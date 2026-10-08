@@ -15,7 +15,7 @@ const Walkers = {
   list: [],
 
   dress(w, h) {
-    const cls = BUILDINGS[h.type].tiers[h.tier].cls || 'plebs';
+    const cls = w.cls = BUILDINGS[h.type].tiers[h.tier].cls || 'plebs';
     const r = Math.random();
     w.cSkin = pick(SKIN);
     w.cHair = pick(HAIR);
@@ -67,6 +67,8 @@ const Walkers = {
     };
     this.dress(w, h);
     if (w.role === 'child') w.speed *= 1.25;
+    // в новом виде жители настоящего роста и шагают по-настоящему — идут медленнее
+    if (NEW_LOOK) w.speed *= 0.38;
     this.pickNext(w);
     this.list.push(w);
   },

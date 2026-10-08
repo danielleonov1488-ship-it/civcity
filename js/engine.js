@@ -68,6 +68,8 @@ const Engine = {
     this.matWater = makeWaterMaterial(this.waterNormals);
     this.matTree = patchMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), { sway: true });
     this.matRock = patchMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }));
+    // новый вид: гранёные деревья и камни, как у Synty
+    if (NEW_LOOK) { this.matTree.flatShading = true; this.matRock.flatShading = true; }
     this.matGhost = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false });
     this.matBorder = new THREE.MeshBasicMaterial({ color: '#fffaf0', transparent: true, opacity: 0.75, depthWrite: false });
     this.matGrid = new THREE.LineBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.22, depthWrite: false });
@@ -557,7 +559,8 @@ const Engine = {
     this.natMeshes = new Map();
     for (const [kind, def] of Object.entries(NATURE_KINDS)) {
       for (let v = 0; v < def.variants; v++) {
-        const geo = natureGeometry(kind === 'grass' ? 'grass' : +kind, v);
+        const k2 = kind === 'grass' ? 'grass' : +kind;
+        const geo = (NEW_LOOK && Look2.natureGeometry(k2, v)) || natureGeometry(k2, v);
         const cap = kind === 'grass' ? 14000 : 7000;
         const mesh = new THREE.InstancedMesh(geo, def.mat === 'rock' ? this.matRock : this.matTree, cap);
         mesh.count = 0;
@@ -812,6 +815,10 @@ const Engine = {
   },
 
   initWalkers() {
+    this._mb = new THREE.Matrix4();
+    this._ml = new THREE.Matrix4();
+    this._mo = new THREE.Matrix4();
+    if (NEW_LOOK) { Look2.initCrowd(this.scene, 400); this.initCats(); return; }
     const geo = fn => this.figGeo(fn);
     this.wMax = 400;
     this.fig = this.figMeshes({
@@ -895,7 +902,8 @@ const Engine = {
     this.figFlush(F, idx);
   },
 
-  drawWalkers(T) {
+  drawWalkers(T, realDt) {
+    if (NEW_LOOK) { Look2.drawWalkers(Walkers.list, realDt || 0); this.drawCats(); return; }
     const list = Walkers.list;
     const n = Math.min(list.length, this.wMax);
     const F = this.fig;
@@ -1171,7 +1179,7 @@ const Engine = {
     this.rebuildNature();
     this.syncBuildings();
     this.animateBuildings(performance.now());
-    this.drawWalkers(this.T);
+    this.drawWalkers(this.T, realDt);
     this.updateParticles(dt, realDt);
     this.updateGhost(realDt);
     Atmos.updateBirds(this.T, this.cam);

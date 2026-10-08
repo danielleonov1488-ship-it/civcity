@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Жители — проверка</title>
+<link rel="stylesheet" href="../vendor/fonts/fonts.css">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe3ee; font: 14px 'Nunito', system-ui, sans-serif; color: #45311f; }
+  canvas { display: block; width: 100%; height: 100%; }
+  .bar { position: fixed; left: 12px; top: 12px; display: flex; gap: 6px; flex-wrap: wrap; max-width: calc(100% - 24px); }
+  button { font: 800 13px 'Nunito', system-ui, sans-serif; color: #45311f; background: #fffaf0; border: 1.5px solid #d6c39e; border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+  button.on { background: #b5452e; border-color: #b5452e; color: #fff; }
+  #status { position: fixed; right: 12px; bottom: 12px; background: #f8f1e2; border: 1.5px solid #d6c39e; border-radius: 12px; padding: 8px 12px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="bar" id="bar"></div>
+<div id="status">Загрузка…</div>
+<script type="importmap">{ "imports": { "three": "../vendor/three-module/build/three.module.js" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from '../vendor/three-module/examples/jsm/controls/OrbitControls.js';
+import { citizen } from './citizens.js';
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#cfe3ee');
+scene.add(new THREE.HemisphereLight('#eef6ff', '#8a8060', 1.2));
+const sun = new THREE.DirectionalLight('#fff0d4', 2.6); sun.position.set(-4, 8, 6); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6 }); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#c9b48a', roughness: 1 }));
+ground.receiveShadow = true; scene.add(ground);
+const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+const controls = new OrbitControls(camera, renderer.domElement);
+camera.position.set(0, 1.6, 6); controls.target.set(0, 0.9, 0);
+const LOOKS = [
+  ['male', 'M Citizen', 'Mid Hair', 'Goatee'],
+  ['female', 'F Dress with robe', 'Hair Bun Mid'],
+  ['male', 'M Citizen Side Robe', 'Pelo Sin Barva'],
+  ['female', 'F Double Part Dress', 'Long Hair'],
+];
+const people = [];
+for (let i = 0; i < LOOKS.length; i++) {
+  const c = await citizen(LOOKS[i]);
+  c.root.position.set(-2.4 + i * 1.6, 0, 0);
+  scene.add(c.root);
+  c.play('Idle_Loop');
+  people.push(c);
+}
+const helpers = people.map(p => { const h = new THREE.SkeletonHelper(p.root); h.visible = false; scene.add(h); return h; });
+const bar = document.getElementById('bar');
+for (const n of ['Idle_Loop', 'Walk_Loop', 'Jog_Fwd_Loop', 'Idle_Talking_Loop', 'Sitting_Idle_Loop', 'Interact', 'PickUp_Table', 'Dance_Loop', 'Death01']) {
+  const b = document.createElement('button'); b.textContent = n.replace(/_Loop$/, '').replace(/_/g, ' ');
+  b.onclick = () => { bar.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); people.forEach(p => p.play(n, 0.3, /Death|Interact|PickUp/.test(n))); };
+  bar.append(b);
+}
+const bones = document.createElement('button'); bones.textContent = 'Кости'; bones.onclick = () => helpers.forEach(h => h.visible = !h.visible); bar.append(bones);
+document.getElementById('status').textContent = 'Готово';
+window.LAB = { scene, camera, controls, people, renderer, advance: s => { for (let t = 0; t < s; t += 1 / 30) tick(1 / 30); } };
+const clock = new THREE.Clock();
+function tick(dt) { people.forEach(p => p.mixer.update(dt)); controls.update(); renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.render(scene, camera); }
+renderer.setAnimationLoop(() => tick(Math.min(clock.getDelta(), 0.05)));
+</script>
+</body>
+</html>

@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Запекание моделей</title>
+<style>body { font: 14px system-ui, sans-serif; margin: 20px; } pre { background: #f4f1ea; padding: 12px; }</style>
+</head>
+<body>
+<h1>Запекание моделей для нового вида</h1>
+<p>Открывать через сервер запекания (порт 5190). Результат пишется в assets/look2/.</p>
+<pre id="log">…</pre>
+<script type="importmap">{ "imports": { "three": "../vendor/three-module/build/three.module.js" } }</script>
+<script type="module">
+// Запекание: жители (тело + одежда + причёска на скелете, кадры движений в таблице костей)
+// и неподвижные модели (деревья, камни, статуи, мелочи) — в компактные файлы для игры.
+import * as THREE from 'three';
+import { rig, loadArt, ART_K } from './citizens.js';
+
+const logEl = document.getElementById('log');
+const log = s => { logEl.textContent += '\n' + s; };
+logEl.textContent = 'Старт';
+
+/* ---------- Палитра: цвет каждого треугольника берём из клетки 16×16 ---------- */
+const ART = '../assets/incoming/artisau/unpacked/AncientGrecce/';
+const pal = await new Promise((res, rej) => {
+  const i = new Image(); i.onload = () => {
+    const c = document.createElement('canvas'); c.width = i.width; c.height = i.height;
+    const g = c.getContext('2d'); g.drawImage(i, 0, 0);
+    res({ w: i.width, h: i.height, d: g.getImageData(0, 0, i.width, i.height).data });
+  }; i.onerror = rej; i.src = encodeURI(ART + 'TexturaLowPoly.png');
+});
+const hex2 = (r, g, b) => [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+function cellOf(u, v) {
+  u = ((u % 1) + 1) % 1; v = ((v % 1) + 1) % 1;
+  const x = Math.min(pal.w - 1, Math.floor(u * pal.w)), y = Math.min(pal.h - 1, Math.floor((1 - v) * pal.h));
+  return y * pal.w + x;
+}
+function cellRGB(cell) { const i = cell * 4; return [pal.d[i], pal.d[i + 1], pal.d[i + 2]]; }
+
+// Цвета треугольников части: [cell на каждый треугольник], площадь по клеткам
+function triCells(geo) {
+  const uv = geo.attributes.uv, p = geo.attributes.position, n = p.count / 3;
+  const cells = new Int32Array(n), area = new Map();
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let t = 0; t < n; t++) {
+    const i = t * 3;
+    const u = (uv.getX(i) + uv.getX(i + 1) + uv.getX(i + 2)) / 3, v = (uv.getY(i) + uv.getY(i + 1) + uv.getY(i + 2)) / 3;
+    const cell = cellOf(u, v);
+    cells[t] = cell;
+    a.fromBufferAttribute(p, i); b.fromBufferAttribute(p, i + 1); c.fromBufferAttribute(p, i + 2);
+    const s = b.sub(a).cross(c.sub(a)).length() / 2;
+    area.set(cell, (area.get(cell) || 0) + s);
+  }
+  return { cells, area };
+}
+const hexToRGB = h => { const v = parseInt(h.replace('#', ''), 16); return [v >> 16, (v >> 8) & 255, v & 255]; };
+
+/* ---------- Сборка буфера ---------- */
+class Bin {
+  constructor() { this.parts = []; this.len = 0; }
+  add(typed) {
+    const pad = (4 - (this.len % 4)) % 4;
+    if (pad) { this.parts.push(new Uint8Array(pad)); this.len += pad; }
+    const off = this.len;
+    const bytes = new Uint8Array(typed.buffer, typed.byteOffset, typed.byteLength);
+    this.parts.push(bytes.slice()); this.len += bytes.byteLength;
+    return [off, typed.length];
+  }
+  blob() { return new Blob(this.parts); }
+}
+async function put(name, data) {
+  const r = await fetch('/assets/look2/' + name, { method: 'PUT', body: data });
+  if (!r.ok) throw new Error('PUT ' + name + ' ' + r.status);
+}
+
+// Слить вершины с одинаковыми позицией, цветом и весами (плоские грани — нормали не нужны)
+function weld(list) {
+  // list: [{x,y,z,r,g,b,si?,sw?}] по треугольникам
+  const map = new Map(), verts = [], idx = [];
+  for (const v of list) {
+    const key = [Math.round(v.x * 1e4), Math.round(v.y * 1e4), Math.round(v.z * 1e4), v.r, v.g, v.b, v.si ? v.si.join(',') + v.sw.join(',') : ''].join('|');
+    let i = map.get(key);
+    if (i === undefined) { i = verts.length; verts.push(v); map.set(key, i); }
+    idx.push(i);
+  }
+  return { verts, idx };
+}
+
+/* ---------- Жители ---------- */
+const SEG_BONES = ['pelvis', 'spine_01', 'spine_02', 'spine_03', 'neck_01', 'Head', 'clavicle_l', 'upperarm_l', 'lowerarm_l', 'hand_l',
+  'clavicle_r', 'upperarm_r', 'lowerarm_r', 'hand_r', 'thigh_l', 'calf_l', 'foot_l', 'ball_l', 'thigh_r', 'calf_r', 'foot_r', 'ball_r'];
+const CLIPS = ['Walk_Loop', 'Idle_Loop', 'Idle_Talking_Loop'];
+const FPS = 20;
+// Роли: common (простые), rich (богатые), poor (бедные/рабочие), woman, senator
+const PEOPLE = [
+  { name: 'm-citizen', role: 'common', parts: ['male', 'M Citizen', 'Pelo Sin Barva'] },
+  { name: 'm-citizen-rust', role: 'common', parts: ['male', 'M Citizen', 'Half Bald', 'Goatee'], tint: '#a5523a' },
+  { name: 'm-citizen-olive', role: 'common', parts: ['male', 'M Citizen', 'Long Hair', 'Moustache'], tint: '#7b8a48' },
+  { name: 'm-normal', role: 'common', parts: ['male', 'M Normal Citizen ', 'Pelo Sin Barva', 'Sideburn'] },
+  { name: 'm-normal-blue', role: 'rich', parts: ['male', 'M Normal Citizen ', 'Half Bald', 'Goatee'], tint: '#4f6f9a' },
+  { name: 'm-side-robe', role: 'common', parts: ['male', 'M Citizen Side Robe', 'Pelo Sin Barva', 'Moustache'] },
+  { name: 'm-side-robe-red', role: 'rich', parts: ['male', 'M Citizen Side Robe', 'Long Hair', 'Goatee'], tint: '#9a3a32' },
+  { name: 'm-fisher', role: 'poor', parts: ['male', 'M Citizen Fisherman', 'Half Bald', 'Braid'] },
+  { name: 'm-shorts', role: 'poor', parts: ['male', 'M Citizen Shorts', 'Pelo Sin Barva'] },
+  { name: 'm-slave', role: 'poor', parts: ['male', 'M Slave', 'Half Bald'] },
+  { name: 'm-senator', role: 'senator', parts: ['male', 'M Theatre Dress', 'Half Bald', 'Goatee'] },
+  { name: 'f-robe', role: 'woman', parts: ['female', 'F Dress with robe', 'Hair Bun Mid'] },
+  { name: 'f-shoulder', role: 'woman', parts: ['female', 'F Dress with shoulder robe', 'Low Ponytail'], tint: '#c97b6a' },
+  { name: 'f-double', role: 'woman', parts: ['female', 'F Double Part Dress', 'Long Hair.001'], tint: '#7d9bc0' },
+  { name: 'f-split', role: 'woman', parts: ['female', 'F Splited Dress', 'Hair Upsweep'], tint: '#d8b46a' },
+  { name: 'f-priest', role: 'woman', parts: ['female', 'F Priest', 'Hair Tiara'] },
+  { name: 'f-slave', role: 'poor', parts: ['female', 'F Slave', 'Low braid'] },
+  { name: 'f-shoulder-green', role: 'woman', parts: ['female', 'F Dress with shoulder robe', 'Hair Bun Low'], tint: '#6f8f5a' },
+];
+
+async function bakePeople() {
+  const bin = new Bin();
+  const out = { version: 1, fps: FPS, bones: SEG_BONES.length, bodies: {}, variants: [] };
+  const bodyRigs = {};
+  for (const spec of PEOPLE) {
+    const r = await rig(spec.parts);
+    const sms = r.group.children.filter(o => o.isSkinnedMesh);
+    const skel = sms[0].skeleton;
+    const full2c = new Map(SEG_BONES.map((n, i) => [skel.bones.findIndex(b => b.name === n), i]));
+    const list = [];
+    for (let p = 0; p < sms.length; p++) {
+      const geo = sms[p].geometry;
+      const { cells, area } = triCells(geo);
+      let tintCell = -1;
+      if (spec.tint && p === 1) { let best = 0; for (const [c, a] of area) if (a > best) { best = a; tintCell = c; } }
+      const pos = geo.attributes.position, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight;
+      for (let i = 0; i < pos.count; i++) {
+        const cell = cells[Math.floor(i / 3)];
+        const [cr, cg, cb] = cell === tintCell ? hexToRGB(spec.tint) : cellRGB(cell);
+        const ids = [], ws = [];
+        for (let k = 0; k < 4; k++) { ids.push(full2c.get(si.getComponent(i, k)) ?? 0); ws.push(Math.round(sw.getComponent(i, k) * 255)); }
+        const s = ws.reduce((a, b) => a + b, 0); if (s !== 255) ws[0] += 255 - s;
+        list.push({ x: pos.getX(i), y: pos.getY(i), z: pos.getZ(i), r: cr, g: cg, b: cb, si: ids, sw: ws });
+      }
+    }
+    const { verts, idx } = weld(list);
+    const P = new Float32Array(verts.length * 3), C = new Uint8Array(verts.length * 3), SI = new Uint8Array(verts.length * 4), SW = new Uint8Array(verts.length * 4);
+    verts.forEach((v, i) => { P.set([v.x, v.y, v.z], i * 3); C.set([v.r, v.g, v.b], i * 3); SI.set(v.si, i * 4); SW.set(v.sw, i * 4); });
+    const body = spec.parts[0] === 'female' ? 'f' : 'm';
+    out.variants.push({ name: spec.name, role: spec.role, body, verts: verts.length, tris: idx.length / 3, height: +r.height.toFixed(3),
+      pos: bin.add(P), col: bin.add(C), si: bin.add(SI), sw: bin.add(SW), idx: bin.add(new Uint16Array(idx)) });
+    if (!bodyRigs[body]) bodyRigs[body] = r;
+    log(`житель ${spec.name}: ${verts.length} вершин, ${idx.length / 3} треугольников`);
+  }
+  // таблица костей: на каждый кадр каждого движения — 3 строки матрицы 3×4 на кость
+  for (const [body, r] of Object.entries(bodyRigs)) {
+    const sms = r.group.children.filter(o => o.isSkinnedMesh);
+    const skel = sms[0].skeleton;
+    const mixer = new THREE.AnimationMixer(r.group);
+    const clips = {};
+    const rows = [];
+    for (const name of CLIPS) {
+      const clip = r.clips[name];
+      const frames = Math.max(2, Math.round(clip.duration * FPS));
+      clips[name] = { row: rows.length, frames, dur: +clip.duration.toFixed(3) };
+      const act = mixer.clipAction(clip); act.reset().play();
+      for (let f = 0; f < frames; f++) {
+        mixer.setTime((f / frames) * clip.duration);
+        r.group.updateMatrixWorld(true);
+        skel.update();
+        const row = new Float32Array(SEG_BONES.length * 12);
+        SEG_BONES.forEach((n, j) => {
+          const fi = skel.bones.findIndex(b => b.name === n);
+          const e = skel.boneMatrices.subarray(fi * 16, fi * 16 + 16);
+          row.set([e[0], e[4], e[8], e[12], e[1], e[5], e[9], e[13], e[2], e[6], e[10], e[14]], j * 12);
+        });
+        rows.push(row);
+      }
+      act.stop();
+    }
+    const tex = new Float32Array(rows.length * SEG_BONES.length * 12);
+    rows.forEach((row, i) => tex.set(row, i * row.length));
+    out.bodies[body] = { rows: rows.length, clips, tex: bin.add(tex) };
+    log(`тело ${body}: ${rows.length} кадров`);
+  }
+  await put('people.json', JSON.stringify(out));
+  await put('people.bin', bin.blob());
+  log(`people: ${(bin.len / 1024).toFixed(0)} КБ`);
+}
+
+/* ---------- Неподвижные модели ---------- */
+const STATIC = [
+  // деревья и кусты
+  'Tree', 'Trre', 'Tree Fruits', 'Tree.001', 'Pine', 'Pine.001', 'Pine.002', 'Palm', 'Palm.001', 'Bush', 'Flower Bush', 'No leaf Tree',
+  // камни, цветы, травы
+  'rock', 'rock.002', 'rock.005', 'rock.008', 'rock.010', 'rock.013', 'rock.015', 'Daisy Pack', 'Tulip Pack', 'Blue Jazz Pack', 'Grass', 'Fern', 'Clover', 'Water Ily', 'Log',
+  // статуи и площади
+  'Statue', 'Statue Base', 'Statue Base.001', 'Statue Base.002', 'Zeus', 'Athenea', 'Hermes', 'Hercules', 'Poseidon', 'Hera', 'Demeter', 'Artemisa', 'Discobolo', 'Thinker',
+  'Lion', 'Medusa Bust', 'Fountain', 'Fountain.001', 'Fountain.002', 'Well', 'Well.001', 'Well.002', 'Big Torch', 'Floor Torch', 'Monumental Torch', 'Streetlight', 'Sun Clock', 'Altar', 'Altar.001',
+  // мелочи для улиц, лавок и ферм
+  'Jar', 'Jar.001', 'Jar.002', 'Jar.003', 'Jar.004', 'Jar.005', 'Monumental Jar', 'Basket', 'Basket.001', 'Basket.002', 'Closed Barrel', 'Opened Barrel', 'Cart', 'Horse Cart',
+  'Shop Box', 'Spice Bag', 'Spice Bucket', 'Hay bal', 'straw bale', 'Hay pack', 'Jardinera', 'Bush for Pot', 'Bench', 'Circle bench', 'Hanging Flag', 'Banner', 'Flag', 'Carpet Pack',
+  'Anvil', 'Furnace', 'Grindstone', 'Loom', 'Tool table', 'Weapon shelf', 'Campfire', 'Dummie', 'Target', 'Small Tent', 'Fishing boat', 'Rowerboat con Toldo',
+];
+async function bakeStatic() {
+  const bin = new Bin();
+  const out = { version: 1, scale: ART_K, models: {} };
+  for (const name of STATIC) {
+    let o;
+    try { o = await loadArt(name); } catch (e) { log('нет ' + name); continue; }
+    o.updateMatrixWorld(true);
+    const list = [];
+    const toM = new THREE.Matrix4().makeScale(ART_K, ART_K, ART_K);
+    o.traverse(m => {
+      if (!m.isMesh) return;
+      const geo = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry;
+      const mw = new THREE.Matrix4().multiplyMatrices(toM, m.matrixWorld);
+      const { cells } = triCells(geo);
+      const p = geo.attributes.position, v = new THREE.Vector3();
+      for (let i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i).applyMatrix4(mw);
+        const [r, g, b] = cellRGB(cells[Math.floor(i / 3)]);
+        list.push({ x: v.x, y: v.y, z: v.z, r, g, b });
+      }
+    });
+    const { verts, idx } = weld(list);
+    const P = new Float32Array(verts.length * 3), C = new Uint8Array(verts.length * 3);
+    const box = new THREE.Box3();
+    verts.forEach((v, i) => { P.set([v.x, v.y, v.z], i * 3); C.set([v.r, v.g, v.b], i * 3); box.expandByPoint(new THREE.Vector3(v.x, v.y, v.z)); });
+    const I = verts.length < 65536 ? new Uint16Array(idx) : new Uint32Array(idx);
+    out.models[name] = { verts: verts.length, tris: idx.length / 3, min: box.min.toArray().map(x => +x.toFixed(3)), max: box.max.toArray().map(x => +x.toFixed(3)),
+      pos: bin.add(P), col: bin.add(C), idx: bin.add(I), i32: I instanceof Uint32Array };
+  }
+  await put('props.json', JSON.stringify(out));
+  await put('props.bin', bin.blob());
+  log(`props: ${Object.keys(out.models).length} моделей, ${(bin.len / 1024).toFixed(0)} КБ`);
+}
+
+try {
+  await bakePeople();
+  await bakeStatic();
+  log('ГОТОВО');
+  window.BAKED = true;
+} catch (e) { log('ОШИБКА ' + e.stack); window.BAKED = 'error'; }
+</script>
+</body>
+</html>
