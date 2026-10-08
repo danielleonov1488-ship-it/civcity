@@ -20,8 +20,11 @@ const Game = {
     Input.init(Engine.renderer.domElement);
     computeCoverage();
     UI.init();
+    if (TEST_MODE && !state.testReady) Test.setup();
     UI.updateHud(true);
     window.addEventListener('beforeunload', () => saveGame());
+    // #test дописали или стёрли в адресной строке — перезапуск в нужный город
+    window.addEventListener('hashchange', () => { if (isTestUrl() !== TEST_MODE) location.reload(); });
     document.addEventListener('visibilitychange', () => { if (document.hidden) saveGame(); });
     this.last = this.lastTick = performance.now();
     requestAnimationFrame(t => this.frame(t));
@@ -50,6 +53,7 @@ const Game = {
     Input.setTool(null);
     computeCoverage();
     UI.buildToolbar();
+    if (TEST_MODE) Test.setup();
     UI.setSpeed(1);
     UI.closeTray();
     Advisor.render(true);

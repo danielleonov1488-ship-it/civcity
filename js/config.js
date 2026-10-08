@@ -5,6 +5,10 @@
    ========================================================= */
 
 const PLOT = 24;                 // участок земли — 24×24 клетки
+// Тестовый город: адрес с #test — отдельное сохранение, всё открыто (js/test.js)
+function isTestUrl() { return ['#test', '?test'].some(k => (location.hash + location.search).includes(k)); }
+const TEST_MODE = isTestUrl();
+
 const DAY_SECONDS = 4;           // длина игрового дня при скорости ×1
 const DAYS_PER_SEASON = 30;
 const ROAD_TOP = 0.05;           // высота камней мостовой: на ней стоят жители и кошки

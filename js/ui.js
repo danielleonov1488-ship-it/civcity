@@ -85,7 +85,7 @@ const UI = {
     this.lastHud = t;
     const S = state.stats;
     $('city-name').textContent = state.cityName;
-    $('city-rank').textContent = cityRank(S.pop || 0);
+    $('city-rank').textContent = cityRank(S.pop || 0) + (TEST_MODE ? ' · тест' : '');
     $('v-money').textContent = fmt(state.money);
     const inc = S.income || 0;
     $('v-income').textContent = `${inc >= 0 ? '+' : '−'}${Math.abs(inc).toFixed(1)}`;
@@ -748,6 +748,9 @@ const UI = {
       <p class="field-label">Качество графики</p>
       ${seg('q', [['low', 'Низкое', 'для слабых ПК'], ['medium', 'Среднее', 'телефоны'], ['high', 'Высокое', 'вау-режим']], Settings.quality)}
       <label class="switch"><input type="checkbox" id="day-cycle" ${Settings.dayCycle ? 'checked' : ''}><span></span>Смена дня и ночи</label>
+      ${TEST_MODE ? `<div class="note good"><b>Это тестовый город.</b> У него своё сохранение, ваш настоящий город не трогается.
+        <div class="actions"><button type="button" class="btn small" id="test-give">+30 000 денариев, товары и 40 легионеров</button>
+        <a class="btn small ghost" href="./">В свой город</a></div></div>` : ''}
       <div class="actions">
         <button type="button" class="btn ghost" id="menu-help">Справка</button>
         <button type="button" class="btn ghost" id="menu-new">Новый город</button>
@@ -774,6 +777,7 @@ const UI = {
       if (!Atmos.cycle) Atmos.t = 0.42;
     };
     $('menu-close').onclick = () => this.closeModal();
+    if (TEST_MODE) $('test-give').onclick = () => { Test.give(); this.toast('Добавлено: деньги, товары, свитки, Слава и легионеры', 'good'); };
     $('menu-help').onclick = () => { this.closeModal(); this.openWindow('guide'); };
     $('menu-new').onclick = () => {
       this.showModal(`

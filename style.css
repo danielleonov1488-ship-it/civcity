@@ -538,6 +538,7 @@ kbd { display: inline-block; min-width: 20px; padding: 1px 6px; border: 1px soli
   font-size: 13.5px;
   box-shadow: 0 3px 8px rgba(146, 52, 32, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
+a.btn { text-decoration: none; }
 .btn .ico { width: 16px; height: 16px; }
 .btn:hover { background: var(--terra-deep); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
