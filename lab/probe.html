@@ -1,0 +1,25 @@
+<!doctype html><meta charset="utf-8"><title>probe</title>
+<script type="importmap">{ "imports": { "three": "../vendor/three-module/build/three.module.js" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from '../vendor/three-module/examples/jsm/loaders/FBXLoader.js';
+import { GLTFLoader } from '../vendor/three-module/examples/jsm/loaders/GLTFLoader.js';
+const fbx = new FBXLoader(), gltf = new GLTFLoader();
+window.probe = async (list) => {
+  const out = {};
+  for (const url of list) {
+    try {
+      const isG = /\.gl(b|tf)$/i.test(url);
+      const r = await new Promise((res, rej) => (isG ? gltf : fbx).load(encodeURI(url), res, undefined, rej));
+      const root = isG ? r.scene : r;
+      root.updateMatrixWorld(true);
+      const b = new THREE.Box3().setFromObject(root), s = b.getSize(new THREE.Vector3());
+      let tris = 0, mats = new Set(), meshes = 0;
+      root.traverse(o => { if (o.isMesh) { meshes++; const g = o.geometry; tris += (g.index ? g.index.count : g.attributes.position.count) / 3; [].concat(o.material).forEach(m => mats.add(m.name + (m.map ? '[' + (m.map.name || 'tex') + ']' : '') + (m.vertexColors ? '{vc}' : ''))); } });
+      out[url.split('/').pop()] = { size: s.toArray().map(v => +v.toFixed(2)), min: b.min.toArray().map(v => +v.toFixed(2)), tris: Math.round(tris), meshes, mats: [...mats].slice(0, 4), anims: (r.animations || []).map(a => a.name).slice(0, 30), scale: root.scale.x };
+    } catch (e) { out[url] = 'ERR ' + e.message; }
+  }
+  return out;
+};
+window.ready = true;
+</script>

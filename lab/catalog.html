@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Каталог моделей</title>
+<style>html, body { margin: 0; height: 100%; overflow: hidden; background: #e9eef0; } canvas { display: block; width: 100%; height: 100%; }</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="importmap">{ "imports": { "three": "../vendor/three-module/build/three.module.js" } }</script>
+<script type="module">
+// Каталог: выставляет модели сеткой с подписями. Список — после # через запятую, папка — ?dir=art|nat|prop
+import * as THREE from 'three';
+import { FBXLoader } from '../vendor/three-module/examples/jsm/loaders/FBXLoader.js';
+import { GLTFLoader } from '../vendor/three-module/examples/jsm/loaders/GLTFLoader.js';
+import { OrbitControls } from '../vendor/three-module/examples/jsm/controls/OrbitControls.js';
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#e9eef0');
+scene.add(new THREE.HemisphereLight('#ffffff', '#8a8a7a', 1.1));
+const sun = new THREE.DirectionalLight('#fff4e0', 2.2); sun.position.set(-3, 6, 4); scene.add(sun);
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.1, 2000);
+const controls = new OrbitControls(camera, renderer.domElement);
+const label = text => {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 64;
+  const g = c.getContext('2d'); g.fillStyle = '#222'; g.font = 'bold 34px sans-serif'; g.textAlign = 'center'; g.fillText(text, 256, 44);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false })); s.scale.set(8, 1, 1); return s;
+};
+const DIRS = { art: '../assets/incoming/artisau/unpacked/AncientGrecce/', nat: '../assets/incoming/stylized-nature-megakit/unpacked/glTF/', prop: '../assets/incoming/fantasy-props-megakit/unpacked/Exports/glTF/' };
+const kind = new URLSearchParams(location.search).get('dir') || 'art';
+const names = decodeURIComponent(location.hash.slice(1)).split(',').filter(Boolean);
+const cols = Math.ceil(Math.sqrt(names.length * 1.6)), cell = kind === 'art' ? 16 : 4;
+const K = kind === 'art' ? 0.0052 : 1;
+let done = 0;
+names.forEach((n, i) => {
+  const url = encodeURI(DIRS[kind] + n + (kind === 'art' ? '.fbx' : '.gltf'));
+  const ok = o => {
+    const root = o.scene || o; root.scale.multiplyScalar(K);
+    const b = new THREE.Box3().setFromObject(root), s = b.getSize(new THREE.Vector3());
+    const k = Math.min(1, cell * 0.8 / Math.max(s.x, s.z, s.y * 0.8));
+    root.scale.multiplyScalar(k);
+    const x = (i % cols) * cell, z = Math.floor(i / cols) * cell;
+    root.position.set(x, 0, z); scene.add(root);
+    const l = label(n + (k < 1 ? ' ×' + k.toFixed(2) : '')); l.position.set(x, -0.6, z + cell * 0.42); scene.add(l);
+    done++;
+  };
+  (kind === 'art' ? new FBXLoader() : new GLTFLoader()).load(url, ok, undefined, () => done++);
+});
+const w = cols * cell, h = Math.ceil(names.length / cols) * cell;
+controls.target.set(w / 2 - cell / 2, 0, h / 2 - cell / 2);
+camera.position.set(w / 2, Math.max(w, h) * 0.9, h / 2 + Math.max(w, h) * 0.75);
+renderer.setAnimationLoop(() => { renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); controls.update(); renderer.render(scene, camera); });
+window.CAT = { get done() { return done; }, total: names.length };
+</script>
+</body>
+</html>
