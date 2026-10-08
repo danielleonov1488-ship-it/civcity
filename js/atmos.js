@@ -58,6 +58,51 @@ function patchMaterial(mat, opts) {
   return mat;
 }
 
+/* Вода: бирюза на мели и синева в глубине, прозрачная у берега, пена по кромке колышется,
+   по глади бегут тени облаков и вспыхивают блёстки. Глубина приходит атрибутом aDepth. */
+function makeWaterMaterial(normals) {
+  const mat = new THREE.MeshPhongMaterial({
+    color: '#ffffff', transparent: true, shininess: 300, specular: new THREE.Color(0.32, 0.32, 0.3),
+    normalMap: normals, normalScale: new THREE.Vector2(0.3, 0.3), emissive: '#0a2c38', emissiveIntensity: 0.25,
+  });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = Shared.time;
+    sh.uniforms.uCloud = Shared.cloud;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aDepth;\nvarying float vDepth;\nvarying vec3 vWPos;')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+        vDepth = aDepth;
+        vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\nvarying float vDepth;\nvarying vec3 vWPos;\nuniform float uTime;\nuniform float uCloud;\n${NOISE_GLSL}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float _d = vDepth;
+        if (_d < -0.005) discard;
+        diffuseColor.rgb = mix(vec3(0.50, 0.86, 0.80), vec3(0.10, 0.37, 0.58), smoothstep(0.03, 0.3, _d));
+        diffuseColor.a = mix(0.42, 0.9, smoothstep(0.0, 0.24, _d));
+        // пена — полоса у самой кромки: глубину делим на крутизну дна и получаем расстояние до берега,
+        // поэтому пологие отмели не белеют целиком
+        float _gx = dFdx(_d) / max(length(dFdx(vWPos.xz)), 1e-5);
+        float _gy = dFdy(_d) / max(length(dFdy(vWPos.xz)), 1e-5);
+        float _dist = _d / max(length(vec2(_gx, _gy)), 0.03);
+        float _w = 0.075 + 0.035 * sin(uTime * 1.2 + vWPos.x * 2.3 + vWPos.z * 1.7);
+        float _f = (1.0 - smoothstep(_w * 0.4, _w, _dist)) * (0.7 + 0.3 * vnoise(vWPos.xz * 7.0 + uTime * 0.5));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.97, 0.98, 0.95), _f * 0.85);
+        diffuseColor.a = max(diffuseColor.a, _f * 0.8);
+        float _c = fbm3(vWPos.xz * 0.035 + vec2(uTime * 0.012, uTime * 0.006));
+        diffuseColor.rgb *= 1.0 - smoothstep(0.5, 0.72, _c) * 0.25 * uCloud;
+        float _sp = pow(vnoise(vWPos.xz * 9.0 + vec2(uTime * 0.7, uTime * 0.45)) * vnoise(vWPos.xz * 5.3 - uTime * 0.35), 18.0) * 2.5;`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        totalEmissiveRadiance += vec3(1.0, 0.97, 0.88) * _sp * step(0.08, _d);`)
+      // солнечная дорожка — не сплошная белая клякса, а россыпь мерцающих искр
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+        float _gl = smoothstep(0.95, 1.25, vnoise(vWPos.xz * 15.0 + vec2(uTime * 0.7, -uTime * 0.5)) * vnoise(vWPos.xz * 9.0 - uTime * 0.4) * 1.6);
+        reflectedLight.directSpecular *= 0.1 + _gl * 1.4;`);
+  };
+  mat.customProgramCacheKey = () => 'water';
+  return mat;
+}
+
 /* Процедурная карта нормалей для ряби на воде */
 function makeWaterNormals() {
   const S = 256, cv = document.createElement('canvas');
@@ -66,7 +111,11 @@ function makeWaterNormals() {
   const img = ctx.createImageData(S, S);
   const hgt = new Float32Array(S * S);
   const waves = [];
-  for (let i = 0; i < 12; i++) waves.push([Math.cos(i * 2.4) * (2 + i % 4), Math.sin(i * 2.4) * (2 + i % 3), Math.random() * 6.28, 1 / (1 + i * 0.35)]);
+  // целое число волн на текстуру — тогда она повторяется без швов
+  for (let i = 0; i < 12; i++) {
+    const kx = Math.round(Math.cos(i * 2.4) * (2 + i % 4)), ky = Math.round(Math.sin(i * 2.4) * (2 + i % 3));
+    waves.push([kx || 1, ky, Math.random() * 6.28, 1 / (1 + i * 0.35)]);
+  }
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     let h = 0;
     for (const [kx, ky, ph, a] of waves) h += Math.sin((kx * x + ky * y) / S * Math.PI * 2 + ph) * a;
@@ -146,8 +195,10 @@ const Atmos = {
 
     // бесконечная земля под участками — горизонт без обрыва
     const fg = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-    this.farGround = new THREE.Mesh(fg, patchMaterial(new THREE.MeshLambertMaterial({ color: '#a2c46c' }), { grain: true }));
+    // рисуется первой и не пишет глубину: участки с озёрами (дно ниже нуля) просто рисуются поверх
+    this.farGround = new THREE.Mesh(fg, patchMaterial(new THREE.MeshLambertMaterial({ color: '#a2c46c', depthWrite: false }), { grain: true }));
     this.farGround.position.y = -0.03;
+    this.farGround.renderOrder = -5;
     this.farGround.receiveShadow = true;
     scene.add(this.farGround);
 

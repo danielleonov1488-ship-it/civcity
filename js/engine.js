@@ -4,6 +4,14 @@
 
 const GROUND_HEX = ['#9fc46a', '#a6c870', '#aecd78', '#98bd62', '#e3d2a0', '#8fb7a6', '#6f9f9a'];
 const LOCK_TINT = new THREE.Color('#b7b29a');
+const WATER_Y = -0.07;     // гладь воды
+const GROUND_RES = 4;      // у воды рельеф мельче клетки (4×4), чтобы берега были круглыми; суша — по клетке
+const BED_SAND = new THREE.Color('#dccb98'), BED_SHALLOW = new THREE.Color('#86b9a2'), BED_DEEP = new THREE.Color('#3d7a84');
+
+// Сплайн Катмулла — Рома: плавная кривая через четыре значения
+function catmull(p0, p1, p2, p3, t) {
+  return p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
+}
 const PITCH_NEAR = 0.3, PITCH_FAR = 0.98;
 const DIST_MIN = 6, DIST_MAX = 75;
 
@@ -57,10 +65,7 @@ const Engine = {
     this.matWin = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
     this.matGround = patchMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }), { grain: true });
     this.waterNormals = makeWaterNormals();
-    this.matWater = new THREE.MeshPhongMaterial({
-      color: '#3f95b9', transparent: true, opacity: 0.82, shininess: 140, specular: new THREE.Color(0.9, 0.9, 0.9),
-      normalMap: this.waterNormals, normalScale: new THREE.Vector2(0.45, 0.45), emissive: '#0e3646', emissiveIntensity: 0.4,
-    });
+    this.matWater = makeWaterMaterial(this.waterNormals);
     this.matTree = patchMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), { sway: true });
     this.matRock = patchMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }));
     this.matGhost = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false });
@@ -217,58 +222,209 @@ const Engine = {
     return c;
   },
 
+  // «Сухость» участка в центрах клеток (с запасом в 2 клетки вокруг) — из неё плавно берётся высота дна
+  plotField(px, py) {
+    const t = plotTerrain(px, py);
+    if (t.field) return t.field;
+    const S = PLOT + 4, f = new Float32Array(S * S), x0 = px * PLOT - 2, z0 = py * PLOT - 2;
+    let any = false;
+    for (let b = 0; b < S; b++) {
+      for (let a = 0; a < S; a++) {
+        const w = waterValue(x0 + a, z0 + b);
+        f[b * S + a] = w;
+        if (w < WATER_LEVEL + 0.05) any = true;
+      }
+    }
+    return (t.field = { f, S, x0, z0, any });
+  },
+
+  // Высота дна в точке мира: суша — 0, у кромки плавно уходит под воду, к середине озера глубже.
+  // В центре клетки поле равно её «сухости», поэтому под водой оказываются ровно водные клетки.
+  bedAt(F, X, Z) {
+    if (!F.any) return 0;
+    const u = X - 0.5 - F.x0, v = Z - 0.5 - F.z0, i = Math.floor(u), j = Math.floor(v), tx = u - i, tz = v - j;
+    const f = F.f, S = F.S;
+    const row = r => catmull(f[r * S + i - 1], f[r * S + i], f[r * S + i + 1], f[r * S + i + 2], tx);
+    const w = catmull(row(j - 1), row(j), row(j + 1), row(j + 2), tz) - WATER_LEVEL;
+    // на суше — пологий пляж к кромке; под водой дно сразу уходит вниз, без огромных отмелей у поверхности
+    return w >= 0 ? Math.min(0, WATER_Y + w * 5) : Math.max(-0.5, WATER_Y - Math.sqrt(-w) * 0.95);
+  },
+
+  // Высоты на мелкой сетке и «мокрые» клетки (сама клетка или соседняя уходит под воду) — один раз на участок
+  plotBed(px, py) {
+    const t = plotTerrain(px, py);
+    if (t.bed) return t.bed;
+    const F = this.plotField(px, py), R = GROUND_RES, N = PLOT * R + 1;
+    const h = new Float32Array(N * N), neg = new Uint8Array(PLOT * PLOT), wet = new Uint8Array(PLOT * PLOT);
+    let any = false;
+    if (F.any) {
+      for (let j = 0; j < N; j++) {
+        for (let i = 0; i < N; i++) {
+          const v = this.bedAt(F, px * PLOT + i / R, py * PLOT + j / R);
+          h[j * N + i] = v;
+          if (v >= 0) continue;
+          any = true;
+          const ti = Math.min(PLOT - 1, Math.floor(i / R)), tj = Math.min(PLOT - 1, Math.floor(j / R));
+          neg[tj * PLOT + ti] = 1;
+          if (i % R === 0 && ti > 0) neg[tj * PLOT + ti - 1] = 1;
+          if (j % R === 0 && tj > 0) neg[(tj - 1) * PLOT + ti] = 1;
+          if (i % R === 0 && j % R === 0 && ti > 0 && tj > 0) neg[(tj - 1) * PLOT + ti - 1] = 1;
+        }
+      }
+      for (let tj = 0; tj < PLOT; tj++) {
+        for (let ti = 0; ti < PLOT; ti++) {
+          let w = 0;
+          for (let dj = -1; dj <= 1 && !w; dj++) for (let di = -1; di <= 1 && !w; di++) {
+            const a = ti + di, b = tj + dj;
+            if (a >= 0 && b >= 0 && a < PLOT && b < PLOT && neg[b * PLOT + a]) w = 1;
+          }
+          wet[tj * PLOT + ti] = w;
+        }
+      }
+    }
+    return (t.bed = { R, N, h, wet, any, F });
+  },
+
+  // Обход клеток участка: у воды — мелкая сетка, на суше — одна ячейка на клетку.
+  // На стыке мелких и крупных ячеек земля ровная (высота 0), поэтому щелей нет.
+  eachCell(B, fn) {
+    const R = B.R;
+    for (let tz = 0; tz < PLOT; tz++) {
+      for (let tx = 0; tx < PLOT; tx++) {
+        if (B.wet[tz * PLOT + tx]) {
+          for (let b = 0; b < R; b++) for (let a = 0; a < R; a++) fn(tx * R + a, tz * R + b, 1, true);
+        } else fn(tx * R, tz * R, R, false);
+      }
+    }
+  },
+
   buildGround(px, py) {
-    const N = PLOT + 1, x0 = px * PLOT, z0 = py * PLOT;
-    const pos = new Float32Array(N * N * 3), col = new Float32Array(N * N * 3);
+    const B = this.plotBed(px, py), R = B.R, N = B.N, x0 = px * PLOT, z0 = py * PLOT, owned = isOwnedPlot(px, py);
     const tc = new Map();
     const tileCol = (tx, ty) => { const k = tx + ',' + ty; let c = tc.get(k); if (!c) { c = this.tileColor(tx, ty); tc.set(k, c); } return c; };
-    for (let j = 0; j < N; j++) {
-      for (let i = 0; i < N; i++) {
-        const tx = x0 + i, ty = z0 + j, k = (j * N + i) * 3;
-        let water = 0, deep = 0;
-        const c = new THREE.Color(0, 0, 0);
-        for (const [a, b] of [[tx - 1, ty - 1], [tx, ty - 1], [tx - 1, ty], [tx, ty]]) {
-          const g = groundAt(a, b);
-          if (g >= G_WATER) water++;
-          if (g === G_DEEP) deep++;
-          c.add(tileCol(a, b));
+    const c = new THREE.Color(), w = new THREE.Color();
+    const vid = new Int32Array(N * N).fill(-1), pos = [], col = [], nrm = [];
+    const vert = (i, j) => {
+      const q = j * N + i;
+      if (vid[q] >= 0) return vid[q];
+      const X = x0 + i / R, Z = z0 + j / R, h = B.h[q];
+      // нормаль — по самому полю высот, чтобы соседние участки сходились без шва
+      if (B.any) {
+        const e = 0.12, dx = this.bedAt(B.F, X + e, Z) - this.bedAt(B.F, X - e, Z), dz = this.bedAt(B.F, X, Z + e) - this.bedAt(B.F, X, Z - e);
+        const l = Math.hypot(dx, 2 * e, dz);
+        nrm.push(-dx / l, 2 * e / l, -dz / l);
+      } else nrm.push(0, 1, 0);
+      // цвет — плавная смесь четырёх ближайших клеток
+      const fx = X - 0.5, fz = Z - 0.5, ix = Math.floor(fx), iz = Math.floor(fz), ax = fx - ix, az = fz - iz;
+      c.setRGB(0, 0, 0);
+      c.add(w.copy(tileCol(ix, iz)).multiplyScalar((1 - ax) * (1 - az)));
+      c.add(w.copy(tileCol(ix + 1, iz)).multiplyScalar(ax * (1 - az)));
+      c.add(w.copy(tileCol(ix, iz + 1)).multiplyScalar((1 - ax) * az));
+      c.add(w.copy(tileCol(ix + 1, iz + 1)).multiplyScalar(ax * az));
+      // берег и дно: мокрый песок у кромки, бирюза на мели, тёмная зелень в глубине
+      if (h < 0) {
+        if (h > WATER_Y) w.copy(c).lerp(BED_SAND, Math.min(1, -h / -WATER_Y) * 0.85);
+        else {
+          const d = WATER_Y - h;
+          w.copy(BED_SAND).lerp(BED_SHALLOW, Math.min(1, d / 0.08)).lerp(BED_DEEP, clamp((d - 0.08) / 0.3, 0, 1));
         }
-        c.multiplyScalar(0.25);
-        const h = water === 4 ? (deep >= 2 ? -0.45 : -0.28) : 0;
-        pos[k] = tx; pos[k + 1] = h; pos[k + 2] = ty;
-        col[k] = c.r; col[k + 1] = c.g; col[k + 2] = c.b;
+        c.copy(w);
+        if (!owned) { c.lerp(LOCK_TINT, 0.42); c.multiplyScalar(0.93); }
       }
-    }
+      pos.push(X, h, Z);
+      col.push(c.r, c.g, c.b);
+      return (vid[q] = pos.length / 3 - 1);
+    };
     const idx = [];
-    for (let j = 0; j < PLOT; j++) {
-      for (let i = 0; i < PLOT; i++) {
-        const a = j * N + i, b = (j + 1) * N + i, c = (j + 1) * N + i + 1, d = j * N + i + 1;
-        idx.push(a, b, c, a, c, d);
-      }
-    }
+    this.eachCell(B, (i, j, st) => {
+      const a = vert(i, j), b = vert(i, j + st), cc = vert(i + st, j + st), d = vert(i + st, j);
+      idx.push(a, b, cc, a, cc, d);
+    });
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
     g.setIndex(idx);
-    g.computeVertexNormals();
     const m = new THREE.Mesh(g, this.matGround);
     m.receiveShadow = true;
     return m;
   },
 
-  // Гладь воды — одна плоскость на участок; берег там, где земля опускается ниже неё
+  // Гладь воды: мелкая сетка над «мокрыми» клетками; глубина в вершинах даёт цвет, прозрачность и пену у кромки
   buildWater(px, py) {
-    const t = plotTerrain(px, py);
-    let any = false;
-    for (let k = 0; k < t.ground.length && !any; k++) if (t.ground[k] >= G_WATER) any = true;
-    if (!any) return null;
-    const x0 = px * PLOT, z0 = py * PLOT, y = -0.07, s = 0.09;
+    const B = this.plotBed(px, py);
+    if (!B.any) return null;
+    const R = B.R, N = B.N, x0 = px * PLOT, z0 = py * PLOT, s = 0.09;
+    const vid = new Int32Array(N * N).fill(-1), pos = [], uv = [], nrm = [], dep = [];
+    const vert = (i, j) => {
+      const q = j * N + i;
+      if (vid[q] >= 0) return vid[q];
+      const X = x0 + i / R, Z = z0 + j / R;
+      pos.push(X, WATER_Y, Z);
+      nrm.push(0, 1, 0);
+      uv.push(X * s, Z * s);
+      dep.push(WATER_Y - B.h[q]);
+      return (vid[q] = dep.length - 1);
+    };
+    const idx = [];
+    this.eachCell(B, (i, j, st, fine) => {
+      if (!fine) return;
+      const q = (ii, jj) => B.h[jj * N + ii];
+      if (Math.min(q(i, j), q(i, j + 1), q(i + 1, j + 1), q(i + 1, j)) >= WATER_Y) return;
+      const a = vert(i, j), b = vert(i, j + 1), c = vert(i + 1, j + 1), d = vert(i + 1, j);
+      idx.push(a, b, c, a, c, d);
+    });
+    if (!idx.length) return null;
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute([x0, y, z0, x0, y, z0 + PLOT, x0 + PLOT, y, z0 + PLOT, x0 + PLOT, y, z0], 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute([x0 * s, z0 * s, x0 * s, (z0 + PLOT) * s, (x0 + PLOT) * s, (z0 + PLOT) * s, (x0 + PLOT) * s, z0 * s], 2));
-    g.setIndex([0, 1, 2, 0, 2, 3]);
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setAttribute('aDepth', new THREE.Float32BufferAttribute(dep, 1));
+    g.setIndex(idx);
     const m = new THREE.Mesh(g, this.matWater);
+    m.receiveShadow = true;
+    return m;
+  },
+
+  // Камыши у кромки и кувшинки на мелководье. Перестраиваются вместе с природой участка,
+  // поэтому не лезут на здания и дороги.
+  buildShore(px, py) {
+    const B = this.plotBed(px, py);
+    if (!B.any) return null;
+    const x0 = px * PLOT, z0 = py * PLOT, seed = state.seed;
+    const mb = new MB(px * 7919 + py * 104729 + 13);
+    for (let tz = 0; tz < PLOT; tz++) {
+      for (let tx = 0; tx < PLOT; tx++) {
+        if (!B.wet[tz * PLOT + tx] || World.occ.has(tkey(x0 + tx, z0 + tz))) continue;
+        for (let k2 = 0; k2 < 4; k2++) {
+          const X = x0 + tx + 0.25 + (k2 % 2) * 0.5, Z = z0 + tz + 0.25 + (k2 >> 1) * 0.5;
+          const d = WATER_Y - this.bedAt(B.F, X, Z);
+          const r = hash2(X * 2, Z * 2, seed + 77);
+          if (d > -0.03 && d < 0.05 && r < 0.3) {
+            // пучок камыша, у части — коричневые «початки»
+            const n = 3 + Math.floor(r * 10) % 3;
+            for (let k = 0; k < n; k++) {
+              const a = hash2(X * 2 + k, Z * 2, seed + 81) * 6.28, rr = 0.04 + hash2(X * 2, Z * 2 + k, seed + 83) * 0.12;
+              const cx = X + Math.cos(a) * rr, cz = Z + Math.sin(a) * rr, hh = 0.16 + hash2(cx, cz, seed + 85) * 0.18;
+              mb.box(cx - 0.008, WATER_Y - 0.03, cz - 0.008, cx + 0.008, hh, cz + 0.008, k % 2 ? '#7da046' : '#6a9040', { ao: 0.85 });
+              if (k % 3 === 0) mb.box(cx - 0.014, hh - 0.07, cz - 0.014, cx + 0.014, hh - 0.01, cz + 0.014, '#7a4f2c', { ao: 1 });
+            }
+          } else if (d > 0.07 && d < 0.3 && r > 0.955) {
+            // кувшинка, иногда с цветком
+            const pr = 0.07 + (r - 0.955) * 2;
+            mb.cyl(X, WATER_Y + 0.002, Z, pr, 0.006, (r * 1000) % 2 < 1 ? '#5f9a3a' : '#6aa344', { segs: 9, ao: 1 });
+            if ((r * 1000) % 3 < 1) {
+              mb.box(X - 0.025, WATER_Y + 0.008, Z - 0.025, X + 0.025, WATER_Y + 0.04, Z + 0.025, '#f4b3cc', { ao: 1 });
+              mb.box(X - 0.01, WATER_Y + 0.04, Z - 0.01, X + 0.01, WATER_Y + 0.05, Z + 0.01, '#ffe08a', { ao: 1 });
+            }
+          }
+        }
+      }
+    }
+    const g = mb.build(0, 0).solid;
+    if (!g) return null;
+    const m = new THREE.Mesh(g, this.matTree);
+    m.castShadow = true;
     m.receiveShadow = true;
     return m;
   },
@@ -308,12 +464,14 @@ const Engine = {
   buildBorder(px, py) {
     if (!isOwnedPlot(px, py)) return null;
     const x0 = px * PLOT, z0 = py * PLOT, x1 = x0 + PLOT, z1 = z0 + PLOT;
-    const pos = [];
+    const pos = [], F = this.plotField(px, py);
     const dash = (ax, az, bx, bz) => {
       const len = Math.hypot(bx - ax, bz - az), n = Math.floor(len / 0.8);
       const ux = (bx - ax) / len, uz = (bz - az) / len, w = 0.06;
       for (let i = 0; i < n; i++) {
         const s = i * 0.8, e = s + 0.45;
+        // над водой пунктир не рисуем — он висел бы над гладью
+        if (this.bedAt(F, ax + ux * (s + e) / 2, az + uz * (s + e) / 2) < WATER_Y + 0.02) continue;
         const p = (t, side) => [ax + ux * t - uz * w * side, 0.06, az + uz * t + ux * w * side];
         const a = p(s, -1), b = p(s, 1), c = p(e, 1), d = p(e, -1);
         pos.push(...a, ...b, ...c, ...a, ...c, ...d);
@@ -382,7 +540,7 @@ const Engine = {
       if (obj) p.group.add(obj);
     };
     if (part === 'ground') { set('ground', this.buildGround(p.px, p.py)); set('water', this.buildWater(p.px, p.py)); }
-    if (part === 'nature') { p.nat = this.natureList(p.px, p.py); this.natDirty = true; }
+    if (part === 'nature') { p.nat = this.natureList(p.px, p.py); this.natDirty = true; set('shore', this.buildShore(p.px, p.py)); }
     if (part === 'roads') set('roads', this.buildRoads(p.px, p.py));
     if (part === 'border') { set('border', this.buildBorder(p.px, p.py)); set('sign', this.buildSign(p.px, p.py)); }
     p.dirty[part] = false;

@@ -8,7 +8,7 @@ const Game = {
 
   boot() {
     if (!window.THREE) {
-      document.body.insertAdjacentHTML('beforeend', '<div class="fatal">Не удалось загрузить 3D-библиотеку. Проверьте подключение к интернету и обновите страницу.</div>');
+      document.body.insertAdjacentHTML('beforeend', '<div class="fatal">Не удалось загрузить 3D-библиотеку. Обновите страницу.</div>');
       return;
     }
     Settings.load();

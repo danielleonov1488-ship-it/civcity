@@ -154,13 +154,14 @@ const Post = {
           float coc = clamp((abs(z - uFocus) - uFocus * 0.3) / (uFocus * 1.25), 0.0, 1.0) * uDof;
           vec3 col;
           if (coc > 0.03) {
-            col = tex(vUv);
+            // яркие точки (блики на воде, искры) ограничиваем, иначе размытие растекает их в белую дымку
+            col = min(tex(vUv), vec3(1.4));
             float wsum = 1.0;
             for (int i = 0; i < 14; i++) {
               float t = (float(i) + 0.5) / 14.0;
               float a = float(i) * 2.39996;
               vec2 o = vec2(cos(a), sin(a)) * sqrt(t) * coc * 6.5 * uTexel;
-              col += tex(vUv + o);
+              col += min(tex(vUv + o), vec3(1.4));
               wsum += 1.0;
             }
             col /= wsum;
