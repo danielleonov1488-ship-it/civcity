@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>CivCity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Nunito:wght@500;600;700;800;900&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game" aria-label="Карта города"></canvas>
+<div id="labels"></div>
+
+<!-- Верхняя панель -->
+<header id="hud">
+  <div class="panel hud-left">
+    <button type="button" class="city" id="city-btn" data-tip="city">
+      <img id="emblem" alt="">
+      <span class="city-text">
+        <b id="city-name">Нова Рома</b>
+        <small id="city-rank">Деревня</small>
+        <span class="rank-bar"><span id="rank-bar"></span></span>
+      </span>
+    </button>
+    <span class="vsep"></span>
+    <button type="button" class="stat money" data-tip="money"><span class="coin"></span><b id="v-money">0</b><small id="v-income"></small></button>
+    <span class="vsep"></span>
+    <div id="class-cards" class="class-cards"></div>
+    <button type="button" class="stat" id="st-work" data-tip="workers" data-svg="hammer"><b id="v-work">0</b></button>
+  </div>
+
+  <div class="panel hud-res" id="res-bar"></div>
+
+  <div class="panel hud-right">
+    <div class="date" data-tip="date"><b id="v-date">Год I</b><small id="v-season">весна</small></div>
+    <div class="seg" role="group" aria-label="Скорость времени">
+      <button type="button" data-speed="0" data-tip="speed0" data-svg="pause" aria-label="Пауза"></button>
+      <button type="button" data-speed="1" data-tip="speed1" data-svg="play" aria-label="Скорость 1"></button>
+      <button type="button" data-speed="2" data-tip="speed2" data-svg="fast" aria-label="Скорость 2"></button>
+      <button type="button" data-speed="3" data-tip="speed3" data-svg="faster" aria-label="Скорость 3"></button>
+    </div>
+    <div class="seg" role="group" aria-label="Поворот камеры">
+      <button type="button" id="rot-left" data-tip="rotl" data-svg="rotl" aria-label="Повернуть влево"></button>
+      <button type="button" id="rot-right" data-tip="rotr" data-svg="rotr" aria-label="Повернуть вправо"></button>
+    </div>
+    <button type="button" id="menu-btn" class="icon-btn round" data-tip="menu" data-svg="gear" aria-label="Настройки"></button>
+  </div>
+</header>
+
+<div id="alerts" aria-live="polite"></div>
+
+<!-- Советник: задача, объяснение и кнопка «Показать» -->
+<aside id="advisor" class="panel">
+  <img class="portrait" id="adv-portrait" alt="">
+  <div class="adv-body">
+    <p class="eyebrow" id="adv-step"></p>
+    <p class="adv-title" id="adv-title"></p>
+    <p class="adv-hint" id="adv-hint"></p>
+    <div class="bar" id="adv-barwrap"><div id="adv-bar"></div></div>
+    <div class="adv-foot">
+      <span id="adv-prog"></span>
+      <span class="adv-btns">
+        <button type="button" class="btn small ghost" id="adv-skip" hidden>Понятно</button>
+        <button type="button" class="btn small" id="adv-action" hidden>Показать</button>
+      </span>
+    </div>
+  </div>
+  <button type="button" class="adv-toggle icon-btn" id="adv-toggle" data-svg="up" aria-label="Свернуть советника"></button>
+</aside>
+
+<!-- Разделы -->
+<nav id="rail" aria-label="Разделы">
+  <button type="button" data-open="research" data-tip="rail-research"><span data-svg="research"></span><span class="rail-name">Знания</span><i class="badge" id="b-research" hidden></i></button>
+  <button type="button" data-open="goods" data-tip="rail-goods"><span data-svg="goods"></span><span class="rail-name">Товары</span><i class="badge warn" id="b-goods" hidden></i></button>
+  <button type="button" data-open="legion" data-tip="rail-legion" id="rail-legion"><span data-svg="legion"></span><span class="rail-name">Легион</span><i class="badge" id="b-legion" hidden></i></button>
+  <button type="button" data-open="guide" data-tip="rail-guide"><span data-svg="guide"></span><span class="rail-name">Справка</span></button>
+  <button type="button" data-open="journal" data-tip="rail-journal"><span data-svg="journal"></span><span class="rail-name">Журнал</span><i class="badge" id="b-journal" hidden></i></button>
+</nav>
+
+<!-- Карточка выбранного здания -->
+<aside id="inspector" class="panel" hidden>
+  <button type="button" id="insp-close" class="icon-btn" data-svg="close" aria-label="Закрыть"></button>
+  <div id="insp-body"></div>
+</aside>
+
+<div id="toasts" aria-live="polite"></div>
+
+<!-- Стройка -->
+<footer id="dock">
+  <div id="tool-hint" class="panel" hidden>
+    <img id="hint-icon" alt="">
+    <div class="hint-main"><b id="hint-name"></b><span id="hint-text"></span><span id="hint-status"></span></div>
+    <button type="button" class="btn small ghost" id="hint-cancel">Отмена <kbd>Esc</kbd></button>
+  </div>
+  <div id="tray" class="panel" hidden><div id="tray-items" class="tray-items"></div></div>
+  <nav id="cats" class="panel" aria-label="Категории построек"></nav>
+</footer>
+
+<div id="tooltip" role="tooltip" hidden></div>
+
+<!-- Окно «Империя»: знания, товары, легион, справка, журнал -->
+<div id="win-back" hidden>
+  <section id="win" class="panel" role="dialog" aria-modal="true" aria-labelledby="win-title">
+    <header class="win-head">
+      <h2 id="win-title">Империя</h2>
+      <nav class="tabs" id="win-tabs"></nav>
+      <button type="button" class="icon-btn" id="win-close" data-svg="close" aria-label="Закрыть"></button>
+    </header>
+    <div id="win-body"></div>
+  </section>
+</div>
+
+<div id="modal-back" hidden><div id="modal" class="panel" role="dialog" aria-modal="true"></div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.158.0/three.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/util.js"></script>
+<script src="js/world.js"></script>
+<script src="js/models.js"></script>
+<script src="js/post.js"></script>
+<script src="js/atmos.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/military.js"></script>
+<script src="js/walkers.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/input.js"></script>
+<script src="js/advisor.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/save.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

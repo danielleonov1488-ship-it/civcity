@@ -1,0 +1,343 @@
+'use strict';
+/* =========================================================
+   CivCity — настройки игры: ресурсы, постройки, дома, исследования, походы.
+   Все числа баланса живут здесь, чтобы их было легко крутить.
+   ========================================================= */
+
+const PLOT = 24;                 // участок земли — 24×24 клетки
+const DAY_SECONDS = 4;           // длина игрового дня при скорости ×1
+const DAYS_PER_SEASON = 30;
+const ROAD_TOP = 0.05;           // высота камней мостовой: на ней стоят жители и кошки
+const SEASONS = ['весна', 'лето', 'осень', 'зима'];
+
+const START_MONEY = 2500;
+const START_GOODS = { wheat: 40, wood: 80, stone: 50 };
+const START_SCROLLS = 8;
+const BASE_STORAGE = 200;        // сколько каждого товара помещается без складов
+const WAREHOUSE_STORAGE = 300;   // +к вместимости за каждый склад
+const WORKER_SHARE = 0.5;        // доля жителей, которые работают
+const REFUND_SHARE = 0.5;        // сколько возвращается при сносе
+const REQUEST_RADIUS = 7;        // в каком радиусе от дома должна стоять просьба
+const BEAUTY_RADIUS = 6;         // украшения в этом радиусе радуют дом
+const CROWD_RADIUS = 3.5;        // дома ближе этого считаются соседями (теснота)
+const TRADE_INTERVAL = 10;       // раз в сколько дней приходит караван
+const WATER_LEVEL = 0.3;         // порог шума, ниже которого — озеро
+
+// Сколько товара съедает один житель в день
+const CONSUMPTION = { food: 0.06, oil: 0.03, bread: 0.04, wine: 0.04 };
+
+const TAX_LEVELS = [
+  { name: 'Низкие', mult: 0.7, happy: 8 },
+  { name: 'Обычные', mult: 1, happy: 0 },
+  { name: 'Высокие', mult: 1.35, happy: -12 },
+];
+
+// Типы земли: 0–3 — оттенки травы
+const G_SAND = 4, G_WATER = 5, G_DEEP = 6;
+// Природа и залежи на клетке
+const N_OAK = 1, N_PINE = 2, N_CYPRESS = 3, N_BUSH = 4, N_ROCK = 5, N_FLOWERS = 6,
+  N_STONE = 7, N_MARBLE = 8, N_IRON = 9;
+const DEPOSIT_OF = { trees: [N_OAK, N_PINE, N_CYPRESS], stone: [N_STONE, N_ROCK], marble: [N_MARBLE], iron: [N_IRON] };
+
+/* ---------- Товары ---------- */
+
+const GOODS = {
+  wheat: { name: 'Пшеница', price: 2, food: true },
+  fish: { name: 'Рыба', price: 3, food: true },
+  olives: { name: 'Оливки', price: 3 },
+  grapes: { name: 'Виноград', price: 3 },
+  bread: { name: 'Хлеб', price: 6 },
+  oil: { name: 'Масло', price: 7 },
+  wine: { name: 'Вино', price: 9 },
+  wood: { name: 'Дерево', price: 3 },
+  stone: { name: 'Камень', price: 4 },
+  clay: { name: 'Глина', price: 2 },
+  bricks: { name: 'Кирпич', price: 6 },
+  marble: { name: 'Мрамор', price: 16 },
+  iron: { name: 'Железо', price: 8 },
+  weapons: { name: 'Оружие', price: 18 },
+};
+const GOOD_IDS = Object.keys(GOODS);
+
+// color — цвет класса в интерфейсе: карточки построек, жители, подсказки
+const CLASSES = {
+  plebs: { name: 'Плебеи', gen: 'плебеев', one: 'плебей', color: '#6b8a2f', soft: '#e7efd2', work: 'поля, рощи, карьеры, рынки, храмы' },
+  citizens: { name: 'Граждане', gen: 'граждан', one: 'гражданин', color: '#2f6f9a', soft: '#dcebf5', work: 'пекарни, кузницы, винодельни, термы, школы, казармы' },
+  patricians: { name: 'Патриции', gen: 'патрициев', one: 'патриций', color: '#7a3f8c', soft: '#efe1f3', work: 'театр и форум' },
+};
+
+/* ---------- Дома ----------
+   Дом поднимается на следующий уровень, когда выполнены все needs,
+   красота ≥ beauty и соседних домов не больше maxCrowd. */
+
+const PLEB_TIERS = [
+  { name: 'Пустой участок', cap: 0, tax: 0, needs: [], height: 0.3 },
+  { name: 'Хижина', cls: 'plebs', cap: 4, tax: 0.12, needs: ['road'], height: 1.0 },
+  { name: 'Домик', cls: 'plebs', cap: 8, tax: 0.16, needs: ['road', 'water', 'food'], height: 1.1 },
+  { name: 'Инсула', cls: 'citizens', cap: 16, tax: 0.3, needs: ['road', 'water', 'food', 'temple', 'oil'], beauty: 2, height: 1.5 },
+  { name: 'Большая инсула', cls: 'citizens', cap: 26, tax: 0.36, needs: ['road', 'water', 'food', 'temple', 'oil', 'bread', 'baths'], beauty: 5, height: 2.4 },
+];
+
+const PATRICIAN_TIERS = [
+  { name: 'Участок патриция', cap: 0, tax: 0, needs: [], height: 0.3 },
+  { name: 'Домус', cls: 'patricians', cap: 6, tax: 1.2, needs: ['road', 'water', 'food', 'temple'], beauty: 3, height: 1.2 },
+  { name: 'Богатый домус', cls: 'patricians', cap: 9, tax: 1.4, needs: ['road', 'water', 'food', 'temple', 'oil', 'bread', 'baths'], beauty: 6, height: 1.3 },
+  { name: 'Вилла', cls: 'patricians', cap: 12, tax: 1.7, needs: ['road', 'water', 'food', 'temple', 'oil', 'bread', 'baths', 'wine', 'theatre'], beauty: 10, maxCrowd: 3, height: 1.4 },
+  { name: 'Дворец', cls: 'patricians', cap: 16, tax: 2.2, needs: ['road', 'water', 'food', 'temple', 'oil', 'bread', 'baths', 'wine', 'theatre', 'forum'], beauty: 16, maxCrowd: 2, height: 2.0 },
+];
+
+const NEED_LABELS = {
+  road: 'Дорога вплотную к дому',
+  water: 'Вода: колодец или фонтан',
+  food: 'Еда: рынок и пшеница или рыба',
+  temple: 'Храм поблизости',
+  oil: 'Оливковое масло на рынке',
+  bread: 'Хлеб на рынке',
+  baths: 'Термы поблизости',
+  wine: 'Вино на рынке',
+  theatre: 'Театр поблизости',
+  forum: 'Форум поблизости',
+};
+// «Не хватает …» — родительный падеж
+const NEED_GENITIVE = {
+  road: 'дороги', water: 'воды', food: 'еды', temple: 'храма', oil: 'масла', bread: 'хлеба', baths: 'терм',
+  wine: 'вина', theatre: 'театра', forum: 'форума', beauty: 'красоты', crowd: 'простора',
+};
+const GOOD_NEEDS = ['oil', 'bread', 'wine'];   // эти потребности берутся со склада через рынок
+
+/* ---------- Постройки ----------
+   kind: road | house | producer | service | storage | military | wonder | decor
+   cost — денарии (money) и материалы; jobs — сколько работников какого класса нужно;
+   produces / consumes — товаров в день при полном штате;
+   provides — какую потребность дома закрывает в радиусе radius;
+   deposit — от чего зависит добыча (деревья, камень, мрамор, железо рядом);
+   tech — какое исследование открывает постройку. */
+
+const BUILDINGS = {
+  road: { kind: 'road', cat: 'roads', name: 'Дорога', acc: 'дорогу', cost: { money: 3 }, w: 1, h: 1,
+    desc: 'Мощёная улица. Дома и мастерские должны стоять вплотную к дороге. Тяните мышью, чтобы проложить.' },
+
+  house: { kind: 'house', cat: 'housing', name: 'Дом плебеев', acc: 'дом', cost: { money: 20 }, w: 2, h: 2, tiers: PLEB_TIERS,
+    desc: 'Растёт из хижины в многоэтажную инсулу. Хижины и домики дают плебеев, инсулы — граждан.' },
+  domus: { kind: 'house', cat: 'housing', name: 'Участок патриция', acc: 'домус', cost: { money: 150, wood: 15, stone: 15 }, w: 3, h: 3, tiers: PATRICIAN_TIERS, tech: 'patricians',
+    desc: 'Богатые семьи строят домус, виллу, а потом и дворец. Платят много налогов, любят простор и красоту.' },
+
+  farm: { kind: 'producer', cat: 'food', name: 'Пшеничное поле', acc: 'поле', cost: { money: 60, wood: 10 }, w: 3, h: 3,
+    jobs: { plebs: 4 }, upkeep: 0.5, produces: { wheat: 6 }, needsRoad: true, farmland: true,
+    desc: 'Выращивает пшеницу — основную еду и сырьё для пекарен.' },
+  fishery: { kind: 'producer', cat: 'food', name: 'Рыбацкая хижина', acc: 'рыбацкую хижину', cost: { money: 50, wood: 10 }, w: 2, h: 2,
+    jobs: { plebs: 2 }, upkeep: 0.4, produces: { fish: 4 }, needsRoad: true, needsWater: true,
+    desc: 'Ловит рыбу. Ставится у берега озера.' },
+  grove: { kind: 'producer', cat: 'food', name: 'Оливковая роща', acc: 'оливковую рощу', cost: { money: 70, wood: 5 }, w: 3, h: 3,
+    jobs: { plebs: 3 }, upkeep: 0.5, produces: { olives: 4 }, needsRoad: true, farmland: true, tech: 'olives',
+    desc: 'Даёт оливки для маслодавильни.' },
+  vineyard: { kind: 'producer', cat: 'food', name: 'Виноградник', acc: 'виноградник', cost: { money: 80, wood: 10 }, w: 3, h: 3,
+    jobs: { plebs: 3 }, upkeep: 0.5, produces: { grapes: 4 }, needsRoad: true, farmland: true, tech: 'wine',
+    desc: 'Даёт виноград для винодельни.' },
+  bakery: { kind: 'producer', cat: 'food', name: 'Пекарня', acc: 'пекарню', cost: { money: 120, wood: 10, stone: 15 }, w: 2, h: 2,
+    jobs: { citizens: 3 }, upkeep: 0.8, consumes: { wheat: 4 }, produces: { bread: 4 }, needsRoad: true, tech: 'baking',
+    desc: 'Печёт хлеб из пшеницы. Хлеб нужен большим инсулам и патрициям.' },
+  oilpress: { kind: 'producer', cat: 'food', name: 'Маслодавильня', acc: 'маслодавильню', cost: { money: 100, wood: 15, stone: 10 }, w: 2, h: 2,
+    jobs: { plebs: 3 }, upkeep: 0.8, consumes: { olives: 3 }, produces: { oil: 3 }, needsRoad: true, tech: 'olives',
+    desc: 'Давит оливки в масло. Без масла дом не станет инсулой.' },
+  winery: { kind: 'producer', cat: 'food', name: 'Винодельня', acc: 'винодельню', cost: { money: 150, bricks: 20 }, w: 2, h: 2,
+    jobs: { citizens: 3 }, upkeep: 1, consumes: { grapes: 3 }, produces: { wine: 3 }, needsRoad: true, tech: 'wine',
+    desc: 'Делает вино. Без вина патриции не построят виллу.' },
+  market: { kind: 'service', cat: 'food', name: 'Рынок', acc: 'рынок', cost: { money: 120, wood: 15 }, w: 3, h: 3,
+    jobs: { plebs: 3 }, upkeep: 1, radius: 14, provides: 'market', needsRoad: true, beauty: 1,
+    desc: 'Раздаёт еду, масло, хлеб и вино домам вокруг.' },
+
+  lumber: { kind: 'producer', cat: 'industry', name: 'Лесопилка', acc: 'лесопилку', cost: { money: 40 }, w: 2, h: 2,
+    jobs: { plebs: 3 }, upkeep: 0.3, produces: { wood: 4 }, needsRoad: true, deposit: 'trees', depositRadius: 5, depositNeed: 10,
+    desc: 'Пилит дерево. Чем больше деревьев вокруг, тем больше досок. Деревья не вырубаются.' },
+  quarry: { kind: 'producer', cat: 'industry', name: 'Каменоломня', acc: 'каменоломню', cost: { money: 60, wood: 5 }, w: 2, h: 2,
+    jobs: { plebs: 4 }, upkeep: 0.4, produces: { stone: 3 }, needsRoad: true, deposit: 'stone', depositRadius: 3, depositNeed: 5,
+    desc: 'Добывает камень. Ставьте рядом с серыми скалами.' },
+  claypit: { kind: 'producer', cat: 'industry', name: 'Глиняный карьер', acc: 'глиняный карьер', cost: { money: 50, wood: 5 }, w: 2, h: 2,
+    jobs: { plebs: 3 }, upkeep: 0.4, produces: { clay: 4 }, needsRoad: true, needsWater: true, tech: 'bricks',
+    desc: 'Копает глину у воды.' },
+  brickworks: { kind: 'producer', cat: 'industry', name: 'Кирпичная мастерская', acc: 'кирпичную мастерскую', cost: { money: 120, wood: 10, stone: 20 }, w: 2, h: 2,
+    jobs: { plebs: 3 }, upkeep: 0.8, consumes: { clay: 3 }, produces: { bricks: 3 }, needsRoad: true, tech: 'bricks',
+    desc: 'Обжигает глину в кирпич для терм, школ и чудес света.' },
+  marblequarry: { kind: 'producer', cat: 'industry', name: 'Мраморный карьер', acc: 'мраморный карьер', cost: { money: 200, wood: 20 }, w: 3, h: 3,
+    jobs: { plebs: 5 }, upkeep: 1, produces: { marble: 2 }, needsRoad: true, deposit: 'marble', depositRadius: 4, depositNeed: 6, tech: 'marble',
+    desc: 'Добывает мрамор. Белые скалы встречаются редко — ищите их на новых участках.' },
+  mine: { kind: 'producer', cat: 'industry', name: 'Железный рудник', acc: 'рудник', cost: { money: 150, wood: 20 }, w: 2, h: 2,
+    jobs: { plebs: 4 }, upkeep: 0.8, produces: { iron: 2 }, needsRoad: true, deposit: 'iron', depositRadius: 3, depositNeed: 4, tech: 'metal',
+    desc: 'Добывает железо из рыжих скал.' },
+  smithy: { kind: 'producer', cat: 'industry', name: 'Кузница', acc: 'кузницу', cost: { money: 200, bricks: 20, stone: 10 }, w: 2, h: 2,
+    jobs: { citizens: 3 }, upkeep: 1, consumes: { iron: 2, wood: 1 }, produces: { weapons: 2 }, needsRoad: true, tech: 'metal',
+    desc: 'Куёт мечи и щиты для легиона.' },
+  warehouse: { kind: 'storage', cat: 'industry', name: 'Склад', acc: 'склад', cost: { money: 80, wood: 20 }, w: 2, h: 2,
+    jobs: { plebs: 2 }, upkeep: 0.5, storage: WAREHOUSE_STORAGE, needsRoad: true,
+    desc: `Хранилище. Каждый склад вмещает ещё ${WAREHOUSE_STORAGE} каждого товара.` },
+  tradepost: { kind: 'service', cat: 'industry', name: 'Торговый пост', acc: 'торговый пост', cost: { money: 300, wood: 30, bricks: 20 }, w: 3, h: 3,
+    jobs: { plebs: 3 }, upkeep: 1.5, needsRoad: true, tech: 'trade',
+    desc: 'Сюда приходят караваны: продают излишки и докупают нехватку.' },
+
+  well: { kind: 'service', cat: 'services', name: 'Колодец', acc: 'колодец', cost: { money: 40, stone: 5 }, w: 1, h: 1,
+    radius: 7, provides: 'water', upkeep: 0.1,
+    desc: 'Даёт воду домам поблизости. Дорога не нужна.' },
+  fountain: { kind: 'service', cat: 'services', name: 'Фонтан', acc: 'фонтан', cost: { money: 150, stone: 20 }, w: 2, h: 2,
+    radius: 11, provides: 'water', beauty: 3, upkeep: 0.3, tech: 'gardens',
+    desc: 'Вода для целого квартала и украшение площади.' },
+  temple: { kind: 'service', cat: 'services', name: 'Храм Юпитера', acc: 'храм', cost: { money: 250, wood: 20, stone: 30 }, w: 3, h: 3,
+    jobs: { plebs: 2 }, upkeep: 1, radius: 16, provides: 'temple', beauty: 2, scrolls: 0.5, needsRoad: true,
+    desc: 'Жрецы благословляют дома и пишут свитки для исследований.' },
+  school: { kind: 'service', cat: 'services', name: 'Школа', acc: 'школу', cost: { money: 200, bricks: 20, wood: 10 }, w: 2, h: 2,
+    jobs: { citizens: 3 }, upkeep: 1, scrolls: 2, needsRoad: true, tech: 'schooling',
+    desc: 'Учителя-грамматики пишут свитки для исследований.' },
+
+  baths: { kind: 'service', cat: 'culture', name: 'Термы', acc: 'термы', cost: { money: 400, bricks: 40, stone: 20 }, w: 3, h: 3,
+    jobs: { citizens: 4 }, upkeep: 2, radius: 15, provides: 'baths', beauty: 2, needsRoad: true, tech: 'baths',
+    desc: 'Римские бани с куполами. Нужны большим инсулам и патрициям.' },
+  theatre: { kind: 'service', cat: 'culture', name: 'Театр', acc: 'театр', cost: { money: 500, stone: 40, bricks: 30 }, w: 4, h: 4,
+    jobs: { patricians: 2 }, upkeep: 2, radius: 16, provides: 'theatre', beauty: 3, needsRoad: true, tech: 'theatre',
+    desc: 'Комедии и трагедии. Без театра патриции не построят виллу.' },
+  forum: { kind: 'service', cat: 'culture', name: 'Форум', acc: 'форум', cost: { money: 1200, bricks: 60, marble: 60 }, w: 4, h: 4,
+    jobs: { patricians: 4 }, upkeep: 3, radius: 20, provides: 'forum', beauty: 5, scrolls: 4, needsRoad: true, tech: 'forum',
+    desc: 'Сердце города: базилика, колоннада и трибуна. Даёт свитки, нужен для дворцов.' },
+  colosseum: { kind: 'wonder', cat: 'culture', name: 'Колизей', acc: 'Колизей', cost: { money: 4000, bricks: 200, marble: 150, glory: 50 }, w: 6, h: 6,
+    upkeep: 4, radius: 26, provides: 'theatre', beauty: 15, happy: 10, glory: 0.3, needsRoad: true, tech: 'colosseum',
+    desc: 'Чудо света. Гладиаторские игры радуют весь город и приносят Славу.' },
+  pantheon: { kind: 'wonder', cat: 'culture', name: 'Пантеон', acc: 'Пантеон', cost: { money: 3000, marble: 120, bricks: 80, glory: 30 }, w: 4, h: 4,
+    upkeep: 3, radius: 24, provides: 'temple', beauty: 12, scrolls: 3, glory: 0.2, needsRoad: true, tech: 'pantheon',
+    desc: 'Чудо света. Храм всех богов с огромным куполом.' },
+  arch: { kind: 'wonder', cat: 'culture', name: 'Триумфальная арка', acc: 'триумфальную арку', cost: { money: 800, marble: 40, glory: 25 }, w: 2, h: 2,
+    upkeep: 0.5, beauty: 8, happy: 4, radius: 10, tech: 'triumph',
+    desc: 'Память о победах легиона. Очень красиво.' },
+
+  barracks: { kind: 'military', cat: 'army', name: 'Казармы', acc: 'казармы', cost: { money: 500, bricks: 40, wood: 20 }, w: 3, h: 3,
+    jobs: { citizens: 4 }, upkeep: 2, needsRoad: true, tech: 'legion', capacity: 20,
+    desc: 'Обучают легионеров: каждый стоит 4 оружия и 25 денариев. До 20 солдат на казармы.' },
+
+  flowers: { kind: 'decor', cat: 'decor', name: 'Клумба', acc: 'клумбу', cost: { money: 10 }, w: 1, h: 1, beauty: 1, desc: 'Цветы у порога.' },
+  cypress: { kind: 'decor', cat: 'decor', name: 'Кипарис', acc: 'кипарис', cost: { money: 8 }, w: 1, h: 1, beauty: 1, desc: 'Стройное дерево Средиземноморья.' },
+  pine: { kind: 'decor', cat: 'decor', name: 'Пиния', acc: 'пинию', cost: { money: 10 }, w: 1, h: 1, beauty: 1, desc: 'Итальянская сосна-зонтик.' },
+  bench: { kind: 'decor', cat: 'decor', name: 'Скамья', acc: 'скамью', cost: { money: 15, stone: 2 }, w: 1, h: 1, beauty: 1, desc: 'Мраморная скамья для отдыха.' },
+  amphorae: { kind: 'decor', cat: 'decor', name: 'Амфоры', acc: 'амфоры', cost: { money: 12 }, w: 1, h: 1, beauty: 1, desc: 'Глиняные кувшины у стены.' },
+  olive: { kind: 'decor', cat: 'decor', name: 'Олива', acc: 'оливу', cost: { money: 12 }, w: 1, h: 1, beauty: 1, tech: 'gardens', desc: 'Серебристое оливковое дерево.' },
+  lamp: { kind: 'decor', cat: 'decor', name: 'Жаровня', acc: 'жаровню', cost: { money: 25 }, w: 1, h: 1, beauty: 1, tech: 'gardens', desc: 'Бронзовая жаровня с огнём.' },
+  pergola: { kind: 'decor', cat: 'decor', name: 'Пергола', acc: 'перголу', cost: { money: 30, wood: 5 }, w: 1, h: 1, beauty: 2, tech: 'gardens', desc: 'Навес, увитый виноградом.' },
+  mosaic: { kind: 'decor', cat: 'decor', name: 'Мозаика', acc: 'мозаику', cost: { money: 25, stone: 3 }, w: 1, h: 1, beauty: 2, tech: 'gardens', desc: 'Узорная мостовая из цветных камешков.' },
+  statue: { kind: 'decor', cat: 'decor', name: 'Статуя', acc: 'статую', cost: { money: 100, marble: 8 }, w: 1, h: 1, beauty: 4, tech: 'marble', desc: 'Мраморный гражданин на постаменте.' },
+  column: { kind: 'decor', cat: 'decor', name: 'Колонна', acc: 'колонну', cost: { money: 80, marble: 6 }, w: 1, h: 1, beauty: 3, tech: 'marble', desc: 'Памятная колонна с золотым шаром.' },
+  obelisk: { kind: 'decor', cat: 'decor', name: 'Обелиск', acc: 'обелиск', cost: { money: 150, stone: 20, glory: 10 }, w: 1, h: 1, beauty: 6, tech: 'triumph', desc: 'Трофей из Египта.' },
+  emperor: { kind: 'decor', cat: 'decor', name: 'Статуя императора', acc: 'статую императора', cost: { money: 300, marble: 20, glory: 20 }, w: 1, h: 1, beauty: 10, tech: 'triumph', desc: 'Золотой император на высоком постаменте.' },
+};
+
+const CATEGORIES = [
+  { id: 'roads', name: 'Дороги' },
+  { id: 'housing', name: 'Жильё' },
+  { id: 'food', name: 'Еда' },
+  { id: 'industry', name: 'Ремёсла' },
+  { id: 'services', name: 'Службы' },
+  { id: 'culture', name: 'Культура' },
+  { id: 'army', name: 'Армия' },
+  { id: 'decor', name: 'Красота' },
+];
+for (const c of CATEGORIES) c.items = Object.keys(BUILDINGS).filter(k => BUILDINGS[k].cat === c.id);
+
+/* ---------- Исследования ----------
+   Стоят свитки (их пишут храмы, школы и форум) и денарии. */
+
+const TECHS = [
+  { id: 'gardens', name: 'Садовое искусство', scrolls: 6, money: 100, req: [], col: 0,
+    desc: 'Фонтаны, оливы, жаровни, перголы и мозаики.' },
+  { id: 'olives', name: 'Оливководство', scrolls: 8, money: 150, req: [], col: 0,
+    desc: 'Оливковые рощи и маслодавильни. Масло нужно инсулам.' },
+  { id: 'bricks', name: 'Обжиг кирпича', scrolls: 12, money: 200, req: [], col: 0,
+    desc: 'Глиняные карьеры и кирпичные мастерские.' },
+  { id: 'baking', name: 'Хлебопечение', scrolls: 14, money: 200, req: ['olives'], col: 1,
+    desc: 'Пекарни: хлеб из пшеницы.' },
+  { id: 'schooling', name: 'Школы', scrolls: 16, money: 250, req: ['bricks'], col: 1,
+    desc: 'Школы пишут больше свитков.' },
+  { id: 'baths', name: 'Римские бани', scrolls: 20, money: 300, req: ['bricks'], col: 1,
+    desc: 'Термы — для больших инсул и патрициев.' },
+  { id: 'irrigation', name: 'Ирригация', scrolls: 20, money: 300, req: ['olives'], col: 1,
+    desc: 'Поля, рощи и виноградники дают на треть больше.', bonus: true },
+  { id: 'trade', name: 'Торговля', scrolls: 25, money: 400, req: ['schooling'], col: 2,
+    desc: 'Торговый пост: продажа излишков и покупка нехватки.' },
+  { id: 'patricians', name: 'Патрициат', scrolls: 30, money: 500, req: ['schooling', 'baths'], col: 2,
+    desc: 'Участки патрициев: домусы, виллы, дворцы.' },
+  { id: 'wine', name: 'Виноделие', scrolls: 30, money: 400, req: ['baking'], col: 2,
+    desc: 'Виноградники и винодельни.' },
+  { id: 'marble', name: 'Мрамор', scrolls: 35, money: 500, req: ['bricks'], col: 2,
+    desc: 'Мраморные карьеры, статуи и колонны.' },
+  { id: 'taxreform', name: 'Налоговая реформа', scrolls: 35, money: 500, req: ['trade'], col: 3,
+    desc: 'Налоги приносят на 15% больше.', bonus: true },
+  { id: 'theatre', name: 'Театр', scrolls: 40, money: 600, req: ['patricians'], col: 3,
+    desc: 'Театры — для вилл патрициев.' },
+  { id: 'metal', name: 'Металлургия', scrolls: 40, money: 600, req: ['marble'], col: 3,
+    desc: 'Железные рудники и кузницы.' },
+  { id: 'legion', name: 'Легион', scrolls: 50, money: 800, req: ['metal'], col: 4,
+    desc: 'Казармы и походы. Победы приносят Славу и добычу.' },
+  { id: 'forum', name: 'Форум', scrolls: 60, money: 1000, req: ['theatre', 'marble'], col: 4,
+    desc: 'Форум — для дворцов патрициев. Даёт много свитков.' },
+  { id: 'triumph', name: 'Триумф', scrolls: 60, money: 800, req: ['legion'], col: 5,
+    desc: 'Триумфальная арка, обелиск и статуя императора.' },
+  { id: 'colosseum', name: 'Амфитеатр', scrolls: 100, money: 1500, req: ['forum', 'legion'], col: 5,
+    desc: 'Чудо света: Колизей.' },
+  { id: 'pantheon', name: 'Пантеон', scrolls: 120, money: 1500, req: ['forum'], col: 5,
+    desc: 'Чудо света: Пантеон.' },
+];
+// Знания открываются по мере роста города и изучаются не мгновенно, по одному.
+// Колонка дерева → сколько нужно жителей и сколько игровых дней идёт изучение (день = 4 с при ×1).
+const TECH_POP = [0, 60, 150, 400, 900, 1500];
+const TECH_DAYS = [10, 25, 45, 75, 110, 150];
+for (const t of TECHS) { t.pop = TECH_POP[t.col]; t.days = TECH_DAYS[t.col]; }
+const TECH_BY_ID = Object.fromEntries(TECHS.map(t => [t.id, t]));
+
+/* ---------- Походы легиона ----------
+   strength — сила врага; repeat — через сколько дней можно напасть снова. */
+
+const CAMPAIGNS = [
+  { id: 'bandits', name: 'Разбойники в лесу', strength: 5, days: 8, x: 0.42, y: 0.56, repeat: 60,
+    reward: { money: 250, glory: 3 }, desc: 'Шайка грабит путников на дороге в город.' },
+  { id: 'pirates', name: 'Пиратская бухта', strength: 10, days: 10, x: 0.28, y: 0.74,
+    reward: { money: 600, glory: 8, fish: 60 }, desc: 'Пираты перехватывают торговые корабли.' },
+  { id: 'gauls', name: 'Деревня галлов', strength: 16, days: 12, x: 0.22, y: 0.24,
+    reward: { money: 800, glory: 12, iron: 40 }, desc: 'Непокорные галлы с усатыми вождями.' },
+  { id: 'germans', name: 'Германский лагерь', strength: 24, days: 14, x: 0.5, y: 0.14,
+    reward: { money: 1000, glory: 18, wood: 120 }, desc: 'Лагерь в тёмном лесу за рекой.' },
+  { id: 'hills', name: 'Мраморные холмы', strength: 30, days: 12, x: 0.66, y: 0.36,
+    reward: { glory: 20, marble: 40 }, tribute: { marble: 1.5 }, desc: 'Холмы с белым мрамором. После победы шлют дань мрамором.' },
+  { id: 'carthage', name: 'Карфагенский форт', strength: 42, days: 18, x: 0.58, y: 0.86,
+    reward: { money: 2500, glory: 35 }, desc: 'Последний оплот Карфагена на этом берегу.' },
+  { id: 'dacians', name: 'Крепость даков', strength: 55, days: 18, x: 0.84, y: 0.2,
+    reward: { money: 2000, glory: 45 }, tribute: { iron: 2 }, desc: 'Горная крепость с железными рудниками.' },
+  { id: 'parthia', name: 'Парфянская цитадель', strength: 75, days: 24, x: 0.9, y: 0.66,
+    reward: { money: 6000, glory: 100 }, desc: 'Самый сильный враг Рима на востоке.' },
+];
+
+const LEGIONARY_COST = { weapons: 4, money: 25 };
+const LEGIONARY_DAYS = 5;
+const FESTIVAL = { glory: 15, days: 60, happy: 12 };
+
+const CITY_RANKS = [
+  [0, 'Деревня'],
+  [50, 'Посёлок'],
+  [150, 'Городок'],
+  [400, 'Город'],
+  [900, 'Большой город'],
+  [2000, 'Столица провинции'],
+  [5000, 'Второй Рим'],
+];
+
+// Что жители могут попросить построить рядом с домом
+const REQUEST_POOL = [
+  { type: 'flowers', minTier: 1 },
+  { type: 'cypress', minTier: 1 },
+  { type: 'bench', minTier: 1 },
+  { type: 'well', minTier: 1 },
+  { type: 'amphorae', minTier: 1 },
+  { type: 'pine', minTier: 2 },
+  { type: 'olive', minTier: 2 },
+  { type: 'lamp', minTier: 2 },
+  { type: 'pergola', minTier: 2 },
+  { type: 'fountain', minTier: 3 },
+  { type: 'mosaic', minTier: 3 },
+  { type: 'statue', minTier: 3 },
+  { type: 'column', minTier: 4 },
+  { type: 'obelisk', minTier: 4 },
+];
