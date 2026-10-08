@@ -1553,6 +1553,90 @@ function serviceModel(mb, b) {
       for (let i = 0; i < 3; i++) { mb.cyl(0.6 + i * 0.3, 0.03, 2.35, 0.05, 0.3, PAL.woodDark, { segs: 6 }); mb.cyl(0.6 + i * 0.3, 0.2, 2.35, 0.09, 0.12, '#c9a46a', { segs: 8 }); }
       break;
     }
+    case 'range': {
+      // Стрельбище: навес для лучников, соломенные мишени с кругами, стойка с луками
+      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, '#cdb98f');
+      fence(mb, 0.1, 0.1, 2.9, 0.1); fence(mb, 0.1, 0.1, 0.1, 2.9); fence(mb, 2.9, 0.1, 2.9, 2.9);
+      shed(mb, 0.25, 1.9, 1.45, 2.75, 0.55, PAL.plaster[3], PAL.roof[0]);
+      mb.door('z+', 2.75, 0.85, 0.2, 0.32);
+      mb.box(0.25, 0.03, 1.55, 1.45, 0.08, 1.9, PAL.woodLight);
+      for (const x of [0.3, 1.4]) mb.box(x - 0.03, 0.03, 1.58, x + 0.03, 0.55, 1.64, PAL.wood);
+      mb.box(0.24, 0.55, 1.5, 1.46, 0.6, 1.9, PAL.roof[1]);
+      for (const [x, z] of [[1.9, 0.45], [2.45, 0.6], [2.2, 1.15]]) {
+        mb.box(x - 0.03, 0.03, z + 0.02, x + 0.03, 0.42, z + 0.08, PAL.wood);
+        mb.cyl(x, 0.3, z, 0.2, 0.12, '#e4c45c', { segs: 12, ao: 1 });
+        mb.cyl(x, 0.3, z - 0.002, 0.14, 0.125, '#f6f1e6', { segs: 12, ao: 1 });
+        mb.cyl(x, 0.3, z - 0.004, 0.08, 0.13, '#a8362a', { segs: 10, ao: 1 });
+        mb.box(x + 0.02, 0.38, z + 0.06, x + 0.03, 0.39, z + 0.24, PAL.woodDark, { ao: 1 });
+      }
+      for (let i = 0; i < 4; i++) mb.box(1.6 + i * 0.09, 0.03, 2.55, 1.63 + i * 0.09, 0.5, 2.58, PAL.woodDark);
+      mb.box(1.55, 0.42, 2.53, 1.95, 0.45, 2.6, PAL.wood);
+      crate(mb, 2.5, 2.5, 1.2); crate(mb, 2.65, 2.3, 1);
+      break;
+    }
+    case 'spearcamp': {
+      // Лагерь копейщиков: палатки, стойка с копьями, чучело для учёбы и знамя
+      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, '#c9b48e');
+      const pal = (x0, z0, x1, z1) => {
+        const len = Math.hypot(x1 - x0, z1 - z0), n = Math.round(len / 0.1);
+        for (let i = 0; i <= n; i++) mb.cyl(x0 + (x1 - x0) * i / n, 0.03, z0 + (z1 - z0) * i / n, 0.04, 0.38 + (i % 2) * 0.05, PAL.wood, { segs: 6, rTop: 0.018 });
+      };
+      pal(0.12, 0.12, 2.88, 0.12); pal(0.12, 0.12, 0.12, 2.88); pal(2.88, 0.12, 2.88, 2.88);
+      for (const [x, z] of [[0.75, 0.75], [1.65, 0.75]]) {
+        mb.gable(x - 0.35, z - 0.3, x + 0.35, z + 0.38, 0.03, 0.5, '#efe6d0', { axis: 'z', over: 0, end: '#e3d8c0', ridges: false });
+        mb.box(x - 0.08, 0.03, z + 0.36, x + 0.08, 0.3, z + 0.39, '#a8362a', { ao: 1 });
+      }
+      for (let i = 0; i < 6; i++) {
+        const x = 2.3 + (i % 3) * 0.14, z = 0.55 + Math.floor(i / 3) * 0.16;
+        mb.box(x - 0.012, 0.03, z - 0.012, x + 0.012, 0.95, z + 0.012, PAL.wood, { ao: 1 });
+        mb.box(x - 0.022, 0.95, z - 0.012, x + 0.022, 1.06, z + 0.012, '#c3c7cc', { ao: 1 });
+      }
+      mb.box(2.2, 0.35, 0.45, 2.75, 0.4, 0.5, PAL.woodDark);
+      mb.box(1.2, 0.03, 1.95, 1.25, 0.62, 2.0, PAL.wood);
+      mb.box(1.02, 0.45, 1.95, 1.43, 0.5, 2.0, PAL.wood);
+      mb.blob(1.225, 0.68, 1.975, 0.08, 0.08, 0.08, '#d9b965', { jitter: 0.1 });
+      mb.cyl(1.225, 0.38, 2.04, 0.15, 0.04, '#3e5f8a', { segs: 10, ao: 1 });
+      mb.box(0.55, 0.03, 2.3, 0.58, 1.35, 2.33, PAL.woodDark);
+      mb.box(0.58, 0.95, 2.31, 0.98, 1.3, 2.32, PAL.red, { ao: 1 });
+      mb.box(0.62, 1.07, 2.305, 0.94, 1.1, 2.325, PAL.gold, { ao: 1 });
+      mb.blob(0.565, 1.4, 2.315, 0.05, 0.05, 0.05, PAL.gold, { jitter: 0, detail: 1 });
+      break;
+    }
+    case 'ballistae':
+    case 'catapults': {
+      // Мастерские: дом мастеров, во дворе — готовая машина, брёвна и камни
+      const bal = b.type === 'ballistae';
+      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, '#c2a275');
+      mb.wall(0.2, 0.025, 1.75, 2.8, 0.7, 2.8, PAL.plaster[1], { cornice: false });
+      mb.gable(0.2, 1.75, 2.8, 2.8, 0.7, 0.42, PAL.roof[2], { axis: 'x', end: PAL.plaster[1] });
+      mb.door('z-', 1.75, 1.0, 0.36, 0.48);
+      mb.window('z-', 1.75, 0.45, 0.42, 0.18, 0.2, PAL.shutter[2]);
+      mb.window('z-', 1.75, 2.3, 0.42, 0.18, 0.2, PAL.shutter[2]);
+      smoke(mb, 2.4, 1.2, 2.3);
+      mb.box(2.3, 0.7, 2.2, 2.5, 1.15, 2.4, PAL.brick);
+      const x = 1.0, z = 0.85;
+      for (const [wx, wz] of [[-0.3, -0.28], [0.3, -0.28], [-0.3, 0.28], [0.3, 0.28]]) mb.cyl(x + wx, 0.13, z + wz, 0.13, 0.04, PAL.woodDark, { segs: 10, ao: 1 });
+      mb.box(x - 0.28, 0.12, z - 0.4, x - 0.2, 0.2, z + 0.4, PAL.wood);
+      mb.box(x + 0.2, 0.12, z - 0.4, x + 0.28, 0.2, z + 0.4, PAL.wood);
+      mb.box(x - 0.28, 0.14, z - 0.05, x + 0.28, 0.2, z + 0.05, PAL.woodDark);
+      if (bal) {
+        mb.box(x - 0.05, 0.2, z - 0.05, x + 0.05, 0.42, z + 0.05, PAL.wood);
+        mb.box(x - 0.36, 0.42, z - 0.07, x + 0.36, 0.48, z + 0.07, PAL.wood);
+        mb.box(x - 0.06, 0.48, z - 0.42, x + 0.06, 0.53, z + 0.4, PAL.woodLight);
+        mb.box(x - 0.02, 0.53, z - 0.5, x + 0.02, 0.56, z + 0.32, PAL.woodDark, { ao: 1 });
+        for (let i = 0; i < 5; i++) mb.box(1.9 + i * 0.1, 0.03, 0.4, 1.94 + i * 0.1, 0.07, 1.2, PAL.woodLight);
+      } else {
+        mb.box(x - 0.28, 0.2, z - 0.05, x - 0.2, 0.6, z + 0.05, PAL.wood);
+        mb.box(x + 0.2, 0.2, z - 0.05, x + 0.28, 0.6, z + 0.05, PAL.wood);
+        mb.box(x - 0.28, 0.56, z - 0.07, x + 0.28, 0.64, z + 0.07, PAL.woodDark);
+        mb.box(x - 0.04, 0.2, z - 0.55, x + 0.04, 0.28, z + 0.05, PAL.wood);
+        mb.box(x - 0.1, 0.18, z - 0.62, x + 0.1, 0.3, z - 0.48, PAL.woodDark);
+        for (let i = 0; i < 6; i++) mb.blob(2.0 + (i % 3) * 0.22, 0.1 + Math.floor(i / 3) * 0.14, 0.7 + (i % 2) * 0.1, 0.1, 0.09, 0.1, '#a8a294', { jitter: 0.25 });
+      }
+      crate(mb, 2.55, 1.45, 1.2);
+      fence(mb, 0.1, 0.1, 2.9, 0.1); fence(mb, 0.1, 0.1, 0.1, 1.7); fence(mb, 2.9, 0.1, 2.9, 1.7);
+      break;
+    }
   }
 }
 

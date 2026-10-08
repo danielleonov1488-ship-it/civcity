@@ -27,6 +27,7 @@ const Input = {
     canvas.addEventListener('pointerleave', () => { if (!this.pointers.size) this.hover = null; });
     canvas.addEventListener('wheel', e => {
       e.preventDefault();
+      if (Battle.active) return;
       const f = Math.exp(e.deltaY * 0.0012);
       const p = Engine.groundPoint(e.clientX, e.clientY);
       const before = Engine.cam.distTarget;
@@ -56,6 +57,7 @@ const Input = {
   tileUnder(x, y) { return Engine.groundPoint(x, y); },
 
   down(e) {
+    if (Battle.active) return;
     Engine.renderer.domElement.setPointerCapture(e.pointerId);
     this.pointers.set(e.pointerId, [e.clientX, e.clientY]);
     this.mouse = [e.clientX, e.clientY];
@@ -97,6 +99,7 @@ const Input = {
   },
 
   move(e) {
+    if (Battle.active) return;
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, [e.clientX, e.clientY]);
     const prev = this.mouse;
     this.mouse = [e.clientX, e.clientY];
@@ -160,6 +163,7 @@ const Input = {
   },
 
   keyDown(e) {
+    if (Battle.active) return;
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
     const k = e.key.toLowerCase();
     if (k === 'escape') {

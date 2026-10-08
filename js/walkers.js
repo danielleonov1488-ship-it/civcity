@@ -21,7 +21,7 @@ const Walkers = {
     w.cHair = pick(HAIR);
     w.cLegs = w.cSkin;
     w.longHair = false;
-    const soldiers = Military.total() > 0 && state.legion.soldiers > 0;
+    const soldiers = countType('barracks') > 0;
     if (soldiers && r < 0.08) {
       w.role = 'soldier';
       w.cTorso = '#b8452f';

@@ -125,8 +125,10 @@ const UI = {
     if (this.winOpen && this.winTab === 'research' && rs && t - (this.lastWin || 0) > 1000) { this.lastWin = t; this.updateResearchProgress(); }
     const shortGoods = Object.keys((S.short || {})).length;
     const bg = $('b-goods'); bg.hidden = !shortGoods; bg.textContent = '!';
-    $('rail-legion').hidden = !hasTech('legion') && !Military.total();
-    const bl = $('b-legion'); bl.hidden = !(state.legion.soldiers > 0 && !state.legion.mission); bl.textContent = state.legion.soldiers;
+    $('rail-legion').hidden = !Army.unlocked();
+    const fresh = Army.unlocked() && countType('barracks') > 0 && state.army.progress === 0;
+    const bl = $('b-legion'); bl.hidden = !fresh; bl.textContent = '!';
+    ArmyUI.tick();
     const bj = $('b-journal'); bj.hidden = !state.journalUnread; bj.textContent = Math.min(99, state.journalUnread || 0);
     this.updateTrayAfford();
     if (this.winOpen && this.winTab === 'goods' && t - (this.lastWin || 0) > 1000) { this.lastWin = t; this.renderWindow(); }
@@ -243,7 +245,7 @@ const UI = {
       if (cls.length) card.style.setProperty('--cls', CLASSES[cls[cls.length - 1]].color);
       card.innerHTML = `<span class="card-img"><img src="${this.icons[type] || ''}" alt="">${cls.length ? `<span class="card-cls">${cls.map(c => Icons.cls(c, 20)).join('')}</span>` : ''}${unlocked ? '' : '<i class="lock-badge" aria-hidden="true"></i>'}</span>
         <span class="card-name">${d.name}</span>
-        <span class="card-cost">${unlocked ? this.costHtml(d.cost) : `<span class="lock">${Icons.img('scrolls')}${TECH_BY_ID[d.tech].name}</span>`}</span>`;
+        <span class="card-cost">${unlocked ? this.costHtml(d.cost) : `<span class="lock">${Icons.img(d.milTech && hasTech(d.tech) ? 'glory' : 'scrolls')}${lockName(type)}</span>`}</span>`;
       card.onclick = () => {
         if (!unlocked) { this.openWindow('research', d.tech); return; }
         Input.setTool(Input.tool === type ? null : type);
@@ -438,10 +440,7 @@ const UI = {
       if (d.upkeep) html += `<div class="row"><span>${Icons.img('money')} Содержание в день</span><b>${d.upkeep}</b></div>`;
       html += '</div>';
       html += `<p class="desc">${d.desc}</p>`;
-      if (b.type === 'barracks') {
-        html += `<div class="rows"><div class="row"><span>${Icons.img('legion')} Легионеров</span><b>${Military.total()} / ${Military.capacity()}</b></div></div>`;
-        html += `<button type="button" class="btn" id="open-map">Карта провинции</button>`;
-      }
+      if (d.kind === 'military') html += ArmyUI.buildingPanel(b);
       if (b.type === 'tradepost') html += `<button type="button" class="btn" id="open-trade">Настроить торговлю</button>`;
     }
     html += `<button type="button" class="btn ghost small demolish" id="panel-demolish">Снести (вернётся половина)</button>`;
@@ -457,8 +456,7 @@ const UI = {
     if (rb) rb.onclick = () => { if (isUnlocked(b.req.type)) Input.setTool(b.req.type); else this.openWindow('research', BUILDINGS[b.req.type].tech); };
     const lk = $('lock-tier');
     if (lk) lk.onchange = () => { b.lock = lk.checked; this.refreshPanel(); };
-    const om = $('open-map');
-    if (om) om.onclick = () => this.openWindow('legion');
+    if (d.kind === 'military') ArmyUI.bindBuilding(b);
     const ot = $('open-trade');
     if (ot) ot.onclick = () => this.openWindow('goods');
   },
@@ -507,18 +505,34 @@ const UI = {
     const tabs = [['research', 'Знания'], ['goods', 'Товары'], ['legion', 'Легион'], ['guide', 'Справка'], ['journal', 'Журнал']];
     $('win-tabs').innerHTML = tabs.map(([id, name]) => `<button type="button" class="${id === this.winTab ? 'on' : ''}" data-tab="${id}">${Icons.svg(id === 'goods' ? 'goods' : id)}<span>${name}</span></button>`).join('');
     $('win-tabs').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => this.openWindow(b.dataset.tab));
-    $('win-title').textContent = { research: 'Знания Рима', goods: 'Склады и торговля', legion: 'Легион и провинция', guide: 'Справочник', journal: 'Журнал событий' }[this.winTab];
+    $('win-title').textContent = { research: 'Знания Рима', goods: 'Склады и торговля', legion: 'Легион и походы', guide: 'Справочник', journal: 'Журнал событий' }[this.winTab];
     const body = $('win-body');
     const scroll = body.scrollTop;
     if (this.winTab === 'research') this.renderResearch(body);
     else if (this.winTab === 'goods') this.renderGoods(body);
-    else if (this.winTab === 'legion') ProvinceMap.render(body);
+    else if (this.winTab === 'legion') ArmyUI.render(body);
     else if (this.winTab === 'guide') this.renderGuide(body);
     else this.renderJournal(body);
     body.scrollTop = scroll;
   },
 
   renderResearch(el) {
+    if (Army.unlocked()) {
+      const tabs = `<div class="seg res-tabs"><button type="button" data-rtab="civil" class="${this.resTab !== 'mil' ? 'on' : ''}">Знания Рима</button><button type="button" data-rtab="mil" class="${this.resTab === 'mil' ? 'on' : ''}">${Icons.img('glory')} Военное дело</button></div>`;
+      if (this.resTab === 'mil') {
+        ArmyUI.renderMilResearch(el);
+        el.insertAdjacentHTML('afterbegin', tabs);
+      } else {
+        this.renderCivilResearch(el);
+        el.insertAdjacentHTML('afterbegin', tabs);
+      }
+      el.querySelectorAll('[data-rtab]').forEach(b => b.onclick = () => { this.resTab = b.dataset.rtab; this.renderWindow(); });
+      return;
+    }
+    this.renderCivilResearch(el);
+  },
+
+  renderCivilResearch(el) {
     const cols = [];
     for (const t of TECHS) (cols[t.col] = cols[t.col] || []).push(t);
     const S = state.stats;
@@ -602,7 +616,6 @@ const UI = {
     const trade = Trade.active();
     const producers = g => {
       const list = Object.entries(BUILDINGS).filter(([, d]) => d.produces && d.produces[g]).map(([k, d]) => `<img src="${this.icons[k]}" alt="" title="${d.name}" data-card="${k}">`);
-      for (const c of CAMPAIGNS) if (c.tribute && c.tribute[g]) list.push(`<span class="tag">дань: ${c.name}</span>`);
       return list.join('');
     };
     let html = `<div class="explain">${Icons.img('store', 'big')}<div><b>Всё, что производит город, лежит на общих складах.</b>
@@ -697,7 +710,6 @@ const UI = {
 
   closeModal() {
     if (!this.modalOpen) return false;
-    cancelAnimationFrame(Battle.raf);
     $('modal-back').hidden = true;
     this.modalOpen = false;
     return true;
@@ -749,7 +761,7 @@ const UI = {
       ${seg('q', [['low', 'Низкое', 'для слабых ПК'], ['medium', 'Среднее', 'телефоны'], ['high', 'Высокое', 'вау-режим']], Settings.quality)}
       <label class="switch"><input type="checkbox" id="day-cycle" ${Settings.dayCycle ? 'checked' : ''}><span></span>Смена дня и ночи</label>
       ${TEST_MODE ? `<div class="note good"><b>Это тестовый город.</b> У него своё сохранение, ваш настоящий город не трогается.
-        <div class="actions"><button type="button" class="btn small" id="test-give">+30 000 денариев, товары и 40 легионеров</button>
+        <div class="actions"><button type="button" class="btn small" id="test-give">+30 000 денариев, товары, свитки и Слава</button>
         <a class="btn small ghost" href="./">В свой город</a></div></div>` : ''}
       <div class="actions">
         <button type="button" class="btn ghost" id="menu-help">Справка</button>
@@ -777,7 +789,7 @@ const UI = {
       if (!Atmos.cycle) Atmos.t = 0.42;
     };
     $('menu-close').onclick = () => this.closeModal();
-    if (TEST_MODE) $('test-give').onclick = () => { Test.give(); this.toast('Добавлено: деньги, товары, свитки, Слава и легионеры', 'good'); };
+    if (TEST_MODE) $('test-give').onclick = () => { Test.give(); this.toast('Добавлено: деньги, товары, свитки и Слава', 'good'); };
     $('menu-help').onclick = () => { this.closeModal(); this.openWindow('guide'); };
     $('menu-new').onclick = () => {
       this.showModal(`
@@ -790,19 +802,6 @@ const UI = {
       $('new-no').onclick = () => this.closeModal();
       $('new-yes').onclick = () => { this.closeModal(); Game.newGame(); };
     };
-  },
-
-  battleNotice(rec) {
-    const c = CAMPAIGNS.find(x => x.id === rec.target);
-    this.log(`${rec.win ? 'Победа' : 'Поражение'} легиона: ${c.name}.`, rec.win ? 'good' : 'warn');
-    const box = $('toasts');
-    const el = document.createElement('div');
-    el.className = 'toast ' + (rec.win ? 'good' : 'warn') + ' battle-toast';
-    el.innerHTML = `${Icons.img('legion')}<span>${rec.win ? 'Победа' : 'Поражение'}: ${c.name}</span><button type="button" class="btn tiny">Смотреть битву</button>`;
-    el.querySelector('button').onclick = () => { el.remove(); Battle.show(rec); };
-    box.append(el);
-    setTimeout(() => el.classList.add('out'), 9000);
-    setTimeout(() => el.remove(), 9500);
   },
 
   // Короткое уведомление — только о важном и о прямой реакции на действие игрока
@@ -877,7 +876,7 @@ const UI = {
       case 'workers': return T('Работники', Object.entries(CLASSES).map(([c, v]) => `${v.name}: занято ${fmt((S.filled || {})[c] || 0)} из ${fmt((S.jobs || {})[c] || 0)} мест, свободно ${fmt((S.spare || {})[c] || 0)}`).join('<br>') + '<br>Лишние граждане идут работать за плебеев.');
       case 'food': return T(`Еда: ${fmt(state.goods.wheat + state.goods.fish)}`, `Пшеница ${fmt(state.goods.wheat)} и рыба ${fmt(state.goods.fish)}. Дома получают еду через рынок. Нажмите, чтобы открыть склады.`);
       case 'scrolls': return T(`Свитки: ${fmt(state.scrolls)}`, `Знания Рима. Пишут храмы, школы и форум${S.scrollRate ? ` (+${S.scrollRate.toFixed(1)} в день)` : ''}. Тратятся в «Знаниях» на новые постройки. Нажмите, чтобы открыть.`);
-      case 'glory': return T(`Слава: ${fmt(state.glory)}`, 'Даётся за победы легиона и чудеса света. Нужна для Колизея, Пантеона, арки и праздника-триумфа.');
+      case 'glory': return T(`Слава: ${fmt(state.glory)}`, 'Даётся за победы в походах и чудеса света. Нужна для Военного дела, умений в бою, Колизея, Пантеона и праздника-триумфа.');
       case 'date': return T(dateText(state.day), `День ${state.day % DAYS_PER_SEASON + 1} из ${DAYS_PER_SEASON}. Один игровой день — около ${DAY_SECONDS} секунд на скорости ×1.`);
       case 'speed0': return T('Пауза', 'Пробел');
       case 'speed1': return T('Скорость ×1', 'Клавиша 1');
@@ -912,7 +911,7 @@ const UI = {
     return `<div class="card-tip"><img src="${this.icons[type]}" alt=""><div><b>${d.name}</b><p>${d.desc}</p>
       ${rows.length ? `<p class="tip-rows">${rows.join(' · ')}</p>` : ''}
       <p class="tip-cost">${this.costHtml(d.cost)}</p>
-      ${!isUnlocked(type) ? `<p class="tip-lock">Нужно знание «${TECH_BY_ID[d.tech].name}»${TECH_BY_ID[d.tech].pop ? ` (с ${fmt(TECH_BY_ID[d.tech].pop)} жителей)` : ''}</p>` : ''}</div></div>`;
+      ${!isUnlocked(type) ? `<p class="tip-lock">Нужно: «${lockName(type)}»${!hasTech(d.tech) && TECH_BY_ID[d.tech].pop ? ` (с ${fmt(TECH_BY_ID[d.tech].pop)} жителей)` : ''}</p>` : ''}</div></div>`;
   },
 
   /* ---------- Метки над картой ---------- */

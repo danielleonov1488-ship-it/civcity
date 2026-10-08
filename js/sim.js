@@ -30,8 +30,7 @@ function newState(seed) {
     taxLevel: 1,
     trade: { sell: {}, buy: {} },
     nextTradeDay: TRADE_INTERVAL,
-    legion: { soldiers: 0, progress: 0, mission: null },
-    conquered: {},
+    army: null,
     festivalUntil: 0,
     camera: null,
     journal: [],
@@ -126,12 +125,12 @@ const GOALS = [
   { text: 'Станьте Большим городом', need: 900, reward: { money: 1500 },
     hint: 'С 900 жителей открываются «Легион» и знания пятой колонки.',
     prog: () => state.stats.pop || 0 },
-  { text: 'Обучите 10 легионеров', need: 10, reward: { money: 500, glory: 5 }, act: { open: 'research' },
-    hint: 'Изучите «Легион» и постройте казармы. Солдатам нужно оружие: рудник у рыжих скал и кузница.',
-    prog: () => state.legion.soldiers + (state.legion.mission ? state.legion.mission.soldiers : 0) },
-  { text: 'Первая победа легиона', need: 1, reward: { money: 600 }, act: { open: 'legion' },
-    hint: 'Откройте «Легион» слева и отправьте солдат на разбойников — это самая лёгкая цель.',
-    prog: () => Object.keys(state.conquered).length },
+  { text: 'Постройте Казармы', need: 1, reward: { money: 500, glory: 5 }, act: { tool: 'barracks' },
+    hint: 'Изучите «Легион» в «Знаниях» и поставьте Казармы у дороги. В отряде появятся легионеры.',
+    prog: () => countType('barracks') },
+  { text: 'Первая победа в походе', need: 1, reward: { money: 600 }, act: { open: 'legion' },
+    hint: 'Откройте «Легион» слева, выберите первый бой на карте походов и нажмите «В бой!».',
+    prog: () => state.army ? state.army.wins : 0 },
   { text: 'Соберите 1500 жителей', need: 1500, reward: { money: 5000 },
     hint: 'С 1500 жителей открываются знания о чудесах света.',
     prog: () => state.stats.pop || 0 },
@@ -350,11 +349,6 @@ function dailyProgress() {
   }
   taxes *= taxMult();
 
-  // Дань с покорённых земель
-  for (const c of CAMPAIGNS) {
-    if (!c.tribute || state.conquered[c.id] === undefined) continue;
-    for (const [g, r] of Object.entries(c.tribute)) { state.goods[g] += r; prod[g] = (prod[g] || 0) + r; }
-  }
   for (const g of GOOD_IDS) state.goods[g] = clamp(state.goods[g], 0, cap);
 
   state.money += taxes - upkeep;
@@ -499,7 +493,7 @@ function simDay() {
   state.day++;
   computeCoverage();
   dailyProgress();
-  Military.daily();
+  Army.daily();
   Trade.daily();
   researchDay();
   computeCoverage();

@@ -225,6 +225,7 @@ const Post = {
     if (!this.enabled) { r.setRenderTarget(null); r.render(scene, camera); return; }
     const size = r.getDrawingBufferSize(new THREE.Vector2());
     const w = size.x, h = size.y;
+    if (!w || !h) return;      // окно свёрнуто — рисовать некуда
     this.ensureTargets(w, h);
     r.setRenderTarget(this.rtScene);
     r.render(scene, camera);

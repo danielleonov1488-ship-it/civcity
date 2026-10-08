@@ -15,6 +15,7 @@ const Game = {
     Engine.init($('game'), Settings.quality);
     Atmos.cycle = Settings.dayCycle;
     if (!loadGame()) this.setupNewCity();
+    Army.ensure();
     if (state.camera) Object.assign(Engine.cam, { x: state.camera.x, z: state.camera.z, tx: state.camera.x, tz: state.camera.z, yaw: state.camera.yaw, yawTarget: state.camera.yaw, dist: state.camera.dist, distTarget: state.camera.dist });
     Engine.rebuildAll();
     Input.init(Engine.renderer.domElement);
@@ -44,6 +45,7 @@ const Game = {
 
   newGame() {
     this.setupNewCity();
+    Army.ensure();
     Walkers.list = [];
     Cats.list = [];
     Engine.particles = [];
@@ -81,6 +83,13 @@ const Game = {
     const realDt = Math.min(0.1, (t - this.last) / 1000);
     this.last = t;
     this.lastTick = performance.now();
+    // во время боя город стоит на паузе, а на экране — поле боя
+    if (Battle.active) {
+      Battle.frame(realDt);
+      ArmyUI.tick();
+      requestAnimationFrame(n => this.frame(n));
+      return;
+    }
     const dt = this.advance(realDt);
     Input.update(realDt);
     Walkers.update(dt, realDt);
@@ -95,7 +104,7 @@ const Game = {
   // Сон компьютера не в счёт — за один раз догоняем не больше 10 минут.
   background() {
     const now = performance.now();
-    if (!document.hidden) { this.lastTick = now; return; }
+    if (!document.hidden || Battle.active) { this.lastTick = now; return; }
     const realDt = Math.min(600, (now - this.lastTick) / 1000);
     this.lastTick = now;
     this.advance(realDt);

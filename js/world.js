@@ -170,7 +170,15 @@ function plotFeatures(px, py) {
 
 function isUnlocked(type) {
   const d = BUILDINGS[type];
-  return !d.tech || state.techs.includes(d.tech);
+  if (d.tech && !state.techs.includes(d.tech)) return false;
+  return !d.milTech || !!(state.army && state.army.techs.includes(d.milTech));
+}
+
+// Чего не хватает, чтобы открыть постройку: обычное знание или Военное дело
+function lockName(type) {
+  const d = BUILDINGS[type];
+  if (d.tech && !state.techs.includes(d.tech)) return TECH_BY_ID[d.tech].name;
+  return d.milTech ? `Военное дело: ${MIL_BY_ID[d.milTech].name}` : '';
 }
 
 // Левый верхний угол постройки, чтобы её центр оказался под курсором
@@ -192,6 +200,7 @@ function nearWater(x, y, w, h, r) {
 function checkPlace(type, x, y) {
   const d = BUILDINGS[type];
   if (!isUnlocked(type)) return 'Сначала изучите нужную технологию';
+  if (d.unique && countType(type) > 0) return 'Такое здание в городе уже есть';
   for (let j = 0; j < d.h; j++) {
     for (let i = 0; i < d.w; i++) {
       const tx = x + i, ty = y + j;

@@ -212,8 +212,20 @@ const BUILDINGS = {
     desc: 'Память о победах легиона. Очень красиво.' },
 
   barracks: { kind: 'military', cat: 'army', name: 'Казармы', acc: 'казармы', cost: { money: 500, bricks: 40, wood: 20 }, w: 3, h: 3,
-    jobs: { citizens: 4 }, upkeep: 2, needsRoad: true, tech: 'legion', capacity: 20,
-    desc: 'Обучают легионеров: каждый стоит 4 оружия и 25 денариев. До 20 солдат на казармы.' },
+    upkeep: 2, needsRoad: true, tech: 'legion', unique: true,
+    desc: 'Здесь тренируются легионеры. Нажмите на здание, чтобы улучшить оружие и броню. Уровень Казарм открывает места в отряде.' },
+  range: { kind: 'military', cat: 'army', name: 'Стрельбище', acc: 'стрельбище', cost: { money: 450, wood: 40, stone: 15 }, w: 3, h: 3,
+    upkeep: 2, needsRoad: true, tech: 'legion', milTech: 'archery', unique: true,
+    desc: 'Мишени и навесы: здесь учатся лучники. Нажмите, чтобы улучшить луки и доспехи.' },
+  spearcamp: { kind: 'military', cat: 'army', name: 'Лагерь копейщиков', acc: 'лагерь копейщиков', cost: { money: 650, wood: 30, iron: 20 }, w: 3, h: 3,
+    upkeep: 2, needsRoad: true, tech: 'legion', milTech: 'spears', unique: true,
+    desc: 'Палатки и чучела для учёбы: здесь живут копейщики в тяжёлой броне.' },
+  ballistae: { kind: 'military', cat: 'army', name: 'Мастерская баллист', acc: 'мастерскую баллист', cost: { money: 850, wood: 50, iron: 30 }, w: 3, h: 3,
+    upkeep: 3, needsRoad: true, tech: 'legion', milTech: 'torsion', unique: true,
+    desc: 'Мастера собирают баллисты: болт пробивает строй врагов насквозь.' },
+  catapults: { kind: 'military', cat: 'army', name: 'Мастерская катапульт', acc: 'мастерскую катапульт', cost: { money: 1000, wood: 60, stone: 40, iron: 20 }, w: 3, h: 3,
+    upkeep: 3, needsRoad: true, tech: 'legion', milTech: 'onager', unique: true,
+    desc: 'Здесь строят онагры: камень накрывает толпу врагов.' },
 
   flowers: { kind: 'decor', cat: 'decor', name: 'Клумба', acc: 'клумбу', cost: { money: 10 }, w: 1, h: 1, beauty: 1, desc: 'Цветы у порога.' },
   cypress: { kind: 'decor', cat: 'decor', name: 'Кипарис', acc: 'кипарис', cost: { money: 8 }, w: 1, h: 1, beauty: 1, desc: 'Стройное дерево Средиземноморья.' },
@@ -275,7 +287,7 @@ const TECHS = [
   { id: 'metal', name: 'Металлургия', scrolls: 40, money: 600, req: ['marble'], col: 3,
     desc: 'Железные рудники и кузницы.' },
   { id: 'legion', name: 'Легион', scrolls: 50, money: 800, req: ['metal'], col: 4,
-    desc: 'Казармы и походы. Победы приносят Славу и добычу.' },
+    desc: 'Казармы, отряд и карта походов. Открывает Военное дело.' },
   { id: 'forum', name: 'Форум', scrolls: 60, money: 1000, req: ['theatre', 'marble'], col: 4,
     desc: 'Форум — для дворцов патрициев. Даёт много свитков.' },
   { id: 'triumph', name: 'Триумф', scrolls: 60, money: 800, req: ['legion'], col: 5,
@@ -292,31 +304,6 @@ const TECH_DAYS = [10, 25, 45, 75, 110, 150];
 for (const t of TECHS) { t.pop = TECH_POP[t.col]; t.days = TECH_DAYS[t.col]; }
 const TECH_BY_ID = Object.fromEntries(TECHS.map(t => [t.id, t]));
 
-/* ---------- Походы легиона ----------
-   strength — сила врага; repeat — через сколько дней можно напасть снова. */
-
-const CAMPAIGNS = [
-  { id: 'bandits', name: 'Разбойники в лесу', strength: 5, days: 8, x: 0.42, y: 0.56, repeat: 60,
-    reward: { money: 250, glory: 3 }, desc: 'Шайка грабит путников на дороге в город.' },
-  { id: 'pirates', name: 'Пиратская бухта', strength: 10, days: 10, x: 0.28, y: 0.74,
-    reward: { money: 600, glory: 8, fish: 60 }, desc: 'Пираты перехватывают торговые корабли.' },
-  { id: 'gauls', name: 'Деревня галлов', strength: 16, days: 12, x: 0.22, y: 0.24,
-    reward: { money: 800, glory: 12, iron: 40 }, desc: 'Непокорные галлы с усатыми вождями.' },
-  { id: 'germans', name: 'Германский лагерь', strength: 24, days: 14, x: 0.5, y: 0.14,
-    reward: { money: 1000, glory: 18, wood: 120 }, desc: 'Лагерь в тёмном лесу за рекой.' },
-  { id: 'hills', name: 'Мраморные холмы', strength: 30, days: 12, x: 0.66, y: 0.36,
-    reward: { glory: 20, marble: 40 }, tribute: { marble: 1.5 }, desc: 'Холмы с белым мрамором. После победы шлют дань мрамором.' },
-  { id: 'carthage', name: 'Карфагенский форт', strength: 42, days: 18, x: 0.58, y: 0.86,
-    reward: { money: 2500, glory: 35 }, desc: 'Последний оплот Карфагена на этом берегу.' },
-  { id: 'dacians', name: 'Крепость даков', strength: 55, days: 18, x: 0.84, y: 0.2,
-    reward: { money: 2000, glory: 45 }, tribute: { iron: 2 }, desc: 'Горная крепость с железными рудниками.' },
-  { id: 'parthia', name: 'Парфянская цитадель', strength: 75, days: 24, x: 0.9, y: 0.66,
-    reward: { money: 6000, glory: 100 }, desc: 'Самый сильный враг Рима на востоке.' },
-];
-
-const LEGIONARY_COST = { weapons: 4, money: 25 };
-const LEGIONARY_DAYS = 5;
-const FESTIVAL = { glory: 15, days: 60, happy: 12 };
 
 const CITY_RANKS = [
   [0, 'Деревня'],

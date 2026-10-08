@@ -1,6 +1,7 @@
 'use strict';
 /* Тестовый город: адрес с #test (например …/civcity/#test) открывает отдельный город со своим сохранением.
-   Всё изучено, много ресурсов, готовый квартал, казармы и легионеры. Настоящий город игрока не трогается. */
+   Всё изучено (и Военное дело), много ресурсов, готовый квартал и все военные здания.
+   Улучшения идут в 100 раз быстрее и завершаются кнопкой. Настоящий город игрока не трогается. */
 
 const Test = {
   setup() {
@@ -38,17 +39,25 @@ const Test = {
     put('temple', 1, 14); put('market', 4, 14); put('baths', 7, 14); put('barracks', 10, 14);
     put('smithy', 13, 15); put('warehouse', 15, 15); put('warehouse', 17, 15);
     put('fountain', 19, 15); put('school', 21, 15); put('well', 23, 16);
+    // военные здания за второй улицей, на соседнем участке
+    state.plots.add('0,1');
+    Engine.plotChanged(0, 1);
+    for (let x = 0; x < PLOT; x++) put('road', x, 21);
+    for (const t of ['range', 'spearcamp', 'ballistae', 'catapults']) for (let x = 0; x < PLOT - 2 && !put(t, x, 22); x++);
+    const A = Army.ensure();
+    A.techs = MIL_TECHS.map(t => t.id);
+    for (const p of PERK_IDS) A.perks[p] = Math.max(1, A.perks[p]);
+    A.squad = ['legionary', 'legionary', 'archer'];
     this.give();
     UI.buildToolbar();
-    UI.log('Тестовый город: всё изучено, ресурсы и легионеры уже есть. Легион — кнопка слева.', 'good', true);
+    UI.log('Тестовый город: всё изучено, военные здания стоят. Легион — кнопка слева, прокачка — в карточке Казарм.', 'good', true);
   },
 
   give() {
     state.money += 30000;
     state.scrolls += 300;
-    state.glory += 60;
+    state.glory += 120;
     for (const g of GOOD_IDS) state.goods[g] = Math.max(state.goods[g] || 0, 450);
-    state.legion.soldiers += 40;
     afterCityChanged();
     UI.updateHud(true);
   },
