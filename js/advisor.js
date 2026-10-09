@@ -10,6 +10,9 @@ const TIPS = [
   { id: 'paving', title: 'Мостовая — кистью',
     text: 'В «Дорогах» — кисть: тропинка, гравий, мостовая и площадь. Красьте с зажатой кнопкой, хоть всю землю; Shift — прямой линией, [ и ] — ширина, Ctrl+Z — отменить мазок. Дом у края мостовой сам встаёт к ней фасадом, а на площадь его можно поставить прямо на камни (повернуть — Z и C). Залежи камня, мрамора и железа и густой лес вечные: карьер и шахту ставьте рядом с ними.',
     act: { tool: 'road' }, when: () => true },
+  { id: 'center', title: 'Центр города',
+    text: 'По мостовой к центру приезжает повозка с переселенцами — оттуда семьи сами идут в свободные дома, а работники сами занимают рабочие места. Здесь же жители оставляют просьбы — они появляются значками рядом с карточкой города. Центр растёт вместе с городом: лагерь, дом старосты, курия, базилика… а с ним растёт казна. Соедините мостовой центр и дома.',
+    when: () => !!Settlers.center() && state.day >= 2 },
   { id: 'economy', title: 'Деньги — главное',
     text: 'Казна — справа внизу. Дома платят налоги, а постройки каждый день стоят денег на содержание. Ещё доход — купцы: они сами покупают со склада излишки дерева, камня, кирпича и мрамора. Поставьте каменоломню у скал и склад — и денарии потекут.',
     act: { tool: 'quarry' }, when: () => state.day >= 6 },
@@ -105,6 +108,11 @@ const Advisor = {
 
 /* ---------- Задания: три первых невыполненных, под карточкой города ---------- */
 
+// Центра города нет (не нашлось места) — поставить его бесплатно
+const CENTER_GOAL = { text: 'Поставьте центр города', need: 1, reward: {}, act: { tool: 'center' },
+  hint: 'Сюда приходят переселенцы и расходятся по домам. Без центра дома заселяются медленно. Поставьте его у мостовой — бесплатно.',
+  prog: () => Settlers.center() ? 1 : 0 };
+
 const Tasks = {
   key: '',
   flash: 0,
@@ -112,18 +120,20 @@ const Tasks = {
   render() {
     const box = $('tasks');
     const ids = activeGoals();
+    // без центра города первым идёт задание поставить его (бесплатно)
+    if (!PROMO_MODE && !Settlers.center()) ids.unshift(-1);
     const key = ids.join(',');
     if (key !== this.key) {
       this.key = key;
       box.innerHTML = '';
       const fresh = performance.now() - this.flash < 3000;
       ids.forEach((i, n) => {
-        const g = GOALS[i];
+        const g = i < 0 ? CENTER_GOAL : GOALS[i];
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'task' + (fresh && n === ids.length - 1 ? ' fresh' : '');
         b.dataset.goal = i;
-        b.dataset.tipText = `${g.hint || ''}${g.hint ? ' ' : ''}Награда: ${rewardText(g.reward)}.${g.act ? ' Нажмите — покажу, что строить.' : ''}`;
+        b.dataset.tipText = `${g.hint || ''}${g.hint ? ' ' : ''}${Object.keys(g.reward).length ? `Награда: ${rewardText(g.reward)}.` : ''}${g.act ? ' Нажмите — покажу, что строить.' : ''}`;
         b.innerHTML = `<span class="task-top"><i class="check"></i><span>${escapeHtml(g.text)}</span></span>
           <span class="task-foot"><span class="bar"><div></div></span><small></small></span>`;
         b.onclick = () => g.act && UI.runAction(g.act);
@@ -132,7 +142,7 @@ const Tasks = {
     }
     // полоски хода
     for (const el of box.querySelectorAll('.task')) {
-      const g = GOALS[+el.dataset.goal];
+      const g = +el.dataset.goal < 0 ? CENTER_GOAL : GOALS[+el.dataset.goal];
       const p = Math.min(g.prog(), g.need);
       el.querySelector('.bar > div').style.width = `${(p / g.need) * 100}%`;
       el.querySelector('small').textContent = `${fmt(p)}/${fmt(g.need)}`;
@@ -147,6 +157,12 @@ const Alerts = {
 
   compute() {
     const S = state.stats, out = [];
+    // просьбы жителей — первыми, как у мэра в Town to City
+    for (const h of [...state.buildings.values()].filter(h => h.req && BUILDINGS[h.req.type]).slice(0, 3)) {
+      const r = BUILDINGS[h.req.type];
+      out.push({ id: 'req' + h.id, req: true, text: `Просьба: ${r.name}`, icon: 'img:' + h.req.type, focus: h,
+        tip: `Жители просят поставить ${r.acc} рядом с их домом. Награда — ${requestReward(h.req.type)} денариев и радость жителей. Нажмите, чтобы показать дом.` });
+    }
     for (const [g, info] of Object.entries(SHORTAGE)) {
       if (S.short && S.short[g]) out.push({ id: 'short-' + g, text: info.label, icon: g === 'food' ? 'wheat' : g, tip: info.tip, act: { tool: info.tool } });
     }
@@ -179,7 +195,7 @@ const Alerts = {
     for (const a of list) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'alert';
+      b.className = 'alert' + (a.req ? ' req' : '');
       b.setAttribute('aria-label', a.text);
       const ico = a.icon.startsWith('img:') ? `<img class="ico" src="${UI.icons[a.icon.slice(4)] || ''}" alt="">` : Icons.img(a.icon);
       b.innerHTML = `${ico}${a.n ? `<i class="badge">${a.n > 99 ? '99+' : a.n}</i>` : ''}`;

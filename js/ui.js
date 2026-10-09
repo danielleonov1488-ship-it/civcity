@@ -43,6 +43,7 @@ const UI = {
   init() {
     const tierIcons = [];
     for (const t of ['house', 'domus']) for (let i = 0; i < BUILDINGS[t].tiers.length; i++) tierIcons.push(t + ':' + i);
+    for (let i = 0; i < CENTER_STAGES.length; i++) tierIcons.push('center:' + i);
     this.icons = Engine.renderIcons([...Object.keys(BUILDINGS), ...tierIcons], 128);
     document.querySelectorAll('[data-icon]').forEach(img => { img.src = Icons.get(img.dataset.icon); });
     document.querySelectorAll('[data-svg]').forEach(el => el.insertAdjacentHTML('afterbegin', Icons.svg(el.dataset.svg)));
@@ -99,11 +100,10 @@ const UI = {
     this.lastHud = t;
     const S = state.stats;
     $('city-name').textContent = state.cityName;
-    $('city-rank').textContent = cityRank(S.pop || 0) + (TEST_MODE ? ' · тест' : '');
+    $('city-rank').textContent = cityRankName() + (TEST_MODE ? ' · тест' : '');
     // прогресс до следующего звания города
-    const pop = S.pop || 0;
-    let lo = 0, hi = CITY_RANKS[1][0];
-    for (let i = 0; i < CITY_RANKS.length; i++) if (pop >= CITY_RANKS[i][0]) { lo = CITY_RANKS[i][0]; hi = (CITY_RANKS[i + 1] || [lo * 2])[0]; }
+    const pop = S.pop || 0, lv = cityLevel();
+    const lo = CITY_RANKS[lv][0], hi = (CITY_RANKS[lv + 1] || [lo * 2 || 1])[0];
     $('rank-bar').style.width = `${clamp((pop - lo) / Math.max(1, hi - lo), 0, 1) * 100}%`;
     // жители и счастье — одной цифрой; подробности по классам — в карточке города
     $('v-pop').textContent = fmt(pop);
@@ -127,8 +127,9 @@ const UI = {
     $('v-cap').textContent = `/ ${fmt(tcap)}`;
     document.querySelector('.tr-money').classList.toggle('full', state.money >= tcap - 1);
     const inc = S.income || 0;
-    $('v-income').textContent = `${inc >= 0 ? '+' : '−'}${fmt(Math.abs(inc))} в день`;
-    $('v-income').classList.toggle('neg', inc < 0);
+    const incR = Math.round(inc);
+    $('v-income').textContent = `${incR >= 0 ? '+' : '−'}${fmt(Math.abs(incR))} в день`;
+    $('v-income').classList.toggle('neg', incR < 0);
     // знания: сколько свитков, можно ли что-то изучить, ход изучения
     $('v-scrolls').textContent = fmt(state.scrolls);
     const ready = TECHS.filter(canResearch).length;
@@ -194,7 +195,7 @@ const UI = {
 
   openCity() {
     const S = state.stats, R = S.residents || {};
-    const nextRank = CITY_RANKS.find(([n]) => n > (S.pop || 0));
+    const nextRank = CITY_RANKS[cityLevel() + 1];
     const cls = Object.entries(CLASSES).map(([c, C]) => {
       const n = R[c] || 0, h = (S.happyCls || {})[c] || 0;
       return `<div class="city-cls">${Icons.cls(c, 30)}<div><b>${C.name}: ${fmt(n)}</b>
@@ -205,7 +206,7 @@ const UI = {
     const seg = TAX_LEVELS.map((t, i) => `<button type="button" data-tax="${i}" class="${i === state.taxLevel ? 'on' : ''}">${t.name}<small>${t.mult < 1 ? 'жители рады' : t.mult > 1 ? 'жители недовольны' : '×1'}</small></button>`).join('');
     this.showModal(`
       <p class="eyebrow">Ваш город</p>
-      <h2>${escapeHtml(state.cityName)} — ${cityRank(S.pop || 0)}</h2>
+      <h2>${escapeHtml(state.cityName)} — ${cityRankName()}</h2>
       <p class="sub">Жителей: ${fmt(S.pop || 0)}, счастье ${S.pop ? S.happy + '%' : '—'}. ${nextRank ? `Следующее звание «${nextRank[1]}» — при ${fmt(nextRank[0])} жителях.` : 'Это высшее звание!'}</p>
       <div class="city-classes">${cls}</div>
       <div class="rows">
@@ -213,7 +214,7 @@ const UI = {
         <div class="row"><span>Купцы покупают излишки</span><b>+${fmt(S.trade || 0)} в день</b></div>
         <div class="row"><span>Содержание построек</span><b>−${fmt(S.upkeep || 0)} в день</b></div>
         <div class="row"><span>Итого</span><b>${(S.income || 0) >= 0 ? '+' : '−'}${fmt(Math.abs(S.income || 0))} в день</b></div>
-        <div class="row"><span>Предел казны (растёт со званием города)</span><b>${fmt(treasuryCap())}</b></div>
+        <div class="row"><span>Предел казны (растёт со званием города и центром)</span><b>${fmt(treasuryCap())}</b></div>
       </div>
       <p class="field-label">Налоги</p>
       <div class="seg wide" role="group">${seg}</div>
@@ -504,7 +505,8 @@ const UI = {
     let html = '';
     const head = (eyebrow, title) => `<div class="insp-head"><img src="${this.icons[b.type + ':' + b.tier] || this.icons[b.type] || ''}" alt=""><div><p class="eyebrow">${eyebrow}</p><h2>${title}</h2></div></div><div class="status ${st}"><i></i>${stText}</div>`;
 
-    if (d.kind === 'house') {
+    if (b.type === 'center') html += this.centerPanel(b, head);
+    else if (d.kind === 'house') {
       const tiers = d.tiers, T = tiers[b.tier];
       html += head(T.cls ? `<span class="cls-chip" style="--c:${CLASSES[T.cls].color};--b:${CLASSES[T.cls].soft}">${Icons.cls(T.cls, 16)}${CLASSES[T.cls].name}</span>` : d.name, T.name);
       html += `<div class="rows">
@@ -586,11 +588,15 @@ const UI = {
     }
     html += `<div class="panel-actions">
       <button type="button" class="btn ghost small" id="panel-move">Переместить</button>
-      <button type="button" class="btn ghost small demolish" id="panel-demolish" >Снести (вернётся половина)</button>
+      ${b.type === 'center' ? '' : '<button type="button" class="btn ghost small demolish" id="panel-demolish" >Снести (вернётся половина)</button>'}
     </div>`;
     $('insp-body').innerHTML = html;
     $('panel-move').onclick = () => Input.startMove(b);
-    $('panel-demolish').onclick = () => {
+    document.querySelectorAll('[data-req]').forEach(btn => btn.onclick = () => {
+      const h = state.buildings.get(+btn.dataset.req);
+      if (h) { Engine.lookAt(h.x + h.w / 2, h.y + h.h / 2); this.openPanel(h); }
+    });
+    if ($('panel-demolish')) $('panel-demolish').onclick = () => {
       removeBuilding(b, true);
       Engine.dust(b);
       Sound.demolish(b.x + b.w / 2, b.y + b.h / 2);
@@ -605,6 +611,28 @@ const UI = {
     if (d.kind === 'military') ArmyUI.bindBuilding(b);
     const ot = $('open-trade');
     if (ot) ot.onclick = () => this.openWindow('goods');
+  },
+
+  // Карточка центра города: звание, казна, переселенцы в пути, просьбы жителей
+  centerPanel(b, head) {
+    const S = state.stats, lv = cityLevel(), next = CITY_RANKS[lv + 1], pop = S.pop || 0;
+    let html = head(`Центр города · ${cityRankName()}`, CENTER_STAGES[b.tier || 0]);
+    html += `<div class="rows">
+      <div class="row"><span>${Icons.img('people')} Жители города</span><b>${fmt(pop)}</b></div>
+      <div class="row"><span>${Icons.img('money')} Казна вмещает</span><b>${fmt(treasuryCap())}</b></div>
+      <div class="row"><span>${Icons.img('people')} Переселенцы в пути</span><b>${fmt(Settlers.onTheWay())}</b></div>
+    </div>`;
+    if (next) {
+      const lo = CITY_RANKS[lv][0];
+      html += `<div class="meter"><span>До звания «${next[1]}»</span><b>${fmt(pop)} / ${fmt(next[0])}</b><div class="bar"><div style="width:${clamp((pop - lo) / Math.max(1, next[0] - lo), 0, 1) * 100}%"></div></div></div>
+        <p class="sub">Тогда центр станет: ${CENTER_STAGES[lv + 1]}, а казна будет вмещать ${fmt(TREASURY_CAPS[lv + 1])}.</p>`;
+    } else html += '<p class="sub">Высшее звание — Второй Рим!</p>';
+    const reqs = [...state.buildings.values()].filter(h => h.req && BUILDINGS[h.req.type]);
+    html += '<h3>Просьбы жителей</h3>';
+    html += reqs.length ? `<ul class="needs">${reqs.slice(0, 6).map(h => `<li><img class="ico" src="${this.icons[h.req.type] || ''}" alt=""><span>${BUILDINGS[h.req.type].name} рядом с домом — ${requestReward(h.req.type)} ден.</span><button type="button" class="btn small ghost" data-req="${h.id}">Показать</button></li>`).join('')}</ul>`
+      : '<p class="sub">Пока никто ничего не просит. Просьбы появятся и рядом с карточкой города.</p>';
+    html += `<p class="desc">${BUILDINGS.center.desc}</p>`;
+    return html;
   },
 
   /* ---------- Действия советника и кнопок ---------- */
@@ -1104,9 +1132,9 @@ const UI = {
       return T(`${GOODS[g].name}: ${fmt(state.goods[g])} из ${fmt(S.cap || BASE_STORAGE)}`, `${GOOD_USE[g]}<br>За день: +${p.toFixed(1)} / −${c.toFixed(1)}. Нажмите, чтобы открыть склады.`);
     }
     const R = S.residents || {};
-    const nextRank = CITY_RANKS.find(([n]) => n > (S.pop || 0));
+    const nextRank = CITY_RANKS[cityLevel() + 1];
     switch (k) {
-      case 'city': return T(`${escapeHtml(state.cityName)} — ${cityRank(S.pop || 0)}`, `${nextRank ? `Следующее звание «${nextRank[1]}» — при ${fmt(nextRank[0])} жителях.` : 'Высшее звание!'} Нажмите — классы жителей, работники и налоги.`);
+      case 'city': return T(`${escapeHtml(state.cityName)} — ${cityRankName()}`, `${nextRank ? `Следующее звание «${nextRank[1]}» — при ${fmt(nextRank[0])} жителях.` : 'Высшее звание!'} Нажмите — классы жителей, работники и налоги.`);
       case 'money': return T('Казна', `Налоги: +${(S.taxes || 0).toFixed(1)} в день<br>Содержание построек: −${(S.upkeep || 0).toFixed(1)} в день<br>Ставка: ${TAX_LEVELS[state.taxLevel].name.toLowerCase()}. Нажмите, чтобы изменить.`);
       case 'pop': return T(`Жители: ${fmt(S.pop || 0)}`, Object.entries(CLASSES).map(([c, v]) => `${v.name}: ${fmt(R[c] || 0)}`).join('<br>') + '<br>Половина жителей работает.');
       case 'happy': return T(`Счастье: ${S.pop ? S.happy + '%' : '—'}`, 'Растёт от удобств рядом с домом, красоты, праздников и низких налогов. Падает от тесноты и высоких налогов. Счастливые платят больше.');

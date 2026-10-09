@@ -63,13 +63,76 @@ function decorCount() {
   return n;
 }
 
-// Предел казны — по званию города (позже — по уровню Форума)
-function treasuryCap() {
+// Звание города (номер в CITY_RANKS): растёт с жителями и не падает. С ним растут центр города и предел казны
+function cityLevel() {
+  if (state.cityLevel !== undefined) return state.cityLevel;
   const pop = (state.stats && state.stats.pop) || 0;
   let i = 0;
   CITY_RANKS.forEach(([n], k) => { if (pop >= n) i = k; });
-  return TREASURY_CAPS[i];
+  return i;
 }
+function cityRankName() { return CITY_RANKS[cityLevel()][1]; }
+
+// Раз в день: город дорос до нового звания — центр перестраивается, казна растёт
+function updateCityLevel() {
+  const pop = state.stats.pop || 0;
+  let i = 0;
+  CITY_RANKS.forEach(([n], k) => { if (pop >= n) i = k; });
+  if (state.cityLevel === undefined) { state.cityLevel = i; syncCenterStage(); return; }
+  if (i <= state.cityLevel) return;
+  state.cityLevel = i;
+  const c = syncCenterStage(true);
+  UI.log(`Город вырос: теперь это ${CITY_RANKS[i][1]}!${c ? ` Центр города перестроен — ${CENTER_STAGES[i]}.` : ''} Казна вмещает ${fmt(TREASURY_CAPS[i])} денариев.`, 'good', true, c);
+}
+
+// Модель центра города — по званию
+function syncCenterStage(fx) {
+  const c = Settlers.center();
+  const lv = cityLevel();
+  if (c && (c.tier || 0) !== lv) {
+    c.tier = lv;
+    c.animAt = performance.now();
+    Engine.buildingsChanged(c);
+    Paving.buildingChanged(c);
+    if (fx) { Engine.dust(c); Engine.sparkle(c, 2.5); Sound.build(c); }
+  }
+  return c;
+}
+
+// Поставить центр города: у мостовой вблизи (x, y), подальше ища свободное место. free — без проверки природы
+function placeCenter(x, y, force) {
+  const prev = Paving.noPermanent;
+  if (force) Paving.noPermanent = true;
+  try {
+    for (let r = 0; r <= 24; r++) {
+      for (let k = 0; k < Math.max(1, r * 6); k++) {
+        const a = k / Math.max(1, r * 6) * Math.PI * 2;
+        const p = snapPlace('center', x + Math.cos(a) * r, y + Math.sin(a) * r, 0);
+        if (!p.road || placeBlocked('center', p.cx, p.cy, p.ang)) continue;
+        const b = placeBuilding('center', p.cx, p.cy, p.ang, true);
+        b.tier = cityLevel();
+        return b;
+      }
+    }
+  } finally { Paving.noPermanent = prev; }
+  return null;
+}
+
+// Старый город без центра: один раз пробуем поставить его сами посреди домов; не вышло — задание «Поставьте центр»
+function ensureCenter() {
+  if (state.centerAuto || Settlers.center()) return;
+  state.centerAuto = true;
+  let sx = 0, sy = 0, n = 0;
+  for (const b of state.buildings.values()) if (BUILDINGS[b.type].kind === 'house') { sx += b.x + b.w / 2; sy += b.y + b.h / 2; n++; }
+  const c = placeCenter(n ? sx / n : PLOT / 2, n ? sy / n : PLOT / 2, false);
+  if (c) {
+    computeCoverage();
+    Journal.add(`В городе появился центр — ${CENTER_STAGES[c.tier]}. Сюда приходят переселенцы, здесь жители оставляют просьбы.`, 'good', c);
+  }
+}
+
+// Предел казны — по званию города (его показывает центр города)
+function treasuryCap() { return TREASURY_CAPS[cityLevel()]; }
 
 // Доход в казну: сверх предела не помещается (возвращает, сколько вошло). Траты и награды за задания — без предела
 function addIncome(v) {
@@ -398,6 +461,8 @@ function dailyProgress() {
   }
 
   // Рост и упадок домов
+  Settlers.daily();
+  const center = Settlers.center(), centerOk = !!(center && center.road);
   for (const h of state.buildings.values()) {
     if (BUILDINGS[h.type].kind !== 'house') continue;
     const tiers = tiersOf(h);
@@ -414,9 +479,12 @@ function dailyProgress() {
       if (h.down >= 12) { h.tier--; h.down = 0; onHouseChanged(h, false, now); }
     } else { h.up = 0; h.down = 0; }
 
+    // новые жители — переселенцы из центра города (без центра — понемногу сами, как раньше)
     const capPop = tiers[h.tier].cap;
-    if (h.pop < capPop) h.pop = Math.min(capPop, h.pop + (h.tier >= 3 ? 2 : 1));
-    else if (h.pop > capPop) h.pop = Math.max(capPop, h.pop - 2);
+    if (h.pop < capPop) {
+      if (centerOk) Settlers.request(h, capPop);
+      else h.pop = Math.min(capPop, h.pop + (h.tier >= 3 ? 2 : 1));
+    } else if (h.pop > capPop) h.pop = Math.max(capPop, h.pop - 2);
   }
 
   if (state.money < 0 && state.day >= (state.debtWarnDay || 0)) {
@@ -526,6 +594,7 @@ function checkGoals() {
 
 function simDay() {
   state.day++;
+  ensureCenter();
   computeCoverage();
   dailyProgress();
   Army.daily();
@@ -533,6 +602,7 @@ function simDay() {
   researchDay();
   computeCoverage();
   updateRequests();
+  updateCityLevel();
   checkGoals();
   Advisor.daily();
   UI.refreshPanel();
@@ -541,6 +611,7 @@ function simDay() {
 // После любой стройки или сноса — сразу обновить подсказки
 function afterCityChanged() {
   computeCoverage();
+  syncCenterStage();
   checkGoals();
   UI.refreshPanel();
 }

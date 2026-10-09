@@ -21,6 +21,7 @@ const Game = {
     Engine.rebuildAll();
     Input.init(Engine.renderer.domElement);
     computeCoverage();
+    if (!PROMO_MODE) { ensureCenter(); computeCoverage(); }
     UI.init();
     Minimap.init();
     if (TEST_MODE && !state.testReady) (PROMO_MODE ? Promo.setup() : Test.setup());
@@ -48,6 +49,10 @@ const Game = {
     // стартовая улица через весь участок — мостовая, кусты и камни с неё убраны
     Paving.stamp(0.5, 11.5, PLOT - 0.5, 11.5, ROAD_HALF, 3);
     for (let tx = 0; tx < PLOT; tx++) if (rawNatureAt(tx, 11)) state.cleared.add(tkey(tx, 11));
+    // центр города — лагерь переселенцев у стартовой улицы, вокруг — утоптанная земля
+    const c = placeCenter(PLOT / 2, 8.5, true);
+    if (c) Paving.stamp(c.x + c.w / 2, c.y + c.h / 2, c.x + c.w / 2, c.y + c.h / 2, 2.9, 1);
+    state.centerAuto = true;
     const d = window.innerWidth < window.innerHeight ? 38 : 30;
     Object.assign(Engine.cam, { x: PLOT / 2, z: PLOT / 2, tx: PLOT / 2, tz: PLOT / 2, dist: d, distTarget: d, yaw: Math.PI / 4, yawTarget: Math.PI / 4 });
   },

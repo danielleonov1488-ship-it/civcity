@@ -73,6 +73,7 @@ const Walkers = {
   },
 
   update(dt, realDt) {
+    Settlers.update(dt, realDt);
     const pop = state.stats.pop || 0;
     const target = Math.min(360, Math.floor(pop / 3));
     if (this.list.length < target && Math.random() < 0.35) this.spawn();
@@ -80,7 +81,8 @@ const Walkers = {
     for (const w of this.list) {
       w.age += realDt;
       if (dt > 0) w.life -= dt;
-      paveStep(w, dt, realDt);
+      if (w.settler) Settlers.step(w, dt, realDt);
+      else paveStep(w, dt, realDt);
       w.alpha = clamp(Math.min(w.age * 2, (w.life + 0.5) * 2), 0, 1);
     }
     this.list = this.list.filter(w => w.life > -0.5);

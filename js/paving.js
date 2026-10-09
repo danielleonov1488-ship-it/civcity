@@ -345,7 +345,8 @@ const Paving = {
     c = new Uint8Array(CS * CS);
     const x0 = px * PLOT, y0 = py * PLOT;
     for (const b of state.buildings.values()) {
-      if (b.lifted || BUILDINGS[b.type].kind === 'decor') continue;
+      // лагерь переселенцев стоит прямо на утоптанной земле — она видна и под шатрами
+      if (b.lifted || BUILDINGS[b.type].kind === 'decor' || (b.type === 'center' && !b.tier)) continue;
       const o = boxOfB(b);
       if (o.cx + o.R < x0 || o.cx - o.R > x0 + PLOT || o.cy + o.R < y0 || o.cy - o.R > y0 + PLOT) continue;
       const i0 = Math.max(0, Math.floor((o.cx - o.R - x0) * SUB)), i1 = Math.min(CS - 1, Math.ceil((o.cx + o.R - x0) * SUB));

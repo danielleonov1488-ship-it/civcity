@@ -1657,6 +1657,228 @@ function serviceModel(mb, b) {
 
 /* ---------- Чудеса света ---------- */
 
+/* ---------- Центр города: растёт сам вместе со званием города ----------
+   Место 4×4, фасад смотрит на +z. Без квадратной подложки: здание стоит на земле или мостовой само.
+   0 — лагерь переселенцев, 1 — дом старосты, 2 — курия, 3 — базилика, 4 — большая базилика,
+   5 — дворец наместника, 6 — императорский дворец. */
+
+// огонь: два светящихся конуса и дымок
+function centerFire(mb, x, y, z, s, smokeToo) {
+  mb.glow = true;
+  mb.cone(x, y, z, 0.07 * s, 0.17 * s, '#ff9a40', 8);
+  mb.cone(x, y, z, 0.04 * s, 0.24 * s, '#ffe08a', 8);
+  mb.glow = false;
+  if (smokeToo) smoke(mb, x, y + 0.25 * s, z);
+}
+
+// доска объявлений: сюда жители вешают просьбы
+function noticeBoard(mb, x, z, rot) {
+  const c = Math.cos(rot || 0), s = Math.sin(rot || 0);
+  const P = (u, w) => [x + u * c + w * s, z - u * s + w * c];
+  for (const u of [-0.17, 0.17]) { const [px, pz] = P(u, 0); mb.box(px - 0.018, 0, pz - 0.018, px + 0.018, 0.5, pz + 0.018, PAL.woodDark); }
+  const [bx, bz] = P(0, 0);
+  const hw = Math.abs(c) * 0.2 + Math.abs(s) * 0.02, hd = Math.abs(s) * 0.2 + Math.abs(c) * 0.02;
+  mb.box(bx - hw, 0.22, bz - hd, bx + hw, 0.46, bz + hd, PAL.woodLight);
+  // листки с просьбами
+  for (let i = 0; i < 4; i++) {
+    const [lx, lz] = P(-0.12 + i * 0.08, 0.025);
+    mb.box(lx - 0.025, 0.27 + (i % 2) * 0.07, lz - 0.004, lx + 0.025, 0.33 + (i % 2) * 0.07, lz + 0.004, i % 3 ? '#f6eedc' : '#efe0b0', { ao: 1 });
+  }
+  mb.box(bx - hw - 0.03, 0.46, bz - hd - 0.03, bx + hw + 0.03, 0.5, bz + hd + 0.03, PAL.roof[1]);
+}
+
+// шатёр переселенцев (если набор моделей не загружен)
+function tentShape(mb, x, z, w, d, h, color) {
+  mb.gable(x - w / 2, z - d / 2, x + w / 2, z + d / 2, 0, h, color, { axis: 'z', end: shadeHex(color, 0.92), over: 0.02, endOver: 0.01, ridges: false });
+}
+
+function centerModel(mb, b) {
+  const st = b.tier || 0;
+  const gold = PAL.gold;
+  // готовые мелочи набора (если он загружен), иначе — свои простые фигуры
+  const P = (name, x, z, rot, h, y) => !!mb.prop && mb.prop(name, x, y || 0, z, rot || 0, h);
+
+  if (st === 0) {
+    // Лагерь переселенцев: шатры, костёр, повозка с пожитками, знамя и доска для просьб
+    if (!P('Small Tent', 1.05, 1.1, 0.35, 0.72)) tentShape(mb, 1.05, 1.1, 0.8, 1.0, 0.6, PAL.fabric);
+    if (!P('Small Tent', 2.95, 0.95, -0.5, 0.78)) tentShape(mb, 2.95, 0.95, 0.85, 1.0, 0.64, '#e9d9b6');
+    if (!P('Small Tent', 0.85, 2.75, 1.5, 0.66)) tentShape(mb, 0.85, 2.75, 0.75, 0.9, 0.55, '#d9c49c');
+    if (!P('Campfire', 2.2, 2.25, 0, 0.16)) {
+      for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2; mb.blob(2.2 + Math.cos(a) * 0.16, 0.04, 2.25 + Math.sin(a) * 0.16, 0.05, 0.04, 0.05, PAL.stoneDark); }
+    }
+    centerFire(mb, 2.2, 0.05, 2.25, 1.1, true);
+    for (const [x, z, r] of [[1.75, 2.05, 0.4], [2.6, 2.6, -0.5], [2.15, 2.8, 1.5]]) {
+      if (!P('Log', x, z, r, 0.1)) mb.cyl(x, 0.05, z, 0.05, 0.3, PAL.wood, { segs: 6 });
+    }
+    if (!P('Horse Cart', 3.25, 2.55, 2.4, 0.6)) { mb.box(2.95, 0.12, 2.3, 3.55, 0.3, 2.8, PAL.wood); mb.cyl(3.05, 0.12, 2.25, 0.12, 0.04, PAL.woodDark, { segs: 10 }); }
+    if (!P('Hay bal', 3.5, 1.75, 0.3, 0.2)) mb.box(3.35, 0, 1.6, 3.65, 0.2, 1.9, PAL.thatch);
+    if (!P('Closed Barrel', 1.75, 0.45, 0, 0.18)) mb.cyl(1.75, 0, 0.45, 0.09, 0.18, PAL.wood, { segs: 8 });
+    if (!P('Basket', 1.95, 0.55, 0, 0.08)) crate(mb, 1.95, 0.55, 0.8);
+    crate(mb, 3.6, 3.05, 1);
+    crate(mb, 3.45, 3.25, 0.8);
+    if (!P('Banner', 2.0, 3.55, 0, 0.9)) { mb.box(1.98, 0, 3.53, 2.02, 0.9, 3.57, PAL.woodDark); mb.box(2.02, 0.5, 3.54, 2.26, 0.86, 3.56, PAL.red); }
+    noticeBoard(mb, 0.75, 3.55, 0);
+    treeOlive(mb, 3.6, 0.35, 0.8);
+    bush(mb, 0.25, 0.4, 1.1, PAL.leaf);
+    return;
+  }
+
+  if (st === 1) {
+    // Дом старосты: бревенчато-оштукатуренный дом с крыльцом, колокол на столбе, доска для просьб
+    const x0 = 0.75, x1 = 3.25, z0 = 0.55, z1 = 2.35, H = 0.78;
+    mb.wall(x0, 0, z0, x1, H, z1, PAL.plaster[1], { cornice: false });
+    quoins(mb, x0, z0, x1, z1, 0.07, H, PAL.woodDark);
+    mb.box(x0 - 0.02, H - 0.05, z0 - 0.02, x1 + 0.02, H, z1 + 0.02, PAL.woodDark);
+    mb.box(x0 - 0.02, 0.38, z1, x1 + 0.02, 0.42, z1 + 0.02, PAL.woodDark);
+    mb.gable(x0, z0, x1, z1, H, 0.55, PAL.roof[0], { axis: 'x', end: PAL.plaster[1], over: 0.1 });
+    mb.door('z+', z1, 2.0, 0.3, 0.56, { color: PAL.door, frame: PAL.woodLight });
+    for (const u of [1.2, 2.8]) mb.window('z+', z1, u, 0.48, 0.2, 0.22, PAL.shutter[0], { flowers: true, seed: 2 });
+    for (const u of [1.0, 1.9]) mb.window('x+', x1, u, 0.48, 0.18, 0.2, PAL.shutter[0]);
+    mb.window('x-', x0, 1.45, 0.48, 0.18, 0.2, PAL.shutter[0]);
+    // крыльцо на столбах
+    mb.box(1.25, 0, z1, 2.75, 0.06, z1 + 0.55, PAL.woodLight);
+    for (const x of [1.3, 2.7]) mb.box(x - 0.03, 0.06, z1 + 0.48, x + 0.03, 0.62, z1 + 0.54, PAL.wood);
+    mb.gable(1.18, z1 - 0.02, 2.82, z1 + 0.62, 0.62, 0.16, PAL.roof[1], { axis: 'z', end: PAL.wood, over: 0.03, ridges: false });
+    // колокол на столбе
+    mb.box(3.45, 0, 3.2, 3.5, 0.95, 3.25, PAL.woodDark);
+    mb.box(3.5, 0, 3.2, 3.55, 0.95, 3.25, PAL.woodDark);
+    mb.box(3.33, 0.92, 3.18, 3.67, 0.97, 3.27, PAL.woodDark);
+    mb.cyl(3.5, 0.72, 3.225, 0.08, 0.18, PAL.bronze, { segs: 10, rTop: 0.035 });
+    noticeBoard(mb, 0.65, 3.35, 0);
+    if (!P('Banner', 0.35, 2.55, 0, 0.85)) { mb.box(0.33, 0, 2.53, 0.37, 0.85, 2.57, PAL.woodDark); mb.box(0.37, 0.48, 2.54, 0.6, 0.82, 2.56, PAL.red); }
+    if (!P('Closed Barrel', 3.55, 0.75, 0, 0.18)) mb.cyl(3.55, 0, 0.75, 0.09, 0.18, PAL.wood, { segs: 8 });
+    amphora(mb, 3.6, 1.05, 0.9);
+    pot(mb, 1.15, 2.95, 1, PAL.flowers[0]);
+    pot(mb, 2.85, 2.95, 1, PAL.flowers[2]);
+    treeOlive(mb, 0.35, 0.45, 0.85);
+    bush(mb, 3.65, 2.15, 1, PAL.leaf);
+    return;
+  }
+
+  if (st === 2) {
+    // Курия: каменный зал совета с портиком, ступени, жаровни
+    const x0 = 0.7, x1 = 3.3, z0 = 0.5, z1 = 2.45, y0 = 0.16, H = 1.02;
+    for (let i = 0; i < 3; i++) mb.box(x0 - 0.12 + i * 0.04, i * 0.055, z0 - 0.12 + i * 0.04, x1 + 0.12 - i * 0.04, (i + 1) * 0.055, z1 + 0.62 - i * 0.04, i % 2 ? PAL.stoneLight : PAL.stone);
+    mb.wall(x0, y0, z0, x1, y0 + H, z1, PAL.plaster[3], { plinth: false, band: y0 + 0.62 });
+    for (const u of [1.05, 2.95]) mb.window('z+', z1, u, y0 + 0.42, 0.16, 0.28, null, { frame: PAL.marble });
+    windowsAround(mb, x0, z0, x1, z1, y0 + 0.42, 0.5, 0.14, 0.26, null, true, { frame: PAL.marble });
+    mb.arch('z+', z1, 2.0, 0.36, y0, 0.62, '#e3d7bd', 0.006);
+    mb.arch('z+', z1, 2.0, 0.3, y0, 0.58, PAL.door, 0.01);
+    for (let i = 0; i < 4; i++) column(mb, 1.1 + i * 0.6, z1 + 0.42, y0, H - 0.08, 0.055);
+    mb.box(0.92, y0 + H - 0.08, z1 - 0.02, 3.08, y0 + H, z1 + 0.52, PAL.marble);
+    mb.gable(x0 - 0.04, z0 - 0.04, x1 + 0.04, z1 + 0.56, y0 + H, 0.5, PAL.roof[0], { axis: 'z', end: PAL.marble, over: 0.06, endOver: 0.04 });
+    mb.cyl(2.0, y0 + H + 0.16, z1 + 0.565, 0.06, 0.015, gold, { segs: 12, phase: 0 });
+    for (let i = 0; i < 3; i++) mb.box(1.35 + i * 0.05, 0, z1 + 0.56 + i * 0.09, 2.65 - i * 0.05, 0.16 - i * 0.05, z1 + 0.65 + i * 0.09, PAL.stoneLight);
+    for (const x of [0.45, 3.55]) {
+      if (P('Floor Torch', x, 3.15, 0, 0.42)) centerFire(mb, x, 0.4, 3.15, 0.8);
+      else { mb.cyl(x, 0, 3.15, 0.05, 0.38, PAL.bronze, { segs: 8 }); centerFire(mb, x, 0.38, 3.15, 0.8); }
+    }
+    noticeBoard(mb, 0.55, 3.6, 0);
+    statueFigure(mb, 3.45, 3.65, 0, 0.75, PAL.marble);
+    treeCypress(mb, 0.2, 0.35, 0.8);
+    treeCypress(mb, 3.8, 0.35, 0.8);
+    pot(mb, 1.25, 3.55, 1, PAL.flowers[1]);
+    pot(mb, 2.75, 3.55, 1, PAL.flowers[3]);
+    return;
+  }
+
+  // 3–6: базилика → большая базилика → дворец наместника → императорский дворец
+  const rich = st >= 4, palace = st >= 5, imperial = st >= 6;
+  const y0 = 0.2;
+  // ступенчатое основание по форме здания (не квадрат: с выступом портика)
+  for (let i = 0; i < 3; i++) {
+    const k = i * 0.045;
+    mb.box(0.25 + k, i * 0.066, 0.45 + k, 3.75 - k, (i + 1) * 0.066, 2.75 - k, i % 2 ? PAL.stoneLight : PAL.stone);
+    mb.box(0.75 + k, i * 0.066, 2.7, 3.25 - k, (i + 1) * 0.066, 3.45 - k, i % 2 ? PAL.stoneLight : PAL.stone);
+  }
+  const wallC = palace ? PAL.marble : PAL.plaster[3];
+  if (!palace) {
+    // базилика: высокий средний неф с окнами наверху и низкие боковые нефы
+    const H1 = 0.78, H2 = 1.42;
+    mb.wall(0.4, y0, 0.6, 3.6, y0 + H1, 2.62, wallC, { plinth: false });
+    mb.wall(1.0, y0 + H1, 0.75, 3.0, y0 + H2, 2.5, wallC, { plinth: false });
+    for (let i = 0; i < 4; i++) {
+      mb.window('x+', 3.0, 0.95 + i * 0.42, y0 + H1 + 0.32, 0.14, 0.24, null, { frame: PAL.marble });
+      mb.window('x-', 1.0, 0.95 + i * 0.42, y0 + H1 + 0.32, 0.14, 0.24, null, { frame: PAL.marble });
+    }
+    for (let i = 0; i < 5; i++) {
+      mb.arch('x+', 3.6, 0.85 + i * 0.4, 0.2, y0 + 0.08, 0.5, '#5a4a3a');
+      mb.arch('x-', 0.4, 0.85 + i * 0.4, 0.2, y0 + 0.08, 0.5, '#5a4a3a');
+    }
+    const roofC = rich ? '#8fa29c' : PAL.roof[0];
+    mb.gable(0.33, 0.55, 1.05, 2.67, y0 + H1, 0.22, roofC, { axis: 'z', end: wallC, over: 0.04, ridges: false });
+    mb.gable(2.95, 0.55, 3.67, 2.67, y0 + H1, 0.22, roofC, { axis: 'z', end: wallC, over: 0.04, ridges: false });
+    mb.gable(0.94, 0.7, 3.06, 2.56, y0 + H2, 0.5, roofC, { axis: 'z', end: PAL.marble, over: 0.06, endOver: 0.04 });
+    if (rich) {
+      // апсида сзади — полукруглая, под медной кровлей
+      mb.cyl(2.0, y0, 0.6, 0.62, H1, wallC, { segs: 16, top: false });
+      mb.dome(2.0, y0 + H1, 0.6, 0.64, 0.42, '#8fa29c', 16, true);
+    }
+  } else {
+    // дворец: два этажа аркад, барабан с куполом посередине
+    const H1 = 0.62, H2 = 1.2;
+    mb.wall(0.35, y0, 0.55, 3.65, y0 + H1, 2.65, wallC, { plinth: false, corniceColor: PAL.marbleShade });
+    mb.wall(0.45, y0 + H1, 0.65, 3.55, y0 + H2, 2.55, wallC, { plinth: false, corniceColor: PAL.marbleShade });
+    for (let i = 0; i < 7; i++) {
+      const u = 0.6 + i * 0.47;
+      mb.arch('z+', 2.65, u, 0.24, y0 + 0.04, 0.48, '#4e3e30');
+      mb.window('z+', 2.55, u, y0 + H1 + 0.3, 0.15, 0.26, null, { frame: gold });
+    }
+    for (let i = 0; i < 4; i++) {
+      mb.arch('x+', 3.65, 0.85 + i * 0.5, 0.24, y0 + 0.04, 0.48, '#4e3e30');
+      mb.arch('x-', 0.35, 0.85 + i * 0.5, 0.24, y0 + 0.04, 0.48, '#4e3e30');
+      mb.window('x+', 3.55, 0.85 + i * 0.5, y0 + H1 + 0.3, 0.15, 0.26, null, { frame: gold });
+      mb.window('x-', 0.45, 0.85 + i * 0.5, y0 + H1 + 0.3, 0.15, 0.26, null, { frame: gold });
+    }
+    mb.hip(0.4, 0.6, 3.6, 2.6, y0 + H2, 0.32, PAL.roof[2], { over: 0.06 });
+    // барабан и купол
+    const dc = imperial ? gold : '#c7c2b6';
+    mb.cyl(2.0, y0 + H2, 1.55, 0.72, 0.36, PAL.marble, { segs: 24 });
+    for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; column(mb, 2.0 + Math.cos(a) * 0.76, 1.55 + Math.sin(a) * 0.76, y0 + H2, 0.36, 0.035); }
+    mb.cyl(2.0, y0 + H2 + 0.36, 1.55, 0.8, 0.06, PAL.marbleShade, { segs: 24 });
+    mb.dome(2.0, y0 + H2 + 0.42, 1.55, 0.74, 0.62, dc, 24, true);
+    mb.cyl(2.0, y0 + H2 + 1.02, 1.55, 0.09, 0.14, PAL.marble, { segs: 10 });
+    mb.blob(2.0, y0 + H2 + 1.2, 1.55, 0.07, 0.07, 0.07, gold, { jitter: 0, detail: 1 });
+  }
+  // портик во всю высоту с фронтоном
+  const pc = palace ? 6 : 4, pw = palace ? 2.5 : 2.3, colH = palace ? 1.22 : 1.12;
+  for (let i = 0; i < pc; i++) column(mb, 2.0 - pw / 2 + i * pw / (pc - 1), 3.2, y0, colH, palace ? 0.06 : 0.065, PAL.marble);
+  mb.box(2.0 - pw / 2 - 0.12, y0 + colH, 2.6, 2.0 + pw / 2 + 0.12, y0 + colH + 0.1, 3.32, PAL.marble);
+  for (let i = 0; i < 14; i++) mb.box(2.0 - pw / 2 - 0.05 + i * (pw + 0.1) / 14, y0 + colH + 0.02, 3.32, 2.0 - pw / 2 + 0.02 + i * (pw + 0.1) / 14, y0 + colH + 0.08, 3.335, gold, { ao: 1 });
+  mb.gable(2.0 - pw / 2 - 0.12, 2.6, 2.0 + pw / 2 + 0.12, 3.34, y0 + colH + 0.1, 0.42, palace ? PAL.roof[2] : (rich ? '#8fa29c' : PAL.roof[0]), { axis: 'z', end: PAL.marble, over: 0.05, endOver: 0.03 });
+  mb.cyl(2.0, y0 + colH + 0.25, 3.345, 0.08, 0.015, gold, { segs: 14 });
+  for (const x of [2.0 - pw / 2 - 0.1, 2.0 + pw / 2 + 0.1]) mb.blob(x, y0 + colH + 0.16, 3.33, 0.05, 0.05, 0.05, gold, { jitter: 0, detail: 1 });
+  // двери за колоннадой
+  mb.arch('z+', 2.62, 2.0, 0.42, y0, 0.78, '#e3d7bd', 0.006);
+  mb.arch('z+', 2.62, 2.0, 0.36, y0, 0.74, palace ? '#5a3a20' : PAL.door, 0.01);
+  // широкие ступени
+  for (let i = 0; i < 3; i++) mb.box(1.05 - i * 0.06, 0, 3.4 + i * 0.1, 2.95 + i * 0.06, 0.2 - i * 0.066, 3.5 + i * 0.1, PAL.stoneLight);
+  // знамёна, огни, статуи
+  for (const x of [0.35, 3.65]) {
+    const th = imperial ? 0.55 : 0.42;
+    if (!P('Floor Torch', x, 3.45, 0, th)) mb.cyl(x, 0, 3.45, 0.05, th - 0.02, PAL.bronze, { segs: 8 });
+    centerFire(mb, x, th - 0.02, 3.45, imperial ? 1.05 : 0.8);
+  }
+  for (const x of [0.6, 3.4]) if (!P('Banner', x, 2.95, 0, rich ? 1.05 : 0.9)) { mb.box(x - 0.02, 0, 2.93, x + 0.02, 1, 2.97, PAL.woodDark); mb.box(x + 0.02, 0.55, 2.94, x + 0.26, 0.95, 2.96, PAL.red); }
+  if (rich) {
+    statueFigure(mb, 0.55, 3.75, 0, 0.85, imperial ? gold : PAL.marble, imperial);
+    statueFigure(mb, 3.45, 3.75, 0, 0.85, imperial ? gold : PAL.marble, imperial);
+  } else noticeBoard(mb, 0.55, 3.7, 0);
+  if (imperial) {
+    // квадрига на фронтоне
+    mb.box(1.72, y0 + colH + 0.52, 3.05, 2.28, y0 + colH + 0.58, 3.25, PAL.bronze);
+    for (let i = 0; i < 4; i++) {
+      const x = 1.76 + i * 0.16;
+      mb.box(x - 0.025, y0 + colH + 0.58, 3.08, x + 0.025, y0 + colH + 0.72, 3.24, gold);
+      mb.box(x - 0.02, y0 + colH + 0.7, 3.2, x + 0.02, y0 + colH + 0.8, 3.27, gold);
+    }
+    statueFigure(mb, 2.0, 3.1, y0 + colH + 0.58, 0.45, gold, true);
+  }
+  treeCypress(mb, 0.15, 0.3, 0.9);
+  treeCypress(mb, 3.85, 0.3, 0.9);
+  if (!palace) { pot(mb, 0.25, 2.4, 1.1, PAL.flowers[0]); pot(mb, 3.75, 2.4, 1.1, PAL.flowers[2]); }
+}
+
 function wonderModel(mb, b) {
   switch (b.type) {
     case 'colosseum': {
@@ -1782,6 +2004,7 @@ function modelKey(b) {
   if (d.kind === 'house') return `${b.type}:${b.tier}:${variantOf(b)}:${b.id % 12}`;
   if (b.type === 'flowers' || b.type === 'mosaic') return `${b.type}:${b.id % 6}`;
   if (b.type === 'market' || b.type === 'fountain') return `${b.type}:${b.id % 5}`;
+  if (b.type === 'center') return `center:${b.tier || 0}`;
   return b.type;
 }
 
@@ -1807,6 +2030,7 @@ function buildModelNow(b) {
   const info = { id: d.kind === 'house' ? b.id % 12 + 12 : b.id, type: b.type, tier: b.tier || 0, variant: variantOf(b) };
   if (b.type === 'house') plebHouse(mb, info);
   else if (b.type === 'domus') patricianHouse(mb, info);
+  else if (b.type === 'center') centerModel(mb, info);
   else if (d.kind === 'decor') decorModel(mb, info);
   else if (d.kind === 'wonder') wonderModel(mb, info);
   else if (d.kind === 'producer' || d.kind === 'storage') productionModel(mb, info);

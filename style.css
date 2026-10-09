@@ -191,6 +191,9 @@ kbd { display: inline-block; min-width: 20px; padding: 1px 6px; border: 1px soli
 .alert .ico { width: 26px; height: 26px; }
 .alert img.ico { width: 34px; height: 34px; }
 .alert .badge { top: -6px; right: -6px; background: var(--terra); }
+/* просьба жителей: облачко с тем, что просят построить */
+.alert.req { border-color: rgba(195, 148, 52, 0.7); background: var(--noise), #fff8e6; border-radius: 14px 14px 14px 4px; }
+.alert.req img.ico { width: 34px; height: 34px; }
 
 /* ---------- Задания — под карточкой города ---------- */
 
