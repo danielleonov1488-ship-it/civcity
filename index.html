@@ -43,6 +43,7 @@
       <button type="button" id="rot-left" data-tip="rotl" data-svg="rotl" aria-label="Повернуть влево"></button>
       <button type="button" id="rot-right" data-tip="rotr" data-svg="rotr" aria-label="Повернуть вправо"></button>
     </div>
+    <button type="button" id="home-btn" class="icon-btn round" data-tip="home" data-svg="home" aria-label="К городу"></button>
     <button type="button" id="hide-ui" class="icon-btn round" data-tip="hideui" data-svg="eye" aria-label="Спрятать интерфейс"></button>
     <button type="button" id="menu-btn" class="icon-btn round" data-tip="menu" data-svg="gear" aria-label="Настройки"></button>
   </div>
@@ -81,6 +82,7 @@
 </nav>
 
 <!-- Карточка выбранного здания -->
+<div id="minimap" class="minimap"><canvas id="mm-canvas" aria-label="Карта города"></canvas><button type="button" id="mm-toggle" class="mm-toggle" data-svg="map" aria-label="Свернуть карту"></button></div>
 <aside id="inspector" class="panel" hidden>
   <button type="button" id="insp-close" class="icon-btn" data-svg="close" aria-label="Закрыть"></button>
   <div id="insp-body"></div>

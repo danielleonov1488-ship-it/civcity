@@ -295,43 +295,70 @@ const Atmos = {
     this.bugs.frustumCulled = false;
     this.bugs.count = 0;
     scene.add(this.bugs);
-    this.lifeSeed = Array.from({ length: Math.max(N, M) }, (_, i) => [hash2(i, 1, 5) - 0.5, hash2(i, 2, 5) - 0.5, hash2(i, 3, 5), hash2(i, 4, 5)]);
+  },
+
+  // Живность живёт в клетках мира: в каждой клетке по жребию решено, есть ли там бабочка, светлячок или стая
+  // и где именно. Камера только выбирает, какие клетки вблизи показать, — поэтому за экраном никто не ездит
+  cellsNear(c, cell, R, fn) {
+    const x0 = Math.floor((c.x - R) / cell), x1 = Math.floor((c.x + R) / cell);
+    const z0 = Math.floor((c.z - R) / cell), z1 = Math.floor((c.z + R) / cell);
+    for (let gx = x0; gx <= x1; gx++) for (let gz = z0; gz <= z1; gz++) if (fn(gx, gz) === false) return;
+  },
+
+  // насекомым нужна трава: не вода и не мостовая
+  grassy(x, z) {
+    const tx = Math.floor(x), tz = Math.floor(z);
+    return !isWater(groundAt(tx, tz)) && !Roads.covers(tx, tz);
   },
 
   updateLife(T, c) {
-    const m = this._m, R = 14;
-    // бабочки — только днём и вблизи, иначе их всё равно не разглядеть
-    const day = this.night < 0.4 && c.dist < 30;
+    const m = this._m, col = this._col || (this._col = new THREE.Color());
+    const cols = ['#ffffff', '#f6d24a', '#f39a3a', '#7ab0f0', '#f08ab8'];
+    // бабочки — только днём и вблизи, иначе их всё равно не разглядеть; у каждой своё место над травой
     let n = 0;
-    if (day) {
-      for (let i = 0; i < 36; i++) {
-        const [a, b, h, ph] = this.lifeSeed[i];
-        const bx = c.x + a * R * 2, bz = c.z + b * R * 2;
-        const x = bx + Math.sin(T * 0.7 + ph * 9) * 0.8 + Math.sin(T * 2.3 + i) * 0.15;
-        const z = bz + Math.cos(T * 0.6 + ph * 7) * 0.8;
-        const y = 0.35 + h * 0.6 + Math.sin(T * 3 + i) * 0.08;
+    if (this.night < 0.4 && c.dist < 30) {
+      const R = 16, cap = this.flies.instanceMatrix.count;
+      this.cellsNear(c, 4, R, (gx, gz) => {
+        if (n >= cap) return false;
+        if (hash2(gx, gz, 21) > 0.42) return;
+        const ax = (gx + 0.2 + hash2(gx, gz, 22) * 0.6) * 4, az = (gz + 0.2 + hash2(gx, gz, 23) * 0.6) * 4;
+        const d = Math.hypot(ax - c.x, az - c.z);
+        if (d > R || !this.grassy(ax, az)) return;
+        const ph = hash2(gx, gz, 24), i = ph * 100;
+        const x = ax + Math.sin(T * 0.7 + ph * 9) * 0.8 + Math.sin(T * 2.3 + i) * 0.15;
+        const z = az + Math.cos(T * 0.6 + ph * 7) * 0.8;
+        const y = 0.35 + hash2(gx, gz, 25) * 0.6 + Math.sin(T * 3 + i) * 0.08;
+        const fade = Math.min(1, (R - d) / 3);
         const flap = 0.25 + Math.abs(Math.sin(T * 18 + i * 3)) * 0.9;
         this._e.set(0, T * 0.5 + ph * 6, 0);
         this._q.setFromEuler(this._e);
-        m.compose(new THREE.Vector3(x, y, z), this._q, new THREE.Vector3(flap * 1.2, 1, 1.2));
-        this.flies.setMatrixAt(n++, m);
-      }
+        m.compose(new THREE.Vector3(x, y, z), this._q, new THREE.Vector3(flap * 1.2 * fade, fade, 1.2 * fade));
+        this.flies.setMatrixAt(n, m);
+        this.flies.setColorAt(n, col.set(cols[Math.floor(hash2(gx, gz, 26) * cols.length)]));
+        n++;
+      });
+      if (this.flies.instanceColor) this.flies.instanceColor.needsUpdate = true;
     }
     this.flies.count = n;
     this.flies.instanceMatrix.needsUpdate = true;
-    // светлячки — ночью, мерцают у травы и деревьев
+    // светлячки — ночью, мерцают у травы и деревьев, каждый у своего места
     n = 0;
     if (this.night > 0.5) {
-      for (let i = 0; i < 70; i++) {
-        const [a, b, h, ph] = this.lifeSeed[i];
-        const x = c.x + a * R * 2.4 + Math.sin(T * 0.3 + ph * 11) * 0.6;
-        const z = c.z + b * R * 2.4 + Math.cos(T * 0.25 + ph * 13) * 0.6;
-        const y = 0.2 + h * 0.7 + Math.sin(T * 0.8 + i) * 0.1;
-        const blink = Math.max(0, Math.sin(T * (1.2 + h) + ph * 20)) * (this.night - 0.5) * 2;
+      const R = 18, cap = this.bugs.instanceMatrix.count;
+      this.cellsNear(c, 3, R, (gx, gz) => {
+        if (n >= cap) return false;
+        if (hash2(gx, gz, 41) > 0.45) return;
+        const ax = (gx + hash2(gx, gz, 42)) * 3, az = (gz + hash2(gx, gz, 43)) * 3;
+        const d = Math.hypot(ax - c.x, az - c.z);
+        if (d > R || !this.grassy(ax, az)) return;
+        const h = hash2(gx, gz, 44), ph = hash2(gx, gz, 45);
+        const x = ax + Math.sin(T * 0.3 + ph * 11) * 0.6, z = az + Math.cos(T * 0.25 + ph * 13) * 0.6;
+        const y = 0.2 + h * 0.7 + Math.sin(T * 0.8 + ph * 40) * 0.1;
+        const blink = Math.max(0, Math.sin(T * (1.2 + h) + ph * 20)) * (this.night - 0.5) * 2 * Math.min(1, (R - d) / 3);
         m.makeScale(blink, blink, blink);
         m.setPosition(x, y, z);
         this.bugs.setMatrixAt(n++, m);
-      }
+      });
     }
     this.bugs.count = n;
     this.bugs.instanceMatrix.needsUpdate = true;
@@ -344,36 +371,42 @@ const Atmos = {
     const v = [0, 0, 0, -0.22, 0.04, -0.08, -0.05, 0, 0.05, 0, 0, 0, 0.22, 0.04, -0.08, 0.05, 0, 0.05];
     g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
     g.computeVertexNormals();
-    this.birdMesh = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ color: '#3b3632', side: THREE.DoubleSide, fog: true }), 30);
+    this.birdMesh = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ color: '#3b3632', side: THREE.DoubleSide, fog: true }), 48);
     this.birdMesh.frustumCulled = false;
+    this.birdMesh.count = 0;
     scene.add(this.birdMesh);
-    this.birds = [];
-    for (let f = 0; f < 3; f++) {
-      const n = 6 + f * 2;
-      for (let i = 0; i < n; i++) this.birds.push({ f, i, ph: Math.random() * 6.28, off: [(Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 1.6] });
-    }
     this._m = new THREE.Matrix4();
     this._q = new THREE.Quaternion();
     this._e = new THREE.Euler();
   },
 
+  // Стаи птиц кружат каждая над своей точкой мира (примерно одна стая на клетку 36×36); камера только выбирает, какие показать
   updateBirds(T, c) {
-    const m = this._m;
+    const m = this._m, cap = this.birdMesh.instanceMatrix.count;
     let n = 0;
-    const show = this.night < 0.6;
-    for (const b of this.birds) {
-      if (!show) break;
-      const R = 9 + b.f * 5, sp = 0.12 + b.f * 0.03;
-      const a = T * sp + b.f * 2.1;
-      const cx = c.x + Math.cos(a) * R + b.off[0], cz = c.z + Math.sin(a * 1.3) * R * 0.7 + b.off[2];
-      const y = 6 + b.f * 1.5 + b.off[1] + Math.sin(T * 0.7 + b.i) * 0.3;
-      const dx = -Math.sin(a) * R, dz = Math.cos(a * 1.3) * R * 0.7 * 1.3;
-      const yaw = Math.atan2(dx, dz);
-      const flap = 0.55 + Math.abs(Math.sin(T * 9 + b.ph)) * 0.9;
-      this._e.set(0, yaw, 0);
-      this._q.setFromEuler(this._e);
-      m.compose(new THREE.Vector3(cx, y, cz), this._q, new THREE.Vector3(0.85, flap * 0.85, 0.85));
-      this.birdMesh.setMatrixAt(n++, m);
+    if (this.night < 0.6) {
+      const R = 60 + c.dist * 0.5, CELL = 36;
+      this.cellsNear(c, CELL, R, (gx, gz) => {
+        if (n >= cap) return false;
+        if (hash2(gx, gz, 31) > 0.5) return;
+        const ax = (gx + 0.25 + hash2(gx, gz, 32) * 0.5) * CELL, az = (gz + 0.25 + hash2(gx, gz, 33) * 0.5) * CELL;
+        if (Math.hypot(ax - c.x, az - c.z) > R) return;
+        const size = 4 + Math.floor(hash2(gx, gz, 34) * 5);
+        const rad = 6 + hash2(gx, gz, 35) * 6, h0 = 6 + hash2(gx, gz, 36) * 2.5;
+        const sp = (0.11 + hash2(gx, gz, 37) * 0.05) * (hash2(gx, gz, 38) < 0.5 ? 1 : -1);
+        for (let k = 0; k < size && n < cap; k++) {
+          const ox = (hash2(gx * 13 + k, gz, 39) - 0.5) * 1.6, oy = (hash2(gx, gz * 13 + k, 40) - 0.5) * 0.6, oz = (hash2(gx + k * 7, gz - k, 41) - 0.5) * 1.6;
+          const a = T * sp + k * 0.12 + hash2(gx, gz, 42) * 6.28;
+          const cx = ax + Math.cos(a) * rad + ox, cz = az + Math.sin(a * 1.3) * rad * 0.7 + oz;
+          const y = h0 + oy + Math.sin(T * 0.7 + k) * 0.3;
+          const dx = -Math.sin(a) * rad * sp, dz = Math.cos(a * 1.3) * rad * 0.7 * 1.3 * sp;
+          const flap = 0.55 + Math.abs(Math.sin(T * 9 + k * 1.7 + gx)) * 0.9;
+          this._e.set(0, Math.atan2(dx, dz), 0);
+          this._q.setFromEuler(this._e);
+          m.compose(new THREE.Vector3(cx, y, cz), this._q, new THREE.Vector3(0.85, flap * 0.85, 0.85));
+          this.birdMesh.setMatrixAt(n++, m);
+        }
+      });
     }
     this.birdMesh.count = n;
     this.birdMesh.instanceMatrix.needsUpdate = true;

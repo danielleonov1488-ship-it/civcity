@@ -50,6 +50,7 @@ const UI = {
     document.querySelectorAll('[data-speed]').forEach(btn => btn.addEventListener('click', () => this.setSpeed(+btn.dataset.speed)));
     $('menu-btn').onclick = () => this.openMenu();
     $('hide-ui').onclick = () => this.setUiHidden(true);
+    $('home-btn').onclick = () => Engine.flyHome();
     $('show-ui').onclick = () => this.setUiHidden(false);
     $('city-btn').onclick = () => this.openMenu();
     $('rot-left').onclick = () => Engine.rotate(-1);
@@ -936,6 +937,7 @@ const UI = {
       case 'speed2': return T('Скорость ×2', 'Клавиша 2');
       case 'speed3': return T('Скорость ×3', 'Клавиша 3');
       case 'rotl': return T('Повернуть камеру', 'Клавиша Q');
+      case 'home': return T('К городу', 'Камера вернётся к центру города. Клавиша Home');
       case 'hideui': return T('Спрятать интерфейс', 'Любоваться городом. Вернуть — кнопкой с глазом в углу или клавишей U');
       case 'rotr': return T('Повернуть камеру', 'Клавиша E');
       case 'menu': return T('Настройки', 'Налоги, графика, смена дня и ночи, новый город.');

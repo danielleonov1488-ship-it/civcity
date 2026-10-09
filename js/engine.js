@@ -13,7 +13,9 @@ function catmull(p0, p1, p2, p3, t) {
   return p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
 }
 const PITCH_NEAR = 0.3, PITCH_FAR = 0.98;
-const DIST_MIN = 6, DIST_MAX = 75;
+// DIST_MAX — сколько можно отдалить камеру; DIST_LOOK — до этого расстояния меняются наклон и размытие
+// (дальше камера просто отъезжает, вид вблизи остаётся прежним)
+const DIST_MIN = 6, DIST_MAX = 120, DIST_LOOK = 75;
 
 // simple — простые модели травы и цветов (в разы легче); natShadow — тени от деревьев и камней
 const QUALITY = {
@@ -181,7 +183,7 @@ const Engine = {
     c.yaw += (c.yawTarget - c.yaw) * k;
     c.dist += (c.distTarget - c.dist) * k;
     if (c.tx !== undefined) { c.x += (c.tx - c.x) * k; c.z += (c.tz - c.z) * k; }
-    const t = clamp((c.dist - DIST_MIN) / (DIST_MAX - DIST_MIN), 0, 1);
+    const t = clamp((c.dist - DIST_MIN) / (DIST_LOOK - DIST_MIN), 0, 1);
     // наклон — по расстоянию; кинокамера задаёт свой наклон и высоту точки взгляда
     const pitch = c.pitch !== undefined && c.pitch !== null ? c.pitch : lerp(PITCH_NEAR, PITCH_FAR, Math.pow(t, 0.4));
     const cp = Math.cos(pitch), ly = c.lookY || 0;
@@ -200,7 +202,7 @@ const Engine = {
     sun.target.position.set(c.x, 0, c.z);
     this.fill.position.set(c.x - dir.x * 30, 18, c.z - dir.z * 30);
     this.fill.target.position.set(c.x, 0, c.z);
-    const half = clamp(c.dist * 0.95, 12, 60);
+    const half = clamp(c.dist * 0.95, 12, 100);
     const sc = sun.shadow.camera;
     if (Math.abs(sc.right - half) > 0.5) {
       sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
@@ -228,6 +230,23 @@ const Engine = {
   },
 
   lookAt(x, z) { this.cam.tx = x; this.cam.tz = z; },
+
+  // Центр города: середина построек (крайние 10% с каждой стороны не в счёт — чтобы одинокая ферма вдали
+  // не утаскивала центр); пока построек нет — середина своего участка
+  cityCenter() {
+    const xs = [], zs = [];
+    for (const b of state.buildings.values()) { xs.push(b.x + b.w / 2); zs.push(b.y + b.h / 2); }
+    if (!xs.length) return [PLOT / 2, PLOT / 2];
+    const mid = a => { a.sort((p, q) => p - q); const lo = Math.floor(a.length * 0.1), hi = Math.ceil(a.length * 0.9); const s = a.slice(lo, Math.max(hi, lo + 1)); return s.reduce((x, y) => x + y, 0) / s.length; };
+    return [mid(xs), mid(zs)];
+  },
+
+  // «К городу»: камера плавно летит к центру и встаёт на обычное расстояние
+  flyHome() {
+    const [x, z] = this.cityCenter();
+    this.lookAt(x, z);
+    this.cam.distTarget = clamp(Math.max(26, this.cam.distTarget * 0.6), DIST_MIN, 40);
+  },
 
   project(x, y, z) {
     const v = new THREE.Vector3(x, y, z).project(this.camera);
@@ -522,7 +541,7 @@ const Engine = {
 
   ensurePlots(maxBuild) {
     const c = this.cam;
-    const R = clamp(Math.ceil(c.dist * 1.9 / PLOT), 1, 5);
+    const R = clamp(Math.ceil(c.dist * 1.9 / PLOT), 1, 7);
     const cpx = plotOf(Math.floor(c.x)), cpy = plotOf(Math.floor(c.z));
     let built = 0;
     const order = [];
@@ -916,6 +935,7 @@ const Engine = {
 
   buildingsChanged(b, removed) {
     this.dirty.add(b.id);
+    if (typeof Minimap !== 'undefined') Minimap.dirty = true;
     void removed;
   },
 
@@ -1492,7 +1512,7 @@ const Engine = {
     Atmos.updateLife(this.T, this.cam);
     Atmos.follow(this.camera, this.cam);
     this.waterNormals.offset.set(this.T * 0.012, this.T * 0.008);
-    const t = clamp((this.cam.dist - DIST_MIN) / (DIST_MAX - DIST_MIN), 0, 1);
+    const t = clamp((this.cam.dist - DIST_MIN) / (DIST_LOOK - DIST_MIN), 0, 1);
     Post.render(this.scene, this.camera, { focus: this.cam.dist, dof: lerp(0.8, 0.3, t), bloom: 0.5 + Atmos.night * 0.5 });
   },
 };

@@ -22,6 +22,7 @@ const Game = {
     Input.init(Engine.renderer.domElement);
     computeCoverage();
     UI.init();
+    Minimap.init();
     if (TEST_MODE && !state.testReady) (PROMO_MODE ? Promo.setup() : Test.setup());
     else if (TEST_MODE && !PROMO_MODE) Test.update();
     UI.updateHud(true);
@@ -116,6 +117,7 @@ const Game = {
     Cats.update(dt, realDt);
     Engine.frame(dt, realDt);
     this.drawn = (this.drawn || 0) + 1;     // сколько кадров нарисовано (для проверки скорости)
+    Minimap.update();
     UI.updateLabels(realDt);
     UI.updateHud();
     this.autoQuality(realDt);

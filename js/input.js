@@ -250,6 +250,7 @@ const Input = {
     if (k === 'q' || k === 'й') Engine.rotate(-1);
     if (k === 'e' || k === 'у') Engine.rotate(1);
     if (k === 'u' || k === 'г') UI.setUiHidden(!document.body.classList.contains('ui-hidden'));
+    if (k === 'home') Engine.flyHome();
     if (k === 'z' || k === 'я') this.rotate(-1);
     if (k === 'c' || k === 'с') this.rotate(1);
     if (k === 'r' || k === 'к') this.setTool('road');
