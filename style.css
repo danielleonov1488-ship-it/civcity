@@ -531,6 +531,8 @@ body.ui-hidden .show-ui { display: flex; }
 .note { margin: 10px 0; padding: 8px 11px; border-radius: 10px; background: rgba(150, 112, 62, 0.1); font-size: 13px; }
 .note.bad { background: var(--bad-bg); color: var(--terra-deep); }
 .note.good { background: var(--good-bg); color: #3f5520; }
+.diag-report { max-height: 46vh; overflow: auto; margin: 8px 0 12px; padding: 10px 12px; border-radius: 10px; background: rgba(150, 112, 62, 0.1);
+  font: 12.5px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; user-select: text; }
 
 .switch { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; font-weight: 700; cursor: pointer; }
 .switch input { position: absolute; opacity: 0; }

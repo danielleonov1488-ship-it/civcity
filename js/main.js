@@ -115,6 +115,7 @@ const Game = {
     Walkers.update(dt, realDt);
     Cats.update(dt, realDt);
     Engine.frame(dt, realDt);
+    this.drawn = (this.drawn || 0) + 1;     // сколько кадров нарисовано (для проверки скорости)
     UI.updateLabels(realDt);
     UI.updateHud();
     this.autoQuality(realDt);

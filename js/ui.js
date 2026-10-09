@@ -760,6 +760,8 @@ const UI = {
     };
   },
 
+  qName(q) { return { low: 'Низкое', medium: 'Среднее', high: 'Высокое' }[q] || q; },
+
   // Под качеством графики: на какой видеокарте идёт игра и что делать, если не на той
   gpuNote() {
     const g = Engine.gpuInfo(), name = escapeHtml(g.name || 'не удалось узнать');
@@ -785,6 +787,7 @@ const UI = {
       <p class="field-label">Качество графики</p>
       ${seg('q', [['low', 'Низкое', 'для слабых ПК'], ['medium', 'Среднее', 'ноутбуки'], ['high', 'Высокое', 'вау-режим']], Settings.quality)}
       ${this.gpuNote()}
+      <button type="button" class="btn small ghost" id="speed-test">Проверить скорость игры</button>
       <label class="switch"><input type="checkbox" id="day-cycle" ${Settings.dayCycle ? 'checked' : ''}><span></span>Смена дня и ночи</label>
       <div class="volumes">
         <label class="vol">Музыка<input type="range" id="vol-music" min="0" max="100" value="${Math.round(Settings.music * 100)}"></label>
@@ -809,6 +812,7 @@ const UI = {
       document.querySelectorAll('[data-tax]').forEach(x => x.classList.toggle('on', x === b));
       afterCityChanged();
     });
+    $('speed-test').onclick = () => Diag.run();
     document.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
       Settings.quality = b.dataset.q;
       Settings.qAuto = false;
