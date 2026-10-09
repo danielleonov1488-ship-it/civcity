@@ -223,6 +223,17 @@ const BUILDINGS = {
     upkeep: 0.5, beauty: 8, happy: 4, radius: 10, rating: 30, unique: true,
     desc: 'Память о победах легиона. Очень красиво.' },
 
+  // VIP-постройки: открываются рейтингом легиона, стоят денарии и Славу (решение владельца) — роскошь для богатого города
+  nymphaeum: { kind: 'service', cat: 'culture', name: 'Нимфей', acc: 'нимфей', cost: { money: 1800, glory: 15 }, w: 3, h: 3, vip: true,
+    radius: 16, provides: 'water', beauty: 9, happy: 3, upkeep: 1.5, rating: 20, unique: true,
+    desc: 'Огромный фонтан-святилище нимф: полукруг ниш со статуями, каскады и бассейн. Вода и радость для большого квартала.' },
+  greattemple: { kind: 'service', cat: 'culture', name: 'Храм Венеры и Ромы', acc: 'храм Венеры и Ромы', cost: { money: 2600, glory: 25 }, w: 4, h: 4, vip: true,
+    jobs: { citizens: 3 }, radius: 26, provides: 'temple', beauty: 12, scrolls: 2, upkeep: 2.5, rating: 60, unique: true, needsRoad: true,
+    desc: 'Самый большой храм Рима: колоннада со всех сторон, золото на крыше. Благословляет полгорода и пишет свитки.' },
+  thermae: { kind: 'service', cat: 'culture', name: 'Большие термы', acc: 'большие термы', cost: { money: 4500, glory: 40 }, w: 5, h: 5, vip: true,
+    jobs: { citizens: 6 }, radius: 28, provides: 'baths', beauty: 12, happy: 6, upkeep: 4, rating: 150, unique: true, needsRoad: true,
+    desc: 'Термы императоров: залы под куполами, бассейн под открытым небом и палестра с колоннадой. Счастье всего города.' },
+
   barracks: { kind: 'military', cat: 'army', name: 'Казармы', acc: 'казармы', cost: { money: 950 }, w: 3, h: 3,
     upkeep: 2, needsRoad: true, tech: 'legion', unique: true,
     desc: 'Открывает легионеров. Отряд, прокачка и походы — в окне «Легион».' },

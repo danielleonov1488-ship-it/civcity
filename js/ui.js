@@ -325,7 +325,7 @@ const UI = {
       const unlocked = isUnlocked(type);
       const card = document.createElement('button');
       card.type = 'button';
-      card.className = 'card' + (Input.tool === type ? ' on' : '') + (unlocked ? '' : ' locked');
+      card.className = 'card' + (Input.tool === type ? ' on' : '') + (unlocked ? '' : ' locked') + (d.vip ? ' vip' : '');
       card.dataset.type = type;
       card.dataset.card = type;
       card.setAttribute('aria-label', d.name);
