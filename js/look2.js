@@ -27,7 +27,7 @@ const LOOK2_ROLES = {
   woman: ['woman'],
   patrician: ['senator', 'rich'],
   merchant: ['rich', 'common'],
-  soldier: ['rich'],
+  soldier: ['soldier'],
   child: ['common', 'woman', 'poor'],
   plebs: ['common', 'poor', 'poor', 'common'],
   citizens: ['common', 'rich', 'common'],
@@ -66,7 +66,8 @@ const Look2 = {
 
   async load() {
     const get = async n => {
-      const r = await fetch('assets/look2/' + n);
+      // no-cache: браузер сверяется с сервером, чтобы описание и данные моделей не разошлись после обновления
+      const r = await fetch('assets/look2/' + n, { cache: 'no-cache' });
       if (!r.ok) throw new Error('нет ' + n);
       return n.endsWith('.json') ? r.json() : r.arrayBuffer();
     };
@@ -280,6 +281,31 @@ if (NEW_LOOK) {
   treePine = wrap(treePine, (mb, x, z, s) => mb.prop('Pine.002', x, 0, z, h3(x, z, 7) * 6.28, 0.9 * (s || 1)));
   treeOlive = wrap(treeOlive, (mb, x, z, s) => mb.prop(pickBy(['Tree', 'Trre'], x, z), x, 0, z, h3(x, z, 8) * 6.28, 0.6 * (s || 1)));
   treeOak = wrap(treeOak, (mb, x, z, s) => mb.prop('Tree Fruits', x, 0, z, h3(x, z, 9) * 6.28, 0.85 * (s || 1)));
+  // Детали Synty у общественных зданий: жаровни с огнём, знамёна, мишени, урны, мешки со специями.
+  // [модель, x, z, поворот, высота в клетках, огонь сверху]
+  const EXTRAS = {
+    temple: [['Floor Torch', 0.62, 2.7, 0, 0.42, 1], ['Floor Torch', 2.38, 2.7, 0, 0.42, 1]],
+    forum: [['Banner', 0.45, 2.95, 0, 0.85], ['Banner', 3.55, 2.95, 0, 0.85], ['Floor Torch', 1.25, 2.95, 0, 0.42, 1], ['Floor Torch', 2.75, 2.95, 0, 0.42, 1]],
+    barracks: [['Banner', 2.65, 2.45, 0, 0.75], ['Weapon shelf', 2.55, 1.25, Math.PI, 0.3], ['Target', 1.72, 1.95, 0, 0.26]],
+    spearcamp: [['Weapon shelf', 2.0, 1.6, 0, 0.3], ['Target', 2.4, 2.3, 0.4, 0.26]],
+    range: [['Weapon shelf', 2.45, 1.75, Math.PI / 2, 0.3]],
+    market: [['Spice Bucket', 0.32, 1.0, 0, 0.1], ['Spice Bag', 0.5, 1.08, 0.6, 0.09], ['Basket.002', 2.62, 1.02, 0, 0.07], ['Closed Barrel', 2.78, 1.2, 0, 0.16]],
+    baths: [['Monumental Jar', 0.85, 2.8, 0, 0.28], ['Monumental Jar', 2.15, 2.8, 0, 0.28]],
+    theatre: [['Banner.001', 0.35, 3.05, 0, 0.75], ['Banner.001', 3.65, 3.05, 0, 0.75]],
+    tradepost: [['Closed Barrel', 2.75, 1.8, 0, 0.16], ['Spice Bag', 2.45, 1.95, 0.3, 0.09]],
+  };
+  const addExtras = (mb, b) => {
+    for (const [name, x, z, rot, h, fire] of EXTRAS[b.type] || []) {
+      if (!mb.prop(name, x, 0.03, z, rot, h)) continue;
+      if (fire) {
+        mb.glow = true;
+        mb.cone(x, 0.03 + h * 0.93, z, 0.05, 0.13, '#ff9a40', 8);
+        mb.cone(x, 0.03 + h * 0.93, z, 0.03, 0.18, '#ffe08a', 8);
+        mb.glow = false;
+      }
+    }
+  };
+  serviceModel = ((fn) => function (mb, b) { fn(mb, b); addExtras(mb, b); })(serviceModel);
   statueFigure = wrap(statueFigure, (mb, x, z, y0, s, color, gold) => {
     if (!mb.prop('Statue Base', x, y0, z, 0, 0.2 * s)) return false;
     return mb.prop(gold ? 'Zeus' : pickBy(GODS, x, z), x, y0 + 0.2 * s, z, 0, 0.42 * s);

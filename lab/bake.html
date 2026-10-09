@@ -103,7 +103,8 @@ const PEOPLE = [
   { name: 'm-fisher', role: 'poor', parts: ['male', 'M Citizen Fisherman', 'Half Bald', 'Braid'] },
   { name: 'm-shorts', role: 'poor', parts: ['male', 'M Citizen Shorts', 'Pelo Sin Barva'] },
   { name: 'm-slave', role: 'poor', parts: ['male', 'M Slave', 'Half Bald'] },
-  { name: 'm-senator', role: 'senator', parts: ['male', 'M Theatre Dress', 'Half Bald', 'Goatee'] },
+  { name: 'm-senator', role: 'senator', parts: ['male', 'M Normal Citizen ', 'Half Bald', 'Leaf Crown'], tint: '#eee8d8' },
+  { name: 'm-augur', role: 'senator', parts: ['male', 'M Theatre Dress', 'Goatee'] },
   { name: 'f-robe', role: 'woman', parts: ['female', 'F Dress with robe', 'Hair Bun Mid'] },
   { name: 'f-shoulder', role: 'woman', parts: ['female', 'F Dress with shoulder robe', 'Low Ponytail'], tint: '#c97b6a' },
   { name: 'f-double', role: 'woman', parts: ['female', 'F Double Part Dress', 'Long Hair.001'], tint: '#7d9bc0' },
@@ -111,7 +112,61 @@ const PEOPLE = [
   { name: 'f-priest', role: 'woman', parts: ['female', 'F Priest', 'Hair Tiara'] },
   { name: 'f-slave', role: 'poor', parts: ['female', 'F Slave', 'Low braid'] },
   { name: 'f-shoulder-green', role: 'woman', parts: ['female', 'F Dress with shoulder robe', 'Hair Bun Low'], tint: '#6f8f5a' },
+  // легионеры: щит на левом предплечье, меч в правой руке
+  { name: 's-legionary', role: 'soldier', parts: ['male', 'M Post Mario Spartan', 'Helmet Mohawk'], attach: ['shield', 'sword'] },
+  { name: 's-legionary-2', role: 'soldier', parts: ['male', 'M Post Mario Spartan', 'Helmet Without Mohawk'], attach: ['shield', 'sword'] },
+  { name: 's-centurion', role: 'soldier', parts: ['male', 'M Post Mario Spartan', 'Helmet Horizontal Mohawk'], attach: ['sword'] },
 ];
+
+// Снаряжение в руках: модель набора, кость, к которой она прикреплена жёстко, и как её поставить в исходной позе
+async function attachments(spec, r, list) {
+  const bone = n => r.group.getObjectByName(n);
+  const W = n => bone(n).getWorldPosition(new THREE.Vector3());
+  for (const kind of spec.attach || []) {
+    let name, boneName, M;
+    if (kind === 'shield') {
+      // щит вдоль предплечья, лицом наружу (влево), центр — на середине предплечья
+      name = 'Roman Shield'; boneName = 'lowerarm_l';
+      const el = W('lowerarm_l'), wr = W('hand_l');
+      const up = el.clone().sub(wr).normalize();
+      const n0 = new THREE.Vector3(1, 0, 0.35).normalize();
+      const n = n0.clone().addScaledVector(up, -n0.dot(up)).normalize();
+      const rt = new THREE.Vector3().crossVectors(up, n).normalize();
+      const c = el.clone().lerp(wr, 0.55).addScaledVector(n, 0.075);
+      const k = ART_K * 0.82;
+      M = new THREE.Matrix4().makeBasis(rt, up, n).scale(new THREE.Vector3(k, k, k)).setPosition(c);
+      // модель щита толщиной от z=6 до z=30 — сдвигаем, чтобы внутренняя сторона касалась руки
+      M.multiply(new THREE.Matrix4().makeTranslation(0, 0, -6));
+    } else {
+      // меч в кулаке остриём вниз вдоль руки; у модели рукоять — ниже нуля, клинок — выше
+      name = 'Sword  One Handed'; boneName = 'hand_r';
+      const wr = W('hand_r'), mid = W('middle_01_r'), fa = W('lowerarm_r');
+      const d = wr.clone().sub(fa).normalize();
+      const f0 = new THREE.Vector3(0, 0, 1);
+      const side = f0.clone().addScaledVector(d, -f0.dot(d)).normalize();
+      const rt = new THREE.Vector3().crossVectors(d, side).normalize();
+      const grip = wr.clone().lerp(mid, 0.7);
+      const k = ART_K * 0.9;
+      M = new THREE.Matrix4().makeBasis(rt, d, side).scale(new THREE.Vector3(k, k, k)).setPosition(grip);
+      M.multiply(new THREE.Matrix4().makeTranslation(0, 22, 0));
+    }
+    const o = await loadArt(name);
+    o.updateMatrixWorld(true);
+    const bi = SEG_BONES.indexOf(boneName);
+    o.traverse(m => {
+      if (!m.isMesh) return;
+      const geo = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry;
+      const mw = new THREE.Matrix4().multiplyMatrices(M, m.matrixWorld);
+      const { cells } = triCells(geo);
+      const p = geo.attributes.position, v = new THREE.Vector3();
+      for (let i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i).applyMatrix4(mw);
+        const [cr, cg, cb] = cellRGB(cells[Math.floor(i / 3)]);
+        list.push({ x: v.x, y: v.y, z: v.z, r: cr, g: cg, b: cb, si: [bi, 0, 0, 0], sw: [255, 0, 0, 0] });
+      }
+    });
+  }
+}
 
 async function bakePeople() {
   const bin = new Bin();
@@ -138,6 +193,7 @@ async function bakePeople() {
         list.push({ x: pos.getX(i), y: pos.getY(i), z: pos.getZ(i), r: cr, g: cg, b: cb, si: ids, sw: ws });
       }
     }
+    await attachments(spec, r, list);
     const { verts, idx } = weld(list);
     const P = new Float32Array(verts.length * 3), C = new Uint8Array(verts.length * 3), SI = new Uint8Array(verts.length * 4), SW = new Uint8Array(verts.length * 4);
     verts.forEach((v, i) => { P.set([v.x, v.y, v.z], i * 3); C.set([v.r, v.g, v.b], i * 3); SI.set(v.si, i * 4); SW.set(v.sw, i * 4); });

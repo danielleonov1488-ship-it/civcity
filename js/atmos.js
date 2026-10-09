@@ -153,6 +153,17 @@ const DAY_KEYS = [
   { t: 0.82, sun: '#9a9ad8', sunI: 0.8, zen: '#25315c', hor: '#6f6696', hs: '#8a8cc0', hg: '#2e3048', hi: 0.7, glow: 1, elev: 0.6, exp: 1.22 },
   { t: 1.00, sun: '#8ea2d8', sunI: 0.75, zen: '#16213d', hor: '#33456b', hs: '#6f82b8', hg: '#262e48', hi: 0.75, glow: 1, elev: 0.75, exp: 1.25 },
 ];
+// Новый вид — свет как у Synty: тёплое яркое солнце, небо синее, тени с холодным голубым отливом,
+// снизу тёплый отражённый свет от земли
+if (NEW_LOOK) {
+  const SYNTY_DAY = {
+    0.32: { sun: '#ffe0b4', sunI: 3.0, zen: '#5a9de2', hor: '#cfe3ec', hs: '#e4eeff', hg: '#7c6a48', hi: 0.82, exp: 1.06 },
+    0.5: { sun: '#fff0d4', sunI: 3.35, zen: '#4b95e0', hor: '#cbe2ef', hs: '#e2ecff', hg: '#806e4a', hi: 0.84, exp: 1.03 },
+    0.66: { sun: '#ffe2b2', sunI: 3.15, zen: '#5797dc', hor: '#d6e3e2', hs: '#eaeeff', hg: '#7c6846', hi: 0.84, exp: 1.05 },
+    0.72: { sun: '#ffb66c', sunI: 2.85, zen: '#6c92cf', hor: '#f6c78e', hs: '#ffd8b2', hg: '#705c3e', hi: 0.86, exp: 1.07 },
+  };
+  for (const k of DAY_KEYS) if (SYNTY_DAY[k.t]) Object.assign(k, SYNTY_DAY[k.t]);
+}
 
 const Atmos = {
   t: 0.42,
@@ -180,9 +191,16 @@ const Atmos = {
           float s = max(dot(d, normalize(uSunDir)), 0.0);
           col += uSun * (pow(s, 900.0) * 6.0 + pow(s, 12.0) * 0.35) * (1.0 - uNight * 0.7);
           vec2 p = d.xz / max(d.y, 0.06) * 0.9 + vec2(uTime * 0.008, uTime * 0.004);
+          ${NEW_LOOK ? `
+          // пышные «нарисованные» облака: плотные белые шапки с мягкой тенью снизу
+          float n = fbm3(p * 1.25);
+          float c = smoothstep(0.47, 0.6, n);
+          float shade = smoothstep(0.47, 0.72, fbm3(p * 1.25 + vec2(0.06, -0.08)));
+          vec3 cc = mix(mix(uHor, vec3(0.86, 0.88, 0.95), 0.5), vec3(1.0, 0.99, 0.96), shade) * (1.0 - uNight * 0.75);
+          col = mix(col, cc, c * smoothstep(0.0, 0.22, d.y) * 0.95);` : `
           float c = smoothstep(0.52, 0.85, fbm3(p * 1.4));
           vec3 cc = mix(vec3(1.0, 0.98, 0.95), uHor * 1.1, 0.35) * (1.0 - uNight * 0.75);
-          col = mix(col, cc, c * smoothstep(0.0, 0.25, d.y) * 0.85);
+          col = mix(col, cc, c * smoothstep(0.0, 0.25, d.y) * 0.85);`}
           float stars = step(0.997, h21(floor(d.xz / max(d.y, 0.1) * 160.0))) * uNight * smoothstep(0.1, 0.4, d.y);
           col += vec3(stars) * 1.5;
           gl_FragColor = vec4(col, 1.0);
