@@ -19,7 +19,7 @@ const SCENES: Scene[] = [
     caption: { eyebrow: "Сердце города", title: "Форум, храмы и Пантеон.", hero: "Форум" } },
   { from: bar(5), to: bar(6), clip: { src: "shots/colosseum.mp4", startFrom: 60 },
     caption: { title: "Чудеса света.", hero: "Чудеса", delay: 6 } },
-  { from: bar(6), to: bar(8), clip: { src: "shots/street.mp4", startFrom: 30 },
+  { from: bar(6), to: bar(8), clip: { src: "shots/street.mp4", startFrom: 20 },
     caption: { eyebrow: "Свободная стройка", title: "Улицы — как нарисуешь.", hero: "нарисуешь", sub: "Без клеток. Плавные, живые, твои." } },
   { from: bar(8), to: bar(10), clip: { src: "shots/build.mp4", startFrom: 5 },
     caption: { title: "Дома растут сами.", hero: "сами", sub: "Проведи дорогу — вдоль неё вырастет квартал." } },

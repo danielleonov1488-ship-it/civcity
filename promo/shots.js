@@ -11,17 +11,19 @@ window.PromoShots = {
     for (let i = 0; i < 2500; i++) { Walkers.update(0.08, 0.08); Cats.update(0.08, 0.08); }
   },
 
-  // Улица для прогулки: длинная и в середине города
-  streetKeys(seconds) {
+  // Улица для прогулки: длинная и в середине города. Камера идёт ровно над мостовой и смотрит
+  // на точку дальше по той же улице — так она повторяет все изгибы и не задевает дома
+  streetKeys() {
     const edges = [...Roads.edges.values()].filter(e => e.L > 14).map(e => {
       const m = Roads.pointAt(e, e.L / 2);
       return { e, r: Math.hypot(m.x - 12, m.y - 12) };
     }).filter(o => o.r > 14 && o.r < 24).sort((a, b) => b.e.L - a.e.L);
-    const e = edges[0].e, keys = [];
-    for (let k = 0; k <= 4; k++) {
-      const s = 2 + (Math.min(e.L - 4, 16)) * k / 4, p = Roads.pointAt(e, s);
-      const yaw = Math.atan2(-p.tx, -p.ty) + 0.35;
-      keys.push({ x: p.x + p.ty * 0.25, z: p.y - p.tx * 0.25, dist: 5.2, yaw, pitch: 0.2, lookY: 0.45, t: 0.64 });
+    const e = edges[0].e, keys = [], ahead = 4.2, pitch = 0.24;
+    const span = Math.min(e.L - ahead - 2, 13);
+    for (let s = 1; s <= 1 + span + 1e-6; s += span / 10) {
+      const c = Roads.pointAt(e, s), t = Roads.pointAt(e, s + ahead);
+      const h = Math.hypot(c.x - t.x, c.y - t.y);
+      keys.push({ x: t.x, z: t.y, dist: h / Math.cos(pitch), yaw: Math.atan2(c.x - t.x, c.y - t.y), pitch, lookY: 0.5, t: 0.64 });
     }
     // поворот камеры не должен прыгать через 2π
     for (let i = 1; i < keys.length; i++) while (keys[i].yaw - keys[i - 1].yaw > Math.PI) keys[i].yaw -= Math.PI * 2;
@@ -47,7 +49,7 @@ window.PromoShots = {
         { x: col[0], z: col[1], dist: 17, yaw: -0.6, pitch: 0.5, lookY: 0.6, t: 0.68 },
         { x: col[0], z: col[1], dist: 13, yaw: 0.3, pitch: 0.36, lookY: 0.8, t: 0.68 },
         { x: col[0], z: col[1], dist: 11, yaw: 1.0, pitch: 0.3, lookY: 0.9, t: 0.68 }] },
-      { name: 'street', seconds: 9, keys: this.streetKeys() },
+      { name: 'street', seconds: 9, keys: this.streetKeys(), opts: { linear: true } },
       { name: 'garden', seconds: 7, keys: [
         { x: dh[0], z: dh[1], dist: 8, yaw: 0.9, pitch: 0.38, lookY: 0.3, t: 0.62 },
         { x: dh[0] + 0.5, z: dh[1], dist: 11, yaw: 1.4, pitch: 0.55, lookY: 0.2, t: 0.62 },
