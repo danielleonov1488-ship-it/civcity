@@ -1699,6 +1699,110 @@ function serviceModel(mb, b) {
       treeCypress(mb, 2.85, 2.85, 0.75);
       break;
     }
+    case 'aqueduct': {
+      // кусок акведука вдоль z: столбы, два яруса арок, по верху канал с водой; на концах — половинки столбов,
+      // чтобы соседние куски сливались в один акведук
+      const S = '#d8cdb5', S2 = '#cfc2a6', x0 = 0.3, x1 = 0.7;
+      const archRow = (piers, pw, ys, Y, color) => {
+        for (const c of piers) mb.box(x0, ys < 1 ? 0 : ys - 0.25, Math.max(0, c - pw / 2), x1, ys, Math.min(4, c + pw / 2), color, { ao: 0.88 });
+        for (let k = 0; k + 1 < piers.length; k++) {
+          const a = Math.min(4, piers[k] + pw / 2), bz = Math.max(0, piers[k + 1] - pw / 2), cz = (a + bz) / 2, r = (bz - a) / 2, n = 8, col = lin(color);
+          for (let i = 0; i < n; i++) {
+            const t0 = Math.PI - i / n * Math.PI, t1 = Math.PI - (i + 1) / n * Math.PI;
+            const z0 = cz + Math.cos(t0) * r, y0 = ys + Math.sin(t0) * r, z1 = cz + Math.cos(t1) * r, y1 = ys + Math.sin(t1) * r;
+            mb.quad([x0, y0, z0], [x1, y0, z0], [x1, y1, z1], [x0, y1, z1], col, 0, 0.03);
+            mb.quad([x0, y0, z0], [x0, y1, z1], [x0, Y, z1], [x0, Y, z0], col, 0, 0.03);
+            mb.quad([x1, y1, z1], [x1, y0, z0], [x1, Y, z0], [x1, Y, z1], col, 0, 0.03);
+          }
+        }
+        mb.box(x0 - 0.02, Y, 0, x1 + 0.02, Y + 0.05, 4, PAL.stoneLight, { ao: 1 });
+      };
+      archRow([0, 1.333, 2.667, 4], 0.2, 0.72, 1.42, S);
+      archRow([0, 0.667, 1.333, 2.0, 2.667, 3.333, 4], 0.13, 1.72, 2.06, S2);
+      mb.box(x0, 2.11, 0, x0 + 0.06, 2.26, 4, S, { ao: 1 });
+      mb.box(x1 - 0.06, 2.11, 0, x1, 2.26, 4, S, { ao: 1 });
+      mb.box(x0 + 0.06, 2.11, 0, x1 - 0.06, 2.2, 4, PAL.water, { ao: 1 });
+      mb.box(x0 - 0.01, 2.26, 0, x1 + 0.01, 2.29, 4, PAL.stoneLight, { ao: 1 });
+      bush(mb, 0.15, 0.6, 0.8, PAL.leaf); bush(mb, 0.85, 3.2, 0.7, PAL.leafDark);
+      break;
+    }
+    case 'lighthouse': {
+      // маяк: платформа со ступенями, квадратная башня, восьмигранник, круглый фонарь с огнём и статуей
+      mb.box(0.15, 0, 0.15, 2.85, 0.24, 2.85, PAL.stone);
+      mb.box(0.12, 0.22, 0.12, 2.88, 0.27, 2.88, PAL.stoneLight);
+      for (let i = 0; i < 3; i++) mb.box(1.1 + i * 0.05, 0, 2.85 + i * 0.1, 1.9 - i * 0.05, 0.24 - i * 0.08, 2.95 + i * 0.1, PAL.stoneLight);
+      const H1 = 1.55;
+      mb.wall(0.7, 0.27, 0.7, 2.3, 0.27 + H1, 2.3, '#efe6d4', { plinth: false, band: 0.27 + H1 * 0.5 });
+      for (const f of ['z+', 'z-', 'x+', 'x-']) for (let k = 0; k < 2; k++) mb.window(f, f === 'z+' || f === 'x+' ? 2.3 : 0.7, 1.5, 0.75 + k * 0.75, 0.12, 0.2, null, { frame: PAL.marble });
+      mb.door('z+', 2.3, 1.5, 0.28, 0.42, { color: '#6a4026', frame: PAL.marble });
+      for (const [x, z] of [[0.62, 0.62], [2.38, 0.62], [0.62, 2.38], [2.38, 2.38]]) statueFigure(mb, x, z, 0.27 + H1, 0.45, PAL.bronze);
+      mb.box(0.62, 0.27 + H1, 0.62, 2.38, 0.33 + H1, 2.38, PAL.marble);
+      const y2 = 0.33 + H1;
+      mb.cyl(1.5, y2, 1.5, 0.62, 0.95, '#efe6d4', { segs: 8, rTop: 0.55, phase: Math.PI / 8 });
+      for (let k = 0; k < 8; k++) { const a = Math.PI / 8 + k / 8 * Math.PI * 2; mb.box(1.5 + Math.cos(a) * 0.58 - 0.04, y2 + 0.4, 1.5 + Math.sin(a) * 0.58 - 0.04, 1.5 + Math.cos(a) * 0.58 + 0.04, y2 + 0.6, 1.5 + Math.sin(a) * 0.58 + 0.04, '#3e5f6c', { ao: 1 }); }
+      mb.cyl(1.5, y2 + 0.95, 1.5, 0.6, 0.06, PAL.marble, { segs: 8, phase: Math.PI / 8 });
+      const y3 = y2 + 1.01;
+      for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; column(mb, 1.5 + Math.cos(a) * 0.32, 1.5 + Math.sin(a) * 0.32, y3, 0.5, 0.035); }
+      mb.cyl(1.5, y3 + 0.5, 1.5, 0.38, 0.05, PAL.marble, { segs: 16 });
+      mb.cone(1.5, y3 + 0.55, 1.5, 0.38, 0.24, PAL.bronze, 16);
+      mb.cyl(1.5, y3, 1.5, 0.2, 0.08, PAL.bronze, { segs: 12, rTop: 0.26 });
+      centerFire(mb, 1.5, y3 + 0.08, 1.5, 2.2, true);
+      addLight(mb, 1.5, 0.3, 1.5, 4.5);
+      statueFigure(mb, 1.5, 1.5, y3 + 0.78, 0.55, PAL.gold, true);
+      break;
+    }
+    case 'circus': {
+      // Большой цирк: песчаная дорожка с полукругом в конце, трибуны ступенями, разделительная стенка с обелиском,
+      // стартовые ворота у фасада
+      const P = (name, x, z, rot, h, y) => !!mb.prop && mb.prop(name, x, y || 0, z, rot || 0, h);
+      const cz = 2.0, R = 1.45, x0 = 0.55, x1 = 3.45, zEnd = 9.15;
+      mb.box(x0, 0, cz, x1, 0.045, zEnd, PAL.sand);
+      mb.cyl(2, 0, cz, R, 0.046, PAL.sand, { segs: 24, top: true });
+      // трибуны вдоль длинных сторон: ступени к арене, снаружи — аркада
+      for (const side of [-1, 1]) {
+        for (let k = 0; k < 5; k++) {
+          const xi = side < 0 ? x0 - k * 0.1 : x1 + k * 0.1, xo = side < 0 ? 0.04 : 3.96;
+          mb.box(Math.min(xi, xo), 0, cz, Math.max(xi, xo), 0.12 + k * 0.13, zEnd, k % 2 ? '#e8ddc4' : '#d9cdb2', { ao: 0.9 });
+        }
+        for (let i = 0; i < 14; i++) mb.arch(side < 0 ? 'x-' : 'x+', side < 0 ? 0.04 : 3.96, cz + 0.3 + i * 0.5, 0.26, 0.05, 0.42, '#4e3e30');
+        for (let i = 0; i < 7; i++) {
+          const z = cz + 0.5 + i * 1.0, x = side < 0 ? 0.08 : 3.92;
+          mb.box(x - 0.015, 0.64, z - 0.015, x + 0.015, 1.05, z + 0.015, PAL.wood);
+          mb.box(x - 0.012, 0.85, z, x + 0.012, 1.02, z + 0.3, i % 2 ? PAL.red : PAL.gold, { ao: 1 });
+        }
+      }
+      // полукруглые трибуны в конце
+      const n = 16;
+      for (let k = 0; k < 5; k++) {
+        const ri = R + k * 0.1, ro = 1.96, rm = (ri + ro) / 2, w = ro - ri, h = 0.12 + k * 0.13;
+        for (let i = 0; i < n; i++) {
+          const a0 = Math.PI + i / n * Math.PI, a1 = Math.PI + (i + 1) / n * Math.PI;
+          beam(mb, 2 + Math.cos(a0) * rm, cz + Math.sin(a0) * rm, 2 + Math.cos(a1) * rm, cz + Math.sin(a1) * rm, 0, h, w + 0.02, k % 2 ? '#e8ddc4' : '#d9cdb2');
+        }
+      }
+      // разделительная стенка (спина): бассейны, колонны, обелиск, золотые меты на концах
+      mb.box(1.82, 0.045, 3.3, 2.18, 0.16, 8.0, PAL.marble);
+      mb.box(1.86, 0.16, 3.4, 2.14, 0.19, 7.9, PAL.water);
+      mb.box(1.9, 0.16, 5.4, 2.1, 0.22, 5.9, PAL.stone);
+      mb.cyl(2, 0.22, 5.65, 0.1, 1.1, '#d9c69a', { segs: 4, rTop: 0.05, phase: Math.PI / 4 });
+      mb.cone(2, 1.32, 5.65, 0.06, 0.12, PAL.gold, 4);
+      for (const z of [4.0, 4.8, 6.5, 7.3]) column(mb, 2, z, 0.16, 0.6, 0.035);
+      for (const z of [3.15, 8.15]) for (let i = 0; i < 3; i++) mb.cone(1.9 + i * 0.1, 0.045, z, 0.05, 0.42, PAL.gold, 8);
+      statueFigure(mb, 2, 6.9, 0.16, 0.4, PAL.gold, true);
+      // колесницы на дорожке
+      for (const [x, z, r] of [[1.2, 4.6, Math.PI], [2.8, 6.8, 0], [1.25, 7.6, Math.PI]]) {
+        if (!P('Horse Cart', x, z, r, 0.22)) mb.box(x - 0.08, 0.05, z - 0.15, x + 0.08, 0.15, z + 0.15, PAL.red);
+      }
+      // стартовые ворота (карцеры) у фасада
+      mb.wall(0.04, 0.0, zEnd, 3.96, 0.72, 9.95, '#efe4cc', { cornice: false });
+      for (let i = 0; i < 8; i++) mb.arch('z-', zEnd, 0.35 + i * 0.47, 0.3, 0.05, 0.5, '#3a2c20');
+      mb.arch('z+', 9.95, 2.0, 0.5, 0.05, 0.62, '#3a2c20');
+      mb.box(0.0, 0.7, zEnd - 0.03, 4.0, 0.78, 9.98, PAL.marble);
+      for (const x of [0.25, 3.75]) { mb.box(x - 0.24, 0, zEnd - 0.05, x + 0.24, 1.25, 10.0, '#e6d8ba'); mb.hip(x - 0.27, zEnd - 0.08, x + 0.27, 10.0, 1.25, 0.25, PAL.roof[0]); }
+      mb.gable(0.5, zEnd, 3.5, 9.95, 0.78, 0.22, PAL.roof[1], { axis: 'x', end: '#efe4cc', over: 0.04 });
+      statueFigure(mb, 2, 9.97, 0.78, 0.55, PAL.gold, true);
+      break;
+    }
     case 'nymphaeum': {
       // полукруглая стена с нишами и статуями, каскад, бассейн
       const cx = 1.5, cz = 1.05, R = 1.25, H = 1.05, n = 14;

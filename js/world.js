@@ -320,6 +320,19 @@ function snapPlace(type, fx, fy, ang0) {
   const d = BUILDINGS[type];
   const free = { cx: fx, cy: fy, ang: ang0 || 0, road: false };
   if (d.kind === 'decor') return free;
+  if (d.free) {
+    // акведук продолжается: у конца уже стоящего куска новый встаёт следом, по той же линии
+    let best = null;
+    for (const b of buildingsNear(fx, fy, d.h + 1.5)) {
+      if (b.type !== type || b.lifted) continue;
+      const a = bAng(b), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      for (const s of [1, -1]) {
+        const ex = cx + Math.sin(a) * d.h * s, ey = cy + Math.cos(a) * d.h * s, dd = Math.hypot(fx - ex, fy - ey);
+        if (dd < d.h * 0.55 && (!best || dd < best.d) && !placeBlocked(type, ex, ey, a)) best = { d: dd, cx: ex, cy: ey, ang: a };
+      }
+    }
+    return best ? { cx: best.cx, cy: best.cy, ang: best.ang, road: false } : free;
+  }
   // курсор на мостовой: у самого края — дом встаёт снаружи, лицом к ней; дальше от края — прямо на камни
   const inside = Paving.at(fx, fy) > 0;
   const snapFrom = (x, y) => {

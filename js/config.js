@@ -234,6 +234,17 @@ const BUILDINGS = {
     jobs: { citizens: 6 }, radius: 28, provides: 'baths', beauty: 12, happy: 6, upkeep: 4, rating: 150, unique: true, needsRoad: true,
     desc: 'Термы императоров: залы под куполами, бассейн под открытым небом и палестра с колоннадой. Счастье всего города.' },
 
+  // Большие постройки за рейтинг (как у Town to City): акведук кусками, маяк у воды, Большой цирк
+  aqueduct: { kind: 'service', cat: 'culture', name: 'Акведук', acc: 'акведук', cost: { money: 450, glory: 3 }, w: 1, h: 4, vip: true, free: true,
+    radius: 6, provides: 'water', beauty: 3, upkeep: 0.3, rating: 40,
+    desc: 'Кусок акведука в два яруса арок, по верху течёт вода. Ставьте куски друг за другом — получится акведук через весь город. Даёт воду домам рядом.' },
+  lighthouse: { kind: 'service', cat: 'culture', name: 'Маяк', acc: 'маяк', cost: { money: 5000, glory: 40 }, w: 3, h: 3, vip: true,
+    needsWater: true, beauty: 12, glory: 0.2, upkeep: 3, rating: 200, unique: true,
+    desc: 'Маяк, как на Фаросе: три яруса, огонь наверху виден ночью издалека. Ставится у воды, приносит Славу каждый день.' },
+  circus: { kind: 'service', cat: 'culture', name: 'Большой цирк', acc: 'Большой цирк', cost: { money: 8000, glory: 60 }, w: 4, h: 10, vip: true,
+    jobs: { citizens: 6 }, radius: 34, provides: 'theatre', beauty: 15, happy: 10, glory: 0.3, upkeep: 5, rating: 300, unique: true, needsRoad: true,
+    desc: 'Огромное ристалище для гонок колесниц: трибуны на весь город, обелиск посередине, стартовые ворота. Радость всего Рима.' },
+
   barracks: { kind: 'military', cat: 'army', name: 'Казармы', acc: 'казармы', cost: { money: 950 }, w: 3, h: 3,
     upkeep: 2, needsRoad: true, tech: 'legion', unique: true,
     desc: 'Открывает легионеров. Отряд, прокачка и походы — в окне «Легион».' },
