@@ -286,7 +286,7 @@ const UI = {
 
   onToolChanged() {
     const t = Input.tool;
-    const cat = t && t !== 'bulldoze' && CATEGORIES.find(c => c.items.includes(t));
+    const cat = t && t !== 'bulldoze' && !Input.moving && CATEGORIES.find(c => c.items.includes(t));
     if (cat && cat.id !== this.openCat) this.openTray(cat.id);
     document.querySelectorAll('#tray-items .card').forEach(c => c.classList.toggle('on', c.dataset.type === t));
     const bd = document.querySelector('.cat.bulldoze');
@@ -294,7 +294,11 @@ const UI = {
     const hint = $('tool-hint');
     if (!t) { hint.hidden = true; return; }
     hint.hidden = false;
-    if (t === 'bulldoze') {
+    if (Input.moving) {
+      $('hint-icon').src = this.icons[t] || '';
+      $('hint-name').textContent = `Перенос: ${BUILDINGS[t].name.toLowerCase()}`;
+      $('hint-text').textContent = 'Нажмите, куда поставить: у дороги встанет фасадом к ней, Z / C — повернуть. Перенос бесплатный. Esc или правая кнопка — вернуть на место.';
+    } else if (t === 'bulldoze') {
       $('hint-icon').src = Icons.get('workers');
       $('hint-name').textContent = 'Снос';
       $('hint-text').textContent = 'Нажмите на здание, дорогу или дерево. Возвращается половина стоимости.';
@@ -449,8 +453,12 @@ const UI = {
       if (d.kind === 'military') html += ArmyUI.buildingPanel(b);
       if (b.type === 'tradepost') html += `<button type="button" class="btn" id="open-trade">Настроить торговлю</button>`;
     }
-    html += `<button type="button" class="btn ghost small demolish" id="panel-demolish">Снести (вернётся половина)</button>`;
+    html += `<div class="panel-actions">
+      <button type="button" class="btn ghost small" id="panel-move">Переместить</button>
+      <button type="button" class="btn ghost small demolish" id="panel-demolish" >Снести (вернётся половина)</button>
+    </div>`;
     $('insp-body').innerHTML = html;
+    $('panel-move').onclick = () => Input.startMove(b);
     $('panel-demolish').onclick = () => {
       removeBuilding(b, true);
       Engine.dust(b);
@@ -938,6 +946,7 @@ const UI = {
     let n = 0;
     for (const b of state.buildings.values()) {
       if (n > 120) break;
+      if (b.lifted) continue;
       const d = BUILDINGS[b.type];
       if (d.kind === 'road' || d.kind === 'decor') continue;
       const hgt = d.kind === 'house' ? d.tiers[b.tier].height : 1.1;

@@ -343,6 +343,14 @@ function placeBuilding(type, cx, cy, ang, free) {
   b.rot = rotIndex(b.ang);
   state.buildings.set(b.id, b);
   occupy(b);
+  clearNatureUnder(b);
+  if (!free) pay(d.cost);
+  Engine.buildingsChanged(b);
+  return b;
+}
+
+// Деревья и кусты под постройкой убираются, трава под ней не растёт
+function clearNatureUnder(b) {
   const o = boxOfB(b, 0.3);
   for (let ty = Math.floor(o.cy - o.R); ty <= Math.floor(o.cy + o.R); ty++) {
     for (let tx = Math.floor(o.cx - o.R); tx <= Math.floor(o.cx + o.R); tx++) {
@@ -351,9 +359,38 @@ function placeBuilding(type, cx, cy, ang, free) {
       Engine.natureChanged(tx, ty);
     }
   }
-  if (!free) pay(d.cost);
+}
+
+/* ---------- Перенос постройки ----------
+   Пока постройку несут, она снята с карты (не мешает сама себе) и не рисуется; жители, уровень и товары при ней.
+   Перенос бесплатный. */
+function liftBuilding(b) {
+  unoccupy(b);
+  for (const k of b._cov || []) { const [tx, ty] = k.split(',').map(Number); Engine.natureChanged(tx, ty); }
+  b.lifted = true;
   Engine.buildingsChanged(b);
-  return b;
+}
+
+function dropBuilding(b, cx, cy, ang) {
+  if (cx !== undefined) {
+    b.x = cx - b.w / 2;
+    b.y = cy - b.h / 2;
+    b.ang = normAng(ang || 0);
+    b.rot = rotIndex(b.ang);
+    b.animAt = performance.now();
+  }
+  b.lifted = false;
+  occupy(b);
+  clearNatureUnder(b);
+  Engine.buildingsChanged(b);
+}
+
+// Можно ли поставить переносимую постройку сюда (null — можно)
+function checkMove(b, cx, cy, ang) {
+  const err = placeBlocked(b.type, cx, cy, ang);
+  if (err) return err;
+  if (BUILDINGS[b.type].needsWater && !nearWaterBox(boxOf(b.type, cx, cy, ang), 2)) return 'Нужно ставить у воды';
+  return null;
 }
 
 // По клеткам, как раньше: левый верхний угол (tx, ty), фасадом к ближайшей дороге (для тестового города)

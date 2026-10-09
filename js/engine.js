@@ -873,7 +873,7 @@ const Engine = {
     for (const id of this.dirty) {
       const b = state.buildings.get(id);
       const oldKey = this.bIndex.get(id);
-      const key = b && b.type !== 'road' ? modelKey(b) : null;
+      const key = b && b.type !== 'road' && !b.lifted ? modelKey(b) : null;
       if (oldKey && oldKey !== key) {
         const og = this.bGroups.get(oldKey);
         if (og) { og.ids = og.ids.filter(x => x !== id); og.dirty = true; }
@@ -1243,12 +1243,13 @@ const Engine = {
     for (const m of [this.ringFill, this.ringLine]) { m.position.x = cx; m.position.z = cz; m.scale.set(r, 1, r); }
   },
 
-  // Призрак постройки: центр (cx, cy) и поворот ang
-  setGhost(type, cx, cy, ok, ang) {
+  // Призрак постройки: центр (cx, cy) и поворот ang; src — переносимое здание (призрак — его же вид)
+  setGhost(type, cx, cy, ok, ang, src) {
     if (!type) { this.ghost.visible = false; this.ghostKey = null; this.ghostPos = null; return; }
     const d = BUILDINGS[type];
-    const fake = { id: 1, type, x: cx - d.w / 2, y: cy - d.h / 2, w: d.w, h: d.h, tier: d.kind === 'house' ? 1 : 0, rot: 0 };
-    if (this.ghostKey !== type) {
+    const fake = src ? Object.assign({}, src, { rot: 0, ang: 0 }) : { id: 1, type, x: cx - d.w / 2, y: cy - d.h / 2, w: d.w, h: d.h, tier: d.kind === 'house' ? 1 : 0, rot: 0 };
+    const gkey = src ? 'move:' + modelKey(src) : type;
+    if (this.ghostKey !== gkey) {
       if (this.ghostMesh) this.ghost.remove(this.ghostMesh);
       this.ghostMesh = null;
       if (type !== 'road' && type !== 'bulldoze') {
@@ -1256,7 +1257,7 @@ const Engine = {
         this.ghostMesh = new THREE.Mesh(m.solid, this.matGhost);
         this.ghost.add(this.ghostMesh);
       }
-      this.ghostKey = type;
+      this.ghostKey = gkey;
     }
     this.ghost.visible = true;
     if (!this.ghostPos) this.ghostPos = [cx, cy];

@@ -18,6 +18,7 @@ const Input = {
   roadPlan: null,      // готовая к постройке дорога
   shift: false,
   angle: 0,            // поворот постройки вдали от дорог
+  moving: null,        // переносимое здание (снято с карты, пока его не поставят)
   lastPaint: null,
   pinch: null,
   keys: new Set(),
@@ -52,6 +53,8 @@ const Input = {
   },
 
   setTool(tool) {
+    // смена инструмента посреди переноса — здание возвращается на место
+    if (this.moving && !this.keepMove) this.cancelMove();
     this.tool = tool;
     this.mode = null;
     this.roadRaw = [];
@@ -62,6 +65,37 @@ const Input = {
     Engine.canvasCursor = tool ? 'crosshair' : 'default';
     Engine.renderer.domElement.style.cursor = Engine.canvasCursor;
     UI.onToolChanged();
+  },
+
+  // Перенос: здание «берётся в руку», призрак — оно же; нажатие на землю — поставить, Esc или ПКМ — вернуть
+  startMove(b) {
+    UI.closePanel();
+    liftBuilding(b);
+    this.angle = bAng(b);
+    this.moving = b;
+    this.keepMove = true;
+    this.setTool(b.type);
+    this.keepMove = false;
+    afterCityChanged();
+  },
+
+  cancelMove() {
+    const b = this.moving;
+    if (!b) return;
+    this.moving = null;
+    if (state.buildings.get(b.id) === b) dropBuilding(b);
+    afterCityChanged();
+  },
+
+  finishMove(p) {
+    const b = this.moving;
+    const err = checkMove(b, p.cx, p.cy, p.ang);
+    if (err) { this.warn(err); return; }
+    this.moving = null;
+    dropBuilding(b, p.cx, p.cy, p.ang);
+    Engine.dust(b);
+    afterCityChanged();
+    this.setTool(null);
   },
 
   rotate(dir) {
@@ -110,7 +144,7 @@ const Input = {
       this.mode = 'road';
       this.roadRaw = [[fx, fy]];
       this.roadPlan = null;
-    } else if (tool === 'bulldoze' || BUILDINGS[tool].w === 1) {
+    } else if (!this.moving && (tool === 'bulldoze' || BUILDINGS[tool].w === 1)) {
       this.mode = 'paint';
       this.lastPaint = null;
       this.paint(fx, fy);
@@ -183,7 +217,9 @@ const Input = {
     if (mode === 'pan' && e.button === 2 && !this.moved) { this.setTool(null); return; }
     if (mode === 'road') { this.commitRoad(); return; }
     if (mode === 'place' && this.hover) {
-      this.tryPlace(this.tool, this.placement(this.tool, this.hover[0], this.hover[1]), true);
+      const p = this.placement(this.tool, this.hover[0], this.hover[1]);
+      if (this.moving) this.finishMove(p);
+      else this.tryPlace(this.tool, p, true);
       return;
     }
     if (mode === 'maybe' && !this.moved) this.click(e.clientX, e.clientY);
@@ -365,8 +401,8 @@ const Input = {
       } else {
         const d = BUILDINGS[tool];
         const p = this.placement(tool, fx, fy);
-        const err = checkPlace(tool, p.cx, p.cy, p.ang);
-        Engine.setGhost(tool, p.cx, p.cy, !err, p.ang);
+        const err = this.moving ? checkMove(this.moving, p.cx, p.cy, p.ang) : checkPlace(tool, p.cx, p.cy, p.ang);
+        Engine.setGhost(tool, p.cx, p.cy, !err, p.ang, this.moving);
         const x = p.cx - d.w / 2, y = p.cy - d.h / 2;
         if (d.radius) ring = [p.cx, p.cy, d.radius, { x, y, w: d.w, h: d.h }];
         const key = `${tool}:${p.cx.toFixed(2)}:${p.cy.toFixed(2)}:${p.ang.toFixed(2)}:${err}`;
