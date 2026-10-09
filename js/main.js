@@ -22,6 +22,7 @@ const Game = {
     computeCoverage();
     UI.init();
     if (TEST_MODE && !state.testReady) Test.setup();
+    else if (TEST_MODE) Test.update();
     UI.updateHud(true);
     window.addEventListener('beforeunload', () => saveGame());
     // #test дописали или стёрли в адресной строке — перезапуск в нужный город
@@ -111,11 +112,11 @@ const Game = {
   },
 };
 
-// Новый вид сначала подгружает запечённые модели; не вышло — запускаемся в прежнем виде
+// Сначала подгружаются запечённые модели; не вышло — запускаемся в прежнем виде (?old)
 // Скрипты игры подключает js/boot.js уже после загрузки страницы — тогда стартуем сразу
 function startGame() {
   if (!NEW_LOOK) return Game.boot();
-  Look2.load().then(() => Game.boot(), e => { console.warn('Новый вид не загрузился', e); location.replace(location.pathname + location.hash); });
+  Look2.load().then(() => Game.boot(), e => { console.warn('Новый вид не загрузился', e); location.replace(location.pathname + '?old' + location.hash); });
 }
 if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', startGame);
 else startGame();
