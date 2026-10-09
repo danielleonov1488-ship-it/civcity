@@ -439,7 +439,9 @@ const UI = {
       const d = BUILDINGS[t];
       $('hint-icon').src = this.icons[t] || '';
       $('hint-name').textContent = d.name;
-      $('hint-text').textContent = d.kind === 'decor' ? `${d.desc} Повернуть — Z / C, размер — [ и ]. Ведите с зажатой кнопкой — встанет рядом ещё.`
+      $('hint-text').textContent = d.wall ? `${d.desc} Наведите на стену дома и нажмите — повесится в эту точку. Переедет и снесётся вместе с домом.`
+        : d.scatter ? d.desc
+        : d.kind === 'decor' ? `${d.desc} Повернуть — Z / C, размер — [ и ]. Ведите с зажатой кнопкой — встанет рядом ещё.`
         : `${d.desc} У мостовой встанет фасадом к ней; посреди площади и вдали — повернуть Z / C.`;
     }
     $('hint-status').textContent = '';
@@ -597,6 +599,7 @@ const UI = {
       if (d.kind === 'military') html += ArmyUI.buildingPanel(b);
       if (b.type === 'tradepost') html += `<button type="button" class="btn" id="open-trade">Настроить торговлю</button>`;
     }
+    if (!d.wall) html += `<p class="sub">Тяните золотой кружок у ${d.kind === 'decor' ? 'украшения — поворот и размер' : 'здания — поворот'}; с Shift — шагами по 15°.</p>`;
     html += `<div class="panel-actions">
       <button type="button" class="btn ghost small" id="panel-move">Переместить</button>
       ${b.type === 'center' ? '' : '<button type="button" class="btn ghost small demolish" id="panel-demolish" >Снести (вернётся половина)</button>'}

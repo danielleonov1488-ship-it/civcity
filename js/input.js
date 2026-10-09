@@ -96,9 +96,10 @@ const Input = {
 
   finishMove(p) {
     const b = this.moving;
-    const err = checkMove(b, p.cx, p.cy, p.ang);
+    const err = p.bad || checkMove(b, p.cx, p.cy, p.ang);
     if (err) { this.warn(err); return; }
     this.moving = null;
+    if (p.yo !== undefined) { b.yo = p.yo; b.on = p.on; }
     dropBuilding(b, p.cx, p.cy, p.ang);
     Engine.dust(b);
     Sound.build(b);
@@ -115,8 +116,16 @@ const Input = {
 
   // Куда встанет выбранная постройка под курсором
   placement(type, fx, fy) {
+    const d = BUILDINGS[type];
+    // украшение на стену: в точку на стене под курсором, лицом от стены, на той же высоте
+    if (d.wall) {
+      const w = this.mouse && Engine.pickWall(this.mouse[0], this.mouse[1]);
+      if (!w) return { cx: fx, cy: fy, ang: this.angle, s: this.scale, bad: 'Наведите на стену дома' };
+      const off = 0.5 - 0.44;
+      return { cx: w.x + w.nx * off, cy: w.z + w.nz * off, ang: Math.atan2(w.nx, w.nz), s: this.scale, yo: w.y, on: w.b.id };
+    }
     const p = snapPlace(type, fx, fy, this.angle);
-    if (BUILDINGS[type].kind === 'decor') p.s = this.scale;
+    if (d.kind === 'decor') p.s = this.scale;
     return p;
   },
 
@@ -155,6 +164,20 @@ const Input = {
     if (e.button === 1) { this.mode = 'rotate'; return; }
 
     const tool = this.tool;
+    // рамка выбранной постройки: схватили золотой кружок — поворот (и размер у украшения)
+    if (!tool && UI.selected && Engine.gizmoAt && e.button === 0) {
+      const g = Engine.gizmoAt, v = new THREE.Vector3(g.hx, (UI.selected.yo || 0) + 0.09, g.hz).project(Engine.camera);
+      const r = Engine.renderer.domElement.getBoundingClientRect();
+      const hx = r.left + (v.x + 1) / 2 * r.width, hy = r.top + (1 - v.y) / 2 * r.height;
+      if (Math.hypot(e.clientX - hx, e.clientY - hy) < 22) {
+        const b = UI.selected;
+        this.mode = 'gizmo';
+        this.giz = { b, ang: bAng(b), s: b.s || 1, R: g.R };
+        rememberWallDecor(b);
+        unoccupy(b);
+        return;
+      }
+    }
     if (!tool || !this.hover) { this.mode = 'maybe'; return; }
     const [fx, fy] = this.hover;
     if (tool === 'road') {
@@ -197,6 +220,19 @@ const Input = {
     if (this.mode === 'rotate') {
       Engine.cam.yawTarget -= (e.clientX - prev[0]) * 0.008;
       Engine.cam.yaw = Engine.cam.yawTarget;
+      return;
+    }
+    if (this.mode === 'gizmo') {
+      const p = Engine.groundPoint(e.clientX, e.clientY), z = this.giz, b = z.b;
+      if (!p) return;
+      const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      let a = Math.atan2(p[0] - cx, p[1] - cy);
+      if (e.shiftKey) a = Math.round(a / ROT_STEP) * ROT_STEP;
+      b.ang = normAng(a);
+      b.rot = rotIndex(b.ang);
+      if (BUILDINGS[b.type].kind === 'decor' && !BUILDINGS[b.type].wall) b.s = clamp(Math.round(z.s * Math.hypot(p[0] - cx, p[1] - cy) / z.R * 20) / 20, 0.8, 1.3);
+      Engine.buildingsChanged(b);
+      Engine.setGizmo(b, true);
       return;
     }
     if (this.mode === 'pan' || ((this.mode === 'maybe' || this.mode === 'pick') && this.moved)) {
@@ -292,6 +328,7 @@ const Input = {
     }
     if (mode === 'maybe' && !this.moved) this.click(e.clientX, e.clientY);
     if (mode === 'pick' && !this.moved) this.pick(e.clientX, e.clientY);
+    if (mode === 'gizmo') this.endGizmo();
   },
 
   keyDown(e) {
@@ -365,9 +402,10 @@ const Input = {
   },
 
   tryPlace(type, p, loud) {
-    const err = checkPlace(type, p.cx, p.cy, p.ang, p.s);
+    const err = p.bad || checkPlace(type, p.cx, p.cy, p.ang, p.s);
     if (err) { if (loud || err.startsWith('Не хватает')) this.warn(err); return null; }
     const b = placeBuilding(type, p.cx, p.cy, p.ang, false, p.s);
+    if (p.yo) { b.yo = p.yo; b.on = p.on; Engine.buildingsChanged(b); }
     Engine.dust(b);
     Sound.build(b);
     afterCityChanged();
@@ -397,11 +435,37 @@ const Input = {
       }
       return;
     }
-    // мелкие постройки и украшения рисуются мазком: следующая — на шаг дальше предыдущей
+    // кисть россыпью: вразброс в круге кисти одно из нескольких украшений, разного размера и поворота
     const dd = BUILDINGS[this.tool];
+    if (dd.scatter) {
+      if (last && Math.hypot(fx - last[0], fy - last[1]) < 0.55) return;
+      this.lastPaint = [fx, fy];
+      const types = dd.scatter.filter(isUnlocked);
+      for (let k = 0; k < 4 && types.length; k++) {
+        const t = types[Math.floor(Math.random() * types.length)], a = Math.random() * 6.28, r = Math.random() * 0.9;
+        const p = { cx: fx + Math.cos(a) * r, cy: fy + Math.sin(a) * r, ang: Math.random() * 6.28, s: 0.85 + Math.random() * 0.3 };
+        if (!checkPlace(t, p.cx, p.cy, p.ang, p.s) && this.tryPlace(t, p, false)) break;
+      }
+      return;
+    }
+    // мелкие постройки и украшения рисуются мазком: следующая — на шаг дальше предыдущей
     const step = dd.kind === 'decor' ? (dd.fp || 0.72) * this.scale + 0.1 : 0.85;
     if (last && Math.hypot(fx - last[0], fy - last[1]) < step) return;
     if (this.tryPlace(this.tool, this.placement(this.tool, fx, fy), false)) this.lastPaint = [fx, fy];
+  },
+
+  // рамку отпустили: если новое положение задевает соседей — вернуть как было
+  endGizmo() {
+    const z = this.giz;
+    this.giz = null;
+    if (!z) return;
+    const b = z.b, cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    const err = placeBlocked(b.type, cx, cy, bAng(b), b.s);
+    if (err) { b.ang = z.ang; b.rot = rotIndex(b.ang); if (z.s !== 1) b.s = z.s; else delete b.s; this.warn(err); }
+    if (b.s && Math.abs(b.s - 1) < 0.01) delete b.s;
+    dropBuilding(b);
+    afterCityChanged();
+    UI.refreshPanel();
   },
 
   // «Копировать» — взять такую же постройку с тем же поворотом; «Перенести» — поднять постройку
@@ -463,11 +527,18 @@ const Input = {
             : `${PAVE[m].name} · ширина ${fmtW(w)} · ${String(PAVE[m].cost).replace('.', ',')} ден. за клетку${st && st.cost ? ` · мазок ${fmt(Math.ceil(st.cost))}` : ''}`;
           UI.setToolStatus('road', 0, 0, reason, info);
         }
+      } else if (BUILDINGS[tool].scatter) {
+        // кисть россыпью: круг вместо призрака
+        const d = BUILDINGS[tool];
+        Engine.setGhost(null);
+        Engine.setBrush(fx, fy, 0.95, '#bfe8a0');
+        const key = 'scatter:' + tool;
+        if (key !== this.lastGhostKey) { this.lastGhostKey = key; UI.setToolStatus(tool, 0, 0, null, `Ведите с зажатой кнопкой — ${d.name.toLowerCase()}. ${d.cost.money} ден. за каждое`); }
       } else {
         const d = BUILDINGS[tool];
         const p = this.placement(tool, fx, fy);
-        const err = this.moving ? checkMove(this.moving, p.cx, p.cy, p.ang) : checkPlace(tool, p.cx, p.cy, p.ang, p.s);
-        Engine.setGhost(tool, p.cx, p.cy, !err, p.ang, this.moving, p.s);
+        const err = p.bad || (this.moving ? checkMove(this.moving, p.cx, p.cy, p.ang) : checkPlace(tool, p.cx, p.cy, p.ang, p.s));
+        Engine.setGhost(tool, p.cx, p.cy, !err, p.ang, this.moving, p.s, p.yo);
         const x = p.cx - d.w / 2, y = p.cy - d.h / 2;
         if (d.radius) ring = [p.cx, p.cy, d.radius, { x, y, w: d.w, h: d.h }];
         const key = `${tool}:${p.cx.toFixed(2)}:${p.cy.toFixed(2)}:${p.ang.toFixed(2)}:${err}:${p.s}`;
@@ -476,6 +547,12 @@ const Input = {
           UI.setToolStatus(tool, x, y, err, d.kind === 'decor' ? `Размер ${Math.round(this.scale * 100)}% · [ и ] — меньше или больше · Z и C — повернуть` : '');
         }
       }
+    }
+    // рамка у выбранной постройки
+    if (!tool && UI.selected && state.buildings.has(UI.selected.id) && !BUILDINGS[UI.selected.type].wall) Engine.setGizmo(UI.selected, this.mode === 'gizmo');
+    else Engine.setGizmo(null);
+    if (tool) {
+      // (подсказки инструмента — выше)
     } else if (!tool && UI.selected && BUILDINGS[UI.selected.type].radius) {
       const b = UI.selected;
       ring = [b.x + b.w / 2, b.y + b.h / 2, BUILDINGS[b.type].radius, b];

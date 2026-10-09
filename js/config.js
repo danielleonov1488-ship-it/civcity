@@ -272,6 +272,15 @@ const BUILDINGS = {
   planter: { kind: 'decor', cat: 'decor', name: 'Вазон', acc: 'вазон', cost: { money: 18 }, w: 1, h: 1, beauty: 1, fp: 0.45, desc: 'Каменный вазон с зеленью.' },
   palm: { kind: 'decor', cat: 'decor', name: 'Пальма', acc: 'пальму', cost: { money: 20 }, w: 1, h: 1, beauty: 1, fp: 0.6, tech: 'gardens', desc: 'Финиковая пальма из Африки.' },
   bigjar: { kind: 'decor', cat: 'decor', name: 'Большая ваза', acc: 'большую вазу', cost: { money: 60 }, w: 1, h: 1, beauty: 2, fp: 0.5, tech: 'gardens', desc: 'Высокая расписная ваза.' },
+  // ---- кисти россыпью: каждое движение ставит одно из нескольких украшений вразброс, разного размера
+  grovebrush: { kind: 'decor', cat: 'decor', name: 'Роща россыпью', acc: 'рощу', cost: { money: 10 }, w: 1, h: 1, beauty: 1, fp: 0.6, scatter: ['cypress', 'pine', 'olive'], desc: 'Кисть: ведите с зажатой кнопкой — кипарисы, пинии и оливы встанут вразброс, разного размера. Платится за каждое дерево.' },
+  flowerbrush: { kind: 'decor', cat: 'decor', name: 'Цветы россыпью', acc: 'цветы', cost: { money: 10 }, w: 1, h: 1, beauty: 1, fp: 0.5, scatter: ['flowerbush', 'flowers', 'planter'], desc: 'Кисть: ведите с зажатой кнопкой — кусты, клумбы и вазоны встанут вразброс. Платится за каждое.' },
+  // ---- на стены домов: вешаются в точку на стене под курсором, переезжают и сносятся вместе с домом
+  flowerbox: { kind: 'decor', cat: 'decor', name: 'Ящик с цветами', acc: 'ящик с цветами', cost: { money: 15 }, w: 1, h: 1, beauty: 1, fp: 0.4, wall: true, desc: 'Цветы под окном.' },
+  wallawning: { kind: 'decor', cat: 'decor', name: 'Навес', acc: 'навес', cost: { money: 25 }, w: 1, h: 1, beauty: 1, fp: 0.5, wall: true, desc: 'Полосатый навес над дверью или лавкой.' },
+  wallbanner: { kind: 'decor', cat: 'decor', name: 'Знамя на стене', acc: 'знамя на стене', cost: { money: 35 }, w: 1, h: 1, beauty: 2, fp: 0.35, wall: true, desc: 'Красное полотнище с золотым орлом.' },
+  walllamp: { kind: 'decor', cat: 'decor', name: 'Фонарь на стене', acc: 'фонарь на стене', cost: { money: 30 }, w: 1, h: 1, beauty: 1, fp: 0.3, wall: true, desc: 'Лампа на кованом кронштейне — ночью освещает улицу.' },
+  ivy: { kind: 'decor', cat: 'decor', name: 'Плющ', acc: 'плющ', cost: { money: 12 }, w: 1, h: 1, beauty: 1, fp: 0.45, wall: true, desc: 'Зелень, вьющаяся по стене.' },
   // ---- статуи
   bust: { kind: 'decor', cat: 'decor', name: 'Бюст на постаменте', acc: 'бюст', cost: { money: 120 }, w: 1, h: 1, beauty: 3, fp: 0.4, tech: 'marble', desc: 'Мраморный бюст на колонне.' },
   lion: { kind: 'decor', cat: 'decor', name: 'Мраморный лев', acc: 'мраморного льва', cost: { money: 200 }, w: 1, h: 1, beauty: 4, fp: 0.7, tech: 'marble', desc: 'Лев-страж у ворот и лестниц.' },
@@ -283,11 +292,12 @@ const BUILDINGS = {
 };
 
 // Наборы украшений — вкладки в разделе «Красота»
-const DECOR_SETS = [['light', 'Свет'], ['street', 'Улица'], ['garden', 'Сад'], ['statue', 'Статуи']];
+const DECOR_SETS = [['light', 'Свет'], ['street', 'Улица'], ['garden', 'Сад'], ['wall', 'На стены'], ['statue', 'Статуи']];
 const DECOR_SET_OF = {
   lamp: 'light', lantern: 'light', torch: 'light', bigtorch: 'light', lamps: 'light', campfire: 'light',
   bench: 'street', amphorae: 'street', mosaic: 'street', barrels: 'street', crates: 'street', sacks: 'street', hay: 'street',
   cart: 'street', stall: 'street', banner: 'street', sundial: 'street', roundbench: 'street',
+  grovebrush: 'garden', flowerbrush: 'garden', flowerbox: 'wall', wallawning: 'wall', wallbanner: 'wall', walllamp: 'wall', ivy: 'wall',
   flowers: 'garden', cypress: 'garden', pine: 'garden', olive: 'garden', pergola: 'garden', flowerbush: 'garden', planter: 'garden', palm: 'garden', bigjar: 'garden',
   statue: 'statue', column: 'statue', obelisk: 'statue', emperor: 'statue', bust: 'statue', lion: 'statue', discobolus: 'statue', hercules: 'statue', athena: 'statue', zeus: 'statue',
 };

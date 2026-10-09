@@ -1202,6 +1202,50 @@ function decorModel(mb, b) {
       mb.cyl(0.5, 0.3, 0.5, 0.12, 0.08, PAL.brick, { segs: 12, rTop: 0.06 });
       mb.cyl(0.5, 0.38, 0.5, 0.06, 0.03, PAL.brick, { segs: 10, rTop: 0.09 });
       break;
+    // ---- кисти россыпью (модель — только для значка)
+    case 'grovebrush':
+      treeCypress(mb, 0.3, 0.35, 0.8); treePine(mb, 0.7, 0.4, 0.75); treeOlive(mb, 0.5, 0.75, 0.7);
+      break;
+    case 'flowerbrush':
+      bush(mb, 0.3, 0.4, 1, PAL.leaf); pot(mb, 0.7, 0.35, 1.2, PAL.flowers[0]);
+      for (let i = 0; i < 6; i++) mb.blob(0.35 + i * 0.07, 0.08, 0.7 + (i % 2) * 0.08, 0.04, 0.04, 0.04, PAL.flowers[i % 6]);
+      break;
+    // ---- на стены: стена — плоскость z = 0.44, вещь выступает к +z; высота y = 0 — там, куда указали на стене
+    case 'flowerbox':
+      mb.box(0.28, -0.05, 0.44, 0.72, 0.03, 0.56, PAL.brickLight);
+      mb.box(0.27, 0.02, 0.43, 0.73, 0.035, 0.57, PAL.brick);
+      for (let i = 0; i < 6; i++) {
+        mb.blob(0.32 + i * 0.072, 0.07, 0.5, 0.045, 0.04, 0.045, i % 2 ? PAL.leaf : PAL.leafLight, { jitter: 0.25 });
+        mb.blob(0.32 + i * 0.072, 0.1, 0.52, 0.025, 0.025, 0.025, PAL.flowers[(b.id + i) % 6], { jitter: 0.1 });
+      }
+      for (let i = 0; i < 3; i++) mb.blob(0.36 + i * 0.14, -0.08, 0.56, 0.03, 0.06, 0.02, PAL.leaf, { jitter: 0.3 });
+      break;
+    case 'wallawning':
+      for (const x of [0.22, 0.78]) mb.box(x - 0.008, 0.02, 0.44, x + 0.008, 0.03, 0.7, PAL.woodDark);
+      awning(mb, 'z+', 0.44, 0.2, 0.8, 0.12, 0.28, PAL.awning[b.id % PAL.awning.length]);
+      break;
+    case 'wallbanner':
+      mb.box(0.3, 0.06, 0.44, 0.7, 0.085, 0.5, PAL.bronze);
+      mb.box(0.33, -0.42, 0.475, 0.67, 0.06, 0.49, PAL.red, { ao: 1 });
+      mb.box(0.33, -0.42, 0.474, 0.67, -0.39, 0.491, PAL.gold, { ao: 1 });
+      mb.blob(0.5, -0.12, 0.492, 0.08, 0.06, 0.006, PAL.gold, { jitter: 0.1, detail: 1 });
+      for (const x of [0.36, 0.5, 0.64]) mb.cone(x, -0.47, 0.482, 0.03, 0.06, PAL.gold, 4);
+      break;
+    case 'walllamp':
+      mb.box(0.47, -0.04, 0.44, 0.53, 0.04, 0.47, PAL.iron);
+      mb.box(0.49, 0.0, 0.46, 0.51, 0.02, 0.62, PAL.iron);
+      mb.box(0.45, -0.1, 0.56, 0.55, -0.08, 0.66, PAL.bronze);
+      mb.glow = true; mb.box(0.46, -0.08, 0.57, 0.54, 0.0, 0.65, '#ffd27a'); mb.glow = false;
+      mb.cone(0.5, 0.0, 0.61, 0.07, 0.05, PAL.bronze, 4);
+      addLight(mb, 0.5, -0.05, 0.75, 1.2);
+      break;
+    case 'ivy':
+      for (let i = 0; i < 16; i++) {
+        const x = 0.3 + hash2(b.id, i, 3) * 0.4, y = -0.35 + i / 16 * 0.55;
+        mb.blob(x, y, 0.455, 0.06, 0.05, 0.02, i % 3 ? PAL.leaf : PAL.leafDark, { jitter: 0.3 });
+      }
+      for (let i = 0; i < 4; i++) mb.blob(0.35 + i * 0.1, -0.1 + (i % 2) * 0.2, 0.47, 0.018, 0.018, 0.01, PAL.flowers[b.id % 2 ? 2 : 0]);
+      break;
     // ---- статуи на постаментах
     case 'bust':
       if (!(P('Statue Base.001', 0.5, 0.5, 0, 0.3) && P('Medusa Bust', 0.5, 0.5, 0, 0.22, 0.3))) statueFigure(mb, 0.5, 0.5, 0, 1.1, PAL.marble);

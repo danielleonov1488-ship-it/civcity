@@ -253,6 +253,31 @@ const Engine = {
     return [(v.x + 1) / 2 * this.W, (1 - v.y) / 2 * this.H, v.z < 1 && v.x > -1.2 && v.x < 1.2 && v.y > -1.2 && v.y < 1.3];
   },
 
+  // Точка на стене постройки под курсором: { b, x, y, z, nx, nz } — куда повесить украшение и куда оно смотрит
+  pickWall(sx, sy) {
+    this.raycaster.setFromCamera(this.ndc(sx, sy), this.camera);
+    const list = [];
+    for (const g of this.bGroups.values()) if (g.solid && g.solid.count) list.push(g.solid);
+    // первое попадание в постройку; если это балкон, навес или карниз — ищем стену того же дома чуть дальше по лучу
+    let first = null, k = 0;
+    for (const hit of this.raycaster.intersectObjects(list, false)) {
+      const g = hit.object.userData.group;
+      const id = g && (g.vis || g.ids)[hit.instanceId];
+      const b = id !== undefined && state.buildings.get(id);
+      if (!b || BUILDINGS[b.type].kind === 'decor' || !hit.face) continue;
+      if (!first) first = b;
+      else if (b !== first) break;
+      if (++k > 6) break;
+      const m = this._pm || (this._pm = new THREE.Matrix4());
+      hit.object.getMatrixAt(hit.instanceId, m);
+      const n = hit.face.normal.clone().transformDirection(m);
+      if (Math.abs(n.y) > 0.45 || hit.point.y < 0.08) continue;   // не стена (крыша, балкон, земля)
+      const l = Math.hypot(n.x, n.z) || 1;
+      return { b, x: hit.point.x, y: hit.point.y, z: hit.point.z, nx: n.x / l, nz: n.z / l };
+    }
+    return null;
+  },
+
   pickBuilding(sx, sy) {
     this.raycaster.setFromCamera(this.ndc(sx, sy), this.camera);
     const list = [];
@@ -827,7 +852,7 @@ const Engine = {
   buildingMatrix(b, sy, sxz) {
     const k = b.s || 1;   // размер украшения
     this._q.setFromAxisAngle(this._up, bAng(b));
-    this._p.set(b.x + b.w / 2, 0, b.y + b.h / 2);
+    this._p.set(b.x + b.w / 2, b.yo || 0, b.y + b.h / 2);
     this._s.set((sxz || 1) * k, (sy || 1) * k, (sxz || 1) * k);
     return this._m.compose(this._p, this._q, this._s);
   },
@@ -1235,6 +1260,36 @@ const Engine = {
     if (n && this.quads.instanceColor) this.quads.instanceColor.needsUpdate = true;
   },
 
+  // Рамка у выбранной постройки: кольцо и золотой кружок перед фасадом — тянуть его, чтобы повернуть
+  // (а украшение — ещё и увеличить или уменьшить). Без аргументов — спрятать
+  setGizmo(b, hot) {
+    if (!this.gizmo) {
+      const mk = (geo, color, opacity) => new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, depthTest: false }));
+      this.gizmo = new THREE.Group();
+      this.gizmo.add(mk(new THREE.RingGeometry(0.975, 1, 72).rotateX(-Math.PI / 2), '#fffaf0', 0.85));
+      this.gizmoHandle = mk(new THREE.CircleGeometry(1, 24).rotateX(-Math.PI / 2), '#e3b445', 1);
+      this.gizmoEdge = mk(new THREE.RingGeometry(1, 1.25, 24).rotateX(-Math.PI / 2), '#5a3a10', 0.8);
+      this.gizmo.add(this.gizmoHandle, this.gizmoEdge);
+      this.gizmo.renderOrder = 6;
+      for (const c of this.gizmo.children) c.renderOrder = 6;
+      this.scene.add(this.gizmo);
+    }
+    if (!b || b.lifted && !hot) { this.gizmo.visible = false; this.gizmoAt = null; return; }
+    const g = this.gizmoInfo(b);
+    this.gizmo.visible = true;
+    this.gizmo.position.set(g.cx, (b.yo || 0) + 0.09, g.cz);
+    this.gizmo.children[0].scale.set(g.R, 1, g.R);
+    const hs = hot ? 0.2 : 0.15;
+    for (const m of [this.gizmoHandle, this.gizmoEdge]) { m.position.set(g.hx - g.cx, 0, g.hz - g.cz); m.scale.set(hs, 1, hs); }
+    this.gizmoAt = g;
+  },
+
+  gizmoInfo(b) {
+    const o = boxOfB(b), a = bAng(b);
+    const R = Math.max(0.55, o.R + 0.25);
+    return { cx: o.cx, cz: o.cy, R, hx: o.cx + Math.sin(a) * R, hz: o.cy + Math.cos(a) * R };
+  },
+
   // Круг кисти мостовой под курсором (r — радиус в клетках); без аргументов — спрятать
   setBrush(cx, cz, r, color) {
     if (!this.brushRing) {
@@ -1265,8 +1320,9 @@ const Engine = {
   },
 
   // Призрак постройки: центр (cx, cy) и поворот ang; src — переносимое здание (призрак — его же вид)
-  setGhost(type, cx, cy, ok, ang, src, s) {
+  setGhost(type, cx, cy, ok, ang, src, s, yo) {
     this.ghostScale = s || (src && src.s) || 1;
+    this.ghostY = yo || (src && src.yo) || 0;
     if (!type) { this.ghost.visible = false; this.ghostKey = null; this.ghostPos = null; return; }
     const d = BUILDINGS[type];
     const fake = src ? Object.assign({}, src, { rot: 0, ang: 0 }) : { id: 1, type, x: cx - d.w / 2, y: cy - d.h / 2, w: d.w, h: d.h, tier: d.kind === 'house' ? 1 : 0, rot: 0 };
@@ -1296,7 +1352,7 @@ const Engine = {
     const k = 1 - Math.pow(0.0000005, dt);
     this.ghostPos[0] += (this.ghostTarget[0] - this.ghostPos[0]) * k;
     this.ghostPos[1] += (this.ghostTarget[1] - this.ghostPos[1]) * k;
-    this.ghost.position.set(this.ghostPos[0], 0.01 + Math.sin(this.T * 4) * 0.02, this.ghostPos[1]);
+    this.ghost.position.set(this.ghostPos[0], (this.ghostY || 0) + 0.01 + Math.sin(this.T * 4) * 0.02, this.ghostPos[1]);
     this.ghost.scale.setScalar(this.ghostScale || 1);
     if (this.ghostAng !== undefined) this.ghost.rotation.y += (this.ghostAng - this.ghost.rotation.y) * k;
   },

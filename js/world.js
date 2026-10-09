@@ -278,7 +278,8 @@ function placeBlocked(type, cx, cy, ang, s) {
     }
   }
   const tight = boxOf(type, cx, cy, ang, -0.03, s);
-  for (const b of buildingsNear(cx, cy, o.R + 0.5)) if (boxOverlap(tight, boxOfB(b, -0.03))) return 'Место занято';
+  // украшение на стене висит на доме — с ним и соседними вещами не сравниваем
+  if (!BUILDINGS[type].wall) for (const b of buildingsNear(cx, cy, o.R + 0.5)) if (!b.on && boxOverlap(tight, boxOfB(b, -0.03))) return 'Место занято';
   // залежи и густой лес вечные: ни под домом, ни вплотную к стенам (там их убрала бы стройка)
   const pad = BUILDINGS[type].kind === 'decor' ? 0 : 0.25, big = boxOf(type, cx, cy, ang, pad, s);
   for (let ty = Math.floor(cy - big.R); ty <= Math.floor(cy + big.R); ty++) {
@@ -408,7 +409,22 @@ function clearNatureUnder(b) {
 /* ---------- Перенос постройки ----------
    Пока постройку несут, она снята с карты (не мешает сама себе) и не рисуется; жители, уровень и товары при ней.
    Перенос бесплатный. */
+// Украшения на стенах дома — где они относительно дома (чтобы переехать вместе с ним)
+function wallDecorOf(b) {
+  const out = [];
+  for (const d of state.buildings.values()) if (d.on === b.id) out.push(d);
+  return out;
+}
+function rememberWallDecor(b) {
+  const a = bAng(b), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  for (const d of wallDecorOf(b)) {
+    const dx = d.x + d.w / 2 - cx, dy = d.y + d.h / 2 - cy;
+    d._rel = { u: dx * Math.cos(a) - dy * Math.sin(a), v: dx * Math.sin(a) + dy * Math.cos(a), da: bAng(d) - a };
+  }
+}
+
 function liftBuilding(b) {
+  rememberWallDecor(b);
   unoccupy(b);
   for (const k of b._cov || []) { const [tx, ty] = k.split(',').map(Number); Engine.natureChanged(tx, ty); }
   b.lifted = true;
@@ -429,6 +445,20 @@ function dropBuilding(b, cx, cy, ang) {
   clearNatureUnder(b);
   Engine.buildingsChanged(b);
   Paving.buildingChanged(b);
+  // украшения на стенах — на новое место вместе с домом
+  const a = bAng(b), ncx = b.x + b.w / 2, ncy = b.y + b.h / 2;
+  for (const d of wallDecorOf(b)) {
+    if (!d._rel) continue;
+    const { u, v, da } = d._rel;
+    unoccupy(d);
+    d.x = ncx + u * Math.cos(a) + v * Math.sin(a) - d.w / 2;
+    d.y = ncy - u * Math.sin(a) + v * Math.cos(a) - d.h / 2;
+    d.ang = normAng(a + da);
+    d.rot = rotIndex(d.ang);
+    delete d._rel;
+    occupy(d);
+    Engine.buildingsChanged(d);
+  }
 }
 
 // Можно ли поставить переносимую постройку сюда (null — можно)
@@ -449,6 +479,8 @@ function placeOnTile(type, tx, ty, free) {
 }
 
 function removeBuilding(b, refund) {
+  // снесли дом — снимаются и украшения с его стен
+  for (const d of wallDecorOf(b)) removeBuilding(d, refund);
   unoccupy(b);
   for (const k of b._cov || []) { const [tx, ty] = k.split(',').map(Number); Engine.natureChanged(tx, ty); }
   state.buildings.delete(b.id);
