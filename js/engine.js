@@ -847,8 +847,7 @@ const Engine = {
 
   initCats() {
     const geo = fn => this.figGeo(fn);
-    this.cMax = 60;
-    if (NEW_LOOK) { this.catFig = this.figMeshes(this.facetedCat(geo), { cleg: 4 }, this.cMax); return; }
+    this.cMax = 90;
     this.catFig = this.figMeshes({
       cbody: geo(mb => mb.box(-0.021, -0.019, -0.045, 0.021, 0.019, 0.045, '#fff', { ao: 1 })),
       chest: geo(mb => mb.box(-0.016, -0.016, -0.004, 0.016, 0.016, 0.004, '#fff', { ao: 1 })),
@@ -864,26 +863,6 @@ const Engine = {
       cleg: geo(mb => mb.box(-0.007, -0.042, -0.007, 0.007, 0, 0.007, '#fff', { ao: 1 })),
       ctail: geo(mb => mb.box(-0.006, 0, -0.006, 0.006, 0.07, 0.006, '#fff', { ao: 1 })),
     }, { cleg: 4 }, this.cMax);
-  },
-
-  // Новый вид: та же кошка из тех же частей, но гранёная, как фигурки Synty
-  facetedCat(geo) {
-    return {
-      cbody: geo(mb => mb.blob(0, 0, 0, 0.025, 0.021, 0.05, '#fff', { jitter: 0.06 })),
-      chest: geo(mb => mb.blob(0, 0, 0, 0.017, 0.017, 0.008, '#fff', { jitter: 0.05 })),
-      chead: geo(mb => {
-        mb.blob(0, 0.019, 0.002, 0.025, 0.021, 0.023, '#fff', { jitter: 0.05 });
-        mb.blob(0, 0.012, 0.02, 0.011, 0.008, 0.008, '#fff', { jitter: 0.03 });
-        mb.cyl(-0.014, 0.032, 0, 0.009, 0.02, '#fff', { segs: 3, rTop: 0, top: false, phase: 0.5 });
-        mb.cyl(0.014, 0.032, 0, 0.009, 0.02, '#fff', { segs: 3, rTop: 0, top: false, phase: 0.5 });
-      }),
-      ceyes: geo(mb => {
-        mb.blob(-0.0105, 0.022, 0.0215, 0.0045, 0.0055, 0.003, '#fff', { jitter: 0 });
-        mb.blob(0.0105, 0.022, 0.0215, 0.0045, 0.0055, 0.003, '#fff', { jitter: 0 });
-      }),
-      cleg: geo(mb => mb.cyl(0, -0.042, 0, 0.0075, 0.042, '#fff', { segs: 5, rTop: 0.006, ao: 1 })),
-      ctail: geo(mb => mb.cyl(0, 0, 0, 0.0065, 0.07, '#fff', { segs: 5, rTop: 0.0035, ao: 1 })),
-    };
   },
 
   drawCats() {
@@ -1208,6 +1187,6 @@ const Engine = {
     Atmos.follow(this.camera, this.cam);
     this.waterNormals.offset.set(this.T * 0.012, this.T * 0.008);
     const t = clamp((this.cam.dist - DIST_MIN) / (DIST_MAX - DIST_MIN), 0, 1);
-    Post.render(this.scene, this.camera, { focus: this.cam.dist, dof: lerp(0.8, 0.3, t), bloom: (NEW_LOOK ? 0.75 : 0.5) + Atmos.night * 0.5 });
+    Post.render(this.scene, this.camera, { focus: this.cam.dist, dof: lerp(0.8, 0.3, t), bloom: 0.5 + Atmos.night * 0.5 });
   },
 };

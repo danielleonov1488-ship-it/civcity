@@ -164,8 +164,9 @@ const Cats = {
 
   update(dt, realDt) {
     const houses = state.stats.connectedHouses || [];
-    const target = Math.min(48, Math.floor(houses.length / 4));
-    if (this.list.length < target && Math.random() < 0.04) this.spawn(houses);
+    // кошек чуть больше: примерно одна на три дома
+    const target = Math.min(72, Math.floor(houses.length / 3));
+    if (this.list.length < target && Math.random() < 0.06) this.spawn(houses);
     for (const c of this.list) {
       c.age += realDt;
       c.anim += realDt;

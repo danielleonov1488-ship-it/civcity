@@ -118,8 +118,7 @@ const Post = {
         tColor: { value: null }, tAO: { value: null }, tBloom: { value: null }, tDepth: { value: null },
         uTexel: { value: new THREE.Vector2() }, uAOTexel: { value: new THREE.Vector2() },
         uFocus: { value: 20 }, uDof: { value: 0.6 }, uAOStrength: { value: 1 }, uBloom: { value: 0.8 },
-        uVignette: { value: 0.32 }, uSat: { value: NEW_LOOK ? 1.2 : 1.08 }, uTint: { value: new THREE.Vector3(1.02, 1.0, 0.97) },
-        uSplit: { value: NEW_LOOK ? 1 : 0 },
+        uVignette: { value: 0.32 }, uSat: { value: 1.08 }, uTint: { value: new THREE.Vector3(1.02, 1.0, 0.97) },
         uUseAO: { value: 1 }, uUseBloom: { value: 1 },
       },
       depthTest: false, depthWrite: false,
@@ -127,7 +126,7 @@ const Post = {
         varying vec2 vUv;
         uniform sampler2D tColor, tAO, tBloom, tDepth;
         uniform vec2 uTexel, uAOTexel;
-        uniform float uFocus, uDof, uAOStrength, uBloom, uVignette, uSat, uUseAO, uUseBloom, uSplit;
+        uniform float uFocus, uDof, uAOStrength, uBloom, uVignette, uSat, uUseAO, uUseBloom;
         uniform vec3 uTint;
         ${DEPTH_GLSL}
         vec3 tex(vec2 uv) { return texture2D(tColor, uv).rgb; }
@@ -184,12 +183,6 @@ const Post = {
           if (uUseBloom > 0.5) col += texture2D(tBloom, vUv).rgb * uBloom;
           float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
           col = mix(vec3(l), col, uSat) * uTint;
-          if (uSplit > 0.5) {
-            // как у Synty: тени чуть холоднее, свет теплее, немного больше контраста
-            float k = smoothstep(0.08, 0.9, l);
-            col *= mix(vec3(0.93, 0.98, 1.07), vec3(1.05, 1.01, 0.95), k);
-            col = (col - 0.5 * l) * 1.06 + 0.5 * l;
-          }
           vec2 q = vUv - 0.5;
           col *= 1.0 - uVignette * dot(q, q) * 1.7;
           gl_FragColor = vec4(max(col, 0.0), 1.0);
