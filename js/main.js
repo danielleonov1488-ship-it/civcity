@@ -91,6 +91,14 @@ const Game = {
   frame(t) {
     // съёмка ролика сама шагает кадрами — обычный цикл ждёт
     if (this.hold) { requestAnimationFrame(n => this.frame(n)); return; }
+    // Мониторы 120–240 Гц зовут кадр чаще, чем нужно: рисуем около 60 раз в секунду,
+    // чтобы видеокарта не работала впустую (на 144 Гц — каждый второй вызов)
+    const gap = t - (this.prevRaf || t);
+    this.prevRaf = t;
+    if (gap > 0 && gap < 100) this.rafMs = this.rafMs ? this.rafMs * 0.95 + gap * 0.05 : gap;
+    const every = Math.max(1, Math.round(16.67 / (this.rafMs || 16.67)));
+    this.rafN = ((this.rafN || 0) + 1) % every;
+    if (this.rafN) { requestAnimationFrame(n => this.frame(n)); return; }
     const realDt = Math.min(0.1, (t - this.last) / 1000);
     this.last = t;
     this.lastTick = performance.now();
@@ -109,7 +117,26 @@ const Game = {
     Engine.frame(dt, realDt);
     UI.updateLabels(realDt);
     UI.updateHud();
+    this.autoQuality(realDt);
     requestAnimationFrame(n => this.frame(n));
+  },
+
+  // Пока игрок сам не выбрал качество: если два замера подряд (по 4 с) меньше 38 кадров в секунду —
+  // снижаем качество на ступень. Сразу после загрузки не меряем — там бывают рывки
+  autoQuality(realDt) {
+    if (!Settings.qAuto || Settings.quality === 'low' || document.hidden || PROMO_MODE) { this.aq = null; return; }
+    const a = this.aq || (this.aq = { t: 0, n: 0, warm: 6, slow: 0 });
+    if (a.warm > 0) { a.warm -= realDt; return; }
+    a.t += realDt; a.n++;
+    if (a.t < 4) return;
+    const fps = a.n / a.t;
+    a.slow = fps < 38 ? a.slow + 1 : 0;
+    a.t = 0; a.n = 0;
+    if (a.slow < 2) return;
+    Settings.quality = Settings.quality === 'high' ? 'medium' : 'low';
+    Settings.save();
+    Engine.setQuality(Settings.quality);
+    this.aq = { t: 0, n: 0, warm: 3, slow: 0 };
   },
 
   // Вкладка свёрнута: считаем дни по настоящим часам (браузер может будить таймер и раз в минуту).

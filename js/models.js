@@ -38,6 +38,12 @@ function shadeHex(hex, k) {
 
 /* ---------- Сборщик геометрии ---------- */
 
+// Облегчённые модели для дальнего обзора (Engine.updateLod): окна плоские, мелкие украшения не ставятся.
+// Случайные числа расходуются как в полной модели (лишнее просто не рисуется — mute), поэтому цвета стен
+// и огни в окнах у обеих моделей одинаковые и при смене ничего не «перещёлкивается»
+let MODEL_LOD = false;
+const LOD_PROP_MIN = 0.15;  // украшения ниже этого (в клетках: ящики, мешки, корзинки) в облегчённой модели не ставятся
+
 class MB {
   constructor(seed) {
     this.buckets = { solid: { p: [], c: [] }, glow: { p: [], c: [] }, win: { p: [], c: [] } };
@@ -50,6 +56,7 @@ class MB {
   rand() { this.seed = (this.seed * 16807) % 2147483647; return (this.seed - 1) / 2147483646; }
 
   v(p, c) {
+    if (this.mute) return;
     const B = this.buckets[this.bucket];
     B.p.push(p[0], p[1], p[2]); B.c.push(c[0], c[1], c[2]);
   }
@@ -316,6 +323,13 @@ class MB {
     this.rect(face, plane, u0, u1, y0, y1, this.rand() < 0.6 ? '#ffc070' : '#0b0b12');
     this.bucket = prev;
     const fc = o.frame || PAL.frame, t = 0.018;
+    if (MODEL_LOD) {
+      // издалека: ставни — плоскими прямоугольниками, рамы, подоконник и цветы не рисуются (но случайные числа идут как обычно)
+      const sd = this.seed;
+      if (shutter) { this.rect(face, plane, u0 - t - w * 0.5, u0 - t, y0, y1, shutter, 0.012); this.rect(face, plane, u1 + t, u1 + t + w * 0.5, y0, y1, shutter, 0.012); }
+      this.seed = sd;
+      this.mute = true;
+    }
     this.rect(face, plane, uc - 0.006, uc + 0.006, y0, y1, fc, 0.009);
     this.faceBox(face, plane, u0 - t, u1 + t, y1, y1 + t * 1.6, 0.022, fc);
     this.faceBox(face, plane, u0 - t, u0, y0, y1, 0.018, fc, { noTop: true });
@@ -333,6 +347,7 @@ class MB {
         this.blob(p[0], p[1], p[2], 0.035, 0.03, 0.035, i % 2 ? PAL.leaf : PAL.flowers[(i + (o.seed || 0)) % 6], { jitter: 0.2 });
       }
     }
+    this.mute = false;
   }
 
   // Дверь: каменное обрамление, деревянное полотно, ступенька
@@ -1772,10 +1787,20 @@ function modelKey(b) {
 
 const ModelCache = new Map();
 
-function buildModel(b) {
-  const key = modelKey(b);
+function buildModel(b, lod) {
+  const key = modelKey(b) + (lod ? '#lod' : '');
   let m = ModelCache.get(key);
   if (m) return m;
+  MODEL_LOD = !!lod;
+  try { m = buildModelNow(b); } finally { MODEL_LOD = false; }
+  // из какого здания построена модель: облегчённую строим из него же — с тем же зерном случайности
+  m.src = { ...b };
+  ModelCache.set(key, m);
+  return m;
+}
+
+function buildModelNow(b) {
+  let m;
   const d = BUILDINGS[b.type];
   const mb = new MB(b.id * 31 + 7);
   // у домов внешний вид зависит только от ключа модели — тогда одинаковые дома рисуются одной пачкой
@@ -1789,6 +1814,5 @@ function buildModel(b) {
   m = mb.build(d.w / 2, d.h / 2);
   m.smoke = (mb.smoke || []).map(([x, y, z]) => [x - d.w / 2, y, z - d.h / 2]);
   m.fountain = (mb.fountain || []).map(([x, y, z, r]) => [x - d.w / 2, y, z - d.h / 2, r]);
-  ModelCache.set(key, m);
   return m;
 }

@@ -760,6 +760,18 @@ const UI = {
     };
   },
 
+  // Под качеством графики: на какой видеокарте идёт игра и что делать, если не на той
+  gpuNote() {
+    const g = Engine.gpuInfo(), name = escapeHtml(g.name || 'не удалось узнать');
+    let html = `<p class="sub gpu-line">Видеокарта: ${name}${Settings.qAuto ? ' · качество подбирается само' : ''}</p>`;
+    if (g.soft) html += `<div class="note bad"><b>Игра рисуется без видеокарты</b>, поэтому тормозит: в браузере выключено аппаратное ускорение.
+      Откройте настройки браузера → «Система» → включите «Использовать аппаратное ускорение» и перезапустите браузер.</div>`;
+    else if (g.integrated) html += `<div class="note bad"><b>Игра работает на встроенной графике</b> — она в разы слабее видеокарты.
+      Если в компьютере есть видеокарта NVIDIA или AMD, включите её для браузера: Параметры Windows → Система → Дисплей → Графика →
+      выберите браузер → «Высокая производительность», затем перезапустите браузер. В программе CivCity для ПК это включается само.</div>`;
+    return html;
+  },
+
   openMenu() {
     const seg = (name, items, cur) => `<div class="seg wide" role="group">${items.map(([v, label, sub]) => `<button type="button" data-${name}="${v}" class="${String(cur) === String(v) ? 'on' : ''}">${label}${sub ? `<small>${sub}</small>` : ''}</button>`).join('')}</div>`;
     this.showModal(`
@@ -771,7 +783,8 @@ const UI = {
       <p class="field-label">Налоги</p>
       ${seg('tax', TAX_LEVELS.map((t, i) => [i, t.name, t.mult < 1 ? 'жители рады' : t.mult > 1 ? 'жители недовольны' : '×1']), state.taxLevel)}
       <p class="field-label">Качество графики</p>
-      ${seg('q', [['low', 'Низкое', 'для слабых ПК'], ['medium', 'Среднее', 'телефоны'], ['high', 'Высокое', 'вау-режим']], Settings.quality)}
+      ${seg('q', [['low', 'Низкое', 'для слабых ПК'], ['medium', 'Среднее', 'ноутбуки'], ['high', 'Высокое', 'вау-режим']], Settings.quality)}
+      ${this.gpuNote()}
       <label class="switch"><input type="checkbox" id="day-cycle" ${Settings.dayCycle ? 'checked' : ''}><span></span>Смена дня и ночи</label>
       <div class="volumes">
         <label class="vol">Музыка<input type="range" id="vol-music" min="0" max="100" value="${Math.round(Settings.music * 100)}"></label>
@@ -798,6 +811,7 @@ const UI = {
     });
     document.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
       Settings.quality = b.dataset.q;
+      Settings.qAuto = false;
       Settings.save();
       Engine.setQuality(Settings.quality);
       document.querySelectorAll('[data-q]').forEach(x => x.classList.toggle('on', x === b));

@@ -14,6 +14,11 @@ protocol.registerSchemesAsPrivileged([
 // в собранной программе игра лежит в resources/game, при запуске из папки — в game рядом
 const ROOT = app.isPackaged ? path.join(process.resourcesPath, 'game') : path.join(__dirname, 'game');
 
+// На ноутбуках с двумя видеокартами Windows по умолчанию отдаёт программу встроенной (Intel/AMD) — в разы слабее.
+// Просим мощную; и не даём движку браузера отключать видеокарту из-за «чёрного списка» старых драйверов
+app.commandLine.appendSwitch('force_high_performance_gpu');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+
 if (!app.requestSingleInstanceLock()) app.quit();
 
 let win = null;
@@ -26,7 +31,8 @@ function createWindow() {
     icon: path.join(__dirname, 'build', 'icon.png'),
     show: false,
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false },
+    // свёрнутое окно не рисует кадры впустую — дни игра досчитывает по часам (Game.background)
+    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: true },
   });
   // самопроверка при сборке (CIVCITY_SMOKE=1): окно не показывается, игра грузится, в консоль — итог
   const smoke = !!process.env.CIVCITY_SMOKE;

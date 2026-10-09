@@ -7,6 +7,7 @@ const SETTINGS_KEY = 'civcity.settings';
 // Настройки игрока: качество графики и смена дня и ночи (общие для всех городов)
 const Settings = {
   quality: 'high',
+  qAuto: true,         // качество подбирается само, пока игрок не выбрал его вручную
   dayCycle: true,
   music: 0.5,
   sfx: 0.7,
@@ -17,6 +18,7 @@ const Settings = {
     try {
       const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
       if (QUALITY[s.quality]) this.quality = s.quality;
+      this.qAuto = s.qAuto !== false;
       if (typeof s.dayCycle === 'boolean') this.dayCycle = s.dayCycle;
       if (typeof s.music === 'number') this.music = clamp(s.music, 0, 1);
       if (typeof s.sfx === 'number') this.sfx = clamp(s.sfx, 0, 1);
@@ -24,7 +26,7 @@ const Settings = {
   },
 
   save() {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ quality: this.quality, dayCycle: this.dayCycle, music: this.music, sfx: this.sfx })); } catch (e) { /* нет хранилища */ }
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ quality: this.quality, qAuto: this.qAuto, dayCycle: this.dayCycle, music: this.music, sfx: this.sfx })); } catch (e) { /* нет хранилища */ }
   },
 };
 

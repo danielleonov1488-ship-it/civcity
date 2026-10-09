@@ -253,6 +253,7 @@ const Look2 = {
    берутся из набора, а не строятся из кубиков. Модель ставится на y, поворот rot, высота h (в клетках). */
 if (NEW_LOOK) {
   MB.prototype.prop = function (name, x, y, z, rot, h, tint) {
+    if (MODEL_LOD && h < LOD_PROP_MIN) return true;   // облегчённая модель: мелочь не ставим
     const m = Look2.ready && Look2.raw(name);
     if (!m) return false;
     const { P, C, I } = m._raw;

@@ -15,11 +15,14 @@ function catmull(p0, p1, p2, p3, t) {
 const PITCH_NEAR = 0.3, PITCH_FAR = 0.98;
 const DIST_MIN = 6, DIST_MAX = 75;
 
+// simple — простые модели травы и цветов (в разы легче); natShadow — тени от деревьев и камней
 const QUALITY = {
-  low: { dpr: 1, shadow: 1024, grass: 0.15 },
-  medium: { dpr: 1.25, shadow: 2048, grass: 0.5 },
-  high: { dpr: 2, shadow: 4096, grass: 1 },
+  low: { dpr: 1, shadow: 1024, grass: 0.4, simple: true, natShadow: false },
+  medium: { dpr: 1.25, shadow: 2048, grass: 0.7, simple: false, natShadow: true },
+  high: { dpr: 2, shadow: 4096, grass: 1, simple: false, natShadow: true },
 };
+
+const triCount = g => (g.index ? g.index.count : g.attributes.position.count) / 3;
 
 const Engine = {
   renderer: null, scene: null, camera: null, sun: null, hemi: null,
@@ -105,8 +108,60 @@ const Engine = {
       if (sh.map) { sh.map.dispose(); sh.map = null; }
     }
     Post.setQuality(q);
-    this.natDirty = true;
+    this.applyNatureGeo();
     this.resize();
+  },
+
+  // Природа: на низком качестве — простые модели травы, цветов и камней (нарядные в разы тяжелее) и без теней от деревьев.
+  // На среднем и высоком — всегда нарядные: проверено, издалека простые заметны
+  applyNatureGeo() {
+    const Q = QUALITY[this.quality];
+    for (const rec of this.natMeshes.values()) {
+      const g = Q.simple && rec.lo && triCount(rec.hi) > triCount(rec.lo) * 1.5 ? rec.lo : rec.hi;
+      if (rec.mesh.geometry !== g) rec.mesh.geometry = g;
+      rec.mesh.castShadow = Q.natShadow && !rec.grass;
+    }
+    this.natDirty = true;
+  },
+
+  // Низкое качество: при отдалении дома переходят на облегчённые модели (плоские окна, без мелочи вроде ящиков).
+  // На среднем и высоком — всегда полные: проверено, разница заметна (рамы у светящихся окон ночью).
+  // Облегчённые модели строятся понемногу, около одной за кадр — без рывков
+  updateLod() {
+    const d = this.cam.dist, on = !!QUALITY[this.quality].simple && (this.lodOn ? d > 26 : d > 30);
+    if (on !== !!this.lodOn) { this.lodOn = on; this.lodSwap = true; }
+    if (!this.lodSwap) return;
+    const t0 = performance.now();
+    let pending = false;
+    for (const g of this.bGroups.values()) {
+      let m = g.model;
+      if (on) {
+        if (!g.lodModel) {
+          if (performance.now() - t0 > 4) { pending = true; continue; }
+          g.lodModel = buildModel(g.model.src || state.buildings.get(g.ids[0]), true);
+        }
+        m = g.lodModel;
+      }
+      for (const k of ['solid', 'glow', 'win']) {
+        if (!g[k]) continue;
+        const geo = m[k] || this.emptyGeo || (this.emptyGeo = new THREE.BufferGeometry());
+        if (g[k].geometry !== geo) { g[k].geometry = geo; g[k].boundingSphere = null; }
+      }
+    }
+    this.lodSwap = pending;
+  },
+
+  // На чём рисуется игра: имя видеокарты, встроенная ли она, не рисует ли браузер вовсе без видеокарты
+  gpuInfo() {
+    if (this._gpu) return this._gpu;
+    const gl = this.renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const raw = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
+    // «ANGLE (Intel, Intel(R) UHD Graphics (0x46A3) Direct3D11 vs_5_0 ps_5_0, D3D11)» → «Intel UHD Graphics»
+    const parts = raw.replace(/^ANGLE \(/, '').replace(/\)$/, '').split(', ');
+    const name = (parts.length > 1 ? parts[1] : raw).replace(/\s*\(0x[0-9a-f]+\)/ig, '').replace(/\s+(Direct3D|OpenGL|Vulkan|Metal|vs_|ps_).*$/i, '').replace(/\((R|TM)\)/g, '').trim();
+    const soft = /SwiftShader|Basic Render|llvmpipe|softpipe|Software/i.test(raw);
+    const integrated = !soft && !/Arc/i.test(raw) && /Intel|Radeon\(TM\) Graphics|Radeon Graphics|Vega \d+ Graphics/i.test(raw);
+    return (this._gpu = { raw, name, soft, integrated });
   },
 
   resize() {
@@ -186,7 +241,7 @@ const Engine = {
     const hit = this.raycaster.intersectObjects(list, false)[0];
     if (!hit) return null;
     const g = hit.object.userData.group;
-    const id = g && g.ids[hit.instanceId];
+    const id = g && (g.vis || g.ids)[hit.instanceId];
     return id !== undefined ? state.buildings.get(id) || null : null;
   },
 
@@ -755,16 +810,17 @@ const Engine = {
     for (const [kind, def] of Object.entries(NATURE_KINDS)) {
       for (let v = 0; v < def.variants; v++) {
         const k2 = kind === 'grass' ? 'grass' : +kind;
-        const geo = (NEW_LOOK && Look2.natureGeometry(k2, v)) || natureGeometry(k2, v);
+        // две модели: нарядная (новый вид) и простая — для слабых компьютеров
+        const lo = natureGeometry(k2, v), hi = (NEW_LOOK && Look2.natureGeometry(k2, v)) || lo;
         const cap = kind === 'grass' ? 14000 : 7000;
-        const mesh = new THREE.InstancedMesh(geo, def.mat === 'rock' ? this.matRock : this.matTree, cap);
+        const mesh = new THREE.InstancedMesh(hi, def.mat === 'rock' ? this.matRock : this.matTree, cap);
         mesh.count = 0;
-        mesh.frustumCulled = false;
+        mesh.frustumCulled = false;   // отбор по кадру делаем сами, при раскладке (rebuildNature)
         mesh.castShadow = kind !== 'grass';
         mesh.receiveShadow = true;
         mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
         this.scene.add(mesh);
-        this.natMeshes.set(kind + ':' + v, { mesh, cap });
+        this.natMeshes.set(kind + ':' + v, { mesh, cap, hi, lo, grass: kind === 'grass' });
       }
     }
   },
@@ -794,16 +850,46 @@ const Engine = {
     return out;
   },
 
+  // Камера сдвинулась настолько, что пора заново отобрать природу в кадре
+  natViewChanged() {
+    const c = this.cam, v = this.natView;
+    if (!v) return true;
+    // во время поворота и приближения — каждый кадр, иначе края кадра успеют опустеть
+    if (Math.abs(c.yawTarget - c.yaw) > 0.01 || Math.abs(c.distTarget - c.dist) > c.dist * 0.004) return true;
+    if (performance.now() - v.at < 100) return false;
+    return Math.hypot(c.x - v.x, c.z - v.z) > Math.max(1.5, c.dist * 0.1) || Math.abs(c.dist - v.dist) > v.dist * 0.08 || Math.abs(c.yaw - v.yaw) > 0.1;
+  },
+
+  // Деревья, камни, цветы и трава: в буферы попадает только то, что видно камере (с запасом по краям)
+  // и ближе дымки. Раньше рисовалась природа всех участков вокруг, в разы больше видимого
   rebuildNature() {
-    if (!this.natDirty) return;
+    const viewMoved = this.natViewChanged();
+    if (!this.natDirty && !viewMoved) return;
     this.natDirty = false;
+    if (viewMoved) this.cullBuildings = true;
+    const cm = this.cam;
+    this.natView = { x: cm.x, z: cm.z, dist: cm.dist, yaw: cm.yaw, at: performance.now() };
+    const F = this._natFrustum || (this._natFrustum = new THREE.Frustum());
+    const pm = this._natPM || (this._natPM = new THREE.Matrix4());
+    F.setFromProjectionMatrix(pm.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+    const margin = Math.max(4, cm.dist * 0.22);
+    for (const pl of F.planes) pl.constant += margin;
+    // Engine.noCull = true — рисовать всё, как раньше (для сравнения скорости)
+    const useF = !this.noCull;
+    const sph = this._natSphere || (this._natSphere = new THREE.Sphere(new THREE.Vector3(), 1.2));
+    const far2 = this.cullFar2 = (cm.dist * 3.2 + 18 + margin) ** 2;
+    this.cullFrustum = F;
     const counts = new Map();
     const m = this._m, c = this._c;
     const q = new THREE.Quaternion(), e = new THREE.Euler(), pos = new THREE.Vector3(), sc = new THREE.Vector3();
     const grassShare = QUALITY[this.quality].grass;
     for (const p of this.plots.values()) {
       for (const [key, x, z, rot, s, locked, isGrass] of p.nat) {
+        const d2 = (x - cm.x) ** 2 + (z - cm.z) ** 2;
+        if (useF && d2 > far2) continue;
         if (isGrass && hash2(Math.floor(x * 7), Math.floor(z * 7), 3) > grassShare) continue;
+        sph.center.set(x, 0.6, z);
+        if (useF && !F.intersectsSphere(sph)) continue;
         const rec = this.natMeshes.get(key);
         if (!rec) continue;
         const n = counts.get(key) || 0;
@@ -852,13 +938,15 @@ const Engine = {
       if (!geo) return null;
       const m = new THREE.InstancedMesh(geo, mat, cap);
       m.count = 0;
-      m.frustumCulled = false;
+      // группа за краем кадра (и за краем карты теней) не рисуется; граница группы пересчитывается при изменениях
+      m.frustumCulled = true;
       m.castShadow = shadow;
       m.receiveShadow = shadow;
       this.scene.add(m);
       return m;
     };
     g.cap = cap;
+    if (this.lodOn) this.lodSwap = true;
     g.solid = mk(g.model.solid, this.mat, true);
     g.glow = mk(g.model.glow, this.matGlow, false);
     g.win = mk(g.model.win, this.matWin, false);
@@ -880,7 +968,9 @@ const Engine = {
   },
 
   syncBuildings() {
-    if (!this.dirty.size) return;
+    if (!this.dirty.size && !this.cullBuildings) return;
+    const changed = this.dirty.size > 0, all = this.cullBuildings;
+    this.cullBuildings = false;
     const now = performance.now();
     for (const id of this.dirty) {
       const b = state.buildings.get(id);
@@ -899,8 +989,8 @@ const Engine = {
       } else this.bIndex.delete(id);
     }
     this.dirty.clear();
-    for (const g of this.bGroups.values()) if (g.dirty) this.fillGroup(g);
-    this.rebuildEmitters();
+    for (const g of this.bGroups.values()) if (g.dirty || all) this.fillGroup(g);
+    if (changed) this.rebuildEmitters();
   },
 
   buildingMatrix(b, sy, sxz) {
@@ -910,20 +1000,34 @@ const Engine = {
     return this._m.compose(this._p, this._q, this._s);
   },
 
+  // В буфер группы попадают только здания в кадре камеры (с запасом — чтобы не пропадали тени у краёв).
+  // g.vis — какие здания нарисованы и в каком порядке (по нему клик находит здание), g.slot — обратно: здание → место
   fillGroup(g) {
     g.dirty = false;
     if (g.ids.length > g.cap) this.makeGroupMeshes(g, Math.max(g.ids.length + 8, g.cap * 2));
     g.slot.clear();
-    g.ids.forEach((id, i) => {
+    g.vis = [];
+    const F = this.noCull ? null : this.cullFrustum, cm = this.cam;
+    const sph = this._bSphere || (this._bSphere = new THREE.Sphere(new THREE.Vector3(), 1));
+    for (const id of g.ids) {
       const b = state.buildings.get(id);
-      if (!b) return;
+      if (!b) continue;
+      const cx = b.x + b.w / 2, cz = b.y + b.h / 2;
+      if (F) {
+        if ((cx - cm.x) ** 2 + (cz - cm.z) ** 2 > this.cullFar2) continue;
+        sph.center.set(cx, 1, cz);
+        sph.radius = Math.hypot(b.w, b.h) / 2 + 2;
+        if (!F.intersectsSphere(sph)) continue;
+      }
+      const i = g.vis.length;
+      g.vis.push(id);
       g.slot.set(id, i);
       const m = this.buildingMatrix(b);
       for (const k of ['solid', 'glow', 'win']) if (g[k]) g[k].setMatrixAt(i, m);
-    });
+    }
     for (const k of ['solid', 'glow', 'win']) {
       if (!g[k]) continue;
-      g[k].count = g.ids.length;
+      g[k].count = g.vis.length;
       g[k].instanceMatrix.needsUpdate = true;
       g[k].boundingSphere = null;
     }
@@ -956,7 +1060,7 @@ const Engine = {
       if (age >= 0.6 || age < 0) { m = this.buildingMatrix(b); this.animIds.delete(id); }
       else { const k = easeOutBack(clamp(age / 0.6, 0, 1)); m = this.buildingMatrix(b, Math.max(0.02, k), 1 + (1 - k) * 0.12); }
       const i = g.slot.get(id);
-      for (const kk of ['solid', 'glow', 'win']) if (g[kk]) { g[kk].setMatrixAt(i, m); g[kk].instanceMatrix.needsUpdate = true; }
+      for (const kk of ['solid', 'glow', 'win']) if (g[kk]) { g[kk].setMatrixAt(i, m); g[kk].instanceMatrix.needsUpdate = true; g[kk].boundingSphere = null; }
     }
   },
 
@@ -1375,6 +1479,7 @@ const Engine = {
     this.T += realDt;
     Atmos.update(dt, realDt);
     this.updateCamera(realDt);
+    this.updateLod();
     this.ensurePlots(2);
     this.rebuildNature();
     this.syncRoads();
