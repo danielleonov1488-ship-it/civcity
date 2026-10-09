@@ -24,6 +24,7 @@ const Game = {
     if (TEST_MODE && !state.testReady) Test.setup();
     else if (TEST_MODE) Test.update();
     UI.updateHud(true);
+    Account.init();
     window.addEventListener('beforeunload', () => saveGame());
     // #test дописали или стёрли в адресной строке — перезапуск в нужный город
     window.addEventListener('hashchange', () => { if (isTestUrl() !== TEST_MODE) location.reload(); });

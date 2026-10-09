@@ -4,3 +4,10 @@ Thumbs.db
 .DS_Store
 
 assets/incoming/
+
+# программа для ПК: зависимости, собранная игра, установщики
+desktop/node_modules/
+desktop/game/
+desktop/dist/
+server/node_modules/
+server/data/

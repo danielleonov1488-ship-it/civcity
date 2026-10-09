@@ -81,6 +81,8 @@ function deserialize(data) {
 }
 
 function saveGame() {
+  // город из облака уже записан и страница перезагружается — не затирать его текущим
+  if (typeof Account !== 'undefined' && Account.reloading) return;
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialize()));
   } catch (e) { /* хранилище недоступно — играем без сохранения */ }

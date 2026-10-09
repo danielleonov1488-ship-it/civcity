@@ -1,0 +1,23 @@
+[Unit]
+Description=CivCity game server (accounts, cloud saves)
+After=network.target
+
+[Service]
+Type=simple
+User=civcity
+Group=civcity
+WorkingDirectory=/srv/civcity/server
+EnvironmentFile=/etc/civcity.env
+Environment=NODE_ENV=production
+Environment=DATA_DIR=/srv/civcity/data
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning index.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/civcity/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

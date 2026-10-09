@@ -760,7 +760,7 @@ const UI = {
   openMenu() {
     const seg = (name, items, cur) => `<div class="seg wide" role="group">${items.map(([v, label, sub]) => `<button type="button" data-${name}="${v}" class="${String(cur) === String(v) ? 'on' : ''}">${label}${sub ? `<small>${sub}</small>` : ''}</button>`).join('')}</div>`;
     this.showModal(`
-      <p class="eyebrow">CivCity · версия 0.4</p>
+      <p class="eyebrow">CivCity · версия 0.9</p>
       <h2>Настройки</h2>
       <label class="field" for="city-input">Название города
         <input id="city-input" maxlength="28" value="${escapeHtml(state.cityName)}">
@@ -770,6 +770,8 @@ const UI = {
       <p class="field-label">Качество графики</p>
       ${seg('q', [['low', 'Низкое', 'для слабых ПК'], ['medium', 'Среднее', 'телефоны'], ['high', 'Высокое', 'вау-режим']], Settings.quality)}
       <label class="switch"><input type="checkbox" id="day-cycle" ${Settings.dayCycle ? 'checked' : ''}><span></span>Смена дня и ночи</label>
+      ${Account.menuHtml()}
+      ${Account.downloadHtml()}
       ${TEST_MODE ? `<div class="note good"><b>Это тестовый город.</b> У него своё сохранение, ваш настоящий город не трогается.
         <div class="actions"><button type="button" class="btn small" id="test-give">+30 000 денариев, товары, свитки и Слава</button>
         <a class="btn small ghost" href="./">В свой город</a></div></div>` : ''}
@@ -778,7 +780,8 @@ const UI = {
         <button type="button" class="btn ghost" id="menu-new">Новый город</button>
         <button type="button" class="btn" id="menu-close">Продолжить</button>
       </div>
-      <p class="sub">Игра сохраняется сама каждые 15 секунд в этом браузере.</p>`);
+      <p class="sub">Игра сохраняется сама каждые 15 секунд${Account.on ? ' на этом компьютере и раз в минуту — в облаке' : ' на этом компьютере'}.</p>`);
+    Account.bindMenu();
     const input = $('city-input');
     input.addEventListener('input', () => { state.cityName = input.value.trim() || 'Нова Рома'; this.updateHud(true); });
     document.querySelectorAll('[data-tax]').forEach(b => b.onclick = () => {

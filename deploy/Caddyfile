@@ -1,0 +1,25 @@
+# Caddy раздаёт игру и пропускает /api к серверу CivCity (127.0.0.1:3000).
+# Пока домен не смотрит на сервер, работает по адресу http://159.194.249.20.
+# Когда домен заработает, адрес ниже меняется на «civcity.ru, www.civcity.ru» —
+# и Caddy сам получит и будет продлевать сертификат HTTPS.
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	handle {
+		root * /srv/civcity/www
+		# браузер каждый раз сверяет файлы с сервером (быстро, через ETag), поэтому обновления видны сразу
+		header Cache-Control "no-cache"
+		header /download/* Cache-Control "public, max-age=3600"
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

@@ -1,0 +1,10 @@
+{
+  "name": "civcity-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Сервер CivCity: аккаунты, сохранения в облаке, восстановление пароля",
+  "main": "index.js",
+  "scripts": { "start": "node --disable-warning=ExperimentalWarning index.js" },
+  "engines": { "node": ">=22.13" },
+  "dependencies": { "nodemailer": "10.0.16" }
+}
