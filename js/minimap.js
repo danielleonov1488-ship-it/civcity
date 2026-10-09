@@ -152,7 +152,7 @@ const Minimap = {
   },
 
   update() {
-    if (!this.ctx || this.el.classList.contains('collapsed') || document.body.classList.contains('ui-hidden')) return;
+    if (!this.ctx || this.el.classList.contains('collapsed') || document.body.classList.contains('ui-hidden') || document.body.classList.contains('photo-mode')) return;
     const now = performance.now();
     if (now > this.next) {
       this.next = now + 600;

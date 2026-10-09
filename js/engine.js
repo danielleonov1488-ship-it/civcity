@@ -212,7 +212,7 @@ const Engine = {
   },
 
   rotate(dir) { this.cam.yawTarget += dir * Math.PI / 2; },
-  zoom(factor) { this.cam.distTarget = clamp(this.cam.distTarget * factor, DIST_MIN, DIST_MAX); },
+  zoom(factor) { this.cam.distTarget = clamp(this.cam.distTarget * factor, this.minDist(), DIST_MAX); },
 
   ndc(sx, sy) { return new THREE.Vector2((sx / this.W) * 2 - 1, -(sy / this.H) * 2 + 1); },
 
@@ -1457,7 +1457,14 @@ const Engine = {
     Atmos.updateLife(this.T, this.cam);
     Atmos.follow(this.camera, this.cam);
     this.waterNormals.offset.set(this.T * 0.012, this.T * 0.008);
+    this.render();
+  },
+
+  render() {
     const t = clamp((this.cam.dist - DIST_MIN) / (DIST_LOOK - DIST_MIN), 0, 1);
     Post.render(this.scene, this.camera, { focus: this.cam.dist, dof: lerp(0.8, 0.3, t), bloom: 0.5 + Atmos.night * 0.5 });
   },
+
+  // как близко можно подойти камерой: в режиме фото — к самой земле
+  minDist() { return typeof Photo !== 'undefined' && Photo.on ? 1.6 : DIST_MIN; },
 };

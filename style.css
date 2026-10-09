@@ -532,6 +532,7 @@ kbd { display: inline-block; min-width: 20px; padding: 1px 6px; border: 1px soli
 .good-pill.out { background: var(--good-bg); border-color: transparent; }
 .good-pill.short { background: var(--bad-bg); color: var(--terra-deep); }
 .desc { margin: 8px 0; font-size: 13px; color: var(--ink-soft); }
+.family { margin: 8px 0 0; padding: 7px 10px; border-radius: 9px; background: rgba(150, 112, 62, 0.08); font: italic 600 13px/1.35 var(--font-ui); color: var(--ink-soft); }
 .request { display: flex; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #fbf1d8; border: 1.5px solid #e6cf98; }
 .request img { width: 52px; height: 52px; object-fit: contain; flex: none; }
 .request p { margin: 2px 0; font-size: 13px; }
@@ -549,6 +550,19 @@ body.ui-hidden #toasts, body.ui-hidden #dock, body.ui-hidden #labels, body.ui-hi
 .show-ui:hover { opacity: 1; background: rgba(40, 30, 20, 0.5); }
 .show-ui .ui-ico { width: 22px; height: 22px; }
 body.ui-hidden .show-ui { display: flex; }
+/* режим фото: только город и панель фото внизу */
+body.photo-mode #hud, body.photo-mode #tasks, body.photo-mode #advisor, body.photo-mode #treasury, body.photo-mode #inspector,
+body.photo-mode #menu-pop, body.photo-mode #toasts, body.photo-mode #dock, body.photo-mode #labels, body.photo-mode #tooltip,
+body.photo-mode #minimap, body.photo-mode #show-ui { display: none !important; }
+.photo-bar { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 14px; max-width: calc(100% - 24px); padding: 10px 14px; }
+.photo-bar .btn { margin: 0; }
+.pb-slider { display: grid; gap: 2px; font-size: 11px; font-weight: 900; color: var(--ink-soft); }
+.pb-slider input { width: 140px; accent-color: var(--terra); }
+.pb-hint { flex-basis: 100%; text-align: center; font-size: 11px; font-weight: 700; color: var(--ink-faint); }
+#photo-flash { position: fixed; inset: 0; z-index: 30; background: #fff; opacity: 0; pointer-events: none; }
+#photo-flash.go { animation: pflash 0.45s ease-out; }
+@keyframes pflash { 0% { opacity: 0.85; } 100% { opacity: 0; } }
 .volumes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
 .vol { display: grid; gap: 4px; font-size: 12px; font-weight: 900; color: var(--ink-soft); }
 .vol input[type=range] { width: 100%; accent-color: var(--terra, #b3302a); }

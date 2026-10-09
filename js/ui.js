@@ -15,6 +15,21 @@ const NEED_ACTION = {
 const NEED_SHORT = { road: 'дорога', water: 'вода', food: 'еда', temple: 'храм', oil: 'масло', bread: 'хлеб', baths: 'термы', wine: 'вино', theatre: 'театр', forum: 'форум' };
 const NEED_ICON = { road: 'stone', water: 'water', food: 'wheat', temple: 'temple', oil: 'oil', bread: 'bread', baths: 'baths', wine: 'wine', theatre: 'theatre', forum: 'temple', beauty: 'glory', crowd: 'people' };
 
+// Римские семьи: у каждого дома своя (по номеру дома), в инсулах — несколько
+const GENTES = ['Юлиев', 'Клавдиев', 'Корнелиев', 'Валериев', 'Фабиев', 'Эмилиев', 'Туллиев', 'Ливиев', 'Помпеев', 'Антониев', 'Сервилиев', 'Флавиев',
+  'Аврелиев', 'Домициев', 'Сульпициев', 'Квинкциев', 'Манлиев', 'Фуриев', 'Постумиев', 'Кассиев', 'Атилиев', 'Марциев', 'Семпрониев', 'Лициниев'];
+const PRAENOMINA = ['Марк', 'Луций', 'Гай', 'Публий', 'Квинт', 'Тит', 'Гней', 'Секст', 'Авл', 'Децим'];
+function familyText(h) {
+  if (!h.pop) return 'Пока никто не живёт — переселенцы уже в пути, если дом соединён мостовой с центром города.';
+  const g = GENTES[h.id % GENTES.length], p = PRAENOMINA[(h.id * 7) % PRAENOMINA.length];
+  if (h.pop <= 8) {
+    const kids = Math.max(0, h.pop - 2);
+    return `Семья ${g}: глава семьи ${p}${h.pop > 1 ? ', его жена' : ''}${kids ? `, ${kids} ${plural(kids, 'ребёнок', 'ребёнка', 'детей')}` : ''}.`;
+  }
+  const fam = Math.max(2, Math.round(h.pop / 5)), g2 = GENTES[(h.id * 3 + 5) % GENTES.length];
+  return `${fam} ${plural(fam, 'семья', 'семьи', 'семей')}, ${fmt(h.pop)} человек. Хозяин дома — ${p} из рода ${g}, на первом этаже держит лавку; самые шумные соседи — семья ${g2}.`;
+}
+
 const GOOD_GROUPS = [
   { name: 'Еда', goods: ['wheat', 'fish', 'bread'] },
   { name: 'Сырьё и роскошь', goods: ['olives', 'oil', 'grapes', 'wine'] },
@@ -175,7 +190,7 @@ const UI = {
       ...(Army.unlocked() ? [['legion', 'Легион', 'L'], ['wonders', 'Чудеса света', '']] : []),
       ['guide', 'Справка', ''], ['journal', 'Журнал', state.journalUnread ? String(Math.min(99, state.journalUnread)) : ''],
       null,
-      ['settings', 'Настройки', ''], ['hide', 'Спрятать интерфейс', 'U'],
+      ['photo', 'Режим фото', 'P'], ['settings', 'Настройки', ''], ['hide', 'Спрятать интерфейс', 'U'],
     ];
     const pop = $('menu-pop');
     pop.innerHTML = items.map(it => it ? `<button type="button" data-m="${it[0]}">${Icons.svg({ settings: 'gear', hide: 'eye' }[it[0]] || it[0])}<span>${it[1]}</span>${it[2] ? `<small>${it[2]}</small>` : ''}</button>` : '<hr>').join('');
@@ -183,6 +198,7 @@ const UI = {
       const m = btn.dataset.m;
       this.closeMenu();
       if (m === 'settings') this.openMenu();
+      else if (m === 'photo') Photo.open();
       else if (m === 'hide') this.setUiHidden(true);
       else this.openWindow(m);
     });
@@ -522,6 +538,7 @@ const UI = {
     else if (d.kind === 'house') {
       const tiers = d.tiers, T = tiers[b.tier];
       html += head(T.cls ? `<span class="cls-chip" style="--c:${CLASSES[T.cls].color};--b:${CLASSES[T.cls].soft}">${Icons.cls(T.cls, 16)}${CLASSES[T.cls].name}</span>` : d.name, T.name);
+      html += `<p class="family">${familyText(b)}</p>`;
       html += `<div class="rows">
         <div class="row"><span>${Icons.img('people')} Жители</span><b>${fmt(b.pop)} / ${T.cap}</b></div>
         <div class="row"><span>${Icons.img('money')} Налог в день</span><b>${(b.pop * T.tax * taxMult() * (0.7 + b.happy / 200)).toFixed(1)}</b></div>
@@ -858,7 +875,7 @@ const UI = {
             <li><kbd>ЛКМ</kbd> строить и выбирать</li><li><kbd>ПКМ</kbd> двигать карту, отменить</li>
             <li><kbd>Колесо</kbd> масштаб</li><li><kbd>Средняя кнопка</kbd> вращение</li>
             <li><kbd>W A S D</kbd> камера</li><li><kbd>Q</kbd> <kbd>E</kbd> поворот</li>
-            <li><kbd>R</kbd> мостовая кистью</li><li><kbd>Shift</kbd> прямой линией</li><li><kbd>[</kbd> <kbd>]</kbd> ширина кисти</li><li><kbd>Ctrl</kbd>+<kbd>Z</kbd> отменить мазок</li><li><kbd>H</kbd> дом</li><li><kbd>X</kbd> снос</li><li><kbd>M</kbd> карта</li><li><kbd>Home</kbd> к городу</li><li><kbd>U</kbd> спрятать интерфейс</li>
+            <li><kbd>R</kbd> мостовая кистью</li><li><kbd>Shift</kbd> прямой линией</li><li><kbd>[</kbd> <kbd>]</kbd> ширина кисти</li><li><kbd>Ctrl</kbd>+<kbd>Z</kbd> отменить мазок</li><li><kbd>H</kbd> дом</li><li><kbd>X</kbd> снос</li><li><kbd>M</kbd> карта</li><li><kbd>Home</kbd> к городу</li><li><kbd>U</kbd> спрятать интерфейс</li><li><kbd>P</kbd> режим фото</li>
             <li><kbd>Z</kbd> <kbd>C</kbd> повернуть постройку</li>
             <li><kbd>F</kbd> знания</li><li><kbd>L</kbd> легион</li><li><kbd>Пробел</kbd> пауза</li>
             <li><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> скорость</li><li><kbd>Esc</kbd> отмена</li>

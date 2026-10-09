@@ -121,6 +121,7 @@ const Game = {
     Input.update(realDt);
     Walkers.update(dt, realDt);
     Cats.update(dt, realDt);
+    Photo.update(realDt);
     Engine.frame(dt, realDt);
     this.drawn = (this.drawn || 0) + 1;     // сколько кадров нарисовано (для проверки скорости)
     Minimap.update();

@@ -205,7 +205,7 @@ const Input = {
     if (this.mode === 'pinch' && this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()];
       const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
-      Engine.cam.distTarget = clamp(this.pinch.dist * this.pinch.d / d, DIST_MIN, DIST_MAX);
+      Engine.cam.distTarget = clamp(this.pinch.dist * this.pinch.d / d, Engine.minDist(), DIST_MAX);
       const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
       Engine.cam.yawTarget = this.pinch.yaw - (ang - this.pinch.ang);
       const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -237,6 +237,7 @@ const Input = {
     }
     if (this.mode === 'pan' || ((this.mode === 'maybe' || this.mode === 'pick') && this.moved)) {
       this.mode = 'pan';
+      if (Photo.follow) Photo.setFollow(null);
       const cur = Engine.groundPoint(e.clientX, e.clientY);
       if (this.anchor && cur) Engine.panBy(this.anchor[0] - cur[0], this.anchor[1] - cur[1]);
       return;
@@ -337,6 +338,7 @@ const Input = {
     const k = e.key.toLowerCase();
     this.shift = e.shiftKey;
     if (k === 'escape') {
+      if (Photo.on) { Photo.close(); return; }
       if (UI.closeModal()) return;
       if (UI.closeWindow()) return;
       if (this.tool) { this.setTool(null); return; }
@@ -361,6 +363,7 @@ const Input = {
     if (k === 'e' || k === 'у') Engine.rotate(1);
     if (k === 'u' || k === 'г') UI.setUiHidden(!document.body.classList.contains('ui-hidden'));
     if (k === 'home') Engine.flyHome();
+    if (k === 'p' || k === 'з') Photo.toggle();
     if (k === 'm' || k === 'ь') Minimap.setCollapsed(!Minimap.el.classList.contains('collapsed'));
     if (k === 'z' || k === 'я') this.rotate(-1);
     if (k === 'c' || k === 'с') this.rotate(1);
@@ -481,6 +484,7 @@ const Input = {
   },
 
   click(sx, sy) {
+    if (Photo.on) return;
     const b = Engine.pickBuilding(sx, sy);
     if (b) { UI.openPanel(b); return; }
     const p = Engine.groundPoint(sx, sy);

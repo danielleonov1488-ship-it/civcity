@@ -22,6 +22,7 @@ const UI_SVG = {
   faster: '<path d="M2 7l6 5-6 5ZM9 7l6 5-6 5ZM16 7l6 5-6 5Z"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   menu: '<path d="M4.5 7h15M4.5 12h15M4.5 17h15"/>',
+  photo: '<path d="M3.5 8.5h3.5l1.8-2.5h6.4l1.8 2.5h3.5v10h-17Z"/><circle cx="12" cy="13" r="3.4"/>',
   smile: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 14c.9 1.5 2.1 2.2 3.5 2.2s2.6-.7 3.5-2.2"/><path d="M9.2 9.6v.6M14.8 9.6v.6"/>',
   road: '<path d="M8 3.5 4 20.5M16 3.5l4 17"/><path d="M12 4.5v2.5M12 10.5v3M12 17v3"/>',
   dropper: '<path d="M14.5 4.5a2.8 2.8 0 0 1 4 4L16 11l-3-3Z"/><path d="M13 8 5.5 15.5 5 19l3.5-.5L16 11"/>',
