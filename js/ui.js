@@ -24,9 +24,9 @@ const GOOD_GROUPS = [
 const GOOD_USE = {
   wheat: 'Еда для всех домов через рынок; сырьё для пекарни.', fish: 'Еда для всех домов через рынок.',
   bread: 'Нужен Большой инсуле и патрициям.', olives: 'Сырьё для маслодавильни.', oil: 'Нужно инсулам и патрициям.',
-  grapes: 'Сырьё для винодельни.', wine: 'Нужно виллам и дворцам.', wood: 'Стройка; кузница делает из него оружие.',
-  stone: 'Стройка: храмы, колодцы, термы.', clay: 'Сырьё для кирпичной мастерской.', bricks: 'Стройка: термы, школы, чудеса света.',
-  marble: 'Статуи, форум, чудеса света.', iron: 'Сырьё для кузницы.', weapons: 'Казармы превращают его в легионеров.',
+  grapes: 'Сырьё для винодельни.', wine: 'Нужно виллам и дворцам.', wood: 'Покупают купцы; кузница делает из него оружие, мастерские — машины легиона.',
+  stone: 'Покупают купцы.', clay: 'Сырьё для кирпичной мастерской.', bricks: 'Чудеса света и прокачка легиона; покупают купцы.',
+  marble: 'Чудеса света и прокачка легиона; купцы платят дорого.', iron: 'Сырьё для кузницы.', weapons: 'Казармы превращают его в легионеров.',
 };
 
 const UI = {
@@ -123,6 +123,9 @@ const UI = {
     $('v-season').textContent = `${SEASONS[Math.floor(state.day / DAYS_PER_SEASON) % 4]}, день ${state.day % DAYS_PER_SEASON + 1}`;
     // казна
     $('v-money').textContent = fmt(state.money);
+    const tcap = treasuryCap();
+    $('v-cap').textContent = `/ ${fmt(tcap)}`;
+    document.querySelector('.tr-money').classList.toggle('full', state.money >= tcap - 1);
     const inc = S.income || 0;
     $('v-income').textContent = `${inc >= 0 ? '+' : '−'}${fmt(Math.abs(inc))} в день`;
     $('v-income').classList.toggle('neg', inc < 0);
@@ -207,8 +210,10 @@ const UI = {
       <div class="city-classes">${cls}</div>
       <div class="rows">
         <div class="row"><span>Налоги</span><b>+${fmt(S.taxes || 0)} в день</b></div>
+        <div class="row"><span>Купцы покупают излишки</span><b>+${fmt(S.trade || 0)} в день</b></div>
         <div class="row"><span>Содержание построек</span><b>−${fmt(S.upkeep || 0)} в день</b></div>
         <div class="row"><span>Итого</span><b>${(S.income || 0) >= 0 ? '+' : '−'}${fmt(Math.abs(S.income || 0))} в день</b></div>
+        <div class="row"><span>Предел казны (растёт со званием города)</span><b>${fmt(treasuryCap())}</b></div>
       </div>
       <p class="field-label">Налоги</p>
       <div class="seg wide" role="group">${seg}</div>
@@ -562,11 +567,20 @@ const UI = {
       }
       if (d.scrolls) html += `<div class="row"><span>${Icons.img('scrolls')} Свитков в день</span><b>${(d.scrolls * (d.jobs ? (b.staff || 0) : 1)).toFixed(1)}</b></div>`;
       if (d.glory) html += `<div class="row"><span>${Icons.img('glory')} Славы в день</span><b>${d.glory}</b></div>`;
-      if (d.storage) html += `<div class="row"><span>${Icons.img('store')} Вместимость складов</span><b>${fmt(storageCap())}</b></div>`;
+      if (d.storage) {
+        html += `<div class="row"><span>${Icons.img('store')} Вместимость складов</span><b>${fmt(storageCap())}</b></div>`;
+        if (state.stats.trade) html += `<div class="row"><span>${Icons.img('money')} Купцы покупают излишки</span><b>+${fmt(state.stats.trade)} в день</b></div>`;
+      }
       if (d.beauty) html += `<div class="row"><span>${Icons.img('glory')} Красота для соседей</span><b>+${d.beauty}</b></div>`;
       if (d.upkeep) html += `<div class="row"><span>${Icons.img('money')} Содержание в день</span><b>${d.upkeep}</b></div>`;
       html += '</div>';
       html += `<p class="desc">${d.desc}</p>`;
+      // полки склада: что лежит в городе (зелёным — то, что купцы забирают сверх запаса)
+      if (d.storage) {
+        const have = GOOD_IDS.filter(g => state.goods[g] >= 0.5);
+        html += `<h3>На складах</h3><div class="shelves">${have.length ? have.map(g => `<span class="good-pill ${Trade.sells(g) ? 'sell' : ''}" title="${GOODS[g].name}${Trade.sells(g) ? ' — купцы забирают всё сверх ' + fmt(Trade.reserve(g)) : ' — копится'}">${Icons.img(g)}<b>${fmt(state.goods[g])}</b></span>`).join('') : '<span class="sub">Пока пусто</span>'}</div>
+          <button type="button" class="btn small" id="open-trade">Что продавать, что копить</button>`;
+      }
       if (d.kind === 'military') html += ArmyUI.buildingPanel(b);
       if (b.type === 'tradepost') html += `<button type="button" class="btn" id="open-trade">Настроить торговлю</button>`;
     }
@@ -746,9 +760,11 @@ const UI = {
       const list = Object.entries(BUILDINGS).filter(([, d]) => d.produces && d.produces[g]).map(([k, d]) => `<img src="${this.icons[k]}" alt="" title="${d.name}" data-card="${k}">`);
       return list.join('');
     };
-    let html = `<div class="explain">${Icons.img('store', 'big')}<div><b>Всё, что производит город, лежит на общих складах.</b>
-      <p>Каждого товара помещается ${fmt(cap)}; каждый склад добавляет ${WAREHOUSE_STORAGE}. Дома получают еду, масло, хлеб и вино через ближайший рынок.</p></div></div>`;
-    if (!trade) html += '<p class="note">Торговый пост (исследование «Торговля») позволит продавать излишки и докупать нехватку.</p>';
+    let html = `<div class="explain">${Icons.img('store', 'big')}<div><b>Всё, что производит город, лежит на складах.</b>
+      <p>Каждого товара помещается ${fmt(cap)}; каждый склад добавляет ${WAREHOUSE_STORAGE}. Дома получают еду, масло, хлеб и вино через ближайший рынок.
+      Купцы каждый день покупают со складов то, что отмечено «продавать», — всё сверх запаса. Сегодня: +${fmt(S.trade || 0)} денариев.</p></div></div>`;
+    if (!Trade.hasWarehouse()) html += '<p class="note bad">Купцы приходят только на склад — постройте его (раздел «Ремёсла»).</p>';
+    if (!trade) html += '<p class="note">Без торгового поста купцы платят три четверти цены. Торговый пост (знание «Торговля») — полная цена, а караван докупает то, чего не хватает.</p>';
     for (const grp of GOOD_GROUPS) {
       html += `<h3 class="grp">${grp.name}</h3><div class="goods-list">`;
       for (const g of grp.goods) {
@@ -760,14 +776,14 @@ const UI = {
           <div class="gflow"><span class="pos">${p ? '+' + p.toFixed(1) : ''}</span><span class="neg">${c ? '−' + c.toFixed(1) : ''}</span></div>
           <div class="gsrc">${producers(g)}</div>
           <div class="guse">${GOOD_USE[g]}</div>
-          ${trade ? `<div class="gtrade"><label class="tg"><input type="checkbox" data-sell="${g}" ${state.trade.sell[g] ? 'checked' : ''}> продавать</label><label class="tg"><input type="checkbox" data-buy="${g}" ${state.trade.buy[g] ? 'checked' : ''}> докупать</label><small>${GOODS[g].price} ден.</small></div>` : ''}
+          <div class="gtrade"><label class="tg ${Trade.sells(g) ? 'on' : ''}" title="Купцы забирают всё сверх ${fmt(Trade.reserve(g))}"><input type="checkbox" data-sell="${g}" ${Trade.sells(g) ? 'checked' : ''}> продавать</label>${trade ? `<label class="tg"><input type="checkbox" data-buy="${g}" ${state.trade.buy[g] ? 'checked' : ''}> докупать</label>` : ''}<small>${String(+Trade.price(g).toFixed(2)).replace('.', ',')} ден.</small></div>
         </div>`;
       }
       html += '</div>';
     }
-    if (trade) html += `<p class="sub">Караван приходит раз в ${TRADE_INTERVAL} дней: продаёт то, чего больше 60% склада, и докупает то, чего меньше 15% (в 1,6 раза дороже).</p>`;
+    html += `<p class="sub">Запас, который купцы не трогают: ${TRADE_RESERVE} штук и ещё 10 дней расхода мастерскими и домами${Army.unlocked() ? ', а дерева, кирпича, железа, оружия и мрамора — ещё 150 на прокачку легиона' : ''}. Снимите «продавать», чтобы товар копился.${trade ? ` Караван приходит раз в ${TRADE_INTERVAL} дней и докупает то, чего меньше 15% склада (в 1,6 раза дороже).` : ''}</p>`;
     el.innerHTML = html;
-    el.querySelectorAll('[data-sell]').forEach(i => i.onchange = () => { state.trade.sell[i.dataset.sell] = i.checked; });
+    el.querySelectorAll('[data-sell]').forEach(i => i.onchange = () => { state.trade.sell[i.dataset.sell] = i.checked; this.renderWindow(); });
     el.querySelectorAll('[data-buy]').forEach(i => i.onchange = () => { state.trade.buy[i.dataset.buy] = i.checked; });
   },
 

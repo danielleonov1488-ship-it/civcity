@@ -63,6 +63,23 @@ function decorCount() {
   return n;
 }
 
+// Предел казны — по званию города (позже — по уровню Форума)
+function treasuryCap() {
+  const pop = (state.stats && state.stats.pop) || 0;
+  let i = 0;
+  CITY_RANKS.forEach(([n], k) => { if (pop >= n) i = k; });
+  return TREASURY_CAPS[i];
+}
+
+// Доход в казну: сверх предела не помещается (возвращает, сколько вошло). Траты и награды за задания — без предела
+function addIncome(v) {
+  if (v <= 0) { state.money += v; return v; }
+  const room = Math.max(0, treasuryCap() - state.money);
+  const got = Math.min(v, room);
+  state.money += got;
+  return got;
+}
+
 function storageCap() {
   let n = 0;
   for (const b of state.buildings.values()) if (b.type === 'warehouse' && b.active) n++;
@@ -84,9 +101,9 @@ const GOALS = [
   { text: 'Дождитесь трёх Домиков', need: 3, reward: { money: 200 },
     hint: 'Хижина станет Домиком, когда у неё есть вода и еда. Нажмите на дом — он покажет, чего не хватает.',
     prog: () => housesAtLeast('house', 2) },
-  { text: 'Лесопилка у рощи и каменоломня у скал', need: 2, reward: { money: 200, wood: 30 }, act: { tool: 'lumber' },
-    hint: 'Дерево и камень нужны для стройки. При установке видно, сколько деревьев или скал рядом — ставьте туда, где 100%.',
-    prog: () => Math.min(1, countType('lumber')) + Math.min(1, countType('quarry')) },
+  { text: 'Лесопилка, каменоломня и склад', need: 3, reward: { money: 300 }, act: { tool: 'quarry' },
+    hint: 'Дерево и камень покупают купцы — прямо со склада, каждый день. При установке видно, сколько деревьев или скал рядом — ставьте туда, где 100%.',
+    prog: () => Math.min(1, countType('lumber')) + Math.min(1, countType('quarry')) + Math.min(1, countType('warehouse')) },
   { text: 'Постройте Храм Юпитера', need: 1, reward: { money: 250 }, act: { tool: 'temple' },
     hint: 'Храм нужен для роста домов и пишет свитки — знания Рима. За свитки открываются новые здания.',
     prog: () => countType('temple') },
@@ -102,14 +119,14 @@ const GOALS = [
   { text: 'Соберите 100 жителей', need: 100, reward: { money: 400 }, act: { tool: 'house' },
     hint: 'Больше домов — больше налогов. Следите, чтобы хватало еды: если еды не хватает, рядом с карточкой города появится значок.',
     prog: () => state.stats.pop || 0 },
-  { text: 'Постройте склад', need: 1, reward: { money: 150 }, act: { tool: 'warehouse' },
-    hint: 'Склад добавляет место для всех товаров. Когда склады полны, производство встаёт.',
+  { text: 'Постройте второй склад', need: 2, reward: { money: 200 }, act: { tool: 'warehouse' },
+    hint: 'Каждый склад — ещё место для всех товаров. Когда склады полны, производство встаёт.',
     prog: () => countType('warehouse') },
   { text: 'Купите соседний участок', need: 1, reward: { money: 300 }, act: { plot: true },
     hint: 'Нажмите на табличку «Купить землю». На новых землях бывают мрамор, железо и озёра с рыбой.',
     prog: () => state.plots.size - 1 },
   { text: 'Постройте термы', need: 1, reward: { money: 400 }, act: { open: 'research' },
-    hint: 'Термам нужен кирпич. Изучите «Обжиг кирпича» и «Римские бани», поставьте глиняный карьер у воды.',
+    hint: 'Изучите «Обжиг кирпича» и «Римские бани» — термы нужны большим инсулам и патрициям.',
     prog: () => countType('baths') },
   { text: 'Вырастите Большую инсулу', need: 1, reward: { money: 500 }, act: { tool: 'bakery' },
     hint: 'Большой инсуле нужны хлеб и термы рядом. Пекарня печёт хлеб из пшеницы.',
@@ -355,12 +372,17 @@ function dailyProgress() {
 
   for (const g of GOOD_IDS) state.goods[g] = clamp(state.goods[g], 0, cap);
 
-  state.money += taxes - upkeep;
+  // купцы каждый день покупают излишки со складов
+  const trade = Trade.sellSurplus();
+  const net = taxes + trade - upkeep;
+  const got = addIncome(net);
+  S.lost = net - got;              // не поместилось в казну
   state.scrolls += scrolls;
   state.glory += glory;
   S.taxes = taxes;
+  S.trade = trade;
   S.upkeep = upkeep;
-  S.income = taxes - upkeep;
+  S.income = net;
   S.prod = prod;
   S.cons = cons;
   S.scrollRate = scrolls;
@@ -577,7 +599,10 @@ function researchDay() {
   if (UI.winOpen && UI.winTab === 'research') UI.renderWindow();
 }
 
-/* ---------- Торговля ---------- */
+/* ---------- Торговля ----------
+   Купцы каждый день покупают со складов излишки того, что отмечено «продавать» (по умолчанию — стройматериалы и сырьё):
+   всё сверх запаса. Без торгового поста — за три четверти цены, с ним — по полной. Раз в 10 дней с торговым постом
+   приходит караван и докупает то, что отмечено «докупать», когда этого мало. */
 
 const Trade = {
   active() {
@@ -585,25 +610,60 @@ const Trade = {
     return false;
   },
 
+  hasWarehouse() {
+    for (const b of state.buildings.values()) if (b.type === 'warehouse' && b.active) return true;
+    return false;
+  },
+
+  sells(g) { const s = state.trade.sell[g]; return s === undefined ? SELL_DEFAULT.includes(g) : !!s; },
+
+  // сколько оставить на складе: запас, десять дней расхода мастерскими и домами, а с легионом — на прокачку войск
+  reserve(g) {
+    let r = TRADE_RESERVE + 10 * ((state.stats.cons || {})[g] || 0);
+    if (Army.unlocked() && ['wood', 'bricks', 'iron', 'weapons', 'marble'].includes(g)) r += 150;
+    return r;
+  },
+
+  price(g) { return GOODS[g].price * (this.active() ? 1 : TRADE_PRICE_LOCAL); },
+
+  // каждый день: продать излишки, вернуть выручку (в казну её кладёт dailyProgress)
+  sellSurplus() {
+    if (!this.hasWarehouse()) return 0;
+    let earned = 0;
+    const sold = state.stats.sold = {};
+    for (const g of GOOD_IDS) {
+      if (!this.sells(g)) continue;
+      const n = Math.floor(state.goods[g] - this.reserve(g));
+      if (n <= 0) continue;
+      state.goods[g] -= n;
+      sold[g] = n;
+      earned += n * this.price(g);
+    }
+    // раз в несколько дней — монетки над складом, чтобы было видно, откуда деньги
+    if (earned >= 1 && state.day >= (state.tradeFxDay || 0)) {
+      state.tradeFxDay = state.day + 3;
+      const wh = [...state.buildings.values()].filter(b => b.type === 'warehouse' && b.active);
+      const w = wh[Math.floor(Math.random() * wh.length)];
+      if (w) UI.floatText(w.x + w.w / 2, 1.6, w.y + w.h / 2, '+' + fmt(earned), 'good');
+    }
+    return earned;
+  },
+
+  // раз в 10 дней: караван докупает нехватку (только с торговым постом)
   daily() {
     if (state.day < state.nextTradeDay) return;
     state.nextTradeDay = state.day + TRADE_INTERVAL;
     if (!this.active()) return;
     const cap = storageCap();
-    let earned = 0, spent = 0;
+    let spent = 0;
     for (const g of GOOD_IDS) {
       const price = GOODS[g].price;
-      if (state.trade.sell[g] && state.goods[g] > cap * 0.6) {
-        const n = Math.floor(Math.min(40, state.goods[g] - cap * 0.6));
-        state.goods[g] -= n;
-        earned += n * price;
-      }
       if (state.trade.buy[g] && state.goods[g] < cap * 0.15) {
         const n = Math.floor(Math.min(30, cap * 0.3 - state.goods[g], (state.money - spent) / (price * 1.6)));
         if (n > 0) { state.goods[g] += n; spent += n * price * 1.6; }
       }
     }
-    state.money += earned - spent;
-    if (earned || spent) UI.log(`Пришёл караван: продано на ${fmt(earned)}, куплено на ${fmt(spent)} денариев.`, 'info');
+    state.money -= spent;
+    if (spent) UI.log(`Пришёл караван: куплено на ${fmt(spent)} денариев.`, 'info');
   },
 };
