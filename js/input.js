@@ -23,6 +23,7 @@ const Input = {
   undos: [],           // последние мазки — для Ctrl+Z
   shift: false,
   angle: 0,            // поворот постройки вдали от дорог
+  scale: 1,            // размер украшения: 0,8–1,3 (клавиши [ и ])
   moving: null,        // переносимое здание (снято с карты, пока его не поставят)
   lastPaint: null,
   pinch: null,
@@ -113,7 +114,17 @@ const Input = {
   tileUnder(x, y) { return Engine.groundPoint(x, y); },
 
   // Куда встанет выбранная постройка под курсором
-  placement(type, fx, fy) { return snapPlace(type, fx, fy, this.angle); },
+  placement(type, fx, fy) {
+    const p = snapPlace(type, fx, fy, this.angle);
+    if (BUILDINGS[type].kind === 'decor') p.s = this.scale;
+    return p;
+  },
+
+  // размер украшения: шагами по 10%
+  decorScale(dir) {
+    this.scale = clamp(Math.round((this.scale + dir * 0.1) * 10) / 10, 0.8, 1.3);
+    this.lastGhostKey = '';
+  },
 
   down(e) {
     if (Battle.active) return;
@@ -306,6 +317,9 @@ const Input = {
     if ((k === 'z' || k === 'я') && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this.undoStroke(); return; }
     if (this.tool === 'road' && (k === '[' || k === 'х')) { this.brushSize(-1); return; }
     if (this.tool === 'road' && (k === ']' || k === 'ъ')) { this.brushSize(1); return; }
+    const decorTool = this.tool && BUILDINGS[this.tool] && BUILDINGS[this.tool].kind === 'decor';
+    if (decorTool && (k === '[' || k === 'х')) { this.decorScale(-1); return; }
+    if (decorTool && (k === ']' || k === 'ъ')) { this.decorScale(1); return; }
     if (k === 'q' || k === 'й') Engine.rotate(-1);
     if (k === 'e' || k === 'у') Engine.rotate(1);
     if (k === 'u' || k === 'г') UI.setUiHidden(!document.body.classList.contains('ui-hidden'));
@@ -351,9 +365,9 @@ const Input = {
   },
 
   tryPlace(type, p, loud) {
-    const err = checkPlace(type, p.cx, p.cy, p.ang);
+    const err = checkPlace(type, p.cx, p.cy, p.ang, p.s);
     if (err) { if (loud || err.startsWith('Не хватает')) this.warn(err); return null; }
-    const b = placeBuilding(type, p.cx, p.cy, p.ang);
+    const b = placeBuilding(type, p.cx, p.cy, p.ang, false, p.s);
     Engine.dust(b);
     Sound.build(b);
     afterCityChanged();
@@ -384,7 +398,9 @@ const Input = {
       return;
     }
     // мелкие постройки и украшения рисуются мазком: следующая — на шаг дальше предыдущей
-    if (last && Math.hypot(fx - last[0], fy - last[1]) < 0.85) return;
+    const dd = BUILDINGS[this.tool];
+    const step = dd.kind === 'decor' ? (dd.fp || 0.72) * this.scale + 0.1 : 0.85;
+    if (last && Math.hypot(fx - last[0], fy - last[1]) < step) return;
     if (this.tryPlace(this.tool, this.placement(this.tool, fx, fy), false)) this.lastPaint = [fx, fy];
   },
 
@@ -397,6 +413,7 @@ const Input = {
     if (!isUnlocked(b.type)) { this.warn('Эту постройку ещё не открыли'); return; }
     this.setTool(b.type);
     this.angle = bAng(b);
+    this.scale = b.s || 1;
   },
 
   click(sx, sy) {
@@ -449,14 +466,14 @@ const Input = {
       } else {
         const d = BUILDINGS[tool];
         const p = this.placement(tool, fx, fy);
-        const err = this.moving ? checkMove(this.moving, p.cx, p.cy, p.ang) : checkPlace(tool, p.cx, p.cy, p.ang);
-        Engine.setGhost(tool, p.cx, p.cy, !err, p.ang, this.moving);
+        const err = this.moving ? checkMove(this.moving, p.cx, p.cy, p.ang) : checkPlace(tool, p.cx, p.cy, p.ang, p.s);
+        Engine.setGhost(tool, p.cx, p.cy, !err, p.ang, this.moving, p.s);
         const x = p.cx - d.w / 2, y = p.cy - d.h / 2;
         if (d.radius) ring = [p.cx, p.cy, d.radius, { x, y, w: d.w, h: d.h }];
-        const key = `${tool}:${p.cx.toFixed(2)}:${p.cy.toFixed(2)}:${p.ang.toFixed(2)}:${err}`;
+        const key = `${tool}:${p.cx.toFixed(2)}:${p.cy.toFixed(2)}:${p.ang.toFixed(2)}:${err}:${p.s}`;
         if (key !== this.lastGhostKey) {
           this.lastGhostKey = key;
-          UI.setToolStatus(tool, x, y, err);
+          UI.setToolStatus(tool, x, y, err, d.kind === 'decor' ? `Размер ${Math.round(this.scale * 100)}% · [ и ] — меньше или больше · Z и C — повернуть` : '');
         }
       }
     } else if (!tool && UI.selected && BUILDINGS[UI.selected.type].radius) {

@@ -300,6 +300,7 @@ if (NEW_LOOK) {
     for (const [name, x, z, rot, h, fire] of EXTRAS[b.type] || []) {
       if (!mb.prop(name, x, 0.03, z, rot, h)) continue;
       if (fire) {
+        addLight(mb, x, 0.03 + h, z, 1.4);
         mb.glow = true;
         mb.cone(x, 0.03 + h * 0.93, z, 0.05, 0.13, '#ff9a40', 8);
         mb.cone(x, 0.03 + h * 0.93, z, 0.03, 0.18, '#ffe08a', 8);

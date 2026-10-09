@@ -307,9 +307,20 @@ const UI = {
     items.innerHTML = '';
     const cat = CATEGORIES.find(c => c.id === this.openCat);
     if (!cat) return;
+    // вкладки наборов украшений: свет, улица, сад, статуи
+    let tabs = $('tray-tabs');
+    if (!tabs) { tabs = Object.assign(document.createElement('div'), { id: 'tray-tabs', className: 'tray-tabs' }); $('tray').prepend(tabs); }
+    tabs.hidden = cat.id !== 'decor';
     if (cat.id === 'roads') { this.renderBrush(items); return; }
+    let list = cat.items;
+    if (cat.id === 'decor') {
+      this.decorSet = this.decorSet || 'light';
+      tabs.innerHTML = DECOR_SETS.map(([id, name]) => `<button type="button" class="${id === this.decorSet ? 'on' : ''}" data-set="${id}">${name}</button>`).join('');
+      tabs.querySelectorAll('[data-set]').forEach(btn => btn.onclick = () => { this.decorSet = btn.dataset.set; this.renderTray(); });
+      list = cat.items.filter(t => (BUILDINGS[t].set || 'garden') === this.decorSet);
+    }
     // карточка — только картинка и цена (как в Town to City); название и описание — при наведении
-    for (const type of cat.items) {
+    for (const type of list) {
       const d = BUILDINGS[type];
       const unlocked = isUnlocked(type);
       const card = document.createElement('button');
@@ -428,7 +439,7 @@ const UI = {
       const d = BUILDINGS[t];
       $('hint-icon').src = this.icons[t] || '';
       $('hint-name').textContent = d.name;
-      $('hint-text').textContent = d.kind === 'decor' ? `${d.desc} Повернуть — Z / C.`
+      $('hint-text').textContent = d.kind === 'decor' ? `${d.desc} Повернуть — Z / C, размер — [ и ]. Ведите с зажатой кнопкой — встанет рядом ещё.`
         : `${d.desc} У мостовой встанет фасадом к ней; посреди площади и вдали — повернуть Z / C.`;
     }
     $('hint-status').textContent = '';

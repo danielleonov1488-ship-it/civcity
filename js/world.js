@@ -194,14 +194,15 @@ function bAng(b) { return b.ang !== undefined ? b.ang : (b.rot || 0) * Math.PI /
 function normAng(a) { a %= Math.PI * 2; return a < 0 ? a + Math.PI * 2 : a; }
 function rotIndex(a) { return Math.round(normAng(a) / (Math.PI / 2)) % 4; }
 
-// Прямоугольник постройки: центр, полуразмеры, cos и sin угла; pad — запас (минус — ужать)
-function boxOf(type, cx, cy, ang, pad) {
+// Прямоугольник постройки: центр, полуразмеры, cos и sin угла; pad — запас (минус — ужать); s — размер украшения
+function boxOf(type, cx, cy, ang, pad, s) {
   const d = BUILDINGS[type];
-  const k = d.kind === 'decor' ? 0.72 : 1;   // украшения можно ставить теснее
-  const hw = d.w * k / 2 + (pad || 0), hh = d.h * k / 2 + (pad || 0);
+  // украшение занимает меньше своей клетки (fp — сколько места): их можно ставить теснее
+  const deco = d.kind === 'decor', k = s || 1;
+  const hw = (deco ? (d.fp || 0.72) * d.w : d.w) * k / 2 + (pad || 0), hh = (deco ? (d.fp || 0.72) * d.h : d.h) * k / 2 + (pad || 0);
   return { cx, cy, hw, hh, c: Math.cos(ang), s: Math.sin(ang), R: Math.hypot(hw, hh) };
 }
-function boxOfB(b, pad) { return boxOf(b.type, b.x + b.w / 2, b.y + b.h / 2, bAng(b), pad); }
+function boxOfB(b, pad) { return boxOf(b.type, b.x + b.w / 2, b.y + b.h / 2, bAng(b), pad, b.s); }
 
 function boxLocal(o, x, y) { const dx = x - o.cx, dy = y - o.cy; return [dx * o.c - dy * o.s, dx * o.s + dy * o.c]; }
 function boxWorld(o, lx, ly) { return [o.cx + lx * o.c + ly * o.s, o.cy - lx * o.s + ly * o.c]; }
@@ -265,8 +266,8 @@ function buildingAtPoint(x, y) { return buildingNear(x, y, 1e-6); }
 
 // Место под постройку: своя земля, без воды, не на залежах, не в лесу и не на других постройках. null — свободно.
 // На мостовую ставить можно — дом встанет прямо на камни
-function placeBlocked(type, cx, cy, ang) {
-  const o = boxOf(type, cx, cy, ang);
+function placeBlocked(type, cx, cy, ang, s) {
+  const o = boxOf(type, cx, cy, ang, 0, s);
   const nx = Math.max(1, Math.ceil(o.hw * 4)), ny = Math.max(1, Math.ceil(o.hh * 4));
   for (let j = 0; j <= ny; j++) {
     for (let i = 0; i <= nx; i++) {
@@ -276,10 +277,10 @@ function placeBlocked(type, cx, cy, ang) {
       if (isWater(groundAt(tx, ty))) return 'Здесь вода';
     }
   }
-  const tight = boxOf(type, cx, cy, ang, -0.03);
+  const tight = boxOf(type, cx, cy, ang, -0.03, s);
   for (const b of buildingsNear(cx, cy, o.R + 0.5)) if (boxOverlap(tight, boxOfB(b, -0.03))) return 'Место занято';
   // залежи и густой лес вечные: ни под домом, ни вплотную к стенам (там их убрала бы стройка)
-  const pad = BUILDINGS[type].kind === 'decor' ? 0 : 0.25, big = boxOf(type, cx, cy, ang, pad);
+  const pad = BUILDINGS[type].kind === 'decor' ? 0 : 0.25, big = boxOf(type, cx, cy, ang, pad, s);
   for (let ty = Math.floor(cy - big.R); ty <= Math.floor(cy + big.R); ty++) {
     for (let tx = Math.floor(cx - big.R); tx <= Math.floor(cx + big.R); tx++) {
       if (!boxContains(big, tx + 0.5, ty + 0.5)) continue;
@@ -300,11 +301,11 @@ function nearWaterBox(o, r) {
 }
 
 // null — можно строить, иначе причина отказа
-function checkPlace(type, cx, cy, ang) {
+function checkPlace(type, cx, cy, ang, s) {
   const d = BUILDINGS[type];
   if (!isUnlocked(type)) return 'Сначала изучите нужную технологию';
   if (d.unique && countType(type) > 0) return 'Такое здание в городе уже есть';
-  const err = placeBlocked(type, cx, cy, ang);
+  const err = placeBlocked(type, cx, cy, ang, s);
   if (err) return err;
   if (d.needsWater && !nearWaterBox(boxOf(type, cx, cy, ang), 2)) return 'Нужно ставить у воды';
   if (!canAfford(d.cost)) return 'Не хватает: ' + missingFor(d.cost).join(', ');
@@ -377,9 +378,10 @@ function makeBuilding(type, x, y) {
 }
 
 // Поставить постройку центром в (cx, cy) с поворотом ang
-function placeBuilding(type, cx, cy, ang, free) {
+function placeBuilding(type, cx, cy, ang, free, s) {
   const d = BUILDINGS[type];
   const b = makeBuilding(type, cx - d.w / 2, cy - d.h / 2);
+  if (s && Math.abs(s - 1) > 0.01) b.s = s;
   b.ang = normAng(ang || 0);
   b.rot = rotIndex(b.ang);
   state.buildings.set(b.id, b);
@@ -431,7 +433,7 @@ function dropBuilding(b, cx, cy, ang) {
 
 // Можно ли поставить переносимую постройку сюда (null — можно)
 function checkMove(b, cx, cy, ang) {
-  const err = placeBlocked(b.type, cx, cy, ang);
+  const err = placeBlocked(b.type, cx, cy, ang, b.s);
   if (err) return err;
   if (BUILDINGS[b.type].needsWater && !nearWaterBox(boxOf(b.type, cx, cy, ang), 2)) return 'Нужно ставить у воды';
   return null;

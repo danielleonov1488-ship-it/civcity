@@ -825,9 +825,10 @@ const Engine = {
   },
 
   buildingMatrix(b, sy, sxz) {
+    const k = b.s || 1;   // размер украшения
     this._q.setFromAxisAngle(this._up, bAng(b));
     this._p.set(b.x + b.w / 2, 0, b.y + b.h / 2);
-    this._s.set(sxz || 1, sy || 1, sxz || 1);
+    this._s.set((sxz || 1) * k, (sy || 1) * k, (sxz || 1) * k);
     return this._m.compose(this._p, this._q, this._s);
   },
 
@@ -864,8 +865,59 @@ const Engine = {
     }
   },
 
+  // Ночные огни: тёплые круги света на земле вокруг фонарей, факелов и костров (по одному на источник)
+  updateLights() {
+    const night = typeof Atmos !== 'undefined' ? Atmos.night || 0 : 0;
+    if (!this.lightMesh) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 64;
+      const c = cv.getContext('2d'), gr = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gr.addColorStop(0, 'rgba(255,214,150,1)');
+      gr.addColorStop(0.35, 'rgba(255,170,90,0.55)');
+      gr.addColorStop(1, 'rgba(255,140,60,0)');
+      c.fillStyle = gr;
+      c.fillRect(0, 0, 64, 64);
+      const tex = new THREE.CanvasTexture(cv);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 });
+      this.lightMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), mat, 2048);
+      this.lightMesh.frustumCulled = false;
+      this.lightMesh.renderOrder = 4;
+      this.lightMesh.count = 0;
+      this.scene.add(this.lightMesh);
+      this.lightsDirty = true;
+    }
+    const m = this.lightMesh;
+    m.visible = night > 0.03;
+    m.material.opacity = Math.min(1, night * 1.1) * 0.6;
+    if (!this.lightsDirty) return;
+    this.lightsDirty = false;
+    const L = this.lights || [];
+    const n = Math.min(L.length, 2048), M = this._lm || (this._lm = new THREE.Matrix4());
+    for (let i = 0; i < n; i++) {
+      const l = L[i];
+      M.makeScale(l.r, 1, l.r);
+      M.setPosition(l.x, 0.075, l.z);
+      m.setMatrixAt(i, M);
+    }
+    m.count = n;
+    m.instanceMatrix.needsUpdate = true;
+  },
+
   rebuildEmitters() {
     this.emitters = [];
+    this.lights = [];
+    this.lightsDirty = true;
+    for (const g of this.bGroups.values()) {
+      if (!g.model.lights || !g.model.lights.length) continue;
+      for (const id of g.ids) {
+        const b = state.buildings.get(id);
+        if (!b) continue;
+        const a = bAng(b), ca = Math.cos(a), sa = Math.sin(a), k = b.s || 1;
+        const cx = b.x + b.w / 2, cz = b.y + b.h / 2;
+        for (const [x, y, z, r] of g.model.lights) this.lights.push({ x: cx + (x * ca + z * sa) * k, y: y * k, z: cz + (-x * sa + z * ca) * k, r: r * k });
+      }
+    }
     for (const g of this.bGroups.values()) {
       if (!g.model.smoke.length && !g.model.fountain.length) continue;
       for (const id of g.ids) {
@@ -1213,7 +1265,8 @@ const Engine = {
   },
 
   // Призрак постройки: центр (cx, cy) и поворот ang; src — переносимое здание (призрак — его же вид)
-  setGhost(type, cx, cy, ok, ang, src) {
+  setGhost(type, cx, cy, ok, ang, src, s) {
+    this.ghostScale = s || (src && src.s) || 1;
     if (!type) { this.ghost.visible = false; this.ghostKey = null; this.ghostPos = null; return; }
     const d = BUILDINGS[type];
     const fake = src ? Object.assign({}, src, { rot: 0, ang: 0 }) : { id: 1, type, x: cx - d.w / 2, y: cy - d.h / 2, w: d.w, h: d.h, tier: d.kind === 'house' ? 1 : 0, rot: 0 };
@@ -1244,6 +1297,7 @@ const Engine = {
     this.ghostPos[0] += (this.ghostTarget[0] - this.ghostPos[0]) * k;
     this.ghostPos[1] += (this.ghostTarget[1] - this.ghostPos[1]) * k;
     this.ghost.position.set(this.ghostPos[0], 0.01 + Math.sin(this.T * 4) * 0.02, this.ghostPos[1]);
+    this.ghost.scale.setScalar(this.ghostScale || 1);
     if (this.ghostAng !== undefined) this.ghost.rotation.y += (this.ghostAng - this.ghost.rotation.y) * k;
   },
 
@@ -1340,6 +1394,7 @@ const Engine = {
     this.animateBuildings(performance.now());
     this.drawWalkers(this.T, realDt);
     this.updateParticles(dt, realDt);
+    this.updateLights();
     this.updateGhost(realDt);
     Atmos.updateBirds(this.T, this.cam);
     Atmos.updateLife(this.T, this.cam);

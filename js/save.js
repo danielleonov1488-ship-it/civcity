@@ -40,6 +40,7 @@ function serialize() {
   const r4 = v => Math.round(v * 10000) / 10000;
   for (const b of state.buildings.values()) {
     const o = { i: b.id, t: b.type, x: r4(b.x), y: r4(b.y), r: b.rot || 0, a: r4(bAng(b)) };
+    if (b.s) o.s = r4(b.s);
     if (BUILDINGS[b.type].kind === 'house') Object.assign(o, { tier: b.tier, pop: b.pop, up: b.up, down: b.down, lock: b.lock || undefined, req: b.req || undefined, bonusUntil: b.bonusUntil || undefined });
     buildings.push(o);
   }
@@ -83,6 +84,7 @@ function deserialize(data) {
     b.born = 0;
     b.rot = o.r || 0;
     b.ang = o.a !== undefined ? o.a : b.rot * Math.PI / 2;
+    if (o.s) b.s = o.s;
     if (BUILDINGS[o.t].kind === 'house') Object.assign(b, { tier: o.tier, pop: o.pop, up: o.up || 0, down: o.down || 0, lock: !!o.lock, req: o.req || null, bonusUntil: o.bonusUntil || 0 });
     state.buildings.set(b.id, b);
     occupy(b);

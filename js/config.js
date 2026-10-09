@@ -251,8 +251,47 @@ const BUILDINGS = {
   statue: { kind: 'decor', cat: 'decor', name: 'Статуя', acc: 'статую', cost: { money: 290 }, w: 1, h: 1, beauty: 4, tech: 'marble', desc: 'Мраморный гражданин на постаменте.' },
   column: { kind: 'decor', cat: 'decor', name: 'Колонна', acc: 'колонну', cost: { money: 220 }, w: 1, h: 1, beauty: 3, tech: 'marble', desc: 'Памятная колонна с золотым шаром.' },
   obelisk: { kind: 'decor', cat: 'decor', name: 'Обелиск', acc: 'обелиск', cost: { money: 270, glory: 10 }, w: 1, h: 1, beauty: 6, tech: 'triumph', desc: 'Трофей из Египта.' },
+  // ---- свет: светят ночью
+  lantern: { kind: 'decor', cat: 'decor', name: 'Фонарь', acc: 'фонарь', cost: { money: 40 }, w: 1, h: 1, beauty: 1, fp: 0.4, desc: 'Бронзовый фонарь на столбе — светит всю ночь.' },
+  torch: { kind: 'decor', cat: 'decor', name: 'Факел', acc: 'факел', cost: { money: 20 }, w: 1, h: 1, beauty: 1, fp: 0.35, desc: 'Факел на кованой стойке.' },
+  bigtorch: { kind: 'decor', cat: 'decor', name: 'Большая жаровня', acc: 'большую жаровню', cost: { money: 90 }, w: 1, h: 1, beauty: 2, fp: 0.6, tech: 'gardens', desc: 'Высокая бронзовая чаша с огнём — для площадей и ворот.' },
+  lamps: { kind: 'decor', cat: 'decor', name: 'Гирлянда лампад', acc: 'гирлянду лампад', cost: { money: 60 }, w: 1, h: 1, beauty: 2, fp: 0.95, tech: 'gardens', desc: 'Масляные лампы на верёвке между столбами — праздник на улице.' },
+  campfire: { kind: 'decor', cat: 'decor', name: 'Костёр', acc: 'костёр', cost: { money: 15 }, w: 1, h: 1, beauty: 1, fp: 0.6, desc: 'Огонь в кругу камней, у которого греются по вечерам.' },
+  // ---- улица
+  barrels: { kind: 'decor', cat: 'decor', name: 'Бочки', acc: 'бочки', cost: { money: 15 }, w: 1, h: 1, beauty: 1, fp: 0.5, desc: 'Бочки с вином и маслом у лавки.' },
+  crates: { kind: 'decor', cat: 'decor', name: 'Ящики', acc: 'ящики', cost: { money: 12 }, w: 1, h: 1, beauty: 1, fp: 0.5, desc: 'Ящики с товаром.' },
+  sacks: { kind: 'decor', cat: 'decor', name: 'Мешки и корзины', acc: 'мешки и корзины', cost: { money: 15 }, w: 1, h: 1, beauty: 1, fp: 0.5, desc: 'Пряности, зерно и фрукты.' },
+  hay: { kind: 'decor', cat: 'decor', name: 'Сено', acc: 'сено', cost: { money: 10 }, w: 1, h: 1, beauty: 1, fp: 0.6, desc: 'Тюки сена для лошадей.' },
+  cart: { kind: 'decor', cat: 'decor', name: 'Телега', acc: 'телегу', cost: { money: 45 }, w: 1, h: 1, beauty: 1, fp: 0.9, desc: 'Деревянная телега с колёсами.' },
+  stall: { kind: 'decor', cat: 'decor', name: 'Прилавок', acc: 'прилавок', cost: { money: 60 }, w: 1, h: 1, beauty: 2, fp: 0.95, desc: 'Торговый прилавок под полосатым навесом.' },
+  banner: { kind: 'decor', cat: 'decor', name: 'Знамя', acc: 'знамя', cost: { money: 40 }, w: 1, h: 1, beauty: 2, fp: 0.35, desc: 'Красное знамя Рима.' },
+  sundial: { kind: 'decor', cat: 'decor', name: 'Солнечные часы', acc: 'солнечные часы', cost: { money: 120 }, w: 1, h: 1, beauty: 3, fp: 0.5, tech: 'gardens', desc: 'Римские часы, что показывают время по тени.' },
+  roundbench: { kind: 'decor', cat: 'decor', name: 'Круглая скамья', acc: 'круглую скамью', cost: { money: 50 }, w: 1, h: 1, beauty: 2, fp: 0.9, tech: 'gardens', desc: 'Каменная скамья кольцом — посидеть в тени.' },
+  // ---- сад
+  flowerbush: { kind: 'decor', cat: 'decor', name: 'Цветущий куст', acc: 'цветущий куст', cost: { money: 10 }, w: 1, h: 1, beauty: 1, fp: 0.5, desc: 'Куст в цветах.' },
+  planter: { kind: 'decor', cat: 'decor', name: 'Вазон', acc: 'вазон', cost: { money: 18 }, w: 1, h: 1, beauty: 1, fp: 0.45, desc: 'Каменный вазон с зеленью.' },
+  palm: { kind: 'decor', cat: 'decor', name: 'Пальма', acc: 'пальму', cost: { money: 20 }, w: 1, h: 1, beauty: 1, fp: 0.6, tech: 'gardens', desc: 'Финиковая пальма из Африки.' },
+  bigjar: { kind: 'decor', cat: 'decor', name: 'Большая ваза', acc: 'большую вазу', cost: { money: 60 }, w: 1, h: 1, beauty: 2, fp: 0.5, tech: 'gardens', desc: 'Высокая расписная ваза.' },
+  // ---- статуи
+  bust: { kind: 'decor', cat: 'decor', name: 'Бюст на постаменте', acc: 'бюст', cost: { money: 120 }, w: 1, h: 1, beauty: 3, fp: 0.4, tech: 'marble', desc: 'Мраморный бюст на колонне.' },
+  lion: { kind: 'decor', cat: 'decor', name: 'Мраморный лев', acc: 'мраморного льва', cost: { money: 200 }, w: 1, h: 1, beauty: 4, fp: 0.7, tech: 'marble', desc: 'Лев-страж у ворот и лестниц.' },
+  discobolus: { kind: 'decor', cat: 'decor', name: 'Дискобол', acc: 'дискобола', cost: { money: 250 }, w: 1, h: 1, beauty: 4, fp: 0.6, tech: 'marble', desc: 'Атлет, метающий диск.' },
+  hercules: { kind: 'decor', cat: 'decor', name: 'Статуя Геракла', acc: 'статую Геракла', cost: { money: 300 }, w: 1, h: 1, beauty: 5, fp: 0.6, tech: 'marble', desc: 'Герой с палицей на постаменте.' },
+  athena: { kind: 'decor', cat: 'decor', name: 'Статуя Минервы', acc: 'статую Минервы', cost: { money: 300 }, w: 1, h: 1, beauty: 5, fp: 0.6, tech: 'marble', desc: 'Богиня мудрости в шлеме.' },
+  zeus: { kind: 'decor', cat: 'decor', name: 'Статуя Юпитера', acc: 'статую Юпитера', cost: { money: 350 }, w: 1, h: 1, beauty: 5, fp: 0.6, tech: 'marble', desc: 'Отец богов на троне.' },
   emperor: { kind: 'decor', cat: 'decor', name: 'Статуя императора', acc: 'статую императора', cost: { money: 780, glory: 20 }, w: 1, h: 1, beauty: 10, tech: 'triumph', desc: 'Золотой император на высоком постаменте.' },
 };
+
+// Наборы украшений — вкладки в разделе «Красота»
+const DECOR_SETS = [['light', 'Свет'], ['street', 'Улица'], ['garden', 'Сад'], ['statue', 'Статуи']];
+const DECOR_SET_OF = {
+  lamp: 'light', lantern: 'light', torch: 'light', bigtorch: 'light', lamps: 'light', campfire: 'light',
+  bench: 'street', amphorae: 'street', mosaic: 'street', barrels: 'street', crates: 'street', sacks: 'street', hay: 'street',
+  cart: 'street', stall: 'street', banner: 'street', sundial: 'street', roundbench: 'street',
+  flowers: 'garden', cypress: 'garden', pine: 'garden', olive: 'garden', pergola: 'garden', flowerbush: 'garden', planter: 'garden', palm: 'garden', bigjar: 'garden',
+  statue: 'statue', column: 'statue', obelisk: 'statue', emperor: 'statue', bust: 'statue', lion: 'statue', discobolus: 'statue', hercules: 'statue', athena: 'statue', zeus: 'statue',
+};
+for (const [k, s] of Object.entries(DECOR_SET_OF)) if (BUILDINGS[k]) BUILDINGS[k].set = s;
 
 const CATEGORIES = [
   { id: 'roads', name: 'Дороги' },
