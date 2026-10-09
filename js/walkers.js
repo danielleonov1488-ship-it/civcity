@@ -50,16 +50,16 @@ const Walkers = {
     w.cArms = w.role === 'patrician' ? w.cTorso : w.cSkin;
   },
 
+  // Житель выходит из дома на ближайшую к фасаду точку улицы и идёт в случайную сторону
   spawn() {
     const houses = state.stats.connectedHouses;
     if (!houses || !houses.length) return;
     const h = pick(houses);
-    const roads = adjacentRoads(h);
-    if (!roads.length) return;
-    const [rx, ry] = pick(roads);
+    const q = roadContact(h);
+    if (!q) return;
     const w = {
-      cx: rx, cy: ry, nx: rx, ny: ry, px: rx, py: ry, t: 0,
-      wx: rx + 0.5, wy: ry + 0.5,
+      e: q.e.id, s: q.s, dir: Math.random() < 0.5 ? 1 : -1, dist: 0,
+      wx: q.x, wy: q.y,
       lane: (Math.random() < 0.5 ? -1 : 1) * (0.17 + Math.random() * 0.12),
       speed: 0.5 + Math.random() * 0.35,
       life: 30 + Math.random() * 50, age: 0, alpha: 0, moving: true,
@@ -69,28 +69,24 @@ const Walkers = {
     if (w.role === 'child') w.speed *= 1.25;
     // в новом виде жители настоящего роста и шагают по-настоящему — идут медленнее
     if (NEW_LOOK) w.speed *= 0.38;
-    this.pickNext(w);
     this.list.push(w);
   },
 
-  pickNext(w) {
-    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-    const opts = [];
-    let straight = null;
-    const ddx = w.cx - w.px, ddy = w.cy - w.py;
-    for (const [dx, dy] of dirs) {
-      const x = w.cx + dx, y = w.cy + dy;
-      if (!isRoad(x, y) || (x === w.px && y === w.py)) continue;
-      opts.push([x, y]);
-      if (dx === ddx && dy === ddy) straight = [x, y];
+  // Улица кончилась узлом: чаще прямо, иногда сворачивают; в тупике разворачиваются
+  nextEdge(w, e, nid) {
+    const node = Roads.nodes.get(nid);
+    const opts = node ? [...node.edges].filter(id => id !== e.id).map(id => Roads.edges.get(id)).filter(Boolean) : [];
+    if (!opts.length) return { e, dir: -w.dir };
+    const end = Roads.pointAt(e, nid === e.b ? e.L : 0);
+    const ix = end.tx * w.dir, iy = end.ty * w.dir;
+    let best = opts[0], bd = -2;
+    for (const o of opts) {
+      const p = Roads.pointAt(o, o.a === nid ? 0 : o.L), k = o.a === nid ? 1 : -1;
+      const d = p.tx * k * ix + p.ty * k * iy;
+      if (d > bd) { bd = d; best = o; }
     }
-    let next;
-    if (straight && Math.random() < 0.65) next = straight;
-    else if (opts.length) next = pick(opts);
-    else if (isRoad(w.px, w.py) && (w.px !== w.cx || w.py !== w.cy)) next = [w.px, w.py];
-    else next = [w.cx, w.cy];
-    w.nx = next[0]; w.ny = next[1];
-    if (Math.random() < 0.06) w.pause = 1.5 + Math.random() * 3;
+    const next = bd > 0.5 && Math.random() < 0.65 ? best : pick(opts);
+    return { e: next, dir: next.a === nid ? 1 : -1 };
   },
 
   update(dt, realDt) {
@@ -108,36 +104,46 @@ const Walkers = {
   },
 };
 
-// Шаг по дорогам — общий для жителей и кошек: от клетки к клетке, по своей стороне улицы, лицом по ходу.
-// onTile вызывается, когда фигурка дошла до новой клетки.
+// Шаг по улицам — общий для жителей и кошек: вдоль кривой улицы, по своей стороне, лицом по ходу.
+// onTile вызывается примерно через каждую клетку пути: тогда фигурка может присесть или остановиться.
 function roadStep(w, dt, realDt, onTile) {
+  let e = Roads.edges.get(w.e);
+  if (!e) { w.life = Math.min(w.life, 0); w.moving = false; return; }
   if (dt > 0) {
     if (w.pause > 0) { w.pause -= dt; w.moving = false; }
     else {
-      w.moving = w.nx !== w.cx || w.ny !== w.cy;
-      w.t += dt * w.speed;
-      w.walkPh += dt * w.speed * (w.stride || 11);
-      if (w.t >= 1) {
-        w.t -= 1;
-        w.px = w.cx; w.py = w.cy;
-        w.cx = w.nx; w.cy = w.ny;
-        if (!isRoad(w.cx, w.cy)) w.life = Math.min(w.life, 0);
-        Walkers.pickNext(w);
+      w.moving = true;
+      const step = dt * w.speed;
+      w.walkPh += step * (w.stride || 11);
+      w.s += step * w.dir;
+      w.dist = (w.dist || 0) + step;
+      if (w.dist >= 1) {
+        w.dist -= 1;
+        if (!onTile && Math.random() < 0.06) w.pause = 1.5 + Math.random() * 3;
         if (onTile) onTile(w);
+      }
+      if (w.s < 0 || w.s > e.L) {
+        const nid = w.s < 0 ? e.a : e.b, over = w.s < 0 ? -w.s : w.s - e.L;
+        const next = Walkers.nextEdge(w, e, nid);
+        e = next.e;
+        w.e = e.id;
+        w.dir = next.dir;
+        w.s = clamp(w.dir > 0 ? over : e.L - over, 0, e.L);
       }
     }
   } else w.moving = false;
+  const p = Roads.pointAt(e, w.s);
+  const dx = p.tx * w.dir, dy = p.ty * w.dir;
   // смещение поперёк направления движения; присевшая кошка отходит к краю дороги
   const lane = w.pause > 0 && w.sitLane ? w.sitLane : w.lane;
-  const dx = w.nx - w.cx, dy = w.ny - w.cy;
-  const tox = dx || dy ? -dy * lane : lane * 0.5, toy = dx || dy ? dx * lane : lane * 0.3;
+  const tox = -dy * lane, toy = dx * lane;
   const k = Math.min(1, realDt * 6);
   w.ox = w.ox === undefined ? tox : w.ox + (tox - w.ox) * k;
   w.oy = w.oy === undefined ? toy : w.oy + (toy - w.oy) * k;
-  w.wx = lerp(w.cx, w.nx, w.t) + 0.5 + w.ox;
-  w.wy = lerp(w.cy, w.ny, w.t) + 0.5 + w.oy;
+  w.wx = p.x + w.ox;
+  w.wy = p.y + w.oy;
   // плавный поворот: по ходу движения, а сидя — куда захотелось посмотреть
-  const want = w.pause > 0 && w.sitYaw !== undefined ? w.sitYaw : dx || dy ? Math.atan2(dx, dy) : null;
+  const want = w.pause > 0 && w.sitYaw !== undefined ? w.sitYaw : Math.atan2(dx, dy);
   if (want !== null) {
     let d = want - w.yaw;
     d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -181,21 +187,19 @@ const Cats = {
     // из трёх случайных домов кошка выбирает самый богатый
     let h = pick(houses);
     for (let i = 0; i < 2; i++) { const o = pick(houses); if (o.tier > h.tier) h = o; }
-    const roads = adjacentRoads(h);
-    if (!roads.length) return;
-    const [rx, ry] = pick(roads);
+    const q = roadContact(h);
+    if (!q) return;
     const [body, chest] = pick(CAT_COATS);
     const side = Math.random() < 0.5 ? -1 : 1;
     const c = {
-      cx: rx, cy: ry, nx: rx, ny: ry, px: rx, py: ry, t: 0,
-      wx: rx + 0.5, wy: ry + 0.5,
+      e: q.e.id, s: q.s, dir: Math.random() < 0.5 ? 1 : -1, dist: 0,
+      wx: q.x, wy: q.y,
       lane: side * (0.28 + Math.random() * 0.08), sitLane: side * 0.36,
       speed: 0.32 + Math.random() * 0.22, stride: 17,
       life: 90 + Math.random() * 90, age: 0, alpha: 0, moving: false, anim: Math.random() * 10,
       yaw: Math.random() * 6.28, walkPh: Math.random() * 6.28,
       cBody: body, cChest: chest, cEye: body === '#2d2824' ? '#d9c43a' : '#2b2418',
     };
-    Walkers.pickNext(c);
     c.pause = 2 + Math.random() * 4;
     c.sitYaw = c.yaw;
     this.list.push(c);

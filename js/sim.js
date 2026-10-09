@@ -72,7 +72,7 @@ function storageCap() {
    tool — выбрать постройку, cat — открыть категорию, open — открыть раздел, plot — показать участок. */
 const GOALS = [
   { text: 'Поставьте 3 дома у дороги', need: 3, reward: { money: 150 }, act: { tool: 'house' },
-    hint: 'Дома ставятся вплотную к дороге. В них заселятся плебеи и начнут платить налоги.',
+    hint: 'Подведите дом к дороге — он сам встанет фасадом к ней. В нём заселятся плебеи и начнут платить налоги.',
     prog: () => [...state.buildings.values()].filter(b => b.type === 'house' && b.road).length },
   { text: 'Постройте колодец рядом с домами', need: 1, reward: { money: 100 }, act: { tool: 'well' },
     hint: 'Без воды хижины не растут. Колодец поит дома внутри круга, который виден при установке.',
@@ -411,7 +411,6 @@ const SHORTAGE = {
 
 function onHouseChanged(h, up, now) {
   h.animAt = now;
-  h.rot = orientToRoad(h);
   Engine.buildingsChanged(h);
   const T = tiersOf(h)[h.tier];
   if (up) {

@@ -1,9 +1,11 @@
 'use strict';
-/* Мир: бесконечная карта из участков, рельеф, природа, залежи, занятость клеток. */
+/* Мир: бесконечная карта из участков, рельеф, природа, залежи.
+   Постройки стоят без клеток: центр и угол поворота; занятость ищется по клеткам-корзинкам. */
 
 const World = {
   terrain: new Map(),   // "px,py" → { ground, nature, vari }
-  occ: new Map(),       // "x,y" → здание на клетке
+  occ: new Map(),       // "x,y" → здание, накрывающее центр клетки (трава, деревья, клик)
+  bgrid: new Map(),     // "x,y" → постройки, задевающие клетку (поиск соседей)
 };
 
 function plotOf(t) { return Math.floor(t / PLOT); }
@@ -98,7 +100,7 @@ function isWater(g) { return g >= G_WATER; }
 function isOwnedPlot(px, py) { return state.plots.has(px + ',' + py); }
 function isOwnedTile(tx, ty) { return isOwnedPlot(plotOf(tx), plotOf(ty)); }
 function buildingAt(tx, ty) { return World.occ.get(tkey(tx, ty)); }
-function isRoad(tx, ty) { const b = World.occ.get(tkey(tx, ty)); return !!b && b.type === 'road'; }
+function isRoad(tx, ty) { return Roads.covers(tx, ty); }
 
 /* ---------- Цены и оплата ---------- */
 
@@ -184,70 +186,188 @@ function lockName(type) {
   return d.rating ? `Рейтинг легиона ${d.rating}` : '';
 }
 
-// Левый верхний угол постройки, чтобы её центр оказался под курсором
-function footprintOrigin(type, fx, fy) {
+/* ---------- Постройки без клеток ----------
+   b.x, b.y — левый верхний угол неповёрнутого прямоугольника (центр — x + w/2, y + h/2), b.ang — поворот.
+   Фасад смотрит в сторону (sin ang, cos ang): 0 — юг (+y), π/2 — восток. */
+
+function bAng(b) { return b.ang !== undefined ? b.ang : (b.rot || 0) * Math.PI / 2; }
+function normAng(a) { a %= Math.PI * 2; return a < 0 ? a + Math.PI * 2 : a; }
+function rotIndex(a) { return Math.round(normAng(a) / (Math.PI / 2)) % 4; }
+
+// Прямоугольник постройки: центр, полуразмеры, cos и sin угла; pad — запас (минус — ужать)
+function boxOf(type, cx, cy, ang, pad) {
   const d = BUILDINGS[type];
-  return [Math.round(fx - d.w / 2), Math.round(fy - d.h / 2)];
+  const k = d.kind === 'decor' ? 0.72 : 1;   // украшения можно ставить теснее
+  const hw = d.w * k / 2 + (pad || 0), hh = d.h * k / 2 + (pad || 0);
+  return { cx, cy, hw, hh, c: Math.cos(ang), s: Math.sin(ang), R: Math.hypot(hw, hh) };
+}
+function boxOfB(b, pad) { return boxOf(b.type, b.x + b.w / 2, b.y + b.h / 2, bAng(b), pad); }
+
+function boxLocal(o, x, y) { const dx = x - o.cx, dy = y - o.cy; return [dx * o.c - dy * o.s, dx * o.s + dy * o.c]; }
+function boxWorld(o, lx, ly) { return [o.cx + lx * o.c + ly * o.s, o.cy - lx * o.s + ly * o.c]; }
+function boxContains(o, x, y, pad) { const [lx, ly] = boxLocal(o, x, y), p = pad || 0; return Math.abs(lx) <= o.hw + p && Math.abs(ly) <= o.hh + p; }
+function boxPointDist(o, x, y) { const [lx, ly] = boxLocal(o, x, y); return Math.hypot(Math.max(0, Math.abs(lx) - o.hw), Math.max(0, Math.abs(ly) - o.hh)); }
+function boxCorners(o) { return [[-o.hw, -o.hh], [o.hw, -o.hh], [o.hw, o.hh], [-o.hw, o.hh]].map(([a, b]) => boxWorld(o, a, b)); }
+
+// Пересекаются ли два повёрнутых прямоугольника (теорема о разделяющей оси)
+function boxOverlap(a, b) {
+  const A = boxCorners(a), B = boxCorners(b);
+  for (const o of [a, b]) {
+    for (const [ax, ay] of [[o.c, -o.s], [o.s, o.c]]) {
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (const [x, y] of A) { const p = x * ax + y * ay; a0 = Math.min(a0, p); a1 = Math.max(a1, p); }
+      for (const [x, y] of B) { const p = x * ax + y * ay; b0 = Math.min(b0, p); b1 = Math.max(b1, p); }
+      if (a1 <= b0 || b1 <= a0) return false;
+    }
+  }
+  return true;
 }
 
-function nearWater(x, y, w, h, r) {
-  for (let ty = y - r; ty < y + h + r; ty++) {
-    for (let tx = x - r; tx < x + w + r; tx++) {
-      if (isWater(groundAt(tx, ty))) return true;
+// Постройка раскладывается по клеткам: где она задевает клетку и какие клетки накрывает целиком
+function occupy(b) {
+  const o = boxOfB(b);
+  b._keys = [];
+  b._cov = [];
+  for (let ty = Math.floor(o.cy - o.R); ty <= Math.floor(o.cy + o.R); ty++) {
+    for (let tx = Math.floor(o.cx - o.R); tx <= Math.floor(o.cx + o.R); tx++) {
+      const k = tkey(tx, ty);
+      let set = World.bgrid.get(k);
+      if (!set) World.bgrid.set(k, set = new Set());
+      set.add(b);
+      b._keys.push(k);
+      if (boxContains(o, tx + 0.5, ty + 0.5, 0.15)) { World.occ.set(k, b); b._cov.push(k); }
+    }
+  }
+}
+
+function unoccupy(b) {
+  for (const k of b._keys || []) { const set = World.bgrid.get(k); if (set) { set.delete(b); if (!set.size) World.bgrid.delete(k); } }
+  for (const k of b._cov || []) if (World.occ.get(k) === b) World.occ.delete(k);
+}
+
+function buildingsNear(x, y, r) {
+  const out = new Set();
+  for (let ty = Math.floor(y - r); ty <= Math.floor(y + r); ty++) {
+    for (let tx = Math.floor(x - r); tx <= Math.floor(x + r); tx++) {
+      const set = World.bgrid.get(tkey(tx, ty));
+      if (set) for (const b of set) out.add(b);
+    }
+  }
+  return out;
+}
+
+// Постройка, к которой точка ближе r (или внутри неё)
+function buildingNear(x, y, r) {
+  for (const b of buildingsNear(x, y, r + 0.5)) if (boxPointDist(boxOfB(b), x, y) < r) return b;
+  return null;
+}
+function buildingAtPoint(x, y) { return buildingNear(x, y, 1e-6); }
+
+// Место под постройку: своя земля, без воды, не на дороге и не на других постройках. null — свободно
+function placeBlocked(type, cx, cy, ang) {
+  const o = boxOf(type, cx, cy, ang);
+  const nx = Math.max(1, Math.ceil(o.hw * 4)), ny = Math.max(1, Math.ceil(o.hh * 4));
+  for (let j = 0; j <= ny; j++) {
+    for (let i = 0; i <= nx; i++) {
+      const [x, y] = boxWorld(o, (i / nx * 2 - 1) * (o.hw - 0.04), (j / ny * 2 - 1) * (o.hh - 0.04));
+      const tx = Math.floor(x), ty = Math.floor(y);
+      if (!isOwnedTile(tx, ty)) return 'Эта земля ещё не куплена';
+      if (isWater(groundAt(tx, ty))) return 'Здесь вода';
+    }
+  }
+  const tight = boxOf(type, cx, cy, ang, -0.03);
+  for (const b of buildingsNear(cx, cy, o.R + 0.5)) if (boxOverlap(tight, boxOfB(b, -0.03))) return 'Место занято';
+  if (Roads.distToBox(o, ROAD_HALF) < ROAD_HALF - 0.04) return 'Здесь проходит дорога';
+  return null;
+}
+
+function nearWaterBox(o, r) {
+  for (let ty = Math.floor(o.cy - o.R - r); ty <= Math.floor(o.cy + o.R + r); ty++) {
+    for (let tx = Math.floor(o.cx - o.R - r); tx <= Math.floor(o.cx + o.R + r); tx++) {
+      if (isWater(groundAt(tx, ty)) && boxPointDist(o, tx + 0.5, ty + 0.5) <= r + 0.5) return true;
     }
   }
   return false;
 }
 
 // null — можно строить, иначе причина отказа
-function checkPlace(type, x, y) {
+function checkPlace(type, cx, cy, ang) {
   const d = BUILDINGS[type];
   if (!isUnlocked(type)) return 'Сначала изучите нужную технологию';
   if (d.unique && countType(type) > 0) return 'Такое здание в городе уже есть';
-  for (let j = 0; j < d.h; j++) {
-    for (let i = 0; i < d.w; i++) {
-      const tx = x + i, ty = y + j;
-      if (!isOwnedTile(tx, ty)) return 'Эта земля ещё не куплена';
-      if (isWater(groundAt(tx, ty))) return 'Здесь вода';
-      if (World.occ.has(tkey(tx, ty))) return 'Место занято';
-    }
-  }
-  if (d.needsWater && !nearWater(x, y, d.w, d.h, 2)) return 'Нужно ставить у воды';
+  const err = placeBlocked(type, cx, cy, ang);
+  if (err) return err;
+  if (d.needsWater && !nearWaterBox(boxOf(type, cx, cy, ang), 2)) return 'Нужно ставить у воды';
   if (!canAfford(d.cost)) return 'Не хватает: ' + missingFor(d.cost).join(', ');
   return null;
 }
 
-function occupy(b) {
-  for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) World.occ.set(tkey(b.x + i, b.y + j), b);
+/* Куда встать постройке под курсором. У дороги дом сам разворачивается фасадом к ней и встаёт вплотную,
+   а если место занято — сдвигается вдоль улицы к ближайшему свободному. Вдали от дорог — как повернул игрок. */
+function snapPlace(type, fx, fy, ang0) {
+  const d = BUILDINGS[type];
+  const free = { cx: fx, cy: fy, ang: ang0 || 0, road: false };
+  if (d.kind === 'decor') return free;
+  const q = Roads.nearest(fx, fy, d.h / 2 + ROAD_HALF + 1.4);
+  if (!q) return free;
+  let nx = -q.ty, ny = q.tx;
+  if ((fx - q.x) * nx + (fy - q.y) * ny < 0) { nx = -nx; ny = -ny; }
+  const off = ROAD_HALF + d.h / 2 + 0.04;
+  const at = s => {
+    const p = Roads.pointAt(q.e, s);
+    let mx = -p.ty, my = p.tx;
+    if (mx * nx + my * ny < 0) { mx = -mx; my = -my; }
+    return { cx: p.x + mx * off, cy: p.y + my * off, ang: Math.atan2(-mx, -my), road: true };
+  };
+  for (const ds of [0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1, -1, 1.25, -1.25, 1.5, -1.5]) {
+    const s = q.s + ds;
+    if (s < 0 || s > q.e.L) continue;
+    const c = at(s);
+    if (!placeBlocked(type, c.cx, c.cy, c.ang)) return c;
+  }
+  return at(q.s);
 }
 
 function makeBuilding(type, x, y) {
   const d = BUILDINGS[type];
-  const b = { id: state.nextId++, type, x, y, w: d.w, h: d.h, rot: 0, born: performance.now() };
+  const b = { id: state.nextId++, type, x, y, w: d.w, h: d.h, rot: 0, ang: 0, born: performance.now() };
   if (d.kind === 'house') Object.assign(b, { tier: 0, pop: 0, up: 0, down: 0, happy: 50, lock: false });
   return b;
 }
 
-function placeBuilding(type, x, y, free) {
-  const b = makeBuilding(type, x, y);
+// Поставить постройку центром в (cx, cy) с поворотом ang
+function placeBuilding(type, cx, cy, ang, free) {
+  const d = BUILDINGS[type];
+  const b = makeBuilding(type, cx - d.w / 2, cy - d.h / 2);
+  b.ang = normAng(ang || 0);
+  b.rot = rotIndex(b.ang);
   state.buildings.set(b.id, b);
   occupy(b);
-  for (let j = 0; j < b.h; j++) {
-    for (let i = 0; i < b.w; i++) {
-      const tx = x + i, ty = y + j;
+  const o = boxOfB(b, 0.3);
+  for (let ty = Math.floor(o.cy - o.R); ty <= Math.floor(o.cy + o.R); ty++) {
+    for (let tx = Math.floor(o.cx - o.R); tx <= Math.floor(o.cx + o.R); tx++) {
+      if (!boxContains(o, tx + 0.5, ty + 0.5)) continue;
       if (rawNatureAt(tx, ty)) state.cleared.add(tkey(tx, ty));
       Engine.natureChanged(tx, ty);
     }
   }
-  if (!free) pay(BUILDINGS[type].cost);
-  b.rot = orientToRoad(b);
-  if (type === 'road') refreshOrientationsAround(x, y);
+  if (!free) pay(d.cost);
   Engine.buildingsChanged(b);
   return b;
 }
 
+// По клеткам, как раньше: левый верхний угол (tx, ty), фасадом к ближайшей дороге (для тестового города)
+function placeOnTile(type, tx, ty, free) {
+  const d = BUILDINGS[type], cx = tx + d.w / 2, cy = ty + d.h / 2;
+  const q = Roads.nearest(cx, cy, d.w / 2 + 1.2);
+  const ang = q ? Math.round(Math.atan2(q.x - cx, q.y - cy) / (Math.PI / 2)) * Math.PI / 2 : 0;
+  if (placeBlocked(type, cx, cy, ang)) return null;
+  return placeBuilding(type, cx, cy, ang, free);
+}
+
 function removeBuilding(b, refund) {
-  for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) { World.occ.delete(tkey(b.x + i, b.y + j)); Engine.natureChanged(b.x + i, b.y + j); }
+  unoccupy(b);
+  for (const k of b._cov || []) { const [tx, ty] = k.split(',').map(Number); Engine.natureChanged(tx, ty); }
   state.buildings.delete(b.id);
   if (refund) {
     const c = BUILDINGS[b.type].cost;
@@ -257,51 +377,22 @@ function removeBuilding(b, refund) {
       else if (res !== 'glory') state.goods[res] = (state.goods[res] || 0) + back;
     }
   }
-  if (b.type === 'road') refreshOrientationsAround(b.x, b.y);
   Engine.buildingsChanged(b, true);
 }
 
+// Дорога вплотную к постройке (с небольшим зазором)
 function hasRoadAccess(b) {
-  for (let i = 0; i < b.w; i++) {
-    if (isRoad(b.x + i, b.y - 1) || isRoad(b.x + i, b.y + b.h)) return true;
-  }
-  for (let j = 0; j < b.h; j++) {
-    if (isRoad(b.x - 1, b.y + j) || isRoad(b.x + b.w, b.y + j)) return true;
-  }
-  return false;
+  return Roads.distToBox(boxOfB(b), 1) <= ROAD_HALF + 0.35;
 }
 
-/* Куда смотрит фасад: 0 — юг (+y), 1 — восток (+x), 2 — север, 3 — запад.
-   Здание разворачивается к ближайшей дороге. */
-function orientToRoad(b) {
-  if (b.type === 'road' || BUILDINGS[b.type].kind === 'decor') return b.rot || 0;
-  const sides = [
-    () => { for (let i = 0; i < b.w; i++) if (isRoad(b.x + i, b.y + b.h)) return true; },
-    () => { for (let j = 0; j < b.h; j++) if (isRoad(b.x + b.w, b.y + j)) return true; },
-    () => { for (let i = 0; i < b.w; i++) if (isRoad(b.x + i, b.y - 1)) return true; },
-    () => { for (let j = 0; j < b.h; j++) if (isRoad(b.x - 1, b.y + j)) return true; },
-  ];
-  for (let r = 0; r < 4; r++) if (sides[r]()) return r;
-  return b.rot || 0;
-}
+// Поворот постройки больше не меняется сам — она стоит, как её поставили
+function orientToRoad(b) { return b.rot || 0; }
 
-function refreshOrientationsAround(x, y) {
-  const seen = new Set();
-  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    const b = buildingAt(x + dx, y + dy);
-    if (!b || b.type === 'road' || seen.has(b)) continue;
-    seen.add(b);
-    const r = orientToRoad(b);
-    if (r !== b.rot) { b.rot = r; Engine.buildingsChanged(b); }
-  }
-}
-
-function adjacentRoads(b) {
-  const out = [];
-  const add = (x, y) => { if (isRoad(x, y)) out.push([x, y]); };
-  for (let i = 0; i < b.w; i++) { add(b.x + i, b.y - 1); add(b.x + i, b.y + b.h); }
-  for (let j = 0; j < b.h; j++) { add(b.x - 1, b.y + j); add(b.x + b.w, b.y + j); }
-  return out;
+// Где житель выходит из дома на улицу: ближайшая к фасаду точка дороги
+function roadContact(b) {
+  const a = bAng(b), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const fx = cx + Math.sin(a) * b.h / 2, fy = cy + Math.cos(a) * b.h / 2;
+  return Roads.nearest(fx, fy, 1.4) || Roads.nearest(cx, cy, b.w / 2 + 1.4);
 }
 
 // Квадрат расстояния между центрами двух построек (в клетках)
@@ -326,20 +417,4 @@ function depositFactor(type, x, y) {
     }
   }
   return { count: n, factor: Math.min(1, n / d.depositNeed) };
-}
-
-// L-образный путь дороги от точки до точки
-function roadPath(sx, sy, ex, ey) {
-  const out = [];
-  const dx = Math.sign(ex - sx), dy = Math.sign(ey - sy);
-  let x = sx, y = sy;
-  out.push([x, y]);
-  if (Math.abs(ex - sx) >= Math.abs(ey - sy)) {
-    while (x !== ex) { x += dx; out.push([x, y]); }
-    while (y !== ey) { y += dy; out.push([x, y]); }
-  } else {
-    while (y !== ey) { y += dy; out.push([x, y]); }
-    while (x !== ex) { x += dx; out.push([x, y]); }
-  }
-  return out;
 }

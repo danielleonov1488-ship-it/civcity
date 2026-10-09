@@ -302,7 +302,8 @@ const UI = {
       const d = BUILDINGS[t];
       $('hint-icon').src = this.icons[t] || '';
       $('hint-name').textContent = d.name;
-      $('hint-text').textContent = t === 'road' ? 'Зажмите кнопку мыши и тяните — дорога проложится по пути.' : d.desc;
+      $('hint-text').textContent = t === 'road' ? 'Ведите мышью с зажатой кнопкой — улица ляжет по пути плавной линией. С Shift — по линейке.'
+        : d.kind === 'decor' ? `${d.desc} Повернуть — Z / C.` : `${d.desc} У дороги встанет фасадом к ней; вдали — повернуть Z / C.`;
     }
     $('hint-status').textContent = '';
     $('hint-status').className = '';
@@ -310,7 +311,7 @@ const UI = {
   },
 
   // Строка состояния: залежи рядом, причина отказа
-  setToolStatus(type, x, y, err) {
+  setToolStatus(type, x, y, err, extra) {
     const d = BUILDINGS[type];
     const el = $('hint-status');
     let s = '';
@@ -327,6 +328,7 @@ const UI = {
       s = `Домов в радиусе: ${n}`;
       el.className = n ? 'good' : 'mid';
     }
+    if (extra) { s = extra; el.className = 'good'; }
     if (err && err !== 'Место занято') { s = err; el.className = 'bad'; }
     el.textContent = s;
   },
@@ -671,7 +673,8 @@ const UI = {
             <li><kbd>ЛКМ</kbd> строить и выбирать</li><li><kbd>ПКМ</kbd> двигать карту, отменить</li>
             <li><kbd>Колесо</kbd> масштаб</li><li><kbd>Средняя кнопка</kbd> вращение</li>
             <li><kbd>W A S D</kbd> камера</li><li><kbd>Q</kbd> <kbd>E</kbd> поворот</li>
-            <li><kbd>R</kbd> дорога</li><li><kbd>H</kbd> дом</li><li><kbd>X</kbd> снос</li>
+            <li><kbd>R</kbd> дорога</li><li><kbd>Shift</kbd> дорога по линейке</li><li><kbd>H</kbd> дом</li><li><kbd>X</kbd> снос</li>
+            <li><kbd>Z</kbd> <kbd>C</kbd> повернуть постройку</li>
             <li><kbd>F</kbd> знания</li><li><kbd>L</kbd> легион</li><li><kbd>Пробел</kbd> пауза</li>
             <li><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> скорость</li><li><kbd>Esc</kbd> отмена</li>
           </ul>
@@ -688,7 +691,7 @@ const UI = {
       const r = list[+b.dataset.j].ref;
       this.closeWindow();
       Engine.lookAt(r.x + 1, r.y + 1);
-      const h = buildingAt(r.x, r.y);
+      const h = (r.id && state.buildings.get(r.id)) || buildingAtPoint(r.x + 1, r.y + 1);
       if (h) this.openPanel(h);
     });
   },

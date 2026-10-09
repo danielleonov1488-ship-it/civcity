@@ -193,7 +193,7 @@ const Alerts = {
 const Journal = {
   add(text, kind, ref) {
     state.journal = state.journal || [];
-    state.journal.unshift({ day: state.day, text, kind: kind || 'info', ref: ref ? { x: ref.x, y: ref.y } : null });
+    state.journal.unshift({ day: state.day, text, kind: kind || 'info', ref: ref ? { x: ref.x, y: ref.y, id: ref.id } : null });
     if (state.journal.length > 80) state.journal.length = 80;
     state.journalUnread = (state.journalUnread || 0) + 1;
   },

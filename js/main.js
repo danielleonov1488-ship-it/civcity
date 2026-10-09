@@ -39,7 +39,11 @@ const Game = {
     state = newState(Math.floor(Math.random() * 1e9));
     World.terrain.clear();
     World.occ.clear();
-    for (let x = 0; x < PLOT; x++) placeBuilding('road', x, 11, true);
+    World.bgrid.clear();
+    Roads.clear();
+    // стартовая улица через весь участок
+    const a = Roads.addNode(0.5, 11.5), b = Roads.addNode(PLOT - 0.5, 11.5);
+    clearNatureAlong(Roads.addEdge(a, b, [[a.x, a.y], [b.x, b.y]]));
     const d = window.innerWidth < window.innerHeight ? 38 : 30;
     Object.assign(Engine.cam, { x: PLOT / 2, z: PLOT / 2, tx: PLOT / 2, tz: PLOT / 2, dist: d, distTarget: d, yaw: Math.PI / 4, yawTarget: Math.PI / 4 });
   },

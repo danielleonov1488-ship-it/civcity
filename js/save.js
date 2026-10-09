@@ -26,8 +26,9 @@ const Settings = {
 
 function serialize() {
   const buildings = [];
+  const r4 = v => Math.round(v * 10000) / 10000;
   for (const b of state.buildings.values()) {
-    const o = { i: b.id, t: b.type, x: b.x, y: b.y, r: b.rot || 0 };
+    const o = { i: b.id, t: b.type, x: r4(b.x), y: r4(b.y), r: b.rot || 0, a: r4(bAng(b)) };
     if (BUILDINGS[b.type].kind === 'house') Object.assign(o, { tier: b.tier, pop: b.pop, up: b.up, down: b.down, lock: b.lock || undefined, req: b.req || undefined, bonusUntil: b.bonusUntil || undefined });
     buildings.push(o);
   }
@@ -38,6 +39,7 @@ function serialize() {
     plots: [...state.plots],
     cleared: [...state.cleared],
     buildings,
+    roads: Roads.toJSON(),
     camera: { x: Engine.cam.x, z: Engine.cam.z, yaw: Engine.cam.yawTarget, dist: Engine.cam.distTarget },
   };
 }
@@ -45,7 +47,7 @@ function serialize() {
 function deserialize(data) {
   const s = newState(data.seed);
   for (const [k, v] of Object.entries(data)) {
-    if (k === 'plots' || k === 'cleared' || k === 'buildings') continue;
+    if (k === 'plots' || k === 'cleared' || k === 'buildings' || k === 'roads') continue;
     s[k] = v;
   }
   s.plots = new Set(data.plots);
@@ -58,16 +60,23 @@ function deserialize(data) {
   state = s;
   World.terrain.clear();
   World.occ.clear();
+  World.bgrid.clear();
+  // города до свободной стройки: дороги были постройками на клетках — их собираем в улицы
+  const roadTiles = new Set();
   for (const o of data.buildings) {
+    if (o.t === 'road') { roadTiles.add(o.x + ',' + o.y); continue; }
     if (!BUILDINGS[o.t]) continue;
     const b = makeBuilding(o.t, o.x, o.y);
     b.id = o.i;
     b.born = 0;
     b.rot = o.r || 0;
+    b.ang = o.a !== undefined ? o.a : b.rot * Math.PI / 2;
     if (BUILDINGS[o.t].kind === 'house') Object.assign(b, { tier: o.tier, pop: o.pop, up: o.up || 0, down: o.down || 0, lock: !!o.lock, req: o.req || null, bonusUntil: o.bonusUntil || 0 });
     state.buildings.set(b.id, b);
     occupy(b);
   }
+  if (data.roads) Roads.fromJSON(data.roads);
+  else Roads.fromTiles(roadTiles);
   state.nextId = Math.max(state.nextId, ...[...state.buildings.keys()].map(k => k + 1), 1);
 }
 
@@ -81,7 +90,10 @@ function loadGame() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return false;
-    deserialize(JSON.parse(raw));
+    const data = JSON.parse(raw);
+    // город на клетках переносится в свободную стройку; прежнее сохранение остаётся запасной копией
+    if (!data.roads) { try { if (!localStorage.getItem(SAVE_KEY + '.grid')) localStorage.setItem(SAVE_KEY + '.grid', raw); } catch (e) { /* нет места */ } }
+    deserialize(data);
     return true;
   } catch (e) {
     return false;

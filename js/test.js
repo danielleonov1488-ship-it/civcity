@@ -11,27 +11,34 @@ const Test = {
     state.techs = TECHS.map(t => t.id);
     state.research = null;
 
-    const free = (t, x, y) => {
-      const d = BUILDINGS[t];
-      for (let j = 0; j < d.h; j++) for (let i = 0; i < d.w; i++) {
-        const tx = x + i, ty = y + j;
-        if (!isOwnedTile(tx, ty) || isWater(groundAt(tx, ty)) || World.occ.has(tkey(tx, ty))) return false;
-      }
-      return true;
-    };
     const put = (t, x, y, tier) => {
-      if (!free(t, x, y)) return null;
-      const b = placeBuilding(t, x, y, true);
-      if (tier) {
+      const b = placeOnTile(t, x, y, true);
+      if (b && tier) {
         b.tier = tier;
         b.pop = BUILDINGS[t].tiers[tier].cap;
         Engine.buildingsChanged(b);
       }
       return b;
     };
+    // прямая улица поперёк участка по клеткам ряда y — в обход воды и чужой земли
+    const street = y => {
+      let run = null;
+      const flush = () => {
+        if (run && run[1] > run[0]) {
+          const plan = Roads.plan([[run[0] + 0.5, y + 0.5], [run[1] + 0.5, y + 0.5]], true);
+          if (plan && !plan.err) Roads.build(plan);
+        }
+        run = null;
+      };
+      for (let x = 0; x < PLOT; x++) {
+        if (isOwnedTile(x, y) && !isWater(groundAt(x, y)) && !World.occ.has(tkey(x, y))) run = run ? [run[0], x] : [x, x];
+        else flush();
+      }
+      flush();
+    };
 
     // вторая улица параллельно стартовой (стартовая — y = 11)
-    for (let x = 0; x < PLOT; x++) put('road', x, 17);
+    street(17);
     let n = 0;
     for (let x = 1; x < PLOT - 1; x += 2) {
       for (const y of [9, 12, 18]) put('house', x, y, 1 + (n++ % 4));
@@ -43,7 +50,7 @@ const Test = {
     // военные здания за второй улицей, на соседнем участке
     state.plots.add('0,1');
     Engine.plotChanged(0, 1);
-    for (let x = 0; x < PLOT; x++) put('road', x, 21);
+    street(21);
     for (const t of ['range', 'spearcamp', 'ballistae', 'catapults']) for (let x = 0; x < PLOT - 2 && !put(t, x, 22); x++);
     const A = Army.ensure();
     A.progress = 6 * STAGES_PER_REGION;   // шесть боссов побеждено: открыты все рода войск и умения
