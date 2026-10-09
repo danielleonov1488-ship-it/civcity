@@ -6,6 +6,7 @@
 
 const Test = {
   setup() {
+    Paving.noPermanent = true;
     state.testReady = true;
     state.cityName = 'Тестовый город';
     state.techs = TECHS.map(t => t.id);
@@ -25,8 +26,7 @@ const Test = {
       let run = null;
       const flush = () => {
         if (run && run[1] > run[0]) {
-          const plan = Roads.plan([[run[0] + 0.5, y + 0.5], [run[1] + 0.5, y + 0.5]], true);
-          if (plan && !plan.err) Roads.build(plan);
+          Paving.stamp(run[0] + 0.5, y + 0.5, run[1] + 0.5, y + 0.5, ROAD_HALF, 3);
         }
         run = null;
       };
@@ -59,6 +59,7 @@ const Test = {
     this.army();
     this.give();
     UI.buildToolbar();
+    Paving.noPermanent = false;
     UI.log('Тестовый город: всё изучено, военные здания стоят. Легион и Чудеса — кнопки слева.', 'good', true);
   },
 

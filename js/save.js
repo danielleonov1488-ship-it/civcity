@@ -50,7 +50,8 @@ function serialize() {
     plots: [...state.plots],
     cleared: [...state.cleared],
     buildings,
-    roads: Roads.toJSON(),
+    pave: Paving.toJSON(),
+    roads: Roads.toJSON(),        // старые улицы — пока для отката; не меняются и не рисуются
     camera: { x: Engine.cam.x, z: Engine.cam.z, yaw: Engine.cam.yawTarget, dist: Engine.cam.distTarget },
   };
 }
@@ -58,7 +59,7 @@ function serialize() {
 function deserialize(data) {
   const s = newState(data.seed);
   for (const [k, v] of Object.entries(data)) {
-    if (k === 'plots' || k === 'cleared' || k === 'buildings' || k === 'roads') continue;
+    if (k === 'plots' || k === 'cleared' || k === 'buildings' || k === 'roads' || k === 'pave') continue;
     s[k] = v;
   }
   s.plots = new Set(data.plots);
@@ -88,6 +89,9 @@ function deserialize(data) {
   }
   if (data.roads) Roads.fromJSON(data.roads);
   else Roads.fromTiles(roadTiles);
+  // мостовая кистью; город до неё — улицы и площади становятся мостовой той же формы
+  if (data.pave) Paving.fromJSON(data.pave);
+  else { Paving.clear(); Paving.fromRoads(); }
   state.nextId = Math.max(state.nextId, ...[...state.buildings.keys()].map(k => k + 1), 1);
 }
 

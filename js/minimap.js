@@ -95,17 +95,22 @@ const Minimap = {
     g.imageSmoothingEnabled = false;
     g.drawImage(this.drawTerrain(ex, W, H), 0, 0, W * k, H * k);
     g.setTransform(k, 0, 0, k, -ex.tx0 * k, -ex.ty0 * k);
-    // площади и дороги
-    g.fillStyle = '#e8dcc0';
-    for (const key of Roads.plaza) { const [x, y] = key.split(',').map(Number); g.fillRect(x, y, 1, 1); }
-    g.strokeStyle = '#efe4c8'; g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = ROAD_HALF * 2 + 0.3;
-    for (const e of Roads.edges.values()) {
-      if (!e.xy || e.xy.length < 4) continue;
-      g.beginPath();
-      g.moveTo(e.xy[0], e.xy[1]);
-      for (let i = 2; i < e.xy.length; i += 2) g.lineTo(e.xy[i], e.xy[i + 1]);
-      g.stroke();
+    // мостовая: каждый участок — картинка по мелким клеткам, уменьшенная со сглаживанием (края плавные)
+    const PC = [null, [201, 171, 122], [221, 213, 194], [239, 228, 200], [246, 238, 220]];
+    const tmp = this.paveTmp || (this.paveTmp = Object.assign(document.createElement('canvas'), { width: CS, height: CS }));
+    const tg = tmp.getContext('2d'), img = tg.createImageData(CS, CS), d = img.data;
+    g.imageSmoothingEnabled = true;
+    for (const [key, c] of Paving.chunks) {
+      const [px, py] = key.split(',').map(Number);
+      if ((px + 1) * PLOT < ex.tx0 || px * PLOT > ex.tx1 || (py + 1) * PLOT < ex.ty0 || py * PLOT > ex.ty1) continue;
+      for (let i = 0; i < c.length; i++) {
+        const col = PC[c[i]], o = i * 4;
+        if (col) { d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255; } else d[o + 3] = 0;
+      }
+      tg.putImageData(img, 0, 0);
+      g.drawImage(tmp, px * PLOT, py * PLOT, PLOT, PLOT);
     }
+    g.imageSmoothingEnabled = false;
     // дома и постройки — по цвету рода
     const COL = { house: '#c8553d', wonder: '#e9b949', producer: '#9a6a3a', storage: '#9a6a3a', decor: '#6f9a4a' };
     for (const bd of state.buildings.values()) {
@@ -125,7 +130,7 @@ const Minimap = {
 
   // Подпись того, из чего сложена подложка: поменялось — перерисовать
   signature() {
-    return state.plots.size + ':' + Roads.version + ':' + state.buildings.size + ':' + state.cleared.size;
+    return state.plots.size + ':' + Paving.version + ':' + state.buildings.size + ':' + state.cleared.size;
   },
 
   // Как точка мира ложится на круг: центр круга — середина своей земли, поворот — как у камеры

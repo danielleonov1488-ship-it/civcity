@@ -100,7 +100,7 @@ function isWater(g) { return g >= G_WATER; }
 function isOwnedPlot(px, py) { return state.plots.has(px + ',' + py); }
 function isOwnedTile(tx, ty) { return isOwnedPlot(plotOf(tx), plotOf(ty)); }
 function buildingAt(tx, ty) { return World.occ.get(tkey(tx, ty)); }
-function isRoad(tx, ty) { return Roads.covers(tx, ty); }
+function isRoad(tx, ty) { return Paving.covers(tx, ty); }
 
 /* ---------- Цены и оплата ---------- */
 
@@ -263,7 +263,8 @@ function buildingNear(x, y, r) {
 }
 function buildingAtPoint(x, y) { return buildingNear(x, y, 1e-6); }
 
-// Место под постройку: своя земля, без воды, не на дороге и не на других постройках. null — свободно
+// Место под постройку: своя земля, без воды, не на залежах, не в лесу и не на других постройках. null — свободно.
+// На мостовую ставить можно — дом встанет прямо на камни
 function placeBlocked(type, cx, cy, ang) {
   const o = boxOf(type, cx, cy, ang);
   const nx = Math.max(1, Math.ceil(o.hw * 4)), ny = Math.max(1, Math.ceil(o.hh * 4));
@@ -277,7 +278,15 @@ function placeBlocked(type, cx, cy, ang) {
   }
   const tight = boxOf(type, cx, cy, ang, -0.03);
   for (const b of buildingsNear(cx, cy, o.R + 0.5)) if (boxOverlap(tight, boxOfB(b, -0.03))) return 'Место занято';
-  if (Roads.distToBox(o, ROAD_HALF) < ROAD_HALF - 0.04) return 'Здесь проходит дорога';
+  // залежи и густой лес вечные: ни под домом, ни вплотную к стенам (там их убрала бы стройка)
+  const pad = BUILDINGS[type].kind === 'decor' ? 0 : 0.25, big = boxOf(type, cx, cy, ang, pad);
+  for (let ty = Math.floor(cy - big.R); ty <= Math.floor(cy + big.R); ty++) {
+    for (let tx = Math.floor(cx - big.R); tx <= Math.floor(cx + big.R); tx++) {
+      if (!boxContains(big, tx + 0.5, ty + 0.5)) continue;
+      const keep = permanentNature(tx, ty);
+      if (keep) return keep === 'deposit' ? 'Здесь залежи — на них строить нельзя' : 'Здесь лес — его нельзя вырубить';
+    }
+  }
   return null;
 }
 
@@ -302,30 +311,34 @@ function checkPlace(type, cx, cy, ang) {
   return null;
 }
 
-/* Куда встать постройке под курсором. У дороги дом сам разворачивается фасадом к ней и встаёт вплотную,
-   а если место занято — сдвигается вдоль улицы к ближайшему свободному. Вдали от дорог — как повернул игрок. */
+/* Куда встать постройке под курсором. У края мостовой дом сам разворачивается фасадом к ней и встаёт вплотную,
+   а если место занято — сдвигается вдоль края к ближайшему свободному. Посреди площади и вдали от мостовой —
+   там, где курсор, и как повернул игрок (Z / C или колёсико с Shift). */
 function snapPlace(type, fx, fy, ang0) {
   const d = BUILDINGS[type];
   const free = { cx: fx, cy: fy, ang: ang0 || 0, road: false };
   if (d.kind === 'decor') return free;
-  const q = Roads.nearest(fx, fy, d.h / 2 + ROAD_HALF + 1.4);
-  if (!q) return free;
-  let nx = -q.ty, ny = q.tx;
-  if ((fx - q.x) * nx + (fy - q.y) * ny < 0) { nx = -nx; ny = -ny; }
-  const off = ROAD_HALF + d.h / 2 + 0.04;
-  const at = s => {
-    const p = Roads.pointAt(q.e, s);
-    let mx = -p.ty, my = p.tx;
-    if (mx * nx + my * ny < 0) { mx = -mx; my = -my; }
-    return { cx: p.x + mx * off, cy: p.y + my * off, ang: Math.atan2(-mx, -my), road: true };
+  // курсор на мостовой: у самого края — дом встаёт снаружи, лицом к ней; дальше от края — прямо на камни
+  const inside = Paving.at(fx, fy) > 0;
+  const snapFrom = (x, y) => {
+    if (Paving.at(x, y)) {
+      const q = Paving.nearestEdge(x, y, 0.7, true);
+      if (!q) return null;
+      return { cx: q.x + q.nx * (d.h / 2 + 0.02), cy: q.y + q.ny * (d.h / 2 + 0.02), ang: Math.atan2(-q.nx, -q.ny), road: true, tx: -q.ny, ty: q.nx };
+    }
+    const q = Paving.nearestEdge(x, y, d.h / 2 + 1.4);
+    if (!q) return null;
+    return { cx: q.x - q.nx * (d.h / 2 + 0.02), cy: q.y - q.ny * (d.h / 2 + 0.02), ang: Math.atan2(q.nx, q.ny), road: true, tx: -q.ny, ty: q.nx };
   };
-  for (const ds of [0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1, -1, 1.25, -1.25, 1.5, -1.5]) {
-    const s = q.s + ds;
-    if (s < 0 || s > q.e.L) continue;
-    const c = at(s);
-    if (!placeBlocked(type, c.cx, c.cy, c.ang)) return c;
+  const c0 = snapFrom(fx, fy);
+  if (!c0) return free;
+  if (!placeBlocked(type, c0.cx, c0.cy, c0.ang)) return c0;
+  // занято — ищем свободное место рядом вдоль края
+  for (const ds of [0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1, -1, 1.25, -1.25, 1.5, -1.5]) {
+    const c = snapFrom(fx + c0.tx * ds, fy + c0.ty * ds);
+    if (c && !placeBlocked(type, c.cx, c.cy, c.ang)) return c;
   }
-  return at(q.s);
+  return inside ? free : c0;
 }
 
 function makeBuilding(type, x, y) {
@@ -346,16 +359,17 @@ function placeBuilding(type, cx, cy, ang, free) {
   clearNatureUnder(b);
   if (!free) pay(d.cost);
   Engine.buildingsChanged(b);
+  Paving.buildingChanged(b);
   return b;
 }
 
-// Деревья и кусты под постройкой убираются, трава под ней не растёт
+// Кусты, цветы и одинокие деревья под постройкой убираются, трава под ней не растёт (залежи и лес вечные)
 function clearNatureUnder(b) {
   const o = boxOfB(b, 0.3);
   for (let ty = Math.floor(o.cy - o.R); ty <= Math.floor(o.cy + o.R); ty++) {
     for (let tx = Math.floor(o.cx - o.R); tx <= Math.floor(o.cx + o.R); tx++) {
       if (!boxContains(o, tx + 0.5, ty + 0.5)) continue;
-      if (rawNatureAt(tx, ty)) state.cleared.add(tkey(tx, ty));
+      if (rawNatureAt(tx, ty) && !permanentNature(tx, ty)) state.cleared.add(tkey(tx, ty));
       Engine.natureChanged(tx, ty);
     }
   }
@@ -369,6 +383,7 @@ function liftBuilding(b) {
   for (const k of b._cov || []) { const [tx, ty] = k.split(',').map(Number); Engine.natureChanged(tx, ty); }
   b.lifted = true;
   Engine.buildingsChanged(b);
+  Paving.buildingChanged(b);
 }
 
 function dropBuilding(b, cx, cy, ang) {
@@ -383,6 +398,7 @@ function dropBuilding(b, cx, cy, ang) {
   occupy(b);
   clearNatureUnder(b);
   Engine.buildingsChanged(b);
+  Paving.buildingChanged(b);
 }
 
 // Можно ли поставить переносимую постройку сюда (null — можно)
@@ -393,11 +409,11 @@ function checkMove(b, cx, cy, ang) {
   return null;
 }
 
-// По клеткам, как раньше: левый верхний угол (tx, ty), фасадом к ближайшей дороге (для тестового города)
+// По клеткам, как раньше: левый верхний угол (tx, ty), фасадом к ближайшей мостовой (для тестового города)
 function placeOnTile(type, tx, ty, free) {
   const d = BUILDINGS[type], cx = tx + d.w / 2, cy = ty + d.h / 2;
-  const q = Roads.nearest(cx, cy, d.w / 2 + 1.2);
-  const ang = q ? Math.round(Math.atan2(q.x - cx, q.y - cy) / (Math.PI / 2)) * Math.PI / 2 : 0;
+  const q = Paving.nearestEdge(cx, cy, d.w / 2 + 1.2);
+  const ang = q ? Math.round(Math.atan2(q.nx, q.ny) / (Math.PI / 2)) * Math.PI / 2 : 0;
   if (placeBlocked(type, cx, cy, ang)) return null;
   return placeBuilding(type, cx, cy, ang, free);
 }
@@ -415,22 +431,19 @@ function removeBuilding(b, refund) {
     }
   }
   Engine.buildingsChanged(b, true);
+  Paving.buildingChanged(b);
 }
 
-// Дорога вплотную к постройке (с небольшим зазором)
+// Мостовая вплотную к постройке (с небольшим зазором) или постройка стоит прямо на ней
 function hasRoadAccess(b) {
-  return Roads.distToBox(boxOfB(b), 1) <= ROAD_HALF + 0.35;
+  return Paving.touchesBox(boxOfB(b), 0.45);
 }
 
 // Поворот постройки больше не меняется сам — она стоит, как её поставили
 function orientToRoad(b) { return b.rot || 0; }
 
-// Где житель выходит из дома на улицу: ближайшая к фасаду точка дороги
-function roadContact(b) {
-  const a = bAng(b), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-  const fx = cx + Math.sin(a) * b.h / 2, fy = cy + Math.cos(a) * b.h / 2;
-  return Roads.nearest(fx, fy, 1.4) || Roads.nearest(cx, cy, b.w / 2 + 1.4);
-}
+// Где житель выходит из дома на улицу: точка мостовой у фасада (или у любой стены) и направление от дома
+function roadContact(b) { return Paving.contact(b); }
 
 // Квадрат расстояния между центрами двух построек (в клетках)
 function dist2(a, b) {

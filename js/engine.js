@@ -466,7 +466,7 @@ const Engine = {
     const mb = new MB(px * 7919 + py * 104729 + 13);
     for (let tz = 0; tz < PLOT; tz++) {
       for (let tx = 0; tx < PLOT; tx++) {
-        if (!B.wet[tz * PLOT + tx] || World.occ.has(tkey(x0 + tx, z0 + tz)) || Roads.covers(x0 + tx, z0 + tz)) continue;
+        if (!B.wet[tz * PLOT + tx] || World.occ.has(tkey(x0 + tx, z0 + tz)) || Paving.covers(x0 + tx, z0 + tz)) continue;
         for (let k2 = 0; k2 < 4; k2++) {
           const X = x0 + tx + 0.25 + (k2 % 2) * 0.5, Z = z0 + tz + 0.25 + (k2 >> 1) * 0.5;
           const d = WATER_Y - this.bedAt(B.F, X, Z);
@@ -599,200 +599,8 @@ const Engine = {
     for (const obj of Object.values(p.parts)) if (obj) obj.geometry.dispose();
   },
 
-  /* ---------- Улицы: мостовая вдоль кривой ----------
-     Каждая улица (цепочка через узлы, где сходятся две) — своя сетка: подложка, ряды камней поперёк, бордюры.
-     Где улицы перекрываются на перекрёстке, камни кладёт старшая, а бордюры внутри чужой мостовой не ставятся. */
-
-  syncRoads() {
-    if (this.roadVersion === Roads.version) return;
-    this.roadVersion = Roads.version;
-    if (!this.roadGroup) { this.roadGroup = new THREE.Group(); this.scene.add(this.roadGroup); }
-    for (const m of [...this.roadGroup.children]) { this.roadGroup.remove(m); m.geometry.dispose(); }
-    const strokes = Roads.strokes();
-    const strokeOf = new Map();
-    for (const st of strokes) for (const id of st.ids) strokeOf.set(id, st);
-    for (const st of strokes) {
-      const geo = this.roadGeometry(st, strokeOf);
-      if (!geo) continue;
-      const m = new THREE.Mesh(geo, this.mat);
-      m.receiveShadow = true;
-      this.roadGroup.add(m);
-    }
-    for (const g of [this.junctionGeometry(), this.plazaGeometry()]) {
-      if (!g) continue;
-      const m = new THREE.Mesh(g, this.mat);
-      m.receiveShadow = true;
-      this.roadGroup.add(m);
-    }
-  },
-
-  roadGeometry(st, strokeOf) {
-    const P = st.xy, n = P.length / 2;
-    if (n < 2) return null;
-    const mb = new MB(st.rank * 13 + 5);
-    // направления и нормали; на острых изломах нормаль удлиняется, чтобы ширина не проседала
-    const N = new Float32Array(n * 2), cum = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      if (i) cum[i] = cum[i - 1] + Math.hypot(P[i * 2] - P[i * 2 - 2], P[i * 2 + 1] - P[i * 2 - 1]);
-      const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
-      let tx = P[b * 2] - P[a * 2], ty = P[b * 2 + 1] - P[a * 2 + 1];
-      const l = Math.hypot(tx, ty) || 1;
-      tx /= l; ty /= l;
-      let k = 1;
-      if (i > 0 && i < n - 1) {
-        let ax = P[i * 2] - P[a * 2], ay = P[i * 2 + 1] - P[a * 2 + 1], bx = P[b * 2] - P[i * 2], by = P[b * 2 + 1] - P[i * 2 + 1];
-        const la = Math.hypot(ax, ay) || 1, lb = Math.hypot(bx, by) || 1;
-        ax /= la; ay /= la; bx /= lb; by /= lb;
-        k = 1 / Math.max(0.55, Math.sqrt(Math.max(0, (1 + ax * bx + ay * by) / 2)));
-      }
-      N[i * 2] = -ty * k; N[i * 2 + 1] = tx * k;
-    }
-    const L = cum[n - 1];
-    // точка и нормаль на расстоянии s вдоль улицы
-    let hint = 0;
-    const frame = s => {
-      s = clamp(s, 0, L);
-      if (cum[hint] > s) hint = 0;
-      while (hint < n - 2 && cum[hint + 1] < s) hint++;
-      const i = hint, len = cum[i + 1] - cum[i] || 1e-9, t = (s - cum[i]) / len;
-      return [P[i * 2] + (P[i * 2 + 2] - P[i * 2]) * t, P[i * 2 + 1] + (P[i * 2 + 3] - P[i * 2 + 1]) * t,
-        N[i * 2] + (N[i * 2 + 2] - N[i * 2]) * t, N[i * 2 + 1] + (N[i * 2 + 3] - N[i * 2 + 1]) * t];
-    };
-    const at = (f, l, y) => [f[0] + f[2] * l, y, f[1] + f[3] * l];
-    const mine = id => strokeOf.get(id) === st;
-    const older = id => { const o = strokeOf.get(id); return !o || o.rank >= st.rank; };
-    const yb = 0.03 + (st.rank % 5) * 0.0015;
-    const base = lin('#a2937a'), curb = lin('#ede5d2');
-    const stones = ['#dbcfb2', '#d2c5a6', '#e0d5b9', '#cdbf9e', '#d6caa9'].map(lin);
-    // подложка
-    for (let i = 0; i < n - 1; i++) {
-      const a = [P[i * 2], P[i * 2 + 1], N[i * 2], N[i * 2 + 1]], b = [P[i * 2 + 2], P[i * 2 + 3], N[i * 2 + 2], N[i * 2 + 3]];
-      if (Roads.inPlaza(a[0], a[1]) && Roads.inPlaza(b[0], b[1])) continue;
-      mb.quad(at(a, -ROAD_HALF, yb), at(b, -ROAD_HALF, yb), at(b, ROAD_HALF, yb), at(a, ROAD_HALF, yb), base, 1, 0);
-    }
-    // камни: ряды поперёк улицы со сдвигом швов, как в римской мостовой
-    const box = (f0, f1, l0, l1, y, col) => {
-      const A = at(f0, l0, y), B = at(f1, l0, y), C = at(f1, l1, y), D = at(f0, l1, y);
-      const A0 = at(f0, l0, yb), B0 = at(f1, l0, yb), C0 = at(f1, l1, yb), D0 = at(f0, l1, yb);
-      mb.quad(A, B, C, D, col, 1);
-      mb.quad(A0, A, B, B0, col, 0.72);
-      mb.quad(B0, B, C, C0, col, 0.72);
-      mb.quad(C0, C, D, D0, col, 0.72);
-      mb.quad(D0, D, A, A0, col, 0.72);
-    };
-    const W = ROAD_HALF - 0.03;
-    // у перекрёстков камни кладёт круглая площадка (junctionGeometry)
-    const junctions = [st.start, st.end].filter(e => e.deg >= 3).map(e => Roads.nodes.get(e.id)).filter(Boolean);
-    for (let r = 0, s0 = 0.02; s0 + 0.28 <= L - 0.01; r++, s0 += 0.32) {
-      const f0 = frame(s0), f1 = frame(s0 + 0.28), fm = frame(s0 + 0.14);
-      const split = -W + 2 * W * (0.5 - (r % 2) * 0.17);
-      for (const [l0, l1] of [[-W, split - 0.02], [split + 0.02, W]]) {
-        const lm = (l0 + l1) / 2, cx = fm[0] + fm[2] * lm, cy = fm[1] + fm[3] * lm;
-        if (Roads.nearest(cx, cy, ROAD_HALF - 0.02, older)) continue;
-        if (junctions.some(j => Math.hypot(j.x - cx, j.y - cy) < ROAD_HALF + 0.05) || Roads.inPlaza(cx, cy)) continue;
-        const h = hash2(Math.floor(cx * 7), Math.floor(cy * 7), 77);
-        box(f0, f1, l0, l1, 0.046 + h * 0.012, stones[(h * 5) | 0]);
-      }
-    }
-    // бордюры по краям — кроме мест, где край лежит на другой улице
-    const curbAt = (f0, f1, side) => {
-      const lo = side * (ROAD_HALF - 0.06), hi = side * ROAD_HALF;
-      const A = at(f0, lo, 0.075), B = at(f1, lo, 0.075), C = at(f1, hi, 0.075), D = at(f0, hi, 0.075);
-      mb.quad(A, B, C, D, curb, 1, 0.03);
-      mb.quad(at(f0, lo, yb), A, B, at(f1, lo, yb), curb, 0.82, 0.03);
-      mb.quad(at(f0, hi, 0), D, C, at(f1, hi, 0), curb, 0.82, 0.03);
-    };
-    for (let i = 0; i < n - 1; i++) {
-      const a = [P[i * 2], P[i * 2 + 1], N[i * 2], N[i * 2 + 1]], b = [P[i * 2 + 2], P[i * 2 + 3], N[i * 2 + 2], N[i * 2 + 3]];
-      for (const side of [-1, 1]) {
-        const mx = (a[0] + b[0]) / 2 + (a[2] + b[2]) / 2 * side * (ROAD_HALF - 0.03), my = (a[1] + b[1]) / 2 + (a[3] + b[3]) / 2 * side * (ROAD_HALF - 0.03);
-        if (Roads.inPlaza(mx, my) || Roads.nearest(mx, my, ROAD_HALF - 0.04, id => mine(id))) continue;
-        curbAt(a, b, side);
-      }
-    }
-    // тупик — круглый край с бордюром
-    const cap = (f, dir) => {
-      const tx = f[3] * dir, ty = -f[2] * dir;   // наружу от улицы
-      const nl = Math.hypot(f[2], f[3]) || 1, ox = tx / nl, oy = ty / nl;
-      const nx = f[2] / nl, ny = f[3] / nl, K = 10;
-      const pt = (a, r, y) => [f[0] + (nx * Math.cos(a) + ox * Math.sin(a)) * r, y, f[1] + (ny * Math.cos(a) + oy * Math.sin(a)) * r];
-      for (let k = 0; k < K; k++) {
-        const a0 = Math.PI * k / K, a1 = Math.PI * (k + 1) / K;
-        mb.tri([f[0], yb, f[1]], pt(a0, ROAD_HALF, yb), pt(a1, ROAD_HALF, yb), base);
-        mb.tri([f[0], 0.05, f[1]], pt(a0, ROAD_HALF - 0.08, 0.05), pt(a1, ROAD_HALF - 0.08, 0.05), stones[k % 5]);
-        mb.quad(pt(a0, ROAD_HALF - 0.06, 0.075), pt(a1, ROAD_HALF - 0.06, 0.075), pt(a1, ROAD_HALF, 0.075), pt(a0, ROAD_HALF, 0.075), curb, 1, 0.03);
-        mb.quad(pt(a0, ROAD_HALF, 0), pt(a0, ROAD_HALF, 0.075), pt(a1, ROAD_HALF, 0.075), pt(a1, ROAD_HALF, 0), curb, 0.82, 0.03);
-      }
-    };
-    if (!st.closed && st.start.deg === 1 && !Roads.inPlaza(P[0], P[1])) cap(frame(0), -1);
-    if (!st.closed && st.end.deg === 1 && !Roads.inPlaza(P[n * 2 - 2], P[n * 2 - 1])) cap(frame(L), 1);
-    return mb.build(0, 0).solid;
-  },
-
-  // Перекрёстки: круглая мощёная площадка на стыке улиц — камень в середине и венец клиньев вокруг
-  junctionGeometry() {
-    const mb = new MB(91);
-    const base = lin('#a2937a');
-    const stones = ['#dbcfb2', '#d2c5a6', '#e0d5b9', '#cdbf9e', '#d6caa9'].map(lin);
-    for (const nd of Roads.nodes.values()) {
-      if (nd.edges.size < 3 || Roads.inPlaza(nd.x, nd.y)) continue;
-      const K = 24, y0 = 0.028, R = ROAD_HALF + 0.08;
-      const pt = (a, r, y) => [nd.x + Math.cos(a) * r, y, nd.y + Math.sin(a) * r];
-      for (let k = 0; k < K; k++) {
-        const a0 = Math.PI * 2 * k / K, a1 = Math.PI * 2 * (k + 1) / K;
-        mb.tri([nd.x, y0, nd.y], pt(a0, R, y0), pt(a1, R, y0), base);
-      }
-      const h = 0.05;
-      // середина
-      for (let k = 0; k < 8; k++) {
-        const a0 = Math.PI * 2 * k / 8, a1 = Math.PI * 2 * (k + 1) / 8;
-        mb.tri([nd.x, h, nd.y], pt(a0, 0.17, h), pt(a1, 0.17, h), stones[0]);
-        mb.quad(pt(a0, 0.17, y0), pt(a0, 0.17, h), pt(a1, 0.17, h), pt(a1, 0.17, y0), stones[0], 0.72, 0);
-      }
-      // два венца клиньев со сдвигом швов
-      for (const [r0, r1, n, off] of [[0.2, 0.37, 7, 0], [0.4, R - 0.03, 11, 0.5]]) {
-        for (let k = 0; k < n; k++) {
-          const a0 = Math.PI * 2 * (k + off) / n + 0.03, a1 = Math.PI * 2 * (k + 1 + off) / n - 0.03;
-          const col = stones[(k + n) % 5], hh = h - 0.002 + ((k * 7) % 3) * 0.003;
-          const A = pt(a0, r0, hh), B = pt(a1, r0, hh), C = pt(a1, r1, hh), D = pt(a0, r1, hh);
-          mb.quad(A, B, C, D, col, 1, 0.04);
-          mb.quad(pt(a0, r1, y0), D, C, pt(a1, r1, y0), col, 0.72, 0);
-          mb.quad(pt(a0, r0, y0), A, D, pt(a0, r1, y0), col, 0.72, 0);
-          mb.quad(pt(a1, r0, y0), B, C, pt(a1, r1, y0), col, 0.72, 0);
-        }
-      }
-    }
-    return mb.build(0, 0).solid;
-  },
-
-  // Площади: мощёные клетки, как прежние дороги — три ряда камней со сдвигом швов, бордюр по краю площади
-  plazaGeometry() {
-    if (!Roads.plaza.size) return null;
-    const mb = new MB(37);
-    const stones = ['#dbcfb2', '#d2c5a6', '#e0d5b9', '#cdbf9e', '#d6caa9'];
-    const open = (x, z) => !Roads.plaza.has(x + ',' + z) && !Roads.tiles.has(x + ',' + z);
-    for (const k of Roads.plaza) {
-      const [x, z] = k.split(',').map(Number);
-      mb.box(x, 0, z, x + 1, 0.03, z + 1, '#a2937a', { ao: 1 });
-      for (let a = 0; a < 3; a++) {
-        const split = 0.5 - (a % 2) * 0.17, z0 = z + 0.03 + a * 0.32;
-        for (let b = 0; b < 2; b++) {
-          const h = hash2(x * 3 + a, z * 2 + b, 77);
-          const xs = b ? x + split + 0.02 : x + 0.03, xe = b ? x + 0.97 : x + split - 0.02;
-          mb.box(xs, 0.03, z0, xe, 0.046 + h * 0.012, z0 + 0.28, stones[(h * 5) | 0], { ao: 0.72 });
-        }
-      }
-      const curb = '#ede5d2';
-      if (open(x, z - 1)) mb.box(x, 0, z, x + 1, 0.075, z + 0.06, curb, { ao: 0.82 });
-      if (open(x, z + 1)) mb.box(x, 0, z + 0.94, x + 1, 0.075, z + 1, curb, { ao: 0.82 });
-      if (open(x - 1, z)) mb.box(x, 0, z, x + 0.06, 0.075, z + 1, curb, { ao: 0.82 });
-      if (open(x + 1, z)) mb.box(x + 0.94, 0, z, x + 1, 0.075, z + 1, curb, { ao: 0.82 });
-    }
-    return mb.build(0, 0).solid;
-  },
-
-  // Прокладываемая дорога или кусок под сносом — полупрозрачная лента
-  setRoadPreview(xy, color) {
+  // Прямая линия кисти (с Shift) — полупрозрачная лента; half — полширины
+  setRoadPreview(xy, color, half) {
     if (!this.roadPreview) {
       this.roadPreview = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: '#f3e7c4', transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }));
       this.roadPreview.renderOrder = 2;
@@ -800,7 +608,8 @@ const Engine = {
     }
     const m = this.roadPreview;
     if (!xy || xy.length < 4) { m.visible = false; this.previewKey = null; return; }
-    const key = xy.length + ':' + xy[0] + ':' + xy[xy.length - 1] + ':' + xy[(xy.length >> 2) * 2] + ':' + color;
+    const hw = half || ROAD_HALF;
+    const key = xy.length + ':' + xy[0] + ':' + xy[1] + ':' + xy[xy.length - 2] + ':' + xy[xy.length - 1] + ':' + color + ':' + hw;
     m.visible = true;
     m.material.color.set(color || '#f3e7c4');
     if (key === this.previewKey) return;
@@ -809,7 +618,7 @@ const Engine = {
     const nrm = i => {
       const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
       const tx = xy[b * 2] - xy[a * 2], ty = xy[b * 2 + 1] - xy[a * 2 + 1], l = Math.hypot(tx, ty) || 1;
-      return [-ty / l * ROAD_HALF, tx / l * ROAD_HALF];
+      return [-ty / l * hw, tx / l * hw];
     };
     for (let i = 0; i < n - 1; i++) {
       const [ax, ay] = nrm(i), [bx, by] = nrm(i + 1);
@@ -852,17 +661,19 @@ const Engine = {
       for (let i = 0; i < PLOT; i++) {
         const k = j * PLOT + i, x = px * PLOT + i, z = py * PLOT + j, v = t.vari[k];
         const n = t.nature[k];
-        if (n && !state.cleared.has(tkey(x, z)) && !Roads.covers(x, z)) {
+        if (n && !state.cleared.has(tkey(x, z)) && !Paving.hidesNature(x, z)) {
           const def = NATURE_KINDS[n];
           const ox = ((v & 15) / 15 - 0.5) * 0.35, oz = (((v >> 4) & 15) / 15 - 0.5) * 0.35;
           const center = n === N_STONE || n === N_MARBLE || n === N_IRON;
           out.push([n + ':' + (v % def.variants), x + 0.5 + (center ? 0 : ox), z + 0.5 + (center ? 0 : oz), v * 0.0246, 0.82 + (v % 13) / 30, locked]);
         }
-        if (!n && t.ground[k] < G_SAND && !World.occ.has(tkey(x, z)) && !Roads.covers(x, z)) {
-          // пучки травы, гуще у кромки леса и воды
+        if (!n && t.ground[k] < G_SAND && !World.occ.has(tkey(x, z)) && !Paving.covers(x, z)) {
+          // пучки травы, гуще у кромки леса и воды; на краю мостовой — только мимо камней
           const dens = v / 255;
-          if (dens < 0.42) out.push(['grass:' + (v % 2), x + 0.15 + (v % 7) / 10, z + 0.15 + ((v >> 3) % 7) / 10, v * 0.05, 0.8 + (v % 5) * 0.1, locked, 1]);
-          if (dens < 0.18) out.push(['grass:' + ((v + 1) % 2), x + 0.85 - (v % 5) / 10, z + 0.8 - ((v >> 2) % 5) / 10, v * 0.09, 0.7 + (v % 3) * 0.1, locked, 1]);
+          const ax = x + 0.15 + (v % 7) / 10, az = z + 0.15 + ((v >> 3) % 7) / 10;
+          const bx = x + 0.85 - (v % 5) / 10, bz = z + 0.8 - ((v >> 2) % 5) / 10;
+          if (dens < 0.42 && Paving.free(ax, az, 0.14)) out.push(['grass:' + (v % 2), ax, az, v * 0.05, 0.8 + (v % 5) * 0.1, locked, 1]);
+          if (dens < 0.18 && Paving.free(bx, bz, 0.14)) out.push(['grass:' + ((v + 1) % 2), bx, bz, v * 0.09, 0.7 + (v % 3) * 0.1, locked, 1]);
         }
       }
     }
@@ -946,7 +757,7 @@ const Engine = {
     this.animIds.clear();
     for (const p of this.plots.values()) this.disposePlot(p);
     this.plots.clear();
-    this.roadVersion = -1;
+    Paving.redrawAll();
     for (const b of state.buildings.values()) this.dirty.add(b.id);
     this.gridDirty = true;
     this.natDirty = true;
@@ -1086,7 +897,7 @@ const Engine = {
 
   /* ---------- Жители-фигурки (как игрушечные человечки из кубиков) ---------- */
 
-  // Фигурки из кубиков стоят на камнях мостовой (ROAD_TOP); каждая часть — свой InstancedMesh с цветом на экземпляр
+  // Фигурки из кубиков стоят на мостовой (её высота — Paving.surfY); каждая часть — свой InstancedMesh с цветом на экземпляр
   figGeo(fn) { const mb = new MB(5); fn(mb); const g = mb.build(0, 0).solid; g.deleteAttribute('color'); return g; },
 
   figMeshes(shapes, counts, max) {
@@ -1191,7 +1002,7 @@ const Engine = {
     const put = (...a) => this.figPart(F, idx, ...a);
     for (let i = 0; i < n; i++) {
       const c = list[i], a = c.anim;
-      this.figBase(c.wx, ROAD_TOP, c.wy, c.yaw, c.alpha * 1.15);
+      this.figBase(c.wx, Paving.surfY(c.wx, c.wy), c.wy, c.yaw, c.alpha * 1.15);
       if (c.moving) {
         // идёт: лапы попарно накрест, хвост трубой
         const sw = Math.sin(c.walkPh) * 0.6, bob = Math.abs(Math.cos(c.walkPh)) * 0.004;
@@ -1233,7 +1044,7 @@ const Engine = {
       const ph = w.walkPh || 0;
       const sw = w.moving ? Math.sin(ph) * 0.65 : 0;
       const bob = w.moving ? Math.abs(Math.cos(ph)) * 0.012 : 0;
-      this.figBase(w.wx, ROAD_TOP + bob, w.wy, w.yaw, w.alpha * (w.role === 'child' ? 0.72 : 1) * 1.05);
+      this.figBase(w.wx, Paving.surfY(w.wx, w.wy) + bob, w.wy, w.yaw, w.alpha * (w.role === 'child' ? 0.72 : 1) * 1.05);
       const dress = w.role === 'woman';
       put('leg', w.cLegs, 1, 1, 1, sw, -0.021, 0.1, 0);
       put('leg', w.cLegs, 1, 1, 1, -sw, 0.021, 0.1, 0);
@@ -1372,6 +1183,28 @@ const Engine = {
     if (n && this.quads.instanceColor) this.quads.instanceColor.needsUpdate = true;
   },
 
+  // Круг кисти мостовой под курсором (r — радиус в клетках); без аргументов — спрятать
+  setBrush(cx, cz, r, color) {
+    if (!this.brushRing) {
+      // светлое кольцо с тёмной каймой — видно и на траве, и на светлом камне
+      const mk = (geo, color, opacity) => new THREE.Mesh(geo.rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+      this.brushRing = mk(new THREE.RingGeometry(0.95, 1, 64), '#fffaf0', 0.95);
+      this.brushEdge = mk(new THREE.RingGeometry(1, 1.035, 64), '#3a2a10', 0.5);
+      this.brushFill = mk(new THREE.CircleGeometry(0.95, 48), '#fffaf0', 0.16);
+      this.brushRing.renderOrder = this.brushEdge.renderOrder = this.brushFill.renderOrder = 3;
+      this.scene.add(this.brushRing, this.brushEdge, this.brushFill);
+    }
+    const on = cx !== null && cx !== undefined;
+    this.brushRing.visible = this.brushEdge.visible = this.brushFill.visible = on;
+    if (!on) return;
+    for (const m of [this.brushRing, this.brushEdge, this.brushFill]) {
+      m.position.set(cx, 0.075, cz);
+      m.scale.set(r, 1, r);
+    }
+    this.brushRing.material.color.set(color || '#fffaf0');
+    this.brushFill.material.color.set(color || '#fffaf0');
+  },
+
   setRadius(cx, cz, r) {
     const on = r > 0;
     this.ringFill.visible = this.ringLine.visible = on;
@@ -1502,7 +1335,7 @@ const Engine = {
     this.updateLod();
     this.ensurePlots(2);
     this.rebuildNature();
-    this.syncRoads();
+    Paving.sync();
     this.syncBuildings();
     this.animateBuildings(performance.now());
     this.drawWalkers(this.T, realDt);

@@ -240,6 +240,7 @@ const UI = {
     items.innerHTML = '';
     const cat = CATEGORIES.find(c => c.id === this.openCat);
     if (!cat) return;
+    if (cat.id === 'roads') { this.renderBrush(items); return; }
     for (const type of cat.items) {
       const d = BUILDINGS[type];
       const unlocked = isUnlocked(type);
@@ -267,6 +268,58 @@ const UI = {
     legend.hidden = !used.size;
   },
 
+  /* Раздел «Дороги» — кисть мостовой, как в Town to City: покрытия с ценой за клетку, ластик, «улучшить»
+     (тропинку и гравий — в мостовую) и ширина кисти */
+  renderBrush(items) {
+    for (const m of [3, 4, 2, 1, -1, 0]) {
+      const p = PAVE[m];
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'card pave';
+      card.dataset.pave = m;
+      card.dataset.tipText = m === 0 ? 'Стирает мостовую под кистью. Бесплатно.'
+        : m === -1 ? 'Тропинки и гравий под кистью становятся мостовой — платится только разница в цене.' : p.desc + '.';
+      const name = m === 0 ? 'Ластик' : m === -1 ? 'Улучшить' : p.name;
+      const cost = m === 0 ? '<span class="pave-note">бесплатно</span>' : m === -1 ? '<span class="pave-note">в мостовую</span>'
+        : `<span class="cost">${Icons.img('money')}${String(p.cost).replace('.', ',')}</span><span class="pave-note">за клетку</span>`;
+      card.innerHTML = `<span class="card-img">${paveSwatch(m)}</span><span class="card-name">${name}</span><span class="card-cost">${cost}</span>`;
+      card.onclick = () => {
+        Input.brush.mode = m;
+        if (Input.tool !== 'road') Input.setTool('road');
+        Input.lastGhostKey = '';
+        this.onBrushChanged();
+      };
+      items.append(card);
+    }
+    const size = document.createElement('div');
+    size.className = 'pave-size';
+    size.innerHTML = `<span class="pave-size-label">Ширина кисти</span>
+      <span class="pave-size-row"><button type="button" data-d="-1" aria-label="Уже">−</button><b id="pave-w"></b><button type="button" data-d="1" aria-label="Шире">+</button></span>
+      <input id="pave-r" type="range" min="0" max="${BRUSH_SIZES.length - 1}" step="1" aria-label="Ширина кисти">
+      <span class="pave-keys">Shift — прямой линией<br>[ ] — ширина · Ctrl+Z — отменить</span>`;
+    size.querySelectorAll('button').forEach(btn => btn.onclick = () => Input.brushSize(+btn.dataset.d));
+    size.querySelector('input').oninput = e => { Input.brush.r = BRUSH_SIZES[+e.target.value]; Input.lastGhostKey = ''; this.onBrushChanged(); };
+    items.append(size);
+    const legend = $('tray-legend');
+    if (legend) legend.hidden = true;
+    this.onBrushChanged();
+  },
+
+  // кисть сменилась (покрытие или ширина): подсветка, ползунок, подсказка
+  onBrushChanged() {
+    const on = Input.tool === 'road';
+    document.querySelectorAll('#tray-items .card.pave').forEach(c => c.classList.toggle('on', on && +c.dataset.pave === Input.brush.mode));
+    const r = $('pave-r'), w = $('pave-w');
+    if (r) r.value = Math.max(0, BRUSH_SIZES.indexOf(Input.brush.r));
+    if (w) w.textContent = fmtW(Input.brush.r * 2);
+    if (!on) return;
+    const m = Input.brush.mode;
+    $('hint-name').textContent = m === 0 ? 'Ластик' : m === -1 ? 'Улучшить до мостовой' : PAVE[m].name;
+    $('hint-text').textContent = m === 0 ? 'Ведите с зажатой кнопкой — мостовая под кистью исчезнет.'
+      : m === -1 ? 'Ведите по тропинкам и гравию — они станут мостовой.'
+      : `${PAVE[m].desc}. Ведите с зажатой кнопкой — хоть всю землю замостите.`;
+  },
+
   // Какие классы работают в постройке (или живут в доме)
   cardClasses(type) {
     const d = BUILDINGS[type];
@@ -276,7 +329,7 @@ const UI = {
   },
 
   updateTrayAfford() {
-    document.querySelectorAll('#tray-items .card').forEach(card => {
+    document.querySelectorAll('#tray-items .card[data-type]').forEach(card => {
       const type = card.dataset.type;
       if (!isUnlocked(type)) return;
       const d = BUILDINGS[type];
@@ -291,7 +344,7 @@ const UI = {
     const t = Input.tool;
     const cat = t && t !== 'bulldoze' && !Input.moving && CATEGORIES.find(c => c.items.includes(t));
     if (cat && cat.id !== this.openCat) this.openTray(cat.id);
-    document.querySelectorAll('#tray-items .card').forEach(c => c.classList.toggle('on', c.dataset.type === t));
+    document.querySelectorAll('#tray-items .card[data-type]').forEach(c => c.classList.toggle('on', c.dataset.type === t));
     const bd = document.querySelector('.cat.bulldoze');
     if (bd) bd.classList.toggle('on', t === 'bulldoze');
     const hint = $('tool-hint');
@@ -300,20 +353,21 @@ const UI = {
     if (Input.moving) {
       $('hint-icon').src = this.icons[t] || '';
       $('hint-name').textContent = `Перенос: ${BUILDINGS[t].name.toLowerCase()}`;
-      $('hint-text').textContent = 'Нажмите, куда поставить: у дороги встанет фасадом к ней, Z / C — повернуть. Перенос бесплатный. Esc или правая кнопка — вернуть на место.';
+      $('hint-text').textContent = 'Нажмите, куда поставить: у мостовой встанет фасадом к ней, Z / C — повернуть. Перенос бесплатный. Esc или правая кнопка — вернуть на место.';
     } else if (t === 'bulldoze') {
       $('hint-icon').src = Icons.get('workers');
       $('hint-name').textContent = 'Снос';
-      $('hint-text').textContent = 'Нажмите на здание, дорогу или дерево. Возвращается половина стоимости.';
+      $('hint-text').textContent = 'Нажмите на здание, куст или одинокое дерево — вернётся половина стоимости здания. Мостовую стирает ластик в «Дорогах». Залежи и лес вечные.';
     } else {
       const d = BUILDINGS[t];
       $('hint-icon').src = this.icons[t] || '';
       $('hint-name').textContent = d.name;
-      $('hint-text').textContent = t === 'road' ? 'Ведите мышью с зажатой кнопкой — улица ляжет по пути плавной линией. С Shift — по линейке.'
-        : d.kind === 'decor' ? `${d.desc} Повернуть — Z / C.` : `${d.desc} У дороги встанет фасадом к ней; вдали — повернуть Z / C.`;
+      $('hint-text').textContent = d.kind === 'decor' ? `${d.desc} Повернуть — Z / C.`
+        : `${d.desc} У мостовой встанет фасадом к ней; посреди площади и вдали — повернуть Z / C.`;
     }
     $('hint-status').textContent = '';
     $('hint-status').className = '';
+    if (t === 'road') this.onBrushChanged();
     this.closePanel();
   },
 
@@ -685,7 +739,7 @@ const UI = {
             <li><kbd>ЛКМ</kbd> строить и выбирать</li><li><kbd>ПКМ</kbd> двигать карту, отменить</li>
             <li><kbd>Колесо</kbd> масштаб</li><li><kbd>Средняя кнопка</kbd> вращение</li>
             <li><kbd>W A S D</kbd> камера</li><li><kbd>Q</kbd> <kbd>E</kbd> поворот</li>
-            <li><kbd>R</kbd> дорога</li><li><kbd>Shift</kbd> дорога по линейке</li><li><kbd>H</kbd> дом</li><li><kbd>X</kbd> снос</li>
+            <li><kbd>R</kbd> мостовая кистью</li><li><kbd>Shift</kbd> прямой линией</li><li><kbd>[</kbd> <kbd>]</kbd> ширина кисти</li><li><kbd>Ctrl</kbd>+<kbd>Z</kbd> отменить мазок</li><li><kbd>H</kbd> дом</li><li><kbd>X</kbd> снос</li>
             <li><kbd>Z</kbd> <kbd>C</kbd> повернуть постройку</li>
             <li><kbd>F</kbd> знания</li><li><kbd>L</kbd> легион</li><li><kbd>Пробел</kbd> пауза</li>
             <li><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> скорость</li><li><kbd>Esc</kbd> отмена</li>
@@ -1103,3 +1157,48 @@ const UI = {
   // совместимость со старыми вызовами
   refreshPanelSoon() { this.refreshPanel(); },
 };
+
+// Образец покрытия для карточки кисти (SVG 64×64): m — номер покрытия, 0 — ластик, -1 — «улучшить»
+function paveSwatch(m) {
+  let s = 11 + (m + 2) * 7919;
+  const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const STONES = ['#dbcfb2', '#d2c5a6', '#e0d5b9', '#cdbf9e', '#d6caa9'];
+  const dirt = () => {
+    let o = '<rect width="64" height="64" fill="#b89a6a"/>';
+    for (let i = 0; i < 22; i++) o += `<ellipse cx="${rnd() * 64}" cy="${rnd() * 64}" rx="${3 + rnd() * 7}" ry="${2 + rnd() * 4}" fill="${rnd() < 0.5 ? '#a8885a' : '#c9ab7a'}" opacity="0.55"/>`;
+    for (let i = 0; i < 14; i++) o += `<circle cx="${rnd() * 64}" cy="${rnd() * 64}" r="${0.8 + rnd() * 1.2}" fill="#8a7048"/>`;
+    return o;
+  };
+  const stone = () => {
+    let o = '<rect width="64" height="64" fill="#8f8268"/>';
+    for (let r = 0; r < 6; r++) {
+      const y = r * 11 - 2, off = r % 2 ? -6 : 0;
+      for (let c = 0; c < 6; c++) {
+        const x = c * 13 + off + rnd() * 2, w = 10 + rnd() * 2.5, h = 8.5 + rnd() * 1.5;
+        o += `<rect x="${x.toFixed(1)}" y="${(y + rnd()).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="${STONES[(rnd() * 5) | 0]}"/>`;
+      }
+    }
+    return o;
+  };
+  let body = '';
+  if (m === 1) body = dirt();
+  else if (m === 2) {
+    body = '<rect width="64" height="64" fill="#d6cfbd"/>';
+    for (let i = 0; i < 160; i++) body += `<circle cx="${(rnd() * 64).toFixed(1)}" cy="${(rnd() * 64).toFixed(1)}" r="${(0.7 + rnd() * 1.5).toFixed(1)}" fill="${['#bfb7a3', '#ebe5d6', '#a9a08c', '#f4efe3'][(rnd() * 4) | 0]}"/>`;
+  } else if (m === 3) body = stone() + '<rect y="56" width="64" height="8" fill="#ede5d2"/><rect y="56" width="64" height="1.5" fill="#fff8e8"/>';
+  else if (m === 4) {
+    body = '<rect width="64" height="64" fill="#b9ae98"/>';
+    for (let r = 0; r < 5; r++) {
+      const off = r % 2 ? -11 : 0;
+      for (let c = 0; c < 4; c++) body += `<rect x="${c * 22 + off + 0.8}" y="${r * 14 + 0.8}" width="20.4" height="12.4" fill="${['#ece4d2', '#e4dbc6', '#f0e9d9'][(rnd() * 3) | 0]}"/>`;
+    }
+  } else if (m === -1) {
+    body = `<svg width="32" height="64" viewBox="0 0 32 64">${dirt()}</svg><svg x="32" width="32" height="64" viewBox="32 0 32 64">${stone()}</svg>`
+      + '<circle cx="32" cy="32" r="12" fill="#fff" opacity="0.92"/><path d="M26 32h11m-4-5 5 5-5 5" stroke="#b5552e" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+  } else {
+    body = '<rect width="64" height="64" fill="#8fae5a"/>';
+    for (let i = 0; i < 40; i++) { const x = rnd() * 64, y = rnd() * 64; body += `<path d="M${x.toFixed(1)} ${y.toFixed(1)}l${(rnd() * 2 - 1).toFixed(1)} -4" stroke="${rnd() < 0.5 ? '#6f9440' : '#a8c46e'}" stroke-width="1.2"/>`; }
+    body += '<g transform="rotate(-35 32 32)"><rect x="16" y="23" width="32" height="18" rx="3" fill="#e9826a"/><rect x="16" y="23" width="12" height="18" rx="3" fill="#f6efe2"/><rect x="16" y="38" width="32" height="3" fill="#000" opacity="0.15"/></g>';
+  }
+  return `<svg class="pave-sw" viewBox="0 0 64 64" aria-hidden="true">${body}</svg>`;
+}

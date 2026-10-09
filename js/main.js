@@ -44,9 +44,10 @@ const Game = {
     World.occ.clear();
     World.bgrid.clear();
     Roads.clear();
-    // стартовая улица через весь участок
-    const a = Roads.addNode(0.5, 11.5), b = Roads.addNode(PLOT - 0.5, 11.5);
-    clearNatureAlong(Roads.addEdge(a, b, [[a.x, a.y], [b.x, b.y]]));
+    Paving.clear();
+    // стартовая улица через весь участок — мостовая, кусты и камни с неё убраны
+    Paving.stamp(0.5, 11.5, PLOT - 0.5, 11.5, ROAD_HALF, 3);
+    for (let tx = 0; tx < PLOT; tx++) if (rawNatureAt(tx, 11)) state.cleared.add(tkey(tx, 11));
     const d = window.innerWidth < window.innerHeight ? 38 : 30;
     Object.assign(Engine.cam, { x: PLOT / 2, z: PLOT / 2, tx: PLOT / 2, tz: PLOT / 2, dist: d, distTarget: d, yaw: Math.PI / 4, yawTarget: Math.PI / 4 });
   },

@@ -11,6 +11,7 @@ const Promo = {
   /* ---------- Город ---------- */
 
   setup() {
+    Paving.noPermanent = true;     // реклама: город строится поверх природы, как раньше
     state.testReady = true;
     state.cityName = 'Нова Рома';
     state.seed = PROMO_SEED;
@@ -124,8 +125,13 @@ const Promo = {
       this.street(pts);
     }
 
-    // ---- форум: площадь в кольце
+    // улицы — мостовой той же формы; внутри кольца форума — площадь из травертина
     const [cx, cy] = this.C;
+    Paving.clear();
+    Paving.fromRoads();
+    Paving.stamp(cx, cy, cx, cy, 8.3, 4);
+
+    // ---- форум: площадь в кольце
     this.put('forum', cx, cy + 2.2, Math.PI, undefined);
     this.put('temple', cx, cy - 3.6, 0);
     this.put('pantheon', cx - 4.6, cy - 0.4, Math.PI / 2);

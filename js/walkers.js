@@ -1,5 +1,5 @@
 'use strict';
-/* Жители, гуляющие по улицам. Чисто для красоты: на экономику не влияют.
+/* Жители, гуляющие по мостовой. Чисто для красоты: на экономику не влияют.
    Каждый — фигурка из кубиков: роль, одежда по классу, походка и поворот по ходу движения. */
 
 const SKIN = ['#eec3a0', '#d9a679', '#c58b5e', '#f3cfae', '#a8714b'];
@@ -50,43 +50,26 @@ const Walkers = {
     w.cArms = w.role === 'patrician' ? w.cTorso : w.cSkin;
   },
 
-  // Житель выходит из дома на ближайшую к фасаду точку улицы и идёт в случайную сторону
+  // Житель выходит из дома на мостовую у фасада и идёт вдоль дома в случайную сторону
   spawn() {
     const houses = state.stats.connectedHouses;
     if (!houses || !houses.length) return;
     const h = pick(houses);
     const q = roadContact(h);
     if (!q) return;
+    const head = q.dir + (Math.random() < 0.5 ? 1 : -1) * Math.PI / 2;
     const w = {
-      e: q.e.id, s: q.s, dir: Math.random() < 0.5 ? 1 : -1, dist: 0,
-      wx: q.x, wy: q.y,
-      lane: (Math.random() < 0.5 ? -1 : 1) * (0.17 + Math.random() * 0.12),
+      wx: q.x, wy: q.y, head, want: head, dist: 0,
+      lane: (Math.random() < 0.5 ? -1 : 1) * (0.1 + Math.random() * 0.2),
       speed: 0.5 + Math.random() * 0.35,
       life: 30 + Math.random() * 50, age: 0, alpha: 0, moving: true,
-      seed: Math.random(), pause: 0, yaw: Math.random() * 6.28, walkPh: Math.random() * 6.28,
+      seed: Math.random(), pause: 0, yaw: head, walkPh: Math.random() * 6.28,
     };
     this.dress(w, h);
     if (w.role === 'child') w.speed *= 1.25;
     // в новом виде жители настоящего роста и шагают по-настоящему — идут медленнее
     if (NEW_LOOK) w.speed *= 0.38;
     this.list.push(w);
-  },
-
-  // Улица кончилась узлом: чаще прямо, иногда сворачивают; в тупике разворачиваются
-  nextEdge(w, e, nid) {
-    const node = Roads.nodes.get(nid);
-    const opts = node ? [...node.edges].filter(id => id !== e.id).map(id => Roads.edges.get(id)).filter(Boolean) : [];
-    if (!opts.length) return { e, dir: -w.dir };
-    const end = Roads.pointAt(e, nid === e.b ? e.L : 0);
-    const ix = end.tx * w.dir, iy = end.ty * w.dir;
-    let best = opts[0], bd = -2;
-    for (const o of opts) {
-      const p = Roads.pointAt(o, o.a === nid ? 0 : o.L), k = o.a === nid ? 1 : -1;
-      const d = p.tx * k * ix + p.ty * k * iy;
-      if (d > bd) { bd = d; best = o; }
-    }
-    const next = bd > 0.5 && Math.random() < 0.65 ? best : pick(opts);
-    return { e: next, dir: next.a === nid ? 1 : -1 };
   },
 
   update(dt, realDt) {
@@ -97,61 +80,86 @@ const Walkers = {
     for (const w of this.list) {
       w.age += realDt;
       if (dt > 0) w.life -= dt;
-      roadStep(w, dt, realDt);
+      paveStep(w, dt, realDt);
       w.alpha = clamp(Math.min(w.age * 2, (w.life + 0.5) * 2), 0, 1);
     }
     this.list = this.list.filter(w => w.life > -0.5);
   },
 };
 
-// Шаг по улицам — общий для жителей и кошек: вдоль кривой улицы, по своей стороне, лицом по ходу.
-// onTile вызывается примерно через каждую клетку пути: тогда фигурка может присесть или остановиться.
-function roadStep(w, dt, realDt, onTile) {
-  let e = Roads.edges.get(w.e);
-  if (!e) { w.life = Math.min(w.life, 0); w.moving = false; return; }
+// Шаг по мостовой — общий для жителей и кошек. Идут, куда глаза глядят, но только по камням: впереди край или
+// стена — сворачивают туда, где дальше свободно; на узкой улице держатся своей стороны. Без старых линий дорог —
+// гуляют по любой мостовой, площади и тропинке. onTile — примерно через каждую клетку пути: присесть или постоять.
+function paveStep(w, dt, realDt, onTile) {
   if (dt > 0) {
     if (w.pause > 0) { w.pause -= dt; w.moving = false; }
     else {
-      w.moving = true;
-      const step = dt * w.speed;
-      w.walkPh += step * (w.stride || 11);
-      w.s += step * w.dir;
-      w.dist = (w.dist || 0) + step;
-      if (w.dist >= 1) {
-        w.dist -= 1;
-        if (!onTile && Math.random() < 0.06) w.pause = 1.5 + Math.random() * 3;
-        if (onTile) onTile(w);
-      }
-      if (w.s < 0 || w.s > e.L) {
-        const nid = w.s < 0 ? e.a : e.b, over = w.s < 0 ? -w.s : w.s - e.L;
-        const next = Walkers.nextEdge(w, e, nid);
-        e = next.e;
-        w.e = e.id;
-        w.dir = next.dir;
-        w.s = clamp(w.dir > 0 ? over : e.L - over, 0, e.L);
+      w.think = (w.think || 0) - dt;
+      if (w.think <= 0) { steer(w); w.think = 0.25 + Math.random() * 0.2; }
+      let d = w.want - w.head;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      w.head += clamp(d, -dt * 2.4, dt * 2.4);
+      const step = dt * w.speed, sx = Math.sin(w.head), sy = Math.cos(w.head);
+      if (Paving.walkable(w.wx + sx * (step + 0.1), w.wy + sy * (step + 0.1))) {
+        w.wx += sx * step;
+        w.wy += sy * step;
+        w.moving = true;
+        w.stuck = 0;
+        w.walkPh += step * (w.stride || 11);
+        w.dist = (w.dist || 0) + step;
+        if (w.dist >= 1) {
+          w.dist -= 1;
+          if (!onTile && Math.random() < 0.06) w.pause = 1.5 + Math.random() * 3;
+          if (onTile) onTile(w);
+        }
+      } else {
+        // упёрся: подумать сразу, а если долго некуда — развернуться
+        w.moving = false;
+        w.think = 0;
+        w.stuck = (w.stuck || 0) + dt;
+        if (w.stuck > 1.2) { w.head = w.want = w.head + Math.PI * (0.7 + Math.random() * 0.6); w.stuck = 0; }
       }
     }
   } else w.moving = false;
-  const p = Roads.pointAt(e, w.s);
-  const dx = p.tx * w.dir, dy = p.ty * w.dir;
-  // смещение поперёк направления движения; присевшая кошка отходит к краю дороги
-  const lane = w.pause > 0 && w.sitLane ? w.sitLane : w.lane;
-  const tox = -dy * lane, toy = dx * lane;
-  const k = Math.min(1, realDt * 6);
-  w.ox = w.ox === undefined ? tox : w.ox + (tox - w.ox) * k;
-  w.oy = w.oy === undefined ? toy : w.oy + (toy - w.oy) * k;
-  w.wx = p.x + w.ox;
-  w.wy = p.y + w.oy;
+  // мостовую под ногами стёрли или застроили — житель уходит
+  if (!Paving.walkable(w.wx, w.wy)) { w.lost = (w.lost || 0) + realDt; if (w.lost > 1) w.life = Math.min(w.life, 0); }
+  else w.lost = 0;
   // плавный поворот: по ходу движения, а сидя — куда захотелось посмотреть
-  const want = w.pause > 0 && w.sitYaw !== undefined ? w.sitYaw : Math.atan2(dx, dy);
-  if (want !== null) {
-    let d = want - w.yaw;
-    d = Math.atan2(Math.sin(d), Math.cos(d));
-    w.yaw += d * Math.min(1, realDt * (w.pause > 0 ? 3 : 8));
-  }
+  const want = w.pause > 0 && w.sitYaw !== undefined ? w.sitYaw : w.head;
+  let d = want - w.yaw;
+  d = Math.atan2(Math.sin(d), Math.cos(d));
+  w.yaw += d * Math.min(1, realDt * (w.pause > 0 ? 3 : 8));
 }
 
-/* Кошки: гуляют по улицам, присаживаются у края дороги, умываются и машут хвостом.
+// Как далеко можно пройти от жителя в направлении a (до max, шагом st)
+function freeAhead(w, a, max, st) {
+  const sx = Math.sin(a), sy = Math.cos(a);
+  let d = 0;
+  while (d < max && Paving.walkable(w.wx + sx * (d + st), w.wy + sy * (d + st))) d += st;
+  return d;
+}
+
+// Куда идти дальше: чаще прямо, иногда сворачивают; где свободнее — туда охотнее; в тупике — назад
+function steer(w) {
+  const h = w.head;
+  let best = h, bs = -1e9;
+  for (const da of [0, 0.35, -0.35, 0.8, -0.8, 1.4, -1.4, 2.1, -2.1, Math.PI]) {
+    const f = freeAhead(w, h + da, 1.6, 0.2);
+    const s = Math.min(f, 1.2) * 1.4 - Math.abs(da) * 0.45 + Math.random() * (f > 1 ? 0.5 : 0.2);
+    if (s > bs) { bs = s; best = h + da; }
+  }
+  // на улице (по бокам близко края) — держаться своей стороны, а не середины
+  if (Math.abs(best - h) < 0.5) {
+    const l = freeAhead(w, best - Math.PI / 2, 1.2, 0.1), r = freeAhead(w, best + Math.PI / 2, 1.2, 0.1);
+    if (l + r < 2.2) {
+      const target = clamp((l + r) / 2 + (w.lane || 0), 0.12, Math.max(0.12, l + r - 0.12));
+      best += clamp((r - target) * 0.6, -0.3, 0.3);
+    }
+  }
+  w.want = best;
+}
+
+/* Кошки: гуляют по мостовой, присаживаются, умываются и машут хвостом.
    В богатых кварталах их больше. */
 
 const CAT_COATS = [
@@ -177,7 +185,7 @@ const Cats = {
       c.age += realDt;
       c.anim += realDt;
       if (dt > 0) c.life -= dt;
-      roadStep(c, dt, realDt, cat => this.onTile(cat));
+      paveStep(c, dt, realDt, cat => this.onTile(cat));
       c.alpha = clamp(Math.min(c.age * 2, (c.life + 0.5) * 2), 0, 1);
     }
     this.list = this.list.filter(c => c.life > -0.5);
@@ -191,10 +199,10 @@ const Cats = {
     if (!q) return;
     const [body, chest] = pick(CAT_COATS);
     const side = Math.random() < 0.5 ? -1 : 1;
+    const head = q.dir + side * Math.PI / 2;
     const c = {
-      e: q.e.id, s: q.s, dir: Math.random() < 0.5 ? 1 : -1, dist: 0,
-      wx: q.x, wy: q.y,
-      lane: side * (0.28 + Math.random() * 0.08), sitLane: side * 0.36,
+      wx: q.x, wy: q.y, head, want: head, dist: 0,
+      lane: side * (0.25 + Math.random() * 0.1),
       speed: 0.32 + Math.random() * 0.22, stride: 17,
       life: 90 + Math.random() * 90, age: 0, alpha: 0, moving: false, anim: Math.random() * 10,
       yaw: Math.random() * 6.28, walkPh: Math.random() * 6.28,

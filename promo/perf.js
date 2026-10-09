@@ -30,7 +30,7 @@ window.Perf = {
     };
     const undo = [
       wrap(Walkers, 'update', 'жители'), wrap(Cats, 'update', 'кошки'), wrap(UI, 'updateLabels', 'подписи'), wrap(UI, 'updateHud', 'панель'),
-      wrap(Atmos, 'update', 'небо'), wrap(Engine, 'rebuildNature', 'природа'), wrap(Engine, 'syncRoads', 'дороги'), wrap(Engine, 'syncBuildings', 'здания:синх'),
+      wrap(Atmos, 'update', 'небо'), wrap(Engine, 'rebuildNature', 'природа'), wrap(Paving, 'sync', 'мостовая'), wrap(Engine, 'syncBuildings', 'здания:синх'),
       wrap(Engine, 'animateBuildings', 'здания:анимация'), wrap(Engine, 'drawWalkers', 'жители:рисование'), wrap(Engine, 'updateParticles', 'частицы'),
       wrap(Atmos, 'updateBirds', 'птицы'), wrap(Atmos, 'updateLife', 'жизнь'), wrap(Post, 'render', 'отрисовка (отправка)'),
     ];

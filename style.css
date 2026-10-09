@@ -445,6 +445,18 @@ kbd { display: inline-block; min-width: 20px; padding: 1px 6px; border: 1px soli
 .card.locked { background: rgba(239, 228, 205, 0.6); }
 .card.locked img { filter: grayscale(0.85) opacity(0.6); }
 .card .lock { display: inline-flex; align-items: center; gap: 3px; color: var(--ink-soft); font-weight: 800; text-align: center; }
+/* кисть мостовой: образцы покрытий и ширина */
+.pave-sw { display: block; width: 76px; height: 76px; border-radius: 10px; box-shadow: inset 0 0 0 1px rgba(60, 40, 10, 0.18), 0 1px 2px rgba(60, 40, 10, 0.18); }
+.card.pave .card-cost { align-items: baseline; }
+.pave-note { font-weight: 700; font-size: 11px; color: var(--ink-soft); }
+.pave-size { flex: none; display: grid; justify-items: center; align-content: center; gap: 6px; min-width: 150px; padding: 6px 10px; border: 1.5px dashed rgba(185, 156, 108, 0.55); border-radius: 11px; }
+.pave-size-label { font-weight: 800; font-size: 12.5px; }
+.pave-size-row { display: flex; align-items: center; gap: 8px; }
+.pave-size-row b { min-width: 76px; text-align: center; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.pave-size-row button { width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--edge-strong); background: rgba(255, 252, 245, 0.9); font-weight: 900; font-size: 16px; line-height: 1; color: var(--ink); }
+.pave-size-row button:hover { background: #fff; border-color: var(--terra); }
+.pave-size input { width: 100%; accent-color: var(--terra); }
+.pave-keys { font-size: 10.5px; line-height: 1.35; font-weight: 700; color: var(--ink-soft); text-align: center; }
 .lock-badge { position: absolute; right: 2px; bottom: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--ink-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M6.5 9V7a3.5 3.5 0 0 1 7 0v2' fill='none' stroke='white' stroke-width='1.8'/%3E%3Crect x='5' y='9' width='10' height='7' rx='1.5' fill='white'/%3E%3C/svg%3E") center / 14px no-repeat; }
 
 #tool-hint { display: flex; align-items: center; gap: 12px; max-width: 660px; padding: 8px 10px 8px 8px; animation: rise 0.2s ease-out; }
@@ -837,6 +849,8 @@ h3.grp { margin: 20px 0 8px; font: 700 23px var(--font-display); }
   .cat img { width: 34px; height: 34px; }
   .card { width: 92px; }
   .card-img img { width: 58px; height: 58px; }
+  .pave-sw { width: 58px; height: 58px; }
+  .pave-keys { display: none; }
   #tool-hint { font-size: 12px; }
   #hint-text { display: none; }
   #win { height: 100%; }

@@ -308,7 +308,7 @@ const Atmos = {
   // насекомым нужна трава: не вода и не мостовая
   grassy(x, z) {
     const tx = Math.floor(x), tz = Math.floor(z);
-    return !isWater(groundAt(tx, tz)) && !Roads.covers(tx, tz);
+    return !isWater(groundAt(tx, tz)) && !Paving.covers(tx, tz);
   },
 
   updateLife(T, c) {

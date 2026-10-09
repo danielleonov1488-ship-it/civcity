@@ -226,7 +226,7 @@ const Look2 = {
       const i = c.n++;
       const s = GAME_M * w.alpha * (w.role === 'child' ? 0.72 : 1);
       this._q.setFromAxisAngle(this._up, w.yaw);
-      this._p.set(w.wx, ROAD_TOP, w.wy);
+      this._p.set(w.wx, Paving.surfY(w.wx, w.wy), w.wy);
       this._s.set(s, s, s);
       c.mesh.setMatrixAt(i, this._m.compose(this._p, this._q, this._s));
       c.anim.setXYZW(i, clip.row, clip.frames, w.ph2, 0);
