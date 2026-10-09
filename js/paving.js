@@ -311,9 +311,9 @@ const Paving = {
 
   /* ---------- Отрисовка ---------- */
 
-  // постройка поставлена, перенесена или убрана — под ней мостовая не рисуется (там своё основание):
-  // забыть карту построек и перерисовать участки, которых она касается
-  cover: new Map(),       // 'px,py' → Uint8Array: мелкая клетка под постройкой с основанием
+  // постройка поставлена, перенесена или убрана: под ней жители не ходят и не встают бордюры —
+  // забыть карту построек и перерисовать участки, которых она касается (сама мостовая под постройкой рисуется)
+  cover: new Map(),       // 'px,py' → Uint8Array: мелкая клетка под постройкой (кроме украшений)
   buildingChanged(b) {
     if (BUILDINGS[b.type].kind === 'decor') return;
     this._wx = NaN;
@@ -345,8 +345,7 @@ const Paving = {
     c = new Uint8Array(CS * CS);
     const x0 = px * PLOT, y0 = py * PLOT;
     for (const b of state.buildings.values()) {
-      // лагерь переселенцев стоит прямо на утоптанной земле — она видна и под шатрами
-      if (b.lifted || BUILDINGS[b.type].kind === 'decor' || (b.type === 'center' && !b.tier)) continue;
+      if (b.lifted || BUILDINGS[b.type].kind === 'decor') continue;
       const o = boxOfB(b);
       if (o.cx + o.R < x0 || o.cx - o.R > x0 + PLOT || o.cy + o.R < y0 || o.cy - o.R > y0 + PLOT) continue;
       const i0 = Math.max(0, Math.floor((o.cx - o.R - x0) * SUB)), i1 = Math.min(CS - 1, Math.ceil((o.cx + o.R - x0) * SUB));
@@ -465,9 +464,9 @@ if (vUp > 0.5) {
     const [px, py] = key.split(',').map(Number);
     const sx0 = px * CS, sy0 = py * CS, M = CS + 3;
     // мелкие клетки участка с полосой вокруг (сглаживанию нужны соседи):
-    // G — что рисовать (под постройками с основанием пусто), R — как замощено на самом деле (по нему — бордюры,
-    // чтобы вокруг дома на площади не вставал бордюр)
-    const G = new Uint8Array(M * M), R = new Uint8Array(M * M);
+    // G — покрытие (мостовая рисуется и под постройками: у них нет квадратных подложек, и вокруг дома на площади
+    // не должно быть квадратной дыры), U — под постройкой: там не ставится бордюр
+    const G = new Uint8Array(M * M), U = new Uint8Array(M * M);
     const has = new Uint8Array(PAVE_TYPES + 1);
     let any = false, cqx = NaN, cqy = NaN, cov = null;
     for (let j = -1; j <= CS + 1; j++) {
@@ -476,12 +475,11 @@ if (vUp > 0.5) {
         const sx = sx0 + i, v = this.get(sx, sy);
         if (!v) continue;
         const k = (j + 1) * M + i + 1, qx = this._px;
-        R[k] = v;
-        if (qx !== cqx || qy !== cqy) { cov = this.coverOf(qx, qy); cqx = qx; cqy = qy; }
-        if (cov[(sy - qy * CS) * CS + (sx - qx * CS)]) continue;
         G[k] = v;
         has[v] = 1;
         any = true;
+        if (qx !== cqx || qy !== cqy) { cov = this.coverOf(qx, qy); cqx = qx; cqy = qy; }
+        if (cov[(sy - qy * CS) * CS + (sx - qx * CS)]) U[k] = 1;
       }
     }
     if (!any) return;
@@ -501,10 +499,11 @@ if (vUp > 0.5) {
     const masks = [], mk = new Uint8Array(M * M), mr = new Uint8Array(M * M), ma = new Uint8Array(M * M);
     for (let t = 1; t <= PAVE_TYPES; t++) if (has[t]) masks[t] = new Uint8Array(M * M);
     for (let k = 0; k < M * M; k++) {
-      const r = R[k];
+      const r = G[k];
       if (!r) continue;
       ma[k] = 1;
-      if (G[k]) masks[G[k]][k] = 1; else mr[k] = 1;
+      masks[r][k] = 1;
+      if (U[k]) mr[k] = 1;
       if (PAVE[r].kerb) mk[k] = 1;
     }
     const F = [];

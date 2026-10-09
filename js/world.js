@@ -332,13 +332,41 @@ function snapPlace(type, fx, fy, ang0) {
   };
   const c0 = snapFrom(fx, fy);
   if (!c0) return free;
-  if (!placeBlocked(type, c0.cx, c0.cy, c0.ang)) return c0;
+  if (!placeBlocked(type, c0.cx, c0.cy, c0.ang)) return snugUp(type, c0, snapFrom, fx, fy);
   // занято — ищем свободное место рядом вдоль края
   for (const ds of [0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1, -1, 1.25, -1.25, 1.5, -1.5]) {
     const c = snapFrom(fx + c0.tx * ds, fy + c0.ty * ds);
-    if (c && !placeBlocked(type, c.cx, c.cy, c.ang)) return c;
+    if (c && !placeBlocked(type, c.cx, c.cy, c.ang)) return snugUp(type, c, snapFrom, fx + c0.tx * ds, fy + c0.ty * ds);
   }
   return inside ? free : c0;
+}
+
+/* Дома встают впритык: если рядом вдоль той же улицы уже стоит постройка и между ними меньше клетки,
+   новая придвигается к ней боком до касания (каждая остаётся лицом к своему краю мостовой — на изгибе улицы
+   дома сходятся углами, как в старых городах) */
+function snugUp(type, c0, snapFrom, fx, fy) {
+  const d = BUILDINGS[type];
+  const fxn = Math.sin(c0.ang), fyn = Math.cos(c0.ang), sx = c0.tx, sy = c0.ty;
+  let best = null;
+  for (const n of buildingsNear(c0.cx, c0.cy, d.w + 3)) {
+    const nd = BUILDINGS[n.type];
+    if (nd.kind === 'decor' || n.lifted) continue;
+    if (Math.cos(bAng(n) - c0.ang) < 0.85) continue;              // смотрит в другую сторону
+    const dx = n.x + n.w / 2 - c0.cx, dy = n.y + n.h / 2 - c0.cy;
+    if (Math.abs(dx * fxn + dy * fyn) > 1.0) continue;             // стоит не в том же ряду
+    const u = dx * sx + dy * sy, gap = Math.abs(u) - (d.w + n.w) / 2;
+    if (gap < 0.03 || gap > 1.2) continue;
+    if (!best || gap < best.gap) best = { gap, dir: Math.sign(u) };
+  }
+  if (!best) return c0;
+  // насколько можно придвинуться, чтобы не задеть соседа: поиск делением пополам
+  let lo = 0, hi = best.gap + 0.05, out = c0;
+  for (let i = 0; i < 8; i++) {
+    const k = (lo + hi) / 2;
+    const c = snapFrom(fx + sx * best.dir * k, fy + sy * best.dir * k);
+    if (c && !placeBlocked(type, c.cx, c.cy, c.ang)) { lo = k; out = c; } else hi = k;
+  }
+  return out;
 }
 
 function makeBuilding(type, x, y) {

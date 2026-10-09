@@ -102,6 +102,24 @@ class MB {
 
   plate(x0, z0, x1, z1, y, color) { this.box(x0, 0, z0, x1, y, z1, color, { ao: 0.9 }); }
 
+  // Неровное пятно земли, песка или камня вместо квадратной подложки: волнистый край и тонкий бортик.
+  // Верх — чуть выше мостовой, чтобы пятно было видно и на площади
+  patch(cx, cz, rx, rz, y, color, o) {
+    o = o || {};
+    const n = o.segs || 22, c = lin(color), j = o.jitter === undefined ? 0.1 : o.jitter;
+    const ph = this.rand() * 6.28, k1 = 2 + Math.floor(this.rand() * 3), pts = [];
+    for (let i = 0; i < n; i++) {
+      const a = i / n * Math.PI * 2;
+      const r = 1 + j * (Math.sin(a * k1 + ph) * 0.6 + (this.rand() - 0.5) * 0.7);
+      pts.push([cx + Math.cos(a) * rx * r, cz + Math.sin(a) * rz * r]);
+    }
+    for (let i = 0; i < n; i++) {
+      const p = pts[i], q = pts[(i + 1) % n];
+      this.tri([cx, y, cz], [p[0], y, p[1]], [q[0], y, q[1]], c);
+      this.quad([q[0], 0, q[1]], [q[0], y, q[1]], [p[0], y, p[1]], [p[0], 0, p[1]], c, 0.8, 0.02);
+    }
+  }
+
   cyl(cx, y0, cz, r, h, color, o) {
     o = o || {};
     const n = o.segs || 8, rt = o.rTop === undefined ? r : o.rTop;
@@ -356,7 +374,7 @@ class MB {
     this.arch(face, plane, uc, w + 0.07, 0.02, h + 0.045, o.frame || '#e3d7bd', 0.006);
     this.arch(face, plane, uc, w, 0.02, h, o.color || PAL.door, 0.01);
     this.rect(face, plane, uc - 0.004, uc + 0.004, 0.03, h - w / 2, PAL.doorDark, 0.012);
-    this.faceBox(face, plane, uc - w / 2 - 0.05, uc + w / 2 + 0.05, 0, 0.035, 0.08, PAL.stoneLight);
+    this.faceBox(face, plane, uc - w / 2 - 0.05, uc + w / 2 + 0.05, 0, 0.048, 0.08, PAL.stoneLight);
   }
 
   build(ox, oz) {
@@ -649,7 +667,8 @@ function natureGeometry(kind, v) {
 
 /* ---------- Жилые дома плебеев (2×2) ---------- */
 
-function houseLot(mb, color) { mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, color); }
+// Двор у дома: неровное пятно утоптанной земли, а не квадрат; у каменных домов — без двора (стоят прямо на мостовой)
+function houseLot(mb, color) { if (color !== PAL.paving) mb.patch(1, 1, 0.9, 0.86, 0.042, color); }
 
 function plebHouse(mb, b) {
   const t = b.tier, v = b.variant;
@@ -759,7 +778,7 @@ function plebHouse(mb, b) {
   if (t === 3) {
     // Инсула: лавка внизу, жильё и деревянный балкон наверху
     houseLot(mb, PAL.paving);
-    const x0 = 0.15, z0 = 0.15, x1 = 1.85, z1 = 1.85, f = 0.5;
+    const x0 = 0.08, z0 = 0.15, x1 = 1.92, z1 = 1.85, f = 0.5;
     mb.wall(x0, 0.025, z0, x1, f, z1, PAL.plaster[(b.id + 1) % PAL.plaster.length], { cornice: false });
     mb.wall(x0 + 0.02, f, z0 + 0.02, x1 - 0.02, f * 2, z1 - 0.02, wall, { plinth: false });
     mb.box(x0 - 0.03, f - 0.02, z0 - 0.03, x1 + 0.03, f + 0.02, z1 + 0.03, PAL.stoneLight, { ao: 1 });
@@ -863,7 +882,7 @@ function patricianHouse(mb, b) {
   const sh = PAL.shutter[(b.id + 1) % PAL.shutter.length];
 
   if (t === 0) {
-    mb.plate(0.04, 0.04, 2.96, 2.96, 0.025, PAL.dirt);
+    mb.patch(1.5, 1.5, 1.32, 1.28, 0.042, PAL.dirt);
     for (const [x, z] of [[0.3, 0.3], [2.7, 0.3], [2.7, 2.7], [0.3, 2.7]]) mb.box(x - 0.03, 0, z - 0.03, x + 0.03, 0.32, z + 0.03, PAL.wood);
     mb.box(1.0, 0.025, 1.1, 1.5, 0.22, 1.4, PAL.marble);
     mb.box(1.6, 0.025, 1.2, 1.9, 0.15, 1.5, PAL.marbleShade);
@@ -871,7 +890,7 @@ function patricianHouse(mb, b) {
     return;
   }
 
-  mb.plate(0.04, 0.04, 2.96, 2.96, 0.025, t >= 3 ? '#b6cd86' : PAL.paving);
+  if (t >= 3) mb.patch(1.5, 1.45, 1.38, 1.3, 0.042, '#b6cd86', { jitter: 0.08 });
 
   if (t === 1 || t === 2) {
     // домус с атриумом: четыре крыла вокруг открытого двора с бассейном
@@ -911,7 +930,7 @@ function patricianHouse(mb, b) {
     planter(mb, 2.25, 2.88, 0.5, 0.1, PAL.flowers[(b.id + 4) % 6]);
     if (t === 2) {
       // перистиль: сад с колоннадой
-      mb.plate(0.3, 0.3, 2.7, 1.55, 0.03, '#a8c47a');
+      mb.plate(0.3, 0.3, 2.7, 1.55, 0.045, '#a8c47a');
       for (let i = 0; i <= 6; i++) {
         column(mb, 0.35 + i * 0.383, 0.35, 0.03, 0.46, 0.028);
         if (i > 0 && i < 6) continue;
@@ -1026,9 +1045,9 @@ function statueFigure(mb, x, z, y0, s, color, gold) {
 function decorModel(mb, b) {
   switch (b.type) {
     case 'flowers':
-      mb.box(0.15, 0, 0.15, 0.85, 0.1, 0.85, PAL.stone, { top: PAL.soil });
-      mb.box(0.13, 0.08, 0.13, 0.87, 0.11, 0.87, PAL.stoneLight, { ao: 1, noTop: false });
-      mb.plate(0.18, 0.18, 0.82, 0.82, 0.115, PAL.soil);
+      mb.cyl(0.5, 0, 0.5, 0.36, 0.1, PAL.stone, { segs: 16, cap: PAL.soil });
+      mb.cyl(0.5, 0.08, 0.5, 0.38, 0.03, PAL.stoneLight, { segs: 16, top: false });
+      mb.cyl(0.5, 0.1, 0.5, 0.33, 0.015, PAL.soil, { segs: 16 });
       for (let i = 0; i < 14; i++) {
         const fx = 0.22 + hash2(b.id, i, 5) * 0.56, fz = 0.22 + hash2(i, b.id, 6) * 0.56;
         mb.blob(fx, 0.15, fz, 0.06, 0.05, 0.06, PAL.leaf, { jitter: 0.2, detail: 1 });
@@ -1129,7 +1148,7 @@ function smoke(mb, x, y, z) {
 function productionModel(mb, b) {
   switch (b.type) {
     case 'farm':
-      mb.plate(0.04, 0.04, 2.96, 2.96, 0.03, PAL.soil);
+      mb.plate(0.04, 0.04, 2.96, 2.96, 0.045, PAL.soil);
       cropRows(mb, 0.15, 1.15, 2.85, 2.85, PAL.wheat, 0.15, 'x');
       cropRows(mb, 1.3, 0.15, 2.85, 1.05, PAL.wheatGreen, 0.11, 'x');
       shed(mb, 0.15, 0.15, 1.1, 0.95, 0.44, PAL.woodLight, PAL.thatch, 'x');
@@ -1139,7 +1158,7 @@ function productionModel(mb, b) {
       fence(mb, 0.06, 2.94, 2.94, 2.94);
       break;
     case 'grove':
-      mb.plate(0.04, 0.04, 2.96, 2.96, 0.03, '#b9b27c');
+      mb.plate(0.04, 0.04, 2.96, 2.96, 0.045, '#b9b27c');
       for (let i = 0; i < 3; i++) for (let k = 0; k < 3; k++) {
         if (i === 0 && k === 0) continue;
         treeOlive(mb, 0.5 + i * 1.0, 0.5 + k * 1.0, 1.15 + hash2(b.id, i * 3 + k, 3) * 0.25);
@@ -1150,7 +1169,7 @@ function productionModel(mb, b) {
       for (let i = 0; i < 2; i++) mb.cyl(1.3 + i * 0.2, 0.03, 0.25, 0.08, 0.1, '#a0784a', { segs: 8, cap: '#5a6a2a' });
       break;
     case 'vineyard':
-      mb.plate(0.04, 0.04, 2.96, 2.96, 0.03, '#a8906a');
+      mb.plate(0.04, 0.04, 2.96, 2.96, 0.045, '#a8906a');
       for (let i = 0; i < 6; i++) {
         const z = 1.0 + i * 0.32;
         for (let k = 0; k <= 5; k++) mb.box(0.2 + k * 0.52, 0.03, z - 0.015, 0.23 + k * 0.52, 0.4, z + 0.015, PAL.woodDark);
@@ -1163,7 +1182,7 @@ function productionModel(mb, b) {
       for (let i = 0; i < 3; i++) { mb.cyl(1.4 + i * 0.25, 0.03, 0.5, 0.1, 0.18, PAL.woodLight, { segs: 10 }); mb.cyl(1.4 + i * 0.25, 0.21, 0.5, 0.085, 0.004, PAL.grape, { segs: 10 }); }
       break;
     case 'fishery':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, PAL.sand);
+      mb.patch(1, 1, 0.92, 0.86, 0.042, PAL.sand);
       for (const [x, z] of [[0.35, 0.35], [1.25, 0.35], [0.35, 1.05], [1.25, 1.05]]) mb.cyl(x, 0, z, 0.035, 0.22, PAL.woodDark, { segs: 6 });
       mb.box(0.28, 0.2, 0.28, 1.32, 0.25, 1.12, PAL.wood);
       mb.wall(0.4, 0.25, 0.4, 1.2, 0.62, 1.0, PAL.woodLight, { plinth: false, cornice: false });
@@ -1180,7 +1199,7 @@ function productionModel(mb, b) {
       mb.cyl(0.6, 0.025, 1.7, 0.09, 0.11, PAL.woodLight, { segs: 8, cap: '#7f9fb0' });
       break;
     case 'lumber':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, PAL.dirt);
+      mb.patch(1, 1, 0.9, 0.86, 0.042, PAL.dirt);
       shed(mb, 0.2, 0.2, 1.1, 0.85, 0.44, PAL.woodLight, PAL.roof[2]);
       mb.door('z+', 0.85, 0.65, 0.2, 0.3, { color: '#6a4a2a' });
       for (let i = 0; i < 5; i++) {
@@ -1199,7 +1218,7 @@ function productionModel(mb, b) {
     case 'marblequarry': {
       const big = b.type === 'marblequarry', S = big ? 3 : 2;
       const rock = big ? PAL.marble : '#bdb6a8', rockD = big ? PAL.marbleShade : '#a49d8f';
-      mb.plate(0.04, 0.04, S - 0.04, S - 0.04, 0.025, big ? '#e4dfd4' : '#cbc3b2');
+      mb.patch(S / 2, S / 2, S / 2 - 0.08, S / 2 - 0.12, 0.042, big ? '#e4dfd4' : '#cbc3b2');
       // уступы карьера
       for (let i = 0; i < 3; i++) mb.box(0.12 + i * 0.12, 0.025, 0.12, S - 0.12 - i * 0.12, 0.42 - i * 0.13, S * 0.45 - i * 0.06, i % 2 ? rock : rockD);
       for (let i = 0; i < (big ? 8 : 5); i++) {
@@ -1219,15 +1238,15 @@ function productionModel(mb, b) {
       break;
     }
     case 'claypit':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, '#b88a62');
-      mb.plate(0.2, 0.2, 1.2, 1.2, 0.03, '#9c6a48');
-      mb.plate(0.3, 0.3, 1.1, 1.1, 0.034, '#7d9fa8');
+      mb.patch(1, 1, 0.92, 0.88, 0.042, '#b88a62');
+      mb.patch(0.7, 0.7, 0.5, 0.46, 0.05, '#9c6a48', { jitter: 0.15 });
+      mb.patch(0.7, 0.7, 0.38, 0.34, 0.056, '#7d9fa8', { jitter: 0.12 });
       for (let i = 0; i < 6; i++) for (let k = 0; k < 2; k++) mb.box(1.35 + (i % 2) * 0.25, 0.025 + k * 0.05, 0.3 + Math.floor(i / 2) * 0.3, 1.55 + (i % 2) * 0.25, 0.07 + k * 0.05, 0.48 + Math.floor(i / 2) * 0.3, k ? '#c98a66' : PAL.brickLight);
       shed(mb, 0.25, 1.35, 1.0, 1.85, 0.34, PAL.woodLight, PAL.thatch);
       mb.box(1.3, 0.025, 1.4, 1.85, 0.2, 1.8, PAL.wood);
       break;
     case 'brickworks':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, PAL.dirt);
+      mb.patch(1, 1, 0.9, 0.88, 0.042, PAL.dirt);
       mb.wall(0.2, 0.025, 0.2, 1.1, 0.52, 1.0, PAL.brick, { corniceColor: PAL.brickLight });
       mb.gable(0.2, 0.2, 1.1, 1.0, 0.52, 0.28, PAL.roof[1], { axis: 'x', end: PAL.brick });
       mb.door('z+', 1.0, 0.65, 0.22, 0.32);
@@ -1242,7 +1261,7 @@ function productionModel(mb, b) {
       for (let i = 0; i < 4; i++) for (let k = 0; k < 3; k++) mb.box(0.3 + i * 0.22, 0.025 + k * 0.07, 1.25, 0.48 + i * 0.22, 0.09 + k * 0.07, 1.6, k % 2 ? PAL.brickLight : PAL.brick);
       break;
     case 'mine':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, '#9a7a62');
+      mb.patch(1, 1, 0.92, 0.86, 0.042, '#9a7a62');
       mb.blob(1.0, 0.15, 0.6, 0.86, 0.68, 0.52, '#8e6a54', { jitter: 0.15, detail: 1, top: '#7f9a5a' });
       mb.box(0.73, 0.025, 0.95, 0.8, 0.52, 1.02, PAL.woodDark);
       mb.box(1.2, 0.025, 0.95, 1.27, 0.52, 1.02, PAL.woodDark);
@@ -1257,7 +1276,7 @@ function productionModel(mb, b) {
       rocks(mb, 1.6, 1.5, 0.7, PAL.rust, 3, 1);
       break;
     case 'smithy':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, PAL.dirt);
+      mb.patch(1, 1.05, 0.88, 0.82, 0.042, PAL.dirt);
       mb.wall(0.2, 0.025, 0.2, 1.8, 0.56, 1.1, PAL.stone);
       mb.gable(0.2, 0.2, 1.8, 1.1, 0.56, 0.3, PAL.roof[0], { axis: 'x', end: PAL.stone });
       mb.box(1.35, 0.5, 0.35, 1.57, 1.15, 0.57, PAL.brickDark);
@@ -1276,7 +1295,6 @@ function productionModel(mb, b) {
       mb.cyl(0.45, 0.025, 1.6, 0.12, 0.12, PAL.wood, { segs: 10, cap: '#4a6a7a' });
       break;
     case 'bakery':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, PAL.paving);
       mb.wall(0.2, 0.025, 0.2, 1.3, 0.56, 1.4, PAL.plaster[1]);
       mb.hip(0.2, 0.2, 1.3, 1.4, 0.56, 0.32, PAL.roof[0]);
       mb.door('z+', 1.4, 0.75, 0.2, 0.32);
@@ -1296,7 +1314,6 @@ function productionModel(mb, b) {
       }
       break;
     case 'oilpress':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, PAL.paving);
       mb.wall(0.2, 0.025, 0.2, 1.2, 0.52, 1.2, PAL.plaster[0]);
       mb.hip(0.2, 0.2, 1.2, 1.2, 0.52, 0.32, PAL.roof[1]);
       mb.door('z+', 1.2, 0.7, 0.2, 0.31);
@@ -1309,7 +1326,6 @@ function productionModel(mb, b) {
       for (let i = 0; i < 6; i++) amphora(mb, 0.32 + i * 0.22, 1.58 + (i % 2) * 0.14, 1.45, i % 2 ? '#c98a5a' : PAL.brickLight);
       break;
     case 'winery':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, PAL.paving);
       mb.wall(0.2, 0.025, 0.2, 1.8, 0.56, 1.1, PAL.plaster[2]);
       mb.gable(0.2, 0.2, 1.8, 1.1, 0.56, 0.3, PAL.roof[0], { axis: 'x', end: PAL.plaster[2] });
       mb.door('z+', 1.1, 1.0, 0.26, 0.38, { color: '#5a2a2a' });
@@ -1327,7 +1343,6 @@ function productionModel(mb, b) {
       for (let i = 0; i < 2; i++) amphora(mb, 1.78, 0.98 + i * 0.25, 1.3, '#b06a44');
       break;
     case 'warehouse':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, PAL.paving);
       mb.wall(0.15, 0.025, 0.2, 1.85, 0.64, 1.25, PAL.plaster[3]);
       mb.gable(0.15, 0.2, 1.85, 1.25, 0.64, 0.36, PAL.roof[2], { axis: 'x', end: PAL.plaster[3] });
       for (let i = 0; i < 3; i++) { mb.arch('z+', 1.25, 0.45 + i * 0.55, 0.3, 0.02, 0.46, '#e3d7bd', 0.006); mb.arch('z+', 1.25, 0.45 + i * 0.55, 0.26, 0.02, 0.42, PAL.doorDark); }
@@ -1357,7 +1372,7 @@ function stall(mb, x, z, color, k) {
 function serviceModel(mb, b) {
   switch (b.type) {
     case 'well':
-      mb.plate(0.08, 0.08, 0.92, 0.92, 0.025, PAL.paving);
+      mb.patch(0.5, 0.5, 0.42, 0.42, 0.042, PAL.paving, { jitter: 0.05 });
       mb.cyl(0.5, 0.025, 0.5, 0.25, 0.2, PAL.stone, { segs: 14, top: false });
       mb.cyl(0.5, 0.025, 0.5, 0.2, 0.19, '#2f5f78', { segs: 14 });
       mb.cyl(0.5, 0.2, 0.5, 0.27, 0.035, PAL.stoneLight, { segs: 14, top: false });
@@ -1370,7 +1385,7 @@ function serviceModel(mb, b) {
       amphora(mb, 0.82, 0.78, 0.9);
       break;
     case 'fountain':
-      mb.plate(0.06, 0.06, 1.94, 1.94, 0.03, PAL.paving);
+      mb.cyl(1, 0, 1, 0.94, 0.042, PAL.paving, { segs: 32 });
       for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; mb.plate(1 + Math.cos(a) * 0.86 - 0.06, 1 + Math.sin(a) * 0.86 - 0.06, 1 + Math.cos(a) * 0.86 + 0.06, 1 + Math.sin(a) * 0.86 + 0.06, 0.035, PAL.pavingDark); }
       mb.cyl(1, 0.03, 1, 0.76, 0.17, PAL.stone, { segs: 24, top: false });
       mb.cyl(1, 0.2, 1, 0.8, 0.035, PAL.stoneLight, { segs: 24, top: false });
@@ -1385,7 +1400,6 @@ function serviceModel(mb, b) {
       for (const [x, z] of [[0.2, 0.2], [1.8, 0.2], [0.2, 1.8], [1.8, 1.8]]) pot(mb, x, z, 1.3, PAL.flowers[(x + z) * 3 % 6 | 0]);
       break;
     case 'temple': {
-      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, PAL.paving);
       mb.box(0.24, 0.03, 0.18, 2.76, 0.15, 2.56, PAL.stone);
       mb.box(0.34, 0.15, 0.28, 2.66, 0.27, 2.46, PAL.stoneLight);
       for (let i = 0; i < 4; i++) mb.box(0.85 - i * 0.02, 0.03, 2.46 + i * 0.08, 2.15 + i * 0.02, 0.27 - i * 0.06, 2.56 + i * 0.08, PAL.stoneLight);
@@ -1421,7 +1435,6 @@ function serviceModel(mb, b) {
       break;
     }
     case 'baths':
-      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, PAL.paving);
       mb.wall(0.2, 0.03, 0.2, 2.8, 0.78, 2.6, PAL.brickLight, { corniceColor: PAL.stoneLight });
       for (let i = 0; i < 5; i++) {
         mb.arch('z+', 2.6, 0.45 + i * 0.52, 0.28, 0.12, 0.52, PAL.stoneLight, 0.006);
@@ -1444,7 +1457,6 @@ function serviceModel(mb, b) {
       smoke(mb, 0.6, 1.2, 0.6);
       break;
     case 'school':
-      mb.plate(0.04, 0.04, 1.96, 1.96, 0.025, PAL.paving);
       mb.wall(0.2, 0.025, 0.2, 1.8, 0.64, 1.2, PAL.plaster[3]);
       windowsAround(mb, 0.2, 0.2, 1.8, 1.2, 0.38, 0.4, 0.12, 0.17, PAL.shutter[1], true);
       mb.hip(0.2, 0.2, 1.8, 1.2, 0.64, 0.32, PAL.roof[2]);
@@ -1456,8 +1468,7 @@ function serviceModel(mb, b) {
       for (let i = 0; i < 3; i++) mb.cyl(0.35 + i * 0.07, 0.07, 1.4, 0.022, 0.12, '#efe1bb', { segs: 6 });
       break;
     case 'market':
-      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, PAL.paving);
-      for (let i = 0; i < 5; i++) for (let k = 0; k < 5; k++) if ((i + k) % 2) mb.plate(0.1 + i * 0.56, 0.1 + k * 0.56, 0.6 + i * 0.56, 0.6 + k * 0.56, 0.035, PAL.pavingDark);
+      mb.patch(1.5, 1.5, 1.42, 1.36, 0.042, PAL.paving, { jitter: 0.06 });
       for (const [x, z, c] of [[0.2, 0.25, 0], [1.15, 0.25, 1], [2.1, 0.25, 2], [0.2, 2.05, 3], [2.1, 2.05, 4]]) stall(mb, x, z, PAL.awning[(c + b.id) % PAL.awning.length], c);
       mb.cyl(1.5, 0.035, 1.5, 0.38, 0.13, PAL.stone, { segs: 18, top: false });
       mb.cyl(1.5, 0.035, 1.5, 0.33, 0.11, PAL.water, { segs: 18 });
@@ -1467,7 +1478,7 @@ function serviceModel(mb, b) {
       treeOlive(mb, 1.5, 2.6, 0.8);
       break;
     case 'tradepost':
-      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, PAL.paving);
+      mb.patch(1.5, 1.5, 1.4, 1.34, 0.042, PAL.dirt);
       mb.wall(0.2, 0.03, 0.2, 2.2, 0.78, 1.4, PAL.plaster[4]);
       windowsAround(mb, 0.2, 0.2, 2.2, 1.4, 0.48, 0.42, 0.12, 0.17, PAL.shutter[2], true);
       mb.hip(0.2, 0.2, 2.2, 1.4, 0.78, 0.36, PAL.roof[0]);
@@ -1486,7 +1497,6 @@ function serviceModel(mb, b) {
       mb.blob(2.62, 1.18, 2.42, 0.04, 0.04, 0.04, PAL.gold, { jitter: 0 });
       break;
     case 'theatre': {
-      mb.plate(0.03, 0.03, 3.97, 3.97, 0.03, PAL.paving);
       const cx = 2, cz = 1.4;
       for (let r = 0; r < 7; r++) {
         const R0 = 0.55 + r * 0.22, R1 = R0 + 0.22, y = 0.03 + r * 0.11;
@@ -1521,8 +1531,7 @@ function serviceModel(mb, b) {
       break;
     }
     case 'forum': {
-      mb.plate(0.03, 0.03, 3.97, 3.97, 0.04, PAL.marbleShade);
-      for (let i = 0; i < 6; i++) for (let k = 0; k < 6; k++) if ((i + k) % 2) mb.plate(0.4 + i * 0.53, 1.6 + k * 0.38, 0.9 + i * 0.53, 1.95 + k * 0.38, 0.045, PAL.paving);
+      mb.patch(2, 2.3, 1.9, 1.6, 0.045, PAL.marbleShade, { jitter: 0.05 });
       mb.wall(0.25, 0.04, 0.2, 3.75, 1.0, 1.25, PAL.plaster[3], { cornice: false });
       for (let i = 0; i < 10; i++) column(mb, 0.35 + i * 0.367, 1.4, 0.04, 0.86, 0.05);
       mb.box(0.23, 0.86, 1.25, 3.77, 0.96, 1.5, PAL.marble);
@@ -1542,7 +1551,7 @@ function serviceModel(mb, b) {
       break;
     }
     case 'barracks': {
-      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, '#c9b48e');
+      mb.patch(1.5, 1.5, 1.42, 1.38, 0.042, '#c9b48e');
       const pal = (x0, z0, x1, z1) => {
         const len = Math.hypot(x1 - x0, z1 - z0), n = Math.round(len / 0.09);
         for (let i = 0; i <= n; i++) {
@@ -1570,7 +1579,7 @@ function serviceModel(mb, b) {
     }
     case 'range': {
       // Стрельбище: навес для лучников, соломенные мишени с кругами, стойка с луками
-      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, '#cdb98f');
+      mb.patch(1.5, 1.5, 1.42, 1.38, 0.042, '#cdb98f');
       fence(mb, 0.1, 0.1, 2.9, 0.1); fence(mb, 0.1, 0.1, 0.1, 2.9); fence(mb, 2.9, 0.1, 2.9, 2.9);
       shed(mb, 0.25, 1.9, 1.45, 2.75, 0.55, PAL.plaster[3], PAL.roof[0]);
       mb.door('z+', 2.75, 0.85, 0.2, 0.32);
@@ -1591,7 +1600,7 @@ function serviceModel(mb, b) {
     }
     case 'spearcamp': {
       // Лагерь копейщиков: палатки, стойка с копьями, чучело для учёбы и знамя
-      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, '#c9b48e');
+      mb.patch(1.5, 1.5, 1.42, 1.38, 0.042, '#c9b48e');
       const pal = (x0, z0, x1, z1) => {
         const len = Math.hypot(x1 - x0, z1 - z0), n = Math.round(len / 0.1);
         for (let i = 0; i <= n; i++) mb.cyl(x0 + (x1 - x0) * i / n, 0.03, z0 + (z1 - z0) * i / n, 0.04, 0.38 + (i % 2) * 0.05, PAL.wood, { segs: 6, rTop: 0.018 });
@@ -1621,7 +1630,7 @@ function serviceModel(mb, b) {
     case 'catapults': {
       // Мастерские: дом мастеров, во дворе — готовая машина, брёвна и камни
       const bal = b.type === 'ballistae';
-      mb.plate(0.03, 0.03, 2.97, 2.97, 0.03, '#c2a275');
+      mb.patch(1.5, 1.5, 1.42, 1.38, 0.042, '#c2a275');
       mb.wall(0.2, 0.025, 1.75, 2.8, 0.7, 2.8, PAL.plaster[1], { cornice: false });
       mb.gable(0.2, 1.75, 2.8, 2.8, 0.7, 0.42, PAL.roof[2], { axis: 'x', end: PAL.plaster[1] });
       mb.door('z-', 1.75, 1.0, 0.36, 0.48);
@@ -1882,7 +1891,6 @@ function centerModel(mb, b) {
 function wonderModel(mb, b) {
   switch (b.type) {
     case 'colosseum': {
-      mb.plate(0.03, 0.03, 5.97, 5.97, 0.03, PAL.paving);
       const cx = 3, cz = 3, RX = 2.75, RZ = 2.3, segs = 40, tiers = 3, th = 0.56;
       const pt = (k, a, y) => [cx + Math.cos(a) * RX * k, y, cz + Math.sin(a) * RZ * k];
       for (let i = 0; i < segs; i++) {
@@ -1933,7 +1941,7 @@ function wonderModel(mb, b) {
       break;
     }
     case 'pantheon': {
-      mb.plate(0.03, 0.03, 3.97, 3.97, 0.04, PAL.marbleShade);
+      mb.cyl(2, 0, 1.65, 1.55, 0.045, PAL.marbleShade, { segs: 32 });
       const cx = 2, cz = 1.65, R = 1.35;
       mb.cyl(cx, 0.04, cz, R, 1.0, '#e6dcc6', { segs: 32 });
       for (let i = 0; i < 3; i++) mb.cyl(cx, 0.3 + i * 0.3, cz, R + 0.02, 0.03, PAL.marble, { segs: 32, top: false });
@@ -1958,7 +1966,6 @@ function wonderModel(mb, b) {
       break;
     }
     case 'arch':
-      mb.plate(0.03, 0.03, 1.97, 1.97, 0.03, PAL.paving);
       mb.box(0.15, 0.03, 0.7, 0.65, 1.15, 1.3, PAL.marble);
       mb.box(1.35, 0.03, 0.7, 1.85, 1.15, 1.3, PAL.marble);
       mb.box(0.12, 0.03, 0.67, 0.68, 0.14, 1.33, PAL.marbleShade);
