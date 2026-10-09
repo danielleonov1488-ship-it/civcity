@@ -1,5 +1,5 @@
 'use strict';
-/* Мини-карта — круглый «медальон» в правом нижнем углу: своя земля (трава, лес, вода, песок), дороги и площади,
+/* Мини-карта — круглый «медальон» над казной (по умолчанию свёрнута в кнопку, клавиша M): своя земля (трава, лес, вода, песок), дороги и площади,
    дома точками, чужие участки приглушены, рамка — что сейчас видит камера. Карта повёрнута вместе с камерой:
    «вверх» на ней — это «вперёд» на экране. Клик или перетаскивание по карте переносит камеру туда. */
 const Minimap = {
@@ -19,8 +19,8 @@ const Minimap = {
     this.dpr = dpr;
     this.ctx = this.cv.getContext('2d');
     this.base = document.createElement('canvas');
-    let collapsed = false;
-    try { collapsed = localStorage.getItem('civcity.minimap') === '0'; } catch (e) { /* нет хранилища */ }
+    let collapsed = true;
+    try { collapsed = localStorage.getItem('civcity.minimap2') !== '1'; } catch (e) { /* нет хранилища */ }
     this.setCollapsed(collapsed);
     $('mm-toggle').onclick = () => this.setCollapsed(!this.el.classList.contains('collapsed'));
     // клик и перетаскивание — перелёт камеры
@@ -41,7 +41,7 @@ const Minimap = {
   setCollapsed(on) {
     this.el.classList.toggle('collapsed', on);
     $('mm-toggle').setAttribute('aria-label', on ? 'Показать карту' : 'Свернуть карту');
-    try { localStorage.setItem('civcity.minimap', on ? '0' : '1'); } catch (e) { /* нет хранилища */ }
+    try { localStorage.setItem('civcity.minimap2', on ? '0' : '1'); } catch (e) { /* нет хранилища */ }
     this.drawnAt = 0;
   },
 

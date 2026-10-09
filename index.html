@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>CivCity</title>
 <link rel="stylesheet" href="vendor/fonts/fonts.css">
-<link rel="stylesheet" href="style.css?v=2026100924">
+<link rel="stylesheet" href="style.css?v=2026100925">
 </head>
 <body>
 <canvas id="game" aria-label="Карта города"></canvas>
 <div id="labels"></div>
 
-<!-- Верхняя панель -->
+<!-- Слева сверху — карточка города со временем; рядом — значки того, что не так; справа — Легион и меню -->
 <header id="hud">
-  <div class="panel hud-left">
+  <div class="panel hud-city">
     <button type="button" class="city" id="city-btn" data-tip="city">
       <img id="emblem" alt="">
       <span class="city-text">
@@ -22,67 +22,59 @@
         <span class="rank-bar"><span id="rank-bar"></span></span>
       </span>
     </button>
-    <span class="vsep"></span>
-    <button type="button" class="stat money" data-tip="money"><span class="coin"></span><b id="v-money">0</b><small id="v-income"></small></button>
-    <span class="vsep"></span>
-    <div id="class-cards" class="class-cards"></div>
-    <button type="button" class="stat" id="st-work" data-tip="workers" data-svg="hammer"><b id="v-work">0</b></button>
+    <div class="city-stats">
+      <button type="button" class="stat" id="st-pop" data-tip="pop" data-svg="people"><b id="v-pop">0</b></button>
+      <button type="button" class="stat" id="st-happy" data-tip="happy" data-svg="smile"><b id="v-happy">—</b></button>
+      <button type="button" class="stat warn" id="st-work" data-tip="workers" data-svg="hammer" hidden><b id="v-work">0</b></button>
+    </div>
+    <div class="time-row">
+      <div class="date" data-tip="date"><b id="v-date">Год I</b><small id="v-season">весна</small></div>
+      <div class="seg" role="group" aria-label="Скорость времени">
+        <button type="button" data-speed="0" data-tip="speed0" data-svg="pause" aria-label="Пауза"></button>
+        <button type="button" data-speed="1" data-tip="speed1" data-svg="play" aria-label="Скорость 1"></button>
+        <button type="button" data-speed="2" data-tip="speed2" data-svg="fast" aria-label="Скорость 2"></button>
+        <button type="button" data-speed="3" data-tip="speed3" data-svg="faster" aria-label="Скорость 3"></button>
+      </div>
+    </div>
   </div>
-
-  <div class="panel hud-res" id="res-bar"></div>
-
-  <div class="panel hud-right">
-    <div class="date" data-tip="date"><b id="v-date">Год I</b><small id="v-season">весна</small></div>
-    <div class="seg" role="group" aria-label="Скорость времени">
-      <button type="button" data-speed="0" data-tip="speed0" data-svg="pause" aria-label="Пауза"></button>
-      <button type="button" data-speed="1" data-tip="speed1" data-svg="play" aria-label="Скорость 1"></button>
-      <button type="button" data-speed="2" data-tip="speed2" data-svg="fast" aria-label="Скорость 2"></button>
-      <button type="button" data-speed="3" data-tip="speed3" data-svg="faster" aria-label="Скорость 3"></button>
-    </div>
-    <div class="seg" role="group" aria-label="Поворот камеры">
-      <button type="button" id="rot-left" data-tip="rotl" data-svg="rotl" aria-label="Повернуть влево"></button>
-      <button type="button" id="rot-right" data-tip="rotr" data-svg="rotr" aria-label="Повернуть вправо"></button>
-    </div>
+  <div id="alerts" aria-live="polite"></div>
+  <div class="hud-right">
+    <button type="button" id="legion-btn" class="pill-btn" data-tip="rail-legion" hidden><span data-svg="legion"></span><span>Легион</span><i class="badge" id="b-legion" hidden></i></button>
     <button type="button" id="home-btn" class="icon-btn round" data-tip="home" data-svg="home" aria-label="К городу"></button>
-    <button type="button" id="hide-ui" class="icon-btn round" data-tip="hideui" data-svg="eye" aria-label="Спрятать интерфейс"></button>
-    <button type="button" id="menu-btn" class="icon-btn round" data-tip="menu" data-svg="gear" aria-label="Настройки"></button>
+    <button type="button" id="menu-btn" class="icon-btn round" data-tip="menu" data-svg="menu" aria-label="Меню"><i class="badge" id="b-menu" hidden></i></button>
   </div>
 </header>
 <button type="button" id="show-ui" class="show-ui" data-svg="eye" aria-label="Показать интерфейс" title="Показать интерфейс (U)"></button>
+<div id="menu-pop" class="panel menu-pop" hidden></div>
 
-<div id="alerts" aria-live="polite"></div>
+<!-- Задания — под карточкой города -->
+<aside id="tasks" class="panel"></aside>
 
-<!-- Советник: задача, объяснение и кнопка «Показать» -->
-<aside id="advisor" class="panel">
+<!-- Советник: появляется облачком, когда есть что объяснить -->
+<aside id="advisor" class="panel" hidden>
   <img class="portrait" id="adv-portrait" alt="">
   <div class="adv-body">
-    <p class="eyebrow" id="adv-step"></p>
+    <p class="eyebrow">Советник Марк</p>
     <p class="adv-title" id="adv-title"></p>
     <p class="adv-hint" id="adv-hint"></p>
-    <div class="bar" id="adv-barwrap"><div id="adv-bar"></div></div>
-    <div class="adv-foot">
-      <span id="adv-prog"></span>
-      <span class="adv-btns">
-        <button type="button" class="btn small ghost" id="adv-skip" hidden>Понятно</button>
-        <button type="button" class="btn small" id="adv-action" hidden>Показать</button>
-      </span>
+    <div class="adv-btns">
+      <button type="button" class="btn small ghost" id="adv-skip">Понятно</button>
+      <button type="button" class="btn small" id="adv-action" hidden>Показать</button>
     </div>
   </div>
-  <button type="button" class="adv-toggle icon-btn" id="adv-toggle" data-svg="up" aria-label="Свернуть советника"></button>
 </aside>
 
-<!-- Разделы -->
-<nav id="rail" aria-label="Разделы">
-  <button type="button" data-open="research" data-tip="rail-research"><span data-svg="research"></span><span class="rail-name">Знания</span><i class="badge" id="b-research" hidden></i></button>
-  <button type="button" data-open="goods" data-tip="rail-goods"><span data-svg="goods"></span><span class="rail-name">Товары</span><i class="badge warn" id="b-goods" hidden></i></button>
-  <button type="button" data-open="legion" data-tip="rail-legion" id="rail-legion"><span data-svg="legion"></span><span class="rail-name">Легион</span><i class="badge" id="b-legion" hidden></i></button>
-  <button type="button" data-open="wonders" data-tip="rail-wonders" id="rail-wonders"><span data-svg="wonders"></span><span class="rail-name">Чудеса</span><i class="badge" id="b-wonders" hidden></i></button>
-  <button type="button" data-open="guide" data-tip="rail-guide"><span data-svg="guide"></span><span class="rail-name">Справка</span></button>
-  <button type="button" data-open="journal" data-tip="rail-journal"><span data-svg="journal"></span><span class="rail-name">Журнал</span><i class="badge" id="b-journal" hidden></i></button>
-</nav>
-
 <!-- Карточка выбранного здания -->
-<div id="minimap" class="minimap"><canvas id="mm-canvas" aria-label="Карта города"></canvas><button type="button" id="mm-toggle" class="mm-toggle" data-svg="map" aria-label="Свернуть карту"></button></div>
+<div id="minimap" class="minimap collapsed"><canvas id="mm-canvas" aria-label="Карта города"></canvas><button type="button" id="mm-toggle" class="mm-toggle" data-svg="map" data-tip="map" aria-label="Показать карту"></button></div>
+
+<!-- Справа внизу — казна, знания и Слава -->
+<aside id="treasury" class="panel">
+  <button type="button" class="tr-money" data-tip="money"><small>Казна</small><span class="tr-row"><span class="coin"></span><b id="v-money">0</b></span><small id="v-income"></small></button>
+  <div class="tr-sub">
+    <button type="button" class="tr-chip" id="tr-scrolls" data-tip="rail-research"><span id="tr-scrolls-ico"></span><b id="v-scrolls">0</b><i class="badge" id="b-research" hidden></i><span class="tr-prog" id="tr-prog" hidden><span></span></span></button>
+    <button type="button" class="tr-chip" id="tr-glory" data-tip="glory" hidden><span id="tr-glory-ico"></span><b id="v-glory">0</b></button>
+  </div>
+</aside>
 <aside id="inspector" class="panel" hidden>
   <button type="button" id="insp-close" class="icon-btn" data-svg="close" aria-label="Закрыть"></button>
   <div id="insp-body"></div>
@@ -98,12 +90,16 @@
     <button type="button" class="btn small ghost" id="hint-cancel">Отмена <kbd>Esc</kbd></button>
   </div>
   <div id="tray" class="panel" hidden><div id="tray-items" class="tray-items"></div></div>
-  <nav id="cats" class="panel" aria-label="Категории построек"></nav>
+  <div class="dock-bar">
+    <nav id="tools-left" class="panel tools" aria-label="Мостовая"></nav>
+    <nav id="cats" class="panel" aria-label="Постройки"></nav>
+    <nav id="tools-right" class="panel tools" aria-label="Инструменты"></nav>
+  </div>
 </footer>
 
 <div id="tooltip" role="tooltip" hidden></div>
 
-<!-- Окно «Империя»: знания, товары, легион, справка, журнал -->
+<!-- Окно «Империя»: знания, товары, легион, чудеса, справка, журнал -->
 <div id="win-back" hidden>
   <section id="win" class="panel" role="dialog" aria-modal="true" aria-labelledby="win-title">
     <header class="win-head">
@@ -120,7 +116,7 @@
 <!-- ?v= — номер сборки: меняется при каждом обновлении, чтобы браузер не взял старые файлы из своего кэша.
      Three.js — модулем (importmap), остальные скрипты по порядку подключает js/boot.js -->
 <script type="importmap">{ "imports": { "three": "./vendor/three-module/build/three.module.js" } }</script>
-<script type="module" src="js/boot.js?v=2026100924"></script>
+<script type="module" src="js/boot.js?v=2026100925"></script>
 <script>setTimeout(() => { if (typeof Game === 'undefined') document.body.insertAdjacentHTML('beforeend', '<div class="fatal">Игра не запустилась: обновите браузер или страницу.</div>'); }, 15000);</script>
 </body>
 </html>

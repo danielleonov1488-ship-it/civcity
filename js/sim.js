@@ -22,7 +22,8 @@ function newState(seed) {
     buildings: new Map(),
     nextId: 1,
     techs: [],
-    goalIndex: 0,
+    goalIndex: 0,          // первое невыполненное задание
+    goalsDone: [],         // выполненные задания дальше goalIndex (видны сразу три, выполнять можно в любом порядке)
     firsts: [],
     nextRequestDay: 25,
     speed: 1,
@@ -90,7 +91,7 @@ const GOALS = [
     hint: 'Храм нужен для роста домов и пишет свитки — знания Рима. За свитки открываются новые здания.',
     prog: () => countType('temple') },
   { text: 'Изучите «Оливководство»', need: 1, reward: { scrolls: 5 }, act: { open: 'research', focus: 'olives' }, techGoal: 'olives',
-    hint: 'Первое знание — бесплатно! Откройте «Знания» слева и нажмите «Изучить» на подсвеченной карточке «Оливководство». Оно откроет оливковые рощи и масло для инсул.',
+    hint: 'Первое знание — бесплатно! Нажмите на свитки справа внизу (под казной) и нажмите «Изучить» на подсвеченной карточке «Оливководство». Оно откроет оливковые рощи и масло для инсул.',
     prog: () => hasTech('olives') ? 1 : 0 },
   { text: 'Оливковая роща и маслодавильня', need: 2, reward: { money: 250 }, act: { tool: 'grove' },
     hint: 'Роща растит оливки, маслодавильня делает из них масло. Дома получают масло через рынок.',
@@ -99,7 +100,7 @@ const GOALS = [
     hint: 'Инсуле нужны вода, еда, храм, масло и немного красоты: клумбы и кипарисы рядом.',
     prog: () => housesAtLeast('house', 3) },
   { text: 'Соберите 100 жителей', need: 100, reward: { money: 400 }, act: { tool: 'house' },
-    hint: 'Больше домов — больше налогов. Следите, чтобы хватало еды: смотрите «Товары» слева.',
+    hint: 'Больше домов — больше налогов. Следите, чтобы хватало еды: если еды не хватает, рядом с карточкой города появится значок.',
     prog: () => state.stats.pop || 0 },
   { text: 'Постройте склад', need: 1, reward: { money: 150 }, act: { tool: 'warehouse' },
     hint: 'Склад добавляет место для всех товаров. Когда склады полны, производство встаёт.',
@@ -129,7 +130,7 @@ const GOALS = [
     hint: 'Изучите «Легион» в «Знаниях» и поставьте Казармы у дороги. В отряде появятся легионеры.',
     prog: () => countType('barracks') },
   { text: 'Первая победа в походе', need: 1, reward: { money: 600 }, act: { open: 'legion' },
-    hint: 'Откройте «Легион» слева, выберите первый бой на карте походов и нажмите «В бой!».',
+    hint: 'Откройте «Легион» справа вверху, выберите первый бой на карте походов и нажмите «В бой!».',
     prog: () => state.army ? state.army.wins : 0 },
   { text: 'Победите Атамана разбойников', need: 1, reward: { money: 800, glory: 10 }, act: { open: 'legion' },
     hint: 'Последний бой Леса разбойников — босс. Победа откроет «Кипящее масло», Лагерь копейщиков и ещё одно место в отряде. Улучшайте войска во вкладке «Войска».',
@@ -138,7 +139,7 @@ const GOALS = [
     hint: 'Большой город растит и армию: предел уровня войск поднимается до 5.',
     prog: () => state.stats.pop || 0 },
   { text: 'Возведите чудо света', need: 1, reward: { money: 3000, glory: 20 }, act: { open: 'wonders' },
-    hint: 'Чудеса открывает рейтинг легиона — он растёт с каждой победой в походах. Откройте «Чудеса» слева: первой будет Триумфальная арка.',
+    hint: 'Чудеса открывает рейтинг легиона — он растёт с каждой победой в походах. Откройте «Легион» справа вверху, вкладка «Чудеса»: первой будет Триумфальная арка.',
     prog: () => countType('arch') + countType('colosseum') + countType('pantheon') },
 ];
 
@@ -365,7 +366,7 @@ function dailyProgress() {
   S.scrollRate = scrolls;
   S.gloryRate = glory;
 
-  // Нехватки не всплывают на экран: они видны «тревогами» под верхней панелью и пишутся в журнал
+  // Нехватки не всплывают на экран: они видны значками рядом с карточкой города и пишутся в журнал
   S.short = short;
   state.warnDays = state.warnDays || {};
   for (const g of Object.keys(short)) {
@@ -481,15 +482,24 @@ function rewardText(r) {
   return Object.entries(r).map(([k, v]) => `${fmt(v)} ${k === 'money' ? 'ден.' : k === 'glory' ? 'Славы' : k === 'scrolls' ? 'свитков' : GOODS[k].name.toLowerCase()}`).join(', ');
 }
 
+// Задания: на экране сразу три первых невыполненных, выполнять их можно в любом порядке
+function goalDone(i) { return i < (state.goalIndex || 0) || (state.goalsDone || []).includes(i); }
+function activeGoals(n) {
+  const out = [];
+  for (let i = 0; i < GOALS.length && out.length < (n || 3); i++) if (!goalDone(i)) out.push(i);
+  return out;
+}
 function checkGoals() {
-  const g = GOALS[state.goalIndex];
-  if (!g) return;
-  if (g.prog() >= g.need) {
+  for (const i of activeGoals()) {
+    const g = GOALS[i];
+    if (g.prog() < g.need) continue;
     giveReward(g.reward);
-    UI.log(`Задача «${g.text}» выполнена. Награда: ${rewardText(g.reward)}`, 'good', true);
-    state.goalIndex++;
-    Advisor.goalDone();
+    UI.log(`Задание «${g.text}» выполнено. Награда: ${rewardText(g.reward)}`, 'good', true);
+    state.goalsDone = [...(state.goalsDone || []), i];
+    Tasks.flash = performance.now();
   }
+  while (state.goalIndex < GOALS.length && goalDone(state.goalIndex)) state.goalIndex++;
+  state.goalsDone = (state.goalsDone || []).filter(i => i >= state.goalIndex);
 }
 
 function simDay() {
@@ -532,8 +542,8 @@ function techCost(t) {
 // Какое знание советник подсвечивает: «Оливководство», пока его ждут задачи
 function recommendedTech() {
   if (hasTech('olives') || (state.research && state.research.id === 'olives')) return null;
-  const g = GOALS[state.goalIndex];
-  return !state.techs.length || (g && g.techGoal === 'olives') || (g && g.act && g.act.tool === 'grove') ? 'olives' : null;
+  const gs = activeGoals().map(i => GOALS[i]);
+  return !state.techs.length || gs.some(g => g.techGoal === 'olives' || (g.act && g.act.tool === 'grove')) ? 'olives' : null;
 }
 
 function canResearch(t) {

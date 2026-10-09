@@ -150,6 +150,8 @@ const Input = {
       this.mode = 'road';
       this.stroke = { last: [fx, fy], start: [fx, fy], undo: [], cleared: [], cost: 0, reason: null };
       if (!this.shift) this.paintTo(fx, fy);
+    } else if (tool === 'copy' || tool === 'move') {
+      this.mode = 'pick';
     } else if (!this.moving && (tool === 'bulldoze' || BUILDINGS[tool].w === 1)) {
       this.mode = 'paint';
       this.lastPaint = null;
@@ -186,7 +188,7 @@ const Input = {
       Engine.cam.yaw = Engine.cam.yawTarget;
       return;
     }
-    if (this.mode === 'pan' || (this.mode === 'maybe' && this.moved)) {
+    if (this.mode === 'pan' || ((this.mode === 'maybe' || this.mode === 'pick') && this.moved)) {
       this.mode = 'pan';
       const cur = Engine.groundPoint(e.clientX, e.clientY);
       if (this.anchor && cur) Engine.panBy(this.anchor[0] - cur[0], this.anchor[1] - cur[1]);
@@ -278,6 +280,7 @@ const Input = {
       return;
     }
     if (mode === 'maybe' && !this.moved) this.click(e.clientX, e.clientY);
+    if (mode === 'pick' && !this.moved) this.pick(e.clientX, e.clientY);
   },
 
   keyDown(e) {
@@ -307,6 +310,7 @@ const Input = {
     if (k === 'e' || k === 'у') Engine.rotate(1);
     if (k === 'u' || k === 'г') UI.setUiHidden(!document.body.classList.contains('ui-hidden'));
     if (k === 'home') Engine.flyHome();
+    if (k === 'm' || k === 'ь') Minimap.setCollapsed(!Minimap.el.classList.contains('collapsed'));
     if (k === 'z' || k === 'я') this.rotate(-1);
     if (k === 'c' || k === 'с') this.rotate(1);
     if (k === 'r' || k === 'к') this.setTool('road');
@@ -384,6 +388,17 @@ const Input = {
     if (this.tryPlace(this.tool, this.placement(this.tool, fx, fy), false)) this.lastPaint = [fx, fy];
   },
 
+  // «Копировать» — взять такую же постройку с тем же поворотом; «Перенести» — поднять постройку
+  pick(sx, sy) {
+    const p = Engine.groundPoint(sx, sy);
+    const b = Engine.pickBuilding(sx, sy) || (p && buildingAtPoint(p[0], p[1]));
+    if (!b) return;
+    if (this.tool === 'move') { this.startMove(b); return; }
+    if (!isUnlocked(b.type)) { this.warn('Эту постройку ещё не открыли'); return; }
+    this.setTool(b.type);
+    this.angle = bAng(b);
+  },
+
   click(sx, sy) {
     const b = Engine.pickBuilding(sx, sy);
     if (b) { UI.openPanel(b); return; }
@@ -411,6 +426,10 @@ const Input = {
         const b = buildingAtPoint(fx, fy);
         if (b) quads.push([b.x + b.w / 2, b.y + b.h / 2, b.w, b.h, '#e0583e', bAng(b)]);
         else quads.push([Math.floor(fx), Math.floor(fy), 1, 1, permanentNature(Math.floor(fx), Math.floor(fy)) ? '#c9b48a' : '#e0583e']);
+      } else if (tool === 'copy' || tool === 'move') {
+        Engine.setGhost(null);
+        const b = buildingAtPoint(fx, fy);
+        if (b) quads.push([b.x + b.w / 2, b.y + b.h / 2, b.w, b.h, tool === 'copy' ? '#6fb7e0' : '#e8b84a', bAng(b)]);
       } else if (tool === 'road') {
         Engine.setGhost(null);
         const m = this.brush.mode, st = this.stroke;

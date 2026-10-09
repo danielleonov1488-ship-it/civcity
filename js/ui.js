@@ -1,6 +1,7 @@
 'use strict';
-/* Интерфейс поверх 3D-карты: верхняя панель, док стройки, карточка здания,
-   окно «Империя» (знания, товары, легион, справка, журнал), настройки, подсказки, метки над картой. */
+/* Интерфейс поверх 3D-карты — просто, как в Town to City: слева сверху карточка города со временем и значки тревог,
+   под ней задания; справа сверху «Легион», «К городу» и меню; внизу док стройки (мостовая, постройки, инструменты);
+   справа внизу казна, знания и Слава. Ещё — карточка здания, окно «Империя», настройки, подсказки, метки над картой. */
 
 const $ = id => document.getElementById(id);
 
@@ -48,14 +49,18 @@ const UI = {
     $('emblem').src = Icons.get('emblem');
     this.buildCats();
     document.querySelectorAll('[data-speed]').forEach(btn => btn.addEventListener('click', () => this.setSpeed(+btn.dataset.speed)));
-    $('menu-btn').onclick = () => this.openMenu();
-    $('hide-ui').onclick = () => this.setUiHidden(true);
+    $('menu-btn').onclick = () => this.toggleMenu();
     $('home-btn').onclick = () => Engine.flyHome();
     $('show-ui').onclick = () => this.setUiHidden(false);
-    $('city-btn').onclick = () => this.openMenu();
-    $('rot-left').onclick = () => Engine.rotate(-1);
-    $('rot-right').onclick = () => Engine.rotate(1);
-    document.querySelectorAll('#rail [data-open]').forEach(b => b.onclick = () => this.openWindow(b.dataset.open));
+    for (const id of ['city-btn', 'st-pop', 'st-happy', 'st-work']) $(id).onclick = () => this.openCity();
+    document.querySelector('.tr-money').onclick = () => this.openCity();
+    $('legion-btn').onclick = () => this.openWindow('legion');
+    $('tr-scrolls').onclick = () => this.openWindow('research');
+    $('tr-glory').onclick = () => this.openWindow(Army.unlocked() ? 'legion' : 'research');
+    $('tr-scrolls-ico').innerHTML = Icons.img('scrolls');
+    $('tr-glory-ico').innerHTML = Icons.img('glory');
+    // меню закрывается нажатием мимо него
+    document.addEventListener('pointerdown', e => { if (!$('menu-pop').hidden && !e.target.closest('#menu-pop, #menu-btn')) this.closeMenu(); });
     $('insp-close').onclick = () => this.closePanel();
     $('hint-cancel').onclick = () => Input.setTool(null);
     $('win-close').onclick = () => this.closeWindow();
@@ -80,7 +85,13 @@ const UI = {
       `<span class="cost ${this.have(res) < v ? 'short' : ''}">${Icons.img(res)}${fmt(v)}</span>`).join('');
   },
 
-  /* ---------- Верхняя панель ---------- */
+  // Цена на карточке: денарии крупно, остальное (пока стройка тратит и товары) — мелко рядом
+  priceHtml(cost) {
+    return Object.entries(cost).map(([res, v]) =>
+      `<span class="cost ${res === 'money' ? 'main' : 'extra'} ${this.have(res) < v ? 'short' : ''}">${Icons.img(res)}${fmt(v)}</span>`).join('');
+  },
+
+  /* ---------- Карточка города, казна и значки ---------- */
 
   updateHud(force) {
     const t = performance.now();
@@ -89,93 +100,125 @@ const UI = {
     const S = state.stats;
     $('city-name').textContent = state.cityName;
     $('city-rank').textContent = cityRank(S.pop || 0) + (TEST_MODE ? ' · тест' : '');
-    $('v-money').textContent = fmt(state.money);
-    const inc = S.income || 0;
-    $('v-income').textContent = `${inc >= 0 ? '+' : '−'}${Math.abs(inc).toFixed(1)}`;
-    $('v-income').classList.toggle('neg', inc < 0);
     // прогресс до следующего звания города
     const pop = S.pop || 0;
     let lo = 0, hi = CITY_RANKS[1][0];
     for (let i = 0; i < CITY_RANKS.length; i++) if (pop >= CITY_RANKS[i][0]) { lo = CITY_RANKS[i][0]; hi = (CITY_RANKS[i + 1] || [lo * 2])[0]; }
     $('rank-bar').style.width = `${clamp((pop - lo) / Math.max(1, hi - lo), 0, 1) * 100}%`;
-    // карточки классов жителей: сколько их и насколько они счастливы
-    const R = S.residents || {};
-    let cc = '';
-    for (const [k] of Object.entries(CLASSES)) {
-      if (k !== 'plebs' && !(R[k] > 0)) continue;
-      const h = (S.happyCls || {})[k] || 0;
-      cc += `<button type="button" class="ccard" data-tip="class:${k}">${Icons.cls(k)}<b>${fmt(R[k] || 0)}</b><span class="hp ${!R[k] ? '' : h >= 60 ? 'good' : h >= 40 ? 'mid' : 'bad'}">${R[k] ? h + '%' : '—'}</span></button>`;
+    // жители и счастье — одной цифрой; подробности по классам — в карточке города
+    $('v-pop').textContent = fmt(pop);
+    const h = pop ? S.happy : null;
+    $('v-happy').textContent = h === null || h === undefined ? '—' : h + '%';
+    $('st-happy').className = 'stat' + (h === null || h === undefined ? '' : h >= 60 ? ' good' : h >= 40 ? ' mid' : ' bad');
+    // работники видны, только когда их не хватает
+    let short = false, f = 0, jobs = 0;
+    for (const k of Object.keys(CLASSES)) {
+      const j = (S.jobs || {})[k] || 0, fl = (S.filled || {})[k] || 0;
+      f += fl; jobs += j;
+      if (j > fl) short = true;
     }
-    if (cc !== this._ccHtml) { $('class-cards').innerHTML = cc; this._ccHtml = cc; }
-    let short = false, f = 0;
-    for (const k of Object.keys(CLASSES)) { const j = (S.jobs || {})[k] || 0; f += (S.filled || {})[k] || 0; if (j > ((S.filled || {})[k] || 0)) short = true; }
-    let jobs = 0;
-    for (const k of Object.keys(CLASSES)) jobs += (S.jobs || {})[k] || 0;
+    $('st-work').hidden = !short;
     $('v-work').textContent = `${fmt(f)}/${fmt(jobs)}`;
-    $('st-work').classList.toggle('warn', short);
     $('v-date').textContent = `Год ${roman(Math.floor(state.day / (DAYS_PER_SEASON * 4)) + 1)}`;
     $('v-season').textContent = `${SEASONS[Math.floor(state.day / DAYS_PER_SEASON) % 4]}, день ${state.day % DAYS_PER_SEASON + 1}`;
-    this.renderRes();
-    this.layoutHud();
-    Alerts.render();
-    Advisor.render();
-    // значки на боковом меню
+    // казна
+    $('v-money').textContent = fmt(state.money);
+    const inc = S.income || 0;
+    $('v-income').textContent = `${inc >= 0 ? '+' : '−'}${fmt(Math.abs(inc))} в день`;
+    $('v-income').classList.toggle('neg', inc < 0);
+    // знания: сколько свитков, можно ли что-то изучить, ход изучения
+    $('v-scrolls').textContent = fmt(state.scrolls);
     const ready = TECHS.filter(canResearch).length;
     const br = $('b-research'); br.hidden = !ready; br.textContent = ready;
-    const rb = document.querySelector('#rail [data-open="research"]'), rs = state.research;
-    rb.classList.toggle('researching', !!rs);
-    if (rs) rb.style.setProperty('--p', `${(1 - rs.left / TECH_BY_ID[rs.id].days) * 100}%`);
+    const rs = state.research;
+    $('tr-prog').hidden = !rs;
+    if (rs) $('tr-prog').style.setProperty('--p', `${(1 - rs.left / TECH_BY_ID[rs.id].days) * 100}%`);
     if (this.winOpen && this.winTab === 'research' && rs && t - (this.lastWin || 0) > 1000) { this.lastWin = t; this.updateResearchProgress(); }
-    const shortGoods = Object.keys((S.short || {})).length;
-    const bg = $('b-goods'); bg.hidden = !shortGoods; bg.textContent = '!';
-    $('rail-legion').hidden = !Army.unlocked();
-    $('rail-wonders').hidden = !Army.unlocked();
+    $('tr-glory').hidden = !(state.glory > 0 || hasTech('legion'));
+    $('v-glory').textContent = fmt(state.glory);
+    // Легион: кнопка появляется с открытием войск; значок — пора в первый поход или открыто чудо
+    $('legion-btn').hidden = !Army.unlocked();
     const fresh = Army.unlocked() && countType('barracks') > 0 && state.army.progress === 0;
-    const bl = $('b-legion'); bl.hidden = !fresh; bl.textContent = '!';
-    // чудо открыто рейтингом, но ещё не построено
     const wOpen = Army.unlocked() && state.army && WONDERS.some(w => Army.wonderState(w) === 'open');
-    const bw = $('b-wonders'); bw.hidden = !wOpen; bw.textContent = '!';
+    const bl = $('b-legion'); bl.hidden = !fresh && !wOpen; bl.textContent = '!';
+    const bm = $('b-menu'); bm.hidden = !state.journalUnread; bm.textContent = Math.min(99, state.journalUnread || 0);
+    Alerts.render();
+    Tasks.render();
+    Advisor.render();
+    this.layoutHud();
     ArmyUI.tick();
-    const bj = $('b-journal'); bj.hidden = !state.journalUnread; bj.textContent = Math.min(99, state.journalUnread || 0);
     this.updateTrayAfford();
     if (this.winOpen && this.winTab === 'goods' && t - (this.lastWin || 0) > 1000) { this.lastWin = t; this.renderWindow(); }
   },
 
-  // Сводка не помещается в строку — сначала прячем приросты ресурсов, потом переносим ресурсы ниже.
-  // Советник, тревоги и карточка здания встают под нижний край сводки (--hud-b).
+  // Задания встают под карточку города, советник — под задания, мини-карта — над казной
   layoutHud() {
-    const hud = $('hud'), left = hud.querySelector('.hud-left'), res = $('res-bar'), right = hud.querySelector('.hud-right');
-    const fits = () => left.scrollWidth + res.scrollWidth + right.scrollWidth + 24 <= hud.clientWidth;
-    hud.classList.remove('compact', 'wrap');
-    if (!fits()) { hud.classList.add('compact'); if (!fits()) hud.classList.add('wrap'); }
-    const b = Math.round(hud.getBoundingClientRect().bottom);
-    if (b !== this._hudB) { this._hudB = b; document.documentElement.style.setProperty('--hud-b', b + 'px'); }
+    const root = document.documentElement.style;
+    const set = (k, v) => { if (this['_' + k] !== v) { this['_' + k] = v; root.setProperty('--' + k, v + 'px'); } };
+    set('hud-b', Math.round(document.querySelector('.hud-city').getBoundingClientRect().bottom));
+    const tasks = $('tasks');
+    set('tasks-b', Math.round(tasks.children.length ? tasks.getBoundingClientRect().bottom : this['_hud-b'] || 140));
+    set('tr-h', Math.round($('treasury').getBoundingClientRect().height));
   },
 
-  renderRes() {
-    const S = state.stats, cap = S.cap || BASE_STORAGE;
-    const chips = [];
-    const food = state.goods.wheat + state.goods.fish;
-    const fd = ((S.prod || {}).wheat || 0) + ((S.prod || {}).fish || 0) - ((S.cons || {}).wheat || 0) - ((S.cons || {}).fish || 0);
-    chips.push(['food', 'wheat', food, fd]);
-    for (const g of ['wood', 'stone', 'bricks', 'marble', 'weapons']) {
-      const v = state.goods[g];
-      const known = v > 0.5 || (S.prod || {})[g] || (g === 'bricks' && hasTech('bricks')) || (g === 'marble' && hasTech('marble')) || (g === 'weapons' && hasTech('metal'));
-      if (!known) continue;
-      chips.push(['good:' + g, g, v, ((S.prod || {})[g] || 0) - ((S.cons || {})[g] || 0)]);
-    }
-    let html = chips.map(([tip, icon, v, d]) => {
-      const cls = v < 0.5 && d < 0 ? 'empty' : v >= cap - 0.5 ? 'full' : '';
-      return `<button type="button" class="chip ${cls}" data-tip="${tip}">${Icons.img(icon)}<b>${fmt(v)}</b>${Math.abs(d) >= 0.1 ? `<small class="${d < 0 ? 'neg' : ''}">${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}</small>` : ''}</button>`;
+  /* ---------- Меню ☰ ---------- */
+
+  toggleMenu() { if ($('menu-pop').hidden) this.openMenuPop(); else this.closeMenu(); },
+
+  openMenuPop() {
+    const items = [
+      ['research', 'Знания', 'F'], ['goods', 'Товары и склады', ''],
+      ...(Army.unlocked() ? [['legion', 'Легион', 'L'], ['wonders', 'Чудеса света', '']] : []),
+      ['guide', 'Справка', ''], ['journal', 'Журнал', state.journalUnread ? String(Math.min(99, state.journalUnread)) : ''],
+      null,
+      ['settings', 'Настройки', ''], ['hide', 'Спрятать интерфейс', 'U'],
+    ];
+    const pop = $('menu-pop');
+    pop.innerHTML = items.map(it => it ? `<button type="button" data-m="${it[0]}">${Icons.svg({ settings: 'gear', hide: 'eye' }[it[0]] || it[0])}<span>${it[1]}</span>${it[2] ? `<small>${it[2]}</small>` : ''}</button>` : '<hr>').join('');
+    pop.querySelectorAll('[data-m]').forEach(btn => btn.onclick = () => {
+      const m = btn.dataset.m;
+      this.closeMenu();
+      if (m === 'settings') this.openMenu();
+      else if (m === 'hide') this.setUiHidden(true);
+      else this.openWindow(m);
+    });
+    pop.hidden = false;
+  },
+
+  closeMenu() { $('menu-pop').hidden = true; },
+
+  /* ---------- Карточка города: классы жителей, работники, налоги, доходы и расходы ---------- */
+
+  openCity() {
+    const S = state.stats, R = S.residents || {};
+    const nextRank = CITY_RANKS.find(([n]) => n > (S.pop || 0));
+    const cls = Object.entries(CLASSES).map(([c, C]) => {
+      const n = R[c] || 0, h = (S.happyCls || {})[c] || 0;
+      return `<div class="city-cls">${Icons.cls(c, 30)}<div><b>${C.name}: ${fmt(n)}</b>
+        <span>Счастье: ${n ? `<b class="hp ${h >= 60 ? 'good' : h >= 40 ? 'mid' : 'bad'}">${h}%</b>` : '—'}</span>
+        <span>Работают: ${C.work}</span>
+        <span>Рабочих мест занято: ${fmt((S.filled || {})[c] || 0)} из ${fmt((S.jobs || {})[c] || 0)}</span></div></div>`;
     }).join('');
-    html += '<span class="vsep"></span>';
-    html += `<button type="button" class="chip key" data-tip="scrolls">${Icons.img('scrolls')}<b>${fmt(state.scrolls)}</b>${S.scrollRate ? `<small>+${S.scrollRate.toFixed(1)}</small>` : ''}</button>`;
-    if (state.glory > 0 || hasTech('legion')) html += `<button type="button" class="chip key" data-tip="glory">${Icons.img('glory')}<b>${fmt(state.glory)}</b></button>`;
-    if (html !== this._resHtml) {
-      $('res-bar').innerHTML = html;
-      this._resHtml = html;
-      $('res-bar').querySelectorAll('.chip').forEach(c => c.onclick = () => this.openWindow(c.dataset.tip === 'scrolls' ? 'research' : c.dataset.tip === 'glory' ? 'legion' : 'goods'));
-    }
+    const seg = TAX_LEVELS.map((t, i) => `<button type="button" data-tax="${i}" class="${i === state.taxLevel ? 'on' : ''}">${t.name}<small>${t.mult < 1 ? 'жители рады' : t.mult > 1 ? 'жители недовольны' : '×1'}</small></button>`).join('');
+    this.showModal(`
+      <p class="eyebrow">Ваш город</p>
+      <h2>${escapeHtml(state.cityName)} — ${cityRank(S.pop || 0)}</h2>
+      <p class="sub">Жителей: ${fmt(S.pop || 0)}, счастье ${S.pop ? S.happy + '%' : '—'}. ${nextRank ? `Следующее звание «${nextRank[1]}» — при ${fmt(nextRank[0])} жителях.` : 'Это высшее звание!'}</p>
+      <div class="city-classes">${cls}</div>
+      <div class="rows">
+        <div class="row"><span>Налоги</span><b>+${fmt(S.taxes || 0)} в день</b></div>
+        <div class="row"><span>Содержание построек</span><b>−${fmt(S.upkeep || 0)} в день</b></div>
+        <div class="row"><span>Итого</span><b>${(S.income || 0) >= 0 ? '+' : '−'}${fmt(Math.abs(S.income || 0))} в день</b></div>
+      </div>
+      <p class="field-label">Налоги</p>
+      <div class="seg wide" role="group">${seg}</div>
+      <div class="actions"><button type="button" class="btn" id="city-close">Закрыть</button></div>`);
+    document.querySelectorAll('[data-tax]').forEach(btn => btn.onclick = () => {
+      state.taxLevel = +btn.dataset.tax;
+      afterCityChanged();
+      this.openCity();
+    });
+    $('city-close').onclick = () => this.closeModal();
   },
 
   setSpeed(s) {
@@ -192,28 +235,46 @@ const UI = {
     const cats = $('cats');
     cats.innerHTML = '';
     for (const c of CATEGORIES) {
+      if (c.id === 'roads') continue;   // мостовая — кисть слева
       const btn = document.createElement('button');
       btn.className = 'cat' + (c.id === this.openCat ? ' on' : '');
       btn.type = 'button';
       btn.dataset.cat = c.id;
+      btn.dataset.tipText = c.name;
+      btn.setAttribute('aria-label', c.name);
       const first = c.items.find(isUnlocked) || c.items[0];
-      btn.innerHTML = `<img src="${this.icons[first] || ''}" alt=""><span>${c.name}</span>`;
+      btn.innerHTML = `<img src="${this.icons[first] || ''}" alt="">`;
       const fresh = c.items.some(t => isUnlocked(t) && BUILDINGS[t].tech && !(state.seenTypes || []).includes(t));
       if (fresh) btn.classList.add('fresh');
       btn.onclick = () => {
         if (this.openCat === c.id) { this.closeTray(); return; }
         this.openTray(c.id);
-        if (c.items.length === 1 && isUnlocked(c.items[0])) Input.setTool(c.items[0]);
       };
       cats.append(btn);
     }
-    const bd = document.createElement('button');
-    bd.className = 'cat bulldoze' + (Input.tool === 'bulldoze' ? ' on' : '');
-    bd.type = 'button';
-    bd.dataset.tip = 'bulldoze';
-    bd.innerHTML = `<span class="pick">${Icons.svg('pick')}</span><span>Снос</span>`;
-    bd.onclick = () => Input.setTool(Input.tool === 'bulldoze' ? null : 'bulldoze');
-    cats.append(bd);
+    // слева — кисть мостовой, справа — копировать, перенести, снести
+    const tool = (id, svg, tip, on, click) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tool' + (id === 'bulldoze' ? ' bulldoze' : '') + (on ? ' on' : '');
+      b.dataset.tool = id;
+      b.dataset.tip = 'tool-' + id;
+      b.setAttribute('aria-label', tip);
+      b.innerHTML = svg.startsWith('img:') ? `<img src="${this.icons[svg.slice(4)] || ''}" alt="">` : Icons.svg(svg);
+      b.onclick = click;
+      return b;
+    };
+    $('tools-left').replaceChildren(tool('road', 'img:road', 'Мостовая', this.openCat === 'roads', () => {
+      if (this.openCat === 'roads') { this.closeTray(); return; }
+      this.openTray('roads');
+      Input.setTool('road');
+    }));
+    const flip = id => () => Input.setTool(Input.tool === id ? null : id);
+    $('tools-right').replaceChildren(
+      tool('copy', 'dropper', 'Копировать', Input.tool === 'copy', flip('copy')),
+      tool('move', 'move', 'Перенести', Input.tool === 'move' || !!Input.moving, flip('move')),
+      tool('bulldoze', 'pick', 'Снести', Input.tool === 'bulldoze', flip('bulldoze')),
+    );
   },
 
   // совместимость со старыми вызовами
@@ -231,7 +292,7 @@ const UI = {
   closeTray() {
     this.openCat = null;
     $('tray').hidden = true;
-    if (Input.tool && Input.tool !== 'bulldoze') Input.setTool(null);
+    if (Input.tool && !['bulldoze', 'copy', 'move'].includes(Input.tool)) Input.setTool(null);
     this.buildCats();
   },
 
@@ -241,6 +302,7 @@ const UI = {
     const cat = CATEGORIES.find(c => c.id === this.openCat);
     if (!cat) return;
     if (cat.id === 'roads') { this.renderBrush(items); return; }
+    // карточка — только картинка и цена (как в Town to City); название и описание — при наведении
     for (const type of cat.items) {
       const d = BUILDINGS[type];
       const unlocked = isUnlocked(type);
@@ -249,23 +311,15 @@ const UI = {
       card.className = 'card' + (Input.tool === type ? ' on' : '') + (unlocked ? '' : ' locked');
       card.dataset.type = type;
       card.dataset.card = type;
-      const cls = this.cardClasses(type);
-      if (cls.length) card.style.setProperty('--cls', CLASSES[cls[cls.length - 1]].color);
-      card.innerHTML = `<span class="card-img"><img src="${this.icons[type] || ''}" alt="">${cls.length ? `<span class="card-cls">${cls.map(c => Icons.cls(c, 20)).join('')}</span>` : ''}${unlocked ? '' : '<i class="lock-badge" aria-hidden="true"></i>'}</span>
-        <span class="card-name">${d.name}</span>
-        <span class="card-cost">${unlocked ? this.costHtml(d.cost) : `<span class="lock">${Icons.img((d.boss || d.rating) && (!d.tech || hasTech(d.tech)) ? 'glory' : 'scrolls')}${lockName(type)}</span>`}</span>`;
+      card.setAttribute('aria-label', d.name);
+      card.innerHTML = `<span class="card-img"><img src="${this.icons[type] || ''}" alt="">${unlocked ? '' : '<i class="lock-badge" aria-hidden="true"></i>'}</span>
+        <span class="card-cost">${unlocked ? this.priceHtml(d.cost) : `<span class="lock">${Icons.img((d.boss || d.rating) && (!d.tech || hasTech(d.tech)) ? 'glory' : 'scrolls')}${lockName(type)}</span>`}</span>`;
       card.onclick = () => {
         if (!unlocked) { this.openWindow('research', d.tech); return; }
         Input.setTool(Input.tool === type ? null : type);
       };
       items.append(card);
     }
-    // подпись: кто где работает — цвет значка в углу карточки
-    let legend = $('tray-legend');
-    if (!legend) { legend = Object.assign(document.createElement('div'), { id: 'tray-legend', className: 'tray-legend' }); $('tray').append(legend); }
-    const used = new Set(cat.items.flatMap(t => this.cardClasses(t)));
-    legend.innerHTML = used.size ? `<span>${cat.id === 'housing' ? 'Кто живёт:' : 'Кто работает:'}</span>${[...used].map(c => `<span class="lg">${Icons.cls(c, 16)}${CLASSES[c].name}</span>`).join('')}` : '';
-    legend.hidden = !used.size;
   },
 
   /* Раздел «Дороги» — кисть мостовой, как в Town to City: покрытия с ценой за клетку, ластик, «улучшить»
@@ -333,7 +387,7 @@ const UI = {
       const type = card.dataset.type;
       if (!isUnlocked(type)) return;
       const d = BUILDINGS[type];
-      const html = this.costHtml(d.cost);
+      const html = this.priceHtml(d.cost);
       const el = card.querySelector('.card-cost');
       if (el.innerHTML !== html) el.innerHTML = html;
       card.classList.toggle('poor', !canAfford(d.cost));
@@ -342,20 +396,26 @@ const UI = {
 
   onToolChanged() {
     const t = Input.tool;
-    const cat = t && t !== 'bulldoze' && !Input.moving && CATEGORIES.find(c => c.items.includes(t));
+    const PICK = ['bulldoze', 'copy', 'move'];
+    const cat = t && !PICK.includes(t) && !Input.moving && CATEGORIES.find(c => c.items.includes(t));
     if (cat && cat.id !== this.openCat) this.openTray(cat.id);
     document.querySelectorAll('#tray-items .card[data-type]').forEach(c => c.classList.toggle('on', c.dataset.type === t));
-    const bd = document.querySelector('.cat.bulldoze');
-    if (bd) bd.classList.toggle('on', t === 'bulldoze');
+    document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('on',
+      b.dataset.tool === 'road' ? this.openCat === 'roads' : b.dataset.tool === 'move' ? (t === 'move' || !!Input.moving) : b.dataset.tool === t));
     const hint = $('tool-hint');
     if (!t) { hint.hidden = true; return; }
     hint.hidden = false;
-    if (Input.moving) {
+    if (t === 'copy' || t === 'move') {
+      $('hint-icon').src = '';
+      $('hint-name').textContent = t === 'copy' ? 'Копировать' : 'Перенести';
+      $('hint-text').textContent = t === 'copy' ? 'Нажмите на постройку — возьмёте такую же, с тем же поворотом.'
+        : 'Нажмите на постройку, а потом — куда её поставить. Перенос бесплатный.';
+    } else if (Input.moving) {
       $('hint-icon').src = this.icons[t] || '';
       $('hint-name').textContent = `Перенос: ${BUILDINGS[t].name.toLowerCase()}`;
       $('hint-text').textContent = 'Нажмите, куда поставить: у мостовой встанет фасадом к ней, Z / C — повернуть. Перенос бесплатный. Esc или правая кнопка — вернуть на место.';
     } else if (t === 'bulldoze') {
-      $('hint-icon').src = Icons.get('workers');
+      $('hint-icon').src = '';
       $('hint-name').textContent = 'Снос';
       $('hint-text').textContent = 'Нажмите на здание, куст или одинокое дерево — вернётся половина стоимости здания. Мостовую стирает ластик в «Дорогах». Залежи и лес вечные.';
     } else {
@@ -541,6 +601,7 @@ const UI = {
     if (act.open) { this.openWindow(act.open, act.focus); return; }
     this.closeWindow();
     if (act.menu) { this.openMenu(); return; }
+    if (act.city) { this.openCity(); return; }
     if (act.tool) {
       if (isUnlocked(act.tool)) Input.setTool(act.tool);
       else this.openWindow('research', BUILDINGS[act.tool].tech);
@@ -739,7 +800,7 @@ const UI = {
             <li><kbd>ЛКМ</kbd> строить и выбирать</li><li><kbd>ПКМ</kbd> двигать карту, отменить</li>
             <li><kbd>Колесо</kbd> масштаб</li><li><kbd>Средняя кнопка</kbd> вращение</li>
             <li><kbd>W A S D</kbd> камера</li><li><kbd>Q</kbd> <kbd>E</kbd> поворот</li>
-            <li><kbd>R</kbd> мостовая кистью</li><li><kbd>Shift</kbd> прямой линией</li><li><kbd>[</kbd> <kbd>]</kbd> ширина кисти</li><li><kbd>Ctrl</kbd>+<kbd>Z</kbd> отменить мазок</li><li><kbd>H</kbd> дом</li><li><kbd>X</kbd> снос</li>
+            <li><kbd>R</kbd> мостовая кистью</li><li><kbd>Shift</kbd> прямой линией</li><li><kbd>[</kbd> <kbd>]</kbd> ширина кисти</li><li><kbd>Ctrl</kbd>+<kbd>Z</kbd> отменить мазок</li><li><kbd>H</kbd> дом</li><li><kbd>X</kbd> снос</li><li><kbd>M</kbd> карта</li><li><kbd>Home</kbd> к городу</li><li><kbd>U</kbd> спрятать интерфейс</li>
             <li><kbd>Z</kbd> <kbd>C</kbd> повернуть постройку</li>
             <li><kbd>F</kbd> знания</li><li><kbd>L</kbd> легион</li><li><kbd>Пробел</kbd> пауза</li>
             <li><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> скорость</li><li><kbd>Esc</kbd> отмена</li>
@@ -957,6 +1018,7 @@ const UI = {
   // Короткое уведомление — только о важном и о прямой реакции на действие игрока
   // Интерфейс спрятан: виден только город и маленький глаз в углу, чтобы всё вернуть
   setUiHidden(on) {
+    this.closeMenu();
     document.body.classList.toggle('ui-hidden', on);
     Engine.setCleanView(on);
     if (on) { this.closePanel(); Input.setTool(null); if (this.openCat) this.closeTray(); }
@@ -1028,8 +1090,8 @@ const UI = {
     const R = S.residents || {};
     const nextRank = CITY_RANKS.find(([n]) => n > (S.pop || 0));
     switch (k) {
-      case 'city': return T(`${escapeHtml(state.cityName)} — ${cityRank(S.pop || 0)}`, `${nextRank ? `Следующее звание «${nextRank[1]}» — при ${fmt(nextRank[0])} жителях.` : 'Высшее звание!'} Нажмите, чтобы открыть настройки.`);
-      case 'money': return T('Денарии', `Налоги: +${(S.taxes || 0).toFixed(1)} в день<br>Содержание построек: −${(S.upkeep || 0).toFixed(1)} в день<br>Ставка: ${TAX_LEVELS[state.taxLevel].name.toLowerCase()} (меняется в настройках).`);
+      case 'city': return T(`${escapeHtml(state.cityName)} — ${cityRank(S.pop || 0)}`, `${nextRank ? `Следующее звание «${nextRank[1]}» — при ${fmt(nextRank[0])} жителях.` : 'Высшее звание!'} Нажмите — классы жителей, работники и налоги.`);
+      case 'money': return T('Казна', `Налоги: +${(S.taxes || 0).toFixed(1)} в день<br>Содержание построек: −${(S.upkeep || 0).toFixed(1)} в день<br>Ставка: ${TAX_LEVELS[state.taxLevel].name.toLowerCase()}. Нажмите, чтобы изменить.`);
       case 'pop': return T(`Жители: ${fmt(S.pop || 0)}`, Object.entries(CLASSES).map(([c, v]) => `${v.name}: ${fmt(R[c] || 0)}`).join('<br>') + '<br>Половина жителей работает.');
       case 'happy': return T(`Счастье: ${S.pop ? S.happy + '%' : '—'}`, 'Растёт от удобств рядом с домом, красоты, праздников и низких налогов. Падает от тесноты и высоких налогов. Счастливые платят больше.');
       case 'workers': return T('Работники', Object.entries(CLASSES).map(([c, v]) => `${v.name}: занято ${fmt((S.filled || {})[c] || 0)} из ${fmt((S.jobs || {})[c] || 0)} мест, свободно ${fmt((S.spare || {})[c] || 0)}`).join('<br>') + '<br>Лишние граждане идут работать за плебеев.');
@@ -1045,11 +1107,16 @@ const UI = {
       case 'home': return T('К городу', 'Камера вернётся к центру города. Клавиша Home');
       case 'hideui': return T('Спрятать интерфейс', 'Любоваться городом. Вернуть — кнопкой с глазом в углу или клавишей U');
       case 'rotr': return T('Повернуть камеру', 'Клавиша E');
-      case 'menu': return T('Настройки', 'Налоги, графика, смена дня и ночи, новый город.');
-      case 'bulldoze': return T('Снос', 'Клавиша X. Возвращается половина стоимости.');
+      case 'menu': return T('Меню', 'Знания, товары, справка, журнал, настройки.');
+      case 'map': return T('Карта', 'Мини-карта города. Клавиша M');
+      case 'bulldoze': case 'tool-bulldoze': return T('Снести', 'Клавиша X. Возвращается половина стоимости здания. Залежи и лес вечные.');
+      case 'tool-road': return T('Мостовая', 'Кисть: тропинка, гравий, мостовая и площадь. Клавиша R');
+      case 'tool-copy': return T('Копировать', 'Нажмите на постройку — возьмёте такую же.');
+      case 'tool-move': return T('Перенести', 'Нажмите на постройку и поставьте её в другом месте. Бесплатно.');
       case 'rail-research': {
         const r = state.research;
-        return T('Знания', r ? `Изучается «${TECH_BY_ID[r.id].name}»: осталось ${r.left} ${plural(r.left, 'день', 'дня', 'дней')}. Клавиша F.` : 'Знания за свитки открывают новые постройки. Изучаются по одному, несколько дней. Клавиша F.');
+        return T(`Знания: ${fmt(state.scrolls)} свитков`, (r ? `Изучается «${TECH_BY_ID[r.id].name}»: осталось ${r.left} ${plural(r.left, 'день', 'дня', 'дней')}.` : 'За свитки открываются новые постройки. Изучаются по одному, несколько дней.')
+          + ` Свитки пишут храмы, школы и форум${S.scrollRate ? ` (+${S.scrollRate.toFixed(1)} в день)` : ''}. Клавиша F.`);
       }
       case 'rail-goods': return T('Товары', 'Сколько всего на складах, откуда берётся и куда уходит. Торговля.');
       case 'rail-legion': return T('Легион', 'Походы по провинциям, прокачка войск, отряд и умения. Клавиша L.');
