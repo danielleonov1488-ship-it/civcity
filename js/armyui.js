@@ -1,6 +1,7 @@
 'use strict';
-/* Меню армии: окно «Легион» (отряд, умения, карта походов), окно перед боем,
-   карточка военного здания с прокачкой и вкладка «Военное дело» в окне «Знания». */
+/* Окно «Легион» (Легион 2.0): вкладки «Походы» (карта одной провинции на экран), «Войска»
+   (прокачка родов войск одной кнопкой, отряд, умения) и «Против городов» (заработает с сервером).
+   Ещё здесь окно перед боем, карточка военного здания и окно «Чудеса». Меню крупные — под палец тоже. */
 
 const PERK_SVG = {
   oil: '<path d="M4.5 10h15l-1.6 7.2a3 3 0 0 1-2.9 2.3H9a3 3 0 0 1-2.9-2.3z"/><path d="M3 10h18"/><path d="M9 3.5c1.2 1.2-1 2.3 0 3.6M13 3c1.2 1.2-1 2.3 0 3.6M17 3.8c1 1-.8 2 0 3"/>',
@@ -10,8 +11,21 @@ const PERK_SVG = {
   horn: '<path d="M4 15c4 0 9-3 12-8l3 1.5c-2 6-7 10-14 10.5z"/><path d="M4 15l1 3.8M16 7l1.5-3"/>',
 };
 
+// Краски провинций для карты: земля сверху и снизу, тропа, подписи
+const BIOME_ART = {
+  forest: { top: '#cfe0a6', bot: '#9fc277', path: '#e8d6a4', ink: '#4f6a2e' },
+  hills: { top: '#efe2a8', bot: '#c9b874', path: '#f3e6bd', ink: '#6e5a26' },
+  darkforest: { top: '#a9c48e', bot: '#6f9358', path: '#d9c896', ink: '#2f4a26' },
+  swamp: { top: '#c3cfa4', bot: '#8a9c72', path: '#d6cba0', ink: '#3f4f30' },
+  labyrinth: { top: '#efe2c2', bot: '#cdb88c', path: '#f7eed8', ink: '#6a5634' },
+  rocks: { top: '#e2dcc8', bot: '#a9a08a', path: '#efe6cf', ink: '#55503f' },
+  desert: { top: '#f6e6b4', bot: '#e3c47e', path: '#fbf2d6', ink: '#7a5a24' },
+  hades: { top: '#6a4a44', bot: '#3a2626', path: '#a8826e', ink: '#f2d2b8' },
+};
+
 const ArmyUI = {
-  cycle: 0,
+  tab: 'camp',
+  view: null,          // какая провинция открыта на карте: { cycle, r }
 
   perkIcon(id) {
     return `<svg class="ui-ico perk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${PERK_SVG[id] || ''}</svg>`;
@@ -30,44 +44,250 @@ const ArmyUI = {
       return;
     }
     Battle.renderPortraits([...UNIT_IDS]);
-    const cycles = Math.floor(A.progress / (REGIONS.length * STAGES_PER_REGION)) + 1;
-    this.cycle = Math.min(this.cycle, cycles - 1);
+    const tabs = [['camp', 'Походы'], ['troops', 'Войска'], ['pvp', 'Против городов']];
+    const upgrading = Object.keys(A.upg).length;
     el.innerHTML = `
-      <div class="army-top">
-        <section class="squad-box">
-          <div class="squad-head"><h3>Отряд</h3><span class="power">${Icons.svg('people')}Сила <b>${fmt(Army.squadPower())}</b></span>
-            <span class="food ${Army.food() < Army.foodCost() ? 'short' : ''}">${Icons.img('wheat')}На поход <b>${Army.foodCost()}</b> из ${fmt(Army.food())}</span></div>
+      <div class="lg-strip">
+        <span class="lg-stat" data-tip="glory">${Icons.img('glory')}<b>${fmt(state.glory)}</b><small>Слава</small></span>
+        <span class="lg-stat">${Icons.svg('laurel')}<b>${fmt(A.rating)}</b><small>Рейтинг</small></span>
+        <span class="lg-stat ${Army.food() < Army.foodCost() ? 'short' : ''}">${Icons.img('wheat')}<b>${fmt(Army.food())}</b><small>Провизия · на поход ${Army.foodCost()}</small></span>
+        <span class="lg-stat">${Icons.svg('people')}<b>${fmt(Army.squadPower())}</b><small>Сила отряда</small></span>
+        <div class="seg lg-tabs">${tabs.map(([id, n]) => `<button type="button" data-lgtab="${id}" class="${this.tab === id ? 'on' : ''}">${n}${id === 'troops' && upgrading ? ` <i class="lg-dot">${upgrading}</i>` : ''}</button>`).join('')}</div>
+      </div>
+      <div class="lg-body" id="lg-body"></div>`;
+    el.querySelectorAll('[data-lgtab]').forEach(b => b.onclick = () => { this.tab = b.dataset.lgtab; this.render(el); });
+    const body = $('lg-body');
+    if (this.tab === 'troops') this.renderTroops(body);
+    else if (this.tab === 'pvp') this.renderPvp(body);
+    else this.renderCamp(body);
+  },
+
+  /* ---------- Походы: одна провинция на экран ---------- */
+
+  renderCamp(el) {
+    const A = state.army, F = Army.frontier();
+    const turn = A.turnPage;
+    if (!this.view || turn) this.view = { cycle: F.cycle, r: F.r };
+    A.turnPage = false;
+    const { cycle, r } = this.view, R = REGIONS[r];
+    const prev = r > 0 || cycle > 0 ? (r > 0 ? { cycle, r: r - 1 } : { cycle: cycle - 1, r: REGIONS.length - 1 }) : null;
+    const nxt = r < REGIONS.length - 1 ? { cycle, r: r + 1 } : { cycle: cycle + 1, r: 0 };
+    const nextOpen = Army.isOpen(nxt.cycle, nxt.r, 0);
+    const done = Army.stageIndex(cycle, r, STAGES_PER_REGION - 1) < A.progress;
+    const bossKey = R.boss;
+    Battle.renderPortraits([bossKey]);
+    el.innerHTML = `
+      <div class="prov-head">
+        <button type="button" class="icon-btn prov-arrow" id="prov-prev" ${prev ? '' : 'disabled'} aria-label="Предыдущая провинция">‹</button>
+        <div class="prov-title">
+          <small>${cycle ? `Поход ${roman(cycle + 1)} · ` : ''}Провинция ${r + 1} из ${REGIONS.length}</small>
+          <h3>${R.name}${done ? ' <span class="prov-done">✓ пройдена</span>' : ''}</h3>
+          <p>${R.desc}</p>
+        </div>
+        <div class="prov-boss">${this.unitImg(bossKey, 'pb-img')}<span><small>Босс провинции</small><b>${ENEMIES[bossKey].name}</b></span></div>
+        <button type="button" class="icon-btn prov-arrow" id="prov-next" ${nextOpen ? '' : 'disabled'} aria-label="Следующая провинция">›</button>
+      </div>
+      <div class="prov-map-wrap ${turn ? 'turn-in' : ''}">
+        ${this.provinceSvg(cycle, r)}
+        ${turn ? `<div class="prov-banner"><small>Новая провинция открыта</small><b>${R.name}</b></div>` : ''}
+      </div>
+      <div class="prov-foot">
+        <p class="sub">Звёзды — сколько бойцов уцелело. Пройденные бои можно повторять ради добычи. За босса — умения, места в отряде и новые рода войск.</p>
+        <button type="button" class="btn small ghost" id="fest-btn" ${state.glory < FESTIVAL.glory || state.day < state.festivalUntil ? 'disabled' : ''}>${Icons.img('glory')} Триумф: ${FESTIVAL.glory} Славы → +${FESTIVAL.happy} к счастью на ${FESTIVAL.days} дней</button>
+      </div>`;
+    $('prov-prev').onclick = () => { if (prev) { this.view = prev; this.renderCamp(el); } };
+    $('prov-next').onclick = () => { if (nextOpen) { this.view = nxt; this.renderCamp(el); } };
+    $('fest-btn').onclick = () => { if (Army.festival()) UI.renderWindow(); };
+    el.querySelectorAll('[data-node]').forEach(n => n.addEventListener('click', () => this.openStage(cycle, r, +n.dataset.node)));
+    el.querySelectorAll('[data-node]').forEach(n => n.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') this.openStage(cycle, r, +n.dataset.node); }));
+  },
+
+  // Точки боёв вдоль извилистой тропы от лагеря (слева внизу) к логову босса (справа вверху)
+  layout() {
+    if (this._layout) return this._layout;
+    const curve = t => [110 + t * 760, 410 - t * 250 + Math.sin(t * Math.PI * 2.4 + 0.3) * 78];
+    const dense = [];
+    let len = 0, prev = curve(0);
+    for (let i = 0; i <= 1000; i++) {
+      const p = curve(i / 1000);
+      len += Math.hypot(p[0] - prev[0], p[1] - prev[1]);
+      dense.push([p[0], p[1], len]);
+      prev = p;
+    }
+    const pts = [];
+    let j = 0;
+    for (let k = 0; k < STAGES_PER_REGION; k++) {
+      const want = len * (0.04 + 0.96 * k / (STAGES_PER_REGION - 1));
+      while (j < dense.length - 1 && dense[j][2] < want) j++;
+      pts.push([Math.round(dense[j][0]), Math.round(dense[j][1])]);
+    }
+    return (this._layout = { pts, dense: dense.filter((_, i) => i % 10 === 0).map(p => [p[0], p[1]]) });
+  },
+
+  provinceSvg(cycle, r) {
+    const A = state.army, R = REGIONS[r], art = BIOME_ART[R.biome];
+    const W = 1000, H = 500, { pts, dense } = this.layout();
+    const path = 'M' + dense.map(p => p.join(',')).join(' L');
+    let svg = `<svg class="prov-map" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Карта: ${R.name}">
+      <defs>
+        <linearGradient id="pg-${r}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${art.top}"/><stop offset="1" stop-color="${art.bot}"/></linearGradient>
+        <radialGradient id="pv" cx="50%" cy="50%" r="72%"><stop offset="62%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#3a2410" stop-opacity="0.3"/></radialGradient>
+        <filter id="ppaper"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2"/><feColorMatrix values="0 0 0 0 0.5 0 0 0 0 0.38 0 0 0 0 0.2 0 0 0 0.08 0"/></filter>
+      </defs>
+      <rect width="${W}" height="${H}" fill="url(#pg-${r})"/>
+      ${this.scenery(R.biome, r)}
+      <path d="${path}" class="prov-road-edge"/>
+      <path d="${path}" class="prov-road" style="stroke:${art.path}"/>`;
+    // пройденная часть тропы — золотая
+    const doneUpTo = A.progress - Army.stageIndex(cycle, r, 0);
+    if (doneUpTo > 0) {
+      const k = Math.min(STAGES_PER_REGION - 1, doneUpTo);
+      const last = pts[k], cut = dense.findIndex(p => Math.hypot(p[0] - last[0], p[1] - last[1]) < 14);
+      svg += `<path d="M${dense.slice(0, (cut > 0 ? cut : dense.length - 1) + 1).map(p => p.join(',')).join(' L')}" class="prov-road done"/>`;
+    }
+    // лагерь легиона в начале тропы и логово босса в конце
+    svg += this.campArt(70, 448) + this.lairArt(R.biome, pts[STAGES_PER_REGION - 1]);
+    for (let s = 0; s < STAGES_PER_REGION; s++) {
+      const [x, y] = pts[s], idx = Army.stageIndex(cycle, r, s), key = Army.stageKey(cycle, r, s);
+      const boss = s === STAGES_PER_REGION - 1, stars = A.stars[key] || 0;
+      const cls = idx < A.progress ? 'done' : idx === A.progress ? 'current' : 'locked';
+      const rad = boss ? 27 : 18;
+      svg += `<g class="node ${cls} ${boss ? 'boss' : ''}" ${cls !== 'locked' ? `data-node="${s}" tabindex="0" role="button"` : ''} transform="translate(${x},${y})">
+        <title>${boss ? ENEMIES[R.boss].name : `Бой ${s + 1}`}</title>
+        <circle r="${rad + 7}" class="halo"/>
+        <circle r="${rad}" class="disc"/>
+        ${boss ? '<path d="M-12 6 L-15 -9 L-6 -3 L0 -14 L6 -3 L15 -9 L12 6 Z" class="crown"/>' : `<text y="6" class="num">${s + 1}</text>`}
+        ${stars ? `<text y="${rad + 18}" class="stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</text>` : ''}
+      </g>`;
+    }
+    svg += `<rect width="${W}" height="${H}" fill="url(#pv)" pointer-events="none"/><rect width="${W}" height="${H}" filter="url(#ppaper)" opacity="0.8" pointer-events="none"/></svg>`;
+    return svg;
+  },
+
+  campArt(x, y) {
+    return `<g class="prov-camp" transform="translate(${x},${y})">
+      <path d="M-26 6 L-10 -20 L6 6 Z" fill="#efe3c6" stroke="#9a7a52" stroke-width="2"/><path d="M-10 -20 V6" stroke="#9a7a52" stroke-width="1.5"/>
+      <path d="M2 6 L16 -14 L30 6 Z" fill="#e6d7b4" stroke="#9a7a52" stroke-width="2"/>
+      <path d="M-34 6 V-34" stroke="#6e4a2f" stroke-width="2.5"/><path d="M-34 -34 h18 v12 h-18 z" fill="#b5452e"/><circle cx="-25" cy="-28" r="3" fill="#e3b445"/>
+      <text x="0" y="26" class="prov-label">Лагерь</text></g>`;
+  },
+
+  // Логово босса за последней точкой: крепость, пещера, лабиринт, вулкан
+  lairArt(biome, [x, y]) {
+    const fort = `<path d="M-30 18 V-14 h10 v-8 h8 v8 h8 v-8 h8 v8 h8 v-8 h8 v8 h10 V18 Z" fill="#a98f6a" stroke="#6e5638" stroke-width="2"/><path d="M-6 18 v-14 a6 6 0 0 1 12 0 v14" fill="#4a3826"/>`;
+    const cave = `<path d="M-40 20 Q-34 -26 0 -30 Q34 -26 40 20 Z" fill="#8a8170" stroke="#5e5646" stroke-width="2"/><path d="M-14 20 Q-12 -6 0 -8 Q12 -6 14 20 Z" fill="#2e2620"/>`;
+    const art = { hills: cave, rocks: cave, labyrinth: `<path d="M-34 18 V-18 H34 V18 M-22 18 V-6 H22 V18 M-10 18 V6 H10" fill="none" stroke="#8a7452" stroke-width="5"/>`,
+      hades: `<path d="M-40 20 L-12 -32 L12 -32 L40 20 Z" fill="#3a2422" stroke="#1e1212" stroke-width="2"/><path d="M-10 -32 q10 -18 20 0" fill="#ff7a3a"/><path d="M-4 -40 q4 -10 8 0" fill="#ffd27a"/>` }[biome] || fort;
+    return `<g class="prov-lair" transform="translate(${x + 52},${y - 6})">${art}</g>`;
+  },
+
+  // Местность провинции: деревья, холмы, болотца, стены, дюны, лава — по краям от тропы
+  scenery(b, seed) {
+    const rnd = mulberry32(seed * 131 + 7);
+    const { dense } = this.layout();
+    const far = (x, y) => dense.every(p => Math.hypot(p[0] - x, p[1] - y) > 48);
+    let g = '';
+    const put = (n, fn) => {
+      for (let i = 0, tries = 0; i < n && tries < n * 12; tries++) {
+        const x = 20 + rnd() * 960, y = 40 + rnd() * 440;
+        if (!far(x, y) || (x < 140 && y > 380)) continue;
+        g += fn(x, y, 0.75 + rnd() * 0.6, rnd());
+        i++;
+      }
+    };
+    const tree = c => (x, y, k) => `<g transform="translate(${x},${y}) scale(${k})"><path d="M0 -26 l13 18 h-6 l9 13 h-32 l9 -13 h-6 z" fill="${c}"/><rect x="-2.5" y="5" width="5" height="7" fill="#6e4a2f"/></g>`;
+    if (b === 'forest') { put(26, tree('#5f8f45')); put(8, tree('#7aa85a')); }
+    else if (b === 'darkforest') { put(34, tree('#3f6a3a')); put(10, tree('#2f5a30')); }
+    else if (b === 'hills') {
+      put(10, (x, y, k) => `<path d="M${x - 46 * k} ${y + 14} Q${x} ${y - 40 * k} ${x + 46 * k} ${y + 14} Z" fill="#c2ad6a" opacity="0.8"/>`);
+      put(10, tree('#7a9a4a'));
+    } else if (b === 'swamp') {
+      put(10, (x, y, k) => `<ellipse cx="${x}" cy="${y}" rx="${30 * k}" ry="${11 * k}" fill="#6f8f8a" opacity="0.85"/><path d="M${x - 8} ${y} v-16 M${x} ${y - 2} v-20 M${x + 8} ${y} v-14" stroke="#4f6a2e" stroke-width="2.5"/>`);
+      put(12, tree('#5a7448'));
+    } else if (b === 'labyrinth') {
+      put(14, (x, y, k) => `<path d="M${x - 24 * k} ${y - 16 * k} h${48 * k} v${32 * k} h-${36 * k} v-${20 * k} h${24 * k} v${10 * k}" fill="none" stroke="#a8916a" stroke-width="5"/>`);
+    } else if (b === 'rocks') {
+      g += `<path d="M640 0 C 700 60, 760 40, 1000 90 V 0 Z" fill="#8fc2cf"/><path d="M640 0 C 700 60, 760 40, 1000 90" fill="none" stroke="#f4f0e2" stroke-width="3" stroke-dasharray="8 8"/>`;
+      put(14, (x, y, k) => `<path d="M${x - 26 * k} ${y + 12} L${x - 6} ${y - 30 * k} L${x + 22 * k} ${y + 12} Z" fill="#9a958c"/><path d="M${x - 12} ${y - 18 * k} L${x - 6} ${y - 30 * k} L${x} ${y - 18 * k} Z" fill="#f2ead8"/>`);
+    } else if (b === 'desert') {
+      put(10, (x, y, k) => `<path d="M${x - 50 * k} ${y + 10} Q${x - 10} ${y - 22 * k} ${x + 50 * k} ${y + 10} Z" fill="#e8cf8c"/>`);
+      put(10, (x, y, k) => `<g transform="translate(${x},${y}) scale(${k})"><path d="M0 16 q-3 -16 3 -28" stroke="#8a6a46" stroke-width="3.5" fill="none"/><path d="M3 -12 q-14 -3 -20 6 M3 -12 q14 -4 18 6 M3 -12 q3 -12 -8 -15" stroke="#5f8f3a" stroke-width="4.5" fill="none" stroke-linecap="round"/></g>`);
+    } else if (b === 'hades') {
+      put(8, (x, y, k) => `<path d="M${x - 40 * k} ${y + 12} Q${x} ${y - 6} ${x + 40 * k} ${y + 12}" stroke="#ff7a3a" stroke-width="3" fill="none" opacity="0.8"/>`);
+      put(12, (x, y, k) => `<path d="M${x - 20 * k} ${y + 12} L${x - 5} ${y - 26 * k} L${x + 5} ${y - 26 * k} L${x + 20 * k} ${y + 12} Z" fill="#2c1c1a"/>`);
+    }
+    return g;
+  },
+
+  /* ---------- Войска: прокачка, отряд, умения ---------- */
+
+  renderTroops(el) {
+    const A = state.army;
+    el.innerHTML = `
+      <div class="ucards">${UNIT_IDS.map(k => this.unitCard(k)).join('')}</div>
+      <div class="lg-cols">
+        <section class="lg-box">
+          <div class="lg-box-head"><h3>Отряд</h3><small>${Army.squadStats().length} из ${Army.slots()} мест${Army.nextSlotBoss() ? ` · ещё место — после победы: ${Army.bossName(Army.nextSlotBoss())}` : ''}</small></div>
           <div class="squad" id="squad">${this.squadHtml()}</div>
         </section>
-        <section class="perks-box">
-          <div class="squad-head"><h3>Умения в бою</h3><span class="power">${Icons.img('glory')}<b>${fmt(state.glory)}</b> Славы</span></div>
+        <section class="lg-box">
+          <div class="lg-box-head"><h3>Умения в бою</h3><small>Открываются победами над боссами, усиливаются за Славу</small></div>
           <div class="perk-list">${PERK_IDS.map(id => this.perkCard(id)).join('')}</div>
         </section>
-      </div>
-      <div class="map-head">
-        <h3 class="grp">Карта походов</h3>
-        ${cycles > 1 ? `<div class="seg">${Array.from({ length: cycles }, (_, i) => `<button type="button" data-cycle="${i}" class="${i === this.cycle ? 'on' : ''}">Поход ${roman(i + 1)}</button>`).join('')}</div>` : ''}
-        <button type="button" class="btn small ghost" id="fest-btn" ${state.glory < FESTIVAL.glory || state.day < state.festivalUntil ? 'disabled' : ''}>${Icons.img('glory')} Триумф: ${FESTIVAL.glory} Славы → +${FESTIVAL.happy} к счастью на ${FESTIVAL.days} дней</button>
-      </div>
-      <div class="camp-wrap" id="camp-wrap">${this.mapSvg(this.cycle)}</div>
-      <p class="sub">Звёзды — сколько бойцов уцелело. Пройденные бои можно повторять ради добычи. Победа над боссом открывает следующую провинцию.</p>`;
-    this.bind(el);
-    const cur = el.querySelector('.node.current');
-    if (cur) {
-      const wrap = $('camp-wrap'), box = cur.getBoundingClientRect(), wb = wrap.getBoundingClientRect();
-      wrap.scrollLeft += box.left - wb.left - wb.width / 2;
+      </div>`;
+    el.querySelectorAll('[data-up]').forEach(b => b.onclick = () => { if (Army.startUpgrade(b.dataset.up)) UI.renderWindow(); });
+    el.querySelectorAll('[data-finish]').forEach(b => b.onclick = () => Army.finishUpgrade(b.dataset.finish));
+    el.querySelectorAll('[data-build]').forEach(b => b.onclick = () => UI.runAction({ tool: b.dataset.build }));
+    el.querySelectorAll('[data-slot]').forEach(b => b.onclick = () => this.pickUnit(+b.dataset.slot));
+    el.querySelectorAll('[data-perk-up]').forEach(b => b.onclick = () => { if (Army.upgradePerk(b.dataset.perkUp)) UI.renderWindow(); });
+  },
+
+  unitCard(key) {
+    const U = UNITS[key], A = state.army, d = BUILDINGS[U.building];
+    const s = Army.stats(key), lvl = A.levels[key];
+    let foot, cls = '';
+    if (!isUnlocked(U.building)) {
+      cls = 'locked';
+      foot = d.boss ? `<p class="uc-why">${Icons.svg('legion')}Откроется после победы над боссом: <b>${Army.bossName(d.boss)}</b></p>`
+        : `<p class="uc-why">Нужно знание «${lockName(U.building)}»</p>`;
+    } else if (!countType(U.building)) {
+      cls = 'nobuilding';
+      foot = `<p class="uc-why">Постройте в городе: <b>${d.name}</b></p><button type="button" class="btn small" data-build="${U.building}">Построить</button>`;
+    } else {
+      const u = A.upg[key], i = Army.upgradeInfo(key);
+      if (u) {
+        const left = (u.end - Date.now()) / 1000, k = 1 - left / Math.max(1, u.total);
+        foot = `<div class="upg-run" data-run="${key}"><div class="bar"><div style="width:${clamp(k, 0, 1) * 100}%"></div></div>
+          <small>Улучшается до ${u.to} ур. · осталось <b>${fmtDuration(left)}</b></small>
+          ${TEST_MODE ? `<button type="button" class="btn tiny ghost" data-finish="${key}">Завершить (тест)</button>` : ''}</div>`;
+      } else if (i.max) foot = '<p class="uc-max">Максимальный уровень</p>';
+      else if (i.blocked) {
+        const pop = Army.nextCapPop();
+        foot = `<p class="uc-why">Предел города — ${i.limit} уровень.${pop ? ` Дальше — когда в городе будет ${fmt(pop)} жителей.` : ''}</p>`;
+      } else {
+        const can = Army.canUpgrade(key);
+        foot = `<div class="uc-cost card-cost">${UI.costHtml(i.cost)}</div>
+          <button type="button" class="btn uc-up" data-up="${key}" ${can ? '' : 'disabled'}>Улучшить до ${i.to} ур. <small>${fmtDuration(i.time)}</small></button>`;
+      }
     }
+    return `<div class="ucard ${cls}">
+      <div class="uc-top">${this.unitImg(key, 'uc-por')}<div class="uc-name"><b>${U.name}</b><span class="uc-lvl">${lvl}<small>ур.</small></span><p>${U.role}</p></div></div>
+      <div class="uc-stats"><span><small>Здоровье</small><b>${fmt(s.hp)}</b></span><span><small>Урон</small><b>${fmt(s.atk)}</b></span><span><small>Броня</small><b>${s.armor}</b></span><span><small>Сила</small><b>${Army.power(s)}</b></span></div>
+      <p class="uc-strong">Сильнее против: ${U.strong}</p>
+      <div class="uc-foot">${foot}</div>
+    </div>`;
   },
 
   squadHtml() {
     const A = state.army, slots = Army.slots();
     let html = '';
-    for (let i = 0; i < Math.max(slots, 3); i++) {
+    const total = SQUAD_BASE + SLOT_BOSSES.length;
+    for (let i = 0; i < total; i++) {
       const t = A.squad[i];
-      if (i >= slots) { html += `<div class="slot locked">${Icons.svg('pick')}<small>место на ${SQUAD_BY_LEVEL[i - SQUAD_BASE] || '—'} ур. Казарм</small></div>`; continue; }
+      if (i >= slots) { html += `<div class="slot locked">${Icons.svg('pick')}<small>после победы: ${Army.bossName(SLOT_BOSSES[i - SQUAD_BASE])}</small></div>`; continue; }
       if (t && Army.available(t)) {
         const s = Army.stats(t);
-        html += `<button type="button" class="slot" data-slot="${i}">${this.unitImg(t)}<b>${UNITS[t].name}</b><small>Сила ${Army.power(s)}</small></button>`;
+        html += `<button type="button" class="slot" data-slot="${i}">${this.unitImg(t)}<b>${UNITS[t].name}</b><small>${s.level} ур. · сила ${Army.power(s)}</small></button>`;
       } else html += `<button type="button" class="slot empty" data-slot="${i}"><span class="plus">+</span><small>Свободно</small></button>`;
     }
     return html;
@@ -75,24 +295,10 @@ const ArmyUI = {
 
   perkCard(id) {
     const lvl = state.army.perks[id], P = PERKS[id];
-    if (!lvl) {
-      const t = MIL_TECHS.find(x => x.perk === id);
-      return `<div class="perk locked" title="${P.desc}"><span class="ring">${this.perkIcon(id)}</span><b>${P.name}</b><small>Военное дело: «${t.name}»</small></div>`;
-    }
+    if (!lvl) return `<div class="perk locked" title="${P.desc}"><span class="ring">${this.perkIcon(id)}</span><b>${P.name}</b><small>после победы: ${Army.bossName(P.boss)}</small></div>`;
     const cost = Army.perkCost(id);
     return `<div class="perk" title="${P.desc}"><span class="ring">${this.perkIcon(id)}</span><b>${P.name}</b><small>${'★'.repeat(lvl)}${'☆'.repeat(PERK_MAX - lvl)} · раз в ${P.cd} с</small>
       ${lvl < PERK_MAX ? `<button type="button" class="btn tiny" data-perk-up="${id}" ${state.glory < cost ? 'disabled' : ''}>Усилить: ${cost} ${Icons.img('glory')}</button>` : '<small class="maxed">Максимум</small>'}</div>`;
-  },
-
-  bind(el) {
-    el.querySelectorAll('[data-slot]').forEach(b => b.onclick = () => this.pickUnit(+b.dataset.slot));
-    el.querySelectorAll('[data-perk-up]').forEach(b => b.onclick = () => { if (Army.upgradePerk(b.dataset.perkUp)) { UI.toast(`${PERKS[b.dataset.perkUp].name}: умение усилено`, 'good'); this.render(el); } });
-    el.querySelectorAll('[data-cycle]').forEach(b => b.onclick = () => { this.cycle = +b.dataset.cycle; this.render(el); });
-    el.querySelectorAll('[data-node]').forEach(n => n.addEventListener('click', () => {
-      const [r, s] = n.dataset.node.split('-').map(Number);
-      this.openStage(this.cycle, r, s);
-    }));
-    $('fest-btn').onclick = () => { if (Army.festival()) this.render(el); };
   },
 
   // Выбор бойца в место отряда
@@ -100,7 +306,7 @@ const ArmyUI = {
     const A = state.army;
     const opts = UNIT_IDS.map(k => {
       const ok = Army.available(k), s = Army.stats(k);
-      const why = ok ? `Сила ${Army.power(s)} · сильнее против: ${UNITS[k].strong}` : this.lockText(k);
+      const why = ok ? `${s.level} ур. · сила ${Army.power(s)} · сильнее против: ${UNITS[k].strong}` : this.lockText(k);
       return `<button type="button" class="pick-unit ${ok ? '' : 'locked'}" data-pick="${k}" ${ok ? '' : 'disabled'}>${this.unitImg(k)}<span><b>${UNITS[k].name}</b><small>${why}</small></span></button>`;
     }).join('');
     UI.showModal(`<p class="eyebrow">Отряд · место ${i + 1}</p><h2>Кого поставить?</h2><div class="pick-list">${opts}</div>
@@ -113,105 +319,26 @@ const ArmyUI = {
 
   lockText(k) {
     const b = UNITS[k].building, d = BUILDINGS[b];
-    if (!isUnlocked(b)) return d.milTech ? `Военное дело: «${MIL_BY_ID[d.milTech].name}»` : `Нужно знание «${TECH_BY_ID[d.tech].name}»`;
+    if (!isUnlocked(b)) return d.boss ? `После победы: ${Army.bossName(d.boss)}` : `Нужно знание «${lockName(b)}»`;
     return `Постройте: ${d.name}`;
   },
 
-  /* ---------- Карта походов ---------- */
+  /* ---------- Против городов (заработает вместе с сервером) ---------- */
 
-  // Точки боёв на равном расстоянии вдоль извилистой дороги (по длине пути, а не по x)
-  layout() {
-    if (this._layout) return this._layout;
-    const N = REGIONS.length * STAGES_PER_REGION, dense = [];
-    const curve = t => [80 + t * 1480, 235 + Math.sin(t * Math.PI * 5.2 + 0.4) * 125];
-    let len = 0, prev = curve(0);
-    for (let i = 0; i <= 2000; i++) {
-      const p = curve(i / 2000);
-      len += Math.hypot(p[0] - prev[0], p[1] - prev[1]);
-      dense.push([p[0], p[1], len]);
-      prev = p;
-    }
-    const pts = [];
-    let j = 0;
-    for (let k = 0; k < N; k++) {
-      const want = len * k / (N - 1);
-      while (j < dense.length - 1 && dense[j][2] < want) j++;
-      pts.push([dense[j][0], dense[j][1]]);
-    }
-    return (this._layout = pts);
-  },
-
-  nodePos(r, s) { return this.layout()[r * STAGES_PER_REGION + s]; },
-
-  mapSvg(cycle) {
-    const A = state.army, W = 1640, H = 470;
-    const pts = this.layout();
-    const nodes = [];
-    let svg = `<svg class="camp-map" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Карта походов">
-      <defs>
-        <filter id="paper"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2"/><feColorMatrix values="0 0 0 0 0.5 0 0 0 0 0.38 0 0 0 0 0.2 0 0 0 0.09 0"/></filter>
-        <radialGradient id="vign" cx="50%" cy="50%" r="75%"><stop offset="60%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#5a3a1a" stop-opacity="0.22"/></radialGradient>
-      </defs>
-      <rect width="${W}" height="${H}" fill="#efe0bd"/>
-      <path d="M0 ${H - 28} C 220 ${H - 52}, 430 ${H - 10}, 650 ${H - 36} S 1100 ${H - 14}, 1310 ${H - 44} S 1560 ${H - 22}, ${W} ${H - 34} V ${H} H 0 Z" fill="#a9cfd6" opacity="0.85"/>
-      <path d="M0 ${H - 28} C 220 ${H - 52}, 430 ${H - 10}, 650 ${H - 36} S 1100 ${H - 14}, 1310 ${H - 44} S 1560 ${H - 22}, ${W} ${H - 34}" fill="none" stroke="#7aa9b4" stroke-width="2" stroke-dasharray="6 6"/>`;
-    // провинция — широкая цветная полоса вдоль своего участка дороги, вокруг — значки местности
-    REGIONS.forEach((R, r) => {
-      const seg = pts.slice(r * STAGES_PER_REGION, (r + 1) * STAGES_PER_REGION + (r < REGIONS.length - 1 ? 1 : 0));
-      const d = 'M' + seg.map(p => p.join(',')).join(' L');
-      const open = Army.stageIndex(cycle, r, 0) <= A.progress;
-      // подпись — у середины провинции, со стороны от дороги
-      const mid = seg[Math.floor(STAGES_PER_REGION / 2)], up = mid[1] > 235;
-      const lx = clamp(mid[0], 110, W - 110), ly = clamp(mid[1] + (up ? -72 : 82), 34, H - 48);
-      svg += `<g class="region ${open ? '' : 'fog'}">
-        <path d="${d}" fill="none" stroke="${this.biomeColor(R.biome)}" stroke-width="118" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
-        ${this.terrain(R.biome, seg, r)}
-        <text x="${lx}" y="${ly}" class="reg-name">${R.name}</text>
-      </g>`;
-    });
-    // дорога: пройденная часть — золотая
-    const done = Math.min(pts.length - 1, A.progress - cycle * pts.length);
-    svg += `<polyline points="${pts.map(p => p.join(',')).join(' ')}" class="road"/>`;
-    if (done > 0) svg += `<polyline points="${pts.slice(0, done + 1).map(p => p.join(',')).join(' ')}" class="road done"/>`;
-    for (let r = 0; r < REGIONS.length; r++) {
-      for (let s = 0; s < STAGES_PER_REGION; s++) {
-        const [x, y] = this.nodePos(r, s), idx = Army.stageIndex(cycle, r, s), key = Army.stageKey(cycle, r, s);
-        const boss = s === STAGES_PER_REGION - 1, stars = A.stars[key] || 0;
-        const cls = idx < A.progress ? 'done' : idx === A.progress ? 'current' : 'locked';
-        const rad = boss ? 20 : 13;
-        nodes.push(`<g class="node ${cls} ${boss ? 'boss' : ''}" ${cls !== 'locked' ? `data-node="${r}-${s}" tabindex="0" role="button"` : ''} transform="translate(${x},${y})">
-          <title>${boss ? ENEMIES[REGIONS[r].boss].name : `${REGIONS[r].name}: бой ${s + 1}`}</title>
-          <circle r="${rad + 5}" class="halo"/>
-          <circle r="${rad}" class="disc"/>
-          ${boss ? '<path d="M-9 4 L-11 -7 L-4 -2 L0 -10 L4 -2 L11 -7 L9 4 Z" class="crown"/>' : `<text y="4.5" class="num">${s + 1}</text>`}
-          ${stars ? `<text y="${rad + 14}" class="stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</text>` : ''}
-        </g>`);
-      }
-    }
-    svg += nodes.join('');
-    svg += `<rect width="${W}" height="${H}" fill="url(#vign)" pointer-events="none"/><rect width="${W}" height="${H}" filter="url(#paper)" opacity="0.7" pointer-events="none"/></svg>`;
-    return svg;
-  },
-
-  biomeColor(b) {
-    return { forest: '#a9c97a', hills: '#d6cf8a', darkforest: '#7fa66a', swamp: '#9aaa7a', labyrinth: '#d9c9a2', rocks: '#c9c2a6', desert: '#ecd59a', hades: '#9a6a5a' }[b];
-  },
-
-  // Значки местности по обе стороны дороги: деревья, горы, болота, стены лабиринта, пальмы, вулканы
-  terrain(b, seg, seed) {
-    const rnd = mulberry32(seed * 101 + 5);
-    let g = '';
-    for (let i = 0; i < 12; i++) {
-      const p = seg[Math.floor(rnd() * seg.length)], side = rnd() < 0.5 ? -1 : 1;
-      const x = p[0] + (rnd() - 0.5) * 50, y = p[1] + side * (34 + rnd() * 24);
-      if (b === 'forest' || b === 'darkforest') g += `<path d="M${x} ${y - 15} l8 12 h-4 l6 9 h-20 l6 -9 h-4 z" fill="${b === 'forest' ? '#5f8f45' : '#3f6a3a'}"/><rect x="${x - 1.5}" y="${y + 6}" width="3" height="4" fill="#6e4a2f"/>`;
-      else if (b === 'hills' || b === 'rocks') g += `<path d="M${x - 15} ${y + 7} L${x} ${y - 12} L${x + 15} ${y + 7} Z" fill="${b === 'hills' ? '#b7a46a' : '#9a958c'}"/><path d="M${x - 4} ${y - 7} L${x} ${y - 12} L${x + 4} ${y - 7} Z" fill="#f2ead8"/>`;
-      else if (b === 'swamp') g += `<ellipse cx="${x}" cy="${y}" rx="13" ry="4.5" fill="#6f8f8a"/><path d="M${x - 4} ${y} v-10 M${x} ${y} v-13 M${x + 4} ${y} v-9" stroke="#5f7a3a" stroke-width="2"/>`;
-      else if (b === 'labyrinth') g += `<path d="M${x - 11} ${y - 9} h22 v18 h-18 v-12 h12 v6 h-5" fill="none" stroke="#9a8a6a" stroke-width="2.5"/>`;
-      else if (b === 'desert') g += `<path d="M${x} ${y + 9} q-2 -11 2 -18" stroke="#8a6a46" stroke-width="2.5" fill="none"/><path d="M${x + 2} ${y - 9} q-9 -2 -13 4 M${x + 2} ${y - 9} q9 -3 12 4 M${x + 2} ${y - 9} q2 -8 -5 -10" stroke="#5f8f3a" stroke-width="3" fill="none"/>`;
-      else if (b === 'hades') g += `<path d="M${x - 13} ${y + 7} L${x - 4} ${y - 11} L${x + 4} ${y - 11} L${x + 13} ${y + 7} Z" fill="#4a3530"/><path d="M${x - 3} ${y - 11} q3 -8 6 0" fill="#ff7a3a"/>`;
-    }
-    return g;
+  renderPvp(el) {
+    const A = state.army;
+    el.innerHTML = `
+      <div class="pvp-box">
+        <div class="pvp-rating">${Icons.svg('laurel')}<b>${fmt(A.rating)}</b><small>рейтинг легиона</small></div>
+        <div class="pvp-text">
+          <h3>Бои с другими городами — скоро</h3>
+          <p>Когда заработает сервер, ваш отряд сможет нападать на отряды других игроков. Бой идёт сам, как в походах, а вы жмёте умения. Победы над городами дают много рейтинга и немного добычи.</p>
+          <p>Рейтинг не тратится — это ваше достижение. Сейчас он растёт с каждой победой в походах: ${RATING.first} за новый бой, ${RATING.boss} за босса, ${RATING.repeat} за повтор. За рейтинг открываются чудеса света.</p>
+          <button type="button" class="btn ghost" id="pvp-wonders">${Icons.svg('wonders')} Открыть «Чудеса»</button>
+          <button type="button" class="btn" disabled>${Icons.svg('swords')} Найти соперника</button>
+        </div>
+      </div>`;
+    $('pvp-wonders').onclick = () => UI.openWindow('wonders');
   },
 
   /* ---------- Окно перед боем ---------- */
@@ -238,6 +365,7 @@ const ArmyUI = {
     const squad = Army.squadStats();
     const err = Army.canFight();
     const tips = this.counterTips(st);
+    const unlocks = st.boss && first ? Army.unlocksAt(Army.bosses() + 1) : [];
     UI.showModal(`
       <div class="stage-modal">
         <p class="eyebrow">${st.title} · ${st.boss ? 'Босс' : `бой ${s + 1} из ${STAGES_PER_REGION}`}</p>
@@ -252,18 +380,20 @@ const ArmyUI = {
         </div>
         <div class="rows">
           <div class="row"><span>${Icons.img('money')} Добыча${first ? ' (первая победа ×2,5)' : ''}</span><b class="loot-line">${Object.entries(reward).map(([k, n]) => `${Icons.img(k)} ${fmt(n)}`).join(' ')}</b></div>
+          <div class="row"><span>${Icons.svg('laurel')} Рейтинг за победу</span><b>+${first ? (st.boss ? RATING.boss : RATING.first) : RATING.repeat}</b></div>
+          ${unlocks.length ? `<div class="row"><span>${Icons.svg('legion')} Откроется</span><b>${unlocks.join(', ')}</b></div>` : ''}
           <div class="row"><span>${Icons.img('wheat')} Провизия на поход</span><b class="${Army.food() < Army.foodCost() ? 'short' : ''}">${Army.foodCost()} из ${fmt(Army.food())}</b></div>
           ${state.army.stars[st.key] ? `<div class="row"><span>Лучший результат</span><b class="stars">${'★'.repeat(state.army.stars[st.key])}</b></div>` : ''}
         </div>
         ${err ? `<p class="note bad">${err}</p>` : ''}
         <div class="actions">
           <button type="button" class="btn" id="go-battle" ${err ? 'disabled' : ''}>В бой!</button>
-          <button type="button" class="btn ghost" id="go-squad">Изменить отряд</button>
+          <button type="button" class="btn ghost" id="go-squad">Отряд и прокачка</button>
           <button type="button" class="btn ghost" id="go-cancel">Отмена</button>
         </div>
       </div>`, 'wide');
     $('go-battle').onclick = () => Battle.start(st);
-    $('go-squad').onclick = () => { UI.closeModal(); UI.openWindow('legion'); };
+    $('go-squad').onclick = () => { UI.closeModal(); this.tab = 'troops'; UI.openWindow('legion'); };
     $('go-cancel').onclick = () => UI.closeModal();
   },
 
@@ -279,66 +409,25 @@ const ArmyUI = {
     return advice.length ? 'Совет: ' + advice.slice(0, 2).join('; ') + '.' : '';
   },
 
-  /* ---------- Военное здание: боец и прокачка ---------- */
+  /* ---------- Военное здание: только открывает род войск ---------- */
 
   buildingPanel(b) {
     Army.ensure();
     const key = UNIT_BY_BUILDING[b.type];
     if (!key) return '';
-    const U = UNITS[key], s = Army.stats(key), A = state.army;
+    const U = UNITS[key], lvl = state.army.levels[key];
     Battle.renderPortraits([key]);
-    let html = `<div class="unit-card">${this.unitImg(key, 'uc-img')}<div><b>${U.name}</b><p>${U.role}</p><p class="strong">Сильнее против: ${U.strong}</p></div></div>
-      <div class="rows">
-        <div class="row"><span>Здоровье</span><b>${fmt(s.hp)}</b></div>
-        <div class="row"><span>Урон</span><b>${fmt(s.atk)} раз в ${s.rate} с</b></div>
-        <div class="row"><span>Броня</span><b>${s.armor} (−${Math.round(s.armor / (s.armor + 100) * 100)}% урона)</b></div>
-        <div class="row"><span>Дальность</span><b>${s.range > 3 ? `${s.range} шагов` : 'ближний бой'}</b></div>
-        <div class="row"><span>Сила бойца</span><b>${Army.power(s)}</b></div>
-      </div>`;
-    if (b.type === 'barracks') {
-      const nextSlot = SQUAD_BY_LEVEL.find(l => l > A.levels.legionary);
-      html += `<p class="note">Мест в отряде: <b>${Army.slots()}</b>${nextSlot ? `. Следующее место — на ${nextSlot} уровне Казарм.` : '.'}</p>`;
-    }
-    html += `<h3>Прокачка</h3><div class="upg-list" id="upg-list">${this.upgradeRows(key)}</div>`;
-    const cap = Army.cap(), pop = Army.nextCapPop();
-    if (!TEST_MODE && pop && A.levels[key] >= cap) html += `<p class="note">Предел уровня для вашего города — ${cap}. Чтобы качать дальше, вырастите город до ${fmt(pop)} жителей.</p>`;
-    html += `<button type="button" class="btn" id="open-legion">${Icons.img('legion')} Отряд и карта походов</button>`;
-    return html;
-  },
-
-  upgradeRows(key) {
-    const A = state.army, u = A.upg[key];
-    return ['level', 'weapon', 'armor'].map(kind => {
-      const K = UPGRADE_KINDS[kind], i = Army.upgradeInfo(key, kind);
-      let right;
-      if (u && u.kind === kind) {
-        const left = (u.end - Date.now()) / 1000, k = 1 - left / Math.max(1, u.total);
-        right = `<div class="upg-run" data-run="${key}"><div class="bar"><div style="width:${clamp(k, 0, 1) * 100}%"></div></div><small>до ${u.to} ур. · осталось <b>${fmtDuration(left)}</b></small>
-          ${TEST_MODE ? `<button type="button" class="btn tiny ghost" data-finish="${key}">Завершить (тест)</button>` : ''}</div>`;
-      } else if (i.max) right = '<small class="maxed">Максимум</small>';
-      else if (i.blocked) right = `<small class="why">${kind === 'level' ? `Предел города: ${i.limit}` : `Сначала уровень здания ${i.to}`}</small>`;
-      else {
-        const can = Army.canUpgrade(key, kind);
-        right = `<div class="upg-buy"><span class="card-cost">${UI.costHtml(i.cost)}</span><small>${fmtDuration(i.time)}</small>
-          <button type="button" class="btn tiny" data-upg="${key}:${kind}" ${can ? '' : 'disabled'} title="${u ? 'В здании уже идёт улучшение' : ''}">До ${i.to} ур.</button></div>`;
-      }
-      return `<div class="upg"><div class="upg-name"><b>${K.name}</b><span class="lvl">${i.cur}</span><small>${K.what}</small></div>${right}</div>`;
-    }).join('');
+    return `<div class="unit-card">${this.unitImg(key, 'uc-img')}<div><small class="eyebrow">Открывает</small><b>${U.many}</b><p>${U.role}</p><p class="strong">Сильнее против: ${U.strong} · сейчас ${lvl} ур.</p></div></div>
+      <p class="note">Прокачка, отряд и походы — в окне «Легион», вкладка «Войска».</p>
+      <button type="button" class="btn" id="open-legion">${Icons.img('legion')} Открыть Легион</button>`;
   },
 
   bindBuilding(b) {
-    const key = UNIT_BY_BUILDING[b.type];
-    if (!key) return;
-    document.querySelectorAll('[data-upg]').forEach(btn => btn.onclick = () => {
-      const [k, kind] = btn.dataset.upg.split(':');
-      if (Army.startUpgrade(k, kind)) UI.refreshPanel();
-    });
-    document.querySelectorAll('[data-finish]').forEach(btn => btn.onclick = () => { Army.finishUpgrade(btn.dataset.finish); });
     const ol = $('open-legion');
-    if (ol) ol.onclick = () => UI.openWindow('legion');
+    if (ol) ol.onclick = () => { this.tab = 'troops'; UI.openWindow('legion'); };
   },
 
-  // Каждые четверть секунды: обратный отсчёт улучшений в открытой карточке
+  // Каждые четверть секунды: таймеры улучшений и обратный отсчёт на карточках
   tick() {
     Army.tick();
     for (const el of document.querySelectorAll('[data-run]')) {
@@ -350,54 +439,31 @@ const ArmyUI = {
     }
   },
 
-  /* ---------- Военное дело ---------- */
+  /* ---------- Окно «Чудеса» ---------- */
 
-  renderMilResearch(el) {
+  renderWonders(el) {
     Army.ensure();
-    const A = state.army, busy = A.research ? MIL_BY_ID[A.research.id] : null;
-    const cols = [];
-    for (const t of MIL_TECHS) (cols[t.col] = cols[t.col] || []).push(t);
-    const card = t => {
-      const st = Army.techState(t), afford = state.glory >= t.glory && state.money >= t.money;
-      const days = MIL_DAYS[t.col];
-      const opens = t.unlocks ? `<div class="opens"><img src="${UI.icons[t.unlocks]}" alt="" data-card="${t.unlocks}"></div>` : t.perk ? `<div class="opens perk-open">${this.perkIcon(t.perk)}</div>` : '';
+    const A = state.army;
+    if (!Army.unlocked()) {
+      el.innerHTML = `<div class="explain">${Icons.svg('wonders')}<div><b>Чудеса света открывает легион.</b>
+        <p>Изучите «Легион» и побеждайте в походах: с каждой победой растёт рейтинг легиона, а за рейтинг открываются Триумфальная арка, Колизей и Пантеон.</p></div></div>`;
+      return;
+    }
+    const card = w => {
+      const st = Army.wonderState(w), d = BUILDINGS[w.id];
+      const name = d ? d.name : w.name;
+      const pic = d && UI.icons[w.id] ? `<img class="w-pic" src="${UI.icons[w.id]}" alt="">` : `<span class="w-pic w-svg">${Icons.svg('wonders')}</span>`;
       let foot;
-      if (st === 'done') foot = '<span class="tech-done">✓ Изучено</span>';
-      else if (st === 'active') foot = `<div class="tech-prog"><div class="bar"><div style="width:${(1 - A.research.left / A.research.total) * 100}%"></div></div><span>Изучается · осталось <b>${A.research.left}</b> ${plural(A.research.left, 'день', 'дня', 'дней')}</span></div>`;
-      else if (st === 'locked') foot = `<span class="tech-lock">Сначала: ${t.req.filter(r => !A.techs.includes(r)).map(r => MIL_BY_ID[r].name).join(', ')}</span>`;
-      else foot = `<button type="button" class="btn small" data-mtech="${t.id}" ${afford && !busy ? '' : 'disabled'}>${Icons.img('glory')}${t.glory} ${Icons.img('money')}${fmt(t.money)}</button><span class="tech-time">${busy ? 'После текущего' : `${days} ${plural(days, 'день', 'дня', 'дней')}`}</span>`;
-      return `<div class="tech mil ${st}${st === 'open' && afford && !busy ? ' ready' : ''}" data-tech-id="m-${t.id}"><h4>${t.name}</h4><p>${t.desc}</p>${opens}${foot}</div>`;
+      if (st === 'built') foot = '<p class="w-done">✓ Построено — бонус действует</p>';
+      else if (st === 'open') foot = `<div class="card-cost">${UI.costHtml(d.cost)}</div><button type="button" class="btn" data-wonder="${w.id}" ${canAfford(d.cost) ? '' : 'disabled'}>Построить</button>`;
+      else if (st === 'locked') foot = `<div class="w-need"><div class="bar"><div style="width:${Math.min(100, A.rating / w.rating * 100)}%"></div></div><small>Рейтинг ${fmt(A.rating)} из ${fmt(w.rating)}</small></div>`;
+      else foot = `<p class="w-pvp">${Icons.svg('swords')}Нужны бои с другими городами · рейтинг ${fmt(w.rating)}</p>`;
+      return `<div class="wcard ${st}">${pic}<div class="w-body"><h4>${name}</h4>${d ? `<p>${d.desc}</p>` : ''}<p class="w-bonus">${w.bonus}</p>${foot}</div></div>`;
     };
     el.innerHTML = `
-      <div class="explain">${Icons.img('glory', 'big')}<div><b>Военное дело изучается за Славу и денарии.</b> У вас ${fmt(state.glory)} Славы.
-        <p>Слава даётся за победы в походах. Военное дело открывает новые военные здания, умения в бою и бонусы всем бойцам. Изучается одно знание за раз, несколько дней.</p>
-        ${busy ? `<p class="now">Сейчас изучается «${busy.name}» — осталось ${A.research.left} ${plural(A.research.left, 'день', 'дня', 'дней')}.</p>` : ''}</div></div>
-      <div class="tree-wrap"><svg class="tree-lines" id="tree-lines"></svg><div class="tree mil-tree">${cols.map(c => `<div class="tcol">${c.map(card).join('')}</div>`).join('')}</div></div>`;
-    el.querySelectorAll('[data-mtech]').forEach(b => b.onclick = () => { if (Army.research(b.dataset.mtech)) UI.renderWindow(); });
-    requestAnimationFrame(() => this.drawMilLines());
-  },
-
-  drawMilLines() {
-    const svg = $('tree-lines');
-    if (!svg) return;
-    const wrap = svg.parentElement, box = wrap.getBoundingClientRect();
-    svg.setAttribute('width', wrap.scrollWidth);
-    svg.setAttribute('height', wrap.scrollHeight);
-    let d = '';
-    for (const t of MIL_TECHS) {
-      const to = wrap.querySelector(`[data-tech-id="m-${t.id}"]`);
-      if (!to) continue;
-      const b = to.getBoundingClientRect();
-      for (const r of t.req) {
-        const from = wrap.querySelector(`[data-tech-id="m-${r}"]`);
-        if (!from) continue;
-        const a = from.getBoundingClientRect();
-        const x1 = a.right - box.left + wrap.scrollLeft, y1 = a.top + a.height / 2 - box.top + wrap.scrollTop;
-        const x2 = b.left - box.left + wrap.scrollLeft, y2 = b.top + 22 - box.top + wrap.scrollTop;
-        const mx = (x1 + x2) / 2;
-        d += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" class="${state.army.techs.includes(r) ? 'done' : ''}"/>`;
-      }
-    }
-    svg.innerHTML = d;
+      <div class="explain">${Icons.svg('wonders')}<div><b>Чудеса света — за что воюет легион.</b> Рейтинг легиона: <b>${fmt(A.rating)}</b>, Славы: <b>${fmt(state.glory)}</b>.
+        <p>Рейтинг растёт с каждой победой и не тратится. Когда его хватает, чудо можно построить: оно стоит много Славы и материалов и даёт сильный бонус городу и армии. Первые три открываются походами, старшие — боями с другими городами.</p></div></div>
+      <div class="wgrid">${WONDERS.map(card).join('')}</div>`;
+    el.querySelectorAll('[data-wonder]').forEach(b => b.onclick = () => UI.runAction({ tool: b.dataset.wonder }));
   },
 };

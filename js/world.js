@@ -168,17 +168,20 @@ function plotFeatures(px, py) {
 
 /* ---------- Постройки ---------- */
 
+// Постройка открыта: изучено знание, побеждено нужное число боссов, хватает рейтинга легиона (для чудес)
 function isUnlocked(type) {
   const d = BUILDINGS[type];
   if (d.tech && !state.techs.includes(d.tech)) return false;
-  return !d.milTech || !!(state.army && state.army.techs.includes(d.milTech));
+  if (d.boss && !(state.army && Math.floor(state.army.progress / STAGES_PER_REGION) >= d.boss)) return false;
+  return !d.rating || !!(state.army && state.army.rating >= d.rating);
 }
 
-// Чего не хватает, чтобы открыть постройку: обычное знание или Военное дело
+// Чего не хватает, чтобы открыть постройку: знание, победа над боссом или рейтинг
 function lockName(type) {
   const d = BUILDINGS[type];
   if (d.tech && !state.techs.includes(d.tech)) return TECH_BY_ID[d.tech].name;
-  return d.milTech ? `Военное дело: ${MIL_BY_ID[d.milTech].name}` : '';
+  if (d.boss && !isUnlocked(type)) return `Победа: ${Army.bossName(d.boss)}`;
+  return d.rating ? `Рейтинг легиона ${d.rating}` : '';
 }
 
 // Левый верхний угол постройки, чтобы её центр оказался под курсором

@@ -1,6 +1,6 @@
 'use strict';
 /* Тестовый город: адрес с #test (например …/civcity/#test) открывает отдельный город со своим сохранением.
-   Всё изучено (и Военное дело), много ресурсов, готовый квартал и все военные здания.
+   Всё изучено, пройдены пять провинций походов (открыты все войска и умения), много ресурсов, готовый квартал.
    Улучшения идут в 100 раз быстрее и завершаются кнопкой. Настоящий город игрока не трогается. */
 
 const Test = {
@@ -45,12 +45,13 @@ const Test = {
     for (let x = 0; x < PLOT; x++) put('road', x, 21);
     for (const t of ['range', 'spearcamp', 'ballistae', 'catapults']) for (let x = 0; x < PLOT - 2 && !put(t, x, 22); x++);
     const A = Army.ensure();
-    A.techs = MIL_TECHS.map(t => t.id);
+    A.progress = 6 * STAGES_PER_REGION;   // шесть боссов побеждено: открыты все рода войск и умения
+    A.rating = 150;                        // открыты Арка и Колизей, Пантеон ещё впереди
     for (const p of PERK_IDS) A.perks[p] = Math.max(1, A.perks[p]);
-    A.squad = ['legionary', 'legionary', 'archer'];
+    A.squad = ['legionary', 'legionary', 'spearman', 'archer', 'ballista', 'catapult'];
     this.give();
     UI.buildToolbar();
-    UI.log('Тестовый город: всё изучено, военные здания стоят. Легион — кнопка слева, прокачка — в карточке Казарм.', 'good', true);
+    UI.log('Тестовый город: всё изучено, военные здания стоят. Легион и Чудеса — кнопки слева.', 'good', true);
   },
 
   give() {

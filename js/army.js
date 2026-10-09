@@ -1,27 +1,28 @@
 'use strict';
-/* Армия по мотивам Hustle Castle: пять родов войск из военных зданий города, прокачка зданий,
-   оружия и брони по настоящим часам, Военное дело, умения в бою и карта походов против варваров,
-   зверей и чудовищ. Здесь — данные и правила. Бой считает BattleSim (без графики), рисует battle.js. */
+/* Армия по мотивам Hustle Castle («Легион 2.0»). Военные здания города только открывают рода войск,
+   всё остальное живёт в окне «Легион»: прокачка (один уровень на род, одна кнопка, по настоящим часам),
+   отряд, карта походов по провинциям, умения за боссов, Слава, рейтинг и чудеса света.
+   Здесь — данные и правила. Бой считает BattleSim (без графики), рисует battle.js. */
 
 /* ---------- Рода войск ----------
-   Числа — на 1 уровне оружия и брони. range — дальность удара, rate — секунд между ударами,
+   Числа — на 1 уровне. range — дальность удара, rate — секунд между ударами,
    speed — шаг в секунду (0 — машина стоит в тылу). vs — против кого бьют сильнее. */
 const UNITS = {
   legionary: { name: 'Легионер', many: 'Легионеры', gen: 'легионеров', building: 'barracks',
     role: 'Щит и меч. Держит строй и принимает удар на себя.',
-    hp: 270, atk: 22, armor: 32, range: 1.0, rate: 1.0, speed: 1.6, vs: { human: 1.3 }, strong: 'людей ближнего боя' },
+    hp: 270, atk: 22, armor: 32, range: 1.0, rate: 1.0, speed: 1.6, vs: { human: 1.3 }, strong: 'людей ближнего боя', costK: 1 },
   spearman: { name: 'Копейщик', many: 'Копейщики', gen: 'копейщиков', building: 'spearcamp',
     role: 'Тяжёлая броня и длинное копьё: бьёт первым, но ходит медленно.',
-    hp: 330, atk: 19, armor: 48, range: 1.7, rate: 1.3, speed: 1.1, vs: { beast: 1.6, giant: 1.6 }, strong: 'зверей и великанов' },
+    hp: 330, atk: 19, armor: 48, range: 1.7, rate: 1.3, speed: 1.1, vs: { beast: 1.6, giant: 1.6 }, strong: 'зверей и великанов', costK: 1.1 },
   archer: { name: 'Лучник', many: 'Лучники', gen: 'лучников', building: 'range',
     role: 'Стреляет издалека, но сам хрупкий — держится за спинами.',
-    hp: 150, atk: 19, armor: 10, range: 7.5, rate: 1.15, speed: 1.5, shot: 'arrow', vs: { ranged: 1.35, swift: 1.35 }, strong: 'стрелков и быстрых зверей' },
+    hp: 150, atk: 19, armor: 10, range: 7.5, rate: 1.15, speed: 1.5, shot: 'arrow', vs: { ranged: 1.35, swift: 1.35 }, strong: 'стрелков и быстрых зверей', costK: 1 },
   ballista: { name: 'Баллиста', many: 'Баллисты', gen: 'баллист', building: 'ballistae',
     role: 'Тяжёлый болт пробивает строй врагов насквозь. Стоит в тылу.',
-    hp: 220, atk: 50, armor: 22, range: 13, rate: 3.0, speed: 0, shot: 'bolt', pierce: true, vs: { armored: 1.6, giant: 1.5 }, strong: 'бронированных и чудовищ' },
+    hp: 220, atk: 50, armor: 22, range: 13, rate: 3.0, speed: 0, shot: 'bolt', pierce: true, vs: { armored: 1.6, giant: 1.5 }, strong: 'бронированных и чудовищ', costK: 1.25 },
   catapult: { name: 'Катапульта', many: 'Катапульты', gen: 'катапульт', building: 'catapults',
     role: 'Камень по площади: бьёт редко, но накрывает толпу. Стоит в тылу.',
-    hp: 240, atk: 40, armor: 22, range: 14, minRange: 2.5, rate: 4.0, speed: 0, shot: 'stone', splash: 1.6, vs: { swarm: 1.4, human: 1.15 }, strong: 'толпу' },
+    hp: 240, atk: 40, armor: 22, range: 14, minRange: 2.5, rate: 4.0, speed: 0, shot: 'stone', splash: 1.6, vs: { swarm: 1.4, human: 1.15 }, strong: 'толпу', costK: 1.35 },
 };
 const UNIT_IDS = Object.keys(UNITS);
 const UNIT_BY_BUILDING = Object.fromEntries(UNIT_IDS.map(k => [UNITS[k].building, k]));
@@ -54,7 +55,8 @@ const ENEMIES = {
   cerberus: { name: 'Цербер', boss: true, hp: 4600, atk: 80, armor: 40, range: 1.5, rate: 1.1, speed: 1.9, size: 1.9, bites: 3, tags: ['beast', 'giant'] },
 };
 
-/* ---------- Провинции карты походов ---------- */
+/* ---------- Провинции карты походов ----------
+   Каждая — своя карта на весь экран: фон, тропа из STAGES_PER_REGION боёв, последний — босс. */
 const REGIONS = [
   { id: 'forest', name: 'Лес разбойников', biome: 'forest', foes: ['bandit', 'bandit', 'slinger', 'wolf'], boss: 'chief',
     desc: 'Шайки на лесной дороге. Хватит трёх легионеров.' },
@@ -73,67 +75,63 @@ const REGIONS = [
   { id: 'hades', name: 'Врата Аида', biome: 'hades', foes: ['shade', 'hellhound', 'shade', 'hellhound'], boss: 'cerberus',
     desc: 'Тени и адские псы стерегут вход. За ними — Цербер.' },
 ];
-const STAGES_PER_REGION = 8;
+const STAGES_PER_REGION = 10;
+// Сложность и добыча растут как при восьми боях на провинцию (так проверен баланс)
+const STAGE_STEP = 8 / STAGES_PER_REGION;
 
-/* ---------- Умения в бою ---------- */
+/* ---------- Умения в бою: открываются победами над боссами, усиливаются за Славу ---------- */
 const PERKS = {
-  oil: { name: 'Кипящее масло', cd: 14, desc: 'Котёл опрокидывают на самую плотную толпу врагов: сильный урон и ожог.' },
-  testudo: { name: 'Черепаха', cd: 20, desc: 'Отряд смыкает щиты: урон по бойцам заметно меньше.' },
-  bandage: { name: 'Перевязка', cd: 22, desc: 'Лекари перевязывают раненых: отряд лечится.' },
-  volley: { name: 'Залп', cd: 18, desc: 'Лучники из тыла бьют по всем врагам разом.' },
-  horn: { name: 'Боевой рог', cd: 25, desc: 'Отряд бьёт и двигается быстрее.' },
+  oil: { name: 'Кипящее масло', cd: 14, boss: 1, desc: 'Котёл опрокидывают на самую плотную толпу врагов: сильный урон и ожог.' },
+  testudo: { name: 'Черепаха', cd: 20, boss: 2, desc: 'Отряд смыкает щиты: урон по бойцам заметно меньше.' },
+  bandage: { name: 'Перевязка', cd: 22, boss: 3, desc: 'Лекари перевязывают раненых: отряд лечится.' },
+  volley: { name: 'Залп', cd: 18, boss: 4, desc: 'Лучники из тыла бьют по всем врагам разом.' },
+  horn: { name: 'Боевой рог', cd: 25, boss: 6, desc: 'Отряд бьёт и двигается быстрее.' },
 };
 const PERK_IDS = Object.keys(PERKS);
 const PERK_MAX = 5;
 
-/* ---------- Военное дело — своя ветка знаний (за Славу и денарии) ---------- */
-const MIL_TECHS = [
-  { id: 'archery', name: 'Стрельба из лука', col: 0, req: [], glory: 5, money: 300, unlocks: 'range', desc: 'Стрельбище: лучники.' },
-  { id: 'oil', name: 'Кипящее масло', col: 0, req: [], glory: 4, money: 200, perk: 'oil', desc: 'Умение в бою: котёл масла на толпу.' },
-  { id: 'drill', name: 'Строевая подготовка', col: 0, req: [], glory: 8, money: 400, bonus: { hp: 0.1 }, desc: '+10% здоровья всем бойцам.' },
-  { id: 'spears', name: 'Длинные копья', col: 1, req: ['drill'], glory: 12, money: 600, unlocks: 'spearcamp', desc: 'Лагерь копейщиков: копейщики.' },
-  { id: 'testudo', name: 'Черепаха', col: 1, req: ['oil'], glory: 12, money: 500, perk: 'testudo', desc: 'Умение в бою: отряд смыкает щиты.' },
-  { id: 'steel', name: 'Закалённая сталь', col: 1, req: ['drill'], glory: 15, money: 700, bonus: { atk: 0.1 }, desc: '+10% урона всем бойцам.' },
-  { id: 'torsion', name: 'Торсион', col: 2, req: ['archery', 'steel'], glory: 20, money: 900, unlocks: 'ballistae', desc: 'Мастерская баллист: баллисты.' },
-  { id: 'medicus', name: 'Медики', col: 2, req: ['testudo'], glory: 18, money: 800, perk: 'bandage', desc: 'Умение в бою: перевязка раненых.' },
-  { id: 'kitchen', name: 'Полевая кухня', col: 2, req: ['drill'], glory: 16, money: 600, bonus: { food: 0.3 }, desc: 'Походы едят на 30% меньше провизии.' },
-  { id: 'onager', name: 'Онагр', col: 3, req: ['torsion'], glory: 28, money: 1300, unlocks: 'catapults', desc: 'Мастерская катапульт: катапульты.' },
-  { id: 'volley', name: 'Залп', col: 3, req: ['archery', 'medicus'], glory: 25, money: 1100, perk: 'volley', desc: 'Умение в бою: залп по всем врагам.' },
-  { id: 'veterans', name: 'Ветераны', col: 3, req: ['steel', 'spears'], glory: 30, money: 1500, bonus: { hp: 0.15, atk: 0.15 }, desc: '+15% здоровья и урона всем бойцам.' },
-  { id: 'horn', name: 'Боевой рог', col: 4, req: ['volley'], glory: 35, money: 1800, perk: 'horn', desc: 'Умение в бою: отряд быстрее бьёт и бежит.' },
-  { id: 'legat', name: 'Легат', col: 4, req: ['veterans'], glory: 40, money: 2500, bonus: { slot: 1 }, desc: '+1 место в отряде.' },
-  { id: 'spoils', name: 'Трофеи', col: 4, req: ['kitchen'], glory: 30, money: 1500, bonus: { loot: 0.3 }, desc: '+30% добычи в походах.' },
-];
-const MIL_BY_ID = Object.fromEntries(MIL_TECHS.map(t => [t.id, t]));
-const MIL_DAYS = [8, 18, 30, 45, 60];   // дней изучения по колонке дерева
-
-/* ---------- Прокачка военных зданий ---------- */
+/* ---------- Прокачка родов войск ---------- */
 const ARMY_MAX_LEVEL = 10;
 // Секунд настоящего времени на улучшение до уровня n: от минуты до двух суток
 const UPGRADE_TIME = [0, 0, 60, 300, 1200, 3600, 7200, 14400, 28800, 86400, 172800];
-// Предел уровня военных зданий от размера города: растите город, чтобы растить армию
+// Предел уровня от размера города: растите город, чтобы растить армию
 const ARMY_CAP = [[0, 3], [1500, 5], [2500, 7], [4000, 9], [6000, 10]];
 const SQUAD_BASE = 3;
-const SQUAD_BY_LEVEL = [3, 6, 9];        // уровни Казарм, на которых открывается ещё одно место
-const FOOD_PER_SOLDIER = 6;              // провизии (зерно, рыба) на бойца за поход
+const SLOT_BOSSES = [1, 3, 5, 7];        // после скольких боссов открывается ещё одно место в отряде
+const FOOD_PER_SOLDIER = 6;              // провизии (зерно, рыба, хлеб) на бойца за поход
 const FESTIVAL = { glory: 15, days: 60, happy: 12 };
+// Рейтинг — достижение, не тратится. Растёт с победами (позже — сильнее в боях с городами)
+const RATING = { first: 3, boss: 12, repeat: 1 };
 
-const UPGRADE_KINDS = {
-  level: { name: 'Уровень здания', what: 'открывает новые уровни оружия и брони' },
-  weapon: { name: 'Оружие', what: '+18% урона за уровень' },
-  armor: { name: 'Броня', what: '+6 брони и +15% здоровья за уровень' },
-};
-
-function upgradeCost(kind, to) {
-  const k = to - 1;
-  if (kind === 'level') {
-    const c = { money: Math.round(260 * Math.pow(1.55, k)), bricks: Math.round(20 * Math.pow(1.4, k)), iron: Math.round(8 * Math.pow(1.45, k)) };
-    if (to >= 6) c.marble = Math.round(10 * Math.pow(1.4, to - 6));
-    return c;
-  }
-  if (kind === 'weapon') return { money: Math.round(160 * Math.pow(1.5, k)), weapons: Math.round(6 * Math.pow(1.38, k)), iron: Math.round(8 * Math.pow(1.38, k)) };
-  return { money: Math.round(160 * Math.pow(1.5, k)), iron: Math.round(14 * Math.pow(1.38, k)), wood: Math.round(12 * Math.pow(1.3, k)) };
+// Цена улучшения рода войск до уровня to
+function unitCost(type, to) {
+  const k = to - 1, f = UNITS[type].costK;
+  const c = {
+    money: Math.round(560 * Math.pow(1.52, k) * f / 10) * 10,
+    iron: Math.round(26 * Math.pow(1.4, k) * f),
+    weapons: Math.round(6 * Math.pow(1.38, k) * f),
+    bricks: Math.round(18 * Math.pow(1.38, k) * f),
+  };
+  if (UNITS[type].speed === 0) { c.wood = c.bricks; delete c.bricks; }   // машины — из дерева
+  if (to >= 6) c.marble = Math.round(10 * Math.pow(1.4, to - 6) * f);
+  return c;
 }
+
+/* ---------- Чудеса света ----------
+   Открываются рейтингом легиона, стоят много Славы и материалов (цена — у здания), дают бонусы городу и армии.
+   Старшие чудеса требуют боёв с другими городами — они появятся вместе с сервером. */
+const WONDERS = [
+  { id: 'arch', rating: 30, army: { atk: 0.05 }, bonus: 'Красота и счастье вокруг, +5% урона всем бойцам' },
+  { id: 'colosseum', rating: 120, army: { hp: 0.1 }, bonus: 'Счастье всего города, Слава каждый день, +10% здоровья бойцам' },
+  { id: 'pantheon', rating: 250, army: { atk: 0.1 }, bonus: 'Свитки и Слава каждый день, +10% урона бойцам' },
+  { id: 'circus', name: 'Большой цирк', rating: 600, pvp: true, bonus: 'Скачки колесниц: огромное счастье и Слава' },
+  { id: 'aqueduct', name: 'Акведук Клавдия', rating: 900, pvp: true, bonus: 'Вода всему городу без колодцев и фонтанов' },
+  { id: 'trajan', name: 'Колонна Траяна', rating: 1200, pvp: true, bonus: '+15% урона и здоровья всей армии' },
+  { id: 'caracalla', name: 'Термы Каракаллы', rating: 1600, pvp: true, bonus: 'Термы для всего города и много счастья' },
+  { id: 'hadrian', name: 'Мавзолей Адриана', rating: 2100, pvp: true, bonus: 'Слава и свитки каждый день' },
+  { id: 'jupiter', name: 'Храм Юпитера Капитолийского', rating: 3000, pvp: true, bonus: 'Величайший храм Рима: всё понемногу, но для всех' },
+];
+const WONDER_BY_ID = Object.fromEntries(WONDERS.map(w => [w.id, w]));
 
 function fmtDuration(sec) {
   sec = Math.max(0, Math.ceil(sec));
@@ -158,37 +156,66 @@ function mulberry32(a) {
 const Army = {
   ensure() {
     const A = state.army || (state.army = {});
-    A.levels = A.levels || {};          // уровень здания по роду войск
-    A.gear = A.gear || {};              // { weapon, armor } по роду войск
-    A.upg = A.upg || {};                // идущее улучшение по роду: { kind, to, end }
+    A.levels = A.levels || {};          // уровень рода войск
+    A.upg = A.upg || {};                // идущее улучшение по роду: { to, end, total }
     A.squad = A.squad || ['legionary', 'legionary', 'legionary'];
     A.perks = A.perks || {};
-    A.techs = A.techs || [];
-    A.research = A.research || null;
     A.stars = A.stars || {};            // "круг-провинция-бой" → звёзды
     A.progress = A.progress || 0;       // сколько боёв первого прохода пройдено подряд
     A.wins = A.wins || 0;
-    for (const k of UNIT_IDS) {
-      if (!A.levels[k]) A.levels[k] = 1;
-      if (!A.gear[k]) A.gear[k] = { weapon: 1, armor: 1 };
-    }
+    A.rating = A.rating || 0;
+    if (A.v !== 2) this.migrate(A);
+    for (const k of UNIT_IDS) if (!A.levels[k]) A.levels[k] = 1;
     for (const p of PERK_IDS) if (A.perks[p] === undefined) A.perks[p] = 0;
     return A;
+  },
+
+  // Сохранение первой армии: уровни здания, оружия и брони сливаются в один уровень,
+  // восемь боёв на провинцию становятся десятью, Военное дело уходит
+  migrate(A) {
+    if (A.gear) {
+      for (const k of UNIT_IDS) {
+        const g = A.gear[k] || { weapon: 1, armor: 1 };
+        A.levels[k] = Math.max(A.levels[k] || 1, g.weapon || 1, g.armor || 1);
+      }
+      delete A.gear;
+    }
+    for (const [k, u] of Object.entries(A.upg)) {
+      if (u.kind && u.kind !== 'level') A.upg[k] = { to: (A.levels[k] || 1) + 1, end: u.end, total: u.total };
+      else delete A.upg[k].kind;
+      if (A.upg[k].to <= (A.levels[k] || 1)) delete A.upg[k];
+    }
+    if (A.progress) {
+      const per = 8;
+      A.progress = Math.floor(A.progress / per) * STAGES_PER_REGION + Math.min(STAGES_PER_REGION - 1, Math.round((A.progress % per) * STAGES_PER_REGION / per));
+      A.rating = A.rating || A.wins * RATING.repeat + Math.floor(A.progress / STAGES_PER_REGION) * RATING.boss;
+    }
+    A.stars = {};
+    delete A.techs; delete A.research;
+    // умения за уже побеждённых боссов; открытые раньше через Военное дело остаются
+    const nb = this.bossesOf(A);
+    for (const p of PERK_IDS) if (nb >= PERKS[p].boss && !A.perks[p]) A.perks[p] = 1;
+    A.v = 2;
   },
 
   get A() { return state.army; },
 
   unlocked() { return hasTech('legion'); },
 
-  // Род войск доступен, если его здание стоит в городе
+  bossesOf(A) { return Math.floor((A.progress || 0) / STAGES_PER_REGION); },
+  // Сколько боссов побеждено (сквозь все круги походов)
+  bosses() { return this.bossesOf(this.A); },
+
+  // Род войск в бою: его здание стоит в городе
   available(type) {
     const b = UNITS[type].building;
     return isUnlocked(b) && countType(b) > 0;
   },
 
+  // Бонусы построенных чудес армии: hp, atk
   bonus(key) {
     let v = 0;
-    for (const id of this.A.techs) { const b = MIL_BY_ID[id].bonus; if (b && b[key]) v += b[key]; }
+    for (const w of WONDERS) if (w.army && w.army[key] && countType(w.id) > 0) v += w.army[key];
     return v;
   },
 
@@ -206,21 +233,21 @@ const Army = {
     return next ? next[0] : null;
   },
 
-  slots() {
-    const lvl = this.A.levels.legionary;      // места в отряде открывает уровень Казарм
-    let n = SQUAD_BASE;
-    for (const l of SQUAD_BY_LEVEL) if (lvl >= l) n++;
-    return n + (this.bonus('slot') || 0);
-  },
+  // Места в отряде: три с начала и ещё по одному за боссов
+  slots() { return SQUAD_BASE + SLOT_BOSSES.filter(b => this.bosses() >= b).length; },
+  nextSlotBoss() { return SLOT_BOSSES.find(b => this.bosses() < b) || null; },
 
-  // Боевые числа бойца с учётом прокачки и Военного дела
+  // Имя босса, после которого что-то откроется (n — сколько боссов нужно победить)
+  bossName(n) { const R = REGIONS[(n - 1) % REGIONS.length]; return ENEMIES[R.boss].name; },
+
+  // Боевые числа бойца: уровень поднимает и здоровье, и урон, и броню
   stats(type) {
-    const U = UNITS[type], A = this.A, g = A.gear[type], lvl = A.levels[type];
-    const hpK = 1 + 0.15 * (g.armor - 1) + 0.04 * (lvl - 1) + this.bonus('hp');
-    const atkK = 1 + 0.18 * (g.weapon - 1) + 0.04 * (lvl - 1) + this.bonus('atk');
+    const U = UNITS[type], lvl = this.A.levels[type];
+    const hpK = 1 + 0.19 * (lvl - 1) + this.bonus('hp');
+    const atkK = 1 + 0.22 * (lvl - 1) + this.bonus('atk');
     return {
-      key: type, def: U, name: U.name,
-      hp: Math.round(U.hp * hpK), atk: Math.round(U.atk * atkK), armor: U.armor + 6 * (g.armor - 1),
+      key: type, def: U, name: U.name, level: lvl,
+      hp: Math.round(U.hp * hpK), atk: Math.round(U.atk * atkK), armor: U.armor + 6 * (lvl - 1),
       range: U.range, minRange: U.minRange || 0, rate: U.rate, speed: U.speed,
       shot: U.shot, pierce: U.pierce, splash: U.splash, vs: U.vs, tags: ['roman'], size: 1,
     };
@@ -235,14 +262,12 @@ const Army = {
 
   squadStats() {
     const slots = this.slots();
-    return this.A.squad.slice(0, slots).filter(t => this.available(t)).map(t => this.stats(t));
+    return this.A.squad.slice(0, slots).filter(t => t && this.available(t)).map(t => this.stats(t));
   },
 
   squadPower() { return this.squadStats().reduce((s, u) => s + this.power(u), 0); },
 
-  foodCost() {
-    return Math.ceil(this.squadStats().length * FOOD_PER_SOLDIER * (1 - this.bonus('food')));
-  },
+  foodCost() { return Math.ceil(this.squadStats().length * FOOD_PER_SOLDIER); },
 
   food() { return (state.goods.wheat || 0) + (state.goods.fish || 0) + (state.goods.bread || 0); },
 
@@ -255,38 +280,37 @@ const Army = {
     }
   },
 
-  /* ---------- Прокачка в зданиях ---------- */
+  /* ---------- Прокачка: один уровень на род войск, одна кнопка ---------- */
 
-  upgradeInfo(type, kind) {
-    const A = this.A;
-    const cur = kind === 'level' ? A.levels[type] : A.gear[type][kind];
-    const to = cur + 1;
-    const limit = kind === 'level' ? Math.min(ARMY_MAX_LEVEL, this.cap()) : A.levels[type];
-    return { cur, to, max: cur >= ARMY_MAX_LEVEL, blocked: to > limit, limit, cost: upgradeCost(kind, to), time: UPGRADE_TIME[Math.min(to, ARMY_MAX_LEVEL)] * (TEST_MODE ? 0.01 : 1) };
+  upgradeInfo(type) {
+    const cur = this.A.levels[type], to = cur + 1;
+    const limit = Math.min(ARMY_MAX_LEVEL, this.cap());
+    return { cur, to, max: cur >= ARMY_MAX_LEVEL, blocked: to > limit, limit, cost: unitCost(type, Math.min(to, ARMY_MAX_LEVEL)),
+      time: UPGRADE_TIME[Math.min(to, ARMY_MAX_LEVEL)] * (TEST_MODE ? 0.01 : 1) };
   },
 
-  canUpgrade(type, kind) {
-    const i = this.upgradeInfo(type, kind);
+  canUpgrade(type) {
+    const i = this.upgradeInfo(type);
     return !this.A.upg[type] && !i.max && !i.blocked && canAfford(i.cost);
   },
 
-  startUpgrade(type, kind) {
-    if (!this.canUpgrade(type, kind)) return false;
-    const i = this.upgradeInfo(type, kind);
+  startUpgrade(type) {
+    if (!this.canUpgrade(type)) return false;
+    const i = this.upgradeInfo(type);
     pay(i.cost);
-    this.A.upg[type] = { kind, to: i.to, end: Date.now() + i.time * 1000, total: i.time };
-    UI.log(`${BUILDINGS[UNITS[type].building].name}: начато улучшение «${UPGRADE_KINDS[kind].name}» до ${i.to} уровня.`, 'info');
+    this.A.upg[type] = { to: i.to, end: Date.now() + i.time * 1000, total: i.time };
+    UI.log(`${UNITS[type].many}: начато улучшение до ${i.to} уровня — ${fmtDuration(i.time)}.`, 'info');
     return true;
   },
 
   finishUpgrade(type) {
     const u = this.A.upg[type];
     if (!u) return;
-    if (u.kind === 'level') this.A.levels[type] = u.to;
-    else this.A.gear[type][u.kind] = u.to;
+    this.A.levels[type] = Math.max(this.A.levels[type], u.to);
     delete this.A.upg[type];
-    UI.log(`${BUILDINGS[UNITS[type].building].name}: «${UPGRADE_KINDS[u.kind].name}» теперь ${u.to} уровня. ${UNITS[type].many} стали сильнее!`, 'good', true);
+    UI.log(`${UNITS[type].many} теперь ${u.to} уровня — сильнее и крепче!`, 'good', true);
     UI.refreshPanel();
+    if (UI.winOpen && UI.winTab === 'legion') UI.renderWindow();
   },
 
   // Проверка таймеров по настоящим часам — улучшения идут, даже когда игра закрыта
@@ -296,44 +320,7 @@ const Army = {
     for (const [type, u] of Object.entries(this.A.upg)) if (now >= u.end) this.finishUpgrade(type);
   },
 
-  /* ---------- Военное дело ---------- */
-
-  techState(t) {
-    const A = this.A;
-    if (A.techs.includes(t.id)) return 'done';
-    if (A.research && A.research.id === t.id) return 'active';
-    if (!t.req.every(r => A.techs.includes(r))) return 'locked';
-    return 'open';
-  },
-
-  canResearch(t) {
-    return this.techState(t) === 'open' && !this.A.research && state.glory >= t.glory && state.money >= t.money;
-  },
-
-  research(id) {
-    const t = MIL_BY_ID[id];
-    if (!this.canResearch(t)) return false;
-    state.glory -= t.glory;
-    state.money -= t.money;
-    const days = MIL_DAYS[t.col];
-    this.A.research = { id, left: days, total: days };
-    UI.log(`Военное дело: начали изучать «${t.name}». Будет готово через ${days} ${plural(days, 'день', 'дня', 'дней')}.`, 'info');
-    return true;
-  },
-
-  daily() {
-    if (!state.army) return;
-    const r = this.A.research;
-    if (!r || --r.left > 0) return;
-    this.A.research = null;
-    const t = MIL_BY_ID[r.id];
-    this.A.techs.push(t.id);
-    if (t.perk && !this.A.perks[t.perk]) this.A.perks[t.perk] = 1;
-    const what = t.unlocks ? ` Открыто: ${BUILDINGS[t.unlocks].name}.` : t.perk ? ` Новое умение в бою: ${PERKS[t.perk].name}.` : '';
-    UI.log(`Военное дело: изучено «${t.name}».${what}`, 'good', true);
-    UI.buildToolbar();
-    if (UI.winOpen && UI.winTab === 'research') UI.renderWindow();
-  },
+  daily() {},
 
   perkCost(id) { return 6 + 6 * this.A.perks[id]; },
 
@@ -353,6 +340,14 @@ const Army = {
     return true;
   },
 
+  /* ---------- Чудеса ---------- */
+
+  wonderState(w) {
+    if (w.pvp) return 'pvp';
+    if (countType(w.id) > 0) return 'built';
+    return this.A.rating >= w.rating ? 'open' : 'locked';
+  },
+
   /* ---------- Карта походов ---------- */
 
   stageKey(cycle, r, s) { return `${cycle}-${r}-${s}`; },
@@ -362,27 +357,34 @@ const Army = {
 
   isOpen(cycle, r, s) { return this.stageIndex(cycle, r, s) <= this.A.progress; },
 
+  // Где сейчас передний край: круг, провинция, бой
+  frontier() {
+    const p = this.A.progress, per = REGIONS.length * STAGES_PER_REGION;
+    return { cycle: Math.floor(p / per), r: Math.floor((p % per) / STAGES_PER_REGION), s: p % STAGES_PER_REGION };
+  },
+
   // Состав и награда боя — одинаковые при каждом заходе
   stage(cycle, r, s) {
-    const R = REGIONS[r], D = this.stageIndex(cycle, r, s);
-    const rnd = mulberry32(D * 7919 + 13);
+    const R = REGIONS[r], idx = this.stageIndex(cycle, r, s);
+    const D = idx * STAGE_STEP, sk = s * STAGE_STEP;
+    const rnd = mulberry32(idx * 7919 + 13);
     const boss = s === STAGES_PER_REGION - 1;
-    const nWaves = boss ? 2 : s < 3 ? 1 : s < 6 ? 2 : 3;
+    const nWaves = boss ? 2 : s < 3 ? 1 : s < 7 ? 2 : 3;
     const scale = Math.pow(1.02, D) * (1 + cycle * 0.6);
     const waves = [];
     for (let w = 0; w < nWaves; w++) {
-      const n = Math.min(6, 2 + Math.floor((s + r) / 3) + (w === nWaves - 1 && !boss ? 1 : 0));
+      const n = Math.min(6, 2 + Math.floor((sk + r) / 3) + (w === nWaves - 1 && !boss ? 1 : 0));
       const wave = [];
       for (let i = 0; i < n; i++) wave.push(R.foes[Math.floor(rnd() * R.foes.length)]);
       if (boss && w === nWaves - 1) { wave.length = Math.min(wave.length, 2); wave.unshift(R.boss); }
       waves.push(wave);
     }
     const reward = {
-      money: Math.round(45 * Math.pow(1.085, D)),
-      glory: 1 + Math.floor(D / 5) + (boss ? 3 : 0),
+      money: Math.round(45 * Math.pow(1.085, D) * STAGE_STEP),
+      glory: Math.max(1, Math.round((1 + Math.floor(D / 5)) * STAGE_STEP)) + (boss ? 3 : 0),
     };
     const extra = boss ? ['iron', 'weapons', 'marble'][r % 3] : rnd() < 0.3 ? ['iron', 'weapons', 'bricks'][Math.floor(rnd() * 3)] : null;
-    if (extra) reward[extra] = Math.round((boss ? 25 : 10) * (1 + D * 0.08));
+    if (extra) reward[extra] = Math.round((boss ? 25 : 10 * STAGE_STEP) * (1 + D * 0.08));
     const title = `${R.name}${cycle ? ' ' + roman(cycle + 1) : ''}`;
     return { cycle, r, s, D, R, boss, waves, scale, reward, title, name: boss ? ENEMIES[R.boss].name : `Бой ${s + 1}`, key: this.stageKey(cycle, r, s) };
   },
@@ -410,9 +412,9 @@ const Army = {
     return p;
   },
 
-  // Награда с учётом первой победы и знания «Трофеи»
+  // Награда с учётом первой победы
   rewardFor(st, first) {
-    const k = (first ? 2.5 : 1) * (1 + this.bonus('loot'));
+    const k = first ? 2.5 : 1;
     const out = {};
     for (const [res, v] of Object.entries(st.reward)) out[res] = Math.max(1, Math.round(v * k));
     return out;
@@ -421,11 +423,20 @@ const Army = {
   canFight() {
     const sq = this.squadStats();
     if (!sq.length) return 'В отряде нет бойцов — постройте Казармы.';
-    if (this.food() < this.foodCost()) return `Не хватает провизии: нужно ${this.foodCost()} зерна или рыбы.`;
+    if (this.food() < this.foodCost()) return `Не хватает провизии: нужно ${this.foodCost()} зерна, рыбы или хлеба.`;
     return null;
   },
 
-  // Итог боя: звёзды, добыча, открытие следующего
+  // Что открыла победа над n-м боссом: умения, место в отряде, военные здания
+  unlocksAt(n) {
+    const out = [];
+    for (const id of PERK_IDS) if (PERKS[id].boss === n) out.push(`умение «${PERKS[id].name}»`);
+    if (SLOT_BOSSES.includes(n)) out.push('ещё одно место в отряде');
+    for (const [k, d] of Object.entries(BUILDINGS)) if (d.boss === n) out.push(`${d.name.toLowerCase()} — ${UNITS[UNIT_BY_BUILDING[k]].many.toLowerCase()}`);
+    return out;
+  },
+
+  // Итог боя: звёзды, добыча, рейтинг, открытие следующего боя и наград за боссов
   finish(st, result) {
     const A = this.A;
     const first = result.win && this.stageIndex(st.cycle, st.r, st.s) === A.progress;
@@ -436,7 +447,21 @@ const Army = {
       reward = this.rewardFor(st, first);
       giveReward(reward);
       A.wins++;
-      if (first) A.progress++;
+      const gain = first ? (st.boss ? RATING.boss : RATING.first) : RATING.repeat;
+      A.rating += gain;
+      result.rating = gain;
+      if (first) {
+        A.progress++;
+        if (st.boss) {
+          const n = this.bosses();
+          for (const id of PERK_IDS) if (PERKS[id].boss === n && !A.perks[id]) A.perks[id] = 1;
+          result.unlocks = this.unlocksAt(n);
+          result.bossBeaten = true;
+          A.turnPage = true;          // карта перелистнётся на следующую провинцию
+          if (result.unlocks.length) UI.log(`Побеждён ${st.name}! Открыто: ${result.unlocks.join(', ')}.`, 'good', true);
+          UI.buildToolbar();
+        }
+      }
       result.stars = stars;
     }
     result.first = first;

@@ -131,12 +131,15 @@ const GOALS = [
   { text: 'Первая победа в походе', need: 1, reward: { money: 600 }, act: { open: 'legion' },
     hint: 'Откройте «Легион» слева, выберите первый бой на карте походов и нажмите «В бой!».',
     prog: () => state.army ? state.army.wins : 0 },
+  { text: 'Победите Атамана разбойников', need: 1, reward: { money: 800, glory: 10 }, act: { open: 'legion' },
+    hint: 'Последний бой Леса разбойников — босс. Победа откроет «Кипящее масло», Лагерь копейщиков и ещё одно место в отряде. Улучшайте войска во вкладке «Войска».',
+    prog: () => state.army ? Math.floor(state.army.progress / STAGES_PER_REGION) : 0 },
   { text: 'Соберите 1500 жителей', need: 1500, reward: { money: 5000 },
-    hint: 'С 1500 жителей открываются знания о чудесах света.',
+    hint: 'Большой город растит и армию: предел уровня войск поднимается до 5.',
     prog: () => state.stats.pop || 0 },
-  { text: 'Возведите чудо света', need: 1, reward: { money: 3000, glory: 20 }, act: { cat: 'culture' },
-    hint: 'Колизей и Пантеон строятся из мрамора, кирпича и Славы за победы легиона.',
-    prog: () => countType('colosseum') + countType('pantheon') },
+  { text: 'Возведите чудо света', need: 1, reward: { money: 3000, glory: 20 }, act: { open: 'wonders' },
+    hint: 'Чудеса открывает рейтинг легиона — он растёт с каждой победой в походах. Откройте «Чудеса» слева: первой будет Триумфальная арка.',
+    prog: () => countType('arch') + countType('colosseum') + countType('pantheon') },
 ];
 
 function cityRank(pop) {

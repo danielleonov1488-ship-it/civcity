@@ -1066,17 +1066,20 @@ const Battle = {
         <p class="eyebrow">${st.title}</p>
         <h2>${res.win ? 'Победа!' : res.retreat ? 'Отступили' : 'Поражение'}</h2>
         ${stars}
-        <p>${res.win ? `Уцелело бойцов: ${res.alive} из ${res.total}.${res.first ? ' Первая победа здесь — добыча больше.' : ''}` : 'Отряд вернулся домой. Прокачайте оружие и броню в военных зданиях или возьмите другой состав.'}</p>
+        <p>${res.win ? `Уцелело бойцов: ${res.alive} из ${res.total}.${res.first ? ' Первая победа здесь — добыча больше.' : ''}` : 'Отряд вернулся домой. Улучшите войска в окне «Легион» → «Войска» или возьмите другой состав.'}</p>
         ${loot}
+        ${res.win ? `<p class="b-rating">${Icons.svg('laurel')} +${res.rating} рейтинга легиона</p>` : ''}
+        ${res.unlocks && res.unlocks.length ? `<div class="b-unlocks"><small>Открыто</small><b>${res.unlocks.join(' · ')}</b></div>` : ''}
         <div class="actions">
-          ${next ? `<button type="button" class="btn" id="res-next">Дальше: ${next.boss ? next.name : `бой ${next.s + 1}`}</button>` : ''}
+          ${next ? `<button type="button" class="btn" id="res-next">${res.bossBeaten ? `Дальше: ${next.R.name}` : `Дальше: ${next.boss ? next.name : `бой ${next.s + 1}`}`}</button>` : ''}
           <button type="button" class="btn ${next ? 'ghost' : ''}" id="res-again">${res.win ? 'Ещё раз' : 'Попробовать снова'}</button>
           <button type="button" class="btn ghost" id="res-map">На карту</button>
         </div>
       </div>`);
     $('res-map').onclick = () => { UI.closeModal(); this.exit(true); };
     $('res-again').onclick = () => { UI.closeModal(); this.exit(false); ArmyUI.openStage(st.cycle, st.r, st.s); };
-    if (next) $('res-next').onclick = () => { UI.closeModal(); this.exit(false); ArmyUI.openStage(next.cycle, next.r, next.s); };
+    // после босса — на карту: она перелистнётся на новую провинцию
+    if (next) $('res-next').onclick = () => { UI.closeModal(); if (res.bossBeaten) { ArmyUI.tab = 'camp'; this.exit(true); } else { this.exit(false); ArmyUI.openStage(next.cycle, next.r, next.s); } };
   },
 
   exit(toMap) {
@@ -1094,7 +1097,7 @@ const Battle = {
     if (ui) ui.remove();
     document.body.classList.remove('battle-mode');
     UI.updateHud(true);
-    if (toMap) UI.openWindow('legion');
+    if (toMap) { ArmyUI.tab = 'camp'; UI.openWindow('legion'); }
   },
 
   /* ---------- Портреты для меню ---------- */

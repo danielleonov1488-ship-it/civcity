@@ -126,8 +126,12 @@ const UI = {
     const shortGoods = Object.keys((S.short || {})).length;
     const bg = $('b-goods'); bg.hidden = !shortGoods; bg.textContent = '!';
     $('rail-legion').hidden = !Army.unlocked();
+    $('rail-wonders').hidden = !Army.unlocked();
     const fresh = Army.unlocked() && countType('barracks') > 0 && state.army.progress === 0;
     const bl = $('b-legion'); bl.hidden = !fresh; bl.textContent = '!';
+    // чудо открыто рейтингом, но ещё не построено
+    const wOpen = Army.unlocked() && state.army && WONDERS.some(w => Army.wonderState(w) === 'open');
+    const bw = $('b-wonders'); bw.hidden = !wOpen; bw.textContent = '!';
     ArmyUI.tick();
     const bj = $('b-journal'); bj.hidden = !state.journalUnread; bj.textContent = Math.min(99, state.journalUnread || 0);
     this.updateTrayAfford();
@@ -245,7 +249,7 @@ const UI = {
       if (cls.length) card.style.setProperty('--cls', CLASSES[cls[cls.length - 1]].color);
       card.innerHTML = `<span class="card-img"><img src="${this.icons[type] || ''}" alt="">${cls.length ? `<span class="card-cls">${cls.map(c => Icons.cls(c, 20)).join('')}</span>` : ''}${unlocked ? '' : '<i class="lock-badge" aria-hidden="true"></i>'}</span>
         <span class="card-name">${d.name}</span>
-        <span class="card-cost">${unlocked ? this.costHtml(d.cost) : `<span class="lock">${Icons.img(d.milTech && hasTech(d.tech) ? 'glory' : 'scrolls')}${lockName(type)}</span>`}</span>`;
+        <span class="card-cost">${unlocked ? this.costHtml(d.cost) : `<span class="lock">${Icons.img((d.boss || d.rating) && (!d.tech || hasTech(d.tech)) ? 'glory' : 'scrolls')}${lockName(type)}</span>`}</span>`;
       card.onclick = () => {
         if (!unlocked) { this.openWindow('research', d.tech); return; }
         Input.setTool(Input.tool === type ? null : type);
@@ -502,33 +506,22 @@ const UI = {
   },
 
   renderWindow() {
-    const tabs = [['research', 'Знания'], ['goods', 'Товары'], ['legion', 'Легион'], ['guide', 'Справка'], ['journal', 'Журнал']];
+    const tabs = [['research', 'Знания'], ['goods', 'Товары'], ['legion', 'Легион'], ['wonders', 'Чудеса'], ['guide', 'Справка'], ['journal', 'Журнал']];
     $('win-tabs').innerHTML = tabs.map(([id, name]) => `<button type="button" class="${id === this.winTab ? 'on' : ''}" data-tab="${id}">${Icons.svg(id === 'goods' ? 'goods' : id)}<span>${name}</span></button>`).join('');
     $('win-tabs').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => this.openWindow(b.dataset.tab));
-    $('win-title').textContent = { research: 'Знания Рима', goods: 'Склады и торговля', legion: 'Легион и походы', guide: 'Справочник', journal: 'Журнал событий' }[this.winTab];
+    $('win-title').textContent = { research: 'Знания Рима', goods: 'Склады и торговля', legion: 'Легион', wonders: 'Чудеса света', guide: 'Справочник', journal: 'Журнал событий' }[this.winTab];
     const body = $('win-body');
     const scroll = body.scrollTop;
     if (this.winTab === 'research') this.renderResearch(body);
     else if (this.winTab === 'goods') this.renderGoods(body);
     else if (this.winTab === 'legion') ArmyUI.render(body);
+    else if (this.winTab === 'wonders') ArmyUI.renderWonders(body);
     else if (this.winTab === 'guide') this.renderGuide(body);
     else this.renderJournal(body);
     body.scrollTop = scroll;
   },
 
   renderResearch(el) {
-    if (Army.unlocked()) {
-      const tabs = `<div class="seg res-tabs"><button type="button" data-rtab="civil" class="${this.resTab !== 'mil' ? 'on' : ''}">Знания Рима</button><button type="button" data-rtab="mil" class="${this.resTab === 'mil' ? 'on' : ''}">${Icons.img('glory')} Военное дело</button></div>`;
-      if (this.resTab === 'mil') {
-        ArmyUI.renderMilResearch(el);
-        el.insertAdjacentHTML('afterbegin', tabs);
-      } else {
-        this.renderCivilResearch(el);
-        el.insertAdjacentHTML('afterbegin', tabs);
-      }
-      el.querySelectorAll('[data-rtab]').forEach(b => b.onclick = () => { this.resTab = b.dataset.rtab; this.renderWindow(); });
-      return;
-    }
     this.renderCivilResearch(el);
   },
 
@@ -897,7 +890,8 @@ const UI = {
         return T('Знания', r ? `Изучается «${TECH_BY_ID[r.id].name}»: осталось ${r.left} ${plural(r.left, 'день', 'дня', 'дней')}. Клавиша F.` : 'Знания за свитки открывают новые постройки. Изучаются по одному, несколько дней. Клавиша F.');
       }
       case 'rail-goods': return T('Товары', 'Сколько всего на складах, откуда берётся и куда уходит. Торговля.');
-      case 'rail-legion': return T('Легион', 'Карта провинции, походы и Слава. Клавиша L.');
+      case 'rail-legion': return T('Легион', 'Походы по провинциям, прокачка войск, отряд и умения. Клавиша L.');
+      case 'rail-wonders': return T('Чудеса света', 'Открываются рейтингом легиона, стоят Славы и материалов и дают городу и армии сильные бонусы.');
       case 'rail-guide': return T('Справка', 'Как растут дома, классы, управление.');
       case 'rail-journal': return T('Журнал', 'Все события города: рост, нехватки, победы.');
     }
