@@ -695,10 +695,11 @@ const Battle = {
   view(u) {
     let v = this.views.get(u.id);
     if (v) return v;
-    const fig = buildFigure(u.key);
+    // настоящие бойцы со скелетом (js/battle3d.js), пока он не загрузился — прежние фигурки
+    const fig = (window.Battle3D && Battle3D.makeUnit(u.key)) || buildFigure(u.key);
     const root = fig.root;
     root.rotation.order = 'YXZ';
-    const sc = (u.size || 1) * (fig.kind === 'beast' ? 1.7 : 1.5);
+    const sc = (u.size || 1) * (fig.real ? 1 : fig.kind === 'beast' ? 1.7 : 1.5);
     root.scale.setScalar(sc);
     this.scene.add(root);
     const hp = document.createElement('div');
@@ -733,7 +734,7 @@ const Battle = {
     $('b-perks').innerHTML = perks.length ? perks.map(([id, p]) => `
       <button type="button" class="b-perk" data-perk="${id}" title="${PERKS[id].desc}">
         <span class="ring">${ArmyUI.perkIcon(id)}<i class="cd"></i></span><small>${PERKS[id].name}</small><em>${'★'.repeat(p.lvl)}</em>
-      </button>`).join('') : '<p class="b-noperks panel">Умения в бою открываются в «Военном деле» (окно «Знания»)</p>';
+      </button>`).join('') : '<p class="b-noperks panel">Умения открываются победами над боссами (окно «Легион» → «Войска»)</p>';
     el.querySelectorAll('[data-perk]').forEach(b => b.onclick = () => this.sim.usePerk(b.dataset.perk));
     this.setSpeed(this.speed);
     this.banner(st.boss ? `Босс: ${st.name}` : st.title, 2.2);
@@ -837,6 +838,17 @@ const Battle = {
   // Поза и движение фигурки по состоянию бойца
   animate(v, dt) {
     const u = v.u, f = v.fig, r = v.root;
+    if (f.real) {
+      Battle3D.animate(v, dt, this.sim);
+      if (!u.alive) {
+        v.hp.style.display = 'none';
+        this.ring(v, 'testudo', false);
+        this.ring(v, 'horn', false);
+        return;
+      }
+      this.status(v, dt, f.h + 0.15);
+      return;
+    }
     if (!u.alive) {
       v.dead += dt;
       const k = Math.min(1, v.dead / 0.45);
@@ -885,11 +897,17 @@ const Battle = {
       if (f.machine === 'catapult') f.arm.rotation.x = atk >= 0 ? 0.35 - Math.sin(Math.min(1, atk * 2) * Math.PI / 2) * 1.9 : Math.min(0.35, f.arm.rotation.x + dt * 0.8);
       else { f.bolt.visible = !(atk >= 0 && atk < 0.8); f.arm.scale.x = atk >= 0 ? 0.85 + atk * 0.15 : 1; }
     }
+    this.status(v, dt, (f.kind === 'beast' ? 1.4 : 1.8) + 0.1 / (u.size || 1));
+  },
+
+  // Общее для любых фигур: круги умений, огонь, полоска здоровья
+  status(v, dt, top) {
+    const u = v.u, t = this.sim.t;
     this.ring(v, 'testudo', u.testudo > t);
     this.ring(v, 'horn', u.horn > t);
     if (u.burn > t && dt > 0 && Math.random() < 0.35) this.parts.add({ x: u.x + (Math.random() - 0.5) * 0.4, y: 0.4 + Math.random() * 0.6, z: u.z, vx: 0, vy: 1.2, vz: 0, g: 0.5, s: 0.12, life: 0.5, color: Math.random() < 0.5 ? '#ff9a2a' : '#ffd25a', grow: -0.6 });
     // полоска здоровья над головой
-    const p = u.boss ? null : this.screen(u.x, (u.size || 1) * (f.kind === 'beast' ? 1.4 : 1.8) + 0.1, u.z);
+    const p = u.boss ? null : this.screen(u.x, (u.size || 1) * top, u.z);
     if (p) {
       v.hp.style.display = '';
       v.hp.style.transform = `translate(${p[0]}px, ${p[1]}px)`;
@@ -1085,7 +1103,11 @@ const Battle = {
   exit(toMap) {
     this.active = false;
     this.resultShown = false;
-    for (const v of this.views.values()) v.hp.remove();
+    for (const v of this.views.values()) {
+      v.hp.remove();
+      // у настоящих бойцов общие с другими боями формы и текстуры — их не освобождаем
+      if (v.fig.real) { this.scene.remove(v.root); Battle3D.dispose(v.fig); }
+    }
     this.scene.traverse(o => {
       if (o.geometry && !Object.values(SHOT_GEO).includes(o.geometry)) o.geometry.dispose();
       if (o.material && o.material.dispose) o.material.dispose();
@@ -1105,6 +1127,7 @@ const Battle = {
   portraits: {},
 
   portrait(key) {
+    if (window.Battle3D) return Battle3D.portrait(key) || '';
     if (!this.portraits[key]) this.renderPortraits([key]);
     return this.portraits[key] || '';
   },
