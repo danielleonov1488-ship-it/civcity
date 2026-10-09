@@ -1,6 +1,7 @@
 # Приёмник кадров для съёмки ролика CivCity (только localhost).
 #   POST /raw?shot=имя&w=2560&h=1440&fps=30 — сырой кадр RGBA (снизу вверх, как отдаёт WebGL) уходит прямо в ffmpeg
-#   POST /end?shot=имя — закончить клип: ffmpeg дописывает D:\CivCity\promo\shots\<имя>.mp4
+#   POST /end?shot=имя — закончить клип: ffmpeg дописывает D:\CivCity\promo\shots\<имя>.mp4 (кодирует видеокарта NVENC, если драйвер позволяет, иначе процессор)
+#   POST /wav?shot=имя — звук (WAV) сохраняется в D:\CivCity\promo\audio\<имя>.wav
 #   POST /frame?shot=имя&i=номер — одиночный JPEG для проверки в D:\CivCity\promo\frames\<имя>\
 import os
 import re
@@ -17,11 +18,25 @@ procs = {}
 lock = threading.Lock()
 
 
+def pick_encoder():
+    """Видеокарта (NVENC), если драйвер её поддерживает; иначе процессор, но в облегчённом режиме."""
+    test = [FFMPEG, '-v', 'error', '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=0.1', '-c:v', 'h264_nvenc', '-f', 'null', '-']
+    try:
+        if subprocess.run(test, capture_output=True, timeout=20).returncode == 0:
+            return ['-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-rc', 'vbr', '-cq', '16', '-b:v', '0']
+    except Exception:
+        pass
+    return ['-c:v', 'libx264', '-preset', 'faster', '-crf', '15']
+
+
+ENCODER = pick_encoder()
+
+
 def start(shot, w, h, fps):
     os.makedirs(os.path.join(ROOT, 'shots'), exist_ok=True)
     out = os.path.join(ROOT, 'shots', shot + '.mp4')
     cmd = [FFMPEG, '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', f'{w}x{h}', '-r', str(fps), '-i', '-',
-           '-vf', 'vflip', '-c:v', 'libx264', '-preset', 'medium', '-crf', '15', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out]
+           '-vf', 'vflip', *ENCODER, '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out]
     return subprocess.Popen(cmd, stdin=subprocess.PIPE)
 
 
@@ -60,6 +75,12 @@ class H(BaseHTTPRequestHandler):
                 p.stdin.close()
                 p.wait()
             return self._ok(body=b'done')
+        if u.path == '/wav':
+            d = os.path.join(ROOT, 'audio')
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, shot + '.wav'), 'wb') as f:
+                f.write(data)
+            return self._ok(body=b'saved')
         if u.path == '/frame' and q.get('i', '').isdigit():
             d = os.path.join(ROOT, 'frames', shot)
             os.makedirs(d, exist_ok=True)
@@ -74,4 +95,5 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 5192
+    print('кодирование:', 'видеокарта (NVENC)' if 'h264_nvenc' in ENCODER else 'процессор (x264)', flush=True)
     ThreadingHTTPServer(('127.0.0.1', port), H).serve_forever()

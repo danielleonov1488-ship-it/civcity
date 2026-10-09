@@ -186,15 +186,66 @@ window.PromoShots = {
     return list;
   },
 
+  // Спокойный вертикальный ролик: те же места, но камера плывёт медленнее (×1.3 к обычной длине),
+  // плюс сидящая кошка крупно и вечер, когда в окнах загорается свет. Имена клипов — с «_c»
+  cozyList() {
+    const base = this.list().filter(s => ['street', 'garden', 'forum', 'pond', 'sunset', 'night', 'finale'].includes(s.name));
+    for (const sh of base) {
+      const [vd, vp] = this.VERT[sh.name] || [1.25, 0.05];
+      for (const k of sh.keys) { k.dist *= vd; k.pitch = Math.min(1.2, k.pitch + vp); }
+      sh.seconds = Math.round(sh.seconds * 1.3);
+    }
+    base.push(this.catSitShot(), this.duskShot());
+    for (const sh of base) sh.name += '_c';
+    return base.filter(Boolean);
+  },
+
+  // Кошка сидит и умывается, камера медленно обходит её; выбираем кошку, вокруг которой просторно
+  catSitShot() {
+    let best = null;
+    for (const c of Cats.list) {
+      const crowd = buildingsNear(c.wx, c.wy, 2.5).size;
+      if (!best || crowd < best.crowd) best = { c, crowd };
+    }
+    if (!best) return null;
+    const c = best.c, dist = 2.5, pitch = 0.3;
+    // сторона, где камере ничего не мешает: проверяем точки между кошкой и камерой
+    let y0 = 0, bestFree = -1;
+    for (let i = 0; i < 24; i++) {
+      const y = i / 24 * Math.PI * 2;
+      let free = 0;
+      for (let a = 0; a <= 0.7; a += 0.1) for (const r of [0.8, 1.5, 2.3]) {
+        if (!buildingAtPoint(c.wx + Math.sin(y + a) * r, c.wy + Math.cos(y + a) * r)) free++;
+      }
+      if (free > bestFree) { bestFree = free; y0 = y; }
+    }
+    return { name: 'catsit', seconds: 9, keys: [
+      { x: c.wx, z: c.wy, dist, yaw: y0, pitch, lookY: 0.12, t: 0.62 },
+      { x: c.wx, z: c.wy, dist: dist * 0.9, yaw: y0 + 0.7, pitch: pitch - 0.04, lookY: 0.12, t: 0.62 }], opts: {
+      linear: true,
+      before() { c.pause = 999; c.groom = true; c.life = 999; c.sitYaw = y0 + 0.35; },
+      each() { const k = Engine.cam; k.x = k.tx = c.wx; k.z = k.tz = c.wy; },
+    } };
+  },
+
+  // Вечереет: камера тихо плывёт над кварталами, а в окнах один за другим загорается свет
+  duskShot() {
+    return { name: 'dusk', seconds: 12, keys: [
+      { x: 12, z: 17, dist: 30, yaw: 0.55, pitch: 0.56, t: 0.752 },
+      { x: 12, z: 15.5, dist: 27, yaw: 0.4, pitch: 0.5, t: 0.785 },
+      { x: 12, z: 14, dist: 24, yaw: 0.25, pitch: 0.46, t: 0.818 }], opts: { linear: true } };
+  },
+
   start(only, vertical) {
     UI.setUiHidden(true);
+    const cozy = vertical === 'cozy';
     this.vert = !!vertical;
     Cinema.setSize(vertical ? 1440 : 2560, vertical ? 2560 : 1440);
     Atmos.cycle = false;
     this.populate();
-    let list = this.list();
-    if (only && only.length) list = list.filter(s => only.includes(s.name));
-    if (vertical) list = this.vertical(list);
+    let list = cozy ? this.cozyList() : this.list();
+    if (only && only.length) list = list.filter(s => only.includes(s.name.replace(/_c$/, '')));
+    if (vertical && !cozy) list = this.vertical(list);
     Cinema.record(list);
     const iv = setInterval(() => { if (!Cinema.progress && Cinema.done.length + (Cinema.error ? 1 : 0) >= list.length) { this.finished = true; clearInterval(iv); } }, 500);
   },
