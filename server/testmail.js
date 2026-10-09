@@ -11,4 +11,9 @@ const to = process.env.SMTP_USER;
 if (!to || !process.env.SMTP_PASS) { console.error('Почта ещё не настроена'); process.exit(1); }
 mail.send(to, 'CivCity: почта работает', 'Это проверочное письмо. Если вы его видите — письма «Забыли пароль?» будут доходить до игроков.')
   .then(() => { console.log(`Проверочное письмо отправлено на ${to}`); process.exit(0); })
-  .catch(e => { console.error(`Письмо не ушло: ${e.message}`); process.exit(1); });
+  .catch(e => {
+    if (/MX records/i.test(e.message)) console.error('Пароль верный, но Beget пока не отправляет письма: домен ещё не виден в интернете. Обычно это проходит за несколько часов.');
+    else if (/auth|535|credentials/i.test(e.message)) console.error('Почта не приняла адрес или пароль ящика.');
+    else console.error(`Письмо не ушло: ${e.message}`);
+    process.exit(1);
+  });

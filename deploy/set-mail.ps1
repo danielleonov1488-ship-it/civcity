@@ -22,4 +22,4 @@ $b64 | ssh -i $key -o BatchMode=yes root@159.194.249.20 'cd /srv/civcity/server 
 $ok = $LASTEXITCODE -eq 0
 $b64 = $null
 if ($ok) { Write-Host ''; Write-Host 'Готово! Проверьте ящик — туда пришло проверочное письмо.' -ForegroundColor Green }
-else { Write-Host ''; Write-Host 'Не получилось. Проверьте адрес и пароль ящика и запустите ещё раз.' -ForegroundColor Red }
+else { Write-Host ''; Write-Host 'Не получилось — причина написана выше. Исправьте и запустите ещё раз.' -ForegroundColor Red }
