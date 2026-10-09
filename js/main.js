@@ -12,6 +12,7 @@ const Game = {
       return;
     }
     Settings.load();
+    Sound.init();
     Engine.init($('game'), Settings.quality);
     Atmos.cycle = Settings.dayCycle;
     if (!loadGame()) this.setupNewCity();
@@ -90,6 +91,7 @@ const Game = {
     this.last = t;
     this.lastTick = performance.now();
     // во время боя город стоит на паузе, а на экране — поле боя
+    Sound.update(realDt);
     if (Battle.active) {
       Battle.frame(realDt);
       ArmyUI.tick();

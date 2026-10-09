@@ -513,6 +513,9 @@ kbd { display: inline-block; min-width: 20px; padding: 1px 6px; border: 1px soli
 .acc-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .acc-form .field small { font-weight: 400; color: var(--ink-soft); }
 .acc-box { margin-top: 14px; }
+.volumes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+.vol { display: grid; gap: 4px; font-size: 12px; font-weight: 900; color: var(--ink-soft); }
+.vol input[type=range] { width: 100%; accent-color: var(--terra, #b3302a); }
 .acc-box .actions { margin-top: 8px; }
 .linkish { background: none; border: 0; padding: 0; color: var(--terra-deep); text-decoration: underline; cursor: pointer; font: inherit; }
 .panel-actions .btn { flex: 1; margin: 0; width: auto; }

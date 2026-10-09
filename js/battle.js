@@ -646,6 +646,7 @@ const Battle = {
     Input.setTool(null);
     this.buildScene(stage);
     this.buildHud();
+    Sound.battleStart();
     document.body.classList.add('battle-mode');
     this.active = true;
     return true;
@@ -806,14 +807,21 @@ const Battle = {
 
   handleEvents() {
     for (const e of this.sim.events.splice(0)) {
-      if (e.type === 'hit') this.floatText(e.unit, `${e.dmg}${e.crit ? '!' : ''}`, e.unit.side === 'ally' ? 'hurt' : e.crit ? 'crit' : 'dmg');
+      if (e.type === 'hit') {
+        this.floatText(e.unit, `${e.dmg}${e.crit ? '!' : ''}`, e.unit.side === 'ally' ? 'hurt' : e.crit ? 'crit' : 'dmg');
+        // мечи звенят, когда бьются люди; звери и великаны бьют глухо
+        const beast = t => t && t.tags && (t.tags.includes('beast') || t.tags.includes('giant'));
+        if (e.from && e.from.shot) Sound.thud(0.5);
+        else if (beast(e.from) || beast(e.unit)) Sound.thud(0.8);
+        else Sound.clash(e.crit ? 1 : 0.75);
+      }
       else if (e.type === 'heal') this.floatText(e.unit, `+${e.amount}`, 'heal');
-      else if (e.type === 'death') this.parts.burst(e.unit.x, 0.3, e.unit.z, '#d8c8a8', 10, 1.2, 1.2, 0.18, 0.7);
-      else if (e.type === 'wave') { if (e.n > 1) this.banner(`Волна ${e.n} из ${e.total}`, 1.6); }
-      else if (e.type === 'boom') { this.parts.burst(e.x, 0.2, e.z, '#cbb994', 22, e.r * 2.2, 2.5, 0.26, 0.9); this.ringFx(e.x, e.z, e.r, '#f4e3c0'); }
-      else if (e.type === 'slam') { this.parts.burst(e.x, 0.15, e.z, '#cbb994', 14, e.r * 2, 1.5, 0.22, 0.7); this.ringFx(e.x, e.z, e.r, '#f4e3c0'); }
-      else if (e.type === 'shoot') this.shotViews.set(e.shot, null);
-      else if (e.type === 'perk') this.perkFx(e);
+      else if (e.type === 'death') { this.parts.burst(e.unit.x, 0.3, e.unit.z, '#d8c8a8', 10, 1.2, 1.2, 0.18, 0.7); if (e.unit.tags && e.unit.tags.includes('beast')) Sound.thud(1); else Sound.grunt(); }
+      else if (e.type === 'wave') { if (e.n > 1) { this.banner(`Волна ${e.n} из ${e.total}`, 1.6); Sound.shout(); } }
+      else if (e.type === 'boom') { Sound.boom(); this.parts.burst(e.x, 0.2, e.z, '#cbb994', 22, e.r * 2.2, 2.5, 0.26, 0.9); this.ringFx(e.x, e.z, e.r, '#f4e3c0'); }
+      else if (e.type === 'slam') { Sound.thud(1); this.parts.burst(e.x, 0.15, e.z, '#cbb994', 14, e.r * 2, 1.5, 0.22, 0.7); this.ringFx(e.x, e.z, e.r, '#f4e3c0'); }
+      else if (e.type === 'shoot') { this.shotViews.set(e.shot, null); Sound.whoosh(e.shot.kind); }
+      else if (e.type === 'perk') { this.perkFx(e); if (e.id === 'horn') Sound.horn(); else if (e.id === 'testudo') Sound.shout(); else if (e.id === 'oil') Sound.demolish(); }
     }
   },
 
@@ -1075,6 +1083,7 @@ const Battle = {
   showResult() {
     this.resultShown = true;
     const res = Army.finish(this.stage, this.sim.result);
+    Sound.battleEnd(res.win);
     const st = this.stage;
     const stars = res.win ? `<div class="stars">${[1, 2, 3].map(i => `<span class="${i <= res.stars ? 'on' : ''}">★</span>`).join('')}</div>` : '';
     const loot = res.reward ? `<div class="loot">${Object.entries(res.reward).map(([k, n]) => `<span class="good-pill out">${Icons.img(k)}+${fmt(n)}</span>`).join('')}</div>` : '';
@@ -1102,6 +1111,7 @@ const Battle = {
 
   exit(toMap) {
     this.active = false;
+    if (Sound.drums) Sound.battleEnd(false);
     this.resultShown = false;
     for (const v of this.views.values()) {
       v.hp.remove();

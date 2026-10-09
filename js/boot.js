@@ -5,7 +5,7 @@ import * as THREE from 'three';
 window.THREE = THREE;
 const v = new URL(import.meta.url).searchParams.get('v') || '';
 const FILES = ['config', 'util', 'world', 'roads', 'models', 'look2', 'post', 'atmos', 'engine', 'sim', 'army', 'battle',
-  'walkers', 'icons', 'input', 'advisor', 'armyui', 'ui', 'save', 'account', 'test', 'main'];
+  'walkers', 'icons', 'input', 'advisor', 'armyui', 'ui', 'save', 'account', 'audio', 'test', 'main'];
 let last;
 for (const f of FILES) {
   const s = last = document.createElement('script');

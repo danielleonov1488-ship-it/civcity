@@ -94,6 +94,7 @@ const Input = {
     this.moving = null;
     dropBuilding(b, p.cx, p.cy, p.ang);
     Engine.dust(b);
+    Sound.build(b);
     afterCityChanged();
     this.setTool(null);
   },
@@ -292,6 +293,7 @@ const Input = {
     if (err) { if (loud || err.startsWith('Не хватает')) this.warn(err); return null; }
     const b = placeBuilding(type, p.cx, p.cy, p.ang);
     Engine.dust(b);
+    Sound.build(b);
     afterCityChanged();
     return b;
   },
@@ -305,6 +307,7 @@ const Input = {
       if (b) {
         removeBuilding(b, true);
         Engine.dust(b);
+        Sound.demolish(fx, fy);
         afterCityChanged();
         return;
       }
@@ -312,6 +315,7 @@ const Input = {
         Roads.removePlaza(Math.floor(fx), Math.floor(fy));
         Roads.removeAt(fx, fy);
         Engine.puff(fx, 0.2, fy, '#d8cdb2', 10, 0.6, 1, 0.12, 0.6);
+        Sound.demolish(fx, fy);
         afterCityChanged();
         return;
       }
@@ -320,6 +324,7 @@ const Input = {
         if (len) {
           for (const [res, v] of Object.entries(BUILDINGS.road.cost)) if (res === 'money') state.money += Math.floor(v * len * REFUND_SHARE);
           Engine.puff(fx, 0.2, fy, '#d8cdb2', 10, 0.6, 1, 0.12, 0.6);
+          Sound.demolish(fx, fy);
           afterCityChanged();
         }
         return;
@@ -347,6 +352,7 @@ const Input = {
     if (plan.err) { this.warn(plan.err); return; }
     pay(plan.cost);
     Roads.build(plan);
+    Sound.road(plan.L);
     afterCityChanged();
   },
 

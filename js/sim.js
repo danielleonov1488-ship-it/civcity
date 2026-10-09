@@ -416,6 +416,7 @@ function onHouseChanged(h, up, now) {
   if (up) {
     UI.floatText(h.x + h.w / 2, T.height + 0.4, h.y + h.h / 2, `↑ ${T.name}`, 'good');
     Engine.sparkle(h, T.height);
+    Sound.chime(h.x + h.w / 2, h.y + h.h / 2);
   }
   const key = h.type + h.tier;
   if (up && h.tier >= 2 && !state.firsts.includes(key)) {

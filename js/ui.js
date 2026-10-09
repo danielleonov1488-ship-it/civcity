@@ -462,6 +462,7 @@ const UI = {
     $('panel-demolish').onclick = () => {
       removeBuilding(b, true);
       Engine.dust(b);
+      Sound.demolish(b.x + b.w / 2, b.y + b.h / 2);
       this.closePanel();
       afterCityChanged();
     };
@@ -770,6 +771,10 @@ const UI = {
       <p class="field-label">Качество графики</p>
       ${seg('q', [['low', 'Низкое', 'для слабых ПК'], ['medium', 'Среднее', 'телефоны'], ['high', 'Высокое', 'вау-режим']], Settings.quality)}
       <label class="switch"><input type="checkbox" id="day-cycle" ${Settings.dayCycle ? 'checked' : ''}><span></span>Смена дня и ночи</label>
+      <div class="volumes">
+        <label class="vol">Музыка<input type="range" id="vol-music" min="0" max="100" value="${Math.round(Settings.music * 100)}"></label>
+        <label class="vol">Звуки<input type="range" id="vol-sfx" min="0" max="100" value="${Math.round(Settings.sfx * 100)}"></label>
+      </div>
       ${Account.menuHtml()}
       ${Account.downloadHtml()}
       ${TEST_MODE ? `<div class="note good"><b>Это тестовый город.</b> У него своё сохранение, ваш настоящий город не трогается.
@@ -801,6 +806,12 @@ const UI = {
       Atmos.cycle = Settings.dayCycle;
       if (!Atmos.cycle) Atmos.t = 0.42;
     };
+    const vol = (id, key) => {
+      $(id).oninput = () => { Settings[key] = $(id).value / 100; Sound[key] = Settings[key]; Sound.start(); Sound.setVolumes(); };
+      $(id).onchange = () => { Settings.save(); if (key === 'sfx') Sound.click(); };
+    };
+    vol('vol-music', 'music');
+    vol('vol-sfx', 'sfx');
     $('menu-close').onclick = () => this.closeModal();
     if (TEST_MODE) $('test-give').onclick = () => { Test.give(); this.toast('Добавлено: деньги, товары, свитки и Слава', 'good'); };
     $('menu-help').onclick = () => { this.closeModal(); this.openWindow('guide'); };
