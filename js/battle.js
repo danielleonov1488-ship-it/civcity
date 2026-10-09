@@ -802,6 +802,7 @@ const Battle = {
       if (this.endT <= 0) this.showResult();
     }
     Engine.renderer.toneMappingExposure = 1.05;
+    if (this.camHook) this.camHook(this.camera);   // съёмка ролика ведёт камеру сама
     Post.render(this.scene, this.camera, { focus: this.focus, dof: 0.25, bloom: this.stage.R.biome === 'hades' ? 0.8 : 0.5 });
   },
 

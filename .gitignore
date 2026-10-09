@@ -11,3 +11,12 @@ desktop/game/
 desktop/dist/
 server/node_modules/
 server/data/
+
+# рекламный ролик: кадры, отрендеренные клипы, зависимости Remotion
+promo/frames/
+promo/shots/
+promo/video/node_modules/
+promo/video/out/
+promo/check/
+promo/video/public/shots/
+promo/video/public/audio/

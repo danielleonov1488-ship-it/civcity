@@ -1,7 +1,7 @@
 'use strict';
 /* Сохранение города в браузере (localStorage). */
 
-const SAVE_KEY = TEST_MODE ? 'civcity.save.test' : 'civcity.save.v2';
+const SAVE_KEY = PROMO_MODE ? 'civcity.save.promo' : TEST_MODE ? 'civcity.save.test' : 'civcity.save.v2';
 const SETTINGS_KEY = 'civcity.settings';
 
 // Настройки игрока: качество графики и смена дня и ночи (общие для всех городов)

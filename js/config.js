@@ -6,8 +6,10 @@
 
 const PLOT = 24;                 // участок земли — 24×24 клетки
 // Тестовый город: адрес с #test — отдельное сохранение, всё открыто (js/test.js)
-function isTestUrl() { return ['#test', '?test'].some(k => (location.hash + location.search).includes(k)); }
+function isTestUrl() { return ['#test', '?test', '#promo'].some(k => (location.hash + location.search).includes(k)); }
 const TEST_MODE = isTestUrl();
+// город для съёмок рекламного ролика (js/promo.js): своё сохранение, дни не идут, жители гуляют
+const PROMO_MODE = (location.hash + location.search).includes('#promo');
 
 const DAY_SECONDS = 4;           // длина игрового дня при скорости ×1
 const DAYS_PER_SEASON = 30;

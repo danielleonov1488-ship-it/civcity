@@ -110,8 +110,9 @@ const Engine = {
   },
 
   resize() {
-    this.W = window.innerWidth;
-    this.H = window.innerHeight;
+    // forceSize — кадр для записи видео: рисуется в своём размере, окно не важно
+    this.W = this.forceSize ? this.forceSize[0] : window.innerWidth;
+    this.H = this.forceSize ? this.forceSize[1] : window.innerHeight;
     this.renderer.setSize(this.W, this.H, false);
     this.camera.aspect = this.W / this.H;
     this.camera.updateProjectionMatrix();
@@ -126,11 +127,12 @@ const Engine = {
     c.dist += (c.distTarget - c.dist) * k;
     if (c.tx !== undefined) { c.x += (c.tx - c.x) * k; c.z += (c.tz - c.z) * k; }
     const t = clamp((c.dist - DIST_MIN) / (DIST_MAX - DIST_MIN), 0, 1);
-    const pitch = lerp(PITCH_NEAR, PITCH_FAR, Math.pow(t, 0.4));
-    const cp = Math.cos(pitch);
+    // наклон — по расстоянию; кинокамера задаёт свой наклон и высоту точки взгляда
+    const pitch = c.pitch !== undefined && c.pitch !== null ? c.pitch : lerp(PITCH_NEAR, PITCH_FAR, Math.pow(t, 0.4));
+    const cp = Math.cos(pitch), ly = c.lookY || 0;
     const cam = this.camera;
-    cam.position.set(c.x + Math.sin(c.yaw) * cp * c.dist, Math.sin(pitch) * c.dist, c.z + Math.cos(c.yaw) * cp * c.dist);
-    cam.lookAt(c.x, 0, c.z);
+    cam.position.set(c.x + Math.sin(c.yaw) * cp * c.dist, ly + Math.sin(pitch) * c.dist, c.z + Math.cos(c.yaw) * cp * c.dist);
+    cam.lookAt(c.x, ly, c.z);
     const near = Math.max(0.2, c.dist * 0.03), far = c.dist * 7 + 60;
     if (Math.abs(cam.near - near) > 0.05 || Math.abs(cam.far - far) > 1) { cam.near = near; cam.far = far; cam.updateProjectionMatrix(); }
     cam.updateMatrixWorld();
@@ -504,8 +506,18 @@ const Engine = {
     };
     if (part === 'ground') { set('ground', this.buildGround(p.px, p.py)); set('water', this.buildWater(p.px, p.py)); }
     if (part === 'nature') { p.nat = this.natureList(p.px, p.py); this.natDirty = true; set('shore', this.buildShore(p.px, p.py)); }
-    if (part === 'border') { set('border', this.buildBorder(p.px, p.py)); set('sign', this.buildSign(p.px, p.py)); }
+    if (part === 'border') {
+      set('border', this.buildBorder(p.px, p.py));
+      set('sign', this.buildSign(p.px, p.py));
+      for (const k of ['border', 'sign']) if (p.parts[k]) p.parts[k].visible = !this.cleanView;
+    }
     p.dirty[part] = false;
+  },
+
+  // Чистый вид (интерфейс спрятан): без пунктира границ участков и табличек продажи земли
+  setCleanView(on) {
+    this.cleanView = on;
+    for (const p of this.plots.values()) for (const k of ['border', 'sign']) if (p.parts[k]) p.parts[k].visible = !on;
   },
 
   disposePlot(p) {

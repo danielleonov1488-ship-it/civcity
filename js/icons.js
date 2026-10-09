@@ -12,6 +12,7 @@ const UI_SVG = {
   journal: '<path d="M6 3.5h9l3.5 3.5v13.5H6Z"/><path d="M15 3.5V7h3.5M9 10.5h6.5M9 13.5h6.5M9 16.5h4"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.3"/>',
   rotl: '<path d="M8 6H4V2M4.6 6A8 8 0 1 1 4 13"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/>',
   rotr: '<path d="M16 6h4V2M19.4 6A8 8 0 1 0 20 13"/>',
   pause: '<path d="M9 5v14M15 5v14"/>',
   play: '<path d="M7 5l11 7-11 7Z"/>',

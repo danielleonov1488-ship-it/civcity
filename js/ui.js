@@ -49,6 +49,8 @@ const UI = {
     this.buildCats();
     document.querySelectorAll('[data-speed]').forEach(btn => btn.addEventListener('click', () => this.setSpeed(+btn.dataset.speed)));
     $('menu-btn').onclick = () => this.openMenu();
+    $('hide-ui').onclick = () => this.setUiHidden(true);
+    $('show-ui').onclick = () => this.setUiHidden(false);
     $('city-btn').onclick = () => this.openMenu();
     $('rot-left').onclick = () => Engine.rotate(-1);
     $('rot-right').onclick = () => Engine.rotate(1);
@@ -829,6 +831,15 @@ const UI = {
   },
 
   // Короткое уведомление — только о важном и о прямой реакции на действие игрока
+  // Интерфейс спрятан: виден только город и маленький глаз в углу, чтобы всё вернуть
+  setUiHidden(on) {
+    document.body.classList.toggle('ui-hidden', on);
+    Engine.setCleanView(on);
+    if (on) { this.closePanel(); Input.setTool(null); if (this.openCat) this.closeTray(); }
+    const tip = $('tooltip');
+    if (tip) tip.hidden = true;
+  },
+
   toast(msg, kind) {
     const box = $('toasts');
     for (const t of box.children) if (t.dataset.msg === msg) return;
@@ -907,6 +918,7 @@ const UI = {
       case 'speed2': return T('Скорость ×2', 'Клавиша 2');
       case 'speed3': return T('Скорость ×3', 'Клавиша 3');
       case 'rotl': return T('Повернуть камеру', 'Клавиша Q');
+      case 'hideui': return T('Спрятать интерфейс', 'Любоваться городом. Вернуть — кнопкой с глазом в углу или клавишей U');
       case 'rotr': return T('Повернуть камеру', 'Клавиша E');
       case 'menu': return T('Настройки', 'Налоги, графика, смена дня и ночи, новый город.');
       case 'bulldoze': return T('Снос', 'Клавиша X. Возвращается половина стоимости.');

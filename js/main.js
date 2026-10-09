@@ -22,8 +22,8 @@ const Game = {
     Input.init(Engine.renderer.domElement);
     computeCoverage();
     UI.init();
-    if (TEST_MODE && !state.testReady) Test.setup();
-    else if (TEST_MODE) Test.update();
+    if (TEST_MODE && !state.testReady) (PROMO_MODE ? Promo.setup() : Test.setup());
+    else if (TEST_MODE && !PROMO_MODE) Test.update();
     UI.updateHud(true);
     Account.init();
     window.addEventListener('beforeunload', () => saveGame());
@@ -62,7 +62,7 @@ const Game = {
     Input.setTool(null);
     computeCoverage();
     UI.buildToolbar();
-    if (TEST_MODE) Test.setup();
+    if (TEST_MODE) (PROMO_MODE ? Promo.setup() : Test.setup());
     UI.setSpeed(1);
     UI.closeTray();
     Advisor.render(true);
@@ -74,6 +74,8 @@ const Game = {
   advance(realDt) {
     const running = state.speed > 0 && !UI.blocking();
     const dt = running ? realDt * state.speed : 0;
+    // в городе для съёмок дни не идут — дома не меняются, а жители гуляют
+    if (PROMO_MODE) return dt;
     if (running) {
       this.dayTimer += dt;
       while (this.dayTimer >= DAY_SECONDS) {
@@ -87,6 +89,8 @@ const Game = {
   },
 
   frame(t) {
+    // съёмка ролика сама шагает кадрами — обычный цикл ждёт
+    if (this.hold) { requestAnimationFrame(n => this.frame(n)); return; }
     const realDt = Math.min(0.1, (t - this.last) / 1000);
     this.last = t;
     this.lastTick = performance.now();

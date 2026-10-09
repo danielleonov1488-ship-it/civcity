@@ -513,6 +513,15 @@ kbd { display: inline-block; min-width: 20px; padding: 1px 6px; border: 1px soli
 .acc-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .acc-form .field small { font-weight: 400; color: var(--ink-soft); }
 .acc-box { margin-top: 14px; }
+/* интерфейс спрятан — только город */
+body.ui-hidden #hud, body.ui-hidden #alerts, body.ui-hidden #advisor, body.ui-hidden #rail, body.ui-hidden #inspector,
+body.ui-hidden #toasts, body.ui-hidden #dock, body.ui-hidden #labels, body.ui-hidden #tooltip { display: none !important; }
+.show-ui { display: none; position: fixed; top: calc(14px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 30;
+  width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.5); background: rgba(40, 30, 20, 0.28);
+  color: #fff; opacity: 0.45; cursor: pointer; transition: opacity 0.2s, background 0.2s; align-items: center; justify-content: center; }
+.show-ui:hover { opacity: 1; background: rgba(40, 30, 20, 0.5); }
+.show-ui .ui-ico { width: 22px; height: 22px; }
+body.ui-hidden .show-ui { display: flex; }
 .volumes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
 .vol { display: grid; gap: 4px; font-size: 12px; font-weight: 900; color: var(--ink-soft); }
 .vol input[type=range] { width: 100%; accent-color: var(--terra, #b3302a); }

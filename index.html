@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>CivCity</title>
 <link rel="stylesheet" href="vendor/fonts/fonts.css">
-<link rel="stylesheet" href="style.css?v=2026100913">
+<link rel="stylesheet" href="style.css?v=2026100915">
 </head>
 <body>
 <canvas id="game" aria-label="Карта города"></canvas>
@@ -43,9 +43,11 @@
       <button type="button" id="rot-left" data-tip="rotl" data-svg="rotl" aria-label="Повернуть влево"></button>
       <button type="button" id="rot-right" data-tip="rotr" data-svg="rotr" aria-label="Повернуть вправо"></button>
     </div>
+    <button type="button" id="hide-ui" class="icon-btn round" data-tip="hideui" data-svg="eye" aria-label="Спрятать интерфейс"></button>
     <button type="button" id="menu-btn" class="icon-btn round" data-tip="menu" data-svg="gear" aria-label="Настройки"></button>
   </div>
 </header>
+<button type="button" id="show-ui" class="show-ui" data-svg="eye" aria-label="Показать интерфейс" title="Показать интерфейс (U)"></button>
 
 <div id="alerts" aria-live="polite"></div>
 
@@ -116,7 +118,7 @@
 <!-- ?v= — номер сборки: меняется при каждом обновлении, чтобы браузер не взял старые файлы из своего кэша.
      Three.js — модулем (importmap), остальные скрипты по порядку подключает js/boot.js -->
 <script type="importmap">{ "imports": { "three": "./vendor/three-module/build/three.module.js" } }</script>
-<script type="module" src="js/boot.js?v=2026100913"></script>
+<script type="module" src="js/boot.js?v=2026100915"></script>
 <script>setTimeout(() => { if (typeof Game === 'undefined') document.body.insertAdjacentHTML('beforeend', '<div class="fatal">Игра не запустилась: обновите браузер или страницу.</div>'); }, 15000);</script>
 </body>
 </html>
