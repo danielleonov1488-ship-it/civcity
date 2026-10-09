@@ -99,9 +99,10 @@ window.PromoShots = {
         Battle.start(Army.stage(cycle, r, s));
         Battle.camHook = cam => {
           if (rec) t += 1 / 30;
-          const x = Battle.camX;
-          cam.position.set(x - 6.2 + t * 0.32, 3.4 + Math.sin(t * 0.4) * 0.15, 12.5 - t * 0.2);
-          cam.lookAt(x + 0.9, 0.95, 0);
+          const x = Battle.camX, v = PromoShots.vert;
+          if (v) cam.position.set(x - 7.5 + t * 0.4, 5.6 + Math.sin(t * 0.4) * 0.15, 17 - t * 0.3);
+          else cam.position.set(x - 6.2 + t * 0.32, 3.4 + Math.sin(t * 0.4) * 0.15, 12.5 - t * 0.2);
+          cam.lookAt(x + 0.9, v ? 1.2 : 0.95, 0);
         };
       },
       each() { rec = true; },
@@ -169,13 +170,31 @@ window.PromoShots = {
     } };
   },
 
-  start(only) {
+  // Вертикальная съёмка для TikTok/Shorts: кадр 1440×2560, камера чуть дальше и выше, пролёты быстрее.
+  // vd — во сколько раз отодвинуть камеру, vp — насколько сильнее наклонить вниз
+  VERT: { street: [1, 0.02], aerial: [1.05, 0], forum: [1.3, 0.08], colosseum: [1.35, 0.08], garden: [1.25, 0.06], pond: [1.3, 0.08],
+    sunset: [1.1, 0.06], night: [1.15, 0.05], cat: [1.25, 0.05], build: [1.3, 0.05], finale: [1.1, 0.04] },
+  vertical(list) {
+    for (const sh of list) {
+      const [vd, vp] = this.VERT[sh.name] || [1.25, 0.05];
+      if (sh.keys) {
+        for (const k of sh.keys) { k.dist *= vd; k.pitch = Math.min(1.2, k.pitch + vp); }
+        if (sh.name !== 'build') sh.seconds = Math.max(4, Math.round(sh.seconds * 0.7));
+      }
+      sh.name += '_v';
+    }
+    return list;
+  },
+
+  start(only, vertical) {
     UI.setUiHidden(true);
-    Cinema.setSize(2560, 1440);
+    this.vert = !!vertical;
+    Cinema.setSize(vertical ? 1440 : 2560, vertical ? 2560 : 1440);
     Atmos.cycle = false;
     this.populate();
     let list = this.list();
     if (only && only.length) list = list.filter(s => only.includes(s.name));
+    if (vertical) list = this.vertical(list);
     Cinema.record(list);
     const iv = setInterval(() => { if (!Cinema.progress && Cinema.done.length + (Cinema.error ? 1 : 0) >= list.length) { this.finished = true; clearInterval(iv); } }, 500);
   },

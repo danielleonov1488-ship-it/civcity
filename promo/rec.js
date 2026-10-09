@@ -1,7 +1,7 @@
 'use strict';
 /* Запись клипов для ролика: Electron открывает город для съёмок (#promo) в скрытом окне со своей видеокартой
    и запускает в нём сценарий съёмки (promo/shots.js). Кадры уходят в приёмник (capture.py → ffmpeg).
-   Запуск: cd desktop && npx electron ../promo/rec.js [имя клипа ...] */
+   Запуск: cd desktop && npx electron ../promo/rec.js [имя клипа ...] [--vertical] */
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -11,6 +11,7 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 const only = process.argv.slice(2).filter(a => !a.startsWith('-') && !a.endsWith('.js') && a !== '.');
+const vertical = process.argv.includes('--vertical'); // кадр 1440×2560 для TikTok/Shorts
 const script = fs.readFileSync(path.join(__dirname, 'shots.js'), 'utf8');
 
 app.whenReady().then(async () => {
@@ -26,7 +27,7 @@ app.whenReady().then(async () => {
   const gpu = await win.webContents.executeJavaScript(`(() => { const gl = Engine.renderer.getContext(); const e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : 'нет данных'; })()`);
   console.log('видеокарта:', gpu);
   await win.webContents.executeJavaScript(script + `\n;window.__only = ${JSON.stringify(only)};`);
-  await win.webContents.executeJavaScript('PromoShots.start(window.__only)');
+  await win.webContents.executeJavaScript(`PromoShots.start(window.__only, ${vertical})`);
   let last = '';
   for (;;) {
     const s = await win.webContents.executeJavaScript('JSON.stringify({ p: Cinema.progress, done: Cinema.done, err: Cinema.error, fin: PromoShots.finished })');

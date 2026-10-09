@@ -3,7 +3,7 @@ import { Easing } from "remotion";
 import { loadFont as loadInter } from "@remotion/google-fonts/Inter";
 import { loadFont as loadCinzel } from "@remotion/google-fonts/Cinzel";
 
-const inter = loadInter("normal", { weights: ["500", "600", "800"], subsets: ["cyrillic", "latin"] });
+const inter = loadInter("normal", { weights: ["500", "600", "800", "900"], subsets: ["cyrillic", "latin"] });
 const cinzel = loadCinzel("normal", { weights: ["600", "800"], subsets: ["latin"] });
 
 export const theme = {
