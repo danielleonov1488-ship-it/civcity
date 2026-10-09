@@ -4,7 +4,7 @@
    потом новая пьеса в другой тональности; иногда под фортепиано ложится мягкая подложка.
    Звуки синтезируются: клик кнопки, стройка («тук-тук»), снос, мостовая, колокольчик при росте дома,
    в бою — звон мечей, свист стрел, удары камней, крики, боевой рог и барабаны.
-   Если приблизить камеру к улицам — слышно, как жители негромко разговаривают; днём поют птицы, ночью — сверчки.
+   Днём поют птицы, ночью — сверчки (если камера близко к земле).
    Браузер разрешает звук только после первого нажатия игрока — до этого всё молчит. */
 
 const Sound = {
@@ -272,53 +272,17 @@ const Sound = {
     if (this.drums) this.scheduleDrums(now, ahead);
   },
 
-  /* ---------- Окружение: разговоры на улицах, птицы, сверчки ---------- */
+  /* ---------- Окружение: птицы и сверчки ---------- */
 
   startAmbience() {
-    const ctx = this.ctx;
-    // гул голосов: несколько «говорящих» полос шума с огибающей слогов
-    this.murmur = ctx.createGain(); this.murmur.gain.value = 0; this.murmur.connect(this.ambBus);
-    this.voices = [];
-    for (let i = 0; i < 4; i++) {
-      const src = ctx.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true;
-      const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass'; f1.frequency.value = 450 + i * 160; f1.Q.value = 2.2;
-      const f2 = ctx.createBiquadFilter(); f2.type = 'peaking'; f2.frequency.value = 1300 + i * 220; f2.Q.value = 3; f2.gain.value = 8;
-      const g = ctx.createGain(); g.gain.value = 0;
-      src.connect(f1); f1.connect(f2); f2.connect(g); g.connect(this.murmur);
-      src.start(0, Math.random() * 1.5);
-      this.voices.push({ g, f1, next: 0 });
-    }
     this.ambT = 0;
   },
 
   update(realDt) {
     if (!this.ready || this.ctx.state !== 'running') return;
-    const now = this.ctx.currentTime;
     const inCity = !Battle.active;
     const c = Engine.cam;
-    // приблизили камеру к улицам с жителями — слышен город
-    let people = 0;
-    if (inCity && c) {
-      const r2 = Math.pow(c.dist * 0.6 + 3, 2);
-      for (const w of Walkers.list) if ((w.wx - c.x) ** 2 + (w.wy - c.z) ** 2 < r2) people++;
-    }
-    const close = inCity && c ? clamp((26 - c.dist) / 16, 0, 1) : 0;
     const night = typeof Atmos !== 'undefined' ? Atmos.night || 0 : 0;
-    const level = close * clamp(people / 14, 0, 1) * (1 - night * 0.7) * 0.11;
-    this.murmur.gain.setTargetAtTime(level, now, 0.8);
-    if (level > 0.003) {
-      for (const v of this.voices) {
-        if (now < v.next) continue;
-        // слог: подъём и спад громкости, высота чуть плавает
-        const syl = 0.12 + Math.random() * 0.2, gap = Math.random() < 0.25 ? 0.4 + Math.random() * 1.2 : 0.03;
-        v.g.gain.cancelScheduledValues(now);
-        v.g.gain.setValueAtTime(v.g.gain.value, now);
-        v.g.gain.linearRampToValueAtTime(0.5 + Math.random() * 0.5, now + syl * 0.35);
-        v.g.gain.linearRampToValueAtTime(0, now + syl);
-        v.f1.frequency.setTargetAtTime(380 + Math.random() * 700, now, 0.05);
-        v.next = now + syl + gap;
-      }
-    }
     // птицы днём и сверчки ночью — изредка и только близко к земле
     this.ambT -= realDt;
     if (inCity && this.ambT <= 0) {
