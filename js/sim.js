@@ -89,9 +89,9 @@ const GOALS = [
   { text: 'Постройте Храм Юпитера', need: 1, reward: { money: 250 }, act: { tool: 'temple' },
     hint: 'Храм нужен для роста домов и пишет свитки — знания Рима. За свитки открываются новые здания.',
     prog: () => countType('temple') },
-  { text: 'Изучите первую технологию', need: 1, reward: { scrolls: 5 }, act: { open: 'research' },
-    hint: 'Откройте «Знания» слева. Свитки копятся сами, пока работает храм. Начните с «Оливководства»: масло нужно инсулам.',
-    prog: () => state.techs.length },
+  { text: 'Изучите «Оливководство»', need: 1, reward: { scrolls: 5 }, act: { open: 'research', focus: 'olives' }, techGoal: 'olives',
+    hint: 'Первое знание — бесплатно! Откройте «Знания» слева и нажмите «Изучить» на подсвеченной карточке «Оливководство». Оно откроет оливковые рощи и масло для инсул.',
+    prog: () => hasTech('olives') ? 1 : 0 },
   { text: 'Оливковая роща и маслодавильня', need: 2, reward: { money: 250 }, act: { tool: 'grove' },
     hint: 'Роща растит оливки, маслодавильня делает из них масло. Дома получают масло через рынок.',
     prog: () => Math.min(1, countType('grove')) + Math.min(1, countType('oilpress')) },
@@ -521,18 +521,32 @@ function techState(t) {
   return 'open';
 }
 
+// Первое знание — в подарок: город только учится
+function techCost(t) {
+  return !state.techs.length && !state.research ? { scrolls: 0, money: 0, free: true } : { scrolls: t.scrolls, money: t.money };
+}
+
+// Какое знание советник подсвечивает: «Оливководство», пока его ждут задачи
+function recommendedTech() {
+  if (hasTech('olives') || (state.research && state.research.id === 'olives')) return null;
+  const g = GOALS[state.goalIndex];
+  return !state.techs.length || (g && g.techGoal === 'olives') || (g && g.act && g.act.tool === 'grove') ? 'olives' : null;
+}
+
 function canResearch(t) {
-  return techState(t) === 'open' && !state.research && state.scrolls >= t.scrolls && state.money >= t.money;
+  const c = techCost(t);
+  return techState(t) === 'open' && !state.research && state.scrolls >= c.scrolls && state.money >= c.money;
 }
 
 // Начать изучение: свитки и денарии списываются сразу, знание приходит через t.days дней
 function research(id) {
   const t = TECH_BY_ID[id];
   if (!canResearch(t)) return false;
-  state.scrolls -= t.scrolls;
-  state.money -= t.money;
+  const c = techCost(t);
+  state.scrolls -= c.scrolls;
+  state.money -= c.money;
   state.research = { id, left: t.days };
-  UI.log(`Начали изучать «${t.name}». Будет готово через ${t.days} ${plural(t.days, 'день', 'дня', 'дней')}.`, 'info');
+  UI.log(`Начали изучать «${t.name}»${c.free ? ' — первое знание в подарок' : ''}. Будет готово через ${t.days} ${plural(t.days, 'день', 'дня', 'дней')}.`, 'info');
   UI.updateHud(true);
   return true;
 }

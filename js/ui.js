@@ -466,7 +466,7 @@ const UI = {
   runAction(act) {
     if (!act) return;
     this.closeModal();
-    if (act.open) { this.openWindow(act.open); return; }
+    if (act.open) { this.openWindow(act.open, act.focus); return; }
     this.closeWindow();
     if (act.menu) { this.openMenu(); return; }
     if (act.tool) {
@@ -537,9 +537,12 @@ const UI = {
     for (const t of TECHS) (cols[t.col] = cols[t.col] || []).push(t);
     const S = state.stats;
     const busy = state.research ? TECH_BY_ID[state.research.id] : null;
+    const rec = recommendedTech();
     const card = t => {
       const st = techState(t);
-      const afford = state.scrolls >= t.scrolls && state.money >= t.money;
+      const cost = techCost(t);
+      const afford = state.scrolls >= cost.scrolls && state.money >= cost.money;
+      const isRec = rec === t.id;
       const days = `${t.days} ${plural(t.days, 'день', 'дня', 'дней')}`;
       const pop = S.pop || 0;
       const opens = Object.entries(BUILDINGS).filter(([, d]) => d.tech === t.id).map(([k]) => `<img src="${this.icons[k]}" alt="" data-card="${k}">`).join('');
@@ -552,9 +555,12 @@ const UI = {
         foot = `<div class="tech-prog"><div class="bar"><div style="width:${(1 - r.left / t.days) * 100}%"></div></div><span>Изучается · осталось <b>${r.left}</b> ${plural(r.left, 'день', 'дня', 'дней')}</span></div>`;
       } else if (st === 'locked') foot = `<span class="tech-lock">Сначала: ${reqs.join(', ')}</span>`;
       else if (st === 'pop') foot = `<span class="tech-pop">${Icons.svg('people')}Нужно ${fmt(t.pop)} жителей <small>(сейчас ${fmt(pop)})</small></span>`;
-      else foot = `<button type="button" class="btn small" data-tech="${t.id}" ${afford && !busy ? '' : 'disabled'}>${Icons.img('scrolls')}${t.scrolls} ${Icons.img('money')}${fmt(t.money)}</button>
+      else foot = `<button type="button" class="btn small${isRec ? ' rec' : rec ? ' ghost' : ''}" data-tech="${t.id}" ${afford && !busy ? '' : 'disabled'}>${cost.free ? 'Изучить бесплатно' : `${Icons.img('scrolls')}${t.scrolls} ${Icons.img('money')}${fmt(t.money)}`}</button>
         <span class="tech-time">${busy ? 'После текущего знания' : days}</span>`;
-      return `<div class="tech ${st}${focus}${st === 'open' && afford && !busy ? ' ready' : ''}" data-tech-id="${t.id}">
+      // пока советник ведёт к одному знанию, золотой рамкой светится только оно
+      const ready = st === 'open' && afford && !busy && (!rec || isRec);
+      return `<div class="tech ${st}${focus}${ready ? ' ready' : ''}${isRec && st === 'open' ? ' recommend' : ''}" data-tech-id="${t.id}">
+        ${isRec && st === 'open' ? '<span class="tech-badge">Советник: начните с этого</span>' : ''}
         <h4>${t.name}</h4>
         <p>${t.desc}</p>
         ${opens ? `<div class="opens">${opens}</div>` : ''}
@@ -573,7 +579,7 @@ const UI = {
     requestAnimationFrame(() => this.drawTechLines());
     if (this.winFocus) {
       const f = el.querySelector('.tech.focus');
-      if (f) f.scrollIntoView({ block: 'nearest', inline: 'center' });
+      if (f) f.scrollIntoView({ block: 'nearest', inline: f.closest('.tcol') === el.querySelector('.tcol') ? 'start' : 'center' });
       this.winFocus = null;
     }
   },

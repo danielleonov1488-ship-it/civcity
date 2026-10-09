@@ -621,6 +621,13 @@ a.btn { text-decoration: none; }
 .tech.locked { opacity: 0.55; background: rgba(255, 255, 255, 0.4); }
 .tech.ready { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(195, 148, 52, 0.25); }
 .tech.focus { animation: glow 1.4s ease-out 2; border-color: var(--terra); }
+/* Знание, к которому ведёт советник: красная рамка, мягкое свечение и ярлык */
+.tech.recommend { border: 2px solid var(--terra); background: #fff7ec; box-shadow: 0 0 0 4px rgba(181, 69, 46, 0.18), 0 8px 22px rgba(181, 69, 46, 0.22); animation: recPulse 1.8s ease-in-out infinite; }
+.tech.recommend h4 { color: var(--terra-deep, #8e2f1f); }
+.tech-badge { position: absolute; top: -11px; left: 10px; padding: 2px 9px; border-radius: 999px; background: var(--terra); color: #fff; font: 800 11px var(--font-ui, 'Nunito'), sans-serif; letter-spacing: 0.02em; white-space: nowrap; }
+.btn.rec { background: var(--terra); border-color: var(--terra); color: #fff; }
+@keyframes recPulse { 0%, 100% { box-shadow: 0 0 0 4px rgba(181, 69, 46, 0.18), 0 8px 22px rgba(181, 69, 46, 0.22); } 50% { box-shadow: 0 0 0 7px rgba(181, 69, 46, 0.1), 0 8px 26px rgba(181, 69, 46, 0.32); } }
+@media (prefers-reduced-motion: reduce) { .tech.recommend { animation: none; } }
 .tech.active { border-color: var(--gold); background: #fdf6e3; }
 .tech.pop { background: rgba(255, 255, 255, 0.55); }
 .tech-prog { display: grid; gap: 4px; margin-top: 8px; font-size: 12px; font-weight: 800; color: #7a5512; }
