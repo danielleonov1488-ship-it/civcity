@@ -722,56 +722,43 @@ function plebHouse(mb, b) {
   }
 
   if (t === 2) {
-    houseLot(mb, '#dccba6');
-    if (v === 0) {
-      mb.wall(0.3, 0.025, 0.35, 1.7, 0.6, 1.55, wall);
-      mb.door('z+', 1.55, 0.7, 0.19, 0.31);
-      mb.window('z+', 1.55, 1.25, 0.38, 0.13, 0.14, sh, { flowers: true, seed: b.id });
-      windowRow(mb, 'x+', 1.7, 0.45, 1.45, 2, 0.38, 0.12, 0.14, sh);
-      windowRow(mb, 'x-', 0.3, 0.45, 1.45, 2, 0.38, 0.12, 0.14, sh);
-      windowRow(mb, 'z-', 0.35, 0.4, 1.6, 2, 0.38, 0.12, 0.14, sh);
-      mb.hip(0.3, 0.35, 1.7, 1.55, 0.6, 0.38, roof);
-      // навес над дверью
-      mb.box(0.52, 0.36, 1.55, 0.88, 0.385, 1.74, roof, { ao: 1 });
-      mb.box(0.54, 0.025, 1.7, 0.57, 0.36, 1.73, PAL.wood);
-      mb.box(0.83, 0.025, 1.7, 0.86, 0.36, 1.73, PAL.wood);
-      pot(mb, 0.42, 1.78, 1, PAL.flowers[b.id % 6]); pot(mb, 1.05, 1.78, 1, PAL.flowers[(b.id + 2) % 6]);
-      mb.box(1.25, 0.025, 1.68, 1.6, 0.1, 1.78, PAL.wood);
-      lantern(mb, 'z+', 1.55, 0.97, 0.38);
-      if (b.id % 2) ivy(mb, 'x+', 1.7, 1.38, 0.03, 0.56, PAL.flowers[(b.id + 1) % 3 === 0 ? 2 : 0]);
-    } else if (v === 1) {
-      mb.wall(0.25, 0.025, 0.25, 1.75, 0.58, 0.95, wall);
-      mb.gable(0.25, 0.25, 1.75, 0.95, 0.58, 0.32, roof, { axis: 'x', end: wall });
-      mb.wall(0.25, 0.025, 0.95, 0.95, 0.58, 1.75, wall);
-      mb.gable(0.25, 0.95, 0.95, 1.75, 0.58, 0.32, roof, { axis: 'z', end: wall });
-      mb.door('z+', 1.75, 0.6, 0.18, 0.3);
-      windowRow(mb, 'z+', 0.95, 1.05, 1.7, 2, 0.37, 0.12, 0.14, sh, { flowers: true, seed: b.id });
-      mb.window('x+', 1.75, 0.6, 0.37, 0.12, 0.14, sh);
-      windowRow(mb, 'z-', 0.25, 0.4, 1.6, 3, 0.37, 0.12, 0.14, sh);
-      mb.plate(1.0, 1.0, 1.92, 1.92, 0.032, '#a8c47a');
-      treeOlive(mb, 1.45, 1.4, 0.95);
-      hedge(mb, 1.0, 1.86, 1.92, 1.94, 0.14);
-      hedge(mb, 1.84, 1.0, 1.94, 1.86, 0.14);
-      lantern(mb, 'z+', 1.75, 0.84, 0.36);
-      ivy(mb, 'z+', 0.95, 1.62, 0.03, 0.5, PAL.flowers[b.id % 2 ? 2 : 0]);
+    // Домик стоит во весь участок, стена к стене с соседями, — как первый этаж будущей инсулы:
+    // тот же размер и цвет, поэтому, вырастая, дом не меняется внизу, а над ним надстраивают этажи
+    const x0 = 0.08, z0 = 0.15, x1 = 1.92, z1 = 1.85, f = 0.5;
+    const gw = PAL.plaster[(b.id + 1) % PAL.plaster.length];
+    mb.wall(x0, 0.025, z0, x1, f, z1, gw);
+    if (v === 2) {
+      // аркада по фасаду — потом под ней будут лавки большого дома
+      for (let i = 0; i < 4; i++) mb.arch('z+', z1, x0 + 0.22 + i * 0.42, 0.26, 0.04, 0.38, '#4d3a2c');
+      for (let i = 0; i < 5; i++) mb.faceBox('z+', z1, x0 + 0.01 + i * 0.42 - 0.03, x0 + 0.01 + i * 0.42 + 0.03, 0.03, 0.44, 0.03, PAL.stoneLight);
+      for (let i = 0; i < 3; i++) amphora(mb, x0 + 0.35 + i * 0.42, z1 + 0.12, 1, null);
+      quoins(mb, x0, z0, x1, z1, 0.07, f - 0.04, PAL.stoneLight);
     } else {
-      mb.wall(0.3, 0.025, 0.25, 1.7, 0.62, 1.15, wall);
-      mb.gable(0.3, 0.25, 1.7, 1.15, 0.62, 0.34, roof, { axis: 'x', end: wall });
-      mb.door('z+', 1.15, 1.0, 0.19, 0.32);
-      mb.window('z+', 1.15, 0.58, 0.4, 0.13, 0.14, sh, { flowers: true, seed: b.id });
-      mb.window('z+', 1.15, 1.42, 0.4, 0.13, 0.14, sh);
-      windowRow(mb, 'x+', 1.7, 0.35, 1.05, 2, 0.4, 0.12, 0.14, sh);
-      lowWall(mb, 0.15, 1.85, 0.85, 1.85, 0.18, wall);
-      lowWall(mb, 1.15, 1.85, 1.85, 1.85, 0.18, wall);
-      lowWall(mb, 0.15, 1.2, 0.15, 1.85, 0.18, wall);
-      lowWall(mb, 1.85, 1.2, 1.85, 1.85, 0.18, wall);
-      pot(mb, 0.4, 1.55, 1.2, '#f08ab8'); pot(mb, 1.6, 1.55, 1.2, '#ffffff');
-      treeCypress(mb, 1.62, 1.38, 0.55);
-      mb.cyl(0.6, 0.025, 1.45, 0.1, 0.12, PAL.stone, { segs: 10 });
-      mb.cyl(0.6, 0.14, 1.45, 0.08, 0.004, PAL.water, { segs: 10 });
-      lantern(mb, 'z+', 1.15, 1.24, 0.38);
-      ivy(mb, 'x-', 0.3, 0.45, 0.03, 0.6, b.id % 2 ? PAL.flowers[2] : null);
+      // дверь и лавка с прилавком под полосатым навесом
+      mb.door('z+', z1, x0 + 0.4, 0.2, 0.34);
+      const a = x0 + 0.85;
+      mb.rect('z+', z1, a, a + 0.62, 0.03, 0.36, '#4d3a2c');
+      mb.faceBox('z+', z1, a + 0.04, a + 0.58, 0.03, 0.15, 0.1, PAL.wood);
+      for (let i = 0; i < 4; i++) mb.blob(a + 0.11 + i * 0.13, 0.18, z1 + 0.05, 0.035, 0.03, 0.035, ['#e05a3a', '#f0c040', '#7fb24a', '#a05ac0'][(i + b.id) % 4], { jitter: 0.1 });
+      awning(mb, 'z+', z1, a - 0.03, a + 0.65, 0.45, 0.24, PAL.awning[b.id % PAL.awning.length]);
+      mb.window('z+', z1, x1 - 0.16, 0.3, 0.12, 0.14, sh, { flowers: true, seed: b.id });
+      pot(mb, x0 + 0.16, z1 + 0.1, 1, PAL.flowers[b.id % 6]);
+      lantern(mb, 'z+', z1, x0 + 0.68, 0.38);
     }
+    windowRow(mb, 'x-', x0, z0 + 0.3, z1 - 0.3, 2, 0.3, 0.12, 0.14, sh);
+    windowRow(mb, 'x+', x1, z0 + 0.3, z1 - 0.3, 2, 0.3, 0.12, 0.14, sh);
+    windowRow(mb, 'z-', z0, x0 + 0.3, x1 - 0.3, 3, 0.3, 0.12, 0.14, sh);
+    // крыша: у каждого из трёх видов своя
+    if (v === 1) {
+      mb.gable(x0, z0, x1, z1, f, 0.42, roof, { axis: 'x', end: gw, over: 0.08 });
+      mb.box(x1 - 0.42, f + 0.12, z0 + 0.3, x1 - 0.3, f + 0.48, z0 + 0.42, PAL.brickLight);
+      mb.box(x1 - 0.44, f + 0.46, z0 + 0.28, x1 - 0.28, f + 0.5, z0 + 0.44, PAL.brickDark);
+    } else {
+      mb.hip(x0, z0, x1, z1, f, v === 2 ? 0.32 : 0.4, roof, { over: 0.08 });
+      mb.box(x0 + 0.3, f + 0.1, z0 + 0.28, x0 + 0.42, f + 0.42, z0 + 0.4, PAL.brickLight);
+      mb.box(x0 + 0.28, f + 0.4, z0 + 0.26, x0 + 0.44, f + 0.44, z0 + 0.42, PAL.brickDark);
+    }
+    if (b.id % 2) ivy(mb, 'x-', x0, z1 - 0.16, 0.03, f - 0.04, PAL.flowers[b.id % 3 === 0 ? 2 : 0]);
     return;
   }
 
@@ -1137,8 +1124,9 @@ function decorModel(mb, b) {
       mb.glow = false;
       break;
     case 'campfire':
-      if (!P('Campfire', 0.5, 0.5, 0, 0.16)) for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2; mb.blob(0.5 + Math.cos(a) * 0.18, 0.04, 0.5 + Math.sin(a) * 0.18, 0.05, 0.04, 0.05, PAL.stoneDark); }
-      centerFire(mb, 0.5, 0.05, 0.5, 1.1, true);
+      for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; mb.blob(0.5 + Math.cos(a) * 0.17, 0.035, 0.5 + Math.sin(a) * 0.17, 0.055, 0.045, 0.05, i % 2 ? PAL.stoneDark : PAL.stone, { jitter: 0.25 }); }
+      for (let i = 0; i < 3; i++) { const a = i * 2.1; mb.box(0.5 + Math.cos(a) * 0.03 - 0.12, 0.03, 0.5 + Math.sin(a) * 0.03 - 0.022, 0.5 + Math.cos(a) * 0.03 + 0.12, 0.07, 0.5 + Math.sin(a) * 0.03 + 0.022, i % 2 ? PAL.woodDark : PAL.wood); }
+      centerFire(mb, 0.5, 0.06, 0.5, 1.1, true);
       break;
     // ---- улица
     case 'barrels':
@@ -1150,13 +1138,24 @@ function decorModel(mb, b) {
       crate(mb, 0.38, 0.45, 1.3); crate(mb, 0.62, 0.5, 1.2); crate(mb, 0.48, 0.47, 1.1, 0.14);
       break;
     case 'sacks':
-      if (!P('Spice Bag', 0.36, 0.45, 0.4, 0.1)) mb.blob(0.36, 0.06, 0.45, 0.08, 0.07, 0.08, '#c9a46a');
-      if (!P('Spice Bucket', 0.6, 0.42, 0, 0.11)) mb.cyl(0.6, 0, 0.42, 0.07, 0.1, PAL.wood, { segs: 8 });
-      if (!P('Basket', 0.52, 0.66, 0, 0.09)) mb.cyl(0.52, 0, 0.66, 0.08, 0.08, PAL.woodLight, { segs: 8 });
+      // мешки с зерном, корзина фруктов и ведро пряностей
+      for (const [x, z, c] of [[0.34, 0.4, '#d8c39a'], [0.5, 0.36, '#cdb486'], [0.42, 0.56, '#d8c39a']]) {
+        mb.blob(x, 0.1, z, 0.1, 0.1, 0.09, c, { jitter: 0.12 });
+        mb.cyl(x, 0.18, z, 0.04, 0.05, shadeHex(c, 0.85), { segs: 6, rTop: 0.02 });
+      }
+      mb.cyl(0.68, 0, 0.5, 0.09, 0.09, PAL.woodLight, { segs: 10, rTop: 0.11 });
+      for (let i = 0; i < 5; i++) mb.blob(0.66 + (i % 3) * 0.03, 0.11, 0.48 + Math.floor(i / 3) * 0.04, 0.035, 0.03, 0.035, ['#e05a3a', '#f0c040', '#7fb24a'][i % 3]);
+      mb.cyl(0.6, 0, 0.7, 0.065, 0.1, PAL.wood, { segs: 8 });
+      mb.cyl(0.6, 0.1, 0.7, 0.06, 0.012, '#c8742c', { segs: 8 });
       break;
     case 'hay':
-      if (!P('Hay bal', 0.4, 0.45, 0.3, 0.2)) mb.box(0.25, 0, 0.35, 0.55, 0.2, 0.6, PAL.thatch);
-      if (!P('Hay bal', 0.65, 0.6, 1.2, 0.18)) mb.box(0.52, 0, 0.5, 0.78, 0.18, 0.72, PAL.thatch);
+      // тюки сена, перетянутые верёвкой
+      for (const [x0, z0, x1, z1, y0, y1] of [[0.22, 0.32, 0.56, 0.58, 0, 0.18], [0.52, 0.48, 0.8, 0.72, 0, 0.16], [0.3, 0.38, 0.58, 0.6, 0.18, 0.33]]) {
+        mb.box(x0, y0, z0, x1, y1, z1, PAL.thatch, { top: '#e3c977' });
+        mb.box(x0 + (x1 - x0) * 0.3, y0, z0 - 0.004, x0 + (x1 - x0) * 0.3 + 0.015, y1 + 0.002, z1 + 0.004, PAL.thatchDark, { ao: 1 });
+        mb.box(x0 + (x1 - x0) * 0.7, y0, z0 - 0.004, x0 + (x1 - x0) * 0.7 + 0.015, y1 + 0.002, z1 + 0.004, PAL.thatchDark, { ao: 1 });
+      }
+      for (let i = 0; i < 6; i++) mb.box(0.2 + i * 0.1, 0.0, 0.76 + (i % 2) * 0.04, 0.24 + i * 0.1, 0.012, 0.8 + (i % 2) * 0.04, '#e3c977', { ao: 1 });
       break;
     case 'cart':
       if (!P('Cart', 0.5, 0.5, 0, 0.42)) {
@@ -1188,7 +1187,12 @@ function decorModel(mb, b) {
       if (!P('Flower Bush', 0.5, 0.5, 0, 0.32)) { bush(mb, 0.5, 0.5, 1.2, PAL.leaf); for (let i = 0; i < 6; i++) mb.blob(0.5 + Math.cos(i) * 0.12, 0.2, 0.5 + Math.sin(i) * 0.12, 0.03, 0.03, 0.03, PAL.flowers[i % 6]); }
       break;
     case 'planter':
-      if (!P('Jardinera', 0.5, 0.5, 0, 0.26)) { mb.box(0.3, 0, 0.3, 0.7, 0.16, 0.7, PAL.stoneLight); mb.blob(0.5, 0.22, 0.5, 0.2, 0.1, 0.2, PAL.leaf); }
+      // каменный вазон на ножке с подстриженным самшитом
+      mb.cyl(0.5, 0, 0.5, 0.12, 0.05, PAL.stoneLight, { segs: 12 });
+      mb.cyl(0.5, 0.05, 0.5, 0.06, 0.08, PAL.stone, { segs: 10 });
+      mb.cyl(0.5, 0.13, 0.5, 0.12, 0.12, PAL.stoneLight, { segs: 12, rTop: 0.17 });
+      mb.cyl(0.5, 0.25, 0.5, 0.175, 0.02, PAL.stone, { segs: 12 });
+      mb.blob(0.5, 0.36, 0.5, 0.15, 0.14, 0.15, PAL.hedge, { jitter: 0.12, detail: 1 });
       break;
     case 'palm':
       if (!P(b.id % 2 ? 'Palm' : 'Palm.001', 0.5, 0.5, b.id * 1.3, 1.0)) { mb.cyl(0.5, 0, 0.5, 0.04, 0.9, PAL.woodDark, { segs: 6 }); for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2; mb.blob(0.5 + Math.cos(a) * 0.2, 0.9, 0.5 + Math.sin(a) * 0.2, 0.22, 0.04, 0.08, PAL.leaf); } }
@@ -1381,13 +1385,22 @@ function productionModel(mb, b) {
     case 'quarry':
     case 'marblequarry': {
       const big = b.type === 'marblequarry', S = big ? 3 : 2;
-      const rock = big ? PAL.marble : '#bdb6a8', rockD = big ? PAL.marbleShade : '#a49d8f';
+      const rock = big ? '#efece4' : '#bdb6a8', rockD = big ? '#d9d3c6' : '#a39c8e', rockL = big ? '#fbf9f4' : '#d0cabd';
       mb.patch(S / 2, S / 2, S / 2 - 0.08, S / 2 - 0.12, 0.042, big ? '#e4dfd4' : '#cbc3b2');
-      // уступы карьера
-      for (let i = 0; i < 3; i++) mb.box(0.12 + i * 0.12, 0.025, 0.12, S - 0.12 - i * 0.12, 0.42 - i * 0.13, S * 0.45 - i * 0.06, i % 2 ? rock : rockD);
-      for (let i = 0; i < (big ? 8 : 5); i++) {
-        const x = 0.3 + (i % 4) * 0.28, z = S * 0.62 + Math.floor(i / 4) * 0.3;
-        mb.box(x - 0.1, 0.025, z - 0.08, x + 0.1, 0.17 + (i % 2) * 0.05, z + 0.08, i % 2 ? rock : rockD);
+      // скала: неровные глыбы вдоль задней стороны, сверху — светлые валуны
+      const n = big ? 7 : 5;
+      for (let i = 0; i < n; i++) {
+        const x = 0.26 + i * (S - 0.52) / (n - 1), j = hash2(b.id, i, 9);
+        mb.blob(x, 0.2, 0.36 + j * 0.12, 0.25 + j * 0.08, 0.34 + j * 0.14, 0.24, i % 2 ? rock : rockD, { jitter: 0.22, detail: 1 });
+        if (i < n - 1) mb.blob(x + 0.16, 0.52 + j * 0.12, 0.28, 0.18, 0.16, 0.16, rockL, { jitter: 0.3, detail: 1 });
+      }
+      // ровный срез, вырубленный в скале, — две ступени
+      for (let i = 0; i < 2; i++) mb.box(0.24 + i * 0.22, 0.025, 0.58, S * 0.58 - i * 0.12, 0.2 - i * 0.08, 0.84 - i * 0.04, i ? rockL : rock, { ao: 0.85 });
+      // нарезанные блоки, сложенные на земле
+      for (let i = 0; i < (big ? 6 : 4); i++) {
+        const x = 0.3 + (i % 3) * 0.26, z = S * 0.62 + Math.floor(i / 3) * 0.26, hgt = 0.1 + (i % 2) * 0.03;
+        mb.box(x - 0.1, 0.025, z - 0.08, x + 0.1, 0.025 + hgt, z + 0.08, i % 2 ? rockL : rock, { ao: 0.85 });
+        if (i % 3 === 0) mb.box(x - 0.08, 0.025 + hgt, z - 0.06, x + 0.08, 0.025 + hgt + 0.09, z + 0.06, rockL, { ao: 0.85 });
       }
       // деревянный кран с колесом-топчаком
       const cx = S - 0.52, cz = S - 0.55;
@@ -1397,8 +1410,10 @@ function productionModel(mb, b) {
       mb.cyl(cx + 0.2, 0.28, cz, 0.24, 0.1, PAL.woodLight, { segs: 14 });
       mb.cyl(cx + 0.2, 0.28, cz, 0.2, 0.1, PAL.woodDark, { segs: 14 });
       mb.box(cx - 0.405, 0.48, cz - 0.004, cx - 0.4, 0.84, cz + 0.004, '#5a4a3a', { ao: 1 });
-      mb.box(cx - 0.48, 0.38, cz - 0.08, cx - 0.32, 0.48, cz + 0.08, rock);
+      mb.box(cx - 0.48, 0.38, cz - 0.08, cx - 0.32, 0.48, cz + 0.08, rockL);
+      // инструменты у скалы
       for (let i = 0; i < 3; i++) mb.box(0.2 + i * 0.05, 0.025, S - 0.35 + i * 0.03, 0.24 + i * 0.05, 0.25, S - 0.33 + i * 0.03, PAL.woodLight);
+      crate(mb, S - 0.25, 0.95, 1.1);
       break;
     }
     case 'claypit':

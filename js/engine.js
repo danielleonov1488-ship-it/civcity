@@ -965,7 +965,8 @@ const Engine = {
       if (!g || !g.slot.has(id)) { this.animIds.delete(id); continue; }
       const age = (now - Math.max(b.born || 0, b.animAt || 0)) / 1000;
       let m;
-      if (age >= 0.6 || age < 0) { m = this.buildingMatrix(b); this.animIds.delete(id); }
+      if (age >= 0.6 || age < 0) { m = this.buildingMatrix(b); this.animIds.delete(id); delete b.growFrom; }
+      else if (b.growFrom) { const k = easeOutBack(clamp(age / 0.6, 0, 1)); m = this.buildingMatrix(b, b.growFrom + (1 - b.growFrom) * k, 1); }
       else { const k = easeOutBack(clamp(age / 0.6, 0, 1)); m = this.buildingMatrix(b, Math.max(0.02, k), 1 + (1 - k) * 0.12); }
       const i = g.slot.get(id);
       for (const kk of ['solid', 'glow', 'win']) if (g[kk]) { g[kk].setMatrixAt(i, m); g[kk].instanceMatrix.needsUpdate = true; g[kk].boundingSphere = null; }

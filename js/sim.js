@@ -502,6 +502,9 @@ const SHORTAGE = {
 
 function onHouseChanged(h, up, now) {
   h.animAt = now;
+  // дом вырос: стены внизу остаются, над ними поднимаются новые этажи (а не весь дом заново из земли)
+  const prev = tiersOf(h)[h.tier + (up ? -1 : 1)];
+  if (up && prev && prev.height) h.growFrom = clamp(prev.height / tiersOf(h)[h.tier].height, 0.2, 1);
   Engine.buildingsChanged(h);
   const T = tiersOf(h)[h.tier];
   if (up) {
