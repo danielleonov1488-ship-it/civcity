@@ -1,7 +1,7 @@
 {
   "name": "civcity",
   "productName": "CivCity",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "CivCity — уютный градостроитель про Рим",
   "author": "CivCity",
   "main": "main.js",
@@ -20,7 +20,7 @@
     "copyright": "CivCity",
     "directories": { "output": "dist", "buildResources": "build" },
     "electronLanguages": ["ru", "en-US"],
-    "files": ["main.js", "updater.js", "package.json"],
+    "files": ["main.js", "updater.js", "preload-launcher.js", "preload-game.js", "launcher/**", "package.json"],
     "extraResources": [{ "from": "game", "to": "game" }],
     "win": {
       "icon": "build/icon.png",

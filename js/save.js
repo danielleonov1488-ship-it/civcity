@@ -23,6 +23,11 @@ const Settings = {
       if (typeof s.music === 'number') this.music = clamp(s.music, 0, 1);
       if (typeof s.sfx === 'number') this.sfx = clamp(s.sfx, 0, 1);
     } catch (e) { /* по умолчанию */ }
+    // в программе для ПК качество выбирают в лаунчере
+    try {
+      const d = window.civDesktop && civDesktop.prefs();
+      if (d && QUALITY[d.quality]) { this.quality = d.quality; this.qAuto = false; } else if (d && d.quality === 'auto') this.qAuto = true;
+    } catch (e) { /* нет моста */ }
   },
 
   save() {

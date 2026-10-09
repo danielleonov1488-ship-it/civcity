@@ -1,14 +1,16 @@
 'use strict';
-/* Аккаунт: вход по почте и паролю, город в облаке, восстановление пароля по ссылке из письма.
-   Город по-прежнему сохраняется в браузере каждые 15 секунд, а при входе ещё и на сервер — раз в минуту,
-   если что-то изменилось, и при сворачивании. Если город менялся на другом устройстве, игрок выбирает,
-   какой оставить. Тестовый город (#test) в облако не попадает. */
+/* Аккаунт: вход обязателен — без него видно только окно входа и регистрации. Город у игрока один и живёт
+   на сервере; на компьютере лежит его копия (сохраняется каждые 15 секунд, в облако — раз в минуту, если
+   что-то изменилось, и при сворачивании). Пропал интернет после входа — играем дальше, облако догонит.
+   У копии на компьютере есть хозяин (owner): если войдёт другой человек, он получит свой город, а не чужой.
+   В программе для ПК вход общий с лаунчером (window.civDesktop). Тестовый город (#test) — без входа и облака. */
 
 const ACCOUNT_KEY = 'civcity.account';
 
 const Account = {
   // адрес сервера: на самом сайте — он же; в программе для ПК и на запасном сайте — civcity.ru
   api: (() => {
+    if (typeof window.civDesktop === 'object' && window.civDesktop) return civDesktop.api();
     try { const o = localStorage.getItem('civcity.api'); if (o) return o; } catch (e) { /* нет хранилища */ }
     const h = location.hostname;
     if (/^https?:$/.test(location.protocol) && (/(^|\.)civcity\.ru$/.test(h) || /^\d+\.\d+\.\d+\.\d+$/.test(h))) return location.origin + '/api';
@@ -22,27 +24,39 @@ const Account = {
   upAt: 0,           // когда город последний раз ушёл в облако
   busy: false,
   conflict: false,
+  owner: null,       // чей город лежит на этом компьютере (почта)
 
   get on() { return !!this.token && !TEST_MODE; },
+  // нужен вход: окно входа обязательное и не закрывается
+  get gated() { return !TEST_MODE && !this.token; },
+  get desktop() { return typeof window.civDesktop === 'object' && !!window.civDesktop; },
 
   init() {
     if (TEST_MODE) return;
     try { Object.assign(this, JSON.parse(localStorage.getItem(ACCOUNT_KEY) || '{}')); } catch (e) { /* пусто */ }
+    // в программе для ПК вход хранит программа (общий с лаунчером)
+    if (this.desktop) {
+      const s = civDesktop.session();
+      this.token = s && s.token || null;
+      if (s && s.email) this.email = s.email;
+    }
     const m = /^#reset=([\w-]+)$/.exec(location.hash);
     if (m) {
       history.replaceState(null, '', location.pathname + location.search);
       this.showReset(m[1]);
     } else if (this.token) this.syncOnStart();
-    else if (!this.skipped()) this.showLogin();
+    else this.showLogin();
     setInterval(() => this.upload(false), 20000);
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.upload(true); });
   },
 
   remember() {
-    try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify({ email: this.email, token: this.token, base: this.base, upAt: this.upAt })); } catch (e) { /* нет хранилища */ }
+    try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify({ email: this.email, token: this.desktop ? null : this.token, base: this.base, upAt: this.upAt, owner: this.owner })); } catch (e) { /* нет хранилища */ }
+    if (this.desktop) civDesktop.setSession(this.token ? { email: this.email, token: this.token } : null);
   },
 
-  skipped() { try { return localStorage.getItem(ACCOUNT_KEY + '.skip') === '1'; } catch (e) { return false; } },
+  // окна входа: пока игрок не вошёл, они обязательные
+  modal(html) { UI.showModal(html, null, this.gated); },
 
   async call(method, path, body) {
     let r;
@@ -65,16 +79,21 @@ const Account = {
     this.email = res.email;
     this.token = res.token;
     this.remember();
-    UI.closeModal();
+    UI.closeModal(true);
     this.syncOnStart();
   },
 
   logout() {
     if (this.token) this.call('POST', '/logout').catch(() => {});
     this.token = null;
-    this.base = null;
     this.remember();
-    UI.toast('Вы вышли. Город остался на этом компьютере.', 'good');
+    this.showLogin('Вы вышли. Войдите, чтобы продолжить.');
+  },
+
+  // Город заменили (уничтожили и начали заново) — новый сразу уходит в облако
+  cityReplaced() {
+    this.lastData = null;
+    if (this.on) { this.owner = this.email; this.upload(true, true); }
   },
 
   // Мета для списка сохранений: название, жители, день
@@ -89,14 +108,33 @@ const Account = {
     let me;
     try { me = await this.call('GET', '/me'); } catch (e) {
       if (e.status === 401) { this.token = null; this.remember(); this.showLogin('Вход устарел — войдите снова.'); }
-      return;
+      return;      // нет связи — играем дальше, облако догонит
     }
     this.email = me.email;
+    const foreign = this.owner && this.owner !== me.email;    // город на компьютере — чужой
+    if (!me.save) {
+      // у этого игрока города ещё нет: свой (или ничей) город с компьютера переезжает в аккаунт, чужой — нет
+      if (foreign) { this.startFresh(); return; }
+      this.owner = me.email;
+      this.remember();
+      this.upload(true);
+      return;
+    }
+    if (foreign) { this.loadCloud(); return; }
     this.remember();
-    if (!me.save) { this.upload(true); return; }
-    if (this.base === me.save.id) return;
+    if (this.base === me.save.id) { this.owner = me.email; this.remember(); return; }
     if (this.base === null && this.freshLocal()) { this.loadCloud(); return; }
     this.askConflict(me.save);
+  },
+
+  // У вошедшего игрока ещё нет города, а на компьютере — чужой: начинаем ему чистое поле
+  startFresh() {
+    this.owner = this.email;
+    this.base = null;
+    this.remember();
+    Game.newGame();
+    saveGame();
+    this.upload(true, true);
   },
 
   askConflict(cloud) {
@@ -124,6 +162,7 @@ const Account = {
       if (!r.save) return;
       JSON.parse(r.save.data);
       this.base = r.save.id;
+      this.owner = this.email;
       this.lastData = null;
       this.remember();
       this.reloading = true;
@@ -144,12 +183,13 @@ const Account = {
     try {
       const r = await this.call('PUT', '/save', { data, base: this.base, meta: this.meta(), force: !!force });
       this.base = r.id;
+      this.owner = this.email;
       this.lastData = data;
       this.upAt = Date.now();
       this.remember();
     } catch (e) {
       if (e.status === 409 && e.data && e.data.latest) this.askConflict(e.data.latest);
-      else if (e.status === 401) { this.token = null; this.remember(); }
+      else if (e.status === 401) { this.token = null; this.remember(); this.showLogin('Вход устарел — войдите снова.'); }
     } finally {
       this.lastUp = Date.now();
       this.busy = false;
@@ -167,10 +207,10 @@ const Account = {
 
   showLogin(note, mode) {
     mode = mode || 'login';
-    UI.showModal(`
+    this.modal(`
       <p class="eyebrow">CivCity</p>
       <h2>${mode === 'login' ? 'Вход' : 'Регистрация'}</h2>
-      <p class="sub">${note || 'Город хранится на сервере: не потеряется, и играть можно с любого компьютера — на сайте и в программе.'}</p>
+      <p class="sub">${note || 'Ваш город хранится на сервере: не потеряется, и играть можно с любого компьютера — на сайте и в программе для ПК.'}</p>
       <div class="seg wide" role="group">
         <button type="button" data-amode="login" class="${mode === 'login' ? 'on' : ''}">Вход</button>
         <button type="button" data-amode="reg" class="${mode === 'reg' ? 'on' : ''}">Регистрация</button>
@@ -181,12 +221,11 @@ const Account = {
         <p class="note bad" id="acc-err" hidden></p>
         <div class="actions">
           <button type="submit" class="btn" id="acc-go">${mode === 'login' ? 'Войти' : 'Создать аккаунт'}</button>
-          <button type="button" class="btn ghost" id="acc-skip">Играть без входа</button>
         </div>
       </form>
-      ${mode === 'login' ? '<p class="sub"><button type="button" class="linkish" id="acc-forgot">Забыли пароль?</button></p>' : '<p class="sub">Подтверждать почту не нужно — она понадобится, только если забудете пароль.</p>'}`);
+      ${mode === 'login' ? '<p class="sub"><button type="button" class="linkish" id="acc-forgot">Забыли пароль?</button></p>' : '<p class="sub">Подтверждать почту не нужно — она понадобится, только если забудете пароль.</p>'}
+      ${this.downloadHtml()}`);
     document.querySelectorAll('[data-amode]').forEach(b => b.onclick = () => this.showLogin(note, b.dataset.amode));
-    $('acc-skip').onclick = () => { try { localStorage.setItem(ACCOUNT_KEY + '.skip', '1'); } catch (e) { /* нет хранилища */ } UI.closeModal(); };
     const fg = $('acc-forgot');
     if (fg) fg.onclick = () => this.showForgot($('acc-email').value);
     $('acc-form').onsubmit = async e => {
@@ -208,7 +247,7 @@ const Account = {
   },
 
   showForgot(email) {
-    UI.showModal(`
+    this.modal(`
       <p class="eyebrow">CivCity</p>
       <h2>Забыли пароль?</h2>
       <p class="sub">Пришлём на почту ссылку — по ней можно задать новый пароль. Ссылка действует час.</p>
@@ -237,7 +276,7 @@ const Account = {
   },
 
   showReset(token) {
-    UI.showModal(`
+    this.modal(`
       <p class="eyebrow">CivCity</p>
       <h2>Новый пароль</h2>
       <form id="acc-form" class="acc-form">
@@ -266,20 +305,16 @@ const Account = {
 
   // Блок для окна настроек
   menuHtml() {
-    if (TEST_MODE) return '';
-    if (!this.on) return `<div class="note acc-box"><b>Город хранится только на этом компьютере.</b> Войдите, чтобы он хранился и на сервере.
-      <div class="actions"><button type="button" class="btn small" id="acc-open">Войти или зарегистрироваться</button></div></div>`;
+    if (TEST_MODE || !this.on) return '';
     const when = this.upAt ? new Date(this.upAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : null;
     return `<div class="note good acc-box">Вы вошли как <b>${escapeHtml(this.email || '')}</b>. ${when ? `В облаке сохранено в ${when}.` : 'Город сохраняется в облаке раз в минуту.'}
       <div class="actions"><button type="button" class="btn small" id="acc-now">Сохранить в облако сейчас</button><button type="button" class="btn small ghost" id="acc-out">Выйти</button></div></div>`;
   },
 
   bindMenu() {
-    const o = $('acc-open');
-    if (o) o.onclick = () => this.showLogin();
     const n = $('acc-now');
     if (n) n.onclick = async () => { this.lastData = null; await this.upload(true); UI.toast(this.upAt && Date.now() - this.upAt < 5000 ? 'Город сохранён в облаке' : 'Не получилось — проверьте интернет', this.upAt && Date.now() - this.upAt < 5000 ? 'good' : 'warn'); UI.closeModal(); };
     const out = $('acc-out');
-    if (out) out.onclick = () => { this.logout(); UI.closeModal(); };
+    if (out) out.onclick = () => { UI.closeModal(); this.logout(); };
   },
 };

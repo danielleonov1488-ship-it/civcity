@@ -8,7 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 // Повышать, когда меняется сама программа (desktop/main.js, updater.js) так, что старая с новой игрой не справится
-const SHELL_MIN = '0.9.2';
+const SHELL_MIN = '0.9.3';     // 0.9.3 — лаунчер
 
 function listFiles(root) {
   const out = ['index.html', 'style.css'];

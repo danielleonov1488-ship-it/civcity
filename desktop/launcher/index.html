@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; font-src 'self'; script-src 'self'">
+<title>CivCity</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+<header class="titlebar">
+  <span class="tb-name">CivCity</span>
+  <span class="tb-drag"></span>
+  <button type="button" class="tb-btn" id="tb-min" aria-label="Свернуть">&#8211;</button>
+  <button type="button" class="tb-btn close" id="tb-close" aria-label="Закрыть">&#215;</button>
+</header>
+
+<main>
+  <section class="left">
+    <div class="hero">
+      <div class="hero-text">
+        <h1 class="logo">CIVCITY</h1>
+        <p class="tag">Уютный градостроитель про Древний Рим</p>
+      </div>
+    </div>
+    <div class="news">
+      <h2>Новости</h2>
+      <ul id="news"><li class="muted">Загружаю новости…</li></ul>
+    </div>
+    <nav class="links" id="links"></nav>
+  </section>
+
+  <aside class="right">
+    <div class="card" id="acct"></div>
+
+    <div class="card settings">
+      <h3>Настройки</h3>
+      <label class="row">Качество графики
+        <select id="quality">
+          <option value="auto">Подбирать само</option>
+          <option value="low">Низкое</option>
+          <option value="medium">Среднее</option>
+          <option value="high">Высокое</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="fullscreen"> Во весь экран</label>
+      <label class="check"><input type="checkbox" id="autostart"> Запускать игру сразу, без лаунчера</label>
+    </div>
+
+    <div class="update">
+      <div class="upd-text" id="upd-text">Проверяю обновления…</div>
+      <div class="upd-bar wait" id="upd-bar"><div id="upd-fill"></div></div>
+      <div class="shell-note" id="shell-note" hidden>
+        Вышла новая версия программы CivCity. Скачайте и установите её — город сохранится.
+        <button type="button" class="btn small" id="shell-dl">Скачать</button>
+      </div>
+    </div>
+
+    <button type="button" class="play" id="play" disabled>Играть</button>
+    <p class="ver" id="ver"></p>
+  </aside>
+</main>
+<script src="launcher.js"></script>
+</body>
+</html>

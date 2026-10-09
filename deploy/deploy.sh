@@ -26,7 +26,7 @@ tar -czf - --exclude=assets/incoming index.html style.css game-manifest.json js 
     rm -rf /srv/civcity/www.old; mv /srv/civcity/www /srv/civcity/www.old; mv /srv/civcity/www.new /srv/civcity/www; rm -rf /srv/civcity/www.old'
 
 # сервер аккаунтов
-tar -czf - -C server index.js mail.js setmail.js testmail.js package.json node_modules \
+tar -czf - -C server index.js mail.js setmail.js testmail.js launcher.json package.json node_modules \
   | $SSH 'set -e; tar -xzf - -C /srv/civcity/server'
 scp -q -i "$HOME/.ssh/civcity_ed25519" deploy/civcity.service "$HOST:/etc/systemd/system/civcity.service"
 scp -q -i "$HOME/.ssh/civcity_ed25519" deploy/Caddyfile "$HOST:/etc/caddy/Caddyfile"

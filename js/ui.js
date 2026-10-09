@@ -715,17 +715,22 @@ const UI = {
 
   /* ---------- Небольшие окна ---------- */
 
-  showModal(html, size) {
+  // locked — обязательное окно (вход в игру): его не закрыть ни Esc, ни кликом мимо, и другие окна его не перекрывают
+  showModal(html, size, locked) {
+    if (this.modalLocked && !locked) return;
+    this.modalLocked = !!locked;
     $('modal').className = 'panel' + (size ? ' ' + size : '');
     $('modal').innerHTML = html;
     $('modal-back').hidden = false;
     this.modalOpen = true;
   },
 
-  closeModal() {
+  closeModal(force) {
     if (!this.modalOpen) return false;
+    if (this.modalLocked && !force) return true;
     $('modal-back').hidden = true;
     this.modalOpen = false;
+    this.modalLocked = false;
     return true;
   },
 
@@ -801,10 +806,13 @@ const UI = {
         <a class="btn small ghost" href="./">В свой город</a></div></div>` : ''}
       <div class="actions">
         <button type="button" class="btn ghost" id="menu-help">Справка</button>
-        <button type="button" class="btn ghost" id="menu-new">Новый город</button>
         <button type="button" class="btn" id="menu-close">Продолжить</button>
       </div>
-      <p class="sub">Игра сохраняется сама каждые 15 секунд${Account.on ? ' на этом компьютере и раз в минуту — в облаке' : ' на этом компьютере'}.</p>`);
+      <p class="sub">Игра сохраняется сама каждые 15 секунд${Account.on ? ' на этом компьютере и раз в минуту — в облаке' : ' на этом компьютере'}.</p>
+      <details class="danger-zone"><summary>Начать сначала</summary>
+        <p class="sub">Город можно уничтожить и начать с чистого поля. Пропадёт всё: дома, жители, запасы, армия, знания, чудеса, рейтинг.</p>
+        <button type="button" class="btn danger small" id="menu-destroy">Уничтожить город…</button>
+      </details>`);
     Account.bindMenu();
     const input = $('city-input');
     input.addEventListener('input', () => { state.cityName = input.value.trim() || 'Нова Рома'; this.updateHud(true); });
@@ -817,6 +825,7 @@ const UI = {
     document.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
       Settings.quality = b.dataset.q;
       Settings.qAuto = false;
+      if (window.civDesktop) civDesktop.setPref('quality', Settings.quality);
       Settings.save();
       Engine.setQuality(Settings.quality);
       document.querySelectorAll('[data-q]').forEach(x => x.classList.toggle('on', x === b));
@@ -836,16 +845,58 @@ const UI = {
     $('menu-close').onclick = () => this.closeModal();
     if (TEST_MODE) $('test-give').onclick = () => { Test.give(); this.toast('Добавлено: деньги, товары, свитки и Слава', 'good'); };
     $('menu-help').onclick = () => { this.closeModal(); this.openWindow('guide'); };
-    $('menu-new').onclick = () => {
+    $('menu-destroy').onclick = () => this.destroyCity(1);
+  },
+
+  // «Уничтожить город»: три подтверждения, последнее — написать название города. Город у игрока один,
+  // поэтому вместо него сразу появляется чистое поле (и уходит в облако)
+  destroyCity(step) {
+    const name = state.cityName;
+    if (step === 1) {
       this.showModal(`
-        <h2>Начать заново?</h2>
-        <p>Город «${escapeHtml(state.cityName)}» будет удалён без возможности вернуть.</p>
+        <p class="eyebrow">Уничтожить город</p>
+        <h2>Уничтожить «${escapeHtml(name)}»?</h2>
+        <p>Пропадёт всё: дома, жители, запасы, армия, знания, чудеса, рейтинг и Слава. Вместо города будет чистое поле.</p>
         <div class="actions">
-          <button type="button" class="btn danger" id="new-yes">Да, новый город</button>
-          <button type="button" class="btn ghost" id="new-no">Отмена</button>
+          <button type="button" class="btn ghost" id="dz-no">Нет, оставить</button>
+          <button type="button" class="btn danger" id="dz-go">Продолжить</button>
         </div>`);
-      $('new-no').onclick = () => this.closeModal();
-      $('new-yes').onclick = () => { this.closeModal(); Game.newGame(); };
+    } else if (step === 2) {
+      this.showModal(`
+        <p class="eyebrow">Уничтожить город</p>
+        <h2>Точно уничтожить?</h2>
+        <p>Это нельзя отменить. Город, который вы строили, исчезнет навсегда.</p>
+        <div class="actions">
+          <button type="button" class="btn" id="dz-no">Нет, оставить город</button>
+          <button type="button" class="btn danger" id="dz-go">Да, уничтожить</button>
+        </div>`);
+    } else {
+      this.showModal(`
+        <p class="eyebrow">Последний шаг</p>
+        <h2>Напишите название города</h2>
+        <p>Чтобы уничтожить город, напишите его название: <b>${escapeHtml(name)}</b></p>
+        <label class="field"><input id="dz-name" autocomplete="off" spellcheck="false"></label>
+        <div class="actions">
+          <button type="button" class="btn ghost" id="dz-no">Отмена</button>
+          <button type="button" class="btn danger" id="dz-go" disabled>Уничтожить навсегда</button>
+        </div>`);
+      const inp = $('dz-name'), go = $('dz-go');
+      const norm = s => s.trim().toLowerCase().replace(/ё/g, 'е');
+      inp.oninput = () => { go.disabled = norm(inp.value) !== norm(name); };
+      setTimeout(() => inp.focus(), 50);
+    }
+    $('dz-no').onclick = () => this.closeModal();
+    $('dz-go').onclick = () => {
+      if (step < 3) return this.destroyCity(step + 1);
+      this.closeModal();
+      Game.newGame();
+      saveGame();
+      Account.cityReplaced();
+      this.showModal(`
+        <h2>Чистое поле</h2>
+        <p>Город уничтожен. Начнём заново — советник подскажет, с чего начать.</p>
+        <div class="actions"><button type="button" class="btn" id="dz-ok">Начать</button></div>`);
+      $('dz-ok').onclick = () => this.closeModal();
     };
   },
 

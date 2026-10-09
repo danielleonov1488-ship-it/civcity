@@ -169,6 +169,11 @@ function cleanPassword(p) {
 const routes = {
   'GET /api/health': () => ({ ok: true }),
 
+  // новости и ссылки для лаунчера программы для ПК (файл launcher.json рядом с сервером; правится без перезапуска)
+  'GET /api/launcher': () => {
+    try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'launcher.json'), 'utf8')); } catch (e) { return { news: [], links: [] }; }
+  },
+
   'POST /api/register': async (req) => {
     if (limited('reg:' + ipOf(req), 10, 3600e3)) throw new Fail(429, 'Слишком много попыток, попробуйте позже');
     const b = await json(req);

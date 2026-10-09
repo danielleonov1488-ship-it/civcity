@@ -1,0 +1,83 @@
+/* Лаунчер CivCity: та же римская палитра, что и в игре — пергамент, терракота, золото */
+:root {
+  --paper: #f8f1e2; --paper-2: #f1e6cf; --ink: #45311f; --ink-soft: #7a634b;
+  --terra: #c8553d; --terra-deep: #a84530; --gold: #c39434; --gold-soft: #e9b949;
+  --line: rgba(150, 112, 62, 0.25); --good: #4f6b2a; --bad: #a84530;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); font: 14px/1.45 Nunito, "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; }
+button, input, select { font: inherit; color: inherit; }
+
+/* своя строка заголовка: окно без рамки Windows */
+.titlebar { height: 34px; display: flex; align-items: center; background: #2b1d13; color: #f3e6cc; -webkit-app-region: drag; }
+.tb-name { padding: 0 14px; font: 600 15px/1 "Cormorant Garamond", Georgia, serif; letter-spacing: 0.12em; text-transform: uppercase; }
+.tb-drag { flex: 1; }
+.tb-btn { -webkit-app-region: no-drag; width: 46px; height: 34px; border: 0; background: transparent; color: #f3e6cc; font-size: 18px; cursor: pointer; }
+.tb-btn:hover { background: rgba(255, 255, 255, 0.1); }
+.tb-btn.close:hover { background: #b23a2a; }
+
+main { height: calc(100% - 34px); display: grid; grid-template-columns: 1fr 340px; }
+
+/* слева: вид города, новости, ссылки */
+.left { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); }
+.hero { position: relative; height: 210px; flex: none; background: url(bg.jpg) center 42% / cover; }
+.hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(30, 18, 8, 0.05) 30%, rgba(30, 18, 8, 0.72)); }
+.hero-text { position: absolute; left: 26px; bottom: 18px; z-index: 1; }
+.logo { margin: 0; font: 600 54px/1 "Cormorant Garamond", Georgia, serif; letter-spacing: 0.14em; color: var(--gold-soft); text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55); }
+.tag { margin: 6px 0 0; color: #f6ead2; font-weight: 600; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6); }
+
+.news { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 16px 22px 8px; }
+.news h2, .card h3 { margin: 0 0 10px; font: 700 22px/1 "Cormorant Garamond", Georgia, serif; color: var(--terra-deep); text-transform: uppercase; letter-spacing: 0.06em; }
+#news { list-style: none; margin: 0; padding: 0 4px 0 0; overflow: auto; }
+#news li { border-bottom: 1px dotted var(--line); padding: 8px 0; cursor: pointer; }
+#news li.muted { cursor: default; color: var(--ink-soft); }
+.n-head { display: flex; align-items: baseline; gap: 10px; }
+.n-date { flex: none; font-size: 11.5px; font-weight: 700; color: #fff; background: #6f8f6a; border-radius: 4px; padding: 2px 7px; font-variant-numeric: tabular-nums; }
+.n-title { font-weight: 800; letter-spacing: 0.02em; }
+.n-text { margin: 6px 0 2px; color: var(--ink-soft); display: none; }
+#news li.open .n-text { display: block; }
+
+.links { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 22px 14px; border-top: 1px solid var(--line); }
+.links button { border: 0; background: none; padding: 0; color: var(--terra-deep); text-decoration: underline; cursor: pointer; }
+
+/* справа: вход, настройки, обновление, кнопка «Играть» */
+.right { display: flex; flex-direction: column; gap: 12px; padding: 16px; background: linear-gradient(180deg, var(--paper), var(--paper-2)); overflow: auto; }
+.card { background: #fffaf0; border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.card h3 { font-size: 18px; margin-bottom: 8px; }
+.tabs { display: flex; gap: 4px; margin-bottom: 10px; background: rgba(150, 112, 62, 0.1); border-radius: 9px; padding: 3px; }
+.tabs button { flex: 1; border: 0; border-radius: 7px; padding: 6px; background: transparent; cursor: pointer; font-weight: 700; color: var(--ink-soft); }
+.tabs button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(80, 50, 20, 0.15); }
+.field { display: block; margin-bottom: 8px; font-size: 12.5px; font-weight: 700; color: var(--ink-soft); }
+.field input { display: block; width: 100%; margin-top: 3px; padding: 8px 10px; border: 1px solid #d8c6a4; border-radius: 8px; background: #fff; user-select: text; }
+.field input:focus, select:focus { outline: 2px solid var(--gold-soft); outline-offset: 0; }
+.msg { margin: 4px 0 8px; font-size: 12.5px; }
+.msg.bad { color: var(--bad); }
+.msg.good { color: var(--good); }
+.btn { border: 0; border-radius: 9px; padding: 8px 14px; background: var(--terra); color: #fff; font-weight: 800; cursor: pointer; }
+.btn:hover { background: var(--terra-deep); }
+.btn.small { padding: 5px 11px; font-size: 12.5px; }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.linkish { border: 0; background: none; padding: 0; color: var(--terra-deep); text-decoration: underline; cursor: pointer; font-size: 12.5px; }
+.signed { display: flex; flex-direction: column; gap: 6px; }
+.signed b { word-break: break-all; }
+
+.settings .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; font-weight: 700; font-size: 13px; }
+select { padding: 5px 8px; border: 1px solid #d8c6a4; border-radius: 8px; background: #fff; }
+.check { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 13px; cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--terra); }
+
+.update { margin-top: auto; }
+.upd-text { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 5px; min-height: 18px; }
+.upd-bar { height: 8px; border-radius: 5px; background: #e3d5bc; overflow: hidden; }
+#upd-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--terra), var(--gold-soft)); transition: width 0.2s; }
+.upd-bar.wait #upd-fill { width: 30%; animation: wait 1.2s ease-in-out infinite alternate; }
+@keyframes wait { to { margin-left: 70%; } }
+.shell-note { margin-top: 8px; padding: 9px 11px; border-radius: 9px; background: rgba(233, 185, 73, 0.18); font-size: 12.5px; }
+.shell-note .btn { margin-top: 6px; }
+
+.play { height: 58px; border: 0; border-radius: 12px; cursor: pointer; font: 700 26px/1 "Cormorant Garamond", Georgia, serif; letter-spacing: 0.16em; text-transform: uppercase; color: #fff;
+  background: linear-gradient(180deg, #d4673f, #a84530); box-shadow: 0 4px 0 #7d321f, 0 8px 18px rgba(120, 50, 20, 0.3); }
+.play:hover:not(:disabled) { filter: brightness(1.06); }
+.play:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 2px 0 #7d321f, 0 4px 10px rgba(120, 50, 20, 0.3); }
+.play:disabled { cursor: default; background: #c9b79b; box-shadow: 0 4px 0 #a8977b; font-size: 17px; letter-spacing: 0.04em; text-transform: none; font-family: Nunito, "Segoe UI", sans-serif; font-weight: 800; }
+.ver { margin: 0; text-align: center; font-size: 11.5px; color: var(--ink-soft); }
