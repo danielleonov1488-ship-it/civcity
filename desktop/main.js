@@ -1,18 +1,29 @@
 'use strict';
 /* CivCity для Windows: игра в своём окне, без браузера.
    Файлы игры лежат внутри программы и отдаются по адресу app://game/ — так работают модули и загрузка моделей,
-   а сохранение хранится в папке программы (как localStorage сайта). F11 — во весь экран. */
+   а сохранение хранится в папке программы (как localStorage сайта). F11 — во весь экран.
+   Перед запуском игра сама обновляется с сайта (updater.js): скачиваются только изменившиеся файлы. */
 
 const { app, BrowserWindow, Menu, protocol, net, shell } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const Updater = require('./updater');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
 ]);
 
-// в собранной программе игра лежит в resources/game, при запуске из папки — в game рядом
-const ROOT = app.isPackaged ? path.join(process.resourcesPath, 'game') : path.join(__dirname, 'game');
+// для проверок обновления — отдельная папка данных, чтобы не трогать настоящие сохранения
+if (process.env.CIVCITY_USERDATA) app.setPath('userData', process.env.CIVCITY_USERDATA);
+
+// Игра: вложенная в программу (resources/game, при запуске из папки — game рядом) или скачанная обновлением
+// (папка данных программы/game) — запускается та, что новее
+const BUNDLED = app.isPackaged ? path.join(process.resourcesPath, 'game') : path.join(__dirname, 'game');
+const LOCAL = path.join(app.getPath('userData'), 'game');
+let ROOT = BUNDLED;
+const ICON = path.join(__dirname, 'build', 'icon.png');
+const smoke = !!process.env.CIVCITY_SMOKE;
+let starting = true;      // пока идёт обновление, закрытие окна-заставки не завершает программу
 
 // На ноутбуках с двумя видеокартами Windows по умолчанию отдаёт программу встроенной (Intel/AMD) — в разы слабее.
 // Просим мощную; и не даём движку браузера отключать видеокарту из-за «чёрного списка» старых драйверов
@@ -28,21 +39,20 @@ function createWindow() {
     width: 1440, height: 900, minWidth: 1024, minHeight: 640,
     title: 'CivCity',
     backgroundColor: '#d6e6e6',
-    icon: path.join(__dirname, 'build', 'icon.png'),
+    icon: ICON,
     show: false,
     autoHideMenuBar: true,
     // свёрнутое окно не рисует кадры впустую — дни игра досчитывает по часам (Game.background)
     webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: true },
   });
   // самопроверка при сборке (CIVCITY_SMOKE=1): окно не показывается, игра грузится, в консоль — итог
-  const smoke = !!process.env.CIVCITY_SMOKE;
   if (!smoke) win.once('ready-to-show', () => { win.maximize(); win.show(); });
   else {
     const errors = [];
     win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 3) errors.push(e.message); });
     win.webContents.on('did-finish-load', () => setTimeout(async () => {
       const r = await win.webContents.executeJavaScript(`({ game: typeof Game !== 'undefined', three: !!window.THREE, look2: typeof Look2 !== 'undefined' && Look2.ready, fighters: !!window.Battle3D, roads: typeof Roads !== 'undefined' ? Roads.edges.size : -1 })`).catch(err => ({ err: String(err) }));
-      console.log('SMOKE', JSON.stringify(r), 'errors:', JSON.stringify(errors.slice(0, 5)));
+      console.log('SMOKE', JSON.stringify(r), 'root:', ROOT === BUNDLED ? 'встроенная' : 'обновлённая', 'errors:', JSON.stringify(errors.slice(0, 5)));
       app.quit();
     }, 9000));
   }
@@ -70,7 +80,7 @@ function createWindow() {
 
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   protocol.handle('app', req => {
     const u = new URL(req.url);
     let p = decodeURIComponent(u.pathname);
@@ -80,7 +90,13 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(file).toString());
   });
   Menu.setApplicationMenu(null);
+  // обновление перед стартом; при самопроверке — только если явно задан адрес обновлений
+  if (!smoke || process.env.CIVCITY_UPDATE_URL) {
+    if (await Updater.run(BUNDLED, LOCAL, ICON) === 'quit') { app.quit(); return; }
+  }
+  ROOT = Updater.pickRoot(BUNDLED, LOCAL);
   createWindow();
+  starting = false;
 });
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => { if (!starting) app.quit(); });

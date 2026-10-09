@@ -7,6 +7,7 @@ assets/incoming/
 
 # программа для ПК: зависимости, собранная игра, установщики
 desktop/node_modules/
+game-manifest.json
 desktop/game/
 desktop/dist/
 server/node_modules/

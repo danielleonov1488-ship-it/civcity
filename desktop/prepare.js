@@ -15,6 +15,8 @@ for (const d of ['js', 'vendor', 'assets']) {
     filter: src => !src.includes(path.join('assets', 'incoming')),
   });
 }
+// опись файлов с контрольными суммами — по ней программа поймёт, что обновлять (updater.js)
+fs.writeFileSync(path.join(DST, 'game-manifest.json'), JSON.stringify(require('../deploy/manifest').manifest(DST)));
 let size = 0;
 const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else size += fs.statSync(p).size; } };
 walk(DST);

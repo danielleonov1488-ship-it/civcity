@@ -18,7 +18,9 @@ if [ "${1:-}" = "setup" ]; then
 fi
 
 # игра: страница, стили, скрипты, библиотеки, готовые модели (без сырых наборов)
-tar -czf - --exclude=assets/incoming index.html style.css js vendor assets \
+# и опись файлов с контрольными суммами — по ней программа для ПК обновляется сама
+node deploy/manifest.js . game-manifest.json
+tar -czf - --exclude=assets/incoming index.html style.css game-manifest.json js vendor assets \
   | $SSH 'set -e; rm -rf /srv/civcity/www.new; mkdir -p /srv/civcity/www.new; tar -xzf - -C /srv/civcity/www.new
     [ -d /srv/civcity/www/download ] && cp -r /srv/civcity/www/download /srv/civcity/www.new/ || true
     rm -rf /srv/civcity/www.old; mv /srv/civcity/www /srv/civcity/www.old; mv /srv/civcity/www.new /srv/civcity/www; rm -rf /srv/civcity/www.old'
