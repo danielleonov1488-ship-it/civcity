@@ -112,7 +112,10 @@ const Game = {
 };
 
 // Новый вид сначала подгружает запечённые модели; не вышло — запускаемся в прежнем виде
-window.addEventListener('DOMContentLoaded', () => {
+// Скрипты игры подключает js/boot.js уже после загрузки страницы — тогда стартуем сразу
+function startGame() {
   if (!NEW_LOOK) return Game.boot();
   Look2.load().then(() => Game.boot(), e => { console.warn('Новый вид не загрузился', e); location.replace(location.pathname + location.hash); });
-});
+}
+if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', startGame);
+else startGame();

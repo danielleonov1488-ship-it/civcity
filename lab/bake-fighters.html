@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Запекание бойцов</title>
+<style>body { font: 14px system-ui, sans-serif; margin: 20px; } pre { background: #f4f1ea; padding: 12px; }</style></head>
+<body>
+<h1>Запекание бойцов для боёв</h1>
+<p>Тело Quaternius (CC0) + причёски + только нужные движения, текстуры уменьшены → assets/fighters/fighters.glb. Открывать через сервер запекания (порт 5190).</p>
+<pre id="log">…</pre>
+<script type="importmap">{ "imports": { "three": "../vendor/three-module/build/three.module.js" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/three-module/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFExporter } from '../vendor/three-module/examples/jsm/exporters/GLTFExporter.js';
+const logEl = document.getElementById('log');
+const log = s => { logEl.textContent += '\n' + s; };
+const loader = new GLTFLoader();
+const load = url => new Promise((res, rej) => loader.load(encodeURI(url), res, undefined, rej));
+const BASE = '../assets/incoming/universal-base-characters/unpacked/Universal Base Characters[Standard]/';
+const body = await load(BASE + 'Base Characters/Godot - UE/Superhero_Male_FullBody.gltf');
+const anim = await load('../assets/incoming/universal-animation-library/unpacked/Universal Animation Library[Standard]/Unreal-Godot/UAL1_Standard.glb');
+const HAIRS = ['Hair_Buzzed', 'Hair_Long', 'Hair_Beard', 'Hair_SimpleParted', 'Eyebrows_Regular'];
+const hairs = await Promise.all(HAIRS.map(n => load(BASE + 'Hairstyles/Origin at 0/glTF (Godot)/' + n + '.gltf')));
+const CLIPS = ['Idle_Loop', 'Sword_Idle', 'Walk_Loop', 'Jog_Fwd_Loop', 'Sword_Attack', 'Punch_Cross', 'Punch_Jab', 'Hit_Chest', 'Hit_Head', 'Death01',
+  'Spell_Simple_Shoot', 'Spell_Simple_Idle_Loop', 'Dance_Loop'];
+
+const scene = body.scene;
+scene.name = 'Fighter';
+scene.updateMatrixWorld(true);
+anim.scene.updateMatrixWorld(true);
+// Текстуры уменьшаем: цвет тела — 1024 в JPEG, рельеф — 512, глаза — 128; роугнесс-карту убираем
+function shrink(tex, size, jpeg) {
+  if (!tex || !tex.image) return;
+  const img = tex.image, w = Math.min(size, img.width), h = Math.round(w * img.height / img.width);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  c.getContext('2d').drawImage(img, 0, 0, w, h);
+  tex.image = c; tex.needsUpdate = true;
+  if (jpeg) tex.userData.mimeType = 'image/jpeg';
+}
+scene.traverse(o => {
+  if (!o.isMesh) return;
+  const m = o.material;
+  if (m.roughnessMap) { m.roughnessMap = null; m.roughness = 0.75; m.needsUpdate = true; }
+  if (m.metalnessMap) m.metalnessMap = null;
+  const eyes = /Eye/i.test(m.name);
+  shrink(m.map, eyes ? 128 : 1024, !eyes);
+  shrink(m.normalMap, eyes ? 64 : 512, false);
+});
+let hairMat = null;
+// причёски кладём рядом с телом отдельными узлами — в игре их цепляют к кости головы
+hairs.forEach((g, i) => {
+  const grp = new THREE.Group(); grp.name = 'hair:' + HAIRS[i];
+  g.scene.traverse(o => {
+    if (!o.isMesh) return;
+    const m = o.clone(); o.updateWorldMatrix(true, false); m.matrix.copy(o.matrixWorld).decompose(m.position, m.quaternion, m.scale);
+    // все причёски с одним материалом — одна маленькая текстура на всех
+    if (!hairMat) { hairMat = m.material.clone(); hairMat.normalMap = null; hairMat.name = 'Hair'; shrink(hairMat.map, 256, false); }
+    m.material = hairMat;
+    grp.add(m);
+  });
+  scene.add(grp);
+});
+// движения: только повороты костей и сдвиг таза под пропорции тела
+const bp = scene.getObjectByName('pelvis'), ap = anim.scene.getObjectByName('pelvis');
+const k = bp.position.length() / ap.position.length();
+const clips = [];
+for (const name of CLIPS) {
+  const src = anim.animations.find(a => a.name === name);
+  if (!src) { log('нет движения ' + name); continue; }
+  const c = src.clone();
+  c.tracks = c.tracks.filter(t => t.name.endsWith('.quaternion') || t.name === 'pelvis.position');
+  for (const t of c.tracks) if (t.name === 'pelvis.position') { t.values = t.values.slice(); for (let i = 0; i < t.values.length; i++) t.values[i] *= k; }
+  clips.push(c);
+}
+log(`движений: ${clips.length}, коэффициент таза ${k.toFixed(3)}`);
+const exporter = new GLTFExporter();
+const glb = await new Promise((res, rej) => exporter.parse(scene, res, rej, { binary: true, animations: clips, onlyVisible: false }));
+const r = await fetch('/assets/look2/fighters.glb', { method: 'PUT', body: glb });
+log(`fighters.glb: ${(glb.byteLength / 1024).toFixed(0)} КБ, ответ ${r.status}`);
+window.BAKED = r.ok;
+</script>
+</body>
+</html>
