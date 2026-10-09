@@ -29,8 +29,9 @@ tar -czf - -C server index.js mail.js setmail.js testmail.js package.json node_m
 scp -q -i "$HOME/.ssh/civcity_ed25519" deploy/civcity.service "$HOST:/etc/systemd/system/civcity.service"
 scp -q -i "$HOME/.ssh/civcity_ed25519" deploy/Caddyfile "$HOST:/etc/caddy/Caddyfile"
 $SSH 'set -e
-  addr=$(grep -s "^SITE_ADDRESS=" /etc/civcity.env | cut -d= -f2-); mkdir -p /etc/systemd/system/caddy.service.d
-  printf "[Service]\nEnvironment=SITE_ADDRESS=%s\n" "${addr:-:80}" > /etc/systemd/system/caddy.service.d/site.conf
-  systemctl daemon-reload; systemctl enable --now civcity >/dev/null 2>&1; systemctl restart civcity caddy
+  rm -f /etc/systemd/system/caddy.service.d/site.conf
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || { echo "Caddyfile с ошибкой"; exit 1; }
+  systemctl daemon-reload; systemctl enable --now civcity >/dev/null 2>&1; systemctl restart civcity
+  systemctl reload caddy || systemctl restart caddy
   sleep 1; systemctl is-active civcity caddy'
 echo "выложено"
