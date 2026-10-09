@@ -1,19 +1,20 @@
-// Спокойный вертикальный ролик (~41 с): один день в городе под своё тихое фортепиано игры.
-// Музыка — 72 удара в минуту, такт ровно 100 кадров; каждый кадр живёт такт и мягко перетекает в следующий.
+// Спокойный вертикальный ролик (~40 с): один день в городе под трек «Sleepy Cat» (Mixkit).
+// Берём последние 40,5 с трека — его настоящая концовка ложится на финальную заставку.
+// Темп 67,5 уд/мин, такт 3,556 с; каждый кадр живёт такт и мягко перетекает в следующий.
 import React from "react";
 import { AbsoluteFill, Audio, Easing, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame } from "remotion";
 import { theme } from "./theme";
 import { Grain, Wordmark } from "./components";
 
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
-const BAR = 100;
-const LEAD = 4;          // в музыке первая нота через 0,12 с
+const MUSIC = { src: "music/sleepy-cat.mp3", start: 78.33 };   // начало 22-го такта трека
+const BAR = 3.5556 * 30;
 const XF = 24;           // длина наплыва между кадрами
 const soft = Easing.bezier(0.33, 0, 0.2, 1);
-export const COZY_FRAMES = 1245;
+export const COZY_FRAMES = 1220;
 
 type Scene = { k: number; n?: number; src: string; from: number; rate?: number; zoom?: [number, number]; origin?: string; look?: string; blur?: number; dim?: number };
-const at = (k: number) => LEAD + k * BAR;
+const at = (k: number) => Math.round(k * BAR);
 
 const SCENES: Scene[] = [
   { k: 0, src: "street_c", from: 0 },
@@ -21,12 +22,11 @@ const SCENES: Scene[] = [
   { k: 2, src: "garden_c", from: 10 },
   { k: 3, src: "catsit_c", from: 20, zoom: [1.12, 1.2], origin: "47% 56%" },
   { k: 4, src: "forum_c", from: 20 },
-  { k: 5, src: "pond_c", from: 30 },
-  { k: 6, src: "sunset_c", from: 40, look: "saturate(1.08)" },
-  { k: 7, src: "dusk_c", from: 120 },
-  { k: 8, src: "night_c", from: 40, look: "brightness(1.1) hue-rotate(-6deg)" },
-  { k: 9, n: 2, src: "finale_c", from: 10 },
-  { k: 11, n: 1.45, src: "finale_c", from: 236, blur: 10, dim: 0.5, zoom: [1.1, 1.16] },
+  { k: 5, src: "sunset_c", from: 40, look: "saturate(1.08)" },
+  { k: 6, src: "dusk_c", from: 120 },
+  { k: 7, src: "night_c", from: 40, look: "brightness(1.1) hue-rotate(-6deg)" },
+  { k: 8, n: 2, src: "finale_c", from: 0 },
+  { k: 10, n: 1.5, src: "finale_c", from: 225, blur: 10, dim: 0.5, zoom: [1.1, 1.16] },
 ];
 
 type Line = { text: string; gold?: string };
@@ -37,10 +37,10 @@ const CAPS: Cap[] = [
   { k: 2, lines: [{ text: "Сады, фонтаны," }, { text: "тишина.", gold: "тишина." }] },
   { k: 3, lines: [{ text: "Кошки греются" }, { text: "на солнце.", gold: "солнце." }] },
   { k: 4, lines: [{ text: "Неспешная жизнь" }, { text: "Рима.", gold: "Рима." }] },
-  { k: 6, lines: [{ text: "Тёплые закаты.", gold: "закаты." }] },
-  { k: 7, lines: [{ text: "В окнах" }, { text: "зажигается свет.", gold: "свет." }] },
-  { k: 8, lines: [{ text: "Спокойной ночи," }, { text: "Рим.", gold: "Рим." }] },
-  { k: 9, n: 2, stagger: 40, lines: [{ text: "Строй." }, { text: "Украшай." }, { text: "Отдыхай.", gold: "Отдыхай." }] },
+  { k: 5, lines: [{ text: "Тёплые закаты.", gold: "закаты." }] },
+  { k: 6, lines: [{ text: "В окнах" }, { text: "зажигается свет.", gold: "свет." }] },
+  { k: 7, lines: [{ text: "Спокойной ночи," }, { text: "Рим.", gold: "Рим." }] },
+  { k: 8, n: 2, stagger: 40, lines: [{ text: "Строй." }, { text: "Украшай." }, { text: "Отдыхай.", gold: "Отдыхай." }] },
 ];
 
 const Shot: React.FC<Scene & { dur: number }> = ({ src, from, rate = 1, zoom = [1, 1.05], origin = "50% 50%", look, blur, dim, dur }) => {
@@ -85,7 +85,7 @@ const Caption: React.FC<Cap & { dur: number }> = ({ lines, dur, stagger = 12 }) 
 const rnd = (i: number) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 const Motes: React.FC = () => {
   const frame = useCurrentFrame();
-  const night = interpolate(frame, [at(7) + 40, at(8), at(9), at(9) + 20], [0, 1, 1, 0], clamp);
+  const night = interpolate(frame, [at(6) + 40, at(7), at(8), at(8) + 20], [0, 1, 1, 0], clamp);
   const day = 1 - night;
   return (
     <AbsoluteFill style={{ pointerEvents: "none", mixBlendMode: "screen" }}>
@@ -123,7 +123,7 @@ const EndCard: React.FC = () => {
 
 export const Cozy: React.FC = () => {
   const frame = useCurrentFrame();
-  const end = at(11);
+  const end = at(10);
   return (
     <AbsoluteFill style={{ background: "#120c08" }}>
       {SCENES.map((s, i) => {
@@ -141,8 +141,8 @@ export const Cozy: React.FC = () => {
       <Sequence from={end} durationInFrames={COZY_FRAMES - end}><EndCard /></Sequence>
       <Grain />
       <AbsoluteFill style={{ background: "#000", opacity: interpolate(frame, [COZY_FRAMES - 30, COZY_FRAMES], [0, 1], clamp), pointerEvents: "none" }} />
-      <Audio src={staticFile("music/cozy_music.wav")} volume={f => interpolate(f, [COZY_FRAMES - 45, COZY_FRAMES], [1, 0], clamp)} />
-      <Audio src={staticFile("music/cozy_amb.wav")} volume={f => interpolate(f, [COZY_FRAMES - 45, COZY_FRAMES], [1, 0], clamp)} />
+      <Audio src={staticFile(MUSIC.src)} trimBefore={Math.round(MUSIC.start * 30)}
+        volume={f => interpolate(f, [0, 8, COZY_FRAMES - 20, COZY_FRAMES], [0, 1, 1, 0], clamp)} />
     </AbsoluteFill>
   );
 };
