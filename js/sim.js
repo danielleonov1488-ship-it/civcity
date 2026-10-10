@@ -582,7 +582,115 @@ function activeGoals(n) {
   for (let i = 0; i < GOALS.length && out.length < (n || 3); i++) if (!goalDone(i)) out.push(i);
   return out;
 }
+/* ---------- Поручения центра города (как заказы мэра в Town to City) ----------
+   Одно поручение за раз: несколько шагов «поставьте рядом с …», награда — денарии и Слава. Шаги считают украшения
+   вокруг постройки-якоря. Поручение появляется, когда всё нужное для него открыто; когда все выполнены —
+   круг начинается заново, и нужно уже вдвое больше. */
+
+const LIGHTS = ['lamp', 'lantern', 'torch', 'bigtorch', 'walllamp'];
+const STATUES = ['statue', 'bust', 'lion', 'discobolus', 'hercules', 'athena', 'zeus', 'emperor', 'column', 'obelisk'];
+const TREES = ['cypress', 'pine', 'olive', 'palm'];
+
+// сколько украшений из types стоит не дальше r от ближайшей постройки anchor
+function nearType(types, anchor, r) {
+  const anchors = [...state.buildings.values()].filter(b => b.type === anchor && !b.lifted).map(b => boxOfB(b));
+  if (!anchors.length) return 0;
+  let n = 0;
+  for (const b of state.buildings.values()) {
+    if (!types.includes(b.type) || b.lifted) continue;
+    const x = b.x + b.w / 2, y = b.y + b.h / 2;
+    if (anchors.some(o => boxPointDist(o, x, y) <= r)) n++;
+  }
+  return n;
+}
+function countTypes(types) { let n = 0; for (const b of state.buildings.values()) if (types.includes(b.type)) n++; return n; }
+
+const ORDERS = [
+  { id: 'center', title: 'Порядок у центра города', reward: { money: 300 }, steps: [
+    { text: 'Фонари или жаровни у центра', need: 2, types: LIGHTS, prog: () => nearType(LIGHTS, 'center', 4) },
+    { text: 'Скамьи у центра', need: 2, types: ['bench', 'roundbench'], prog: () => nearType(['bench', 'roundbench'], 'center', 4) },
+    { text: 'Клумбы или кусты у центра', need: 2, types: ['flowers', 'flowerbush', 'planter'], prog: () => nearType(['flowers', 'flowerbush', 'planter'], 'center', 4) },
+  ] },
+  { id: 'market', title: 'Шумный рынок', anchor: 'market', reward: { money: 400 }, steps: [
+    { text: 'Прилавки у рынка', need: 2, types: ['stall'], prog: () => nearType(['stall'], 'market', 4) },
+    { text: 'Бочки, ящики, мешки у рынка', need: 3, types: ['barrels', 'crates', 'sacks', 'amphorae'], prog: () => nearType(['barrels', 'crates', 'sacks', 'amphorae'], 'market', 4) },
+  ] },
+  { id: 'flowers', title: 'Город в цветах', reward: { money: 350 }, steps: [
+    { text: 'Клумба', need: 1, types: ['flowers'], prog: () => countTypes(['flowers']) },
+    { text: 'Цветущий куст', need: 1, types: ['flowerbush'], prog: () => countTypes(['flowerbush']) },
+    { text: 'Вазон', need: 1, types: ['planter'], prog: () => countTypes(['planter']) },
+    { text: 'Ящик с цветами на стене дома', need: 2, types: ['flowerbox'], prog: () => countTypes(['flowerbox']) },
+  ] },
+  { id: 'temple', title: 'Священная роща', anchor: 'temple', reward: { money: 500, glory: 2 }, steps: [
+    { text: 'Деревья у храма', need: 4, types: TREES, prog: () => nearType(TREES, 'temple', 5) },
+    { text: 'Огонь у храма', need: 2, types: LIGHTS, prog: () => nearType(LIGHTS, 'temple', 5) },
+  ] },
+  { id: 'lights', title: 'Светлые улицы', reward: { money: 500 }, steps: [
+    { text: 'Фонарей и факелов в городе', need: 8, types: LIGHTS, prog: () => countTypes(LIGHTS) },
+    { text: 'Гирлянда лампад над улицей', need: 1, types: ['lamps'], prog: () => countTypes(['lamps']) },
+  ] },
+  { id: 'plaza', title: 'Площадь для собраний', reward: { money: 600 }, steps: [
+    { text: 'Клеток, замощённых площадью', need: 20, types: ['road'], prog: () => Math.floor(Paving.countType(4)) },
+    { text: 'Статуя на площади', need: 1, types: STATUES, prog: () => [...state.buildings.values()].filter(b => STATUES.includes(b.type) && Paving.at(b.x + b.w / 2, b.y + b.h / 2) === 4).length },
+    { text: 'Солнечные часы', need: 1, types: ['sundial'], prog: () => countTypes(['sundial']) },
+  ] },
+  { id: 'festival', title: 'К празднику', reward: { money: 600, glory: 2 }, steps: [
+    { text: 'Знамёна на стенах домов', need: 3, types: ['wallbanner'], prog: () => countTypes(['wallbanner']) },
+    { text: 'Навесы над лавками', need: 3, types: ['wallawning'], prog: () => countTypes(['wallawning']) },
+    { text: 'Знамёна на улицах', need: 2, types: ['banner'], prog: () => countTypes(['banner']) },
+  ] },
+  { id: 'fountain', title: 'Вода и мрамор', anchor: 'fountain', reward: { money: 700, glory: 3 }, steps: [
+    { text: 'Статуи у фонтана', need: 2, types: STATUES, prog: () => nearType(STATUES, 'fountain', 4) },
+    { text: 'Скамьи у фонтана', need: 2, types: ['bench', 'roundbench'], prog: () => nearType(['bench', 'roundbench'], 'fountain', 4) },
+  ] },
+  { id: 'patrician', title: 'Сад патриция', anchor: 'domus', reward: { money: 900, glory: 3 }, steps: [
+    { text: 'Перголы у домусов', need: 2, types: ['pergola'], prog: () => nearType(['pergola'], 'domus', 4) },
+    { text: 'Статуи у домусов', need: 2, types: STATUES, prog: () => nearType(STATUES, 'domus', 4) },
+    { text: 'Деревья у домусов', need: 4, types: TREES, prog: () => nearType(TREES, 'domus', 4) },
+  ] },
+];
+const ORDER_BY_ID = Object.fromEntries(ORDERS.map(o => [o.id, o]));
+
+// поручение доступно: есть якорь и открыто хотя бы одно украшение для каждого шага
+function orderAvailable(o) {
+  if (o.anchor && !countType(o.anchor)) return false;
+  if (!Settlers.center()) return false;
+  return o.steps.every(s => s.types.some(t => t === 'road' || isUnlocked(t)));
+}
+function orderNeed(s) { return s.need * (1 + (state.orderRound || 0)); }
+
+// текущее поручение; нет — выбрать следующее доступное
+function currentOrder() {
+  let o = state.order && ORDER_BY_ID[state.order];
+  if (o) return o;
+  const done = state.ordersDone || [];
+  o = ORDERS.find(x => !done.includes(x.id) && orderAvailable(x));
+  if (!o && done.length && ORDERS.filter(orderAvailable).every(x => done.includes(x.id))) {
+    // все доступные выполнены — новый круг, нужно больше
+    if (ORDERS.every(x => done.includes(x.id))) { state.ordersDone = []; state.orderRound = (state.orderRound || 0) + 1; o = ORDERS.find(orderAvailable); }
+  }
+  if (o) { state.order = o.id; Advisor.queue('orders'); }
+  return o || null;
+}
+
+function checkOrder() {
+  const o = currentOrder();
+  if (!o) return;
+  if (!o.steps.every(s => s.prog() >= orderNeed(s))) return;
+  const r = {};
+  for (const [k, v] of Object.entries(o.reward)) r[k] = Math.round(v * (1 + (state.orderRound || 0) * 0.5));
+  giveReward(r);
+  UI.log(`Поручение «${o.title}» выполнено! Награда: ${rewardText(r)}`, 'good', true, Settlers.center());
+  const c = Settlers.center();
+  if (c) { Engine.sparkle(c, 2); UI.floatText(c.x + c.w / 2, 2.4, c.y + c.h / 2, '+' + fmt(r.money || 0), 'good'); }
+  Sound.chime && Sound.chime(c ? c.x : 0, c ? c.y : 0);
+  state.ordersDone = [...(state.ordersDone || []), o.id];
+  state.order = null;
+  Tasks.flash = performance.now();
+}
+
 function checkGoals() {
+  checkOrder();
   for (const i of activeGoals()) {
     const g = GOALS[i];
     if (g.prog() < g.need) continue;

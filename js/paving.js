@@ -221,6 +221,13 @@ const Paving = {
   },
 
   // Сколько клеток замощено (для советника и подсказок)
+  // сколько клеток замощено покрытием t
+  countType(t) {
+    let n = 0;
+    for (const c of this.chunks.values()) for (let i = 0; i < c.length; i++) if (c[i] === t) n++;
+    return n / (SUB * SUB);
+  },
+
   count() {
     let n = 0;
     for (const c of this.chunks.values()) for (let i = 0; i < c.length; i++) if (c[i]) n++;

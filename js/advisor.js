@@ -16,6 +16,9 @@ const TIPS = [
   { id: 'vip', title: 'Открыта VIP-постройка!',
     text: 'Рейтинг легиона открыл первую VIP-постройку — Нимфей, огромный фонтан. VIP-постройки стоят денарии и Славу, а дают городу много красоты и счастья. Ищите их в «Культуре» — у них золотая рамка.',
     act: { tool: 'nymphaeum' }, when: () => isUnlocked('nymphaeum') },
+  { id: 'orders', title: 'Поручение центра города',
+    text: 'Центр города даёт поручения, как мэр: украсить площадь, посадить рощу у храма, развесить знамёна. Поручение — сверху в списке заданий, у каждого шага — счётчик. Нажмите на шаг — я выберу нужное украшение. Выполните все шаги — получите награду.',
+    when: () => !!state.order },
   { id: 'economy', title: 'Деньги — главное',
     text: 'Казна — справа внизу. Дома платят налоги, а постройки каждый день стоят денег на содержание. Ещё доход — купцы: они сами покупают со склада излишки дерева, камня, кирпича и мрамора. Поставьте каменоломню у скал и склад — и денарии потекут.',
     act: { tool: 'quarry' }, when: () => state.day >= 6 },
@@ -88,6 +91,14 @@ const Advisor = {
     }
   },
 
+  // поставить подсказку в очередь сразу (не дожидаясь нового дня)
+  queue(id) {
+    state.tipsSeen = state.tipsSeen || [];
+    state.tipQueue = state.tipQueue || [];
+    if (state.tipsSeen.includes(id) || state.tipQueue.includes(id)) return;
+    state.tipQueue.push(id);
+  },
+
   dismiss() {
     const id = state.tipQueue.shift();
     if (id) state.tipsSeen.push(id);
@@ -122,13 +133,28 @@ const Tasks = {
 
   render() {
     const box = $('tasks');
+    const ord = PROMO_MODE ? null : currentOrder();
     const ids = activeGoals();
     // без центра города первым идёт задание поставить его (бесплатно)
     if (!PROMO_MODE && !Settlers.center()) ids.unshift(-1);
-    const key = ids.join(',');
+    const key = ids.join(',') + '|' + (ord ? ord.id + (state.orderRound || 0) : '');
     if (key !== this.key) {
       this.key = key;
       box.innerHTML = '';
+      if (ord) {
+        const el = document.createElement('div');
+        el.className = 'order';
+        el.dataset.tipText = `Поручение центра города. Награда: ${rewardText(ord.reward)}${state.orderRound ? ' и больше за новый круг' : ''}.`;
+        el.innerHTML = `<p class="order-title"><span class="order-ico"></span>${escapeHtml(ord.title)}</p>` + ord.steps.map((s, i) =>
+          `<button type="button" class="order-step" data-step="${i}"><i class="check"></i><span>${escapeHtml(s.text)}</span><small></small></button>`).join('');
+        el.querySelectorAll('[data-step]').forEach(b => b.onclick = () => {
+          const s = ord.steps[+b.dataset.step];
+          const t = s.types.find(x => x !== 'road' && isUnlocked(x)) || (s.types[0] === 'road' ? 'road' : null);
+          if (t === 'road') { UI.openTray('roads'); Input.brush.mode = 4; Input.setTool('road'); UI.onBrushChanged(); }
+          else if (t) Input.setTool(t);
+        });
+        box.append(el);
+      }
       const fresh = performance.now() - this.flash < 3000;
       ids.forEach((i, n) => {
         const g = i < 0 ? CENTER_GOAL : GOALS[i];
@@ -142,6 +168,12 @@ const Tasks = {
         b.onclick = () => g.act && UI.runAction(g.act);
         box.append(b);
       });
+    }
+    // ход поручения
+    if (ord) for (const el of box.querySelectorAll('.order-step')) {
+      const s = ord.steps[+el.dataset.step], need = orderNeed(s), p = Math.min(s.prog(), need);
+      el.querySelector('small').textContent = `${fmt(p)}/${fmt(need)}`;
+      el.classList.toggle('done', p >= need);
     }
     // полоски хода
     for (const el of box.querySelectorAll('.task')) {

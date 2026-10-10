@@ -658,6 +658,11 @@ const UI = {
       html += `<div class="meter"><span>До звания «${next[1]}»</span><b>${fmt(pop)} / ${fmt(next[0])}</b><div class="bar"><div style="width:${clamp((pop - lo) / Math.max(1, next[0] - lo), 0, 1) * 100}%"></div></div></div>
         <p class="sub">Тогда центр станет: ${CENTER_STAGES[lv + 1]}, а казна будет вмещать ${fmt(TREASURY_CAPS[lv + 1])}.</p>`;
     } else html += '<p class="sub">Высшее звание — Второй Рим!</p>';
+    const ord = currentOrder();
+    if (ord) {
+      html += `<h3>Поручение: ${escapeHtml(ord.title)}</h3><ul class="needs">${ord.steps.map(s => { const need = orderNeed(s), p = Math.min(s.prog(), need); return `<li class="${p >= need ? 'yes' : 'no'}"><span>${escapeHtml(s.text)}</span><b>${fmt(p)}/${fmt(need)}</b></li>`; }).join('')}</ul>
+        <p class="sub">Награда: ${rewardText(ord.reward)}. Выполнено поручений: ${(state.ordersDone || []).length + (state.orderRound || 0) * ORDERS.length}.</p>`;
+    }
     const reqs = [...state.buildings.values()].filter(h => h.req && BUILDINGS[h.req.type]);
     html += '<h3>Просьбы жителей</h3>';
     html += reqs.length ? `<ul class="needs">${reqs.slice(0, 6).map(h => `<li><img class="ico" src="${this.icons[h.req.type] || ''}" alt=""><span>${BUILDINGS[h.req.type].name} рядом с домом — ${requestReward(h.req.type)} ден.</span><button type="button" class="btn small ghost" data-req="${h.id}">Показать</button></li>`).join('')}</ul>`
