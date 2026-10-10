@@ -12,9 +12,15 @@ var sky_mat: ProceduralSkyMaterial
 var lamps: Array[OmniLight3D] = []
 var hour := 7.6
 var shot_path := ""
+var shot_frame := 150
 var frame := 0
 var house_rects: Array[Rect2] = []
+var blocked := PackedByteArray()   # клетки под постройками и вплотную к ним — там не растут деревья и трава
 var footprints := []          # {c, ax, hw, hd} — повёрнутые прямоугольники домов (чтобы не налезали)
+var houses := []              # {door, smoke: [частицы], pos, lived} — для заселения
+var obstacles := []           # [Vector2 центр, радиус] — фонтан, прилавки, скамьи, фонари
+var benches := []             # [Vector2 место, Vector2 куда смотрит сидящий]
+var stall_spots := []         # [Vector2 где стоит покупатель, Vector2 куда смотрит]
 var mat_props := Kit.material()
 
 
@@ -25,10 +31,15 @@ func _ready() -> void:
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	hour = float(args.get("hour", "7.6"))
 	shot_path = args.get("shot", "")
+	shot_frame = int(args.get("frames", "150"))
 	_environment()
 	terrain = Terrain.new()
 	_town()
+	_laundry()
+	_aqueduct(Vector2(7.0, 14.0), Vector2(27.0, 33.0), 9.5)
+	_mark_blocked(0.5)
 	_yards()
+	_pave_rect(Vector2(40.0, 58.4), 6.2, 7.2, Terrain.Kind.PLAZA)
 	_ground()
 	_water()
 	_nature()
@@ -36,6 +47,11 @@ func _ready() -> void:
 	add_child(Birds.new())
 	var ppl := People.new()
 	ppl.terrain = terrain
+	ppl.houses = houses
+	ppl.footprints = footprints
+	ppl.obstacles = obstacles
+	ppl.benches = benches
+	ppl.stall_spots = stall_spots
 	add_child(ppl)
 	rig = CameraRig.new()
 	rig.terrain = terrain
@@ -47,7 +63,7 @@ func _ready() -> void:
 
 func _process(_dt: float) -> void:
 	frame += 1
-	if shot_path != "" and frame == 150:
+	if shot_path != "" and frame == shot_frame:
 		var img := get_viewport().get_texture().get_image()
 		img.save_png(shot_path)
 		print("SHOT ", shot_path, " fps=", Engine.get_frames_per_second())
@@ -227,8 +243,10 @@ func _add_house(pos: Vector2, facing: Vector2, p: Dictionary) -> bool:
 	mi.transform = Transform3D(Basis(Vector3.UP, ang), Vector3(pos.x, y, pos.y))
 	add_child(mi)
 	house_rects.append(Rect2(pos - Vector2(3.2, 3.2), Vector2(6.4, 6.4)))
+	var rec := {"door": mi.transform * (res["door"] as Vector3) + Vector3(facing.x, 0, facing.y) * 0.9, "smoke": [], "pos": pos, "lived": false, "face": facing}
 	for s in res["smoke"]:
-		_smoke(mi.transform * (s as Vector3))
+		rec["smoke"].append(_smoke(mi.transform * (s as Vector3)))
+	houses.append(rec)
 	return true
 
 
@@ -263,8 +281,23 @@ func _town() -> void:
 		_light(k.xf * (f as Vector3), Color("ffa04a"), 6.0)
 	# фонтан посреди площади
 	var pc := Terrain.PLAZA_C
+	# фонтан: круглая чаша, посередине — статуя девушки с кувшином на постаменте
 	k.xf = Transform3D(Basis.IDENTITY, Vector3(pc.x, Terrain.TOWN_Y, pc.y))
 	Props.fountain(k)
+	_art("Women_holding_jar", pc, 1.9, PI, 1.25)
+	obstacles.append([pc, 2.8])
+	# храм на южной стороне площади, фасадом к фонтану; перед ступенями — статуи богов
+	var temple_p := Vector2(40.0, 58.4)
+	footprints.append({"c": temple_p, "ax": Vector2(1, 0), "hw": 4.9, "hd": 5.8, "noyard": true})
+	_art("Tenple_001", temple_p, 8.7, PI / 2)
+	for st: Array in [[Vector2(36.4, 51.4), "Athenea"], [Vector2(43.6, 51.4), "Hercules"], [Vector2(30.6, 40.6), "Zeus"], [Vector2(45.6, 42.2), "Hera"]]:
+		var sp2: Vector2 = st[0]
+		_art("Statue_Base_Small", sp2, 1.0, 0.0)
+		var face := (pc - sp2).normalized()
+		_art(st[1], sp2, 2.3, atan2(face.x, face.y), 1.0)
+		obstacles.append([sp2, 0.9])
+	_art("Sun_Clock", Vector2(41.8, 39.4), 1.15, 0.4)
+	obstacles.append([Vector2(41.8, 39.4), 0.7])
 	# прилавки рынка, скамьи, амфоры, ящики
 	var stalls := [Vector2(34.0, 40.6), Vector2(42.4, 41.0), Vector2(33.6, 47.6), Vector2(43.0, 47.4)]
 	for i in stalls.size():
@@ -272,11 +305,15 @@ func _town() -> void:
 		var face := (pc - sp).normalized()
 		k.xf = Transform3D(Basis(Vector3.UP, atan2(face.x, face.y) + PI / 2), Vector3(sp.x, Terrain.TOWN_Y, sp.y))
 		Props.stall(k, i + 3)
+		obstacles.append([sp, 1.45])
+		stall_spots.append([sp + face * 1.9, -face])
 	for i in 6:
 		var a := TAU * i / 6.0 + 0.3
 		var bp := pc + Vector2(cos(a), sin(a)) * 3.2
 		k.xf = Transform3D(Basis(Vector3.UP, -a + PI / 2), Vector3(bp.x, Terrain.TOWN_Y, bp.y))
 		Props.bench(k)
+		obstacles.append([bp, 0.85])
+		benches.append([bp, Vector2(cos(a), sin(a))])
 	# фонари вокруг площади и вдоль дороги от ворот
 	var lamp_pts := []
 	for i in 8:
@@ -288,6 +325,7 @@ func _town() -> void:
 		var p2: Vector2 = lp
 		k.xf = Transform3D(Basis.IDENTITY, Vector3(p2.x, terrain.height_at(p2.x, p2.y), p2.y))
 		var fire := Props.lamp(k)
+		obstacles.append([p2, 0.3])
 		lamps.append(_light(k.xf * fire, Color("ffbf70"), 7.0))
 	# кипарисы и пинии в городе
 	for i in 6:
@@ -346,9 +384,40 @@ func _town() -> void:
 	add_child(tmi)
 
 
+func _pave_rect(c: Vector2, hw: float, hd: float, kd: int) -> void:
+	for j in range(int((c.y - hd) / Terrain.CELL), int((c.y + hd) / Terrain.CELL) + 1):
+		for i in range(int((c.x - hw) / Terrain.CELL), int((c.x + hw) / Terrain.CELL) + 1):
+			if terrain.inside(i, j):
+				var kk := terrain.idx(i, j)
+				if absf(terrain.h[kk] - Terrain.TOWN_Y) < 0.6:
+					terrain.kind[kk] = kd
+					terrain.h[kk] = Terrain.TOWN_Y
+
+
+func _mark_blocked(margin: float) -> void:
+	blocked.resize(Terrain.N * Terrain.N)
+	blocked.fill(0)
+	for f in footprints:
+		var c: Vector2 = f["c"]
+		var ax: Vector2 = f["ax"]
+		var az := Vector2(-ax.y, ax.x)
+		var hw: float = float(f["hw"]) + margin
+		var hd: float = float(f["hd"]) + margin
+		var r := hw + hd
+		for j in range(int((c.y - r) / Terrain.CELL), int((c.y + r) / Terrain.CELL) + 1):
+			for i in range(int((c.x - r) / Terrain.CELL), int((c.x + r) / Terrain.CELL) + 1):
+				if not terrain.inside(i, j):
+					continue
+				var q := Vector2((i + 0.5) * Terrain.CELL, (j + 0.5) * Terrain.CELL) - c
+				if absf(q.dot(ax)) < hw and absf(q.dot(az)) < hd:
+					blocked[terrain.idx(i, j)] = 1
+
+
 ## Отмостка вокруг домов: мощёная полоса перед фасадом и по бокам, под домом — утоптанная земля
 func _yards() -> void:
 	for fp in footprints:
+		if fp.get("noyard", false):
+			continue
 		var c: Vector2 = fp["c"]
 		var ax: Vector2 = fp["ax"]
 		var az := Vector2(-ax.y, ax.x)
@@ -368,6 +437,60 @@ func _yards() -> void:
 					terrain.h[kk] = Terrain.TOWN_Y
 
 
+## Модель Artisau в точке pos (на земле), высотой height, повёрнутая на yaw, приподнятая на lift
+func _art(name: String, pos: Vector2, height: float, yaw: float, lift := 0.0) -> Node3D:
+	var n := Artisau.make(name, height)
+	n.position = Vector3(pos.x, terrain.height_at(pos.x, pos.y) + lift, pos.y)
+	n.rotation.y = yaw
+	add_child(n)
+	return n
+
+
+## Акведук: арки с холмов к городу; русло наверху на одной высоте, поэтому опоры в низинах выше
+func _aqueduct(a: Vector2, b: Vector2, top: float) -> void:
+	var dir := (b - a).normalized()
+	var len := a.distance_to(b)
+	var bay := 4.0
+	var n := int(len / bay)
+	for i in n:
+		var p := a + dir * (bay * (i + 0.5))
+		var ground := terrain.height_at(p.x, p.y)
+		var h := top - ground
+		if h < 3.0:
+			continue
+		var node := Artisau.make("Aqueduct", 0.0)
+		node.scale = Vector3(bay / 8.17, h / 37.03, 2.2 / 4.72)
+		node.position = Vector3(p.x, ground, p.y)
+		node.rotation.y = atan2(-dir.y, dir.x)
+		add_child(node)
+		footprints.append({"c": p, "ax": dir, "hw": bay * 0.5, "hd": 1.3, "noyard": true})
+
+
+## Верёвки с бельём во дворах за домами
+func _laundry() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 17
+	for i in houses.size():
+		if i % 3 != 1:
+			continue
+		var h: Dictionary = houses[i]
+		var face: Vector2 = h["face"]
+		var pos: Vector2 = h["pos"]
+		var at := pos - face * rng.randf_range(3.8, 4.4)
+		var probe := {"c": at, "ax": Vector2(face.y, -face.x), "hw": 1.3, "hd": 0.4, "noyard": true}
+		var ok := true
+		for o in footprints:
+			if _obb_hit(probe, o):
+				ok = false
+				break
+		if not ok or not terrain.inside(int(at.x / Terrain.CELL), int(at.y / Terrain.CELL)):
+			continue
+		if absf(terrain.height_at(at.x, at.y) - Terrain.TOWN_Y) > 0.3:
+			continue
+		_art("Clothes_line", at, 2.2, atan2(face.x, face.y) + PI / 2)
+		footprints.append(probe)
+
+
 func _light(at: Vector3, col: Color, rng_m: float) -> OmniLight3D:
 	var l := OmniLight3D.new()
 	l.position = at
@@ -380,7 +503,7 @@ func _light(at: Vector3, col: Color, rng_m: float) -> OmniLight3D:
 
 
 ## Дым из трубы: мягкие светлые клубы поднимаются, растут и тают
-func _smoke(at: Vector3) -> void:
+func _smoke(at: Vector3) -> GPUParticles3D:
 	var p := GPUParticles3D.new()
 	p.amount = 14
 	p.lifetime = 5.0
@@ -429,6 +552,7 @@ func _smoke(at: Vector3) -> void:
 	p.draw_pass_1 = q
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(p)
+	return p
 
 
 # ---------- природа ----------
@@ -464,13 +588,7 @@ func _grass() -> void:
 		var p := Vector2(x, z)
 		if (terrain.road_dist(p)[0] as float) < 1.8 or p.distance_to(Terrain.PLAZA_C) < Terrain.PLAZA_R + 1.0:
 			continue
-		var probe := {"c": p, "ax": Vector2(1, 0), "hw": 0.2, "hd": 0.2}
-		var hit := false
-		for o in footprints:
-			if _obb_hit(probe, o):
-				hit = true
-				break
-		if hit:
+		if blocked[kk]:
 			continue
 		var sc := rng.randf_range(0.7, 1.5)
 		xs.append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * rng.randf_range(0.8, 1.3), sc)), Vector3(x, terrain.h[kk], z)))
@@ -501,11 +619,7 @@ func _free_spot(x: float, z: float) -> bool:
 		return false
 	if p.distance_to(Terrain.PLAZA_C) < Terrain.PLAZA_R + 3.5:
 		return false
-	var probe := {"c": p, "ax": Vector2(1, 0), "hw": 0.8, "hd": 0.8}
-	for o in footprints:
-		if _obb_hit(probe, o):
-			return false
-	return true
+	return blocked[kk] == 0
 
 
 func _nature() -> void:

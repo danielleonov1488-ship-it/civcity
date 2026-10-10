@@ -6,11 +6,13 @@ render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 varying vec3 wpos;
 varying vec3 wnrm;
 varying float kind;
+varying float top_y;
 
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	wnrm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	kind = UV.x;
+	top_y = UV.y;
 }
 
 float h31(vec3 p) {
@@ -46,6 +48,15 @@ void fragment() {
 		c *= 0.96 + 0.06 * h31(floor(wpos * 8.0));
 		c = mix(c * 0.62, c, smoothstep(0.015, 0.05, e));
 		rough = 0.8;
+	} else if (an.y < 0.5 && k == 2.0) {
+		// обрыв: слои камня по высоте, у каждого кубика свой оттенок
+		float band = 0.5 + 0.5 * sin(wpos.y * 4.2 + sin(wpos.y * 1.3) * 1.5);
+		c = mix(c, c * vec3(0.88, 0.86, 0.84), band * 0.8);
+		c *= 0.93 + 0.12 * h31(floor(wpos * 8.0 - wnrm * 0.5));
+	} else if (an.y < 0.5 && k == 1.0) {
+		// стенка уступа: сверху кромка травы, ниже — земля
+		vec3 dirt = vec3(0.24, 0.15, 0.08) * (0.9 + 0.2 * h31(floor(wpos * 8.0 - wnrm * 0.5)));
+		c = wpos.y > top_y - 0.05 ? c * 0.85 : dirt;
 	} else {
 		// трава, земля, скала, песок: кубики по 12,5 см, каждый со своим оттенком
 		vec3 id = floor(wpos * 8.0 - wnrm * 0.5);

@@ -92,19 +92,36 @@ static func lamp(k: Kit) -> Vector3:
 	return Vector3(0, 2.83, 0)
 
 
-## Фонтан: круглая чаша, вода, колонна с верхней чашей
+## Фонтан: восьмиугольная мраморная чаша с профилированным бортом, вода, в центре постамент (статуя ставится отдельно)
 static func fountain(k: Kit) -> Array:
-	var st := Color("d9cdb6")
-	k.cyl(Vector3.ZERO, 2.0, 0.6, 16, st)
-	k.cyl(Vector3(0, 0.6, 0), 2.08, 0.1, 16, Color("e8ddc8"))
-	k.cyl(Vector3(0, 0.0, 0), 0.4, 1.7, 8, st)
-	k.cyl(Vector3(0, 1.6, 0), 0.75, 0.25, 12, st, 0.9)
-	k.cyl(Vector3(0, 1.85, 0), 0.18, 0.5, 6, st)
-	k.blob(Vector3(0, 2.45, 0), Vector3(0.22, 0.25, 0.22), Color("e8ddc8"), 3, 0.05)
-	# вода — светлая бирюза внутри чаши (отдельной сеткой не нужна)
-	k.cyl(Vector3(0, 0.45, 0), 1.85, 0.05, 16, Color("7cc9c4"))
-	k.cyl(Vector3(0, 1.78, 0), 0.68, 0.03, 12, Color("7cc9c4"))
-	return [Vector3(0, 2.6, 0)]
+	var st := Color("e2d7c3")
+	var st2 := Color("cfc3ad")
+	var n := 8
+	# ступень вокруг
+	k.cyl(Vector3.ZERO, 2.75, 0.12, n, st2)
+	# стенка чаши: снаружи с выступами-карнизами
+	k.cyl(Vector3(0, 0.12, 0), 2.45, 0.12, n, st, -1.0, false)
+	k.cyl(Vector3(0, 0.24, 0), 2.35, 0.38, n, st2, 2.35, false)
+	k.cyl(Vector3(0, 0.62, 0), 2.5, 0.1, n, st, -1.0, false)
+	# широкий борт сверху (кольцо) и внутренняя стенка
+	for i in n:
+		var a0 := TAU * i / n
+		var a1 := TAU * (i + 1) / n
+		var o0 := Vector3(cos(a0), 0, sin(a0))
+		var o1 := Vector3(cos(a1), 0, sin(a1))
+		k.quad_out(o0 * 2.5 + Vector3(0, 0.72, 0), o1 * 2.5 + Vector3(0, 0.72, 0), o1 * 2.15 + Vector3(0, 0.72, 0), o0 * 2.15 + Vector3(0, 0.72, 0), st.lightened(0.05), Vector3(0, 0, 0))
+		k.quad_in(o0 * 2.15 + Vector3(0, 0.3, 0), o1 * 2.15 + Vector3(0, 0.3, 0), o1 * 2.15 + Vector3(0, 0.72, 0), o0 * 2.15 + Vector3(0, 0.72, 0), st2.darkened(0.1), Vector3(0, 0.5, 0))
+	# вода внутри
+	k.cyl(Vector3(0, 0.3, 0), 2.16, 0.26, n, Color("62b8b8"), -1.0, true)
+	# постамент с чашей поменьше и львиными мордами
+	k.cyl(Vector3(0, 0.5, 0), 0.55, 0.75, n, st)
+	k.cyl(Vector3(0, 1.2, 0), 0.62, 0.08, n, st2)
+	for i in 4:
+		var a := TAU * i / 4.0 + PI / 8.0
+		var p := Vector3(cos(a) * 0.56, 0.95, sin(a) * 0.56)
+		k.blob(p, Vector3(0.12, 0.12, 0.12), Color("b89a5a"), i, 0.1)
+		k.rod(p, p + Vector3(cos(a) * 0.5, -0.45, sin(a) * 0.5), 0.025, 4, Color("bfe8ec"))
+	return [Vector3(0, 1.3, 0)]
 
 
 ## Прилавок рынка: стол, ящики с фруктами, полосатый тент на шестах
@@ -122,8 +139,9 @@ static func stall(k: Kit, seed_v: int) -> void:
 		k.box(Vector3(x - 0.2, 0.85, -0.35), Vector3(x + 0.2, 1.0, 0.35), Color("a0784e"))
 		for q in 5:
 			k.blob(Vector3(x + r.randf_range(-0.13, 0.13), 1.05, r.randf_range(-0.25, 0.25)), Vector3(0.06, 0.06, 0.06), fc, r.randi(), 0.15)
-	var a := Color(["c9483b", "3f7f8a", "d9a33a", "5f7f52"][r.randi() % 4])
-	var b := Color("f3ead8")
+	# навес из простого холста — без «современных» полос
+	var a := Color(["e9dfc6", "d9b878", "c98a5a", "cdbf9f", "b9a27a"][r.randi() % 5])
+	var b := a.darkened(0.06)
 	for i in 8:
 		var x0 := -1.15 + i * 0.2875
 		var x1 := x0 + 0.2875

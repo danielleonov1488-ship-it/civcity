@@ -9,6 +9,7 @@ const WALLS := ["e3b56b", "dc977c", "efdcb6", "ecd283", "f0e9dc", "c9654a", "e7c
 const SHUTTERS := ["5f7f52", "4e7d85", "7a5235", "5c6e88", "8a3f32"]
 const TILES := ["c8693c", "b95c34", "d27a46", "bf6a3f"]
 const FLOWERS := ["d8443d", "f07aa0", "f4f0e8", "f2c443", "b45cc8", "ff8a3d"]
+const DADO := ["8e3b2c", "9a5a2e", "6a6a48", "7a3428"]
 const STONE := "c4b8a3"
 const STONE_DARK := "a89c88"
 const TRIM := "f1e6cc"
@@ -20,6 +21,7 @@ const PLINTH := 0.4
 var k := Kit.new()
 var rng := RandomNumberGenerator.new()
 var smoke: Array[Vector3] = []
+var door := Vector3.ZERO     # где дверь (в координатах дома)
 
 
 ## p: w, d, floors, wall, shutter, roof ("gable" | "hip" | "terrace"), shop, balcony, seed, sides (рисовать ли боковые стены)
@@ -52,6 +54,10 @@ func build(p: Dictionary) -> Dictionary:
 					yy += hh
 					alt = not alt
 		k.box(Vector3(-w / 2 - 0.08, y1 - 0.06, -d / 2 - 0.08), Vector3(w / 2 + 0.08, y1 + 0.08, d / 2 + 0.08), Color(TRIM))
+	# по-помпейски: нижняя часть стен первого этажа — тёмная краска (красная, охра или зелень), над ней светлая полоса
+	var dado := Color(DADO[rng.randi() % DADO.size()])
+	k.box(Vector3(-w / 2 - 0.012, PLINTH, -d / 2 - 0.012), Vector3(w / 2 + 0.012, PLINTH + 0.9, d / 2 + 0.012), dado)
+	k.box(Vector3(-w / 2 - 0.018, PLINTH + 0.9, -d / 2 - 0.018), Vector3(w / 2 + 0.018, PLINTH + 0.96, d / 2 + 0.018), Color(TRIM))
 	# фасад: окна, дверь, лавка
 	_front(w, d, fl, shut, p)
 	# задняя стена — тоже окна (их видно, когда крутишь камеру)
@@ -76,12 +82,14 @@ func build(p: Dictionary) -> Dictionary:
 	if roof != "terrace" or rng.randf() < 0.5:
 		var cx := w * (0.25 if rng.randf() < 0.5 else -0.25)
 		var cz := -d * 0.18
-		var base_y := top + (0.6 if roof != "terrace" else 0.0)
-		k.box(Vector3(cx - 0.24, top - 0.2, cz - 0.24), Vector3(cx + 0.24, base_y + 1.0, cz + 0.24), Color(TRIM).darkened(0.08))
-		k.box(Vector3(cx - 0.3, base_y + 1.0, cz - 0.3), Vector3(cx + 0.3, base_y + 1.12, cz + 0.3), Color(STONE_DARK))
-		k.box(Vector3(cx - 0.16, base_y + 1.12, cz - 0.16), Vector3(cx + 0.16, base_y + 1.3, cz + 0.16), Color(TILES[0]))
-		smoke.append(Vector3(cx, base_y + 1.35, cz))
-	return {"mesh": k.mesh(), "smoke": smoke}
+		# у римлян труб почти не было — дым уходит через глиняную отдушину-домик на крыше
+		var base_y := top + (minf(w, d) * 0.22 * 0.7 if roof != "terrace" else 0.1)
+		var tc := Color(TILES[0]).darkened(0.05)
+		k.box(Vector3(cx - 0.2, top - 0.1, cz - 0.2), Vector3(cx + 0.2, base_y + 0.35, cz + 0.2), Color(TRIM).darkened(0.12))
+		k.quad(Vector3(cx - 0.3, base_y + 0.35, cz - 0.28), Vector3(cx - 0.3, base_y + 0.35, cz + 0.28), Vector3(cx, base_y + 0.55, cz + 0.28), Vector3(cx, base_y + 0.55, cz - 0.28), tc)
+		k.quad(Vector3(cx + 0.3, base_y + 0.35, cz + 0.28), Vector3(cx + 0.3, base_y + 0.35, cz - 0.28), Vector3(cx, base_y + 0.55, cz - 0.28), Vector3(cx, base_y + 0.55, cz + 0.28), tc)
+		smoke.append(Vector3(cx, base_y + 0.45, cz))
+	return {"mesh": k.mesh(), "smoke": smoke, "door": door}
 
 
 func _front(w: float, d: float, fl: int, shut: Color, p: Dictionary) -> void:
@@ -90,6 +98,7 @@ func _front(w: float, d: float, fl: int, shut: Color, p: Dictionary) -> void:
 	# первый этаж: дверь в каменной раме и окно — или лавка с навесом
 	var door_x := -w * 0.22 if w > 3.6 else 0.0
 	_door(door_x, z)
+	door = Vector3(door_x, 0, z)
 	if shop and w > 3.6:
 		_shop(w * 0.22, z, minf(1.9, w * 0.42))
 	elif w > 3.6:
@@ -111,25 +120,42 @@ func _windows(w: float, d: float, y: float, shut: Color, flowers: bool) -> void:
 
 ## Окно: стекло в глубине, каменный подоконник и перемычка, открытые ставни по бокам, ящик с цветами
 func _window(x: float, y: float, z: float, shut: Color, box_flowers: bool) -> void:
-	var ww := 0.62
-	var wh := 0.95
-	k.box(Vector3(x - ww / 2, y, z - 0.02), Vector3(x + ww / 2, y + wh, z + 0.012), Color(GLASS))
-	# переплёт
-	k.box(Vector3(x - 0.025, y, z), Vector3(x + 0.025, y + wh, z + 0.03), Color(TRIM).darkened(0.1))
-	k.box(Vector3(x - ww / 2, y + wh * 0.55, z), Vector3(x + ww / 2, y + wh * 0.55 + 0.04, z + 0.03), Color(TRIM).darkened(0.1))
-	# подоконник и перемычка
-	k.box(Vector3(x - ww / 2 - 0.08, y - 0.07, z - 0.02), Vector3(x + ww / 2 + 0.08, y, z + 0.1), Color(TRIM))
-	k.box(Vector3(x - ww / 2 - 0.06, y + wh, z - 0.02), Vector3(x + ww / 2 + 0.06, y + wh + 0.1, z + 0.05), Color(TRIM))
-	# ставни, распахнутые к стене, с планками
+	# римское окно: небольшой проём без стекла, каменные откосы, деревянные ставни из досок, иногда решётка
+	var ww := 0.56
+	var wh := 0.78
+	k.box(Vector3(x - ww / 2, y, z - 0.01), Vector3(x + ww / 2, y + wh, z + 0.004), Color("2b231d"))
+	k.box(Vector3(x - ww / 2 - 0.07, y - 0.08, z - 0.02), Vector3(x + ww / 2 + 0.07, y, z + 0.09), Color(TRIM))
+	k.box(Vector3(x - ww / 2 - 0.07, y + wh, z - 0.02), Vector3(x + ww / 2 + 0.07, y + wh + 0.09, z + 0.05), Color(TRIM))
 	for s: float in [-1.0, 1.0]:
-		var x0 := x + s * (ww / 2 + 0.02)
-		var x1 := x + s * (ww / 2 + 0.02 + ww * 0.5)
-		k.box(Vector3(minf(x0, x1), y - 0.02, z), Vector3(maxf(x0, x1), y + wh + 0.02, z + 0.05), shut)
-		for q in 4:
-			var yy := y + 0.08 + q * 0.22
-			k.box(Vector3(minf(x0, x1) + 0.03, yy, z + 0.05), Vector3(maxf(x0, x1) - 0.03, yy + 0.05, z + 0.07), shut.darkened(0.25))
+		k.box(Vector3(x + s * ww / 2 - 0.04, y, z - 0.02), Vector3(x + s * ww / 2 + 0.04, y + wh, z + 0.04), Color(TRIM).darkened(0.05))
+	var wood := shut
+	var lattice := rng.randf() < 0.3
+	if lattice:
+		# деревянная решётка
+		for q in 3:
+			var xx := x - ww / 2 + ww * (q + 1) / 4.0
+			k.box(Vector3(xx - 0.015, y, z + 0.005), Vector3(xx + 0.015, y + wh, z + 0.03), wood.darkened(0.2))
+		for q in 3:
+			var yy := y + wh * (q + 1) / 4.0
+			k.box(Vector3(x - ww / 2, yy - 0.015, z + 0.005), Vector3(x + ww / 2, yy + 0.015, z + 0.03), wood.darkened(0.2))
+	# ставни: обе распахнуты, или одна прикрыта
+	var closed := -1.0 if rng.randf() < 0.3 else 0.0
+	for s: float in [-1.0, 1.0]:
+		if s == closed and not lattice:
+			# прикрытая створка — в проёме
+			k.box(Vector3(minf(x, x + s * ww / 2), y + 0.01, z + 0.005), Vector3(maxf(x, x + s * ww / 2), y + wh - 0.01, z + 0.04), wood)
+			continue
+		var x0 := x + s * (ww / 2 + 0.04)
+		var x1 := x + s * (ww / 2 + 0.04 + ww * 0.5)
+		k.box(Vector3(minf(x0, x1), y - 0.02, z), Vector3(maxf(x0, x1), y + wh + 0.02, z + 0.04), wood)
+		# доски и поперечины
+		for q in 2:
+			var xx := minf(x0, x1) + absf(x1 - x0) * (q + 1) / 3.0
+			k.box(Vector3(xx - 0.008, y, z + 0.04), Vector3(xx + 0.008, y + wh, z + 0.048), wood.darkened(0.3))
+		for yy: float in [y + 0.12, y + wh - 0.16]:
+			k.box(Vector3(minf(x0, x1) + 0.02, yy, z + 0.04), Vector3(maxf(x0, x1) - 0.02, yy + 0.05, z + 0.06), wood.darkened(0.15))
 	if box_flowers:
-		_flower_box(x, y - 0.07, z + 0.1, ww + 0.1)
+		_flower_box(x, y - 0.08, z + 0.09, ww + 0.14)
 
 
 func _flower_box(x: float, y: float, z: float, len: float) -> void:
@@ -177,8 +203,9 @@ func _door(x: float, z: float) -> void:
 		k.tri(Vector3(x, cy, z - 0.03), Vector3(x + cos(a0) * r0, cy + sin(a0) * r0, z - 0.03), Vector3(x + cos(a1) * r0, cy + sin(a1) * r0, z - 0.03), Color(GLASS))
 	# фонарь у двери
 	var lx := x + dw / 2 + 0.35
-	k.box(Vector3(lx - 0.03, y + 1.75, z), Vector3(lx + 0.03, y + 1.8, z + 0.25), Color("2e2a26"))
-	k.box(Vector3(lx - 0.08, y + 1.5, z + 0.17), Vector3(lx + 0.08, y + 1.75, z + 0.33), Color("f6c76a"))
+	k.box(Vector3(lx - 0.025, y + 1.75, z), Vector3(lx + 0.025, y + 1.79, z + 0.22), Color("8a6a3a"))
+	k.cyl(Vector3(lx, y + 1.6, z + 0.2), 0.07, 0.08, 6, Color("a9803f"), 0.04)
+	k.blob(Vector3(lx, y + 1.71, z + 0.2), Vector3(0.03, 0.05, 0.03), Color("ffb347"), 3, 0.1)
 
 
 ## Лавка: широкий проём с прилавком и полосатый навес на шестах
@@ -197,8 +224,8 @@ func _shop(x: float, z: float, ww: float) -> void:
 		for q in 3:
 			k.blob(Vector3(fx + rng.randf_range(-0.07, 0.07), y + 1.0, z + 0.12 + q * 0.1), Vector3(0.05, 0.05, 0.05), fruit, rng.randi(), 0.15)
 	# навес полосами
-	var a := Color(["c9483b", "3f7f8a", "d9a33a"][rng.randi() % 3])
-	var b := Color("f3ead8")
+	var a := Color(["e8dcc0", "d9b46a", "b8653f", "cfc3a3"][rng.randi() % 4])
+	var b := a.darkened(0.08)
 	var n := 7
 	var x0 := x - ww / 2 - 0.25
 	var x1 := x + ww / 2 + 0.25
@@ -215,20 +242,32 @@ func _shop(x: float, z: float, ww: float) -> void:
 
 
 func _balcony(w: float, y: float, z: float) -> void:
-	var bw := minf(w * 0.7, 2.6)
-	k.box(Vector3(-bw / 2, y - 0.12, z), Vector3(bw / 2, y + 0.04, z + 0.75), Color(STONE))
-	# консоли под плитой
-	for s: float in [-bw / 2 + 0.2, bw / 2 - 0.2]:
-		k.box(Vector3(s - 0.07, y - 0.42, z), Vector3(s + 0.07, y - 0.12, z + 0.5), Color(STONE_DARK))
-	# перила: стойки и поручень
-	var ry := y + 0.9
-	k.box(Vector3(-bw / 2, ry, z + 0.68), Vector3(bw / 2, ry + 0.06, z + 0.76), Color("3b302a"))
+	# деревянный балкон (мениан): доски на балках-консолях, перила из брусьев, крыша-навес из черепицы
+	var bw := minf(w * 0.75, 3.0)
+	var wood := Color("7a5233")
+	k.box(Vector3(-bw / 2, y - 0.08, z), Vector3(bw / 2, y + 0.03, z + 0.85), wood.lightened(0.05))
+	for i in 4:
+		var bx := -bw / 2 + 0.15 + i * (bw - 0.3) / 3.0
+		k.box(Vector3(bx - 0.06, y - 0.2, z), Vector3(bx + 0.06, y - 0.08, z + 0.95), wood.darkened(0.25))
+	var ry := y + 0.95
+	k.box(Vector3(-bw / 2, ry, z + 0.78), Vector3(bw / 2, ry + 0.07, z + 0.86), wood)
 	for side: float in [-1.0, 1.0]:
-		k.box(Vector3(side * bw / 2 - 0.04, ry, z), Vector3(side * bw / 2 + 0.04, ry + 0.06, z + 0.76), Color("3b302a"))
-	var n := int(bw / 0.14)
+		k.box(Vector3(side * bw / 2 - 0.04, y, z), Vector3(side * bw / 2 + 0.04, ry + 0.07, z + 0.86), wood)
+	var n := int(bw / 0.22)
 	for i in n + 1:
 		var bx := -bw / 2 + i * bw / n
-		k.box(Vector3(bx - 0.015, y + 0.04, z + 0.7), Vector3(bx + 0.015, ry, z + 0.74), Color("3b302a"))
+		k.box(Vector3(bx - 0.025, y + 0.03, z + 0.8), Vector3(bx + 0.025, ry, z + 0.85), wood.darkened(0.1))
+	k.box(Vector3(-bw / 2, y + 0.4, z + 0.81), Vector3(bw / 2, y + 0.45, z + 0.85), wood.darkened(0.1))
+	# столбы до навеса и черепичный навес
+	if rng.randf() < 0.6:
+		for side: float in [-1.0, 1.0]:
+			k.box(Vector3(side * bw / 2 - 0.05, y, z + 0.78), Vector3(side * bw / 2 + 0.05, y + 2.05, z + 0.88), wood)
+		var top := y + 2.05
+		k.quad(Vector3(-bw / 2 - 0.15, top + 0.25, z), Vector3(bw / 2 + 0.15, top + 0.25, z), Vector3(bw / 2 + 0.15, top - 0.05, z + 1.05), Vector3(-bw / 2 - 0.15, top - 0.05, z + 1.05), Color(TILES[1]).darkened(0.1))
+		var tx := -bw / 2 - 0.05
+		while tx < bw / 2 + 0.1:
+			k.half_tube(Vector3(tx, top - 0.02, z + 1.05), Vector3(tx, top + 0.27, z), 0.08, 4, Color(TILES[int(absf(tx) * 10) % TILES.size()]), Vector3(0, 0.96, 0.28).normalized())
+			tx += 0.2
 	# горшки с цветами
 	for i in 2:
 		var px := -bw / 2 + 0.3 + i * (bw - 0.6)
@@ -241,7 +280,7 @@ func _balcony(w: float, y: float, z: float) -> void:
 ## Черепичная крыша: скаты, ряды полукруглой черепицы от карниза к коньку, конёк, фронтоны или вальмы
 func _roof(w: float, d: float, y: float, hip: bool) -> void:
 	var ov := 0.35
-	var rise := minf(w, d) * 0.3
+	var rise := minf(w, d) * 0.22
 	var x0 := -w / 2 - ov
 	var x1 := w / 2 + ov
 	var z0 := -d / 2 - ov
@@ -281,6 +320,12 @@ func _roof(w: float, d: float, y: float, hip: bool) -> void:
 				t = e.lerp(t, 1.0 - f)
 			var up := (t - e).cross(Vector3.RIGHT * s).normalized() * -1.0
 			k.half_tube(e + up * 0.04, t + up * 0.04, 0.1, 4, col, up)
+			# антефикс — фигурная плитка на конце ряда у карниза
+			if lim == 0.0:
+				var ax := e + up * 0.06
+				var inner := ax - Vector3(0, 0, s * 0.3)
+				k.quad_out(ax + Vector3(-0.07, 0, 0), ax + Vector3(0.07, 0, 0), ax + Vector3(0.05, 0.16, 0.02 * s), ax + Vector3(-0.05, 0.16, 0.02 * s), Color("d98a5a"), inner)
+				k.tri_out(ax + Vector3(-0.05, 0.16, 0.02 * s), ax + Vector3(0.05, 0.16, 0.02 * s), ax + Vector3(0, 0.22, 0.03 * s), Color("d98a5a"), inner)
 		x += step
 		row += 1
 	# вальмы — ряды поперёк

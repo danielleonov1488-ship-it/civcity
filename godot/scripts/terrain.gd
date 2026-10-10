@@ -4,9 +4,9 @@ extends RefCounted
 ## ровная долина под город посередине. Высота квантуется шагом STEP — на склонах видны тонкие «горизонтали».
 ## Клетка CELL метра; у каждой — высота, вид покрытия и цвет. Сетка строится одной моделью.
 
-const CELL := 0.5
-const N := 160                 # клеток на сторону (80 м)
-const STEP := 0.25             # шаг уступа по высоте
+const CELL := 0.25
+const N := 320                 # клеток на сторону (80 м)
+const STEP := 0.125            # шаг уступа по высоте — мелкий, как в Town to City
 const TOWN_Y := 2.0            # высота долины под город
 const SEA_Y := 0.0             # уровень моря
 
@@ -88,12 +88,12 @@ func plaza_r(p: Vector2) -> float:
 ## Высота рельефа до квантования
 func raw_height(x: float, z: float) -> float:
 	var p := Vector2(x, z)
-	var y := TOWN_Y + n1.get_noise_2d(x, z) * 1.6
+	var y := TOWN_Y + n1.get_noise_2d(x, z) * 1.1
 	# холмы на севере и на западе
 	var north := smoothstep(24.0, 6.0, z)
-	y += north * (4.5 + n3.get_noise_2d(x * 2.0, z) * 3.0)
+	y += north * (3.6 + n3.get_noise_2d(x * 2.0, z) * 2.2)
 	var west := smoothstep(16.0, 2.0, x) * (1.0 - north)
-	y += west * (2.5 + n1.get_noise_2d(x * 1.7, z * 1.7) * 1.5)
+	y += west * (1.8 + n1.get_noise_2d(x * 1.7, z * 1.7) * 1.0)
 	# скала: резкий подъём у ворот, с неровным краем
 	var cliff_z := 16.8 + n2.get_noise_2d(x, 0.0) * 1.4 + absf(x - GATE.x) * 0.02
 	cliff_z = lerpf(16.3, cliff_z, smoothstep(3.5, 7.5, absf(x - GATE.x)))   # у ворот скала ровная
@@ -147,7 +147,7 @@ func build() -> void:
 			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 				if inside(i + d.x, j + d.y):
 					drop = maxf(drop, absf(y - h[idx(i + d.x, j + d.y)]))
-			if drop >= 1.0:
+			if drop >= 0.45:
 				kind[k] = Kind.ROCK
 
 
@@ -202,13 +202,13 @@ func mesh() -> ArrayMesh:
 	var c := PackedColorArray()
 	var uv := PackedVector2Array()
 	var ix := PackedInt32Array()
-	var add_quad := func(a: Vector3, b: Vector3, cc: Vector3, d: Vector3, n: Vector3, col: Color, kd: int) -> void:
+	var add_quad := func(a: Vector3, b: Vector3, cc: Vector3, d: Vector3, n: Vector3, col: Color, kd: int, top: float) -> void:
 		var base := v.size()
 		v.append_array([a, b, cc, d])
 		nr.append_array([n, n, n, n])
 		var lc := col.srgb_to_linear()
 		c.append_array([lc, lc, lc, lc])
-		var u := Vector2(kd, 0)
+		var u := Vector2(kd, top)
 		uv.append_array([u, u, u, u])
 		# по часовой, если смотреть со стороны нормали (так в Godot лицевая сторона)
 		ix.append_array([base, base + 2, base + 1, base, base + 3, base + 2])
@@ -220,7 +220,7 @@ func mesh() -> ArrayMesh:
 			var z0 := j * CELL
 			var x1 := x0 + CELL
 			var z1 := z0 + CELL
-			add_quad.call(Vector3(x0, y, z0), Vector3(x0, y, z1), Vector3(x1, y, z1), Vector3(x1, y, z0), Vector3.UP, top_color(k, y), kind[k])
+			add_quad.call(Vector3(x0, y, z0), Vector3(x0, y, z1), Vector3(x1, y, z1), Vector3(x1, y, z0), Vector3.UP, top_color(k, y), kind[k], y)
 			# стенки к более низким соседям (по одной клетке высоты — полоска на каждый уровень скалы)
 			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 				var ni := i + d.x
@@ -245,13 +245,10 @@ func mesh() -> ArrayMesh:
 					a = Vector3(x0, 0, z1); b = Vector3(x1, 0, z1)
 				else:
 					a = Vector3(x1, 0, z0); b = Vector3(x0, 0, z0)
-				# стенка — полосами по STEP: так у скалы видны слои, а у уступа — кромка травы
-				var yy := y
-				while yy > yn + 0.001:
-					var lo := maxf(yn, yy - STEP)
-					var col := side_color(k, (yy + lo) * 0.5, y, drop)
-					add_quad.call(Vector3(b.x, lo, b.z), Vector3(b.x, yy, b.z), Vector3(a.x, yy, a.z), Vector3(a.x, lo, a.z), n, col, Kind.ROCK if drop >= 1.0 else Kind.DIRT)
-					yy = lo
+				# стенка одним куском: слои скалы и кромку травы рисует видеокарта (по высоте верха в UV.y)
+				var rocky := drop >= 0.4 or kind[k] == Kind.ROCK
+				var col := C_ROCK if rocky else top_color(k, y)
+				add_quad.call(Vector3(b.x, yn, b.z), Vector3(b.x, y, b.z), Vector3(a.x, y, a.z), Vector3(a.x, yn, a.z), n, col, Kind.ROCK if rocky else Kind.DIRT, y)
 	var arr := []
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = v
