@@ -1,0 +1,104 @@
+class_name CameraRig
+extends Node3D
+## Камера как в Town to City: зажатое колёсико — вращать под любым углом, колёсико — ближе/дальше,
+## правая кнопка или WASD — двигать, Q/E — поворот. Ближе к земле камера сама наклоняется ниже.
+
+var yaw := deg_to_rad(200.0)
+var pitch := deg_to_rad(38.0)
+var dist := 34.0
+var target := Vector3(38, 2, 44)
+var cam: Camera3D
+var attrs: CameraAttributesPractical
+var terrain: Terrain
+var _yaw_t := yaw
+var _pitch_t := pitch
+var _dist_t := dist
+var _target_t := target
+var _orbit := false
+var _pan := false
+
+const DIST_MIN := 4.0
+const DIST_MAX := 70.0
+
+
+func _ready() -> void:
+	cam = Camera3D.new()
+	cam.fov = 40.0
+	cam.near = 0.1
+	cam.far = 600.0
+	attrs = CameraAttributesPractical.new()
+	attrs.dof_blur_far_enabled = true
+	attrs.dof_blur_near_enabled = true
+	attrs.dof_blur_amount = 0.06
+	cam.attributes = attrs
+	add_child(cam)
+	_update(true)
+
+
+func set_view(t: Vector3, yaw_deg: float, pitch_deg: float, d: float) -> void:
+	target = t
+	_target_t = t
+	yaw = deg_to_rad(yaw_deg)
+	_yaw_t = yaw
+	pitch = deg_to_rad(pitch_deg)
+	_pitch_t = pitch
+	dist = d
+	_dist_t = d
+	_update(true)
+
+
+func _unhandled_input(e: InputEvent) -> void:
+	if e is InputEventMouseButton:
+		var mb := e as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_MIDDLE:
+			_orbit = mb.pressed
+		elif mb.button_index == MOUSE_BUTTON_RIGHT:
+			_pan = mb.pressed
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_dist_t = clampf(_dist_t * 0.88, DIST_MIN, DIST_MAX)
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_dist_t = clampf(_dist_t / 0.88, DIST_MIN, DIST_MAX)
+	elif e is InputEventMouseMotion:
+		var mm := e as InputEventMouseMotion
+		if _orbit:
+			_yaw_t -= mm.relative.x * 0.006
+			_pitch_t = clampf(_pitch_t + mm.relative.y * 0.005, deg_to_rad(8), deg_to_rad(80))
+		elif _pan:
+			var k := _dist_t * 0.0016
+			var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
+			var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
+			_target_t -= right * mm.relative.x * k + fwd * mm.relative.y * k
+
+
+func _process(dt: float) -> void:
+	var mv := Vector2.ZERO
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): mv.y -= 1
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): mv.y += 1
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): mv.x -= 1
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): mv.x += 1
+	if Input.is_key_pressed(KEY_Q): _yaw_t += dt * 1.4
+	if Input.is_key_pressed(KEY_E): _yaw_t -= dt * 1.4
+	if mv != Vector2.ZERO:
+		var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
+		var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
+		_target_t += (right * mv.x + fwd * mv.y) * _dist_t * 0.9 * dt
+	var a := 1.0 - pow(0.0008, dt)
+	yaw = lerpf(yaw, _yaw_t, a)
+	pitch = lerpf(pitch, _pitch_t, a)
+	dist = lerpf(dist, _dist_t, a)
+	target = target.lerp(_target_t, a)
+	_update(false)
+
+
+func _update(_snap: bool) -> void:
+	if terrain:
+		target.y = lerpf(target.y, terrain.height_at(target.x, target.z), 0.2 if not _snap else 1.0)
+	var off := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
+	if cam:
+		cam.global_position = target + off
+		cam.look_at(target, Vector3.UP)
+		# размытие как у миниатюры: резко там, куда смотрим, мягко вдали и у самой камеры
+		attrs.dof_blur_far_distance = dist * 1.35
+		attrs.dof_blur_far_transition = dist * 1.1
+		attrs.dof_blur_near_distance = dist * 0.42
+		attrs.dof_blur_near_transition = dist * 0.3

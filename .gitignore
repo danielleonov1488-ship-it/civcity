@@ -24,3 +24,7 @@ promo/video/public/audio/
 promo/video/public/music/
 promo/audio/
 promo/music-preview/
+
+# движок Godot и рабочие файлы проверок (всё на диске D)
+tools/
+.work/
