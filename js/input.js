@@ -45,7 +45,7 @@ const Input = {
       if (e.shiftKey && this.tool === 'road') { this.brushSize(e.deltaY > 0 ? -1 : 1); return; }
       if (e.shiftKey && this.tool && this.tool !== 'bulldoze') { this.rotate(e.deltaY > 0 ? 1 : -1); return; }
       const f = Math.exp(e.deltaY * 0.0012);
-      const p = Engine.groundPoint(e.clientX, e.clientY);
+      const p = Engine.groundPoint(e.clientX, e.clientY, true);
       const before = Engine.cam.distTarget;
       Engine.zoom(f);
       const real = Engine.cam.distTarget / before;
@@ -159,14 +159,14 @@ const Input = {
 
     this.start = [e.clientX, e.clientY];
     this.moved = false;
-    this.anchor = this.hover;
+    this.anchor = Engine.groundPoint(e.clientX, e.clientY, true);
     if (e.button === 2) { this.mode = 'pan'; return; }
     if (e.button === 1) { this.mode = 'rotate'; return; }
 
     const tool = this.tool;
     // рамка выбранной постройки: схватили золотой кружок — поворот (и размер у украшения)
     if (!tool && UI.selected && Engine.gizmoAt && e.button === 0) {
-      const g = Engine.gizmoAt, v = new THREE.Vector3(g.hx, (UI.selected.yo || 0) + 0.09, g.hz).project(Engine.camera);
+      const g = Engine.gizmoAt, v = new THREE.Vector3(g.hx, bY(UI.selected) + 0.09, g.hz).project(Engine.camera);
       const r = Engine.renderer.domElement.getBoundingClientRect();
       const hx = r.left + (v.x + 1) / 2 * r.width, hy = r.top + (1 - v.y) / 2 * r.height;
       if (Math.hypot(e.clientX - hx, e.clientY - hy) < 22) {
@@ -184,6 +184,11 @@ const Input = {
       this.mode = 'road';
       this.stroke = { last: [fx, fy], start: [fx, fy], undo: [], cleared: [], cost: 0, reason: null };
       if (!this.shift) this.paintTo(fx, fy);
+    } else if (tool === 'terrain') {
+      // «выровнять» — до высоты клетки, с которой начали мазок
+      this.mode = 'terrain';
+      this.tstroke = { done: new Set(), changed: [], cost: 0, reason: null, to: Terrain.levelAt(Math.floor(fx), Math.floor(fy)) };
+      this.terrainTo(fx, fy);
     } else if (tool === 'copy' || tool === 'move') {
       this.mode = 'pick';
     } else if (!this.moving && (tool === 'bulldoze' || BUILDINGS[tool].w === 1)) {
@@ -209,7 +214,7 @@ const Input = {
       const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
       Engine.cam.yawTarget = this.pinch.yaw - (ang - this.pinch.ang);
       const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-      const p0 = Engine.groundPoint(this.pinch.mid[0], this.pinch.mid[1]), p1 = Engine.groundPoint(mid[0], mid[1]);
+      const p0 = Engine.groundPoint(this.pinch.mid[0], this.pinch.mid[1], true), p1 = Engine.groundPoint(mid[0], mid[1], true);
       if (p0 && p1) Engine.panBy(p0[0] - p1[0], p0[1] - p1[1]);
       this.pinch.mid = mid;
       return;
@@ -238,7 +243,7 @@ const Input = {
     if (this.mode === 'pan' || ((this.mode === 'maybe' || this.mode === 'pick') && this.moved)) {
       this.mode = 'pan';
       if (Photo.follow) Photo.setFollow(null);
-      const cur = Engine.groundPoint(e.clientX, e.clientY);
+      const cur = Engine.groundPoint(e.clientX, e.clientY, true);
       if (this.anchor && cur) Engine.panBy(this.anchor[0] - cur[0], this.anchor[1] - cur[1]);
       return;
     }
@@ -250,7 +255,49 @@ const Input = {
       if (!this.shift) this.paintTo(this.hover[0], this.hover[1]);
     } else if (this.mode === 'paint') {
       this.paint(this.hover[0], this.hover[1]);
+    } else if (this.mode === 'terrain') {
+      this.terrainTo(this.hover[0], this.hover[1]);
     }
+  },
+
+  /* ---------- Кисть рельефа ---------- */
+
+  terrainSize(dir) {
+    const tb = Terrain.brush, i = Math.max(0, TERRAIN_SIZES.indexOf(tb.size));
+    tb.size = TERRAIN_SIZES[clamp(i + dir, 0, TERRAIN_SIZES.length - 1)];
+    this.lastGhostKey = '';
+    UI.onTerrainChanged();
+  },
+
+  // клетки под кистью меняются по разу за мазок: провёл — гряда поднялась на уровень
+  terrainTo(fx, fy) {
+    const st = this.tstroke;
+    if (!st) return;
+    const tb = Terrain.brush, [tx0, ty0] = Terrain.brushOrigin(fx, fy, tb.size);
+    const r = Terrain.stroke(tx0, ty0, tb.size, tb.mode, st.to, st.done, state.money);
+    if (r.changed.length) {
+      state.money -= r.cost;
+      st.cost += r.cost;
+      for (const c of r.changed) st.changed.push(c);
+      for (const [tx, ty] of r.changed) if (Math.random() < 0.35) Engine.puff(tx + 0.5, Terrain.heightAt(tx, ty) + 0.05, ty + 0.5, '#e9dcc0', 3, 0.7, 0.6, 0.1, 0.6);
+      const now = performance.now();
+      if (now - (this.lastClack || 0) > 300) { this.lastClack = now; Sound.thud(0.8); Sound.road(0.4); }
+      this.lastGhostKey = '';
+    }
+    if (r.reason) { st.reason = r.reason; this.lastGhostKey = ''; }
+  },
+
+  endTerrain() {
+    const st = this.tstroke;
+    this.tstroke = null;
+    if (!st) return;
+    if (st.changed.length) {
+      this.undos.push({ terrain: st.changed, cost: st.cost });
+      if (this.undos.length > 30) this.undos.shift();
+      afterCityChanged();
+      Advisor.queue('terrain');
+    }
+    if (st.reason) this.warn(st.reason);
   },
 
   /* ---------- Кисть мостовой ---------- */
@@ -285,6 +332,7 @@ const Input = {
 
   // мазок закончен: запомнить для Ctrl+Z, пересчитать город
   endStroke() {
+    if (this.tstroke) this.endTerrain();
     const st = this.stroke;
     this.stroke = null;
     if (!st || !st.undo.length) return;
@@ -298,6 +346,7 @@ const Input = {
   undoStroke() {
     const u = this.undos.pop();
     if (!u) return;
+    if (u.terrain) { Terrain.undo(u.terrain); state.money += u.cost; afterCityChanged(); return; }
     Paving.undo(u.undo, u.cleared);
     state.money += u.cost;
     afterCityChanged();
@@ -315,6 +364,7 @@ const Input = {
     if (cancelled || mode === 'pinched' || mode === 'pinch') { this.endStroke(); Engine.setRoadPreview(null); return; }
 
     if (mode === 'pan' && e.button === 2 && !this.moved) { this.setTool(null); return; }
+    if (mode === 'terrain') { this.endTerrain(); return; }
     if (mode === 'road') {
       const st = this.stroke;
       if (st && this.shift && this.hover) { st.last = st.start; this.paintTo(this.hover[0], this.hover[1]); }
@@ -356,6 +406,8 @@ const Input = {
     if ((k === 'z' || k === 'я') && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this.undoStroke(); return; }
     if (this.tool === 'road' && (k === '[' || k === 'х')) { this.brushSize(-1); return; }
     if (this.tool === 'road' && (k === ']' || k === 'ъ')) { this.brushSize(1); return; }
+    if (this.tool === 'terrain' && (k === '[' || k === 'х')) { this.terrainSize(-1); return; }
+    if (this.tool === 'terrain' && (k === ']' || k === 'ъ')) { this.terrainSize(1); return; }
     const decorTool = this.tool && BUILDINGS[this.tool] && BUILDINGS[this.tool].kind === 'decor';
     if (decorTool && (k === '[' || k === 'х')) { this.decorScale(-1); return; }
     if (decorTool && (k === ']' || k === 'ъ')) { this.decorScale(1); return; }
@@ -368,6 +420,7 @@ const Input = {
     if (k === 'z' || k === 'я') this.rotate(-1);
     if (k === 'c' || k === 'с') this.rotate(1);
     if (k === 'r' || k === 'к') this.setTool('road');
+    if (k === 't' || k === 'е') this.setTool(this.tool === 'terrain' ? null : 'terrain');
     if (k === 'h' || k === 'р') this.setTool('house');
     if (k === 'x' || k === 'ч' || k === 'delete') this.setTool('bulldoze');
     if (k === 'f' || k === 'а') UI.openWindow('research');
@@ -530,6 +583,25 @@ const Input = {
           const info = m === 0 ? `Ластик · ширина ${fmtW(w)}` : m === -1 ? `Улучшить до мостовой · ширина ${fmtW(w)}`
             : `${PAVE[m].name} · ширина ${fmtW(w)} · ${String(PAVE[m].cost).replace('.', ',')} ден. за клетку${st && st.cost ? ` · мазок ${fmt(Math.ceil(st.cost))}` : ''}`;
           UI.setToolStatus('road', 0, 0, reason, info);
+        }
+      } else if (tool === 'terrain') {
+        // кисть рельефа: клетки под ней подсвечены (красным — те, что менять нельзя)
+        Engine.setGhost(null);
+        const tb = Terrain.brush, st = this.tstroke, [tx0, ty0] = Terrain.brushOrigin(fx, fy, tb.size);
+        let why = null;
+        for (let ty = ty0; ty < ty0 + tb.size; ty++) {
+          for (let tx = tx0; tx < tx0 + tb.size; tx++) {
+            const w = Terrain.blocked(tx, ty);
+            if (w && !why) why = w;
+            quads.push([tx + 0.05, ty + 0.05, 0.9, 0.9, w ? '#e0583e' : tb.mode > 0 ? '#fff8dc' : tb.mode < 0 ? '#ffb347' : '#8fd3ff']);
+          }
+        }
+        const reason = (st && st.reason) || why;
+        const key = `terrain:${tb.mode}:${tb.size}:${reason}:${st ? Math.round(st.cost) : -1}`;
+        if (key !== this.lastGhostKey) {
+          this.lastGhostKey = key;
+          const name = tb.mode > 0 ? 'Поднять' : tb.mode < 0 ? 'Опустить' : 'Выровнять';
+          UI.setToolStatus('terrain', 0, 0, reason, `${name} · ${tb.size}×${tb.size} · ${TERRAIN_COST} ден. за клетку${st && st.cost ? ` · мазок ${fmt(Math.ceil(st.cost))}` : ''}`);
         }
       } else if (BUILDINGS[tool].scatter) {
         // кисть россыпью: круг вместо призрака

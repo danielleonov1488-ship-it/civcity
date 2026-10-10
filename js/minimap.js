@@ -58,7 +58,7 @@ const Minimap = {
 
   // Земля по пикселю на клетку — меняется редко (новый участок, вырубка), поэтому рисуется отдельно и хранится
   drawTerrain(ex, W, H) {
-    const key = ex.tx0 + ',' + ex.ty0 + ',' + W + ',' + H + ':' + state.plots.size + ':' + state.cleared.size;
+    const key = ex.tx0 + ',' + ex.ty0 + ',' + W + ',' + H + ':' + state.plots.size + ':' + state.cleared.size + ':' + Terrain.version;
     if (this.terrain && this.terrainKey === key) return this.terrain;
     this.terrainKey = key;
     const img = new ImageData(W, H), d = img.data;
@@ -72,6 +72,13 @@ const Minimap = {
           const px = plotOf(x), py = plotOf(y), t = plotTerrain(px, py);
           const n = t.nature[(y - py * PLOT) * PLOT + (x - px * PLOT)];
           if (n && !state.cleared.has(tkey(x, y))) c = n === N_OAK || n === N_PINE || n === N_CYPRESS || n === N_BUSH ? FOREST : n === N_FLOWERS ? c : ROCK;
+        }
+        // уступы: чем выше, тем светлее; у края, за которым ниже, — тень подпорной стены
+        const L = Terrain.levelAt(x, y);
+        if (L || Terrain.levelAt(x, y - 1) > L || Terrain.levelAt(x - 1, y) > L) {
+          const edge = Terrain.levelAt(x, y - 1) > L || Terrain.levelAt(x - 1, y) > L;
+          const k = (1 + L * 0.07) * (edge ? 0.8 : 1);
+          c = [Math.min(255, c[0] * k), Math.min(255, c[1] * k), Math.min(255, c[2] * k)];
         }
         const o = (ty * W + tx) * 4, own = isOwnedTile(x, y);
         // чужая земля — приглушённая, как на большой карте
@@ -189,7 +196,7 @@ const Minimap = {
 
   // Точка земли под точкой экрана; у горизонта луч уходит в небо — тогда берём точку подальше по лучу
   ground(sx, sy) {
-    const p = Engine.groundPoint(sx, sy);
+    const p = Engine.groundPoint(sx, sy, true);
     if (p) {
       const c = Engine.cam, dx = p[0] - c.x, dz = p[1] - c.z, d = Math.hypot(dx, dz), lim = c.dist * 3;
       return d > lim ? [c.x + dx / d * lim, c.z + dz / d * lim] : p;

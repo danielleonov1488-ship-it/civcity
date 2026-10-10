@@ -216,10 +216,27 @@ const Engine = {
 
   ndc(sx, sy) { return new THREE.Vector2((sx / this.W) * 2 - 1, -(sy / this.H) * 2 + 1); },
 
-  groundPoint(sx, sy) {
+  // Точка земли под курсором. С рельефом луч идёт по уступам (клик по подпорной стене — это верхняя клетка);
+  // flat — по ровной земле: так камера при сдвиге не дёргается на уступах
+  groundPoint(sx, sy, flat) {
     this.raycaster.setFromCamera(this.ndc(sx, sy), this.camera);
-    const p = new THREE.Vector3();
-    return this.raycaster.ray.intersectPlane(this.groundPlane, p) ? [p.x, p.z] : null;
+    const p = new THREE.Vector3(), ray = this.raycaster.ray;
+    if (flat || !Terrain.any()) return ray.intersectPlane(this.groundPlane, p) ? [p.x, p.z] : null;
+    const o = ray.origin, d = ray.direction;
+    if (d.y > -1e-4) return null;
+    const top = Terrain.maxLevel() * LEVEL_H;
+    const t0 = Math.max(0, (o.y - top) / -d.y), t1 = o.y / -d.y;
+    const hz = Math.hypot(d.x, d.z) || 1e-6, n = clamp(Math.ceil((t1 - t0) * hz / 0.04), 1, 600), dt = (t1 - t0) / n;
+    const under = t => o.y + d.y * t <= Terrain.heightAt(o.x + d.x * t, o.z + d.z * t);
+    let a = t0;
+    for (let i = 1; i <= n; i++) {
+      const t = t0 + dt * i;
+      if (!under(t)) { a = t; continue; }
+      let lo = a, hi = t;
+      for (let k = 0; k < 8; k++) { const m = (lo + hi) / 2; if (under(m)) hi = m; else lo = m; }
+      return [o.x + d.x * hi, o.z + d.z * hi];
+    }
+    return [o.x + d.x * t1, o.z + d.z * t1];
   },
 
   panBy(dx, dz) {
@@ -400,16 +417,7 @@ const Engine = {
     const tileCol = (tx, ty) => { const k = tx + ',' + ty; let c = tc.get(k); if (!c) { c = this.tileColor(tx, ty); tc.set(k, c); } return c; };
     const c = new THREE.Color(), w = new THREE.Color();
     const vid = new Int32Array(N * N).fill(-1), pos = [], col = [], nrm = [];
-    const vert = (i, j) => {
-      const q = j * N + i;
-      if (vid[q] >= 0) return vid[q];
-      const X = x0 + i / R, Z = z0 + j / R, h = B.h[q];
-      // нормаль — по самому полю высот, чтобы соседние участки сходились без шва
-      if (B.any) {
-        const e = 0.12, dx = this.bedAt(B.F, X + e, Z) - this.bedAt(B.F, X - e, Z), dz = this.bedAt(B.F, X, Z + e) - this.bedAt(B.F, X, Z - e);
-        const l = Math.hypot(dx, 2 * e, dz);
-        nrm.push(-dx / l, 2 * e / l, -dz / l);
-      } else nrm.push(0, 1, 0);
+    const shade = (X, Z, h) => {
       // цвет — плавная смесь четырёх ближайших клеток
       const fx = X - 0.5, fz = Z - 0.5, ix = Math.floor(fx), iz = Math.floor(fz), ax = fx - ix, az = fz - iz;
       c.setRGB(0, 0, 0);
@@ -427,12 +435,40 @@ const Engine = {
         c.copy(w);
         if (!owned) { c.lerp(LOCK_TINT, 0.42); c.multiplyScalar(0.93); }
       }
+    };
+    const vert = (i, j) => {
+      const q = j * N + i;
+      if (vid[q] >= 0) return vid[q];
+      const X = x0 + i / R, Z = z0 + j / R, h = B.h[q];
+      // нормаль — по самому полю высот, чтобы соседние участки сходились без шва
+      if (B.any) {
+        const e = 0.12, dx = this.bedAt(B.F, X + e, Z) - this.bedAt(B.F, X - e, Z), dz = this.bedAt(B.F, X, Z + e) - this.bedAt(B.F, X, Z - e);
+        const l = Math.hypot(dx, 2 * e, dz);
+        nrm.push(-dx / l, 2 * e / l, -dz / l);
+      } else nrm.push(0, 1, 0);
+      shade(X, Z, h);
       pos.push(X, h, Z);
       col.push(c.r, c.g, c.b);
       return (vid[q] = pos.length / 3 - 1);
     };
-    const idx = [];
-    this.eachCell(B, (i, j, st) => {
+    // вершина поднятой клетки — своя, на высоте уступа (цвет — та же смесь, что у соседей внизу)
+    const vertAt = (X, Z, y) => {
+      shade(X, Z, 0);
+      nrm.push(0, 1, 0);
+      pos.push(X, y, Z);
+      col.push(c.r, c.g, c.b);
+      return pos.length / 3 - 1;
+    };
+    const idx = [], hills = Terrain.any();
+    this.eachCell(B, (i, j, st, fine) => {
+      if (hills && !fine) {
+        const X = x0 + i / R, Z = z0 + j / R, L = Terrain.levelAt(X, Z);
+        if (L > 0) {
+          const y = L * LEVEL_H, a = vertAt(X, Z, y), b = vertAt(X, Z + 1, y), cc = vertAt(X + 1, Z + 1, y), d = vertAt(X + 1, Z, y);
+          idx.push(a, b, cc, a, cc, d);
+          return;
+        }
+      }
       const a = vert(i, j), b = vert(i, j + st), cc = vert(i + st, j + st), d = vert(i + st, j);
       idx.push(a, b, cc, a, cc, d);
     });
@@ -442,6 +478,77 @@ const Engine = {
     g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
     g.setIndex(idx);
     const m = new THREE.Mesh(g, this.matGround);
+    m.receiveShadow = true;
+    return m;
+  },
+
+  // Подпорные стены уступов: тёсаный камень рядами вразбежку на тёмном растворе, сверху — кромка травы
+  // (а у мостовой — каменный карниз). Отдельной сеткой: стены отбрасывают тень на нижнюю землю
+  buildCliffs(px, py) {
+    if (!Terrain.any()) return null;
+    const x0 = px * PLOT, z0 = py * PLOT, pos = [], nrm = [], col = [];
+    const c = new THREE.Color(), STONE = CLIFF_STONE, MORTAR = CLIFF_MORTAR;
+    // обход вершин — лицом наружу (n): дальние, отвёрнутые от камеры стены не рисуются вовсе
+    const quad = (A, B, C, D, n, color) => {
+      const ax = B[0] - A[0], ay = B[1] - A[1], az = B[2] - A[2], bx = C[0] - A[0], by = C[1] - A[1], bz = C[2] - A[2];
+      if ((ay * bz - az * by) * n[0] + (az * bx - ax * bz) * n[1] + (ax * by - ay * bx) * n[2] < 0) { const t = B; B = D; D = t; }
+      for (const P of [A, B, C, A, C, D]) { pos.push(P[0], P[1], P[2]); nrm.push(n[0], n[1], n[2]); col.push(color.r, color.g, color.b); }
+    };
+    for (let tz = z0; tz < z0 + PLOT; tz++) {
+      for (let tx = x0; tx < x0 + PLOT; tx++) {
+        const L = Terrain.levelAt(tx, tz);
+        if (!L) continue;
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const Ln = Terrain.levelAt(tx + dx, tz + dz);
+          if (Ln >= L) continue;
+          // край клетки: начало, направление вдоль края и наружу
+          const ex = dx > 0 ? tx + 1 : dx < 0 ? tx : tx, ez = dz > 0 ? tz + 1 : dz < 0 ? tz : tz;
+          const ux = dx ? 0 : 1, uz = dx ? 1 : 0, n = [dx, 0, dz];
+          const P = (u, y, off) => [ex + ux * u + dx * off, y, ez + uz * u + dz * off];
+          const yb = Ln * LEVEL_H, yt = L * LEVEL_H;
+          // раствор — сплошной стеной, камни — чуть впереди него
+          c.copy(MORTAR);
+          quad(P(0, yb, 0), P(1, yb, 0), P(1, yt, 0), P(0, yt, 0), n, c);
+          const courses = Math.round((yt - yb) / (LEVEL_H / 4)), ch = (yt - yb) / courses, g = 0.011;
+          for (let k = 0; k < courses; k++) {
+            const y0 = yb + k * ch, y1 = y0 + ch;
+            let u = -hash2(tx * 7 + k, tz * 5 + dx * 3 + dz, 41) * 0.3;
+            let m = 0;
+            while (u < 1 && m++ < 8) {
+              const len = 0.26 + hash2(tx + m * 13, tz + k * 17 + dz * 3, 43 + dx) * 0.18;
+              const a = Math.max(0, u) + g, b = Math.min(1, u + len) - g;
+              if (b - a > 0.03) {
+                const h = hash2(tx * 3 + m, tz * 11 + k, 47 + dz);
+                c.copy(STONE[Math.floor(h * STONE.length) % STONE.length]);
+                // нижние ряды темнее (в тени и сырости), верхние светлее
+                c.multiplyScalar((0.86 + 0.14 * (k + 0.5) / courses) * (0.93 + hash2(tx + m, tz - k, 53) * 0.12));
+                quad(P(a, y0 + g, 0.012), P(b, y0 + g, 0.012), P(b, y1 - g, 0.012), P(a, y1 - g, 0.012), n, c);
+              }
+              u += len;
+            }
+          }
+          // кромка сверху: трава нависает над стеной, у мостовой — каменный карниз
+          const paved = Paving.at(tx + 0.5 + dx * 0.45, tz + 0.5 + dz * 0.45) > 0;
+          c.copy(paved ? CLIFF_CAP : this.tileColor(tx, tz));
+          const top = c.clone();
+          quad(P(0, yt + 0.003, 0), P(1, yt + 0.003, 0), P(1, yt + 0.003, 0.04), P(0, yt + 0.003, 0.04), [0, 1, 0], top);
+          c.multiplyScalar(0.78);
+          quad(P(0, yt - 0.055, 0.04), P(1, yt - 0.055, 0.04), P(1, yt + 0.003, 0.04), P(0, yt + 0.003, 0.04), n, c);
+        }
+      }
+    }
+    if (!pos.length) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.computeBoundingSphere();
+    if (!this.matCliff) {
+      this.matCliff = patchMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }));
+      this.matCliff.shadowSide = THREE.DoubleSide;
+    }
+    const m = new THREE.Mesh(geo, this.matCliff);
+    m.castShadow = true;
     m.receiveShadow = true;
     return m;
   },
@@ -603,7 +710,7 @@ const Engine = {
       p.parts[name] = obj;
       if (obj) p.group.add(obj);
     };
-    if (part === 'ground') { set('ground', this.buildGround(p.px, p.py)); set('water', this.buildWater(p.px, p.py)); }
+    if (part === 'ground') { set('ground', this.buildGround(p.px, p.py)); set('water', this.buildWater(p.px, p.py)); set('cliff', this.buildCliffs(p.px, p.py)); }
     if (part === 'nature') { p.nat = this.natureList(p.px, p.py); this.natDirty = true; set('shore', this.buildShore(p.px, p.py)); }
     if (part === 'border') {
       set('border', this.buildBorder(p.px, p.py));
@@ -690,15 +797,16 @@ const Engine = {
           const def = NATURE_KINDS[n];
           const ox = ((v & 15) / 15 - 0.5) * 0.35, oz = (((v >> 4) & 15) / 15 - 0.5) * 0.35;
           const center = n === N_STONE || n === N_MARBLE || n === N_IRON;
-          out.push([n + ':' + (v % def.variants), x + 0.5 + (center ? 0 : ox), z + 0.5 + (center ? 0 : oz), v * 0.0246, 0.82 + (v % 13) / 30, locked]);
+          out.push([n + ':' + (v % def.variants), x + 0.5 + (center ? 0 : ox), z + 0.5 + (center ? 0 : oz), v * 0.0246, 0.82 + (v % 13) / 30, locked, 0, Terrain.heightAt(x, z)]);
         }
         if (!n && t.ground[k] < G_SAND && !World.occ.has(tkey(x, z)) && !Paving.covers(x, z)) {
           // пучки травы, гуще у кромки леса и воды; на краю мостовой — только мимо камней
           const dens = v / 255;
           const ax = x + 0.15 + (v % 7) / 10, az = z + 0.15 + ((v >> 3) % 7) / 10;
           const bx = x + 0.85 - (v % 5) / 10, bz = z + 0.8 - ((v >> 2) % 5) / 10;
-          if (dens < 0.42 && Paving.free(ax, az, 0.14)) out.push(['grass:' + (v % 2), ax, az, v * 0.05, 0.8 + (v % 5) * 0.1, locked, 1]);
-          if (dens < 0.18 && Paving.free(bx, bz, 0.14)) out.push(['grass:' + ((v + 1) % 2), bx, bz, v * 0.09, 0.7 + (v % 3) * 0.1, locked, 1]);
+          const gy = Terrain.heightAt(x, z);
+          if (dens < 0.42 && Paving.free(ax, az, 0.14)) out.push(['grass:' + (v % 2), ax, az, v * 0.05, 0.8 + (v % 5) * 0.1, locked, 1, gy]);
+          if (dens < 0.18 && Paving.free(bx, bz, 0.14)) out.push(['grass:' + ((v + 1) % 2), bx, bz, v * 0.09, 0.7 + (v % 3) * 0.1, locked, 1, gy]);
         }
       }
     }
@@ -739,11 +847,11 @@ const Engine = {
     const q = new THREE.Quaternion(), e = new THREE.Euler(), pos = new THREE.Vector3(), sc = new THREE.Vector3();
     const grassShare = QUALITY[this.quality].grass;
     for (const p of this.plots.values()) {
-      for (const [key, x, z, rot, s, locked, isGrass] of p.nat) {
+      for (const [key, x, z, rot, s, locked, isGrass, y] of p.nat) {
         const d2 = (x - cm.x) ** 2 + (z - cm.z) ** 2;
         if (useF && d2 > far2) continue;
         if (isGrass && hash2(Math.floor(x * 7), Math.floor(z * 7), 3) > grassShare) continue;
-        sph.center.set(x, 0.6, z);
+        sph.center.set(x, 0.6 + y, z);
         if (useF && !F.intersectsSphere(sph)) continue;
         const rec = this.natMeshes.get(key);
         if (!rec) continue;
@@ -751,7 +859,7 @@ const Engine = {
         if (n >= rec.cap) continue;
         e.set(0, rot, 0);
         q.setFromEuler(e);
-        pos.set(x, 0, z);
+        pos.set(x, y, z);
         sc.setScalar(s);
         m.compose(pos, q, sc);
         rec.mesh.setMatrixAt(n, m);
@@ -852,7 +960,7 @@ const Engine = {
   buildingMatrix(b, sy, sxz) {
     const k = b.s || 1;   // размер украшения
     this._q.setFromAxisAngle(this._up, bAng(b));
-    this._p.set(b.x + b.w / 2, b.yo || 0, b.y + b.h / 2);
+    this._p.set(b.x + b.w / 2, bY(b), b.y + b.h / 2);
     this._s.set((sxz || 1) * k, (sy || 1) * k, (sxz || 1) * k);
     return this._m.compose(this._p, this._q, this._s);
   },
@@ -872,7 +980,7 @@ const Engine = {
       const cx = b.x + b.w / 2, cz = b.y + b.h / 2;
       if (F) {
         if ((cx - cm.x) ** 2 + (cz - cm.z) ** 2 > this.cullFar2) continue;
-        sph.center.set(cx, 1, cz);
+        sph.center.set(cx, 1 + bY(b), cz);
         sph.radius = Math.hypot(b.w, b.h) / 2 + 2;
         if (!F.intersectsSphere(sph)) continue;
       }
@@ -922,7 +1030,7 @@ const Engine = {
     for (let i = 0; i < n; i++) {
       const l = L[i];
       M.makeScale(l.r, 1, l.r);
-      M.setPosition(l.x, 0.075, l.z);
+      M.setPosition(l.x, 0.075 + (l.g || 0), l.z);
       m.setMatrixAt(i, M);
     }
     m.count = n;
@@ -939,8 +1047,8 @@ const Engine = {
         const b = state.buildings.get(id);
         if (!b) continue;
         const a = bAng(b), ca = Math.cos(a), sa = Math.sin(a), k = b.s || 1;
-        const cx = b.x + b.w / 2, cz = b.y + b.h / 2;
-        for (const [x, y, z, r] of g.model.lights) this.lights.push({ x: cx + (x * ca + z * sa) * k, y: y * k, z: cz + (-x * sa + z * ca) * k, r: r * k });
+        const cx = b.x + b.w / 2, cz = b.y + b.h / 2, gy = bY(b);
+        for (const [x, y, z, r] of g.model.lights) this.lights.push({ x: cx + (x * ca + z * sa) * k, y: y * k + gy, z: cz + (-x * sa + z * ca) * k, r: r * k, g: gy });
       }
     }
     for (const g of this.bGroups.values()) {
@@ -950,7 +1058,7 @@ const Engine = {
         if (!b) continue;
         const a = bAng(b), ca = Math.cos(a), sa = Math.sin(a);
         const cx = b.x + b.w / 2, cz = b.y + b.h / 2;
-        const toWorld = ([x, y, z]) => [cx + x * ca + z * sa, y, cz - x * sa + z * ca];
+        const gy = bY(b), toWorld = ([x, y, z]) => [cx + x * ca + z * sa, y + gy, cz - x * sa + z * ca];
         for (const p of g.model.smoke) this.emitters.push({ b, kind: 'smoke', p: toWorld(p), t: Math.random() });
         for (const p of g.model.fountain) this.emitters.push({ b, kind: 'fountain', p: toWorld(p), r: p[3], t: Math.random() });
       }
@@ -1080,7 +1188,7 @@ const Engine = {
     const put = (...a) => this.figPart(F, idx, ...a);
     for (let i = 0; i < n; i++) {
       const c = list[i], a = c.anim;
-      this.figBase(c.wx, Paving.surfY(c.wx, c.wy), c.wy, c.yaw, c.alpha * 1.15);
+      this.figBase(c.wx, Terrain.surfY(c.wx, c.wy), c.wy, c.yaw, c.alpha * 1.15);
       if (c.moving) {
         // идёт: лапы попарно накрест, хвост трубой
         const sw = Math.sin(c.walkPh) * 0.6, bob = Math.abs(Math.cos(c.walkPh)) * 0.004;
@@ -1122,7 +1230,7 @@ const Engine = {
       const ph = w.walkPh || 0;
       const sw = w.moving ? Math.sin(ph) * 0.65 : 0;
       const bob = w.moving ? Math.abs(Math.cos(ph)) * 0.012 : 0;
-      this.figBase(w.wx, Paving.surfY(w.wx, w.wy) + bob, w.wy, w.yaw, w.alpha * (w.role === 'child' ? 0.72 : 1) * 1.05);
+      this.figBase(w.wx, Terrain.surfY(w.wx, w.wy) + bob, w.wy, w.yaw, w.alpha * (w.role === 'child' ? 0.72 : 1) * 1.05);
       const dress = w.role === 'woman';
       put('leg', w.cLegs, 1, 1, 1, sw, -0.021, 0.1, 0);
       put('leg', w.cLegs, 1, 1, 1, -sw, 0.021, 0.1, 0);
@@ -1165,13 +1273,13 @@ const Engine = {
   },
 
   dust(b) {
-    this.puff(b.x + b.w / 2, 0.05, b.y + b.h / 2, '#f4ecdb', 6 + b.w * 3, b.w * 0.9, 0.7, 0.09, 0.6);
+    this.puff(b.x + b.w / 2, 0.05 + bY(b), b.y + b.h / 2, '#f4ecdb', 6 + b.w * 3, b.w * 0.9, 0.7, 0.09, 0.6);
   },
 
   sparkle(b, h) {
     for (let i = 0; i < 16; i++) {
       const a = Math.random() * Math.PI * 2;
-      this.emit({ x: b.x + b.w / 2, y: h * Math.random() + 0.2, z: b.y + b.h / 2, vx: Math.cos(a) * 1.4, vy: 1.6 + Math.random(), vz: Math.sin(a) * 1.4,
+      this.emit({ x: b.x + b.w / 2, y: h * Math.random() + 0.2 + bY(b), z: b.y + b.h / 2, vx: Math.cos(a) * 1.4, vy: 1.6 + Math.random(), vz: Math.sin(a) * 1.4,
         s: 0.06, t: 0, life: 0.9 + Math.random() * 0.4, color: Math.random() < 0.5 ? '#fff3b0' : '#ffd24a', grow: 0, g: -3.5 });
     }
   },
@@ -1251,8 +1359,8 @@ const Engine = {
     for (let i = 0; i < n; i++) {
       // [x, z, w, h, цвет] — квадрат по клеткам от угла; [cx, cz, w, h, цвет, угол] — повёрнутый, от центра
       const [x, z, w, h, color, ang] = list[i];
-      if (ang === undefined) { m.makeScale(w, 1, h); m.setPosition(x + w / 2, 0.06, z + h / 2); }
-      else { this._q.setFromAxisAngle(this._up, ang); this._p.set(x, 0.06, z); this._s.set(w, 1, h); m.compose(this._p, this._q, this._s); }
+      if (ang === undefined) { m.makeScale(w, 1, h); m.setPosition(x + w / 2, 0.06 + Terrain.heightAt(x + w / 2, z + h / 2), z + h / 2); }
+      else { this._q.setFromAxisAngle(this._up, ang); this._p.set(x, 0.06 + Terrain.heightAt(x, z), z); this._s.set(w, 1, h); m.compose(this._p, this._q, this._s); }
       this.quads.setMatrixAt(i, m);
       this.quads.setColorAt(i, c.set(color));
     }
@@ -1278,7 +1386,7 @@ const Engine = {
     if (!b || b.lifted && !hot) { this.gizmo.visible = false; this.gizmoAt = null; return; }
     const g = this.gizmoInfo(b);
     this.gizmo.visible = true;
-    this.gizmo.position.set(g.cx, (b.yo || 0) + 0.09, g.cz);
+    this.gizmo.position.set(g.cx, bY(b) + 0.09, g.cz);
     this.gizmo.children[0].scale.set(g.R, 1, g.R);
     const hs = hot ? 0.2 : 0.15;
     for (const m of [this.gizmoHandle, this.gizmoEdge]) { m.position.set(g.hx - g.cx, 0, g.hz - g.cz); m.scale.set(hs, 1, hs); }
@@ -1306,7 +1414,7 @@ const Engine = {
     this.brushRing.visible = this.brushEdge.visible = this.brushFill.visible = on;
     if (!on) return;
     for (const m of [this.brushRing, this.brushEdge, this.brushFill]) {
-      m.position.set(cx, 0.075, cz);
+      m.position.set(cx, 0.075 + Terrain.heightAt(cx, cz), cz);
       m.scale.set(r, 1, r);
     }
     this.brushRing.material.color.set(color || '#fffaf0');
@@ -1326,6 +1434,7 @@ const Engine = {
     this.ghostY = yo || (src && src.yo) || 0;
     if (!type) { this.ghost.visible = false; this.ghostKey = null; this.ghostPos = null; return; }
     const d = BUILDINGS[type];
+    this.ghostWall = !!d.wall;
     const fake = src ? Object.assign({}, src, { rot: 0, ang: 0 }) : { id: 1, type, x: cx - d.w / 2, y: cy - d.h / 2, w: d.w, h: d.h, tier: d.kind === 'house' ? 1 : 0, rot: 0 };
     const gkey = src ? 'move:' + modelKey(src) : type;
     if (this.ghostKey !== gkey) {
@@ -1353,7 +1462,10 @@ const Engine = {
     const k = 1 - Math.pow(0.0000005, dt);
     this.ghostPos[0] += (this.ghostTarget[0] - this.ghostPos[0]) * k;
     this.ghostPos[1] += (this.ghostTarget[1] - this.ghostPos[1]) * k;
-    this.ghost.position.set(this.ghostPos[0], (this.ghostY || 0) + 0.01 + Math.sin(this.T * 4) * 0.02, this.ghostPos[1]);
+    // на уступ призрак поднимается плавно
+    const gy = this.ghostWall ? 0 : Terrain.heightAt(this.ghostTarget[0], this.ghostTarget[1]);
+    this.ghostBase = this.ghostBase === undefined ? gy : this.ghostBase + (gy - this.ghostBase) * k;
+    this.ghost.position.set(this.ghostPos[0], this.ghostBase + (this.ghostY || 0) + 0.01 + Math.sin(this.T * 4) * 0.02, this.ghostPos[1]);
     this.ghost.scale.setScalar(this.ghostScale || 1);
     if (this.ghostAng !== undefined) this.ghost.rotation.y += (this.ghostAng - this.ghost.rotation.y) * k;
   },

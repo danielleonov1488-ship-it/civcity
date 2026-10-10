@@ -27,6 +27,7 @@ const UI_SVG = {
   road: '<path d="M8 3.5 4 20.5M16 3.5l4 17"/><path d="M12 4.5v2.5M12 10.5v3M12 17v3"/>',
   dropper: '<path d="M14.5 4.5a2.8 2.8 0 0 1 4 4L16 11l-3-3Z"/><path d="M13 8 5.5 15.5 5 19l3.5-.5L16 11"/>',
   move: '<path d="M12 3v18M3 12h18"/><path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+  terrace: '<path d="M3 19.5h18"/><path d="M3 19.5V15h5.5v-4.5H14V6h7v13.5"/><path d="M8.5 15H14M14 10.5h7"/>',
   shovel: '<path d="M14 10 5 19"/><path d="M13.5 5.5 18.5 10.5 21 8l-5-5Z"/><path d="M3.5 17.5 6.5 20.5"/>',
   up: '<path d="M6 14l6-6 6 6"/>',
   pick: '<path d="M5 20 15 10"/><path d="M9 5.5c4.5-2.5 10-1.3 12 3l-3.5 1C16 7.3 12.6 6.2 9 5.5Z"/>',

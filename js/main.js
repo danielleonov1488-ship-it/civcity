@@ -46,6 +46,7 @@ const Game = {
     World.bgrid.clear();
     Roads.clear();
     Paving.clear();
+    Terrain.clear();
     // стартовая улица через весь участок — мостовая, кусты и камни с неё убраны
     Paving.stamp(0.5, 11.5, PLOT - 0.5, 11.5, ROAD_HALF, 3);
     for (let tx = 0; tx < PLOT; tx++) if (rawNatureAt(tx, 11)) state.cleared.add(tkey(tx, 11));

@@ -157,6 +157,9 @@ const Paving = {
   // есть ли мостовая вплотную к прямоугольнику постройки (снаружи, с зазором до gap)
   touchesBox(o, gap) {
     const g = gap === undefined ? 0.3 : gap;
+    // мостовая на другом уступе (над стеной или под ней) — не в счёт
+    const L = Terrain.levelAt(Math.floor(o.cx), Math.floor(o.cy));
+    const at = Terrain.any() ? (x, y) => this.at(x, y) && Terrain.levelAt(Math.floor(x), Math.floor(y)) === L : (x, y) => this.at(x, y);
     const per = 2 * (o.hw + o.hh) * 2, n = Math.max(8, Math.ceil(per / 0.2));
     for (let i = 0; i < n; i++) {
       // точка на периметре, отодвинутая наружу на g
@@ -166,16 +169,19 @@ const Paving = {
       else if ((u -= 2 * o.hh) < 2 * o.hw) { lx = o.hw - u; ly = o.hh + g; }
       else { u -= 2 * o.hw; lx = -o.hw - g; ly = o.hh - u; }
       const [x, y] = boxWorld(o, lx, ly);
-      if (this.at(x, y)) return true;
+      if (at(x, y)) return true;
     }
-    return !!this.at(o.cx, o.cy);
+    return !!at(o.cx, o.cy);
   },
 
   // Ближайший край мостовой от точки: идём по кругу направлений, ищем первую замощённую точку
   // (outward — наоборот, первую незамощённую: точка внутри мостовой ищет её край).
   // Возвращает { d, x, y, nx, ny } — расстояние, найденную точку и направление к ней, или null
   nearestEdge(fx, fy, maxD, outward) {
-    const hit = (x, y) => outward ? !this.at(x, y) : this.at(x, y) > 0;
+    // мостовая другого уступа — как незамощённая земля
+    const L = Terrain.levelAt(Math.floor(fx), Math.floor(fy)), hills = Terrain.any();
+    const paved = (x, y) => this.at(x, y) > 0 && (!hills || Terrain.levelAt(Math.floor(x), Math.floor(y)) === L);
+    const hit = (x, y) => outward ? !paved(x, y) : paved(x, y);
     let best = null;
     for (let k = 0; k < 32; k++) {
       const a = k / 32 * Math.PI * 2, nx = Math.sin(a), ny = Math.cos(a);
@@ -202,10 +208,12 @@ const Paving = {
   contact(b) {
     const a = bAng(b), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
     const fx = Math.sin(a), fy = Math.cos(a);
+    const L = Terrain.levelAt(Math.floor(cx), Math.floor(cy));
+    const walkable = Terrain.any() ? (x, y) => this.walkable(x, y) && Terrain.levelAt(Math.floor(x), Math.floor(y)) === L : (x, y) => this.walkable(x, y);
     for (let d = b.h / 2 + 0.12; d <= b.h / 2 + 1.4; d += 0.12) {
       for (const side of [0, 0.3, -0.3, 0.6, -0.6]) {
         const x = cx + fx * d - fy * side * b.w, y = cy + fy * d + fx * side * b.w;
-        if (this.walkable(x, y)) return { x, y, dir: a };
+        if (walkable(x, y)) return { x, y, dir: a };
       }
     }
     // фасад не у мостовой — любая сторона
@@ -214,7 +222,7 @@ const Paving = {
       const ang = k / 16 * Math.PI * 2;
       for (let d = 0.2; d <= 1.4; d += 0.2) {
         const x = cx + Math.sin(ang) * (o.R + d), y = cy + Math.cos(ang) * (o.R + d);
-        if (this.walkable(x, y)) return { x, y, dir: ang };
+        if (walkable(x, y)) return { x, y, dir: ang };
       }
     }
     return null;
@@ -491,6 +499,23 @@ if (vUp > 0.5) {
       }
     }
     if (!any) return;
+    // Рельеф: у каждой мелкой клетки — уровень её клетки карты. Мостовая каждого уступа строится отдельно,
+    // на своей высоте; у края уступа она обрывается (а где с обеих сторон замощено — встают ступени)
+    let LV = null;
+    const lvls = new Set();
+    if (Terrain.any()) {
+      LV = new Uint8Array(M * M);
+      const tx0 = Math.floor((sx0 - 1) / SUB), ty0 = Math.floor((sy0 - 1) / SUB), TW = PLOT + 3, TL = new Uint8Array(TW * TW);
+      for (let j = 0; j < TW; j++) for (let i = 0; i < TW; i++) TL[j * TW + i] = Terrain.levelAt(tx0 + i, ty0 + j);
+      for (let j = 0; j < M; j++) {
+        const tj = Math.floor((sy0 + j - 1) / SUB) - ty0;
+        for (let i = 0; i < M; i++) {
+          const k = j * M + i, l = TL[tj * TW + Math.floor((sx0 + i - 1) / SUB) - tx0];
+          LV[k] = l;
+          if (G[k]) lvls.add(l);
+        }
+      }
+    } else lvls.add(0);
     // сглаженное поле покрытия в узлах (центрах мелких клеток 0..CS): доля соседей того же покрытия с весами 4-2-1 (из 16).
     // Край проходит по уровню ISO между узлами — плавной линией под любым углом, без «лесенки»
     const N = CS + 1, ISO = 7;
@@ -503,97 +528,121 @@ if (vUp > 0.5) {
       }
       return F;
     };
-    // маски: каждое покрытие; мощено камнем (мостовая или площадь) — для бордюра; мостовая под постройкой — там бордюр не нужен
-    const masks = [], mk = new Uint8Array(M * M), mr = new Uint8Array(M * M), ma = new Uint8Array(M * M);
-    for (let t = 1; t <= PAVE_TYPES; t++) if (has[t]) masks[t] = new Uint8Array(M * M);
+    // маски: мощено камнем (мостовая или площадь) — для бордюра; мостовая под постройкой — там бордюр не нужен.
+    // Эти две — общие для всех уступов: между мостовыми разной высоты бордюр не ставится
+    const mk = new Uint8Array(M * M), mr = new Uint8Array(M * M);
     for (let k = 0; k < M * M; k++) {
       const r = G[k];
       if (!r) continue;
-      ma[k] = 1;
-      masks[r][k] = 1;
       if (U[k]) mr[k] = 1;
       if (PAVE[r].kerb) mk[k] = 1;
     }
-    const F = [];
-    for (let t = 1; t <= PAVE_TYPES; t++) if (has[t]) F[t] = field(masks[t]);
-    const FK = field(mk), FR = field(mr), FA = field(ma);
+    const FK = field(mk), FR = field(mr);
 
     const pos = [], nrm = [], typ = [], edg = [];
     const vert = (x, z, y, t, e, nx, ny, nz) => { pos.push(x, y, z); nrm.push(nx, ny, nz); typ.push(t); edg.push(e); };
     const s = 1 / SUB;
     // точка на ребре между узлами p и q, где поле пересекает уровень ISO
     const cross = (P, Q, vp, vq) => { const f = vq === vp ? 0.5 : clamp((ISO - vp) / (vq - vp), 0, 1); return [P[0] + (Q[0] - P[0]) * f, P[1] + (Q[1] - P[1]) * f]; };
-    // ячейка целиком внутри покрытия t и без бордюра — её можно слить с соседней в один прямоугольник
-    const solid = (i, j, t) => {
-      const a = j * N + i, b = a + 1, c = a + N + 1, d = a + N;
-      const f = F[t];
-      if (!f || f[a] < ISO || f[b] < ISO || f[c] < ISO || f[d] < ISO) return false;
-      const k = FK[a] >= ISO;
-      return (FK[b] >= ISO) === k && (FK[c] >= ISO) === k && (FK[d] >= ISO) === k;
-    };
-    for (let j = 0; j < CS; j++) {
-      const Y0 = (sy0 + j + 0.5) * s, Y1 = Y0 + s;
-      let i = 0;
-      while (i < CS) {
+    for (const L of lvls) {
+      const yL = L * LEVEL_H;
+      // маски покрытий — только клетки этого уступа
+      const masks = [], ma = new Uint8Array(M * M);
+      for (let t = 1; t <= PAVE_TYPES; t++) if (has[t]) masks[t] = new Uint8Array(M * M);
+      for (let k = 0; k < M * M; k++) {
+        const r = G[k];
+        if (!r || (LV && LV[k] !== L)) continue;
+        ma[k] = 1;
+        masks[r][k] = 1;
+      }
+      const F = [];
+      for (let t = 1; t <= PAVE_TYPES; t++) if (has[t]) F[t] = field(masks[t]);
+      const FA = field(ma);
+      // ячейка целиком внутри покрытия t и без бордюра — её можно слить с соседней в один прямоугольник
+      const solid = (i, j, t) => {
         const a = j * N + i, b = a + 1, c = a + N + 1, d = a + N;
-        if (!FA[a] && !FA[b] && !FA[c] && !FA[d]) { i++; continue; }      // рядом ничего не мощено
-        const X0 = (sx0 + i + 0.5) * s, X1 = X0 + s;
-        // какое покрытие здесь сплошное (одно на ячейку — иначе смешанная ячейка)
-        let full = 0;
-        for (let t = 1; t <= PAVE_TYPES; t++) if (F[t] && solid(i, j, t)) { full = full ? -1 : t; }
-        if (full > 0) {
-          let e = i + 1;
-          while (e < CS && solid(e, j, full)) e++;
-          const XE = (sx0 + e + 0.5) * s, y = PAVE_H[full];
-          vert(X0, Y0, y, full, 0, 0, 1, 0); vert(X0, Y1, y, full, 0, 0, 1, 0); vert(XE, Y1, y, full, 0, 0, 1, 0);
-          vert(X0, Y0, y, full, 0, 0, 1, 0); vert(XE, Y1, y, full, 0, 0, 1, 0); vert(XE, Y0, y, full, 0, 0, 1, 0);
-          i = e;
-          continue;
-        }
-        const C = [[X0, Y0], [X1, Y0], [X1, Y1], [X0, Y1]], idx = [a, b, c, d];
-        // каждое покрытие в ячейке — своим многоугольником (marching squares с плавной границей)
-        for (let t = 1; t <= PAVE_TYPES; t++) {
-          const f = F[t];
-          if (!f) continue;
-          const v = idx.map(k => f[k]);
-          if (v[0] < ISO && v[1] < ISO && v[2] < ISO && v[3] < ISO) continue;
-          const y = PAVE_H[t], poly = [];
-          for (let k = 0; k < 4; k++) {
-            const k2 = (k + 1) % 4, pin = v[k] >= ISO, qin = v[k2] >= ISO;
-            if (pin) poly.push(C[k][0], C[k][1], 0);
-            if (pin !== qin) { const p = cross(C[k], C[k2], v[k], v[k2]); poly.push(p[0], p[1], 1); }
+        const f = F[t];
+        if (!f || f[a] < ISO || f[b] < ISO || f[c] < ISO || f[d] < ISO) return false;
+        const k = FK[a] >= ISO;
+        return (FK[b] >= ISO) === k && (FK[c] >= ISO) === k && (FK[d] >= ISO) === k;
+      };
+      for (let j = 0; j < CS; j++) {
+        const Y0 = (sy0 + j + 0.5) * s, Y1 = Y0 + s;
+        let i = 0;
+        while (i < CS) {
+          const a = j * N + i, b = a + 1, c = a + N + 1, d = a + N;
+          if (!FA[a] && !FA[b] && !FA[c] && !FA[d]) { i++; continue; }      // рядом ничего не мощено
+          const X0 = (sx0 + i + 0.5) * s, X1 = X0 + s;
+          // какое покрытие здесь сплошное (одно на ячейку — иначе смешанная ячейка)
+          let full = 0;
+          for (let t = 1; t <= PAVE_TYPES; t++) if (F[t] && solid(i, j, t)) { full = full ? -1 : t; }
+          if (full > 0) {
+            let e = i + 1;
+            while (e < CS && solid(e, j, full)) e++;
+            const XE = (sx0 + e + 0.5) * s, y = PAVE_H[full] + yL;
+            vert(X0, Y0, y, full, 0, 0, 1, 0); vert(X0, Y1, y, full, 0, 0, 1, 0); vert(XE, Y1, y, full, 0, 0, 1, 0);
+            vert(X0, Y0, y, full, 0, 0, 1, 0); vert(XE, Y1, y, full, 0, 0, 1, 0); vert(XE, Y0, y, full, 0, 0, 1, 0);
+            i = e;
+            continue;
           }
-          for (let k = 1; k + 1 < poly.length / 3; k++) {
-            for (const w of [0, k, k + 1]) vert(poly[w * 3], poly[w * 3 + 1], y, t, poly[w * 3 + 2], 0, 1, 0);
-          }
-        }
-        // бордюр: по границе мостовой или площади с тем, что не мощено камнем (постройки не в счёт);
-        // где он зашёл под дом — не нужен, под открытыми постройками (поля, сады) тем более
-        const vk = idx.map(k => FK[k]), K = vk.map(x => x >= ISO), nk = K.filter(Boolean).length;
-        const hid = FR[a] >= ISO || FR[b] >= ISO || FR[c] >= ISO || FR[d] >= ISO;
-        if (nk && nk < 4 && !hid) {
-          const mids = [];
-          for (let k = 0; k < 4; k++) { const k2 = (k + 1) % 4; if (K[k] !== K[k2]) mids.push(cross(C[k], C[k2], vk[k], vk[k2])); }
-          let ix = 0, iy = 0;
-          for (let k = 0; k < 4; k++) if (K[k]) { ix += C[k][0] / nk; iy += C[k][1] / nk; }
-          for (let m = 0; m + 1 < mids.length; m += 2) {
-            const A = mids[m], B = mids[m + 1];
-            const dx = B[0] - A[0], dy = B[1] - A[1], l = Math.hypot(dx, dy) || 1;
-            let nx = -dy / l, ny = dx / l;              // внутрь, к мощёному
-            if ((ix - A[0]) * nx + (iy - A[1]) * ny < 0) { nx = -nx; ny = -ny; }
-            const a1 = [A[0] + nx * KERB_W, A[1] + ny * KERB_W], b1 = [B[0] + nx * KERB_W, B[1] + ny * KERB_W];
-            const T = KERB_TOP;
-            vert(A[0], A[1], T, 5, 0, 0, 1, 0); vert(B[0], B[1], T, 5, 0, 0, 1, 0); vert(b1[0], b1[1], T, 5, 0, 0, 1, 0);
-            vert(A[0], A[1], T, 5, 0, 0, 1, 0); vert(b1[0], b1[1], T, 5, 0, 0, 1, 0); vert(a1[0], a1[1], T, 5, 0, 0, 1, 0);
-            // наружная стенка — до земли; внутренняя — до камня
-            for (const [P, Q, lo, w] of [[A, B, 0, -1], [a1, b1, PAVE_H[3] - 0.004, 1]]) {
-              const ex = nx * w, ey = ny * w;
-              vert(P[0], P[1], lo, 5, 0, ex, 0, ey); vert(Q[0], Q[1], lo, 5, 0, ex, 0, ey); vert(Q[0], Q[1], T, 5, 0, ex, 0, ey);
-              vert(P[0], P[1], lo, 5, 0, ex, 0, ey); vert(Q[0], Q[1], T, 5, 0, ex, 0, ey); vert(P[0], P[1], T, 5, 0, ex, 0, ey);
+          const C = [[X0, Y0], [X1, Y0], [X1, Y1], [X0, Y1]], idx = [a, b, c, d];
+          // каждое покрытие в ячейке — своим многоугольником (marching squares с плавной границей)
+          for (let t = 1; t <= PAVE_TYPES; t++) {
+            const f = F[t];
+            if (!f) continue;
+            const v = idx.map(k => f[k]);
+            if (v[0] < ISO && v[1] < ISO && v[2] < ISO && v[3] < ISO) continue;
+            const y = PAVE_H[t] + yL, poly = [];
+            for (let k = 0; k < 4; k++) {
+              const k2 = (k + 1) % 4, pin = v[k] >= ISO, qin = v[k2] >= ISO;
+              if (pin) poly.push(C[k][0], C[k][1], 0);
+              if (pin !== qin) { const p = cross(C[k], C[k2], v[k], v[k2]); poly.push(p[0], p[1], 1); }
+            }
+            for (let k = 1; k + 1 < poly.length / 3; k++) {
+              for (const w of [0, k, k + 1]) vert(poly[w * 3], poly[w * 3 + 1], y, t, poly[w * 3 + 2], 0, 1, 0);
             }
           }
+          // бордюр: по границе мостовой или площади с тем, что не мощено камнем (постройки не в счёт);
+          // где он зашёл под дом — не нужен, под открытыми постройками (поля, сады) тем более
+          const vk = idx.map(k => FK[k]), K = vk.map(x => x >= ISO), nk = K.filter(Boolean).length;
+          const hid = FR[a] >= ISO || FR[b] >= ISO || FR[c] >= ISO || FR[d] >= ISO;
+          if (nk && nk < 4 && !hid) {
+            const mids = [];
+            for (let k = 0; k < 4; k++) { const k2 = (k + 1) % 4; if (K[k] !== K[k2]) mids.push(cross(C[k], C[k2], vk[k], vk[k2])); }
+            let ix = 0, iy = 0;
+            for (let k = 0; k < 4; k++) if (K[k]) { ix += C[k][0] / nk; iy += C[k][1] / nk; }
+            // бордюр рисует тот уступ, на котором его мощёная сторона
+            if (LV && Terrain.levelAt(Math.floor(ix), Math.floor(iy)) !== L) mids.length = 0;
+            for (let m = 0; m + 1 < mids.length; m += 2) {
+              const A = mids[m], B = mids[m + 1];
+              const dx = B[0] - A[0], dy = B[1] - A[1], l = Math.hypot(dx, dy) || 1;
+              let nx = -dy / l, ny = dx / l;              // внутрь, к мощёному
+              if ((ix - A[0]) * nx + (iy - A[1]) * ny < 0) { nx = -nx; ny = -ny; }
+              const a1 = [A[0] + nx * KERB_W, A[1] + ny * KERB_W], b1 = [B[0] + nx * KERB_W, B[1] + ny * KERB_W];
+              const T = KERB_TOP + yL;
+              vert(A[0], A[1], T, 5, 0, 0, 1, 0); vert(B[0], B[1], T, 5, 0, 0, 1, 0); vert(b1[0], b1[1], T, 5, 0, 0, 1, 0);
+              vert(A[0], A[1], T, 5, 0, 0, 1, 0); vert(b1[0], b1[1], T, 5, 0, 0, 1, 0); vert(a1[0], a1[1], T, 5, 0, 0, 1, 0);
+              // наружная стенка — до земли; внутренняя — до камня
+              for (const [P, Q, lo, w] of [[A, B, yL, -1], [a1, b1, yL + PAVE_H[3] - 0.004, 1]]) {
+                const ex = nx * w, ey = ny * w;
+                vert(P[0], P[1], lo, 5, 0, ex, 0, ey); vert(Q[0], Q[1], lo, 5, 0, ex, 0, ey); vert(Q[0], Q[1], T, 5, 0, ex, 0, ey);
+                vert(P[0], P[1], lo, 5, 0, ex, 0, ey); vert(Q[0], Q[1], T, 5, 0, ex, 0, ey); vert(P[0], P[1], T, 5, 0, ex, 0, ey);
+              }
+            }
+          }
+          i++;
         }
-        i++;
+      }
+    }
+    // ступени: мелкие клетки мостовой у края уступа, за которым выше тоже мостовая
+    if (LV) {
+      for (let j = 0; j < CS; j++) {
+        for (let i = 0; i < CS; i++) {
+          const t = G[(j + 1) * M + i + 1];
+          if (!t) continue;
+          const st = Terrain.stairAt(sx0 + i, sy0 + j);
+          if (st) this.stairs(sx0 + i, sy0 + j, st, t, vert);
+        }
       }
     }
     if (!pos.length) return;
@@ -607,6 +656,37 @@ if (vUp > 0.5) {
     mesh.receiveShadow = true;
     Engine.scene.add(mesh);
     this.meshes.set(key, mesh);
+  },
+
+  // Ступени в мелкой клетке у края уступа: четыре проступи с подступёнками до верхней мостовой.
+  // Камень — у мостовой и площади, у тропинки и гравия — ступени из той же земли
+  stairs(sx, sy, st, t, vert) {
+    const s = 1 / SUB, yL = st.L * LEVEL_H, run = (st.deep ? 2 : 1) * s, { dx, dy } = st;
+    const tx = Math.floor(sx / SUB), ty = Math.floor(sy / SUB);
+    const eX = dx > 0 ? tx + 1 : tx, eY = dy > 0 ? ty + 1 : ty;
+    const u0 = dx ? sy * s : sx * s, u1 = u0 + s;
+    // точка по расстоянию от стены d и по ширине u
+    const W = (d, u) => dx ? [eX - dx * d, u] : [u, eY - dy * d];
+    const d0 = st.k * s, d1 = d0 + s, riser = t >= 3 ? 5 : t;
+    const fx = -dx, fz = -dy, sxn = dx ? 0 : 1, szn = dx ? 1 : 0;
+    // соседняя клетка тех же ступеней — боковая стенка между ними не нужна
+    const same = o => { const q = dx ? Terrain.stairAt(sx, sy + o) : Terrain.stairAt(sx + o, sy); return q && q.dx === dx && q.dy === dy && q.deep === st.deep && q.k === st.k; };
+    const sideA = !same(-1), sideB = !same(1);
+    const quad = (P, Q, R, S, y0, y1, y2, y3, ty, nx, ny, nz) => {
+      vert(P[0], P[1], y0, ty, 0, nx, ny, nz); vert(Q[0], Q[1], y1, ty, 0, nx, ny, nz); vert(R[0], R[1], y2, ty, 0, nx, ny, nz);
+      vert(P[0], P[1], y0, ty, 0, nx, ny, nz); vert(R[0], R[1], y2, ty, 0, nx, ny, nz); vert(S[0], S[1], y3, ty, 0, nx, ny, nz);
+    };
+    const lo = yL + PAVE_H[3] - 0.006;
+    for (let i = 1; i <= 4; i++) {
+      const a = Math.max(d0, run * (4 - i) / 4), b = Math.min(d1, run * (5 - i) / 4);
+      if (b - a < 1e-5) continue;
+      const top = yL + PAVE_H[3] + LEVEL_H * i / 5;
+      const A = W(a, u0), B = W(b, u0), C = W(b, u1), D = W(a, u1);
+      quad(A, B, C, D, top, top, top, top, t, 0, 1, 0);                    // проступь
+      quad(B, C, C, B, lo, lo, top, top, riser, fx, 0, fz);                // подступёнок
+      if (sideA) quad(A, B, B, A, lo, lo, top, top, riser, -sxn, 0, -szn);
+      if (sideB) quad(D, C, C, D, lo, lo, top, top, riser, sxn, 0, szn);
+    }
   },
 };
 

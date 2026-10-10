@@ -102,7 +102,8 @@ function paveStep(w, dt, realDt, onTile) {
       d = Math.atan2(Math.sin(d), Math.cos(d));
       w.head += clamp(d, -dt * 2.4, dt * 2.4);
       const step = dt * w.speed, sx = Math.sin(w.head), sy = Math.cos(w.head);
-      if (Paving.walkable(w.wx + sx * (step + 0.1), w.wy + sy * (step + 0.1))) {
+      const ax = w.wx + sx * (step + 0.1), ay = w.wy + sy * (step + 0.1);
+      if (Paving.walkable(ax, ay) && Terrain.canStep(w.wx, w.wy, ax, ay)) {
         w.wx += sx * step;
         w.wy += sy * step;
         w.moving = true;
@@ -137,7 +138,11 @@ function paveStep(w, dt, realDt, onTile) {
 function freeAhead(w, a, max, st) {
   const sx = Math.sin(a), sy = Math.cos(a);
   let d = 0;
-  while (d < max && Paving.walkable(w.wx + sx * (d + st), w.wy + sy * (d + st))) d += st;
+  while (d < max) {
+    const x = w.wx + sx * (d + st), y = w.wy + sy * (d + st);
+    if (!Paving.walkable(x, y) || !Terrain.canStep(w.wx + sx * d, w.wy + sy * d, x, y)) break;
+    d += st;
+  }
   return d;
 }
 

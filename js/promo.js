@@ -128,6 +128,7 @@ const Promo = {
     // улицы — мостовой той же формы; внутри кольца форума — площадь из травертина
     const [cx, cy] = this.C;
     Paving.clear();
+    Terrain.clear();
     Paving.fromRoads();
     Paving.stamp(cx, cy, cx, cy, 8.3, 4);
 

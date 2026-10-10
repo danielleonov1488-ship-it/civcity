@@ -102,7 +102,7 @@ const Photo = {
     const k = 1 - Math.pow(0.002, realDt);
     c.tx = c.x = c.x + (w.wx - c.x) * k;
     c.tz = c.z = c.z + (w.wy - c.z) * k;
-    c.lookY = 0.22;
+    c.lookY = 0.22 + Terrain.surfY(w.wx, w.wy);
     // камера сзади-сбоку от жителя; если там стена дома — заходим с другой стороны
     const base = w.yaw + Math.PI - 0.5, cp = Math.cos(c.pitch || 0.3) * c.dist;
     const clear = a => {

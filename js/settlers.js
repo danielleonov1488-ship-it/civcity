@@ -80,7 +80,7 @@ const Settlers = {
       for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
         const j = ny * W + nx;
-        if (D[j] >= 0 || !this.walk(nx + x0, ny + y0)) continue;
+        if (D[j] >= 0 || !this.walk(nx + x0, ny + y0) || !Terrain.edgePass(x + x0, y + y0, nx + x0, ny + y0)) continue;
         D[j] = d;
         q[qt++] = j;
       }
@@ -146,7 +146,12 @@ const Settlers = {
     if (pts.length < 3) return pts;
     const clear = (a, b) => {
       const L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.ceil(L / 0.2);
-      for (let i = 1; i < n; i++) { const t = i / n; if (!Paving.walkable(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)) return false; }
+      let px = a[0], py = a[1];
+      for (let i = 1; i < n; i++) {
+        const t = i / n, x = a[0] + (b[0] - a[0]) * t, y = a[1] + (b[1] - a[1]) * t;
+        if (!Paving.walkable(x, y) || !Terrain.canStep(px, py, x, y)) return false;
+        px = x; py = y;
+      }
       return true;
     };
     const out = [pts[0]];
@@ -298,7 +303,7 @@ const Settlers = {
       if (n >= 4) break;
       const a = Math.max(0, Math.min(1, c.alpha));
       this._q.setFromAxisAngle(this._up, c.yaw + CART_YAW);
-      this._p.set(c.x, Paving.surfY(c.x, c.y), c.y);
+      this._p.set(c.x, Terrain.surfY(c.x, c.y), c.y);
       this._s.set(a, a, a);
       this.mesh.setMatrixAt(n++, this._m.compose(this._p, this._q, this._s));
     }

@@ -327,6 +327,7 @@ for (const [k, s] of Object.entries(DECOR_SET_OF)) if (BUILDINGS[k]) BUILDINGS[k
 
 const CATEGORIES = [
   { id: 'roads', name: 'Дороги' },
+  { id: 'terrain', name: 'Рельеф' },
   { id: 'housing', name: 'Жильё' },
   { id: 'food', name: 'Еда' },
   { id: 'industry', name: 'Ремёсла' },

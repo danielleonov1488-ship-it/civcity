@@ -269,12 +269,16 @@ function buildingAtPoint(x, y) { return buildingNear(x, y, 1e-6); }
 function placeBlocked(type, cx, cy, ang, s) {
   const o = boxOf(type, cx, cy, ang, 0, s);
   const nx = Math.max(1, Math.ceil(o.hw * 4)), ny = Math.max(1, Math.ceil(o.hh * 4));
+  const hills = Terrain.any() && !BUILDINGS[type].wall;
+  let lv = -1;
   for (let j = 0; j <= ny; j++) {
     for (let i = 0; i <= nx; i++) {
       const [x, y] = boxWorld(o, (i / nx * 2 - 1) * (o.hw - 0.04), (j / ny * 2 - 1) * (o.hh - 0.04));
       const tx = Math.floor(x), ty = Math.floor(y);
       if (!isOwnedTile(tx, ty)) return 'Эта земля ещё не куплена';
       if (isWater(groundAt(tx, ty))) return 'Здесь вода';
+      // на уступе: вся постройка — на одной высоте
+      if (hills) { const l = Terrain.levelAt(tx, ty); if (lv < 0) lv = l; else if (l !== lv) return 'Нужна ровная земля — выровняйте её кистью «Рельеф»'; }
     }
   }
   const tight = boxOf(type, cx, cy, ang, -0.03, s);

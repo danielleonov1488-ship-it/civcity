@@ -257,7 +257,7 @@ const UI = {
     const cats = $('cats');
     cats.innerHTML = '';
     for (const c of CATEGORIES) {
-      if (c.id === 'roads') continue;   // мостовая — кисть слева
+      if (c.id === 'roads' || c.id === 'terrain') continue;   // мостовая и рельеф — кисти слева
       const btn = document.createElement('button');
       btn.className = 'cat' + (c.id === this.openCat ? ' on' : '');
       btn.type = 'button';
@@ -290,6 +290,10 @@ const UI = {
       if (this.openCat === 'roads') { this.closeTray(); return; }
       this.openTray('roads');
       Input.setTool('road');
+    }), tool('terrain', 'terrace', 'Рельеф', this.openCat === 'terrain', () => {
+      if (this.openCat === 'terrain') { this.closeTray(); return; }
+      this.openTray('terrain');
+      Input.setTool('terrain');
     }));
     const flip = id => () => Input.setTool(Input.tool === id ? null : id);
     $('tools-right').replaceChildren(
@@ -328,6 +332,7 @@ const UI = {
     if (!tabs) { tabs = Object.assign(document.createElement('div'), { id: 'tray-tabs', className: 'tray-tabs' }); $('tray').prepend(tabs); }
     tabs.hidden = cat.id !== 'decor';
     if (cat.id === 'roads') { this.renderBrush(items); return; }
+    if (cat.id === 'terrain') { this.renderTerrain(items); return; }
     let list = cat.items;
     if (cat.id === 'decor') {
       this.decorSet = this.decorSet || 'light';
@@ -407,6 +412,57 @@ const UI = {
       : `${PAVE[m].desc}. Ведите с зажатой кнопкой — хоть всю землю замостите.`;
   },
 
+  /* Раздел «Рельеф» — кисть уступов, как в Town to City: поднять, опустить, выровнять; размер — квадрат клеток */
+  renderTerrain(items) {
+    const MODES = [
+      [1, 'Поднять', 'Клетки под кистью поднимаются на уступ. Провели ещё раз — ещё на уступ выше (до четырёх).'],
+      [-1, 'Опустить', 'Клетки под кистью опускаются на уступ — до ровной земли.'],
+      [0, 'Выровнять', 'Клетки под кистью становятся той же высоты, что клетка, с которой начали мазок.'],
+    ];
+    for (const [m, name, tip] of MODES) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'card pave terr';
+      card.dataset.terr = m;
+      card.dataset.tipText = tip + ' Под постройками и у воды землю не трогают.';
+      card.innerHTML = `<span class="card-img">${terrainSwatch(m)}</span><span class="card-name">${name}</span>
+        <span class="card-cost"><span class="cost">${Icons.img('money')}${TERRAIN_COST}</span><span class="pave-note">за клетку</span></span>`;
+      card.onclick = () => {
+        Terrain.brush.mode = m;
+        if (Input.tool !== 'terrain') Input.setTool('terrain');
+        Input.lastGhostKey = '';
+        this.onTerrainChanged();
+      };
+      items.append(card);
+    }
+    const size = document.createElement('div');
+    size.className = 'pave-size';
+    size.innerHTML = `<span class="pave-size-label">Размер кисти</span>
+      <span class="pave-size-row"><button type="button" data-d="-1" aria-label="Меньше">−</button><b id="terr-w"></b><button type="button" data-d="1" aria-label="Больше">+</button></span>
+      <input id="terr-r" type="range" min="0" max="${TERRAIN_SIZES.length - 1}" step="1" aria-label="Размер кисти">
+      <span class="pave-keys">Где мостовая подходит к уступу<br>с обеих сторон — встают ступени<br>[ ] — размер · Ctrl+Z — отменить</span>`;
+    size.querySelectorAll('button').forEach(btn => btn.onclick = () => Input.terrainSize(+btn.dataset.d));
+    size.querySelector('input').oninput = e => { Terrain.brush.size = TERRAIN_SIZES[+e.target.value]; Input.lastGhostKey = ''; this.onTerrainChanged(); };
+    items.append(size);
+    const legend = $('tray-legend');
+    if (legend) legend.hidden = true;
+    this.onTerrainChanged();
+  },
+
+  onTerrainChanged() {
+    const on = Input.tool === 'terrain', tb = Terrain.brush;
+    document.querySelectorAll('#tray-items .card.terr').forEach(c => c.classList.toggle('on', on && +c.dataset.terr === tb.mode));
+    const r = $('terr-r'), w = $('terr-w');
+    if (r) r.value = Math.max(0, TERRAIN_SIZES.indexOf(tb.size));
+    if (w) w.textContent = `${tb.size}×${tb.size} ${tb.size === 1 ? 'клетка' : tb.size < 5 ? 'клетки' : 'клеток'}`;
+    if (!on) return;
+    $('hint-icon').src = '';
+    $('hint-name').textContent = tb.mode > 0 ? 'Поднять землю' : tb.mode < 0 ? 'Опустить землю' : 'Выровнять землю';
+    $('hint-text').textContent = tb.mode > 0 ? 'Ведите с зажатой кнопкой — земля встанет уступом, с каменной подпорной стеной. Ещё мазок — уступ выше.'
+      : tb.mode < 0 ? 'Ведите с зажатой кнопкой — уступ под кистью опустится.'
+      : 'Начните мазок с клетки нужной высоты и ведите — земля станет вровень с ней.';
+  },
+
   // Какие классы работают в постройке (или живут в доме)
   cardClasses(type) {
     const d = BUILDINGS[type];
@@ -432,9 +488,10 @@ const UI = {
     const PICK = ['bulldoze', 'copy', 'move'];
     const cat = t && !PICK.includes(t) && !Input.moving && CATEGORIES.find(c => c.items.includes(t));
     if (cat && cat.id !== this.openCat) this.openTray(cat.id);
+    if (t === 'terrain' && this.openCat !== 'terrain') this.openTray('terrain');
     document.querySelectorAll('#tray-items .card[data-type]').forEach(c => c.classList.toggle('on', c.dataset.type === t));
     document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('on',
-      b.dataset.tool === 'road' ? this.openCat === 'roads' : b.dataset.tool === 'move' ? (t === 'move' || !!Input.moving) : b.dataset.tool === t));
+      b.dataset.tool === 'road' ? this.openCat === 'roads' : b.dataset.tool === 'terrain' ? this.openCat === 'terrain' : b.dataset.tool === 'move' ? (t === 'move' || !!Input.moving) : b.dataset.tool === t));
     const hint = $('tool-hint');
     if (!t) { hint.hidden = true; return; }
     hint.hidden = false;
@@ -447,6 +504,8 @@ const UI = {
       $('hint-icon').src = this.icons[t] || '';
       $('hint-name').textContent = `Перенос: ${BUILDINGS[t].name.toLowerCase()}`;
       $('hint-text').textContent = 'Нажмите, куда поставить: у мостовой встанет фасадом к ней, Z / C — повернуть. Перенос бесплатный. Esc или правая кнопка — вернуть на место.';
+    } else if (t === 'terrain') {
+      // подсказку заполнит onTerrainChanged
     } else if (t === 'bulldoze') {
       $('hint-icon').src = '';
       $('hint-name').textContent = 'Снос';
@@ -463,12 +522,13 @@ const UI = {
     $('hint-status').textContent = '';
     $('hint-status').className = '';
     if (t === 'road') this.onBrushChanged();
+    if (t === 'terrain') this.onTerrainChanged();
     this.closePanel();
   },
 
   // Строка состояния: залежи рядом, причина отказа
   setToolStatus(type, x, y, err, extra) {
-    const d = BUILDINGS[type];
+    const d = BUILDINGS[type] || {};
     const el = $('hint-status');
     let s = '';
     el.className = '';
@@ -681,7 +741,7 @@ const UI = {
     if (act.menu) { this.openMenu(); return; }
     if (act.city) { this.openCity(); return; }
     if (act.tool) {
-      if (isUnlocked(act.tool)) Input.setTool(act.tool);
+      if (act.tool === 'terrain' || isUnlocked(act.tool)) Input.setTool(act.tool);
       else this.openWindow('research', BUILDINGS[act.tool].tech);
       return;
     }
@@ -1191,6 +1251,7 @@ const UI = {
       case 'map': return T('Карта', 'Мини-карта города. Клавиша M');
       case 'bulldoze': case 'tool-bulldoze': return T('Снести', 'Клавиша X. Возвращается половина стоимости здания. Залежи и лес вечные.');
       case 'tool-road': return T('Мостовая', 'Кисть: тропинка, гравий, мостовая и площадь. Клавиша R');
+      case 'tool-terrain': return T('Рельеф', 'Холмы уступами: поднять, опустить, выровнять землю. Клавиша T');
       case 'tool-copy': return T('Копировать', 'Нажмите на постройку — возьмёте такую же.');
       case 'tool-move': return T('Перенести', 'Нажмите на постройку и поставьте её в другом месте. Бесплатно.');
       case 'rail-research': {
@@ -1226,7 +1287,7 @@ const UI = {
   /* ---------- Метки над картой ---------- */
 
   floatText(x, y, z, text, kind) {
-    this.floats.push({ x, y, z, text, kind, t: 0 });
+    this.floats.push({ x, y: y + Terrain.heightAt(x, z), z, text, kind, t: 0 });
   },
 
   updateLabels(dt) {
@@ -1247,8 +1308,8 @@ const UI = {
       if (b.lifted) continue;
       const d = BUILDINGS[b.type];
       if (d.kind === 'road' || d.kind === 'decor') continue;
-      const hgt = d.kind === 'house' ? d.tiers[b.tier].height : 1.1;
       const cx = b.x + b.w / 2, cz = b.y + b.h / 2;
+      const hgt = (d.kind === 'house' ? d.tiers[b.tier].height : 1.1) + Terrain.heightAt(cx, cz);
       if ((d.needsRoad || d.kind === 'house') && b.road === false) {
         if (put('w' + b.id, cx, hgt + 0.35, cz, () => Object.assign(document.createElement('div'), { className: 'lbl warn', textContent: '!', title: 'Нет дороги рядом' }))) n++;
       } else if (b.req) {
@@ -1304,6 +1365,36 @@ const UI = {
   // совместимость со старыми вызовами
   refreshPanelSoon() { this.refreshPanel(); },
 };
+
+// Картинка для карточки кисти рельефа (SVG 64×64): уступ с каменной стеной и стрелкой; m — 1 поднять, -1 опустить, 0 выровнять
+function terrainSwatch(m) {
+  const wall = (x, y, w, h) => {
+    let o = `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#6c5f4c"/>`;
+    const rows = Math.round(h / 6);
+    for (let r = 0; r < rows; r++) {
+      const yy = y + r * (h / rows) + 0.7, off = r % 2 ? -5 : 0;
+      for (let cx = x + off; cx < x + w; cx += 10) {
+        const a = Math.max(x, cx) + 0.7, b = Math.min(x + w, cx + 10) - 0.7;
+        if (b - a > 0.6) o += `<rect x="${a.toFixed(1)}" y="${yy.toFixed(1)}" width="${(b - a).toFixed(1)}" height="${(h / rows - 1.4).toFixed(1)}" rx="1" fill="${['#c2b294', '#b5a585', '#cbbd9f'][(r + Math.round(cx)) % 3]}"/>`;
+      }
+    }
+    return o;
+  };
+  const grass = (x, y, w) => `<rect x="${x}" y="${y}" width="${w}" height="5" rx="1.5" fill="#8db35a"/><rect x="${x}" y="${y + 3.5}" width="${w}" height="1.5" fill="#6f9445"/>`;
+  let body = '<rect width="64" height="64" fill="#cfe3ef"/>';
+  body += `<rect x="0" y="52" width="64" height="12" fill="#86ad55"/>`;
+  if (m > 0) {
+    body += wall(14, 30, 36, 22) + grass(13, 26, 38);
+    body += '<path d="M32 6v15M25.5 12.5 32 6l6.5 6.5" stroke="#fff" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+  } else if (m < 0) {
+    body += wall(0, 34, 16, 18) + grass(0, 30, 17) + wall(48, 34, 16, 18) + grass(47, 30, 17);
+    body += '<path d="M32 22v20M25.5 35.5 32 42l6.5-6.5" stroke="#fff" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+  } else {
+    body += wall(0, 36, 30, 16) + grass(0, 32, 31) + wall(30, 36, 34, 16) + grass(30, 32, 34);
+    body += '<path d="M10 20h44M16 14l-6 6 6 6M48 14l6 6-6 6" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+  }
+  return `<svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">${body}</svg>`;
+}
 
 // Образец покрытия для карточки кисти (SVG 64×64): m — номер покрытия, 0 — ластик, -1 — «улучшить»
 function paveSwatch(m) {
