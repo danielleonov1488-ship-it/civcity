@@ -380,6 +380,7 @@ func _bottom_bar() -> void:
 	var sc := ScrollContainer.new()
 	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sc.custom_minimum_size = Vector2(980, 160)
+	sc.name = "scroll"
 	tray.add_child(sc)
 	tray_grid = HBoxContainer.new()
 	tray_grid.add_theme_constant_override("separation", 8)
@@ -432,6 +433,15 @@ func _fill_cards() -> void:
 		var tp: String = type
 		b.pressed.connect(func(): select_build(tp))
 		tray_grid.add_child(b)
+	# лоток по ширине карточек
+	var n := 0
+	for type in Defs.B:
+		if Defs.B[type]["cat"] == open_cat:
+			n += 1
+	var w := minf(980.0, n * 132.0 - 8.0)
+	(tray.get_node("scroll") as Control).custom_minimum_size.x = w
+	tray.offset_left = -w / 2.0 - 12.0
+	tray.offset_right = w / 2.0 + 12.0
 	_update_cards()
 
 
@@ -644,7 +654,17 @@ func advisor(title: String, text: String) -> void:
 
 
 func toast(text: String, kind := "") -> void:
+	# выполненные задания подряд — одной плашкой, без вереницы сообщений
+	if kind == "goal" and toast_box.get_child_count() > 0:
+		var last := toast_box.get_child(toast_box.get_child_count() - 1)
+		if last.has_meta("goal") and last.modulate.a > 0.5:
+			var ll: Label = last.get_child(0)
+			ll.text += "
+" + text
+			return
 	var p := PanelContainer.new()
+	if kind == "goal":
+		p.set_meta("goal", true)
 	var l := _label(text, 15, true, C_BAD if kind == "warn" else C_INK)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -652,7 +672,7 @@ func toast(text: String, kind := "") -> void:
 	p.add_child(l)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	toast_box.add_child(p)
-	while toast_box.get_child_count() > 3:
+	while toast_box.get_child_count() > 2:
 		toast_box.get_child(0).queue_free()
 		toast_box.remove_child(toast_box.get_child(0))
 	var tw := create_tween()
@@ -734,10 +754,12 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
 			gi.transparency = 0.0
 		holder.add_child(g)
-		var size := maxf(float(d["w"]), float(d["d"]))
-		var hgt := 3.0 if d["kind"] == "decor" else 8.0
-		cam.look_at_from_position(Vector3(size * 0.9, size * 0.8 + hgt * 0.35, size * 1.3), Vector3(0, minf(hgt, size) * 0.25, 0), Vector3.UP)
-		cam.size = size
+		# рамка по габаритам модели: вся постройка в кадре, вид спереди-сбоку сверху
+		var box := Artisau.aabb(g)
+		var c := box.get_center()
+		var rad := maxf(0.6, box.size.length() * 0.5)
+		var dir := Vector3(0.62, 0.62, 0.95).normalized()
+		cam.look_at_from_position(c + dir * rad / sin(deg_to_rad(15.0)) * 0.92, c, Vector3.UP)
 		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		await RenderingServer.frame_post_draw
 		icons[type] = ImageTexture.create_from_image(vp.get_texture().get_image())

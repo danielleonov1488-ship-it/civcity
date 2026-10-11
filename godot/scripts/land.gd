@@ -257,15 +257,35 @@ const LOCK := Color("b9b39a")
 func top_color(k: int) -> Color:
 	var c: Color
 	match kind[k]:
-		Kind.DIRT: c = C_DIRT
 		Kind.ROCK: c = C_ROCK
 		Kind.SAND: c = C_SAND_WET if h[k] < SEA_Y + 0.15 else C_SAND
-		Kind.ROAD: c = C_ROAD
-		Kind.PLAZA: c = C_PLAZA
 		Kind.YARD: c = C_YARD
 		Kind.FIELD: c = C_FIELD
 		_: c = C_GRASS[tint[k]]
 	return c
+
+
+## Маска покрытий для шейдера земли: R — мостовая, G — площадь, B — тропа. Шейдер читает её
+## с плавной выборкой, поэтому края дорог выходят скруглёнными, а не ступеньками по клеткам
+func make_surface() -> Image:
+	var data := PackedByteArray()
+	data.resize(N * N * 4)
+	for k in N * N:
+		var kd := kind[k]
+		data[k * 4] = 255 if kd == Kind.ROAD else 0
+		data[k * 4 + 1] = 255 if kd == Kind.PLAZA else 0
+		data[k * 4 + 2] = 255 if kd == Kind.DIRT else 0
+		data[k * 4 + 3] = 255
+	return Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, data)
+
+
+func update_surface(img: Image, ch: Vector2i) -> void:
+	if img.has_mipmaps():
+		img.clear_mipmaps()
+	for j in range(ch.y * CH, ch.y * CH + CH):
+		for i in range(ch.x * CH, ch.x * CH + CH):
+			var kd := kind[idx(i, j)]
+			img.set_pixel(i, j, Color(1.0 if kd == Kind.ROAD else 0.0, 1.0 if kd == Kind.PLAZA else 0.0, 1.0 if kd == Kind.DIRT else 0.0, 1.0))
 
 
 ## Сетка куска (ci, cj): верх — полосами из одинаковых клеток (меньше треугольников), стенки — к нижним соседям
@@ -297,7 +317,7 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 			var e := i + 1
 			while e < i0 + CH:
 				var k2 := idx(e, j)
-				if h[k2] != y or kind[k2] != kd or (kd == Kind.GRASS and tint[k2] != tc):
+				if h[k2] != y or kind[k2] != kd or tint[k2] != tc:
 					break
 				if e % int(PLOT / CELL) == 0:
 					break                       # граница участка — не сливаем (разный цвет своей и чужой земли)

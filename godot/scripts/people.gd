@@ -14,6 +14,8 @@ var _spawn_t := 0.0
 var max_walkers := 46
 
 const RADIUS := 0.3
+const CART_HORSE_Z := 2.05
+const CART_SEAT_Y := 0.3
 
 
 func setup(l: Land, c: City) -> void:
@@ -288,28 +290,31 @@ func _float_text(p: Vector2, text: String) -> void:
 
 func _make_cart() -> void:
 	var root := Node3D.new()
-	var body := Synty.make("SM_Prop_Cart_01")
-	body.rotation.y = PI
-	root.add_child(body)
-	var load_n := Synty.make("SM_Prop_Cart_01_Insert_02")
-	load_n.rotation.y = PI
-	root.add_child(load_n)
+	root.add_child(Synty.make("SM_Prop_Cart_01"))
+	root.add_child(Synty.make("SM_Prop_Cart_01_Insert_01"))
 	var horse := (load("res://assets/animals/Horse_b.glb") as PackedScene).instantiate() as Node3D
 	root.add_child(horse)
 	var aabb := Artisau.aabb(horse)
-	var s := 2.3 / maxf(aabb.size.z, aabb.size.x)
+	var s := 2.1 / maxf(aabb.size.z, aabb.size.x)
 	horse.scale = Vector3.ONE * s
-	if aabb.size.x > aabb.size.z:
-		horse.rotation.y = PI / 2
-	horse.position = Vector3(0, 0, 2.6)
+	horse.position = Vector3(0, 0, CART_HORSE_Z)
 	var hanim: AnimationPlayer = horse.find_children("*", "AnimationPlayer", true, false)[0]
 	var driver := Citizen.create(rng, false)
 	root.add_child(driver)
-	driver.position = Vector3(0, 0.75, 0.6)
+	driver.position = Vector3(0, CART_SEAT_Y, 0.55)
 	driver.play("Driving_Loop", 0.0)
+	# переселенцы едут в кузове, на мешках
+	var riders := []
+	for k in 3:
+		var r := Citizen.create(rng, k != 1, k == 2)
+		root.add_child(r)
+		r.position = Vector3(-0.28 if k != 1 else 0.28, CART_SEAT_Y, -0.35 - 0.45 * (k % 2))
+		r.rotation.y = PI / 2 if k != 1 else -PI / 2
+		r.play("Sitting_Idle_Loop", 0.0)
+		riders.append(r)
 	add_child(root)
 	root.visible = false
-	cart = {"n": root, "horse": hanim, "path": PackedVector2Array(), "s": 0.0, "state": "wait", "t": 3.0, "load": [], "driver": driver}
+	cart = {"n": root, "horse": hanim, "path": PackedVector2Array(), "s": 0.0, "state": "wait", "t": 3.0, "load": [], "driver": driver, "riders": riders}
 
 
 func _cart_path_len(path: PackedVector2Array) -> float:
@@ -350,6 +355,8 @@ func _cart_step(dt: float) -> void:
 				c["state"] = "in"
 				c["s"] = 0.0
 				n.visible = true
+				for r: Node3D in c["riders"]:
+					r.visible = true
 		"in", "out":
 			var path: PackedVector2Array = c["path"]
 			var total := _cart_path_len(path)
@@ -414,3 +421,5 @@ func _drop() -> void:
 			w["n"] = int(q[1]) if m == 0 else 0
 			_go(w, city.door_point(h), "settle")
 	cart["load"] = []
+	for r: Node3D in cart["riders"]:
+		r.visible = false

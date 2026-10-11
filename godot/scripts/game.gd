@@ -17,6 +17,8 @@ var env: Environment
 var sky_mat: ProceduralSkyMaterial
 var chunk_nodes := {}
 var land_mat: ShaderMaterial
+var surf_img: Image                  # маска покрытий (мостовая, площадь, тропа) для плавных краёв
+var surf_tex: ImageTexture
 var visuals := {}                    # id постройки → {handles, lights: [], smoke: []}
 var nature := {}                     # Vector2i(2-метровая клетка) → [{handles, p}]
 var plot_signs := {}
@@ -93,6 +95,10 @@ func _ready() -> void:
 		if args.has("demo"):
 			_demo_town()
 	_nature()
+	surf_img = land.make_surface()
+	surf_img.generate_mipmaps()
+	surf_tex = ImageTexture.create_from_image(surf_img)
+	land_mat.set_shader_parameter("surf", surf_tex)
 	for j in Land.CHN:
 		for i in Land.CHN:
 			land.dirty[Vector2i(i, j)] = true
@@ -339,6 +345,11 @@ func _rebuild_land(limit := 6) -> void:
 			add_child(mi)
 			chunk_nodes[ch] = mi
 		mi.mesh = land.chunk_mesh(ch.x, ch.y)
+		if surf_img:
+			land.update_surface(surf_img, ch)
+	if surf_tex and not done.is_empty():
+		surf_img.generate_mipmaps()
+		surf_tex.update(surf_img)
 	if people and people.land and not done.is_empty():
 		people.refresh(done)
 
@@ -641,15 +652,20 @@ func placement(type: String, p: Vector2) -> Dictionary:
 	var hw := float(d["w"]) / 2.0
 	var yaw := tool_yaw
 	var pos := p
+	var err := ""
 	if d["kind"] != "decor":
-		var e := _nearest_road(p, 5.5)
+		var e := _nearest_road(p, maxf(5.5, hd + 2.5))
 		if not e.is_empty():
 			var nrm: Vector2 = e["n"]
 			yaw = snappedf(atan2(nrm.x, nrm.y), deg_to_rad(5.0))
 			var f := City.facing(yaw)
 			pos = (e["p"] as Vector2) - f * (hd + 0.05)
 			pos = _snap_row(type, pos, yaw)
-	return {"pos": pos, "yaw": yaw, "err": city.check_place(type, pos, yaw)}
+		elif not d.get("noroad", false):
+			err = "Поставьте у дороги — к ней встанет фасад"
+	if err == "":
+		err = city.check_place(type, pos, yaw)
+	return {"pos": pos, "yaw": yaw, "err": err}
 
 
 func _is_road(p: Vector2) -> bool:

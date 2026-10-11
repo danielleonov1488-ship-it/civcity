@@ -23,6 +23,7 @@ var stats := {"pop": 0, "happy": 0, "taxes": 0.0, "upkeep": 0.0, "trade": 0.0, "
 var goals_done: Array = []
 var settle_queue: Array = []      # дома, ждущие переселенцев: [id, сколько]
 var plots_bought := 0
+const PLAZA_TYPES := ["market", "forum", "fountain", "center", "theatre"]
 var tips_seen: Array = []
 
 
@@ -115,15 +116,22 @@ func check_place(type: String, pos: Vector2, yaw: float, ignore_id := -1) -> Str
 			continue
 		if obb_hit(tight, obb(buildings[id], -0.05)):
 			return "Место занято"
-	if d["kind"] != "decor" and d["kind"] != "house":
-		# большие постройки нельзя ставить поверх дороги
+	if d["kind"] != "decor":
+		# поверх мостовой и площади строить нельзя (тропу можно)
+		var hw2 := float(f["hw"]) - 0.3
+		var hd2 := float(f["hd"]) - 0.3
+		var nu := int(hw2 * 2.0 / 0.5) + 1
+		var nv := int(hd2 * 2.0 / 0.5) + 1
+		var ax2: Vector2 = f["ax"]
+		var fw2 := Vector2(-ax2.y, ax2.x)
 		var on_road := 0
-		for u in 5:
-			for v in 5:
-				var q: Vector2 = pos + (f["ax"] as Vector2) * (u / 2.0 - 1.0) * (float(f["hw"]) - 0.3) + Vector2(-f["ax"].y, f["ax"].x) * (v / 2.0 - 1.0) * (float(f["hd"]) - 0.3)
-				if land.kind_at(q.x, q.y) == Land.Kind.ROAD:
+		for u in nu:
+			for v in nv:
+				var q: Vector2 = pos + ax2 * lerpf(-hw2, hw2, float(u) / maxf(1.0, nu - 1)) + fw2 * lerpf(-hd2, hd2, float(v) / maxf(1.0, nv - 1))
+				var kq := land.kind_at(q.x, q.y)
+				if kq == Land.Kind.ROAD or (kq == Land.Kind.PLAZA and not type in PLAZA_TYPES):
 					on_road += 1
-		if on_road > 3:
+		if on_road > (0 if d["kind"] == "house" else int(nu * nv * 0.02)):
 			return "Мешает дорога"
 	return ""
 
@@ -146,7 +154,7 @@ func place(type: String, pos: Vector2, yaw: float, free := false, seed_v := -1) 
 	var kd := Land.Kind.YARD
 	if type in ["farm", "grove", "vineyard"]:
 		kd = Land.Kind.FIELD
-	elif type in ["market", "forum", "fountain", "center", "theatre"]:
+	elif type in PLAZA_TYPES:
 		kd = Land.Kind.PLAZA
 	if d["kind"] != "decor":
 		land.flatten_obb(pos, f["ax"], f["hw"] + 0.1, f["hd"] + 0.1, y, kd)
@@ -559,7 +567,7 @@ func _check_goals() -> void:
 		if goal_progress(g["id"]) >= int(g["need"]):
 			goals_done.append(g["id"])
 			money += float(g["reward"])
-			message.emit("Задание выполнено: %s. Награда — %d денариев." % [g["text"], g["reward"]], "goal")
+			message.emit("✓ %s · +%d ден." % [g["text"], g["reward"]], "goal")
 
 
 # ---------- сохранение ----------

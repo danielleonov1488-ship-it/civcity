@@ -53,27 +53,76 @@ static func _house(b: Bp, tier: int) -> void:
 			b.add("SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 5), Vector3(-0.8, 0, -0.5), 1.0)
 			b.door = Vector3(0, 0, 2.6)
 		1:
-			# хижина: кирпичная комнатка с соломенной кровлей-навесом, дворик с плетнём, сено и корзины
-			b.paint("Brick")
-			b.block(-1.25, -1.25, 1, 1, 1, {"door_i": 0, "door": "SM_Bld_Wall_Door_04", "win_p": 0.5, "trim": "SM_Bld_Trim_01"})
-			b.gable(-1.25, -1.25, 1, 1, FL, false)
-			b.add("SM_Prop_Overhang_02", Vector3(-1.25, 2.55, 0.0), 0.0)
-			b.add("SM_Prop_Straw_Stack_01", Vector3(1.4, 0, -1.4), b.rng.randf() * TAU, 0.8)
-			b.add("SM_Prop_Basket_Set_04", Vector3(1.2, 0, 0.9), 0.4, 0.8)
-			b.add("SM_Prop_Jar_01", Vector3(0.3, 0, -1.8), 0.0)
-			b.add("SM_Env_Fence_Woof_02", Vector3(0.25, 0, 2.3), 0.0, 0.85)
-			b.plants(0.4, -0.5, 2.2, 2.0, 2)
-			b.door = Vector3(-1.25, 0, 0.9)
+			# хижина: беленая комнатка с черепичной крышей у задней межи, перед ней — дворик:
+			# пергола с лозой над входом, стол с посудой, печь или ткацкий станок, сено, кувшины, плетень
+			var di := b.rng.randi() % 2
+			b.block(0, -1.25, 2, 1, 1, {"door_i": di, "door": "SM_Bld_Wall_Door_04", "win_p": 0.7})
+			b.gable(0, -1.25, 2, 1, FL)
+			var px := -1.25 if di == 0 else 1.25
+			var ox := -px                         # вторая половина дворика
+			for c: Vector3 in [Vector3(px - 1.05, 0, 2.2), Vector3(px + 1.05, 0, 2.2)]:
+				b.add("SM_Bld_Trellis_Pillar_01", c, 0.0, 0.78)
+			b.add("SM_Bld_Trellis_Roof_01", Vector3(px + 1.25, 2.44, 0.0), 0.0)
+			b.add("SM_Env_Vine_0%d" % (1 + b.rng.randi() % 3), Vector3(px, 2.45, 1.1), b.rng.randf() * TAU, 0.75)
+			if b.chance(0.6):
+				b.add("SM_Env_Ivy_Pillar_Flowers_0%d" % (1 + b.rng.randi() % 2), Vector3(px + 1.05, 0, 2.2), 0.0, 0.78)
+			b.add("SM_Prop_Table_0%d" % (1 + b.rng.randi() % 3), Vector3(px + 0.2, 0, 1.0), PI / 2, 0.8)
+			b.add("SM_Prop_Seat_Stool_0%d" % (1 + b.rng.randi() % 2), Vector3(px - 0.6, 0, 1.2), b.rng.randf() * TAU)
+			b.add("SM_Prop_Bowl_0%d" % (1 + b.rng.randi() % 5), Vector3(px + 0.1, 0.63, 0.9), 0.0, 0.7)
+			b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 5), Vector3(px + 0.35, 0.63, 1.15), 0.0, 0.7)
+			match b.rng.randi() % 3:
+				0:
+					b.add("SM_Prop_Kiln_01", Vector3(ox + 0.4, 0, 0.95), b.rng.randf_range(-0.4, 0.4), 0.6)
+					b.add("SM_Prop_Straw_Bundle_01", Vector3(ox - 0.7, 0, 1.6), b.rng.randf() * TAU)
+				1:
+					b.add("SM_Prop_Loom_01", Vector3(ox, 0, 0.6), 0.0, 0.85)
+					b.add("SM_Prop_Basket_Set_0%d" % (1 + b.rng.randi() % 4), Vector3(ox + 0.7, 0, 1.5), b.rng.randf() * TAU, 0.7)
+				_:
+					b.add("SM_Prop_Straw_Stack_0%d" % (1 + b.rng.randi() % 2), Vector3(ox + 0.5, 0, 1.0), b.rng.randf() * TAU, 0.6)
+					b.add("SM_Prop_Ladder_01", Vector3(ox - 0.9, 0, 0.12), 0.0)
+			b.add("SM_Prop_Jar_01", Vector3(ox - 0.9, 0, 0.45), 0.0, 0.9)
+			b.add("SM_Prop_Vase_0%d" % (1 + b.rng.randi() % 4), Vector3(ox - 0.55, 0, 0.35), b.rng.randf() * TAU, 0.8)
+			b.add("SM_Env_Fence_Woof_0%d" % (1 + b.rng.randi() % 3), Vector3(ox - 1.25, 0, 2.35), 0.0, 1.0)
+			b.add("SM_Prop_FlowerBed_0%d" % (1 + b.rng.randi() % 2), Vector3(px - 0.6, 0.35, -0.0), 0.0, 0.75)
+			b.plants(ox - 1.0, 1.7, ox + 1.0, 2.2, 2)
+			b.door = Vector3(px, 0, 2.6)
 		2:
-			# домик: оштукатуренный, черепица, навес над дверью, цветы, скамья
-			b.block(0, 0, 2, 2, 1, {"door_i": b.rng.randi() % 2, "win_p": 0.8})
-			b.gable(0, 0, 2, 2, FL)
-			var di: int = 0 if b.door.x < 0 else 1
-			b.add("SM_Prop_Overhang_02", Vector3(-1.25 if di == 0 else 1.25, 2.7, 2.62), 0.0)
-			b.door_decor(0, 0, 2, 2, di)
-			b.window_pots(0, 0, 2, 2, 0)
-			if b.chance(0.5):
-				b.ivy(0, 0, 2, 2, 1)
+			if b.chance(0.65):
+				# домик: две комнаты под двумя скатами, между ними крытое крыльцо со столом, цветы
+				var fx := -1.25 if b.chance(0.5) else 1.25   # передняя комната
+				var qx := -fx                                 # крыльцо
+				b.block(0, -1.25, 2, 1, 1, {"door_i": 0 if qx < 0 else 1, "door": b.pick(["SM_Bld_Wall_Door_02", "SM_Bld_Wall_Door_03", "SM_Bld_Wall_Door_01"]), "win_p": 0.9, "win0": "SM_Bld_Wall_Window_06"})
+				b.gable(0, -1.25, 2, 1, FL)
+				b.block(fx, 1.25, 1, 1, 1, {"door_i": -1, "win_p": 1.0, "win0": "SM_Bld_Wall_Window_06", "sides": [0, 1 if fx < 0 else 3]})
+				b.gable(fx, 1.25, 1, 1, FL)
+				for c: Vector3 in [Vector3(qx - 1.1, 0, 2.3), Vector3(qx + 1.1, 0, 2.3)]:
+					b.add("SM_Bld_Trellis_Pillar_01", c, 0.0, 0.84)
+				b.add_xf("SM_Bld_Roof_Base_Straight_01", Transform3D(Basis.IDENTITY.scaled(Vector3(1.0, 0.55, 1.04)), Vector3(qx - 1.25, 2.62, 2.6)), true)
+				b.add("SM_Bld_Roof_Edge_Straight_01", Vector3(qx - 1.25, 2.62, 2.6), 0.0, 1.0, true)
+				b.add("SM_Prop_Table_0%d" % (1 + b.rng.randi() % 3), Vector3(qx, 0, 1.2), 0.0, 0.85)
+				b.add("SM_Prop_Seat_Bench_0%d" % (1 + b.rng.randi() % 3), Vector3(qx, 0, 0.45), 0.0, 0.85)
+				b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 5), Vector3(qx - 0.3, 0.68, 1.2), 0.0, 0.7)
+				b.add("SM_Prop_Bowl_0%d" % (1 + b.rng.randi() % 5), Vector3(qx + 0.25, 0.68, 1.15), 0.0, 0.7)
+				b.add("SM_Prop_Pots_Hanging_0%d" % (1 + b.rng.randi() % 2), Vector3(qx + 0.9, 2.35, 2.3), 0.0)
+				if b.chance(0.6):
+					b.add("SM_Env_Ivy_Pillar_Flowers_0%d" % (1 + b.rng.randi() % 2), Vector3(qx + 1.1 * signf(qx), 0, 2.3), 0.0, 0.84)
+				b.add("SM_Prop_FlowerBed_0%d" % (1 + b.rng.randi() % 2), Vector3(fx, 0.35, 2.55), 0.0, 0.8)
+				b.add("SM_Prop_FlowerPot_Hanging_0%d" % (4 + b.rng.randi() % 3), Vector3(fx, 1.2, 2.63), 0.0)
+				if b.chance(0.5):
+					b.ivy(0, -1.25, 2, 1, 1)
+			else:
+				# домик: оштукатуренный, черепица, деревянный навес во всю ширину, лавочка, цветы
+				var di := b.rng.randi() % 2
+				b.block(0, 0, 2, 2, 1, {"door_i": di, "door": b.pick(["SM_Bld_Wall_Door_02", "SM_Bld_Wall_Door_03"]), "win_p": 0.9, "win0": "SM_Bld_Wall_Window_06"})
+				b.gable(0, 0, 2, 2, FL)
+				b.on_wall("SM_Prop_Overhang_01", 0, 0, 2, 2, 0, 0.5, 2.7, 0.12)
+				b.on_wall("SM_Prop_Overhang_01", 0, 0, 2, 2, 0, 1.5, 2.7, 0.12)
+				b.door_decor(0, 0, 2, 2, di)
+				b.window_pots(0, 0, 2, 2, 0)
+				b.add("SM_Prop_FlowerBed_0%d" % (1 + b.rng.randi() % 2), Vector3(1.25 if di == 0 else -1.25, 0.35, 2.55), 0.0, 0.8)
+				b.add(b.pick(["SM_Prop_Jar_Pile_01", "SM_Prop_Vase_Pile_0%d" % (1 + b.rng.randi() % 6), "SM_Prop_Straw_Bundle_01"]), Vector3(2.15 if di == 0 else -2.15, 0, 2.85), b.rng.randf() * TAU, 0.75)
+				if b.chance(0.6):
+					b.ivy(0, 0, 2, 2, 1)
 		3:
 			# инсула: лавка внизу, жильё наверху, балкон с цветами и ковром, плющ
 			var di := b.rng.randi() % 2
