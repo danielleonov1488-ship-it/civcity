@@ -12,6 +12,9 @@ signal building_removed(b)
 signal house_changed(b, up)
 signal event(text, icon)             # событие для колокольчика и всплывашки справа
 signal family_left(home, name)       # семья уехала из дома (жители уходят в тоннель)
+signal arrivals_changed              # на площади у станции стало больше или меньше семей
+signal family_came(f)                # повозка привезла семью
+signal family_assigned(name, home)   # игрок выбрал семье дом — жители идут туда
 
 var land: Land
 var money := float(Defs.START_MONEY)
@@ -23,8 +26,19 @@ var buildings := {}                   # id → запись постройки
 var next_id := 1
 var stats := {"pop": 0, "happy": 0, "income": 0.0, "upkeep": 0.0, "rp_day": 0.0, "residents": {}, "workers": {}, "jobs": {}, "free": {}, "class_happy": {}}
 var goods := {}                       # сырьё, которое есть в городе: wheat, olives, grapes
-var settle_queue: Array = []          # [id дома, сколько человек]
-var waiting := 0                      # семьи на станции, которым не хватило жилья
+## Приезд семей — как поезд в Town to City: повозка привозит семью, она ждёт на площади у станции,
+## пока игрок не выберет ей дом. Ждать могут не больше ARRIVAL_MAX семей — тогда новые не едут.
+var arrivals: Array = []              # семьи на площади: [{name, n, cls}]
+var pending := {}                     # семьи, которым выбран дом, идут туда: имя → {name, n, cls, home}
+var incoming := 0                     # сколько семей едет в повозке
+var arrive_t := 0.0                   # часов с прошлой повозки
+var settled_total := 0                # сколько семей заселено за игру
+var moving_id := -1                   # постройку переносят — жильцы не уходят из неё
+var tips := {}                        # какие советы и шаги обучения уже показаны
+signal rehomed(old, new)              # перенесённый дом получил новый номер
+var waiting: int:
+	get:
+		return arrivals.size()
 var goals_done: Array = []
 var events: Array = []                # [{day, text, icon}]
 var road_cells := 0                   # сколько клеток дорог проложил игрок
@@ -78,6 +92,11 @@ func center() -> Dictionary:
 
 
 func building_at(p: Vector2) -> Dictionary:
+	# сначала — украшения на стенах (у них нет клеток на земле)
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if b.has("host") and (b["pos"] as Vector2).distance_to(p) < 0.7:
+			return b
 	var id := land.occ_at(p)
 	return buildings.get(id, {})
 
@@ -112,6 +131,8 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	if money < float(d["cost"]) and ignore_id == -1:
 		res["err"] = "Не хватает денариев"
 		return res
+	if d.get("wall", false):
+		return res                            # украшение на стене: место выбирает игра (стена дома)
 	var tier := 1 if d["kind"] == "house" else (6 if type == "center" else 0)   # станция занимает место на вырост
 	var bp := Catalog.make(type, tier, variant, color)
 	var cells := land.footprint_cells(bp.footprint(), pos, yaw)
@@ -222,10 +243,32 @@ func remove(b: Dictionary, refund := true) -> void:
 		money += float(def(b)["cost"]) * Defs.REFUND
 	land.set_occ(b["cells"], 0)
 	buildings.erase(b["id"])
-	settle_queue = settle_queue.filter(func(q): return q[0] != b["id"])
+	# украшения на стенах снесённого дома падают вместе с ним
+	for oid in buildings.keys():
+		if buildings.has(oid) and int(buildings[oid].get("host", -1)) == int(b["id"]):
+			remove(buildings[oid], refund)
+	# семьи, которые шли в этот дом, возвращаются на площадь
+	for nm in pending.keys():
+		if int(pending[nm]["home"]) == int(b["id"]) and int(b["id"]) != moving_id:
+			var f: Dictionary = pending[nm]
+			pending.erase(nm)
+			arrivals.append({"name": f["name"], "n": f["n"], "cls": f["cls"]})
 	compute()
 	building_removed.emit(b)
+	arrivals_changed.emit()
 	changed.emit()
+
+
+## Перенесённый дом: те, кто шёл в старый, идут в новый
+func rehome(old: int, new: int) -> void:
+	if not buildings.has(new):
+		return
+	var b: Dictionary = buildings[new]
+	for nm in pending:
+		if int(pending[nm]["home"]) == old:
+			pending[nm]["home"] = new
+			b["coming"] = int(b.get("coming", 0)) + int(pending[nm]["n"])
+	rehomed.emit(old, new)
 
 
 ## Сменить цвет дома (щелчок по значку в карточке)
@@ -428,7 +471,7 @@ func sim_day() -> void:
 	stats["income"] = income
 	stats["upkeep"] = upkeep
 	stats["rp_day"] = rpd
-	_request_settlers()
+	_tick_arrivals()
 	_update_level()
 	_check_goals()
 	changed.emit()
@@ -477,35 +520,122 @@ func _fam_name(b: Dictionary) -> String:
 	return fams[0]["name"] if not fams.is_empty() else "без имени"
 
 
-## Свободные места в домах ждут семьи — повозка привезёт их из тоннеля
-func _request_settlers() -> void:
-	var queued := {}
-	for q in settle_queue:
-		queued[q[0]] = int(queued.get(q[0], 0)) + int(q[1])
-	var city_ok := int(stats["pop"]) < 12 or int(stats["happy"]) >= 45
+## Раз в час: не пора ли повозке привезти новую семью
+func _tick_arrivals() -> void:
+	if center().is_empty() or _count(func(b): return is_house(b)) == 0:
+		return
+	var room: int = int(Defs.ARRIVAL_MAX[level]) - arrivals.size() - incoming
+	if room <= 0:
+		arrive_t = 0.0
+		return
+	arrive_t += 1.0
+	var every := Defs.ARRIVE_HOURS / (1.0 + 0.35 * level)
+	if int(stats["pop"]) >= 12 and int(stats["happy"]) < 40:
+		every *= 2.0                      # в несчастный город едут неохотно
+	var first := settled_total == 0 and arrivals.is_empty() and incoming == 0 and pending.is_empty()
+	if arrive_t >= every or first:
+		arrive_t = 0.0
+		incoming += mini(room, 2 + level / 3)    # семьи приезжают по двое
+
+
+## Кого везёт повозка: семьи тех классов, для которых открыты дома (чаще — те, для кого есть место)
+func pick_class() -> String:
+	var opts := []
+	var total := 0.0
+	for cl in Defs.CLASS_ORDER:
+		if not unlocked(Defs.CLASSES[cl]["house"]):
+			continue
+		var free := 0
+		for id in buildings:
+			var b: Dictionary = buildings[id]
+			if is_house(b) and def(b)["cls"] == cl:
+				free += house_cap(b) - int(b["pop"]) - int(b.get("coming", 0))
+		for f in arrivals:
+			if f["cls"] == cl:
+				free -= int(f["n"])
+		var w := 3.0 if free > 0 else (1.0 if cl == "plebs" else 0.5)
+		opts.append([cl, w])
+		total += w
+	var x := rng.randf() * total
+	for o in opts:
+		x -= float(o[1])
+		if x <= 0.0:
+			return o[0]
+	return "plebs"
+
+
+## Новая семья: родовое имя, которого ещё нет в городе
+func new_family(cls: String) -> Dictionary:
+	var used := {}
+	for f in arrivals:
+		used[f["name"]] = true
+	for nm in pending:
+		used[nm] = true
 	for id in buildings:
-		var b: Dictionary = buildings[id]
-		if not is_house(b):
-			continue
-		var free := house_cap(b) - int(b["pop"]) - int(queued.get(id, 0)) - int(b.get("coming", 0))
-		if free <= 0 or not city_ok:
-			continue
-		if waiting > 0:
-			continue                          # сначала заселятся те, кто ждёт на площади
-		if rng.randf() < 0.75:
-			var n := mini(free, rng.randi_range(2, 4))
-			settle_queue.append([id, n])
+		for f in buildings[id].get("families", []):
+			used[f["name"]] = true
+	var name := ""
+	for k in 60:
+		var nm: String = Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()]
+		if k >= 20:
+			nm += " " + Defs.COGNOMENS[rng.randi() % Defs.COGNOMENS.size()]
+		if not used.has(nm):
+			name = nm
+			break
+	if name == "":
+		name = "%s %d" % [Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()], rng.randi() % 1000]
+	var sz: Array = Defs.FAMILY_SIZE[cls]
+	return {"name": name, "n": rng.randi_range(int(sz[0]), int(sz[1])), "cls": cls}
 
 
-## Привезти семью, которой пока негде жить (будет ждать на площади, как у вокзала в Town to City)
-func wants_waiting() -> bool:
-	if int(stats["pop"]) < 10 or int(stats["happy"]) < 55:
+## Семья сошла с повозки (или осталась без дома) и ждёт на площади
+func family_arrived(f: Dictionary, from_cart := true) -> void:
+	if from_cart:
+		incoming = maxi(0, incoming - 1)
+	pending.erase(f["name"])
+	for a in arrivals:
+		if a["name"] == f["name"]:
+			return
+	arrivals.append({"name": f["name"], "n": int(f["n"]), "cls": f["cls"]})
+	arrivals_changed.emit()
+	changed.emit()
+	if from_cart:
+		family_came.emit(arrivals[-1])
+
+
+func arrival(name: String) -> Dictionary:
+	for a in arrivals:
+		if a["name"] == name:
+			return a
+	return {}
+
+
+## Подходит ли дом семье: её класса и хватает места
+func can_host(b: Dictionary, f: Dictionary) -> bool:
+	return is_house(b) and def(b)["cls"] == f["cls"] and house_cap(b) - int(b["pop"]) - int(b.get("coming", 0)) >= int(f["n"])
+
+
+func homes_for(f: Dictionary) -> Array:
+	var out := []
+	for id in buildings:
+		if can_host(buildings[id], f):
+			out.append(buildings[id])
+	return out
+
+
+## Игрок выбрал семье дом
+func assign(name: String, home: int) -> bool:
+	var f := arrival(name)
+	if f.is_empty() or not buildings.has(home) or not can_host(buildings[home], f):
 		return false
-	for id in buildings:
-		var b: Dictionary = buildings[id]
-		if is_house(b) and house_cap(b) - int(b["pop"]) - int(b.get("coming", 0)) > 0:
-			return false
-	return rng.randf() < 0.01
+	arrivals.erase(f)
+	var b: Dictionary = buildings[home]
+	b["coming"] = int(b.get("coming", 0)) + int(f["n"])
+	pending[name] = {"name": name, "n": f["n"], "cls": f["cls"], "home": home}
+	family_assigned.emit(name, home)
+	arrivals_changed.emit()
+	changed.emit()
+	return true
 
 
 ## Семья дошла до дома
@@ -519,6 +649,8 @@ func settled(id: int, n: int, name := "") -> int:
 		return 0
 	if name == "":
 		name = Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()]
+	pending.erase(name)
+	settled_total += 1
 	(b["families"] as Array).append({"name": name, "n": n})
 	b["pop"] = int(b["pop"]) + n
 	compute()
@@ -693,10 +825,11 @@ func save_data() -> Dictionary:
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		bl.append({"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
-			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"],
+			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1),
 			"cells": Marshalls.raw_to_base64((b["cells"] as PackedInt32Array).to_byte_array())})
 	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
-		"goals": goals_done, "waiting": waiting, "events": events, "road_cells": road_cells}
+		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"]}),
+		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells}
 
 
 func load_data(d: Dictionary) -> void:
@@ -708,7 +841,14 @@ func load_data(d: Dictionary) -> void:
 	for r in d.get("research", []):
 		research[r] = true
 	goals_done = d.get("goals", [])
-	waiting = int(d.get("waiting", 0))
+	arrivals = []
+	for f in d.get("arrivals", []):
+		arrivals.append({"name": f["name"], "n": int(f["n"]), "cls": f.get("cls", "plebs")})
+	pending = {}
+	incoming = 0
+	arrive_t = float(d.get("arrive_t", 0.0))
+	settled_total = int(d.get("settled_total", 0))
+	tips = d.get("tips", {})
 	road_cells = int(d.get("road_cells", 0))
 	events = d.get("events", [])
 	next_id = int(d.get("next_id", 1))
@@ -719,6 +859,8 @@ func load_data(d: Dictionary) -> void:
 			"yaw": float(bd["yaw"]), "variant": int(bd.get("variant", 0)), "color": int(bd.get("color", 0)), "y": float(bd.get("y", Land.BASE_Y)),
 			"cells": cells, "pop": int(bd["pop"]), "families": bd.get("families", []), "happy": 50, "up": 0, "down": 0, "staff": 1.0,
 			"active": true, "road": true, "needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0}
+		if int(bd.get("host", -1)) >= 0:
+			b["host"] = int(bd["host"])
 		buildings[b["id"]] = b
 		land.set_occ(cells, b["id"])
 		next_id = maxi(next_id, int(b["id"]) + 1)

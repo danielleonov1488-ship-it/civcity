@@ -24,7 +24,7 @@ func shot(name: String) -> void:
 		if c.is_house(b):
 			tiers[b["type"] + str(b["tier"])] = int(tiers.get(b["type"] + str(b["tier"]), 0)) + 1
 	print("SHOT ", name, " day=", c.day, " pop=", c.stats["pop"], " happy=", c.stats["happy"], " money=", int(c.money), " rp=", int(c.rp), " lvl=", c.level,
-		" people=", game.people.residents.size(), " vis=", game.people.visible_count, " wait=", game.people.waiting_fams.size(), " queue=", c.settle_queue.size(), " houses=", tiers, " fps=", Engine.get_frames_per_second(), " parts=", game.parts.count())
+		" people=", game.people.residents.size(), " vis=", game.people.visible_count, " wait=", game.people.waiting_fams.size(), " arr=", c.arrivals.size(), " inc=", c.incoming, " houses=", tiers, " fps=", Engine.get_frames_per_second(), " parts=", game.parts.count())
 
 
 func try_place(type: String, near: Vector2, r: float, variant := -1) -> Dictionary:
@@ -49,6 +49,11 @@ func _process(dt: float) -> void:
 	if game == null or not game.ready_done:
 		return
 	t += dt
+	# игрок заселяет приезжих в первый подходящий дом
+	for f in game.city.arrivals.duplicate():
+		var homes: Array = game.city.homes_for(f)
+		if not homes.is_empty():
+			game.city.assign(f["name"], homes[0]["id"])
 	if step >= 2 and not cart_shot and game.people.cart.get("state", "") == "in" and float(game.people.cart["s"]) > 8.0:
 		cart_shot = true
 		var keep: float = game.speed

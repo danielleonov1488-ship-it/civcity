@@ -30,6 +30,10 @@ var lbl_day: Label
 var lbl_clock: Label
 var speed_btns := []
 var class_box: HBoxContainer
+var city_card: PanelContainer
+var top_panel: PanelContainer
+var fam_box: HBoxContainer            # семьи на площади ждут жилья (как очередь поезда в Town to City)
+var _fam_known := {}
 var tasks_box: VBoxContainer
 var tasks_panel: PanelContainer
 var lbl_money: Label
@@ -91,6 +95,7 @@ func _ready() -> void:
 	add_child(root)
 	_city_card()
 	_class_chips()
+	_families()
 	_tasks()
 	_top_right()
 	_bottom_left()
@@ -358,6 +363,7 @@ func mouse_over_ui() -> bool:
 
 func _city_card() -> void:
 	var p := _panel(null, "papyrus", 30, 26)
+	city_card = p
 	_put(p, Control.PRESET_TOP_LEFT, Vector2(10, 8))
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
@@ -432,6 +438,105 @@ func _class_chips() -> void:
 	root.add_child(class_box)
 
 
+## Интерфейс открывается постепенно (как в Town to City): 0 — только стройка, 1 — плашка города и классы,
+## 2 — кнопки сверху справа, 3 — всё, включая задания
+func ui_level() -> int:
+	if game == null or game.city == null:
+		return 3
+	return int(game.city.tips.get("ui", 3))
+
+
+func apply_reveal(lvl: int) -> void:
+	for x: Control in [city_card, class_box]:
+		if x and x.visible != (lvl >= 1):
+			x.visible = lvl >= 1
+			if x.visible:
+				x.modulate.a = 0.0
+				x.create_tween().tween_property(x, "modulate:a", 1.0, 0.6)
+	if top_panel and top_panel.visible != (lvl >= 2):
+		top_panel.visible = lvl >= 2
+		if top_panel.visible:
+			top_panel.modulate.a = 0.0
+			top_panel.create_tween().tween_property(top_panel, "modulate:a", 1.0, 0.6)
+	if lvl < 3:
+		tasks_panel.visible = false
+	# пока плашки города нет, семьи ждут в самом углу
+	_put(fam_box, Control.PRESET_TOP_LEFT, Vector2(10, 12) if lvl < 1 else Vector2(420, 86))
+
+
+func _families() -> void:
+	fam_box = HBoxContainer.new()
+	_put(fam_box, Control.PRESET_TOP_LEFT, Vector2(420, 86))
+	fam_box.add_theme_constant_override("separation", 6)
+	fam_box.visible = false
+	root.add_child(fam_box)
+
+
+## Значки семей на площади: щелчок — выбрать им дом
+func _fill_families() -> void:
+	for ch in fam_box.get_children():
+		ch.queue_free()
+	var c: City = game.city
+	fam_box.visible = not c.arrivals.is_empty() and game.mode != "demo"
+	if not fam_box.visible:
+		_fam_known = {}
+		return
+	var chip := _chip(false, 12.0)
+	chip.mouse_filter = Control.MOUSE_FILTER_PASS
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	chip.add_child(h)
+	var cap := _label("Ждут\nжилья", 14, true, C_SOFT)
+	cap.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	h.add_child(cap)
+	var now := {}
+	for f in c.arrivals:
+		var nm: String = f["name"]
+		var cd: Dictionary = Defs.CLASSES[f["cls"]]
+		var home_name: String = Defs.B[cd["house"]]["name"]
+		var b := _round("family", "Семья %s · %d чел. · %s\nХотят жить: «%s»\nНажмите и выберите им дом" % [nm, int(f["n"]), cd["name"].to_lower(), home_name], 54,
+			func(): game.start_settle(nm))
+		if game.tool == "settle" and game.settle_fam.get("name", "") == nm:
+			_set_on(b, true)
+		var cnt := _label(str(int(f["n"])), 15, true, C_CREAM)
+		cnt.add_theme_color_override("font_outline_color", C_INK)
+		cnt.add_theme_constant_override("outline_size", 7)
+		cnt.position = Vector2(38, 32)
+		b.add_child(cnt)
+		if f["cls"] != "plebs":
+			var ci := _icon(cd["icon"], 18, C_INK)
+			ci.position = Vector2(-2, -2)
+			b.add_child(ci)
+		h.add_child(b)
+		now[nm] = true
+		if not _fam_known.has(nm):
+			# новая семья — медальон мягко «подпрыгивает»
+			b.pivot_offset = Vector2(27, 27)
+			b.scale = Vector2(0.6, 0.6)
+			var tw := b.create_tween()
+			tw.tween_property(b, "scale", Vector2(1.12, 1.12), 0.25).set_trans(Tween.TRANS_BACK)
+			tw.tween_property(b, "scale", Vector2.ONE, 0.2)
+	_fam_known = now
+	fam_box.add_child(chip)
+
+
+## Советы о приезжих: первая семья; семья, которой негде жить
+func on_arrival(f: Dictionary) -> void:
+	var c: City = game.city
+	if game.mode == "demo" or (game.tutorial and game.tutorial.active()):
+		return
+	if c.settled_total == 0 and not c.tips.has("first_family"):
+		c.tips["first_family"] = true
+		advisor("Приехали первые жители!", "Семьи сошли с повозки на площадь у станции и ждут жилья. Нажмите на значок семьи слева вверху — подходящие дома засветятся, — и щёлкните по дому.
+
+Пока семьи ждут, новые не едут: на площади помещается всего несколько семей. Так город растёт постепенно.")
+		return
+	if c.homes_for(f).is_empty() and not c.tips.has("nohome_" + f["cls"]):
+		c.tips["nohome_" + f["cls"]] = true
+		var cd: Dictionary = Defs.CLASSES[f["cls"]]
+		advisor("Семье негде жить", "Семья %s (%s) ищет «%s», а свободных мест нет. Постройте дом у дороги — семья подождёт на площади." % [f["name"], cd["name"].to_lower(), Defs.B[cd["house"]]["name"]])
+
+
 func _tasks() -> void:
 	tasks_panel = _panel(null, "scroll_v", 36, 26)
 	_put(tasks_panel, Control.PRESET_TOP_LEFT, Vector2(10, 204))
@@ -445,6 +550,7 @@ func _tasks() -> void:
 
 func _top_right() -> void:
 	var p := _panel(null, "papyrus", 26, 12)
+	top_panel = p
 	_put(p, Control.PRESET_TOP_RIGHT, Vector2(-10, 8))
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
@@ -895,6 +1001,13 @@ func _update_pointer() -> void:
 	pointer_target = null
 	if game == null or game.city == null or game.mode == "demo" or game.mode == "menu":
 		return
+	if game.tutorial and game.tutorial.active():
+		var pt: Array = game.tutorial.pointer()
+		pointer_target = pt[0]
+		pointer_text.text = pt[1]
+		return
+	if ui_level() < 3:
+		return
 	var goals: Array = game.city.active_goals(1)
 	if goals.is_empty():
 		return
@@ -1005,6 +1118,21 @@ func _fill_tool_panel() -> void:
 		ch.queue_free()
 	variant_box.visible = false
 	if t == "":
+		return
+	if t == "settle":
+		var f: Dictionary = game.settle_fam
+		var cd: Dictionary = Defs.CLASSES[f.get("cls", "plebs")]
+		var home_name: String = Defs.B[cd["house"]]["name"]
+		tool_title.text = "Семья %s" % f.get("name", "")
+		tool_keys.text = "%d чел. · %s. Хотят жить: «%s».\nЩёлкните по светящемуся дому. Правая кнопка — отмена." % [int(f.get("n", 0)), cd["name"].to_lower(), home_name]
+		if game.city.homes_for(f).is_empty():
+			tool_err.text = "Свободного дома нет — постройте «%s» у дороги. Семья подождёт на площади." % home_name
+		else:
+			variant_box.visible = true
+			var auto := Button.new()
+			auto.text = "Выбрать дом за меня"
+			auto.pressed.connect(func(): game.settle_auto())
+			variant_box.add_child(auto)
 		return
 	if Defs.B.has(t):
 		var d: Dictionary = Defs.B[t]
@@ -1303,6 +1431,10 @@ func _notes() -> void:
 
 ## Событие: короткая плашка наверху (не посреди экрана) и запись в колокольчике
 func notify(text: String, icon := "info") -> void:
+	if game and game.tutorial and game.tutorial.active() and icon in ["check", "research", "info"]:
+		bell_count += 1                   # во время обучения не мешаем всплывашками — только в колокольчик
+		bell_badge.text = str(bell_count)
+		return
 	var p := _chip(false, 16.0)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var h := HBoxContainer.new()
@@ -1709,6 +1841,7 @@ func refresh() -> void:
 	for sb in speed_btns:
 		_set_on(sb[0], is_equal_approx(game.speed, sb[1]))
 	_fill_classes()
+	_fill_families()
 	_fill_tasks()
 	if tray.visible:
 		_update_cards()
@@ -1776,7 +1909,7 @@ func _fill_tasks() -> void:
 		ch.queue_free()
 	var c: City = game.city
 	var goals := c.active_goals(3)
-	tasks_panel.visible = not goals.is_empty() and game.mode != "demo"
+	tasks_panel.visible = not goals.is_empty() and game.mode != "demo" and ui_level() >= 3
 	if goals.is_empty():
 		return
 	var hdr := HBoxContainer.new()
@@ -1896,7 +2029,7 @@ func _update_world_icons() -> void:
 		elif d["kind"] in ["rp", "farm", "store", "monument"] and d.has("jobs") and float(b.get("staff", 1.0)) < 0.99:
 			icon = "hammer"
 		elif d["kind"] == "center" and c.waiting > 0:
-			icon = "keys"
+			icon = "family"
 		if icon != "":
 			want[id] = icon
 	for id in world_icons.keys():

@@ -80,6 +80,9 @@ var last_paint := Vector2.INF
 var hover := Vector2.INF
 var place_info := {}
 var moving := {}                      # перенос постройки: исходная запись
+var settle_fam := {}                  # семья с площади, которой игрок выбирает дом
+var tutorial: Tutorial
+var settle_marks := []                # подсветка подходящих домов
 var _rmb_down := Vector2.ZERO
 var _mouse_pos := Vector2(-1, -1)
 
@@ -188,6 +191,13 @@ func _ready() -> void:
 	city.event.connect(func(t, i): hud.notify(t, i))
 	city.changed.connect(func(): hud.refresh())
 	city.changed.connect(_sync_all_actors)
+	city.changed.connect(_settle_refresh)
+	city.family_came.connect(func(f): hud.on_arrival(f))
+	if mode == "new" and not loaded and not settings.get("tut_done", false) and shot_path == "":
+		Tutorial.start_new(city)
+	tutorial = Tutorial.new()
+	add_child(tutorial)
+	tutorial.setup(self)
 	_update_plot_signs()
 	_set_hour(hour)
 	hud.refresh()
@@ -202,7 +212,7 @@ func _ready() -> void:
 			rig.set_view(Vector3(194, Land.BASE_Y, 158), 22, 30, 70)
 	elif mode == "demo" and shot_path == "":
 		hud.notify("Готовый город: стройте сколько угодно — он не сохраняется", "info")
-	elif not loaded and shot_path == "":
+	elif not loaded and shot_path == "" and not tutorial.active():
 		hud.advisor("Аве! Я Марк, твой советник.", "Из тоннеля в горе к почтовой станции приезжают повозки с переселенцами. Проложи дорогу кистью (слева внизу) и поставь вдоль неё дома — они сами встанут фасадом к дороге. Рядом поставь лавки: каждая кормит и радует дома в своей дальности.\n\nКамера: колёсико — масштаб, зажатое колёсико — вращать, правая кнопка — двигать (или WASD, Q/E).")
 
 
@@ -455,6 +465,7 @@ func _set_hour(h: float) -> void:
 	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
 	if lm:
 		lm.emission_energy_multiplier = lamp * (0.6 if hour > 23.0 or hour < 4.0 else 1.6)
+	Parts._glass_material().emission_energy_multiplier = lamp * 3.0
 	for l in night_lights:
 		l.visible = lamp > 0.02
 		l.light_energy = lamp * 2.4
@@ -873,6 +884,8 @@ func _show(b: Dictionary) -> void:
 		for sp in bp.smoke.slice(0, 1):
 			vis["smoke"].append(_smoke(xf * sp))
 	visuals[b["id"]] = vis
+	if b["type"] == "sheep":
+		_sheep(b, vis)
 	_sync_actors(b)
 	_set_hour(hour)
 
@@ -887,7 +900,7 @@ func _hide(b: Dictionary) -> void:
 		(l as Node).queue_free()
 	for s in vis["smoke"]:
 		(s as Node).queue_free()
-	for a in vis.get("actors", []):
+	for a in vis.get("actors", []) + vis.get("pets", []):
 		(a as Node).queue_free()
 	visuals.erase(b["id"])
 
@@ -908,6 +921,38 @@ func _on_house_changed(b: Dictionary, up: bool) -> void:
 		hud.house_event(b, up)
 	if selected.get("id", -1) == b["id"]:
 		select_building(b)
+
+
+static var _sheep_scene: PackedScene
+
+
+## Две овечки пасутся (модель Quaternius CC0)
+func _sheep(b: Dictionary, vis: Dictionary) -> void:
+	if _sheep_scene == null:
+		_sheep_scene = load("res://assets/animals/Sheep_a.glb")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(b["id"])
+	for k in 2:
+		var sh := _sheep_scene.instantiate() as Node3D
+		actors_root.add_child(sh)
+		var box := Artisau.aabb(sh)
+		var sc := 0.9 / maxf(0.01, maxf(box.size.x, box.size.z))
+		sh.scale = Vector3.ONE * sc
+		var off := Vector2(rng.randf_range(-0.8, 0.8), rng.randf_range(-0.8, 0.8))
+		var p: Vector2 = (b["pos"] as Vector2) + off
+		sh.position = Vector3(p.x, land.height_at(p.x, p.y), p.y)
+		sh.rotation.y = rng.randf() * TAU
+		var ap: AnimationPlayer = sh.find_children("*", "AnimationPlayer", true, false)[0] if not sh.find_children("*", "AnimationPlayer", true, false).is_empty() else null
+		if ap:
+			for a in ap.get_animation_list():
+				if String(a).ends_with("Eating") or String(a).ends_with("Idle_Eating") or String(a) == "Eating":
+					ap.get_animation(a).loop_mode = Animation.LOOP_LINEAR
+					ap.play(a)
+					ap.seek(rng.randf() * 2.0, true)
+					break
+		if not vis.has("pets"):
+			vis["pets"] = []
+		vis["pets"].append(sh)
 
 
 ## Люди при деле у постройки: появляются, когда она работает, и уходят, когда нет
@@ -1116,7 +1161,11 @@ func _process(dt: float) -> void:
 	if speed != _actor_speed:
 		_actor_speed = speed
 		for a in actors_root.get_children():
-			(a as Citizen).anim.speed_scale = speed
+			if a is Citizen:
+				(a as Citizen).anim.speed_scale = speed
+			else:
+				for ap in a.find_children("*", "AnimationPlayer", true, false):
+					(ap as AnimationPlayer).speed_scale = speed
 	_update_tool()
 	autosave_t += dt
 	if mode == "menu":
@@ -1193,6 +1242,9 @@ func set_tool(t: String) -> void:
 		_add_nature(moving_nature["name"], moving_nature["xf"], moving_nature["p"])
 		moving_nature = {}
 	tool = t
+	if t != "settle":
+		settle_fam = {}
+		_clear_settle_marks()
 	painting = false
 	line_from = Vector2.INF
 	if ghost:
@@ -1264,6 +1316,8 @@ func _bounds(bp: Bp) -> Array:
 ## Куда встанет постройка: у дороги — фасадом к ней, вплотную к соседям в ряд; иначе — как повернул игрок
 func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
+	if d.get("wall", false):
+		return _wall_place(type, p)
 	if variant < 0:
 		variant = next_variant
 	if color < 0:
@@ -1303,6 +1357,62 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 			pos = _snap_row(pos, yaw, bb, int(moving.get("id", -1)))
 	var chk := city.check_place(type, pos, yaw, variant, color, -3 if not moving.is_empty() else -1)
 	return {"pos": pos, "yaw": yaw, "err": chk["err"], "cells": chk["cells"], "y": chk["y"], "variant": variant, "color": color, "tier": tier}
+
+
+## Украшение на стену: ближайшая стена дома под курсором
+func _wall_place(type: String, p: Vector2) -> Dictionary:
+	var best := {}
+	var bd := 1.8
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		var kd: String = city.def(b)["kind"]
+		if kd in ["decor", "farm"] or (b["pos"] as Vector2).distance_to(p) > 14.0:
+			continue
+		var bp := city.blueprint(b)
+		var fz := bp.front_z()
+		if fz == -INF:
+			continue
+		var bb := _bounds(bp)
+		bb[3] = fz
+		var ax := City.axis(b["yaw"])
+		var fw := City.facing(b["yaw"])
+		var rel: Vector2 = p - (b["pos"] as Vector2)
+		var lx := rel.dot(ax)
+		var lz := rel.dot(fw)
+		var sides := [[absf(lz - float(bb[3])), "f"], [absf(lz - float(bb[2])), "b"], [absf(lx - float(bb[1])), "r"], [absf(lx - float(bb[0])), "l"]]
+		for sd: Array in sides:
+			var inside_x := lx >= float(bb[0]) - 0.3 and lx <= float(bb[1]) + 0.3
+			var inside_z := lz >= float(bb[2]) - 0.3 and lz <= float(bb[3]) + 0.3
+			if (sd[1] in ["f", "b"] and not inside_x) or (sd[1] in ["l", "r"] and not inside_z):
+				continue
+			if float(sd[0]) < bd:
+				bd = sd[0]
+				var px := clampf(lx, float(bb[0]) + 0.35, float(bb[1]) - 0.35)
+				var pz := clampf(lz, float(bb[2]) + 0.35, float(bb[3]) - 0.35)
+				var ly := 0.0
+				match sd[1]:
+					"f":
+						pz = float(bb[3]) + 0.02
+						ly = 0.0
+					"b":
+						pz = float(bb[2]) - 0.02
+						ly = PI
+					"r":
+						px = float(bb[1]) + 0.02
+						ly = PI / 2
+					"l":
+						px = float(bb[0]) - 0.02
+						ly = -PI / 2
+				var wp: Vector2 = (b["pos"] as Vector2) + ax * px + fw * pz
+				var hgt: float = {"wall_torch": 2.25, "wall_lamp": 2.45, "wall_flowers": 1.25, "wall_banner": 2.2}.get(type, 2.0)
+				best = {"pos": wp, "yaw": float(b["yaw"]) + ly, "err": "", "cells": PackedInt32Array(), "y": float(b["y"]) + hgt,
+					"variant": 0, "color": 0, "tier": 0, "host": b["id"]}
+	if best.is_empty():
+		var g := land.height_at(p.x, p.y)
+		return {"pos": p, "yaw": tool_yaw, "err": "Наведите на стену дома", "cells": PackedInt32Array(), "y": g + 2.0, "variant": 0, "color": 0, "tier": 0}
+	if city.money < float(Defs.B[type]["cost"]):
+		best["err"] = "Не хватает денариев"
+	return best
 
 
 ## Ближайший край дороги: точка и направление к ней
@@ -1406,6 +1516,9 @@ func _update_tool() -> void:
 	if tool in ["bulldoze", "copy", "move"]:
 		_hover_any(hover)
 		return
+	if tool == "settle":
+		_settle_hover(hover)
+		return
 	if tool == "move_nature":
 		_move_nature_ghost()
 		return
@@ -1504,6 +1617,105 @@ func _clear_highlight() -> void:
 		highlight.queue_free()
 		highlight = null
 	highlight_key = ""
+
+
+# ---------- заселение семьи (как в Town to City: значок семьи → подсвеченный дом) ----------
+
+func start_settle(name: String) -> void:
+	var f := city.arrival(name)
+	if f.is_empty():
+		return
+	hud.close_panels()
+	settle_fam = f
+	set_tool("settle")
+	_settle_marks_show()
+
+
+func _clear_settle_marks() -> void:
+	for m in settle_marks:
+		(m as Node).queue_free()
+	settle_marks = []
+
+
+## Все дома, куда семья может въехать, мягко светятся
+func _settle_marks_show() -> void:
+	_clear_settle_marks()
+	for b in city.homes_for(settle_fam):
+		var g := Parts.ghost(city.blueprint(b), "shell", Color(1.0, 0.95, 0.7, 0.22))
+		g.transform = city.xf(b)
+		add_child(g)
+		settle_marks.append(g)
+		var o := Parts.ghost(city.blueprint(b), "outline", Color(1.0, 0.9, 0.55))
+		o.transform = city.xf(b)
+		add_child(o)
+		settle_marks.append(o)
+		# ключи над домом: здесь есть место
+		var sp := Sprite3D.new()
+		sp.texture = hud._badge("keys")
+		sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		sp.pixel_size = 0.011
+		sp.no_depth_test = true
+		sp.render_priority = 10
+		sp.position = Vector3(b["pos"].x, float(b["y"]) + 4.0 + int(b["tier"]) * 3.0, b["pos"].y)
+		add_child(sp)
+		settle_marks.append(sp)
+
+
+## Пока выбираем дом, город живёт: обновить подсветку (или выйти, если семьи уже нет)
+func _settle_refresh() -> void:
+	if tool != "settle":
+		return
+	var f := city.arrival(settle_fam.get("name", ""))
+	if f.is_empty():
+		set_tool("")
+		return
+	settle_fam = f
+	_settle_marks_show()
+
+
+func _settle_hover(p: Vector2) -> void:
+	var b := city.building_at(p)
+	if b.is_empty() or not city.is_house(b):
+		_clear_highlight()
+		hud.tool_status("")
+		return
+	if city.can_host(b, settle_fam):
+		var key := "settle:%d" % b["id"]
+		if key != highlight_key:
+			_clear_highlight()
+			highlight_key = key
+			highlight = Parts.ghost(city.blueprint(b), "outline", Color(1.0, 1.0, 0.92))
+			highlight.transform = city.xf(b)
+			add_child(highlight)
+		hud.tool_status("")
+	else:
+		_clear_highlight()
+		var cls: String = settle_fam["cls"]
+		if city.def(b)["cls"] != cls:
+			hud.tool_status("Этот дом для другого класса — им нужен «%s»" % Defs.B[Defs.CLASSES[cls]["house"]]["name"])
+		else:
+			var free := city.house_cap(b) - int(b["pop"]) - int(b.get("coming", 0))
+			hud.tool_status("Тесно: свободно мест %d, а их %d" % [maxi(0, free), int(settle_fam["n"])])
+
+
+func _settle_into(b: Dictionary) -> bool:
+	var name: String = settle_fam.get("name", "")
+	if name == "" or not city.assign(name, b["id"]):
+		return false
+	sound.ui("place")
+	set_tool("")
+	return true
+
+
+## «Выбрать дом за меня»: ближайший к станции подходящий дом
+func settle_auto() -> void:
+	var homes := city.homes_for(settle_fam)
+	if homes.is_empty():
+		return
+	var c := city.center()
+	var from: Vector2 = c["pos"] if not c.is_empty() else Land.CENTER
+	homes.sort_custom(func(a, b): return (a["pos"] as Vector2).distance_to(from) < (b["pos"] as Vector2).distance_to(from))
+	_settle_into(homes[0])
 
 
 ## Выбрать постройку: обводка по силуэту и карточка
@@ -1614,6 +1826,11 @@ func _click() -> void:
 			_paint_to(hover)
 		return
 	match tool:
+		"settle":
+			var b := city.building_at(hover)
+			if b.is_empty() or not city.can_host(b, settle_fam) or not _settle_into(b):
+				sound.ui("error")
+			return
 		"move_nature":
 			if land.occ_at(hover) == 0 and not land.is_water(hover) and not land.is_road(hover):
 				var basis: Basis = (moving_nature["xf"] as Transform3D).basis.rotated(Vector3.UP, tool_yaw)
@@ -1662,7 +1879,8 @@ func _click() -> void:
 				return
 			if not b.is_empty() and not city.def(b).get("fixed", false):
 				moving = {"id": b["id"], "type": b["type"], "tier": b["tier"], "variant": b["variant"], "color": b["color"], "pop": b["pop"],
-					"families": b["families"], "pos": b["pos"], "yaw": b["yaw"]}
+					"families": b["families"], "pos": b["pos"], "yaw": b["yaw"], "decor": _hosted(b)}
+				city.moving_id = int(b["id"])
 				city.remove(b, false)
 				city.money += 0.0
 				var t: String = b["type"]
@@ -1684,12 +1902,17 @@ func _click() -> void:
 			b["tier"] = int(moving["tier"])
 			b["pop"] = int(moving["pop"])
 			b["families"] = moving["families"]
+			_moved(b)
 			moving = {}
 			_show(b)
 			city.compute()
 			set_tool("")
 		else:
 			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
+			if pl.has("host"):
+				b["host"] = pl["host"]
+				b["y"] = pl["y"]
+				_show(b)
 			if tool_variant < 0:
 				next_variant = randi() % int(Defs.B[tool].get("variants", 1))
 		_puff(Vector3(pl["pos"].x, float(pl["y"]), pl["pos"].y))
@@ -1701,12 +1924,44 @@ func _click() -> void:
 		hud.ask_buy(plot)
 		return
 	var b := city.building_at(hover)
-	if not b.is_empty():
+	if not b.is_empty() and city.def(b)["kind"] == "center" and not city.arrivals.is_empty():
+		start_settle(city.arrivals[0]["name"])
+	elif not b.is_empty():
 		select_building(b)
 		hud.open_info(b)
 	else:
 		select_building({})
 		hud.close_panels()
+
+
+## Украшения на стенах постройки: тип и место относительно неё
+func _hosted(b: Dictionary) -> Array:
+	var out := []
+	var ax := City.axis(b["yaw"])
+	var fw := City.facing(b["yaw"])
+	for id in city.buildings:
+		var o: Dictionary = city.buildings[id]
+		if int(o.get("host", -1)) == int(b["id"]):
+			var rel: Vector2 = (o["pos"] as Vector2) - (b["pos"] as Vector2)
+			out.append([o["type"], rel.dot(ax), rel.dot(fw), float(o["yaw"]) - float(b["yaw"]), float(o["y"]) - float(b["y"]), o["variant"], o["color"]])
+	return out
+
+
+## Постройка встала на новое место: жильцы идут за ней, украшения возвращаются на её стены
+func _moved(b: Dictionary, m := {}) -> void:
+	if m.is_empty():
+		m = moving
+	var old := int(m["id"])
+	city.moving_id = -1
+	city.rehome(old, int(b["id"]))
+	var ax := City.axis(b["yaw"])
+	var fw := City.facing(b["yaw"])
+	for dd: Array in m.get("decor", []):
+		var p: Vector2 = (b["pos"] as Vector2) + ax * float(dd[1]) + fw * float(dd[2])
+		var o := city.place(dd[0], p, float(b["yaw"]) + float(dd[3]), int(dd[5]), int(dd[6]), true)
+		o["host"] = b["id"]
+		o["y"] = float(b["y"]) + float(dd[4])
+		_show(o)
 
 
 func _cancel_move() -> void:
@@ -1716,6 +1971,7 @@ func _cancel_move() -> void:
 	b["tier"] = int(m["tier"])
 	b["pop"] = int(m["pop"])
 	b["families"] = m["families"]
+	_moved(b, m)
 	_show(b)
 	city.compute()
 

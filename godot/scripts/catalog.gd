@@ -906,6 +906,27 @@ static func _forum(b: Bp) -> void:
 
 static func _decor(b: Bp, type: String) -> void:
 	match type:
+		"lamp_post":
+			b.add("#lamp_post", Vector3.ZERO, 0.0)
+			b.light(Vector3(0.42, 2.12, 0.0))
+		"candelabrum":
+			b.add("SM_Prop_Senser_02", Vector3.ZERO, 0.0, 2.2)
+			b.light(Vector3(0, 1.85, 0))
+		"wall_torch":
+			b.add("SM_Prop_Bracket_01", Vector3(0, 0, 0.0), PI / 2, 2.0)
+			b.add_xf("SM_Prop_Torch_02", Transform3D(Basis(Vector3.RIGHT, 0.35), Vector3(0, 0.12, 0.2)))
+			b.light(Vector3(0, 0.55, 0.32))
+		"wall_lamp":
+			b.add("#wall_lamp", Vector3.ZERO, 0.0)
+			b.light(Vector3(0, -0.2, 0.4))
+		"wall_flowers":
+			b.add("SM_Prop_FlowerPot_Hanging_0%d" % (4 + b.rng.randi() % 3), Vector3(0, 0, 0.12), 0.0)
+		"wall_banner":
+			b.add("SM_Prop_Banner_0%d_%s" % [1 + b.rng.randi() % 2, b.pick(["A", "B", "C", "D", "E", "F"])], Vector3(0, 0.5, 0.03), 0.0)
+		"fence": b.add("SM_Env_Fence_Woof_0%d" % (1 + b.rng.randi() % 3), Vector3(-1.25, 0, 0), 0.0)
+		"hay": b.add("SM_Prop_Straw_Stack_0%d" % (1 + b.rng.randi() % 3), Vector3.ZERO, b.rng.randf() * TAU, 0.7)
+		"amphorae": b.add(b.pick(["SM_Prop_Jar_Pile_01", "SM_Prop_Vase_Pile_02", "SM_Prop_Vase_Pile_04"]), Vector3.ZERO, b.rng.randf() * TAU, 0.9)
+		"sheep": b.add("SM_Env_Grass_02", Vector3(0.3, 0, -0.2), 0.0, 0.6)
 		"tree": b.add("SM_Env_Tree_0%d" % (1 + b.rng.randi() % 4), Vector3.ZERO, b.rng.randf() * TAU, 0.42)
 		"cypress": b.add("SM_Env_Tree_Thin_0%d" % (1 + b.rng.randi() % 2), Vector3.ZERO, b.rng.randf() * TAU, 0.75)
 		"palm": b.add("SM_Env_Tree_Palm_0%d" % (1 + b.rng.randi() % 3), Vector3.ZERO, b.rng.randf() * TAU, 0.45)

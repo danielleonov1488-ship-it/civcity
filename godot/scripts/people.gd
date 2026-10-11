@@ -49,12 +49,22 @@ func setup(l: Land, c: City, g) -> void:
 	city.building_removed.connect(_on_building_removed)
 	city.changed.connect(func(): _jobs_dirty = true)
 	city.family_left.connect(_on_family_left)
+	city.family_assigned.connect(_on_assigned)
+	city.rehomed.connect(_on_rehomed)
 	# жители уже заселённых домов (загрузка, готовый город)
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
 		if city.is_house(b):
 			for f in b["families"]:
 				_make_family(f["name"], int(f["n"]), id, city.door_point(b))
+	# семьи, которые ждут жилья на площади
+	for f in city.arrivals:
+		var fam := _make_family(f["name"], int(f["n"]), -1, Land.CENTER, f["cls"])
+		for r in fam:
+			r["p"] = _plaza_point()
+			r["goal"] = "plaza"
+			_arrive(r)
+		waiting_fams.append({"name": f["name"], "members": fam.map(func(x): return x["id"])})
 	_assign_jobs()
 	_start_of_day(true)
 
@@ -128,10 +138,13 @@ func _clear(a: Vector2, b: Vector2) -> bool:
 
 # ---------- жители ----------
 
-func _make_family(name: String, n: int, home: int, at: Vector2) -> Array:
+func _make_family(name: String, n: int, home: int, at: Vector2, cls := "") -> Array:
 	var out := []
 	var house: Dictionary = city.buildings.get(home, {})
-	var cls: String = city.def(house)["cls"] if not house.is_empty() else "plebs"
+	if not house.is_empty():
+		cls = city.def(house)["cls"]
+	elif cls == "":
+		cls = "plebs"
 	for m in n:
 		var child := m >= 2 and rng.randf() < 0.6
 		var r := {"id": next_rid, "home": home, "fam": name, "female": m == 1 or (m > 1 and rng.randf() < 0.5), "child": child,
@@ -215,30 +228,35 @@ func _arrive(r: Dictionary) -> void:
 			if c:
 				c.play("Idle_Loop")
 		"settle":
+			# семья въезжает, как только первый из неё дошёл до двери (остальные подтянутся)
 			r["state"] = "home"
 			_hide(r)
 			var h: Dictionary = city.buildings.get(r["home"], {})
-			if not h.is_empty():
-				var fam := _fam_members(r["fam"], r["home"])
-				var all_in := true
-				for m in fam:
-					if m["state"] != "home":
-						all_in = false
-				if all_in and not h.has("_fam_" + str(r["fam"])):
-					h["_fam_" + str(r["fam"])] = true
-					h["coming"] = maxi(0, int(h.get("coming", 0)) - fam.size())
-					var took := city.settled(r["home"], fam.size(), r["fam"])
-					_float_text(city.door_point(h), "+ семья %s" % r["fam"])
-					# кому не хватило места — уходят ждать на площадь
-					for k in range(took, fam.size()):
-						var m: Dictionary = fam[k]
+			var nm := str(r["fam"])
+			if not h.is_empty() and not h.has("_fam_" + nm):
+				h["_fam_" + nm] = true
+				var fam := _fam_members(nm, r["home"])
+				var n := int(city.pending.get(nm, {}).get("n", fam.size()))
+				h["coming"] = maxi(0, int(h.get("coming", 0)) - n)
+				var took := city.settled(r["home"], n, nm)
+				_float_text(city.door_point(h), "+ семья %s" % nm)
+				# кому не хватило места — уходят ждать на площадь
+				if took < fam.size():
+					var extra: Array = fam.filter(func(x): return x != r)
+					extra = extra.slice(maxi(0, extra.size() - (fam.size() - took)))
+					for m: Dictionary in extra:
 						m["home"] = -1
-						m["p"] = city.door_point(h)
+						if m["state"] == "home":
+							m["p"] = city.door_point(h)
 						_go(m, _plaza_point(), "plaza")
-					if took < fam.size():
-						waiting_fams.append({"name": r["fam"], "members": fam.slice(took).map(func(x): return x["id"])})
+					waiting_fams.append({"name": nm, "members": extra.map(func(x): return x["id"])})
+					city.family_arrived({"name": nm, "n": extra.size(), "cls": h_cls(h)}, false)
 		"leave":
 			_remove(r)
+
+
+func h_cls(h: Dictionary) -> String:
+	return city.def(h)["cls"] if not h.is_empty() else "plebs"
 
 
 func _fam_members(name: String, home: int) -> Array:
@@ -495,7 +513,6 @@ func _process(dt: float) -> void:
 			_assign_jobs()
 		if speed > 0.0:
 			_schedule(dh)
-			_settle_waiting()
 	if speed <= 0.0:
 		for r in residents:
 			if r["node"] != null:
@@ -568,9 +585,21 @@ func _float_text(p: Vector2, text: String) -> void:
 
 # ---------- события города ----------
 
+func _on_rehomed(old: int, new: int) -> void:
+	var h: Dictionary = city.buildings.get(new, {})
+	for r in residents:
+		if int(r["home"]) == old:
+			r["home"] = new
+			if r["state"] == "home":
+				r["p"] = city.door_point(h)
+			elif r["state"] == "walk" and r["goal"] in ["home", "settle"]:
+				_go(r, city.door_point(h), r["goal"])
+	_jobs_dirty = true
+
+
 func _on_building_removed(b: Dictionary) -> void:
 	slots.erase(b["id"])
-	if city.def(b)["kind"] == "house":
+	if city.def(b)["kind"] == "house" and int(b["id"]) != city.moving_id:
 		# жильцы снесённого дома выходят и ждут нового жилья на площади
 		var fams := {}
 		for r in residents:
@@ -580,12 +609,13 @@ func _on_building_removed(b: Dictionary) -> void:
 				r["p"] = city.door_point(b) if r["state"] == "home" else r["p"]
 				_go(r, _plaza_point(), "plaza")
 		for f in fams:
-			waiting_fams.append({"name": f, "members": residents.filter(func(x): return x["fam"] == f and int(x["home"]) <= 0).map(func(x): return x["id"])})
+			var ids: Array = residents.filter(func(x): return x["fam"] == f and int(x["home"]) <= 0).map(func(x): return x["id"])
+			waiting_fams.append({"name": f, "members": ids})
+			city.family_arrived({"name": f, "n": ids.size(), "cls": city.def(b)["cls"]}, false)
 	for r in residents:
 		if r["job"] == b["id"]:
 			_quit_job(r)
 	_jobs_dirty = true
-	city.waiting = waiting_fams.size()
 
 
 func _on_family_left(home: int, name: String) -> void:
@@ -612,40 +642,22 @@ func _plaza_point() -> Vector2:
 	return base
 
 
-## Семьи на площади занимают освободившиеся дома
-func _settle_waiting() -> void:
-	if waiting_fams.is_empty():
+## Игрок выбрал семье дом: она идёт с площади к нему
+func _on_assigned(name: String, home: int) -> void:
+	var h: Dictionary = city.buildings.get(home, {})
+	if h.is_empty():
 		return
-	for f in waiting_fams.duplicate():
-		var members: Array = f["members"].filter(func(id): return by_id.has(id))
-		if members.is_empty():
-			waiting_fams.erase(f)
+	for wf in waiting_fams.duplicate():
+		if wf["name"] != name:
 			continue
-		var house := _free_house(members.size())
-		if house.is_empty():
-			continue
-		house["coming"] = int(house.get("coming", 0)) + members.size()
-		for id in members:
+		waiting_fams.erase(wf)
+		for id in wf["members"]:
+			if not by_id.has(id):
+				continue
 			var r: Dictionary = by_id[id]
-			r["home"] = house["id"]
-			r["cls"] = city.def(house)["cls"]
-			_go(r, city.door_point(house), "settle")
-		waiting_fams.erase(f)
-	city.waiting = waiting_fams.size()
-
-
-func _free_house(n: int) -> Dictionary:
-	var queued := {}
-	for q in city.settle_queue:
-		queued[q[0]] = int(queued.get(q[0], 0)) + int(q[1])
-	for id in city.buildings:
-		var b: Dictionary = city.buildings[id]
-		if not city.is_house(b):
-			continue
-		var room := city.house_cap(b) - int(b["pop"]) - int(b.get("coming", 0)) - int(queued.get(id, 0))
-		if room >= n:
-			return b
-	return {}
+			r["home"] = home
+			r["cls"] = h_cls(h)
+			_go(r, city.door_point(h), "settle")
 
 
 # ---------- повозка с переселенцами ----------
@@ -695,8 +707,7 @@ func _cart_step(dt: float) -> void:
 			c["t"] = float(c["t"]) - dt
 			if float(c["t"]) > 0.0 or city.center().is_empty():
 				return
-			var want_waiting := city.settle_queue.is_empty() and city.wants_waiting() and waiting_fams.size() < 3
-			if city.settle_queue.is_empty() and not want_waiting:
+			if city.incoming <= 0:
 				return
 			var to := _plaza_point()
 			c["path"] = _path(Land.TUNNEL + Vector2(0, 0.8), to)
@@ -704,24 +715,21 @@ func _cart_step(dt: float) -> void:
 				c["t"] = 4.0
 				return
 			c["load"] = []
-			if want_waiting:
-				c["load"].append([-1, rng.randi_range(2, 4)])
-			for k in 3:
-				if city.settle_queue.is_empty():
-					break
-				var q: Array = city.settle_queue.pop_front()
-				if city.buildings.has(q[0]):
-					var h: Dictionary = city.buildings[q[0]]
-					h["coming"] = int(h.get("coming", 0)) + int(q[1])
-					c["load"].append(q)
-			if c["load"].is_empty():
-				c["t"] = 3.0
-				return
+			var names := {}
+			for k in city.incoming:
+				var f := city.new_family(city.pick_class())
+				if names.has(f["name"]):
+					f = city.new_family(f["cls"])
+				names[f["name"]] = true
+				c["load"].append(f)
+			var heads := 0
+			for f in c["load"]:
+				heads += int(f["n"])
 			c["state"] = "in"
 			c["s"] = 0.0
 			n.visible = true
-			for r: Node3D in c["riders"]:
-				r.visible = true
+			for k in (c["riders"] as Array).size():
+				(c["riders"][k] as Node3D).visible = k < heads
 		"in", "out":
 			var path: PackedVector2Array = c["path"]
 			var total := _cart_path_len(path)
@@ -771,21 +779,18 @@ func _horse_anim(ap: AnimationPlayer, name: String) -> void:
 func _drop() -> void:
 	var n: Node3D = cart["n"]
 	var base := Vector2(n.position.x, n.position.z)
-	for q in cart["load"]:
-		var hid: int = q[0]
-		var name: String = Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()]
-		var fam := _make_family(name, int(q[1]), hid if city.buildings.has(hid) else -1, base)
+	for f in cart["load"]:
+		var fam := _make_family(f["name"], int(f["n"]), -1, base, f["cls"])
 		for r in fam:
 			r["p"] = _near_free(base + Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)))
 			if r["p"] == Vector2.INF:
 				r["p"] = base
 			_go(r, _plaza_point(), "plaza")
-		if hid < 0 or not city.buildings.has(hid):
-			waiting_fams.append({"name": name, "members": fam.map(func(x): return x["id"])})
+		waiting_fams.append({"name": f["name"], "members": fam.map(func(x): return x["id"])})
+		city.family_arrived(f)
 	cart["load"] = []
 	for r: Node3D in cart["riders"]:
 		r.visible = false
-	city.waiting = waiting_fams.size()
 	_jobs_dirty = true
 
 

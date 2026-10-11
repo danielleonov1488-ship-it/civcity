@@ -78,11 +78,72 @@ static func _special_mesh(name: String) -> Mesh:
 			var am := _bird_mesh(name == "#swan")
 			_special[name] = am
 			return am
+		"#lamp_post", "#wall_lamp":
+			var lm := _lamp_mesh(name == "#wall_lamp")
+			_special[name] = lm
+			return lm
 		_:
 			m.albedo_color = Color.MAGENTA
 	bm.material = m
 	_special[name] = bm
 	return bm
+
+
+## Римский фонарь: бронзовый корпус, тёплые стёкла (светятся ночью вместе с окнами домов)
+static func _lamp_mesh(wall: bool) -> Mesh:
+	var k := Kit.new()
+	var glass := Kit.new()
+	var wood := Color("5a3b22")
+	var bronze := Color("9a6a2c")
+	var stone := Color("cfc3ad")
+	var lx := 0.0
+	var ly := 0.0
+	var lz := 0.0
+	if wall:
+		# кронштейн из стены и фонарь на цепочке
+		k.boxc(Vector3(0, 0.0, 0.03), Vector3(0.12, 0.2, 0.06), bronze)
+		k.rod(Vector3(0, 0.0, 0.05), Vector3(0, 0.0, 0.42), 0.018, 5, bronze)
+		k.rod(Vector3(0, 0.0, 0.42), Vector3(0, -0.12, 0.42), 0.008, 4, Color("3a2a1a"))
+		lx = 0.0
+		ly = -0.2
+		lz = 0.42
+	else:
+		k.boxc(Vector3(0, 0.15, 0), Vector3(0.34, 0.3, 0.34), stone, [])
+		k.cyl(Vector3(0, 0.3, 0), 0.07, 2.0, 6, wood)
+		k.rod(Vector3(0, 2.25, 0), Vector3(0.45, 2.25, 0), 0.03, 5, wood)
+		k.rod(Vector3(0.42, 2.25, 0), Vector3(0.42, 2.17, 0), 0.008, 4, Color("3a2a1a"))
+		k.cone(Vector3(0, 2.3, 0), 0.06, 0.12, 6, bronze)
+		lx = 0.42
+		ly = 2.07
+		lz = 0.0
+	# корпус фонаря: крышка, рамка, донце
+	k.cone(Vector3(lx, ly + 0.1, lz), 0.13, 0.12, 4, bronze)
+	k.boxc(Vector3(lx, ly - 0.12, lz), Vector3(0.2, 0.03, 0.2), bronze, [])
+	for c: Vector2 in [Vector2(-0.085, -0.085), Vector2(0.085, -0.085), Vector2(-0.085, 0.085), Vector2(0.085, 0.085)]:
+		k.boxc(Vector3(lx + c.x, ly - 0.01, lz + c.y), Vector3(0.025, 0.2, 0.025), bronze, [])
+	glass.boxc(Vector3(lx, ly - 0.01, lz), Vector3(0.16, 0.18, 0.16), Color("ffd48a"), [])
+	var m := k.mesh()
+	m.surface_set_material(0, Kit.material(0.6))
+	var g := glass.mesh()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, g.surface_get_arrays(0))
+	m.surface_set_material(1, _glass_material())
+	return m
+
+
+static var _glass: StandardMaterial3D
+
+
+## Стекло фонарей: днём просто тёплое, ночью светится (яркость меняет игра вместе с окнами)
+static func _glass_material() -> StandardMaterial3D:
+	if _glass == null:
+		_glass = StandardMaterial3D.new()
+		_glass.albedo_color = Color("f3d49a")
+		_glass.vertex_color_use_as_albedo = false
+		_glass.emission_enabled = true
+		_glass.emission = Color("ffb35c")
+		_glass.emission_energy_multiplier = 0.0
+		_glass.roughness = 0.3
+	return _glass
 
 
 ## Утка и лебедь на воде — низкополигональные, в духе Synty
