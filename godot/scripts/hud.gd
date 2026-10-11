@@ -659,8 +659,7 @@ func toast(text: String, kind := "") -> void:
 		var last := toast_box.get_child(toast_box.get_child_count() - 1)
 		if last.has_meta("goal") and last.modulate.a > 0.5:
 			var ll: Label = last.get_child(0)
-			ll.text += "
-" + text
+			ll.text += "\n" + text
 			return
 	var p := PanelContainer.new()
 	if kind == "goal":
