@@ -234,6 +234,8 @@ func _set_hour(h: float) -> void:
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color.darkened(0.1)
 	env.ambient_light_energy = 0.25 if night else 0.6
 	env.fog_light_color = Color("39436a") if night else warm.lerp(Color("dcc9ac"), 0.6)
+	# дым ночью не светится белым — гаснет вместе с небом
+	(_puff_quad().material as StandardMaterial3D).albedo_color = Color(0.3, 0.33, 0.43) if night else Color(1, 1, 1).lerp(Color(1.0, 0.82, 0.66), clampf(dusk, 0.0, 1.0) * 0.6)
 	var lit := night or hour < 6.4 or hour > 18.9
 	for l in night_lights:
 		l.visible = lit
