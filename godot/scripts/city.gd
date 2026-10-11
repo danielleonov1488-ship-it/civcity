@@ -11,6 +11,7 @@ signal building_added(b)
 signal building_removed(b)
 signal house_changed(b, up)
 signal event(text, icon)             # событие для колокольчика и всплывашки справа
+signal family_left(home, name)       # семья уехала из дома (жители уходят в тоннель)
 
 var land: Land
 var money := float(Defs.START_MONEY)
@@ -26,6 +27,7 @@ var settle_queue: Array = []          # [id дома, сколько челов�
 var waiting := 0                      # семьи на станции, которым не хватило жилья
 var goals_done: Array = []
 var events: Array = []                # [{day, text, icon}]
+var road_cells := 0                   # сколько клеток дорог проложил игрок
 var rng := RandomNumberGenerator.new()
 
 
@@ -131,10 +133,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 		if o != 0 and o != ignore_id:
 			res["err"] = "Место занято"
 			return res
-		if land.kind[k] == Land.Kind.ROCK and not d.get("water", false):
-			res["err"] = "Здесь скалы"
-			return res
-		var y := land.h[k]
+		var y := land.hq(k)
 		if y < Land.WATER_Y + 0.05:
 			on_water += 1
 		lo = minf(lo, y)
@@ -399,10 +398,10 @@ func _store_near(s: Dictionary, stores: Array) -> bool:
 	return false
 
 
-# ---------- день ----------
+# ---------- час ----------
 
+## Раз в игровой час: налоги, очки исследований, рост домов, переселенцы, уровень города
 func sim_day() -> void:
-	day += 1
 	compute()
 	var income := 0.0
 	var upkeep := 0.0
@@ -421,7 +420,7 @@ func sim_day() -> void:
 			"rp":
 				rpd += float(d["rp"]) * float(b["staff"])
 			"shop", "monument", "store", "farm":
-				upkeep += float(d["cost"]) * 0.0015
+				upkeep += float(d["cost"]) * 0.0035
 	money = minf(money_cap(), money + income - upkeep)
 	rp = minf(rp_cap(), rp + rpd)
 	stats["income"] = income
@@ -463,7 +462,9 @@ func _grow_house(b: Dictionary) -> void:
 			if not fams.is_empty():
 				var f: Dictionary = fams.pop_back()
 				b["pop"] = maxi(0, int(b["pop"]) - int(f["n"]))
+				b.erase("_fam_" + str(f["name"]))
 				_event("Семья %s уехала: им плохо живётся" % f["name"], "person")
+				family_left.emit(b["id"], f["name"])
 				house_changed.emit(b, false)
 	else:
 		b["down"] = 0
@@ -480,40 +481,48 @@ func _request_settlers() -> void:
 	for q in settle_queue:
 		queued[q[0]] = int(queued.get(q[0], 0)) + int(q[1])
 	var city_ok := int(stats["pop"]) < 12 or int(stats["happy"]) >= 45
-	var free_total := 0
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		if not is_house(b):
 			continue
 		var free := house_cap(b) - int(b["pop"]) - int(queued.get(id, 0)) - int(b.get("coming", 0))
-		free_total += maxi(0, free)
 		if free <= 0 or not city_ok:
 			continue
+		if waiting > 0:
+			continue                          # сначала заселятся те, кто ждёт на площади
 		if rng.randf() < 0.75:
 			var n := mini(free, rng.randi_range(2, 4))
 			settle_queue.append([id, n])
-	# семьи, которым не хватило жилья, ждут на станции (как значок над вокзалом в Town to City)
-	if city_ok and free_total == 0 and int(stats["happy"]) >= 55:
-		waiting = mini(8, waiting + 1)
-	elif free_total > 0:
-		waiting = maxi(0, waiting - 1)
 
 
-## Семья доехала до дома
-func settled(id: int, n: int) -> void:
+## Привезти семью, которой пока негде жить (будет ждать на площади, как у вокзала в Town to City)
+func wants_waiting() -> bool:
+	if int(stats["pop"]) < 10 or int(stats["happy"]) < 55:
+		return false
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if is_house(b) and house_cap(b) - int(b["pop"]) - int(b.get("coming", 0)) > 0:
+			return false
+	return rng.randf() < 0.01
+
+
+## Семья дошла до дома
+func settled(id: int, n: int, name := "") -> int:
 	if not buildings.has(id):
-		return
+		return 0
 	var b: Dictionary = buildings[id]
 	var room := house_cap(b) - int(b["pop"])
 	n = mini(n, room)
 	if n <= 0:
-		return
-	var name: String = Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()]
+		return 0
+	if name == "":
+		name = Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()]
 	(b["families"] as Array).append({"name": name, "n": n})
 	b["pop"] = int(b["pop"]) + n
 	compute()
 	house_changed.emit(b, false)
 	changed.emit()
+	return n
 
 
 func _update_level() -> void:
@@ -599,16 +608,18 @@ func buy_plot(p: Vector2i) -> bool:
 # ---------- задания ----------
 
 const GOALS := [
-	{"id": "houses3", "text": "Постройте 3 дома у дороги", "need": 3, "money": 150, "rp": 20, "tool": "house_pleb",
+	{"id": "road1", "text": "Проложите мостовую от станции", "need": 40, "money": 100, "rp": 10, "icon": "road",
+		"hint": "Выберите «Мостовую» слева внизу и ведите кисть с зажатой левой кнопкой мыши от площади у станции."},
+	{"id": "houses3", "text": "Постройте 3 дома у дороги", "need": 3, "money": 150, "rp": 20, "tool": "house_pleb", "icon": "housing",
 		"hint": "Дом ставится фасадом к дороге. Повозка привезёт семьи из тоннеля."},
-	{"id": "fruit", "text": "Поставьте фруктовую лавку", "need": 1, "money": 100, "rp": 20, "tool": "stall_fruit",
+	{"id": "fruit", "text": "Поставьте фруктовую лавку", "need": 1, "money": 100, "rp": 20, "tool": "stall_fruit", "icon": "food",
 		"hint": "Лавка кормит ближайшие дома в своей дальности. Чем больше разных лавок рядом, тем счастливее дом."},
-	{"id": "scriptorium", "text": "Постройте скрипторий", "need": 1, "money": 100, "rp": 30, "tool": "scriptorium",
+	{"id": "scriptorium", "text": "Постройте скрипторий", "need": 1, "money": 100, "rp": 30, "tool": "scriptorium", "icon": "quill",
 		"hint": "Скрипторий даёт очки исследований — за них открываются новые постройки."},
 	{"id": "pop30", "text": "Соберите 30 жителей", "need": 30, "money": 200, "rp": 40},
-	{"id": "research1", "text": "Изучите что-нибудь", "need": 1, "money": 150, "rp": 0,
-		"hint": "Откройте меню исследований (свиток вверху справа)."},
-	{"id": "decor5", "text": "Поставьте 5 украшений", "need": 5, "money": 120, "rp": 20,
+	{"id": "research1", "text": "Изучите что-нибудь", "need": 1, "money": 150, "rp": 0, "icon": "research",
+		"hint": "Нажмите на свиток вверху справа — откроется меню исследований. Очки исследований дают скрипторий, школа и библиотека."},
+	{"id": "decor5", "text": "Поставьте 5 украшений", "need": 5, "money": 120, "rp": 20, "icon": "flower",
 		"hint": "Украшения дают дому очки красоты — до +30% счастья."},
 	{"id": "floor2", "text": "Дорастите дом до 2 этажей", "need": 1, "money": 250, "rp": 40,
 		"hint": "Изучите «Второй жилой этаж». Довольный полный дом надстроит его сам."},
@@ -632,6 +643,7 @@ func _count(pred: Callable) -> int:
 
 func goal_progress(id: String) -> int:
 	match id:
+		"road1": return road_cells
 		"houses3": return _count(func(b): return is_house(b))
 		"fruit": return _count(func(b): return b["type"] == "stall_fruit")
 		"scriptorium": return _count(func(b): return b["type"] == "scriptorium")
@@ -682,7 +694,7 @@ func save_data() -> Dictionary:
 			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"],
 			"cells": Marshalls.raw_to_base64((b["cells"] as PackedInt32Array).to_byte_array())})
 	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
-		"goals": goals_done, "waiting": waiting, "events": events}
+		"goals": goals_done, "waiting": waiting, "events": events, "road_cells": road_cells}
 
 
 func load_data(d: Dictionary) -> void:
@@ -695,6 +707,7 @@ func load_data(d: Dictionary) -> void:
 		research[r] = true
 	goals_done = d.get("goals", [])
 	waiting = int(d.get("waiting", 0))
+	road_cells = int(d.get("road_cells", 0))
 	events = d.get("events", [])
 	next_id = int(d.get("next_id", 1))
 	buildings = {}

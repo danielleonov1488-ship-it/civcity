@@ -24,7 +24,7 @@ func shot(name: String) -> void:
 		if c.is_house(b):
 			tiers[b["type"] + str(b["tier"])] = int(tiers.get(b["type"] + str(b["tier"]), 0)) + 1
 	print("SHOT ", name, " day=", c.day, " pop=", c.stats["pop"], " happy=", c.stats["happy"], " money=", int(c.money), " rp=", int(c.rp), " lvl=", c.level,
-		" walkers=", game.people.walkers.size(), " queue=", c.settle_queue.size(), " houses=", tiers, " fps=", Engine.get_frames_per_second(), " parts=", game.parts.count())
+		" people=", game.people.residents.size(), " vis=", game.people.visible_count, " wait=", game.people.waiting_fams.size(), " queue=", c.settle_queue.size(), " houses=", tiers, " fps=", Engine.get_frames_per_second(), " parts=", game.parts.count())
 
 
 func try_place(type: String, near: Vector2, r: float, variant := -1) -> Dictionary:
@@ -57,18 +57,18 @@ func _process(dt: float) -> void:
 		game.rig.set_view(n.position, rad_to_deg(n.rotation.y) + 70, 40, 10)
 		await get_tree().create_timer(0.5).timeout
 		shot("q_cart.png")
-		game.rig.set_view(Vector3(128, 2, 70), 15, 44, 46)
+		game.rig.set_view(Vector3(192, 2, 138), 15, 44, 46)
 		game.speed = keep
 	match step:
 		0:
 			if t > 1.0:
 				game.city.money = 6000
-				road(Vector2(128, 70), Vector2(128, 92))
-				road(Vector2(108, 76), Vector2(150, 76))
-				road(Vector2(108, 88), Vector2(150, 88))
+				road(Vector2(192, 128), Vector2(192, 152))
+				road(Vector2(172, 136), Vector2(214, 136))
+				road(Vector2(172, 148), Vector2(214, 148))
 				var n := 0
-				for z in range(66, 94, 2):
-					for x in range(106, 152, 2):
+				for z in range(128, 156, 2):
+					for x in range(170, 216, 2):
 						if n >= 18:
 							break
 						var p := Vector2(x, z)
@@ -77,12 +77,12 @@ func _process(dt: float) -> void:
 							game.city.place("house_pleb", pl["pos"], pl["yaw"], pl["variant"], pl["color"])
 							n += 1
 				print("houses ", n)
-				try_place("stall_fruit", Vector2(124, 81), 5)
-				try_place("stall_veg", Vector2(134, 81), 5)
-				try_place("scriptorium", Vector2(140, 72), 5)
-				try_place("musicians", Vector2(118, 82), 5)
+				try_place("stall_fruit", Vector2(188, 141), 5)
+				try_place("stall_veg", Vector2(198, 141), 5)
+				try_place("scriptorium", Vector2(206, 131), 6)
+				try_place("musicians", Vector2(182, 142), 5)
 				game.city.research["stall_veg"] = true
-				game.rig.set_view(Vector3(128, 2, 80), 15, 46, 46)
+				game.rig.set_view(Vector3(192, 2, 142), 15, 46, 46)
 				game.speed = 6.0
 				step = 1
 				t = 0.0
@@ -92,22 +92,22 @@ func _process(dt: float) -> void:
 				step = 2
 				t = 0.0
 		2:
-			if t > 40.0:
+			if t > 60.0:
 				shot("q2_settled.png")
 				var c: City = game.city
 				c.rp = 600
 				for r in ["floor2", "farm", "warehouse", "butcher", "weaver", "deco_flowers"]:
 					c.research[r] = true
 				c.level = 1
-				try_place("warehouse", Vector2(116, 94), 6)
-				try_place("butcher", Vector2(140, 92), 6)
-				try_place("weaver", Vector2(118, 92), 6)
+				try_place("warehouse", Vector2(180, 156), 6)
+				try_place("butcher", Vector2(204, 154), 6)
+				try_place("weaver", Vector2(182, 154), 6)
 				for k in 8:
-					try_place("flowers", Vector2(112 + k * 4, 84), 2)
+					try_place("flowers", Vector2(176 + k * 4, 146), 2)
 				step = 3
 				t = 0.0
 		3:
-			if t > 45.0:
+			if t > 70.0:
 				shot("q3_grown.png")
 				var c: City = game.city
 				for id in c.buildings:
@@ -144,7 +144,7 @@ func _process(dt: float) -> void:
 			if t > 2.0:
 				shot("q5_research.png")
 				game.hud._toggle(game.hud.research_panel)
-				game.rig.set_view(Vector3(128, 2, 80), 25, 52, 40)
+				game.rig.set_view(Vector3(192, 2, 142), 25, 52, 40)
 				step = 6
 				t = 0.0
 		6:

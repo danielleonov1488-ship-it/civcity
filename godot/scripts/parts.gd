@@ -58,6 +58,13 @@ static func _special_mesh(name: String) -> Mesh:
 		"#dark":
 			m.albedo_color = Color("2a2019")
 			m.roughness = 1.0
+		"#lit":
+			# жилой дом изнутри: ночью окна светятся тёплым светом
+			m.albedo_color = Color("2e2218")
+			m.roughness = 1.0
+			m.emission_enabled = true
+			m.emission = Color("ffb35c")
+			m.emission_energy_multiplier = 0.0
 		"#marble":
 			m = Synty.material("Marble_01").duplicate()
 			m.uv1_triplanar = true
@@ -132,10 +139,10 @@ func _alloc(g: Dictionary) -> int:
 
 
 ## Поставить чертёж; xf — где стоит постройка. Возвращает ручку [[группа, место], …]
-func place(bp: Bp, xf: Transform3D) -> Array:
+func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 	var handles := []
 	for p in bp.parts:
-		var g := _group(p[0], p[2])
+		var g := _group(subst.get(p[0], p[0]), p[2])
 		var slot := _alloc(g)
 		var t: Transform3D = xf * (p[1] as Transform3D)
 		for sub in g["subs"]:

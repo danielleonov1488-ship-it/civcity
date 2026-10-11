@@ -7,6 +7,7 @@ extends Node3D
 ## Запуск: без параметров — меню; -- --new | --play | --demo; снимок: --shot=путь.png --view=x,z,yaw,pitch,dist --hour=8
 
 static var boot := {}                 # с чем перезапуститься: {"menu"|"play"|"new"|"demo": "1"}
+const DAY_LEN := 360.0                # сутки — 6 минут при обычной скорости (час — 15 секунд)
 
 var land: Land
 var city: City
@@ -39,7 +40,13 @@ var shot_path := ""
 var shot_frame := 200
 var frame := 0
 var autosave_t := 0.0
-var settings := {"fullscreen": false, "quality": "high", "ui_scale": 1.0, "autosave": true}
+var settings := {"fullscreen": false, "quality": "high", "ui_scale": 1.0, "autosave": true, "music": 0.55, "sfx": 0.7}
+var sound: Sound
+var place_color := -1                 # цвет будущей постройки (не меняется, пока курсор рядом)
+var place_color_pos := Vector2.INF
+var last_snap_n := Vector2.ZERO       # куда смотрел фасад в прошлый раз — чтобы дом не дёргался
+var moving_nature := {}               # переносимое дерево или камень
+var hover_nature := {}
 var _autogo := ""
 var loading: CanvasLayer
 var ready_done := false
@@ -103,6 +110,9 @@ func _ready() -> void:
 		clock_hours = false
 	can_save = shot_path == "" and (mode == "play" or mode == "new")
 	_load_settings()
+	sound = Sound.new()
+	sound.game = self
+	add_child(sound)
 	_environment()
 	_grading()
 	_loading_show()
@@ -124,6 +134,7 @@ func _ready() -> void:
 	land_mat.set_shader_parameter("tile_plaza_d", tex.call("Floor_Tiles_02"))
 	await _step("Вода и тоннель", 0.15)
 	_water()
+	_horizon()
 	_tunnel()
 	var birds := Birds.new()
 	birds.center = Vector3(Land.START.x, 0, Land.START.y)
@@ -164,13 +175,11 @@ func _ready() -> void:
 		if built % 16 == 0:
 			await _step("Рисуем землю", 0.4 + 0.45 * built / total)
 	await _step("Жители", 0.9)
-	people.setup(land, city)
-	if int(city.stats["pop"]) > 0:
-		people.prespawn(mini(46, int(city.stats["pop"]) / 6))
+	people.setup(land, city, self)
 	rig = CameraRig.new()
 	add_child(rig)
 	rig.land = land
-	var v := str(args.get("view", "128,60,15,42,58")).split(",")
+	var v := str(args.get("view", "192,124,15,42,60")).split(",")
 	rig.set_view(Vector3(float(v[0]), Land.BASE_Y, float(v[1])), float(v[2]), float(v[3]), float(v[4]))
 	_make_markers()
 	hud = Hud.new()
@@ -190,7 +199,7 @@ func _ready() -> void:
 	if mode == "menu":
 		hud.show_menu(FileAccess.file_exists(save_path()))
 		if not args.has("view"):
-			rig.set_view(Vector3(130, Land.BASE_Y, 92), 22, 30, 70)
+			rig.set_view(Vector3(194, Land.BASE_Y, 158), 22, 30, 70)
 	elif mode == "demo" and shot_path == "":
 		hud.notify("Готовый город: стройте сколько угодно — он не сохраняется", "info")
 	elif not loaded and shot_path == "":
@@ -367,10 +376,10 @@ func _environment() -> void:
 	env.glow_bloom = 0.08
 	env.glow_hdr_threshold = 1.05
 	env.fog_enabled = true
-	env.fog_light_color = Color("e2c9a2")
+	env.fog_light_color = Color("e6e2d2")
 	env.fog_density = 0.0011
 	env.fog_aerial_perspective = 0.35
-	env.fog_sky_affect = 0.25
+	env.fog_sky_affect = 0.55
 	env.adjustment_enabled = true
 	env.adjustment_saturation = 1.18
 	env.adjustment_contrast = 1.12
@@ -430,9 +439,13 @@ func _set_hour(h: float) -> void:
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color.darkened(0.1)
 	env.ambient_light_energy = 0.28 if night else 0.62
 	env.ambient_light_color = Color("6f7fb8") if night else Color.WHITE
-	env.fog_light_color = Color("3c4672") if night else warm.lerp(Color("e2c9a2"), 0.6)
+	env.fog_light_color = Color("3c4672") if night else warm.lerp(Color("e3e6dc"), 0.75)
 	(_puff_quad().material as StandardMaterial3D).albedo_color = Color(0.3, 0.33, 0.43) if night else Color(1, 1, 1).lerp(Color(1.0, 0.82, 0.66), clampf(dusk, 0.0, 1.0) * 0.6)
 	var lit := night or hour < 6.6 or hour > 18.7
+	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
+	if lm:
+		var k := smoothstep(18.3, 19.8, hour) + (1.0 - smoothstep(5.2, 6.8, hour))
+		lm.emission_energy_multiplier = clampf(k, 0.0, 1.0) * (0.25 if hour > 22.5 or hour < 5.0 else 1.6)
 	for l in night_lights:
 		l.visible = lit
 		l.light_energy = 2.4 if night else 1.1
@@ -469,55 +482,161 @@ func _water() -> void:
 		add_child(far)
 
 
-## Тоннель в горе: каменный портал с аркой, тёмный проём, скалы вокруг, жаровни и знамя
+## Тоннель в холме: каменный портал, тёмный проём, скалы по бокам и на холме над входом (не перед ним)
 func _tunnel() -> void:
 	var g := Land.TUNNEL
 	var y := land.height_at(g.x, g.y + 1.5)
 	var xf := Transform3D(Basis.IDENTITY, Vector3(g.x, y, g.y))
 	var bp := Bp.new(3)
-	bp.add("SM_Bld_Door_Monument_01", Vector3(-2.5, 0, -0.3), 0.0, 0.9)
-	bp.parts.append(["#dark", Transform3D(Basis.IDENTITY.scaled(Vector3(4.0, 5.4, 5.0)), Vector3(0, 2.7, -2.8)), {}])
+	# портал с распахнутыми створками — повозки выезжают из темноты тоннеля
+	var portal := Synty.make("SM_Bld_Door_Monument_01")
+	portal.transform = xf * Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * 0.9), Vector3(-2.5, 0, -0.3))
+	add_child(portal)
+	for mi: MeshInstance3D in portal.find_children("*Door_*", "MeshInstance3D", true, false):
+		mi.rotate_y(deg_to_rad(-105.0) if String(mi.name).ends_with("_L") else deg_to_rad(105.0))
+	bp.parts.append(["#dark", Transform3D(Basis.IDENTITY.scaled(Vector3(4.0, 5.4, 6.0)), Vector3(0, 2.7, -3.6)), {}])
 	for x: float in [-3.9, 3.9]:
 		bp.add("SM_Bld_Pillar_Large_02", Vector3(x, 0, 0.2), 0.0, 1.0)
 		bp.add("SM_Env_Ivy_Pillar_Flowers_04", Vector3(x, 0, 0.2), randf() * TAU, 1.0)
 		bp.brazier(Vector3(x * 1.3, 0, 1.4), true)
 	bp.add("SM_Prop_Banner_03_A", Vector3(0, 6.9, 0.3), 0.0, 1.0)
-	# скалы, в которые врезан портал
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 9
-	for k in 11:
-		var a := -PI * 0.5 + k * PI / 10.0
-		var p := Vector3(sin(a) * rng.randf_range(7.0, 9.0), rng.randf_range(-0.6, 1.5) + absf(cos(a)) * 3.0, -absf(cos(a)) * 5.0 - 3.0)
-		var sc := rng.randf_range(0.45, 0.65)
-		bp.add_xf("SM_Env_Rock_Cliff_Layers_01", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * 0.9, sc)), p))
-	for k in 3:
-		bp.add_xf("SM_Env_Rock_Cliff_Layers_02", Transform3D(Basis(Vector3.UP, k * 2.1).scaled(Vector3.ONE * 0.9), Vector3(-2.5 + k * 2.5, 6.2, -4.5)))
-	for x: float in [-6.0, 6.0]:
-		bp.add("SM_Env_Bush_Cluster_0%d" % (1 + rng.randi() % 5), Vector3(x, 0, 1.6), rng.randf() * TAU, 0.8)
+	for side: float in [-1.0, 1.0]:
+		for k in 3:
+			var p := Vector3(side * rng.randf_range(6.8, 9.5), 0.0, -rng.randf_range(1.0, 4.0) - k * 1.5)
+			p.y = land.height_at(g.x + p.x, g.y + p.z) - y - 0.6
+			var sc := rng.randf_range(0.6, 0.84)
+			bp.parts.append(["SM_Env_Rock_Cliff_Layers_02", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * 0.9, sc)), p), {"tint": Color(0.86, 0.8, 0.7)}])
+		bp.add("SM_Env_Bush_Cluster_0%d" % (1 + rng.randi() % 5), Vector3(side * 6.2, 0, 1.6), rng.randf() * TAU, 0.8)
+	# камни и деревья на верху холма
+	for k in 7:
+		var a := rng.randf() * TAU
+		var r := rng.randf_range(3.0, 12.0)
+		var q := Land.HILL + Vector2(cos(a), sin(a) * 0.8) * r
+		if q.y > g.y - 4.0:
+			continue
+		var p := Vector3(q.x - g.x, land.height_at(q.x, q.y) - y - 0.2, q.y - g.y)
+		if rng.randf() < 0.5:
+			bp.add("SM_Env_Rock_Cliff_02", p, rng.randf() * TAU, rng.randf_range(0.5, 0.9))
+		else:
+			bp.add("SM_Env_Tree_0%d" % (1 + rng.randi() % 4), p, rng.randf() * TAU, rng.randf_range(0.45, 0.6))
 	parts.place(bp, xf)
 	for lp in bp.lights:
 		_light(xf * lp)
 
 
-## Скалы на крутых склонах горы и холмов (вместо голых стенок уступов)
+## Пейзаж до горизонта: за краем карты — холмы, луга и леса (низкодетально, без теней)
+func _horizon() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var step := 32.0
+	var R := 1600.0
+	var n := int(R * 2.0 / step)
+	var fn := FastNoiseLite.new()
+	fn.seed = 3
+	fn.frequency = 0.004
+	fn.fractal_octaves = 3
+	var fz := FastNoiseLite.new()
+	fz.seed = 8
+	fz.frequency = 0.012
+	var S := Land.SIZE
+	var hgt := func(x: float, z: float) -> float:
+		if x > 0.5 and z > 0.5 and x < S - 0.5 and z < S - 0.5:
+			return Land.WATER_Y - 6.0
+		var dx := maxf(maxf(-x, x - S), 0.0)
+		var dz := maxf(maxf(-z, z - S), 0.0)
+		var d := sqrt(dx * dx + dz * dz)
+		return Land.EDGE_Y + smoothstep(0.0, 260.0, d) * (6.0 + fn.get_noise_2d(x, z) * 26.0) + smoothstep(500.0, 1400.0, d) * 60.0
+	var col := func(x: float, z: float, y: float) -> Color:
+		var f := fz.get_noise_2d(x, z)
+		var c := Color("7fa23e").lerp(Color("4e7a34"), clampf(f * 1.6 + 0.3, 0.0, 1.0))
+		return c.lerp(Color("b9b38a"), smoothstep(40.0, 80.0, y))
+	var x0 := S / 2.0 - R
+	for j in n:
+		for i in n:
+			var xa := x0 + i * step
+			var za := x0 + j * step
+			var pts: Array[Vector3] = [Vector3(xa, 0, za), Vector3(xa + step, 0, za), Vector3(xa + step, 0, za + step), Vector3(xa, 0, za + step)]
+			var all_in := true
+			for k in 4:
+				pts[k].y = hgt.call(pts[k].x, pts[k].z)
+				if pts[k].y > Land.WATER_Y:
+					all_in = false
+			if all_in:
+				continue
+			for tri: Array in [[0, 2, 1], [0, 3, 2]]:
+				var a: Vector3 = pts[tri[0]]
+				var b: Vector3 = pts[tri[1]]
+				var c: Vector3 = pts[tri[2]]
+				var nrm := (c - a).cross(b - a).normalized()
+				var cc: Color = col.call((a.x + b.x + c.x) / 3.0, (a.z + b.z + c.z) / 3.0, (a.y + b.y + c.y) / 3.0)
+				for v: Vector3 in [a, b, c]:
+					st.set_normal(nrm)
+					st.set_color(cc)
+					st.add_vertex(v)
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.roughness = 1.0
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	# дальние леса: деревья пятнами вокруг карты
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4
+	var trees := {}
+	for k in 9000:
+		var a := rng.randf() * TAU
+		var d := rng.randf_range(8.0, 520.0)
+		var p := Vector2(S / 2.0, S / 2.0) + Vector2(cos(a), sin(a)) * (S * 0.72 + d)
+		if p.x > 0 and p.y > 0 and p.x < S and p.y < S:
+			continue
+		if fz.get_noise_2d(p.x, p.y) < 0.05 and rng.randf() < 0.85:
+			continue
+		var nm := ("SM_Env_Tree_0%d" % (1 + rng.randi() % 4)) if rng.randf() < 0.7 else ("SM_Env_Tree_Thin_0%d" % (1 + rng.randi() % 2))
+		var y: float = hgt.call(p.x, p.y)
+		if not trees.has(nm):
+			trees[nm] = []
+		trees[nm].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.45, 0.8)), Vector3(p.x, y - 0.3, p.y)))
+	for nm in trees:
+		var src := Synty.make(nm, {"tint": Synty.GREEN})
+		for smi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
+			var mesh := smi.mesh.duplicate() as Mesh
+			for si in mesh.get_surface_count():
+				var sm := smi.get_surface_override_material(si)
+				if sm:
+					mesh.surface_set_material(si, sm)
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = mesh
+			var list: Array = trees[nm]
+			mm.instance_count = list.size()
+			var local := Citizen._rel(smi, src)
+			for k in list.size():
+				mm.set_instance_transform(k, (list[k] as Transform3D) * local)
+			var mmi := MultiMeshInstance3D.new()
+			mmi.multimesh = mm
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(mmi)
+		src.free()
+
+
+## Скалы на крутых склонах (вместо голых стенок уступов)
 func _cliff_rocks() -> void:
 	var bp := Bp.new(17)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5
-	for n in 2600:
+	for n in 3000:
 		var x := rng.randf_range(2.0, Land.SIZE - 2.0)
 		var z := rng.randf_range(2.0, Land.SIZE - 2.0)
 		var c := land.cell(Vector2(x, z))
-		if land.kind[land.idx(c.x, c.y)] != Land.Kind.ROCK:
-			continue
-		if Vector2(x, z).distance_to(Land.TUNNEL) < 9.0:
+		var k := land.idx(c.x, c.y)
+		if land.occ[k] != 0 or not land.is_rock(k) or Vector2(x, z).distance_to(Land.TUNNEL) < 10.0:
 			continue
 		var y := land.height_at(x, z)
-		if rng.randf() < 0.5:
-			var sc := rng.randf_range(0.25, 0.42)
-			bp.add_xf("SM_Env_Rock_Cliff_Layers_02", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc, sc)), Vector3(x, y - 0.8, z)))
-		else:
-			bp.add("SM_Env_Rock_Cliff_02", Vector3(x, y - 0.3, z), rng.randf() * TAU, rng.randf_range(0.3, 0.6))
+		bp.add("SM_Env_Rock_Cliff_02", Vector3(x, y - 0.3, z), rng.randf() * TAU, rng.randf_range(0.3, 0.55))
 	parts.place(bp, Transform3D.IDENTITY)
 
 
@@ -533,67 +652,66 @@ func _light(at: Vector3) -> OmniLight3D:
 	return l
 
 
-## Леса пятнами, луга с цветами и травой, кусты; у стартовых участков — реже
+## Рощи пятнами, луга с цветами и травой, кусты. Каждое дерево и камень — отдельные: их можно снести или перенести
 func _nature() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5
 	var fn := FastNoiseLite.new()
 	fn.seed = 77
-	fn.frequency = 0.022
-	for n in 60000:
+	fn.frequency = 0.02
+	for n in 52000:
 		var x := rng.randf_range(1.0, Land.SIZE - 1.0)
 		var z := rng.randf_range(1.0, Land.SIZE - 1.0)
 		var p := Vector2(x, z)
 		var c := land.cell(p)
 		var k := land.idx(c.x, c.y)
-		var kd := land.kind[k]
-		if kd != Land.Kind.GRASS or land.occ[k] != 0:
+		if land.kind[k] != Land.Kind.GRASS or land.occ[k] != 0 or land.is_water(p):
 			continue
 		var near_b := false
-		for o: Vector2 in [Vector2(3.5, 0), Vector2(-3.5, 0), Vector2(0, 3.5), Vector2(0, -3.5)]:
+		for o: Vector2 in [Vector2(3.0, 0), Vector2(-3.0, 0), Vector2(0, 3.0), Vector2(0, -3.0)]:
 			if land.occ_at(p + o) != 0 or land.is_road(p + o):
 				near_b = true
 		if near_b:
 			continue
-		if p.distance_to(Land.CENTER) < 12.0 or (absf(x - Land.TUNNEL.x) < 6.0 and z < 72.0 and z > 25.0):
+		if p.distance_to(Land.CENTER) < 14.0 or (absf(x - Land.TUNNEL.x) < 7.0 and z > Land.TUNNEL.y - 1.0 and z < 136.0):
 			continue
-		var y := land.h[k]
-		var forest := fn.get_noise_2d(x, z) + 0.15
-		var ds := maxf(absf(x - Land.START.x) - 30.0, absf(z - Land.START.y) - 30.0)
-		forest -= (1.0 - smoothstep(-10.0, 20.0, ds)) * 0.45       # у города леса реже
+		var y := land.height_at(x, z)
+		var forest := fn.get_noise_2d(x, z)
+		var ds := maxf(absf(x - Land.START.x) - 40.0, absf(z - Land.START.y) - 40.0)
+		forest -= (1.0 - smoothstep(-20.0, 30.0, ds)) * 0.35       # у города рощ меньше
 		var r := rng.randf()
 		var name := ""
 		var s := 1.0
-		if forest > 0.18 and r < 0.55:
+		if forest > 0.3 and r < 0.3:
 			var t := rng.randf()
-			if t < 0.5:
+			if t < 0.55:
 				name = "SM_Env_Tree_0%d" % (1 + rng.randi() % 4)
-				s = rng.randf_range(0.42, 0.68)
+				s = rng.randf_range(0.42, 0.66)
 			elif t < 0.75:
 				name = "SM_Env_Tree_Large_0%d" % (1 + rng.randi() % 3)
-				s = rng.randf_range(0.3, 0.45)
+				s = rng.randf_range(0.3, 0.42)
 			elif t < 0.9:
 				name = "SM_Env_Tree_Thin_0%d" % (1 + rng.randi() % 2)
 				s = rng.randf_range(0.6, 0.95)
 			else:
 				name = "SM_Env_Bush_Cluster_0%d" % (1 + rng.randi() % 5)
 				s = rng.randf_range(0.6, 1.0)
-		elif r < 0.006 and ds > 0.0:
+		elif r < 0.004:
 			name = "SM_Env_Tree_0%d" % (1 + rng.randi() % 4)
 			s = rng.randf_range(0.42, 0.62)
-		elif r < 0.01 and ds > 0.0:
+		elif r < 0.008:
 			name = "SM_Env_Tree_Thin_0%d" % (1 + rng.randi() % 2)
 			s = rng.randf_range(0.6, 0.9)
-		elif r < 0.03:
+		elif r < 0.022:
 			name = "SM_Env_Tree_Bush_0%d" % (1 + rng.randi() % 3)
 			s = rng.randf_range(0.5, 0.8)
-		elif r < 0.12:
+		elif r < 0.07:
 			name = "SM_Env_Flowers_0%d" % (1 + rng.randi() % 5)
 			s = rng.randf_range(1.0, 1.8)
-		elif r < 0.2:
+		elif r < 0.13:
 			name = "SM_Env_Grass_0%d" % (1 + rng.randi() % 3)
 			s = rng.randf_range(0.7, 1.2)
-		elif r < 0.215:
+		elif r < 0.137:
 			name = "SM_Env_Rock_Cliff_02"
 			s = rng.randf_range(0.12, 0.25)
 		else:
@@ -607,7 +725,32 @@ func _add_nature(name: String, xf: Transform3D, p: Vector2) -> void:
 	if not nature.has(key):
 		nature[key] = []
 	var tinted := name.begins_with("SM_Env_Tree") or name.begins_with("SM_Env_Garden") or name.begins_with("SM_Env_Bush")
-	nature[key].append({"h": parts.place_one(name, xf, {"tint": Synty.GREEN} if tinted else {}, true), "p": p})
+	var remap := {"tint": Synty.GREEN} if tinted else {}
+	nature[key].append({"h": parts.place_one(name, xf, remap, true), "p": p, "name": name, "xf": xf, "remap": remap})
+
+
+## Дерево, куст или камень под курсором (их можно снести и перенести, как в Town to City)
+func nature_at(p: Vector2) -> Dictionary:
+	var best := {}
+	var bd := 1.6
+	for kz in range(int(p.y / 2.0) - 1, int(p.y / 2.0) + 2):
+		for kx in range(int(p.x / 2.0) - 1, int(p.x / 2.0) + 2):
+			for it in nature.get(Vector2i(kx, kz), []):
+				var nm: String = it["name"]
+				if nm.contains("Grass") or nm.contains("Flowers") or nm.contains("Lillies"):
+					continue
+				var d := (it["p"] as Vector2).distance_to(p)
+				var r := 1.6 if nm.contains("Tree") else 1.0
+				if d < r and d < bd:
+					bd = d
+					best = it
+	return best
+
+
+func remove_nature(it: Dictionary) -> void:
+	var key := Vector2i(int((it["p"] as Vector2).x / 2.0), int((it["p"] as Vector2).y / 2.0))
+	parts.remove(it["h"])
+	(nature.get(key, []) as Array).erase(it)
 
 
 ## У прудов: камыши, кувшинки, утки и лебеди плавают кругами
@@ -722,7 +865,8 @@ func _show(b: Dictionary) -> void:
 	_hide(b)
 	var bp := city.blueprint(b)
 	var xf := city.xf(b)
-	var vis := {"h": parts.place(bp, xf), "lights": [], "smoke": [], "actors": []}
+	var lit := city.is_house(b) and int(b["pop"]) > 0
+	var vis := {"h": parts.place(bp, xf, {"#dark": "#lit"} if lit else {}), "lights": [], "smoke": [], "actors": []}
 	for lp in bp.lights:
 		vis["lights"].append(_light(xf * lp))
 	var lived: bool = not city.is_house(b) or int(b["pop"]) > 0
@@ -772,7 +916,9 @@ func _sync_actors(b: Dictionary) -> void:
 	var vis: Dictionary = visuals.get(b["id"], {})
 	if vis.is_empty():
 		return
-	var on: bool = (int(b["pop"]) > 0) if city.is_house(b) else bool(b.get("active", true))
+	var d := city.def(b)
+	# у мастерских и лавок работают настоящие жители (приходят из дома) — тут только станция и сады патрициев
+	var on: bool = not d.has("jobs") and d["kind"] in ["center", "house"] and (int(b["pop"]) > 0 or d["kind"] == "center") and hour > 6.5 and hour < 20.5
 	if bool(vis.get("act_on", false)) == on and vis.has("act_on"):
 		return
 	for a in vis.get("actors", []):
@@ -951,13 +1097,21 @@ func _process(dt: float) -> void:
 	_swim(dt)
 	var sdt := dt * speed
 	if speed > 0.0 and mode != "menu":
-		day_t += sdt
-		if day_t >= Defs.DAY_SECONDS:
-			day_t -= Defs.DAY_SECONDS
-			city.sim_day()
-	if clock_hours:
-		_set_hour(hour + maxf(sdt, dt * 0.5 if mode == "menu" else 0.0) * 24.0 / 480.0)
-	people.set_meta("speed", speed)
+		var h0 := hour
+		var nh := hour + sdt * 24.0 / DAY_LEN
+		if not clock_hours:
+			day_t += sdt
+			if day_t >= DAY_LEN / 24.0:
+				day_t -= DAY_LEN / 24.0
+				city.sim_day()
+		else:
+			if int(floor(nh)) != int(floor(h0)):
+				city.sim_day()
+			if nh >= 24.0:
+				city.day += 1
+			_set_hour(nh)
+	elif mode == "menu" and clock_hours:
+		_set_hour(hour + dt * 0.5 * 24.0 / DAY_LEN)
 	if speed != _actor_speed:
 		_actor_speed = speed
 		for a in actors_root.get_children():
@@ -1034,6 +1188,9 @@ func ground_at_mouse() -> Vector2:
 func set_tool(t: String) -> void:
 	if t == "" and not moving.is_empty():
 		_cancel_move()
+	if t != "move_nature" and not moving_nature.is_empty():
+		_add_nature(moving_nature["name"], moving_nature["xf"], moving_nature["p"])
+		moving_nature = {}
 	tool = t
 	painting = false
 	line_from = Vector2.INF
@@ -1109,7 +1266,13 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	if variant < 0:
 		variant = next_variant
 	if color < 0:
-		color = int(moving.get("color", -1)) if not moving.is_empty() else city.pick_color(p)
+		if not moving.is_empty():
+			color = int(moving.get("color", 0))
+		else:
+			if place_color < 0 or place_color_pos.distance_to(p) > 5.0:
+				place_color = city.pick_color(p)
+				place_color_pos = p
+			color = place_color
 	var tier := 1 if d["kind"] == "house" else (city.level if type == "center" else 0)
 	if not moving.is_empty():
 		tier = int(moving["tier"])
@@ -1121,6 +1284,15 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 		var e := _nearest_road(p, maxf(6.0, (float(bb[3]) - float(bb[2])) * 0.5 + 3.0))
 		if not e.is_empty():
 			var nrm: Vector2 = e["n"]
+			# не дёргаться: если прежнее направление почти так же близко к дороге — оставить его
+			if last_snap_n != Vector2.ZERO and nrm.angle_to(last_snap_n) != 0.0:
+				var dd := 0.0
+				while dd <= 8.0 and not land.is_road(p + last_snap_n * dd):
+					dd += 0.2
+				if dd <= p.distance_to(e["p"]) + 0.8:
+					nrm = last_snap_n
+					e["p"] = p + nrm * dd
+			last_snap_n = nrm
 			yaw = snappedf(atan2(nrm.x, nrm.y), deg_to_rad(5.0))
 			var f := City.facing(yaw)
 			pos = (e["p"] as Vector2) - f * (float(bb[3]) + 0.05)
@@ -1206,7 +1378,7 @@ func _update_tool() -> void:
 			ghost.visible = false
 		if tool in ["bulldoze", "copy", "move"] or tool == "":
 			if not over_ui and hover != Vector2.INF and tool != "":
-				_hover_building(city.building_at(hover))
+				_hover_any(hover)
 			elif tool != "":
 				_clear_highlight()
 		return
@@ -1224,7 +1396,10 @@ func _update_tool() -> void:
 			_paint_to(hover)
 		return
 	if tool in ["bulldoze", "copy", "move"]:
-		_hover_building(city.building_at(hover))
+		_hover_any(hover)
+		return
+	if tool == "move_nature":
+		_move_nature_ghost()
 		return
 	if not Defs.B.has(tool):
 		return
@@ -1255,6 +1430,49 @@ func _update_tool() -> void:
 
 
 ## Подсветка постройки под курсором: снос — красная, копировать и перенести — золотая
+func _hover_any(p: Vector2) -> void:
+	var b := city.building_at(p)
+	if b.is_empty() and tool in ["bulldoze", "move"]:
+		var it := nature_at(p)
+		if not it.is_empty():
+			_hover_nature(it)
+			return
+	hover_nature = {}
+	_hover_building(b)
+
+
+## Подсветка дерева или камня (снос — красным, перенос — золотым)
+func _hover_nature(it: Dictionary) -> void:
+	var key := "n%d_%d:%s" % [int((it["p"] as Vector2).x * 100), int((it["p"] as Vector2).y * 100), tool]
+	hover_nature = it
+	if key == highlight_key:
+		return
+	_clear_highlight()
+	highlight_key = key
+	var bp := Bp.new(1)
+	bp.parts.append([it["name"], Transform3D.IDENTITY, it["remap"]])
+	highlight = Parts.ghost(bp, "shell", Color(1.0, 0.18, 0.12, 0.5) if tool == "bulldoze" else Color(1.0, 0.85, 0.4, 0.4))
+	highlight.transform = it["xf"]
+	add_child(highlight)
+	if hud:
+		var nm: String = it["name"]
+		var what := "дерево" if nm.contains("Tree") else ("куст" if nm.contains("Bush") else "камень")
+		hud.tool_status(("Убрать %s" % what) if tool == "bulldoze" else ("Перенести %s" % what))
+
+
+func _move_nature_ghost() -> void:
+	if ghost == null:
+		var bp := Bp.new(1)
+		bp.parts.append([moving_nature["name"], Transform3D.IDENTITY, moving_nature["remap"]])
+		ghost = Parts.ghost(bp, "place")
+		add_child(ghost)
+	ghost.visible = true
+	var basis: Basis = (moving_nature["xf"] as Transform3D).basis
+	var ok := land.occ_at(hover) == 0 and not land.is_water(hover) and not land.is_road(hover)
+	Parts.ghost_color(ghost, Color(0.45, 1.0, 0.45, 0.32) if ok else Color(1.0, 0.25, 0.2, 0.5))
+	ghost.transform = Transform3D(basis.rotated(Vector3.UP, tool_yaw), Vector3(hover.x, land.height_at(hover.x, hover.y), hover.y))
+
+
 func _hover_building(b: Dictionary) -> void:
 	var key := "" if b.is_empty() else "%d:%s" % [b["id"], tool]
 	if key == highlight_key:
@@ -1388,14 +1606,33 @@ func _click() -> void:
 			_paint_to(hover)
 		return
 	match tool:
+		"move_nature":
+			if land.occ_at(hover) == 0 and not land.is_water(hover) and not land.is_road(hover):
+				var basis: Basis = (moving_nature["xf"] as Transform3D).basis.rotated(Vector3.UP, tool_yaw)
+				var xf := Transform3D(basis, Vector3(hover.x, land.height_at(hover.x, hover.y), hover.y))
+				_add_nature(moving_nature["name"], xf, hover)
+				moving_nature = {}
+				sound.ui("place")
+				set_tool("move")
+			else:
+				sound.ui("error")
+			return
 		"bulldoze":
 			var b := city.building_at(hover)
+			if b.is_empty() and not hover_nature.is_empty():
+				remove_nature(hover_nature)
+				hover_nature = {}
+				_clear_highlight()
+				_puff(Vector3(hover.x, land.height_at(hover.x, hover.y), hover.y), Color("cfe0b0"))
+				sound.ui("demolish")
+				return
 			if not b.is_empty():
 				if city.def(b).get("fixed", false):
 					hud.notify("Почтовая станция не сносится — с неё начинается город", "info")
 				else:
 					city.remove(b)
 					_clear_highlight()
+					sound.ui("demolish")
 			return
 		"copy":
 			var b := city.building_at(hover)
@@ -1406,6 +1643,15 @@ func _click() -> void:
 			return
 		"move":
 			var b := city.building_at(hover)
+			if b.is_empty() and not hover_nature.is_empty():
+				moving_nature = hover_nature.duplicate()
+				remove_nature(hover_nature)
+				hover_nature = {}
+				_clear_highlight()
+				tool_yaw = 0.0
+				tool = ""
+				set_tool("move_nature")
+				return
 			if not b.is_empty() and not city.def(b).get("fixed", false):
 				moving = {"id": b["id"], "type": b["type"], "tier": b["tier"], "variant": b["variant"], "color": b["color"], "pop": b["pop"],
 					"families": b["families"], "pos": b["pos"], "yaw": b["yaw"]}
@@ -1422,6 +1668,7 @@ func _click() -> void:
 		var pl := placement(tool, hover)
 		if pl["err"] != "":
 			hud.tool_status(pl["err"])
+			sound.ui("error")
 			return
 		var b: Dictionary
 		if not moving.is_empty():
@@ -1438,6 +1685,7 @@ func _click() -> void:
 			if tool_variant < 0:
 				next_variant = randi() % int(Defs.B[tool].get("variants", 1))
 		_puff(Vector3(pl["pos"].x, float(pl["y"]), pl["pos"].y))
+		sound.ui("place")
 		return
 	# без инструмента: участок на продажу или карточка постройки
 	var plot := land.plot_of(hover)
@@ -1476,6 +1724,9 @@ func _release() -> void:
 	line_from = Vector2.INF
 	painting = false
 	if not stroke.is_empty():
+		if tool != "erase":
+			city.road_cells += stroke.size()
+			city._check_goals()
 		undo_stack.append({"ch": stroke, "cost": stroke_cost})
 		redo_stack.clear()
 		if undo_stack.size() > 40:
@@ -1579,7 +1830,8 @@ func _load() -> bool:
 		return false
 	land.load_changes(data.get("land", {}))
 	city.load_data(data)
-	hour = float(data.get("hour", 8.0))
+	if clock_hours:
+		hour = float(data.get("hour", 8.0))
 	for id in city.buildings:
 		_show(city.buildings[id])
 	return true
@@ -1613,24 +1865,21 @@ func _demo_town() -> void:
 		city.research[r["id"]] = true
 	for g in City.GOALS:
 		city.goals_done.append(g["id"])
-	for j in range(1, 6):
-		for i in range(2, 7):
-			land.owned[Vector2i(i, j)] = true
 	var R := Land.Kind.ROAD
 	var road := func(a: Vector2, b: Vector2, w: float, kd: int) -> void:
 		land.paint_line(a, b, w, kd, true)
 	# улицы: главная от тоннеля на юг к храму, площадь с фонтаном, поперечные улицы и переулки
-	road.call(Vector2(128, 60), Vector2(128, 128), 1.7, R)
-	road.call(Vector2(98, 72), Vector2(160, 72), 1.4, R)
-	road.call(Vector2(98, 104), Vector2(162, 104), 1.4, R)
-	road.call(Vector2(108, 72), Vector2(108, 104), 1.2, R)
-	road.call(Vector2(148, 72), Vector2(148, 104), 1.2, R)
-	road.call(Vector2(98, 60), Vector2(98, 112), 1.0, Land.Kind.DIRT)
-	road.call(Vector2(108, 88), Vector2(118, 88), 1.0, Land.Kind.DIRT)
-	road.call(Vector2(138, 88), Vector2(148, 88), 1.0, Land.Kind.DIRT)
-	road.call(Vector2(162, 104), Vector2(168, 120), 1.0, Land.Kind.DIRT)
+	road.call(Vector2(192, 126), Vector2(192, 194), 1.7, R)
+	road.call(Vector2(162, 138), Vector2(224, 138), 1.4, R)
+	road.call(Vector2(162, 170), Vector2(226, 170), 1.4, R)
+	road.call(Vector2(172, 138), Vector2(172, 170), 1.2, R)
+	road.call(Vector2(212, 138), Vector2(212, 170), 1.2, R)
+	road.call(Vector2(162, 126), Vector2(162, 178), 1.0, Land.Kind.DIRT)
+	road.call(Vector2(172, 154), Vector2(182, 154), 1.0, Land.Kind.DIRT)
+	road.call(Vector2(202, 154), Vector2(212, 154), 1.0, Land.Kind.DIRT)
+	road.call(Vector2(226, 170), Vector2(232, 186), 1.0, Land.Kind.DIRT)
 	for k in 30:
-		land.paint_circle(Vector2(128, 88), 9.0, Land.Kind.PLAZA, true, false)
+		land.paint_circle(Vector2(192, 154), 9.0, Land.Kind.PLAZA, true, false)
 	var place := func(type: String, near: Vector2, r: float, tier := -1, variant := -1) -> Dictionary:
 		var v := variant if variant >= 0 else randi() % int(Defs.B[type].get("variants", 1))
 		for k in range(0, int(r * 2) + 1):
@@ -1654,31 +1903,31 @@ func _demo_town() -> void:
 					return b
 		return {}
 	seed(42)
-	place.call("temple", Vector2(128, 136), 5)
-	place.call("fountain", Vector2(128, 88), 1)
-	place.call("forum", Vector2(150, 118), 6)
-	place.call("theatre", Vector2(104, 120), 6)
-	place.call("baths", Vector2(142, 80), 4)
-	place.call("warehouse", Vector2(116, 62), 4)
-	place.call("scriptorium", Vector2(140, 64), 4)
-	place.call("library", Vector2(156, 92), 5)
-	place.call("farm", Vector2(84, 80), 5)
-	place.call("farm", Vector2(84, 94), 5)
-	place.call("grove", Vector2(84, 108), 5)
-	place.call("vineyard", Vector2(176, 110), 5)
+	place.call("temple", Vector2(192, 202), 5)
+	place.call("fountain", Vector2(192, 154), 1)
+	place.call("forum", Vector2(214, 184), 6)
+	place.call("theatre", Vector2(168, 186), 6)
+	place.call("baths", Vector2(206, 146), 4)
+	place.call("warehouse", Vector2(180, 128), 4)
+	place.call("scriptorium", Vector2(204, 130), 4)
+	place.call("library", Vector2(220, 158), 5)
+	place.call("farm", Vector2(148, 146), 5)
+	place.call("farm", Vector2(148, 160), 5)
+	place.call("grove", Vector2(148, 174), 5)
+	place.call("vineyard", Vector2(240, 176), 5)
 	# лавки вокруг площади и вдоль улиц
-	for t: Array in [["stall_fruit", Vector2(119, 80)], ["stall_veg", Vector2(137, 96)], ["stall_fish", Vector2(119, 97)], ["bakery", Vector2(113, 76)],
-			["butcher", Vector2(143, 76)], ["weaver", Vector2(113, 100)], ["cobbler", Vector2(143, 100)], ["thermopolium", Vector2(133, 68)],
-			["taberna", Vector2(122, 108)], ["musicians", Vector2(124, 82)], ["dice", Vector2(133, 94)], ["barber", Vector2(102, 84)],
-			["potter", Vector2(154, 84)], ["wineshop", Vector2(102, 96)], ["jeweler", Vector2(136, 108)], ["perfumer", Vector2(154, 100)]]:
+	for t: Array in [["stall_fruit", Vector2(183, 146)], ["stall_veg", Vector2(201, 162)], ["stall_fish", Vector2(183, 163)], ["bakery", Vector2(177, 142)],
+			["butcher", Vector2(207, 142)], ["weaver", Vector2(177, 166)], ["cobbler", Vector2(207, 166)], ["thermopolium", Vector2(197, 134)],
+			["taberna", Vector2(186, 174)], ["musicians", Vector2(188, 148)], ["dice", Vector2(197, 160)], ["barber", Vector2(166, 150)],
+			["potter", Vector2(218, 150)], ["wineshop", Vector2(166, 162)], ["jeweler", Vector2(200, 174)], ["perfumer", Vector2(218, 166)]]:
 		place.call(t[0], t[1], 4)
 	# дома вдоль всех улиц: у площади — повыше и побогаче
-	for z in range(58, 132, 2):
-		for x in range(92, 168, 2):
+	for z in range(124, 198, 2):
+		for x in range(156, 232, 2):
 			var p := Vector2(x, z)
 			if not land.is_road(p + Vector2(3.5, 0)) and not land.is_road(p - Vector2(3.5, 0)) and not land.is_road(p + Vector2(0, 3.5)) and not land.is_road(p - Vector2(0, 3.5)):
 				continue
-			var dc := p.distance_to(Vector2(128, 88))
+			var dc := p.distance_to(Vector2(192, 154))
 			var type := "house_pleb"
 			var r := randf()
 			if dc < 30.0 and r < 0.35:
@@ -1705,21 +1954,21 @@ func _demo_town() -> void:
 	# красота: кипарисы вдоль главной улицы, скамьи и жаровни у фонтана, статуи у храма, цветы
 	for k in 8:
 		var a := TAU * k / 8.0 + 0.2
-		place.call("bench", Vector2(128, 88) + Vector2(cos(a), sin(a)) * 5.6, 0.5)
+		place.call("bench", Vector2(192, 154) + Vector2(cos(a), sin(a)) * 5.6, 0.5)
 	for k in 4:
 		var a := TAU * k / 4.0 + PI / 4
-		place.call("bigbrazier", Vector2(128, 88) + Vector2(cos(a), sin(a)) * 7.8, 0.5)
-	for z in range(62, 128, 4):
+		place.call("bigbrazier", Vector2(192, 154) + Vector2(cos(a), sin(a)) * 7.8, 0.5)
+	for z in range(128, 194, 4):
 		for sx: float in [-1.0, 1.0]:
-			if absf(z - 88) > 11:
+			if absf(z - 154) > 11:
 				var p := Vector2(128 + sx * 2.6, z)
 				var pl := placement("cypress", p)
 				if pl["err"] == "":
 					city.place("cypress", pl["pos"], 0.0, 0, -1, true)
-	for t: Array in [["statue", Vector2(122, 128)], ["statue", Vector2(134, 128)], ["lion", Vector2(119, 132)], ["lion", Vector2(137, 132)]]:
+	for t: Array in [["statue", Vector2(186, 194)], ["statue", Vector2(198, 194)], ["lion", Vector2(183, 198)], ["lion", Vector2(201, 198)]]:
 		place.call(t[0], t[1], 1.5)
 	for k in 90:
-		var p := Vector2(randf_range(94, 166), randf_range(58, 132))
+		var p := Vector2(randf_range(158, 230), randf_range(124, 198))
 		var t: String = ["flowers", "bush", "planter", "tree", "flowers", "palm", "goods", "well"][k % 8]
 		var pl := placement(t, p)
 		if pl["err"] == "":

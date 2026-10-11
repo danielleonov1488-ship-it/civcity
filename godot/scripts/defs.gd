@@ -4,7 +4,7 @@ extends RefCounted
 ## три класса жителей (у каждого свой дом), лавки по видам потребностей с дальностью, рабочими и
 ## производительностью, исследования за отдельную валюту, уровни города от Стоянки до Вечного города.
 
-const DAY_SECONDS := 6.0
+const DAY_SECONDS := 15.0         # игровой час
 const START_MONEY := 2500
 const REFUND := 0.5
 const ROAD_COST := {"road": 0.25, "plaza": 0.5, "path": 0.06}     # денариев за клетку 25 см
@@ -15,11 +15,11 @@ const DENSITY_FREE := 6
 # ---------- жители ----------
 
 const CLASSES := {
-	"plebs": {"name": "Плебеи", "one": "Плебеи", "icon": "person", "house": "house_pleb", "tax": 0.55, "per_floor": 4, "work": 0.5,
+	"plebs": {"name": "Плебеи", "one": "Плебеи", "icon": "person", "house": "house_pleb", "tax": 1.4, "per_floor": 4, "work": 0.5,
 		"needs": ["food"]},
-	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 1.25, "per_floor": 3, "work": 0.5,
+	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 3.1, "per_floor": 3, "work": 0.5,
 		"needs": ["food", "clothes", "fun"]},
-	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 3.2, "per_floor": 3, "work": 0.35,
+	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 8.0, "per_floor": 3, "work": 0.35,
 		"needs": ["food", "clothes", "fun", "services", "goods"]},
 }
 const CLASS_ORDER := ["plebs", "artisans", "patricians"]
@@ -144,13 +144,13 @@ const B := {
 		"icon": "grapes", "desc": "Даёт виноград винным лавкам."},
 	"warehouse": {"kind": "store", "cat": "farming", "name": "Склад", "cost": 300, "range": 4, "jobs": {"plebs": 2}, "unlock": "warehouse",
 		"icon": "warehouse", "desc": "Сюда со станции приходят товары, отсюда их разносят по лавкам вокруг. Лавкам со значком склада без него нечем торговать."},
-	"scriptorium": {"kind": "rp", "cat": "farming", "name": "Скрипторий", "cost": 180, "rp": 2.0, "jobs": {"plebs": 2},
+	"scriptorium": {"kind": "rp", "cat": "farming", "name": "Скрипторий", "cost": 180, "rp": 5.0, "jobs": {"plebs": 2},
 		"icon": "quill", "desc": "Писцы переписывают свитки — даёт очки исследований."},
-	"school": {"kind": "rp", "cat": "farming", "name": "Школа", "cost": 600, "rp": 5.0, "jobs": {"artisans": 2}, "unlock": "school",
+	"school": {"kind": "rp", "cat": "farming", "name": "Школа", "cost": 600, "rp": 12.0, "jobs": {"artisans": 2}, "unlock": "school",
 		"icon": "teacher", "desc": "Грамматик учит детей — больше очков исследований."},
-	"library": {"kind": "rp", "cat": "farming", "name": "Библиотека", "cost": 1500, "rp": 11.0, "jobs": {"artisans": 3}, "unlock": "library",
+	"library": {"kind": "rp", "cat": "farming", "name": "Библиотека", "cost": 1500, "rp": 27.0, "jobs": {"artisans": 3}, "unlock": "library",
 		"icon": "bookshelf", "desc": "Тысячи свитков — много очков исследований."},
-	"academy": {"kind": "rp", "cat": "farming", "name": "Академия", "cost": 3500, "rp": 22.0, "jobs": {"patricians": 3}, "unlock": "academy",
+	"academy": {"kind": "rp", "cat": "farming", "name": "Академия", "cost": 3500, "rp": 55.0, "jobs": {"patricians": 3}, "unlock": "academy",
 		"icon": "book", "desc": "Философы спорят под колоннадой — очень много очков исследований."},
 
 	# особые: памятники радуют всех вокруг

@@ -1,39 +1,44 @@
 class_name Land
 extends RefCounted
-## Земля игры: карта 256×256 м из клеток по 25 см с уступами по 12,5 см (как в Town to City).
-## Мягкие холмы и луга, пруды, на севере — гора с тоннелем: оттуда выезжают повозки с переселенцами,
-## рядом почтовая станция — начало города. Земля поделена на участки 32×32 м: четыре свои с начала,
-## остальные покупаются. Каждая клетка помнит, какая постройка на ней стоит (occ) — постройки занимают
-## землю своей настоящей формой, а не прямоугольником.
+## Земля игры: карта 384×384 м из клеток по 25 см с уступами по 12,5 см (как в Town to City).
+## Середина 256×256 м — своя земля с начала: мягкие холмы, луга, леса пятнами, пруды; на севере —
+## небольшой холм с тоннелем, оттуда выезжают повозки, рядом почтовая станция. Вокруг — кольцо дорогих
+## участков по 64 м, а дальше до горизонта — просто пейзаж. Каждая клетка помнит, какая постройка на ней
+## стоит (occ): постройки занимают землю своей настоящей формой, а не прямоугольником.
+## Высоты хранятся «как есть», а читаются ступеньками по 12,5 см (hq).
 
 const CELL := 0.25
-const SIZE := 256.0
-const N := 1024
+const SIZE := 384.0
+const N := 1536
 const STEP := 0.125
 const BASE_Y := 2.0
 const WATER_Y := 1.0
 const SEA_Y := WATER_Y
-const CH := 64                     # клеток в куске сетки (16 м)
+const EDGE_Y := 4.5                 # высота на краю карты — там начинается пейзаж до горизонта
+const CH := 64                      # клеток в куске сетки (16 м)
 const CHN := N / CH
-const PLOT := 32.0                 # участок земли
-const PLOTS := 8
-const TUNNEL := Vector2(128.0, 33.0)     # портал тоннеля в горе (смотрит на юг)
+const PLOT := 64.0                  # участок земли
+const PLOTS := 6
+const TUNNEL := Vector2(192.0, 86.0)     # портал тоннеля в холме (смотрит на юг)
 const GATE := TUNNEL
-const CENTER := Vector2(121.5, 45.0)     # почтовая станция
-const START := Vector2(128.0, 64.0)      # середина стартовых участков
-const PONDS := [[Vector3(151.0, 84.0, 7.5)], [Vector3(66.0, 118.0, 13.0)], [Vector3(196.0, 150.0, 11.0)], [Vector3(112.0, 196.0, 17.0)], [Vector3(36.0, 60.0, 9.0)]]
-const SM := 2                      # маска покрытий — по 2×2 клетки
+const HILL := Vector2(192.0, 72.0)
+const CENTER := Vector2(185.0, 99.0)     # почтовая станция
+const START := Vector2(192.0, 150.0)     # середина своей земли
+const PONDS := [[Vector3(215.0, 150.0, 7.5)], [Vector3(130.0, 182.0, 13.0)], [Vector3(260.0, 214.0, 11.0)],
+	[Vector3(176.0, 262.0, 17.0)], [Vector3(102.0, 124.0, 9.0)], [Vector3(338.0, 300.0, 22.0)], [Vector3(40.0, 250.0, 16.0)]]
+const SM := 2                       # маска покрытий — по 2×2 клетки
 
 enum Kind { GRASS, DIRT, ROCK, SAND, ROAD, PLAZA, YARD, FIELD }
 
-var h := PackedFloat32Array()
+var h := PackedFloat32Array()        # высоты (без ступенек)
 var kind := PackedByteArray()
-var tint := PackedByteArray()        # 0…3 — оттенок травы пятнами
+var tint := PackedByteArray()        # 0…255 — оттенок травы пятнами
 var occ := PackedInt32Array()        # id постройки на клетке (0 — свободно)
 var base_h := PackedFloat32Array()   # исходная карта — для сохранения только изменений
 var base_kind := PackedByteArray()
 var owned := {}                      # Vector2i участка → true
 var dirty := {}                      # Vector2i куска → true (перестроить сетку)
+var road_chunks := {}                # куски, где есть дороги (для маски покрытий и сетки ходьбы)
 
 var n1 := FastNoiseLite.new()
 var n2 := FastNoiseLite.new()
@@ -67,9 +72,14 @@ func cell_center(i: int, j: int) -> Vector2:
 	return Vector2((i + 0.5) * CELL, (j + 0.5) * CELL)
 
 
+## Высота клетки ступеньками по 12,5 см
+func hq(k: int) -> float:
+	return roundf(h[k] / STEP) * STEP
+
+
 func height_at(x: float, z: float) -> float:
 	var c := cell(Vector2(x, z))
-	return h[idx(c.x, c.y)]
+	return hq(idx(c.x, c.y))
 
 
 func kind_at(x: float, z: float) -> int:
@@ -94,6 +104,17 @@ func is_water(p: Vector2) -> bool:
 	return height_at(p.x, p.y) < WATER_Y + 0.05
 
 
+## Крутой обрыв (скала) — перепад к соседу от 50 см
+func is_rock(k: int) -> bool:
+	var i := k % N
+	var j := k / N
+	var y := hq(k)
+	for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if inside(i + d.x, j + d.y) and absf(y - hq(idx(i + d.x, j + d.y))) >= 0.5:
+			return true
+	return false
+
+
 static func walk_kind(kd: int) -> bool:
 	return kd == Kind.ROAD or kd == Kind.PLAZA or kd == Kind.DIRT
 
@@ -109,95 +130,76 @@ func is_road(p: Vector2) -> bool:
 
 func raw_height(x: float, z: float) -> float:
 	var p := Vector2(x, z)
-	# мягкие холмы: на стартовых участках почти ровно, дальше — круче
-	var ds := maxf(absf(x - START.x) - 34.0, absf(z - START.y) - 34.0)
-	var amp := lerpf(0.32, 2.6, smoothstep(0.0, 46.0, ds))
+	# мягкие холмы: на своей земле у станции почти ровно, дальше — выше; за кольцом участков — снова к краю
+	var ds := maxf(absf(x - START.x) - 40.0, absf(z - START.y) - 40.0)
+	var amp := lerpf(0.3, 2.4, smoothstep(0.0, 70.0, ds))
 	var y := BASE_Y + 0.4 + n1.get_noise_2d(x, z) * amp + n3.get_noise_2d(x, z) * amp * 0.25
-	# гора на севере с тоннелем
-	var dh := p.distance_to(Vector2(128.0, 2.0))
-	y += (1.0 - smoothstep(12.0, 44.0, dh)) * (11.0 + n2.get_noise_2d(x * 0.5, z * 0.5) * 2.5)
-	y += smoothstep(26.0, 2.0, z) * (5.0 + n1.get_noise_2d(x * 1.7, 3.0) * 3.0)
-	# по краям карты — холмы, чтобы край не был виден обрывом
-	var edge := minf(minf(x, SIZE - x), minf(z, SIZE - z))
-	y += smoothstep(26.0, 0.0, edge) * (4.0 + n2.get_noise_2d(x * 0.3, z * 0.3) * 2.0)
-	# выход из тоннеля: ровная дорога и обрыв горы за порталом
+	y += smoothstep(80.0, 150.0, ds) * (2.0 + n3.get_noise_2d(x * 0.5, z * 0.5) * 3.0)
+	# небольшой холм с тоннелем
+	var dh := p.distance_to(HILL)
+	var kh := clampf(1.0 - dh / 25.0, 0.0, 1.0)
+	y += 9.0 * kh * kh * (3.0 - 2.0 * kh) + n2.get_noise_2d(x * 0.7, z * 0.7) * 0.8 * kh
 	var dx := absf(x - TUNNEL.x)
-	if z > TUNNEL.y - 0.2 and z < 64.0:
-		var corridor := 1.0 - smoothstep(4.0, 9.0, dx)
-		y = lerpf(y, BASE_Y + 0.4, corridor * smoothstep(TUNNEL.y - 0.2, TUNNEL.y + 1.0, z))
-	elif z <= TUNNEL.y - 0.2 and dx < 16.0:
-		# склон горы над порталом: круто вверх, по бокам — плавнее
-		var rise := (TUNNEL.y - z) * lerpf(1.6, 0.5, smoothstep(5.0, 16.0, dx))
-		y = maxf(y, BASE_Y + lerpf(7.5, 2.0, smoothstep(6.0, 16.0, dx)) + rise)
-	# станция и площадь перед ней — ровно
-	var flat := 1.0 - smoothstep(9.0, 16.0, p.distance_to(Vector2(124.0, 46.0)))
-	y = lerpf(y, BASE_Y + 0.4, flat)
+	if z < TUNNEL.y + 0.2:
+		# стена над порталом: невысокая, по бокам сходит на нет
+		var face := (1.0 - smoothstep(4.5, 10.0, dx)) * smoothstep(TUNNEL.y + 0.2, TUNNEL.y - 3.0, z)
+		y = maxf(y, lerpf(y, BASE_Y + 7.6, face))
+	else:
+		# дорога от портала на юг и площадь у станции — ровно
+		var corridor := (1.0 - smoothstep(4.0, 8.0, dx)) * (1.0 - smoothstep(130.0, 140.0, z))
+		y = lerpf(y, BASE_Y + 0.4, corridor * smoothstep(TUNNEL.y + 0.2, TUNNEL.y + 1.5, z))
+	y = lerpf(y, BASE_Y + 0.4, 1.0 - smoothstep(10.0, 18.0, p.distance_to(CENTER + Vector2(3, 0))))
 	# пруды
 	for pd in PONDS:
 		var c: Vector3 = pd[0]
 		var r := c.z * (1.0 + n2.get_noise_2d(x * 0.8, z * 0.8) * 0.18)
 		var d := p.distance_to(Vector2(c.x, c.y))
-		y = lerpf(y, WATER_Y - 0.9, 1.0 - smoothstep(r * 0.55, r, d))
-		y = lerpf(y, maxf(minf(y, WATER_Y + 0.35), WATER_Y + 0.15), (1.0 - smoothstep(r, r + 2.5, d)) * smoothstep(r * 0.55, r, d))
+		if d < r + 3.0:
+			y = lerpf(y, WATER_Y - 0.9, 1.0 - smoothstep(r * 0.55, r, d))
+			y = lerpf(y, maxf(minf(y, WATER_Y + 0.35), WATER_Y + 0.15), (1.0 - smoothstep(r, r + 2.5, d)) * smoothstep(r * 0.55, r, d))
+	# край карты — к общей высоте, дальше пейзаж до горизонта
+	var edge := minf(minf(x, SIZE - x), minf(z, SIZE - z))
+	y = lerpf(y, EDGE_Y, 1.0 - smoothstep(0.0, 22.0, edge))
 	return y
 
 
 func generate() -> void:
-	h.resize(N * N)
+	# высоты — по сетке 1 м, потом растягиваем на клетки 25 см (быстро, средствами движка)
+	var M := int(SIZE) + 1
+	var coarse := PackedFloat32Array()
+	coarse.resize(M * M)
+	for j in M:
+		for i in M:
+			coarse[j * M + i] = raw_height(float(i), float(j))
+	var img := Image.create_from_data(M, M, false, Image.FORMAT_RF, coarse.to_byte_array())
+	img.resize(N, N, Image.INTERPOLATE_BILINEAR)
+	h = img.get_data().to_float32_array()
 	kind.resize(N * N)
-	tint.resize(N * N)
+	kind.fill(Kind.GRASS)
 	occ.resize(N * N)
 	occ.fill(0)
-	# высоты считаем по сетке 50 см и сглаживаем на клетки 25 см — так вчетверо быстрее
-	var M2 := N / 2 + 1
-	var coarse := PackedFloat32Array()
-	coarse.resize(M2 * M2)
-	for j in M2:
-		for i in M2:
-			coarse[j * M2 + i] = raw_height(i * 0.5, j * 0.5)
-	for j in N:
-		var fj := (j + 0.5) * 0.5
-		var j0 := mini(int(fj), M2 - 2)
-		var tj := fj - j0
-		for i in N:
-			var fi := (i + 0.5) * 0.5
-			var i0 := mini(int(fi), M2 - 2)
-			var ti := fi - i0
-			var a := lerpf(coarse[j0 * M2 + i0], coarse[j0 * M2 + i0 + 1], ti)
-			var b := lerpf(coarse[(j0 + 1) * M2 + i0], coarse[(j0 + 1) * M2 + i0 + 1], ti)
-			var k := idx(i, j)
-			h[k] = roundf(lerpf(a, b, tj) / STEP) * STEP
-			var t := 0.5 + n2.get_noise_2d(i * 0.11, j * 0.11) * 1.1 + n1.get_noise_2d(i * 0.6, j * 0.6) * 0.35
-			tint[k] = clampi(int(t * 4.0), 0, 3)
-			kind[k] = Kind.GRASS
-	for j in N:
-		for i in N:
-			var k := idx(i, j)
-			var y := h[k]
-			if y < WATER_Y + 0.3:
-				kind[k] = Kind.SAND
-				continue
-			var drop := 0.0
-			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-				if inside(i + d.x, j + d.y):
-					drop = maxf(drop, absf(y - h[idx(i + d.x, j + d.y)]))
-			if drop >= 0.5:
-				kind[k] = Kind.ROCK
+	var tn := FastNoiseLite.new()
+	tn.seed = 5
+	tn.frequency = 0.035
+	tn.fractal_octaves = 3
+	tint = tn.get_image(N, N, false, false, true).get_data()
 	# дорога из тоннеля мимо станции и площадь перед станцией
-	paint_line(TUNNEL + Vector2(0, 0.6), Vector2(128.0, 70.0), 1.7, Kind.ROAD, true)
-	for z in range(40, 52):
-		paint_line(Vector2(124.0, z + 0.5), Vector2(127.0, z + 0.5), 0.6, Kind.PLAZA, true)
-	# свои участки с начала: 2×2 вокруг станции
-	for dj in range(1, 3):
-		for di in range(3, 5):
+	paint_line(TUNNEL + Vector2(0, 0.6), Vector2(192.0, 128.0), 1.7, Kind.ROAD, true)
+	for z in range(92, 106):
+		paint_line(Vector2(187.5, z + 0.5), Vector2(190.0, z + 0.5), 0.6, Kind.PLAZA, true)
+	# своя земля с начала: середина 4×4 участка (256×256 м)
+	for dj in range(1, 5):
+		for di in range(1, 5):
 			owned[Vector2i(di, dj)] = true
 	base_h = h.duplicate()
 	base_kind = kind.duplicate()
 	dirty.clear()
+	touched.clear()
 
 
 func _mark(i: int, j: int) -> void:
 	dirty[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
+	touched[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
 	# стенки уступов на краю куска рисует соседний кусок
 	if i % CH == 0 and i > 0:
 		dirty[Vector2i((i - 1) / CH, clampi(j / CH, 0, CHN - 1))] = true
@@ -211,7 +213,7 @@ func _mark(i: int, j: int) -> void:
 
 # ---------- кисть дорог ----------
 
-## Покрасить клетки в круге (square = квадрат) радиуса r. over — рисовать поверх других дорог.
+## Покрасить клетки в круге (square — квадрат) радиуса r. over — рисовать поверх других дорог.
 func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := true, square := false, over := true) -> Array:
 	var out := []
 	var c := cell(p)
@@ -231,19 +233,24 @@ func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := tr
 				continue
 			var k := idx(i, j)
 			var kk := kind[k]
-			if kk == Kind.ROCK or kk == Kind.SAND or h[k] < WATER_Y + 0.05 or occ[k] != 0:
+			var y := hq(k)
+			if y < WATER_Y + 0.05 or occ[k] != 0:
 				continue
 			if kd == Kind.GRASS and not walk_kind(kk):
 				continue
 			if kd != Kind.GRASS and walk_kind(kk) and kk != kd and not over:
 				continue
-			if kd != Kind.GRASS and kk == kd and (not flat or absf(h[k] - y0) < 0.01):
+			if kd != Kind.GRASS and kk == kd and (not flat or absf(y - y0) < 0.01):
 				continue
+			if flat and absf(y - y0) > 0.6:
+				continue                         # уступ выше полуметра кисть не срезает
 			out.append([Vector2i(i, j), kk, h[k]])
 			kind[k] = kd
-			if flat and absf(h[k] - y0) <= 0.5:
+			if flat:
 				h[k] = y0
 			_mark(i, j)
+			if walk_kind(kd):
+				road_chunks[Vector2i(i / CH, j / CH)] = true
 	return out
 
 
@@ -262,6 +269,8 @@ func undo(changes: Array) -> void:
 		kind[k] = ch[1]
 		h[k] = ch[2]
 		_mark(c.x, c.y)
+		if walk_kind(ch[1]):
+			road_chunks[Vector2i(c.x / CH, c.y / CH)] = true
 
 
 # ---------- постройки на земле ----------
@@ -303,7 +312,7 @@ func set_occ(cells: PackedInt32Array, id: int) -> void:
 ## Выровнять клетки под постройкой на высоту y (вокруг остаются уступы — как подпорные стенки)
 func flatten_cells(cells: PackedInt32Array, y: float, kd := -1) -> void:
 	for k in cells:
-		if h[k] != y or (kd >= 0 and kind[k] != kd):
+		if hq(k) != y or (kd >= 0 and kind[k] != kd):
 			h[k] = y
 			if kd >= 0:
 				kind[k] = kd
@@ -314,8 +323,9 @@ func flatten_cells(cells: PackedInt32Array, y: float, kd := -1) -> void:
 
 func make_surface() -> Image:
 	var img := Image.create(N / SM, N / SM, false, Image.FORMAT_RGBA8)
-	for ch in range(0, CHN * CHN):
-		update_surface(img, Vector2i(ch % CHN, ch / CHN))
+	img.fill(Color(0, 0, 0, 1))
+	for ch in road_chunks:
+		update_surface(img, ch)
 	return img
 
 
@@ -347,22 +357,28 @@ const C_DIRT := Color("c6a878")
 const C_ROCK := Color("d9c7ad")
 const C_SAND := Color("e2cf9c")
 const C_SAND_WET := Color("bfae84")
-const C_ROAD := Color("c9bba0")
-const C_PLAZA := Color("d8c9b0")
 const C_YARD := Color("b8a07a")
 const C_FIELD := Color("9a7a4e")
 const LOCK := Color("c4bb98")
 
 
-func top_color(k: int) -> Color:
-	var c: Color
-	match kind[k]:
-		Kind.ROCK: c = C_ROCK
-		Kind.SAND: c = C_SAND_WET if h[k] < WATER_Y + 0.12 else C_SAND
-		Kind.YARD: c = C_YARD
-		Kind.FIELD: c = C_FIELD
-		_: c = C_GRASS[tint[k]]
-	return c
+## Что рисовать на клетке: дороги и дворы — как есть; трава у воды — песок, на обрыве — скала
+func show_kind(k: int, y: float) -> int:
+	var kd := kind[k]
+	if kd != Kind.GRASS:
+		return kd
+	if y < WATER_Y + 0.3:
+		return Kind.SAND
+	return kd
+
+
+func top_color(kd: int, k: int, y: float) -> Color:
+	match kd:
+		Kind.ROCK: return C_ROCK
+		Kind.SAND: return C_SAND_WET if y < WATER_Y + 0.12 else C_SAND
+		Kind.YARD: return C_YARD
+		Kind.FIELD: return C_FIELD
+	return C_GRASS[tint[k] >> 6]
 
 
 ## Сетка куска (ci, cj): верх — полосами из одинаковых клеток (меньше треугольников), стенки — к нижним соседям
@@ -372,6 +388,21 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 	var col := PackedColorArray()
 	var uv := PackedVector2Array()
 	var ix := PackedInt32Array()
+	var i0 := ci * CH
+	var j0 := cj * CH
+	var plot_cells := int(PLOT / CELL)
+	# высоты куска с рамкой в одну клетку — читаем один раз
+	var W := CH + 2
+	var hy := PackedFloat32Array()
+	hy.resize(W * W)
+	for j in W:
+		for i in W:
+			var gi := clampi(i0 + i - 1, 0, N - 1)
+			var gj := clampi(j0 + j - 1, 0, N - 1)
+			var yy := hq(idx(gi, gj))
+			if i0 + i - 1 < 0 or j0 + j - 1 < 0 or i0 + i - 1 >= N or j0 + j - 1 >= N:
+				yy = WATER_Y - 3.0
+			hy[j * W + i] = yy
 	var quad := func(a: Vector3, b: Vector3, cc: Vector3, d: Vector3, n: Vector3, c: Color, kd: int, top: float) -> void:
 		var base := v.size()
 		v.append_array([a, b, cc, d])
@@ -381,28 +412,27 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 		var u := Vector2(kd, top)
 		uv.append_array([u, u, u, u])
 		ix.append_array([base, base + 2, base + 1, base, base + 3, base + 2])
-	var i0 := ci * CH
-	var j0 := cj * CH
-	var plot_cells := int(PLOT / CELL)
 	for j in range(j0, j0 + CH):
 		var i := i0
+		var lj := j - j0 + 1
 		while i < i0 + CH:
 			var k := idx(i, j)
-			var y := h[k]
-			var kd := kind[k]
-			var tc := tint[k]
+			var y := hy[lj * W + (i - i0 + 1)]
+			var kd := show_kind(k, y)
+			var tc := tint[k] >> 6
 			var own := is_owned(cell_center(i, j))
 			var e := i + 1
 			while e < i0 + CH:
 				var k2 := idx(e, j)
-				if h[k2] != y or kind[k2] != kd or tint[k2] != tc:
+				var y2 := hy[lj * W + (e - i0 + 1)]
+				if y2 != y or show_kind(k2, y2) != kd or (tint[k2] >> 6) != tc:
 					break
 				if e % plot_cells == 0:
 					break                       # граница участка — не сливаем (разный цвет своей и чужой земли)
 				e += 1
-			var c := top_color(k)
+			var c := top_color(kd, k, y)
 			if not own:
-				c = c.lerp(LOCK, 0.2)
+				c = c.lerp(LOCK, 0.18)
 			var x0 := i * CELL
 			var x1 := e * CELL
 			var z0 := j * CELL
@@ -411,15 +441,12 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 			i = e
 	# стенки уступов
 	for j in range(j0, j0 + CH):
+		var lj := j - j0 + 1
 		for i in range(i0, i0 + CH):
-			var k := idx(i, j)
-			var y := h[k]
+			var li := i - i0 + 1
+			var y := hy[lj * W + li]
 			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-				var ni := i + d.x
-				var nj := j + d.y
-				var yn := WATER_Y - 3.0
-				if inside(ni, nj):
-					yn = h[idx(ni, nj)]
+				var yn := hy[(lj + d.y) * W + li + d.x]
 				if yn >= y:
 					continue
 				var x0 := i * CELL
@@ -436,8 +463,9 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 					a = Vector3(x0, 0, z1); b = Vector3(x1, 0, z1)
 				else:
 					a = Vector3(x1, 0, z0); b = Vector3(x0, 0, z0)
-				var rocky := y - yn >= 0.45 or kind[k] == Kind.ROCK
-				var c := C_ROCK if rocky else top_color(k)
+				var k := idx(i, j)
+				var rocky := y - yn >= 0.45
+				var c := C_ROCK if rocky else top_color(show_kind(k, y), k, y)
 				quad.call(Vector3(b.x, yn, b.z), Vector3(b.x, y, b.z), Vector3(a.x, y, a.z), Vector3(a.x, yn, a.z), Vector3(d.x, 0, d.y), c, Kind.ROCK if rocky else Kind.DIRT, y)
 	var arr := []
 	arr.resize(Mesh.ARRAY_MAX)
@@ -459,11 +487,14 @@ func save_changes() -> Dictionary:
 	var cells := PackedInt32Array()
 	var kinds := PackedByteArray()
 	var hs := PackedFloat32Array()
-	for k in N * N:
-		if kind[k] != base_kind[k] or h[k] != base_h[k]:
-			cells.append(k)
-			kinds.append(kind[k])
-			hs.append(h[k])
+	for ch in _changed_chunks():
+		for j in range(ch.y * CH, ch.y * CH + CH):
+			for i in range(ch.x * CH, ch.x * CH + CH):
+				var k := idx(i, j)
+				if kind[k] != base_kind[k] or h[k] != base_h[k]:
+					cells.append(k)
+					kinds.append(kind[k])
+					hs.append(h[k])
 	var plots := []
 	for p in owned:
 		plots.append([p.x, p.y])
@@ -471,13 +502,25 @@ func save_changes() -> Dictionary:
 		"hs": Marshalls.raw_to_base64(hs.to_byte_array()), "plots": plots}
 
 
+var touched := {}                    # куски, где игрок что-то менял
+
+
+func _changed_chunks() -> Array:
+	return touched.keys()
+
+
 func load_changes(d: Dictionary) -> void:
 	var cells := Marshalls.base64_to_raw(d.get("cells", "")).to_int32_array()
 	var kinds := Marshalls.base64_to_raw(d.get("kinds", ""))
 	var hs := Marshalls.base64_to_raw(d.get("hs", "")).to_float32_array()
 	for n in cells.size():
-		kind[cells[n]] = kinds[n]
-		h[cells[n]] = hs[n]
+		var k := cells[n]
+		kind[k] = kinds[n]
+		h[k] = hs[n]
+		var ch := Vector2i((k % N) / CH, (k / N) / CH)
+		touched[ch] = true
+		if walk_kind(kinds[n]):
+			road_chunks[ch] = true
 	owned.clear()
 	for p in d.get("plots", []):
 		owned[Vector2i(int(p[0]), int(p[1]))] = true

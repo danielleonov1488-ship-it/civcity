@@ -79,15 +79,15 @@ func _run() -> void:
 		await frames(5)
 	await frames(30)
 	game.hud.advisor_panel.visible = false
-	game.rig.set_view(Vector3(128, 2, 78), 15, 58, 40)
+	game.rig.set_view(Vector3(192, 2, 138), 15, 58, 40)
 	await frames(20)
 	await click(center_of(game.hud.road_btns["road"]))
 	print("after road button tool=", game.tool)
-	await drag(scr(Vector2(128, 70)), scr(Vector2(128, 90)))
-	await drag(scr(Vector2(114, 80)), scr(Vector2(142, 80)))
-	print("road at (128,84): ", game.land.kind_at(128, 84), " money=", int(game.city.money))
+	await drag(scr(Vector2(192, 128)), scr(Vector2(192, 150)))
+	await drag(scr(Vector2(178, 140)), scr(Vector2(206, 140)))
+	print("road at (192,144): ", game.land.kind_at(192, 144), " money=", int(game.city.money))
 	shot("in1_roads.png")
-	await click(scr(Vector2(136, 74)), MOUSE_BUTTON_RIGHT)
+	await click(scr(Vector2(200, 132)), MOUSE_BUTTON_RIGHT)
 	print("after RMB tool=", game.tool)
 	await click(center_of(game.hud.cats["housing"]))
 	await frames(5)
@@ -98,13 +98,13 @@ func _run() -> void:
 	print("tray visible=", game.hud.tray.visible, " card=", card != null)
 	await click(center_of(card))
 	print("after card tool=", game.tool)
-	move(scr(Vector2(124, 76)))
+	move(scr(Vector2(188, 136)))
 	await frames(10)
 	shot("in2_ghost.png")
-	for w: Vector2 in [Vector2(124, 76), Vector2(119, 76), Vector2(124, 84), Vector2(119, 84), Vector2(133, 76), Vector2(138, 84)]:
+	for w: Vector2 in [Vector2(188, 136), Vector2(183, 136), Vector2(188, 144), Vector2(183, 144), Vector2(197, 136), Vector2(202, 144)]:
 		await click(scr(w))
 	print("houses placed, buildings=", game.city.buildings.size())
-	await click(scr(Vector2(146, 70)), MOUSE_BUTTON_RIGHT)
+	await click(scr(Vector2(210, 130)), MOUSE_BUTTON_RIGHT)
 	print("after RMB2 tool=", game.tool)
 	# снос: подсветка всей модели
 	await click(center_of(game.hud.tool_btns["bulldoze"]))
@@ -116,10 +116,33 @@ func _run() -> void:
 	await frames(10)
 	print("highlight=", game.highlight != null)
 	shot("in3_bulldoze.png")
-	await click(scr(Vector2(146, 70)), MOUSE_BUTTON_RIGHT)
+	await click(scr(Vector2(210, 130)), MOUSE_BUTTON_RIGHT)
 	await frames(5)
 	await click(scr(hb["pos"]))
 	print("info visible=", game.hud.info_panel.visible, " outline=", game.select_outline != null)
 	await frames(10)
 	shot("in4_info.png")
+	# снос и перенос дерева
+	var tree := {}
+	for key in game.nature:
+		for it in game.nature[key]:
+			if String(it["name"]).contains("Tree") and (it["p"] as Vector2).distance_to(Vector2(192, 140)) < 40.0:
+				tree = it
+				break
+		if not tree.is_empty():
+			break
+	print("tree found=", not tree.is_empty())
+	if not tree.is_empty():
+		game.rig.set_view(Vector3(tree["p"].x, 2, tree["p"].y), 15, 50, 16)
+		await frames(30)
+		game.hud.close_panels()
+		game.set_tool("move")
+		move(scr(tree["p"]))
+		await frames(10)
+		print("hover nature=", not game.hover_nature.is_empty())
+		shot("in5_tree.png")
+		await click(scr(tree["p"]))
+		print("moving tree tool=", game.tool)
+		await click(scr(tree["p"] + Vector2(4, 0)))
+		print("after place tool=", game.tool, " tree at new=", not game.nature_at(tree["p"] + Vector2(4, 0)).is_empty())
 	get_tree().quit()
