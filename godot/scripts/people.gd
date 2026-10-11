@@ -391,14 +391,23 @@ func _errand_point(r: Dictionary) -> Vector2:
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
 		if b["type"] in ["fountain", "temple", "forum"] or (city.def(b)["kind"] == "decor" and b["type"] in ["bench", "well", "statue"]):
-			if not h.is_empty() and (b["pos"] as Vector2).distance_to(h["pos"]) < 70.0:
+			if rng.randf() < 0.25 and not h.is_empty() and (b["pos"] as Vector2).distance_to(h["pos"]) < 70.0:
 				opts.append(city.door_point(b) + Vector2(rng.randf_range(-1.5, 1.5), rng.randf_range(-1.5, 1.5)))
+	var base: Vector2 = r["p"]
 	if opts.is_empty():
 		var c := city.center()
-		if not c.is_empty():
-			return city.door_point(c) + Vector2(rng.randf_range(-3, 3), rng.randf_range(-3, 3))
-		return r["p"]
-	return opts[rng.randi() % opts.size()]
+		if c.is_empty():
+			return r["p"]
+		base = city.door_point(c)
+	else:
+		base = opts[rng.randi() % opts.size()]
+	# не толпиться в одной точке: разойтись по площади вокруг
+	for k in 16:
+		var a := rng.randf() * TAU
+		var q := base + Vector2(cos(a), sin(a)) * rng.randf_range(1.5, 6.0)
+		if _free(q):
+			return q
+	return base
 
 
 func _hours_to(a: Vector2, b: Vector2) -> float:
