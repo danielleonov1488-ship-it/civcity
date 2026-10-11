@@ -23,6 +23,8 @@ var visuals := {}                    # id постройки → {handles, light
 var nature := {}                     # Vector2i(2-метровая клетка) → [{handles, p}]
 var plot_signs := {}
 var night_lights: Array[OmniLight3D] = []
+var actors_root: Node3D               # люди при деле у построек
+var _actor_speed := 1.0
 
 var speed := 1.0
 var day_t := 0.0
@@ -71,6 +73,8 @@ func _ready() -> void:
 	city = City.new(land)
 	parts = Parts.new()
 	add_child(parts)
+	actors_root = Node3D.new()
+	add_child(actors_root)
 	land_mat = ShaderMaterial.new()
 	land_mat.shader = load("res://shaders/land.gdshader")
 	var tex := func(n: String) -> Texture2D: return load(Synty._tex_path(n))
@@ -116,6 +120,7 @@ func _ready() -> void:
 	add_child(hud)
 	city.message.connect(func(t, k): hud.toast(t, k))
 	city.changed.connect(func(): hud.refresh())
+	city.changed.connect(_sync_all_actors)
 	_update_plot_signs()
 	_set_hour(hour)
 	hud.refresh()
@@ -379,7 +384,47 @@ func _show(b: Dictionary) -> void:
 		for sp in bp.smoke.slice(0, 1):
 			vis["smoke"].append(_smoke(xf * sp))
 	visuals[b["id"]] = vis
+	_sync_actors(b)
 	_set_hour(hour)
+
+
+## Люди при деле у постройки: появляются, когда она работает (есть работники и дорога), и уходят, когда нет
+func _sync_actors(b: Dictionary) -> void:
+	var vis: Dictionary = visuals.get(b["id"], {})
+	if vis.is_empty():
+		return
+	var d: Dictionary = Defs.B[b["type"]]
+	var on: bool = (int(b["pop"]) > 0) if d["kind"] == "house" else bool(b.get("active", true)) and bool(b.get("road", true))
+	if bool(vis.get("act_on", false)) == on and vis.has("actors"):
+		return
+	for a in vis.get("actors", []):
+		(a as Node).queue_free()
+	vis["actors"] = []
+	vis["act_on"] = on
+	if not on:
+		return
+	var bp := Catalog.make(b["type"], b["tier"], b["seed"])
+	var xf := _bxf(b)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(b["id"]) * 7919 + int(b["tier"])
+	for a: Array in bp.actors:
+		var who: String = a[3]
+		var model := ""
+		if who == "soldier":
+			model = "SK_Chr_Solider_Male_01" if rng.randf() < 0.7 else "SK_Chr_Soldier_Female_02"
+		var c := Citizen.create(rng, who == "female" or (who == "any" and rng.randf() < 0.5), false, who == "rich", model)
+		actors_root.add_child(c)
+		c.transform = xf * Transform3D(Basis(Vector3.UP, float(a[1])), a[0])
+		c.play(a[2], 0.0)
+		var cur := c.anim.current_animation
+		if cur != "":
+			c.anim.seek(rng.randf() * c.anim.get_animation(cur).length, true)
+		vis["actors"].append(c)
+
+
+func _sync_all_actors() -> void:
+	for id in city.buildings:
+		_sync_actors(city.buildings[id])
 
 
 func _hide(b: Dictionary) -> void:
@@ -392,6 +437,8 @@ func _hide(b: Dictionary) -> void:
 		(l as Node).queue_free()
 	for s in vis["smoke"]:
 		(s as Node).queue_free()
+	for a in vis.get("actors", []):
+		(a as Node).queue_free()
 	visuals.erase(b["id"])
 
 
@@ -539,6 +586,10 @@ func _process(dt: float) -> void:
 		if clock_hours:
 			_set_hour(hour + sdt * 24.0 / 480.0)       # сутки — 8 минут
 	people.set_meta("speed", speed)
+	if speed != _actor_speed:
+		_actor_speed = speed
+		for a in actors_root.get_children():
+			(a as Citizen).anim.speed_scale = speed
 	_update_tool()
 	autosave_t += dt
 	if autosave_t > 60.0 and shot_path == "":

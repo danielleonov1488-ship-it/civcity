@@ -36,8 +36,74 @@ static func make(type: String, tier := 0, seed_v := 1) -> Bp:
 		"forum": _forum(b)
 		"center": _center(b, tier)
 		_: _decor(b, type)
+	b.base = Transform3D.IDENTITY
+	_actors(b, type, tier)
 	_cache[key] = b
 	return b
+
+
+## Люди при деле: видны, пока постройка работает
+static func _actors(b: Bp, type: String, tier: int) -> void:
+	match type:
+		"farm":
+			b.actor(Vector3(-2.3, 0, -1.2), b.rng.randf() * TAU, "Fixing_Kneeling", "pleb")
+			b.actor(Vector3(1.4, 0, 1.6), b.rng.randf() * TAU, "Fixing_Kneeling", "pleb")
+			b.actor(Vector3(0.4, 0, -3.0), PI, "Crouch_Idle", "female")
+		"grove":
+			b.actor(Vector3(-1.6, 0, 1.6), PI, "Interact", "pleb")
+			b.actor(Vector3(1.9, 0, -1.4), b.rng.randf() * TAU, "Fixing_Kneeling", "female")
+		"vineyard":
+			b.actor(Vector3(-1.5, 0, -2.9), PI / 2, "Interact", "female")
+			b.actor(Vector3(1.5, 0, 0.7), -PI / 2, "Fixing_Kneeling", "pleb")
+		"bakery":
+			b.actor(Vector3(1.2, 0, 2.15), PI, "Interact", "pleb")
+			b.actor(Vector3(-1.6, 0, 1.45), PI, "PickUp_Table", "female")
+		"oilpress":
+			b.actor(Vector3(1.0, 0, 2.2), PI, "Push", "pleb")
+		"winery":
+			b.actor(Vector3(0.0, 0, 1.5), PI, "PickUp_Table", "pleb")
+		"lumber":
+			b.actor(Vector3(-2.0, 0, 2.05), PI, "Interact", "pleb")
+			b.actor(Vector3(0.6, 0, 0.9), 0.4, "Fixing_Kneeling", "pleb")
+		"quarry":
+			b.actor(Vector3(-0.3, 0, 0.2), PI + 0.4, "Fixing_Kneeling", "pleb")
+			b.actor(Vector3(1.7, 0, 1.2), PI - 0.5, "Interact", "pleb")
+		"smithy":
+			b.actor(Vector3(0.9, 0, 0.62), PI + 0.4, "Interact", "pleb")
+			b.actor(Vector3(3.0, 0, 1.35), PI, "Push", "pleb")
+		"warehouse":
+			b.actor(Vector3(-1.2, 0, 2.7), PI, "PickUp_Table", "pleb")
+		"market":
+			for c: Vector3 in [Vector3(-4.6, 0, -3.4), Vector3(-1.3, 0, -3.4), Vector3(2.0, 0, -3.4), Vector3(-4.6, 0, 0.9), Vector3(2.0, 0, 0.9)]:
+				b.actor(c + Vector3(1.3, 0, 0.2), 0.0, b.pick(["Interact", "Idle_Talking", "Idle"]), "any")
+			b.actor(Vector3(-3.3, 0, 2.4), PI, "Idle_Talking", "female")
+			b.actor(Vector3(3.3, 0, 2.4), PI + 0.3, "Idle_Talking", "rich")
+		"well":
+			b.actor(Vector3(0.95, 0, 0.75), -PI * 0.7, "Interact", "female")
+		"temple":
+			b.actor(Vector3(0, 0, 7.9), PI, "Spell_Simple_Idle", "rich")
+		"baths":
+			b.actor(Vector3(-4.6, 0, 3.6), PI * 0.8, "Idle_Talking", "rich")
+			b.actor(Vector3(-3.9, 0, 3.2), -PI * 0.2, "Idle_Talking", "rich")
+			b.actor(Vector3(4.5, 0, 0.2), -PI / 2, "Idle", "female")
+		"theatre":
+			b.actor(Vector3(0, 0.6, 5.6), PI, "Dance", "female")
+		"forum":
+			b.actor(Vector3(-1.6, 0, 1.2), 0.9, "Idle_Talking", "rich")
+			b.actor(Vector3(-0.8, 0, 1.9), PI + 0.9, "Idle_Talking", "rich")
+			b.actor(Vector3(2.4, 0, 3.8), 0.0, "Sword_Idle", "soldier")
+		"center":
+			if tier >= 2:
+				b.actor(Vector3(-2.6, 0, 3.6), 0.0, "Sword_Idle", "soldier")
+				b.actor(Vector3(0.1, 0, 3.6), 0.0, "Sword_Idle", "soldier")
+			elif tier == 1:
+				b.actor(Vector3(-1.4, 0, 3.4), 0.0, "Sword_Idle", "soldier")
+			else:
+				b.actor(Vector3(-2.0, 0, 0.2), PI, "Idle_Talking", "rich")
+		"domus":
+			if tier >= 1:
+				b.actor(Vector3(2.4, 0, -4.2), b.rng.randf() * TAU, "Fixing_Kneeling", "pleb")
+				b.actor(Vector3(-3.0, 0, 1.4), 0.4, "Idle_Talking", "rich")
 
 
 # ---------- жильё плебеев: 5×5 м, растёт на месте ----------

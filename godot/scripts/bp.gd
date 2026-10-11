@@ -21,6 +21,7 @@ var parts := []                 # [имя, Transform3D, remap]
 var lights: Array[Vector3] = []
 var smoke: Array[Vector3] = []
 var door := Vector3(0, 0, 3)    # куда входят жители (снаружи, у двери)
+var actors := []                # люди при деле: [положение, поворот, движение, кто: pleb|rich|female|soldier|any]
 var rng := RandomNumberGenerator.new()
 var remap := {}                 # раскраска стен этого здания (текущий этаж)
 var color := "White"
@@ -50,6 +51,11 @@ func add(name: String, pos: Vector3, yaw := 0.0, s := 1.0, walls := false) -> vo
 
 func add_xf(name: String, xf: Transform3D, walls := false) -> void:
 	parts.append([name, base * xf, remap.duplicate() if walls else {}])
+
+
+## Человек при деле (виден, когда постройка работает): работник в поле, торговец, жрец, стражник
+func actor(p: Vector3, yaw: float, anim: String, who := "any") -> void:
+	actors.append([base * p, yaw, anim, who])
 
 
 func light(p: Vector3) -> void:

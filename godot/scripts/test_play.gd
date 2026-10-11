@@ -140,5 +140,23 @@ func _process(dt: float) -> void:
 		6:
 			if t > 2.0:
 				shot("p6_road.png")
+				for id in game.city.buildings:
+					var b = game.city.buildings[id]
+					if b["type"] == "market":
+						game.rig.set_view(Vector3(b["pos"].x, 2, b["pos"].y), rad_to_deg(b["yaw"]) + 25, 38, 13)
+				step = 7
+				t = 0.0
+		7:
+			if t > 2.0:
+				shot("p7_market.png")
+				for id in game.city.buildings:
+					var b = game.city.buildings[id]
+					if b["type"] == "farm":
+						game.rig.set_view(Vector3(b["pos"].x, 2, b["pos"].y), rad_to_deg(b["yaw"]) + 25, 40, 15)
+				step = 8
+				t = 0.0
+		8:
+			if t > 2.0:
+				shot("p8_farm.png")
 				game.save()
 				get_tree().quit()

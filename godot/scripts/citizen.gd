@@ -34,7 +34,8 @@ static func library() -> AnimationLibrary:
 		for n in ap.get_animation_list():
 			var a := ap.get_animation(n).duplicate() as Animation
 			var short := String(n).get_slice("/", String(n).get_slice_count("/") - 1)
-			if short.ends_with("_Loop") or short in ["Walk", "Idle", "Idle_Talking", "Sitting_Idle", "Sitting_Talking", "Driving", "Walk_Formal", "Jog_Fwd", "Push", "Crouch_Idle"]:
+			if short.ends_with("_Loop") or short in ["Walk", "Idle", "Idle_Talking", "Sitting_Idle", "Sitting_Talking", "Driving", "Walk_Formal", "Jog_Fwd", "Push", "Crouch_Idle",
+					"Fixing_Kneeling", "Interact", "PickUp_Table", "Spell_Simple_Idle", "Sword_Idle", "Dance", "Idle_Torch", "Crouch_Fwd"]:
 				a.loop_mode = Animation.LOOP_LINEAR
 			_lib.add_animation(short.trim_suffix("_Loop"), a)
 		src.free()
@@ -51,14 +52,14 @@ static func _material(variant: String) -> StandardMaterial3D:
 
 
 ## rich — патриций; child — ребёнок (уменьшенный взрослый)
-static func create(rng: RandomNumberGenerator, is_female: bool, child := false, rich := false) -> Citizen:
+static func create(rng: RandomNumberGenerator, is_female: bool, child := false, rich := false, model := "") -> Citizen:
 	Synty._index()
 	var c := Citizen.new()
 	var pool: Array = RICH if rich else PLEBS
 	var choices := pool.filter(func(n): return (n in FEMALE) == is_female)
 	if choices.is_empty():
 		choices = pool
-	var name: String = choices[rng.randi() % choices.size()]
+	var name: String = model if model != "" else choices[rng.randi() % choices.size()]
 	c.female = name in FEMALE
 	var body := _scene(DIR + name + ".fbx").instantiate() as Node3D
 	c.add_child(body)
