@@ -1,5 +1,5 @@
 extends Node
-## Игровой тест: новый город — улицы, дома, колодцы, поле, рынок; прогон дней; снимки повозки, роста, карточек, храма
+## Игровой тест: новый город — улицы, дома, лавки, скрипторий; прогон дней; исследования; снимки
 
 var game
 var step := 0
@@ -7,157 +7,148 @@ var t := 0.0
 var out := "D:/CivCity/.work/gd/"
 var cart_shot := false
 
+
 func _ready() -> void:
 	Game.boot = {"new": "1"}
 	var sc: PackedScene = load("res://main.tscn")
 	game = sc.instantiate()
 	add_child(game)
 
+
 func shot(name: String) -> void:
 	get_viewport().get_texture().get_image().save_png(out + name)
+	var c: City = game.city
 	var tiers := {}
-	for id in game.city.buildings:
-		var b = game.city.buildings[id]
-		if b["type"] == "house":
-			tiers[b["tier"]] = int(tiers.get(b["tier"], 0)) + 1
-	print("SHOT ", name, " pop=", game.city.stats["pop"], " money=", int(game.city.money), " day=", game.city.day, " walkers=", game.people.walkers.size(), " queue=", game.city.settle_queue.size(), " tiers=", tiers, " fps=", Engine.get_frames_per_second(), " parts=", game.parts.count())
+	for id in c.buildings:
+		var b = c.buildings[id]
+		if c.is_house(b):
+			tiers[b["type"] + str(b["tier"])] = int(tiers.get(b["type"] + str(b["tier"]), 0)) + 1
+	print("SHOT ", name, " day=", c.day, " pop=", c.stats["pop"], " happy=", c.stats["happy"], " money=", int(c.money), " rp=", int(c.rp), " lvl=", c.level,
+		" walkers=", game.people.walkers.size(), " queue=", c.settle_queue.size(), " houses=", tiers, " fps=", Engine.get_frames_per_second(), " parts=", game.parts.count())
 
-func try_place(type: String, near: Vector2, r: float) -> bool:
+
+func try_place(type: String, near: Vector2, r: float, variant := -1) -> Dictionary:
 	for k in range(0, int(r * 2) + 1):
 		var rr := k * 0.5
 		var n := maxi(1, int(rr * 6))
 		for a in n:
 			var p := near + Vector2(cos(TAU * a / n), sin(TAU * a / n)) * rr
-			var pl: Dictionary = game.placement(type, p)
+			var pl: Dictionary = game.placement(type, p, variant)
 			if pl["err"] == "":
-				game.city.place(type, pl["pos"], pl["yaw"])
-				print("placed ", type, " at ", pl["pos"])
-				return true
-	print("FAILED ", type, " near ", near, " err=", game.placement(type, near)["err"])
-	return false
+				var b: Dictionary = game.city.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"])
+				return b
+	print("FAILED ", type, " near ", near, " err=", game.placement(type, near, variant)["err"])
+	return {}
 
-func road(a: Vector2, b: Vector2, w := 1.2, kd := Land.Kind.ROAD) -> void:
+
+func road(a: Vector2, b: Vector2, w := 1.3, kd := Land.Kind.ROAD) -> void:
 	game.land.paint_line(a, b, w, kd, true)
 
+
 func _process(dt: float) -> void:
+	if game == null or not game.ready_done:
+		return
 	t += dt
-	if step >= 2 and not cart_shot and game.people.cart.get("state", "") == "in" and float(game.people.cart["s"]) > 9.0:
+	if step >= 2 and not cart_shot and game.people.cart.get("state", "") == "in" and float(game.people.cart["s"]) > 8.0:
 		cart_shot = true
 		var keep: float = game.speed
 		game.speed = 0.0
 		var n: Node3D = game.people.cart["n"]
-		game.rig.set_view(n.position, rad_to_deg(n.rotation.y) + 70, 42, 10)
+		game.rig.set_view(n.position, rad_to_deg(n.rotation.y) + 70, 40, 10)
 		await get_tree().create_timer(0.5).timeout
-		shot("p_cart.png")
-		game.rig.set_view(Vector3(66, 2, 46), 200, 44, 40)
+		shot("q_cart.png")
+		game.rig.set_view(Vector3(128, 2, 70), 15, 44, 46)
 		game.speed = keep
 	match step:
 		0:
 			if t > 1.0:
-				game.city.money = 30000
-				for px in [3, 4, 5]:
-					print("buy ", px, " ", game.city.buy_plot(Vector2i(px, 3)))
-				var c: Vector2 = Land.CENTER
-				road(c + Vector2(0, 5), Vector2(64, 62))
-				road(Vector2(46, 44), Vector2(94, 44))
-				road(Vector2(80, 44), Vector2(80, 63))
-				road(Vector2(48, 50), Vector2(64, 50), 1.0, Land.Kind.DIRT)
-				var top := Defs.RANKS.size() - 1
-				game.city.max_rank = top
-				game.city.rank = top
-				game.land.flatten_obb(Vector2(87, 35.5), Vector2(1, 0), 7.0, 9.0, game.land.height_at(87, 42), Land.Kind.GRASS)
-				try_place("temple", Vector2(87, 36), 3)
-				game.city.max_rank = 0
-				game.city.rank = 0
-				try_place("farm", Vector2(86, 58), 3)
-				try_place("farm", Vector2(57, 57), 3)
-				try_place("market", Vector2(72, 38), 4)
-				try_place("well", Vector2(58, 47), 4)
-				try_place("well", Vector2(74, 50), 4)
+				game.city.money = 6000
+				road(Vector2(128, 70), Vector2(128, 92))
+				road(Vector2(108, 76), Vector2(150, 76))
+				road(Vector2(108, 88), Vector2(150, 88))
 				var n := 0
-				for z in range(36, 62):
-					for x in range(46, 94):
-						var pl: Dictionary = game.placement("house", Vector2(x, z))
+				for z in range(66, 94, 2):
+					for x in range(106, 152, 2):
+						if n >= 18:
+							break
+						var p := Vector2(x, z)
+						var pl: Dictionary = game.placement("house_pleb", p)
 						if pl["err"] == "":
-							game.city.place("house", pl["pos"], pl["yaw"])
+							game.city.place("house_pleb", pl["pos"], pl["yaw"], pl["variant"], pl["color"])
 							n += 1
 				print("houses ", n)
-				game.rig.set_view(Vector3(66, 2, 46), 200, 44, 40)
+				try_place("stall_fruit", Vector2(124, 81), 5)
+				try_place("stall_veg", Vector2(134, 81), 5)
+				try_place("scriptorium", Vector2(140, 72), 5)
+				try_place("musicians", Vector2(118, 82), 5)
+				game.city.research["stall_veg"] = true
+				game.rig.set_view(Vector3(128, 2, 80), 15, 46, 46)
 				game.speed = 6.0
 				step = 1
 				t = 0.0
 		1:
 			if t > 2.0:
-				shot("p1_built.png")
+				shot("q1_built.png")
 				step = 2
 				t = 0.0
 		2:
 			if t > 40.0:
-				shot("p2_grown.png")
+				shot("q2_settled.png")
+				var c: City = game.city
+				c.rp = 600
+				for r in ["floor2", "farm", "warehouse", "butcher", "weaver", "deco_flowers"]:
+					c.research[r] = true
+				c.level = 1
+				try_place("warehouse", Vector2(116, 94), 6)
+				try_place("butcher", Vector2(140, 92), 6)
+				try_place("weaver", Vector2(118, 92), 6)
+				for k in 8:
+					try_place("flowers", Vector2(112 + k * 4, 84), 2)
 				step = 3
 				t = 0.0
 		3:
-			if t > 40.0:
-				shot("p3_grown.png")
-				print("GOODS ", game.city.goods, " stats ", game.city.stats)
-				var hn := 0
-				for id in game.city.buildings:
-					var b = game.city.buildings[id]
-					if b["type"] != "house":
-						print("B ", b["type"], " staff=", b.get("staff"), " active=", b.get("active"), " road=", b["road"])
-					elif hn < 4:
-						hn += 1
-						print("H tier=", b["tier"], " target=", b.get("target"), " up=", b.get("up"), " needs=", b["needs"])
-				game.speed = 1.0
-				game._set_hour(9.0)
-				game.clock_hours = false
-				game.hud._toggle_cat("housing")
-				for id in game.city.buildings:
-					var b = game.city.buildings[id]
-					if b["type"] == "house" and int(b["tier"]) >= 2:
-						game.hud.open_info(b)
-						game.rig.set_view(Vector3(b["pos"].x, 2, b["pos"].y), 160, 34, 16)
+			if t > 45.0:
+				shot("q3_grown.png")
+				var c: City = game.city
+				for id in c.buildings:
+					var b = c.buildings[id]
+					if c.is_house(b):
+						print("H tier=", b["tier"], " pop=", b["pop"], " happy=", b["happy"], " needs=", b["needs"], " score=", b["score"], " missing=", b["missing"])
 						break
+				for id in c.buildings:
+					var b = c.buildings[id]
+					if not c.is_house(b) and c.def(b)["kind"] != "decor":
+						print("B ", b["type"], " active=", b.get("active"), " staff=", b.get("staff"), " served=", b.get("served"), " why=", b.get("why", ""))
+				game.speed = 1.0
+				game.clock_hours = false
+				game._set_hour(10.0)
+				for id in c.buildings:
+					var b = c.buildings[id]
+					if c.is_house(b) and int(b["tier"]) >= 2:
+						game.select_building(b)
+						game.hud.open_info(b)
+						game.rig.set_view(Vector3(b["pos"].x, 2, b["pos"].y), 25, 36, 18)
+						break
+				game.hud._toggle_cat("commerce")
 				step = 4
 				t = 0.0
 		4:
 			if t > 3.0:
-				shot("p4_ui.png")
+				shot("q4_ui.png")
 				game.hud.close_panels()
-				game.hud._toggle_cat("culture")
-				var tb: Dictionary = {}
-				for id in game.city.buildings:
-					if game.city.buildings[id]["type"] == "temple": tb = game.city.buildings[id]
-				if not tb.is_empty(): game.rig.set_view(Vector3(tb["pos"].x, 2, tb["pos"].y), rad_to_deg(tb["yaw"]) + 20, 30, 24)
+				game.hud._toggle(game.hud.research_panel)
+				game.hud._fill_research()
 				step = 5
 				t = 0.0
 		5:
-			if t > 3.0:
-				shot("p5_temple.png")
-				game.hud._toggle_cat("culture")
-				game.rig.set_view(Vector3(64, 2, 44), 160, 55, 14)
+			if t > 2.0:
+				shot("q5_research.png")
+				game.hud._toggle(game.hud.research_panel)
+				game.rig.set_view(Vector3(128, 2, 80), 25, 52, 40)
 				step = 6
 				t = 0.0
 		6:
 			if t > 2.0:
-				shot("p6_road.png")
-				for id in game.city.buildings:
-					var b = game.city.buildings[id]
-					if b["type"] == "market":
-						game.rig.set_view(Vector3(b["pos"].x, 2, b["pos"].y), rad_to_deg(b["yaw"]) + 25, 38, 13)
-				step = 7
-				t = 0.0
-		7:
-			if t > 2.0:
-				shot("p7_market.png")
-				for id in game.city.buildings:
-					var b = game.city.buildings[id]
-					if b["type"] == "farm":
-						game.rig.set_view(Vector3(b["pos"].x, 2, b["pos"].y), rad_to_deg(b["yaw"]) + 25, 40, 15)
-				step = 8
-				t = 0.0
-		8:
-			if t > 2.0:
-				shot("p8_farm.png")
+				shot("q6_overview.png")
 				game.save()
 				get_tree().quit()

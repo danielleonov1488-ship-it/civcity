@@ -1,39 +1,59 @@
 class_name City
 extends RefCounted
-## Жизнь города (перенос браузерной версии): казна с пределом, налоги и содержание, товары на складах,
-## работники, обслуживание домов (вода, рынок, храм, термы…), красота, рост и упадок домов,
-## переселенцы, звания города, центр города, участки земли, задания.
+## Жизнь города — как в Town to City: три класса жителей, лавки по видам потребностей обслуживают
+## ближайшие дома в своей дальности (сколько потянут рабочие), памятники и украшения радуют всех вокруг,
+## теснота огорчает. Счастливые дома сами надстраивают этажи, в свободные места приезжают семьи.
+## Деньги — налоги с домов; очки исследований — скрипторий, школа, библиотека. Уровень города растёт
+## от числа жителей и их счастья.
 
-signal changed            # что-то поменялось — перерисовать интерфейс
+signal changed                       # что-то поменялось — перерисовать интерфейс
 signal building_added(b)
 signal building_removed(b)
 signal house_changed(b, up)
-signal message(text, kind)
+signal event(text, icon)             # событие для колокольчика и всплывашки справа
 
 var land: Land
 var money := float(Defs.START_MONEY)
+var rp := 0.0
 var day := 0
-var goods := {}
-var buildings := {}              # id → запись постройки
+var level := 0
+var research := {}                    # id → true
+var buildings := {}                   # id → запись постройки
 var next_id := 1
-var rank := 0
-var max_rank := 0
-var stats := {"pop": 0, "happy": 0, "taxes": 0.0, "upkeep": 0.0, "trade": 0.0, "income": 0.0, "lost": 0.0, "cap": Defs.BASE_STORAGE,
-	"residents": {}, "jobs": {}, "staff": {}, "short": {}}
+var stats := {"pop": 0, "happy": 0, "income": 0.0, "upkeep": 0.0, "rp_day": 0.0, "residents": {}, "workers": {}, "jobs": {}, "free": {}, "class_happy": {}}
+var goods := {}                       # сырьё, которое есть в городе: wheat, olives, grapes
+var settle_queue: Array = []          # [id дома, сколько человек]
+var waiting := 0                      # семьи на станции, которым не хватило жилья
 var goals_done: Array = []
-var settle_queue: Array = []      # дома, ждущие переселенцев: [id, сколько]
-var plots_bought := 0
-const PLAZA_TYPES := ["market", "forum", "fountain", "center", "theatre"]
-var tips_seen: Array = []
+var events: Array = []                # [{day, text, icon}]
+var rng := RandomNumberGenerator.new()
 
 
 func _init(l: Land) -> void:
 	land = l
-	for g in Defs.GOODS:
-		goods[g] = float(Defs.START_GOODS.get(g, 0.0))
+	rng.seed = 5
 
 
-# ---------- постройки ----------
+func def(b: Dictionary) -> Dictionary:
+	return Defs.B[b["type"]]
+
+
+func is_house(b: Dictionary) -> bool:
+	return def(b)["kind"] == "house"
+
+
+func unlocked(type: String) -> bool:
+	var u: String = Defs.B[type].get("unlock", "")
+	return u == "" or research.has(u)
+
+
+func blueprint(b: Dictionary) -> Bp:
+	return Catalog.make(b["type"], int(b["tier"]), int(b.get("variant", 0)), int(b.get("color", 0)))
+
+
+func xf(b: Dictionary) -> Transform3D:
+	return Transform3D(Basis(Vector3.UP, b["yaw"]), Vector3(b["pos"].x, b["y"], b["pos"].y))
+
 
 static func facing(yaw: float) -> Vector2:
 	return Vector2(sin(yaw), cos(yaw))
@@ -43,142 +63,9 @@ static func axis(yaw: float) -> Vector2:
 	return Vector2(cos(yaw), -sin(yaw))
 
 
-func def(b: Dictionary) -> Dictionary:
-	return Defs.B[b["type"]]
-
-
-func obb(b: Dictionary, pad := 0.0) -> Dictionary:
-	var d := def(b)
-	return {"c": b["pos"], "ax": axis(b["yaw"]), "hw": float(d["w"]) / 2.0 + pad, "hd": float(d["d"]) / 2.0 + pad}
-
-
-static func obb_hit(a: Dictionary, b: Dictionary) -> bool:
-	for f in [a, b]:
-		var ax: Vector2 = f["ax"]
-		for ax2: Vector2 in [ax, Vector2(-ax.y, ax.x)]:
-			var pa := _proj(a, ax2)
-			var pb := _proj(b, ax2)
-			if pa.y <= pb.x or pb.y <= pa.x:
-				return false
-	return true
-
-
-static func _proj(f: Dictionary, axis2: Vector2) -> Vector2:
-	var c: Vector2 = f["c"]
-	var ax: Vector2 = f["ax"]
-	var az := Vector2(-ax.y, ax.x)
-	var r: float = absf(ax.dot(axis2)) * float(f["hw"]) + absf(az.dot(axis2)) * float(f["hd"])
-	var m := c.dot(axis2)
-	return Vector2(m - r, m + r)
-
-
-static func obb_has(f: Dictionary, p: Vector2) -> bool:
-	var q: Vector2 = p - (f["c"] as Vector2)
-	var ax: Vector2 = f["ax"]
-	var az := Vector2(-ax.y, ax.x)
-	return absf(q.dot(ax)) <= float(f["hw"]) and absf(q.dot(az)) <= float(f["hd"])
-
-
-func building_at(p: Vector2) -> Dictionary:
-	for id in buildings:
-		var b: Dictionary = buildings[id]
-		if obb_has(obb(b), p):
-			return b
-	return {}
-
-
-func unlocked(type: String) -> bool:
-	return max_rank >= int(Defs.B[type].get("rank", 0))
-
-
-## Почему здесь нельзя строить (пусто — можно)
-func check_place(type: String, pos: Vector2, yaw: float, ignore_id := -1) -> String:
-	var d: Dictionary = Defs.B[type]
-	if not unlocked(type):
-		return "Откроется со званием «%s»" % Defs.RANKS[int(d.get("rank", 0))][1]
-	if money < float(d["cost"]) and ignore_id < 0:
-		return "Не хватает денариев"
-	var f := {"c": pos, "ax": axis(yaw), "hw": float(d["w"]) / 2.0, "hd": float(d["d"]) / 2.0}
-	var s := land.survey(pos, f["ax"], f["hw"], f["hd"])
-	if s[3]:
-		return "Эта земля ещё не куплена"
-	if s[2]:
-		return "Здесь вода"
-	if s[4]:
-		return "Здесь скалы"
-	if float(s[1]) - float(s[0]) > (0.6 if d["kind"] != "decor" else 0.3):
-		return "Слишком круто — нужна ровная земля"
-	var tight := f.duplicate()
-	tight["hw"] = float(tight["hw"]) - 0.05
-	tight["hd"] = float(tight["hd"]) - 0.05
-	for id in buildings:
-		if id == ignore_id:
-			continue
-		if obb_hit(tight, obb(buildings[id], -0.05)):
-			return "Место занято"
-	if d["kind"] != "decor":
-		# поверх мостовой и площади строить нельзя (тропу можно)
-		var hw2 := float(f["hw"]) - 0.3
-		var hd2 := float(f["hd"]) - 0.3
-		var nu := int(hw2 * 2.0 / 0.5) + 1
-		var nv := int(hd2 * 2.0 / 0.5) + 1
-		var ax2: Vector2 = f["ax"]
-		var fw2 := Vector2(-ax2.y, ax2.x)
-		var on_road := 0
-		for u in nu:
-			for v in nv:
-				var q: Vector2 = pos + ax2 * lerpf(-hw2, hw2, float(u) / maxf(1.0, nu - 1)) + fw2 * lerpf(-hd2, hd2, float(v) / maxf(1.0, nv - 1))
-				var kq := land.kind_at(q.x, q.y)
-				if kq == Land.Kind.ROAD or (kq == Land.Kind.PLAZA and not type in PLAZA_TYPES):
-					on_road += 1
-		if on_road > maxi(2, int(nu * nv * 0.02)):
-			return "Мешает дорога"
-	return ""
-
-
-## Поставить постройку (деньги списываются); возвращает запись
-func place(type: String, pos: Vector2, yaw: float, free := false, seed_v := -1) -> Dictionary:
-	var d: Dictionary = Defs.B[type]
-	var b := {"id": next_id, "type": type, "tier": 0, "pos": pos, "yaw": yaw, "seed": seed_v if seed_v >= 0 else randi() % 6,
-		"pop": 0, "up": 0, "down": 0, "needs": {}, "happy": 50, "beauty": 0.0, "road": true, "staff": 1.0, "active": true}
-	if d["kind"] == "house":
-		b["tier"] = 1 if type == "house" else 0
-	next_id += 1
-	if not free:
-		money -= float(d["cost"])
-	# земля под постройкой: выровнять и засыпать (поле — пашня, площади — плитка)
-	var f := obb(b)
-	var s := land.survey(pos, f["ax"], f["hw"], f["hd"])
-	var y: float = roundf((float(s[0]) + float(s[1])) * 0.5 / Land.STEP) * Land.STEP
-	b["y"] = y
-	var kd := Land.Kind.YARD
-	if type in ["farm", "grove", "vineyard"]:
-		kd = Land.Kind.FIELD
-	elif type in PLAZA_TYPES:
-		kd = Land.Kind.PLAZA
-	if d["kind"] != "decor":
-		land.flatten_obb(pos, f["ax"], f["hw"] + 0.1, f["hd"] + 0.1, y, kd, [Land.Kind.ROAD] if kd == Land.Kind.PLAZA else [Land.Kind.ROAD, Land.Kind.PLAZA])
-	else:
-		b["y"] = land.height_at(pos.x, pos.y)
-	buildings[b["id"]] = b
-	compute()
-	building_added.emit(b)
-	changed.emit()
-	return b
-
-
-func remove(b: Dictionary, refund := true) -> void:
-	if def(b).get("fixed", false):
-		return
-	if refund:
-		money += float(def(b)["cost"]) * Defs.REFUND
-	buildings.erase(b["id"])
-	if def(b)["kind"] != "decor":
-		var f := obb(b)
-		land.flatten_obb(b["pos"], f["ax"], f["hw"] + 0.1, f["hd"] + 0.1, b["y"], Land.Kind.GRASS, [Land.Kind.ROAD] if b["type"] in PLAZA_TYPES else [Land.Kind.ROAD, Land.Kind.PLAZA])
-	compute()
-	building_removed.emit(b)
-	changed.emit()
+func door_point(b: Dictionary) -> Vector2:
+	var p3: Vector3 = Transform3D(Basis(Vector3.UP, b["yaw"]), Vector3(b["pos"].x, 0, b["pos"].y)) * blueprint(b).door
+	return Vector2(p3.x, p3.z)
 
 
 func center() -> Dictionary:
@@ -188,155 +75,328 @@ func center() -> Dictionary:
 	return {}
 
 
-## Дорога у входа: перед фасадом есть мостовая, площадь или тропа
-func has_road(b: Dictionary) -> bool:
-	var d := def(b)
-	if d.get("noroad", false) or d["kind"] == "decor":
-		return true
-	var f := facing(b["yaw"])
-	var ax := axis(b["yaw"])
-	var hw := float(d["w"]) / 2.0
-	var hd := float(d["d"]) / 2.0
-	for k in 9:
-		var t := lerpf(-hw + 0.3, hw - 0.3, k / 8.0)
-		for out: float in [0.35, 0.7, 1.1]:
-			var p: Vector2 = b["pos"] + f * (hd + out) + ax * t
-			var kd := land.kind_at(p.x, p.y)
-			if kd == Land.Kind.ROAD or kd == Land.Kind.PLAZA or kd == Land.Kind.DIRT:
+func building_at(p: Vector2) -> Dictionary:
+	var id := land.occ_at(p)
+	return buildings.get(id, {})
+
+
+func money_cap() -> float:
+	var c := float(Defs.LEVELS[level]["money"])
+	if research.has("vault1"):
+		c *= 2.0
+	if research.has("vault2"):
+		c *= 2.0
+	return c
+
+
+func rp_cap() -> float:
+	return float(Defs.LEVELS[level]["rp"]) * (2.0 if research.has("research1") else 1.0)
+
+
+func house_cap(b: Dictionary) -> int:
+	var cls: String = def(b)["cls"]
+	return int(Defs.CLASSES[cls]["per_floor"]) * int(b["tier"])
+
+
+# ---------- стройка ----------
+
+## Можно ли поставить; возвращает {"err": текст или "", "cells": клетки, "y": высота}
+func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 0, ignore_id := -1) -> Dictionary:
+	var d: Dictionary = Defs.B[type]
+	var res := {"err": "", "cells": PackedInt32Array(), "y": 0.0}
+	if not unlocked(type):
+		res["err"] = "Откроется исследованием «%s»" % Defs.research(d["unlock"]).get("name", "")
+		return res
+	if money < float(d["cost"]) and ignore_id == -1:
+		res["err"] = "Не хватает денариев"
+		return res
+	var tier := 1 if d["kind"] == "house" else (6 if type == "center" else 0)   # станция занимает место на вырост
+	var bp := Catalog.make(type, tier, variant, color)
+	var cells := land.footprint_cells(bp.footprint(), pos, yaw)
+	if cells.is_empty():
+		cells = land.footprint_cells([Rect2(-0.4, -0.4, 0.8, 0.8)], pos, yaw)
+	res["cells"] = cells
+	var lo := INF
+	var hi := -INF
+	var on_water := 0
+	for k in cells:
+		var q := land.cell_center(k % Land.N, k / Land.N)
+		if q.x < 1.0 or q.y < 1.0 or q.x > Land.SIZE - 1.0 or q.y > Land.SIZE - 1.0:
+			res["err"] = "Край карты"
+			return res
+		if not land.is_owned(q) and ignore_id != -2:
+			res["err"] = "Эта земля ещё не куплена"
+			return res
+		var o := land.occ[k]
+		if o != 0 and o != ignore_id:
+			res["err"] = "Место занято"
+			return res
+		if land.kind[k] == Land.Kind.ROCK and not d.get("water", false):
+			res["err"] = "Здесь скалы"
+			return res
+		var y := land.h[k]
+		if y < Land.WATER_Y + 0.05:
+			on_water += 1
+		lo = minf(lo, y)
+		hi = maxf(hi, y)
+	if d.get("water", false):
+		if on_water < cells.size():
+			res["err"] = "Ставится только на воду"
+			return res
+		res["y"] = Land.WATER_Y - 0.02
+		return res
+	if on_water > 0:
+		res["err"] = "Здесь вода"
+		return res
+	if hi - lo > 1.3:
+		res["err"] = "Слишком круто"
+		return res
+	res["y"] = roundf((lo + hi) * 0.5 / Land.STEP) * Land.STEP
+	if d["kind"] != "decor" and d["kind"] != "farm" and type != "center":
+		var dp3: Vector3 = Transform3D(Basis(Vector3.UP, yaw), Vector3(pos.x, 0, pos.y)) * bp.door
+		if not _road_near(Vector2(dp3.x, dp3.z), 1.7, cells):
+			res["err"] = "Нужна дорога у входа"
+			return res
+	return res
+
+
+func _road_near(p: Vector2, r: float, own_cells: PackedInt32Array) -> bool:
+	var c := land.cell(p)
+	var rc := int(ceil(r / Land.CELL))
+	for j in range(c.y - rc, c.y + rc + 1):
+		for i in range(c.x - rc, c.x + rc + 1):
+			if not land.inside(i, j):
+				continue
+			var k := land.idx(i, j)
+			if Land.walk_kind(land.kind[k]) and land.occ[k] == 0 and land.cell_center(i, j).distance_to(p) <= r:
 				return true
 	return false
 
 
-func door_point(b: Dictionary) -> Vector2:
-	var bp := Catalog.make(b["type"], b["tier"], b["seed"])
-	var p3: Vector3 = Transform3D(Basis(Vector3.UP, b["yaw"]), Vector3(b["pos"].x, 0, b["pos"].y)) * bp.door
-	return Vector2(p3.x, p3.z)
+## Поставить постройку (деньги списываются); возвращает запись. free — даром и без проверок (готовый город)
+func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false) -> Dictionary:
+	var d: Dictionary = Defs.B[type]
+	if color < 0:
+		color = pick_color(pos)
+	var chk := check_place(type, pos, yaw, variant, color, -2 if free else -1)
+	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else 0),
+		"pos": pos, "yaw": yaw, "variant": variant, "color": color, "y": float(chk["y"]), "cells": chk["cells"],
+		"pop": 0, "families": [], "happy": 50, "up": 0, "down": 0, "staff": 1.0, "active": true, "road": true,
+		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0}
+	next_id += 1
+	if not free:
+		money -= float(d["cost"])
+	var cells: PackedInt32Array = b["cells"]
+	if not d.get("water", false):
+		land.flatten_cells(cells, b["y"], Land.Kind.FIELD if d["kind"] == "farm" else -1)
+	land.set_occ(cells, b["id"])
+	buildings[b["id"]] = b
+	compute()
+	building_added.emit(b)
+	changed.emit()
+	_check_goals()
+	return b
 
 
-# ---------- расчёт обслуживания ----------
-
-func treasury_cap() -> float:
-	return float(Defs.TREASURY_CAPS[mini(max_rank, Defs.TREASURY_CAPS.size() - 1)])
-
-
-func storage_cap() -> float:
-	var c := Defs.BASE_STORAGE
+## Цвет новой постройки: не такой, как у соседей
+func pick_color(pos: Vector2) -> int:
+	var used := {}
 	for id in buildings:
-		if buildings[id]["type"] == "warehouse" and buildings[id]["active"]:
-			c += Defs.WAREHOUSE_STORAGE
-	return c
+		var o: Dictionary = buildings[id]
+		if (o["pos"] as Vector2).distance_to(pos) < 11.0:
+			used[int(o.get("color", 0))] = true
+	var opts := []
+	for i in Defs.PALETTE.size():
+		if not used.has(i):
+			opts.append(i)
+	if opts.is_empty():
+		return rng.randi() % Defs.PALETTE.size()
+	return opts[rng.randi() % opts.size()]
 
+
+func remove(b: Dictionary, refund := true) -> void:
+	if def(b).get("fixed", false):
+		return
+	if refund:
+		money += float(def(b)["cost"]) * Defs.REFUND
+	land.set_occ(b["cells"], 0)
+	buildings.erase(b["id"])
+	settle_queue = settle_queue.filter(func(q): return q[0] != b["id"])
+	compute()
+	building_removed.emit(b)
+	changed.emit()
+
+
+## Сменить цвет дома (щелчок по значку в карточке)
+func recolor(b: Dictionary) -> void:
+	b["color"] = (int(b["color"]) + 1) % Defs.PALETTE.size()
+	house_changed.emit(b, false)
+	changed.emit()
+
+
+# ---------- расчёт: обслуживание, счастье ----------
 
 func compute() -> void:
 	var houses := []
-	var residents := {"plebs": 0, "citizens": 0, "patricians": 0}
-	var jobs := {"plebs": 0, "citizens": 0, "patricians": 0}
-	var providers := {"water": [], "market": [], "temple": [], "baths": [], "theatre": [], "forum": []}
-	var beauty_src := []
+	var residents := {}
+	var jobs := {}
+	for c in Defs.CLASS_ORDER:
+		residents[c] = 0
+		jobs[c] = 0
+	var shops := []
+	var monuments := []
+	var decor := []
+	var stores := []
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		var d := def(b)
-		b["road"] = has_road(b)
-		if d["kind"] == "house":
-			houses.append(b)
-			var T: Dictionary = Defs.tiers(b["type"])[b["tier"]]
-			if T.has("cls"):
-				residents[T["cls"]] += int(b["pop"])
-			continue
+		match d["kind"]:
+			"house":
+				houses.append(b)
+				residents[d["cls"]] += int(b["pop"])
+			"decor":
+				decor.append(b)
+				continue
+		b["road"] = d["kind"] in ["farm", "center"] or _road_near(door_point(b), 1.7, b["cells"])
 		if d.has("jobs") and b["road"]:
 			for c in d["jobs"]:
 				jobs[c] += int(d["jobs"][c])
-		if d.get("beauty", 0) > 0:
-			beauty_src.append(b)
+	# работники: у каждого класса свои, лишние высшего класса идут на работу классом ниже
 	var workers := {}
-	var filled := {}
 	var spare := {}
-	for c in residents:
-		workers[c] = int(floor(residents[c] * Defs.WORKER_SHARE))
+	var filled := {}
+	for c in Defs.CLASS_ORDER:
+		workers[c] = int(floor(residents[c] * float(Defs.CLASSES[c]["work"])))
 		filled[c] = mini(jobs[c], workers[c])
 		spare[c] = workers[c] - filled[c]
-	for pair: Array in [["patricians", "citizens"], ["citizens", "plebs"]]:
+	for pair: Array in [["patricians", "artisans"], ["artisans", "plebs"]]:
 		var take := mini(jobs[pair[1]] - filled[pair[1]], spare[pair[0]])
 		if take > 0:
 			filled[pair[1]] += take
 			spare[pair[0]] -= take
-	var staff := {}
-	for c in residents:
-		staff[c] = float(filled[c]) / jobs[c] if jobs[c] > 0 else 1.0
+	var ratio := {}
+	for c in Defs.CLASS_ORDER:
+		ratio[c] = float(filled[c]) / jobs[c] if jobs[c] > 0 else 1.0
+	goods = {}
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		var d := def(b)
-		if d["kind"] == "house" or d["kind"] == "decor":
+		if d["kind"] == "decor" or d["kind"] == "house":
 			continue
 		var st := 1.0
 		if d.has("jobs"):
 			for c in d["jobs"]:
-				st = minf(st, staff[c])
+				st = minf(st, ratio[c])
 		b["staff"] = st if b["road"] else 0.0
-		b["active"] = b["road"] and (not d.has("jobs") or b["staff"] >= 0.25)
-		if d.has("provides") and b["active"]:
-			providers[d["provides"]].append(b)
-	var food := float(goods["wheat"]) + float(goods["fish"])
-	var happy_sum := 0.0
+		b["active"] = b["road"] and (not d.has("jobs") or float(b["staff"]) >= 0.25)
+		if d["kind"] == "farm" and b["active"]:
+			goods[d["makes"]] = true
+		elif d["kind"] == "store" and b["active"]:
+			stores.append(b)
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		var d := def(b)
+		if d["kind"] == "shop":
+			b["why"] = "" if b["active"] else ("road" if not b["road"] else "staff")
+			if b["active"] and d.get("store", false) and not _store_near(b, stores):
+				b["active"] = false
+				b["why"] = "store"
+			if b["active"] and d.has("needs_good") and not goods.has(d["needs_good"]):
+				b["active"] = false
+				b["why"] = "good"
+			if b["active"]:
+				shops.append(b)
+		elif d["kind"] == "monument" and b["active"]:
+			monuments.append(b)
+	# лавки обслуживают ближайшие дома в своей дальности, сколько хватит сил
 	for h in houses:
-		var n := {"road": h["road"]}
-		for kind in providers:
-			n[kind] = false
-			for p in providers[kind]:
-				var r := float(def(p)["radius"])
-				if (h["pos"] as Vector2).distance_squared_to(p["pos"]) <= r * r:
-					n[kind] = true
-					break
-		n["food"] = n["market"] and food > 0.5
-		for g in ["oil", "bread", "wine"]:
-			n[g] = n["market"] and float(goods[g]) > 0.5
-		h["needs"] = n
-		var beauty := 0.0
-		for s in beauty_src:
-			if (h["pos"] as Vector2).distance_to(s["pos"]) <= Defs.BEAUTY_RADIUS:
-				beauty += float(def(s)["beauty"])
-		h["beauty"] = snappedf(beauty, 0.1)
+		h["score"] = {}            # тип лавки → бонус
+		h["needs"] = {}            # вид потребности → true
+		h["monuments"] = 0.0
+	for s in shops:
+		var d := def(s)
+		var r := Defs.range_m(d)
+		if d["sub"] == "food" and research.has("reach1"):
+			r *= 1.33
+		var cap := int(ceil(float(Defs.CAPACITY[int(d["cap"])]) * float(s["staff"])))
+		var near := []
+		for h in houses:
+			var dd := (h["pos"] as Vector2).distance_to(s["pos"])
+			if dd <= r:
+				near.append([dd, h])
+		near.sort_custom(func(a, b): return a[0] < b[0])
+		var served := 0
+		for e in near:
+			if served >= cap:
+				break
+			var h: Dictionary = e[1]
+			var sc: Dictionary = h["score"]
+			if int(sc.get(s["type"], 0)) < int(d["bonus"]):
+				sc[s["type"]] = int(d["bonus"])
+			h["needs"][d["sub"]] = true
+			served += 1
+		s["served"] = served
+	var happy_sum := 0.0
+	var pop := 0
+	for h in houses:
+		var cls: String = def(h)["cls"]
+		var hp := 40.0
+		for t in h["score"]:
+			hp += float(h["score"][t])
+		for m in monuments:
+			var md := def(m)
+			if (h["pos"] as Vector2).distance_to(m["pos"]) <= Defs.range_m(md):
+				hp += float(md["bonus"])
+				h["monuments"] = float(h["monuments"]) + float(md["bonus"])
+		var deco := 0.0
+		for o in decor:
+			if (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DECOR_RADIUS:
+				deco += float(def(o).get("deco", 1))
+		var deco_b := minf(30.0, deco * 0.6)
+		hp += deco_b
 		var crowd := 0
 		for o in houses:
-			if o != h and int(o["tier"]) > 0 and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.CROWD_RADIUS:
+			if o != h and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DENSITY_RADIUS:
 				crowd += 1
-		h["crowd"] = crowd
-		var tiers := Defs.tiers(h["type"])
-		var target := 0
-		for t in range(1, tiers.size()):
-			if meets(h, t):
-				target = t
-			else:
-				break
-		h["target"] = target
-		var hp := 40.0
-		for need in Defs.NEED_HAPPY:
-			if n.get(need, false):
-				hp += Defs.NEED_HAPPY[need]
-		hp += minf(20.0, h["beauty"] * 2.0)
-		hp -= maxf(0, crowd - (2 if h["type"] == "domus" else 4)) * (6 if h["type"] == "domus" else 3)
-		h["happy"] = clampi(int(hp), 0, 100)
-		happy_sum += h["happy"] * int(h["pop"])
-	var pop := 0
-	for c in residents:
-		pop += residents[c]
+		var dens := -float(maxi(0, crowd - Defs.DENSITY_FREE)) * 2.0
+		hp += dens
+		var missing := []
+		for n in Defs.CLASSES[cls]["needs"]:
+			if not h["needs"].has(n):
+				missing.append(n)
+		hp -= missing.size() * 10.0
+		h["deco"] = deco
+		h["deco_bonus"] = deco_b
+		h["density"] = dens
+		h["missing"] = missing
+		h["happy"] = clampi(int(hp), 0, 200)
+		happy_sum += minf(100.0, hp) * int(h["pop"])
+		pop += int(h["pop"])
 	stats["pop"] = pop
 	stats["residents"] = residents
-	stats["jobs"] = jobs
 	stats["workers"] = workers
-	stats["staff"] = staff
+	stats["jobs"] = jobs
+	stats["free"] = spare
+	stats["ratio"] = ratio
 	stats["happy"] = int(happy_sum / pop) if pop > 0 else 0
-	stats["cap"] = storage_cap()
+	var per_class := {}
+	for c in Defs.CLASS_ORDER:
+		var hs := 0.0
+		var n := 0
+		for h in houses:
+			if def(h)["cls"] == c:
+				hs += minf(100.0, float(h["happy"])) * maxi(1, int(h["pop"]))
+				n += maxi(1, int(h["pop"]))
+		per_class[c] = int(hs / n) if n > 0 else 0
+	stats["class_happy"] = per_class
 
 
-func meets(h: Dictionary, t: int) -> bool:
-	var T: Dictionary = Defs.tiers(h["type"])[t]
-	for need in T["needs"]:
-		if not h["needs"].get(need, false):
-			return false
-	if T.has("beauty") and float(h["beauty"]) < float(T["beauty"]):
-		return false
-	return true
+func _store_near(s: Dictionary, stores: Array) -> bool:
+	var r := float(Defs.RANGE[4]) * (2.0 if research.has("store1") else 1.0)
+	for w in stores:
+		if (w["pos"] as Vector2).distance_to(s["pos"]) <= r:
+			return true
+	return false
 
 
 # ---------- день ----------
@@ -344,156 +404,172 @@ func meets(h: Dictionary, t: int) -> bool:
 func sim_day() -> void:
 	day += 1
 	compute()
-	var cap := storage_cap()
+	var income := 0.0
 	var upkeep := 0.0
-	for id in buildings:
+	var rpd := 0.0
+	for id in buildings.keys():
 		var b: Dictionary = buildings[id]
 		var d := def(b)
-		upkeep += float(d.get("upkeep", 0.0))
-		if not d.has("produces"):
-			continue
-		var k := float(b["staff"]) if b["active"] else 0.0
-		if d.has("consumes"):
-			for g in d["consumes"]:
-				k = minf(k, float(goods[g]) / float(d["consumes"][g]))
-		for g in d["produces"]:
-			k = minf(k, maxf(0.0, cap - float(goods[g])) / float(d["produces"][g]))
-		k = maxf(0.0, k)
-		if d.has("consumes"):
-			for g in d["consumes"]:
-				goods[g] = float(goods[g]) - float(d["consumes"][g]) * k
-		for g in d["produces"]:
-			goods[g] = float(goods[g]) + float(d["produces"][g]) * k
-		b["working"] = k > 0.01
-	var taxes := 0.0
-	var short := {}
-	for id in buildings:
-		var h: Dictionary = buildings[id]
-		if def(h)["kind"] != "house":
-			continue
-		var T: Dictionary = Defs.tiers(h["type"])[h["tier"]]
-		if h["needs"].get("market", false) and int(h["pop"]) > 0:
-			var need := int(h["pop"]) * float(Defs.CONSUMPTION["food"])
-			var total := float(goods["wheat"]) + float(goods["fish"])
-			if total > 0:
-				var take := minf(need, total)
-				var fw := float(goods["wheat"]) / total
-				goods["wheat"] = float(goods["wheat"]) - take * fw
-				goods["fish"] = float(goods["fish"]) - take * (1.0 - fw)
-				if take < need:
-					short["food"] = true
-			else:
-				short["food"] = true
-			for g in ["oil", "bread", "wine"]:
-				if not g in T["needs"]:
-					continue
-				var want := int(h["pop"]) * float(Defs.CONSUMPTION[g])
-				var take := minf(want, float(goods[g]))
-				goods[g] = float(goods[g]) - take
-				if take < want:
-					short[g] = true
-		taxes += int(h["pop"]) * float(T["tax"]) * (0.7 + float(h["happy"]) / 200.0)
-	for g in goods:
-		goods[g] = clampf(float(goods[g]), 0.0, cap)
-	# купцы покупают излишки со склада (без торгового поста — за ¾ цены)
-	var trade := 0.0
-	if _count("warehouse") > 0:
-		for g in Defs.SELL:
-			var extra := float(goods[g]) - Defs.TRADE_RESERVE
-			if extra > 1.0:
-				trade += extra * float(Defs.GOODS[g]["price"]) * 0.75
-				goods[g] = Defs.TRADE_RESERVE
-	var net := taxes + trade - upkeep
-	var before := money
-	money = minf(money + net, maxf(treasury_cap(), money)) if net > 0 else money + net
-	stats["lost"] = net - (money - before)
-	stats["taxes"] = taxes
+		match d["kind"]:
+			"house":
+				var cls: String = d["cls"]
+				var tax := float(Defs.CLASSES[cls]["tax"])
+				if cls == "patricians" and research.has("taxes1"):
+					tax *= 1.25
+				income += int(b["pop"]) * tax * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
+				_grow_house(b)
+			"rp":
+				rpd += float(d["rp"]) * float(b["staff"])
+			"shop", "monument", "store", "farm":
+				upkeep += float(d["cost"]) * 0.0015
+	money = minf(money_cap(), money + income - upkeep)
+	rp = minf(rp_cap(), rp + rpd)
+	stats["income"] = income
 	stats["upkeep"] = upkeep
-	stats["trade"] = trade
-	stats["income"] = net
-	stats["short"] = short
-	# рост и упадок домов
-	for id in buildings.keys():
-		var h: Dictionary = buildings[id]
-		if def(h)["kind"] != "house":
-			continue
-		var tiers := Defs.tiers(h["type"])
-		var target: int = h.get("target", 0)
-		if target > int(h["tier"]):
-			h["up"] = int(h["up"]) + 1
-			h["down"] = 0
-			if int(h["up"]) >= (2 if int(h["tier"]) == 0 else 3):
-				h["tier"] = int(h["tier"]) + 1
-				h["up"] = 0
-				house_changed.emit(h, true)
-		elif target < int(h["tier"]) and int(h["tier"]) > 1:
-			h["down"] = int(h["down"]) + 1
-			h["up"] = 0
-			if int(h["down"]) >= 12:
-				h["tier"] = int(h["tier"]) - 1
-				h["down"] = 0
-				house_changed.emit(h, false)
-		else:
-			h["up"] = 0
-			h["down"] = 0
-		var capp: int = tiers[h["tier"]]["cap"]
-		if int(h["pop"]) > capp:
-			h["pop"] = maxi(capp, int(h["pop"]) - 2)
+	stats["rp_day"] = rpd
 	_request_settlers()
-	_update_rank()
-	compute()
+	_update_level()
 	_check_goals()
 	changed.emit()
 
 
-func _count(type: String) -> int:
-	var n := 0
-	for id in buildings:
-		if buildings[id]["type"] == type:
-			n += 1
-	return n
+## Дом надстраивает этаж, когда жители довольны, дом полон и этаж открыт исследованием
+func _grow_house(b: Dictionary) -> void:
+	var d := def(b)
+	var floors := int(b["tier"])
+	var unlocked_floor := 1
+	if research.has("floor2"):
+		unlocked_floor = 2
+	if research.has("floor3"):
+		unlocked_floor = 3
+	unlocked_floor = mini(unlocked_floor, Defs.floors_max(d["cls"]))
+	var need := 55 + 12 * (floors - 1)
+	var full := int(b["pop"]) >= house_cap(b)
+	if full and floors < unlocked_floor and int(b["happy"]) >= need:
+		b["up"] = int(b["up"]) + 1
+		if int(b["up"]) >= 3:
+			b["up"] = 0
+			b["tier"] = floors + 1
+			house_changed.emit(b, true)
+			_event("Дом семьи %s надстроил %d-й этаж" % [_fam_name(b), floors + 1], "housing")
+	else:
+		b["up"] = 0
+	# несчастные уезжают
+	if int(b["happy"]) < 25 and int(b["pop"]) > 0:
+		b["down"] = int(b["down"]) + 1
+		if int(b["down"]) >= 20:
+			b["down"] = 0
+			var fams: Array = b["families"]
+			if not fams.is_empty():
+				var f: Dictionary = fams.pop_back()
+				b["pop"] = maxi(0, int(b["pop"]) - int(f["n"]))
+				_event("Семья %s уехала: им плохо живётся" % f["name"], "person")
+				house_changed.emit(b, false)
+	else:
+		b["down"] = 0
 
 
-## Дома с местами зовут переселенцев (если до них есть дорога от центра)
+func _fam_name(b: Dictionary) -> String:
+	var fams: Array = b["families"]
+	return fams[0]["name"] if not fams.is_empty() else "без имени"
+
+
+## Свободные места в домах ждут семьи — повозка привезёт их из тоннеля
 func _request_settlers() -> void:
-	var waiting := {}
+	var queued := {}
 	for q in settle_queue:
-		waiting[q[0]] = int(waiting.get(q[0], 0)) + int(q[1])
+		queued[q[0]] = int(queued.get(q[0], 0)) + int(q[1])
+	var city_ok := int(stats["pop"]) < 12 or int(stats["happy"]) >= 45
+	var free_total := 0
 	for id in buildings:
-		var h: Dictionary = buildings[id]
-		if def(h)["kind"] != "house" or int(h["tier"]) == 0 or not h["road"]:
+		var b: Dictionary = buildings[id]
+		if not is_house(b):
 			continue
-		var capp: int = Defs.tiers(h["type"])[h["tier"]]["cap"]
-		var free: int = capp - int(h["pop"]) - int(waiting.get(id, 0)) - int(h.get("coming", 0))
-		if free > 0:
-			settle_queue.append([id, mini(free, 4)])
+		var free := house_cap(b) - int(b["pop"]) - int(queued.get(id, 0)) - int(b.get("coming", 0))
+		free_total += maxi(0, free)
+		if free <= 0 or not city_ok:
+			continue
+		if rng.randf() < 0.75:
+			var n := mini(free, rng.randi_range(2, 4))
+			settle_queue.append([id, n])
+	# семьи, которым не хватило жилья, ждут на станции (как значок над вокзалом в Town to City)
+	if city_ok and free_total == 0 and int(stats["happy"]) >= 55:
+		waiting = mini(8, waiting + 1)
+	elif free_total > 0:
+		waiting = maxi(0, waiting - 1)
 
 
+## Семья доехала до дома
 func settled(id: int, n: int) -> void:
 	if not buildings.has(id):
 		return
-	var h: Dictionary = buildings[id]
-	var capp: int = Defs.tiers(h["type"])[h["tier"]]["cap"]
-	h["pop"] = mini(capp, int(h["pop"]) + n)
+	var b: Dictionary = buildings[id]
+	var room := house_cap(b) - int(b["pop"])
+	n = mini(n, room)
+	if n <= 0:
+		return
+	var name: String = Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()]
+	(b["families"] as Array).append({"name": name, "n": n})
+	b["pop"] = int(b["pop"]) + n
 	compute()
+	house_changed.emit(b, false)
 	changed.emit()
 
 
-func _update_rank() -> void:
-	rank = Defs.rank_of(int(stats["pop"]))
-	if rank > max_rank:
-		max_rank = rank
-		var c := center()
-		if not c.is_empty():
-			c["tier"] = mini(max_rank, Defs.CENTER_STAGES.size() - 1)
-			house_changed.emit(c, true)
-		message.emit("Город теперь — «%s»! Казна вмещает %d денариев, открылись новые постройки." % [Defs.RANKS[max_rank][1], int(treasury_cap())], "rank")
+func _update_level() -> void:
+	while level < Defs.LEVELS.size() - 1:
+		var nx: Dictionary = Defs.LEVELS[level + 1]
+		if int(stats["pop"]) >= int(nx["pop"]) and int(stats["happy"]) >= int(nx["happy"]):
+			level += 1
+			_event("Город теперь — «%s»! Открылись новые исследования, казна вмещает %d ден." % [nx["name"], int(money_cap())], "level")
+			var c := center()
+			if not c.is_empty():
+				c["tier"] = level
+				house_changed.emit(c, true)
+		else:
+			break
+
+
+func next_level() -> Dictionary:
+	return Defs.LEVELS[level + 1] if level < Defs.LEVELS.size() - 1 else {}
+
+
+# ---------- исследования ----------
+
+func can_research(id: String) -> String:
+	var r := Defs.research(id)
+	if r.is_empty() or research.has(id):
+		return "Уже изучено"
+	if int(r["lvl"]) > level:
+		return "Нужен уровень «%s»" % Defs.LEVELS[int(r["lvl"])]["name"]
+	if r.has("after") and not research.has(r["after"]):
+		return "Сначала — «%s»" % Defs.research(r["after"])["name"]
+	if rp < float(r["cost"]):
+		return "Не хватает очков исследований"
+	return ""
+
+
+func do_research(id: String) -> bool:
+	if can_research(id) != "":
+		return false
+	var r := Defs.research(id)
+	rp -= float(r["cost"])
+	research[id] = true
+	_event("Изучено: %s" % r["name"], "research")
+	compute()
+	_check_goals()
+	changed.emit()
+	return true
 
 
 # ---------- участки ----------
 
+const PLOT_PRICE := [0, 600, 900, 1300, 1800, 2500, 3400, 4500, 6000, 8000, 10000, 13000]
+
+
 func plot_price() -> int:
-	return int(Defs.PLOT_PRICE[mini(plots_bought + 1, Defs.PLOT_PRICE.size() - 1)])
+	var bought := land.owned.size() - 4
+	return int(PLOT_PRICE[clampi(bought + 1, 1, PLOT_PRICE.size() - 1)])
 
 
 func can_buy(p: Vector2i) -> bool:
@@ -509,11 +585,12 @@ func buy_plot(p: Vector2i) -> bool:
 	if not can_buy(p) or money < plot_price():
 		return false
 	money -= plot_price()
-	plots_bought += 1
 	land.owned[p] = true
-	for j in range(p.y * 64, p.y * 64 + 64):
-		for i in range(p.x * 64, p.x * 64 + 64):
-			land._mark(i, j)
+	var c := int(Land.PLOT / Land.CELL)
+	for j in range(p.y * c, p.y * c + c, Land.CH):
+		for i in range(p.x * c, p.x * c + c, Land.CH):
+			land._mark(i + 1, j + 1)
+	_event("Куплен новый участок земли", "keys")
 	_check_goals()
 	changed.emit()
 	return true
@@ -521,41 +598,58 @@ func buy_plot(p: Vector2i) -> bool:
 
 # ---------- задания ----------
 
-func goal_progress(id: String) -> int:
-	match id:
-		"houses3":
-			var n := 0
-			for i in buildings:
-				if buildings[i]["type"] == "house" and buildings[i]["road"]:
-					n += 1
-			return n
-		"well": return _count("well") + _count("fountain")
-		"farm_market": return mini(1, _count("farm")) + mini(1, _count("market"))
-		"domik3": return _houses_at("house", 2)
-		"temple": return _count("temple")
-		"oil": return mini(1, _count("grove")) + mini(1, _count("oilpress"))
-		"insula": return _houses_at("house", 3)
-		"pop100", "pop400": return int(stats["pop"])
-		"plot": return plots_bought
-		"warehouse": return mini(1, _count("lumber")) + mini(1, _count("quarry")) + mini(1, _count("warehouse"))
-		"baths": return _count("baths")
-		"big_insula": return _houses_at("house", 4)
-		"domus": return _houses_at("domus", 1)
-	return 0
+const GOALS := [
+	{"id": "houses3", "text": "Постройте 3 дома у дороги", "need": 3, "money": 150, "rp": 20, "tool": "house_pleb",
+		"hint": "Дом ставится фасадом к дороге. Повозка привезёт семьи из тоннеля."},
+	{"id": "fruit", "text": "Поставьте фруктовую лавку", "need": 1, "money": 100, "rp": 20, "tool": "stall_fruit",
+		"hint": "Лавка кормит ближайшие дома в своей дальности. Чем больше разных лавок рядом, тем счастливее дом."},
+	{"id": "scriptorium", "text": "Постройте скрипторий", "need": 1, "money": 100, "rp": 30, "tool": "scriptorium",
+		"hint": "Скрипторий даёт очки исследований — за них открываются новые постройки."},
+	{"id": "pop30", "text": "Соберите 30 жителей", "need": 30, "money": 200, "rp": 40},
+	{"id": "research1", "text": "Изучите что-нибудь", "need": 1, "money": 150, "rp": 0,
+		"hint": "Откройте меню исследований (свиток вверху справа)."},
+	{"id": "decor5", "text": "Поставьте 5 украшений", "need": 5, "money": 120, "rp": 20,
+		"hint": "Украшения дают дому очки красоты — до +30% счастья."},
+	{"id": "floor2", "text": "Дорастите дом до 2 этажей", "need": 1, "money": 250, "rp": 40,
+		"hint": "Изучите «Второй жилой этаж». Довольный полный дом надстроит его сам."},
+	{"id": "store", "text": "Склад и мясная лавка", "need": 2, "money": 200, "rp": 40},
+	{"id": "pop100", "text": "Соберите 100 жителей", "need": 100, "money": 400, "rp": 80},
+	{"id": "artisan", "text": "Постройте дом ремесленников", "need": 1, "money": 300, "rp": 60},
+	{"id": "temple", "text": "Постройте храм", "need": 1, "money": 500, "rp": 100},
+	{"id": "pop300", "text": "Соберите 300 жителей", "need": 300, "money": 900, "rp": 150},
+	{"id": "patrician", "text": "Постройте домус патрициев", "need": 1, "money": 800, "rp": 150},
+	{"id": "pop600", "text": "Соберите 600 жителей", "need": 600, "money": 1500, "rp": 300},
+]
 
 
-func _houses_at(type: String, tier: int) -> int:
+func _count(pred: Callable) -> int:
 	var n := 0
-	for i in buildings:
-		if buildings[i]["type"] == type and int(buildings[i]["tier"]) >= tier:
+	for id in buildings:
+		if pred.call(buildings[id]):
 			n += 1
 	return n
 
 
+func goal_progress(id: String) -> int:
+	match id:
+		"houses3": return _count(func(b): return is_house(b))
+		"fruit": return _count(func(b): return b["type"] == "stall_fruit")
+		"scriptorium": return _count(func(b): return b["type"] == "scriptorium")
+		"pop30", "pop100", "pop300", "pop600": return int(stats["pop"])
+		"research1": return research.size()
+		"decor5": return _count(func(b): return def(b)["kind"] == "decor")
+		"floor2": return _count(func(b): return is_house(b) and int(b["tier"]) >= 2)
+		"store": return mini(1, _count(func(b): return b["type"] == "warehouse")) + mini(1, _count(func(b): return b["type"] == "butcher"))
+		"artisan": return _count(func(b): return b["type"] == "house_artisan")
+		"temple": return _count(func(b): return b["type"] == "temple")
+		"patrician": return _count(func(b): return b["type"] == "house_patrician")
+	return 0
+
+
 func active_goals(n := 3) -> Array:
 	var out := []
-	for g in Defs.GOALS:
-		if not g["id"] in goals_done:
+	for g in GOALS:
+		if not goals_done.has(g["id"]):
 			out.append(g)
 			if out.size() >= n:
 				break
@@ -566,8 +660,16 @@ func _check_goals() -> void:
 	for g in active_goals():
 		if goal_progress(g["id"]) >= int(g["need"]):
 			goals_done.append(g["id"])
-			money += float(g["reward"])
-			message.emit("✓ %s · +%d ден." % [g["text"], g["reward"]], "goal")
+			money = minf(money_cap(), money + float(g["money"]))
+			rp = minf(rp_cap(), rp + float(g["rp"]))
+			_event("Задание выполнено: %s (+%d ден.%s)" % [g["text"], g["money"], (", +%d оч." % g["rp"]) if int(g["rp"]) > 0 else ""], "check")
+
+
+func _event(text: String, icon: String) -> void:
+	events.append({"day": day, "text": text, "icon": icon})
+	if events.size() > 60:
+		events.pop_front()
+	event.emit(text, icon)
 
 
 # ---------- сохранение ----------
@@ -576,5 +678,33 @@ func save_data() -> Dictionary:
 	var bl := []
 	for id in buildings:
 		var b: Dictionary = buildings[id]
-		bl.append({"type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "seed": b["seed"], "pop": b["pop"], "y": b["y"]})
-	return {"money": money, "day": day, "goods": goods, "buildings": bl, "max_rank": max_rank, "goals": goals_done, "plots_bought": plots_bought, "tips": tips_seen}
+		bl.append({"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
+			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"],
+			"cells": Marshalls.raw_to_base64((b["cells"] as PackedInt32Array).to_byte_array())})
+	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
+		"goals": goals_done, "waiting": waiting, "events": events}
+
+
+func load_data(d: Dictionary) -> void:
+	money = float(d.get("money", Defs.START_MONEY))
+	rp = float(d.get("rp", 0))
+	day = int(d.get("day", 0))
+	level = int(d.get("level", 0))
+	research = {}
+	for r in d.get("research", []):
+		research[r] = true
+	goals_done = d.get("goals", [])
+	waiting = int(d.get("waiting", 0))
+	events = d.get("events", [])
+	next_id = int(d.get("next_id", 1))
+	buildings = {}
+	for bd in d.get("buildings", []):
+		var cells := Marshalls.base64_to_raw(bd.get("cells", "")).to_int32_array()
+		var b := {"id": int(bd["id"]), "type": bd["type"], "tier": int(bd["tier"]), "pos": Vector2(float(bd["x"]), float(bd["z"])),
+			"yaw": float(bd["yaw"]), "variant": int(bd.get("variant", 0)), "color": int(bd.get("color", 0)), "y": float(bd.get("y", Land.BASE_Y)),
+			"cells": cells, "pop": int(bd["pop"]), "families": bd.get("families", []), "happy": 50, "up": 0, "down": 0, "staff": 1.0,
+			"active": true, "road": true, "needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0}
+		buildings[b["id"]] = b
+		land.set_occ(cells, b["id"])
+		next_id = maxi(next_id, int(b["id"]) + 1)
+	compute()

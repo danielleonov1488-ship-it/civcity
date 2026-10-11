@@ -19,7 +19,7 @@ var _orbit := false
 var _pan := false
 
 const DIST_MIN := 4.0
-const DIST_MAX := 95.0
+const DIST_MAX := 130.0
 
 
 func _ready() -> void:
@@ -83,8 +83,8 @@ func _process(dt: float) -> void:
 		var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
 		var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
 		_target_t += (right * mv.x + fwd * mv.y) * _dist_t * 0.9 * dt
-	_target_t.x = clampf(_target_t.x, 4.0, 124.0)
-	_target_t.z = clampf(_target_t.z, 4.0, 124.0)
+	_target_t.x = clampf(_target_t.x, 4.0, Land.SIZE - 4.0)
+	_target_t.z = clampf(_target_t.z, 4.0, Land.SIZE - 4.0)
 	var a := 1.0 - pow(0.0008, dt)
 	yaw = lerpf(yaw, _yaw_t, a)
 	pitch = lerpf(pitch, _pitch_t, a)
@@ -96,7 +96,7 @@ func _process(dt: float) -> void:
 func _update(_snap: bool) -> void:
 	var hsrc = land if land != null else terrain
 	if hsrc != null:
-		target.y = lerpf(target.y, maxf(0.0, hsrc.height_at(target.x, target.z)), 0.1 if not _snap else 1.0)
+		target.y = lerpf(target.y, maxf(1.0, hsrc.height_at(target.x, target.z)), 0.1 if not _snap else 1.0)
 	var off := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
 	if cam:
 		cam.global_position = target + off

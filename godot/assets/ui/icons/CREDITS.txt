@@ -1,0 +1,2 @@
+Иконки: game-icons.net (авторы Lorc и Delapouite), лицензия CC BY 3.0 — https://creativecommons.org/licenses/by/3.0/
+Картинки слегка изменены (убран фон). Значки pause, play, close, eraser, plus, brush*, line* нарисованы для CivCity.

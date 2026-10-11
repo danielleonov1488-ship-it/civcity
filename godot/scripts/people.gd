@@ -18,37 +18,52 @@ const CART_HORSE_Z := 2.05
 const CART_SEAT_Y := 0.3
 
 
+const G := 2                          # клетка сетки ходьбы — 2×2 клетки земли (50 см)
+const GN := Land.N / G
+
+
 func setup(l: Land, c: City) -> void:
 	land = l
 	city = c
 	rng.seed = 21
-	grid.region = Rect2i(0, 0, Land.N, Land.N)
-	grid.cell_size = Vector2(Land.CELL, Land.CELL)
-	grid.offset = Vector2(Land.CELL, Land.CELL) * 0.5
+	grid.region = Rect2i(0, 0, GN, GN)
+	grid.cell_size = Vector2(Land.CELL * G, Land.CELL * G)
+	grid.offset = Vector2(Land.CELL * G, Land.CELL * G) * 0.5
 	grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	grid.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	grid.update()
-	for j in Land.N:
-		for i in Land.N:
-			grid.set_point_solid(Vector2i(i, j), not _walk(land.kind[land.idx(i, j)]))
+	for j in GN:
+		for i in GN:
+			grid.set_point_solid(Vector2i(i, j), not _walk_g(i, j))
 	_make_cart()
 
 
-static func _walk(kd: int) -> bool:
-	return kd == Land.Kind.ROAD or kd == Land.Kind.PLAZA or kd == Land.Kind.DIRT
+## Клетка ходьбы проходима, если хотя бы половина её земли — дорога без построек
+func _walk_g(gi: int, gj: int) -> bool:
+	var n := 0
+	for dj in G:
+		for di in G:
+			var k := land.idx(gi * G + di, gj * G + dj)
+			if Land.walk_kind(land.kind[k]) and land.occ[k] == 0:
+				n += 1
+	return n * 2 >= G * G
 
 
 ## Земля поменялась в кусках chunks — обновить проходимость
 func refresh(chunks: Array) -> void:
+	var s := Land.CH / G
 	for ch: Vector2i in chunks:
-		for j in range(ch.y * Land.CH, ch.y * Land.CH + Land.CH):
-			for i in range(ch.x * Land.CH, ch.x * Land.CH + Land.CH):
-				grid.set_point_solid(Vector2i(i, j), not _walk(land.kind[land.idx(i, j)]))
+		for j in range(ch.y * s, ch.y * s + s):
+			for i in range(ch.x * s, ch.x * s + s):
+				grid.set_point_solid(Vector2i(i, j), not _walk_g(i, j))
+
+
+func gcell(p: Vector2) -> Vector2i:
+	return Vector2i(clampi(int(p.x / (Land.CELL * G)), 0, GN - 1), clampi(int(p.y / (Land.CELL * G)), 0, GN - 1))
 
 
 func _free(p: Vector2) -> bool:
-	var c := land.cell(p)
-	return not grid.is_point_solid(c)
+	return not grid.is_point_solid(gcell(p))
 
 
 func _near_free(p: Vector2, rmax := 14) -> Vector2:
@@ -56,7 +71,7 @@ func _near_free(p: Vector2, rmax := 14) -> Vector2:
 		return p
 	for r in range(1, rmax):
 		for a in 12:
-			var q := p + Vector2(cos(TAU * a / 12.0), sin(TAU * a / 12.0)) * r * Land.CELL
+			var q := p + Vector2(cos(TAU * a / 12.0), sin(TAU * a / 12.0)) * r * Land.CELL * G * 0.5
 			if _free(q):
 				return q
 	return Vector2.INF
@@ -67,7 +82,7 @@ func _path(a: Vector2, b: Vector2) -> PackedVector2Array:
 	var fb := _near_free(b)
 	if fa == Vector2.INF or fb == Vector2.INF:
 		return PackedVector2Array()
-	var raw := grid.get_point_path(land.cell(fa), land.cell(fb))
+	var raw := grid.get_point_path(gcell(fa), gcell(fb))
 	if raw.is_empty():
 		return PackedVector2Array()
 	var out := PackedVector2Array([fa])
@@ -131,7 +146,7 @@ func _spawn_wanderer() -> void:
 	var at := _near_free(city.door_point(h))
 	if at == Vector2.INF:
 		return
-	var rich: bool = h["type"] == "domus"
+	var rich: bool = h["type"] == "house_patrician"
 	var w := _spawn(at, rng.randf() < 0.5, rich, rng.randf() < 0.15)
 	w["home"] = h["id"]
 	_next(w)
@@ -205,6 +220,8 @@ func _remove(w: Dictionary) -> void:
 
 
 func _process(dt: float) -> void:
+	if city == null or land == null:
+		return
 	dt = minf(dt, 0.05)
 	var speed: float = get_meta("speed", 1.0)
 	if speed <= 0.0:
@@ -348,7 +365,7 @@ func _cart_step(dt: float) -> void:
 				# собрать до трёх семей и ехать от ворот к центру
 				var cen := city.center()
 				var to := city.door_point(cen)
-				c["path"] = _path(Land.GATE + Vector2(0, 0.5), to)
+				c["path"] = _path(Land.TUNNEL + Vector2(0, 0.8), to)
 				if c["path"].size() < 2:
 					c["t"] = 4.0
 					return
@@ -428,7 +445,7 @@ func _drop() -> void:
 			var at := _near_free(base + Vector2(rng.randf_range(-1.2, 1.2), rng.randf_range(-1.2, 1.2)))
 			if at == Vector2.INF:
 				at = base
-			var w := _spawn(at, m == 1, h["type"] == "domus")
+			var w := _spawn(at, m == 1, h["type"] == "house_patrician")
 			w["settle"] = hid
 			w["n"] = int(q[1]) if m == 0 else 0
 			_go(w, city.door_point(h), "settle")

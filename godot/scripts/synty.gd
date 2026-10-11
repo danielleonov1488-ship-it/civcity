@@ -112,6 +112,10 @@ static func material(slot: String, remap := {}) -> Material:
 		var albedo: String = _slots[key][0].get_basename()
 		var normal: String = _slots[key][1].get_basename()
 		albedo = remap.get(albedo, albedo)
+		# подкраска отдельной картинки (штукатурка дома в цвет), остальное — как есть
+		var tints: Dictionary = remap.get("tints", {})
+		if tints.has(albedo):
+			m.albedo_color = tints[albedo]
 		var ap := _tex_path(albedo)
 		if ap != "":
 			m.albedo_texture = load(ap)

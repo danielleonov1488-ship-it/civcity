@@ -7,29 +7,22 @@ extends RefCounted
 const M := 2.5      # модуль стены
 const FL := 3.0     # этаж
 const STUCCO := ["Stucco_White_01", "Stucco_Orange_01", "Stucco_Red_01", "Stucco_Blue_01"]
-## Цвета домов: штукатурка, та же с кирпичным низом, с узорами (полосы, пилястры, меандр)
-const COLORS := {
-	"White": {"plain": "Stucco_White_01", "brick": "Building_Half_Brick_01"},
-	"Orange": {"plain": "Stucco_Orange_01", "brick": "Building_Half_Brick_02"},
-	"Blue": {"plain": "Stucco_Blue_01", "brick": "Building_Half_Brick_03"},
-	"Red": {"plain": "Stucco_Red_01", "brick": "Building_Half_Brick_04"},
-}
-const PAINT := ["White", "Orange", "White", "Orange", "Red", "White", "Blue", "Orange", "White"]
-const ROOFS := ["Roof_Tile_01", "Roof_Tile_01", "Roof_Tile_03", "Roof_Tile_12", "Roof_Tile_05", "Roof_Tile_01"]
+## Черепица: терракота разных оттенков, иногда песочная
+const ROOFS := ["Roof_Tile_01", "Roof_Tile_03", "Roof_Tile_12", "Roof_Tile_01", "Roof_Tile_06", "Roof_Tile_05", "Roof_Tile_03"]
 
 var parts := []                 # [имя, Transform3D, remap]
 var lights: Array[Vector3] = []
 var smoke: Array[Vector3] = []
 var door := Vector3(0, 0, 3)    # куда входят жители (снаружи, у двери)
-var actors := []                # люди при деле: [положение, поворот, движение, кто: pleb|rich|female|soldier|any]
 var rng := RandomNumberGenerator.new()
 var remap := {}                 # раскраска стен этого здания (текущий этаж)
-var color := "White"
+var tint := Color(1, 1, 1)      # цвет штукатурки (из палитры)
 var ground_style := "brick"     # низ первого этажа: brick | pattern | plain
 var upper_style := "plain"      # верхние этажи: plain | pattern
 var roof_tex := "Roof_Tile_01"
 var full_brick := false
 var base := Transform3D.IDENTITY  # общий сдвиг/масштаб (для больших построек)
+var actors := []                # люди при деле: [положение, поворот, движение, кто]
 
 
 func _init(seed_v := 1) -> void:
@@ -62,14 +55,14 @@ func light(p: Vector3) -> void:
 	lights.append(base * p)
 
 
-## Раскраска здания: цвет, стиль первого этажа и верха, цвет черепицы
-func paint(c: String) -> void:
-	if c == "Brick":
-		full_brick = true
-		c = "White"
-	color = c
-	ground_style = pick(["brick", "brick", "pattern", "plain"])
-	upper_style = pick(["plain", "plain", "pattern"])
+## Раскраска здания: цвет штукатурки из палитры (индекс), стиль первого этажа и верха, черепица.
+## c = -1 — кирпич целиком
+func paint(c: int, styles := true) -> void:
+	full_brick = c < 0
+	tint = Color(1, 1, 1) if c < 0 else (Defs.PALETTE[c % Defs.PALETTE.size()]["c"] as Color)
+	if styles:
+		ground_style = pick(["brick", "plain", "pattern", "plain"])
+		upper_style = pick(["plain", "plain", "pattern"])
 	roof_tex = pick(ROOFS)
 	remap = floor_remap(1)
 
@@ -79,20 +72,86 @@ func _set_tex(tex: String) -> Dictionary:
 	for s0 in STUCCO:
 		r[s0] = tex
 	r["Roof_Tile_01"] = roof_tex
+	if not full_brick:
+		r["tints"] = {tex: tint}
 	return r
 
 
 func floor_remap(f: int) -> Dictionary:
 	if full_brick:
 		return _set_tex("Building_Large_Brick_01")
-	var c: Dictionary = COLORS[color]
 	if f == 0:
 		match ground_style:
-			"brick": return _set_tex(c["brick"])
-			"pattern": return _set_tex("Stucco_%s_Pattern_0%d" % [color, 3 + (hash(color) % 2)])
+			"brick": return _set_tex("Building_Half_Brick_01")
+			"pattern": return _set_tex("Stucco_White_Pattern_0%d" % (3 + (int(tint.r * 97.0) % 2)))
 	if upper_style == "pattern" and f > 0:
-		return _set_tex("Stucco_%s_Pattern_0%d" % [color, 1 + (hash(color + "u") % 2)])
-	return _set_tex(c["plain"])
+		return _set_tex("Stucco_White_Pattern_0%d" % (1 + (int(tint.g * 89.0) % 2)))
+	return _set_tex("Stucco_White_01")
+
+
+## Двускатная крыша с коньком вдоль Z (поперёк фасада) — фронтоном к улице
+func gable_z(cx: float, cz: float, wm: int, dm: int, top: float, toppers := true) -> float:
+	var keep := base
+	base = base * Transform3D(Basis(Vector3.UP, PI / 2), Vector3(cx, 0, cz))
+	var sm := smoke.size()
+	var r := gable(0, 0, dm, wm, top, toppers)
+	base = keep
+	return r
+
+
+# ---------- след постройки на земле ----------
+
+const NONSOLID := ["Roof", "Trim", "Ivy", "Vine", "Banner", "Hanging", "Rug", "Drapery", "Overhang", "Trellis_Roof", "_Balcony_0",
+	"SM_Bld_Balcony", "Grass", "SM_Env_Flowers", "Lillies", "Torch", "Mural", "Symbol", "SM_Bld_Door_0", "Topper", "Wall_Tiny", "Ornament",
+	"Pillar_Trim", "Beam_Detail", "Cart_01_Insert", "Brazier_0", "Plate", "Bowl", "Jug", "Goblet", "Scroll_0", "Tool_"]
+
+static var _aabbs := {}
+
+
+static func model_aabb(name: String) -> AABB:
+	if _aabbs.has(name):
+		return _aabbs[name]
+	var box := AABB(Vector3(-0.5, 0, -0.5), Vector3(1, 1, 1))
+	if not name.begins_with("#"):
+		var n := Synty.make(name)
+		box = Artisau.aabb(n)
+		n.free()
+	_aabbs[name] = box
+	return box
+
+
+## Прямоугольники следа (в осях постройки, XZ): из габаритов настоящих деталей, без крыш, плюща, навесов и мелочи
+func footprint() -> Array:
+	var out := []
+	for p in parts:
+		var nm: String = p[0]
+		var skip := false
+		for w in NONSOLID:
+			if nm.contains(w):
+				skip = true
+				break
+		if skip:
+			continue
+		var xf: Transform3D = p[1]
+		var box := model_aabb(nm)
+		if nm.begins_with("SM_Env_Tree") or nm.begins_with("SM_Env_Bush") or nm.begins_with("SM_Env_Garden"):
+			# у деревьев — только ствол и низ кроны
+			var c := box.get_center()
+			box = AABB(Vector3(c.x - box.size.x * 0.15, box.position.y, c.z - box.size.z * 0.15), Vector3(box.size.x * 0.3, box.size.y, box.size.z * 0.3))
+		var lo := Vector2(INF, INF)
+		var hi := Vector2(-INF, -INF)
+		var low_y := INF
+		for i in 8:
+			var q := xf * box.get_endpoint(i)
+			lo = lo.min(Vector2(q.x, q.z))
+			hi = hi.max(Vector2(q.x, q.z))
+			low_y = minf(low_y, q.y)
+		if low_y > 1.6:
+			continue                          # висит высоко (балкон, вывеска) — землю не занимает
+		if (hi - lo).x < 0.05 or (hi - lo).y < 0.05:
+			continue
+		out.append(Rect2(lo, hi - lo))
+	return out
 
 
 # ---------- коробка стен ----------

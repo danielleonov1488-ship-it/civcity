@@ -1,185 +1,300 @@
 class_name Defs
 extends RefCounted
-## Все числа баланса: постройки, уровни домов, потребности, товары, звания города, задания.
-## Перенесено из браузерной версии (js/config.js); расстояния — в метрах (1 клетка браузера = 2,5 м).
-## Знания пока заменены званием города: постройки открываются, когда город дорастает до звания (rank).
+## Все числа и названия игры — устроено как в Town to City, только Рим:
+## три класса жителей (у каждого свой дом), лавки по видам потребностей с дальностью, рабочими и
+## производительностью, исследования за отдельную валюту, уровни города от Стоянки до Вечного города.
 
-const DAY_SECONDS := 5.0
-const START_MONEY := 3000
-const START_GOODS := {"wheat": 40.0}
-const BASE_STORAGE := 200.0
-const WAREHOUSE_STORAGE := 300.0
-const WORKER_SHARE := 0.5
+const DAY_SECONDS := 6.0
+const START_MONEY := 2500
 const REFUND := 0.5
-const BEAUTY_RADIUS := 15.0
-const CROWD_RADIUS := 8.0
-const ROAD_COST := {"road": 0.4, "plaza": 0.8, "path": 0.1}     # денариев за клетку 25 см
-const CONSUMPTION := {"food": 0.06, "oil": 0.03, "bread": 0.04, "wine": 0.04}
-const NEED_HAPPY := {"water": 6, "food": 8, "temple": 5, "oil": 4, "bread": 4, "baths": 5, "wine": 4, "theatre": 5, "forum": 4}
-const TREASURY_CAPS := [4000, 6000, 10000, 20000, 40000, 80000, 200000]
-const RANKS := [[0, "Деревня"], [50, "Посёлок"], [150, "Городок"], [400, "Город"], [900, "Большой город"], [2000, "Столица провинции"], [5000, "Второй Рим"]]
-const CENTER_STAGES := ["Лагерь переселенцев", "Дом старосты", "Курия", "Базилика", "Большая базилика", "Дворец наместника", "Императорский дворец"]
-const PLOT_PRICE := [0, 400, 700, 1100, 1600, 2300, 3200, 4500, 6000]
+const ROAD_COST := {"road": 0.25, "plaza": 0.5, "path": 0.06}     # денариев за клетку 25 см
+const DECOR_RADIUS := 14.0            # украшения радуют дома в этом радиусе
+const DENSITY_RADIUS := 9.0           # теснота: слишком много домов рядом
+const DENSITY_FREE := 6
 
-const GOODS := {
-	"wheat": {"name": "Пшеница", "price": 2.0}, "fish": {"name": "Рыба", "price": 3.0},
-	"olives": {"name": "Оливки", "price": 3.0}, "grapes": {"name": "Виноград", "price": 3.0},
-	"bread": {"name": "Хлеб", "price": 6.0}, "oil": {"name": "Масло", "price": 7.0}, "wine": {"name": "Вино", "price": 9.0},
-	"wood": {"name": "Дерево", "price": 3.0}, "stone": {"name": "Камень", "price": 4.0}, "marble": {"name": "Мрамор", "price": 16.0},
-	"iron": {"name": "Железо", "price": 8.0}, "weapons": {"name": "Оружие", "price": 18.0},
-}
-const SELL := ["wood", "stone", "marble", "iron", "weapons"]       # излишки покупают купцы
-const TRADE_RESERVE := 40.0
+# ---------- жители ----------
 
 const CLASSES := {
-	"plebs": {"name": "Плебеи", "color": Color("6b8a2f")},
-	"citizens": {"name": "Граждане", "color": Color("2f6f9a")},
-	"patricians": {"name": "Патриции", "color": Color("7a3f8c")},
+	"plebs": {"name": "Плебеи", "one": "Плебеи", "icon": "person", "house": "house_pleb", "tax": 0.55, "per_floor": 4, "work": 0.5,
+		"needs": ["food"]},
+	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 1.25, "per_floor": 3, "work": 0.5,
+		"needs": ["food", "clothes", "fun"]},
+	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 3.2, "per_floor": 3, "work": 0.35,
+		"needs": ["food", "clothes", "fun", "services", "goods"]},
 }
+const CLASS_ORDER := ["plebs", "artisans", "patricians"]
 
-const NEED_LABELS := {
-	"road": "Дорога у входа", "water": "Вода: колодец или фонтан", "food": "Еда: рынок и пшеница",
-	"temple": "Храм поблизости", "oil": "Масло на рынке", "bread": "Хлеб на рынке", "baths": "Термы поблизости",
-	"wine": "Вино на рынке", "theatre": "Театр поблизости", "forum": "Форум поблизости",
+## Виды потребностей (как вкладки коммерции в Town to City)
+const NEEDS := {
+	"food": {"name": "Еда", "icon": "food"},
+	"clothes": {"name": "Одежда", "icon": "clothes"},
+	"fun": {"name": "Развлечения", "icon": "fun"},
+	"services": {"name": "Услуги", "icon": "services"},
+	"goods": {"name": "Товары", "icon": "goods"},
 }
+const NEED_ORDER := ["food", "clothes", "fun", "services", "goods"]
 
-const PLEB_TIERS := [
-	{"name": "Пустой участок", "cap": 0, "tax": 0.0, "needs": []},
-	{"name": "Хижина", "cls": "plebs", "cap": 4, "tax": 0.12, "needs": ["road"]},
-	{"name": "Домик", "cls": "plebs", "cap": 8, "tax": 0.16, "needs": ["road", "water", "food"]},
-	{"name": "Инсула", "cls": "citizens", "cap": 16, "tax": 0.3, "needs": ["road", "water", "food", "temple", "oil"], "beauty": 2},
-	{"name": "Большая инсула", "cls": "citizens", "cap": 26, "tax": 0.36, "needs": ["road", "water", "food", "temple", "oil", "bread", "baths"], "beauty": 5},
-]
-const PATRICIAN_TIERS := [
-	{"name": "Участок патриция", "cap": 0, "tax": 0.0, "needs": []},
-	{"name": "Домус", "cls": "patricians", "cap": 6, "tax": 1.2, "needs": ["road", "water", "food", "temple"], "beauty": 3},
-	{"name": "Богатый домус", "cls": "patricians", "cap": 9, "tax": 1.4, "needs": ["road", "water", "food", "temple", "oil", "bread", "baths"], "beauty": 6},
-	{"name": "Вилла", "cls": "patricians", "cap": 12, "tax": 1.7, "needs": ["road", "water", "food", "temple", "oil", "bread", "baths", "wine", "theatre"], "beauty": 10},
-	{"name": "Дворец", "cls": "patricians", "cap": 16, "tax": 2.2, "needs": ["road", "water", "food", "temple", "oil", "bread", "baths", "wine", "theatre", "forum"], "beauty": 16},
+## Римские семьи (родовые имена) — у каждой семьи в доме своё имя
+const FAMILIES := ["Юлии", "Корнелии", "Клавдии", "Валерии", "Фабии", "Эмилии", "Ливии", "Туллии", "Флавии", "Антонии", "Юнии",
+	"Сервилии", "Сульпиции", "Помпеи", "Лицинии", "Порции", "Октавии", "Аврелии", "Кассии", "Марции", "Постумии", "Манлии",
+	"Семпронии", "Теренции", "Фурии", "Горации", "Квинкции", "Секстии", "Вибии", "Плавтии", "Петронии", "Домиции"]
+
+# ---------- уровни города ----------
+
+const LEVELS := [
+	{"name": "Стоянка", "pop": 0, "happy": 0, "money": 3000, "rp": 300},
+	{"name": "Хутор", "pop": 35, "happy": 55, "money": 5000, "rp": 500},
+	{"name": "Деревня", "pop": 90, "happy": 58, "money": 8000, "rp": 800},
+	{"name": "Посёлок", "pop": 180, "happy": 60, "money": 12000, "rp": 1200},
+	{"name": "Городок", "pop": 320, "happy": 62, "money": 20000, "rp": 1600},
+	{"name": "Город", "pop": 520, "happy": 64, "money": 30000, "rp": 2000},
+	{"name": "Большой город", "pop": 800, "happy": 66, "money": 50000, "rp": 3000},
+	{"name": "Вечный город", "pop": 1200, "happy": 68, "money": 100000, "rp": 5000},
 ]
 
-## Постройки. w, d — размер в метрах (вдоль фасада и вглубь); radius — в метрах; rank — с какого звания доступно
+# ---------- слова для свойств лавок (как в подсказках Town to City) ----------
+
+const RANGE := {1: 13.0, 2: 19.0, 3: 26.0, 4: 36.0, 5: 50.0}          # дальность обслуживания, м
+const CAPACITY := {1: 4, 2: 7, 3: 11, 4: 16, 5: 24}                   # сколько домов обслуживает
+const WORD := {1: "очень низкая", 2: "низкая", 3: "средняя", 4: "высокая", 5: "очень высокая"}
+
+# ---------- постройки ----------
+## kind: house | shop | farm | rp | store | monument | decor | center
+## cat: housing | commerce | farming | decor | special;  sub — вкладка коммерции (вид потребности)
+## range/cap — уровни 1…5 (см. RANGE, CAPACITY); jobs — {класс: число}; bonus — % счастья домам, которые обслужены
+## store — нужен склад рядом (иначе лавке нечем торговать); needs_good — сырьё с полей; unlock — исследование
 const B := {
-	"house": {"kind": "house", "cat": "housing", "name": "Дом плебеев", "cost": 20, "w": 5.0, "d": 5.0, "tiers": "pleb",
-		"desc": "Растёт из хижины в многоэтажную инсулу, когда рядом есть всё нужное. Хижины и домики дают плебеев, инсулы — граждан."},
-	"domus": {"kind": "house", "cat": "housing", "name": "Участок патриция", "cost": 310, "w": 10.0, "d": 10.0, "tiers": "patrician", "rank": 2,
-		"desc": "Богатые семьи строят домус, виллу, а потом и дворец. Платят много налогов, любят простор и красоту."},
-	"farm": {"kind": "producer", "cat": "food", "name": "Пшеничное поле", "cost": 110, "w": 10.0, "d": 10.0,
-		"jobs": {"plebs": 4}, "upkeep": 0.5, "produces": {"wheat": 6.0},
-		"desc": "Выращивает пшеницу — основную еду и сырьё для пекарен."},
-	"grove": {"kind": "producer", "cat": "food", "name": "Оливковая роща", "cost": 95, "w": 10.0, "d": 10.0, "rank": 1,
-		"jobs": {"plebs": 3}, "upkeep": 0.5, "produces": {"olives": 4.0}, "desc": "Даёт оливки для маслодавильни."},
-	"vineyard": {"kind": "producer", "cat": "food", "name": "Виноградник", "cost": 130, "w": 10.0, "d": 10.0, "rank": 3,
-		"jobs": {"plebs": 3}, "upkeep": 0.5, "produces": {"grapes": 4.0}, "desc": "Даёт виноград для винодельни."},
-	"bakery": {"kind": "producer", "cat": "food", "name": "Пекарня", "cost": 260, "w": 5.0, "d": 5.0, "rank": 2,
-		"jobs": {"citizens": 3}, "upkeep": 0.8, "consumes": {"wheat": 4.0}, "produces": {"bread": 4.0},
-		"desc": "Печёт хлеб из пшеницы. Хлеб нужен большим инсулам и патрициям."},
-	"oilpress": {"kind": "producer", "cat": "food", "name": "Маслодавильня", "cost": 230, "w": 5.0, "d": 5.0, "rank": 1,
-		"jobs": {"plebs": 3}, "upkeep": 0.8, "consumes": {"olives": 3.0}, "produces": {"oil": 3.0},
-		"desc": "Давит оливки в масло. Без масла дом не станет инсулой."},
-	"winery": {"kind": "producer", "cat": "food", "name": "Винодельня", "cost": 330, "w": 5.0, "d": 5.0, "rank": 3,
-		"jobs": {"citizens": 3}, "upkeep": 1.0, "consumes": {"grapes": 3.0}, "produces": {"wine": 3.0},
-		"desc": "Делает вино. Без вина патриции не построят виллу."},
-	"market": {"kind": "service", "cat": "food", "name": "Рынок", "cost": 190, "w": 10.0, "d": 7.5,
-		"jobs": {"plebs": 3}, "upkeep": 1.0, "radius": 35.0, "provides": "market", "beauty": 1,
-		"desc": "Раздаёт еду, масло, хлеб и вино домам вокруг."},
-	"lumber": {"kind": "producer", "cat": "industry", "name": "Лесопилка", "cost": 40, "w": 7.5, "d": 5.0,
-		"jobs": {"plebs": 3}, "upkeep": 0.3, "produces": {"wood": 4.0}, "desc": "Пилит доски — купцы покупают их со склада."},
-	"quarry": {"kind": "producer", "cat": "industry", "name": "Каменоломня", "cost": 85, "w": 7.5, "d": 7.5,
-		"jobs": {"plebs": 4}, "upkeep": 0.4, "produces": {"stone": 3.0}, "desc": "Добывает камень — его покупают купцы."},
-	"smithy": {"kind": "producer", "cat": "industry", "name": "Кузница", "cost": 440, "w": 7.5, "d": 5.0, "rank": 3,
-		"jobs": {"citizens": 3}, "upkeep": 1.0, "consumes": {"wood": 1.0}, "produces": {"weapons": 2.0},
-		"desc": "Куёт мечи и щиты — для легиона и на продажу."},
-	"warehouse": {"kind": "storage", "cat": "industry", "name": "Склад", "cost": 170, "w": 7.5, "d": 5.0,
-		"jobs": {"plebs": 2}, "upkeep": 0.5, "storage": 300.0,
-		"desc": "Хранилище: ещё 300 каждого товара. Купцы покупают излишки прямо со склада."},
-	"well": {"kind": "service", "cat": "services", "name": "Колодец", "cost": 70, "w": 3.5, "d": 3.0,
-		"radius": 18.0, "provides": "water", "upkeep": 0.1, "noroad": true,
-		"desc": "Даёт воду домам поблизости. Дорога не нужна."},
-	"fountain": {"kind": "service", "cat": "services", "name": "Фонтан", "cost": 270, "w": 5.0, "d": 5.0, "rank": 1,
-		"radius": 28.0, "provides": "water", "beauty": 3, "upkeep": 0.3, "noroad": true,
-		"desc": "Вода для целого квартала и украшение площади."},
-	"temple": {"kind": "service", "cat": "services", "name": "Храм Юпитера", "cost": 520, "w": 10.0, "d": 15.0,
-		"jobs": {"plebs": 2}, "upkeep": 1.0, "radius": 40.0, "provides": "temple", "beauty": 3,
-		"desc": "Жрецы благословляют дома вокруг. Нужен для инсул."},
-	"baths": {"kind": "service", "cat": "culture", "name": "Термы", "cost": 880, "w": 12.5, "d": 10.0, "rank": 2,
-		"jobs": {"citizens": 4}, "upkeep": 2.0, "radius": 38.0, "provides": "baths", "beauty": 2,
-		"desc": "Римские бани с бассейном. Нужны большим инсулам и патрициям."},
-	"theatre": {"kind": "service", "cat": "culture", "name": "Театр", "cost": 1000, "w": 15.0, "d": 15.0, "rank": 3,
-		"jobs": {"patricians": 2}, "upkeep": 2.0, "radius": 40.0, "provides": "theatre", "beauty": 3,
-		"desc": "Комедии и трагедии. Без театра патриции не построят виллу."},
-	"forum": {"kind": "service", "cat": "culture", "name": "Форум", "cost": 3200, "w": 15.0, "d": 15.0, "rank": 4,
-		"jobs": {"patricians": 4}, "upkeep": 3.0, "radius": 50.0, "provides": "forum", "beauty": 5,
-		"desc": "Сердце города: колоннада, статуи и трибуна. Нужен для дворцов."},
-	"center": {"kind": "center", "cat": "", "name": "Центр города", "cost": 0, "w": 10.0, "d": 10.0, "fixed": true,
-		"desc": "Сюда приезжают переселенцы. Растёт вместе со званием города: лагерь, дом старосты, курия, базилика…"},
-	# украшения
-	"tree": {"kind": "decor", "cat": "decor", "name": "Дерево", "cost": 12, "w": 2.0, "d": 2.0, "beauty": 1, "desc": "Тенистое дерево у дома."},
-	"cypress": {"kind": "decor", "cat": "decor", "name": "Кипарис", "cost": 8, "w": 1.2, "d": 1.2, "beauty": 1, "desc": "Стройный кипарис — римская классика."},
-	"palm": {"kind": "decor", "cat": "decor", "name": "Пальма", "cost": 20, "w": 2.0, "d": 2.0, "beauty": 1, "rank": 1, "desc": "Пальма с юга."},
-	"flowers": {"kind": "decor", "cat": "decor", "name": "Клумба", "cost": 10, "w": 2.0, "d": 1.2, "beauty": 1, "desc": "Цветы в каменной клумбе."},
-	"bush": {"kind": "decor", "cat": "decor", "name": "Куст", "cost": 6, "w": 1.5, "d": 1.5, "beauty": 1, "desc": "Кудрявый куст."},
-	"planter": {"kind": "decor", "cat": "decor", "name": "Вазон", "cost": 18, "w": 1.0, "d": 1.0, "beauty": 1, "desc": "Нарядный вазон с цветами."},
-	"bench": {"kind": "decor", "cat": "decor", "name": "Скамья", "cost": 25, "w": 2.0, "d": 1.0, "beauty": 1, "desc": "Мраморная скамья — посидеть и поболтать."},
-	"brazier": {"kind": "decor", "cat": "decor", "name": "Жаровня", "cost": 25, "w": 0.8, "d": 0.8, "beauty": 1, "light": true, "desc": "Ночью горит и освещает улицу."},
-	"bigbrazier": {"kind": "decor", "cat": "decor", "name": "Большая жаровня", "cost": 90, "w": 2.0, "d": 2.0, "beauty": 2, "light": true, "rank": 1, "desc": "Бронзовая чаша с огнём на треноге."},
-	"statue": {"kind": "decor", "cat": "decor", "name": "Статуя", "cost": 290, "w": 1.5, "d": 1.5, "beauty": 4, "rank": 1, "desc": "Мраморная статуя на постаменте."},
-	"column": {"kind": "decor", "cat": "decor", "name": "Колонна со статуей", "cost": 380, "w": 1.5, "d": 1.5, "beauty": 5, "rank": 2, "desc": "Колонна, увитая розами, со статуей наверху."},
-	"lion": {"kind": "decor", "cat": "decor", "name": "Золотой лев", "cost": 600, "w": 2.0, "d": 3.0, "beauty": 6, "rank": 3, "desc": "Золотой лев на постаменте — гордость форума."},
-	"sundial": {"kind": "decor", "cat": "decor", "name": "Солнечные часы", "cost": 120, "w": 1.4, "d": 1.4, "beauty": 2, "desc": "Часы для площади."},
-	"smallfountain": {"kind": "decor", "cat": "decor", "name": "Питьевой фонтанчик", "cost": 80, "w": 1.2, "d": 1.2, "beauty": 2, "desc": "Маленький фонтан со львиной головой."},
-	"pergola": {"kind": "decor", "cat": "decor", "name": "Беседка", "cost": 260, "w": 5.5, "d": 5.5, "beauty": 4, "rank": 2, "desc": "Беседка с куполом — для отдыха."},
-	"banner": {"kind": "decor", "cat": "decor", "name": "Знамя", "cost": 40, "w": 1.0, "d": 1.0, "beauty": 2, "desc": "Знамя на шесте."},
-	"cart": {"kind": "decor", "cat": "decor", "name": "Телега", "cost": 45, "w": 2.0, "d": 3.3, "beauty": 1, "desc": "Телега с товаром."},
-	"goods": {"kind": "decor", "cat": "decor", "name": "Корзины и амфоры", "cost": 15, "w": 1.5, "d": 1.5, "beauty": 1, "desc": "Товар у лавки."},
+	# жильё: дом растёт этажами сам, когда жителям хорошо
+	"house_pleb": {"kind": "house", "cat": "housing", "cls": "plebs", "name": "Дом плебеев", "cost": 100, "variants": 5,
+		"desc": "Скромный дом для простых римлян. Растёт на этаж, когда жителям хорошо и открыт новый этаж."},
+	"house_artisan": {"kind": "house", "cat": "housing", "cls": "artisans", "name": "Дом ремесленников", "cost": 250, "variants": 5, "unlock": "artisans",
+		"desc": "Дом с мастерской внизу. Ремесленникам нужны еда, одежда и развлечения."},
+	"house_patrician": {"kind": "house", "cat": "housing", "cls": "patricians", "name": "Домус патрициев", "cost": 600, "variants": 4, "unlock": "patricians",
+		"desc": "Богатый дом с портиком и садом. Патриции платят много, но хотят всего и лучшего."},
+
+	# еда
+	"stall_fruit": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Фруктовая лавка", "cost": 45, "bonus": 5, "range": 2, "cap": 3,
+		"jobs": {"plebs": 1}, "icon": "food", "desc": "Яблоки, груши и инжир под полотняным навесом."},
+	"stall_veg": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Овощная лавка", "cost": 45, "bonus": 5, "range": 2, "cap": 3,
+		"jobs": {"plebs": 1}, "unlock": "stall_veg", "icon": "veg", "desc": "Капуста, лук, бобы и чеснок."},
+	"stall_fish": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Рыбная лавка", "cost": 45, "bonus": 5, "range": 2, "cap": 3,
+		"jobs": {"plebs": 1}, "unlock": "stall_fish", "icon": "fish", "desc": "Свежая рыба и гарум — римский соус."},
+	"butcher": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Мясная лавка", "cost": 200, "bonus": 7, "range": 2, "cap": 3,
+		"jobs": {"plebs": 2}, "store": true, "unlock": "butcher", "icon": "meat", "desc": "Колбасы и окорока. Товар берёт со склада."},
+	"bakery": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Пекарня", "cost": 450, "bonus": 8, "range": 3, "cap": 4,
+		"jobs": {"plebs": 3}, "store": true, "needs_good": "wheat", "unlock": "bakery", "icon": "bread",
+		"desc": "Печёт хлеб из пшеницы с полей. Нужны склад рядом и пшеничное поле."},
+	"thermopolium": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Термополий", "cost": 580, "bonus": 9, "range": 4, "cap": 4,
+		"jobs": {"artisans": 2}, "store": true, "unlock": "thermopolium", "icon": "meal", "desc": "Римская закусочная: горячая похлёбка из кувшинов в прилавке."},
+	"taberna": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Таверна", "cost": 1100, "bonus": 11, "range": 5, "cap": 5,
+		"jobs": {"artisans": 3}, "store": true, "unlock": "taberna", "icon": "mug", "desc": "Столы под навесом, вино и жаркое. Любимое место горожан."},
+	# одежда
+	"weaver": {"kind": "shop", "cat": "commerce", "sub": "clothes", "name": "Ткацкая лавка", "cost": 150, "bonus": 6, "range": 2, "cap": 3,
+		"jobs": {"plebs": 2}, "unlock": "weaver", "icon": "wool", "desc": "Шерсть и лён прямо со станка."},
+	"cobbler": {"kind": "shop", "cat": "commerce", "sub": "clothes", "name": "Сапожник", "cost": 220, "bonus": 6, "range": 2, "cap": 3,
+		"jobs": {"plebs": 2}, "store": true, "unlock": "cobbler", "icon": "boots", "desc": "Сандалии и калиги на любой вкус."},
+	"dyer": {"kind": "shop", "cat": "commerce", "sub": "clothes", "name": "Красильня", "cost": 420, "bonus": 8, "range": 3, "cap": 4,
+		"jobs": {"artisans": 2}, "store": true, "unlock": "dyer", "icon": "cape", "desc": "Чаны с краской: шафран, марена и вайда."},
+	"fullonica": {"kind": "shop", "cat": "commerce", "sub": "clothes", "name": "Фуллоника", "cost": 520, "bonus": 7, "range": 4, "cap": 5,
+		"jobs": {"plebs": 3}, "unlock": "fullonica", "icon": "tshirt", "desc": "Римская прачечная: стирают и сушат тоги всего квартала."},
+	"tailor": {"kind": "shop", "cat": "commerce", "sub": "clothes", "name": "Мастерская тог", "cost": 950, "bonus": 10, "range": 4, "cap": 4,
+		"jobs": {"artisans": 3}, "store": true, "unlock": "tailor", "icon": "toga", "desc": "Белоснежные тоги с пурпурной каймой."},
+	# развлечения
+	"musicians": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Уличные музыканты", "cost": 90, "bonus": 5, "range": 1, "cap": 2,
+		"jobs": {"plebs": 1}, "unlock": "musicians", "icon": "lyre", "desc": "Лира и флейта на углу улицы."},
+	"dice": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Игра в кости", "cost": 180, "bonus": 6, "range": 2, "cap": 3,
+		"jobs": {"plebs": 1}, "unlock": "dice", "icon": "dice", "desc": "Стол под навесом, где кидают кости и спорят."},
+	"mimes": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Помост мимов", "cost": 360, "bonus": 8, "range": 3, "cap": 4,
+		"jobs": {"artisans": 2}, "unlock": "mimes", "icon": "puppet", "desc": "Весёлые сценки на деревянном помосте."},
+	"odeon": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Одеон", "cost": 900, "bonus": 10, "range": 4, "cap": 5,
+		"jobs": {"artisans": 2}, "unlock": "odeon", "icon": "harp", "desc": "Малый театр для музыки и стихов."},
+	"theatre": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Театр", "cost": 2600, "bonus": 13, "range": 5, "cap": 5,
+		"jobs": {"patricians": 2}, "unlock": "theatre", "icon": "fun", "desc": "Комедии и трагедии под открытым небом."},
+	# услуги
+	"barber": {"kind": "shop", "cat": "commerce", "sub": "services", "name": "Цирюльня", "cost": 250, "bonus": 6, "range": 2, "cap": 3,
+		"jobs": {"artisans": 1}, "unlock": "barber", "icon": "razor", "desc": "Бритьё, стрижка и свежие сплетни."},
+	"balnea": {"kind": "shop", "cat": "commerce", "sub": "services", "name": "Бани", "cost": 650, "bonus": 8, "range": 3, "cap": 4,
+		"jobs": {"plebs": 2}, "unlock": "balnea", "icon": "bath", "desc": "Маленькие бани квартала с тёплым бассейном."},
+	"medic": {"kind": "shop", "cat": "commerce", "sub": "services", "name": "Лекарь", "cost": 700, "bonus": 8, "range": 4, "cap": 4,
+		"jobs": {"artisans": 2}, "store": true, "unlock": "medic", "icon": "medic", "desc": "Травы, мази и мудрый совет."},
+	"baths": {"kind": "shop", "cat": "commerce", "sub": "services", "name": "Термы", "cost": 1800, "bonus": 12, "range": 5, "cap": 5,
+		"jobs": {"artisans": 3}, "unlock": "baths", "icon": "water", "desc": "Большие римские бани с колоннами и бассейном."},
+	# товары
+	"potter": {"kind": "shop", "cat": "commerce", "sub": "goods", "name": "Гончарная", "cost": 300, "bonus": 6, "range": 2, "cap": 3,
+		"jobs": {"plebs": 2}, "unlock": "potter", "icon": "pottery", "desc": "Амфоры, кувшины и миски из обожжённой глины."},
+	"oilshop": {"kind": "shop", "cat": "commerce", "sub": "goods", "name": "Масляная лавка", "cost": 380, "bonus": 7, "range": 3, "cap": 4,
+		"jobs": {"plebs": 2}, "store": true, "needs_good": "olives", "unlock": "oilshop", "icon": "olive",
+		"desc": "Оливковое масло для кухни и светильников. Нужна оливковая роща."},
+	"lamps": {"kind": "shop", "cat": "commerce", "sub": "goods", "name": "Мастер светильников", "cost": 520, "bonus": 7, "range": 3, "cap": 4,
+		"jobs": {"artisans": 2}, "store": true, "unlock": "lamps", "icon": "candle", "desc": "Глиняные и бронзовые лампы."},
+	"wineshop": {"kind": "shop", "cat": "commerce", "sub": "goods", "name": "Винная лавка", "cost": 600, "bonus": 9, "range": 3, "cap": 4,
+		"jobs": {"artisans": 2}, "store": true, "needs_good": "grapes", "unlock": "wineshop", "icon": "wine",
+		"desc": "Фалернское и местное вино. Нужен виноградник."},
+	"perfumer": {"kind": "shop", "cat": "commerce", "sub": "goods", "name": "Парфюмер", "cost": 800, "bonus": 9, "range": 4, "cap": 4,
+		"jobs": {"artisans": 2}, "store": true, "unlock": "perfumer", "icon": "perfume", "desc": "Розовое масло и мирра в стеклянных флаконах."},
+	"jeweler": {"kind": "shop", "cat": "commerce", "sub": "goods", "name": "Ювелир", "cost": 1300, "bonus": 11, "range": 4, "cap": 4,
+		"jobs": {"artisans": 2}, "store": true, "unlock": "jeweler", "icon": "ring", "desc": "Кольца, фибулы и жемчужные серьги."},
+
+	# хозяйство
+	"farm": {"kind": "farm", "cat": "farming", "name": "Пшеничное поле", "cost": 120, "jobs": {"plebs": 3}, "makes": "wheat", "unlock": "farm",
+		"icon": "wheat", "desc": "Даёт пшеницу пекарням."},
+	"grove": {"kind": "farm", "cat": "farming", "name": "Оливковая роща", "cost": 150, "jobs": {"plebs": 2}, "makes": "olives", "unlock": "grove",
+		"icon": "olive", "desc": "Даёт оливки масляным лавкам."},
+	"vineyard": {"kind": "farm", "cat": "farming", "name": "Виноградник", "cost": 200, "jobs": {"plebs": 3}, "makes": "grapes", "unlock": "vineyard",
+		"icon": "grapes", "desc": "Даёт виноград винным лавкам."},
+	"warehouse": {"kind": "store", "cat": "farming", "name": "Склад", "cost": 300, "range": 4, "jobs": {"plebs": 2}, "unlock": "warehouse",
+		"icon": "warehouse", "desc": "Сюда со станции приходят товары, отсюда их разносят по лавкам вокруг. Лавкам со значком склада без него нечем торговать."},
+	"scriptorium": {"kind": "rp", "cat": "farming", "name": "Скрипторий", "cost": 180, "rp": 2.0, "jobs": {"plebs": 2},
+		"icon": "quill", "desc": "Писцы переписывают свитки — даёт очки исследований."},
+	"school": {"kind": "rp", "cat": "farming", "name": "Школа", "cost": 600, "rp": 5.0, "jobs": {"artisans": 2}, "unlock": "school",
+		"icon": "teacher", "desc": "Грамматик учит детей — больше очков исследований."},
+	"library": {"kind": "rp", "cat": "farming", "name": "Библиотека", "cost": 1500, "rp": 11.0, "jobs": {"artisans": 3}, "unlock": "library",
+		"icon": "bookshelf", "desc": "Тысячи свитков — много очков исследований."},
+	"academy": {"kind": "rp", "cat": "farming", "name": "Академия", "cost": 3500, "rp": 22.0, "jobs": {"patricians": 3}, "unlock": "academy",
+		"icon": "book", "desc": "Философы спорят под колоннадой — очень много очков исследований."},
+
+	# особые: памятники радуют всех вокруг
+	"fountain": {"kind": "monument", "cat": "special", "name": "Фонтан", "cost": 300, "bonus": 6, "range": 3, "unlock": "fountain",
+		"icon": "water", "desc": "Фонтан для квартала: вода и радость всем вокруг."},
+	"temple": {"kind": "monument", "cat": "special", "name": "Храм Юпитера", "cost": 1400, "bonus": 10, "range": 4, "jobs": {"plebs": 2}, "unlock": "temple",
+		"icon": "level", "desc": "Храм на подиуме с колоннадой. Значительно повышает счастье жителей поблизости."},
+	"forum": {"kind": "monument", "cat": "special", "name": "Форум", "cost": 3200, "bonus": 12, "range": 5, "unlock": "forum",
+		"icon": "caesar", "desc": "Сердце города: колоннада, статуи и трибуна."},
+	"arch": {"kind": "monument", "cat": "special", "name": "Триумфальная арка", "cost": 2400, "bonus": 10, "range": 4, "unlock": "arch",
+		"icon": "castle", "desc": "Арка в честь побед — гордость жителей."},
+	"colosseum": {"kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 9000, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum",
+		"icon": "swords", "desc": "Гладиаторы и звери. Весь город ходит смотреть."},
+	"pantheon": {"kind": "monument", "cat": "special", "name": "Пантеон", "cost": 15000, "bonus": 20, "range": 5, "unlock": "pantheon",
+		"icon": "level", "desc": "Храм всех богов с огромным куполом."},
+	"center": {"kind": "center", "cat": "", "name": "Почтовая станция", "cost": 0, "fixed": true,
+		"desc": "Сюда из тоннеля приезжают повозки с переселенцами и товарами."},
+
+	# украшения: очки украшения домам вокруг
+	"flowers": {"kind": "decor", "cat": "decor", "name": "Клумба", "cost": 8, "deco": 3, "unlock": "deco_flowers", "desc": "Цветы в каменной клумбе."},
+	"planter": {"kind": "decor", "cat": "decor", "name": "Вазон", "cost": 12, "deco": 3, "unlock": "deco_flowers", "desc": "Нарядный вазон с цветами."},
+	"tree": {"kind": "decor", "cat": "decor", "name": "Дерево", "cost": 10, "deco": 3, "unlock": "deco_trees", "desc": "Тенистое дерево."},
+	"cypress": {"kind": "decor", "cat": "decor", "name": "Кипарис", "cost": 8, "deco": 2, "unlock": "deco_trees", "desc": "Стройный кипарис — римская классика."},
+	"palm": {"kind": "decor", "cat": "decor", "name": "Пальма", "cost": 15, "deco": 3, "unlock": "deco_trees", "desc": "Пальма с юга."},
+	"bush": {"kind": "decor", "cat": "decor", "name": "Куст", "cost": 5, "deco": 2, "unlock": "deco_trees", "desc": "Кудрявый куст."},
+	"bench": {"kind": "decor", "cat": "decor", "name": "Скамья", "cost": 15, "deco": 3, "desc": "Посидеть и поболтать."},
+	"well": {"kind": "decor", "cat": "decor", "name": "Колодец", "cost": 40, "deco": 4, "desc": "Колодец с кувшинами."},
+	"goods": {"kind": "decor", "cat": "decor", "name": "Корзины и амфоры", "cost": 10, "deco": 2, "desc": "Товар у лавки."},
+	"cart": {"kind": "decor", "cat": "decor", "name": "Телега", "cost": 30, "deco": 2, "desc": "Телега с товаром."},
+	"brazier": {"kind": "decor", "cat": "decor", "name": "Жаровня", "cost": 25, "deco": 3, "light": true, "unlock": "deco_metal", "desc": "Ночью горит и освещает улицу."},
+	"bigbrazier": {"kind": "decor", "cat": "decor", "name": "Большая жаровня", "cost": 70, "deco": 5, "light": true, "unlock": "deco_metal", "desc": "Бронзовая чаша с огнём."},
+	"banner": {"kind": "decor", "cat": "decor", "name": "Знамя", "cost": 30, "deco": 3, "unlock": "deco_metal", "desc": "Знамя на шесте."},
+	"statue": {"kind": "decor", "cat": "decor", "name": "Статуя", "cost": 220, "deco": 9, "unlock": "deco_stone", "desc": "Мраморная статуя на постаменте."},
+	"column": {"kind": "decor", "cat": "decor", "name": "Колонна со статуей", "cost": 300, "deco": 10, "unlock": "deco_stone", "desc": "Колонна, увитая розами."},
+	"lion": {"kind": "decor", "cat": "decor", "name": "Золотой лев", "cost": 500, "deco": 12, "unlock": "deco_stone", "desc": "Лев на постаменте."},
+	"sundial": {"kind": "decor", "cat": "decor", "name": "Солнечные часы", "cost": 100, "deco": 5, "unlock": "deco_stone", "desc": "Часы для площади."},
+	"smallfountain": {"kind": "decor", "cat": "decor", "name": "Фонтанчик", "cost": 70, "deco": 5, "unlock": "fountain", "desc": "Питьевой фонтанчик со львиной головой."},
+	"pergola": {"kind": "decor", "cat": "decor", "name": "Беседка", "cost": 200, "deco": 8, "unlock": "deco_stone", "desc": "Беседка с куполом."},
+	"duck": {"kind": "decor", "cat": "decor", "name": "Утки", "cost": 15, "deco": 3, "unlock": "animals", "water": true, "desc": "Утки плавают по пруду."},
+	"swan": {"kind": "decor", "cat": "decor", "name": "Лебедь", "cost": 25, "deco": 4, "unlock": "animals", "water": true, "desc": "Белый лебедь на воде."},
 }
 
-## Категории меню стройки (как в Town to City: снизу посередине)
-const CATS := [
-	["housing", "Жильё"], ["food", "Еда и рынок"], ["industry", "Ремёсла"], ["services", "Службы"], ["culture", "Культура"], ["decor", "Красота"],
+## Разделы меню стройки (снизу посередине) и вкладки коммерции
+const CATS := [["housing", "Жильё", "housing"], ["commerce", "Коммерция", "commerce"], ["farming", "Хозяйство и науки", "farming"],
+	["decor", "Украшения", "decor"], ["special", "Особые постройки", "special"]]
+
+# ---------- исследования ----------
+## Каждый уровень города открывает свой раздел. unlock — что даёт (постройку открывает её ключ в B.unlock)
+const RESEARCH := [
+	{"id": "stall_veg", "lvl": 0, "name": "Овощная лавка", "cost": 30, "icon": "veg"},
+	{"id": "stall_fish", "lvl": 0, "name": "Рыбная лавка", "cost": 30, "icon": "fish"},
+	{"id": "reach1", "lvl": 0, "name": "Больший охват", "cost": 90, "icon": "arrow", "after": "stall_veg",
+		"desc": "Лавки с едой обслуживают дома на треть дальше."},
+	{"id": "farm", "lvl": 0, "name": "Пшеничное поле", "cost": 50, "icon": "wheat"},
+	{"id": "deco_flowers", "lvl": 0, "name": "Цветы и вазоны", "cost": 25, "icon": "daisy"},
+	{"id": "deco_trees", "lvl": 0, "name": "Деревья и кусты", "cost": 25, "icon": "tree"},
+	{"id": "musicians", "lvl": 0, "name": "Уличные музыканты", "cost": 60, "icon": "lyre"},
+
+	{"id": "floor2", "lvl": 1, "name": "Второй жилой этаж", "cost": 150, "icon": "housing",
+		"desc": "Дома, где жителям хорошо, сами надстраивают второй этаж."},
+	{"id": "weaver", "lvl": 1, "name": "Ткацкая лавка", "cost": 90, "icon": "wool"},
+	{"id": "warehouse", "lvl": 1, "name": "Склад", "cost": 100, "icon": "warehouse"},
+	{"id": "butcher", "lvl": 1, "name": "Мясная лавка", "cost": 120, "icon": "meat", "after": "warehouse"},
+	{"id": "cobbler", "lvl": 1, "name": "Сапожник", "cost": 130, "icon": "boots", "after": "weaver"},
+	{"id": "bakery", "lvl": 1, "name": "Пекарня", "cost": 180, "icon": "bread", "after": "warehouse"},
+	{"id": "fountain", "lvl": 1, "name": "Фонтаны", "cost": 140, "icon": "water"},
+	{"id": "animals", "lvl": 1, "name": "Утки и лебеди", "cost": 50, "icon": "swan"},
+
+	{"id": "artisans", "lvl": 2, "name": "Класс ремесленников", "cost": 250, "icon": "hammer",
+		"desc": "Открывает дома ремесленников. Им нужны еда, одежда и развлечения."},
+	{"id": "dice", "lvl": 2, "name": "Игра в кости", "cost": 140, "icon": "dice"},
+	{"id": "barber", "lvl": 2, "name": "Цирюльня", "cost": 180, "icon": "razor"},
+	{"id": "thermopolium", "lvl": 2, "name": "Термополий", "cost": 230, "icon": "meal"},
+	{"id": "school", "lvl": 2, "name": "Школа", "cost": 260, "icon": "teacher"},
+	{"id": "grove", "lvl": 2, "name": "Оливковая роща", "cost": 150, "icon": "olive"},
+	{"id": "oilshop", "lvl": 2, "name": "Масляная лавка", "cost": 190, "icon": "amphora", "after": "grove"},
+	{"id": "roads2", "lvl": 2, "name": "Площади из плитки", "cost": 110, "icon": "plaza", "desc": "Новое покрытие дорог — узорная плитка."},
+	{"id": "deco_stone", "lvl": 2, "name": "Каменные украшения", "cost": 160, "icon": "mona"},
+	{"id": "store1", "lvl": 2, "name": "Больше носильщиков", "cost": 200, "icon": "warehouse", "after": "warehouse",
+		"desc": "Склад разносит товары вдвое дальше."},
+
+	{"id": "floor3", "lvl": 3, "name": "Третий жилой этаж", "cost": 400, "icon": "housing", "after": "floor2",
+		"desc": "Самые счастливые дома дорастают до трёх этажей."},
+	{"id": "dyer", "lvl": 3, "name": "Красильня", "cost": 300, "icon": "cape"},
+	{"id": "potter", "lvl": 3, "name": "Гончарная", "cost": 260, "icon": "pottery"},
+	{"id": "mimes", "lvl": 3, "name": "Помост мимов", "cost": 280, "icon": "puppet"},
+	{"id": "temple", "lvl": 3, "name": "Храм", "cost": 380, "icon": "level"},
+	{"id": "fullonica", "lvl": 3, "name": "Фуллоника", "cost": 320, "icon": "tshirt"},
+	{"id": "deco_metal", "lvl": 3, "name": "Жаровни и знамёна", "cost": 180, "icon": "candle"},
+	{"id": "vault1", "lvl": 3, "name": "Новое хранилище денег", "cost": 300, "icon": "money", "desc": "Казна вмещает вдвое больше."},
+
+	{"id": "patricians", "lvl": 4, "name": "Класс патрициев", "cost": 600, "icon": "toga",
+		"desc": "Открывает домусы патрициев. Им нужно всё: еда, одежда, развлечения, услуги и товары."},
+	{"id": "balnea", "lvl": 4, "name": "Бани", "cost": 420, "icon": "bath"},
+	{"id": "lamps", "lvl": 4, "name": "Мастер светильников", "cost": 420, "icon": "candle"},
+	{"id": "library", "lvl": 4, "name": "Библиотека", "cost": 600, "icon": "bookshelf", "after": "school"},
+	{"id": "vineyard", "lvl": 4, "name": "Виноградник", "cost": 280, "icon": "grapes"},
+	{"id": "wineshop", "lvl": 4, "name": "Винная лавка", "cost": 380, "icon": "wine", "after": "vineyard"},
+	{"id": "odeon", "lvl": 4, "name": "Одеон", "cost": 560, "icon": "harp"},
+	{"id": "taberna", "lvl": 4, "name": "Таверна", "cost": 520, "icon": "mug"},
+	{"id": "research1", "lvl": 4, "name": "Новые полки для свитков", "cost": 450, "icon": "scroll", "desc": "Очков исследований помещается вдвое больше."},
+
+	{"id": "perfumer", "lvl": 5, "name": "Парфюмер", "cost": 700, "icon": "perfume"},
+	{"id": "medic", "lvl": 5, "name": "Лекарь", "cost": 620, "icon": "medic"},
+	{"id": "tailor", "lvl": 5, "name": "Мастерская тог", "cost": 800, "icon": "toga"},
+	{"id": "baths", "lvl": 5, "name": "Термы", "cost": 900, "icon": "water", "after": "balnea"},
+	{"id": "jeweler", "lvl": 5, "name": "Ювелир", "cost": 1000, "icon": "ring"},
+	{"id": "forum", "lvl": 5, "name": "Форум", "cost": 1200, "icon": "caesar"},
+	{"id": "taxes1", "lvl": 5, "name": "Налоги для богатых", "cost": 900, "icon": "coins", "desc": "Патриции платят на четверть больше."},
+
+	{"id": "theatre", "lvl": 6, "name": "Театр", "cost": 1500, "icon": "fun", "after": "odeon"},
+	{"id": "arch", "lvl": 6, "name": "Триумфальная арка", "cost": 1300, "icon": "castle"},
+	{"id": "academy", "lvl": 6, "name": "Академия", "cost": 1600, "icon": "book", "after": "library"},
+	{"id": "vault2", "lvl": 6, "name": "Подвалы казны", "cost": 1200, "icon": "money", "after": "vault1", "desc": "Казна вмещает ещё вдвое больше."},
+
+	{"id": "colosseum", "lvl": 7, "name": "Амфитеатр", "cost": 3200, "icon": "swords"},
+	{"id": "pantheon", "lvl": 7, "name": "Пантеон", "cost": 4500, "icon": "level"},
 ]
 
-## Задания: прогресс считает City.goal_progress(id)
-const GOALS := [
-	{"id": "houses3", "text": "Поставьте 3 дома у дороги", "need": 3, "reward": 150, "tool": "house",
-		"hint": "Подведите дом к дороге — он сам встанет фасадом к ней. Переселенцы приедут из ворот и заселятся."},
-	{"id": "well", "text": "Постройте колодец рядом с домами", "need": 1, "reward": 100, "tool": "well",
-		"hint": "Без воды хижины не растут. Колодец поит дома внутри круга, который виден при установке."},
-	{"id": "farm_market", "text": "Пшеничное поле и рынок", "need": 2, "reward": 200, "tool": "farm",
-		"hint": "Поле растит пшеницу, рынок раздаёт её домам вокруг. Ставьте у дороги."},
-	{"id": "domik3", "text": "Дождитесь трёх Домиков", "need": 3, "reward": 200,
-		"hint": "Хижина станет Домиком, когда у неё есть вода и еда. Нажмите на дом — он покажет, чего не хватает."},
-	{"id": "temple", "text": "Постройте Храм Юпитера", "need": 1, "reward": 250, "tool": "temple",
-		"hint": "Храм нужен для роста домов в инсулы."},
-	{"id": "oil", "text": "Оливковая роща и маслодавильня", "need": 2, "reward": 250, "tool": "grove",
-		"hint": "Роща растит оливки, маслодавильня делает из них масло. Дома получают масло через рынок."},
-	{"id": "insula", "text": "Вырастите первую Инсулу", "need": 1, "reward": 300, "tool": "flowers",
-		"hint": "Инсуле нужны вода, еда, храм, масло и немного красоты: клумбы и деревья рядом."},
-	{"id": "pop100", "text": "Соберите 100 жителей", "need": 100, "reward": 400, "tool": "house",
-		"hint": "Больше домов — больше налогов. Следите, чтобы хватало еды."},
-	{"id": "plot", "text": "Купите соседний участок", "need": 1, "reward": 300,
-		"hint": "Нажмите на табличку «Купить» на соседней земле."},
-	{"id": "warehouse", "text": "Лесопилка, каменоломня и склад", "need": 3, "reward": 300, "tool": "lumber",
-		"hint": "Дерево и камень покупают купцы — прямо со склада, каждый день."},
-	{"id": "baths", "text": "Постройте термы", "need": 1, "reward": 400, "tool": "baths",
-		"hint": "Термы нужны большим инсулам и патрициям."},
-	{"id": "big_insula", "text": "Вырастите Большую инсулу", "need": 1, "reward": 500, "tool": "bakery",
-		"hint": "Большой инсуле нужны хлеб и термы рядом. Пекарня печёт хлеб из пшеницы."},
-	{"id": "domus", "text": "Поселите патрициев", "need": 1, "reward": 600, "tool": "domus",
-		"hint": "Участок патриция 10×10 м растёт в домус, виллу и дворец."},
-	{"id": "pop400", "text": "Соберите 400 жителей", "need": 400, "reward": 1000,
-		"hint": "Город растёт — покупайте новые участки и украшайте улицы."},
+## Цвета домов: штукатурка подкрашивается (у соседей — всегда разные)
+const PALETTE := [
+	{"name": "Охра", "c": Color(1.0, 0.78, 0.47)},
+	{"name": "Терракота", "c": Color(0.98, 0.6, 0.44)},
+	{"name": "Розовый", "c": Color(1.0, 0.72, 0.68)},
+	{"name": "Лимонный", "c": Color(1.0, 0.9, 0.56)},
+	{"name": "Голубой", "c": Color(0.66, 0.82, 0.95)},
+	{"name": "Шалфей", "c": Color(0.76, 0.9, 0.66)},
+	{"name": "Белый", "c": Color(1.0, 1.0, 1.0)},
+	{"name": "Персиковый", "c": Color(1.0, 0.82, 0.64)},
+	{"name": "Сиреневый", "c": Color(0.86, 0.78, 0.95)},
+	{"name": "Песочный", "c": Color(0.95, 0.86, 0.7)},
 ]
 
 
-static func tiers(type: String) -> Array:
-	var t: String = B[type].get("tiers", "")
-	return PLEB_TIERS if t == "pleb" else PATRICIAN_TIERS if t == "patrician" else []
+static func research(id: String) -> Dictionary:
+	for r in RESEARCH:
+		if r["id"] == id:
+			return r
+	return {}
 
 
-static func rank_of(pop: int) -> int:
-	var r := 0
-	for i in RANKS.size():
-		if pop >= int(RANKS[i][0]):
-			r = i
-	return r
+static func range_m(d: Dictionary) -> float:
+	return float(RANGE.get(int(d.get("range", 0)), 0.0))
+
+
+static func floors_max(cls: String) -> int:
+	return 2 if cls == "patricians" else 3

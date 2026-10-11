@@ -1,5 +1,5 @@
 extends Node3D
-## Выставка построек: аргументы — список "тип:уровень" через запятую, камера yaw и путь снимка
+## Выставка построек: аргументы — список "тип:этаж:фасад:цвет" через запятую, поворот камеры и путь снимка
 
 func _ready() -> void:
 	var env := Environment.new()
@@ -11,6 +11,8 @@ func _ready() -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	env.ssao_enabled = true
 	env.ssao_intensity = 2.0
+	env.adjustment_enabled = true
+	env.adjustment_saturation = 1.15
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -22,47 +24,69 @@ func _ready() -> void:
 	add_child(sun)
 	var g := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(300, 300)
+	pm.size = Vector2(400, 400)
 	g.mesh = pm
 	var gm := StandardMaterial3D.new()
-	gm.albedo_color = Color("93b05c")
+	gm.albedo_color = Color("8fae4a")
 	g.material_override = gm
 	add_child(g)
-	var parts := Parts.new()
-	add_child(parts)
-	var a := OS.get_cmdline_user_args()
-	var list: PackedStringArray = a[0].split(",")
-	var cols := int(ceil(sqrt(list.size())))
-	var cell := 17.0
-	for i in list.size():
-		var t := list[i].split(":")
-		var tier := int(t[1]) if t.size() > 1 else 0
-		var seed_v := int(t[2]) if t.size() > 2 else i
-		var bp := Catalog.make(t[0], tier, seed_v)
-		var p := Vector3((i % cols) * cell, 0, int(i / cols) * cell)
-		parts.place(bp, Transform3D(Basis.IDENTITY, p))
-		var l := Label3D.new()
-		l.text = list[i]
-		l.font_size = 48
-		l.pixel_size = 0.02
-		l.outline_size = 10
-		l.position = p + Vector3(0, 0.1, 8.0)
-		l.rotation_degrees = Vector3(-60, 0, 0)
-		add_child(l)
-	var rows := int(ceil(list.size() / float(cols)))
-	var yaw := deg_to_rad(float(a[1]) if a.size() > 1 else 25.0)
-	var d := maxf(cols, rows) * cell * 0.62 + 6.0
-	var c := Vector3((cols - 1) * cell / 2.0, 2.0, (rows - 1) * cell / 2.0)
+	var args := OS.get_cmdline_user_args()
+	var list: PackedStringArray = args[0].split(",")
+	var yaw := float(args[1]) if args.size() > 1 else 20.0
+	var out: String = args[2] if args.size() > 2 else "D:/CivCity/.work/gd/gallery.png"
+	var showfp := args.size() > 3 and args[3] == "fp"
+	var cols := int(ceil(sqrt(list.size() * 1.5)))
+	var x := 0.0
+	var row := 0
+	var maxd := 0.0
+	var i := 0
+	var cx := []
+	for item in list:
+		var p := item.split(":")
+		var bp := Catalog.make(p[0], int(p[1]) if p.size() > 1 else 1, int(p[2]) if p.size() > 2 else 0, int(p[3]) if p.size() > 3 else i % 10)
+		var fp := bp.footprint()
+		var lo := Vector2(INF, INF)
+		var hi := Vector2(-INF, -INF)
+		for r: Rect2 in fp:
+			lo = lo.min(r.position)
+			hi = hi.max(r.end)
+		if fp.is_empty():
+			lo = Vector2(-2, -2)
+			hi = Vector2(2, 2)
+		var w := hi.x - lo.x
+		var n := Parts.ghost(bp, "outline")
+		for gi: GeometryInstance3D in n.find_children("*", "GeometryInstance3D", true, false):
+			gi.material_override = null
+		n.position = Vector3(x - lo.x, 0, row * 16.0)
+		add_child(n)
+		if showfp:
+			for r: Rect2 in fp:
+				var m := MeshInstance3D.new()
+				var bm := BoxMesh.new()
+				bm.size = Vector3(r.size.x, 0.05, r.size.y)
+				m.mesh = bm
+				var mm := StandardMaterial3D.new()
+				mm.albedo_color = Color(1, 0, 0, 0.45)
+				mm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				m.material_override = mm
+				m.position = n.position + Vector3(r.get_center().x, 0.03, r.get_center().y)
+				add_child(m)
+		x += w + 2.5
+		i += 1
+		if i % cols == 0:
+			cx.append(x)
+			x = 0.0
+			row += 1
+	cx.append(x)
+	var width: float = cx.max()
+	var depth := (row + 1) * 16.0
 	var cam := Camera3D.new()
-	cam.fov = 40
 	add_child(cam)
-	cam.look_at_from_position(c + Vector3(sin(yaw), 0.62, cos(yaw)) * d, c, Vector3.UP)
-	set_meta("shot", a[2] if a.size() > 2 else "D:/CivCity/.work/gd/gallery.png")
-	print("PARTS ", parts.count(), " groups ", parts.groups.size())
-
-var frame := 0
-func _process(_dt: float) -> void:
-	frame += 1
-	if frame == 20:
-		get_viewport().get_texture().get_image().save_png(get_meta("shot"))
-		get_tree().quit()
+	var c := Vector3(width / 2.0, 0, depth / 2.0 - 8.0)
+	var dist := maxf(width, depth) * 0.95 + 6.0
+	cam.fov = 38
+	cam.look_at_from_position(c + Vector3(sin(deg_to_rad(yaw)), 0.75, cos(deg_to_rad(yaw))).normalized() * dist, c)
+	await get_tree().create_timer(1.0).timeout
+	get_viewport().get_texture().get_image().save_png(out)
+	print("SHOT ", out)
+	get_tree().quit()

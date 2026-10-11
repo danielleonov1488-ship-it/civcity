@@ -8,7 +8,8 @@ uniform sampler2D tile_plaza_a : source_color, filter_linear_mipmap, repeat_enab
 uniform sampler2D tile_plaza_b : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D tile_plaza_c : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D tile_plaza_d : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2D surf : filter_linear_mipmap, repeat_disable;   // R мостовая, G площадь, B тропа (клетка 25 см)
+uniform sampler2D surf : filter_linear_mipmap, repeat_disable;   // R мостовая, G площадь, B тропа
+uniform float map_size = 256.0;
 
 varying vec3 wpos;
 varying vec3 wnrm;
@@ -60,7 +61,7 @@ void fragment() {
 		}
 		if (k == 0.0 || k == 1.0 || k == 4.0 || k == 5.0 || k == 6.0) {
 			// покрытия по маске с плавной выборкой — края скруглены, а не ступеньками по клеткам
-			vec4 m = textureLod(surf, wpos.xz / 128.0, 1.4);   // размытая маска: плавные края без ступенек
+			vec4 m = textureLod(surf, wpos.xz / map_size, 0.7);   // размытая маска: плавные края без ступенек
 			float wob = vn(wpos.xz * 2.3) - 0.5;
 			float w_path = smoothstep(0.28, 0.6, m.b + wob * 0.35);
 			float w_road = smoothstep(0.44, 0.54, m.r + wob * 0.06);
