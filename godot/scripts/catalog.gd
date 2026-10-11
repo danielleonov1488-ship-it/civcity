@@ -644,8 +644,11 @@ static func _actors(b: Bp, type: String, tier: int) -> void:
 		"mimes":
 			b.actor(Vector3(-0.8, 0.7, -1.4), 0.0, "Dance", "any")
 			b.actor(Vector3(0.9, 0.7, -1.6), 0.0, "Spell_Simple_Idle", "any")
-		"odeon", "theatre":
-			b.actor(Vector3(0, 0.5, 3.2), PI, "Spell_Simple_Idle", "rich")
+		"odeon":
+			b.actor(Vector3(0, 0.5, 3.4), PI, "Spell_Simple_Idle", "rich")
+		"theatre":
+			b.actor(Vector3(-1.5, 0.6, 5.6), PI, "Spell_Simple_Idle", "rich")
+			b.actor(Vector3(1.5, 0.6, 5.8), PI, "Dance", "female")
 		"balnea":
 			b.actor(Vector3(-2.0, 0, 2.6), PI, "Idle_Talking", "any")
 		"school":

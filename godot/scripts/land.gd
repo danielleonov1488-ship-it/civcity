@@ -135,19 +135,11 @@ func raw_height(x: float, z: float) -> float:
 	var amp := lerpf(0.3, 2.4, smoothstep(0.0, 70.0, ds))
 	var y := BASE_Y + 0.4 + n1.get_noise_2d(x, z) * amp + n3.get_noise_2d(x, z) * amp * 0.25
 	y += smoothstep(80.0, 150.0, ds) * (2.0 + n3.get_noise_2d(x * 0.5, z * 0.5) * 3.0)
-	# небольшой холм с тоннелем
-	var dh := p.distance_to(HILL)
-	var kh := clampf(1.0 - dh / 25.0, 0.0, 1.0)
-	y += 9.0 * kh * kh * (3.0 - 2.0 * kh) + n2.get_noise_2d(x * 0.7, z * 0.7) * 0.8 * kh
+	# дорога от портала на юг и площадь у станции — ровно (сам холм с тоннелем строится по клеткам в generate)
 	var dx := absf(x - TUNNEL.x)
-	if z < TUNNEL.y + 0.2:
-		# стена над порталом: невысокая, по бокам сходит на нет
-		var face := (1.0 - smoothstep(4.5, 10.0, dx)) * smoothstep(TUNNEL.y + 0.2, TUNNEL.y - 3.0, z)
-		y = maxf(y, lerpf(y, BASE_Y + 7.6, face))
-	else:
-		# дорога от портала на юг и площадь у станции — ровно
+	if z > TUNNEL.y:
 		var corridor := (1.0 - smoothstep(4.0, 8.0, dx)) * (1.0 - smoothstep(130.0, 140.0, z))
-		y = lerpf(y, BASE_Y + 0.4, corridor * smoothstep(TUNNEL.y + 0.2, TUNNEL.y + 1.5, z))
+		y = lerpf(y, BASE_Y + 0.4, corridor)
 	y = lerpf(y, BASE_Y + 0.4, 1.0 - smoothstep(10.0, 18.0, p.distance_to(CENTER + Vector2(3, 0))))
 	# пруды
 	for pd in PONDS:
@@ -174,6 +166,7 @@ func generate() -> void:
 	var img := Image.create_from_data(M, M, false, Image.FORMAT_RF, coarse.to_byte_array())
 	img.resize(N, N, Image.INTERPOLATE_BILINEAR)
 	h = img.get_data().to_float32_array()
+	_hill()
 	kind.resize(N * N)
 	kind.fill(Kind.GRASS)
 	occ.resize(N * N)
@@ -195,6 +188,44 @@ func generate() -> void:
 	base_kind = kind.duplicate()
 	dirty.clear()
 	touched.clear()
+
+
+const HILL_R := 26.0
+const HILL_H := 8.0
+const CLIFF_H := 7.5                 # высота отвесной стены с порталом над дорогой
+const CLIFF_W := 12.0                # полуширина стены
+
+
+## Холм с тоннелем: пологий купол, спереди — отвесная каменная стена, в ней портал
+func _hill() -> void:
+	var i0 := int((HILL.x - HILL_R - 4.0) / CELL)
+	var i1 := int((HILL.x + HILL_R + 4.0) / CELL)
+	var j0 := int((HILL.y - HILL_R - 4.0) / CELL)
+	var j1 := int((TUNNEL.y + 2.0) / CELL)
+	var base := BASE_Y + 0.4
+	for j in range(maxi(0, j0), mini(N, j1)):
+		for i in range(maxi(0, i0), mini(N, i1)):
+			var q := cell_center(i, j)
+			var k := idx(i, j)
+			var d := q.distance_to(HILL) / HILL_R
+			var dome := 0.0
+			if d < 1.0:
+				var t := 1.0 - d
+				dome = HILL_H * t * t * (3.0 - 2.0 * t) + n2.get_noise_2d(q.x * 0.6, q.y * 0.6) * 0.5 * t
+			var dx := absf(q.x - TUNNEL.x)
+			# линия стены слегка выгнута назад к краям
+			var face_z := TUNNEL.y - 0.3 - dx * dx * 0.012
+			if dx < CLIFF_W and q.y > face_z:
+				h[k] = base                      # перед стеной — ровная площадка у портала
+				continue
+			if dx < 1.5 and q.y > face_z - 1.5:
+				h[k] = base                      # ниша под каменный портал
+				continue
+			if dx < CLIFF_W and q.y <= face_z:
+				var wall := base + CLIFF_H * (1.0 - smoothstep(CLIFF_W - 4.0, CLIFF_W, dx))
+				h[k] = maxf(maxf(h[k], base + dome), wall + (dome * 0.25))
+			else:
+				h[k] = maxf(h[k], base + dome)
 
 
 func _mark(i: int, j: int) -> void:
@@ -242,16 +273,32 @@ func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := tr
 				continue
 			if kd != Kind.GRASS and kk == kd and (not flat or absf(y - y0) < 0.01):
 				continue
-			if flat and absf(y - y0) > 0.6:
-				continue                         # уступ выше полуметра кисть не срезает
+			if flat and absf(y - y0) > 1.2:
+				continue                         # обрыв кисть не срезает
 			out.append([Vector2i(i, j), kk, h[k]])
 			kind[k] = kd
-			if flat:
-				h[k] = y0
+			if flat and walk_kind(kd):
+				# дорога ложится по земле: только сглаживаем мелкие ступеньки вдоль неё, не поднимая над травой
+				h[k] = _smooth_at(i, j, 3)
 			_mark(i, j)
 			if walk_kind(kd):
 				road_chunks[Vector2i(i / CH, j / CH)] = true
 	return out
+
+
+## Средняя высота вокруг клетки (радиус rc клеток) — для мягкой дороги по склону
+func _smooth_at(i: int, j: int, rc: int) -> float:
+	var sum := 0.0
+	var n := 0
+	var y0 := h[idx(i, j)]
+	for dj in range(-rc, rc + 1):
+		for di in range(-rc, rc + 1):
+			if inside(i + di, j + dj):
+				var y := h[idx(i + di, j + dj)]
+				if y >= WATER_Y + 0.05 and absf(y - y0) < 0.5:   # обрывы и стены в среднее не берём
+					sum += y
+					n += 1
+	return sum / n if n > 0 else h[idx(i, j)]
 
 
 func paint_line(a: Vector2, b: Vector2, r: float, kd: int, flat := false) -> Array:
@@ -319,6 +366,39 @@ func flatten_cells(cells: PackedInt32Array, y: float, kd := -1) -> void:
 			_mark(k % N, k / N)
 
 
+## Земля вокруг постройки плавно подходит к её полу — без ям и ступенек (rc клеток вокруг)
+func blend_ring(cells: PackedInt32Array, y: float, rc := 7) -> void:
+	var dist := {}
+	var front: Array[int] = []
+	for k in cells:
+		dist[k] = 0
+		front.append(k)
+	for step in range(1, rc + 1):
+		var nxt: Array[int] = []
+		for k in front:
+			var i := k % N
+			var j := k / N
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				if not inside(i + d.x, j + d.y):
+					continue
+				var k2 := idx(i + d.x, j + d.y)
+				if dist.has(k2):
+					continue
+				dist[k2] = step
+				nxt.append(k2)
+		front = nxt
+	for k in dist:
+		var st: int = dist[k]
+		if st == 0 or occ[k] != 0 or walk_kind(kind[k]) or h[k] < WATER_Y + 0.2:
+			continue
+		var t := 1.0 - float(st) / float(rc + 1)
+		t = t * t * (3.0 - 2.0 * t)
+		var ny := lerpf(h[k], y, t)
+		if absf(ny - h[k]) > 0.01:
+			h[k] = ny
+			_mark(k % N, k / N)
+
+
 # ---------- маска покрытий для шейдера (плавные края дорог) ----------
 
 func make_surface() -> Image:
@@ -352,12 +432,13 @@ func update_surface(img: Image, ch: Vector2i) -> void:
 
 # ---------- цвета и сетка ----------
 
-const C_GRASS := [Color("6c9636"), Color("7aa13c"), Color("88aa42"), Color("9fb24c")]
+const C_GRASS := [Color("587f2a"), Color("678d2f"), Color("789a36"), Color("8fa842")]
 const C_DIRT := Color("c6a878")
 const C_ROCK := Color("d9c7ad")
 const C_SAND := Color("e2cf9c")
 const C_SAND_WET := Color("bfae84")
 const C_YARD := Color("b8a07a")
+const C_PAVE := Color("b9a98e")
 const C_FIELD := Color("9a7a4e")
 const LOCK := Color("c4bb98")
 
@@ -465,8 +546,10 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 					a = Vector3(x1, 0, z0); b = Vector3(x0, 0, z0)
 				var k := idx(i, j)
 				var rocky := y - yn >= 0.45
-				var c := C_ROCK if rocky else top_color(show_kind(k, y), k, y)
-				quad.call(Vector3(b.x, yn, b.z), Vector3(b.x, y, b.z), Vector3(a.x, y, a.z), Vector3(a.x, yn, a.z), Vector3(d.x, 0, d.y), c, Kind.ROCK if rocky else Kind.DIRT, y)
+				var skd := show_kind(k, y)
+				var paved := skd == Kind.ROAD or skd == Kind.PLAZA
+				var c := C_ROCK if rocky else (C_PAVE if paved else top_color(skd, k, y))
+				quad.call(Vector3(b.x, yn, b.z), Vector3(b.x, y, b.z), Vector3(a.x, y, a.z), Vector3(a.x, yn, a.z), Vector3(d.x, 0, d.y), c, Kind.ROCK if rocky else (Kind.ROAD if paved else Kind.DIRT), y)
 	var arr := []
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = v

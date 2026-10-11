@@ -333,6 +333,8 @@ func _enter_work(r: Dictionary) -> void:
 	var c := _node(r)
 	if c:
 		var xf: Transform3D = city.xf(b) * Transform3D(Basis(Vector3.UP, float(a[1])), a[0])
+		if (a[0] as Vector3).y < 0.05:
+			xf.origin.y = land.height_at(xf.origin.x, xf.origin.z)      # стоит на земле, а не над ней
 		c.transform = xf
 		r["p"] = Vector2(xf.origin.x, xf.origin.z)
 		c.play(a[2], 0.3)

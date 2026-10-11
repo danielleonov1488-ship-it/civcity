@@ -491,7 +491,7 @@ func _toggle(p: Control) -> void:
 			x.visible = false
 	p.visible = not was
 	if p.visible and game and game.sound:
-		game.sound.ui("open")
+		pass
 
 
 var reach_on := false
@@ -703,7 +703,7 @@ func _toggle_cat(cid: String) -> void:
 ## Свиток разворачивается из середины
 func _unroll() -> void:
 	if game and game.sound:
-		game.sound.ui("scroll")
+		pass
 	await get_tree().process_frame
 	var w := tray.get_combined_minimum_size().x
 	tray.pivot_offset = Vector2(w / 2.0, 0)
@@ -1325,7 +1325,7 @@ func notify(text: String, icon := "info") -> void:
 	tw.tween_property(p, "modulate:a", 0.0, 0.6)
 	tw.tween_callback(p.queue_free)
 	if icon in ["check", "level"] and game and game.sound:
-		game.sound.ui("done")
+		pass
 	if not events_panel.visible:
 		bell_count += 1
 		bell_badge.text = str(bell_count)
@@ -1897,8 +1897,6 @@ func _update_world_icons() -> void:
 			icon = "hammer"
 		elif d["kind"] == "center" and c.waiting > 0:
 			icon = "keys"
-		elif c.is_house(b) and int(b["pop"]) == 0:
-			icon = "family"
 		if icon != "":
 			want[id] = icon
 	for id in world_icons.keys():

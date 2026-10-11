@@ -102,9 +102,11 @@ void fragment() {
 		}
 	} else if (k == 2.0) {
 		// обрыв: слои камня по высоте
-		float band = 0.5 + 0.5 * sin(wpos.y * 4.2 + sin(wpos.y * 1.3) * 1.5);
-		c = mix(c, c * vec3(0.86, 0.84, 0.82), band * 0.8);
-		c *= 0.93 + 0.12 * r;
+		float band = 0.5 + 0.5 * sin(wpos.y * 3.1 + sin(wpos.y * 1.3 + wpos.x * 0.05) * 1.5);
+		float fine = vn(vec2(wpos.x * 0.7 + wpos.z * 0.7, wpos.y * 6.0));
+		c = mix(c * vec3(1.03, 1.0, 0.97), c * vec3(0.8, 0.76, 0.72), band * 0.75);
+		c *= 0.88 + 0.2 * fine;
+		c *= 0.93 + 0.1 * r;
 	} else if (k == 1.0) {
 		// стенка уступа: сверху кромка травы, ниже земля
 		vec3 dirt = vec3(0.24, 0.16, 0.09) * (0.9 + 0.2 * r);

@@ -7,7 +7,7 @@ extends Node3D
 ## Запуск: без параметров — меню; -- --new | --play | --demo; снимок: --shot=путь.png --view=x,z,yaw,pitch,dist --hour=8
 
 static var boot := {}                 # с чем перезапуститься: {"menu"|"play"|"new"|"demo": "1"}
-const DAY_LEN := 360.0                # сутки — 6 минут при обычной скорости (час — 15 секунд)
+const DAY_LEN := 600.0                # сутки — 10 минут при обычной скорости (час — 25 секунд), как в Town to City
 
 var land: Land
 var city: City
@@ -358,7 +358,7 @@ func _environment() -> void:
 	env.ambient_light_energy = 0.62
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
-	env.tonemap_exposure = 1.0
+	env.tonemap_exposure = 0.95
 	env.ssao_enabled = true
 	env.ssao_radius = 1.3
 	env.ssao_intensity = 2.4
@@ -419,36 +419,45 @@ void fragment() {
 	cl.add_child(r)
 
 
+## Свет суток — всё плавно, как в Town to City: долгое золотое утро и вечер, короткая сиреневая ночь,
+## при которой всё видно; фонари и окна загораются постепенно в сумерках
 func _set_hour(h: float) -> void:
 	hour = fposmod(h, 24.0)
-	var day_k := clampf((hour - 5.5) / 14.0, 0.0, 1.0)
-	var ang := day_k * PI
-	var to_sun := Vector3(cos(ang), sin(ang) * 0.9 + 0.05, 0.42).normalized()
-	var night := hour < 5.6 or hour > 19.6
-	var dusk := smoothstep(18.5, 20.5, hour) + (1.0 - smoothstep(4.5, 7.0, hour))
-	if night:
-		to_sun = Vector3(-0.3, 0.55, -0.5).normalized()
-	var elev := clampf(to_sun.y, 0.0, 1.0)
+	# день: 0 — ночь, 1 — полный день; рассвет 4.6–7.2, закат 18.4–21.4
+	var day := smoothstep(4.6, 7.2, hour) * (1.0 - smoothstep(18.4, 21.4, hour))
+	# золото: утро и вечер
+	var gold := (smoothstep(4.8, 6.4, hour) * (1.0 - smoothstep(6.4, 9.5, hour))) + (smoothstep(15.5, 18.5, hour) * (1.0 - smoothstep(19.6, 21.2, hour)))
+	gold = clampf(gold, 0.0, 1.0)
+	# солнце по дуге 5:00–21:00, ночью — луна с другой стороны
+	var t := clampf((hour - 5.0) / 16.0, 0.0, 1.0)
+	var ang := t * PI
+	var sun_dir := Vector3(cos(ang), maxf(0.06, sin(ang)) * 0.9, 0.42).normalized()
+	var moon_dir := Vector3(-0.35, 0.62, -0.5).normalized()
+	var dir := moon_dir.lerp(sun_dir, smoothstep(0.0, 0.25, day)).normalized()
 	var c := Vector3(Land.START.x, 0, Land.START.y)
-	sun.look_at_from_position(c + to_sun * 160.0, c, Vector3.UP)
-	var warm := Color("ffa95e").lerp(Color("ffecd2"), smoothstep(0.15, 0.75, elev))
-	sun.light_color = Color("9fb4ff") if night else warm
-	sun.light_energy = 0.35 if night else 1.5 + 1.6 * smoothstep(0.05, 0.6, elev)
-	sky_mat.sky_horizon_color = Color("2b3550") if night else Color("f6c48e").lerp(Color("eedbc0"), smoothstep(0.1, 0.6, elev))
-	sky_mat.sky_top_color = Color("141c3a") if night else Color("5a93cf").lerp(Color("7c8fc4"), clampf(dusk, 0.0, 1.0) * 0.5)
+	sun.look_at_from_position(c + dir * 160.0, c, Vector3.UP)
+	var noon := Color("fff1dc")
+	var golden := Color("ffab5e")
+	var night_c := Color("a9a2ff")
+	var sun_c := noon.lerp(golden, gold)
+	sun.light_color = night_c.lerp(sun_c, day)
+	sun.light_energy = lerpf(0.55, lerpf(2.6, 1.9, gold), day)
+	sky_mat.sky_top_color = Color("2f2a63").lerp(Color("5a93cf").lerp(Color("8b8fc4"), gold * 0.6), day)
+	sky_mat.sky_horizon_color = Color("6a5a9a").lerp(Color("eedbc0").lerp(Color("f6b07a"), gold), day)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color.darkened(0.1)
-	env.ambient_light_energy = 0.28 if night else 0.62
-	env.ambient_light_color = Color("6f7fb8") if night else Color.WHITE
-	env.fog_light_color = Color("3c4672") if night else warm.lerp(Color("e3e6dc"), 0.75)
-	(_puff_quad().material as StandardMaterial3D).albedo_color = Color(0.3, 0.33, 0.43) if night else Color(1, 1, 1).lerp(Color(1.0, 0.82, 0.66), clampf(dusk, 0.0, 1.0) * 0.6)
-	var lit := night or hour < 6.6 or hour > 18.7
+	env.ambient_light_energy = lerpf(0.55, 0.62, day)
+	env.ambient_light_color = Color("8f86d6").lerp(Color.WHITE, day)
+	env.ambient_light_sky_contribution = lerpf(0.4, 1.0, day)
+	env.fog_light_color = Color("5a5290").lerp(Color("e3e6dc").lerp(Color("f2c79a"), gold * 0.8), day)
+	(_puff_quad().material as StandardMaterial3D).albedo_color = Color(0.55, 0.55, 0.7).lerp(Color(1, 1, 1).lerp(Color(1.0, 0.85, 0.7), gold * 0.6), day)
+	# окна и фонари: разгораются в сумерках
+	var lamp := 1.0 - smoothstep(0.15, 0.7, day)
 	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
 	if lm:
-		var k := smoothstep(18.3, 19.8, hour) + (1.0 - smoothstep(5.2, 6.8, hour))
-		lm.emission_energy_multiplier = clampf(k, 0.0, 1.0) * (0.25 if hour > 22.5 or hour < 5.0 else 1.6)
+		lm.emission_energy_multiplier = lamp * (0.6 if hour > 23.0 or hour < 4.0 else 1.6)
 	for l in night_lights:
-		l.visible = lit
-		l.light_energy = 2.4 if night else 1.1
+		l.visible = lamp > 0.02
+		l.light_energy = lamp * 2.4
 
 
 # ---------- вода, тоннель, природа ----------
@@ -482,55 +491,55 @@ func _water() -> void:
 		add_child(far)
 
 
-## Тоннель в холме: каменный портал, тёмный проём, скалы по бокам и на холме над входом (не перед ним)
+## Тоннель в холме: отвесная каменная стена (её рисует земля), в ней каменный портал с распахнутыми створками,
+## колонны с плющом, жаровни, знамя; по краю стены свисает плющ, на холме — деревья и кусты
 func _tunnel() -> void:
 	var g := Land.TUNNEL
-	var y := land.height_at(g.x, g.y + 1.5)
-	var xf := Transform3D(Basis.IDENTITY, Vector3(g.x, y, g.y))
+	var y := Land.BASE_Y + 0.4
+	var fz := g.y - 0.3
+	var xf := Transform3D(Basis.IDENTITY, Vector3(g.x, y, fz))
 	var bp := Bp.new(3)
-	# портал с распахнутыми створками — повозки выезжают из темноты тоннеля
 	var portal := Synty.make("SM_Bld_Door_Monument_01")
-	portal.transform = xf * Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * 0.9), Vector3(-2.5, 0, -0.3))
+	portal.transform = xf * Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * 0.82), Vector3(-2.13, 0, 0.12))
 	add_child(portal)
-	for mi: MeshInstance3D in portal.find_children("*Door_*", "MeshInstance3D", true, false):
-		mi.rotate_y(deg_to_rad(-105.0) if String(mi.name).ends_with("_L") else deg_to_rad(105.0))
-	bp.parts.append(["#dark", Transform3D(Basis.IDENTITY.scaled(Vector3(4.0, 5.4, 6.0)), Vector3(0, 2.7, -3.6)), {}])
-	for x: float in [-3.9, 3.9]:
-		bp.add("SM_Bld_Pillar_Large_02", Vector3(x, 0, 0.2), 0.0, 1.0)
-		bp.add("SM_Env_Ivy_Pillar_Flowers_04", Vector3(x, 0, 0.2), randf() * TAU, 1.0)
-		bp.brazier(Vector3(x * 1.3, 0, 1.4), true)
-	bp.add("SM_Prop_Banner_03_A", Vector3(0, 6.9, 0.3), 0.0, 1.0)
+	for mi: MeshInstance3D in portal.find_children("*", "MeshInstance3D", true, false):
+		if String(mi.name).ends_with("_L") or String(mi.name).ends_with("_R"):
+			mi.visible = false            # створки распахнуты внутрь — проём тёмный
+	bp.parts.append(["#dark", Transform3D(Basis.IDENTITY.scaled(Vector3(3.0, 4.2, 1.4)), Vector3(0, 2.1, -0.75)), {}])
+	for x: float in [-3.4, 3.4]:
+		bp.add("SM_Bld_Pillar_02", Vector3(x, 0, 0.45), 0.0, 1.05)
+		bp.add("SM_Env_Ivy_Pillar_Flowers_0%d" % (1 if x < 0 else 2), Vector3(x, 0, 0.45), x, 1.05)
+		bp.brazier(Vector3(x * 1.35, 0, 1.6), true)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 9
-	for side: float in [-1.0, 1.0]:
-		for k in 3:
-			var p := Vector3(side * rng.randf_range(6.8, 9.5), 0.0, -rng.randf_range(1.0, 4.0) - k * 1.5)
-			p.y = land.height_at(g.x + p.x, g.y + p.z) - y - 0.6
-			var sc := rng.randf_range(0.6, 0.84)
-			bp.parts.append(["SM_Env_Rock_Cliff_Layers_02", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * 0.9, sc)), p), {"tint": Color(0.86, 0.8, 0.7)}])
-		bp.add("SM_Env_Bush_Cluster_0%d" % (1 + rng.randi() % 5), Vector3(side * 6.2, 0, 1.6), rng.randf() * TAU, 0.8)
-	# камни и деревья на верху холма
+	# плющ свисает с края стены
 	for k in 7:
-		var a := rng.randf() * TAU
-		var r := rng.randf_range(3.0, 12.0)
-		var q := Land.HILL + Vector2(cos(a), sin(a) * 0.8) * r
-		if q.y > g.y - 4.0:
+		var x := -9.0 + k * 3.0
+		if absf(x) < 2.4:
 			continue
-		var p := Vector3(q.x - g.x, land.height_at(q.x, q.y) - y - 0.2, q.y - g.y)
-		if rng.randf() < 0.5:
-			bp.add("SM_Env_Rock_Cliff_02", p, rng.randf() * TAU, rng.randf_range(0.5, 0.9))
-		else:
-			bp.add("SM_Env_Tree_0%d" % (1 + rng.randi() % 4), p, rng.randf() * TAU, rng.randf_range(0.45, 0.6))
+		var top := land.height_at(g.x + x, fz - 0.6) - y
+		bp.add("SM_Env_Ivy_Draped_Flowers_0%d" % (1 + k % 3) if k % 2 == 0 else "SM_Env_Ivy_Draped_0%d" % (1 + k % 3), Vector3(x, top - 0.05, -0.15 - x * x * 0.012), 0.0, rng.randf_range(1.0, 1.4))
 	parts.place(bp, xf)
 	for lp in bp.lights:
 		_light(xf * lp)
+	# деревья и кусты на холме
+	for k in 26:
+		var a := rng.randf() * TAU
+		var r := rng.randf_range(2.0, 20.0)
+		var q := Land.HILL + Vector2(cos(a), sin(a)) * r
+		if q.y > fz - 2.0:
+			continue
+		var t := rng.randf()
+		var nm := "SM_Env_Tree_0%d" % (1 + rng.randi() % 4) if t < 0.45 else ("SM_Env_Tree_Thin_0%d" % (1 + rng.randi() % 2) if t < 0.65 else "SM_Env_Bush_Cluster_0%d" % (1 + rng.randi() % 5))
+		var sc := rng.randf_range(0.45, 0.65) if nm.contains("Tree_0") else (rng.randf_range(0.6, 0.9) if nm.contains("Thin") else rng.randf_range(0.6, 1.0))
+		_add_nature(nm, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * sc), Vector3(q.x, land.height_at(q.x, q.y), q.y)), q)
 
 
 ## Пейзаж до горизонта: за краем карты — холмы, луга и леса (низкодетально, без теней)
 func _horizon() -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var step := 32.0
+	var step := 16.0
 	var R := 1600.0
 	var n := int(R * 2.0 / step)
 	var fn := FastNoiseLite.new()
@@ -547,40 +556,30 @@ func _horizon() -> void:
 		var dx := maxf(maxf(-x, x - S), 0.0)
 		var dz := maxf(maxf(-z, z - S), 0.0)
 		var d := sqrt(dx * dx + dz * dz)
-		return Land.EDGE_Y + smoothstep(0.0, 260.0, d) * (6.0 + fn.get_noise_2d(x, z) * 26.0) + smoothstep(500.0, 1400.0, d) * 60.0
-	var col := func(x: float, z: float, y: float) -> Color:
-		var f := fz.get_noise_2d(x, z)
-		var c := Color("7fa23e").lerp(Color("4e7a34"), clampf(f * 1.6 + 0.3, 0.0, 1.0))
-		return c.lerp(Color("b9b38a"), smoothstep(40.0, 80.0, y))
+		return Land.EDGE_Y + smoothstep(0.0, 220.0, d) * (5.0 + fn.get_noise_2d(x, z) * 22.0) + smoothstep(500.0, 1400.0, d) * 55.0
 	var x0 := S / 2.0 - R
+	var grass := Land.C_GRASS[1] as Color
 	for j in n:
 		for i in n:
 			var xa := x0 + i * step
 			var za := x0 + j * step
+			if xa >= 0.0 and za >= 0.0 and xa + step <= S and za + step <= S:
+				continue                      # внутри карты — там своя земля
 			var pts: Array[Vector3] = [Vector3(xa, 0, za), Vector3(xa + step, 0, za), Vector3(xa + step, 0, za + step), Vector3(xa, 0, za + step)]
-			var all_in := true
 			for k in 4:
 				pts[k].y = hgt.call(pts[k].x, pts[k].z)
-				if pts[k].y > Land.WATER_Y:
-					all_in = false
-			if all_in:
-				continue
 			for tri: Array in [[0, 2, 1], [0, 3, 2]]:
-				var a: Vector3 = pts[tri[0]]
-				var b: Vector3 = pts[tri[1]]
-				var c: Vector3 = pts[tri[2]]
-				var nrm := (c - a).cross(b - a).normalized()
-				var cc: Color = col.call((a.x + b.x + c.x) / 3.0, (a.z + b.z + c.z) / 3.0, (a.y + b.y + c.y) / 3.0)
-				for v: Vector3 in [a, b, c]:
-					st.set_normal(nrm)
-					st.set_color(cc)
+				for vi: int in tri:
+					var v: Vector3 = pts[vi]
+					var tone := clampf(0.5 + fz.get_noise_2d(v.x, v.z) * 0.9, 0.0, 1.0)
+					var c := (Land.C_GRASS[0] as Color).lerp(Land.C_GRASS[3] as Color, tone)
+					st.set_color(c.srgb_to_linear())
+					st.set_uv(Vector2(0.0, v.y))
 					st.add_vertex(v)
+	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
-	var m := StandardMaterial3D.new()
-	m.vertex_color_use_as_albedo = true
-	m.roughness = 1.0
-	mi.material_override = m
+	mi.material_override = land_mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
 	# дальние леса: деревья пятнами вокруг карты
@@ -633,7 +632,7 @@ func _cliff_rocks() -> void:
 		var z := rng.randf_range(2.0, Land.SIZE - 2.0)
 		var c := land.cell(Vector2(x, z))
 		var k := land.idx(c.x, c.y)
-		if land.occ[k] != 0 or not land.is_rock(k) or Vector2(x, z).distance_to(Land.TUNNEL) < 10.0:
+		if land.occ[k] != 0 or not land.is_rock(k) or Vector2(x, z).distance_to(Land.HILL) < 30.0:
 			continue
 		var y := land.height_at(x, z)
 		bp.add("SM_Env_Rock_Cliff_02", Vector3(x, y - 0.3, z), rng.randf() * TAU, rng.randf_range(0.3, 0.55))
@@ -939,6 +938,8 @@ func _sync_actors(b: Dictionary) -> void:
 		var c := Citizen.create(rng, who == "female" or (who == "any" and rng.randf() < 0.5), false, who == "rich", model)
 		actors_root.add_child(c)
 		c.transform = xf * Transform3D(Basis(Vector3.UP, float(a[1])), a[0])
+		if (a[0] as Vector3).y < 0.05:
+			c.position.y = land.height_at(c.position.x, c.position.z)
 		c.play(a[2], 0.0)
 		var cur := c.anim.current_animation
 		if cur != "":
@@ -1278,6 +1279,9 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 		tier = int(moving["tier"])
 	var bp := Catalog.make(type, tier, variant, color)
 	var bb := _bounds(bp)
+	var fz := bp.front_z()
+	if fz > -INF:
+		bb[3] = fz                        # фасадом — вплотную к краю дороги
 	var yaw := tool_yaw
 	var pos := p
 	if snap and d["kind"] != "decor" and d["kind"] != "farm":
@@ -1295,7 +1299,7 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 			last_snap_n = nrm
 			yaw = snappedf(atan2(nrm.x, nrm.y), deg_to_rad(5.0))
 			var f := City.facing(yaw)
-			pos = (e["p"] as Vector2) - f * (float(bb[3]) + 0.05)
+			pos = (e["p"] as Vector2) - f * (float(bb[3]) + 0.02)
 			pos = _snap_row(pos, yaw, bb, int(moving.get("id", -1)))
 	var chk := city.check_place(type, pos, yaw, variant, color, -3 if not moving.is_empty() else -1)
 	return {"pos": pos, "yaw": yaw, "err": chk["err"], "cells": chk["cells"], "y": chk["y"], "variant": variant, "color": color, "tier": tier}
@@ -1348,7 +1352,11 @@ func _snap_row(pos: Vector2, yaw: float, bb: Array, ignore := -1) -> Vector2:
 			continue
 		if absf(angle_difference(float(o["yaw"]), yaw)) > deg_to_rad(12):
 			continue
-		var ob := _bounds(city.blueprint(o))
+		var obp := city.blueprint(o)
+		var ob := _bounds(obp)
+		var ofz := obp.front_z()
+		if ofz > -INF:
+			ob[3] = ofz
 		var rel: Vector2 = pos - (o["pos"] as Vector2)
 		var along := rel.dot(ax)
 		var across := rel.dot(f)

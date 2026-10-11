@@ -120,9 +120,23 @@ static func model_aabb(name: String) -> AABB:
 	return box
 
 
+## Передняя стена постройки (z фасада) — по стенам и дверям; если стен нет — по следу
+func front_z() -> float:
+	var f := -INF
+	for p in parts:
+		var nm: String = p[0]
+		if (nm.begins_with("SM_Bld_Wall_") and not nm.contains("Balcony") and not nm.contains("Tiny")) or nm.begins_with("SM_Bld_Pillar"):
+			var box := model_aabb(nm)
+			var xf: Transform3D = p[1]
+			for i in 8:
+				f = maxf(f, (xf * box.get_endpoint(i)).z)
+	return f
+
+
 ## Прямоугольники следа (в осях постройки, XZ): из габаритов настоящих деталей, без крыш, плюща, навесов и мелочи
 func footprint() -> Array:
 	var out := []
+	var fz := front_z()
 	for p in parts:
 		var nm: String = p[0]
 		var skip := false
@@ -148,6 +162,8 @@ func footprint() -> Array:
 			low_y = minf(low_y, q.y)
 		if low_y > 1.6:
 			continue                          # висит высоко (балкон, вывеска) — землю не занимает
+		if fz > -INF and lo.y > fz - 0.05 and (hi.y - lo.y) < 1.0 and (hi.x - lo.x) < 1.6:
+			continue                          # горшки и скамейки перед фасадом стоят на мостовой
 		if (hi - lo).x < 0.05 or (hi - lo).y < 0.05:
 			continue
 		out.append(Rect2(lo, hi - lo))

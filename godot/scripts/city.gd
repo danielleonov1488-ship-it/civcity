@@ -188,6 +188,8 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	var cells: PackedInt32Array = b["cells"]
 	if not d.get("water", false):
 		land.flatten_cells(cells, b["y"], Land.Kind.FIELD if d["kind"] == "farm" else -1)
+		if d["kind"] != "decor":
+			land.blend_ring(cells, b["y"], 8)
 	land.set_occ(cells, b["id"])
 	buildings[b["id"]] = b
 	compute()
