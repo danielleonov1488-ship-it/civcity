@@ -8,6 +8,7 @@ var out := "D:/CivCity/.work/gd/"
 var cart_shot := false
 
 func _ready() -> void:
+	Game.boot = {"new": "1"}
 	var sc: PackedScene = load("res://main.tscn")
 	game = sc.instantiate()
 	add_child(game)

@@ -1,3 +1,4 @@
+class_name Game
 extends Node3D
 ## CivCity: уютный римский город в духе Town to City на моделях Synty POLYGON Ancient Empire.
 ## Мир: земля уступами, море, холмы, скала с воротами (оттуда приезжают переселенцы), центр города у ворот.
@@ -56,13 +57,32 @@ var _lmb_down := false
 
 const SAVE_NAME := "city.json"
 
+static var boot := {}                  # с чем перезапуститься: {"menu"|"play"|"new"|"demo": "1"}
+var mode := "play"                     # menu — меню на фоне готового города; play — свой город; new — новый; demo — готовый город
+var can_save := true
+var _autogo := ""                      # проверка меню: через пару секунд перейти в режим (для снимков)
+
 
 func _ready() -> void:
 	var args := {}
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
+	if not boot.is_empty():
+		args = boot.duplicate()           # перезапуск из меню — только новый режим, без старых параметров запуска
+	boot = {}
+	if args.is_empty():
+		args["menu"] = "1"
+	if args.has("menu"):
+		mode = "menu"
+		args["demo"] = "1"
+	elif args.has("demo"):
+		mode = "demo"
+	elif args.has("new"):
+		mode = "new"
 	shot_path = args.get("shot", "")
+	_autogo = args.get("autogo", "")
+	can_save = shot_path == "" and (mode == "play" or mode == "new")
 	shot_frame = int(args.get("frames", "200"))
 	hour = float(args.get("hour", "8.0"))
 	if args.has("hour"):
@@ -86,13 +106,17 @@ func _ready() -> void:
 	land_mat.set_shader_parameter("tile_plaza_d", tex.call("Floor_Tiles_02"))
 	_water()
 	_gate()
+	_cliff_rocks()
+	var birds := Birds.new()
+	birds.center = Vector3(Land.CENTER.x, 0, Land.CENTER.y + 10)
+	add_child(birds)
 	city.building_added.connect(_on_added)
 	city.building_removed.connect(_on_removed)
 	city.house_changed.connect(_on_house_changed)
 	people = People.new()
 	add_child(people)
 	var loaded := false
-	if not args.has("new") and not args.has("demo") and shot_path == "":
+	if mode == "play" and shot_path == "":
 		loaded = _load()
 	if not loaded:
 		city.place("center", Land.CENTER, 0.0, true, 1)
@@ -108,6 +132,8 @@ func _ready() -> void:
 			land.dirty[Vector2i(i, j)] = true
 	_rebuild_land(999)
 	people.setup(land, city)
+	if int(city.stats["pop"]) > 0:
+		people.prespawn(mini(40, int(city.stats["pop"]) / 6))
 	rig = CameraRig.new()
 	rig.terrain = null
 	add_child(rig)
@@ -124,7 +150,12 @@ func _ready() -> void:
 	_update_plot_signs()
 	_set_hour(hour)
 	hud.refresh()
-	if not loaded and shot_path == "":
+	if mode == "menu":
+		hud.show_menu(FileAccess.file_exists(save_path()))
+		rig.set_view(Vector3(66, Land.BASE_Y, 70), 205, 30, 62)
+	elif mode == "demo" and shot_path == "":
+		hud.toast("Готовый город: стройте и смотрите сколько угодно — он не сохраняется", "")
+	elif not loaded and shot_path == "":
 		hud.advisor("Аве! Я Марк, твой советник.", "Через ворота в скале к центру города приезжают переселенцы. Проложи от центра дорогу кистью (слева внизу) и поставь вдоль неё дома — они сами повернутся к дороге. Камера: колёсико — масштаб, зажатое колёсико — вращать, правая кнопка — двигать, WASD и Q/E.")
 
 
@@ -244,6 +275,40 @@ func _gate() -> void:
 	parts.place(bp, xf)
 	for lp in bp.lights:
 		_light(xf * lp)
+
+
+## Скалы Synty вдоль обрыва с воротами: вместо ровной стенки уступов — слоистый песчаник
+func _cliff_rocks() -> void:
+	var bp := Bp.new(17)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5
+	var x := 1.0
+	while x < 127.0:
+		var step := rng.randf_range(4.5, 7.0)
+		if absf(x - Land.GATE.x) < 4.8:
+			x += step
+			continue
+		var top := land.height_at(x, 6.0)
+		var zf := -1.0
+		for k in 120:
+			var z := 8.0 + k * 0.2
+			if land.height_at(x, z) < top - 2.5:
+				zf = z
+				break
+		if zf > 0.0:
+			var low := land.height_at(x, zf + 1.5)
+			if rng.randf() < 0.6:
+				var sc := rng.randf_range(0.42, 0.58)
+				bp.add_xf("SM_Env_Rock_Cliff_Layers_01", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * rng.randf_range(0.75, 0.95), sc)), Vector3(x, low - 0.6, zf - 3.2)))
+			else:
+				var sc := rng.randf_range(0.8, 1.1)
+				bp.add_xf("SM_Env_Rock_Cliff_Layers_02", Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sc, sc * 1.1, sc)), Vector3(x, low - 0.4, zf - 2.2)))
+			if rng.randf() < 0.45:
+				bp.add("SM_Env_Rock_Cliff_02", Vector3(x + rng.randf_range(-2, 2), low - 0.2, zf + rng.randf_range(0.2, 1.2)), rng.randf() * TAU, rng.randf_range(0.4, 0.7))
+			if rng.randf() < 0.5:
+				bp.add("SM_Env_Bush_Cluster_0%d" % (1 + rng.randi() % 5), Vector3(x + rng.randf_range(-2, 2), low, zf + rng.randf_range(0.6, 1.6)), rng.randf() * TAU, rng.randf_range(0.6, 0.9))
+		x += step
+	parts.place(bp, Transform3D.IDENTITY)
 
 
 func _light(at: Vector3) -> OmniLight3D:
@@ -559,17 +624,30 @@ func _update_plot_signs() -> void:
 			var c := Vector2((i + 0.5) * Land.PLOT, (j + 0.5) * Land.PLOT)
 			if land.is_water(c) and land.is_water(c + Vector2(4, 4)) and land.is_water(c - Vector2(4, 4)):
 				continue
+			# межевой столб со знаменем и ценой — участок продаётся
+			var y := maxf(land.height_at(c.x, c.y), 0.3)
+			var sign := Node3D.new()
+			sign.position = Vector3(c.x, y, c.y)
+			sign.add_child(Synty.make("SM_Prop_Pole_02"))
+			var ban := Synty.make("SM_Prop_Banner_02_%s" % ["A", "C", "E", "G"][(i + j) % 4])
+			ban.position = Vector3(0, 3.2, 0)
+			ban.rotation.y = 0.6
+			sign.add_child(ban)
 			var l := Label3D.new()
-			l.text = "Купить землю\n%d ден." % city.plot_price()
-			l.font_size = 48
+			l.text = "Купить · %d ден." % city.plot_price()
+			if hud:
+				l.font = hud.font_bold
+			l.font_size = 44
 			l.outline_size = 12
 			l.modulate = Color("fff6dc")
 			l.outline_modulate = Color("6a4a2a")
 			l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			l.pixel_size = 0.016
-			l.position = Vector3(c.x, maxf(land.height_at(c.x, c.y), 0.5) + 3.0, c.y)
-			add_child(l)
-			plot_signs[p] = l
+			l.pixel_size = 0.009
+			l.position = Vector3(0, 4.4, 0)
+			l.visibility_range_end = 90.0
+			sign.add_child(l)
+			add_child(sign)
+			plot_signs[p] = sign
 
 
 # ---------- кадр ----------
@@ -592,7 +670,11 @@ func _process(dt: float) -> void:
 			(a as Citizen).anim.speed_scale = speed
 	_update_tool()
 	autosave_t += dt
-	if autosave_t > 60.0 and shot_path == "":
+	if mode == "menu":
+		rig._yaw_t += dt * 0.035
+		if _autogo != "" and frame == 90:
+			hud._menu_go(_autogo)
+	if autosave_t > 60.0 and can_save:
 		autosave_t = 0.0
 		save()
 	if shot_path != "" and frame == shot_frame:
@@ -603,7 +685,7 @@ func _process(dt: float) -> void:
 
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_WM_CLOSE_REQUEST and shot_path == "":
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and can_save:
 		save()
 
 
@@ -998,7 +1080,20 @@ func save_path() -> String:
 	return dir.path_join(SAVE_NAME)
 
 
+## Перезапуск сцены в другом режиме (меню, свой город, новый, готовый)
+func restart(m: String) -> void:
+	if can_save:
+		save()
+	boot = {m: "1"}
+	if _autogo != "" and shot_path != "":
+		boot["shot"] = shot_path
+		boot["frames"] = str(shot_frame)
+	get_tree().reload_current_scene()
+
+
 func save() -> void:
+	if not can_save:
+		return
 	var data := city.save_data()
 	data["land"] = land.save_changes(base_land)
 	data["hour"] = hour
@@ -1040,62 +1135,113 @@ func _load() -> bool:
 # ---------- готовый городок (для снимков и первого знакомства) ----------
 
 func _demo_town() -> void:
-	city.money = 50000
-	city.max_rank = 4
-	var c := Land.CENTER
-	# главная улица от центра на юг, площадь, поперечные улицы
-	land.paint_line(c + Vector2(0, 4), c + Vector2(0, 46), 1.6, Land.Kind.ROAD, true)
-	land.paint_line(Vector2(36, 56), Vector2(92, 56), 1.4, Land.Kind.ROAD, true)
-	land.paint_line(Vector2(40, 38), Vector2(88, 38), 1.3, Land.Kind.ROAD, true)
-	for k in 40:
-		land.paint_circle(Vector2(64, 66), 8.0, Land.Kind.PLAZA, true, false)
-	land.paint_line(c + Vector2(0, 46), c + Vector2(0, 80), 1.5, Land.Kind.ROAD, true)
-	for p in [Vector2i(3, 4), Vector2i(4, 4), Vector2i(2, 3), Vector2i(5, 3), Vector2i(3, 5), Vector2i(4, 5), Vector2i(2, 4), Vector2i(5, 4)]:
-		land.owned[p] = true
+	city.money = 90000
+	for g in Defs.GOALS:
+		city.goals_done.append(g["id"])
+	city.max_rank = Defs.RANKS.size() - 1
+	for j in range(1, 7):
+		for i in range(1, 7):
+			land.owned[Vector2i(i, j)] = true
+	var R := Land.Kind.ROAD
+	var road := func(a: Vector2, b: Vector2, w: float, kd: int) -> void:
+		land.paint_line(a, b, w, kd, true)
+	# улицы: главная от центра к храму через площадь, поперечные, переулки-тропы
+	road.call(Vector2(64, 36), Vector2(64, 99), 1.7, R)
+	road.call(Vector2(38, 50), Vector2(92, 50), 1.35, R)
+	road.call(Vector2(36, 86), Vector2(94, 86), 1.35, R)
+	road.call(Vector2(47, 50), Vector2(47, 86), 1.2, R)
+	road.call(Vector2(81, 50), Vector2(81, 86), 1.2, R)
+	road.call(Vector2(47, 68), Vector2(55, 68), 1.2, R)
+	road.call(Vector2(73, 68), Vector2(81, 68), 1.2, R)
+	road.call(Vector2(36, 50), Vector2(30, 62), 1.0, Land.Kind.DIRT)
+	road.call(Vector2(30, 62), Vector2(30, 92), 1.0, Land.Kind.DIRT)
+	road.call(Vector2(94, 86), Vector2(98, 96), 1.0, Land.Kind.DIRT)
+	for k in 30:
+		land.paint_circle(Vector2(64, 68), 8.5, Land.Kind.PLAZA, true, false)
+	var put := func(type: String, near: Vector2, r: float, tier := -1) -> Dictionary:
+		for k in range(0, int(r * 2) + 1):
+			var rr := k * 0.5
+			var n := maxi(1, int(rr * 6))
+			for q in n:
+				var p := near + Vector2(cos(TAU * q / n), sin(TAU * q / n)) * rr
+				var pl: Dictionary = placement(type, p)
+				if pl["err"] == "":
+					var b := city.place(type, pl["pos"], pl["yaw"], true)
+					if tier >= 0:
+						b["tier"] = tier
+						var T: Dictionary = Defs.tiers(type)[tier] if not Defs.tiers(type).is_empty() else {}
+						b["pop"] = int(T.get("cap", 0))
+					return b
+		return {}
+	# главное: храм в конце улицы, рынок и термы у площади, театр, форум
+	put.call("temple", Vector2(64, 106), 4)
+	put.call("fountain", Vector2(64, 68), 1)
+	put.call("market", Vector2(51.5, 62), 4)
+	put.call("baths", Vector2(76, 61), 4)
+	put.call("forum", Vector2(72, 95), 5)
+	put.call("theatre", Vector2(42, 96), 6)
+	for x: float in [40.0, 52.0]:
+		put.call("domus", Vector2(x, 80), 4, 3 + int(x > 45.0))
+	put.call("domus", Vector2(87, 80), 4, 4)
+	put.call("domus", Vector2(87, 56), 4, 2)
+	# окраины: поля, роща, виноградник, мастерские
+	put.call("farm", Vector2(24, 66), 6)
+	put.call("farm", Vector2(24, 78), 6)
+	put.call("grove", Vector2(24, 90), 6)
+	put.call("vineyard", Vector2(36, 59), 4)
+	put.call("bakery", Vector2(34, 72), 4)
+	put.call("oilpress", Vector2(34, 80), 4)
+	put.call("winery", Vector2(97, 90), 5)
+	put.call("warehouse", Vector2(56, 44), 4)
+	put.call("smithy", Vector2(73, 44), 4)
+	put.call("well", Vector2(52, 54), 3)
+	put.call("well", Vector2(76, 76), 3)
+	put.call("well", Vector2(58, 90), 3)
+	# дома рядами вдоль всех улиц; чем ближе к площади — тем выше
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
-	# дома рядами вдоль улиц
-	var rows := [[Vector2(42, 56), Vector2(60, 56), 1.0], [Vector2(68, 56), Vector2(90, 56), 1.0], [Vector2(42, 56), Vector2(60, 56), -1.0], [Vector2(68, 56), Vector2(90, 56), -1.0],
-		[Vector2(44, 38), Vector2(61, 38), 1.0], [Vector2(67, 38), Vector2(86, 38), 1.0], [Vector2(44, 38), Vector2(61, 38), -1.0], [Vector2(67, 38), Vector2(86, 38), -1.0]]
-	for r in rows:
-		var a: Vector2 = r[0]
-		var bb: Vector2 = r[1]
-		var side: float = r[2]
-		var dir := (bb - a).normalized()
-		var nrm := Vector2(-dir.y, dir.x) * side
-		var t := 0.0
-		while t < a.distance_to(bb) - 4.0:
-			var pos := a + dir * (t + 2.5) + nrm * (1.75 + 2.5)
-			var yaw := atan2(-nrm.x, -nrm.y)
-			if city.check_place("house", pos, yaw) == "":
-				var hb := city.place("house", pos, yaw, true)
-				hb["tier"] = [1, 2, 2, 3, 3, 4][rng.randi() % 6]
-				hb["pop"] = Defs.PLEB_TIERS[hb["tier"]]["cap"]
-				_show(hb)
-				t += 5.02
+	for z in range(34, 104):
+		for x in range(30, 100):
+			var p := Vector2(x, z)
+			if not _is_road(p + Vector2(2.6, 0)) and not _is_road(p - Vector2(2.6, 0)) and not _is_road(p + Vector2(0, 2.6)) and not _is_road(p - Vector2(0, 2.6)):
+				continue
+			var pl: Dictionary = placement("house", p)
+			if pl["err"] != "":
+				continue
+			var hb := city.place("house", pl["pos"], pl["yaw"], true)
+			var d := (pl["pos"] as Vector2).distance_to(Vector2(64, 68))
+			var tier := 1
+			if d < 16.0:
+				tier = [3, 4, 4, 3][rng.randi() % 4]
+			elif d < 28.0:
+				tier = [2, 3, 3, 4][rng.randi() % 4]
+			elif d < 40.0:
+				tier = [1, 2, 2, 3][rng.randi() % 4]
 			else:
-				t += 1.0
-	# службы и красота вокруг площади
-	var put := func(type: String, pos: Vector2, yaw: float) -> void:
-		if city.check_place(type, pos, yaw) == "":
-			city.place(type, pos, yaw, true)
-	put.call("temple", Vector2(64, 82.5), PI)
-	put.call("market", Vector2(52, 66), PI / 2)
-	put.call("fountain", Vector2(64, 66), 0.0)
-	put.call("baths", Vector2(78, 68), -PI / 2)
-	put.call("well", Vector2(60, 47), 0.0)
-	put.call("well", Vector2(70, 29), 0.0)
-	for k in 6:
-		var a := TAU * k / 6.0 + 0.4
-		put.call("bench", Vector2(64, 66) + Vector2(cos(a), sin(a)) * 4.6, -a - PI / 2)
-	for p in [Vector2(57, 59), Vector2(71, 59), Vector2(57, 73), Vector2(71, 73)]:
-		put.call("bigbrazier", p, 0.0)
-	for p in [Vector2(60.4, 42), Vector2(67.6, 42), Vector2(60.4, 50), Vector2(67.6, 50)]:
-		put.call("cypress", p, 0.0)
-	put.call("statue", Vector2(58.0, 76.0), 0.0)
-	put.call("statue", Vector2(70.0, 76.0), 0.0)
-	put.call("farm", Vector2(30, 66), PI / 2)
-	put.call("grove", Vector2(30, 78), PI / 2)
+				tier = [1, 1, 2][rng.randi() % 3]
+			hb["tier"] = tier
+			hb["pop"] = Defs.PLEB_TIERS[tier]["cap"]
+	# красота: кипарисы вдоль главной улицы, скамьи и жаровни у фонтана, статуи у храма, цветы
+	var deco := func(type: String, p: Vector2, yaw: float) -> void:
+		if city.check_place(type, p, yaw) == "":
+			city.place(type, p, yaw, true)
+	for k in 8:
+		var a := TAU * k / 8.0 + 0.2
+		deco.call("bench", Vector2(64, 68) + Vector2(cos(a), sin(a)) * 5.2, -a - PI / 2)
+	for k in 4:
+		var a := TAU * k / 4.0 + PI / 4
+		deco.call("bigbrazier", Vector2(64, 68) + Vector2(cos(a), sin(a)) * 7.4, 0.0)
+	for z in range(38, 98, 4):
+		for sx: float in [-1.0, 1.0]:
+			if absf(z - 68) > 10:
+				deco.call("cypress", Vector2(64 + sx * 2.4, z), 0.0)
+	for p: Vector2 in [Vector2(58, 99), Vector2(70, 99)]:
+		deco.call("statue", p, PI)
+	for p: Vector2 in [Vector2(55.5, 99), Vector2(72.5, 99)]:
+		deco.call("lion", p, PI)
+	for k in 60:
+		var p := Vector2(rng.randf_range(32, 98), rng.randf_range(36, 104))
+		deco.call(["flowers", "bush", "planter", "tree", "flowers", "palm"][k % 6], p, rng.randf() * TAU)
 	city.compute()
 	for id in city.buildings:
 		_show(city.buildings[id])

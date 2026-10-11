@@ -111,6 +111,18 @@ func _lived_houses() -> Array:
 	return out
 
 
+## Сразу населить улицы (готовый город, загрузка): n гуляющих
+func prespawn(n: int) -> void:
+	for k in n:
+		_spawn_wanderer()
+		if not walkers.is_empty():
+			var w: Dictionary = walkers[walkers.size() - 1]
+			var q := _random_road_near(w["p"], 12.0)
+			w["p"] = q
+			_place(w)
+			_next(w)
+
+
 func _spawn_wanderer() -> void:
 	var lived := _lived_houses()
 	if lived.is_empty():

@@ -202,23 +202,23 @@ static func _house(b: Bp, tier: int) -> void:
 			if b.chance(0.4):
 				b.wall_banner(0, 0, 2, 2, 0.5 if di == 1 else 1.5, 2 * FL - 0.35)
 		_:
-			# большая инсула: три этажа, лавка, два балкона, терраса на крыше с перголой, знамёна
+			# большая инсула: три этажа под черепицей, лавка, балконы на двух этажах, знамёна, плющ
 			var di := b.rng.randi() % 2
-			b.block(0, 0, 2, 2, 3, {"door_i": di, "shop": [1 - di], "roof_trim": false})
-			b.flat_roof(0, 0, 2, 2, 3 * FL)
-			b.roof_pergola(-2.5, -2.5, 3 * FL)
-			b.add("SM_Prop_FlowerPot_Fancy_01", Vector3(1.6, 3 * FL, 1.6), 0.0, 0.8)
-			b.add("SM_Env_Garden_Plants_04", Vector3(1.4, 3 * FL, -1.2), 0.0, 0.6)
+			b.block(0, 0, 2, 2, 3, {"door_i": di, "shop": [1 - di]})
+			b.gable(0, 0, 2, 2, 3 * FL)
 			b.shop_front(0, 0, 2, 2, 1 - di)
 			b.balcony(0, 0, 2, 2, 0, 1)
 			b.balcony(0, 0, 2, 2, 1, 2)
+			if b.chance(0.5):
+				b.balcony(0, 0, 2, 2, 1, 1)
 			b.window_pots(0, 0, 2, 2, 1)
 			b.window_pots(0, 0, 2, 2, 2)
 			b.door_decor(0, 0, 2, 2, di)
 			b.ivy(0, 0, 2, 2, 3)
-			b.ivy(0, 0, 2, 2, 3)
-			b.wall_banner(0, 0, 2, 2, 0.5, 2 * FL - 0.35)
-			b.wall_banner(0, 0, 2, 2, 1.5, 2 * FL - 0.35)
+			b.ivy(0, 0, 2, 2, 2)
+			b.wall_banner(0, 0, 2, 2, 0.5 if di == 1 else 1.5, 2 * FL - 0.35)
+			if b.chance(0.5):
+				b.on_wall("SM_Prop_Overhang_01", 0, 0, 2, 2, 0, 0.5 if di == 0 else 1.5, 2.75, 0.12)
 
 
 # ---------- патриции: 10×10 м ----------
@@ -431,11 +431,11 @@ static func _well(b: Bp) -> void:
 
 
 static func _fountain(b: Bp) -> void:
-	b.add("SM_Prop_Fountain_04", Vector3.ZERO, 0.0, 1.0)
-	b.add("SM_Prop_Fountain_04_Insert_01", Vector3.ZERO, 0.0, 1.0)
+	b.add("SM_Prop_Fountain_04", Vector3.ZERO, 0.0, 1.35)
+	b.add("SM_Prop_Fountain_04_Insert_01", Vector3.ZERO, 0.0, 1.35)
 	for c: Vector3 in [Vector3(-2.1, 0, -2.1), Vector3(2.1, 0, -2.1), Vector3(-2.1, 0, 2.1), Vector3(2.1, 0, 2.1)]:
 		b.add("SM_Prop_FlowerPot_Fancy_01", c + Vector3(0, 0.57 * 0.7, 0), 0.0, 0.7)
-	b.add("SM_Env_Lillies_02", Vector3(0.6, 0.65, 0.4), 0.0, 0.5)
+	b.add("SM_Env_Lillies_02", Vector3(0.8, 0.85, 0.5), 0.0, 0.6)
 	b.door = Vector3(0, 0, 2.6)
 
 

@@ -14,7 +14,7 @@ const COLORS := {
 	"Blue": {"plain": "Stucco_Blue_01", "brick": "Building_Half_Brick_03"},
 	"Red": {"plain": "Stucco_Red_01", "brick": "Building_Half_Brick_04"},
 }
-const PAINT := ["White", "Orange", "White", "Orange", "Red", "Blue", "White"]
+const PAINT := ["White", "Orange", "White", "Orange", "Red", "White", "Blue", "Orange", "White"]
 const ROOFS := ["Roof_Tile_01", "Roof_Tile_01", "Roof_Tile_03", "Roof_Tile_12", "Roof_Tile_05", "Roof_Tile_01"]
 
 var parts := []                 # [имя, Transform3D, remap]

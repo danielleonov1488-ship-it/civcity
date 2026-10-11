@@ -199,7 +199,7 @@ func undo(changes: Array) -> void:
 
 
 ## Клетки под постройкой (повёрнутый прямоугольник): выровнять и засыпать утоптанной землёй
-func flatten_obb(c: Vector2, ax: Vector2, hw: float, hd: float, y: float, kd: int = Kind.YARD) -> Array:
+func flatten_obb(c: Vector2, ax: Vector2, hw: float, hd: float, y: float, kd: int = Kind.YARD, keep: Array = []) -> Array:
 	var out := []
 	var az := Vector2(-ax.y, ax.x)
 	var r := hw + hd
@@ -210,6 +210,8 @@ func flatten_obb(c: Vector2, ax: Vector2, hw: float, hd: float, y: float, kd: in
 			var q := Vector2((i + 0.5) * CELL, (j + 0.5) * CELL) - c
 			if absf(q.dot(ax)) <= hw and absf(q.dot(az)) <= hd:
 				var k := idx(i, j)
+				if kind[k] in keep:
+					continue                    # кромку мостовой не трогаем — дорога не рвётся
 				out.append([Vector2i(i, j), kind[k], h[k]])
 				h[k] = y
 				kind[k] = kd

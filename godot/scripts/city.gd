@@ -131,7 +131,7 @@ func check_place(type: String, pos: Vector2, yaw: float, ignore_id := -1) -> Str
 				var kq := land.kind_at(q.x, q.y)
 				if kq == Land.Kind.ROAD or (kq == Land.Kind.PLAZA and not type in PLAZA_TYPES):
 					on_road += 1
-		if on_road > (0 if d["kind"] == "house" else int(nu * nv * 0.02)):
+		if on_road > maxi(2, int(nu * nv * 0.02)):
 			return "Мешает дорога"
 	return ""
 
@@ -157,7 +157,7 @@ func place(type: String, pos: Vector2, yaw: float, free := false, seed_v := -1) 
 	elif type in PLAZA_TYPES:
 		kd = Land.Kind.PLAZA
 	if d["kind"] != "decor":
-		land.flatten_obb(pos, f["ax"], f["hw"] + 0.1, f["hd"] + 0.1, y, kd)
+		land.flatten_obb(pos, f["ax"], f["hw"] + 0.1, f["hd"] + 0.1, y, kd, [Land.Kind.ROAD] if kd == Land.Kind.PLAZA else [Land.Kind.ROAD, Land.Kind.PLAZA])
 	else:
 		b["y"] = land.height_at(pos.x, pos.y)
 	buildings[b["id"]] = b
@@ -175,7 +175,7 @@ func remove(b: Dictionary, refund := true) -> void:
 	buildings.erase(b["id"])
 	if def(b)["kind"] != "decor":
 		var f := obb(b)
-		land.flatten_obb(b["pos"], f["ax"], f["hw"] + 0.1, f["hd"] + 0.1, b["y"], Land.Kind.GRASS)
+		land.flatten_obb(b["pos"], f["ax"], f["hw"] + 0.1, f["hd"] + 0.1, b["y"], Land.Kind.GRASS, [Land.Kind.ROAD] if b["type"] in PLAZA_TYPES else [Land.Kind.ROAD, Land.Kind.PLAZA])
 	compute()
 	building_removed.emit(b)
 	changed.emit()

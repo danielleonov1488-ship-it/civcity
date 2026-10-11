@@ -160,7 +160,95 @@ func _panel(at: Vector2, preset := Control.PRESET_TOP_LEFT) -> PanelContainer:
 	return p
 
 
+# ---------- стартовое меню ----------
+
+var menu_root: Control
+
+func show_menu(has_save: bool) -> void:
+	root.visible = false
+	menu_root = Control.new()
+	menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu_root.theme = theme_main
+	add_child(menu_root)
+	# мягкая тень слева, чтобы читались надписи поверх города
+	var shade := TextureRect.new()
+	var g := Gradient.new()
+	g.colors = PackedColorArray([Color(0.12, 0.08, 0.04, 0.78), Color(0.12, 0.08, 0.04, 0.0)])
+	g.offsets = PackedFloat32Array([0.45, 1.0])
+	var gt := GradientTexture2D.new()
+	gt.gradient = g
+	gt.fill_from = Vector2(0, 0)
+	gt.fill_to = Vector2(1, 0)
+	shade.texture = gt
+	shade.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+	shade.offset_right = 900
+	shade.stretch_mode = TextureRect.STRETCH_SCALE
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	menu_root.add_child(shade)
+	var box := VBoxContainer.new()
+	box.position = Vector2(88, 150)
+	box.add_theme_constant_override("separation", 14)
+	menu_root.add_child(box)
+	var lat: FontFile = load("res://assets/fonts/CormorantGaramond-latin-2fed1d.woff2")
+	var cyr: FontFile = load("res://assets/fonts/CormorantGaramond-cyrillic-4f4a82.woff2")
+	lat.fallbacks = [cyr]
+	var title := Label.new()
+	title.text = "CivCity"
+	title.add_theme_font_override("font", lat)
+	title.add_theme_font_size_override("font_size", 104)
+	title.add_theme_color_override("font_color", Color("fff3dc"))
+	title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
+	title.add_theme_constant_override("shadow_offset_y", 3)
+	box.add_child(title)
+	var sub := Label.new()
+	sub.text = "Уютный римский городок: дороги, дома, жители"
+	sub.add_theme_font_override("font", lat)
+	sub.add_theme_font_size_override("font_size", 30)
+	sub.add_theme_color_override("font_color", Color("f1e2c6"))
+	box.add_child(sub)
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(0, 26)
+	box.add_child(gap)
+	var mk := func(text: String, cb: Callable) -> Button:
+		var b := Button.new()
+		b.text = text
+		b.custom_minimum_size = Vector2(360, 56)
+		b.add_theme_font_size_override("font_size", 21)
+		b.pressed.connect(cb)
+		box.add_child(b)
+		return b
+	if has_save:
+		mk.call("Продолжить свой город", func(): _menu_go("play"))
+	var bn: Button = mk.call("Новый город", func(): pass)
+	bn.pressed.connect(func():
+		if has_save and not bn.has_meta("sure"):
+			bn.set_meta("sure", true)
+			bn.text = "Точно? Прежний город сотрётся"
+			return
+		_menu_go("new"))
+	mk.call("Посмотреть готовый город", func(): _menu_go("demo"))
+	mk.call("Выход", func(): get_tree().quit())
+	var foot := Label.new()
+	foot.text = "Колёсико — масштаб · зажатое колёсико — вращать · правая кнопка — двигать"
+	foot.add_theme_font_size_override("font_size", 15)
+	foot.add_theme_color_override("font_color", Color("e8d9bd"))
+	foot.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	foot.position = Vector2(88, -60)
+	menu_root.add_child(foot)
+
+
+func _menu_go(m: String) -> void:
+	var l := _label("Загрузка…", 28, true, Color("fff3dc"))
+	l.set_anchors_preset(Control.PRESET_CENTER)
+	menu_root.add_child(l)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	game.restart(m)
+
+
 func mouse_over_ui() -> bool:
+	if menu_root and menu_root.visible:
+		return true
 	var h := root.get_viewport().gui_get_hovered_control()
 	return h != null and h != root
 
@@ -260,8 +348,10 @@ func refresh() -> void:
 	# задания
 	for ch in tasks_box.get_children():
 		ch.queue_free()
+	var goals := c.active_goals(3)
+	tasks_box.get_parent().visible = not goals.is_empty()
 	tasks_box.add_child(_label("Задания", 17, true))
-	for g in c.active_goals(3):
+	for g in goals:
 		var b := Button.new()
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -362,8 +452,17 @@ func _bottom_bar() -> void:
 	road_btns["bulldoze"] = bd
 	var bs := Button.new()
 	bs.text = "Сохранить"
-	bs.pressed.connect(func(): game.save(); toast("Город сохранён", "ok"))
+	bs.pressed.connect(func():
+		if game.can_save:
+			game.save()
+			toast("Город сохранён", "ok")
+		else:
+			toast("Готовый город не сохраняется — начните свой в меню", ""))
 	th.add_child(bs)
+	var bm := Button.new()
+	bm.text = "Меню"
+	bm.pressed.connect(func(): game.restart("menu"))
+	th.add_child(bm)
 	bar.add_child(tools)
 	# лоток с карточками над разделами
 	tray = PanelContainer.new()
