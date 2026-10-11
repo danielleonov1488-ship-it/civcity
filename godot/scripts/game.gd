@@ -116,7 +116,7 @@ func _ready() -> void:
 	people = People.new()
 	add_child(people)
 	var loaded := false
-	if mode == "play" and shot_path == "":
+	if mode == "play":
 		loaded = _load()
 	if not loaded:
 		city.place("center", Land.CENTER, 0.0, true, 1)
