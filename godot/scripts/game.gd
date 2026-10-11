@@ -691,11 +691,19 @@ func _notification(what: int) -> void:
 
 # ---------- точка земли под курсором ----------
 
+var _mouse_pos := Vector2(-1, -1)
+
+
+func _input(e: InputEvent) -> void:
+	if e is InputEventMouse:
+		_mouse_pos = (e as InputEventMouse).position
+
+
 func ground_at_mouse() -> Vector2:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		return Vector2.INF
-	var mp := get_viewport().get_mouse_position()
+	var mp := _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
 	var o := cam.project_ray_origin(mp)
 	var d := cam.project_ray_normal(mp)
 	if d.y > -0.001:

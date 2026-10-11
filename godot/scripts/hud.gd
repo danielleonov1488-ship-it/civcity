@@ -588,8 +588,10 @@ func _hint_panel() -> void:
 	hint_panel.offset_left = -330
 	hint_panel.offset_right = 330
 	hint_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	hint_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE      # подсказка не мешает вести кисть и ставить дома
 	root.add_child(hint_panel)
 	var v := VBoxContainer.new()
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint_panel.add_child(v)
 	hint_name = _label("", 17, true)
 	hint_text = _label("", 14, false, C_SOFT)
