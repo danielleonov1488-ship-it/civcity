@@ -95,9 +95,12 @@ static func names(prefix: String) -> Array:
 	return out
 
 
-static func material(slot: String) -> Material:
-	if _mats.has(slot):
-		return _mats[slot]
+## remap — подмена картинок: {"Stucco_White_01": "Stucco_Orange_01"} перекрашивает штукатурку дома;
+## remap["tint"] — оттенок (деревья чуть зеленее палитры, ближе к уютной зелени Town to City)
+static func material(slot: String, remap := {}) -> Material:
+	var mkey := slot + "|" + str(remap)
+	if _mats.has(mkey):
+		return _mats[mkey]
 	_index()
 	var m := StandardMaterial3D.new()
 	m.roughness = 0.85
@@ -108,12 +111,14 @@ static func material(slot: String) -> Material:
 	if _slots.has(key):
 		var albedo: String = _slots[key][0].get_basename()
 		var normal: String = _slots[key][1].get_basename()
+		albedo = remap.get(albedo, albedo)
 		var ap := _tex_path(albedo)
 		if ap != "":
 			m.albedo_texture = load(ap)
 		else:
 			unknown["tex:" + albedo] = true
-		var np := _tex_path(normal)
+		# у общей палитры карта рельефа от другого набора — без неё палитра чище (как у Synty)
+		var np := "" if normal.begins_with("PolygonAncientEmpire_") else _tex_path(normal)
 		if np != "":
 			m.normal_enabled = true
 			m.normal_texture = load(np)
@@ -128,13 +133,20 @@ static func material(slot: String) -> Material:
 	else:
 		unknown[slot] = true
 		m.albedo_texture = load(_tex_path("PolygonAncientEmpire_01_A"))
-	_mats[slot] = m
+	if remap.has("tint"):
+		m.albedo_color = remap["tint"]
+	_mats[mkey] = m
 	return m
 
 
 ## Узел с моделью name; материалы назначены, основание — на нуле (если ground)
-static func make(name: String) -> Node3D:
+const GREEN := Color(0.86, 1.0, 0.78)
+
+
+static func make(name: String, remap := {}) -> Node3D:
 	_index()
+	if remap.is_empty() and (name.begins_with("SM_Env_Tree") or name.begins_with("SM_Env_Bush") or name.begins_with("SM_Env_Garden")):
+		remap = {"tint": GREEN}
 	if not _paths.has(name):
 		push_warning("Synty: нет модели " + name)
 		return Node3D.new()
@@ -151,5 +163,5 @@ static func make(name: String) -> Node3D:
 			else:
 				var src := mi.mesh.surface_get_material(i)
 				slot = src.resource_name if src else ""
-			mi.set_surface_override_material(i, material(slot))
+			mi.set_surface_override_material(i, material(slot, remap))
 	return n

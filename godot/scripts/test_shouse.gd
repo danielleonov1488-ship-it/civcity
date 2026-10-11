@@ -26,21 +26,25 @@ func _ready() -> void:
 	gm.albedo_color = Color("9bb36a")
 	g.material_override = gm
 	add_child(g)
-	var specs := [[3, 2, 2], [2, 2, 1], [2, 2, 3]]
-	var x := -9.0
+	var specs := [{"w": 2, "floors": 2, "shop": true, "beams": true}] if OS.get_cmdline_user_args().has("one") else [
+		{"w": 2, "floors": 3, "shop": true}, {"w": 1, "floors": 2, "roof": "flat"}, {"w": 2, "floors": 2, "shop": true, "beams": true}, {"w": 3, "floors": 1, "shop": true}, {"w": 2, "floors": 4, "roof": "flat", "shop": true}]
+	var x := -14.0
 	for i in specs.size():
-		var s: Array = specs[i]
-		var h := SyntyHouse.new().build(s[0], s[1], s[2], i + 5)
-		h.position = Vector3(x + s[0] * 1.25, 0, 0)
+		var s: Dictionary = specs[i]
+		s["seed"] = i + 11
+		var h := SyntyHouse.new().build(s)
+		var w: int = s.get("w", 2)
+		h.position = Vector3(x + w * 1.25, 0, 0)
 		add_child(h)
-		x += s[0] * 2.5 + 1.0
+		x += w * 2.5 + 0.05
 	var cam := Camera3D.new()
 	cam.fov = 40
 	add_child(cam)
 	var args := OS.get_cmdline_user_args()
 	var yaw := float(args[0]) if args.size() > 0 else 25.0
-	var c := Vector3(0, 3, 0)
-	cam.look_at_from_position(c + Vector3(sin(deg_to_rad(yaw)), 0.55, cos(deg_to_rad(yaw))) * 24.0, c, Vector3.UP)
+	var one := OS.get_cmdline_user_args().has("one")
+	var c := Vector3(-11.5 if one else -1.0, 3.5, 0)
+	cam.look_at_from_position(c + Vector3(sin(deg_to_rad(yaw)), 0.42, cos(deg_to_rad(yaw))) * (12.0 if one else 27.0), c, Vector3.UP)
 
 
 var frame := 0

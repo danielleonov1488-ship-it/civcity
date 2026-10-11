@@ -30,13 +30,13 @@ func _ready() -> void:
 	rng.seed = 3
 	var anims := ["Walk_Loop", "Idle_Talking_Loop", "Idle_Loop", "Walk_Formal_Loop", "Sitting_Talking_Loop", "Push_Loop"]
 	for i in 6:
-		var c := Citizen.create(rng, i % 2 == 1, i == 5)
+		var c := Citizen.create(rng, i % 2 == 1, i == 5, i == 2 or i == 3)
 		add_child(c)
 		c.position = Vector3(-3.75 + i * 1.5, 0, 0)
 		c.rotation.y = 0.35
 		c.play(anims[i], 0.0)
 		if i == 0:
-			print("ANIMS ", c.anim.get_animation_list().slice(0, 6))
+			print("ANIMS ", c.anim.get_animation_list().slice(0, 12))
 	var cam := Camera3D.new()
 	cam.fov = 35
 	add_child(cam)
