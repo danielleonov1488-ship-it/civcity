@@ -573,11 +573,11 @@ func do_research(id: String) -> bool:
 
 # ---------- участки ----------
 
-const PLOT_PRICE := [0, 600, 900, 1300, 1800, 2500, 3400, 4500, 6000, 8000, 10000, 13000]
+const PLOT_PRICE := [0, 25000, 35000, 50000, 70000, 95000, 125000, 160000, 200000, 250000, 300000, 360000, 430000, 500000, 600000, 700000, 800000, 900000, 1000000, 1200000, 1500000]
 
 
 func plot_price() -> int:
-	var bought := land.owned.size() - 4
+	var bought := land.owned.size() - 16
 	return int(PLOT_PRICE[clampi(bought + 1, 1, PLOT_PRICE.size() - 1)])
 
 
