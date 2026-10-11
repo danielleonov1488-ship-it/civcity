@@ -1452,29 +1452,29 @@ func _fill_classes() -> void:
 		var cd: Dictionary = Defs.CLASSES[cl]
 		if not c.unlocked(cd["house"]) and int(c.stats["residents"].get(cl, 0)) == 0:
 			continue
-		var chip := _chip()
+		var chip := _chip(false, 12.0)
 		chip.tooltip_text = "%s: %d жителей, счастье %d%%, свободных работников %d" % [cd["name"], int(c.stats["residents"].get(cl, 0)), int(c.stats["class_happy"].get(cl, 0)), int(c.stats["free"].get(cl, 0))]
 		chip.mouse_filter = Control.MOUSE_FILTER_PASS
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 4)
 		var v1 := VBoxContainer.new()
 		v1.add_theme_constant_override("separation", -4)
-		v1.add_child(_icon(cd["icon"], 28))
-		var n := _label(str(int(c.stats["residents"].get(cl, 0))), 14, true)
+		v1.add_child(_icon(cd["icon"], 36))
+		var n := _label(str(int(c.stats["residents"].get(cl, 0))), 16, true)
 		n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v1.add_child(n)
 		h.add_child(v1)
 		var v2 := VBoxContainer.new()
 		v2.add_theme_constant_override("separation", 0)
 		var hr := HBoxContainer.new()
-		hr.add_child(_icon("happy", 16, C_GOOD))
-		hr.add_child(_label("%d%%" % int(c.stats["class_happy"].get(cl, 0)), 15, true, C_GOOD))
+		hr.add_child(_icon("happy", 20, C_GOOD))
+		hr.add_child(_label("%d%%" % int(c.stats["class_happy"].get(cl, 0)), 18, true, C_GOOD))
 		v2.add_child(hr)
 		var wr := HBoxContainer.new()
-		wr.add_child(_icon("hammer", 16, C_SOFT))
+		wr.add_child(_icon("hammer", 20, C_SOFT))
 		var fr := int(c.stats["free"].get(cl, 0))
 		var short := int(c.stats["jobs"].get(cl, 0)) - int(c.stats["workers"].get(cl, 0))
-		wr.add_child(_label(("+%d" % fr) if short <= 0 else ("−%d" % short), 15, true, C_INK if short <= 0 else C_BAD))
+		wr.add_child(_label(("+%d" % fr) if short <= 0 else ("−%d" % short), 18, true, C_INK if short <= 0 else C_BAD))
 		v2.add_child(wr)
 		h.add_child(v2)
 		chip.add_child(h)

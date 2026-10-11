@@ -185,6 +185,8 @@ func _ready() -> void:
 	_sync_all_actors()
 	ready_done = true
 	_loading_hide()
+	if args.has("noui"):
+		hud.visible = false
 	if mode == "menu":
 		hud.show_menu(FileAccess.file_exists(save_path()))
 		if not args.has("view"):
@@ -825,7 +827,7 @@ func _smoke(at: Vector3) -> GPUParticles3D:
 	sct.curve = sc
 	pm.scale_curve = sct
 	var grad := Gradient.new()
-	grad.set_color(0, Color(0.95, 0.94, 0.92, 0.3))
+	grad.set_color(0, Color(0.95, 0.94, 0.92, 0.16))
 	grad.set_color(1, Color(0.9, 0.9, 0.9, 0.0))
 	var gt := GradientTexture1D.new()
 	gt.gradient = grad
@@ -843,7 +845,7 @@ static var _quad: QuadMesh
 static func _puff_quad() -> QuadMesh:
 	if _quad == null:
 		_quad = QuadMesh.new()
-		_quad.size = Vector2(0.7, 0.7)
+		_quad.size = Vector2(1.0, 1.0)
 		var m := StandardMaterial3D.new()
 		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
