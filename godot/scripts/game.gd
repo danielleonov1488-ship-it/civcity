@@ -152,7 +152,7 @@ func _ready() -> void:
 	hud.refresh()
 	if mode == "menu":
 		hud.show_menu(FileAccess.file_exists(save_path()))
-		rig.set_view(Vector3(66, Land.BASE_Y, 70), 205, 30, 62)
+		rig.set_view(Vector3(60, Land.BASE_Y, 70), 215, 33, 58)
 	elif mode == "demo" and shot_path == "":
 		hud.toast("Готовый город: стройте и смотрите сколько угодно — он не сохраняется", "")
 	elif not loaded and shot_path == "":
@@ -838,10 +838,10 @@ func _nearest_road(p: Vector2, maxd: float) -> Dictionary:
 	# направление — среднее по соседним лучам, чтобы дом вставал ровно вдоль края, а не под углом к клетке
 	var sum := Vector2.ZERO
 	var k0: int = best["k"]
-	for o in range(-4, 5):
+	for o in range(-2, 3):
 		var k := posmod(k0 + o, 36)
 		var hit: float = hits[k]
-		if hit >= 0.0 and hit <= float(best["d"]) + 1.5:
+		if hit >= 0.0 and hit <= float(best["d"]) * 1.12 + 0.3:
 			var a := TAU * k / 36.0
 			sum += Vector2(sin(a), cos(a)) / (hit + 0.3)
 	var n := sum.normalized() if sum.length() > 0.001 else Vector2(sin(TAU * k0 / 36.0), cos(TAU * k0 / 36.0))
@@ -1149,7 +1149,7 @@ func _demo_town() -> void:
 	for g in Defs.GOALS:
 		city.goals_done.append(g["id"])
 	city.max_rank = Defs.RANKS.size() - 1
-	for j in range(1, 7):
+	for j in range(1, 8):
 		for i in range(1, 7):
 			land.owned[Vector2i(i, j)] = true
 	var R := Land.Kind.ROAD
@@ -1163,12 +1163,25 @@ func _demo_town() -> void:
 	road.call(Vector2(81, 50), Vector2(81, 86), 1.2, R)
 	road.call(Vector2(47, 68), Vector2(55, 68), 1.2, R)
 	road.call(Vector2(73, 68), Vector2(81, 68), 1.2, R)
+	# переулки внутри кварталов — больше фасадов, гуще застройка
+	for zl: float in [59.0, 77.0]:
+		road.call(Vector2(47, zl), Vector2(57, zl), 1.0, Land.Kind.DIRT)
+		road.call(Vector2(71, zl), Vector2(81, zl), 1.0, Land.Kind.DIRT)
+	road.call(Vector2(56, 86), Vector2(56, 99), 1.0, Land.Kind.DIRT)
+	road.call(Vector2(72, 86), Vector2(72, 99), 1.0, Land.Kind.DIRT)
 	road.call(Vector2(36, 50), Vector2(30, 62), 1.0, Land.Kind.DIRT)
 	road.call(Vector2(30, 62), Vector2(30, 92), 1.0, Land.Kind.DIRT)
 	road.call(Vector2(94, 86), Vector2(98, 96), 1.0, Land.Kind.DIRT)
 	for k in 30:
 		land.paint_circle(Vector2(64, 68), 8.5, Land.Kind.PLAZA, true, false)
 	var put := func(type: String, near: Vector2, r: float, tier := -1) -> Dictionary:
+		# на склоне — выровнять площадку (готовый город может себе позволить), как уступ в Town to City
+		var pl0: Dictionary = placement(type, near)
+		if str(pl0["err"]).begins_with("Слишком круто"):
+			var dd: Dictionary = Defs.B[type]
+			var rr0 := maxf(float(dd["w"]), float(dd["d"])) * 0.5 + 1.0
+			var hy := snappedf(land.height_at(pl0["pos"].x, pl0["pos"].y), Land.STEP)
+			land.flatten_obb(pl0["pos"], City.axis(pl0["yaw"]), rr0, rr0, hy, Land.Kind.GRASS, [Land.Kind.ROAD, Land.Kind.PLAZA])
 		for k in range(0, int(r * 2) + 1):
 			var rr := k * 0.5
 			var n := maxi(1, int(rr * 6))
@@ -1188,7 +1201,7 @@ func _demo_town() -> void:
 	put.call("fountain", Vector2(64, 68), 1)
 	put.call("market", Vector2(51.5, 62), 4)
 	put.call("baths", Vector2(76, 61), 4)
-	put.call("forum", Vector2(72, 95), 5)
+	put.call("forum", Vector2(85, 95), 5)
 	put.call("theatre", Vector2(42, 96), 6)
 	for x: float in [40.0, 52.0]:
 		put.call("domus", Vector2(x, 80), 4, 3 + int(x > 45.0))
@@ -1216,6 +1229,10 @@ func _demo_town() -> void:
 			if not _is_road(p + Vector2(2.6, 0)) and not _is_road(p - Vector2(2.6, 0)) and not _is_road(p + Vector2(0, 2.6)) and not _is_road(p - Vector2(0, 2.6)):
 				continue
 			var pl: Dictionary = placement("house", p)
+			if str(pl["err"]).begins_with("Слишком круто"):
+				var hy := snappedf(land.height_at(pl["pos"].x, pl["pos"].y), Land.STEP)
+				land.flatten_obb(pl["pos"], City.axis(pl["yaw"]), 2.8, 2.8, hy, Land.Kind.GRASS, [Land.Kind.ROAD, Land.Kind.PLAZA])
+				pl = placement("house", p)
 			if pl["err"] != "":
 				continue
 			var hb := city.place("house", pl["pos"], pl["yaw"], true)
