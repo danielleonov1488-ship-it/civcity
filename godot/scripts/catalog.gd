@@ -7,8 +7,8 @@ const M := Bp.M
 const FL := Bp.FL
 ## Масштаб построек: детали Synty в натуральную величину, а нам нужен «кукольный» город как в Town to City —
 ## дома чуть меньше, люди заметно меньше дверей (Citizen.SIZE)
-const ARCH := 0.82
-const DECOR := 0.88
+const ARCH := 0.72
+const DECOR := 0.78
 
 static var _cache := {}
 
@@ -56,7 +56,8 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 		_: CatDecor._decor(b, type)
 	b.base = Transform3D.IDENTITY
 	_actors(b, type, tier)
-	_scale(b, DECOR if Defs.B.get(type, {}).get("kind", "") == "decor" else ARCH)
+	var dd: Dictionary = Defs.B.get(type, {})
+	_scale(b, DECOR if dd.get("kind", "") == "decor" and not dd.get("wall", false) else ARCH)   # на стенах — в масштабе дома
 	_cache[key] = b
 	return b
 

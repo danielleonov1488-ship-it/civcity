@@ -180,4 +180,16 @@ Task 21: a wide cozy painted illustration for a loading screen: a small Roman to
 
 ---
 
+## Дополнительно (сейчас эти значки нарисованы временно, «золотом» по старым контурам)
+
+**22 — Иконки, лист 7: кисть дороги и цвет дома**
+```
+Task 22: icon sheet 4x2, same rules and style as Task 11 (colorful hand-painted icons, thick ink-brown outline, soft shading, readable at small size), each centered in its own equal square cell, generous padding, NO labels, transparent background, 2048x1024.
+Icons in order (row by row):
+1 a winding freehand stroke of stone paving drawn by a brush (free drawing), 2 a straight stone road segment with a small ruler beside it (straight line), 3 a round brush tip dipped in grey stone paint (round brush), 4 a square brush tip dipped in grey stone paint (square brush),
+5 a golden curved arrow turning back to the left (undo), 6 the same golden curved arrow turning to the right (redo), 7 a painter's brush with a drop of terracotta paint and a small color palette (recolor house), 8 an empty cell.
+```
+
+---
+
 После каждого листа можно спросить ChatGPT: *«сделай ещё один вариант в том же стиле»*. Пришлите мне всё, что получилось, вместе с вариантами — я выберу лучшее и порежу на части для игры.

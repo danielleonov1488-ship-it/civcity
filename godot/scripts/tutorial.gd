@@ -77,16 +77,17 @@ func cur_id() -> String:
 
 
 func _card() -> void:
-	card = hud._panel(null, "scroll_h", 34, 22)
-	(card.get_theme_stylebox("panel") as StyleBoxTexture).content_margin_left = 46
-	(card.get_theme_stylebox("panel") as StyleBoxTexture).content_margin_right = 46
-	hud._put(card, Control.PRESET_TOP_LEFT, Vector2(10, 150))     # там, где потом будут задания
+	card = hud._panel(null, "scroll_h", 0, 6)                       # свиток с валиками слева и справа
+	hud._put(card, Control.PRESET_TOP_LEFT, Vector2(8, hud.TASKS_Y + 8))  # там, где потом будут задания
 	card.custom_minimum_size = Vector2(540, 0)
+	# окна, карточка постройки и советник рисуются поверх обучения
+	hud.root.move_child(card, hud.info_panel.get_index())
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 14)
 	card.add_child(h)
-	icon_box = Control.new()
-	icon_box.custom_minimum_size = Vector2(78, 78)
+	icon_box = Panel.new()                                          # бронзовый медальон со светом
+	icon_box.custom_minimum_size = Vector2(76, 76)
+	icon_box.add_theme_stylebox_override("panel", hud._medal("medal_on", 76))
 	icon_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	h.add_child(icon_box)
 	var v := VBoxContainer.new()
@@ -104,10 +105,14 @@ func _card() -> void:
 	v.add_child(row)
 	var skip := Button.new()
 	skip.text = "Пропустить обучение"
-	skip.flat = true
 	skip.focus_mode = Control.FOCUS_NONE
 	skip.add_theme_font_size_override("font_size", 14)
-	skip.add_theme_color_override("font_color", hud.C_SOFT)
+	skip.add_theme_stylebox_override("normal", hud._box_pill(20, 4))
+	skip.add_theme_stylebox_override("hover", hud._box_pill(20, 4, "g_btn_hover"))
+	skip.add_theme_stylebox_override("pressed", hud._box_pill(20, 4, "g_btn_on"))
+	skip.custom_minimum_size = Vector2(0, 30)
+	skip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
 	skip.pressed.connect(finish)
 	row.add_child(skip)
 	count = hud._label("", 14, true, hud.C_SOFT)
@@ -133,14 +138,13 @@ func _enter(i: int) -> void:
 	next_btn.visible = s.get("next", false)
 	for ch in icon_box.get_children():
 		ch.queue_free()
-	var bg := TextureRect.new()
-	bg.texture = load("res://assets/ui/medal_on.png")
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	icon_box.add_child(bg)
-	var ic: TextureRect = hud._icon(s["icon"], 40)
-	ic.position = Vector2(19, 18)
+	# у круглых рисованных значков (глаз, «i») своё кольцо снято — эмаль ложится в медальон
+	var face: bool = hud.painted(s["icon"] + "_m")
+	var isz := 56 if face else 48
+	var ic: TextureRect = hud._icon(s["icon"] + "_m" if face else s["icon"], isz)
+	ic.position = Vector2((76 - isz) / 2.0, (76 - isz) / 2.0)
 	icon_box.add_child(ic)
+
 	# карточка мягко появляется
 	card.modulate.a = 0.0
 	card.create_tween().tween_property(card, "modulate:a", 1.0, 0.35)

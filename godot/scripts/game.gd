@@ -93,6 +93,7 @@ var rot_drag := false
 var press_screen := Vector2.ZERO
 var press_hover := Vector2.INF
 var rot_yaw0 := 0.0
+var manual_yaw := false               # игрок сам повернул постройку — к дороге её больше не разворачиваем
 var settle_marks := []                # подсветка подходящих домов
 var settle_keys := []                 # значки «ключи» над ними
 var _rmb_down := Vector2.ZERO
@@ -245,55 +246,83 @@ func _loading_show() -> void:
 	loading = CanvasLayer.new()
 	loading.layer = 50
 	add_child(loading)
-	var bg := TextureRect.new()
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	if ResourceLoader.exists("res://assets/ui/loading.png"):
-		bg.texture = load("res://assets/ui/loading.png")
 	var fill := ColorRect.new()
 	fill.color = Color("2b1d12")
 	fill.set_anchors_preset(Control.PRESET_FULL_RECT)
 	loading.add_child(fill)
+	# рисованная картинка: римский городок на закате (на весь экран, без полей)
+	var bg := TextureRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	bg.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	for pic in ["res://assets/ui/ai/loading.jpg", "res://assets/ui/loading.png"]:
+		if ResourceLoader.exists(pic):
+			bg.texture = load(pic)
+			break
 	loading.add_child(bg)
+	# мягкое затемнение снизу — чтобы подпись и полоса читались на картинке
+	var g := Gradient.new()
+	g.set_color(0, Color(0.12, 0.07, 0.03, 0.0))
+	g.set_color(1, Color(0.12, 0.07, 0.03, 0.78))
+	var gt := GradientTexture2D.new()
+	gt.gradient = g
+	gt.width = 4
+	gt.height = 256
+	gt.fill_from = Vector2(0, 0)
+	gt.fill_to = Vector2(0, 1)
+	var shade := TextureRect.new()
+	shade.texture = gt
+	shade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	shade.stretch_mode = TextureRect.STRETCH_SCALE
+	shade.anchor_left = 0.0
+	shade.anchor_right = 1.0
+	shade.anchor_top = 0.62
+	shade.anchor_bottom = 1.0
+	loading.add_child(shade)
+	# логотип сверху посередине
+	var logo := TextureRect.new()
+	logo.texture = load("res://assets/ui/ai/logo.png")
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	logo.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	logo.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	logo.offset_left = -250
+	logo.offset_right = 250
+	logo.offset_top = 22
+	logo.offset_bottom = 268
+	loading.add_child(logo)
 	var box := VBoxContainer.new()
 	box.name = "box"
 	box.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	box.position = Vector2(-260, -130)
-	box.custom_minimum_size = Vector2(520, 0)
+	box.position = Vector2(-280, -128)
+	box.custom_minimum_size = Vector2(560, 0)
+	box.add_theme_constant_override("separation", 8)
 	loading.add_child(box)
-	var title := Label.new()
-	title.text = "CivCity"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_override("font", load("res://assets/fonts/Philosopher-Bold.ttf"))
-	title.add_theme_font_size_override("font_size", 54)
-	title.add_theme_color_override("font_color", Color("fff3dc"))
-	title.add_theme_color_override("font_outline_color", Color("3a2412"))
-	title.add_theme_constant_override("outline_size", 10)
-	box.add_child(title)
 	var l := Label.new()
 	l.name = "label"
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.add_theme_font_override("font", load("res://assets/fonts/AlegreyaSans-Bold.ttf"))
-	l.add_theme_font_size_override("font_size", 22)
+	l.add_theme_font_override("font", load("res://assets/fonts/Philosopher-Bold.ttf"))
+	l.add_theme_font_size_override("font_size", 26)
 	l.add_theme_color_override("font_color", Color("fff3dc"))
 	l.add_theme_color_override("font_outline_color", Color("3a2412"))
-	l.add_theme_constant_override("outline_size", 6)
+	l.add_theme_constant_override("outline_size", 8)
 	box.add_child(l)
+	# полоса загрузки: пергаментный жёлоб в бронзовой кайме, золотое заполнение (как ползунки в настройках)
 	var bar := ProgressBar.new()
 	bar.name = "bar"
 	bar.show_percentage = false
-	bar.custom_minimum_size = Vector2(520, 16)
-	var bgs := StyleBoxFlat.new()
-	bgs.bg_color = Color(0.15, 0.1, 0.06, 0.8)
-	bgs.set_corner_radius_all(8)
-	bgs.border_color = Color("e8c98f")
-	bgs.set_border_width_all(2)
-	var fgs := StyleBoxFlat.new()
-	fgs.bg_color = Color("e2a843")
-	fgs.set_corner_radius_all(8)
-	bar.add_theme_stylebox_override("background", bgs)
-	bar.add_theme_stylebox_override("fill", fgs)
+	bar.custom_minimum_size = Vector2(560, 16)
+	var mk := func(tex: String) -> StyleBoxTexture:
+		var st := StyleBoxTexture.new()
+		st.texture = load("res://assets/ui/ai/%s.png" % tex)
+		st.texture_margin_left = 8
+		st.texture_margin_right = 8
+		st.content_margin_left = 8
+		st.content_margin_right = 8
+		return st
+	bar.add_theme_stylebox_override("background", mk.call("g_slider"))
+	bar.add_theme_stylebox_override("fill", mk.call("g_slider_fill"))
 	box.add_child(bar)
 	var tip := Label.new()
 	tip.text = ["Совет: лавки обслуживают только ближайшие дома — ставьте разные лавки среди домов.",
@@ -304,10 +333,10 @@ func _loading_show() -> void:
 	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip.add_theme_font_override("font", load("res://assets/fonts/AlegreyaSans-Medium.ttf"))
-	tip.add_theme_font_size_override("font_size", 17)
-	tip.add_theme_color_override("font_color", Color("f1e2c6"))
+	tip.add_theme_font_size_override("font_size", 18)
+	tip.add_theme_color_override("font_color", Color("f6e8cc"))
 	tip.add_theme_color_override("font_outline_color", Color("3a2412"))
-	tip.add_theme_constant_override("outline_size", 5)
+	tip.add_theme_constant_override("outline_size", 6)
 	box.add_child(tip)
 
 
@@ -1361,6 +1390,7 @@ func ground_at_mouse() -> Vector2:
 # ---------- инструменты ----------
 
 func set_tool(t: String) -> void:
+	var prev_tool := tool
 	if not moving.is_empty() and t != String(moving["type"]):
 		_cancel_move()
 	if t != "move_nature" and not moving_nature.is_empty():
@@ -1370,6 +1400,8 @@ func set_tool(t: String) -> void:
 	place_lock = {}
 	pressing = false
 	rot_drag = false
+	if t != prev_tool or t == "":
+		manual_yaw = false
 	if t != "settle":
 		settle_fam = {}
 		_clear_settle_marks()
@@ -1478,7 +1510,16 @@ func placement(type: String, p: Vector2, variant := -1, color := -1, morph := fa
 	if locked:
 		p = place_lock["p"]
 	var pos := p
-	if snap and not locked and d["kind"] != "decor" and d["kind"] != "farm":
+	if snap and not locked and manual_yaw and d["kind"] != "decor" and d["kind"] != "farm":
+		var f := City.facing(yaw)
+		var reach := float(bb[3]) + 3.0
+		var dd := 0.0
+		while dd <= reach and not land.is_road(p + f * dd):
+			dd += 0.2
+		if dd <= reach:
+			pos = p + f * dd - f * (float(bb[3]) + 0.02)
+			pos = _snap_row(pos, yaw, bb, int(moving.get("id", -1)))
+	elif snap and not locked and d["kind"] != "decor" and d["kind"] != "farm":
 		var e := _nearest_road(p, maxf(6.0, (float(bb[3]) - float(bb[2])) * 0.5 + 3.0))
 		if not e.is_empty():
 			var nrm: Vector2 = e["n"]
@@ -1590,7 +1631,7 @@ func _nearest_road(p: Vector2, maxd: float) -> Dictionary:
 
 
 ## Ряд: если рядом постройка с тем же поворотом — придвинуться к ней боком и выровнять фасад
-const ROW_GAP := 0.7                  # промежуток между соседними домами в ряду, м
+const ROW_GAP := 0.6                  # промежуток между соседними домами в ряду, м
 
 
 func _snap_row(pos: Vector2, yaw: float, bb: Array, ignore := -1) -> Vector2:
@@ -1697,7 +1738,7 @@ func _update_tool() -> void:
 		range_ring.position = Vector3(pl["pos"].x, y + 0.12, pl["pos"].y)
 		range_ring.scale = Vector3(rr, 1.0, rr)
 	if hud:
-		hud.tool_status(pl["err"] if pl["err"] != "" or place_lock.is_empty() else "Щёлкните, чтобы построить (правая кнопка — отмена)")
+		hud.tool_status(pl["err"])
 
 
 ## Подсветка постройки под курсором: снос — красная, копировать и перенести — золотая
@@ -1933,12 +1974,14 @@ func _unhandled_input(e: InputEvent) -> void:
 				if k.ctrl_pressed:
 					_undo()
 				else:
-					tool_yaw -= deg_to_rad(15)
+					tool_yaw = _yaw_now() - deg_to_rad(15)
+					manual_yaw = true
 			KEY_Y:
 				if k.ctrl_pressed:
 					_redo()
 			KEY_X:
-				tool_yaw += deg_to_rad(15)
+				tool_yaw = _yaw_now() + deg_to_rad(15)
+				manual_yaw = true
 			KEY_C:
 				if k.ctrl_pressed:
 					set_tool("copy")
@@ -2116,6 +2159,13 @@ func _moved(b: Dictionary, m := {}) -> void:
 		_show(o)
 
 
+## Поворот призрака сейчас (если он стоит у дороги — повёрнут к ней)
+func _yaw_now() -> float:
+	if not manual_yaw and place_info.has("yaw"):
+		return float(place_info["yaw"])
+	return tool_yaw
+
+
 ## Поставить постройку там, где призрак (после щелчка без поворота)
 func _build_here() -> void:
 	if Defs.B.has(tool):
@@ -2168,8 +2218,9 @@ func _release() -> void:
 	if pressing:
 		pressing = false
 		if rot_drag:
-			rot_drag = false                  # повернули — ждём следующего щелчка
-			hud.tool_status("Щёлкните, чтобы построить (правая кнопка — отмена)")
+			rot_drag = false                  # повернули — дальше постройка едет за мышкой, щелчок — построить
+			place_lock = {}
+			manual_yaw = true
 		elif not hud.mouse_over_ui() and (hover != Vector2.INF or not place_lock.is_empty()):
 			_build_here()
 		return
