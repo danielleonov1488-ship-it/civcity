@@ -16,6 +16,8 @@ const CLOTH := {"PolygonAncientEmpire_01_A": "PolygonAncientEmpire_01_C", "tints
 const TRAVERTINE := {"tints": {"Building_Large_Brick_01": Color(1.0, 0.93, 0.8)}}
 ## Мраморная облицовка (арки и ниши вместо серого руста)
 const MARBLE := {"Building_Large_Brick_01": "Building_Marble_01"}
+## Статуя в нише стены (SM_Bld_Wall_Alcove_01) — почти в рост ниши, крупнее прохожих
+const NICHE := 0.76
 
 
 # =====================================================================
@@ -219,6 +221,12 @@ static func _statue(b: Bp, p: Vector3, yaw := 0.0, s := 0.7, plinth := "SM_Prop_
 	b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), p + Vector3(0, h * s * 1.2, 0), yaw, s)
 
 
+## Статуя на колонне-постаменте: постамент человечку по грудь, статуя крупнее его
+static func _column_statue(b: Bp, p: Vector3, yaw := 0.0) -> void:
+	b.add("SM_Prop_Pillar_Base_02", p, 0.0, 0.8)
+	b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), p + Vector3(0, 1.2, 0), yaw, 0.85)
+
+
 ## Парус велария над трибунами: центр на угле a (от центра c), радиус rm, высота y; ткань вдоль края,
 ## наклонена к центру. w, d — размеры (родное полотнище 5,1 × 2,6)
 static func _sail(b: Bp, c: Vector3, a: float, rm: float, y: float, w: float, d: float) -> void:
@@ -236,10 +244,11 @@ static func _brazier(b: Bp, p: Vector3, s := 0.52) -> void:
 	b.light(p + Vector3(0, 2.0 * s, 0))
 
 
-## Фонарь на столбе (светит ночью)
+## Фонарь на столбе (светит ночью) — как уличный фонарь-украшение, выше прохожих (CatDecor.LAMP_K)
 static func _lamp_post(b: Bp, p: Vector3, yaw := 0.0) -> void:
-	b.add("#lamp_post", p, yaw)
-	b.light(p + Vector3(0.42, 2.0, 0).rotated(Vector3.UP, yaw))
+	var k := CatDecor.LAMP_K
+	b.add("#lamp_post", p, yaw, k)
+	b.light(p + Vector3(0.42, 2.0, 0).rotated(Vector3.UP, yaw) * k)
 
 
 ## Фонарь на кронштейне у стены (yaw — куда смотрит стена)
@@ -308,9 +317,21 @@ static func _pool(b: Bp, x0: float, x1: float, z0: float, z1: float, stairs := t
 ## Постоялый двор государственной почты у тоннеля: ядро 3×2 модуля (контора и комнаты), справа конюшня,
 ## слева двор с повозкой, потом — таверна с террасой. С уровнем: второй этаж, портик с террасой, каменная
 ## конюшня, белый портик с фронтоном, третий этаж и двухэтажные крылья, статуи и позолота.
-## Площадь перед станцией свободна: там ждут приезжие семьи (у колонн — только львы и жаровни)
+## Площадь перед станцией свободна: там ждут приезжие семьи (у колонн — только львы и жаровни).
+## Станция — начало города: к ней приезжает повозка, перед ней ждут семьи, поэтому вся она в CENTER_K раз крупнее
+## обычных построек (двери, окна и крыши выше человечка, как у вокзала в Town to City)
+const CENTER_K := 1.22
+## …но уже вдоль фасада, как узкие дома и лавки: в конце чертёж сжимается по X в CENTER_SX раз (_squeeze_center).
+## Стены, крыши, навесы, портик, скамьи, длинный стол, ограда и повозка сжимаются; колонны, статуи, львы, жаровни,
+## фонари, амфоры и горшки сохраняют форму — сдвигается только их середина. Высота остаётся крупной.
+## То, что должно встать в точку x уже сжатой станции (табурет у стола, жаровня у колонны), ставится в x / CENTER_SX
+const CENTER_SX := 0.8
+const CENTER_FLEX := ["SM_Prop_Seat_Bench", "SM_Prop_Table_01", "SM_Prop_Cart_01", "SM_Env_Fence"]
+
+
 static func _center(b: Bp, stage: int) -> void:
 	var s := clampi(stage, 0, 7)
+	b.base = Transform3D(Basis.from_scale(Vector3.ONE * CENTER_K), Vector3.ZERO)
 	b.paint(0, false)      # охра: на жёлтой стене читается терракотовая черепица
 	b.ground_style = "brick" if s >= 3 else "plain"
 	b.upper_style = "plain"
@@ -394,8 +415,8 @@ static func _center(b: Bp, stage: int) -> void:
 		var sr := _gable2(b, 3.75, 6.25, -5.0, 0.0, sfl * FL, 1.6, true)
 		b.remap = b.floor_remap(1)
 		b.add("SM_Bld_Roof_Topper_02", Vector3(5.0, sr - 0.04, -0.12), 0.0)
-		b.add("SM_Prop_Bowl_07", Vector3(3.95, 0, 0.6), PI / 2, 1.0)
-		_water(b, Vector3(3.95, 0.12, 0.6), Vector3(0.75, 0.16, 0.9))
+		b.add("SM_Prop_Bowl_07", Vector3(2.93 / CENTER_SX, 0, 0.6), PI / 2, 1.0)
+		_water(b, Vector3(2.93 / CENTER_SX, 0.12, 0.6), Vector3(0.75, 0.16, 0.9))
 		b.add("SM_Prop_Straw_Bundle_01", Vector3(6.5, 0, -1.2), 0.5)
 		b.add("SM_Prop_Straw_Bundle_01", Vector3(6.45, 0, -0.6), 1.9)
 		b.add("SM_Env_Ivy_Flowers_0%d" % (1 + b.rng.randi() % 5), Vector3(6.37, 1.6, -3.0), PI / 2)
@@ -409,7 +430,7 @@ static func _center(b: Bp, stage: int) -> void:
 		if s >= 1:
 			b.fence(-6.15, -4.85, -3.95, -1.9, false)
 			for k in 3:
-				b.add("SM_Env_Crop_Single_0%d" % (1 + k % 2), Vector3(-5.6 + k * 0.75, 0, -3.4 + (k % 2) * 0.6), b.rng.randf() * TAU, 0.9)
+				b.add("SM_Env_Crop_Single_0%d" % (1 + k % 2), Vector3((-4.5 + k * 0.55) / CENTER_SX, 0, -3.4 + (k % 2) * 0.6), b.rng.randf() * TAU, 0.9)
 			b.add("SM_Env_Garden_Plants_0%d" % (3 + b.rng.randi() % 3), Vector3(-4.6, 0, -4.2), 0.0, 0.6)
 		else:
 			b.add("SM_Prop_Vase_Pile_02", Vector3(-5.1, 0, -3.8), 0.6, 0.85)
@@ -421,8 +442,8 @@ static func _center(b: Bp, stage: int) -> void:
 			b.add("SM_Bld_Trellis_Roof_01", Vector3(-3.75, 2.44, -1.8), 0.0)
 			b.add_xf("SM_Env_Vine_0%d" % (1 + b.rng.randi() % 2), Transform3D(Basis(Vector3.RIGHT, -PI / 2).scaled(Vector3(0.9, 1, 1)), Vector3(-5.0, 2.72, 0.45)))
 			b.add("SM_Prop_Table_04", Vector3(-5.0, 0, -0.6), 0.0, 0.9)
-			b.add("SM_Prop_Seat_Stool_02", Vector3(-5.7, 0, -0.6), 0.0)
-			b.add("SM_Prop_Seat_Stool_02", Vector3(-4.3, 0, -0.6), 0.0)
+			for sd: float in [-1.0, 1.0]:
+				b.add("SM_Prop_Seat_Stool_02", Vector3(-5.0 + sd * 0.7 / CENTER_SX, 0, -0.6), 0.0)
 			b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 4), Vector3(-5.1, 0.7, -0.55), 0.0, 0.7)
 			b.add("SM_Prop_Bowl_04", Vector3(-4.8, 0.7, -0.7), 0.0, 0.8)
 	else:
@@ -464,7 +485,7 @@ static func _center(b: Bp, stage: int) -> void:
 			b.on_wall("SM_Env_Ivy_Flowers_0%d" % (1 + b.rng.randi() % 5), -5.0, cz, 1, 2, 3, 1.5, 1.8, 0.13)
 	# повозка: у двора, потом — в воротах конюшни
 	var cp := Vector3(5.05, 0, 0.75) if wing else Vector3(-5.0, 0, 0.9)
-	var cy := PI + 0.08 if wing else -0.1
+	var cy := PI if wing else (0.0 if s >= 2 else -0.1)   # ровно: в воротах конюшни и между столбами перголы
 	b.add("SM_Prop_Cart_01", cp, cy, 0.85)
 	b.add("SM_Prop_Cart_01_Insert_0%d" % (2 if s % 2 == 0 else 3), cp, cy, 0.85)
 	# ---------- портик: с 3 уровня колонны с террасой наверху, с 5 — белый портик с фронтоном ----------
@@ -506,16 +527,18 @@ static func _center(b: Bp, stage: int) -> void:
 		elif s >= 7:
 			b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(-4.1, 4.0, 2.85), 0.0, 0.45)
 			b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(4.1, 4.0, 2.85), 0.0, 0.45)
+	# скамьи у стены по сторонам двери, у их концов — амфора и горшок (с 4 уровня справа поилка, горшок не нужен)
 	if s >= 3:
-		b.add("SM_Prop_Seat_Bench_01", Vector3(-2.4, 0, 0.5), 0.0, 0.9)
-		b.add("SM_Prop_Seat_Bench_01", Vector3(2.5, 0, 0.5), 0.0, 0.9)
-		_jar(b, Vector3(-3.3, 0, 0.45))
-		_pot(b, Vector3(3.35, 0, 0.5))
+		b.add("SM_Prop_Seat_Bench_01", Vector3(-2.3, 0, 0.5), 0.0, 0.9)
+		b.add("SM_Prop_Seat_Bench_01", Vector3(2.3, 0, 0.5), 0.0, 0.9)
+		_jar(b, Vector3(-2.8 / CENTER_SX, 0, 0.45))
+		if not wing:
+			_pot(b, Vector3(2.8 / CENTER_SX, 0, 0.5))
 	else:
 		b.add("SM_Prop_Seat_Bench_01", Vector3(-2.3, 0, 0.55), 0.0, 0.9)
 		_jar(b, Vector3(2.0, 0, 0.45))
-		_jar(b, Vector3(2.45, 0, 0.6), 0.7)
-		_pot(b, Vector3(-3.3, 0, 0.5))
+		_jar(b, Vector3(2.05 / CENTER_SX, 0, 0.62), 0.7)
+		_pot(b, Vector3(-2.72 / CENTER_SX, 0, 0.5))
 		b.add("SM_Prop_FlowerBed_0%d" % (1 + b.rng.randi() % 2), Vector3(-2.9, 0.38, 1.6), 0.0, 0.8)
 	# ---------- перед станцией: верстовой столб, знамя на шесте, свет, львы ----------
 	# всё — у стены, между колоннами или по краям (|x| ≥ 4,3): площадь — для ждущих семей
@@ -533,15 +556,42 @@ static func _center(b: Bp, stage: int) -> void:
 			b.brazier(Vector3(-2.5, 0, 2.15))
 			b.brazier(Vector3(2.5, 0, 2.15))
 		4:
-			_lamp_post(b, Vector3(-4.4, 0, 2.4), 0.0)
-			_lamp_post(b, Vector3(4.4, 0, 2.4), PI)
+			# за крайними колоннами, фонарь — наружу (не в колонну)
+			_lamp_post(b, Vector3(-3.75 / CENTER_SX, 0, 2.4), PI)
+			_lamp_post(b, Vector3(3.75 / CENTER_SX, 0, 2.4), 0.0)
 		_:
-			_brazier(b, Vector3(-4.7, 0, 2.4))
-			_brazier(b, Vector3(4.7, 0, 2.4))
+			_brazier(b, Vector3(-3.96 / CENTER_SX, 0, 2.4))
+			_brazier(b, Vector3(3.96 / CENTER_SX, 0, 2.4))
 	if s >= 4:
-		b.add("SM_Prop_Statue_Lion_01", Vector3(-2.5, 0, 2.05), 0.0, 0.32)
-		b.add("SM_Prop_Statue_Lion_01", Vector3(2.5, 0, 2.05), 0.0, 0.32)
-	b.door = Vector3(0, 0, 0.9 if s < 3 else 3.4)
+		# львы у входа, ближе к средним колоннам: в боковых пролётах место для стража (Catalog._actors)
+		b.add("SM_Prop_Statue_Lion_01", Vector3(-1.75 / CENTER_SX, 0, 2.05), 0.0, 0.32)
+		b.add("SM_Prop_Statue_Lion_01", Vector3(1.75 / CENTER_SX, 0, 2.05), 0.0, 0.32)
+	b.door = Vector3(0, 0, 0.9 if s < 3 else 3.4) * CENTER_K
+	_squeeze_center(b)
+
+
+## Сжать готовую станцию вдоль фасада в CENTER_SX раз (см. CENTER_SX): гибкие детали — как у лавок (CatShops._flex)
+## и CENTER_FLEX, остальные сохраняют форму. Огни, дым и вход — следом
+static func _squeeze_center(b: Bp) -> void:
+	var sx := CENTER_SX
+	var S := Basis.from_scale(Vector3(sx, 1, 1))
+	var k := Vector3(sx, 1, 1)
+	for p: Array in b.parts:
+		var nm: String = p[0]
+		var xf: Transform3D = p[1]
+		var flex := CatShops._flex(nm)
+		for f: String in CENTER_FLEX:
+			flex = flex or nm.begins_with(f)
+		if flex:
+			p[1] = Transform3D(S * xf.basis, xf.origin * k)
+		else:
+			var c := xf * Bp.model_aabb(nm).get_center()
+			p[1] = Transform3D(xf.basis, xf.origin + Vector3(c.x * (sx - 1.0), 0, 0))
+	for i in b.lights.size():
+		b.lights[i] = b.lights[i] * k
+	for i in b.smoke.size():
+		b.smoke[i] = b.smoke[i] * k
+	b.door = b.door * k
 
 
 # =====================================================================
@@ -624,7 +674,7 @@ static func _scriptorium(b: Bp) -> void:
 	b.add("SM_Prop_Table_05", Vector3(1.2, 0, 1.0), PI / 2, 0.95)
 	b.add("SM_Prop_Scroll_Pile_0%d" % [1, 3, 5][b.rng.randi() % 3], Vector3(0.95, 0.74, 1.0), 0.3, 0.55)
 	b.add("SM_Prop_Scroll_01", Vector3(1.45, 0.76, 1.05), 1.2, 0.9)
-	b.add("SM_Prop_Seat_Stool_01", Vector3(1.2, 0, 1.7), 0.0, 0.85)
+	b.add("SM_Prop_Seat_Stool_01", Vector3(1.2, 0, 1.7), 0.0, 0.95)
 	b.add("SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 5), Vector3(2.2, 0, 1.25), 0.0, 0.7)
 	b.add("SM_Prop_Scroll_Pile_02", Vector3(2.2, 0.48, 1.25), 0.0, 0.8)
 	# красный тканевый навес на двух тонких столбиках
@@ -691,10 +741,10 @@ static func _school(b: Bp) -> void:
 	# скамьи учеников (лицом к учителю), на них — свитки и лира
 	for r in 2:
 		for x: float in [-1.55, 1.55]:
-			b.add("SM_Prop_Seat_Bench_01", Vector3(x, 0, 0.95 + r * 0.85), 0.0, 0.85)
-	b.add("SM_Prop_Scroll_Pile_02", Vector3(-1.9, 0.42, 0.95), 0.4, 0.8)
-	b.add("SM_Prop_Scroll_Pile_04", Vector3(1.2, 0.42, 1.8), -0.3, 0.8)
-	b.add("SM_Prop_Lyre_01", Vector3(1.95, 0.55, 0.95), 0.2, 0.8)
+			b.add("SM_Prop_Seat_Bench_01", Vector3(x, 0, 0.95 + r * 0.85), 0.0, 1.0)
+	b.add("SM_Prop_Scroll_Pile_02", Vector3(-1.9, 0.49, 0.95), 0.4, 0.8)
+	b.add("SM_Prop_Scroll_Pile_04", Vector3(1.2, 0.49, 1.8), -0.3, 0.8)
+	b.add("SM_Prop_Lyre_01", Vector3(1.95, 0.6, 0.95), 0.2, 0.8)
 	# кресло учителя и корзина-капса со свитками
 	b.add("SM_Prop_Seat_Chair_03", Vector3(0.85, 0, 2.75), PI, 0.75)
 	b.add("SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 5), Vector3(-0.85, 0, 2.8), 0.0, 0.65)
@@ -729,7 +779,7 @@ static func _library(b: Bp) -> void:
 	for f in 2:
 		for i: int in [0, 3]:
 			var a := b.wall_at(0, cz, 4, 2, 0, i + 0.5, f * FL + 0.22, -0.32)
-			b.add("SM_Prop_Statue_0%d" % (1 + (i + f * 2 + b.rng.randi()) % 7), a[0], a[1], 0.62)
+			b.add("SM_Prop_Statue_0%d" % (1 + (i + f * 2 + b.rng.randi()) % 7), a[0], a[1], NICHE)
 	var ridge := _gable2(b, -5.0, 5.0, cz - 2.5, fz, 2 * FL, 1.3)
 	for x: float in [-4.85, 4.85]:
 		b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(x, ridge - 0.12, cz), 0.0, 0.45)
@@ -750,8 +800,8 @@ static func _library(b: Bp) -> void:
 	b.add("SM_Bld_Roof_Topper_05", Vector3(3.0, pt, fz + 2.62), 0.0)
 	b.add("SM_Prop_Drapery_01", Vector3(0, 2.95, fz + 2.5), 0.0, 0.8)
 	# по сторонам: статуи на колоннах-постаментах, плющ, мраморные скамьи, свитки
-	b.column_statue(Vector3(-4.0, 0, fz + 1.9), 0.0, 0.8)
-	b.column_statue(Vector3(4.0, 0, fz + 1.9), 0.0, 0.8)
+	_column_statue(b, Vector3(-4.0, 0, fz + 1.9))
+	_column_statue(b, Vector3(4.0, 0, fz + 1.9))
 	b.add("SM_Prop_Seat_Bench_03", Vector3(-4.1, 0, fz + 0.5), 0.0, 0.85)
 	b.add("SM_Prop_Seat_Bench_03", Vector3(4.1, 0, fz + 0.5), 0.0, 0.85)
 	b.add("SM_Prop_Scroll_Pile_0%d" % [1, 5, 6][b.rng.randi() % 3], Vector3(-4.6, 0.55, fz + 0.5), 0.0, 0.6)
@@ -788,7 +838,7 @@ static func _academy(b: Bp) -> void:
 	var fz := cz + 2.5
 	for i: int in [1, 3]:
 		var a := b.wall_at(0, cz, 5, 2, 0, i + 0.5, 0.22, -0.32)
-		b.add("SM_Prop_Statue_0%d" % (1 + (i + b.rng.randi()) % 7), a[0], a[1], 0.62)
+		b.add("SM_Prop_Statue_0%d" % (1 + (i + b.rng.randi()) % 7), a[0], a[1], NICHE)
 	var ridge := _hip(b, -6.25, 6.25, cz - 2.5, fz, 2 * FL, 1.3)
 	_chimney(b, Vector3(-4.0, 2 * FL + 0.42, cz - 0.8))
 	# портик: четыре колонны в два этажа, антаблемент, фронтон с медальоном и статуей
@@ -814,15 +864,15 @@ static func _academy(b: Bp) -> void:
 		# в повёрнутой рамке: x — вдоль двора, z — от боковой стены (0) внутрь (+)
 		var hl := (z1 - z0) / 2.0
 		_stoa(b, hl, 1.6, "SM_Bld_Pillar_01", ["SM_Bld_Wall_Window_01", "SM_Bld_Wall_Alcove_01", "SM_Bld_Wall_Window_01"])
-		b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(0, 0.22, -0.32), 0.0, 0.6)
+		b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(0, 0.22, -0.32), 0.0, 0.78)
 		b.add("SM_Env_Ivy_Flowers_0%d" % (1 + b.rng.randi() % 9), Vector3(-1.75, 1.9, -0.14), PI)
 		_wall_lamp(b, Vector3(1.75, 2.35, -0.12), PI)
 		b.base = keep
 	# толос со статуей и полукруглые скамьи-экседры
 	b.add("SM_Prop_Pergola_01", Vector3(0, 0.05, tz), 0.0, 0.55)
-	b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(0, 0.05, tz), PI, 0.6)
-	b.add("SM_Prop_Seat_Bench_04", Vector3(-2.9, 0.05, tz), PI / 2, 0.62)
-	b.add("SM_Prop_Seat_Bench_04", Vector3(2.9, 0.05, tz), -PI / 2, 0.62)
+	b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(0, 0.05, tz), PI, 0.75)
+	b.add("SM_Prop_Seat_Bench_04", Vector3(-2.9, 0.05, tz), PI / 2, 0.72)
+	b.add("SM_Prop_Seat_Bench_04", Vector3(2.9, 0.05, tz), -PI / 2, 0.72)
 	# сад: клумбы у портика, кусты и цветы, оливы у ворот, кипарисы у портика
 	var qb := (zp + tz - 0.8) / 2.0
 	var qf := (tz + 0.8 + z1) / 2.0
@@ -959,7 +1009,7 @@ static func _vineyard(b: Bp) -> void:
 		b.add("SM_Bld_Trellis_Pillar_01", c, 0.0, 0.78)
 	b.add_xf("SM_Bld_Trellis_Roof_01", Transform3D(Basis.IDENTITY.scaled(Vector3(0.95, 1, 0.85)), Vector3(-1.45, 2.44, 2.3)))
 	b.add_xf("SM_Env_Vine_0%d" % (1 + b.rng.randi() % 2), Transform3D(Basis(Vector3.RIGHT, -PI / 2).scaled(Vector3(0.75, 1, 1)), Vector3(-2.7, 2.72, 4.3)))
-	_statue(b, Vector3(-2.7, 0, 3.4), 0.0, 0.55)
+	_statue(b, Vector3(-2.7, 0, 3.4), 0.0, 0.7)
 	b.add("SM_Env_Flowers_0%d" % (1 + b.rng.randi() % 5), Vector3(-0.6, 0, 4.2), 0.0, 1.3)
 	b.door = Vector3(0, 0, 5.3)
 
@@ -1042,7 +1092,7 @@ static func _baths(b: Bp) -> void:
 	var fz := cz + 1.25
 	for i: int in [1, 3]:
 		var a := b.wall_at(0, cz, 5, 1, 0, i + 0.5, 0.22, -0.32)
-		b.add("SM_Prop_Statue_0%d" % (1 + (i + b.rng.randi()) % 7), a[0], a[1], 0.62)
+		b.add("SM_Prop_Statue_0%d" % (1 + (i + b.rng.randi()) % 7), a[0], a[1], NICHE)
 	# крыша: плоская с парапетом, по центру — купол
 	for i in 5:
 		b.add("SM_Bld_Roof_Base_Flat_02", Vector3(-6.25 + i * M, 2 * FL - 0.68, fz), 0.0)
@@ -1076,13 +1126,13 @@ static func _baths(b: Bp) -> void:
 		var keep := b.base
 		b.base = keep * Transform3D(Basis(Vector3.UP, -side * PI / 2), Vector3(side * 6.5, 0, pz0 + 2.5))
 		_stoa(b, 2.5, 1.55, "SM_Bld_Pillar_02", ["SM_Bld_Wall_Alcove_01", "SM_Bld_Wall_Window_06"])
-		b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(-1.25, 0.22, -0.32), 0.0, 0.6)
+		b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(-1.25, 0.22, -0.32), 0.0, 0.78)
 		b.add("SM_Prop_Seat_Bench_03", Vector3(1.25, 0, 0.5), 0.0, 0.8)
 		b.add("SM_Env_Ivy_Pillar_Flowers_0%d" % (1 + b.rng.randi() % 2), Vector3(0, 0, 1.55), b.rng.randf() * TAU, 0.85)
 		b.base = keep
 	# статуи у бассейнов, жаровни у начала дорожки, пальмы, корзины
-	_statue(b, Vector3(-4.6, 0, pz0 + 5.4), 0.0, 0.6)
-	_statue(b, Vector3(4.6, 0, pz0 + 5.4), 0.0, 0.6)
+	_statue(b, Vector3(-4.6, 0, pz0 + 5.4), 0.0, 0.8)
+	_statue(b, Vector3(4.6, 0, pz0 + 5.4), 0.0, 0.8)
 	b.brazier(Vector3(-1.6, 0, pz0 + 5.45))
 	b.brazier(Vector3(1.6, 0, pz0 + 5.45))
 	b.add("SM_Env_Tree_Palm_0%d" % (1 + b.rng.randi() % 3), Vector3(-6.5, 0, fz - 0.5), b.rng.randf() * TAU, 0.45)
@@ -1165,8 +1215,8 @@ static func _odeon(b: Bp) -> void:
 	_lamp_post(b, Vector3(-5.0, 0, 4.0), 0.0)
 	_lamp_post(b, Vector3(5.0, 0, 4.0), PI)
 	# музы на постаментах у торцов трибун, кипарисы
-	_statue(b, Vector3(-5.3, 0, 2.65), 0.0, 0.6)
-	_statue(b, Vector3(5.3, 0, 2.65), 0.0, 0.6)
+	_statue(b, Vector3(-5.3, 0, 2.65), 0.0, 0.8)
+	_statue(b, Vector3(5.3, 0, 2.65), 0.0, 0.8)
 	_cypress(b, Vector3(-5.6, 0, -2.4), 0.48)
 	_cypress(b, Vector3(5.6, 0, -2.4), 0.48)
 	# мачты на краю трибун и два паруса велария между ними
@@ -1195,7 +1245,7 @@ static func _theatre(b: Bp) -> void:
 	_cavea(b, c, s, 1.6)
 	_cavea_arcade(b, c, s, 1.6)
 	_marble(b, Vector3(0, 0, cz - 0.8), Vector3(3.2, 0.04, 1.6))
-	_statue(b, Vector3(0, 0.04, cz - 0.95), 0.0, 0.5)
+	_statue(b, Vector3(0, 0.04, cz - 0.95), 0.0, 0.62)
 	# сцена (доходит до задней стены скены)
 	_marble(b, Vector3(0, 0, 5.725), Vector3(13.0, 0.6, 3.45))
 	# расписной фриз по фасаду сцены (к зрителям)

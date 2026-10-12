@@ -46,6 +46,22 @@ const W1 := "SM_Bld_Wall_01"
 const DOOR := "SM_Bld_Wall_Door_04"
 const SHOP := "SM_Bld_Wall_Door_Double_03"
 
+## Лавки уже, как дома (CatHouses._narrow): чертёж собирается в пролётах Synty по 2,5 м, а в конце сжимается вдоль
+## фасада (ось X) в SX раз. Стены, карнизы, крыши, двери, прилавки, полосатые навесы и полотна, полки, балки, плющ
+## и лоза сжимаются вместе с пролётом; вещи (колонны, столбы, мебель, корзины, амфоры, фонари, трубы, статуи)
+## сохраняют пропорции — сдвигается только их середина. Огни, дым и вход — следом. Люди при деле (Catalog._actors)
+## стоят в уже сжатых координатах, поэтому то, на чём они сидят, ставится в точку x / SX.
+## Сжатие то же, что у домов (одна постоянная): пролёт и проём лавки той же ширины, что у соседнего дома
+const SX := CatHouses.SX
+const RIGID := ["SM_Bld_Pillar", "SM_Bld_Roof_Topper", "SM_Bld_Ornament", "SM_Bld_Trellis_Pillar", "SM_Env_Ivy_Pillar",
+	"SM_Bld_Roof_Base_Pillar", "SM_Bld_Roof_Base_Peak"]
+const FLEX := ["SM_Bld_", "#dark", "#lit", "SM_Prop_Overhang", "SM_Prop_Banner_Roof", "SM_Prop_Mural", "SM_Prop_FlowerBed",
+	"SM_Prop_Drapery", "SM_Env_Ivy", "SM_Env_Vine", "SM_Prop_Shelf", "SM_Prop_Beam", "SM_Prop_Rug_Drape"]
+## Высота сиденья скамьи Synty в родном масштабе — люди при деле садятся ровно на неё (Catalog.ARCH = Citizen.SIZE)
+const SEAT := 1.0
+## Детали, которые не сжимаются, хоть и гибкие по имени (краска в круглом чане) — индексы в b.parts
+static var _hold := {}
+
 
 # ---------- основа ----------
 
@@ -107,6 +123,37 @@ static func _ivy(b: Bp, x0: float, x1: float, z0: float, z1: float, side: int, i
 ## Цветы в подвесном кашпо под окном (сторона side, модуль i)
 static func _pot(b: Bp, x0: float, x1: float, z0: float, z1: float, side: int, i: float, y: float, k: int) -> void:
 	_on(b, "SM_Prop_FlowerPot_Hanging_0%d" % (4 + posmod(k, 3)), x0, x1, z0, z1, side, i, y, 0.13, 0.85)
+
+
+static func _flex(nm: String) -> bool:
+	for s: String in RIGID:
+		if nm.begins_with(s):
+			return false
+	for s: String in FLEX:
+		if nm.begins_with(s):
+			return true
+	return false
+
+
+## Сжать чертёж лавки вдоль фасада (см. SX)
+static func _narrow(b: Bp, sx := SX) -> void:
+	var S := Basis.from_scale(Vector3(sx, 1, 1))
+	var k := Vector3(sx, 1, 1)
+	for i in b.parts.size():
+		var p: Array = b.parts[i]
+		var nm: String = p[0]
+		var xf: Transform3D = p[1]
+		if _flex(nm) and not _hold.has(i):
+			p[1] = Transform3D(S * xf.basis, xf.origin * k)
+		else:
+			var c := xf * Bp.model_aabb(nm).get_center()
+			p[1] = Transform3D(xf.basis, xf.origin + Vector3(c.x * (sx - 1.0), 0, 0))
+	for i in b.lights.size():
+		b.lights[i] = b.lights[i] * k
+	for i in b.smoke.size():
+		b.smoke[i] = b.smoke[i] * k
+	b.door = b.door * k
+	_hold.clear()
 
 
 ## Деталь со своей раскраской (полотно другого цвета, бронза, оттенок товара)
@@ -274,6 +321,14 @@ static func _awning(b: Bp, x0: float, x1: float, zb: float, zf: float, yb: float
 		_put_xf(b, "SM_Prop_Banner_Roof_01", Transform3D(bs, Vector3(x0 + i * w, yb, zb)), _cloth(ca if i % 2 == 0 else cb))
 
 
+## Круглый столик Synty родом 0,55 м — ниже сиденья табурета; вытягиваем до обеденной высоты TABLE7
+const TABLE7 := 0.74
+
+
+static func _table(b: Bp, p: Vector3, s := 1.0) -> void:
+	_put_xf(b, "SM_Prop_Table_07", Transform3D(Basis.from_scale(Vector3(s, TABLE7 / 0.55, s)), p))
+
+
 ## Столб навеса высотой h
 static func _pole(b: Bp, p: Vector3, h: float) -> void:
 	b.add_xf("SM_Prop_Pole_01", Transform3D(Basis.from_scale(Vector3(1.0, h / 3.0, 1.0)), p))
@@ -319,6 +374,7 @@ static func _sausage(b: Bp, p: Vector3, k: int) -> void:
 static func _vat(b: Bp, p: Vector3, col: int, s := 1.0, yaw := 0.0) -> void:
 	var r := Basis(Vector3.UP, yaw)
 	_put_xf(b, "SM_Prop_Bowl_02", Transform3D(r * Basis.from_scale(Vector3(0.75, 1.6, 0.75) * s), p))
+	_hold[b.parts.size()] = true      # краска круглая, как чан, — при сжатии лавки не сплющивается
 	_put_xf(b, "SM_Prop_Banner_Roof_01", Transform3D(r * Basis.from_scale(Vector3(0.22 * s, 0.03, 0.22 * s)), p + Vector3(-0.29 * s, 0.46 * s, -0.29 * s).rotated(Vector3.UP, yaw)), _cloth(col))
 
 
@@ -356,7 +412,10 @@ static func _chimney(b: Bp, p: Vector3, smoke := true) -> void:
 
 ## Прилавок — низкая стенка в цвет дома (как каменные прилавки Помпей) со столбиками по краям, вдоль x0..x1
 ## на линии z (лицевая грань); fancy — с расписным меандром. Возвращает высоту столешницы (по пояс человечку)
-static func _counter(b: Bp, x0: float, x1: float, z: float, fancy := true, h := 0.85) -> float:
+const CTR := 0.95
+
+
+static func _counter(b: Bp, x0: float, x1: float, z: float, fancy := true, h := CTR) -> float:
 	var nm := "SM_Bld_Wall_Balcony_06" if fancy else "SM_Bld_Wall_Balcony_05"
 	var f := 0.22 if fancy else 0.11
 	b.add_xf(nm, Transform3D(Basis.from_scale(Vector3((x1 - x0) / 2.5, h / 1.02, 1.0)), Vector3(x0, 0, z - f)), true)
@@ -387,15 +446,17 @@ static func _stall(b: Bp, kind: String, v: int) -> void:
 	var cols: Array = {"fruit": [RED, ORANGE, MAGENTA], "veg": [GREEN, SAGE, MUSTARD], "fish": [SKY, BLUE, SKY]}[kind]
 	var col: int = cols[(pal + v) % 3]
 	var col2 := BLUE if kind == "fish" and (pal + v) % 3 == 2 else WHITE
-	var hb := 2.75
-	var hf := 2.2
+	# навес высоко: покупатель (1,8 м в мерах чертежа) проходит под передним краем с запасом
+	var hb := 2.95
+	var hf := 2.45
 	for x: float in [-1.25, 1.25]:
 		_pole(b, Vector3(x, 0, -1.15), hb)
 		_pole(b, Vector3(x, 0, 1.1), hf)
 	_awning(b, -1.38, 1.38, -1.3, 1.35, hb + 0.05, hf - 0.05, col, col2)
-	# прилавок с товаром лицом к покупателю — корзины крупные, как в Town to City
-	b.add("SM_Prop_Table_08", Vector3(0, 0, 0.5), 0.0, 0.85)
-	var top := 0.66
+	# прилавок с товаром лицом к покупателю — корзины крупные, как в Town to City; стол в полную высоту (по пояс торговцу),
+	# поуже, чтобы влез между столбами
+	_put_xf(b, "SM_Prop_Table_08", Transform3D(Basis.from_scale(Vector3(0.85, 1.0, 0.85)), Vector3(0, 0, 0.5)))
+	var top := 0.78
 	var goods: Array = {"fruit": ["apples", "oranges", "plums"], "veg": ["greens", "beets", "grain"], "fish": ["fish", "olives", "fish"]}[kind]
 	for k in 3:
 		var g: String = goods[(k + v) % 3]
@@ -464,6 +525,7 @@ const SHELF_CLOTH := ["01_B", "03_C", "01_A", "03_B"]
 static func _shop(b: Bp, type: String, v: int) -> void:
 	var spec: Array = SHOPS.get(type, ["porch", "A", RED])
 	var pal := _pal(b)
+	_hold.clear()
 	_paint(b, pal)
 	b.ground_style = ["plain", "brick", "plain", "pattern"][(pal + type.length()) % 4]
 	b.upper_style = "plain"
@@ -476,6 +538,7 @@ static func _shop(b: Bp, type: String, v: int) -> void:
 		_: _form_yard(b, type, spec, pal)
 	if b.smoke.size() > 1:
 		b.smoke.resize(1)
+	_narrow(b)
 
 
 ## Полки ремесла в открытом проёме (модуль bx..bx+2,5, фасад z)
@@ -507,16 +570,17 @@ static func _form_awning(b: Bp, type: String, spec: Array, pal: int) -> void:
 	else:
 		_roof_x(b, -2.5, 2.5, -2.5, 0.0, FL, 2.3, _topper(pal))
 	_chimney(b, Vector3(1.4, FL + 0.55, -1.6), type != "potter")
+	# навес над прилавком: передний край на 2,4 — люди проходят под ним, не задевая
 	if type == "potter":
 		# навес только над входом и прилавком — печь для обжига справа под открытым небом, дым из неё
-		_awning(b, -2.55, 1.55, 0.12, 1.72, 2.78, 2.2, ACCENT[pal])
+		_awning(b, -2.55, 1.55, 0.12, 1.72, 2.8, 2.4, ACCENT[pal])
 		for x: float in [-2.35, -0.45, 1.45]:
-			_pole(b, Vector3(x, 0, 1.58), 2.2)
+			_pole(b, Vector3(x, 0, 1.58), 2.4)
 		_counter(b, 0.2, 1.25, 1.62)
 	else:
-		_awning(b, -2.55, 2.55, 0.12, 1.72, 2.78, 2.2, ACCENT[pal])
+		_awning(b, -2.55, 2.55, 0.12, 1.72, 2.8, 2.4, ACCENT[pal])
 		for x: float in [-2.35, 0.0, 2.35]:
-			_pole(b, Vector3(x, 0, 1.58), 2.2)
+			_pole(b, Vector3(x, 0, 1.58), 2.4)
 		if type == "barber":
 			_counter(b, -2.2, -0.25, 1.62)
 		else:
@@ -545,12 +609,12 @@ static func _form_porch(b: Bp, type: String, spec: Array, pal: int) -> void:
 	b.add("SM_Env_Ivy_Pillar_Flowers_0%d" % (1 + pal % 2), Vector3(-2.2, 0, 1.3), pal * 0.8, 0.78)
 	_hanging_lamp(b, Vector3(0.0, 2.55, 0.75), 0.45, false)
 	if type != "weaver":
-		_counter(b, 0.35, 2.15, 1.18)
+		_counter(b, 0.35, 2.15, 1.45)   # лицом чуть впереди столбов: за прилавком место для сапожника (он стоит в z 0,6)
 	_sign(b, Vector3(-1.25, 2.62 if not wood else 2.45, 1.47), 0.0, spec[1], spec[2], 0.5)
 	_lamp(b, Vector3(-0.35, 2.1, 0.12))
 	b.add("SM_Prop_FlowerPot_Fancy_01", Vector3(-2.15, 0, 0.62), 0.0, 0.6)
 	_trade_shelf(b, type, 0.0, 0.0, pal)
-	_goods(b, type, Vector3(1.25, 0, 1.06), pal)
+	_goods(b, type, Vector3(1.25, 0, 1.3), pal)
 	b.door = Vector3(-1.25, 0, 2.3)
 
 
@@ -603,9 +667,9 @@ static func _form_terrace(b: Bp, type: String, spec: Array, pal: int) -> void:
 		_counter(b, 0.3, 2.2, 1.0)
 		_goods(b, type, Vector3(1.25, 0, 0.8), pal)
 	else:
-		_awning(b, 0.0, 2.5, 0.1, 1.62, 2.75, 2.15, ACCENT[pal])
+		_awning(b, 0.0, 2.5, 0.1, 1.62, 2.8, 2.4, ACCENT[pal])
 		for x: float in [0.15, 2.35]:
-			_pole(b, Vector3(x, 0, 1.5), 2.15)
+			_pole(b, Vector3(x, 0, 1.5), 2.4)
 		_counter(b, 0.3, 2.2, 1.56)
 		_trade_shelf(b, type, 0.0, 0.0, pal)
 		_goods(b, type, Vector3(1.25, 0, 1.36), pal)
@@ -683,15 +747,15 @@ static func _form_yard(b: Bp, type: String, spec: Array, pal: int) -> void:
 
 ## Товар и утварь ремесла; t — середина прилавка
 static func _goods(b: Bp, type: String, t: Vector3, pal: int) -> void:
-	var top := t + Vector3(0, 0.85, 0)
+	var top := t + Vector3(0, CTR, 0)
 	match type:
 		"butcher":
 			# окорока гроздью и колбасы на перекладине, куски мяса на блюде, колода для рубки, кувшины соли
-			b.add_xf("SM_Prop_Beam_01", Transform3D(Basis.from_scale(Vector3(2.3 / 2.5, 0.6, 0.6)), Vector3(0.1, 2.12, 1.45)))
+			b.add_xf("SM_Prop_Beam_01", Transform3D(Basis.from_scale(Vector3(2.3 / 2.5, 0.6, 0.6)), Vector3(0.1, 2.3, 1.45)))
 			for k in 3:
-				_ham(b, Vector3(1.35 + k * 0.4, 2.1, 1.45), k)
+				_ham(b, Vector3(1.35 + k * 0.4, 2.28, 1.45), k)
 			for k in 2:
-				_sausage(b, Vector3(0.5 + k * 0.25, 2.1, 1.45), k)
+				_sausage(b, Vector3(0.5 + k * 0.25, 2.28, 1.45), k)
 			b.add("SM_Prop_Plate_02", top + Vector3(-0.5, 0, 0), 0.0, 1.0)
 			_put(b, "SM_Prop_Basket_Insert_04", top + Vector3(-0.5, 0.04, 0), 0.2, 0.55, {"tint": T_MEAT})
 			_put(b, "SM_Prop_Basket_Insert_04", top + Vector3(0.15, 0.0, 0.03), -0.3, 0.45, {"tint": T_MEAT})
@@ -701,9 +765,11 @@ static func _goods(b: Bp, type: String, t: Vector3, pal: int) -> void:
 			b.add("SM_Prop_Jar_Pile_01", Vector3(-2.05, 0, 1.1), 0.0, 0.5)
 		"potter":
 			# печь для обжига справа от прилавка (дым и огонь в устье), амфоры горой у входа, вазы и миски на прилавке
-			b.add("SM_Prop_Kiln_01", Vector3(2.05, 0, 0.72), PI, 0.42)
-			b.smoke.insert(0, b.base * Vector3(2.05, 0.85, 0.72))
-			b.light(Vector3(2.05, 0.35, 1.25))
+			# (печь ставится в x / SX: после сжатия лавки она остаётся в 1,64 от середины — гончар у прилавка её не задевает)
+			var kx := 1.64 / SX
+			b.add("SM_Prop_Kiln_01", Vector3(kx, 0, 0.72), PI, 0.42)
+			b.smoke.insert(0, b.base * Vector3(kx, 0.85, 0.72))
+			b.light(Vector3(kx, 0.35, 1.25))
 			b.add("SM_Prop_Vase_Pile_02", Vector3(-2.1, 0, 1.12), 0.0, 0.42)
 			b.add("SM_Prop_Vase_0%d" % (1 + pal % 6), top + Vector3(-0.85, 0, 0), 0.0, 0.4)
 			b.add("SM_Prop_Jug_0%d" % (1 + (pal + 2) % 6), top + Vector3(-0.5, 0, 0.0), 0.4, 0.5)
@@ -712,14 +778,15 @@ static func _goods(b: Bp, type: String, t: Vector3, pal: int) -> void:
 			b.add("SM_Prop_Vase_03", Vector3(-0.35, 0, 1.45), 0.3, 0.5)
 			b.add("SM_Prop_Vase_05", Vector3(-0.05, 0, 1.15), 0.9, 0.45)
 		"barber":
-			# кресло для бритья под навесом, на прилавке таз, кувшин, полотенце, масло и зеркальце; скамья для ждущих
-			b.add("SM_Prop_Seat_Chair_01", Vector3(1.25, 0, 1.0), PI, 1.0)
-			b.add("SM_Prop_Bowl_04", Vector3(-1.75, 0.85, 1.42), 0.0, 1.0)
-			b.add("SM_Prop_Jug_05", Vector3(-1.3, 0.85, 1.42), 0.0, 0.9)
-			_put(b, "SM_Prop_Rug_Folded_02", Vector3(-0.9, 0.85, 1.42), 0.3, 0.4, _rug("03_A"))
-			b.add("SM_Prop_Goblet_01", Vector3(-0.55, 0.85, 1.45), 0.0, 1.0)
-			_put(b, "SM_Prop_Plate_03", Vector3(-2.0, 0.86, 1.48), 0.0, 1.0, GILT)
-			b.add("SM_Prop_Seat_Bench_05", Vector3(0.3, 0, 0.42), PI / 2, 0.5)
+			# кресло для бритья под навесом (клиент сидит в (1,25; 1,0) уже сжатой лавки), на прилавке таз, кувшин,
+			# полотенце, масло и зеркальце; скамья для ждущих — сиденье в рост людей
+			b.add("SM_Prop_Seat_Chair_01", Vector3(1.25 / SX, 0, 1.0), PI, 1.0)
+			b.add("SM_Prop_Bowl_04", Vector3(-1.75, CTR, 1.42), 0.0, 1.0)
+			b.add("SM_Prop_Jug_05", Vector3(-1.3, CTR, 1.42), 0.0, 0.9)
+			_put(b, "SM_Prop_Rug_Folded_02", Vector3(-0.9, CTR, 1.42), 0.3, 0.4, _rug("03_A"))
+			b.add("SM_Prop_Goblet_01", Vector3(-0.55, CTR, 1.45), 0.0, 1.0)
+			_put(b, "SM_Prop_Plate_03", Vector3(-2.0, CTR + 0.01, 1.48), 0.0, 1.0, GILT)
+			b.add_xf("SM_Prop_Seat_Bench_05", Transform3D(Basis(Vector3.UP, PI / 2) * Basis.from_scale(Vector3(0.5, SEAT, 0.75)), Vector3(0.3, 0, 0.42)))
 			b.add("SM_Prop_FlowerPot_Fancy_01", Vector3(2.2, 0, 0.45), 0.0, 0.55)
 		"cobbler":
 			# кожи висят на балке, сандалии в корзинах, сложенная кожа и молоток на прилавке, наковальня и табурет
@@ -772,7 +839,7 @@ static func _goods(b: Bp, type: String, t: Vector3, pal: int) -> void:
 			for k in 5:
 				b.add("SM_Prop_Senser_04", top + Vector3(-0.8 + k * 0.4, 0, 0), k * 0.5, 0.4)
 			for k in 3:
-				_hanging_lamp(b, Vector3(0.5 + k * 0.75, 2.28, 1.15), 0.6, k == 1)
+				_hanging_lamp(b, Vector3(0.5 + k * 0.75, 2.42, 1.15), 0.6, k == 1)
 			b.add("SM_Prop_Senser_02", Vector3(-0.45, 0, 0.7), 0.0, 1.25)
 			b.add("SM_Prop_Senser_01", Vector3(-2.15, 0, 0.8), 0.0, 0.7)
 			b.add("SM_Prop_Senser_02", Vector3(-2.25, 0, 1.3), 0.0, 1.0)
@@ -787,7 +854,7 @@ static func _goods(b: Bp, type: String, t: Vector3, pal: int) -> void:
 				b.add("SM_Prop_Vase_04", Vector3(-0.25 - k * 2.0, 0, 1.3), 0.0, 0.55)
 				b.add("SM_Env_Garden_Plants_0%d" % (3 + (pal + k) % 4), Vector3(-0.25 - k * 2.0, 0.32, 1.3), k * 1.3, 0.26)
 			for k in 3:
-				_put_xf(b, "SM_Prop_Straw_Bundle_01", Transform3D(Basis(Vector3.UP, k * 0.9) * Basis(Vector3.RIGHT, PI) * Basis.from_scale(Vector3.ONE * 0.3), Vector3(0.6 + k * 0.6, 2.1, 1.48)), {"tint": [T_GREEN, T_OLIVE, Color(0.9, 0.8, 0.5)][k]})
+				_put_xf(b, "SM_Prop_Straw_Bundle_01", Transform3D(Basis(Vector3.UP, k * 0.9) * Basis(Vector3.RIGHT, PI) * Basis.from_scale(Vector3.ONE * 0.3), Vector3(0.6 + k * 0.6, 2.28, 1.48)), {"tint": [T_GREEN, T_OLIVE, Color(0.9, 0.8, 0.5)][k]})
 		"perfumer":
 			# мраморный столик с флаконами, курильница с дымком благовоний, высокие амфоры с маслами,
 			# подушки и ковёр для покупательниц, цветник между колоннами
@@ -838,6 +905,7 @@ static func _goods(b: Bp, type: String, t: Vector3, pal: int) -> void:
 ## черепичным портиком на колоннах; наверху окна с фронтонами, дверь на балкончик с перилами, цветы
 static func _thermopolium(b: Bp) -> void:
 	var pal := _pal(b)
+	_hold.clear()
 	_paint(b, pal)
 	b.ground_style = "plain"
 	var bw := _back_win(pal)
@@ -854,32 +922,36 @@ static func _thermopolium(b: Bp) -> void:
 	for i: float in [0.5, 2.5]:
 		_pot(b, -3.75, 3.75, -2.5, 0.0, 0, i, FL + 1.0, pal + int(i))
 	# стойка: длинная вдоль улицы и колено к стене, расписная, в столешнице — кувшины с горячей едой
-	var ctop := _counter(b, -3.4, 0.2, 0.95, true)
-	b.add_xf("SM_Bld_Wall_Balcony_06", Transform3D(Basis(Vector3.UP, -PI / 2) * Basis.from_scale(Vector3(0.4 / 2.5, ctop / 1.02, 1.0)), Vector3(-3.4, 0, 0.0)), true)
+	# (стойка отодвинута от стены на 0,56 — за ней помещается продавец)
+	var ctop := _counter(b, -3.4, 0.2, 1.15, true)
+	b.add_xf("SM_Bld_Wall_Balcony_06", Transform3D(Basis(Vector3.UP, -PI / 2) * Basis.from_scale(Vector3(0.6 / 2.5, ctop / 1.02, 1.0)), Vector3(-3.4, 0, 0.0)), true)
 	for k in 4:
-		b.add("SM_Prop_Jar_01", Vector3(-2.95 + k * 0.8, ctop - 0.2, 0.66), k * 0.9, 0.42)
-	b.add("SM_Prop_Brazier_04", Vector3(-0.15, ctop, 0.66), 0.0, 0.4)
-	b.add("SM_Prop_Brazier_04_Insert_01", Vector3(-0.15, ctop, 0.66), 0.0, 0.4)
-	b.light(Vector3(-0.15, ctop + 0.4, 0.8))
+		b.add("SM_Prop_Jar_01", Vector3(-2.95 + k * 0.8, ctop - 0.2, 0.86), k * 0.9, 0.42)
+	b.add("SM_Prop_Brazier_04", Vector3(-0.15, ctop, 0.86), 0.0, 0.4)
+	b.add("SM_Prop_Brazier_04_Insert_01", Vector3(-0.15, ctop, 0.86), 0.0, 0.4)
+	b.light(Vector3(-0.15, ctop + 0.4, 1.0))
 	for k in 2:
 		b.add("SM_Prop_Pots_Hanging_0%d" % (1 + k % 2), Vector3(-2.6 + k * 1.7, 2.3, 1.45), k * 0.8)
 	# роспись-ларарий на стене за стойкой, знамя-вывеска, табуреты для посетителей, столик у двери
 	_put(b, "SM_Prop_Mural_02", Vector3(-1.25, 1.75, 0.13), 0.0, 0.42, {"Mural_01": "mural_08"})
 	_sign(b, Vector3(1.25, 2.8, 0.14), 0.0, "B", ACCENT[pal], 0.62)
 	_lamp(b, Vector3(3.35, 2.15, 0.12))
+	# табуреты у стойки — между колоннами портика, не задевая их; столик в полную высоту
 	for k in 2:
-		b.add("SM_Prop_Seat_Chair_01", Vector3(-2.6 + k * 1.6, 0, 1.3), k * 0.5 - 0.3, 0.85)
-	b.add("SM_Prop_Table_07", Vector3(3.3, 0, 1.0), 0.0, 1.0)
-	b.add("SM_Prop_Seat_Chair_01", Vector3(3.3, 0, 0.4), 0.0, 0.85)
-	b.add("SM_Prop_Jug_0%d" % (1 + pal % 4), Vector3(3.2, 0.55, 1.0), 0.0, 0.42)
-	b.add("SM_Prop_Bowl_04", Vector3(3.45, 0.55, 0.92), 0.0, 0.6)
+		b.add("SM_Prop_Seat_Chair_01", Vector3([-2.3, -0.55][k], 0, 1.42), k * 0.5 - 0.3, 0.95)
+	_table(b, Vector3(3.3, 0, 1.0))
+	b.add("SM_Prop_Seat_Chair_01", Vector3(3.3, 0, 0.4), 0.0, 0.95)
+	b.add("SM_Prop_Jug_0%d" % (1 + pal % 4), Vector3(3.2, TABLE7, 1.0), 0.0, 0.42)
+	b.add("SM_Prop_Bowl_04", Vector3(3.45, TABLE7, 0.92), 0.0, 0.6)
 	b.door = Vector3(-1.0, 0, 2.5)
+	_narrow(b)
 
 
 ## Таверна 7,5×5 м в два этажа с балконом; перед ней дворик под перголой с прямыми рейками — лоза на рейках,
 ## цветущий плющ свисает с балки, столы, лампы, жаровня
 static func _taberna(b: Bp) -> void:
 	var pal := _pal(b)
+	_hold.clear()
 	_paint(b, pal)
 	b.ground_style = "brick"
 	var bw := _back_win(pal)
@@ -907,18 +979,20 @@ static func _taberna(b: Bp) -> void:
 		b.add("SM_Env_Ivy_Draped_Flowers_01", Vector3(3.72 * s, 2.86, 0.0), PI / 2, 0.85)
 	b.add("SM_Env_Ivy_Pillar_Flowers_0%d" % (1 + pal % 2), Vector3(-3.5, 0, 2.1), 0.5, 0.9)
 	b.add("SM_Env_Ivy_Pillar_Flowers_0%d" % (1 + (pal + 1) % 2), Vector3(3.5, 0, 2.1), 1.5, 0.9)
-	# круглые деревянные столики со складными табуретами и длинный стол со скамьями
+	# круглые деревянные столики со складными табуретами и длинный стол со скамьями — в рост посетителей
+	# (табуреты ставятся в x / SX: после сжатия двора они остаются в 0,65 от столика, а не врезаются в него)
 	for c: Vector3 in [Vector3(-2.2, 0, -0.9), Vector3(1.9, 0, -1.1)]:
-		b.add("SM_Prop_Table_07", c, 0.0, 1.0)
-		b.add("SM_Prop_Seat_Chair_01", c + Vector3(-0.65, 0, 0.05), PI / 2, 0.85)
-		b.add("SM_Prop_Seat_Chair_01", c + Vector3(0.65, 0, -0.05), PI / 2, 0.85)
-		b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 4), c + Vector3(0.1, 0.55, 0), 0.0, 0.42)
-	b.add("SM_Prop_Table_08", Vector3(-0.3, 0, 0.55), 0.0, 0.62)
-	b.add("SM_Prop_Seat_Bench_05", Vector3(-0.3, 0, 0.0), 0.0, 0.55)
-	b.add("SM_Prop_Seat_Bench_05", Vector3(-0.3, 0, 1.12), 0.0, 0.55)
-	b.add("SM_Prop_Plate_02", Vector3(-0.7, 0.49, 0.55), 0.0, 0.6)
-	b.add("SM_Prop_Jug_05", Vector3(-0.2, 0.49, 0.5), 0.0, 0.8)
-	b.add("SM_Prop_Goblet_02", Vector3(0.25, 0.49, 0.6), 0.0, 0.9)
+		_table(b, c)
+		b.add("SM_Prop_Seat_Chair_01", c + Vector3(-0.65 / SX, 0, 0.05), PI / 2, 0.95)
+		b.add("SM_Prop_Seat_Chair_01", c + Vector3(0.65 / SX, 0, -0.05), PI / 2, 0.95)
+		b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 4), c + Vector3(0.1, TABLE7, 0), 0.0, 0.42)
+	_put_xf(b, "SM_Prop_Table_08", Transform3D(Basis.from_scale(Vector3(0.62, 0.95, 0.75)), Vector3(-0.3, 0, 0.55)))
+	for z: float in [-0.08, 1.18]:
+		_put_xf(b, "SM_Prop_Seat_Bench_05", Transform3D(Basis.from_scale(Vector3(0.6, SEAT, 0.8)), Vector3(-0.3, 0, z)))
+	var lt := 0.78 * 0.95
+	b.add("SM_Prop_Plate_02", Vector3(-0.7, lt, 0.55), 0.0, 0.6)
+	b.add("SM_Prop_Jug_05", Vector3(-0.2, lt, 0.5), 0.0, 0.8)
+	b.add("SM_Prop_Goblet_02", Vector3(0.25, lt, 0.6), 0.0, 0.9)
 	b.add("SM_Prop_Vase_Pile_02", Vector3(3.0, 0, -2.0), 0.6, 0.55)
 	b.add("SM_Prop_Jar_Pile_01", Vector3(-3.1, 0, -1.9), 0.0, 0.55)
 	_hanging_lamp(b, Vector3(-1.8, 2.7, -0.3), 0.5)
@@ -926,6 +1000,7 @@ static func _taberna(b: Bp) -> void:
 	b.brazier(Vector3(-3.0, 0, 1.0))
 	_sign(b, Vector3(-2.5, 2.8, -2.36), 0.0, "B", ACCENT[pal], 0.62)
 	b.door = Vector3(0, 0, 3.2)
+	_narrow(b)
 
 
 # ---------- ремёсла и забавы ----------
@@ -934,6 +1009,7 @@ static func _taberna(b: Bp) -> void:
 ## тоги на перекладине); перед пристройкой верёвка с бельём, перед домом чаны в низкой каменной ванне
 static func _fullonica(b: Bp) -> void:
 	var pal := _pal(b)
+	_hold.clear()
 	_paint(b, pal)
 	b.ground_style = "plain"
 	# основной дом 5×2,5 м, два этажа, фронтоном к улице
@@ -970,12 +1046,13 @@ static func _fullonica(b: Bp) -> void:
 	_sign(b, Vector3(-0.75, 2.85, 0.14), 0.0, "A", SKY, 0.55)
 	_lamp(b, Vector3(-1.6, 2.2, 0.12))
 	b.door = Vector3(-2.5, 0, 2.2)
+	_narrow(b)
 
 
 ## Уличные музыканты: скамья под деревом, лира, корзина для монет, коврик
 static func _musicians(b: Bp) -> void:
 	var pal := _pal(b)
-	b.add("SM_Prop_Seat_Bench_05", Vector3(-0.3, 0, -0.65), 0.0, 0.75)
+	_put_xf(b, "SM_Prop_Seat_Bench_05", Transform3D(Basis.from_scale(Vector3(0.75, SEAT, 0.85)), Vector3(-0.3, 0, -0.65)))
 	_put(b, "SM_Prop_Rug_0%d" % (1 + pal % 4), Vector3(0.1, 0.01, 0.2), PI / 2, 0.55, _rug(["01_A", "01_B", "03_A", "02_B"][pal % 4]))
 	b.add("SM_Prop_Basket_0%d" % (1 + pal % 4), Vector3(0.0, 0, 0.95), 0.0, 0.5)
 	b.add_xf("SM_Prop_Lyre_01", Transform3D(Basis(Vector3.UP, 0.4) * Basis(Vector3.RIGHT, -0.25), Vector3(0.45, 0.42, -0.75)))
@@ -992,19 +1069,19 @@ static func _musicians(b: Bp) -> void:
 ## Игра в кости: столик под полосатым навесом (цвет с белым, как у рыночных лавок), табуреты вокруг, кубок и кувшин
 static func _dice(b: Bp) -> void:
 	var pal := _pal(b)
-	var hb := 2.5
-	var hf := 2.05
+	var hb := 2.8
+	var hf := 2.4
 	for x: float in [-1.2, 1.2]:
 		_pole(b, Vector3(x, 0, -1.15), hb)
 		_pole(b, Vector3(x, 0, 1.15), hf)
 	_awning(b, -1.32, 1.32, -1.3, 1.3, hb + 0.05, hf - 0.05, [RED, BLUE, PURPLE, GREEN][pal % 4], WHITE)
-	b.add("SM_Prop_Table_07", Vector3.ZERO, 0.0, 1.15)
+	_table(b, Vector3.ZERO, 1.15)
 	for a in 4:
 		var q := Vector3(cos(a * PI / 2), 0, sin(a * PI / 2)) * 0.95
-		b.add("SM_Prop_Seat_Chair_01", q, a * PI / 2, 0.85)
-	b.add("SM_Prop_Goblet_01", Vector3(0.15, 0.63, 0.1), 0.0, 0.9)
-	b.add("SM_Prop_Plate_03", Vector3(-0.15, 0.63, -0.1), 0.0, 0.6)
-	b.add("SM_Prop_Bowl_04", Vector3(0.0, 0.63, -0.2), 0.0, 0.45)
+		b.add("SM_Prop_Seat_Chair_01", q, a * PI / 2, 0.92)
+	b.add("SM_Prop_Goblet_01", Vector3(0.15, TABLE7, 0.1), 0.0, 0.9)
+	b.add("SM_Prop_Plate_03", Vector3(-0.15, TABLE7, -0.1), 0.0, 0.6)
+	b.add("SM_Prop_Bowl_04", Vector3(0.0, TABLE7, -0.2), 0.0, 0.45)
 	b.add("SM_Prop_Jug_02", Vector3(1.6, 0, 1.0), 0.0, 0.55)
 	b.add("SM_Prop_Vase_04", Vector3(-1.6, 0, 0.9), 0.0, 0.6)
 	b.door = Vector3(0, 0, 1.9)
@@ -1034,9 +1111,8 @@ static func _mimes(b: Bp) -> void:
 	b.add("SM_Prop_Vase_02", Vector3(1.9, 0.7, -2.5), 0.0, 0.6)
 	b.add_xf("SM_Prop_Lyre_01", Transform3D(Basis(Vector3.UP, -0.3) * Basis(Vector3.RIGHT, -0.2), Vector3(-1.45, 1.1, -2.6)))
 	# зрители; жаровни по краям (свет от факелов на заднике)
-	b.add("SM_Prop_Seat_Bench_05", Vector3(-1.3, 0, 1.3), 0.0, 0.75)
-	b.add("SM_Prop_Seat_Bench_05", Vector3(1.3, 0, 1.3), 0.0, 0.75)
-	b.add("SM_Prop_Seat_Bench_05", Vector3(0, 0, 2.4), 0.0, 0.75)
+	for c: Vector3 in [Vector3(-1.3, 0, 1.3), Vector3(1.3, 0, 1.3), Vector3(0, 0, 2.4)]:
+		_put_xf(b, "SM_Prop_Seat_Bench_05", Transform3D(Basis.from_scale(Vector3(0.75, SEAT, 0.9)), c))
 	for x: float in [-2.75, 2.75]:
 		b.add("SM_Prop_Brazier_03", Vector3(x, 0, 0.1), 0.0)
 		b.add("SM_Prop_Brazier_03_Insert_01", Vector3(x, 0, 0.1), 0.0)

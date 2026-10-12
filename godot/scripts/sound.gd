@@ -42,11 +42,10 @@ func _ready() -> void:
 		p.bus = "SFX"
 		add_child(p)
 		pool.append(p)
-	var d := DirAccess.open("res://assets/music")
-	if d:
-		for f in d.get_files():
-			if f.ends_with(".ogg"):
-				tracks.append("res://assets/music/" + f)
+	# список музыки (в собранной игре тоже: ResourceLoader видит и упакованные файлы)
+	for f in ResourceLoader.list_directory("res://assets/music"):
+		if String(f).ends_with(".ogg"):
+			tracks.append("res://assets/music/" + String(f))
 	tracks.sort()
 	order = range(tracks.size())
 	order.shuffle()
@@ -76,7 +75,7 @@ func _process(dt: float) -> void:
 		if _pause_t <= 0.0:
 			cur = (cur + 1) % order.size()
 			music.stream = load(tracks[order[cur]])
-			music.volume_db = -6.0
+			music.volume_db = -10.0          # записи выровнены по громкости (-18 LUFS) — чуть тише, как раньше
 			music.play()
 	# птицы днём, тише издалека; ночью тишина
 	if game and game.ready_done:

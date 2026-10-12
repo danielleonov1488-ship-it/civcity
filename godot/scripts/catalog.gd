@@ -127,16 +127,16 @@ static func _actors(b: Bp, type: String, tier: int) -> void:
 		"stall_fruit", "stall_veg", "stall_fish":
 			b.actor(Vector3(0, 0, -0.4), 0.0, "Idle_Talking", "any")
 		"butcher", "cobbler", "potter", "oilshop", "wineshop", "lamps":
-			b.actor(Vector3(1.0, 0, 0.6), 0.0, "Idle_Talking", "any")
+			b.actor(Vector3(1.0 * CatShops.SX, 0, 0.6), 0.0, "Idle_Talking", "any")
 		"perfumer", "jeweler", "tailor", "weaver", "medic":
-			b.actor(Vector3(1.25, 0, 0.35), 0.0, "Interact", "any")
+			b.actor(Vector3(1.25 * CatShops.SX, 0, 0.35), 0.0, "Interact", "any")
 		"bakery":
 			b.actor(Vector3(-1.2, 0, 1.75), PI, "Interact", "pleb")
 		"barber":
 			b.actor(Vector3(1.25, 0, 1.0), 0.0, "Sitting_Idle", "pleb")
 			b.actor(Vector3(1.9, 0, 1.2), -PI / 2, "Interact", "any")
 		"thermopolium":
-			b.actor(Vector3(-1.25, 0, 0.1), 0.0, "Idle_Talking", "any")
+			b.actor(Vector3(-1.25, 0, 0.34), 0.0, "Idle_Talking", "any")
 		"taberna":
 			b.actor(Vector3(-2.0, 0, 2.1), PI, "Idle_Talking", "any")
 			b.actor(Vector3(1.8, 0, 0.7), 0.0, "Idle_Talking", "any")
@@ -166,11 +166,11 @@ static func _actors(b: Bp, type: String, tier: int) -> void:
 			b.actor(Vector3(-1.6, 0, 1.2), 0.9, "Idle_Talking", "rich")
 			b.actor(Vector3(2.4, 0, 3.8), 0.0, "Sword_Idle", "soldier")
 		"center":
-			b.actor(Vector3(1.0, 0, 1.0), 0.4, "Idle_Talking", "any")
+			b.actor(Vector3(1.0, 0, 1.0) * CatCivic.CENTER_K, 0.4, "Idle_Talking", "any")
 			if tier >= 2:
-				b.actor(Vector3(-2.6, 0, 3.6), 0.0, "Sword_Idle", "soldier")
+				b.actor(Vector3(-2.6, 0, 3.6) * CatCivic.CENTER_K, 0.0, "Sword_Idle", "soldier")
 		"house_patrician":
-			b.actor(Vector3(2.4, 0, -4.2), b.rng.randf() * TAU, "Fixing_Kneeling", "pleb")
+			b.actor(Vector3(1.1, 0, -4.2), b.rng.randf() * TAU, "Fixing_Kneeling", "pleb")
 
 
 static func _trim_run(b: Bp, a: Vector3, dir: Vector3, len: float) -> void:

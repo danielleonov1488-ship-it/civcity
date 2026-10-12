@@ -4,9 +4,12 @@ extends RefCounted
 ## (Помпеи, Остия, Кампания). Чертёж Bp строится в родных размерах Synty (пролёт 2,5 м, этаж 3 м);
 ## Catalog.make потом уменьшает его до «кукольного» масштаба (Catalog.ARCH).
 ## Как в Town to City: у всех обликов одного класса ОДНА И ТА ЖЕ коробка — ширина, глубина, линия фасада, этажи,
-## высота карниза и конька (плебеи 5×5 м, ремесленники 7,5×5 м, патриции 10×5 м и сад за домом). Разные только
-## фасад (дверь, окна, ставни, балконы, навесы, фризы, таблички, фонари, цветы, плющ), вид крыши (шатровая,
-## двускатная, фронтоном к улице — конёк на одной высоте), черепица, навершия, место трубы и цвет штукатурки.
+## высота карниза и конька. Дома узкие (просьба владельца): у всех трёх классов фасад одной ширины — два пролёта
+## (дверь и окно/лавка), собранные из пролётов Synty по 2,5 м и сжатые вдоль фасада (_narrow, SX) до 4 м.
+## Плебеи — коробка 5 м в глубину; ремесленники — та же коробка с лавкой внизу и двором-мастерской под навесом
+## за домом; патриции — коробка за портиком с тремя колоннами на мраморном полу и сад за стенами. Разные только фасад (дверь, окна,
+## ставни, балконы, навесы, фризы, таблички, фонари, цветы, плющ, статуи), вид крыши (шатровая, двускатная,
+## фронтоном к улице — конёк на одной высоте), черепица, навершия, место трубы и цвет штукатурки.
 ## Рост тоже один на класс: tier = этажи; второй этаж — во всю глубину, третий — в глубине, впереди терраса.
 
 const M := Bp.M
@@ -50,6 +53,43 @@ static var _corner_runs := {}     # угловые столбики коробо
 
 static func R(x0: float, x1: float, z0: float, z1: float) -> PackedFloat32Array:
 	return PackedFloat32Array([x0, x1, z0, z1])
+
+
+## Узкие дома: чертёж собирается в пролётах Synty по 2,5 м, а в конце сжимается вдоль фасада (ось X) в SX раз.
+## Стены, карнизы, крыши, двери и ставни, ступени, навесы, ящики цветов, плющ и лоза сжимаются вместе с пролётом;
+## вещи (горшки, скамьи, амфоры, фонари, статуи, колонны, трубы, таблички, вывески, навершия) сохраняют пропорции —
+## сдвигается только их середина. Огни, дым и вход — следом
+const SX := 0.75
+const RIGID := ["SM_Bld_Pillar", "SM_Bld_Roof_Topper", "SM_Bld_Ornament", "SM_Bld_Trellis_Pillar", "SM_Env_Ivy_Pillar"]
+const FLEX := ["SM_Bld_", "#dark", "SM_Prop_Overhang", "SM_Prop_Mural", "SM_Prop_FlowerBed", "SM_Prop_Drapery", "SM_Env_Ivy", "SM_Env_Vine"]
+
+
+static func _flex(nm: String) -> bool:
+	for s: String in RIGID:
+		if nm.begins_with(s):
+			return false
+	for s: String in FLEX:
+		if nm.begins_with(s):
+			return true
+	return false
+
+
+static func _narrow(b: Bp, sx := SX) -> void:
+	var S := Basis.from_scale(Vector3(sx, 1, 1))
+	var k := Vector3(sx, 1, 1)
+	for p: Array in b.parts:
+		var nm: String = p[0]
+		var xf: Transform3D = p[1]
+		if _flex(nm):
+			p[1] = Transform3D(S * xf.basis, xf.origin * k)
+		else:
+			var c := xf * Bp.model_aabb(nm).get_center()
+			p[1] = Transform3D(xf.basis, xf.origin + Vector3(c.x * (sx - 1.0), 0, 0))
+	for i in b.lights.size():
+		b.lights[i] = b.lights[i] * k
+	for i in b.smoke.size():
+		b.smoke[i] = b.smoke[i] * k
+	b.door = b.door * k
 
 
 ## Начало дома: класс жильцов, черепица (только терракота), решётки окон по классу, штукатурка без «фахверка».
@@ -151,12 +191,14 @@ static func _n(r: PackedFloat32Array, side: int) -> int:
 
 
 ## Этаж коробки r на уровне f: spec {сторона: [пролёты]}; "" — пропуск (там сосед/пристройка), нет в списке — глухая стена.
-## o: cornice (карниз; TRIM_MID — тонкий поясок; "" — без), plinth (каменный цоколь), sides, corners, y
+## o: cornice (карниз; TRIM_MID — тонкий поясок; "" — без), plinth (каменный цоколь), no_plinth (стороны без цоколя),
+## sides, corners, y
 static func _storey(b: Bp, r: PackedFloat32Array, f: int, spec: Dictionary, o := {}) -> void:
 	var y: float = o.get("y", f * FL)
 	var cor: String = o.get("cornice", "SM_Bld_Trim_02")
 	var cy := FL - (0.11 if cor == TRIM_MID else 0.33)
-	var plinth: bool = o.get("plinth", f == 0)
+	var plinth0: bool = o.get("plinth", f == 0)
+	var no_plinth: Array = o.get("no_plinth", [])
 	var sides: Array = o.get("sides", [0, 1, 2, 3])
 	b.remap = b.floor_remap(f)
 	var wr := _wr(b)
@@ -164,6 +206,7 @@ static func _storey(b: Bp, r: PackedFloat32Array, f: int, spec: Dictionary, o :=
 	for side: int in sides:
 		var names: Array = spec.get(side, [])
 		var n := _n(r, side)
+		var plinth := plinth0 and not no_plinth.has(side)
 		# по бокам и сзади карниз и цоколь — одной деталью на всю стену (их видно наискосок);
 		# тонкий поясок — одной деталью и на фасаде; богатый карниз и цоколь фасада — по пролётам
 		var gaps := names.has("")
@@ -254,14 +297,13 @@ static func _step(b: Bp, r: PackedFloat32Array, side: int, i: int) -> void:
 	_put(b, "SM_Bld_Floor_Trim_01", a[0], a[1], Vector3(0.56, 1.0, 0.55))
 
 
-## Парадная двустворчатая дверь домуса: створки во весь проём (2 м), широкая ступень; сюда входят жители
+## Парадная двустворчатая дверь домуса: створки во весь проём (2 м); порог — мраморный пол портика (_podium);
+## сюда входят жители
 static func _grand_door(b: Bp, r: PackedFloat32Array, i: int) -> void:
 	var nm := "SM_Bld_Door_Half_0%d" % b.pick([2, 3])
 	for k in 2:
 		var a := _sp(r, 0, i * M + 0.25 + k * 1.0, 0.0, -0.02)
 		_put(b, nm, a[0], a[1], Vector3(2.0, 1.08, 1.0))
-	var s := _sp(r, 0, i * M + 0.2, 0.0, 0.06)
-	_put(b, "SM_Bld_Floor_Trim_01", s[0], s[1], Vector3(0.84, 1.0, 0.55))
 	var d := _sp(r, 0, i * M + 1.25, 0.0, 0.9)
 	b.door = b.base * (d[0] as Vector3)
 
@@ -317,8 +359,15 @@ static func _win(b: Bp, r: PackedFloat32Array, side: int, i: int, f: int, leaf: 
 		_wbox(b, r, side, i, f * FL)
 
 
+## Низ настенного фонаря — не ниже этого (в родных метрах): у Bp.footprint() всё, что висит ниже 1,6 м игры, занимает
+## землю; фонарь пониже «съедал» бы клетку мостовой перед фасадом, а у обликов одного класса след был бы разный
+static func _lamp_y(y: float) -> float:
+	return maxf(y, 1.63 / Catalog.ARCH)
+
+
 ## Римский фонарь на кронштейне (ночью горит)
 static func _lamp(b: Bp, r: PackedFloat32Array, side: int, u: float, y := 2.25) -> void:
+	y = _lamp_y(y)
 	var a := _sp(r, side, u, y, 0.11)
 	_put(b, "#wall_lamp", a[0], a[1])
 	b.light((a[0] as Vector3) + Basis(Vector3.UP, a[1]) * Vector3(0, -0.2, 0.42))
@@ -441,36 +490,39 @@ static func _bench(b: Bp, p: Vector3, yaw := 0.0) -> void:
 
 ## Скамья у стены под окном пролёта i (ящика цветов под этим окном нет) и горшок у её края
 static func _street_bench(b: Bp, r: PackedFloat32Array, i: int) -> void:
-	_bench(b, Vector3(r[0] + i * M + 1.25, 0, r[3] + 0.5))
-	_pot(b, Vector3(r[0] + i * M + (0.22 if b.chance(0.5) else 2.28), 0, r[3] + 0.46), 0.45)
+	_put(b, "SM_Prop_Seat_Bench_01", Vector3(r[0] + i * M + 1.25, 0, r[3] + 0.5), 0.0, Vector3.ONE * 0.75)    # пролёт узкий — скамья короче
+	_pot(b, Vector3(r[0] + i * M + (0.18 if b.chance(0.5) else 2.32), 0, r[3] + 0.46), 0.42)
 
 
 ## Задняя стена этажа — одна на класс (облики различаются фасадом, зад у всех одинаковый), без случайности:
 ## внизу окно с решёткой и задняя дверь со ступенькой; на втором этаже окна со ставнями (у ремесленников между
-## ними висячие цветы); наверху окошки под карнизом. У домуса (в сад): внизу окна и дверь в сад,
-## наверху окна, средние — со ставнями
+## ними висячие цветы); наверху окошки под карнизом. У домуса (в сад): внизу двустворчатая дверь в сад с широкой
+## ступенью (створки — _house_patrician) и окно, наверху окно с фронтончиком и окно со ставнями
 static func _bk(b: Bp, r: PackedFloat32Array, f: int, shut: String) -> Array:
 	var n := _n(r, 2)
 	var a: Array
-	if n >= 4:
-		a = [W1, WALL, D4, W1] if f == 0 else [W2, W1, W1, W2]
-		if f == 1:
-			for i: int in [1, 2]:
-				_shutters(b, r, 2, i, FL, shut)
-		return a
+	if String(_st.get("cls", "")) == "patrician" and n == 2:
+		if f == 0:
+			var s := _sp(r, 2, 0.2, 0.0, 0.06)
+			_put(b, "SM_Bld_Floor_Trim_01", s[0], s[1], Vector3(0.84, 1.0, 0.55))
+			return [D4, W1]
+		_shutters(b, r, 2, 1, f * FL, shut)
+		return [W5, W1]
 	match f:
 		0:
 			a = [W1, D4] if n == 2 else [W1, D4, W1]
 			_door(b, r, 2, 1, "SM_Bld_Door_01", 0.0, false)
 			_step(b, r, 2, 1)
 		1:
-			a = [W1, W1] if n == 2 else [W1, WALL, W1]
+			a = [W1, W2] if n == 2 else [W1, WALL, W1]      # одно окно со ставнями, другое — окошки под карнизом
 			if n == 3:
 				_on(b, "SM_Prop_FlowerPot_Hanging_05", r, 2, 1.5 * M, FL + 2.3, 0.11, 0.6)
 		_:
 			a = [W2, W2] if n == 2 else [W2, WALL, W2]
+	# у трёхэтажного окно второго этажа сзади — без ставен (сзади их почти не видно, а деталей у дома и так много)
+	var bare := f == 1 and int(_st.get("floors", 0)) >= 3
 	for i in n:
-		if f >= 1 and a[i] == W1:
+		if f >= 1 and a[i] == W1 and not bare:
 			_shutters(b, r, 2, i, f * FL, shut)
 	return a
 
@@ -636,7 +688,7 @@ static func _terrace(b: Bp, r: PackedFloat32Array, top: float, rails := [0, 1, 3
 				_on(b, rail, r, side, i * M, top, 0.0, 1.0, true)
 
 
-## Обстановка террасы (пол на высоте y): горшки по углам, ковёр или плющ на парапете, скамья или столик с табуретом
+## Обстановка террасы (пол на высоте y): горшки по углам, ковёр или плющ на парапете, скамья или столик с кувшином
 static func _terrace_dress(b: Bp, rf: PackedFloat32Array, y: float) -> void:
 	var ty := y + 0.07
 	var w := rf[1] - rf[0]
@@ -651,7 +703,6 @@ static func _terrace_dress(b: Bp, rf: PackedFloat32Array, y: float) -> void:
 		_bench(b, Vector3(cx + b.rng.randf_range(-0.6, 0.6), ty, rf[2] + 0.75))
 	else:
 		_put(b, "SM_Prop_Table_07", Vector3(cx + 0.3, ty, rf[2] + 1.2), 0.0, Vector3.ONE * 0.9)
-		_put(b, "SM_Prop_Stool_01", Vector3(cx - 0.5, ty, rf[2] + 1.25), 0.4)
 		_put(b, "SM_Prop_Jug_05", Vector3(cx + 0.3, ty + 0.5, rf[2] + 1.2), 0.0)
 
 
@@ -773,7 +824,7 @@ const RISE_PAT := 1.2       # домус
 ## Крыша над коробкой r с карнизом на высоте eave: "hip" — шатровая/вальмовая, "gx" — двускатная, конёк вдоль улицы,
 ## "gz" — фронтоном к улице (скат положе: пролёт шире, а конёк на той же высоте). Навершия, одна труба на коньке
 ## (chim — где вдоль конька, −1…1), medal — мраморный медальон во фронтоне. Возвращает высоту конька
-static func _roof(b: Bp, r: PackedFloat32Array, eave: float, kind: String, rise: float, chim: float, medal := false) -> float:
+static func _roof(b: Bp, r: PackedFloat32Array, eave: float, kind: String, rise: float, chim: float, medal := false, detail := true) -> float:
 	var w := r[1] - r[0]
 	var d := r[3] - r[2]
 	var tp: String = _st.get("tp", "SM_Bld_Roof_Topper_01")      # навершие выбрано в _begin — одно на всех этажах
@@ -794,12 +845,12 @@ static func _roof(b: Bp, r: PackedFloat32Array, eave: float, kind: String, rise:
 				reach = 1.24
 		"gz":
 			half = w / 2.0
-			_gable(b, r, eave, rise / (0.75 * half / M), true, tp)
+			_gable(b, r, eave, rise / (0.75 * half / M), true, tp, detail)
 			at += Vector3(0, 0, chim * maxf(0.0, d / 2.0 - 0.9))
 			if medal:
 				_medallion(b, r, 0, w / 2.0, eave + rise * 0.4, true)
 		_:
-			_gable(b, r, eave, rise / (0.75 * half / M), false, tp)
+			_gable(b, r, eave, rise / (0.75 * half / M), false, tp, detail)
 			at += Vector3(chim * (w / 2.0 - 0.9), 0, 0)
 	var ridge := eave + rise
 	_chimney(b, at + Vector3(0, ridge - rise / half * reach - 0.06, 0))
@@ -809,17 +860,23 @@ static func _roof(b: Bp, r: PackedFloat32Array, eave: float, kind: String, rise:
 ## Каркас дома — одна коробка r0 на все облики класса: до двух этажей во всю глубину, у трёхэтажного третий —
 ## в глубине, впереди терраса (как в Town to City); крыша. p: g / u / t — пролёты фасада первого, второго этажа
 ## и комнаты на крыше; roof / troof — вид крыши дома и комнаты; chim — труба вдоль конька; rise — подъём конька;
-## medal — медальон во фронтоне; dress — обставить террасу. Бока и зад у всех одинаковые (_bk).
+## medal — медальон во фронтоне; dress — обставить террасу. Бока и зад у всех одинаковые (_bk); на верхних этажах
+## на каждой боковой стене окошки под карнизом в передней половине (у края ряда высокий узкий дом не стоит глухой
+## плитой), внизу бока глухие. У трёхэтажного — без цоколя сзади (бережём детали).
 ## Случайность по этажам — из своих потоков (_begin); по выходе снова поток «g». Возвращает {r0, rb, rf, cor, shut, ridge}
 static func _frame(b: Bp, r0: PackedFloat32Array, floors: int, p: Dictionary) -> Dictionary:
 	var cor := _cor(b)
+	if String(_st.get("cls", "")) == "patrician":
+		cor = "SM_Bld_Trim_04"           # у домуса — самый богатый карниз (у узкого фасада всего два пролёта)
 	var shut := _shut(b)
 	var full := mini(floors, 2)
+	_st["floors"] = floors
 	var g: Array = p["g"]
 	for f in full:
 		_use(b, "g" if f == 0 else "f1")
-		_storey(b, r0, f, {0: g if f == 0 else p["u"], 1: [] if f == 0 else [W2, WALL], 2: _bk(b, r0, f, shut), 3: [] if f == 0 else [WALL, W2]},
-			{"cornice": cor if f == floors - 1 else TRIM_MID})
+		_storey(b, r0, f, {0: g if f == 0 else p["u"], 1: [] if f == 0 else [W2, WALL], 2: _bk(b, r0, f, shut),
+			3: [] if f == 0 else [WALL, W2]},
+			{"cornice": cor if f == floors - 1 else TRIM_MID, "no_plinth": [2] if floors >= 3 else []})
 	if g.has(SHOP):
 		_dark_shops(b, r0, full * FL)
 	else:
@@ -833,7 +890,7 @@ static func _frame(b: Bp, r0: PackedFloat32Array, floors: int, p: Dictionary) ->
 		o["rb"] = rb
 		o["rf"] = R(r0[0], r0[1], rb[3], r0[3])
 		_use(b, "roof")
-		o["ridge"] = _roof(b, rb, 3 * FL, p.get("troof", "gx"), RISE_TOP, chim, medal)
+		o["ridge"] = _roof(b, rb, 3 * FL, p.get("troof", "gx"), RISE_TOP, chim, medal, false)
 	else:
 		_use(b, "roof")
 		o["ridge"] = _roof(b, r0, floors * FL, p.get("roof", "gx"), p.get("rise", RISE), chim, medal)
@@ -873,8 +930,8 @@ static func _terrace_pergola(b: Bp, o: Dictionary, pi: int) -> void:
 #                                     дома плебеев
 # =====================================================================================
 
-## Дом плебеев: у всех пяти обликов одна коробка 5×5 м (2×2 пролёта), фасад на одной линии; второй этаж во всю
-## глубину, третий — в глубине с террасой впереди. Разное — фасад, отделка, вид крыши (конёк на одной высоте)
+## Дом плебеев: у всех пяти обликов одна коробка 2×2 пролёта (после сжатия 4×5 м), фасад на одной линии; второй
+## этаж во всю глубину, третий — в глубине с террасой впереди. Разное — фасад, отделка, вид крыши (конёк на одной высоте)
 static func _house_pleb(b: Bp, floors: int, v: int) -> void:
 	floors = clampi(floors, 1, 3)
 	_begin(b, "pleb", v % 5)
@@ -889,6 +946,7 @@ static func _house_pleb(b: Bp, floors: int, v: int) -> void:
 		_: _pleb_awning(b, r0, floors, di)
 	_use(b, "g")
 	_back_prop(b, r0)
+	_narrow(b)
 
 
 ## Край пролёта двери у угла дома (u вдоль фасада): там горшки, фонарь, кувшин
@@ -1035,14 +1093,15 @@ static func _shop_inside(b: Bp, r: PackedFloat32Array, i: int, kind: int, hang :
 
 ## Лавка: навес, прилавок на пороге (как в Помпеях) с товаром ремесла, товар у стены сбоку, вывеска-полотнище
 ## (kind: 0 — ткач, 1 — гончар, 2 — кузнец/медник, 3 — зерно и мешки)
-## aw — ширина навеса (у двух лавок рядом навесы чуть уже, чтобы не сходились на общем простенке)
-static func _shopfront(b: Bp, r: PackedFloat32Array, i: int, kind: int, awning := true, ban := -1, aw := 1.0) -> void:
+## aw — ширина навеса (у двух лавок рядом навесы чуть уже, чтобы не сходились на общем простенке);
+## ban — вывеска с правого (1) или левого (0) края проёма, −1 — наугад; ban_p — вероятность вывески
+static func _shopfront(b: Bp, r: PackedFloat32Array, i: int, kind: int, awning := true, ban := -1, aw := 1.0, ban_p := 0.6) -> void:
 	if awning:
 		var a := _sp(r, 0, i * M + 1.25, 2.78, 0.12)
 		_put(b, "SM_Prop_Overhang_01", a[0], a[1], Vector3(aw, 1, 1))
 	_shop_inside(b, r, i, mini(kind, 2))
 	var sl := b.chance(0.5) if ban < 0 else ban == 1     # вывеска справа (товар у стены — слева)
-	var su := i * M + (0.32 if sl else 2.18)
+	var su := i * M + (0.45 if sl else 2.05)      # у узкого дома — не за угол
 	if kind == 3:
 		# зерно: мешки горкой на пороге, амфора у стены
 		_put(b, "SM_Prop_Sack_Stack_0%d" % (1 + b.rng.randi() % 2), Vector3(r[0] + i * M + 1.25, 0, r[3] - 0.3), b.rng.randf_range(-0.08, 0.08), Vector3.ONE * 0.72)
@@ -1065,149 +1124,166 @@ static func _shopfront(b: Bp, r: PackedFloat32Array, i: int, kind: int, awning :
 			_put(b, "SM_Prop_Tool_Hammer_01", top + Vector3(-0.3, 0.02, 0), 0.6, Vector3.ONE * 1.3)
 			_put(b, "SM_Prop_Plate_0%d" % (1 + b.rng.randi() % 3), top + Vector3(0.3, 0, 0.05), 0.0, Vector3.ONE * 0.8)
 			_front_put(b, "SM_Prop_Anvil_01", r, su, 0.0, 0.55, 0.5)
-	if b.chance(0.6):
+	if b.chance(ban_p):
 		_on(b, "SM_Prop_Banner_0%d_%s" % [1 + b.rng.randi() % 2, b.pick(["A", "B", "C", "D", "E", "F"])], r, 0, i * M + (2.48 if sl else 0.02), 2.62, 0.12, 0.45)
 
 
-## Дом ремесленников: у всех пяти обликов одна коробка 7,5×5 м (3×2 пролёта): внизу лавки и дверь в каменном
-## наличнике, наверху жильё; второй этаж во всю глубину, третий — в глубине с террасой впереди
+## Дом ремесленников: у всех пяти обликов одна коробка 2×2 пролёта, как у плебеев (после сжатия 4×5 м): внизу лавка
+## под навесом и дверь в каменном наличнике, наверху жильё; второй этаж во всю глубину, третий — в глубине с террасой
+## впереди. За домом у всех один двор-мастерская под навесом (_art_yard) — дом глубже, чем у плебеев
+const ART_CRAFT := [0, 3, 2, 1, 2]       # ремесло облика: 0 ткач, 1 гончар, 2 кузнец/медник, 3 зерно
 static func _house_artisan(b: Bp, floors: int, v: int) -> void:
 	floors = clampi(floors, 1, 3)
 	_begin(b, "artisan", v % 5)
-	var r0 := R(-3.75, 3.75, -2.5, 2.5)
-	var craft := v % 3
+	var r0 := R(-2.5, 2.5, -2.5, 2.5)
+	var craft: int = ART_CRAFT[v % 5]
+	var si := b.rng.randi() % 2          # пролёт лавки (дверь — в другом)
 	# у облика: сначала всё у земли (поток «g»), потом этажи выше (свои потоки)
 	match v % 5:
-		0: _art_two_shops(b, r0, floors, craft)
-		1: _art_workshop(b, r0, floors, craft)
-		2: _art_pediment(b, r0, floors, craft)
-		3: _art_brick(b, r0, floors, craft)
-		_: _art_balconies(b, r0, floors, craft)
+		0: _art_balcony(b, r0, floors, craft, si)
+		1: _art_workshop(b, r0, floors, craft, si)
+		2: _art_pediment(b, r0, floors, craft, si)
+		3: _art_brick(b, r0, floors, craft, si)
+		_: _art_balconies(b, r0, floors, craft, si)
 	_use(b, "g")
-	_back_prop(b, r0)
+	_art_yard(b, r0, craft)
+	_narrow(b)
 
 
-## 0 «Две лавки»: лавки по сторонам двери, над дверью деревянный висячий балкон; вальмовая крыша
-static func _art_two_shops(b: Bp, r0: PackedFloat32Array, floors: int, craft: int) -> void:
-	var o := _frame(b, r0, floors, {"g": [SHOP, D3, SHOP], "u": [W1, D4, W1], "t": [W1, D4, W1], "roof": "hip", "troof": "hip",
-		"chim": b.pick([-1.0, 1.0])})
-	var shut: String = o["shut"]
-	_door(b, r0, 0, 1, _leaf(b))
-	_step(b, r0, 0, 1)
-	_shopfront(b, r0, 0, craft, true, 0)
-	_shopfront(b, r0, 2, (craft + 1) % 4, true, 1)
-	_lamp(b, r0, 0, M if b.chance(0.5) else 2 * M, 2.2)
-	_side_ivy(b, r0, b.pick([1, 3]), 1.5)
-	if floors >= 2:
-		_use(b, "f1")
-		_win(b, r0, 0, 0, 1, shut)
-		_win(b, r0, 0, 2, 1, shut)
-		_balcony(b, r0, 0, 1, 1)
-		_door2(b, r0, 0, 1, 1)
+## Лавка в пролёте si: навес, прилавок с товаром, вывеска — у простенка с дверью (не свешивается за угол дома)
+static func _art_shop(b: Bp, r0: PackedFloat32Array, si: int, craft: int, ban_p := 0.6) -> void:
+	_shopfront(b, r0, si, craft, true, 1 if si == 0 else 0, 1.0, ban_p)
 
 
-## 1 «Мастерская»: две лавки рядом под навесами, дверь с краю; наверху окна со ставнями и цветами, между ними
-## вывеска-полотнище мастерской; двускатная крыша, на террасе пергола
-static func _art_workshop(b: Bp, r0: PackedFloat32Array, floors: int, craft: int) -> void:
-	var di := 0 if b.chance(0.5) else 2
-	var o := _frame(b, r0, floors, {"g": _bays(3, di, D3, SHOP), "u": [W1, WALL, W1], "t": _bays(3, 1, D4), "roof": "gx", "troof": "hip",
-		"chim": 0.6 if di == 0 else -0.6, "dress": false})
-	var shut: String = o["shut"]
-	_door(b, r0, 0, di, _leaf(b))
-	_step(b, r0, 0, di)
-	var k := 0
-	for i in 3:
-		if i != di:
-			_shopfront(b, r0, i, craft if k == 0 else 3, true, -1, 0.92)
-			k += 1
-	_lamp(b, r0, 0, _outer(di, 3, 0.2), 2.2)
-	_front_pot(b, r0, _outer(di, 3, 0.32), 0.5)
-	_side_ivy(b, r0, 3 if di == 0 else 1, 1.5)
-	if floors >= 2:
-		_use(b, "f1")
-		_win(b, r0, 0, 0, 1, shut)
-		_win(b, r0, 0, 2, 1, shut)
-		# вывеска мастерской между окнами — крупное полотнище (маленькая табличка издали читалась пятном)
-		_on(b, "SM_Prop_Banner_0%d_%s" % [1 + b.rng.randi() % 2, b.pick(["A", "B", "C", "D", "E", "F"])], r0, 0, 1.5 * M, FL + 2.62, 0.12, 0.85)
-	if floors >= 3:
-		_use(b, "f2")
-		_terrace_pergola(b, o, 2 if di == 0 else 0)
+## Двор-мастерская за домом ремесленника — у всех обликов один и тот же: черепичный навес скатом назад на двух
+## деревянных столбах вдоль задней стены, под ним снасть ремесла (у задней двери проход свободен)
+const YARD := 1.9
+static func _art_yard(b: Bp, r0: PackedFloat32Array, craft: int) -> void:
+	var z1 := r0[2]
+	var z0 := z1 - YARD
+	for x: float in [r0[0] + 0.3, r0[1] - 0.3]:
+		_put(b, "SM_Bld_Trellis_Pillar_01", Vector3(x, 0, z0 + 0.3), 0.0, Vector3.ONE * 0.72)
+	b.remap = b.floor_remap(1)
+	_lean(b, R(r0[0], r0[1], z0, z1), 2.15, 0.9, 2)
+	# задняя дверь — в пролёте у −X (_bk), снасть — у +X
+	var p := Vector3(r0[1] - 1.2, 0, z1 - 0.85)
+	match craft:
+		0:
+			_put(b, "SM_Prop_Loom_01", p, PI + 0.15, Vector3.ONE * 0.75)
+			_put(b, "SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 5), p + Vector3(-1.05, 0, 0.35), b.rng.randf() * TAU, Vector3.ONE * 0.7)
+		1:
+			_put(b, "SM_Prop_Kiln_01", p + Vector3(0.1, 0, -0.1), PI, Vector3.ONE * 0.5)
+			_put(b, "SM_Prop_Vase_Pile_0%d" % (1 + b.rng.randi() % 6), p + Vector3(-1.2, 0, 0.2), 0.0, Vector3.ONE * 0.6)
+		2:
+			_put(b, "SM_Prop_Anvil_01", p + Vector3(0.2, 0, 0.1), 0.4, Vector3.ONE * 0.8)
+			_put(b, "SM_Prop_Grinding_Wheel_01", p + Vector3(-0.9, 0.3, -0.1), 1.2, Vector3.ONE * 0.8)
+		_:
+			_put(b, "SM_Prop_Sack_Stack_0%d" % (1 + b.rng.randi() % 2), p, b.rng.randf_range(-0.2, 0.2), Vector3.ONE * 0.7)
+			_put(b, "SM_Prop_Jar_01", p + Vector3(-1.05, 0, 0.3), 0.0, Vector3.ONE * 0.75)
 
 
-## 2 «Фронтон»: лавка, дверь и окно со ставнями; наверху окна с фронтончиками; фронтон к улице с медальоном
-static func _art_pediment(b: Bp, r0: PackedFloat32Array, floors: int, craft: int) -> void:
-	var si := 0 if b.chance(0.5) else 2       # лавка
-	var wi := 2 - si                          # окно
-	var g := [SHOP, D3, SHOP]
-	g[wi] = W1
-	var o := _frame(b, r0, floors, {"g": g, "u": [W5, W1, W5], "t": [W1, D4, W1], "roof": "gz", "troof": "gz",
-		"chim": -0.6, "medal": true})
-	var shut: String = o["shut"]
-	_door(b, r0, 0, 1, _leaf(b))
-	_step(b, r0, 0, 1)
-	_shopfront(b, r0, si, craft)
-	_win(b, r0, 0, wi, 0, shut)
-	_front_jar(b, r0, wi * M + (0.25 if wi == 0 else 2.25), 0.7)
-	_lamp(b, r0, 0, M if wi == 0 else 2 * M, 2.2)
-	_side_ivy(b, r0, b.pick([1, 3]), 1.6)
-	if floors >= 2:
-		_use(b, "f1")
-		_win(b, r0, 0, 1, 1, shut)
-		_hang_pots(b, r0, 0, M if wi == 0 else 2 * M, FL + 2.5)
-
-
-## 3 «Кирпич»: кирпичный низ, лавка, дверь и окно со скамьёй; наверху каменный балкончик над дверью;
-## двускатная крыша
-static func _art_brick(b: Bp, r0: PackedFloat32Array, floors: int, craft: int) -> void:
-	b.ground_style = "brick"
-	_st["jrail"] = "stone"
-	var si := 0 if b.chance(0.5) else 2
-	var wi := 2 - si
-	var g := [SHOP, D3, SHOP]
-	g[wi] = W1
-	var o := _frame(b, r0, floors, {"g": g, "u": [W1, D4, W1], "t": _bays(3, si, D4), "roof": "gx", "troof": "hip",
-		"chim": -0.6 if si == 0 else 0.6})
-	var shut: String = o["shut"]
-	_door(b, r0, 0, 1, _leaf(b))
-	_step(b, r0, 0, 1)
-	_shopfront(b, r0, si, craft)
-	_win(b, r0, 0, wi, 0, shut, false)
-	_street_bench(b, r0, wi)
-	_lamp(b, r0, 0, M if wi == 0 else 2 * M, 2.2)
-	_side_ivy(b, r0, 3 if wi == 0 else 1, 1.6, 0.9)
-	if floors >= 2:
-		_use(b, "f1")
-		_win(b, r0, 0, 0, 1, shut)
-		_win(b, r0, 0, 2, 1, shut)
-		_jbal(b, r0, 0, 1, 1)
-		_door2(b, r0, 0, 1, 1)
-
-
-## 4 «Балкончики»: лавка, окно и дверь; наверху два балкончика по краям и расписной фриз; вальмовая крыша
-static func _art_balconies(b: Bp, r0: PackedFloat32Array, floors: int, craft: int) -> void:
-	var di := 0 if b.chance(0.5) else 2
-	var si := 2 - di
-	var g := [W1, W1, W1]
-	g[di] = D3
-	g[si] = SHOP
-	var u := [D4, W1, D4]
-	var o := _frame(b, r0, floors, {"g": g, "u": u, "t": [W1, D4, W1], "roof": "hip", "troof": "hip",
+## 0 «Балкон»: лавка под черепичным навесом, рядом дверь в каменном наличнике; над дверью деревянный висячий
+## балкон, над лавкой окно со ставнями и цветами; вальмовая крыша
+static func _art_balcony(b: Bp, r0: PackedFloat32Array, floors: int, craft: int, si: int) -> void:
+	var di := 1 - si
+	var o := _frame(b, r0, floors, {"g": _bays(2, di, D3, SHOP), "u": _bays(2, di, D4), "t": _bays(2, si, D4), "roof": "hip", "troof": "hip",
 		"chim": 1.0 if di == 0 else -1.0})
 	var shut: String = o["shut"]
 	_door(b, r0, 0, di, _leaf(b))
 	_step(b, r0, 0, di)
-	_shopfront(b, r0, si, craft)
-	_win(b, r0, 0, 1, 0, shut)
-	_lamp(b, r0, 0, M if di == 0 else 2 * M, 2.2)
-	_hang_pots(b, r0, 0, _outer(di, 3, 0.22), 2.55)
-	_front_pot(b, r0, _outer(di, 3, 0.32), 0.5)
+	_art_shop(b, r0, si, craft)
+	_lamp(b, r0, 0, _outer(di, 2, 0.2), 2.2)
+	_side_ivy(b, r0, 3 if di == 0 else 1, 1.5)
 	if floors >= 2:
 		_use(b, "f1")
-		_jbal(b, r0, 0, 0, 1)
-		_door2(b, r0, 0, 0, 1)
-		_jbal(b, r0, 0, 2, 1, false)
-		_door2(b, r0, 0, 2, 1)
+		_balcony(b, r0, 0, di, 1)
+		_door2(b, r0, 0, di, 1)
+		_win(b, r0, 0, si, 1, shut)
+
+
+## 1 «Мастерская»: лавка под навесом, наверху два окна со ставнями и вывеска-полотнище между ними;
+## двускатная крыша, на террасе пергола с виноградом
+static func _art_workshop(b: Bp, r0: PackedFloat32Array, floors: int, craft: int, si: int) -> void:
+	var di := 1 - si
+	var o := _frame(b, r0, floors, {"g": _bays(2, di, D3, SHOP), "u": [W1, W1], "t": _bays(2, di, D4), "roof": "gx", "troof": "hip",
+		"chim": 0.55 if di == 0 else -0.55, "dress": false})
+	var shut: String = o["shut"]
+	_door(b, r0, 0, di, _leaf(b))
+	_step(b, r0, 0, di)
+	_art_shop(b, r0, si, craft, 0.0)
+	_front_pot(b, r0, _outer(di, 2, 0.36), 0.5)
+	_lamp(b, r0, 0, _outer(di, 2, 0.2), 2.2)
+	if floors >= 2:
+		_use(b, "f1")
+		_win(b, r0, 0, 0, 1, shut)
 		_win(b, r0, 0, 1, 1, shut)
+		# вывеска мастерской между окнами (над ставнями)
+		_on(b, "SM_Prop_Banner_0%d_%s" % [1 + b.rng.randi() % 2, b.pick(["A", "B", "C", "D", "E", "F"])], r0, 0, M, FL + 2.66, 0.12, 0.5)
+	if floors >= 3:
+		_use(b, "f2")
+		_terrace_pergola(b, o, si)
+
+
+## 2 «Фронтон»: лавка, дверь; наверху окна с фронтончиками и ящиками цветов, между ними висячие цветы;
+## фронтон к улице с медальоном
+static func _art_pediment(b: Bp, r0: PackedFloat32Array, floors: int, craft: int, si: int) -> void:
+	var di := 1 - si
+	var o := _frame(b, r0, floors, {"g": _bays(2, di, D3, SHOP), "u": [W5, W5], "t": _bays(2, di, D4), "roof": "gz", "troof": "gz",
+		"chim": -0.6, "medal": true})
+	_door(b, r0, 0, di, _leaf(b))
+	_step(b, r0, 0, di)
+	_art_shop(b, r0, si, craft)
+	_front_jar(b, r0, _outer(di, 2, 0.36), 0.7)
+	_lamp(b, r0, 0, _outer(di, 2, 0.2), 2.2)
+	_side_ivy(b, r0, b.pick([1, 3]), 1.6)
+	if floors >= 2:
+		_use(b, "f1")
+		for i in 2:
+			_wbox(b, r0, 0, i, FL)
+		_hang_pots(b, r0, 0, M, FL + 2.5)
+
+
+## 3 «Кирпич»: кирпичный низ, лавка, дверь; наверху балкончик с решёткой над дверью и окно со ставнями;
+## двускатная крыша
+static func _art_brick(b: Bp, r0: PackedFloat32Array, floors: int, craft: int, si: int) -> void:
+	var di := 1 - si
+	b.ground_style = "brick"
+	_st["jrail"] = "bars"            # каменный балкончик на узком фасаде читался глухим ящиком
+	var o := _frame(b, r0, floors, {"g": _bays(2, di, D3, SHOP), "u": _bays(2, di, D4), "t": _bays(2, si, D4), "roof": "gx", "troof": "hip",
+		"chim": -0.55 if di == 0 else 0.55})
+	var shut: String = o["shut"]
+	_door(b, r0, 0, di, _leaf(b))
+	_step(b, r0, 0, di)
+	_art_shop(b, r0, si, craft)
+	_front_jar(b, r0, _outer(di, 2, 0.34), 0.65)
+	_lamp(b, r0, 0, _outer(di, 2, 0.2), 2.2)
+	_side_ivy(b, r0, 3 if di == 0 else 1, 1.6, 0.9)
+	if floors >= 2:
+		_use(b, "f1")
+		_jbal(b, r0, 0, di, 1)
+		_door2(b, r0, 0, di, 1)
+		_win(b, r0, 0, si, 1, shut)
+
+
+## 4 «Балкончик»: лавка, дверь, горшок у входа; наверху балкончик с решёткой над лавкой, окно со ставнями
+## и расписной фриз; вальмовая крыша
+static func _art_balconies(b: Bp, r0: PackedFloat32Array, floors: int, craft: int, si: int) -> void:
+	var di := 1 - si
+	_st["jrail"] = "bars"
+	var u := _bays(2, si, D4)
+	var o := _frame(b, r0, floors, {"g": _bays(2, di, D3, SHOP), "u": u, "t": _bays(2, di, D4), "roof": "hip", "troof": "gx",
+		"chim": 1.0 if di == 0 else -1.0})
+	var shut: String = o["shut"]
+	_door(b, r0, 0, di, _leaf(b))
+	_step(b, r0, 0, di)
+	_art_shop(b, r0, si, craft)
+	_lamp(b, r0, 0, _outer(di, 2, 0.2), 2.2)
+	_front_pot(b, r0, _outer(di, 2, 0.36), 0.5)
+	if floors >= 2:
+		_use(b, "f1")
+		_jbal(b, r0, 0, si, 1)
+		_door2(b, r0, 0, si, 1)
+		_win(b, r0, 0, di, 1, shut)
 		_frieze(b, r0, 0, 1, u)
 
 
@@ -1254,172 +1330,237 @@ static func _pillar_ivy(b: Bp, p: Vector3, front: float) -> void:
 	b.add_xf(nm, Transform3D(bs, Vector3(p.x, p.y, z)))
 
 
-## Протирон — главный знак богатого дома: два мраморных столба у парадной двери (пролёт i фасада r)
-## под маленьким черепичным фронтоном, на столбах — фонари. У всех домусов одинаковой глубины: он задаёт линию фасада
+## Портик домуса во всю ширину фасада — главный знак богатого дома: мраморный пол-стилобат со ступенью к улице
+## (_podium), на нём три небольшие мраморные колонны (по углам и посередине: дверь и окно — каждое в своём пролёте
+## между колоннами), на крайних — фонари. Вид крыши портика: "ped" — черепичный фронтон к улице с золотым навершием
+## и мраморным медальоном, "lean" — черепичный навес скатом к улице на мраморном архитраве, "flat" — лоджия-терраса
+## с каменной балюстрадой и статуями по углам. Колонны у всех обликов на одних местах: портик задаёт линию фасада
+## (дом стоит за ним в глубине)
 const PORCH := 1.1
-static func _porch(b: Bp, r: PackedFloat32Array, i: int) -> float:
-	var dx := r[0] + i * M + 1.25
-	var z0 := r[3]
-	var pz := z0 + PORCH - 0.26
-	for sx: float in [-1.0, 1.0]:
-		_put(b, "SM_Bld_Pillar_06", Vector3(dx + sx * 1.0, 0, pz), 0.0, Vector3(1, 0.97, 1))
-		_put(b, "#wall_lamp", Vector3(dx + sx * 1.0, 2.15, pz + 0.25), 0.0, Vector3.ONE * 0.85)
-	b.light(Vector3(dx, 1.95, pz + 0.6))
-	_gable(b, R(dx - 1.25, dx + 1.25, z0 - 0.05, z0 + PORCH + 0.12), FL - 0.12, 1.25, true, "SM_Bld_Roof_Topper_06", false, false)
-	var front := pz + 0.26
-	b.door = b.base * Vector3(dx, 0, front + 0.45)
-	return front
+const PCOL := [-2.2, 0.0, 2.2]       # колонны до сжатия (после — ±1,65 м и середина)
+const PH := 0.125                    # верх мраморного пола портика (вещи под портиком стоят на нём)
+const MARBLE_FLOOR := {"Stone_01": "Building_Marble_01"}
+static func _portico(b: Bp, rm: PackedFloat32Array, style: String) -> void:
+	var z0 := rm[3]
+	var pz := z0 + PORCH - 0.2
+	var top := FL - 0.12
+	var ly := _lamp_y(2.15)
+	_podium(b, rm)
+	for x: float in PCOL:
+		_put(b, "SM_Bld_Pillar_06", Vector3(x, PH, pz), 0.0, Vector3(0.75, (2.91 - PH) / 3.0, 0.75))
+	for x: float in [PCOL[0], PCOL[2]]:
+		_put(b, "#wall_lamp", Vector3(x, ly, pz + 0.18), 0.0, Vector3.ONE * 0.8)
+	b.light(Vector3(0, ly - 0.2, pz + 0.55))
+	var rp := R(rm[0], rm[1], z0 - 0.05, z0 + PORCH + 0.12)
+	match style:
+		"ped":
+			_gable(b, rp, top, 1.0, true, "SM_Bld_Roof_Topper_06", false, false)
+			_medallion(b, rp, 0, (rm[1] - rm[0]) / 2.0, top + 0.27, true)
+		"lean":
+			b.remap = b.floor_remap(1)
+			_lean(b, rp, top, 0.95, 0)
+			# мраморный архитрав по верху колонн (богатый карниз, как под крышей дома) — навес не «плебейский»
+			for i in 2:
+				_put(b, "SM_Bld_Trim_04", Vector3(rm[0] + i * M, top - 0.3, pz + 0.09), 0.0)
+		_:
+			# лоджия: плита с каменной балюстрадой спереди и по бокам, статуи на углах, горшок с цветами
+			var rr: Dictionary = b.remap.duplicate()
+			var d := rp[3] - rp[2]
+			_put(b, "SM_Bld_Roof_Base_Flat_02", Vector3(rp[0], top - 0.68, rp[3]), 0.0, Vector3(2.0, 1, d / M), rr)
+			for i in 2:
+				var rail := _sp(rp, 0, i * M, top, -0.25)
+				_put(b, "SM_Bld_Wall_Balcony_06", rail[0], rail[1], Vector3(1.0, 0.85, 1.0), b.remap.duplicate())
+			for side: int in [1, 3]:
+				var a := _sp(rp, side, 0.0 if side == 1 else 0.05, top, -0.25)
+				_put(b, "SM_Bld_Wall_Balcony_06", a[0], a[1], Vector3((d - 0.05) / M, 0.85, 1.0), b.remap.duplicate())
+			for x: float in [PCOL[0], PCOL[2]]:
+				_put(b, "SM_Prop_Statue_0%d" % b.pick([3, 5, 6]), Vector3(x, top + 0.87, z0 + 0.9), (0.3 if x < 0 else -0.3), Vector3.ONE * 0.34)
+			_pot(b, Vector3(0, top, z0 + 0.45), 0.5)
 
 
-## Парадный вход домуса: двустворчатая дверь и протирон в пролёте pd, по сторонам жаровни (у двухэтажного) или горшки
-static func _pat_entry(b: Bp, rm: PackedFloat32Array, pd: int, floors: int) -> void:
+## Мраморный пол портика (плита толщиной PH от стены до колонн) и каменная ступень во всю ширину по его краю:
+## верхняя полка ступени — под колоннами, нижняя чуть выходит на мостовую (как ступенька у дверей плебеев)
+static func _podium(b: Bp, rm: PackedFloat32Array) -> void:
+	var z0 := rm[3]
+	var w := (rm[1] - rm[0]) / M
+	var zs := z0 + PORCH - 0.165             # начало ступени: верхняя полка доходит до передней кромки колонн
+	_put(b, "SM_Bld_Base_Floor_Combined_01", Vector3(rm[0], PH - 0.01, z0 - 0.05), 0.0,
+		Vector3(w, 1.25, (zs + 0.06 - z0 + 0.05) / M), MARBLE_FLOOR)
+	_put(b, "SM_Bld_Floor_Trim_01", Vector3(rm[0], 0.0, zs), 0.0, Vector3(w, 1.0, 0.45))
+
+
+## Золотая жаровня-чаша на точёной ножке (как у станции); s — масштаб (0,34 — чаша чуть ниже пояса прохожему).
+## В углях — три уголька #lit: днём тёмные, в сумерках разгораются вместе с окнами (сами угли Synty не светятся)
+static func _gold_brazier(b: Bp, p: Vector3, s := 0.34) -> void:
+	_put(b, "SM_Prop_Brazier_01", p, 0.0, Vector3.ONE * s)
+	_put(b, "SM_Prop_Brazier_01_Insert_01", p, 0.0, Vector3.ONE * s)
+	var a := 0.6 + p.x * 2.3          # без случайности: поток «g» у дома одинаков на всех этажностях
+	for k in 3:
+		var off: Vector2 = [Vector2(0.05, 0.0), Vector2(0.3, 0.14), Vector2(-0.22, -0.24)][k]
+		var e: float = [0.3, 0.22, 0.2][k] * s
+		var q := p + Vector3(off.x * s, 1.9 * s, off.y * s)       # утоплены в угли: видны только верхушки
+		b.parts.append(["#lit", b.base * Transform3D(Basis(Vector3.UP, a + k * 0.7).scaled(Vector3.ONE * e), q), {}])
+	b.light(p + Vector3(0, 2.0 * s + 0.3, 0))
+
+
+## Парадный вход домуса: двустворчатая дверь во весь проём в пролёте pd и портик; сюда входят жители
+static func _pat_entry(b: Bp, rm: PackedFloat32Array, pd: int, style: String) -> void:
 	_grand_door(b, rm, pd)
-	_porch(b, rm, pd)
-	var dx := rm[0] + pd * M + 1.25
-	if floors >= 2:
-		b.brazier(Vector3(dx - 1.7, 0, rm[3] + 0.35))
-		b.brazier(Vector3(dx + 1.7, 0, rm[3] + 0.35))
-	else:
-		for sx: float in [-1.6, 1.6]:
-			_pot(b, Vector3(dx + sx, 0, rm[3] + 0.45), 0.55)
+	_portico(b, rm, style)
+	b.door = b.base * Vector3(rm[0] + pd * M + 1.25, 0, rm[3] + PORCH + 0.45)
 
 
-## Домус патрициев: у всех четырёх обликов одна коробка 10×5 м (4×2 пролёта) у улицы, протирон одной глубины
-## и одинаковый сад 10×4 м за домом (стены, кипарисы, клумбы); 1–2 этажа. Разное — фасад, вид крыши, убранство сада
+## Точка на фасаде домуса у земли: пролёт wi, u метров от его левого края (до сжатия)
+static func _wx(rm: PackedFloat32Array, wi: int, u: float) -> float:
+	return rm[0] + wi * M + u
+
+
+## У дальнего угла пролёта окна wi (рядом с угловой колонной портика), до сжатия
+static func _wcorner(rm: PackedFloat32Array, wi: int, k := 0.55) -> float:
+	return _wx(rm, wi, k if wi == 0 else M - k)
+
+
+## На мостовой перед портиком — по паре по сторонам двери (у средней колонны и у крайней, чаша не выходит за угол
+## дома): золотые жаровни-чаши (у двухэтажного) или горшки с цветами. Перед нижней полкой ступени портика
+const BRAZ := 0.34                   # жаровня у входа: чаша чуть ниже пояса прохожему, мостовую не загромождает
+static func _pat_flank(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> void:
+	var rf := R(rm[0], rm[1], rm[2], rm[3] + PORCH)
+	for x: float in [PCOL[1], -2.0 if pd == 0 else 2.0]:
+		var u := x - rm[0]
+		if floors >= 2:
+			# задней кромкой чаши — в CLEAR + 0,08 от линии портика (за нижней полкой ступени), как _front_put
+			_gold_brazier(b, Vector3(x, 0, rf[3] + CLEAR + 0.08 - Bp.model_aabb("SM_Prop_Brazier_01").position.z * BRAZ), BRAZ)
+		else:
+			_front_put(b, "SM_Prop_FlowerPot_Fancy_01", rf, u, 0.57 * 0.5, 0.5, 0.0, 0.08)
+
+
+## Домус патрициев: та же ширина, что у домов плебеев и ремесленников (два пролёта), но дом стоит в глубине за
+## портиком с колоннами во всю ширину, а за домом сад за стенами; 1–2 этажа. У всех четырёх обликов одна коробка,
+## портик одной глубины с колоннами на одних местах и одинаковый сад. Разное — крыша портика, окна, балконы,
+## вид крыши, убранство у фасада и середина сада
 static func _house_patrician(b: Bp, floors: int, v: int) -> void:
 	floors = clampi(floors, 1, 2)
 	_begin(b, "patrician", v % 4)
-	var rm := R(-5.0, 5.0, -1.0, 4.0)
-	var pd := 1 + b.rng.randi() % 2           # пролёт парадной двери
+	var rm := R(-2.5, 2.5, -1.0, 4.0)
+	var pd := b.rng.randi() % 2           # пролёт парадной двери, в другом — окно
 	# у облика: сначала всё у земли (поток «g»), потом второй этаж (поток «f1»)
 	match v % 4:
 		0: _pat_peristyle(b, rm, floors, pd)
-		1: _pat_balconies(b, rm, floors, pd)
+		1: _pat_loggia(b, rm, floors, pd)
 		2: _pat_temple(b, rm, floors, pd)
 		_: _pat_arcade(b, rm, floors, pd)
 	_use(b, "g")
-	_door2(b, rm, 2, 2, 0)                    # дверь в сад (проём — в _bk)
-	_pat_garden(b, rm, v % 4)
+	_door2(b, rm, 2, 0, 0)                    # дверь в сад (проём и ступень — в _bk)
+	_pat_garden(b, rm, v % 4, floors)
+	_narrow(b)
 
 
-## 0 «Перистиль»: у двери окна с фронтончиками, по краям окна со ставнями и цветами; двускатная крыша
+## 0 «Перистиль»: портик под фронтоном с медальоном; внизу окно с фронтончиком и цветами, у угла под портиком
+## золотая жаровня; по сторонам двери на мостовой — жаровни или горшки; наверху окна с фронтончиками и крашеными
+## ставнями (ящики цветов над фронтоном портика теснились с его навершием); двускатная крыша
 static func _pat_peristyle(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> void:
-	var g := [W1, W1, W1, W1]
-	g[pd] = DOUBLE
-	g[pd - 1] = W5
-	g[pd + 1] = W5
-	var o := _frame(b, rm, floors, {"g": g, "u": [W1, W5, W5, W1], "roof": "gx", "rise": RISE_PAT,
-		"chim": 0.5 if pd == 1 else -0.5})
-	var shut: String = o["shut"]
-	for i in 4:
-		if g[i] == W1:
-			_win(b, rm, 0, i, 0, shut)
-	_pat_entry(b, rm, pd, floors)
-	_side_ivy(b, rm, b.pick([1, 3]), 1.5)
+	var wi := 1 - pd
+	var o := _frame(b, rm, floors, {"g": _bays(2, pd, DOUBLE, W5), "u": [W5, W5], "roof": "gx", "rise": RISE_PAT,
+		"chim": b.pick([-0.45, 0.45])})
+	_wbox(b, rm, 0, wi, 0.0)
+	_pat_entry(b, rm, pd, "ped")
+	_gold_brazier(b, Vector3(_wcorner(rm, wi, 0.42), PH, rm[3] + 0.38), 0.32)
+	_pat_flank(b, rm, floors, pd)
+	_side_ivy(b, rm, 3 if wi == 0 else 1, 1.5)
 	if floors >= 2:
 		_use(b, "f1")
-		_win(b, rm, 0, 0, 1, shut)
-		_win(b, rm, 0, 3, 1, shut)
+		_win(b, rm, 0, wi, 1, o["shut"], false)
+		_win(b, rm, 0, pd, 1, o["shut"], false)
 
 
-## 1 «Балконы»: окна со ставнями и цветами, наверху два каменных балкончика по краям; вальмовая крыша,
-## у углов фасада — статуи на постаментах
-static func _pat_balconies(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> void:
-	_st["jrail"] = "stone"
-	var g := _bays(4, pd, DOUBLE)
-	var o := _frame(b, rm, floors, {"g": g, "u": [D4, W1, W1, D4], "roof": "hip", "rise": RISE_PAT,
-		"chim": -0.6 if pd == 1 else 0.6})
-	var shut: String = o["shut"]
-	for i in 4:
-		if g[i] == W1:
-			_win(b, rm, 0, i, 0, shut)
-	_pat_entry(b, rm, pd, floors)
-	for sx: float in [-1.0, 1.0]:
-		_statue(b, Vector3(sx * 4.55, 0, rm[3] + 0.55), -sx * PI * 0.08, 0.5)
-	_side_ivy(b, rm, b.pick([1, 3]), 1.5)
+## 1 «Лоджия»: портик-лоджия с балюстрадой и статуями по углам, наверху на неё выходит дверь; внизу окно
+## с фронтончиком и цветами, под портиком статуя на постаменте; вальмовая крыша
+static func _pat_loggia(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> void:
+	var wi := 1 - pd
+	_frame(b, rm, floors, {"g": _bays(2, pd, DOUBLE, W5), "u": _bays(2, wi, D4, W5), "roof": "hip", "rise": RISE_PAT,
+		"chim": 0.6 if wi == 0 else -0.6})
+	_wbox(b, rm, 0, wi, 0.0)
+	_pat_entry(b, rm, pd, "flat")
+	_statue(b, Vector3(_wcorner(rm, wi, 0.45), PH, rm[3] + 0.42), (0.35 if wi == 0 else -0.35), 0.5)
+	_pat_flank(b, rm, floors, pd)
+	_side_ivy(b, rm, 3 if wi == 0 else 1, 1.5)
 	if floors >= 2:
 		_use(b, "f1")
-		for i: int in [0, 3]:
-			_jbal(b, rm, 0, i, 1)
-			_door2(b, rm, 0, i, 1)
-		# над дверью — без ящика цветов: он сливался с навершием протирона
-		_win(b, rm, 0, 1, 1, shut, pd != 1)
-		_win(b, rm, 0, 2, 1, shut, pd != 2)
+		_door2(b, rm, 0, wi, 1)
+		_wbox(b, rm, 0, pd, FL)
 
 
-## 2 «Храм»: окна с фронтончиками, широкий низкий фронтон к улице с медальоном (как у храма), фриз;
-## у входа кипарисы в кадках
+## 2 «Храм»: портик под фронтоном и сам дом фронтоном к улице с медальоном (как храм); внизу окно с фронтончиком,
+## под портиком ваза на постаменте; наверху окна со ставнями (без ящиков цветов — над фронтоном портика тесно)
+## и расписной фриз
 static func _pat_temple(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> void:
-	var g := _bays(4, pd, DOUBLE, W5)
-	var u := [W5, W1, W1, W5]
-	var o := _frame(b, rm, floors, {"g": g, "u": u, "roof": "gz", "rise": RISE_PAT, "chim": -0.5, "medal": true})
+	var wi := 1 - pd
+	var u := [W1, W1]
+	var o := _frame(b, rm, floors, {"g": _bays(2, pd, DOUBLE, W5), "u": u, "roof": "gz", "rise": RISE_PAT, "chim": -0.5, "medal": true})
 	var shut: String = o["shut"]
-	_pat_entry(b, rm, pd, floors)
-	for sx: float in [-1.0, 1.0]:
-		_put(b, "SM_Prop_Pillar_Base_01", Vector3(sx * 4.6, 0, rm[3] + 0.45), 0.0, Vector3(0.45, 1.15, 0.45))
-		_put(b, "SM_Prop_Vase_0%d" % b.pick([1, 3, 5]), Vector3(sx * 4.6, 1.15, rm[3] + 0.45), 0.0, Vector3.ONE * 0.55)
+	_wbox(b, rm, 0, wi, 0.0)
+	_pat_entry(b, rm, pd, "ped")
+	var vx := _wcorner(rm, wi, 0.5)
+	_put(b, "SM_Prop_Pillar_Base_01", Vector3(vx, PH, rm[3] + 0.42), 0.0, Vector3(0.42, 1.0, 0.42))
+	_put(b, "SM_Prop_Vase_0%d" % b.pick([1, 3, 5]), Vector3(vx, PH + 1.0, rm[3] + 0.42), 0.0, Vector3.ONE * 0.5)
+	_pat_flank(b, rm, floors, pd)
 	_side_ivy(b, rm, b.pick([1, 3]), 1.6)
 	if floors >= 2:
 		_use(b, "f1")
-		_win(b, rm, 0, 1, 1, shut, pd != 1)     # над дверью — без ящика цветов (навершие протирона)
-		_win(b, rm, 0, 2, 1, shut, pd != 2)
+		_win(b, rm, 0, wi, 1, shut, false)
+		_win(b, rm, 0, pd, 1, shut, false)
 		_frieze(b, rm, 0, 1, u)
 
 
-## 3 «Высокие окна»: внизу длинные окна под карнизом (как у домусов Помпей) и окно со ставнями, наверху деревянный
-## висячий балкон и окна с цветами; вальмовая крыша, плющ на колонне протирона
+## 3 «Аркада»: портик под черепичным навесом на мраморном архитраве, плющ на колонне; внизу окно с фронтончиком
+## и цветами (вещи в углу портика с улицы всё равно закрывает колонна); наверху окна со ставнями и цветами;
+## вальмовая крыша
 static func _pat_arcade(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> void:
-	var g := _bays(4, pd, DOUBLE, W4)
-	var wi := 3 if pd == 1 else 0
-	g[wi] = W1
-	var bi := 0 if pd == 1 else 3             # балкон — над крайним пролётом у входа
-	var u := [W1, W1, W1, W1]
-	u[bi] = D4
-	var o := _frame(b, rm, floors, {"g": g, "u": u, "roof": "hip", "rise": RISE_PAT, "chim": 0.6 if pd == 1 else -0.6})
+	var wi := 1 - pd
+	var o := _frame(b, rm, floors, {"g": _bays(2, pd, DOUBLE, W5), "u": [W1, W1], "roof": "hip", "rise": RISE_PAT,
+		"chim": 0.6 if wi == 0 else -0.6})
 	var shut: String = o["shut"]
-	_win(b, rm, 0, wi, 0, shut)
-	_pat_entry(b, rm, pd, floors)
-	_pillar_ivy(b, Vector3(rm[0] + pd * M + 1.25 + (1.0 if wi == 3 else -1.0), 0, rm[3] + PORCH - 0.26), rm[3] + PORCH)
-	_lamp(b, rm, 0, (wi + (0 if wi == 3 else 1)) * M, 2.3)
+	_wbox(b, rm, 0, wi, 0.0)
+	_pat_entry(b, rm, pd, "lean")
+	var cx: float = PCOL[0] if wi == 0 else PCOL[2]
+	_pillar_ivy(b, Vector3(cx, PH, rm[3] + PORCH - 0.2), rm[3] + PORCH)
+	_pat_flank(b, rm, floors, pd)
 	if floors >= 2:
 		_use(b, "f1")
-		_balcony(b, rm, 0, bi, 1)
-		_door2(b, rm, 0, bi, 1)
-		for i in 4:
-			if u[i] == W1:
-				_win(b, rm, 0, i, 1, shut, i != pd)    # над дверью — без ящика цветов (навершие протирона)
+		_win(b, rm, 0, wi, 1, shut)
+		_win(b, rm, 0, pd, 1, shut)
 
 
-## Сад за домусом — у всех обликов один участок (стены, глубина, кипарисы по углам, клумбы у дома); разное — середина:
-## фонтан, пергола, статуя или колодец. Место садовника (2,4; −4,2) свободно
-static func _pat_garden(b: Bp, rm: PackedFloat32Array, kind: int) -> void:
+## Сад за домусом — у всех обликов один участок 2 пролёта × 4 м (стены, кипарисы, клумба у окна; дверь в сад —
+## у +X); разное — середина: фонтан, пергола, статуя или колодец. Место садовника (1,5; −4,2) до сжатия
+## (после — (1,2; −4,2)) свободно
+static func _pat_garden(b: Bp, rm: PackedFloat32Array, kind: int, floors := 1) -> void:
 	var z0 := rm[2] - 0.05
 	var zb := -5.0
-	_lowwall(b, Vector3(-5.0, 0, z0), Vector3(-5.0, 0, zb), 1.1, false)
-	_lowwall(b, Vector3(-5.0, 0, zb), Vector3(5.0, 0, zb), 1.1, false)
-	_lowwall(b, Vector3(5.0, 0, zb), Vector3(5.0, 0, z0), 1.1, false)
-	var rw := R(-5.0, 5.0, zb, z0)
-	_ivy(b, rw, 2, b.rng.randf_range(2.0, 8.0), 0.62, true, 0.6)
-	_cypress(b, Vector3(-4.35, 0, -4.4), 0.4)
-	_cypress(b, Vector3(4.35, 0, -1.7), 0.4)
-	_bed(b, Vector3(-3.6, 0, -1.75), 0.0, 0.75)
-	_bed(b, Vector3(1.6, 0, -1.75), 0.0, 0.75)
+	var xl := rm[0]
+	var xr := rm[1]
+	_lowwall(b, Vector3(xl, 0, z0), Vector3(xl, 0, zb), 1.1, false)
+	_lowwall(b, Vector3(xl, 0, zb), Vector3(xr, 0, zb), 1.1, false)
+	_lowwall(b, Vector3(xr, 0, zb), Vector3(xr, 0, z0), 1.1, false)
+	var rw := R(xl, xr, zb, z0)
+	_ivy(b, rw, 2, b.rng.randf_range(1.4, 3.6), 0.62, true, 0.6)
+	# кипарис в дальнем углу выглядывает из-за крыши — с улицы видно, что за домом сад
+	_cypress(b, Vector3(-2.0, 0, -4.45), 0.55 if floors < 2 else 0.85)
+	_cypress(b, Vector3(-2.05, 0, -1.65), 0.36)
+	_bed(b, Vector3(-0.95, 0, -1.75), 0.0, 0.7)
 	match kind:
 		0:
-			_fountain(b, Vector3(-0.6, 0, -3.3), 0.48)
-			_statue(b, Vector3(-3.6, 0, -3.0), PI / 2, 0.55)
-			_put(b, "SM_Prop_Seat_Kline_0%d" % (1 + b.rng.randi() % 3), Vector3(4.2, 0, -3.3), -PI / 2, Vector3.ONE * 0.6)
+			_fountain(b, Vector3(-0.35, 0, -3.15), 0.42)
+			_put(b, "SM_Prop_Seat_Kline_0%d" % (1 + b.rng.randi() % 3), Vector3(-0.7, 0, -4.5), 0.0, Vector3.ONE * 0.55)
 		1:
-			_pergola(b, -4.6, -4.75, 0.0, false, true, 0.3)
-			_put(b, "SM_Prop_Seat_Kline_0%d" % (1 + b.rng.randi() % 3), Vector3(-3.35, 0, -3.4), 0.0, Vector3.ONE * 0.6)
-			_fountain(b, Vector3(0.2, 0, -3.4), 0.4)
+			_pergola(b, -1.6, -4.9, 0.0, false, true, 0.0)
+			_put(b, "SM_Prop_Seat_Kline_0%d" % (1 + b.rng.randi() % 3), Vector3(-0.35, 0, -3.75), 0.0, Vector3.ONE * 0.55)
+			_pot(b, Vector3(1.4, 0, -2.6), 0.5)
 		2:
-			_statue(b, Vector3(-0.6, 0, -3.4), 0.0, 0.7)
-			_cypress(b, Vector3(-2.3, 0, -4.4), 0.34)
-			_cypress(b, Vector3(1.1, 0, -4.4), 0.34)
-			_bench(b, Vector3(-3.4, 0, -3.2), PI / 2)
+			_statue(b, Vector3(-0.4, 0, -3.2), 0.0, 0.65)
+			_cypress(b, Vector3(0.4, 0, -4.45), 0.3)
+			_bench(b, Vector3(-2.0, 0, -3.1), PI / 2)
 		_:
-			_put(b, "SM_Prop_Well_01", Vector3(-1.0, 0, -3.4), b.rng.randf() * TAU, Vector3.ONE * 0.5)
-			_put(b, "SM_Env_Tree_Bush_0%d" % (1 + b.rng.randi() % 2), Vector3(-3.6, 0, -3.5), b.rng.randf() * TAU, Vector3.ONE * 0.5)
-			_jar(b, Vector3(0.4, 0, -4.4), 0.7)
-			_jar(b, Vector3(0.9, 0, -4.5), 0.6)
+			_put(b, "SM_Prop_Well_01", Vector3(-0.5, 0, -3.2), b.rng.randf() * TAU, Vector3.ONE * 0.45)
+			_jar(b, Vector3(-1.5, 0, -4.55), 0.7)
+			_jar(b, Vector3(-1.05, 0, -4.6), 0.6)

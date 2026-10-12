@@ -245,8 +245,8 @@ static func _fountain(b: Bp) -> void:
 	b.add("SM_Env_Lillies_01", Vector3(-1.1, 0.37, -1.05), 4.0, 0.5)
 	b.add("#duck", Vector3(1.0, 0.38, 1.05), -2.4, 1.0)
 	for sd: float in [-1.0, 1.0]:
-		b.add("#lamp_post", Vector3(sd * 2.45, 0, 2.3), PI / 2 - sd * PI / 2, 1.0)
-		b.light(Vector3(sd * 2.45 + sd * 0.42, 2.1, 2.3))
+		b.add("#lamp_post", Vector3(sd * 2.45, 0, 2.3), PI / 2 - sd * PI / 2, CatDecor.LAMP_K)
+		b.light(Vector3(sd * 2.45 + sd * 0.42 * CatDecor.LAMP_K, 2.1 * CatDecor.LAMP_K, 2.3))
 		_cypress(b, Vector3(sd * 2.3, 0, -2.45), 0.42)
 		b.add("SM_Prop_Seat_Bench_03", Vector3(sd * 2.25, 0, 0.2), -sd * PI / 2, 0.8)
 	b.door = Vector3(0, 0, 2.6)

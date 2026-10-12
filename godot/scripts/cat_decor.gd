@@ -264,14 +264,19 @@ static func _bench(b: Bp) -> void:
 	b.door = Vector3(0, 0, 0.95)
 
 
-## Фонарь на столбе: с корзинкой цветов на перекладине, с горшком у подножия или с цветочным кругом
+## Фонарь на столбе: с корзинкой цветов на перекладине, с горшком у подножия или с цветочным кругом.
+## Столб в LAMP_K раз выше родного: фонарь висит выше прохожих, макушка — у карниза одноэтажного дома (как в Town to City)
+const LAMP_K := 1.2
+
+
 static func _lamp_post(b: Bp) -> void:
-	b.add("#lamp_post", Vector3.ZERO, 0.0)
-	b.light(Vector3(0.42, 2.12, 0.0))
+	var k := LAMP_K
+	b.add("#lamp_post", Vector3.ZERO, 0.0, k)
+	b.light(Vector3(0.42, 2.12, 0.0) * k)
 	match _look(b, 3):
 		0:
-			_sx(b, "SM_Prop_Beam_01", Vector3(-0.44, 2.25, 0.0), 0.0, Vector3(0.18, 0.28, 0.28))
-			b.add("SM_Prop_FlowerPot_Hanging_0%d" % (4 + b.rng.randi() % 3), Vector3(-0.36, 2.23, -0.0), 0.0, 0.42)
+			_sx(b, "SM_Prop_Beam_01", Vector3(-0.44, 2.25, 0.0) * k, 0.0, Vector3(0.18, 0.28, 0.28) * k)
+			b.add("SM_Prop_FlowerPot_Hanging_0%d" % (4 + b.rng.randi() % 3), Vector3(-0.36, 2.23, -0.0) * k, 0.0, 0.42 * k)
 			b.add("SM_Env_Grass_01", Vector3(0.05, 0, 0.12), _yaw(b), 0.45)
 			_bloom(b, Vector3(-0.18, 0, 0.1), 0.17)
 		1:
@@ -598,12 +603,12 @@ static func _statue(b: Bp) -> void:
 	_slab(b, Vector3.ZERO, Vector3(1.08, 0.12, 1.08))
 	if _look(b, 2) == 0:
 		b.add("SM_Prop_Plinth_04", Vector3(0, 0.12, 0), 0.0)
-		b.add(st, Vector3(0, 0.8, 0), 0.0, 0.82)
+		b.add(st, Vector3(0, 0.8, 0), 0.0, 1.0)
 		_bloom(b, Vector3(-0.68, 0, 0.62), 0.2)
 		_bloom(b, Vector3(0.68, 0, 0.62), 0.2)
 	else:
 		b.add("SM_Prop_Pillar_Base_01", Vector3(0, 0.12, 0), 0.0, 0.85)
-		b.add(st, Vector3(0, 0.97, 0), 0.0, 0.72)
+		b.add(st, Vector3(0, 0.97, 0), 0.0, 0.88)
 		for px: float in [-0.4, 0.4]:
 			b.add("SM_Prop_Vase_04", Vector3(px, 0.12, 0.38), _yaw(b), 0.36)
 			_bloom(b, Vector3(px, 0.12 + 0.19, 0.38), 0.11)
@@ -618,7 +623,7 @@ static func _column(b: Bp) -> void:
 	_sx(b, "SM_Bld_Pillar_0%d" % b.pick([2, 3, 4]), Vector3(0, top, 0), 0.0, Vector3(0.62, 0.75, 0.62))
 	_sx(b, "SM_Env_Ivy_Pillar_Flowers_01", Vector3(0, top, 0), _yaw(b), Vector3(0.66, 0.9, 0.66))
 	b.add("SM_Prop_Pillar_Top_01", Vector3(0, top + 2.25, 0), 0.0, 0.62)
-	b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(0, top + 2.25 + 0.155, 0), 0.0, 0.52)
+	b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(0, top + 2.25 + 0.155, 0), 0.0, 0.62)
 	_bloom(b, Vector3(0.7, 0, 0.64), 0.2)
 	_bloom(b, Vector3(-0.7, 0, 0.6), 0.17)
 
