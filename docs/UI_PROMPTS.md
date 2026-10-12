@@ -190,6 +190,20 @@ Icons in order (row by row):
 5 a golden curved arrow turning back to the left (undo), 6 the same golden curved arrow turning to the right (redo), 7 a painter's brush with a drop of terracotta paint and a small color palette (recolor house), 8 an empty cell.
 ```
 
+**23 — Курсор мыши: стрелка, рука, молоток, кирка, поворот**
+
+Сейчас в игре временный курсор — золотая стрелка, нарисованная по контуру. Этот набор заменит её. Я сам разрежу лист на 5 картинок 64 × 64 (`cursor_arrow`, `cursor_hand`, `cursor_build`, `cursor_bulldoze`, `cursor_rotate`) и положу в `godot/assets/ui/ai/` — игра подхватит их сама. Важно, чтобы кончик стрелки (и кончик пальца у руки) был в самом левом верхнем углу своей клетки: это та точка, которой «щёлкает» курсор.
+```
+Task 23: a mouse cursor set for the game, 5 cursors side by side in ONE row, each in its own equal square cell 512x512 (whole image 2560x512), transparent background, NO labels.
+Same style as before: hand-painted, polished gold and bronze with a thin dark-brown outline (#4a2c17), soft painted shading, a tiny warm highlight, a very soft drop shadow down-right. Each cursor must read clearly when shrunk to 32x32 pixels: bold simple silhouette, no thin details.
+VERY IMPORTANT: in every cell the clicking point (the arrow tip / the fingertip) is at the TOP-LEFT corner of the cell, about 30 px from the top and 30 px from the left edge, pointing up-left; the cursor body goes down-right from there and fills about 70% of the cell.
+1) normal pointer: a classic computer arrow cursor pointing up-left, made of polished gold with a bronze rim, a tiny green laurel sprig engraved along its tail.
+2) hand pointer for clickable things: a hand in a cream Roman toga sleeve with a gold bracelet, index finger pointing up-left (fingertip exactly at the top-left clicking point).
+3) build: the same gold arrow as 1), plus a small hammer (wooden handle, iron head) placed at the lower right of the arrow, not covering the tip.
+4) bulldoze: the same gold arrow, plus a small pickaxe with a few red bricks at the lower right of the arrow.
+5) rotate: the same gold arrow, plus two small curved golden arrows forming a circle (rotation sign) at the lower right of the arrow.
+```
+
 ---
 
 После каждого листа можно спросить ChatGPT: *«сделай ещё один вариант в том же стиле»*. Пришлите мне всё, что получилось, вместе с вариантами — я выберу лучшее и порежу на части для игры.

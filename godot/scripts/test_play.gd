@@ -49,11 +49,19 @@ func _process(dt: float) -> void:
 	if game == null or not game.ready_done:
 		return
 	t += dt
-	# игрок заселяет приезжих в первый подходящий дом
+	# игрок заселяет приезжих в самый счастливый подходящий дом (там, где рядом лавки)
 	for f in game.city.arrivals.duplicate():
 		var homes: Array = game.city.homes_for(f)
 		if not homes.is_empty():
+			homes.sort_custom(func(a, b): return int(a["happy"]) > int(b["happy"]))
 			game.city.assign(f["name"], homes[0]["id"])
+	# и покупает этаж полному счастливому дому, когда можно (этажи больше не растут сами)
+	if step >= 3 and game.city.has_method("buy_floor"):
+		for id in game.city.buildings.keys():
+			var b: Dictionary = game.city.buildings.get(id, {})
+			if not b.is_empty() and game.city.is_house(b) and game.city.can_buy_floor(b) == "":
+				game.city.buy_floor(b)
+				print("FLOOR bought: house ", id, " tier=", b["tier"], " happy=", b["happy"], " money=", int(game.city.money))
 	if step >= 2 and not cart_shot and game.people.cart.get("state", "") == "in" and float(game.people.cart["s"]) > 8.0:
 		cart_shot = true
 		var keep: float = game.speed
@@ -82,11 +90,12 @@ func _process(dt: float) -> void:
 							game.city.place("house_pleb", pl["pos"], pl["yaw"], pl["variant"], pl["color"])
 							n += 1
 				print("houses ", n)
+				game.city.research["stall_veg"] = true      # как будто уже изучены (иначе их не поставить)
+				game.city.research["musicians"] = true
 				try_place("stall_fruit", Vector2(188, 141), 5)
 				try_place("stall_veg", Vector2(198, 141), 5)
-				try_place("scriptorium", Vector2(206, 131), 6)
+				try_place("scriptorium", Vector2(206, 131), 14)
 				try_place("musicians", Vector2(182, 142), 5)
-				game.city.research["stall_veg"] = true
 				game.rig.set_view(Vector3(192, 2, 142), 15, 46, 46)
 				game.speed = 6.0
 				step = 1
@@ -109,6 +118,17 @@ func _process(dt: float) -> void:
 				try_place("weaver", Vector2(182, 154), 6)
 				for k in 8:
 					try_place("flowers", Vector2(176 + k * 4, 146), 2)
+				# фонари и скамьи у обжитых домов — как игрок, которому советник сказал про украшения
+				var k2 := 0
+				for id in c.buildings.keys():
+					var h: Dictionary = c.buildings[id]
+					if c.is_house(h) and int(h["pop"]) > 0:
+						var back: Vector2 = (h["pos"] as Vector2) - City.facing(float(h["yaw"])) * 5.0
+						try_place("lamp_post" if k2 % 2 == 0 else "bench", back, 3)
+						try_place("well", back + City.axis(float(h["yaw"])) * 3.0, 3)
+						k2 += 1
+				c.compute()
+				print("after decor: happy=", c.stats["happy"], " tips=", c.stats.get("happy_tips", []))
 				step = 3
 				t = 0.0
 		3:
@@ -118,8 +138,15 @@ func _process(dt: float) -> void:
 				for id in c.buildings:
 					var b = c.buildings[id]
 					if c.is_house(b):
-						print("H tier=", b["tier"], " pop=", b["pop"], " happy=", b["happy"], " needs=", b["needs"], " score=", b["score"], " missing=", b["missing"])
+						print("H tier=", b["tier"], " pop=", b["pop"], " happy=", b["happy"], " needs=", b["needs"], " score=", b["score"], " missing=", b["missing"],
+							" parts=", b.get("happy_parts", []), " floor: ", c.can_buy_floor(b))
 						break
+				var hs := []
+				for id in c.buildings:
+					if c.is_house(c.buildings[id]):
+						hs.append(int(c.buildings[id]["happy"]))
+				print("HAPPY houses=", hs, " city=", c.stats["happy"], " parts=", c.stats.get("happy_parts", []), " tips=", c.stats.get("happy_tips", []),
+					" block='", c.stats.get("arrive_block", ""), "' income=", snappedf(float(c.stats["income"]), 0.1), " upkeep=", snappedf(float(c.stats["upkeep"]), 0.1))
 				for id in c.buildings:
 					var b = c.buildings[id]
 					if not c.is_house(b) and c.def(b)["kind"] != "decor":

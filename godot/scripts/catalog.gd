@@ -14,6 +14,12 @@ static var _cache := {}
 
 
 static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
+	var dd0: Dictionary = Defs.B.get(type, {})
+	if dd0.get("kind", "") == "decor":
+		# украшение всегда выглядит как его карточка: облик задаёт тип, а не цвет, место или фасад
+		tier = 0
+		variant = 0
+		color = int(dd0.get("color", 0))
 	var key := "%s:%d:%d:%d" % [type, tier, variant, color]
 	if _cache.has(key):
 		return _cache[key]
@@ -124,10 +130,12 @@ static func _actors(b: Bp, type: String, tier: int) -> void:
 			b.actor(Vector3(-1.6, 0, 1.6), PI, "Interact", "pleb")
 		"vineyard":
 			b.actor(Vector3(-1.5, 0, -2.9), PI / 2, "Interact", "female")
+		# продавцы без покупателя не говорят «в воздух»: ждут, перекладывают товар; заговорят, когда подойдёт
+		# покупатель (People._keeper_react)
 		"stall_fruit", "stall_veg", "stall_fish":
-			b.actor(Vector3(0, 0, -0.4), 0.0, "Idle_Talking", "any")
+			b.actor(Vector3(0, 0, -0.4), 0.0, "Idle", "any")
 		"butcher", "cobbler", "potter", "oilshop", "wineshop", "lamps":
-			b.actor(Vector3(1.0 * CatShops.SX, 0, 0.6), 0.0, "Idle_Talking", "any")
+			b.actor(Vector3(1.0 * CatShops.SX, 0, 0.6), 0.0, "Interact", "any")
 		"perfumer", "jeweler", "tailor", "weaver", "medic":
 			b.actor(Vector3(1.25 * CatShops.SX, 0, 0.35), 0.0, "Interact", "any")
 		"bakery":
@@ -136,10 +144,10 @@ static func _actors(b: Bp, type: String, tier: int) -> void:
 			b.actor(Vector3(1.25, 0, 1.0), 0.0, "Sitting_Idle", "pleb")
 			b.actor(Vector3(1.9, 0, 1.2), -PI / 2, "Interact", "any")
 		"thermopolium":
-			b.actor(Vector3(-1.25, 0, 0.34), 0.0, "Idle_Talking", "any")
+			b.actor(Vector3(-1.25, 0, 0.34), 0.0, "Interact", "any")
 		"taberna":
-			b.actor(Vector3(-2.0, 0, 2.1), PI, "Idle_Talking", "any")
-			b.actor(Vector3(1.8, 0, 0.7), 0.0, "Idle_Talking", "any")
+			b.actor(Vector3(-2.0, 0, 2.1), PI, "Interact", "any")
+			b.actor(Vector3(1.8, 0, 0.7), 0.0, "Idle", "any")
 		"musicians":
 			b.actor(Vector3(-0.6, 0, -0.6), 0.0, "Sitting_Talking", "pleb")
 			b.actor(Vector3(0.6, 0, -0.1), 0.0, "Dance", "female")
@@ -155,18 +163,18 @@ static func _actors(b: Bp, type: String, tier: int) -> void:
 			b.actor(Vector3(-1.5, 0.6, 5.6), PI, "Spell_Simple_Idle", "rich")
 			b.actor(Vector3(1.5, 0.6, 5.8), PI, "Dance", "female")
 		"balnea":
-			b.actor(Vector3(-2.0, 0, 2.6), PI, "Idle_Talking", "any")
+			b.actor(Vector3(-2.0, 0, 2.6), PI, "Idle", "any")
 		"school":
-			b.actor(Vector3(0, 0, 2.6), PI, "Idle_Talking", "rich")
+			b.actor(Vector3(0, 0, 2.6), PI, "Idle", "rich")
 		"scriptorium":
 			b.actor(Vector3(1.2, 0, 1.7), PI, "Sitting_Idle", "pleb")
 		"temple":
 			b.actor(Vector3(0, 0, 7.1), PI, "Spell_Simple_Idle", "rich")
 		"forum":
-			b.actor(Vector3(-1.6, 0, 1.2), 0.9, "Idle_Talking", "rich")
+			b.actor(Vector3(-1.6, 0, 1.2), 0.9, "Idle", "rich")
 			b.actor(Vector3(2.4, 0, 3.8), 0.0, "Sword_Idle", "soldier")
 		"center":
-			b.actor(Vector3(1.0, 0, 1.0) * CatCivic.CENTER_K, 0.4, "Idle_Talking", "any")
+			b.actor(Vector3(1.0, 0, 1.0) * CatCivic.CENTER_K, 0.4, "Idle", "any")
 			if tier >= 2:
 				b.actor(Vector3(-2.6, 0, 3.6) * CatCivic.CENTER_K, 0.0, "Sword_Idle", "soldier")
 		"house_patrician":

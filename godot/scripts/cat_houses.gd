@@ -1390,7 +1390,7 @@ static func _podium(b: Bp, rm: PackedFloat32Array) -> void:
 
 
 ## Золотая жаровня-чаша на точёной ножке (как у станции); s — масштаб (0,34 — чаша чуть ниже пояса прохожему).
-## В углях — три уголька #lit: днём тёмные, в сумерках разгораются вместе с окнами (сами угли Synty не светятся)
+## В углях — три уголька #ember: днём тёмные, в сумерках разгораются вместе с фонарями (сами угли Synty не светятся)
 static func _gold_brazier(b: Bp, p: Vector3, s := 0.34) -> void:
 	_put(b, "SM_Prop_Brazier_01", p, 0.0, Vector3.ONE * s)
 	_put(b, "SM_Prop_Brazier_01_Insert_01", p, 0.0, Vector3.ONE * s)
@@ -1399,7 +1399,7 @@ static func _gold_brazier(b: Bp, p: Vector3, s := 0.34) -> void:
 		var off: Vector2 = [Vector2(0.05, 0.0), Vector2(0.3, 0.14), Vector2(-0.22, -0.24)][k]
 		var e: float = [0.3, 0.22, 0.2][k] * s
 		var q := p + Vector3(off.x * s, 1.9 * s, off.y * s)       # утоплены в угли: видны только верхушки
-		b.parts.append(["#lit", b.base * Transform3D(Basis(Vector3.UP, a + k * 0.7).scaled(Vector3.ONE * e), q), {}])
+		b.parts.append(["#ember", b.base * Transform3D(Basis(Vector3.UP, a + k * 0.7).scaled(Vector3.ONE * e), q), {}])
 	b.light(p + Vector3(0, 2.0 * s + 0.3, 0))
 
 

@@ -1,7 +1,7 @@
 class_name People
 extends Node3D
 ## Жители — настоящие люди, как в Town to City: каждого жителя города видно, когда он на улице.
-## Семьи приезжают на повозке из тоннеля, сходят на площадь у станции, потом идут в свой дом.
+## Семьи приезжают на повозке по большой дороге из-за горизонта, сходят на площадь у станции, потом идут в свой дом.
 ## Утром работники выходят из дома и идут на работу (встают за прилавок, к печи, в поле), вечером
 ## возвращаются домой; остальные ходят по лавкам и на площадь; ночью все спят дома, окна светятся.
 ## Если жилья нет — семьи ждут на площади. Кошки гуляют по улицам и спят у дверей.
@@ -27,6 +27,7 @@ const MAX_VIS := 150                 # больше людей на улице �
 const RADIUS := 0.3
 const CART_HORSE_Z := 2.05
 const CART_SEAT_Y := 0.3
+const CART_FAR := 46.0               # повозка появляется (и исчезает) так далеко за краем карты на большой дороге
 const G := 2                         # клетка сетки ходьбы — 2×2 клетки земли (50 см)
 const GN := Land.N / G
 const WALK := 1.15                   # м/с при обычной скорости (люди маленькие — и шаг короче)
@@ -150,7 +151,10 @@ func _make_family(name: String, n: int, home: int, at: Vector2, cls := "") -> Ar
 		var r := {"id": next_rid, "home": home, "fam": name, "female": m == 1 or (m > 1 and rng.randf() < 0.5), "child": child,
 			"rich": cls == "patricians", "cls": cls, "job": -1, "state": "home", "p": at, "path": PackedVector2Array(), "i": 0,
 			"node": null, "yaw": rng.randf() * TAU, "speed": rng.randf_range(0.92, 1.12) * (0.8 if child else 1.0), "goal": "",
-			"t": 0.0, "slot": -1, "seed": rng.randi(), "dep": rng.randf_range(-0.6, 0.6), "ret": rng.randf_range(0.0, 1.2), "done_today": false}
+			"t": 0.0, "slot": -1, "seed": rng.randi(), "dep": rng.randf_range(-0.6, 0.6), "ret": rng.randf_range(0.0, 1.2), "done_today": false,
+			# что делает на месте (лавка, скамья, кошка, разговор…), куда шёл, с кем говорит, череда движений
+			"act": "", "dest": {}, "conv": {}, "seq": [], "si": 0, "st": 0.0, "at": 0.0, "face": 0.0, "yoff": 0.0, "yoff_to": 0.0,
+			"fade": 1.0, "outs": 0, "serve": 0, "pal": 0, "door": {}}
 		next_rid += 1
 		residents.append(r)
 		by_id[r["id"]] = r
@@ -186,13 +190,27 @@ func _place(r: Dictionary) -> void:
 	if c == null:
 		return
 	var p: Vector2 = r["p"]
-	c.position = Vector3(p.x, land.height_at(p.x, p.y), p.y)
+	c.position = Vector3(p.x, land.height_at(p.x, p.y) + float(r["yoff"]), p.y)
 	c.rotation.y = float(r["yaw"])
 
 
-## Начать прогулку к точке to; goal — что будет по приходу
-func _go(r: Dictionary, to: Vector2, goal: String) -> void:
+## Начать прогулку к точке to; goal — что будет по приходу. keep — не отпускать занятое место (скамью, разговор)
+func _go(r: Dictionary, to: Vector2, goal: String, keep := false) -> void:
 	_leave_slot(r)
+	# выходит из дома или лавки — появляется в дверях, а не посреди улицы
+	var in_shop: bool = r["state"] == "work" and int(r["slot"]) < 0 and r["node"] == null
+	var from_in: bool = r["state"] == "home" or (r["state"] == "idle" and r["act"] == "inside") or in_shop
+	var door_id: int = int(r["home"]) if r["state"] == "home" else (int(r["job"]) if in_shop else int((r["dest"] as Dictionary).get("bid", -1)))
+	var door_b: Dictionary = city.buildings.get(door_id, {})
+	if r["state"] == "door":
+		_door_cancel(r)
+	if not keep:
+		_release(r)
+	r["yoff"] = 0.0
+	r["yoff_to"] = 0.0
+	if from_in and not door_b.is_empty():
+		r["p"] = (r["p"] as Vector2) - City.facing(door_b["yaw"]) * 0.4
+		r["yaw"] = float(door_b["yaw"])
 	r["path"] = _path(r["p"], to)
 	r["i"] = 1
 	r["goal"] = goal
@@ -201,24 +219,27 @@ func _go(r: Dictionary, to: Vector2, goal: String) -> void:
 		_arrive(r)
 		return
 	r["state"] = "walk"
+	var had: bool = r["node"] != null
 	var c := _node(r)
 	if c:
 		c.play("Walk_Loop")
+		if from_in or not had:
+			r["fade"] = 0.0
+			c.set_alpha(0.0)
 
 
 func _arrive(r: Dictionary) -> void:
 	match r["goal"]:
 		"home":
 			r["state"] = "home"
-			_hide(r)
+			_door_in(r, city.buildings.get(r["home"], {}), "home")
 		"work":
 			_enter_work(r)
 		"errand", "play", "stroll":
-			r["state"] = "idle"
-			r["t"] = rng.randf_range(0.8, 2.2) if r["goal"] == "errand" else rng.randf_range(0.6, 1.4)
-			var c := _node(r)
-			if c:
-				c.play("Idle_Talking_Loop" if rng.randf() < 0.6 else "Idle_Loop")
+			# пришёл к настоящей цели: лавка, скамья, кошка, колодец, площадь — там и займётся делом
+			_begin(r)
+		"talk":
+			_talk_arrived(r)
 		"plaza":
 			# новосёлы стоят на площади у станции и осматриваются
 			r["state"] = "idle"
@@ -230,7 +251,7 @@ func _arrive(r: Dictionary) -> void:
 		"settle":
 			# семья въезжает, как только первый из неё дошёл до двери (остальные подтянутся)
 			r["state"] = "home"
-			_hide(r)
+			_door_in(r, city.buildings.get(r["home"], {}), "home")
 			var h: Dictionary = city.buildings.get(r["home"], {})
 			var nm := str(r["fam"])
 			var pf: Dictionary = city.pending.get(nm, {})
@@ -266,6 +287,7 @@ func _fam_members(name: String, home: int) -> Array:
 
 func _remove(r: Dictionary) -> void:
 	_leave_slot(r)
+	_release(r)
 	_hide(r)
 	residents.erase(r)
 	by_id.erase(r["id"])
@@ -346,7 +368,10 @@ func _enter_work(r: Dictionary) -> void:
 			free = k
 			break
 	if free < 0:
-		_hide(r)                         # внутри мастерской
+		if (r["p"] as Vector2).distance_to(city.door_point(b)) < 1.5:
+			_door_in(r, b, "work")       # внутри мастерской — входит в дверь
+		else:
+			_hide(r)
 		return
 	list[free] = r["id"]
 	slots[b["id"]] = list
@@ -359,8 +384,19 @@ func _enter_work(r: Dictionary) -> void:
 			xf.origin.y = land.height_at(xf.origin.x, xf.origin.z)      # стоит на земле, а не над ней
 		c.transform = xf
 		c.scale = Vector3.ONE * Citizen.SIZE * (0.68 if r["child"] else 1.0)
+		c.set_alpha(1.0)
+		r["fade"] = 1.0
 		r["p"] = Vector2(xf.origin.x, xf.origin.z)
-		c.play(a[2], 0.3)
+		# без собеседника никто не говорит «в воздух»: разговор — только с покупателем (_keeper_react)
+		var sa: String = "Idle" if String(a[2]).begins_with("Idle_Talking") else String(a[2])
+		c.play(sa, 0.3, rng.randf())
+		# продавец за прилавком: помнит, как стоит, чтобы повернуться к покупателю и вернуться обратно
+		r["slot_anim"] = sa
+		r["slot_yaw"] = c.rotation.y
+		r["slot_front"] = absf(wrapf(float(a[1]), -PI, PI)) < 0.8      # стоит лицом к улице
+		r["face"] = c.rotation.y
+		r["serve"] = 0
+		r["wk"] = rng.randf_range(6.0, 14.0)
 
 
 func _leave_slot(r: Dictionary) -> void:
@@ -397,42 +433,15 @@ func _start_of_day(instant: bool) -> void:
 		if r["job"] >= 0 and h >= 8.0 and h < 17.0:
 			r["p"] = work_door(r)
 			_enter_work(r)
-		elif instant and h >= 9.0 and h < 18.0 and not r["child"] and rng.randf() < 0.25:
-			var to := _errand_point(r)
-			r["p"] = _near_free(to) if _near_free(to) != Vector2.INF else to
+		elif instant and h >= 9.0 and h < 18.0 and rng.randf() < (0.3 if r["child"] else 0.25):
+			# уже на улице: у прилавка, на скамье, у колодца, на площади
+			var d := _pick_errand(r)
+			if d.is_empty():
+				continue
+			_claim(r, d)
+			r["p"] = d["p"]
 			r["goal"] = "errand"
 			_arrive(r)
-
-
-func _errand_point(r: Dictionary) -> Vector2:
-	var h: Dictionary = city.buildings.get(r["home"], {})
-	var opts := []
-	if not h.is_empty():
-		for t in h.get("score", {}):
-			for id in city.buildings:
-				var b: Dictionary = city.buildings[id]
-				if b["type"] == t and (b["pos"] as Vector2).distance_to(h["pos"]) < 60.0:
-					opts.append(city.door_point(b))
-	for id in city.buildings:
-		var b: Dictionary = city.buildings[id]
-		if b["type"] in ["fountain", "temple", "forum"] or (city.def(b)["kind"] == "decor" and b["type"] in ["bench", "well", "statue"]):
-			if rng.randf() < 0.25 and not h.is_empty() and (b["pos"] as Vector2).distance_to(h["pos"]) < 70.0:
-				opts.append(city.door_point(b) + Vector2(rng.randf_range(-1.5, 1.5), rng.randf_range(-1.5, 1.5)))
-	var base: Vector2 = r["p"]
-	if opts.is_empty():
-		var c := city.center()
-		if c.is_empty():
-			return r["p"]
-		base = city.door_point(c)
-	else:
-		base = opts[rng.randi() % opts.size()]
-	# не толпиться в одной точке: разойтись по площади вокруг
-	for k in 16:
-		var a := rng.randf() * TAU
-		var q := base + Vector2(cos(a), sin(a)) * rng.randf_range(1.5, 6.0)
-		if _free(q):
-			return q
-	return base
 
 
 func _hours_to(a: Vector2, b: Vector2) -> float:
@@ -457,20 +466,19 @@ func _schedule(dh: float) -> void:
 					if h >= dep and h < 16.5 and not r["done_today"]:
 						r["done_today"] = true
 						_go(r, work_door(r), "work")
-				elif not night and h >= 8.5 and h < 19.0:
-					var chance := 0.04 if r["child"] else 0.025
+				elif not night and h >= 8.5 and h < 19.5:
+					var chance := 0.02 if r["child"] else 0.025
 					if rng.randf() < chance * dh * 4.0 * 10.0:
-						if r["child"]:
-							_go(r, _near_road(r["p"], 9.0), "play")
-						else:
-							_go(r, _errand_point(r), "errand" if h < 18.0 else "stroll")
+						r["outs"] = 0
+						_errand(r)
 			"work":
 				if h >= 17.0 + float(r["ret"]) or h < 6.0:
 					var hp: Dictionary = city.buildings.get(r["home"], {})
 					if hp.is_empty():
 						continue
 					if rng.randf() < 0.3 and h < 19.0:
-						_go(r, _errand_point(r), "errand")
+						r["outs"] = 1
+						_errand(r)
 					else:
 						_go(r, city.door_point(hp), "home")
 			"idle":
@@ -483,6 +491,8 @@ func _schedule(dh: float) -> void:
 						else:
 							_go(r, city.door_point(hb), "settle")
 					continue
+				if r["act"] != "" and not night:
+					continue                     # занят делом (лавка, скамья, разговор) — сам решит, когда уйти
 				if float(r["t"]) <= 0.0 or night:
 					var hp: Dictionary = city.buildings.get(r["home"], {})
 					if hp.is_empty():
@@ -501,6 +511,1140 @@ func _near_road(p: Vector2, r: float) -> Vector2:
 		if _free(q):
 			return q
 	return p
+
+
+# ---------- жизнь на улице: лавки, скамьи, кошки, разговоры, двери ----------
+# Как в Town to City: житель идёт к настоящей цели — к прилавку лавки, что кормит его дом, на скамью, к колодцу,
+# к кошке, на площадь. У прилавка встаёт лицом к продавцу, говорит с ним, берёт товар; продавец поворачивается
+# к нему и отвечает. На скамье садится и сидит, рядом сидящие болтают. На площади люди сходятся по двое-трое и
+# разговаривают по очереди (один говорит — другие слушают и кивают); в одиночку никто не говорит в пустоту.
+# В дом и в лавку входят через дверь: повернулся к ней, шагнул и растаял; выходят — проявляются в дверях.
+
+var spots := {}                      # id постройки → {номер места: rid} — места у прилавка, зрителей, на скамьях, у колодца
+var convs := []                      # разговоры: {"m": [rid], "spk": rid, "sw": сек до новой реплики, "left": сек, "open": можно подойти}
+var _bp_spots := {}                  # места в осях постройки (по чертежу) — считаются один раз
+var _vis_t := 0.0
+
+const SIT_BACK := 0.21               # сидящий: таз на столько позади ступней (движение Sitting_* при нашем росте)
+const SIT_SEAT := 0.3                # и на такой высоте над землёй
+const TALK_D := 0.85                 # расстояние между собеседниками
+const RUN := 2.3                     # дети бегают (м/с)
+const TALK_ANIMS := ["Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Interact", "Interact_M", "Spell_Simple_Idle", "Spell_Simple_Idle_M"]
+const LISTEN_ANIMS := ["Listen", "Listen_M", "Listen", "Listen_M", "Idle"]
+const SOLO_ANIMS := ["Idle", "Look_Around", "Look_Around_M", "Idle"]
+const WATCH := ["musicians", "dice", "mimes"]                          # смотрят представление
+const ENTER := ["odeon", "theatre", "balnea", "baths", "medic", "taberna", "fullonica", "dyer"]   # заходят внутрь
+const STAND := ["Idle_Talking", "Interact", "Idle"]                    # продавцы, что стоят и могут повернуться
+
+
+static func _yaw_to(a: Vector2, b: Vector2) -> float:
+	var d := b - a
+	return atan2(d.x, d.y) if d.length_squared() > 0.0001 else 0.0
+
+
+## Включить движение у жителя (если он виден); phase < 0 — с любого места, чтобы соседи не двигались в такт
+func _anim(r: Dictionary, name: String, blend := 0.35, phase := -1.0) -> void:
+	var c: Citizen = r["node"]
+	if c:
+		c.play(name, blend, rng.randf() if phase < 0.0 else phase)
+
+
+## Череда движений [[движение, секунды], …]; когда кончится — _act_done
+func _seq(r: Dictionary, steps: Array) -> void:
+	r["seq"] = steps
+	r["si"] = -1
+	r["st"] = 0.0
+	_seq_next(r)
+
+
+func _seq_next(r: Dictionary) -> bool:
+	var steps: Array = r["seq"]
+	var i := int(r["si"]) + 1
+	if i >= steps.size():
+		return false
+	r["si"] = i
+	var s: Array = steps[i]
+	r["st"] = float(s[1])
+	var nm: String = s[0]
+	if nm == "SIT":
+		_sit_pick(r)
+	elif nm != "":
+		_anim(r, nm, 0.3, 0.0 if nm in ["Sitting_Enter", "Sitting_Exit", "Fixing_Kneeling", "Fixing_Kneeling_M", "PickUp_Table", "PickUp_Table_M"] else -1.0)
+	_on_step(r, nm)
+	return true
+
+
+# ---------- куда пойти ----------
+
+## Новое дело вне дома: выбрать цель, занять место, идти
+func _errand(r: Dictionary) -> void:
+	var d := _pick_errand(r)
+	if d.is_empty():
+		var hp: Dictionary = city.buildings.get(r["home"], {})
+		if not hp.is_empty() and r["state"] != "home":
+			_go(r, city.door_point(hp), "home")
+		return
+	_release(r)
+	_claim(r, d)
+	_go(r, d["p"], "errand", true)
+
+
+func _claim(r: Dictionary, d: Dictionary) -> void:
+	r["dest"] = d
+	if d.has("bid") and int(d.get("k", -1)) >= 0:
+		var sp: Dictionary = spots.get(d["bid"], {})
+		sp[int(d["k"])] = int(r["id"])
+		spots[d["bid"]] = sp
+	if d.has("cat"):
+		var c: Dictionary = d["cat"]
+		c["pet"] = int(r["id"])
+		c["t"] = 999.0                    # кошка ждёт, пока к ней подойдут
+
+
+## Отпустить всё занятое: место у прилавка или на скамье, кошку, разговор
+func _release(r: Dictionary) -> void:
+	var d: Dictionary = r["dest"]
+	if d.has("bid") and int(d.get("k", -1)) >= 0:
+		var sp: Dictionary = spots.get(d["bid"], {})
+		if int(sp.get(int(d["k"]), 0)) == int(r["id"]):
+			sp.erase(int(d["k"]))
+	if str(d.get("act", "")) == "shop":
+		_keeper_free(int(d["bid"]), r)
+	if d.has("cat"):
+		var c: Dictionary = d["cat"]
+		if int(c.get("pet", 0)) == int(r["id"]):
+			c["pet"] = 0
+			if c["state"] == "pet":
+				c["state"] = "sit"
+			c["t"] = rng.randf_range(2.0, 6.0)
+	_conv_leave(r)
+	if int(r["pal"]) > 0:
+		var o: Dictionary = by_id.get(int(r["pal"]), {})
+		if not o.is_empty() and int(o["pal"]) == int(r["id"]):
+			o["pal"] = 0
+		r["pal"] = 0
+	r["dest"] = {}
+	r["act"] = ""
+	r["seq"] = []
+
+
+## Что делать вне дома — по весам: лавки своего дома, скамья, колодец, фонтанчик, статуя, кошка, площадь. Дети играют.
+func _pick_errand(r: Dictionary) -> Dictionary:
+	var h: Dictionary = city.buildings.get(r["home"], {})
+	var from: Vector2 = h["pos"] if not h.is_empty() else r["p"]
+	var hour: float = game.hour
+	var opts := []
+	var cat := _cat_free(r["p"], 24.0)
+	if r["child"]:
+		opts.append([6.0, {"act": "play", "p": _near_road(city.door_point(h) if not h.is_empty() else r["p"], 7.0)}])
+		if not cat.is_empty():
+			opts.append([2.5, _cat_target(r, cat)])
+	else:
+		if not h.is_empty() and hour < 18.0:
+			var s := _shop_target(r, h)
+			if not s.is_empty():
+				opts.append([7.0, s])
+		for e: Array in [["bench", "sit", 50.0, 3.0], ["well", "well", 45.0, 1.2], ["smallfountain", "drink", 45.0, 1.2], ["statue", "look", 60.0, 0.8], ["column", "look", 60.0, 0.5]]:
+			var t := _decor_target(r, from, e[0], e[1], e[2])
+			if not t.is_empty():
+				opts.append([e[3], t])
+		if not cat.is_empty():
+			opts.append([1.0, _cat_target(r, cat)])
+		var pz := _plaza_target(r, from)
+		if not pz.is_empty():
+			opts.append([3.0, pz])
+	var sum := 0.0
+	for o in opts:
+		if not (o[1] as Dictionary).is_empty():
+			sum += float(o[0])
+	var x := rng.randf() * sum
+	for o in opts:
+		if (o[1] as Dictionary).is_empty():
+			continue
+		x -= float(o[0])
+		if x <= 0.0:
+			return o[1]
+	return {}
+
+
+## Лавка, что обслуживает дом (h["score"]): ближайшая такого вида; свободное место у прилавка
+func _shop_target(r: Dictionary, h: Dictionary) -> Dictionary:
+	var types: Array = (h.get("score", {}) as Dictionary).keys()
+	for k in types.size():
+		var j := rng.randi() % types.size()
+		var tmp = types[k]
+		types[k] = types[j]
+		types[j] = tmp
+	# откуда только что вышел (бани, таверна, лавка) — туда же сразу обратно не идёт
+	var last := int((r["dest"] as Dictionary).get("bid", -1))
+	for t in types:
+		var best := {}
+		var bd := 75.0
+		for id in city.buildings:
+			var b: Dictionary = city.buildings[id]
+			if b["type"] != t or not b.get("active", true) or int(b["id"]) == last:
+				continue
+			var dd := (b["pos"] as Vector2).distance_to(h["pos"])
+			if dd < bd:
+				bd = dd
+				best = b
+		if best.is_empty():
+			continue
+		var d := {}
+		if t in WATCH:
+			d = _watch_target(r, best)
+		elif t in ENTER:
+			d = {"act": "enter", "bid": best["id"], "k": -1, "p": city.door_point(best)}
+		else:
+			if _keeper(best["id"]).is_empty() and rng.randf() < 0.75:
+				continue                      # продавца нет за прилавком — в другой раз
+			d = _counter_target(r, best)
+		if not d.is_empty():
+			return d
+	return {}
+
+
+## Свободная ли точка для человека (не внутри стен), иначе — подвинуть вперёд от постройки
+func _spot_ok(w: Vector2, fwd: Vector2) -> Vector2:
+	for k in 7:
+		var q := w + fwd * 0.15 * k
+		if _free(q):
+			return q
+	return Vector2.INF
+
+
+## Места покупателей у прилавка (в осях постройки): перед продавцом и по бокам, сразу за прилавком
+func _counter_spots(b: Dictionary) -> Array:
+	var key := "c:%s:%d:%d:%d" % [b["type"], int(b["tier"]), int(b.get("variant", 0)), int(b.get("color", 0))]
+	if _bp_spots.has(key):
+		return _bp_spots[key]
+	var bp := city.blueprint(b)
+	var out := []
+	var kp := Vector3(bp.door.x, 0, bp.door.z - 1.0)
+	var ky := 0.0
+	if bp.actors.size() > 0:
+		kp = bp.actors[0][0]
+		ky = float(bp.actors[0][1])
+	if absf(wrapf(ky, -PI, PI)) > 0.8:
+		# мастер стоит спиной к улице (пекарь у печи) — покупатели ждут у входа, напротив него
+		for ox: float in [0.0, -0.5, 0.5]:
+			out.append([Vector3(kp.x + ox, 0, bp.door.z + 0.1), kp])
+		_bp_spots[key] = out
+		return out
+	var f := Vector3(sin(ky), 0, cos(ky))
+	var l := Vector3(cos(ky), 0, -sin(ky))
+	for ox: float in [0.0, -0.5, 0.5]:
+		var z := 0.4
+		for p in bp.parts:
+			var nm: String = p[0]
+			if nm.begins_with("#"):
+				continue
+			var box := Bp.model_aabb(nm)
+			var xf: Transform3D = p[1]
+			var lo := Vector3(INF, INF, INF)
+			var hi := -lo
+			for i in 8:
+				var q := xf * box.get_endpoint(i) - kp
+				var v := Vector3(q.dot(l), q.y, q.dot(f))
+				lo = lo.min(v)
+				hi = hi.max(v)
+			# только низкое на земле перед продавцом: прилавок, стол, корзины
+			if lo.y > 0.3 or hi.y > 1.35 or hi.y < 0.25 or hi.z < 0.05 or lo.z > 1.0 or hi.x < ox - 0.2 or lo.x > ox + 0.2:
+				continue
+			z = maxf(z, hi.z + 0.27)
+		out.append([kp + l * ox + f * minf(z, 2.2), kp])
+	_bp_spots[key] = out
+	return out
+
+
+func _counter_target(r: Dictionary, b: Dictionary) -> Dictionary:
+	var xf := city.xf(b)
+	var fwd := City.facing(b["yaw"])
+	var sp: Dictionary = spots.get(b["id"], {})
+	var list := _counter_spots(b)
+	for k in list.size():
+		if sp.has(k):
+			continue
+		var w: Vector3 = xf * (list[k][0] as Vector3)
+		var q := _spot_ok(Vector2(w.x, w.z), fwd)
+		if q == Vector2.INF:
+			continue
+		var kw: Vector3 = xf * (list[k][1] as Vector3)
+		return {"act": "shop", "bid": b["id"], "k": k, "p": q, "face": Vector2(kw.x, kw.z)}
+	return {}
+
+
+## Зрители у музыкантов, игроков в кости, мимов: полукругом перед ними
+func _watch_target(r: Dictionary, b: Dictionary) -> Dictionary:
+	var bp := city.blueprint(b)
+	var xf := city.xf(b)
+	var fwd := City.facing(b["yaw"])
+	var c := Vector3.ZERO
+	for a in bp.actors:
+		c += a[0] as Vector3
+	if bp.actors.size() > 0:
+		c /= bp.actors.size()
+	var door := bp.door
+	var rad := maxf(1.3, door.z - c.z + 0.4)
+	var sp: Dictionary = spots.get(b["id"], {})
+	var angs := [0.0, -0.45, 0.45, -0.9, 0.9, -0.22, 0.22]
+	for k in angs.size():
+		if sp.has(k):
+			continue
+		var a: float = angs[k]
+		var rr := rad + (0.55 if k >= 5 else 0.0)
+		var lp := c + Vector3(sin(a), 0, cos(a)) * rr
+		var w: Vector3 = xf * lp
+		var q := _spot_ok(Vector2(w.x, w.z), fwd)
+		if q == Vector2.INF:
+			continue
+		var cw: Vector3 = xf * c
+		return {"act": "watch", "bid": b["id"], "k": k, "p": q, "face": Vector2(cw.x, cw.z), "type": b["type"]}
+	return {}
+
+
+## Места у украшения: скамья — сиденья, колодец и фонтанчик — подойти спереди, статуя — посмотреть
+func _decor_target(r: Dictionary, from: Vector2, base: String, act: String, maxd: float) -> Dictionary:
+	var cands := []
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if b.has("host") or Defs.base_of(b["type"]) != base:
+			continue
+		var dd := (b["pos"] as Vector2).distance_to(from)
+		if dd <= maxd:
+			cands.append([dd + rng.randf() * 10.0, b])
+	cands.sort_custom(func(a, c): return a[0] < c[0])
+	for e in cands.slice(0, 4):
+		var b: Dictionary = e[1]
+		var d := _seat_target(r, b) if act == "sit" else _front_target(r, b, act)
+		if not d.is_empty():
+			return d
+	return {}
+
+
+## Сиденья скамьи (в осях постройки): [где стоят ступни, куда смотрит, высота сиденья]
+func _bench_seats(b: Dictionary) -> Array:
+	var key := "s:%s:%d:%d" % [b["type"], int(b.get("variant", 0)), int(b.get("color", 0))]
+	if _bp_spots.has(key):
+		return _bp_spots[key]
+	var out := []
+	var bp := city.blueprint(b)
+	for p in bp.parts:
+		var nm: String = p[0]
+		if not nm.begins_with("SM_Prop_Seat_Bench"):
+			continue
+		var xf: Transform3D = p[1]
+		var box := Bp.model_aabb(nm)
+		var sc := xf.basis.get_scale()
+		var w := box.size.x * sc.x
+		var fwd := xf.basis.z.normalized()
+		var side := xf.basis.x.normalized()
+		var seat_h := minf(box.size.y, 0.5) * sc.y
+		var mid := xf * Vector3(box.get_center().x, 0, box.get_center().z)
+		var n := 3 if w > 1.55 else 2
+		for i in n:
+			var o := (i - (n - 1) / 2.0) * w * (0.3 if n == 3 else 0.44)
+			out.append([mid + side * o + fwd * SIT_BACK, atan2(fwd.x, fwd.z), seat_h])
+		break
+	_bp_spots[key] = out
+	return out
+
+
+func _seat_target(r: Dictionary, b: Dictionary) -> Dictionary:
+	var seats := _bench_seats(b)
+	var sp: Dictionary = spots.get(b["id"], {})
+	var xf := city.xf(b)
+	var order := range(seats.size())
+	if rng.randf() < 0.5:
+		order.reverse()
+	for k in order:
+		if sp.has(k):
+			continue
+		var s: Array = seats[k]
+		var w: Vector3 = xf * (s[0] as Vector3)
+		return {"act": "sit", "bid": b["id"], "k": k, "p": Vector2(w.x, w.z), "yaw": float(b["yaw"]) + float(s[1]), "seat": float(s[2])}
+	return {}
+
+
+func _front_target(r: Dictionary, b: Dictionary, act: String) -> Dictionary:
+	var bp := city.blueprint(b)
+	var xf := city.xf(b)
+	var fwd := City.facing(b["yaw"])
+	var side := City.axis(b["yaw"])
+	var sp: Dictionary = spots.get(b["id"], {})
+	var dp := city.door_point(b)
+	var ctr := Vector2(xf.origin.x, xf.origin.z)
+	var offs := [0.0, -0.55, 0.55] if act != "look" else [0.0, -0.8, 0.8, -1.5, 1.5]
+	for k in offs.size():
+		if sp.has(k):
+			continue
+		var q := _spot_ok(dp + side * float(offs[k]) + (fwd * 0.4 if act == "look" else Vector2.ZERO), fwd)
+		if q == Vector2.INF:
+			continue
+		return {"act": act, "bid": b["id"], "k": k, "p": q, "face": ctr}
+	return {}
+
+
+## Площадь: фонтан, храм, форум, почтовая станция — погулять и поговорить с кем-нибудь
+func _plaza_target(r: Dictionary, from: Vector2) -> Dictionary:
+	var opts := []
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if b["type"] in ["fountain", "temple", "forum", "center", "arch", "pantheon"] and (b["pos"] as Vector2).distance_to(from) < 80.0:
+			opts.append(b)
+	if opts.is_empty():
+		var q := _near_road(r["p"], 10.0)
+		return {"act": "stroll", "p": q}
+	var b: Dictionary = opts[rng.randi() % opts.size()]
+	var base := city.door_point(b)
+	# рядом с теми, кто уже стоит там, — чтобы было с кем поговорить
+	for o in residents:
+		if o["state"] == "idle" and o["act"] == "solo" and not o["child"] and (o["p"] as Vector2).distance_to(base) < 9.0 and rng.randf() < 0.6:
+			base = o["p"]
+			break
+	# не в толпу: точка, где в полутора метрах никто не стоит и не идёт туда же
+	var near := _stand_points(base, 8.0)
+	for k in 20:
+		var a := rng.randf() * TAU
+		var q := base + Vector2(cos(a), sin(a)) * rng.randf_range(1.2, 5.0 + k * 0.2)
+		if _free(q) and not _crowded(q, near, 1.5):
+			return {"act": "stroll", "p": q}
+	return {}
+
+
+## Где стоят (или куда идут, чтобы стоять) люди рядом с точкой
+func _stand_points(c: Vector2, rad: float) -> Array:
+	var out := []
+	for o in residents:
+		var p: Vector2 = o["p"]
+		if o["state"] == "walk" and o["goal"] in ["errand", "talk"] and (o["path"] as PackedVector2Array).size() > 0:
+			p = o["path"][o["path"].size() - 1]
+		elif o["state"] != "idle":
+			continue
+		if p.distance_squared_to(c) < rad * rad:
+			out.append(p)
+	return out
+
+
+func _crowded(q: Vector2, pts: Array, d: float) -> bool:
+	for p: Vector2 in pts:
+		if p.distance_squared_to(q) < d * d:
+			return true
+	return false
+
+
+func _cat_free(from: Vector2, maxd: float) -> Dictionary:
+	var best := {}
+	var bd := maxd
+	var hour: float = game.hour
+	if hour < 7.0 or hour > 20.0:
+		return best
+	for c in cats:
+		if c["state"] in ["sit", "sleep"] and int(c.get("pet", 0)) == 0:
+			var dd := (c["p"] as Vector2).distance_to(from)
+			if dd < bd and _free(c["p"]):
+				bd = dd
+				best = c
+	return best
+
+
+func _cat_target(r: Dictionary, c: Dictionary) -> Dictionary:
+	var cp: Vector2 = c["p"]
+	var a0 := _yaw_to(cp, r["p"])
+	for k in 8:
+		var a := a0 + (k / 2) * 0.7 * (1.0 if k % 2 == 0 else -1.0)
+		var q := cp + Vector2(sin(a), cos(a)) * 0.4
+		if _free(q):
+			return {"act": "cat", "cat": c, "p": q, "face": cp}
+	return {}
+
+
+# ---------- на месте ----------
+
+## Пришёл к цели — занялся делом
+func _begin(r: Dictionary) -> void:
+	var d: Dictionary = r["dest"]
+	var act: String = d.get("act", "stroll")
+	if d.has("bid") and not city.buildings.has(d["bid"]):
+		act = "stroll"
+	if r["child"] and r["goal"] == "play":
+		act = "play"
+	r["state"] = "idle"
+	r["t"] = 99.0
+	r["act"] = act
+	r["at"] = 0.0
+	if d.has("face"):
+		r["face"] = _yaw_to(r["p"], d["face"])
+	else:
+		r["face"] = float(r["yaw"])
+	if act == "enter":
+		_door_in(r, city.buildings.get(d["bid"], {}), "inside")
+		return
+	_node(r)
+	match act:
+		"shop":
+			if _keeper(int(d.get("bid", -1))).is_empty():
+				# продавца за прилавком нет (ушёл домой, не наняли) — не говорить с пустым прилавком: посмотреть товар и взять
+				_seq(r, [["Idle", rng.randf_range(0.4, 0.8)], ["Look_Around" if rng.randf() < 0.5 else "Look_Around_M", 7.5],
+					["PickUp_Table" if rng.randf() < 0.6 else "PickUp_Table_M", 1.66], ["Idle", 0.6]])
+				return
+			var talk := "Idle_Talking" if rng.randf() < 0.5 else "Idle_Talking_M"
+			var steps := [["Idle", rng.randf_range(0.4, 1.2)], [talk, rng.randf_range(2.5, 4.5)], ["Listen", rng.randf_range(1.8, 3.0)],
+				["PickUp_Table" if rng.randf() < 0.6 else "PickUp_Table_M", 1.66], ["Idle", rng.randf_range(0.5, 1.0)]]
+			if rng.randf() < 0.4:
+				steps.insert(3, [talk, rng.randf_range(1.5, 3.0)])
+			_seq(r, steps)
+		"watch":
+			r["at"] = rng.randf_range(14.0, 30.0)
+			_watch_pick(r)
+		"sit":
+			r["face"] = float(d["yaw"])
+			r["at"] = rng.randf_range(18.0, 45.0)
+			_seq(r, [["Idle", 0.7], ["Sitting_Enter", 1.3], ["SIT", r["at"]], ["Sitting_Exit", 1.03], ["Idle", 0.3]])
+		"well":
+			_seq(r, [["Idle", 0.4], ["Interact" if rng.randf() < 0.5 else "Interact_M", 4.0], ["PickUp_Table", 1.66], ["Idle", 0.6]])
+		"drink":
+			_seq(r, [["Idle", 0.4], ["PickUp_Table", 2.5], ["Idle", 0.6], ["Look_Around", 3.5]])
+		"look":
+			_seq(r, [["Idle", 0.6], ["Look_Around" if rng.randf() < 0.5 else "Look_Around_M", 7.5], ["Idle", rng.randf_range(1.0, 3.0)]])
+		"cat":
+			var c: Dictionary = d["cat"]
+			c["state"] = "pet"
+			c["yaw"] = _yaw_to(c["p"], r["p"])
+			var kneel: String = ["Fixing_Kneeling", "Fixing_Kneeling_M", "Crouch_Idle", "Crouch_Idle_M"][rng.randi() % 4]
+			var secs := 5.2 if kneel.begins_with("Fixing") else rng.randf_range(4.0, 6.5)
+			_seq(r, [["Idle", 0.5], [kneel, secs], ["Idle", 0.8]])
+		"play":
+			_play_begin(r)
+		_:
+			_social(r)
+
+
+## Дело сделано: дальше — ещё куда-нибудь или домой
+func _act_done(r: Dictionary) -> void:
+	match r["act"]:
+		"solo":
+			if float(r["at"]) <= 0.0:
+				_next(r)
+			elif not _join_talk(r):
+				_solo_cycle(r)
+		"look":
+			if rng.randf() < 0.5:
+				_social(r)
+			else:
+				_next(r)
+		"watch":
+			if float(r["at"]) <= 0.0:
+				_next(r)
+			else:
+				_watch_pick(r)
+		"inside":
+			_next(r)
+		"talk":
+			_seq(r, [["Idle", 9999.0]])
+		"play":
+			_play_tick(r)
+		_:
+			_next(r)
+
+
+func _next(r: Dictionary) -> void:
+	var hp: Dictionary = city.buildings.get(r["home"], {})
+	r["outs"] = int(r["outs"]) + 1
+	var h: float = game.hour
+	if hp.is_empty():
+		_release(r)
+		r["state"] = "idle"
+		r["t"] = 0.0
+		return
+	if int(r["job"]) >= 0 and h >= 7.0 and h < 16.5 and not r["done_today"] and city.buildings.has(r["job"]):
+		r["done_today"] = true                # получил работу, пока гулял, — идёт прямо на работу
+		_go(r, work_door(r), "work")
+		return
+	if h >= 8.0 and h < 19.0 and int(r["outs"]) < 3 and rng.randf() < (0.3 if r["child"] else 0.5):
+		_errand(r)
+	else:
+		_go(r, city.door_point(hp), "home")
+
+
+## Каждый кадр, пока житель занят делом на месте
+func _act_step(r: Dictionary, dt: float) -> void:
+	var c: Citizen = r["node"]
+	var moved := false
+	if r["act"] == "play":
+		moved = _play_move(r, dt)
+	if c:
+		var dy := angle_difference(float(r["yaw"]), float(r["face"]))
+		if absf(dy) > 0.01:
+			r["yaw"] = float(r["yaw"]) + dy * minf(1.0, dt * 5.0)
+			moved = true
+		if absf(float(r["yoff"]) - float(r["yoff_to"])) > 0.001:
+			r["yoff"] = move_toward(float(r["yoff"]), float(r["yoff_to"]), dt * 0.12)
+			moved = true
+		if moved:
+			_place(r)
+	if r["act"] in ["solo", "watch", "play"]:
+		r["at"] = float(r["at"]) - dt
+	if r["act"] == "sit" and _sitting(r):
+		r["sw"] = float(r.get("sw", 0.0)) - dt
+		if float(r["sw"]) <= 0.0:
+			_sit_pick(r)
+	r["st"] = float(r["st"]) - dt
+	if float(r["st"]) <= 0.0:
+		if not _seq_next(r):
+			_act_done(r)
+
+
+## Смена движения в череде: продавец отвечает покупателю, сидящий опускается на скамью
+func _on_step(r: Dictionary, nm: String) -> void:
+	var d: Dictionary = r["dest"]
+	match r["act"]:
+		"shop":
+			var bid := int(d.get("bid", -1))
+			match nm:
+				"Idle_Talking", "Idle_Talking_M":
+					_keeper_react(bid, r, "Listen" if rng.randf() < 0.6 else "Listen_M")
+				"Listen":
+					_keeper_react(bid, r, "Idle_Talking" if rng.randf() < 0.5 else "Idle_Talking_M")
+				"PickUp_Table", "PickUp_Table_M":
+					_keeper_react(bid, r, "Interact" if rng.randf() < 0.5 else "Interact_M")
+		"sit":
+			match nm:
+				"Sitting_Enter":
+					r["yoff_to"] = clampf(float(d.get("seat", SIT_SEAT)) - SIT_SEAT, -0.05, 0.14)
+				"Sitting_Exit":
+					r["yoff_to"] = 0.0
+					r["face"] = float(d["yaw"])
+
+
+func _sitting(r: Dictionary) -> bool:
+	var s: Array = r["seq"]
+	var i := int(r["si"])
+	return i >= 0 and i < s.size() and str(s[i][0]) == "SIT"
+
+
+## Сидит на скамье: если рядом сидит сосед — болтают по очереди, повернувшись друг к другу; один — сидит, смотрит
+func _sit_pick(r: Dictionary) -> void:
+	var d: Dictionary = r["dest"]
+	r["sw"] = rng.randf_range(3.0, 6.0)
+	var nb := {}
+	for k in (spots.get(d.get("bid", -1), {}) as Dictionary):
+		var o: Dictionary = by_id.get(int(spots[d["bid"]][k]), {})
+		if not o.is_empty() and o != r and o["act"] == "sit" and o["state"] == "idle" and _sitting(o):
+			nb = o
+			break
+	var base := float(d.get("yaw", r["face"]))
+	if nb.is_empty():
+		r["face"] = base
+		_anim(r, ["Sitting_Idle", "Sitting_Idle_M"][rng.randi() % 2], 0.4)
+		return
+	# поворот к соседу — чуть, не сходя с места
+	var side := City.axis(base)
+	var turn := 0.35 if side.dot((nb["p"] as Vector2) - (r["p"] as Vector2)) > 0.0 else -0.35
+	r["face"] = base - turn
+	var talking: bool = str((nb["node"] as Citizen)._cur if nb["node"] != null else "").begins_with("Sitting_Talking")
+	_anim(r, ("Sitting_Idle" if talking else ("Sitting_Talking" if rng.randf() < 0.5 else "Sitting_Talking_M")), 0.4)
+
+
+func _watch_pick(r: Dictionary) -> void:
+	var t: String = (r["dest"] as Dictionary).get("type", "")
+	var opts := ["Idle", "Listen", "Listen_M", "Idle"]
+	if t == "mimes":
+		opts += ["Laugh", "Laugh"]
+	elif t == "musicians":
+		opts += ["Dance", "Listen"]
+	elif t == "dice":
+		opts += ["Look_Around", "Laugh"]
+	var a: String = opts[rng.randi() % opts.size()]
+	_seq(r, [[a, rng.randf_range(2.5, 5.0) if a != "Laugh" else 2.5]])
+
+
+# ---------- продавец за прилавком ----------
+
+func _keeper(bid: int) -> Dictionary:
+	var list: Array = slots.get(bid, [])
+	if list.is_empty() or list[0] == null or int(list[0]) == 0:
+		return {}
+	var k: Dictionary = by_id.get(int(list[0]), {})
+	if k.is_empty() or k["state"] != "work":
+		return {}
+	return k
+
+
+## Продавец поворачивается к покупателю (не больше чем на 40°) и отвечает ему
+func _keeper_react(bid: int, cust: Dictionary, anim: String) -> void:
+	var k := _keeper(bid)
+	if k.is_empty() or k["node"] == null or not (str(k.get("slot_anim", "")) in STAND) or not bool(k.get("slot_front", true)):
+		return
+	if int(k["serve"]) != 0 and int(k["serve"]) != int(cust["id"]) and by_id.has(int(k["serve"])):
+		return
+	k["serve"] = int(cust["id"])
+	var base := float(k["slot_yaw"])
+	var want := _yaw_to(k["p"], cust["p"])
+	k["face"] = base + clampf(angle_difference(base, want), -0.7, 0.7)
+	(k["node"] as Citizen).play(anim, 0.3, rng.randf())
+
+
+func _keeper_free(bid: int, cust: Dictionary) -> void:
+	var k := _keeper(bid)
+	if k.is_empty() or int(k["serve"]) != int(cust["id"]):
+		return
+	k["serve"] = 0
+	k["face"] = float(k["slot_yaw"])
+	k["wk"] = rng.randf_range(4.0, 9.0)
+	if k["node"] != null:
+		(k["node"] as Citizen).play(k["slot_anim"], 0.4, rng.randf())
+
+
+## Продавец без покупателей не стоит как статуя: то оглядится, то переложит товар
+func _work_step(r: Dictionary, dt: float) -> void:
+	var c: Citizen = r["node"]
+	if not r.has("slot_yaw"):
+		return
+	var dy := angle_difference(c.rotation.y, float(r["face"]))
+	if absf(dy) > 0.01:
+		c.rotation.y += dy * minf(1.0, dt * 4.0)
+	if int(r["serve"]) != 0:
+		if not by_id.has(int(r["serve"])) or str((by_id[int(r["serve"])] as Dictionary)["act"]) != "shop":
+			r["serve"] = 0
+			r["face"] = float(r["slot_yaw"])
+			c.play(r["slot_anim"], 0.4, rng.randf())
+		return
+	if not (str(r["slot_anim"]) in STAND):
+		return
+	r["wk"] = float(r.get("wk", 8.0)) - dt
+	if float(r["wk"]) <= 0.0:
+		var opts := [r["slot_anim"], r["slot_anim"], "Idle", "Look_Around", "Look_Around_M", "Interact", "Interact_M"]
+		var a: String = opts[rng.randi() % opts.size()]
+		r["wk"] = 7.5 if a.begins_with("Look") else rng.randf_range(5.0, 11.0)
+		c.play(a, 0.4, 0.0 if a.begins_with("Look") else rng.randf())
+
+
+# ---------- разговоры ----------
+
+## Гуляет на площади: подойти к кому-нибудь поговорить, иначе постоять, оглядеться
+func _social(r: Dictionary) -> void:
+	r["act"] = "solo"
+	r["at"] = rng.randf_range(12.0, 30.0)
+	if not _join_talk(r):
+		_solo_cycle(r)
+
+
+func _solo_cycle(r: Dictionary) -> void:
+	r["act"] = "solo"
+	var a: String = SOLO_ANIMS[rng.randi() % SOLO_ANIMS.size()]
+	_seq(r, [[a, 7.5 if a.begins_with("Look") else rng.randf_range(3.0, 6.0)]])
+
+
+## Найти собеседника рядом: разговор, где меньше трёх, или одинокого прохожего. true — идёт к нему
+func _join_talk(r: Dictionary) -> bool:
+	if r["child"] or game.hour >= 21.0:
+		return false
+	var p: Vector2 = r["p"]
+	# одинокий прохожий рядом — чаще заговаривают вдвоём; к паре подходят третьим реже
+	var q := {}
+	var bd := 9.0
+	for o in residents:
+		if o == r or o["state"] != "idle" or o["act"] != "solo" or o["child"] or o["node"] == null and r["node"] != null:
+			continue
+		var dd := (o["p"] as Vector2).distance_to(p)
+		if dd < bd:
+			bd = dd
+			q = o
+	var best := {}
+	bd = 9.0
+	for cv in convs:
+		if not cv["open"] or (cv["m"] as Array).size() >= 3:
+			continue
+		var c := _conv_center(cv)
+		var dd := c.distance_to(p)
+		if dd < bd:
+			bd = dd
+			best = cv
+	if not best.is_empty() and ((q.is_empty() and rng.randf() < 0.5) or rng.randf() < 0.2):
+		var to := _conv_slot(best, p)
+		if to != Vector2.INF:
+			(best["m"] as Array).append(int(r["id"]))
+			if (best["m"] as Array).size() >= 3:
+				best["open"] = false
+			r["conv"] = best
+			r["act"] = "talk"
+			_go(r, to, "talk", true)
+			return true
+	if q.is_empty():
+		return false
+	var qp: Vector2 = q["p"]
+	var a0 := _yaw_to(qp, p)
+	var others := _stand_points(qp, 2.5).filter(func(x): return x.distance_squared_to(qp) > 0.01 and x.distance_squared_to(p) > 0.01)
+	for k in 7:
+		var a := a0 + (k / 2) * 0.55 * (1.0 if k % 2 == 0 else -1.0)
+		var to := qp + Vector2(sin(a), cos(a)) * TALK_D
+		if _free(to) and _free(qp.lerp(to, 0.5)) and not _crowded(to, others, 0.7):
+			var cv := {"m": [int(q["id"]), int(r["id"])], "spk": int(q["id"]), "sw": 0.0, "left": rng.randf_range(18.0, 42.0), "open": true}
+			convs.append(cv)
+			q["conv"] = cv
+			q["act"] = "talk"
+			q["seq"] = []
+			q["st"] = 9999.0
+			_anim(q, "Idle", 0.4)
+			r["conv"] = cv
+			r["act"] = "talk"
+			_go(r, to, "talk", true)
+			return true
+	return false
+
+
+func _talk_arrived(r: Dictionary) -> void:
+	r["state"] = "idle"
+	r["t"] = 99.0
+	_node(r)
+	var cv: Dictionary = r["conv"]
+	if cv.is_empty() or not convs.has(cv) or not (cv["m"] as Array).has(int(r["id"])):
+		r["conv"] = {}
+		r["at"] = rng.randf_range(6.0, 15.0)
+		_solo_cycle(r)
+		return
+	r["act"] = "talk"
+	r["seq"] = []
+	r["st"] = 9999.0
+	cv["sw"] = 0.0                       # все на месте — первая реплика
+	_anim(r, "Idle", 0.3)
+
+
+func _conv_center(cv: Dictionary) -> Vector2:
+	var s := Vector2.ZERO
+	var n := 0
+	for id in cv["m"]:
+		var m: Dictionary = by_id.get(int(id), {})
+		if m.is_empty():
+			continue
+		var p: Vector2 = m["p"]
+		if m["state"] == "walk" and (m["path"] as PackedVector2Array).size() > 0:
+			p = m["path"][m["path"].size() - 1]
+		s += p
+		n += 1
+	return s / maxi(1, n)
+
+
+## Третий собеседник встаёт так, чтобы получился треугольник, с той стороны, откуда подходит
+func _conv_slot(cv: Dictionary, from: Vector2) -> Vector2:
+	var ps := []
+	for id in cv["m"]:
+		var m: Dictionary = by_id.get(int(id), {})
+		if not m.is_empty():
+			ps.append(m["path"][m["path"].size() - 1] if m["state"] == "walk" and (m["path"] as PackedVector2Array).size() > 0 else m["p"])
+	if ps.size() != 2:
+		return Vector2.INF
+	var c: Vector2 = (ps[0] + ps[1]) * 0.5
+	var ab: Vector2 = ps[1] - ps[0]
+	var n := Vector2(-ab.y, ab.x).normalized()
+	if n.dot(from - c) < 0.0:
+		n = -n
+	for k in 3:
+		var to := c + n.rotated((k / 2) * 0.4 * (1.0 if k % 2 == 0 else -1.0)) * TALK_D * 0.8
+		if _free(to):
+			return to
+	return Vector2.INF
+
+
+## Разговор: говорят по очереди; говорящий жестикулирует, слушатели смотрят на него и кивают, иногда смеются
+func _conv_step(cv: Dictionary, dt: float) -> void:
+	var pres := []
+	var walkers := []
+	for id in cv["m"]:
+		var m: Dictionary = by_id.get(int(id), {})
+		if m.is_empty():
+			continue
+		if m["state"] == "idle" and m["act"] == "talk":
+			pres.append(m)
+		elif m["state"] == "walk":
+			walkers.append(m)
+	if pres.size() < 2:
+		# ждёт подходящего — смотрит на него
+		for m in pres:
+			if not walkers.is_empty():
+				m["face"] = _yaw_to(m["p"], walkers[0]["p"])
+		if pres.size() + walkers.size() < 2:
+			_conv_end(cv)
+		return
+	cv["left"] = float(cv["left"]) - dt
+	if float(cv["left"]) <= 0.0:
+		_conv_end(cv)
+		return
+	cv["sw"] = float(cv["sw"]) - dt
+	if float(cv["sw"]) <= 0.0:
+		var cur := int(cv["spk"])
+		var cand := pres.filter(func(x): return int(x["id"]) != cur)
+		var spk: Dictionary = cand[rng.randi() % cand.size()] if not cand.is_empty() and rng.randf() < 0.85 else pres[0]
+		cv["spk"] = int(spk["id"])
+		cv["sw"] = rng.randf_range(2.5, 5.5)
+		var laugh := rng.randf() < 0.12
+		for m in pres:
+			if m == spk:
+				_anim(m, TALK_ANIMS[rng.randi() % TALK_ANIMS.size()], 0.35)
+			else:
+				_anim(m, "Laugh" if laugh and rng.randf() < 0.7 else LISTEN_ANIMS[rng.randi() % LISTEN_ANIMS.size()], 0.4)
+	var spk_r: Dictionary = by_id.get(int(cv["spk"]), {})
+	for m in pres:
+		if m == spk_r or spk_r.is_empty() or not pres.has(spk_r):
+			var s := Vector2.ZERO
+			for o in pres:
+				if o != m:
+					s += o["p"]
+			m["face"] = _yaw_to(m["p"], s / (pres.size() - 1))
+		else:
+			m["face"] = _yaw_to(m["p"], spk_r["p"])
+
+
+func _conv_end(cv: Dictionary) -> void:
+	convs.erase(cv)
+	for id in cv["m"]:
+		var m: Dictionary = by_id.get(int(id), {})
+		if m.is_empty() or m["conv"] != cv:
+			continue
+		m["conv"] = {}
+		if m["state"] == "idle" and m["act"] == "talk":
+			# расходятся не разом: кто-то ещё постоит
+			m["act"] = "solo"
+			m["at"] = 0.0
+			_seq(m, [["Idle", rng.randf_range(0.3, 2.5)]])
+
+
+func _conv_leave(r: Dictionary) -> void:
+	var cv: Dictionary = r["conv"]
+	r["conv"] = {}
+	if cv.is_empty():
+		return
+	(cv["m"] as Array).erase(int(r["id"]))
+	if (cv["m"] as Array).size() <= 1:
+		_conv_end(cv)
+	else:
+		cv["open"] = true
+		if int(cv["spk"]) == int(r["id"]):
+			cv["sw"] = 0.0
+
+
+# ---------- дети играют ----------
+
+## Дети играют у дома: вдвоём — в догонялки (один убегает, другой догоняет, догнал — меняются), один — сидит
+## на корточках, возится с камешками, подпрыгивает, перебегает
+func _play_begin(r: Dictionary) -> void:
+	r["act"] = "play"
+	r["at"] = rng.randf_range(15.0, 35.0)
+	r["pc"] = r["p"]
+	r["pk"] = ""
+	r["run_to"] = Vector2.INF
+	for o in residents:
+		# в догонялки — только с тем, кто рядом и до кого видно (не через дом): иначе догоняющий упрётся в стену,
+		# а убегающий будет бежать на месте
+		if o != r and o["child"] and o["act"] == "play" and o["state"] == "idle" and int(o["pal"]) == 0 \
+				and (o["p"] as Vector2).distance_to(r["p"]) < 6.0 and _clear(r["p"], o["p"]):
+			o["pal"] = int(r["id"])
+			r["pal"] = int(o["id"])
+			r["pc"] = o["pc"]
+			o["blk"] = 0
+			r["blk"] = 0
+			o["pk"] = "run"
+			_play_run(o)
+			r["pk"] = "chase"
+			_anim(r, "Jog_Fwd", 0.2)
+			r["st"] = 9999.0
+			return
+	_play_solo(r)
+
+
+func _play_solo(r: Dictionary) -> void:
+	r["pk"] = "solo"
+	r["run_to"] = Vector2.INF
+	var x := rng.randf()
+	if x < 0.45:
+		_seq(r, [[["Crouch_Idle", "Crouch_Idle_M"][rng.randi() % 2], rng.randf_range(3.0, 6.0)]])
+	elif x < 0.65:
+		_seq(r, [["Dance", rng.randf_range(1.5, 3.0)]])
+	else:
+		var to := _play_point(r)
+		if to != Vector2.INF:
+			r["run_to"] = to
+			r["seq"] = []
+			r["st"] = 9999.0
+			_anim(r, "Jog_Fwd", 0.2)
+		else:
+			_seq(r, [["Look_Around", 7.5]])
+
+
+func _play_point(r: Dictionary) -> Vector2:
+	var c: Vector2 = r["pc"]
+	for k in 10:
+		var a := rng.randf() * TAU
+		var q := c + Vector2(cos(a), sin(a)) * rng.randf_range(1.0, 3.8)
+		if _free(q) and _clear(r["p"], q):
+			return q
+	return Vector2.INF
+
+
+func _play_run(r: Dictionary) -> void:
+	var to := _play_point(r)
+	if to == Vector2.INF:
+		r["pc"] = r["p"]                 # место игры за домом — играем там, где стоим
+		to = _play_point(r)
+	if to == Vector2.INF:
+		# бежать некуда (тесно): постоять и посмеяться — череда кончится, и _play_tick проверит, не пора ли домой
+		r["run_to"] = Vector2.INF
+		_seq(r, [["Laugh" if rng.randf() < 0.5 else "Idle", rng.randf_range(0.8, 1.5)]])
+		return
+	r["run_to"] = to
+	r["seq"] = []
+	r["st"] = 9999.0
+	_anim(r, "Jog_Fwd", 0.2)
+
+
+## Шаг игры: бег к точке или за товарищем. true — сдвинулся
+func _play_move(r: Dictionary, dt: float) -> bool:
+	if float(r["at"]) <= -5.0 and (r["seq"] as Array).is_empty():
+		# игра давно кончилась, а череда так и не дошла до _play_tick (застрял) — заканчиваем череду сейчас:
+		# _act_step сразу вызовет _act_done → _play_tick → _next
+		r["st"] = 0.0
+		return false
+	var pal: Dictionary = by_id.get(int(r["pal"]), {})
+	if r["pk"] in ["run", "chase"] and (pal.is_empty() or pal["act"] != "play" or pal["state"] != "idle" or int(pal["pal"]) != int(r["id"])):
+		r["pal"] = 0
+		_play_solo(r)
+		return false
+	if not (r["seq"] as Array).is_empty():
+		return false                     # стоит, смеётся, сидит на корточках
+	var to: Vector2 = r["run_to"]
+	if r["pk"] == "chase":
+		to = pal["p"]
+		if (pal["p"] as Vector2).distance_to(r["p"]) < 0.45:
+			# догнал! меняются: тот замирает и смеётся, этот убегает
+			r["pk"] = "run"
+			pal["pk"] = "caught"
+			pal["run_to"] = Vector2.INF
+			_seq(pal, [["Laugh" if rng.randf() < 0.5 else "Dance", 1.2]])
+			_play_run(r)
+			return false
+	if to == Vector2.INF:
+		return false
+	var d := to - (r["p"] as Vector2)
+	var dist := d.length()
+	var mv := RUN * float(r["speed"]) * dt * (0.92 if r["pk"] == "chase" else 1.0)
+	if dist <= mv or not _free((r["p"] as Vector2) + d / maxf(dist, 0.001) * minf(mv * 3.0, dist)):
+		r["run_to"] = Vector2.INF
+		if r["pk"] == "run":
+			_seq(r, [["Dance" if rng.randf() < 0.4 else "Idle", rng.randf_range(0.6, 1.4)]])
+		elif r["pk"] == "chase":
+			r["blk"] = int(r.get("blk", 0)) + 1
+			if r["blk"] >= 3 and not pal.is_empty():
+				# не добежать (стена между ними) — игра врозь
+				r["blk"] = 0
+				pal["pal"] = 0
+				r["pal"] = 0
+				_play_solo(pal)
+				_play_solo(r)
+			else:
+				_seq(r, [["Idle", 0.5]])
+		elif r["pk"] == "solo":
+			_seq(r, [[["Crouch_Idle", "Idle", "Dance"][rng.randi() % 3], rng.randf_range(1.5, 4.0)]])
+		return false
+	if r["pk"] == "chase":
+		r["blk"] = 0
+	r["p"] = (r["p"] as Vector2) + d / dist * mv
+	r["face"] = atan2(d.x, d.y)
+	r["yaw"] = lerp_angle(float(r["yaw"]), float(r["face"]), minf(1.0, dt * 10.0))
+	return true
+
+
+## Череда игры кончилась: что дальше
+func _play_tick(r: Dictionary) -> void:
+	if float(r["at"]) <= 0.0:
+		_next(r)
+		return
+	match r["pk"]:
+		"run":
+			_play_run(r)
+		"caught", "chase":
+			r["pk"] = "chase"
+			r["seq"] = []
+			r["st"] = 9999.0
+			_anim(r, "Jog_Fwd", 0.2)
+		_:
+			if int(r["pal"]) == 0:
+				for o in residents:
+					if o != r and o["child"] and o["act"] == "play" and o["state"] == "idle" and int(o["pal"]) == 0 and o["pk"] == "solo" \
+							and (o["p"] as Vector2).distance_to(r["p"]) < 6.0 and _clear(r["p"], o["p"]):
+						o["pal"] = int(r["id"])
+						r["pal"] = int(o["id"])
+						o["pc"] = r["pc"]
+						o["blk"] = 0
+						r["blk"] = 0
+						o["pk"] = "chase"
+						o["seq"] = []
+						o["st"] = 9999.0
+						_anim(o, "Jog_Fwd", 0.2)
+						r["pk"] = "run"
+						_play_run(r)
+						return
+			_play_solo(r)
+
+
+# ---------- двери ----------
+
+## Дошёл до двери: повернулся к ней, шагнул внутрь и растаял. then — "home" или "inside" (в лавке, в банях)
+func _door_in(r: Dictionary, b: Dictionary, then: String) -> void:
+	var c: Citizen = r["node"]
+	if c == null or b.is_empty():
+		_door_done(r, then, b)
+		return
+	var fwd := City.facing(b["yaw"])
+	r["state"] = "door"
+	r["door"] = {"t": 0.0, "then": then, "from": r["p"], "dir": -fwd, "bid": b["id"]}
+	r["face"] = atan2(-fwd.x, -fwd.y)
+	c.play("Idle", 0.2)
+
+
+func _door_step(r: Dictionary, dt: float) -> void:
+	var d: Dictionary = r["door"]
+	var c: Citizen = r["node"]
+	d["t"] = float(d["t"]) + dt
+	var t: float = d["t"]
+	if c == null:
+		_door_done(r, d["then"], city.buildings.get(d["bid"], {}))
+		return
+	r["yaw"] = lerp_angle(float(r["yaw"]), float(r["face"]), minf(1.0, dt * 9.0))
+	if t > 0.25:
+		c.play("Walk", 0.15)
+		var k := clampf((t - 0.25) / 0.75, 0.0, 1.0)
+		r["p"] = (d["from"] as Vector2) + (d["dir"] as Vector2) * 0.5 * k
+		c.set_alpha(1.0 - smoothstep(0.35, 1.0, k))
+	_place(r)
+	if t >= 1.0:
+		r["p"] = d["from"]
+		_door_done(r, d["then"], city.buildings.get(d["bid"], {}))
+
+
+func _door_done(r: Dictionary, then: String, b: Dictionary) -> void:
+	_hide(r)
+	r["door"] = {}
+	if then == "inside":
+		r["state"] = "idle"
+		r["act"] = "inside"
+		r["seq"] = [["", rng.randf_range(15.0, 40.0)]]
+		r["si"] = 0
+		r["st"] = float(r["seq"][0][1])
+	else:
+		r["state"] = then
+
+
+## Ушёл от двери, не дойдя (семья уехала, дом перенесли)
+func _door_cancel(r: Dictionary) -> void:
+	var d: Dictionary = r["door"]
+	if not d.is_empty():
+		r["p"] = d["from"]
+	r["door"] = {}
+	r["state"] = "idle"
+	if r["node"] != null:
+		(r["node"] as Citizen).set_alpha(1.0)
+	r["fade"] = 1.0
 
 
 # ---------- кадр ----------
@@ -525,13 +1669,125 @@ func _process(dt: float) -> void:
 		for c in cats:
 			c["walk"] = 0.0
 		return
-	for r in residents:
-		if r["state"] == "walk":
-			_step(r, dt * speed)
-		elif r["node"] != null:
-			(r["node"] as Citizen).anim.speed_scale = speed
+	var sdt := dt * speed
+	for r in residents.duplicate():
+		match r["state"]:
+			"walk":
+				_step(r, sdt)
+			"idle":
+				if r["node"] != null:
+					(r["node"] as Citizen).anim.speed_scale = speed
+				if r["act"] != "":
+					_act_step(r, sdt)
+			"door":
+				if r["node"] != null:
+					(r["node"] as Citizen).anim.speed_scale = speed
+				_door_step(r, sdt)
+			"work":
+				if r["node"] != null:
+					(r["node"] as Citizen).anim.speed_scale = speed
+					_work_step(r, sdt)
+			_:
+				if r["node"] != null:
+					(r["node"] as Citizen).anim.speed_scale = speed
+		if r["node"] != null and float(r["fade"]) < 1.0 and r["state"] != "walk" and r["state"] != "door":
+			r["fade"] = minf(1.0, float(r["fade"]) + sdt / 0.6)
+			(r["node"] as Citizen).set_alpha(float(r["fade"]))
+	for cv in convs.duplicate():
+		_conv_step(cv, sdt)
+	_vis_t -= dt
+	if _vis_t <= 0.0:
+		_vis_t = 0.5
+		_vis_tick()
 	_cart_step(dt * speed)
 	_cats_step(dt * speed)
+
+
+## Кого рисовать: людей больше, чем MAX_VIS, — рисуем тех, кто в кадре, ближних к камере первыми;
+## кто вне кадра — убираем, чтобы освободить место (вошедшие в кадр проявляются плавно)
+func _vis_tick() -> void:
+	var rig = game.rig
+	if rig == null or rig.cam == null:
+		return
+	var cam: Camera3D = rig.cam
+	var cp := cam.global_position
+	var want := []
+	var drop := []
+	for r in residents:
+		var st: String = r["state"]
+		if not (st in ["walk", "idle", "work"]) or (st == "idle" and r["act"] == "inside") or (st == "work" and int(r["slot"]) < 0):
+			continue
+		var p: Vector2 = r["p"]
+		var p3 := Vector3(p.x, land.height_at(p.x, p.y) + 0.5, p.y)
+		var seen := cam.is_position_in_frustum(p3)
+		if r["node"] == null:
+			if seen:
+				want.append([p3.distance_squared_to(cp), r])
+		elif not seen:
+			drop.append([p3.distance_squared_to(cp), r])
+	if want.is_empty():
+		return
+	want.sort_custom(func(a, b): return a[0] < b[0])
+	drop.sort_custom(func(a, b): return a[0] > b[0])
+	var made := 0
+	for w in want:
+		if made >= 24:
+			break                        # не всех разом — без рывка кадра при повороте камеры
+		if visible_count >= MAX_VIS:
+			if drop.is_empty():
+				break
+			_hide(drop.pop_front()[1])
+		_show(w[1])
+		made += 1
+
+
+## Житель попал в кадр: создать его и поставить в нужной позе (идёт, сидит, говорит, стоит за прилавком)
+func _show(r: Dictionary) -> void:
+	var c := _node(r)
+	if c == null:
+		return
+	r["fade"] = 0.0
+	c.set_alpha(0.0)
+	match r["state"]:
+		"walk":
+			c.play("Walk_Loop", 0.0, rng.randf())
+		"work":
+			var b: Dictionary = city.buildings.get(r["job"], {})
+			if b.is_empty():
+				return
+			var bp := city.blueprint(b)
+			if int(r["slot"]) >= bp.actors.size():
+				return
+			var a: Array = bp.actors[r["slot"]]
+			var xf: Transform3D = city.xf(b) * Transform3D(Basis(Vector3.UP, float(a[1])), a[0])
+			if (a[0] as Vector3).y < 0.05:
+				xf.origin.y = land.height_at(xf.origin.x, xf.origin.z)
+			c.transform = xf
+			c.scale = Vector3.ONE * Citizen.SIZE * (0.68 if r["child"] else 1.0)
+			var sa: String = "Idle" if String(a[2]).begins_with("Idle_Talking") else String(a[2])   # не говорит «в воздух»
+			c.play(sa, 0.0, rng.randf())
+			r["slot_anim"] = sa
+			r["slot_yaw"] = c.rotation.y
+			r["slot_front"] = absf(wrapf(float(a[1]), -PI, PI)) < 0.8
+			r["face"] = c.rotation.y
+			r["serve"] = 0
+		"idle":
+			var nm := "Idle"
+			if r["act"] == "sit" and _sitting(r):
+				nm = "Sitting_Idle"
+				r["yoff"] = r["yoff_to"]
+			elif r["act"] == "talk":
+				nm = "Listen"
+			elif r["act"] == "play" and (r.get("pk", "") == "chase" or r.get("run_to", Vector2.INF) != Vector2.INF):
+				nm = "Jog_Fwd"
+			else:
+				var s: Array = r["seq"]
+				var i := int(r["si"])
+				if i >= 0 and i < s.size() and not (str(s[i][0]) in ["", "SIT", "Sitting_Enter", "Sitting_Exit"]):
+					nm = s[i][0]
+			r["yaw"] = r["face"]
+			_place(r)
+			c.play(nm, 0.0, rng.randf())
 
 
 func _step(r: Dictionary, dt: float) -> void:
@@ -545,8 +1801,13 @@ func _step(r: Dictionary, dt: float) -> void:
 		c = _node(r)
 		if c:
 			c.play("Walk_Loop")
+			r["fade"] = 0.0             # место на улице освободилось — проявляется, а не выскакивает
+			c.set_alpha(0.0)
 	if c:
 		c.anim.speed_scale = game.speed * float(r["speed"])
+		if float(r["fade"]) < 1.0:
+			r["fade"] = minf(1.0, float(r["fade"]) + dt / 0.6)
+			c.set_alpha(float(r["fade"]))
 	var p: Vector2 = r["p"]
 	var to := path[i] - p
 	var dist := to.length()
@@ -594,6 +1855,10 @@ func _on_rehomed(old: int, new: int) -> void:
 	var h: Dictionary = city.buildings.get(new, {})
 	for r in residents:
 		if int(r["home"]) == old:
+			if r["state"] == "door" and str((r["door"] as Dictionary).get("then", "")) == "home":
+				_hide(r)                     # входил в дом, который переносят — уже внутри
+				r["door"] = {}
+				r["state"] = "home"
 			r["home"] = new
 			if city.pending.has(r["fam"]) and r["state"] != "walk":
 				if r["state"] == "home":
@@ -608,6 +1873,24 @@ func _on_rehomed(old: int, new: int) -> void:
 
 func _on_building_removed(b: Dictionary) -> void:
 	slots.erase(b["id"])
+	# кто стоял у этой лавки, сидел на скамье, был внутри — идут дальше
+	for r in residents.duplicate():
+		if int((r["dest"] as Dictionary).get("bid", -1)) == int(b["id"]) and r["state"] == "idle" and r["act"] != "":
+			if r["act"] == "inside":
+				_release(r)
+				_node(r)
+				_social(r)
+			else:
+				_release(r)
+				# сидел на скамье, а её убрали — встаёт на землю сразу (иначе висел бы над мостовой на высоте сиденья)
+				r["yoff"] = 0.0
+				r["yoff_to"] = 0.0
+				_place(r)
+				_social(r)
+		elif r["state"] == "door" and int((r["door"] as Dictionary).get("bid", -1)) == int(b["id"]) and int(b["id"]) != city.moving_id:
+			_door_cancel(r)
+			_social(r)
+	spots.erase(b["id"])
 	if city.def(b)["kind"] == "house" and int(b["id"]) != city.moving_id:
 		# жильцы снесённого дома выходят и ждут нового жилья на площади
 		var fams := {}
@@ -620,7 +1903,8 @@ func _on_building_removed(b: Dictionary) -> void:
 		for f in fams:
 			var ids: Array = residents.filter(func(x): return x["fam"] == f and int(x["home"]) <= 0).map(func(x): return x["id"])
 			waiting_fams.append({"name": f, "members": ids})
-			city.family_arrived({"name": f, "n": ids.size(), "cls": city.def(b)["cls"]}, false)
+			# «back»: семья уже жила в городе — в счёт приехавших (первые три семьи, просьба «Заселите три семьи») второй раз не идёт
+			city.family_arrived({"name": f, "n": ids.size(), "cls": city.def(b)["cls"], "back": true}, false)
 	for r in residents:
 		if r["job"] == b["id"]:
 			_quit_job(r)
@@ -637,6 +1921,11 @@ func _on_family_left(home: int, name: String) -> void:
 				var h: Dictionary = city.buildings.get(home, {})
 				r["p"] = city.door_point(h) if not h.is_empty() else r["p"]
 			_go(r, tun, "leave")
+			# уходят по большой дороге за край карты, к горизонту
+			if r["state"] == "walk":
+				var lp: PackedVector2Array = r["path"]
+				lp.append(Vector2(Land.ROAD_X + rng.randf_range(-1.2, 1.2), -CART_FAR))
+				r["path"] = lp
 
 
 func _plaza_point() -> Vector2:
@@ -725,7 +2014,11 @@ func _cart_step(dt: float) -> void:
 			if city.incoming <= 0:
 				return
 			var to := _plaza_point()
-			c["path"] = _path(Land.TUNNEL + Vector2(0, 0.8), to)
+			# повозка выезжает из-за горизонта: по большой дороге за краем карты, через арку — к станции
+			var cp := _path(Land.TUNNEL + Vector2(0, 0.8), to)
+			if cp.size() >= 2:
+				cp.insert(0, Vector2(Land.ROAD_X, -CART_FAR))
+			c["path"] = cp
 			if c["path"].size() < 2:
 				c["t"] = 4.0
 				return
@@ -748,7 +2041,9 @@ func _cart_step(dt: float) -> void:
 		"in", "out":
 			var path: PackedVector2Array = c["path"]
 			var total := _cart_path_len(path)
-			c["s"] = float(c["s"]) + 2.4 * dt
+			# дорога длинная: пока повозку не видно на экране, она едет втрое быстрее (кто смотрит — видит обычный шаг)
+			var seen: bool = game.rig != null and game.rig.cam != null and game.rig.cam.is_position_in_frustum(n.position)
+			c["s"] = float(c["s"]) + 2.4 * dt * (1.0 if seen or not n.visible else 3.0)
 			var s: float = c["s"] if c["state"] == "in" else total - float(c["s"])
 			var p := path[0]
 			var dir := Vector2(0, 1)
@@ -934,9 +2229,12 @@ func _cats_step(dt: float) -> void:
 		var legs: Array = c["legs"]
 		for k in 4:
 			(legs[k] as Node3D).rotation.x = sin(ph + (PI if k % 3 == 0 else 0.0)) * 0.6 * w
-		(c["tail"] as Node3D).rotation.y = sin(t * 2.2 + float(c["ph"])) * 0.35
+		# гладят — хвост ходит быстрее и шире, голова поднята к человеку
+		var petted: bool = c["state"] == "pet"
+		(c["tail"] as Node3D).rotation.y = sin(t * (5.5 if petted else 2.2) + float(c["ph"])) * (0.6 if petted else 0.35)
+		(c["head"] as Node3D).rotation.x = lerpf((c["head"] as Node3D).rotation.x, -0.35 if petted else 0.0, minf(1.0, dt * 3.0))
 		var body_y := 0.0
-		if c["state"] == "sit":
+		if c["state"] == "sit" or petted:
 			body_y = -0.04
 		elif c["state"] == "sleep":
 			body_y = -0.09
@@ -948,3 +2246,21 @@ func _cats_step(dt: float) -> void:
 			c["meow_t"] = rng.randf_range(90, 240)
 			if c["state"] != "sleep" and game.sound:
 				game.sound.cat(c["snd"])
+
+
+## Где сейчас семья, что ждёт жилья (середина её людей) — для значка над ней; Vector3.INF — такой нет
+func waiting_family_pos(name: String) -> Vector3:
+	for wf in waiting_fams:
+		if wf["name"] != name:
+			continue
+		var sum := Vector2.ZERO
+		var n := 0
+		for id in wf["members"]:
+			if by_id.has(id):
+				sum += by_id[id]["p"]
+				n += 1
+		if n == 0:
+			return Vector3.INF
+		var p := sum / n
+		return Vector3(p.x, land.height_at(p.x, p.y), p.y)
+	return Vector3.INF

@@ -59,7 +59,14 @@ static func _special_mesh(name: String) -> Mesh:
 			m.albedo_color = Color("2a2019")
 			m.roughness = 1.0
 		"#lit":
-			# жилой дом изнутри: ночью окна светятся тёплым светом
+			# жилой дом и лавка изнутри: ночью в окнах — еле тёплый огонёк (как от спички), светят фонари, а не дома
+			m.albedo_color = Color("2e2218")
+			m.roughness = 1.0
+			m.emission_enabled = true
+			m.emission = Color("ffa04a")
+			m.emission_energy_multiplier = 0.0
+		"#ember":
+			# угли и пламя в жаровнях, факелах, огненных чашах: днём тёмные, ночью горят ярко
 			m.albedo_color = Color("2e2218")
 			m.roughness = 1.0
 			m.emission_enabled = true
@@ -78,8 +85,9 @@ static func _special_mesh(name: String) -> Mesh:
 			var am := _bird_mesh(name == "#swan")
 			_special[name] = am
 			return am
-		"#lamp_post", "#wall_lamp":
-			var lm := _lamp_mesh(name == "#wall_lamp")
+		"#lamp_post", "#wall_lamp", "#wall_lamp_dim":
+			# #wall_lamp_dim — фонарик у двери жилого дома: ночью еле теплится (улицу светят фонари-украшения)
+			var lm := _lamp_mesh(name != "#lamp_post", name == "#wall_lamp_dim")
 			_special[name] = lm
 			return lm
 		"#shutters_green", "#shutters_brown", "#shutters_blue", "#window_box", "#chimney":
@@ -127,7 +135,7 @@ static func _small_mesh(name: String) -> Mesh:
 
 
 ## Римский фонарь: бронзовый корпус, тёплые стёкла (светятся ночью вместе с окнами домов)
-static func _lamp_mesh(wall: bool) -> Mesh:
+static func _lamp_mesh(wall: bool, dim := false) -> Mesh:
 	var k := Kit.new()
 	var glass := Kit.new()
 	var wood := Color("5a3b22")
@@ -163,11 +171,20 @@ static func _lamp_mesh(wall: bool) -> Mesh:
 	m.surface_set_material(0, Kit.material(0.6))
 	var g := glass.mesh()
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, g.surface_get_arrays(0))
-	m.surface_set_material(1, _glass_material())
+	m.surface_set_material(1, _glass_dim_material() if dim else _glass_material())
 	return m
 
 
 static var _glass: StandardMaterial3D
+static var _glass_dim: StandardMaterial3D
+
+
+## Стекло фонарика у двери жилого дома: то же стекло, но ночью светится еле-еле (яркость меняет игра)
+static func _glass_dim_material() -> StandardMaterial3D:
+	if _glass_dim == null:
+		_glass_dim = _glass_material().duplicate()
+		_glass_dim.emission_energy_multiplier = 0.0
+	return _glass_dim
 
 
 ## Стекло фонарей: днём просто тёплое, ночью светится (яркость меняет игра вместе с окнами)

@@ -31,6 +31,10 @@ func _run() -> void:
 	game.city.money = 90000
 	for r in Defs.RESEARCH:
 		game.city.research[r["id"]] = true
+	for t in Defs.B:                      # и всё, что открывают награды за просьбы
+		var u: String = Defs.B[t].get("unlock", "")
+		if u != "":
+			game.city.research[u] = true
 	var shs: PackedScene = load("res://assets/animals/Sheep_a.glb")
 	var sh := shs.instantiate()
 	for ap in sh.find_children("*", "AnimationPlayer", true, false):

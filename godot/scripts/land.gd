@@ -1,10 +1,11 @@
 class_name Land
 extends RefCounted
 ## Земля игры: карта 384×384 м из клеток по 25 см с уступами по 12,5 см (как в Town to City).
-## Середина 256×256 м — своя земля с начала: мягкие холмы, луга, леса пятнами, пруды; на севере —
-## небольшой холм с тоннелем, оттуда выезжают повозки, рядом почтовая станция. Вокруг — кольцо дорогих
-## участков по 64 м, а дальше до горизонта — просто пейзаж. Каждая клетка помнит, какая постройка на ней
-## стоит (occ): постройки занимают землю своей настоящей формой, а не прямоугольником.
+## Середина 256×256 м — своя земля с начала: мягкие холмы, луга, леса пятнами, пруды. С севера из-за
+## горизонта приходит большая мощёная дорога: через край карты, через арку на въезде на свою землю — к
+## почтовой станции; по ней приезжают повозки. Вокруг — кольцо дорогих участков по 64 м, а дальше до
+## горизонта — тот же пейзаж (его рисует игра, высоты — far_height). Каждая клетка помнит, какая постройка
+## на ней стоит (occ): постройки занимают землю своей настоящей формой, а не прямоугольником.
 ## Высоты хранятся «как есть», а читаются ступеньками по 12,5 см (hq).
 
 const CELL := 0.25
@@ -14,14 +15,17 @@ const STEP := 0.125
 const BASE_Y := 2.0
 const WATER_Y := 1.0
 const SEA_Y := WATER_Y
-const EDGE_Y := 4.5                 # высота на краю карты — там начинается пейзаж до горизонта
+const EDGE_Y := 4.5                 # средняя высота пейзажа за краем карты (дальние холмы и горы — от неё)
 const CH := 64                      # клеток в куске сетки (16 м)
 const CHN := N / CH
 const PLOT := 64.0                  # участок земли
 const PLOTS := 6
-const TUNNEL := Vector2(192.0, 86.0)     # портал тоннеля в холме (смотрит на юг)
-const GATE := TUNNEL
-const HILL := Vector2(192.0, 72.0)
+const ROAD_X := 192.0                    # большая дорога идёт с севера вдоль x = 192
+const ROAD_R := 2.25                     # её полуширина (4,5 м — шире улиц города)
+const TUNNEL := Vector2(ROAD_X, 0.5)     # где большая дорога входит на карту (старое имя — повозки и уходящие семьи)
+const EDGE_ROAD := TUNNEL
+const GATE := Vector2(ROAD_X, 64.0)      # арка на въезде на свою землю (граница участков)
+const HILL := GATE                       # (старое имя: у арки нет скал)
 const CENTER := Vector2(185.0, 99.0)     # почтовая станция
 const START := Vector2(192.0, 150.0)     # середина своей земли
 const PONDS := [[Vector3(215.0, 150.0, 7.5)], [Vector3(130.0, 182.0, 13.0)], [Vector3(260.0, 214.0, 11.0)],
@@ -128,18 +132,47 @@ func is_road(p: Vector2) -> bool:
 
 # ---------- рельеф ----------
 
-func raw_height(x: float, z: float) -> float:
-	var p := Vector2(x, z)
-	# мягкие холмы: на своей земле у станции почти ровно, дальше — выше; за кольцом участков — снова к краю
+## Мягкие холмы (без дороги, прудов и края): на своей земле у станции почти ровно, дальше — выше
+func _relief(x: float, z: float) -> float:
 	var ds := maxf(absf(x - START.x) - 40.0, absf(z - START.y) - 40.0)
 	var amp := lerpf(0.3, 2.4, smoothstep(0.0, 70.0, ds))
 	var y := BASE_Y + 0.4 + n1.get_noise_2d(x, z) * amp + n3.get_noise_2d(x, z) * amp * 0.25
 	y += smoothstep(80.0, 150.0, ds) * (2.0 + n3.get_noise_2d(x * 0.5, z * 0.5) * 3.0)
-	# дорога от портала на юг и площадь у станции — ровно (сам холм с тоннелем строится по клеткам в generate)
-	var dx := absf(x - TUNNEL.x)
-	if z > TUNNEL.y:
-		var corridor := (1.0 - smoothstep(4.0, 8.0, dx)) * (1.0 - smoothstep(130.0, 140.0, z))
-		y = lerpf(y, BASE_Y + 0.4, corridor)
+	return y
+
+
+var _road_prof := PackedFloat32Array()
+
+
+## Высота большой дороги на z: плавно по холмам (среднее по ±24 м), у арки и станции — ровно
+func road_y(z: float) -> float:
+	if _road_prof.is_empty():
+		_road_prof.resize(int(SIZE) + 1)
+		for zi in _road_prof.size():
+			var s := 0.0
+			for k in range(-4, 5):
+				s += _relief(ROAD_X, zi + k * 6.0)
+			_road_prof[zi] = s / 9.0
+		# площадка у арки — ровная
+		var yg := _road_prof[int(GATE.y)]
+		for zi in _road_prof.size():
+			_road_prof[zi] = lerpf(_road_prof[zi], yg, 1.0 - smoothstep(6.0, 16.0, absf(zi - GATE.y)))
+	var zc := clampf(z, 0.0, SIZE)
+	var i0 := mini(int(zc), _road_prof.size() - 2)
+	var y := lerpf(_road_prof[i0], _road_prof[i0 + 1], zc - i0)
+	return lerpf(y, BASE_Y + 0.4, smoothstep(72.0, 96.0, z))
+
+
+func raw_height(x: float, z: float) -> float:
+	var p := Vector2(x, z)
+	var y := _relief(x, z)
+	# большая дорога с края карты к станции: поперёк ровная, вдоль — плавно по холмам; склоны мягко к ней
+	var dx := absf(x - ROAD_X)
+	if dx < ROAD_R + 14.0 and z < 140.0:
+		var corridor := (1.0 - smoothstep(ROAD_R + 1.0, ROAD_R + 13.0, dx)) * (1.0 - smoothstep(130.0, 140.0, z))
+		y = lerpf(y, road_y(z), corridor)
+	# у арки — ровная площадка пошире
+	y = lerpf(y, road_y(GATE.y), 1.0 - smoothstep(7.0, 14.0, p.distance_to(GATE)))
 	y = lerpf(y, BASE_Y + 0.4, 1.0 - smoothstep(10.0, 18.0, p.distance_to(CENTER + Vector2(3, 0))))
 	# пруды
 	for pd in PONDS:
@@ -149,10 +182,15 @@ func raw_height(x: float, z: float) -> float:
 		if d < r + 3.0:
 			y = lerpf(y, WATER_Y - 0.9, 1.0 - smoothstep(r * 0.55, r, d))
 			y = lerpf(y, maxf(minf(y, WATER_Y + 0.35), WATER_Y + 0.15), (1.0 - smoothstep(r, r + 2.5, d)) * smoothstep(r * 0.55, r, d))
-	# край карты — к общей высоте, дальше пейзаж до горизонта
+	# у края карты — просто холмы (они же продолжаются за краем: far_height), без низин с водой
 	var edge := minf(minf(x, SIZE - x), minf(z, SIZE - z))
-	y = lerpf(y, EDGE_Y, 1.0 - smoothstep(0.0, 22.0, edge))
+	y = lerpf(y, _edge_relief(x, z), 1.0 - smoothstep(0.0, 22.0, edge))
 	return y
+
+
+## Холмы у края карты и сразу за ним — одни и те же (шва нет), но не ниже луга у воды
+func _edge_relief(x: float, z: float) -> float:
+	return maxf(_relief(x, z), WATER_Y + 0.5)
 
 
 func generate() -> void:
@@ -166,7 +204,6 @@ func generate() -> void:
 	var img := Image.create_from_data(M, M, false, Image.FORMAT_RF, coarse.to_byte_array())
 	img.resize(N, N, Image.INTERPOLATE_BILINEAR)
 	h = img.get_data().to_float32_array()
-	_hill()
 	kind.resize(N * N)
 	kind.fill(Kind.GRASS)
 	occ.resize(N * N)
@@ -176,8 +213,9 @@ func generate() -> void:
 	tn.frequency = 0.035
 	tn.fractal_octaves = 3
 	tint = tn.get_image(N, N, false, false, true).get_data()
-	# дорога из тоннеля мимо станции и площадь перед станцией
-	paint_line(TUNNEL + Vector2(0, 0.6), Vector2(192.0, 128.0), 1.7, Kind.ROAD, true)
+	# большая дорога с края карты через арку мимо станции и площадь перед станцией
+	paint_line(Vector2(ROAD_X, 0.1), Vector2(ROAD_X, 106.0), ROAD_R, Kind.ROAD, true)
+	paint_line(Vector2(ROAD_X, 104.0), Vector2(ROAD_X, 128.0), 1.7, Kind.ROAD, true)
 	for z in range(92, 106):
 		paint_line(Vector2(187.5, z + 0.5), Vector2(190.0, z + 0.5), 0.6, Kind.PLAZA, true)
 	# своя земля с начала: середина 4×4 участка (256×256 м)
@@ -190,42 +228,35 @@ func generate() -> void:
 	touched.clear()
 
 
-const HILL_R := 26.0
-const HILL_H := 8.0
-const CLIFF_H := 7.5                 # высота отвесной стены с порталом над дорогой
-const CLIFF_W := 12.0                # полуширина стены
+# ---------- пейзаж за краем карты ----------
+
+var _far_n: FastNoiseLite
 
 
-## Холм с тоннелем: пологий купол, спереди — отвесная каменная стена, в ней портал
-func _hill() -> void:
-	var i0 := int((HILL.x - HILL_R - 4.0) / CELL)
-	var i1 := int((HILL.x + HILL_R + 4.0) / CELL)
-	var j0 := int((HILL.y - HILL_R - 4.0) / CELL)
-	var j1 := int((TUNNEL.y + 2.0) / CELL)
-	var base := BASE_Y + 0.4
-	for j in range(maxi(0, j0), mini(N, j1)):
-		for i in range(maxi(0, i0), mini(N, i1)):
-			var q := cell_center(i, j)
-			var k := idx(i, j)
-			var d := q.distance_to(HILL) / HILL_R
-			var dome := 0.0
-			if d < 1.0:
-				var t := 1.0 - d
-				dome = HILL_H * t * t * (3.0 - 2.0 * t) + n2.get_noise_2d(q.x * 0.6, q.y * 0.6) * 0.5 * t
-			var dx := absf(q.x - TUNNEL.x)
-			# линия стены слегка выгнута назад к краям
-			var face_z := TUNNEL.y - 0.3 - dx * dx * 0.012
-			if dx < CLIFF_W and q.y > face_z:
-				h[k] = base                      # перед стеной — ровная площадка у портала
-				continue
-			if dx < 1.5 and q.y > face_z - 1.5:
-				h[k] = base                      # ниша под каменный портал
-				continue
-			if dx < CLIFF_W and q.y <= face_z:
-				var wall := base + CLIFF_H * (1.0 - smoothstep(CLIFF_W - 4.0, CLIFF_W, dx))
-				h[k] = maxf(maxf(h[k], base + dome), wall + (dome * 0.25))
-			else:
-				h[k] = maxf(h[k], base + dome)
+## Высота земли за краем карты (её рисует игра до горизонта): у края — те же холмы, что на карте (_edge_relief,
+## шва нет), дальше — большие холмы и горы в дымке. Вдоль большой дороги на север — пологая долина, дорога поперёк
+## ровная, первые 60 м за краем — на высоте дороги у края (по ней едут повозки и уходят семьи: Land.height_at
+## за краем отдаёт высоту крайней клетки — она та же)
+func far_height(x: float, z: float) -> float:
+	if _far_n == null:
+		_far_n = FastNoiseLite.new()
+		_far_n.seed = 3
+		_far_n.frequency = 0.004
+		_far_n.fractal_octaves = 3
+	var dx := maxf(maxf(-x, x - SIZE), 0.0)
+	var dz := maxf(maxf(-z, z - SIZE), 0.0)
+	var d := sqrt(dx * dx + dz * dz)
+	var hills := EDGE_Y + smoothstep(0.0, 220.0, d) * (5.0 + _far_n.get_noise_2d(x, z) * 22.0) + smoothstep(500.0, 1400.0, d) * 55.0
+	var y := lerpf(_edge_relief(x, z) if d < 260.0 else hills, hills, smoothstep(30.0, 260.0, d))
+	if z < 0.0:
+		var rd := absf(x - ROAD_X)
+		if rd < ROAD_R + 60.0:
+			var y0 := roundf(_edge_relief(ROAD_X, 0.0) / STEP) * STEP
+			var far := EDGE_Y + (5.0 + _far_n.get_noise_2d(ROAD_X, z) * 22.0) * 0.35 * smoothstep(0.0, 220.0, -z) + smoothstep(500.0, 1400.0, -z) * 55.0
+			var ry := lerpf(y0, far, smoothstep(60.0, 420.0, -z))
+			var w := 1.0 - smoothstep(ROAD_R + 1.5, ROAD_R + 4.0 + 50.0 * smoothstep(0.0, 400.0, -z), rd)
+			y = lerpf(y, ry, w)
+	return y
 
 
 func _mark(i: int, j: int) -> void:
@@ -482,7 +513,8 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 			var gj := clampi(j0 + j - 1, 0, N - 1)
 			var yy := hq(idx(gi, gj))
 			if i0 + i - 1 < 0 or j0 + j - 1 < 0 or i0 + i - 1 >= N or j0 + j - 1 >= N:
-				yy = WATER_Y - 3.0
+				# за краем — пейзаж до горизонта той же высоты (far_height): низкая стенка вниз закрывает щёлку в пару см
+				yy -= 0.3
 			hy[j * W + i] = yy
 	var quad := func(a: Vector3, b: Vector3, cc: Vector3, d: Vector3, n: Vector3, c: Color, kd: int, top: float) -> void:
 		var base := v.size()

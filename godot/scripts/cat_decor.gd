@@ -4,10 +4,11 @@ extends RefCounted
 ## Catalog.make потом уменьшает его до «кукольного» масштаба (Catalog.DECOR).
 ## Каждое украшение — маленькая уютная сценка как в Town to City: клумба в каменном бортике,
 ## скамья между терракотовыми горшками, колодец под черепичной крышей, телега с товаром, статуя на постаменте.
-## Облик (look) выбирается по цвету из палитры: игра сама даёт соседям разные цвета, поэтому рядом стоящие
-## украшения выглядят по-разному. Мелочи (поворот, какой именно кувшин) — от b.rng. Деталей немного (≤ ~22).
+## Облик (look) — своя карточка в меню стройки (Defs.B: «flowers», «flowers_2»…, поле look): что игрок выбрал,
+## то и встанет, где бы он ни поставил. Цвет и место облик не меняют: Catalog.make строит украшение всегда
+## с одним и тем же цветом, а мелочи (какой именно кувшин, поворот цветка) берутся из b.rng, который зависит
+## только от типа, — поэтому картинка карточки и поставленное украшение одинаковы. Деталей немного (≤ ~22).
 ## Настенные (wall): начало координат — на поверхности стены, +Z — от стены наружу.
-## Игра ставит настенные украшения с цветом 0 — поэтому облик 0 у них самый удачный.
 
 const M := Bp.M
 const FL := Bp.FL
@@ -24,54 +25,42 @@ const LILY := Color(0.72, 0.93, 0.62)
 
 static func _decor(b: Bp, type: String) -> void:
 	b.door = Vector3(0, 0, 1.0)
-	match type:
-		"flowers": _flowers(b)
-		"planter": _planter(b)
-		"tree": _tree(b)
-		"cypress": _cypress(b)
-		"palm": _palm(b)
-		"bush": _bush(b)
-		"bench": _bench(b)
-		"lamp_post": _lamp_post(b)
-		"candelabrum": _candelabrum(b)
-		"wall_torch": _wall_torch(b)
-		"wall_lamp": _wall_lamp(b)
-		"wall_flowers": _wall_flowers(b)
-		"wall_banner": _wall_banner(b)
-		"fence": _fence(b)
-		"hay": _hay(b)
-		"amphorae": _amphorae(b)
-		"goods": _goods(b)
-		"well": _well(b)
-		"cart": _cart(b)
-		"brazier": _brazier(b)
-		"bigbrazier": _bigbrazier(b)
-		"banner": _banner(b)
-		"sheep": _sheep(b)
-		"statue": _statue(b)
+	var lk := int((Defs.B.get(type, {}) as Dictionary).get("look", 0))
+	match Defs.base_of(type):
+		"flowers": _flowers(b, lk)
+		"planter": _planter(b, lk)
+		"tree": _tree(b, lk)
+		"cypress": _cypress(b, lk)
+		"palm": _palm(b, lk)
+		"bush": _bush(b, lk)
+		"bench": _bench(b, lk)
+		"lamp_post": _lamp_post(b, lk)
+		"candelabrum": _candelabrum(b, lk)
+		"wall_torch": _wall_torch(b, lk)
+		"wall_lamp": _wall_lamp(b, lk)
+		"wall_flowers": _wall_flowers(b, lk)
+		"wall_banner": _wall_banner(b, lk)
+		"fence": _fence(b, lk)
+		"hay": _hay(b, lk)
+		"amphorae": _amphorae(b, lk)
+		"goods": _goods(b, lk)
+		"well": _well(b, lk)
+		"cart": _cart(b, lk)
+		"brazier": _brazier(b, lk)
+		"bigbrazier": _bigbrazier(b, lk)
+		"banner": _banner(b, lk)
+		"sheep": _sheep(b, lk)
+		"statue": _statue(b, lk)
 		"column": _column(b)
-		"lion": _lion(b)
-		"sundial": _sundial(b)
-		"smallfountain": _smallfountain(b)
-		"pergola": _pergola(b)
+		"lion": _lion(b, lk)
+		"sundial": _sundial(b, lk)
+		"smallfountain": _smallfountain(b, lk)
+		"pergola": _pergola(b, lk)
 		"duck": _duck(b)
 		"swan": _swan(b)
 
 
 # ---------- помощники ----------
-
-## Номер цвета палитры, с которым строится украшение (Catalog.make красит чертёж b.paint(цвет))
-static func _ci(b: Bp) -> int:
-	for i in Defs.PALETTE.size():
-		if (Defs.PALETTE[i]["c"] as Color).is_equal_approx(b.tint):
-			return i
-	return 0
-
-
-## Какой из n обликов: по цвету — соседям игра даёт разные цвета, и облики расходятся ровно
-static func _look(b: Bp, n: int) -> int:
-	return posmod(_ci(b), n)
-
 
 ## Деталь со своей раскраской (remap), равномерный масштаб
 static func _addr(b: Bp, name: String, pos: Vector3, yaw: float, s: float, rm: Dictionary) -> void:
@@ -99,7 +88,7 @@ static func _ground_fp(b: Bp, w: float, d: float, c := Vector3.ZERO) -> void:
 
 
 ## Огонь в чаше: горка маленьких кубиков-«вокселей», утопленных в угли так, что видны только верхушки.
-## Днём они тёмные, как угли; в сумерках разгораются вместе с окнами домов (#lit).
+## Днём они тёмные, как угли; в сумерках разгораются вместе с фонарями (#ember — ярче окон домов).
 ## c — верх углей, spread — радиус горки, n — сколько кубиков, s1..s0 — размер от середины к краю
 static func _fire(b: Bp, c: Vector3, spread: float, n: int, s1: float, s0: float) -> void:
 	for k in n:
@@ -109,7 +98,7 @@ static func _fire(b: Bp, c: Vector3, spread: float, n: int, s1: float, s0: float
 		var s := lerpf(s1, s0, f) * b.rng.randf_range(0.9, 1.1)
 		var p := c + Vector3(cos(a) * r, s * 0.12 - s * 0.35 * f, sin(a) * r)
 		var bs := Basis(Vector3.UP, b.rng.randf() * TAU).scaled(Vector3.ONE * s)
-		b.parts.append(["#lit", b.base * Transform3D(bs, p), {}])
+		b.parts.append(["#ember", b.base * Transform3D(bs, p), {}])
 
 
 ## Язычок пламени из трёх кубиков, сужается кверху вдоль up (как огонь из вокселей в Town to City)
@@ -118,7 +107,7 @@ static func _flame(b: Bp, p: Vector3, s: float, up := Vector3.UP) -> void:
 	for k in 3:
 		var sk: float = [1.0, 0.72, 0.45][k] * s
 		var off: float = [0.0, 0.72, 1.28][k] * s
-		b.parts.append(["#lit", b.base * Transform3D(Basis(Vector3.UP, yaw + k * 0.5).scaled(Vector3.ONE * sk), p + up * off), {}])
+		b.parts.append(["#ember", b.base * Transform3D(Basis(Vector3.UP, yaw + k * 0.5).scaled(Vector3.ONE * sk), p + up * off), {}])
 
 
 ## Цветущий кустик в настоящих цветах
@@ -145,8 +134,8 @@ static func _yaw(b: Bp) -> float:
 # ---------- цветы и зелень ----------
 
 ## Клумба: каменный ящик с цветами, круглый бортик из камней с цветочным ковром или высокая цветочница
-static func _flowers(b: Bp) -> void:
-	match _look(b, 3):
+static func _flowers(b: Bp, lk: int) -> void:
+	match lk:
 		0:
 			var sx := 0.72
 			var sz := 0.74
@@ -173,8 +162,8 @@ static func _flowers(b: Bp) -> void:
 
 
 ## Вазон: терракотовая ваза на круглом камне, пара греческих ваз или пифос с самшитом и горшки
-static func _planter(b: Bp) -> void:
-	match _look(b, 3):
+static func _planter(b: Bp, lk: int) -> void:
+	match lk:
 		0:
 			_sx(b, "SM_Prop_Plinth_03", Vector3.ZERO, 0.0, Vector3(0.78, 1.0, 0.78))
 			_pot(b, Vector3(0, 0.15, 0), 1.05)
@@ -192,9 +181,10 @@ static func _planter(b: Bp) -> void:
 			b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 4), Vector3(0.02, 0, 0.32), _yaw(b), 0.8)
 
 
-static func _tree(b: Bp) -> void:
-	b.add("SM_Env_Tree_0%d" % (1 + b.rng.randi() % 4), Vector3.ZERO, _yaw(b), b.rng.randf_range(0.38, 0.46))
-	if _look(b, 2) == 0:
+## Дерево: в каменном круге с цветами или раскидистое на лужайке
+static func _tree(b: Bp, lk: int) -> void:
+	b.add("SM_Env_Tree_01" if lk == 0 else "SM_Env_Tree_02", Vector3.ZERO, _yaw(b), 0.42)
+	if lk == 0:
 		b.add("SM_Prop_Stone_Border_01", Vector3.ZERO, _yaw(b), 0.34)
 		_bloom(b, Vector3(0.25, 0, 0.12), 0.2)
 		b.add("SM_Env_Grass_01", Vector3(-0.2, 0, -0.18), _yaw(b), 0.5)
@@ -203,9 +193,10 @@ static func _tree(b: Bp) -> void:
 		_bloom(b, Vector3(0.45, 0, 0.3), 0.24)
 
 
-static func _cypress(b: Bp) -> void:
-	b.add("SM_Env_Tree_Thin_0%d" % (1 + b.rng.randi() % 2), Vector3.ZERO, _yaw(b), b.rng.randf_range(0.7, 0.8))
-	if _look(b, 2) == 0:
+## Кипарис: в траве или в каменном круге с ковром цветов
+static func _cypress(b: Bp, lk: int) -> void:
+	b.add("SM_Env_Tree_Thin_01" if lk == 0 else "SM_Env_Tree_Thin_02", Vector3.ZERO, _yaw(b), 0.75)
+	if lk == 0:
 		b.add("SM_Env_Grass_01", Vector3(0.1, 0, 0.05), _yaw(b), 0.6)
 		_bloom(b, Vector3(-0.25, 0, 0.25), 0.2)
 	else:
@@ -213,9 +204,10 @@ static func _cypress(b: Bp) -> void:
 		b.add("SM_Env_Flowers_0%d" % (1 + b.rng.randi() % 5), Vector3(0, 0.02, 0), _yaw(b), 1.0)
 
 
-static func _palm(b: Bp) -> void:
-	b.add("SM_Env_Tree_Palm_0%d" % (1 + b.rng.randi() % 3), Vector3.ZERO, _yaw(b), b.rng.randf_range(0.4, 0.46))
-	if _look(b, 2) == 0:
+## Пальма: с зеленью у корней или в каменном круге с цветами
+static func _palm(b: Bp, lk: int) -> void:
+	b.add("SM_Env_Tree_Palm_01" if lk == 0 else "SM_Env_Tree_Palm_02", Vector3.ZERO, _yaw(b), 0.43)
+	if lk == 0:
 		b.add("SM_Env_Garden_Plants_07", Vector3(0.45, 0, 0.3), _yaw(b), 0.3)
 		b.add("SM_Env_Grass_03", Vector3(-0.35, 0, 0.2), _yaw(b), 0.6)
 	else:
@@ -225,8 +217,8 @@ static func _palm(b: Bp) -> void:
 
 
 ## Куст: карликовая пальма в пифосе, цветущий куст или южный куст-веер в цветах
-static func _bush(b: Bp) -> void:
-	match _look(b, 3):
+static func _bush(b: Bp, lk: int) -> void:
+	match lk:
 		0:
 			_topiary(b, Vector3(0, 0, -0.05), 1.08)
 			_bloom(b, Vector3(0.42, 0, 0.25), 0.22)
@@ -245,8 +237,8 @@ static func _bush(b: Bp) -> void:
 # ---------- скамьи и свет ----------
 
 ## Скамья: мраморная между двумя терракотовыми горшками, деревянная с вазой и корзиной или полукруглая у куста
-static func _bench(b: Bp) -> void:
-	match _look(b, 3):
+static func _bench(b: Bp, lk: int) -> void:
+	match lk:
 		0:
 			b.add("SM_Prop_Seat_Bench_01", Vector3.ZERO, 0.0)
 			for sx: float in [-1.15, 1.15]:
@@ -269,11 +261,11 @@ static func _bench(b: Bp) -> void:
 const LAMP_K := 1.2
 
 
-static func _lamp_post(b: Bp) -> void:
+static func _lamp_post(b: Bp, lk: int) -> void:
 	var k := LAMP_K
 	b.add("#lamp_post", Vector3.ZERO, 0.0, k)
 	b.light(Vector3(0.42, 2.12, 0.0) * k)
-	match _look(b, 3):
+	match lk:
 		0:
 			_sx(b, "SM_Prop_Beam_01", Vector3(-0.44, 2.25, 0.0) * k, 0.0, Vector3(0.18, 0.28, 0.28) * k)
 			b.add("SM_Prop_FlowerPot_Hanging_0%d" % (4 + b.rng.randi() % 3), Vector3(-0.36, 2.23, -0.0) * k, 0.0, 0.42 * k)
@@ -289,27 +281,29 @@ static func _lamp_post(b: Bp) -> void:
 
 
 ## Светильник: высокий бронзовый канделябр на мраморном круге или огненная чаша на высокой мраморной подставке
-static func _candelabrum(b: Bp) -> void:
-	if _look(b, 2) == 0:
+static func _candelabrum(b: Bp, lk: int) -> void:
+	if lk == 0:
 		b.add("SM_Prop_Plinth_03", Vector3.ZERO, 0.0, 1.0)
 		b.add("SM_Prop_Senser_01", Vector3(0, 0.15, 0), 0.0, 1.15)
 		_fire(b, Vector3(0, 2.0, 0), 0.05, 3, 0.07, 0.05)
 		b.light(Vector3(0, 2.2, 0))
 	else:
-		# высокая стройная мраморная подставка с огненной чашей
-		var h := 1.5 * 0.8
-		b.add("SM_Prop_Pillar_Base_02", Vector3.ZERO, 0.0, 0.8)
-		b.add("SM_Prop_Brazier_04", Vector3(0, h, 0), 0.0, 0.45)
-		b.add("SM_Prop_Brazier_04_Insert_01", Vector3(0, h, 0), 0.0, 0.45)
-		_fire(b, Vector3(0, h + 0.22, 0), 0.09, 4, 0.08, 0.055)
-		b.light(Vector3(0, h + 0.4, 0))
+		# стройная мраморная колонна на круглом камне, наверху огненная чаша (не путать с жаровней на тумбе)
+		var y0 := 0.12
+		b.add("SM_Prop_Plinth_03", Vector3.ZERO, 0.0, 0.8)
+		_sx(b, "SM_Bld_Pillar_02", Vector3(0, y0, 0), 0.0, Vector3(0.3, 0.45, 0.3))
+		var h := y0 + 3.0 * 0.45
+		b.add("SM_Prop_Brazier_04", Vector3(0, h, 0), 0.0, 0.42)
+		b.add("SM_Prop_Brazier_04_Insert_01", Vector3(0, h, 0), 0.0, 0.42)
+		_fire(b, Vector3(0, h + 0.2, 0), 0.085, 4, 0.08, 0.055)
+		b.light(Vector3(0, h + 0.38, 0))
 
 
 # ---------- на стене ----------
 
 ## Факел на стене: тёмное древко в кольце, за ним — золотая бляха или львиная маска; огонь — язычок из кубиков
-static func _wall_torch(b: Bp) -> void:
-	if _look(b, 2) == 0:
+static func _wall_torch(b: Bp, lk: int) -> void:
+	if lk == 0:
 		b.add("SM_Bld_Ornament_09", Vector3(0, 0.02, 0.0), 0.0, 1.1)
 		b.add("SM_Prop_Bracket_01", Vector3(0, -0.12, 0.0), 0.0, 2.2)
 	else:
@@ -323,8 +317,8 @@ static func _wall_torch(b: Bp) -> void:
 
 
 ## Фонарь на стене: фонарь со стеклом на кронштейне или римский бронзовый светильник на цепочке
-static func _wall_lamp(b: Bp) -> void:
-	if _look(b, 2) == 0:
+static func _wall_lamp(b: Bp, lk: int) -> void:
+	if lk == 0:
 		b.add("#wall_lamp", Vector3.ZERO, 0.0)
 		b.light(Vector3(0, -0.2, 0.4))
 	else:
@@ -335,8 +329,8 @@ static func _wall_lamp(b: Bp) -> void:
 
 
 ## Цветы на стене: ящик с цветами под окном, подвесное кашпо или два кашпо
-static func _wall_flowers(b: Bp) -> void:
-	match _look(b, 3):
+static func _wall_flowers(b: Bp, lk: int) -> void:
+	match lk:
 		0:
 			# каменный ящик с цветами, как под окнами в Town to City (низ окна первого этажа)
 			# верх ящика ~0,83 м над землёй (под подоконником), снизу — два кронштейна
@@ -351,25 +345,24 @@ static func _wall_flowers(b: Bp) -> void:
 
 
 ## Знамя на стене: полотнище на перекладине, другое по форме или два узких полотнища рядом
-static func _wall_banner(b: Bp) -> void:
-	var letter: String = b.pick(["A", "B", "C", "D", "E", "F", "G", "H", "I"])
-	match _look(b, 3):
+## Рисунок на полотнищах у каждого облика свой и постоянный (буква модели Synty — какой рисунок)
+static func _wall_banner(b: Bp, lk: int) -> void:
+	match lk:
 		0:
-			b.add("SM_Prop_Banner_01_%s" % letter, Vector3(0, 0.5, 0.03), 0.0)
+			b.add("SM_Prop_Banner_01_E", Vector3(0, 0.5, 0.03), 0.0)
 		1:
-			b.add("SM_Prop_Banner_02_%s" % letter, Vector3(0, 0.5, 0.03), 0.0)
+			b.add("SM_Prop_Banner_02_D", Vector3(0, 0.5, 0.03), 0.0)
 		_:
-			var l2: String = b.pick(["A", "B", "C", "D", "E", "F", "G", "H", "I"])
-			b.add("SM_Prop_Banner_02_%s" % letter, Vector3(-0.42, 0.45, 0.03), 0.0, 0.72)
-			b.add("SM_Prop_Banner_02_%s" % l2, Vector3(0.42, 0.45, 0.03), 0.0, 0.72)
+			b.add("SM_Prop_Banner_02_C", Vector3(-0.42, 0.45, 0.03), 0.0, 0.72)
+			b.add("SM_Prop_Banner_02_H", Vector3(0.42, 0.45, 0.03), 0.0, 0.72)
 
 
 # ---------- двор и хозяйство ----------
 
 ## Плетень: чистый жердяной забор (ставится рядами), калитка между каменными столбиками с вазами
 ## или низкая оштукатуренная садовая стенка в цвет дома с вазонами (как в Помпеях)
-static func _fence(b: Bp) -> void:
-	match _look(b, 3):
+static func _fence(b: Bp, lk: int) -> void:
+	match lk:
 		0:
 			b.add("SM_Env_Fence_Woof_0%d" % (1 + b.rng.randi() % 3), Vector3(-1.25, 0, 0), 0.0)
 			b.add("SM_Env_Grass_03", Vector3(-0.55, 0, 0.14), 0.0, 0.6)
@@ -390,8 +383,8 @@ static func _fence(b: Bp) -> void:
 
 
 ## Стог сена: копна, прислонённый сноп, мешок и коса; или большая копна с корзиной и мешками
-static func _hay(b: Bp) -> void:
-	if _look(b, 2) == 0:
+static func _hay(b: Bp, lk: int) -> void:
+	if lk == 0:
 		b.add("SM_Prop_Straw_Stack_01", Vector3(-0.15, 0, -0.1), _yaw(b), 0.58)
 		_lean(b, "SM_Prop_Straw_Bundle_01", Vector3(0.62, 0, 0.18), _yaw(b), 0.18, 0.55)
 		b.add("SM_Prop_Sack_0%d" % (3 + b.rng.randi() % 3), Vector3(0.5, 0, -0.45), _yaw(b), 0.75)
@@ -405,8 +398,8 @@ static func _hay(b: Bp) -> void:
 		_lean(b, "SM_Prop_Straw_Bundle_01", Vector3(-0.72, 0, -0.1), _yaw(b), -0.16, 0.5)
 
 
-static func _amphorae(b: Bp) -> void:
-	match _look(b, 3):
+static func _amphorae(b: Bp, lk: int) -> void:
+	match lk:
 		0:
 			b.add("SM_Prop_Vase_Pile_02", Vector3(-0.15, 0, 0), _yaw(b), 0.72)
 			b.add("SM_Prop_Vase_02", Vector3(0.62, 0, 0.3), _yaw(b), 0.85)
@@ -420,8 +413,8 @@ static func _amphorae(b: Bp) -> void:
 			b.add("SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 8), Vector3(0.55, 0, 0.5), _yaw(b), 0.7)
 
 
-static func _goods(b: Bp) -> void:
-	match _look(b, 3):
+static func _goods(b: Bp, lk: int) -> void:
+	match lk:
 		0:
 			b.add("SM_Prop_Basket_Set_01", Vector3(0, 0, -0.1), 0.0, 0.72)
 			b.add("SM_Prop_Basket_Set_01_Insert_01", Vector3(0, 0, -0.1), 0.0, 0.72)
@@ -440,10 +433,9 @@ static func _goods(b: Bp) -> void:
 
 
 ## Колодец: каменный сруб с воротом под черепичной крышей, под дощатым навесом или открытый; кувшины и корзина
-static func _well(b: Bp) -> void:
+static func _well(b: Bp, lk: int) -> void:
 	var s := 0.62
 	b.add("SM_Prop_Well_01", Vector3(0.08, 0, 0.0), 0.0, s)
-	var lk := _look(b, 3)
 	if lk < 2:
 		var h := 2.02
 		for px: float in [-1.08, 1.08]:
@@ -479,9 +471,8 @@ static func _well(b: Bp) -> void:
 
 
 ## Телега с товаром стоит вдоль улицы (оглоблями влево или вправо), рядом мешки или амфоры
-static func _cart(b: Bp) -> void:
+static func _cart(b: Bp, lk: int) -> void:
 	var s := 0.82
-	var lk := _look(b, 2)
 	var yaw := -PI / 2 if lk == 0 else PI / 2
 	var c := Basis(Vector3.UP, yaw) * Vector3(0, 0, -0.69 * s)
 	b.add("SM_Prop_Cart_01", c, yaw, s)
@@ -499,8 +490,8 @@ static func _cart(b: Bp) -> void:
 # ---------- огонь, знамёна ----------
 
 ## Жаровня: железный треножник на каменном круге или огненная чаша на мраморной базе; дымок
-static func _brazier(b: Bp) -> void:
-	if _look(b, 2) == 0:
+static func _brazier(b: Bp, lk: int) -> void:
+	if lk == 0:
 		b.add("SM_Prop_Plinth_03", Vector3.ZERO, 0.0, 0.9)
 		b.add("SM_Prop_Brazier_03", Vector3(0, 0.13, 0), 0.0)
 		b.add("SM_Prop_Brazier_03_Insert_01", Vector3(0, 0.13, 0), 0.0)
@@ -517,9 +508,9 @@ static func _brazier(b: Bp) -> void:
 
 
 ## Большая жаровня: бронзовая чаша на ножке или широкая низкая чаша на мраморной плите; дымок
-static func _bigbrazier(b: Bp) -> void:
+static func _bigbrazier(b: Bp, lk: int) -> void:
 	_slab(b, Vector3.ZERO, Vector3(1.55, 0.12, 1.55))
-	if _look(b, 2) == 0:
+	if lk == 0:
 		b.add("SM_Prop_Brazier_01", Vector3(0, 0.12, 0), 0.0, 0.75)
 		b.add("SM_Prop_Brazier_01_Insert_01", Vector3(0, 0.12, 0), 0.0, 0.75)
 		_fire(b, Vector3(0, 1.56, 0), 0.3, 7, 0.14, 0.08)
@@ -535,13 +526,12 @@ static func _bigbrazier(b: Bp) -> void:
 
 ## Знамя на шесте: римский значок — полотнище на перекладине, золотые бляхи на древке;
 ## или на мраморном постаменте с полотнищем другой формы
-static func _banner(b: Bp) -> void:
-	var letter: String = b.pick(["A", "B", "C", "D", "E", "F", "G", "H", "I"])
-	if _look(b, 2) == 0:
+static func _banner(b: Bp, lk: int) -> void:
+	if lk == 0:
 		b.add("SM_Prop_Plinth_03", Vector3.ZERO, 0.0, 0.75)
 		_sx(b, "SM_Prop_Pole_02", Vector3(0, 0.1, 0), 0.0, Vector3(1.0, 1.15, 1.0))
 		_sx(b, "SM_Prop_Beam_01", Vector3(-0.56, 3.1, 0.08), 0.0, Vector3(0.45, 0.6, 0.6))
-		b.add("SM_Prop_Banner_01_%s" % letter, Vector3(0, 3.05, -0.02), 0.0)
+		b.add("SM_Prop_Banner_01_B", Vector3(0, 3.05, -0.02), 0.0)
 		for k in 2:
 			b.add("SM_Bld_Ornament_0%d" % b.pick([1, 4, 7]), Vector3(0, 1.28 - k * 0.42, 0.11), 0.0, 0.42)
 		b.add("SM_Bld_Ornament_09", Vector3(0, 3.62, 0.0), 0.0, 1.0)
@@ -550,7 +540,7 @@ static func _banner(b: Bp) -> void:
 		var py := 0.68 * 0.8
 		_sx(b, "SM_Prop_Pole_02", Vector3(0, py, 0), 0.0, Vector3(1.0, 1.0, 1.0))
 		_sx(b, "SM_Prop_Beam_01", Vector3(-0.62, py + 2.62, 0.08), 0.0, Vector3(0.5, 0.6, 0.6))
-		b.add("SM_Prop_Banner_02_%s" % letter, Vector3(0, py + 2.58, 0.06), 0.0)
+		b.add("SM_Prop_Banner_02_F", Vector3(0, py + 2.58, 0.06), 0.0)
 		for k in 3:
 			b.add("SM_Bld_Ornament_07", Vector3(0, py + 0.95 - k * 0.3, 0.11), 0.0, 0.34)
 		b.add("SM_Bld_Ornament_09", Vector3(0, py + 3.12, 0.0), 0.0, 1.0)
@@ -560,11 +550,11 @@ static func _banner(b: Bp) -> void:
 
 ## Лужок для пары овец (самих овец добавляет игра, они бродят в пределах ±0,8 м):
 ## загон с плетнём и корытцем или открытый луг с копёшкой в углу
-static func _sheep(b: Bp) -> void:
+static func _sheep(b: Bp, lk: int) -> void:
 	b.add("SM_Env_Grass_02", Vector3(0.3, 0, -0.2), 0.0, 0.6)
 	b.add("SM_Env_Grass_01", Vector3(-0.65, 0, 0.5), _yaw(b), 0.8)
 	b.add("SM_Env_Flowers_0%d" % (1 + b.rng.randi() % 5), Vector3(-0.3, 0, 0.1), _yaw(b), 1.3)
-	if _look(b, 2) == 0:
+	if lk == 0:
 		b.add("SM_Env_Fence_Woof_0%d" % (1 + b.rng.randi() % 3), Vector3(-1.03, 0, -1.05), 0.0, 0.8)
 		_sx(b, "SM_Bld_Floor_Trim_02", Vector3(0.95 - 0.155, 0, 0.375), PI / 2, Vector3(0.3, 0.55, 0.3))
 		b.parts.append(["#water", b.base * Transform3D(Basis.from_scale(Vector3(0.18, 0.04, 0.62)), Vector3(0.95, 0.22, 0)), {}])
@@ -598,10 +588,15 @@ static func _lilies(b: Bp, p: Vector3, s: float) -> void:
 
 # ---------- камень: статуи, колонна, лев, часы, фонтанчик, беседка ----------
 
-static func _statue(b: Bp) -> void:
-	var st := "SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7)
+## Статуя на мраморной ступени: у каждого облика своя фигура — воин с копьём и щитом, полководец в плаще,
+## девушка с амфорой, мудрец в тоге; чётные — на квадратном постаменте в цветах, нечётные — на круглом с вазонами
+const STATUES := ["SM_Prop_Statue_01", "SM_Prop_Statue_02", "SM_Prop_Statue_04", "SM_Prop_Statue_05"]
+
+
+static func _statue(b: Bp, lk: int) -> void:
+	var st: String = STATUES[posmod(lk, STATUES.size())]
 	_slab(b, Vector3.ZERO, Vector3(1.08, 0.12, 1.08))
-	if _look(b, 2) == 0:
+	if lk % 2 == 0:
 		b.add("SM_Prop_Plinth_04", Vector3(0, 0.12, 0), 0.0)
 		b.add(st, Vector3(0, 0.8, 0), 0.0, 1.0)
 		_bloom(b, Vector3(-0.68, 0, 0.62), 0.2)
@@ -620,17 +615,17 @@ static func _column(b: Bp) -> void:
 	_slab(b, Vector3.ZERO, Vector3(1.12, 0.14, 1.12))
 	b.add("SM_Prop_Plinth_04", Vector3(0, 0.14, 0), 0.0)
 	var top := 0.82
-	_sx(b, "SM_Bld_Pillar_0%d" % b.pick([2, 3, 4]), Vector3(0, top, 0), 0.0, Vector3(0.62, 0.75, 0.62))
+	_sx(b, "SM_Bld_Pillar_02", Vector3(0, top, 0), 0.0, Vector3(0.62, 0.75, 0.62))
 	_sx(b, "SM_Env_Ivy_Pillar_Flowers_01", Vector3(0, top, 0), _yaw(b), Vector3(0.66, 0.9, 0.66))
 	b.add("SM_Prop_Pillar_Top_01", Vector3(0, top + 2.25, 0), 0.0, 0.62)
-	b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(0, top + 2.25 + 0.155, 0), 0.0, 0.62)
+	b.add("SM_Prop_Statue_07", Vector3(0, top + 2.25 + 0.155, 0), 0.0, 0.62)
 	_bloom(b, Vector3(0.7, 0, 0.64), 0.2)
 	_bloom(b, Vector3(-0.7, 0, 0.6), 0.17)
 
 
 ## Золотой лев (состаренная позолота): на высоком постаменте или на мраморной плите с вазонами по углам
-static func _lion(b: Bp) -> void:
-	if _look(b, 2) == 0:
+static func _lion(b: Bp, lk: int) -> void:
+	if lk == 0:
 		var s := 0.45
 		b.add("SM_Prop_Plinth_05", Vector3.ZERO, 0.0, s)
 		var ls := 0.43
@@ -647,8 +642,8 @@ static func _lion(b: Bp) -> void:
 	b.door = Vector3(0, 0, 1.5)
 
 
-static func _sundial(b: Bp) -> void:
-	if _look(b, 2) == 0:
+static func _sundial(b: Bp, lk: int) -> void:
+	if lk == 0:
 		_sx(b, "SM_Prop_Plinth_03", Vector3.ZERO, 0.0, Vector3(1.75, 1.0, 1.75))
 		b.add("SM_Prop_Sundial_01", Vector3(0, 0.15, 0), 0.0)
 	else:
@@ -660,8 +655,8 @@ static func _sundial(b: Bp) -> void:
 
 
 ## Фонтанчик: уличный фонтан как в Помпеях (каменное корыто, столбик с львиной головой, струя) или настенный фонтан Synty
-static func _smallfountain(b: Bp) -> void:
-	if _look(b, 2) == 0:
+static func _smallfountain(b: Bp, lk: int) -> void:
+	if lk == 0:
 		var sx := 0.56
 		var sz := 0.8
 		_sx(b, "SM_Bld_Floor_Trim_02", Vector3(-1.25 * sx, 0, -0.515 * sz), 0.0, Vector3(sx, 1.0, sz))
@@ -681,10 +676,9 @@ static func _smallfountain(b: Bp) -> void:
 
 
 ## Беседка: помпейская пергола с виноградом — шесть столбиков, решётка с лозой, ложе, столик с кувшином,
-## вазоны у входа. Реже — круглая беседка-толос с черепичным куполом
-static func _pergola(b: Bp) -> void:
-	var ci := _ci(b)
-	if ci == 3 or ci == 8:
+## вазоны у входа. Второй облик — круглая беседка-толос с черепичным куполом
+static func _pergola(b: Bp, lk: int) -> void:
+	if lk == 1:
 		_tholos(b)
 		return
 	var h := 3.13 * 0.85

@@ -98,6 +98,15 @@ var bell_badge: Label
 var pointer: TextureRect
 var pointer_target: Control
 var pointer_text: Label
+var credits_panel: PanelContainer         # титры: кто и что сделал для игры
+var hover_tip: PanelContainer             # мгновенная подсказка у плашки города и фишек классов
+var hover_box: VBoxContainer
+var hover_src: Control                    # над чем сейчас мышь
+var hover_level: Control                  # зоны плашки города: уровень, жители, счастье
+var hover_pop: Control
+var hover_happy: Control
+var _cursor_key := ""                     # какой курсор стоит сейчас (стрелка, рука, молоток, кирка, поворот)
+var _cursor_px := 0
 
 
 func _ready() -> void:
@@ -129,8 +138,10 @@ func _ready() -> void:
 	_stats_panel()
 	_pause_panel()
 	_settings_panel()
+	_credits_panel()
 	_buy_panel()
 	_pointer()
+	_hover_tip_panel()
 	apply_scale(float(game.settings.get("ui_scale", 1.0)))
 	get_window().size_changed.connect(func(): apply_scale(float(game.settings.get("ui_scale", 1.0))))
 	get_tree().node_added.connect(_on_node_added)
@@ -165,6 +176,7 @@ func _hook(b: BaseButton) -> void:
 	if b.has_meta("snd"):
 		return
 	b.set_meta("snd", true)
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND      # над кнопкой — курсор-«рука»
 	b.pressed.connect(func():
 		if game and game.sound:
 			game.sound.ui("click"))
@@ -548,6 +560,27 @@ func _clear(box: Node) -> void:
 		ch.queue_free()
 
 
+## Ещё раз подогнать окно под содержимое через кадр — когда перенос строк уже посчитан по настоящей ширине
+func _refit(c: Control) -> void:
+	if c.has_meta("refit"):
+		return
+	c.set_meta("refit", true)
+	await get_tree().process_frame
+	if is_instance_valid(c):
+		c.remove_meta("refit")
+		_snug(c)
+
+
+## Текст с переносом строк фиксированной ширины. Ширину задаём сразу (а не после раскладки):
+## иначе новая надпись нулевой ширины считает себя в одну букву на строку — огромной высоты,
+## и окно вытягивается до низа экрана
+func _wrap(l: Label, w: float) -> Label:
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(w, 0)
+	l.size = Vector2(w, l.size.y)
+	return l
+
+
 ## Плашка-фишка (классы, семьи, всплывашки, лавки в карточке дома)
 func _chip(dark := false, cm := 10.0) -> PanelContainer:
 	var p := PanelContainer.new()
@@ -612,24 +645,18 @@ func _city_card() -> void:
 	var top_gap := Control.new()
 	top_gap.custom_minimum_size = Vector2(0, 5)
 	col.add_child(top_gap)
+	# уровень, жители, счастье: каждая пара «значок + число» — одна зона для подсказки целиком (без щелей между ними)
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 4)
+	row.add_theme_constant_override("separation", 0)
 	lbl_level = _label("Стоянка", 14, true, C_SOFT)
-	lbl_level.mouse_filter = Control.MOUSE_FILTER_PASS
-	row.add_child(lbl_level)
-	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(5, 0)
-	row.add_child(gap)
-	row.add_child(_icon("family", 20))
+	hover_level = _hover_zone(row, [lbl_level], _tip_level)
 	lbl_pop = _label("0", 16, true)
-	row.add_child(lbl_pop)
-	var gap2 := Control.new()
-	gap2.custom_minimum_size = Vector2(4, 0)
-	row.add_child(gap2)
-	row.add_child(_icon("happy", 20))
+	hover_pop = _hover_zone(row, [_icon("family", 20), lbl_pop], _tip_pop)
 	lbl_happy = _label("0%", 16, true, C_GOOD)
-	row.add_child(lbl_happy)
+	hover_happy = _hover_zone(row, [_icon("happy", 20), lbl_happy], _tip_happy)
+	for z: Control in [hover_level, hover_pop, hover_happy]:
+		z.set_meta("tip_anchor", p)            # подсказка встаёт под всей плашкой, не закрывая день и скорость
 	col.add_child(row)
 	var t := HBoxContainer.new()
 	t.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -736,6 +763,17 @@ func _fill_families() -> void:
 
 
 
+## Повозка впервые встала из-за низкого счастья: объясняет советник (дальше — обычная всплывашка)
+func on_arrive_block(text: String) -> void:
+	if game.mode == "demo" or game.mode == "menu" or (game.tutorial and game.tutorial.active()):
+		notify(text, "happy")
+		return
+	var c: City = game.city
+	var ht: Array = c.stats.get("happy_tips", [])
+	var tip := ("\n\nСовет: " + String(ht[0]) + ".") if not ht.is_empty() else ""
+	advisor("Новые семьи не едут", ("Первые %d семьи приезжают всегда, а дальше в город переселяются, только если счастье города не ниже %d%%. Сейчас — %d%%, и повозка ждёт на дороге.\n\nНаведите мышь на счастье вверху — там видно, из чего оно складывается и что его поднимет. Как только счастье поднимется, повозка сразу поедет." % [int(_defc("ARRIVE_FREE", 3)), int(_defc("ARRIVE_HAPPY", 60)), int(c.stats.get("happy", 0))]) + tip)
+
+
 ## Советы о приезжих: первая семья; семья, которой негде жить
 func on_arrival(f: Dictionary) -> void:
 	var c: City = game.city
@@ -760,6 +798,337 @@ func _tasks() -> void:
 	tasks_box = VBoxContainer.new()
 	tasks_box.add_theme_constant_override("separation", 4)
 	tasks_panel.add_child(tasks_box)
+
+
+# ---------- мгновенные подсказки: плашка города (уровень, жители, счастье) и фишки классов ----------
+
+const TIP_W := 330.0
+var _hover_hold := 0                        # сколько кадров не проверять, ушла ли мышь (после пересборки)
+
+
+func _hover_tip_panel() -> void:
+	hover_tip = _panel(null, "bar", 0, 6)
+	hover_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hover_tip.visible = false
+	hover_tip.z_index = 20
+	hover_box = VBoxContainer.new()
+	hover_box.add_theme_constant_override("separation", 3)
+	hover_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hover_tip.add_child(hover_box)
+
+
+## Зона подсказки: значок и число вместе (с полями по бокам — между зонами нет «мёртвых» щелей).
+## Подсказка открывается сразу, где бы ни была мышь над зоной
+func _hover_zone(parent: Control, items: Array, build: Callable) -> Control:
+	var z := HBoxContainer.new()
+	z.add_theme_constant_override("separation", 3)
+	z.custom_minimum_size = Vector2(0, 24)
+	z.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for it: Control in items:
+		it.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		it.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		z.add_child(it)
+	var m := MarginContainer.new()
+	m.add_theme_constant_override("margin_left", 5)
+	m.add_theme_constant_override("margin_right", 5)
+	m.add_child(z)
+	parent.add_child(m)
+	_hover_on(m, build)
+	return m
+
+
+func _hover_on(c: Control, build: Callable) -> void:
+	c.mouse_filter = Control.MOUSE_FILTER_STOP
+	c.set_meta("tip", build)
+	c.mouse_entered.connect(func(): _show_hover(c))
+	c.mouse_exited.connect(func():
+		if hover_src == c:
+			_hide_hover())
+
+
+func _show_hover(c: Control) -> void:
+	hover_src = c
+	_fill_hover()
+
+
+func _hide_hover() -> void:
+	hover_src = null
+	if hover_tip:
+		hover_tip.visible = false
+
+
+## Пересобрать подсказку (при наведении и при каждом обновлении города — числа живые)
+func _fill_hover() -> void:
+	if hover_src == null or not is_instance_valid(hover_src) or not hover_src.is_visible_in_tree():
+		_hide_hover()
+		return
+	_clear(hover_box)
+	(hover_src.get_meta("tip") as Callable).call(hover_box)
+	hover_tip.visible = true
+	_hover_hold = 3
+	_place_hover()
+	_place_hover_later()
+
+
+func _place_hover() -> void:
+	if hover_src == null or not is_instance_valid(hover_src):
+		return
+	hover_tip.reset_size()
+	var r := hover_src.get_global_rect()
+	var below := r.end.y
+	if hover_src.has_meta("tip_anchor"):
+		below = (hover_src.get_meta("tip_anchor") as Control).get_global_rect().end.y
+	var p := Vector2(r.position.x - 8.0, below + 4.0)
+	p.x = clampf(p.x, 4.0, maxf(4.0, root.size.x - hover_tip.size.x - 4.0))
+	hover_tip.position = p
+
+
+func _place_hover_later() -> void:
+	await get_tree().process_frame
+	if hover_tip.visible:
+		_place_hover()
+
+
+## Мышь ушла, а сигнал «ушла» не пришёл (фишку пересобрали под мышью) — прячем подсказку сами
+func _hover_tick() -> void:
+	if hover_tip == null or not hover_tip.visible:
+		return
+	if hover_src == null or not is_instance_valid(hover_src) or not hover_src.is_visible_in_tree():
+		_hide_hover()
+		return
+	if _hover_hold > 0:
+		_hover_hold -= 1                    # пересобранную фишку ещё раскладывают — проверим через пару кадров
+		return
+	var h := root.get_viewport().gui_get_hovered_control()
+	if h != null:
+		if h != hover_src and not hover_src.is_ancestor_of(h):
+			_hide_hover()
+		return
+	if not hover_src.get_global_rect().grow(2.0).has_point(hover_src.get_global_mouse_position()):
+		_hide_hover()
+
+
+func _tip_head(v: Control, icon: Variant, text: String) -> void:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 7)
+	h.add_child(icon if icon is Control else _icon(String(icon), 28))
+	var l := _label(text, 20, false, C_INK, font_title)
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(l)
+	v.add_child(h)
+
+
+func _tip_text(v: Control, text: String, col := C_SOFT, size := 15, bold := false) -> void:
+	v.add_child(_wrap(_label(text, size, bold, col), TIP_W))
+
+
+## Строка подсказки: значок · подпись · значение; ok = 1 / 0 — галочка или крестик в конце
+func _tip_row(v: Control, icon: Variant, text: String, val: String, col := C_INK, ok := -1) -> void:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	h.custom_minimum_size = Vector2(TIP_W, 0)
+	if icon is Control:
+		h.add_child(icon)
+	elif String(icon) != "":
+		h.add_child(_icon(String(icon), 22, C_SOFT))
+	var l := _label(text, 15)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(l)
+	var vl := _label(val, 15, true, col)
+	vl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(vl)
+	if ok >= 0:
+		var mk := _icon("check" if ok == 1 else "close", 18)
+		mk.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(mk)
+	v.add_child(h)
+
+
+static func _plural(n: int, one: String, few: String, many: String) -> String:
+	var m := n % 100
+	if m >= 11 and m <= 14:
+		return many
+	match n % 10:
+		1:
+			return one
+		2, 3, 4:
+			return few
+	return many
+
+
+## Уровень города → что нужно для следующего и что он даст
+func _tip_level(v: VBoxContainer) -> void:
+	var c: City = game.city
+	_tip_head(v, "level", "Уровень города: «%s»" % Defs.LEVELS[c.level]["name"])
+	var nx := c.next_level()
+	if nx.is_empty():
+		_tip_text(v, "Это высший уровень — ваш город стал Вечным!", C_GOOD, 15, true)
+		return
+	_tip_text(v, "Следующий уровень — «%s». Нужно:" % nx["name"], C_INK, 15, true)
+	var pop := int(c.stats["pop"])
+	var hp := int(c.stats["happy"])
+	var pop_ok := pop >= int(nx["pop"])
+	var hp_ok := hp >= int(nx["happy"])
+	_tip_row(v, "family", "Жителей", "%s / %s" % [fmt(pop), fmt(int(nx["pop"]))], C_GOOD if pop_ok else C_BAD, 1 if pop_ok else 0)
+	_tip_row(v, "happy", "Счастье города", "%d%% / %d%%" % [hp, int(nx["happy"])], C_GOOD if hp_ok else C_BAD, 1 if hp_ok else 0)
+	# пределы — с уже изученными хранилищами (как money_cap/rp_cap), а не голые числа уровня
+	_tip_text(v, "На новом уровне казна вмещает %s ден., очков исследований — %s, открываются новые исследования." % [fmt(c.money_cap_for(c.level + 1)), fmt(c.rp_cap_for(c.level + 1))])
+	if not pop_ok:
+		_tip_text(v, "Жителей прибавится, если строить дома у дорог и заселять приезжих.", C_INK, 14)
+	if not hp_ok:
+		_tip_text(v, "Счастье поднимают лавки рядом с домами, украшения и памятники — наведите на счастье, там подробнее.", C_INK, 14)
+
+
+## Жители → по классам, кто ждёт жилья и едет в повозке
+func _tip_pop(v: VBoxContainer) -> void:
+	var c: City = game.city
+	_tip_head(v, "family", "Жители: %s" % fmt(int(c.stats["pop"])))
+	for cl in Defs.CLASS_ORDER:
+		var cd: Dictionary = Defs.CLASSES[cl]
+		var n := int(c.stats["residents"].get(cl, 0))
+		if n == 0 and not c.unlocked(cd["house"]):
+			continue
+		_tip_row(v, _cls_pic(cl, 26), cd["name"], "%s чел." % fmt(n))
+	var fam_n := c.arrivals.size()
+	var ppl := 0
+	for f in c.arrivals:
+		ppl += int(f["n"])
+	if fam_n > 0:
+		_tip_row(v, "tent", "Ждут жилья на площади", "%d %s · %d чел." % [fam_n, _plural(fam_n, "семья", "семьи", "семей"), ppl], C_BAD)
+	if not c.pending.is_empty():
+		_tip_row(v, "family", "Идут в свой новый дом", "%d %s" % [c.pending.size(), _plural(c.pending.size(), "семья", "семьи", "семей")], C_GOOD)
+	if c.incoming > 0:
+		_tip_row(v, "horse", "Едут в повозке", "%d %s" % [c.incoming, _plural(c.incoming, "семья", "семьи", "семей")], C_INK)
+	var block := String(c.stats.get("arrive_block", ""))
+	if block != "":
+		_tip_text(v, block, C_BAD, 14, true)
+	elif fam_n > 0:
+		_tip_text(v, "Нажмите на значок семьи слева вверху и выберите им дом.", C_INK, 14)
+	else:
+		_tip_text(v, "Повозка привозит новые семьи по большой дороге. Стройте дома у дорог — им будет где жить.", C_SOFT, 14)
+
+
+## Счастье города → из чего складывается, по классам, что сделать и что оно даёт
+func _tip_happy(v: VBoxContainer) -> void:
+	var c: City = game.city
+	var hp := int(c.stats["happy"])
+	_tip_head(v, "happy", "Счастье города: %d%%" % hp)
+	var parts: Array = c.stats.get("happy_parts", [])
+	if not parts.is_empty():
+		_tip_text(v, "Из чего складывается (в среднем на жителя):", C_INK, 14, true)
+		var first := true
+		for p: Array in parts:
+			var val := int(p[1])
+			_tip_row(v, "", String(p[0]), ("%d%%" % val) if first else _pct(val), C_INK if first else (C_GOOD if val > 0 else (C_BAD if val < 0 else C_SOFT)))
+			first = false
+	var shown := 0
+	for cl in Defs.CLASS_ORDER:
+		if int(c.stats["residents"].get(cl, 0)) > 0:
+			shown += 1
+	if shown > 1 or parts.is_empty():
+		_tip_text(v, "По классам:", C_INK, 14, true)
+		for cl in Defs.CLASS_ORDER:
+			if int(c.stats["residents"].get(cl, 0)) <= 0:
+				continue
+			var ch := int(c.stats["class_happy"].get(cl, 0))
+			_tip_row(v, _cls_pic(cl, 24), Defs.CLASSES[cl]["name"], "%d%%" % ch, C_GOOD if ch >= 60 else (C_GOLD if ch >= 40 else C_BAD))
+	var tips: Array = c.stats.get("happy_tips", [])
+	_tip_text(v, "Что сделать:", C_INK, 14, true)
+	if tips.is_empty():
+		_tip_text(v, "• Лавки нужных видов рядом с домами, украшения между домами и памятники поднимают счастье; теснота и нехватка лавок — опускают.", C_INK, 14)
+	for t in tips:
+		_tip_text(v, "• " + String(t), C_INK, 14)
+	_tip_text(v, "Счастливые жители платят больше налогов, а новые семьи едут, пока счастье города не ниже %d%%. Щёлкните по дому — карточка покажет, чего не хватает именно ему." % int(_defc("ARRIVE_HAPPY", 60)), C_SOFT, 14)
+
+
+## Фишка класса → жители, счастье, нужды (у скольких домов нет нужной лавки), работа
+func _tip_class(v: VBoxContainer, cl: String) -> void:
+	var c: City = game.city
+	var cd: Dictionary = Defs.CLASSES[cl]
+	var n := int(c.stats["residents"].get(cl, 0))
+	_tip_head(v, _cls_pic(cl, 40), "%s · %s %s" % [cd["name"], fmt(n), _plural(n, "житель", "жителя", "жителей")])
+	var hp := int(c.stats["class_happy"].get(cl, 0))
+	_tip_row(v, "happy", "Счастье", "%d%%" % hp, C_GOOD if hp >= 60 else (C_GOLD if hp >= 40 else C_BAD))
+	var houses := []
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if c.is_house(b) and c.def(b)["cls"] == cl:
+			houses.append(b)
+	_tip_text(v, "Нужно рядом с домом «%s»:" % Defs.B[cd["house"]]["name"], C_INK, 14, true)
+	for nd in cd["needs"]:
+		var miss := 0
+		for b in houses:
+			if nd in b.get("missing", []):
+				miss += 1
+		var txt := "есть у всех" if miss == 0 else "нет у %d из %d" % [miss, houses.size()]
+		if houses.is_empty():
+			txt = "—"
+		_tip_row(v, Defs.NEEDS[nd]["icon"], Defs.NEEDS[nd]["name"], txt, C_GOOD if miss == 0 else C_BAD, -1 if houses.is_empty() else (1 if miss == 0 else 0))
+	var jobs := int(c.stats["jobs"].get(cl, 0))
+	var workers := int(c.stats["workers"].get(cl, 0))
+	var free := int(c.stats["free"].get(cl, 0))
+	_tip_row(v, "hammer", "Могут работать", "%d чел." % workers)
+	_tip_row(v, "commerce", "Мест для них в лавках и мастерских", "%d" % jobs, C_BAD if jobs > workers else C_INK)
+	if jobs > workers:
+		_tip_text(v, "Работников не хватает — постройки работают слабее. Заселите больше семей. Лишнее место можно убрать (−) там, где оно меньше всего нужно, например у скриптория: лавка, у которой забрали всех работников, закрывается.", C_BAD, 14)
+	elif free > 0:
+		_tip_text(v, "Свободны %d — могут работать в новых постройках." % free, C_SOFT, 14)
+	_tip_text(v, "Налог: %s ден. в час с жителя — больше, когда жители счастливы." % String.num(float(cd["tax"]), 1).replace(".", ","), C_SOFT, 14)
+
+
+# ---------- курсор: рисованная стрелка вместо курсора Windows ----------
+
+const CURSOR_HOT := 4.0 / 64.0          # «горячая точка» — кончик стрелки в (4, 4) на картинке 64×64
+var _cursor_cache := {}
+
+
+## Картинка курсора assets/ui/ai/cursor_<key>.png нужного размера (нет своей — стрелка)
+func _cursor_image(key: String, px: int) -> Image:
+	var ck := "%s:%d" % [key, px]
+	if _cursor_cache.has(ck):
+		return _cursor_cache[ck]
+	var path := AI + "cursor_%s.png" % key
+	if not ResourceLoader.exists(path):
+		path = AI + "cursor_arrow.png"
+	var img: Image = null
+	if ResourceLoader.exists(path):
+		img = (load(path) as Texture2D).get_image()
+		if img.is_compressed():
+			img.decompress()
+		img.clear_mipmaps()
+		img.convert(Image.FORMAT_RGBA8)
+		img.resize(px, px, Image.INTERPOLATE_LANCZOS)
+	_cursor_cache[ck] = img
+	return img
+
+
+## Какой курсор нужен сейчас: над окнами — стрелка (над кнопками — «рука»), над городом — по инструменту:
+## стройка — молоток, снос — кирка, перенос и заселение — рука, поворот — стрелки по кругу
+func _cursor_tick() -> void:
+	var px := int(clampf(roundf(30.0 * get_viewport().get_final_transform().get_scale().x), 24.0, 128.0))
+	var key := "arrow"
+	if game and game.ready_done and root.visible and (menu_root == null or not menu_root.visible) and not mouse_over_ui():
+		var t: String = game.tool
+		if game.rot_drag or (game.rig and game.rig._orbit):
+			key = "rotate"
+		elif t == "bulldoze" or t == "erase":
+			key = "bulldoze"
+		elif t in ["road", "path", "plaza"] or Defs.B.has(t):
+			key = "build"
+		elif t in ["move", "move_nature", "copy", "settle"]:
+			key = "hand"
+	if key == _cursor_key and px == _cursor_px:
+		return
+	if px != _cursor_px:
+		var hand := _cursor_image("hand", px)
+		if hand:
+			Input.set_custom_mouse_cursor(hand, Input.CURSOR_POINTING_HAND, Vector2(px, px) * CURSOR_HOT)
+	_cursor_key = key
+	_cursor_px = px
+	var img := _cursor_image(key, px)
+	if img:
+		Input.set_custom_mouse_cursor(img, Input.CURSOR_ARROW, Vector2(px, px) * CURSOR_HOT)
 
 
 # ---------- сверху справа ----------
@@ -856,7 +1225,7 @@ func _toggle(p: Control) -> void:
 
 
 func _close_windows() -> void:
-	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel]:
+	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel]:
 		if x:
 			x.visible = false
 
@@ -942,10 +1311,18 @@ func _bottom_left() -> void:
 	sl.max_value = 4.0
 	sl.step = 0.25
 	sl.custom_minimum_size = Vector2(160, 26)
-	sl.value_changed.connect(func(x): game.brush_r = x)
+	sl.value = game.brush_r
+	sl.value_changed.connect(func(x): game.brush_r = x; refresh_tools())
 	sl.name = "size"
 	r1.add_child(sl)
+	var sv := _label("", 17, true)            # число на ползунке: какой размер кисти сейчас
+	sv.name = "size_val"
+	sv.custom_minimum_size = Vector2(34, 0)
+	r1.add_child(sv)
 	vb.add_child(r1)
+	var price := _label("", 16, false, C_SOFT)   # сколько стоит метр дороги при этой кисти
+	price.name = "price"
+	vb.add_child(price)
 	var r2 := HBoxContainer.new()
 	r2.add_theme_constant_override("separation", 4)
 	for t: Array in [["linefree", "Рисовать свободно"], ["linestraight", "Прямая линия: от точки до точки"], ["brushround", "Круглая кисть"], ["brushsquare", "Квадратная кисть"], ["undo", "Отменить (Ctrl+Z)"], ["redo", "Вернуть (Ctrl+Y)"]]:
@@ -989,6 +1366,14 @@ func _refresh_brush() -> void:
 		_set_on(road_btns["brushsquare"], game.brush_square)
 		(road_btns["over"] as CheckBox).set_pressed_no_signal(game.brush_over)
 		(road_panel.find_child("size", true, false) as HSlider).set_value_no_signal(game.brush_r)
+		(road_panel.find_child("size_val", true, false) as Label).text = ("%.2f" % game.brush_r).trim_suffix("0").replace(".", ",")
+		var t: String = game.tool
+		var pl := road_panel.find_child("price", true, false) as Label
+		if Defs.ROAD_COST.has(t):
+			pl.text = "Метр — около %s ден. (полоса %s м)" % [price_txt(road_price_m(t)), ("%.1f" % (game.brush_r * 2.0)).replace(".", ",")]
+		else:
+			pl.text = "Стирать дорогу — бесплатно" if t == "erase" else ""
+		pl.visible = pl.text != ""
 
 
 func _bottom_center() -> void:
@@ -1412,6 +1797,8 @@ func _card_or_cat(cat: String, type: String) -> Control:
 func _process(_dt: float) -> void:
 	_place_badges()
 	_place_notes()
+	_cursor_tick()
+	_hover_tick()
 
 	if game and lbl_clock:
 		var h := int(game.hour)
@@ -1539,11 +1926,17 @@ func _fill_tool_panel_body() -> void:
 	else:
 		var names := {"road": "Мостовая", "path": "Тропа", "plaza": "Площадь", "erase": "Ластик", "bulldoze": "Снос", "copy": "Копировать", "move": "Перенести", "move_nature": "Перенести"}
 		tool_title.text = names.get(t, t)
-		var keys := {"road": "Ведите с зажатой левой кнопкой. [ ] — размер, Ctrl+Z — отменить.",
-			"path": "Утоптанная тропа — почти даром.", "plaza": "Плитка для площадей у рынков и храмов.", "erase": "Стирает дорогу под кистью.",
+		var keys := {"road": "Каменная улица. Ведите с зажатой левой кнопкой. [ ] — размер, Ctrl+Z — отменить.",
+			"path": "Утоптанная тропа — самая дешёвая дорога: ею удобно тянуть длинные улицы к окраинам.", "plaza": "Плитка для площадей у рынков и храмов — самая дорогая.", "erase": "Стирает дорогу под кистью.",
 			"bulldoze": "Наведите на постройку, дерево или камень — подсветится красным. Щелчок — снести.", "copy": "Щёлкните по постройке — возьмёте такую же.",
 			"move": "Щёлкните по постройке, дереву или камню и поставьте на новое место.", "move_nature": "Поставьте на новое место. Z/X — повернуть."}
-		tool_keys.text = keys.get(t, "") + "\nПравая кнопка — отмена"
+		var txt: String = keys.get(t, "")
+		if Defs.ROAD_COST.has(t):
+			# цена видна сразу: сколько стоит метр при нынешней кисти — у всех трёх видов дороги
+			tool_title.text = "%s · около %s ден. за метр" % [names[t], price_txt(road_price_m(t))]
+			txt += "\nМетр при кисти %s: тропа ~%s · мостовая ~%s · площадь ~%s ден." % [
+				("%.2f" % game.brush_r).trim_suffix("0").replace(".", ","), price_txt(road_price_m("path")), price_txt(road_price_m("road")), price_txt(road_price_m("plaza"))]
+		tool_keys.text = txt + "\nПравая кнопка — отмена"
 
 
 func tool_status(err: String) -> void:
@@ -1551,6 +1944,61 @@ func tool_status(err: String) -> void:
 		tool_err.text = err
 		tool_err.visible = err != ""
 		_snug(tool_panel)
+
+
+## Цена метра дороги при нынешней кисти: полоса шириной 2r из клеток по 25 см
+func road_price_m(t: String) -> float:
+	if not Defs.ROAD_COST.has(t):
+		return 0.0
+	return 2.0 * float(game.brush_r) / Land.CELL / Land.CELL * float(Defs.ROAD_COST[t])
+
+
+## Цена словами: мелочь — с десятыми, остальное — целыми
+func price_txt(v: float) -> String:
+	if v < 9.95:
+		return ("%.1f" % v).trim_suffix(",0").trim_suffix(".0").replace(".", ",")
+	return fmt(v)
+
+
+var _stroke_lbl: Label
+var _stroke_tw: Tween
+
+## Пока ведут кисть: казна меняется сразу, у курсора — сколько стоит этот мазок (или что денег не хватило).
+## done — мазок окончен, подпись мягко гаснет
+func stroke_live(cost: float, t: String, broke := false, done := false) -> void:
+	var c: City = game.city
+	lbl_money.text = "%s / %s" % [fmt(c.money), fmt(c.money_cap())]
+	if _stroke_lbl == null:
+		_stroke_lbl = _label("", 19, true, C_CREAM)
+		_stroke_lbl.add_theme_color_override("font_outline_color", Color("3a2412"))
+		_stroke_lbl.add_theme_constant_override("outline_size", 8)
+		_stroke_lbl.visible = false
+		root.add_child(_stroke_lbl)
+	if done:
+		if _stroke_lbl.visible:
+			if _stroke_tw:
+				_stroke_tw.kill()
+			_stroke_tw = _stroke_lbl.create_tween()
+			_stroke_tw.tween_interval(0.9)
+			_stroke_tw.tween_property(_stroke_lbl, "modulate:a", 0.0, 0.6)
+			_stroke_tw.tween_callback(func(): _stroke_lbl.visible = false)
+		return
+	if t == "erase" or not Defs.ROAD_COST.has(t):
+		_stroke_lbl.visible = false
+		return
+	if _stroke_tw and _stroke_tw.is_valid():
+		_stroke_tw.kill()
+	if broke:
+		_stroke_lbl.text = "Не хватает денариев · мазок %s ден." % fmt(cost)
+		_stroke_lbl.add_theme_color_override("font_color", Color("ffb09a"))
+	else:
+		_stroke_lbl.text = "Этот мазок: %s ден." % fmt(cost)
+		_stroke_lbl.add_theme_color_override("font_color", C_CREAM)
+	_stroke_lbl.modulate.a = 1.0
+	_stroke_lbl.visible = true
+	_stroke_lbl.reset_size()
+	var mp: Vector2 = game._mouse_pos if game._mouse_pos.x >= 0.0 else root.get_local_mouse_position()
+	_stroke_lbl.position = (mp + Vector2(24, -40)).round()
 
 
 
@@ -1622,9 +2070,12 @@ func _row(icon: String, text: String, val: String, col := C_INK) -> HBoxContaine
 	return r
 
 
+## Карточку пересобирают при каждом обновлении города (раз в игровой час) — и каждый раз она должна
+## сжаться ровно по содержимому: прикрепляем заново сразу и ещё раз через кадр (после переноса строк)
 func _fill_info() -> void:
 	_fill_info_body()
 	_snug(info_panel)
+	_refit(info_panel)
 
 
 func _fill_info_body() -> void:
@@ -1635,6 +2086,10 @@ func _fill_info_body() -> void:
 		return
 	var c: City = game.city
 	var d := c.def(b)
+	# у дома карточка шире: слева — нужды и жильцы, справа — из чего складывается счастье
+	var cw := 500.0 if c.is_house(b) else 330.0
+	info_box.custom_minimum_size = Vector2(cw, 0)
+	info_panel.custom_minimum_size = Vector2(cw + 40.0, 0)
 	var hdr := HBoxContainer.new()
 	hdr.add_theme_constant_override("separation", 8)
 	var ib := _round(d.get("icon", Defs.CLASSES[d["cls"]]["icon"] if d.has("cls") else "info"), "Сменить цвет" if c.is_house(b) else d["name"], 48)
@@ -1645,8 +2100,7 @@ func _fill_info_body() -> void:
 	var tv := VBoxContainer.new()
 	tv.add_theme_constant_override("separation", 0)
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var nm := _label(d["name"], 21, false, C_INK, font_title)
-	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var nm := _wrap(_label(d["name"], 21, false, C_INK, font_title), cw - 104.0)
 	tv.add_child(nm)
 	hdr.add_child(tv)
 	var close := _bare("close", "Закрыть", 34, func(): close_panels())
@@ -1656,74 +2110,7 @@ func _fill_info_body() -> void:
 	info_box.add_child(_divider(18))
 	match d["kind"]:
 		"house":
-			var cls: Dictionary = Defs.CLASSES[d["cls"]]
-			tv.add_child(_label("%s · этаж %d из %d · цвет «%s»" % [cls["name"], int(b["tier"]), Defs.floors_max(d["cls"]), Defs.PALETTE[int(b["color"])]["name"]], 14, true, C_SOFT))
-			var hp := int(b["happy"])
-			var hrow := HBoxContainer.new()
-			var hi := _icon("happy", 30)
-			_grey(hi, hp < 50)
-			hrow.add_child(hi)
-			hrow.add_child(_label("+%d%% счастье жителей" % hp, 20, true, C_GOOD if hp >= 50 else C_BAD))
-			info_box.add_child(hrow)
-			info_box.add_child(_row("flower", "Очки украшения (%d)" % int(b.get("deco", 0)), "+%d%%" % int(b.get("deco_bonus", 0)), C_GOOD))
-			if float(b.get("monuments", 0.0)) > 0.0:
-				info_box.add_child(_row("level", "Памятники рядом", "+%d%%" % int(b["monuments"]), C_GOOD))
-			info_box.add_child(_row("huts", "Теснота", "%d%%" % int(b.get("density", 0)), C_BAD if float(b.get("density", 0)) < 0 else C_SOFT))
-			var tax := int(b["pop"]) * float(cls["tax"]) * (0.5 + minf(100.0, float(hp)) / 100.0)
-			info_box.add_child(_row("income", "Доход в час", "+%s" % fmt(tax), C_GOOD))
-			# потребности: какие лавки обслуживают дом
-			for n in Defs.NEED_ORDER:
-				var need: Dictionary = Defs.NEEDS[n]
-				var shops := []
-				for t in b.get("score", {}):
-					if Defs.B[t].get("sub", "") == n:
-						shops.append(t)
-				var required: bool = n in cls["needs"]
-				if shops.is_empty() and not required:
-					continue
-				var r := HBoxContainer.new()
-				r.add_theme_constant_override("separation", 4)
-				var ni := _icon(need["icon"], 28)
-				_grey(ni, shops.is_empty())          # нет лавки рядом — серая
-				r.add_child(ni)
-				if shops.is_empty():
-					r.add_child(_label("%s: нет лавки рядом (−10%%)" % need["name"], 15, true, C_BAD))
-				else:
-					var fl := HFlowContainer.new()
-					fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-					for t in shops:
-						var chip := _chip()
-						var ch := HBoxContainer.new()
-						ch.add_child(_icon(Defs.B[t].get("icon", "commerce"), 20))
-						ch.add_child(_label("+%d%%" % int(b["score"][t]), 14, true, C_GOOD))
-						chip.add_child(ch)
-						chip.tooltip_text = Defs.B[t]["name"]
-						fl.add_child(chip)
-					r.add_child(fl)
-				info_box.add_child(r)
-			# семьи: портрет класса и число людей
-			var fams: Array = b.get("families", [])
-			if fams.is_empty():
-				info_box.add_child(_label("Ждёт новосёлов — повозка привезёт семью из тоннеля", 15, true, C_SOFT))
-			for f in fams:
-				var fr := HBoxContainer.new()
-				fr.add_theme_constant_override("separation", 6)
-				fr.add_child(_cls_pic(d["cls"], 30))
-				var fl := _label("Семья %s" % f["name"], 16, true)
-				fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				fr.add_child(fl)
-				fr.add_child(_label("%d чел." % int(f["n"]), 16, true, C_SOFT))
-				info_box.add_child(fr)
-
-			var fmax := Defs.floors_max(d["cls"])
-			if int(b["tier"]) < fmax:
-				var need_floor := "floor2" if int(b["tier"]) == 1 else "floor3"
-				var hint := "Надстроит этаж, когда дом полон и счастье не ниже %d%%" % (55 + 12 * (int(b["tier"]) - 1))
-				if not c.research.has(need_floor):
-					hint += " (сначала изучите «%s»)" % Defs.research(need_floor)["name"]
-				var hl := _label(hint, 14, false, C_SOFT)
-				hl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				info_box.add_child(hl)
+			_fill_house(b, d, tv, cw)
 		"shop":
 			tv.add_child(_label(Defs.NEEDS[d["sub"]]["name"], 14, true, C_SOFT))
 			info_box.add_child(_row("happy", "Счастье домам", "+%d%%" % int(d["bonus"]), C_GOOD))
@@ -1731,16 +2118,16 @@ func _fill_info_body() -> void:
 			info_box.add_child(_row("housing", "Обслуживает домов", "%d из %d" % [int(b.get("served", 0)), int(ceil(float(Defs.CAPACITY[int(d["cap"])]) * float(b.get("staff", 1.0))))]))
 			info_box.add_child(_hire_row(b))
 			if not b.get("active", true):
+				var st_txt := c.idle_text(b)            # нет работников: почему именно (никто не живёт, не тот класс, мало мест)
 				var why := {"store": "Нет склада рядом — нечем торговать", "good": "Нет сырья: %s" % {"wheat": "постройте пшеничное поле", "olives": "посадите оливковую рощу", "grapes": "посадите виноградник"}.get(d.get("needs_good", ""), ""),
-					"road": "Нет дороги у входа", "staff": "Нет работников: наймите (+) — или нужно больше жителей"}
-				var wl := _label(why.get(b.get("why", "staff"), "Не работает"), 15, true, C_BAD)
-				wl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+					"road": "Нет дороги у входа", "staff": "Не работает: " + st_txt}
+				var wl := _wrap(_label(why.get(b.get("why", "staff"), "Не работает"), 15, true, C_BAD), cw)
 				info_box.add_child(wl)
 		"monument":
 			info_box.add_child(_row("happy", "Счастье всем вокруг", "+%d%%" % int(d["bonus"]), C_GOOD))
 			info_box.add_child(_row("arrow", "Дальность", Defs.WORD[int(d["range"])]))
 		"rp":
-			info_box.add_child(_row("research", "Очки исследований в день", "+%.1f" % (float(d["rp"]) * float(b.get("staff", 1.0))), C_GOOD))
+			info_box.add_child(_row("research", "Очки исследований в час", "+%.1f" % (float(d["rp"]) * float(b.get("staff", 1.0))), C_GOOD))
 			info_box.add_child(_hire_row(b))
 		"farm":
 			info_box.add_child(_row("wheat", "Даёт", {"wheat": "пшеницу", "olives": "оливки", "grapes": "виноград"}[d["makes"]], C_GOOD))
@@ -1759,10 +2146,8 @@ func _fill_info_body() -> void:
 				info_box.add_child(_row("tent", "Ждут жилья", "%d семей" % c.waiting, C_BAD))
 		"decor":
 			info_box.add_child(_row("flower", "Очки украшения", "+%d" % int(d.get("deco", 1)), C_GOOD))
-	var desc := _label(d["desc"], 14, false, C_SOFT)
-	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc.custom_minimum_size = Vector2(300, 0)
-	info_box.add_child(desc)
+	if not c.is_house(b):                      # у дома вместо описания — что даёт счастье (см. _fill_house)
+		info_box.add_child(_wrap(_label(d["desc"], 14, false, C_SOFT), cw))
 	if not d.get("fixed", false):
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 6)
@@ -1771,20 +2156,330 @@ func _fill_info_body() -> void:
 		bd.icon = ico("demolish", 32)
 		bd.pressed.connect(func(): c.remove(b); close_panels())
 		h.add_child(bd)
-		var bm := Button.new()
-		bm.text = "Перенести"
-		bm.icon = ico("move", 32)
-		bm.pressed.connect(func(): game.set_tool("move"); game.hover = b["pos"]; game._click(); close_panels())
-		h.add_child(bm)
+		if not d.get("wall", false):              # украшение на стене не переносится (только снести и повесить заново)
+			var bm := Button.new()
+			bm.text = "Перенести"
+			bm.icon = ico("move", 32)
+			# переносим именно эту постройку (не ту, что под курсором за карточкой)
+			bm.pressed.connect(func(): game.set_tool("move"); game.start_move(b); close_panels())
+			h.add_child(bm)
 		info_box.add_child(h)
 
 
+## Карточка дома (как в Town to City): счастье крупно и что оно даёт; слева — что нужно классу и какая лавка
+## закрывает каждую нужду, жильцы; справа — из чего складывается счастье (b["happy_parts"] из City.compute);
+## внизу — кнопка «Надстроить этаж» (City.can_buy_floor / buy_floor / floor_price).
+## Тело карточки — в прокрутке не выше места над нижней полосой: высокая карточка (патриции, много семей)
+## не закрывает казну внизу и не уходит за край экрана; шапка и кнопки «Снести / Перенести» видны всегда
+func _fill_house(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float) -> void:
+	var outer := info_box
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 6)
+	body.custom_minimum_size = Vector2(cw, 0)
+	var sc := ScrollContainer.new()
+	sc.name = "house_scroll"
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.follow_focus = false
+	sc.add_child(body)
+	outer.add_child(sc)
+	info_box = body
+	_fill_house_body(b, d, tv, cw)
+	info_box = outer
+	_fit_house_scroll(sc, body)
+	_fit_house_scroll_later(sc, body, int(b["id"]))
+
+
+## Высота прокрутки карточки дома: по содержимому, но не ниже верха нижней полосы (казна, Копия/Перенос/Снос)
+func _fit_house_scroll(sc: ScrollContainer, body: Control) -> void:
+	if not is_instance_valid(sc) or not is_instance_valid(body):
+		return
+	var want := body.get_combined_minimum_size().y
+	sc.custom_minimum_size.y = 0.0
+	var outside := info_panel.get_combined_minimum_size().y      # шапка, кнопки и поля окна
+	var room := get_viewport().get_visible_rect().size.y - 62.0 - BAR_H - 10.0 - outside
+	sc.custom_minimum_size.y = minf(want, maxf(160.0, room))
+
+
+## Через кадр (перенос строк уже посчитан) — ещё раз по настоящей высоте; карточку пересобирают каждый
+## игровой час — прокрутка остаётся там, где её оставил игрок
+func _fit_house_scroll_later(sc: ScrollContainer, body: Control, id: int) -> void:
+	await get_tree().process_frame
+	if not is_instance_valid(sc):
+		return
+	_fit_house_scroll(sc, body)
+	_snug(info_panel)
+	var hs: Array = info_panel.get_meta("house_scroll", [-1, 0])
+	for k in 2:
+		if int(hs[0]) == id:
+			sc.scroll_vertical = int(hs[1])
+		if k == 0:
+			await get_tree().process_frame
+			if not is_instance_valid(sc):
+				return
+	sc.get_v_scroll_bar().value_changed.connect(func(v: float):
+		if is_instance_valid(info_panel):
+			info_panel.set_meta("house_scroll", [id, int(v)]))
+	if int(hs[0]) != id:
+		info_panel.set_meta("house_scroll", [id, 0])
+
+
+func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float) -> void:
+	var c: City = game.city
+	var cl: String = d["cls"]
+	var cls: Dictionary = Defs.CLASSES[cl]
+	var tier := int(b["tier"])
+	var fmax := Defs.floors_max(cl)
+	tv.add_child(_label("%s · этаж %d из %d · цвет «%s»" % [cls["name"], tier, fmax, Defs.PALETTE[int(b["color"])]["name"]], 14, true, C_SOFT))
+	var hp := int(b["happy"])
+	var hcol := C_GOOD if hp >= 60 else (C_GOLD if hp >= 40 else C_BAD)
+	# счастье крупно и налог с дома
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 8)
+	var hi := _icon("happy", 36)
+	_grey(hi, hp < 40)
+	top.add_child(hi)
+	var hl := _label("Счастье %d%%" % hp, 25, true, hcol)
+	hl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	top.add_child(hl)
+	var tax := float(cls["tax"])
+	if cl == "patricians" and c.research.has("taxes1"):
+		tax *= 1.25
+	var inc := int(b["pop"]) * tax * (0.5 + minf(100.0, float(hp)) / 100.0)
+	var chip := _chip(false, 10.0)
+	chip.mouse_filter = Control.MOUSE_FILTER_PASS
+	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	chip.tooltip_text = "Налог с дома за час. Чем счастливее жители, тем больше платят: при 100% — втрое больше, чем при 0%"
+	var ch := HBoxContainer.new()
+	ch.add_theme_constant_override("separation", 4)
+	ch.add_child(_icon("income", 22))
+	ch.add_child(_label("+%s ден. в час" % fmt(inc), 16, true, C_GOOD))
+	chip.add_child(ch)
+	top.add_child(chip)
+	info_box.add_child(top)
+	# что даёт счастье — одной строкой
+	var why_happy := "Счастливые жители платят больше налогов, а новые семьи едут, пока счастье города не ниже %d%%" % int(_defc("ARRIVE_HAPPY", 60))
+	if tier < fmax:
+		why_happy += "; при счастье дома от %d%% можно надстроить этаж" % _floor_need(b)
+	info_box.add_child(_wrap(_label(why_happy + ".", 14, false, C_SOFT), cw))
+	if hp < 25 and int(b["pop"]) > 0:
+		info_box.add_child(_wrap(_label("Счастье ниже 25% — семьи скоро начнут уезжать!", 15, true, C_BAD), cw))
+	info_box.add_child(_divider(14))
+	# две колонки
+	var cols := HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 14)
+	var lw := 250.0
+	var rw := cw - lw - 14.0
+	var left := VBoxContainer.new()
+	left.add_theme_constant_override("separation", 5)
+	left.custom_minimum_size = Vector2(lw, 0)
+	var right := VBoxContainer.new()
+	right.add_theme_constant_override("separation", 3)
+	right.custom_minimum_size = Vector2(rw, 0)
+	cols.add_child(left)
+	cols.add_child(right)
+	info_box.add_child(cols)
+	# слева: нужды класса — значок с галочкой или крестиком и лавка, что её закрывает
+	var dat := {"plebs": "Плебеям", "artisans": "Ремесленникам", "patricians": "Патрициям"}
+	left.add_child(_label("%s нужно" % dat.get(cl, cls["name"]), 16, true, C_SOFT))
+	var pen := int(_defc("MISSING_PENALTY", 10))
+	for n in Defs.NEED_ORDER:
+		var need: Dictionary = Defs.NEEDS[n]
+		var shops := []
+		for t in b.get("score", {}):
+			if Defs.B[t].get("sub", "") == n:
+				shops.append(t)
+		var required: bool = n in cls["needs"]
+		if shops.is_empty() and not required:
+			continue
+		var ok := not shops.is_empty()
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 6)
+		var ib := Control.new()
+		ib.custom_minimum_size = Vector2(32, 32)
+		ib.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ib.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		var ni := _icon(need["icon"], 30)
+		_grey(ni, not ok)                       # нет лавки рядом — серая
+		ib.add_child(ni)
+		var mk := _icon("check" if ok else "close", 17)
+		mk.position = Vector2(18, 17)
+		ib.add_child(mk)
+		r.add_child(ib)
+		var nv := VBoxContainer.new()
+		nv.add_theme_constant_override("separation", -2)
+		nv.add_child(_label(need["name"] + ("" if required else " · не обязательно"), 15, true, C_INK if ok else C_BAD))
+		var sub := ""
+		if ok:
+			var names := []
+			for t in shops:
+				names.append(Defs.B[t]["name"])
+			sub = ", ".join(names)
+		else:
+			var can := []                        # какие открытые лавки закрыли бы нужду
+			for t in Defs.B:
+				if Defs.B[t]["kind"] == "shop" and Defs.B[t].get("sub", "") == n and c.unlocked(t):
+					can.append("«%s»" % Defs.B[t]["name"])
+			# лавка этого вида рядом уже стоит, но не работает или не успевает ко всем — сказать почему
+			# (а не «поставьте ещё одну»)
+			var near_s := {}
+			for sid in c.buildings:
+				var s: Dictionary = c.buildings[sid]
+				var sd := c.def(s)
+				if sd["kind"] != "shop" or sd.get("sub", "") != n or (s["pos"] as Vector2).distance_to(b["pos"]) > c.shop_range(sd):
+					continue
+				if not s.get("active", true):
+					near_s = s                       # неработающая важнее переполненной
+					break
+				if near_s.is_empty() and int(s.get("served", 0)) >= int(s.get("cap", 0)):
+					near_s = s
+			r.mouse_filter = Control.MOUSE_FILTER_PASS
+			if not near_s.is_empty() and not near_s.get("active", true):
+				sub = "«%s» рядом не работает: %s" % [c.def(near_s)["name"], c.idle_text(near_s)]
+			elif not near_s.is_empty():
+				sub = "«%s» рядом не успевает ко всем (−%d%%)" % [c.def(near_s)["name"], pen]
+				r.tooltip_text = "Лавка обслуживает столько домов, сколько позволяют её работники. Наймите ей работников или поставьте рядом ещё одну лавку этого вида"
+			elif not can.is_empty():
+				sub = "Нет рядом (−%d%%) — поставьте %s" % [pen, can[0]]
+				if can.size() > 1:
+					r.tooltip_text = "Эту нужду закроет любая из лавок: %s" % ", ".join(can)
+			else:
+				sub = "Нет рядом (−%d%%) — лавку откроют исследования" % pen
+		nv.add_child(_wrap(_label(sub, 13, false, C_SOFT if ok else C_BAD), lw - 38.0))
+		r.add_child(nv)
+		left.add_child(r)
+	# слева: жильцы
+	left.add_child(_label("Жильцы · %d из %d мест" % [int(b["pop"]), c.house_cap(b)], 16, true, C_SOFT))
+	var fams: Array = b.get("families", [])
+	if fams.is_empty():
+		left.add_child(_wrap(_label("Пока пусто: семья приедет на повозке — заселите её значком слева вверху", 13, false, C_SOFT), lw))
+	# больше четырёх семей (домус патрициев) — первые три строками, остальные одной строкой
+	var shown_f := fams if fams.size() <= 4 else fams.slice(0, 3)
+	for f in shown_f:
+		var fr := HBoxContainer.new()
+		fr.add_theme_constant_override("separation", 6)
+		fr.add_child(_cls_pic(cl, 26))
+		var fl := _label("Семья %s" % f["name"], 15, true)
+		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		fl.clip_text = true
+		fr.add_child(fl)
+		fr.add_child(_label("%d чел." % int(f["n"]), 15, true, C_SOFT))
+		left.add_child(fr)
+	if fams.size() > shown_f.size():
+		var rest := fams.slice(shown_f.size())
+		var ppl := 0
+		var names := []
+		for f in rest:
+			ppl += int(f["n"])
+			names.append("%s (%d)" % [f["name"], int(f["n"])])
+		var more := _label("и ещё %d %s · %d чел." % [rest.size(), _plural(rest.size(), "семья", "семьи", "семей"), ppl], 14, true, C_SOFT)
+		more.mouse_filter = Control.MOUSE_FILTER_PASS
+		more.tooltip_text = "Семьи: " + ", ".join(names)
+		left.add_child(more)
+	# справа: из чего складывается счастье
+	right.add_child(_label("Из чего счастье", 16, true, C_SOFT))
+	var parts: Array = b.get("happy_parts", [])
+	if parts.is_empty():
+		parts = _happy_parts_old(b, cl)
+	var first := true
+	for p: Array in parts:
+		var v := int(p[1])
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 4)
+		var l := _wrap(_label(String(p[0]), 14, false, C_INK), rw - 52.0)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		r.add_child(l)
+		var vl := _label(("%d%%" % v) if first else _pct(v), 15, true, C_INK if first else (C_GOOD if v > 0 else (C_BAD if v < 0 else C_SOFT)))
+		vl.custom_minimum_size = Vector2(46, 0)
+		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		vl.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		r.add_child(vl)
+		right.add_child(r)
+		first = false
+	var line := ColorRect.new()
+	line.color = Color(C_SOFT, 0.45)
+	line.custom_minimum_size = Vector2(0, 2)
+	right.add_child(line)
+	var tr := HBoxContainer.new()
+	var tl := _label("Итого", 16, true)
+	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tr.add_child(tl)
+	tr.add_child(_label("%d%%" % hp, 17, true, hcol))
+	right.add_child(tr)
+	# внизу: этаж покупает игрок
+	if tier >= fmax:
+		info_box.add_child(_wrap(_label("Выше этот дом не строят: этаж %d из %d" % [tier, fmax], 14, false, C_SOFT), cw))
+		return
+	if not c.has_method("can_buy_floor"):
+		var hint := "Надстроит этаж, когда дом полон и счастье не ниже %d%%" % _floor_need(b)
+		info_box.add_child(_wrap(_label(hint, 14, false, C_SOFT), cw))
+		return
+	var price := int(c.call("floor_price", b))
+	var why := String(c.call("can_buy_floor", b))
+	var fb := Button.new()
+	fb.focus_mode = Control.FOCUS_NONE
+	fb.text = "Надстроить этаж · %s ден." % fmt(price)
+	fb.icon = ico("housing", 36)
+	fb.expand_icon = false
+	fb.custom_minimum_size = Vector2(cw, 50)
+	fb.add_theme_font_size_override("font_size", 21)
+	fb.add_theme_font_override("font", font_bold)
+	fb.disabled = why != ""
+	fb.tooltip_text = why if why != "" else "Ещё %d места — в дом въедет новая семья" % int(cls["per_floor"])
+	fb.pressed.connect(func():
+		if c.call("buy_floor", b):
+			if game.sound:
+				game.sound.ui("coins")
+			_fill_info())
+	info_box.add_child(fb)
+	if why != "":
+		var wl := _wrap(_label(why, 14, true, C_BAD), cw)
+		wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		info_box.add_child(wl)
+
+
+## Слагаемые счастья дома по старым полям (если City.compute их ещё не считает)
+func _happy_parts_old(b: Dictionary, cl: String) -> Array:
+	var out := [["Основа", int(Defs.CLASSES[cl].get("base", 40))]]
+	for t in b.get("score", {}):
+		out.append([Defs.B[t]["name"], int(b["score"][t])])
+	if int(b.get("deco_bonus", 0)) != 0:
+		out.append(["Украшения", int(b["deco_bonus"])])
+	if float(b.get("monuments", 0.0)) > 0.0:
+		out.append(["Памятники", int(b["monuments"])])
+	if float(b.get("density", 0.0)) < 0.0:
+		out.append(["Теснота", int(b["density"])])
+	for n in b.get("missing", []):
+		out.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -10])
+	return out
+
+
+## «+5%», «−10%» (настоящий минус)
+func _pct(v: int) -> String:
+	return ("+%d%%" % v) if v > 0 else (("−%d%%" % -v) if v < 0 else "0%")
+
+
+## С какого счастья дома можно надстроить следующий этаж
+func _floor_need(b: Dictionary) -> int:
+	if game.city.has_method("floor_need"):
+		return int(game.city.call("floor_need", b))
+	return 55 + 12 * (int(b["tier"]) - 1)
+
+
+var _defs_map := {}
+
+
+## Число из Defs по имени (если его там нет — запасное), чтобы интерфейс не ломался от переименований
+func _defc(name: String, dflt: Variant) -> Variant:
+	if _defs_map.is_empty():
+		_defs_map = (load("res://scripts/defs.gd") as Script).get_script_constant_map()
+	return _defs_map.get(name, dflt)
 
 
 ## Закрыть окна; true — было что закрывать
 func close_panels() -> bool:
 	var any := info_panel.visible or advisor_panel.visible or buy_panel.visible
-	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel]:
+	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, credits_panel]:
 		any = any or x.visible
 		x.visible = false
 	info_panel.visible = false
@@ -2097,10 +2792,10 @@ func _fill_finance() -> void:
 		ch.queue_free()
 	var c: City = game.city
 	v.add_child(_row("coins", "В казне", "%s / %s" % [fmt(c.money), fmt(c.money_cap())]))
-	v.add_child(_row("income", "Налоги в день", "+%s" % fmt(c.stats.get("income", 0.0)), C_GOOD))
-	v.add_child(_row("hammer", "Содержание построек в день", "−%s" % fmt(c.stats.get("upkeep", 0.0)), C_BAD))
-	v.add_child(_row("research", "Очки исследований", "%s / %s (+%.1f в день)" % [fmt(c.rp), fmt(c.rp_cap()), float(c.stats.get("rp_day", 0.0))]))
-	var hint := _label("Налог платит каждый житель: плебей — %.2f, ремесленник — %.2f, патриций — %.2f денария в день; счастливые платят больше. Казна не вмещает больше предела — поднимайте уровень города и изучайте хранилища." % [Defs.CLASSES["plebs"]["tax"], Defs.CLASSES["artisans"]["tax"], Defs.CLASSES["patricians"]["tax"]], 14, false, C_SOFT)
+	v.add_child(_row("income", "Налоги за час", "+%s" % fmt(c.stats.get("income", 0.0)), C_GOOD))
+	v.add_child(_row("hammer", "Содержание построек за час", "−%s" % fmt(c.stats.get("upkeep", 0.0)), C_BAD))
+	v.add_child(_row("research", "Очки исследований", "%s / %s (+%.1f в час)" % [fmt(c.rp), fmt(c.rp_cap()), float(c.stats.get("rp_day", 0.0))]))
+	var hint := _label("Налог платит каждый житель: плебей — %.2f, ремесленник — %.2f, патриций — %.2f денария в час; счастливые платят больше. Казна не вмещает больше предела — поднимайте уровень города и изучайте хранилища." % [Defs.CLASSES["plebs"]["tax"], Defs.CLASSES["artisans"]["tax"], Defs.CLASSES["patricians"]["tax"]], 14, false, C_SOFT)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.custom_minimum_size = Vector2(400, 0)
 	v.add_child(hint)
@@ -2135,7 +2830,8 @@ func _pause_panel() -> void:
 	pause_panel = w[0]
 	var v: VBoxContainer = w[1]
 	for t: Array in [["Продолжить", "play", func(): pause_panel.visible = false], ["Сохранить", "save", func(): _save_now()],
-			["Настройки", "settings", func(): pause_panel.visible = false; _open_settings()], ["Главное меню", "level", func(): game.restart("menu")], ["Выход", "exit", func(): _quit()]]:
+			["Настройки", "settings", func(): pause_panel.visible = false; _open_settings()], ["Титры", "laurels", func(): open_credits()],
+			["Главное меню", "level", func(): game.restart("menu")], ["Выход", "exit", func(): _quit()]]:
 		var b := Button.new()
 		b.text = t[0]
 		b.icon = ico(t[1], 40)
@@ -2226,10 +2922,140 @@ func _settings_panel() -> void:
 			return
 		game.new_game())
 	v.add_child(nb)
-	var credits := _label("Модели — Synty POLYGON Ancient Empire. Музыка — записи Шопена, Шумана и Сати из Викисклада (общественное достояние). Звуки — Kenney и авторы OpenGameArt (CC0). Рисованный интерфейс сделан для CivCity; значки инструментов — по мотивам game-icons.net (Lorc, Delapouite), CC BY 3.0. Шрифты Philosopher и Alegreya Sans — OFL. Движения людей — Quaternius, CC0.", 14, false, C_SOFT)
-	credits.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	credits.custom_minimum_size = Vector2(460, 0)
-	v.add_child(credits)
+
+
+# ---------- титры ----------
+
+## Кто и что сделал для игры (по файлам CREDITS/LICENSE в assets). Разделы: [заголовок, значок, [[что, кто · лицензия], …]]
+const CREDITS := [
+	["Игра", "laurels", [
+		["CivCity — уютный римский город", "замысел, игровой дизайн и решения — команда CivCity"],
+		["Программирование, мир, жители и интерфейс", "команда CivCity вместе с Claude (Anthropic)"]]],
+	["Город и постройки", "housing", [
+		["Synty Studios — POLYGON Ancient Empire", "3D-модели домов, лавок, храмов, деревьев и украшений · лицензия Synty Store"],
+		["Artisau — Ancient Greece Low Poly", "статуи и мелкие предметы · CC0"]]],
+	["Жители и животные", "family", [
+		["Quaternius — Universal Base Characters, Modular Character Outfits", "жители города · CC0"],
+		["Quaternius — Universal Animation Library", "походка, работа и отдых жителей · CC0"],
+		["Quaternius — коровы, ослы, лошади, овцы", "животные · CC0"]]],
+	["Музыка", "music", [
+		["Записи из Викисклада и Musopen", "общественное достояние (PD) и CC0 · громкость выровнена для игры"],
+		["Эрик Сати — Гимнопедия № 1", "PD"],
+		["Фредерик Шопен — Ноктюрн ми-бемоль мажор, соч. 9 № 2", "CC0"],
+		["Роберт Шуман — «Грёзы» из «Детских сцен»", "PD"],
+		["Фредерик Шопен — Ноктюрн соль мажор, соч. 37 № 2", "исп. Ольга Гуревич · CC0"],
+		["Фредерик Шопен — Вальс ля-бемоль мажор, соч. 69 № 1", "CC0"],
+		["Фредерик Шопен — Ноктюрн ми минор, соч. 72 № 1", "CC0"],
+		["Роберт Шуман — «О чужих странах и людях»", "PD"],
+		["Фредерик Шопен — Ноктюрн фа-диез мажор, соч. 15 № 2", "CC0"],
+		["Фредерик Шопен — Вальс ля минор", "PD"],
+		["Роберт Шуман — «Поэт говорит»", "PD"],
+		["Эдвард Григ — «Утро» из сюиты «Пер Гюнт»", "Musopen Symphony · PD"],
+		["Иоганн Себастьян Бах — Ария", "Air Force Strings, оркестр ВВС США · PD"],
+		["Антонио Вивальди — Концерт для двух мандолин, RV 532, Анданте", "The Modena Chamber Orchestra · PD"],
+		["Анонимный романс (Jeux interdits)", "Джим Гринингер, гитара · CC0"],
+		["Йозеф Гайдн — Квартет «Жаворонок», Адажио", "Musopen String Quartet · PD"],
+		["Иоганн Пахельбель — Канон", "Strolling Strings, оркестр ВВС США · PD"],
+		["Клод Дебюсси — «Священный танец»", "камерный оркестр морской пехоты США, арфа — Карен Гримзи · PD"],
+		["Томазо Альбинони — Концерт для гобоя ре минор, Адажио", "Пол Арден-Тейлор, гобой · CC0"],
+		["Георг Фридрих Гендель — «Музыка на воде», Менуэт", "камерный оркестр морской пехоты США · PD"],
+		["Иоганн Себастьян Бах — Гольдберг-вариации, Ария", "Кимико Исидзака · CC0"],
+		["Вольфганг Амадей Моцарт — Серенада «Гран партита», Адажио", "оркестр морской пехоты США · PD"],
+		["Антонио Вивальди — «Зима», Ларго", "The Modena Chamber Orchestra · PD"],
+		["Александр Бородин — Квартет № 2, Ноктюрн", "Musopen String Quartet · PD"],
+		["Феликс Мендельсон — «Итальянская» симфония, Анданте", "Musopen Symphony · PD"],
+		["Георг Фридрих Гендель — «Гармоничный кузнец»", "Musopen, клавесин · CC0"],
+		["Антонин Дворжак — Квартет № 10, Романс", "Musopen String Quartet · PD"],
+		["Людвиг ван Бетховен — «Патетическая» соната, Адажио", "Musopen · CC0"]]],
+	["Звуки", "sound", [
+		["Kenney — Interface Sounds, RPG Audio, UI Audio", "щелчки, стройка, монеты · CC0 · kenney.nl"],
+		["Kerzoven — «Cat Purr & Meow», IgnasD — «Meow»", "кошки · OpenGameArt, CC0"],
+		["isaiah658 — «Ambient Bird Sounds»", "птицы · OpenGameArt, CC0"]]],
+	["Интерфейс", "scroll", [
+		["Рисованные рамки, свитки, медальоны, иконки, портреты и логотип", "нарисованы для CivCity"],
+		["Часть значков инструментов", "по мотивам game-icons.net — Lorc, Delapouite · CC BY 3.0"]]],
+	["Шрифты", "quill", [
+		["Philosopher — Jovanny Lemonad", "SIL Open Font License 1.1"],
+		["Alegreya Sans — Huerta Tipográfica", "SIL Open Font License 1.1"]]],
+	["Движок", "settings", [
+		["Godot Engine 4", "© Хуан Линецкий, Ариэль Манзур и участники Godot · лицензия MIT · godotengine.org"]]],
+]
+
+
+func _credits_panel() -> void:
+	var w := _window("Титры", 680)
+	credits_panel = w[0]
+	var v: VBoxContainer = w[1]
+	var sc := ScrollContainer.new()
+	sc.name = "scroll"
+	sc.custom_minimum_size = Vector2(640, 560)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(sc)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 4)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(col)
+	col.add_child(_pic("logo.png", Vector2(600, 150)))
+	var tag := _label("Уютный римский город", 20, false, C_SOFT, font_title)
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(tag)
+	for sec: Array in CREDITS:
+		var gap := Control.new()
+		gap.custom_minimum_size = Vector2(0, 10)
+		col.add_child(gap)
+		var hdr := HBoxContainer.new()
+		hdr.alignment = BoxContainer.ALIGNMENT_CENTER
+		hdr.add_theme_constant_override("separation", 8)
+		hdr.add_child(_icon(sec[1], 30))
+		hdr.add_child(_label(sec[0], 24, false, C_INK, font_title))
+		col.add_child(hdr)
+		col.add_child(_divider(14))
+		for it: Array in sec[2]:
+			var a := _wrap(_label(it[0], 17, true, C_INK), 600)
+			a.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			col.add_child(a)
+			var bl := _wrap(_label(it[1], 14, false, C_SOFT), 600)
+			bl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			col.add_child(bl)
+			var sp := Control.new()
+			sp.custom_minimum_size = Vector2(0, 3)
+			col.add_child(sp)
+	var gap2 := Control.new()
+	gap2.custom_minimum_size = Vector2(0, 18)
+	col.add_child(gap2)
+	var thanks := _label("Спасибо, что играете!", 26, false, C_INK, font_title)
+	thanks.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(thanks)
+	var gap3 := Control.new()
+	gap3.custom_minimum_size = Vector2(0, 30)
+	col.add_child(gap3)
+	# игрок крутит колёсико или тянет полосу — титры больше не плывут сами
+	var stop := func(e: InputEvent):
+		if e is InputEventMouseButton and credits_panel.has_meta("roll"):
+			(credits_panel.get_meta("roll") as Tween).kill()
+			credits_panel.remove_meta("roll")
+	sc.gui_input.connect(stop)
+	sc.get_v_scroll_bar().gui_input.connect(stop)
+
+
+## Титры: окно посреди экрана, через пару секунд текст медленно плывёт вверх (как в кино)
+func open_credits() -> void:
+	_toggle(credits_panel)
+	if not credits_panel.visible:
+		return
+	var sc: ScrollContainer = credits_panel.find_child("scroll", true, false)
+	sc.scroll_vertical = 0
+	if credits_panel.has_meta("roll"):
+		(credits_panel.get_meta("roll") as Tween).kill()
+	await get_tree().process_frame
+	var bar := sc.get_v_scroll_bar()
+	var top := maxf(0.0, bar.max_value - bar.page)
+	if top <= 0.0 or not credits_panel.visible:
+		return
+	var tw := sc.create_tween()
+	tw.tween_interval(2.5)
+	tw.tween_method(func(y: float): sc.scroll_vertical = int(y), 0.0, top, top / 28.0)
+	credits_panel.set_meta("roll", tw)
 
 
 func _open_settings(stay := false) -> void:
@@ -2285,9 +3111,7 @@ func refresh() -> void:
 	if game == null or game.city == null:
 		return
 	var c: City = game.city
-	lbl_level.text = Defs.LEVELS[c.level]["name"]
-	var nx := c.next_level()
-	lbl_level.tooltip_text = "Уровень города" if nx.is_empty() else "Следующий уровень «%s»: %d жителей и счастье %d%%" % [nx["name"], nx["pop"], nx["happy"]]
+	lbl_level.text = Defs.LEVELS[c.level]["name"]          # подсказка — мгновенная, _tip_level
 	lbl_pop.text = fmt(c.stats["pop"])
 	lbl_happy.text = "%d%%" % int(c.stats["happy"])
 	lbl_day.text = "День %d" % (c.day + 1)
@@ -2317,19 +3141,25 @@ func refresh() -> void:
 		_fill_stats()
 	_update_world_icons()
 	_update_pointer()
+	if hover_src:
+		_fill_hover()                       # числа в открытой подсказке живые
 
 
 func _fill_classes() -> void:
+	var hover_cls := ""                     # мышь над фишкой класса — после пересборки подсказка остаётся на новой фишке
+	if hover_src and is_instance_valid(hover_src) and hover_src.has_meta("cls"):
+		hover_cls = hover_src.get_meta("cls")
 	_clear(class_box)
-	_snug(class_box)
 	var c: City = game.city
 	for cl in Defs.CLASS_ORDER:
 		var cd: Dictionary = Defs.CLASSES[cl]
 		if not c.unlocked(cd["house"]) and int(c.stats["residents"].get(cl, 0)) == 0:
 			continue
 		var chip := _chip(false, 8.0)
-		chip.tooltip_text = "%s: %d жителей, счастье %d%%, свободных работников %d" % [cd["name"], int(c.stats["residents"].get(cl, 0)), int(c.stats["class_happy"].get(cl, 0)), int(c.stats["free"].get(cl, 0))]
-		chip.mouse_filter = Control.MOUSE_FILTER_PASS
+		chip.set_meta("cls", cl)
+		_hover_on(chip, _tip_class.bind(cl))
+		if cl == hover_cls:
+			hover_src = chip
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 6)
 		var pic := _cls_pic(cl, 46)               # портрет класса в медальоне
@@ -2360,16 +3190,24 @@ func _fill_classes() -> void:
 		h.add_child(v2)
 		chip.add_child(h)
 		class_box.add_child(chip)
+	_snug(class_box)                          # по содержимому — уже после заполнения
 
 
 func _fill_tasks() -> void:
 	_clear(tasks_box)
-	_snug(tasks_panel)
 	var c: City = game.city
 	var goals := c.active_goals(3)
 	tasks_panel.visible = not goals.is_empty() and game.mode != "demo" and ui_level() >= 3
-	if goals.is_empty():
-		return
+	if not goals.is_empty():
+		_fill_tasks_body(goals)
+	# свиток по содержимому: прикрепить заново уже ПОСЛЕ заполнения (иначе он сжимается до пустого и
+	# просьбы вылезают за нижний валик) и ещё раз через кадр, когда перенос строк уже посчитан
+	_snug(tasks_panel)
+	_refit(tasks_panel)
+
+
+func _fill_tasks_body(goals: Array) -> void:
+	var c: City = game.city
 	var hdr := HBoxContainer.new()
 	hdr.alignment = BoxContainer.ALIGNMENT_CENTER
 	hdr.add_theme_constant_override("separation", 6)
@@ -2380,15 +3218,30 @@ func _fill_tasks() -> void:
 	var first := true
 	for g in goals:
 		var prog := mini(c.goal_progress(g["id"]), int(g["need"]))
+		# строка просьбы растёт по тексту (текст сверху, под ним полоса), а прозрачная кнопка лежит поверх всей строки
+		var row := MarginContainer.new()
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		for side in ["left", "right", "top", "bottom"]:
+			row.add_theme_constant_override("margin_" + side, 2)
 		var b := Button.new()
-		b.flat = true
 		b.focus_mode = Control.FOCUS_NONE
-		b.custom_minimum_size = Vector2(266, 52)
+		var e := StyleBoxEmpty.new()
+		for st in ["normal", "pressed", "focus", "disabled"]:
+			b.add_theme_stylebox_override(st, e)
+		var hov := _box_pill(8, 4, "g_btn_hover")
+		hov.modulate_color = Color(1, 1, 1, 0.45)
+		b.add_theme_stylebox_override("hover", hov)
+		b.add_theme_stylebox_override("hover_pressed", hov)
 		var who: Array = Defs.WHO.get(g.get("who", "advisor"), Defs.WHO["advisor"])
-		b.tooltip_text = "%s\n%s\nНаграда: %d ден.%s%s" % [who[0], g.get("hint", g["text"]), g["money"], (", %d оч. исследований" % g["rp"]) if int(g["rp"]) > 0 else "",
+		var hint_txt := String(g.get("hint", ""))
+		# «Соберите N жителей», а повозка стоит из-за счастья — сразу сказать почему и что делать
+		var block := String(c.stats.get("arrive_block", ""))
+		if String((g["p"] as Array)[0]) == "pop" and block != "":
+			var ht: Array = c.stats.get("happy_tips", [])
+			hint_txt = block + "." + ((" Совет: " + String(ht[0]) + ".") if not ht.is_empty() else "") + ("\n" + hint_txt if hint_txt != "" else "")
+		b.tooltip_text = "%s\n%s\nНаграда: %d ден.%s%s" % [who[0], hint_txt if hint_txt != "" else String(g["text"]), g["money"], (", %d оч. исследований" % g["rp"]) if int(g["rp"]) > 0 else "",
 			("\nОткроется: " + g["reward"]) if g.has("reward") else ""]
 		var h := HBoxContainer.new()
-		h.set_anchors_preset(Control.PRESET_FULL_RECT)
 		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		h.add_theme_constant_override("separation", 8)
 		var med := Panel.new()                    # медальон с иконкой просьбы; первая — светится
@@ -2402,36 +3255,40 @@ func _fill_tasks() -> void:
 		h.add_child(med)
 		var v := VBoxContainer.new()
 		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		v.add_theme_constant_override("separation", 2)
+		v.add_theme_constant_override("separation", 3)
 		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var t := _label(g["text"], 15, true)
-		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		t.custom_minimum_size = Vector2(214, 0)
+		v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		var t := _wrap(_label(g["text"], 15, true), 222)
 		v.add_child(t)
 		var pr := HBoxContainer.new()
+		pr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pr.add_theme_constant_override("separation", 6)
 		var bar := ProgressBar.new()
 		bar.max_value = int(g["need"])
 		bar.value = prog
 		bar.show_percentage = false
-		bar.custom_minimum_size = Vector2(172, 14)
-
+		bar.custom_minimum_size = Vector2(170, 14)
 		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		# жёлоб и золотая полоса — как у ползунка
 		bar.add_theme_stylebox_override("background", _ai_box("g_slider", [8, 0, 8, 0], [8, 0, 8, 0]))
 		bar.add_theme_stylebox_override("fill", _ai_box("g_slider_fill", [8, 0, 8, 0], [8, 0, 8, 0]))
 		pr.add_child(bar)
-		pr.add_child(_label("%d/%d" % [prog, int(g["need"])], 14, true, C_SOFT))
+		var cnt := _label("%s/%s" % [fmt(prog), fmt(int(g["need"]))], 14, true, C_SOFT)
+		cnt.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		pr.add_child(cnt)
 		v.add_child(pr)
 		h.add_child(v)
-		b.add_child(h)
+		row.add_child(h)
+		row.add_child(b)                          # кнопка последней — поверх строки, ловит щелчок и подсказку
 		var gg: Dictionary = g
+		var gh := hint_txt
 		b.pressed.connect(func():
-			if gg.has("hint"):
-				advisor(gg["text"], gg["hint"])
+			if gh != "":
+				advisor(gg["text"], gh)
 			if gg.has("tool"):
 				select_build(gg["tool"]))
-		tasks_box.add_child(b)
+		tasks_box.add_child(row)
 		first = false
 
 
@@ -2492,11 +3349,17 @@ func _badge_layer() -> void:
 
 
 ## Значок над точкой мира, размер на экране постоянный (как в Town to City): рисованный пузырь —
-## нет работников, склада, сырья, дороги, ждут жилья, сюда можно заселить; или плашка с монетой и ценой участка
-func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "") -> void:
+## нет работников, склада, сырья, дороги, ждут жилья, сюда можно заселить; или плашка с монетой и ценой участка.
+## Значок можно нажать: cb — что сделать; без cb — по ключу (_badge_click): семья — выбрать ей дом,
+## беда над постройкой — её карточка, ключи над домом — заселить, цена участка — купить
+func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "", cb: Callable = Callable()) -> void:
 	if badges.has(key):
 		var old: Dictionary = badges[key]
 		old["pos"] = pos
+		if cb.is_valid():
+			old["cb"] = cb
+		else:
+			cb = old.get("cb", Callable())
 		if old["icon"] == icon and old["warn"] == warn and old.get("text", "") == text:
 			return
 		(old["n"] as Node).queue_free()
@@ -2520,9 +3383,69 @@ func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "
 			pc.add_child(h)
 		p = pc
 	p.visible = false
+	for ch in p.find_children("*", "Control", true, false):
+		(ch as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE      # ловит мышь, когда можно нажать (_place_badges)
+	p.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	p.gui_input.connect(_badge_input.bind(key))
 	badge_layer.add_child(p)
 	p.reset_size()
-	badges[key] = {"pos": pos, "icon": icon, "warn": warn, "text": text, "n": p, "anc": anc, "ph": float(hash(key) % 628) / 100.0}
+	badges[key] = {"pos": pos, "icon": icon, "warn": warn, "text": text, "n": p, "anc": anc, "ph": float(hash(key) % 628) / 100.0, "cb": cb}
+
+
+## Значок ловит только левую кнопку (нажатие — действие, отпускание тоже не уходит в мир);
+## правая/средняя кнопка и движение мыши проходят дальше — карту можно тянуть и вращать прямо со значка
+func _badge_input(e: InputEvent, key: String) -> void:
+	if e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		get_viewport().set_input_as_handled()
+		if (e as InputEventMouseButton).pressed:
+			_badge_click(key)
+
+
+## Нажали значок над миром
+func _badge_click(key: String) -> void:
+	if not badges.has(key):
+		return
+	var cb: Callable = badges[key].get("cb", Callable())
+	if cb.is_valid():
+		cb.call()
+		return
+	var c: City = game.city
+	if key.begins_with("fam_"):
+		game.start_settle(key.substr(4))                       # семья на площади — выбрать ей дом
+	elif key.begins_with("settle") and key.substr(6).is_valid_int():
+		var h: Dictionary = c.buildings.get(int(key.substr(6)), {})
+		if not h.is_empty() and c.can_host(h, game.settle_fam):
+			game._settle_into(h)                                # ключи над домом — заселить сюда
+	elif key.begins_with("plot"):
+		var ij := key.substr(4).split("_")
+		if ij.size() == 2 and c.can_buy(Vector2i(int(ij[0]), int(ij[1]))):
+			ask_buy(Vector2i(int(ij[0]), int(ij[1])))           # цена участка — купить
+	elif key.begins_with("b") and key.substr(1).is_valid_int():
+		var b: Dictionary = c.buildings.get(int(key.substr(1)), {})
+		if b.is_empty():
+			return
+		if c.def(b)["kind"] == "center" and not c.arrivals.is_empty():
+			game.start_settle(c.arrivals[0]["name"])             # семьи у станции — выбрать дом первой
+		else:
+			game.select_building(b)                              # беда над постройкой — её карточка
+			open_info(b)
+
+
+## Над каждой семьёй, что ждёт жилья на площади, — значок семьи (нажать — выбрать ей дом)
+func _family_badges() -> void:
+	var want := {}
+	var c: City = game.city
+	if c != null and game.people != null and game.mode != "demo" and game.mode != "menu" and game.people.has_method("waiting_family_pos"):
+		for f in c.arrivals:
+			var at: Vector3 = game.people.waiting_family_pos(String(f["name"]))
+			if at.is_finite():
+				var key := "fam_" + String(f["name"])
+				want[key] = true
+				set_badge(key, at + Vector3(0, 1.7, 0), "family")
+	for k in badges.keys():
+		if String(k).begins_with("fam_") and not want.has(k):
+			clear_badge(k)
 
 
 func clear_badge(key: String) -> void:
@@ -2532,6 +3455,8 @@ func clear_badge(key: String) -> void:
 
 
 func _place_badges() -> void:
+	if game and game.ready_done:
+		_family_badges()
 	if badges.is_empty():
 		return
 	var cam := get_viewport().get_camera_3d()
@@ -2540,10 +3465,18 @@ func _place_badges() -> void:
 	var vr := get_viewport().get_visible_rect()
 	var show: bool = root.visible and game.mode != "menu"
 	var t := Time.get_ticks_msec() / 1000.0
+	var tl: String = game.tool
 	for k in badges:
 		var b: Dictionary = badges[k]
 		var p: Control = b["n"]
 		var w: Vector3 = b["pos"]
+		# нажать значок можно без инструмента; при заселении — ключи над домами и значки семей
+		# (с кистью или стройкой значки мышь не ловят — не мешают вести дорогу и ставить дома)
+		var can: bool = tl == "" or (tl == "settle" and (String(k).begins_with("settle") or String(k).begins_with("fam_")))
+		# PASS, а не STOP: левую кнопку забирает _badge_input, а правая/средняя (тянуть и вращать карту) идут в мир
+		var mf := Control.MOUSE_FILTER_PASS if can else Control.MOUSE_FILTER_IGNORE
+		if p.mouse_filter != mf:
+			p.mouse_filter = mf
 		if not show or cam.is_position_behind(w):
 			p.visible = false
 			continue
@@ -2596,6 +3529,7 @@ func show_menu(has_save: bool) -> void:
 		return b
 	mk.call("Играть", "play", func(): _menu_go("play" if has_save else "new"))
 	mk.call("Настройки", "settings", func(): _menu_settings())
+	mk.call("Титры", "laurels", func(): _menu_credits())
 	mk.call("Выход", "exit", func(): get_tree().quit())
 	var foot := _label("Колёсико — масштаб · зажатое колёсико — вращать · правая кнопка — двигать", 16, true, C_CREAM)
 	foot.add_theme_color_override("font_outline_color", Color("3a2412"))
@@ -2619,6 +3553,23 @@ func _menu_settings() -> void:
 
 func _menu_settings_closed() -> void:
 	if game.mode == "menu" and not settings_panel.visible and menu_root:
+		root.visible = false
+		menu_root.visible = true
+
+
+## Титры из главного меню — так же, как настройки: меню прячется, пока открыто окно
+func _menu_credits() -> void:
+	menu_root.visible = false
+	root.visible = true
+	for ch in root.get_children():
+		(ch as CanvasItem).visible = false
+	open_credits()
+	if not credits_panel.visibility_changed.is_connected(_menu_credits_closed):
+		credits_panel.visibility_changed.connect(_menu_credits_closed)
+
+
+func _menu_credits_closed() -> void:
+	if game.mode == "menu" and not credits_panel.visible and menu_root:
 		root.visible = false
 		menu_root.visible = true
 
@@ -2676,18 +3627,32 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		var d: Dictionary = Defs.B[type]
 		var tier := 2 if d["kind"] == "house" else 0
 		col = (col + 3) % Defs.PALETTE.size()
+		# у украшений облик задаёт тип (Catalog.make сам берёт их постоянный цвет) — картинка как поставленное
 		var g := Parts.ghost(Catalog.make(type, tier, 0, col), "outline", Color(0, 0, 0, 0))
 		for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
 			gi.material_override = null
+		# тёмная плашка под землёй (ровняет землю под клумбой, лужком, перголой) — на картинке не нужна
+		for ch in g.get_children():
+			if ch is MeshInstance3D and (ch as MeshInstance3D).mesh == Parts._special_mesh("#dark") and (ch as Node3D).position.y < -0.05:
+				g.remove_child(ch)
+				ch.free()
 		holder.add_child(g)
 		var box := Artisau.aabb(g)
 		var c := box.get_center()
-		var rad := maxf(0.6, box.size.length() * 0.5)
+		var deco: bool = d["kind"] == "decor"
+		var rad := maxf(0.3 if deco else 0.6, box.size.length() * 0.5)
 		var dir := Vector3(0.62, 0.6, 0.95).normalized()
 		cam.look_at_from_position(c + dir * rad / sin(deg_to_rad(15.0)) * 0.95, c, Vector3.UP)
 		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		await RenderingServer.frame_post_draw
-		icons[type] = ImageTexture.create_from_image(vp.get_texture().get_image())
+		var img := vp.get_texture().get_image()
+		if deco:
+			# украшения маленькие: обрезать пустые поля, чтобы облик был крупно и облики отличались на карточке
+			var r := img.get_used_rect()
+			if r.size.x > 8 and r.size.y > 8:
+				r = r.grow(int(maxf(r.size.x, r.size.y) * 0.05)).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
+				img = img.get_region(r)
+		icons[type] = ImageTexture.create_from_image(img)
 		g.queue_free()
 		await get_tree().process_frame
 	vp.queue_free()

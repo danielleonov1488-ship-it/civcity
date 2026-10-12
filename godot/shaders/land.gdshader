@@ -10,6 +10,13 @@ uniform sampler2D tile_plaza_c : source_color, filter_linear_mipmap, repeat_enab
 uniform sampler2D tile_plaza_d : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D surf : filter_linear_mipmap, repeat_disable;   // R мостовая, G площадь, B тропа
 uniform float map_size = 256.0;
+// пейзаж за краем карты (вид 8): те же 4 оттенка травы чужой земли (линейные), большая дорога на север
+uniform vec3 far_g0 = vec3(0.081, 0.120, 0.025);
+uniform vec3 far_g1 = vec3(0.100, 0.144, 0.030);
+uniform vec3 far_g2 = vec3(0.128, 0.176, 0.040);
+uniform vec3 far_g3 = vec3(0.155, 0.191, 0.047);
+uniform float far_road_x = 192.0;
+uniform float far_road_half = 2.25;
 
 varying vec3 wpos;
 varying vec3 wnrm;
@@ -31,11 +38,30 @@ float vn(vec2 p) {
 	return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
 }
 
+// Пятна травы за краем карты — как Land.tint: шум по клеткам 25 см, 4 оттенка (доли как на карте: 4/44/46/5 %)
+vec3 far_grass(vec3 wp) {
+	vec2 q = (floor(wp.xz * 4.0) + 0.5) * 0.045;
+	float n = (vn(q) * 4.0 + vn(q * 2.0 + vec2(17.3, 5.1)) * 2.0 + vn(q * 4.0 + vec2(3.7, 11.9))) / 7.0;
+	n = 0.5 + (n - 0.5) * 1.08;
+	return n < 0.25 ? far_g0 : (n < 0.5 ? far_g1 : (n < 0.75 ? far_g2 : far_g3));
+}
+
 void fragment() {
 	vec3 base = COLOR.rgb;               // вершинный цвет: оттенок клетки (у чужой земли приглушён)
+	float k = floor(kind + 0.5);
+	bool far = k > 7.5;
+	float fv = wpos.y / 0.125 + 0.5;          // для горизонталей за краем карты (производная — вне ветвлений)
+	float fw = max(fwidth(fv), 1e-4);
+	float dmap = 0.0;
+	if (far) {
+		// за краем карты: вблизи — пятна клетками, как на карте; вдали — крупные пятна из вершинного цвета
+		vec2 dd = max(max(-wpos.xz, wpos.xz - vec2(map_size)), vec2(0.0));
+		dmap = length(dd);
+		base = mix(far_grass(wpos), base, smoothstep(90.0, 420.0, dmap));
+		k = 0.0;
+	}
 	vec3 c = base;
 	vec3 an = abs(wnrm);
-	float k = floor(kind + 0.5);
 	bool top = an.y > 0.5;
 	vec3 cube = floor(wpos * 8.0 - wnrm * 0.5);
 	float r = h31(cube);
@@ -66,6 +92,11 @@ void fragment() {
 		if (k == 0.0 || k == 1.0 || k == 4.0 || k == 5.0 || k == 6.0) {
 			// покрытия по маске с плавной выборкой — края скруглены, а не ступеньками по клеткам
 			vec4 m = textureLod(surf, wpos.xz / map_size, 0.7);   // размытая маска: плавные края без ступенек
+			if (far) {
+				// за краем карты маски нет: большая дорога уходит на север прямо за горизонт (края — как у маски)
+				float rd = abs(wpos.x - far_road_x);
+				m = vec4(wpos.z < 0.0 ? clamp(0.5 + (far_road_half - rd) / 1.6, 0.0, 1.0) : 0.0, 0.0, 0.0, 1.0);
+			}
 			float wob = vn(wpos.xz * 2.3) - 0.5;
 			float w_path = smoothstep(0.28, 0.6, m.b + wob * 0.35);
 			float w_road = smoothstep(0.44, 0.54, m.r + wob * 0.06);
@@ -103,6 +134,12 @@ void fragment() {
 				c = mix(c, t, w_plaza);
 				rough = mix(rough, 0.8, w_plaza);
 			}
+		}
+		if (far) {
+			// горизонтали там, где на карте уступы по 12,5 см (высота (n + ½)·0,125): тонкие тёмные линии,
+			// вдали, где они сливаются, — гаснут
+			float line = (1.0 - smoothstep(0.0, fw * 1.4, fract(fv))) * (1.0 - smoothstep(0.3, 0.8, fw));
+			c *= 1.0 - 0.45 * line;
 		}
 	} else if (k == 2.0) {
 		// обрыв: слои камня по высоте
