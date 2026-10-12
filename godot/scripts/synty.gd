@@ -127,6 +127,10 @@ static func material(slot: String, remap := {}) -> Material:
 			m.normal_enabled = true
 			m.normal_texture = load(np)
 			m.normal_scale = 0.6
+		# решётки окон: просветы прозрачные — за ними тёмная комната, ночью у жилых домов тёплый свет
+		if albedo.begins_with("Window"):
+			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+			m.alpha_scissor_threshold = 0.5
 		if slot.to_lower().contains("glass") or slot.to_lower().contains("water"):
 			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 			m.albedo_color.a = 0.6
@@ -144,7 +148,7 @@ static func material(slot: String, remap := {}) -> Material:
 
 
 ## Узел с моделью name; материалы назначены, основание — на нуле (если ground)
-const GREEN := Color(0.86, 1.0, 0.78)
+const GREEN := Color(0.9, 0.93, 0.72)
 
 
 static func make(name: String, remap := {}) -> Node3D:

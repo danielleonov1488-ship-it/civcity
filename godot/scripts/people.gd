@@ -29,7 +29,7 @@ const CART_HORSE_Z := 2.05
 const CART_SEAT_Y := 0.3
 const G := 2                         # клетка сетки ходьбы — 2×2 клетки земли (50 см)
 const GN := Land.N / G
-const WALK := 1.45                   # м/с при обычной скорости
+const WALK := 1.15                   # м/с при обычной скорости (люди маленькие — и шаг короче)
 
 
 func setup(l: Land, c: City, g) -> void:
@@ -233,17 +233,18 @@ func _arrive(r: Dictionary) -> void:
 			_hide(r)
 			var h: Dictionary = city.buildings.get(r["home"], {})
 			var nm := str(r["fam"])
-			if not h.is_empty() and not h.has("_fam_" + nm):
-				h["_fam_" + nm] = true
+			var pf: Dictionary = city.pending.get(nm, {})
+			if not h.is_empty() and not pf.is_empty() and int(pf["home"]) == int(r["home"]):
 				var fam := _fam_members(nm, r["home"])
-				var n := int(city.pending.get(nm, {}).get("n", fam.size()))
+				var n := int(pf["n"])
 				h["coming"] = maxi(0, int(h.get("coming", 0)) - n)
 				var took := city.settled(r["home"], n, nm)
 				_float_text(city.door_point(h), "+ семья %s" % nm)
 				# кому не хватило места — уходят ждать на площадь
 				if took < fam.size():
-					var extra: Array = fam.filter(func(x): return x != r)
-					extra = extra.slice(maxi(0, extra.size() - (fam.size() - took)))
+					var keep := [r] if took > 0 else []
+					var extra: Array = fam.filter(func(x): return not keep.has(x))
+					extra = extra.slice(0, fam.size() - took)
 					for m: Dictionary in extra:
 						m["home"] = -1
 						if m["state"] == "home":
@@ -281,14 +282,17 @@ func _assign_jobs() -> void:
 		var d := city.def(b)
 		if not d.has("jobs") or city.is_house(b) or not b.get("road", true):
 			continue
-		for c in d["jobs"]:
-			for k in int(d["jobs"][c]):
+		var jb := city.jobs_of(b)
+		for c in jb:
+			for k in int(jb[c]):
 				need.append([id, c])
 	var keep := {}
 	for r in residents:
 		if r["job"] >= 0:
 			if not city.buildings.has(r["job"]) or r["child"] or int(r["home"]) <= 0:
 				_quit_job(r)
+			elif int(keep.get(r["job"], 0)) >= city.hired_of(city.buildings[r["job"]]):
+				_quit_job(r)                  # игрок уволил лишних
 			else:
 				keep[r["job"]] = int(keep.get(r["job"], 0)) + 1
 	var order := {"plebs": ["plebs", "artisans", "patricians"], "artisans": ["artisans", "patricians"], "patricians": ["patricians"]}
@@ -354,6 +358,7 @@ func _enter_work(r: Dictionary) -> void:
 		if (a[0] as Vector3).y < 0.05:
 			xf.origin.y = land.height_at(xf.origin.x, xf.origin.z)      # стоит на земле, а не над ней
 		c.transform = xf
+		c.scale = Vector3.ONE * Citizen.SIZE * (0.68 if r["child"] else 1.0)
 		r["p"] = Vector2(xf.origin.x, xf.origin.z)
 		c.play(a[2], 0.3)
 
@@ -590,7 +595,11 @@ func _on_rehomed(old: int, new: int) -> void:
 	for r in residents:
 		if int(r["home"]) == old:
 			r["home"] = new
-			if r["state"] == "home":
+			if city.pending.has(r["fam"]) and r["state"] != "walk":
+				if r["state"] == "home":
+					r["p"] = city.door_point(h)
+				_go(r, city.door_point(h), "settle")
+			elif r["state"] == "home":
 				r["p"] = city.door_point(h)
 			elif r["state"] == "walk" and r["goal"] in ["home", "settle"]:
 				_go(r, city.door_point(h), r["goal"])
@@ -663,7 +672,11 @@ func _on_assigned(name: String, home: int) -> void:
 # ---------- повозка с переселенцами ----------
 
 func _make_cart() -> void:
+	var top := Node3D.new()
+	# повозка и лошадь — в «кукольном» масштабе построек; люди в ней — своего размера
 	var root := Node3D.new()
+	root.scale = Vector3.ONE * Catalog.ARCH
+	top.add_child(root)
 	root.add_child(Synty.make("SM_Prop_Cart_01"))
 	root.add_child(Synty.make("SM_Prop_Cart_01_Insert_01"))
 	var horse := (load("res://assets/animals/Horse_b.glb") as PackedScene).instantiate() as Node3D
@@ -676,6 +689,7 @@ func _make_cart() -> void:
 	var driver := Citizen.create(rng, false)
 	root.add_child(driver)
 	driver.position = Vector3(0, CART_SEAT_Y, 0.55)
+	driver.scale = Vector3.ONE * Citizen.SIZE / Catalog.ARCH
 	driver.play("Driving_Loop", 0.0)
 	var riders := []
 	for k in 3:
@@ -683,11 +697,12 @@ func _make_cart() -> void:
 		root.add_child(r)
 		r.position = Vector3(-0.28 if k != 1 else 0.28, CART_SEAT_Y, -0.35 - 0.45 * (k % 2))
 		r.rotation.y = PI / 2 if k != 1 else -PI / 2
+		r.scale = Vector3.ONE * Citizen.SIZE * (0.68 if k == 2 else 1.0) / Catalog.ARCH
 		r.play("Sitting_Idle_Loop", 0.0)
 		riders.append(r)
-	add_child(root)
-	root.visible = false
-	cart = {"n": root, "horse": hanim, "path": PackedVector2Array(), "s": 0.0, "state": "wait", "t": 3.0, "load": [], "driver": driver, "riders": riders}
+	add_child(top)
+	top.visible = false
+	cart = {"n": top, "horse": hanim, "path": PackedVector2Array(), "s": 0.0, "state": "wait", "t": 3.0, "load": [], "driver": driver, "riders": riders}
 
 
 func _cart_path_len(path: PackedVector2Array) -> float:

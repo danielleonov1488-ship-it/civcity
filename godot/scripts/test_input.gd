@@ -104,6 +104,21 @@ func _run() -> void:
 	for w: Vector2 in [Vector2(188, 136), Vector2(183, 136), Vector2(188, 144), Vector2(183, 144), Vector2(197, 136), Vector2(202, 144)]:
 		await click(scr(w))
 	print("houses placed, buildings=", game.city.buildings.size())
+	# поворот как в Town to City: зажать и вести вбок — не строится; следующий щелчок строит повёрнутым
+	var n0: int = game.city.buildings.size()
+	var a := scr(Vector2(186, 152))
+	move(a)
+	await frames(3)
+	btn(a, MOUSE_BUTTON_LEFT, true)
+	for k in 20:
+		move(a + Vector2(k * 6.0, 0))
+		await frames(1)
+	btn(a + Vector2(114, 0), MOUSE_BUTTON_LEFT, false)
+	await frames(5)
+	print("ROT after drag: built=", game.city.buildings.size() - n0, " lock=", not game.place_lock.is_empty(), " yaw=", snappedf(rad_to_deg(game.tool_yaw), 1))
+	shot("in2b_rotated_ghost.png")
+	await click(a + Vector2(114, 0))
+	print("ROT after click: built=", game.city.buildings.size() - n0, " lock=", not game.place_lock.is_empty())
 	await click(scr(Vector2(210, 130)), MOUSE_BUTTON_RIGHT)
 	print("after RMB2 tool=", game.tool)
 	# снос: подсветка всей модели
@@ -112,9 +127,10 @@ func _run() -> void:
 	for id in game.city.buildings:
 		if game.city.is_house(game.city.buildings[id]):
 			hb = game.city.buildings[id]
+			break
 	move(scr(hb["pos"]))
 	await frames(10)
-	print("highlight=", game.highlight != null)
+	print("highlight=", game.highlight != null, " hb=", hb["pos"], " hover=", game.hover, " over_ui=", game.hud.mouse_over_ui(), " at=", game.city.building_at(game.hover).get("id", -1), " hbid=", hb["id"], " hovered=", get_viewport().gui_get_hovered_control())
 	shot("in3_bulldoze.png")
 	await click(scr(Vector2(210, 130)), MOUSE_BUTTON_RIGHT)
 	await frames(5)

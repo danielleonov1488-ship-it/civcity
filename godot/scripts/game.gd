@@ -18,6 +18,7 @@ var hud: Hud
 var sun: DirectionalLight3D
 var env: Environment
 var sky_mat: ProceduralSkyMaterial
+var grade: ShaderMaterial              # цветокоррекция кадра (тёплые света, прохладные тени)
 var chunk_nodes := {}
 var land_mat: ShaderMaterial
 var surf_img: Image
@@ -25,6 +26,8 @@ var surf_tex: ImageTexture
 var visuals := {}                     # id постройки → {h, lights, smoke, actors}
 var nature := {}                      # Vector2i(2-метровая клетка) → [{h, p}]
 var plot_signs := {}
+var plot_fill: MeshInstance3D            # подсветка участка под курсором (его можно купить)
+var plot_fill_key := Vector2i(-1, -1)
 var night_lights: Array[OmniLight3D] = []
 var actors_root: Node3D
 var swimmers := []                    # утки и лебеди на прудах
@@ -82,7 +85,16 @@ var place_info := {}
 var moving := {}                      # перенос постройки: исходная запись
 var settle_fam := {}                  # семья с площади, которой игрок выбирает дом
 var tutorial: Tutorial
+## Поворот как в Town to City: зажать левую кнопку и вести мышь вбок — постройка поворачивается на месте;
+## отпустил — не строится, строится следующим щелчком (уже повёрнутая)
+var place_lock := {}                  # {p: точка} — призрак закреплён на месте
+var pressing := false
+var rot_drag := false
+var press_screen := Vector2.ZERO
+var press_hover := Vector2.INF
+var rot_yaw0 := 0.0
 var settle_marks := []                # подсветка подходящих домов
+var settle_keys := []                 # значки «ключи» над ними
 var _rmb_down := Vector2.ZERO
 var _mouse_pos := Vector2(-1, -1)
 
@@ -185,6 +197,7 @@ func _ready() -> void:
 	var v := str(args.get("view", "192,124,15,42,60")).split(",")
 	rig.set_view(Vector3(float(v[0]), Land.BASE_Y, float(v[1])), float(v[2]), float(v[3]), float(v[4]))
 	_make_markers()
+	_apply_quality()
 	hud = Hud.new()
 	hud.game = self
 	add_child(hud)
@@ -346,8 +359,19 @@ func _apply_quality() -> void:
 	env.sdfgi_enabled = q == "high"
 	env.ssil_enabled = q == "high"
 	env.ssao_enabled = q != "low"
+	env.glow_enabled = q != "low"
 	if sun:
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if q != "low" else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+		sun.directional_shadow_max_distance = 190.0 if q != "low" else 175.0
+	# слабые ноутбуки: картинка считается в 75% размера и аккуратно растягивается (FSR), без размытия глубины
+	var vp := get_viewport()
+	if vp and shot_path == "":
+		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR if q == "low" else Viewport.SCALING_3D_MODE_BILINEAR
+		vp.scaling_3d_scale = 0.75 if q == "low" else 1.0
+	if rig and rig.attrs:
+		rig.attrs.dof_blur_far_enabled = q != "low"
+		rig.attrs.dof_blur_near_enabled = q != "low"
+	Engine.max_fps = 60 if shot_path == "" else 0
 
 
 # ---------- небо, солнце, свет, цвет ----------
@@ -357,57 +381,56 @@ func _environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
 	sky_mat = ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color("5a93cf")
-	sky_mat.sky_horizon_color = Color("f0d4a8")
-	sky_mat.ground_horizon_color = Color("d8c3a0")
-	sky_mat.ground_bottom_color = Color("6e6b56")
+	sky_mat.sky_top_color = Color("6f95c4")
+	sky_mat.sky_horizon_color = Color("f0d0a4")
+	sky_mat.ground_horizon_color = Color("d8bf98")
+	sky_mat.ground_bottom_color = Color("6a5f4c")
 	sky_mat.sun_angle_max = 25.0
 	sky.sky_material = sky_mat
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.62
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-	env.tonemap_mode = Environment.TONE_MAPPER_AGX
-	env.tonemap_exposure = 0.95
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_white = 6.0
+	env.tonemap_exposure = 1.1
 	env.ssao_enabled = true
-	env.ssao_radius = 1.3
-	env.ssao_intensity = 2.4
-	env.ssao_power = 1.6
+	env.ssao_radius = 0.8
+	env.ssao_intensity = 2.6
+	env.ssao_power = 1.5
+	env.ssao_detail = 0.8
+	env.ssao_light_affect = 0.3
 	env.ssil_enabled = true
-	env.ssil_radius = 4.0
-	env.ssil_intensity = 0.9
+	env.ssil_radius = 3.0
+	env.ssil_intensity = 0.6
 	env.sdfgi_enabled = true
 	env.sdfgi_use_occlusion = true
-	env.sdfgi_bounce_feedback = 0.6
+	env.sdfgi_bounce_feedback = 0.5
 	env.sdfgi_min_cell_size = 0.25
-	env.sdfgi_energy = 1.15
+	env.sdfgi_energy = 0.75
 	env.glow_enabled = true
-	env.glow_intensity = 0.55
-	env.glow_bloom = 0.08
-	env.glow_hdr_threshold = 1.05
+	env.glow_intensity = 0.5
+	env.glow_bloom = 0.0
+	env.glow_hdr_threshold = 1.0
 	env.fog_enabled = true
-	env.fog_light_color = Color("e6e2d2")
-	env.fog_density = 0.0011
-	env.fog_aerial_perspective = 0.35
-	env.fog_sky_affect = 0.55
-	env.adjustment_enabled = true
-	env.adjustment_saturation = 1.18
-	env.adjustment_contrast = 1.12
-	env.adjustment_brightness = 1.02
+	env.fog_light_color = Color("e9c9a0")
+	env.fog_density = 0.0009
+	env.fog_aerial_perspective = 0.5
+	env.fog_sky_affect = 0.45
+	env.adjustment_enabled = false
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 	sun = DirectionalLight3D.new()
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 140.0
-	sun.light_angular_distance = 1.4
-	sun.shadow_blur = 1.2
+	sun.directional_shadow_max_distance = 190.0
+	sun.light_angular_distance = 2.2
+	sun.shadow_blur = 1.6
 	add_child(sun)
 	_apply_quality()
 
 
-## Тёплая виньетка по краям экрана, как в Town to City
+## Цветокоррекция и виньетка поверх кадра (интерфейс — выше, его не трогает)
 func _grading() -> void:
 	var cl := CanvasLayer.new()
 	cl.layer = 1
@@ -415,51 +438,60 @@ func _grading() -> void:
 	var r := ColorRect.new()
 	r.set_anchors_preset(Control.PRESET_FULL_RECT)
 	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var sh := Shader.new()
-	sh.code = """shader_type canvas_item;
-uniform float strength = 0.42;
-void fragment() {
-	vec2 d = UV - 0.5;
-	float v = smoothstep(0.28, 0.78, length(d * vec2(1.15, 1.0)));
-	COLOR = vec4(0.28, 0.14, 0.05, v * strength);
-}"""
-	var m := ShaderMaterial.new()
-	m.shader = sh
-	r.material = m
+	grade = ShaderMaterial.new()
+	grade.shader = load("res://shaders/grade.gdshader")
+	r.material = grade
 	cl.add_child(r)
 
 
-## Свет суток — всё плавно, как в Town to City: долгое золотое утро и вечер, короткая сиреневая ночь,
-## при которой всё видно; фонари и окна загораются постепенно в сумерках
+## Свет суток — как в Town to City: солнце не поднимается высоко (тени всегда видны), светит из-за домов
+## сбоку; долгое золотое утро и вечер, короткая сиреневая ночь, при которой всё видно; фонари и окна
+## загораются постепенно в сумерках. Цвет кадра — тёплые света и прохладные тени (grade.gdshader).
 func _set_hour(h: float) -> void:
 	hour = fposmod(h, 24.0)
-	# день: 0 — ночь, 1 — полный день; рассвет 4.6–7.2, закат 18.4–21.4
-	var day := smoothstep(4.6, 7.2, hour) * (1.0 - smoothstep(18.4, 21.4, hour))
+	# день: 0 — ночь, 1 — полный день; рассвет 4.6–7.2, закат 18.6–21.6
+	var day := smoothstep(4.3, 6.4, hour) * (1.0 - smoothstep(19.8, 22.4, hour))
 	# золото: утро и вечер
-	var gold := (smoothstep(4.8, 6.4, hour) * (1.0 - smoothstep(6.4, 9.5, hour))) + (smoothstep(15.5, 18.5, hour) * (1.0 - smoothstep(19.6, 21.2, hour)))
+	var gold := (smoothstep(4.5, 6.0, hour) * (1.0 - smoothstep(7.5, 10.5, hour))) + (smoothstep(15.5, 18.5, hour) * (1.0 - smoothstep(21.0, 22.4, hour)))
 	gold = clampf(gold, 0.0, 1.0)
-	# солнце по дуге 5:00–21:00, ночью — луна с другой стороны
-	var t := clampf((hour - 5.0) / 16.0, 0.0, 1.0)
+	# солнце: с востока на запад по северной стороне неба, высота не больше 46°
+	var t := clampf((hour - 4.6) / 17.6, 0.0, 1.0)
 	var ang := t * PI
-	var sun_dir := Vector3(cos(ang), maxf(0.06, sin(ang)) * 0.9, 0.42).normalized()
+	var elev := deg_to_rad(4.0 + 44.0 * sin(ang))
+	# как в Town to City: солнце весь день справа — утром спереди-справа, днём сбоку, вечером сзади-справа;
+	# тени ложатся влево, фасады то освещены, то в мягкой тени
+	var flat := Vector3(1.0, 0.0, lerpf(0.9, -0.95, t)).normalized()
+	var sun_dir := (flat * cos(elev) + Vector3.UP * sin(elev)).normalized()
 	var moon_dir := Vector3(-0.35, 0.62, -0.5).normalized()
 	var dir := moon_dir.lerp(sun_dir, smoothstep(0.0, 0.25, day)).normalized()
 	var c := Vector3(Land.START.x, 0, Land.START.y)
-	sun.look_at_from_position(c + dir * 160.0, c, Vector3.UP)
-	var noon := Color("fff1dc")
-	var golden := Color("ffab5e")
-	var night_c := Color("a9a2ff")
+	sun.look_at_from_position(c + dir * 200.0, c, Vector3.UP)
+	var noon := Color("ffe8c8")
+	var golden := Color("ffb070")
+	var night_c := Color("8a8cff")
 	var sun_c := noon.lerp(golden, gold)
 	sun.light_color = night_c.lerp(sun_c, day)
-	sun.light_energy = lerpf(0.55, lerpf(2.6, 1.9, gold), day)
-	sky_mat.sky_top_color = Color("2f2a63").lerp(Color("5a93cf").lerp(Color("8b8fc4"), gold * 0.6), day)
-	sky_mat.sky_horizon_color = Color("6a5a9a").lerp(Color("eedbc0").lerp(Color("f6b07a"), gold), day)
+	sun.light_energy = lerpf(1.6, lerpf(2.6, 2.9, gold), day)
+	sky_mat.sky_top_color = Color("2f2a63").lerp(Color("6f95c4").lerp(Color("9a8fc0"), gold * 0.6), day)
+	sky_mat.sky_horizon_color = Color("6a5a9a").lerp(Color("efd6b4").lerp(Color("f6a870"), gold), day)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color.darkened(0.1)
-	env.ambient_light_energy = lerpf(0.55, 0.62, day)
-	env.ambient_light_color = Color("8f86d6").lerp(Color.WHITE, day)
-	env.ambient_light_sky_contribution = lerpf(0.4, 1.0, day)
-	env.fog_light_color = Color("5a5290").lerp(Color("e3e6dc").lerp(Color("f2c79a"), gold * 0.8), day)
+	# рассеянный свет: днём слабый и серо-сиреневый — тени глубокие; ночью сиреневый — всё видно
+	env.ambient_light_energy = lerpf(1.8, lerpf(0.5, 0.66, gold), day)
+	env.ambient_light_color = Color("7b84e6").lerp(Color("c4b8c8"), day)
+	env.ambient_light_sky_contribution = lerpf(0.35, 0.3, day)
+	env.fog_light_color = Color("5a5290").lerp(Color("e9d2b0").lerp(Color("f2b07a"), gold * 0.8), day)
 	(_puff_quad().material as StandardMaterial3D).albedo_color = Color(0.55, 0.55, 0.7).lerp(Color(1, 1, 1).lerp(Color(1.0, 0.85, 0.7), gold * 0.6), day)
+	if grade:
+		var g_day := Vector3(1.07, 0.97, 0.84)
+		var g_gold := Vector3(1.08, 0.95, 0.82)
+		var g_night := Vector3(0.7, 0.82, 1.45)
+		var gain := g_night.lerp(g_day.lerp(g_gold, gold), day)
+		grade.set_shader_parameter("gain", gain)
+		grade.set_shader_parameter("shadow_tint", Vector3(0.9, 0.88, 1.1).lerp(Vector3(0.86, 0.84, 0.95).lerp(Vector3(0.84, 0.8, 0.92), gold), day))
+		grade.set_shader_parameter("green_shift", lerpf(0.15, 0.6, day))
+		grade.set_shader_parameter("tint", Vector3(1.05, 1.22, 1.75).lerp(Vector3.ONE, day))
+		grade.set_shader_parameter("sat", lerpf(1.08, lerpf(1.04, 0.93, gold), day))
+		grade.set_shader_parameter("contrast", lerpf(1.06, 1.14, day))
 	# окна и фонари: разгораются в сумерках
 	var lamp := 1.0 - smoothstep(0.15, 0.7, day)
 	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
@@ -468,7 +500,7 @@ func _set_hour(h: float) -> void:
 	Parts._glass_material().emission_energy_multiplier = lamp * 3.0
 	for l in night_lights:
 		l.visible = lamp > 0.02
-		l.light_energy = lamp * 2.4
+		l.light_energy = lamp * 1.6
 
 
 # ---------- вода, тоннель, природа ----------
@@ -488,7 +520,7 @@ func _water() -> void:
 	add_child(mi)
 	# земля за краем карты — луг до горизонта (кольцо вокруг карты, под картой его нет)
 	var fm := StandardMaterial3D.new()
-	fm.albedo_color = Color("8fae4a")
+	fm.albedo_color = Color("7a8840")
 	fm.roughness = 1.0
 	var S := Land.SIZE
 	var W := 700.0
@@ -653,9 +685,10 @@ func _cliff_rocks() -> void:
 func _light(at: Vector3) -> OmniLight3D:
 	var l := OmniLight3D.new()
 	l.position = at
-	l.light_color = Color("ffb060")
-	l.omni_range = 7.0
-	l.light_energy = 2.0
+	l.light_color = Color("ffd09a")
+	l.omni_range = 4.6
+	l.omni_attenuation = 1.4
+	l.light_energy = 1.4
 	l.shadow_enabled = false
 	add_child(l)
 	night_lights.append(l)
@@ -864,11 +897,35 @@ func _rebuild_land(limit := 6) -> void:
 
 # ---------- постройки: картинка ----------
 
+var build_anim := false               # постройка поставлена игроком — показать, как она растёт
+
 func _on_added(b: Dictionary) -> void:
-	_show(b)
-	var r := 14.0
-	clear_nature(b["pos"], r, b["cells"])
-	_update_plot_signs()
+	if build_anim and city.def(b)["kind"] != "decor":
+		_grow_anim(b)
+	else:
+		_show(b)
+	if not (b["cells"] as PackedInt32Array).is_empty():
+		clear_nature(b["pos"], 14.0, b["cells"])
+
+
+## Стройка как в Town to City: здание вырастает из земли за пару секунд, в пыли; потом — настоящее
+func _grow_anim(b: Dictionary) -> void:
+	var g := Parts.ghost(city.blueprint(b), "place", Color(1.0, 0.95, 0.85, 0.35))
+	var xf := city.xf(b)
+	g.transform = xf
+	g.scale = Vector3(1.0, 0.04, 1.0)
+	add_child(g)
+	var id: int = b["id"]
+	var tw := create_tween()
+	tw.tween_property(g, "scale", Vector3(1.0, 1.06, 1.0), 1.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(g, "scale", Vector3.ONE, 0.18)
+	tw.tween_callback(func():
+		g.queue_free()
+		if city.buildings.has(id):
+			_show(city.buildings[id])
+			_puff(Vector3(b["pos"].x, float(b["y"]) + 0.3, b["pos"].y), Color("efe3c8")))
+	for k in 3:
+		get_tree().create_timer(0.35 * k).timeout.connect(func(): _puff(xf.origin + Vector3(randf_range(-1.5, 1.5), 0.2, randf_range(-1.5, 1.5)), Color("e8dcc4")))
 
 
 func _show(b: Dictionary) -> void:
@@ -880,7 +937,7 @@ func _show(b: Dictionary) -> void:
 	for lp in bp.lights:
 		vis["lights"].append(_light(xf * lp))
 	var lived: bool = not city.is_house(b) or int(b["pop"]) > 0
-	if lived:
+	if lived and (int(b["id"]) % 3 == 0 or not city.is_house(b)):    # дымок — тонкой струйкой и не над каждым домом
 		for sp in bp.smoke.slice(0, 1):
 			vis["smoke"].append(_smoke(xf * sp))
 	visuals[b["id"]] = vis
@@ -910,7 +967,6 @@ func _on_removed(b: Dictionary) -> void:
 	_puff(Vector3(b["pos"].x, b["y"], b["pos"].y))
 	if selected.get("id", -1) == b["id"]:
 		select_building({})
-	_update_plot_signs()
 
 
 func _on_house_changed(b: Dictionary, up: bool) -> void:
@@ -983,6 +1039,7 @@ func _sync_actors(b: Dictionary) -> void:
 		var c := Citizen.create(rng, who == "female" or (who == "any" and rng.randf() < 0.5), false, who == "rich", model)
 		actors_root.add_child(c)
 		c.transform = xf * Transform3D(Basis(Vector3.UP, float(a[1])), a[0])
+		c.scale = Vector3.ONE * Citizen.SIZE
 		if (a[0] as Vector3).y < 0.05:
 			c.position.y = land.height_at(c.position.x, c.position.z)
 		c.play(a[2], 0.0)
@@ -1000,9 +1057,9 @@ func _sync_all_actors() -> void:
 ## Дым из отдушины — мягкие клубы
 func _smoke(at: Vector3) -> GPUParticles3D:
 	var p := GPUParticles3D.new()
-	p.amount = 10
-	p.lifetime = 5.0
-	p.preprocess = 5.0
+	p.amount = 7
+	p.lifetime = 4.0
+	p.preprocess = 4.0
 	p.position = at
 	var pm := ParticleProcessMaterial.new()
 	pm.direction = Vector3(0.25, 1, 0.1)
@@ -1010,17 +1067,17 @@ func _smoke(at: Vector3) -> GPUParticles3D:
 	pm.initial_velocity_min = 0.35
 	pm.initial_velocity_max = 0.55
 	pm.gravity = Vector3(0.12, 0.05, 0.04)
-	pm.scale_min = 0.6
-	pm.scale_max = 0.9
+	pm.scale_min = 0.22
+	pm.scale_max = 0.34
 	var sc := Curve.new()
-	sc.add_point(Vector2(0, 0.4))
-	sc.add_point(Vector2(1, 2.4))
+	sc.add_point(Vector2(0, 0.5))
+	sc.add_point(Vector2(1, 2.2))
 	var sct := CurveTexture.new()
 	sct.curve = sc
 	pm.scale_curve = sct
 	var grad := Gradient.new()
-	grad.set_color(0, Color(0.95, 0.94, 0.92, 0.16))
-	grad.set_color(1, Color(0.9, 0.9, 0.9, 0.0))
+	grad.set_color(0, Color(0.86, 0.84, 0.82, 0.32))
+	grad.set_color(1, Color(0.8, 0.8, 0.8, 0.0))
 	var gt := GradientTexture1D.new()
 	gt.gradient = grad
 	pm.color_ramp = gt
@@ -1089,12 +1146,87 @@ func _puff(at: Vector3, col := Color("e8dcc4")) -> void:
 
 # ---------- участки ----------
 
+static var _gold_mat: StandardMaterial3D
+
+
+static func _plot_mat(a: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_color = Color(1.0, 0.84, 0.38, a)
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return m
+
+
+## Пунктир по краю участка, лежит на земле (повторяет холмы)
+func _plot_border(p: Vector2i) -> MeshInstance3D:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var x0 := p.x * Land.PLOT
+	var z0 := p.y * Land.PLOT
+	var L := Land.PLOT
+	var sides := [[Vector2(x0, z0), Vector2(1, 0)], [Vector2(x0 + L, z0), Vector2(0, 1)], [Vector2(x0 + L, z0 + L), Vector2(-1, 0)], [Vector2(x0, z0 + L), Vector2(0, -1)]]
+	for sd: Array in sides:
+		var a: Vector2 = sd[0]
+		var d: Vector2 = sd[1]
+		var n := Vector2(-d.y, d.x) * 0.16
+		var t := 0.0
+		while t < L - 0.01:
+			var q0 := a + d * t
+			var q1 := a + d * minf(t + 0.7, L)
+			for tri: Array in [[q0 - n, q1 - n, q1 + n], [q0 - n, q1 + n, q0 + n]]:
+				for q: Vector2 in tri:
+					st.add_vertex(Vector3(q.x, maxf(land.height_at(q.x, q.y), Land.WATER_Y) + 0.14, q.y))
+			t += 1.2
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	if _gold_mat == null:
+		_gold_mat = _plot_mat(0.85)
+	mi.material_override = _gold_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+## Курсор над участком, который можно купить: мягкая золотая заливка поверх земли
+func _plot_hover(p: Vector2i) -> void:
+	if p == plot_fill_key:
+		return
+	plot_fill_key = p
+	if plot_fill:
+		plot_fill.queue_free()
+		plot_fill = null
+	if p.x < 0:
+		return
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var step := 2.0
+	var n := int(Land.PLOT / step)
+	var y := func(x: float, z: float) -> float: return maxf(land.height_at(x, z), Land.WATER_Y) + 0.1
+	for j in n:
+		for i in n:
+			var xa := p.x * Land.PLOT + i * step
+			var za := p.y * Land.PLOT + j * step
+			var v00 := Vector3(xa, y.call(xa, za), za)
+			var v10 := Vector3(xa + step, y.call(xa + step, za), za)
+			var v01 := Vector3(xa, y.call(xa, za + step), za + step)
+			var v11 := Vector3(xa + step, y.call(xa + step, za + step), za + step)
+			for v: Vector3 in [v00, v10, v11, v00, v11, v01]:
+				st.add_vertex(v)
+	plot_fill = MeshInstance3D.new()
+	plot_fill.mesh = st.commit()
+	plot_fill.material_override = _plot_mat(0.16)
+	plot_fill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(plot_fill)
+
+
 func _update_plot_signs() -> void:
 	if hud == null:
 		return
 	for k in plot_signs:
 		(plot_signs[k] as Node).queue_free()
+		hud.clear_badge("plot%d_%d" % [k.x, k.y])
 	plot_signs.clear()
+	_plot_hover(Vector2i(-1, -1))
 	for j in Land.PLOTS:
 		for i in Land.PLOTS:
 			var p := Vector2i(i, j)
@@ -1117,19 +1249,12 @@ func _update_plot_signs() -> void:
 			ban.position = Vector3(0, 3.2, 0)
 			ban.rotation.y = 0.6
 			sign.add_child(ban)
-			var l := Label3D.new()
-			l.text = "Купить · %s ден." % hud.fmt(city.plot_price())
-			l.font = hud.font_bold
-			l.font_size = 48
-			l.outline_size = 14
-			l.modulate = Color("fff6dc")
-			l.outline_modulate = Color("6a4a2a")
-			l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			l.pixel_size = 0.01
-			l.position = Vector3(0, 4.6, 0)
-			l.visibility_range_end = 120.0
-			sign.add_child(l)
 			add_child(sign)
+			# золотая пунктирная рамка по земле вокруг участка и табличка с ценой (всегда одного размера)
+			var border := _plot_border(p)
+			sign.add_child(border)
+			border.global_transform = Transform3D.IDENTITY
+			hud.set_badge("plot%d_%d" % [i, j], Vector3(at.x, y + 4.4, at.y), "coins", false, "%s ден." % hud.fmt(city.plot_price()))
 			plot_signs[p] = sign
 
 
@@ -1172,7 +1297,7 @@ func _process(dt: float) -> void:
 		rig._yaw_t += dt * 0.03
 		if _autogo != "" and frame == 60:
 			hud._menu_go(_autogo)
-	if autosave_t > 90.0 and can_save and settings.get("autosave", true):
+	if autosave_t > 90.0 and can_save and settings.get("autosave", true) and moving.is_empty() and moving_nature.is_empty():
 		autosave_t = 0.0
 		save()
 	if shot_path != "" and frame == shot_frame:
@@ -1236,12 +1361,15 @@ func ground_at_mouse() -> Vector2:
 # ---------- инструменты ----------
 
 func set_tool(t: String) -> void:
-	if t == "" and not moving.is_empty():
+	if not moving.is_empty() and t != String(moving["type"]):
 		_cancel_move()
 	if t != "move_nature" and not moving_nature.is_empty():
 		_add_nature(moving_nature["name"], moving_nature["xf"], moving_nature["p"])
 		moving_nature = {}
 	tool = t
+	place_lock = {}
+	pressing = false
+	rot_drag = false
 	if t != "settle":
 		settle_fam = {}
 		_clear_settle_marks()
@@ -1314,17 +1442,26 @@ func _bounds(bp: Bp) -> Array:
 
 
 ## Куда встанет постройка: у дороги — фасадом к ней, вплотную к соседям в ряд; иначе — как повернул игрок
-func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictionary:
+## Как в Town to City: украшение у самой стены дома само становится настенным (клумба → цветы на стене, фонарь → фонарь на стене)
+const MORPH := {"flowers": "wall_flowers", "planter": "wall_flowers", "lamp_post": "wall_lamp", "candelabrum": "wall_lamp", "brazier": "wall_torch", "banner": "wall_banner"}
+
+
+func placement(type: String, p: Vector2, variant := -1, color := -1, morph := false) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	if d.get("wall", false):
 		return _wall_place(type, p)
+	if morph and MORPH.has(type) and city.unlocked(MORPH[type]) and place_lock.is_empty():
+		var w := _wall_place(MORPH[type], p, 0.75)
+		if w.has("host"):
+			w["type"] = MORPH[type]
+			return w
 	if variant < 0:
 		variant = next_variant
 	if color < 0:
 		if not moving.is_empty():
 			color = int(moving.get("color", 0))
 		else:
-			if place_color < 0 or place_color_pos.distance_to(p) > 5.0:
+			if place_color < 0 or (place_lock.is_empty() and place_color_pos.distance_to(p) > 5.0):
 				place_color = city.pick_color(p)
 				place_color_pos = p
 			color = place_color
@@ -1337,8 +1474,11 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	if fz > -INF:
 		bb[3] = fz                        # фасадом — вплотную к краю дороги
 	var yaw := tool_yaw
+	var locked := not place_lock.is_empty()
+	if locked:
+		p = place_lock["p"]
 	var pos := p
-	if snap and d["kind"] != "decor" and d["kind"] != "farm":
+	if snap and not locked and d["kind"] != "decor" and d["kind"] != "farm":
 		var e := _nearest_road(p, maxf(6.0, (float(bb[3]) - float(bb[2])) * 0.5 + 3.0))
 		if not e.is_empty():
 			var nrm: Vector2 = e["n"]
@@ -1360,9 +1500,9 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 
 
 ## Украшение на стену: ближайшая стена дома под курсором
-func _wall_place(type: String, p: Vector2) -> Dictionary:
+func _wall_place(type: String, p: Vector2, maxd := 1.8) -> Dictionary:
 	var best := {}
-	var bd := 1.8
+	var bd := maxd
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
 		var kd: String = city.def(b)["kind"]
@@ -1404,9 +1544,9 @@ func _wall_place(type: String, p: Vector2) -> Dictionary:
 						px = float(bb[0]) - 0.02
 						ly = -PI / 2
 				var wp: Vector2 = (b["pos"] as Vector2) + ax * px + fw * pz
-				var hgt: float = {"wall_torch": 2.25, "wall_lamp": 2.45, "wall_flowers": 1.25, "wall_banner": 2.2}.get(type, 2.0)
+				var hgt: float = {"wall_torch": 2.25, "wall_lamp": 2.45, "wall_flowers": 1.25, "wall_banner": 2.2}.get(type, 2.0) * Catalog.ARCH
 				best = {"pos": wp, "yaw": float(b["yaw"]) + ly, "err": "", "cells": PackedInt32Array(), "y": float(b["y"]) + hgt,
-					"variant": 0, "color": 0, "tier": 0, "host": b["id"]}
+					"variant": 0, "color": posmod(int(b["id"]) * 3 + int(floor(px * 1.3)), 10), "tier": 0, "host": b["id"]}
 	if best.is_empty():
 		var g := land.height_at(p.x, p.y)
 		return {"pos": p, "yaw": tool_yaw, "err": "Наведите на стену дома", "cells": PackedInt32Array(), "y": g + 2.0, "variant": 0, "color": 0, "tier": 0}
@@ -1450,6 +1590,9 @@ func _nearest_road(p: Vector2, maxd: float) -> Dictionary:
 
 
 ## Ряд: если рядом постройка с тем же поворотом — придвинуться к ней боком и выровнять фасад
+const ROW_GAP := 0.7                  # промежуток между соседними домами в ряду, м
+
+
 func _snap_row(pos: Vector2, yaw: float, bb: Array, ignore := -1) -> Vector2:
 	var ax := City.axis(yaw)
 	var f := City.facing(yaw)
@@ -1478,10 +1621,11 @@ func _snap_row(pos: Vector2, yaw: float, bb: Array, ignore := -1) -> Vector2:
 		var gap_r := along + float(bb[0]) - float(ob[1])     # справа от соседа
 		var gap_l := float(ob[0]) - (along + float(bb[1]))   # слева от соседа
 		var shift := front_o - front_me
-		if gap_r > -0.3 and gap_r < 1.6:
-			return pos - ax * gap_r + f * shift
-		if gap_l > -0.3 and gap_l < 1.6:
-			return pos + ax * gap_l + f * shift
+		# как в Town to City: дома в ряд по одной линии фасадов, но с промежутком — туда можно поставить украшения
+		if gap_r > -0.3 and gap_r < 1.9:
+			return pos - ax * (gap_r - ROW_GAP) + f * shift
+		if gap_l > -0.3 and gap_l < 1.9:
+			return pos + ax * (gap_l - ROW_GAP) + f * shift
 	return pos
 
 
@@ -1491,6 +1635,11 @@ func _update_tool() -> void:
 	brush_box.visible = false
 	range_ring.visible = selected.has("id") and Defs.range_m(city.def(selected)) > 0.0 if not selected.is_empty() else false
 	var over_ui := hud and hud.mouse_over_ui()
+	if tool == "" and hover != Vector2.INF and not over_ui:
+		var pl := land.plot_of(hover)
+		_plot_hover(pl if plot_signs.has(pl) and not land.is_owned(hover) else Vector2i(-1, -1))
+	else:
+		_plot_hover(Vector2i(-1, -1))
 	if tool == "" or hover == Vector2.INF or over_ui:
 		if ghost:
 			ghost.visible = false
@@ -1524,14 +1673,15 @@ func _update_tool() -> void:
 		return
 	if not Defs.B.has(tool):
 		return
-	var pl := placement(tool, hover)
+	var pl := placement(tool, hover, -1, -1, true)
+	var gtype: String = pl.get("type", tool)
 	place_info = pl
 	var d: Dictionary = Defs.B[tool]
-	var key := "%s:%d:%d:%d" % [tool, pl["tier"], pl["variant"], pl["color"]]
+	var key := "%s:%d:%d:%d" % [gtype, pl["tier"], pl["variant"], pl["color"]]
 	if ghost == null or ghost_key != key:
 		if ghost:
 			ghost.queue_free()
-		ghost = Parts.ghost(Catalog.make(tool, pl["tier"], pl["variant"], pl["color"]), "place")
+		ghost = Parts.ghost(Catalog.make(gtype, pl["tier"], pl["variant"], pl["color"]), "place")
 		add_child(ghost)
 		ghost_key = key
 	ghost.visible = true
@@ -1547,7 +1697,7 @@ func _update_tool() -> void:
 		range_ring.position = Vector3(pl["pos"].x, y + 0.12, pl["pos"].y)
 		range_ring.scale = Vector3(rr, 1.0, rr)
 	if hud:
-		hud.tool_status(pl["err"])
+		hud.tool_status(pl["err"] if pl["err"] != "" or place_lock.is_empty() else "Щёлкните, чтобы построить (правая кнопка — отмена)")
 
 
 ## Подсветка постройки под курсором: снос — красная, копировать и перенести — золотая
@@ -1635,6 +1785,9 @@ func _clear_settle_marks() -> void:
 	for m in settle_marks:
 		(m as Node).queue_free()
 	settle_marks = []
+	for k in settle_keys:
+		hud.clear_badge(k)
+	settle_keys = []
 
 
 ## Все дома, куда семья может въехать, мягко светятся
@@ -1650,15 +1803,8 @@ func _settle_marks_show() -> void:
 		add_child(o)
 		settle_marks.append(o)
 		# ключи над домом: здесь есть место
-		var sp := Sprite3D.new()
-		sp.texture = hud._badge("keys")
-		sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		sp.pixel_size = 0.011
-		sp.no_depth_test = true
-		sp.render_priority = 10
-		sp.position = Vector3(b["pos"].x, float(b["y"]) + 4.0 + int(b["tier"]) * 3.0, b["pos"].y)
-		add_child(sp)
-		settle_marks.append(sp)
+		hud.set_badge("settle%d" % b["id"], Vector3(b["pos"].x, float(b["y"]) + city.blueprint(b).top_y() + 1.2, b["pos"].y), "keys")
+		settle_keys.append("settle%d" % b["id"])
 
 
 ## Пока выбираем дом, город живёт: обновить подсветку (или выйти, если семьи уже нет)
@@ -1753,17 +1899,36 @@ func _unhandled_input(e: InputEvent) -> void:
 					select_building({})
 		elif mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
+				press_screen = mb.position
+				press_hover = hover
 				_click()
 			else:
 				_release()
+	elif e is InputEventMouseMotion and pressing and Defs.B.has(tool):
+		var mpos := (e as InputEventMouseMotion).position
+		if not rot_drag and mpos.distance_to(press_screen) > 6.0 and press_hover != Vector2.INF:
+			rot_drag = true
+			if place_lock.is_empty():
+				var pl0 := placement(tool, press_hover)
+				place_lock = {"p": pl0["pos"]}
+				rot_yaw0 = float(pl0["yaw"])
+			else:
+				rot_yaw0 = tool_yaw
+		if rot_drag:
+			tool_yaw = rot_yaw0 + (mpos.x - press_screen.x) * deg_to_rad(0.6)
 	elif e is InputEventKey and e.pressed and not e.echo:
 		var k := e as InputEventKey
 		match k.keycode:
 			KEY_ESCAPE:
+				# как в Town to City: отменить инструмент → закрыть окна → снять выбор → меню игры
 				if tool != "":
 					set_tool("")
-				elif hud.close_panels() == false:
+				elif hud.close_panels():
+					pass
+				elif not selected.is_empty():
 					select_building({})
+				else:
+					hud._top_action("menu")
 			KEY_Z:
 				if k.ctrl_pressed:
 					_undo()
@@ -1867,7 +2032,13 @@ func _click() -> void:
 				next_variant = int(b["variant"])
 			return
 		"move":
+			if not moving.is_empty():
+				return
 			var b := city.building_at(hover)
+			if not b.is_empty() and city.def(b).get("wall", false):
+				hud.tool_status("Украшение на стене не переносится — снесите его и повесьте заново")
+				sound.ui("error")
+				return
 			if b.is_empty() and not hover_nature.is_empty():
 				moving_nature = hover_nature.duplicate()
 				remove_nature(hover_nature)
@@ -1879,7 +2050,7 @@ func _click() -> void:
 				return
 			if not b.is_empty() and not city.def(b).get("fixed", false):
 				moving = {"id": b["id"], "type": b["type"], "tier": b["tier"], "variant": b["variant"], "color": b["color"], "pop": b["pop"],
-					"families": b["families"], "pos": b["pos"], "yaw": b["yaw"], "decor": _hosted(b)}
+					"families": b["families"], "pos": b["pos"], "yaw": b["yaw"], "decor": _hosted(b), "hire": b.get("hire", -1)}
 				city.moving_id = int(b["id"])
 				city.remove(b, false)
 				city.money += 0.0
@@ -1891,32 +2062,11 @@ func _click() -> void:
 				hud.notify("Перенос: поставьте постройку на новое место (правая кнопка — вернуть обратно)", "move")
 			return
 	if Defs.B.has(tool):
-		var pl := placement(tool, hover)
-		if pl["err"] != "":
-			hud.tool_status(pl["err"])
-			sound.ui("error")
+		if not Defs.B[tool].get("wall", false):
+			pressing = true
+			rot_drag = false
 			return
-		var b: Dictionary
-		if not moving.is_empty():
-			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(moving["color"]), true)
-			b["tier"] = int(moving["tier"])
-			b["pop"] = int(moving["pop"])
-			b["families"] = moving["families"]
-			_moved(b)
-			moving = {}
-			_show(b)
-			city.compute()
-			set_tool("")
-		else:
-			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
-			if pl.has("host"):
-				b["host"] = pl["host"]
-				b["y"] = pl["y"]
-				_show(b)
-			if tool_variant < 0:
-				next_variant = randi() % int(Defs.B[tool].get("variants", 1))
-		_puff(Vector3(pl["pos"].x, float(pl["y"]), pl["pos"].y))
-		sound.ui("place")
+		_build_here()
 		return
 	# без инструмента: участок на продажу или карточка постройки
 	var plot := land.plot_of(hover)
@@ -1952,6 +2102,8 @@ func _moved(b: Dictionary, m := {}) -> void:
 	if m.is_empty():
 		m = moving
 	var old := int(m["id"])
+	if int(m.get("hire", -1)) >= 0:
+		b["hire"] = int(m["hire"])
 	city.moving_id = -1
 	city.rehome(old, int(b["id"]))
 	var ax := City.axis(b["yaw"])
@@ -1962,6 +2114,42 @@ func _moved(b: Dictionary, m := {}) -> void:
 		o["host"] = b["id"]
 		o["y"] = float(b["y"]) + float(dd[4])
 		_show(o)
+
+
+## Поставить постройку там, где призрак (после щелчка без поворота)
+func _build_here() -> void:
+	if Defs.B.has(tool):
+		var pl := placement(tool, hover, -1, -1, true)
+		var ptype: String = pl.get("type", tool)
+		if pl["err"] != "":
+			hud.tool_status(pl["err"])        # повёрнутый призрак остаётся на месте — можно довернуть
+			sound.ui("error")
+			return
+		place_lock = {}
+		var b: Dictionary
+		if not moving.is_empty():
+			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(moving["color"]), true)
+			b["tier"] = int(moving["tier"])
+			b["pop"] = int(moving["pop"])
+			b["families"] = moving["families"]
+			_moved(b)
+			moving = {}
+			_show(b)
+			city.compute()
+			set_tool("")
+		else:
+			build_anim = true
+			b = city.place(ptype, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
+			build_anim = false
+			if pl.has("host"):
+				b["host"] = pl["host"]
+				b["y"] = pl["y"]
+				_show(b)
+			if tool_variant < 0:
+				next_variant = randi() % int(Defs.B[tool].get("variants", 1))
+		_puff(Vector3(pl["pos"].x, float(pl["y"]), pl["pos"].y))
+		sound.ui("place")
+		return
 
 
 func _cancel_move() -> void:
@@ -1977,6 +2165,14 @@ func _cancel_move() -> void:
 
 
 func _release() -> void:
+	if pressing:
+		pressing = false
+		if rot_drag:
+			rot_drag = false                  # повернули — ждём следующего щелчка
+			hud.tool_status("Щёлкните, чтобы построить (правая кнопка — отмена)")
+		elif not hud.mouse_over_ui() and (hover != Vector2.INF or not place_lock.is_empty()):
+			_build_here()
+		return
 	if not painting:
 		return
 	if brush_line and line_from != Vector2.INF and hover != Vector2.INF:
@@ -2077,6 +2273,8 @@ func save_path() -> String:
 func save() -> void:
 	if not can_save:
 		return
+	if not moving.is_empty() or not moving_nature.is_empty():
+		set_tool("")                          # перенос не закончен — вернуть на место, иначе постройка пропадёт
 	var data := city.save_data()
 	data["land"] = land.save_changes()
 	data["hour"] = hour
@@ -2127,8 +2325,10 @@ func _demo_town() -> void:
 	city.level = 6
 	for r in Defs.RESEARCH:
 		city.research[r["id"]] = true
-	for g in City.GOALS:
+	for g in Defs.REQUESTS:
 		city.goals_done.append(g["id"])
+		if g.has("unlock"):
+			city.research[g["unlock"]] = true
 	var R := Land.Kind.ROAD
 	var road := func(a: Vector2, b: Vector2, w: float, kd: int) -> void:
 		land.paint_line(a, b, w, kd, true)

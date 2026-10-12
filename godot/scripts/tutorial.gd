@@ -38,7 +38,7 @@ const STEPS := [
 	{"id": "food", "title": "Еда", "icon": "food",
 		"text": "Тёплый дом — это начало, но жителям нужна еда. Откройте «Лавки» и поставьте фруктовую лавку рядом с домами."},
 	{"id": "workers", "title": "Работники", "icon": "hammer", "next": true,
-		"text": "В лавке работают жители соседних домов: утром идут за прилавок, вечером — домой. Пока работников нет, лавка закрыта. Чем больше домов вокруг, тем больше рук."},
+		"text": "В лавке работают жители соседних домов: утром идут за прилавок, вечером — домой. Щёлкните по лавке: кнопками + и − нанимают и увольняют работников. Больше работников — больше домов накормит лавка, но каждому надо платить."},
 	{"id": "script", "title": "Знания", "icon": "quill",
 		"text": "Новые лавки, дома и украшения открываются исследованиями. Очки исследований даёт скрипторий — откройте «Хозяйство» и поставьте его."},
 	{"id": "research", "title": "Исследования", "icon": "research",
@@ -80,7 +80,7 @@ func _card() -> void:
 	card = hud._panel(null, "scroll_h", 34, 22)
 	(card.get_theme_stylebox("panel") as StyleBoxTexture).content_margin_left = 46
 	(card.get_theme_stylebox("panel") as StyleBoxTexture).content_margin_right = 46
-	hud._put(card, Control.PRESET_TOP_LEFT, Vector2(10, 206))     # там, где потом будут задания
+	hud._put(card, Control.PRESET_TOP_LEFT, Vector2(10, 150))     # там, где потом будут задания
 	card.custom_minimum_size = Vector2(540, 0)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 14)

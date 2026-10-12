@@ -23,6 +23,7 @@ var roof_tex := "Roof_Tile_01"
 var full_brick := false
 var base := Transform3D.IDENTITY  # общий сдвиг/масштаб (для больших построек)
 var actors := []                # люди при деле: [положение, поворот, движение, кто]
+var _top := -1.0
 
 
 func _init(seed_v := 1) -> void:
@@ -118,6 +119,23 @@ static func model_aabb(name: String) -> AABB:
 		n.free()
 	_aabbs[name] = box
 	return box
+
+
+## Высота верхушки постройки (для значков над ней)
+func top_y() -> float:
+	if _top >= 0.0:
+		return _top
+	var t := 1.0
+	for p in parts:
+		var nm: String = p[0]
+		if nm.begins_with("#"):
+			continue
+		var box := model_aabb(nm)
+		var xf: Transform3D = p[1]
+		for i in 8:
+			t = maxf(t, (xf * box.get_endpoint(i)).y)
+	_top = t
+	return t
 
 
 ## Передняя стена постройки (z фасада) — по стенам и дверям; если стен нет — по следу
@@ -252,7 +270,7 @@ func gable(cx: float, cz: float, wm: int, dm: int, top: float, toppers := true) 
 	add_xf("SM_Bld_Roof_Base_Straight_Side_01", sxf.call(Vector3(cx - hw, top, cz - hd), PI), true)
 	var ridge := top + 0.75 * k
 	if toppers:
-		var tp := "SM_Bld_Roof_Topper_0%d" % (1 + rng.randi() % 6)
+		var tp := "SM_Bld_Roof_Topper_0%d" % pick([1, 2, 3, 5, 6])    # 4-й похож на крест — не для Рима
 		add(tp, Vector3(cx - hw + 0.12, ridge + 0.02, cz), 0.0)
 		add(tp, Vector3(cx + hw - 0.12, ridge + 0.02, cz), 0.0)
 	smoke.append(base * Vector3(cx + hw * 0.45, ridge + 0.1, cz - 0.3))
@@ -287,7 +305,7 @@ func roof_pergola(x: float, z: float, top: float) -> void:
 func ivy(cx: float, cz: float, wm: int, dm: int, floors: int, flowers := true) -> void:
 	var side: int = pick([0, 1, 3])
 	var n := wm if side % 2 == 0 else dm
-	var nm := "SM_Env_Ivy_Flowers_0%d" % (1 + rng.randi() % 9) if flowers else "SM_Env_Ivy_0%d" % (1 + rng.randi() % 9)
+	var nm := "SM_Env_Ivy_Flowers_0%d" % pick([1, 2, 3, 4, 6, 8, 9]) if flowers else "SM_Env_Ivy_0%d" % pick([1, 2, 3, 4, 6, 8, 9])
 	on_wall(nm, cx, cz, wm, dm, side, rng.randi() % n + 0.5, rng.randf_range(1.4, maxf(1.6, floors * FL - 1.3)), 0.13)
 
 

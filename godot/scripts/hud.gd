@@ -74,7 +74,9 @@ var settings_panel: PanelContainer
 var buy_panel: PanelContainer
 var buy_plot := Vector2i(-1, -1)
 var menu_root: Control
-var world_icons := {}
+var world_icons := {}                 # id постройки → значок беды
+var badge_layer: Control              # значки над постройками: всегда одного размера на экране (как в Town to City)
+var badges := {}                      # ключ → {pos, icon, n}
 var paused_speed := 1.0
 var hidden_ui := false
 var bell_count := 0
@@ -93,6 +95,7 @@ func _ready() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.theme = theme_main
 	add_child(root)
+	_badge_layer()
 	_city_card()
 	_class_chips()
 	_families()
@@ -362,7 +365,7 @@ func mouse_over_ui() -> bool:
 # ---------- город, классы, задания ----------
 
 func _city_card() -> void:
-	var p := _panel(null, "papyrus", 30, 26)
+	var p := _panel(null, "papyrus", 26, 16)
 	city_card = p
 	_put(p, Control.PRESET_TOP_LEFT, Vector2(10, 8))
 	var h := HBoxContainer.new()
@@ -370,15 +373,15 @@ func _city_card() -> void:
 	p.add_child(h)
 	# лавровый венок с орлом — герб города
 	var crest := Control.new()
-	crest.custom_minimum_size = Vector2(92, 92)
+	crest.custom_minimum_size = Vector2(64, 64)
 	var wr := TextureRect.new()
 	wr.texture = load("res://assets/ui/wreath.png")
 	wr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	wr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	wr.set_anchors_preset(Control.PRESET_FULL_RECT)
 	crest.add_child(wr)
-	var eagle := _icon("eagle", 44, Color("8a5a22"))
-	eagle.position = Vector2(24, 20)
+	var eagle := _icon("eagle", 30, Color("8a5a22"))
+	eagle.position = Vector2(17, 14)
 	crest.add_child(eagle)
 	h.add_child(crest)
 	var v := VBoxContainer.new()
@@ -387,10 +390,10 @@ func _city_card() -> void:
 	# знамя с названием
 	var ban := TextureRect.new()
 	ban.texture = load("res://assets/ui/banner.png")
-	ban.custom_minimum_size = Vector2(240, 50)
+	ban.custom_minimum_size = Vector2(190, 38)
 	ban.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	ban.stretch_mode = TextureRect.STRETCH_SCALE
-	lbl_city = _label("Новый Рим", 26, false, C_CREAM, font_title)
+	lbl_city = _label("Новый Рим", 21, false, C_CREAM, font_title)
 	lbl_city.add_theme_color_override("font_outline_color", Color("5a1a10"))
 	lbl_city.add_theme_constant_override("outline_size", 6)
 	lbl_city.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -399,41 +402,41 @@ func _city_card() -> void:
 	lbl_city.offset_top = -3
 	ban.add_child(lbl_city)
 	v.add_child(ban)
-	lbl_level = _label("Стоянка", 19, true, C_SOFT)
+	lbl_level = _label("Стоянка", 15, true, C_SOFT)
 	lbl_level.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_level.mouse_filter = Control.MOUSE_FILTER_PASS
 	v.add_child(lbl_level)
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 6)
-	row.add_child(_icon("family", 26))
-	lbl_pop = _label("0", 21, true)
+	row.add_child(_icon("family", 20))
+	lbl_pop = _label("0", 17, true)
 	row.add_child(lbl_pop)
 	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(16, 0)
+	gap.custom_minimum_size = Vector2(10, 0)
 	row.add_child(gap)
-	row.add_child(_icon("happy", 26, C_GOOD))
-	lbl_happy = _label("0%", 21, true, C_GOOD)
+	row.add_child(_icon("happy", 20, C_GOOD))
+	lbl_happy = _label("0%", 17, true, C_GOOD)
 	row.add_child(lbl_happy)
 	v.add_child(row)
 	var t := HBoxContainer.new()
 	t.alignment = BoxContainer.ALIGNMENT_CENTER
 	t.add_theme_constant_override("separation", 4)
-	lbl_day = _label("День 1", 17, true, C_SOFT)
+	lbl_day = _label("День 1", 14, true, C_SOFT)
 	t.add_child(lbl_day)
 	for sp: Array in [[0.0, "pause", "Пауза (пробел)"], [1.0, "play", "Обычная скорость (1)"], [2.0, "fastfwd", "Быстро (2)"], [4.0, "fastfwd", "Очень быстро (3)"]]:
 		var s: float = sp[0]
-		var b := _round(sp[1], sp[2], 36, func(): set_speed(s))
+		var b := _round(sp[1], sp[2], 28, func(): set_speed(s))
 		t.add_child(b)
 		speed_btns.append([b, s])
-	lbl_clock = _label("08:00", 16, true, C_SOFT)
+	lbl_clock = _label("08:00", 14, true, C_SOFT)
 	t.add_child(lbl_clock)
 	v.add_child(t)
 
 
 func _class_chips() -> void:
 	class_box = HBoxContainer.new()
-	_put(class_box, Control.PRESET_TOP_LEFT, Vector2(420, 12))
+	_put(class_box, Control.PRESET_TOP_LEFT, Vector2(330, 10))
 	class_box.add_theme_constant_override("separation", 8)
 	root.add_child(class_box)
 
@@ -461,12 +464,12 @@ func apply_reveal(lvl: int) -> void:
 	if lvl < 3:
 		tasks_panel.visible = false
 	# пока плашки города нет, семьи ждут в самом углу
-	_put(fam_box, Control.PRESET_TOP_LEFT, Vector2(10, 12) if lvl < 1 else Vector2(420, 86))
+	_put(fam_box, Control.PRESET_TOP_LEFT, Vector2(10, 12) if lvl < 1 else Vector2(330, 80))
 
 
 func _families() -> void:
 	fam_box = HBoxContainer.new()
-	_put(fam_box, Control.PRESET_TOP_LEFT, Vector2(420, 86))
+	_put(fam_box, Control.PRESET_TOP_LEFT, Vector2(330, 80))
 	fam_box.add_theme_constant_override("separation", 6)
 	fam_box.visible = false
 	root.add_child(fam_box)
@@ -475,6 +478,7 @@ func _families() -> void:
 ## Значки семей на площади: щелчок — выбрать им дом
 func _fill_families() -> void:
 	for ch in fam_box.get_children():
+		fam_box.remove_child(ch)
 		ch.queue_free()
 	var c: City = game.city
 	fam_box.visible = not c.arrivals.is_empty() and game.mode != "demo"
@@ -539,7 +543,7 @@ func on_arrival(f: Dictionary) -> void:
 
 func _tasks() -> void:
 	tasks_panel = _panel(null, "scroll_v", 36, 26)
-	_put(tasks_panel, Control.PRESET_TOP_LEFT, Vector2(10, 204))
+	_put(tasks_panel, Control.PRESET_TOP_LEFT, Vector2(10, 150))
 	tasks_panel.custom_minimum_size = Vector2(330, 0)
 	tasks_box = VBoxContainer.new()
 	tasks_box.add_theme_constant_override("separation", 6)
@@ -837,6 +841,7 @@ func _types_in(cat: String, sub := "") -> Array:
 
 func _fill_cards() -> void:
 	for ch in tray_grid.get_children():
+		tray_grid.remove_child(ch)
 		ch.queue_free()
 	tray_tabs.visible = open_cat == "commerce"
 	for b in tray_tabs.get_children():
@@ -914,7 +919,7 @@ func _card_tip(type: String) -> String:
 			if d.has("jobs"):
 				t += "\n\nРабочие: %s" % _jobs_text(d)
 	if game and game.city and not game.city.unlocked(type):
-		t += "\n\nОткроется исследованием «%s»" % Defs.research(d["unlock"]).get("name", "")
+		t += "\n\nОткроется %s" % Defs.unlock_text(d["unlock"])
 	var cnt := 0
 	if game and game.city:
 		for id in game.city.buildings:
@@ -946,7 +951,7 @@ func _update_cards() -> void:
 			x.queue_free()
 		if not c.unlocked(type):
 			pr.add_child(_icon("lock", 18, C_SOFT))
-			var ln := _label(Defs.research(d["unlock"]).get("name", ""), 13, true, C_SOFT)
+			var ln := _label(Defs.unlock_short(d["unlock"]), 13, true, C_SOFT)
 			ln.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			ln.custom_minimum_size = Vector2(90, 0)
 			pr.add_child(ln)
@@ -972,7 +977,7 @@ func select_build(type: String) -> void:
 		_refresh_cat_buttons()
 		_unroll()
 	if not game.city.unlocked(type):
-		notify("«%s» откроется исследованием «%s»" % [Defs.B[type]["name"], Defs.research(Defs.B[type]["unlock"]).get("name", "")], "lock")
+		notify("«%s» откроется %s" % [Defs.B[type]["name"], Defs.unlock_text(Defs.B[type]["unlock"])], "lock")
 		return
 	game.set_tool(type)
 	_update_pointer()
@@ -1038,6 +1043,18 @@ func _update_pointer() -> void:
 		"decor5":
 			pointer_target = _card_or_cat("decor", "flowers")
 			tip = "Украшения"
+		"lights":
+			pointer_target = _card_or_cat("decor", "lamp_post")
+			tip = "Украшения"
+		"fam3":
+			if game.tool != "settle" and fam_box.visible and fam_box.get_child_count() > 0:
+				for x in fam_box.get_child(0).find_children("*", "Button", true, false):
+					pointer_target = x
+					tip = "Семья"
+					break
+		"market", "fed6":
+			pointer_target = cats.get("commerce")
+			tip = "Лавки"
 		"temple":
 			pointer_target = _card_or_cat("special", "temple")
 			tip = "Памятники"
@@ -1055,6 +1072,7 @@ func _card_or_cat(cat: String, type: String) -> Control:
 
 
 func _process(_dt: float) -> void:
+	_place_badges()
 	if game and lbl_clock:
 		var h := int(game.hour)
 		var m := int((game.hour - h) * 60.0) / 10 * 10
@@ -1137,7 +1155,7 @@ func _fill_tool_panel() -> void:
 	if Defs.B.has(t):
 		var d: Dictionary = Defs.B[t]
 		tool_title.text = "%s · %s ден." % [d["name"], fmt(d["cost"])]
-		var keys := "Z/X — поворот · правая кнопка — отмена"
+		var keys := "Повернуть: зажмите левую кнопку и ведите мышь вбок (или Z/X) · правая кнопка — отмена"
 		if int(d.get("variants", 1)) > 1:
 			keys = "C/V — другой фасад · " + keys
 			variant_box.visible = true
@@ -1192,6 +1210,32 @@ func open_info(b: Dictionary) -> void:
 	info_b = b
 	info_panel.visible = true
 	_fill_info()
+
+
+## Строка «Работники: 2 / 3  [−] [+]» — нанять или уволить
+func _hire_row(b: Dictionary) -> HBoxContainer:
+	var c: City = game.city
+	var mx := c.job_max(b)
+	var h := c.hired_of(b)
+	var row := _row("hammer", "Работники", "%d / %d · %d%%" % [h, mx, int(float(b.get("staff", 1.0)) * 100.0)], C_GOOD if float(b.get("fill", 1.0)) >= 0.99 and h > 0 else C_BAD)
+	row.tooltip_text = "Сколько работников нанять. Чем больше — тем больше домов обслуживает постройка, но каждый работник стоит %.1f ден. в час и нужен жителям ниже классом" % City.WAGE
+	var minus := Button.new()
+	minus.text = "−"
+	minus.custom_minimum_size = Vector2(34, 30)
+	minus.focus_mode = Control.FOCUS_NONE
+	minus.disabled = h <= 0
+	minus.tooltip_text = "Уволить работника"
+	minus.pressed.connect(func(): c.set_hire(b, h - 1); _fill_info())
+	var plus := Button.new()
+	plus.text = "+"
+	plus.custom_minimum_size = Vector2(34, 30)
+	plus.focus_mode = Control.FOCUS_NONE
+	plus.disabled = h >= mx
+	plus.tooltip_text = "Нанять работника"
+	plus.pressed.connect(func(): c.set_hire(b, h + 1); _fill_info())
+	row.add_child(minus)
+	row.add_child(plus)
+	return row
 
 
 func _row(icon: String, text: String, val: String, col := C_INK) -> HBoxContainer:
@@ -1301,10 +1345,10 @@ func _fill_info() -> void:
 			info_box.add_child(_row("happy", "Счастье домам", "+%d%%" % int(d["bonus"]), C_GOOD))
 			info_box.add_child(_row("arrow", "Дальность", Defs.WORD[int(d["range"])]))
 			info_box.add_child(_row("housing", "Обслуживает домов", "%d из %d" % [int(b.get("served", 0)), int(ceil(float(Defs.CAPACITY[int(d["cap"])]) * float(b.get("staff", 1.0))))]))
-			info_box.add_child(_row("hammer", "Работники", "%d%% (%s)" % [int(float(b.get("staff", 1.0)) * 100.0), _jobs_text(d)], C_GOOD if float(b.get("staff", 1.0)) >= 0.99 else C_BAD))
+			info_box.add_child(_hire_row(b))
 			if not b.get("active", true):
 				var why := {"store": "Нет склада рядом — нечем торговать", "good": "Нет сырья: %s" % {"wheat": "постройте пшеничное поле", "olives": "посадите оливковую рощу", "grapes": "посадите виноградник"}.get(d.get("needs_good", ""), ""),
-					"road": "Нет дороги у входа", "staff": "Не хватает работников — нужно больше жителей"}
+					"road": "Нет дороги у входа", "staff": "Нет работников: наймите (+) — или нужно больше жителей"}
 				var wl := _label(why.get(b.get("why", "staff"), "Не работает"), 15, true, C_BAD)
 				wl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				info_box.add_child(wl)
@@ -1313,13 +1357,13 @@ func _fill_info() -> void:
 			info_box.add_child(_row("arrow", "Дальность", Defs.WORD[int(d["range"])]))
 		"rp":
 			info_box.add_child(_row("research", "Очки исследований в день", "+%.1f" % (float(d["rp"]) * float(b.get("staff", 1.0))), C_GOOD))
-			info_box.add_child(_row("hammer", "Работники", "%d%% (%s)" % [int(float(b.get("staff", 1.0)) * 100.0), _jobs_text(d)]))
+			info_box.add_child(_hire_row(b))
 		"farm":
 			info_box.add_child(_row("wheat", "Даёт", {"wheat": "пшеницу", "olives": "оливки", "grapes": "виноград"}[d["makes"]], C_GOOD))
-			info_box.add_child(_row("hammer", "Работники", "%d%%" % int(float(b.get("staff", 1.0)) * 100.0)))
+			info_box.add_child(_hire_row(b))
 		"store":
 			info_box.add_child(_row("arrow", "Разносит товары", Defs.WORD[4]))
-			info_box.add_child(_row("hammer", "Работники", "%d%%" % int(float(b.get("staff", 1.0)) * 100.0)))
+			info_box.add_child(_hire_row(b))
 		"center":
 			tv.add_child(_label("Уровень города: %s" % Defs.LEVELS[c.level]["name"], 14, true, C_SOFT))
 			var nx := c.next_level()
@@ -1915,7 +1959,7 @@ func _fill_tasks() -> void:
 	var hdr := HBoxContainer.new()
 	hdr.alignment = BoxContainer.ALIGNMENT_CENTER
 	hdr.add_child(_icon("scroll", 26, C_SOFT))
-	hdr.add_child(_label("Задания", 22, false, C_INK, font_title))
+	hdr.add_child(_label("Просьбы горожан", 22, false, C_INK, font_title))
 	tasks_box.add_child(hdr)
 	var first := true
 	for g in goals:
@@ -1924,7 +1968,9 @@ func _fill_tasks() -> void:
 		b.flat = true
 		b.focus_mode = Control.FOCUS_NONE
 		b.custom_minimum_size = Vector2(292, 58)
-		b.tooltip_text = g.get("hint", g["text"]) + "\nНаграда: %d ден.%s" % [g["money"], (", %d оч. исследований" % g["rp"]) if int(g["rp"]) > 0 else ""]
+		var who: Array = Defs.WHO.get(g.get("who", "advisor"), Defs.WHO["advisor"])
+		b.tooltip_text = "%s\n%s\nНаграда: %d ден.%s%s" % [who[0], g.get("hint", g["text"]), g["money"], (", %d оч. исследований" % g["rp"]) if int(g["rp"]) > 0 else "",
+			("\nОткроется: " + g["reward"]) if g.has("reward") else ""]
 		var h := HBoxContainer.new()
 		h.set_anchors_preset(Control.PRESET_FULL_RECT)
 		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2024,34 +2070,103 @@ func _update_world_icons() -> void:
 		var b: Dictionary = c.buildings[id]
 		var d := c.def(b)
 		var icon := ""
+		var warn := true
 		if d["kind"] == "shop" and not b.get("active", true):
 			icon = {"store": "warehouse", "good": "wheat", "road": "road"}.get(b.get("why", ""), "hammer")
-		elif d["kind"] in ["rp", "farm", "store", "monument"] and d.has("jobs") and float(b.get("staff", 1.0)) < 0.99:
+		elif d["kind"] in ["rp", "farm", "store", "monument"] and d.has("jobs") and (float(b.get("fill", 1.0)) < 0.99 or c.hired_of(b) == 0):
 			icon = "hammer"
 		elif d["kind"] == "center" and c.waiting > 0:
 			icon = "family"
+			warn = false
 		if icon != "":
-			want[id] = icon
+			want[id] = [icon, warn]
 	for id in world_icons.keys():
-		if not want.has(id) or world_icons[id][1] != want[id]:
-			(world_icons[id][0] as Node).queue_free()
+		if not want.has(id) or world_icons[id] != want[id]:
+			clear_badge("b%d" % id)
 			world_icons.erase(id)
 	for id in want:
 		if world_icons.has(id):
 			continue
 		var b: Dictionary = c.buildings[id]
-		var s := Sprite3D.new()
-		s.texture = _badge(want[id])
-		s.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		s.pixel_size = 0.012
-		s.no_depth_test = true
-		s.render_priority = 10
-		var top := 4.0 + (int(b["tier"]) * 3.0 if c.is_house(b) else 2.0)
-		s.position = Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y)
-		game.add_child(s)
-		world_icons[id] = [s, want[id]]
+		var top: float = c.blueprint(b).top_y() + 1.2
+		set_badge("b%d" % id, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), want[id][0], want[id][1])
+		world_icons[id] = want[id]
 
 
+# ---------- значки над миром ----------
+
+func _badge_layer() -> void:
+	badge_layer = Control.new()
+	badge_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	badge_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(badge_layer)
+	move_child(badge_layer, 0)                # окна интерфейса рисуются поверх значков
+
+
+## Значок над точкой мира: кремовый квадратик с картинкой (беда — с красной каймой), размер на экране постоянный
+func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "") -> void:
+	if badges.has(key):
+		var old: Dictionary = badges[key]
+		old["pos"] = pos
+		if old["icon"] == icon and old["warn"] == warn and old.get("text", "") == text:
+			return
+		(old["n"] as Node).queue_free()
+	var p := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color("f8ecd6")
+	sb.set_corner_radius_all(9)
+	sb.shadow_color = Color(0.18, 0.1, 0.04, 0.35)
+	sb.shadow_size = 3
+	sb.shadow_offset = Vector2(0, 2)
+	if warn:
+		sb.border_color = C_BAD
+		sb.set_border_width_all(2)
+	sb.content_margin_left = 5
+	sb.content_margin_right = 5
+	sb.content_margin_top = 5
+	sb.content_margin_bottom = 5
+	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.custom_minimum_size = Vector2(40, 40)
+	if text == "":
+		p.add_child(_icon(icon, 30, C_BAD if warn else C_INK))
+	else:
+		var h := HBoxContainer.new()
+		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		h.add_theme_constant_override("separation", 4)
+		h.add_child(_icon(icon, 26, C_GOLD))
+		h.add_child(_label(text, 17, true, C_INK))
+		p.add_child(h)
+	p.visible = false
+	badge_layer.add_child(p)
+	p.reset_size()
+	badges[key] = {"pos": pos, "icon": icon, "warn": warn, "text": text, "n": p}
+
+
+func clear_badge(key: String) -> void:
+	if badges.has(key):
+		(badges[key]["n"] as Node).queue_free()
+		badges.erase(key)
+
+
+func _place_badges() -> void:
+	if badges.is_empty():
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var vr := get_viewport().get_visible_rect()
+	var show: bool = root.visible and game.mode != "menu"
+	for k in badges:
+		var b: Dictionary = badges[k]
+		var p: Control = b["n"]
+		var w: Vector3 = b["pos"]
+		if not show or cam.is_position_behind(w):
+			p.visible = false
+			continue
+		var pt := cam.unproject_position(w)
+		p.position = pt - p.size * 0.5
+		p.visible = vr.grow(30).has_point(pt)
 
 
 # ---------- стартовое меню ----------

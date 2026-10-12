@@ -10,6 +10,7 @@ const PLEBS := ["SK_Chr_Worker_Male_01", "SK_Chr_Worker_Female_01", "SK_Chr_Farm
 const RICH := ["SK_Chr_Upperclass_Male_01", "SK_Chr_Upperclass_Female_01", "SK_Chr_Politician_Male_01"]
 const FEMALE := ["SK_Chr_Worker_Female_01", "SK_Chr_Farmer_Female_01", "SK_Chr_Upperclass_Female_01", "SK_Chr_Soldier_Female_02"]
 
+const SIZE := 0.72                   # люди «кукольные», ниже дверей — как в Town to City
 var anim: AnimationPlayer
 var female := false
 var _cur := ""
@@ -86,8 +87,7 @@ static func create(rng: RandomNumberGenerator, is_female: bool, child := false, 
 	c.anim.root_node = NodePath("..")
 	c.anim.add_animation_library("", library())
 	c.anim.speed_scale = rng.randf_range(0.92, 1.08)
-	if child:
-		c.scale = Vector3.ONE * 0.68
+	c.scale = Vector3.ONE * SIZE * (0.68 if child else 1.0)
 	return c
 
 

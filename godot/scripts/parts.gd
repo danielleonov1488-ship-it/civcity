@@ -29,8 +29,8 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 				var mmi: MultiMeshInstance3D = sub["mmi"]
 				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 				if tile.x >= 0:
-					mmi.visibility_range_end = 110.0
-					mmi.visibility_range_end_margin = 15.0
+					mmi.visibility_range_end = 150.0
+					mmi.visibility_range_end_margin = 20.0
 					mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			g["subs"].append(sub)
 		src.free()
@@ -82,11 +82,48 @@ static func _special_mesh(name: String) -> Mesh:
 			var lm := _lamp_mesh(name == "#wall_lamp")
 			_special[name] = lm
 			return lm
+		"#shutters_green", "#shutters_brown", "#shutters_blue", "#window_box", "#chimney":
+			var km := _small_mesh(name)
+			_special[name] = km
+			return km
 		_:
 			m.albedo_color = Color.MAGENTA
 	bm.material = m
 	_special[name] = bm
 	return bm
+
+
+## Мелочи, которых нет в Synty, но они есть у домов Town to City (в палитре Synty):
+## ставни (пара, раскрыты к стене; середина окна — начало координат, лицом к +Z), ящик с цветами под окном, печная труба
+static func _small_mesh(name: String) -> Mesh:
+	var k := Kit.new()
+	match name:
+		"#shutters_green", "#shutters_brown", "#shutters_blue":
+			var col: Color = {"#shutters_green": Color("5d8a48"), "#shutters_brown": Color("7a4e2c"), "#shutters_blue": Color("4f7c9a")}[name]
+			for sx: float in [-1.0, 1.0]:
+				var cx := sx * 0.8
+				k.boxc(Vector3(cx, 0.0, 0.03), Vector3(0.46, 1.08, 0.05), col, [])
+				# планки и рамка чуть темнее — объём как у кубиков Town to City
+				for j in 5:
+					k.boxc(Vector3(cx, -0.4 + j * 0.2, 0.065), Vector3(0.4, 0.05, 0.03), col.darkened(0.18), [])
+				k.boxc(Vector3(cx, 0.0, 0.07), Vector3(0.05, 1.0, 0.025), col.darkened(0.25), [])
+		"#window_box":
+			k.boxc(Vector3(0, 0.08, 0.1), Vector3(0.9, 0.16, 0.2), Color("b5603a"), [])
+			k.boxc(Vector3(0, 0.0, 0.1), Vector3(0.94, 0.03, 0.24), Color("8f4a2c"), [])
+			var cols := [Color("c8384a"), Color("e88aa0"), Color("f0e2c8"), Color("d9502e"), Color("e8b13a")]
+			for i in 9:
+				var x := -0.38 + i * 0.095
+				k.boxc(Vector3(x, 0.2, 0.1 + (0.04 if i % 2 else -0.04)), Vector3(0.11, 0.1, 0.11), Color("4f7a2e").darkened(0.1 * (i % 3)), [])
+				if i % 2 == 0:
+					k.boxc(Vector3(x, 0.28, 0.1), Vector3(0.07, 0.07, 0.07), cols[i % cols.size()], [])
+		"#chimney":
+			k.boxc(Vector3(0, 0.55, 0), Vector3(0.46, 1.1, 0.46), Color("e9dfcb"))
+			k.boxc(Vector3(0, 1.12, 0), Vector3(0.6, 0.08, 0.6), Color("b5603a"), [])
+			k.boxc(Vector3(0, 1.2, 0), Vector3(0.36, 0.08, 0.36), Color("8f4a2c"), [])
+			k.boxc(Vector3(0, 1.245, 0), Vector3(0.22, 0.01, 0.22), Color("1c1410"), [])
+	var m := k.mesh()
+	m.surface_set_material(0, Kit.material(0.85))
+	return m
 
 
 ## Римский фонарь: бронзовый корпус, тёплые стёкла (светятся ночью вместе с окнами домов)

@@ -126,7 +126,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	var d: Dictionary = Defs.B[type]
 	var res := {"err": "", "cells": PackedInt32Array(), "y": 0.0}
 	if not unlocked(type):
-		res["err"] = "Откроется исследованием «%s»" % Defs.research(d["unlock"]).get("name", "")
+		res["err"] = "Откроется %s" % Defs.unlock_text(d["unlock"])
 		return res
 	if money < float(d["cost"]) and ignore_id == -1:
 		res["err"] = "Не хватает денариев"
@@ -215,8 +215,8 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	buildings[b["id"]] = b
 	compute()
 	building_added.emit(b)
-	changed.emit()
 	_check_goals()
+	changed.emit()
 	return b
 
 
@@ -278,6 +278,50 @@ func recolor(b: Dictionary) -> void:
 	changed.emit()
 
 
+# ---------- работники (как в Town to City: сколько нанять — решает игрок) ----------
+
+const WAGE := 0.3                     # денариев в час за каждого нанятого работника
+
+
+func job_max(b: Dictionary) -> int:
+	var n := 0
+	for c in def(b).get("jobs", {}):
+		n += int(def(b)["jobs"][c])
+	return n
+
+
+## Рабочие места постройки с учётом найма: сначала младшие классы
+func jobs_of(b: Dictionary) -> Dictionary:
+	var d := def(b)
+	if not d.has("jobs"):
+		return {}
+	var h := int(b.get("hire", -1))
+	if h < 0 or h >= job_max(b):
+		return (d["jobs"] as Dictionary).duplicate()
+	var out := {}
+	var left := h
+	for c in Defs.CLASS_ORDER:
+		if d["jobs"].has(c):
+			var n := mini(int(d["jobs"][c]), left)
+			out[c] = n
+			left -= n
+	return out
+
+
+func hired_of(b: Dictionary) -> int:
+	var n := 0
+	var jb := jobs_of(b)
+	for c in jb:
+		n += int(jb[c])
+	return n
+
+
+func set_hire(b: Dictionary, n: int) -> void:
+	b["hire"] = clampi(n, 0, job_max(b))
+	compute()
+	changed.emit()
+
+
 # ---------- расчёт: обслуживание, счастье ----------
 
 func compute() -> void:
@@ -303,8 +347,9 @@ func compute() -> void:
 				continue
 		b["road"] = d["kind"] in ["farm", "center"] or _road_near(door_point(b), 1.7, b["cells"])
 		if d.has("jobs") and b["road"]:
-			for c in d["jobs"]:
-				jobs[c] += int(d["jobs"][c])
+			var jb := jobs_of(b)
+			for c in jb:
+				jobs[c] += int(jb[c])
 	# работники: у каждого класса свои, лишние высшего класса идут на работу классом ниже
 	var workers := {}
 	var spare := {}
@@ -329,8 +374,14 @@ func compute() -> void:
 			continue
 		var st := 1.0
 		if d.has("jobs"):
-			for c in d["jobs"]:
-				st = minf(st, ratio[c])
+			var jb := jobs_of(b)
+			var hired := 0
+			for c in jb:
+				hired += int(jb[c])
+				if int(jb[c]) > 0:
+					st = minf(st, ratio[c])
+			b["fill"] = st if b["road"] else 0.0               # хватает ли жителей на нанятые места
+			st *= float(hired) / float(maxi(1, job_max(b)))     # наняли меньше — работает слабее
 		b["staff"] = st if b["road"] else 0.0
 		b["active"] = b["road"] and (not d.has("jobs") or float(b["staff"]) >= 0.25)
 		if d["kind"] == "farm" and b["active"]:
@@ -465,7 +516,7 @@ func sim_day() -> void:
 			"rp":
 				rpd += float(d["rp"]) * float(b["staff"])
 			"shop", "monument", "store", "farm":
-				upkeep += float(d["cost"]) * 0.0035
+				upkeep += float(d["cost"]) * 0.0025 + WAGE * hired_of(b)
 	money = minf(money_cap(), money + income - upkeep)
 	rp = minf(rp_cap(), rp + rpd)
 	stats["income"] = income
@@ -654,6 +705,7 @@ func settled(id: int, n: int, name := "") -> int:
 	(b["families"] as Array).append({"name": name, "n": n})
 	b["pop"] = int(b["pop"]) + n
 	compute()
+	_check_goals()
 	house_changed.emit(b, false)
 	changed.emit()
 	return n
@@ -741,32 +793,6 @@ func buy_plot(p: Vector2i) -> bool:
 
 # ---------- задания ----------
 
-const GOALS := [
-	{"id": "road1", "text": "Проложите мостовую от станции", "need": 40, "money": 100, "rp": 10, "icon": "road",
-		"hint": "Выберите «Мостовую» слева внизу и ведите кисть с зажатой левой кнопкой мыши от площади у станции."},
-	{"id": "houses3", "text": "Постройте 3 дома у дороги", "need": 3, "money": 150, "rp": 20, "tool": "house_pleb", "icon": "housing",
-		"hint": "Дом ставится фасадом к дороге. Повозка привезёт семьи из тоннеля."},
-	{"id": "fruit", "text": "Поставьте фруктовую лавку", "need": 1, "money": 100, "rp": 20, "tool": "stall_fruit", "icon": "food",
-		"hint": "Лавка кормит ближайшие дома в своей дальности. Чем больше разных лавок рядом, тем счастливее дом."},
-	{"id": "scriptorium", "text": "Постройте скрипторий", "need": 1, "money": 100, "rp": 30, "tool": "scriptorium", "icon": "quill",
-		"hint": "Скрипторий даёт очки исследований — за них открываются новые постройки."},
-	{"id": "pop30", "text": "Соберите 30 жителей", "need": 30, "money": 200, "rp": 40},
-	{"id": "research1", "text": "Изучите что-нибудь", "need": 1, "money": 150, "rp": 0, "icon": "research",
-		"hint": "Нажмите на свиток вверху справа — откроется меню исследований. Очки исследований дают скрипторий, школа и библиотека."},
-	{"id": "decor5", "text": "Поставьте 5 украшений", "need": 5, "money": 120, "rp": 20, "icon": "flower",
-		"hint": "Украшения дают дому очки красоты — до +30% счастья."},
-	{"id": "floor2", "text": "Дорастите дом до 2 этажей", "need": 1, "money": 250, "rp": 40,
-		"hint": "Изучите «Второй жилой этаж». Довольный полный дом надстроит его сам."},
-	{"id": "store", "text": "Склад и мясная лавка", "need": 2, "money": 200, "rp": 40},
-	{"id": "pop100", "text": "Соберите 100 жителей", "need": 100, "money": 400, "rp": 80},
-	{"id": "artisan", "text": "Постройте дом ремесленников", "need": 1, "money": 300, "rp": 60},
-	{"id": "temple", "text": "Постройте храм", "need": 1, "money": 500, "rp": 100},
-	{"id": "pop300", "text": "Соберите 300 жителей", "need": 300, "money": 900, "rp": 150},
-	{"id": "patrician", "text": "Постройте домус патрициев", "need": 1, "money": 800, "rp": 150},
-	{"id": "pop600", "text": "Соберите 600 жителей", "need": 600, "money": 1500, "rp": 300},
-]
-
-
 func _count(pred: Callable) -> int:
 	var n := 0
 	for id in buildings:
@@ -776,25 +802,50 @@ func _count(pred: Callable) -> int:
 
 
 func goal_progress(id: String) -> int:
-	match id:
-		"road1": return road_cells
-		"houses3": return _count(func(b): return is_house(b))
-		"fruit": return _count(func(b): return b["type"] == "stall_fruit")
-		"scriptorium": return _count(func(b): return b["type"] == "scriptorium")
-		"pop30", "pop100", "pop300", "pop600": return int(stats["pop"])
-		"research1": return research.size()
-		"decor5": return _count(func(b): return def(b)["kind"] == "decor")
-		"floor2": return _count(func(b): return is_house(b) and int(b["tier"]) >= 2)
+	var g := Defs.request(id)
+	if g.is_empty():
+		return 0
+	var pp: Array = g["p"]
+	var arg = pp[1] if pp.size() > 1 else null
+	match pp[0]:
+		"road": return road_cells
+		"houses": return _count(func(b): return is_house(b))
+		"fam": return settled_total
+		"count": return _count(func(b): return b["type"] == arg)
+		"kind": return _count(func(b): return def(b)["kind"] == arg)
+		"pop": return int(stats["pop"])
+		"happy": return int(stats["happy"]) if int(stats["pop"]) >= 10 else 0
+		"cls": return int(stats["residents"].get(arg, 0))
+		"floors": return _count(func(b): return is_house(b) and int(b["tier"]) >= int(arg))
+		"fed": return _count(func(b): return is_house(b) and bool((b.get("needs", {}) as Dictionary).get(arg, false)))
+		"research": return research.keys().filter(func(k): return not String(k).begins_with("q_")).size()
+		"shops":
+			var kinds := {}
+			for id2 in buildings:
+				if def(buildings[id2])["kind"] == "shop":
+					kinds[buildings[id2]["type"]] = true
+			return kinds.size()
+		"near":
+			var cls: String = pp[2]
+			var n := 0
+			for id2 in buildings:
+				var h: Dictionary = buildings[id2]
+				if not is_house(h) or def(h)["cls"] != cls:
+					continue
+				for id3 in buildings:
+					var o: Dictionary = buildings[id3]
+					if o["type"] == arg and (o["pos"] as Vector2).distance_to(h["pos"]) <= maxf(18.0, Defs.range_m(def(o))):
+						n += 1
+						break
+			return n
 		"store": return mini(1, _count(func(b): return b["type"] == "warehouse")) + mini(1, _count(func(b): return b["type"] == "butcher"))
-		"artisan": return _count(func(b): return b["type"] == "house_artisan")
-		"temple": return _count(func(b): return b["type"] == "temple")
-		"patrician": return _count(func(b): return b["type"] == "house_patrician")
+		"light": return _count(func(b): return def(b).get("light", false))
 	return 0
 
 
 func active_goals(n := 3) -> Array:
 	var out := []
-	for g in GOALS:
+	for g in Defs.REQUESTS:
 		if not goals_done.has(g["id"]):
 			out.append(g)
 			if out.size() >= n:
@@ -808,7 +859,11 @@ func _check_goals() -> void:
 			goals_done.append(g["id"])
 			money = minf(money_cap(), money + float(g["money"]))
 			rp = minf(rp_cap(), rp + float(g["rp"]))
-			_event("Задание выполнено: %s (+%d ден.%s)" % [g["text"], g["money"], (", +%d оч." % g["rp"]) if int(g["rp"]) > 0 else ""], "check")
+			var extra := ""
+			if g.has("unlock"):
+				research[g["unlock"]] = true
+				extra = ". Открыто: %s" % g.get("reward", "новые украшения")
+			_event("Просьба выполнена: %s (+%d ден.%s)%s" % [g["text"], g["money"], (", +%d оч." % g["rp"]) if int(g["rp"]) > 0 else "", extra], "check")
 
 
 func _event(text: String, icon: String) -> void:
@@ -825,7 +880,7 @@ func save_data() -> Dictionary:
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		bl.append({"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
-			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1),
+			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": b.get("hire", -1),
 			"cells": Marshalls.raw_to_base64((b["cells"] as PackedInt32Array).to_byte_array())})
 	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
 		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"]}),
@@ -841,6 +896,9 @@ func load_data(d: Dictionary) -> void:
 	for r in d.get("research", []):
 		research[r] = true
 	goals_done = d.get("goals", [])
+	for g in Defs.REQUESTS:
+		if goals_done.has(g["id"]) and g.has("unlock"):
+			research[g["unlock"]] = true
 	arrivals = []
 	for f in d.get("arrivals", []):
 		arrivals.append({"name": f["name"], "n": int(f["n"]), "cls": f.get("cls", "plebs")})
@@ -861,6 +919,8 @@ func load_data(d: Dictionary) -> void:
 			"active": true, "road": true, "needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0}
 		if int(bd.get("host", -1)) >= 0:
 			b["host"] = int(bd["host"])
+		if int(bd.get("hire", -1)) >= 0:
+			b["hire"] = int(bd["hire"])
 		buildings[b["id"]] = b
 		land.set_occ(cells, b["id"])
 		next_id = maxi(next_id, int(b["id"]) + 1)

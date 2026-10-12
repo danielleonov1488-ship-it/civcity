@@ -3,8 +3,8 @@ shader_type spatial;
 render_mode cull_disabled, specular_schlick_ggx, depth_draw_always;
 
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
-uniform vec3 shallow : source_color = vec3(0.42, 0.80, 0.74);
-uniform vec3 deep : source_color = vec3(0.10, 0.36, 0.50);
+uniform vec3 shallow : source_color = vec3(0.30, 0.52, 0.46);
+uniform vec3 deep : source_color = vec3(0.07, 0.20, 0.25);
 
 varying vec3 wpos;
 

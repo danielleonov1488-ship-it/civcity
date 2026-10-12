@@ -432,7 +432,7 @@ func update_surface(img: Image, ch: Vector2i) -> void:
 
 # ---------- цвета и сетка ----------
 
-const C_GRASS := [Color("587f2a"), Color("678d2f"), Color("789a36"), Color("8fa842")]
+const C_GRASS := [Color("536428"), Color("5e6e2c"), Color("6a7832"), Color("767f37")]
 const C_DIRT := Color("c6a878")
 const C_ROCK := Color("d9c7ad")
 const C_SAND := Color("e2cf9c")

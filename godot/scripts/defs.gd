@@ -183,16 +183,16 @@ const B := {
 	"bush": {"kind": "decor", "cat": "decor", "name": "Куст", "cost": 5, "deco": 2, "unlock": "deco_trees", "desc": "Кудрявый куст."},
 	"bench": {"kind": "decor", "cat": "decor", "name": "Скамья", "cost": 15, "deco": 3, "desc": "Посидеть и поболтать."},
 	"lamp_post": {"kind": "decor", "cat": "decor", "name": "Фонарь на столбе", "cost": 20, "deco": 3, "light": true, "desc": "Бронзовый фонарь на деревянном столбе — ночью светит на улицу."},
-	"candelabrum": {"kind": "decor", "cat": "decor", "name": "Светильник", "cost": 25, "deco": 3, "light": true, "desc": "Высокий бронзовый светильник с огоньком."},
-	"wall_torch": {"kind": "decor", "cat": "decor", "name": "Факел на стене", "cost": 10, "deco": 2, "light": true, "wall": true, "desc": "Вешается на стену дома. Ночью горит."},
-	"wall_flowers": {"kind": "decor", "cat": "decor", "name": "Цветы на стене", "cost": 8, "deco": 2, "wall": true, "desc": "Подвесной горшок с цветами — вешается на стену."},
-	"wall_lamp": {"kind": "decor", "cat": "decor", "name": "Фонарь на стене", "cost": 15, "deco": 3, "light": true, "wall": true, "desc": "Маленький фонарь у двери. Ночью светит."},
-	"fence": {"kind": "decor", "cat": "decor", "name": "Плетень", "cost": 5, "deco": 1, "desc": "Деревянный плетень вокруг двора."},
-	"hay": {"kind": "decor", "cat": "decor", "name": "Стог сена", "cost": 6, "deco": 1, "desc": "Душистое сено."},
-	"amphorae": {"kind": "decor", "cat": "decor", "name": "Амфоры", "cost": 10, "deco": 2, "desc": "Груда амфор с маслом и вином."},
+	"candelabrum": {"kind": "decor", "cat": "decor", "unlock": "q_lights", "name": "Светильник", "cost": 25, "deco": 3, "light": true, "desc": "Высокий бронзовый светильник с огоньком."},
+	"wall_torch": {"kind": "decor", "cat": "decor", "unlock": "q_lights", "name": "Факел на стене", "cost": 10, "deco": 2, "light": true, "wall": true, "desc": "Вешается на стену дома. Ночью горит."},
+	"wall_flowers": {"kind": "decor", "cat": "decor", "unlock": "q_garden", "name": "Цветы на стене", "cost": 8, "deco": 2, "wall": true, "desc": "Подвесной горшок с цветами — вешается на стену."},
+	"wall_lamp": {"kind": "decor", "cat": "decor", "unlock": "q_lights", "name": "Фонарь на стене", "cost": 15, "deco": 3, "light": true, "wall": true, "desc": "Маленький фонарь у двери. Ночью светит."},
+	"fence": {"kind": "decor", "cat": "decor", "unlock": "q_garden", "name": "Плетень", "cost": 5, "deco": 1, "desc": "Деревянный плетень вокруг двора."},
+	"hay": {"kind": "decor", "cat": "decor", "unlock": "q_garden", "name": "Стог сена", "cost": 6, "deco": 1, "desc": "Душистое сено."},
+	"amphorae": {"kind": "decor", "cat": "decor", "unlock": "q_market", "name": "Амфоры", "cost": 10, "deco": 2, "desc": "Груда амфор с маслом и вином."},
 	"well": {"kind": "decor", "cat": "decor", "name": "Колодец", "cost": 40, "deco": 4, "desc": "Колодец с кувшинами."},
-	"goods": {"kind": "decor", "cat": "decor", "name": "Корзины и амфоры", "cost": 10, "deco": 2, "desc": "Товар у лавки."},
-	"cart": {"kind": "decor", "cat": "decor", "name": "Телега", "cost": 30, "deco": 2, "desc": "Телега с товаром."},
+	"goods": {"kind": "decor", "cat": "decor", "unlock": "q_market", "name": "Корзины и амфоры", "cost": 10, "deco": 2, "desc": "Товар у лавки."},
+	"cart": {"kind": "decor", "cat": "decor", "unlock": "q_market", "name": "Телега", "cost": 30, "deco": 2, "desc": "Телега с товаром."},
 	"brazier": {"kind": "decor", "cat": "decor", "name": "Жаровня", "cost": 25, "deco": 3, "light": true, "unlock": "deco_metal", "desc": "Ночью горит и освещает улицу."},
 	"bigbrazier": {"kind": "decor", "cat": "decor", "name": "Большая жаровня", "cost": 70, "deco": 5, "light": true, "unlock": "deco_metal", "desc": "Бронзовая чаша с огнём."},
 	"banner": {"kind": "decor", "cat": "decor", "name": "Знамя", "cost": 30, "deco": 3, "unlock": "deco_metal", "desc": "Знамя на шесте."},
@@ -203,7 +203,7 @@ const B := {
 	"lion": {"kind": "decor", "cat": "decor", "name": "Золотой лев", "cost": 500, "deco": 12, "unlock": "deco_stone", "desc": "Лев на постаменте."},
 	"sundial": {"kind": "decor", "cat": "decor", "name": "Солнечные часы", "cost": 100, "deco": 5, "unlock": "deco_stone", "desc": "Часы для площади."},
 	"smallfountain": {"kind": "decor", "cat": "decor", "name": "Фонтанчик", "cost": 70, "deco": 5, "unlock": "fountain", "desc": "Питьевой фонтанчик со львиной головой."},
-	"pergola": {"kind": "decor", "cat": "decor", "name": "Беседка", "cost": 200, "deco": 8, "unlock": "deco_stone", "desc": "Беседка с куполом."},
+	"pergola": {"kind": "decor", "cat": "decor", "name": "Пергола", "cost": 200, "deco": 8, "unlock": "deco_stone", "desc": "Увитая виноградом пергола с ложем и столиком — как в садах Помпей."},
 	"duck": {"kind": "decor", "cat": "decor", "name": "Утки", "cost": 15, "deco": 3, "unlock": "animals", "water": true, "desc": "Утки плавают по пруду."},
 	"swan": {"kind": "decor", "cat": "decor", "name": "Лебедь", "cost": 25, "deco": 4, "unlock": "animals", "water": true, "desc": "Белый лебедь на воде."},
 }
@@ -298,6 +298,88 @@ const PALETTE := [
 	{"name": "Сиреневый", "c": Color(0.86, 0.78, 0.95)},
 	{"name": "Песочный", "c": Color(0.95, 0.86, 0.7)},
 ]
+
+
+## Просьбы горожан (как запросы в Town to City): кто просит, что сделать, награда. Награда-«unlock» открывает украшения.
+## p: [вид, параметр] — road, houses, fam, count <тип>, kind <вид>, pop, happy, cls <класс>, floors <этажей>,
+## fed <потребность>, research, shops, near <тип> <класс>, store, light
+const REQUESTS := [
+	{"id": "road1", "who": "advisor", "text": "Проложите мостовую от станции", "p": ["road"], "need": 40, "money": 100, "rp": 10, "icon": "road",
+		"hint": "Выберите «Мостовую» слева внизу и ведите кисть с зажатой левой кнопкой мыши от площади у станции."},
+	{"id": "houses3", "who": "advisor", "text": "Постройте 3 дома у дороги", "p": ["houses"], "need": 3, "money": 150, "rp": 20, "tool": "house_pleb", "icon": "housing",
+		"hint": "Дом ставится фасадом к дороге. Повозка привезёт семьи из тоннеля."},
+	{"id": "fam3", "who": "advisor", "text": "Заселите три семьи", "p": ["fam"], "need": 3, "money": 100, "rp": 10, "icon": "family",
+		"hint": "Семьи ждут на площади у станции. Нажмите на значок семьи слева вверху и выберите им дом."},
+	{"id": "fruit", "who": "plebs", "text": "Нам бы поесть: фруктовая лавка", "p": ["count", "stall_fruit"], "need": 1, "money": 100, "rp": 20, "tool": "stall_fruit", "icon": "food",
+		"hint": "Лавка кормит ближайшие дома в своей дальности. Чем больше разных лавок рядом, тем счастливее дом."},
+	{"id": "scriptorium", "who": "advisor", "text": "Постройте скрипторий", "p": ["count", "scriptorium"], "need": 1, "money": 100, "rp": 30, "tool": "scriptorium", "icon": "quill",
+		"hint": "Скрипторий даёт очки исследований — за них открываются новые постройки."},
+	{"id": "research1", "who": "advisor", "text": "Изучите что-нибудь", "p": ["research"], "need": 1, "money": 150, "rp": 0, "icon": "research",
+		"hint": "Нажмите на свиток вверху справа — откроется меню исследований. Очки исследований дают скрипторий, школа и библиотека."},
+	{"id": "lights", "who": "plebs", "text": "Ночью темно: 3 фонаря на столбах", "p": ["count", "lamp_post"], "need": 3, "money": 120, "rp": 20, "tool": "lamp_post", "icon": "candle",
+		"unlock": "q_lights", "reward": "факелы и фонари на стены, светильники",
+		"hint": "Фонари радуют дома вокруг и светят ночью. Поставьте их вдоль улиц."},
+	{"id": "fed6", "who": "plebs", "text": "Еды на всех: 6 сытых домов", "p": ["fed", "food"], "need": 6, "money": 150, "rp": 25, "icon": "food",
+		"hint": "Дом сыт, если рядом лавка с едой и в ней хватает работников. Посмотрите охват лавок (глаз вверху справа)."},
+	{"id": "pop30", "who": "advisor", "text": "Соберите 30 жителей", "p": ["pop"], "need": 30, "money": 200, "rp": 40, "icon": "family"},
+	{"id": "decor5", "who": "plebs", "text": "Красоты хочется: 5 украшений", "p": ["kind", "decor"], "need": 5, "money": 120, "rp": 20, "icon": "flower",
+		"unlock": "q_garden", "reward": "цветы на стены, плетень, стог сена",
+		"hint": "Украшения дают дому очки красоты — до +30% счастья. Ставьте их в промежутках между домами."},
+	{"id": "floor2", "who": "plebs", "text": "Нам тесно: дом в 2 этажа", "p": ["floors", 2], "need": 1, "money": 250, "rp": 40, "icon": "housing",
+		"hint": "Изучите «Второй жилой этаж». Довольный полный дом надстроит его сам."},
+	{"id": "store", "who": "plebs", "text": "Склад и мясная лавка", "p": ["store"], "need": 2, "money": 200, "rp": 40, "icon": "warehouse"},
+	{"id": "market", "who": "plebs", "text": "Рынок: 4 разные лавки", "p": ["shops"], "need": 4, "money": 220, "rp": 40, "icon": "commerce",
+		"unlock": "q_market", "reward": "телега, корзины и амфоры",
+		"hint": "Разные лавки рядом делают дома счастливее. Откройте новые в исследованиях."},
+	{"id": "fountain4", "who": "plebs", "text": "Вода рядом: фонтан у 4 домов", "p": ["near", "fountain", "plebs"], "need": 4, "money": 300, "rp": 50, "icon": "water",
+		"hint": "Изучите «Фонтаны» и поставьте фонтан посреди домов плебеев."},
+	{"id": "happy60", "who": "advisor", "text": "Счастье города 60%", "p": ["happy"], "need": 60, "money": 300, "rp": 60, "icon": "happy",
+		"hint": "Лавки всех нужных видов, украшения и памятники рядом поднимают счастье."},
+	{"id": "pop100", "who": "advisor", "text": "Соберите 100 жителей", "p": ["pop"], "need": 100, "money": 400, "rp": 80, "icon": "family"},
+	{"id": "artisan", "who": "advisor", "text": "Постройте дом ремесленников", "p": ["count", "house_artisan"], "need": 1, "money": 300, "rp": 60, "tool": "house_artisan", "icon": "hammer"},
+	{"id": "art12", "who": "artisans", "text": "Поселите 12 ремесленников", "p": ["cls", "artisans"], "need": 12, "money": 350, "rp": 70, "icon": "hammer"},
+	{"id": "clothes8", "who": "artisans", "text": "Одежду всем: 8 домов с одеждой", "p": ["fed", "clothes"], "need": 8, "money": 380, "rp": 70, "icon": "clothes"},
+	{"id": "floor2x5", "who": "plebs", "text": "Пять домов в 2 этажа", "p": ["floors", 2], "need": 5, "money": 400, "rp": 80, "icon": "housing"},
+	{"id": "temple", "who": "artisans", "text": "Постройте храм", "p": ["count", "temple"], "need": 1, "money": 500, "rp": 100, "tool": "temple", "icon": "level"},
+	{"id": "school", "who": "artisans", "text": "Детям нужна школа", "p": ["count", "school"], "need": 1, "money": 450, "rp": 100, "tool": "school", "icon": "teacher"},
+	{"id": "pop300", "who": "advisor", "text": "Соберите 300 жителей", "p": ["pop"], "need": 300, "money": 900, "rp": 150, "icon": "family"},
+	{"id": "patrician", "who": "advisor", "text": "Постройте домус патрициев", "p": ["count", "house_patrician"], "need": 1, "money": 800, "rp": 150, "tool": "house_patrician", "icon": "toga"},
+	{"id": "floor3", "who": "artisans", "text": "Дом в 3 этажа", "p": ["floors", 3], "need": 1, "money": 700, "rp": 140, "icon": "housing"},
+	{"id": "pat10", "who": "patricians", "text": "Поселите 10 патрициев", "p": ["cls", "patricians"], "need": 10, "money": 900, "rp": 180, "icon": "toga"},
+	{"id": "happy70", "who": "patricians", "text": "Счастье города 70%", "p": ["happy"], "need": 70, "money": 1000, "rp": 200, "icon": "happy"},
+	{"id": "pop600", "who": "advisor", "text": "Соберите 600 жителей", "p": ["pop"], "need": 600, "money": 1500, "rp": 300, "icon": "family"},
+	{"id": "forum", "who": "patricians", "text": "Постройте форум", "p": ["count", "forum"], "need": 1, "money": 2000, "rp": 400, "tool": "forum", "icon": "caesar"},
+	{"id": "pop1000", "who": "advisor", "text": "Соберите 1000 жителей", "p": ["pop"], "need": 1000, "money": 3000, "rp": 600, "icon": "laurels"},
+]
+const WHO := {"advisor": ["Советник Марк", "caesar"], "plebs": ["Плебеи просят", "person"], "artisans": ["Ремесленники просят", "hammer"], "patricians": ["Патриции просят", "toga"]}
+
+
+static func request(id: String) -> Dictionary:
+	for r in REQUESTS:
+		if r["id"] == id:
+			return r
+	return {}
+
+
+## Чем открывается постройка: исследованием или просьбой горожан
+static func unlock_text(id: String) -> String:
+	var r := research(id)
+	if not r.is_empty():
+		return "исследованием «%s»" % r["name"]
+	for q in REQUESTS:
+		if q.get("unlock", "") == id:
+			return "наградой за просьбу «%s»" % q["text"]
+	return ""
+
+
+static func unlock_short(id: String) -> String:
+	var r := research(id)
+	if not r.is_empty():
+		return r["name"]
+	for q in REQUESTS:
+		if q.get("unlock", "") == id:
+			return "Просьба горожан"
+	return ""
 
 
 static func research(id: String) -> Dictionary:

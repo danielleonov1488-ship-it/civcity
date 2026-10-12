@@ -8,12 +8,12 @@ var center := Vector3(38, 0, 44)
 
 func _ready() -> void:
 	var body_k := Kit.new()
-	body_k.box(Vector3(-0.06, -0.05, -0.16), Vector3(0.06, 0.05, 0.16), Color("f2efe8"))
-	body_k.box(Vector3(-0.04, -0.02, 0.16), Vector3(0.04, 0.05, 0.26), Color("f2efe8"))
+	body_k.box(Vector3(-0.06, -0.05, -0.16), Vector3(0.06, 0.05, 0.16), Color("b9b2a6"))
+	body_k.box(Vector3(-0.04, -0.02, 0.16), Vector3(0.04, 0.05, 0.26), Color("b9b2a6"))
 	body_k.box(Vector3(-0.015, 0.0, 0.26), Vector3(0.015, 0.02, 0.31), Color("e2a13c"))
-	body_k.box(Vector3(-0.05, -0.02, -0.26), Vector3(0.05, 0.02, -0.16), Color("d9d4ca"))
+	body_k.box(Vector3(-0.05, -0.02, -0.26), Vector3(0.05, 0.02, -0.16), Color("9e978c"))
 	var wing_k := Kit.new()
-	wing_k.box(Vector3(0.0, -0.01, -0.09), Vector3(0.36, 0.01, 0.09), Color("ebe7df"))
+	wing_k.box(Vector3(0.0, -0.01, -0.09), Vector3(0.36, 0.01, 0.09), Color("aaa398"))
 	wing_k.box(Vector3(0.26, -0.012, -0.08), Vector3(0.36, 0.012, 0.06), Color("6d6a66"))
 	var body_m := body_k.mesh()
 	var wing_m := wing_k.mesh()
@@ -37,7 +37,9 @@ func _ready() -> void:
 		b.add_child(wr)
 		add_child(b)
 		var flock := i % 3
-		birds.append({"n": b, "l": wl, "r": wr, "rad": 9.0 + flock * 6.0 + rng.randf() * 3.0, "y": 11.0 + flock * 3.0 + rng.randf() * 2.0,
+		b.scale = Vector3.ONE * 0.42
+		# низко над крышами: камера теперь выше и дальше — птицы не должны пролетать у самого объектива
+		birds.append({"n": b, "l": wl, "r": wr, "rad": 9.0 + flock * 6.0 + rng.randf() * 3.0, "y": 6.5 + flock * 1.6 + rng.randf() * 1.2,
 			"sp": (0.22 + rng.randf() * 0.08) * (1.0 if flock != 1 else -1.0), "ph": rng.randf() * TAU, "fl": rng.randf() * TAU,
 			"cx": center.x + (flock - 1) * 9.0, "cz": center.z - flock * 4.0})
 

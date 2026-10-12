@@ -20,17 +20,20 @@ var _pan := false
 
 const DIST_MIN := 4.0
 const DIST_MAX := 130.0
+const FOV := 30.0                    # узкий объектив — город как игрушечная миниатюра (Town to City)
+## dist — «масштаб кадра» (как при прежнем объективе 40°), камера отъезжает дальше, чтобы кадр был тот же
+static var K := tan(deg_to_rad(20.0)) / tan(deg_to_rad(FOV / 2.0))
 
 
 func _ready() -> void:
 	cam = Camera3D.new()
-	cam.fov = 40.0
-	cam.near = 0.1
-	cam.far = 600.0
+	cam.fov = FOV
+	cam.near = 0.15
+	cam.far = 800.0
 	attrs = CameraAttributesPractical.new()
 	attrs.dof_blur_far_enabled = true
 	attrs.dof_blur_near_enabled = true
-	attrs.dof_blur_amount = 0.06
+	attrs.dof_blur_amount = 0.09
 	cam.attributes = attrs
 	add_child(cam)
 	_update(true)
@@ -97,12 +100,13 @@ func _update(_snap: bool) -> void:
 	var hsrc = land if land != null else terrain
 	if hsrc != null:
 		target.y = lerpf(target.y, maxf(1.0, hsrc.height_at(target.x, target.z)), 0.1 if not _snap else 1.0)
-	var off := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
+	var d := dist * K
+	var off := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * d
 	if cam:
 		cam.global_position = target + off
 		cam.look_at(target, Vector3.UP)
 		# размытие как у миниатюры: резко там, куда смотрим, мягко вдали и у самой камеры
-		attrs.dof_blur_far_distance = dist * 1.35
-		attrs.dof_blur_far_transition = dist * 1.1
-		attrs.dof_blur_near_distance = dist * 0.42
-		attrs.dof_blur_near_transition = dist * 0.3
+		attrs.dof_blur_far_distance = d * 1.12
+		attrs.dof_blur_far_transition = d * 0.9
+		attrs.dof_blur_near_distance = d * 0.6
+		attrs.dof_blur_near_transition = d * 0.35
