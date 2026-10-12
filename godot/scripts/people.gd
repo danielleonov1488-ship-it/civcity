@@ -25,9 +25,22 @@ var _hour := 8.0
 
 const MAX_VIS := 150                 # больше людей на улице не рисуем (остальные идут «невидимо»)
 const RADIUS := 0.3
-const CART_HORSE_Z := 2.05
-const CART_SEAT_Y := 0.3
 const CART_FAR := 46.0               # повозка появляется (и исчезает) так далеко за краем карты на большой дороге
+## Повозка переселенцев (размеры — в единицах модели телеги Synty, вся она в масштабе построек Catalog.ARCH)
+const CART_V := 2.4                  # шаг лошади, м/с
+const CART_SX := 1.25                # кузов телеги шире
+const CART_SZ := 1.75                # и длиннее — на три ряда седоков (колёса свои, круглые)
+const CART_FLOOR := 0.72             # пол кузова
+const CART_HIP := 0.417              # сидящий (движения Sitting_*): таз над ступнями
+const CART_HIP_BACK := 0.29          # и позади ступней
+const CART_ROWS := [0.62, 0.02, -0.58]   # ступни седоков по рядам, от облучка назад
+const CART_ROW_W := 1.36             # ширина ряда: взрослый 0.56, ребёнок 0.4
+const CART_DRIVER := Vector3(0.26, 0.98, 1.24)   # возница на облучке (рядом место ещё одному седоку)
+const CART_WHEEL_R := 0.49
+const CART_WHEEL_X := 0.95
+const CART_WHEEL_Z := [-0.78, 0.62]
+const CART_HORSE_LEN := 2.5          # лошадь от морды до хвоста
+const CART_HORSE_Z := 2.72           # её середина: круп — у облучка, оглобли — по бокам до груди
 const G := 2                         # клетка сетки ходьбы — 2×2 клетки земли (50 см)
 const GN := Land.N / G
 const WALK := 1.15                   # м/с при обычной скорости (люди маленькие — и шаг короче)
@@ -1960,38 +1973,227 @@ func _on_assigned(name: String, home: int) -> void:
 
 # ---------- повозка с переселенцами ----------
 
+## Повозка — римская четырёхколёсная раеда из деталей Synty: кузов телеги шире и длиннее, четыре колеса
+## (крутятся на ходу), по бортам красные полотнища со львами, поперёк кузова — скамьи с подушками.
+## Седоки сидят лицом вперёд и видны по пояс над бортом, на облучке — возница с вожжами, сзади — поклажа.
+## Повозка и лошадь — в «кукольном» масштабе построек; люди в ней — своего размера.
 func _make_cart() -> void:
 	var top := Node3D.new()
-	# повозка и лошадь — в «кукольном» масштабе построек; люди в ней — своего размера
 	var root := Node3D.new()
 	root.scale = Vector3.ONE * Catalog.ARCH
 	top.add_child(root)
-	root.add_child(Synty.make("SM_Prop_Cart_01"))
-	root.add_child(Synty.make("SM_Prop_Cart_01_Insert_01"))
+	var body := Synty.make("SM_Prop_Cart_01")
+	body.scale = Vector3(CART_SX, 1.0, CART_SZ)
+	root.add_child(body)
+	# колёса — отдельно от растянутого кузова (круглые), по два с каждой стороны
+	var wheels := []
+	for w in body.find_children("SM_Prop_Cart_01_Wheel_*", "MeshInstance3D", true, false):
+		var mi := w as MeshInstance3D
+		mi.get_parent().remove_child(mi)
+		for z in CART_WHEEL_Z:
+			var wn := mi.duplicate() as MeshInstance3D
+			wn.position = Vector3(signf(mi.position.x) * CART_WHEEL_X, CART_WHEEL_R, z)
+			root.add_child(wn)
+			wheels.append(wn)
+		mi.free()
+	# скамьи с подушками: три ряда и облучок
+	var benches := []
+	for z in CART_ROWS:
+		benches.append([float(z), CART_FLOOR + CART_HIP])
+	benches.append([CART_DRIVER.z, CART_DRIVER.y + CART_HIP])
+	for st in benches:
+		var bz: float = float(st[0]) - CART_HIP_BACK - 0.02
+		var b := Synty.make("SM_Prop_Bench_01")
+		b.scale = Vector3(CART_ROW_W / 1.64, (float(st[1]) - CART_FLOOR - 0.07) / 0.47, 0.34 / 0.47)
+		b.position = Vector3(0, CART_FLOOR, bz)
+		root.add_child(b)
+		var cu := Synty.make("SM_Prop_Pillow_05")
+		cu.scale = Vector3(CART_ROW_W / 1.06, 0.6, 0.38 / 1.07)
+		cu.position = Vector3(0, float(st[1]) - 0.04, bz)
+		root.add_child(cu)
+	# по бортам — красные полотнища со львами и амфорами
+	for sx in [-1.0, 1.0]:
+		var bn := Synty.make("SM_Prop_Banner_04_A")
+		bn.rotation.y = PI / 2 * sx
+		bn.scale = Vector3(2.3 / 4.87, 0.5 / 1.09, 0.5)
+		bn.position = Vector3(0.79 * sx, 1.33, -0.08)
+		root.add_child(bn)
+	# поклажа сзади: амфора, мешок с корзиной, свёрнутый ковёр поперёк заднего борта
+	for l in [["SM_Prop_Vase_05", Vector3(-0.45, CART_FLOOR, -1.1), 0.72, 0.3], ["SM_Prop_Sack_03", Vector3(0.42, CART_FLOOR, -1.12), 0.6, -0.4],
+			["SM_Prop_Basket_06", Vector3(0.4, CART_FLOOR + 0.42, -1.1), 0.62, 0.25], ["SM_Prop_Rug_Folded_02", Vector3(-0.02, CART_FLOOR + 0.3, -1.12), 0.5, 0.1],
+			["SM_Prop_Pillow_07", Vector3(0.0, 1.42, -1.2), 1.0, PI / 2]]:
+		var p := Synty.make(l[0])
+		p.position = l[1]
+		p.scale = Vector3.ONE * float(l[2])
+		p.rotation.y = float(l[3])
+		root.add_child(p)
+		if l[0] == "SM_Prop_Pillow_07":
+			p.name = "bolster"           # убирается, когда на заднем борту сидят седоки
+	# лошадь в оглоблях
 	var horse := (load("res://assets/animals/Horse_b.glb") as PackedScene).instantiate() as Node3D
 	root.add_child(horse)
 	var aabb := Artisau.aabb(horse)
-	var s := 2.1 / maxf(aabb.size.z, aabb.size.x)
-	horse.scale = Vector3.ONE * s
+	horse.scale = Vector3.ONE * CART_HORSE_LEN / maxf(aabb.size.z, aabb.size.x)
 	horse.position = Vector3(0, 0, CART_HORSE_Z)
 	var hanim: AnimationPlayer = horse.find_children("*", "AnimationPlayer", true, false)[0]
+	var head := BoneAttachment3D.new()
+	head.bone_name = "Head"
+	(horse.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D).add_child(head)
+	# возница на облучке, вожжи — от его рук к голове лошади
 	var driver := Citizen.create(rng, false)
 	root.add_child(driver)
-	driver.position = Vector3(0, CART_SEAT_Y, 0.55)
+	driver.position = CART_DRIVER
 	driver.scale = Vector3.ONE * Citizen.SIZE / Catalog.ARCH
 	driver.play("Driving_Loop", 0.0)
-	var riders := []
-	for k in 3:
-		var r := Citizen.create(rng, k != 1, k == 2)
-		root.add_child(r)
-		r.position = Vector3(-0.28 if k != 1 else 0.28, CART_SEAT_Y, -0.35 - 0.45 * (k % 2))
-		r.rotation.y = PI / 2 if k != 1 else -PI / 2
-		r.scale = Vector3.ONE * Citizen.SIZE * (0.68 if k == 2 else 1.0) / Catalog.ARCH
-		r.play("Sitting_Idle_Loop", 0.0)
-		riders.append(r)
+	var hands := []
+	for bn in ["LeftHand", "RightHand"]:
+		var ba := BoneAttachment3D.new()
+		ba.bone_name = bn
+		(driver.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D).add_child(ba)
+		hands.append(ba)
+	var reins := []
+	var rm := StandardMaterial3D.new()
+	rm.albedo_color = Color("4a2e1a")
+	rm.roughness = 0.9
+	for k in 2:
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.02, 0.02, 1.0)
+		mi.mesh = bm
+		mi.material_override = rm
+		top.add_child(mi)
+		reins.append(mi)
 	add_child(top)
 	top.visible = false
-	cart = {"n": top, "horse": hanim, "path": PackedVector2Array(), "s": 0.0, "state": "wait", "t": 3.0, "load": [], "driver": driver, "riders": riders}
+	cart = {"n": top, "body": root, "horse": hanim, "head": head, "hands": hands, "reins": reins, "wheels": wheels, "driver": driver,
+		"path": PackedVector2Array(), "s": 0.0, "state": "wait", "t": 3.0, "load": [], "riders": [], "leaving": [], "fade": 0.0, "mult": 1.0, "show": false}
+
+
+## Кто едет: у каждой семьи — её люди (мужчина, женщина, дети) того же облика, что и жители, которые сойдут на площадь.
+## Садятся рядами лицом вперёд, семья к семье (взрослый занимает 0,56 ряда, ребёнок 0,4); кому ряда не хватило — рядом с возницей
+func _cart_board(load: Array) -> void:
+	for r: Node in cart["riders"] + cart["leaving"]:
+		r.queue_free()
+	cart["riders"] = []
+	cart["leaving"] = []
+	var root: Node3D = cart["body"]
+	var rows := []
+	for i in CART_ROWS.size():
+		rows.append([])
+	var spare := []
+	var ri := 0
+	var w := 0.0
+	for f in load:
+		var ms := []
+		for m in int(f["n"]):
+			ms.append({"female": m == 1 or (m > 1 and rng.randf() < 0.5), "child": m >= 2 and rng.randf() < 0.6,
+				"rich": f["cls"] == "patricians", "seed": rng.randi()})
+		f["members"] = ms
+		for m in ms:
+			var mw := 0.4 if m["child"] else 0.56
+			while ri < rows.size() and w + mw > CART_ROW_W + 0.01:
+				ri += 1
+				w = 0.0
+			if ri < rows.size():
+				rows[ri].append(m)
+				w += mw
+			else:
+				spare.append(m)
+	# кому и рядом с возницей места нет — садятся на задний борт спиной к поклаже, ноги наружу (как на телегах)
+	var tail := []
+	if spare.size() > 1:
+		w = 0.0
+		for m in spare.slice(1):
+			var mw := 0.4 if m["child"] else 0.56
+			if w + mw > CART_ROW_W - 0.12:
+				break
+			tail.append(m)
+			w += mw
+	var seats := []                  # [кто, x, таз z, высота сиденья, лицом назад]
+	for i in rows.size():
+		var tw := 0.0
+		for m in rows[i]:
+			tw += 0.4 if m["child"] else 0.56
+		var x := tw / 2.0
+		for m in rows[i]:
+			var mw := 0.4 if m["child"] else 0.56
+			seats.append([m, x - mw / 2.0, float(CART_ROWS[i]) - CART_HIP_BACK, CART_FLOOR + CART_HIP, false])
+			x -= mw
+	if not spare.is_empty():
+		seats.append([spare[0], -0.3, CART_DRIVER.z - CART_HIP_BACK, CART_DRIVER.y + CART_HIP, false])
+	var tx := w / 2.0
+	for m in tail:
+		var mw := 0.4 if m["child"] else 0.56
+		seats.append([m, tx - mw / 2.0, -1.3, 1.4, true])
+		tx -= mw
+	(root.get_node("bolster") as Node3D).visible = tail.is_empty()
+	for s in seats:
+		var m: Dictionary = s[0]
+		var rr := RandomNumberGenerator.new()
+		rr.seed = int(m["seed"])
+		var c := Citizen.create(rr, m["female"], m["child"], m["rich"])
+		root.add_child(c)
+		var k := 0.68 if m["child"] else 1.0
+		var back: bool = s[4]
+		c.scale = Vector3.ONE * Citizen.SIZE * k / Catalog.ARCH
+		c.position = Vector3(float(s[1]), float(s[3]) - CART_HIP * k, float(s[2]) + CART_HIP_BACK * k * (-1.0 if back else 1.0))
+		c.rotation.y = PI if back else 0.0
+		var an: Array = ["Sitting_Idle", "Sitting_Idle_M"] if m["child"] else ["Sitting_Idle", "Sitting_Idle_M", "Sitting_Talking", "Sitting_Talking_M"]
+		c.play(an[rng.randi() % an.size()], 0.0, rng.randf())
+		m["seat"] = c.position
+		m["tail"] = back
+		cart["riders"].append(c)
+
+
+## Вожжи: от рук возницы к голове лошади (кости движутся — вожжи за ними)
+func _cart_reins() -> void:
+	var to: Vector3 = (cart["head"] as Node3D).global_position
+	var side: Vector3 = (cart["n"] as Node3D).global_basis.x * 0.06
+	for k in 2:
+		var a: Vector3 = (cart["hands"][k] as Node3D).global_position
+		var b: Vector3 = to + (side if k == 0 else -side)
+		var d := b - a
+		if d.length() < 0.05:
+			continue
+		(cart["reins"][k] as MeshInstance3D).global_transform = Transform3D(Basis.looking_at(d / d.length(), Vector3.UP) * Basis.from_scale(Vector3(1, 1, d.length())), (a + b) * 0.5)
+
+
+## Где повозка на своём пути: s — сколько проехала (на обратном пути — от площади); snap — сразу развернуть по дороге
+func _cart_move(c: Dictionary, dt: float, snap: bool) -> void:
+	var n: Node3D = c["n"]
+	var path: PackedVector2Array = c["path"]
+	if path.size() < 2:
+		return
+	var total := _cart_path_len(path)
+	var s: float = c["s"] if c["state"] != "out" else total - float(c["s"])
+	var p := path[0]
+	var dir := Vector2(0, 1)
+	var acc := 0.0
+	for i in path.size() - 1:
+		var l := path[i].distance_to(path[i + 1])
+		if s <= acc + l or i == path.size() - 2:
+			p = path[i].lerp(path[i + 1], clampf((s - acc) / maxf(l, 0.001), 0.0, 1.0))
+			dir = (path[i + 1] - path[i]).normalized()
+			break
+		acc += l
+	if c["state"] == "out":
+		dir = -dir
+	n.position = Vector3(p.x, land.height_at(p.x, p.y), p.y)
+	var yaw := atan2(dir.x, dir.y)
+	n.rotation.y = yaw if snap else lerp_angle(n.rotation.y, yaw, minf(1.0, dt * 4.0))
+
+
+## Вступительный ролик: повозка сразу на большой дороге перед аркой (а не из-за горизонта)
+func cart_seek_z(z: float) -> void:
+	var path: PackedVector2Array = cart["path"]
+	var acc := 0.0
+	for i in path.size() - 1:
+		var l := path[i].distance_to(path[i + 1])
+		if path[i + 1].y >= z:
+			cart["s"] = acc + l * clampf((z - path[i].y) / maxf(path[i + 1].y - path[i].y, 0.001), 0.0, 1.0)
+			break
+		acc += l
+	_cart_move(cart, 0.0, true)
 
 
 func _cart_path_len(path: PackedVector2Array) -> float:
@@ -2030,36 +2232,28 @@ func _cart_step(dt: float) -> void:
 					f = city.new_family(f["cls"])
 				names[f["name"]] = true
 				c["load"].append(f)
-			var heads := 0
-			for f in c["load"]:
-				heads += int(f["n"])
 			c["state"] = "in"
 			c["s"] = 0.0
+			c["mult"] = 1.0
+			_cart_board(c["load"])
 			n.visible = true
-			for k in (c["riders"] as Array).size():
-				(c["riders"][k] as Node3D).visible = k < heads
+			# первая повозка новой игры — вступительный ролик (повозка начнёт путь у арки)
+			var tut = game.get("tutorial") if game != null else null
+			if tut != null and tut.intro_wanted():
+				tut.intro_start(c)
+			_cart_move(c, 0.0, true)
 		"in", "out":
-			var path: PackedVector2Array = c["path"]
-			var total := _cart_path_len(path)
+			var total := _cart_path_len(c["path"])
 			# дорога длинная: пока повозку не видно на экране, она едет втрое быстрее (кто смотрит — видит обычный шаг)
-			var seen: bool = game.rig != null and game.rig.cam != null and game.rig.cam.is_position_in_frustum(n.position)
-			c["s"] = float(c["s"]) + 2.4 * dt * (1.0 if seen or not n.visible else 3.0)
-			var s: float = c["s"] if c["state"] == "in" else total - float(c["s"])
-			var p := path[0]
-			var dir := Vector2(0, 1)
-			var acc := 0.0
-			for i in path.size() - 1:
-				var l := path[i].distance_to(path[i + 1])
-				if s <= acc + l or i == path.size() - 2:
-					p = path[i].lerp(path[i + 1], clampf((s - acc) / maxf(l, 0.001), 0.0, 1.0))
-					dir = (path[i + 1] - path[i]).normalized()
-					break
-				acc += l
-			if c["state"] == "out":
-				dir = -dir
-			n.position = Vector3(p.x, land.height_at(p.x, p.y), p.y)
-			n.rotation.y = lerp_angle(n.rotation.y, atan2(dir.x, dir.y), minf(1.0, dt * 4.0))
+			# (в ролике камера ведёт повозку сама — та всегда едет своим шагом)
+			var seen: bool = bool(c["show"]) or (game.rig != null and game.rig.cam != null and game.rig.cam.is_position_in_frustum(n.position))
+			var ds := CART_V * float(c["mult"]) * dt * (1.0 if seen or not n.visible else 3.0)
+			c["s"] = float(c["s"]) + ds
+			_cart_move(c, dt, false)
+			for wh: Node3D in c["wheels"]:
+				wh.rotation.x += ds / (CART_WHEEL_R * Catalog.ARCH)
 			_horse_anim(c["horse"], "Walk")
+			(c["horse"] as AnimationPlayer).speed_scale = maxf(0.0, float(game.speed)) * float(c["mult"])
 			if float(c["s"]) >= total:
 				if c["state"] == "in":
 					_drop()
@@ -2071,10 +2265,24 @@ func _cart_step(dt: float) -> void:
 					c["t"] = 4.0
 		"unload":
 			_horse_anim(c["horse"], "Idle")
+			(c["horse"] as AnimationPlayer).speed_scale = maxf(0.0, float(game.speed))
 			c["t"] = float(c["t"]) - dt
 			if float(c["t"]) <= 0.0:
 				c["state"] = "out"
 				c["s"] = 0.0
+				c["mult"] = 1.0
+	# сошедшие седоки тают, пока на земле проявляются те же люди
+	var lv: Array = c["leaving"]
+	if not lv.is_empty():
+		c["fade"] = float(c["fade"]) - dt / 0.35
+		for r: Citizen in lv:
+			r.set_alpha(maxf(0.0, float(c["fade"])))
+		if float(c["fade"]) <= 0.0:
+			for r: Node in lv:
+				r.queue_free()
+			c["leaving"] = []
+	if n.visible:
+		_cart_reins()
 
 
 func _horse_anim(ap: AnimationPlayer, name: String) -> void:
@@ -2085,23 +2293,41 @@ func _horse_anim(ap: AnimationPlayer, name: String) -> void:
 			return
 
 
-## Семьи сходят с повозки на площадь, стоят, осматриваются и идут в свои дома (или ждут жилья)
+## Семьи сходят с повозки на площадь — те самые люди, что сидели в ней: каждый спускается на свою сторону
+## у своего ряда, и все идут на площадь ждать жилья
 func _drop() -> void:
 	var n: Node3D = cart["n"]
+	var root: Node3D = cart["body"]
 	var base := Vector2(n.position.x, n.position.z)
 	for f in cart["load"]:
 		var fam := _make_family(f["name"], int(f["n"]), -1, base, f["cls"])
-		for r in fam:
-			r["p"] = _near_free(base + Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)))
+		var ms: Array = f.get("members", [])
+		for i in fam.size():
+			var r: Dictionary = fam[i]
+			var q := base + Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0))
+			if i < ms.size():
+				var m: Dictionary = ms[i]
+				r["female"] = m["female"]
+				r["child"] = m["child"]
+				r["rich"] = m["rich"]
+				r["seed"] = m["seed"]
+				r["speed"] = rng.randf_range(0.92, 1.12) * (0.8 if m["child"] else 1.0)
+				if m.has("seat"):
+					var sp: Vector3 = m["seat"]
+					var w := root.to_global(Vector3(sp.x, 0.0, -2.3) if m.get("tail", false) else Vector3(1.7 if sp.x >= 0.0 else -1.7, 0.0, sp.z - CART_HIP_BACK))
+					q = Vector2(w.x, w.z)
+			r["p"] = _near_free(q)
 			if r["p"] == Vector2.INF:
 				r["p"] = base
 			_go(r, _plaza_point(), "plaza")
 		waiting_fams.append({"name": f["name"], "members": fam.map(func(x): return x["id"])})
 		city.family_arrived(f)
 	cart["load"] = []
-	for r: Node3D in cart["riders"]:
-		r.visible = false
+	cart["leaving"] = cart["riders"]
+	cart["riders"] = []
+	cart["fade"] = 1.0
 	_jobs_dirty = true
+	_vis_tick()                      # сошедшие сразу на виду — проявляются, пока седоки тают
 
 
 # ---------- кошки ----------

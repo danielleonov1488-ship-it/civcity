@@ -105,7 +105,7 @@ var hover_src: Control                    # над чем сейчас мышь
 var hover_level: Control                  # зоны плашки города: уровень, жители, счастье
 var hover_pop: Control
 var hover_happy: Control
-var _cursor_key := ""                     # какой курсор стоит сейчас (стрелка, рука, молоток, кирка, поворот)
+var _cursor_key := ""                     # какой рисованный курсор стоит на обычной стрелке (по инструменту, см. _cursor_world)
 var _cursor_px := 0
 
 
@@ -1077,58 +1077,88 @@ func _tip_class(v: VBoxContainer, cl: String) -> void:
 	_tip_text(v, "Налог: %s ден. в час с жителя — больше, когда жители счастливы." % String.num(float(cd["tax"]), 1).replace(".", ","), C_SOFT, 14)
 
 
-# ---------- курсор: рисованная стрелка вместо курсора Windows ----------
+# ---------- курсор: рисованные курсоры вместо курсоров Windows (assets/ui/ai/cursors, см. scripts/cursors.gd) ----------
 
-const CURSOR_HOT := 4.0 / 64.0          # «горячая точка» — кончик стрелки в (4, 4) на картинке 64×64
-var _cursor_cache := {}
-
-
-## Картинка курсора assets/ui/ai/cursor_<key>.png нужного размера (нет своей — стрелка)
-func _cursor_image(key: String, px: int) -> Image:
-	var ck := "%s:%d" % [key, px]
-	if _cursor_cache.has(ck):
-		return _cursor_cache[ck]
-	var path := AI + "cursor_%s.png" % key
-	if not ResourceLoader.exists(path):
-		path = AI + "cursor_arrow.png"
-	var img: Image = null
-	if ResourceLoader.exists(path):
-		img = (load(path) as Texture2D).get_image()
-		if img.is_compressed():
-			img.decompress()
-		img.clear_mipmaps()
-		img.convert(Image.FORMAT_RGBA8)
-		img.resize(px, px, Image.INTERPOLATE_LANCZOS)
-	_cursor_cache[ck] = img
-	return img
+const Cursors := preload("res://scripts/cursors.gd")
+## Формы курсора с постоянной картинкой. Обычная стрелка (CURSOR_ARROW) меняется по инструменту, «рука» светится при нажатии;
+## CURSOR_FORBIDDEN ставится недоступным кнопкам — над ними серая стрелка (нажать нельзя). Текстовый курсор — как в Windows
+const CURSOR_FIXED := {Input.CURSOR_WAIT: "wait", Input.CURSOR_BUSY: "wait", Input.CURSOR_MOVE: "move", Input.CURSOR_DRAG: "hand_glow",
+	Input.CURSOR_CAN_DROP: "hand", Input.CURSOR_FORBIDDEN: "arrow_grey", Input.CURSOR_VSIZE: "resize_v", Input.CURSOR_HSIZE: "resize_h",
+	Input.CURSOR_BDIAGSIZE: "resize_diag", Input.CURSOR_FDIAGSIZE: "resize_diag", Input.CURSOR_HELP: "help", Input.CURSOR_CROSS: "cross"}
+var _cursor_hand := ""
 
 
-## Какой курсор нужен сейчас: над окнами — стрелка (над кнопками — «рука»), над городом — по инструменту:
-## стройка — молоток, снос — кирка, перенос и заселение — рука, поворот — стрелки по кругу
+## Какой курсор нужен сейчас. Над окнами — стрелка, над кнопками и значками — «рука», над недоступной кнопкой — серая;
+## над городом — по инструменту и по тому, что под мышью (_cursor_world). Зажата левая кнопка — стрелка и рука светятся
 func _cursor_tick() -> void:
-	var px := int(clampf(roundf(30.0 * get_viewport().get_final_transform().get_scale().x), 24.0, 128.0))
+	var px := Cursors.size_for(get_viewport())
+	var down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	var key := "arrow"
-	if game and game.ready_done and root.visible and (menu_root == null or not menu_root.visible) and not mouse_over_ui():
-		var t: String = game.tool
-		if game.rot_drag or (game.rig and game.rig._orbit):
-			key = "rotate"
-		elif t == "bulldoze" or t == "erase":
-			key = "bulldoze"
-		elif t in ["road", "path", "plaza"] or Defs.B.has(t):
-			key = "build"
-		elif t in ["move", "move_nature", "copy", "settle"]:
-			key = "hand"
-	if key == _cursor_key and px == _cursor_px:
+	var ui := mouse_over_ui()
+	if game == null or not game.ready_done:
+		key = "wait"
+	elif ui:
+		_cursor_disabled_btn()
+	elif root.visible:
+		key = _cursor_world()
+	if down and key in ["arrow", "hand"]:
+		key += "_glow"
+	var hand := "hand_glow" if down else "hand"
+	if key == _cursor_key and hand == _cursor_hand and px == _cursor_px:
 		return
 	if px != _cursor_px:
-		var hand := _cursor_image("hand", px)
-		if hand:
-			Input.set_custom_mouse_cursor(hand, Input.CURSOR_POINTING_HAND, Vector2(px, px) * CURSOR_HOT)
+		for sh in CURSOR_FIXED:
+			Cursors.put(sh, CURSOR_FIXED[sh], px)
 	_cursor_key = key
+	_cursor_hand = hand
 	_cursor_px = px
-	var img := _cursor_image(key, px)
-	if img:
-		Input.set_custom_mouse_cursor(img, Input.CURSOR_ARROW, Vector2(px, px) * CURSOR_HOT)
+	Cursors.put(Input.CURSOR_POINTING_HAND, hand, px)
+	Cursors.put(Input.CURSOR_ARROW, key, px)
+
+
+## Курсор над городом (мышь не над окнами)
+func _cursor_world() -> String:
+	var t: String = game.tool
+	var rig = game.rig
+	if game.rot_drag or (rig and rig._orbit):
+		return "rotate"                     # поворот постройки (левая зажата и ведут вбок) или камеры (зажатое колёсико)
+	if rig and rig._pan and game._rmb_moved > 6.0:
+		return "move"                       # тянут карту правой кнопкой
+	if t == "":
+		# щёлкнуть можно: постройка — откроется карточка, участок с табличкой — купить
+		return "hand" if game.plot_fill_key.x >= 0 or not game.pick_building().is_empty() else "arrow"
+	if t in ["bulldoze", "move", "copy"]:
+		var b: Dictionary = game.pick_building()
+		var d: Dictionary = {} if b.is_empty() else game.city.def(b)
+		if d.get("fixed", false) or (t == "move" and d.get("wall", false)):
+			return "forbidden"                  # почтовую станцию не снести и не перенести, украшение на стене не переносится
+		return {"bulldoze": "demolish", "move": "move", "copy": "hand"}[t]
+	if t == "erase":
+		return "demolish"
+	if t in ["road", "path", "plaza"]:
+		return "road"
+	if t == "move_nature":
+		var p: Vector2 = game.hover
+		var ok: bool = p != Vector2.INF and game.land.occ_at(p) == 0 and not game.land.is_water(p) and not game.land.is_road(p)
+		return "move" if ok else "arrow_red"
+	if t == "settle":
+		return "people"
+	if Defs.B.has(t):
+		if game.hover != Vector2.INF and String(game.place_info.get("err", "")) != "":
+			return "arrow_red"                  # здесь не поставить — призрак красный
+		if not game.moving.is_empty():
+			return "move"
+		return "monument" if Defs.B[t].get("cat", "") == "special" else "build"
+	return "arrow"
+
+
+## Недоступная кнопка (не хватает денег, ещё закрыто) — серая стрелка вместо «руки»: нажать нельзя
+func _cursor_disabled_btn() -> void:
+	var h := root.get_viewport().gui_get_hovered_control()
+	if h is BaseButton and h.has_meta("snd"):
+		var want := Control.CURSOR_FORBIDDEN if (h as BaseButton).disabled else Control.CURSOR_POINTING_HAND
+		if h.mouse_default_cursor_shape != want:
+			h.mouse_default_cursor_shape = want
 
 
 # ---------- сверху справа ----------

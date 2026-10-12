@@ -266,6 +266,7 @@ func _step(text: String, k: float) -> void:
 func _loading_show() -> void:
 	if shot_path != "":
 		return
+	preload("res://scripts/cursors.gd").wait(self)        # песочные часы, пока грузится (потом курсор ставит интерфейс)
 	loading = CanvasLayer.new()
 	loading.layer = 50
 	add_child(loading)
@@ -520,29 +521,33 @@ func _set_hour(h: float) -> void:
 	sun.look_at_from_position(c + dir * 200.0, c, Vector3.UP)
 	var noon := Color("ffe8c8")
 	var golden := Color("ffb070")
-	var night_c := Color("8a8cff")
+	# луна — мягкая сиренево-лавандовая, не ледяная синяя (ночь уютная, а не холодная)
+	var night_c := Color("a3a6dc")
 	var sun_c := noon.lerp(golden, gold)
 	sun.light_color = night_c.lerp(sun_c, day)
-	sun.light_energy = lerpf(1.6, lerpf(2.6, 2.9, gold), day)
-	sky_mat.sky_top_color = Color("2f2a63").lerp(Color("6f95c4").lerp(Color("9a8fc0"), gold * 0.6), day)
-	sky_mat.sky_horizon_color = Color("6a5a9a").lerp(Color("efd6b4").lerp(Color("f6a870"), gold), day)
+	sun.light_energy = lerpf(1.5, lerpf(2.6, 2.9, gold), day)
+	sky_mat.sky_top_color = Color("2e2a5c").lerp(Color("6f95c4").lerp(Color("9a8fc0"), gold * 0.6), day)
+	sky_mat.sky_horizon_color = Color("665a92").lerp(Color("efd6b4").lerp(Color("f6a870"), gold), day)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color.darkened(0.1)
-	# рассеянный свет: днём слабый и серо-сиреневый — тени глубокие; ночью сиреневый — всё видно
-	env.ambient_light_energy = lerpf(1.8, lerpf(0.5, 0.66, gold), day)
-	env.ambient_light_color = Color("7b84e6").lerp(Color("c4b8c8"), day)
+	# рассеянный свет: днём слабый и серо-сиреневый — тени глубокие; ночью сиреневый — всё видно, но темнее,
+	# чтобы фонари, жаровни и огни арки лежали на мостовой тёплыми пятнами
+	env.ambient_light_energy = lerpf(1.25, lerpf(0.5, 0.66, gold), day)
+	env.ambient_light_color = Color("8a90c8").lerp(Color("c4b8c8"), day)
 	env.ambient_light_sky_contribution = lerpf(0.35, 0.3, day)
-	env.fog_light_color = Color("5a5290").lerp(Color("e9d2b0").lerp(Color("f2b07a"), gold * 0.8), day)
+	env.fog_light_color = Color("585088").lerp(Color("e9d2b0").lerp(Color("f2b07a"), gold * 0.8), day)
 	(_puff_quad().material as StandardMaterial3D).albedo_color = Color(0.55, 0.55, 0.7).lerp(Color(1, 1, 1).lerp(Color(1.0, 0.85, 0.7), gold * 0.6), day)
 	if grade:
 		var g_day := Vector3(1.07, 0.97, 0.84)
 		var g_gold := Vector3(1.08, 0.95, 0.82)
-		var g_night := Vector3(0.7, 0.82, 1.45)
+		# ночь: сиреневая, но не ледяная — синеву притушили, а тёплый свет фонарей шейдер не подсинивает (warm_keep)
+		var g_night := Vector3(0.88, 0.86, 1.18)
 		var gain := g_night.lerp(g_day.lerp(g_gold, gold), day)
 		grade.set_shader_parameter("gain", gain)
-		grade.set_shader_parameter("shadow_tint", Vector3(0.9, 0.88, 1.1).lerp(Vector3(0.86, 0.84, 0.95).lerp(Vector3(0.84, 0.8, 0.92), gold), day))
+		grade.set_shader_parameter("shadow_tint", Vector3(0.93, 0.88, 1.05).lerp(Vector3(0.86, 0.84, 0.95).lerp(Vector3(0.84, 0.8, 0.92), gold), day))
 		grade.set_shader_parameter("green_shift", lerpf(0.15, 0.6, day))
-		grade.set_shader_parameter("tint", Vector3(1.05, 1.22, 1.75).lerp(Vector3.ONE, day))
-		grade.set_shader_parameter("sat", lerpf(1.08, lerpf(1.04, 0.93, gold), day))
+		grade.set_shader_parameter("tint", Vector3(1.02, 1.07, 1.34).lerp(Vector3.ONE, day))
+		grade.set_shader_parameter("sat", lerpf(0.95, lerpf(1.04, 0.93, gold), day))
+		grade.set_shader_parameter("warm_keep", 1.0 - smoothstep(0.15, 0.7, day))
 		grade.set_shader_parameter("contrast", lerpf(1.06, 1.14, day))
 	# окна и фонари: разгораются в сумерках. Окна домов и лавок — еле тёплый огонёк, как от спички
 	# (улицу освещают фонари и жаровни, а не дома); к полуночи и он почти гаснет
@@ -558,7 +563,8 @@ func _set_hour(h: float) -> void:
 	for l in night_lights:
 		var k: float = l.get_meta("k", 1.0)
 		l.visible = lamp * k > 0.02
-		l.light_energy = lamp * 1.6 * k
+		# фонари, жаровни и огни арки — заметные тёплые пятна; огонёк у жилого дома остаётся еле видным
+		l.light_energy = lamp * k * (2.6 if k >= 1.0 else 1.6)
 
 
 # ---------- вода, въезд, пейзаж до горизонта, природа ----------

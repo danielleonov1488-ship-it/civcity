@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://wcknjo568ogc"
-path="res://.godot/imported/cursor_bulldoze.png-d2e8fd22be72cad2820f953f7ca44e61.ctex"
+uid="uid://c48ibhwsoe6mq"
+path="res://.godot/imported/brush.png-1834b273ebaa2974184f7cb6a317cb03.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/ui/ai/cursor_bulldoze.png"
-dest_files=["res://.godot/imported/cursor_bulldoze.png-d2e8fd22be72cad2820f953f7ca44e61.ctex"]
+source_file="res://assets/ui/ai/cursors/brush.png"
+dest_files=["res://.godot/imported/brush.png-1834b273ebaa2974184f7cb6a317cb03.ctex"]
 
 [params]
 

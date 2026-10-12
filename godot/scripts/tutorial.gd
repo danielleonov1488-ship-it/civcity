@@ -158,6 +158,9 @@ func _enter(i: int) -> void:
 			# повозка выезжает сразу, камера смотрит на площадь у станции
 			if c.arrivals.is_empty() and c.incoming == 0 and c.pending.is_empty():
 				c.incoming = 2
+			var cart: Dictionary = game.people.cart
+			if cart.get("state", "") == "wait":
+				cart["t"] = minf(float(cart["t"]), 0.6)     # и трогается почти сразу — начинается ролик
 			var ctr := c.center()
 			if not ctr.is_empty():
 				var dp: Vector2 = c.door_point(ctr)
@@ -202,6 +205,9 @@ func finish() -> void:
 
 
 func _process(dt: float) -> void:
+	if not cine.is_empty():
+		_cine_tick(dt)               # пока идёт ролик, шаги обучения ждут
+		return
 	if not active() or game == null or not game.ready_done:
 		return
 	if _wait > 0.0:
@@ -268,3 +274,311 @@ func pointer() -> Array:
 			if not hud.research_panel.visible:
 				return [hud.top_btns.get("research"), "Исследования"]
 	return [null, ""]
+
+
+# ---------- вступительный ролик: первая повозка въезжает в город (как поезд в Town to City) ----------
+## Чёрные полосы кино, интерфейс прячется; камера сначала смотрит на арку въезда — из-под неё выезжает повозка
+## с первыми семьями, — потом едет рядом с ней крупным планом до площади у станции. Семьи сходят, подпись просит
+## выбрать им дом, и камера плавно возвращается туда, где была. «Пропустить», Esc или правая кнопка — сразу к игре.
+
+const INTRO_FROM_Z := 56.0           # повозка начинает путь за 8 м до арки, а не из-за горизонта
+const INTRO_PACE := 1.6              # и едет чуть бодрее обычного — до станции секунд двенадцать
+const INTRO_BAR := 0.11              # высота чёрных полос — доля высоты экрана
+const INTRO_SAY := ["Первые переселенцы прибыли в Новый Рим!", "Им нужен дом — выберите его"]
+var cine := {}                       # идёт ролик: фаза, время, где камера и куда смотрит
+var cine_ui: CanvasLayer
+
+
+## Ролик — для первой повозки новой игры. В автотестах (игра — не главная сцена) — только на шаге обучения «Едут!»
+func intro_wanted() -> bool:
+	if game == null or hud == null or not cine.is_empty() or not game.ready_done:
+		return false
+	var c: City = game.city
+	if c.tips.has("intro") or game.shot_path != "" or not (game.mode in ["new", "play"]) or not hud.visible or not hud.root.visible:
+		return false                     # (интерфейс спрятан для снимка — игрок занят, ролик не нужен)
+	if c.settled_total > 0 or not c.arrivals.is_empty() or not c.pending.is_empty():
+		return false
+	return cur_id() == "cart" or game == get_tree().current_scene
+
+
+## Повозка тронулась — начинаем: затемнение, и сразу общий план у арки
+func intro_start(cart: Dictionary) -> void:
+	game.city.tips["intro"] = true
+	game.people.cart_seek_z(INTRO_FROM_Z)
+	cart["mult"] = 0.0                   # ждёт у арки, пока экран темнеет
+	cart["show"] = true                  # и едет своим шагом, даже если на миг выйдет из кадра
+	# что игрок делал мышью — отпускаем (начатую дорогу дописываем), инструмент и свиток стройки убираем
+	if game.painting:
+		game._release()
+	game.pressing = false
+	game.rot_drag = false
+	game.place_lock = {}
+	game.set_tool("")
+	hud._close_tray()
+	var rig = game.rig
+	rig._orbit = false
+	rig._pan = false
+	rig.cine = true
+	var p0: Array = rig.pose()
+	cine = {"t": 0.0, "phase": "fade", "pt": 0.0, "cart": cart, "speed0": float(game.speed), "said": -1,
+		"pos": p0[0], "look": p0[1], "h": (cart["n"] as Node3D).rotation.y, "back": 1.8}
+	game.speed = 1.0
+	_cine_ui()
+
+
+func _cine_ui() -> void:
+	cine_ui = CanvasLayer.new()
+	cine_ui.layer = 40                   # над интерфейсом, под экраном загрузки
+	add_child(cine_ui)
+	var block := Control.new()           # ловит мышь: пока идёт ролик, мир не щёлкается и камера не крутится
+	block.set_anchors_preset(Control.PRESET_FULL_RECT)
+	block.mouse_filter = Control.MOUSE_FILTER_STOP
+	cine_ui.add_child(block)
+	var veil := ColorRect.new()          # затемнение при смене кадра
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	veil.color = Color(0.02, 0.015, 0.01, 0.0)
+	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	block.add_child(veil)
+	cine["veil"] = veil
+	for top in [true, false]:
+		var bar := ColorRect.new()
+		bar.color = Color(0.02, 0.015, 0.01)
+		bar.anchor_right = 1.0
+		bar.anchor_top = 0.0 if top else 1.0
+		bar.anchor_bottom = bar.anchor_top
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		block.add_child(bar)
+		cine["bar_top" if top else "bar_bot"] = bar
+	var cap := Label.new()
+	cap.anchor_right = 1.0
+	cap.anchor_top = 1.0 - INTRO_BAR
+	cap.anchor_bottom = 1.0
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cap.add_theme_font_override("font", hud.font_title)
+	cap.add_theme_font_size_override("font_size", 32)
+	cap.add_theme_color_override("font_color", Color("fff3dc"))
+	cap.modulate.a = 0.0
+	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	block.add_child(cap)
+	cine["cap"] = cap
+	var skip := Button.new()
+	skip.text = "Пропустить  ›"
+	skip.flat = true
+	skip.focus_mode = Control.FOCUS_NONE
+	skip.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND   # как у всех кнопок — рисованная «рука»
+	skip.alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	skip.anchor_left = 1.0
+	skip.anchor_right = 1.0
+	skip.anchor_top = 1.0 - INTRO_BAR
+	skip.anchor_bottom = 1.0
+	skip.offset_left = -260
+	skip.offset_right = -30
+	skip.add_theme_font_override("font", hud.font_title)
+	skip.add_theme_font_size_override("font_size", 20)
+	for st in ["font_color", "font_focus_color"]:
+		skip.add_theme_color_override(st, Color(1.0, 0.94, 0.82, 0.62))
+	for st in ["font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+		skip.add_theme_color_override(st, Color("ffe7a8"))
+	skip.pressed.connect(_cine_skip)
+	block.add_child(skip)
+	cine["skip"] = skip
+	_cine_bars(0.0)
+
+
+## Пока идёт ролик: Esc и правая кнопка — пропустить; клавиши игре не достаются
+func _input(e: InputEvent) -> void:
+	if cine.is_empty():
+		return
+	if e is InputEventKey:
+		if e.is_pressed() and not e.is_echo() and (e as InputEventKey).keycode == KEY_ESCAPE:
+			_cine_skip()
+		get_viewport().set_input_as_handled()
+	elif e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT:
+		if e.is_pressed():
+			_cine_skip()
+		get_viewport().set_input_as_handled()
+
+
+func _cine_skip() -> void:
+	if cine.is_empty() or cine["phase"] == "back":
+		return
+	var cart: Dictionary = cine["cart"]
+	if cart.get("state", "") == "in":
+		cart["mult"] = 1.0               # повозка доедет сама, обычным шагом
+	_cine_back(1.0)
+
+
+func _cine_phase(name: String) -> void:
+	cine["phase"] = name
+	cine["pt"] = 0.0
+
+
+func _cine_back(dur: float) -> void:
+	if cine["phase"] == "back":
+		return
+	cine["from_pos"] = cine["pos"]
+	cine["from_look"] = cine["look"]
+	cine["back"] = dur
+	(cine["cart"] as Dictionary)["show"] = false
+	_cine_say(-1)
+	_cine_phase("back")
+
+
+## Подпись внизу: прежняя гаснет, новая проявляется (-1 — просто погасить)
+func _cine_say(i: int) -> void:
+	var cap: Label = cine["cap"]
+	cine["said"] = maxi(int(cine["said"]), i)
+	var tw := cap.create_tween()
+	if cap.modulate.a > 0.01:
+		tw.tween_property(cap, "modulate:a", 0.0, 0.35)
+	if i >= 0:
+		tw.tween_callback(func(): cap.text = INTRO_SAY[i])
+		tw.tween_property(cap, "modulate:a", 1.0, 0.7)
+
+
+func _cine_bars(k: float) -> void:
+	var h := get_viewport().get_visible_rect().size.y * INTRO_BAR * k
+	(cine["bar_top"] as Control).offset_bottom = h
+	(cine["bar_bot"] as Control).offset_top = -h
+	(cine["skip"] as Control).modulate.a = k
+
+
+## Общий план: камера на городской стороне арки, чуть сбоку, медленно наезжает — повозка выезжает из-под арки на нас
+func _cine_arch(pt: float) -> Array:
+	var g := Land.GATE
+	var gy: float = game.land.height_at(g.x, g.y + 12.0)
+	var u := smoothstep(0.0, 5.0, pt)
+	return [Vector3(g.x + 5.5, gy + 2.8, g.y + 14.0).lerp(Vector3(g.x + 4.2, gy + 2.2, g.y + 10.5), u), Vector3(g.x, gy + 1.7, g.y - 2.0)]
+
+
+## Смещение от повозки (влево, вверх, вперёд — по её ходу) в мировых осях
+func _cine_rel(v: Vector3) -> Vector3:
+	var h: float = cine["h"]
+	return Vector3(cos(h), 0, -sin(h)) * v.x + Vector3.UP * v.y + Vector3(sin(h), 0, cos(h)) * v.z
+
+
+## Крупный план: камера едет вместе с повозкой со стороны возницы — сначала спереди, потом сбоку.
+## Смещения сглаживаются, а не положение: повозка всегда в кадре, а камера мягко обходит её
+func _cine_follow(pt: float, dt: float) -> void:
+	var u := smoothstep(0.5, 9.0, pt)
+	var want_off := _cine_rel(Vector3(4.2, 2.6, 6.4).lerp(Vector3(6.6, 3.0, 1.4), u))
+	var want_look := _cine_rel(Vector3(0.0, 0.9, 1.0))
+	cine["off"] = (cine["off"] as Vector3).lerp(want_off, 1.0 - exp(-dt * 1.3))
+	cine["loff"] = (cine["loff"] as Vector3).lerp(want_look, 1.0 - exp(-dt * 2.6))
+
+
+## Приехали: камера отходит и поднимается над остановившейся повозкой — видно, как семьи сходят и идут на площадь
+func _cine_arrive(dt: float) -> void:
+	cine["off"] = (cine["off"] as Vector3).lerp(_cine_rel(Vector3(7.8, 5.4, 4.0)), 1.0 - exp(-dt * 0.9))
+	cine["loff"] = (cine["loff"] as Vector3).lerp(_cine_rel(Vector3(-0.6, 0.4, 1.0)), 1.0 - exp(-dt * 1.2))
+
+
+func _cine_tick(dt: float) -> void:
+	dt = minf(dt, 0.05)
+	cine["t"] = float(cine["t"]) + dt
+	cine["pt"] = float(cine["pt"]) + dt
+	var pt: float = cine["pt"]
+	var cart: Dictionary = cine["cart"]
+	var n: Node3D = cart["n"]
+	var rig = game.rig
+	var veil: ColorRect = cine["veil"]
+	if float(cine["t"]) > 40.0 and cine["phase"] != "back":
+		_cine_back(1.2)                  # на всякий случай: ролик не дольше 40 секунд
+		pt = 0.0
+	if cine["phase"] != "arrive":
+		cine["h"] = lerp_angle(float(cine["h"]), n.rotation.y, 1.0 - exp(-dt * 1.6))
+	var want: Array = [cine["pos"], cine["look"]]
+	match cine["phase"]:
+		"fade":
+			# экран темнеет, интерфейс прячется; под затемнением — сразу к арке
+			veil.color.a = smoothstep(0.0, 0.45, pt)
+			hud.root.modulate.a = 1.0 - smoothstep(0.0, 0.45, pt)
+			if pt >= 0.45:
+				hud.visible = false
+				cart["mult"] = INTRO_PACE
+				var a := _cine_arch(0.0)
+				cine["pos"] = a[0]
+				cine["look"] = a[1]
+				want = a
+				_cine_phase("arch")
+		"arch":
+			veil.color.a = 1.0 - smoothstep(0.0, 0.9, pt)
+			want = _cine_arch(pt)
+			if pt > 1.0 and int(cine["said"]) < 0:
+				_cine_say(0)
+			if cart["state"] != "in" or n.position.z > Land.GATE.y + 1.5:
+				# повозка выехала из-под арки — камера пристраивается к ней с того места, где стоит
+				cine["h"] = n.rotation.y
+				cine["anchor"] = n.position
+				cine["off"] = (cine["pos"] as Vector3) - n.position
+				cine["loff"] = (cine["look"] as Vector3) - n.position
+				_cine_phase("follow")
+		"follow", "arrive":
+			veil.color.a = 0.0
+			if cine["phase"] == "follow":
+				cine["anchor"] = n.position
+				_cine_follow(pt, dt)
+				if cart["state"] != "in":
+					_cine_phase("arrive")       # встала у станции (дальше смотрим на это место, даже когда она поедет назад)
+			else:
+				_cine_arrive(dt)
+				if pt > 0.8 and int(cine["said"]) < 1:
+					_cine_say(1)
+				if pt > 3.8:
+					_cine_back(1.8)
+			var an: Vector3 = cine["anchor"]
+			var cp: Vector3 = an + (cine["off"] as Vector3)
+			cp.y = maxf(cp.y, game.land.height_at(cp.x, cp.z) + 0.8)
+			cine["pos"] = cp
+			cine["look"] = an + (cine["loff"] as Vector3)
+			if cine["phase"] != "back":
+				rig.cine_look(cp, cine["look"])
+				cine["bars"] = smoothstep(0.0, 0.8, float(cine["t"]))
+				_cine_bars(cine["bars"])
+			return
+		"back":
+			# плавно назад, туда, где камера была до ролика; полосы уходят, интерфейс возвращается
+			var bl: float = cine["back"]
+			var u := smoothstep(0.0, bl, pt)
+			var to: Array = rig.pose()
+			rig.cine_look((cine["from_pos"] as Vector3).lerp(to[0], u), (cine["from_look"] as Vector3).lerp(to[1], u))
+			veil.color.a = maxf(0.0, veil.color.a - dt * 3.0)
+			_cine_bars(minf(float(cine.get("bars", 1.0)), 1.0 - smoothstep(0.0, bl * 0.7, pt)))
+			if pt > bl * 0.35:
+				hud.visible = true
+				hud.root.modulate.a = maxf(hud.root.modulate.a, smoothstep(bl * 0.35, bl, pt))
+			if pt >= bl:
+				_cine_end()
+			return
+	# камера догоняет нужный кадр мягко — без рывков на изгибах дороги
+	var kk := 1.0 - exp(-dt * 2.2)
+	var cp: Vector3 = (cine["pos"] as Vector3).lerp(want[0], kk)
+	cp.y = maxf(cp.y, game.land.height_at(cp.x, cp.z) + 0.8)
+	cine["pos"] = cp
+	cine["look"] = (cine["look"] as Vector3).lerp(want[1], kk)
+	rig.cine_look(cp, cine["look"])
+	cine["bars"] = smoothstep(0.0, 0.8, float(cine["t"]))
+	_cine_bars(cine["bars"])
+
+
+func _cine_end() -> void:
+	var rig = game.rig
+	rig.cine = false
+	rig._orbit = false
+	rig._pan = false
+	hud.visible = true
+	hud.root.modulate.a = 1.0
+	if cine_ui != null:
+		cine_ui.queue_free()
+		cine_ui = null
+	var s0: float = cine["speed0"]
+	var cart: Dictionary = cine["cart"]
+	cart["show"] = false
+	if cart.get("state", "") == "in":
+		cart["mult"] = 1.0
+	cine = {}
+	if is_equal_approx(float(game.speed), 1.0) and s0 > 1.0:
+		hud.set_speed(s0)            # игрок ждал повозку на быстрой скорости — она и остаётся
+	else:
+		hud.refresh()

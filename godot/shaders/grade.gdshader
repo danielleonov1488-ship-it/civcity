@@ -11,6 +11,7 @@ uniform float contrast = 1.08;
 uniform float vignette = 0.45;
 uniform vec3 vig_col = vec3(0.52, 0.36, 0.26);
 uniform vec3 tint = vec3(1.0);                         // общий оттенок (ночью — сиреневый) и яркость
+uniform float warm_keep = 0.0;                         // ночью: тёплый свет фонарей и жаровен не подсинивать
 
 vec3 rgb2hsv(vec3 c) {
 	vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
@@ -29,7 +30,9 @@ vec3 hsv2rgb(vec3 c) {
 void fragment() {
 	vec3 c0 = texture(screen_tex, SCREEN_UV).rgb;
 	float l0 = max(c0.r, max(c0.g, c0.b));
-	vec3 c = c0 * mix(tint, vec3(1.0), smoothstep(0.55, 0.95, l0));
+	// тёплое пятно (красного заметно больше синего) — свет фонаря: его ночной сиреневый оттенок не трогает
+	float warm = warm_keep * smoothstep(0.22, 0.55, (c0.r - c0.b) / (l0 + 0.02)) * smoothstep(0.06, 0.25, l0);
+	vec3 c = c0 * mix(tint, vec3(1.0), max(smoothstep(0.55, 0.95, l0), warm));
 	vec3 h = rgb2hsv(c);
 	// зелёные тона (жёлто-зелёный … бирюзовый) тянем к оливе и чуть гасим
 	float g = smoothstep(0.11, 0.19, h.x) * (1.0 - smoothstep(0.42, 0.52, h.x));
@@ -38,7 +41,7 @@ void fragment() {
 	c = hsv2rgb(h);
 	float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
 	vec3 sh = mix(shadow_tint, vec3(1.0), smoothstep(0.02, 0.5, l));
-	vec3 hi = mix(vec3(1.0), gain, smoothstep(0.2, 0.95, l));
+	vec3 hi = mix(vec3(1.0), gain, smoothstep(0.2, 0.95, l) * (1.0 - warm));
 	c = c * sh * hi;
 	l = dot(c, vec3(0.2126, 0.7152, 0.0722));
 	c = mix(vec3(l), c, sat);

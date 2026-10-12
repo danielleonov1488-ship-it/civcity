@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://o2h304b03v00"
-path="res://.godot/imported/cursor_arrow.png-5289fee5e11115357a2b140b0d3544a1.ctex"
+uid="uid://cvemuxysgvnpr"
+path="res://.godot/imported/wait_red.png-00494044b41d58bd29a97bf0a07484a8.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/ui/ai/cursor_arrow.png"
-dest_files=["res://.godot/imported/cursor_arrow.png-5289fee5e11115357a2b140b0d3544a1.ctex"]
+source_file="res://assets/ui/ai/cursors/wait_red.png"
+dest_files=["res://.godot/imported/wait_red.png-00494044b41d58bd29a97bf0a07484a8.ctex"]
 
 [params]
 

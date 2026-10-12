@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://5p1k11sbp2ff"
-path="res://.godot/imported/cursor_rotate.png-a7880bcc14320f58b382e08d12f51285.ctex"
+uid="uid://dlfhrggp0bubh"
+path="res://.godot/imported/road.png-428968d939dd56aeb6e86706a953b3be.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/ui/ai/cursor_rotate.png"
-dest_files=["res://.godot/imported/cursor_rotate.png-a7880bcc14320f58b382e08d12f51285.ctex"]
+source_file="res://assets/ui/ai/cursors/road.png"
+dest_files=["res://.godot/imported/road.png-428968d939dd56aeb6e86706a953b3be.ctex"]
 
 [params]
 

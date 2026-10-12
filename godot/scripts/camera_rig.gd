@@ -17,6 +17,7 @@ var _dist_t := dist
 var _target_t := target
 var _orbit := false
 var _pan := false
+var cine := false                    # камеру ведёт вступительный ролик: ввод и плавный ход выключены
 
 const DIST_MIN := 4.0
 const DIST_MAX := 130.0
@@ -51,7 +52,26 @@ func set_view(t: Vector3, yaw_deg: float, pitch_deg: float, d: float) -> void:
 	_update(true)
 
 
+## Кадр ролика: камера в pos смотрит на look; резкость миниатюры — на look
+func cine_look(pos: Vector3, look: Vector3) -> void:
+	cam.global_position = pos
+	cam.look_at(look, Vector3.UP)
+	var d := pos.distance_to(look)
+	attrs.dof_blur_far_distance = d * 1.12
+	attrs.dof_blur_far_transition = d * 0.9
+	attrs.dof_blur_near_distance = d * 0.6
+	attrs.dof_blur_near_transition = d * 0.35
+
+
+## Где камера игрока и куда смотрит — [положение, цель] (куда вернуться после ролика)
+func pose() -> Array:
+	var d := dist * K
+	return [target + Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * d, target]
+
+
 func _unhandled_input(e: InputEvent) -> void:
+	if cine:
+		return
 	if e is InputEventMouseButton:
 		var mb := e as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_MIDDLE:
@@ -75,6 +95,8 @@ func _unhandled_input(e: InputEvent) -> void:
 
 
 func _process(dt: float) -> void:
+	if cine:
+		return
 	var mv := Vector2.ZERO
 	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): mv.y -= 1
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): mv.y += 1
