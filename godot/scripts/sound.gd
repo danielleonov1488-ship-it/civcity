@@ -13,8 +13,8 @@ var cache := {}
 var game
 var _pause_t := 2.0
 
-const SFX := {"click": "click.ogg", "select": "select.ogg", "open": "open.ogg", "close": "close.ogg", "place": "place.ogg",
-	"error": "error.ogg", "done": "done.ogg", "demolish": "demolish.ogg", "scroll": "scroll.ogg"}
+## Выбор владельца (12.10): кнопки, окна, стройка, снос, «нельзя», выполненная просьба — без звука; остались только монетки
+const SFX := {"coins": "coins.ogg"}
 const MEOWS := ["cat_softmew.wav", "cat_mewpurr.wav", "cat_mewfood.wav", "Meow.ogg"]
 
 
@@ -82,13 +82,15 @@ func _process(dt: float) -> void:
 	if game and game.ready_done:
 		var h: float = game.hour
 		var day := smoothstep(5.0, 7.0, h) * (1.0 - smoothstep(19.5, 21.0, h))
-		var near := 1.0 - smoothstep(40.0, 110.0, game.rig.dist) if game.rig else 0.5
-		var target := lerpf(-60.0, -15.0, day * (0.35 + 0.65 * near))
+		var near := 1.0 - smoothstep(25.0, 70.0, game.rig.dist) if game.rig else 0.3
+		var target := lerpf(-60.0, -30.0, day * near)
 		ambient.volume_db = lerpf(ambient.volume_db, target, minf(1.0, dt * 1.5))
 
 
 func ui(name := "click") -> void:
-	var st := _load(SFX.get(name, "click.ogg"))
+	if not SFX.has(name):
+		return
+	var st := _load(SFX[name])
 	if st == null:
 		return
 	for p in pool:

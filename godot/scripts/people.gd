@@ -868,7 +868,7 @@ func _make_cat(home: Dictionary) -> Dictionary:
 	var snd := AudioStreamPlayer3D.new()
 	snd.max_distance = 30.0
 	snd.unit_size = 4.0
-	snd.volume_db = -8.0
+	snd.volume_db = -14.0
 	snd.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	root.add_child(snd)
 	var cat := {"n": root, "head": head, "tail": tail, "legs": legs, "p": p, "path": PackedVector2Array(), "i": 0, "state": "sit", "t": rng.randf_range(2, 6),
@@ -945,6 +945,6 @@ func _cats_step(dt: float) -> void:
 		# изредка мяукает, если камера рядом
 		c["meow_t"] = float(c["meow_t"]) - dt
 		if float(c["meow_t"]) <= 0.0:
-			c["meow_t"] = rng.randf_range(25, 90)
+			c["meow_t"] = rng.randf_range(90, 240)
 			if c["state"] != "sleep" and game.sound:
 				game.sound.cat(c["snd"])

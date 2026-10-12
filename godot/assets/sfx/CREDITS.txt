@@ -3,3 +3,5 @@ click, select, open, close, place, error, done, demolish, scroll — Kenney «In
 cat_softmew, cat_mewpurr, cat_mewfood, cat_purrsleepy_loop — Kerzoven, «Cat Purr & Meow», OpenGameArt, CC0
 Meow.ogg — IgnasD, «Meow», OpenGameArt, CC0
 birds.ogg — isaiah658, «Ambient Bird Sounds», OpenGameArt, CC0
+
+coins.ogg — Kenney «RPG Audio» / «UI Audio» (www.kenney.nl), CC0 — выбран владельцем как «Монетки: A»
