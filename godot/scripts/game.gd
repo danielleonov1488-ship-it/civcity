@@ -2029,19 +2029,26 @@ func _edge_fan(p: Vector2, maxd: float) -> Dictionary:
 	if best == INF:
 		return {}
 	var cam_f := City.facing(rig.yaw) if rig else Vector2(0, 1)
-	# кандидаты — «ямки»: лучи не дальше best + 0.5, не дальше соседей; полоса равных лучей — один кандидат (середина)
+	# кандидаты — «ямки»: лучи не дальше best + 0.5, не дальше соседей; полоса равных лучей — один кандидат (середина).
+	# Обход по кругу с луча, отличного от предыдущего: полоса через луч 0 (край в сторону +z) не рвётся надвое
+	var start := 0
+	for k in 48:
+		if absf(float(hits[k]) - float(hits[posmod(k - 1, 48)])) >= 0.001:
+			start = k
+			break
 	var cand := []
-	var k0 := 0
-	while k0 < 48:
+	var i0 := 0
+	while i0 < 48:
+		var k0 := (start + i0) % 48
 		var h: float = hits[k0]
 		if h < 0.0 or h > best + 0.5:
-			k0 += 1
+			i0 += 1
 			continue
 		var run := [k0]
-		var j := k0 + 1
-		while j < 48 and absf(float(hits[j]) - h) < 0.001:
-			run.append(j)
-			j += 1
+		var i := i0 + 1
+		while i < 48 and absf(float(hits[(start + i) % 48]) - h) < 0.001:
+			run.append((start + i) % 48)
+			i += 1
 		var left: float = hits[posmod(run[0] - 1, 48)]
 		var right: float = hits[posmod(run[run.size() - 1] + 1, 48)]
 		if (left < 0.0 or left >= h) and (right < 0.0 or right >= h):
@@ -2049,7 +2056,7 @@ func _edge_fan(p: Vector2, maxd: float) -> Dictionary:
 			for r: int in run:
 				sum += Vector2(sin(TAU * r / 48.0), cos(TAU * r / 48.0))
 			cand.append({"n": sum.normalized(), "d": h, "run": run})
-		k0 = j
+		i0 = i
 	if cand.is_empty():
 		return {}
 	var pick: Dictionary = cand[0]
@@ -2222,6 +2229,7 @@ func _align_pick(p: Vector2, mid: int) -> Dictionary:
 ## Проверки постройки на площади (вместо запрета «здесь дорога»): не на большой дороге, не на склоне, перед дверью
 ## свободно, чужую дверь не загораживает. "" — можно
 func _plaza_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: float, variant: int, color: int, tier: int, mid: int) -> String:
+	var d: Dictionary = Defs.B[type]
 	var lo := INF
 	var hi := -INF
 	var own := {}
@@ -2231,9 +2239,10 @@ func _plaza_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: flo
 			return "По большой дороге ездят повозки — здесь не строят"
 		lo = minf(lo, land.hq(k))
 		hi = maxf(hi, land.hq(k))
-	if hi - lo > PLAZA_SLOPE:
+	# ровное место — для домов и лавок (иначе ступени вокруг них на плитке); большим храмам и казармам хватает
+	# общего правила check_place (1,3 м), как и раньше
+	if hi - lo > PLAZA_SLOPE and d["kind"] in ["house", "shop", "rp", "store"]:
 		return "Мостовая здесь слишком наклонная — найдите место ровнее"
-	var d: Dictionary = Defs.B[type]
 	var bp := Catalog.make(type, tier, variant, color)
 	var ax := City.axis(yaw)
 	var f := City.facing(yaw)

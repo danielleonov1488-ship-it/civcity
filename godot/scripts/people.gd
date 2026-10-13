@@ -1929,17 +1929,21 @@ func _on_building_added(b: Dictionary) -> void:
 		if r["state"] in ["home", "work", "door"] or r["act"] == "inside":
 			continue                    # дома, на работе, в дверях — их не видно на улице
 		if land.occ_at(r["p"]) == id:
-			var q := _near_free(r["p"])
+			var q := _near_free(r["p"], 80)          # до ~20 м — выйти и из-под большого храма
 			if q != Vector2.INF:
 				r["p"] = q
 				_place(r)
 		if r["state"] == "walk":
 			var path: PackedVector2Array = r["path"]
 			if path.size() >= 2 and _path_hits(r["p"], path, int(r["i"]), id):
-				_go(r, path[path.size() - 1], r["goal"], true)
+				var to: Vector2 = path[path.size() - 1]
+				if land.occ_at(to) == id:            # шёл как раз туда, где теперь стоит постройка, — к ближнему свободному месту
+					to = _near_free(to, 80)
+				if to != Vector2.INF:
+					_go(r, to, r["goal"], true)
 	for c in cats:
 		if land.occ_at(c["p"]) == id:
-			var q := _near_free(c["p"])
+			var q := _near_free(c["p"], 80)
 			if q != Vector2.INF:
 				c["p"] = q
 		if c["state"] == "walk" and _path_hits(c["p"], c["path"], int(c["i"]), id):

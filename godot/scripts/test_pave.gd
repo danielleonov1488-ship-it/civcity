@@ -172,6 +172,7 @@ func _run() -> void:
 	if plaza:
 		_t1_detect()
 		_t3_rim()
+		_t3b_edges()
 		await _t4_mouse()
 		_t5_s2()
 		_t6_big_road()
@@ -300,6 +301,34 @@ func _t3_rim() -> void:
 		ok("T3 rim %s" % str(c[0]), pl.get("mode", "") == "plaza" and pl.get("sub", "") == "rim" and yaw_is(y, c[1], 0.02) \
 			and absf(bv - float(c[3])) <= 0.08 and pl["err"] == "" and all_paved(pl["cells"]),
 			"sub=%s yaw=%.1f back=%.2f err=%s" % [pl.get("sub", ""), rad_to_deg(y), bv, pl["err"]])
+
+
+## T3b: у каждого из четырёх краёв площади на любой глубине — ровно спиной к краю (раньше у края +z косило на 5–20°)
+func _t3b_edges() -> void:
+	var bad := 0
+	var n := 0
+	# [точка у края, направление внутрь, ожидаемый поворот]
+	for e: Array in [[Vector2(176, 134), Vector2(0, 1), 0.0], [Vector2(176, 146), Vector2(0, -1), PI], [Vector2(170, 140), Vector2(1, 0), PI / 2], [Vector2(182, 140), Vector2(-1, 0), -PI / 2]]:
+		for i in 23:
+			var depth := 0.4 + 0.2 * i
+			for side: float in [-1.5, 0.0, 1.5]:
+				var inward: Vector2 = e[1]
+				var p: Vector2 = (e[0] as Vector2) + inward * depth + Vector2(inward.y, -inward.x) * side
+				var dists := [p.y - 134.0, 146.0 - p.y, p.x - 170.0, 182.0 - p.x]
+				var mine := depth
+				var others := 99.0
+				for dd: float in dists:
+					if absf(dd - mine) > 0.01:
+						others = minf(others, dd)
+				if others < mine + 0.8:            # 0,5 м — равные края + шаг лучей 0,25 м
+					continue                      # у угла: другой край почти так же близко — тогда решает камера
+				var pl := probe("house_pleb", p)
+				n += 1
+				if pl.get("mode", "") != "plaza" or not yaw_is(float(pl["yaw"]), e[2], deg_to_rad(0.6)):
+					bad += 1
+					if bad <= 5:
+						print("PAVE   edge miss p=", p, " sub=", pl.get("sub", ""), " yaw=", snappedf(rad_to_deg(float(pl["yaw"])), 0.1), " want=", rad_to_deg(e[2]))
+	ok("T3b every edge, every depth: back square to the edge", bad == 0, "%d/%d" % [n - bad, n])
 
 
 ## T4: мышью на площади 12×12 — дом посередине, второй в ряд, лавка в тот же ряд; рядом на траве — как раньше
@@ -491,8 +520,11 @@ func _t8_rotate() -> void:
 	game.rig.set_view(Vector3(238, 2, 234), 15, 58, 40)
 	await frames(90)                      # камера доезжает плавно — ждём, пока встанет
 	var c := scr(Vector2(238, 234))
-	move(c)
-	await frames(8)
+	for tr in 5:
+		move(c)
+		await frames(8)
+		if game.hover.distance_to(Vector2(238, 234)) < 0.3:
+			break
 	var pre: Dictionary = game.place_info.duplicate()
 	var hc = get_viewport().gui_get_hovered_control()
 	if hc:
@@ -506,16 +538,16 @@ func _t8_rotate() -> void:
 	await frames(2)
 	# 18 точек экрана игры (окно может быть крупнее — пересчёт): поворот начался (порог 14), но меньше 4° — это щелчок
 	var px := 18.0 * get_viewport().get_final_transform().get_scale().x
-	for k in 4:
-		move(c + Vector2(px * (k + 1) / 4.0, 0))
-		await frames(1)
-	await frames(1)
+	for k in 6:
+		move(c + Vector2(px * minf(k + 1, 4) / 4.0, 0))
+		await frames(2)
+	var rot_started: bool = game.rot_drag
 	btn(c + Vector2(px, 0), MOUSE_BUTTON_LEFT, false)
 	await frames(5)
 	ids = new_ids(before)
 	print("PAVE   T8 tiny: pre sub=", pre.get("sub", ""), " err=", pre.get("err", ""), " pos=", pre.get("pos", Vector2.ZERO), " now err=", game.place_info.get("err", ""), " lock=", game.place_lock, " yaw0=", rad_to_deg(game.rot_yaw0), " yaw=", rad_to_deg(game.tool_yaw))
 	var bpos: Vector2 = game.city.buildings[ids[0]]["pos"] if ids.size() == 1 else Vector2.INF
-	ok("T8 tiny drag counts as a click", ids.size() == 1 and bpos.distance_to(pre["pos"]) <= 0.05, "new=%d built=%s yaw=%.1f pre=%s" % [ids.size(), bpos, rad_to_deg(float(game.city.buildings[ids[0]]["yaw"])) if ids.size() == 1 else 0.0, pre["pos"]])
+	ok("T8 tiny drag counts as a click", rot_started and ids.size() == 1 and bpos.distance_to(pre["pos"]) <= 0.05, "new=%d built=%s yaw=%.1f pre=%s" % [ids.size(), bpos, rad_to_deg(float(game.city.buildings[ids[0]]["yaw"])) if ids.size() == 1 else 0.0, pre["pos"]])
 
 
 ## T9: перенос дома на площадь — на мостовую, со старым поворотом; отмена — на место
@@ -632,4 +664,6 @@ func _t12_perf() -> void:
 			mx = maxi(mx, dt)
 		res[name] = [tot / pts.size(), mx]
 		print("PAVE PERF %s avg=%d max=%d us" % [name, tot / pts.size(), mx])
-	ok("T12 plaza placement fast enough", int(res["plaza"][0]) < 3000 and int(res["rim"][0]) < 3000, "plaza=%s rim=%s" % [res["plaza"], res["rim"]])
+	# сравнение с улицей в том же прогоне (машина то свободна, то занята): площадь — не больше чем вдвое с небольшим
+	var lim := float(res["street"][0]) * 2.2 + 300.0
+	ok("T12 plaza placement fast enough", float(res["plaza"][0]) < lim and float(res["rim"][0]) < lim, "plaza=%s rim=%s limit=%d" % [res["plaza"], res["rim"], int(lim)])
