@@ -111,6 +111,9 @@ var last_snap_p := Vector2.INF        # где был курсор, когда �
 # к ней, ровно у края. У входа нужна мостовая
 var pave_build := true                 # false — пока раскладывается готовый город меню (витрина, старый городок): там прежние правила
 var yaw_set := false                   # игрок уже поворачивал постройку (Z/X, зажатая мышь) — дальше держим его поворот
+var free_yaw := 0.0                    # …вот этот (отдельно от tool_yaw: перенос деревьев и домов его не сбивает)
+var rot_off := Vector2.ZERO            # Z/X: середина постройки относительно курсора — поворачивается на месте, не прыгает
+var press_pl := {}                     # какую постройку показывала тень в миг нажатия (поворот зажатой мышью — от неё)
 const SNAP_R := 0.8                    # фасад (постройка серединой на курсоре) ближе этого к краю дороги — прилипает к краю
 const SNAP_STAY := 1.5                 # …и держится, пока фасад не отошёл дальше этого (без дёрганья на границе)
 const PAVE_SLOPE := 0.5                # дом и лавка на мостовой — только на почти ровном месте (иначе ступени вокруг)
@@ -1734,6 +1737,7 @@ func set_tool(t: String) -> void:
 		_cover_selected()
 	if t != prev_tool or t == "":
 		manual_yaw = false
+		rot_off = Vector2.ZERO
 		last_snap_n = Vector2.ZERO        # новая постройка — к дороге заново, без памяти о прошлой
 	if t != "settle":
 		settle_fam = {}
@@ -1895,6 +1899,14 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	# готовый город меню: дом и лавка на мостовую не встают (кромку — неровный край кисти у фасада — прощаем)
 	elif err == "" and d["kind"] in ["house", "shop", "rp", "store"] and _over_road(chk["cells"], pos, yaw, float(bb[3])):
 		err = "Здесь дорога — поставьте рядом с ней"
+	# игрок: поле и крупное украшение тоже не на большую дорогу к станции (фонарь или цветы у края — можно)
+	if err == "" and pave_build and d["kind"] in ["farm", "decor"]:
+		var on_big := 0
+		for k in (chk["cells"] as PackedInt32Array):
+			if Land.walk_kind(land.base_kind[k]):
+				on_big += 1
+		if on_big > (0 if d["kind"] == "farm" else 16):
+			err = "По большой дороге ездят повозки — здесь не строят"
 	return {"pos": pos, "yaw": yaw, "err": err, "cells": chk["cells"], "y": chk["y"], "variant": variant, "color": color, "tier": tier,
 		"mode": "free" if free else "", "sub": sub}
 
@@ -1911,9 +1923,23 @@ func _over_road(cells: PackedInt32Array, pos: Vector2, yaw: float, front: float)
 ## Поворот новой постройки без дороги рядом: переносимая — как стояла; игрок повернул (эту или прежние) — его
 ## поворот; иначе — фасадом к камере (по сторонам света)
 func _free_yaw() -> float:
-	if not moving.is_empty() or yaw_set or manual_yaw:
+	if not moving.is_empty() or manual_yaw:
 		return tool_yaw
+	if yaw_set:
+		return free_yaw
 	return snappedf(rig.yaw, PI / 2) if rig else 0.0
+
+
+## Z/X: запомнить, где середина показанной постройки относительно курсора — поворот будет вокруг неё (без прыжка)
+func _rot_keep() -> void:
+	if not place_info.has("pos") or not Defs.B.has(tool) or hover == Vector2.INF or not moving.is_empty():
+		return
+	if manual_yaw:
+		return                                # уже крутят — сдвиг тот же
+	var bb := _row_bounds(Catalog.make(tool, int(place_info.get("tier", 0)), int(place_info.get("variant", 0)), int(place_info.get("color", 0))))
+	var y := float(place_info["yaw"])
+	var c: Vector2 = (place_info["pos"] as Vector2) + City.axis(y) * ((float(bb[0]) + float(bb[1])) * 0.5) + City.facing(y) * ((float(bb[2]) + float(bb[3])) * 0.5)
+	rot_off = c - hover
 
 
 ## Свободная постановка игрока: {"pos", "yaw", "sub"}.
@@ -1925,8 +1951,15 @@ func _free_place(p: Vector2, bb: Array, mid: int, locked: bool) -> Dictionary:
 		return {"pos": p, "yaw": tool_yaw, "sub": "lock"}
 	# вплотную к дороге (курсор на траве у края) — фасадом к ней. Свой поворот этой постройки (Z/X, зажатая мышь)
 	# и выключенная привязка (R) — не прилипает. Войти — ближе SNAP_R, выйти — дальше SNAP_STAY: на границе не дёргается
-	if snap and not manual_yaw and not land.is_road(p):
-		var near_prev := last_snap_n != Vector2.ZERO and last_snap_p.distance_to(p) < 2.0
+	var near_prev := last_snap_n != Vector2.ZERO and last_snap_p.distance_to(p) < 2.0
+	var side_ok := not land.is_road(p)
+	if not side_ok and near_prev:
+		# курсор заехал на дорогу у самого края (до 1 м) — постройка остаётся прилипшей, а не прыгает на мостовую
+		var dd0 := 0.0
+		while dd0 <= 1.0 and land.is_road(p - last_snap_n * dd0):
+			dd0 += 0.1
+		side_ok = dd0 <= 1.0
+	if snap and not manual_yaw and side_ok:
 		var keep := last_snap_n if near_prev else Vector2.ZERO
 		var reach := (float(bb[3]) - float(bb[2])) * 0.5 + (SNAP_STAY if near_prev else SNAP_R)     # от середины до фасада + зазор
 		var e := _nearest_road(p, reach, (float(bb[1]) - float(bb[0])) * 0.5, keep)
@@ -1950,6 +1983,8 @@ func _free_place(p: Vector2, bb: Array, mid: int, locked: bool) -> Dictionary:
 	last_snap_n = Vector2.ZERO
 	last_snap_p = Vector2.INF
 	var y0 := _free_yaw()
+	if manual_yaw:
+		p += rot_off                          # повернули Z/X — середина остаётся, где была
 	var pc := p - City.axis(y0) * ((float(bb[0]) + float(bb[1])) * 0.5) - City.facing(y0) * ((float(bb[2]) + float(bb[3])) * 0.5)
 	if snap:
 		pc = _snap_row(pc, y0, bb, mid)       # рядом дом с тем же поворотом — встать с ним в ряд
@@ -1978,7 +2013,7 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 	var bp := Catalog.make(type, tier, variant, color)
 	var ax := City.axis(yaw)
 	var f := City.facing(yaw)
-	if homey and not _road_free_near(pos + ax * bp.door.x + f * bp.door.z, 1.7, own):
+	if not _road_free_near(pos + ax * bp.door.x + f * bp.door.z, 1.7, own):
 		return "Нужна дорога у входа"
 	var rects: Array = bp.footprint()
 	if rects.is_empty():
@@ -1992,11 +2027,15 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 		var od: Dictionary = city.def(o)
 		if od["kind"] == "decor" or od["kind"] == "farm":
 			continue
-		var rel := city.door_point(o) - pos
+		var odp := city.door_point(o)
+		var rel := odp - pos
 		var lp := Vector2(rel.dot(ax), rel.dot(f))
 		for r: Rect2 in rects:
 			if r.grow(0.4).has_point(lp):
 				return "Так загородится вход соседней постройки"
+		# сосед сейчас у дороги, а новая постройка закроет ему всю мостовую у входа
+		if od["kind"] != "center" and bool(o.get("road", false)) and not _road_free_near(odp, 1.7, own):
+			return "Так загородится вход соседней постройки"
 	return ""
 
 
@@ -2803,6 +2842,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			if mb.pressed:
 				press_screen = mb.position
 				press_hover = hover
+				press_pl = place_info.duplicate() if Defs.B.has(tool) else {}
 				_click()
 			else:
 				_release()
@@ -2813,7 +2853,7 @@ func _unhandled_input(e: InputEvent) -> void:
 		if not rot_drag and absf(dx) > ROT_DRAG_PX and absf(dx) > absf(mpos.y - press_screen.y) * 1.3 and press_hover != Vector2.INF:
 			rot_drag = true
 			if place_lock.is_empty():
-				var pl0 := placement(tool, press_hover)
+				var pl0 := press_pl if press_pl.has("pos") else placement(tool, press_hover)
 				place_lock = {"p": pl0["pos"]}
 				rot_yaw0 = float(pl0["yaw"])
 			else:
@@ -2838,16 +2878,20 @@ func _unhandled_input(e: InputEvent) -> void:
 				if k.ctrl_pressed:
 					_undo()
 				else:
+					_rot_keep()
 					tool_yaw = _yaw_now() - deg_to_rad(15)
 					manual_yaw = true
 					yaw_set = true
+					free_yaw = tool_yaw
 			KEY_Y:
 				if k.ctrl_pressed:
 					_redo()
 			KEY_X:
+				_rot_keep()
 				tool_yaw = _yaw_now() + deg_to_rad(15)
 				manual_yaw = true
 				yaw_set = true
+				free_yaw = tool_yaw
 			KEY_C:
 				if k.ctrl_pressed:
 					set_tool("copy")
@@ -3088,6 +3132,7 @@ func _build_here() -> void:
 			# поворот был для этой постройки: следующая снова сама встанет фасадом к дороге (а поворот
 			# tool_yaw остаётся — для мест без дороги и для украшений)
 			manual_yaw = false
+			rot_off = Vector2.ZERO
 		_puff(Vector3(pl["pos"].x, float(pl["y"]), pl["pos"].y))
 		sound.ui("place")
 		return
@@ -3120,6 +3165,8 @@ func _release() -> void:
 				place_lock = {}                   # повернули — дальше постройка едет за мышкой, щелчок — построить
 				manual_yaw = true
 				yaw_set = true
+				free_yaw = tool_yaw
+				rot_off = Vector2.ZERO
 		elif not hud.mouse_over_ui() and (hover != Vector2.INF or not place_lock.is_empty()):
 			_build_here()
 		return

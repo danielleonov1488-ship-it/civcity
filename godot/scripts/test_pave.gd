@@ -171,6 +171,7 @@ func _run() -> void:
 	_f6_owner_oval()
 	_f7_yaw_kept()
 	_f8_rules()
+	await _f9_review()
 	await _t8_rotate()
 	await _t9_move()
 	_t10_walk()
@@ -380,7 +381,7 @@ func _f6_owner_oval() -> void:
 ## F7: свой поворот держится и для следующих построек
 func _f7_yaw_kept() -> void:
 	reset()
-	game.tool_yaw = 0.7
+	game.free_yaw = 0.7
 	game.yaw_set = true
 	var a: Dictionary = game.placement("house_pleb", S2 + Vector2(6, -6))
 	ok("F7 player's rotation is used", a.get("sub", "") == "free" and yaw_is(float(a["yaw"]), 0.7, 0.001))
@@ -426,6 +427,79 @@ func _f8_rules() -> void:
 	var sl := probe("house_pleb", c)
 	ok("F8 steep paving refused with a reason", sl["err"] == "Мостовая здесь слишком наклонная — найдите место ровнее", str(sl["err"]))
 	reset()
+
+
+## F9: по независимой проверке — край дороги без прыжка, Z/X на месте, поворот не сбивается переносом, поле не на большую дорогу
+func _f9_review() -> void:
+	# курсор с травы заехал на дорогу у самого края — постройка не прыгает на мостовую
+	reset()
+	var a: Dictionary = game.placement("house_pleb", Vector2(176, 168.0 + 0.3))
+	var b: Dictionary = game.placement("house_pleb", Vector2(176, 168.0 - 0.5))
+	ok("F9 cursor slips onto the street edge: still snapped, no jump", a.get("sub", "") == "road" and b.get("sub", "") == "road"
+		and (a["pos"] as Vector2).distance_to(b["pos"]) <= 0.05 and yaw_is(float(a["yaw"]), float(b["yaw"]), 0.001), "a=%s b=%s %s" % [a.get("sub", ""), b.get("sub", ""), (a["pos"] as Vector2).distance_to(b["pos"])])
+	var c: Dictionary = game.placement("house_pleb", Vector2(176, 168.0 - 1.6))
+	ok("F9 deeper into the street: free on the paving", c.get("sub", "") == "free")
+	# Z у дороги — поворачивается на месте (середина остаётся)
+	reset()
+	var p := Vector2(176, 168.0 + 0.6)
+	var s0: Dictionary = game.placement("house_pleb", p)
+	game.place_info = s0
+	game.hover = p
+	game._rot_keep()
+	game.tool_yaw = float(s0["yaw"]) + deg_to_rad(15)
+	game.manual_yaw = true
+	var s1: Dictionary = game.placement("house_pleb", p)
+	ok("F9 Z/X next to a road turns it in place", centre("house_pleb", s1).distance_to(centre("house_pleb", s0)) <= 0.05 and yaw_is(float(s1["yaw"]), float(s0["yaw"]) + deg_to_rad(15), 0.002),
+		"moved %.2f" % centre("house_pleb", s1).distance_to(centre("house_pleb", s0)))
+	# свой поворот не сбивается переносом дома
+	reset()
+	game.yaw_set = true
+	game.free_yaw = 0.7
+	var src: Dictionary = {}
+	for id in game.city.buildings:
+		if game.city.buildings[id]["type"] == "house_pleb":
+			src = game.city.buildings[id]
+	if not src.is_empty():
+		game.start_move(src)
+		game.set_tool("")                    # отменили перенос
+		game.set_tool("house_pleb")
+	game.yaw_set = true
+	var k: Dictionary = game.placement("house_pleb", S2 + Vector2(9, -9))
+	ok("F9 remembered rotation survives moving a house", yaw_is(float(k["yaw"]), 0.7, 0.001), "yaw=%.3f" % float(k["yaw"]))
+	# новая постройка не отрезает соседа от дороги (его дверь не накрыта, но мостовая у входа закрыта вся)
+	reset()
+	var st: Dictionary = game.city.place("stall_fruit", centre_pos("stall_fruit", Vector2(176, 186.6), PI), PI)
+	game.city.compute()
+	var cut := false
+	if bool(st.get("road", false)):
+		var sdp: Vector2 = game.city.door_point(st)
+		for dx: float in [-1.5, -0.75, 0.0, 0.75, 1.5]:
+			for dz: float in [-1.5, -0.75]:
+				var q := probe("house_pleb", sdp + Vector2(dx, dz))
+				if q["err"] == "":
+					var own := {}
+					for kk in (q["cells"] as PackedInt32Array):
+						own[kk] = true
+					if not game._road_free_near(sdp, 1.7, own):
+						cut = true
+	ok("F9 a building never cuts a neighbour off the road", bool(st.get("road", false)) and not cut)
+	game.city.remove(st, false)
+	# поле — не на большую дорогу к станции
+	reset()
+	var ft := _a_farm()
+	if Defs.B[ft].has("unlock"):
+		game.city.research[Defs.B[ft]["unlock"]] = true
+	game.city.research[ft] = true
+	var f: Dictionary = game.placement(ft, Vector2(192, 100))
+	ok("F9 a farm cannot cover the big road", f["err"] == "По большой дороге ездят повозки — здесь не строят", str(f["err"]))
+	reset()
+
+
+func _a_farm() -> String:
+	for t in Defs.B:
+		if Defs.B[t]["kind"] == "farm":
+			return t
+	return ""
 
 
 ## T8: поворот на площади — зажать и вести вбок; отпустить — не строит; щелчок — строит повёрнутым
