@@ -10,6 +10,11 @@
 	# сертификаты — от Let's Encrypt (у запасного ZeroSSL в этой версии Caddy сломан вход)
 	email noreply@civcity.ru
 	acme_ca https://acme-v02.api.letsencrypt.org/directory
+	# без HTTP/3 (QUIC): у части провайдеров он режется или зависает посреди загрузки, и лаунчер
+	# ждёт впустую; обычные HTTP/1.1 и HTTP/2 работают везде и не медленнее
+	servers {
+		protocols h1 h2
+	}
 }
 
 (game) {
