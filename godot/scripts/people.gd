@@ -61,6 +61,7 @@ func setup(l: Land, c: City, g) -> void:
 	refresh(land.road_chunks.keys())
 	_make_cart()
 	city.building_removed.connect(_on_building_removed)
+	city.building_added.connect(_on_building_added)
 	city.changed.connect(func(): _jobs_dirty = true)
 	city.family_left.connect(_on_family_left)
 	city.family_assigned.connect(_on_assigned)
@@ -101,6 +102,36 @@ func refresh(chunks: Array) -> void:
 		for j in range(ch.y * s, ch.y * s + s):
 			for i in range(ch.x * s, ch.x * s + s):
 				grid.set_point_solid(Vector2i(i, j), not _walk_g(i, j))
+
+
+## Сетка ходьбы под клетками постройки (и кольцом вокруг) — сразу, как постройку поставили или убрали.
+## На ровной мостовой земля под домом не меняется, чанк к перестройке не помечается, и без этого жители
+## ходили бы сквозь новый дом на площади, а на месте снесённого оставалась бы невидимая стена
+func refresh_cells(cells: PackedInt32Array) -> void:
+	var seen := {}
+	for k in cells:
+		var gi := (k % Land.N) / G
+		var gj := (k / Land.N) / G
+		for dj in range(-1, 2):
+			for di in range(-1, 2):
+				var g := Vector2i(gi + di, gj + dj)
+				if g.x < 0 or g.y < 0 or g.x >= GN or g.y >= GN or seen.has(g):
+					continue
+				seen[g] = true
+				grid.set_point_solid(g, not _walk_g(g.x, g.y))
+
+
+## Путь (от p по точкам path с номера i) проходит по клеткам постройки id?
+func _path_hits(p: Vector2, path: PackedVector2Array, i: int, id: int) -> bool:
+	var a := p
+	for j in range(i, path.size()):
+		var b: Vector2 = path[j]
+		var n := maxi(1, int(a.distance_to(b) / 0.25))
+		for s in n + 1:
+			if land.occ_at(a.lerp(b, float(s) / n)) == id:
+				return true
+		a = b
+	return false
 
 
 func gcell(p: Vector2) -> Vector2i:
@@ -1884,7 +1915,40 @@ func _on_rehomed(old: int, new: int) -> void:
 	_jobs_dirty = true
 
 
+## Постройку поставили (в том числе на площадь, прямо на мостовую): кто стоит на её месте — отходит на
+## свободную мостовую, кто шёл сквозь неё — обходит, кошки тоже
+func _on_building_added(b: Dictionary) -> void:
+	if land == null:
+		return
+	var cells: PackedInt32Array = b.get("cells", PackedInt32Array())
+	refresh_cells(cells)
+	if city.bulk or cells.is_empty():
+		return
+	var id := int(b["id"])
+	for r in residents:
+		if r["state"] in ["home", "work", "door"] or r["act"] == "inside":
+			continue                    # дома, на работе, в дверях — их не видно на улице
+		if land.occ_at(r["p"]) == id:
+			var q := _near_free(r["p"])
+			if q != Vector2.INF:
+				r["p"] = q
+				_place(r)
+		if r["state"] == "walk":
+			var path: PackedVector2Array = r["path"]
+			if path.size() >= 2 and _path_hits(r["p"], path, int(r["i"]), id):
+				_go(r, path[path.size() - 1], r["goal"], true)
+	for c in cats:
+		if land.occ_at(c["p"]) == id:
+			var q := _near_free(c["p"])
+			if q != Vector2.INF:
+				c["p"] = q
+		if c["state"] == "walk" and _path_hits(c["p"], c["path"], int(c["i"]), id):
+			c["state"] = "sit"           # через миг пойдёт снова — уже в обход
+			c["t"] = 0.5
+
+
 func _on_building_removed(b: Dictionary) -> void:
+	refresh_cells(b.get("cells", PackedInt32Array()))
 	slots.erase(b["id"])
 	# кто стоял у этой лавки, сидел на скамье, был внутри — идут дальше
 	for r in residents.duplicate():

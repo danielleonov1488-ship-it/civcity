@@ -70,6 +70,9 @@ func _build() -> void:
 	if city.building_added.is_connected(g._on_added):
 		city.building_added.disconnect(g._on_added)
 	city.bulk = true
+	# витрина раскладывается по прежним правилам (без стройки на площади и с прежним поиском края) — город меню
+	# остаётся ровно таким, каким его одобрили (сайт, ролики)
+	g.pave_build = false
 	# вся карта своя: у края нет табличек «купить участок» (витрина не сохраняется)
 	for j in Land.PLOTS:
 		for i in Land.PLOTS:
@@ -91,6 +94,7 @@ func _build() -> void:
 		if verbose:
 			print("  showcase %s: %d ms, %d buildings" % [st, Time.get_ticks_msec() - ts, city.buildings.size()])
 	city.bulk = false
+	g.pave_build = true
 	city.money = 48000.0
 	city.level = 7
 	city.compute()

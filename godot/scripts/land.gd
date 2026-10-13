@@ -40,6 +40,7 @@ var tint := PackedByteArray()        # 0…255 — оттенок травы п�
 var occ := PackedInt32Array()        # id постройки на клетке (0 — свободно)
 var base_h := PackedFloat32Array()   # исходная карта — для сохранения только изменений
 var base_kind := PackedByteArray()
+var rev := 0                          # растёт при каждом изменении земли (кэш «это площадь?» в game.gd)
 var owned := {}                      # Vector2i участка → true
 var dirty := {}                      # Vector2i куска → true (перестроить сетку)
 var road_chunks := {}                # куски, где есть дороги (для маски покрытий и сетки ходьбы)
@@ -260,6 +261,7 @@ func far_height(x: float, z: float) -> float:
 
 
 func _mark(i: int, j: int) -> void:
+	rev += 1
 	dirty[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
 	touched[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
 	# стенки уступов на краю куска рисует соседний кусок
@@ -340,15 +342,25 @@ func paint_line(a: Vector2, b: Vector2, r: float, kd: int, flat := false) -> Arr
 	return out
 
 
-func undo(changes: Array) -> void:
-	for ch in changes:
+## Вернуть клетки как были (отмена мазка кисти). Клетки под постройками не трогаются: земля и мостовая под
+## домом остаются такими, какими были, когда его ставили (иначе дом повис бы или земля проткнула бы пол).
+## Возвращает номера записей, которые правда вернули
+func undo(changes: Array) -> PackedInt32Array:
+	var done := PackedInt32Array()
+	# с конца: мазок по склону записывает одну клетку дважды (сперва трава, потом уже мостовая) — вернуть надо первое
+	for n in range(changes.size() - 1, -1, -1):
+		var ch: Array = changes[n]
 		var c: Vector2i = ch[0]
 		var k := idx(c.x, c.y)
+		if occ[k] != 0:
+			continue
+		done.append(n)
 		kind[k] = ch[1]
 		h[k] = ch[2]
 		_mark(c.x, c.y)
 		if walk_kind(ch[1]):
 			road_chunks[Vector2i(c.x / CH, c.y / CH)] = true
+	return done
 
 
 # ---------- постройки на земле ----------
