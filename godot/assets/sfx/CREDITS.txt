@@ -5,3 +5,5 @@ Meow.ogg — IgnasD, «Meow», OpenGameArt, CC0
 birds.ogg — isaiah658, «Ambient Bird Sounds», OpenGameArt, CC0
 
 coins.ogg — Kenney «RPG Audio» / «UI Audio» (www.kenney.nl), CC0 — выбран владельцем как «Монетки: A»
+
+battle/*.ogg (удары, щиты, падение, скрип машин, монеты в бою Легиона) — Kenney «RPG Audio» (www.kenney.nl), CC0

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Сервер CivCity: аккаунты, сохранения в облаке, восстановление пароля",
   "main": "index.js",
-  "scripts": { "start": "node --disable-warning=ExperimentalWarning index.js" },
+  "scripts": { "start": "node --disable-warning=ExperimentalWarning index.js", "test": "node --disable-warning=ExperimentalWarning test.js" },
   "engines": { "node": ">=22.13" },
   "dependencies": { "nodemailer": "10.0.16" }
 }

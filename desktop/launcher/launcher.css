@@ -1,4 +1,4 @@
-/* Лаунчер CivCity: та же римская палитра, что и в игре — пергамент, терракота, золото */
+/* Лаунчер CivCity: та же римская палитра, что и в игре — пергамент, терракота, золото. Шрифты — fonts/ рядом (OFL). */
 :root {
   --paper: #f8f1e2; --paper-2: #f1e6cf; --ink: #45311f; --ink-soft: #7a634b;
   --terra: #c8553d; --terra-deep: #a84530; --gold: #c39434; --gold-soft: #e9b949;
@@ -60,6 +60,10 @@ main { height: calc(100% - 34px); display: grid; grid-template-columns: 1fr 340p
 .linkish { border: 0; background: none; padding: 0; color: var(--terra-deep); text-decoration: underline; cursor: pointer; font-size: 12.5px; }
 .signed { display: flex; flex-direction: column; gap: 6px; }
 .signed b { word-break: break-all; }
+.muted { color: var(--ink-soft); }
+.small { font-size: 12px; }
+.tools { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; }
+.linkish:disabled { opacity: 0.5; cursor: default; }
 
 .settings .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; font-weight: 700; font-size: 13px; }
 select { padding: 5px 8px; border: 1px solid #d8c6a4; border-radius: 8px; background: #fff; }
@@ -67,7 +71,8 @@ select { padding: 5px 8px; border: 1px solid #d8c6a4; border-radius: 8px; backgr
 .check input { width: 16px; height: 16px; accent-color: var(--terra); }
 
 .update { margin-top: auto; }
-.upd-text { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 5px; min-height: 18px; }
+.upd-text { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 5px; min-height: 18px; font-variant-numeric: tabular-nums; }
+.upd-sub { margin-top: 3px; min-height: 15px; text-align: right; font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .upd-bar { height: 8px; border-radius: 5px; background: #e3d5bc; overflow: hidden; }
 #upd-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--terra), var(--gold-soft)); transition: width 0.2s; }
 .upd-bar.wait #upd-fill { width: 30%; animation: wait 1.2s ease-in-out infinite alternate; }

@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('civ', {
   logout: () => ipcRenderer.invoke('l:logout'),
   setPref: (key, value) => ipcRenderer.invoke('l:setPref', key, value),
   play: () => ipcRenderer.invoke('l:play'),
+  verify: () => ipcRenderer.invoke('l:verify'),
+  openSaves: () => ipcRenderer.invoke('l:saves'),
   downloadShell: () => ipcRenderer.invoke('l:shell'),
   open: url => ipcRenderer.invoke('l:open', url),
   win: what => ipcRenderer.send('l:win', what),

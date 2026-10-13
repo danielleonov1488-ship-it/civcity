@@ -1,31 +1,45 @@
 'use strict';
-/* Лаунчер: вход и регистрация, новости и ссылки с сервера, настройки, ход обновления и кнопка «Играть».
-   Всё, что касается сети и файлов, делает сама программа (main.js) — здесь только окно; связь — window.civ. */
+/* Лаунчер: вход и регистрация, новости и ссылки с сервера, настройки, ход загрузки игры и кнопка «Играть».
+   Всё, что касается сети, файлов и запуска игры, делает сама программа (main.js) — здесь только окно; связь — window.civ. */
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 const L = {
   email: null,
-  update: { done: false },
+  version: '',
+  update: { busy: true },
   mode: 'login',
+  note: null,          // сообщение под кнопкой входа (например, «вход устарел»)
 
   async init() {
     $('tb-min').onclick = () => civ.win('min');
     $('tb-close').onclick = () => civ.win('close');
     const info = await civ.info();
     this.email = info.email;
-    $('ver').textContent = `Программа ${info.version}${info.build ? ` · игра ${info.build}` : ''}`;
-    $('quality').value = info.prefs.quality || 'auto';
-    $('fullscreen').checked = !!info.prefs.fullscreen;
-    $('autostart').checked = !!info.prefs.autostart;
-    $('quality').onchange = () => civ.setPref('quality', $('quality').value);
-    $('fullscreen').onchange = () => civ.setPref('fullscreen', $('fullscreen').checked);
-    $('autostart').onchange = () => civ.setPref('autostart', $('autostart').checked);
-    $('play').onclick = () => { $('play').disabled = true; $('play').textContent = 'Запускаю…'; civ.play(); };
+    this.version = info.version;
+    this.showVersion(info.game);
+    this.showPrefs(info.prefs);
+    $('quality').onchange = async () => this.showPrefs(await civ.setPref('quality', $('quality').value));
+    $('fullscreen').onchange = async () => this.showPrefs(await civ.setPref('fullscreen', $('fullscreen').checked));
+    $('autostart').onchange = async () => this.showPrefs(await civ.setPref('autostart', $('autostart').checked));
+    $('verify').onclick = () => civ.verify();
+    $('saves').onclick = () => civ.openSaves();
+    $('play').onclick = () => this.play();
     $('shell-dl').onclick = () => civ.downloadShell();
     civ.onUpdate(s => this.onUpdate(s));
     this.drawAccount();
     this.loadContent();
+  },
+
+  showPrefs(p) {
+    if (!p) return;
+    $('quality').value = p.quality || 'high';
+    $('fullscreen').checked = !!p.fullscreen;
+    $('autostart').checked = !!p.autostart;
+  },
+
+  showVersion(g) {
+    $('ver').textContent = `Программа ${this.version}` + (g ? ` · игра ${g.version}${g.build ? ` (сборка ${g.build})` : ''}` : '');
   },
 
   async loadContent() {
@@ -48,8 +62,9 @@ const L = {
     const box = $('acct');
     if (this.email) {
       box.innerHTML = `<div class="signed"><h3>Аккаунт</h3><span>Вы вошли как <b>${esc(this.email)}</b></span>
+        <span class="muted small">Город хранится в облаке — играйте с любого компьютера.</span>
         <span><button type="button" class="linkish" id="a-out">Выйти</button></span></div>`;
-      $('a-out').onclick = async () => { await civ.logout(); this.email = null; this.drawAccount(); this.refreshPlay(); };
+      $('a-out').onclick = async () => { await civ.logout(); this.email = null; this.drawAccount(); };
       this.refreshPlay();
       return;
     }
@@ -65,6 +80,7 @@ const L = {
         const r = await civ.forgot($('a-email').value);
         this.drawAccount(r.error || 'Если такая почта есть в игре, письмо уже летит. Проверьте и папку «Спам».', r.error ? 'bad' : 'good');
       };
+      this.refreshPlay();
       return;
     }
     const reg = this.mode === 'reg';
@@ -91,25 +107,38 @@ const L = {
     this.refreshPlay();
   },
 
-  /* ---------- Обновление и «Играть» ---------- */
+  /* ---------- Загрузка игры и «Играть» ---------- */
+
+  async play() {
+    const r = await civ.play();
+    if (r && r.relogin) { this.email = null; this.mode = 'login'; this.drawAccount(r.relogin); }
+    else if (r && r.error) { $('upd-text').textContent = r.error; }
+  },
 
   onUpdate(s) {
     this.update = s;
     $('upd-text').textContent = s.text || '';
+    $('upd-sub').textContent = s.sub || '';
     const bar = $('upd-bar');
     bar.classList.toggle('wait', s.p === null || s.p === undefined);
     $('upd-fill').style.width = s.p == null ? '' : Math.round(s.p * 100) + '%';
     $('shell-note').hidden = !s.shell;
-    if (s.build) $('ver').textContent = $('ver').textContent.replace(/ · игра \d+|$/, ` · игра ${s.build}`);
+    $('verify').disabled = !!(s.busy || s.running || !s.ready);
+    if (s.game !== undefined) this.showVersion(s.game);
     this.refreshPlay();
   },
 
   refreshPlay() {
-    const b = $('play');
-    if (b.textContent === 'Запускаю…') return;
-    const ready = this.update.done;
-    b.disabled = !ready || !this.email;
-    b.textContent = !this.email ? 'Войдите, чтобы играть' : !ready ? 'Обновляю…' : 'Играть';
+    const b = $('play'), s = this.update;
+    let text = 'Играть', on = true;
+    if (!this.email) { text = 'Войдите, чтобы играть'; on = false; }
+    else if (s.running) { text = 'Игра запущена'; on = false; }
+    else if (s.starting) { text = 'Запускаю…'; on = false; }
+    else if (s.busy) { text = s.ready ? 'Обновляю…' : 'Скачиваю…'; on = false; }
+    else if (!s.ready) { text = s.shell ? 'Нужна новая версия' : 'Скачать ещё раз'; on = !s.shell; }
+    b.textContent = text;
+    b.disabled = !on;
+    b.classList.toggle('small-text', text.length > 12);
   },
 };
 

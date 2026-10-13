@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Аккаунт — CivCity</title>
+<meta name="description" content="Новый пароль для CivCity и ваш город в облаке.">
+<meta name="theme-color" content="#22150c">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+<link rel="canonical" href="https://civcity.ru/account/">
+<link rel="icon" href="../favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="preload" href="../assets/fonts/philosopher-bold.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/account.js" defer></script>
+</head>
+<body class="page">
+<a class="skip" href="#main">К содержанию</a>
+<header class="top">
+  <a class="brand" href="../" aria-label="CivCity — на главную"><img src="../assets/img/logo-sm.webp" alt="CivCity" width="240" height="118"></a>
+  <nav class="nav nav-plain" aria-label="Разделы сайта">
+    <a href="../">Главная</a>
+    <a href="../#news">Новости</a>
+  </nav>
+  <a class="btn btn-sm" href="/download/CivCity-setup.exe">Скачать</a>
+</header>
+
+<main id="main">
+  <div class="wrap">
+    <h1>Аккаунт CivCity</h1>
+    <p class="lead-c">Аккаунт создаётся в программе при первом запуске — нужны только почта и пароль. Здесь можно задать новый пароль и посмотреть, какой город хранится в облаке.</p>
+    <noscript><p class="msg bad">Для этой страницы нужен включённый JavaScript.</p></noscript>
+
+    <section class="panel card reset-panel" id="reset" aria-labelledby="reset-title" hidden>
+      <h2 id="reset-title"><img src="../assets/img/icons/keys.webp" alt="" width="96" height="96">Новый пароль</h2>
+      <form data-form="reset" novalidate>
+        <p>Придумайте новый пароль — не короче 6 знаков.</p>
+        <label class="field"><span>Новый пароль</span>
+          <span class="pw"><input type="password" name="password" autocomplete="new-password" minlength="6" maxlength="200" required><button type="button" data-eye aria-label="Показать пароль">Показать</button></span>
+        </label>
+        <label class="field"><span>Ещё раз, для проверки</span>
+          <input type="password" name="password2" autocomplete="new-password" minlength="6" maxlength="200" required>
+        </label>
+        <div class="form-row"><button class="btn" type="submit">Сохранить пароль</button></div>
+        <p class="msg" data-msg role="alert" hidden></p>
+      </form>
+      <div class="done" data-done hidden>
+        <img src="../assets/img/icons/laurels.webp" alt="" width="96" height="96">
+        <p><b>Пароль изменён.</b> Теперь войдите в программе CivCity с почтой <b data-done-email></b> и новым паролем.</p>
+        <p class="muted">На других компьютерах вход сброшен — там тоже понадобится новый пароль.</p>
+        <div class="form-row center"><a class="btn" href="/download/CivCity-setup.exe">Скачать CivCity</a><a class="btn-ghost dark" href="../">На главную</a></div>
+      </div>
+    </section>
+
+    <div class="panels" data-panels>
+      <section class="panel card" id="forgot" aria-labelledby="forgot-title">
+        <h2 id="forgot-title"><img src="../assets/img/icons/scroll.webp" alt="" width="96" height="96">Забыли пароль?</h2>
+        <p>Напишите почту, с которой входите в CivCity, — пришлём письмо со ссылкой для нового пароля. Ссылка действует час.</p>
+        <form data-form="forgot" novalidate>
+          <label class="field"><span>Почта</span>
+            <input type="email" name="email" autocomplete="email" inputmode="email" maxlength="254" required placeholder="you@example.ru">
+          </label>
+          <div class="form-row"><button class="btn" type="submit">Прислать ссылку</button></div>
+          <p class="msg" data-msg role="status" hidden></p>
+        </form>
+      </section>
+
+      <section class="panel card" id="city" aria-labelledby="city-title">
+        <h2 id="city-title"><img src="../assets/img/icons/save.webp" alt="" width="96" height="96">Мой город в облаке</h2>
+        <div data-signed-out>
+          <p>Войдите, чтобы посмотреть, какой город сохранён на сервере.</p>
+          <form data-form="login" novalidate>
+            <label class="field"><span>Почта</span>
+              <input type="email" name="email" autocomplete="username" inputmode="email" maxlength="254" required>
+            </label>
+            <label class="field"><span>Пароль</span>
+              <span class="pw"><input type="password" name="password" autocomplete="current-password" maxlength="200" required><button type="button" data-eye aria-label="Показать пароль">Показать</button></span>
+            </label>
+            <div class="form-row"><button class="btn" type="submit">Войти</button><a href="#forgot" class="small-link">Забыли пароль?</a></div>
+            <p class="msg" data-msg role="alert" hidden></p>
+          </form>
+        </div>
+        <div data-signed-in hidden>
+          <p>Вы вошли как <b data-email></b>.</p>
+          <div class="city-card" data-city aria-live="polite"></div>
+          <div data-history-box hidden>
+            <h3 class="history-title">Прежние сохранения</h3>
+            <ul class="history" data-history></ul>
+          </div>
+          <p class="muted small" data-old hidden></p>
+          <div class="form-row"><button class="btn-ghost dark" type="button" data-logout>Выйти</button></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-grid">
+    <img src="../assets/img/logo-sm.webp" alt="CivCity" width="240" height="118" loading="lazy">
+    <p>Уютный градостроитель про Древний Рим.<br>© 2026 CivCity</p>
+    <nav aria-label="Ссылки внизу страницы">
+      <a href="/download/CivCity-setup.exe">Скачать</a>
+      <a href="../">Главная</a>
+      <a href="../credits/">Авторы и лицензии</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

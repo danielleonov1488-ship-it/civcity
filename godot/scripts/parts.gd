@@ -52,6 +52,9 @@ func _sub(mesh: Mesh, local: Transform3D) -> Dictionary:
 static func _special_mesh(name: String) -> Mesh:
 	if _special.has(name):
 		return _special[name]
+	if name.begins_with("#mil_"):                  # палатки, мишени, баллисты… Легиона (cat_military.gd)
+		_special[name] = CatMilitary.kit_mesh(name)
+		return _special[name]
 	var bm := BoxMesh.new()
 	var m := StandardMaterial3D.new()
 	match name:

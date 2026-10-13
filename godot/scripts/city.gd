@@ -52,11 +52,14 @@ var goals_done: Array = []
 var events: Array = []                # [{day, text, icon}]
 var road_cells := 0                   # сколько клеток дорог проложил игрок
 var rng := RandomNumberGenerator.new()
+var bulk := false                     # place() без пересчёта (витрина Showcase ставит сотни построек, compute — в конце)
+var legion := Legion.new()            # армия: походы, Слава, чудеса (legion.gd); сохраняется под ключом "legion"
 
 
 func _init(l: Land) -> void:
 	land = l
 	rng.seed = 5
+	legion.bind(self)
 
 
 func def(b: Dictionary) -> Dictionary:
@@ -69,7 +72,9 @@ func is_house(b: Dictionary) -> bool:
 
 func unlocked(type: String) -> bool:
 	var u: String = Defs.B[type].get("unlock", "")
-	return u == "" or research.has(u)
+	if u.begins_with("boss"):                 # военные постройки: победа Легиона над N-м боссом
+		return legion.bosses() >= int(u.substr(4))
+	return u == "" or research.has(u) or legion.wonder_unlocks(type)   # чудеса открывает и рейтинг походов
 
 
 func blueprint(b: Dictionary) -> Bp:
@@ -150,6 +155,12 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	if money < float(d["cost"]) and ignore_id == -1:
 		res["err"] = "Не хватает денариев"
 		return res
+	if ignore_id == -1 and legion.glory + 0.001 < float(d.get("glory", 0)):
+		res["err"] = "Не хватает Славы: нужно %d (Слава — за победы Легиона)" % int(d["glory"])
+		return res
+	if ignore_id == -1 and d.get("unique", false) and _count(func(o): return o["type"] == type) > 0:
+		res["err"] = "Такая постройка в городе уже есть"
+		return res
 	if d.get("wall", false):
 		return res                            # украшение на стене: место выбирает игра (стена дома)
 	var tier := 1 if d["kind"] == "house" else (6 if type == "center" else 0)   # станция занимает место на вырост
@@ -227,6 +238,7 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	next_id += 1
 	if not free:
 		money -= float(d["cost"])
+		legion.glory = maxf(0.0, legion.glory - float(d.get("glory", 0)))   # чудеса Легиона стоят ещё и Славы
 	var cells: PackedInt32Array = b["cells"]
 	if not d.get("water", false):
 		land.flatten_cells(cells, b["y"], Land.Kind.FIELD if d["kind"] == "farm" else -1)
@@ -236,6 +248,9 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		if land.occ[k] >= 0:                   # арку у въезда (занятость < 0) не затираем даже готовым городом
 			land.occ[k] = b["id"]
 	buildings[b["id"]] = b
+	if bulk:                                    # готовый город раскладывается разом — пересчёт один раз в конце
+		building_added.emit(b)
+		return b
 	compute()
 	building_added.emit(b)
 	_check_goals()
@@ -502,6 +517,10 @@ func compute() -> void:
 		for t in mon:
 			parts.append([Defs.B[t]["name"], int(mon[t])])
 			mon_sum += int(mon[t])
+		var lg := legion.city_happy()          # чудеса Легиона без постройки и триумф — всем домам
+		if lg > 0:
+			parts.append(["Легион: чудеса и триумф", lg])
+			mon_sum += lg
 		var crowd := 0
 		for o in houses:
 			if o != h and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DENSITY_RADIUS:
@@ -906,7 +925,7 @@ func sim_day() -> void:
 			"rp":
 				rpd += float(d["rp"]) * float(b["staff"])
 				upkeep += float(d["cost"]) * 0.0025 + WAGE * hired_of(b)     # писцам и учителям тоже платят
-			"shop", "monument", "store", "farm":
+			"shop", "monument", "store", "farm", "military":
 				upkeep += float(d["cost"]) * 0.0025 + WAGE * hired_of(b)
 	hour_n += 1
 	money = minf(money_cap(), money + income - upkeep)
@@ -914,6 +933,8 @@ func sim_day() -> void:
 	stats["income"] = income
 	stats["upkeep"] = upkeep
 	stats["rp_day"] = rpd
+	for ev: Array in legion.on_hour():           # Легион: таймеры улучшений (настоящие часы), Слава чудес, триумф
+		_event(ev[0], ev[1])
 	_tick_arrivals()
 	_update_level()
 	_check_goals()
@@ -1395,7 +1416,8 @@ func save_data() -> Dictionary:
 		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false))}),
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
 		"incoming": incoming,
-		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells}
+		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
+		"legion": legion.to_dict()}
 
 
 func load_data(d: Dictionary) -> void:
@@ -1420,6 +1442,7 @@ func load_data(d: Dictionary) -> void:
 	tips = d.get("tips", {})
 	road_cells = int(d.get("road_cells", 0))
 	events = d.get("events", [])
+	legion.from_dict(d.get("legion", {}))
 	next_id = int(d.get("next_id", 1))
 	buildings = {}
 	for bd in d.get("buildings", []):

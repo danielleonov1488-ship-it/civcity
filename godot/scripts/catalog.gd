@@ -59,6 +59,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 		"colosseum": CatMonuments._colosseum(b)
 		"pantheon": CatMonuments._pantheon(b)
 		"center": CatCivic._center(b, tier)
+		"barracks", "range", "spearcamp", "ballistae", "catapults": CatMilitary.make(b, type)
 		_: CatDecor._decor(b, type)
 	b.base = Transform3D.IDENTITY
 	_actors(b, type, tier)

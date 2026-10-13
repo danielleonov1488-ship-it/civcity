@@ -24,10 +24,23 @@ promo/video/public/audio/
 promo/video/public/music/
 promo/audio/
 promo/music-preview/
+promo/shots2/
+promo/video/public2/
+# ролики-петли и снимки для сайта (большие файлы — выкладываются на сервер, не в git)
+site_media/
+# видео и снимки нового сайта (~80 МБ) — собирает python -I deploy/build_site_media.py из site_media и съёмок
+site/media/
 
 # движок Godot и рабочие файлы проверок (всё на диске D)
 tools/
 .work/
+
+# собранная игра Godot (deploy/build_game.sh): exe и .pck — только на сервер, не в git
+# (с косой чертой — только папка в корне: desktop/build/ с installer.nsh и значком должна попасть в git)
+/build/
+
+# ключ подписи описи игры (deploy/game_manifest.js): только на компьютере владельца — не в git и не на сервер
+/secrets/
 
 # Synty POLYGON (куплено владельцем): исходные модели нельзя выкладывать — только локально, в собранную игру попадают
 godot/assets/synty/

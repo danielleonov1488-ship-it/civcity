@@ -8,7 +8,20 @@ config_version=5
 config/name="CivCity"
 config/description="Римский город: уютная стройка как в Town to City, мир и дома в духе Synty"
 run/main_scene="res://main.tscn"
+config/version="1.0.0"
 config/features=PackedStringArray("4.7", "Forward Plus")
+config/icon="res://assets/ui/ai/app_icon.png"
+boot_splash/bg_color=Color(0.169, 0.114, 0.071, 1)
+boot_splash/image="res://assets/ui/ai/app_icon.png"
+boot_splash/stretch_mode=0
+; собранная игра (не редактор): свои данные Godot (журналы, кэш шейдеров) — в %APPDATA%/CivCity Game
+config/use_custom_user_dir.template=true
+config/custom_user_dir_name.template="CivCity Game"
+
+[autoload]
+
+; первой: в собранной игре подключает файлы с моделями, музыкой и интерфейсом (scripts/packs.gd)
+Packs="*res://scripts/packs.gd"
 
 [display]
 

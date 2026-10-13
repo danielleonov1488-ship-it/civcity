@@ -1,14 +1,14 @@
 {
   "name": "civcity",
   "productName": "CivCity",
-  "version": "0.9.3",
+  "version": "1.0.0",
   "description": "CivCity — уютный градостроитель про Рим",
   "author": "CivCity",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "node prepare.js && electron .",
-    "build": "node prepare.js && electron-builder --win portable nsis"
+    "build": "node prepare.js && electron-builder --win nsis"
   },
   "devDependencies": {
     "electron": "44.7.0",
@@ -18,15 +18,25 @@
     "appId": "ru.civcity.game",
     "productName": "CivCity",
     "copyright": "CivCity",
-    "directories": { "output": "dist", "buildResources": "build" },
-    "electronLanguages": ["ru", "en-US"],
-    "files": ["main.js", "updater.js", "preload-launcher.js", "preload-game.js", "launcher/**", "package.json"],
-    "extraResources": [{ "from": "game", "to": "game" }],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "electronLanguages": [
+      "ru",
+      "en-US"
+    ],
+    "files": [
+      "main.js",
+      "updater.js",
+      "preload-launcher.js",
+      "launcher/**",
+      "package.json"
+    ],
     "win": {
       "icon": "build/icon.png",
       "artifactName": "CivCity-${version}-${arch}.${ext}"
     },
-    "portable": { "artifactName": "CivCity-${version}-portable.exe" },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
@@ -34,7 +44,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "CivCity",
-      "artifactName": "CivCity-${version}-setup.exe"
+      "artifactName": "CivCity-${version}-setup.exe",
+      "include": "build/installer.nsh"
     }
   }
 }

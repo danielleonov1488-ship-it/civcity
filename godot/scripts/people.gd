@@ -2412,7 +2412,7 @@ func _cats_step(dt: float) -> void:
 		if not houses.is_empty():
 			cats.append(_make_cat(houses[rng.randi() % houses.size()]))
 	var night: bool = game.hour >= 21.0 or game.hour < 6.0
-	var t := Time.get_ticks_msec() / 1000.0
+	var t := AnimClock.now()
 	for c in cats:
 		var n: Node3D = c["n"]
 		c["t"] = float(c["t"]) - dt

@@ -179,14 +179,28 @@ const B := {
 		"icon": "level", "desc": "Храм на подиуме с колоннадой. Значительно повышает счастье жителей поблизости."},
 	"forum": {"kind": "monument", "cat": "special", "name": "Форум", "cost": 3200, "bonus": 12, "range": 5, "unlock": "forum",
 		"icon": "caesar", "desc": "Сердце города: колоннада, статуи и трибуна."},
-	"arch": {"kind": "monument", "cat": "special", "name": "Триумфальная арка", "cost": 2400, "bonus": 10, "range": 4, "unlock": "arch",
-		"icon": "castle", "desc": "Арка в честь побед — гордость жителей."},
-	"colosseum": {"kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 9000, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum",
-		"icon": "swords", "desc": "Гладиаторы и звери. Весь город ходит смотреть."},
-	"pantheon": {"kind": "monument", "cat": "special", "name": "Пантеон", "cost": 15000, "bonus": 20, "range": 5, "unlock": "pantheon",
-		"icon": "level", "desc": "Храм всех богов с огромным куполом."},
+	# чудеса Легиона (Legion.WONDERS): открываются исследованием или рейтингом походов, сверх денариев стоят Славы (glory)
+	"arch": {"kind": "monument", "cat": "special", "name": "Триумфальная арка", "cost": 2400, "bonus": 10, "range": 4, "unlock": "arch", "glory": 25,
+		"icon": "castle", "desc": "Арка в честь побед — гордость жителей. Чудо Легиона: +5% урона всем бойцам."},
+	"colosseum": {"kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 9000, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum", "glory": 50,
+		"icon": "swords", "desc": "Гладиаторы и звери. Весь город ходит смотреть. Чудо Легиона: +10% здоровья бойцам и Слава каждый день."},
+	"pantheon": {"kind": "monument", "cat": "special", "name": "Пантеон", "cost": 15000, "bonus": 20, "range": 5, "unlock": "pantheon", "glory": 80,
+		"icon": "level", "desc": "Храм всех богов с огромным куполом. Чудо Легиона: +10% урона бойцам и Слава каждый день."},
 	"center": {"kind": "center", "cat": "", "name": "Почтовая станция", "cost": 0, "fixed": true,
 		"desc": "Сюда по большой дороге приезжают повозки с переселенцами и товарами."},
+
+	# Легион: военные постройки только открывают рода войск — отряд, прокачка и походы живут в окне «Легион».
+	# unique — одна на город; unlock "bossN" — открывается победой над N-м боссом походов (Legion.boss_name)
+	"barracks": {"kind": "military", "cat": "military", "name": "Казармы", "cost": 1500, "unlock": "legion", "unique": true, "icon": "legion",
+		"desc": "Открывает легионеров — щит и меч, держат строй. Отряд, прокачка и походы — в окне «Легион»."},
+	"range": {"kind": "military", "cat": "military", "name": "Стрельбище", "cost": 1200, "unlock": "archery", "unique": true, "icon": "arrow",
+		"desc": "Мишени и навес для стрелков: открывает лучников. Прокачка — в окне «Легион»."},
+	"spearcamp": {"kind": "military", "cat": "military", "name": "Лагерь копейщиков", "cost": 1800, "unlock": "boss1", "unique": true, "icon": "tent",
+		"desc": "Палатки и чучела для учёбы: открывает копейщиков в тяжёлой броне — грозу зверей и великанов."},
+	"ballistae": {"kind": "military", "cat": "military", "name": "Мастерская баллист", "cost": 2800, "unlock": "boss3", "unique": true, "icon": "anvil",
+		"desc": "Мастера собирают баллисты: болт пробивает строй врагов насквозь."},
+	"catapults": {"kind": "military", "cat": "military", "name": "Мастерская катапульт", "cost": 3400, "unlock": "boss5", "unique": true, "icon": "saw",
+		"desc": "Здесь строят онагры: камень накрывает толпу врагов."},
 
 	# украшения: очки украшения домам вокруг. Каждый облик — своя карточка: что выбрал, то и встанет
 	# (облик не зависит ни от места, ни от цвета). base — вид украшения (просьбы горожан, «посидеть на скамье»
@@ -278,7 +292,7 @@ const B := {
 const DECOR_SUBS := [["plants", "Цветы", "daisy"], ["trees", "Деревья", "pine"], ["light", "Свет", "lamp"],
 	["street", "Улица", "bench"], ["yard", "Двор и рынок", "cart"], ["stone", "Статуи и камень", "mona"], ["animals", "Животные", "swan"]]
 const CATS := [["housing", "Жильё", "housing"], ["commerce", "Коммерция", "commerce"], ["farming", "Хозяйство и науки", "farming"],
-	["decor", "Украшения", "decor"], ["special", "Особые постройки", "special"]]
+	["decor", "Украшения", "decor"], ["special", "Особые постройки", "special"], ["military", "Легион", "legion"]]
 
 # ---------- исследования ----------
 ## Каждый уровень города открывает свой раздел. unlock — что даёт (постройку открывает её ключ в B.unlock)
@@ -337,6 +351,9 @@ const RESEARCH := [
 	{"id": "odeon", "lvl": 4, "name": "Одеон", "cost": 1060, "icon": "harp"},
 	{"id": "taberna", "lvl": 4, "name": "Таверна", "cost": 990, "icon": "mug"},
 	{"id": "research1", "lvl": 4, "name": "Новые полки для свитков", "cost": 860, "icon": "scroll", "desc": "Очков исследований помещается вдвое больше."},
+	{"id": "legion", "lvl": 4, "name": "Легион", "cost": 950, "icon": "legion",
+		"desc": "Открывает Казармы и окно «Легион»: отряд идёт походом против разбойников, зверей и чудовищ, добывает Славу и денарии. Дальние провинции — когда город станет «Большим городом»."},
+	{"id": "archery", "lvl": 4, "name": "Стрельбище", "cost": 700, "icon": "arrow", "after": "legion", "desc": "Лучники для Легиона: бьют издалека."},
 
 	{"id": "perfumer", "lvl": 5, "name": "Парфюмер", "cost": 1470, "icon": "perfume"},
 	{"id": "medic", "lvl": 5, "name": "Лекарь", "cost": 1300, "icon": "medic"},
@@ -441,6 +458,8 @@ static func request(id: String) -> Dictionary:
 
 ## Чем открывается постройка: исследованием или просьбой горожан
 static func unlock_text(id: String) -> String:
+	if id.begins_with("boss"):
+		return "победой Легиона над боссом «%s»" % Legion.boss_name(int(id.substr(4)))
 	var r := research(id)
 	if not r.is_empty():
 		return "исследованием «%s»" % r["name"]
@@ -451,6 +470,8 @@ static func unlock_text(id: String) -> String:
 
 
 static func unlock_short(id: String) -> String:
+	if id.begins_with("boss"):
+		return "Победа над боссом"
 	var r := research(id)
 	if not r.is_empty():
 		return r["name"]

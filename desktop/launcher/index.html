@@ -37,7 +37,6 @@
       <h3>Настройки</h3>
       <label class="row">Качество графики
         <select id="quality">
-          <option value="auto">Подбирать само</option>
           <option value="low">Низкое</option>
           <option value="medium">Среднее</option>
           <option value="high">Высокое</option>
@@ -45,13 +44,18 @@
       </label>
       <label class="check"><input type="checkbox" id="fullscreen"> Во весь экран</label>
       <label class="check"><input type="checkbox" id="autostart"> Запускать игру сразу, без лаунчера</label>
+      <div class="tools">
+        <button type="button" class="linkish" id="verify">Проверить файлы игры</button>
+        <button type="button" class="linkish" id="saves">Папка сохранений</button>
+      </div>
     </div>
 
     <div class="update">
       <div class="upd-text" id="upd-text">Проверяю обновления…</div>
       <div class="upd-bar wait" id="upd-bar"><div id="upd-fill"></div></div>
+      <div class="upd-sub" id="upd-sub"></div>
       <div class="shell-note" id="shell-note" hidden>
-        Вышла новая версия программы CivCity. Скачайте и установите её — город сохранится.
+        Вышла новая версия программы CivCity. Скачайте и установите её поверх этой — вход и город сохранятся.
         <button type="button" class="btn small" id="shell-dl">Скачать</button>
       </div>
     </div>

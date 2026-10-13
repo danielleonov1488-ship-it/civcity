@@ -1,7 +1,10 @@
-# Caddy раздаёт игру и пропускает /api к серверу CivCity (127.0.0.1:3000).
-# civcity.ru — по HTTPS: сертификат Caddy получает и продлевает сам (пока домен не виден в интернете,
-# он просто повторяет попытки). www.civcity.ru перенаправляет на civcity.ru.
-# По адресу сервера (http://159.194.249.20) игра тоже открывается — на случай, если с доменом что-то случится.
+# Caddy раздаёт сайт и игру для лаунчера и пропускает /api к серверу CivCity (127.0.0.1:3000).
+# civcity.ru — по HTTPS: сертификат Caddy получает и продлевает сам. www.civcity.ru перенаправляет на civcity.ru.
+# По адресу сервера (http://159.194.249.20) всё тоже открывается — на случай, если с доменом что-то случится.
+#
+#   /api/*     → сервер аккаунтов (вход, сохранения городов в облаке, новости лаунчера)
+#   /game/*    → /srv/civcity/game: опись игры manifest.json и файлы игры f/<sha256>[.zst] (их выкладывает deploy.sh)
+#   остальное  → /srv/civcity/www: сайт, установщики в /download/, game-manifest.json для лаунчеров 0.9.x
 
 {
 	# сертификаты — от Let's Encrypt (у запасного ZeroSSL в этой версии Caddy сломан вход)
@@ -10,17 +13,34 @@
 }
 
 (game) {
-	encode zstd gzip
+	# сжатие — для страниц, стилей, описей; файлы игры (game/f/*) уже сжаты или не сжимаются,
+	# и отдаются как есть — так работает докачка с места обрыва (Range)
+	@compress not path /game/f/*
+	encode @compress zstd gzip
+
+	@blob path /game/f/*
+	@meta not path /game/f/*
+	@download path /download/*
+	@page not path /download/*
 
 	handle /api/* {
 		reverse_proxy 127.0.0.1:3000
 	}
 
+	handle /game/* {
+		root * /srv/civcity
+		# у файла по содержимому адрес навсегда связан с содержимым — можно хранить сколько угодно
+		header @blob Cache-Control "public, max-age=31536000, immutable"
+		# опись меняется с каждой выкладкой — каждый раз сверять
+		header @meta Cache-Control "no-cache"
+		file_server
+	}
+
 	handle {
 		root * /srv/civcity/www
-		# браузер каждый раз сверяет файлы с сервером (быстро, через ETag), поэтому обновления видны сразу
-		header Cache-Control "no-cache"
-		header /download/* Cache-Control "public, max-age=3600"
+		# страницы браузер каждый раз сверяет с сервером (быстро, через ETag) — обновления сайта видны сразу
+		header @page Cache-Control "no-cache"
+		header @download Cache-Control "public, max-age=3600"
 		file_server
 	}
 

@@ -142,6 +142,7 @@ func _ready() -> void:
 	_buy_panel()
 	_pointer()
 	_hover_tip_panel()
+	LegionUi.attach(self)                      # окно «Легион» и его медальон сверху справа (scripts/legion_ui.gd)
 	apply_scale(float(game.settings.get("ui_scale", 1.0)))
 	get_window().size_changed.connect(func(): apply_scale(float(game.settings.get("ui_scale", 1.0))))
 	get_tree().node_added.connect(_on_node_added)
@@ -362,6 +363,13 @@ func ico(name: String, size := 64) -> Texture2D:
 		if FileAccess.file_exists(path):
 			var img := Image.new()
 			img.load_svg_from_string(FileAccess.get_file_as_string(path), size / 512.0)
+			tex = ImageTexture.create_from_image(img)
+		elif ResourceLoader.exists(path):         # собранная игра: исходных SVG нет, только импортированная картинка 512
+			var img := (load(path) as Texture2D).get_image()
+			if img.is_compressed():
+				img.decompress()
+			img.convert(Image.FORMAT_RGBA8)
+			img.resize(maxi(1, roundi(img.get_width() * size / 512.0)), maxi(1, roundi(img.get_height() * size / 512.0)), Image.INTERPOLATE_LANCZOS)
 			tex = ImageTexture.create_from_image(img)
 	_ico[key] = tex
 	return tex
@@ -1258,6 +1266,7 @@ func _close_windows() -> void:
 	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel]:
 		if x:
 			x.visible = false
+	LegionUi.close_for(self)
 
 
 ## Свиток стройки и карточка постройки не открыты вместе (как в Town to City): одно прячет другое
@@ -1553,7 +1562,8 @@ func _fill_cards() -> void:
 	tray_dtabs.visible = open_cat == "decor"
 	for b in tray_dtabs.get_children():
 		_set_on(b, b.get_meta("sub") == open_dsub)
-	var names := {"housing": "Жильё", "commerce": "Лавки и мастерские", "farming": "Хозяйство и науки", "decor": "Украшения", "special": "Памятники"}
+	var names := {"housing": "Жильё", "commerce": "Лавки и мастерские", "farming": "Хозяйство и науки", "decor": "Украшения", "special": "Памятники",
+		"military": "Военные постройки Легиона"}
 	tray_title.text = names.get(open_cat, "")
 	if open_cat == "commerce":
 		tray_title.text += " · " + Defs.NEEDS[open_sub]["name"]
@@ -2512,6 +2522,7 @@ func close_panels() -> bool:
 	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, credits_panel]:
 		any = any or x.visible
 		x.visible = false
+	any = LegionUi.close_for(self) or any        # окно «Легион» (scripts/legion_ui.gd)
 	info_panel.visible = false
 	advisor_panel.visible = false
 	buy_panel.visible = false
@@ -2884,7 +2895,7 @@ func _save_now() -> void:
 func _quit() -> void:
 	if game.can_save:
 		game.save()
-	get_tree().quit()
+	Account.me().quit_game()                  # сначала город уходит в облако (не дольше нескольких секунд)
 
 
 func _settings_panel() -> void:
@@ -2942,16 +2953,8 @@ func _settings_panel() -> void:
 	au.add_theme_font_size_override("font_size", 18)
 	au.toggled.connect(func(x): game.settings["autosave"] = x; game.save_settings())
 	v.add_child(au)
-	var nb := Button.new()
-	nb.text = "Начать новый город"
-	nb.name = "newgame"
-	nb.pressed.connect(func():
-		if not nb.has_meta("sure"):
-			nb.set_meta("sure", true)
-			nb.text = "Точно? Прежний город сотрётся — нажмите ещё раз"
-			return
-		game.new_game())
-	v.add_child(nb)
+	# аккаунт (почта, облако, «Выйти») и «Уничтожить город…» с тремя подтверждениями — scripts/account_ui.gd
+	AccountUi.settings_block(self, v)
 
 
 # ---------- титры ----------
@@ -2963,11 +2966,11 @@ const CREDITS := [
 		["Программирование, мир, жители и интерфейс", "команда CivCity вместе с Claude (Anthropic)"]]],
 	["Город и постройки", "housing", [
 		["Synty Studios — POLYGON Ancient Empire", "3D-модели домов, лавок, храмов, деревьев и украшений · лицензия Synty Store"],
-		["Artisau — Ancient Greece Low Poly", "статуи и мелкие предметы · CC0"]]],
+		["Artisau — Ancient Greece Low Poly", "статуи и мелкие предметы, шатры, слон и Минотавр в боях Легиона · CC0"]]],
 	["Жители и животные", "family", [
 		["Quaternius — Universal Base Characters, Modular Character Outfits", "жители города · CC0"],
 		["Quaternius — Universal Animation Library", "походка, работа и отдых жителей · CC0"],
-		["Quaternius — коровы, ослы, лошади, овцы", "животные · CC0"]]],
+		["Quaternius — коровы, ослы, лошади, овцы, волк, бык", "животные в городе и звери в боях Легиона · CC0"]]],
 	["Музыка", "music", [
 		["Записи из Викисклада и Musopen", "общественное достояние (PD) и CC0 · громкость выровнена для игры"],
 		["Эрик Сати — Гимнопедия № 1", "PD"],
@@ -2998,7 +3001,7 @@ const CREDITS := [
 		["Антонин Дворжак — Квартет № 10, Романс", "Musopen String Quartet · PD"],
 		["Людвиг ван Бетховен — «Патетическая» соната, Адажио", "Musopen · CC0"]]],
 	["Звуки", "sound", [
-		["Kenney — Interface Sounds, RPG Audio, UI Audio", "щелчки, стройка, монеты · CC0 · kenney.nl"],
+		["Kenney — Interface Sounds, RPG Audio, UI Audio", "щелчки, стройка, монеты, звуки боя · CC0 · kenney.nl"],
 		["Kerzoven — «Cat Purr & Meow», IgnasD — «Meow»", "кошки · OpenGameArt, CC0"],
 		["isaiah658 — «Ambient Bird Sounds»", "птицы · OpenGameArt, CC0"]]],
 	["Интерфейс", "scroll", [
@@ -3096,6 +3099,7 @@ func _open_settings(stay := false) -> void:
 	for q in ["high", "medium", "low"]:
 		var b: Button = settings_panel.find_child("q_" + q, true, false)
 		b.add_theme_stylebox_override("normal", _box_pill(16, 6, "g_btn_on" if game.settings["quality"] == q else "g_btn"))
+	AccountUi.settings_refresh(self)
 	if not stay:
 		_toggle(settings_panel)
 
@@ -3560,7 +3564,7 @@ func show_menu(has_save: bool) -> void:
 	mk.call("Играть", "play", func(): _menu_go("play" if has_save else "new"))
 	mk.call("Настройки", "settings", func(): _menu_settings())
 	mk.call("Титры", "laurels", func(): _menu_credits())
-	mk.call("Выход", "exit", func(): get_tree().quit())
+	mk.call("Выход", "exit", func(): Account.me().quit_game())
 	var foot := _label("Колёсико — масштаб · зажатое колёсико — вращать · правая кнопка — двигать", 16, true, C_CREAM)
 	foot.add_theme_color_override("font_outline_color", Color("3a2412"))
 	foot.add_theme_constant_override("outline_size", 6)
@@ -3605,6 +3609,8 @@ func _menu_credits_closed() -> void:
 
 
 func _menu_go(m: String) -> void:
+	if not Account.me().may_play(m):          # без входа не играем; сначала сверка города с облаком (account.gd)
+		return
 	var l := _label("Загрузка…", 32, false, C_CREAM, font_title)
 	l.add_theme_color_override("font_outline_color", Color("3a2412"))
 	l.add_theme_constant_override("outline_size", 8)

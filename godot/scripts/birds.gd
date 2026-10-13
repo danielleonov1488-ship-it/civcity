@@ -45,7 +45,7 @@ func _ready() -> void:
 
 
 func _process(dt: float) -> void:
-	var t := Time.get_ticks_msec() / 1000.0
+	var t := AnimClock.now()
 	for b in birds:
 		b["ph"] += b["sp"] * dt
 		var a: float = b["ph"]

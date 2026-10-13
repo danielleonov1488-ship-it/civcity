@@ -98,12 +98,14 @@ func _process(dt: float) -> void:
 	if cine:
 		return
 	var mv := Vector2.ZERO
-	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): mv.y -= 1
-	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): mv.y += 1
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): mv.x -= 1
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): mv.x += 1
-	if Input.is_key_pressed(KEY_Q): _yaw_t += dt * 1.4
-	if Input.is_key_pressed(KEY_E): _yaw_t -= dt * 1.4
+	var typing := get_viewport().gui_get_focus_owner() is LineEdit     # печатают почту или название — камера стоит
+	if not typing:
+		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): mv.y -= 1
+		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): mv.y += 1
+		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): mv.x -= 1
+		if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): mv.x += 1
+		if Input.is_key_pressed(KEY_Q): _yaw_t += dt * 1.4
+		if Input.is_key_pressed(KEY_E): _yaw_t -= dt * 1.4
 	if mv != Vector2.ZERO:
 		var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
 		var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))

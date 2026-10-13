@@ -35,6 +35,7 @@ var swimmers := []                    # утки и лебеди на пруда
 var _actor_speed := 1.0
 
 var mode := "play"                    # menu | play | new | demo
+var promo := false                    # --promo: вместо готового городка — большая витрина Showcase (режим demo)
 var can_save := true
 var speed := 1.0
 var day_t := 0.0
@@ -131,11 +132,12 @@ func _ready() -> void:
 	if not boot.is_empty():
 		args = boot.duplicate()
 	boot = {}
-	if not (args.has("menu") or args.has("play") or args.has("new") or args.has("demo")):
+	if not (args.has("menu") or args.has("play") or args.has("new") or args.has("demo") or args.has("promo")):
 		args["menu"] = "1"
+	promo = args.has("promo")
 	if args.has("menu"):
 		mode = "menu"
-	elif args.has("demo"):
+	elif args.has("demo") or promo:
 		mode = "demo"
 	elif args.has("new"):
 		mode = "new"
@@ -187,7 +189,10 @@ func _ready() -> void:
 		loaded = _load()
 	if not loaded:
 		city.place("center", Land.CENTER, PI / 2, 0, 0, true)
-		if mode == "demo" or mode == "menu":
+		# фон меню — тоже витрина (на «низком» качестве — прежний городок: он легче для видеокарты)
+		if promo or (mode == "menu" and settings.get("quality", "high") != "low"):
+			Showcase.build(self, args)
+		elif mode == "demo" or mode == "menu":
 			_demo_town()
 	await _step("Леса и луга", 0.35)
 	_nature()
@@ -247,10 +252,14 @@ func _ready() -> void:
 		hud.show_menu(FileAccess.file_exists(save_path()))
 		if not args.has("view"):
 			rig.set_view(Vector3(194, Land.BASE_Y, 158), 22, 30, 70)
-	elif mode == "demo" and shot_path == "":
+	elif mode == "demo" and shot_path == "" and not promo:
 		hud.notify("Готовый город: стройте сколько угодно — он не сохраняется", "info")
 	elif not loaded and shot_path == "" and not tutorial.active():
 		hud.advisor("Аве! Я Марк, твой советник.", "По большой дороге через арку к почтовой станции приезжают повозки с переселенцами. Проложи дорогу кистью (слева внизу) и поставь вдоль неё дома — они сами встанут фасадом к дороге. Рядом поставь лавки: каждая кормит и радует дома в своей дальности.\n\nКамера: колёсико — масштаб, зажатое колёсико — вращать, правая кнопка — двигать (или WASD, Q/E).")
+	Account.me().attach(self)                 # вход в аккаунт и сверка города с облаком (scripts/account.gd)
+	LegionBattle.attach(self)                 # 3D-бой Легиона: «В бой» в окне «Легион» открывает поле боя (scripts/legion_battle.gd)
+	LegionNet.me()                            # бои с городами по сети: отряд обороны на сервер, отчёты о нападениях (scripts/legion_net.gd)
+	QaDrive.attach(self)                      # автопроверка собранной игры, только с аргументом --qa=… (scripts/qa_drive.gd)
 
 
 func _step(text: String, k: float) -> void:
@@ -274,16 +283,20 @@ func _loading_show() -> void:
 	fill.color = Color("2b1d12")
 	fill.set_anchors_preset(Control.PRESET_FULL_RECT)
 	loading.add_child(fill)
-	# рисованная картинка: римский городок на закате (на весь экран, без полей)
+	# рисованная картинка владельца (на весь экран, без полей) — каждый раз одна из трёх: городок на закате,
+	# вечер с фонарями, легион выходит в поход
 	var bg := TextureRect.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	bg.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	for pic in ["res://assets/ui/ai/loading.jpg", "res://assets/ui/loading.png"]:
-		if ResourceLoader.exists(pic):
-			bg.texture = load(pic)
-			break
+	var pics := ["res://assets/ui/ai/loading.jpg", "res://assets/ui/ai/loading_33.jpg", "res://assets/ui/ai/loading_34.jpg"].filter(
+		func(p: String) -> bool: return ResourceLoader.exists(p))
+	if pics.is_empty():
+		pics = ["res://assets/ui/loading.png"]
+	var pic: String = pics[randi() % pics.size()]
+	if ResourceLoader.exists(pic):
+		bg.texture = load(pic)
 	loading.add_child(bg)
 	# мягкое затемнение снизу — чтобы подпись и полоса читались на картинке
 	var g := Gradient.new()
@@ -315,6 +328,7 @@ func _loading_show() -> void:
 	logo.offset_right = 250
 	logo.offset_top = 22
 	logo.offset_bottom = 268
+	logo.visible = not pic.ends_with("loading_34.jpg")    # там вверху посередине орёл легиона — логотип закрыл бы его
 	loading.add_child(logo)
 	var box := VBoxContainer.new()
 	box.name = "box"
@@ -1029,7 +1043,7 @@ func _ponds_life() -> void:
 
 
 func _swim(dt: float) -> void:
-	var t := Time.get_ticks_msec() / 1000.0
+	var t := AnimClock.now()
 	for s in swimmers:
 		s["a"] = float(s["a"]) + float(s["w"]) * dt * maxf(0.2, speed)
 		var a: float = s["a"]
@@ -1227,7 +1241,8 @@ func _sync_actors(b: Dictionary) -> void:
 		return
 	var d := city.def(b)
 	# у мастерских и лавок работают настоящие жители (приходят из дома) — тут только станция и сады патрициев
-	var on: bool = not d.has("jobs") and d["kind"] in ["center", "house"] and (int(b["pop"]) > 0 or d["kind"] == "center") and hour > 6.5 and hour < 20.5
+	# (и военные постройки: солдаты и мастера Легиона — не жители города)
+	var on: bool = not d.has("jobs") and d["kind"] in ["center", "house", "military"] and (int(b["pop"]) > 0 or d["kind"] != "house") and hour > 6.5 and hour < 20.5
 	if bool(vis.get("act_on", false)) == on and vis.has("act_on"):
 		return
 	for a in vis.get("actors", []):
@@ -3040,13 +3055,8 @@ func _redo() -> void:
 # ---------- сохранение ----------
 
 func save_path() -> String:
-	var dir := ""
-	if OS.has_feature("editor"):
-		dir = ProjectSettings.globalize_path("res://").path_join("../saves")
-	else:
-		dir = OS.get_executable_path().get_base_dir().path_join("saves")
-	DirAccess.make_dir_recursive_absolute(dir)
-	return dir.path_join(SAVE_NAME)
+	# папка: --savedir=, CIVCITY_SAVEDIR от программы запуска, в редакторе D:/CivCity/saves, иначе user:// (см. game_paths.gd)
+	return GamePaths.save_dir().path_join(SAVE_NAME)
 
 
 func save() -> void:
@@ -3058,9 +3068,12 @@ func save() -> void:
 	data["land"] = land.save_changes()
 	data["hour"] = hour
 	data["version"] = 2
+	var s := JSON.stringify(data)
 	var f := FileAccess.open(save_path(), FileAccess.WRITE)
 	if f:
-		f.store_string(JSON.stringify(data))
+		f.store_string(s)
+		f.close()
+	Account.me().after_save(s)                # и в облако (не чаще раза в минуту, при выходе — сразу)
 
 
 func _load() -> bool:

@@ -49,14 +49,16 @@ static func _index() -> void:
 				_slots[slot][1] = nn
 
 
+## ResourceLoader.list_directory, а не DirAccess: в собранной игре исходных .fbx/.png в файлах нет (только .import),
+## а list_directory отдаёт привычные имена и там, и в редакторе
 static func _scan(path: String, ext: String, out: Dictionary) -> void:
-	var d := DirAccess.open(path)
-	if d == null:
-		return
-	for f in d.get_files():
-		if f.ends_with(ext):
+	var subs := []
+	for f in ResourceLoader.list_directory(path):
+		if f.ends_with("/"):
+			subs.append(f.trim_suffix("/"))
+		elif f.ends_with(ext):
 			out[f.trim_suffix(ext)] = path + "/" + f
-	for sub in d.get_directories():
+	for sub in subs:
 		_scan(path + "/" + sub, ext, out)
 
 
