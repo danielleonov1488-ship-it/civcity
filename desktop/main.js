@@ -311,9 +311,11 @@ ipcMain.handle('l:content', async e => {
   return c;
 });
 
-ipcMain.handle('l:login', async (e, mode, email, password) => {
+ipcMain.handle('l:login', async (e, mode, email, password, consent) => {
   if (!fromLauncher(e)) return { error: 'Нет доступа' };
-  const r = await api('POST', mode === 'register' ? '/register' : '/login', { email: String(email || ''), password: String(password || '') });
+  const body = { email: String(email || ''), password: String(password || '') };
+  if (mode === 'register') body.consent = consent === true;     // галочка согласия на обработку данных
+  const r = await api('POST', mode === 'register' ? '/register' : '/login', body);
   if (r.error) return { error: r.error };
   store.email = r.email;
   store.token = r.token;

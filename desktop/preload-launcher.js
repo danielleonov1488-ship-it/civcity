@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('civ', {
   info: () => ipcRenderer.invoke('l:info'),
   content: () => ipcRenderer.invoke('l:content'),
-  login: (mode, email, password) => ipcRenderer.invoke('l:login', mode, email, password),
+  login: (mode, email, password, consent) => ipcRenderer.invoke('l:login', mode, email, password, consent === true),
   forgot: email => ipcRenderer.invoke('l:forgot', email),
   logout: () => ipcRenderer.invoke('l:logout'),
   setPref: (key, value) => ipcRenderer.invoke('l:setPref', key, value),

@@ -173,7 +173,8 @@ func _sign_in(register: bool) -> bool:
 		if tab:
 			await click(tab)
 			await frames(6)
-		check("под «Создать аккаунт» — ссылка на политику конфиденциальности", lg.find_child("privacy", true, false) != null)
+		var cb := lg.find_child("consent", true, false) as CheckBox
+		check("галочка согласия есть и пустая по умолчанию", cb != null and not cb.button_pressed)
 		await shot("01_register")
 	var em := lg.find_child("email", true, false) as LineEdit
 	var pw := lg.find_child("pass", true, false) as LineEdit
@@ -182,6 +183,18 @@ func _sign_in(register: bool) -> bool:
 		return false
 	em.text = str(args.get("qa_mail", ""))
 	pw.text = str(args.get("qa_pass", ""))
+	if register:
+		# без галочки аккаунт не создаётся — подсказка вместо запроса на сервер
+		await click(go)
+		await frames(6)
+		var er := lg.find_child("err", true, false) as Label
+		check("без галочки согласия — подсказка, аккаунт не создан", er != null and er.visible and er.text.contains("галочк") and not acc.signed_in())
+		var cb2 := lg.find_child("consent", true, false) as CheckBox
+		if cb2:
+			await click(cb2)
+			await frames(4)
+		check("галочка согласия поставлена щелчком", cb2 != null and cb2.button_pressed)
+		await shot("01_register_ok")
 	await click(go)
 	var ok := await wait_until(func(): return acc.signed_in(), 25.0)
 	check("вошли (%s)" % ("регистрация" if register else "вход"), ok)

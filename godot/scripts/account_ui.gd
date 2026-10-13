@@ -204,10 +204,15 @@ func _fill_login() -> void:
 	var pw := _field(true, "")
 	pw.name = "pass"
 	v.add_child(pw)
+	if _mode == "reg":
+		v.add_child(_consent_row())
 	var err: Label = hud._wrap(hud._label("", 15, true, hud.C_BAD), FIELD_W)
 	err.name = "err"
 	err.visible = false
 	v.add_child(err)
+	var cb := v.find_child("consent", true, false) as CheckBox
+	if cb:
+		cb.toggled.connect(func(on: bool): if on and is_instance_valid(err): err.visible = false)    # галочку поставили — подсказка больше не нужна
 	var go := Button.new()
 	go.name = "go"
 	go.text = "Войти" if _mode == "login" else "Создать аккаунт"
@@ -231,16 +236,6 @@ func _fill_login() -> void:
 		var tip: Label = hud._wrap(hud._label("Подтверждать почту не нужно — она понадобится, только если забудете пароль.", 14, false, hud.C_SOFT), FIELD_W)
 		tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(tip)
-		var ok_l: Label = hud._wrap(hud._label("Нажимая «Создать аккаунт», вы соглашаетесь на обработку своих данных согласно", 14, false, hud.C_SOFT), FIELD_W)
-		ok_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		v.add_child(ok_l)
-		var pol := _link("политике конфиденциальности", func(): OS.shell_open(Account.SITE.trim_suffix("/") + "/privacy/"))
-		pol.name = "privacy"
-		pol.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		v.add_child(pol)
-		var gap := Control.new()          # чтобы ссылка на политику не сливалась с «Выход из игры» ниже
-		gap.custom_minimum_size = Vector2(0, 6)
-		v.add_child(gap)
 	if not _login_in_modal:
 		var ex := _link("Выход из игры", func(): Account.me().quit_game())
 		ex.name = "exit"
@@ -261,10 +256,16 @@ func _submit(em: LineEdit, pw: LineEdit, err: Label, go: Button) -> void:
 		_err(err, "Пароль — не короче 6 знаков")
 		pw.grab_focus()
 		return
+	var ok: CheckBox = null
+	if _mode == "reg":
+		ok = _login.find_child("consent", true, false) as CheckBox
+	if _mode == "reg" and (ok == null or not ok.button_pressed):
+		_err(err, "Поставьте галочку согласия — без неё аккаунт не создать")
+		return
 	var label := go.text
 	go.disabled = true
 	go.text = "Входим…" if _mode == "login" else "Создаём аккаунт…"
-	var e: String = await Account.me().login(mail, pw.text, _mode == "reg")
+	var e: String = await Account.me().login(mail, pw.text, _mode == "reg", ok != null and ok.button_pressed)
 	if not is_instance_valid(go):
 		return
 	go.disabled = false
@@ -281,6 +282,44 @@ func _submit(em: LineEdit, pw: LineEdit, err: Label, go: Button) -> void:
 		_login_in_modal = false
 	else:
 		menu()
+
+
+## Регистрация: пустая по умолчанию галочка «Даю согласие на обработку персональных данных и принимаю
+## политику конфиденциальности» — обе ссылки открывают страницы на civcity.ru (как на leonovlabs.ru)
+func _consent_row() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.name = "consent_row"
+	row.add_theme_constant_override("separation", 8)
+	row.custom_minimum_size = Vector2(FIELD_W, 0)
+	var ok := CheckBox.new()
+	ok.name = "consent"
+	ok.focus_mode = Control.FOCUS_NONE
+	ok.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	row.add_child(ok)
+	var t := RichTextLabel.new()
+	t.name = "consent_text"
+	t.bbcode_enabled = true
+	t.fit_content = true
+	t.scroll_active = false
+	t.selection_enabled = false
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	t.custom_minimum_size = Vector2(FIELD_W - 40, 0)
+	t.add_theme_font_override("normal_font", hud.font)
+	t.add_theme_font_override("bold_font", hud.font_bold)
+	t.add_theme_font_size_override("normal_font_size", 15)
+	t.add_theme_font_size_override("bold_font_size", 15)
+	t.add_theme_color_override("default_color", hud.C_SOFT)
+	t.meta_underlined = true
+	t.text = "Даю [b][url=consent]согласие на обработку персональных данных[/url][/b] и принимаю [b][url=privacy]политику конфиденциальности[/url][/b]"
+	t.meta_clicked.connect(func(m): OS.shell_open(Account.SITE.trim_suffix("/") + "/" + str(m) + "/"))
+	# щелчок по тексту мимо ссылок — тоже ставит галочку, как у обычной подписи
+	t.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT and t.get_meta("hover_link", false) == false:
+			ok.button_pressed = not ok.button_pressed)
+	t.meta_hover_started.connect(func(_m): t.set_meta("hover_link", true))
+	t.meta_hover_ended.connect(func(_m): t.set_meta("hover_link", false))
+	row.add_child(t)
+	return row
 
 
 func _err(l: Label, text: String) -> void:

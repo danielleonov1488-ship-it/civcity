@@ -83,12 +83,14 @@ db.exec(`
   if (!cols.includes('flags')) db.exec('ALTER TABLE saves ADD COLUMN flags INTEGER NOT NULL DEFAULT 0');
   db.exec('CREATE INDEX IF NOT EXISTS saves_user_game ON saves(user_id, game, id)');
 }
+// когда игрок поставил галочку согласия на обработку данных (лаунчер 1.0.2+, игра сборки 15+); у старых — пусто
+if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'consent')) db.exec('ALTER TABLE users ADD COLUMN consent INTEGER');
 const SWITCHED = 1;
 
 const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   userById: db.prepare('SELECT * FROM users WHERE id = ?'),
-  addUser: db.prepare('INSERT INTO users (email, pass, created, last_seen) VALUES (?, ?, ?, ?)'),
+  addUser: db.prepare('INSERT INTO users (email, pass, created, last_seen, consent) VALUES (?, ?, ?, ?, ?)'),
   setPass: db.prepare('UPDATE users SET pass = ? WHERE id = ?'),
   seen: db.prepare('UPDATE users SET last_seen = ? WHERE id = ?'),
   addSession: db.prepare('INSERT INTO sessions (hash, user_id, created, used, agent) VALUES (?, ?, ?, ?, ?)'),
@@ -287,7 +289,7 @@ const routes = {
     const email = cleanEmail(b.email), pass = cleanPassword(b.password);
     if (q.userByEmail.get(email)) throw new Fail(409, 'Такая почта уже зарегистрирована — войдите');
     const now = Date.now();
-    const r = q.addUser.run(email, hashPassword(pass), now, now);
+    const r = q.addUser.run(email, hashPassword(pass), now, now, b.consent === true ? now : null);
     return { token: openSession(Number(r.lastInsertRowid), req.headers['user-agent']), email };
   },
 

@@ -218,12 +218,13 @@ const Account = {
       <form id="acc-form" class="acc-form" autocomplete="on">
         <label class="field">Почта<input id="acc-email" type="email" autocomplete="email" required value="${escapeHtml(this.email || '')}"></label>
         <label class="field">Пароль${mode === 'reg' ? ' <small>(не короче 6 знаков)</small>' : ''}<input id="acc-pass" type="password" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}" required minlength="6"></label>
+        ${mode === 'reg' ? '<label class="consent-check" style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:4px 0 8px"><input type="checkbox" id="acc-ok" style="margin-top:2px"><span>Даю <a href="https://civcity.ru/consent/" target="_blank" rel="noopener">согласие на обработку персональных данных</a> и принимаю <a href="https://civcity.ru/privacy/" target="_blank" rel="noopener">политику конфиденциальности</a></span></label>' : ''}
         <p class="note bad" id="acc-err" hidden></p>
         <div class="actions">
           <button type="submit" class="btn" id="acc-go">${mode === 'login' ? 'Войти' : 'Создать аккаунт'}</button>
         </div>
       </form>
-      ${mode === 'login' ? '<p class="sub"><button type="button" class="linkish" id="acc-forgot">Забыли пароль?</button></p>' : '<p class="sub">Подтверждать почту не нужно — она понадобится, только если забудете пароль.</p><p class="sub">Нажимая «Создать аккаунт», вы соглашаетесь на обработку своих данных согласно <a href="https://civcity.ru/privacy/" target="_blank" rel="noopener">политике конфиденциальности</a>.</p>'}
+      ${mode === 'login' ? '<p class="sub"><button type="button" class="linkish" id="acc-forgot">Забыли пароль?</button></p>' : '<p class="sub">Подтверждать почту не нужно — она понадобится, только если забудете пароль.</p>'}
       ${this.downloadHtml()}`);
     document.querySelectorAll('[data-amode]').forEach(b => b.onclick = () => this.showLogin(note, b.dataset.amode));
     const fg = $('acc-forgot');
@@ -232,9 +233,16 @@ const Account = {
       e.preventDefault();
       const err = $('acc-err'), go = $('acc-go');
       err.hidden = true;
+      if (mode === 'reg' && !$('acc-ok').checked) {
+        err.textContent = 'Поставьте галочку согласия — без неё аккаунт не создать';
+        err.hidden = false;
+        return;
+      }
       go.disabled = true;
       try {
-        const res = await this.call('POST', mode === 'login' ? '/login' : '/register', { email: $('acc-email').value, password: $('acc-pass').value });
+        const body = { email: $('acc-email').value, password: $('acc-pass').value };
+        if (mode === 'reg') body.consent = true;
+        const res = await this.call('POST', mode === 'login' ? '/login' : '/register', body);
         this.signedIn(res);
         UI.toast(mode === 'login' ? 'Вы вошли — город сохраняется в облаке' : 'Аккаунт создан — город сохраняется в облаке', 'good');
       } catch (ex) {

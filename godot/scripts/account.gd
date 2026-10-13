@@ -164,8 +164,11 @@ func attach(g) -> void:
 
 # ---------- вход и выход ----------
 
-func login(mail: String, password: String, register: bool) -> String:
-	var r := await _call(HTTPClient.METHOD_POST, "/register" if register else "/login", {"email": mail.strip_edges(), "password": password}, false, TIMEOUT, false)
+func login(mail: String, password: String, register: bool, consent := false) -> String:
+	var body := {"email": mail.strip_edges(), "password": password}
+	if register:
+		body["consent"] = consent         # галочка согласия на обработку данных (сервер запоминает время)
+	var r := await _call(HTTPClient.METHOD_POST, "/register" if register else "/login", body, false, TIMEOUT, false)
 	if r["status"] == 0:
 		return "Нет связи с сервером. Проверьте интернет и попробуйте ещё раз."
 	if r["status"] != 200:

@@ -91,20 +91,30 @@ const L = {
       <form id="a-form">
         <label class="field">Почта<input id="a-email" type="email" required autocomplete="email"></label>
         <label class="field">Пароль${reg ? ' (не короче 6 знаков)' : ''}<input id="a-pass" type="password" required minlength="6" autocomplete="${reg ? 'new-password' : 'current-password'}"></label>
-        ${msg ? `<p class="msg ${kind || 'bad'}">${esc(msg)}</p>` : ''}
+        ${reg ? '<label class="consent"><input type="checkbox" id="a-ok"><span>Даю <a href="#" class="linkish" id="a-consent">согласие на обработку персональных данных</a> и принимаю <a href="#" class="linkish" id="a-privacy">политику конфиденциальности</a></span></label>' : ''}
+        <p class="msg ${kind || 'bad'}" id="a-msg"${msg ? '' : ' hidden'}>${msg ? esc(msg) : ''}</p>
         <button type="submit" class="btn" id="a-go">${reg ? 'Создать аккаунт' : 'Войти'}</button>
-        ${reg ? '<p class="consent">Нажимая «Создать аккаунт», вы соглашаетесь на обработку своих данных согласно <button type="button" class="linkish" id="a-privacy">политике конфиденциальности</button>.</p>'
-        : ' <button type="button" class="linkish" id="a-forgot">Забыли пароль?</button>'}
+        ${reg ? '' : ' <button type="button" class="linkish" id="a-forgot">Забыли пароль?</button>'}
       </form>`;
     box.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { this.mode = b.dataset.m; this.drawAccount(); });
     const fg = $('a-forgot');
     if (fg) fg.onclick = () => { this.mode = 'forgot'; this.drawAccount(); };
     const pv = $('a-privacy');
-    if (pv) pv.onclick = () => civ.open('https://civcity.ru/privacy/');
+    if (pv) pv.onclick = e => { e.preventDefault(); civ.open('https://civcity.ru/privacy/'); };
+    const cs = $('a-consent');
+    if (cs) cs.onclick = e => { e.preventDefault(); civ.open('https://civcity.ru/consent/'); };
+    const ok = $('a-ok');
+    if (ok) ok.onchange = () => { if (ok.checked && $('a-msg').textContent.startsWith('Поставьте галочку')) $('a-msg').hidden = true; };
     $('a-form').onsubmit = async e => {
       e.preventDefault();
+      if (reg && !$('a-ok').checked) {
+        $('a-msg').className = 'msg bad';
+        $('a-msg').textContent = 'Поставьте галочку согласия — без неё аккаунт не создать';
+        $('a-msg').hidden = false;
+        return;
+      }
       $('a-go').disabled = true;
-      const r = await civ.login(reg ? 'register' : 'login', $('a-email').value, $('a-pass').value);
+      const r = await civ.login(reg ? 'register' : 'login', $('a-email').value, $('a-pass').value, reg && $('a-ok').checked);
       if (r.error) { this.drawAccount(r.error); return; }
       this.email = r.email;
       this.drawAccount();
