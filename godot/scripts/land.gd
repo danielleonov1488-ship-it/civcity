@@ -40,7 +40,6 @@ var tint := PackedByteArray()        # 0…255 — оттенок травы п�
 var occ := PackedInt32Array()        # id постройки на клетке (0 — свободно)
 var base_h := PackedFloat32Array()   # исходная карта — для сохранения только изменений
 var base_kind := PackedByteArray()
-var rev := 0                          # растёт при каждом изменении земли (кэш «это площадь?» в game.gd)
 var owned := {}                      # Vector2i участка → true
 var dirty := {}                      # Vector2i куска → true (перестроить сетку)
 var road_chunks := {}                # куски, где есть дороги (для маски покрытий и сетки ходьбы)
@@ -261,7 +260,6 @@ func far_height(x: float, z: float) -> float:
 
 
 func _mark(i: int, j: int) -> void:
-	rev += 1
 	dirty[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
 	touched[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
 	# стенки уступов на краю куска рисует соседний кусок

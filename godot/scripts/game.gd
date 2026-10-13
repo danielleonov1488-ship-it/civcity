@@ -107,20 +107,13 @@ var rot_yaw0 := 0.0
 var manual_yaw := false               # игрок сам повернул эту постройку — к дороге её не разворачиваем (до постановки)
 const ROT_DRAG_PX := 14.0             # с какого сдвига мыши вбок (зажатая левая) начинается поворот — дрожь щелчка не в счёт
 var last_snap_p := Vector2.INF        # где был курсор, когда фасад последний раз нашёл дорогу
-# стройка на площади (как в Town to City: замостить всё и строить внутри): мостовая шире 9 м — дом встаёт прямо на неё
-var pave_build := true                 # false — пока раскладывается готовый город меню (витрина, старый городок)
-var last_pave_p := Vector2.INF         # где был курсор в прошлый раз, когда постройка встала на площадь
-var last_pave_n := Vector2.ZERO        # к какому краю площади она тогда встала спиной
-var last_pave_sub := ""                # как тогда встала: manual / row / rim / edge / align / default
-var _plaza_cache := {}
-const PAVE_KINDS := ["house", "shop", "rp", "store", "monument", "military"]
-const PLAZA_N := 19                    # площадь: квадрат 19×19 отсчётов через 0,5 м (≈9,25 м) сплошной мостовой — шире
-const PLAZA_N_STAY := 18               # самой широкой кисти (8 м), так что улица одним мазком площадью не бывает
-const RIM_EXTRA := 1.0                 # у края площади (полдиагонали постройки + это) — постройка встаёт к краю спиной
-const EDGE_R := 5.5                    # край площади ближе этого — постройка ставится спиной к нему
-const ALIGN_R := 8.0                   # сосед ближе этого — постройка встаёт как он (рядом) или лицом к нему (напротив)
-const PLAZA_SLOPE := 0.5               # на мостовой — только почти ровное место (иначе вокруг дома ступени)
-const STREET_MSG := "Это улица — дом встаёт у её края. Прямо на мостовую ставят на площади (шире 9 м)"
+# постановка, как в Town to City: куда навёл и как повернул (на траве, площади, мостовой); вплотную к дороге — фасадом
+# к ней, ровно у края. У входа нужна мостовая
+var pave_build := true                 # false — пока раскладывается готовый город меню (витрина, старый городок): там прежние правила
+var yaw_set := false                   # игрок уже поворачивал постройку (Z/X, зажатая мышь) — дальше держим его поворот
+const SNAP_R := 0.8                    # фасад (постройка серединой на курсоре) ближе этого к краю дороги — прилипает к краю
+const SNAP_STAY := 1.5                 # …и держится, пока фасад не отошёл дальше этого (без дёрганья на границе)
+const PAVE_SLOPE := 0.5                # дом и лавка на мостовой — только на почти ровном месте (иначе ступени вокруг)
 var settle_marks := []                # подсветка подходящих домов
 var settle_keys := []                 # значки «ключи» над ними
 var _rmb_down := Vector2.ZERO
@@ -1742,9 +1735,6 @@ func set_tool(t: String) -> void:
 	if t != prev_tool or t == "":
 		manual_yaw = false
 		last_snap_n = Vector2.ZERO        # новая постройка — к дороге заново, без памяти о прошлой
-		last_pave_p = Vector2.INF
-		last_pave_n = Vector2.ZERO
-		last_pave_sub = ""
 	if t != "settle":
 		settle_fam = {}
 		_clear_settle_marks()
@@ -1845,32 +1835,18 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	if locked:
 		p = place_lock["p"]
 	var pos := p
-	var road_snap: bool = snap and not locked and d["kind"] != "decor" and d["kind"] != "farm"
-	# площадь (мостовая шире 9 м): постройка встаёт прямо на мостовую — у соседа в ряд, у края спиной к нему,
-	# посередине пустой площади фасадом к игроку. На улице и на траве — всё как раньше (у края улицы, фасадом к ней)
 	var mid := int(moving.get("id", -1))
-	var pave: bool = pave_build and d["kind"] in PAVE_KINDS
-	var plaza := false
 	var sub := ""
-	if pave and locked and str(place_lock.get("mode", "")) == "plaza":
-		plaza = true                      # поворот зажатой мышью начался на площади — крутится на месте
-		sub = "lock"
-	elif pave and not locked and Land.walk_kind(land.kind_at(p.x, p.y)) \
-			and _plaza_at(p, PLAZA_N_STAY if last_pave_sub != "" and last_pave_p.distance_to(p) < 2.0 else PLAZA_N):
-		var r := _plaza_place(p, bb, mid)
-		plaza = true
+	# игрок: свободная постановка, как в Town to City — куда навёл и как повернул; вплотную к дороге — фасадом к ней.
+	# Готовый город меню (витрина, старый городок) раскладывается по прежним правилам — он не меняется
+	var free: bool = pave_build and not (d["kind"] in ["decor", "farm", "center"])
+	if free:
+		var r := _free_place(p, bb, mid, locked)
 		pos = r["pos"]
 		yaw = r["yaw"]
 		sub = r["sub"]
-		last_pave_p = p
-		last_pave_sub = sub
-		last_pave_n = r["n"]
-		last_snap_n = Vector2.ZERO
-		last_snap_p = Vector2.INF
-	if not plaza:
-		last_pave_p = Vector2.INF
-		last_pave_sub = ""
-		last_pave_n = Vector2.ZERO
+	else:
+		var road_snap: bool = snap and not locked and d["kind"] != "decor" and d["kind"] != "farm"
 		if road_snap and manual_yaw:
 			# игрок сам повернул постройку: двигаем её вперёд до края дороги (а с самой дороги — назад, на обочину)
 			var f := City.facing(yaw)
@@ -1914,13 +1890,13 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 				pos = _snap_row(pos, yaw, bb, int(moving.get("id", -1)))
 	var chk := city.check_place(type, pos, yaw, variant, color, -3 if not moving.is_empty() else -1)
 	var err: String = chk["err"]
-	if err == "" and plaza:
-		err = _plaza_checks(type, chk["cells"], pos, yaw, variant, color, tier, mid)
-	# на улице дом и лавка на мостовую не встают (кромку — неровный край кисти у фасада — прощаем)
+	if err == "" and free:
+		err = _free_checks(type, chk["cells"], pos, yaw, variant, color, tier, mid)
+	# готовый город меню: дом и лавка на мостовую не встают (кромку — неровный край кисти у фасада — прощаем)
 	elif err == "" and d["kind"] in ["house", "shop", "rp", "store"] and _over_road(chk["cells"], pos, yaw, float(bb[3])):
-		err = STREET_MSG
+		err = "Здесь дорога — поставьте рядом с ней"
 	return {"pos": pos, "yaw": yaw, "err": err, "cells": chk["cells"], "y": chk["y"], "variant": variant, "color": color, "tier": tier,
-		"mode": "plaza" if plaza else "", "sub": sub}
+		"mode": "free" if free else "", "sub": sub}
 
 
 ## Клетки следа заходят на дорогу глубже кромки фасада?
@@ -1932,328 +1908,78 @@ func _over_road(cells: PackedInt32Array, pos: Vector2, yaw: float, front: float)
 	return false
 
 
-## Площадь ли тут: квадрат n×n отсчётов (через 0,5 м, по каждой второй клетке) сплошной мостовой, накрывающий
-## точку. Мостовая — по виду клетки: дома, стоящие на площади, её не прерывают. Самый широкий мазок кисти — не
-## больше 17 отсчётов поперёк, поэтому улица (и перекрёсток улиц) площадью не бывает. Ответ помнится до правки земли
-func _plaza_at(p: Vector2, n: int) -> bool:
-	var ap := int(floor(p.x / 0.5))
-	var bq := int(floor(p.y / 0.5))
-	var key := Vector4i(ap, bq, n, land.rev)
-	if _plaza_cache.has(key):
-		return _plaza_cache[key]
-	if _plaza_cache.size() > 4096:
-		_plaza_cache.clear()
-	var res := _plaza_calc(ap, bq, n)
-	_plaza_cache[key] = res
-	return res
+## Поворот новой постройки без дороги рядом: переносимая — как стояла; игрок повернул (эту или прежние) — его
+## поворот; иначе — фасадом к камере (по сторонам света)
+func _free_yaw() -> float:
+	if not moving.is_empty() or yaw_set or manual_yaw:
+		return tool_yaw
+	return snappedf(rig.yaw, PI / 2) if rig else 0.0
 
 
-## Отсчёт решётки площади: мостовая ли (по виду клетки, кто на ней стоит — неважно)
-func _pv(a: int, b: int) -> bool:
-	var i := a * 2
-	var j := b * 2
-	if i < 0 or j < 0 or i >= Land.N or j >= Land.N:
-		return false
-	return Land.walk_kind(land.kind[land.idx(i, j)])
+## Свободная постановка игрока: {"pos", "yaw", "sub"}.
+## sub: "road" — курсор на траве вплотную к дороге, постройка фасадом к ней ровно у края (в ряд с соседями);
+##      "free" — серединой следа на курсор, своим поворотом (на траве, площади, мостовой);
+##      "lock" — крутят зажатой мышью: на месте, поворот из tool_yaw
+func _free_place(p: Vector2, bb: Array, mid: int, locked: bool) -> Dictionary:
+	if locked:
+		return {"pos": p, "yaw": tool_yaw, "sub": "lock"}
+	# вплотную к дороге (курсор на траве у края) — фасадом к ней. Свой поворот этой постройки (Z/X, зажатая мышь)
+	# и выключенная привязка (R) — не прилипает. Войти — ближе SNAP_R, выйти — дальше SNAP_STAY: на границе не дёргается
+	if snap and not manual_yaw and not land.is_road(p):
+		var near_prev := last_snap_n != Vector2.ZERO and last_snap_p.distance_to(p) < 2.0
+		var keep := last_snap_n if near_prev else Vector2.ZERO
+		var reach := (float(bb[3]) - float(bb[2])) * 0.5 + (SNAP_STAY if near_prev else SNAP_R)     # от середины до фасада + зазор
+		var e := _nearest_road(p, reach, (float(bb[1]) - float(bb[0])) * 0.5, keep)
+		if not e.is_empty():
+			var nrm: Vector2 = e["n"]
+			# не дёргаться: пока курсор плавно ведут, прежняя дорога остаётся, если она почти так же близко
+			if near_prev:
+				var ang := absf(nrm.angle_to(last_snap_n))
+				if ang > 0.0 and (ang < deg_to_rad(10.0) or ang > deg_to_rad(60.0)):
+					var dd := 0.0
+					while dd <= reach + 0.5 and not land.is_road(p + last_snap_n * dd):
+						dd += 0.1
+					if dd <= p.distance_to(e["p"]) + (0.25 if ang < deg_to_rad(10.0) else 0.6):
+						nrm = last_snap_n
+						e["p"] = p + nrm * dd
+			last_snap_n = nrm
+			last_snap_p = p
+			var yr := snappedf(atan2(nrm.x, nrm.y), deg_to_rad(5.0))
+			var pr := (e["p"] as Vector2) - City.facing(yr) * (float(bb[3]) + 0.02)
+			return {"pos": _snap_row(pr, yr, bb, mid), "yaw": yr, "sub": "road"}
+	last_snap_n = Vector2.ZERO
+	last_snap_p = Vector2.INF
+	var y0 := _free_yaw()
+	var pc := p - City.axis(y0) * ((float(bb[0]) + float(bb[1])) * 0.5) - City.facing(y0) * ((float(bb[2]) + float(bb[3])) * 0.5)
+	if snap:
+		pc = _snap_row(pc, y0, bb, mid)       # рядом дом с тем же поворотом — встать с ним в ряд
+	return {"pos": pc, "yaw": y0, "sub": "free"}
 
 
-func _plaza_calc(ap: int, bq: int, n: int) -> bool:
-	if not _pv(ap, bq):
-		return false
-	# быстрый отказ: сплошная мостовая через точку вдоль x и вдоль z — не короче n отсчётов (улица отпадает сразу)
-	for dir: Vector2i in [Vector2i(1, 0), Vector2i(0, 1)]:
-		var run := 1
-		var k := 1
-		while k < n and _pv(ap - dir.x * k, bq - dir.y * k):
-			run += 1
-			k += 1
-		k = 1
-		while k < n and _pv(ap + dir.x * k, bq + dir.y * k):
-			run += 1
-			k += 1
-		if run < n:
-			return false
-	# точно: есть ли окно n×n целиком из мостовой, в котором лежит точка (суммы по префиксам)
-	var w := 2 * n - 1
-	var a0 := ap - n + 1
-	var b0 := bq - n + 1
-	var ps := PackedInt32Array()
-	ps.resize((w + 1) * (w + 1))
-	for j in w:
-		var row := 0
-		for i in w:
-			if not _pv(a0 + i, b0 + j):
-				row += 1
-			ps[(j + 1) * (w + 1) + i + 1] = ps[j * (w + 1) + i + 1] + row
-	for j in n:
-		for i in n:
-			if ps[(j + n) * (w + 1) + i + n] - ps[j * (w + 1) + i + n] - ps[(j + n) * (w + 1) + i] + ps[j * (w + 1) + i] == 0:
-				return true
-	return false
-
-
-## Край площади: 0 — свободная мостовая, 1 — открытый край (трава, вода, чужая земля), 2 — постройка (за ней не смотрим)
-func _open_edge(q: Vector2) -> int:
-	if q.x < 0.0 or q.y < 0.0 or q.x >= Land.N * Land.CELL or q.y >= Land.N * Land.CELL:
-		return 1
-	var c := land.cell(q)
-	var k := land.idx(c.x, c.y)
-	if land.occ[k] != 0:
-		return 2
-	return 0 if Land.walk_kind(land.kind[k]) else 1
-
-
-## Ближайший открытый край площади вокруг p: {"n": направление к краю, "d": расстояние} или {} — нет ближе maxd.
-## Постройки заслоняют (край за рядом домов — не край). Из нескольких почти одинаково близких краёв (угол) берётся
-## тот, что дальше от камеры: постройка встанет к нему спиной — фасадом к игроку
-func _edge_fan(p: Vector2, maxd: float) -> Dictionary:
-	var hits := []
-	hits.resize(48)
-	var best := INF
-	for k in 48:
-		var dir := Vector2(sin(TAU * k / 48.0), cos(TAU * k / 48.0))
-		var dd := 0.0
-		var hit := -1.0
-		var lim := minf(maxd, best * 1.12 + 0.6)
-		while dd <= lim:
-			var e := _open_edge(p + dir * dd)
-			if e == 1:
-				hit = dd
-				break
-			if e == 2:
-				break
-			dd += 0.25
-		hits[k] = hit
-		if hit >= 0.0 and hit < best:
-			best = hit
-	if best == INF:
-		return {}
-	var cam_f := City.facing(rig.yaw) if rig else Vector2(0, 1)
-	# кандидаты — «ямки»: лучи не дальше best + 0.5, не дальше соседей; полоса равных лучей — один кандидат (середина).
-	# Обход по кругу с луча, отличного от предыдущего: полоса через луч 0 (край в сторону +z) не рвётся надвое
-	var start := 0
-	for k in 48:
-		if absf(float(hits[k]) - float(hits[posmod(k - 1, 48)])) >= 0.001:
-			start = k
-			break
-	var cand := []
-	var i0 := 0
-	while i0 < 48:
-		var k0 := (start + i0) % 48
-		var h: float = hits[k0]
-		if h < 0.0 or h > best + 0.5:
-			i0 += 1
-			continue
-		var run := [k0]
-		var i := i0 + 1
-		while i < 48 and absf(float(hits[(start + i) % 48]) - h) < 0.001:
-			run.append((start + i) % 48)
-			i += 1
-		var left: float = hits[posmod(run[0] - 1, 48)]
-		var right: float = hits[posmod(run[run.size() - 1] + 1, 48)]
-		if (left < 0.0 or left >= h) and (right < 0.0 or right >= h):
-			var sum := Vector2.ZERO
-			for r: int in run:
-				sum += Vector2(sin(TAU * r / 48.0), cos(TAU * r / 48.0))
-			cand.append({"n": sum.normalized(), "d": h, "run": run})
-		i0 = i
-	if cand.is_empty():
-		return {}
-	var pick: Dictionary = cand[0]
-	for c: Dictionary in cand:
-		var sc := (-(c["n"] as Vector2)).dot(cam_f)
-		var ps := (-(pick["n"] as Vector2)).dot(cam_f)
-		if sc > ps + 0.001 or (absf(sc - ps) <= 0.001 and float(c["d"]) < float(pick["d"])):
-			pick = c
-	var n: Vector2 = pick["n"]
-	if (pick["run"] as Array).size() == 1:
-		# один луч — уточнить по соседям, как у дороги
-		var kk: int = pick["run"][0]
-		var sum2 := Vector2.ZERO
-		for o in range(-2, 3):
-			var k2 := posmod(kk + o, 48)
-			var h2: float = hits[k2]
-			if h2 >= 0.0 and h2 <= float(pick["d"]) * 1.12 + 0.3:
-				sum2 += Vector2(sin(TAU * k2 / 48.0), cos(TAU * k2 / 48.0)) / (h2 + 0.3)
-		if sum2.length() > 0.001:
-			n = sum2.normalized()
-	# держаться прежнего края, пока курсор ведут рядом (у угла не перескакивать)
-	if last_pave_n != Vector2.ZERO and last_pave_p.distance_to(p) < 2.0 and last_pave_n.dot(n) < 0.999:
-		var dk := _edge_dist(p, last_pave_n, maxd + 0.5)
-		if dk <= _edge_dist(p, n, maxd + 0.5) + 0.25:
-			n = last_pave_n
-	return {"n": n, "d": _edge_dist(p, n, maxd + 0.5)}
-
-
-## Расстояние от p по направлению n до открытого края (с точностью до сантиметра); INF — упёрлись в постройку или далеко
-func _edge_dist(p: Vector2, n: Vector2, lim: float) -> float:
-	var dd := 0.0
-	while dd <= lim:
-		var e := _open_edge(p + n * dd)
-		if e == 2:
-			return INF
-		if e == 1:
-			var lo := maxf(0.0, dd - 0.1)
-			var hi := dd
-			for it in 4:
-				var m := (lo + hi) * 0.5
-				if _open_edge(p + n * m) == 1:
-					hi = m
-				else:
-					lo = m
-			return hi
-		dd += 0.1
-	return INF
-
-
-## Площадь: куда и как встаёт постройка. {"pos", "yaw", "sub", "n"} — по порядку: свой поворот → в ряд к соседу →
-## у края спиной к нему → у ближнего (края или соседа) → посреди пустой площади фасадом к игроку
-func _plaza_place(p: Vector2, bb: Array, mid: int) -> Dictionary:
-	var cx := (float(bb[0]) + float(bb[1])) * 0.5
-	var cz := (float(bb[2]) + float(bb[3])) * 0.5
-	var at := func(y: float) -> Vector2: return p - City.axis(y) * cx - City.facing(y) * cz     # серединой следа на курсор
-	# 0. игрок сам повернул (Z/X, зажатая мышь) или выключил привязку (R) — его поворот, серединой на курсор
-	if manual_yaw or not snap:
-		var ym := tool_yaw
-		var pm: Vector2 = at.call(ym)
-		if snap:
-			pm = _snap_row(pm, ym, bb, mid)
-		return {"pos": pm, "yaw": ym, "sub": "manual", "n": Vector2.ZERO}
-	# 1. рядом сосед, к которому можно встать в ряд (фасады на одной линии, промежуток ROW_GAP)
-	var row := _row_pick(p, bb, cx, cz, mid)
-	if not row.is_empty():
-		return {"pos": _snap_row(row["pos"], row["yaw"], bb, mid), "yaw": row["yaw"], "sub": "row", "n": Vector2.ZERO}
-	# 2. у края площади — спиной к краю, задней стеной вплотную (2 см), фасадом в площадь
-	var half_diag := Vector2(float(bb[1]) - float(bb[0]), float(bb[3]) - float(bb[2])).length() * 0.5
-	var band := half_diag + RIM_EXTRA + (0.5 if last_pave_sub == "rim" and last_pave_p.distance_to(p) < 2.0 else 0.0)
-	var edge := _edge_fan(p, maxf(EDGE_R, band + 0.5))
-	if not edge.is_empty() and float(edge["d"]) <= band:
-		var n: Vector2 = edge["n"]
-		var s := clampf((float(bb[1]) - float(bb[0])) * 0.5 * 0.85, 0.0, 3.0)
-		var pr := _edge_probe3(p, n, s, float(edge["d"]) + 3.0)
-		if s >= 0.2 and pr[0] < INF and pr[2] < INF and (pr[1] == INF or absf(pr[1] - (pr[0] + pr[2]) * 0.5) < 0.25):
-			var tilt := atan2(pr[2] - pr[0], 2.0 * s)
-			if absf(tilt) < deg_to_rad(12.0):
-				n = (n * 2.0 * s - Vector2(n.y, -n.x) * (pr[2] - pr[0])).normalized()
-				pr = _edge_probe3(p, n, s, float(edge["d"]) + 3.0)
-		var yr := snappedf(atan2(-n.x, -n.y), deg_to_rad(5.0))
-		var best: float = minf(pr[1], minf(pr[0], pr[2]))
-		if best == INF:
-			best = float(edge["d"])
-		var q := p + n * best
-		var pr_pos := q + City.facing(yr) * (0.02 - float(bb[2])) - City.axis(yr) * cx
-		return {"pos": _snap_row(pr_pos, yr, bb, mid), "yaw": yr, "sub": "rim", "n": n}
-	# 3. ближний ориентир: край площади (спиной к нему) или соседний дом (рядом — так же, напротив — лицом к нему)
-	var al := _align_pick(p, mid)
-	if not edge.is_empty() and float(edge["d"]) <= EDGE_R and (al.is_empty() or float(edge["d"]) <= float(al["dist"])):
-		var ye := snappedf(atan2(-(edge["n"] as Vector2).x, -(edge["n"] as Vector2).y), deg_to_rad(5.0))
-		return {"pos": _snap_row(at.call(ye), ye, bb, mid), "yaw": ye, "sub": "edge", "n": edge["n"]}
-	if not al.is_empty():
-		var ya: float = al["yaw"]
-		return {"pos": _snap_row(at.call(ya), ya, bb, mid), "yaw": ya, "sub": "align", "n": Vector2.ZERO}
-	# 4. посреди пустой площади: переносимый дом — как стоял, новый — фасадом к камере (по сторонам света)
-	var yd := float(moving["yaw"]) if not moving.is_empty() else (snappedf(rig.yaw, PI / 2) if rig else 0.0)
-	return {"pos": _snap_row(at.call(yd), yd, bb, mid), "yaw": yd, "sub": "default", "n": Vector2.ZERO}
-
-
-## До открытого края площади из трёх точек вдоль задней стены (слева −s, середина, справа +s); INF — не дошли
-## (или упёрлись в постройку)
-func _edge_probe3(p0: Vector2, n: Vector2, s: float, lim: float) -> Array:
-	var side := Vector2(n.y, -n.x)
-	var out := [INF, INF, INF]
-	for k in 3:
-		if k != 1 and s < 0.2:
-			continue
-		out[k] = _edge_dist(p0 + side * (s * (k - 1)), n, lim)
-	return out
-
-
-## Сосед, к которому постройка встанет в ряд (как _snap_row: фасады на одной линии, промежуток −0,3…1,9 м) — тот,
-## у кого промежуток ближе к ROW_GAP. {"yaw", "pos"} (серединой следа на курсор, ещё не подвинута) или {}
-func _row_pick(p: Vector2, bb: Array, cx: float, cz: float, mid: int) -> Dictionary:
-	var best := {}
-	var best_sc := INF
-	for id in city.buildings:
-		if id == mid:
-			continue
-		var o: Dictionary = city.buildings[id]
-		if (o["pos"] as Vector2).distance_squared_to(p) > 900.0:
-			continue
-		var od: Dictionary = city.def(o)
-		if od["kind"] == "decor" or od.get("fixed", false) or od["kind"] == "farm":
-			continue
-		var y := float(o["yaw"])
-		var pc := p - City.axis(y) * cx - City.facing(y) * cz
-		var ob := _row_bounds(city.blueprint(o))
-		var rel: Vector2 = pc - (o["pos"] as Vector2)
-		var along := rel.dot(City.axis(y))
-		var across := rel.dot(City.facing(y))
-		if absf(across + float(bb[3]) - float(ob[3])) > 1.4:
-			continue
-		for gap: float in [along + float(bb[0]) - float(ob[1]), float(ob[0]) - (along + float(bb[1]))]:
-			if gap > -0.3 and gap < 1.9 and absf(gap - ROW_GAP) < best_sc:
-				best_sc = absf(gap - ROW_GAP)
-				best = {"yaw": y, "pos": pc}
-	return best
-
-
-## Ближайший сосед (ближе ALIGN_R до его следа): рядом с ним — постройка встаёт так же, перед ним или за ним —
-## развёрнутой (двери напротив дверей, задние стены друг к другу). {"yaw", "dist"} или {}
-func _align_pick(p: Vector2, mid: int) -> Dictionary:
-	var best := {}
-	var bd := ALIGN_R
-	for id in city.buildings:
-		if id == mid:
-			continue
-		var o: Dictionary = city.buildings[id]
-		if (o["pos"] as Vector2).distance_squared_to(p) > 400.0:
-			continue
-		var od: Dictionary = city.def(o)
-		if od["kind"] == "decor" or od.get("fixed", false) or od["kind"] == "farm":
-			continue
-		var y := float(o["yaw"])
-		var ob := _row_bounds(city.blueprint(o))
-		var rel: Vector2 = p - (o["pos"] as Vector2)
-		var lx := rel.dot(City.axis(y))
-		var lz := rel.dot(City.facing(y))
-		var dx := maxf(0.0, maxf(float(ob[0]) - lx, lx - float(ob[1])))
-		var dz := maxf(0.0, maxf(float(ob[2]) - lz, lz - float(ob[3])))
-		var dist := Vector2(dx, dz).length()
-		if dist < bd:
-			bd = dist
-			var beside := lz >= float(ob[2]) - 0.5 and lz <= float(ob[3]) + 0.5
-			best = {"yaw": y if beside else wrapf(y + PI, -PI, PI), "dist": dist}
-	return best
-
-
-## Проверки постройки на площади (вместо запрета «здесь дорога»): не на большой дороге, не на склоне, перед дверью
-## свободно, чужую дверь не загораживает. "" — можно
-func _plaza_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: float, variant: int, color: int, tier: int, mid: int) -> String:
+## Проверки свободной постановки (после check_place): не на большой дороге к станции, у входа — мостовая (не своя),
+## чужую дверь не загораживать, на мостовой — почти ровно. "" — можно
+func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: float, variant: int, color: int, tier: int, mid: int) -> String:
 	var d: Dictionary = Defs.B[type]
+	var homey: bool = d["kind"] in ["house", "shop", "rp", "store"]
 	var lo := INF
 	var hi := -INF
 	var own := {}
+	var paved := 0
 	for k in cells:
 		own[k] = true
 		if Land.walk_kind(land.base_kind[k]):
 			return "По большой дороге ездят повозки — здесь не строят"
+		if Land.walk_kind(land.kind[k]):
+			paved += 1
 		lo = minf(lo, land.hq(k))
 		hi = maxf(hi, land.hq(k))
-	# ровное место — для домов и лавок (иначе ступени вокруг них на плитке); большим храмам и казармам хватает
-	# общего правила check_place (1,3 м), как и раньше
-	if hi - lo > PLAZA_SLOPE and d["kind"] in ["house", "shop", "rp", "store"]:
+	if homey and paved * 2 >= cells.size() and hi - lo > PAVE_SLOPE:
 		return "Мостовая здесь слишком наклонная — найдите место ровнее"
 	var bp := Catalog.make(type, tier, variant, color)
 	var ax := City.axis(yaw)
 	var f := City.facing(yaw)
-	if d["kind"] in ["house", "shop", "rp", "store"]:
-		# к двери должны подходить жители и покупатели
-		var dp := pos + ax * bp.door.x + f * bp.door.z
-		for q: Vector2 in [dp, dp + f * 0.4]:
-			var c := land.cell(q)
-			var k := land.idx(c.x, c.y)
-			if own.has(k) or land.occ[k] != 0 or not Land.walk_kind(land.kind[k]):
-				return "Перед входом нужно свободное место — поверните постройку (потяните мышью вбок)"
+	if homey and not _road_free_near(pos + ax * bp.door.x + f * bp.door.z, 1.7, own):
+		return "Нужна дорога у входа"
 	var rects: Array = bp.footprint()
 	if rects.is_empty():
 		rects = [Rect2(-0.4, -0.4, 0.8, 0.8)]
@@ -2272,6 +1998,20 @@ func _plaza_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: flo
 			if r.grow(0.4).has_point(lp):
 				return "Так загородится вход соседней постройки"
 	return ""
+
+
+## Есть ли свободная мостовая (не под постройкой и не под этой же постройкой own) ближе r к точке
+func _road_free_near(p: Vector2, r: float, own: Dictionary) -> bool:
+	var c := land.cell(p)
+	var rc := int(ceil(r / Land.CELL))
+	for j in range(c.y - rc, c.y + rc + 1):
+		for i in range(c.x - rc, c.x + rc + 1):
+			if not land.inside(i, j):
+				continue
+			var k := land.idx(i, j)
+			if Land.walk_kind(land.kind[k]) and land.occ[k] == 0 and not own.has(k) and land.cell_center(i, j).distance_to(p) <= r:
+				return true
+	return false
 
 
 ## Украшение на стену: стена дома, в которую смотрит курсор (луч по деталям), иначе — ближайшая к точке земли
@@ -3074,7 +2814,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			rot_drag = true
 			if place_lock.is_empty():
 				var pl0 := placement(tool, press_hover)
-				place_lock = {"p": pl0["pos"], "mode": pl0.get("mode", "")}
+				place_lock = {"p": pl0["pos"]}
 				rot_yaw0 = float(pl0["yaw"])
 			else:
 				rot_yaw0 = tool_yaw
@@ -3100,12 +2840,14 @@ func _unhandled_input(e: InputEvent) -> void:
 				else:
 					tool_yaw = _yaw_now() - deg_to_rad(15)
 					manual_yaw = true
+					yaw_set = true
 			KEY_Y:
 				if k.ctrl_pressed:
 					_redo()
 			KEY_X:
 				tool_yaw = _yaw_now() + deg_to_rad(15)
 				manual_yaw = true
+				yaw_set = true
 			KEY_C:
 				if k.ctrl_pressed:
 					set_tool("copy")
@@ -3340,9 +3082,9 @@ func _build_here() -> void:
 				_show(b)
 			if tool_variant < 0:
 				next_variant = randi() % int(Defs.B[tool].get("variants", 1))
-			if pl.get("mode", "") == "plaza" and not city.tips.has("plaza") and mode != "demo":
-				city.tips["plaza"] = true
-				hud.advisor("Стройка на площади", "Мостовая шире 9 метров — это площадь: на ней дом встаёт прямо на плитку. Рядом с соседом — в ряд с ним, у края — спиной к краю, напротив соседа — лицом к нему, посреди пустой площади — фасадом к вам.\n\nНа улице дом по-прежнему встаёт у её края. Повернуть по-своему — зажмите кнопку мыши и ведите вбок.")
+			if pl.get("sub", "") == "free" and not city.tips.has("free_place") and mode != "demo" and not (tutorial and tutorial.active()):
+				city.tips["free_place"] = true
+				hud.advisor("Строим где хотите", "Дом встаёт там, куда вы навели, — на траве, на площади, хоть на мостовой. Повернуть — зажмите кнопку мыши и ведите вбок (или Z / X); этот поворот запомнится и для следующих домов.\n\nПодведите дом вплотную к дороге — он сам встанет ровно фасадом к ней. Нужно одно: у входа должна быть мостовая, иначе жители не дойдут.")
 			# поворот был для этой постройки: следующая снова сама встанет фасадом к дороге (а поворот
 			# tool_yaw остаётся — для мест без дороги и для украшений)
 			manual_yaw = false
@@ -3377,6 +3119,7 @@ func _release() -> void:
 			else:
 				place_lock = {}                   # повернули — дальше постройка едет за мышкой, щелчок — построить
 				manual_yaw = true
+				yaw_set = true
 		elif not hud.mouse_over_ui() and (hover != Vector2.INF or not place_lock.is_empty()):
 			_build_here()
 		return
