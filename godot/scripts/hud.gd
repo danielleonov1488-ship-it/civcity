@@ -779,7 +779,8 @@ func on_arrive_block(text: String) -> void:
 	var c: City = game.city
 	var ht: Array = c.stats.get("happy_tips", [])
 	var tip := ("\n\nСовет: " + String(ht[0]) + ".") if not ht.is_empty() else ""
-	advisor("Новые семьи не едут", ("Первые %d семьи приезжают всегда, а дальше в город переселяются, только если счастье города не ниже %d%%. Сейчас — %d%%, и повозка ждёт на дороге.\n\nНаведите мышь на счастье вверху — там видно, из чего оно складывается и что его поднимет. Как только счастье поднимется, повозка сразу поедет." % [int(_defc("ARRIVE_FREE", 3)), int(_defc("ARRIVE_HAPPY", 60)), int(c.stats.get("happy", 0))]) + tip)
+	var nf := int(_defc("ARRIVE_FREE", 3))
+	advisor("Новые семьи не едут", ("Первые %d %s приезжают всегда, а дальше в город переселяются, только если счастье города не ниже %d%%. Сейчас — %d%%, и повозка ждёт на дороге.\n\nНаведите мышь на счастье вверху — там видно, из чего оно складывается и что его поднимет. Как только счастье поднимется, повозка сразу поедет." % [nf, _plural(nf, "семья", "семьи", "семей"), int(_defc("ARRIVE_HAPPY", 60)), int(c.stats.get("happy", 0))]) + tip)
 
 
 ## Советы о приезжих: первая семья; семья, которой негде жить
@@ -981,7 +982,9 @@ func _tip_level(v: VBoxContainer) -> void:
 	_tip_row(v, "family", "Жителей", "%s / %s" % [fmt(pop), fmt(int(nx["pop"]))], C_GOOD if pop_ok else C_BAD, 1 if pop_ok else 0)
 	_tip_row(v, "happy", "Счастье города", "%d%% / %d%%" % [hp, int(nx["happy"])], C_GOOD if hp_ok else C_BAD, 1 if hp_ok else 0)
 	# пределы — с уже изученными хранилищами (как money_cap/rp_cap), а не голые числа уровня
-	_tip_text(v, "На новом уровне казна вмещает %s ден., очков исследований — %s, открываются новые исследования." % [fmt(c.money_cap_for(c.level + 1)), fmt(c.rp_cap_for(c.level + 1))])
+	var smx: Array = Defs.B["scriptorium"].get("max", [])
+	var scr := (", скрипториев — до %d" % int(smx[mini(c.level + 1, smx.size() - 1)])) if not smx.is_empty() else ""
+	_tip_text(v, "На новом уровне казна вмещает %s ден., очков исследований — %s%s, открываются новые исследования." % [fmt(c.money_cap_for(c.level + 1)), fmt(c.rp_cap_for(c.level + 1)), scr])
 	if not pop_ok:
 		_tip_text(v, "Жителей прибавится, если строить дома у дорог и заселять приезжих.", C_INK, 14)
 	if not hp_ok:
@@ -1651,7 +1654,8 @@ func _card_tip(type: String) -> String:
 		"monument":
 			t += "\n\nСчастье всем вокруг: +%d%%\nДальность: %s" % [d["bonus"], Defs.WORD[int(d["range"])]]
 		"rp":
-			t += "\n\nОчки исследований: +%s в час\nРабочие: %s" % [str(d["rp"]), _jobs_text(d)]
+			var rph: float = game.city.rp_per_hour(type) if game and game.city else float(d["rp"])
+			t += "\n\nОчки исследований: +%s в час\nРабочие: %s" % [String.num(rph, 1), _jobs_text(d)]
 		"house":
 			var c: Dictionary = Defs.CLASSES[d["cls"]]
 			t += "\n\nЖители: %s, %d на этаж\nНужно им: %s" % [c["name"].to_lower(), c["per_floor"], ", ".join(c["needs"].map(func(n): return Defs.NEEDS[n]["name"].to_lower()))]
@@ -1667,7 +1671,15 @@ func _card_tip(type: String) -> String:
 		for id in game.city.buildings:
 			if game.city.buildings[id]["type"] == type:
 				cnt += 1
-	t += "\nВ городе: %d" % cnt
+	var mx: int = game.city.build_max(type) if game and game.city else -1
+	if mx >= 0:
+		t += "\nВ городе: %d из %d" % [cnt, mx]
+		var lv: int = game.city.level
+		var amx: Array = Defs.B[type]["max"]
+		if lv + 1 < Defs.LEVELS.size():           # сколько можно будет на следующем уровне
+			t += " (на уровне «%s» — %d)" % [Defs.LEVELS[lv + 1]["name"], int(amx[mini(lv + 1, amx.size() - 1)])]
+	else:
+		t += "\nВ городе: %d" % cnt
 	return t
 
 
@@ -1706,6 +1718,14 @@ func _update_cards() -> void:
 			pr.add_child(sp)
 			b.add_theme_stylebox_override("normal", _card_box("g_card_lock"))
 			_grey(img)
+		elif c.cap_err(type) != "":
+			# предел уровня города: больше таких не поставить, пока город не вырастет
+			var lm := _label("Предел: %d" % c.build_max(type), 12, true, C_SOFT)
+			lm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			lm.custom_minimum_size = Vector2(84, 0)
+			pr.add_child(lm)
+			b.add_theme_stylebox_override("normal", _card_box("g_card"))
+			_grey(img)
 		else:
 			pr.add_child(_icon("coins", 22))
 			pr.add_child(_label(fmt(d["cost"]), 18, true, C_INK if c.money >= float(d["cost"]) else C_BAD))
@@ -1733,6 +1753,9 @@ func select_build(type: String) -> void:
 		_unroll()
 	if not game.city.unlocked(type):
 		notify("«%s» откроется %s" % [Defs.B[type]["name"], Defs.unlock_text(Defs.B[type]["unlock"])], "lock")
+		return
+	if game.city.cap_err(type) != "":
+		notify(game.city.cap_err(type), "lock")
 		return
 	game.set_tool(type)
 	_update_pointer()
@@ -1790,15 +1813,17 @@ func _update_pointer() -> void:
 		"fruit":
 			pointer_target = _card_or_cat("commerce", "stall_fruit")
 			tip = "Лавки"
-		"scriptorium", "store":
-			pointer_target = _card_or_cat("farming", "scriptorium" if g["id"] == "scriptorium" else "warehouse")
-			tip = "Хозяйство"
+		"scriptorium", "scriptorium2", "store":
+			# второй скрипторий — только когда уровень города позволяет
+			if g["id"] != "scriptorium2" or game.city.cap_err("scriptorium") == "":
+				pointer_target = _card_or_cat("farming", "warehouse" if g["id"] == "store" else "scriptorium")
+				tip = "Хозяйство"
 		"research1", "floor2":
 			if not research_panel.visible:
 				pointer_target = top_btns.get("research")
 				tip = "Исследования"
 		"decor5":
-			pointer_target = _card_or_cat("decor", "flowers")
+			pointer_target = _card_or_cat("decor", "bench")
 			tip = "Украшения"
 		"lights":
 			pointer_target = _card_or_cat("decor", "lamp_post")
@@ -2167,7 +2192,7 @@ func _fill_info_body() -> void:
 			info_box.add_child(_row("happy", "Счастье всем вокруг", "+%d%%" % int(d["bonus"]), C_GOOD))
 			info_box.add_child(_row("arrow", "Дальность", Defs.WORD[int(d["range"])]))
 		"rp":
-			info_box.add_child(_row("research", "Очки исследований в час", "+%.1f" % (float(d["rp"]) * float(b.get("staff", 1.0))), C_GOOD))
+			info_box.add_child(_row("research", "Очки исследований в час", "+%.1f" % (c.rp_per_hour(b["type"]) * float(b.get("staff", 1.0))), C_GOOD))
 			info_box.add_child(_hire_row(b))
 		"farm":
 			info_box.add_child(_row("wheat", "Даёт", {"wheat": "пшеницу", "olives": "оливки", "grapes": "виноград"}[d["makes"]], C_GOOD))
@@ -2177,6 +2202,7 @@ func _fill_info_body() -> void:
 			info_box.add_child(_hire_row(b))
 		"center":
 			tv.add_child(_label("Уровень города: %s" % Defs.LEVELS[c.level]["name"], 14, true, C_SOFT))
+			info_box.add_child(_row("scroll", "Почта привозит свитки", "+%s в час" % String.num(float(Defs.LEVELS[c.level].get("rp_h", 0.0)), 1), C_GOOD))
 			var nx := c.next_level()
 			if not nx.is_empty():
 				info_box.add_child(_row("level", "Следующий уровень", nx["name"]))
@@ -3170,7 +3196,7 @@ func refresh() -> void:
 	lbl_income.tooltip_text = "Доход за час"
 	lbl_income.add_theme_color_override("font_color", C_GOOD if net >= 0 else C_BAD)
 	lbl_rp.text = "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]
-	lbl_rp.tooltip_text = "Очки исследований / предел. Дают скрипторий, школа, библиотека"
+	lbl_rp.tooltip_text = "Очки исследований / предел. Дают почта на станции, скрипторий, школа, библиотека"
 	lbl_rp_day.text = "+%.1f" % float(c.stats.get("rp_day", 0.0)) if float(c.stats.get("rp_day", 0.0)) > 0.0 else ""
 	for sb in speed_btns:
 		_set_on(sb[0], is_equal_approx(game.speed, sb[1]))
@@ -3334,7 +3360,7 @@ func _fill_tasks_body(goals: Array) -> void:
 		b.pressed.connect(func():
 			if gh != "":
 				advisor(gg["text"], gh)
-			if gg.has("tool"):
+			if gg.has("tool") and (gh == "" or game.city.cap_err(gg["tool"]) == ""):   # предел — объяснит подсказка
 				select_build(gg["tool"]))
 		tasks_box.add_child(row)
 		first = false

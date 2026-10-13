@@ -4,7 +4,7 @@ extends RefCounted
 ## ближайшие дома в своей дальности (сколько потянут рабочие), памятники и украшения радуют всех вокруг,
 ## теснота огорчает. Этаж полному счастливому дому покупает игрок (buy_floor); новые семьи едут, пока
 ## город счастлив (arrivals_blocked).
-## Деньги — налоги с домов; очки исследований — скрипторий, школа, библиотека. Уровень города растёт
+## Деньги — налоги с домов; очки исследований — почта на станции, скрипторий, школа, библиотека. Уровень города растёт
 ## от числа жителей и их счастья.
 
 signal changed                       # что-то поменялось — перерисовать интерфейс
@@ -160,6 +160,9 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 		return res
 	if ignore_id == -1 and d.get("unique", false) and _count(func(o): return o["type"] == type) > 0:
 		res["err"] = "Такая постройка в городе уже есть"
+		return res
+	if ignore_id == -1 and cap_err(type) != "":   # предел уровня города (перенос и готовый город — без него)
+		res["err"] = cap_err(type)
 		return res
 	if d.get("wall", false):
 		return res                            # украшение на стене: место выбирает игра (стена дома)
@@ -321,6 +324,43 @@ func recolor(b: Dictionary) -> void:
 # ---------- работники (как в Town to City: сколько нанять — решает игрок) ----------
 
 const WAGE := 0.3                     # денариев в час за каждого нанятого работника
+
+
+## Сколько построек этого вида можно держать на нынешнем уровне города (−1 — сколько угодно)
+func build_max(type: String) -> int:
+	var mx: Array = Defs.B[type].get("max", [])
+	if mx.is_empty():
+		return -1
+	return int(mx[clampi(level, 0, mx.size() - 1)])
+
+
+func count_type(type: String) -> int:
+	return _count(func(o): return o["type"] == type)
+
+
+## Почему ещё одну такую постройку не поставить из-за предела уровня ("" — можно).
+## Лишние, поставленные раньше, остаются и работают
+func cap_err(type: String) -> String:
+	var mx := build_max(type)
+	if mx < 0 or count_type(type) < mx:
+		return ""
+	var d: Dictionary = Defs.B[type]
+	var many := String(d.get("gen", String(d["name"]).to_lower()))
+	if level >= Defs.LEVELS.size() - 1:
+		return "Больше %s не поставить — это предел" % many
+	return "%s на уровне «%s» — не больше %d. Ещё один — на уровне «%s»" % [many.left(1).to_upper() + many.substr(1), Defs.LEVELS[level]["name"], mx, Defs.LEVELS[level + 1]["name"]]
+
+
+## Очков исследований в час от полностью занятой постройки — с изученными прибавками (ученики писцов…)
+func rp_per_hour(type: String) -> float:
+	var d: Dictionary = Defs.B[type]
+	var rate := float(d.get("rp", 0))
+	var out := rate
+	var up: Dictionary = d.get("rp_up", {})
+	for r in up:
+		if research.has(r):
+			out += rate * float(up[r])
+	return out
 
 
 func job_max(b: Dictionary) -> int:
@@ -923,10 +963,12 @@ func sim_day() -> void:
 				income += int(b["pop"]) * tax * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
 				_grow_house(b)
 			"rp":
-				rpd += float(d["rp"]) * float(b["staff"])
+				rpd += rp_per_hour(b["type"]) * float(b["staff"])
 				upkeep += float(d["cost"]) * 0.0025 + WAGE * hired_of(b)     # писцам и учителям тоже платят
 			"shop", "monument", "store", "farm", "military":
 				upkeep += float(d["cost"]) * 0.0025 + WAGE * hired_of(b)
+	if not center().is_empty():
+		rpd += float(Defs.LEVELS[level].get("rp_h", 0.0))   # почта привозит на станцию свитки
 	hour_n += 1
 	money = minf(money_cap(), money + income - upkeep)
 	rp = minf(rp_cap(), rp + rpd)
@@ -1093,13 +1135,13 @@ func _tick_arrivals() -> void:
 		arrive_t = 0.0
 		return
 	arrive_t += 1.0
-	var every := Defs.ARRIVE_HOURS / (1.0 + 0.35 * level)
+	var every: float = Defs.ARRIVE_EVERY[clampi(level, 0, Defs.ARRIVE_EVERY.size() - 1)]
 	var first := settled_total == 0 and arrivals.is_empty() and incoming == 0 and pending.is_empty()
 	if arrive_t >= every or first:
 		arrive_t = 0.0
 		var n := mini(room, 2 + level / 3)    # семьи приезжают по двое
 		if int(stats["happy"]) < Defs.ARRIVE_HAPPY and int(stats["pop"]) > 0:
-			n = mini(n, maxi(0, Defs.ARRIVE_FREE - families_came()))   # без счастья — только первые три семьи
+			n = mini(n, maxi(0, Defs.ARRIVE_FREE - families_came()))   # без счастья — только первые ARRIVE_FREE семей
 		incoming += n
 
 
