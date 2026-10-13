@@ -12,6 +12,8 @@
     }
   ],
   "links": [
-    { "title": "Сайт игры", "url": "https://civcity.ru" }
+    { "title": "Сайт игры", "url": "https://civcity.ru" },
+    { "title": "Наш Telegram", "url": "https://t.me/leonovlabs" },
+    { "title": "Конфиденциальность", "url": "https://civcity.ru/privacy/" }
   ]
 }

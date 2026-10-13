@@ -9,6 +9,8 @@ extends Node
 ##        пустая папка сохранений: вход → город скачан из облака → «Играть» → в городе N построек
 ##   CivCity.exe -- --menu --qa=legion --qa_out=DIR    (сессия от лаунчера: CIVCITY_SESSION)
 ##        «Играть» → город из облака → медальон «Легион» → «В бой!» → ×3 и «Авто» → итог → «В лагерь» → выход
+##   CivCity.exe -- --menu --nologin --qa=credits --qa_out=DIR
+##        титры из меню: «Создано Leonov Labs» и ссылка на Telegram
 ## Печатает строки «QA …» (в журнал godot.log), снимки — в qa_out. Последняя строка: «QA DONE fails=N».
 
 const PacksScript := preload("res://scripts/packs.gd")
@@ -58,6 +60,8 @@ func _ready() -> void:
 			_restore_flow()
 		"legion":
 			_legion_flow()
+		"credits":
+			_credits_flow()
 		_:
 			print("QA FAIL unknown scenario")
 			_done()
@@ -169,6 +173,8 @@ func _sign_in(register: bool) -> bool:
 		if tab:
 			await click(tab)
 			await frames(6)
+		check("под «Создать аккаунт» — ссылка на политику конфиденциальности", lg.find_child("privacy", true, false) != null)
+		await shot("01_register")
 	var em := lg.find_child("email", true, false) as LineEdit
 	var pw := lg.find_child("pass", true, false) as LineEdit
 	var go := lg.find_child("go", true, false) as Button
@@ -268,6 +274,26 @@ func _restore_flow() -> void:
 	await shot("03_restored")
 	print("QA account net=", acc.net, " synced=", acc.synced)
 	await _quit_like_player()
+
+
+## Титры из главного меню: кто сделал игру и ссылка на канал (запуск с --nologin, без окна входа)
+func _credits_flow() -> void:
+	if not await wait_mode(["menu"], 120.0):
+		check("меню открылось", false)
+		await _done()
+		return
+	await frames(20)
+	var hud = _g().hud
+	hud._menu_credits()
+	await frames(40)
+	var found := false
+	for n in hud.credits_panel.find_children("*", "Label", true, false):
+		if (n as Label).text == "Создано Leonov Labs":
+			found = true
+	check("в титрах — «Создано Leonov Labs»", found)
+	check("в титрах — ссылка на Telegram", hud.credits_panel.find_children("*", "LinkButton", true, false).size() > 0)
+	await shot("01_credits")
+	await _done()
 
 
 func _legion_flow() -> void:

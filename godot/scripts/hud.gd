@@ -2962,8 +2962,8 @@ func _settings_panel() -> void:
 ## Кто и что сделал для игры (по файлам CREDITS/LICENSE в assets). Разделы: [заголовок, значок, [[что, кто · лицензия], …]]
 const CREDITS := [
 	["Игра", "laurels", [
-		["CivCity — уютный римский город", "замысел, игровой дизайн и решения — команда CivCity"],
-		["Программирование, мир, жители и интерфейс", "команда CivCity вместе с Claude (Anthropic)"]]],
+		["CivCity — уютный римский город", "замысел, игровой дизайн и решения — Leonov Labs"],
+		["Программирование, мир, жители и интерфейс", "Leonov Labs вместе с Claude (Anthropic)"]]],
 	["Город и постройки", "housing", [
 		["Synty Studios — POLYGON Ancient Empire", "3D-модели домов, лавок, храмов, деревьев и украшений · лицензия Synty Store"],
 		["Artisau — Ancient Greece Low Poly", "статуи и мелкие предметы, шатры, слон и Минотавр в боях Легиона · CC0"]]],
@@ -3032,6 +3032,20 @@ func _credits_panel() -> void:
 	var tag := _label("Уютный римский город", 20, false, C_SOFT, font_title)
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(tag)
+	var by := _label("Создано Leonov Labs", 18, true, C_INK)
+	by.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(by)
+	var tg := LinkButton.new()
+	tg.text = "Наш канал в Telegram — t.me/leonovlabs"
+	tg.underline = LinkButton.UNDERLINE_MODE_ON_HOVER
+	tg.add_theme_font_override("font", font_bold)
+	tg.add_theme_font_size_override("font_size", 15)
+	tg.add_theme_color_override("font_color", C_SOFT)
+	tg.add_theme_color_override("font_hover_color", C_INK)
+	tg.focus_mode = Control.FOCUS_NONE
+	tg.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	tg.pressed.connect(func(): OS.shell_open("https://t.me/leonovlabs"))
+	col.add_child(tg)
 	for sec: Array in CREDITS:
 		var gap := Control.new()
 		gap.custom_minimum_size = Vector2(0, 10)

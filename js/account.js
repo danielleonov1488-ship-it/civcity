@@ -223,7 +223,7 @@ const Account = {
           <button type="submit" class="btn" id="acc-go">${mode === 'login' ? 'Войти' : 'Создать аккаунт'}</button>
         </div>
       </form>
-      ${mode === 'login' ? '<p class="sub"><button type="button" class="linkish" id="acc-forgot">Забыли пароль?</button></p>' : '<p class="sub">Подтверждать почту не нужно — она понадобится, только если забудете пароль.</p>'}
+      ${mode === 'login' ? '<p class="sub"><button type="button" class="linkish" id="acc-forgot">Забыли пароль?</button></p>' : '<p class="sub">Подтверждать почту не нужно — она понадобится, только если забудете пароль.</p><p class="sub">Нажимая «Создать аккаунт», вы соглашаетесь на обработку своих данных согласно <a href="https://civcity.ru/privacy/" target="_blank" rel="noopener">политике конфиденциальности</a>.</p>'}
       ${this.downloadHtml()}`);
     document.querySelectorAll('[data-amode]').forEach(b => b.onclick = () => this.showLogin(note, b.dataset.amode));
     const fg = $('acc-forgot');

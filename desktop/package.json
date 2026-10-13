@@ -1,7 +1,7 @@
 {
   "name": "civcity",
   "productName": "CivCity",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CivCity — уютный градостроитель про Рим",
   "author": "CivCity",
   "main": "main.js",

@@ -400,6 +400,16 @@ button, input { font: inherit; color: inherit; }
 .credits li { margin: 6px 0; }
 .credits .lic { color: var(--ink-faint); font-size: 0.92rem; }
 .credits .lic::before { content: "— "; }
+.news-more { max-width: 640px; margin: 28px auto 0; text-align: center; color: var(--ink-soft); }
+.news-more a { font-weight: 700; }
+
+/* политика конфиденциальности — та же карточка, что у «Авторов», но со сплошным текстом */
+.policy { max-width: 780px; }
+.policy .updated { margin: 0 0 18px; color: var(--ink-faint); font-size: 0.95rem; }
+.policy p { margin: 8px 0; color: var(--ink-soft); }
+.policy ul { margin: 8px 0; }
+.policy b { color: var(--ink); }
+.policy .contact { margin-top: 30px; padding: 16px 20px; border-radius: 10px; background: rgba(226, 183, 92, 0.16); border: 1px solid var(--line); }
 
 /* ---------- ширина экрана ---------- */
 

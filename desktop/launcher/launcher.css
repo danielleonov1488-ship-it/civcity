@@ -53,6 +53,8 @@ main { height: calc(100% - 34px); display: grid; grid-template-columns: 1fr 340p
 .msg { margin: 4px 0 8px; font-size: 12.5px; }
 .msg.bad { color: var(--bad); }
 .msg.good { color: var(--good); }
+.consent { margin: 10px 0 0; font-size: 12px; line-height: 1.4; color: var(--ink-soft); }
+.consent .linkish { font-size: 12px; }
 .btn { border: 0; border-radius: 9px; padding: 8px 14px; background: var(--terra); color: #fff; font-weight: 800; cursor: pointer; }
 .btn:hover { background: var(--terra-deep); }
 .btn.small { padding: 5px 11px; font-size: 12.5px; }

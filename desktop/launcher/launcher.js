@@ -60,6 +60,8 @@ const L = {
 
   drawAccount(msg, kind) {
     const box = $('acct');
+    // пока заполняют регистрацию, настройки спрятаны: иначе форма с согласием не помещается в окно
+    document.querySelector('.settings').hidden = !this.email && this.mode === 'reg';
     if (this.email) {
       box.innerHTML = `<div class="signed"><h3>Аккаунт</h3><span>Вы вошли как <b>${esc(this.email)}</b></span>
         <span class="muted small">Город хранится в облаке — играйте с любого компьютера.</span>
@@ -91,11 +93,14 @@ const L = {
         <label class="field">Пароль${reg ? ' (не короче 6 знаков)' : ''}<input id="a-pass" type="password" required minlength="6" autocomplete="${reg ? 'new-password' : 'current-password'}"></label>
         ${msg ? `<p class="msg ${kind || 'bad'}">${esc(msg)}</p>` : ''}
         <button type="submit" class="btn" id="a-go">${reg ? 'Создать аккаунт' : 'Войти'}</button>
-        ${reg ? '' : ' <button type="button" class="linkish" id="a-forgot">Забыли пароль?</button>'}
+        ${reg ? '<p class="consent">Нажимая «Создать аккаунт», вы соглашаетесь на обработку своих данных согласно <button type="button" class="linkish" id="a-privacy">политике конфиденциальности</button>.</p>'
+        : ' <button type="button" class="linkish" id="a-forgot">Забыли пароль?</button>'}
       </form>`;
     box.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { this.mode = b.dataset.m; this.drawAccount(); });
     const fg = $('a-forgot');
     if (fg) fg.onclick = () => { this.mode = 'forgot'; this.drawAccount(); };
+    const pv = $('a-privacy');
+    if (pv) pv.onclick = () => civ.open('https://civcity.ru/privacy/');
     $('a-form').onsubmit = async e => {
       e.preventDefault();
       $('a-go').disabled = true;

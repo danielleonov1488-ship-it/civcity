@@ -288,6 +288,13 @@ fi
 mv -f "$I/civcity.service" /etc/systemd/system/civcity.service
 mv -f "$I/Caddyfile" /etc/caddy/Caddyfile
 rm -f "$I/server.tgz" /etc/systemd/system/caddy.service.d/site.conf
+# журналы сервера (ошибки, иногда с почтой или IP) — не дольше 30 дней: так обещает политика конфиденциальности
+J=/etc/systemd/journald.conf.d/civcity.conf
+if ! grep -qs '^MaxRetentionSec=30day' "$J"; then
+  mkdir -p "$(dirname "$J")"
+  printf '[Journal]\nMaxRetentionSec=30day\n' > "$J"
+  systemctl restart systemd-journald
+fi
 systemctl daemon-reload
 systemctl enable --now civcity >/dev/null 2>&1
 systemctl restart civcity

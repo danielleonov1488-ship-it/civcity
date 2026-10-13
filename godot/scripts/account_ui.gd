@@ -231,6 +231,16 @@ func _fill_login() -> void:
 		var tip: Label = hud._wrap(hud._label("Подтверждать почту не нужно — она понадобится, только если забудете пароль.", 14, false, hud.C_SOFT), FIELD_W)
 		tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(tip)
+		var ok_l: Label = hud._wrap(hud._label("Нажимая «Создать аккаунт», вы соглашаетесь на обработку своих данных согласно", 14, false, hud.C_SOFT), FIELD_W)
+		ok_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(ok_l)
+		var pol := _link("политике конфиденциальности", func(): OS.shell_open(Account.SITE.trim_suffix("/") + "/privacy/"))
+		pol.name = "privacy"
+		pol.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		v.add_child(pol)
+		var gap := Control.new()          # чтобы ссылка на политику не сливалась с «Выход из игры» ниже
+		gap.custom_minimum_size = Vector2(0, 6)
+		v.add_child(gap)
 	if not _login_in_modal:
 		var ex := _link("Выход из игры", func(): Account.me().quit_game())
 		ex.name = "exit"
