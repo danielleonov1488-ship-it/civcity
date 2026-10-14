@@ -204,6 +204,8 @@ func _ready() -> void:
 		loaded = _load()
 	if not loaded:
 		city.tips["v22_pace"] = true             # новая игра — сразу по новым правилам, объяснять перемены не нужно
+		if mode in ["play", "new"]:
+			land.own_start()                     # своя земля новой игры — 2×3 участка, остальное покупается (меню и витрина — как были)
 		city.place("center", Land.CENTER, PI / 2, 0, 0, true)
 		# фон меню — тоже витрина (на «низком» качестве — прежний городок: он легче для видеокарты)
 		if promo or (mode == "menu" and settings.get("quality", "high") != "low"):
@@ -256,6 +258,7 @@ func _ready() -> void:
 	city.changed.connect(func(): if tool == "": _cover_selected())
 	city.family_came.connect(func(f): hud.on_arrival(f))
 	city.arrive_advice.connect(func(t): hud.on_arrive_block(t))
+	city.festival_changed.connect(_fest_look)
 	if mode == "new" and not loaded and not settings.get("tut_done", false) and shot_path == "":
 		Tutorial.start_new(city)
 	tutorial = Tutorial.new()
@@ -265,6 +268,8 @@ func _ready() -> void:
 	add_child(rank_cine)
 	rank_cine.setup(self)
 	_update_plot_signs()
+	if city.fest_left > 0:
+		_fest_look(true)                      # сохранение с идущими играми — город сразу наряжен
 	_set_hour(hour)
 	hud.refresh()
 	_sync_all_actors()
@@ -925,6 +930,117 @@ func _cliff_rocks() -> void:
 	parts.place(bp, Transform3D.IDENTITY)
 
 
+# ---------- игры в честь богов: город наряжен ----------
+
+var fest_vis := {}                       # наряд праздника: {h: детали в пуле, mesh: гирлянды}
+const FEST_Z := [70, 78, 86, 94, 102, 110, 118]   # где вдоль большой дороги (от арки к станции) встают шесты парами
+const FEST_SIDE := 3.3                   # шесты — так далеко от середины дороги (она 4,5 м шириной)
+const FEST_POLE := 1.4                   # шест выше обычного (3 м × 1,4): гирлянда над повозкой
+const FEST_SAG := 0.55                   # гирлянда провисает посередине
+const FEST_COLORS := [Color("b8322a"), Color("e8b13c"), Color("f2ead4"), Color("3d6fa3"), Color("c25a1c"), Color("4f8a3a")]
+
+
+## Игры в честь богов (City.festival): вдоль большой дороги от арки до станции — шесты со знамёнами парами и гирлянды
+## флажков поперёк дороги; жители сходятся на площадь у станции (People._fest_target). Шесты и знамёна — в общем пуле
+## деталей (MultiMesh), все гирлянды — одна сетка без теней: слабым ноутбукам не тяжело. Где у дороги стоит дом
+## игрока — шеста нет
+func _fest_look(on: bool) -> void:
+	if not fest_vis.is_empty():
+		parts.remove(fest_vis["h"])
+		if fest_vis["mesh"] != null:
+			(fest_vis["mesh"] as Node).queue_free()
+		fest_vis = {}
+	if not on or mode in ["menu", "demo"]:
+		return
+	var h := []
+	var lines := []
+	var k := 0
+	var prev := {}                           # сторона дороги → верх прошлого шеста (гирлянда вдоль дороги)
+	for z: int in FEST_Z:
+		var tops := {}
+		for side: float in [-1.0, 1.0]:
+			var p := _fest_spot(Vector2(Land.ROAD_X + side * FEST_SIDE, float(z)), side)
+			if p == Vector2.INF:
+				prev.erase(side)
+				continue
+			var y := land.height_at(p.x, p.y)
+			h.append_array(parts.place_one("SM_Prop_Pole_02", Transform3D(Basis.from_scale(Vector3(1.0, FEST_POLE, 1.0)), Vector3(p.x, y, p.y))))
+			# знамя поперёк дороги, к ней половиной: видно и с дороги, и сбоку
+			var ban := "SM_Prop_Banner_02_%s" % ["A", "C", "E", "G", "B", "H", "D"][k % 7]
+			h.append_array(parts.place_one(ban, Transform3D(Basis.IDENTITY, Vector3(p.x - side * 0.5, y + 3.0 * FEST_POLE - 0.35, p.y))))
+			var top := Vector3(p.x, y + 3.0 * FEST_POLE - 0.05, p.y)
+			if prev.has(side):
+				lines.append([prev[side], top])
+			prev[side] = top
+			tops[side] = top
+			k += 1
+		if tops.size() == 2:
+			lines.append([tops[-1.0], tops[1.0]])
+	var mi: MeshInstance3D = null
+	if not lines.is_empty():
+		mi = MeshInstance3D.new()
+		mi.mesh = _garlands(lines)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mi)
+	fest_vis = {"h": h, "mesh": mi}
+
+
+## Место для шеста у дороги (сдвигаем от дороги до 1,6 м): своя трава или земля, не вода, не мостовая, без построек рядом
+func _fest_spot(p: Vector2, side: float) -> Vector2:
+	for k in 3:
+		var q := p + Vector2(side * 0.8 * k, 0.0)
+		var c := land.cell(q)
+		var ok := land.inside(c.x, c.y) and not land.is_water(q) and not Land.walk_kind(land.kind[land.idx(c.x, c.y)])
+		for j in range(c.y - 2, c.y + 3):
+			for i in range(c.x - 2, c.x + 3):
+				if ok and (not land.inside(i, j) or land.occ[land.idx(i, j)] != 0):
+					ok = false
+		if ok:
+			return q
+	return Vector2.INF
+
+
+## Гирлянды флажков поперёк дороги: шнур провисает, на нём треугольные флажки разных цветов (одна сетка на все)
+static func _garlands(lines: Array) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var k := 0
+	for ln: Array in lines:
+		var a: Vector3 = ln[0]
+		var b: Vector3 = ln[1]
+		var n := maxi(6, int(a.distance_to(b) / 0.42))
+		var nrm := (b - a).cross(Vector3.UP).normalized()
+		var pts := []
+		for i in n + 1:
+			var u := float(i) / n
+			pts.append(a.lerp(b, u) + Vector3.DOWN * FEST_SAG * 4.0 * u * (1.0 - u))
+		for i in n:
+			var p0: Vector3 = pts[i]
+			var p1: Vector3 = pts[i + 1]
+			_tri(st, p0, p1, p1 + Vector3.DOWN * 0.045, Color("5a3d22"), nrm)          # шнур
+			_tri(st, p0, p1 + Vector3.DOWN * 0.045, p0 + Vector3.DOWN * 0.045, Color("5a3d22"), nrm)
+			var q0 := p0.lerp(p1, 0.06)
+			var q1 := p0.lerp(p1, 0.94)
+			_tri(st, q0, q1, (q0 + q1) * 0.5 + Vector3.DOWN * 0.48, FEST_COLORS[k % FEST_COLORS.size()], nrm)   # флажок
+			k += 1
+	var m := st.commit()
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.vertex_color_is_srgb = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.roughness = 0.9
+	if m.get_surface_count() > 0:
+		m.surface_set_material(0, mat)
+	return m
+
+
+static func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, col: Color, nrm: Vector3) -> void:
+	for v: Vector3 in [a, b, c]:
+		st.set_color(col)
+		st.set_normal(nrm)
+		st.add_vertex(v)
+
+
 ## Ночной огонёк; k — доля яркости (1 — фонари и жаровни, у жилых домов — еле теплится)
 func _light(at: Vector3, k := 1.0) -> OmniLight3D:
 	var l := OmniLight3D.new()
@@ -1152,6 +1268,9 @@ func _on_added(b: Dictionary) -> void:
 		_show(b)
 	if not (b["cells"] as PackedInt32Array).is_empty():
 		clear_nature(b["pos"], 14.0, b["cells"])
+	var bp: Vector2 = b["pos"]
+	if not fest_vis.is_empty() and absf(bp.x - Land.ROAD_X) < 16.0 and bp.y > FEST_Z[0] - 12 and bp.y < FEST_Z[-1] + 12:
+		_fest_look(true)                       # новый дом у дороги во время игр — шесты переставим, чтобы не торчали из стены
 
 
 ## Стройка как в Town to City: здание вырастает из земли за пару секунд, в пыли; потом — настоящее

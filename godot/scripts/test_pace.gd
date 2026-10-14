@@ -1,7 +1,8 @@
 extends Node
 ## Темп игры: предел скрипториев, школ, библиотек и академий по уровням города, очки исследований в час (почта на
 ## станции, ученики писцов), перенос живого сохранения (просьбы 1–10 выполнены, хутор, 51 житель, 97 очков), ряды
-## исследований, повозка только в свободные дома, новый уровень по кнопке; и бот — игра до Вечного города при 1×.
+## исследований, повозка только в свободные дома, новый уровень по кнопке; и бот — игра до Вечного города при 1×
+## (с играми в честь богов и покупкой земли; сами траты этапа 1b проверяет test_sinks.tscn).
 ##   bash .work/py/gpu_run.sh res://test_pace.tscn             — проверки, в конце «PACE CHECKS fails=0»
 ##   bash .work/py/gpu_run.sh --headless res://test_pace.tscn -- bot   — бот: «RANK …» по рангам и итог «PACE BOT …»
 ## Время идёт вручную (скорость 0, city.sim_day() по часам); повозку и путь семьи до дома бот
@@ -543,20 +544,29 @@ func _texts(n: Node) -> String:
 ## Бот играет как внимательный игрок при скорости 1× (повозку и путь семьи до дома изображает сам): улицы сеткой —
 ## жилые ряды через 14 м и «площадные» ряды с местом для больших построек; дома впрок, чтобы повозке было куда
 ## везти; лавки на все нужды и для разнообразия; склады и поля; писцы, школы, библиотеки и академии до предела
-## уровня; сначала — условия следующего уровня (копит на них деньги); украшения, фонтаны, храмы, этажи.
+## уровня; сначала — условия следующего уровня (копит на них деньги); украшения, фонтаны, храмы, этажи; с «Посёлка» —
+## игры в честь богов, как только можно; улицы на своей земле кончились, а строить негде — покупает участок сбоку.
 ## Жмёт «Перейти на новый уровень», как только можно. По каждому рангу пишет: минуты, долю ряда исследований
-## к переходу, часы с полной казной, пропавшие очки, сколько семей ждало сразу.
+## к переходу, часы с полной казной, пропавшие очки, сколько семей ждало сразу, сколько было игр и куплено участков,
+## на что ушли деньги; в конце — таблица «PACE TABLE».
 
 ## Ряды улиц вдоль x: [z, площадной, поперечные улицы] — площадной ряд в 24 м от соседей: храм, форум, школа, театр
-## встанут. Всё — в пределах будущей стартовой земли новых игр (x 128–256, z 64–256); у станции и большой дороги
-## (x 178–206 севернее z 112) рядов нет
+## встанут. Сначала — своя земля новой игры (x 128–256, z 64–256); у станции и большой дороги (x 178–206 севернее
+## z 112) рядов нет. Кончилось место — бот покупает участок сбоку (B_PLOTS) и ведёт ряды дальше (B_EXT_*)
 const B_WEST := [134.0, 157.0, 178.0]
 const B_EAST := [206.0, 228.0, 250.0]
 const B_SOUTH := [134.0, 157.0, 180.0, 203.0, 226.0, 250.0]
-const B_ROWS := [[80.0, false, [B_WEST, B_EAST]], [94.0, false, [B_WEST, B_EAST]], [108.0, false, [B_WEST, B_EAST]],
-	[122.0, false, [B_SOUTH]], [136.0, false, [B_SOUTH]], [160.0, true, [B_SOUTH]], [184.0, false, [B_SOUTH]],
-	[198.0, false, [B_SOUTH]], [222.0, true, [B_SOUTH]], [246.0, false, [B_SOUTH]]]
-const B_PONDS := [Vector3(215, 150, 7.5), Vector3(130, 182, 13.0), Vector3(260, 214, 11.0)]
+const B_EXT_W := [68.0, 89.0, 112.0, 134.0]
+const B_EXT_E := [250.0, 272.0, 295.0, 316.0]
+const B_ROWS := [[80.0, false, [B_WEST, B_EAST, B_EXT_W, B_EXT_E]], [94.0, false, [B_WEST, B_EAST, B_EXT_W, B_EXT_E]],
+	[108.0, false, [B_WEST, B_EAST, B_EXT_W, B_EXT_E]], [122.0, false, [B_SOUTH, B_EXT_W, B_EXT_E]], [136.0, false, [B_SOUTH, B_EXT_W, B_EXT_E]],
+	[160.0, true, [B_SOUTH, B_EXT_W, B_EXT_E]], [184.0, false, [B_SOUTH, B_EXT_W, B_EXT_E]], [198.0, false, [B_SOUTH, B_EXT_W, B_EXT_E]],
+	[222.0, true, [B_SOUTH, B_EXT_W, B_EXT_E]], [246.0, false, [B_SOUTH, B_EXT_W, B_EXT_E]],
+	[270.0, false, [B_SOUTH, B_EXT_W, B_EXT_E]], [284.0, false, [B_SOUTH, B_EXT_W, B_EXT_E]], [308.0, true, [B_SOUTH, B_EXT_W, B_EXT_E]]]
+## какие участки бот покупает, когда места нет (по порядку; сначала — к востоку, где нет прудов)
+const B_PLOTS := [Vector2i(4, 2), Vector2i(4, 3), Vector2i(4, 1), Vector2i(1, 2), Vector2i(1, 3), Vector2i(1, 1),
+	Vector2i(3, 4), Vector2i(2, 4), Vector2i(4, 4), Vector2i(1, 4)]
+const B_PONDS := [Vector3(215, 150, 7.5), Vector3(130, 182, 13.0), Vector3(260, 214, 11.0), Vector3(102, 124, 9.0), Vector3(176, 262, 17.0)]
 const B_HOME := Vector2(185.0, 128.0)            # от станции город растёт вниз по карте
 ## крупное — сначала у площадных рядов
 const B_BIG := ["school", "library", "academy", "temple", "forum", "odeon", "theatre", "baths", "balnea", "fountain",
@@ -577,8 +587,12 @@ var cart_t := 0.0
 var cart_load: Array = []           # семьи в повозке (City.make_load при выезде)
 var walks: Array = []                # [час прихода, дом, человек, семья]
 var reqs := {}
-var segs: Array = []                 # ряды улиц по порядку прокладки: [от, до, площадной]
-var seg_i := 0
+var segs: Array = []                 # отрезки рядов по порядку прокладки: [от, до, площадной]
+var seg_i := 0                       # сколько отрезков проложено
+var seg_done := {}                   # номер отрезка → проложен
+var side_spent := 0.0                # денарии на мостовые и участки (их не считаем в трату того, что строили)
+var land_t := -1.0                   # когда улицы на своей земле кончились впервые
+var last_plot_t := -99.0             # когда куплен последний участок
 var cols_done := {}                  # проложенные поперечные улицы между рядами
 var hc: Array = []                   # точки у жилых рядов
 var cc: Array = []                   # точки у площадных рядов
@@ -596,11 +610,11 @@ func _bot() -> void:
 	print("PACE BOT start: cart %.1f h each way, walk %.1f h, 1 h = %.0f s at 1x; goal «%s»; seed %d" % [CART_H, WALK_H, SEC_H, Defs.LEVELS[-1]["name"], int(c.rng.seed)])
 	_bot_layout()
 	game.rig.set_view(Vector3(190, 2, 165), 20, 62, 130)
+	_rank_start()
 	_bstreet()
 	_bstreet()
 	for i in 3:                               # как в обучении: три дома у дороги — и повозка едет
 		_bput("house_pleb", B_HOME, false)
-	_rank_start()
 	var lvl := 0
 	var wall0 := Time.get_ticks_msec()
 	while t < MAX_H and c.level < Defs.LEVELS.size() - 1:
@@ -656,12 +670,44 @@ func _wet(a: Vector2, b: Vector2) -> bool:
 	return false
 
 
-## Проложить следующий отрезок ряда (и поперечные улицы к соседнему ряду у его концов)
+## Отрезок целиком на своей земле (и дома по обе стороны, и поперечные улицы к ряду выше)
+func _seg_owned(s: Array) -> bool:
+	var a: Vector2 = s[0]
+	var b: Vector2 = s[1]
+	for i in int(a.distance_to(b)) + 1:
+		var p := a.move_toward(b, float(i))
+		for q: Vector2 in [p, p + Vector2(0, 7.0), p - Vector2(0, 7.0)]:
+			if not game.land.is_owned(q):
+				return false
+	return true
+
+
+## Ещё не проложенные отрезки на своей земле (помним до новой улицы или участка)
+var _left_cache := -1
+
+
+func _streets_left() -> int:
+	if _left_cache < 0:
+		_left_cache = 0
+		for i in segs.size():
+			if not seg_done.has(i) and _seg_owned(segs[i]):
+				_left_cache += 1
+	return _left_cache
+
+
+## Проложить следующий отрезок ряда на своей земле (и поперечные улицы к соседнему ряду у его концов)
 func _bstreet() -> bool:
-	if seg_i >= segs.size():
+	var si := -1
+	for i in segs.size():
+		if not seg_done.has(i) and _seg_owned(segs[i]):
+			si = i
+			break
+	if si < 0:
 		return false
-	var s: Array = segs[seg_i]
+	seg_done[si] = true
 	seg_i += 1
+	_left_cache = -1
+	var s: Array = segs[si]
 	var a: Vector2 = s[0]
 	var b: Vector2 = s[1]
 	_paint(a, b)
@@ -677,7 +723,8 @@ func _bstreet() -> bool:
 		if ri > 0 and (x < 178.0 or x > 206.0 or a.y > 112.0):
 			var key := "%d:%d" % [int(x), ri]
 			var top := Vector2(x, float(B_ROWS[ri - 1][0]))
-			if not cols_done.has(key) and not _wet(top, Vector2(x, a.y)):
+			var own: bool = game.land.is_owned(top) and game.land.is_owned((top + Vector2(x, a.y)) * 0.5)
+			if not cols_done.has(key) and own and not _wet(top, Vector2(x, a.y)):
 				cols_done[key] = true
 				_paint(top, Vector2(x, a.y))
 	var dir := (b - a).normalized()
@@ -698,6 +745,7 @@ func _bstreet() -> bool:
 func _paint(a: Vector2, b: Vector2) -> void:
 	var ch: Array = game.land.paint_line(a, b, 1.3, Land.Kind.ROAD, true)
 	c.road_cells += ch.size()
+	_spent("roads", ch.size() * float(Defs.ROAD_COST["road"]))
 	c.money -= ch.size() * float(Defs.ROAD_COST["road"])
 
 
@@ -711,14 +759,56 @@ func _bput(type: String, target: Vector2, big: bool, tries := 40) -> Dictionary:
 		if type == "house_patrician":
 			pools = [cc, hc]                          # домус глубокий — спиной к спине в жилом ряду не встаёт
 		elif d["kind"] == "house":
-			pools = [hc] if seg_i < segs.size() else [hc, cc]
+			pools = [hc] if _streets_left() > 0 else [hc, cc]
 		for pool: Array in pools:
 			var b := _try_pool(type, target, pool, tries)
 			if not b.is_empty():
 				return b
-		if not _bstreet():
+		# новая улица; на своей земле улицы кончились — купить участок сбоку, как игрок, которому негде строить
+		# (не ради украшения; и не ради поля: бот ставит только к дороге, а полю она не нужна — у бота оно не встаёт)
+		if not _bstreet() and not (not (d["kind"] in ["decor", "farm"]) and _bland(type) and _bstreet()):
 			break
 	return {}
+
+
+## Места на своей земле нет: купить участок сбоку (B_PLOTS по порядку), если хватает сверх запаса на условия уровня
+func _bland(why: String) -> bool:
+	if land_t < 0.0:
+		land_t = t
+		print("  .. %d h (%s): all streets on own land are laid" % [int(t), Defs.LEVELS[c.level]["name"]])
+	return _buy_plot("no room for «%s»" % why, _bsave(), false)
+
+
+## Купить следующий участок: сперва те, куда бот ведёт ряды (B_PLOTS), потом (any) любой у своей земли.
+## Не больше участка в полсуток (сперва обжить купленный) и не в ущерб запасу на условия уровня
+func _buy_plot(why: String, keep: float, any := true) -> bool:
+	if t - last_plot_t < 12.0:
+		return false
+	var opts: Array = B_PLOTS.duplicate()
+	if any:
+		for j in Land.PLOTS:
+			for i in Land.PLOTS:
+				opts.append(Vector2i(i, j))
+	for p: Vector2i in opts:
+		if not c.can_buy(p):
+			continue
+		var price: int = c.plot_price()
+		if c.money - float(price) < keep or not c.buy_plot(p):
+			return false
+		last_plot_t = t
+		_left_cache = -1
+		rk["plots"] = int(rk["plots"]) + 1
+		_spent("land", float(price))
+		print("  .. %d h: %s — bought plot %s for %d" % [int(t), why, p, price])
+		return true
+	return false
+
+
+## Казна почти полна, доход вот-вот начнёт пропадать — как советует советник («участки земли за краем своей»):
+## купить участок впрок, если хватает сверх запаса на условия уровня
+func _bland_rich(save: float) -> void:
+	if c.money >= c.money_cap() * 0.9:
+		_buy_plot("treasury %d%% full" % roundi(100.0 * c.money / c.money_cap()), save)
 
 
 func _try_pool(type: String, target: Vector2, pool: Array, tries: int) -> Dictionary:
@@ -744,9 +834,9 @@ func _try_pool(type: String, target: Vector2, pool: Array, tries: int) -> Dictio
 		if err == "" and (d["kind"] == "decor" or pl["sub"] == "road"):
 			return c.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"])
 		# бот ничего не сносит: что мешает здесь сейчас (занято, круто, вода, вход соседа), мешает и потом;
-		# временное — только деньги, исследование и предел уровня
+		# временное — только деньги, исследование, предел уровня и некупленная земля
 		if not (err.begins_with("Не хватает") or err.begins_with("Откроется") or err.contains("не больше") or err.contains("пока не строят") \
-				or err.contains("предел") or err.contains("уже есть")):
+				or err.contains("предел") or err.contains("уже есть") or err.contains("не куплена")):
 			dt[p] = true
 	return {}
 
@@ -823,7 +913,9 @@ func _settle() -> void:
 		if homes.is_empty():
 			var type: String = Defs.CLASSES[f["cls"]]["house"]
 			if c.money >= float(Defs.B[type]["cost"]):
+				var m0 := _m0()
 				_bput(type, B_HOME, false)
+				_spend("houses", m0)
 				homes = c.homes_for(f)
 		if homes.is_empty():
 			continue
@@ -844,14 +936,56 @@ func _bplay() -> void:
 	if _houses().is_empty():
 		return
 	var save := _bsave()
+	var m0 := _m0()
 	_bneed()
+	_spend("need", m0)
+	m0 = _m0()
+	_bfest(save)
+	_spend("festivals", m0)
+	m0 = _m0()
 	_bhouses()
+	_spend("houses", m0)
+	m0 = _m0()
 	_brp(save)
+	_spend("rp", m0)
+	m0 = _m0()
 	_bshops(save)
+	_spend("shops", m0)
+	m0 = _m0()
 	_bmonuments(save)
+	_spend("monuments", m0)
+	m0 = _m0()
 	_bdecor(save)
+	_spend("decor", m0)
+	m0 = _m0()
 	_bfloors(save)
+	_spend("floors", m0)
+	_bland_rich(save)
 	c.compute()
+
+
+## Счёт трат по видам: [деньги, побочные траты] до дела; после — разница без мостовых и участков (их считают сами)
+func _m0() -> Array:
+	return [c.money, side_spent]
+
+
+func _spend(cat: String, m0: Array) -> void:
+	var d: float = float(m0[0]) - c.money - (side_spent - float(m0[1]))
+	if d > 0.5:
+		var sp: Dictionary = rk["spend"]
+		sp[cat] = float(sp.get(cat, 0.0)) + d
+
+
+func _spent(cat: String, v: float) -> void:
+	side_spent += v
+	var sp: Dictionary = rk["spend"]
+	sp[cat] = float(sp.get(cat, 0.0)) + v
+
+
+## Игры в честь богов (с «Посёлка»): как только можно и хватает (запас на условия уровня — как у лавок, наполовину)
+func _bfest(save: float) -> void:
+	if c.can_festival() == "" and c.money - float(c.fest_price()) >= save * 0.5 and c.festival():
+		rk["fests"] = int(rk["fests"]) + 1
 
 
 ## Исследования: сначала то, что откроет условия следующего уровня, потом ключевое, потом остальное своего ряда
@@ -874,9 +1008,12 @@ func _bresearch() -> void:
 			continue
 		if r.has("after") and not c.research.has(r["after"]):
 			continue
-		if c.can_research(id) == "":
+		var why: String = c.can_research(id)
+		if why == "":
 			c.do_research(id)
 			continue
+		if why.begins_with("Не помещается"):
+			continue                              # дороже полок — копить бесполезно: сперва другое (полки — в B_KEY)
 		break
 
 
@@ -1196,11 +1333,14 @@ func _bfloors(save: float) -> void:
 
 func _rank_start() -> void:
 	rk = {"t0": t, "hours": 0, "cap_h": 0, "rp_earned": 0.0, "rp_lost": 0.0, "max_wait": 0, "seek": 0, "money_lost": 0.0,
-		"poor_h": 0, "money_min": INF}
+		"poor_h": 0, "money_min": INF, "fests": 0, "plots": 0, "spend": {}, "net": 0.0, "fest_h": 0, "rp_req": 0.0}
 
 
 func _hour_stats() -> void:
 	rk["hours"] = int(rk["hours"]) + 1
+	rk["net"] = float(rk["net"]) + float(c.stats["income"]) - float(c.stats["upkeep"])
+	if c.fest_left > 0:
+		rk["fest_h"] = int(rk["fest_h"]) + 1
 	if c.money >= c.money_cap() - 1.0:
 		rk["cap_h"] = int(rk["cap_h"]) + 1
 	if c.money < 150.0:
@@ -1229,8 +1369,20 @@ func _press() -> void:
 	var hrs := maxi(1, int(rk["hours"]))
 	var row := {"lvl": L, "min": mins, "tier": _tier_pct(L), "tier_all": _tier_pct(L, false), "cap": 100.0 * int(rk["cap_h"]) / hrs,
 		"lost": 100.0 * float(rk["rp_lost"]) / maxf(1.0, float(rk["rp_earned"]) + float(rk["rp_lost"])), "wait": int(rk["max_wait"]),
-		"seek": int(rk["seek"]), "poor": 100.0 * int(rk["poor_h"]) / hrs, "mlost": float(rk["money_lost"])}
+		"seek": int(rk["seek"]), "poor": 100.0 * int(rk["poor_h"]) / hrs, "mlost": float(rk["money_lost"]), "fests": int(rk["fests"]),
+		"plots": int(rk["plots"]), "earned": float(rk["rp_earned"]), "net": float(rk["net"])}
 	rows_out.append(row)
+	var sp: Dictionary = rk["spend"]
+	var parts := []
+	var tot := 0.0
+	for k in sp:
+		tot += float(sp[k])
+	var keys := sp.keys()
+	keys.sort_custom(func(a, b): return float(sp[a]) > float(sp[b]))
+	for k in keys:
+		parts.append("%s %d" % [k, int(sp[k])])
+	print("  «%s» money: net income %d, spent %d (%s), lost to the cap %d; festivals %d (%d h on), plots %d; rp earned %d" % [Defs.LEVELS[L]["name"],
+		int(rk["net"]), int(tot), ", ".join(parts), int(rk["money_lost"]), int(rk["fests"]), int(rk["fest_h"]), int(rk["plots"]), int(rk["rp_earned"])])
 	print("RANK %d «%s» at %.1f h = %.1f min (1x) | «%s» lasted %.1f min | tier %d researched %d%% (%d%% counting Legion/wonders) | treasury at cap %d%% of %d h, money lost %d, below 150 den %d%% | rp lost %d%% | max waiting %d | seekers %d | pop=%d happy=%d money=%d/%d rp=%d/%d houses=%d buildings=%d | rp/h %.1f, net den/h %d" % [
 		L + 1, Defs.LEVELS[L + 1]["name"], t, t * SEC_H / 60.0, Defs.LEVELS[L]["name"], mins, L, roundi(row["tier"]), roundi(row["tier_all"]), roundi(row["cap"]), hrs,
 		int(row["mlost"]), roundi(row["poor"]), roundi(row["lost"]), row["wait"], row["seek"], int(c.stats["pop"]), int(c.stats["happy"]), int(c.money),
@@ -1268,6 +1420,13 @@ func _summary() -> void:
 	print("PACE BOT treasury at cap, %% of hours (want <20%% from Деревня): %s" % ", ".join(caps))
 	print("PACE BOT rp overflow (want <10%%): %s" % ", ".join(lost))
 	print("PACE BOT max families waiting (want ≤3): %s" % ", ".join(waits))
+	# одна таблица по рангам (как в отчёте этапа 1a) — и сколько игр и участков
+	print("PACE TABLE | rank | min (1x) | plan | tier researched | treasury at cap | rp lost | max waiting | festivals | plots bought |")
+	for row: Dictionary in rows_out:
+		var L: int = row["lvl"]
+		var m: float = float(row["min"]) + (TUT_MIN if L == 0 else 0.0)
+		print("PACE TABLE | %s | %.1f | %s | %d%% | %d%% | %d%% | %d | %d | %d |" % [Defs.LEVELS[L]["name"], m, ("%.0f" % B_TARGET[L]) if L < B_TARGET.size() else "-",
+			roundi(row["tier"]), roundi(row["cap"]), roundi(row["lost"]), int(row["wait"]), int(row["fests"]), int(row["plots"])])
 	print("PACE BOT end at %.1f h = %.1f min: level %d «%s» pop=%d happy=%d money=%d rp=%d research=%d houses=%d buildings=%d" % [t, t * SEC_H / 60.0,
 		c.level, Defs.LEVELS[c.level]["name"], int(c.stats["pop"]), int(c.stats["happy"]), int(c.money), int(c.rp), c.research.size(), _houses().size(), c.buildings.size()])
 	var kinds := {}

@@ -20,6 +20,8 @@ const CH := 64                      # клеток в куске сетки (16 
 const CHN := N / CH
 const PLOT := 64.0                  # участок земли
 const PLOTS := 6
+const START_PLOTS := Rect2i(2, 1, 2, 3)   # своя земля новой игры: участки x 2–3, z 1–3 (x 128–256, z 64–256 м)
+const OLD_PLOTS := 16                    # столько своей земли давали с начала прежде (4×4): купленные — сверх них
 const ROAD_X := 192.0                    # большая дорога идёт с севера вдоль x = 192
 const ROAD_R := 2.25                     # её полуширина (4,5 м — шире улиц города)
 const TUNNEL := Vector2(ROAD_X, 0.5)     # где большая дорога входит на карту (старое имя — повозки и уходящие семьи)
@@ -218,7 +220,8 @@ func generate() -> void:
 	paint_line(Vector2(ROAD_X, 104.0), Vector2(ROAD_X, 128.0), 1.7, Kind.ROAD, true)
 	for z in range(92, 106):
 		paint_line(Vector2(187.5, z + 0.5), Vector2(190.0, z + 0.5), 0.6, Kind.PLAZA, true)
-	# своя земля с начала: середина 4×4 участка (256×256 м)
+	# своя земля с начала: середина 4×4 участка (256×256 м) — у готового города меню и витрины;
+	# новая игра берёт меньше (own_start), старые сохранения — свою (load_changes)
 	for dj in range(1, 5):
 		for di in range(1, 5):
 			owned[Vector2i(di, dj)] = true
@@ -226,6 +229,14 @@ func generate() -> void:
 	base_kind = kind.duplicate()
 	dirty.clear()
 	touched.clear()
+
+
+## Своя земля новой игры — START_PLOTS (2×3 участка, ~24,6 тыс. м²): остальное покупается
+func own_start() -> void:
+	owned.clear()
+	for j in range(START_PLOTS.position.y, START_PLOTS.end.y):
+		for i in range(START_PLOTS.position.x, START_PLOTS.end.x):
+			owned[Vector2i(i, j)] = true
 
 
 # ---------- пейзаж за краем карты ----------

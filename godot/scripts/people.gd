@@ -697,6 +697,10 @@ func _pick_errand(r: Dictionary) -> Dictionary:
 		var pz := _plaza_target(r, from)
 		if not pz.is_empty():
 			opts.append([3.0, pz])
+	if city.fest_left > 0:                     # игры в честь богов: город сходится на площадь у станции
+		var fz := _fest_target(r, from)
+		if not fz.is_empty():
+			opts.append([4.0 if r["child"] else 6.0, fz])
 	var sum := 0.0
 	for o in opts:
 		if not (o[1] as Dictionary).is_empty():
@@ -953,6 +957,28 @@ func _plaza_target(r: Dictionary, from: Vector2) -> Dictionary:
 		var q := base + Vector2(cos(a), sin(a)) * rng.randf_range(1.2, 5.0 + k * 0.2)
 		if _free(q) and not _crowded(q, near, 1.5):
 			return {"act": "stroll", "p": q}
+	return {}
+
+
+## Игры в честь богов: место в толпе у почтовой станции — на площади и дороге перед входом, лицом к станции
+## (дети бегают там же); идут те, чей дом не дальше 110 м
+func _fest_target(r: Dictionary, from: Vector2) -> Dictionary:
+	var c := city.center()
+	if c.is_empty():
+		return {}
+	var base := city.door_point(c)
+	if from.distance_to(base) > 110.0:
+		return {}
+	var f := City.facing(float(c["yaw"]))
+	var ax := City.axis(float(c["yaw"]))
+	var near := _stand_points(base + f * 4.0, 12.0)
+	for k in 16:
+		var q := base + f * rng.randf_range(1.0, 7.5) + ax * rng.randf_range(-9.0, 9.0)
+		if _free(q) and not _crowded(q, near, 1.1):
+			if r["child"]:
+				return {"act": "play", "p": q}
+			# взрослые смотрят игры (пляшут, как у музыкантов) или болтают с соседями
+			return {"act": "watch" if rng.randf() < 0.6 else "stroll", "type": "musicians", "p": q, "face": base}
 	return {}
 
 

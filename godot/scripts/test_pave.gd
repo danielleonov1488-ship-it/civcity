@@ -200,16 +200,16 @@ func _paint() -> void:
 	var L: Land = game.land
 	flat_zone(Vector2(183, 160), 46, 62)
 	flat_zone(S2, 40, 40)
-	flat_zone(Vector2(96, 236), 44, 40)
+	flat_zone(Vector2(152, 222), 44, 40)
 	L.paint_circle(S1, 6.0, Land.Kind.ROAD, true, true, true)
 	for st: Array in STREETS:
 		L.paint_line(Vector2(164, st[0]), Vector2(190, st[0]), st[1], Land.Kind.ROAD, true)
 	L.paint_line(Vector2(196, 150), Vector2(196, 172), 2.0, Land.Kind.ROAD, true)
 	L.paint_circle(S2, 15.0, Land.Kind.PLAZA, true, true, true)
 	# как у владельца на снимке: песчаная «площадь» овалом у улицы
-	L.paint_line(Vector2(84, 244), Vector2(108, 244), 2.0, Land.Kind.ROAD, true)
-	for x in range(88, 106, 2):
-		L.paint_circle(Vector2(x, 236), 5.0, Land.Kind.DIRT, true, true, false)
+	L.paint_line(Vector2(140, 230), Vector2(164, 230), 2.0, Land.Kind.ROAD, true)
+	for x in range(144, 162, 2):
+		L.paint_circle(Vector2(x, 222), 5.0, Land.Kind.DIRT, true, true, false)
 
 
 func centre_pos(type: String, c: Vector2, yaw: float) -> Vector2:
@@ -355,8 +355,8 @@ func _f5_mouse() -> void:
 ## F6: как на снимке владельца — песчаная площадь у улицы, внизу ряд домов: лавка ставится везде, где помещается
 ## (раньше то «перед входом нужно свободное место», то можно — от сдвига мыши на миллиметр)
 func _f6_owner_oval() -> void:
-	for x: float in [93.0, 96.4, 99.8]:
-		var pl := probe("house_pleb", Vector2(x, 241.6))
+	for x: float in [149.0, 152.4, 155.8]:
+		var pl := probe("house_pleb", Vector2(x, 227.6))
 		if pl["err"] == "":
 			game.city.place("house_pleb", pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
 	var bad := 0
@@ -364,7 +364,7 @@ func _f6_owner_oval() -> void:
 	var errs := {}
 	for i in 30:
 		for j in 14:
-			var p := Vector2(86.0 + i * 0.73, 231.0 + j * 0.53)
+			var p := Vector2(142.0 + i * 0.73, 217.0 + j * 0.53)
 			if not Land.walk_kind(game.land.kind_at(p.x, p.y)):
 				continue
 			var pl := probe("stall_fruit", p)

@@ -1603,7 +1603,7 @@ func _bottom_right() -> void:
 	full_money = _label("Казна полна — доход пропадает", 14, true, C_BAD)
 	full_money.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	full_money.mouse_filter = Control.MOUSE_FILTER_PASS
-	full_money.tooltip_text = "Казна заполнена до предела — новые денарии пропадают. Потратьте их: дома, этажи, лавки, памятники, украшения. Предел растёт с уровнем города и исследованиями хранилищ."
+	full_money.tooltip_text = "Казна заполнена до предела — новые денарии пропадают. Потратьте их: дома, этажи, лавки, памятники, украшения, игры в честь богов (с уровня «Посёлок» — в карточке почтовой станции), новые участки земли. Предел растёт с уровнем города и исследованиями хранилищ."
 	full_money.visible = false
 	pv.add_child(full_money)
 	full_rp = _label("Полки полны — очки пропадают", 14, true, C_BAD)
@@ -2397,6 +2397,7 @@ func _fill_info_body() -> void:
 				info_box.add_child(_wrap(_label(wait, 14, true, C_BAD), 330))
 			if c.waiting > 0:
 				info_box.add_child(_row("tent", "Ждут жилья", "%d %s" % [c.waiting, _plural(c.waiting, "семья", "семьи", "семей")], C_BAD))
+			_fest_rows(info_box)
 		"decor":
 			info_box.add_child(_row("flower", "Очки украшения", "+%d" % int(d.get("deco", 1)), C_GOOD))
 	if not c.is_house(b):                      # у дома вместо описания — что даёт счастье (см. _fill_house)
@@ -2417,6 +2418,44 @@ func _fill_info_body() -> void:
 			bm.pressed.connect(func(): game.set_tool("move"); game.start_move(b); close_panels())
 			h.add_child(bm)
 		info_box.add_child(h)
+
+
+## Карточка станции: игры в честь богов (с уровня «Посёлок») — идут ли, когда снова и кнопка «Устроить игры — N ден.»
+func _fest_rows(v: Control) -> void:
+	var c: City = game.city
+	if not c.fest_open():
+		return
+	var F: Dictionary = Defs.FESTIVAL
+	v.add_child(_divider(14))
+	if c.fest_left > 0:
+		v.add_child(_row("laurels", "Игры в честь богов", "идут, ещё %d ч" % c.fest_left, C_GOOD))
+		v.add_child(_wrap(_label("Весь город празднует: счастье всех домов +%d%%, повозка с семьями ходит чаще." % int(F["happy"]), 14, false, C_GOOD), 330))
+		return
+	var why := c.can_festival()
+	var st := "можно устроить"
+	if c.fest_cd > 0:
+		st = "через %d ч" % c.fest_cd
+	elif why != "":
+		st = "мало денариев" if why.begins_with("Не хватает") else ""
+	v.add_child(_row("laurels", "Игры в честь богов", st, C_GOOD if why == "" else (C_BAD if why.begins_with("Не хватает") else C_SOFT)))
+	var fb := Button.new()
+	fb.name = "fest_btn"
+	fb.text = "Устроить игры — %s ден." % fmt(c.fest_price())
+	fb.icon = ico("laurels", 32)
+	fb.focus_mode = Control.FOCUS_NONE
+	fb.disabled = why != ""
+	fb.tooltip_text = why if why != "" else "Устроить игры в честь богов"
+	fb.pressed.connect(press_festival)
+	v.add_child(fb)
+	var txt := "На сутки: счастье всех домов +%d%%, повозка ходит чаще. Цена — %d ден. за каждого жителя." % [int(F["happy"]), int(F["per_pop"])]
+	v.add_child(_wrap(_label(why if why != "" else txt, 14, why != "", C_BAD if why.begins_with("Не хватает") else C_SOFT), 330))
+
+
+## «Устроить игры» в карточке станции: платим, город празднует (звук — только монетки)
+func press_festival() -> void:
+	if game.city.festival():
+		game.sound.ui("coins")
+	refresh()
 
 
 ## Карточка дома (как в Town to City): счастье крупно и что оно даёт; слева — что нужно классу и какая лавка
@@ -3368,7 +3407,7 @@ func _buy_panel() -> void:
 
 func ask_buy(p: Vector2i) -> void:
 	buy_plot = p
-	(buy_panel.find_child("text", true, false) as Label).text = "Участок 64 × 64 м за краем вашей земли. Купить его за %s денариев? На нём можно будет строить." % fmt(game.city.plot_price())
+	(buy_panel.find_child("text", true, false) as Label).text = "Участок 64 × 64 м за краем вашей земли. Купить его за %s денариев? На нём можно будет строить. Каждый следующий участок — дороже." % fmt(game.city.plot_price())
 	buy_panel.visible = true
 
 
@@ -3454,13 +3493,29 @@ func _once_tips() -> void:
 		var nx := c.next_level()
 		advisor("Город готов к новому уровню!", "Все условия для уровня «%s» выполнены. Город сам не растёт: нажмите кнопку «Перейти на новый уровень» под табличкой города (или в карточке почтовой станции) — когда сами захотите.\n\nНовый уровень откроет новые исследования, казна станет вместительнее. Условия следующего уровня всегда видно, если навести мышь на уровень города." % nx.get("name", ""))
 		return
+	if c.fest_open() and int(c.stats.get("pop", 0)) > 0 and not c.tips.has("fest_tip"):
+		c.tips["fest_tip"] = true
+		advisor("Игры в честь богов", fest_note())
+		return
 	if full_money.visible and not c.tips.has("full_money"):
 		c.tips["full_money"] = true
-		advisor("Казна полна", "Казна заполнена до предела — новые денарии пропадают. Пустите их в дело: новые дома и этажи, лавки, украшения и памятники. Чтобы казна вмещала больше, поднимайте уровень города и изучите «Новое хранилище денег».")
+		var fest := " Или устройте игры в честь богов — в карточке почтовой станции." if c.fest_open() else ""
+		advisor("Казна полна", "Казна заполнена до предела — новые денарии пропадают. Пустите их в дело: новые дома и этажи, лавки, украшения и памятники, участки земли за краем своей.%s Чтобы казна вмещала больше, поднимайте уровень города и изучите «Новое хранилище денег»." % fest)
 		return
 	if full_rp.visible and not c.tips.has("full_rp"):
 		c.tips["full_rp"] = true
 		advisor("Полки полны", "Очков исследований столько, сколько вмещают полки, — новые пропадают. Изучите что-нибудь в свитке исследований вверху справа. Полки вырастут на новом уровне города и с исследованием «Новые полки для свитков».")
+
+
+## Советник один раз (tips.fest_tip), когда открылись игры в честь богов: что дают, сколько стоят, где кнопка
+func fest_note() -> String:
+	var c: City = game.city
+	var F: Dictionary = Defs.FESTIVAL
+	var often := "раз в двое суток" if int(F["cd"]) == 48 else "раз в %d ч" % int(F["cd"])
+	return ("Город дорос до уровня «%s» — теперь можно устраивать игры в честь богов. Целые сутки весь город празднует: счастье всех домов на %d%% выше, а повозка с семьями ходит чаще.\n\n" \
+		+ "Игры стоят %d %s за каждого жителя (сейчас — %s ден.), устраивать их можно %s. Щёлкните по почтовой станции — кнопка «Устроить игры» в её карточке.") \
+		% [Defs.LEVELS[int(F["lvl"])]["name"], int(F["happy"]), int(F["per_pop"]), _plural(int(F["per_pop"]), "денарий", "денария", "денариев"),
+		fmt(c.fest_price()), often]
 
 
 ## Что поменялось в старом городе после обновления темпа (советник один раз, city.tips.v22_pace)

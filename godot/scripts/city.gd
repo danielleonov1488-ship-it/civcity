@@ -6,7 +6,8 @@ extends RefCounted
 ## город счастлив (arrivals_blocked), и только в свободные дома (free_fit).
 ## Деньги — налоги с домов; очки исследований — почта на станции, скрипторий, школа, библиотека. Новый уровень —
 ## как в Town to City: когда выполнены условия (жители, счастье, постройки — Defs.LEVELS need), игрок сам жмёт
-## «Перейти на новый уровень» (rank_up); город сам не растёт.
+## «Перейти на новый уровень» (rank_up); город сам не растёт. Большие траты: игры в честь богов (festival, с «Посёлка»)
+## и участки земли (buy_plot: у новой игры своя земля — 2×3 участка, Land.START_PLOTS).
 
 signal changed                       # что-то поменялось — перерисовать интерфейс
 signal building_added(b)
@@ -20,6 +21,7 @@ signal family_assigned(name, home)   # игрок выбрал семье дом
 signal arrive_advice(text)           # повозка впервые встала из-за низкого счастья — объясняет советник
 signal level_up(lvl)                 # город перешёл на новый уровень — ролик «Новый ранг» (rank_cine.gd)
 signal quiet(text, icon)             # событие только в колокольчик, без всплывашки
+signal festival_changed(on)          # игры в честь богов начались / кончились — город наряжается (game.gd)
 
 var land: Land
 var money := float(Defs.START_MONEY)
@@ -58,6 +60,9 @@ var road_cells := 0                   # сколько клеток дорог �
 var rng := RandomNumberGenerator.new()
 var bulk := false                     # place() без пересчёта (витрина Showcase ставит сотни построек, compute — в конце)
 var legion := Legion.new()            # армия: походы, Слава, чудеса (legion.gd); сохраняется под ключом "legion"
+var fest_left := 0                    # сколько игровых часов ещё идут игры в честь богов (Defs.FESTIVAL)
+var fest_cd := 0                      # через сколько часов можно устроить новые игры
+var plots_bought := 0                 # сколько участков земли куплено (от него цена следующего)
 
 
 func _init(l: Land) -> void:
@@ -565,7 +570,8 @@ func compute() -> void:
 	# две лавки еды и украшения; 65% (второй этаж) — три разные лавки и украшения; 75% (третий) — ещё мясо, хлеб, фонтан.
 	var happy_sum := 0.0
 	var pop := 0
-	var sums := {"base": 0.0, "shops": 0.0, "deco": 0.0, "mon": 0.0, "crowd": 0.0, "miss": 0.0, "w": 0.0}
+	var sums := {"base": 0.0, "shops": 0.0, "deco": 0.0, "mon": 0.0, "fest": 0.0, "crowd": 0.0, "miss": 0.0, "w": 0.0}
+	var fb := fest_bonus()                     # игры в честь богов — всем домам, как триумф Легиона
 	for h in houses:
 		var cls: String = def(h)["cls"]
 		var cd: Dictionary = Defs.CLASSES[cls]
@@ -597,6 +603,8 @@ func compute() -> void:
 		if lg > 0:
 			parts.append(["Легион: чудеса и триумф", lg])
 			mon_sum += lg
+		if fb > 0:
+			parts.append(["Праздник: игры в честь богов", fb])
 		var crowd := 0
 		for o in houses:
 			if o != h and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DENSITY_RADIUS:
@@ -609,7 +617,7 @@ func compute() -> void:
 			if not h["needs"].has(n):
 				missing.append(n)
 				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + mon_sum + dens - missing.size() * Defs.MISSING_PENALTY
+		var hp := base + shop_sum + deco_b + mon_sum + fb + dens - missing.size() * Defs.MISSING_PENALTY
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["monuments"] = float(mon_sum)
@@ -626,6 +634,7 @@ func compute() -> void:
 		sums["shops"] += shop_sum * w
 		sums["deco"] += deco_b * w
 		sums["mon"] += mon_sum * w
+		sums["fest"] += fb * w
 		sums["crowd"] += dens * w
 		sums["miss"] += -missing.size() * Defs.MISSING_PENALTY * w
 		sums["clip"] = float(sums.get("clip", 0.0)) + (clampf(hp, 0.0, 100.0) - hp) * w   # счастье дома — от 0 до 100%
@@ -636,7 +645,7 @@ func compute() -> void:
 	if float(sums["w"]) > 0.0:
 		var wt: float = sums["w"]
 		var rows := [["Основа", "base", true], ["Лавки", "shops", true], ["Украшения", "deco", true], ["Памятники", "mon", false],
-				["Теснота", "crowd", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
+				["Праздник: игры в честь богов", "fest", false], ["Теснота", "crowd", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
 		var fv := []
 		var vi := []
 		var acc := 0
@@ -1020,6 +1029,7 @@ func sim_day() -> void:
 	stats["rp_day"] = rpd
 	for ev: Array in legion.on_hour():           # Легион: таймеры улучшений (настоящие часы), Слава чудес, триумф
 		_event(ev[0], ev[1])
+	_fest_hour()
 	_tick_arrivals()
 	_update_level()
 	_check_goals()
@@ -1221,17 +1231,20 @@ func free_fit() -> int:
 	return n - incoming
 
 
-## Счастливый город зовёт чаще: множитель промежутка между повозками (1 — обычный) и почему
+## Счастливый город и праздник зовут чаще: множитель промежутка между повозками (1 — обычный) и почему
 func arrive_mult() -> Array:
 	var hp := int(stats.get("happy", 0))
 	var m := 1.0
-	var why := ""
+	var why := []
 	for e: Array in Defs.ARRIVE_FAST:
 		if hp >= int(e[0]):
 			m = float(e[1])
-			why = "счастье города от %d%%" % int(e[0])
+			why.append("счастье города от %d%%" % int(e[0]))
 			break
-	return [maxf(Defs.ARRIVE_MULT_MIN, m), why]
+	if fest_left > 0:
+		m *= float(Defs.FESTIVAL["cart"])
+		why.append("идут игры в честь богов")
+	return [maxf(Defs.ARRIVE_MULT_MIN, m), " и ".join(why)]
 
 
 ## Повозка раз в столько игровых часов — с поправкой на счастье
@@ -1577,14 +1590,70 @@ func do_research(id: String) -> bool:
 	return true
 
 
+# ---------- праздник «Игры в честь богов» (Defs.FESTIVAL) ----------
+
+## Сколько счастья всем домам дают игры сейчас (City.compute)
+func fest_bonus() -> int:
+	return int(Defs.FESTIVAL["happy"]) if fest_left > 0 else 0
+
+
+## Цена игр: столько-то денариев за каждого жителя
+func fest_price() -> int:
+	return int(Defs.FESTIVAL["per_pop"]) * int(stats.get("pop", 0))
+
+
+func fest_open() -> bool:
+	return level >= int(Defs.FESTIVAL["lvl"])
+
+
+## "" — игры можно устроить; иначе — почему нельзя (для кнопки в карточке станции)
+func can_festival() -> String:
+	if not fest_open():
+		return "Игры откроются на уровне «%s»" % Defs.LEVELS[int(Defs.FESTIVAL["lvl"])]["name"]
+	if fest_left > 0:
+		return "Игры уже идут — ещё %d ч" % fest_left
+	if fest_cd > 0:
+		return "Новые игры можно устроить через %d ч" % fest_cd
+	if int(stats.get("pop", 0)) <= 0:
+		return "Праздновать пока некому"
+	if money < float(fest_price()):
+		return "Не хватает денариев: нужно %d" % fest_price()
+	return ""
+
+
+## Устроить игры: казна платит, сутки весь город празднует (счастье, повозка чаще); в колокольчик — тихо
+func festival() -> bool:
+	if can_festival() != "":
+		return false
+	var F: Dictionary = Defs.FESTIVAL
+	money -= float(fest_price())
+	fest_left = int(F["hours"])
+	fest_cd = int(F["cd"])
+	_quiet("Игры в честь богов! %d ч счастье всех домов +%d%%, повозка с семьями ходит чаще" % [int(F["hours"]), int(F["happy"])], "laurels")
+	compute()
+	festival_changed.emit(true)
+	_check_goals()
+	changed.emit()
+	return true
+
+
+## Час праздника (sim_day): игры идут — на час меньше; кончились — тихая запись в колокольчик
+func _fest_hour() -> void:
+	fest_cd = maxi(0, fest_cd - 1)
+	if fest_left <= 0:
+		return
+	fest_left -= 1
+	if fest_left == 0:
+		_quiet("Игры в честь богов окончены. Новые можно устроить через %d ч — в карточке почтовой станции" % fest_cd, "laurels")
+		compute()
+		festival_changed.emit(false)
+
+
 # ---------- участки ----------
 
-const PLOT_PRICE := [0, 25000, 35000, 50000, 70000, 95000, 125000, 160000, 200000, 250000, 300000, 360000, 430000, 500000, 600000, 700000, 800000, 900000, 1000000, 1200000, 1500000]
-
-
+## Цена следующего участка: k-й купленный — Defs.PLOT_BASE × PLOT_GROW^(k−1), до тысяч (6, 8, 10, 13, 17 тыс. …)
 func plot_price() -> int:
-	var bought := land.owned.size() - 16
-	return int(PLOT_PRICE[clampi(bought + 1, 1, PLOT_PRICE.size() - 1)])
+	return int(roundf(float(Defs.PLOT_BASE) * pow(Defs.PLOT_GROW, plots_bought) / 1000.0)) * 1000
 
 
 func can_buy(p: Vector2i) -> bool:
@@ -1600,12 +1669,13 @@ func buy_plot(p: Vector2i) -> bool:
 	if not can_buy(p) or money < plot_price():
 		return false
 	money -= plot_price()
+	plots_bought += 1
 	land.owned[p] = true
 	var c := int(Land.PLOT / Land.CELL)
 	for j in range(p.y * c, p.y * c + c, Land.CH):
 		for i in range(p.x * c, p.x * c + c, Land.CH):
 			land._mark(i + 1, j + 1)
-	_event("Куплен новый участок земли", "keys")
+	_quiet("Куплен новый участок земли — на нём можно строить", "keys")
 	_check_goals()
 	changed.emit()
 	return true
@@ -1742,6 +1812,7 @@ func save_data() -> Dictionary:
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
+		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought,
 		"legion": legion.to_dict()}
 
 
@@ -1767,6 +1838,10 @@ func load_data(d: Dictionary) -> void:
 	tips = d.get("tips", {})
 	road_cells = int(d.get("road_cells", 0))
 	events = d.get("events", [])
+	fest_left = maxi(0, int(d.get("fest_left", 0)))
+	fest_cd = maxi(0, int(d.get("fest_cd", 0)))
+	# старые сохранения: своя земля с начала была 4×4 участка — купленные сверх них (земля загружена раньше города)
+	plots_bought = maxi(0, int(d.get("plots_bought", land.owned.size() - Land.OLD_PLOTS)))
 	_drop_roads2()
 	legion.from_dict(d.get("legion", {}))
 	next_id = int(d.get("next_id", 1))
