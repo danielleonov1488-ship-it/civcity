@@ -165,8 +165,8 @@ static func top(ui: LegionUi) -> void:
 	_top_load(ui, body)
 
 
-## Запросить таблицу лучших (и снова — по «Повторить»)
-static func _top_load(ui: LegionUi, body: VBoxContainer) -> void:
+## Запросить таблицу лучших (и снова — по «Повторить»). auto — после ошибки один раз повторить самим через 5 с
+static func _top_load(ui: LegionUi, body: VBoxContainer, auto := true) -> void:
 	var net = ui._net()
 	ui.hud._clear(body)
 	body.add_child(ui._wl("Собираем вести со всей империи…", 600, 17, C_SOFT, true, true))
@@ -180,7 +180,15 @@ static func _top_load(ui: LegionUi, body: VBoxContainer) -> void:
 			var f: Dictionary = (net.last_fail as Dictionary).duplicate() if "last_fail" in net else {}
 			if f.is_empty():
 				f = {"title": "Не получилось", "text": err}
-			error_block(ui, bx, f, func(): _top_load(ui, bx))
+			var again := auto and bx.is_inside_tree()
+			error_block(ui, bx, f, func(): _top_load(ui, bx, false), "пробуем снова сами…" if again else "")
+			if again:
+				# связь могла мигнуть — один раз пробуем снова сами, через 5 секунд
+				bx.get_tree().create_timer(5.0).timeout.connect(func():
+					var b2 := wb.get_ref() as VBoxContainer
+					# окно закрыто или уже грузится/загружено по «Повторить» — не трогаем
+					if b2 != null and b2.is_inside_tree() and b2.get_node_or_null("NetError") != null:
+						_top_load(ui, b2, false))
 			return
 		_fill_top(ui, bx, d))
 

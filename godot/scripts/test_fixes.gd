@@ -1,9 +1,10 @@
 extends Node3D
 ## Этап 0 — поломки из замечаний 14.10. Запуск: bash .work/py/gpu_run.sh res://test_fixes.tscn → «FIX DONE fails=0».
 ## Связь (NetHttp): настоящая причина сбоя, повтор с забытым адресом, во вкладке «Против городов» — заголовок, объяснение,
-## «Повторить» и код, сам повторяет через 5 с; таблица лучших — так же; честный текст, пока итог прошлого боя в пути;
+## «Повторить» и код, сам повторяет через 5 с (один раз); таблица лучших — так же; честный текст, пока итог прошлого боя в пути;
 ## итог, не ушедший за полчаса, брошен. Значок «нет связи с облаком» (через 2 минуты) и советник один раз.
-## Пауза, когда окно свёрнуто. Кольца дальности лавок с «Большим охватом». Возврат очков за убранное «Площади из плитки».
+## Пауза, когда окно свёрнуто (бой кампании ждёт, бой с городом — нет). Кольца дальности лавок с «Большим охватом».
+## Возврат очков за убранное «Площади из плитки» — и ни час, ни награда Легиона не срезают их до полок.
 ## В живой сервер не ходит: «нет связи» — закрытый порт 127.0.0.1:9 (на Windows он не отказывает, а молчит: вид сбоя
 ## тогда timeout, а не connect — поэтому ждём ответа не дольше 2 с, NetHttp.test_timeout). Снимки — D:/CivCity/.work/gd/fix_*.png
 var game
@@ -47,6 +48,14 @@ func shot(name: String) -> void:
 	await frames(8)
 	get_viewport().get_texture().get_image().save_png(OUT + name)
 	print("FIX shot ", OUT + name)
+
+
+func _labels(n: Node) -> String:
+	var s := ""
+	if n != null:
+		for l in n.find_children("*", "Label", true, false):
+			s += (l as Label).text + " | "
+	return s
 
 
 func _no_internet_words(s: String) -> bool:
@@ -119,6 +128,10 @@ func _run() -> void:
 	var over := c.rp
 	c.sim_day()
 	check(c.rp >= over - 0.01, "очки сверх полок не срезаются следующим часом", [over, c.rp, c.rp_cap()])
+	c.rp = c.rp_cap() + 160.0
+	over = c.rp
+	c.legion._give({"rp": 50.0, "money": 0.0})
+	check(c.rp >= over - 0.01, "награда Легиона очками не срезает их до полок", [over, c.rp, c.rp_cap()])
 	c.rp = 0.0
 
 	# ---------- 0.3 кольца дальности: с «Большим охватом» — как в расчёте ----------
@@ -182,8 +195,15 @@ func _run() -> void:
 	# таблица лучших — тот же блок
 	LegionPvpView.top(ui)
 	var top_err := await until(func(): return ui.overlay != null and ui.overlay.find_child("NetError", true, false) != null, 25.0)
-	check(top_err and ui.overlay.find_child("Retry", true, false) != null, "«Лучшие города» без связи — та же ошибка с «Повторить»")
+	check(top_err and ui.overlay.find_child("Retry", true, false) != null and _labels(ui.overlay.find_child("NetError", true, false)).contains("пробуем снова сами"),
+		"«Лучшие города» без связи — та же ошибка с «Повторить» и «пробуем снова сами…»")
 	await shot("fix_top_error.png")
+	var top_again := await until(func(): return ui.overlay != null and ui.overlay.find_child("NetError", true, false) == null, 8.0)
+	await until(func(): return ui.overlay != null and ui.overlay.find_child("NetError", true, false) != null, 25.0)
+	var blk2: Node = ui.overlay.find_child("NetError", true, false) if ui.overlay != null else null
+	var once := blk2 != null and not _labels(blk2).contains("пробуем снова сами")
+	await secs(6.0)
+	check(top_again and once and is_instance_valid(blk2) and blk2.is_inside_tree(), "«Лучшие города» сами повторили один раз и больше не повторяют")
 	ui._close_overlay()
 	# нападение, пока итог прошлого боя в пути — честный текст, не «нет связи»
 	var lg: Legion = c.legion
@@ -274,6 +294,25 @@ func _run() -> void:
 	await frames(5)
 	check(game.speed == 0.0, "пауза до сворачивания не снимается")
 	hud.set_speed(1.0)
+	# бой кампании ждёт, бой с городом идёт дальше: сервер ждёт его итог только полчаса
+	for is_pvp in [false, true]:
+		var fb := LegionBattle.new()         # без сцены: только то, что смотрит пауза
+		fb.pvp = is_pvp
+		fb.phase = "fight"
+		fb.pause_lbl = Label.new()
+		LegionBattle.current = fb
+		game.minimized_test = true
+		await frames(3)
+		var held: bool = game._min_battle == fb
+		var stopped := fb.paused
+		game.minimized_test = false
+		await frames(3)
+		check(held != is_pvp and stopped != is_pvp and not fb.paused and game._min_battle == null and is_equal_approx(game.speed, 1.0),
+			"свернули во время боя %s — %s" % ["с городом" if is_pvp else "кампании", "бой идёт дальше" if is_pvp else "бой на паузе, потом дальше"],
+			[held, stopped, fb.paused, game.speed])
+		LegionBattle.current = null
+		fb.pause_lbl.free()
+		fb.free()
 
 	NetHttp.test_timeout = 0.0
 

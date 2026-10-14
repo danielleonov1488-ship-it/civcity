@@ -104,6 +104,8 @@ func _on_level_up(lvl: int) -> void:
 
 func _process(dt: float) -> void:
 	if not cine.is_empty():
+		if float(game._min_speed) >= 0.0:
+			return                       # окно свёрнуто: ролик ждёт игрока
 		_tick(minf(dt, 0.05))
 		return
 	if pending.is_empty() or game == null or not game.ready_done:
@@ -407,7 +409,13 @@ func _end() -> void:
 	var tool0: String = cine["tool0"]
 	var to: int = cine["to"]
 	cine = {}
-	if is_equal_approx(float(game.speed), 1.0):
+	if float(game._min_speed) >= 0.0:
+		# окно свёрнуто — скорость игрока отдаём тому, кто вернёт её при разворачивании
+		if is_equal_approx(float(game._min_speed), 1.0):
+			game._min_speed = s0
+			hud.paused_speed = s0
+		hud.refresh()
+	elif is_equal_approx(float(game.speed), 1.0):
 		hud.set_speed(s0)
 	else:
 		hud.refresh()

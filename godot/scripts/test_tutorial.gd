@@ -68,6 +68,25 @@ func _run() -> void:
 	for k in 3:
 		put("house_pleb", dp + Vector2(4, 10 + k * 6))
 	await wait_step("cart")
+	# окно свернули посреди ролика с повозкой: ролик ждёт, развернули — идёт дальше
+	var tut = game.tutorial
+	var w := 0
+	while tut.cine.is_empty() and w < 600:
+		await frames(5)
+		w += 5
+	if tut.cine.is_empty():
+		print("CINE MIN FAIL ролик с повозкой не начался")
+	else:
+		await frames(20)
+		game.minimized_test = true
+		await frames(3)
+		var ct := float(tut.cine.get("t", -1.0))
+		await frames(40)
+		var frozen: bool = not tut.cine.is_empty() and is_equal_approx(float(tut.cine["t"]), ct) and game.speed == 0.0
+		game.minimized_test = false
+		await frames(5)
+		var goes: bool = tut.cine.is_empty() or float(tut.cine["t"]) > ct
+		print("CINE MIN ", "PASS" if frozen and goes else "FAIL", " frozen=", frozen, " goes=", goes, " speed=", game.speed)
 	await frames(60)
 	await shot("t4_cart.png")
 	await wait_step("settle")

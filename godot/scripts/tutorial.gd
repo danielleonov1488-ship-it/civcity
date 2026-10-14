@@ -172,7 +172,7 @@ func _enter(i: int) -> void:
 				if int(r["lvl"]) <= c.level and not r.has("after") and not c.research.has(r["id"]):
 					cheapest = minf(cheapest, float(r["cost"]))
 			if cheapest < 1e9:
-				c.rp = minf(c.rp_cap(), maxf(c.rp, cheapest))
+				c.rp = maxf(c.rp, minf(c.rp_cap(), cheapest))
 	hud.apply_reveal(int(c.tips.get("ui", 3)))
 	hud._update_pointer()
 
@@ -206,6 +206,8 @@ func finish() -> void:
 
 func _process(dt: float) -> void:
 	if not cine.is_empty():
+		if game != null and float(game._min_speed) >= 0.0:
+			return                   # окно свёрнуто: ролик ждёт игрока
 		_cine_tick(dt)               # пока идёт ролик, шаги обучения ждут
 		return
 	if not active() or game == null or not game.ready_done:
@@ -578,7 +580,13 @@ func _cine_end() -> void:
 	if cart.get("state", "") == "in":
 		cart["mult"] = 1.0
 	cine = {}
-	if is_equal_approx(float(game.speed), 1.0) and s0 > 1.0:
+	if float(game._min_speed) >= 0.0:
+		# окно свёрнуто — скорость игрока отдаём тому, кто вернёт её при разворачивании
+		if is_equal_approx(float(game._min_speed), 1.0) and s0 > 1.0:
+			game._min_speed = s0
+			hud.paused_speed = s0
+		hud.refresh()
+	elif is_equal_approx(float(game.speed), 1.0) and s0 > 1.0:
 		hud.set_speed(s0)            # игрок ждал повозку на быстрой скорости — она и остаётся
 	else:
 		hud.refresh()

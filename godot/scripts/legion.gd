@@ -1046,7 +1046,7 @@ func _give(reward: Dictionary) -> void:
 					c.money = minf(c.money_cap(), c.money + v)
 			"rp":
 				if c != null:
-					c.rp = minf(c.rp_cap(), c.rp + v)
+					c.rp = maxf(c.rp, minf(c.rp_cap(), c.rp + v))   # сверх полок (возврат очков) не срезаем — как в sim_day
 
 
 # =====================================================================

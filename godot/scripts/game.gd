@@ -1581,8 +1581,9 @@ func _notification(what: int) -> void:
 
 
 ## Окно свернули — город на паузе (без игрока он не живёт: 5 минут на быстрой скорости — двое суток), развернули —
-## прежняя скорость. Только сворачивание: переключиться на другое окно (Alt+Tab) — не пауза. Бой Легиона тоже ждёт;
-## улучшения бойцов идут по часам, как и задумано
+## прежняя скорость. Только сворачивание: переключиться на другое окно (Alt+Tab) — не пауза. Бой кампании тоже ждёт,
+## а бой с городом идёт дальше: сервер ждёт его итог только полчаса, потом засчитывает поражение. Ролики (ранг,
+## повозка) ждут игрока сами. Улучшения бойцов идут по часам, как и задумано
 func _minimized_pause() -> void:
 	if mode == "menu" or mode == "demo" or promo or shot_path != "" or hud == null:
 		return
@@ -1591,7 +1592,7 @@ func _minimized_pause() -> void:
 		if _min_speed < 0.0:
 			_min_speed = speed
 			var b = LegionBattle.current
-			if b != null and is_instance_valid(b) and not b.paused and b.phase != "result" and b.modal == null:
+			if b != null and is_instance_valid(b) and not b.pvp and not b.paused and b.phase != "result" and b.modal == null:
 				b._toggle_pause()
 				_min_battle = b
 		if speed > 0.0:

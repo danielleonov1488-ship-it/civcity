@@ -243,5 +243,51 @@ func _run() -> void:
 	await check_after("два ранга", pose0, 2.0, 2)
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Город стал деревней!", "советник: «%s»" % hud.adv_title.text)
 	print("  advisor: ", hud.adv_text.text.replace("\n", " / "))
+
+	# ---------- 5. окно свернули посреди ролика: ролик ждёт игрока, скорость ×4 возвращается ----------
+	print("== свернули посреди ролика")
+	hud.advisor_panel.visible = false
+	hud.set_speed(4.0)
+	await frames(5)
+	t0 = Time.get_ticks_msec()
+	rank_up(180, 60)
+	check(c.level == 3, "уровень 3 (Посёлок)")
+	started = await wait_cine(true, 0.6)
+	check(started and is_equal_approx(float(rc.cine.get("speed0", 0.0)), 4.0), "ролик начался на ×4")
+	await until(now() + 1.0)
+	game.minimized_test = true
+	await frames(3)
+	var t_min := float(rc.cine.get("t", -1.0))
+	await until(now() + 1.5)
+	check(not rc.cine.is_empty() and is_equal_approx(float(rc.cine["t"]), t_min) and game.speed == 0.0,
+		"свёрнуто — ролик стоит, город на паузе (t=%.2f)" % float(rc.cine.get("t", -1.0)))
+	game.minimized_test = false
+	await frames(3)
+	check(not rc.cine.is_empty() and float(rc.cine["t"]) > t_min and is_equal_approx(float(game.speed), 1.0), "развернули — ролик идёт дальше")
+	ended = await wait_cine(false, 10.0)
+	check(ended, "ролик досмотрен до конца")
+	await check_after("свёрнутый ролик", pose0, 4.0, 3)
+	hud.advisor_panel.visible = false
+	# ролик кончился, пока окно свёрнуто (на всякий случай): ×4 отдаётся тому, кто вернёт скорость
+	c.level = 2
+	c.tips["rank_cine"] = 2
+	ctr["tier"] = 2
+	game._show(ctr)
+	hud.set_speed(4.0)
+	await frames(5)
+	t0 = Time.get_ticks_msec()
+	rank_up(180, 60)
+	started = await wait_cine(true, 0.6)
+	await until(now() + 0.5)
+	game.minimized_test = true
+	await frames(3)
+	if not rc.cine.is_empty():
+		rc._end()
+	check(started and rc.cine.is_empty() and is_equal_approx(float(game._min_speed), 4.0) and game.speed == 0.0,
+		"кончился свёрнутым — скорость ×4 ждёт разворачивания (%s)" % game._min_speed)
+	game.minimized_test = false
+	await frames(3)
+	check(is_equal_approx(float(game.speed), 4.0), "развернули — снова ×4 (%s)" % game.speed)
+	hud.set_speed(1.0)
 	print("RANK DONE fails=", fails)
 	get_tree().quit()
