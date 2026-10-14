@@ -337,7 +337,7 @@ static func _center(b: Bp, stage: int) -> void:
 	b.upper_style = "plain"
 	b.roof_tex = "Roof_Tile_01"
 	b.remap = b.floor_remap(1)
-	var fl := 1 if s < 2 else (2 if s < 6 else 3)
+	var fl := 1 if s < 1 else (2 if s < 6 else 3)     # хутор — уже два этажа: первый ранг видно издалека
 	var cz := -2.5
 	var top := fl * FL
 	var wing := s >= 4

@@ -96,6 +96,8 @@ var place_info := {}
 var moving := {}                      # перенос постройки: исходная запись
 var settle_fam := {}                  # семья с площади, которой игрок выбирает дом
 var tutorial: Tutorial
+const RankCineScript := preload("res://scripts/rank_cine.gd")
+var rank_cine = null                  # ролик «Новый ранг»: станция вырастает (scripts/rank_cine.gd)
 ## Поворот как в Town to City: зажать левую кнопку и вести мышь вбок — постройка поворачивается на месте;
 ## отпустил — не строится, строится следующим щелчком (уже повёрнутая)
 var place_lock := {}                  # {p: точка} — призрак закреплён на месте
@@ -250,6 +252,9 @@ func _ready() -> void:
 	tutorial = Tutorial.new()
 	add_child(tutorial)
 	tutorial.setup(self)
+	rank_cine = RankCineScript.new()
+	add_child(rank_cine)
+	rank_cine.setup(self)
 	_update_plot_signs()
 	_set_hour(hour)
 	hud.refresh()
@@ -1203,9 +1208,12 @@ func _on_removed(b: Dictionary) -> void:
 
 
 func _on_house_changed(b: Dictionary, up: bool) -> void:
-	_show(b)
-	if up:
-		_puff(Vector3(b["pos"].x, b["y"], b["pos"].y), Color("fff3c8"))
+	# новую станцию покажет ролик «Новый ранг» — до него стоит старая
+	var held: bool = up and b["type"] == "center" and rank_cine != null and rank_cine.holds_station()
+	if not held:
+		_show(b)
+		if up:
+			_puff(Vector3(b["pos"].x, b["y"], b["pos"].y), Color("fff3c8"))
 	if hud:
 		hud.house_event(b, up)
 	if selected.get("id", -1) == b["id"]:
@@ -1533,7 +1541,10 @@ func _process(dt: float) -> void:
 			else:
 				for ap in a.find_children("*", "AnimationPlayer", true, false):
 					(ap as AnimationPlayer).speed_scale = speed
-	_update_tool()
+	if rig and rig.cine:
+		_plot_hover(Vector2i(-1, -1))         # в ролике камеру ведёт он: без подсветки участка под мышью
+	else:
+		_update_tool()
 	autosave_t += dt
 	if mode == "menu":
 		rig._yaw_t += dt * 0.03

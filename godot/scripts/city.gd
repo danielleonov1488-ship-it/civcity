@@ -17,6 +17,7 @@ signal arrivals_changed              # на площади у станции с�
 signal family_came(f)                # повозка привезла семью
 signal family_assigned(name, home)   # игрок выбрал семье дом — жители идут туда
 signal arrive_advice(text)           # повозка впервые встала из-за низкого счастья — объясняет советник
+signal level_up(lvl)                 # город перешёл на новый уровень — ролик «Новый ранг» (rank_cine.gd)
 
 var land: Land
 var money := float(Defs.START_MONEY)
@@ -1288,6 +1289,7 @@ func _update_level() -> void:
 		var nx: Dictionary = Defs.LEVELS[level + 1]
 		if int(stats["pop"]) >= int(nx["pop"]) and int(stats["happy"]) >= int(nx["happy"]):
 			level += 1
+			level_up.emit(level)         # раньше всплывашки: ролик её заменяет и придерживает новую станцию
 			_event("Город теперь — «%s»! Открылись новые исследования, казна вмещает %d ден." % [nx["name"], int(money_cap())], "level")
 			var c := center()
 			if not c.is_empty():

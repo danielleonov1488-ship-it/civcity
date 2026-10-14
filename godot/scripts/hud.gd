@@ -2632,6 +2632,11 @@ func _place_notes() -> void:
 
 ## Событие: короткая плашка наверху (не посреди экрана) и запись в колокольчике
 func notify(text: String, icon := "info") -> void:
+	var rc = game.get("rank_cine") if game else null
+	if icon == "level" and rc != null and rc.covers_toast():
+		bell_count += 1                   # новый ранг покажет ролик — всплывашка не нужна, только колокольчик
+		bell_badge.text = str(bell_count)
+		return
 	if game and game.tutorial and game.tutorial.active() and icon in ["check", "research", "info"]:
 		bell_count += 1                   # во время обучения не мешаем всплывашками — только в колокольчик
 		bell_badge.text = str(bell_count)
@@ -2658,8 +2663,6 @@ func notify(text: String, icon := "info") -> void:
 	tw.tween_interval(5.0)
 	tw.tween_property(p, "modulate:a", 0.0, 0.6)
 	tw.tween_callback(p.queue_free)
-	if icon in ["check", "level"] and game and game.sound:
-		pass
 	if not events_panel.visible:
 		bell_count += 1
 		bell_badge.text = str(bell_count)
