@@ -1278,7 +1278,11 @@ func _sync_actors(b: Dictionary) -> void:
 		var model := ""
 		if who == "soldier":
 			model = "SK_Chr_Solider_Male_01" if rng.randf() < 0.7 else "SK_Chr_Soldier_Female_02"
-		var c := Citizen.create(rng, who == "female" or (who == "any" and rng.randf() < 0.5), false, who == "rich", model)
+		# одежда по сословию дома; садовник у домуса — слуга, в простом
+		var cls: String = "patricians" if who == "rich" else String(d.get("cls", "plebs"))
+		if cls == "patricians" and who != "rich":
+			cls = "plebs"
+		var c := Citizen.create(rng, who == "female" or (who == "any" and rng.randf() < 0.5), false, who == "rich", model, cls)
 		actors_root.add_child(c)
 		c.transform = xf * Transform3D(Basis(Vector3.UP, float(a[1])), a[0])
 		c.scale = Vector3.ONE * Citizen.SIZE

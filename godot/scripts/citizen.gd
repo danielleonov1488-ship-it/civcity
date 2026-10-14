@@ -3,7 +3,7 @@ extends Node3D
 ## Житель — персонаж Synty Ancient Empire (рабочие, фермеры, патриции, политик) с движениями из бесплатной
 ## библиотеки Quaternius. Оба скелета при импорте приведены к общему стандарту (BoneMap → гуманоид),
 ## поэтому движения подходят без переделки. Текстура — общая палитра Synty; вариант палитры (A/B/C)
-## меняет цвета одежды.
+## меняет тон кожи и волос. Одежду красит шейдер citizen_cloth: у каждого жителя свои цвета по сословию.
 
 const DIR := "res://assets/synty/FBX/Characters/Unreal_Characters/"
 const PLEBS := ["SK_Chr_Worker_Male_01", "SK_Chr_Worker_Female_01", "SK_Chr_Farmer_Male_01", "SK_Chr_Farmer_Female_01"]
@@ -19,6 +19,39 @@ var _cur := ""
 static var _cache := {}
 static var _lib: AnimationLibrary
 static var _mats := {}
+static var _cloth: Shader
+
+## Где на модели ткани: полосы атласа (0–13 блок тканей, 14–18 белые, 19 меандр). k — ткань лежит
+## в среднем тоне атласа: цвет чуть светлее, чтобы на экране был как в палитре. Солдат тут нет — они в своём красном
+const CLOTH := {
+	"SK_Chr_Worker_Male_01": {"main": [2], "trim": [19]},                 # туника; узорная кайма
+	"SK_Chr_Worker_Female_01": {"main": [10], "trim": [12]},              # платье; поясок
+	"SK_Chr_Farmer_Male_01": {"main": [0]},                               # туника с тёмным подолом
+	"SK_Chr_Farmer_Female_01": {"main": [1], "k": 1.19},                  # платье в два тона
+	"SK_Chr_Upperclass_Male_01": {"main": [9], "second": [8]},            # туника; тога
+	"SK_Chr_Upperclass_Female_01": {"main": [2], "second": [16], "trim": [12], "k": 1.19},  # стола; нижняя туника; кайма
+	"SK_Chr_Politician_Male_01": {"main": [3], "second": [17]},           # туника сенатора; тога
+}
+## Римские краски: [цвет, вес]. Плебеи пестрее, чем было в истории, — так веселее улица
+const PAL := {
+	# некрашеная шерсть (белая, овсяная, серая, бурая, ореховая), марена, охра, резеда, вайда, олива, ржавчина
+	"plebs": [["d8ccb0", 8], ["b9a88a", 7], ["9a958a", 5], ["7a5f45", 7], ["5e4836", 3], ["a9503a", 14], ["b8776a", 8],
+		["c49a4a", 12], ["d9a93e", 6], ["5f7c96", 11], ["7a7e4c", 8], ["b86b3a", 8]],
+	# марена, розовая марена, шафран, резеда, оранжевый, вайда, небесный, морская волна, мирт, охра, сливки, каштан
+	"artisans": [["b4432f", 12], ["c9786e", 8], ["d9a93e", 11], ["cdb24e", 6], ["c9733a", 8], ["4d7397", 11], ["7fa3be", 8],
+		["5e9488", 7], ["6f8a4e", 7], ["b58a52", 8], ["d9cdb2", 8], ["8a5a3c", 6]],
+	# туника патриция под тогой: кермес, тирский пурпур, аметист, золото шафрана, индиго, небесный, морская волна, белая, роза, охра
+	"patricians_m": [["a3283a", 14], ["6e2a5a", 10], ["8a5c9a", 8], ["d7a23a", 12], ["2f5585", 12], ["7fa6c6", 8], ["4f8c80", 8],
+		["e8e2d6", 14], ["c97c84", 8], ["c08a3e", 6]],
+	# стола матроны — цвета из Овидия: шафран, небо, индиго, морская волна, аметист, бледная роза, кермес, пурпур, мирт, миндаль, воск
+	"patricians_f": [["d8a13c", 12], ["7ea4c8", 10], ["34588c", 10], ["4e9086", 9], ["8c5fa0", 10], ["d59098", 9], ["a82c3c", 10],
+		["6a2858", 8], ["6e8c55", 6], ["d8b98c", 8], ["e0c46a", 8]],
+	"senator": [["6e2a5a", 35], ["a3283a", 30], ["8a5c9a", 15], ["aa4638", 20]],   # пурпур, кермес, аметист, марена
+	"toga": [["eee8dc", 45], ["f4f1ea", 25], ["e3d8c3", 30]],                     # чистая, белёная мелом, небелёная
+	"palla": [["ede6d8", 60], ["f3efe7", 40]],
+	"gold_trim": [["d4a548", 55], ["6e2a5a", 25], ["a82c3c", 20]],
+	"belt": [["c49a4a", 25], ["a9503a", 25], ["5f7c96", 20], ["7a5f45", 20], ["d8ccb0", 10]],
+}
 
 
 static func _scene(path: String) -> PackedScene:
@@ -160,17 +193,74 @@ static func _derive(lib: AnimationLibrary) -> void:
 			lib.add_animation(n + "_M", _mirror(lib.get_animation(n)))
 
 
-static func _material(variant: String) -> StandardMaterial3D:
+## Три общих материала на всех (тон кожи A/B/C); цвета одежды — у каждого жителя свои (instance uniform)
+static func _material(variant: String) -> ShaderMaterial:
 	if not _mats.has(variant):
-		var m := StandardMaterial3D.new()
-		m.albedo_texture = load(Synty._tex_path("PolygonAncientEmpire_01_" + variant))
-		m.roughness = 0.85
+		if _cloth == null:
+			_cloth = load("res://shaders/citizen_cloth.gdshader")
+		var m := ShaderMaterial.new()
+		m.shader = _cloth
+		m.set_shader_parameter("albedo_tex", load(Synty._tex_path("PolygonAncientEmpire_01_" + variant)))
 		_mats[variant] = m
 	return _mats[variant]
 
 
-## rich — патриций; child — ребёнок (уменьшенный взрослый)
-static func create(rng: RandomNumberGenerator, is_female: bool, child := false, rich := false, model := "") -> Citizen:
+## Цвет из палитры по весам; avoid — кроме этого цвета (кайма не сливается с одеждой)
+static func _pick(cr: RandomNumberGenerator, pal: Array, avoid := Color(-1, 0, 0)) -> Color:
+	var opts := pal.filter(func(e): return Color(String(e[0])) != avoid)
+	var sum := 0
+	for e in opts:
+		sum += int(e[1])
+	var x := cr.randi() % maxi(sum, 1)
+	for e in opts:
+		x -= int(e[1])
+		if x < 0:
+			return Color(String(e[0]))
+	return Color(String(pal[0][0]))
+
+
+static func _bits(cols: Array) -> int:
+	var b := 0
+	for i: int in cols:
+		b |= 1 << i
+	return b
+
+
+## Одежда по сословию: туника/платье — из палитры сословия, тога — белая, кайма и пояс — свои
+static func _dress(body: Node3D, model: String, cls: String, female: bool, child: bool, cr: RandomNumberGenerator) -> void:
+	var map: Dictionary = CLOTH.get(model, {})
+	if map.is_empty():
+		return
+	var rich := cls == "patricians"
+	var pal: Array = PAL.get(cls, PAL["plebs"])
+	if model == "SK_Chr_Politician_Male_01":
+		pal = PAL["senator"]
+	elif rich:
+		pal = PAL["patricians_f"] if female else PAL["patricians_m"]
+	elif child and cr.randf() < 0.3:
+		pal = PAL["artisans"]                     # детям чаще яркое
+	var main := _pick(cr, pal)
+	var second := _pick(cr, PAL["toga"])
+	if model == "SK_Chr_Upperclass_Female_01":
+		second = _pick(cr, PAL["palla"]) if cr.randf() < 0.6 else _pick(cr, PAL["patricians_f"], main)
+	var trim := _pick(cr, PAL["belt"], main)
+	if model == "SK_Chr_Worker_Male_01":
+		trim = main.lerp(Color("e8dfcc"), 0.55)   # кайма — светлее той же ткани, как у Synty
+	elif model == "SK_Chr_Upperclass_Female_01":
+		trim = _pick(cr, PAL["gold_trim"])
+	var k: float = map.get("k", 1.0)
+	main = Color(minf(main.r * k, 1.0), minf(main.g * k, 1.0), minf(main.b * k, 1.0))
+	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
+		mi.set_instance_shader_parameter("cloth_main", main.srgb_to_linear())
+		mi.set_instance_shader_parameter("cloth_second", second.srgb_to_linear())
+		mi.set_instance_shader_parameter("cloth_trim", trim.srgb_to_linear())
+		mi.set_instance_shader_parameter("mask_main", _bits(map.get("main", [])))
+		mi.set_instance_shader_parameter("mask_second", _bits(map.get("second", [])))
+		mi.set_instance_shader_parameter("mask_trim", _bits(map.get("trim", [])))
+
+
+## rich — патриций; child — ребёнок (уменьшенный взрослый); cls — сословие для одежды (по умолчанию по rich)
+static func create(rng: RandomNumberGenerator, is_female: bool, child := false, rich := false, model := "", cls := "") -> Citizen:
 	Synty._index()
 	var c := Citizen.new()
 	var pool: Array = RICH if rich else PLEBS
@@ -184,6 +274,11 @@ static func create(rng: RandomNumberGenerator, is_female: bool, child := false, 
 	var variant: String = ["A", "A", "B", "C"][rng.randi() % 4]
 	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
 		mi.material_override = _material(variant)
+	# одежда: свой поток случайностей от СОСТОЯНИЯ rng — rng не сдвигается, лица и причёски прежние,
+	# а один и тот же житель всегда в той же одежде (и на повозке, и на улице, и после возврата в кадр)
+	var cr := RandomNumberGenerator.new()
+	cr.seed = rng.state ^ 0x5DEECE66D
+	_dress(body, name, cls if cls != "" else ("patricians" if rich else "plebs"), c.female, child, cr)
 	# причёска (и борода у части мужчин) — на кости головы
 	var sk: Skeleton3D = body.find_children("*", "Skeleton3D", true, false)[0]
 	var hairs: Array = ["SM_Chr_Hair_Female_0%d" % (1 + rng.randi() % 6)] if c.female else ["SM_Chr_Hair_Male_0%d" % (1 + rng.randi() % 7)]

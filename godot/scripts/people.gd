@@ -213,7 +213,7 @@ func _node(r: Dictionary) -> Citizen:
 		return null
 	var rr := RandomNumberGenerator.new()
 	rr.seed = int(r["seed"])
-	var c := Citizen.create(rr, r["female"], r["child"], r["rich"])
+	var c := Citizen.create(rr, r["female"], r["child"], r["rich"], "", r["cls"])
 	add_child(c)
 	c.anim.speed_scale = maxf(0.01, game.speed)
 	r["node"] = c
@@ -2155,7 +2155,7 @@ func _cart_board(load: Array) -> void:
 		var ms := []
 		for m in int(f["n"]):
 			ms.append({"female": m == 1 or (m > 1 and rng.randf() < 0.5), "child": m >= 2 and rng.randf() < 0.6,
-				"rich": f["cls"] == "patricians", "seed": rng.randi()})
+				"rich": f["cls"] == "patricians", "cls": f["cls"], "seed": rng.randi()})
 		f["members"] = ms
 		for m in ms:
 			var mw := 0.4 if m["child"] else 0.56
@@ -2199,7 +2199,7 @@ func _cart_board(load: Array) -> void:
 		var m: Dictionary = s[0]
 		var rr := RandomNumberGenerator.new()
 		rr.seed = int(m["seed"])
-		var c := Citizen.create(rr, m["female"], m["child"], m["rich"])
+		var c := Citizen.create(rr, m["female"], m["child"], m["rich"], "", m["cls"])
 		root.add_child(c)
 		var k := 0.68 if m["child"] else 1.0
 		var back: bool = s[4]
