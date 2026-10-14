@@ -3,9 +3,10 @@ extends RefCounted
 ## Жизнь города — как в Town to City: три класса жителей, лавки по видам потребностей обслуживают
 ## ближайшие дома в своей дальности (сколько потянут рабочие), памятники и украшения радуют всех вокруг,
 ## теснота огорчает. Этаж полному счастливому дому покупает игрок (buy_floor); новые семьи едут, пока
-## город счастлив (arrivals_blocked).
-## Деньги — налоги с домов; очки исследований — почта на станции, скрипторий, школа, библиотека. Уровень города растёт
-## от числа жителей и их счастья.
+## город счастлив (arrivals_blocked), и только в свободные дома (free_fit).
+## Деньги — налоги с домов; очки исследований — почта на станции, скрипторий, школа, библиотека. Новый уровень —
+## как в Town to City: когда выполнены условия (жители, счастье, постройки — Defs.LEVELS need), игрок сам жмёт
+## «Перейти на новый уровень» (rank_up); город сам не растёт.
 
 signal changed                       # что-то поменялось — перерисовать интерфейс
 signal building_added(b)
@@ -18,6 +19,7 @@ signal family_came(f)                # повозка привезла семь�
 signal family_assigned(name, home)   # игрок выбрал семье дом — жители идут туда
 signal arrive_advice(text)           # повозка впервые встала из-за низкого счастья — объясняет советник
 signal level_up(lvl)                 # город перешёл на новый уровень — ролик «Новый ранг» (rank_cine.gd)
+signal quiet(text, icon)             # событие только в колокольчик, без всплывашки
 
 var land: Land
 var money := float(Defs.START_MONEY)
@@ -325,7 +327,9 @@ func recolor(b: Dictionary) -> void:
 
 # ---------- работники (как в Town to City: сколько нанять — решает игрок) ----------
 
-const WAGE := 0.3                     # денариев в час за каждого нанятого работника
+## Денариев в час за каждого нанятого работника — растёт с уровнем города (Defs.WAGE)
+func wage() -> float:
+	return float(Defs.WAGE[clampi(level, 0, Defs.WAGE.size() - 1)])
 
 
 ## Сколько построек этого вида можно держать на нынешнем уровне города (−1 — сколько угодно)
@@ -341,16 +345,41 @@ func count_type(type: String) -> int:
 
 
 ## Почему ещё одну такую постройку не поставить из-за предела уровня ("" — можно).
-## Лишние, поставленные раньше, остаются и работают
+## Лишние, поставленные раньше, остаются, но не работают (over_cap)
 func cap_err(type: String) -> String:
 	var mx := build_max(type)
 	if mx < 0 or count_type(type) < mx:
 		return ""
 	var d: Dictionary = Defs.B[type]
 	var many := String(d.get("gen", String(d["name"]).to_lower()))
+	var Many := many.left(1).to_upper() + many.substr(1)
 	if level >= Defs.LEVELS.size() - 1:
 		return "Больше %s не поставить — это предел" % many
-	return "%s на уровне «%s» — не больше %d. Ещё один — на уровне «%s»" % [many.left(1).to_upper() + many.substr(1), Defs.LEVELS[level]["name"], mx, Defs.LEVELS[level + 1]["name"]]
+	if mx == 0:
+		return "%s на уровне «%s» пока не строят — первые на уровне «%s»" % [Many, Defs.LEVELS[level]["name"], Defs.LEVELS[level + 1]["name"]]
+	return "%s на уровне «%s» — не больше %d. Больше — на уровне «%s»" % [Many, Defs.LEVELS[level]["name"], mx, Defs.LEVELS[level + 1]["name"]]
+
+
+## Постройки сверх предела уровня (старые города: поставлены, когда предела не было) — id → true.
+## Работают первые build_max каждого вида по номеру; остальные стоят, но не работают и ничего не стоят
+func over_cap() -> Dictionary:
+	var by := {}
+	for id in buildings:
+		var t: String = buildings[id]["type"]
+		if Defs.B[t].has("max"):
+			if not by.has(t):
+				by[t] = []
+			by[t].append(int(id))
+	var out := {}
+	for t in by:
+		var mx := build_max(t)
+		var ids: Array = by[t]
+		if ids.size() <= mx:
+			continue
+		ids.sort()
+		for i in range(maxi(0, mx), ids.size()):
+			out[ids[i]] = true
+	return out
 
 
 ## Очков исследований в час от полностью занятой постройки — с изученными прибавками (ученики писцов…)
@@ -417,6 +446,7 @@ func compute() -> void:
 	var monuments := []
 	var decor := []
 	var stores := []
+	var oc := over_cap()                    # сверх предела уровня — не работают и не берут работников
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		var d := def(b)
@@ -428,7 +458,7 @@ func compute() -> void:
 				decor.append(b)
 				continue
 		b["road"] = d["kind"] in ["farm", "center"] or _road_near(door_point(b), 1.7, b["cells"])
-		if d.has("jobs") and b["road"]:
+		if d.has("jobs") and b["road"] and not oc.has(int(id)):
 			var jb := jobs_of(b)
 			for c in jb:
 				jobs[c] += int(jb[c])
@@ -466,6 +496,11 @@ func compute() -> void:
 			st *= float(hired) / float(maxi(1, job_max(b)))     # наняли меньше — работает слабее
 		b["staff"] = st if b["road"] else 0.0
 		b["active"] = b["road"] and (not d.has("jobs") or float(b["staff"]) >= 0.25)
+		b["over"] = oc.has(int(id))
+		if b["over"]:
+			b["fill"] = 0.0
+			b["staff"] = 0.0
+			b["active"] = false
 		if d["kind"] == "farm" and b["active"]:
 			goods[d["makes"]] = true
 		elif d["kind"] == "store" and b["active"]:
@@ -828,7 +863,7 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 			var spare_at := ""
 			for id in buildings:
 				var o: Dictionary = buildings[id]
-				if def(o)["kind"] == "rp" and int(jobs_of(o).get(cls_need, 0)) > 0:
+				if def(o)["kind"] == "rp" and not o.get("over", false) and int(jobs_of(o).get(cls_need, 0)) > 0:
 					spare_at = def(o)["name"]
 					break
 			var txt := "Не хватает работников: «%s» обслуживает меньше домов, чем может. Заселите ещё семьи" % def(worst)["name"]
@@ -911,6 +946,8 @@ func _need_shop_issue(n: String, houses: Array, ws: Dictionary) -> Dictionary:
 ## Почему лавка не работает — коротко, со строчной буквы (для советов и карточки дома)
 func idle_text(b: Dictionary) -> String:
 	var d := def(b)
+	if b.get("over", false):
+		return "сверх предела уровня — не работает"
 	match String(b.get("why", "")):
 		"road":
 			return "нет дороги у входа"
@@ -963,13 +1000,18 @@ func sim_day() -> void:
 				income += int(b["pop"]) * tax * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
 				_grow_house(b)
 			"rp":
+				if b.get("over", false):
+					continue                              # сверх предела уровня: стоит, не работает, не стоит денег
 				rpd += rp_per_hour(b["type"]) * float(b["staff"])
-				upkeep += float(d["cost"]) * 0.0025 + WAGE * hired_of(b)     # писцам и учителям тоже платят
+				upkeep += float(d["cost"]) * Defs.UPKEEP + wage() * hired_of(b)     # писцам и учителям тоже платят
 			"shop", "monument", "store", "farm", "military":
-				upkeep += float(d["cost"]) * 0.0025 + WAGE * hired_of(b)
+				upkeep += float(d["cost"]) * Defs.UPKEEP + wage() * hired_of(b)
 	if not center().is_empty():
 		rpd += float(Defs.LEVELS[level].get("rp_h", 0.0))   # почта привозит на станцию свитки
 	hour_n += 1
+	# что пропало за час: казна и полки полны (значки «Казна полна», «Полки полны»)
+	stats["money_lost"] = maxf(0.0, money + income - upkeep - money_cap()) if income > upkeep else 0.0
+	stats["rp_lost"] = maxf(0.0, rp + rpd - maxf(rp, rp_cap()))
 	money = minf(money_cap(), money + income - upkeep)
 	rp = maxf(rp, minf(rp_cap(), rp + rpd))      # сверх полок (возврат очков) не срезаем — просто не копим дальше
 	stats["income"] = income
@@ -1126,7 +1168,73 @@ func _arrive_gate(why: String) -> void:
 		arrive_block_h = 0
 
 
-## Раз в час: не пора ли повозке привезти новую семью
+## Сколько семей каждого открытого класса влезет в дома прямо сейчас: по каждому дому — свободные места ÷ самая
+## маленькая семья класса, минус семьи этого класса, что уже ждут на площади. (Те, кто идёт к дому, уже в его «coming».)
+func fit_by_class() -> Dictionary:
+	var out := {}
+	for cl in Defs.CLASS_ORDER:
+		if unlocked(Defs.CLASSES[cl]["house"]):
+			out[cl] = 0
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if not is_house(b):
+			continue
+		var cl: String = def(b)["cls"]
+		if not out.has(cl):
+			continue
+		var lf := house_cap(b) - int(b["pop"]) - int(b.get("coming", 0))
+		out[cl] += maxi(0, lf) / int(Defs.FAMILY_SIZE[cl][0])
+	for f in arrivals:
+		if out.has(f["cls"]):
+			out[f["cls"]] -= 1
+	for cl in out:
+		out[cl] = maxi(0, int(out[cl]))
+	return out
+
+
+## Сколько ещё семей можно везти: влезут в дома, минус те, что уже едут в повозке
+func free_fit() -> int:
+	var n := 0
+	var fit := fit_by_class()
+	for cl in fit:
+		n += int(fit[cl])
+	return n - incoming
+
+
+## Счастливый город зовёт чаще: множитель промежутка между повозками (1 — обычный) и почему
+func arrive_mult() -> Array:
+	var hp := int(stats.get("happy", 0))
+	var m := 1.0
+	var why := ""
+	for e: Array in Defs.ARRIVE_FAST:
+		if hp >= int(e[0]):
+			m = float(e[1])
+			why = "счастье города от %d%%" % int(e[0])
+			break
+	return [maxf(Defs.ARRIVE_MULT_MIN, m), why]
+
+
+## Повозка раз в столько игровых часов — с поправкой на счастье
+func arrive_every() -> float:
+	return float(Defs.ARRIVE_EVERY[clampi(level, 0, Defs.ARRIVE_EVERY.size() - 1)]) * float(arrive_mult()[0])
+
+
+## Почему повозка ждёт из-за жилья ("" — не ждёт): мест нет, едет или ждёт семья «ищет жильё»
+func arrive_wait() -> String:
+	if center().is_empty() or arrivals_blocked() != "":
+		return ""
+	if free_fit() > 0:
+		return ""
+	if not arrivals.is_empty():
+		for f in arrivals:
+			if not homes_for(f).is_empty():
+				return "Семьи ждут на площади — выберите им дом (значок семьи слева вверху)"
+		return "Семья ищет жильё — постройте дом. Новые семьи приедут, когда в домах будет место"
+	return "Свободных мест в домах нет — повозка привезёт одну семью, и та будет искать жильё"
+
+
+## Раз в час: не пора ли повозке привезти новую семью. Едут только туда, где есть место (free_fit);
+## если места нет, а на площади и в повозке пусто — одна семья «ищет жильё» (подсказка, что пора строить)
 func _tick_arrivals() -> void:
 	if center().is_empty() or _count(func(b): return is_house(b)) == 0:
 		return
@@ -1136,41 +1244,40 @@ func _tick_arrivals() -> void:
 	if why != "":
 		arrive_t = minf(arrive_t + 1.0, 99.0)     # как только счастье поднимется — повозка поедет сразу
 		return
-	var room: int = int(Defs.ARRIVAL_MAX[level]) - arrivals.size() - incoming
+	var room: int = int(Defs.ARRIVAL_MAX[clampi(level, 0, Defs.ARRIVAL_MAX.size() - 1)]) - arrivals.size() - incoming
 	if room <= 0:
 		arrive_t = 0.0
 		return
 	arrive_t += 1.0
-	var every: float = Defs.ARRIVE_EVERY[clampi(level, 0, Defs.ARRIVE_EVERY.size() - 1)]
-	var first := settled_total == 0 and arrivals.is_empty() and incoming == 0 and pending.is_empty()
-	if arrive_t >= every or first:
+	var fit := free_fit()
+	var nobody := arrivals.is_empty() and incoming == 0 and pending.is_empty()
+	if fit <= 0 and not nobody:
+		return                                    # мест нет, а семьи уже ждут или едут — повозка стоит
+	var first := settled_total == 0 and nobody
+	if arrive_t >= arrive_every() or first:
 		arrive_t = 0.0
-		var n := mini(room, 2 + level / 3)    # семьи приезжают по двое
+		var n := mini(room, int(Defs.FAMILIES_PER_CART[clampi(level, 0, Defs.FAMILIES_PER_CART.size() - 1)]))
+		n = mini(n, fit if fit > 0 else 1)        # мест нет — одна семья «ищет жильё»
 		if int(stats["happy"]) < Defs.ARRIVE_HAPPY and int(stats["pop"]) > 0 and not _arrive_free():
 			n = mini(n, maxi(0, Defs.ARRIVE_FREE - families_came()))   # без счастья — только первые ARRIVE_FREE семей
-		incoming += n
+		incoming += maxi(0, n)
 
 
-## Кого везёт повозка: семьи тех классов, для которых открыты дома (чаще — те, для кого есть место)
+## Кого везёт повозка: семьи тех классов, которым есть место в домах. Если места нет ни у кого
+## (семья «ищет жильё») — любого открытого класса, чаще плебеев
 func pick_class() -> String:
+	var fit := fit_by_class()
 	var opts := []
 	var total := 0.0
-	for cl in Defs.CLASS_ORDER:
-		if not unlocked(Defs.CLASSES[cl]["house"]):
-			continue
-		var free := 0
-		for id in buildings:
-			var b: Dictionary = buildings[id]
-			if is_house(b) and def(b)["cls"] == cl:
-				var lf := house_cap(b) - int(b["pop"]) - int(b.get("coming", 0))
-				if lf >= int(Defs.FAMILY_SIZE[cl][0]):       # одно место у плебеев — не место: семьи от двух
-					free += lf
-		for f in arrivals:
-			if f["cls"] == cl:
-				free -= int(f["n"])
-		var w := 3.0 if free > 0 else (1.0 if cl == "plebs" else 0.5)
-		opts.append([cl, w])
-		total += w
+	for cl in fit:
+		if int(fit[cl]) > 0:
+			opts.append([cl, 5.0])
+			total += 5.0
+	if opts.is_empty():
+		for cl in fit:
+			var w := 1.0 if cl == "plebs" else 0.5
+			opts.append([cl, w])
+			total += w
 	var x := rng.randf() * total
 	for o in opts:
 		x -= float(o[1])
@@ -1200,7 +1307,16 @@ func new_family(cls: String) -> Dictionary:
 	if name == "":
 		name = "%s %d" % [Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()], rng.randi() % 1000]
 	var sz: Array = Defs.FAMILY_SIZE[cls]
-	return {"name": name, "n": rng.randi_range(int(sz[0]), int(sz[1])), "cls": cls}
+	# семья едет туда, где есть место: не больше, чем влезет в самый просторный свободный дом её класса
+	var hi := int(sz[1])
+	var room := 0
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if is_house(b) and def(b)["cls"] == cls:
+			room = maxi(room, house_cap(b) - int(b["pop"]) - int(b.get("coming", 0)))
+	if room >= int(sz[0]):
+		hi = mini(hi, room)
+	return {"name": name, "n": rng.randi_range(int(sz[0]), hi), "cls": cls}
 
 
 ## Семья сошла с повозки (или осталась без дома) и ждёт на площади
@@ -1289,23 +1405,90 @@ func settled(id: int, n: int, name := "") -> int:
 	return n
 
 
+## Раз в час: город сам уровень не поднимает — только отмечает, что готов (кнопка «Перейти на новый уровень»),
+## и один раз на каждый уровень пишет об этом в колокольчик
 func _update_level() -> void:
-	while level < Defs.LEVELS.size() - 1:
-		var nx: Dictionary = Defs.LEVELS[level + 1]
-		if int(stats["pop"]) >= int(nx["pop"]) and int(stats["happy"]) >= int(nx["happy"]):
-			level += 1
-			level_up.emit(level)         # раньше всплывашки: ролик её заменяет и придерживает новую станцию
-			_event("Город теперь — «%s»! Открылись новые исследования, казна вмещает %d ден." % [nx["name"], int(money_cap())], "level")
-			var c := center()
-			if not c.is_empty():
-				c["tier"] = level
-				house_changed.emit(c, true)
-		else:
-			break
+	var ok := rank_ok()
+	stats["rank_ready"] = ok
+	if ok and int(tips.get("rank_said", -1)) != level + 1:
+		tips["rank_said"] = level + 1
+		_quiet("Город готов стать «%s» — нажмите «Перейти на новый уровень» под табличкой города" % Defs.LEVELS[level + 1]["name"], "level")
 
 
 func next_level() -> Dictionary:
 	return Defs.LEVELS[level + 1] if level < Defs.LEVELS.size() - 1 else {}
+
+
+## Условия перехода на уровень lvl (по умолчанию — следующий): [{text, icon, have, need, ok}]
+## Жители и счастье — из Defs.LEVELS pop/happy, постройки — из need
+func rank_needs(lvl := -1) -> Array:
+	if lvl < 0:
+		lvl = level + 1
+	if lvl <= 0 or lvl >= Defs.LEVELS.size():
+		return []
+	var L: Dictionary = Defs.LEVELS[lvl]
+	var pop := int(stats.get("pop", 0))
+	var hp := int(stats.get("happy", 0))
+	var out := [{"text": "Жителей", "icon": "family", "have": pop, "need": int(L["pop"]), "ok": pop >= int(L["pop"]), "pct": false},
+		{"text": "Счастье города", "icon": "happy", "have": hp, "need": int(L["happy"]), "ok": hp >= int(L["happy"]), "pct": true}]
+	for n: Dictionary in L.get("need", []):
+		var have := progress_of(n["p"])
+		out.append({"text": n["text"], "say": n.get("say", String(n["text"]).to_lower()), "icon": n.get("icon", "check"), "have": have,
+			"need": int(n["n"]), "ok": have >= int(n["n"]), "pct": false})
+	return out
+
+
+## Сколько условий уровня lvl уже выполнено
+func rank_met(lvl := -1) -> int:
+	var k := 0
+	for e: Dictionary in rank_needs(lvl):
+		if e["ok"]:
+			k += 1
+	return k
+
+
+## Все условия следующего уровня выполнены — можно жать кнопку
+func rank_ok() -> bool:
+	if level >= Defs.LEVELS.size() - 1:
+		return false
+	var nd := rank_needs()
+	return not nd.is_empty() and rank_met() == nd.size()
+
+
+## «20 жителей, счастье от 55%, фруктовая лавка и скрипторий» — что нужно уровню lvl (для подсказок)
+func rank_text(lvl := -1) -> String:
+	var parts := []
+	for e: Dictionary in rank_needs(lvl):
+		if e["pct"]:
+			parts.append("счастье от %d%%" % int(e["need"]))
+		elif e["icon"] == "family":
+			parts.append("%d %s" % [int(e["need"]), plural(int(e["need"]), "житель", "жителя", "жителей")])
+		else:
+			parts.append(String(e["say"]))
+	if parts.size() <= 1:
+		return "".join(parts)
+	return ", ".join(parts.slice(0, parts.size() - 1)) + " и " + String(parts[-1])
+
+
+## Игрок нажал «Перейти на новый уровень»: +1 уровень, ролик «Новый ранг», новые исследования.
+## force — без проверки условий (тесты, отладка)
+func rank_up(force := false) -> bool:
+	if level >= Defs.LEVELS.size() - 1 or (not force and not rank_ok()):
+		return false
+	level += 1
+	var nx: Dictionary = Defs.LEVELS[level]
+	tips["rank_pressed"] = true
+	level_up.emit(level)         # раньше всплывашки: ролик её заменяет и придерживает новую станцию
+	_event("Город теперь — «%s»! Открылись новые исследования, казна вмещает %d ден." % [nx["name"], int(money_cap())], "level")
+	var c := center()
+	if not c.is_empty():
+		c["tier"] = level
+		house_changed.emit(c, true)
+	compute()                    # пределы уровня выросли — лишние школы и скриптории могут заработать
+	stats["rank_ready"] = rank_ok()
+	_check_goals()
+	changed.emit()
+	return true
 
 
 # ---------- исследования ----------
@@ -1384,9 +1567,15 @@ func goal_progress(id: String) -> int:
 	var g := Defs.request(id)
 	if g.is_empty():
 		return 0
-	var pp: Array = g["p"]
+	return progress_of(g["p"])
+
+
+## Сколько уже есть по условию p (просьбы горожан и условия уровней): [вид, параметр…]
+func progress_of(pp: Array) -> int:
 	var arg = pp[1] if pp.size() > 1 else null
 	match pp[0]:
+		"rank":                                     # «Станьте хутором»: сколько условий уровня выполнено
+			return rank_needs(int(arg)).size() if level >= int(arg) else rank_met(int(arg))
 		"road": return road_cells
 		"houses": return _count(func(b): return is_house(b))
 		"fam": return settled_total
@@ -1398,10 +1587,11 @@ func goal_progress(id: String) -> int:
 		"floors": return _count(func(b): return is_house(b) and int(b["tier"]) >= int(arg))
 		"fed": return _count(func(b): return is_house(b) and bool((b.get("needs", {}) as Dictionary).get(arg, false)))
 		"research": return research.keys().filter(func(k): return not String(k).begins_with("q_")).size()
-		"shops":
+		"shops":                                    # разные лавки (["shops", "food"] — только этого вида)
 			var kinds := {}
 			for id2 in buildings:
-				if def(buildings[id2])["kind"] == "shop":
+				var sd := def(buildings[id2])
+				if sd["kind"] == "shop" and (arg == null or sd.get("sub", "") == arg):
 					kinds[buildings[id2]["type"]] = true
 			return kinds.size()
 		"near":
@@ -1434,6 +1624,9 @@ func active_goals(n := 3) -> Array:
 
 func _check_goals() -> void:
 	for g in active_goals():
+		var pp: Array = g["p"]
+		if pp[0] == "rank" and level < int(pp[1]):
+			continue                                # «Станьте хутором» — только когда игрок нажал кнопку
 		if goal_progress(g["id"]) >= int(g["need"]):
 			goals_done.append(g["id"])
 			money = minf(money_cap(), money + float(g["money"]))
@@ -1467,6 +1660,14 @@ func _event(text: String, icon: String) -> void:
 	if events.size() > 60:
 		events.pop_front()
 	event.emit(text, icon)
+
+
+## Событие только в колокольчик (без всплывашки)
+func _quiet(text: String, icon: String) -> void:
+	events.append({"day": day, "text": text, "icon": icon})
+	if events.size() > 60:
+		events.pop_front()
+	quiet.emit(text, icon)
 
 
 # ---------- сохранение ----------

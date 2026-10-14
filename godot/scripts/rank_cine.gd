@@ -615,9 +615,17 @@ func _say_text() -> String:
 		out.append("Открылись исследования: %s и ещё\u00a0%d." % [", ".join(names.slice(0, 3)), names.size() - 3])
 	elif not names.is_empty():
 		out.append("Открылись исследования: %s." % _join(names))
-	var mx: Array = Defs.B["scriptorium"].get("max", [])
-	if not mx.is_empty():
-		out.append("Скрипториев можно держать:\u00a0%d." % int(mx[mini(to, mx.size() - 1)]))
+	# пределы построек для очков исследований, которые выросли
+	var caps := []
+	for t in ["scriptorium", "school", "library", "academy"]:
+		var mx: Array = Defs.B[t].get("max", [])
+		if mx.is_empty():
+			continue
+		var n := int(mx[mini(to, mx.size() - 1)])
+		if n > int(mx[mini(from, mx.size() - 1)]):
+			caps.append("%s —\u00a0%d" % [String(Defs.B[t].get("gen", t)), n])
+	if not caps.is_empty():
+		out.append("Можно держать: %s." % ", ".join(caps))
 	out.append("Казна вмещает %s\u00a0ден." % hud.fmt(game.city.money_cap_for(to)))
 	return " ".join(out)
 
@@ -663,8 +671,10 @@ func _advise(to: int) -> void:
 	if not names.is_empty():
 		t += "В свитке исследований вверху справа открылись %s и другие." % ", ".join(names)
 	var nx: Dictionary = Defs.LEVELS[to + 1]
+	var need: String = game.city.rank_text(to + 1)
 	if to == 1:
-		t += "\n\nСледующий уровень — «%s»: %d жителей и счастье от %d%%." % [nx["name"], int(nx["pop"]), int(nx["happy"])]
+		t += "\n\nСледующий уровень — «%s»: нужно %s." % [nx["name"], need]
 	else:
-		t += "\n\nДальше город растёт спокойнее: следующий уровень — «%s», ему нужно %d жителей и счастье от %d%%." % [nx["name"], int(nx["pop"]), int(nx["happy"])]
+		t += "\n\nДальше город растёт спокойнее: следующий уровень — «%s», ему нужно %s." % [nx["name"], need]
+	t += " Когда всё будет готово, под табличкой города снова появится кнопка «Перейти на новый уровень»."
 	hud.advisor("Город стал %s!" % AS_NAME[to], t)

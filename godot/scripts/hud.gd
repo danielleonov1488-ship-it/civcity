@@ -106,6 +106,9 @@ var hover_src: Control                    # над чем сейчас мышь
 var hover_level: Control                  # зоны плашки города: уровень, жители, счастье
 var hover_pop: Control
 var hover_happy: Control
+var rank_btn: Button                      # «Перейти на новый уровень» — под табличкой города, когда все условия выполнены
+var full_money: Label                     # «Казна полна — доход пропадает» над казной
+var full_rp: Label                        # «Полки полны — очки пропадают»
 var _cursor_key := ""                     # какой рисованный курсор стоит на обычной стрелке (по инструменту, см. _cursor_world)
 var _cursor_px := 0
 
@@ -125,6 +128,7 @@ func _ready() -> void:
 	_class_chips()
 	_families()
 	_tasks()
+	_rank_button()
 	_top_right()
 	_bottom_left()
 	_bottom_center()
@@ -793,7 +797,7 @@ func on_arrival(f: Dictionary) -> void:
 		c.tips["first_family"] = true
 		advisor("Приехали первые жители!", "Семьи сошли с повозки на площадь у станции и ждут жилья. Нажмите на значок семьи слева вверху — подходящие дома засветятся, — и щёлкните по дому.
 
-Пока семьи ждут, новые не едут: на площади помещается всего несколько семей. Так город растёт постепенно.")
+Пока семьи ждут, новые не едут: на площади помещается всего несколько семей. А везёт их повозка только туда, где в домах есть свободное место, — стройте дома заранее. Так город растёт постепенно.")
 		return
 	if c.homes_for(f).is_empty() and not c.tips.has("nohome_" + f["cls"]):
 		c.tips["nohome_" + f["cls"]] = true
@@ -808,6 +812,68 @@ func _tasks() -> void:
 	tasks_box = VBoxContainer.new()
 	tasks_box.add_theme_constant_override("separation", 4)
 	tasks_panel.add_child(tasks_box)
+
+
+# ---------- новый уровень по кнопке (как зелёная кнопка в Town to City) ----------
+
+const RANK_H := 50                          # на столько опускаются просьбы, когда видна кнопка уровня
+
+
+func _rank_button() -> void:
+	rank_btn = Button.new()
+	rank_btn.text = "Перейти на новый уровень"
+	rank_btn.icon = ico("level", 40)
+	rank_btn.expand_icon = false
+	rank_btn.focus_mode = Control.FOCUS_NONE
+	rank_btn.add_theme_font_override("font", font_bold)
+	rank_btn.add_theme_font_size_override("font_size", 18)
+	rank_btn.add_theme_stylebox_override("normal", _box_pill(18, 6, "g_btn_on"))
+	rank_btn.add_theme_stylebox_override("hover", _box_pill(18, 6, "g_btn_hover"))
+	rank_btn.add_theme_stylebox_override("pressed", _box_pill(18, 6, "g_btn_on"))
+	rank_btn.add_theme_stylebox_override("hover_pressed", _box_pill(18, 6, "g_btn_on"))
+	for st in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+		rank_btn.add_theme_color_override(st, C_GOOD)
+	rank_btn.custom_minimum_size = Vector2(PLATE.x, 44)
+	rank_btn.visible = false
+	rank_btn.pressed.connect(press_rank)
+	root.add_child(rank_btn)
+	_put(rank_btn, Control.PRESET_TOP_LEFT, Vector2(8, TASKS_Y + 2))
+
+
+## Кнопка видна: условия выполнены, город не в меню и не в демо, обучение кончилось
+func rank_shown() -> bool:
+	if game == null or game.city == null or game.mode in ["demo", "menu"]:
+		return false
+	if game.tutorial and game.tutorial.active():
+		return false
+	return ui_level() >= 1 and game.city.rank_ok()
+
+
+## «Перейти на новый уровень»: уровень +1, ролик «Новый ранг» сыграет сам (rank_cine ловит level_up)
+func press_rank() -> void:
+	var c: City = game.city
+	if not c.rank_ok():
+		return
+	advisor_panel.visible = false            # ролик ждёт, пока открыт советник, — убираем его
+	_hide_hover()
+	_hide_info()
+	c.rank_up()
+	refresh()
+
+
+## Кнопка уровня и сдвиг просьб под неё; плашка уровня светится, пока город готов
+func _update_rank_ui() -> void:
+	var on := rank_shown()
+	if rank_btn.visible != on:
+		rank_btn.visible = on
+		_put(tasks_panel, Control.PRESET_TOP_LEFT, Vector2(8, TASKS_Y + (RANK_H if on else 0)))
+	if on:
+		var nx: Dictionary = game.city.next_level()
+		rank_btn.tooltip_text = "Город готов стать «%s»: все условия выполнены. Нажмите — откроются новые исследования, казна станет вместительнее." % nx.get("name", "")
+	lbl_level.add_theme_color_override("font_color", C_GOOD if on else C_SOFT)
+	if not on:
+		lbl_level.modulate = Color.WHITE
+		rank_btn.self_modulate = Color.WHITE
 
 
 # ---------- мгновенные подсказки: плашка города (уровень, жители, счастье) и фишки классов ----------
@@ -967,7 +1033,8 @@ static func _plural(n: int, one: String, few: String, many: String) -> String:
 	return many
 
 
-## Уровень города → что нужно для следующего и что он даст
+## Уровень города → чек-лист условий следующего (галочки, сколько из скольких) и что он даст.
+## Сам город уровень не поднимает: когда всё готово, под табличкой появляется кнопка «Перейти на новый уровень»
 func _tip_level(v: VBoxContainer) -> void:
 	var c: City = game.city
 	_tip_head(v, "level", "Уровень города: «%s»" % Defs.LEVELS[c.level]["name"])
@@ -975,21 +1042,38 @@ func _tip_level(v: VBoxContainer) -> void:
 	if nx.is_empty():
 		_tip_text(v, "Это высший уровень — ваш город стал Вечным!", C_GOOD, 15, true)
 		return
-	_tip_text(v, "Следующий уровень — «%s». Нужно:" % nx["name"], C_INK, 15, true)
-	var pop := int(c.stats["pop"])
-	var hp := int(c.stats["happy"])
-	var pop_ok := pop >= int(nx["pop"])
-	var hp_ok := hp >= int(nx["happy"])
-	_tip_row(v, "family", "Жителей", "%s / %s" % [fmt(pop), fmt(int(nx["pop"]))], C_GOOD if pop_ok else C_BAD, 1 if pop_ok else 0)
-	_tip_row(v, "happy", "Счастье города", "%d%% / %d%%" % [hp, int(nx["happy"])], C_GOOD if hp_ok else C_BAD, 1 if hp_ok else 0)
+	var nd := c.rank_needs()
+	var met := c.rank_met()
+	_tip_text(v, "Следующий уровень — «%s». Готово %d из %d:" % [nx["name"], met, nd.size()], C_INK, 15, true)
+	for e: Dictionary in nd:
+		var val := ("%d%% / %d%%" % [int(e["have"]), int(e["need"])]) if e["pct"] else ("%s / %s" % [fmt(int(e["have"])), fmt(int(e["need"]))])
+		_tip_row(v, e["icon"], e["text"], val, C_GOOD if e["ok"] else C_BAD, 1 if e["ok"] else 0)
+	if met == nd.size():
+		_tip_text(v, "Всё готово! Нажмите «Перейти на новый уровень» под табличкой города — когда сами захотите.", C_GOOD, 15, true)
 	# пределы — с уже изученными хранилищами (как money_cap/rp_cap), а не голые числа уровня
-	var smx: Array = Defs.B["scriptorium"].get("max", [])
-	var scr := (", скрипториев — до %d" % int(smx[mini(c.level + 1, smx.size() - 1)])) if not smx.is_empty() else ""
-	_tip_text(v, "На новом уровне казна вмещает %s ден., очков исследований — %s%s, открываются новые исследования." % [fmt(c.money_cap_for(c.level + 1)), fmt(c.rp_cap_for(c.level + 1)), scr])
-	if not pop_ok:
-		_tip_text(v, "Жителей прибавится, если строить дома у дорог и заселять приезжих.", C_INK, 14)
-	if not hp_ok:
-		_tip_text(v, "Счастье поднимают лавки рядом с домами, украшения и памятники — наведите на счастье, там подробнее.", C_INK, 14)
+	_tip_text(v, "На новом уровне казна вмещает %s ден., очков исследований — %s%s, открываются новые исследования." % [fmt(c.money_cap_for(c.level + 1)), fmt(c.rp_cap_for(c.level + 1)), _caps_text(c.level + 1)])
+	if met < nd.size():
+		if not nd[0]["ok"]:
+			_tip_text(v, "Жителей прибавится, если строить дома у дорог и заселять приезжих.", C_INK, 14)
+		if not nd[1]["ok"]:
+			_tip_text(v, "Счастье поднимают лавки рядом с домами, украшения и памятники — наведите на счастье, там подробнее.", C_INK, 14)
+		for i in range(2, nd.size()):
+			if not nd[i]["ok"]:
+				_tip_text(v, "Постройки ищите в меню стройки внизу; закрытые открываются исследованиями (свиток вверху справа).", C_INK, 14)
+				break
+
+
+## «, скрипториев — до 3, школ — до 2» — пределы построек для очков исследований на уровне lvl
+func _caps_text(lvl: int) -> String:
+	var out := ""
+	for t in ["scriptorium", "school", "library", "academy"]:
+		var mx: Array = Defs.B[t].get("max", [])
+		if mx.is_empty():
+			continue
+		var n := int(mx[clampi(lvl, 0, mx.size() - 1)])
+		if n > 0:
+			out += ", %s — до %d" % [String(Defs.B[t].get("gen", t)), n]
+	return out
 
 
 ## Жители → по классам, кто ждёт жилья и едет в повозке
@@ -1012,13 +1096,37 @@ func _tip_pop(v: VBoxContainer) -> void:
 		_tip_row(v, "family", "Идут в свой новый дом", "%d %s" % [c.pending.size(), _plural(c.pending.size(), "семья", "семьи", "семей")], C_GOOD)
 	if c.incoming > 0:
 		_tip_row(v, "horse", "Едут в повозке", "%d %s" % [c.incoming, _plural(c.incoming, "семья", "семьи", "семей")], C_INK)
+	_arrive_rows(v, true)
 	var block := String(c.stats.get("arrive_block", ""))
+	var wait := c.arrive_wait()
 	if block != "":
 		_tip_text(v, block, C_BAD, 14, true)
+	elif wait != "":
+		_tip_text(v, wait, C_BAD, 14, true)
 	elif fam_n > 0:
 		_tip_text(v, "Нажмите на значок семьи слева вверху и выберите им дом.", C_INK, 14)
 	else:
-		_tip_text(v, "Повозка привозит новые семьи по большой дороге. Стройте дома у дорог — им будет где жить.", C_SOFT, 14)
+		_tip_text(v, "Повозка привозит новые семьи по большой дороге — только туда, где есть место. Стройте дома у дорог заранее.", C_SOFT, 14)
+
+
+## Строки о повозке: как часто ходит (и почему чаще) и на сколько семей есть место в домах.
+## tip — в мгновенной подсказке (иначе — в карточке станции)
+func _arrive_rows(v: Control, tip: bool) -> void:
+	var c: City = game.city
+	var am: Array = c.arrive_mult()
+	var every := "раз в %s ч" % String.num(c.arrive_every(), 1).replace(".", ",")
+	var fit := maxi(0, c.free_fit())
+	var fit_txt := ("на %d %s" % [fit, _plural(fit, "семью", "семьи", "семей")]) if fit > 0 else "нет"
+	if tip:
+		_tip_row(v, "horse", "Повозка с семьями", every, C_INK)
+		if float(am[0]) < 1.0:
+			_tip_text(v, "Чаще обычного: %s." % am[1], C_GOOD, 14)
+		_tip_row(v, "housing", "Свободное место в домах", fit_txt, C_GOOD if fit > 0 else C_BAD)
+	else:
+		v.add_child(_row("horse", "Повозка с семьями", every))
+		if float(am[0]) < 1.0:
+			v.add_child(_wrap(_label("Чаще обычного: %s." % am[1], 14, true, C_GOOD), 330))
+		v.add_child(_row("housing", "Место в домах", fit_txt, C_GOOD if fit > 0 else C_BAD))
 
 
 ## Счастье города → из чего складывается, по классам, что сделать и что оно даёт
@@ -1480,9 +1588,25 @@ func _bottom_center() -> void:
 func _bottom_right() -> void:
 	var p := _panel(null, "bar", 0, 1)
 	_put(p, Control.PRESET_BOTTOM_RIGHT, Vector2(-10, -6))
+	var pv := VBoxContainer.new()
+	pv.add_theme_constant_override("separation", 0)
+	p.add_child(pv)
+	# «Казна полна» и «Полки полны» — над счётчиками, только пока доход или очки пропадают
+	full_money = _label("Казна полна — доход пропадает", 14, true, C_BAD)
+	full_money.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	full_money.mouse_filter = Control.MOUSE_FILTER_PASS
+	full_money.tooltip_text = "Казна заполнена до предела — новые денарии пропадают. Потратьте их: дома, этажи, лавки, памятники, украшения. Предел растёт с уровнем города и исследованиями хранилищ."
+	full_money.visible = false
+	pv.add_child(full_money)
+	full_rp = _label("Полки полны — очки пропадают", 14, true, C_BAD)
+	full_rp.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	full_rp.mouse_filter = Control.MOUSE_FILTER_PASS
+	full_rp.tooltip_text = "Очков исследований столько, сколько вмещают полки, — новые пропадают. Изучите что-нибудь в свитке исследований вверху справа."
+	full_rp.visible = false
+	pv.add_child(full_rp)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
-	p.add_child(h)
+	pv.add_child(h)
 	for t: Array in [["copy", "copy", "Копия", "Копировать постройку (Ctrl+C)"], ["move", "move", "Перенос", "Перенести постройку, дерево или камень (M)"],
 			["bulldoze", "demolish", "Снос", "Снос (Delete): постройки, деревья, камни"]]:
 		var tn: String = t[0]
@@ -1681,6 +1805,8 @@ func _card_tip(type: String) -> String:
 	var mx: int = game.city.build_max(type) if game and game.city else -1
 	if mx >= 0:
 		t += "\nВ городе: %d из %d" % [cnt, mx]
+		if cnt > mx:
+			t += " — сверх предела не работают: %d" % (cnt - mx)
 		var lv: int = game.city.level
 		var amx: Array = Defs.B[type]["max"]
 		if lv + 1 < Defs.LEVELS.size():           # сколько можно будет на следующем уровне
@@ -1802,6 +1928,11 @@ func _update_pointer() -> void:
 		pointer_target = pt[0]
 		pointer_text.text = pt[1]
 		return
+	# город впервые готов к новому уровню — стрелка на кнопку, пока её не нажмут
+	if rank_btn and rank_btn.visible and not game.city.tips.has("rank_pressed") and game.tool == "":
+		pointer_target = rank_btn
+		pointer_text.text = ""                # кнопка сама говорит, что делать; подпись легла бы на просьбы
+		return
 	if ui_level() < 3:
 		return
 	var goals: Array = game.city.active_goals(1)
@@ -1875,6 +2006,11 @@ func _process(_dt: float) -> void:
 	_place_notes()
 	_cursor_tick()
 	_hover_tick()
+	if rank_btn and rank_btn.visible:
+		# город готов к новому уровню: кнопка и надпись уровня мягко светятся
+		var k := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 320.0)
+		rank_btn.self_modulate = Color.WHITE.lerp(Color(1.2, 1.16, 1.02), k)
+		lbl_level.modulate = Color.WHITE.lerp(Color(1.35, 1.35, 1.1), k)
 
 	if game and lbl_clock:
 		var h := int(game.hour)
@@ -2106,7 +2242,7 @@ func _hire_row(b: Dictionary) -> HBoxContainer:
 	var mx := c.job_max(b)
 	var h := c.hired_of(b)
 	var row := _row("hammer", "Работники", "%d / %d · %d%%" % [h, mx, int(float(b.get("staff", 1.0)) * 100.0)], C_GOOD if float(b.get("fill", 1.0)) >= 0.99 and h > 0 else C_BAD)
-	row.tooltip_text = "Сколько работников нанять. Чем больше — тем больше домов обслуживает постройка, но каждый работник стоит %.1f ден. в час и нужен жителям ниже классом" % City.WAGE
+	row.tooltip_text = "Сколько работников нанять. Чем больше — тем больше домов обслуживает постройка, но каждый работник стоит %s ден. в час (жалованье растёт с уровнем города) и нужен жителям ниже классом" % String.num(c.wage(), 2).replace(".", ",")
 	var minus := Button.new()
 	minus.text = "−"
 	_small(minus)
@@ -2204,7 +2340,17 @@ func _fill_info_body() -> void:
 			info_box.add_child(_row("arrow", "Дальность", Defs.WORD[int(d["range"])]))
 		"rp":
 			info_box.add_child(_row("research", "Очки исследований в час", "+%.1f" % (c.rp_per_hour(b["type"]) * float(b.get("staff", 1.0))), C_GOOD))
-			info_box.add_child(_hire_row(b))
+			if b.get("over", false):
+				# старый город: таких построек больше, чем можно на этом уровне — лишние не работают (их не сносим)
+				info_box.add_child(_wrap(_label("Сверх предела уровня — не работает", 15, true, C_BAD), cw))
+				var nl := c.level + 1
+				var mx: Array = d.get("max", [])
+				while nl < Defs.LEVELS.size() and nl < mx.size() and int(mx[nl]) <= c.build_max(b["type"]):
+					nl += 1
+				var more := (" Больше заработает на уровне «%s»." % Defs.LEVELS[nl]["name"]) if nl < Defs.LEVELS.size() and nl < mx.size() else ""
+				info_box.add_child(_wrap(_label("На уровне «%s» работают %d (первые построенные).%s Сносить не нужно: пока постройка не работает, она ничего не стоит." % [Defs.LEVELS[c.level]["name"], c.build_max(b["type"]), more], 14, false, C_SOFT), cw))
+			else:
+				info_box.add_child(_hire_row(b))
 		"farm":
 			info_box.add_child(_row("wheat", "Даёт", {"wheat": "пшеницу", "olives": "оливки", "grapes": "виноград"}[d["makes"]], C_GOOD))
 			info_box.add_child(_hire_row(b))
@@ -2216,11 +2362,33 @@ func _fill_info_body() -> void:
 			info_box.add_child(_row("scroll", "Почта привозит свитки", "+%s в час" % String.num(float(Defs.LEVELS[c.level].get("rp_h", 0.0)), 1), C_GOOD))
 			var nx := c.next_level()
 			if not nx.is_empty():
-				info_box.add_child(_row("level", "Следующий уровень", nx["name"]))
-				info_box.add_child(_row("family", "Жителей", "%d / %d" % [int(c.stats["pop"]), int(nx["pop"])], C_GOOD if int(c.stats["pop"]) >= int(nx["pop"]) else C_INK))
-				info_box.add_child(_row("happy", "Счастье", "%d%% / %d%%" % [int(c.stats["happy"]), int(nx["happy"])], C_GOOD if int(c.stats["happy"]) >= int(nx["happy"]) else C_INK))
+				# чек-лист условий следующего уровня; когда всё готово — кнопка «Перейти на новый уровень»
+				var nd := c.rank_needs()
+				info_box.add_child(_row("level", "Следующий уровень", "%s · %d из %d" % [nx["name"], c.rank_met(), nd.size()]))
+				for e: Dictionary in nd:
+					var val := ("%d%% / %d%%" % [int(e["have"]), int(e["need"])]) if e["pct"] else ("%s / %s" % [fmt(int(e["have"])), fmt(int(e["need"]))])
+					var r := _row(e["icon"], e["text"], val, C_GOOD if e["ok"] else C_BAD)
+					var mk := _icon("check" if e["ok"] else "close", 18)
+					mk.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+					r.add_child(mk)
+					info_box.add_child(r)
+				if rank_shown():
+					var rb := Button.new()
+					rb.text = "Перейти на новый уровень"
+					rb.icon = ico("level", 32)
+					rb.focus_mode = Control.FOCUS_NONE
+					rb.add_theme_font_override("font", font_bold)
+					rb.add_theme_stylebox_override("normal", _box_pill(16, 6, "g_btn_on"))
+					for st in ["font_color", "font_hover_color", "font_pressed_color"]:
+						rb.add_theme_color_override(st, C_GOOD)
+					rb.pressed.connect(press_rank)
+					info_box.add_child(rb)
+			_arrive_rows(info_box, false)
+			var wait := c.arrive_wait()
+			if wait != "":
+				info_box.add_child(_wrap(_label(wait, 14, true, C_BAD), 330))
 			if c.waiting > 0:
-				info_box.add_child(_row("tent", "Ждут жилья", "%d семей" % c.waiting, C_BAD))
+				info_box.add_child(_row("tent", "Ждут жилья", "%d %s" % [c.waiting, _plural(c.waiting, "семья", "семьи", "семей")], C_BAD))
 		"decor":
 			info_box.add_child(_row("flower", "Очки украшения", "+%d" % int(d.get("deco", 1)), C_GOOD))
 	if not c.is_house(b):                      # у дома вместо описания — что даёт счастье (см. _fill_house)
@@ -2876,7 +3044,10 @@ func _fill_finance() -> void:
 	v.add_child(_row("income", "Налоги за час", "+%s" % fmt(c.stats.get("income", 0.0)), C_GOOD))
 	v.add_child(_row("hammer", "Содержание построек за час", "−%s" % fmt(c.stats.get("upkeep", 0.0)), C_BAD))
 	v.add_child(_row("research", "Очки исследований", "%s / %s (+%.1f в час)" % [fmt(c.rp), fmt(c.rp_cap()), float(c.stats.get("rp_day", 0.0))]))
-	var hint := _label("Налог платит каждый житель: плебей — %.2f, ремесленник — %.2f, патриций — %.2f денария в час; счастливые платят больше. Казна не вмещает больше предела — поднимайте уровень города и изучайте хранилища." % [Defs.CLASSES["plebs"]["tax"], Defs.CLASSES["artisans"]["tax"], Defs.CLASSES["patricians"]["tax"]], 14, false, C_SOFT)
+	var tx := []
+	for cl in ["plebs", "artisans", "patricians"]:
+		tx.append(String.num(float(Defs.CLASSES[cl]["tax"]), 1).replace(".", ","))
+	var hint := _label("Налог платит каждый житель: плебей — %s, ремесленник — %s, патриций — %s денария в час; счастливые платят больше. Содержание: каждая постройка (кроме домов и украшений) стоит в час %s%% своей цены, а каждый работник — %s ден. жалованья; жалованье растёт с уровнем города. Казна не вмещает больше предела — поднимайте уровень города и изучайте хранилища." % [tx[0], tx[1], tx[2], String.num(Defs.UPKEEP * 100.0, 1).replace(".", ","), String.num(c.wage(), 2).replace(".", ",")], 14, false, C_SOFT)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.custom_minimum_size = Vector2(400, 0)
 	v.add_child(hint)
@@ -3214,9 +3385,12 @@ func refresh() -> void:
 	lbl_rp_day.text = "+%.1f" % float(c.stats.get("rp_day", 0.0)) if float(c.stats.get("rp_day", 0.0)) > 0.0 else ""
 	for sb in speed_btns:
 		_set_on(sb[0], is_equal_approx(game.speed, sb[1]))
+	_update_full_marks()
+	_update_rank_ui()
 	_fill_classes()
 	_fill_families()
 	_fill_tasks()
+	_once_tips()
 	if tray.visible:
 		_update_cards()
 	if info_panel.visible:
@@ -3231,6 +3405,81 @@ func refresh() -> void:
 	_update_pointer()
 	if hover_src:
 		_fill_hover()                       # числа в открытой подсказке живые
+
+
+## «Казна полна — доход пропадает» / «Полки полны — очки пропадают»: казна или полки у предела, а прибавка есть
+func _update_full_marks() -> void:
+	var c: City = game.city
+	var play: bool = not (game.mode in ["demo", "menu"])
+	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0))
+	var m_on := play and c.money >= c.money_cap() - 0.5 and net > 0.0
+	var r_on := play and c.rp >= c.rp_cap() - 0.05 and float(c.stats.get("rp_day", 0.0)) > 0.0
+	if full_money.visible != m_on or full_rp.visible != r_on:
+		full_money.visible = m_on
+		full_rp.visible = r_on
+		_snug(full_money.get_parent().get_parent() as Control)
+
+
+## Можно ли сейчас показать совет советника (один раз на механику): своя игра, обучение кончилось,
+## советник и ролик свободны
+func _tip_free() -> bool:
+	if game == null or not (game.mode in ["new", "play"]) or game.shot_path != "" or not visible or not root.visible:
+		return false
+	if game.tutorial and game.tutorial.active():
+		return false
+	if advisor_panel.visible:
+		return false
+	var rc = game.get("rank_cine")
+	return rc == null or (rc.cine.is_empty() and rc.pending.is_empty())
+
+
+## Советы один раз: город готов к новому уровню; казна полна; полки полны
+func _once_tips() -> void:
+	var c: City = game.city
+	if not _tip_free():
+		return
+	if rank_btn.visible and not c.tips.has("rank_tip"):
+		c.tips["rank_tip"] = true
+		var nx := c.next_level()
+		advisor("Город готов к новому уровню!", "Все условия для уровня «%s» выполнены. Город сам не растёт: нажмите кнопку «Перейти на новый уровень» под табличкой города (или в карточке почтовой станции) — когда сами захотите.\n\nНовый уровень откроет новые исследования, казна станет вместительнее. Условия следующего уровня всегда видно, если навести мышь на уровень города." % nx.get("name", ""))
+		return
+	if full_money.visible and not c.tips.has("full_money"):
+		c.tips["full_money"] = true
+		advisor("Казна полна", "Казна заполнена до предела — новые денарии пропадают. Пустите их в дело: новые дома и этажи, лавки, украшения и памятники. Чтобы казна вмещала больше, поднимайте уровень города и изучите «Новое хранилище денег».")
+		return
+	if full_rp.visible and not c.tips.has("full_rp"):
+		c.tips["full_rp"] = true
+		advisor("Полки полны", "Очков исследований столько, сколько вмещают полки, — новые пропадают. Изучите что-нибудь в свитке исследований вверху справа. Полки вырастут на новом уровне города и с исследованием «Новые полки для свитков».")
+
+
+## Что поменялось в старом городе после обновления темпа (советник один раз, city.tips.v22_pace)
+func pace_note() -> String:
+	var c: City = game.city
+	var t := "Аве! В городе кое-что поменялось — коротко о главном:\n\n"
+	t += "• Новый уровень город больше не получает сам. Когда выполнены все условия — жители, счастье и нужные постройки, — под табличкой города появится кнопка «Перейти на новый уровень». Список условий — если навести мышь на уровень города.\n"
+	t += "• Повозка везёт семьи только туда, где есть свободное место. Если мест нет, приедет одна семья «ищет жильё» — значит, пора строить. Счастливый город (от 70%) зовёт семьи чаще.\n"
+	t += "• Налоги стали ниже, а жалованье работникам и содержание построек растут вместе с городом — денарии снова стоит беречь.\n"
+	t += "• Школ, библиотек и академий теперь можно держать ограниченное число — по уровню города, как скрипториев."
+	var oc := c.over_cap()
+	if not oc.is_empty():
+		var by := {}
+		for id in oc:
+			var nm := String(Defs.B[c.buildings[id]["type"]].get("gen", "построек"))
+			by[nm] = int(by.get(nm, 0)) + 1
+		var parts := []
+		for nm in by:
+			parts.append("%s — %d" % [nm, by[nm]])
+		t += " Сверх предела у вас: %s. Они остаются на месте, но не работают и ничего не стоят, пока город не вырастет — сносить их не нужно." % ", ".join(parts)
+	return t
+
+
+## Событие только в колокольчик: число на значке, без всплывашки
+func bell(_text: String, _icon := "info") -> void:
+	if events_panel.visible:
+		_fill_events()
+		return
+	bell_count += 1
+	bell_badge.text = str(bell_count)
 
 
 func _fill_classes() -> void:
@@ -3327,6 +3576,10 @@ func _fill_tasks_body(goals: Array) -> void:
 		if String((g["p"] as Array)[0]) == "pop" and block != "":
 			var ht: Array = c.stats.get("happy_tips", [])
 			hint_txt = block + "." + ((" Совет: " + String(ht[0]) + ".") if not ht.is_empty() else "") + ("\n" + hint_txt if hint_txt != "" else "")
+		var rank_lv := int((g["p"] as Array)[1]) if String((g["p"] as Array)[0]) == "rank" else -1
+		if rank_lv > 0:
+			# «Станьте хутором»: условия уровня — из данных (Defs.LEVELS), чтобы не расходились с кнопкой
+			hint_txt = "Нужно: %s.\n%s" % [c.rank_text(rank_lv), hint_txt]
 		b.tooltip_text = "%s\n%s\nНаграда: %d ден.%s%s" % [who[0], hint_txt if hint_txt != "" else String(g["text"]), g["money"], (", %d оч. исследований" % g["rp"]) if int(g["rp"]) > 0 else "",
 			("\nОткроется: " + g["reward"]) if g.has("reward") else ""]
 		var h := HBoxContainer.new()
@@ -3363,6 +3616,9 @@ func _fill_tasks_body(goals: Array) -> void:
 		bar.add_theme_stylebox_override("fill", _ai_box("g_slider_fill", [8, 0, 8, 0], [8, 0, 8, 0]))
 		pr.add_child(bar)
 		var cnt := _label("%s/%s" % [fmt(prog), fmt(int(g["need"]))], 14, true, C_SOFT)
+		if rank_lv > 0 and prog >= int(g["need"]):
+			cnt.text = "готово!"                  # осталось нажать «Перейти на новый уровень»
+			cnt.add_theme_color_override("font_color", C_GOOD)
 		cnt.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		pr.add_child(cnt)
 		v.add_child(pr)

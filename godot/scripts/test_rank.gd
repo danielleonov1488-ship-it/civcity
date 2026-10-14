@@ -48,11 +48,16 @@ func wait_cine(on: bool, sec: float) -> bool:
 	return game.rank_cine.cine.is_empty() != on
 
 
-func rank_up(pop: int, happy: int) -> void:
+## Новый уровень — по кнопке (City.rank_up); условия по постройкам тут не важны — жмём без проверки,
+## пока уровень не станет нужным (как будто игрок нажал «Перейти на новый уровень» раз или два подряд)
+func rank_up(pop: int, happy: int, to := -1) -> void:
 	var c: City = game.city
 	c.stats["pop"] = pop
 	c.stats["happy"] = happy
-	c._update_level()
+	if to < 0:
+		to = c.level + 1
+	while c.level < to:
+		c.rank_up(true)
 
 
 ## Всё вернулось как было до ролика
@@ -228,7 +233,7 @@ func _run() -> void:
 	game._show(ctr)
 	await frames(5)
 	t0 = Time.get_ticks_msec()
-	rank_up(60, 60)
+	rank_up(60, 60, 2)
 	check(c.level == 2 and int(rc.pending.get("from", -1)) == 0 and int(rc.pending.get("to", -1)) == 2, "0 → 2: один ролик в очереди")
 	started = await wait_cine(true, 0.6)
 	check(started and int(rc.cine["from"]) == 0 and int(rc.cine["to"]) == 2, "ролик 0 → 2")

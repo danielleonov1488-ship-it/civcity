@@ -125,5 +125,5 @@ func _run() -> void:
 	game.tutorial.next_btn.emit_signal("pressed")
 	await frames(60)
 	await shot("t11_full.png")
-	print("done tut=", c.tips)
+	print("done tut=", c.tips, " arrivals=", c.arrivals, " pending=", c.pending.keys(), " incoming=", c.incoming, " settled=", c.settled_total)
 	get_tree().quit()

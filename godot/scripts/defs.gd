@@ -18,27 +18,37 @@ const DENSITY_MAX := 16               # теснота отнимает не б�
 const MISSING_PENALTY := 10           # −10% за каждый вид нужной лавки, которой нет рядом
 ## Этажи покупает игрок в карточке дома (как в Town to City): нужен открытый этаж, полный дом и счастье
 const FLOOR_HAPPY := {2: 65, 3: 75}   # счастье дома, с которого можно надстроить этаж
-const FLOOR_PRICE := {"plebs": {2: 120, 3: 220}, "artisans": {2: 300, 3: 520}, "patricians": {2: 900, 3: 1500}}
+const FLOOR_PRICE := {"plebs": {2: 200, 3: 450}, "artisans": {2: 550, 3: 1000}, "patricians": {2: 1800, 3: 1500}}
 const FLOOR_RESEARCH := {2: "floor2", 3: "floor3"}
-## Приезд семей: первые ARRIVE_FREE семей едут всегда, дальше — только пока счастье города не ниже ARRIVE_HAPPY
+## Приезд семей: первые ARRIVE_FREE семей едут всегда, дальше — только пока счастье города не ниже ARRIVE_HAPPY.
+## И всегда — только в свободные дома (City.free_fit): нет места — едет одна семья «ищет жильё»
 const ARRIVE_HAPPY := 60
 const ARRIVE_FREE := 7
+## Счастливый город зовёт чаще: [счастье от, множитель промежутка между повозками]; не чаще, чем ARRIVE_MULT_MIN
+const ARRIVE_FAST := [[80, 0.65], [70, 0.8]]
+const ARRIVE_MULT_MIN := 0.5
+## Жалованье работнику в час (по уровню города) и содержание постройки в час — доля её цены
+const WAGE := [0.3, 0.35, 0.45, 0.6, 0.75, 0.9, 1.05, 1.2]
+const UPKEEP := 0.005
 
 # ---------- жители ----------
 
 ## base — счастье дома без лавок и украшений; deco_max — сколько могут дать украшения (см. City.compute)
 const CLASSES := {
-	"plebs": {"name": "Плебеи", "one": "Плебеи", "icon": "person", "house": "house_pleb", "tax": 1.4, "per_floor": 4, "work": 0.5,
+	"plebs": {"name": "Плебеи", "one": "Плебеи", "icon": "person", "house": "house_pleb", "tax": 1.2, "per_floor": 4, "work": 0.5,
 		"needs": ["food"], "base": 44, "deco_max": 12},
-	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 3.1, "per_floor": 3, "work": 0.5,
+	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 2.2, "per_floor": 3, "work": 0.5,
 		"needs": ["food", "clothes", "fun"], "base": 41, "deco_max": 14},
-	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 8.0, "per_floor": 3, "work": 0.35,
+	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 4.5, "per_floor": 3, "work": 0.35,
 		"needs": ["food", "clothes", "fun", "services", "goods"], "base": 38, "deco_max": 16},
 }
 const CLASS_ORDER := ["plebs", "artisans", "patricians"]
-## повозка с новыми семьями — раз в столько игровых часов (по уровню города): на первых двух — чаще
-const ARRIVE_EVERY := [2.0, 2.5, 2.35, 1.95, 1.67, 1.45, 1.29, 1.16]
-const ARRIVAL_MAX := [2, 2, 3, 3, 4, 4, 5, 6]   # сколько семей может ждать жилья (по уровню города)
+## повозка с новыми семьями — раз в столько игровых часов (по уровню города); счастье города ускоряет (ARRIVE_FAST)
+const ARRIVE_EVERY := [2.0, 2.5, 2.6, 2.4, 2.25, 2.1, 1.95, 1.8]
+const ARRIVAL_MAX := [2, 2, 2, 2, 3, 3, 3, 3]   # сколько семей может ждать жилья (по уровню города), как в Town to City
+## семей в повозке — не больше (по уровню города): с Городка повозка больше — иначе большой город не растёт
+## быстрее одного рейса туда-обратно (бот темпа, test_pace)
+const FAMILIES_PER_CART := [2, 2, 2, 2, 3, 3, 3, 3]
 const FAMILY_SIZE := {"plebs": [2, 4], "artisans": [2, 3], "patricians": [1, 3]}
 
 ## Виды потребностей (как вкладки коммерции в Town to City)
@@ -60,16 +70,40 @@ const COGNOMENS := ["Максимы", "Руфы", "Галлы", "Флакки", 
 
 # ---------- уровни города ----------
 
-## rp_h — очков исследований в час привозит почта на станцию (растёт со станцией)
+## rp_h — очков исследований в час привозит почта на станцию (растёт со станцией).
+## Новый уровень — как в Town to City: город сам не растёт, а когда выполнены условия (жители pop, счастье happy
+## и постройки need), игрок жмёт «Перейти на новый уровень» (City.rank_up). need — постройки, которые можно
+## открыть исследованиями ПРЕДЫДУЩЕГО уровня или раньше (иначе тупик): p — как у просьб (City.progress_of), n — сколько
+## text — строка чек-листа, say — то же во фразе советника («нужно 60 жителей, … и склад»)
 const LEVELS := [
-	{"name": "Стоянка", "pop": 0, "happy": 0, "money": 3000, "rp": 300, "rp_h": 1.0},
-	{"name": "Хутор", "pop": 20, "happy": 55, "money": 5000, "rp": 500, "rp_h": 1.5},
-	{"name": "Деревня", "pop": 60, "happy": 58, "money": 8000, "rp": 800, "rp_h": 2.0},
-	{"name": "Посёлок", "pop": 180, "happy": 60, "money": 12000, "rp": 1200, "rp_h": 2.5},
-	{"name": "Городок", "pop": 320, "happy": 62, "money": 20000, "rp": 1600, "rp_h": 3.0},
-	{"name": "Город", "pop": 520, "happy": 64, "money": 30000, "rp": 2000, "rp_h": 3.5},
-	{"name": "Большой город", "pop": 800, "happy": 66, "money": 50000, "rp": 3000, "rp_h": 4.0},
-	{"name": "Вечный город", "pop": 1200, "happy": 68, "money": 100000, "rp": 5000, "rp_h": 5.0},
+	{"name": "Стоянка", "pop": 0, "happy": 0, "money": 3000, "rp": 300, "rp_h": 1.0, "need": []},
+	{"name": "Хутор", "pop": 20, "happy": 55, "money": 5000, "rp": 400, "rp_h": 2.5, "need": [
+		{"p": ["count", "stall_fruit"], "n": 1, "text": "Фруктовая лавка", "icon": "food", "say": "фруктовая лавка"},
+		{"p": ["count", "scriptorium"], "n": 1, "text": "Скрипторий", "icon": "quill", "say": "скрипторий"}]},
+	{"name": "Деревня", "pop": 60, "happy": 58, "money": 8000, "rp": 600, "rp_h": 3.0, "need": [
+		{"p": ["shops", "food"], "n": 3, "text": "Разные лавки еды", "icon": "food", "say": "три разные лавки еды"},
+		{"p": ["count", "warehouse"], "n": 1, "text": "Склад", "icon": "warehouse", "say": "склад"},
+		{"p": ["floors", 2], "n": 2, "text": "Дома в 2 этажа", "icon": "housing", "say": "два дома в 2 этажа"}]},
+	{"name": "Посёлок", "pop": 180, "happy": 60, "money": 12000, "rp": 900, "rp_h": 3.5, "need": [
+		{"p": ["count", "school"], "n": 1, "text": "Школа", "icon": "teacher", "say": "школа"},
+		{"p": ["count", "house_artisan"], "n": 4, "text": "Дома ремесленников", "icon": "hammer", "say": "четыре дома ремесленников"},
+		{"p": ["count", "fountain"], "n": 1, "text": "Фонтан", "icon": "water", "say": "фонтан"}]},
+	{"name": "Городок", "pop": 320, "happy": 62, "money": 20000, "rp": 1000, "rp_h": 4.0, "need": [
+		{"p": ["count", "temple"], "n": 1, "text": "Храм", "icon": "level", "say": "храм"},
+		{"p": ["shops", "clothes"], "n": 2, "text": "Разные лавки одежды", "icon": "clothes", "say": "две разные лавки одежды"},
+		{"p": ["floors", 2], "n": 10, "text": "Дома в 2 этажа", "icon": "housing", "say": "десять домов в 2 этажа"}]},
+	{"name": "Город", "pop": 520, "happy": 64, "money": 30000, "rp": 1600, "rp_h": 5.0, "need": [
+		{"p": ["count", "house_patrician"], "n": 3, "text": "Домусы патрициев", "icon": "toga", "say": "три домуса патрициев"},
+		{"p": ["count", "library"], "n": 1, "text": "Библиотека", "icon": "bookshelf", "say": "библиотека"},
+		{"p": ["floors", 3], "n": 3, "text": "Дома в 3 этажа", "icon": "housing", "say": "три дома в 3 этажа"}]},
+	{"name": "Большой город", "pop": 800, "happy": 66, "money": 50000, "rp": 2800, "rp_h": 6.0, "need": [
+		{"p": ["count", "forum"], "n": 1, "text": "Форум", "icon": "caesar", "say": "форум"},
+		{"p": ["shops", "services"], "n": 2, "text": "Разные лавки услуг", "icon": "services", "say": "две разные лавки услуг"},
+		{"p": ["cls", "patricians"], "n": 30, "text": "Патриции", "icon": "toga", "say": "30 патрициев"}]},
+	{"name": "Вечный город", "pop": 1200, "happy": 68, "money": 100000, "rp": 6000, "rp_h": 8.0, "need": [
+		{"p": ["count", "academy"], "n": 1, "text": "Академия", "icon": "book", "say": "академия"},
+		{"p": ["count", "theatre"], "n": 1, "text": "Театр", "icon": "fun", "say": "театр"},
+		{"p": ["floors", 3], "n": 15, "text": "Дома в 3 этажа", "icon": "housing", "say": "15 домов в 3 этажа"}]},
 ]
 
 # ---------- слова для свойств лавок (как в подсказках Town to City) ----------
@@ -87,9 +121,9 @@ const B := {
 	# жильё: этаж покупает игрок в карточке дома, когда дом полон и жителям хорошо (Defs.FLOOR_HAPPY)
 	"house_pleb": {"kind": "house", "cat": "housing", "cls": "plebs", "name": "Дом плебеев", "cost": 100, "variants": 5,
 		"desc": "Скромный дом для простых римлян. Когда дом полон и жители счастливы, в его карточке можно надстроить этаж — для новой семьи."},
-	"house_artisan": {"kind": "house", "cat": "housing", "cls": "artisans", "name": "Дом ремесленников", "cost": 250, "variants": 5, "unlock": "artisans",
+	"house_artisan": {"kind": "house", "cat": "housing", "cls": "artisans", "name": "Дом ремесленников", "cost": 350, "variants": 5, "unlock": "artisans",
 		"desc": "Дом с мастерской внизу. Ремесленникам нужны еда, одежда и развлечения."},
-	"house_patrician": {"kind": "house", "cat": "housing", "cls": "patricians", "name": "Домус патрициев", "cost": 600, "variants": 4, "unlock": "patricians",
+	"house_patrician": {"kind": "house", "cat": "housing", "cls": "patricians", "name": "Домус патрициев", "cost": 1000, "variants": 4, "unlock": "patricians",
 		"desc": "Богатый дом с портиком и садом. Патриции платят много, но хотят всего и лучшего."},
 
 	# еда
@@ -164,30 +198,34 @@ const B := {
 		"icon": "grapes", "desc": "Даёт виноград винным лавкам."},
 	"warehouse": {"kind": "store", "cat": "farming", "name": "Склад", "cost": 300, "range": 4, "jobs": {"plebs": 2}, "unlock": "warehouse",
 		"icon": "warehouse", "desc": "Сюда со станции приходят товары, отсюда их разносят по лавкам вокруг. Лавкам со значком склада без него нечем торговать."},
-	# max — сколько можно держать на каждом уровне города; rp_up — прибавка к очкам за исследование (доля от rp)
+	# max — сколько можно держать на каждом уровне города (лишние, поставленные раньше, стоят, но не работают:
+	# работают первые по номеру); rp_up — прибавка к очкам за исследование (доля от rp); gen — «нет … » (для подсказок)
 	"scriptorium": {"kind": "rp", "cat": "farming", "name": "Скрипторий", "cost": 180, "rp": 2.0, "jobs": {"plebs": 2},
 		"max": [1, 2, 3, 4, 5, 6, 8, 10], "rp_up": {"scribes1": 0.5, "scribes2": 0.5}, "gen": "скрипториев",
 		"icon": "quill", "desc": "Писцы переписывают свитки — даёт очки исследований."},
-	"school": {"kind": "rp", "cat": "farming", "name": "Школа", "cost": 600, "rp": 5.0, "jobs": {"artisans": 2}, "unlock": "school",
+	"school": {"kind": "rp", "cat": "farming", "name": "Школа", "cost": 800, "rp": 5.0, "jobs": {"artisans": 2}, "unlock": "school",
+		"max": [0, 0, 2, 4, 5, 6, 7, 8], "gen": "школ",
 		"icon": "teacher", "desc": "Грамматик учит детей — больше очков исследований."},
-	"library": {"kind": "rp", "cat": "farming", "name": "Библиотека", "cost": 1500, "rp": 11.0, "jobs": {"artisans": 3}, "unlock": "library",
+	"library": {"kind": "rp", "cat": "farming", "name": "Библиотека", "cost": 2500, "rp": 9.0, "jobs": {"artisans": 3}, "unlock": "library",
+		"max": [0, 0, 0, 0, 2, 3, 4, 5], "gen": "библиотек",
 		"icon": "bookshelf", "desc": "Тысячи свитков — много очков исследований."},
-	"academy": {"kind": "rp", "cat": "farming", "name": "Академия", "cost": 3500, "rp": 22.0, "jobs": {"patricians": 3}, "unlock": "academy",
+	"academy": {"kind": "rp", "cat": "farming", "name": "Академия", "cost": 6000, "rp": 12.0, "jobs": {"patricians": 3}, "unlock": "academy",
+		"max": [0, 0, 0, 0, 0, 0, 1, 2], "gen": "академий",
 		"icon": "book", "desc": "Философы спорят под колоннадой — очень много очков исследований."},
 
 	# особые: памятники радуют всех вокруг
-	"fountain": {"kind": "monument", "cat": "special", "name": "Фонтан", "cost": 300, "bonus": 6, "range": 3, "unlock": "fountain",
+	"fountain": {"kind": "monument", "cat": "special", "name": "Фонтан", "cost": 400, "bonus": 6, "range": 3, "unlock": "fountain",
 		"icon": "water", "desc": "Фонтан для квартала: вода и радость всем вокруг."},
-	"temple": {"kind": "monument", "cat": "special", "name": "Храм Юпитера", "cost": 1400, "bonus": 10, "range": 4, "jobs": {"plebs": 2}, "unlock": "temple",
+	"temple": {"kind": "monument", "cat": "special", "name": "Храм Юпитера", "cost": 2500, "bonus": 10, "range": 4, "jobs": {"plebs": 2}, "unlock": "temple",
 		"icon": "level", "desc": "Храм на подиуме с колоннадой. Значительно повышает счастье жителей поблизости."},
-	"forum": {"kind": "monument", "cat": "special", "name": "Форум", "cost": 3200, "bonus": 12, "range": 5, "unlock": "forum",
+	"forum": {"kind": "monument", "cat": "special", "name": "Форум", "cost": 8000, "bonus": 12, "range": 5, "unlock": "forum",
 		"icon": "caesar", "desc": "Сердце города: колоннада, статуи и трибуна."},
 	# чудеса Легиона (Legion.WONDERS): открываются исследованием или рейтингом походов, сверх денариев стоят Славы (glory)
-	"arch": {"kind": "monument", "cat": "special", "name": "Триумфальная арка", "cost": 2400, "bonus": 10, "range": 4, "unlock": "arch", "glory": 25,
+	"arch": {"kind": "monument", "cat": "special", "name": "Триумфальная арка", "cost": 6000, "bonus": 10, "range": 4, "unlock": "arch", "glory": 25,
 		"icon": "castle", "desc": "Арка в честь побед — гордость жителей. Чудо Легиона: +5% урона всем бойцам."},
-	"colosseum": {"kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 9000, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum", "glory": 50,
+	"colosseum": {"kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 30000, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum", "glory": 50,
 		"icon": "swords", "desc": "Гладиаторы и звери. Весь город ходит смотреть. Чудо Легиона: +10% здоровья бойцам и Слава каждый день."},
-	"pantheon": {"kind": "monument", "cat": "special", "name": "Пантеон", "cost": 15000, "bonus": 20, "range": 5, "unlock": "pantheon", "glory": 80,
+	"pantheon": {"kind": "monument", "cat": "special", "name": "Пантеон", "cost": 60000, "bonus": 20, "range": 5, "unlock": "pantheon", "glory": 80,
 		"icon": "level", "desc": "Храм всех богов с огромным куполом. Чудо Легиона: +10% урона бойцам и Слава каждый день."},
 	"center": {"kind": "center", "cat": "", "name": "Почтовая станция", "cost": 0, "fixed": true,
 		"desc": "Сюда по большой дороге приезжают повозки с переселенцами и товарами."},
@@ -310,55 +348,55 @@ const RESEARCH := [
 	{"id": "deco_trees", "lvl": 0, "name": "Деревья и кусты", "cost": 15, "icon": "tree"},
 	{"id": "musicians", "lvl": 0, "name": "Уличные музыканты", "cost": 40, "icon": "lyre"},
 
-	{"id": "floor2", "lvl": 1, "name": "Второй жилой этаж", "cost": 100, "icon": "housing",
+	{"id": "floor2", "lvl": 1, "name": "Второй жилой этаж", "cost": 50, "icon": "housing",
 		"desc": "Второй этаж можно купить в карточке дома, когда дом полон, а счастье в нём не ниже 65%. Туда въедет ещё одна семья."},
-	{"id": "weaver", "lvl": 1, "name": "Ткацкая лавка", "cost": 80, "icon": "wool"},
-	{"id": "warehouse", "lvl": 1, "name": "Склад", "cost": 90, "icon": "warehouse"},
-	{"id": "butcher", "lvl": 1, "name": "Мясная лавка", "cost": 110, "icon": "meat", "after": "warehouse"},
-	{"id": "cobbler", "lvl": 1, "name": "Сапожник", "cost": 120, "icon": "boots", "after": "weaver"},
-	{"id": "bakery", "lvl": 1, "name": "Пекарня", "cost": 160, "icon": "bread", "after": "warehouse"},
-	{"id": "fountain", "lvl": 1, "name": "Фонтаны", "cost": 120, "icon": "water"},
-	{"id": "animals", "lvl": 1, "name": "Животные: утки, лебеди, овцы", "cost": 40, "icon": "swan"},
-	{"id": "scribes1", "lvl": 1, "name": "Ученики писцов", "cost": 60, "icon": "quill",
+	{"id": "weaver", "lvl": 1, "name": "Ткацкая лавка", "cost": 40, "icon": "wool"},
+	{"id": "warehouse", "lvl": 1, "name": "Склад", "cost": 50, "icon": "warehouse"},
+	{"id": "butcher", "lvl": 1, "name": "Мясная лавка", "cost": 60, "icon": "meat", "after": "warehouse"},
+	{"id": "cobbler", "lvl": 1, "name": "Сапожник", "cost": 60, "icon": "boots", "after": "weaver"},
+	{"id": "bakery", "lvl": 1, "name": "Пекарня", "cost": 80, "icon": "bread", "after": "warehouse"},
+	{"id": "fountain", "lvl": 1, "name": "Фонтаны", "cost": 60, "icon": "water"},
+	{"id": "animals", "lvl": 1, "name": "Животные: утки, лебеди, овцы", "cost": 20, "icon": "swan"},
+	{"id": "scribes1", "lvl": 1, "name": "Ученики писцов", "cost": 30, "icon": "quill",
 		"desc": "За писцами садятся ученики: каждый скрипторий даёт 3 очка исследований в час вместо 2."},
 
-	{"id": "artisans", "lvl": 2, "name": "Класс ремесленников", "cost": 380, "icon": "hammer",
+	{"id": "artisans", "lvl": 2, "name": "Класс ремесленников", "cost": 270, "icon": "hammer",
 		"desc": "Открывает дома ремесленников. Им нужны еда, одежда и развлечения."},
-	{"id": "dice", "lvl": 2, "name": "Игра в кости", "cost": 210, "icon": "dice"},
-	{"id": "barber", "lvl": 2, "name": "Цирюльня", "cost": 270, "icon": "razor"},
-	{"id": "thermopolium", "lvl": 2, "name": "Термополий", "cost": 340, "icon": "meal"},
-	{"id": "school", "lvl": 2, "name": "Школа", "cost": 390, "icon": "teacher"},
-	{"id": "grove", "lvl": 2, "name": "Оливковая роща", "cost": 220, "icon": "olive"},
-	{"id": "oilshop", "lvl": 2, "name": "Масляная лавка", "cost": 280, "icon": "amphora", "after": "grove"},
-	{"id": "deco_stone", "lvl": 2, "name": "Каменные украшения", "cost": 240, "icon": "mona"},
-	{"id": "store1", "lvl": 2, "name": "Больше носильщиков", "cost": 300, "icon": "warehouse", "after": "warehouse",
+	{"id": "dice", "lvl": 2, "name": "Игра в кости", "cost": 150, "icon": "dice"},
+	{"id": "barber", "lvl": 2, "name": "Цирюльня", "cost": 190, "icon": "razor"},
+	{"id": "thermopolium", "lvl": 2, "name": "Термополий", "cost": 240, "icon": "meal"},
+	{"id": "school", "lvl": 2, "name": "Школа", "cost": 270, "icon": "teacher"},
+	{"id": "grove", "lvl": 2, "name": "Оливковая роща", "cost": 150, "icon": "olive"},
+	{"id": "oilshop", "lvl": 2, "name": "Масляная лавка", "cost": 200, "icon": "amphora", "after": "grove"},
+	{"id": "deco_stone", "lvl": 2, "name": "Каменные украшения", "cost": 170, "icon": "mona"},
+	{"id": "store1", "lvl": 2, "name": "Больше носильщиков", "cost": 210, "icon": "warehouse", "after": "warehouse",
 		"desc": "Склад разносит товары вдвое дальше."},
 
-	{"id": "floor3", "lvl": 3, "name": "Третий жилой этаж", "cost": 680, "icon": "housing", "after": "floor2",
+	{"id": "floor3", "lvl": 3, "name": "Третий жилой этаж", "cost": 480, "icon": "housing", "after": "floor2",
 		"desc": "Третий этаж можно купить в карточке полного дома со счастьем не ниже 75%."},
-	{"id": "dyer", "lvl": 3, "name": "Красильня", "cost": 510, "icon": "cape"},
-	{"id": "potter", "lvl": 3, "name": "Гончарная", "cost": 440, "icon": "pottery"},
-	{"id": "mimes", "lvl": 3, "name": "Помост мимов", "cost": 480, "icon": "puppet"},
-	{"id": "temple", "lvl": 3, "name": "Храм", "cost": 650, "icon": "level"},
-	{"id": "fullonica", "lvl": 3, "name": "Фуллоника", "cost": 540, "icon": "tshirt"},
-	{"id": "deco_metal", "lvl": 3, "name": "Жаровни и знамёна", "cost": 310, "icon": "candle"},
-	{"id": "vault1", "lvl": 3, "name": "Новое хранилище денег", "cost": 510, "icon": "money", "desc": "Казна вмещает вдвое больше."},
-	{"id": "scribes2", "lvl": 3, "name": "Мастерская писцов", "cost": 450, "icon": "quill", "after": "scribes1",
+	{"id": "dyer", "lvl": 3, "name": "Красильня", "cost": 360, "icon": "cape"},
+	{"id": "potter", "lvl": 3, "name": "Гончарная", "cost": 310, "icon": "pottery"},
+	{"id": "mimes", "lvl": 3, "name": "Помост мимов", "cost": 340, "icon": "puppet"},
+	{"id": "temple", "lvl": 3, "name": "Храм", "cost": 460, "icon": "level"},
+	{"id": "fullonica", "lvl": 3, "name": "Фуллоника", "cost": 380, "icon": "tshirt"},
+	{"id": "deco_metal", "lvl": 3, "name": "Жаровни и знамёна", "cost": 220, "icon": "candle"},
+	{"id": "vault1", "lvl": 3, "name": "Новое хранилище денег", "cost": 360, "icon": "money", "desc": "Казна вмещает вдвое больше."},
+	{"id": "scribes2", "lvl": 3, "name": "Мастерская писцов", "cost": 320, "icon": "quill", "after": "scribes1",
 		"desc": "Скрипторий даёт 4 очка исследований в час."},
 
-	{"id": "patricians", "lvl": 4, "name": "Класс патрициев", "cost": 1140, "icon": "toga",
+	{"id": "patricians", "lvl": 4, "name": "Класс патрициев", "cost": 800, "icon": "toga",
 		"desc": "Открывает домусы патрициев. Им нужно всё: еда, одежда, развлечения, услуги и товары."},
-	{"id": "balnea", "lvl": 4, "name": "Бани", "cost": 800, "icon": "bath"},
-	{"id": "lamps", "lvl": 4, "name": "Мастер светильников", "cost": 800, "icon": "candle"},
-	{"id": "library", "lvl": 4, "name": "Библиотека", "cost": 1140, "icon": "bookshelf", "after": "school"},
-	{"id": "vineyard", "lvl": 4, "name": "Виноградник", "cost": 530, "icon": "grapes"},
-	{"id": "wineshop", "lvl": 4, "name": "Винная лавка", "cost": 720, "icon": "wine", "after": "vineyard"},
-	{"id": "odeon", "lvl": 4, "name": "Одеон", "cost": 1060, "icon": "harp"},
-	{"id": "taberna", "lvl": 4, "name": "Таверна", "cost": 990, "icon": "mug"},
-	{"id": "research1", "lvl": 4, "name": "Новые полки для свитков", "cost": 860, "icon": "scroll", "desc": "Очков исследований помещается вдвое больше."},
-	{"id": "legion", "lvl": 4, "name": "Легион", "cost": 950, "icon": "legion",
+	{"id": "balnea", "lvl": 4, "name": "Бани", "cost": 560, "icon": "bath"},
+	{"id": "lamps", "lvl": 4, "name": "Мастер светильников", "cost": 560, "icon": "candle"},
+	{"id": "library", "lvl": 4, "name": "Библиотека", "cost": 800, "icon": "bookshelf", "after": "school"},
+	{"id": "vineyard", "lvl": 4, "name": "Виноградник", "cost": 370, "icon": "grapes"},
+	{"id": "wineshop", "lvl": 4, "name": "Винная лавка", "cost": 500, "icon": "wine", "after": "vineyard"},
+	{"id": "odeon", "lvl": 4, "name": "Одеон", "cost": 740, "icon": "harp"},
+	{"id": "taberna", "lvl": 4, "name": "Таверна", "cost": 690, "icon": "mug"},
+	{"id": "research1", "lvl": 4, "name": "Новые полки для свитков", "cost": 600, "icon": "scroll", "desc": "Очков исследований помещается вдвое больше."},
+	{"id": "legion", "lvl": 4, "name": "Легион", "cost": 670, "icon": "legion",
 		"desc": "Открывает Казармы и окно «Легион»: отряд идёт походом против разбойников, зверей и чудовищ, добывает Славу и денарии. Дальние провинции — когда город станет «Большим городом»."},
-	{"id": "archery", "lvl": 4, "name": "Стрельбище", "cost": 700, "icon": "arrow", "after": "legion", "desc": "Лучники для Легиона: бьют издалека."},
+	{"id": "archery", "lvl": 4, "name": "Стрельбище", "cost": 490, "icon": "arrow", "after": "legion", "desc": "Лучники для Легиона: бьют издалека."},
 
 	{"id": "perfumer", "lvl": 5, "name": "Парфюмер", "cost": 1470, "icon": "perfume"},
 	{"id": "medic", "lvl": 5, "name": "Лекарь", "cost": 1300, "icon": "medic"},
@@ -368,14 +406,14 @@ const RESEARCH := [
 	{"id": "forum", "lvl": 5, "name": "Форум", "cost": 2520, "icon": "caesar"},
 	{"id": "taxes1", "lvl": 5, "name": "Налоги для богатых", "cost": 1890, "icon": "coins", "desc": "Патриции платят на четверть больше."},
 
-	{"id": "theatre", "lvl": 6, "name": "Театр", "cost": 3450, "icon": "fun", "after": "odeon"},
-	{"id": "arch", "lvl": 6, "name": "Триумфальная арка", "cost": 2990, "icon": "castle"},
-	{"id": "academy", "lvl": 6, "name": "Академия", "cost": 3680, "icon": "book", "after": "library"},
-	{"id": "vault2", "lvl": 6, "name": "Подвалы казны", "cost": 2760, "icon": "money", "after": "vault1", "desc": "Казна вмещает ещё вдвое больше."},
+	{"id": "theatre", "lvl": 6, "name": "Театр", "cost": 4830, "icon": "fun", "after": "odeon"},
+	{"id": "arch", "lvl": 6, "name": "Триумфальная арка", "cost": 4190, "icon": "castle"},
+	{"id": "academy", "lvl": 6, "name": "Академия", "cost": 5150, "icon": "book", "after": "library"},
+	{"id": "vault2", "lvl": 6, "name": "Подвалы казны", "cost": 3860, "icon": "money", "after": "vault1", "desc": "Казна вмещает ещё вдвое больше."},
 
-	{"id": "colosseum", "lvl": 7, "name": "Амфитеатр", "cost": 8000, "icon": "swords"},
-	# не дороже предела очков на высшем уровне (5000 × 2 с «research1») — иначе изучить нельзя вовсе
-	{"id": "pantheon", "lvl": 7, "name": "Пантеон", "cost": 9800, "icon": "level"},
+	{"id": "colosseum", "lvl": 7, "name": "Амфитеатр", "cost": 10000, "icon": "swords"},
+	# не дороже предела очков на высшем уровне (6000 × 2 с «research1») — иначе изучить нельзя вовсе
+	{"id": "pantheon", "lvl": 7, "name": "Пантеон", "cost": 11500, "icon": "level"},
 ]
 
 ## Цвета домов: штукатурка подкрашивается (у соседей — всегда разные)
@@ -418,8 +456,8 @@ const REQUESTS := [
 		"hint": "Украшения дают дому очки красоты: +1% счастья за каждые 2 очка (у плебеев до +12%). Ставьте их в промежутках между домами."},
 	{"id": "fed6", "who": "plebs", "text": "Еды на всех: 6 сытых домов", "p": ["fed", "food"], "need": 6, "money": 150, "rp": 20, "icon": "food",
 		"hint": "Дом сыт, если рядом лавка с едой и в ней хватает работников. Посмотрите охват лавок (глаз вверху справа)."},
-	{"id": "hamlet", "who": "advisor", "text": "Хутор: 20 жителей", "p": ["pop"], "need": 20, "money": 200, "rp": 40, "icon": "family",
-		"hint": POP_HINT + " Когда жителей 20, а счастье от 55%, стоянка станет хутором."},
+	{"id": "hamlet", "who": "advisor", "text": "Станьте хутором", "p": ["rank", 1], "need": 4, "money": 200, "rp": 40, "icon": "level",
+		"hint": RANK_HINT},
 	{"id": "scriptorium2", "who": "advisor", "text": "Второй скрипторий", "p": ["count", "scriptorium"], "need": 2, "money": 150, "rp": 20, "tool": "scriptorium", "icon": "quill",
 		"hint": "На хуторе можно держать два скриптория, в деревне — три. Больше скрипториев — быстрее исследования."},
 	{"id": "market", "who": "plebs", "text": "Рынок: 4 разные лавки", "p": ["shops"], "need": 4, "money": 220, "rp": 40, "icon": "commerce",
@@ -431,8 +469,8 @@ const REQUESTS := [
 		"hint": POP_HINT},
 	{"id": "fountain4", "who": "plebs", "text": "Вода рядом: фонтан у 4 домов", "p": ["near", "fountain", "plebs"], "need": 4, "money": 300, "rp": 50, "icon": "water",
 		"hint": "Изучите «Фонтаны» и поставьте фонтан посреди домов плебеев."},
-	{"id": "village", "who": "advisor", "text": "Деревня: 60 жителей", "p": ["pop"], "need": 60, "money": 400, "rp": 80, "icon": "family",
-		"hint": POP_HINT + " При 60 жителях и счастье от 58% хутор станет деревней."},
+	{"id": "village", "who": "advisor", "text": "Станьте деревней", "p": ["rank", 2], "need": 5, "money": 400, "rp": 80, "icon": "level",
+		"hint": RANK_HINT},
 	{"id": "store", "who": "plebs", "text": "Склад и мясная лавка", "p": ["store"], "need": 2, "money": 200, "rp": 40, "icon": "warehouse"},
 	{"id": "happy60", "who": "advisor", "text": "Счастье города 60%", "p": ["happy"], "need": 60, "money": 300, "rp": 60, "icon": "happy",
 		"hint": "Новые семьи едут только в город, где счастье не ниже 60%. Разные лавки рядом с домами, украшения и памятники поднимают счастье."},
@@ -442,7 +480,7 @@ const REQUESTS := [
 	{"id": "art12", "who": "artisans", "text": "Поселите 12 ремесленников", "p": ["cls", "artisans"], "need": 12, "money": 350, "rp": 70, "icon": "hammer"},
 	{"id": "clothes8", "who": "artisans", "text": "Одежду всем: 8 домов с одеждой", "p": ["fed", "clothes"], "need": 8, "money": 380, "rp": 70, "icon": "clothes"},
 	{"id": "floor2x5", "who": "plebs", "text": "Пять домов в 2 этажа", "p": ["floors", 2], "need": 5, "money": 400, "rp": 80, "icon": "housing"},
-	{"id": "temple", "who": "artisans", "text": "Постройте храм", "p": ["count", "temple"], "need": 1, "money": 500, "rp": 100, "tool": "temple", "icon": "level"},
+	{"id": "temple", "who": "artisans", "text": "Постройте храм", "p": ["count", "temple"], "need": 1, "money": 800, "rp": 100, "tool": "temple", "icon": "level"},
 	{"id": "school", "who": "artisans", "text": "Детям нужна школа", "p": ["count", "school"], "need": 1, "money": 450, "rp": 100, "tool": "school", "icon": "teacher"},
 	{"id": "pop300", "who": "advisor", "text": "Соберите 300 жителей", "p": ["pop"], "need": 300, "money": 900, "rp": 150, "icon": "family",
 		"hint": POP_HINT},
@@ -452,12 +490,14 @@ const REQUESTS := [
 	{"id": "happy70", "who": "patricians", "text": "Счастье города 70%", "p": ["happy"], "need": 70, "money": 1000, "rp": 200, "icon": "happy"},
 	{"id": "pop600", "who": "advisor", "text": "Соберите 600 жителей", "p": ["pop"], "need": 600, "money": 1500, "rp": 300, "icon": "family",
 		"hint": POP_HINT},
-	{"id": "forum", "who": "patricians", "text": "Постройте форум", "p": ["count", "forum"], "need": 1, "money": 2000, "rp": 400, "tool": "forum", "icon": "caesar"},
+	{"id": "forum", "who": "patricians", "text": "Постройте форум", "p": ["count", "forum"], "need": 1, "money": 4000, "rp": 400, "tool": "forum", "icon": "caesar"},
 	{"id": "pop1000", "who": "advisor", "text": "Соберите 1000 жителей", "p": ["pop"], "need": 1000, "money": 3000, "rp": 600, "icon": "laurels",
 		"hint": POP_HINT},
 ]
 ## Подсказка к просьбам «Соберите N жителей»: откуда берутся жители и почему повозка может стоять
-const POP_HINT := "Жители прибавляются, когда повозка привозит новые семьи и вы заселяете их в дома. Первые %d семей приедут всегда, а дальше — только пока счастье города не ниже %d%%. Наведите на счастье вверху — там видно, что его поднимет." % [ARRIVE_FREE, ARRIVE_HAPPY]
+const POP_HINT := "Жители прибавляются, когда повозка привозит новые семьи и вы заселяете их в дома. Повозка везёт семьи только туда, где есть свободное место, — стройте дома заранее. Первые %d семей приедут всегда, а дальше — только пока счастье города не ниже %d%%; от 70%% повозка ходит чаще. Наведите на счастье вверху — там видно, что его поднимет." % [ARRIVE_FREE, ARRIVE_HAPPY]
+## Подсказка к просьбам «Станьте хутором / деревней» (список условий подставляет интерфейс — City.rank_text)
+const RANK_HINT := "Новый уровень город получает не сам: когда выполнены все условия, под табличкой города появляется кнопка «Перейти на новый уровень» — нажмите её. Список условий — если навести мышь на уровень города вверху слева."
 const WHO := {"advisor": ["Советник Марк", "caesar"], "plebs": ["Плебеи просят", "person"], "artisans": ["Ремесленники просят", "hammer"], "patricians": ["Патриции просят", "toga"]}
 
 

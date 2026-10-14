@@ -203,6 +203,7 @@ func _ready() -> void:
 	if mode == "play":
 		loaded = _load()
 	if not loaded:
+		city.tips["v22_pace"] = true             # новая игра — сразу по новым правилам, объяснять перемены не нужно
 		city.place("center", Land.CENTER, PI / 2, 0, 0, true)
 		# фон меню — тоже витрина (на «низком» качестве — прежний городок: он легче для видеокарты)
 		if promo or (mode == "menu" and settings.get("quality", "high") != "low"):
@@ -244,6 +245,7 @@ func _ready() -> void:
 	hud.game = self
 	add_child(hud)
 	city.event.connect(func(t, i): hud.notify(t, i))
+	city.quiet.connect(func(t, i): hud.bell(t, i))
 	if city.unread > 0 and mode in ["play", "new"]:
 		hud.bell_count += city.unread         # записано при загрузке (например, возврат очков) — только число на колокольчике
 		hud.bell_badge.text = str(hud.bell_count)
@@ -276,6 +278,9 @@ func _ready() -> void:
 			rig.set_view(Vector3(194, Land.BASE_Y, 158), 22, 30, 70)
 	elif mode == "demo" and shot_path == "" and not promo:
 		hud.notify("Готовый город: стройте сколько угодно — он не сохраняется", "info")
+	elif loaded and mode == "play" and shot_path == "" and not city.tips.has("v22_pace"):
+		city.tips["v22_pace"] = true
+		hud.advisor("В городе новые правила", hud.pace_note())
 	elif not loaded and shot_path == "" and not tutorial.active():
 		hud.advisor("Аве! Я Марк, твой советник.", "По большой дороге через арку к почтовой станции приезжают повозки с переселенцами. Проложи дорогу кистью (слева внизу) и поставь вдоль неё дома — они сами встанут фасадом к дороге. Рядом поставь лавки: каждая кормит и радует дома в своей дальности.\n\nКамера: колёсико — масштаб, зажатое колёсико — вращать, правая кнопка — двигать (или WASD, Q/E).")
 	Account.me().attach(self)                 # вход в аккаунт и сверка города с облаком (scripts/account.gd)
