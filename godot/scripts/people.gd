@@ -2445,6 +2445,7 @@ static func _cat_model_ok() -> bool:
 		_cat_lib = _cat_clips(aps[0], sks[0])
 		_cat_ok = 1
 	root.free()
+	print("Кошки: ", "модель Quaternius" if _cat_ok == 1 else "запасные (модели нет)")
 	return _cat_ok == 1
 
 
