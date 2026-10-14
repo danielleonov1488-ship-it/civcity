@@ -450,6 +450,8 @@ func _checks_1a(houses: Array) -> void:
 	check(hud.rank_btn.visible, "button «Перейти на новый уровень» is shown")
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Город готов к новому уровню!" and c.tips.has("rank_tip"), "advisor explains it once: «%s»" % hud.adv_title.text)
 	check(hud.pointer_target == hud.rank_btn, "the arrow points at the button the first time")
+	game.rig.set_view(Vector3(180, 2, 143), 20, 50, 46)
+	await shot("pace_rank_btn.png")
 	hud.advisor_panel.visible = false
 	hud._show_hover(hud.hover_level)
 	hud._hover_hold = 30                      # мыши над плашкой нет — подсказку держим для снимка
