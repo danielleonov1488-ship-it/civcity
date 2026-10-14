@@ -66,7 +66,7 @@ func calm() -> bool:
 	if tut != null and (not tut.cine.is_empty() or tut.active()):
 		return false
 	for p in [hud.pause_panel, hud.settings_panel, hud.credits_panel, hud.research_panel, hud.events_panel,
-			hud.finance_panel, hud.stats_panel, hud.buy_panel]:
+			hud.finance_panel, hud.stats_panel, hud.buy_panel, hud.advisor_panel]:
 		if p != null and p.visible:
 			return false
 	var lu := LegionUi.of(hud)

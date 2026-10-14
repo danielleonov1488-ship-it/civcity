@@ -1083,10 +1083,16 @@ func families_came() -> int:
 	return n
 
 
+## Семьи едут без условия счастья: первые Defs.ARRIVE_FREE семей, а на стоянке — пока людей меньше, чем нужно
+## хутору (семьи бывают по 2 человека — семи семей может не хватить до 20)
+func _arrive_free() -> bool:
+	return families_came() < Defs.ARRIVE_FREE or (level == 0 and int(stats.get("pop", 0)) < int(Defs.LEVELS[1]["pop"]))
+
+
 ## Почему повозка не везёт новые семьи ("" — везёт): первые Defs.ARRIVE_FREE семей едут всегда,
 ## дальше — только пока счастье города не ниже Defs.ARRIVE_HAPPY (как поезд в Town to City)
 func arrivals_blocked() -> String:
-	if families_came() < Defs.ARRIVE_FREE or int(stats.get("pop", 0)) <= 0:
+	if _arrive_free() or int(stats.get("pop", 0)) <= 0:
 		return ""
 	if int(stats.get("happy", 0)) < Defs.ARRIVE_HAPPY:
 		return "Новые семьи приедут, когда счастье города будет не ниже %d%% (сейчас %d%%)" % [Defs.ARRIVE_HAPPY, int(stats["happy"])]
@@ -1141,7 +1147,7 @@ func _tick_arrivals() -> void:
 	if arrive_t >= every or first:
 		arrive_t = 0.0
 		var n := mini(room, 2 + level / 3)    # семьи приезжают по двое
-		if int(stats["happy"]) < Defs.ARRIVE_HAPPY and int(stats["pop"]) > 0:
+		if int(stats["happy"]) < Defs.ARRIVE_HAPPY and int(stats["pop"]) > 0 and not _arrive_free():
 			n = mini(n, maxi(0, Defs.ARRIVE_FREE - families_came()))   # без счастья — только первые ARRIVE_FREE семей
 		incoming += n
 

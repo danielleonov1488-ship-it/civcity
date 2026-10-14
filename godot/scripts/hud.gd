@@ -1697,6 +1697,10 @@ func _update_cards() -> void:
 			continue
 		var type: String = b.get_meta("type")
 		var d: Dictionary = Defs.B[type]
+		if c.build_max(type) >= 0:
+			var tip := _card_tip(type)       # «В городе: N из M» меняется с каждой постройкой и рангом
+			if b.tooltip_text != tip:
+				b.tooltip_text = tip
 		var img: TextureRect = b.find_child("img", true, false)
 		if img and img.texture == null:
 			img.texture = icons.get(type)

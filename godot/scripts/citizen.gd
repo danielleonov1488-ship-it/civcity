@@ -193,6 +193,20 @@ static func _derive(lib: AnimationLibrary) -> void:
 			lib.add_animation(n + "_M", _mirror(lib.get_animation(n)))
 
 
+static var _plain_mats := {}
+
+
+## Обычный материал без перекраски (причёски, бороды, венки; всё — в режиме совместимости для старых видеокарт,
+## где место под instance uniform мало)
+static func _plain(variant: String) -> StandardMaterial3D:
+	if not _plain_mats.has(variant):
+		var m := StandardMaterial3D.new()
+		m.albedo_texture = load(Synty._tex_path("PolygonAncientEmpire_01_" + variant))
+		m.roughness = 0.85
+		_plain_mats[variant] = m
+	return _plain_mats[variant]
+
+
 ## Три общих материала на всех (тон кожи A/B/C); цвета одежды — у каждого жителя свои (instance uniform)
 static func _material(variant: String) -> ShaderMaterial:
 	if not _mats.has(variant):
@@ -272,13 +286,15 @@ static func create(rng: RandomNumberGenerator, is_female: bool, child := false, 
 	var body := _scene(DIR + name + ".fbx").instantiate() as Node3D
 	c.add_child(body)
 	var variant: String = ["A", "A", "B", "C"][rng.randi() % 4]
+	var dyed := RenderingServer.get_current_rendering_method() != "gl_compatibility"
 	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
-		mi.material_override = _material(variant)
+		mi.material_override = _material(variant) if dyed else _plain(variant)
 	# одежда: свой поток случайностей от СОСТОЯНИЯ rng — rng не сдвигается, лица и причёски прежние,
 	# а один и тот же житель всегда в той же одежде (и на повозке, и на улице, и после возврата в кадр)
 	var cr := RandomNumberGenerator.new()
 	cr.seed = rng.state ^ 0x5DEECE66D
-	_dress(body, name, cls if cls != "" else ("patricians" if rich else "plebs"), c.female, child, cr)
+	if dyed:
+		_dress(body, name, cls if cls != "" else ("patricians" if rich else "plebs"), c.female, child, cr)
 	# причёска (и борода у части мужчин) — на кости головы
 	var sk: Skeleton3D = body.find_children("*", "Skeleton3D", true, false)[0]
 	var hairs: Array = ["SM_Chr_Hair_Female_0%d" % (1 + rng.randi() % 6)] if c.female else ["SM_Chr_Hair_Male_0%d" % (1 + rng.randi() % 7)]
@@ -292,7 +308,7 @@ static func create(rng: RandomNumberGenerator, is_female: bool, child := false, 
 	for h in hairs:
 		var hn := _scene("res://assets/synty/FBX/Attachments/" + h + ".fbx").instantiate() as Node3D
 		for mi: MeshInstance3D in hn.find_children("*", "MeshInstance3D", true, false):
-			mi.material_override = _material(variant)
+			mi.material_override = _plain(variant)
 		att.add_child(hn)
 	c.anim = AnimationPlayer.new()
 	body.add_child(c.anim)

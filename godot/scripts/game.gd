@@ -1547,6 +1547,9 @@ func _process(dt: float) -> void:
 					(ap as AnimationPlayer).speed_scale = speed
 	if rig and rig.cine:
 		_plot_hover(Vector2i(-1, -1))         # в ролике камеру ведёт он: без подсветки участка под мышью
+		brush_ring.visible = false            # …и без колец кисти и охвата на земле
+		brush_box.visible = false
+		range_ring.visible = false
 	else:
 		_update_tool()
 	autosave_t += dt
