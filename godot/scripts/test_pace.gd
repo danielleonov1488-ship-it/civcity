@@ -298,7 +298,10 @@ func _checks_1a(houses: Array) -> void:
 	c.arrive_t = 10.0
 	c._tick_arrivals()
 	check(c.incoming == 1, "no room, nobody waiting: one family comes to look for a home (incoming %d)" % c.incoming)
-	c.family_arrived(c.new_family(c.pick_class()))
+	var ld: Array = c.make_load(c.incoming)
+	check(ld.size() == 1 and bool(ld[0].get("seek", false)), "the cart load is one family «ищет жильё»: %s" % [ld])
+	ld[0]["n"] = 2                             # семья из двоих: в пустой дом на 4 места после неё войдёт ещё одна
+	c.family_arrived(ld[0])
 	check(c.arrivals.size() == 1 and c.incoming == 0, "it waits on the square")
 	check(c.arrive_wait().contains("ищет жильё"), "station text: «%s»" % c.arrive_wait())
 	c.arrive_t = 10.0
@@ -314,7 +317,28 @@ func _checks_1a(houses: Array) -> void:
 	c.stats["happy"] = 65
 	c._tick_arrivals()
 	check(c.incoming == 1, "room for one more family: the cart brings one (incoming %d)" % c.incoming)
+	# повозка собирает семьи разом и держит место каждой: в 4 места после ждущей семьи из двоих — ровно одна из двоих
+	ld = c.make_load(2)
+	check(ld.size() == 1 and int(ld[0]["n"]) == 2 and not c.homes_for(ld[0]).is_empty(), "load with a family waiting: %s" % [ld])
+	c.arrivals = []
 	c.incoming = 0
+	check(c.free_fit() == 2, "empty house, nobody waiting: room for 2 families (free_fit %d)" % c.free_fit())
+	# первая семья из 3–4 человек — вторая уже не войдёт, и повозка везёт одну
+	var over_n := 0
+	var same := 0
+	var two := 0
+	for i in 40:
+		ld = c.make_load(2)
+		var sum := 0
+		for f in ld:
+			sum += int(f["n"])
+		if sum > 4 or ld.is_empty():
+			over_n += 1
+		if ld.size() == 2:
+			two += 1
+			if ld[0]["name"] == ld[1]["name"]:
+				same += 1
+	check(over_n == 0 and same == 0 and two > 0, "40 loads for 4 places: all fit (%d over the room, %d same names, %d of 2 families)" % [over_n, same, two])
 	c.stats["happy"] = 72
 	var m72: float = c.arrive_mult()[0]
 	c.stats["happy"] = 85
@@ -346,6 +370,42 @@ func _checks_1a(houses: Array) -> void:
 	c.level = 2
 	c.compute()
 	check(c.idle_text(over[0]).contains("сверх предела"), "idle reason: «%s»" % c.idle_text(over[0]))
+	hud._update_world_icons()
+	check(not hud.world_icons.has(int(over[0]["id"])) and not hud.world_icons.has(int(over[1]["id"])), "no «нет работников» badge over idle schools")
+	# перенос работающей школы (и отмена переноса) не делает её «лишней»: порядок постройки едет с ней
+	var born0 := int(schools[0]["born"])
+	check(game.start_move(schools[0]), "move the first school")
+	game.set_tool("")                          # отмена переноса — школа встаёт обратно с новым номером
+	var back: Dictionary = {}
+	for id in c.buildings:
+		if c.buildings[id]["type"] == "school" and int(c.buildings[id].get("born", -1)) == born0:
+			back = c.buildings[id]
+	check(not back.is_empty() and int(back["id"]) != born0 and not bool(back.get("over", true)) and bool(over[0]["over"]) and bool(over[1]["over"]),
+		"after the move it still works (id %d → %d), the same two stay idle" % [born0, int(back.get("id", -1))])
+	schools[0] = back
+	var s2b: Dictionary = c.save_data()
+	var born_saved := false
+	for bd in s2b["buildings"]:
+		if int(bd["id"]) == int(back["id"]) and int(bd.get("born", -1)) == born0:
+			born_saved = true
+	check(born_saved, "the build order is saved")
+	# «Форум» дороже полок Города без «Новых полок для свитков» — карточка исследования говорит, что делать
+	var lv0: int = c.level
+	var rp0: float = c.rp
+	var had_r1: bool = c.research.has("research1")
+	c.research.erase("research1")
+	c.level = 5
+	c.rp = 100.0
+	var why_f: String = c.can_research("forum")
+	check(why_f.contains("Не помещается на полки") and why_f.contains("Новые полки для свитков"), "forum without bigger shelves: «%s»" % why_f)
+	c.research["research1"] = true
+	why_f = c.can_research("forum")
+	check(why_f == "Не хватает очков исследований", "with bigger shelves it is just points: «%s»" % why_f)
+	if not had_r1:
+		c.research.erase("research1")
+	c.level = lv0
+	c.rp = rp0
+	c.compute()
 	var note: String = hud.pace_note()
 	check(note.contains("Сверх предела у вас: школ — 2"), "migration note names the idle schools")
 	print("  note: ", note.replace("\n", " / "))
@@ -512,7 +572,7 @@ const B_SKIP := ["legion", "archery", "arch", "colosseum", "pantheon", "animals"
 var t := 0.0                         # игровых часов от начала
 var cart := "wait"                   # повозка: wait (за краем карты) → in → out → wait
 var cart_t := 0.0
-var cart_load := 0
+var cart_load: Array = []           # семьи в повозке (City.make_load при выезде)
 var walks: Array = []                # [час прихода, дом, человек, семья]
 var reqs := {}
 var segs: Array = []                 # ряды улиц по порядку прокладки: [от, до, площадной]
@@ -528,7 +588,10 @@ var headless := false
 
 func _bot() -> void:
 	headless = DisplayServer.get_name() == "headless"
-	print("PACE BOT start: cart %.1f h each way, walk %.1f h, 1 h = %.0f s at 1x; goal «%s»" % [CART_H, WALK_H, SEC_H, Defs.LEVELS[-1]["name"]])
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("seed="):                # «-- bot seed=7» — другой случай: семьи, цвета (разброс итогов)
+			c.rng.seed = int(a.substr(5))
+	print("PACE BOT start: cart %.1f h each way, walk %.1f h, 1 h = %.0f s at 1x; goal «%s»; seed %d" % [CART_H, WALK_H, SEC_H, Defs.LEVELS[-1]["name"], int(c.rng.seed)])
 	_bot_layout()
 	game.rig.set_view(Vector3(190, 2, 165), 20, 62, 130)
 	_bstreet()
@@ -712,15 +775,17 @@ func _bot_step() -> void:
 	match cart:
 		"wait":
 			if t >= cart_t and c.incoming > 0:
-				cart = "in"
-				cart_load = c.incoming
-				cart_t = t + CART_H
+				# как в игре: семьи собираются при выезде, каждой держится место (people._cart_step)
+				cart_load = c.make_load(c.incoming)
+				c.incoming = cart_load.size()
+				if not cart_load.is_empty():
+					cart = "in"
+					cart_t = t + CART_H
+					if bool(cart_load[0].get("seek", false)):
+						rk["seek"] = int(rk["seek"]) + 1     # семья «ищет жильё»: места ей нет
 		"in":
 			if t >= cart_t:
-				for k in cart_load:
-					var f: Dictionary = c.new_family(c.pick_class())
-					if c.homes_for(f).is_empty():
-						rk["seek"] = int(rk["seek"]) + 1     # семья «ищет жильё»: места ей нет
+				for f in cart_load:
 					c.family_arrived(f)
 				cart = "out"
 				cart_t = t + 0.12 + CART_H         # разгрузка 3 с — и назад

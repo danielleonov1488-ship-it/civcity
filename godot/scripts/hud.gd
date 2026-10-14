@@ -1061,6 +1061,14 @@ func _tip_level(v: VBoxContainer) -> void:
 			if not nd[i]["ok"]:
 				_tip_text(v, "Постройки ищите в меню стройки внизу; закрытые открываются исследованиями (свиток вверху справа).", C_INK, 14)
 				break
+		# постройку условия открывает исследование, что не помещается на полки, — сказать прямо, что делать
+		for n: Dictionary in nx.get("need", []):
+			var p: Array = n["p"]
+			if String(p[0]) != "count" or c.unlocked(String(p[1])):
+				continue
+			var why := c.can_research(String(Defs.B[String(p[1])].get("unlock", "")))
+			if why.begins_with("Не помещается"):
+				_tip_text(v, "«%s»: %s." % [n["text"], why], C_BAD, 14)
 
 
 ## «, скрипториев — до 3, школ — до 2» — пределы построек для очков исследований на уровне lvl
@@ -3417,6 +3425,9 @@ func _update_full_marks() -> void:
 	if full_money.visible != m_on or full_rp.visible != r_on:
 		full_money.visible = m_on
 		full_rp.visible = r_on
+		var r1 := Defs.research("research1")
+		full_rp.tooltip_text = "Очков исследований столько, сколько вмещают полки, — новые пропадают. Изучите что-нибудь в свитке исследований вверху справа." \
+			+ (("\nИли изучите «%s» — полки вместят вдвое больше." % r1["name"]) if not c.research.has("research1") and c.level >= int(r1["lvl"]) else "")
 		_snug(full_money.get_parent().get_parent() as Control)
 
 
@@ -3657,6 +3668,8 @@ func _update_world_icons() -> void:
 	for id in c.buildings:
 		var b: Dictionary = c.buildings[id]
 		var d := c.def(b)
+		if b.get("over", false):
+			continue                 # сверх предела уровня: работников ей не нужно, всё сказано в карточке — без значка
 		var icon := ""
 		var warn := true
 		if d["kind"] == "shop" and not b.get("active", true):

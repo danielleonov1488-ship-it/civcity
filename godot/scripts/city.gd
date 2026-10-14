@@ -241,7 +241,7 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else 0),
 		"pos": pos, "yaw": yaw, "variant": variant, "color": color, "y": float(chk["y"]), "cells": chk["cells"],
 		"pop": 0, "families": [], "happy": 50, "up": 0, "down": 0, "staff": 1.0, "active": true, "road": true,
-		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0}
+		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0, "born": next_id}   # born — порядок постройки (перенос его не меняет)
 	next_id += 1
 	if not free:
 		money -= float(d["cost"])
@@ -361,7 +361,8 @@ func cap_err(type: String) -> String:
 
 
 ## Постройки сверх предела уровня (старые города: поставлены, когда предела не было) — id → true.
-## Работают первые build_max каждого вида по номеру; остальные стоят, но не работают и ничего не стоят
+## Работают первые build_max каждого вида по порядку постройки (born; перенос его не меняет); остальные стоят,
+## но не работают и ничего не стоят
 func over_cap() -> Dictionary:
 	var by := {}
 	for id in buildings:
@@ -369,16 +370,16 @@ func over_cap() -> Dictionary:
 		if Defs.B[t].has("max"):
 			if not by.has(t):
 				by[t] = []
-			by[t].append(int(id))
+			by[t].append([int(buildings[id].get("born", id)), int(id)])
 	var out := {}
 	for t in by:
 		var mx := build_max(t)
 		var ids: Array = by[t]
 		if ids.size() <= mx:
 			continue
-		ids.sort()
+		ids.sort()                          # [born, id] — сначала по порядку постройки
 		for i in range(maxi(0, mx), ids.size()):
-			out[ids[i]] = true
+			out[int(ids[i][1])] = true
 	return out
 
 
@@ -1169,27 +1170,46 @@ func _arrive_gate(why: String) -> void:
 
 
 ## Сколько семей каждого открытого класса влезет в дома прямо сейчас: по каждому дому — свободные места ÷ самая
-## маленькая семья класса, минус семьи этого класса, что уже ждут на площади. (Те, кто идёт к дому, уже в его «coming».)
+## маленькая семья класса; семьи, что уже ждут на площади, сначала занимают места по своему числу людей.
+## (Те, кто идёт к дому, уже в его «coming».)
 func fit_by_class() -> Dictionary:
 	var out := {}
 	for cl in Defs.CLASS_ORDER:
 		if unlocked(Defs.CLASSES[cl]["house"]):
 			out[cl] = 0
+	var free := _free_rooms()
+	for id in free:
+		var cl: String = def(buildings[id])["cls"]
+		if out.has(cl):
+			out[cl] += int(free[id]) / int(Defs.FAMILY_SIZE[cl][0])
+	return out
+
+
+## Свободные места в домах открытых классов (дом → мест) за вычетом семей, что ждут на площади:
+## каждая ждущая семья занимает самый тесный дом своего класса, куда входит целиком (не входит никуда — ничего не занимает)
+func _free_rooms() -> Dictionary:
+	var free := {}
 	for id in buildings:
 		var b: Dictionary = buildings[id]
-		if not is_house(b):
-			continue
-		var cl: String = def(b)["cls"]
-		if not out.has(cl):
-			continue
-		var lf := house_cap(b) - int(b["pop"]) - int(b.get("coming", 0))
-		out[cl] += maxi(0, lf) / int(Defs.FAMILY_SIZE[cl][0])
-	for f in arrivals:
-		if out.has(f["cls"]):
-			out[f["cls"]] -= 1
-	for cl in out:
-		out[cl] = maxi(0, int(out[cl]))
-	return out
+		if is_house(b) and unlocked(Defs.CLASSES[def(b)["cls"]]["house"]):
+			free[id] = maxi(0, house_cap(b) - int(b["pop"]) - int(b.get("coming", 0)))
+	var wait := arrivals.duplicate()
+	wait.sort_custom(func(x, y): return int(x["n"]) > int(y["n"]))      # большие семьи — первыми
+	for f in wait:
+		_take_room(free, String(f["cls"]), int(f["n"]))
+	return free
+
+
+## Занять в free место семье из n человек класса cls: в самом тесном доме, где она помещается. false — места нет
+func _take_room(free: Dictionary, cls: String, n: int) -> bool:
+	var best := -1
+	for id in free:
+		if def(buildings[id])["cls"] == cls and int(free[id]) >= n and (best < 0 or int(free[id]) < int(free[best])):
+			best = int(id)
+	if best < 0:
+		return false
+	free[best] = int(free[best]) - n
+	return true
 
 
 ## Сколько ещё семей можно везти: влезут в дома, минус те, что уже едут в повозке
@@ -1284,6 +1304,39 @@ func pick_class() -> String:
 		if x <= 0.0:
 			return o[0]
 	return "plebs"
+
+
+## Кого везёт повозка (k семей): каждой — настоящее место в доме её класса, считая и тех, кто ждёт на площади,
+## и тех, кого повозка уже взяла. Влезло меньше — везёт меньше. Места нет ни у кого и на площади пусто —
+## одна семья «ищет жильё» (seek), подсказка, что пора строить
+func make_load(k: int) -> Array:
+	var free := _free_rooms()
+	var out := []
+	var names := {}
+	for i in k:
+		var opts := {}                            # класс → самое большое место, куда войдёт его самая маленькая семья
+		for id in free:
+			var cl: String = def(buildings[id])["cls"]
+			if int(free[id]) >= int(Defs.FAMILY_SIZE[cl][0]):
+				opts[cl] = maxi(int(opts.get(cl, 0)), int(free[id]))
+		if opts.is_empty():
+			if i == 0 and arrivals.is_empty():
+				var s := new_family(pick_class())
+				s["seek"] = true
+				out.append(s)
+			break
+		var cls: String = opts.keys()[rng.randi() % opts.size()]
+		var f := new_family(cls)
+		for r in 8:                               # два одинаковых рода в одной повозке — не бывает
+			if not names.has(f["name"]):
+				break
+			f = new_family(cls)
+		var sz: Array = Defs.FAMILY_SIZE[cls]
+		f["n"] = rng.randi_range(int(sz[0]), mini(int(sz[1]), int(opts[cls])))
+		_take_room(free, cls, int(f["n"]))
+		names[f["name"]] = true
+		out.append(f)
+	return out
 
 
 ## Новая семья: родовое имя, которого ещё нет в городе
@@ -1502,6 +1555,11 @@ func can_research(id: String) -> String:
 	if r.has("after") and not research.has(r["after"]):
 		return "Сначала — «%s»" % Defs.research(r["after"])["name"]
 	if rp < float(r["cost"]):
+		# дороже, чем вмещают полки: копить бесполезно — сказать, что поможет
+		if float(r["cost"]) > rp_cap():
+			if not research.has("research1") and level >= int(Defs.research("research1")["lvl"]):
+				return "Не помещается на полки (%d очков) — сначала изучите «%s»" % [int(rp_cap()), Defs.research("research1")["name"]]
+			return "Не помещается на полки (%d очков) — полки вырастут на новом уровне" % int(rp_cap())
 		return "Не хватает очков исследований"
 	return ""
 
@@ -1678,7 +1736,7 @@ func save_data() -> Dictionary:
 		var b: Dictionary = buildings[id]
 		bl.append({"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
 			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": b.get("hire", -1),
-			"cells": Marshalls.raw_to_base64((b["cells"] as PackedInt32Array).to_byte_array())})
+			"born": int(b.get("born", id)), "cells": Marshalls.raw_to_base64((b["cells"] as PackedInt32Array).to_byte_array())})
 	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
 		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false))}),
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
@@ -1718,7 +1776,8 @@ func load_data(d: Dictionary) -> void:
 		var b := {"id": int(bd["id"]), "type": bd["type"], "tier": int(bd["tier"]), "pos": Vector2(float(bd["x"]), float(bd["z"])),
 			"yaw": float(bd["yaw"]), "variant": int(bd.get("variant", 0)), "color": int(bd.get("color", 0)), "y": float(bd.get("y", Land.BASE_Y)),
 			"cells": cells, "pop": int(bd["pop"]), "families": bd.get("families", []), "happy": 50, "up": 0, "down": 0, "staff": 1.0,
-			"active": true, "road": true, "needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0}
+			"active": true, "road": true, "needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0,
+			"born": int(bd.get("born", bd["id"]))}         # старые сохранения: порядок постройки — по номеру
 		if int(bd.get("host", -1)) >= 0:
 			b["host"] = int(bd["host"])
 		if int(bd.get("hire", -1)) >= 0:

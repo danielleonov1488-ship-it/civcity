@@ -346,8 +346,8 @@ func _assign_jobs() -> void:
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
 		var d := city.def(b)
-		if not d.has("jobs") or city.is_house(b) or not b.get("road", true):
-			continue
+		if not d.has("jobs") or city.is_house(b) or not b.get("road", true) or b.get("over", false):
+			continue                     # сверх предела уровня — не работает, работников не берёт
 		var jb := city.jobs_of(b)
 		for c in jb:
 			for k in int(jb[c]):
@@ -355,7 +355,7 @@ func _assign_jobs() -> void:
 	var keep := {}
 	for r in residents:
 		if r["job"] >= 0:
-			if not city.buildings.has(r["job"]) or r["child"] or int(r["home"]) <= 0:
+			if not city.buildings.has(r["job"]) or r["child"] or int(r["home"]) <= 0 or city.buildings[r["job"]].get("over", false):
 				_quit_job(r)
 			elif int(keep.get(r["job"], 0)) >= city.hired_of(city.buildings[r["job"]]):
 				_quit_job(r)                  # игрок уволил лишних
@@ -2294,14 +2294,11 @@ func _cart_step(dt: float) -> void:
 			if c["path"].size() < 2:
 				c["t"] = 4.0
 				return
-			c["load"] = []
-			var names := {}
-			for k in city.incoming:
-				var f := city.new_family(city.pick_class())
-				if names.has(f["name"]):
-					f = city.new_family(f["cls"])
-				names[f["name"]] = true
-				c["load"].append(f)
+			# семьи собираются разом, и каждой держится место в доме — никто не приезжает «в никуда»
+			c["load"] = city.make_load(city.incoming)
+			city.incoming = (c["load"] as Array).size()   # влезло меньше — везёт меньше
+			if city.incoming <= 0:
+				return
 			c["state"] = "in"
 			c["s"] = 0.0
 			c["mult"] = 1.0

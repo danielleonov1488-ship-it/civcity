@@ -3101,7 +3101,8 @@ func start_move(b: Dictionary) -> bool:
 		sound.ui("error")
 		return false
 	moving = {"id": b["id"], "type": b["type"], "tier": b["tier"], "variant": b["variant"], "color": b["color"], "pop": b["pop"],
-		"families": b["families"], "pos": b["pos"], "yaw": b["yaw"], "decor": _hosted(b), "hire": b.get("hire", -1)}
+		"families": b["families"], "pos": b["pos"], "yaw": b["yaw"], "decor": _hosted(b), "hire": b.get("hire", -1),
+		"born": int(b.get("born", b["id"]))}     # порядок постройки едет с ней: перенесённая школа не станет «лишней»
 	city.moving_id = int(b["id"])
 	city.remove(b, false)
 	var t: String = b["type"]
@@ -3165,6 +3166,7 @@ func _build_here() -> void:
 		var b: Dictionary
 		if not moving.is_empty():
 			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(moving["color"]), true)
+			b["born"] = int(moving.get("born", b["born"]))
 			b["tier"] = int(moving["tier"])
 			b["pop"] = int(moving["pop"])
 			b["families"] = moving["families"]
@@ -3199,6 +3201,7 @@ func _cancel_move() -> void:
 	var m := moving
 	moving = {}
 	var b := city.place(m["type"], m["pos"], m["yaw"], int(m["variant"]), int(m["color"]), true)
+	b["born"] = int(m.get("born", b["born"]))
 	b["tier"] = int(m["tier"])
 	b["pop"] = int(m["pop"])
 	b["families"] = m["families"]
