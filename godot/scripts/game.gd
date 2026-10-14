@@ -38,6 +38,9 @@ var mode := "play"                    # menu | play | new | demo
 var promo := false                    # --promo: вместо готового городка — большая витрина Showcase (режим demo)
 var can_save := true
 var speed := 1.0
+var _min_speed := -1.0                # скорость до сворачивания окна (-1 — окно не свёрнуто)
+var _min_battle = null                # бой Легиона, поставленный на паузу при сворачивании
+var minimized_test := false           # проверки: «окно свёрнуто» без настоящего окна
 var day_t := 0.0
 var hour := 8.0
 var clock_hours := true
@@ -241,6 +244,10 @@ func _ready() -> void:
 	hud.game = self
 	add_child(hud)
 	city.event.connect(func(t, i): hud.notify(t, i))
+	if city.unread > 0 and mode in ["play", "new"]:
+		hud.bell_count += city.unread         # записано при загрузке (например, возврат очков) — только число на колокольчике
+		hud.bell_badge.text = str(hud.bell_count)
+	city.unread = 0
 	city.changed.connect(func(): hud.refresh())
 	city.changed.connect(_sync_all_actors)
 	city.changed.connect(_settle_refresh)
@@ -1518,6 +1525,7 @@ func _process(dt: float) -> void:
 	if not ready_done:
 		return
 	frame += 1
+	_minimized_pause()
 	_rebuild_land()
 	_swim(dt)
 	var sdt := dt * speed
@@ -1570,6 +1578,33 @@ func _process(dt: float) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and can_save and ready_done:
 		save()
+
+
+## Окно свернули — город на паузе (без игрока он не живёт: 5 минут на быстрой скорости — двое суток), развернули —
+## прежняя скорость. Только сворачивание: переключиться на другое окно (Alt+Tab) — не пауза. Бой Легиона тоже ждёт;
+## улучшения бойцов идут по часам, как и задумано
+func _minimized_pause() -> void:
+	if mode == "menu" or mode == "demo" or promo or shot_path != "" or hud == null:
+		return
+	var mini := minimized_test or DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_MINIMIZED
+	if mini:
+		if _min_speed < 0.0:
+			_min_speed = speed
+			var b = LegionBattle.current
+			if b != null and is_instance_valid(b) and not b.paused and b.phase != "result" and b.modal == null:
+				b._toggle_pause()
+				_min_battle = b
+		if speed > 0.0:
+			_min_speed = speed                # скорость вернули (ролик ранга, обучение) — запомнить и снова стоп
+			hud.paused_speed = speed
+			hud.set_speed(0.0)
+	elif _min_speed >= 0.0:
+		if speed <= 0.0 and _min_speed > 0.0:
+			hud.set_speed(_min_speed)
+		_min_speed = -1.0
+		if _min_battle != null and is_instance_valid(_min_battle) and _min_battle.paused:
+			_min_battle._toggle_pause()
+		_min_battle = null
 
 
 # ---------- точка земли под курсором ----------
@@ -2544,10 +2579,8 @@ func _update_tool() -> void:
 	Parts.ghost_color(ghost, Color(0.45, 1.0, 0.45, 0.32) if ok else Color(1.0, 0.25, 0.2, 0.5))
 	var y := float(pl["y"]) if ok else land.height_at(pl["pos"].x, pl["pos"].y)
 	ghost.transform = Transform3D(Basis(Vector3.UP, pl["yaw"]), Vector3(pl["pos"].x, y + 0.02, pl["pos"].y))
-	var rr := Defs.range_m(d)
+	var rr := city.shop_range(d)
 	if rr > 0.0:
-		if d.get("sub", "") == "food" and city.research.has("reach1"):
-			rr *= 1.33
 		range_ring.visible = true
 		range_ring.position = Vector3(pl["pos"].x, y + 0.12, pl["pos"].y)
 		range_ring.scale = Vector3(rr, 1.0, rr)
@@ -2829,7 +2862,7 @@ func select_building(b: Dictionary) -> void:
 	select_outline = Parts.ghost(city.blueprint(b), "outline", Color(1.0, 0.96, 0.82))
 	select_outline.transform = city.xf(b)
 	add_child(select_outline)
-	var rr := Defs.range_m(city.def(b))
+	var rr := city.shop_range(city.def(b))     # с «Большим охватом» лавки с едой — на треть дальше
 	if rr > 0.0:
 		range_ring.position = Vector3(b["pos"].x, float(b["y"]) + 0.12, b["pos"].y)
 		range_ring.scale = Vector3(rr, 1.0, rr)

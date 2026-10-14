@@ -330,7 +330,6 @@ const RESEARCH := [
 	{"id": "school", "lvl": 2, "name": "Школа", "cost": 390, "icon": "teacher"},
 	{"id": "grove", "lvl": 2, "name": "Оливковая роща", "cost": 220, "icon": "olive"},
 	{"id": "oilshop", "lvl": 2, "name": "Масляная лавка", "cost": 280, "icon": "amphora", "after": "grove"},
-	{"id": "roads2", "lvl": 2, "name": "Площади из плитки", "cost": 160, "icon": "plaza", "desc": "Новое покрытие дорог — узорная плитка."},
 	{"id": "deco_stone", "lvl": 2, "name": "Каменные украшения", "cost": 240, "icon": "mona"},
 	{"id": "store1", "lvl": 2, "name": "Больше носильщиков", "cost": 300, "icon": "warehouse", "after": "warehouse",
 		"desc": "Склад разносит товары вдвое дальше."},

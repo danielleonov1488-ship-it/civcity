@@ -51,6 +51,7 @@ var waiting: int:
 		return arrivals.size()
 var goals_done: Array = []
 var events: Array = []                # [{day, text, icon}]
+var unread := 0                       # события, записанные при загрузке (до интерфейса): число на колокольчике
 var road_cells := 0                   # сколько клеток дорог проложил игрок
 var rng := RandomNumberGenerator.new()
 var bulk := false                     # place() без пересчёта (витрина Showcase ставит сотни построек, compute — в конце)
@@ -491,9 +492,7 @@ func compute() -> void:
 		h["monuments"] = 0.0
 	for s in shops:
 		var d := def(s)
-		var r := Defs.range_m(d)
-		if d["sub"] == "food" and research.has("reach1"):
-			r *= 1.33
+		var r := shop_range(d)
 		var cap := int(ceil(float(Defs.CAPACITY[int(d["cap"])]) * float(s["staff"])))
 		var near := []
 		for h in houses:
@@ -972,7 +971,7 @@ func sim_day() -> void:
 		rpd += float(Defs.LEVELS[level].get("rp_h", 0.0))   # почта привозит на станцию свитки
 	hour_n += 1
 	money = minf(money_cap(), money + income - upkeep)
-	rp = minf(rp_cap(), rp + rpd)
+	rp = maxf(rp, minf(rp_cap(), rp + rpd))      # сверх полок (возврат очков) не срезаем — просто не копим дальше
 	stats["income"] = income
 	stats["upkeep"] = upkeep
 	stats["rp_day"] = rpd
@@ -1438,12 +1437,29 @@ func _check_goals() -> void:
 		if goal_progress(g["id"]) >= int(g["need"]):
 			goals_done.append(g["id"])
 			money = minf(money_cap(), money + float(g["money"]))
-			rp = minf(rp_cap(), rp + float(g["rp"]))
+			rp = maxf(rp, minf(rp_cap(), rp + float(g["rp"])))
 			var extra := ""
 			if g.has("unlock"):
 				research[g["unlock"]] = true
 				extra = ". Открыто: %s" % g.get("reward", "новые украшения")
 			_event("Просьба выполнена: %s (+%d ден.%s)%s" % [g["text"], g["money"], (", +%d оч." % g["rp"]) if int(g["rp"]) > 0 else "", extra], "check")
+
+
+## Старые сохранения: исследование «Площади из плитки» (roads2) ничего не давало — площадь открыта с начала.
+## Его убрали; потраченные очки возвращаем сверх предела полок и пишем об этом в колокольчик (один раз)
+const ROADS2_RP := 160
+
+
+func _drop_roads2() -> void:
+	if not research.has("roads2"):
+		return
+	research.erase("roads2")
+	rp += ROADS2_RP
+	events.append({"day": day, "icon": "research",
+		"text": "Исследование «Площади из плитки» убрано: площадь из плитки и так открыта с самого начала. Потраченные %d очков исследований вернулись." % ROADS2_RP})
+	if events.size() > 60:
+		events.pop_front()
+	unread += 1
 
 
 func _event(text: String, icon: String) -> void:
@@ -1492,6 +1508,7 @@ func load_data(d: Dictionary) -> void:
 	tips = d.get("tips", {})
 	road_cells = int(d.get("road_cells", 0))
 	events = d.get("events", [])
+	_drop_roads2()
 	legion.from_dict(d.get("legion", {}))
 	next_id = int(d.get("next_id", 1))
 	buildings = {}

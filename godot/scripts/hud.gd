@@ -95,6 +95,7 @@ var paused_speed := 1.0
 var hidden_ui := false
 var bell_count := 0
 var bell_badge: Label
+var cloud_off: CloudBadge             # значок «нет связи с облаком» слева от колокольчика
 var pointer: TextureRect
 var pointer_target: Control
 var pointer_text: Label
@@ -1182,6 +1183,12 @@ func _top_right() -> void:
 	top_panel = h
 	root.add_child(h)
 	_put(h, Control.PRESET_TOP_RIGHT, Vector2(-10, 6))
+	# перечёркнутое облачко — нет связи с облаком дольше 2 минут (scripts/cloud_badge.gd); обычно скрыто
+	cloud_off = CloudBadge.make(self, 40)
+	cloud_off.holder = _shadowed(cloud_off)
+	cloud_off.holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	cloud_off.holder.visible = false
+	h.add_child(cloud_off.holder)
 	var bell := _round("bell", "События города", 48, func(): _toggle(events_panel); _fill_events())
 	h.add_child(_shadowed(bell))
 	top_btns["bell"] = bell
@@ -1302,7 +1309,7 @@ func _toggle_reach() -> void:
 		return
 	for id in game.city.buildings:
 		var b: Dictionary = game.city.buildings[id]
-		var r := Defs.range_m(game.city.def(b))
+		var r: float = game.city.shop_range(game.city.def(b))     # с «Большим охватом» еда дальше — как в расчёте города
 		if r <= 0.0 or game.city.def(b)["kind"] == "decor":
 			continue
 		var ring: MeshInstance3D = game._ring(Color(1.0, 0.85, 0.4, 0.55) if b.get("active", true) else Color(1.0, 0.3, 0.2, 0.6))

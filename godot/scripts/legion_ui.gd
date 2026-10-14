@@ -103,6 +103,9 @@ var _pending := {}                         # бой с городом, идущ�
 var _pvp_state := "idle"                   # idle | loading | ok | error
 var _pvp_list: Array = []
 var _pvp_err := ""
+var _pvp_fail := {}                         # ошибка списка соперников для окна: title, text, code (LegionNet.last_fail)
+var _pvp_auto := false                      # сам повторил после ошибки (раз за заход на вкладку)
+var _pvp_auto_wait := false                 # ждёт 5 с до этого повтора
 var _net_obj = null
 var _net_checked := false
 
@@ -376,6 +379,7 @@ func _select_tab(id: String) -> void:
 		b.add_theme_stylebox_override("hover", hud._box_pill(16, 6, "g_btn_on" if on else "g_btn_hover"))
 	if id == "pvp" and _pvp_state != "loading":
 		_pvp_state = "idle"                  # каждый заход — свежий список соперников
+		_pvp_auto = false
 	_rebuild()
 
 
@@ -1805,8 +1809,21 @@ func _load_opponents() -> void:
 		_pvp_list = list if list is Array else []
 		_pvp_err = String(err)
 		_pvp_state = "error" if _pvp_err != "" else "ok"
+		_pvp_fail = (n.last_fail as Dictionary).duplicate() if _pvp_err != "" and "last_fail" in n else {}
+		if _pvp_state == "error" and not _pvp_auto and is_inside_tree():
+			# связь могла мигнуть — один раз пробуем снова сами, через 5 секунд
+			_pvp_auto = true
+			_pvp_auto_wait = true
+			get_tree().create_timer(5.0).timeout.connect(_pvp_retry_auto)
 		if visible and tab == "pvp":
 			_rebuild())
+
+
+func _pvp_retry_auto() -> void:
+	_pvp_auto_wait = false
+	if visible and tab == "pvp" and _pvp_state == "error":
+		_load_opponents()
+		_rebuild()
 
 
 func _build_pvp() -> Control:
@@ -1930,8 +1947,8 @@ func _opponents() -> Control:
 		v.add_child(_wl("Ищем соперников вашей силы…", 600, 17, C_SOFT, true))
 		return v
 	if _pvp_state == "error":
-		v.add_child(_wl(_pvp_err if _pvp_err.ends_with(".") else "Не получилось связаться с сервером: %s" % _pvp_err, 600, 16, C_BAD, true))
-		v.add_child(_wl("Нажмите «Найти других», чтобы попробовать ещё раз.", 600, 15, C_SOFT))
+		var f := _pvp_fail if not _pvp_fail.is_empty() else {"title": "Соперников найти не вышло", "text": _pvp_err}
+		LegionPvpView.error_block(self, v, f, func(): _load_opponents(); _rebuild(), "пробуем снова сами…" if _pvp_auto_wait else "")
 		return v
 	if _pvp_list.is_empty():
 		v.add_child(_wl("Пока некого атаковать — загляните позже.", 600, 17, C_SOFT, true))

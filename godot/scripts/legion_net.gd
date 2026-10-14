@@ -23,10 +23,12 @@ const POLL := 5.0
 const PUB_GAP := 120.0                        # отряд обороны проверяем не чаще раза в 2 минуты
 const PUB_REFRESH := 6 * 3600.0               # и обновляем, даже если не менялся, раз в 6 часов
 const STATE_GAP := 300.0                      # отчёты о нападениях — раз в 5 минут
-const TIMEOUT := 20.0
+const TIMEOUT := 12.0                         # ответы боёв маленькие; при сбое NetHttp ещё раз пробует (до 10 с)
+const BATTLE_TTL := 30 * 60.0                 # сервер ждёт итог боя полчаса (server/pvp.js), потом бой — поражение
 
 var me_state := {}
-var last_error := ""
+var last_error := ""                          # почему не вышел последний запрос: dns | connect | tls | timeout | read | код ответа
+var last_fail := {}                           # последняя ошибка для окна: title, text, short, code («Код: timeout · 14:32»)
 var unsupported := false                      # сервер без /api/pvp (ответил 404) — в окне «скоро»
 ## Проверки: работать и без настоящей игры (готовый город, тестовая сцена); legion_override — легион без города
 var force_on := false
@@ -102,7 +104,10 @@ func pvp_ready() -> bool:
 func pvp_opponents(cb: Callable) -> void:
 	_check_account()
 	_hook()
-	await _publish(false)
+	var pr := await _publish(false)
+	if int(pr.get("status", 200)) == 0:
+		cb.call([], _err(pr))                       # связи нет — второй запрос не ждём, говорим сразу
+		return
 	var r := await _call(HTTPClient.METHOD_GET, "/pvp/opponents")
 	if r["status"] != 200:
 		cb.call([], _err(r))
@@ -129,13 +134,15 @@ func pvp_attack(opp: Dictionary, cb: Callable) -> void:
 	# недоложенные бои поражением
 	await _flush_retry()
 	if not _retry.is_empty():
-		cb.call({}, _err({"status": 0, "data": {}, "error": ""}))
+		var wait := "Сначала отправляем итог прошлого боя — как только сервер его примет, можно нападать снова."
+		last_fail = {"title": "Итог прошлого боя ещё в пути", "text": wait, "short": wait, "code": ""}
+		cb.call({}, wait)
 		return
 	var r := await _call(HTTPClient.METHOD_POST, "/pvp/attack", {"target": String(opp.get("id", "")), "squad": attack_snapshot(lg)})
 	if r["status"] != 200:
 		if (r["data"] as Dictionary).get("me") is Dictionary:
 			_apply_me(r["data"]["me"])
-		cb.call({}, _err(r))
+		cb.call({}, _err(r, true))
 		return
 	var d: Dictionary = r["data"]
 	var o: Dictionary = (d.get("opponent", {}) as Dictionary).duplicate()
@@ -185,7 +192,7 @@ func pvp_rename(nm: String, cb: Callable) -> void:
 	var snap := lg.defense_snapshot()
 	var r := await _call(HTTPClient.METHOD_PUT, "/pvp/defense", {"snapshot": snap, "name": nm.strip_edges(), "city_level": int(snap.get("city_level", 0))})
 	if r["status"] != 200:
-		cb.call(_err(r))
+		cb.call(_err(r, true))
 		return
 	_pub_hash = JSON.stringify(snap).sha256_text()
 	_pub_t = _now()
@@ -238,45 +245,56 @@ func refresh() -> void:
 
 ## Выставить отряд обороны, если он поменялся (или давно не обновлялся). Снимок считать недёшево (обходит все
 ## постройки города), поэтому сама проверка — не чаще PUB_GAP (_chk_t), а _pub_t — время настоящей отправки
-func _publish(force: bool) -> void:
+## Ответ сервера — или {}, если отправлять было нечего
+func _publish(force: bool) -> Dictionary:
 	var lg := _lg()
 	if lg == null or not lg.window_open():
-		return
+		return {}
 	_chk_t = _now()
 	var snap := lg.defense_snapshot()
 	var h := JSON.stringify(snap).sha256_text()
 	if not force and h == _pub_hash and _now() - _pub_t < PUB_REFRESH:
-		return
+		return {}
 	_pub_t = _now()
 	var r := await _call(HTTPClient.METHOD_PUT, "/pvp/defense", {"snapshot": snap, "city_level": int(snap.get("city_level", 0))})
 	if r["status"] == 200:
 		_pub_hash = h
 		_apply_me(r["data"].get("me", {}))
+	return r
 
 
 ## Отправить итоги, не ушедшие из-за связи, и дождаться тех, что ещё в пути (так делает и новое нападение:
 ## сервер закрывает поражением недоложенные бои, а выигранный бой не должен пропасть из-за мигнувшей связи)
 func _flush_retry() -> void:
 	var t0 := _now()
-	while _sending > 0 and _now() - t0 < TIMEOUT + 2.0:
+	while _sending > 0 and _now() - t0 < TIMEOUT + NetHttp.RETRY_TIMEOUT + 3.0:
 		await get_tree().process_frame
 	var list := _retry.duplicate()
 	_retry.clear()
 	for e: Array in list:
-		await _send_result(e[0], e[1], int(e[2]) if e.size() > 2 else 0)     # не ушёл — снова в _retry
+		# не ушёл — снова в _retry
+		await _send_result(e[0], e[1], int(e[2]) if e.size() > 2 else 0, float(e[3]) if e.size() > 3 else _now())
 
 
-func _send_result(body: Dictionary, opp_name: String, tries := 0) -> void:
+## tries — сколько раз уже не ушёл, t0 — когда не ушёл впервые (первая отправка — сейчас)
+func _send_result(body: Dictionary, opp_name: String, tries := 0, t0 := 0.0) -> void:
+	if tries == 0:
+		t0 = _now()
 	_sending += 1
 	var r := await _call(HTTPClient.METHOD_POST, "/pvp/result", body)
 	_sending -= 1
 	var code := int(r["status"])
-	# нет связи или сервер перезапускается (502/503 — выкладка) — повторим (сервер держит бой BATTLE_TTL)
-	if code == 0 or (code >= 500 and tries < 60):
-		_retry.append([body, opp_name, tries + 1])
+	# нет связи или сервер перезапускается (502/503 — выкладка) — повторим, пока сервер держит бой (BATTLE_TTL)
+	if code == 0 or code >= 500:
+		if _now() - t0 < BATTLE_TTL and (code == 0 or tries < 60):
+			_retry.append([body, opp_name, tries + 1, t0])
+			return
+		# так и не ушёл: сервер уже засчитал бой поражением — бросаем, чтобы он не держал новые нападения
+		push_warning("LegionNet: итог боя %s не ушёл на сервер (%s)" % [String(body.get("battle", "")), last_error])
+		_mark_void(String(body.get("battle", "")))
 		return
 	if r["status"] != 200:
-		push_warning("LegionNet: итог боя не принят: %s" % _err(r))
+		push_warning("LegionNet: итог боя не принят: %d %s" % [int(r["status"]), str(r["error"])])
 		return
 	var d: Dictionary = r["data"]
 	var lg := _lg()
@@ -292,6 +310,18 @@ func _send_result(body: Dictionary, opp_name: String, tries := 0) -> void:
 	if not bool(d.get("accepted", true)) and String(d.get("reason", "")) != "":
 		_note(String(d["reason"]), "info")
 	print("LegionNet: бой %s — %s, рейтинг %+d → %d" % [opp_name, String(d.get("status", "")), int(d.get("delta", 0)), int(d.get("rating", 0))])
+
+
+## Итог боя так и не дошёл до сервера — в летописи «сервер бой не засчитал»
+func _mark_void(bid: String) -> void:
+	var lg := _lg()
+	if lg == null or bid == "":
+		return
+	for e in lg.pvp_log:
+		if e is Dictionary and String(e.get("battle", "")) == bid:
+			e["void"] = true
+			lg.changed.emit()
+			break
 
 
 ## Что сервер сказал о нас: рейтинг, победы и заряды атак — как на сервере (extra — заряд, который ещё спишет бой)
@@ -398,56 +428,42 @@ func _on_battle_requested(setup: Dictionary) -> void:
 
 # ---------- запросы ----------
 
-func _err(r: Dictionary) -> String:
-	match int(r["status"]):
-		0:
-			return "Нет связи с сервером. Проверьте интернет и попробуйте ещё раз."
-		401:
-			return "Вход устарел — войдите в аккаунт снова (Меню → Настройки)."
-		404:
-			if unsupported:
-				return "Сервер ещё не умеет бои с городами — загляните позже."
-	var e := str(r["error"]).strip_edges()
-	return e if e.ends_with(".") or e.ends_with("!") or e.ends_with("?") else e + "."     # целая фраза — окно показывает её как есть
+## Понятная фраза об ошибке (целая — окно показывает её как есть); last_fail — она же с заголовком и кодом для окна.
+## short — коротко, для строки внизу окна (нападение, название города); иначе — с советом нажать «Повторить»
+func _err(r: Dictionary, short := false) -> String:
+	var code := int(r["status"])
+	var f := NetHttp.explain(r, "Сервер боёв", NetHttp.AGAIN)
+	if code == 401:
+		f["title"] = "Вход устарел"
+		f["text"] = "Вход устарел — войдите в аккаунт снова (Меню → Настройки)."
+		f["short"] = f["text"]
+	elif code == 404 and unsupported:
+		f["title"] = "Бои с городами — скоро"
+		f["text"] = "Сервер ещё не умеет бои с городами — загляните позже."
+		f["short"] = f["text"]
+	elif code != 0 and not (code in [502, 503, 504]):
+		f["title"] = "Не получилось"
+	last_fail = f
+	return String(f["short"] if short else f["text"])
 
 
 func _call(method: int, path: String, body = null) -> Dictionary:
 	var a := _acc()
 	if a.token == "":
-		return {"status": 401, "data": {}, "error": "Нужно войти"}
-	var rq := HTTPRequest.new()
-	rq.timeout = TIMEOUT
-	rq.accept_gzip = true
-	add_child(rq)
-	var headers := PackedStringArray(["Accept: application/json", "Authorization: Bearer " + a.token,
-		"User-Agent: CivCity/%s (Godot %s)" % [ProjectSettings.get_setting("application/config/version", ""), Engine.get_version_info().get("string", "")]])
-	var err: int
-	if body == null:
-		err = rq.request(a.api + path, headers, method)
-	else:
-		headers.append("Content-Type: application/json")
-		err = rq.request(a.api + path, headers, method, JSON.stringify(body))
-	if err != OK:
-		rq.queue_free()
-		return {"status": 0, "data": {}, "error": "Нет связи с сервером"}
-	var res: Array = await rq.request_completed
-	rq.queue_free()
-	if int(res[0]) != HTTPRequest.RESULT_SUCCESS:
-		last_error = "Нет связи с сервером"
-		return {"status": 0, "data": {}, "error": last_error}
-	var bytes: PackedByteArray = res[3]
-	var d = JSON.parse_string(bytes.get_string_from_utf8()) if bytes.size() > 0 else {}
-	if typeof(d) != TYPE_DICTIONARY:
-		d = {}
-	var code := int(res[1])
+		return {"status": 401, "data": {}, "error": "Нужно войти", "net": ""}
+	# ответы боёв небольшие — без сжатия: сжатый ответ сервер шлёт кусками, а это лишний повод для сбоя в пути.
+	# Повтор при сбое связи (NetHttp) тут безопасен: итог боя сервер принимает один раз, нападение на ту же цель — тоже
+	var r: Dictionary = await NetHttp.fetch(self, a.api, method, path, body, a.token, {"timeout": TIMEOUT, "accept_gzip": false})
+	var code := int(r["status"])
+	var d: Dictionary = r["data"]
 	if code == 404 and path.begins_with("/pvp/") and not d.has("me"):
 		var e := str(d.get("error", ""))
 		if e == "Нет такого адреса" or e == "":
 			unsupported = true                      # старый сервер без боёв с городами
 	if code == 401 and a.required() and a.has_method("_session_lost"):
 		a._session_lost()                           # вход устарел — Account покажет окно входа (только в настоящей игре)
-	last_error = "" if code == 200 else str(d.get("error", "Сервер не ответил, попробуйте позже"))
-	return {"status": code, "data": d, "error": last_error}
+	last_error = "" if code == 200 else (String(r["net"]) if code == 0 else str(code))
+	return r
 
 
 func _now() -> float:

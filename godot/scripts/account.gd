@@ -49,6 +49,9 @@ var test := ""                                  # --cloudtest=…
 var test_shot := ""
 var last_error := ""
 var up_fail := ""                               # почему город не ушёл в облако (для надписи в настройках)
+var last_net := ""                              # почему не дошёл последний запрос: dns | connect | tls | timeout | read ("" — дошёл)
+var off_since := 0.0                            # с какого времени (unix) нет связи с сервером (0 — связь есть): значок «нет облака»
+var off_told := false                           # советник уже сказал про связь (раз за запуск игры)
 
 var _data := ""                                 # последнее сохранение города (строка) и его отпечаток
 var _hash := ""
@@ -170,7 +173,7 @@ func login(mail: String, password: String, register: bool, consent := false) -> 
 		body["consent"] = consent         # галочка согласия на обработку данных (сервер запоминает время)
 	var r := await _call(HTTPClient.METHOD_POST, "/register" if register else "/login", body, false, TIMEOUT, false)
 	if r["status"] == 0:
-		return "Нет связи с сервером. Проверьте интернет и попробуйте ещё раз."
+		return String(NetHttp.explain(r)["short"])    # настоящая причина, без «проверьте интернет»
 	if r["status"] != 200:
 		return str(r["error"])
 	var d: Dictionary = r["data"]
@@ -192,7 +195,7 @@ func login(mail: String, password: String, register: bool, consent := false) -> 
 func forgot(mail: String) -> String:
 	var r := await _call(HTTPClient.METHOD_POST, "/forgot", {"email": mail.strip_edges()}, false, TIMEOUT, false)
 	if r["status"] == 0:
-		return "Нет связи с сервером. Проверьте интернет и попробуйте ещё раз."
+		return String(NetHttp.explain(r)["short"])
 	if r["status"] != 200:
 		return str(r["error"])
 	return ""
@@ -572,11 +575,34 @@ func _tick() -> void:
 			var g = _g()
 			if g and _carrying(g):
 				return                              # сверка сохраняет город, а сохранение роняет переносимую постройку — после переноса
+			_forget_address()
 			sync()                                  # связь вернулась — сначала сверка, потом отправка
 		return
 	if _busy or _ask_open or net == "old" or not pending():
 		return
 	if _now() - _last_try >= (UP_GAP if net == "online" else RETRY_GAP):
+		if net == "offline":
+			_forget_address()
+		_upload(false)
+
+
+## Связи не было — забыть адрес сервера: VPN мог его поменять, а Godot помнит адреса до перезапуска игры
+func _forget_address() -> void:
+	if net == "offline" or off_since > 0.0:
+		IP.clear_cache(NetHttp.host_of(api))
+
+
+## Значок «нет связи с облаком» нажали — попробовать сразу, не дожидаясь минуты
+func retry_now() -> void:
+	if not required() or token == "" or _quitting:
+		return
+	IP.clear_cache(NetHttp.host_of(api))
+	if not synced:
+		if not syncing:
+			var g = _g()
+			if g == null or not _carrying(g):
+				sync()
+	elif not _busy and not _ask_open and net != "old" and pending():
 		_upload(false)
 
 
@@ -766,37 +792,18 @@ func _notification(what: int) -> void:
 # ---------- запросы к серверу ----------
 
 func _call(method: int, path: String, body = null, gz := false, timeout := TIMEOUT, auth := true) -> Dictionary:
-	var rq := HTTPRequest.new()
-	rq.timeout = timeout
-	rq.accept_gzip = true
-	add_child(rq)
-	var headers := PackedStringArray(["Accept: application/json",
-		"User-Agent: CivCity/%s (Godot %s)" % [ProjectSettings.get_setting("application/config/version", ""), Engine.get_version_info().get("string", "")]])
-	if auth and token != "":
-		headers.append("Authorization: Bearer " + token)
-	var err: int
-	if body == null:
-		err = rq.request(api + path, headers, method)
+	# повтор при сбое связи (NetHttp): чтение и вход — всегда; запись города, уничтожение, регистрация — только если
+	# запрос точно не дошёл (иначе второй раз сервер ответил бы «в облаке новее» или «почта занята»)
+	var safe := method == HTTPClient.METHOD_GET or path == "/login" or path == "/logout"
+	var r: Dictionary = await NetHttp.fetch(self, api, method, path, body, token if auth else "", {"timeout": timeout, "gzip_body": gz, "safe": safe})
+	if int(r["status"]) == 0:
+		last_net = String(r["net"])
+		if off_since <= 0.0:
+			off_since = Time.get_unix_time_from_system()
 	else:
-		var raw := JSON.stringify(body).to_utf8_buffer()
-		headers.append("Content-Type: application/json")
-		if gz:
-			raw = raw.compress(FileAccess.COMPRESSION_GZIP)
-			headers.append("Content-Encoding: gzip")
-		err = rq.request_raw(api + path, headers, method, raw)
-	if err != OK:
-		rq.queue_free()
-		return {"status": 0, "data": {}, "error": "Нет связи с сервером"}
-	var res: Array = await rq.request_completed
-	rq.queue_free()
-	if int(res[0]) != HTTPRequest.RESULT_SUCCESS:
-		return {"status": 0, "data": {}, "error": "Нет связи с сервером"}
-	var bytes: PackedByteArray = res[3]
-	var d = JSON.parse_string(bytes.get_string_from_utf8()) if bytes.size() > 0 else {}
-	if typeof(d) != TYPE_DICTIONARY:
-		d = {}
-	var code := int(res[1])
-	return {"status": code, "data": d, "error": "" if code == 200 else str(d.get("error", "Сервер не ответил, попробуйте позже"))}
+		last_net = ""
+		off_since = 0.0
+	return r
 
 
 # ---------- файлы: вход, состояние облака, город на диске ----------

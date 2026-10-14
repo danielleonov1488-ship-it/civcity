@@ -157,20 +157,57 @@ static func top(ui: LegionUi) -> void:
 	var body := VBoxContainer.new()
 	body.add_theme_constant_override("separation", 4)
 	body.custom_minimum_size = Vector2(620, 420)
-	body.add_child(ui._wl("Собираем вести со всей империи…", 600, 17, C_SOFT, true, true))
 	v.add_child(body)
 	var bh := HBoxContainer.new()
 	bh.alignment = BoxContainer.ALIGNMENT_CENTER
 	bh.add_child(ui._btn("Закрыть", 160, 19, null, "", func(): ui._close_overlay()))
 	v.add_child(bh)
+	_top_load(ui, body)
+
+
+## Запросить таблицу лучших (и снова — по «Повторить»)
+static func _top_load(ui: LegionUi, body: VBoxContainer) -> void:
+	var net = ui._net()
+	ui.hud._clear(body)
+	body.add_child(ui._wl("Собираем вести со всей империи…", 600, 17, C_SOFT, true, true))
+	var wb: WeakRef = weakref(body)               # окно могли закрыть, пока ждали ответ
 	net.pvp_top(func(d: Dictionary, err: String):
-		if not is_instance_valid(body):
+		var bx := wb.get_ref() as VBoxContainer
+		if bx == null:
 			return
-		ui.hud._clear(body)
+		ui.hud._clear(bx)
 		if err != "":
-			body.add_child(ui._wl("Не получилось связаться с сервером: %s" % err, 600, 16, C_BAD, true, true))
+			var f: Dictionary = (net.last_fail as Dictionary).duplicate() if "last_fail" in net else {}
+			if f.is_empty():
+				f = {"title": "Не получилось", "text": err}
+			error_block(ui, bx, f, func(): _top_load(ui, bx))
 			return
-		_fill_top(ui, body, d))
+		_fill_top(ui, bx, d))
+
+
+## Ошибка связи в окне: заголовок, что случилось и что делать, «Повторить» и мелкий код («Код: timeout · 14:32»)
+static func error_block(ui: LegionUi, parent: Control, f: Dictionary, retry: Callable, note := "") -> void:
+	var v := VBoxContainer.new()
+	v.name = "NetError"
+	v.add_theme_constant_override("separation", 6)
+	v.add_child(ui._title(String(f.get("title", "Не получилось")), 22, C_BAD))
+	var t := String(f.get("text", ""))
+	if t != "":
+		v.add_child(ui._wl(t, 600, 16, C_INK))
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	var b := ui._btn("Повторить", 0, 17, ui.hud.ico("redo", 64), "", retry)
+	b.name = "Retry"
+	h.add_child(b)
+	var code := String(f.get("code", ""))
+	if note != "":
+		code = note if code == "" else code + " · " + note
+	if code != "":
+		var cl := ui._l(code, 13, false, C_SOFT)
+		cl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(cl)
+	v.add_child(h)
+	parent.add_child(v)
 
 
 static func _fill_top(ui: LegionUi, body: VBoxContainer, d: Dictionary) -> void:
