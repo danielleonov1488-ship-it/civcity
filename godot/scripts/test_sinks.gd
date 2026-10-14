@@ -3,8 +3,10 @@ extends Node
 ##   bash .work/py/gpu_run.sh res://test_sinks.tscn   — в конце «SINKS DONE fails=0»; снимки — .work/gd/sinks_*.png
 ## Земля: новая игра — свои участки x 2–3, z 1–3 (x 128–256, z 64–256 м), цена k-го купленного 6000 × 1,3^(k−1) до
 ## тысяч, счётчик купленных в сохранении (у старых сохранений — сверх 16); готовый город меню — как был.
-## Праздник: с «Посёлка», 3 ден. за жителя, сутки +8% счастья всем домам и повозка ×0,7, снова — через 48 ч;
-## сохраняется; карточка станции, советник один раз, наряд города (шесты, знамёна, гирлянды) и толпа у станции.
+## Праздник: с «Посёлка», 2,5 часовых налога с жителя (плебей — 3 ден.; налогами игры не окупаются), сутки +8% счастья
+## всем домам и повозка ×0,7 (дробный промежуток — в среднем, остаток часа переносится), снова — через 48 ч;
+## сохраняется; карточка станции, советник один раз, наряд города (шесты, знамёна, гирлянды) и толпа у станции —
+## не на полосе повозки. Окно покупки участка дороже предела казны — объясняет, «Купить» погашена.
 
 const STREETS := [[Vector2(172, 136), Vector2(198, 136)], [Vector2(172, 150), Vector2(198, 150)], [Vector2(172, 164), Vector2(198, 164)]]
 const PRICES := [6000, 8000, 10000, 13000, 17000, 22000, 29000, 38000, 49000, 64000, 83000]
@@ -116,6 +118,7 @@ func _land() -> void:
 	check(c.can_buy(Vector2i(4, 2)) and c.can_buy(Vector2i(1, 1)) and not c.can_buy(Vector2i(0, 2)) and not c.can_buy(Vector2i(4, 4)), "only plots next to own land are for sale")
 	c.money = 5000.0
 	check(not c.buy_plot(Vector2i(4, 2)), "not enough money: plot not bought")
+	await _buy_window()
 	c.money = 20000.0
 	check(c.buy_plot(Vector2i(4, 2)) and is_equal_approx(c.money, 14000.0) and c.plots_bought == 1 and c.plot_price() == 8000, "first plot 6000, next 8000 (money %d)" % int(c.money))
 	game._update_plot_signs()
@@ -155,6 +158,47 @@ func _land() -> void:
 	await shot("sinks_land.png")
 
 
+## Окно покупки: участок дороже предела казны — так и сказано (какой уровень, какое хранилище), «Купить» погашена;
+## мало денариев — сколько в казне; без всплывашек. «Казна полна» зовёт покупать землю, только когда участок по карману
+func _buy_window() -> void:
+	var hud = game.hud
+	var lbl: Label = hud.buy_panel.find_child("text", true, false)
+	var ok: Button = hud.buy_panel.find_child("ok", true, false)
+	var notes0: int = hud.notes_box.get_child_count()
+	c.level = 0                                   # Стоянка: казна 3000, участок 6000
+	hud.ask_buy(Vector2i(4, 2))
+	check(hud.buy_panel.visible and ok.disabled and lbl.text.contains("вмещает только 3 000") and lbl.text.contains("на уровне «Деревня»") and not lbl.text.contains("хранилище"),
+		"«Стоянка»: 6000 > cap 3000 — button off, «%s»" % lbl.text.get_slice("\n\n", 1))
+	c.money = c.money_cap()
+	c.stats["income"] = 50.0
+	c.stats["upkeep"] = 0.0
+	hud.full_money.visible = false
+	hud._update_full_marks()
+	check(hud.full_money.visible and not hud.full_money.tooltip_text.contains("участки") and not hud._plot_fits(), "treasury full at «Стоянка»: no land in the tip")
+	c.level = 2                                   # Деревня: казна 8000 — по карману, но в казне 5000
+	c.money = 5000.0
+	hud.ask_buy(Vector2i(4, 2))
+	check(not ok.disabled and lbl.text.contains("В казне пока 5 000 ден. — накопите ещё 1 000"), "«Деревня»: can save up — «%s»" % lbl.text.get_slice("\n\n", 1))
+	ok.pressed.emit()
+	check(hud.buy_panel.visible and not c.land.owned.has(Vector2i(4, 2)) and hud.notes_box.get_child_count() == notes0, "not bought, the reason stays in the window, no pop-up")
+	c.money = c.money_cap()
+	hud.full_money.visible = false
+	hud._update_full_marks()
+	check(hud.full_money.tooltip_text.contains("участки") and hud._plot_fits(), "treasury full at «Деревня»: land in the tip")
+	c.level = 3                                   # Посёлок: 4-й участок 13 000 > 12 000, «Городок» или хранилище
+	c.plots_bought = 3
+	hud.ask_buy(Vector2i(4, 2))
+	check(ok.disabled and lbl.text.contains("на уровне «Городок» или когда изучите «Новое хранилище денег»"), "«Посёлок», 13 000: «%s»" % lbl.text.get_slice("\n\n", 1))
+	game.rig.set_view(Vector3(192, 2, 165), 0, 72, 340)
+	await shot("sinks_buy_cap.png")
+	hud.buy_panel.visible = false
+	hud.full_money.visible = false
+	c.plots_bought = 0
+	c.level = 0
+	c.money = 5000.0
+	c.stats["income"] = 0.0
+
+
 # ---------- праздник ----------
 
 func _festival() -> void:
@@ -180,7 +224,12 @@ func _festival() -> void:
 	check(not c.tips.has("fest_tip"), "no advisor before «Посёлок»")
 	c.level = 3
 	c.money = 100.0
-	check(c.fest_price() == 3 * pop and c.can_festival().begins_with("Не хватает денариев"), "price %d = 3 × %d; «%s»" % [c.fest_price(), pop, c.can_festival()])
+	# цена — 2,5 часовых налога с жителя (плебей 1,2 → 3 ден.), вверх до десятков: 48 плебеев — 144 → 150
+	check(c.fest_price() == 150 and c.can_festival().begins_with("Не хватает денариев"), "price %d for %d plebs (3 each, up to tens); «%s»" % [c.fest_price(), pop, c.can_festival()])
+	houses[0]["type"] = "house_artisan"           # ремесленники платят налогов больше — и игры для них дороже (5,5 с жителя)
+	var p_art: int = c.fest_price()
+	houses[0]["type"] = "house_pleb"
+	check(p_art == 160, "4 artisans instead of plebs: (44 × 1,2 + 4 × 2,2) × 2,5 = 154 → %d" % p_art)
 	check(not c.festival(), "not enough money: no games")
 	# советник объясняет один раз
 	hud.advisor_panel.visible = false
@@ -198,7 +247,9 @@ func _festival() -> void:
 	hud.open_info(ctr)
 	await frames(3)
 	var btn: Button = hud.info_box.find_child("fest_btn", true, false)
-	check(btn != null and not btn.disabled and btn.text == "Устроить игры — %s ден." % hud.fmt(3 * pop), "station card button: «%s»" % (btn.text if btn else "-"))
+	var price0: int = c.fest_price()
+	check(btn != null and not btn.disabled and btn.text == "Устроить игры — %s ден." % hud.fmt(price0), "station card button: «%s»" % (btn.text if btn else "-"))
+	check(_texts(hud.info_box).contains("по 3 ден. за плебея, 5,5 — за ремесленника, 11,3 — за патриция"), "card: the price depends on taxes")
 	game.rig.set_view(Vector3(ctr["pos"].x, 2, ctr["pos"].y), 25, 40, 30)
 	await shot("sinks_fest_card.png")
 	# игры: деньги, счастье +8% всем домам, повозка чаще, колокольчик, наряд города
@@ -210,11 +261,16 @@ func _festival() -> void:
 	var bell0: int = hud.bell_count
 	var notes0: int = hud.notes_box.get_child_count()
 	btn.pressed.emit()
-	check(c.fest_left == 24 and c.fest_cd == 48 and is_equal_approx(c.money, 3000.0 - 3 * pop), "games on: 24 h, again in 48 h, paid %d" % (3 * pop))
+	check(c.fest_left == 24 and c.fest_cd == 48 and is_equal_approx(c.money, 3000.0 - price0), "games on: 24 h, again in 48 h, paid %d" % price0)
 	var plus8 := true
 	for h in houses:
 		plus8 = plus8 and int(h["happy"]) == int(hp0[h["id"]]) + 8
 	check(plus8 and int(c.stats["happy"]) == city_hp0 + 8, "every house +8%% (city %d → %d)" % [city_hp0, int(c.stats["happy"])])
+	# игры не окупаются: за сутки +8% счастья вернут налогами меньше, чем стоили (налог дома — как в City.sim_day)
+	var back := 0.0
+	for h in houses:
+		back += int(h["pop"]) * c.house_tax(h) * (minf(100.0, float(h["happy"])) - minf(100.0, float(hp0[h["id"]]))) / 100.0 * 24.0
+	check(back > 0.0 and back < 0.8 * price0, "24 h of games return %d in taxes, less than the price %d" % [int(back), price0])
 	var row := false
 	for p: Array in c.stats["happy_parts"]:
 		if String(p[0]).begins_with("Праздник") and int(p[1]) == 8:
@@ -228,6 +284,21 @@ func _festival() -> void:
 	var m85: float = c.arrive_mult()[0]
 	c.compute()
 	check(is_equal_approx(float(m65[0]), 0.7) and String(m65[1]).contains("игры") and is_equal_approx(m85, 0.5), "cart: 65%% ×%.2f («%s»), 85%% ×%.2f (floor 0.5)" % [float(m65[0]), m65[1], m85])
+	# часы идут целыми, а промежуток дробный: остаток переносится — за 48 ч повозок столько, сколько обещано
+	# («Посёлок», 2,4 ч: 65% — 2,4 ч, с играми 1,68; 80% — 1,56, с играми 1,2; раньше выходило 3, 2, 2, 2 ч)
+	var got := []
+	var good := true
+	for e: Array in [[65, false], [65, true], [80, false], [80, true]]:
+		c.fest_left = 24 if e[1] else 0
+		c.stats["happy"] = e[0]
+		var every: float = c.arrive_every()
+		var k := _carts(48, e[0])
+		got.append("%d%%%s every %.2f h: %d" % [e[0], " +games" if e[1] else "", every, k])
+		good = good and absf(k - 48.0 / every) <= 1.5
+	c.fest_left = 24
+	c.arrive_t = 0.0
+	c.compute()
+	check(good, "carts in 48 h match the interval: %s" % ", ".join(got))
 	check(c.can_festival().begins_with("Игры уже идут"), "second games refused: «%s»" % c.can_festival())
 	check(not game.fest_vis.is_empty() and (game.fest_vis["h"] as Array).size() >= 16 and game.fest_vis["mesh"] != null, "the city is dressed: %d parts and garlands" % (game.fest_vis["h"] as Array).size())
 	await frames(3)
@@ -240,9 +311,20 @@ func _festival() -> void:
 	var door: Vector2 = c.door_point(ctr)
 	for r in game.people.residents:
 		var tg: Dictionary = game.people._fest_target(r, door + Vector2(20, 40))
-		if not tg.is_empty() and (tg["p"] as Vector2).distance_to(door) < 13.0:
+		if not tg.is_empty() and (tg["p"] as Vector2).distance_to(door) < 18.0:
 			near += 1
 	check(near > 0 and near == game.people.residents.size(), "festival errands lead to the station square (%d of %d)" % [near, game.people.residents.size()])
+	# толпа не стоит там, где едет и встаёт повозка: полоса большой дороги до станции и место разгрузки (_plaza_point)
+	var in_lane := 0
+	for i in 400:
+		var r: Dictionary = game.people.residents[i % game.people.residents.size()]
+		var tg: Dictionary = game.people._fest_target(r, door)
+		if tg.is_empty():
+			continue
+		var q: Vector2 = tg["p"]
+		if (absf(q.x - Land.ROAD_X) < Land.ROAD_R + 0.5 and q.y < door.y + 5.5) or (absf(q.x - door.x) < 4.5 and absf(q.y - door.y) < 5.5):
+			in_lane += 1
+	check(in_lane == 0, "nobody dances in the cart's lane or unloading spot (%d of 400)" % in_lane)
 	var far := 0
 	for r in game.people.residents:
 		if not game.people._fest_target(r, door + Vector2(0, 140)).is_empty():
@@ -293,6 +375,23 @@ func _festival() -> void:
 	check(game.fest_vis.is_empty(), "look off")
 	game._fest_look(true)
 	check(not game.fest_vis.is_empty(), "look on again")
+
+
+## Сколько повозок выедет за n часов при таком счастье (места нет — каждая везёт одну семью «ищет жильё»;
+## увезённых сразу снимаем, чтобы повозка не ждала)
+func _carts(n: int, happy: int) -> int:
+	c.arrivals = []
+	c.pending = {}
+	c.incoming = 0
+	c.arrive_t = 0.0
+	var k := 0
+	for i in n:
+		c.stats["happy"] = happy
+		c._tick_arrivals()
+		if c.incoming > 0:
+			k += 1
+			c.incoming = 0
+	return k
 
 
 func _texts(n: Node) -> String:

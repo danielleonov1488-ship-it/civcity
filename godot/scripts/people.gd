@@ -960,8 +960,9 @@ func _plaza_target(r: Dictionary, from: Vector2) -> Dictionary:
 	return {}
 
 
-## Игры в честь богов: место в толпе у почтовой станции — на площади и дороге перед входом, лицом к станции
-## (дети бегают там же); идут те, чей дом не дальше 110 м
+## Игры в честь богов: место в толпе у почтовой станции — на площади и дороге у входа, лицом к станции
+## (дети бегают там же); идут те, чей дом не дальше 110 м. Где едет и встаёт повозка, толпы нет: полоса большой
+## дороги севернее станции и место разгрузки (_plaza_point) свободны — толпа больше южнее входа, откуда идёт город
 func _fest_target(r: Dictionary, from: Vector2) -> Dictionary:
 	var c := city.center()
 	if c.is_empty():
@@ -971,9 +972,15 @@ func _fest_target(r: Dictionary, from: Vector2) -> Dictionary:
 		return {}
 	var f := City.facing(float(c["yaw"]))
 	var ax := City.axis(float(c["yaw"]))
-	var near := _stand_points(base + f * 4.0, 12.0)
-	for k in 16:
-		var q := base + f * rng.randf_range(1.0, 7.5) + ax * rng.randf_range(-9.0, 9.0)
+	var near := _stand_points(base + f * 4.0 - ax * 4.0, 15.0)
+	for k in 24:
+		# через раз — на дороге и площади южнее входа (станция стоит всегда одинаково: −ax — к югу), иначе — где угодно у входа
+		var q := base + f * rng.randf_range(1.5, 8.5) - ax * rng.randf_range(5.5, 16.0) if k % 2 == 0 \
+			else base + f * rng.randf_range(1.0, 10.0) + ax * rng.randf_range(-16.0, 9.0)
+		var d := q - base
+		# повозке — дорогу: её полоса по большой дороге до станции и место, где она встаёт (_plaza_point: ±3,5 по x, ±4,5 по z)
+		if (absf(q.x - Land.ROAD_X) < Land.ROAD_R + 0.5 and q.y < base.y + 5.5) or (absf(d.x) < 4.5 and absf(d.y) < 5.5):
+			continue
 		if _free(q) and not _crowded(q, near, 1.1):
 			if r["child"]:
 				return {"act": "play", "p": q}

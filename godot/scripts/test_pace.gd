@@ -896,6 +896,7 @@ func _bot_step() -> void:
 	rk["max_wait"] = maxi(int(rk["max_wait"]), c.arrivals.size())
 	if int(floor(t)) != h0:
 		_bplay()
+		_fest_back()
 		c.sim_day()
 		_hour_stats()
 		for g in c.goals_done:
@@ -982,10 +983,30 @@ func _spent(cat: String, v: float) -> void:
 	sp[cat] = float(sp.get(cat, 0.0)) + v
 
 
+## Игры возвращают часть цены налогами: пока идут, счастье домов +8% (до 100%) — и налог дома больше (как в City.sim_day)
+func _fest_back() -> void:
+	var fb: int = c.fest_bonus()
+	if fb <= 0:
+		return
+	var x := 0.0
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if c.is_house(b):
+			x += int(b["pop"]) * c.house_tax(b) * (minf(100.0, float(b["happy"])) - minf(100.0, float(b["happy"]) - fb)) / 100.0
+	rk["fest_back"] = float(rk["fest_back"]) + x
+
+
 ## Игры в честь богов (с «Посёлка»): как только можно и хватает (запас на условия уровня — как у лавок, наполовину)
 func _bfest(save: float) -> void:
-	if c.can_festival() == "" and c.money - float(c.fest_price()) >= save * 0.5 and c.festival():
+	var pr: int = c.fest_price()
+	if c.can_festival() == "" and c.money - float(pr) >= save * (1.0 if _pop_met() else 0.5) and c.festival():
 		rk["fests"] = int(rk["fests"]) + 1
+		rk["fest_cost"] = float(rk["fest_cost"]) + pr     # точно: в трату «festivals» может влезть награда просьбы
+
+
+## Жителей на следующий уровень уже хватает — осталось накопить на постройки условий: этажи и игры не трогают запас
+func _pop_met() -> bool:
+	return c.level < Defs.LEVELS.size() - 1 and int(c.stats.get("pop", 0)) >= int(Defs.LEVELS[c.level + 1]["pop"])
 
 
 ## Исследования: сначала то, что откроет условия следующего уровня, потом ключевое, потом остальное своего ряда
@@ -1325,7 +1346,7 @@ func _depth(type: String) -> float:
 ## Этажи — всем домам, которым можно (полный дом, счастье от 65% / 75%), пока хватает и на условия уровня
 func _bfloors(save: float) -> void:
 	for h in _houses():
-		if c.can_buy_floor(h) == "" and c.money - float(c.floor_price(h)) >= save * 0.3:
+		if c.can_buy_floor(h) == "" and c.money - float(c.floor_price(h)) >= save * (1.0 if _pop_met() else 0.3):
 			c.buy_floor(h)
 
 
@@ -1333,7 +1354,7 @@ func _bfloors(save: float) -> void:
 
 func _rank_start() -> void:
 	rk = {"t0": t, "hours": 0, "cap_h": 0, "rp_earned": 0.0, "rp_lost": 0.0, "max_wait": 0, "seek": 0, "money_lost": 0.0,
-		"poor_h": 0, "money_min": INF, "fests": 0, "plots": 0, "spend": {}, "net": 0.0, "fest_h": 0, "rp_req": 0.0}
+		"poor_h": 0, "money_min": INF, "fests": 0, "plots": 0, "spend": {}, "net": 0.0, "fest_h": 0, "rp_req": 0.0, "fest_back": 0.0, "fest_cost": 0.0}
 
 
 func _hour_stats() -> void:
@@ -1370,7 +1391,8 @@ func _press() -> void:
 	var row := {"lvl": L, "min": mins, "tier": _tier_pct(L), "tier_all": _tier_pct(L, false), "cap": 100.0 * int(rk["cap_h"]) / hrs,
 		"lost": 100.0 * float(rk["rp_lost"]) / maxf(1.0, float(rk["rp_earned"]) + float(rk["rp_lost"])), "wait": int(rk["max_wait"]),
 		"seek": int(rk["seek"]), "poor": 100.0 * int(rk["poor_h"]) / hrs, "mlost": float(rk["money_lost"]), "fests": int(rk["fests"]),
-		"plots": int(rk["plots"]), "earned": float(rk["rp_earned"]), "net": float(rk["net"])}
+		"plots": int(rk["plots"]), "earned": float(rk["rp_earned"]), "net": float(rk["net"]),
+		"fnet": float(rk["fest_cost"]) - float(rk["fest_back"])}
 	rows_out.append(row)
 	var sp: Dictionary = rk["spend"]
 	var parts := []
@@ -1381,8 +1403,10 @@ func _press() -> void:
 	keys.sort_custom(func(a, b): return float(sp[a]) > float(sp[b]))
 	for k in keys:
 		parts.append("%s %d" % [k, int(sp[k])])
-	print("  «%s» money: net income %d, spent %d (%s), lost to the cap %d; festivals %d (%d h on), plots %d; rp earned %d" % [Defs.LEVELS[L]["name"],
-		int(rk["net"]), int(tot), ", ".join(parts), int(rk["money_lost"]), int(rk["fests"]), int(rk["fest_h"]), int(rk["plots"]), int(rk["rp_earned"])])
+	var fsp := float(rk["fest_cost"])
+	print("  «%s» money: net income %d, spent %d (%s), lost to the cap %d; festivals %d (%d h on; cost %d, back in taxes %d, net sink %d), plots %d; rp earned %d" % [Defs.LEVELS[L]["name"],
+		int(rk["net"]), int(tot), ", ".join(parts), int(rk["money_lost"]), int(rk["fests"]), int(rk["fest_h"]), int(fsp), int(rk["fest_back"]),
+		int(fsp - float(rk["fest_back"])), int(rk["plots"]), int(rk["rp_earned"])])
 	print("RANK %d «%s» at %.1f h = %.1f min (1x) | «%s» lasted %.1f min | tier %d researched %d%% (%d%% counting Legion/wonders) | treasury at cap %d%% of %d h, money lost %d, below 150 den %d%% | rp lost %d%% | max waiting %d | seekers %d | pop=%d happy=%d money=%d/%d rp=%d/%d houses=%d buildings=%d | rp/h %.1f, net den/h %d" % [
 		L + 1, Defs.LEVELS[L + 1]["name"], t, t * SEC_H / 60.0, Defs.LEVELS[L]["name"], mins, L, roundi(row["tier"]), roundi(row["tier_all"]), roundi(row["cap"]), hrs,
 		int(row["mlost"]), roundi(row["poor"]), roundi(row["lost"]), row["wait"], row["seek"], int(c.stats["pop"]), int(c.stats["happy"]), int(c.money),
@@ -1421,12 +1445,12 @@ func _summary() -> void:
 	print("PACE BOT rp overflow (want <10%%): %s" % ", ".join(lost))
 	print("PACE BOT max families waiting (want ≤3): %s" % ", ".join(waits))
 	# одна таблица по рангам (как в отчёте этапа 1a) — и сколько игр и участков
-	print("PACE TABLE | rank | min (1x) | plan | tier researched | treasury at cap | rp lost | max waiting | festivals | plots bought |")
+	print("PACE TABLE | rank | min (1x) | plan | tier researched | treasury at cap | rp lost | max waiting | festivals | festivals net sink (den) | plots bought |")
 	for row: Dictionary in rows_out:
 		var L: int = row["lvl"]
 		var m: float = float(row["min"]) + (TUT_MIN if L == 0 else 0.0)
-		print("PACE TABLE | %s | %.1f | %s | %d%% | %d%% | %d%% | %d | %d | %d |" % [Defs.LEVELS[L]["name"], m, ("%.0f" % B_TARGET[L]) if L < B_TARGET.size() else "-",
-			roundi(row["tier"]), roundi(row["cap"]), roundi(row["lost"]), int(row["wait"]), int(row["fests"]), int(row["plots"])])
+		print("PACE TABLE | %s | %.1f | %s | %d%% | %d%% | %d%% | %d | %d | %d | %d |" % [Defs.LEVELS[L]["name"], m, ("%.0f" % B_TARGET[L]) if L < B_TARGET.size() else "-",
+			roundi(row["tier"]), roundi(row["cap"]), roundi(row["lost"]), int(row["wait"]), int(row["fests"]), int(row["fnet"]), int(row["plots"])])
 	print("PACE BOT end at %.1f h = %.1f min: level %d «%s» pop=%d happy=%d money=%d rp=%d research=%d houses=%d buildings=%d" % [t, t * SEC_H / 60.0,
 		c.level, Defs.LEVELS[c.level]["name"], int(c.stats["pop"]), int(c.stats["happy"]), int(c.money), int(c.rp), c.research.size(), _houses().size(), c.buildings.size()])
 	var kinds := {}

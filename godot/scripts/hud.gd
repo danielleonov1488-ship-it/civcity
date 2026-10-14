@@ -2447,8 +2447,21 @@ func _fest_rows(v: Control) -> void:
 	fb.tooltip_text = why if why != "" else "Устроить игры в честь богов"
 	fb.pressed.connect(press_festival)
 	v.add_child(fb)
-	var txt := "На сутки: счастье всех домов +%d%%, повозка ходит чаще. Цена — %d ден. за каждого жителя." % [int(F["happy"]), int(F["per_pop"])]
+	var txt := "На сутки: счастье всех домов +%d%%, повозка ходит чаще. Цена зависит от налогов: %s." % [int(F["happy"]), fest_rates()]
 	v.add_child(_wrap(_label(why if why != "" else txt, 14, why != "", C_BAD if why.begins_with("Не хватает") else C_SOFT), 330))
+
+
+## Почём игры с жителя каждого класса (City.fest_price): «по 3 ден. за плебея, 5,5 — за ремесленника, 11,3 — за патриция»
+func fest_rates() -> String:
+	var c: City = game.city
+	var who := {"plebs": "плебея", "artisans": "ремесленника", "patricians": "патриция"}
+	var out := []
+	for cl in who:
+		var tax := float(Defs.CLASSES[cl]["tax"]) * (1.25 if cl == "patricians" and c.research.has("taxes1") else 1.0)
+		var x := roundf(tax * float(Defs.FESTIVAL["tax_k"]) * 10.0) / 10.0
+		var v := (str(roundi(x)) if is_equal_approx(x, roundf(x)) else String.num(x, 1)).replace(".", ",")
+		out.append(("по %s ден. за %s" if out.is_empty() else "%s — за %s") % [v, who[cl]])
+	return ", ".join(out)
 
 
 ## «Устроить игры» в карточке станции: платим, город празднует (звук — только монетки)
@@ -3389,6 +3402,7 @@ func _buy_panel() -> void:
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
 	h.add_theme_constant_override("separation", 10)
 	var ok := Button.new()
+	ok.name = "ok"
 	ok.text = "Купить"
 	ok.icon = ico("coins", 32)
 	ok.pressed.connect(func():
@@ -3396,7 +3410,7 @@ func _buy_panel() -> void:
 			game._update_plot_signs()
 			buy_panel.visible = false
 		else:
-			notify("Не хватает денариев", "coins"))
+			ask_buy(buy_plot))                    # не купили — почему, пишем тут же (без всплывашек)
 	h.add_child(ok)
 	var no := Button.new()
 	no.text = "Не сейчас"
@@ -3405,10 +3419,47 @@ func _buy_panel() -> void:
 	v.add_child(h)
 
 
+## Окно покупки участка. Цена выше предела казны — так и пишем (какой уровень или исследование поможет), «Купить» гаснет;
+## просто мало денариев — сколько в казне сейчас
 func ask_buy(p: Vector2i) -> void:
 	buy_plot = p
-	(buy_panel.find_child("text", true, false) as Label).text = "Участок 64 × 64 м за краем вашей земли. Купить его за %s денариев? На нём можно будет строить. Каждый следующий участок — дороже." % fmt(game.city.plot_price())
+	var c: City = game.city
+	var price := c.plot_price()
+	var t := "Участок 64 × 64 м за краем вашей земли. Купить его за %s денариев? На нём можно будет строить. Каждый следующий участок — дороже." % fmt(price)
+	var over := float(price) > c.money_cap()
+	if over:
+		t += "\n\n" + plot_cap_note()
+	elif c.money < float(price):
+		t += "\n\nВ казне пока %s ден. — накопите ещё %s." % [fmt(c.money), fmt(ceilf(float(price) - c.money))]
+	(buy_panel.find_child("text", true, false) as Label).text = t
+	(buy_panel.find_child("ok", true, false) as Button).disabled = over
 	buy_panel.visible = true
+
+
+## Участок дороже, чем вмещает казна: на каком уровне города он станет по карману (или с «Новым хранилищем денег»)
+func plot_cap_note() -> String:
+	var c: City = game.city
+	var price := float(c.plot_price())
+	var t := "Сейчас казна вмещает только %s ден. — столько не скопить." % fmt(c.money_cap())
+	var lv := ""
+	for l in range(c.level + 1, Defs.LEVELS.size()):
+		if c.money_cap_for(l) >= price:
+			lv = Defs.LEVELS[l]["name"]
+			break
+	# хранилище, которое можно изучить уже сейчас (вдвое больше казна) — если его хватит
+	var vault := ""
+	for id in ["vault1", "vault2"]:
+		var r := Defs.research(id)
+		if c.research.has(id):
+			continue
+		if c.level >= int(r["lvl"]) and (not r.has("after") or c.research.has(r["after"])) and c.money_cap() * 2.0 >= price:
+			vault = r["name"]
+		break
+	if lv != "":
+		t += " Участок станет по карману на уровне «%s»" % lv + (" или когда изучите «%s»." % vault if vault != "" else ".")
+	elif vault != "":
+		t += " Изучите «%s» — казна станет вдвое больше." % vault
+	return t
 
 
 # ---------- обновление ----------
@@ -3467,7 +3518,20 @@ func _update_full_marks() -> void:
 		var r1 := Defs.research("research1")
 		full_rp.tooltip_text = "Очков исследований столько, сколько вмещают полки, — новые пропадают. Изучите что-нибудь в свитке исследований вверху справа." \
 			+ (("\nИли изучите «%s» — полки вместят вдвое больше." % r1["name"]) if not c.research.has("research1") and c.level >= int(r1["lvl"]) else "")
+		# куда пустить денарии: игры — когда открыты, участки — когда следующий не дороже предела казны
+		var ways := "дома, этажи, лавки, памятники, украшения"
+		if c.fest_open():
+			ways += ", игры в честь богов (в карточке почтовой станции)"
+		if _plot_fits():
+			ways += ", новые участки земли"
+		full_money.tooltip_text = "Казна заполнена до предела — новые денарии пропадают. Потратьте их: %s. Предел растёт с уровнем города и исследованиями хранилищ." % ways
 		_snug(full_money.get_parent().get_parent() as Control)
+
+
+## Следующий участок земли по карману: продаётся (есть табличка) и не дороже предела казны
+func _plot_fits() -> bool:
+	var c: City = game.city
+	return float(c.plot_price()) <= c.money_cap() and not game.plot_signs.is_empty()
 
 
 ## Можно ли сейчас показать совет советника (один раз на механику): своя игра, обучение кончилось,
@@ -3500,7 +3564,10 @@ func _once_tips() -> void:
 	if full_money.visible and not c.tips.has("full_money"):
 		c.tips["full_money"] = true
 		var fest := " Или устройте игры в честь богов — в карточке почтовой станции." if c.fest_open() else ""
-		advisor("Казна полна", "Казна заполнена до предела — новые денарии пропадают. Пустите их в дело: новые дома и этажи, лавки, украшения и памятники, участки земли за краем своей.%s Чтобы казна вмещала больше, поднимайте уровень города и изучите «Новое хранилище денег»." % fest)
+		# участки — только когда следующий по карману (дороже предела казны его не купить)
+		var land := ", участки земли за краем своей" if _plot_fits() else ""
+		var vault := " и изучите «%s»" % Defs.research("vault1")["name"] if not c.research.has("vault1") else ""
+		advisor("Казна полна", "Казна заполнена до предела — новые денарии пропадают. Пустите их в дело: новые дома и этажи, лавки, украшения и памятники%s.%s Чтобы казна вмещала больше, поднимайте уровень города%s." % [land, fest, vault])
 		return
 	if full_rp.visible and not c.tips.has("full_rp"):
 		c.tips["full_rp"] = true
@@ -3513,9 +3580,8 @@ func fest_note() -> String:
 	var F: Dictionary = Defs.FESTIVAL
 	var often := "раз в двое суток" if int(F["cd"]) == 48 else "раз в %d ч" % int(F["cd"])
 	return ("Город дорос до уровня «%s» — теперь можно устраивать игры в честь богов. Целые сутки весь город празднует: счастье всех домов на %d%% выше, а повозка с семьями ходит чаще.\n\n" \
-		+ "Игры стоят %d %s за каждого жителя (сейчас — %s ден.), устраивать их можно %s. Щёлкните по почтовой станции — кнопка «Устроить игры» в её карточке.") \
-		% [Defs.LEVELS[int(F["lvl"])]["name"], int(F["happy"]), int(F["per_pop"]), _plural(int(F["per_pop"]), "денарий", "денария", "денариев"),
-		fmt(c.fest_price()), often]
+		+ "Чем больше налогов платит город, тем дороже игры: %s (сейчас — %s ден.). Устраивать их можно %s. Щёлкните по почтовой станции — кнопка «Устроить игры» в её карточке.") \
+		% [Defs.LEVELS[int(F["lvl"])]["name"], int(F["happy"]), fest_rates(), fmt(c.fest_price()), often]
 
 
 ## Что поменялось в старом городе после обновления темпа (советник один раз, city.tips.v22_pace)

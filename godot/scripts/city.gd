@@ -992,6 +992,15 @@ func _store_near(s: Dictionary, stores: Array) -> bool:
 
 # ---------- час ----------
 
+## Налог с жителя дома в час (до поправки на счастье): по классу, патриции — с «taxes1» на четверть больше
+func house_tax(b: Dictionary) -> float:
+	var cls: String = def(b)["cls"]
+	var tax := float(Defs.CLASSES[cls]["tax"])
+	if cls == "patricians" and research.has("taxes1"):
+		tax *= 1.25
+	return tax
+
+
 ## Раз в игровой час: налоги, очки исследований, рост домов, переселенцы, уровень города
 func sim_day() -> void:
 	compute()
@@ -1003,11 +1012,7 @@ func sim_day() -> void:
 		var d := def(b)
 		match d["kind"]:
 			"house":
-				var cls: String = d["cls"]
-				var tax := float(Defs.CLASSES[cls]["tax"])
-				if cls == "patricians" and research.has("taxes1"):
-					tax *= 1.25
-				income += int(b["pop"]) * tax * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
+				income += int(b["pop"]) * house_tax(b) * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
 				_grow_house(b)
 			"rp":
 				if b.get("over", false):
@@ -1279,7 +1284,8 @@ func _tick_arrivals() -> void:
 		return
 	var room: int = int(Defs.ARRIVAL_MAX[clampi(level, 0, Defs.ARRIVAL_MAX.size() - 1)]) - arrivals.size() - incoming
 	if room <= 0:
-		arrive_t = 0.0
+		if arrive_t >= 1.0:
+			arrive_t = 0.0                        # долгое ожидание не копим; дробный остаток прошлой повозки — да
 		return
 	arrive_t += 1.0
 	var fit := free_fit()
@@ -1288,7 +1294,10 @@ func _tick_arrivals() -> void:
 		return                                    # мест нет, а семьи уже ждут или едут — повозка стоит
 	var first := settled_total == 0 and nobody
 	if arrive_t >= arrive_every() or first:
-		arrive_t = 0.0
+		# часы идут целыми: остаток меньше часа переносим на следующую повозку — «раз в 1,6 ч» в среднем так и есть
+		# (после долгой стоянки остаток в час и больше — с нуля, без нескольких повозок подряд)
+		var over := arrive_t - arrive_every()
+		arrive_t = over if over > 0.0 and over < 1.0 else 0.0
 		var n := mini(room, int(Defs.FAMILIES_PER_CART[clampi(level, 0, Defs.FAMILIES_PER_CART.size() - 1)]))
 		n = mini(n, fit if fit > 0 else 1)        # мест нет — одна семья «ищет жильё»
 		if int(stats["happy"]) < Defs.ARRIVE_HAPPY and int(stats["pop"]) > 0 and not _arrive_free():
@@ -1597,9 +1606,14 @@ func fest_bonus() -> int:
 	return int(Defs.FESTIVAL["happy"]) if fest_left > 0 else 0
 
 
-## Цена игр: столько-то денариев за каждого жителя
+## Цена игр: tax_k часовых налогов каждого жителя (плебей — 3 ден., ремесленник — 5,5, патриций — 11,25), вверх
+## до десятков. За сутки игр +8% счастья вернут налогами не больше 1,92 часового налога — игры всегда трата
 func fest_price() -> int:
-	return int(Defs.FESTIVAL["per_pop"]) * int(stats.get("pop", 0))
+	var s := 0.0
+	for b in buildings.values():
+		if def(b)["kind"] == "house":
+			s += int(b["pop"]) * house_tax(b)
+	return int(ceil(s * float(Defs.FESTIVAL["tax_k"]) / 10.0 - 0.0001)) * 10
 
 
 func fest_open() -> bool:

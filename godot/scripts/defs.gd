@@ -30,10 +30,11 @@ const ARRIVE_MULT_MIN := 0.5
 ## Жалованье работнику в час (по уровню города) и содержание постройки в час — доля её цены
 const WAGE := [0.3, 0.35, 0.45, 0.6, 0.75, 0.9, 1.05, 1.2]
 const UPKEEP := 0.005
-## Праздник «Игры в честь богов» — с уровня lvl («Посёлок»), в карточке почтовой станции: цена per_pop ден. за жителя;
+## Праздник «Игры в честь богов» — с уровня lvl («Посёлок»), в карточке почтовой станции: цена — tax_k часовых налогов
+## каждого жителя (плебей — 3 ден., ремесленник — 5,5, патриций — 11,25: больше, чем игры вернут налогами);
 ## hours часов счастье всех домов +happy% и повозка ходит чаще (промежуток ×cart, но не чаще ARRIVE_MULT_MIN);
 ## новые игры — не раньше чем через cd часов после начала прошлых
-const FESTIVAL := {"lvl": 3, "per_pop": 3, "hours": 24, "cd": 48, "happy": 8, "cart": 0.7}
+const FESTIVAL := {"lvl": 3, "tax_k": 2.5, "hours": 24, "cd": 48, "happy": 8, "cart": 0.7}
 ## Земля: k-й купленный участок стоит PLOT_BASE × PLOT_GROW^(k−1), до тысяч: 6, 8, 10, 13, 17, 22 тыс. …
 ## (своя земля новой игры — Land.START_PLOTS)
 const PLOT_BASE := 6000
@@ -370,40 +371,40 @@ const RESEARCH := [
 	{"id": "scribes1", "lvl": 1, "name": "Ученики писцов", "cost": 30, "icon": "quill",
 		"desc": "За писцами садятся ученики: каждый скрипторий даёт 3 очка исследований в час вместо 2."},
 
-	{"id": "artisans", "lvl": 2, "name": "Класс ремесленников", "cost": 320, "icon": "hammer",
+	{"id": "artisans", "lvl": 2, "name": "Класс ремесленников", "cost": 290, "icon": "hammer",
 		"desc": "Открывает дома ремесленников. Им нужны еда, одежда и развлечения."},
-	{"id": "dice", "lvl": 2, "name": "Игра в кости", "cost": 180, "icon": "dice"},
-	{"id": "barber", "lvl": 2, "name": "Цирюльня", "cost": 230, "icon": "razor"},
-	{"id": "thermopolium", "lvl": 2, "name": "Термополий", "cost": 280, "icon": "meal"},
-	{"id": "school", "lvl": 2, "name": "Школа", "cost": 320, "icon": "teacher"},
-	{"id": "grove", "lvl": 2, "name": "Оливковая роща", "cost": 180, "icon": "olive"},
-	{"id": "oilshop", "lvl": 2, "name": "Масляная лавка", "cost": 240, "icon": "amphora", "after": "grove"},
-	{"id": "deco_stone", "lvl": 2, "name": "Каменные украшения", "cost": 200, "icon": "mona"},
-	{"id": "store1", "lvl": 2, "name": "Больше носильщиков", "cost": 250, "icon": "warehouse", "after": "warehouse",
+	{"id": "dice", "lvl": 2, "name": "Игра в кости", "cost": 160, "icon": "dice"},
+	{"id": "barber", "lvl": 2, "name": "Цирюльня", "cost": 210, "icon": "razor"},
+	{"id": "thermopolium", "lvl": 2, "name": "Термополий", "cost": 250, "icon": "meal"},
+	{"id": "school", "lvl": 2, "name": "Школа", "cost": 290, "icon": "teacher"},
+	{"id": "grove", "lvl": 2, "name": "Оливковая роща", "cost": 160, "icon": "olive"},
+	{"id": "oilshop", "lvl": 2, "name": "Масляная лавка", "cost": 220, "icon": "amphora", "after": "grove"},
+	{"id": "deco_stone", "lvl": 2, "name": "Каменные украшения", "cost": 180, "icon": "mona"},
+	{"id": "store1", "lvl": 2, "name": "Больше носильщиков", "cost": 220, "icon": "warehouse", "after": "warehouse",
 		"desc": "Склад разносит товары вдвое дальше."},
 
-	{"id": "floor3", "lvl": 3, "name": "Третий жилой этаж", "cost": 540, "icon": "housing", "after": "floor2",
+	{"id": "floor3", "lvl": 3, "name": "Третий жилой этаж", "cost": 490, "icon": "housing", "after": "floor2",
 		"desc": "Третий этаж можно купить в карточке полного дома со счастьем не ниже 75%."},
-	{"id": "dyer", "lvl": 3, "name": "Красильня", "cost": 400, "icon": "cape"},
-	{"id": "potter", "lvl": 3, "name": "Гончарная", "cost": 350, "icon": "pottery"},
-	{"id": "mimes", "lvl": 3, "name": "Помост мимов", "cost": 390, "icon": "puppet"},
-	{"id": "temple", "lvl": 3, "name": "Храм", "cost": 510, "icon": "level"},
-	{"id": "fullonica", "lvl": 3, "name": "Фуллоника", "cost": 430, "icon": "tshirt"},
-	{"id": "deco_metal", "lvl": 3, "name": "Жаровни и знамёна", "cost": 250, "icon": "candle"},
-	{"id": "vault1", "lvl": 3, "name": "Новое хранилище денег", "cost": 410, "icon": "money", "desc": "Казна вмещает вдвое больше."},
-	{"id": "scribes2", "lvl": 3, "name": "Мастерская писцов", "cost": 370, "icon": "quill", "after": "scribes1",
+	{"id": "dyer", "lvl": 3, "name": "Красильня", "cost": 360, "icon": "cape"},
+	{"id": "potter", "lvl": 3, "name": "Гончарная", "cost": 320, "icon": "pottery"},
+	{"id": "mimes", "lvl": 3, "name": "Помост мимов", "cost": 350, "icon": "puppet"},
+	{"id": "temple", "lvl": 3, "name": "Храм", "cost": 460, "icon": "level"},
+	{"id": "fullonica", "lvl": 3, "name": "Фуллоника", "cost": 390, "icon": "tshirt"},
+	{"id": "deco_metal", "lvl": 3, "name": "Жаровни и знамёна", "cost": 220, "icon": "candle"},
+	{"id": "vault1", "lvl": 3, "name": "Новое хранилище денег", "cost": 370, "icon": "money", "desc": "Казна вмещает вдвое больше."},
+	{"id": "scribes2", "lvl": 3, "name": "Мастерская писцов", "cost": 330, "icon": "quill", "after": "scribes1",
 		"desc": "Скрипторий даёт 4 очка исследований в час."},
 
-	{"id": "patricians", "lvl": 4, "name": "Класс патрициев", "cost": 790, "icon": "toga",
+	{"id": "patricians", "lvl": 4, "name": "Класс патрициев", "cost": 750, "icon": "toga",
 		"desc": "Открывает домусы патрициев. Им нужно всё: еда, одежда, развлечения, услуги и товары."},
-	{"id": "balnea", "lvl": 4, "name": "Бани", "cost": 790, "icon": "bath"},
-	{"id": "lamps", "lvl": 4, "name": "Мастер светильников", "cost": 760, "icon": "candle"},
-	{"id": "library", "lvl": 4, "name": "Библиотека", "cost": 790, "icon": "bookshelf", "after": "school"},
-	{"id": "vineyard", "lvl": 4, "name": "Виноградник", "cost": 500, "icon": "grapes"},
-	{"id": "wineshop", "lvl": 4, "name": "Винная лавка", "cost": 700, "icon": "wine", "after": "vineyard"},
-	{"id": "odeon", "lvl": 4, "name": "Одеон", "cost": 1000, "icon": "harp"},
-	{"id": "taberna", "lvl": 4, "name": "Таверна", "cost": 940, "icon": "mug"},
-	{"id": "research1", "lvl": 4, "name": "Новые полки для свитков", "cost": 730, "icon": "scroll", "desc": "Очков исследований помещается вдвое больше."},
+	{"id": "balnea", "lvl": 4, "name": "Бани", "cost": 750, "icon": "bath"},
+	{"id": "lamps", "lvl": 4, "name": "Мастер светильников", "cost": 720, "icon": "candle"},
+	{"id": "library", "lvl": 4, "name": "Библиотека", "cost": 750, "icon": "bookshelf", "after": "school"},
+	{"id": "vineyard", "lvl": 4, "name": "Виноградник", "cost": 480, "icon": "grapes"},
+	{"id": "wineshop", "lvl": 4, "name": "Винная лавка", "cost": 660, "icon": "wine", "after": "vineyard"},
+	{"id": "odeon", "lvl": 4, "name": "Одеон", "cost": 950, "icon": "harp"},
+	{"id": "taberna", "lvl": 4, "name": "Таверна", "cost": 890, "icon": "mug"},
+	{"id": "research1", "lvl": 4, "name": "Новые полки для свитков", "cost": 690, "icon": "scroll", "desc": "Очков исследований помещается вдвое больше."},
 	{"id": "legion", "lvl": 4, "name": "Легион", "cost": 670, "icon": "legion",
 		"desc": "Открывает Казармы и окно «Легион»: отряд идёт походом против разбойников, зверей и чудовищ, добывает Славу и денарии. Дальние провинции — когда город станет «Большим городом»."},
 	{"id": "archery", "lvl": 4, "name": "Стрельбище", "cost": 490, "icon": "arrow", "after": "legion", "desc": "Лучники для Легиона: бьют издалека."},
