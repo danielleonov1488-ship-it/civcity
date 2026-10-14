@@ -1712,6 +1712,8 @@ func _process(dt: float) -> void:
 				(r["node"] as Citizen).anim.speed_scale = 0.0
 		for c in cats:
 			c["walk"] = 0.0
+			if c.has("anim"):
+				(c["anim"] as AnimationPlayer).speed_scale = 0.0
 		return
 	var sdt := dt * speed
 	for r in residents.duplicate():
@@ -2400,7 +2402,170 @@ func _drop() -> void:
 
 # ---------- кошки ----------
 
+## Кошка — модель Quaternius (Animal Pack Vol.2, CC0) со своими позами; нет файла (старый пакет моделей) — прежняя, из Kit.
+## Кости модели: Bone — таз, .001 — грудь, .002 — шея, .003 — голова, .004–.007 — хвост; передние лапы .014–.016 и
+## .017–.019 (плечо, предплечье, кисть), задние .008–.010 и .011–.013 (бедро, голень, стопа)
+const CAT_FILE := "res://assets/animals/Cat.fbx"
+const CAT_LEN := 0.5                   # длина кошки от кончика хвоста до носа
+const CAT_WALK := 0.42                 # шаг кошки (прежняя, вдвое крупнее, ходит 0.9)
+const CAT_STEP := 1.74                 # как быстро лапа уходит назад в «Walking» (ед. модели в секунду) — чтобы лапы не скользили
+## Окрасы: шерсть и грудка
+const CAT_FURS := [[Color("e0913f"), Color("f6dcb4")], [Color("7d7a76"), Color("d9d4cc")], [Color("2c2724"), Color("4a423c")],
+	[Color("f2ede4"), Color("ffffff")], [Color("a87447"), Color("efe0c8")], [Color("4a4440"), Color("f2ede4")]]
+## Состояние кошки → движение и его скорость
+const CAT_CLIP := {"walk": ["Walk", 1.0], "sit": ["Sit", 1.0], "sleep": ["Sleep", 0.3], "pet": ["Pet", 1.0]}
+
 static var _cat_parts := {}
+static var _cat_scene: PackedScene
+static var _cat_ok := -1               # -1 — ещё не проверяли, 1 — модель годится, 0 — кошки из Kit
+static var _cat_lib: AnimationLibrary
+static var _cat_size := 1.0            # длина модели в файле
+static var _cat_mats := {}
+
+
+## Модель кошки на месте и годится: скелет, «Idle» и «Walking». Заодно один раз собираются её движения
+static func _cat_model_ok() -> bool:
+	if _cat_ok >= 0:
+		return _cat_ok == 1
+	_cat_ok = 0
+	if not ResourceLoader.exists(CAT_FILE):
+		return false
+	_cat_scene = load(CAT_FILE) as PackedScene
+	if _cat_scene == null:
+		return false
+	var root := Node3D.new()
+	var m := _cat_scene.instantiate() as Node3D
+	root.add_child(m)
+	var aps := m.find_children("*", "AnimationPlayer", true, false)
+	var sks := m.find_children("*", "Skeleton3D", true, false)
+	if not aps.is_empty() and not sks.is_empty() and LegionFighter._find(aps[0], ["Idle"]) != "" \
+			and LegionFighter._find(aps[0], ["Walking", "Walk"]) != "":
+		var box := Artisau.aabb(m)
+		_cat_size = maxf(0.01, maxf(box.size.x, box.size.z))
+		_cat_lib = _cat_clips(aps[0], sks[0])
+		_cat_ok = 1
+	root.free()
+	return _cat_ok == 1
+
+
+## Движения кошки, общие на всех: «Idle» и «Walk» из файла (по кругу) и свои позы поверх «Idle» (дыхание, хвост):
+## «Sit» — сидит, «Pet» — сидит, подняв голову к человеку, хвост ходит, «Sleep» — спит клубком
+static func _cat_clips(ap: AnimationPlayer, sk: Skeleton3D) -> AnimationLibrary:
+	var lib := AnimationLibrary.new()
+	var idle := ap.get_animation(LegionFighter._find(ap, ["Idle"])).duplicate(true) as Animation
+	var walk := ap.get_animation(LegionFighter._find(ap, ["Walking", "Walk"])).duplicate(true) as Animation
+	idle.loop_mode = Animation.LOOP_LINEAR
+	walk.loop_mode = Animation.LOOP_LINEAR
+	lib.add_animation("Idle", idle)
+	lib.add_animation("Walk", walk)
+	var L := idle.length * 2.0
+	# сидит: таз ниже и откинут назад, передние лапы прямо, задние сложены, хвост лежит позади
+	var sit := {"Bone": Vector3(0, -0.52, 0), "Bone.002": Vector3(0, 0.2, 0), "Bone.003": Vector3(0, 0.3, 0),
+		"Bone.014": Vector3(0, 0.52, 0), "Bone.017": Vector3(0, 0.52, 0),
+		"Bone.008": Vector3(0, -1.14, 0), "Bone.011": Vector3(0, -1.14, 0), "Bone.009": Vector3(0, 2.43, 0), "Bone.012": Vector3(0, 2.43, 0),
+		"Bone.010": Vector3(0, -0.77, 0), "Bone.013": Vector3(0, -0.77, 0),
+		"Bone.004": Vector3(0, -1.68, 0), "Bone.005": Vector3(0, 0.53, 0), "Bone.006": Vector3(0, 0.36, 0), "Bone.007": Vector3(0, -0.27, 0)}
+	lib.add_animation("Sit", _cat_pose(idle, 2, sk, sit, Vector3(0, 0, -1.29)))
+	# гладят: голова поднята к человеку, хвост ходит из стороны в сторону
+	var pet := sit.duplicate()
+	pet["Bone.003"] = Vector3(0, 0.0, 0)
+	pet["Bone.006"] = func(t: float) -> Vector3: return Vector3(0, 0.36, sin(TAU * 4.0 * t / L) * 0.4)
+	pet["Bone.007"] = func(t: float) -> Vector3: return Vector3(0, -0.27, sin(TAU * 4.0 * t / L - 0.8) * 0.5)
+	lib.add_animation("Pet", _cat_pose(idle, 2, sk, pet, Vector3(0, 0, -1.29)))
+	# спит клубком на животе: передние лапы вперёд по земле, задние поджаты, голова лежит, повёрнута к боку,
+	# хвост лёг на землю и обвил бок
+	var sleep := {"Bone.001": Vector3(0, 0, -0.2), "Bone.002": Vector3(0, 0.25, -0.9), "Bone.003": Vector3(0, 0.3, -0.4),
+		"Bone.014": Vector3(0, 1.24, 0), "Bone.017": Vector3(0, 1.24, 0), "Bone.015": Vector3(0, -2.85, 0), "Bone.018": Vector3(0, -2.85, 0),
+		"Bone.016": Vector3(0, 1.7, 0), "Bone.019": Vector3(0, 1.7, 0),
+		"Bone.008": Vector3(0, -1.41, 0), "Bone.011": Vector3(0, -1.41, 0), "Bone.009": Vector3(0, 2.41, 0), "Bone.012": Vector3(0, 2.41, 0),
+		"Bone.010": Vector3(0, -1.0, 0), "Bone.013": Vector3(0, -1.0, 0),
+		"Bone.004": Vector3(0, -2.55, 0), "Bone.005": Vector3(0, 0.27, 0), "Bone.006": Vector3(0, 0.8, 1.3), "Bone.007": Vector3(0, -0.25, 0.9)}
+	lib.add_animation("Sleep", _cat_pose(idle, 2, sk, sleep, Vector3(0, 0, -1.15)))
+	return lib
+
+
+## Поза поверх src (повторяется reps раз): pose — кость → поворот в осях скелета (x — вперёд, y — вбок, z — вверх):
+## Vector3 углов — сначала кивок y (носом вниз), потом крен x, потом поворот z (влево) — или Callable(t) → такие углы.
+## Кость поворачивается вместе с родителем, а потом ещё на свой угол. lift — сдвиг таза (в единицах модели:
+## скелет в файле в 100 раз мельче)
+static func _cat_pose(src: Animation, reps: int, sk: Skeleton3D, pose: Dictionary, lift: Vector3) -> Animation:
+	var a := Animation.new()
+	var L := src.length * reps
+	a.length = L
+	a.loop_mode = Animation.LOOP_LINEAR
+	var n := int(L * 15.0)
+	var node := ""
+	var done := {}
+	for t in src.get_track_count():
+		var path := src.track_get_path(t)
+		node = String(path).get_slice(":", 0)
+		var bone := String(path).get_slice(":", 1)
+		var ty := src.track_get_type(t)
+		var nt := a.add_track(ty)
+		a.track_set_path(nt, path)
+		a.track_set_interpolation_type(nt, src.track_get_interpolation_type(t))
+		var bi := sk.find_bone(bone)
+		if ty == Animation.TYPE_ROTATION_3D and pose.has(bone) and bi >= 0:
+			done[bone] = true
+			for i in n + 1:
+				var tt := L * i / n
+				a.rotation_track_insert_key(nt, tt, _cat_off(sk, bi, pose, tt) * src.rotation_track_interpolate(t, fmod(tt, src.length)))
+			continue
+		var up := lift * 0.01 if ty == Animation.TYPE_POSITION_3D and bone == "Bone" else Vector3.ZERO
+		for r in reps:
+			for k in src.track_get_key_count(t):
+				var v = src.track_get_key_value(t, k)
+				a.track_insert_key(nt, src.track_get_key_time(t, k) + r * src.length, v + up if ty == Animation.TYPE_POSITION_3D else v)
+	# кости без своей дорожки в src — от покоя
+	for bone: String in pose:
+		var bi := sk.find_bone(bone)
+		if done.has(bone) or bi < 0:
+			continue
+		var nt := a.add_track(Animation.TYPE_ROTATION_3D)
+		a.track_set_path(nt, NodePath(node + ":" + bone))
+		for i in n + 1:
+			var tt := L * i / n
+			a.rotation_track_insert_key(nt, tt, _cat_off(sk, bi, pose, tt) * sk.get_bone_rest(bi).basis.get_rotation_quaternion())
+	return a
+
+
+## Свой поворот кости из позы (в осях скелета)
+static func _cat_rot(spec: Variant, t: float) -> Quaternion:
+	var e: Vector3 = (spec as Callable).call(t) if spec is Callable else spec
+	return Basis.from_euler(e, EULER_ORDER_ZXY).get_rotation_quaternion()
+
+
+## Поворот кости в позе вместе со всеми родителями (в осях скелета)
+static func _cat_turn(sk: Skeleton3D, bi: int, pose: Dictionary, t: float) -> Quaternion:
+	var q := Quaternion.IDENTITY
+	while bi >= 0:
+		var nm := sk.get_bone_name(bi)
+		if pose.has(nm):
+			q = q * _cat_rot(pose[nm], t)
+		bi = sk.get_bone_parent(bi)
+	return q
+
+
+## Свой поворот кости → добавка к её повороту в движении (через родителя — в покое и уже повёрнутого позой)
+static func _cat_off(sk: Skeleton3D, bi: int, pose: Dictionary, t: float) -> Quaternion:
+	var r := _cat_rot(pose[sk.get_bone_name(bi)], t)
+	var p := sk.get_bone_parent(bi)
+	if p < 0:
+		return r
+	var g := _cat_turn(sk, p, pose, t) * sk.get_bone_global_rest(p).basis.get_rotation_quaternion()
+	return g.inverse() * r * g
+
+
+## Общие материалы кошек — по цвету
+static func _cat_mat(col: Color) -> StandardMaterial3D:
+	var k := col.to_html()
+	if not _cat_mats.has(k):
+		var m := StandardMaterial3D.new()
+		m.albedo_color = col
+		m.roughness = 0.9
+		m.metallic_specular = 0.25
+		_cat_mats[k] = m
+	return _cat_mats[k]
 
 
 static func _cat_mesh(fur: Color, belly: Color) -> Array:
@@ -2428,10 +2593,48 @@ static func _cat_mesh(fur: Color, belly: Color) -> Array:
 	return out
 
 
+## Новая кошка у дома (rng — в том же порядке, что у прежней: витрина и меню расставляются как раньше)
 func _make_cat(home: Dictionary) -> Dictionary:
-	var furs := [[Color("e0913f"), Color("f6dcb4")], [Color("7d7a76"), Color("d9d4cc")], [Color("2c2724"), Color("4a423c")],
-		[Color("f2ede4"), Color("ffffff")], [Color("a87447"), Color("efe0c8")], [Color("4a4440"), Color("f2ede4")]]
-	var f: Array = furs[rng.randi() % furs.size()]
+	if not _cat_model_ok():
+		return _make_cat_kit(home)
+	var f: Array = CAT_FURS[rng.randi() % CAT_FURS.size()]
+	var root := Node3D.new()
+	var m := _cat_scene.instantiate() as Node3D
+	m.rotation.y = -PI / 2                 # в файле кошка смотрит вдоль +x, у нас — вдоль +z
+	var sc := CAT_LEN / _cat_size * rng.randf_range(0.88, 1.05)
+	m.scale = Vector3.ONE * sc
+	root.add_child(m)
+	# шерсть, грудка и лапки, розовые уши и нос
+	for mi: MeshInstance3D in m.find_children("*", "MeshInstance3D", true, false):
+		for s in mi.mesh.get_surface_count():
+			var m0 := mi.mesh.surface_get_material(s)
+			var mn := m0.resource_name if m0 else ""
+			var col: Color = f[1] if mn == "White" else (Color("e3a3a3") if mn == "Pink" else f[0])
+			mi.set_surface_override_material(s, _cat_mat(col))
+	var ap: AnimationPlayer = m.find_children("*", "AnimationPlayer", true, false)[0]
+	ap.add_animation_library("cat", _cat_lib)
+	add_child(root)
+	var p: Vector2 = _near_free(city.door_point(home))
+	if p == Vector2.INF:
+		p = city.door_point(home)
+	var snd := AudioStreamPlayer3D.new()
+	snd.max_distance = 30.0
+	snd.unit_size = 4.0
+	snd.volume_db = -14.0
+	snd.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
+	root.add_child(snd)
+	var cat := {"n": root, "anim": ap, "clip": "", "fur": f[0], "k": CAT_WALK / (CAT_STEP * sc), "p": p, "path": PackedVector2Array(), "i": 0,
+		"state": "sit", "t": rng.randf_range(2, 6), "home": home["id"], "yaw": rng.randf() * TAU, "walk": 0.0, "ph": rng.randf() * TAU,
+		"snd": snd, "meow_t": rng.randf_range(10, 60)}
+	_cat_place(cat)
+	_cat_anim(cat)
+	ap.seek(float(cat["ph"]) / TAU * ap.current_animation_length, true)     # кошки дышат и машут хвостом не в лад
+	return cat
+
+
+## Прежняя кошка, собранная из Kit (если модели нет)
+func _make_cat_kit(home: Dictionary) -> Dictionary:
+	var f: Array = CAT_FURS[rng.randi() % CAT_FURS.size()]
 	var meshes := _cat_mesh(f[0], f[1])
 	var mat := Kit.material(0.9)
 	var root := Node3D.new()
@@ -2460,7 +2663,7 @@ func _make_cat(home: Dictionary) -> Dictionary:
 	snd.volume_db = -14.0
 	snd.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	root.add_child(snd)
-	var cat := {"n": root, "head": head, "tail": tail, "legs": legs, "p": p, "path": PackedVector2Array(), "i": 0, "state": "sit", "t": rng.randf_range(2, 6),
+	var cat := {"n": root, "head": head, "tail": tail, "legs": legs, "fur": f[0], "p": p, "path": PackedVector2Array(), "i": 0, "state": "sit", "t": rng.randf_range(2, 6),
 		"home": home["id"], "yaw": rng.randf() * TAU, "walk": 0.0, "ph": rng.randf() * TAU, "snd": snd, "meow_t": rng.randf_range(10, 60)}
 	_cat_place(cat)
 	return cat
@@ -2473,6 +2676,37 @@ func _cat_place(c: Dictionary) -> void:
 	n.rotation.y = float(c["yaw"])
 
 
+## Модель кошки: движение по состоянию (сменилось — плавный переход), скорость — как у игры
+func _cat_anim(c: Dictionary) -> void:
+	var ap: AnimationPlayer = c["anim"]
+	var cl: Array = CAT_CLIP.get(c["state"], CAT_CLIP["sit"])
+	if c["clip"] != cl[0]:
+		ap.play("cat/" + String(cl[0]), 0.0 if c["clip"] == "" else 0.35)
+		c["clip"] = cl[0]
+	ap.speed_scale = game.speed * (float(c["k"]) if cl[0] == "Walk" else float(cl[1]))
+
+
+## Прежняя кошка: лапы, хвост, голова — кодом
+func _cat_kit_anim(c: Dictionary, dt: float, t: float) -> void:
+	var n: Node3D = c["n"]
+	var w: float = c["walk"]
+	var ph: float = c["ph"] + t * 9.0
+	var legs: Array = c["legs"]
+	for k in 4:
+		(legs[k] as Node3D).rotation.x = sin(ph + (PI if k % 3 == 0 else 0.0)) * 0.6 * w
+	# гладят — хвост ходит быстрее и шире, голова поднята к человеку
+	var petted: bool = c["state"] == "pet"
+	(c["tail"] as Node3D).rotation.y = sin(t * (5.5 if petted else 2.2) + float(c["ph"])) * (0.6 if petted else 0.35)
+	(c["head"] as Node3D).rotation.x = lerpf((c["head"] as Node3D).rotation.x, -0.35 if petted else 0.0, minf(1.0, dt * 3.0))
+	var body_y := 0.0
+	if c["state"] == "sit" or petted:
+		body_y = -0.04
+	elif c["state"] == "sleep":
+		body_y = -0.09
+	n.get_child(0).position.y = lerpf(n.get_child(0).position.y, body_y, minf(1.0, dt * 4.0))
+	(c["head"] as Node3D).position.y = 0.28 + body_y * 1.6
+
+
 func _cats_step(dt: float) -> void:
 	var want := clampi(int(city.stats["pop"]) / 14, 0, 12)
 	if cats.size() < want and rng.randf() < 0.02:
@@ -2482,7 +2716,6 @@ func _cats_step(dt: float) -> void:
 	var night: bool = game.hour >= 21.0 or game.hour < 6.0
 	var t := AnimClock.now()
 	for c in cats:
-		var n: Node3D = c["n"]
 		c["t"] = float(c["t"]) - dt
 		match c["state"]:
 			"walk":
@@ -2494,7 +2727,7 @@ func _cats_step(dt: float) -> void:
 				else:
 					var to := path[i] - (c["p"] as Vector2)
 					var d := to.length()
-					var mv := 0.9 * dt
+					var mv := (CAT_WALK if c.has("anim") else 0.9) * dt
 					if d <= mv:
 						c["p"] = path[i]
 						c["i"] = i + 1
@@ -2517,23 +2750,10 @@ func _cats_step(dt: float) -> void:
 					else:
 						c["t"] = rng.randf_range(3, 8)
 		_cat_place(c)
-		# лапы, хвост, голова
-		var w: float = c["walk"]
-		var ph: float = c["ph"] + t * 9.0
-		var legs: Array = c["legs"]
-		for k in 4:
-			(legs[k] as Node3D).rotation.x = sin(ph + (PI if k % 3 == 0 else 0.0)) * 0.6 * w
-		# гладят — хвост ходит быстрее и шире, голова поднята к человеку
-		var petted: bool = c["state"] == "pet"
-		(c["tail"] as Node3D).rotation.y = sin(t * (5.5 if petted else 2.2) + float(c["ph"])) * (0.6 if petted else 0.35)
-		(c["head"] as Node3D).rotation.x = lerpf((c["head"] as Node3D).rotation.x, -0.35 if petted else 0.0, minf(1.0, dt * 3.0))
-		var body_y := 0.0
-		if c["state"] == "sit" or petted:
-			body_y = -0.04
-		elif c["state"] == "sleep":
-			body_y = -0.09
-		n.get_child(0).position.y = lerpf(n.get_child(0).position.y, body_y, minf(1.0, dt * 4.0))
-		(c["head"] as Node3D).position.y = 0.28 + body_y * 1.6
+		if c.has("anim"):
+			_cat_anim(c)
+		else:
+			_cat_kit_anim(c, dt, t)
 		# изредка мяукает, если камера рядом
 		c["meow_t"] = float(c["meow_t"]) - dt
 		if float(c["meow_t"]) <= 0.0:

@@ -43,7 +43,7 @@ const CLIPS := {
 		"v": {"dist": 1.1, "fov": 30.0, "dur": 7.0}},
 	# ребёнок подходит погладить кошку на форуме
 	"cat": {"dur": 8.0, "hour": [16.6, 16.65], "follow": "cat", "spot": Vector2(157.0, 155.5), "cam": 112.0, "ease": "inout", "fov": 26.0,
-		"keys": [[0.0, Vector3(0, 0.5, 0), -12.0, 13.0, 4.6], [8.0, Vector3(0, 0.45, 0), 10.0, 10.0, 4.0]],
+		"keys": [[0.0, Vector3(0, 0.4, 0), -12.0, 13.0, 4.0], [8.0, Vector3(0, 0.36, 0), 10.0, 10.0, 3.5]],
 		"v": {"dist": 1.15, "fov": 28.0}},
 	# улица вилл: сады, пальмы, портики
 	"villa": {"dur": 9.0, "hour": [16.5, 16.6],
@@ -430,11 +430,9 @@ func _setup_cat() -> void:
 	for want_fur in [Color("e0913f"), Color("f2ede4"), Color("a87447")]:
 		var found := false
 		for c: Dictionary in ppl.cats:
-			var mi := (c["n"] as Node3D).get_child(0) as MeshInstance3D
-			for pk: String in People._cat_parts:
-				if pk.begins_with(want_fur.to_html()) and (People._cat_parts[pk] as Array)[0] == mi.mesh:
-					cat = c
-					found = true
+			if c.get("fur") == want_fur:
+				cat = c
+				found = true
 		if found:
 			break
 	if not petter.is_empty():
