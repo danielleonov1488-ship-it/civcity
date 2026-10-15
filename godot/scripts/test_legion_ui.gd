@@ -284,6 +284,15 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	ui.sel = {}
 	c.changed.emit()
 	await frames(6)
+	# другие советы города (готовый город стал «Посёлком»: «новый уровень» и т.п.) не перебиваются:
+	# «Легион собран!» ждёт, пока советник свободен (игрок нажал «Понятно» — совет при следующем обновлении города)
+	for i in 6:
+		if not hud.advisor_panel.visible or hud.adv_title.text == "Легион собран!":
+			break
+		check("«Легион собран!» не перебил совет «%s» и не потрачен" % hud.adv_title.text, not lg.flags.has("advised"))
+		hud.advisor_panel.visible = false
+		c.changed.emit()
+		await frames(6)
 	# шаг 1: советник с «Пропустить обучение», стрелка на раздел «Легион» нижней полосы
 	check("обучение, шаг 1 — Казармы", lg.tut_step() == "barracks" and ui.tut_active())
 	check("советник шага 1 с «Пропустить обучение»", hud.advisor_panel.visible and hud.adv_skip.visible and hud.adv_title.text == "Легион собран!")
@@ -337,13 +346,39 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	lg.upg = {}
 	lg.levels["legionary"] = 1
 	lg.progress = 0
+	# «Легион» изучили в окне исследований: пока оно открыто, совета нет (Esc закрыл бы его вместе с окном);
+	# окно закрыли через Esc (close_panels) — совет «Легион собран!» появляется через кадр и не гаснет
+	hud.advisor_panel.visible = false
+	hud.research_panel.visible = true
 	c.changed.emit()
 	await frames(6)
-	check("снова шаг 1 — советник", hud.advisor_panel.visible and hud.adv_skip.visible)
+	check("при открытом окне исследований совета нет и он не потрачен", not hud.advisor_panel.visible and not lg.flags.has("advised"))
+	hud.close_panels()
+	await frames(6)
+	check("окно исследований закрыто (Esc) — снова шаг 1, советник", not hud.research_panel.visible and hud.advisor_panel.visible and hud.adv_skip.visible
+		and hud.adv_title.text == "Легион собран!" and lg.flags.has("advised"))
+	await shot("tut1_after_research")
 	await click(center_of(hud.adv_skip))
 	await frames(6)
-	check("«Пропустить обучение»: обучение и учебный бой позади", lg.tut_step() == "" and lg.flags.has("tut_oil") and not hud.advisor_panel.visible
-		and hud.pointer_target != hud.cats["military"] and not lg.make_battle(lg.stage_info(0, 0, 0), 1).has("tutorial"))
+	check("«Пропустить обучение»: стрелок и полосы нет, учебный бой (масло) один раз остаётся", lg.tut_step() == "" and not lg.flags.has("tut_oil")
+		and not hud.advisor_panel.visible and hud.pointer_target != hud.cats["military"]
+		and String(lg.make_battle(lg.stage_info(0, 0, 0), 1).get("tutorial", "")) == "oil")
+	# старое сохранение: лучник в отряде до первого боя — карточка честно предупреждает (лес посчитан на трёх легионерах)
+	c.place("barracks", Vector2(166, 205), 0.0, 0, -1, true)
+	var rb: Dictionary = c.place("range", Vector2(186, 205), 0.0, 0, -1, true)
+	lg.squad = ["legionary", "archer", "legionary"]
+	ui.view_r = -1
+	ui.sel = {}
+	ui.open("campaign")
+	await frames(8)
+	var tx := _texts(ui.content)
+	check("лучник в лесном отряде: «Лучник в лесу без прикрытия», учебный бой — «для трёх легионеров»", tx.contains("Лучник в лесу без прикрытия")
+		and tx.contains("для трёх легионеров") and not tx.contains("лучники быстро"))
+	await shot("tut_archer_warn")
+	lg.use_auto_squad()
+	check("«Лучший состав» в лесу — три легионера", lg.squad == ["legionary", "legionary", "legionary"])
+	ui.close()
+	c.remove(rb, false)
 	game.mode = mode0
 	hud._update_pointer()
 

@@ -181,8 +181,11 @@ func _update_button() -> void:
 	btn_wrap.visible = on
 	if on:
 		hud._set_on(btn, not bool(lg.flags.get("seen", false)) or visible)
-		# обучение, шаг 1: один раз советник рассказывает, с чего начать (стрелка — на Казармы)
-		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"] and lg.tut_step() == "barracks":
+		# обучение, шаг 1: один раз советник рассказывает, с чего начать (стрелка — на Казармы). Только когда окно
+		# исследований закрыто и советник свободен: Esc, правая кнопка и щелчок по карте закрывают окно вместе
+		# с советником — совет погас бы, не показавшись (окно закрыли — hud зовёт эту проверку через кадр)
+		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"] and lg.tut_step() == "barracks" \
+				and not hud.research_panel.visible and not hud.advisor_panel.visible:
 			lg.flags["advised"] = true
 			hud.advisor("Легион собран!", "Сначала поставьте Казармы (раздел «Легион» на нижней полосе) — они дают легионеров. Потом откройте медальон «Легион» сверху справа: там походы, войска и чудеса света.\n\nОтряд дерётся сам; ваше — состав и умения в нужный миг. Победы приносят денарии и Славу.",
 				func(): lg.tut_skip())
@@ -369,7 +372,7 @@ func _make_window() -> void:
 	tut_act.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	th.add_child(tut_act)
 	var sk := _btn("Пропустить обучение", 0, 14, null, "", func(): lg.tut_skip())
-	sk.tooltip_text = "Без подсказок и учебного боя"
+	sk.tooltip_text = "Без подсказок; в первом бою один раз покажем масло"
 	sk.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	th.add_child(sk)
 	tut_bar.visible = false
@@ -1303,6 +1306,9 @@ func _stage_card(st: Dictionary) -> Control:
 	if why != "":
 		var wl := _wl(why, CARD_W - 24, 14, C_BAD, true, true)
 		v.add_child(wl)
+	elif lg.tutorial_battle(st) and lg.archer_exposed(st):
+		# старое сохранение: лучник в отряде до первого боя — учебный бой посчитан на трёх легионеров
+		v.add_child(_wl("Учебный бой — для трёх легионеров: лучника в лесу некому прикрыть. «Состав» → «Лучший состав».", CARD_W - 24, 13, C_BAD, true, true))
 	elif lg.tutorial_battle(st):
 		v.add_child(_wl("Учебный бой: в нужный миг подскажем, что нажать.", CARD_W - 24, 13, C_GOOD, true, true))
 	else:
@@ -1627,7 +1633,7 @@ func _squad_panel(which: String) -> Control:
 		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		h.add_child(sp)
 		var b := _btn("Лучший состав", 0, 17, _ic39("battle"), "", func(): lg.use_auto_squad())
-		b.tooltip_text = "Собрать отряд самому: впереди легионеры и копейщики, за ними лучники, в тылу машины"
+		b.tooltip_text = "Собрать отряд самому: впереди легионеры и копейщики, за ними лучники, в тылу машины. Пока мест три — три легионера"
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		h.add_child(b)
 	return p

@@ -150,8 +150,9 @@ static var WAVE_MAX := 6
 ## (scripts/test_legion.gd mode=calibrate): отряд обычного игрока (состав — auto_squad) на уровне target_level(r, s)
 ## с умениями побеждает в ≥90% боёв, а без умений на уровень выше — в ≥40% (умения стоят примерно уровня,
 ## но без них никто не упирается в стену). Лес (этап 3, 15.10): три легионера (лучники — с «Городка»), с умениями ≥90%,
-## без умений на том же уровне — от 35% (mode=calibrate regions=0 np_off=0 need_np=0.35 noarcher=1); первый бой —
-## учебный: с маслом в миг остановки 100%, без масла ~1% (mode=tut). Пусто — без подгонки
+## без умений на том же уровне — от 35% (mode=calibrate regions=0 np_off=0 need_np=0.35; пока мест три — без лучника,
+## как «Лучший состав»); первый бой — учебный: с маслом в миг остановки 100%, без масла ~1%, «Авто» (бережёт масло
+## для кучи) 100% (mode=tut). Пусто — без подгонки
 static var TUNE: Array = [
 	[1.8, 4.02, 4.02, 3.04, 2.24, 2.81, 2.39, 2.02, 1.48, 1.54],   # Лес разбойников (три легионера; бой 1 — учебный, mode=tut)
 	[2.98, 2.82, 4.29, 1.34, 2.04, 1.38, 1.31, 0.91, 0.92, 1.27],   # Дикие холмы
@@ -420,7 +421,8 @@ func set_defense_slot(i: int, type: String) -> void:
 
 
 ## Хороший состав из доступных родов войск: впереди держат строй легионеры и копейщики, за ними лучники,
-## в тылу машины (кнопка «Собрать отряд» в окне; так же собирают отряд проверки баланса)
+## в тылу машины (кнопка «Лучший состав» в окне; так же собирают отряд проверки баланса).
+## Пока мест три (лес до первого босса) — три легионера: лучника там некому прикрыть (archer_exposed)
 func auto_squad() -> Array:
 	var n := slots()
 	var have := []
@@ -435,6 +437,8 @@ func auto_squad() -> Array:
 	for t in plan:
 		if out.size() >= n:
 			break
+		if t == "archer" and n <= SQUAD_BASE and "legionary" in have:
+			continue
 		if t in have:
 			out.append(t)
 	while out.size() < n:
@@ -880,13 +884,28 @@ func odds(st: Dictionary) -> Array:
 		lv += float(u["level"])
 	lv /= sq.size()
 	var T := float(recommended_level(st))
+	# лучник среди трёх — как уровень долой (волки бегут прямо к нему, строй тоньше): на уровень выше он
+	# уже почти не мешает (test_legion mode=target regions=0 bow=1 off=1)
+	var bow := archer_exposed(st)
+	if bow:
+		T += 1.0
 	if lv >= T + 0.5:
 		return ["good", "Шансы хорошие"]
-	if lv >= T - 0.5:
-		return ["mid", "Победа — с умениями"]
-	if lv >= T - 1.5:
-		return ["hard", "Будет очень тяжело"]
-	return ["bad", "Враг сильнее"]
+	var v := "mid" if lv >= T - 0.5 else ("hard" if lv >= T - 1.5 else "bad")
+	if bow:
+		return [v, "Лучник в лесу без прикрытия — лучше три легионера"]
+	return [v, {"mid": "Победа — с умениями", "hard": "Будет очень тяжело", "bad": "Враг сильнее"}[v]]
+
+
+## В лесу, пока в отряде три места, стоит лучник: баланс леса посчитан на трёх легионерах — с лучником
+## несколько боёв почти не выиграть на нужном уровне (test_legion mode=target regions=0 bow=1)
+func archer_exposed(st: Dictionary) -> bool:
+	if int(st.get("r", -1)) != 0 or slots() > SQUAD_BASE:
+		return false
+	for u: Dictionary in squad_stats():
+		if String(u["key"]) == "archer":
+			return true
+	return false
 
 
 ## Рекомендованный уровень бойцов для боя (подсказка в окне перед боем)
@@ -936,7 +955,8 @@ static func counter_tips(st: Dictionary) -> String:
 	var advice := []
 	if tags.has("beast") or tags.has("giant"):
 		advice.append("копейщики сильнее против зверей и великанов")
-	if tags.has("ranged") or tags.has("swift"):
+	# в лесу первого круга мест три — лучника там некому прикрыть (archer_exposed): совета про лучников нет
+	if (tags.has("ranged") or tags.has("swift")) and not (int(st.get("r", -1)) == 0 and int(st.get("cycle", 0)) == 0):
 		advice.append("лучники быстро снимают стрелков и волков")
 	if tags.has("armored") or tags.has("giant"):
 		advice.append("баллиста пробивает броню")
@@ -1038,10 +1058,11 @@ static func tut_num(step: String) -> int:
 	return TUT_STEPS.find(step) + 1
 
 
-## «Пропустить обучение»: и стрелки, и учебный бой — больше не показываются
+## «Пропустить обучение»: стрелки, полоса шагов и советы больше не показываются. Учебный бой остаётся (один раз
+## замрёт на масле): первый бой посчитан на масло в нужный миг, без него его почти не выиграть.
+## flags.tut_oil ставит только нажатие масла в учебном бою (и загрузка сохранения, где первый бой уже позади)
 func tut_skip() -> void:
 	flags["tut"] = "done"
-	flags["tut_oil"] = true
 	changed.emit()
 
 

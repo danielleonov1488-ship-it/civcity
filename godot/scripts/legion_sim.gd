@@ -551,7 +551,12 @@ func _auto_perks(side: String) -> void:
 				if Vector2(q.x - o.x, q.z - o.z).length() < 2.0:
 					n += 1
 			bn = maxi(bn, n)
-		if bn >= 3 or boss or foes.size() == 1:
+		# походы: впереди волна-«куча» (setup.packs) — масло бережём для неё, не тратим на последнего врага волны
+		# (бои с городами packs не знают — там как раньше, как на сервере)
+		var hold := false
+		for pk in (setup.get("packs", []) as Array):
+			hold = hold or int(pk) > wave_idx
+		if bn >= 3 or boss or (foes.size() == 1 and not hold):
 			use_perk("oil", side)
 
 

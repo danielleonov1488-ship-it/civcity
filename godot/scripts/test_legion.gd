@@ -11,7 +11,8 @@ extends SceneTree
 ## mode=tut       — учебный первый бой (0-0-0, шайка кучей): три легионера lvl (1), масло там, где бой замирает,
 ##                  без масла и с «Авто»; печатает доли побед и сколько врагов накрыло масло
 ## Состав и умения — как у игрока, дошедшего до боя (места и рода войск открываются боссами); умения жмёт сам бой
-## (auto) — как внимательный игрок. noarcher=1 — без лучников (до исследования «Стрельбище»).
+## (auto) — как внимательный игрок. noarcher=1 — без лучников (до исследования «Стрельбище»); пока мест три
+## (лес) — и так три легионера, как собирает «Лучший состав» (bow=1 — с лучником; mode=tut archer=1 — то же в учебном бою).
 
 const WIN_NEED := 0.75
 ## Обычный уровень бойцов игрока, который подходит к провинции (с учётом предела города: Посёлок → 3, Городок → 4,
@@ -100,10 +101,11 @@ func _init() -> void:
 			_api()
 		"tut":
 			var lv := int(args.get("lvl", "1"))
-			for how in ["freeze", "freeze_auto", "none", "auto"]:
-				var tr := _tut_rate(how, seeds, lv)
-				print("TUT %-11s ур.%d: побед %d%%, масло накрыло в среднем %.1f, здоровья осталось %d%%, время %.0f с" % [how, lv,
-					roundi(float(tr["win"]) * 100), float(tr["hit"]), roundi(float(tr["hp"]) * 100), float(tr["time"])])
+			var arch: bool = args.get("archer", "0") == "1"
+			for how in ["freeze", "freeze_early", "freeze_auto", "early", "none", "auto"]:
+				var tr := _tut_rate(how, seeds, lv, arch)
+				print("TUT %-12s ур.%d%s: побед %d%%, масло накрыло в среднем %.1f, здоровья осталось %d%%, время %.0f с" % [how, lv,
+					" с лучником" if arch else "", roundi(float(tr["win"]) * 100), float(tr["hit"]), roundi(float(tr["hp"]) * 100), float(tr["time"])])
 		"one":
 			var p: PackedStringArray = String(args.get("stage", "0-0-0")).split("-")
 			var st := Legion.stage(int(p[0]), int(p[1]), int(p[2]))
@@ -165,6 +167,9 @@ func _player(st: Dictionary, lvl: int, with_perks: bool) -> Dictionary:
 	for t in plan:
 		if sq.size() >= slots:
 			break
+		# как Legion.auto_squad: пока мест три — без лучника (bow=1 — с лучником, как мог поставить сам игрок)
+		if t == "archer" and slots <= Legion.SQUAD_BASE and args.get("bow", "0") != "1":
+			continue
 		if t in have:
 			sq.append(Legion.unit_stats(t, lvl))
 	var perks := {}
@@ -220,9 +225,12 @@ func _rate(st: Dictionary, lvl: int, seeds: int, with_perks: bool) -> Dictionary
 
 
 ## Учебный бой 0-0-0 (как в игре: шайка кучей, setup.packs): три легионера уровня lvl с маслом 1 ур.
+## (arch — легионер, лучник, легионер: старое сохранение со Стрельбищем).
 ## how: freeze — масло ровно тогда, когда вторая волна вышла на поле (там 3D-бой замирает), потом умения никто не жмёт;
-## freeze_auto — то же, потом «Авто»; none — без масла; auto — «Авто» с начала
-func _tut_rate(how: String, seeds: int, lvl: int) -> Dictionary:
+## freeze_early — масло сразу, как засветилось (~7 с, первая волна), потом всё равно замирание (оно заново кипятит котёл);
+## freeze_auto — замирание, потом «Авто»; early — без замирания: жмёт масло всякий раз, как засветится;
+## none — без масла; auto — «Авто» с начала (повтор пройденного боя)
+func _tut_rate(how: String, seeds: int, lvl: int, arch := false) -> Dictionary:
 	var st := Legion.stage(0, 0, 0)
 	var waves := []
 	for w: Array in st["waves"]:
@@ -231,8 +239,8 @@ func _tut_rate(how: String, seeds: int, lvl: int) -> Dictionary:
 			ws.append(Legion.foe_stats(st, k))
 		waves.append(ws)
 	var sq := []
-	for i in 3:
-		sq.append(Legion.unit_stats("legionary", lvl))
+	for t in (["legionary", "archer", "legionary"] if arch else ["legionary", "legionary", "legionary"]):
+		sq.append(Legion.unit_stats(t, lvl))
 	var win := 0
 	var hit := 0
 	var hp := 0.0
@@ -242,9 +250,17 @@ func _tut_rate(how: String, seeds: int, lvl: int) -> Dictionary:
 			"seed": 1000 + i * 7919, "packs": st["packs"]})
 		sim.set_auto(how == "auto")
 		var pressed := false
+		var early := false
 		while sim.result.is_empty():
 			sim.step(LegionSim.DT)
 			sim.events.clear()
+			if (how == "early" or (how == "freeze_early" and not early)) and float(sim.perks["ally"]["oil"]["ready"]) <= 0.0:
+				sim.press("oil")
+				early = true
+				for e: Dictionary in sim.events:
+					if String(e["type"]) == "hit" and e.get("from") == null:
+						hit += 1
+				sim.events.clear()
 			if how.begins_with("freeze") and not pressed and sim.wave_idx >= 1:
 				var n := 0
 				var all_in := true
@@ -317,6 +333,19 @@ func _api() -> void:
 	_check(L.available("legionary") and not L.available("archer"), "легионеры доступны с Казармами, лучники — нет: " + L.unit_lock_text("archer"))
 	var chk := city.check_place("barracks", p + Vector2(30, 0), 0.0)
 	_check(String(chk["err"]) == "Такая постройка в городе уже есть", "вторые Казармы нельзя: " + String(chk["err"]))
+	# лес, три места: «Лучший состав» — три легионера и при Стрельбище (баланс леса посчитан на них);
+	# лучник в отряде — честное предупреждение в шансах вместо «Победа — с умениями»; совета про лучников в лесу нет
+	var rng_b := city.place("range", p + Vector2(0, 26), 0.0, 0, -1, true)
+	var sq0 := L.auto_squad()
+	L.squad = ["legionary", "archer", "legionary"]
+	var od0 := L.odds(L.stage_info(0, 0, 0))
+	var bow0 := L.archer_exposed(L.stage_info(0, 0, 0))
+	L.squad = sq0
+	_check(L.available("archer") and sq0 == ["legionary", "legionary", "legionary"] and bow0 and String(od0[0]) == "hard" and String(od0[1]).contains("Лучник")
+		and not L.archer_exposed(L.stage_info(0, 0, 0)) and L.odds(L.stage_info(0, 0, 0))[1] == "Победа — с умениями"
+		and not Legion.counter_tips(Legion.stage(0, 0, 0)).contains("лучники") and Legion.counter_tips(Legion.stage(1, 0, 0)).contains("лучники"),
+		"лес на три места: «Лучший состав» %s и со Стрельбищем; с лучником — «%s»; совета про лучников в лесу нет" % [str(sq0), String(od0[1])])
+	city.remove(rng_b, false)
 	# первый бой похода — учебный: шайка кучей во второй волне, бой замирает на масле (3D-бой)
 	var st := L.stage_info(0, 0, 0)
 	_check(bool(st["open"]) and bool(st["first"]) and L.can_fight(st) == "", "первый бой открыт, можно в бой")
@@ -394,7 +423,8 @@ func _api() -> void:
 	L4.from_dict({"perks": {"oil": 0}, "progress": 0, "flags": {"seen": true}})
 	_check(int(L4.perks["oil"]) == 1 and not L4.flags.has("tut") and L4.tutorial_battle(Legion.stage(0, 0, 0).merged({"idx": 0})), "старое сохранение без боёв: учебный бой ещё впереди")
 	L4.tut_skip()
-	_check(not L4.tutorial_battle(Legion.stage(0, 0, 0)), "«Пропустить обучение» — без учебного боя")
+	_check(L4.tut_step() == "" and L4.tutorial_battle(Legion.stage(0, 0, 0)) and not L4.flags.has("tut_oil"),
+		"«Пропустить обучение» — без стрелок и полосы, но учебный бой (масло) один раз остаётся")
 	# чудеса: арка открывается рейтингом походов, стоит Славы
 	L.rating = 10
 	_check(not city.unlocked("arch"), "арка закрыта без исследования и рейтинга")

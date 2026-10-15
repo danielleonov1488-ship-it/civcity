@@ -1494,6 +1494,8 @@ func _show_result() -> void:
 			var ct := Legion.counter_tips(stage)
 			if ct != "":
 				tip += " " + ct
+			if legion.archer_exposed(stage):
+				tip += " Лучник в лесу без прикрытия — лучше три легионера."
 		var tl := _label(tip, 16, false, C_SOFT)
 		tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		tl.custom_minimum_size = Vector2(480, 0)
