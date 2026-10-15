@@ -1017,7 +1017,7 @@ func _cat_free(from: Vector2, maxd: float) -> Dictionary:
 	if hour < 7.0 or hour > 20.0:
 		return best
 	for c in cats:
-		if c["state"] in ["sit", "sleep"] and int(c.get("pet", 0)) == 0:
+		if c["state"] in ["sit", "sleep"] and int(c.get("pet", 0)) == 0 and not c.has("story"):
 			var dd := (c["p"] as Vector2).distance_to(from)
 			if dd < bd and _free(c["p"]):
 				bd = dd
@@ -2624,15 +2624,17 @@ static func _cat_mesh(fur: Color, belly: Color) -> Array:
 	return out
 
 
-## Новая кошка у дома (rng — в том же порядке, что у прежней: витрина и меню расставляются как раньше)
-func _make_cat(home: Dictionary) -> Dictionary:
+## Новая кошка у дома (rng — в том же порядке, что у прежней: витрина и меню расставляются как раньше).
+## opts — кошка истории горожан: fur (номер окраса), p (где), rng (свой поток: общий rng жителей не сдвигается)
+func _make_cat(home: Dictionary, opts := {}) -> Dictionary:
 	if not _cat_model_ok():
-		return _make_cat_kit(home)
-	var f: Array = CAT_FURS[rng.randi() % CAT_FURS.size()]
+		return _make_cat_kit(home, opts)
+	var rg: RandomNumberGenerator = opts.get("rng", rng)
+	var f: Array = CAT_FURS[int(opts["fur"])] if opts.has("fur") else CAT_FURS[rg.randi() % CAT_FURS.size()]
 	var root := Node3D.new()
 	var m := _cat_scene.instantiate() as Node3D
 	m.rotation.y = -PI / 2                 # в файле кошка смотрит вдоль +x, у нас — вдоль +z
-	var sc := CAT_LEN / _cat_size * rng.randf_range(0.88, 1.05)
+	var sc := CAT_LEN / _cat_size * rg.randf_range(0.88, 1.05)
 	m.scale = Vector3.ONE * sc
 	root.add_child(m)
 	# шерсть, грудка и лапки, розовые уши и нос
@@ -2645,7 +2647,7 @@ func _make_cat(home: Dictionary) -> Dictionary:
 	var ap: AnimationPlayer = m.find_children("*", "AnimationPlayer", true, false)[0]
 	ap.add_animation_library("cat", _cat_lib)
 	add_child(root)
-	var p: Vector2 = _near_free(city.door_point(home))
+	var p: Vector2 = opts["p"] if opts.has("p") else _near_free(city.door_point(home))
 	if p == Vector2.INF:
 		p = city.door_point(home)
 	var snd := AudioStreamPlayer3D.new()
@@ -2655,8 +2657,8 @@ func _make_cat(home: Dictionary) -> Dictionary:
 	snd.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	root.add_child(snd)
 	var cat := {"n": root, "anim": ap, "clip": "", "fur": f[0], "k": CAT_WALK / (CAT_STEP * sc), "p": p, "path": PackedVector2Array(), "i": 0,
-		"state": "sit", "t": rng.randf_range(2, 6), "home": home["id"], "yaw": rng.randf() * TAU, "walk": 0.0, "ph": rng.randf() * TAU,
-		"snd": snd, "meow_t": rng.randf_range(10, 60)}
+		"state": "sit", "t": rg.randf_range(2, 6), "home": home["id"], "yaw": rg.randf() * TAU, "walk": 0.0, "ph": rg.randf() * TAU,
+		"snd": snd, "meow_t": rg.randf_range(10, 60)}
 	_cat_place(cat)
 	_cat_anim(cat)
 	ap.seek(float(cat["ph"]) / TAU * ap.current_animation_length, true)     # кошки дышат и машут хвостом не в лад
@@ -2664,8 +2666,9 @@ func _make_cat(home: Dictionary) -> Dictionary:
 
 
 ## Прежняя кошка, собранная из Kit (если модели нет)
-func _make_cat_kit(home: Dictionary) -> Dictionary:
-	var f: Array = CAT_FURS[rng.randi() % CAT_FURS.size()]
+func _make_cat_kit(home: Dictionary, opts := {}) -> Dictionary:
+	var rg: RandomNumberGenerator = opts.get("rng", rng)
+	var f: Array = CAT_FURS[int(opts["fur"])] if opts.has("fur") else CAT_FURS[rg.randi() % CAT_FURS.size()]
 	var meshes := _cat_mesh(f[0], f[1])
 	var mat := Kit.material(0.9)
 	var root := Node3D.new()
@@ -2682,10 +2685,10 @@ func _make_cat_kit(home: Dictionary) -> Dictionary:
 	var legs := []
 	for lp: Vector3 in [Vector3(-0.07, 0.12, 0.2), Vector3(0.07, 0.12, 0.2), Vector3(-0.07, 0.12, -0.2), Vector3(0.07, 0.12, -0.2)]:
 		legs.append(mk.call(meshes[3], lp))
-	var s := rng.randf_range(0.85, 1.05)
+	var s := rg.randf_range(0.85, 1.05)
 	root.scale = Vector3.ONE * s
 	add_child(root)
-	var p: Vector2 = _near_free(city.door_point(home))
+	var p: Vector2 = opts["p"] if opts.has("p") else _near_free(city.door_point(home))
 	if p == Vector2.INF:
 		p = city.door_point(home)
 	var snd := AudioStreamPlayer3D.new()
@@ -2694,8 +2697,8 @@ func _make_cat_kit(home: Dictionary) -> Dictionary:
 	snd.volume_db = -14.0
 	snd.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	root.add_child(snd)
-	var cat := {"n": root, "head": head, "tail": tail, "legs": legs, "fur": f[0], "p": p, "path": PackedVector2Array(), "i": 0, "state": "sit", "t": rng.randf_range(2, 6),
-		"home": home["id"], "yaw": rng.randf() * TAU, "walk": 0.0, "ph": rng.randf() * TAU, "snd": snd, "meow_t": rng.randf_range(10, 60)}
+	var cat := {"n": root, "head": head, "tail": tail, "legs": legs, "fur": f[0], "p": p, "path": PackedVector2Array(), "i": 0, "state": "sit", "t": rg.randf_range(2, 6),
+		"home": home["id"], "yaw": rg.randf() * TAU, "walk": 0.0, "ph": rg.randf() * TAU, "snd": snd, "meow_t": rg.randf_range(10, 60)}
 	_cat_place(cat)
 	return cat
 
@@ -2740,13 +2743,25 @@ func _cat_kit_anim(c: Dictionary, dt: float, t: float) -> void:
 
 func _cats_step(dt: float) -> void:
 	var want := clampi(int(city.stats["pop"]) / 14, 0, 12)
-	if cats.size() < want and rng.randf() < 0.02:
+	var own := 0                           # кошки историй (потерянная и найденные, «named») — сверх обычных
+	for c in cats:
+		if c.has("story") or c.has("named"):
+			own += 1
+	if cats.size() - own < want and rng.randf() < 0.02:
 		var houses := city.buildings.values().filter(func(b): return city.is_house(b) and int(b["pop"]) > 0)
 		if not houses.is_empty():
 			cats.append(_make_cat(houses[rng.randi() % houses.size()]))
 	var night: bool = game.hour >= 21.0 or game.hour < 6.0
 	var t := AnimClock.now()
 	for c in cats:
+		if c.has("story"):
+			# потерянная кошка истории: где спит и что делает — решает Stories (scripts/stories.gd)
+			_cat_place(c)
+			if c.has("anim"):
+				_cat_anim(c)
+			else:
+				_cat_kit_anim(c, dt, t)
+			continue
 		c["t"] = float(c["t"]) - dt
 		match c["state"]:
 			"walk":
@@ -2791,6 +2806,198 @@ func _cats_step(dt: float) -> void:
 			c["meow_t"] = rng.randf_range(90, 240)
 			if c["state"] != "sleep" and game.sound:
 				game.sound.cat(c["snd"])
+
+
+# ---------- истории горожан (scripts/stories.gd): кошка, где ей спрятаться, люди для роликов ----------
+
+## Окрасить модель кошки: шерсть, грудка и лапки, розовые уши и нос
+static func _cat_paint(m: Node3D, f: Array) -> void:
+	for mi: MeshInstance3D in m.find_children("*", "MeshInstance3D", true, false):
+		for s in mi.mesh.get_surface_count():
+			var m0 := mi.mesh.surface_get_material(s)
+			var mn := m0.resource_name if m0 else ""
+			var col: Color = f[1] if mn == "White" else (Color("e3a3a3") if mn == "Pink" else f[0])
+			mi.set_surface_override_material(s, _cat_mat(col))
+
+
+## Кошка без жизни на улице — для корзинки-украшения и портрета в облачке: модель окраса fur в позе clip
+## (Sleep, Sit, Pet), без звука и прогулок. Модели нет — кошка из Kit
+static func cat_node(fur: int, clip := "Sleep", seed_v := 0) -> Node3D:
+	var f: Array = CAT_FURS[clampi(fur, 0, CAT_FURS.size() - 1)]
+	var root := Node3D.new()
+	if not _cat_model_ok():
+		var meshes := _cat_mesh(f[0], f[1])
+		var mat := Kit.material(0.9)
+		for e: Array in [[0, Vector3.ZERO], [1, Vector3(0, 0.28, 0.3)], [2, Vector3(0, 0.22, -0.3)]]:
+			var mi := MeshInstance3D.new()
+			mi.mesh = meshes[int(e[0])]
+			mi.material_override = mat
+			mi.position = e[1]
+			root.add_child(mi)
+		return root
+	var m := _cat_scene.instantiate() as Node3D
+	m.rotation.y = -PI / 2
+	m.scale = Vector3.ONE * CAT_LEN / _cat_size * 0.95
+	root.add_child(m)
+	_cat_paint(m, f)
+	var ap: AnimationPlayer = m.find_children("*", "AnimationPlayer", true, false)[0]
+	ap.add_animation_library("cat", _cat_lib)
+	var cl: Array = CAT_CLIP.get(clip.to_lower(), CAT_CLIP["sleep"])
+	ap.play("cat/" + String(cl[0]))
+	ap.speed_scale = float(cl[1])
+	ap.seek(float(seed_v % 1000) / 1000.0 * ap.current_animation_length, true)
+	return root
+
+
+## Кошка истории: свой поток случайностей (общий rng жителей не сдвигается — витрина и меню прежние), окрас fur,
+## у точки p. Замерла (story): что ей делать, решает Stories; в число обычных кошек не входит
+func story_cat(home: Dictionary, p: Vector2, fur: int, seed_v: int) -> Dictionary:
+	var rg := RandomNumberGenerator.new()
+	rg.seed = seed_v
+	var c := _make_cat(home, {"fur": fur, "p": p, "rng": rg})
+	c["story"] = true
+	c["state"] = "sleep"
+	cats.append(c)
+	_cat_place(c)
+	if c.has("anim"):
+		_cat_anim(c)
+	return c
+
+
+## Кошка-награда истории: живёт у дома home как обычная (гуляет, спит, дети гладят), сверх числа обычных
+func pet_cat(home: Dictionary, fur: int, nm: String, seed_v: int, at := Vector2.INF) -> Dictionary:
+	var rg := RandomNumberGenerator.new()
+	rg.seed = seed_v
+	var opts := {"fur": fur, "rng": rg}
+	if at != Vector2.INF:
+		opts["p"] = at
+	var c := _make_cat(home, opts)
+	c["named"] = nm
+	cats.append(c)
+	return c
+
+
+## Кошка истории стала кошкой-наградой: живёт у дома home (мальчик унёс её домой) и гуляет как все
+func free_cat(c: Dictionary, home: int, nm: String) -> void:
+	c.erase("story")
+	c["named"] = nm
+	c["home"] = home
+	c["state"] = "sit"
+	c["t"] = 2.0
+	var h: Dictionary = city.buildings.get(home, {})
+	if not h.is_empty():
+		var q := _near_free(city.door_point(h))
+		if q != Vector2.INF:
+			c["p"] = q
+			c["path"] = PackedVector2Array()
+			_cat_place(c)
+
+
+## Убрать кошку (история прервалась)
+func drop_cat(c: Dictionary) -> void:
+	cats.erase(c)
+	var n = c.get("n")
+	if n != null and is_instance_valid(n):
+		(n as Node).queue_free()
+
+
+## Свободное место вплотную к украшению b, куда кошка может забиться (в траве лучше, чем на мостовой); Vector2.INF — нет
+func _beside(b: Dictionary, rg: RandomNumberGenerator) -> Vector2:
+	var c: Vector2 = b["pos"]
+	var a0 := rg.randf() * TAU
+	var paved := Vector2.INF
+	for r: float in [0.8, 1.15, 1.6, 2.1]:
+		for k in 10:
+			var a := a0 + TAU * k / 10.0
+			var q := c + Vector2(cos(a), sin(a)) * r
+			if not _hide_ok(q):
+				continue
+			if not land.is_road(q):
+				return q
+			if paved == Vector2.INF:
+				paved = q
+	return paved
+
+
+## Сюда кошке можно: на своей земле, не в постройке, не в воде и не на круче
+func _hide_ok(q: Vector2) -> bool:
+	if q.x < 1.0 or q.y < 1.0 or q.x > Land.SIZE - 1.0 or q.y > Land.SIZE - 1.0:
+		return false
+	if not land.is_owned(q) or land.occ_at(q) != 0 or land.is_water(q):
+		return false
+	var h := land.height_at(q.x, q.y)
+	for d: Vector2 in [Vector2(0.4, 0), Vector2(-0.4, 0), Vector2(0, 0.4), Vector2(0, -0.4)]:
+		if absf(land.height_at(q.x + d.x, q.y + d.y) - h) > 0.3:
+			return false
+	return true
+
+
+## Где спрятаться кошке: у украшения из bases (сено, корзины, кусты…) от rmin до rmax м от точки from, на свободном
+## месте, куда от from можно дойти; таких нет — на своей земле в траве. Vector2.INF — негде (историю не предлагаем)
+func hide_spot(from: Vector2, rmin: float, rmax: float, bases: Array, rg: RandomNumberGenerator) -> Vector2:
+	var cand := []
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if city.def(b)["kind"] != "decor" or b.has("host") or not (Defs.base_of(b["type"]) in bases):
+			continue
+		var d := (b["pos"] as Vector2).distance_to(from)
+		if d >= rmin and d <= rmax:
+			cand.append(b)
+	for i in range(cand.size() - 1, 0, -1):
+		var j := rg.randi() % (i + 1)
+		var tmp = cand[i]
+		cand[i] = cand[j]
+		cand[j] = tmp
+	# дойти можно: от двери до тропы рядом с местом (тропа — в паре шагов, _path ищет её сам)
+	for b in cand.slice(0, 12):
+		var q := _beside(b, rg)
+		if q != Vector2.INF and q.distance_to(from) >= rmin and _path(from, q).size() >= 2:
+			return q
+	for k in 60:
+		var a := rg.randf() * TAU
+		var q := from + Vector2(cos(a), sin(a)) * rg.randf_range(rmin, rmax)
+		if _hide_ok(q) and not land.is_road(q) and _path(from, q).size() >= 2:
+			return q
+	return Vector2.INF
+
+
+## Ребёнок семьи fam из дома home (житель) или {}
+func child_of(fam: String, home: int) -> Dictionary:
+	for r in residents:
+		if r["fam"] == fam and int(r["home"]) == home and bool(r["child"]):
+			return r
+	return {}
+
+
+## Человек для ролика истории: как житель с тем же seed (тот же облик и одежда), сам по себе (не ходит по делам)
+func actor(seed_v: int, female: bool, child: bool, cls: String) -> Citizen:
+	var rr := RandomNumberGenerator.new()
+	rr.seed = seed_v
+	var c := Citizen.create(rr, female, child, cls == "patricians", "", cls)
+	if child:
+		kid_look(c)
+	add_child(c)
+	c.anim.speed_scale = 1.0
+	return c
+
+
+## Ребёнок в ролике и на портрете: без бороды, голова чуть крупнее (дети у нас — уменьшенные взрослые Synty;
+## вблизи, в ролике, иначе выходит маленький бородач)
+static func kid_look(c: Node) -> void:
+	no_beard(c)
+	for sk: Skeleton3D in c.find_children("*", "Skeleton3D", true, false):
+		var hb := sk.find_bone("Head")
+		if hb >= 0:
+			sk.set_bone_pose_scale(hb, Vector3.ONE * 1.22)
+
+
+## Борода ни к чему (причёску жителя выбирает Citizen.create)
+static func no_beard(c: Node) -> void:
+	for att in c.find_children("*", "BoneAttachment3D", true, false):
+		for ch in att.get_children():
+			if String(ch.name).contains("Beard") or not ch.find_children("*Beard*", "", true, false).is_empty():
+				att.remove_child(ch)
+				ch.free()
 
 
 ## Где сейчас семья, что ждёт жилья (середина её людей) — для значка над ней; Vector3.INF — такой нет

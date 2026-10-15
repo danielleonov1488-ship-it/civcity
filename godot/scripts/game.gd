@@ -8,6 +8,7 @@ extends Node3D
 
 static var boot := {}                 # с чем перезапуститься: {"menu"|"play"|"new"|"demo": "1"}
 const DAY_LEN := 600.0                # сутки — 10 минут при обычной скорости (час — 25 секунд), как в Town to City
+const LAND_LAYER := 2                 # слой видимости земли: Decal историй горожан ложится только на неё
 const HOUSE_LIGHT := 0.12             # ночной свет жилых домов (фонарик у двери, жаровня) — доля от фонаря-украшения
 
 var land: Land
@@ -99,6 +100,7 @@ var settle_fam := {}                  # семья с площади, котор
 var tutorial: Tutorial
 const RankCineScript := preload("res://scripts/rank_cine.gd")
 var rank_cine = null                  # ролик «Новый ранг»: станция вырастает (scripts/rank_cine.gd)
+var stories: Stories = null           # «Истории горожан»: просьбы с роликами (scripts/stories.gd)
 ## Поворот как в Town to City: зажать левую кнопку и вести мышь вбок — постройка поворачивается на месте;
 ## отпустил — не строится, строится следующим щелчком (уже повёрнутая)
 var place_lock := {}                  # {p: точка} — призрак закреплён на месте
@@ -278,6 +280,9 @@ func _ready() -> void:
 	rank_cine = RankCineScript.new()
 	add_child(rank_cine)
 	rank_cine.setup(self)
+	stories = Stories.new()
+	add_child(stories)
+	stories.setup(self)
 	_update_plot_signs()
 	if city.fest_left > 0:
 		_fest_look(true)                      # сохранение с идущими играми — город сразу наряжен
@@ -1259,6 +1264,7 @@ func _build_chunk(ch: Vector2i) -> void:
 	if mi == null:
 		mi = MeshInstance3D.new()
 		mi.material_override = land_mat
+		mi.layers = 1 | LAND_LAYER          # на землю (и только на неё) ложатся пятно поисков и следы историй (Decal)
 		add_child(mi)
 		chunk_nodes[ch] = mi
 	mi.mesh = land.chunk_mesh(ch.x, ch.y)
@@ -1337,6 +1343,8 @@ func _show(b: Dictionary) -> void:
 	visuals[b["id"]] = vis
 	if Defs.base_of(b["type"]) == "sheep":      # овцы бродят по лугу любого облика
 		_sheep(b, vis)
+	elif b["type"] == "catbasket":
+		_catbed(b, vis)
 	_sync_actors(b)
 	_set_hour(hour)
 
@@ -1406,6 +1414,17 @@ func _sheep(b: Dictionary, vis: Dictionary) -> void:
 		if not vis.has("pets"):
 			vis["pets"] = []
 		vis["pets"].append(sh)
+
+
+## «Кошачья корзинка» (награда истории «Где Мурка?»): в корзинке спит рыжая кошка (не в actors_root: её сон
+## медленнее шага игры, скорость игры его не трогает)
+func _catbed(b: Dictionary, vis: Dictionary) -> void:
+	var cat := People.cat_node(0, "Sleep", int(b["id"]) * 7919)
+	add_child(cat)
+	cat.transform = city.xf(b) * Transform3D(Basis(Vector3.UP, 2.2).scaled(Vector3.ONE * 0.85), CatDecor.CATBED_AT * Catalog.DECOR)
+	if not vis.has("pets"):
+		vis["pets"] = []
+	vis["pets"].append(cat)
 
 
 ## Люди при деле у постройки: появляются, когда она работает, и уходят, когда нет
@@ -3220,6 +3239,9 @@ func _unhandled_input(e: InputEvent) -> void:
 
 
 func _click() -> void:
+	# история горожан: щёлкнули по потерянной кошке (или по тому, что ищем) — нашли
+	if tool == "" and stories != null and stories.try_click(_mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()):
+		return
 	# постройку ловит луч по всей модели — щёлкнуть можно и по крыше на фоне неба (земли под курсором нет)
 	if hover == Vector2.INF and not tool in ["", "settle", "bulldoze", "copy", "move", "floor"]:
 		return

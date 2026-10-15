@@ -338,6 +338,9 @@ const B := {
 	"sheep_2": {"kind": "decor", "cat": "decor", "sub": "animals", "base": "sheep", "look": 1, "name": "Овцы на лугу", "cost": 30, "deco": 3, "unlock": "animals", "desc": "Пара овечек пасётся на лугу, в углу копёшка."},
 	"duck": {"kind": "decor", "cat": "decor", "sub": "animals", "name": "Утки", "cost": 15, "deco": 3, "unlock": "animals", "water": true, "desc": "Утки плавают по пруду."},
 	"swan": {"kind": "decor", "cat": "decor", "sub": "animals", "name": "Лебедь", "cost": 25, "deco": 4, "unlock": "animals", "water": true, "desc": "Белый лебедь на воде."},
+	# награды историй горожан (StoryDefs, unlock «s_…»): в витрине меню их нет
+	"catbasket": {"kind": "decor", "cat": "decor", "sub": "animals", "name": "Кошачья корзинка", "cost": 15, "deco": 3, "unlock": "s_cat", "story": true,
+		"desc": "Плетёная корзинка с подушкой и миска молока — в корзинке дремлет рыжая кошка. Награда за историю «Где Мурка?»."},
 }
 
 ## Разделы меню стройки (снизу посередине) и вкладки коммерции
@@ -540,6 +543,9 @@ static func unlock_text(id: String) -> String:
 	for q in REQUESTS:
 		if q.get("unlock", "") == id:
 			return "наградой за просьбу «%s»" % q["text"]
+	var s := StoryDefs.by_unlock(id)
+	if not s.is_empty():
+		return "наградой за историю горожан «%s»" % s["title"]
 	return ""
 
 
@@ -554,6 +560,8 @@ static func unlock_short(id: String) -> String:
 	for q in REQUESTS:
 		if q.get("unlock", "") == id:
 			return "Просьба горожан"
+	if not StoryDefs.by_unlock(id).is_empty():
+		return "История горожан"
 	return ""
 
 

@@ -64,6 +64,9 @@ var fest_left := 0                    # сколько игровых часов
 var fest_cd := 0                      # через сколько часов можно устроить новые игры
 var plots_bought := 0                 # сколько участков земли куплено (от него цена следующего)
 var name := ""                        # название города — копия имени с сервера (CityName); "" — ещё не знаем («Новый Рим»)
+## «Истории горожан» (scripts/stories.gd, данные — StoryDefs): часы, предложение, идущая история, пройденные,
+## отложенные, бонусы к счастью (их строки — в happy_parts дома), кошки-награды. Сохраняется под ключом "stories"
+var stories := stories_new()
 
 
 func _init(l: Land) -> void:
@@ -323,6 +326,7 @@ func rehome(old: int, new: int) -> void:
 		if int(pending[nm]["home"]) == old:
 			pending[nm]["home"] = new
 			b["coming"] = int(b.get("coming", 0)) + int(pending[nm]["n"])
+	_story_rehome(old, new)
 	rehomed.emit(old, new)
 
 
@@ -608,6 +612,10 @@ func compute() -> void:
 			mon_sum += lg
 		if fb > 0:
 			parts.append(["Праздник: игры в честь богов", fb])
+		var st_sum := 0                         # истории горожан: награды к счастью (дому, соседям, всем)
+		for e: Array in story_parts(h):
+			parts.append(e)
+			st_sum += int(e[1])
 		var crowd := 0
 		for o in houses:
 			if o != h and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DENSITY_RADIUS:
@@ -620,7 +628,7 @@ func compute() -> void:
 			if not h["needs"].has(n):
 				missing.append(n)
 				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + mon_sum + fb + dens - missing.size() * Defs.MISSING_PENALTY
+		var hp := base + shop_sum + deco_b + mon_sum + fb + st_sum + dens - missing.size() * Defs.MISSING_PENALTY
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["monuments"] = float(mon_sum)
@@ -638,6 +646,7 @@ func compute() -> void:
 		sums["deco"] += deco_b * w
 		sums["mon"] += mon_sum * w
 		sums["fest"] += fb * w
+		sums["story"] = float(sums.get("story", 0.0)) + st_sum * w
 		sums["crowd"] += dens * w
 		sums["miss"] += -missing.size() * Defs.MISSING_PENALTY * w
 		sums["clip"] = float(sums.get("clip", 0.0)) + (clampf(hp, 0.0, 100.0) - hp) * w   # счастье дома — от 0 до 100%
@@ -648,7 +657,7 @@ func compute() -> void:
 	if float(sums["w"]) > 0.0:
 		var wt: float = sums["w"]
 		var rows := [["Основа", "base", true], ["Лавки", "shops", true], ["Украшения", "deco", true], ["Памятники", "mon", false],
-				["Праздник: игры в честь богов", "fest", false], ["Теснота", "crowd", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
+				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Теснота", "crowd", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
 		var fv := []
 		var vi := []
 		var acc := 0
@@ -1038,6 +1047,7 @@ func sim_day() -> void:
 	for ev: Array in legion.on_hour():           # Легион: таймеры улучшений (настоящие часы), Слава чудес, триумф
 		_event(ev[0], ev[1])
 	_fest_hour()
+	_story_hour()
 	_tick_arrivals()
 	_update_level()
 	_check_goals()
@@ -1898,7 +1908,8 @@ func progress_of(pp: Array) -> int:
 		"cls": return int(stats["residents"].get(arg, 0))
 		"floors": return _count(func(b): return is_house(b) and int(b["tier"]) >= int(arg))
 		"fed": return _count(func(b): return is_house(b) and bool((b.get("needs", {}) as Dictionary).get(arg, false)))
-		"research": return research.keys().filter(func(k): return not String(k).begins_with("q_")).size()
+		# награды просьб (q_) и историй (s_) — не исследования
+		"research": return research.keys().filter(func(k): return not (String(k).begins_with("q_") or String(k).begins_with("s_"))).size()
 		"shops":                                    # разные лавки (["shops", "food"] — только этого вида)
 			var kinds := {}
 			for id2 in buildings:
@@ -1982,6 +1993,85 @@ func _quiet(text: String, icon: String) -> void:
 	quiet.emit(text, icon)
 
 
+# ---------- истории горожан: данные (ведёт их scripts/stories.gd, тексты — StoryDefs) ----------
+
+## Пустое состояние: часы историй (идут после обучения), когда кончилась прошлая (-1 — ещё ни одной), пройденные,
+## идущая, предложенная, отложенные (id → до какого часа), бонусы к счастью, кошки-награды
+static func stories_new() -> Dictionary:
+	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": []}
+
+
+## Из сохранения: чего нет — по умолчанию (старые сохранения — без историй: ничего не идёт, часы с нуля)
+static func stories_load(d: Variant) -> Dictionary:
+	var s := stories_new()
+	if typeof(d) != TYPE_DICTIONARY:
+		return s
+	var dd: Dictionary = d
+	s["h"] = int(dd.get("h", 0))
+	s["last_h"] = int(dd.get("last_h", -1))
+	for k in ["done", "active", "offer", "later"]:
+		if typeof(dd.get(k)) == TYPE_DICTIONARY:
+			s[k] = dd[k]
+	for k in ["bonus", "pets"]:
+		if typeof(dd.get(k)) == TYPE_ARRAY:
+			s[k] = dd[k]
+	# истории, которой в игре больше нет, — не продолжаем
+	for k in ["active", "offer"]:
+		if not (s[k] as Dictionary).is_empty() and StoryDefs.story(String(s[k].get("id", ""))).is_empty():
+			s[k] = {}
+	return s
+
+
+## Час историй: часы идут, когда обучение кончилось; временные бонусы к счастью тают
+func _story_hour() -> void:
+	if int(tips.get("tut", -1)) < 0:
+		stories["h"] = int(stories["h"]) + 1
+	var keep := []
+	for b: Dictionary in stories["bonus"]:
+		var left := int(b.get("left", -1))
+		if left > 0:
+			b["left"] = left - 1
+			if left - 1 <= 0:
+				continue
+		keep.append(b)
+	stories["bonus"] = keep
+
+
+## Слагаемые счастья дома h от историй: [[строка, %], …] (семье, дому, соседям в радиусе, всем)
+func story_parts(h: Dictionary) -> Array:
+	var out := []
+	for b: Dictionary in stories["bonus"]:
+		var ok := true
+		if b.has("fam"):                       # семье: переехала — бонус с ней
+			ok = false
+			for f: Dictionary in h.get("families", []):
+				if String(f["name"]) == String(b["fam"]):
+					ok = true
+		elif b.has("home"):
+			ok = int(b["home"]) == int(h["id"])
+		elif b.has("x"):
+			ok = (h["pos"] as Vector2).distance_to(Vector2(float(b["x"]), float(b["z"]))) <= float(b.get("r", 0.0))
+		if not ok:
+			continue
+		var line := String(b.get("line", "История горожан"))
+		var left := int(b.get("left", -1))
+		if left > 0:
+			line += " (ещё %s)" % (("%d ч" % left) if left < 24 else ("%d дн." % ceili(left / 24.0)))
+		out.append([line, int(b.get("pct", 0))])
+	return out
+
+
+## Перенесённый дом: история, бонусы и кошки-награды идут за ним
+func _story_rehome(old: int, new: int) -> void:
+	for k in ["active", "offer"]:
+		var a: Dictionary = stories[k]
+		if not a.is_empty() and int(a.get("home", -1)) == old:
+			a["home"] = new
+	for e: Dictionary in stories["bonus"] + stories["pets"] + (stories["done"] as Dictionary).values():
+		if e.has("home") and int(e["home"]) == old:
+			e["home"] = new
+
+
 # ---------- сохранение ----------
 
 func save_data() -> Dictionary:
@@ -1997,7 +2087,7 @@ func save_data() -> Dictionary:
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
-		"legion": legion.to_dict()}
+		"stories": stories.duplicate(true), "legion": legion.to_dict()}
 
 
 func load_data(d: Dictionary) -> void:
@@ -2025,6 +2115,11 @@ func load_data(d: Dictionary) -> void:
 	fest_left = maxi(0, int(d.get("fest_left", 0)))
 	fest_cd = maxi(0, int(d.get("fest_cd", 0)))
 	name = String(d.get("name", ""))             # старые сохранения — без названия: его скажет сервер
+	stories = stories_load(d.get("stories", {}))  # старые сохранения — историй ещё не было: часы с нуля, ничего не идёт
+	for sid in stories["done"]:
+		var su := String((StoryDefs.story(sid).get("reward", {}) as Dictionary).get("unlock", ""))
+		if su != "":
+			research[su] = true                  # украшение-награда истории остаётся открытым
 	# старые сохранения: своя земля с начала была 4×4 участка — купленные сверх них (земля загружена раньше города)
 	plots_bought = maxi(0, int(d.get("plots_bought", land.owned.size() - Land.OLD_PLOTS)))
 	_drop_roads2()

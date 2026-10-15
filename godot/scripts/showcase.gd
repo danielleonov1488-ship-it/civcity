@@ -835,8 +835,8 @@ func _all_looks() -> void:
 	var si := 0
 	for t in Defs.B:
 		var d: Dictionary = Defs.B[t]
-		if d["kind"] != "decor" or have.has(t) or d.get("water", false) or d.get("trophy", false):
-			continue                              # трофеи Легиона — награда, в витрине их нет
+		if d["kind"] != "decor" or have.has(t) or d.get("water", false) or d.get("trophy", false) or d.get("story", false):
+			continue                              # трофеи Легиона и награды историй горожан — в витрине их нет
 		if d.get("wall", false):
 			for b in _houses:
 				var bp := city.blueprint(b)

@@ -59,6 +59,7 @@ static func _decor(b: Bp, type: String) -> void:
 		"duck": _duck(b)
 		"swan": _swan(b)
 		"trophy_cart": _trophy_cart(b)
+		"catbasket": _catbasket(b)
 
 
 # ---------- помощники ----------
@@ -587,6 +588,21 @@ static func _sheep(b: Bp, lk: int) -> void:
 		b.add("SM_Env_Grass_03", Vector3(0.7, 0, 0.65), _yaw(b), 0.7)
 		b.add("SM_Prop_Straw_Stack_01", Vector3(-1.0, 0, -1.0), _yaw(b), 0.3)
 	_ground_fp(b, 2.0, 2.0)
+
+
+## Награда истории «Где Мурка?»: широкая плоская корзинка с подушкой, рядом миска и свёрнутое покрывальце.
+## Саму кошку (спит в корзинке) ставит game._show — CATBED_AT: где у неё середина (в осях украшения, без масштаба)
+const CATBED_AT := Vector3(-0.08, 0.13, 0.02)
+
+
+static func _catbasket(b: Bp) -> void:
+	b.add("SM_Env_Grass_01", Vector3(-0.75, 0, -0.45), _yaw(b), 0.6)
+	b.add("SM_Prop_Basket_11", Vector3(-0.08, 0, 0.02), 0.3, 1.0)
+	b.add("SM_Prop_Pillow_06", Vector3(-0.08, 0.07, 0.02), 0.5, 0.8)
+	b.add("SM_Prop_Bowl_04", Vector3(0.7, 0, 0.45), 0.0, 0.85)
+	b.add("SM_Prop_Rug_Folded_01", Vector3(0.5, 0, -0.42), 0.4, 0.62)
+	b.add("SM_Env_Flowers_0%d" % (1 + b.rng.randi() % 5), Vector3(-0.72, 0, 0.55), _yaw(b), 1.1)
+	b.door = Vector3(0, 0, 1.0)
 
 
 static func _duck(b: Bp) -> void:

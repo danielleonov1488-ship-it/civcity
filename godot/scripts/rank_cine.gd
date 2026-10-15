@@ -65,8 +65,11 @@ func calm() -> bool:
 	var tut = game.tutorial
 	if tut != null and (not tut.cine.is_empty() or tut.active()):
 		return false
+	var sto = game.get("stories")
+	if sto != null and sto.busy():
+		return false                     # идёт ролик истории горожан
 	for p in [hud.pause_panel, hud.settings_panel, hud.credits_panel, hud.research_panel, hud.events_panel,
-			hud.finance_panel, hud.stats_panel, hud.buy_panel, hud.advisor_panel]:
+			hud.finance_panel, hud.stats_panel, hud.buy_panel, hud.advisor_panel, hud.journal_panel]:
 		if p != null and p.visible:
 			return false
 	var lu := LegionUi.of(hud)

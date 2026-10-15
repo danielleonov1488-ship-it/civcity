@@ -109,6 +109,7 @@ var pointer: TextureRect
 var pointer_target: Control
 var pointer_text: Label
 var credits_panel: PanelContainer         # титры: кто и что сделал для игры
+var journal_panel: PanelContainer = null  # журнал «Истории горожан» (собирает StoryUi при первом открытии)
 var hover_tip: PanelContainer             # мгновенная подсказка у плашки города и фишек классов
 var hover_box: VBoxContainer
 var hover_src: Control                    # над чем сейчас мышь
@@ -739,7 +740,7 @@ func open_city_name() -> void:
 
 ## Никаких окон на экране (для советов «к слову»: про название города)
 func _screen_free() -> bool:
-	for x in [info_panel, events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel, tray]:
+	for x in [info_panel, events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel, tray, journal_panel]:
 		if x and x.visible:
 			return false
 	var lu := LegionUi.of(self)
@@ -1316,7 +1317,10 @@ func _cursor_world() -> String:
 	if rig and rig._pan and game._rmb_moved > 6.0:
 		return "move"                       # тянут карту правой кнопкой
 	if t == "":
-		# щёлкнуть можно: постройка — откроется карточка, участок с табличкой — купить
+		# щёлкнуть можно: постройка — откроется карточка, участок с табличкой — купить, потерянная кошка — нашли
+		var sto = game.get("stories")
+		if sto != null and sto.near_cat(game._mouse_pos):
+			return "hand"
 		return "hand" if game.plot_fill_key.x >= 0 or not game.pick_building().is_empty() else "arrow"
 	if t in ["bulldoze", "move", "copy"]:
 		var b: Dictionary = game.pick_building()
@@ -1456,7 +1460,7 @@ func _toggle(p: Control) -> void:
 
 
 func _close_windows() -> void:
-	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel]:
+	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel, journal_panel]:
 		if x:
 			x.visible = false
 	LegionUi.close_for(self)
@@ -3363,7 +3367,9 @@ func close_panels() -> bool:
 	if CityName.close(self):
 		return true                              # окно «Название города» — поверх всего: закрывается первым, одно
 	var any := info_panel.visible or advisor_panel.visible or buy_panel.visible
-	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, credits_panel]:
+	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, credits_panel, journal_panel]:
+		if x == null:
+			continue
 		any = any or x.visible
 		x.visible = false
 	any = LegionUi.close_for(self) or any        # окно «Легион» (scripts/legion_ui.gd)
@@ -4345,8 +4351,10 @@ func _fill_tasks() -> void:
 	_clear(tasks_box)
 	var c: City = game.city
 	var goals := c.active_goals(3)
-	tasks_panel.visible = not goals.is_empty() and game.mode != "demo" and ui_level() >= 3
-	if not goals.is_empty():
+	var sto = game.get("stories")
+	var story: bool = sto != null and (not sto.row_info().is_empty() or sto.journal_any())   # история горожан — золотая строка сверху
+	tasks_panel.visible = (not goals.is_empty() or story) and game.mode != "demo" and ui_level() >= 3
+	if tasks_panel.visible:
 		_fill_tasks_body(goals)
 	# свиток по содержимому: прикрепить заново уже ПОСЛЕ заполнения (иначе он сжимается до пустого и
 	# просьбы вылезают за нижний валик) и ещё раз через кадр, когда перенос строк уже посчитан
@@ -4361,8 +4369,14 @@ func _fill_tasks_body(goals: Array) -> void:
 	hdr.add_theme_constant_override("separation", 6)
 	hdr.add_child(_icon("scroll", 26, C_SOFT))
 	hdr.add_child(_label("Просьбы горожан", 20, false, C_INK, font_title))
+	var sto = game.get("stories")
+	if sto != null and sto.journal_any():
+		# книжка — журнал «Истории горожан» (пройденные истории, «Пересмотреть»)
+		hdr.add_child(_bare("bookshelf", "Истории горожан: журнал", 28, func(): sto.ui.open_journal()))
 	tasks_box.add_child(hdr)
 	tasks_box.add_child(_divider(14))
+	if sto != null:
+		sto.ui.task_row(tasks_box)           # история горожан — золотая строка наверху
 	var first := true
 	for g in goals:
 		var prog := mini(c.goal_progress(g["id"]), int(g["need"]))
