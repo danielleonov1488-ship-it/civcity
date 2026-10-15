@@ -149,9 +149,9 @@ func _start() -> void:
 	hud._close_tray()
 	hud._hide_info()
 	game._plot_hover(Vector2i(-1, -1))
-	var reach: bool = hud.reach_on
-	if reach:
-		hud._toggle_reach()              # кольца дальности — тоже 3D, в кадре им не место
+	var overlay: String = hud.overlay
+	if overlay != "":
+		hud.set_overlay("")              # «Обзор»: подсветка домов и значки — в кадре им не место
 	var rig = game.rig
 	rig._orbit = false
 	rig._pan = false
@@ -162,7 +162,7 @@ func _start() -> void:
 	cine = {"t": 0.0, "pt": 0.0, "phase": "fade" if late else "glide", "st": st, "from": from, "to": to,
 		"p0": p0[0], "l0": p0[1], "pos": p0[0], "look": p0[1], "top": top, "dy": maxf(1.6, top - old_top + 0.4),
 		"side": _side(st), "glide": clampf(0.8 + float(rig.dist) / 80.0, 1.2, 2.0), "speed0": float(game.speed),
-		"tool0": tool0, "reach": reach, "d0": false, "d1": false, "hid": false, "shown": false, "said": false, "bars": 0.0}
+		"tool0": tool0, "overlay": overlay, "d0": false, "d1": false, "hid": false, "shown": false, "said": false, "bars": 0.0}
 	game.speed = 1.0
 	_ui()
 	cine["ghost"] = _ghost(st)           # собрать заранее, пока камера летит, — без рывка в кадре
@@ -403,8 +403,8 @@ func _end() -> void:
 	var st: Dictionary = game.city.center()
 	if not st.is_empty() and (int(st["tier"]) != int(cine["to"]) or not game.visuals.has(st["id"])):
 		game._show(st)                   # за время ролика пришёл ещё ранг — станция уже следующая
-	if bool(cine["reach"]) and not hud.reach_on:
-		hud._toggle_reach()
+	if String(cine["overlay"]) != "" and hud.overlay == "" and game.tool == "":
+		hud.set_overlay(cine["overlay"])
 	var s0: float = cine["speed0"]
 	var tool0: String = cine["tool0"]
 	var to: int = cine["to"]

@@ -158,6 +158,7 @@ func _run() -> void:
 	game.can_save = false
 	game.city.money = 50000.0
 	game.city.tips["intro"] = true
+	game.city.tips["cover_tip"] = true          # совет о подсветке охвата (test_cover) не загораживает щелчки по миру
 	game.city.research["fountain"] = true
 	game.hud.advisor_panel.visible = false
 	game.rig.set_view(Vector3(180, 2, 150), 15, 58, 60)

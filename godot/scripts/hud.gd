@@ -3,7 +3,7 @@ extends CanvasLayer
 ## Интерфейс в римском духе — рисованный набор владельца (assets/ui/ai): резные рамки с меандром, свитки
 ## с валиками, бронзовые медальоны с цветными иконками, табличка с орлом и лентой названия города. Устроен как в Town to City:
 ## сверху слева — город, жители, счастье, время; рядом — три класса жителей; под ними — задания со стрелкой-подсказкой.
-## Сверху справа — события, исследования, финансы, жители, охват, фото, меню.
+## Сверху справа — события, исследования, финансы, жители, «Обзор» (счастье домов, потребности), фото, меню.
 ## Снизу: слева — дороги, посередине — разделы стройки (свиток разворачивается с карточками), справа — инструменты, деньги, очки.
 
 var game
@@ -134,6 +134,7 @@ func _ready() -> void:
 	_bottom_center()
 	_bottom_right()
 	_tool_panel()
+	_overlay_panel()
 	_info_panel()
 	_advisor()
 	_notes()
@@ -1314,7 +1315,7 @@ func _top_right() -> void:
 	bell_badge.position = Vector2(35, -4)
 	bell.add_child(bell_badge)
 	for t: Array in [["research", "research", "Исследования"], ["finance", "finance", "Финансы"], ["stats", "stats", "Жители и работники"],
-			["view", "view", "Показать охват лавок"], ["photo", "photo", "Фото: спрятать интерфейс (любая клавиша — вернуть)"], ["menu", "menu", "Меню игры"]]:
+			["view", "view", "Обзор: счастье каждого дома и где чего не хватает"], ["photo", "photo", "Фото: спрятать интерфейс (любая клавиша — вернуть)"], ["menu", "menu", "Меню игры"]]:
 		var id: String = t[0]
 		var b := _round(t[1], t[2], 48, func(): _top_action(id))
 		h.add_child(_shadowed(b))
@@ -1371,7 +1372,7 @@ func _top_action(id: String) -> void:
 			_toggle(stats_panel)
 			refresh()
 		"view":
-			_toggle_reach()
+			set_overlay("" if overlay != "" else overlay_last)
 		"photo":
 			_photo()
 		"menu":
@@ -1411,28 +1412,209 @@ func _hide_info() -> void:
 			game.select_building({})
 
 
-var reach_on := false
-var reach_rings := []
+# ---------- «Обзор» (вместо кругов охвата, решение владельца Д3) ----------
+## Счастье каждого дома (рожица и цифра, дом подсвечен цветом) или одна потребность: где она есть (зелёные),
+## где нет (красные, значок ✗), значки — лавки этого вида. Подсветку и значки ставит game.cover (cover.gd).
+## Окно с режимами и легендой — справа внизу (там, где окно инструмента: при «Обзоре» инструмента нет).
+
+var overlay := ""                     # "" — выключен; "happy" — счастье; food, clothes… — одна потребность
+var overlay_last := "happy"
+var overlay_panel: PanelContainer
+var _ov_btns := {}
+var _ov_title: Label
+var _ov_legend: VBoxContainer
+const OV_DATIVE := {"plebs": "плебеям", "artisans": "ремесленникам", "patricians": "патрициям"}
+const OV_HAS := {"food": ["Еда есть рядом", "Еды рядом нет"], "clothes": ["Одежда есть рядом", "Одежды рядом нет"],
+	"fun": ["Развлечения есть рядом", "Развлечений рядом нет"], "services": ["Услуги есть рядом", "Услуг рядом нет"],
+	"goods": ["Товары есть рядом", "Товаров рядом нет"]}
 
 
-func _toggle_reach() -> void:
-	reach_on = not reach_on
-	_set_on(top_btns["view"], reach_on)
-	for r in reach_rings:
-		(r as Node).queue_free()
-	reach_rings.clear()
-	if not reach_on:
+func _overlay_panel() -> void:
+	overlay_panel = _panel(null, "bar", 0, 8)
+	_put(overlay_panel, Control.PRESET_BOTTOM_RIGHT, Vector2(-10, -BAR_H - 10))
+	overlay_panel.custom_minimum_size = Vector2(360, 0)
+	overlay_panel.visible = false
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	overlay_panel.add_child(v)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 8)
+	var t := _label("Обзор", 21, false, C_INK, font_title)
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(t)
+	top.add_child(_bare("close", "Закрыть обзор (Esc или правая кнопка)", 30, func(): set_overlay("")))
+	v.add_child(top)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	for m: String in ["happy"] + Defs.NEED_ORDER:
+		var mm := m
+		var icon: String = "happy" if m == "happy" else Defs.NEEDS[m]["icon"]
+		var tip: String = "Счастье каждого дома" if m == "happy" else "%s: где есть, а где нет" % Defs.NEEDS[m]["name"]
+		var b := _round(icon, tip, 46, func(): set_overlay(mm))
+		row.add_child(b)
+		_ov_btns[m] = b
+	v.add_child(row)
+	_ov_title = _label("", 18, true, C_INK)
+	v.add_child(_ov_title)
+	_ov_legend = VBoxContainer.new()
+	_ov_legend.add_theme_constant_override("separation", 4)
+	v.add_child(_ov_legend)
+
+
+## Включить «Обзор» в режиме mode ("" — выключить). Инструмент при этом убираем: стройка показывает свой охват сама
+func set_overlay(mode: String) -> void:
+	if mode != "" and game and game.tool != "":
+		game.set_tool("")
+	overlay = mode
+	if mode != "":
+		overlay_last = mode
+		_close_tray()
+	if top_btns.has("view"):
+		_set_on(top_btns["view"], mode != "")
+	overlay_panel.visible = mode != ""
+	if game and game.cover:
+		game.cover.refresh()                  # подсветка и значки; при mode != "" — и легенда (fill_overlay)
+	if mode != "":
+		cover_tip()
+
+
+## Легенда «Обзора»: что значат цвета и сколько каких домов (числа живые — после каждого пересчёта города)
+func fill_overlay() -> void:
+	if overlay == "" or overlay_panel == null:
 		return
-	for id in game.city.buildings:
-		var b: Dictionary = game.city.buildings[id]
-		var r: float = game.city.shop_range(game.city.def(b))     # с «Большим охватом» еда дальше — как в расчёте города
-		if r <= 0.0 or game.city.def(b)["kind"] == "decor":
-			continue
-		var ring: MeshInstance3D = game._ring(Color(1.0, 0.85, 0.4, 0.55) if b.get("active", true) else Color(1.0, 0.3, 0.2, 0.6))
-		ring.visible = true
-		ring.position = Vector3(b["pos"].x, float(b["y"]) + 0.15, b["pos"].y)
-		ring.scale = Vector3(r, 1, r)
-		reach_rings.append(ring)
+	for m in _ov_btns:
+		_set_on(_ov_btns[m], m == overlay)
+	_clear(_ov_legend)
+	var s: Dictionary = game.cover.sets
+	var n: Array = s.get("n", [0, 0, 0])
+	if overlay == "happy":
+		_ov_title.text = "Счастье каждого дома"
+		_ov_row(_face("face_good", 24), "%d%% и больше — хорошо, хватит на 2-й этаж" % Cover.HAPPY_GOOD, n[0])
+		_ov_row(_face("face_mid", 24), "%d–%d%% — так себе" % [Cover.HAPPY_BAD, Cover.HAPPY_GOOD - 1], n[1])
+		_ov_row(_face("face_bad", 24), "Меньше %d%% — плохо" % Cover.HAPPY_BAD, n[2])
+		_ov_legend.add_child(_wrap(_label("Щёлкните по дому — в карточке видно, из чего его счастье. Пустые дома не подсвечены.", 14, false, C_SOFT), 340))
+	else:
+		var nd: Dictionary = Defs.NEEDS[overlay]
+		_ov_title.text = nd["name"]
+		var who := []
+		for cl in Defs.CLASS_ORDER:
+			if (Defs.CLASSES[cl]["needs"] as Array).has(overlay):
+				who.append(OV_DATIVE.get(cl, cl))
+		_ov_row(_swatch(Cover.GREEN), OV_HAS[overlay][0], n[0])
+		_ov_row(_swatch(Cover.RED), "%s: −%d%% счастья" % [OV_HAS[overlay][1], Defs.MISSING_PENALTY], n[2])
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 8)
+		r.add_child(_icon(nd["icon"], 24))
+		r.add_child(_wrap(_label("Значки над крышами — где стоят такие лавки", 15, false, C_INK), 300))
+		_ov_legend.add_child(r)
+		_ov_legend.add_child(_wrap(_label("Нужно: %s. Пустые дома не подсвечены." % ", ".join(who), 14, false, C_SOFT), 340))
+	_snug(overlay_panel)
+
+
+func _ov_row(mark: Control, text: String, count: int) -> void:
+	var r := HBoxContainer.new()
+	r.add_theme_constant_override("separation", 8)
+	mark.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	r.add_child(mark)
+	var l := _label(text, 15, false, C_INK)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	r.add_child(l)
+	r.add_child(_label("%d %s" % [count, _plural(count, "дом", "дома", "домов")], 15, true, C_SOFT))
+	_ov_legend.add_child(r)
+
+
+## Цветной квадратик для легенды — тот же цвет, что у подсветки домов
+func _swatch(col: Color) -> Control:
+	var p := Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = col
+	sb.set_corner_radius_all(5)
+	sb.set_border_width_all(2)
+	sb.border_color = Color("3a2412")
+	p.add_theme_stylebox_override("panel", sb)
+	p.custom_minimum_size = Vector2(24, 24)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return p
+
+
+## Рожица, нарисованная кодом (зелёная улыбается, золотая — ровно, красная грустит)
+func _face(kind: String, size := 26) -> Control:
+	var f := FaceIcon.new()
+	f.mood = {"face_good": 1, "face_mid": 0, "face_bad": -1}.get(kind, 0)
+	f.col = {"face_good": Color("6fbf4a"), "face_mid": Color("e8b53a"), "face_bad": Color("d9553a")}.get(kind, Color("e8b53a"))
+	f.custom_minimum_size = Vector2(size, size)
+	f.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return f
+
+
+class FaceIcon extends Control:
+	var mood := 1                     # 1 — довольный, 0 — так себе, −1 — грустный
+	var col := Color("6fbf4a")
+
+	func _draw() -> void:
+		var r := minf(size.x, size.y) * 0.5
+		var c := size * 0.5
+		var ink := Color("3a2412")
+		draw_circle(c, r, ink)
+		draw_circle(c, r - maxf(1.5, r * 0.12), col)
+		draw_circle(c + Vector2(-r * 0.32, -r * 0.2), r * 0.13, ink)
+		draw_circle(c + Vector2(r * 0.32, -r * 0.2), r * 0.13, ink)
+		var w := maxf(1.6, r * 0.14)
+		match mood:
+			1:
+				draw_arc(c + Vector2(0, -r * 0.08), r * 0.5, PI * 0.2, PI * 0.8, 10, ink, w, true)
+			-1:
+				draw_arc(c + Vector2(0, r * 0.72), r * 0.42, PI * 1.22, PI * 1.78, 10, ink, w, true)
+			_:
+				draw_line(c + Vector2(-r * 0.34, r * 0.34), c + Vector2(r * 0.34, r * 0.34), ink, w, true)
+
+
+# ---------- подпись у курсора, пока ставят лавку (сколько новых домов, сколько уже с такой же) ----------
+
+var cover_box: VBoxContainer
+var _cover_g: Label
+var _cover_b: Label
+
+
+func cover_caption(green: String, blue: String) -> void:
+	if cover_box == null:
+		cover_box = VBoxContainer.new()
+		cover_box.add_theme_constant_override("separation", -2)
+		cover_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		for i in 2:
+			var l := _label("", 19, true, Color("b4ffae") if i == 0 else Color("a9d4ff"))
+			l.add_theme_color_override("font_outline_color", Color("2a1a0c"))
+			l.add_theme_constant_override("outline_size", 8)
+			cover_box.add_child(l)
+		_cover_g = cover_box.get_child(0)
+		_cover_b = cover_box.get_child(1)
+		cover_box.visible = false
+		root.add_child(cover_box)
+	var on := green != "" or blue != ""
+	if _cover_g.text != green or _cover_b.text != blue:
+		_cover_g.text = green
+		_cover_b.text = blue
+		_cover_g.visible = green != ""
+		_cover_b.visible = blue != ""
+		cover_box.reset_size()
+	if cover_box.visible != on:
+		cover_box.visible = on
+	if on:
+		_place_caption()
+
+
+func _place_caption() -> void:
+	var mp: Vector2 = game._mouse_pos if game._mouse_pos.x >= 0.0 else root.get_local_mouse_position()
+	cover_box.position = (mp + Vector2(30, 26)).round()
+
+
+## Советник один раз (tips.cover_tip): кругов охвата больше нет — подсветка домов, и есть «Обзор»
+func cover_tip() -> void:
+	var c: City = game.city
+	if c.tips.has("cover_tip") or not _tip_free():
+		return
+	c.tips["cover_tip"] = true
+	advisor("Кому достанется лавка", "Кругов охвата больше нет — смотрите на цвет домов. Пока ставите лавку, зелёные дома получат её впервые, а синие уже снабжает такая же лавка: вторая такая же им ничего не прибавит. У курсора написано, сколько новых домов, а значки над крышами показывают, где такие лавки уже стоят. С памятниками и украшениями так же: зелёным домам станет лучше.\n\nКнопка «Обзор» вверху справа (глаз) покажет счастье каждого дома или одну потребность — где еда, одежда и прочее есть, а где нет.")
 
 
 func _photo() -> void:
@@ -2336,6 +2518,7 @@ func _fill_info_body() -> void:
 			info_box.add_child(_row("happy", "Счастье домам", "+%d%%" % int(d["bonus"]), C_GOOD))
 			info_box.add_child(_row("arrow", "Дальность", Defs.WORD[int(d["range"])]))
 			info_box.add_child(_row("housing", "Обслуживает домов", "%d из %d" % [int(b.get("served", 0)), int(ceil(float(Defs.CAPACITY[int(d["cap"])]) * float(b.get("staff", 1.0))))]))
+			_cover_rows(b, "")
 			info_box.add_child(_hire_row(b))
 			if not b.get("active", true):
 				var st_txt := c.idle_text(b)            # нет работников: почему именно (никто не живёт, не тот класс, мало мест)
@@ -2346,6 +2529,7 @@ func _fill_info_body() -> void:
 		"monument":
 			info_box.add_child(_row("happy", "Счастье всем вокруг", "+%d%%" % int(d["bonus"]), C_GOOD))
 			info_box.add_child(_row("arrow", "Дальность", Defs.WORD[int(d["range"])]))
+			_cover_rows(b, "Радует домов")
 		"rp":
 			info_box.add_child(_row("research", "Очки исследований в час", "+%.1f" % (c.rp_per_hour(b["type"]) * float(b.get("staff", 1.0))), C_GOOD))
 			if b.get("over", false):
@@ -2364,6 +2548,7 @@ func _fill_info_body() -> void:
 			info_box.add_child(_hire_row(b))
 		"store":
 			info_box.add_child(_row("arrow", "Разносит товары", Defs.WORD[4]))
+			_cover_rows(b, "Снабжает лавок")
 			info_box.add_child(_hire_row(b))
 		"center":
 			tv.add_child(_label("Уровень города: %s" % Defs.LEVELS[c.level]["name"], 14, true, C_SOFT))
@@ -2400,6 +2585,7 @@ func _fill_info_body() -> void:
 			_fest_rows(info_box)
 		"decor":
 			info_box.add_child(_row("flower", "Очки украшения", "+%d" % int(d.get("deco", 1)), C_GOOD))
+			_cover_rows(b, "Радует домов")
 	if not c.is_house(b):                      # у дома вместо описания — что даёт счастье (см. _fill_house)
 		info_box.add_child(_wrap(_label(d["desc"], 14, false, C_SOFT), cw))
 	if not d.get("fixed", false):
@@ -2418,6 +2604,26 @@ func _fill_info_body() -> void:
 			bm.pressed.connect(func(): game.set_tool("move"); game.start_move(b); close_panels())
 			h.add_child(bm)
 		info_box.add_child(h)
+
+
+## Строки карточки об охвате (те же числа, что подсветка домов, Cover.selected_sets): head — сколько своих домов
+## (лавок у склада); ниже — сколько из них получают то же и от другой такой же постройки (синие)
+func _cover_rows(b: Dictionary, head: String) -> void:
+	var c: City = game.city
+	var s := Cover.selected_sets(c, b)
+	var kind: String = c.def(b)["kind"]
+	if head != "":
+		var n: int = (s["green"] as Array).size() if kind == "decor" else int(s["own"])
+		info_box.add_child(_row("commerce" if kind == "store" else "housing", head, str(n), C_GOOD if n > 0 else C_SOFT))
+	var k: int = s["dup"]
+	var t: String = {"shop": "Из них уже с такой же лавкой", "monument": "Из них радует и другой такой же",
+		"store": "Из них уже с другим складом", "decor": "Украшений уже хватает"}.get(kind, "")
+	var blue := Color("2f63a8")
+	info_box.add_child(_row("housing" if kind != "store" else "commerce", t, str(k), blue if k > 0 else C_SOFT))
+	if k > 0:
+		var why := "Синим домам украшений уже хватает — больше не прибавится." if kind == "decor" \
+			else "Синие получают то же от другой такой же постройки — им эта ничего не добавляет. Зелёные — только от этой."
+		info_box.add_child(_wrap(_label(why, 14, false, C_SOFT), 330))
 
 
 ## Карточка станции: игры в честь богов (с уровня «Посёлок») — идут ли, когда снова и кнопка «Устроить игры — N ден.»
@@ -3830,7 +4036,9 @@ func _badge_layer() -> void:
 ## нет работников, склада, сырья, дороги, ждут жилья, сюда можно заселить; или плашка с монетой и ценой участка.
 ## Значок можно нажать: cb — что сделать; без cb — по ключу (_badge_click): семья — выбрать ей дом,
 ## беда над постройкой — её карточка, ключи над домом — заселить, цена участка — купить
-func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "", cb: Callable = Callable()) -> void:
+## style: "" — как выше; "mark" — маленький бронзовый медальон со значком (такие же лавки, лавки в «Обзоре»);
+## "plain" — только рисованный значок (✗ в «Обзоре»). Значок "face_good|mid|bad" с текстом — рожица и цифра
+func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "", cb: Callable = Callable(), style := "") -> void:
 	if badges.has(key):
 		var old: Dictionary = badges[key]
 		old["pos"] = pos
@@ -3843,7 +4051,20 @@ func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "
 		(old["n"] as Node).queue_free()
 	var p: Control
 	var anc := Vector2(0.5, 0.5)
-	if text == "" and ResourceLoader.exists(AI + "badge_%s.png" % icon):
+	if style == "mark":
+		var pm := PanelContainer.new()
+		pm.add_theme_stylebox_override("panel", _medal("medal", 38))
+		pm.custom_minimum_size = Vector2(38, 38)
+		var ic := _icon(icon, 24)
+		ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		pm.add_child(ic)
+		if warn:
+			pm.modulate = Color(1.0, 0.62, 0.55)          # не работает — значок краснеет
+		p = pm
+	elif style == "plain":
+		p = _face(icon, 26) if icon.begins_with("face_") else _icon(icon, 26)
+	elif text == "" and ResourceLoader.exists(AI + "badge_%s.png" % icon):
 		p = _pic("badge_%s.png" % icon, Vector2(56, 56))
 		anc = Vector2(0.22, 0.96)                 # хвостик пузыря смотрит на постройку
 	else:
@@ -3856,8 +4077,8 @@ func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "
 			var h := HBoxContainer.new()
 			h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			h.add_theme_constant_override("separation", 4)
-			h.add_child(_icon(icon, 26, C_GOLD))
-			h.add_child(_label(text, 17, true, C_INK))
+			h.add_child(_face(icon, 22) if icon.begins_with("face_") else _icon(icon, 26, C_GOLD))
+			h.add_child(_label(text, 15 if icon.begins_with("face_") else 17, true, C_INK))
 			pc.add_child(h)
 		p = pc
 	p.visible = false

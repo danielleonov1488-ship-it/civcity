@@ -3,7 +3,7 @@ extends Node3D
 ## Связь (NetHttp): настоящая причина сбоя, повтор с забытым адресом, во вкладке «Против городов» — заголовок, объяснение,
 ## «Повторить» и код, сам повторяет через 5 с (один раз); таблица лучших — так же; честный текст, пока итог прошлого боя в пути;
 ## итог, не ушедший за полчаса, брошен. Значок «нет связи с облаком» (через 2 минуты) и советник один раз.
-## Пауза, когда окно свёрнуто (бой кампании ждёт, бой с городом — нет). Кольца дальности лавок с «Большим охватом».
+## Пауза, когда окно свёрнуто (бой кампании ждёт, бой с городом — нет). Охват лавок с «Большим охватом» (подсветка домов).
 ## Возврат очков за убранное «Площади из плитки» — и ни час, ни награда Легиона не срезают их до полок.
 ## В живой сервер не ходит: «нет связи» — закрытый порт 127.0.0.1:9 (на Windows он не отказывает, а молчит: вид сбоя
 ## тогда timeout, а не connect — поэтому ждём ответа не дольше 2 с, NetHttp.test_timeout). Снимки — D:/CivCity/.work/gd/fix_*.png
@@ -134,24 +134,17 @@ func _run() -> void:
 	check(c.rp >= over - 0.01, "награда Легиона очками не срезает их до полок", [over, c.rp, c.rp_cap()])
 	c.rp = 0.0
 
-	# ---------- 0.3 кольца дальности: с «Большим охватом» — как в расчёте ----------
+	# ---------- 0.3 охват с «Большим охватом» — как в расчёте (кругов больше нет: подсветка домов, cover.gd) ----------
 	c.research["stall_veg"] = true
 	c.research["reach1"] = true
-	var veg := c.place("stall_veg", Vector2(176, 150), 0.0, 0, -1, true)
 	var want := Defs.range_m(Defs.B["stall_veg"]) * 1.33
-	game.select_building(veg)
-	await frames(3)
-	check(is_equal_approx(c.shop_range(Defs.B["stall_veg"]), want) and is_equal_approx(game.range_ring.scale.x, want),
-		"кольцо выбранной лавки с едой — на треть больше (%.1f м)" % want, game.range_ring.scale)
-	game.select_building({})
-	hud._toggle_reach()
-	var ring_ok := false
-	for rg in hud.reach_rings:
-		if (rg as Node3D).position.distance_to(Vector3(176, (rg as Node3D).position.y, 150)) < 0.1:
-			ring_ok = is_equal_approx((rg as Node3D).scale.x, want)
-	hud._toggle_reach()
-	check(ring_ok, "«охват всех лавок» — тот же радиус")
-	c.remove(veg, false)
+	var far := c.place("house_pleb", Vector2(176 + Defs.range_m(Defs.B["stall_veg"]) * 1.2, 150), PI * 0.5, 0, -1, true)
+	var sets := Cover.place_sets(c, "stall_veg", Vector2(176, 150))
+	check(is_equal_approx(c.shop_range(Defs.B["stall_veg"]), want) and not far.is_empty() and (sets["green"] as Array).has(int(far["id"])),
+		"охват лавки с едой — на треть дальше (%.1f м): дом на 1,2 дальности подсвечен" % want, sets)
+	check(game.get("range_ring") == null and not hud.has_method("_toggle_reach"), "кругов охвата больше нет")
+	if not far.is_empty():
+		c.remove(far, false)
 	await frames(5)
 
 	# ---------- 0.1 вкладка «Против городов» без связи ----------

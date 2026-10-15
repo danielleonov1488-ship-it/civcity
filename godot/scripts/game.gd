@@ -71,12 +71,8 @@ var highlight: Node3D                 # подсветка постройки п
 var highlight_key := ""
 var selected := {}
 var select_outline: Node3D
-var range_ring: MeshInstance3D
-## Охват лавки: дома, которые она обслуживает, подсвечены зелёным (в дальности, но лавке не хватает сил — оранжевым)
-var cover_nodes := {}                 # id дома → {n: призрак, key: облик}
-var cover_key := ""
-const COVER_OK := Color(0.15, 1.0, 0.45, 0.6)
-const COVER_FULL := Color(1.0, 0.4, 0.15, 0.45)
+## Охват без кругов: дома подсвечены цветом (синие — уже с такой же лавкой, зелёные — получат), и «Обзор» (cover.gd)
+var cover: Cover
 var brush_ring: MeshInstance3D
 var brush_box: MeshInstance3D
 static var _brush_mem := 2.0          # размер кисти по умолчанию (как просил владелец); дальше — что выбрал игрок,
@@ -175,6 +171,9 @@ func _ready() -> void:
 	city = City.new(land)
 	parts = Parts.new()
 	add_child(parts)
+	cover = Cover.new()
+	add_child(cover)
+	cover.setup(self)
 	actors_root = Node3D.new()
 	add_child(actors_root)
 	land_mat = ShaderMaterial.new()
@@ -255,7 +254,7 @@ func _ready() -> void:
 	city.changed.connect(func(): hud.refresh())
 	city.changed.connect(_sync_all_actors)
 	city.changed.connect(_settle_refresh)
-	city.changed.connect(func(): if tool == "": _cover_selected())
+	city.changed.connect(cover.refresh)       # подсветка охвата и «Обзор» — живые
 	city.family_came.connect(func(f): hud.on_arrival(f))
 	city.arrive_advice.connect(func(t): hud.on_arrive_block(t))
 	city.festival_changed.connect(_fest_look)
@@ -1679,9 +1678,8 @@ func _process(dt: float) -> void:
 					(ap as AnimationPlayer).speed_scale = speed
 	if rig and rig.cine:
 		_plot_hover(Vector2i(-1, -1))         # в ролике камеру ведёт он: без подсветки участка под мышью
-		brush_ring.visible = false            # …и без колец кисти и охвата на земле
+		brush_ring.visible = false            # …и без кольца кисти на земле (подсветку домов прячет cover.gd)
 		brush_box.visible = false
-		range_ring.visible = false
 	else:
 		_update_tool()
 	autosave_t += dt
@@ -1910,9 +1908,8 @@ func set_tool(t: String) -> void:
 	place_lock = {}
 	pressing = false
 	rot_drag = false
-	_cover_clear()
-	if t == "":
-		_cover_selected()
+	if t != "" and hud and hud.overlay != "":
+		hud.set_overlay("")                   # взяли инструмент — «Обзор» закрывается, стройка покажет свой охват
 	if t != prev_tool or t == "":
 		manual_yaw = false
 		rot_off = Vector2.ZERO
@@ -1931,8 +1928,12 @@ func set_tool(t: String) -> void:
 		next_variant = tool_variant
 	elif Defs.B.has(t):
 		next_variant = randi() % int(Defs.B[t].get("variants", 1))
+	if cover:
+		cover.refresh()                       # стройка с охватом — синие дома и значки таких же построек сразу
 	if hud:
 		hud.on_tool(t)
+		if Cover.kind_of(t) != "":
+			hud.cover_tip()
 
 
 func is_road_tool(t: String) -> bool:
@@ -1941,7 +1942,6 @@ func is_road_tool(t: String) -> bool:
 
 func _make_markers() -> void:
 	brush_ring = _ring(Color(1, 0.98, 0.9, 0.85))
-	range_ring = _ring(Color(1.0, 0.92, 0.6, 0.7))
 	brush_box = MeshInstance3D.new()
 	var bm := BoxMesh.new()
 	bm.size = Vector3(2, 0.06, 2)
@@ -2639,7 +2639,6 @@ func _update_tool() -> void:
 	hover = ground_at_mouse()
 	brush_ring.visible = false
 	brush_box.visible = false
-	range_ring.visible = selected.has("id") and Defs.range_m(city.def(selected)) > 0.0 if not selected.is_empty() else false
 	var over_ui := hud and hud.mouse_over_ui()
 	if tool == "" and hover != Vector2.INF and not over_ui:
 		var pl := land.plot_of(hover)
@@ -2647,6 +2646,7 @@ func _update_tool() -> void:
 	else:
 		_plot_hover(Vector2i(-1, -1))
 	if tool == "" or hover == Vector2.INF or over_ui:
+		cover.preview_off()                   # подпись у курсора — только когда стройка над землёй
 		if ghost:
 			ghost.visible = false
 		if tool in ["bulldoze", "copy", "move", "settle"]:
@@ -2691,7 +2691,6 @@ func _update_tool() -> void:
 		return
 	var pl := placement(tool, hover)
 	place_info = pl
-	var d: Dictionary = Defs.B[tool]
 	var key := "%s:%d:%d:%d" % [tool, pl["tier"], pl["variant"], pl["color"]]
 	if ghost == null or ghost_key != key:
 		if ghost:
@@ -2704,13 +2703,9 @@ func _update_tool() -> void:
 	Parts.ghost_color(ghost, Color(0.45, 1.0, 0.45, 0.32) if ok else Color(1.0, 0.25, 0.2, 0.5))
 	var y := float(pl["y"]) if ok else land.height_at(pl["pos"].x, pl["pos"].y)
 	ghost.transform = Transform3D(Basis(Vector3.UP, pl["yaw"]), Vector3(pl["pos"].x, y + 0.02, pl["pos"].y))
-	var rr := city.shop_range(d)
-	if rr > 0.0:
-		range_ring.visible = true
-		range_ring.position = Vector3(pl["pos"].x, y + 0.12, pl["pos"].y)
-		range_ring.scale = Vector3(rr, 1.0, rr)
-		if d["kind"] == "shop":
-			_cover_preview(tool, pl["pos"])
+	# охват — без кругов: синие дома уже с такой же, зелёные получат эту (решение владельца Д3)
+	if Cover.kind_of(tool) != "":
+		cover.preview(tool, pl["pos"])
 	if hud:
 		hud.tool_status(pl["err"])
 
@@ -2898,99 +2893,19 @@ func settle_auto() -> void:
 	_settle_into(homes[0])
 
 
-## Выбрать постройку: обводка по силуэту и карточка
-## Подсветить дома в охвате: ok — обслуживаются (зелёные), full — в дальности, но не хватает сил (оранжевые)
-func _cover_show(ok: Array, full: Array) -> void:
-	var want := {}
-	for id in ok:
-		want[id] = COVER_OK
-	# дома в дальности, до которых лавке не хватает сил, не красим: оранжевый не отличить от оранжевых домов
-	for id in cover_nodes.keys():
-		if not want.has(id) or not city.buildings.has(id):
-			(cover_nodes[id]["n"] as Node3D).visible = false
-	for id in want:
-		if not city.buildings.has(id):
-			continue
-		var h: Dictionary = city.buildings[id]
-		var key := "%s:%d:%d:%d:%s" % [h["type"], int(h["tier"]), int(h["variant"]), int(h["color"]), str(h["pos"])]
-		var e: Dictionary = cover_nodes.get(id, {})
-		if e.is_empty() or e["key"] != key:
-			if not e.is_empty():
-				(e["n"] as Node).queue_free()
-			var g := Parts.ghost(city.blueprint(h), "shell", want[id])
-			g.transform = city.xf(h)
-			add_child(g)
-			e = {"n": g, "key": key}
-			cover_nodes[id] = e
-		Parts.ghost_color(e["n"], want[id])
-		(e["n"] as Node3D).visible = true
-
-
-func _cover_clear() -> void:
-	cover_key = ""
-	for id in cover_nodes:
-		(cover_nodes[id]["n"] as Node3D).visible = false
-
-
-## Охват выбранной лавки — по тому, кого она обслуживает сейчас
-func _cover_selected() -> void:
-	if selected.is_empty() or not city.buildings.has(selected.get("id", -1)) or city.def(selected)["kind"] != "shop":
-		if tool == "" or not Defs.B.has(tool):
-			_cover_clear()
-		return
-	var s: Dictionary = selected
-	var r := city.shop_range(city.def(s))
-	var ok: Array = s.get("serves", [])
-	var full := []
-	for id in city.buildings:
-		var h: Dictionary = city.buildings[id]
-		if city.is_house(h) and not ok.has(id) and (h["pos"] as Vector2).distance_to(s["pos"]) <= r:
-			full.append(id)
-	_cover_show(ok, full)
-
-
-## Охват будущей лавки под курсором: ближайшие дома в дальности, сколько она потянет при полном найме
-func _cover_preview(type: String, pos: Vector2) -> void:
-	var key := "%s:%d:%d" % [type, int(pos.x * 2.0), int(pos.y * 2.0)]
-	if key == cover_key:
-		return
-	cover_key = key
-	var d: Dictionary = Defs.B[type]
-	var r := city.shop_range(d)
-	var near := []
-	for id in city.buildings:
-		var h: Dictionary = city.buildings[id]
-		if not city.is_house(h):
-			continue
-		var dd := (h["pos"] as Vector2).distance_to(pos)
-		if dd <= r:
-			var lived := int(h["pop"]) + int(h.get("coming", 0)) > 0
-			near.append([dd + (0.0 if lived else 10000.0), id])
-	near.sort_custom(func(a, b): return a[0] < b[0])
-	var cap := int(Defs.CAPACITY[int(d["cap"])])
-	var ok := []
-	var full := []
-	for i in near.size():
-		(ok if i < cap else full).append(near[i][1])
-	_cover_show(ok, full)
-
-
+## Выбрать постройку: обводка по силуэту и карточка; у лавки, памятника, украшения, склада — подсветка охвата
 func select_building(b: Dictionary) -> void:
 	if select_outline:
 		select_outline.queue_free()
 		select_outline = null
 	selected = b
-	_cover_selected()
+	if cover:
+		cover.refresh()
 	if b.is_empty():
-		range_ring.visible = false
 		return
 	select_outline = Parts.ghost(city.blueprint(b), "outline", Color(1.0, 0.96, 0.82))
 	select_outline.transform = city.xf(b)
 	add_child(select_outline)
-	var rr := city.shop_range(city.def(b))     # с «Большим охватом» лавки с едой — на треть дальше
-	if rr > 0.0:
-		range_ring.position = Vector3(b["pos"].x, float(b["y"]) + 0.12, b["pos"].y)
-		range_ring.scale = Vector3(rr, 1.0, rr)
 
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -3011,8 +2926,9 @@ func _unhandled_input(e: InputEvent) -> void:
 					hud._close_tray()
 					if tool != "":
 						set_tool("")
+					elif not hud.close_panels() and selected.is_empty() and hud.overlay != "":
+						hud.set_overlay("")           # окон и выбора нет — правая кнопка закрывает «Обзор»
 					else:
-						hud.close_panels()
 						select_building({})
 		elif mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
@@ -3048,6 +2964,8 @@ func _unhandled_input(e: InputEvent) -> void:
 					pass
 				elif not selected.is_empty():
 					select_building({})
+				elif hud.overlay != "":
+					hud.set_overlay("")               # потом — закрыть «Обзор»
 				else:
 					hud._top_action("menu")
 			KEY_Z:
