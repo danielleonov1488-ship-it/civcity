@@ -3,12 +3,13 @@ extends Node
 ## Живые сцены историй горожан (scripts/stories.gd):
 ##  - «Скверик для стариков»: пока его строят и потом всегда — днём (DAY) на скамьи у дома приходят старики, садятся
 ##    и болтают, к вечеру уходят по домам. Чем больше скамей, тем больше стариков (полтора на скамью, не больше MAX);
-##  - «Стол для латрункулов» (награда скверика): по утрам (PLAY) двое стариков садятся за доску.
+##  - «Стол для латрункулов» (награда скверика): по утрам (PLAY) двое стариков садятся за доску (не больше чем за TABLES столами).
 ## Старики — не жители (в счёте людей их нет), как люди в ролике; седые (Citizen.elder_look). Скамьи делят с жителями:
 ## место, где сидит житель, старик не берёт, своё помечает в people.spots (MARK) — туда житель не сядет.
 ## В ролике скверика (force_on) старики сразу сидят на местах, в любой час.
 
 const MAX := 8
+const TABLES := 3                      # столов для латрункулов, за которыми играют (у каждого двое стариков), не больше
 const DAY := [8.0, 18.0]               # старики в скверике
 const PLAY := [7.0, 12.0]              # играют в латрункулы
 const WALK := 0.72                     # шаг старика, м/с
@@ -38,9 +39,14 @@ func squares() -> Array:
 	var S: Dictionary = city.stories
 	var a: Dictionary = S["active"]
 	if not a.is_empty() and String(a.get("id", "")) == "square":
-		var sd := StoryDefs.story("square")
-		if st._goal_kind(a) == "square" or bool(a.get("ready", false)):
-			out.append({"c": st._home_pos(a), "r": Stories._sq_r(sd)})
+		var r := Stories._sq_r(StoryDefs.story("square"))
+		var at: Array = (a.get("flags", {}) as Dictionary).get("sq_at", [])
+		if bool(a.get("ready", false)) and at.size() == 2:
+			out.append({"c": Vector2(float(at[0]), float(at[1])), "r": r})   # готов, ждёт ролика: там, где его мерили
+		elif (st._goal_kind(a) == "square" or bool(a.get("ready", false))) and not a.has("homeless") \
+				and city.buildings.has(int(a.get("home", -1))):
+			# строят — у дома просящего; дом снесли (семья без дома) — стариков нет (а не у станции)
+			out.append({"c": st._home_pos(a), "r": r})
 	var e: Dictionary = (S["done"] as Dictionary).get("square", {})
 	var sq: Array = (e.get("flags", {}) as Dictionary).get("sq", [])
 	if sq.size() == 2:
@@ -122,17 +128,26 @@ func want() -> Dictionary:
 				out[key] = {"bid": int(b["id"]), "k": k, "p": Vector2(w.x, w.z), "yaw": float(b["yaw"]) + float(s[1]), "seat": float(s[2])}
 				n -= 1
 				take -= 1
-	# стол для латрункулов: по утрам двое играют
+	# стол для латрункулов: по утрам двое играют — не больше чем за TABLES столами (живые старики дороги): у ролика —
+	# первыми, дальше — самые старые столы (порядок постоянный: камера ходит — старики не меняются)
 	var morning := h >= float(PLAY[0]) and h < float(PLAY[1])
+	var tables := []
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
-		if b["type"] != "latrunc" or not (morning or (not _forced.is_empty() and (b["pos"] as Vector2).distance_to(_forced["c"]) < 30.0)):
+		if b["type"] != "latrunc":
 			continue
+		var near_cine := not _forced.is_empty() and (b["pos"] as Vector2).distance_to(_forced["c"]) < 30.0
+		if morning or near_cine:
+			tables.append([0 if near_cine else 1, int(b.get("born", id)), int(id)])
+	tables.sort_custom(func(x, y): return x[0] < y[0] or (x[0] == y[0] and (x[1] < y[1] or (x[1] == y[1] and x[2] < y[2]))))
+	for t: Array in tables.slice(0, TABLES):
+		var id := int(t[2])
+		var b: Dictionary = city.buildings[id]
 		var xf := city.xf(b)
 		for k in CatDecor.LATRUNC_SEATS.size():
 			var s: Array = CatDecor.LATRUNC_SEATS[k]
 			var w: Vector3 = xf * ((s[0] as Vector3) * Catalog.DECOR)
-			out["t%d:%d" % [int(id), k]] = {"bid": int(id), "k": -1 - k, "p": Vector2(w.x, w.z), "yaw": float(b["yaw"]) + float(s[1]),
+			out["t%d:%d" % [id, k]] = {"bid": id, "k": -1 - k, "p": Vector2(w.x, w.z), "yaw": float(b["yaw"]) + float(s[1]),
 				"seat": float(s[2]) * Catalog.DECOR, "table": true}
 	return out
 

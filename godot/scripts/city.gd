@@ -579,6 +579,9 @@ func compute() -> void:
 	var pop := 0
 	var sums := {"base": 0.0, "shops": 0.0, "deco": 0.0, "mon": 0.0, "fest": 0.0, "crowd": 0.0, "miss": 0.0, "w": 0.0}
 	var fb := fest_bonus()                     # игры в честь богов — всем домам, как триумф Легиона
+	for b: Dictionary in stories["bonus"]:
+		if b.has("at"):                        # «памятник» скверика: пока скверик стоит (разобрали — бонуса нет)
+			b["_live"] = Stories.square_live_pct(self, b)
 	for h in houses:
 		var cls: String = def(h)["cls"]
 		var cd: Dictionary = Defs.CLASSES[cls]
@@ -2051,13 +2054,14 @@ func story_parts(h: Dictionary) -> Array:
 			ok = int(b["home"]) == int(h["id"])
 		elif b.has("x"):
 			ok = (h["pos"] as Vector2).distance_to(Vector2(float(b["x"]), float(b["z"]))) <= float(b.get("r", 0.0))
-		if not ok:
+		var pct := int(b.get("_live", b.get("pct", 0))) if b.has("at") else int(b.get("pct", 0))
+		if not ok or pct <= 0:
 			continue
 		var line := String(b.get("line", "История горожан"))
 		var left := int(b.get("left", -1))
 		if left > 0:
 			line += " (ещё %s)" % (("%d ч" % left) if left < 24 else ("%d дн." % ceili(left / 24.0)))
-		out.append([line, int(b.get("pct", 0))])
+		out.append([line, pct])
 	return out
 
 
