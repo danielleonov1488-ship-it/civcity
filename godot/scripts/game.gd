@@ -445,7 +445,21 @@ func _load_settings() -> void:
 			for k in d:
 				settings[k] = d[k]
 	if shot_path == "":
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if settings["fullscreen"] else DisplayServer.WINDOW_MODE_MAXIMIZED)
+		_window_mode()
+
+
+## Окно на весь экран (или развёрнуто); окно автопроверки (gpu_run.sh: CIVCITY_TESTWIN=hidden) — 1920×1080
+## за краем всех экранов: не мелькает перед владельцем, а его мышь не попадает в окно и не мешает проверкам
+func _window_mode() -> void:
+	if OS.get_environment("CIVCITY_TESTWIN") == "hidden":
+		var left := 0
+		for i in DisplayServer.get_screen_count():
+			left = mini(left, DisplayServer.screen_get_position(i).x)
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		DisplayServer.window_set_size(Vector2i(1920, 1080))
+		DisplayServer.window_set_position(Vector2i(left - 1920 - 400, 0))
+		return
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if settings["fullscreen"] else DisplayServer.WINDOW_MODE_MAXIMIZED)
 
 
 func save_settings() -> void:
@@ -456,7 +470,7 @@ func save_settings() -> void:
 
 
 func apply_settings() -> void:
-	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if settings["fullscreen"] else DisplayServer.WINDOW_MODE_MAXIMIZED)
+	_window_mode()
 	_apply_quality()
 	if hud:
 		hud.apply_scale(float(settings["ui_scale"]))
