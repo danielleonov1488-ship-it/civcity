@@ -2371,7 +2371,23 @@ func _proc_place() -> void:
 		var a := _proc_at(pts, s0)
 		var f: Vector2 = (_proc_at(pts, s0 + 0.8)[0] as Vector2) - (_proc_at(pts, s0 - 0.8)[0] as Vector2)
 		f = f.normalized() if f.length() > 0.01 else (a[1] as Vector2)
-		var q: Vector2 = (a[0] as Vector2) + Vector2(-f.y, f.x) * float(e[2])
+		# у стены сбоку места нет — ближе к середине пути (жених тогда чуть позади), а не сквозь стену
+		var sn := Vector2(-f.y, f.x)
+		var want := float(e[2])
+		var lat := 0.0
+		for k: float in [1.0, 0.6, 0.3, 0.0]:
+			var p2: Vector2 = (a[0] as Vector2) + sn * want * k
+			if game.land.occ_at(p2) == 0 and game.land.occ_at(p2 + sn * (0.32 if want >= 0.0 else -0.32)) == 0:
+				lat = want * k
+				break
+		var lats: Dictionary = pr.get("lat", {})
+		var cur := float(lats.get(String(e[0]), lat))
+		cur = lerpf(cur, lat, 0.2) if bool(pr.get("placed", false)) else lat
+		lats[String(e[0])] = cur
+		pr["lat"] = lats
+		if String(e[0]) == "groom" and absf(cur) < 0.2:
+			a = _proc_at(pts, s0 - 0.6)
+		var q: Vector2 = (a[0] as Vector2) + sn * cur
 		var n := c as Node3D
 		n.position = Vector3(q.x, game.land.height_at(q.x, q.y), q.y)
 		n.rotation.y = lerp_angle(n.rotation.y, atan2(f.x, f.y), 0.25) if bool(pr.get("placed", false)) else atan2(f.x, f.y)
