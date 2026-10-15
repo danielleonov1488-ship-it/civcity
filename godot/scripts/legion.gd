@@ -430,7 +430,7 @@ func set_defense_slot(i: int, type: String) -> void:
 ## Хороший состав из доступных родов войск под бой st: впереди держат строй легионеры и копейщики, за ними лучники,
 ## в тылу машины (кнопка «Лучший состав» в окне; так же собирают отряд проверки баланса). Пока мест три (лес до
 ## первого босса), состав — ответ на бой: против пращников — с лучником, против волков и шайки — три легионера
-## (wants_archer). Без боя (st пуст) — бой переднего края
+## (wants_archer); волчьи бои леса (bite) — без лучника при любом числе мест. Без боя (st пуст) — бой переднего края
 func auto_squad(st := {}) -> Array:
 	var have := []
 	for t in UNIT_IDS:
@@ -449,7 +449,9 @@ static func counter_squad(st: Dictionary, have: Array, n: int) -> Array:
 		return out
 	# порядок предпочтения по местам: каждый род по очереди, пока есть места
 	var plan := ["legionary", "archer", "spearman", "ballista", "legionary", "catapult", "archer", "spearman", "legionary"]
-	var bow := n > SQUAD_BASE or wants_archer(st) or not ("legionary" in have)
+	# волки леса рвут лучников (bite): там лучника не берём и при четырёх местах и больше, пока есть легионеры
+	var wolves := bool(st.get("bite", false)) and "legionary" in have
+	var bow := not wolves and (n > SQUAD_BASE or wants_archer(st) or not ("legionary" in have))
 	for t in plan:
 		if out.size() >= n:
 			break
@@ -485,7 +487,8 @@ func use_auto_squad(st := {}) -> void:
 
 
 ## Отряд отличается от «Лучшего состава» для боя st (по родам войск, порядок мест не важен). Бою «годятся оба»
-## (squad "any") подходят и три легионера, и легионеры с лучником
+## (squad "any") подходят и три легионера, и легионеры с лучником. С четырёх мест «Лучший состав» уже не ответ на бой
+## (общий порядок родов войск) — не под бой только лучник в волчьем бою леса (bite)
 func squad_off(st: Dictionary) -> bool:
 	var a := []
 	for u: Dictionary in squad_stats():
@@ -495,6 +498,8 @@ func squad_off(st: Dictionary) -> bool:
 	b.sort()
 	if a == b:
 		return false
+	if slots() > SQUAD_BASE:
+		return bool(st.get("bite", false)) and "archer" in a and not "archer" in b
 	if String(st.get("squad", "")) == "any" and slots() <= SQUAD_BASE:
 		var bow := ["archer", "legionary", "legionary"]
 		var leg := ["legionary", "legionary", "legionary"]
@@ -929,7 +934,23 @@ static func stage(cycle: int, r: int, s: int) -> Dictionary:
 		"scale": scale, "boss_scale": boss_scale, "reward": reward, "title": title, "name": (ENEMIES[R["boss"]]["name"] if boss else "Бой %d" % (s + 1)), "region": R["id"],
 		"fixed": not fx.is_empty(), "theme": String(fx.get("name", "")), "kite": bool(fx.get("kite", false)), "bite": bool(fx.get("bite", false)),
 		"squad": String(fx.get("squad", ("bow" if bool(fx.get("kite", false)) and not bool(fx.get("bite", false)) else "leg") if not fx.is_empty() else "")),
-		"task": (fx.get("task", ["oil", 3]) as Array).duplicate(), "tip": String(fx.get("tip", ""))}
+		"task": (fx["task"] as Array).duplicate() if fx.has("task") else (["hp", 50] if "%d-%d" % [r, s] in TASK_HP else default_task(waves)),
+		"tip": String(fx.get("tip", ""))}
+
+
+## Задание на третью звезду у боя не из FIXED: «масло накрыло 3+ разом», если в бою есть волна от трёх врагов, иначе
+## (ранние бои провинций — по двое) — «у отряда больше 50% здоровья»: масло там больше двоих не накроет
+static func default_task(waves: Array) -> Array:
+	var big := 0
+	for w: Array in waves:
+		big = maxi(big, w.size())
+	return ["oil", 3] if big >= 3 else ["hp", 50]
+
+
+## Бои не из FIXED, где трое врагов есть, а в кучу под котёл не сбиваются (пращник или лучник стоит поодаль от пары
+## бойцов, волки и псы бросаются на стрелков врозь с берсерками и тенями) — задание тоже «здоровье»: масло больше двоих
+## не накроет. Мерил test_legion mode=tasks (терпеливый игрок бережёт масло до кучи; он же проверка regress.sh)
+const TASK_HP := ["2-2", "2-3", "3-0", "3-1", "3-2", "4-1", "5-0", "5-1", "7-0"]
 
 
 ## То же, что stage() — имя для окна и боя
@@ -1049,9 +1070,11 @@ func squad_hint(st: Dictionary) -> String:
 		cur.append(String(u["key"]))
 	if "archer" in best and not "archer" in cur:
 		return "Для этого боя возьмите лучника — «Лучший состав»."
-	if "archer" in cur and not "archer" in best and slots() <= SQUAD_BASE:
-		if bool(st.get("bite", false)):
+	if "archer" in cur and not "archer" in best and bool(st.get("bite", false)):
+		if slots() <= SQUAD_BASE:
 			return "Волки загрызут лучника — лучше три легионера («Лучший состав»)."
+		return "Волки загрызут лучника — идите без него («Лучший состав»)."
+	if "archer" in cur and not "archer" in best and slots() <= SQUAD_BASE:
 		return "Тут лучше три легионера: лучника некому прикрыть («Лучший состав»)."
 	return "Для этого боя есть состав лучше — «Лучший состав»."
 
@@ -1332,10 +1355,10 @@ static func stars_for(result: Dictionary, st := {}) -> int:
 	return star_count(star_mask(result, st))
 
 
-## Задание боя на третью звезду: [вид, число] (по умолчанию — масло накрыло 3+ разом)
+## Задание боя на третью звезду: [вид, число] (без него — default_task по волнам боя)
 static func task_of(st: Dictionary) -> Array:
 	var t: Array = st.get("task", [])
-	return t if t.size() == 2 and STAR_TASKS.has(String(t[0])) else ["oil", 3]
+	return t if t.size() == 2 and STAR_TASKS.has(String(t[0])) else default_task(st.get("waves", []))
 
 
 static func task_done(result: Dictionary, st: Dictionary) -> bool:

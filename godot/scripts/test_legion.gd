@@ -139,6 +139,35 @@ func _init() -> void:
 							print("FAIL SQ %d-%d: верно %d%%, не тот %d%%" % [r, s, roundi(float(good["win"]) * 100), roundi(float(bad["win"]) * 100)])
 			if args.get("check", "0") == "1":
 				print("SQUADS DONE fails=%d" % sq_fails)
+		"tasks":
+			# задание на третью звезду выполнимо (иначе сундук провинции за 30 звёзд не открыть): «масло N+» — терпеливый
+			# игрок бережёт масло, пока враги не собьются в кучу (бой без масла, после первой готовности котла хоть раз
+			# N+ врагов под котлом), «здоровье N%» и «быстрее N с» — на уровне выше рекомендованного (T+up, up=2, не выше
+			# предела города), с умениями. check=1 — проверка: в каждом бою задание даётся хотя бы в half=0.5 боёв
+			var tk_fails := 0
+			var cyc := int(args.get("cycle", "0"))
+			var up := int(args.get("up", "2"))
+			for r: int in regions:
+				var line := "%-22s|" % Legion.REGIONS[r]["name"]
+				for s in Legion.STAGES:
+					if not only.is_empty() and not s in only:
+						continue
+					var st := Legion.stage(cyc, r, s)
+					var t := Legion.task_of(st)
+					var T := Legion.target_level(cyc, r, s)
+					var p := 0.0
+					if String(t[0]) == "oil":
+						p = _oil_room(st, T, seeds, int(t[1]))
+					else:
+						var lv := mini(T + up, int(Legion.CAP_BY_CITY[int(Legion.REGIONS[r]["rank"])]) + cyc * Legion.CYCLE_CAP)
+						var rr := _rate(st, mini(Legion.MAX_LEVEL, lv), seeds, true)
+						p = float(rr["task"]) * float(rr["win"])
+					line += " %s%d:%3d" % [String(t[0]).left(1), int(t[1]), roundi(p * 100)]
+					if p < float(args.get("half", "0.5")):
+						tk_fails += 1
+						print("FAIL TASK %d-%d-%d %s: %d%%" % [cyc, r, s, str(t), roundi(p * 100)])
+				print(line)
+			print("TASKS DONE fails=%d" % tk_fails)
 		"api":
 			_api()
 		"tut":
@@ -284,6 +313,43 @@ func _rate(st: Dictionary, lvl: int, seeds: int, with_perks: bool) -> Dictionary
 	return {"win": float(win) / seeds, "stars": stars / maxf(1.0, win), "time": tm / seeds, "hp": hp / maxf(1.0, win), "timeout": float(tout) / seeds,
 		"safe": float(safe) / maxf(1.0, win), "task": float(task) / maxf(1.0, win), "oil": oil / maxf(1.0, win),
 		"t50": float(wtimes[wtimes.size() / 2]) if not wtimes.is_empty() else 0.0, "hp50": float(whp[whp.size() / 2]) if not whp.is_empty() else 0.0}
+
+
+## Доля боёв, где терпеливый игрок может накрыть маслом n+ врагов разом: бой без масла (остальные умения — «Авто»),
+## после первой готовности котла хоть раз n+ врагов в куче (как считает котёл: в 2 м от одного из них)
+func _oil_room(st: Dictionary, lvl: int, seeds: int, n: int) -> float:
+	var pl := _player(st, lvl, true)
+	var pk: Dictionary = pl["perks"]
+	pk.erase("oil")
+	var waves := []
+	for w: Array in st["waves"]:
+		var ws := []
+		for k in w:
+			ws.append(Legion.foe_stats(st, k))
+		waves.append(ws)
+	var t_ready := float(Legion.PERKS["oil"]["cd"]) * 0.5
+	var ok := 0
+	for i in seeds:
+		var sim := LegionSim.new({"kind": "campaign", "squad": pl["squad"], "waves": waves, "perks": pk, "seed": 1000 + i * 7919,
+			"packs": st.get("packs", [])})
+		sim.set_auto(true)
+		var best := 0
+		while sim.result.is_empty() and best < n:
+			sim.step(LegionSim.DT)
+			sim.events.clear()
+			if sim.t < t_ready:
+				continue
+			var foes := sim.alive_of("enemy")
+			for o in foes:
+				var c := 0
+				for q in foes:
+					if Vector2(q.x - o.x, q.z - o.z).length() < 2.0:
+						c += 1
+				best = maxi(best, c)
+		sim.dispose()
+		if best >= n:
+			ok += 1
+	return float(ok) / seeds
 
 
 ## Учебный бой 0-0-0 (как в игре: шайка кучей, setup.packs): три легионера уровня lvl с маслом 1 ур.
@@ -485,6 +551,8 @@ func _api() -> void:
 	var bst := L.stage_info(0, 0, 9)
 	var bout := L.apply_result(L.make_battle(bst, 1), {"win": true, "alive": 2, "total": 3, "timeout": false, "time": 50.0})
 	_check(bool(bout["boss_beaten"]) and int(L.perks["oil"]) == 1 and L.slots() == 4 and city.unlocked("spearcamp"), "босс побеждён: %s" % str(bout["unlocks"]))
+	_slots4_api(city, L, p)
+	_tasks_api()
 	_stars_api(city, L)
 	_threats_api(L)
 	# сохранение через JSON
@@ -585,6 +653,62 @@ func _stars_api(city: City, L: Legion) -> void:
 		"все 30 звёзд: сундук +%d Славы, трофей «%s» открыт и ставится бесплатно" % [int(ch.get("glory", 0)), Defs.B["trophy_cart"]["name"]])
 	var o5 := L.apply_result(L.make_battle(s9, 3), {"win": true, "alive": 3, "total": 3, "timeout": false, "time": 30.0, "hp_left": 0.7, "oil_best": 5})
 	_check((o5["chest"] as Dictionary).is_empty(), "сундук — один раз")
+
+
+## Четыре места (после Атамана): «Лучший состав» в волчьем бою леса — без лучника, как велит совет на карточке;
+## прочим отрядам нет красного «есть состав лучше» (с четырёх мест «Лучший состав» — не ответ на бой); лучник
+## в волчьем бою — «загрызут» при любом числе мест
+func _slots4_api(city: City, L: Legion, p: Vector2) -> void:
+	var keep := L.squad.duplicate()
+	var rb := city.place("range", p + Vector2(0, 26), 0.0, 0, -1, true)
+	var w2 := L.stage_info(0, 0, 2)
+	var w7 := L.stage_info(0, 0, 7)
+	var best2 := L.auto_squad(w2)
+	var best7 := L.auto_squad(w7)
+	var best1 := L.auto_squad(L.stage_info(0, 0, 1))
+	L.squad = ["legionary", "legionary", "legionary", "legionary"]
+	var h_leg := L.squad_hint(w2) + L.squad_hint(w7)
+	var h_other := L.squad_hint(L.stage_info(0, 0, 1)) + L.squad_hint(L.stage_info(0, 1, 2)) + L.squad_hint(L.stage_info(0, 2, 5))
+	var off_leg := L.squad_off(w2) or L.squad_off(L.stage_info(0, 0, 1)) or L.squad_off(L.stage_info(0, 1, 2))
+	L.squad = ["legionary", "archer", "legionary", "legionary"]
+	var h_bow := L.squad_hint(w2)
+	var off_bow := L.squad_off(w2)
+	var h_bow_hill := L.squad_hint(L.stage_info(0, 1, 2))
+	var arch := L.available("archer")
+	city.remove(rb, false)
+	L.squad = keep
+	_check(arch and L.slots() == 4 and best2.size() == 4 and not "archer" in best2 and not "archer" in best7 and "archer" in best1,
+		"4 места: «Лучший состав» волкам %s, «Волчьей ночи» %s, пращникам %s" % [str(best2), str(best7), str(best1)])
+	_check(h_leg == "" and h_other == "" and not off_leg and h_bow.contains("загрызут") and off_bow and h_bow_hill == "",
+		"4 места: четыре легионера — без красного совета («%s»), с лучником против волков — «%s»" % [h_leg + h_other, h_bow])
+
+
+## Задание на третью звезду выполнимо в каждом бою (иначе сундук провинции за 30 звёзд не открыть): «масло накрыло
+## N+» — не больше самой большой кучи врагов (волна; у босса с созывом — вместе с подмогой); бои по двое — «здоровье»
+func _tasks_api() -> void:
+	var bad := []
+	var hp := []
+	for c in 2:
+		for r in Legion.REGIONS.size():
+			for s in Legion.STAGES:
+				var st := Legion.stage(c, r, s)
+				var t := Legion.task_of(st)
+				if String(t[0]) == "hp" and c == 0 and not bool(st["fixed"]):
+					hp.append("%d-%d" % [r, s])
+				if String(t[0]) != "oil":
+					continue
+				var big := 0
+				for w: Array in st["waves"]:
+					var n := w.size()
+					for k in w:
+						if Legion.ENEMIES[k].has("summon"):
+							n += (Legion.ENEMIES[k]["summon"]["foes"] as Array).size()
+					big = maxi(big, n)
+				if int(t[1]) > big:
+					bad.append("%s: масло %d+ при %d врагах" % [st["key"], int(t[1]), big])
+	_check(bad.is_empty() and hp.has("1-0") and hp.has("1-2") and hp.has("2-1") and hp.has("2-2") and hp.has("7-0") and not hp.has("1-3")
+		and Legion.task_of({"waves": [["wolf", "boar"]]}) == ["hp", 50],
+		"задание на третью звезду по силам во всех боях %s; бои по двое и без кучи — «здоровье»: %s" % [str(bad), str(hp)])
 
 
 ## Этап 3b: угрозы — Атаман созывает шайку (рог за 3 с), волна-«куча», лучник выцеливает пращников в кустах

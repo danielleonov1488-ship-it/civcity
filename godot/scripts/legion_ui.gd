@@ -1023,9 +1023,10 @@ func _map_view() -> Control:
 			var tw2 := eg.create_tween().set_loops()
 			tw2.tween_property(eg, "position:y", eg.position.y - 6, 0.6).set_trans(Tween.TRANS_SINE)
 			tw2.tween_property(eg, "position:y", eg.position.y, 0.6).set_trans(Tween.TRANS_SINE)
-		var stars := Legion.star_count(int(lg.stars.get(Legion.stage_key(vc, view_r, s), 0)))
+		var smask := int(lg.stars.get(Legion.stage_key(vc, view_r, s), 0))
 		if lg.stage_done(vc, view_r, s):
-			var sr := Stars.new(stars, 13.0 if not boss else 16.0)
+			# горят именно добытые звёзды (как в итоге боя и в условиях на карточке)
+			var sr := Stars.new(Legion.star_count(smask), 13.0 if not boss else 16.0, 3, smask)
 			sr.position = p + Vector2(-sr.custom_minimum_size.x / 2.0, sz / 2.0 - 4.0)
 			m.add_child(sr)
 	# лента с названием провинции
@@ -1208,7 +1209,7 @@ func _stage_card(st: Dictionary) -> Control:
 	if st["done"]:
 		var sh := HBoxContainer.new()
 		sh.add_theme_constant_override("separation", 6)
-		sh.add_child(Stars.new(int(st["stars"]), 17.0))
+		sh.add_child(Stars.new(int(st["stars"]), 17.0, 3, int(st.get("star_mask", -1))))
 		sh.add_child(_l("пройден", 14, true, C_GOOD))
 		tv.add_child(sh)
 	hh.add_child(tv)
@@ -1247,7 +1248,7 @@ func _stage_card(st: Dictionary) -> Control:
 	var tips := lg.tips(st)
 	if tips != "":
 		v.add_child(_wl(tips, CARD_W - 24, 14, C_SOFT))
-	# отряд не под этот бой (пока мест три — загадка на выбор отряда): совет и кнопка «Под бой»
+	# отряд не под этот бой (пока мест три — загадка на выбор отряда; дальше — лучник в волчьем бою): совет и кнопка «Под бой»
 	var hint := lg.squad_hint(st)
 	if hint != "":
 		var hb := HBoxContainer.new()
@@ -1533,7 +1534,7 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(ic)
 	if win_b and not pvp:
-		var sr := Stars.new(int(out.get("stars", 0)), 30.0)
+		var sr := Stars.new(int(out.get("stars", 0)), 30.0, 3, int(out.get("star_mask", -1)))
 		sr.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		v.add_child(sr)
 		# какая звезда не далась и почему
@@ -2457,11 +2458,13 @@ class Stars extends Control:
 	var n := 0
 	var star := 12.0
 	var of := 3                   # сколько звёзд рисовать (1 — значок у строки условия)
+	var mask := -1                # биты звёзд (Legion.STAR_*): горят именно эти; −1 — первые n
 
-	func _init(count: int, s: float, total := 3) -> void:
+	func _init(count: int, s: float, total := 3, m := -1) -> void:
 		n = count
 		star = s
 		of = total
+		mask = m
 		custom_minimum_size = Vector2(s * of + (of - 1) * 2.0, s)
 		size = custom_minimum_size
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2474,7 +2477,7 @@ class Stars extends Control:
 				var r := star * (0.56 if k % 2 == 0 else 0.25)
 				var a := -PI / 2.0 + k * PI / 5.0
 				pts.append(c + Vector2(cos(a), sin(a)) * r)
-			var on := i < n
+			var on := ((mask >> i) & 1) != 0 if mask >= 0 else i < n
 			draw_colored_polygon(pts, Color("f4b93a") if on else Color(0.42, 0.33, 0.24, 0.38))
 			pts.append(pts[0])
 			draw_polyline(pts, Color("5a3512") if on else Color(0.33, 0.25, 0.18, 0.55), maxf(1.2, star * 0.09), true)

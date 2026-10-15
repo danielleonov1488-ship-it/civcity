@@ -1591,7 +1591,8 @@ func _show_result() -> void:
 			var ct := legion.tips(stage)
 			if sh != "":
 				tip += " " + sh
-			elif ct != "":
+			# совет против этих врагов — и при совете по составу (у боёв леса он про то же — тогда не повторяем)
+			if ct != "" and (sh == "" or not bool(stage.get("fixed", false))):
 				tip += " " + ct
 		var tl := _label(tip, 16, false, C_SOFT)
 		tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
