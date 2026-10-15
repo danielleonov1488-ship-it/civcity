@@ -41,6 +41,8 @@ var speed := 1.0
 var _min_speed := -1.0                # скорость до сворачивания окна (-1 — окно не свёрнуто)
 var _min_battle = null                # бой Легиона, поставленный на паузу при сворачивании
 var minimized_test := false           # проверки: «окно свёрнуто» без настоящего окна
+## окно автопроверки (gpu_run.sh задаёт CIVCITY_NOMINPAUSE=1): свёрнутое окно паузу не ставит
+var real_min_pause := OS.get_environment("CIVCITY_NOMINPAUSE") != "1"
 var day_t := 0.0
 var hour := 8.0
 var clock_hours := true
@@ -1719,7 +1721,7 @@ func _notification(what: int) -> void:
 func _minimized_pause() -> void:
 	if mode == "menu" or mode == "demo" or promo or shot_path != "" or hud == null:
 		return
-	var mini := minimized_test or DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_MINIMIZED
+	var mini := minimized_test or (real_min_pause and DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_MINIMIZED)
 	if mini:
 		if _min_speed < 0.0:
 			_min_speed = speed

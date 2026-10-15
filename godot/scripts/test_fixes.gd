@@ -264,6 +264,7 @@ func _run() -> void:
 	# ---------- 0.2 пауза, когда окно свёрнуто ----------
 	hud.set_speed(2.0)
 	await frames(3)
+	game.real_min_pause = true                # под gpu_run.sh настоящая пауза при сворачивании выключена — здесь её и проверяем
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)
 	var real := await until(func(): return DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_MINIMIZED, 3.0)
 	if not real:
