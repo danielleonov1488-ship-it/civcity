@@ -89,6 +89,10 @@ var tut_freeze := false
 var tut_done := false
 var tut_arrow: TextureRect
 var hint_until := 14.0                     # до какой секунды боя видна подсказка над умениями
+## «Толпа!»: красный круг шириной в котёл масла идёт за кучей врагов (волна-«куча», шайка атамана), пока она
+## не сбежится и ещё чуть-чуть: [{units, ring, t}]
+var _crowds: Array = []
+var _summon_warns := 0
 
 # экран
 var canvas: CanvasLayer
@@ -111,6 +115,7 @@ var perk_btns := {}
 var banner: PanelContainer
 var banner_lbl: Label
 var _banner_t := 0.0
+var _banner_dur := 1.6
 var speed_btns := {}
 var auto_btn: Button
 var pause_btn: Button
@@ -592,6 +597,7 @@ func say(text: String, dur := 1.6) -> void:
 	var sz := banner.get_combined_minimum_size()
 	_pin(banner, Control.PRESET_CENTER, Vector2(-sz.x * 0.5, -205), sz)
 	_banner_t = dur
+	_banner_dur = dur
 
 
 # =====================================================================
@@ -704,19 +710,21 @@ func _loading(s: Dictionary) -> void:
 	else:
 		var r := clampi(int(st.get("r", 0)), 0, Legion.REGIONS.size() - 1)
 		fade_map.texture = Legion.art_texture("map", String(Legion.REGIONS[r]["id"]))
-		var nm := String(st.get("name", ""))
+		var nm := String(st.get("theme", "")) if String(st.get("theme", "")) != "" else String(st.get("name", ""))
 		fade_lbl.text = "%s — %s" % [String(st.get("title", "")), nm] if nm != "" else String(st.get("title", ""))
 
 
 func _clear_world() -> void:
 	for id in views:
 		var v: Dictionary = views[id]
-		for k in ["testudo", "horn"]:
+		for k in ["testudo", "horn", "summon"]:
 			if v.has(k) and is_instance_valid(v[k]):
 				(v[k] as Node).queue_free()
 	views.clear()
 	shots.clear()
 	_pool.clear()
+	_crowds.clear()
+	_summon_warns = 0
 	_boss_unit = null
 	if sim != null:
 		sim.dispose()
@@ -736,6 +744,11 @@ func _prewarm() -> void:
 		for st: Dictionary in waves[i]:
 			var k := String(st["key"])
 			need[k] = int(need.get(k, 0)) + 1
+	# шайка атамана: на три созыва вперёд
+	for w: Array in waves:
+		for st: Dictionary in w:
+			for f: Dictionary in (st.get("summon", {}) as Dictionary).get("foes", []):
+				need[String(f["key"])] = int(need.get(String(f["key"]), 0)) + 3
 	for k in need:
 		var list: Array = []
 		for i in int(need[k]):
@@ -795,6 +808,8 @@ func _title() -> void:
 		title_lbl.text = String(stage.get("title", ""))
 		var s := int(stage.get("s", 0))
 		sub_lbl.text = String(stage.get("name", "")) if bool(stage.get("boss", false)) else "Бой %d из %d" % [s + 1, Legion.STAGES]
+		if String(stage.get("theme", "")) != "":
+			sub_lbl.text += " · " + String(stage["theme"])
 	_waves_ui()
 
 
@@ -827,7 +842,7 @@ func _process(dt: float) -> void:
 	_fps(dt)
 	if _banner_t > 0.0:
 		_banner_t -= dt
-		banner.modulate.a = clampf(minf(_banner_t * 3.0, (1.6 - _banner_t) * 6.0 + 1.0), 0.0, 1.0) if _banner_t > 0.0 else 0.0
+		banner.modulate.a = clampf(minf(_banner_t * 3.0, (_banner_dur - _banner_t) * 6.0 + 1.0), 0.0, 1.0) if _banner_t > 0.0 else 0.0   # длинная надпись видна сразу
 	else:
 		banner.modulate.a = maxf(0.0, banner.modulate.a - dt * 4.0)
 	var run := (not paused and not tut_freeze and modal == null) or phase == "result"
@@ -859,6 +874,7 @@ func _process(dt: float) -> void:
 		if end_t > 2.4:
 			_show_result()
 	_update_views(gdt, dt)
+	_update_crowds(gdt)
 	_update_shots()
 	fx.tick(gdt)
 	LegionField.tick(field, t_vis)
@@ -881,15 +897,36 @@ func _handle(evs: Array) -> void:
 		match String(e["type"]):
 			"wave":
 				var n := int(e["n"])
+				# волна-«куча» (походы): «Толпа!» и красный круг за ней (в учебном бою — своя подсказка)
+				var pack: bool = not pvp and tut == "" and (n - 1) in (setup.get("packs", []) as Array)
 				if n > 1:
 					var last: bool = n == int(e["total"])
 					say(("Босс: " + String(stage.get("name", ""))) if last and bool(stage.get("boss", false)) else "Волна %d из %d" % [n, int(e["total"])], 1.8)
 					_play("horn", -10.0, 1.15)
 				_last_wave = n
+				var fresh: Array = []
 				for u in sim.units:
 					if u.wave == n - 1 and u.side == "enemy":
 						_view(u)
+						fresh.append(u)
+				if pack:
+					_crowd(fresh, "Толпа! Масло накроет всех разом")
 				_waves_ui()
+			"warn":
+				# Атаман трубит в рог: через warn секунд вбежит шайка (круг под ним пульсирует — _update_views)
+				_summon_warns += 1
+				say("Атаман созывает шайку! Масло — когда сбегутся" if _summon_warns == 1 else "Атаман снова созывает шайку!", 2.4)
+				_play("horn", -4.0, 0.72)
+				var u: LegionSim.Unit = e["unit"]
+				var f: LegionFighter = _view(u)["f"]
+				fx.ring(f.position, 2.6, Color(0.95, 0.18, 0.1, 0.9), 0.9, 1.0)
+			"summon":
+				var fresh: Array = []
+				for nu: LegionSim.Unit in e["units"]:
+					_view(nu)
+					fresh.append(nu)
+					fx.dust(Vector3(nu.x, _h(nu.x, nu.z), nu.z), 0.8)
+				_crowd(fresh)
 			"attack":
 				var u: LegionSim.Unit = e["unit"]
 				var v := _view(u)
@@ -937,7 +974,7 @@ func _handle(evs: Array) -> void:
 				v["dead"] = true
 				fx.dust(Vector3(f.global_position.x, f.global_position.y, f.global_position.z), 1.2 * maxf(1.0, u.size))
 				_play("fall", -10.0, randf_range(0.85, 1.05))
-				for k in ["testudo", "horn"]:
+				for k in ["testudo", "horn", "summon"]:
 					if v.has(k) and is_instance_valid(v[k]):
 						(v[k] as Node).queue_free()
 						v.erase(k)
@@ -1071,6 +1108,7 @@ func _update_views(gdt: float, dt: float) -> void:
 		# черепаха и рог — круги под ногами; ожог — языки пламени
 		_status(v, "testudo", u.testudo > sim.t, Color(1.0, 0.82, 0.35, 0.85))
 		_status(v, "horn", u.horn > sim.t, Color(1.0, 0.5, 0.25, 0.8))
+		_status(v, "summon", u.summon_warned and phase == "fight", Color(0.95, 0.16, 0.08, 0.9))
 		if u.burn > sim.t and gdt > 0.0 and randf() < 0.5:
 			fx.add(f.global_position + Vector3(randf_range(-0.3, 0.3), randf_range(0.2, 1.1) * u.size, randf_range(-0.2, 0.2)), Vector3(0, 1.3, 0),
 				Color(1.0, 0.55 + randf() * 0.3, 0.15, 0.95), 0.16, 0.5, -0.5, -0.4, true)
@@ -1082,7 +1120,7 @@ func _update_views(gdt: float, dt: float) -> void:
 func _status(v: Dictionary, kind: String, on: bool, col: Color) -> void:
 	if on and not v.has(kind):
 		var size: float = (v["u"] as LegionSim.Unit).size
-		v[kind] = fx.status_ring(col, 0.6 * size)
+		v[kind] = fx.status_ring(col, (1.0 if kind == "summon" else 0.6) * size)
 	elif not on and v.has(kind):
 		if is_instance_valid(v[kind]):
 			(v[kind] as Node).queue_free()
@@ -1092,7 +1130,48 @@ func _status(v: Dictionary, kind: String, on: bool, col: Color) -> void:
 		var f: LegionFighter = v["f"]
 		r.position = Vector3(f.position.x, f.position.y + 0.05 + (0.01 if kind == "horn" else 0.0), f.position.z)
 		var pulse := 1.0 + sin(t_vis * 6.0) * 0.06
+		if kind == "summon":
+			pulse = 1.0 + absf(sin(t_vis * 7.0)) * 0.3       # рог атамана: круг бьётся, как тревога
 		r.scale = Vector3(pulse, 1.0, pulse) * (1.18 if kind == "horn" else 1.0)
+
+
+## Красный круг за кучей врагов (радиус — как у котла масла): идёт за ними, пока не сбегутся, и ещё 2,5 с;
+## сбежались — надпись text (миг для масла)
+func _crowd(units: Array, text := "") -> void:
+	if units.size() < 2 or fx == null:
+		return
+	var ring := fx.status_ring(Color(0.95, 0.2, 0.1, 0.85), 2.2)
+	_crowds.append({"units": units, "ring": ring, "t": 0.0, "say": text})
+	_update_crowds(0.0)
+
+
+func _update_crowds(gdt: float) -> void:
+	var keep: Array = []
+	for c: Dictionary in _crowds:
+		var ring: MeshInstance3D = c["ring"]
+		var n := 0
+		var at := Vector3.ZERO
+		var entering := false
+		for u: LegionSim.Unit in c["units"]:
+			if u.alive:
+				n += 1
+				at += Vector3(u.x, 0.0, u.z)
+				entering = entering or u.entering
+		if not entering:
+			if float(c["t"]) == 0.0 and gdt > 0.0 and String(c["say"]) != "" and n >= 2:
+				say(String(c["say"]), 2.4)
+			c["t"] = float(c["t"]) + gdt
+		if n < 2 or float(c["t"]) > 2.5 or phase == "ending" or phase == "result" or not is_instance_valid(ring):
+			if is_instance_valid(ring):
+				ring.queue_free()
+			continue
+		at /= n
+		at.y = _h(at.x, at.z) + 0.07
+		ring.position = at
+		var pulse := 1.0 + absf(sin(t_vis * 5.0)) * 0.12
+		ring.scale = Vector3(pulse, 1.0, pulse)
+		keep.append(c)
+	_crowds = keep
 
 
 func _update_shots() -> void:
@@ -1445,16 +1524,18 @@ func _show_result() -> void:
 	if pvp:
 		where = "Бой с городом «%s»" % String((setup.get("opponent", {}) as Dictionary).get("name", "?"))
 	else:
-		where = "%s — %s" % [stage.get("title", ""), stage.get("name", "")]
+		where = "%s — %s" % [stage.get("title", ""), stage.get("theme", "") if String(stage.get("theme", "")) != "" else stage.get("name", "")]
 	var wl := _label(where, 18, true, C_SOFT)
 	wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(wl)
 	if win and not pvp:
 		var sr := Stars.new()
 		sr.n = int(out.get("stars", 0))
+		sr.mask = int(out.get("star_mask", 0))
 		sr.custom_minimum_size = Vector2(200, 56)
 		sr.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		v.add_child(sr)
+		v.add_child(_star_lines())
 	var al := _label("Вернулись %d из %d бойцов" % [int(out.get("alive", 0)), int(out.get("total", 0))], 18, false, C_INK)
 	al.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(al)
@@ -1472,6 +1553,20 @@ func _show_result() -> void:
 			var fl := _label("Первая победа здесь — добыча больше!", 16, true, C_GOOD)
 			fl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			v.add_child(fl)
+		if int(out.get("star_glory", 0)) > 0:
+			var gl := _label("Все три звезды в этом бою — +%d Славы!" % int(out["star_glory"]), 16, true, C_GOOD)
+			gl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			v.add_child(gl)
+	var chest: Dictionary = out.get("chest", {})
+	if not chest.is_empty():
+		var ct := "Все 30 звёзд «%s»! Сундук Славы +%d." % [String(chest["region"]), int(chest["glory"])]
+		if String(chest.get("trophy", "")) != "" and Defs.B.has(String(chest["trophy"])):
+			ct += " В город — трофей «%s» (раздел «Украшения»)." % String(Defs.B[String(chest["trophy"])]["name"])
+		var cl := _label(ct, 17, true, Color("6b4a12"))
+		cl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cl.custom_minimum_size = Vector2(480, 0)
+		cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(cl)
 	if pvp:
 		var dd := int(out.get("delta", 0))
 		var dl := _label("Рейтинг побед: %s%d" % ["+" if dd >= 0 else "", dd], 19, true, C_GOOD if dd >= 0 else C_BAD)
@@ -1491,11 +1586,13 @@ func _show_result() -> void:
 	if not win:
 		var tip := "Не беда! Улучшите бойцов в окне «Легион» → «Войска», поставьте в отряд тех, кто сильнее против этих врагов, и вовремя жмите умения."
 		if not pvp:
-			var ct := Legion.counter_tips(stage)
-			if ct != "":
+			# совет по составу под этот бой (без тех родов войск, которых у игрока ещё нет)
+			var sh := legion.squad_hint(stage)
+			var ct := legion.tips(stage)
+			if sh != "":
+				tip += " " + sh
+			elif ct != "":
 				tip += " " + ct
-			if legion.archer_exposed(stage):
-				tip += " Лучник в лесу без прикрытия — лучше три легионера."
 		var tl := _label(tip, 16, false, C_SOFT)
 		tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		tl.custom_minimum_size = Vector2(480, 0)
@@ -1520,6 +1617,42 @@ func _show_result() -> void:
 		ab.tooltip_text = why2
 		bh.add_child(ab)
 	bh.add_child(_button("В лагерь" if not pvp else "К соперникам", "legion", _close, 0))
+
+
+## Три условия звёзд под звёздами: добытые — золотые, недобытая — серая и почему («пали 1 из 3»)
+func _star_lines() -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 1)
+	box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var mask := int(out.get("star_mask", 0))
+	var texts := Legion.star_texts(stage)
+	for i in 3:
+		var on := (mask & (1 << i)) != 0
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 6)
+		var s := Stars.new()
+		s.of = 1
+		s.n = 1 if on else 0
+		s.custom_minimum_size = Vector2(24, 24)
+		h.add_child(s)
+		h.add_child(_label(String(texts[i]), 16, on, C_INK if on else C_SOFT))
+		if not on:
+			h.add_child(_label("— " + Legion.star_miss(i, out, stage), 16, true, C_BAD))
+		box.add_child(h)
+	# один раз — как устроены звёзды
+	if not legion.flags.has("stars_tip"):
+		legion.flags["stars_tip"] = true
+		var tl := _label("Звёзды — за мастерство, каждая добывается раз и навсегда. Все три в бою — +%d Славы; все 30 звёзд провинции — сундук Славы и трофей в город." % Legion.STAR_GLORY, 14, false, C_SOFT)
+		tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tl.custom_minimum_size = Vector2(460, 0)
+		tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(tl)
+		return box
+	var best := int(out.get("star_best", 0))
+	if best > int(out.get("stars", 0)):
+		var bl := _label("Лучшее в этом бою — %d %s из 3: добытые звёзды не теряются" % [best, Hud._plural(best, "звезда", "звезды", "звёзд")], 14, false, C_SOFT)
+		box.add_child(bl)
+	return box
 
 
 ## Отряд после боя: портреты бойцов (лист 35 владельца), павшие — серые
@@ -1847,25 +1980,31 @@ class PerkButton extends Control:
 ## Звёзды итога (рисуются, а не шрифтом)
 class Stars extends Control:
 	var n := 0
+	var mask := -1                 # биты звёзд (Legion.STAR_*): горят именно эти; −1 — первые n
+	var of := 3                    # сколько звёзд рисовать (1 — значок у строки условия)
 
 	func _draw() -> void:
+		if of == 1:
+			_one(size * 0.5, size.y * 0.42, n > 0)
+			return
 		var r := size.y * 0.42
 		for i in 3:
 			var c := Vector2(size.x * 0.5 + (i - 1) * r * 2.3, size.y * 0.5 + (0.0 if i == 1 else 4.0))
-			var rr := r * (1.15 if i == 1 else 1.0)
-			var pts := PackedVector2Array()
-			for k in 10:
-				var a := -PI / 2.0 + k * PI / 5.0
-				pts.append(c + Vector2(cos(a), sin(a)) * (rr if k % 2 == 0 else rr * 0.45))
-			var on := i < n
-			var shadow := PackedVector2Array()
-			for p in pts:
-				shadow.append(p + Vector2(0, 3))
-			draw_colored_polygon(shadow, Color(0.25, 0.14, 0.05, 0.35))
-			draw_colored_polygon(pts, Color("f2c24a") if on else Color(0.78, 0.72, 0.62, 0.7))
-			var ol := pts.duplicate()
-			ol.append(pts[0])
-			draw_polyline(ol, Color("8a5a12") if on else Color(0.55, 0.48, 0.4, 0.8), 2.5, true)
+			_one(c, r * (1.15 if i == 1 else 1.0), (mask & (1 << i)) != 0 if mask >= 0 else i < n)
+
+	func _one(c: Vector2, rr: float, on: bool) -> void:
+		var pts := PackedVector2Array()
+		for k in 10:
+			var a := -PI / 2.0 + k * PI / 5.0
+			pts.append(c + Vector2(cos(a), sin(a)) * (rr if k % 2 == 0 else rr * 0.45))
+		var shadow := PackedVector2Array()
+		for p in pts:
+			shadow.append(p + Vector2(0, 3))
+		draw_colored_polygon(shadow, Color(0.25, 0.14, 0.05, 0.35))
+		draw_colored_polygon(pts, Color("f2c24a") if on else Color(0.78, 0.72, 0.62, 0.7))
+		var ol := pts.duplicate()
+		ol.append(pts[0])
+		draw_polyline(ol, Color("8a5a12") if on else Color(0.55, 0.48, 0.4, 0.8), 2.5, true)
 
 
 ## Кружок волны: пройденная/идущая — золотая, впереди — пустая; волна босса — с короной

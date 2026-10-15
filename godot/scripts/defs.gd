@@ -330,6 +330,9 @@ const B := {
 	"smallfountain_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "smallfountain", "look": 1, "name": "Фонтан с резной стенкой", "cost": 70, "deco": 5, "unlock": "fountain", "desc": "Каменная чаша с водой у резной стенки."},
 	"pergola": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Пергола", "cost": 200, "deco": 8, "unlock": "deco_stone", "desc": "Увитая виноградом пергола с ложем и столиком — как в садах Помпей."},
 	"pergola_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "pergola", "look": 1, "name": "Беседка-толос", "cost": 200, "deco": 8, "unlock": "deco_stone", "desc": "Круглая беседка под черепичным куполом, внутри скамья, колонны в розах."},
+	# трофеи Легиона: все 30 звёзд провинции (Legion.REGIONS trophy) — бесплатно, одна на город
+	"trophy_cart": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Телега атамана", "cost": 0, "deco": 10, "unlock": "trophy:forest", "unique": true, "trophy": true,
+		"desc": "Трофей Легиона за все 30 звёзд «Леса разбойников»: телега атамана со щитами, копьями и знаменем шайки."},
 	# животные
 	"sheep": {"kind": "decor", "cat": "decor", "sub": "animals", "name": "Овцы в загоне", "cost": 30, "deco": 3, "unlock": "animals", "desc": "Пара овечек в загоне с плетнём и корытцем."},
 	"sheep_2": {"kind": "decor", "cat": "decor", "sub": "animals", "base": "sheep", "look": 1, "name": "Овцы на лугу", "cost": 30, "deco": 3, "unlock": "animals", "desc": "Пара овечек пасётся на лугу, в углу копёшка."},
@@ -399,6 +402,8 @@ const RESEARCH := [
 	# Легион — с «Посёлка» (решение владельца Д5): первая провинция «Лес разбойников» открыта сразу
 	{"id": "legion", "lvl": 3, "name": "Легион", "cost": 480, "icon": "legion",
 		"desc": "Открывает Казармы и окно «Легион»: отряд идёт походом против разбойников, зверей и чудовищ, добывает Славу и денарии. Новые провинции открываются по мере роста города."},
+	# лучники — тоже с «Посёлка» (этап 3b): в лесу у них свои бои — «пращники в кустах — берите лучника»
+	{"id": "archery", "lvl": 3, "name": "Стрельбище", "cost": 490, "icon": "arrow", "after": "legion", "desc": "Лучники для Легиона: бьют издалека и снимают вражеских стрелков."},
 
 	{"id": "patricians", "lvl": 4, "name": "Класс патрициев", "cost": 750, "icon": "toga",
 		"desc": "Открывает домусы патрициев. Им нужно всё: еда, одежда, развлечения, услуги и товары."},
@@ -410,8 +415,6 @@ const RESEARCH := [
 	{"id": "odeon", "lvl": 4, "name": "Одеон", "cost": 950, "icon": "harp"},
 	{"id": "taberna", "lvl": 4, "name": "Таверна", "cost": 890, "icon": "mug"},
 	{"id": "research1", "lvl": 4, "name": "Новые полки для свитков", "cost": 690, "icon": "scroll", "desc": "Очков исследований помещается вдвое больше."},
-	# лучники — с «Городка»: лес «Посёлка» проходят три легионера (баланс леса посчитан на них, test_legion noarcher=1)
-	{"id": "archery", "lvl": 4, "name": "Стрельбище", "cost": 490, "icon": "arrow", "after": "legion", "desc": "Лучники для Легиона: бьют издалека."},
 
 	{"id": "perfumer", "lvl": 5, "name": "Парфюмер", "cost": 1350, "icon": "perfume"},
 	{"id": "medic", "lvl": 5, "name": "Лекарь", "cost": 1190, "icon": "medic"},
@@ -527,6 +530,10 @@ static func request(id: String) -> Dictionary:
 static func unlock_text(id: String) -> String:
 	if id.begins_with("boss"):
 		return "победой Легиона над боссом «%s»" % Legion.boss_name(int(id.substr(4)))
+	if id.begins_with("trophy:"):
+		for R: Dictionary in Legion.REGIONS:
+			if String(R["id"]) == id.substr(7):
+				return "всеми 30 звёздами Легиона в провинции «%s»" % R["name"]
 	var r := research(id)
 	if not r.is_empty():
 		return "исследованием «%s»" % r["name"]
@@ -539,6 +546,8 @@ static func unlock_text(id: String) -> String:
 static func unlock_short(id: String) -> String:
 	if id.begins_with("boss"):
 		return "Победа над боссом"
+	if id.begins_with("trophy:"):
+		return "30 звёзд похода"
 	var r := research(id)
 	if not r.is_empty():
 		return r["name"]

@@ -58,6 +58,7 @@ static func _decor(b: Bp, type: String) -> void:
 		"pergola": _pergola(b, lk)
 		"duck": _duck(b)
 		"swan": _swan(b)
+		"trophy_cart": _trophy_cart(b)
 
 
 # ---------- помощники ----------
@@ -485,6 +486,29 @@ static func _cart(b: Bp, lk: int) -> void:
 		b.add("SM_Prop_Vase_01", Vector3(-0.1, 0, 1.18), _yaw(b), 0.75)
 		b.add("SM_Prop_Sack_0%d" % (3 + b.rng.randi() % 3), Vector3(0.45, 0, 1.1), _yaw(b), 0.7)
 	b.door = Vector3(0, 0, 1.6)
+
+
+## Трофей Легиона «Телега атамана» (все 30 звёзд «Леса разбойников»): телега шайки на мраморной плите, в ней добыча,
+## к колесу прислонены щиты разбойников, рядом стойка с их копьями и знамя атамана на шесте
+static func _trophy_cart(b: Bp) -> void:
+	_slab(b, Vector3(0, 0, -0.1), Vector3(3.3, 0.12, 2.1))
+	var s := 0.82
+	var yaw := -PI / 2
+	var c := Basis(Vector3.UP, yaw) * Vector3(0, 0, -0.69 * s) + Vector3(0.15, 0.12, -0.25)
+	b.add("SM_Prop_Cart_01", c, yaw, s)
+	# в телеге — добыча шайки: мешки и кувшины
+	b.add("SM_Prop_Sack_Stack_02", c + Vector3(0.05, 0.6, 0.0), 0.2, 0.78)
+	b.add("SM_Prop_Jar_Pile_01", Vector3(-0.85, 0.12, -0.75), 0.6, 0.7)
+	CatMilitary._lean_shield(b, Vector3(-0.35, 0.12, 0.62), 0.15, "SM_Wep_Shield_01", 0.32, 0.62)
+	CatMilitary._lean_shield(b, Vector3(0.45, 0.12, 0.66), -0.2, "SM_Wep_Shield_03", 0.3, 0.6)
+	CatMilitary._rack(b, Vector3(1.25, 0.12, -0.55), -PI / 2, 1, 0.5)
+	# знамя атамана: шест, перекладина, красное полотнище, наверху — золотое навершие
+	_sx(b, "SM_Prop_Pole_02", Vector3(-1.35, 0.12, -0.45), 0.0, Vector3(0.9, 0.95, 0.9))
+	_sx(b, "SM_Prop_Beam_01", Vector3(-1.85, 2.66, -0.38), 0.0, Vector3(0.42, 0.55, 0.55))
+	b.add("SM_Prop_Banner_01_C", Vector3(-1.35, 2.62, -0.47), 0.0, 0.85)
+	b.add("SM_Bld_Ornament_09", Vector3(-1.35, 3.12, -0.45), 0.0, 0.9)
+	b.add("SM_Prop_Sack_Stack_01", Vector3(1.15, 0.12, 0.55), 0.3, 0.5)
+	b.door = Vector3(0, 0, 1.4)
 
 
 # ---------- огонь, знамёна ----------

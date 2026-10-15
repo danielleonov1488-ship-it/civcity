@@ -82,7 +82,8 @@ const BUILDING_UNIT := {"barracks": "legionary", "spearcamp": "spearman", "range
 ## tags: human — люди, beast — звери, giant — великаны, ranged — стрелки, armored — в броне, swift — быстрые,
 ## swarm — стаей. prefer: "ranged" — сначала бросаются на стрелков. Боссы: cleave — удар задевает всех
 ## рядом с целью (радиус), charge — разбег (удар ×1,8 и отброс), bites — кусает столько ближних сразу,
-## shot+splash — бросает камни по площади. art — портрет: лист 36 (враги, 4×4) или 37 (боссы, 4×2), номер.
+## shot+splash — бросает камни по площади, summon — созывает подмогу: первый раз через first секунд после выхода на поле,
+## дальше каждые every секунд (за warn секунд — рог; foes — кто вбегает, сила как у врагов боя). art — портрет: лист 36 (враги, 4×4) или 37 (боссы, 4×2), номер.
 const ENEMIES := {
 	"bandit": {"name": "Разбойник", "hp": 120, "atk": 12, "armor": 5, "range": 0.95, "rate": 1.0, "speed": 1.7, "tags": ["human"], "art": 0},
 	"slinger": {"name": "Пращник", "hp": 85, "atk": 11, "armor": 0, "range": 6.5, "rate": 1.3, "speed": 1.6, "shot": "sling", "tags": ["human", "ranged"], "art": 1},
@@ -98,7 +99,8 @@ const ENEMIES := {
 	"shade": {"name": "Тень Аида", "hp": 240, "atk": 23, "armor": 32, "range": 1.0, "rate": 1.0, "speed": 1.6, "tags": ["human", "armored"], "art": 11},
 	"hellhound": {"name": "Адский пёс", "hp": 130, "atk": 15, "armor": 8, "range": 0.85, "rate": 0.7, "speed": 3.0, "prefer": "ranged", "tags": ["beast", "swift", "swarm"], "art": 12},
 	# боссы — последний бой каждой провинции
-	"chief": {"name": "Атаман разбойников", "boss": true, "hp": 620, "atk": 26, "armor": 18, "range": 1.1, "rate": 1.0, "speed": 1.6, "size": 1.3, "tags": ["human"], "art": 0},
+	"chief": {"name": "Атаман разбойников", "boss": true, "hp": 620, "atk": 26, "armor": 18, "range": 1.1, "rate": 1.0, "speed": 1.6, "size": 1.3, "tags": ["human"], "art": 0,
+		"summon": {"first": 5.0, "every": 12.0, "warn": 3.0, "foes": ["bandit", "bandit", "bandit"]}},
 	"greatbear": {"name": "Медведь-шатун", "boss": true, "hp": 1050, "atk": 36, "armor": 25, "range": 1.3, "rate": 1.4, "speed": 1.5, "size": 1.7, "cleave": 1.2, "tags": ["beast", "giant"], "art": 1},
 	"gaulKing": {"name": "Вождь галлов", "boss": true, "hp": 1150, "atk": 34, "armor": 32, "range": 1.2, "rate": 1.0, "speed": 1.6, "size": 1.35, "cleave": 1.0, "tags": ["human", "armored"], "art": 2},
 	"giant": {"name": "Германский великан", "boss": true, "hp": 1700, "atk": 46, "armor": 22, "range": 1.6, "rate": 1.6, "speed": 1.2, "size": 1.9, "cleave": 1.5, "tags": ["human", "giant"], "art": 3},
@@ -114,10 +116,12 @@ const ENEMIES := {
 ## Каждая — своя карта на весь экран (рисованный фон 40a…40h), тропа из STAGES боёв, последний — босс.
 ## rank — с какого уровня города (Defs.LEVELS) провинция открыта: первая — с «Посёлка» (там изучается «Легион»),
 ## дальше — по две на уровень, без пустоты после леса (решение владельца Д5 от 14.10: Легион — раньше).
-## Самый трудный бой провинции (target_level) не выше предела бойцов CAP_BY_CITY её уровня — стены нет
+## Самый трудный бой провинции (target_level) не выше предела бойцов CAP_BY_CITY её уровня — стены нет.
+## trophy — украшение в город за все 30 звёзд провинции (Defs.B, unlock «trophy:<id провинции>»)
 const REGIONS := [
 	{"id": "forest", "name": "Лес разбойников", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "wolf"], "boss": "chief", "rank": 3,
-		"desc": "Шайки на лесной дороге. Хватит трёх легионеров.", "map": "40a"},
+		"desc": "Шайки на лесной дороге: пращники в кустах, волчьи тропы, атаман с шайкой. Подбирайте отряд под бой.", "map": "40a",
+		"trophy": "trophy_cart"},
 	{"id": "hills", "name": "Дикие холмы", "biome": "hills", "foes": ["wolf", "wolf", "boar", "bear"], "boss": "greatbear", "rank": 4,
 		"desc": "Волчьи стаи и медведи. Копейщики держат зверя на расстоянии.", "map": "40b"},
 	{"id": "gaul", "name": "Галльская чаща", "biome": "darkforest", "foes": ["gaul", "gaul", "gaulArcher", "boar"], "boss": "gaulKing", "rank": 5,
@@ -149,12 +153,13 @@ static var WAVE_MAX := 6
 ## Подгонка силы врагов каждого боя первого круга (множитель к силе), посчитана проверками баланса
 ## (scripts/test_legion.gd mode=calibrate): отряд обычного игрока (состав — auto_squad) на уровне target_level(r, s)
 ## с умениями побеждает в ≥90% боёв, а без умений на уровень выше — в ≥40% (умения стоят примерно уровня,
-## но без них никто не упирается в стену). Лес (этап 3, 15.10): три легионера (лучники — с «Городка»), с умениями ≥90%,
-## без умений на том же уровне — от 35% (mode=calibrate regions=0 np_off=0 need_np=0.35; пока мест три — без лучника,
-## как «Лучший состав»); первый бой — учебный: с маслом в миг остановки 100%, без масла ~1%, «Авто» (бережёт масло
-## для кучи) 100% (mode=tut). Пусто — без подгонки
+## но без них никто не упирается в стену). Лес (этап 3b): свои бои (FIXED), «Лучший состав» под бой — с умениями ≥90%,
+## без умений на том же уровне — от 35% там, где решает масло (mode=calibrate regions=0 np_off=0 need_np=0.35); бои с
+## пращниками (2-й и 7-й) — легче наибольшего: «не тот» отряд там всё равно ~0%, зато «все вернулись» достижимо на T+2
+## (mode=squads: верно / без умений / не тот / звёзды); первый бой — учебный: с маслом в миг остановки 100%, без масла 0%,
+## «Авто» (бережёт масло для кучи) 100% (mode=tut). Пусто — без подгонки
 static var TUNE: Array = [
-	[1.8, 4.02, 4.02, 3.04, 2.24, 2.81, 2.39, 2.02, 1.48, 1.54],   # Лес разбойников (три легионера; бой 1 — учебный, mode=tut)
+	[1.8, 2.0, 2.4, 1.82, 1.86, 2.06, 1.6, 1.89, 1.32, 1.12],   # Лес разбойников (этап 3b: свои бои, отряд под бой; бой 1 — учебный, mode=tut)
 	[2.98, 2.82, 4.29, 1.34, 2.04, 1.38, 1.31, 0.91, 0.92, 1.27],   # Дикие холмы
 	[2.19, 2.64, 1.78, 1.31, 1.37, 1.08, 0.87, 0.8, 0.81, 0.93],   # Галльская чаща
 	[3.92, 1.83, 1.54, 1.27, 0.96, 1.32, 1.01, 0.6, 0.6, 0.88],   # Германские болота
@@ -166,7 +171,7 @@ static var TUNE: Array = [
 ## То же для кругов со второго (отряд уже полный, умения сильные): множитель поверх TUNE и роста уровней;
 ## посчитано на втором круге (mode=calibrate cycle=1) с той же целью. Дальше каждый круг ещё ×CYCLE_EXTRA
 static var TUNE_C: Array = [
-	[2.23, 2.52, 2.43, 2.18, 2.27, 2.3, 2.56, 2.31, 2.61, 1.98],   # Лес разбойников (этап 3: новый лес и его уровни)
+	[2.23, 3.06, 2.15, 2.34, 2.57, 2.16, 2.87, 2.33, 2.45, 2.31],   # Лес разбойников (этап 3b: свои бои леса на всех кругах)
 	[1.98, 2.04, 2.17, 2.02, 2.08, 1.97, 1.82, 1.77, 1.87, 1.89],   # Дикие холмы
 	[1.97, 1.8, 1.94, 1.78, 1.81, 1.75, 1.85, 1.82, 1.66, 1.67],   # Галльская чаща
 	[1.46, 1.38, 1.51, 1.43, 1.47, 1.43, 1.44, 1.51, 1.49, 1.43],   # Германские болота
@@ -268,7 +273,9 @@ var upg := {}               # идущее улучшение: род → {"to":
 var squad: Array = ["legionary", "legionary", "legionary"]   # отряд походов (места по порядку, "" — пусто)
 var defense: Array = []     # отряд обороны для боёв с городами ([] — как отряд походов)
 var perks := {}             # умение → уровень (0 — закрыто)
-var stars := {}             # "круг-провинция-бой" → звёзды (1…3)
+var stars := {}             # "круг-провинция-бой" → звёзды-биты (STAR_WIN | STAR_SAFE | STAR_TASK), лучшее за все заходы
+var chests := {}            # "круг-провинция" → сундук за 30 звёзд уже выдан
+var trophies := {}          # id провинции → трофей (украшение) открыт в городе
 var progress := 0           # сколько боёв первого прохода пройдено подряд (сквозь круги)
 var wins := 0
 var rating := 0             # рейтинг походов (не тратится)
@@ -420,24 +427,33 @@ func set_defense_slot(i: int, type: String) -> void:
 	changed.emit()
 
 
-## Хороший состав из доступных родов войск: впереди держат строй легионеры и копейщики, за ними лучники,
-## в тылу машины (кнопка «Лучший состав» в окне; так же собирают отряд проверки баланса).
-## Пока мест три (лес до первого босса) — три легионера: лучника там некому прикрыть (archer_exposed)
-func auto_squad() -> Array:
-	var n := slots()
+## Хороший состав из доступных родов войск под бой st: впереди держат строй легионеры и копейщики, за ними лучники,
+## в тылу машины (кнопка «Лучший состав» в окне; так же собирают отряд проверки баланса). Пока мест три (лес до
+## первого босса), состав — ответ на бой: против пращников — с лучником, против волков и шайки — три легионера
+## (wants_archer). Без боя (st пуст) — бой переднего края
+func auto_squad(st := {}) -> Array:
 	var have := []
 	for t in UNIT_IDS:
 		if available(t):
 			have.append(t)
+	if st.is_empty():
+		var fr := frontier()
+		st = stage(int(fr["cycle"]), int(fr["r"]), int(fr["s"]))
+	return counter_squad(st, have, slots())
+
+
+## Состав под бой st из родов have на n мест (так же собирает отряд проверка баланса test_legion.gd)
+static func counter_squad(st: Dictionary, have: Array, n: int) -> Array:
 	var out := []
 	if have.is_empty():
 		return out
 	# порядок предпочтения по местам: каждый род по очереди, пока есть места
 	var plan := ["legionary", "archer", "spearman", "ballista", "legionary", "catapult", "archer", "spearman", "legionary"]
+	var bow := n > SQUAD_BASE or wants_archer(st) or not ("legionary" in have)
 	for t in plan:
 		if out.size() >= n:
 			break
-		if t == "archer" and n <= SQUAD_BASE and "legionary" in have:
+		if t == "archer" and not bow:
 			continue
 		if t in have:
 			out.append(t)
@@ -446,9 +462,44 @@ func auto_squad() -> Array:
 	return out
 
 
-func use_auto_squad() -> void:
-	squad = auto_squad()
+## Бою на три места нужен лучник: у боёв леса — squad "bow" («пращники в кустах») или "any" с ними; у прочих — врагов-стрелков
+## двое и больше, а зверей, что бросаются на стрелков, нет
+static func wants_archer(st: Dictionary) -> bool:
+	if bool(st.get("fixed", false)):
+		# «годятся оба»: при пращниках в кустах «Лучший состав» всё же берёт лучника (без умений с ним надёжнее)
+		return String(st.get("squad", "")) == "bow" or (String(st.get("squad", "")) == "any" and bool(st.get("kite", false)))
+	var ranged := 0
+	for w: Array in st.get("waves", []):
+		for k in w:
+			var E: Dictionary = ENEMIES[k]
+			if String(E.get("prefer", "")) == "ranged":
+				return false
+			if float(E["range"]) > 3.0:
+				ranged += 1
+	return ranged >= 2
+
+
+func use_auto_squad(st := {}) -> void:
+	squad = auto_squad(st)
 	changed.emit()
+
+
+## Отряд отличается от «Лучшего состава» для боя st (по родам войск, порядок мест не важен). Бою «годятся оба»
+## (squad "any") подходят и три легионера, и легионеры с лучником
+func squad_off(st: Dictionary) -> bool:
+	var a := []
+	for u: Dictionary in squad_stats():
+		a.append(String(u["key"]))
+	a.sort()
+	var b := auto_squad(st)
+	b.sort()
+	if a == b:
+		return false
+	if String(st.get("squad", "")) == "any" and slots() <= SQUAD_BASE:
+		var bow := ["archer", "legionary", "legionary"]
+		var leg := ["legionary", "legionary", "legionary"]
+		return not (a == bow or a == leg)
+	return true
 
 
 # =====================================================================
@@ -787,14 +838,59 @@ static func target_level(cycle: int, r: int, s: int) -> int:
 	return base + add + cycle * CYCLE_CAP
 
 
-## Бои с заданным составом: "r-s" → {waves, packs (номера волн, которые выходят тесной кучей — масло накроет всех)}.
-## Первый бой леса — учебный: двое разбойников, потом шайка кучей (без масла её трём легионерам не одолеть)
-const FIXED := {"0-0": {"waves": [["bandit", "bandit"], ["bandit", "bandit", "bandit", "bandit", "slinger"]], "packs": [1]}}
+## Бои с заданным составом (лес — загадка на выбор отряда: «пращники в кустах — берите лучника, волчья тропа —
+## легионеров»): "r-s" → {name — название боя, waves, packs (номера волн, которые выходят тесной кучей — масло
+## накроет всех), kite — пращники «в кустах» отходят от мечей (лучники выцеливают их издалека), bite — волки рвут
+## стрелков (урон по лучникам ×BITE), squad — кого брать, пока мест три: "bow" — с лучником, "leg" — три легионера,
+## "any" — годятся оба (test_legion mode=squads: «не тот» отряд там почти не хуже); без squad — "bow" при kite без bite,
+## иначе "leg"; task — задание на третью звезду [вид, число] (STAR_TASKS), tip — совет на карточке}.
+## Первый бой леса — учебный: двое разбойников, потом шайка кучей (без масла её трём легионерам не одолеть).
+## Состав одинаков на всех кругах — растёт только сила
+const FIXED := {
+	"0-0": {"name": "Засада на дороге", "waves": [["bandit", "bandit"], ["bandit", "bandit", "bandit", "bandit", "slinger"]], "packs": [1],
+		"task": ["oil", 4]},
+	"0-1": {"name": "Пращники в кустах", "waves": [["slinger", "slinger", "slinger", "bandit"]], "kite": true, "task": ["fast", 20],
+		"tip": "Пращники прячутся в кустах и отбегают от мечей — лучник снимет их издалека."},
+	"0-2": {"name": "Волчья тропа", "waves": [["wolf", "wolf", "wolf"], ["wolf", "wolf", "wolf"]], "bite": true, "task": ["hp", 25],
+		"tip": "Волки бросаются на лучников и рвут их — идите легионерами."},
+	"0-3": {"name": "Шайка у брода", "waves": [["bandit", "bandit", "slinger"], ["bandit", "bandit", "bandit", "bandit", "bandit"]], "packs": [1],
+		"squad": "any", "task": ["oil", 4], "tip": "Вторая волна идёт толпой — приберегите масло."},
+	"0-4": {"name": "Лесные стрелки", "waves": [["slinger", "slinger", "bandit"], ["bandit", "bandit", "slinger", "slinger"]], "kite": true,
+		"task": ["hp", 40], "tip": "Пращники отбегают в кусты — без лучника их долго ловить."},
+	"0-5": {"name": "Волки и шайка", "waves": [["wolf", "wolf", "wolf"], ["bandit", "bandit", "bandit", "bandit", "bandit"]], "packs": [1], "bite": true,
+		"task": ["oil", 4], "tip": "Сначала волки (лучника загрызут), потом шайка толпой — масло для неё."},
+	"0-6": {"name": "Пращники за частоколом", "waves": [["bandit", "slinger", "slinger", "slinger"], ["bandit", "bandit", "slinger", "slinger", "slinger"]],
+		"kite": true, "task": ["fast", 60], "tip": "Разбойники прикрывают пращников — лучник достанет их из-за спин."},
+	"0-7": {"name": "Волчья ночь", "waves": [["wolf", "wolf", "wolf"], ["bandit", "bandit", "wolf"], ["wolf", "wolf", "wolf", "bandit"]], "bite": true,
+		"task": ["hp", 35], "tip": "Три волчьих набега — лучника в отряд не берите."},
+	"0-8": {"name": "Большая шайка", "waves": [["slinger", "slinger", "slinger"], ["slinger", "bandit", "slinger", "slinger"], ["bandit", "bandit", "bandit", "bandit", "bandit", "bandit"]],
+		"packs": [2], "kite": true, "squad": "any", "task": ["oil", 5], "tip": "Сначала пращники в кустах, в конце — шайка толпой: масло прибережите для неё."},
+	"0-9": {"waves": [["bandit", "bandit", "slinger", "slinger"], ["chief", "bandit", "bandit"]], "squad": "any", "task": ["oil", 4],
+		"tip": "Атаман трубит в рог и созывает шайку. Масло — когда она сбежится к нему."},
+}
+## Волки на «волчьей тропе» (bite) рвут стрелков: урон по лучникам во столько раз больше
+static var BITE := 3.2
+## Стрелки «в кустах» (kite): сколько метров могут отойти от мечей; урон по ним мечом (BUSH) и стрелой или камнем
+## (BUSH_SHOT) — во столько раз (прячутся в кустах: мечом их не достать, стрела сверху достанет)
+static var KITE := 5.0
+static var BUSH := 0.35
+static var BUSH_SHOT := 1.8
+## Задания на третью звезду: вид → [текст (число — %d), чем меряется в итоге боя]
+## oil — масло накрыло N+ врагов разом; fast — победа быстрее N с; hp — у отряда осталось больше N% здоровья
+const STAR_TASKS := {"oil": "Масло накрыло %d+ врагов разом", "fast": "Победа быстрее %d с", "hp": "У отряда больше %d%% здоровья"}
+## Звёзды боя — биты: победа, все вернулись, задание боя (stars[ключ боя] — лучшее, что набрано, по всем заходам)
+const STAR_WIN := 1
+const STAR_SAFE := 2
+const STAR_TASK := 4
+const STAR_ALL := 7
+## Первые три звезды в бою — столько Славы; все 30 звёзд провинции — сундук Славы (CHEST × (1 + круг)) и трофей в город
+const STAR_GLORY := 2
+const CHEST := [15, 20, 25, 30, 35, 40, 45, 50]
 
 
 ## Состав и награда боя — одинаковые при каждом заходе. Возвращает:
 ## {cycle, r, s, idx, key, D, boss, waves: [[ключ врага, …], …], packs: [номер волны], scale, reward: {money, glory[, rp]},
-##  title, name, region}
+##  title, name, region, fixed, theme (название боя из FIXED или ""), kite, bite, squad ("bow" | "leg" | "any" | "" — FIXED), task [вид, число], tip}
 static func stage(cycle: int, r: int, s: int) -> Dictionary:
 	var R: Dictionary = REGIONS[r]
 	var idx := stage_index(cycle, r, s)
@@ -830,7 +926,10 @@ static func stage(cycle: int, r: int, s: int) -> Dictionary:
 		reward["rp"] = roundi(minf(3000.0, 40.0 * pow(1.04, D)))
 	var title: String = R["name"] + ((" " + roman(cycle + 1)) if cycle > 0 else "")
 	return {"cycle": cycle, "r": r, "s": s, "idx": idx, "key": stage_key(cycle, r, s), "D": D, "boss": boss, "waves": waves, "packs": packs,
-		"scale": scale, "boss_scale": boss_scale, "reward": reward, "title": title, "name": (ENEMIES[R["boss"]]["name"] if boss else "Бой %d" % (s + 1)), "region": R["id"]}
+		"scale": scale, "boss_scale": boss_scale, "reward": reward, "title": title, "name": (ENEMIES[R["boss"]]["name"] if boss else "Бой %d" % (s + 1)), "region": R["id"],
+		"fixed": not fx.is_empty(), "theme": String(fx.get("name", "")), "kite": bool(fx.get("kite", false)), "bite": bool(fx.get("bite", false)),
+		"squad": String(fx.get("squad", ("bow" if bool(fx.get("kite", false)) and not bool(fx.get("bite", false)) else "leg") if not fx.is_empty() else "")),
+		"task": (fx.get("task", ["oil", 3]) as Array).duplicate(), "tip": String(fx.get("tip", ""))}
 
 
 ## То же, что stage() — имя для окна и боя
@@ -839,7 +938,8 @@ func stage_info(cycle: int, r: int, s: int) -> Dictionary:
 	st["open"] = stage_open(cycle, r, s)
 	st["done"] = stage_done(cycle, r, s)
 	st["first"] = st["idx"] == progress
-	st["stars"] = int(stars.get(st["key"], 0))
+	st["star_mask"] = int(stars.get(st["key"], 0))
+	st["stars"] = star_count(int(st["star_mask"]))
 	st["power"] = stage_power(st)
 	st["recommended"] = recommended_level(st)
 	return st
@@ -859,9 +959,24 @@ func next_stage(st: Dictionary) -> Dictionary:
 	return stage_info(c, r, s) if stage_open(c, r, s) else {}
 
 
-## Сила врага k в бою st (у боссов — своя, меньшая прибавка)
+## Сила врага k в бою st (у боссов — своя, меньшая прибавка). Особенности боя: kite — стрелки отходят от мечей,
+## bite — звери, что бросаются на стрелков, рвут их сильнее; summon босса — подмога с силой врагов этого боя.
+## Всё это — только у врагов походов (бои с городами собирают бойцов из UNITS — сервер их не знает)
 static func foe_stats(st: Dictionary, k: String) -> Dictionary:
-	return enemy_stats(k, float(st["boss_scale"]) if bool(ENEMIES[k].get("boss", false)) else float(st["scale"]))
+	var E: Dictionary = ENEMIES[k]
+	var s := enemy_stats(k, float(st["boss_scale"]) if bool(E.get("boss", false)) else float(st["scale"]))
+	if bool(st.get("kite", false)) and String(s["shot"]) != "":
+		s["kite"] = KITE
+		s["bush"] = [BUSH, BUSH_SHOT]
+	if bool(st.get("bite", false)) and String(s["prefer"]) == "ranged":
+		s["vs"] = {"ranged": BITE}
+	if E.has("summon"):
+		var sm: Dictionary = E["summon"]
+		var foes := []
+		for f in sm["foes"]:
+			foes.append(enemy_stats(String(f), float(st["scale"])))
+		s["summon"] = {"first": float(sm.get("first", sm["every"])), "every": float(sm["every"]), "warn": float(sm["warn"]), "foes": foes}
+	return s
 
 
 static func stage_power(st: Dictionary) -> int:
@@ -872,40 +987,145 @@ static func stage_power(st: Dictionary) -> int:
 	return p
 
 
-## Шансы для окна перед боем: "good" | "mid" | "bad" и слова
-## Сравнивает средний уровень отряда с рекомендованным (target_level — на нём обычный отряд с умениями
-## побеждает в 9 боях из 10, без умений нужен уровень выше)
-func odds(st: Dictionary) -> Array:
+## Шансы для окна перед боем: [класс "good" | "mid" | "hard" | "bad", слова].
+## est — оценка прогоном боёв (odds_estimate / окно считает её в фоне): «Победа ~45% · с лучником ~85%».
+## Без неё — по среднему уровню отряда и рекомендованному (target_level — на нём обычный отряд с умениями побеждает
+## в 9 боях из 10, без умений нужен уровень выше); отряд не под бой (пока мест три) — как уровень долой
+func odds(st: Dictionary, est := {}) -> Array:
 	var sq := squad_stats()
 	if sq.is_empty():
 		return ["bad", "В отряде никого"]
+	if not est.is_empty():
+		var p := float(est["cur"])
+		var v := "good" if p >= 0.8 else ("mid" if p >= 0.5 else ("hard" if p >= 0.2 else "bad"))
+		var words := "Победа ~%d%%" % roundi(p * 100.0)
+		if est.has("best") and float(est["best"]) >= p + 0.15:
+			words += " · %s ~%d%%" % [best_words(est.get("best_types", [])), roundi(float(est["best"]) * 100.0)]
+		return [v, words]
 	var lv := 0.0
 	for u: Dictionary in sq:
 		lv += float(u["level"])
 	lv /= sq.size()
 	var T := float(recommended_level(st))
-	# лучник среди трёх — как уровень долой (волки бегут прямо к нему, строй тоньше): на уровень выше он
-	# уже почти не мешает (test_legion mode=target regions=0 bow=1 off=1)
-	var bow := archer_exposed(st)
-	if bow:
+	var off := slots() <= SQUAD_BASE and squad_off(st)
+	if off:
 		T += 1.0
 	if lv >= T + 0.5:
 		return ["good", "Шансы хорошие"]
 	var v := "mid" if lv >= T - 0.5 else ("hard" if lv >= T - 1.5 else "bad")
-	if bow:
-		return [v, "Лучник в лесу без прикрытия — лучше три легионера"]
+	if off:
+		return [v, "Отряд не под этот бой — «Лучший состав»"]
 	return [v, {"mid": "Победа — с умениями", "hard": "Будет очень тяжело", "bad": "Враг сильнее"}[v]]
 
 
-## В лесу, пока в отряде три места, стоит лучник: баланс леса посчитан на трёх легионерах — с лучником
-## несколько боёв почти не выиграть на нужном уровне (test_legion mode=target regions=0 bow=1)
-func archer_exposed(st: Dictionary) -> bool:
-	if int(st.get("r", -1)) != 0 or slots() > SQUAD_BASE:
-		return false
+## Чем «Лучший состав» отличается от нынешнего отряда (для шансов): «с лучником», «без лучника», «лучшим составом»
+func best_words(best_types: Array) -> String:
+	var cur := []
 	for u: Dictionary in squad_stats():
-		if String(u["key"]) == "archer":
-			return true
-	return false
+		cur.append(String(u["key"]))
+	var bow_b := "archer" in best_types
+	var bow_c := "archer" in cur
+	if bow_b and not bow_c:
+		return "с лучником"
+	if bow_c and not bow_b:
+		return "тремя легионерами" if best_types.count("legionary") == best_types.size() and best_types.size() == 3 else "без лучника"
+	return "лучшим составом"
+
+
+## Совет по составу для боя st: "" — отряд и так под бой, иначе кого взять (карточка боя, итог поражения)
+func squad_hint(st: Dictionary) -> String:
+	if squad_stats().is_empty():
+		return ""
+	if slots() <= SQUAD_BASE and wants_archer(st) and not available("archer") and "archer" in can_get():
+		var c = city()
+		if c != null and not c.unlocked("range"):
+			return "Тут пригодится лучник: изучите «Стрельбище» и поставьте его в городе."
+		return "Тут пригодится лучник: поставьте в городе Стрельбище."
+	if not squad_off(st):
+		return ""
+	var best := auto_squad(st)
+	var cur := []
+	for u: Dictionary in squad_stats():
+		cur.append(String(u["key"]))
+	if "archer" in best and not "archer" in cur:
+		return "Для этого боя возьмите лучника — «Лучший состав»."
+	if "archer" in cur and not "archer" in best and slots() <= SQUAD_BASE:
+		if bool(st.get("bite", false)):
+			return "Волки загрызут лучника — лучше три легионера («Лучший состав»)."
+		return "Тут лучше три легионера: лучника некому прикрыть («Лучший состав»)."
+	return "Для этого боя есть состав лучше — «Лучший состав»."
+
+
+## Оценка шансов прогоном боёв (ODDS_RUNS боёв с «Авто» — как внимательный игрок): задание для odds_run —
+## {key, cur: [setup…], best: [setup…] (пусто, если «Лучший состав» тот же), best_types}. Одно и то же для
+## одинаковых отряда, уровней и умений (key — для запоминания)
+const ODDS_RUNS := 8
+
+
+func odds_job(st: Dictionary) -> Dictionary:
+	var cur := []
+	for u: Dictionary in squad_stats():
+		cur.append(String(u["key"]))
+	var best := auto_squad(st)
+	var cs := cur.duplicate()
+	var bs := best.duplicate()
+	cs.sort()
+	bs.sort()
+	var same := cs == bs
+	return {"key": odds_key(st), "cur": _odds_setups(st, cur), "best": [] if same else _odds_setups(st, best), "best_types": best}
+
+
+## Ключ оценки шансов: бой, отряд, уровни, умения, бонусы чудес (одинаковый ключ — та же оценка)
+func odds_key(st: Dictionary) -> String:
+	var cur := []
+	for u: Dictionary in squad_stats():
+		cur.append(String(u["key"]))
+	var key := [st["key"], cur, open_perks(), bonus("atk"), bonus("hp"), auto_squad(st)]
+	for t in UNIT_IDS:
+		key.append(int(levels.get(t, 1)))
+	return str(key)
+
+
+func _odds_setups(st: Dictionary, types: Array) -> Array:
+	var sq := []
+	for t in types:
+		if available(String(t)):
+			sq.append(stats(String(t)))
+	var waves := []
+	for w: Array in st["waves"]:
+		var ws := []
+		for k in w:
+			ws.append(foe_stats(st, k))
+		waves.append(ws)
+	var out := []
+	for i in ODDS_RUNS:
+		out.append({"kind": "campaign", "squad": sq, "waves": waves, "perks": open_perks(), "seed": 1000 + i * 7919,
+			"packs": (st.get("packs", []) as Array).duplicate()})
+	return out
+
+
+## Посчитать задание odds_job (можно в фоне: только LegionSim и готовые числа) → {cur, best?, best_types}
+static func odds_run(job: Dictionary) -> Dictionary:
+	var out := {"cur": _win_rate(job["cur"]), "best_types": job["best_types"]}
+	if not (job["best"] as Array).is_empty():
+		out["best"] = _win_rate(job["best"])
+	return out
+
+
+static func _win_rate(setups: Array) -> float:
+	if setups.is_empty() or (setups[0]["squad"] as Array).is_empty():
+		return 0.0
+	var w := 0
+	for s: Dictionary in setups:
+		var r := LegionSim.new(s.duplicate(true)).run(true)
+		if bool(r["win"]):
+			w += 1
+	return float(w) / setups.size()
+
+
+## То же сразу (проверки)
+func odds_estimate(st: Dictionary) -> Dictionary:
+	return odds_run(odds_job(st))
 
 
 ## Рекомендованный уровень бойцов для боя (подсказка в окне перед боем)
@@ -942,8 +1162,13 @@ func can_fight(st: Dictionary) -> String:
 	return ""
 
 
-## Подсказка по составу: кого брать против этих врагов
-static func counter_tips(st: Dictionary) -> String:
+## Подсказка по составу: кого брать против этих врагов. have — рода войск, которые игрок может взять или построить
+## сейчас (пусто — все): не советуем то, чего ещё нет (копейщики и катапульты — после боссов). У боя из FIXED — свой совет
+static func counter_tips(st: Dictionary, have := []) -> String:
+	if String(st.get("tip", "")) != "":
+		var t := String(st["tip"])
+		if have.is_empty() or "archer" in have or not t.contains("лучник"):
+			return "Совет: " + t.left(1).to_lower() + t.substr(1)
 	var tags := {}
 	var big := false
 	for w: Array in st["waves"]:
@@ -952,19 +1177,38 @@ static func counter_tips(st: Dictionary) -> String:
 		for k in w:
 			for t in ENEMIES[k]["tags"]:
 				tags[t] = true
+	var ok := func(u: String) -> bool: return have.is_empty() or u in have
 	var advice := []
-	if tags.has("beast") or tags.has("giant"):
+	if (tags.has("beast") or tags.has("giant")) and ok.call("spearman"):
 		advice.append("копейщики сильнее против зверей и великанов")
-	# в лесу первого круга мест три — лучника там некому прикрыть (archer_exposed): совета про лучников нет
-	if (tags.has("ranged") or tags.has("swift")) and not (int(st.get("r", -1)) == 0 and int(st.get("cycle", 0)) == 0):
+	# пока мест три, лучник — только против стрелков без волков (wants_archer): совет — по составу боя
+	if (tags.has("ranged") or tags.has("swift")) and ok.call("archer") and (int(st.get("r", -1)) != 0 or int(st.get("cycle", 0)) > 0 or wants_archer(st)):
 		advice.append("лучники быстро снимают стрелков и волков")
-	if tags.has("armored") or tags.has("giant"):
+	if (tags.has("armored") or tags.has("giant")) and ok.call("ballista"):
 		advice.append("баллиста пробивает броню")
 	if tags.has("swarm") or big:
-		advice.append("катапульта и «Кипящее масло» хороши против толпы")
+		advice.append("катапульта и «Кипящее масло» хороши против толпы" if ok.call("catapult") else "«Кипящее масло» хорошо против толпы")
 	if advice.is_empty():
 		return ""
 	return "Совет: " + "; ".join(advice.slice(0, 2)) + "."
+
+
+## Рода войск, которые игрок может взять в отряд, построить или изучить на нынешнем уровне города (для советов);
+## открытые победой над боссом — только после неё
+func can_get() -> Array:
+	var out := []
+	var c = city()
+	for t in UNIT_IDS:
+		var b := String(UNITS[t]["building"])
+		var r := Defs.research(String(Defs.B[b].get("unlock", "")))
+		if free_mode or available(t) or (c != null and (c.unlocked(b) or (not r.is_empty() and int(r["lvl"]) <= city_level()))):
+			out.append(t)
+	return out
+
+
+## Совет по составу для этого игрока: без родов войск, которых ещё нет
+func tips(st: Dictionary) -> String:
+	return counter_tips(st, can_get())
 
 
 ## Что открыла победа над n-м боссом: умения, место в отряде, военные постройки (строки для окна)
@@ -1066,18 +1310,84 @@ func tut_skip() -> void:
 	changed.emit()
 
 
-## Звёзды за победу: все живы — 3, хотя бы половина — 2, иначе 1
-static func stars_for(result: Dictionary) -> int:
+## Звёзды боя за мастерство (биты): STAR_WIN — победа, STAR_SAFE — никто не пал, STAR_TASK — задание боя (task)
+static func star_mask(result: Dictionary, st: Dictionary) -> int:
 	if not bool(result.get("win", false)):
 		return 0
-	var alive := int(result["alive"])
-	var total := int(result["total"])
-	return 3 if alive == total else (2 if alive * 2 >= total else 1)
+	var m := STAR_WIN
+	if int(result.get("alive", 0)) >= int(result.get("total", 1)):
+		m |= STAR_SAFE
+	if task_done(result, st):
+		m |= STAR_TASK
+	return m
+
+
+## Сколько звёзд в наборе битов
+static func star_count(mask: int) -> int:
+	return (mask & 1) + ((mask >> 1) & 1) + ((mask >> 2) & 1)
+
+
+## Звёзд за бой (0…3)
+static func stars_for(result: Dictionary, st := {}) -> int:
+	return star_count(star_mask(result, st))
+
+
+## Задание боя на третью звезду: [вид, число] (по умолчанию — масло накрыло 3+ разом)
+static func task_of(st: Dictionary) -> Array:
+	var t: Array = st.get("task", [])
+	return t if t.size() == 2 and STAR_TASKS.has(String(t[0])) else ["oil", 3]
+
+
+static func task_done(result: Dictionary, st: Dictionary) -> bool:
+	var t := task_of(st)
+	var n := int(t[1])
+	match String(t[0]):
+		"fast":
+			return float(result.get("time", 999.0)) <= float(n)
+		"hp":
+			return float(result.get("hp_left", 0.0)) * 100.0 > float(n)
+	return int(result.get("oil_best", 0)) >= n
+
+
+## Условия трёх звёзд боя — строки для карточки и итога
+static func star_texts(st: Dictionary) -> Array:
+	var t := task_of(st)
+	return ["Победа", "Все вернулись из боя", STAR_TASKS[String(t[0])] % int(t[1])]
+
+
+## Почему не далась звезда i (1 — все вернулись, 2 — задание) — для экрана итога
+static func star_miss(i: int, result: Dictionary, st: Dictionary) -> String:
+	if i == 1:
+		var fell := int(result.get("total", 0)) - int(result.get("alive", 0))
+		return "пали %d из %d" % [fell, int(result.get("total", 0))]
+	var t := task_of(st)
+	match String(t[0]):
+		"fast":
+			return "бой шёл %d с" % ceili(float(result.get("time", 0.0)))
+		"hp":
+			return "осталось %d%%" % floori(float(result.get("hp_left", 0.0)) * 100.0)
+	var n := int(result.get("oil_best", 0))
+	return "масло не жали" if int(result.get("perks_used", 0)) == 0 and n == 0 else "лучшее — %d разом" % n
+
+
+## Звёзды провинции (cycle, r): сколько набрано из 30
+func region_stars(cycle: int, r: int) -> int:
+	var n := 0
+	for s in STAGES:
+		n += star_count(int(stars.get(stage_key(cycle, r, s), 0)))
+	return n
+
+
+## Трофей провинции уже в городе (украшение Defs.B с unlock «trophy:<id>»)
+func has_trophy(id: String) -> bool:
+	return trophies.has(id)
 
 
 ## Итог боя похода: провиант, звёзды, добыча, рейтинг, открытие следующего боя и наград за боссов.
-## result — LegionSim.result ({win, alive, total, timeout, time}); возвращает его, дополнив:
-## {stars, first, reward ({} при поражении), rating, boss_beaten, unlocks: [строки], next: stage_info или {}}
+## result — LegionSim.result ({win, alive, total, timeout, time, hp_left, oil_best…}); возвращает его, дополнив:
+## {stars (за этот бой), star_mask, star_best (лучшее в этом бою за все заходы), star_glory (первые 3 звезды — Слава),
+##  chest ({} или {glory, trophy, region} — все 30 звёзд провинции), first, reward ({} при поражении), rating,
+##  boss_beaten, unlocks: [строки], next: stage_info или {}}
 func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 	var st: Dictionary = setup["stage"]
 	var c = city()
@@ -1089,15 +1399,27 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 	out["reward"] = {}
 	out["rating"] = 0
 	out["stars"] = 0
+	out["star_mask"] = 0
+	out["star_best"] = star_count(int(stars.get(st["key"], 0)))
+	out["star_glory"] = 0
+	out["chest"] = {}
 	out["unlocks"] = []
 	out["boss_beaten"] = false
 	if bool(result.get("win", false)):
-		var stars_n := stars_for(result)
-		stars[st["key"]] = maxi(int(stars.get(st["key"], 0)), stars_n)
-		out["stars"] = stars_n
+		var mask := star_mask(result, st)
+		var old := int(stars.get(st["key"], 0))
+		stars[st["key"]] = old | mask
+		out["stars"] = star_count(mask)
+		out["star_mask"] = mask
+		out["star_best"] = star_count(old | mask)
 		var reward := reward_for(st, first)
+		# первые три звезды в этом бою — немного Славы
+		if (old | mask) == STAR_ALL and old != STAR_ALL:
+			reward["glory"] = int(reward.get("glory", 0)) + STAR_GLORY
+			out["star_glory"] = STAR_GLORY
 		_give(reward)
 		out["reward"] = reward
+		out["chest"] = _chest(int(st["cycle"]), int(st["r"]))
 		wins += 1
 		var gain: int = (RATING["boss"] if st["boss"] else RATING["first"]) if first else RATING["repeat"]
 		rating += gain
@@ -1120,6 +1442,28 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 		c.changed.emit()
 	changed.emit()
 	return out
+
+
+## Все 30 звёзд провинции (cycle, r) — один раз сундук Славы и (на первом таком круге) трофей в город.
+## Возвращает {} или {glory, trophy (тип украшения или ""), region}
+func _chest(cycle: int, r: int) -> Dictionary:
+	var ck := "%d-%d" % [cycle, r]
+	if chests.has(ck) or region_stars(cycle, r) < STAGES * 3:
+		return {}
+	chests[ck] = true
+	var R: Dictionary = REGIONS[r]
+	var g := int(CHEST[r % CHEST.size()]) * (1 + cycle)
+	glory += g
+	var tr := String(R.get("trophy", ""))
+	if tr != "" and not trophies.has(String(R["id"])):
+		trophies[String(R["id"])] = true
+	else:
+		tr = ""
+	var c = city()
+	if c != null and c.has_method("_event"):
+		c._event("Все 30 звёзд: %s! Сундук Славы +%d%s" % [R["name"], g,
+			(". Трофей «%s» — в разделе «Украшения»" % Defs.B[tr]["name"]) if tr != "" and Defs.B.has(tr) else ""], "laurels")
+	return {"glory": g, "trophy": tr, "region": String(R["name"])}
 
 
 func _give(reward: Dictionary) -> void:
@@ -1520,11 +1864,12 @@ static func fmt_duration(sec: float) -> String:
 #   сохранение
 # =====================================================================
 
+## v2 (этап 3b): stars — биты звёзд за мастерство (в v1 — число звёзд по выжившим), chests, trophies
 func to_dict() -> Dictionary:
-	return {"v": 1, "levels": levels, "upg": upg, "squad": squad, "defense": defense, "perks": perks, "stars": stars,
+	return {"v": 2, "levels": levels, "upg": upg, "squad": squad, "defense": defense, "perks": perks, "stars": stars,
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
-		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags}
+		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys()}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -1548,8 +1893,20 @@ func from_dict(d: Dictionary) -> void:
 		if PERKS.has(p):
 			perks[p] = clampi(int(d["perks"][p]), 0, PERK_MAX)
 	stars = {}
+	var v1 := int(d.get("v", 1)) < 2
 	for k in d.get("stars", {}):
-		stars[String(k)] = int(d["stars"][k])
+		var n := int(d["stars"][k])
+		# старые звёзды (v1) — число по выжившим: честно переносим, что известно — победа и «все вернулись» (3 = все живы);
+		# задание боя тогда не считалось — его звезду надо добыть заново
+		if v1:
+			n = (STAR_WIN | (STAR_SAFE if n >= 3 else 0)) if n > 0 else 0
+		stars[String(k)] = n & STAR_ALL
+	chests = {}
+	for k in d.get("chests", []):
+		chests[String(k)] = true
+	trophies = {}
+	for k in d.get("trophies", []):
+		trophies[String(k)] = true
 	progress = int(d.get("progress", 0))
 	wins = int(d.get("wins", 0))
 	rating = int(d.get("rating", 0))

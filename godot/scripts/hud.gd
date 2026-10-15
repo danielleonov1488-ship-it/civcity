@@ -2328,6 +2328,12 @@ func _update_cards() -> void:
 			pr.add_child(lm)
 			b.add_theme_stylebox_override("normal", _card_box("g_card"))
 			_grey(img)
+		elif d.get("trophy", false):
+			# трофей Легиона — бесплатно
+			pr.add_child(_icon("laurels", 22))
+			pr.add_child(_label("Трофей", 16, true, C_GOOD))
+			b.add_theme_stylebox_override("normal", _card_box("g_card"))
+			_grey(img, false)
 		else:
 			pr.add_child(_icon("coins", 22))
 			pr.add_child(_label(fmt(d["cost"]), 18, true, C_INK if c.money >= float(d["cost"]) else C_BAD))

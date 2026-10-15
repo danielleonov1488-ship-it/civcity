@@ -10,6 +10,7 @@ extends Node
 ## auto=1 — «Авто» с начала (проверке можно и в непройденном бою: auto_any); hover_auto=с — навести мышь на «Авто» (кадр
 ## с подсказкой). Учебный бой — region=0 stage=0 (первый бой, масло ещё не жали): кадр, когда бой замер со стрелкой
 ## на масле (…_tut_freeze), потом «нажимает» масло и снимает …_tut_after; печатает TUT freeze/press.
+## crowd_shot=1 — кадр «Толпа!» (волна-«куча», красный круг) …_crowd; warn_shot=1 — кадр рога Атамана …_warn.
 ## Печатает средний FPS, итог боя и куда сохранены кадры. Запускать только через .work/py/gpu_run.sh (замок видеокарты).
 
 var args := {}
@@ -186,6 +187,26 @@ func _process(dt: float) -> void:
 	if args.has("_tut_after") and t >= float(args["_tut_after"]):
 		args.erase("_tut_after")
 		_shot(tag + "_tut_after")
+	# угрозы (этап 3b): кадр «Толпа!» (красный круг за кучей) и рог Атамана (круг под ним бьётся) — через 0,7 с после начала
+	if args.has("crowd_shot") and not battle._crowds.is_empty() and not args.has("_crowd_t"):
+		# куча сбежалась (вышла на поле) — миг для масла
+		var inn := true
+		for u: LegionSim.Unit in battle._crowds[0]["units"]:
+			inn = inn and not u.entering
+		if inn:
+			args["_crowd_t"] = str(t + 0.25)
+			print("CROWD at ", snappedf(st, 0.1), " s: «", battle.banner_lbl.text, "»")
+	if args.has("_crowd_t") and t >= float(args["_crowd_t"]):
+		args.erase("_crowd_t")
+		args.erase("crowd_shot")
+		_shot(tag + "_crowd")
+	if args.has("warn_shot") and battle._summon_warns > 0 and not args.has("_warn_t"):
+		args["_warn_t"] = str(t + 1.0)
+		print("WARN at ", snappedf(st, 0.1), " s: «", battle.banner_lbl.text, "»")
+	if args.has("_warn_t") and t >= float(args["_warn_t"]):
+		args.erase("_warn_t")
+		args.erase("warn_shot")
+		_shot(tag + "_warn")
 	if args.has("hover_auto") and st >= float(args["hover_auto"]):
 		args.erase("hover_auto")
 		var ab: Control = battle.auto_btn

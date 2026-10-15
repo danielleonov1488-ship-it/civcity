@@ -280,6 +280,7 @@ func _process(dt: float) -> void:
 
 ## Таймеры: полоски улучшений, заряды атак. Улучшение дошло — завершаем сразу (не ждём игрового часа)
 func _tick_live() -> void:
+	_odds_poll()
 	var done := false
 	for type in lg.upg.keys():
 		if lg.upgrade_left(type) <= 0.0:
@@ -300,6 +301,13 @@ func _tick_live() -> void:
 					var b: ProgressBar = e.get("bar")
 					if b != null and is_instance_valid(b):
 						b.value = lg.upgrade_progress(t)
+			"odds":
+				var est := _odds_est(e["st"])
+				if not est.is_empty() and not bool(e.get("done", false)):
+					e["done"] = true
+					var od := lg.odds(e["st"], est)
+					l.text = String(od[1])
+					l.add_theme_color_override("font_color", ODDS_COL.get(String(od[0]), C_INK))
 			"pvp":
 				var n := lg.pvp_charges_now()
 				l.text = "Атак в запасе: %d из %d" % [n, int(Legion.PVP["charges"])] + ("" if n >= int(Legion.PVP["charges"]) else " · ещё одна через %s" % Legion.fmt_duration(lg.pvp_next_charge()))
@@ -1015,7 +1023,7 @@ func _map_view() -> Control:
 			var tw2 := eg.create_tween().set_loops()
 			tw2.tween_property(eg, "position:y", eg.position.y - 6, 0.6).set_trans(Tween.TRANS_SINE)
 			tw2.tween_property(eg, "position:y", eg.position.y, 0.6).set_trans(Tween.TRANS_SINE)
-		var stars := int(lg.stars.get(Legion.stage_key(vc, view_r, s), 0))
+		var stars := Legion.star_count(int(lg.stars.get(Legion.stage_key(vc, view_r, s), 0)))
 		if lg.stage_done(vc, view_r, s):
 			var sr := Stars.new(stars, 13.0 if not boss else 16.0)
 			sr.position = p + Vector2(-sr.custom_minimum_size.x / 2.0, sz / 2.0 - 4.0)
@@ -1030,6 +1038,16 @@ func _map_view() -> Control:
 	rh.add_child(_title("%s. %s" % [Legion.roman(view_r + 1), R["name"]], 22))
 	if vc > 0 or int(fr["cycle"]) > 0:
 		rh.add_child(_l("· поход %s" % Legion.roman(vc + 1), 16, true, C_SOFT))
+	if lg.stage_open(vc, view_r, 0):
+		var sn := lg.region_stars(vc, view_r)
+		var sc := Stars.new(1, 18.0, 1)
+		sc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		rh.add_child(sc)
+		rh.add_child(_l("%d/%d" % [sn, Legion.STAGES * 3], 17, true, C_GOLD if sn >= Legion.STAGES * 3 else C_INK))
+		var trn := String(R.get("trophy", ""))
+		rib.tooltip_text += "
+Звёзды провинции: %d из %d. За все — сундук Славы%s" % [sn, Legion.STAGES * 3,
+			(" и трофей «%s» в город" % String(Defs.B[trn]["name"])) if vc == 0 and trn != "" and Defs.B.has(trn) else ""]
 	rib.add_child(rh)
 	_pin(rib, Vector2(0.5, 0.0), Vector2(0, -8))
 	m.add_child(rib)
@@ -1069,6 +1087,9 @@ func _stage_btn(c: int, r: int, s: int, boss: bool, front: bool) -> Button:
 		tip = "Босс: %s" % Legion.ENEMIES[R["boss"]]["name"]
 	else:
 		tip = "Бой %s" % Legion.roman(s + 1)
+		var th := String((Legion.FIXED.get("%d-%d" % [r, s], {}) as Dictionary).get("name", ""))
+		if th != "":
+			tip += " «%s»" % th
 	tip += " — " + ("пройден" if done else ("следующий" if open else "ещё закрыт"))
 	if boss:
 		var sz := 76.0
@@ -1178,6 +1199,9 @@ func _stage_card(st: Dictionary) -> Control:
 	if boss:
 		tv.add_child(_l("Босс провинции", 15, true, C_SOFT))
 		tv.add_child(hud._wrap(_title(String(st["name"]), 23), CARD_W - 110))
+	elif String(st.get("theme", "")) != "":
+		tv.add_child(hud._wrap(_title(String(st["theme"]), 23), CARD_W - 90))
+		tv.add_child(_l("Бой %d из %d · %s" % [int(st["s"]) + 1, Legion.STAGES, String(st["title"])], 14, true, C_SOFT))
 	else:
 		tv.add_child(_title("Бой %d из %d" % [int(st["s"]) + 1, Legion.STAGES], 24))
 		tv.add_child(_l(String(st["title"]), 15, true, C_SOFT))
@@ -1220,9 +1244,38 @@ func _stage_card(st: Dictionary) -> Control:
 				_badge(holder, "×%d" % int(groups[k]), Vector2(1, 1), 13)
 			wh.add_child(holder)
 		v.add_child(wh)
-	var tips := Legion.counter_tips(st)
+	var tips := lg.tips(st)
 	if tips != "":
 		v.add_child(_wl(tips, CARD_W - 24, 14, C_SOFT))
+	# отряд не под этот бой (пока мест три — загадка на выбор отряда): совет и кнопка «Под бой»
+	var hint := lg.squad_hint(st)
+	if hint != "":
+		var hb := HBoxContainer.new()
+		hb.add_theme_constant_override("separation", 6)
+		var off := lg.squad_off(st)
+		hb.add_child(_wl(hint, CARD_W - (128 if off else 24), 14, C_BAD, true))
+		if off:
+			var ab := _btn("Под бой", 0, 15, _ic39("battle"), "", func(): lg.use_auto_squad(st))
+			ab.tooltip_text = "«Лучший состав» для этого боя"
+			ab.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			hb.add_child(ab)
+		v.add_child(hb)
+	# три звезды боя: условия; добытые раньше — золотые
+	var sm := int(st.get("star_mask", 0))
+	var stx := Legion.star_texts(st)
+	var sg := GridContainer.new()
+	sg.columns = 2
+	sg.add_theme_constant_override("h_separation", 5)
+	sg.add_theme_constant_override("v_separation", 0)
+	for i in 3:
+		var on := (sm & (1 << i)) != 0
+		var s1 := Stars.new(1 if on else 0, 15.0, 1)
+		s1.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		sg.add_child(s1)
+		sg.add_child(_l(String(stx[i]), 14, on, C_INK if on else C_SOFT))
+	sg.tooltip_text = "Звёзды боя: каждая добывается раз и навсегда. Все три — +%d Славы; все 30 звёзд провинции — сундук Славы" % Legion.STAR_GLORY
+	sg.mouse_filter = Control.MOUSE_FILTER_PASS
+	v.add_child(sg)
 	v.add_child(_hdiv(12))
 	# шансы
 	var rec := int(st["recommended"])
@@ -1231,7 +1284,8 @@ func _stage_card(st: Dictionary) -> Control:
 	lh.add_child(_tr(_ic39("upgrade"), 26))
 	lh.add_child(_l("Нужен уровень бойцов: %d" % rec, 16, true))
 	v.add_child(lh)
-	var od := lg.odds(st)
+	var est := _odds_est(st)
+	var od := lg.odds(st, est)
 	var sq := lg.squad_stats()
 	var avg := 0.0
 	for u: Dictionary in sq:
@@ -1241,8 +1295,13 @@ func _stage_card(st: Dictionary) -> Control:
 	oh.add_theme_constant_override("separation", 6)
 	oh.add_child(_gap(26))
 	oh.add_child(_l(("У отряда: %s · " % String.num(avg, 1).replace(".", ",")) if not sq.is_empty() else "", 15, true, C_SOFT))
-	oh.add_child(_l(String(od[1]), 15, true, ODDS_COL.get(String(od[0]), C_INK)))
+	var ol := _l(String(od[1]), 15, true, ODDS_COL.get(String(od[0]), C_INK))
+	ol.tooltip_text = "Прикидка: %d боёв этим отрядом с «Авто» — как внимательный игрок" % Legion.ODDS_RUNS
+	ol.mouse_filter = Control.MOUSE_FILTER_PASS
+	oh.add_child(ol)
 	v.add_child(oh)
+	if est.is_empty() and not sq.is_empty():
+		_live.append({"kind": "odds", "label": ol, "st": st})
 	# награда и провиант
 	var first: bool = st["first"]
 	var rw := Legion.reward_for(st, first)
@@ -1306,7 +1365,7 @@ func _stage_card(st: Dictionary) -> Control:
 	if why != "":
 		var wl := _wl(why, CARD_W - 24, 14, C_BAD, true, true)
 		v.add_child(wl)
-	elif lg.tutorial_battle(st) and lg.archer_exposed(st):
+	elif lg.tutorial_battle(st) and lg.squad_off(st) and lg.slots() <= Legion.SQUAD_BASE:
 		# старое сохранение: лучник в отряде до первого боя — учебный бой посчитан на трёх легионеров
 		v.add_child(_wl("Учебный бой — для трёх легионеров: лучника в лесу некому прикрыть. «Состав» → «Лучший состав».", CARD_W - 24, 13, C_BAD, true, true))
 	elif lg.tutorial_battle(st):
@@ -1314,6 +1373,71 @@ func _stage_card(st: Dictionary) -> Control:
 	else:
 		v.add_child(_wl("Отряд дерётся сам; ваше — состав и умения в нужный миг." + ("" if st["done"] else " «Авто» — после первой победы."), CARD_W - 24, 13, C_SOFT, false, true))
 	return p
+
+
+# =====================================================================
+#   шансы боя: прикидка прогоном боёв в фоне (Legion.odds_job / odds_run), запоминается
+# =====================================================================
+
+var _odds_cache := {}                      # ключ (Legion.odds_key) → {cur, best?, best_types}
+var _odds_task := -1                       # идущий расчёт (WorkerThreadPool) или −1
+var _odds_key := ""
+var _odds_res := {}
+var _odds_next := {}                       # задание, ждущее очереди (игрок щёлкнул другой бой)
+
+
+## Оценка шансов для карточки боя: готовая или {} (тогда расчёт уходит в фон, надпись обновит _tick_live)
+func _odds_est(st: Dictionary) -> Dictionary:
+	if lg.squad_stats().is_empty():
+		return {}
+	var key := lg.odds_key(st)
+	if _odds_cache.has(key):
+		return _odds_cache[key]
+	if _odds_task < 0:
+		_odds_start(lg.odds_job(st))
+	elif _odds_key != key and String(_odds_next.get("key", "")) != key:
+		_odds_next = lg.odds_job(st)
+	return {}
+
+
+func _odds_start(job: Dictionary) -> void:
+	_odds_key = String(job["key"])
+	var j := job.duplicate(true)
+	_odds_task = WorkerThreadPool.add_task(func(): _odds_res = Legion.odds_run(j), false, "legion odds")
+
+
+## Расчёт в фоне закончился: запомнить и взяться за следующий
+func _odds_poll() -> void:
+	if _odds_task < 0 or not WorkerThreadPool.is_task_completed(_odds_task):
+		return
+	WorkerThreadPool.wait_for_task_completion(_odds_task)
+	_odds_task = -1
+	if _odds_cache.size() > 64:
+		_odds_cache.clear()
+	_odds_cache[_odds_key] = _odds_res
+	var nj := _odds_next
+	_odds_next = {}
+	if not nj.is_empty() and not _odds_cache.has(String(nj["key"])):
+		_odds_start(nj)
+
+
+## Расчёт готов (проверки ждут его перед снимком)
+func odds_busy() -> bool:
+	_odds_poll()
+	return _odds_task >= 0
+
+
+func _exit_tree() -> void:
+	if _odds_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_odds_task)
+		_odds_task = -1
+
+
+## Бой для «Лучшего состава» во «Войсках»: выбранный на карте (пусто — передний край)
+func _card_stage() -> Dictionary:
+	if sel.is_empty():
+		return {}
+	return lg.stage_info(int(sel["c"]), int(sel["r"]), int(sel["s"]))
 
 
 func _enemy_tip(st: Dictionary, k: String) -> String:
@@ -1404,7 +1528,7 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 		v.add_child(_wl("Бой с городом «%s»" % opp.get("name", "?"), 420, 17, C_SOFT, true, true))
 	else:
 		var st: Dictionary = setup["stage"]
-		v.add_child(_wl("%s — %s" % [st["title"], st["name"]], 420, 17, C_SOFT, true, true))
+		v.add_child(_wl("%s — %s" % [st["title"], st["theme"] if String(st.get("theme", "")) != "" else st["name"]], 420, 17, C_SOFT, true, true))
 	var ic := _tr(_ic38("victory" if win_b else "defeat"), 96)
 	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(ic)
@@ -1412,6 +1536,16 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 		var sr := Stars.new(int(out.get("stars", 0)), 30.0)
 		sr.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		v.add_child(sr)
+		# какая звезда не далась и почему
+		var stg: Dictionary = setup["stage"]
+		var sm := int(out.get("star_mask", 0))
+		var tx := Legion.star_texts(stg)
+		for i in [1, 2]:
+			if (sm & (1 << i)) == 0:
+				v.add_child(_wl("Нет звезды «%s»: %s" % [tx[i], Legion.star_miss(i, out, stg)], 420, 14, C_BAD, false, true))
+		var ch: Dictionary = out.get("chest", {})
+		if not ch.is_empty():
+			v.add_child(_wl("Все 30 звёзд «%s»! Сундук Славы +%d." % [ch["region"], int(ch["glory"])], 420, 16, C_GOLD, true, true))
 	v.add_child(_wl("Вернулись %d из %d бойцов" % [int(out.get("alive", 0)), int(out.get("total", 0))], 420, 16, C_INK, true, true))
 	var rw: Dictionary = out.get("reward", {})
 	if not rw.is_empty():
@@ -1625,15 +1759,15 @@ func _squad_panel(which: String) -> Control:
 	if which == "campaign":
 		info.add_child(_title("Отряд в походе", 22))
 		info.add_child(_l("Сила отряда: %s" % hud.fmt(lg.squad_power()), 16, true, C_INK))
-		info.add_child(_wl("Щелчок по месту — выбрать бойца. Первые места — впереди строя.", 236, 13, C_SOFT))
+		info.add_child(_wl("Щелчок по месту — выбрать бойца. Легионеры всегда впереди, лучники за ними, машины в тылу.", 236, 13, C_SOFT))
 		h.add_child(info)
 	h.add_child(_slots_row(which, SLOT if which == "campaign" else 50.0))
 	if which == "campaign":
 		var sp := Control.new()
 		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		h.add_child(sp)
-		var b := _btn("Лучший состав", 0, 17, _ic39("battle"), "", func(): lg.use_auto_squad())
-		b.tooltip_text = "Собрать отряд самому: впереди легионеры и копейщики, за ними лучники, в тылу машины. Пока мест три — три легионера"
+		var b := _btn("Лучший состав", 0, 17, _ic39("battle"), "", func(): lg.use_auto_squad(_card_stage()))
+		b.tooltip_text = "Собрать отряд под выбранный бой: впереди легионеры и копейщики, за ними лучники, в тылу машины. Пока мест три — под врага: против пращников — с лучником, против волков — три легионера"
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		h.add_child(b)
 	return p
@@ -2322,16 +2456,18 @@ func _wonder_card(w: Dictionary) -> Control:
 class Stars extends Control:
 	var n := 0
 	var star := 12.0
+	var of := 3                   # сколько звёзд рисовать (1 — значок у строки условия)
 
-	func _init(count: int, s: float) -> void:
+	func _init(count: int, s: float, total := 3) -> void:
 		n = count
 		star = s
-		custom_minimum_size = Vector2(s * 3.0 + 4.0, s)
+		of = total
+		custom_minimum_size = Vector2(s * of + (of - 1) * 2.0, s)
 		size = custom_minimum_size
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	func _draw() -> void:
-		for i in 3:
+		for i in of:
 			var c := Vector2(star * 0.5 + i * (star + 2.0), star * 0.5)
 			var pts := PackedVector2Array()
 			for k in 10:

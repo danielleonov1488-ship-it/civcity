@@ -83,6 +83,8 @@ func unlocked(type: String) -> bool:
 	var u: String = Defs.B[type].get("unlock", "")
 	if u.begins_with("boss"):                 # военные постройки: победа Легиона над N-м боссом
 		return legion.bosses() >= int(u.substr(4))
+	if u.begins_with("trophy:"):              # трофей провинции: все 30 звёзд её боёв
+		return legion.has_trophy(u.substr(7))
 	return u == "" or research.has(u) or legion.wonder_unlocks(type)   # чудеса открывает и рейтинг походов
 
 

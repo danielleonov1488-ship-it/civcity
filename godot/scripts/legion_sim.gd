@@ -29,9 +29,15 @@ extends RefCounted
 ##   slam {x, z, r}                  — удар великана/разбег Минотавра по площади
 ##   boom {x, z, r}                  — камень разорвался
 ##   charge {unit, target}           — разбег (Минотавр)
-##   perk {id, side, x?, z?}         — сработало умение (у масла — точка)
+##   perk {id, side, x?, z?, n?}     — сработало умение (у масла — точка и сколько врагов накрыло)
 ##   heal {unit, amount}             — лечение (Перевязка)
+##   warn {kind: "summon", unit}     — босс вот-вот созовёт подмогу (за summon.warn секунд; только походы)
+##   summon {unit, units}            — подмога созвана: units вбегают справа тесной кучей
 ##   end {win}                       — бой окончен (итог — sim.result)
+## Только походы (бои с городами их не знают — сервер считает без них): волна-«куча» (setup.packs), стрелок «в кустах»
+## отходит от бойцов ближнего боя (статы врага kite — метров в запасе), босс созывает подмогу (статы врага summon).
+## В итоге боя ещё oil_best (сколько врагов масло накрыло разом в лучший раз), perks_used, summons — для звёзд;
+## случайных чисел не тратят, сервер их не сверяет
 
 const DT := 1.0 / 30.0
 const TIME_LIMIT := 180.0
@@ -40,6 +46,8 @@ const FIELD_X := Vector2(-9.5, 14.0)
 const FIELD_Z := 2.6
 const LANES := [0.0, -1.1, 1.1, -2.1, 2.1, -0.55, 0.55]
 const ENEMY_LANES := [0.0, -1.2, 1.2, -2.2, 2.2, -0.6, 0.6]
+## походы: стрелки «в кустах» (статы kite) выходят врассыпную по краям поля — одним котлом масла их не накрыть
+const BUSH_LANES := [0.0, -2.35, 2.35, -1.15, 1.15]
 ## Сила умений: [на 1 уровне, прибавка за уровень]. oil/volley/burn — доля среднего урона отряда (oil, volley — по
 ## каждому врагу; burn — в секунду 4 с), за уровень ×(1 + прибавка); testudo — насколько меньше урон (доля),
 ## bandage — доля здоровья, horn — во сколько раз быстрее бьют и ходят. Мягче, чем в старой игре: умения — сильная
@@ -93,6 +101,13 @@ class Unit:
 	var has_home := false
 	var entering := false
 	var wave := -1                 # номер волны врага (−1 — свой отряд)
+	var kite := 0.0                # походы: стрелок в кустах — сколько метров ещё может отойти от мечей
+	var bush := 1.0                # походы: стрелок в кустах — урон по нему мечом (доля)…
+	var bush_shot := 1.0           # …и стрелой, болтом, камнем
+	var kite_k := false            # у стрелка свои множители урона (в кустах)
+	var summon := {}               # походы: босс созывает подмогу {first, every, warn, foes: [статы]}
+	var summon_t := 0.0            # секунд до созыва
+	var summon_warned := false
 
 	func ranged() -> bool:
 		return range_m > 3.0
@@ -138,6 +153,10 @@ var auto := {"ally": false, "enemy": false}
 var avg_atk := {"ally": 1.0, "enemy": 1.0}
 ## нажатия игрока по шагам: [шаг, умение] / [шаг, "auto", вкл] (шаг — сколько шагов боя уже сделано)
 var inputs: Array = []
+## для звёзд похода: больше всего врагов под одним котлом масла, сколько раз жали умения, сколько раз босс созвал подмогу
+var oil_best := 0
+var perks_used := 0
+var summons := 0
 var _uid := 1
 var _formation := false
 
@@ -225,6 +244,13 @@ func _add(side: String, s: Dictionary, x: float, z: float) -> Unit:
 	u.tags = s.get("tags", [])
 	u.boss = bool(s.get("boss", false))
 	u.size = float(s.get("size", 1.0))
+	u.kite = float(s.get("kite", 0.0))
+	var bu: Array = s.get("bush", [1.0, 1.0])
+	u.bush = float(bu[0])
+	u.bush_shot = float(bu[1])
+	u.kite_k = s.has("bush")
+	u.summon = s.get("summon", {})
+	u.summon_t = float(u.summon.get("first", u.summon.get("every", 0.0)))
 	u.timer = 0.3 + rng.randf() * 0.6
 	units.append(u)
 	return u
@@ -244,6 +270,9 @@ func _next_wave() -> bool:
 		var rg := float(s["range"]) > 3.0
 		var x := 12.0 + (1.5 if rg else 0.0) + (i % 3) * 0.7 + (1.0 if bool(s.get("boss", false)) else 0.0)
 		var z := 0.0 if bool(s.get("boss", false)) else float(ENEMY_LANES[i % ENEMY_LANES.size()])
+		if float(s.get("kite", 0.0)) > 0.0:
+			x += float(i % 2) * 1.2
+			z = float(BUSH_LANES[i % BUSH_LANES.size()])
 		if packed:
 			# тесно: шаг 0,35 м вдоль, ±0,35 м поперёк
 			x = 12.0 + i * 0.35
@@ -280,11 +309,27 @@ static func dist(a: Unit, b: Unit) -> float:
 	return Vector2(a.x - b.x, (a.z - b.z) * 0.8).length()
 
 
+## Рядом (ближе r) есть чужой боец ближнего боя (не стрелок и не машина)
+func _melee_near(u: Unit, r: float) -> bool:
+	for o in units:
+		if o.alive and o.side != u.side and not o.ranged() and o.speed > 0.0 and dist(u, o) < r:
+			return true
+	return false
+
+
 func _pick_target(u: Unit) -> Unit:
 	var foes := foes_of(u)
 	if foes.is_empty():
 		return null
 	var pool := foes
+	# походы: стрелок выцеливает пращников в кустах (поверх спин разбойников); в боях с городами их нет
+	if u.shot != "" and u.side == "ally":
+		var bush: Array[Unit] = []
+		for o in foes:
+			if o.kite_k:
+				bush.append(o)
+		if not bush.is_empty():
+			pool = bush
 	if u.prefer == "ranged":
 		var r: Array[Unit] = []
 		for o in foes:
@@ -336,6 +381,8 @@ func _damage(atk: float, vs: Dictionary, from: Unit, tg: Unit, k := 1.0) -> void
 		return
 	var crit := rng.randf() < 0.08
 	var d := atk * _mult(vs, tg) * (0.9 + rng.randf() * 0.2) * k * (1.6 if crit else 1.0)
+	if tg.kite_k and from != null:
+		d *= tg.bush if from.shot == "" else tg.bush_shot   # походы: стрелка в кустах мечом не достать, стрелой — да
 	d *= 1.0 - tg.armor / (tg.armor + 100.0)
 	if tg.testudo > t:
 		d *= 1.0 - tg.testudo_k
@@ -463,12 +510,16 @@ func use_perk(id: String, side := "ally") -> bool:
 					c = o
 			var cx := c.x
 			var cz := c.z
+			var hits := 0
 			for o in foes:
 				if Vector2(o.x - cx, o.z - cz).length() < 2.2:
+					hits += 1
 					_damage(a * PERK_K["oil"][0] * (1.0 + PERK_K["oil"][1] * (lvl - 1)), {}, null, o)
 					o.burn = t + 4.0
 					o.burn_dps = a * PERK_K["burn"][0] * (1.0 + PERK_K["burn"][1] * (lvl - 1))
-			events.append({"type": "perk", "id": id, "side": side, "x": cx, "z": cz})
+			if side == "ally":
+				oil_best = maxi(oil_best, hits)
+			events.append({"type": "perk", "id": id, "side": side, "x": cx, "z": cz, "n": hits})
 		"volley":
 			if foes.is_empty():
 				return false
@@ -494,6 +545,8 @@ func use_perk(id: String, side := "ally") -> bool:
 		_:
 			return false
 	p["ready"] = float(Legion.PERKS[id]["cd"])
+	if side == "ally":
+		perks_used += 1
 	return true
 
 
@@ -556,7 +609,15 @@ func _auto_perks(side: String) -> void:
 		var hold := false
 		for pk in (setup.get("packs", []) as Array):
 			hold = hold or int(pk) > wave_idx
-		if bn >= 3 or boss or (foes.size() == 1 and not hold):
+		# походы: Атаман созывает шайку — масло, когда она сбежится к нему (4+ под котлом), а не по одному атаману
+		# (у бойцов в боях с городами summon нет — там как раньше, как на сервере)
+		var summoner := false
+		for o in foes:
+			summoner = summoner or not o.summon.is_empty()
+		if summoner:
+			if bn >= 4 or foes.size() == 1:
+				use_perk("oil", side)
+		elif bn >= 3 or boss or (foes.size() == 1 and not hold):
 			use_perk("oil", side)
 
 
@@ -584,6 +645,7 @@ func step(dt := DT) -> void:
 		if auto[side]:
 			_auto_perks(side)
 
+	var callers: Array[Unit] = []                # походы: боссы, созвавшие подмогу в этот шаг
 	for u in units:
 		if not u.alive:
 			continue
@@ -601,6 +663,16 @@ func step(dt := DT) -> void:
 			if u.x < 3.5 + (1.8 if u.ranged() else 0.0):
 				u.entering = false
 			continue
+		# походы: босс созывает подмогу — за summon.warn секунд предупреждение (рог), потом шайка вбегает справа
+		if not u.summon.is_empty():
+			u.summon_t -= dt
+			if not u.summon_warned and u.summon_t <= float(u.summon.get("warn", 3.0)):
+				u.summon_warned = true
+				events.append({"type": "warn", "kind": "summon", "unit": u})
+			if u.summon_t <= 0.0:
+				u.summon_t = float(u.summon.get("every", 16.0))
+				u.summon_warned = false
+				callers.append(u)
 		u.retarget -= dt
 		if u.target == null or not u.target.alive or u.retarget <= 0.0:
 			u.target = _pick_target(u)
@@ -634,6 +706,12 @@ func step(dt := DT) -> void:
 				events.append({"type": "slam", "x": tg.x, "z": tg.z, "r": 1.0})
 		else:
 			u.moving = false
+			# походы: стрелок в кустах отходит от мечей (и стреляет на ходу), пока есть куда — лучники снимают его издалека
+			if u.kite > 0.0 and u.x < FIELD_X.y - 0.6 and _melee_near(u, 2.0):
+				var back := minf(u.speed * fast * dt, u.kite)
+				u.x += back
+				u.kite -= back
+				u.moving = true
 			if u.min_range > 0.0 and d < u.min_range:
 				u.timer = maxf(u.timer, 0.2)
 			u.timer -= dt * fast
@@ -656,6 +734,20 @@ func step(dt := DT) -> void:
 				a.z += (1.0 if dz >= 0.0 else -1.0) * dt * 1.2
 		a.z = clampf(a.z, -FIELD_Z, FIELD_Z)
 		a.x = clampf(a.x, FIELD_X.x, FIELD_X.y)
+
+	# подмога вбегает справа тесной кучей (как волна-«куча»)
+	for u in callers:
+		if not u.alive:
+			continue
+		var fresh: Array[Unit] = []
+		var foes_s: Array = u.summon.get("foes", [])
+		for i in foes_s.size():
+			var nu := _add("enemy", foes_s[i], 12.0 + i * 0.35, float((i % 3) - 1) * 0.35)
+			nu.entering = true
+			nu.wave = wave_idx
+			fresh.append(nu)
+		summons += 1
+		events.append({"type": "summon", "unit": u, "units": fresh})
 
 	for s in shots:
 		s.t += dt
@@ -698,7 +790,7 @@ func _end(win: bool, alive: int, timeout := false) -> void:
 			if u.alive:
 				hp += u.hp
 	result = {"win": win, "alive": alive, "total": total, "timeout": timeout, "time": t, "hp_left": hp / maxf(1.0, mx),
-		"inputs": inputs.duplicate(true)}
+		"inputs": inputs.duplicate(true), "oil_best": oil_best, "perks_used": perks_used, "summons": summons}
 	events.append({"type": "end", "win": win})
 	dispose()
 

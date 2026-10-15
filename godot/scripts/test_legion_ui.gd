@@ -97,7 +97,7 @@ func _run() -> void:
 	for k in lg.progress:
 		var cyc := k / 80
 		var r := (k % 80) / 10
-		lg.stars[Legion.stage_key(cyc, r, k % 10)] = 3 if rng.randf() < 0.6 else 2
+		lg.stars[Legion.stage_key(cyc, r, k % 10)] = Legion.STAR_ALL if rng.randf() < 0.6 else Legion.STAR_WIN | Legion.STAR_SAFE
 	lg.upg["legionary"] = {"to": 7, "end": Legion.now() + 754.0, "total": 1200.0}
 	lg.pvp_log = [{"t": Legion.now() - 5400.0, "name": "Аквилея", "win": true, "delta": 22, "money": 640, "attack": true},
 		{"t": Legion.now() - 86000.0, "name": "Новый Карфаген", "win": false, "delta": -6, "money": 0, "attack": false}]
@@ -178,7 +178,7 @@ func _run() -> void:
 	# --- ранняя игра: «Посёлок», Казармы, первые бои (масло — с первого дня) ---
 	c.level = 3
 	lg.progress = 2
-	lg.stars = {"0-0-0": 3, "0-0-1": 2}
+	lg.stars = {"0-0-0": Legion.STAR_ALL, "0-0-1": Legion.STAR_WIN | Legion.STAR_TASK}
 	lg.levels = {"legionary": 2, "spearman": 1, "archer": 1, "ballista": 1, "catapult": 1}
 	lg.upg = {}
 	lg.squad = ["legionary", "legionary", "legionary"]
@@ -201,6 +201,7 @@ func _run() -> void:
 	ui.view_r = 1
 	ui._select_tab("campaign")
 	await shot("early_locked")
+	await _card_puzzle(c, lg, ui)
 	# --- 3D-бой (подделка): окно просит бой сигналом, «бой» зовёт apply_result и battle_closed — окно открывается снова ---
 	var asked := []
 	var fake := func(setup: Dictionary):
@@ -255,6 +256,7 @@ func _run() -> void:
 	ui._close_overlay()
 	game.hud.apply_scale(1.0)
 	await _tutorial(c, lg, ui, fake)
+	await _trophy(c, lg)
 	print("снимков: ", shots.size())
 	get_tree().quit()
 
@@ -363,7 +365,7 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	check("«Пропустить обучение»: стрелок и полосы нет, учебный бой (масло) один раз остаётся", lg.tut_step() == "" and not lg.flags.has("tut_oil")
 		and not hud.advisor_panel.visible and hud.pointer_target != hud.cats["military"]
 		and String(lg.make_battle(lg.stage_info(0, 0, 0), 1).get("tutorial", "")) == "oil")
-	# старое сохранение: лучник в отряде до первого боя — карточка честно предупреждает (лес посчитан на трёх легионерах)
+	# старое сохранение: лучник в отряде до первого боя — карточка честно предупреждает (учебный бой — на трёх легионерах)
 	c.place("barracks", Vector2(166, 205), 0.0, 0, -1, true)
 	var rb: Dictionary = c.place("range", Vector2(186, 205), 0.0, 0, -1, true)
 	lg.squad = ["legionary", "archer", "legionary"]
@@ -372,7 +374,7 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	ui.open("campaign")
 	await frames(8)
 	var tx := _texts(ui.content)
-	check("лучник в лесном отряде: «Лучник в лесу без прикрытия», учебный бой — «для трёх легионеров»", tx.contains("Лучник в лесу без прикрытия")
+	check("лучник в лесном отряде: «лучше три легионера», учебный бой — «для трёх легионеров»", tx.contains("лучше три легионера")
 		and tx.contains("для трёх легионеров") and not tx.contains("лучники быстро"))
 	await shot("tut_archer_warn")
 	lg.use_auto_squad()
@@ -381,6 +383,83 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	c.remove(rb, false)
 	game.mode = mode0
 	hud._update_pointer()
+
+
+## Лес — загадка на выбор отряда: «Пращники в кустах» тремя легионерами — карточка советует лучника, шансы прикидкой
+## прогоном боёв («Победа ~0% · с лучником ~100%»), кнопка «Под бой» ставит лучника; условия трёх звёзд на карточке
+func _card_puzzle(c: City, lg: Legion, ui: LegionUi) -> void:
+	var rb: Dictionary = c.place("range", Vector2(186, 205), 0.0, 0, -1, true)
+	var p0 := lg.progress
+	var st0: Dictionary = lg.stars.duplicate()
+	var lv0: Dictionary = lg.levels.duplicate()
+	lg.levels = {"legionary": 1, "spearman": 1, "archer": 1, "ballista": 1, "catapult": 1}   # на уровне боя (T=1)
+	lg.progress = 1
+	lg.stars = {"0-0-0": Legion.STAR_WIN | Legion.STAR_TASK}
+	lg.squad = ["legionary", "legionary", "legionary"]
+	ui.view_r = 0
+	ui.sel = {}
+	ui._select_tab("campaign")
+	for i in 240:
+		if not ui.odds_busy():
+			break
+		await frames(2)
+	await frames(16)                               # _tick_live обновил надпись шансов
+	var tx := _texts(ui.content)
+	check("карточка «Пращники в кустах»: совет лучника, шансы прикидкой, условия звёзд", tx.contains("Пращники в кустах") and tx.contains("возьмите лучника")
+		and tx.contains("с лучником ~") and tx.contains("Победа быстрее 20 с") and tx.contains("Все вернулись из боя"))
+	await shot("card_slingers")
+	var ab: Button = null
+	for b in ui.content.find_children("*", "Button", true, false):
+		if (b as Button).text == "Под бой":
+			ab = b
+	if ab:
+		await click(center_of(ab))
+		await frames(8)
+	check("«Под бой» ставит лучника", lg.squad.has("archer") and not _texts(ui.content).contains("возьмите лучника"))
+	for i in 240:
+		if not ui.odds_busy():
+			break
+		await frames(2)
+	await frames(16)
+	await shot("card_slingers_bow")
+	# «Волчья тропа» с лучником: советует трёх легионеров
+	lg.progress = 2
+	ui.sel = {}
+	ui._rebuild()
+	await frames(6)
+	check("«Волчья тропа» с лучником — «загрызут»", _texts(ui.content).contains("Волки загрызут лучника"))
+	lg.squad = ["legionary", "legionary", "legionary"]
+	c.remove(rb, false)
+	lg.progress = p0
+	lg.stars = st0
+	lg.levels = lv0
+	ui.view_r = 0
+	ui.sel = {}
+	ui._rebuild()
+
+
+## Трофей «Телега атамана» в городе (все 30 звёзд леса): открыт, ставится бесплатно, кадр вблизи
+func _trophy(c: City, lg: Legion) -> void:
+	lg.trophies["forest"] = true
+	check("трофей открыт в городе", c.unlocked("trophy_cart"))
+	var put := {}
+	for p: Vector2 in [Vector2(176, 186), Vector2(170, 180), Vector2(196, 184), Vector2(160, 176), Vector2(204, 196), Vector2(150, 190)]:
+		var pl: Dictionary = game.placement("trophy_cart", p)
+		if String(pl["err"]) == "":
+			put = c.place("trophy_cart", pl["pos"], pl["yaw"], pl["variant"], pl["color"])
+			break
+	check("трофей поставлен", not put.is_empty())
+	if put.is_empty():
+		return
+	var pos: Vector2 = put["pos"]
+	game.hud.visible = false
+	game.rig.set_view(Vector3(pos.x, 1.0, pos.y), 200, 26, 10)
+	await frames(70)
+	await shot("trophy_city")
+	game.rig.set_view(Vector3(pos.x, 1.0, pos.y), 160, 38, 24)
+	await frames(50)
+	await shot("trophy_city_far")
+	game.hud.visible = true
 
 
 ## Все надписи внутри узла — одной строкой
