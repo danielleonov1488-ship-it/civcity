@@ -1,7 +1,7 @@
 class_name LegionPvpView
 extends RefCounted
 ## Части вкладки «Против городов» окна «Легион», которым нужен сервер (LegionNet): состав отряда соперника
-## маленькими портретами, название нашего города в боях (переименовать), отбитые нападения, таблица лучших городов.
+## маленькими портретами, название нашего города (кнопка «Имя» — окно CityName), отбитые нападения, таблица лучших городов.
 ## Всё строится помощниками окна (LegionUi: _l, _title, _wl, _btn, _modal, _tr, _unit_tex…), чтобы выглядело так же.
 
 const C_INK := Color("4a2c17")
@@ -65,9 +65,11 @@ static func me_rows(ui: LegionUi, box: VBoxContainer, net) -> void:
 	l.tooltip_text = "Так ваш город видят соперники и таблица лучших городов"
 	l.mouse_filter = Control.MOUSE_FILTER_PASS
 	h.add_child(l)
-	if net.has_method("pvp_rename"):
+	if net.has_method("set_city_name"):
 		var b := ui._btn("Имя", 0, 14, ui.hud.ico("quill", 64), "" if nm != "" else "Сервер ещё не ответил", func(): rename(ui))
-		b.tooltip_text = "Переименовать город для боёв"
+		b.name = "RenameCity"
+		if nm != "":
+			b.tooltip_text = "Переименовать город (то же, что щелчок по табличке с названием)"
 		h.add_child(b)
 	box.add_child(h)
 	var dw := int(st.get("def_wins", 0))
@@ -76,66 +78,16 @@ static func me_rows(ui: LegionUi, box: VBoxContainer, net) -> void:
 		box.add_child(ui._l("Отбито нападений: %d из %d" % [dw, dw + dl], 15, true, C_SOFT))
 
 
-## Окно «Название города в боях»
+## Окно «Название города» — то же, что по щелчку по табличке города (CityName); после сохранения окно перерисуется
 static func rename(ui: LegionUi) -> void:
 	var net = ui._net()
-	if net == null or not net.has_method("pvp_rename"):
+	if net == null or not net.has_method("set_city_name"):
 		return
-	var p := ui._modal(500)
-	var v: VBoxContainer = p.get_child(0)
-	var t := ui._title("Название города в боях", 28)
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(t)
-	v.add_child(ui._wl("Его видят соперники, летописи их боёв и таблица лучших городов. От 3 до 24 знаков: буквы, цифры, пробел, дефис.", 440, 15, C_SOFT, false, true))
-	var e := LineEdit.new()
-	e.max_length = 24
-	e.text = String((net.me_state as Dictionary).get("name", ""))
-	e.custom_minimum_size = Vector2(420, 46)
-	e.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	e.add_theme_stylebox_override("normal", ui.hud._box_pill(18, 8, "g_btn_on"))
-	var fo := StyleBoxFlat.new()
-	fo.draw_center = false
-	fo.border_color = Color("d9a441")
-	fo.set_border_width_all(2)
-	fo.set_corner_radius_all(20)
-	e.add_theme_stylebox_override("focus", fo)
-	e.add_theme_font_override("font", ui.hud.font_bold)
-	e.add_theme_font_size_override("font_size", 20)
-	e.add_theme_color_override("font_color", C_INK)
-	e.add_theme_color_override("caret_color", C_INK)
-	e.add_theme_color_override("selection_color", Color(C_GOLD, 0.35))
-	e.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(e)
-	var err := ui._wl("", 440, 15, C_BAD, true, true)
-	v.add_child(err)
-	var bh := HBoxContainer.new()
-	bh.alignment = BoxContainer.ALIGNMENT_CENTER
-	bh.add_theme_constant_override("separation", 12)
-	var ok := ui._btn("Сохранить", 170, 19, null, "", func(): pass)
-	var go := func():
-		var nm := e.text.strip_edges()
-		if nm.length() < 3:
-			err.text = "Название — от 3 до 24 знаков"
-			return
-		ok.disabled = true
-		err.text = ""
-		net.pvp_rename(nm, func(msg: String):
-			if not is_instance_valid(ok):
-				return
-			ok.disabled = false
-			if msg != "":
-				err.text = msg
-				return
-			ui._close_overlay()
-			ui._say("Теперь ваш город в боях — «%s»" % nm)
+	ui._close_overlay()
+	CityName.open(ui.hud, func(nm: String):
+		if is_instance_valid(ui) and ui.visible:
+			ui._say("Теперь ваш город — «%s»" % nm)
 			ui._rebuild())
-	ok.pressed.connect(go)
-	e.text_submitted.connect(func(_t): go.call())
-	bh.add_child(ok)
-	bh.add_child(ui._btn("Отмена", 140, 19, null, "", func(): ui._close_overlay()))
-	v.add_child(bh)
-	e.call_deferred("grab_focus")
-	e.call_deferred("select_all")
 
 
 ## Окно «Лучшие города»: 50 первых по рейтингу побед и наше место

@@ -63,6 +63,7 @@ var legion := Legion.new()            # армия: походы, Слава, ч
 var fest_left := 0                    # сколько игровых часов ещё идут игры в честь богов (Defs.FESTIVAL)
 var fest_cd := 0                      # через сколько часов можно устроить новые игры
 var plots_bought := 0                 # сколько участков земли куплено (от него цена следующего)
+var name := ""                        # название города — копия имени с сервера (CityName); "" — ещё не знаем («Новый Рим»)
 
 
 func _init(l: Land) -> void:
@@ -1995,7 +1996,7 @@ func save_data() -> Dictionary:
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
-		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought,
+		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
 		"legion": legion.to_dict()}
 
 
@@ -2023,6 +2024,7 @@ func load_data(d: Dictionary) -> void:
 	events = d.get("events", [])
 	fest_left = maxi(0, int(d.get("fest_left", 0)))
 	fest_cd = maxi(0, int(d.get("fest_cd", 0)))
+	name = String(d.get("name", ""))             # старые сохранения — без названия: его скажет сервер
 	# старые сохранения: своя земля с начала была 4×4 участка — купленные сверх них (земля загружена раньше города)
 	plots_bought = maxi(0, int(d.get("plots_bought", land.owned.size() - Land.OLD_PLOTS)))
 	_drop_roads2()

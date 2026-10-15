@@ -889,11 +889,12 @@ static func meta_of(d: Dictionary) -> Dictionary:
 	return {"pop": pop, "day": int(d.get("day", 0)), "level": int(d.get("level", 0)), "money": int(d.get("money", 0)), "n": bl.size()}
 
 
+## Название города для подписи в облаке — из сохранения (city.name, его даёт сервер; см. CityName)
 func city_name() -> String:
 	var g = _g()
-	if g and g.hud and g.hud.lbl_city:
-		return str(g.hud.lbl_city.text)
-	return "Новый Рим"
+	if g and g.city and String(g.city.name) != "":
+		return String(g.city.name)
+	return CityName.PLACEHOLDER
 
 
 func _now() -> float:

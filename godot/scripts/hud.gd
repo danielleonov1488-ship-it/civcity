@@ -35,6 +35,8 @@ const C_GOLD := Color("c98a1e")
 const C_CREAM := Color("fff4dc")
 
 var lbl_city: Label
+var name_plate: TextureRect           # табличка с названием: в своём городе её можно нажать (окно «Название города»)
+const CITY_FONT := 20                 # размер названия на ленте (длинное — мельче, show_city_name)
 var lbl_level: Label
 var lbl_pop: Label
 var lbl_happy: Label
@@ -640,7 +642,7 @@ func _city_card() -> void:
 	var plate := _pic("plate.png", PLATE)
 	plate.stretch_mode = TextureRect.STRETCH_SCALE
 	plate.z_index = 1
-	lbl_city = _label("Новый Рим", 20, false, C_CREAM, font_title)
+	lbl_city = _label(CityName.PLACEHOLDER, CITY_FONT, false, C_CREAM, font_title)
 	lbl_city.add_theme_color_override("font_outline_color", Color("4a120c"))
 	lbl_city.add_theme_constant_override("outline_size", 6)
 	lbl_city.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -654,6 +656,19 @@ func _city_card() -> void:
 	lbl_city.offset_bottom = -PLATE.y * 0.3
 	plate.add_child(lbl_city)
 	v.add_child(plate)
+	name_plate = plate
+	if game != null and game.mode in ["play", "new"]:
+		# в своём городе табличку можно нажать — окно «Название города» (в меню и готовом городе — просто надпись)
+		plate.mouse_filter = Control.MOUSE_FILTER_STOP
+		plate.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		plate.tooltip_text = "Щёлкните — назвать город"
+		plate.gui_input.connect(func(e: InputEvent):
+			if e is InputEventMouseButton and (e as InputEventMouseButton).pressed and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+				plate.accept_event()
+				open_city_name())
+		plate.mouse_entered.connect(func(): plate.modulate = Color(1.12, 1.09, 1.03))
+		plate.mouse_exited.connect(func(): plate.modulate = Color.WHITE)
+	show_city_name()
 	# плашка под табличкой: уровень, жители, счастье; день, скорость, время (верх прячется под лентой)
 	var p := PanelContainer.new()
 	p.add_theme_stylebox_override("panel", _box_pill(13, 4))
@@ -693,6 +708,45 @@ func _city_card() -> void:
 	lbl_clock = _label("08:00", 14, true, C_SOFT)
 	t.add_child(lbl_clock)
 	col.add_child(t)
+
+
+## Название города на табличке: имя с сервера (city.name), пока его нет — «Новый Рим» (в меню и готовом городе — всегда).
+## Длинное имя (до 24 знаков) — мельче, чтобы целиком влезло в ленту
+func show_city_name() -> void:
+	var nm := CityName.PLACEHOLDER
+	if game != null and game.city != null and game.mode in ["play", "new"] and String(game.city.name) != "":
+		nm = String(game.city.name)
+	if lbl_city == null or (lbl_city.text == nm and lbl_city.has_meta("fit")):
+		return
+	lbl_city.text = nm
+	lbl_city.set_meta("fit", true)
+	var w := PLATE.x * (1.0 - 0.335 - 0.095) - 6.0
+	var sz := CITY_FONT
+	while sz > 11 and font_title.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x > w:
+		sz -= 1
+	lbl_city.add_theme_font_size_override("font_size", sz)
+
+
+## Щелчок по табличке: окно «Название города» (то же, что у кнопки «Имя» в «Легионе»)
+func open_city_name() -> void:
+	if game == null or not (game.mode in ["play", "new"]):
+		return
+	if game.sound:
+		game.sound.ui("click")
+	_close_windows()
+	CityName.open(self)
+
+
+## Никаких окон на экране (для советов «к слову»: про название города)
+func _screen_free() -> bool:
+	for x in [info_panel, events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel, tray]:
+		if x and x.visible:
+			return false
+	var lu := LegionUi.of(self)
+	if (lu != null and lu.visible) or CityName.window(self) != null:
+		return false
+	var au = get_node_or_null("AccountUi")
+	return au == null or au._modal == null or not is_instance_valid(au._modal)
 
 
 func _class_chips() -> void:
@@ -3306,6 +3360,8 @@ func _defc(name: String, dflt: Variant) -> Variant:
 
 ## Закрыть окна; true — было что закрывать
 func close_panels() -> bool:
+	if CityName.close(self):
+		return true                              # окно «Название города» — поверх всего: закрывается первым, одно
 	var any := info_panel.visible or advisor_panel.visible or buy_panel.visible
 	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, credits_panel]:
 		any = any or x.visible
@@ -4048,6 +4104,7 @@ func refresh() -> void:
 	lbl_pop.text = fmt(c.stats["pop"])
 	lbl_happy.text = "%d%%" % int(c.stats["happy"])
 	lbl_day.text = "День %d" % (c.day + 1)
+	show_city_name()
 	lbl_money.text = "%s / %s" % [fmt(c.money), fmt(c.money_cap())]
 	lbl_money.tooltip_text = "Денарии в казне / предел казны"
 	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0))
@@ -4187,6 +4244,12 @@ func _once_tips() -> void:
 	if full_rp.visible and not c.tips.has("full_rp"):
 		c.tips["full_rp"] = true
 		advisor("Полки полны", "Очков исследований столько, сколько вмещают полки, — новые пропадают. Изучите что-нибудь в свитке исследований вверху справа. Полки вырастут на новом уровне города и с исследованием «Новые полки для свитков».")
+		return
+	# название: сервер дал городу имя сам (игрок его ещё не выбирал) — один раз, когда на экране ничего не открыто
+	var me: Dictionary = LegionNet.me().me_state
+	if not c.tips.has("name_tip") and not me.is_empty() and not bool(me.get("custom", true)) and _screen_free():
+		c.tips["name_tip"] = true
+		advisor("Как назовём город?", "Дайте городу имя — щёлкните по табличке с названием вверху слева. Это имя увидят соперники и таблица лучших городов.")
 
 
 ## Советник один раз (tips.fest_tip), когда открылись игры в честь богов: что дают, сколько стоят, где кнопка

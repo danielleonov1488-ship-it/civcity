@@ -146,11 +146,12 @@ func _run() -> void:
 	await frames(6)
 	await shot("net_top")
 	ui._close_overlay()
-	# окно названия
+	# окно названия (то же, что по щелчку по табличке города — CityName)
 	LegionPvpView.rename(ui)
 	await frames(6)
+	check("кнопка «Имя» открывает окно «Название города»", CityName.window(game.hud) != null)
 	await shot("net_rename")
-	ui._close_overlay()
+	CityName.close(game.hud)
 	await frames(4)
 	# «Напасть» на B настоящим щелчком
 	var row_btn: Button = null

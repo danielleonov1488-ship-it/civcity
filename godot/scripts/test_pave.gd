@@ -195,6 +195,10 @@ func _menu_hash() -> void:
 		var p: Vector2 = (b["pos"] as Vector2).snapped(Vector2(0.01, 0.01))
 		s += "%s:%.2f,%.2f:%.3f;" % [b["type"], p.x, p.y, snappedf(float(b["yaw"]), 0.001)]
 	print("PAVE MENUHASH mode=", args["menu_hash"], " n=", ids.size(), " h=", s.sha256_text())
+	# табличка с названием в готовом городе — просто надпись «Новый Рим», не нажимается (окно «Название города» — только в своём)
+	var hud: Hud = game.hud
+	if hud.name_plate.mouse_filter != Control.MOUSE_FILTER_IGNORE or hud.lbl_city.text != CityName.PLACEHOLDER:
+		print("FAIL табличка города в витрине: %s, нажимается=%s" % [hud.lbl_city.text, str(hud.name_plate.mouse_filter != Control.MOUSE_FILTER_IGNORE)])
 
 
 func _paint() -> void:

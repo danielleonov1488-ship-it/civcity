@@ -13,9 +13,12 @@ extends Node
 ##   pvp_report(setup, out) — итог боя на сервер (один раз на номер боя; сам модуль докладывает уже по сигналу
 ##       LegionBattle.finished, не дожидаясь возврата в город); pvp_top(cb(data, err)); pvp_rename(name, cb(err)).
 ##   me_state — что сервер сказал о нас: name, custom, rating, wins, losses, def_wins, def_losses, charges, next_in…
+## Название города (CityName, окно «Название города»): set_city_name(name, cb(err, offline)) — PUT /pvp/name, и без
+## Легиона. Имя из каждого ответа сервера (me.name) становится названием города: city.name и табличка вверху слева.
 ## Сам по себе (раз в 5 с проверяет): выставляет отряд обороны, если он поменялся (Legion.defense_snapshot()),
 ## раз в 5 минут забирает отчёты о нападениях на наш город (Legion.pvp_defense → летопись боёв, +Слава за оборону)
 ## и повторяет итоги боёв, которые не ушли из-за связи. Рейтинг, победы и заряды атак берёт с сервера.
+## Пока Легиона нет — только раз в 5 минут спрашивает своё состояние (имя города), оборону не выставляет.
 
 signal changed                                # ответ сервера: имя, рейтинг, отчёты — перерисовать окно
 
@@ -182,23 +185,63 @@ func pvp_top(cb: Callable) -> void:
 	cb.call(r["data"], "")
 
 
-## Новое название города в боях (его видят соперники и таблица лучших); "" — ок, иначе почему нет
-func pvp_rename(nm: String, cb: Callable) -> void:
-	var lg := _lg()
-	if lg == null:
-		cb.call("Город ещё не готов")
+## Новое название города (табличка, таблица лучших, летописи соперников). cb(err, offline): err "" — сохранено
+## (city.name, табличка, me_state, сохранение и облако — уже), иначе почему нет: текст сервера (занято, не подойдёт)
+## или честная причина без связи / без входа (offline — тогда в окне «Повторить»)
+func set_city_name(raw: String, cb: Callable) -> void:
+	var nm := CityName.clean(raw)
+	var why := CityName.check(nm, String(me_state.get("name", "")))
+	if why != "":
+		cb.call(why, false)
+		return
+	if not signed_in():
+		var t := "Название хранится на сервере CivCity — войдите в аккаунт (Меню → Настройки) и попробуйте снова."
+		last_fail = {"title": "Нужно войти", "text": t, "short": t, "code": ""}
+		cb.call(t, true)
 		return
 	_check_account()
-	var snap := lg.defense_snapshot()
-	var r := await _call(HTTPClient.METHOD_PUT, "/pvp/defense", {"snapshot": snap, "name": nm.strip_edges(), "city_level": int(snap.get("city_level", 0))})
-	if r["status"] != 200:
-		cb.call(_err(r, true))
+	var r := await _call(HTTPClient.METHOD_PUT, "/pvp/name", {"name": nm})
+	var d: Dictionary = r["data"]
+	if int(r["status"]) == 404 and not d.has("me") and str(d.get("error", "")) in ["Нет такого адреса", ""]:
+		r = await _rename_old(nm)                   # сервер ещё без /pvp/name
+	var code := int(r["status"])
+	if code != 200:
+		var f := _err(r, true, "Сервер CivCity")
+		# отказ сервера (занято, не подойдёт, слишком часто) — его словами; нет связи, сбой, вход устарел — «Повторить»
+		var off := code == 0 or code >= 500 or code == 401
+		cb.call(f if off else str(r["error"]), off)
 		return
-	_pub_hash = JSON.stringify(snap).sha256_text()
-	_pub_t = _now()
-	_chk_t = _pub_t
-	_apply_me(r["data"].get("me", {}))
-	cb.call("")
+	_apply_me((r["data"] as Dictionary).get("me", {}))
+	var g = _game()
+	if g != null and g.can_save and g.ready_done and not Account._carrying(g):
+		g.save()                                    # сохранение и облако (Account.after_save: meta.city — новое имя)
+	cb.call("", false)
+
+
+## Сервер до PUT /pvp/name (ещё не обновлён): название уходило вместе с отрядом обороны — только с Легионом
+func _rename_old(nm: String) -> Dictionary:
+	var lg := _lg()
+	if lg == null or not lg.window_open():
+		return {"status": 409, "data": {}, "error": "Сервер пока не умеет менять название города — загляните чуть позже", "net": ""}
+	var snap := lg.defense_snapshot()
+	var r := await _call(HTTPClient.METHOD_PUT, "/pvp/defense", {"snapshot": snap, "name": nm, "city_level": int(snap.get("city_level", 0))})
+	if r["status"] == 200:
+		_pub_hash = JSON.stringify(snap).sha256_text()
+		_pub_t = _now()
+		_chk_t = _pub_t
+	return r
+
+
+## Название и сразу отряд обороны (если Легион собран) — так проверки выставляют оборону одним вызовом; "" — ок
+func pvp_rename(nm: String, cb: Callable) -> void:
+	set_city_name(nm, func(err: String, _offline: bool):
+		if err != "":
+			cb.call(err)
+			return
+		var lg := _lg()
+		if lg != null and lg.window_open():
+			await _publish(true)
+		cb.call(""))
 
 
 ## Отряд похода — тот, что пойдёт в бой (сервер сверит его с городом в облаке)
@@ -216,9 +259,14 @@ func _tick() -> void:
 		return
 	if not force_on and not _acc().synced:
 		return                                      # сначала город сверяется с облаком
-	if not _lg().window_open():
-		return                                      # Легиона ещё нет — на сервер не ходим
 	_check_account()
+	if not _lg().window_open():
+		# Легиона ещё нет: оборону не выставляем, только своё состояние — в нём имя города (табличка вверху слева)
+		if _now() - _state_t >= STATE_GAP:
+			_busy = true
+			await refresh()
+			_busy = false
+		return
 	_busy = true
 	_hook()
 	await _flush_retry()
@@ -329,6 +377,7 @@ func _apply_me(m: Dictionary, extra := 0) -> void:
 	if m.is_empty():
 		return
 	me_state = m
+	_apply_name(String(m.get("name", "")))
 	var lg := _lg()
 	if lg != null:
 		var before := [lg.pvp_rating, lg.pvp_wins, lg.pvp_losses, lg.pvp_charges]
@@ -346,6 +395,19 @@ func _apply_me(m: Dictionary, extra := 0) -> void:
 		if before != [lg.pvp_rating, lg.pvp_wins, lg.pvp_losses, lg.pvp_charges]:
 			lg.changed.emit()
 	changed.emit()
+
+
+## Имя с сервера — название города: в сохранение (city.name) и на табличку. Только в своём городе (не в меню,
+## не в готовом городе витрины)
+func _apply_name(nm: String) -> void:
+	var g = _game()
+	if nm == "" or g == null or g.city == null or not (String(g.mode) in ["play", "new"]):
+		return
+	if String(g.city.name) == nm:
+		return
+	g.city.name = nm
+	if g.hud != null:
+		g.hud.show_city_name()
 
 
 ## Отчёты о нападениях на наш город → летопись боёв; потом сказать серверу «прочитано»
@@ -430,9 +492,9 @@ func _on_battle_requested(setup: Dictionary) -> void:
 
 ## Понятная фраза об ошибке (целая — окно показывает её как есть); last_fail — она же с заголовком и кодом для окна.
 ## short — коротко, для строки внизу окна (нападение, название города); иначе — с советом нажать «Повторить»
-func _err(r: Dictionary, short := false) -> String:
+func _err(r: Dictionary, short := false, who := "Сервер боёв") -> String:
 	var code := int(r["status"])
-	var f := NetHttp.explain(r, "Сервер боёв", NetHttp.AGAIN)
+	var f := NetHttp.explain(r, who, NetHttp.AGAIN)
 	if code == 401:
 		f["title"] = "Вход устарел"
 		f["text"] = "Вход устарел — войдите в аккаунт снова (Меню → Настройки)."
@@ -456,7 +518,7 @@ func _call(method: int, path: String, body = null) -> Dictionary:
 	var r: Dictionary = await NetHttp.fetch(self, a.api, method, path, body, a.token, {"timeout": TIMEOUT, "accept_gzip": false})
 	var code := int(r["status"])
 	var d: Dictionary = r["data"]
-	if code == 404 and path.begins_with("/pvp/") and not d.has("me"):
+	if code == 404 and path.begins_with("/pvp/") and path != "/pvp/name" and not d.has("me"):
 		var e := str(d.get("error", ""))
 		if e == "Нет такого адреса" or e == "":
 			unsupported = true                      # старый сервер без боёв с городами

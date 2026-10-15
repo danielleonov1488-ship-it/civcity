@@ -2,7 +2,9 @@
 // Проверка боёв с городами перед выкладкой: node server/test_pvp.js   (ничего не трогает, кроме своей папки данных)
 // Отряд обороны (сверка с городом в облаке), соперники и вольные города, нападение, итог (одноразовый номер,
 // ставки рейтинга, защита города), подделки (слабый отряд, слишком быстрый бой), брошенный бой, заряды,
-// отчёты защитнику и «прочитано», таблица лучших, названия городов. Победы сервер повторяет сам (legion_sim.js):
+// отчёты защитнику и «прочитано», таблица лучших, названия городов (PUT /pvp/name и без Легиона: проверки, занятые,
+// запасные, грубые слова с «двойниками» букв, частые попытки; списки совпадают с godot/scripts/city_name.gd).
+// Победы сервер повторяет сам (legion_sim.js):
 // тест считает тот же бой у себя и знает, чем он кончится.
 // Данные — в TEST_DATA_DIR (по умолчанию ../.work/srvtest_pvp), порт — TEST_PORT (3012).
 const { spawn } = require('child_process');
@@ -10,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const pvp = require('./pvp');
 const sim = require('./legion_sim');
+const names = require('./names');
 
 const DATA = process.env.TEST_DATA_DIR || path.join(__dirname, '..', '.work', 'srvtest_pvp');
 const PORT = +process.env.TEST_PORT || 3012;
@@ -66,11 +69,11 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
     ok(r.data.pvp === true, 'health: pvp');
 
     const tok = {};
-    for (const n of ['a', 'b', 'c', 'd']) {
+    for (const n of ['a', 'b', 'c', 'd', 'e']) {
       r = await call('POST', '/register', { email: `${n}@pvp.test`, password: 'secret' + n });
       tok[n] = r.data.token;
     }
-    ok(tok.a && tok.b && tok.c && tok.d, 'four players registered');
+    ok(tok.a && tok.b && tok.c && tok.d && tok.e, 'five players registered');
     const save = async (n, c) => (await call('PUT', '/save?game=rome2', { data: c, force: true, meta: { city: 'Новый Рим' } }, tok[n])).status;
     ok(await save('a', city({ level: 4, buildings: ['barracks', 'range'], levels: { legionary: 3, archer: 2 } })) === 200 &&
        await save('b', city({ level: 6, buildings: ['barracks', 'range', 'spearcamp', 'arch'], levels: { legionary: 6, archer: 5, spearman: 4 },
@@ -238,6 +241,66 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
     ok(r.status === 200 && top.length === 3 && top[0].name === nameA && top[0].rating === ratingA && ratingA > 0 && top.some(t => t.me && t.name === r.data.me.name) &&
       r.data.me.place === top.find(t => t.me).place && r.data.total === 3, `leaderboard: A first (${ratingA}), my place`, r.data);
     ok(!JSON.stringify(r.data).includes('@'), 'leaderboard has no e-mails');
+
+    // название города: PUT /pvp/name — и без Легиона (D: в облаке город без «Легиона»)
+    r = await call('PUT', '/pvp/name', { name: 'Аквилея Новая' }, null);
+    ok(r.status === 401, 'name without login → 401');
+    r = await call('GET', '/pvp/state', undefined, tok.d);
+    const nameD = r.data.me.name;
+    ok(r.status === 200 && !r.data.me.custom, `D: server name «${nameD}», not chosen by the player (custom false)`, r.data.me);
+    r = await call('PUT', '/pvp/defense', { snapshot: { squad: sq(['legionary', 1]) }, name: 'Тибур Золотой' }, tok.d);
+    const st409 = await call('GET', '/pvp/state', undefined, tok.d);
+    ok(r.status === 409 && /Легион/.test(r.data.error) && st409.data.me.name === nameD && !st409.data.me.custom,
+      'old rename via /defense without a Legion → 409 and the name is NOT changed', [r.data, st409.data.me]);
+    r = await call('PUT', '/pvp/name', { name: '  Тибур   Золотой ' }, tok.d);
+    ok(r.status === 200 && r.data.me.name === 'Тибур Золотой' && r.data.me.custom === true, 'D (no Legion) renamed: spaces trimmed, custom true', r.data);
+    r = await call('GET', '/pvp/state', undefined, tok.d);
+    ok(r.data.me.name === 'Тибур Золотой', 'D: state shows the new name');
+    r = await call('PUT', '/pvp/name', { name: 'Тибур Золотой' }, tok.d);
+    ok(r.status === 200 && r.data.me.name === 'Тибур Золотой', 'same name again → 200');
+    r = await call('PUT', '/pvp/name', { name: 'сиракузы  ВЕЛИКИЕ' }, tok.d);
+    ok(r.status === 409 && r.data.error === 'Такое название уже занято — придумайте другое', 'taken name (case, spaces) → 409 with the text', r.data);
+    r = await call('PUT', '/pvp/name', { name: 'Ая' }, tok.c);
+    ok(r.status === 400 && /от 3 до 24/.test(r.data.error), 'too short → 400', r.data);
+    r = await call('PUT', '/pvp/name', { name: 'Очень длинное название города' }, tok.c);
+    ok(r.status === 400 && /от 3 до 24/.test(r.data.error), 'too long (25+) → 400', r.data);
+    r = await call('PUT', '/pvp/name', { name: 'Рим_2' }, tok.c);
+    ok(r.status === 400 && /только буквы/.test(r.data.error), 'bad characters → 400', r.data);
+    r = await call('PUT', '/pvp/name', { name: 'Город 4242' }, tok.c);
+    ok(r.status === 400 && /даёт сам сервер/.test(r.data.error), 'reserved «Город 4242» → 400', r.data);
+    const RUDE_TXT = 'Такое название не подойдёт — придумайте другое';
+    for (const [n, who] of [['Хуй', 'c'], ['х у й', 'c'], ['XYЙ', 'c'], ['Пиzда', 'c'], ['blyat', 'a'], ['Ёбаный Рим', 'a'], ['F u c k', 'a'], ['Sh1t', 'a']]) {
+      r = await call('PUT', '/pvp/name', { name: n }, tok[who]);
+      ok(r.status === 400 && r.data.error === RUDE_TXT, `rude «${n}» → 400`, r.data);
+    }
+    r = await call('GET', '/pvp/state', undefined, tok.c);
+    ok(r.data.me.name === oC.name, 'C keeps its name after the refused ones');
+
+    // новое название видно в таблице лучших и в списке соперников (летописи новых боёв берут имя оттуда же — pvp_players.name)
+    r = await call('PUT', '/pvp/name', { name: 'Аквилея Новая' }, tok.a);
+    ok(r.status === 200 && r.data.me.name === 'Аквилея Новая', 'A renamed (has a Legion) → 200', r.data);
+    r = await call('GET', '/pvp/top', undefined, tok.a);
+    ok(r.data.top.some(t => t.me && t.name === 'Аквилея Новая') && !r.data.top.some(t => t.name === nameA), 'leaderboard shows A\'s new name', r.data.top);
+    r = await call('GET', '/pvp/opponents', undefined, tok.b);
+    ok(r.status === 200 && r.data.opponents.some(o => o.name === 'Аквилея Новая'), 'opponents list (for B) shows A\'s new name',r.data.opponents && r.data.opponents.map(o => o.name));
+
+    // частые попытки — 429 (10 за 10 минут)
+    let codes = [];
+    for (let i = 0; i < 11; i++) codes.push((await call('PUT', '/pvp/name', { name: `Капуя ${['Первая', 'Вторая', 'Третья'][i % 3]} ${i}` }, tok.e)).status);
+    ok(codes.slice(0, 10).every(c => c === 200) && codes[10] === 429, `rate limit: 10 renames, the 11th → 429 (${codes.join(' ')})`);
+
+    // грубые слова и правила — те же, что в игре (godot/scripts/city_name.gd): списки совпадают, примеры
+    const gd = fs.readFileSync(path.join(__dirname, '..', 'godot', 'scripts', 'city_name.gd'), 'utf8');
+    for (const k of ['RUDE_RU', 'RUDE_RU_WORD', 'RUDE_EN', 'RUDE_EN_WORD', 'LOOK', 'TRANS', 'LAT']) {
+      const m = gd.match(new RegExp(`const ${k} := "([^"]*)"`));
+      ok(m && m[1] === names[k], `city_name.gd ${k} = server/names.js`, m && m[1]);
+    }
+    const bad = ['Хуй', 'х у й', 'XYЙ', 'хууууй', 'Пиzда', 'pizda', 'Бля', 'блядь город', 'ёбаный', 'Сука', 'Fuck', 'f u c k', 'Sh1t', 'mudak',
+      'Пидорас', 'х-у-й-н-я', 'huy', 'Ху йня', 'CYKA', 'е б а т ь', 'долбоёб'];
+    const good = ['Новый Рим', 'Хлеба и зрелищ', 'Сабля Востока', 'Нора барсука', 'Ребенок', 'Небеса', 'Корабль', 'Дух уединения', 'Чихуахуа',
+      'Скипидар', 'Херсонес', 'Tarentum', 'Колония Юлия', 'Рим и Хуан', 'Сукре', 'Страхование', 'Мебель', 'Сухуми', 'Мудрость', 'Hancock'];
+    const miss = bad.filter(s => !names.rude(s)), wrong = good.filter(s => names.rude(s));
+    ok(!miss.length && !wrong.length, `rude filter: ${bad.length} rude caught, ${good.length} fine names pass`, { miss, wrong });
   } finally {
     await stop(srv);
   }

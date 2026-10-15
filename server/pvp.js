@@ -9,6 +9,10 @@
    таблицу лучших (GET /api/pvp/top). Если живых соперников мало, список добирают «вольные города» —
    отряды, которые сервер собирает сам под силу игрока (за них рейтинг вдвое меньше, отчётов нет).
 
+   Название города — одно на всё (табличка в игре, сохранение, таблица лучших, летописи соперников) и хранится
+   здесь (pvp_players.name, единственное на сервере). Сначала у каждого имя от сервера («Колония Юлия»), игрок
+   меняет его через PUT /api/pvp/name — и без Легиона. Правила (длина, знаки, грубые слова) — server/names.js.
+
    Добыча лёгкая и ни у кого не отнимается: нападающий за победу получает денарии и немного Славы (считает
    сервер), защитник за отбитый натиск — 1 Славу (отнимать Славу у проигравшей обороны можно включить: DEF_LOOT).
    Рейтинг не уходит ниже нуля.
@@ -32,6 +36,7 @@
 
 const crypto = require('crypto');
 const { replayPvp, cleanInputs } = require('./legion_sim');
+const names = require('./names');
 
 const UNITS = {
   legionary: { hp: 270, atk: 22, armor: 32, range: 1.0, rate: 1.0 },
@@ -71,7 +76,7 @@ const DEF_DAY_LOSS = 40;  // больше этого рейтинга за су�
 const BOT_NAMES = ['Капуя', 'Тарент', 'Неаполь', 'Помпеи', 'Остия', 'Кумы', 'Брундизий', 'Анций', 'Вейи', 'Тибур', 'Пренесте',
   'Сиракузы', 'Массилия', 'Аквилея', 'Равенна', 'Медиолан', 'Верона', 'Генуя', 'Аримин', 'Анкона', 'Регий', 'Пестум', 'Сполеций',
   'Арреций', 'Пиза', 'Кремона', 'Плацентия', 'Мутина', 'Бононья', 'Луцерия', 'Беневент', 'Сатрик', 'Ардея', 'Лавиний', 'Альба Фуценская'];
-// имя города по умолчанию (название города в игре у всех одинаковое — «Новый Рим»): «Колония Юлия», «Форум Клавдия»…
+// имя города по умолчанию (пока игрок не назвал город сам): «Колония Юлия», «Форум Клавдия»…
 const NAME_A = ['Колония', 'Форум', 'Кастра', 'Муниципий'];
 const NAME_B = ['Юлия', 'Клавдия', 'Флавия', 'Аврелия', 'Ульпия', 'Элия', 'Августа', 'Валерия', 'Корнелия', 'Фабия', 'Помпея',
   'Антония', 'Сервилия', 'Туллия', 'Лициния', 'Эмилия', 'Сульпиция', 'Домиция', 'Марция', 'Кассия'];
@@ -253,7 +258,27 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     const t = String(s || '').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
     if (t.length < 3 || t.length > 24) throw new Fail(400, 'Название — от 3 до 24 знаков');
     if (!NAME_RE.test(t) || !/\p{L}/u.test(t)) throw new Fail(400, 'В названии — только буквы, цифры, пробел и дефис');
+    if (names.rude(t)) throw new Fail(400, 'Такое название не подойдёт — придумайте другое');
     return t;
+  }
+
+  // новое название игрока p: проверено, не запасное «Город 123» (своё запасное оставить можно), не занято другим
+  function pickName(p, raw) {
+    const nm = cleanName(raw);
+    if (nameKey(nm) !== nameKey(p.name) && RESERVED_RE.test(nameKey(nm))) throw new Fail(400, 'Такие названия («Город 123») даёт сам сервер — придумайте своё');
+    const other = q.byKey.get(nameKey(nm));
+    if (other && other.user_id !== p.user_id) throw new Fail(409, 'Такое название уже занято — придумайте другое');
+    return nm;
+  }
+
+  // записать название (игрок выбрал его сам — custom); заняли в ту же секунду (UNIQUE name_key) — тоже 409
+  function setName(uid, nm) {
+    try {
+      q.setName.run(nm, nameKey(nm), uid);
+    } catch (e) {
+      if (/UNIQUE|constraint/i.test(String(e && e.message))) throw new Fail(409, 'Такое название уже занято — придумайте другое');
+      throw e;
+    }
   }
 
   /* ---------- что знаем о городе из облака (последнее сохранение rome2) ---------- */
@@ -454,23 +479,30 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     return { ok: true };
   };
 
-  // выставить отряд обороны (снимок) и, если игрок назвал город, — название
+  // название города (табличка в игре, таблица лучших, летописи соперников) — и без Легиона
+  routes['PUT /api/pvp/name'] = async (req) => {
+    const a = auth(req);
+    if (limited(`pvp:name:${a.userId}`, 10, 600e3)) throw new Fail(429, 'Слишком часто — подождите несколько минут');
+    const b = await json(req);
+    const p = player(a.userId);
+    const nm = pickName(p, b.name);
+    if (nm !== p.name || !p.custom) setName(a.userId, nm);
+    return { me: state(q.player.get(a.userId)) };
+  };
+
+  // выставить отряд обороны (снимок) и, если прислали, — название (так переименовывают версии игры до PUT /pvp/name).
+  // Сначала все проверки, потом запись: без Легиона не меняется ничего (раньше название успевало сохраниться до 409)
   routes['PUT /api/pvp/defense'] = async (req) => {
     const a = auth(req);
     if (limited(`pvp:def:${a.userId}`, 30, 600e3)) throw new Fail(429, 'Слишком часто');
     const b = await json(req);
     const p = player(a.userId);
-    if (b.name !== undefined && b.name !== null && b.name !== '') {
-      const nm = cleanName(b.name);
-      if (nameKey(nm) !== nameKey(p.name) && RESERVED_RE.test(nameKey(nm))) throw new Fail(400, 'Такие названия («Город 123») даёт сам сервер — придумайте своё');
-      const other = q.byKey.get(nameKey(nm));
-      if (other && other.user_id !== a.userId) throw new Fail(409, 'Такое название уже занято — придумайте другое');
-      if (nm !== p.name) q.setName.run(nm, nameKey(nm), a.userId);
-    }
+    const nm = b.name !== undefined && b.name !== null && b.name !== '' ? pickName(p, b.name) : null;
     const f = facts(a.userId);
     if (f && !f.legion) throw new Fail(409, 'Легион ещё не собран');
     const c = checkSquad(f, b.snapshot);
     const lvl = f ? f.cityLevel : clamp(int(b.city_level), 0, 7);
+    if (nm !== null && nm !== p.name) setName(a.userId, nm);
     q.setDefense.run(JSON.stringify(c.snap), c.snap.squad.length ? c.power : 0, lvl, Date.now(), a.userId);
     return { me: state(q.player.get(a.userId)), power: c.power, clamped: c.clamped };
   };
