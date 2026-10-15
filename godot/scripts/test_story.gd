@@ -24,6 +24,8 @@ func _ready() -> void:
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		if kv[0] == "mode" and kv.size() > 1:
 			mode = kv[1]
+		if kv[0] == "out" and kv.size() > 1:
+			out = kv[1].trim_suffix("/") + "/"   # куда снимки (проверка под OpenGL — в свою папку)
 	Game.boot = {"play": "1"} if mode == "owner" else {"new": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -386,12 +388,14 @@ func _search_and_find() -> void:
 	var dd := sp.distance_to(door)
 	check(dd >= 11.5 and dd <= 41.0, "кошка в %.1f м от двери (12–40)" % dd)
 	check(game.people._path(door, sp).size() >= 2, "до неё можно дойти")
+	var s0: Array = A.get("spot0", [])
+	check(s0.size() == 2 and Vector2(float(s0[0]), float(s0[1])).distance_to(sp) < 0.01, "кошка там, где проверяли при предложении (%s / %s)" % [s0, sp])
 	var a0: Array = A["area0"]
 	var a1: Array = A["area1"]
 	check(is_equal_approx(float(a0[2]), 22.0) and Vector2(float(a0[0]), float(a0[1])).distance_to(sp) <= 22.0 * 0.55, "место поисков 22 м, кошка внутри, не в середине")
 	check(is_equal_approx(float(a1[2]), 12.0) and Vector2(float(a1[0]), float(a1[1])).distance_to(sp) <= 12.0 * 0.55, "через 3 ч — 12 м, кошка внутри")
 	await frames(20)
-	check(sto._glow != null and is_equal_approx(sto._glow.size.x, 44.0), "пятно света на земле (22 м)")
+	check(sto._glow != null and is_equal_approx(sto._glow_r, 22.0), "пятно света на земле (22 м)")
 	check(sto._paws.size() >= 2, "следы лапок от дома (%d)" % sto._paws.size())
 	check(not hud.badges.has("story_paw"), "следа над кошкой пока нет")
 	# мяу: звук в мире и подпись
@@ -406,7 +410,7 @@ func _search_and_find() -> void:
 	S["h"] = int(A["t0"]) + 3
 	sto.tick()
 	await frames(5)
-	check(sto._glow != null and is_equal_approx(sto._glow.size.x, 24.0), "через 3 ч пятно теснее (12 м)")
+	check(sto._glow != null and is_equal_approx(sto._glow_r, 12.0), "через 3 ч пятно теснее (12 м)")
 	check(String(sto.row_info().get("text", "")).contains("тёплые уголки"), "подсказка в строке: «%s»" % sto.row_info().get("text"))
 	S["h"] = int(A["t0"]) + 6
 	sto.tick()
@@ -430,6 +434,8 @@ func _search_and_find() -> void:
 	check((S["done"] as Dictionary).has("cat") and (S["active"] as Dictionary).is_empty(), "история пройдена сразу (действие — до ролика)")
 	check(c.research.has("s_cat") and c.unlocked("catbasket"), "украшение «Кошачья корзинка» открыто")
 	check(is_equal_approx(c.rp, minf(c.rp_cap(), rp0 + 20.0)) or c.rp >= rp0 + 19.9, "+20 очков исследований (%.0f → %.0f)" % [rp0, c.rp])
+	if rp0 + 20.0 <= c.rp_cap():
+		check(String(S["done"]["cat"].get("text", "")).contains("+20 очков исследований"), "в награде — +20 очков")
 	var line := ""
 	for e: Array in kid_home["happy_parts"]:
 		if String(e[0]).begins_with("Мурка снова дома"):
@@ -516,8 +522,11 @@ func _skip_applies() -> void:
 	var ended: bool = await wait_kit(false, 4.0)
 	check(ended and String(S["active"].get("id", "")) == "cat" and int(S["active"]["step"]) == 1, "Esc в ролике просьбы — согласились помочь (по умолчанию)")
 	check(not sto.cat.is_empty(), "кошка спряталась")
+	c.rp = c.rp_cap()                    # полки полны: очков не прибавится — и награда не обещает их
 	sto.found()
 	check(sto.kit != null, "нашли — ролик встречи")
+	var rtxt := String(S["done"].get("cat", {}).get("text", ""))
+	check(is_equal_approx(c.rp, c.rp_cap()) and not rtxt.contains("+20 очков") and rtxt.contains("полки полны"), "полки полны — в награде честно: «%s»" % rtxt)
 	await frames(40)
 	press_key(KEY_ESCAPE)
 	ended = await wait_kit(false, 4.0)
@@ -577,7 +586,7 @@ func _save_mid_step() -> void:
 	sto._h_seen = -1
 	sto.tick()
 	await frames(5)
-	check(sto._glow != null and is_equal_approx(sto._glow.size.x, 24.0), "место поисков — по часам (4 ч — 12 м)")
+	check(sto._glow != null and is_equal_approx(sto._glow_r, 12.0), "место поисков — по часам (4 ч — 12 м)")
 	sto.found()
 	await frames(20)
 	press_key(KEY_ESCAPE)
@@ -588,6 +597,37 @@ func _save_mid_step() -> void:
 	var c3 := City.new(game.land)
 	c3.load_data(d)
 	check(int(c3.stories["h"]) == 0 and (c3.stories["active"] as Dictionary).is_empty() and (c3.stories["done"] as Dictionary).is_empty(), "старое сохранение: историй нет, часы с нуля")
+	# нашли, а ролик встречи ждёт (игра на паузе, ждёт ролик ранга) — сохранили, загрузили: кошка на месте, ролик снимает её
+	fresh(450)
+	S = c.stories
+	sto.tick()
+	sto.accept()
+	var spot2: Array = S["active"]["spot"]
+	var sp2 := Vector2(float(spot2[0]), float(spot2[1]))
+	game.rank_cine.pending = {"from": c.level, "to": c.level + 1, "late": true}   # (без кадров: rank_cine вне игры его снимет)
+	sto.found()
+	check(sto.kit == null and bool(S["active"].get("ready", false)) and (S["done"] as Dictionary).is_empty(), "ролик ранга ждёт — встреча ждёт щелчка («Готово»)")
+	var d2: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	game.people.drop_cat(sto.cat)
+	sto.cat = {}
+	c.stories = City.stories_load(d2["stories"])
+	S = c.stories
+	sto._restore()
+	check(not sto.cat.is_empty() and (sto.cat["p"] as Vector2).distance_to(sp2) < 0.01, "после загрузки кошка там же (ждёт мальчика)")
+	check(not sto.try_click(game.rig.cam.unproject_position(sto._cat_pos())), "найденную кошку второй раз не находят")
+	game.rank_cine.pending = {}
+	sto.play_ready()
+	var flew: bool = await wait_beat("fly", 6.0)
+	var foc: Vector2 = sto.cine.get("focus", Vector2.INF)
+	check(flew and foc.distance_to(sp2) < 1.0, "ролик встречи — у кошки (%s / %s)" % [foc, sp2])
+	press_key(KEY_ESCAPE)
+	await wait_kit(false, 4.0)
+	await frames(4)
+	var home_cat := false
+	for cc in game.people.cats:
+		if cc.has("named") and not cc.has("story") and String(cc.get("named", "")) != "":
+			home_cat = true
+	check((S["done"] as Dictionary).has("cat") and sto.cat.is_empty() and home_cat, "кошка — домой к семье")
 
 
 # ---------- дом снесли ----------
@@ -627,6 +667,31 @@ func _demolished() -> void:
 	sto._h_seen = -1
 	sto.tick()
 	check(String(S["offer"].get("fam", "")) == kid_fam and int(S["offer"].get("home", -1)) == int(kid_home["id"]), "предложение снова")
+	# дом переносят: предложение не пропадает, едет за домом
+	var old_id := int(kid_home["id"])
+	check(game.start_move(kid_home), "дом Корнелиев подняли (перенос)")
+	for i in 4:
+		sto.tick()
+	await frames(45)
+	check(String(S["offer"].get("id", "")) == "cat" and not (S["later"] as Dictionary).has("cat"), "пока дом в руках — предложение ждёт")
+	check(not hud.badges.has("story"), "свиток пока не висит")
+	var moved := false
+	cands.sort_custom(func(p, q): return p.distance_squared_to(Vector2(174, 118)) < q.distance_squared_to(Vector2(174, 118)))
+	for p in cands.slice(0, 300):
+		reset_place()
+		var pl: Dictionary = game.placement("house_pleb", p)
+		if pl["err"] == "" and pl["sub"] == "road":
+			game.hover = p
+			game._build_here()
+			moved = game.moving.is_empty()
+			break
+	var nid := int(S["offer"].get("home", -1))
+	check(moved and nid != old_id and c.buildings.has(nid) and String(S["offer"].get("fam", "")) == kid_fam, "дом поставили — предложение у него (дом %d → %d)" % [old_id, nid])
+	if c.buildings.has(nid):
+		kid_home = c.buildings[nid]
+	sto.tick()
+	await frames(3)
+	check(hud.badges.has("story") and not (S["later"] as Dictionary).has("cat"), "свиток снова над домом")
 	sto.accept()
 	var ev0: int = c.events.size()
 	# идёт история — дом снесли: ждём; семья заселилась в другой дом — история идёт дальше

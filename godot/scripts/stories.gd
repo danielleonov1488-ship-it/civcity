@@ -27,10 +27,13 @@ var _poll := 0.0
 var _h_seen := -1
 var _meow_t := 10.0
 var _sit_t := 0.0                      # кошка мяукнула — сидит, потом снова спит
-var _glow: Decal = null
+var _glow: Node3D = null               # пятно поисков: Decal (Forward+, Mobile) или сетка по земле (OpenGL — там Decal нет)
+var _glow_key := ""
+var _glow_r := 0.0                     # радиус пятна сейчас (0 — нет)
 var _paws: Array = []
 var _paws_key := ""
-var _spot_cache := {}                  # «дом:час» → кошке есть где спрятаться
+var _no_decals := RenderingServer.get_current_rendering_method() == "gl_compatibility"
+var _spot_cache := {}                  # «история:дом:час» → где кошке спрятаться (INF — негде)
 var _hidden: Array = []                # прохожие, спрятанные на время ролика (заслоняли героя)
 var _tried := ""                       # с чем последний раз искали, кому предложить историю
 
@@ -74,8 +77,9 @@ func _restore() -> void:
 			h = city.center()
 		if not h.is_empty():
 			game.people.pet_cat(h, int(p.get("fur", 0)), String(p.get("name", "")), int(p.get("seed", 1)))
+	# кошка живёт, пока её не забрали домой (_after_final): и пока ищут, и когда нашли, а ролик встречи ещё ждёт щелчка
 	var a: Dictionary = s["active"]
-	if not a.is_empty() and _goal_kind(a) == "find" and a.has("spot"):
+	if not a.is_empty() and a.has("spot"):
 		_spawn_cat(a)
 
 
@@ -192,23 +196,26 @@ func can_offer(sd: Dictionary) -> Dictionary:
 			return {}
 	var fo := StoryDefs.find_opts(sd)
 	for bind: Dictionary in _cast(sd).slice(0, 4):
-		if fo.is_empty() or _spot_ok(bind, fo):
+		bind["id"] = String(sd["id"])        # тот же посев _rng, что в _start_find: проверяем то самое место
+		var sp := Vector2.INF if fo.is_empty() else _spot_for(bind, fo)
+		if fo.is_empty() or sp != Vector2.INF:
+			if sp != Vector2.INF:
+				bind["spot0"] = [sp.x, sp.y]
 			if bind.has("fam"):
 				bind["seed"] = _fair_seed(hash(String(bind["fam"])) & 0xffffff)
 			return bind
 	return {}
 
 
-## Кошке есть где спрятаться у этого дома (поиск пути — дорогой: ответ помним до конца игрового часа)
-func _spot_ok(bind: Dictionary, fo: Dictionary) -> bool:
-	var key := "%d:%d" % [int(bind["home"]), int(S()["h"])]
+## Где кошке спрятаться у этого дома (INF — негде; поиск пути — дорогой: ответ помним до конца игрового часа)
+func _spot_for(bind: Dictionary, fo: Dictionary) -> Vector2:
+	var key := "%s:%d:%d" % [String(bind.get("id", "")), int(bind["home"]), int(S()["h"])]
 	if not _spot_cache.has(key):
 		if _spot_cache.size() > 64:
 			_spot_cache.clear()
 		var home: Dictionary = city.buildings[int(bind["home"])]
-		var spot: Vector2 = game.people.hide_spot(city.door_point(home), float(fo["rmin"]), float(fo["rmax"]), fo.get("hide", []), _rng(bind, 1))
-		_spot_cache[key] = spot != Vector2.INF
-	return bool(_spot_cache[key])
+		_spot_cache[key] = game.people.hide_spot(city.door_point(home), float(fo["rmin"]), float(fo["rmax"]), fo.get("hide", []), _rng(bind, 1))
+	return _spot_cache[key]
 
 
 ## Кого просить: дома нужного класса, где живёт семья с ребёнком, — ближние к станции первыми; [{home, fam, kid, seed…}]
@@ -264,6 +271,8 @@ func _rng(bind: Dictionary, salt := 0) -> RandomNumberGenerator:
 ## Предложение ещё в силе: дом стоит, семья живёт в нём
 func _tick_offer() -> void:
 	var o: Dictionary = S()["offer"]
+	if city.moving_id >= 0 and city.moving_id == int(o.get("home", -1)):
+		return                           # дом переносят — предложение поедет за ним (City._story_rehome)
 	if StoryDefs.story(String(o.get("id", ""))).is_empty() or not _lives(o):
 		_drop_offer()
 
@@ -380,6 +389,12 @@ func _start_find(a: Dictionary, o: Dictionary) -> void:
 	var door: Vector2 = city.door_point(home) if not home.is_empty() else (city.center()["pos"] as Vector2)
 	var rg := _rng(a, 1)
 	var spot: Vector2 = game.people.hide_spot(door, float(o["rmin"]), float(o["rmax"]), o.get("hide", []), rg)
+	if spot == Vector2.INF and a.has("spot0"):
+		# с предложения город поменялся: место, проверенное тогда, ещё годится?
+		var s0 := Vector2(float(a["spot0"][0]), float(a["spot0"][1]))
+		var d0 := s0.distance_to(door)
+		if d0 >= float(o["rmin"]) and d0 <= float(o["rmax"]) and game.people._hide_ok(s0) and game.people._path(door, s0).size() >= 2:
+			spot = s0
 	if spot == Vector2.INF:
 		spot = game.people._near_free(door + City.facing(float(home.get("yaw", 0.0))) * 6.0, 40)
 	if spot == Vector2.INF:
@@ -503,6 +518,8 @@ func play_ready() -> void:
 	var steps: Array = sd["steps"]
 	var i := int(a["step"])
 	var beats: Array = (steps[i] as Dictionary).get("cine", [])
+	if cat.is_empty() and a.has("spot"):
+		_spawn_cat(a)                    # кошка — в кадре встречи (и потом — домой, к семье)
 	var bind := a.duplicate(true)
 	if i >= steps.size() - 1:
 		_finish("found")                 # действие — сразу: пропустят ролик или выйдут из игры — награда уже есть
@@ -629,8 +646,15 @@ func _reward(sd: Dictionary, a: Dictionary, full: bool) -> String:
 		(s["bonus"] as Array).append({"id": id, "line": line, "pct": int(pct), "x": hp.x, "z": hp.y, "r": float(mo[1]), "left": -1})
 		out.append("домам в %d м +%d%% счастья навсегда" % [int(mo[1]), int(pct)])
 	if r.has("rp") and full:
+		var was := city.rp
 		city.rp = maxf(city.rp, minf(city.rp_cap(), city.rp + float(r["rp"])))
-		out.append("+%d очков исследований" % int(r["rp"]))
+		var got := int(round(city.rp - was))   # полки полны — пишем, сколько правда легло
+		if got >= int(r["rp"]):
+			out.append("+%d очков исследований" % got)
+		elif got > 0:
+			out.append("+%d очков исследований (больше не уместилось на полках)" % got)
+		else:
+			out.append("очки исследований не уместились — полки полны")
 	if r.has("glory"):
 		city.legion.glory += int(r["glory"])
 		out.append("+%d Славы" % int(r["glory"]))
@@ -856,6 +880,8 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 		if _glow != null:
 			_glow.queue_free()
 			_glow = null
+		_glow_key = ""
+		_glow_r = 0.0
 		for p in _paws:
 			(p as Node).queue_free()
 		_paws = []
@@ -863,19 +889,29 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 		return
 	var c := Vector2(float(area[0]), float(area[1]))
 	var r := float(area[2])
-	if _glow == null:
-		_glow = Decal.new()
-		_glow.texture_albedo = StoryUi.glow_tex()
-		_glow.modulate = Color(1.0, 0.82, 0.42, 0.5)
-		_glow.albedo_mix = 1.0
-		_glow.normal_fade = 0.6
-		_glow.upper_fade = 0.2
-		_glow.lower_fade = 0.2
-		_glow.cull_mask = Game.LAND_LAYER   # только земля: дома, люди и деревья не светятся
-		game.add_child(_glow)
-	_glow.size = Vector3(r * 2.0, 8.0, r * 2.0)
-	_glow.position = Vector3(c.x, game.land.height_at(c.x, c.y), c.y)
 	var k := "%.1f,%.1f,%.1f" % [c.x, c.y, r]
+	if _no_decals:
+		if k != _glow_key:
+			if _glow != null:
+				_glow.queue_free()
+			_glow = _glow_mesh(c, r)
+			game.add_child(_glow)
+	else:
+		if _glow == null:
+			var dc := Decal.new()
+			dc.texture_albedo = StoryUi.glow_tex()
+			dc.modulate = Color(1.0, 0.82, 0.42, 0.5)
+			dc.albedo_mix = 1.0
+			dc.normal_fade = 0.6
+			dc.upper_fade = 0.2
+			dc.lower_fade = 0.2
+			dc.cull_mask = Game.LAND_LAYER   # только земля: дома, люди и деревья не светятся
+			game.add_child(dc)
+			_glow = dc
+		(_glow as Decal).size = Vector3(r * 2.0, 8.0, r * 2.0)
+		_glow.position = Vector3(c.x, game.land.height_at(c.x, c.y), c.y)
+	_glow_key = k
+	_glow_r = r
 	if k == _paws_key:
 		return
 	_paws_key = k
@@ -895,16 +931,67 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 	var n := mini(10, int(len / 1.5))
 	for i in n:
 		var q := d0 + dir * (1.8 + i * 1.5) + side * (0.22 if i % 2 == 0 else -0.22)
-		var pd := Decal.new()
-		pd.texture_albedo = StoryUi.paw_tex()
-		pd.modulate = Color(0.32, 0.2, 0.11, 0.8 * (1.0 - 0.05 * i))
-		pd.size = Vector3(0.6, 2.0, 0.6)
-		pd.normal_fade = 0.6
-		pd.cull_mask = Game.LAND_LAYER
-		pd.position = Vector3(q.x, game.land.height_at(q.x, q.y), q.y)
+		var col := Color(0.32, 0.2, 0.11, 0.8 * (1.0 - 0.05 * i))
+		var pd: Node3D
+		if _no_decals:
+			var pm := PlaneMesh.new()        # лежит на земле (XZ)
+			pm.size = Vector2(0.6, 0.6)
+			var mi := MeshInstance3D.new()
+			mi.mesh = pm
+			mi.material_override = _flat_mat(StoryUi.paw_tex(), col)
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mi.position = Vector3(q.x, game.land.height_at(q.x, q.y) + 0.03, q.y)
+			pd = mi
+		else:
+			var dc := Decal.new()
+			dc.texture_albedo = StoryUi.paw_tex()
+			dc.modulate = col
+			dc.size = Vector3(0.6, 2.0, 0.6)
+			dc.normal_fade = 0.6
+			dc.cull_mask = Game.LAND_LAYER
+			dc.position = Vector3(q.x, game.land.height_at(q.x, q.y), q.y)
+			pd = dc
 		pd.rotation.y = atan2(dir.x, dir.y) + PI
 		game.add_child(pd)
 		_paws.append(pd)
+
+
+## Пятно поисков без Decal (OpenGL): сетка по земле чуть выше неё, мягкий свет без теней; дома и деревья его заслоняют
+func _glow_mesh(c: Vector2, r: float) -> MeshInstance3D:
+	var n := 24
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for j in n + 1:
+		for i in n + 1:
+			var x := c.x - r + 2.0 * r * i / n
+			var z := c.y - r + 2.0 * r * j / n
+			# земля ступеньками по 0,25 м: берём самую высокую рядом — пятно не уходит под бугорки
+			var y: float = game.land.height_at(x, z)
+			for dd: Vector2 in [Vector2(-0.6, -0.6), Vector2(0.6, -0.6), Vector2(-0.6, 0.6), Vector2(0.6, 0.6)]:
+				y = maxf(y, game.land.height_at(x + dd.x, z + dd.y))
+			st.set_uv(Vector2(float(i) / n, float(j) / n))
+			st.add_vertex(Vector3(x, y + 0.06, z))
+	for j in n:
+		for i in n:
+			var k := j * (n + 1) + i
+			for v in [k, k + 1, k + n + 1, k + 1, k + n + 2, k + n + 1]:
+				st.add_index(v)
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = _flat_mat(StoryUi.glow_tex(), Color(1.0, 0.82, 0.42, 0.5))
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+static func _flat_mat(tex: Texture2D, col: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_texture = tex
+	m.albedo_color = col
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.render_priority = -1
+	return m
 
 
 func _badge_pos(id: int) -> Vector3:
