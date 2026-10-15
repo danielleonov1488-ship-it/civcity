@@ -4,6 +4,9 @@ extends Node
 ## «Этаж»: кнопка с числом готовых домов, U и Esc, стрелки с ценой над готовыми домами (зелёные), мазок мышью по улице —
 ## каждый готовый дом под курсором получает этаж за свою цену, монетки — один раз на мазок, итог — в колокольчик;
 ## денарии кончились — мазок дальше не надстраивает; над неготовым домом у курсора — почему; кнопки «все разом» нет.
+## Правки по проверке: советник про «Этаж» не теряется, если окно исследований закрыли Esc; рывок мыши за кадр не
+## пропускает дома; дом не по карману пропускается, а дешёвые дальше по мазку этаж получают; из перекрытых стрелок —
+## верхняя; при крупном интерфейсе нижние полосы не наезжают друг на друга.
 ## Рожицы: поставили лавку — над домами, чьё счастье поменялось, «+N%» волной; не больше 40; не в готовом городе.
 ## «НОВОЕ»: новая игра — ничего не горит; изучили — горит на разделе, вкладке, карточке; навели / взяли — гаснет;
 ## исследования нового уровня — на кнопке и в окне; в сохранении; старое сохранение — ничего не новое.
@@ -187,11 +190,14 @@ func _run() -> void:
 	await _floor_stroke()
 	await _floor_broke()
 	await _floor_why()
+	await _floor_mixed()
+	await _badge_top()
 	await _floor_exit()
 	await _pops()
 	await _new_marks()
 	await _new_research()
 	await _new_save()
+	await _bars_scale()
 	print("UX DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -296,6 +302,23 @@ func _floor_tool() -> void:
 	hud._top_action("research")
 	await frames(2)
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Этаж — без карточки дома", "окно закрыли — советник рассказал про «Этаж»: «%s»" % hud.adv_title.text)
+	# закрыли Esc (close_panels гасит и советника): совет не теряется — он показан после закрытия окна
+	c.tips.erase("floor_tool")
+	hud.advisor_panel.visible = false
+	hud._top_action("research")
+	await frames(2)
+	check(hud.research_panel.visible and not hud.advisor_panel.visible, "окно исследований открыто снова")
+	await key(KEY_ESCAPE)
+	await frames(2)
+	check(not hud.research_panel.visible and hud.advisor_panel.visible and hud.adv_title.text == "Этаж — без карточки дома" and c.tips.has("floor_tool"), "окно закрыли Esc — советник про «Этаж» на экране: «%s»" % hud.adv_title.text)
+	# и щелчком по карте (тоже close_panels)
+	c.tips.erase("floor_tool")
+	hud.advisor_panel.visible = false
+	hud._top_action("research")
+	await frames(2)
+	hud.close_panels()
+	await frames(2)
+	check(hud.advisor_panel.visible and hud.adv_title.text == "Этаж — без карточки дома", "окно закрыли щелчком мимо — советник на экране: «%s»" % hud.adv_title.text)
 	c.tips.erase("floor_tool")
 	hud.advisor_panel.visible = false
 	game.rig.set_view(Vector3(182, 2, 160), 0, 52, 62)
@@ -411,11 +434,11 @@ func _floor_stroke() -> void:
 			await frames(1)
 	check(game.floor_drag and game.floor_done.size() == mid + 1 and String(cover.cap[1]).begins_with("Этот мазок: %d" % (mid + 1)), "посреди мазка: надстроено %d, у курсора «%s»" % [game.floor_done.size(), cover.cap[1]])
 	await shot("ux_floor_stroke.png")
-	for i in range(mid + 1, pts.size()):
-		var n := maxi(1, int(pts[i - 1].distance_to(pts[i]) / 8.0))
-		for s in range(1, n + 1):
-			move(pts[i - 1].lerp(pts[i], float(s) / n))
-			await frames(1)
+	# дальше — рывком через дом за один кадр (быстрая мышь, слабый ноутбук): дом на пути тоже получает этаж
+	var jump: float = (pts[mid] as Vector2).distance_to(pts[-1])
+	move(pts[-1])
+	await frames(2)
+	check(game.floor_done.size() == pts.size(), "рывок на %d точек за кадр — дом между кадрами не пропущен: надстроено %d из %d" % [int(jump), game.floor_done.size(), pts.size()])
 	await frames(2)
 	btn(pts[-1], MOUSE_BUTTON_LEFT, false)
 	await frames(3)
@@ -540,6 +563,91 @@ func _floor_why() -> void:
 		check(fbtn and tip, "в карточке дома кнопка «Надстроить этаж» осталась, рядом — подсказка про инструмент")
 		hud.close_panels()
 		await frames(2)
+
+
+# ---------- дом не по карману посреди мазка — пропускается, а дешёвые дальше получают этаж ----------
+
+func _floor_mixed() -> void:
+	game.set_tool("")
+	c.money = 500000.0
+	# дорогой: надстроенный дом ряда 1 — полный и счастливый, «Третий жилой этаж» изучен — этаж 3 за 450 ден.
+	c.research["floor3"] = true
+	var dear := -1
+	for id in row1:
+		var h: Dictionary = c.buildings[id]
+		if int(h["tier"]) == 2:
+			dear = id
+			c.settled(id, c.house_cap(h) - int(h["pop"]), "Дорогой %d" % id)
+			if int(h["happy"]) < int(Defs.FLOOR_HAPPY[3]):
+				h["happy"] = int(Defs.FLOOR_HAPPY[3]) + 5        # для пробы: счастье на третий этаж
+			break
+	if not check(dear >= 0 and c.can_buy_floor(c.buildings[dear], false) == "", "дорогой дом готов к 3-му этажу"):
+		c.research.erase("floor3")
+		return
+	# дешёвые: готовы ко 2-му этажу (200 ден.); мазок ведём от дорогого к ближнему из них
+	var dx: float = (c.buildings[dear]["pos"] as Vector2).x
+	var cheap := []
+	for id in houses():
+		if int(c.buildings[id]["tier"]) == 1 and c.can_buy_floor(c.buildings[id]) == "":
+			cheap.append(id)
+	cheap.sort_custom(func(p, q): return absf((c.buildings[p]["pos"] as Vector2).x - dx) < absf((c.buildings[q]["pos"] as Vector2).x - dx))
+	if not check(not cheap.is_empty(), "дешёвых готовых домов: %d" % cheap.size()):
+		c.research.erase("floor3")
+		return
+	var low: int = cheap[0]
+	var p_dear := c.floor_price(c.buildings[dear])
+	var p_cheap := c.floor_price(c.buildings[low])
+	c.money = float(p_cheap) + 100.0                  # на дешёвый хватает, на дорогой — нет
+	check(p_dear > int(c.money) and p_cheap <= int(c.money), "этаж дорогому — %d ден., дешёвому — %d, в казне %d" % [p_dear, p_cheap, int(c.money)])
+	game.rig.set_view(Vector3(182, 2, 160), 0, 52, 62)
+	await frames(10)
+	game.set_tool("floor")
+	await frames(6)
+	hud.advisor_panel.visible = false
+	var tiers0 := {}
+	for id in houses():
+		tiers0[id] = int(c.buildings[id]["tier"])
+	check(hud.badges.has("fl%d" % dear) and hud.badges["fl%d" % dear]["warn"] and hud.badges.has("fl%d" % low) and not hud.badges["fl%d" % low]["warn"], "над дорогим — красная цена, над дешёвым — обычная")
+	# нажали на красную стрелку дорогого — он пропущен, мазок не кончился
+	var a := badge_scr("fl%d" % dear)
+	var b := badge_scr("fl%d" % low)
+	move(a)
+	await frames(3)
+	btn(a, MOUSE_BUTTON_LEFT, true)
+	await frames(3)
+	check(game.floor_drag and game.floor_done.is_empty() and not game.floor_broke and String(cover.cap[2]).begins_with("Не хватает денариев: этаж стоит %s" % hud.fmt(p_dear)), "дорогой не по карману — у курсора «%s», мазок идёт дальше" % cover.cap[2])
+	var n := maxi(1, int(a.distance_to(b) / 8.0))
+	for s in range(1, n + 1):
+		move(a.lerp(b, float(s) / n))
+		await frames(1)
+	await frames(2)
+	btn(b, MOUSE_BUTTON_LEFT, false)
+	await frames(3)
+	var got := []
+	for id in houses():
+		if int(c.buildings[id]["tier"]) > int(tiers0[id]):
+			got.append(id)
+	check(got.size() == 1 and not got.has(dear) and cheap.has(got[0]) and is_equal_approx(c.money, 100.0), "дорогой пропущен, дешёвый на пути получил этаж: %s, в казне %d" % [got, int(c.money)])
+	game.set_tool("")
+	c.research.erase("floor3")
+	c.money = 500000.0
+	c.compute()
+
+
+## Две стрелки друг на друге: под мышью — верхняя (её и видно); красные в мазке не в счёт
+func _badge_top() -> void:
+	game.set_tool("")
+	var w := Vector3(182, game.land.height_at(182, 160) + 3.0, 160)
+	hud.set_badge("flt1", w, "up", false, "111")
+	hud.set_badge("flt2", w + Vector3(0.4, 0, 0), "up", true, "222")
+	await frames(3)
+	var r1: Rect2 = (hud.badges["flt1"]["n"] as Control).get_global_rect()
+	var r2: Rect2 = (hud.badges["flt2"]["n"] as Control).get_global_rect()
+	var p := r1.intersection(r2).get_center()
+	check(r1.intersects(r2) and hud.badge_at(p, "flt") == "flt2", "стрелки перекрылись — под мышью верхняя: «%s»" % hud.badge_at(p, "flt"))
+	check(hud.badge_at(p, "flt", true) == "flt1", "красная не в счёт — та, что под ней")
+	hud.clear_badge("flt1")
+	hud.clear_badge("flt2")
 
 
 # ---------- выйти: Esc, правая кнопка, U ----------
@@ -766,3 +874,35 @@ func _new_save() -> void:
 	c3.level = maxi(c3.level, 2)
 	c3.research["dice"] = true
 	check(c3.is_new("dice"), "в старом городе новое после обновления — с пометкой")
+
+
+# ---------- крупный интерфейс: кнопка «Этаж» не загоняет правую полосу на разделы ----------
+
+func _bars_scale() -> void:
+	var sc0: float = game.settings.get("ui_scale", 1.0)
+	var m0: float = c.money
+	var rp0: float = c.rp
+	game.settings["ui_scale"] = 1.4          # как из настроек: окно, меняя размер, применяет его заново
+	hud.apply_scale(1.4)
+	c.money = c.money_cap()
+	c.rp = c.rp_cap()                         # «Полки полны» и «Казна полна» — правая полоса шире всего
+	var st0: Dictionary = c.stats.duplicate()
+	c.stats["rp_day"] = 12.5
+	c.stats["income"] = float(c.stats.get("upkeep", 0.0)) + 1234.0
+	hud.refresh()
+	await frames(6)
+	var l: Rect2 = hud.bar_left.get_global_rect()
+	var m: Rect2 = hud.bar_mid.get_global_rect()
+	var r: Rect2 = hud.bar_right.get_global_rect()
+	check(get_window().content_scale_factor > 1.1 and hud.full_rp.visible and hud.full_money.visible, "крупный интерфейс (%.2f), «Полки полны» и «Казна полна» видно" % get_window().content_scale_factor)
+	check(not m.intersects(r) and m.position.x > l.end.x, "нижние полосы не наезжают: дороги %s, разделы %s, инструменты %s" % [l, m, r])
+	await shot("ux_bars_scale14.png")
+	game.settings["ui_scale"] = sc0
+	hud.apply_scale(sc0)
+	c.money = m0
+	c.rp = rp0
+	c.stats = st0
+	hud.refresh()
+	await frames(6)
+	var mc: float = hud.bar_mid.get_global_rect().get_center().x
+	check(absf(mc - hud.root.size.x * 0.5) < 1.0, "обычный размер — разделы снова посередине (%.0f из %.0f)" % [mc, hud.root.size.x])

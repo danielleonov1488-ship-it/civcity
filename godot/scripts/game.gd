@@ -123,7 +123,10 @@ var settle_keys := []                 # значки «ключи» над ни�
 var floor_drag := false               # «Этаж» (U): левая кнопка зажата — готовые дома под курсором получают этаж
 var floor_done: Array = []            # кому надстроили этаж в этом мазке (второй раз за мазок — нет)
 var floor_spent := 0                  # сколько денариев ушло в этом мазке
-var floor_broke := false              # в этом мазке кончились деньги — до отпускания кнопки больше не надстраиваем
+var floor_broke := false              # в этом мазке кончились денарии: ни один из оставшихся готовых домов не по карману
+var floor_from := Vector2.INF         # где нажали: пока мышь там — щелчок по стрелке под ней, даже по красной
+var floor_last := Vector2.INF         # где был курсор в прошлый кадр мазка: дома на пути между кадрами — тоже
+var floor_moved := false              # мазок ушёл от места нажатия: красные стрелки больше не заслоняют дома под ними
 var floor_hover := -1                 # под курсором: 1 — дом, которому можно этаж, 0 — дом, которому нельзя, −1 — не дом
 const POPS_MAX := 40                  # рожиц после стройки за раз не больше (самые большие перемены счастья)
 var _rmb_down := Vector2.ZERO
@@ -2912,13 +2915,16 @@ func settle_auto() -> void:
 
 # ---------- «Этаж» (U), как в Town to City: щёлкнуть по дому со стрелкой или вести по улице с зажатой кнопкой ----------
 # Готовые дома (полные, счастливые) светятся зелёным, над крышей — стрелка с ценой (cover.gd, _floor). Каждый дом
-# за мазок — один этаж, за свою цену; кончились денарии — мазок дальше не надстраивает. Монетки звенят раз на мазок,
+# за мазок — один этаж, за свою цену; дом не по карману пропускается (дешёвые дальше — надстраиваются), кончились
+# денарии совсем — у курсора «Не хватает денариев». Монетки звенят раз на мазок,
 # итог — одной строкой в колокольчик (City.floors_done). Кнопки «надстроить все разом» нет (решение владельца Д4)
 
-## Дом под курсором: стрелка над крышей (по ней щёлкают чаще всего) или сама модель; украшение на стене — его дом
-func _floor_pick() -> Dictionary:
+## Дом под курсором: стрелка над крышей (по ней щёлкают чаще всего; из нескольких — верхняя, её и видно) или сама
+## модель; украшение на стене — его дом. sweep — мазок уже ведут: красная стрелка (не по карману) готовый дом под ней
+## не заслоняет
+func _floor_pick(sweep := false) -> Dictionary:
 	if hud:
-		var k: String = hud.badge_at(_mouse_pos, "fl")
+		var k: String = hud.badge_at(_mouse_pos, "fl", sweep)
 		if k != "" and k.substr(2).is_valid_int() and city.buildings.has(int(k.substr(2))):
 			return city.buildings[int(k.substr(2))]
 	return _settle_pick()
@@ -2928,11 +2934,14 @@ func _floor_pick() -> Dictionary:
 func _floor_hover(over_ui: bool) -> void:
 	if floor_drag and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_floor_end()                          # кнопку отпустили над окном — мазок окончен
-	var b := {} if over_ui else _floor_pick()
+	if floor_drag:
+		if over_ui:
+			floor_last = Vector2.INF          # курсор ушёл на окно — линию поперёк окна не ведём
+		else:
+			_floor_sweep()
+	var b := {} if over_ui else _floor_pick()     # подпись — про стрелку под курсором, даже красную
 	if not b.is_empty() and not city.is_house(b):
 		b = {}
-	if floor_drag and not b.is_empty():
-		_floor_buy(b)
 	if over_ui:
 		floor_hover = -1
 		_clear_highlight()
@@ -2974,17 +2983,48 @@ func _floor_lines(b: Dictionary) -> Array:
 	return ["", tot, why]
 
 
-## Надстроить дом b в этом мазке (если он готов и денариев хватает)
+## Мазок: дом под курсором и дома на пути от прошлого кадра (быстрая мышь, слабый ноутбук, долгий кадр после покупки)
+func _floor_sweep() -> void:
+	var to := _mouse_pos
+	if floor_from != Vector2.INF and to.distance_to(floor_from) > 6.0:
+		floor_moved = true
+	var from := floor_last if floor_last != Vector2.INF else to
+	var n := clampi(int(from.distance_to(to) / 12.0), 1, 16)
+	var keep := hover
+	for s in range(1, n):                     # точки между кадрами; последняя — сам курсор, ниже
+		_mouse_pos = from.lerp(to, float(s) / n)
+		hover = ground_at_mouse()             # луч по постройкам меряет глубину от земли под этой точкой
+		_floor_try(_floor_pick(true))
+	_mouse_pos = to
+	hover = keep
+	_floor_try(_floor_pick(floor_moved))
+	floor_last = to
+
+
+func _floor_try(b: Dictionary) -> void:
+	if not b.is_empty() and city.is_house(b):
+		_floor_buy(b)
+
+
+## Надстроить дом b в этом мазке (если он готов и денариев хватает). Не по карману — только он пропускается:
+## дома подешевле дальше по улице этаж получат
 func _floor_buy(b: Dictionary) -> void:
-	if floor_broke or floor_done.has(int(b["id"])) or city.can_buy_floor(b, false) != "":
+	if floor_done.has(int(b["id"])) or city.can_buy_floor(b, false) != "":
 		return
 	var price := city.floor_price(b)
 	if city.money < float(price):
-		floor_broke = true                    # денарии кончились — дальше этот мазок не надстраивает
+		# «Не хватает денариев» у курсора — только когда не по карману ни один из оставшихся готовых
+		var cheap := INF
+		var pr: Dictionary = cover.sets.get("price", {}) if cover.state == "floor" else {}
+		for id in pr:
+			if not floor_done.has(int(id)):
+				cheap = minf(cheap, float(pr[id]))
+		floor_broke = city.money < cheap
 		return
 	if city.buy_floor(b, true):
 		floor_done.append(int(b["id"]))
 		floor_spent += price
+		floor_broke = false
 		if floor_done.size() == 1:
 			sound.ui("coins")                 # монетки — один раз на мазок, а не на каждый дом
 
@@ -2996,6 +3036,9 @@ func _floor_end() -> void:
 	floor_done = []
 	floor_spent = 0
 	floor_broke = false
+	floor_from = Vector2.INF
+	floor_last = Vector2.INF
+	floor_moved = false
 
 
 ## Рожицы после стройки (как в Town to City): над домами, чьё счастье поменялось, — улыбка или грусть и «+5%»,
@@ -3189,9 +3232,10 @@ func _click() -> void:
 			floor_done = []
 			floor_spent = 0
 			floor_broke = false
-			var b := _floor_pick()
-			if not b.is_empty() and city.is_house(b):
-				_floor_buy(b)
+			floor_from = _mouse_pos
+			floor_last = _mouse_pos
+			floor_moved = false
+			_floor_try(_floor_pick())
 			return
 		"move_nature":
 			if land.occ_at(hover) == 0 and not land.is_water(hover) and not land.is_road(hover):

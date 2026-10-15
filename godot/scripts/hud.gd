@@ -54,6 +54,9 @@ var lbl_rp: Label
 var lbl_rp_day: Label
 var cats := {}
 var top_btns := {}
+var bar_left: PanelContainer             # нижние полосы: дороги, разделы стройки, инструменты с казной
+var bar_mid: PanelContainer
+var bar_right: PanelContainer
 var tray: PanelContainer
 var tray_grid: HBoxContainer
 var tray_tabs: HBoxContainer
@@ -168,6 +171,7 @@ func apply_scale(s: float) -> void:
 	var st := minf(ws.x / 1600.0, ws.y / 900.0)          # растяжение canvas_items от базовых 1600×900
 	var top := minf(1.6, ws.x / (st * MIN_W))
 	get_window().content_scale_factor = clampf(s, 0.7, maxf(0.7, top))
+	_fit_bottom.call_deferred()               # экран в точках стал уже — полосы внизу подогнать
 
 
 ## Щелчок у каждой кнопки интерфейса
@@ -1862,6 +1866,7 @@ func _unhandled_key_input(e: InputEvent) -> void:
 func _bottom_left() -> void:
 	var p := _panel(null, "bar", 0, 1)
 	_put(p, Control.PRESET_BOTTOM_LEFT, Vector2(10, -6))
+	bar_left = p
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
 	p.add_child(h)
@@ -1954,6 +1959,7 @@ func _refresh_brush() -> void:
 func _bottom_center() -> void:
 	var p := _panel(null, "bar", 0, 1)
 	_put(p, Control.PRESET_CENTER_BOTTOM, Vector2(0, -6))
+	bar_mid = p
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 12)
 	p.add_child(h)
@@ -2009,6 +2015,7 @@ func _bottom_center() -> void:
 func _bottom_right() -> void:
 	var p := _panel(null, "bar", 0, 1)
 	_put(p, Control.PRESET_BOTTOM_RIGHT, Vector2(-10, -6))
+	bar_right = p
 	var pv := VBoxContainer.new()
 	pv.add_theme_constant_override("separation", 0)
 	p.add_child(pv)
@@ -2073,6 +2080,24 @@ func _bottom_right() -> void:
 	lbl_income = _label("", 15, true, C_GOOD)
 	r2.add_child(lbl_income)
 	counters.add_child(r2)
+
+
+## Полоса разделов посередине не заходит под правую (крупный интерфейс, длинная казна, «Полки полны»):
+## тогда она сдвигается влево — в просвет у полосы дорог, но не на неё
+func _fit_bottom() -> void:
+	if bar_left == null or bar_mid == null or bar_right == null or not bar_mid.has_meta("put"):
+		return
+	var vw := root.size.x
+	var wl := maxf(bar_left.size.x, bar_left.get_combined_minimum_size().x)
+	var wm := maxf(bar_mid.size.x, bar_mid.get_combined_minimum_size().x)
+	var wr := maxf(bar_right.size.x, bar_right.get_combined_minimum_size().x)
+	var mid_l := (vw - wm) * 0.5
+	var over := mid_l + wm + 8.0 - (vw - 10.0 - wr)              # насколько середина наехала бы на правую
+	var room := mid_l - (10.0 + wl + 8.0)                          # сколько места до полосы дорог
+	var dx := -ceilf(clampf(over, 0.0, maxf(0.0, room)))
+	var off: Vector2 = (bar_mid.get_meta("put") as Array)[1]
+	if not is_equal_approx(off.x, dx):
+		_put(bar_mid, Control.PRESET_CENTER_BOTTOM, Vector2(dx, off.y))
 
 
 func _toggle_cat(cid: String) -> void:
@@ -3494,7 +3519,9 @@ func _research_panel() -> void:
 			for r in Defs.RESEARCH:
 				game.city.mark_seen_r(r["id"])
 			update_new_marks()
-			_once_tips())                     # изучили второй этаж — про «Этаж» советник скажет, когда окно закрыто
+			# изучили второй этаж — про «Этаж» советник скажет, когда окно закрыто. Через кадр: Esc, правая кнопка
+			# и щелчок по карте закрывают окна (close_panels) вместе с советником — совет погас бы, не показавшись
+			_once_tips.call_deferred())
 
 
 func _fill_research() -> void:
@@ -3998,6 +4025,7 @@ func refresh() -> void:
 	_update_rank_ui()
 	_update_floor_btn()
 	update_new_marks()
+	_fit_bottom()                             # казна длиннее, «Полки полны» — правая полоса шире
 	_fill_classes()
 	_fill_families()
 	_fill_tasks()
@@ -4493,16 +4521,20 @@ func _family_badges() -> void:
 
 
 ## Значок с ключом на prefix под точкой mp (координаты интерфейса), "" — нет. «Этаж»: стрелки мышь не ловят
-## (мазок идёт по городу), а дом под стрелкой ищет game._floor_pick
-func badge_at(mp: Vector2, prefix: String) -> String:
+## (мазок идёт по городу), а дом под стрелкой ищет game._floor_pick. Из нескольких под мышью — верхний (нарисован
+## последним): за что видно, за то и платят. skip_warn — красные (не по карману) не в счёт
+func badge_at(mp: Vector2, prefix: String, skip_warn := false) -> String:
 	if mp.x < 0.0:
 		return ""
+	var best := ""
+	var best_i := -1
 	for k in badges:
-		if String(k).begins_with(prefix):
+		if String(k).begins_with(prefix) and not (skip_warn and bool(badges[k]["warn"])):
 			var n: Control = badges[k]["n"]
-			if n.visible and n.get_global_rect().grow(3.0).has_point(mp):
-				return k
-	return ""
+			if n.visible and n.get_index() > best_i and n.get_global_rect().grow(3.0).has_point(mp):
+				best_i = n.get_index()
+				best = String(k)
+	return best
 
 
 func clear_badge(key: String) -> void:
