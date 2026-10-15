@@ -8,9 +8,11 @@ extends Node
 ## текст сервера (409), окно открыто; грубое — отказ сразу (сервер тоже отказывает и «двойникам» букв); без входа
 ## и без связи — честная причина и «Повторить», ничего не меняется; «Повторить» со связью — сохранено: табличка,
 ## city.name, me.name, сохранение на диске, подпись для облака; длинное имя — мельче; Легион: кнопка «Имя» открывает
-## то же окно (Esc закрывает только его), переименование оттуда, таблица лучших — с новым именем.
-## Снимки: name_tip, name_hover, name_modal, name_409, name_rude, name_nologin, name_offline, name_renamed, name_long,
-## name_legion_modal, name_legion_after, name_top. В конце «NAME DONE fails=N».
+## то же окно (Esc закрывает только его), переименование оттуда, таблица лучших — с новым именем; «Сохранить» с тем же
+## именем ставит его на табличку (город, загруженный со старым именем); новая игра в той же сессии — имя с сервера на
+## табличке и в подписи ролика сразу, без ожидания. Фильтр грубых слов — те же примеры, что у сервера
+## (server/names_cases.json). Снимки: name_tip, name_hover, name_modal, name_409, name_rude, name_nologin, name_offline,
+## name_renamed, name_long, name_legion_modal, name_legion_after, name_top, name_newgame. В конце «NAME DONE fails=N».
 
 const PORT := 3016
 const API := "http://127.0.0.1:3016/api"
@@ -143,7 +145,21 @@ func register(mail: String) -> String:
 
 # ---------- проверка ----------
 
+## Фильтр грубых слов в игре — на тех же примерах, что у сервера (server/test_pvp.js)
+func rude_cases() -> void:
+	var path := ProjectSettings.globalize_path("res://").path_join("../server/names_cases.json").simplify_path()
+	var d = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (d is Dictionary):
+		check("примеры грубых слов: %s" % path, false)
+		return
+	var miss := (d["bad"] as Array).filter(func(s): return not CityName.rude(String(s)))
+	var wrong := (d["good"] as Array).filter(func(s): return CityName.rude(String(s)))
+	check("фильтр в игре = на сервере: %d грубых пойманы, %d обычных проходят" % [(d["bad"] as Array).size(), (d["good"] as Array).size()],
+		miss.is_empty() and wrong.is_empty(), {"miss": miss, "wrong": wrong})
+
+
 func _run() -> void:
+	rude_cases()
 	if not await start_server():
 		finish()
 		return
@@ -176,12 +192,13 @@ func _run() -> void:
 	var c: City = game.city
 	var plate: TextureRect = hud.name_plate
 	check("пока сервер не ответил — «Новый Рим»", c.name == "" and hud.lbl_city.text == CityName.PLACEHOLDER, [c.name, hud.lbl_city.text])
+	check("подпись ролика без имени — «ваш город»", game.tutorial.intro_line(0) == "Первые переселенцы прибыли в ваш город!", game.tutorial.intro_line(0))
 
 	# имя с сервера приходит само (Легиона нет) и встаёт на табличку
 	var got := await until(func(): return c.name != "", 20.0)
 	var srv_name := String(net.me_state.get("name", ""))
 	check("имя с сервера пришло без Легиона: «%s»" % srv_name, got and srv_name != "" and c.name == srv_name and hud.lbl_city.text == srv_name and
-		not bool(net.me_state.get("custom", true)), [c.name, hud.lbl_city.text, net.me_state])
+		not bool(net.me_state.get("custom", true)) and bool(net.me_state.get("rename", false)), [c.name, hud.lbl_city.text, net.me_state])
 	check("подпись для облака — то же имя", acc.city_name() == srv_name, acc.city_name())
 
 	# совет: один раз, когда на экране ничего нет
@@ -226,11 +243,17 @@ func _run() -> void:
 		hud.lbl_city.text == srv_name and c.name == srv_name, [err.text, hud.lbl_city.text])
 	await shot("name_409")
 
-	# грубое — отказ сразу (Enter в поле)
-	field.text = "Х у й"
-	field.grab_focus()
-	await key(KEY_ENTER)
-	check("грубое имя — отказ сразу: «%s»" % err.text, err.text == CityName.MSG_RUDE and String(net.me_state.get("name", "")) == srv_name)
+	# грубое — отказ сразу (Enter в поле); и корень, разорванный дефисом («Сохранить»)
+	for bad in ["Х у й", "Пиз-дец"]:
+		err.text = ""
+		field.text = bad
+		if bad == "Х у й":
+			field.grab_focus()
+			await key(KEY_ENTER)
+		else:
+			await click(center_of(save_btn))
+		check("грубое имя «%s» — отказ сразу: «%s»" % [bad, err.text], err.text == CityName.MSG_RUDE and String(net.me_state.get("name", "")) == srv_name and
+			CityName.window(hud) != null)
 	await shot("name_rude")
 
 	# без входа — причина и «Повторить»
@@ -267,6 +290,19 @@ func _run() -> void:
 	check("на сервере — новое имя", String(st["data"]["me"]["name"]) == nm1, st["data"])
 	await move(Vector2(800, 500))
 	await shot("name_renamed")
+
+	# город со старым именем (загрузили прежнее сохранение): «Сохранить» с тем же именем ставит имя сервера на табличку
+	c.name = "Старый Рим"
+	hud.show_city_name()
+	await click(center_of(plate))
+	await frames(6)
+	w = CityName.window(hud)
+	check("в поле — имя с сервера, не старое из сохранения", w != null and (w.find_child("field", true, false) as LineEdit).text == nm1)
+	if w != null:
+		await click(center_of(w.find_child("save", true, false) as Button))
+		await frames(4)
+	check("«Сохранить» с тем же именем: окно закрылось, табличка «%s»" % hud.lbl_city.text, CityName.window(hud) == null and
+		hud.lbl_city.text == nm1 and c.name == nm1, [hud.lbl_city.text, c.name])
 
 	# длинное имя — мельче, целиком в ленте
 	var keep := c.name
@@ -343,4 +379,27 @@ func _run() -> void:
 	await shot("name_top")
 	ui._close_overlay()
 	ui.close()
+
+	# новая игра в той же сессии (LegionNet переживает перезапуск): имя с сервера — на табличке и в ролике сразу
+	game.can_save = false
+	game.queue_free()
+	await frames(4)
+	if FileAccess.file_exists(save):
+		DirAccess.remove_absolute(save)
+	Game.boot = {"new": "1", "hour": "10.5"}
+	net._busy = true                                   # пока смотрим — без запросов к серверу (имя только из памяти)
+	game = (load("res://main.tscn") as PackedScene).instantiate()
+	add_child(game)
+	while not game.ready_done:
+		await frames(5)
+	await frames(3)
+	hud = game.hud
+	check("новая игра: табличка сразу «%s» (сервер ещё не спрошен)" % hud.lbl_city.text, hud.lbl_city.text == nm2 and game.city.name == nm2 and
+		acc.city_name() == nm2 and net._state_t < 0.0, [hud.lbl_city.text, game.city.name, net._state_t])
+	check("новая игра: подпись ролика — «%s»" % game.tutorial.intro_line(0), game.tutorial.intro_line(0) == "Первые переселенцы прибыли в город «%s»!" % nm2)
+	net._busy = false
+	var asked := await until(func(): return net._state_t > 0.0, 15.0)
+	check("новая игра: свежее состояние спрошено сразу, не через 5 минут", asked and hud.lbl_city.text == nm2)
+	await frames(10)
+	await shot("name_newgame")
 	finish()

@@ -247,7 +247,7 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
     ok(r.status === 401, 'name without login → 401');
     r = await call('GET', '/pvp/state', undefined, tok.d);
     const nameD = r.data.me.name;
-    ok(r.status === 200 && !r.data.me.custom, `D: server name «${nameD}», not chosen by the player (custom false)`, r.data.me);
+    ok(r.status === 200 && !r.data.me.custom && r.data.me.rename === true, `D: server name «${nameD}», not chosen by the player (custom false), rename: true`, r.data.me);
     r = await call('PUT', '/pvp/defense', { snapshot: { squad: sq(['legionary', 1]) }, name: 'Тибур Золотой' }, tok.d);
     const st409 = await call('GET', '/pvp/state', undefined, tok.d);
     ok(r.status === 409 && /Легион/.test(r.data.error) && st409.data.me.name === nameD && !st409.data.me.custom,
@@ -269,7 +269,8 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
     r = await call('PUT', '/pvp/name', { name: 'Город 4242' }, tok.c);
     ok(r.status === 400 && /даёт сам сервер/.test(r.data.error), 'reserved «Город 4242» → 400', r.data);
     const RUDE_TXT = 'Такое название не подойдёт — придумайте другое';
-    for (const [n, who] of [['Хуй', 'c'], ['х у й', 'c'], ['XYЙ', 'c'], ['Пиzда', 'c'], ['blyat', 'a'], ['Ёбаный Рим', 'a'], ['F u c k', 'a'], ['Sh1t', 'a']]) {
+    for (const [n, who] of [['Хуй', 'c'], ['х у й', 'c'], ['XYЙ', 'c'], ['Пиzда', 'c'], ['blyat', 'a'], ['Ёбаный Рим', 'a'], ['F u c k', 'a'], ['Sh1t', 'a'],
+      ['Пиз Дец', 'd'], ['Пиз-дец', 'd'], ['Пізда', 'd'], ['П1зда', 'a'], ['Порноград', 'a']]) {
       r = await call('PUT', '/pvp/name', { name: n }, tok[who]);
       ok(r.status === 400 && r.data.error === RUDE_TXT, `rude «${n}» → 400`, r.data);
     }
@@ -289,16 +290,14 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
     for (let i = 0; i < 11; i++) codes.push((await call('PUT', '/pvp/name', { name: `Капуя ${['Первая', 'Вторая', 'Третья'][i % 3]} ${i}` }, tok.e)).status);
     ok(codes.slice(0, 10).every(c => c === 200) && codes[10] === 429, `rate limit: 10 renames, the 11th → 429 (${codes.join(' ')})`);
 
-    // грубые слова и правила — те же, что в игре (godot/scripts/city_name.gd): списки совпадают, примеры
+    // грубые слова и правила — те же, что в игре (godot/scripts/city_name.gd): списки совпадают, примеры (names_cases.json —
+    // их же проверяет игра в test_city_name.gd)
     const gd = fs.readFileSync(path.join(__dirname, '..', 'godot', 'scripts', 'city_name.gd'), 'utf8');
-    for (const k of ['RUDE_RU', 'RUDE_RU_WORD', 'RUDE_EN', 'RUDE_EN_WORD', 'LOOK', 'TRANS', 'LAT']) {
+    for (const k of ['RUDE_RU', 'RUDE_RU_WORD', 'RUDE_EN', 'RUDE_EN_WORD', 'RUDE_RU_JOIN', 'RUDE_EN_JOIN', 'EXTRA', 'SAFE_LAT', 'LOOK', 'TRANS', 'LAT']) {
       const m = gd.match(new RegExp(`const ${k} := "([^"]*)"`));
       ok(m && m[1] === names[k], `city_name.gd ${k} = server/names.js`, m && m[1]);
     }
-    const bad = ['Хуй', 'х у й', 'XYЙ', 'хууууй', 'Пиzда', 'pizda', 'Бля', 'блядь город', 'ёбаный', 'Сука', 'Fuck', 'f u c k', 'Sh1t', 'mudak',
-      'Пидорас', 'х-у-й-н-я', 'huy', 'Ху йня', 'CYKA', 'е б а т ь', 'долбоёб'];
-    const good = ['Новый Рим', 'Хлеба и зрелищ', 'Сабля Востока', 'Нора барсука', 'Ребенок', 'Небеса', 'Корабль', 'Дух уединения', 'Чихуахуа',
-      'Скипидар', 'Херсонес', 'Tarentum', 'Колония Юлия', 'Рим и Хуан', 'Сукре', 'Страхование', 'Мебель', 'Сухуми', 'Мудрость', 'Hancock'];
+    const { bad, good } = JSON.parse(fs.readFileSync(path.join(__dirname, 'names_cases.json'), 'utf8'));
     const miss = bad.filter(s => !names.rude(s)), wrong = good.filter(s => names.rude(s));
     ok(!miss.length && !wrong.length, `rude filter: ${bad.length} rude caught, ${good.length} fine names pass`, { miss, wrong });
   } finally {

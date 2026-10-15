@@ -247,7 +247,8 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     const now = Date.now();
     regen(p, now);
     return {
-      name: p.name, custom: !!p.custom, rating: p.rating, wins: p.wins, losses: p.losses, def_wins: p.def_wins, def_losses: p.def_losses,
+      // rename: сервер умеет PUT /pvp/name (игра зовёт назвать город только тогда — старый сервер его не шлёт)
+      name: p.name, custom: !!p.custom, rename: true, rating: p.rating, wins: p.wins, losses: p.losses, def_wins: p.def_wins, def_losses: p.def_losses,
       charges: p.charges, max_charges: PVP.charges, next_in: p.charges >= PVP.charges ? 0 : Math.max(0, Math.ceil((p.charge_t + PVP.regen - now) / 1000)),
       regen: PVP.regen / 1000, power: p.power, published: !!p.snapshot && p.power > 0,
       shield_in: Math.max(0, Math.ceil((p.shield_until - now) / 1000)),

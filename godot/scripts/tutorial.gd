@@ -286,7 +286,7 @@ func pointer() -> Array:
 const INTRO_FROM_Z := 56.0           # повозка начинает путь за 8 м до арки, а не из-за горизонта
 const INTRO_PACE := 1.6              # и едет чуть бодрее обычного — до станции секунд двенадцать
 const INTRO_BAR := 0.11              # высота чёрных полос — доля высоты экрана
-const INTRO_SAY := ["Первые переселенцы прибыли в Новый Рим!", "Им нужен дом — выберите его"]
+const INTRO_SAY := ["Первые переселенцы прибыли в ваш город!", "Им нужен дом — выберите его"]
 var cine := {}                       # идёт ролик: фаза, время, где камера и куда смотрит
 var cine_ui: CanvasLayer
 
@@ -435,8 +435,14 @@ func _cine_say(i: int) -> void:
 	if cap.modulate.a > 0.01:
 		tw.tween_property(cap, "modulate:a", 0.0, 0.35)
 	if i >= 0:
-		tw.tween_callback(func(): cap.text = INTRO_SAY[i])
+		tw.tween_callback(func(): cap.text = intro_line(i))
 		tw.tween_property(cap, "modulate:a", 1.0, 0.7)
+
+
+## Подпись ролика: имя города — то же, что на табличке (с сервера); пока его нет — «ваш город»
+func intro_line(i: int) -> String:
+	var nm := String(game.city.name) if i == 0 and game != null and game.city != null else ""
+	return "Первые переселенцы прибыли в город «%s»!" % nm if nm != "" else String(INTRO_SAY[i])
 
 
 func _cine_bars(k: float) -> void:

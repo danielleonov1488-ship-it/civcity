@@ -16,15 +16,22 @@ const MSG_CHARS := "В названии — только буквы, цифры,
 const MSG_RESERVED := "Такие названия («Город 123») даёт сам сервер — придумайте своё"
 const MSG_RUDE := "Такое название не подойдёт — придумайте другое"
 
-# грубые слова — как в server/names.js (корни: *_WORD — только в начале слова, остальные — в любом месте)
+# грубые слова — как в server/names.js (корни: *_WORD — только в начале слова, *_JOIN — и во всём названии без пробелов,
+# остальные — в любом месте слова)
 const RUDE_RU := "хуй хуе хуя хуи пизд пезд бляд блят ебан ебат ебал ебло ебуч ебну уебищ мудак мудил мудач пидор пидр пидарас залуп гандон гондон шлюх дроч жоп говн мраз шалав"
-const RUDE_RU_WORD := "еб бля сука сукин заеб наеб выеб въеб отъеб съеб поеб доеб долбоеб пидар"
+const RUDE_RU_WORD := "еб бля сука сукин заеб наеб выеб въеб отъеб съеб поеб доеб долбоеб пидар уеб порн"
 const RUDE_EN := "fuck shit cunt bitch whore pusy ashole porn twat"
 const RUDE_EN_WORD := "dick cock slut wank"
+const RUDE_RU_JOIN := "пизд пезд залуп шлюх уебищ долбоеб мудак пидорас пидарас"
+const RUDE_EN_JOIN := "fuck cunt bitch whore"
+# украинские буквы и буквы с надстрочными знаками → обычные; безобидные латинские слова (только целым словом)
+const EXTRA := "і=и ї=и є=е ў=у ґ=г á=a à=a â=a ä=a ã=a å=a é=e è=e ê=e ë=e í=i ì=i î=i ï=i ó=o ò=o ô=o ö=o õ=o ø=o ú=u ù=u û=u ü=u ý=y ÿ=y ç=c ñ=n"
+const SAFE_LAT := "pueblo lebanon ebony eboracum ebusus eboli huesca huelva scunthorpe dickinson cockermouth"
 # латинские буквы и цифры, похожие на русские; транслит (сначала длинные сочетания); русские, похожие на латинские
-const LOOK := "a=а b=в c=с e=е h=н k=к m=м n=п o=о p=р r=г t=т u=и x=х y=у 0=о 3=з 4=ч 6=б @=а"
+const LOOK := "a=а b=в c=с e=е h=н k=к m=м n=п o=о p=р r=г t=т u=и x=х y=у 0=о 1=и 3=з 4=ч 6=б 9=я @=а"
 const TRANS := "shch=щ sch=щ zh=ж kh=х ch=ч sh=ш ts=ц ya=я yu=ю yo=е ye=е a=а b=б c=с d=д e=е f=ф g=г h=х i=и j=й k=к l=л m=м n=н o=о p=п q=к r=р s=с t=т u=у v=в w=в x=х y=й z=з"
 const LAT := "а=a в=b с=c е=e н=h к=k м=m о=o р=p т=t у=y х=x и=u п=n г=r ь=b 0=o 1=i 3=e 4=a 5=s 7=t 8=b @=a $=s"
+const KEEP := "-'’."                           # внутри слова: слово не рвут (как цифры)
 
 const C_INK := Color("4a2c17")
 const C_SOFT := Color("7a5a3c")
@@ -72,17 +79,19 @@ static func check(s: String, current := "") -> String:
 	return ""
 
 
-## Грубое ли название: три вида текста (двойники → кириллица, транслит, двойники → латиница), в каждом — слова
-## и склейки коротких слов (server/names.js — те же шаги)
+## Грубое ли название: буквы попроще (і → и, ý → y), без безобидных латинских слов; три вида текста (двойники →
+## кириллица, транслит, двойники → латиница), в каждом — слова, склейки коротких слов и всё название одной строкой
+## (server/names.js — те же шаги)
 static func rude(s: String) -> bool:
-	var t := s.to_lower().replace("ё", "е")
-	return _hits(_swap(t, "look"), RUDE_RU, RUDE_RU_WORD) or _hits(_translit(t), RUDE_RU, RUDE_RU_WORD) \
-		or _hits(_swap(t, "lat"), RUDE_EN, RUDE_EN_WORD)
+	var t := _swap(s.to_lower().replace("ё", "е"), "extra")
+	t = _rx("safe", "(^|[^a-z])(" + SAFE_LAT.replace(" ", "|") + ")(?=$|[^a-z])").sub(t, "$1 ", true)
+	return _hits(_swap(t, "look"), RUDE_RU, RUDE_RU_WORD, RUDE_RU_JOIN) or _hits(_translit(t), RUDE_RU, RUDE_RU_WORD, RUDE_RU_JOIN) \
+		or _hits(_swap(t, "lat"), RUDE_EN, RUDE_EN_WORD, RUDE_EN_JOIN)
 
 
 static func _pairs_of(which: String) -> Array:
 	if not _pairs.has(which):
-		var src: String = {"look": LOOK, "trans": TRANS, "lat": LAT}[which]
+		var src: String = {"extra": EXTRA, "look": LOOK, "trans": TRANS, "lat": LAT}[which]
 		var a := []
 		for tok in src.split(" "):
 			a.append(tok.split("=", true, 1))
@@ -128,22 +137,34 @@ static func _squash(w: String) -> String:
 	return o
 
 
-## Слова (буквы a–z, а–я; цифры выкидываются, остальное разделяет) и склейки коротких слов (1–2 буквы) с соседями
+## Слова и куски для сверки: части (их делит любой не-буквенный знак, цифры выкидываются), склейки коротких частей
+## (1–2 буквы) с соседями и слова целиком (дефис, апостроф, точка их не делят: «Пиз-дец» → «пиздец»)
 static func _chunks(t: String) -> Array:
 	var words := []
+	var whole := []
 	var cur := ""
+	var wcur := ""
+	var letter := _rx("letter", "\\p{L}")
 	for ch in t:
-		var c := ch.unicode_at(0)
-		if (c >= 0x61 and c <= 0x7a) or (c >= 0x430 and c <= 0x44f):
+		if letter.search(ch) != null:
 			cur += ch
-		elif c >= 0x30 and c <= 0x39:
+			wcur += ch
 			continue
-		else:
-			if cur != "":
-				words.append(_squash(cur))
-			cur = ""
+		var c := ch.unicode_at(0)
+		if c >= 0x30 and c <= 0x39:
+			continue
+		if cur != "":
+			words.append(_squash(cur))
+		cur = ""
+		if KEEP.contains(ch):
+			continue
+		if wcur != "":
+			whole.append(_squash(wcur))
+		wcur = ""
 	if cur != "":
 		words.append(_squash(cur))
+	if wcur != "":
+		whole.append(_squash(wcur))
 	var glued := []
 	for i in words.size():
 		if not glued.is_empty() and ((words[i] as String).length() <= 2 or (words[i - 1] as String).length() <= 2):
@@ -152,10 +173,20 @@ static func _chunks(t: String) -> Array:
 			glued.append(words[i])
 	for g in glued:
 		words.append(_squash(g))
-	return words
+	return words + whole
 
 
-static func _hits(t: String, any: String, word: String) -> bool:
+## Всё название одной строкой: только буквы a–z, а–я
+static func _joined(t: String) -> String:
+	var o := ""
+	for ch in t:
+		var c := ch.unicode_at(0)
+		if (c >= 0x61 and c <= 0x7a) or (c >= 0x430 and c <= 0x44f):
+			o += ch
+	return _squash(o)
+
+
+static func _hits(t: String, any: String, word: String, join: String) -> bool:
 	var a := any.split(" ")
 	var w := word.split(" ")
 	for c: String in _chunks(t):
@@ -165,6 +196,10 @@ static func _hits(t: String, any: String, word: String) -> bool:
 		for r in w:
 			if c.begins_with(r):
 				return true
+	var j := _joined(t)
+	for r in join.split(" "):
+		if j.contains(r):
+			return true
 	return false
 
 
@@ -285,7 +320,8 @@ static func open(hud, done := Callable()) -> void:
 			code.visible = false
 			return
 		if nm == cur and bool(net.me_state.get("custom", false)):
-			close(hud)                                    # то же имя — сохранять нечего
+			net.adopt_name()                              # то же имя — на сервере уже оно; табличке и сохранению — тоже
+			close(hud)
 			return
 		ok.disabled = true
 		ok.text = "Сохраняем…"

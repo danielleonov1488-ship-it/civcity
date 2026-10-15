@@ -410,6 +410,21 @@ func _apply_name(nm: String) -> void:
 		g.hud.show_city_name()
 
 
+## Имя, которое сервер уже сказал (me_state), — названием города, если на табличке ещё другое
+func adopt_name() -> void:
+	_check_account()
+	if not me_state.is_empty():
+		_apply_name(String(me_state.get("name", "")))
+
+
+## Город появился на экране (Game._ready; модуль переживает перезапуск сцены — новая игра, город из облака): имя,
+## которое сервер уже дал, — сразу на табличку и в сохранение, а свежее состояние — на ближайшей проверке (~5 с),
+## не через 5 минут
+func attach_city() -> void:
+	adopt_name()
+	_state_t = -1.0e9
+
+
 ## Отчёты о нападениях на наш город → летопись боёв; потом сказать серверу «прочитано»
 func _apply_reports(list: Array) -> void:
 	var lg := _lg()
