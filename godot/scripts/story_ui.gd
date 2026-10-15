@@ -11,6 +11,8 @@ extends RefCounted
 
 const PORTRAIT := 112                  # медальон портрета, точек
 const CPS := 38.0                      # букв в секунду (печать текста)
+## Откуда смотрит камера портрета: чуть сбоку и почти вровень с глазами (сверху брови закрывают глаза)
+const FACE_DIR := Vector3(0.3, 0.04, 0.95)
 
 var st                                 # Stories
 var hud
@@ -29,6 +31,7 @@ var _tw: Tween
 var _pick := Callable()
 
 static var _heart: Texture2D
+static var _petal: Texture2D
 static var _paw: Texture2D
 static var _glow: Texture2D
 static var _mask: Shader
@@ -284,6 +287,12 @@ func _portrait_vp(who: Dictionary) -> SubViewport:
 	fill.light_energy = 0.45
 	fill.light_color = Color("cfe0ff")
 	vp.add_child(fill)
+	# мягкий свет спереди, со стороны камеры: тень от бровей не ложится на глаза, лицо приветливое
+	var front := DirectionalLight3D.new()
+	front.look_at_from_position(Vector3.ZERO, -FACE_DIR + Vector3(0, -0.25, 0), Vector3.UP)
+	front.light_energy = 0.0 if Citizen.plain_faces else 0.5
+	front.light_color = Color("fff4e6")
+	vp.add_child(front)
 	var cam := Camera3D.new()
 	cam.fov = 24.0
 	cam.near = 0.02
@@ -301,6 +310,10 @@ func _portrait_vp(who: Dictionary) -> SubViewport:
 			vp.add_child(c)
 			if bool(who.get("child", false)):
 				People.kid_look(c)
+			if bool(who.get("old", false)):
+				Citizen.elder_look(c)
+			else:
+				Citizen.face_fix(c, false, bool(who.get("child", false)))   # брови не «тёмными очками» (рисунок Synty вблизи)
 			c.play("Idle_Talking")
 			sk = c.find_children("*", "Skeleton3D", true, false)[0]
 			bone = sk.find_bone("Head")
@@ -336,7 +349,7 @@ func _aim(vp: SubViewport) -> void:
 	if sk != null and is_instance_valid(sk) and int(f[2]) >= 0:
 		head = ((sk as Skeleton3D).global_transform * (sk as Skeleton3D).get_bone_global_pose(int(f[2]))).origin
 	head += f[3]
-	var dir := Vector3(sin(0.32), 0.12, cos(0.32)).normalized()
+	var dir := Vector3(sin(0.32), 0.12, cos(0.32)).normalized() if Citizen.plain_faces else FACE_DIR   # «до»: прежний ракурс
 	cam.position = head + dir * float(f[4])
 	cam.look_at(head - Vector3(0, 0.02, 0), Vector3.UP)
 
@@ -530,6 +543,50 @@ func hearts(at: Vector3, n := 6) -> void:
 		tw.parallel().tween_property(s, "position:y", at.y + off.y + 1.3, 1.8).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 		tw.tween_property(s, "modulate:a", 0.0, 0.5)
 		tw.tween_callback(s.queue_free)
+
+
+## Лепестки роз над молодыми (свадьба): кружатся и опускаются, тают у земли
+func petals(at: Vector3, n := 18) -> void:
+	var cols := [Color("f4a6b8"), Color("ffffff"), Color("e8506a"), Color("ffd6de"), Color("f7c6cf")]
+	for i in n:
+		var s := Sprite3D.new()
+		s.texture = petal_tex()
+		s.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		s.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		s.pixel_size = 0.0026 * randf_range(0.8, 1.2)
+		s.modulate = cols[i % cols.size()]
+		s.modulate.a = 0.0
+		var off := Vector3(randf_range(-0.9, 0.9), randf_range(1.0, 1.9), randf_range(-0.9, 0.9))
+		s.position = at + off
+		game.add_child(s)
+		var tw := s.create_tween()
+		tw.tween_interval(0.07 * i)
+		tw.tween_property(s, "modulate:a", 1.0, 0.2)
+		var fall := randf_range(2.0, 2.8)
+		tw.parallel().tween_property(s, "position", at + Vector3(off.x + randf_range(-0.5, 0.5), -0.55, off.z + randf_range(-0.5, 0.5)), fall) 			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		# кружится: то узкий, то широкий
+		var tw2 := s.create_tween().set_loops(4)
+		tw2.tween_property(s, "scale:x", 0.35, fall / 8.0)
+		tw2.tween_property(s, "scale:x", 1.0, fall / 8.0)
+		tw.tween_property(s, "modulate:a", 0.0, 0.4)
+		tw.tween_callback(s.queue_free)
+
+
+static func petal_tex() -> Texture2D:
+	if _petal == null:
+		var n := 32
+		var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+		for y in n:
+			for x in n:
+				# лепесток: капля — шире у верха, к низу сужается
+				var u := (x + 0.5) / n * 2.0 - 1.0
+				var v := (y + 0.5) / n * 2.0 - 1.0
+				var w := 0.75 * (1.0 - 0.45 * (v + 1.0) * 0.5)
+				var d := pow(u / maxf(w, 0.05), 2.0) + pow(v / 0.95, 2.0)
+				img.set_pixel(x, y, Color(1, 1, 1, clampf((1.0 - d) * 5.0, 0.0, 1.0)))
+		img.generate_mipmaps()
+		_petal = ImageTexture.create_from_image(img)
+	return _petal
 
 
 static func heart_tex() -> Texture2D:

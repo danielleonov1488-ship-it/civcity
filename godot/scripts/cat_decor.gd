@@ -60,6 +60,8 @@ static func _decor(b: Bp, type: String) -> void:
 		"swan": _swan(b)
 		"trophy_cart": _trophy_cart(b)
 		"catbasket": _catbasket(b)
+		"latrunc": _latrunc(b)
+		"rosearch": _rosearch(b)
 
 
 # ---------- помощники ----------
@@ -603,6 +605,48 @@ static func _catbasket(b: Bp) -> void:
 	b.add("SM_Prop_Rug_Folded_01", Vector3(0.5, 0, -0.42), 0.4, 0.62)
 	b.add("SM_Env_Flowers_0%d" % (1 + b.rng.randi() % 5), Vector3(-0.72, 0, 0.55), _yaw(b), 1.1)
 	b.door = Vector3(0, 0, 1.0)
+
+
+## Стол для латрункулов (награда «Скверика для стариков»): низкий столик с доской и фишками, два табурета друг против
+## друга, кувшин и чаши. Где сидят игроки (StoryLife): [ступни, поворот, высота сиденья] в осях украшения, без масштаба
+const LATRUNC_SEATS := [[Vector3(-0.35, 0, 0.0), PI / 2, 0.42], [Vector3(0.35, 0, 0.0), -PI / 2, 0.42]]
+
+
+static func _latrunc(b: Bp) -> void:
+	b.add("SM_Prop_Table_07", Vector3.ZERO, 0.0, 1.0)
+	var top := 0.552
+	b.parts.append(["#dark", b.base * Transform3D(Basis.from_scale(Vector3(0.5, 0.025, 0.5)), Vector3(0, top + 0.012, 0)), {}])
+	b.parts.append(["#marble", b.base * Transform3D(Basis.from_scale(Vector3(0.42, 0.012, 0.42)), Vector3(0, top + 0.03, 0)), {}])
+	# фишки: свои плоские, у соперника высокие — посреди партии
+	for f: Vector3 in [Vector3(-0.14, 0, -0.1), Vector3(-0.14, 0, 0.06), Vector3(-0.04, 0, 0.13), Vector3(0.02, 0, -0.04)]:
+		b.parts.append(["#dark", b.base * Transform3D(Basis(Vector3.UP, 0.3).scaled(Vector3(0.055, 0.022, 0.055)), f + Vector3(0, top + 0.047, 0)), {}])
+	for f: Vector3 in [Vector3(0.14, 0, 0.1), Vector3(0.12, 0, -0.12), Vector3(0.06, 0, 0.02)]:
+		b.parts.append(["#dark", b.base * Transform3D(Basis.from_scale(Vector3(0.04, 0.06, 0.04)), f + Vector3(0, top + 0.066, 0)), {}])
+	for s: Array in LATRUNC_SEATS:
+		var p: Vector3 = s[0]
+		b.add("SM_Prop_Seat_Stool_02", Vector3(signf(p.x) * 0.62, 0, 0), 0.0, 0.9)
+	b.add("SM_Prop_Goblet_01", Vector3(-0.27, top, 0.27), 0.0, 0.55)
+	b.add("SM_Prop_Goblet_01", Vector3(0.27, top, -0.26), 0.0, 0.55)
+	b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 4), Vector3(0.1, 0, 0.62), _yaw(b), 0.62)
+	_pot(b, Vector3(-0.75, 0, -0.62), 0.75)
+	b.add("SM_Env_Grass_01", Vector3(0.78, 0, -0.55), _yaw(b), 0.5)
+	b.door = Vector3(0, 0, 1.0)
+
+
+## Арка из роз (награда «Свадьбы Юлии»): два столба садовой решётки, перекладина в цветущих розах, по столбам вьётся
+## цветущий плющ, у подножия — вазоны с цветами. Под ней свободно проходят люди
+static func _rosearch(b: Bp) -> void:
+	var h := 3.13 * 0.75
+	for sx: float in [-1.0, 1.0]:
+		b.add("SM_Bld_Trellis_Pillar_01", Vector3(sx * 0.95, 0, 0), 0.0, 0.75)
+		b.add("SM_Env_Ivy_Pillar_Flowers_0%d" % (1 + b.rng.randi() % 2), Vector3(sx * 0.95, 0, 0.02), _yaw(b), 0.85)
+		_pot(b, Vector3(sx * 1.5, 0, 0.42), 0.8)
+		_bloom(b, Vector3(sx * 0.95, 0, 0.42), 0.24)
+	b.add("SM_Bld_Trellis_Roof_End_01", Vector3(-1.25, h - 0.08, 0), PI / 2, 1.0)
+	b.add("SM_Env_Ivy_Draped_Flowers_03", Vector3(0, h + 0.2, 0.06), 0.0, 0.66)
+	b.add("SM_Env_Ivy_Draped_Flowers_03", Vector3(0, h + 0.18, -0.06), PI, 0.62)
+	_ground_fp(b, 3.6, 1.2)
+	b.door = Vector3(0, 0, 1.1)
 
 
 static func _duck(b: Bp) -> void:

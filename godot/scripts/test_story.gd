@@ -6,7 +6,14 @@ extends Node
 ## дома, очки, кошка); пропуск ролика — действие всё равно случилось; сам нашёл (12 ч) — без очков; сохранение посреди шага;
 ## дом снесли (ждём семью, она заселилась — история идёт; не заселилась — прервалась); виды целей других историй.
 ## Снимки — .work/gd/story_*.png. Итог: «STORY DONE fails=N».
-## mode=owner — город владельца (копия сохранения в CIVCITY_SAVEDIR): загрузка без историй, предложение, кошка находится.
+## «Скверик для стариков»: ранг и исследования, старик просит (седой, лицо для крупного плана), советник, пороги по скамьям
+## (бронза / серебро / золото с часами), старики приходят — скамей больше, стариков больше; сохранение посреди шага; «Готово» —
+## ролик и «памятник» +7% в 15 м (строки счастья рядом, у дальних нет); стол для латрункулов — утром двое играют; вечером уходят.
+## «Свадьба Юлии»: ранг, ремесленники, жених из другого дома; таверна в выборе — только если её можно построить; сад —
+## арка из роз сразу; ветка таверны; дом невесты перенесли; новый дом: плебейский и занятый не в счёт; молодые — семья в новом
+## доме; ролик: вечер, шествие, жаровни; +6% в 20 м на 3 дня; «Пересмотреть»; сохранение посреди шага.
+## mode=owner — город владельца (копия сохранения в CIVCITY_SAVEDIR): загрузка без историй, предложение, кошка находится,
+## потом — скверик в его городе. mode=faces — лица в ролике до и после правки (story_face_before/after.png).
 var game
 var c: City
 var hud
@@ -118,8 +125,8 @@ func who_kid(tag: String) -> void:
 	print("  [%s] Корнелии: %s; дом %s; семьи в доме: %s; предложение: %s" % [tag, rs, kid_home.get("id"), kid_home.get("families"), c.stories["offer"]])
 
 
-## Состояние историй с нуля (а город, дома, жители — те же)
-func fresh(h := 100) -> void:
+## Состояние историй с нуля (а город, дома, жители — те же); done — эти истории уже пройдены
+func fresh(h := 100, done := []) -> void:
 	if not sto.cat.is_empty():
 		game.people.drop_cat(sto.cat)
 		sto.cat = {}
@@ -128,6 +135,8 @@ func fresh(h := 100) -> void:
 			game.people.drop_cat(cc)
 	c.stories = City.stories_new()
 	c.stories["h"] = h
+	for id in done:
+		c.stories["done"][id] = {"day": 0, "h": 1}
 	c.research.erase("s_cat")
 	sto._h_seen = -1
 	sto._tried = ""
@@ -242,6 +251,11 @@ func _run() -> void:
 	await frames(10)
 	print("kid home ", kid_home.get("id"), " at ", kid_home.get("pos"), " pop=", c.stats["pop"], " hay=", hay.get("pos"), " bush=", bush.get("pos"))
 	check(not kid_home.is_empty() and int(c.stats["pop"]) >= 20, "городок: дом Корнелиев и %d жителей" % int(c.stats["pop"]))
+	if mode == "faces":
+		await _faces()
+		print("STORY DONE fails=", fails)
+		get_tree().quit()
+		return
 	await _timing()
 	await _offer_flow()
 	await _search_and_find()
@@ -251,6 +265,10 @@ func _run() -> void:
 	await _save_mid_step()
 	await _demolished()
 	await _goal_kinds()
+	c.money = 50000.0
+	await _square()
+	c.money = 50000.0
+	await _wedding()
 	StoryDefs.extra = []
 	print("STORY DONE fails=", fails)
 	get_tree().quit()
@@ -843,3 +861,551 @@ func _owner() -> void:
 	await play_through(30.0, "fx", "story_owner_found.png")
 	await wait_kit(false, 4.0)
 	check((S["done"] as Dictionary).has("cat"), "в городе владельца история проходится")
+	# потом — скверик (у владельца «Деревня»): через GAP_H после кошки
+	for i in StoryDefs.GAP_H:
+		c._story_hour()
+	sto._tried = ""
+	sto.tick()
+	o = S["offer"]
+	check(String(o.get("id", "")) == "square", "через %d ч — «Скверик для стариков» (%s)" % [StoryDefs.GAP_H, o.get("fam")])
+	if o.is_empty():
+		return
+	h = c.buildings[int(o["home"])]
+	var hp: Vector2 = h["pos"]
+	print("owner: скверик просит ", StoryDefs.elder(String(o["fam"])), " из семьи ", o["fam"], " дом ", o["home"], " at ", hp, " свободно ", sto.free_near(hp, 15.0), " м²")
+	hud.advisor_panel.visible = false
+	game.rig.set_view(Vector3(hp.x + 2, Land.BASE_Y, hp.y + 3), 215.0, 40.0, 34.0)
+	await frames(40)
+	await shot("story_owner_square_offer.png")
+	sto.open_offer()
+	await wait_beat("say", 6.0)
+	await frames(80)
+	sto.ui.finish_typing()
+	await frames(10)
+	await shot("story_owner_square_ask.png")
+	await play_through(25.0)
+	await wait_kit(false, 4.0)
+	var A2: Dictionary = S["active"]
+	check(sto._goal_kind(A2) == "square", "скверик строят")
+	if sto._goal_kind(A2) != "square":
+		return
+	var g: Array = sto._step(A2)["goal"]
+	print("owner: рядом уже ", sto.progress(A2, g)["parts"])
+	var k := 0
+	while int(sto.progress(A2, g)["benches"]) < 3 and k < 12:
+		deco("bench", hp + Vector2(cos(k * 1.1), sin(k * 1.1)) * 7.0)
+		k += 1
+	k = 0
+	while int(sto.progress(A2, g)["parts"][1][1]) < 2 and k < 8:
+		deco("tree", hp + Vector2(cos(k * 1.7 + 0.5), sin(k * 1.7 + 0.5)) * 9.0)
+		k += 1
+	k = 0
+	while int(sto.progress(A2, g)["parts"][2][1]) < 1 and k < 6:
+		deco("well", hp + Vector2(cos(k * 2.1 + 1.0), sin(k * 2.1 + 1.0)) * 8.0)
+		k += 1
+	sto.tick()
+	var pr: Dictionary = sto.progress(A2, g)
+	check(bool(pr["min"]), "в городе владельца скверик собирается: %s" % [pr["parts"]])
+	hud.advisor_panel.visible = false
+	sto.life._sync(true)
+	game.rig.set_view(Vector3(hp.x, Land.BASE_Y, hp.y), 200.0, 45.0, 26.0)
+	await frames(90)
+	await shot("story_owner_square.png")
+	if not bool(pr["min"]):
+		return
+	sto.press("ready")
+	await play_through(40.0, "reward", "story_owner_square_open.png")
+	await wait_kit(false, 4.0)
+	check((S["done"] as Dictionary).has("square"), "в городе владельца скверик готов: %s" % S["done"].get("square", {}).get("text", ""))
+
+
+# ---------- «Скверик для стариков» ----------
+
+## Сколько стариков сидит (или идёт сесть) в скверике
+func elders_n(state := "") -> int:
+	var n := 0
+	for k in sto.life.elders:
+		var e: Dictionary = sto.life.elders[k]
+		if not e.get("table", false) and (state == "" or String(e["state"]) == state):
+			n += 1
+	return n
+
+
+## Новый квартал для проверок скверика и свадьбы (там просторно)
+func _block() -> void:
+	street(Vector2(170, 178), Vector2(170, 206))
+	street(Vector2(160, 206), Vector2(212, 206))
+	for i in 9:
+		var h := put("house_pleb", Vector2(161 + i * 5.5, 209))
+		if not h.is_empty():
+			settle(h, "Квартал %d" % i)
+	c.compute()
+
+
+func _square() -> void:
+	print("== скверик для стариков")
+	StoryDefs.extra = []
+	_block()
+	game._set_hour(10.5)
+	c.level = 1
+	fresh(1000, ["cat"])
+	var S := c.stories
+	sto._tried = ""
+	sto.tick()
+	check((S["offer"] as Dictionary).is_empty(), "ранг «Хутор» — скверик не предлагают (с «Деревни»)")
+	c.level = 2
+	c.research.erase("deco_trees")
+	sto._tried = ""
+	sto.tick()
+	check((S["offer"] as Dictionary).is_empty(), "деревья не изучены — скверик не предлагают (не пройти)")
+	c.research["deco_trees"] = true
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "square" and int(c.stats["pop"]) >= 60, "«Деревня», %d жителей — просят скверик (%s)" % [int(c.stats["pop"]), o.get("fam")])
+	if o.is_empty():
+		return
+	var home: Dictionary = c.buildings[int(o["home"])]
+	var hp: Vector2 = home["pos"]
+	check(bool(o.get("old", false)) and sto.free_near(hp, 15.0) >= 40, "просит старик; вокруг дома есть где разбить скверик (%d м²)" % sto.free_near(hp, 15.0))
+	var info: Dictionary = sto.row_info()
+	check(String(info.get("text", "")).contains("просит о помощи") and String(info.get("title", "")) == "Скверик для стариков", "золотая строка: «%s»" % info.get("text"))
+	await frames(20)
+	check(hud.badges.has("story"), "свиток над домом старика")
+	game.rig.set_view(Vector3(hp.x + 2, Land.BASE_Y, hp.y + 3), 215.0, 40.0, 30.0)
+	await frames(40)
+	await shot("story_square_offer.png")
+	# ролик просьбы: старик седой, лицо — для крупного плана
+	hud._badge_click("story")
+	check(sto.kit != null, "щелчок по свитку — ролик")
+	var said: bool = await wait_beat("say", 8.0)
+	await frames(60)
+	sto.ui.finish_typing()
+	await frames(10)
+	var act = sto.cine["actors"].get("elder")
+	check(said and act != null and sto.ui.name_lbl.text.ends_with(StoryDefs.nomen(String(o["fam"]))) and sto.ui.role_lbl.text.begins_with("дед"),
+		"облачко: «%s», %s" % [sto.ui.name_lbl.text, sto.ui.role_lbl.text])
+	if act != null:
+		var silver := false
+		var lay := true
+		for mi: MeshInstance3D in (act as Node).find_children("*", "MeshInstance3D", true, false):
+			lay = lay and (mi.layers & Citizen.FACE_LAYER) != 0
+			silver = silver or mi.material_override == Citizen._silver
+		check(silver and lay, "старик седой, лицо — на свету для крупного плана")
+	await shot("story_square_ask.png")
+	var t0 := Time.get_ticks_msec()
+	while not sto.ui.choosing() and Time.get_ticks_msec() - t0 < 15000:
+		sto.ui.finish_typing()
+		await frames(3)
+		sto._next()
+		await frames(10)
+	check(sto.ui.choosing() and sto.ui.pills.get_child_count() == 2, "выбор: «Будет вам скверик!» / «Чуть позже, отец»")
+	(sto.ui.pills.get_child(0) as Button).pressed.emit()
+	await play_through(12.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	check(String(A.get("id", "")) == "square" and sto._goal_kind(A) == "square", "история идёт: шаг «скверик»")
+	if sto._goal_kind(A) != "square":
+		return
+	# советник объясняет пороги один раз
+	hud.advisor_panel.visible = false
+	sto.tick()
+	check(c.tips.has("story_square") and hud.advisor_panel.visible and hud.adv_title.text == "Скверик для стариков", "советник один раз объяснил скверик и «Готово»")
+	hud.advisor_panel.visible = false
+	await frames(5)
+	check(sto._glow != null and is_equal_approx(sto._glow_r, 15.0), "место скверика подсвечено (15 м)")
+	# ставим самое нужное: скамьи, деревья, колодец
+	var g: Array = sto._step(A)["goal"]
+	var pr: Dictionary = sto.progress(A, g)
+	print("  было рядом: ", pr["parts"])
+	var dirs := [Vector2(6, 2), Vector2(-6, 3), Vector2(2, 7), Vector2(-3, -7), Vector2(7, -4), Vector2(-7, -3), Vector2(4, 8), Vector2(-5, 7), Vector2(8, 5)]
+	var di := 0
+	while int(sto.progress(A, g)["benches"]) < 3 and di < 9:
+		deco("bench", hp + dirs[di])
+		di += 1
+	for t in 3:
+		if int(sto.progress(A, g)["parts"][1][1]) < 2:
+			deco("tree", hp + dirs[(di + t) % 9] * 1.15)
+	if int(sto.progress(A, g)["parts"][2][1]) < 1:
+		deco("well", hp + Vector2(-8, 0))
+	sto.tick()
+	pr = sto.progress(A, g)
+	check(bool(pr["min"]) and int(pr["tier"]) == 1 and int(pr["benches"]) == 3, "3 скамьи, 2 дерева, колодец — бронза (%s)" % [pr["parts"]])
+	info = sto.row_info()
+	var btn0 := String((info["buttons"] as Array)[0][0])
+	check(btn0 == "Готово (бронза)" and String(info["text"]).contains("+3%") and String(info["text"]).contains("Серебро — 5 скамей"),
+		"строка: «%s» [%s]" % [info["text"], btn0])
+	# старики приходят: скамей больше — стариков больше
+	sto.life._sync(false)
+	var n3 := elders_n()
+	var busy := 0                        # места, где уже сидят жители (их старики не занимают)
+	for id in game.people.spots:
+		if c.buildings.has(id) and Defs.base_of(c.buildings[id]["type"]) == "bench" and (c.buildings[id]["pos"] as Vector2).distance_to(hp) <= 15.0:
+			for k in game.people.spots[id]:
+				if int(game.people.spots[id][k]) != StoryLife.MARK:
+					busy += 1
+	check(n3 >= 2 and n3 <= 4 and n3 + busy >= 3, "три скамьи — пришли старики (%d, жители сидят на %d местах)" % [n3, busy])
+	var walker := {}
+	for k in sto.life.elders:
+		if String(sto.life.elders[k]["state"]) == "in":
+			walker = sto.life.elders[k]
+	if not walker.is_empty():
+		var p0: Vector3 = (walker["node"] as Node3D).position
+		game.speed = 1.0
+		await frames(90)
+		game.speed = 0.0
+		check((walker["node"] as Node3D).position.distance_to(p0) > 0.3, "старик идёт к скамье от дома (%.1f м)" % (walker["node"] as Node3D).position.distance_to(p0))
+	# сохранение посреди шага
+	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var c2 := City.new(game.land)
+	c2.load_data(d)
+	check(String(c2.stories["active"].get("id", "")) == "square" and int(c2.stories["active"].get("step", -1)) == 1, "после загрузки — тот же шаг скверика")
+	# ещё скамьи: серебро, потом семь — всё ещё серебро без часов, с часами — золото
+	while int(sto.progress(A, g)["benches"]) < 5 and di < 9:
+		deco("bench", hp + dirs[di])
+		di += 1
+	pr = sto.progress(A, g)
+	check(int(pr["tier"]) == 2, "5 скамей — серебро (%d)" % int(pr["benches"]))
+	sto.life._sync(false)
+	var n5 := elders_n()
+	check(n5 > n3, "скамей больше — и стариков больше (%d → %d)" % [n3, n5])
+	while int(sto.progress(A, g)["benches"]) < 7 and di < 9:
+		deco("bench", hp + dirs[di])
+		di += 1
+	pr = sto.progress(A, g)
+	check(int(pr["benches"]) >= 7 and int(pr["tier"]) == 2 and String(sto.row_info()["text"]).contains("солнечные часы"), "7 скамей без часов — серебро, строка зовёт к часам")
+	c.research["deco_stone"] = true
+	deco("sundial", hp + Vector2(0, -4))
+	pr = sto.progress(A, g)
+	check(int(pr["tier"]) == 3, "7 скамей и солнечные часы — золото")
+	sto.life._sync(true)
+	var n7 := elders_n("sit")
+	check(n7 >= 6, "старики сидят на скамьях (%d)" % n7)
+	var sc := sto.square_center(A, 15.0)
+	game.rig.set_view(Vector3(sc.x, Land.BASE_Y, sc.y), 200.0, 34.0, 15.0)
+	await frames(50)
+	await shot("story_square_elders.png")
+	game.rig.set_view(Vector3(hp.x, Land.BASE_Y, hp.y), 200.0, 50.0, 40.0)
+	hud.refresh()
+	await frames(30)
+	await shot("story_square_ready.png")
+	# «Готово» — сразу ролик и награда
+	var houses_near := []
+	var house_far := {}
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if c.is_house(b) and int(b["pop"]) > 0:
+			if (b["pos"] as Vector2).distance_to(sc) <= 15.0:
+				houses_near.append(b)
+			elif (b["pos"] as Vector2).distance_to(sc) > 25.0:
+				house_far = b
+	info = sto.row_info()
+	check(String((info["buttons"] as Array)[0][0]) == "Готово (золото)", "кнопка «Готово (золото)»")
+	((info["buttons"] as Array)[0][1] as Callable).call()
+	check(sto.kit != null and (S["done"] as Dictionary).has("square"), "«Готово» — ролик сразу, история пройдена")
+	var e: Dictionary = S["done"].get("square", {})
+	check(c.research.has("s_square") and c.unlocked("latrunc"), "украшение «Стол для латрункулов» открыто")
+	var mon := {}
+	for bb: Dictionary in S["bonus"]:
+		if String(bb.get("id", "")) == "square":
+			mon = bb
+	check(int(mon.get("pct", 0)) == 7 and is_equal_approx(float(mon.get("r", 0)), 15.0) and int(mon.get("left", 0)) == -1, "памятник: +7%% в 15 м навсегда (%s)" % mon)
+	check(String(e.get("text", "")).contains("+7% счастья навсегда"), "в журнале: %s" % e.get("text"))
+	c.compute()
+	var line_ok := not houses_near.is_empty()
+	for hb: Dictionary in houses_near:
+		var has := false
+		for pp: Array in hb["happy_parts"]:
+			if String(pp[0]) == "Скверик для стариков" and int(pp[1]) == 7:
+				has = true
+		line_ok = line_ok and has
+	var far_has := false
+	for pp: Array in house_far.get("happy_parts", []):
+		if String(pp[0]) == "Скверик для стариков":
+			far_has = true
+	check(line_ok and not far_has, "строка «Скверик для стариков» +7 у %d домов рядом, у дальних — нет" % houses_near.size())
+	await play_through(40.0, "anim", "story_square_open.png", "reward", "story_square_reward.png")
+	var ended: bool = await wait_kit(false, 4.0)
+	check(ended and not game.rig.cine, "ролик скверика кончился")
+	await frames(5)
+	sto.life._sync(false)
+	check(elders_n() >= 6, "и потом днём старики сидят в скверике (%d)" % elders_n())
+	# стол для латрункулов: по утрам двое играют
+	var lt := deco("latrunc", sc + Vector2(3, -9))
+	check(not lt.is_empty(), "«Стол для латрункулов» поставлен")
+	game._set_hour(8.0)
+	sto.life._sync(true)
+	var players := 0
+	for k in sto.life.elders:
+		if sto.life.elders[k].get("table", false):
+			players += 1
+	check(players == 2, "утром за доской двое стариков")
+	if not lt.is_empty():
+		var lp: Vector2 = lt["pos"]
+		game.rig.set_view(Vector3(lp.x, Land.BASE_Y, lp.y), 150.0, 30.0, 6.0)
+		await frames(110)
+		await shot("story_latrunc.png")
+	# вечер: расходятся по домам
+	game._set_hour(19.0)
+	sto.life._sync(false)
+	var sitting := elders_n("sit")
+	check(sitting == 0, "вечером старики встают и уходят")
+	game._set_hour(10.5)
+	sto.life.clear()
+
+
+# ---------- «Свадьба Юлии» ----------
+
+func _wedding() -> void:
+	print("== свадьба Юлии")
+	c.level = 2
+	fresh(2000, ["cat", "square"])
+	var S := c.stories
+	c.research["artisans"] = true
+	c.research["deco_flowers"] = true
+	c.research["thermopolium"] = true
+	var arts := []
+	for i in 5:
+		var h := put("house_artisan", Vector2(184 + i * 6, 202))
+		if not h.is_empty():
+			settle(h, ["Юлии", "Валерии", "Фабии", "Ливии", "Флавии"][i])
+			arts.append(h)
+	c.compute()
+	c.level = 2
+	sto._tried = ""
+	sto.tick()
+	check((S["offer"] as Dictionary).is_empty(), "ранг «Деревня» — свадьбу не предлагают (с «Посёлка»)")
+	c.level = 3
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "wedding" and int(c.progress_of(["cls", "artisans"])) >= 12, "«Посёлок», ремесленников %d — свадьба (%s)" % [c.progress_of(["cls", "artisans"]), o.get("fam")])
+	if o.is_empty():
+		return
+	var roles: Dictionary = o.get("roles", {})
+	check(roles.has("bride") and roles.has("groom") and roles.has("mother") and String(o.get("fam2", "")) != String(o["fam"]) and c.buildings.has(int(o.get("home2", -1))),
+		"невеста из семьи %s, жених Марк из семьи %s (другой дом)" % [o["fam"], o.get("fam2")])
+	check(String(sto.row_info().get("text", "")) == "Юлия и Марк ждут градоначальника", "строка: «%s»" % sto.row_info().get("text"))
+	# таверна в выборе — только если её можно построить
+	var opts: Array = StoryDefs.story("wedding")["steps"][0]["cine"][-1][3]
+	c.research.erase("thermopolium")
+	check(sto._avail(opts).size() == 2, "термополий не изучен — «Пир в таверне» не предлагают")
+	c.research["thermopolium"] = true
+	check(sto._avail(opts).size() == 3, "изучен — предлагают")
+	var bride_h: Dictionary = c.buildings[int(o["home"])]
+	var bp: Vector2 = bride_h["pos"]
+	hud._badge_click("story")
+	var ch: bool = await drive_until("choice", 30.0)
+	await frames(10)
+	sto.ui.finish_typing()
+	check(sto.cine["actors"].has("bride") and sto.cine["actors"].has("groom"), "в ролике Юлия и Марк")
+	check(sto.ui.choosing() and sto.ui.pills.get_child_count() == 3, "выбор: сад / таверна / позже")
+	await frames(30)
+	await shot("story_wedding_choice.png")
+	(sto.ui.pills.get_child(0) as Button).pressed.emit()
+	await play_through(12.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	check(String(A.get("id", "")) == "wedding" and String(A["flags"].get("choice", "")) == "garden" and int(A["step"]) == 1, "выбрали сад — шаг «пир»")
+	if String(A.get("id", "")) != "wedding" or int(A["step"]) != 1:
+		return
+	check(c.research.has("s_wedding") and c.unlocked("rosearch") and String(c.events[-1]["text"]).contains("Арка из роз"), "арка из роз открыта сразу: «%s»" % c.events[-1]["text"])
+	var info: Dictionary = sto.row_info()
+	check(String(info["text"]).contains("8 цветов") and String((info["buttons"] as Array)[-1][0]) == "Лучше: пир в таверне", "строка сада и «Лучше: пир в таверне»: %s" % [info["buttons"].map(func(x): return x[0])])
+	# ветка таверны (на копии): термополий в 25 м
+	var g: Array = sto._step(A)["goal"]
+	var a2 := A.duplicate(true)
+	a2["flags"]["choice"] = "tavern"
+	check(not bool(sto.progress(a2, g)["ok"]), "таверна: пока нет")
+	var th := put("thermopolium", bp + Vector2(10, 4))
+	check(not th.is_empty() and bool(sto.progress(a2, g)["ok"]), "таверна: термополий в 25 м — пир есть")
+	check(not bool(sto.progress(A, g)["ok"]), "сад: ещё не готов")
+	# сад: 8 цветов и арка
+	var fl := ["flowers", "planter", "bush", "flowers_2", "planter_2", "bush_2", "flowers_3", "planter_3"]
+	for i in 8:
+		deco(fl[i], bp + Vector2(cos(i * 0.8), sin(i * 0.8)) * 6.0)
+	sto.tick()
+	check(int(A["step"]) == 1 and String(sto.row_info()["text"]).contains("Сейчас:"), "8 цветов, беседки нет — ждём (%s)" % sto.row_info()["text"])
+	var ra := deco("rosearch", bp + Vector2(-7, 2))
+	sto.tick()
+	check(int(A["step"]) == 2, "арка из роз поставлена — шаг «дом молодым»")
+	if not ra.is_empty():
+		var rp0: Vector2 = ra["pos"]
+		game.rig.set_view(Vector3(rp0.x, Land.BASE_Y, rp0.y), 20.0, 38.0, 9.0)
+		await frames(50)
+		await shot("story_rosearch.png")
+	await frames(5)
+	check(sto._glow != null and is_equal_approx(sto._glow_r, 30.0), "где строить новый дом — подсвечено (30 м)")
+	# сохранение посреди шага
+	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var c2 := City.new(game.land)
+	c2.load_data(d)
+	var A2: Dictionary = c2.stories["active"]
+	check(String(A2.get("id", "")) == "wedding" and int(A2.get("step", -1)) == 2 and String(A2["flags"].get("choice", "")) == "garden" and A2.has("roles"),
+		"после загрузки: свадьба, шаг «дом», выбран сад, роли на месте")
+	# дом невесты перенесли — история с ним
+	var old_id := int(bride_h["id"])
+	check(game.start_move(bride_h), "дом невесты подняли")
+	await frames(30)
+	var moved := false
+	cands.sort_custom(func(p, q): return p.distance_squared_to(bp + Vector2(0, -4)) < q.distance_squared_to(bp + Vector2(0, -4)))
+	for p in cands.slice(0, 300):
+		reset_place()
+		var pl: Dictionary = game.placement("house_artisan", p)
+		if pl["err"] == "" and pl["sub"] == "road":
+			game.hover = p
+			game._build_here()
+			moved = game.moving.is_empty()
+			break
+	check(moved and int(A["home"]) != old_id and c.buildings.has(int(A["home"])), "дом поставили — история у нового места (%d → %d)" % [old_id, int(A["home"])])
+	bride_h = c.buildings.get(int(A["home"]), bride_h)
+	bp = bride_h["pos"]
+	# новый дом: старые и плебейские не в счёт; заселённый — тоже
+	var pl_h := put("house_pleb", bp + Vector2(-10, 6))
+	sto.tick()
+	check(int(A["step"]) == 2, "новый дом плебеев не в счёт")
+	var full := put("house_artisan", bp + Vector2(12, -2))
+	if not full.is_empty():
+		settle(full, "Проба 9")
+	sto.tick()
+	check(int(A["step"]) == 2 and String(sto.row_info()["text"]).contains("заняли"), "новый дом заняли — нужен другой: «%s»" % sto.row_info()["text"])
+	var nh := put("house_artisan", bp + Vector2(-12, -3))
+	sto.tick()
+	var nm := String(A.get("couple", ""))
+	check(not nh.is_empty() and int(A["flags"].get("built", -1)) == int(nh["id"]) and int(nh["pop"]) == 2 and nm != "", "молодые поселились в новом доме: семья «%s»" % nm)
+	var mem := []
+	for r in game.people.residents:
+		if r["fam"] == nm:
+			mem.append(r)
+	check(mem.size() == 2 and int(mem[0]["seed"]) == int(roles["groom"]["seed"]) and int(mem[1]["seed"]) == int(roles["bride"]["seed"]),
+		"в городе — Марк и Юлия (тот же облик, что в роликах)")
+	check(bool(A.get("ready", false)) and String(c.events[-1]["text"]).contains("поселились"), "колокольчик: «%s»" % c.events[-1]["text"])
+	await frames(5)
+	check(hud.badges.has("story"), "над домом невесты — «Готово»: посмотреть свадьбу")
+	# свадьба: награда сразу, шествие вечером
+	var happy0 := {}
+	for id in c.buildings:
+		if c.is_house(c.buildings[id]):
+			happy0[id] = int(c.buildings[id]["happy"])
+	hud.set_speed(2.0)
+	var nl0: int = game.night_lights.size()
+	hud._badge_click("story")
+	check(sto.kit != null and (S["done"] as Dictionary).has("wedding"), "ролик свадьбы, история пройдена")
+	var bon := {}
+	for bb: Dictionary in S["bonus"]:
+		if String(bb.get("id", "")) == "wedding":
+			bon = bb
+	var np: Vector2 = nh["pos"]
+	check(int(bon.get("pct", 0)) == 6 and is_equal_approx(float(bon.get("r", 0)), 20.0) and int(bon.get("left", 0)) == 72
+		and Vector2(float(bon.get("x", 0)), float(bon.get("z", 0))).distance_to(np) < 0.01, "домам в 20 м от нового дома +6%% на 3 дня (%s)" % bon)
+	var wt := String(S["done"]["wedding"].get("text", ""))
+	check(wt.contains("Арка из роз") and wt.contains("семья"), "в журнале: %s" % wt)
+	c.compute()
+	var wl := ""
+	for pp: Array in nh["happy_parts"]:
+		if String(pp[0]).begins_with("Свадьба Юлии и Марка"):
+			wl = "%s %+d" % [pp[0], pp[1]]
+	check(wl.contains("+6") and wl.contains("ещё 3"), "строка счастья: «%s»" % wl)
+	var walked: bool = await wait_walk(12.0)
+	check(walked and is_equal_approx(game.look_hour, Stories.DUSK) and sto.cine["actors"].size() == Stories.PROC.size(), "шествие: вечер, %d человек" % sto.cine.get("actors", {}).size())
+	check((sto.cine.get("props", []) as Array).size() >= 1 and game.night_lights.size() > nl0, "у двери нового дома горят жаровни")
+	await frames(150)
+	await shot("story_wedding_proc.png")
+	var oh: float = game.land.height_at(208.0, 116.0)
+	print("  камера шествия: вариант ", sto.cine.get("proc", {}).get("cam_i"), " из ", Stories.PROC_CAMS.size(),
+		"; луч в чистом поле: ", sto._clear_view3(Vector3(203, oh + 2.3, 116), Vector3(209, oh + 1.0, 116)), " occ=", game.land.occ_at(Vector2(206, 116)))
+	var pr: Dictionary = sto.cine.get("proc", {})
+	var s_mid := float(pr.get("s", 0))
+	await frames(30)
+	check(float(sto.cine.get("proc", {}).get("s", 0)) > s_mid, "шествие идёт к дому")
+	var door_at: bool = await wait_beat("fx", 30.0)
+	check(door_at, "дошли до двери")
+	await frames(40)
+	await shot("story_wedding_door.png")
+	await play_through(30.0, "say", "story_wedding_say.png")
+	var ended: bool = await wait_kit(false, 5.0)
+	await frames(4)
+	check(ended and is_equal_approx(game.look_hour, -1.0) and game.night_lights.size() == nl0, "ролик кончился: свет как был, жаровни убраны")
+	check(is_equal_approx(float(game.speed), 2.0), "скорость вернулась (×%s)" % game.speed)
+	hud.set_speed(0.0)
+	# пересмотр из журнала
+	sto.replay("wedding")
+	var rp: bool = await drive_until("proc", 40.0)
+	await frames(20)
+	press_key(KEY_ESCAPE)
+	var rend: bool = await wait_kit(false, 5.0)
+	check(rp and rend and is_equal_approx(game.look_hour, -1.0), "«Пересмотреть» свадьбу — шествие, Esc — всё как было")
+	# через 3 дня бонус кончился
+	for i in 72:
+		c._story_hour()
+	var still := false
+	for bb: Dictionary in S["bonus"]:
+		if String(bb.get("id", "")) == "wedding":
+			still = true
+	check(not still, "через 3 дня свадебный бонус кончился")
+
+
+# ---------- лица вблизи: до и после ----------
+
+func _faces() -> void:
+	print("== лица: до и после")
+	for k in [true, false]:
+		Citizen.plain_faces = k
+		fresh(3000 + (100 if k else 0))
+		c.level = 1
+		sto._tried = ""
+		sto.tick()
+		if (c.stories["offer"] as Dictionary).is_empty():
+			check(false, "лица: нет предложения")
+			break
+		var hp: Vector2 = c.buildings[int(c.stories["offer"]["home"])]["pos"]
+		game.rig.set_view(Vector3(hp.x + 2, Land.BASE_Y, hp.y + 3), 215.0, 38.0, 26.0)
+		await frames(20)
+		sto.open_offer()
+		await wait_beat("say", 8.0)
+		await frames(70)
+		sto.ui.finish_typing()
+		await frames(10)
+		await shot("story_face_%s.png" % ("before" if k else "after"))
+		press_key(KEY_ESCAPE)
+		await wait_kit(false, 4.0)
+		await frames(5)
+	Citizen.plain_faces = false
+
+
+## Ждать, пока шествие пойдёт (такт ["proc", "walk"])
+func wait_walk(sec: float) -> bool:
+	var t0 := Time.get_ticks_msec()
+	while (Time.get_ticks_msec() - t0) / 1000.0 < sec:
+		if sto.cine.is_empty():
+			return false
+		var i := int(sto.cine.get("i", -1))
+		var beats: Array = sto.cine.get("beats", [])
+		if i >= 0 and i < beats.size() and String(beats[i][0]) == "proc" and String(beats[i][1]) == "walk":
+			return true
+		await get_tree().process_frame
+	return false
+
+
+## Вести ролик (реплики дальше, на выборе — первая кнопка), пока не дойдёт до такта kind
+func drive_until(kind: String, sec: float) -> bool:
+	var t0 := Time.get_ticks_msec()
+	while sto.kit != null and (Time.get_ticks_msec() - t0) / 1000.0 < sec:
+		await frames(6)
+		if sto.cine.is_empty():
+			continue
+		var i := int(sto.cine.get("i", -1))
+		var beats: Array = sto.cine.get("beats", [])
+		if i < 0 or i >= beats.size():
+			continue
+		var bk := String(beats[i][0])
+		if bk == kind:
+			return true
+		if bk in ["say", "choice"] and sto.cine.get("wait", false):
+			sto.ui.finish_typing()
+			await frames(3)
+			sto._next()
+		elif bk == "choice" and sto.ui.choosing():
+			sto.ui.finish_typing()
+			(sto.ui.pills.get_child(0) as Button).pressed.emit()
+	return false

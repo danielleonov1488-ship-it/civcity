@@ -13,12 +13,22 @@ const POLL := 0.5                      # как часто проверять п
 const CLICK_PX := 34.0                 # щелчок по кошке — в стольких точках от неё
 const MEOW := [20.0, 40.0]             # кошка мяукает раз в 20–40 с (при скорости ×1)
 const KID_CALL_H := 2                  # мальчик зовёт кошку раз в 2 игровых часа
+const BUILD_GLOW := 0.3               # пятно «где строить» (скверик, сад, новый дом) — мягче, чем место поисков
+const FILL := 0.55                     # свет-заполнение на лица героев ролика
+const PROC_LEN := 15.0                 # свадебное шествие: столько метров пути до нового дома
+const PROC_V := 1.2                    # шаг шествия, м/с
+const DUSK := 21.2                     # «вечер» в свадебном ролике: такой свет (часы игры не трогаем)
+const TIER := ["нет", "бронза", "серебро", "золото"]
+## Шествие: кто где идёт — [роль, сколько метров позади пары, в сторону]
+const PROC := [["bride", 0.0, 0.42], ["groom", 0.0, -0.42], ["mother", -1.4, 0.3], ["guest1", -2.3, -0.5], ["guest2", -2.4, 0.55],
+	["guest3", -3.3, 0.0]]
 const WAIT_HOME_H := 24                # семья без дома (снесли): столько часов ждём, пока заселится, потом история прерывается
 
 var game
 var hud
 var city: City
 var ui: StoryUi
+var life: StoryLife                    # старики в скверике и за столом латрункулов
 var force := false                     # проверки: истории и когда игра — не главная сцена
 var kit: CineKit = null                # идёт ролик
 var cine := {}                         # ролик: такты, где он, кто в кадре, выбор, что потом
@@ -43,6 +53,9 @@ func setup(g) -> void:
 	hud = g.hud
 	city = g.city
 	ui = StoryUi.new(self)
+	life = StoryLife.new()
+	add_child(life)
+	life.setup(self)
 	city.building_removed.connect(_on_removed)
 	city.family_left.connect(_on_family_left)
 	if game.mode in ["new", "play"]:
@@ -148,6 +161,7 @@ func tick() -> void:
 		_try_offer()
 	_marks(true)
 	_advise_once()
+	_advise_square()
 
 
 ## Пора предложить новую историю: обучение кончилось, прошло FIRST_H (первая) или GAP_H (после прошлой)
@@ -194,17 +208,98 @@ func can_offer(sd: Dictionary) -> Dictionary:
 	for r in sd.get("needs", []):
 		if not city.research.has(r):
 			return {}
+	for np: Array in sd.get("need_p", []):
+		if city.progress_of(np[0]) < int(np[1]):
+			return {}
 	var fo := StoryDefs.find_opts(sd)
-	for bind: Dictionary in _cast(sd).slice(0, 4):
+	var room: Array = sd.get("space", [])
+	# сначала — семьи, которые ещё ни о чём не просили (разные истории — у разных соседей)
+	var asked := {}
+	for e: Dictionary in (S()["done"] as Dictionary).values():
+		asked[String(e.get("fam", ""))] = true
+	var fresh := []
+	var again := []
+	for e: Dictionary in _cast(sd):
+		(again if asked.has(String(e.get("fam", ""))) else fresh).append(e)
+	for bind: Dictionary in (fresh + again).slice(0, 4 if not fo.is_empty() else 8):
 		bind["id"] = String(sd["id"])        # тот же посев _rng, что в _start_find: проверяем то самое место
+		if not room.is_empty() and free_near(_home_pos(bind), float(room[0])) < int(room[1]):
+			continue                         # вокруг всё застроено: скверик или новый дом ставить негде
 		var sp := Vector2.INF if fo.is_empty() else _spot_for(bind, fo)
 		if fo.is_empty() or sp != Vector2.INF:
 			if sp != Vector2.INF:
 				bind["spot0"] = [sp.x, sp.y]
 			if bind.has("fam"):
 				bind["seed"] = _fair_seed(hash(String(bind["fam"])) & 0xffffff)
+			if not _bind_roles(sd, bind):
+				continue
 			return bind
 	return {}
+
+
+## Свободной земли (м², по точкам через 2 м) в r м от p: своя земля, не постройка, не дорога, не вода
+func free_near(p: Vector2, r: float) -> int:
+	var land: Land = game.land
+	var n := 0
+	var k := int(r / 2.0)
+	for j in range(-k, k + 1):
+		for i in range(-k, k + 1):
+			var q := p + Vector2(i, j) * 2.0
+			if Vector2(i, j).length() * 2.0 > r or not land.is_owned(q) or land.occ_at(q) != 0 or land.is_water(q) or land.is_road(q):
+				continue
+			n += 4
+	return n
+
+
+## Кто ещё в истории (свадьба): жених из соседнего дома, мать и гости — облик по семье, имя — StoryDefs.roles.
+## Пишет bind["roles"] {роль: {seed, female, child, cls, old}}; false — некого позвать (жениха нет)
+func _bind_roles(sd: Dictionary, bind: Dictionary) -> bool:
+	var cast: Dictionary = sd.get("cast", {})
+	if cast.size() <= 1 and not sd.has("extras"):
+		return true
+	var fam := String(bind.get("fam", ""))
+	var roles := {}
+	var keys := cast.keys()
+	var r0: Dictionary = cast[keys[0]]
+	roles[keys[0]] = {"seed": int(bind.get("seed", 1)), "female": bool(r0.get("female", false)), "child": false, "cls": String(bind.get("cls", "plebs")),
+		"old": bool(r0.get("old", false))}
+	for k in keys.slice(1):
+		var r: Dictionary = cast[k]
+		if not bool(r.get("other", false)):
+			continue
+		var o := _other_family(bind)
+		if o.is_empty():
+			return false
+		bind["home2"] = int(o["home"])
+		bind["fam2"] = String(o["fam"])
+		roles[k] = {"seed": _fair_seed(hash(String(o["fam"])) & 0xffffff), "female": bool(r.get("female", false)), "child": false,
+			"cls": String(o["cls"])}
+	var ex: Dictionary = sd.get("extras", {})
+	for k in ex:
+		roles[k] = {"seed": _fair_seed(hash(fam + ":" + String(k)) & 0xffffff), "female": bool(ex[k].get("female", false)),
+			"child": bool(ex[k].get("child", false)), "cls": String(bind.get("cls", "plebs"))}
+	bind["roles"] = roles
+	return true
+
+
+## Соседняя семья (в другом доме, до 70 м — ближняя): {home, fam, cls} или {}
+func _other_family(bind: Dictionary) -> Dictionary:
+	var hp := _home_pos(bind)
+	var best := {}
+	var bd := 70.0
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if int(id) == int(bind.get("home", -1)) or not city.is_house(b) or int(b["pop"]) <= 0:
+			continue
+		var d := (b["pos"] as Vector2).distance_to(hp)
+		if d >= bd:
+			continue
+		for f: Dictionary in b["families"]:
+			if String(f["name"]) != String(bind.get("fam", "")):
+				bd = d
+				best = {"home": int(id), "fam": String(f["name"]), "cls": String(city.def(b)["cls"])}
+				break
+	return best
 
 
 ## Где кошке спрятаться у этого дома (INF — негде; поиск пути — дорогой: ответ помним до конца игрового часа)
@@ -225,7 +320,7 @@ func _cast(sd: Dictionary) -> Array:
 	if cast.is_empty():
 		return [] if ctr.is_empty() else [{"home": int(ctr["id"]), "fam": "", "kid": ""}]
 	var role: Dictionary = cast.values()[0]
-	var cls := String(role.get("cls", "plebs"))
+	var clss := String(role.get("cls", "plebs")).split("|")
 	var child := bool(role.get("child", false))
 	var c0: Vector2 = ctr["pos"] if not ctr.is_empty() else Land.CENTER
 	var kids := {}                       # «семья|дом» — у кого есть ребёнок (один проход по жителям)
@@ -236,14 +331,17 @@ func _cast(sd: Dictionary) -> Array:
 	var out := []
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
-		if not city.is_house(b) or String(city.def(b)["cls"]) != cls or int(b["pop"]) <= 0:
+		if not city.is_house(b) or not (String(city.def(b)["cls"]) in clss) or int(b["pop"]) <= 0:
 			continue
 		for f: Dictionary in b["families"]:
 			var fam := String(f["name"])
 			if child and not kids.has("%s|%d" % [fam, int(id)]):
 				continue
-			out.append({"home": int(id), "fam": fam, "kid": StoryDefs.boy(fam), "cls": cls, "female": bool(role.get("female", false)),
-				"child": child, "d": (b["pos"] as Vector2).distance_to(c0)})
+			var e := {"home": int(id), "fam": fam, "kid": StoryDefs.boy(fam), "cls": String(city.def(b)["cls"]), "female": bool(role.get("female", false)),
+				"child": child, "d": (b["pos"] as Vector2).distance_to(c0)}
+			if bool(role.get("old", false)):
+				e["old"] = true
+			out.append(e)
 	out.sort_custom(func(x, y): return float(x["d"]) < float(y["d"]))
 	for e: Dictionary in out:
 		e.erase("d")
@@ -327,14 +425,15 @@ func _after_ask() -> void:
 	var o: Dictionary = S()["offer"]
 	if o.is_empty():
 		return
-	if String(cine.get("choice", "go")) == "later":
+	var ch := String(cine.get("choice", "go"))
+	if ch == "later":
 		postpone()
 		return
-	accept()
+	accept(ch)
 
 
-## Согласились помочь: история идёт, со второго шага
-func accept() -> void:
+## Согласились помочь: история идёт, со второго шага; choice — что выбрали в ролике (сад или таверна)
+func accept(choice := "go") -> void:
 	var s := S()
 	var o: Dictionary = s["offer"]
 	if o.is_empty():
@@ -344,8 +443,22 @@ func accept() -> void:
 	a["step"] = 0
 	s["active"] = a
 	s["offer"] = {}
+	if not (choice in ["go", ""]):
+		_choose(a, choice)
 	_enter_step(1)
 	hud.refresh()
+
+
+## Выбор сделан (в ролике или в золотой строке): запомнить; что история открывает сразу (арка из роз) — открыть
+func _choose(a: Dictionary, val: String) -> void:
+	(a["flags"] as Dictionary)["choice"] = val
+	var u := String((_story(a).get("grant", {}) as Dictionary).get(val, ""))
+	if u != "" and not city.research.has(u):
+		city.research[u] = true
+		for t in Defs.B:
+			if String(Defs.B[t].get("unlock", "")) == u:
+				city._quiet("Открыто украшение «%s» (Украшения) — для истории «%s»." % [Defs.B[t]["name"], _story(a)["title"]], "decor")
+				break
 
 
 # ---------- шаги ----------
@@ -452,7 +565,8 @@ func _on_hour() -> void:
 		hud.refresh()
 
 
-func _tick_active() -> void:
+## play_now — игрок сам нажал «Готово»: ролик-шаг — сразу
+func _tick_active(play_now := false) -> void:
 	var s := S()
 	var a: Dictionary = s["active"]
 	if _story(a).is_empty():
@@ -484,7 +598,66 @@ func _tick_active() -> void:
 		return
 	var pr := progress(a, st["goal"])
 	if bool(pr["ok"]):
-		_advance(false)
+		if _goal_kind(a) == "square":
+			var sq := square_center(a, float(st["goal"][1]))
+			(a["flags"] as Dictionary)["sq"] = [sq.x, sq.y]
+		if String(st.get("done", "")) == "couple":
+			_couple(a)
+		_advance(play_now)
+
+
+## Свадьба: новый дом построен — молодые сразу в нём поселяются (пока его не заняли другие). Новая семья — по роду
+## жениха; с повозки не приезжала (повозки от этого чаще не ходят); облик — как у жениха и невесты в роликах
+func _couple(a: Dictionary) -> void:
+	var flags: Dictionary = a["flags"]
+	var hid := int(flags.get("built", -1))
+	var h: Dictionary = city.buildings.get(hid, {})
+	if h.is_empty() or a.has("couple"):
+		return
+	var nm := _couple_name(String(a.get("fam2", a.get("fam", ""))))
+	city.pending[nm] = {"name": nm, "n": 2, "cls": String(city.def(h)["cls"]), "home": hid, "back": true}
+	if city.settled(hid, 2, nm) <= 0:
+		city.pending.erase(nm)
+		return
+	a["couple"] = nm
+	var roles: Dictionary = a.get("roles", {})
+	var fam: Array = game.people._make_family(nm, 2, hid, city.door_point(h))
+	for i in fam.size():
+		var ro: Dictionary = roles.get("groom" if i == 0 else "bride", {})
+		if not ro.is_empty():
+			(fam[i] as Dictionary)["seed"] = int(ro["seed"])
+			(fam[i] as Dictionary)["female"] = i == 1
+	city._quiet("Юлия и Марк поселились в новом доме — теперь это семья %s. Свадьбу сыграют вечером: посмотрите шествие!" \
+		% StoryDefs.fam_gen(nm), "ring")
+
+
+## Имя новой семьи: род жениха и своё прозвище («Валерии Руфы»), какого в городе ещё нет
+func _couple_name(fam: String) -> String:
+	var f := StoryDefs._fam1(fam)
+	if f == "":
+		f = "Юлии"
+	var used := {}
+	for id in city.buildings:
+		for fm: Dictionary in city.buildings[id].get("families", []):
+			used[String(fm["name"])] = true
+	for fm: Dictionary in city.arrivals:
+		used[String(fm["name"])] = true
+	for k in city.pending:
+		used[String(k)] = true
+	var k0 := hash(fam) % Defs.COGNOMENS.size()
+	for i in Defs.COGNOMENS.size():
+		var nm := "%s %s" % [f, Defs.COGNOMENS[(k0 + i) % Defs.COGNOMENS.size()]]
+		if not used.has(nm):
+			return nm
+	return "%s Младшие" % f
+
+
+## Где новый дом молодых (свадьба): построенный для них, тот, где они живут теперь, или дом невесты
+func _built_pos(a: Dictionary) -> Vector2:
+	var h: Dictionary = city.buildings.get(int((a.get("flags", {}) as Dictionary).get("built", -1)), {})
+	if h.is_empty() and String(a.get("couple", "")) != "":
+		h = city.buildings.get(_find_family(String(a["couple"])), {})
+	return h["pos"] if not h.is_empty() else _home_pos(a)
 
 
 ## Цель шага выполнена: следующий шаг; ролик-шаг — сразу (по щелчку игрока) или ждёт щелчка
@@ -595,6 +768,9 @@ func _finish(how: String, text := "") -> void:
 		"seed": int(a.get("seed", 1)), "cls": a.get("cls", "plebs"), "how": how, "cat_name": a.get("cat_name", ""), "fur": int(a.get("fur", 0))}
 	if a.has("spot"):
 		e["spot"] = a["spot"]
+	for k in ["roles", "flags", "fam2", "home2", "couple", "old"]:
+		if a.has(k):
+			e[k] = a[k]                      # для «Пересмотреть»: кто был в роликах, что выбрали, где новый дом
 	e["text"] = (text + " " if text != "" else "") + "Награда: " + rw + "."
 	s["done"][String(sd["id"])] = e
 	s["active"] = {}
@@ -630,7 +806,7 @@ func _reward(sd: Dictionary, a: Dictionary, full: bool) -> String:
 		out.append("дому %s +%d%% счастья на %s" % [StoryDefs.fam_gen(fam), int(hh[0]), _hours(int(hh[1]))])
 	if r.has("happy_area"):
 		var ha: Array = r["happy_area"]
-		var hp := _home_pos(a)
+		var hp := _built_pos(a) if ha.size() > 3 and String(ha[3]) == "built" else _home_pos(a)
 		(s["bonus"] as Array).append({"id": id, "line": line, "pct": int(ha[0]), "x": hp.x, "z": hp.y, "r": float(ha[1]), "left": int(ha[2])})
 		out.append("домам в %d м +%d%% счастья на %s" % [int(ha[1]), int(ha[0]), _hours(int(ha[2]))])
 	if r.has("happy_all"):
@@ -643,6 +819,9 @@ func _reward(sd: Dictionary, a: Dictionary, full: bool) -> String:
 		if pct is Array:
 			pct = (pct as Array)[clampi(int((a.get("flags", {}) as Dictionary).get("tier", 1)) - 1, 0, (pct as Array).size() - 1)]
 		var hp := _home_pos(a)
+		var sq: Array = (a.get("flags", {}) as Dictionary).get("sq", [])
+		if mo.size() > 2 and String(mo[2]) == "square" and sq.size() == 2:
+			hp = Vector2(float(sq[0]), float(sq[1]))
 		(s["bonus"] as Array).append({"id": id, "line": line, "pct": int(pct), "x": hp.x, "z": hp.y, "r": float(mo[1]), "left": -1})
 		out.append("домам в %d м +%d%% счастья навсегда" % [int(mo[1]), int(pct)])
 	if r.has("rp") and full:
@@ -658,6 +837,8 @@ func _reward(sd: Dictionary, a: Dictionary, full: bool) -> String:
 	if r.has("glory"):
 		city.legion.glory += int(r["glory"])
 		out.append("+%d Славы" % int(r["glory"]))
+	if bool(r.get("family", false)) and String(a.get("couple", "")) != "":
+		out.append("молодые живут своим домом — семья %s" % StoryDefs.fam_gen(String(a["couple"])))
 	if int(r.get("cats", 0)) > 0:
 		(s["pets"] as Array).append({"home": int(a.get("home", -1)), "fur": int(a.get("fur", 0)), "name": String(a.get("cat_name", "")),
 			"seed": hash(fam) & 0xffff})
@@ -761,8 +942,14 @@ func progress(a: Dictionary, g: Array) -> Dictionary:
 				ok = ok and n >= int(need[base])
 			return {"have": have, "need": tot, "ok": ok, "txt": "%d/%d" % [have, tot]}
 		"built_after":
-			var n := _count_near(String(g[1]), hp, float(g[2]), int(a.get("id0", 0)))
-			return {"have": mini(n, 1), "need": 1, "ok": n > 0, "txt": ""}
+			var room := int(g[3]) if g.size() > 3 else 0
+			var nb := _new_near(String(g[1]), hp, float(g[2]), int(a.get("id0", 0)), room)
+			if nb >= 0:
+				flags["built"] = nb
+			var any := nb >= 0 or (room > 0 and _new_near(String(g[1]), hp, float(g[2]), int(a.get("id0", 0)), 0) >= 0)
+			return {"have": int(nb >= 0), "need": 1, "ok": nb >= 0, "txt": "", "full": any and nb < 0}
+		"square":
+			return _square(a, g)
 		"score":
 			var n := _count_near(String(g[1]), hp, float(g[2]), -1)
 			var tiers: Array = g[3]
@@ -791,18 +978,88 @@ func progress(a: Dictionary, g: Array) -> Dictionary:
 	return {"have": 0, "need": 1, "ok": false, "txt": ""}
 
 
-## Сколько построек вида base (тип или облик украшения) в r м от p; after ≥ 0 — только построенные после (born > after)
+## Постройка вида base (тип, облик украшения или «a|b» — любой из них)
+static func _is(b: Dictionary, base: String) -> bool:
+	for k in base.split("|"):
+		if b["type"] == k or Defs.base_of(b["type"]) == k:
+			return true
+	return false
+
+
+## Сколько построек вида base («a|b» — любой) в r м от p; after ≥ 0 — только построенные после (born > after)
 func _count_near(base: String, p: Vector2, r: float, after: int) -> int:
 	var n := 0
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
-		if b["type"] != base and Defs.base_of(b["type"]) != base:
+		if not _is(b, base):
 			continue
 		if after >= 0 and int(b.get("born", id)) < after:
 			continue
 		if (b["pos"] as Vector2).distance_to(p) <= r:
 			n += 1
 	return n
+
+
+## Новый дом вида base в r м от p, построенный после after, где свободно хотя бы room мест (ближний), или -1
+func _new_near(base: String, p: Vector2, r: float, after: int, room: int) -> int:
+	var best := -1
+	var bd := INF
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if not _is(b, base) or int(b.get("born", id)) < after:
+			continue
+		var d := (b["pos"] as Vector2).distance_to(p)
+		if d > r or d >= bd:
+			continue
+		if room > 0 and (not city.is_house(b) or city.house_cap(b) - int(b["pop"]) - int(b.get("coming", 0)) < room):
+			continue
+		bd = d
+		best = int(id)
+	return best
+
+
+## Скверик: всё из списка рядом (скамьи, деревья, колодец); порог — по скамьям: бронза, серебро, золото (и солнечные
+## часы); «Готово» — когда хватает
+func _square(a: Dictionary, g: Array) -> Dictionary:
+	var flags: Dictionary = a["flags"]
+	var hp := _home_pos(a)
+	var r := float(g[1])
+	var need: Dictionary = g[2]
+	var parts := []
+	var ok := true
+	var have := 0
+	var tot := 0
+	for base in need:
+		var n := _count_near(String(base), hp, r, -1)
+		ok = ok and n >= int(need[base])
+		have += mini(n, int(need[base]))
+		tot += int(need[base])
+		parts.append([String(base), n, int(need[base])])
+	var nb := _count_near(String(g[3]), hp, r, -1)
+	var tiers: Array = g[4]
+	var gold := String(g[5]) if g.size() > 5 else ""
+	var sun := gold == "" or _count_near(gold, hp, r, -1) > 0
+	var tier := 0
+	if ok:
+		for k in tiers.size():
+			if nb >= int(tiers[k]) and (k < tiers.size() - 1 or sun):
+				tier = k + 1
+	flags["tier"] = tier
+	return {"have": have, "need": tot, "ok": ok and tier >= 1 and bool(flags.get("ready", false)), "tier": tier, "min": ok,
+		"benches": nb, "sun": sun, "parts": parts, "txt": "%d/%d" % [have, tot]}
+
+
+## Середина скверика: среди скамеек в r м от дома (нет скамеек — сам дом)
+func square_center(a: Dictionary, r: float) -> Vector2:
+	var hp := _home_pos(a)
+	var sum := Vector2.ZERO
+	var n := 0
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if Defs.base_of(b["type"]) == "bench" and (b["pos"] as Vector2).distance_to(hp) <= r:
+			sum += b["pos"]
+			n += 1
+	return sum / n if n > 0 else hp
 
 
 ## «Готово» (score), «Заплатить» (pay), выбор (choice) — из золотой строки
@@ -829,8 +1086,8 @@ func press(what: String, val := "") -> void:
 					game.sound.ui("coins")
 			flags["paid"] = true
 		"choice":
-			flags["choice"] = val
-	_tick_active()
+			_choose(a, val)
+	_tick_active(what == "ready")
 	hud.refresh()
 
 
@@ -871,7 +1128,27 @@ func _marks(on: bool) -> void:
 		hud.set_badge("story_paw", _cat_pos() + Vector3(0, 0.75, 0), "cat", false, "", found)
 	else:
 		hud.clear_badge("story_paw")
+	if on and not cine_on and area.is_empty() and not a.is_empty() and not a.get("ready", false) and not a.has("homeless"):
+		area = _goal_area(a)                # где строить (скверик, сад, новый дом): то же мягкое пятно света
 	_area_marks(area, a)
+
+
+## Где выполнять цель шага: [x, z, радиус] у дома просящего — или []
+func _goal_area(a: Dictionary) -> Array:
+	var g: Array = _step(a).get("goal", [])
+	if g.is_empty():
+		return []
+	var hp := _home_pos(a)
+	match String(g[0]):
+		"square", "around":
+			return [hp.x, hp.y, float(g[1]), BUILD_GLOW]
+		"built_after":
+			return [hp.x, hp.y, float(g[2]), BUILD_GLOW]
+		"flag":
+			var sub: Array = (g[2] as Dictionary).get(String((a.get("flags", {}) as Dictionary).get(String(g[1]), "")), [])
+			if not sub.is_empty() and String(sub[0]) == "around":
+				return [hp.x, hp.y, float(sub[1]), BUILD_GLOW]
+	return []
 
 
 ## Место поисков: мягкое пятно тёплого света на земле (не кольцо) и цепочка следов лапок от дома в его сторону
@@ -889,12 +1166,13 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 		return
 	var c := Vector2(float(area[0]), float(area[1]))
 	var r := float(area[2])
-	var k := "%.1f,%.1f,%.1f" % [c.x, c.y, r]
+	var al := float(area[3]) if area.size() > 3 else 0.5   # где строить — свет мягче, чем где искать кошку
+	var k := "%.1f,%.1f,%.1f,%.2f" % [c.x, c.y, r, al]
 	if _no_decals:
 		if k != _glow_key:
 			if _glow != null:
 				_glow.queue_free()
-			_glow = _glow_mesh(c, r)
+			_glow = _glow_mesh(c, r, al)
 			game.add_child(_glow)
 	else:
 		if _glow == null:
@@ -909,6 +1187,7 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 			game.add_child(dc)
 			_glow = dc
 		(_glow as Decal).size = Vector3(r * 2.0, 8.0, r * 2.0)
+		(_glow as Decal).modulate = Color(1.0, 0.82, 0.42, al)
 		_glow.position = Vector3(c.x, game.land.height_at(c.x, c.y), c.y)
 	_glow_key = k
 	_glow_r = r
@@ -957,7 +1236,7 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 
 
 ## Пятно поисков без Decal (OpenGL): сетка по земле чуть выше неё, мягкий свет без теней; дома и деревья его заслоняют
-func _glow_mesh(c: Vector2, r: float) -> MeshInstance3D:
+func _glow_mesh(c: Vector2, r: float, al := 0.5) -> MeshInstance3D:
 	var n := 24
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -978,7 +1257,7 @@ func _glow_mesh(c: Vector2, r: float) -> MeshInstance3D:
 				st.add_index(v)
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
-	mi.material_override = _flat_mat(StoryUi.glow_tex(), Color(1.0, 0.82, 0.42, 0.5))
+	mi.material_override = _flat_mat(StoryUi.glow_tex(), Color(1.0, 0.82, 0.42, al))
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return mi
 
@@ -1015,6 +1294,9 @@ func show_area() -> void:
 	if a.is_empty():
 		return
 	var c := _home_pos(a)
+	var ga := _goal_area(a)
+	if not ga.is_empty():
+		c = Vector2(float(ga[0]), float(ga[1]))
 	if _goal_kind(a) == "find":
 		var g: Dictionary = _step(a)["goal"][2]
 		var hours := int(S()["h"]) - int(a.get("t0", S()["h"]))
@@ -1024,6 +1306,16 @@ func show_area() -> void:
 	var rig = game.rig
 	rig._target_t = Vector3(c.x, game.land.height_at(c.x, c.y), c.y)
 	rig._dist_t = clampf(rig._dist_t, 30.0, 55.0)
+
+
+## Советник один раз: как устроен скверик — пороги по скамьям и «Готово»
+func _advise_square() -> void:
+	var a: Dictionary = S()["active"]
+	if a.is_empty() or _goal_kind(a) != "square" or city.tips.has("story_square") or not hud._tip_free() or kit != null:
+		return
+	city.tips["story_square"] = true
+	hud.advisor("Скверик для стариков", "Скамьи, деревья и колодец ставьте рядом с домом просящего — это место подсвечено на земле. Старики начнут приходить, как только появятся скамьи: чем больше скамей, тем больше стариков.\n\n" \
+		+ "Когда хватит самого нужного, в «Просьбах горожан» появится «Готово». Нажмёте сразу — бронза (3 скамьи): +3% счастья домам вокруг. Пять скамей — серебро, +5%. Семь скамей и солнечные часы — золото, +7%. Награда остаётся навсегда.")
 
 
 ## Советник один раз: что такое истории горожан (когда появилось первое предложение)
@@ -1046,7 +1338,8 @@ func row_info() -> Dictionary:
 	var a: Dictionary = s["active"]
 	if not o.is_empty():
 		var sd := StoryDefs.story(String(o["id"]))
-		return {"title": sd["title"], "icon": sd.get("icon", "scroll"), "text": "%s просит о помощи" % StoryDefs.fill(String(sd.get("who", "")), o),
+		var row := String(sd.get("row", "%s просит о помощи" % String(sd.get("who", ""))))
+		return {"title": sd["title"], "icon": sd.get("icon", "scroll"), "text": StoryDefs.fill(row, o),
 			"tip": StoryDefs.fill(String(sd.get("ask", "")), o) + "\nНажмите «Выслушать» или свиток над их домом.",
 			"buttons": [["Выслушать", open_offer], ["Отложить", postpone]]}
 	if a.is_empty():
@@ -1063,7 +1356,8 @@ func row_info() -> Dictionary:
 		info["buttons"] = [["Посмотреть", play_ready]]
 		return info
 	var st := _step(a)
-	var text := StoryDefs.fill(String(st.get("text", "")), a)
+	var ch := String((a.get("flags", {}) as Dictionary).get("choice", ""))
+	var text := StoryDefs.fill(String((st.get("texts", {}) as Dictionary).get(ch, st.get("text", ""))), a)
 	var hours := int(s["h"]) - int(a.get("t0", s["h"]))
 	for hn: Array in st.get("hints", []):
 		if hours >= int(hn[0]):
@@ -1087,13 +1381,59 @@ func row_info() -> Dictionary:
 			for op: Array in g[1]:
 				bs.append([String(op[0]), press.bind("choice", String(op[1]))])
 			info["buttons"] = bs
-		"", "flag", "around", "built_after", "wait", "p":
+		"square":
+			var pr := progress(a, g)
+			text += " " + _square_text(sd, g, pr)
+			info["buttons"] = [["Показать", show_area]]
+			if bool(pr["min"]):
+				info["buttons"] = [["Готово (%s)" % TIER[int(pr["tier"])], press.bind("ready", "")], ["Показать", show_area]]
+		"flag":
+			if ch == "":
+				# ещё не выбрали (пропустили ролик и выбор): выбрать здесь
+				text = "Где устроить праздник? Выберите — и за дело."
+				for op: Array in choice_opts(sd):
+					info["buttons"].append([String(op[0]), press.bind("choice", String(op[1]))])
+			else:
+				var pr := progress(a, g)
+				if String(pr["txt"]) != "":
+					text += " Сейчас: %s." % pr["txt"]
+				info["buttons"] = [["Показать", show_area]]
+				for op: Array in choice_opts(sd):
+					if String(op[1]) != ch:
+						info["buttons"].append(["Лучше: %s" % String(op[0]).to_lower(), press.bind("choice", String(op[1]))])
+		"built_after":
+			var pr := progress(a, g)
+			if bool(pr.get("full", false)):
+				text += " Новый дом уже заняли — нужен такой, где свободно хотя бы %d места." % int(g[3])
+			info["buttons"] = [["Показать", show_area]]
+		"", "around", "wait", "p":
 			if kind != "":
 				var pr := progress(a, g)
 				if String(pr["txt"]) != "":
 					text += " %s." % pr["txt"]
 	info["text"] = text
 	return info
+
+
+## Строка скверика: что уже есть, какой порог сейчас и что нужно до следующего
+func _square_text(sd: Dictionary, g: Array, pr: Dictionary) -> String:
+	var names := {"bench": "скамей", "tree|cypress|palm": "деревьев", "well|smallfountain": "колодцев"}
+	var bits := []
+	for e: Array in pr["parts"]:
+		var nm := String(names.get(String(e[0]), String(e[0])))
+		bits.append("%s %d" % [nm, int(e[1])] if String(e[0]) == String(g[3]) else "%s %d/%d" % [nm, mini(int(e[1]), int(e[2])), int(e[2])])
+	var out := "Сейчас: " + ", ".join(bits) + "."
+	var tier := int(pr["tier"])
+	var tiers: Array = g[4]
+	var pct: Array = ((sd.get("reward", {}) as Dictionary).get("monument", [[0]]) as Array)[0]
+	if tier >= 1:
+		out += " Это %s: +%d%% счастья домам рядом." % [TIER[tier], int(pct[tier - 1])]
+	if tier < tiers.size():
+		var more := "%d скамей" % int(tiers[tier])
+		if tier == tiers.size() - 1 and g.size() > 5 and not bool(pr["sun"]):
+			more += " и солнечные часы"
+		out += " %s — %s." % [TIER[tier + 1].capitalize(), more]
+	return out
 
 
 ## Есть что показать в журнале (кнопка-книжка у «Просьб горожан»)
@@ -1156,7 +1496,17 @@ func _play(sd: Dictionary, bind: Dictionary, beats: Array, mode: String, after: 
 	kit.finished.connect(_cleanup)
 	ui.bubble(kit.block)
 	cine = {"story": sd, "bind": bind, "beats": beats, "i": -1, "bt": 0.0, "mode": mode, "after": after, "actors": {},
-		"wait": false, "choice": "", "opts": [], "end": false, "tcat": null}
+		"wait": false, "choice": "", "opts": [], "end": false, "tcat": null, "props": [], "lights": []}
+	# мягкий свет спереди, со стороны камеры, — только на героев ролика (слой Citizen.FACE_LAYER): тень от бровей
+	# не ложится на глаза, лица приветливые; город он не трогает
+	var fl := DirectionalLight3D.new()
+	fl.light_cull_mask = Citizen.FACE_LAYER
+	fl.light_energy = 0.0 if Citizen.plain_faces else FILL
+	fl.light_color = Color("fff1dc")
+	fl.light_specular = 0.0
+	fl.shadow_enabled = false
+	game.add_child(fl)
+	cine["fill"] = fl
 	_marks(false)
 	_next_beat()
 
@@ -1194,7 +1544,7 @@ func _skip() -> void:
 		for i in range(int(cine["i"]), beats.size()):
 			var b: Array = beats[maxi(i, 0)]
 			if String(b[0]) == "choice":
-				cine["choice"] = String(((b[3] as Array)[0] as Array)[1])
+				cine["choice"] = String((_avail(b[3])[0] as Array)[1])
 				break
 	_end_cine(0.9)
 
@@ -1217,6 +1567,18 @@ func _cleanup() -> void:
 	var tc = cine.get("tcat")
 	if tc != null and is_instance_valid(tc):
 		(tc as Node).queue_free()
+	var fl = cine.get("fill")
+	if fl != null and is_instance_valid(fl):
+		(fl as Node).queue_free()
+	for h in cine.get("props", []):
+		game.parts.remove(h)
+	for l in cine.get("lights", []):
+		game.night_lights.erase(l)
+		(l as Node).queue_free()
+	if bool(cine.get("dusk", false)):
+		game.look_hour = -1.0
+		game._set_hour(game.hour)
+	life.force_off()
 	ui.close()
 	for n in _hidden:
 		if n != null and is_instance_valid(n):
@@ -1242,9 +1604,20 @@ func _speaker(who: String) -> Dictionary:
 			"role": "кошка семьи %s" % StoryDefs.fam_gen(String(b.get("fam", "")))}
 	if who == "advisor":
 		return {"kind": "pic", "pic": "advisor.png", "name": "Советник Марк", "role": "советник градоначальника"}
-	return {"kind": "citizen", "seed": int(b.get("seed", 1)), "female": bool(b.get("female", false)), "child": bool(b.get("child", true)),
-		"cls": String(b.get("cls", "plebs")), "name": StoryDefs.fill(String(sd.get("who", "")), b), "role": StoryDefs.fill(String(sd.get("role", "")), b),
-		"pic": "class_%s.png" % String(b.get("cls", "plebs"))}
+	var ro := _role(b, who)
+	var nm: Array = (sd.get("roles", {}) as Dictionary).get(who, [sd.get("who", ""), sd.get("role", "")])
+	return {"kind": "citizen", "seed": int(ro["seed"]), "female": bool(ro["female"]), "child": bool(ro["child"]), "old": bool(ro.get("old", false)),
+		"cls": String(ro["cls"]), "name": StoryDefs.fill(String(nm[0]), b), "role": StoryDefs.fill(String(nm[1]), b),
+		"pic": "class_%s.png" % String(ro["cls"])}
+
+
+## Кто играет роль: облик (seed, пол, ребёнок, сословие, старик) — из bind["roles"] или общий (история с одним героем)
+func _role(b: Dictionary, role: String) -> Dictionary:
+	var roles: Dictionary = b.get("roles", {})
+	if roles.has(role):
+		return roles[role]
+	return {"seed": int(b.get("seed", 1)), "female": bool(b.get("female", false)), "child": bool(b.get("child", true)),
+		"cls": String(b.get("cls", "plebs")), "old": bool(b.get("old", false))}
 
 
 ## Где стоит человек роли who (или кошка): точка на земле и куда смотрит
@@ -1274,9 +1647,19 @@ func _beat_start(b: Array) -> void:
 		"actor":
 			_actor(String(b[1]), String(b[2]))
 		"fly":
-			var w := _who_at(String(b[1]))
-			var shot := _talk_shot(w[0], w[1], String(b[1]) == "cat")
-			cine["focus"] = Vector2((w[0] as Vector3).x, (w[0] as Vector3).z)
+			var shot: Array
+			if String(b[1]) == "square":
+				shot = _square_shot(_sq_center(bind))
+				cine["focus"] = _sq_center(bind)
+			elif String(b[1]) == "proc":
+				shot = (cine.get("proc", {}) as Dictionary).get("shot", [])
+				if shot.is_empty():
+					return
+				cine["focus"] = Vector2((shot[1] as Vector3).x, (shot[1] as Vector3).z)
+			else:
+				var w := _who_at(String(b[1]))
+				shot = _talk_shot(w[0], w[1], String(b[1]) == "cat")
+				cine["focus"] = Vector2((w[0] as Vector3).x, (w[0] as Vector3).z)
 			var cd: Vector2 = Vector2((shot[0] as Vector3).x, (shot[0] as Vector3).z) - (cine["focus"] as Vector2)
 			cine["cam_dir"] = cd.normalized() if cd.length() > 0.01 else Vector2(0, 1)
 			if bool(cine.get("snap", false)):
@@ -1285,9 +1668,22 @@ func _beat_start(b: Array) -> void:
 			else:
 				kit.cam_to(shot[0], shot[1], 1.7)
 		"anim":
-			var c = cine["actors"].get(String(b[1]))
-			if c != null:
-				(c as Citizen).play(String(b[2]))
+			if String(b[1]) == "guests":
+				var k := 0
+				for r in cine["actors"]:
+					if String(r) in ["bride", "groom"]:
+						continue
+					# гости — кто как: зеркально, вразнобой, не в такт
+					var gc := cine["actors"][r] as Citizen
+					var an := String(b[2])
+					if k % 2 == 1 and gc.anim.has_animation(an + "_M"):
+						an += "_M"
+					gc.play(an, 0.3, k * 0.37)
+					k += 1
+			else:
+				var c = cine["actors"].get(String(b[1]))
+				if c != null:
+					(c as Citizen).play(String(b[2]))
 		"walk":
 			var c = cine["actors"].get(String(b[1]))
 			if c != null:
@@ -1300,14 +1696,17 @@ func _beat_start(b: Array) -> void:
 			cine["wait"] = true
 		"choice":
 			ui.say(_speaker(String(b[1])), StoryDefs.fill(String(b[2]), bind))
-			cine["opts"] = b[3]
-			ui.choices(b[3], _picked)
+			var opts := _avail(b[3])
+			cine["opts"] = opts
+			ui.choices(opts, _picked)
 		"cat":
 			_cat_state(String(b[1]))
 		"fx":
 			var w := _who_at(String(b[2]))
 			if String(b[1]) == "hearts":
 				ui.hearts((w[0] as Vector3) + Vector3(0, 0.25, 0))
+			elif String(b[1]) == "petals":
+				ui.petals((w[0] as Vector3) + Vector3(0, 0.6, 0))
 			else:
 				game._puff(w[0], Color("fff3c8"))
 		"reward":
@@ -1316,6 +1715,19 @@ func _beat_start(b: Array) -> void:
 				game.sound.ui("coins")       # из звуков интерфейса владелец оставил только монетки
 		"cut":
 			cine["cut"] = 0.0
+		"elders":
+			life.force_on(_sq_center(bind), _sq_r(sd))
+		"dusk":
+			cine["dusk"] = true
+			game.look_hour = DUSK
+			game._set_hour(game.hour)
+		"proc":
+			if String(b[1]) == "set":
+				_proc_set()
+		"cheer":
+			_cheer(String(b[1]))
+		"enter":
+			_enter_house()
 		"wait":
 			pass
 
@@ -1325,6 +1737,9 @@ func _beat_tick(dt: float) -> void:
 	if cine.is_empty() or bool(cine["end"]):
 		return
 	ui.track()
+	var fl = cine.get("fill")
+	if fl != null and is_instance_valid(fl) and game.rig != null:
+		(fl as Node3D).global_transform.basis = game.rig.cam.global_transform.basis * Basis(Vector3.RIGHT, -0.3)
 	_crowd_clear()
 	cine["bt"] = float(cine["bt"]) + dt
 	var bt: float = cine["bt"]
@@ -1337,8 +1752,18 @@ func _beat_tick(dt: float) -> void:
 		"fly":
 			if not kit.moving() or bt > 3.0:
 				_next_beat()
-		"anim", "actor", "cat":
+		"anim", "actor", "cat", "elders", "dusk":
 			if bt >= 0.35:
+				_next_beat()
+		"proc":
+			if String(b[1]) != "walk" or _proc_step(dt) or bt > 30.0:
+				_next_beat()
+		"cheer":
+			if bt >= 1.4:
+				_next_beat()
+		"enter":
+			_enter_step_fade(dt)
+			if bt >= 1.6:
 				_next_beat()
 		"fx":
 			if bt >= 0.6:
@@ -1402,11 +1827,24 @@ func _picked(val: String) -> void:
 ## Человек для ролика: у двери дома (лицом на улицу) или в нескольких шагах от кошки (лицом к ней)
 func _actor(role: String, where: String) -> void:
 	var b: Dictionary = cine["bind"]
-	var c: Citizen = game.people.actor(int(b.get("seed", 1)), bool(b.get("female", false)), bool(b.get("child", true)), String(b.get("cls", "plebs")))
+	var c := _make_actor(role)
 	var h: Dictionary = city.buildings.get(int(b.get("home", -1)), {})
 	var p := Vector2.ZERO
 	var yaw := 0.0
-	if where == "near_cat":
+	if where == "beside" and not (cine["actors"] as Dictionary).is_empty():
+		# рядом с первым (жених рядом с невестой): на шаг в сторону, чуть повернувшись к ней
+		var o: Node3D = cine["actors"].values()[0]
+		var f := Vector2(sin(o.rotation.y), cos(o.rotation.y))
+		var side := Vector2(f.y, -f.x)
+		p = Vector2(o.position.x, o.position.z) + side * 0.95 - f * 0.15
+		yaw = o.rotation.y + 0.35
+	elif where == "square":
+		# старик — посреди скверика, на просторе (не у стены), лицом к своему дому: скверик со стариками — за ним
+		var sc := _sq_center(b)
+		p = _open_spot(sc)
+		var to: Vector2 = (h["pos"] as Vector2) if not h.is_empty() else p + Vector2(0, 1)
+		yaw = atan2(to.x - p.x, to.y - p.y)
+	elif where == "near_cat":
 		var cp3: Vector3 = _who_at("cat")[0]
 		var cp := Vector2(cp3.x, cp3.z)
 		p = _approach()
@@ -1418,6 +1856,52 @@ func _actor(role: String, where: String) -> void:
 	c.position = Vector3(p.x, game.land.height_at(p.x, p.y), p.y)
 	c.rotation.y = yaw
 	c.play("Idle")
+	_put_actor(role, c)
+
+
+## Свободное место у точки c, где вокруг (1,2 м) ни построек, ни воды: человеку в кадре не мешает стена
+func _open_spot(c: Vector2) -> Vector2:
+	for r: float in [0.0, 1.0, 2.0, 3.0, 4.0, 5.5, 7.0]:
+		for k in (1 if r == 0.0 else 12):
+			var q := c + Vector2(cos(k * TAU / 12.0), sin(k * TAU / 12.0)) * r
+			var ok: bool = game.people._hide_ok(q)
+			for j in 8:
+				ok = ok and game.land.occ_at(q + Vector2(cos(j * TAU / 8.0), sin(j * TAU / 8.0)) * 1.2) == 0
+			if ok:
+				return q
+	var q: Vector2 = game.people._near_free(c, 12)
+	return q if q != Vector2.INF else c
+
+
+## Человек роли для ролика: облик по роли; festive — на свадьбе невеста в платье цвета огня и с венком
+func _make_actor(role: String, festive := false) -> Citizen:
+	var ro := _role(cine["bind"], role)
+	var c: Citizen = game.people.actor(int(ro["seed"]), bool(ro["female"]), bool(ro["child"]), String(ro["cls"]), bool(ro.get("old", false)))
+	if role == "bride" and festive:
+		_bride_look(c)
+	return c
+
+
+## Невеста: платье цвета огня (flammeum — так в Риме одевались к свадьбе) и венок
+static func _bride_look(c: Citizen) -> void:
+	if RenderingServer.get_current_rendering_method() != "gl_compatibility":
+		for mi: MeshInstance3D in c.find_children("*", "MeshInstance3D", true, false):
+			mi.set_instance_shader_parameter("cloth_main", Color("e98a2e").srgb_to_linear())
+			mi.set_instance_shader_parameter("cloth_second", Color("f4ead6").srgb_to_linear())
+	var sks := c.find_children("*", "Skeleton3D", true, false)
+	if sks.is_empty():
+		return
+	var att := BoneAttachment3D.new()
+	att.bone_name = "Head"
+	(sks[0] as Skeleton3D).add_child(att)
+	var cr := (load("res://assets/synty/FBX/Attachments/SM_Chr_Attach_Crown_Leaf_01.fbx") as PackedScene).instantiate() as Node3D
+	for mi: MeshInstance3D in cr.find_children("*", "MeshInstance3D", true, false):
+		mi.material_override = Citizen._plain("A")
+		mi.layers |= Citizen.FACE_LAYER
+	att.add_child(cr)
+
+
+func _put_actor(role: String, c: Citizen) -> void:
 	var old = cine["actors"].get(role)
 	if old != null and is_instance_valid(old):
 		(old as Node).queue_free()
@@ -1431,13 +1915,86 @@ func _talk_shot(p: Vector3, f: Vector2, is_cat: bool) -> Array:
 	var d0 := 3.6 if is_cat else 5.2
 	var h0 := 1.5 if is_cat else 1.9
 	var turns := [0.55, -0.55, 0.95, -0.95, 0.2, -0.2, 1.35, -1.35] if is_cat else [0.42, -0.42, 0.8, -0.8, 0.1, 1.2, -1.2]
-	for k: float in [1.0, 0.8, 0.62]:
+	for k: float in [1.0, 0.8]:
 		for turn: float in turns:
 			var dir := f.rotated(-turn)
 			var cam := p + Vector3(dir.x, 0, dir.y) * d0 * k + Vector3.UP * h0 * k
 			if _clear_view(Vector2(cam.x, cam.z), Vector2(p.x, p.z)):
 				return [cam, p + Vector3.UP * (0.1 if is_cat else 0.3) - Vector3(dir.x, 0, dir.y) * 0.6]
+	# тесно (узкая улица, напротив дома): повыше, над заборами и украшениями — не вплотную к лицу
+	for hk: float in [1.8, 2.6]:
+		for turn: float in turns:
+			var dir := f.rotated(-turn)
+			var cam := p + Vector3(dir.x, 0, dir.y) * d0 + Vector3.UP * h0 * hk
+			if _clear_view3(cam, p + Vector3.UP * (0.2 if is_cat else 1.0)):
+				return [cam, p + Vector3.UP * (0.1 if is_cat else 0.5) - Vector3(dir.x, 0, dir.y) * 0.6]
+	for turn: float in turns:
+		var dir := f.rotated(-turn)
+		var cam := p + Vector3(dir.x, 0, dir.y) * d0 * 0.62 + Vector3.UP * h0 * 0.62
+		if _clear_view(Vector2(cam.x, cam.z), Vector2(p.x, p.z)):
+			return [cam, p + Vector3.UP * (0.1 if is_cat else 0.3) - Vector3(dir.x, 0, dir.y) * 0.6]
 	return [p + Vector3(f.x, 0, f.y) * 2.2 + Vector3.UP * 5.0, p + Vector3.UP * 0.3]
+
+
+## То же, но с высотой: луч от камеры до героя идёт над низкими украшениями и крышами ниже него, но не сквозь дом и не
+## сквозь холм. Высота постройки — по её чертежу (top_y)
+func _clear_view3(cam: Vector3, at: Vector3) -> bool:
+	var a := Vector2(cam.x, cam.z)
+	var b := Vector2(at.x, at.z)
+	var n := maxi(1, int(a.distance_to(b) / 0.15))
+	var tops := {}
+	for k in n:
+		var u := float(k) / n
+		var q := a.lerp(b, u)
+		if q.distance_to(b) < 0.7:
+			break
+		var y := lerpf(cam.y, at.y, u)
+		if y < game.land.height_at(q.x, q.y) + 0.15:
+			return false
+		var id: int = game.land.occ_at(q)
+		if id == 0:
+			continue
+		if not tops.has(id):
+			var bb: Dictionary = city.buildings.get(id, {})
+			tops[id] = float(bb["y"]) + city.blueprint(bb).top_y() if not bb.is_empty() else INF
+		if y < float(tops[id]):
+			return false
+	# кроны деревьев шире ствола (на земле занят только ствол): луч сквозь крону — тоже заслонено
+	for cr: Array in _crowns(b):
+		var cp: Vector2 = cr[0]
+		var q := Geometry2D.get_closest_point_to_segment(cp, a, b)
+		if q.distance_to(cp) > float(cr[1]) or q.distance_to(b) < 1.5:
+			continue
+		var u := a.distance_to(q) / maxf(a.distance_to(b), 0.01)
+		var y := lerpf(cam.y, at.y, u)
+		if y > float(cr[2]) and y < float(cr[3]):
+			return false
+	return true
+
+
+## Кроны деревьев (украшения и природа) в 45 м от точки: [середина, радиус, низ кроны, верх] — один раз на ролик
+func _crowns(near: Vector2) -> Array:
+	if cine.has("crowns") and (cine["crowns_at"] as Vector2).distance_to(near) < 15.0:
+		return cine["crowns"]
+	var out := []
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if String(Defs.B.get(b["type"], {}).get("sub", "")) != "trees" or (b["pos"] as Vector2).distance_to(near) > 45.0:
+			continue
+		var top: float = city.blueprint(b).top_y()
+		out.append([b["pos"], clampf(top * 0.4, 0.8, 2.2), float(b["y"]) + top * 0.45, float(b["y"]) + top])
+	var k0 := Vector2i(int(near.x / 2.0), int(near.y / 2.0))
+	for j in range(-22, 23):
+		for i in range(-22, 23):
+			for it: Dictionary in game.nature.get(k0 + Vector2i(i, j), []):
+				if String(it.get("name", "")).contains("Tree") and (it["p"] as Vector2).distance_to(near) <= 45.0:
+					var p: Vector2 = it["p"]
+					var gy: float = game.land.height_at(p.x, p.y)
+					out.append([p, 2.0, gy + 2.0, gy + 6.5])
+	if not cine.is_empty():
+		cine["crowns"] = out
+		cine["crowns_at"] = near
+	return out
 
 
 ## Между камерой (a) и героем (b) по земле — ни построек, ни украшений (у самого героя — можно: он у двери, у копны)
@@ -1568,3 +2125,325 @@ func _tcat() -> Node3D:
 	n.rotation.y = hash(b.get("fam", "")) % 628 / 100.0
 	cine["tcat"] = n
 	return n
+
+
+# ---------- скверик и свадьба: варианты выбора, кадры, шествие ----------
+
+## Варианты выбора, которые правда можно выбрать: у варианта с постройками [4-й элемент] хоть одна из них открыта
+## (таверна — если изучен термополий или таверна)
+func _avail(opts: Array) -> Array:
+	var out := []
+	for o: Array in opts:
+		if o.size() > 3 and o[3] is Array:
+			var any := false
+			for t in o[3]:
+				any = any or city.unlocked(String(t))
+			if not any:
+				continue
+		out.append(o)
+	return out if not out.is_empty() else opts
+
+
+## Варианты выбора истории (без «позже») — для кнопок в золотой строке: [[подпись, значение], …]
+func choice_opts(sd: Dictionary) -> Array:
+	var out := []
+	for st: Dictionary in sd.get("steps", []):
+		for b: Array in st.get("cine", []):
+			if String(b[0]) == "choice":
+				for o: Array in _avail(b[3]):
+					if String(o[1]) != "later":
+						out.append([String(o[0]), String(o[1])])
+				return out
+	return out
+
+
+## Радиус скверика (из цели истории)
+static func _sq_r(sd: Dictionary) -> float:
+	var st := StoryDefs.goal_step(sd, "square")
+	return float(st["goal"][1]) if not st.is_empty() else 15.0
+
+
+## Середина скверика: запомненная (когда нажали «Готово») или среди скамеек у дома
+func _sq_center(b: Dictionary) -> Vector2:
+	var sq: Array = (b.get("flags", {}) as Dictionary).get("sq", [])
+	if sq.size() == 2:
+		return Vector2(float(sq[0]), float(sq[1]))
+	return square_center(b, _sq_r(StoryDefs.story(String(b.get("id", "square")))))
+
+
+## Общий план скверика: сверху-сбоку, откуда ни дома, ни деревья не заслоняют середину
+func _square_shot(c: Vector2) -> Array:
+	var h: float = game.land.height_at(c.x, c.y)
+	var home: Dictionary = city.buildings.get(int(cine["bind"].get("home", -1)), {})
+	var a0 := 0.0
+	if not home.is_empty():
+		var d: Vector2 = c - (home["pos"] as Vector2)
+		a0 = atan2(d.x, d.y)              # со стороны, противоположной дому: дом — фоном
+	for k in 10:
+		var a: float = a0 + [0.0, 0.5, -0.5, 1.0, -1.0, 1.5, -1.5, 2.2, -2.2, PI][k]
+		var dir := Vector2(sin(a), cos(a))
+		var cam := c + dir * 10.5
+		if _clear_view3(Vector3(cam.x, h + 5.2, cam.y), Vector3(c.x, h + 0.6, c.y)):
+			return [Vector3(cam.x, h + 5.2, cam.y), Vector3(c.x, h + 0.4, c.y)]
+	return [Vector3(c.x + 5.0, h + 9.0, c.y + 5.0), Vector3(c.x, h + 0.4, c.y)]
+
+
+## Новый дом молодых для шествия: построенный для них, где они живут теперь, или (пересмотр без дома) дом невесты
+func _proc_house(b: Dictionary) -> Dictionary:
+	var h: Dictionary = city.buildings.get(int((b.get("flags", {}) as Dictionary).get("built", -1)), {})
+	if h.is_empty() and String(b.get("couple", "")) != "":
+		h = city.buildings.get(_find_family(String(b["couple"])), {})
+	if h.is_empty():
+		h = city.buildings.get(int(b.get("home", -1)), city.center())
+	return h
+
+
+## Шествие: путь от дома невесты к новому дому (последние PROC_LEN м), все на местах, у двери — две жаровни
+func _proc_set() -> void:
+	var b: Dictionary = cine["bind"]
+	var to_h := _proc_house(b)
+	var from_h: Dictionary = city.buildings.get(int(b.get("home", -1)), {})
+	var door: Vector2 = city.door_point(to_h)
+	var fwd := City.facing(float(to_h.get("yaw", 0.0)))
+	var start: Vector2 = city.door_point(from_h) if not from_h.is_empty() and int(from_h["id"]) != int(to_h["id"]) else door + fwd * (PROC_LEN + 4.0)
+	var path: PackedVector2Array = game.people._path(start, door)
+	if path.size() < 2:
+		path = PackedVector2Array([door + fwd * (PROC_LEN + 4.0), door])
+	var lead := 3.4                       # гости идут позади — путь начинается раньше пары
+	var pts := _tail(path, PROC_LEN + lead)
+	var pr := {"pts": pts, "len": _plen(pts), "s": minf(lead, _plen(pts) * 0.3), "door": door, "cheer": lead + 2.5}
+	cine["proc"] = pr
+	for e: Array in PROC:
+		var c := _make_actor(String(e[0]), true)
+		_put_actor(String(e[0]), c)
+		c.play("Walk", 0.0, randf())
+	_proc_place()
+	# камера — сбоку от шествия, с той стороны, где ничто не заслоняет
+	var at := _proc_at(pts, float(pr["len"]) * 0.5)
+	var mid: Vector2 = at[0]
+	var side := Vector2(-(at[1] as Vector2).y, (at[1] as Vector2).x)
+	pr["side"] = side if _clear_view(mid + side * 7.0, mid) or not _clear_view(mid - side * 7.0, mid) else -side
+	pr["cam_i"] = -1
+	pr["shot"] = _proc_cam()
+	# огонь у двери нового дома: две жаровни по бокам (только на время ролика)
+	var bp := Catalog.make("brazier")
+	var ax := Vector2(fwd.y, -fwd.x)
+	for sx: float in [-1.0, 1.0]:
+		var q := door + ax * 2.1 * sx + fwd * 0.3
+		if game.land.occ_at(q) != 0:
+			continue
+		var xf := Transform3D(Basis(Vector3.UP, float(to_h.get("yaw", 0.0))), Vector3(q.x, game.land.height_at(q.x, q.y), q.y))
+		cine["props"].append(game.parts.place(bp, xf))
+		for lp in bp.lights:
+			cine["lights"].append(game._light(xf * lp, 0.55))
+	game._set_hour(game.hour)             # огни в жаровнях разгораются сразу (вечерний свет)
+
+
+## Последние len м пути
+static func _tail(path: PackedVector2Array, len: float) -> PackedVector2Array:
+	var out := PackedVector2Array([path[path.size() - 1]])
+	var acc := 0.0
+	for i in range(path.size() - 1, 0, -1):
+		var a := path[i]
+		var b := path[i - 1]
+		var d := a.distance_to(b)
+		if acc + d >= len:
+			out.append(a.lerp(b, (len - acc) / maxf(d, 0.001)))
+			out.reverse()
+			return out
+		acc += d
+		out.append(b)
+	out.reverse()
+	return out
+
+
+static func _plen(pts: PackedVector2Array) -> float:
+	var n := 0.0
+	for i in pts.size() - 1:
+		n += pts[i].distance_to(pts[i + 1])
+	return n
+
+
+## Точка пути на s м от начала и куда он идёт там: [точка, направление]
+static func _proc_at(pts: PackedVector2Array, s: float) -> Array:
+	var acc := 0.0
+	s = maxf(0.0, s)
+	for i in pts.size() - 1:
+		var d := pts[i].distance_to(pts[i + 1])
+		if acc + d >= s or i == pts.size() - 2:
+			var dir := (pts[i + 1] - pts[i]).normalized() if d > 0.001 else Vector2(0, 1)
+			return [pts[i].lerp(pts[i + 1], clampf((s - acc) / maxf(d, 0.001), 0.0, 1.0)), dir]
+		acc += d
+	return [pts[0], Vector2(0, 1)]
+
+
+## Все на своих местах в шествии (направление — сглаженное по паре метров пути: на углах не дёргаются)
+func _proc_place() -> void:
+	var pr: Dictionary = cine["proc"]
+	var pts: PackedVector2Array = pr["pts"]
+	for e: Array in PROC:
+		var c = cine["actors"].get(String(e[0]))
+		if c == null or not is_instance_valid(c):
+			continue
+		var s0 := float(pr["s"]) + float(e[1])
+		var a := _proc_at(pts, s0)
+		var f: Vector2 = (_proc_at(pts, s0 + 0.8)[0] as Vector2) - (_proc_at(pts, s0 - 0.8)[0] as Vector2)
+		f = f.normalized() if f.length() > 0.01 else (a[1] as Vector2)
+		var q: Vector2 = (a[0] as Vector2) + Vector2(-f.y, f.x) * float(e[2])
+		var n := c as Node3D
+		n.position = Vector3(q.x, game.land.height_at(q.x, q.y), q.y)
+		n.rotation.y = lerp_angle(n.rotation.y, atan2(f.x, f.y), 0.25) if bool(pr.get("placed", false)) else atan2(f.x, f.y)
+	pr["placed"] = true
+
+
+## Откуда смотреть на шествие (от пары): [вперёд, вбок, высота] — спереди (идут на камеру), сбоку, выше, сверху
+const PROC_CAMS := [[6.0, 1.4, 2.3], [2.2, 6.2, 2.6], [2.2, -6.2, 2.6], [4.0, 4.6, 4.6], [4.0, -4.6, 4.6], [5.5, 0.0, 4.2],
+	[-5.5, 1.5, 3.8], [4.0, 0.5, 5.6], [-4.0, 0.5, 5.6], [3.0, 5.0, 6.5], [3.0, -5.0, 6.5], [2.0, 2.0, 8.0]]
+
+
+## Камера шествия: из PROC_CAMS — первая по порядку, откуда видно пару (раз в 0,8 с; между проверками — прежняя, пока
+## её видно: камера не мечется); смотрит на пару
+func _proc_cam() -> Array:
+	var pr: Dictionary = cine["proc"]
+	var a := _proc_at(pr["pts"], float(pr["s"]) - 0.4)
+	var c: Vector2 = a[0]
+	var d: Vector2 = a[1]
+	var side: Vector2 = pr["side"]
+	var h: float = game.land.height_at(c.x, c.y)
+	var head := Vector3(c.x, h + 1.0, c.y)
+	var order := range(PROC_CAMS.size())
+	var ci := int(pr.get("cam_i", -1))
+	if ci >= 0 and float(pr.get("re", 0.0)) > 0.0:
+		order.erase(ci)
+		order.push_front(ci)
+	else:
+		pr["re"] = 0.8
+	var pick := PROC_CAMS.size() - 1
+	for i: int in order:
+		var e: Array = PROC_CAMS[i]
+		var q := c + d * float(e[0]) + side * float(e[1])
+		if _clear_view3(Vector3(q.x, h + float(e[2]), q.y), head):
+			pick = i
+			break
+	pr["cam_i"] = pick
+	var e: Array = PROC_CAMS[pick]
+	var q := c + d * float(e[0]) + side * float(e[1])
+	return [Vector3(q.x, h + float(e[2]), q.y), Vector3(c.x, h + 0.7, c.y) + Vector3(d.x, 0, d.y) * 0.5]
+
+
+## Шествие идёт: шаг, камера следом, гости кричат «Таласио!»; true — пара у двери (повернулась к гостям)
+func _proc_step(dt: float) -> bool:
+	var pr: Dictionary = cine.get("proc", {})
+	if pr.is_empty():
+		return true
+	var stop := float(pr["len"]) - 1.2
+	if pr.has("aside"):
+		return _proc_aside(dt)
+	pr["re"] = float(pr.get("re", 0.0)) - dt
+	pr["s"] = minf(stop, float(pr["s"]) + PROC_V * dt)
+	_proc_place()
+	var shot := _proc_cam()
+	if not kit.moving():
+		kit.cam_set(kit.pos.lerp(shot[0], minf(1.0, dt * 2.5)), kit.look.lerp(shot[1], minf(1.0, dt * 3.0)))
+	cine["focus"] = Vector2((shot[1] as Vector3).x, (shot[1] as Vector3).z)
+	if float(pr["s"]) >= float(pr["cheer"]):
+		pr["cheer"] = float(pr["cheer"]) + 5.0
+		_cheer("Таласио!")
+	if float(pr["s"]) < stop:
+		return false
+	# пришли: молодые поворачиваются к улице, гости расступаются по бокам (перед молодыми — камера)
+	var cp := Vector2.ZERO
+	var fs := Vector2.ZERO
+	for r in ["bride", "groom"]:
+		var n = cine["actors"].get(r)
+		if n != null and is_instance_valid(n):
+			cp += Vector2((n as Node3D).position.x, (n as Node3D).position.z) * 0.5
+			(n as Node3D).rotation.y += PI
+			(n as Citizen).play("Idle", 0.3)
+			fs = Vector2(sin((n as Node3D).rotation.y), cos((n as Node3D).rotation.y))
+	var aside := {}
+	var k := 0
+	for e: Array in PROC:
+		if String(e[0]) in ["bride", "groom"]:
+			continue
+		var a: float = [1.05, -1.05, 1.5, -1.5][k % 4]
+		var q := cp + fs.rotated(a) * (1.7 + 0.35 * (k / 2))
+		if not game.people._hide_ok(q):
+			q = cp + fs.rotated(a * 0.6) * 2.2
+		aside[String(e[0])] = q
+		k += 1
+	pr["aside"] = aside
+	pr["cp"] = cp
+	pr["at"] = 0.0
+	return false
+
+
+## Гости отходят в стороны и поворачиваются к молодым; true — встали
+func _proc_aside(dt: float) -> bool:
+	var pr: Dictionary = cine["proc"]
+	pr["at"] = float(pr["at"]) + dt
+	var cp: Vector2 = pr["cp"]
+	var done := true
+	for r in pr["aside"]:
+		var c = cine["actors"].get(r)
+		if c == null or not is_instance_valid(c):
+			continue
+		var n := c as Node3D
+		var p := Vector2(n.position.x, n.position.z)
+		var to: Vector2 = pr["aside"][r]
+		if p.distance_to(to) > 0.05 and float(pr["at"]) < 2.5:
+			done = false
+			var d := (to - p).normalized()
+			p = p.move_toward(to, 1.3 * dt)
+			n.position = Vector3(p.x, game.land.height_at(p.x, p.y), p.y)
+			n.rotation.y = lerp_angle(n.rotation.y, atan2(d.x, d.y), 0.3)
+			(c as Citizen).play("Walk", 0.2)
+		else:
+			n.rotation.y = lerp_angle(n.rotation.y, atan2(cp.x - p.x, cp.y - p.y), 0.25)
+			(c as Citizen).play("Idle", 0.3)
+	return done and float(pr["at"]) > 0.6
+
+
+## Гости кричат (подписи над ними, вразнобой)
+func _cheer(text: String) -> void:
+	var k := 0
+	for r in cine["actors"]:
+		if String(r) in ["bride", "groom"] or k >= 3:
+			continue
+		var n = cine["actors"][r]
+		if n == null or not is_instance_valid(n):
+			continue
+		ui.bubble3d((n as Node3D).position + Vector3(0, 1.45 + 0.12 * k, 0), text, 2.2, 26)
+		k += 1
+
+
+## Молодые входят в новый дом: поворачиваются к двери и идут (тают — _enter_step_fade)
+func _enter_house() -> void:
+	var pr: Dictionary = cine.get("proc", {})
+	if pr.is_empty():
+		return
+	var door: Vector2 = pr["door"]
+	for r in ["bride", "groom"]:
+		var c = cine["actors"].get(r)
+		if c != null and is_instance_valid(c):
+			var n := c as Node3D
+			n.rotation.y = atan2(door.x - n.position.x, door.y - n.position.z)
+			(c as Citizen).play("Walk", 0.2)
+
+
+func _enter_step_fade(dt: float) -> void:
+	var pr: Dictionary = cine.get("proc", {})
+	if pr.is_empty():
+		return
+	var door: Vector2 = pr["door"]
+	var t := float(cine["bt"])
+	for r in ["bride", "groom"]:
+		var c = cine["actors"].get(r)
+		if c == null or not is_instance_valid(c):
+			continue
+		var n := c as Node3D
+		var p := Vector2(n.position.x, n.position.z)
+		if p.distance_to(door) > 0.15:
+			p = p.move_toward(door, 0.9 * dt)
+			n.position = Vector3(p.x, game.land.height_at(p.x, p.y), p.y)
+		(c as Citizen).set_alpha(clampf(1.0 - (t - 0.6) / 0.9, 0.0, 1.0))

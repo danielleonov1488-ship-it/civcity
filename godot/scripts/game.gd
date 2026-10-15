@@ -46,6 +46,7 @@ var minimized_test := false           # проверки: «окно свёрн�
 var real_min_pause := OS.get_environment("CIVCITY_NOMINPAUSE") != "1"
 var day_t := 0.0
 var hour := 8.0
+var look_hour := -1.0                 # ≥ 0 — свет как в этот час (свадебный ролик вечером); часы игры идут как шли
 var clock_hours := true
 var shot_path := ""
 var shot_frame := 200
@@ -578,13 +579,14 @@ func _grading() -> void:
 ## загораются постепенно в сумерках. Цвет кадра — тёплые света и прохладные тени (grade.gdshader).
 func _set_hour(h: float) -> void:
 	hour = fposmod(h, 24.0)
+	var lh := look_hour if look_hour >= 0.0 else hour   # свет: часы игры или час ролика
 	# день: 0 — ночь, 1 — полный день; рассвет 4.6–7.2, закат 18.6–21.6
-	var day := smoothstep(4.3, 6.4, hour) * (1.0 - smoothstep(19.8, 22.4, hour))
+	var day := smoothstep(4.3, 6.4, lh) * (1.0 - smoothstep(19.8, 22.4, lh))
 	# золото: утро и вечер
-	var gold := (smoothstep(4.5, 6.0, hour) * (1.0 - smoothstep(7.5, 10.5, hour))) + (smoothstep(15.5, 18.5, hour) * (1.0 - smoothstep(21.0, 22.4, hour)))
+	var gold := (smoothstep(4.5, 6.0, lh) * (1.0 - smoothstep(7.5, 10.5, lh))) + (smoothstep(15.5, 18.5, lh) * (1.0 - smoothstep(21.0, 22.4, lh)))
 	gold = clampf(gold, 0.0, 1.0)
 	# солнце: с востока на запад по северной стороне неба, высота не больше 46°
-	var t := clampf((hour - 4.6) / 17.6, 0.0, 1.0)
+	var t := clampf((lh - 4.6) / 17.6, 0.0, 1.0)
 	var ang := t * PI
 	var elev := deg_to_rad(4.0 + 44.0 * sin(ang))
 	# как в Town to City: солнце весь день справа — утром спереди-справа, днём сбоку, вечером сзади-справа;
@@ -630,7 +632,7 @@ func _set_hour(h: float) -> void:
 	var lamp := 1.0 - smoothstep(0.15, 0.7, day)
 	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
 	if lm:
-		lm.emission_energy_multiplier = lamp * (0.018 if hour > 23.0 or hour < 4.0 else 0.045)
+		lm.emission_energy_multiplier = lamp * (0.018 if lh > 23.0 or lh < 4.0 else 0.045)
 	var em := (Parts._special_mesh("#ember") as PrimitiveMesh).material as StandardMaterial3D
 	if em:
 		em.emission_energy_multiplier = lamp * 1.6

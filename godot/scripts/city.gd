@@ -2067,6 +2067,11 @@ func _story_rehome(old: int, new: int) -> void:
 		var a: Dictionary = stories[k]
 		if not a.is_empty() and int(a.get("home", -1)) == old:
 			a["home"] = new
+		if not a.is_empty() and int(a.get("home2", -1)) == old:
+			a["home2"] = new                   # дом жениха
+		var fl: Dictionary = a.get("flags", {})
+		if int(fl.get("built", -1)) == old:
+			fl["built"] = new                  # новый дом молодых
 	for e: Dictionary in stories["bonus"] + stories["pets"] + (stories["done"] as Dictionary).values():
 		if e.has("home") and int(e["home"]) == old:
 			e["home"] = new

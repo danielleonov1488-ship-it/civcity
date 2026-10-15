@@ -349,6 +349,92 @@ func anim_len(name: String) -> float:
 	return 0.0
 
 
+static var _face_meshes := {}          # «сетка тела Synty:старик» → её копия с поправленными бровями (для роликов и портретов)
+static var _silver: StandardMaterial3D
+const BROW_UV := Vector2(0.0515, 0.816) # брови на атласе — пятно цвета волос
+const GREY_UV := Vector2(0.3896, 0.9912) # светло-серая полоса атласа (её шейдер одежды не перекрашивает) — седые брови
+const STUBBLE_UV := Vector2(0.0186, 0.835) # щетина на подбородке (и бритая голова) у мужчин Synty
+const SKIN_UV := Vector2(0.0204, 0.8139)   # кожа лица
+const FACE_LAYER := 1 << 10            # слой «лица вблизи»: свет-заполнение в роликах историй светит только на них
+static var plain_faces := false        # проверка «до/после»: лица вблизи как раньше (без правки бровей и света спереди)
+
+
+## Лицо вблизи (ролики историй, портреты в облачке). У мужчин Synty одна широкая бровь-брусок, она нависает над глазами
+## и закрывает их верхнюю половину; у тёмных вариантов палитры (B, C) бровь почти чёрная — вблизи, да ещё в тени
+## от бруска, выходит сплошная чёрная полоса, как тёмные очки. Это рисунок Synty (тот же брусок с их же материалом),
+## не наш материал. Тем, кого показываем вблизи, даём копию сетки: бровь тоньше и выше (над глазами — полоска кожи),
+## середина бруска уходит в лоб — выходят две брови. У женщин брови и так две — их чуть тоньше и выше.
+## Толпа на улицах — как была (там лицо — пара точек), и сетки общие: одна копия на модель.
+## old — старик: брови седые; young — ребёнок: без щетины (дети у нас — уменьшенные взрослые Synty).
+## Ещё — слой FACE_LAYER: в ролике на лица светит мягкий свет спереди (Stories)
+static func face_fix(n: Node, old := false, young := false) -> void:
+	if plain_faces:
+		return
+	for mi: MeshInstance3D in n.find_children("*", "MeshInstance3D", true, false):
+		if mi.skin != null and mi.mesh is ArrayMesh:
+			mi.mesh = _face_mesh(mi.mesh, old, young)
+		mi.layers |= FACE_LAYER
+
+
+## Старик: волосы и борода седые, брови светлые
+static func elder_look(n: Node) -> void:
+	if _silver == null:
+		_silver = StandardMaterial3D.new()
+		_silver.albedo_color = Color("d2cdc4")
+		_silver.roughness = 0.9
+	for att in n.find_children("*", "BoneAttachment3D", true, false):
+		for mi: MeshInstance3D in att.find_children("*", "MeshInstance3D", true, false):
+			mi.material_override = _silver
+	face_fix(n, true)
+
+
+static func _face_mesh(m: ArrayMesh, old := false, young := false) -> ArrayMesh:
+	var key := "%d:%s:%s" % [m.get_instance_id(), old, young]
+	if _face_meshes.has(key):
+		return _face_meshes[key]
+	_face_meshes[key] = m
+	if m.get_surface_count() != 1 or m.get_blend_shape_count() > 0:
+		return m
+	var arr := m.surface_get_arrays(0)
+	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var uv: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
+	var brow := []
+	var y1 := -INF
+	var one := false                     # брусок через всё лицо (есть вершины посередине)
+	for i in v.size():
+		if v[i].y > 1.55 and absf(uv[i].x - BROW_UV.x) < 0.01 and absf(uv[i].y - BROW_UV.y) < 0.01:
+			brow.append(i)
+			y1 = maxf(y1, v[i].y)
+			one = one or absf(v[i].x) < 0.004
+	if brow.is_empty():
+		return m
+	var k := 0.6 if one else 0.8         # толщина брови (доля прежней)
+	var lift := 0.006 if one else 0.003  # и выше на столько
+	for i: int in brow:
+		var p := v[i]
+		p.y = y1 + lift - (y1 - p.y) * k
+		if not one:
+			p.y += 0.006 * (1.0 - clampf(absf(p.x) / 0.06, 0.0, 1.0))   # у переносицы — повыше: взгляд добрее, не хмурый
+		if one and absf(p.x) < 0.004:
+			p.z -= 0.014                     # середина бруска — в лоб: две брови, сходятся к переносице
+		v[i] = p
+		if old:
+			uv[i] = GREY_UV
+	if young:
+		for i in v.size():
+			if v[i].y > 1.45 and absf(uv[i].x - STUBBLE_UV.x) < 0.005 and absf(uv[i].y - STUBBLE_UV.y) < 0.005:
+				uv[i] = SKIN_UV
+	arr[Mesh.ARRAY_VERTEX] = v
+	arr[Mesh.ARRAY_TEX_UV] = uv
+	var fmt := m.surface_get_format(0)
+	var flags := fmt & (Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS | (((1 << 12) - 1) << Mesh.ARRAY_FORMAT_CUSTOM_BASE))
+	var out := ArrayMesh.new()
+	out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [], {}, flags)
+	out.surface_set_material(0, m.surface_get_material(0))
+	_face_meshes[key] = out
+	return out
+
+
 ## Совместимость со старым кодом: относительное преобразование узла внутри предка top
 static func _rel(n: Node3D, top: Node) -> Transform3D:
 	var xf := Transform3D.IDENTITY

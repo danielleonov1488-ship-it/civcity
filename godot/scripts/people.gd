@@ -2969,13 +2969,18 @@ func child_of(fam: String, home: int) -> Dictionary:
 	return {}
 
 
-## Человек для ролика истории: как житель с тем же seed (тот же облик и одежда), сам по себе (не ходит по делам)
-func actor(seed_v: int, female: bool, child: bool, cls: String) -> Citizen:
+## Человек для ролика истории: как житель с тем же seed (тот же облик и одежда), сам по себе (не ходит по делам).
+## Лицо — для крупного плана (Citizen.face_fix); old — старик (седой)
+func actor(seed_v: int, female: bool, child: bool, cls: String, old := false) -> Citizen:
 	var rr := RandomNumberGenerator.new()
 	rr.seed = seed_v
 	var c := Citizen.create(rr, female, child, cls == "patricians", "", cls)
 	if child:
 		kid_look(c)
+	if old:
+		Citizen.elder_look(c)
+	else:
+		Citizen.face_fix(c, false, child)
 	add_child(c)
 	c.anim.speed_scale = 1.0
 	return c
