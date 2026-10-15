@@ -1065,7 +1065,7 @@ func _fam_name(b: Dictionary) -> String:
 	return fams[0]["name"] if not fams.is_empty() else "без имени"
 
 
-# ---------- этажи: покупает игрок в карточке дома (как в Town to City) ----------
+# ---------- этажи: покупает игрок инструментом «Этаж» (U) или в карточке дома (как в Town to City) ----------
 
 ## Цена следующего этажа (0 — надстраивать некуда)
 func floor_price(b: Dictionary) -> int:
@@ -1083,14 +1083,15 @@ func floor_need(b: Dictionary) -> int:
 	return int(Defs.FLOOR_HAPPY.get(int(b.get("tier", 1)) + 1, 100))
 
 
-## "" — этаж можно купить; иначе — почему нельзя (для подсказки у кнопки)
-func can_buy_floor(b: Dictionary) -> String:
+## "" — этаж можно купить; иначе — почему нельзя (для подсказки у кнопки и у курсора инструмента «Этаж»).
+## check_money = false — дом готов, а хватит ли денариев, не смотрим (стрелка с красной ценой)
+func can_buy_floor(b: Dictionary, check_money := true) -> String:
 	if b.is_empty() or not buildings.has(b.get("id", -1)) or not is_house(b):
 		return "Этаж можно надстроить только жилому дому"
 	var h: Dictionary = buildings[b["id"]]
 	var nx := int(h["tier"]) + 1
 	if nx > Defs.floors_max(def(h)["cls"]):
-		return "Это последний этаж"
+		return "Выше не строят: у «%s» не больше %d этажей" % [def(h)["name"], Defs.floors_max(def(h)["cls"])]
 	var rid: String = Defs.FLOOR_RESEARCH.get(nx, "")
 	if rid != "" and not research.has(rid):
 		return "Сначала изучите «%s»" % Defs.research(rid)["name"]
@@ -1104,14 +1105,25 @@ func can_buy_floor(b: Dictionary) -> String:
 	if left >= int(Defs.FAMILY_SIZE[String(def(h)["cls"])][0]):
 		return "В доме есть место ещё для семьи (%d %s) — сначала заселите её" % [left, plural(left, "место", "места", "мест")]
 	if int(h["happy"]) < floor_need(h):
-		return "Счастье дома ниже %d%%" % floor_need(h)
-	if money < float(floor_price(h)):
+		return "Счастье дома %d%% — для %d-го этажа нужно от %d%%" % [clampi(int(h["happy"]), 0, 100), nx, floor_need(h)]
+	if check_money and money < float(floor_price(h)):
 		return "Не хватает денариев"
 	return ""
 
 
-## Купить этаж: деньги списываются, дом растёт, в него может въехать ещё семья
-func buy_floor(b: Dictionary) -> bool:
+## Дома, которым можно надстроить этаж прямо сейчас; check_money = false — и те, кому не хватает только денариев
+func floor_ready(check_money := true) -> Array:
+	var out := []
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if is_house(b) and can_buy_floor(b, check_money) == "":
+			out.append(id)
+	return out
+
+
+## Купить этаж: деньги списываются, дом растёт, в него может въехать ещё семья.
+## quiet — инструментом «Этаж»: без события на каждый дом, итог мазка — одной строкой в колокольчик (floors_done)
+func buy_floor(b: Dictionary, quiet := false) -> bool:
 	if can_buy_floor(b) != "":
 		return false
 	var h: Dictionary = buildings[b["id"]]
@@ -1119,10 +1131,39 @@ func buy_floor(b: Dictionary) -> bool:
 	h["tier"] = int(h["tier"]) + 1
 	compute()
 	house_changed.emit(h, true)
-	_event("Дому семьи %s надстроили %d-й этаж — место ещё для %d жителей" % [_fam_name(h), int(h["tier"]), int(Defs.CLASSES[def(h)["cls"]]["per_floor"])], "housing")
+	if not quiet:
+		_event("Дому семьи %s надстроили %d-й этаж — место ещё для %d жителей" % [_fam_name(h), int(h["tier"]), int(Defs.CLASSES[def(h)["cls"]]["per_floor"])], "housing")
 	_check_goals()
 	changed.emit()
 	return true
+
+
+## Мазок инструмента «Этаж» окончен: одна запись в колокольчик (без всплывашки) — сколько этажей, кому и за сколько
+func floors_done(ids: Array, spent: int) -> void:
+	if ids.is_empty():
+		return
+	var names := []
+	var room := 0
+	for id in ids:
+		if buildings.has(id):
+			var h: Dictionary = buildings[id]
+			names.append(_fam_name(h))
+			room += int(Defs.CLASSES[def(h)["cls"]]["per_floor"])
+	if ids.size() == 1 and buildings.has(ids[0]):
+		_quiet("Дому семьи %s надстроили %d-й этаж за %d ден. — место ещё для %d жителей" % [names[0], int(buildings[ids[0]]["tier"]), spent, room], "housing")
+		return
+	var who := ", ".join(names.slice(0, 3)) + (" и ещё %d" % (names.size() - 3) if names.size() > 3 else "")
+	_quiet("Надстроили %d %s за %d ден. (дома семей %s) — место ещё для %d жителей" % [ids.size(), plural(ids.size(), "этаж", "этажа", "этажей"), spent, who, room], "housing")
+
+
+## Счастье жилых домов, где живут (0…100), — до и после стройки: над кем оно поменялось, всплывают рожицы (game._happy_pops)
+func happy_map() -> Dictionary:
+	var out := {}
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if is_house(b) and int(b["pop"]) + int(b.get("coming", 0)) > 0:
+			out[id] = clampi(int(b.get("happy", 0)), 0, 100)
+	return out
 
 
 # ---------- приезд семей ----------
@@ -1592,11 +1633,137 @@ func do_research(id: String) -> bool:
 	var r := Defs.research(id)
 	rp -= float(r["cost"])
 	research[id] = true
-	_event("Изучено: %s" % r["name"], "research")
+	var where := research_where(id)
+	_event("Изучено: %s%s" % [r["name"], (" — " + where) if where != "" else ""], "research")
 	compute()
 	_check_goals()
 	changed.emit()
 	return true
+
+
+## Где искать то, что открыло исследование id: «карточка в «Лавки · Товары»», «инструмент «Этаж» справа внизу (U)»
+func research_where(id: String) -> String:
+	if id in ["floor2", "floor3"]:
+		return "инструмент «Этаж» справа внизу (клавиша U)"
+	var by := {}                          # раздел меню стройки → его вкладки с новыми карточками
+	var order := []
+	var n := 0
+	for t in Defs.B:
+		var d: Dictionary = Defs.B[t]
+		if d.get("unlock", "") != id or String(d.get("cat", "")) == "":
+			continue
+		n += 1
+		var cl: String = Defs.CAT_SHORT.get(d["cat"], d["cat"])
+		if not by.has(cl):
+			by[cl] = []
+			order.append(cl)
+		var sl := sub_name(t)
+		if sl != "" and not (by[cl] as Array).has(sl):
+			by[cl].append(sl)
+	if order.is_empty():
+		return ""
+	var parts := []
+	for cl in order.slice(0, 2):
+		parts.append("«%s»" % (cl + ((" · " + ", ".join(by[cl])) if not (by[cl] as Array).is_empty() else "")))
+	return ("карточка в " if n == 1 else "карточки в ") + " и ".join(parts)
+
+
+## Вкладка меню стройки, где карточка: «Товары» у лавок, «Цветы» у украшений; у остальных — ""
+static func sub_name(type: String) -> String:
+	var d: Dictionary = Defs.B[type]
+	if d.get("cat", "") == "commerce" and Defs.NEEDS.has(d.get("sub", "")):
+		return String(Defs.NEEDS[d["sub"]]["name"])
+	if d.get("cat", "") == "decor":
+		for ds: Array in Defs.DECOR_SUBS:
+			if ds[0] == d.get("sub", ""):
+				return String(ds[1])
+	return ""
+
+
+# ---------- «НОВОЕ»: открылось, а игрок ещё не смотрел (tips.seen — карточки построек и «@floor» — инструмент «Этаж»,
+# tips.seen_r — исследования, которые можно изучать). Старые сохранения: seed_seen — ничего не новое ----------
+
+## Карточка постройки открыта, а игрок её ещё не видел (не наводил мышь, не брал)
+func is_new(type: String) -> bool:
+	if type == "@floor":
+		return research.has("floor2") and not (tips.get("seen", {}) as Dictionary).has(type)
+	return String(Defs.B[type].get("cat", "")) != "" and unlocked(type) and not (tips.get("seen", {}) as Dictionary).has(type)
+
+
+## Игрок посмотрел на карточку (или взял инструмент): true — она была новой
+func mark_seen(type: String) -> bool:
+	if not is_new(type):
+		return false
+	var s: Dictionary = tips.get("seen", {})
+	s[type] = true
+	tips["seen"] = s
+	return true
+
+
+## Исследование можно изучать (уровень есть, нужное раньше изучено), но ещё не изучено
+func research_open(id: String) -> bool:
+	var r := Defs.research(id)
+	return not r.is_empty() and not research.has(id) and int(r["lvl"]) <= level and (not r.has("after") or research.has(r["after"]))
+
+
+func is_new_r(id: String) -> bool:
+	return research_open(id) and not (tips.get("seen_r", {}) as Dictionary).has(id)
+
+
+func mark_seen_r(id: String) -> bool:
+	if not is_new_r(id):
+		return false
+	var s: Dictionary = tips.get("seen_r", {})
+	s[id] = true
+	tips["seen_r"] = s
+	return true
+
+
+## Новых карточек в разделе cat (и вкладке sub; "" — во всём разделе)
+func new_count(cat: String, sub := "") -> int:
+	var n := 0
+	for t in Defs.B:
+		var d: Dictionary = Defs.B[t]
+		if d.get("cat", "") == cat and (sub == "" or d.get("sub", "") == sub) and is_new(t):
+			n += 1
+	return n
+
+
+## Все счётчики новых карточек за один проход: раздел → число, «раздел|вкладка» → число (для пометок на кнопках)
+func new_counts() -> Dictionary:
+	var out := {}
+	for t in Defs.B:
+		if is_new(t):
+			var d: Dictionary = Defs.B[t]
+			var cat: String = d["cat"]
+			out[cat] = int(out.get(cat, 0)) + 1
+			var k := cat + "|" + String(d.get("sub", ""))
+			out[k] = int(out.get(k, 0)) + 1
+	return out
+
+
+func new_research() -> int:
+	var n := 0
+	for r in Defs.RESEARCH:
+		if is_new_r(r["id"]):
+			n += 1
+	return n
+
+
+## Всё, что открыто сейчас, — уже «видели»: новая игра и старое сохранение без tips.seen начинают без пометок
+func seed_seen() -> void:
+	var s := {}
+	for t in Defs.B:
+		if unlocked(t):
+			s[t] = true
+	if research.has("floor2"):
+		s["@floor"] = true
+	var r := {}
+	for e in Defs.RESEARCH:
+		if research_open(e["id"]):
+			r[e["id"]] = true
+	tips["seen"] = s
+	tips["seen_r"] = r
 
 
 # ---------- праздник «Игры в честь богов» (Defs.FESTIVAL) ----------
@@ -1877,3 +2044,6 @@ func load_data(d: Dictionary) -> void:
 				land.occ[k] = b["id"]
 		next_id = maxi(next_id, int(b["id"]) + 1)
 	compute()
+	# старое сохранение (до пометок «НОВОЕ»): всё, что уже открыто, — «видели», новым ничего не горит
+	if not tips.has("seen"):
+		seed_seen()

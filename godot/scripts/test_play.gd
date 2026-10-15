@@ -55,13 +55,15 @@ func _process(dt: float) -> void:
 		if not homes.is_empty():
 			homes.sort_custom(func(a, b): return int(a["happy"]) > int(b["happy"]))
 			game.city.assign(f["name"], homes[0]["id"])
-	# и покупает этаж полному счастливому дому, когда можно (этажи больше не растут сами)
-	if step >= 3 and game.city.has_method("buy_floor"):
+	# и покупает этаж полному счастливому дому, когда можно (этажи больше не растут сами) — как инструментом «Этаж»:
+	# мазок по всем готовым домам, итог — одной строкой в колокольчик
+	if step >= 3 and step < 6 and game.city.has_method("buy_floor"):
 		for id in game.city.buildings.keys():
 			var b: Dictionary = game.city.buildings.get(id, {})
 			if not b.is_empty() and game.city.is_house(b) and game.city.can_buy_floor(b) == "":
-				game.city.buy_floor(b)
+				game._floor_buy(b)
 				print("FLOOR bought: house ", id, " tier=", b["tier"], " happy=", b["happy"], " money=", int(game.city.money))
+		game._floor_end()
 	if step >= 2 and not cart_shot and game.people.cart.get("state", "") == "in" and float(game.people.cart["s"]) > 8.0:
 		cart_shot = true
 		var keep: float = game.speed
@@ -182,5 +184,13 @@ func _process(dt: float) -> void:
 		6:
 			if t > 2.0:
 				shot("q6_overview.png")
+				game.set_tool("floor")                      # инструмент «Этаж» (U): стрелки над готовыми домами
+				step = 7
+				t = 0.0
+		7:
+			if t > 2.0:
+				shot("q7_floor_tool.png")
+				print("FLOOR tool: ready=", game.city.floor_ready(false).size(), " marks=", game.hud.badges.keys().filter(func(k): return String(k).begins_with("fl")).size())
+				game.set_tool("")
 				game.save()
 				get_tree().quit()

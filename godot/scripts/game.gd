@@ -120,6 +120,12 @@ const SNAP_STAY := 1.5                 # …и держится, пока фас
 const PAVE_SLOPE := 0.5                # дом и лавка на мостовой — только на почти ровном месте (иначе ступени вокруг)
 var settle_marks := []                # подсветка подходящих домов
 var settle_keys := []                 # значки «ключи» над ними
+var floor_drag := false               # «Этаж» (U): левая кнопка зажата — готовые дома под курсором получают этаж
+var floor_done: Array = []            # кому надстроили этаж в этом мазке (второй раз за мазок — нет)
+var floor_spent := 0                  # сколько денариев ушло в этом мазке
+var floor_broke := false              # в этом мазке кончились деньги — до отпускания кнопки больше не надстраиваем
+var floor_hover := -1                 # под курсором: 1 — дом, которому можно этаж, 0 — дом, которому нельзя, −1 — не дом
+const POPS_MAX := 40                  # рожиц после стройки за раз не больше (самые большие перемены счастья)
 var _rmb_down := Vector2.ZERO
 var _rmb_armed := false               # правую кнопку нажали над миром (а не над окном)
 var _rmb_moved := 0.0                 # насколько ушла мышь с зажатой правой: тянули карту — не «щелчок»
@@ -203,6 +209,7 @@ func _ready() -> void:
 		loaded = _load()
 	if not loaded:
 		city.tips["v22_pace"] = true             # новая игра — сразу по новым правилам, объяснять перемены не нужно
+		city.seed_seen()                         # открытое с начала — не «НОВОЕ»; пометки — у того, что откроют исследования
 		if mode in ["play", "new"]:
 			land.own_start()                     # своя земля новой игры — 2×3 участка, остальное покупается (меню и витрина — как были)
 		city.place("center", Land.CENTER, PI / 2, 0, 0, true)
@@ -398,7 +405,7 @@ func _loading_show() -> void:
 		"Совет: правая кнопка мыши отменяет выбранный инструмент.",
 		"Совет: украшения рядом с домом дают до +12% счастья (у богатых — больше).",
 		"Совет: щёлкните по значку дома в карточке, чтобы сменить его цвет.",
-		"Совет: полному счастливому дому можно купить этаж в его карточке — туда въедет новая семья."][randi() % 5]
+		"Совет: «Этаж» (U) — ведите мышью с зажатой кнопкой вдоль улицы, и этаж получат все готовые дома."][randi() % 5]
 	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip.add_theme_font_override("font", load("res://assets/fonts/AlegreyaSans-Medium.ttf"))
@@ -1898,6 +1905,9 @@ func set_tool(t: String) -> void:
 		# подпись у курсора гаснет; недотянутую прямую линию не рисуем — игрок отменял
 		line_from = Vector2.INF
 		_release()
+	if floor_drag:
+		_floor_end()                          # мазок «Этажа» прервали — его итог всё равно в колокольчик
+	floor_hover = -1
 	var prev_tool := tool
 	if not moving.is_empty() and t != String(moving["type"]):
 		_cancel_move()
@@ -1928,12 +1938,16 @@ func set_tool(t: String) -> void:
 		next_variant = tool_variant
 	elif Defs.B.has(t):
 		next_variant = randi() % int(Defs.B[t].get("variants", 1))
+	if t == "floor" and city.mark_seen("@floor") and hud:
+		hud.update_new_marks()                # взяли «Этаж» — пометка «НОВОЕ» с кнопки снята
 	if cover:
 		cover.refresh()                       # стройка с охватом — синие дома и значки таких же построек сразу
 	if hud:
 		hud.on_tool(t)
 		if Cover.kind_of(t) != "":
 			hud.cover_tip()
+		elif t == "floor":
+			hud.floor_tip()
 
 
 func is_road_tool(t: String) -> bool:
@@ -2645,6 +2659,9 @@ func _update_tool() -> void:
 		_plot_hover(pl if plot_signs.has(pl) and not land.is_owned(hover) else Vector2i(-1, -1))
 	else:
 		_plot_hover(Vector2i(-1, -1))
+	if tool == "floor":
+		_floor_hover(over_ui)                 # дом ловит луч (и стрелка над крышей) — даже на фоне неба
+		return
 	if tool == "" or hover == Vector2.INF or over_ui:
 		cover.preview_off()                   # подпись у курсора — только когда стройка над землёй
 		if ghost:
@@ -2893,6 +2910,123 @@ func settle_auto() -> void:
 	_settle_into(homes[0])
 
 
+# ---------- «Этаж» (U), как в Town to City: щёлкнуть по дому со стрелкой или вести по улице с зажатой кнопкой ----------
+# Готовые дома (полные, счастливые) светятся зелёным, над крышей — стрелка с ценой (cover.gd, _floor). Каждый дом
+# за мазок — один этаж, за свою цену; кончились денарии — мазок дальше не надстраивает. Монетки звенят раз на мазок,
+# итог — одной строкой в колокольчик (City.floors_done). Кнопки «надстроить все разом» нет (решение владельца Д4)
+
+## Дом под курсором: стрелка над крышей (по ней щёлкают чаще всего) или сама модель; украшение на стене — его дом
+func _floor_pick() -> Dictionary:
+	if hud:
+		var k: String = hud.badge_at(_mouse_pos, "fl")
+		if k != "" and k.substr(2).is_valid_int() and city.buildings.has(int(k.substr(2))):
+			return city.buildings[int(k.substr(2))]
+	return _settle_pick()
+
+
+## Каждый кадр с «Этажом» в руках: подсветка и подпись у дома под курсором; с зажатой кнопкой — надстроить его
+func _floor_hover(over_ui: bool) -> void:
+	if floor_drag and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		_floor_end()                          # кнопку отпустили над окном — мазок окончен
+	var b := {} if over_ui else _floor_pick()
+	if not b.is_empty() and not city.is_house(b):
+		b = {}
+	if floor_drag and not b.is_empty():
+		_floor_buy(b)
+	if over_ui:
+		floor_hover = -1
+		_clear_highlight()
+		cover.preview_off()
+		return
+	cover.say(_floor_lines(b))
+	if b.is_empty():
+		floor_hover = -1
+		_clear_highlight()
+		return
+	var ok := city.can_buy_floor(b) == ""
+	floor_hover = 1 if ok else 0
+	var key := "floor:%d:%d:%s" % [int(b["id"]), int(b["tier"]), ok]
+	if key != highlight_key:
+		_clear_highlight()
+		highlight_key = key
+		if ok:
+			highlight = Parts.ghost(city.blueprint(b), "outline", Color(1.0, 1.0, 0.92))
+			highlight.transform = city.xf(b)
+			add_child(highlight)
+
+
+## Подпись у курсора: [зелёная — этаж и цена (или только что надстроили), синяя — итог мазка, кремовая — почему нельзя]
+func _floor_lines(b: Dictionary) -> Array:
+	var tot := ""
+	if not floor_done.is_empty():
+		tot = "Этот мазок: %d %s · %s ден." % [floor_done.size(), City.plural(floor_done.size(), "этаж", "этажа", "этажей"), hud.fmt(floor_spent)]
+	if b.is_empty():
+		return ["", tot, "Не хватает денариев" if floor_broke else ""]
+	if floor_done.has(int(b["id"])):
+		return ["Надстроили %d-й этаж — скоро въедет новая семья" % int(b["tier"]), tot, ""]
+	var why := city.can_buy_floor(b)
+	var price := city.floor_price(b)
+	if why == "":
+		var per := int(Defs.CLASSES[city.def(b)["cls"]]["per_floor"])
+		return ["Дом семьи %s: %d-й этаж · %s ден. · +%d %s" % [city._fam_name(b), int(b["tier"]) + 1, hud.fmt(price), per, City.plural(per, "место", "места", "мест")], tot, ""]
+	if city.can_buy_floor(b, false) == "":
+		why = "Не хватает денариев: этаж стоит %s ден." % hud.fmt(price)
+	return ["", tot, why]
+
+
+## Надстроить дом b в этом мазке (если он готов и денариев хватает)
+func _floor_buy(b: Dictionary) -> void:
+	if floor_broke or floor_done.has(int(b["id"])) or city.can_buy_floor(b, false) != "":
+		return
+	var price := city.floor_price(b)
+	if city.money < float(price):
+		floor_broke = true                    # денарии кончились — дальше этот мазок не надстраивает
+		return
+	if city.buy_floor(b, true):
+		floor_done.append(int(b["id"]))
+		floor_spent += price
+		if floor_done.size() == 1:
+			sound.ui("coins")                 # монетки — один раз на мазок, а не на каждый дом
+
+
+## Мазок окончен (кнопку отпустили, сменили инструмент): итог — одной строкой в колокольчик
+func _floor_end() -> void:
+	floor_drag = false
+	city.floors_done(floor_done, floor_spent)
+	floor_done = []
+	floor_spent = 0
+	floor_broke = false
+
+
+## Рожицы после стройки (как в Town to City): над домами, чьё счастье поменялось, — улыбка или грусть и «+5%»,
+## волной от постройки (дальние — позже). Не в меню и готовом городе, не в ролике нового ранга, без звука
+func _happy_pops(before: Dictionary, at: Vector2) -> void:
+	if before.is_empty() or hud == null or mode in ["menu", "demo"] or promo or (rig and rig.cine):
+		return
+	var after := city.happy_map()
+	var ch := []
+	for id in after:
+		if before.has(id) and int(after[id]) != int(before[id]):
+			ch.append([absi(int(after[id]) - int(before[id])), int(id), int(after[id]) - int(before[id])])
+	ch.sort_custom(func(a, b): return a[0] > b[0])
+	for e: Array in ch.slice(0, POPS_MAX):
+		var h: Dictionary = city.buildings[e[1]]
+		var top := Vector3(h["pos"].x, float(h["y"]) + city.blueprint(h).top_y() + 1.0, h["pos"].y)
+		hud.happy_pop(top, e[2], minf(1.2, at.distance_to(h["pos"]) * 0.03))
+
+
+## Лавка, украшение, памятник, склад — после них над домами всплывают рожицы
+static func _pops_for(type: String) -> bool:
+	return Defs.B.has(type) and Defs.B[type]["kind"] in ["shop", "decor", "monument", "store"]
+
+
+## Действие, от которого может поменяться счастье домов (наём в карточке лавки), — и рожицы над теми, у кого поменялось
+func happy_action(f: Callable, at: Vector2) -> void:
+	var h0 := city.happy_map()
+	f.call()
+	_happy_pops(h0, at)
+
+
 ## Выбрать постройку: обводка по силуэту и карточка; у лавки, памятника, украшения, склада — подсветка охвата
 func select_building(b: Dictionary) -> void:
 	if select_outline:
@@ -3002,6 +3136,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				hud.refresh_tools()
 			KEY_M:
 				set_tool("move")
+			KEY_U:
+				set_tool("" if tool == "floor" else "floor")
 			KEY_DELETE:
 				set_tool("bulldoze")
 			KEY_SPACE:
@@ -3026,7 +3162,7 @@ func _unhandled_input(e: InputEvent) -> void:
 
 func _click() -> void:
 	# постройку ловит луч по всей модели — щёлкнуть можно и по крыше на фоне неба (земли под курсором нет)
-	if hover == Vector2.INF and not tool in ["", "settle", "bulldoze", "copy", "move"]:
+	if hover == Vector2.INF and not tool in ["", "settle", "bulldoze", "copy", "move", "floor"]:
 		return
 	if is_road_tool(tool):
 		painting = true
@@ -3046,6 +3182,16 @@ func _click() -> void:
 			var b := _settle_pick()
 			if b.is_empty() or not city.can_host(b, settle_fam) or not _settle_into(b):
 				sound.ui("error")
+			return
+		"floor":
+			# мазок: этот дом и все готовые, над которыми пройдёт курсор, пока кнопка зажата (_floor_hover)
+			floor_drag = true
+			floor_done = []
+			floor_spent = 0
+			floor_broke = false
+			var b := _floor_pick()
+			if not b.is_empty() and city.is_house(b):
+				_floor_buy(b)
 			return
 		"move_nature":
 			if land.occ_at(hover) == 0 and not land.is_water(hover) and not land.is_road(hover):
@@ -3071,9 +3217,11 @@ func _click() -> void:
 				if city.def(b).get("fixed", false):
 					hud.notify("Почтовая станция не сносится — с неё начинается город", "info")
 				else:
+					var h0 := city.happy_map() if _pops_for(b["type"]) else {}
 					city.remove(b)
 					_clear_highlight()
 					sound.ui("demolish")
+					_happy_pops(h0, b["pos"])     # снесли лавку или украшение — над кем стало хуже, грустные рожицы
 			return
 		"copy":
 			var b := pick_building()
@@ -3140,6 +3288,8 @@ func start_move(b: Dictionary) -> bool:
 	moving = {"id": b["id"], "type": b["type"], "tier": b["tier"], "variant": b["variant"], "color": b["color"], "pop": b["pop"],
 		"families": b["families"], "pos": b["pos"], "yaw": b["yaw"], "decor": _hosted(b), "hire": b.get("hire", -1),
 		"born": int(b.get("born", b["id"]))}     # порядок постройки едет с ней: перенесённая школа не станет «лишней»
+	if _pops_for(b["type"]):
+		moving["happy0"] = city.happy_map()   # счастье домов до переноса: на новом месте — рожицы над теми, у кого поменялось
 	city.moving_id = int(b["id"])
 	city.remove(b, false)
 	var t: String = b["type"]
@@ -3207,12 +3357,15 @@ func _build_here() -> void:
 			b["tier"] = int(moving["tier"])
 			b["pop"] = int(moving["pop"])
 			b["families"] = moving["families"]
+			var h0: Dictionary = moving.get("happy0", {})
 			_moved(b)
 			moving = {}
 			_show(b)
 			city.compute()
 			set_tool("")
+			_happy_pops(h0, pl["pos"])
 		else:
+			var h0 := city.happy_map() if _pops_for(tool) else {}
 			build_anim = true
 			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
 			build_anim = false
@@ -3220,6 +3373,7 @@ func _build_here() -> void:
 				b["host"] = pl["host"]
 				b["y"] = pl["y"]
 				_show(b)
+			_happy_pops(h0, pl["pos"])           # лавка, украшение, памятник: рожицы волной над домами, кому стало лучше или хуже
 			if tool_variant < 0:
 				next_variant = randi() % int(Defs.B[tool].get("variants", 1))
 			if pl.get("sub", "") == "free" and not city.tips.has("free_place") and mode != "demo" and not (tutorial and tutorial.active()):
@@ -3248,6 +3402,9 @@ func _cancel_move() -> void:
 
 
 func _release() -> void:
+	if floor_drag:
+		_floor_end()
+		return
 	if pressing:
 		pressing = false
 		if rot_drag:

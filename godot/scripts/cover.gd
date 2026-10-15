@@ -6,6 +6,7 @@ extends Node3D
 ##   памятник — так же, по виду памятника; украшение — зелёным домам станет лучше, синим украшений уже хватает;
 ##   склад — лавки, которым он нужен: зелёные пока без склада, синие уже со складом.
 ##   «Обзор» (hud.set_overlay): счастье каждого дома или одна потребность — где она есть, а где нет.
+##   Инструмент «Этаж» (U): зелёные — дома, которым можно надстроить этаж; над ними стрелка с ценой.
 ## Подсветка — свой пул MultiMesh (Pool): меши деталей — у основного пула, цвет — у каждого дома свой.
 ## Зажигаем не больше PER_FRAME домов за кадр (ближние к курсору — первыми); пока курсор стоит — ничего не считаем.
 
@@ -381,6 +382,25 @@ static func overview_sets(c: City, mode: String) -> Dictionary:
 	return {"tint": tint, "faces": faces, "miss": miss, "shops": shops, "n": n}
 
 
+## Инструмент «Этаж» (U): ready — дома, которым можно надстроить этаж прямо сейчас (зелёные, над крышей стрелка с ценой);
+## short — готовы, но не хватает денариев (стрелка с красной ценой, без подсветки); price — id → цена следующего этажа
+static func floor_sets(c: City) -> Dictionary:
+	var ready := []
+	var short := []
+	var price := {}
+	if c.research.has("floor2"):
+		for id in c.buildings:
+			var h: Dictionary = c.buildings[id]
+			if not c.is_house(h) or c.can_buy_floor(h, false) != "":
+				continue
+			price[id] = c.floor_price(h)
+			if c.money >= float(price[id]):
+				ready.append(id)
+			else:
+				short.append(id)
+	return {"ready": ready, "short": short, "price": price}
+
+
 ## Подпись у курсора: [сколько новых (зелёным), сколько уже с такой же (синим), третья строка — предупреждение
 ## (лавка тут не заработает) или у украшения — скольким прибавит вместе со следующим]
 static func caption(type: String, s: Dictionary) -> Array:
@@ -493,6 +513,8 @@ func refresh() -> void:
 	var hud = game.hud
 	if t == "" and hud != null and hud.overlay != "":
 		_overview(hud.overlay)
+	elif t == "floor":
+		_floor()
 	elif kind_of(t) != "":
 		if t != _type:
 			_near = Vector2.INF                  # новая стройка: зелёные — когда курсор встанет на землю
@@ -587,6 +609,31 @@ func _overview(mode: String) -> void:
 	_marks(mk)
 	if game.hud:
 		game.hud.fill_overlay()
+
+
+## Инструмент «Этаж»: готовые дома зелёные, над каждым готовым — стрелка с ценой этажа (не хватает денариев — цена красная)
+func _floor() -> void:
+	var c: City = game.city
+	sets = floor_sets(c)
+	state = "floor"
+	var w := {}
+	for id in sets["ready"]:
+		w[id] = GREEN
+	_apply(w, game.hover)
+	var mk := {}
+	for k in ["ready", "short"]:
+		for id in sets[k]:
+			var price := int(sets["price"][id])
+			mk["fl%d" % id] = [id, "up", k == "short", game.hud.fmt(price) if game.hud else str(price), ""]
+	_marks(mk)
+
+
+## Подпись у курсора от инструмента «Этаж» (game._floor_hover): [зелёная, синяя, кремовая строка]
+func say(lines: Array) -> void:
+	cap = lines
+	if game.hud:
+		game.hud.cover_caption(cap[0], cap[1], cap[2])
+		_shown = true
 
 
 ## Значки над такими же постройками (лавки, памятники, склады): где они уже стоят. Неработающие — красным

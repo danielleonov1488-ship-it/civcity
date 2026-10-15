@@ -12,6 +12,7 @@ var cur := -1
 var cache := {}
 var game
 var _pause_t := 2.0
+var played := {}                      # сколько раз звучал звук интерфейса (для проверок: один звон монет на мазок)
 
 ## Выбор владельца (12.10): кнопки, окна, стройка, снос, «нельзя», выполненная просьба — без звука; остались только монетки
 const SFX := {"coins": "coins.ogg"}
@@ -87,6 +88,7 @@ func _process(dt: float) -> void:
 
 
 func ui(name := "click") -> void:
+	played[name] = int(played.get(name, 0)) + 1
 	if not SFX.has(name):
 		return
 	var st := _load(SFX[name])

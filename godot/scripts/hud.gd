@@ -95,6 +95,8 @@ var paused_speed := 1.0
 var hidden_ui := false
 var bell_count := 0
 var bell_badge: Label
+var floor_badge: Label                    # на кнопке «Этаж»: сколько домов готовы к этажу
+const FLOOR_TIP := "Этаж (U): щёлкните по дому со стрелкой или ведите с зажатой кнопкой вдоль улицы — этаж получат все готовые дома под курсором"
 var cloud_off: CloudBadge             # значок «нет связи с облаком» слева от колокольчика
 var pointer: TextureRect
 var pointer_target: Control
@@ -1272,6 +1274,9 @@ func _cursor_world() -> String:
 		return "move" if ok else "arrow_red"
 	if t == "settle":
 		return "people"
+	if t == "floor":
+		# над домом, которому можно этаж, — «строить»; над домом, которому нельзя, — красная стрелка (у курсора — почему)
+		return {1: "build", 0: "arrow_red"}.get(int(game.floor_hover), "arrow")
 	if Defs.B.has(t):
 		if game.hover != Vector2.INF and String(game.place_info.get("err", "")) != "":
 			return "arrow_red"                  # здесь не поставить — призрак красный
@@ -1320,6 +1325,7 @@ func _top_right() -> void:
 		var b := _round(t[1], t[2], 48, func(): _top_action(id))
 		h.add_child(_shadowed(b))
 		top_btns[id] = b
+	_new_pill(top_btns["research"], "bottom")         # «НОВОЕ» — открылись исследования, которых игрок ещё не видел
 
 
 var _shadow_tex: Texture2D
@@ -1570,6 +1576,215 @@ class FaceIcon extends Control:
 				draw_line(c + Vector2(-r * 0.34, r * 0.34), c + Vector2(r * 0.34, r * 0.34), ink, w, true)
 
 
+## Золотая стрелка вверх, нарисованная кодом: «можно надстроить этаж» (над крышей и на кнопке «Этаж»)
+class UpArrow extends Control:
+	func _draw() -> void:
+		var pts := PackedVector2Array()
+		for p: Vector2 in [Vector2(0.5, 0.03), Vector2(0.97, 0.5), Vector2(0.69, 0.5), Vector2(0.69, 0.97), Vector2(0.31, 0.97), Vector2(0.31, 0.5), Vector2(0.03, 0.5)]:
+			pts.append(p * size)
+		draw_colored_polygon(pts, Color("f2c14e"))
+		# светлый блик слева — как у рисованных медальонов
+		draw_colored_polygon(PackedVector2Array([Vector2(0.5, 0.12) * size, Vector2(0.5, 0.5) * size, Vector2(0.16, 0.44) * size]), Color("fde39a"))
+		var ln := pts.duplicate()
+		ln.append(pts[0])
+		draw_polyline(ln, Color("3a2412"), maxf(1.5, minf(size.x, size.y) * 0.08), true)
+
+
+## Значок, нарисованный кодом: рожица (face_good | face_mid | face_bad) или стрелка вверх (up); иначе null
+func _drawn(icon: String, size: int) -> Control:
+	if icon.begins_with("face_"):
+		return _face(icon, size)
+	if icon == "up":
+		var a := UpArrow.new()
+		a.custom_minimum_size = Vector2(size * 0.8, size)
+		a.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		return a
+	return null
+
+
+# ---------- рожицы после стройки (как в Town to City): над домами, чьё счастье поменялось, — «+5%» и улыбка ----------
+# Пул POPS готовых плашек в слое значков: всплывают с задержкой (волна от постройки), поднимаются на 40 точек и гаснут
+
+const POP_T := 2.2                    # сколько живёт рожица, с
+const POP_RISE := 40.0                # на сколько точек поднимается
+var _pops: Array = []                 # [{n: плашка, face, lbl, pos: точка мира, t0: когда всплыть (мс), on}]
+
+
+func happy_pop(pos: Vector3, delta: int, delay := 0.0) -> void:
+	var e: Dictionary = {}
+	for p: Dictionary in _pops:
+		if not p["on"]:
+			e = p
+			break
+	if e.is_empty():
+		if _pops.size() < Game.POPS_MAX:
+			e = _make_pop()
+			_pops.append(e)
+		else:
+			# все заняты — берём ту, что всплыла раньше всех
+			e = _pops[0]
+			for p: Dictionary in _pops:
+				if int(p["t0"]) < int(e["t0"]):
+					e = p
+	var good := delta > 0
+	var f: FaceIcon = e["face"]
+	f.mood = 1 if good else -1
+	f.col = Color("6fbf4a") if good else Color("d9553a")
+	f.queue_redraw()
+	var l: Label = e["lbl"]
+	l.text = _pct(delta)
+	l.add_theme_color_override("font_color", Color("c9ffb0") if good else Color("ffb7a3"))
+	e["pos"] = pos
+	e["t0"] = Time.get_ticks_msec() + int(delay * 1000.0)
+	e["on"] = true
+	(e["n"] as Control).visible = false
+
+
+func _make_pop() -> Dictionary:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 3)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var f := _face("face_good", 24) as FaceIcon
+	f.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(f)
+	var l := _label("", 18, true, C_CREAM)
+	l.add_theme_color_override("font_outline_color", Color("2a1a0c"))
+	l.add_theme_constant_override("outline_size", 7)
+	h.add_child(l)
+	h.visible = false
+	badge_layer.add_child(h)
+	return {"n": h, "face": f, "lbl": l, "pos": Vector3.ZERO, "t0": 0, "on": false}
+
+
+## Сколько рожиц сейчас в деле (ждут своей очереди или всплывают) — для проверок
+func pops_active() -> int:
+	var n := 0
+	for p: Dictionary in _pops:
+		if p["on"]:
+			n += 1
+	return n
+
+
+func _place_pops() -> void:
+	if _pops.is_empty():
+		return
+	var cam := get_viewport().get_camera_3d()
+	var now := Time.get_ticks_msec()
+	var show: bool = cam != null and root.visible and not hidden_ui and not (game.rig != null and game.rig.cine)
+	for p: Dictionary in _pops:
+		if not p["on"]:
+			continue
+		var n: Control = p["n"]
+		var t := float(now - int(p["t0"])) / 1000.0
+		if t > POP_T:
+			p["on"] = false
+			n.visible = false
+			continue
+		var w: Vector3 = p["pos"]
+		if t < 0.0 or not show or cam.is_position_behind(w):
+			n.visible = false
+			continue
+		var k := t / POP_T
+		var pt := cam.unproject_position(w)
+		n.reset_size()
+		n.position = (pt - Vector2(n.size.x * 0.5, n.size.y) - Vector2(0, POP_RISE * ease(k, 0.5))).round()
+		# быстро проявляется, держится, мягко гаснет; в начале чуть больше — «выпрыгивает»
+		n.modulate.a = clampf(t / 0.15, 0.0, 1.0) * clampf((POP_T - t) / 0.8, 0.0, 1.0)
+		n.pivot_offset = n.size * 0.5
+		n.scale = Vector2.ONE * (1.0 + 0.25 * maxf(0.0, 1.0 - t / 0.25))
+		n.visible = true
+
+
+# ---------- «НОВОЕ» (как в Town to City): открылось исследованием или рангом, а игрок ещё не смотрел ----------
+# Карточка — пока на неё не навели мышь (0,4 с) или не взяли; исследование — пока не навели или не закрыли окно;
+# разделы, вкладки, кнопка исследований и «Этаж» — пока внутри есть новое (City.is_new, tips.seen — в сохранении)
+
+## Пометка на кнопке b: "top" — плашка «НОВОЕ» над медальоном, "bottom" — под ним, "card" — в углу карточки,
+## "dot" — красная точка (узкие вкладки)
+func _new_pill(b: Control, where: String) -> Control:
+	var p: Control
+	if where == "dot":
+		var d := Panel.new()
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color("d0432c")
+		sb.set_corner_radius_all(8)
+		sb.set_border_width_all(2)
+		sb.border_color = C_CREAM
+		d.add_theme_stylebox_override("panel", sb)
+		d.size = Vector2(15, 15)
+		d.position = Vector2(b.custom_minimum_size.x - 13, -3)
+		p = d
+	else:
+		var pc := PanelContainer.new()
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color("c4402a")
+		sb.set_corner_radius_all(6)
+		sb.set_border_width_all(2)
+		sb.border_color = Color("fbe6b0")
+		sb.content_margin_left = 5
+		sb.content_margin_right = 5
+		sb.content_margin_top = 0
+		sb.content_margin_bottom = 1
+		pc.add_theme_stylebox_override("panel", sb)
+		pc.add_child(_label("НОВОЕ", 11, true, C_CREAM))
+		pc.reset_size()
+		var w := b.custom_minimum_size.x
+		var sz := pc.get_combined_minimum_size()
+		match where:
+			"card":
+				pc.position = Vector2(w - sz.x - 9, 44)       # в углу картинки, под названием (название не закрывает)
+			"corner":
+				pc.position = Vector2(w - sz.x * 0.5 - 6, -8)
+			"bottom":
+				pc.position = Vector2((w - sz.x) * 0.5, b.custom_minimum_size.y - sz.y + 6)
+			_:
+				pc.position = Vector2((w - sz.x) * 0.5, -sz.y + 6)
+		p = pc
+	p.name = "new_mark"
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for ch in p.find_children("*", "Control", true, false):
+		(ch as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.visible = false
+	b.add_child(p)
+	return p
+
+
+func _show_new(b: Control, on: bool) -> void:
+	var p := b.get_node_or_null("new_mark") as Control
+	if p and p.visible != on:
+		p.visible = on
+
+
+## Пометки «НОВОЕ» на разделах, вкладках, кнопках исследований и «Этаж», на карточках открытого свитка
+func update_new_marks() -> void:
+	if game == null or game.city == null:
+		return
+	var c: City = game.city
+	var play: bool = game.mode in ["new", "play"]
+	var n: Dictionary = c.new_counts() if play else {}
+	for cid in cats:
+		_show_new(cats[cid], int(n.get(cid, 0)) > 0)
+	for b in tray_tabs.get_children():
+		_show_new(b, int(n.get("commerce|" + String(b.get_meta("sub")), 0)) > 0)
+	for b in tray_dtabs.get_children():
+		_show_new(b, int(n.get("decor|" + String(b.get_meta("sub")), 0)) > 0)
+	_show_new(top_btns["research"], play and c.new_research() > 0)
+	_show_new(tool_btns["floor"], play and c.is_new("@floor"))
+	floor_badge.visible = not (play and c.is_new("@floor"))      # число готовых домов — когда «НОВОЕ» снято (они на одном месте)
+	for b in tray_grid.get_children():
+		if b.has_meta("type"):
+			_show_new(b, play and c.is_new(b.get_meta("type")))
+
+
+## Мышь на карточке 0,4 с — карточку посмотрели: «НОВОЕ» с неё снимается
+func _card_hovered(b: Button, type: String) -> void:
+	if not (game.mode in ["new", "play"]) or not game.city.is_new(type):
+		return
+	await get_tree().create_timer(0.4).timeout
+	if is_instance_valid(b) and b.is_hovered() and game.city.mark_seen(type):
+		update_new_marks()
+
+
 # ---------- подпись у курсора, пока ставят лавку (сколько новых домов, сколько уже с такой же) ----------
 
 var cover_box: VBoxContainer
@@ -1744,10 +1959,11 @@ func _bottom_center() -> void:
 	p.add_child(h)
 	for c: Array in Defs.CATS:
 		var cid: String = c[0]
-		var short: String = {"housing": "Жильё", "commerce": "Лавки", "farming": "Хозяйство", "decor": "Украшения", "special": "Памятники"}.get(cid, c[1])
+		var short: String = Defs.CAT_SHORT.get(cid, c[1])
 		var v := _round_lbl(c[2], short, c[1], 54, func(): _toggle_cat(cid))
 		h.add_child(v)
 		cats[cid] = v.get_meta("btn")
+		_new_pill(cats[cid], "top")
 	# свиток с карточками над разделами (разворачивается)
 	tray = _panel(null, "scroll_h", 0, 5)
 	_put(tray, Control.PRESET_CENTER_BOTTOM, Vector2(0, -BAR_H))
@@ -1771,6 +1987,7 @@ func _bottom_center() -> void:
 		var b := _round(Defs.NEEDS[n]["icon"], Defs.NEEDS[n]["name"], 40, func(): open_sub = nn; _fill_cards())
 		b.set_meta("sub", nn)
 		tray_tabs.add_child(b)
+		_new_pill(b, "dot")
 	tray_dtabs = HBoxContainer.new()
 	tray_dtabs.add_theme_constant_override("separation", 4)
 	top.add_child(tray_dtabs)
@@ -1779,6 +1996,7 @@ func _bottom_center() -> void:
 		var b := _round(ds[2], ds[1], 40, func(): open_dsub = dn; _fill_cards())
 		b.set_meta("sub", dn)
 		tray_dtabs.add_child(b)
+		_new_pill(b, "dot")
 	var sc := ScrollContainer.new()
 	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sc.name = "scroll"
@@ -1810,12 +2028,26 @@ func _bottom_right() -> void:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
 	pv.add_child(h)
-	for t: Array in [["copy", "copy", "Копия", "Копировать постройку (Ctrl+C)"], ["move", "move", "Перенос", "Перенести постройку, дерево или камень (M)"],
+	for t: Array in [["floor", "housing", "Этаж", FLOOR_TIP], ["copy", "copy", "Копия", "Копировать постройку (Ctrl+C)"], ["move", "move", "Перенос", "Перенести постройку, дерево или камень (M)"],
 			["bulldoze", "demolish", "Снос", "Снос (Delete): постройки, деревья, камни"]]:
 		var tn: String = t[0]
 		var v := _round_lbl(t[1], t[2], t[3], 48, func(): game.set_tool("" if game.tool == tn else tn))
 		h.add_child(v)
 		tool_btns[tn] = v.get_meta("btn")
+	# «Этаж»: на доме — золотая стрелка вверх; число — сколько домов готовы к этажу; «НОВОЕ» — пока инструмент не брали
+	var fb: Button = tool_btns["floor"]
+	var ar := UpArrow.new()
+	ar.name = "up"
+	ar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ar.position = Vector2(27, 23)
+	ar.size = Vector2(17, 19)
+	fb.add_child(ar)
+	floor_badge = _label("", 15, true, C_CREAM)
+	floor_badge.add_theme_color_override("font_outline_color", C_GOOD)
+	floor_badge.add_theme_constant_override("outline_size", 9)
+	floor_badge.position = Vector2(35, -4)
+	fb.add_child(floor_badge)
+	_new_pill(fb, "top")
 	var sep := Control.new()
 	sep.custom_minimum_size = Vector2(6, 0)
 	h.add_child(sep)
@@ -1952,6 +2184,8 @@ func _fill_cards() -> void:
 		v.add_child(pr)
 		var tp: String = type
 		b.pressed.connect(func(): select_build(tp))
+		_new_pill(b, "card")
+		b.mouse_entered.connect(func(): _card_hovered(b, tp))
 		tray_grid.add_child(b)
 	var w := minf(1180.0, list.size() * (CARD.x + 10.0) - 10.0)
 	_snug(tray)
@@ -1959,6 +2193,7 @@ func _fill_cards() -> void:
 	(tray.find_child("scroll", true, false) as Control).custom_minimum_size = Vector2(w, CARD.y + (20.0 if list.size() * (CARD.x + 10.0) - 10.0 > 1180.0 else 2.0))
 
 	_update_cards()
+	update_new_marks()
 	_update_pointer()
 
 
@@ -2094,6 +2329,8 @@ func select_build(type: String) -> void:
 	if not game.city.unlocked(type):
 		notify("«%s» откроется %s" % [Defs.B[type]["name"], Defs.unlock_text(Defs.B[type]["unlock"])], "lock")
 		return
+	if game.mode in ["new", "play"] and game.city.mark_seen(type):
+		update_new_marks()                    # взяли карточку — она больше не «НОВОЕ»
 	if game.city.cap_err(type) != "":
 		notify(game.city.cap_err(type), "lock")
 		return
@@ -2164,7 +2401,12 @@ func _update_pointer() -> void:
 				pointer_target = _card_or_cat("farming", "warehouse" if g["id"] == "store" else "scriptorium")
 				tip = "Хозяйство"
 		"research1", "floor2":
-			if not research_panel.visible:
+			if g["id"] == "floor2" and game.city.research.has("floor2"):
+				# второй этаж изучен — стрелка на «Этаж» (пока он не в руках)
+				if game.tool != "floor":
+					pointer_target = tool_btns.get("floor")
+					tip = "Этаж"
+			elif not research_panel.visible:
 				pointer_target = top_btns.get("research")
 				tip = "Исследования"
 		"decor5":
@@ -2206,6 +2448,7 @@ func _card_or_cat(cat: String, type: String) -> Control:
 
 func _process(_dt: float) -> void:
 	_place_badges()
+	_place_pops()
 	_place_notes()
 	_place_overlay()
 	_cursor_tick()
@@ -2296,6 +2539,17 @@ func _fill_tool_panel_body() -> void:
 	_clear(variant_box)
 	variant_box.visible = false
 	if t == "":
+		return
+	if t == "floor":
+		var c: City = game.city
+		var n: int = c.floor_ready(false).size()
+		tool_title.text = "Этаж · готовы домов: %d" % n
+		tool_err.text = ""
+		tool_keys.text = "Щёлкните по дому со стрелкой — над ним вырастет этаж, туда въедет ещё семья. Ведите с зажатой кнопкой вдоль улицы — этаж получат все готовые дома под курсором, пока хватает денариев.\nГотов дом, когда он полон, а счастье в нём от %d%% (3-й этаж — от %d%%). Esc или правая кнопка — выход." % [int(Defs.FLOOR_HAPPY[2]), int(Defs.FLOOR_HAPPY[3])]
+		if not c.research.has("floor2"):
+			tool_err.text = "Этажи откроет исследование «%s» (уровень «%s»)" % [Defs.research("floor2")["name"], Defs.LEVELS[int(Defs.research("floor2")["lvl"])]["name"]]
+		elif n == 0:
+			tool_err.text = "Пока ни один дом не готов: наведите на дом — у курсора будет написано, чего ему не хватает"
 		return
 	if t == "settle":
 		var f: Dictionary = game.settle_fam
@@ -2453,14 +2707,14 @@ func _hire_row(b: Dictionary) -> HBoxContainer:
 	minus.focus_mode = Control.FOCUS_NONE
 	minus.disabled = h <= 0
 	minus.tooltip_text = "Уволить работника"
-	minus.pressed.connect(func(): c.set_hire(b, h - 1); _fill_info())
+	minus.pressed.connect(func(): game.happy_action(func(): c.set_hire(b, h - 1), b["pos"]); _fill_info())
 	var plus := Button.new()
 	plus.text = "+"
 	_small(plus)
 	plus.focus_mode = Control.FOCUS_NONE
 	plus.disabled = h >= mx
 	plus.tooltip_text = "Нанять работника"
-	plus.pressed.connect(func(): c.set_hire(b, h + 1); _fill_info())
+	plus.pressed.connect(func(): game.happy_action(func(): c.set_hire(b, h + 1), b["pos"]); _fill_info())
 	row.add_child(minus)
 	row.add_child(plus)
 	return row
@@ -2965,6 +3219,10 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 		var wl := _wrap(_label(why, 14, true, C_BAD), cw)
 		wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		info_box.add_child(wl)
+	if c.research.has("floor2"):
+		var tk := _wrap(_label("Много домов сразу — инструментом «Этаж» справа внизу (U): ведите мышью по улице", 13, false, C_SOFT), cw)
+		tk.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		info_box.add_child(tk)
 
 
 ## Слагаемые счастья дома по старым полям (если City.compute их ещё не считает)
@@ -3230,6 +3488,13 @@ func _research_panel() -> void:
 	research_box.add_theme_constant_override("separation", 10)
 	research_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(research_box)
+	# окно закрыли — всё, что в нём было новым, игрок видел: «НОВОЕ» с исследований снимается
+	research_panel.visibility_changed.connect(func():
+		if not research_panel.visible and game and game.city and game.mode in ["new", "play"]:
+			for r in Defs.RESEARCH:
+				game.city.mark_seen_r(r["id"])
+			update_new_marks()
+			_once_tips())                     # изучили второй этаж — про «Этаж» советник скажет, когда окно закрыто
 
 
 func _fill_research() -> void:
@@ -3292,6 +3557,14 @@ func _fill_research() -> void:
 						_fill_cards()
 				else:
 					notify(game.city.can_research(id), "lock"))
+			if game.mode in ["new", "play"] and c.is_new_r(id):
+				# «НОВОЕ» — открылось новым рангом или изученным раньше; навели мышь — посмотрели
+				var pm := _new_pill(b, "corner")
+				pm.visible = true
+				b.mouse_entered.connect(func():
+					if game.city.mark_seen_r(id):
+						pm.visible = false
+						update_new_marks())
 			var bc := CenterContainer.new()
 			bc.add_child(b)
 			cell.add_child(bc)
@@ -3723,6 +3996,8 @@ func refresh() -> void:
 		_set_on(sb[0], is_equal_approx(game.speed, sb[1]))
 	_update_full_marks()
 	_update_rank_ui()
+	_update_floor_btn()
+	update_new_marks()
 	_fill_classes()
 	_fill_families()
 	_fill_tasks()
@@ -3766,6 +4041,39 @@ func _update_full_marks() -> void:
 		_snug(full_money.get_parent().get_parent() as Control)
 
 
+## Кнопка «Этаж»: до «Второго жилого этажа» серая (в подсказке — чем откроется); потом число — сколько домов готовы
+## к этажу (полные и счастливые; денариев может и не хватать — тогда над домом красная цена)
+func _update_floor_btn() -> void:
+	var c: City = game.city
+	var fb: Button = tool_btns["floor"]
+	var open := c.research.has("floor2")
+	var n: int = c.floor_ready(false).size() if open and game.mode in ["new", "play"] else 0
+	var txt := str(n) if n > 0 else ""
+	if floor_badge.text != txt:
+		floor_badge.text = txt
+	var tip := FLOOR_TIP + ("\nГотовы к этажу сейчас: %d" % n if open else "")
+	if not open:
+		tip = "Этаж (U): надстроить этаж полному дому, где жителям хорошо. Откроется исследованием «%s» (уровень «%s»)" % [
+			Defs.research("floor2")["name"], Defs.LEVELS[int(Defs.research("floor2")["lvl"])]["name"]]
+	if fb.tooltip_text != tip:
+		fb.tooltip_text = tip
+	if game.tool == "floor" and tool_panel.visible:
+		_fill_tool_panel()                    # «готовы домов: N» — живое
+	if bool(fb.get_meta("open", true)) != open or not fb.has_meta("open"):
+		fb.set_meta("open", open)
+		_grey(fb.get_node("ic"), not open)
+		(fb.get_node("up") as CanvasItem).modulate = Color.WHITE if open else Color(0.62, 0.6, 0.56, 0.75)
+
+
+## Советник один раз (tips.floor_tool): этажи — инструментом «Этаж», без карточки каждого дома
+func floor_tip() -> void:
+	var c: City = game.city
+	if c.tips.has("floor_tool") or not c.research.has("floor2") or not _tip_free():
+		return
+	c.tips["floor_tool"] = true
+	advisor("Этаж — без карточки дома", "Надстраивать этажи теперь удобнее: кнопка «Этаж» справа внизу (или клавиша U). Над каждым домом, которому можно этаж, встанет золотая стрелка с ценой, а сам дом засветится зелёным. Щёлкните по такому дому — или ведите мышью с зажатой кнопкой вдоль улицы: этаж получат все готовые дома под курсором, пока хватает денариев.\n\nГотов дом, когда он полон, а счастье в нём от %d%% (для третьего этажа — от %d%%). Наведите на дом без стрелки — у курсора будет написано, чего ему не хватает. Число на кнопке — сколько домов готовы сейчас. Выйти — Esc или правая кнопка." % [int(Defs.FLOOR_HAPPY[2]), int(Defs.FLOOR_HAPPY[3])])
+
+
 ## Следующий участок земли по карману: продаётся (есть табличка) и не дороже предела казны
 func _plot_fits() -> bool:
 	var c: City = game.city
@@ -3798,6 +4106,9 @@ func _once_tips() -> void:
 	if c.fest_open() and int(c.stats.get("pop", 0)) > 0 and not c.tips.has("fest_tip"):
 		c.tips["fest_tip"] = true
 		advisor("Игры в честь богов", fest_note())
+		return
+	if c.research.has("floor2") and not c.tips.has("floor_tool") and not research_panel.visible:
+		floor_tip()                           # изучили второй этаж (или старый город после обновления) — один раз про «Этаж»
 		return
 	if full_money.visible and not c.tips.has("full_money"):
 		c.tips["full_money"] = true
@@ -4109,8 +4420,10 @@ func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "
 			var h := HBoxContainer.new()
 			h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			h.add_theme_constant_override("separation", 4)
-			h.add_child(_face(icon, 22) if icon.begins_with("face_") else _icon(icon, 26, C_GOLD))
-			h.add_child(_label(text, 15 if icon.begins_with("face_") else 17, true, C_INK))
+			var dr := _drawn(icon, 22)             # рожица «Обзора», стрелка «Этажа» — нарисованы кодом
+			h.add_child(dr if dr else _icon(icon, 26, C_GOLD))
+			# красная цена — денариев не хватает (стрелка «Этажа»)
+			h.add_child(_label(text, 15 if icon.begins_with("face_") else 17, true, C_BAD if warn else C_INK))
 			pc.add_child(h)
 		p = pc
 	p.visible = false
@@ -4177,6 +4490,19 @@ func _family_badges() -> void:
 	for k in badges.keys():
 		if String(k).begins_with("fam_") and not want.has(k):
 			clear_badge(k)
+
+
+## Значок с ключом на prefix под точкой mp (координаты интерфейса), "" — нет. «Этаж»: стрелки мышь не ловят
+## (мазок идёт по городу), а дом под стрелкой ищет game._floor_pick
+func badge_at(mp: Vector2, prefix: String) -> String:
+	if mp.x < 0.0:
+		return ""
+	for k in badges:
+		if String(k).begins_with(prefix):
+			var n: Control = badges[k]["n"]
+			if n.visible and n.get_global_rect().grow(3.0).has_point(mp):
+				return k
+	return ""
 
 
 func clear_badge(key: String) -> void:
