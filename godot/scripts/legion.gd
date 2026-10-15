@@ -112,25 +112,25 @@ const ENEMIES := {
 #   провинции карты походов
 # =====================================================================
 ## Каждая — своя карта на весь экран (рисованный фон 40a…40h), тропа из STAGES боёв, последний — босс.
-## rank — с какого уровня города (Defs.LEVELS) провинция открыта: первая — с «Городка» (там изучается «Легион»),
-## остальные — с «Большого города» (решение владельца: армия — для большого города; первую провинцию
-## даём раньше, чтобы было во что играть, пока город растёт).
+## rank — с какого уровня города (Defs.LEVELS) провинция открыта: первая — с «Посёлка» (там изучается «Легион»),
+## дальше — по две на уровень, без пустоты после леса (решение владельца Д5 от 14.10: Легион — раньше).
+## Самый трудный бой провинции (target_level) не выше предела бойцов CAP_BY_CITY её уровня — стены нет
 const REGIONS := [
-	{"id": "forest", "name": "Лес разбойников", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "wolf"], "boss": "chief", "rank": 4,
+	{"id": "forest", "name": "Лес разбойников", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "wolf"], "boss": "chief", "rank": 3,
 		"desc": "Шайки на лесной дороге. Хватит трёх легионеров.", "map": "40a"},
-	{"id": "hills", "name": "Дикие холмы", "biome": "hills", "foes": ["wolf", "wolf", "boar", "bear"], "boss": "greatbear", "rank": 6,
+	{"id": "hills", "name": "Дикие холмы", "biome": "hills", "foes": ["wolf", "wolf", "boar", "bear"], "boss": "greatbear", "rank": 4,
 		"desc": "Волчьи стаи и медведи. Копейщики держат зверя на расстоянии.", "map": "40b"},
-	{"id": "gaul", "name": "Галльская чаща", "biome": "darkforest", "foes": ["gaul", "gaul", "gaulArcher", "boar"], "boss": "gaulKing", "rank": 6,
+	{"id": "gaul", "name": "Галльская чаща", "biome": "darkforest", "foes": ["gaul", "gaul", "gaulArcher", "boar"], "boss": "gaulKing", "rank": 5,
 		"desc": "Галлы бьются отчаянно, их лучники прячутся за деревьями.", "map": "40c"},
-	{"id": "germania", "name": "Германские болота", "biome": "swamp", "foes": ["berserker", "wolf", "gaulArcher", "berserker"], "boss": "giant", "rank": 6,
+	{"id": "germania", "name": "Германские болота", "biome": "swamp", "foes": ["berserker", "wolf", "gaulArcher", "berserker"], "boss": "giant", "rank": 5,
 		"desc": "Берсерки не знают страха. В тумане ждёт великан.", "map": "40d"},
 	{"id": "crete", "name": "Лабиринт Минотавра", "biome": "labyrinth", "foes": ["bull", "pirate", "bull", "slinger"], "boss": "minotaur", "rank": 6,
 		"desc": "Каменные коридоры Крита и бешеные быки.", "map": "40e"},
 	{"id": "sicily", "name": "Скалы циклопов", "biome": "rocks", "foes": ["pirate", "slinger", "pirate", "boar"], "boss": "cyclops", "rank": 6,
 		"desc": "Пираты на берегу, а наверху — циклоп с камнями.", "map": "40f"},
-	{"id": "carthage", "name": "Пески Карфагена", "biome": "desert", "foes": ["mercenary", "slinger", "mercenary", "pirate"], "boss": "elephant", "rank": 6,
+	{"id": "carthage", "name": "Пески Карфагена", "biome": "desert", "foes": ["mercenary", "slinger", "mercenary", "pirate"], "boss": "elephant", "rank": 7,
 		"desc": "Наёмники в броне и боевые слоны Ганнибала.", "map": "40g"},
-	{"id": "hades", "name": "Врата Аида", "biome": "hades", "foes": ["shade", "hellhound", "shade", "hellhound"], "boss": "cerberus", "rank": 6,
+	{"id": "hades", "name": "Врата Аида", "biome": "hades", "foes": ["shade", "hellhound", "shade", "hellhound"], "boss": "cerberus", "rank": 7,
 		"desc": "Тени и адские псы стерегут вход. За ними — Цербер.", "map": "40h"},
 ]
 const STAGES := 10
@@ -149,9 +149,11 @@ static var WAVE_MAX := 6
 ## Подгонка силы врагов каждого боя первого круга (множитель к силе), посчитана проверками баланса
 ## (scripts/test_legion.gd mode=calibrate): отряд обычного игрока (состав — auto_squad) на уровне target_level(r, s)
 ## с умениями побеждает в ≥90% боёв, а без умений на уровень выше — в ≥40% (умения стоят примерно уровня,
-## но без них никто не упирается в стену). Пусто — без подгонки
+## но без них никто не упирается в стену). Лес (этап 3, 15.10): три легионера (лучники — с «Городка»), с умениями ≥90%,
+## без умений на том же уровне — от 35% (mode=calibrate regions=0 np_off=0 need_np=0.35 noarcher=1); первый бой —
+## учебный: с маслом в миг остановки 100%, без масла ~1% (mode=tut). Пусто — без подгонки
 static var TUNE: Array = [
-	[4.12, 3.64, 2.98, 2.01, 2.03, 1.81, 1.93, 1.37, 1.15, 1.22],   # Лес разбойников
+	[1.8, 4.02, 4.02, 3.04, 2.24, 2.81, 2.39, 2.02, 1.48, 1.54],   # Лес разбойников (три легионера; бой 1 — учебный, mode=tut)
 	[2.98, 2.82, 4.29, 1.34, 2.04, 1.38, 1.31, 0.91, 0.92, 1.27],   # Дикие холмы
 	[2.19, 2.64, 1.78, 1.31, 1.37, 1.08, 0.87, 0.8, 0.81, 0.93],   # Галльская чаща
 	[3.92, 1.83, 1.54, 1.27, 0.96, 1.32, 1.01, 0.6, 0.6, 0.88],   # Германские болота
@@ -163,7 +165,7 @@ static var TUNE: Array = [
 ## То же для кругов со второго (отряд уже полный, умения сильные): множитель поверх TUNE и роста уровней;
 ## посчитано на втором круге (mode=calibrate cycle=1) с той же целью. Дальше каждый круг ещё ×CYCLE_EXTRA
 static var TUNE_C: Array = [
-	[3.05, 2.8, 2.71, 2.73, 2.51, 3.05, 2.67, 2.83, 2.86, 2.51],   # Лес разбойников
+	[2.23, 2.52, 2.43, 2.18, 2.27, 2.3, 2.56, 2.31, 2.61, 1.98],   # Лес разбойников (этап 3: новый лес и его уровни)
 	[1.98, 2.04, 2.17, 2.02, 2.08, 1.97, 1.82, 1.77, 1.87, 1.89],   # Дикие холмы
 	[1.97, 1.8, 1.94, 1.78, 1.81, 1.75, 1.85, 1.82, 1.66, 1.67],   # Галльская чаща
 	[1.46, 1.38, 1.51, 1.43, 1.47, 1.43, 1.44, 1.51, 1.49, 1.43],   # Германские болота
@@ -181,9 +183,10 @@ const CYCLE_ROOM := 3
 # =====================================================================
 #   умения в бою: открываются победами над боссами, усиливаются за Славу
 # =====================================================================
-## cd — перезарядка (с), boss — после какого по счёту босса открывается. art — лист 38 (4×4), номер.
+## cd — перезарядка (с), boss — после какого по счёту босса открывается (0 — с первого дня Легиона: в каждом бою есть
+## своя кнопка). art — лист 38 (4×4), номер.
 const PERKS := {
-	"oil": {"name": "Кипящее масло", "cd": 14.0, "boss": 1, "art": 0, "desc": "Котёл опрокидывают на самую плотную толпу врагов: сильный урон и ожог."},
+	"oil": {"name": "Кипящее масло", "cd": 14.0, "boss": 0, "art": 0, "desc": "Котёл опрокидывают на самую плотную толпу врагов: сильный урон и ожог."},
 	"testudo": {"name": "Черепаха", "cd": 20.0, "boss": 2, "art": 1, "desc": "Отряд смыкает щиты: урон по бойцам заметно меньше."},
 	"bandage": {"name": "Перевязка", "cd": 22.0, "boss": 3, "art": 2, "desc": "Лекари перевязывают раненых: отряд лечится."},
 	"volley": {"name": "Залп", "cd": 18.0, "boss": 4, "art": 3, "desc": "Лучники из тыла бьют по всем врагам разом."},
@@ -197,10 +200,11 @@ const PERK_MAX := 5
 # =====================================================================
 ## Уровни 1…10 — первый круг походов; каждый пройденный круг поднимает предел на CYCLE_CAP (до MAX_LEVEL)
 const MAX_LEVEL := 40
-## Секунд настоящего времени на улучшение до уровня n: от минуты до двух суток (выше 10-го — по двое суток)
-const UPGRADE_TIME := [0, 0, 60, 300, 1200, 3600, 7200, 14400, 28800, 86400, 172800]
-## Предел уровня бойцов от уровня города (индекс — Defs.LEVELS): растите город, чтобы растить армию
-const CAP_BY_CITY := [3, 3, 3, 3, 3, 5, 7, 10]
+## Секунд настоящего времени на улучшение до уровня n: от 5 минут до двух суток (выше 10-го — по двое суток)
+const UPGRADE_TIME := [0, 0, 300, 1800, 3600, 5400, 7200, 14400, 28800, 86400, 172800]
+## Предел уровня бойцов от уровня города (индекс — Defs.LEVELS): растите город, чтобы растить армию.
+## На уровне города, где открывается провинция, предел не ниже её самого трудного боя (target_level)
+const CAP_BY_CITY := [3, 3, 3, 3, 4, 6, 8, 10]
 const SQUAD_BASE := 3
 const SQUAD_MAX := 7
 ## После скольких боссов открывается ещё одно место в отряде
@@ -305,7 +309,7 @@ func _ensure() -> void:
 			levels[k] = 1
 	for p in PERK_IDS:
 		if not perks.has(p):
-			perks[p] = 0
+			perks[p] = 1 if int(PERKS[p]["boss"]) <= 0 else 0      # масло — с первого дня
 
 
 static func now() -> float:
@@ -766,15 +770,27 @@ static func level_k(lvl: int) -> float:
 
 
 ## Уровень бойцов, на котором обычный отряд уверенно побеждает в этом бою (подсказка в окне перед боем):
-## в первой провинции 1–3, дальше по уровню на провинцию, к концу провинции +1, босс +2; каждый круг +CYCLE_CAP
+## в первой провинции — FOREST_T (с 3-го боя нужен 2-й уровень, с 6-го — 3-й), дальше по уровню на провинцию,
+## к концу провинции +1, босс +2; каждый круг +CYCLE_CAP
+const FOREST_T := [1, 1, 2, 2, 2, 3, 3, 3, 3, 3]
+
+
 static func target_level(cycle: int, r: int, s: int) -> int:
+	if r == 0 and s < FOREST_T.size():
+		return int(FOREST_T[s]) + cycle * CYCLE_CAP
 	var base := r + 1
 	var add := 2 if s == STAGES - 1 else (1 if s >= 4 else 0)
 	return base + add + cycle * CYCLE_CAP
 
 
+## Бои с заданным составом: "r-s" → {waves, packs (номера волн, которые выходят тесной кучей — масло накроет всех)}.
+## Первый бой леса — учебный: двое разбойников, потом шайка кучей (без масла её трём легионерам не одолеть)
+const FIXED := {"0-0": {"waves": [["bandit", "bandit"], ["bandit", "bandit", "bandit", "bandit", "slinger"]], "packs": [1]}}
+
+
 ## Состав и награда боя — одинаковые при каждом заходе. Возвращает:
-## {cycle, r, s, idx, key, D, boss, waves: [[ключ врага, …], …], scale, reward: {money, glory[, rp]}, title, name, region}
+## {cycle, r, s, idx, key, D, boss, waves: [[ключ врага, …], …], packs: [номер волны], scale, reward: {money, glory[, rp]},
+##  title, name, region}
 static func stage(cycle: int, r: int, s: int) -> Dictionary:
 	var R: Dictionary = REGIONS[r]
 	var idx := stage_index(cycle, r, s)
@@ -798,13 +814,18 @@ static func stage(cycle: int, r: int, s: int) -> Dictionary:
 			wave.resize(mini(wave.size(), 2))
 			wave.push_front(R["boss"])
 		waves.append(wave)
+	var packs: Array = []
+	var fx: Dictionary = FIXED.get("%d-%d" % [r, s], {})
+	if not fx.is_empty():
+		waves = (fx["waves"] as Array).duplicate(true)
+		packs = (fx.get("packs", []) as Array).duplicate()
 	var reward := {"money": roundi(minf(30000.0, 100.0 * pow(1.05, D))),
 		"glory": maxi(1, roundi((1 + floor(D / 5.0)) * STAGE_STEP)) + (3 if boss else 0)}
 	if boss:
 		reward["money"] = int(reward["money"]) * 3
 		reward["rp"] = roundi(minf(3000.0, 40.0 * pow(1.04, D)))
 	var title: String = R["name"] + ((" " + roman(cycle + 1)) if cycle > 0 else "")
-	return {"cycle": cycle, "r": r, "s": s, "idx": idx, "key": stage_key(cycle, r, s), "D": D, "boss": boss, "waves": waves,
+	return {"cycle": cycle, "r": r, "s": s, "idx": idx, "key": stage_key(cycle, r, s), "D": D, "boss": boss, "waves": waves, "packs": packs,
 		"scale": scale, "boss_scale": boss_scale, "reward": reward, "title": title, "name": (ENEMIES[R["boss"]]["name"] if boss else "Бой %d" % (s + 1)), "region": R["id"]}
 
 
@@ -945,7 +966,9 @@ static func unlocks_at(n: int) -> Array:
 # =====================================================================
 
 ## Настройка боя похода для LegionSim.new(setup) (тот же setup — в 3D-бой):
-## {kind: "campaign", stage, squad: [статы бойцов], waves: [[статы врагов]], perks: {id: ур.}, seed, food}
+## {kind: "campaign", stage, squad: [статы бойцов], waves: [[статы врагов]], perks: {id: ур.}, seed, food, packs: [номер волны],
+##  tutorial: "oil" — учебный первый бой (шайка сбилась в кучу — бой замирает, стрелка на «Кипящее масло»)}.
+## packs и tutorial — только в походах: бои с городами (сервер, server/legion_sim.js) их не знают
 func make_battle(st: Dictionary, seed_v := -1) -> Dictionary:
 	var waves := []
 	for w: Array in st["waves"]:
@@ -955,8 +978,16 @@ func make_battle(st: Dictionary, seed_v := -1) -> Dictionary:
 		waves.append(ws)
 	if seed_v < 0:
 		seed_v = (int(now() * 1000.0) & 0xffffff) + 1
-	return {"kind": "campaign", "stage": st, "squad": squad_stats(), "waves": waves, "perks": open_perks(), "seed": seed_v,
-		"food": food_cost(st)}
+	var s := {"kind": "campaign", "stage": st, "squad": squad_stats(), "waves": waves, "perks": open_perks(), "seed": seed_v,
+		"food": food_cost(st), "packs": (st.get("packs", []) as Array).duplicate()}
+	if tutorial_battle(st):
+		s["tutorial"] = "oil"
+	return s
+
+
+## Этот бой — учебный: самый первый бой похода, ещё не пройден, и масло в учебном бою ещё не жали
+func tutorial_battle(st: Dictionary) -> bool:
+	return int(st.get("idx", -1)) == 0 and progress == 0 and not flags.has("tut_oil") and int(perks.get("oil", 0)) > 0
 
 
 ## Кнопка «В бой» окна «Легион»: проверить и попросить 3D-бой (сигнал battle_requested).
@@ -976,6 +1007,42 @@ func start_pvp_battle(opp: Dictionary) -> Dictionary:
 	var setup := make_pvp_battle(opp)
 	battle_requested.emit(setup)
 	return setup
+
+
+# =====================================================================
+#   обучение: 4 шага со стрелкой (окно «Легион» пишет шаг, hud ставит стрелку)
+# =====================================================================
+
+const TUT_STEPS := ["barracks", "medal", "fight", "troops"]
+
+
+## Шаг обучения ("" — нет: Легион ещё закрыт, обучение пройдено или пропущено). Шаг выводится из состояния игры:
+## barracks — поставить Казармы, medal — открыть окно «Легион», fight — первый (учебный) бой, troops — улучшить бойцов
+func tut_step() -> String:
+	if free_mode or String(flags.get("tut", "")) == "done" or not window_open():
+		return ""
+	if count_type("barracks") == 0:
+		return "barracks"
+	if not flags.has("seen"):
+		return "medal"
+	if progress == 0 and not flags.has("tut_fought"):
+		return "fight"
+	if upg.is_empty() and int(levels.get("legionary", 1)) <= 1:
+		return "troops"
+	flags["tut"] = "done"                         # все шаги позади
+	return ""
+
+
+## Номер шага 1…4 (0 — нет такого)
+static func tut_num(step: String) -> int:
+	return TUT_STEPS.find(step) + 1
+
+
+## «Пропустить обучение»: и стрелки, и учебный бой — больше не показываются
+func tut_skip() -> void:
+	flags["tut"] = "done"
+	flags["tut_oil"] = true
+	changed.emit()
 
 
 ## Звёзды за победу: все живы — 3, хотя бы половина — 2, иначе 1
@@ -1479,8 +1546,12 @@ func from_dict(d: Dictionary) -> void:
 	glory_acc = float(d.get("glory_acc", 0.0))
 	flags = d.get("flags", {})
 	_ensure()
-	# умения за уже побеждённых боссов
+	# умения за уже побеждённых боссов (и масло — с первого дня: старым сохранениям тоже)
 	for p in PERK_IDS:
 		if bosses() >= int(PERKS[p]["boss"]) and int(perks[p]) == 0:
 			perks[p] = 1
+	# старое сохранение, где уже воевали: обучение и учебный бой позади
+	if progress > 0 and not flags.has("tut"):
+		flags["tut"] = "done"
+		flags["tut_oil"] = true
 	changed.emit()

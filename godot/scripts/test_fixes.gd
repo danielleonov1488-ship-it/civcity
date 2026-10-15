@@ -157,7 +157,7 @@ func _run() -> void:
 	c.level = 4
 	c.research["legion"] = true
 	c.money = 20000.0
-	c.legion.flags["intro"] = true
+	c.legion.flags["tut"] = "done"
 	c.changed.emit()
 	await frames(5)
 	var ui := LegionUi.of(hud)

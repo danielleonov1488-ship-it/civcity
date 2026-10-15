@@ -7,6 +7,9 @@ extends Node
 ## perk_at — нажать умение в секунду боя; pvp=1 — бой с городом (отряд обороны — такой же отряд);
 ## retreat_at=с — спросить «Отступить?» (кадр) и отступить; pause_at=с — пауза (кадр); game=1 — бой из готового города;
 ## next=1 — после победы нажать «Дальше» и снять следующий бой (next_shot=с); close=1 — после итога «В лагерь».
+## auto=1 — «Авто» с начала (проверке можно и в непройденном бою: auto_any); hover_auto=с — навести мышь на «Авто» (кадр
+## с подсказкой). Учебный бой — region=0 stage=0 (первый бой, масло ещё не жали): кадр, когда бой замер со стрелкой
+## на масле (…_tut_freeze), потом «нажимает» масло и снимает …_tut_after; печатает TUT freeze/press.
 ## Печатает средний FPS, итог боя и куда сохранены кадры. Запускать только через .work/py/gpu_run.sh (замок видеокарты).
 
 var args := {}
@@ -74,7 +77,9 @@ func _ready() -> void:
 		var st := legion.stage_info(c, r, s)
 		setup = legion.make_battle(st, int(args.get("seed", "7")))
 	print("BATTLE ", "pvp" if args.has("pvp") else "%d-%d-%d" % [c, r, s], " lvl=", lvl, " squad=", legion.squad_stats().map(func(x): return x["key"]), " perks=", legion.open_perks())
+	print("BATTLE tutorial=", setup.get("tutorial", ""), " packs=", setup.get("packs", []))
 	battle = LegionBattle.open(self, setup, _on_done, {"legion": legion, "speed": float(args.get("speed", "1")), "auto": args.get("auto", "0") == "1",
+		"auto_any": args.get("auto", "0") == "1",
 		"quality": args.get("quality", "high"), "zoom": float(args.get("zoom", "1"))}.merged({"cam_x": float(args["cam_x"])} if args.has("cam_x") else {}))
 	battle.finished.connect(func(o: Dictionary) -> void:
 		print("RESULT win=", o.get("win"), " alive=", o.get("alive"), "/", o.get("total"), " time=", snappedf(float(o.get("time", 0)), 0.1),
@@ -159,6 +164,41 @@ func _process(dt: float) -> void:
 	var st: float = battle.sim.t
 	if int(t) != int(t - dt) and battle.fps_avg > 0.0:
 		fps_log.append(battle.fps_avg)
+	# учебный бой: бой замер — кадр со стрелкой, потом масло
+	if battle.tut_freeze and not args.has("_tut_t"):
+		args["_tut_t"] = str(t)
+		var foes := 0
+		for u in battle.sim.units:
+			if u.side == "enemy" and u.alive and u.wave == battle.sim.wave_idx:
+				foes += 1
+		print("TUT freeze at ", snappedf(st, 0.1), " s: wave ", battle.sim.wave_idx + 1, ", foes ", foes, ", oil ready ", battle.sim.perk_ready("oil"),
+			", speed ", battle.speed, ", auto_btn visible ", battle.auto_btn.visible, ", hint «", battle.hint_lbl.text, "»")
+	if args.has("_tut_t") and not args.has("_tut_shot") and t - float(args["_tut_t"]) > 1.2:
+		args["_tut_shot"] = "1"
+		var st0: float = battle.sim.t
+		_shot(tag + "_tut_freeze")
+		print("TUT still frozen: ", battle.tut_freeze and is_equal_approx(battle.sim.t, st0), " arrow ", battle.tut_arrow.visible)
+		var alive0 := battle.sim.alive_of("enemy").size()
+		battle.use_perk("oil")
+		print("TUT press: freeze ", battle.tut_freeze, ", flags.tut_oil ", legion.flags.get("tut_oil", false), ", foes alive ", alive0, " → ", battle.sim.alive_of("enemy").size(),
+			", hint «", battle.hint_lbl.text, "»")
+		args["_tut_after"] = str(t + 1.4)
+	if args.has("_tut_after") and t >= float(args["_tut_after"]):
+		args.erase("_tut_after")
+		_shot(tag + "_tut_after")
+	if args.has("hover_auto") and st >= float(args["hover_auto"]):
+		args.erase("hover_auto")
+		var ab: Control = battle.auto_btn
+		var c := ab.get_viewport().get_final_transform() * (ab.get_global_transform_with_canvas() * (ab.size / 2.0))
+		var m := InputEventMouseMotion.new()
+		m.position = c
+		m.global_position = c
+		Input.parse_input_event(m)
+		args["hover_shot"] = str(t + 1.6)
+		print("AUTO disabled=", battle.auto_btn.disabled, " pressed=", battle.auto_btn.button_pressed, " sim auto=", battle.sim.auto["ally"], " tip «", battle.auto_btn.tooltip_text, "»")
+	if args.has("hover_shot") and t >= float(args["hover_shot"]):
+		args.erase("hover_shot")
+		_shot(tag + "_auto_off")
 	for p: Array in perk_at:
 		if p[0] >= 0.0 and st >= float(p[0]):
 			battle.use_perk(String(p[1]))

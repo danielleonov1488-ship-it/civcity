@@ -17,8 +17,9 @@ extends Node
 ## шлёт legion.battle_closed(out) — окно «Легион» открывается снова. Можно открыть и напрямую:
 ## LegionBattle.open(host, setup, on_done, opts) (host — Game или любой узел; без города — для проверок).
 ##
-## Управление: кнопки умений внизу (или клавиши 1–5), «Авто» — умения жмёт сам отряд, скорость ×1/×2/×3,
-## пробел — пауза, Esc — отступить (с вопросом), колёсико — камера ближе или дальше.
+## Управление: кнопки умений внизу (или клавиши 1–5), «Авто» — умения жмёт сам отряд (только в пройденных боях
+## и боях с городами), скорость ×1/×2/×3, пробел — пауза, Esc — отступить (с вопросом), колёсико — камера ближе или дальше.
+## Учебный первый бой (setup.tutorial = "oil"): ×1 без «Авто»; шайка вышла кучей — бой замирает, стрелка на масле.
 
 signal finished(out: Dictionary)          # бой окончен, итог подсчитан (до закрытия экрана итога)
 
@@ -82,6 +83,12 @@ var _last_wave := 0
 var _fps_t := 0.0
 var _fps_n := 0
 var fps_avg := 0.0
+# учебный первый бой (setup.tutorial = "oil"): шайка сбилась в кучу — бой замирает, стрелка на «Кипящее масло»
+var tut := ""
+var tut_freeze := false
+var tut_done := false
+var tut_arrow: TextureRect
+var hint_until := 14.0                     # до какой секунды боя видна подсказка над умениями
 
 # экран
 var canvas: CanvasLayer
@@ -270,6 +277,15 @@ func _build_screen() -> void:
 	hint_lbl.visible = false
 	ui.add_child(hint_lbl)
 	_pin(hint_lbl, Control.PRESET_CENTER_BOTTOM, Vector2(-420, -176), Vector2(840, 30))
+	# стрелка учебного боя над кнопкой умения (качается)
+	tut_arrow = TextureRect.new()
+	tut_arrow.texture = _icon_tex("arrow_down")
+	tut_arrow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tut_arrow.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tut_arrow.size = Vector2(60, 60)
+	tut_arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tut_arrow.visible = false
+	ui.add_child(tut_arrow)
 	# занавес между городом и боем: карта провинции (лист 40 владельца) и название боя
 	fade = ColorRect.new()
 	fade.color = Color(0.12, 0.08, 0.05, 1.0)
@@ -528,7 +544,7 @@ func _fill_perks() -> void:
 		if sim.perks["ally"].has(id):
 			ids.append(id)
 	if ids.is_empty():
-		var l := _label("Бой идёт сам. Умения в бою откроются победами над боссами провинций", 17, true, C_SOFT)
+		var l := _label("Отряд дерётся сам; ваше — состав и умения в нужный миг", 17, true, C_SOFT)
 		h.add_child(l)
 	var n := 0
 	for id: String in ids:
@@ -619,7 +635,24 @@ func _start(s: Dictionary) -> void:
 	world.add_child(cam)
 	cam.make_current()
 	sim = LegionSim.new(setup)
-	sim.set_auto(bool(opts.get("auto", legion.flags.get("battle_auto", false))))   # запоминается: бой с городом повторит сервер
+	# учебный бой: управление — у игрока, скорость ×1, «Авто» и скорость спрятаны
+	tut = "" if pvp else String(s.get("tutorial", ""))
+	tut_freeze = false
+	tut_done = false
+	tut_arrow.visible = false
+	if tut != "":
+		speed = 1.0
+	elif not opts.has("speed"):
+		speed = clampf(float(legion.flags.get("battle_speed", speed)), 1.0, 3.0)
+	for b in speed_btns.values():
+		(b as Control).visible = tut == ""
+	auto_btn.visible = tut == ""
+	# «Авто» — только для пройденных боёв (и боёв с городами): в первый раз бой ведёт сам игрок
+	var auto_ok := pvp or bool(opts.get("auto_any", false)) or legion.stage_done(int(stage.get("cycle", 0)), int(stage.get("r", 0)), int(stage.get("s", 0)))
+	auto_btn.disabled = not auto_ok
+	auto_btn.tooltip_text = "Умения отряд жмёт сам — вовремя и с умом" if auto_ok else "Авто — для пройденных боёв: в первый раз ведите бой сами"
+	var want := bool(opts.get("auto", legion.flags.get("battle_auto", false)))
+	sim.set_auto(want and auto_ok and tut == "")   # запоминается: бой с городом повторит сервер
 	_prewarm()
 	views.clear()
 	shots.clear()
@@ -630,11 +663,15 @@ func _start(s: Dictionary) -> void:
 	_refresh_speed()
 	# первые бои: тихая подсказка над умениями (как устроен бой), потом не мешает
 	var seen := int(legion.flags.get("battle_hints", 0))
-	hint_lbl.visible = seen < 3 and not sim.perks["ally"].is_empty()
+	hint_lbl.visible = (seen < 3 or tut != "") and not sim.perks["ally"].is_empty()
 	hint_lbl.modulate.a = 1.0
-	if hint_lbl.visible:
+	_pin(hint_lbl, Control.PRESET_CENTER_BOTTOM, Vector2(-420, -262 if tut != "" else -176), Vector2(840, 30))
+	hint_until = INF if tut != "" else 14.0
+	if tut != "":
+		hint_lbl.text = "Учебный бой. Отряд дерётся сам; ваше — состав и умения в нужный миг."
+	elif hint_lbl.visible:
 		legion.flags["battle_hints"] = seen + 1
-		hint_lbl.text = "Бой идёт сам. Когда умение засветится — нажмите его (или клавишу 1–5)."
+		hint_lbl.text = "Отряд дерётся сам; ваше — состав и умения в нужный миг. Умение засветилось — жмите (клавиши 1–5)."
 	_handle(sim.take_events())
 	phase = "intro"
 	intro_t = 0.0
@@ -793,25 +830,27 @@ func _process(dt: float) -> void:
 		banner.modulate.a = clampf(minf(_banner_t * 3.0, (1.6 - _banner_t) * 6.0 + 1.0), 0.0, 1.0) if _banner_t > 0.0 else 0.0
 	else:
 		banner.modulate.a = maxf(0.0, banner.modulate.a - dt * 4.0)
-	var run := not paused and modal == null or phase == "result"
+	var run := (not paused and not tut_freeze and modal == null) or phase == "result"
 	var gdt := dt * speed * slowmo if run else 0.0
 	t_vis += gdt
 	if phase == "intro":
 		intro_t += dt
 		if intro_t > 2.4:
 			phase = "fight"
-	if hint_lbl.visible and (sim.t > 14.0 or phase == "ending" or phase == "result"):
+	if hint_lbl.visible and (sim.t > hint_until or phase == "ending" or phase == "result"):
 		hint_lbl.modulate.a = maxf(0.0, hint_lbl.modulate.a - dt * 1.5)
 		if hint_lbl.modulate.a <= 0.0:
 			hint_lbl.visible = false
 	if run and phase != "result":
 		acc += gdt
 		var n := 0
-		while acc >= LegionSim.DT and n < 16 and sim.result.is_empty():
+		while acc >= LegionSim.DT and n < 16 and sim.result.is_empty() and not tut_freeze:
 			sim.step(LegionSim.DT)
 			acc -= LegionSim.DT
 			n += 1
 			_handle(sim.take_events())
+			_tut_check()
+	_tut_arrow(dt)
 	if not sim.result.is_empty() and (phase == "fight" or phase == "intro"):
 		_begin_end()
 	if phase == "ending":
@@ -976,6 +1015,7 @@ func _perk_fx(e: Dictionary) -> void:
 func _begin_end() -> void:
 	phase = "ending"
 	end_t = 0.0
+	tut_freeze = false                       # отступили, пока бой стоял на масле
 	retreat_btn.disabled = true
 	var res := sim.result
 	if pvp:
@@ -1192,6 +1232,8 @@ func _update_ui() -> void:
 
 
 func _set_speed(s: float) -> void:
+	if tut != "":
+		return
 	speed = s
 	legion.flags["battle_speed"] = s
 	_refresh_speed()
@@ -1209,6 +1251,9 @@ func _refresh_speed() -> void:
 
 
 func _toggle_auto() -> void:
+	if auto_btn.disabled or tut != "":
+		_refresh_speed()
+		return
 	sim.set_auto(not bool(sim.auto["ally"]))
 	legion.flags["battle_auto"] = sim.auto["ally"]
 	_refresh_speed()
@@ -1225,8 +1270,54 @@ func _toggle_pause() -> void:
 func use_perk(id: String) -> void:
 	if phase != "fight" and phase != "intro":
 		return
+	if tut_freeze and id != "oil":
+		return
 	if sim.press(id):
 		_handle(sim.take_events())
+		if tut_freeze and id == "oil":
+			# учебный бой: масло накрыло шайку — бой идёт дальше
+			tut_freeze = false
+			tut_done = true
+			tut_arrow.visible = false
+			legion.flags["tut_oil"] = true
+			hint_lbl.text = "Отлично! Котёл снова закипит через %d с." % int(Legion.PERKS["oil"]["cd"])
+			hint_lbl.visible = true
+			hint_lbl.modulate.a = 1.0
+			hint_until = sim.t + 6.0
+
+
+## Учебный бой: вторая волна (шайка кучей) вышла на поле — бой замирает, масло готово, стрелка на кнопке
+func _tut_check() -> void:
+	if tut != "oil" or tut_done or tut_freeze or sim.wave_idx < 1 or not sim.result.is_empty():
+		return
+	var n := 0
+	for u in sim.units:
+		if u.side == "enemy" and u.wave == sim.wave_idx and u.alive:
+			if u.entering:
+				return
+			n += 1
+	if n == 0 or not sim.perks["ally"].has("oil"):
+		return
+	tut_freeze = true
+	acc = 0.0
+	sim.perks["ally"]["oil"]["ready"] = 0.0
+	hint_lbl.text = "Разбойники сбились в кучу! Жмите «Кипящее масло» (клавиша 1)"
+	hint_lbl.visible = true
+	hint_lbl.modulate.a = 1.0
+	say("Разбойники сбились в кучу!", 2.0)
+
+
+## Стрелка над кнопкой «Кипящее масло», пока бой стоит (покачивается)
+func _tut_arrow(_dt: float) -> void:
+	var pb: Control = perk_btns.get("oil")
+	tut_arrow.visible = tut_freeze and pb != null and is_instance_valid(pb) and phase != "result"
+	if not tut_arrow.visible:
+		return
+	var r := pb.get_global_rect()
+	var bob := sin(Time.get_ticks_msec() / 160.0) * 8.0
+	var k := ui.get_global_transform().affine_inverse()
+	var top := k * Vector2(r.get_center().x, r.position.y)
+	tut_arrow.position = Vector2(top.x - tut_arrow.size.x * 0.5, top.y - tut_arrow.size.y - 2.0 + bob)
 
 
 func _unhandled_key_input(e: InputEvent) -> void:

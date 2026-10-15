@@ -8,12 +8,14 @@ extends SceneTree
 ##                  (цель: с умениями ≥need=0.9 на T, без умений ≥need_np=0.4 на T+np_off=1)
 ## mode=need      — для каждого боя: с какого уровня отряд побеждает в ≥75% боёв
 ## mode=one       — один бой stage=c-r-s на уровне lvl: доля побед, звёзды, время
+## mode=tut       — учебный первый бой (0-0-0, шайка кучей): три легионера lvl (1), масло там, где бой замирает,
+##                  без масла и с «Авто»; печатает доли побед и сколько врагов накрыло масло
 ## Состав и умения — как у игрока, дошедшего до боя (места и рода войск открываются боссами); умения жмёт сам бой
 ## (auto) — как внимательный игрок. noarcher=1 — без лучников (до исследования «Стрельбище»).
 
 const WIN_NEED := 0.75
-## Обычный уровень бойцов игрока, который подходит к провинции (с учётом предела города: Городок → 3,
-## Большой город → 7, Вечный город → 10)
+## Обычный уровень бойцов игрока, который подходит к провинции (с учётом предела города: Посёлок → 3, Городок → 4,
+## Город → 6, Большой город → 8, Вечный город → 10)
 const EXPECT := [2, 4, 5, 6, 7, 8, 9, 10]
 
 var args := {}
@@ -47,6 +49,10 @@ func _init() -> void:
 		regions.append(int(x))
 	if args.has("notune"):
 		Legion.TUNE = []
+	if args.has("set"):
+		# set=r,s,множитель — подменить одну клетку TUNE (подбор вручную)
+		var sv: PackedStringArray = String(args["set"]).split(",")
+		Legion.TUNE[int(sv[0])][int(sv[1])] = float(sv[2])
 	match mode:
 		"calibrate":
 			# множитель силы врагов, при котором отряд на уровне target_level побеждает в ≥80% боёв
@@ -92,6 +98,12 @@ func _init() -> void:
 					print(line)
 		"api":
 			_api()
+		"tut":
+			var lv := int(args.get("lvl", "1"))
+			for how in ["freeze", "freeze_auto", "none", "auto"]:
+				var tr := _tut_rate(how, seeds, lv)
+				print("TUT %-11s ур.%d: побед %d%%, масло накрыло в среднем %.1f, здоровья осталось %d%%, время %.0f с" % [how, lv,
+					roundi(float(tr["win"]) * 100), float(tr["hit"]), roundi(float(tr["hp"]) * 100), float(tr["time"])])
 		"one":
 			var p: PackedStringArray = String(args.get("stage", "0-0-0")).split("-")
 			var st := Legion.stage(int(p[0]), int(p[1]), int(p[2]))
@@ -194,7 +206,8 @@ func _rate(st: Dictionary, lvl: int, seeds: int, with_perks: bool) -> Dictionary
 	var hp := 0.0
 	var tout := 0
 	for i in seeds:
-		var sim := LegionSim.new({"kind": "campaign", "squad": pl["squad"], "waves": waves, "perks": pl["perks"], "seed": 1000 + i * 7919})
+		var sim := LegionSim.new({"kind": "campaign", "squad": pl["squad"], "waves": waves, "perks": pl["perks"], "seed": 1000 + i * 7919,
+			"packs": st.get("packs", [])})
 		var r := sim.run(true)
 		if r["win"]:
 			win += 1
@@ -204,6 +217,56 @@ func _rate(st: Dictionary, lvl: int, seeds: int, with_perks: bool) -> Dictionary
 		if r["timeout"]:
 			tout += 1
 	return {"win": float(win) / seeds, "stars": stars / maxf(1.0, win), "time": tm / seeds, "hp": hp / maxf(1.0, win), "timeout": float(tout) / seeds}
+
+
+## Учебный бой 0-0-0 (как в игре: шайка кучей, setup.packs): три легионера уровня lvl с маслом 1 ур.
+## how: freeze — масло ровно тогда, когда вторая волна вышла на поле (там 3D-бой замирает), потом умения никто не жмёт;
+## freeze_auto — то же, потом «Авто»; none — без масла; auto — «Авто» с начала
+func _tut_rate(how: String, seeds: int, lvl: int) -> Dictionary:
+	var st := Legion.stage(0, 0, 0)
+	var waves := []
+	for w: Array in st["waves"]:
+		var ws := []
+		for k in w:
+			ws.append(Legion.foe_stats(st, k))
+		waves.append(ws)
+	var sq := []
+	for i in 3:
+		sq.append(Legion.unit_stats("legionary", lvl))
+	var win := 0
+	var hit := 0
+	var hp := 0.0
+	var tm := 0.0
+	for i in seeds:
+		var sim := LegionSim.new({"kind": "campaign", "squad": sq, "waves": waves, "perks": {} if how == "none" else {"oil": 1},
+			"seed": 1000 + i * 7919, "packs": st["packs"]})
+		sim.set_auto(how == "auto")
+		var pressed := false
+		while sim.result.is_empty():
+			sim.step(LegionSim.DT)
+			sim.events.clear()
+			if how.begins_with("freeze") and not pressed and sim.wave_idx >= 1:
+				var n := 0
+				var all_in := true
+				for u in sim.units:
+					if u.side == "enemy" and u.wave == sim.wave_idx and u.alive:
+						n += 1
+						if u.entering:
+							all_in = false
+				if all_in and n > 0:
+					sim.perks["ally"]["oil"]["ready"] = 0.0
+					sim.press("oil")
+					for e: Dictionary in sim.events:
+						if String(e["type"]) == "hit" and e.get("from") == null:
+							hit += 1
+					pressed = true
+					if how == "freeze_auto":
+						sim.set_auto(true)
+		if sim.result["win"]:
+			win += 1
+			hp += float(sim.result["hp_left"])
+		tm += float(sim.result["time"])
+	return {"win": float(win) / seeds, "hit": float(hit) / seeds, "hp": hp / maxf(1.0, win), "time": tm / seeds}
 
 
 # =====================================================================
@@ -224,48 +287,89 @@ func _api() -> void:
 	var city := City.new(land)
 	city.place("center", Land.CENTER, PI / 2, 0, 0, true)
 	var L: Legion = city.legion
-	_check(not L.window_open() and L.lock_text() != "", "окно закрыто до исследования «Легион»: " + L.lock_text())
-	city.level = 4
+	_check(not L.window_open() and L.lock_text().contains("Посёлок"), "окно закрыто до исследования «Легион»: " + L.lock_text())
+	# Д5: Легион с «Посёлка» — исследование того же ряда, провинции раньше, предел бойцов не ниже самого трудного боя
+	_check(int(Defs.research("legion")["lvl"]) == int(Legion.REGIONS[0]["rank"]) and int(Legion.REGIONS[0]["rank"]) == 3, "«Легион» изучается на «%s» — там же открыт лес" % Defs.LEVELS[int(Defs.research("legion")["lvl"])]["name"])
+	var ranks := []
+	var walls := []
+	for r in Legion.REGIONS.size():
+		var rk := int(Legion.REGIONS[r]["rank"])
+		ranks.append(rk)
+		var mx := 0
+		for s in Legion.STAGES:
+			mx = maxi(mx, Legion.target_level(0, r, s))
+		if mx > int(Legion.CAP_BY_CITY[rk]):
+			walls.append("%s: бой %d ур. > предел %d" % [Legion.REGIONS[r]["name"], mx, int(Legion.CAP_BY_CITY[rk])])
+	_check(ranks == [3, 4, 5, 5, 6, 6, 7, 7] and walls.is_empty(), "провинции по уровням города %s, стен нет %s" % [ranks, walls])
+	_check(int(L.perks["oil"]) == 1 and L.open_perks().has("oil"), "«Кипящее масло» — с первого дня")
+	city.level = 3
 	city.research["legion"] = true
 	_check(L.window_open(), "окно открыто после «Легиона»")
 	_check(city.unlocked("barracks") and not city.unlocked("range"), "Казармы — исследованием «Легион», Стрельбище — «Стрельбищем»")
 	_check(not city.unlocked("spearcamp") and Defs.unlock_text("boss1").contains("Атаман"), "Лагерь копейщиков закрыт до первого босса: " + Defs.unlock_text("boss1"))
+	# обучение: шаги выводятся из состояния игры
+	_check(L.tut_step() == "barracks", "обучение, шаг 1 — Казармы: «%s»" % L.tut_step())
 	var p := Land.CENTER + Vector2(14, 12)
 	city.place("barracks", p, 0.0, 0, -1, true)
+	_check(L.tut_step() == "medal", "шаг 2 — медальон: «%s»" % L.tut_step())
+	L.flags["seen"] = true
+	_check(L.tut_step() == "fight", "шаг 3 — учебный бой: «%s»" % L.tut_step())
 	_check(L.available("legionary") and not L.available("archer"), "легионеры доступны с Казармами, лучники — нет: " + L.unit_lock_text("archer"))
 	var chk := city.check_place("barracks", p + Vector2(30, 0), 0.0)
 	_check(String(chk["err"]) == "Такая постройка в городе уже есть", "вторые Казармы нельзя: " + String(chk["err"]))
-	# прокачка по настоящим часам (ускорено)
+	# первый бой похода — учебный: шайка кучей во второй волне, бой замирает на масле (3D-бой)
+	var st := L.stage_info(0, 0, 0)
+	_check(bool(st["open"]) and bool(st["first"]) and L.can_fight(st) == "", "первый бой открыт, можно в бой")
+	var setup := L.make_battle(st, 42)
+	_check(String(setup.get("tutorial", "")) == "oil" and setup["packs"] == [1] and (setup["waves"] as Array).size() == 2
+		and (setup["waves"][0] as Array).size() == 2 and (setup["waves"][1] as Array).size() == 5, "учебный бой: tutorial=oil, packs=[1], волны 2 + 5")
+	var sim0 := LegionSim.new(setup)
+	while sim0.wave_idx < 1 and sim0.result.is_empty():
+		sim0.step(LegionSim.DT)
+	var zs := []
+	var xs := []
+	for u in sim0.units:
+		if u.side == "enemy" and u.wave == 1:
+			zs.append(u.z)
+			xs.append(u.x)
+	if xs.is_empty():
+		xs = [0.0]
+		zs = [0.0]
+	_check(sim0.wave_idx == 1 and xs.size() == 5 and xs.max() - xs.min() < 1.5 and zs.max() - zs.min() <= 0.71, "вторая волна выходит кучей: x %.2f…%.2f, z %.2f…%.2f" % [xs.min(), xs.max(), zs.min(), zs.max()])
+	var r1 := LegionSim.new(setup).run(true)
+	var r2 := LegionSim.new(setup).run(true)
+	_check(r1["win"] == r2["win"] and is_equal_approx(float(r1["time"]), float(r2["time"])), "бой с тем же зерном идёт одинаково (%.2f с)" % float(r1["time"]))
+	L.flags["tut_fought"] = true
+	_check(L.tut_step() == "troops", "шаг 4 — улучшить бойцов: «%s»" % L.tut_step())
+	var g0 := L.glory
+	var out := L.apply_result(setup, r1)
+	_check(bool(out["win"]) and L.progress == 1 and L.rating == 3 and L.glory > g0 and int(out["stars"]) >= 1, "победа: прогресс 1, рейтинг 3, Слава %.0f, звёзд %d, добыча %s" % [L.glory, int(out["stars"]), str(out["reward"])])
+	_check(not (out["next"] as Dictionary).is_empty(), "открылся следующий бой")
+	_check(not L.make_battle(L.stage_info(0, 0, 0), 1).has("tutorial") and not L.make_battle(L.stage_info(0, 0, 1), 1).has("tutorial"), "повтор и следующие бои — не учебные")
+	# прокачка по настоящим часам (ускорено): 5 минут до 2-го уровня, 30 минут до 3-го
+	_check(is_equal_approx(L.upgrade_info("legionary")["time"], 300.0) and Legion.UPGRADE_TIME[3] == 1800, "улучшение до 2 ур. — 5 мин, до 3-го — 30 мин")
 	city.money = 5000.0
-	L.time_k = 2000.0
+	L.time_k = 20000.0
 	_check(L.can_upgrade("legionary") == "", "можно улучшить легионеров")
 	var m0 := city.money
 	_check(L.upgrade("legionary") and is_equal_approx(m0 - city.money, 700.0), "улучшение до 2 ур. стоит 700 ден.")
 	_check(L.can_upgrade("legionary") == "Уже улучшается", "второй раз — «Уже улучшается»")
+	_check(L.tut_step() == "" and String(L.flags.get("tut", "")) == "done", "обучение пройдено: улучшение началось")
 	OS.delay_msec(120)
 	var ev := L.tick()
 	_check(int(L.levels["legionary"]) == 2 and ev.size() == 1, "таймер прошёл — 2 уровень: " + str(ev))
 	L.upgrade("legionary")
 	OS.delay_msec(300)
 	L.tick()
-	_check(int(L.levels["legionary"]) == 3 and L.can_upgrade("legionary").begins_with("Предел города"), "предел «Городка» — 3 ур.: " + L.can_upgrade("legionary"))
-	# первый бой похода
-	var st := L.stage_info(0, 0, 0)
-	_check(bool(st["open"]) and bool(st["first"]) and L.can_fight(st) == "", "первый бой открыт, можно в бой")
-	var setup := L.make_battle(st, 42)
-	var r1 := LegionSim.new(setup).run(true)
-	var r2 := LegionSim.new(setup).run(true)
-	_check(r1["win"] == r2["win"] and is_equal_approx(float(r1["time"]), float(r2["time"])), "бой с тем же зерном идёт одинаково (%.2f с)" % float(r1["time"]))
-	var g0 := L.glory
-	var out := L.apply_result(setup, r1)
-	_check(bool(out["win"]) and L.progress == 1 and L.rating == 3 and L.glory > g0 and int(out["stars"]) >= 1, "победа: прогресс 1, рейтинг 3, Слава %.0f, звёзд %d, добыча %s" % [L.glory, int(out["stars"]), str(out["reward"])])
-	_check(not (out["next"] as Dictionary).is_empty(), "открылся следующий бой")
+	_check(int(L.levels["legionary"]) == 3 and L.can_upgrade("legionary").begins_with("Предел города"), "предел «Посёлка» — 3 ур.: " + L.can_upgrade("legionary"))
 	# провинции за уровнем города
 	L.progress = 10
-	_check(not L.stage_open(0, 1, 0) and L.region_lock_text(1).contains("Большой город"), "вторая провинция ждёт «Большого города»: " + L.region_lock_text(1))
+	_check(not L.stage_open(0, 1, 0) and L.region_lock_text(1).contains("Городок"), "вторая провинция ждёт «Городка»: " + L.region_lock_text(1))
+	city.level = 4
+	_check(L.stage_open(0, 1, 0) and L.cap() == 4, "на «Городке» открыта, предел 4")
 	city.level = 6
-	_check(L.stage_open(0, 1, 0) and L.cap() == 7, "на «Большом городе» открыта, предел 7")
-	# босс: умение, место в отряде, новая постройка
+	_check(L.cap() == 8, "на «Большом городе» предел 8")
+	# босс: место в отряде, новая постройка (масло уже было)
 	L.progress = 9
 	var bst := L.stage_info(0, 0, 9)
 	var bout := L.apply_result(L.make_battle(bst, 1), {"win": true, "alive": 2, "total": 3, "timeout": false, "time": 50.0})
@@ -278,12 +382,25 @@ func _api() -> void:
 	city2.load_data(d)
 	var L2: Legion = city2.legion
 	_check(L2.progress == L.progress and L2.rating == L.rating and is_equal_approx(L2.glory, L.glory) and int(L2.levels["legionary"]) == 3
-		and L2.upg.has("legionary") and L2.squad.size() == 4 and int(L2.perks["oil"]) == 1 and L2.stars.size() == L.stars.size(), "сохранение и загрузка (JSON) — всё на месте")
+		and L2.upg.has("legionary") and L2.squad.size() == 4 and int(L2.perks["oil"]) == 1 and L2.stars.size() == L.stars.size()
+		and String(L2.flags.get("tut", "")) == "done", "сохранение и загрузка (JSON) — всё на месте")
+	# старое сохранение (до этапа 3): масла не было, флагов обучения нет — после загрузки масло есть, обучение позади
+	var old := {"levels": {"legionary": 3}, "squad": ["legionary", "legionary", "legionary"], "perks": {"oil": 0}, "progress": 4, "flags": {"seen": true, "advised": true}}
+	var L3 := Legion.new()
+	L3.from_dict(old)
+	_check(int(L3.perks["oil"]) == 1 and String(L3.flags.get("tut", "")) == "done" and L3.flags.has("tut_oil") and L3.progress == 4 and L3.flags.has("seen"),
+		"старое сохранение после 1-го боя: масло 1, обучение и учебный бой позади, прогресс и флаги целы")
+	var L4 := Legion.new()
+	L4.from_dict({"perks": {"oil": 0}, "progress": 0, "flags": {"seen": true}})
+	_check(int(L4.perks["oil"]) == 1 and not L4.flags.has("tut") and L4.tutorial_battle(Legion.stage(0, 0, 0).merged({"idx": 0})), "старое сохранение без боёв: учебный бой ещё впереди")
+	L4.tut_skip()
+	_check(not L4.tutorial_battle(Legion.stage(0, 0, 0)), "«Пропустить обучение» — без учебного боя")
 	# чудеса: арка открывается рейтингом походов, стоит Славы
 	L.rating = 10
 	_check(not city.unlocked("arch"), "арка закрыта без исследования и рейтинга")
 	L.rating = 30
 	L.glory = 3.0
+	city.money = 20000.0                           # арка дороже денариев после прокачки (6000 с этапа 1b) — проверяем именно Славу
 	_check(city.unlocked("arch") and L.wonder_state("arch") == "open", "рейтинг 30 открывает Триумфальную арку")
 	var ca := city.check_place("arch", p + Vector2(30, 0), 0.0)
 	_check(String(ca["err"]).begins_with("Не хватает Славы"), "без Славы арку не поставить: " + String(ca["err"]))

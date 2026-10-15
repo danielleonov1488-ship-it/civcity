@@ -91,7 +91,7 @@ var lbl_rating: Label
 var view_r := -1                           # какая провинция на карте
 var view_c := -1                           # какой круг похода
 var sel := {}                              # выбранный бой {c, r, s}
-var overlay: Control                       # окно поверх (итог боя, выбор бойца, «как устроено»)
+var overlay: Control                       # окно поверх (итог боя, выбор бойца)
 var toast: PanelContainer
 var _live := []                            # что обновлять каждые 0,2 с: таймеры улучшений, заряды атак
 var _live_t := 0.0
@@ -108,6 +108,13 @@ var _pvp_auto := false                      # сам повторил после
 var _pvp_auto_wait := false                 # ждёт 5 с до этого повтора
 var _net_obj = null
 var _net_checked := false
+# обучение Легиону (4 шага, Legion.tut_step): полоса в окне с шагом и «Пропустить», стрелка hud
+var tut_bar: PanelContainer
+var tut_lbl: Label
+var tut_act: Button                        # «Поставить Казармы» (шаг 1, если окно открыто раньше)
+var _fight_btn: Button                     # «В бой!» в карточке боя
+var _front_btn: Button                     # передний край на карте
+var _upg_btn: Button                       # «Улучшить до 2» у легионеров
 
 
 # =====================================================================
@@ -151,7 +158,7 @@ func setup(h: Hud) -> void:
 	_make_button()
 	_make_window()
 	if lg != null:
-		lg.changed.connect(func(): _dirty = true; _update_button())
+		lg.changed.connect(func(): _dirty = true; _update_button(); hud._update_pointer())
 		lg.battle_closed.connect(_on_battle_closed)
 		game.city.changed.connect(_on_city)
 	resized.connect(_fit)
@@ -174,10 +181,11 @@ func _update_button() -> void:
 	btn_wrap.visible = on
 	if on:
 		hud._set_on(btn, not bool(lg.flags.get("seen", false)) or visible)
-		# один раз: советник рассказывает, где Легион и с чего начать
-		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"]:
+		# обучение, шаг 1: один раз советник рассказывает, с чего начать (стрелка — на Казармы)
+		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"] and lg.tut_step() == "barracks":
 			lg.flags["advised"] = true
-			hud.advisor("Легион собран!", "Сверху справа появился медальон «Легион»: там походы, войска и чудеса света.\n\nСначала поставьте Казармы (раздел «Легион» на нижней полосе) — они открывают легионеров. Бой идёт сам: отряд сражается, а вы только вовремя жмёте умения. Победы приносят денарии и Славу.")
+			hud.advisor("Легион собран!", "Сначала поставьте Казармы (раздел «Легион» на нижней полосе) — они дают легионеров. Потом откройте медальон «Легион» сверху справа: там походы, войска и чудеса света.\n\nОтряд дерётся сам; ваше — состав и умения в нужный миг. Победы приносят денарии и Славу.",
+				func(): lg.tut_skip())
 
 
 func toggle() -> void:
@@ -198,6 +206,8 @@ func open(tab_id := "") -> void:
 	hud._hide_info()
 	visible = true
 	lg.flags["seen"] = true
+	if tab_id == "" and lg.tut_step() == "fight":
+		tab_id = "campaign"                  # обучение: первый бой — на карте похода
 	var fr := lg.frontier()
 	if view_r < 0:
 		view_r = int(fr["r"])
@@ -210,14 +220,14 @@ func open(tab_id := "") -> void:
 	else:
 		_select_tab(tab_id if tab_id != "" else tab)
 	_update_button()
-	if not lg.flags.has("intro"):
-		_show_intro()
+	hud._update_pointer()
 
 
 func close() -> void:
 	visible = false
 	_close_overlay()
 	_update_button()
+	hud._update_pointer()
 
 
 func _on_city() -> void:
@@ -343,9 +353,30 @@ func _make_window() -> void:
 		tabs[id] = b
 		tb.add_child(b)
 	v.add_child(tb)
+	# обучение: шаг одной строкой и «Пропустить» (видно, пока идёт обучение; внизу окна)
+	tut_bar = hud._chip(true, 10)
+	tut_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var th := HBoxContainer.new()
+	th.add_theme_constant_override("separation", 10)
+	tut_bar.add_child(th)
+	var ti := _tr(_ic39("map"), 30)
+	ti.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	th.add_child(ti)
+	tut_lbl = hud._label("", 17, true, C_INK)
+	tut_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	th.add_child(tut_lbl)
+	tut_act = _btn("Поставить Казармы", 0, 15, hud.ico("hammer", 64), "", func(): close(); hud.select_build("barracks"))
+	tut_act.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	th.add_child(tut_act)
+	var sk := _btn("Пропустить обучение", 0, 14, null, "", func(): lg.tut_skip())
+	sk.tooltip_text = "Без подсказок и учебного боя"
+	sk.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	th.add_child(sk)
+	tut_bar.visible = false
 	content = MarginContainer.new()
 	content.custom_minimum_size = Vector2(CW, CH)
 	v.add_child(content)
+	v.add_child(tut_bar)                     # внизу окна: стрелки на вкладки и карточки её не закрывают
 	toast = hud._chip(true, 12)
 	toast.visible = false
 	toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -388,6 +419,9 @@ func _rebuild() -> void:
 		return
 	_live = []
 	hud._clear(content)
+	_fight_btn = null
+	_front_btn = null
+	_upg_btn = null
 	var body: Control
 	match tab:
 		"troops":
@@ -401,8 +435,74 @@ func _rebuild() -> void:
 	body.set_anchors_preset(Control.PRESET_FULL_RECT)
 	content.add_child(body)
 	_update_header()
+	_update_tut()
 	_last_sig = _sig()
 	_fit.call_deferred()
+	hud._update_pointer()
+
+
+# =====================================================================
+#   обучение Легиону: шаг в полосе окна, стрелка — у hud (hud._update_pointer спрашивает tut_pointer)
+# =====================================================================
+
+const TUT_TEXT := {
+	"barracks": "Поставьте Казармы — они дают легионеров.",
+	"medal": "Откройте медальон «Легион» сверху справа.",
+	"fight": "Первый бой — учебный. Отряд дерётся сам, но в нужный миг нужна ваша команда.",
+	"troops": "Бойцы растут по часам, даже когда игра закрыта. Улучшите легионеров.",
+}
+
+
+## Идёт обучение Легиону (только в настоящей игре: не в меню и не в показе)
+func tut_active() -> bool:
+	return lg != null and game != null and game.mode in ["play", "new"] and lg.tut_step() != ""
+
+
+## Полоса обучения в окне: «Шаг 3 из 4 · …» и «Пропустить обучение»
+func _update_tut() -> void:
+	if tut_bar == null:
+		return
+	var on := tut_active()
+	var was := tut_bar.visible
+	tut_bar.visible = on
+	if on:
+		var step := lg.tut_step()
+		tut_lbl.text = "Шаг %d из %d · %s" % [Legion.tut_num(step), Legion.TUT_STEPS.size(), TUT_TEXT.get(step, "")]
+		tut_act.visible = step == "barracks"
+	if was != on:
+		_fit.call_deferred()
+
+
+## Куда показывает стрелка обучения: [Control или null, подпись]
+func tut_pointer() -> Array:
+	var step := lg.tut_step()
+	match step:
+		"barracks":
+			if visible:
+				return [tut_act, ""]
+			if game.tool == "barracks":
+				return [null, ""]
+			return [hud._card_or_cat("military", "barracks"), "Казармы"]
+		"medal":
+			return [btn, "Легион"]
+		"fight", "troops":
+			if not visible:
+				return [btn, "Легион"]
+			if overlay != null and is_instance_valid(overlay):
+				return [null, ""]
+			if step == "fight":
+				if tab != "campaign":
+					return [tabs["campaign"], "Походы"]
+				if _fight_btn != null and is_instance_valid(_fight_btn) and int(sel.get("s", -1)) == 0 and int(sel.get("r", -1)) == 0 and int(sel.get("c", -1)) == 0:
+					return [_fight_btn, ""]
+				if _front_btn != null and is_instance_valid(_front_btn):
+					return [_front_btn, "Бой I"]
+				return [null, ""]
+			if tab != "troops":
+				return [tabs["troops"], "Войска"]
+			if _upg_btn != null and is_instance_valid(_upg_btn):
+				return [_upg_btn, ""]
+	return [null, ""]
 
 
 func _update_header() -> void:
@@ -900,6 +1000,7 @@ func _map_view() -> Control:
 		b.pressed.connect(func(): sel = st; _rebuild())
 		m.add_child(b)
 		if front:
+			_front_btn = b
 			var tw := b.create_tween().set_loops()
 			tw.tween_property(b, "scale", Vector2(1.1, 1.1), 0.55).set_trans(Tween.TRANS_SINE)
 			tw.tween_property(b, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
@@ -1198,11 +1299,14 @@ func _stage_card(st: Dictionary) -> Control:
 	fb.add_theme_font_override("font", hud.font_title)
 	fb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(fb)
+	_fight_btn = fb
 	if why != "":
 		var wl := _wl(why, CARD_W - 24, 14, C_BAD, true, true)
 		v.add_child(wl)
+	elif lg.tutorial_battle(st):
+		v.add_child(_wl("Учебный бой: в нужный миг подскажем, что нажать.", CARD_W - 24, 13, C_GOOD, true, true))
 	else:
-		v.add_child(_wl("Бой идёт сам. Вы жмёте умения, когда они готовы.", CARD_W - 24, 13, C_SOFT, false, true))
+		v.add_child(_wl("Отряд дерётся сам; ваше — состав и умения в нужный миг." + ("" if st["done"] else " «Авто» — после первой победы."), CARD_W - 24, 13, C_SOFT, false, true))
 	return p
 
 
@@ -1248,6 +1352,7 @@ func _fight(st: Dictionary) -> void:
 	if bool(get_meta("pvp_attacking", false)):
 		_say("Легион уже выступает на город — дождитесь ответа сервера")
 		return
+	lg.flags["tut_fought"] = true                # обучение: шаг «первый бой» позади (дальше — «Войска»)
 	if _has_battle_scene():
 		_pending = {}
 		close()
@@ -1380,7 +1485,7 @@ func _turn_page() -> void:
 
 
 # =====================================================================
-#   окна поверх: итог боя, выбор бойца, «как устроено»
+#   окна поверх: итог боя, выбор бойца
 # =====================================================================
 
 func _modal(w: float) -> PanelContainer:
@@ -1416,34 +1521,6 @@ func _close_overlay() -> void:
 	if overlay != null and is_instance_valid(overlay):
 		overlay.queue_free()
 	overlay = null
-
-
-func _show_intro() -> void:
-	var p := _modal(560)
-	var v: VBoxContainer = p.get_child(0)
-	var t := _title("Легион собран!", 32)
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(t)
-	var ic := _tr(_unit_tex("legionary"), 96)
-	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	v.add_child(ic)
-	for row: Array in [
-			[_ic39("map"), "Походы", "Отряд идёт по тропе от боя к бою, в конце провинции — босс. Бой идёт сам, вы только вовремя жмёте умения."],
-			[_ic39("upgrade"), "Войска", "Одна кнопка «Улучшить» на каждый род войск. Улучшение идёт по настоящим часам — даже когда игра закрыта."],
-			[_ic39("barracks"), "Город", "Новых бойцов открывают военные постройки: Казармы, Стрельбище и другие. Чем больше город, тем выше уровень бойцов."],
-			[_ic39("glory"), "Слава", "Победы приносят денарии и Славу. Слава — на умения, чудеса света и Триумф для всего города."]]:
-		var h := HBoxContainer.new()
-		h.add_theme_constant_override("separation", 10)
-		h.add_child(_tr(row[0], 46))
-		var tv := VBoxContainer.new()
-		tv.add_theme_constant_override("separation", 0)
-		tv.add_child(_l(String(row[1]), 18, true))
-		tv.add_child(_wl(String(row[2]), 440, 15, C_SOFT))
-		h.add_child(tv)
-		v.add_child(h)
-	var b := _btn("Понятно!", 200, 22, null, "", func(): lg.flags["intro"] = true; _close_overlay())
-	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	v.add_child(b)
 
 
 ## Выбор бойца на место i (which: "campaign" — отряд похода, "defense" — отряд обороны)
@@ -1704,6 +1781,8 @@ func _unit_card(t: String) -> Control:
 			var ub := _btn("Улучшить до %d" % int(info["to"]), 196, 17, _ic39("upgrade"), why, func(): _do("upgrade", t))
 			ub.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 			v.add_child(ub)
+			if t == "legionary":
+				_upg_btn = ub
 			if why != "":
 				v.add_child(_wl(why, 204, 12, C_BAD, true, true))
 	return p
@@ -1921,7 +2000,7 @@ func _opponents() -> Control:
 		var tv := VBoxContainer.new()
 		tv.add_theme_constant_override("separation", 6)
 		tv.add_child(_title("Бои с городами — скоро", 26))
-		tv.add_child(_wl("Здесь ваш легион сможет нападать на отряды обороны других игроков сайта. Бой идёт сам, как в походе. Победа поднимает рейтинг побед и приносит денарии и Славу — ни у кого ничего не отнимается.", 540, 16, C_INK))
+		tv.add_child(_wl("Здесь ваш легион сможет нападать на отряды обороны других игроков сайта. Отряд дерётся сам, как в походе. Победа поднимает рейтинг побед и приносит денарии и Славу — ни у кого ничего не отнимается.", 540, 16, C_INK))
 		tv.add_child(_wl("Уже сейчас соберите отряд обороны слева: его увидят те, кто нападёт на ваш город. Рейтинг побед открывает старшие чудеса света.", 540, 15, C_SOFT))
 		var n = _net()
 		if n != null and n.has_method("signed_in") and not bool(n.signed_in()):

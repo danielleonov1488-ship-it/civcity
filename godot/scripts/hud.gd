@@ -79,6 +79,8 @@ var info_b := {}
 var advisor_panel: PanelContainer
 var adv_title: Label
 var adv_text: Label
+var adv_skip: Button                        # «Пропустить обучение» у совета-шага (advisor(…, skip))
+var _adv_skip_cb := Callable()
 var notes_box: VBoxContainer
 var events_panel: PanelContainer
 var research_panel: PanelContainer
@@ -2398,6 +2400,14 @@ func _update_pointer() -> void:
 		pointer_target = rank_btn
 		pointer_text.text = ""                # кнопка сама говорит, что делать; подпись легла бы на просьбы
 		return
+	# обучение Легиону (4 шага: Казармы → окно → учебный бой → улучшение) — scripts/legion_ui.gd
+	var lu := LegionUi.of(self)
+	if lu != null and lu.tut_active():
+		var lp: Array = lu.tut_pointer()
+		if lp[0] != null:
+			pointer_target = lp[0]
+			pointer_text.text = lp[1]
+			return
 	if ui_level() < 3:
 		return
 	var goals: Array = game.city.active_goals(1)
@@ -3335,16 +3345,34 @@ func _advisor() -> void:
 	adv_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	adv_text.custom_minimum_size = Vector2(440, 0)
 	v.add_child(adv_text)
+	# «Понятно» справа; слева от него — «Пропустить обучение», если совет — шаг обучения (advisor(…, skip))
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_END
+	row.add_theme_constant_override("separation", 10)
+	v.add_child(row)
+	adv_skip = Button.new()
+	adv_skip.text = "Пропустить обучение"
+	adv_skip.focus_mode = Control.FOCUS_NONE
+	adv_skip.add_theme_font_size_override("font_size", 14)
+	adv_skip.visible = false
+	adv_skip.pressed.connect(func():
+		advisor_panel.visible = false
+		if _adv_skip_cb.is_valid():
+			_adv_skip_cb.call()
+		_update_pointer())
+	row.add_child(adv_skip)
 	var ok := Button.new()
 	ok.text = "Понятно"
-	ok.size_flags_horizontal = Control.SIZE_SHRINK_END
 	ok.pressed.connect(func(): advisor_panel.visible = false)
-	v.add_child(ok)
+	row.add_child(ok)
 
 
-func advisor(title: String, text: String) -> void:
+## Совет: заголовок и текст; skip — совет начинает обучение: рядом с «Понятно» кнопка «Пропустить обучение»
+func advisor(title: String, text: String, skip := Callable()) -> void:
 	adv_title.text = title
 	adv_text.text = text
+	_adv_skip_cb = skip
+	adv_skip.visible = skip.is_valid()
 	advisor_panel.visible = true
 
 

@@ -3,7 +3,7 @@ extends Node
 ##   bash .work/py/gpu_run.sh res://test_legion_ui.tscn -- [out=D:/CivCity/.work/legion_ui] [only=map,troops,…]
 ## Ставит военные постройки, прогресс походов (Крит, бой 4), уровни, умения, Славу; открывает медальон настоящим
 ## щелчком мыши и снимает каждую вкладку, выбор бойца, итог боя (без 3D-боя окно считает бой само),
-## «как устроено», свою карту для провинций без картинки и раннюю игру («Городок», первый бой).
+## свою карту для провинций без картинки, раннюю игру («Посёлок», первый бой) и обучение Легиону в 4 шага (tut*.png).
 var game
 var out := "D:/CivCity/.work/legion_ui"
 var only := []
@@ -104,7 +104,7 @@ func _run() -> void:
 	lg.pvp_rating = 64
 	lg.pvp_wins = 3
 	lg.pvp_losses = 1
-	lg.flags["intro"] = true
+	lg.flags["tut"] = "done"
 	c.changed.emit()
 	await frames(10)
 	check("медальон виден после исследования", ui.btn_wrap.visible)
@@ -172,24 +172,17 @@ func _run() -> void:
 	print("бой: прогресс ", p0, " → ", lg.progress)
 	await shot("result")
 	ui._close_overlay()
-	# «как устроено» — при первом открытии
-	lg.flags.erase("intro")
-	ui.close()
-	ui.open()
-	await shot("intro")
-	ui._close_overlay()
-	lg.flags["intro"] = true
 	# ESC/правая кнопка закрывают окно (hud.close_panels)
 	var was: bool = game.hud.close_panels()
 	check("close_panels закрыл окно", was and not ui.visible)
-	# --- ранняя игра: «Городок», Казармы, первые бои ---
-	c.level = 4
+	# --- ранняя игра: «Посёлок», Казармы, первые бои (масло — с первого дня) ---
+	c.level = 3
 	lg.progress = 2
 	lg.stars = {"0-0-0": 3, "0-0-1": 2}
 	lg.levels = {"legionary": 2, "spearman": 1, "archer": 1, "ballista": 1, "catapult": 1}
 	lg.upg = {}
 	lg.squad = ["legionary", "legionary", "legionary"]
-	lg.perks = {"oil": 0, "testudo": 0, "bandage": 0, "volley": 0, "horn": 0}
+	lg.perks = {"oil": 1, "testudo": 0, "bandage": 0, "volley": 0, "horn": 0}
 	lg.glory = 3.0
 	lg.rating = 6
 	for id in c.buildings.keys():
@@ -261,8 +254,106 @@ func _run() -> void:
 	await shot("scaled_pick")
 	ui._close_overlay()
 	game.hud.apply_scale(1.0)
+	await _tutorial(c, lg, ui, fake)
 	print("снимков: ", shots.size())
 	get_tree().quit()
+
+
+## Обучение Легиону в 4 шага: Казармы → окно → учебный бой → улучшение; и «Пропустить обучение».
+## Стрелки и советник — только в настоящей игре: на время проверки город считается игрой (сохранять его всё равно нельзя)
+func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
+	var hud = game.hud
+	var mode0: String = game.mode
+	game.mode = "play"
+	ui.close()
+	hud.advisor_panel.visible = false
+	for id in c.buildings.keys():
+		if String(c.buildings[id]["type"]) in ["barracks", "range", "spearcamp", "ballistae", "catapults"]:
+			c.remove(c.buildings[id], false)
+	c.level = 3
+	c.money = 20000.0
+	c.tips["rank_pressed"] = true                  # стрелка «новый уровень» не перебивает обучение Легиону
+	lg.progress = 0
+	lg.stars = {}
+	lg.upg = {}
+	lg.levels = {"legionary": 1, "spearman": 1, "archer": 1, "ballista": 1, "catapult": 1}
+	lg.squad = ["legionary", "legionary", "legionary"]
+	lg.perks = {"oil": 1, "testudo": 0, "bandage": 0, "volley": 0, "horn": 0}
+	lg.flags = {}
+	ui.view_r = -1
+	ui.sel = {}
+	c.changed.emit()
+	await frames(6)
+	# шаг 1: советник с «Пропустить обучение», стрелка на раздел «Легион» нижней полосы
+	check("обучение, шаг 1 — Казармы", lg.tut_step() == "barracks" and ui.tut_active())
+	check("советник шага 1 с «Пропустить обучение»", hud.advisor_panel.visible and hud.adv_skip.visible and hud.adv_title.text == "Легион собран!")
+	check("стрелка на раздел «Легион»", hud.pointer_target == hud.cats["military"])
+	await shot("tut1_barracks")
+	hud.advisor_panel.visible = false
+	# шаг 2: Казармы стоят — стрелка на медальон
+	c.place("barracks", Vector2(166, 205), 0.0, 0, -1, true)
+	c.changed.emit()
+	await frames(6)
+	check("шаг 2 — медальон: стрелка на «Легион»", lg.tut_step() == "medal" and hud.pointer_target == ui.btn)
+	hud.advisor_panel.visible = false               # советы города (готовый город стал «игрой» на «Посёлке») — не про Легион
+	await shot("tut2_medal")
+	# шаг 3: окно открыто — полоса «Шаг 3 из 4», стрелка на «В бой!»
+	await click(center_of(ui.btn))
+	await frames(10)
+	check("шаг 3 — учебный бой: полоса в окне", lg.tut_step() == "fight" and ui.tut_bar.visible and ui.tut_lbl.text.begins_with("Шаг 3 из 4"))
+	check("стрелка на «В бой!»", ui._fight_btn != null and hud.pointer_target == ui._fight_btn)
+	check("карточка: учебный бой", _texts(ui.content).contains("Учебный бой"))
+	await shot("tut3_fight")
+	# «бой» (подделка 3D-боя): после него шаг 4 — вкладка «Войска», потом «Улучшить до 2»
+	var asked := []
+	var f2 := func(setup: Dictionary):
+		asked.append(setup)
+		fake.call(setup)
+	lg.battle_requested.connect(f2)
+	ui._fight(lg.stage_info(0, 0, 0))
+	await frames(8)
+	lg.battle_requested.disconnect(f2)
+	check("первый бой — учебный (tutorial=oil, куча во 2-й волне)", asked.size() == 1 and String(asked[0].get("tutorial", "")) == "oil" and asked[0]["packs"] == [1])
+	check("шаг 4 — стрелка на вкладку «Войска»", ui.visible and lg.tut_step() == "troops" and hud.pointer_target == ui.tabs["troops"])
+	await shot("tut4_troops_tab")
+	ui._select_tab("troops")
+	await frames(6)
+	check("стрелка на «Улучшить до 2»", ui._upg_btn != null and hud.pointer_target == ui._upg_btn and ui.tut_lbl.text.begins_with("Шаг 4 из 4"))
+	await shot("tut4_upgrade")
+	ui._do("upgrade", "legionary")
+	await frames(4)
+	ui._rebuild()
+	await frames(4)
+	var pt = hud.pointer_target
+	check("обучение пройдено: полосы и стрелки нет", lg.tut_step() == "" and String(lg.flags.get("tut", "")) == "done" and not ui.tut_bar.visible
+		and (pt == null or (not ui.is_ancestor_of(pt) and pt != ui.btn)))
+	await shot("tut_done")
+	# «Пропустить обучение» у советника: ни стрелок, ни учебного боя
+	ui.close()
+	for id in c.buildings.keys():
+		if String(c.buildings[id]["type"]) == "barracks":
+			c.remove(c.buildings[id], false)
+	lg.flags = {}
+	lg.upg = {}
+	lg.levels["legionary"] = 1
+	lg.progress = 0
+	c.changed.emit()
+	await frames(6)
+	check("снова шаг 1 — советник", hud.advisor_panel.visible and hud.adv_skip.visible)
+	await click(center_of(hud.adv_skip))
+	await frames(6)
+	check("«Пропустить обучение»: обучение и учебный бой позади", lg.tut_step() == "" and lg.flags.has("tut_oil") and not hud.advisor_panel.visible
+		and hud.pointer_target != hud.cats["military"] and not lg.make_battle(lg.stage_info(0, 0, 0), 1).has("tutorial"))
+	game.mode = mode0
+	hud._update_pointer()
+
+
+## Все надписи внутри узла — одной строкой
+func _texts(n: Node) -> String:
+	var out := ""
+	for l in n.find_children("*", "Label", true, false):
+		out += (l as Label).text + " | "
+	return out
 
 
 ## Сеть боёв с городами для проверки: то, что должен уметь настоящий модуль (Account или scripts/legion_net.gd)

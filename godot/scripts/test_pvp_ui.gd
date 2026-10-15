@@ -128,7 +128,7 @@ func _run() -> void:
 	lg.squad = ["legionary", "legionary", "archer", "spearman"]
 	lg.perks = {"oil": 2, "testudo": 0, "bandage": 0, "volley": 0, "horn": 0}
 	lg.glory = 40.0
-	lg.flags["intro"] = true
+	lg.flags["tut"] = "done"
 	lg.flags["battle_speed"] = 3.0
 	lg.flags["battle_auto"] = true
 	lg.pvp_log = []

@@ -236,12 +236,19 @@ func _next_wave() -> bool:
 		return false
 	var wave: Array = waves[wave_idx]
 	var sum := 0.0
+	# волна-«куча» (только походы: setup.packs; бои с городами её не знают — сервер считает их без неё)
+	var packed: bool = wave_idx in (setup.get("packs", []) as Array)
 	for i in wave.size():
 		var s: Dictionary = wave[i]
 		sum += float(s["atk"])
 		var rg := float(s["range"]) > 3.0
-		var u := _add("enemy", s, 12.0 + (1.5 if rg else 0.0) + (i % 3) * 0.7 + (1.0 if bool(s.get("boss", false)) else 0.0),
-			0.0 if bool(s.get("boss", false)) else float(ENEMY_LANES[i % ENEMY_LANES.size()]))
+		var x := 12.0 + (1.5 if rg else 0.0) + (i % 3) * 0.7 + (1.0 if bool(s.get("boss", false)) else 0.0)
+		var z := 0.0 if bool(s.get("boss", false)) else float(ENEMY_LANES[i % ENEMY_LANES.size()])
+		if packed:
+			# тесно: шаг 0,35 м вдоль, ±0,35 м поперёк
+			x = 12.0 + i * 0.35
+			z = float((i % 3) - 1) * 0.35
+		var u := _add("enemy", s, x, z)
 		u.entering = true
 		u.wave = wave_idx
 	avg_atk["enemy"] = sum / maxf(1.0, wave.size())

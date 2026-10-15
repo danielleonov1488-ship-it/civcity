@@ -41,7 +41,7 @@ func _run() -> void:
 	lg.progress = 2
 	lg.levels = {"legionary": 3, "spearman": 1, "archer": 3, "ballista": 1, "catapult": 1}
 	lg.use_auto_squad()
-	lg.flags["intro"] = true
+	lg.flags["tut"] = "done"
 	lg.flags["seen"] = true
 	c.changed.emit()
 	await frames(10)
