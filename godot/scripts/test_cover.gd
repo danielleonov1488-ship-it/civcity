@@ -6,6 +6,9 @@ extends Node
 ## Выбрали лавку: свои дома зелёные, у кого есть и другая такая же — синие; строка в карточке. Памятник, украшение,
 ## склад — так же. «Обзор»: счастье (цвет и рожица) или одна потребность (✗ и значки лавок), живой, закрывается
 ## Esc / правой кнопкой / инструментом. Советник один раз. Кругов нет. Большой город — без рывка (пул, по Cover.PER_FRAME домов за кадр).
+## Правки по проверке: лавка без склада / сырья — зелёных нет, у курсора предупреждение, значки над складами;
+## 1 очко украшения на голом доме — не синий (копится); значок такой же лавки щёлкается; карточка в «Обзоре» не
+## закрывает его окно; пул без подсветки — вне сцены и без прежнего пика; подпись у курсора не уезжает за край.
 
 const STREETS := [[Vector2(140, 150), Vector2(236, 150)], [Vector2(140, 172), Vector2(236, 172)]]
 
@@ -270,7 +273,7 @@ func _shop_place() -> void:
 	for id in g:
 		if had.has(id):
 			check(false, "зелёный дом %d уже с фруктовой лавкой" % id)
-	check(cover.cap == ["Новых домов: %d" % g.size(), "Уже с фруктовой лавкой: %d" % dup], "подпись: %s" % [cover.cap])
+	check(cover.cap == ["Новых домов: %d" % g.size(), "Уже с фруктовой лавкой: %d" % dup, ""], "подпись: %s" % [cover.cap])
 	# тот же метр — ничего не пересчитываем
 	var same: Dictionary = cover.sets
 	cover.preview("stall_fruit", P + Vector2(0.1, 0.1) if floori(P.x + 0.1) == floori(P.x) and floori(P.y + 0.1) == floori(P.y) else P)
@@ -310,7 +313,24 @@ func _shop_place() -> void:
 	# без домов рядом и «все уже с ней»
 	check(Cover.caption("stall_fruit", {"new": 0, "dup": 0})[1].begins_with("Рядом нет домов"), "нет домов рядом — так и сказано")
 	check(Cover.caption("potter", {"new": 0, "dup": 3})[1] == "Тут все дома уже с гончарной — поставьте дальше", "все уже с гончарной — «поставьте дальше»")
-	check(Cover.caption("potter", {"new": 6, "dup": 3}) == ["Новых домов: 6", "Уже с гончарной: 3"], "как просил владелец: «новых домов: 6, уже с гончарной: 3»")
+	check(Cover.caption("potter", {"new": 6, "dup": 3}) == ["Новых домов: 6", "Уже с гончарной: 3", ""], "как просил владелец: «новых домов: 6, уже с гончарной: 3»")
+	await _caption_edge()
+
+
+## Подпись у курсора у правого / нижнего края — целиком на экране (по другую сторону курсора)
+func _caption_edge() -> void:
+	var rs: Vector2 = hud.root.size
+	var long := Cover.caption("musicians", {"new": 0, "dup": 4})
+	var mp0: Vector2 = game._mouse_pos
+	for at in [Vector2(rs.x - 40, 300), Vector2(rs.x - 40, rs.y - 30), Vector2(rs.x * 0.5, rs.y - 20)]:
+		game._mouse_pos = at
+		hud.cover_caption(long[0], long[1], long[2])
+		var r: Rect2 = hud.cover_box.get_global_rect()
+		var fit := r.position.x >= 0.0 and r.end.x <= rs.x and r.position.y >= 0.0 and r.end.y <= rs.y and r.size.x > 200.0
+		check(fit, "подпись «%s» у курсора %s — на экране: %s (экран %s)" % [long[1], at, r, rs])
+	game._mouse_pos = mp0
+	hud.cover_caption("", "", "")
+	check(not hud.cover_box.visible, "пустая подпись спрятана")
 
 
 # ---------- лавка: выбрали ----------
@@ -338,6 +358,7 @@ func _shop_selected() -> void:
 	check(colors_of(Cover.BLUE) == sorted(other.keys()), "синие — дома другой фруктовой лавки (%d)" % other.size())
 	check(int(cover.sets["dup"]) == k and k > 0, "из её домов есть и у другой: %d" % k)
 	check(cover.marks.has("same%d" % int(s1["id"])) and not cover.marks.has("same%d" % int(s2["id"])), "значок — над другой такой же, не над выбранной")
+	check((hud.badges["same%d" % int(s1["id"])]["cb"] as Callable).is_valid(), "у значка такой же лавки есть действие")
 	var tx := texts(hud.info_box)
 	var at := tx.find("Из них уже с такой же лавкой")
 	check(at >= 0 and at + 1 < tx.size() and tx[at + 1] == str(k), "в карточке: «Из них уже с такой же лавкой: %d»" % k, tx)
@@ -347,6 +368,20 @@ func _shop_selected() -> void:
 	# неработающая лавка ничего не снабжает: её дома не зелёные
 	var r := Cover.selected_sets(c, s2.merged({"active": false}, true))
 	check((r["green"] as Array).is_empty() and int(r["own"]) == 0, "неработающая лавка — зелёных нет")
+	# щёлкнуть мышью медальон над другой фруктовой лавкой — выбрана она и открыта её карточка
+	var key := "same%d" % int(s1["id"])
+	var bn: Control = hud.badges[key]["n"]
+	if check(bn.visible and bn.mouse_filter == Control.MOUSE_FILTER_PASS, "медальон виден и ловит мышь (без стройки в руках)"):
+		var mp: Vector2 = get_viewport().get_final_transform() * bn.get_global_rect().get_center()
+		move(mp)
+		await frames(2)
+		btn(mp, MOUSE_BUTTON_LEFT, true)
+		await frames(1)
+		btn(mp, MOUSE_BUTTON_LEFT, false)
+		await frames(3)
+		check(int(game.selected.get("id", -1)) == int(s1["id"]) and int(hud.info_b.get("id", -1)) == int(s1["id"]) and hud.info_panel.visible,
+			"щёлкнули медальон — выбрана та лавка и открыта её карточка (выбрано %s)" % game.selected.get("id", -1))
+		check(cover.state == "sel" and cover.marks.has("same%d" % int(s2["id"])) and not cover.marks.has(key), "подсветка и медальоны — теперь от неё")
 	hud.close_panels()
 	await frames(2)
 	check(cover.state == "" and cover.want.is_empty(), "сняли выбор — подсветка гаснет")
@@ -400,6 +435,39 @@ func _monument() -> void:
 
 func _decor() -> void:
 	c.research["deco_stone"] = true
+	# плетень (1 очко) у домов без украшений: +1% только со вторым очком — дома не синие, «уже хватает» не пишем
+	var F := Vector2(200, 161)
+	var bare := 0
+	var deco_any := 0
+	for id in houses():
+		var h: Dictionary = c.buildings[id]
+		if (h["pos"] as Vector2).distance_to(F) <= Defs.DECOR_RADIUS:
+			bare += 1
+			deco_any += int(h["deco_bonus"])
+	var sf := Cover.place_sets(c, "fence", F)
+	check(bare > 0 and deco_any == 0, "у плетня %d домов, украшений у них нет" % bare)
+	check((sf["blue"] as Array).is_empty() and int(sf["dup"]) == 0 and int(sf["half"]) == bare,
+		"плетень у голых домов: синих %d, «уже хватает» %d, копится у %d" % [(sf["blue"] as Array).size(), int(sf["dup"]), int(sf["half"])])
+	var cf := Cover.caption("fence", sf)
+	check(cf == ["", "", "Со следующим украшением прибавит домам: %d" % bare], "подпись плетня: %s" % [cf])
+	# второй плетень рядом — теперь прибавит им всем (зелёные)
+	var f1: Dictionary = c.place("fence", F, 0.0, 0, -1, true)
+	c.compute()
+	var sf2 := Cover.place_sets(c, "fence", F + Vector2(1.5, 0))
+	check((sf2["green"] as Array).size() > 0 and (sf2["blue"] as Array).is_empty(), "второй плетень: зелёных %d, синих нет" % (sf2["green"] as Array).size())
+	var sel_f := Cover.selected_sets(c, f1)
+	check((sel_f["blue"] as Array).is_empty() and int(sel_f["dup"]) == 0 and int(sel_f["half"]) > 0, "выбранный плетень: не синие, копится у %d" % int(sel_f["half"]))
+	game.select_building(f1)
+	hud.open_info(f1)
+	await frames(2)
+	var tf := texts(hud.info_box)
+	var has_half := false
+	for t in tf:
+		has_half = has_half or String(t).contains("прибавит вместе со следующим украшением")
+	check(has_half and not tf.has("Синим домам украшений уже хватает — больше не прибавится."), "в карточке плетня — «прибавит вместе со следующим», не «уже хватает»")
+	hud.close_panels()
+	c.remove(f1, false)
+	c.compute()
 	# три статуи в конце улицы — домам рядом украшений уже хватает (у плебеев до +12%)
 	var st := []
 	for x in [144.0, 148.0, 152.0]:
@@ -408,6 +476,13 @@ func _decor() -> void:
 	var P := Vector2(160, 161)
 	var s := Cover.place_sets(c, "lamp_post", P)
 	check(not (s["green"] as Array).is_empty() and not (s["blue"] as Array).is_empty(), "фонарь: зелёных %d, «уже хватает» %d" % [(s["green"] as Array).size(), (s["blue"] as Array).size()])
+	var capped := true
+	for id in s["blue"]:
+		var h: Dictionary = c.buildings[id]
+		capped = capped and int(h["deco_bonus"]) >= int(Defs.CLASSES[c.def(h)["cls"]]["deco_max"])
+	check(capped, "синие у фонаря — только дома, где украшений уже сколько можно (+%d%%)" % int(Defs.CLASSES["plebs"]["deco_max"]))
+	var sf3 := Cover.place_sets(c, "fence", Vector2(146, 161))
+	check(not (sf3["blue"] as Array).is_empty(), "плетень у статуй: дома с полным украшением — синие (%d)" % (sf3["blue"] as Array).size())
 	var before := {}
 	for id in houses():
 		before[id] = int(c.buildings[id]["deco_bonus"])
@@ -440,6 +515,12 @@ func _store() -> void:
 	c.research["butcher"] = true
 	c.research["warehouse"] = true
 	c.money = 20000.0
+	# склада нет: зелёных нет, у курсора — предупреждение (лавка всё равно не заработала бы)
+	var pb := spot("butcher", Vector2(176, 176))
+	if check(not pb.is_empty(), "место для мясной лавки"):
+		var sb := Cover.place_sets(c, "butcher", pb["pos"])
+		check((sb["green"] as Array).is_empty() and int(sb["dup"]) == 0 and sb["why"] == "store", "мясная без склада: зелёных %d, why «%s»" % [(sb["green"] as Array).size(), sb["why"]])
+		check(Cover.caption("butcher", sb) == ["", "", "Нет склада рядом — лавка не заработает"], "подпись: %s" % [Cover.caption("butcher", sb)])
 	var bt: Dictionary = put("butcher", Vector2(176, 176))
 	c.compute()
 	if not check(not bt.is_empty() and bt["why"] == "store", "мясная лавка без склада не работает: «%s»" % bt.get("why", "?")):
@@ -459,8 +540,51 @@ func _store() -> void:
 	check((s2s["blue"] as Array).has(int(bt["id"])) and int(s2s["dup"]) >= 1, "второй склад туда же: мясная лавка уже со складом (синяя)")
 	var sel := Cover.selected_sets(c, w)
 	check((sel["green"] as Array).has(int(bt["id"])), "выбранный склад: мясная лавка — его (зелёная)")
-	c.remove(w, false)
+	# взяли мясную лавку — значки и над складами (где она заработает), не только над такими же
+	game.set_tool("butcher")
+	await frames(2)
+	check(cover.marks.has("wh%d" % int(w["id"])) and hud.badges.has("wh%d" % int(w["id"])) and cover.marks.has("same%d" % int(bt["id"])), "мясная в руках: значок над складом и над другой мясной")
+	game.set_tool("stall_fruit")
+	await frames(2)
+	check(not cover.marks.has("wh%d" % int(w["id"])), "фруктовой лавке склад не нужен — значка над складом нет")
+	# мышью вдали от склада: зелёных нет, у курсора предупреждение, медальон над складом; снимок
+	game.set_tool("")
+	game.rig.set_view(Vector3(166, 2, 166), 0, 58, 80)
+	await frames(6)
+	game.set_tool("butcher")
+	move(scr(Vector2(142, 146)))
+	await frames(14)
+	var wp: Vector2 = game.place_info.get("pos", Vector2.INF)
+	check(cover.cap[2] == "Нет склада рядом — лавка не заработает" and colors_of(Cover.GREEN).is_empty() and (hud.cover_box as Control).visible,
+		"мышью в %s (до склада %.0f м): «%s», зелёных %d" % [wp, wp.distance_to(w["pos"]), cover.cap[2], colors_of(Cover.GREEN).size()])
+	await shot("cover_place_no_store.png")
+	game.set_tool("")
+	# сырья нет: пекарня у склада без пшеничного поля — зелёных нет, подсказка, что нужно
+	if not c.goods.has("wheat"):
+		var sk := Cover.place_sets(c, "bakery", pl["pos"] + Vector2(6, 0))
+		check((sk["green"] as Array).is_empty() and sk["why"] == "good", "пекарня без пшеницы: зелёных нет (why «%s»)" % sk["why"])
+		check(Cover.caption("bakery", sk)[2] == "Нет сырья — нужно «%s»" % Defs.B["farm"]["name"], "подпись: %s" % [Cover.caption("bakery", sk)])
+	# со складом рядом: зелёные — ровно кто получит мясную лавку на деле
+	var bpos: Vector2 = bt["pos"]
+	var byaw: float = bt["yaw"]
+	var bvar: int = int(bt.get("variant", 0))
+	var bcol: int = int(bt.get("color", 0))
 	c.remove(bt, false)
+	c.compute()
+	var had := with_shop("butcher")
+	var sg := Cover.place_sets(c, "butcher", bpos)
+	check(sg["why"] == "" and not (sg["green"] as Array).is_empty(), "у склада: мясная лавка правда даст мясо — зелёных %d" % (sg["green"] as Array).size())
+	c.money = 20000.0
+	var bt2: Dictionary = c.place("butcher", bpos, byaw, bvar, bcol)
+	c.compute()
+	var gained := []
+	for id in with_shop("butcher"):
+		if not had.has(id):
+			gained.append(int(id))
+	check(bool(bt2["active"]) and sorted(gained) == sorted(sg["green"]), "мясо получили ровно зелёные: %s / %s" % [sorted(gained), sorted(sg["green"])])
+	check(Cover.caption("butcher", sg)[0] == "Новых домов: %d" % (sg["green"] as Array).size(), "подпись: %s" % [Cover.caption("butcher", sg)])
+	c.remove(w, false)
+	c.remove(bt2, false)
 
 
 # ---------- «Обзор» ----------
@@ -513,6 +637,7 @@ func _overview() -> void:
 	check(faces == lived.size(), "камера близко: рожица и цифра у %d из %d" % [faces, lived.size()])
 	await frames(20)
 	await shot("cover_overview_happy.png")
+	await _overview_card(lived)
 	game.rig.set_view(Vector3(186, 2, 161), 0, 58, 100)
 	await frames(4)
 	# одна потребность: еда
@@ -545,6 +670,12 @@ func _overview() -> void:
 	# Esc и правая кнопка закрывают; инструмент тоже
 	await key(KEY_ESCAPE)
 	check(hud.overlay == "" and not hud.overlay_panel.visible and cover.want.is_empty(), "Esc закрывает «Обзор»")
+	await frames(2)
+	var idle: bool = not cover.pool.visible
+	for k in cover.pool.groups:
+		for sub in cover.pool.groups[k]["subs"]:
+			idle = idle and (sub["mm"] as MultiMesh).visible_instance_count == 0
+	check(idle, "подсветки нет — пул вне сцены, MultiMesh не рисуют ни одного места")
 	var badge_left := false
 	for k in hud.badges:
 		badge_left = badge_left or String(k).begins_with("ov")
@@ -567,6 +698,31 @@ func _overview() -> void:
 	game.set_tool("")
 	for b in dec:
 		c.remove(b, false)
+
+
+## Щёлкнули по дому в «Обзоре» — карточка не закрывает окно «Обзора» (режимы, легенду, ✕); и при крупном интерфейсе
+func _overview_card(lived: Array) -> void:
+	var hid: int = lived[lived.size() / 2]
+	var sc0: float = game.settings.get("ui_scale", 1.0)
+	for sc in [1.0, 1.4]:
+		game.settings["ui_scale"] = sc         # как из настроек: окно, меняя размер, применяет его заново
+		hud.apply_scale(sc)
+		await frames(3)
+		cover._open(hid)
+		await frames(4)
+		var o: Rect2 = hud.overlay_panel.get_global_rect()
+		var i: Rect2 = hud.info_panel.get_global_rect()
+		var rs: Vector2 = hud.root.size
+		check(hud.info_panel.visible and hud.overlay_panel.visible and hud.overlay == "happy", "карточка дома открыта, «Обзор» на месте (размер %.1f)" % sc)
+		check(not o.intersects(i) and o.position.x >= 0.0 and o.end.y <= rs.y, "окно «Обзора» %s не под карточкой %s (размер %.1f → %.2f, экран %s)" % [o, i, sc, get_window().content_scale_factor, rs])
+		if sc == 1.0:
+			await shot("cover_overview_card.png")
+		hud._hide_info()
+		await frames(3)
+		check(is_equal_approx(hud.overlay_panel.get_global_rect().end.x, hud.root.size.x - 10.0), "карточку закрыли — «Обзор» снова справа (размер %.1f)" % sc)
+	game.settings["ui_scale"] = sc0
+	hud.apply_scale(sc0)
+	await frames(3)
 
 
 # ---------- большой город: пул, а не призраки ----------
@@ -630,6 +786,17 @@ func _big_city() -> void:
 	game.rig.set_view(Vector3(186, 2, 215), 0, 60, 150)
 	await frames(10)
 	await shot("cover_big_city.png")
+	# после всего города — подсветить пять домов: пул заново, MultiMesh не рисуют прежний пик пустых мест
+	var w5 := {}
+	for id in all.slice(0, 5):
+		w5[id] = Cover.GREEN
+	cover._apply(w5, Vector2.INF)
+	var drawn := 0
+	for k in cover.pool.groups:
+		var g: Dictionary = cover.pool.groups[k]
+		if not (g["subs"] as Array).is_empty():
+			drawn += (g["subs"][0]["mm"] as MultiMesh).visible_instance_count
+	check(cover.lit.size() == 5 and cover.todo.is_empty() and drawn <= cover.pool.count() + 8, "после всего города пять домов: рисуется мест %d, живых %d" % [drawn, cover.pool.count()])
 	cover.clear()
 	await frames(2)
-	check(cover.lit.is_empty() and cover.want.is_empty(), "погасили — пул пуст")
+	check(cover.lit.is_empty() and cover.want.is_empty() and not cover.pool.visible, "погасили — пул пуст и вне сцены")

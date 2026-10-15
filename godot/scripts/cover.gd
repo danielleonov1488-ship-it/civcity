@@ -107,7 +107,8 @@ class Pool extends Parts:
 			g["used"] = 0
 			g["free"] = []
 			var cap: int = maxi(16, int(g["cap"]))
-			while cap < int(need.get(k, 0)):
+			# с запасом в четверть: надстроили один дом — места есть, остальные дома этого вида не гаснут заново
+			while cap < int(float(need.get(k, 0)) * 1.25) + 4:
 				cap *= 2
 			g["cap"] = cap
 			for sub in g["subs"]:
@@ -135,6 +136,19 @@ class Pool extends Parts:
 			for sub in (e[0] as Dictionary)["subs"]:
 				(sub["mm"] as MultiMesh).set_instance_custom_data(e[1], col)
 
+	## Вид деталей пуст (ни одной живой ручки): места с нуля, видимых — ноль. Иначе MultiMesh так и рисует
+	## прежний пик пустых мест (Parts.remove только обнуляет детали, а число видимых не уменьшает)
+	func reset_group(g: Dictionary) -> void:
+		g["used"] = 0
+		g["free"] = []
+		for sub in g["subs"]:
+			(sub["mm"] as MultiMesh).visible_instance_count = 0
+
+	func reset_all() -> void:
+		for k in groups:
+			if int(groups[k]["used"]) > 0:
+				reset_group(groups[k])
+
 
 var game
 var pool: Pool
@@ -144,7 +158,7 @@ var todo: Array = []          # кого ещё зажечь (ближние —
 var marks := {}               # ключ значка → true: такие же постройки, рожицы и ✗ «Обзора»
 var state := ""               # "" | "place" | "sel" | "ov" — что сейчас подсвечено
 var sets := {}                # последние наборы — для подписи у курсора, легенды «Обзора» и проверок
-var cap := ["", ""]           # подпись у курсора: [зелёная строка, синяя строка]
+var cap := ["", "", ""]       # подпись у курсора: [зелёная строка, синяя строка, предупреждение / заметка]
 var _type := ""
 var _cell := Vector2i(1 << 30, 0)
 var _near := Vector2.INF
@@ -178,11 +192,15 @@ static func with_name(type: String) -> String:
 ## Если поставить type в pos: green — кому постройка правда что-то даст; blue — у кого такое уже есть
 ## (у лавок, памятников и складов — по всему городу, у украшений — в их радиусе, кому больше не прибавится);
 ## new / dup — для подписи: сколько новых и сколько из её охвата уже с такой же. pos = INF — только синие
+## why — лавка тут не заработает: "store" (нет склада рядом), "good" (нет сырья); тогда зелёных нет.
+## half — украшение: дома, где его очки копятся (прибавит вместе со следующим), — без цвета
 static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	var green := []
 	var blue := []
 	var dup := 0
+	var half := 0
+	var why := ""
 	var at := pos.is_finite()
 	match d["kind"]:
 		"shop":
@@ -190,7 +208,12 @@ static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 				var h: Dictionary = c.buildings[id]
 				if c.is_house(h) and (h.get("score", {}) as Dictionary).has(type):
 					blue.append(id)
-			if at:
+			# как в City.compute: без склада рядом или без сырья лавка стоит — никому ничего не даст
+			if at and d.get("store", false) and not _store_near({"pos": pos}, _stores(c, -1), _store_r(c)):
+				why = "store"
+			elif at and d.has("needs_good") and not c.goods.has(d["needs_good"]):
+				why = "good"
+			if at and why == "":
 				# как в City.compute: ближайшие дома в дальности, сначала жилые, сколько потянет при полном найме
 				for id in _nearest(c, pos, c.shop_range(d), int(Defs.CAPACITY[int(d["cap"])])):
 					if (c.buildings[id].get("score", {}) as Dictionary).has(type):
@@ -220,9 +243,11 @@ static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 						continue
 					if _deco_gain(c, h, pts) > 0:
 						green.append(id)
-					else:
-						blue.append(id)
+					elif _deco_capped(c, h):
+						blue.append(id)              # украшений уже сколько можно — больше не прибавится
 						dup += 1
+					else:
+						half += 1                    # очки копятся: +1% придёт со следующим украшением
 		"store":
 			var stores := _stores(c, -1)
 			var r := _store_r(c)
@@ -238,7 +263,7 @@ static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 						dup += 1
 					else:
 						green.append(id)
-	return {"green": green, "blue": blue, "new": green.size(), "dup": dup}
+	return {"green": green, "blue": blue, "new": green.size(), "dup": dup, "why": why, "half": half}
 
 
 ## Выбранная постройка: green — кому она одна это даёт; blue — кого снабжают (радуют) другие такие же;
@@ -280,8 +305,10 @@ static func selected_sets(c: City, b: Dictionary) -> Dictionary:
 						other[int(id)] = true
 						break
 		"decor":
-			# украшения складываются: зелёным без него станет хуже, синим его очки уже ничего не прибавляют
+			# украшения складываются: зелёным без него станет хуже, синим украшений и так сколько можно;
+			# half — его очки копятся (прибавят вместе со следующим украшением), такие дома без цвета
 			var pts := float(d.get("deco", 1))
+			var half := 0
 			for id in c.buildings:
 				var h: Dictionary = c.buildings[id]
 				if not c.is_house(h) or (h["pos"] as Vector2).distance_to(b["pos"]) > Defs.DECOR_RADIUS:
@@ -289,10 +316,12 @@ static func selected_sets(c: City, b: Dictionary) -> Dictionary:
 				own.append(id)
 				if _deco_gain(c, h, -pts) < 0:
 					green.append(id)
-				else:
+				elif _deco_capped(c, h):
 					blue.append(id)
 					dup += 1
-			return {"green": green, "blue": blue, "own": own.size(), "dup": dup}
+				else:
+					half += 1
+			return {"green": green, "blue": blue, "own": own.size(), "dup": dup, "half": half}
 		"store":
 			var r := _store_r(c)
 			var stores := _stores(c, bid)
@@ -352,33 +381,49 @@ static func overview_sets(c: City, mode: String) -> Dictionary:
 	return {"tint": tint, "faces": faces, "miss": miss, "shops": shops, "n": n}
 
 
-## Подпись у курсора: [сколько новых (зелёным), сколько уже с такой же (синим)]
+## Подпись у курсора: [сколько новых (зелёным), сколько уже с такой же (синим), третья строка — предупреждение
+## (лавка тут не заработает) или у украшения — скольким прибавит вместе со следующим]
 static func caption(type: String, s: Dictionary) -> Array:
 	var n: int = s.get("new", 0)
 	var k: int = s.get("dup", 0)
 	var w := with_name(type)
 	match Defs.B[type]["kind"]:
 		"shop":
+			match String(s.get("why", "")):
+				"store":
+					return ["", "", "Нет склада рядом — лавка не заработает"]
+				"good":
+					return ["", "", "Нет сырья — нужно «%s»" % _farm_name(String(Defs.B[type].get("needs_good", "")))]
 			if n == 0 and k == 0:
-				return ["", "Рядом нет домов — лавке некого снабжать"]
+				return ["", "Рядом нет домов — лавке некого снабжать", ""]
 			if n == 0:
-				return ["", "Тут все дома уже %s — поставьте дальше" % w]
-			return ["Новых домов: %d" % n, ("Уже %s: %d" % [w, k]) if k > 0 else ""]
+				return ["", "Тут все дома уже %s — поставьте дальше" % w, ""]
+			return ["Новых домов: %d" % n, ("Уже %s: %d" % [w, k]) if k > 0 else "", ""]
 		"monument":
 			if n == 0 and k == 0:
-				return ["", "Рядом нет домов"]
+				return ["", "Рядом нет домов", ""]
 			if n == 0:
-				return ["", "Тут все дома уже %s — поставьте дальше" % w]
-			return ["Порадует домов: %d" % n, ("Уже %s: %d" % [w, k]) if k > 0 else ""]
+				return ["", "Тут все дома уже %s — поставьте дальше" % w, ""]
+			return ["Порадует домов: %d" % n, ("Уже %s: %d" % [w, k]) if k > 0 else "", ""]
 		"decor":
-			if n == 0 and k == 0:
-				return ["", "Рядом нет домов"]
-			return [("Украсит домов: %d" % n) if n > 0 else "", ("Украшений уже хватает: %d" % k) if k > 0 else ""]
+			var hf: int = s.get("half", 0)
+			if n == 0 and k == 0 and hf == 0:
+				return ["", "Рядом нет домов", ""]
+			return [("Украсит домов: %d" % n) if n > 0 else "", ("Украшений уже хватает: %d" % k) if k > 0 else "",
+				("Со следующим украшением прибавит домам: %d" % hf) if hf > 0 else ""]
 		"store":
 			if n == 0 and k == 0:
-				return ["", "Рядом нет лавок, которым нужен склад"]
-			return [("Склад получат лавки: %d" % n) if n > 0 else "", ("Уже со складом: %d" % k) if k > 0 else ""]
-	return ["", ""]
+				return ["", "Рядом нет лавок, которым нужен склад", ""]
+			return [("Склад получат лавки: %d" % n) if n > 0 else "", ("Уже со складом: %d" % k) if k > 0 else "", ""]
+	return ["", "", ""]
+
+
+## Откуда сырьё good: имя поля или рощи, что его даёт (как в City.idle_text)
+static func _farm_name(good: String) -> String:
+	for t in Defs.B:
+		if Defs.B[t].get("makes", "") == good:
+			return String(Defs.B[t]["name"])
+	return "поле"
 
 
 static func _nearest(c: City, pos: Vector2, r: float, n: int) -> Array:
@@ -403,6 +448,12 @@ static func _deco_gain(c: City, h: Dictionary, pts: float) -> int:
 	var cd: Dictionary = Defs.CLASSES[c.def(h)["cls"]]
 	var now := int(h.get("deco_bonus", 0))
 	return mini(int(cd.get("deco_max", 12)), int(floor(maxf(0.0, float(h.get("deco", 0.0)) + pts) * Defs.DECO_RATE))) - now
+
+
+## Украшений у дома уже сколько можно (deco_max класса): больше не прибавится. Не путать с «не прибавилось из-за
+## округления» — +1% за каждые 2 очка, одно очко ждёт следующего
+static func _deco_capped(c: City, h: Dictionary) -> bool:
+	return int(h.get("deco_bonus", 0)) >= int(Defs.CLASSES[c.def(h)["cls"]].get("deco_max", 12))
 
 
 static func _store_r(c: City) -> float:
@@ -463,7 +514,7 @@ func preview(type: String, pos: Vector2) -> void:
 		_near = pos
 		_place(type, pos)
 	if game.hud:
-		game.hud.cover_caption(cap[0], cap[1])
+		game.hud.cover_caption(cap[0], cap[1], cap[2])
 		_shown = true
 
 
@@ -472,13 +523,13 @@ func preview_off() -> void:
 	if _shown:
 		_shown = false
 		if game.hud:
-			game.hud.cover_caption("", "")
+			game.hud.cover_caption("", "", "")
 
 
 func clear() -> void:
 	state = ""
 	sets = {}
-	cap = ["", ""]
+	cap = ["", "", ""]
 	_type = ""
 	_near = Vector2.INF
 	preview_off()
@@ -496,29 +547,29 @@ func _place(type: String, pos: Vector2) -> void:
 	for id in sets["green"]:
 		w[id] = GREEN
 	_apply(w, pos)
-	_marks(_same_marks(type, -1))
-	cap = caption(type, sets) if pos.is_finite() else ["", ""]
+	_marks(_wh_marks(type, _same_marks(type, -1)))
+	cap = caption(type, sets) if pos.is_finite() else ["", "", ""]
 
 
 func _selected(b: Dictionary) -> void:
 	var c: City = game.city
 	sets = selected_sets(c, b)
 	state = "sel"
-	cap = ["", ""]
+	cap = ["", "", ""]
 	var w := {}
 	for id in sets["blue"]:
 		w[id] = BLUE
 	for id in sets["green"]:
 		w[id] = GREEN
 	_apply(w, b["pos"])
-	_marks(_same_marks(String(b["type"]), int(b["id"])))
+	_marks(_wh_marks(String(b["type"]), _same_marks(String(b["type"]), int(b["id"]))))
 
 
 func _overview(mode: String) -> void:
 	var c: City = game.city
 	sets = overview_sets(c, mode)
 	state = "ov"
-	cap = ["", ""]
+	cap = ["", "", ""]
 	_apply(sets["tint"], Vector2.INF)
 	var mk := {}
 	_far = game.rig != null and float(game.rig.dist) > FAR
@@ -552,6 +603,18 @@ func _same_marks(type: String, skip: int) -> Dictionary:
 	return mk
 
 
+## Лавке нужен склад — значки и над складами: видно, где лавка заработает (кругов дальности нет)
+func _wh_marks(type: String, mk: Dictionary) -> Dictionary:
+	if not Defs.B[type].get("store", false):
+		return mk
+	var c: City = game.city
+	for id in c.buildings:
+		var w: Dictionary = c.buildings[id]
+		if c.def(w)["kind"] == "store":
+			mk["wh%d" % id] = [id, String(c.def(w).get("icon", "warehouse")), not bool(w.get("active", false)), "", "mark"]
+	return mk
+
+
 ## Значки: mk — ключ → [id постройки, значок, красный ли, надпись, вид (hud.set_badge)]; лишние убираем, новые ставим
 func _marks(mk: Dictionary) -> void:
 	var hud = game.hud
@@ -570,9 +633,7 @@ func _marks(mk: Dictionary) -> void:
 		var b: Dictionary = c.buildings[id]
 		# над бедой постройки (нет работников, склада…) свой пузырь — наш значок выше него
 		var top: float = c.blueprint(b).top_y() + (3.0 if hud.world_icons.has(id) else 1.2)
-		var cb := Callable()
-		if String(k).begins_with("ov"):
-			cb = func(): _open(id)                # щёлкнуть значок «Обзора» — карточка дома или лавки
+		var cb := func(): _open(id)               # щёлкнуть значок (без стройки в руках) — карточка этой постройки
 		hud.set_badge(k, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), e[1], e[2], e[3] if e.size() > 3 else "", cb, e[4] if e.size() > 4 else "")
 		marks[k] = true
 
@@ -591,13 +652,31 @@ func _apply(w: Dictionary, near: Vector2) -> void:
 	var c: City = game.city
 	var t0 := Time.get_ticks_usec()
 	want = w
-	for id in lit.keys():
-		var e: Dictionary = lit[id]
-		var b: Dictionary = c.buildings.get(id, {})
-		if not w.has(id) or b.is_empty() or not _same_look(e, b):
-			pool.remove(e["h"])
-			lit.erase(id)
 	todo.clear()
+	if w.is_empty():
+		lit.clear()                          # гасим всё разом: места с нуля (пул уйдёт из сцены в _process)
+		pool.reset_all()
+		return
+	var hi := 0
+	for k in pool.groups:
+		hi += int(pool.groups[k]["used"])
+	if hi > 1024 and w.size() <= PER_FRAME and lit.size() > w.size() * 4:
+		# из многих домов (после «Обзора» на весь город) светиться останется мало — весь пул заново: эти дома
+		# зажгутся сразу, а прежний пик пустых мест MultiMesh рисовать не будут (и не гасим сотни домов по одному)
+		lit.clear()
+		pool.reset_all()
+	else:
+		for id in lit.keys():
+			var e: Dictionary = lit[id]
+			var b: Dictionary = c.buildings.get(id, {})
+			if not w.has(id) or b.is_empty() or not _same_look(e, b):
+				pool.remove(e["h"])
+				lit.erase(id)
+		# виды деталей, где никого не осталось, — с нуля
+		for k in pool.groups:
+			var g: Dictionary = pool.groups[k]
+			if int(g["used"]) > 0 and (g["free"] as Array).size() >= int(g["used"]):
+				pool.reset_group(g)
 	for id in w:
 		if lit.has(id):
 			var e: Dictionary = lit[id]
@@ -645,14 +724,19 @@ func _reserve(c: City) -> void:
 func _process(_dt: float) -> void:
 	if game == null or pool == null:
 		return
-	# в ролике нового ранга и на фото без интерфейса подсветки нет
-	var show: bool = not (game.rig != null and game.rig.cine) and not (game.hud != null and game.hud.hidden_ui)
-	if pool.visible != show:
-		pool.visible = show
 	if state == "ov" and game.rig != null and game.hud != null and game.hud.overlay == "happy" and (float(game.rig.dist) > FAR) != _far:
 		_overview("happy")                   # камеру отдалили или приблизили — рожицы с цифрами или без
 	if not todo.is_empty():
 		_light_some()
+	_vis()
+
+
+## Пул в сцене, только когда есть что подсветить: без подсветки — ни вызовов отрисовки, ни копии экрана для шейдера.
+## В ролике нового ранга и на фото без интерфейса подсветки тоже нет
+func _vis() -> void:
+	var show: bool = not lit.is_empty() and not (game.rig != null and game.rig.cine) and not (game.hud != null and game.hud.hidden_ui)
+	if pool.visible != show:
+		pool.visible = show
 
 
 func _light_some(t0 := -1) -> void:

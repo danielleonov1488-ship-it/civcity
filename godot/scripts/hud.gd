@@ -1415,7 +1415,8 @@ func _hide_info() -> void:
 # ---------- «Обзор» (вместо кругов охвата, решение владельца Д3) ----------
 ## Счастье каждого дома (рожица и цифра, дом подсвечен цветом) или одна потребность: где она есть (зелёные),
 ## где нет (красные, значок ✗), значки — лавки этого вида. Подсветку и значки ставит game.cover (cover.gd).
-## Окно с режимами и легендой — справа внизу (там, где окно инструмента: при «Обзоре» инструмента нет).
+## Окно с режимами и легендой — справа внизу (там, где окно инструмента: при «Обзоре» инструмента нет);
+## открыта карточка постройки — окно встаёт левее неё (_place_overlay), чтобы режимы и легенда оставались видны.
 
 var overlay := ""                     # "" — выключен; "happy" — счастье; food, clothes… — одна потребность
 var overlay_last := "happy"
@@ -1572,30 +1573,33 @@ class FaceIcon extends Control:
 # ---------- подпись у курсора, пока ставят лавку (сколько новых домов, сколько уже с такой же) ----------
 
 var cover_box: VBoxContainer
-var _cover_g: Label
-var _cover_b: Label
+var _cover_l: Array = []              # строки: зелёная, синяя, третья — предупреждение или заметка (кремовая)
 
 
-func cover_caption(green: String, blue: String) -> void:
+func cover_caption(green: String, blue: String, soft := "") -> void:
 	if cover_box == null:
 		cover_box = VBoxContainer.new()
 		cover_box.add_theme_constant_override("separation", -2)
 		cover_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		for i in 2:
-			var l := _label("", 19, true, Color("b4ffae") if i == 0 else Color("a9d4ff"))
+		for col in [Color("b4ffae"), Color("a9d4ff"), Color("ffe3a3")]:
+			var l := _label("", 19, true, col)
 			l.add_theme_color_override("font_outline_color", Color("2a1a0c"))
 			l.add_theme_constant_override("outline_size", 8)
+			l.visible = false
 			cover_box.add_child(l)
-		_cover_g = cover_box.get_child(0)
-		_cover_b = cover_box.get_child(1)
+			_cover_l.append(l)
 		cover_box.visible = false
 		root.add_child(cover_box)
-	var on := green != "" or blue != ""
-	if _cover_g.text != green or _cover_b.text != blue:
-		_cover_g.text = green
-		_cover_b.text = blue
-		_cover_g.visible = green != ""
-		_cover_b.visible = blue != ""
+	var tx := [green, blue, soft]
+	var on := green != "" or blue != "" or soft != ""
+	var changed := false
+	for i in 3:
+		var l: Label = _cover_l[i]
+		if l.text != tx[i]:
+			l.text = tx[i]
+			l.visible = tx[i] != ""
+			changed = true
+	if changed:
 		cover_box.reset_size()
 	if cover_box.visible != on:
 		cover_box.visible = on
@@ -1603,9 +1607,18 @@ func cover_caption(green: String, blue: String) -> void:
 		_place_caption()
 
 
+## Подпись справа снизу от курсора; не влезает — по другую сторону курсора, и всегда целиком на экране
 func _place_caption() -> void:
 	var mp: Vector2 = game._mouse_pos if game._mouse_pos.x >= 0.0 else root.get_local_mouse_position()
-	cover_box.position = (mp + Vector2(30, 26)).round()
+	var sz := cover_box.get_combined_minimum_size()
+	var p := mp + Vector2(30, 26)
+	if p.x + sz.x > root.size.x - 6.0:
+		p.x = mp.x - 18.0 - sz.x
+	if p.y + sz.y > root.size.y - 6.0:
+		p.y = mp.y - 14.0 - sz.y
+	p.x = clampf(p.x, 6.0, maxf(6.0, root.size.x - sz.x - 6.0))
+	p.y = clampf(p.y, 6.0, maxf(6.0, root.size.y - sz.y - 6.0))
+	cover_box.position = p.round()
 
 
 ## Советник один раз (tips.cover_tip): кругов охвата больше нет — подсветка домов, и есть «Обзор»
@@ -2194,6 +2207,7 @@ func _card_or_cat(cat: String, type: String) -> Control:
 func _process(_dt: float) -> void:
 	_place_badges()
 	_place_notes()
+	_place_overlay()
 	_cursor_tick()
 	_hover_tick()
 	if rank_btn and rank_btn.visible:
@@ -2624,6 +2638,10 @@ func _cover_rows(b: Dictionary, head: String) -> void:
 		var why := "Синим домам украшений уже хватает — больше не прибавится." if kind == "decor" \
 			else "Синие получают то же от другой такой же постройки — им эта ничего не добавляет. Зелёные — только от этой."
 		info_box.add_child(_wrap(_label(why, 14, false, C_SOFT), 330))
+	var hf: int = s.get("half", 0)
+	if hf > 0:
+		# +1% за каждые 2 очка: очко этого украшения ждёт следующего рядом
+		info_box.add_child(_wrap(_label("Ещё %d %s прибавит вместе со следующим украшением рядом." % [hf, _plural(hf, "дому", "домам", "домам")], 14, false, C_SOFT), 330))
 
 
 ## Карточка станции: игры в честь богов (с уровня «Посёлок») — идут ли, когда снова и кнопка «Устроить игры — N ден.»
@@ -3054,6 +3072,20 @@ func _notes() -> void:
 	notes_box.add_theme_constant_override("separation", 5)
 	notes_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(notes_box)
+
+
+## «Обзор» справа внизу; открыта карточка постройки — встаём левее неё (карточка рисуется поверх и закрыла бы
+## режимы и легенду, а легенда сама зовёт щёлкнуть по дому). Сдвиг — через _put: _snug в fill_overlay его сохранит
+func _place_overlay() -> void:
+	if overlay_panel == null or not overlay_panel.visible:
+		return
+	var x := -10.0
+	if info_panel.visible:
+		x = minf(-10.0, info_panel.position.x - root.size.x - 12.0)
+		x = maxf(x, overlay_panel.size.x + 10.0 - root.size.x)        # не уезжать за левый край
+	var m: Array = overlay_panel.get_meta("put", [Control.PRESET_BOTTOM_RIGHT, Vector2(-10, -BAR_H - 10)])
+	if not is_equal_approx((m[1] as Vector2).x, x):
+		_put(overlay_panel, Control.PRESET_BOTTOM_RIGHT, Vector2(x, -BAR_H - 10))
 
 
 ## Всплывашки посередине сверху, но не на значках семей слева и не на карточке постройки справа
