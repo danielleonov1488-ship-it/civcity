@@ -34,14 +34,15 @@ Config.PLOT_XS = { -105, -35, 35, 105 }
 Config.PLOT_Z = 52
 Config.PLOT_SIZE = 60
 
+-- scale — во сколько раз фигурка крупнее обычной: чем реже, тем внушительнее
 Config.RARITIES = {
-	{ id = "common", weight = 56, color = Color3.fromRGB(225, 225, 225), en = "Common", ru = "Обычный" },
-	{ id = "rare", weight = 25, color = Color3.fromRGB(95, 215, 95), en = "Rare", ru = "Редкий" },
-	{ id = "epic", weight = 12, color = Color3.fromRGB(185, 105, 255), en = "Epic", ru = "Эпический" },
-	{ id = "legendary", weight = 5, color = Color3.fromRGB(255, 195, 45), en = "Legendary", ru = "Легендарный" },
-	{ id = "mythic", weight = 1.6, color = Color3.fromRGB(255, 70, 70), en = "Mythic", ru = "Мифический" },
-	{ id = "divine", weight = 0.35, color = Color3.fromRGB(255, 245, 160), en = "Divine", ru = "Божественный" },
-	{ id = "secret", weight = 0.05, color = Color3.fromRGB(30, 30, 30), en = "Secret", ru = "Секретный" },
+	{ id = "common", weight = 56, scale = 1, color = Color3.fromRGB(225, 225, 225), en = "Common", ru = "Обычный" },
+	{ id = "rare", weight = 25, scale = 1.08, color = Color3.fromRGB(95, 215, 95), en = "Rare", ru = "Редкий" },
+	{ id = "epic", weight = 12, scale = 1.16, color = Color3.fromRGB(185, 105, 255), en = "Epic", ru = "Эпический" },
+	{ id = "legendary", weight = 5, scale = 1.25, color = Color3.fromRGB(255, 195, 45), en = "Legendary", ru = "Легендарный" },
+	{ id = "mythic", weight = 1.6, scale = 1.3, color = Color3.fromRGB(255, 70, 70), en = "Mythic", ru = "Мифический" },
+	{ id = "divine", weight = 0.35, scale = 1.4, color = Color3.fromRGB(255, 245, 160), en = "Divine", ru = "Божественный" },
+	{ id = "secret", weight = 0.05, scale = 1.5, color = Color3.fromRGB(30, 30, 30), en = "Secret", ru = "Секретный" },
 }
 
 local function rgb(r, g, b)

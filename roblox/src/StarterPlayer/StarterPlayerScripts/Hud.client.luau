@@ -256,7 +256,18 @@ local function setupUnit(model)
 	end
 	local value = label(bb, { Position = UDim2.fromOffset(0, y + 46), Size = UDim2.new(1, 0, 0, 22), Text = "", TextColor3 = GREEN })
 
-	local prompt = model:FindFirstChild("Prompt", true)
+	-- детали модели доходят до клиента не всегда вместе с ней: кнопку ждём, а не ищем
+	local promptAt = root:WaitForChild("PromptAt", 5)
+	local prompt = promptAt and promptAt:WaitForChild("Prompt", 5)
+	-- кнопку видит тот, кому она нужна: на дороге — все, на базе — все, кроме хозяина
+	-- (сервер включает её для всех; своё «выключено» клиент ставит заново после любой смены)
+	local function syncPrompt()
+		local state = model:GetAttribute("State")
+		local want = state == "belt" or (state == "home" and model:GetAttribute("Owner") ~= player.UserId)
+		if prompt.Enabled ~= want then
+			prompt.Enabled = want
+		end
+	end
 	local function update()
 		local state = model:GetAttribute("State")
 		local owner = model:GetAttribute("Owner")
@@ -274,21 +285,15 @@ local function setupUnit(model)
 				prompt.ActionText = L("buy") .. " $" .. Config.fmt(unit.price)
 			elseif state == "home" then
 				prompt.ActionText = L("steal")
-				if owner == player.UserId and prompt.Enabled then
-					prompt.Enabled = false
-				end
 			end
+			syncPrompt()
 		end
 	end
 	update()
 	model:GetAttributeChangedSignal("State"):Connect(update)
 	model:GetAttributeChangedSignal("Owner"):Connect(update)
 	if prompt then
-		prompt:GetPropertyChangedSignal("Enabled"):Connect(function()
-			if prompt.Enabled and model:GetAttribute("State") == "home" and model:GetAttribute("Owner") == player.UserId then
-				prompt.Enabled = false
-			end
-		end)
+		prompt:GetPropertyChangedSignal("Enabled"):Connect(syncPrompt)
 	end
 	model.AncestryChanged:Connect(function()
 		if not model:IsDescendantOf(workspace) then

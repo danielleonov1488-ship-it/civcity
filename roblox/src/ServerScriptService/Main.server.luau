@@ -163,16 +163,22 @@ local function slotCF(p, slot)
 	return p.plot.slots[slot].cf
 end
 
+-- переставить фигурку целиком. Пока модель не в workspace, сварка не тянет детали за корнем,
+-- поэтому при переносе корня вне мира детали оставались бы на старом месте — PivotTo двигает всё.
+local function place(u, cf)
+	u.model:PivotTo(cf)
+end
+
 -- поставить юнита на постамент хозяина (сразу или пешком от текущего места)
 local function assign(u, p, slot, walk)
 	u.owner = p
 	u.slot = slot
 	p.slots[slot] = u
 	u.model:SetAttribute("Owner", p.player.UserId)
-	u.model.Parent = p.plot.units
 	if walk then
 		local from = u.root.Position
 		local plot = p.plot
+		u.walkPos = Vector3.new(from.X, 1.3, from.Z)
 		u.path = {
 			Vector3.new(plot.entranceOut.X, 1.3, from.Z),
 			plot.entranceOut,
@@ -180,9 +186,11 @@ local function assign(u, p, slot, walk)
 			plot.slots[slot].cf.Position,
 		}
 		u.pathI = 1
+		u.model.Parent = p.plot.units
 		setState(u, "walk")
 	else
-		u.root.CFrame = slotCF(p, slot)
+		place(u, slotCF(p, slot))
+		u.model.Parent = p.plot.units
 		setState(u, "home")
 	end
 end
@@ -222,7 +230,7 @@ local function spawnBelt(force)
 	local u = makeUnit(id, rollMut())
 	u.x = Config.BELT_START
 	u.phase = math.random() * 6
-	u.root.CFrame = CFrame.new(u.x, 1.3, 0) * CFrame.Angles(0, -math.pi / 2, 0)
+	place(u, CFrame.new(u.x, 1.3, 0) * CFrame.Angles(0, -math.pi / 2, 0))
 	u.model.Parent = beltFolder
 	table.insert(belt, u)
 	if Config.RARITY[rid].rank >= 4 then
@@ -295,7 +303,7 @@ local function returnHome(u)
 	releaseCarry(u)
 	local owner = u.owner
 	if owner and profiles[owner.player] and owner.slots[u.slot] == u then
-		u.root.CFrame = slotCF(owner, u.slot)
+		place(u, slotCF(owner, u.slot))
 		setState(u, "home")
 		refreshAttrs(owner)
 	else
@@ -324,7 +332,7 @@ local function steal(u, player)
 	u.carrier = thief
 	thief.carrying = u
 	setState(u, "carried")
-	u.root.CFrame = hrp.CFrame * CFrame.new(0, 3.4, 0)
+	place(u, hrp.CFrame * CFrame.new(0, 3.4, 0))
 	local weld = Instance.new("WeldConstraint")
 	weld.Part0 = hrp
 	weld.Part1 = u.root
@@ -352,7 +360,6 @@ local function deliver(thief)
 	if owner and owner.slots[u.slot] == u then
 		owner.slots[u.slot] = nil
 	end
-	u.root.CFrame = slotCF(thief, slot)
 	assign(u, thief, slot, false)
 	thief.steals = thief.steals + 1
 	refreshAttrs(thief)
@@ -384,11 +391,34 @@ onPrompt = function(u, player)
 	end
 end
 
+---------------------------------------------------------------- плиты сбора денег
+
+local function collect(p, s)
+	local bank = p.banks[s] or 0
+	if bank < 1 then
+		return
+	end
+	local pad = p.plot.slots[s].pad
+	p.banks[s] = 0
+	pad:SetAttribute("Bank", 0)
+	setCash(p, p.cash + bank)
+	Collected:FireClient(p.player, bank, pad.Position)
+end
+
+-- хозяин стоит на плите (Touched срабатывает только при наступании, а стоять и собирать — удобнее)
+local function standsOn(pad, pos)
+	local o = pad.CFrame:PointToObjectSpace(pos)
+	return math.abs(o.X) < pad.Size.X / 2 + 0.8 and math.abs(o.Z) < pad.Size.Z / 2 + 0.8 and o.Y > 0 and o.Y < 6
+end
+
 ---------------------------------------------------------------- замок базы
 
 local function setBarrier(plot, on)
-	plot.barrier.Transparency = on and 0.45 or 1
+	plot.barrier.Transparency = on and 0.88 or 1
 	plot.barrier.CanCollide = on
+	for _, beam in ipairs(plot.beams) do
+		beam.Transparency = on and 0.05 or 1
+	end
 end
 
 local function lockBase(p, seconds)
@@ -413,17 +443,9 @@ for _, plot in ipairs(plots) do
 	for s, slot in ipairs(plot.slots) do
 		slot.pad.Touched:Connect(function(hit)
 			local p = plot.owner
-			if not p or not p.player.Character or not hit:IsDescendantOf(p.player.Character) then
-				return
+			if p and p.player.Character and hit:IsDescendantOf(p.player.Character) then
+				collect(p, s)
 			end
-			local bank = p.banks[s] or 0
-			if bank < 1 then
-				return
-			end
-			p.banks[s] = 0
-			slot.pad:SetAttribute("Bank", 0)
-			setCash(p, p.cash + bank)
-			Collected:FireClient(p.player, bank, slot.pad.Position)
 		end)
 	end
 end
@@ -622,7 +644,6 @@ local function onPlayerAdded(player)
 			local s = tonumber(e.s)
 			if Config.UNIT[e.id] and s and s <= Config.slots(p.rebirths) and not p.slots[s] then
 				local u = makeUnit(e.id, (e.m ~= "" and Config.MUTATIONS[e.m]) and e.m or nil)
-				u.root.CFrame = plot.slots[s].cf
 				assign(u, p, s, false)
 			end
 		end
@@ -705,12 +726,46 @@ RebirthReq.OnServerEvent:Connect(function(player)
 		slot.pad:SetAttribute("Bank", 0)
 	end
 	p.rebirths = p.rebirths + 1
-	setCash(p, 0)
+	setCash(p, Config.START_CASH) -- с нулём не на что купить даже крестьянина
 	refreshPedestals(p.plot, p)
 	refreshAttrs(p)
 	Notify:FireClient(player, "rebirth_done", { tostring(p.rebirths), tostring(Config.multiplier(p.rebirths)) })
 	saveData(p)
 end)
+
+---------------------------------------------------------------- проверка в Studio (в опубликованной игре этого нет)
+
+if RunService:IsStudio() then
+	local dbg = Instance.new("BindableFunction")
+	dbg.Name = "LegionDebug"
+	dbg.OnInvoke = function(cmd, player, a, b)
+		local p = profiles[player]
+		if not p then
+			return "no profile"
+		end
+		if cmd == "cash" then
+			setCash(p, p.cash + a)
+		elseif cmd == "give" then
+			local s = freeSlot(p)
+			if not s then
+				return "no slot"
+			end
+			assign(makeUnit(a, b), p, s, false)
+			refreshAttrs(p)
+		elseif cmd == "unlock" then
+			p.lockUntil = now() -- главный цикл откроет базу
+		end
+		local units = {}
+		for s, u in pairs(p.slots) do
+			table.insert(units, s .. ":" .. u.id .. ":" .. u.state)
+		end
+		table.sort(units)
+		return string.format("cash=%s rebirths=%d steals=%d carrying=%s lock=%.0f units=%s",
+			Config.fmt(p.cash), p.rebirths, p.steals, p.carrying and p.carrying.id or "-",
+			math.max(0, p.lockUntil - now()), table.concat(units, ","))
+	end
+	dbg.Parent = game:GetService("ServerStorage")
+end
 
 ---------------------------------------------------------------- главный цикл
 
@@ -756,23 +811,24 @@ RunService.Heartbeat:Connect(function(dt)
 	for _, p in pairs(profiles) do
 		for _, u in pairs(p.slots) do
 			if u.state == "walk" then
+				-- walkPos — точка на пути без подпрыгивания (иначе подскок копится и фигурка взлетает)
 				local target = u.path[u.pathI]
-				local pos = u.root.Position
+				local pos = u.walkPos
 				local d = target - pos
 				local step = Config.HOME_SPEED * dt
 				if d.Magnitude <= step then
+					u.walkPos = target
 					u.pathI = u.pathI + 1
 					if u.pathI > #u.path then
 						u.root.CFrame = slotCF(p, u.slot)
 						setState(u, "home")
 						refreshAttrs(p)
-					else
-						u.root.CFrame = CFrame.new(target) * (u.root.CFrame - u.root.Position)
 					end
 				else
 					local np = pos + d.Unit * step
+					u.walkPos = np
 					local look = Vector3.new(d.X, 0, d.Z)
-					local rot = look.Magnitude > 0.01 and CFrame.lookAt(np, np + look) or CFrame.new(np)
+					local rot = look.Magnitude > 0.01 and CFrame.lookAt(np, np + look) or (u.root.CFrame - u.root.Position + np)
 					local bob = math.abs(math.sin(t * 9)) * 0.3
 					u.root.CFrame = rot + Vector3.new(0, bob, 0)
 				end
@@ -800,10 +856,15 @@ RunService.Heartbeat:Connect(function(dt)
 	if incomeTimer >= 1 then
 		incomeTimer = incomeTimer - 1
 		for _, p in pairs(profiles) do
+			local _, hrp = charParts(p.player)
 			for s, u in pairs(p.slots) do
 				if u.state == "home" then
+					local pad = p.plot.slots[s].pad
 					p.banks[s] = (p.banks[s] or 0) + Config.unitIncome(u.id, u.mut, p.rebirths)
-					p.plot.slots[s].pad:SetAttribute("Bank", math.floor(p.banks[s]))
+					pad:SetAttribute("Bank", math.floor(p.banks[s]))
+					if hrp and standsOn(pad, hrp.Position) then
+						collect(p, s)
+					end
 				end
 			end
 		end

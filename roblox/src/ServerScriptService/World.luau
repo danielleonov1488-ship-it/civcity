@@ -156,12 +156,23 @@ local function buildPlot(root, index, cf)
 	part(m, Vector3.new(GATE + 5, 2, 3), L(0, 1.4 + WALL_H + 3.2, -H + 1), C.marble, Enum.Material.Marble)
 	part(m, Vector3.new(GATE + 5.4, 0.5, 3.2), L(0, 1.4 + WALL_H + 4.4, -H + 1), C.gold, Enum.Material.Metal)
 
-	-- лазерная стена в воротах (видна и твёрдая, только пока база заперта)
+	-- лазерная стена в воротах (видна и твёрдая, только пока база заперта): почти прозрачная
+	-- плоскость держит чужих, а видно её по горизонтальным лучам — сквозь лучи база хорошо просматривается
 	local barrier = part(m, Vector3.new(GATE, WALL_H, 1), L(0, 1.4 + WALL_H / 2, -H + 1), C.lock, Enum.Material.Neon)
 	barrier.Name = "Barrier"
 	barrier.Transparency = 1
 	barrier.CanCollide = false
 	barrier.CollisionGroup = "Barrier" .. index
+	local beams = {}
+	for i = 1, 6 do
+		local beam = part(m, Vector3.new(GATE, 0.22, 0.22), L(0, 1.4 + i * 2.1, -H + 1), C.lock, Enum.Material.Neon, Enum.PartType.Cylinder)
+		beam.Name = "Beam"
+		beam.Transparency = 1
+		beam.CanCollide = false
+		beam.CanQuery = false
+		beam.CanTouch = false
+		beams[i] = beam
+	end
 
 	-- табличка над воротами: имя хозяина и замок (текст рисует игрок у себя)
 	local sign = part(m, Vector3.new(1, 1, 1), L(0, 1.4 + WALL_H + 7, -H + 1), C.marble)
@@ -209,6 +220,7 @@ local function buildPlot(root, index, cf)
 		model = m,
 		slots = slots,
 		barrier = barrier,
+		beams = beams,
 		sign = sign,
 		lockPad = lockPad,
 		units = units,

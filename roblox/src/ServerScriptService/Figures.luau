@@ -452,6 +452,11 @@ function Figures.build(id, mut)
 		end
 	end
 	model.PrimaryPart = root
+	local k = Config.RARITY[unit.rarity].scale or 1
+	if k ~= 1 then
+		model:ScaleTo(k) -- от корня под ногами: фигурка растёт вверх, стоять остаётся на месте
+		height = height * k
+	end
 	model:SetAttribute("Height", height)
 	return model
 end
