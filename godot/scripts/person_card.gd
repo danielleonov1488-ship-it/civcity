@@ -807,10 +807,7 @@ static func _person_subject(vp: SubViewport, ppl: People, r: Dictionary) -> void
 
 
 static func _cat_subject(vp: SubViewport, ct: Dictionary) -> void:
-	var fur := 0
-	for i in People.CAT_FURS.size():
-		if (People.CAT_FURS[i][0] as Color).is_equal_approx(ct.get("fur", Color.BLACK)):
-			fur = i
+	var fur := People.cat_fi(ct)                # окрас (и чёрная Мася — свой номер, не по таблице CAT_FURS)
 	var cn := People.cat_node(fur, "Pet", 7)
 	cn.name = "who"
 	cn.rotation.y = 0.35
