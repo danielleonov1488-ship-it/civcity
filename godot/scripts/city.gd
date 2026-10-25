@@ -2420,6 +2420,7 @@ static func stories_load(d: Variant) -> Dictionary:
 			for r in (steps[i] as Dictionary).get("grant", []):
 				if not (s["granted"] as Dictionary).has(String(r)):
 					s["granted"][String(r)] = String(a0["id"])
+	StoryDefs.migrate(s)                    # «Где Мурка?» → «Где Мася?» (Д15): новые имена, чёрная кошка
 	return s
 
 

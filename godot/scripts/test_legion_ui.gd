@@ -407,17 +407,18 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	c.changed.emit()
 	await frames(6)
 	# другие советы города (готовый город стал «Посёлком»: «новый уровень» и т.п.) не перебиваются:
-	# «Легион собран!» ждёт, пока советник свободен (игрок нажал «Понятно» — совет при следующем обновлении города)
+	# совет «Легион открыт — теперь его нужно построить» ждёт, пока советник свободен (игрок нажал «Понятно» — совет при следующем обновлении города)
 	for i in 6:
-		if not hud.advisor_panel.visible or hud.adv_title.text == "Легион собран!":
+		if not hud.advisor_panel.visible or hud.adv_title.text == StoryDefs.ADV_LEGION:
 			break
-		check("«Легион собран!» не перебил совет «%s» и не потрачен" % hud.adv_title.text, not lg.flags.has("advised"))
+		check("совет о Легионе не перебил совет «%s» и не потрачен" % hud.adv_title.text, not lg.flags.has("advised"))
 		hud.advisor_panel.visible = false
 		c.changed.emit()
 		await frames(6)
 	# шаг 1: советник с «Пропустить обучение», стрелка на раздел «Легион» нижней полосы
 	check("обучение, шаг 1 — Казармы", lg.tut_step() == "barracks" and ui.tut_active())
-	check("советник шага 1 с «Пропустить обучение»", hud.advisor_panel.visible and hud.adv_skip.visible and hud.adv_title.text == "Легион собран!")
+	check("советник шага 1 с «Пропустить обучение»", hud.advisor_panel.visible and hud.adv_skip.visible and hud.adv_title.text == StoryDefs.ADV_LEGION
+		and hud.adv_text.text.contains("Готового Легиона нет"))
 	check("стрелка на раздел «Легион»", hud.pointer_target == hud.cats["military"])
 	await shot("tut1_barracks")
 	hud.advisor_panel.visible = false
@@ -508,7 +509,7 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	lg.levels["legionary"] = 1
 	lg.progress = 0
 	# «Легион» изучили в окне исследований: пока оно открыто, совета нет (Esc закрыл бы его вместе с окном);
-	# окно закрыли через Esc (close_panels) — совет «Легион собран!» появляется через кадр и не гаснет
+	# окно закрыли через Esc (close_panels) — совет о Легионе появляется через кадр и не гаснет
 	hud.advisor_panel.visible = false
 	hud.research_panel.visible = true
 	c.changed.emit()
@@ -517,7 +518,7 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	hud.close_panels()
 	await frames(6)
 	check("окно исследований закрыто (Esc) — снова шаг 1, советник", not hud.research_panel.visible and hud.advisor_panel.visible and hud.adv_skip.visible
-		and hud.adv_title.text == "Легион собран!" and lg.flags.has("advised"))
+		and hud.adv_title.text == StoryDefs.ADV_LEGION and lg.flags.has("advised"))
 	await shot("tut1_after_research")
 	await click(center_of(hud.adv_skip))
 	await frames(6)

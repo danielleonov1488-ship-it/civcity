@@ -12,7 +12,7 @@ extends Node
 const POLL := 0.5                      # как часто проверять предложение и шаги, с
 const CLICK_PX := 34.0                 # щелчок по кошке — в стольких точках от неё
 const MEOW := [20.0, 40.0]             # кошка мяукает раз в 20–40 с (при скорости ×1)
-const KID_CALL_H := 2                  # мальчик зовёт кошку раз в 2 игровых часа
+const KID_CALL_H := 2                  # хозяйка (Мария) зовёт кошку раз в 2 игровых часа
 const BUILD_GLOW := 0.3               # пятно «где строить» (скверик, сад, новый дом) — мягче, чем место поисков
 const FILL := 0.55                     # свет-заполнение на лица героев ролика
 const PROC_LEN := 15.0                 # свадебное шествие: столько метров пути до нового дома
@@ -221,7 +221,7 @@ func time_ok() -> bool:
 	return int(s["h"]) - int(s["last_h"]) >= gap_now()
 
 
-## Пауза до следующей истории: обычно GAP_H; у истории-продолжения (gap_h — «Разбойники у арки» после «Мурки», Д9) —
+## Пауза до следующей истории: обычно GAP_H; у истории-продолжения (gap_h — «Разбойники у арки» после «Маси», Д9) —
 ## своя, если её очередь: та, что в after, пройдена, ранг и жители позволяют, и её не пропускают (skip_if)
 func gap_now() -> int:
 	var s := S()
@@ -274,7 +274,7 @@ func can_offer(sd: Dictionary) -> Dictionary:
 	var sk := String(sd.get("skip_if", ""))
 	if sk != "" and city.research.has(sk) and String((S().get("granted", {}) as Dictionary).get(sk, "")) != String(sd["id"]):
 		return {}
-	# сначала та история (на «Хуторе» первой остаётся «Где Мурка?»); с «Деревни» не держим, если ту сейчас не предложить
+	# сначала та история (на «Хуторе» первой остаётся «Где Мася?»); с «Деревни» не держим, если ту сейчас не предложить
 	var af := String(sd.get("after", ""))
 	if af != "" and not (S()["done"] as Dictionary).has(af) and not StoryDefs.story(af).is_empty():
 		if city.level < 2 or not can_offer(StoryDefs.story(af)).is_empty():
@@ -403,7 +403,8 @@ func _spot_for(bind: Dictionary, fo: Dictionary) -> Vector2:
 	return _spot_cache[key]
 
 
-## Кого просить: дома нужного класса, где живёт семья с ребёнком, — ближние к станции первыми; [{home, fam, kid, seed…}]
+## Кого просить: дома нужного класса, где живёт семья с ребёнком (child) или со взрослой жительницей (young — Мария
+## из «Где Мася?»), — ближние к станции первыми; [{home, fam, kid, seed…}] (kid — имя героя: мальчик семьи или cast.name)
 func _cast(sd: Dictionary) -> Array:
 	var cast: Dictionary = sd.get("cast", {})
 	var ctr := city.center()
@@ -414,10 +415,11 @@ func _cast(sd: Dictionary) -> Array:
 	var child := bool(role.get("child", false))
 	var floors := int(role.get("floors", 0))     # дом ровно в столько этажей («Тесно у …» — в два, чтобы надстроить третий)
 	var c0: Vector2 = ctr["pos"] if not ctr.is_empty() else Land.CENTER
-	var kids := {}                       # «семья|дом» — у кого есть ребёнок (один проход по жителям)
-	if child:
+	var young := bool(role.get("young", false))
+	var kids := {}                       # «семья|дом» — у кого есть ребёнок / взрослая женщина (один проход по жителям)
+	if child or young:
 		for r in game.people.residents:
-			if bool(r["child"]):
+			if (child and bool(r["child"])) or (young and not child and bool(r["female"]) and not bool(r["child"])):
 				kids["%s|%d" % [r["fam"], int(r["home"])]] = true
 	var out := []
 	for id in city.buildings:
@@ -428,9 +430,9 @@ func _cast(sd: Dictionary) -> Array:
 			continue
 		for f: Dictionary in b["families"]:
 			var fam := String(f["name"])
-			if child and not kids.has("%s|%d" % [fam, int(id)]):
+			if (child or young) and not kids.has("%s|%d" % [fam, int(id)]):
 				continue
-			var e := {"home": int(id), "fam": fam, "kid": StoryDefs.boy(fam), "cls": String(city.def(b)["cls"]), "female": bool(role.get("female", false)),
+			var e := {"home": int(id), "fam": fam, "kid": String(role.get("name", StoryDefs.boy(fam))), "cls": String(city.def(b)["cls"]), "female": bool(role.get("female", false)),
 				"child": child, "d": (b["pos"] as Vector2).distance_to(c0)}
 			if bool(role.get("old", false)):
 				e["old"] = true
@@ -607,7 +609,7 @@ func _enter_step(i: int) -> void:
 			var rd := Defs.research(String(r))
 			city._quiet("Открыто: «%s» — для истории «%s»." % [rd.get("name", r), StoryDefs.title_of(_story(a), a)], "research")
 		if String(r) == "legion":
-			city.legion.flags["advised"] = true   # «Легион собран!» скажет совет шага (с военным кварталом), не окно Легиона
+			city.legion.flags["advised"] = true   # что такое Легион и как его строить, скажет совет шага (с военным кварталом), не окно Легиона
 	if bool(st.get("quarter", false)):
 		quarter()                        # военный квартал у арки — один раз на город (Legion.flags.quarter)
 	if not (st.get("grant", []) as Array).is_empty():
@@ -647,7 +649,7 @@ func _start_find(a: Dictionary, o: Dictionary, what := "cat") -> void:
 		var ang := rg.randf() * TAU
 		var c := spot + Vector2(cos(ang), sin(ang)) * r * rg.randf_range(0.25, 0.5)
 		a["area%d" % k] = [c.x, c.y, r]
-	a["cat_name"] = String(o.get("name", "Мурка"))
+	a["cat_name"] = String(o.get("name", "Мася"))
 	a["fur"] = int(o.get("fur", 0))
 	if what == "cat":
 		_spawn_cat(a)
@@ -666,18 +668,18 @@ func _spawn_cat(a: Dictionary) -> void:
 	cat["yaw"] = _rng(a, 2).randf() * TAU
 
 
-## Мальчик у дома зовёт кошку (маленькая подпись над ним; без всплывашек)
+## Хозяйка у дома зовёт кошку (маленькая подпись над ней; без всплывашек)
 func _call_kid(a: Dictionary) -> void:
 	var home: Dictionary = city.buildings.get(int(a.get("home", -1)), {})
 	if home.is_empty():
 		return
 	var dp: Vector2 = city.door_point(home)
-	var name := String(a.get("cat_name", "Мурка"))
+	var name := String(a.get("cat_name", "Мася"))
 	var call := String(StoryDefs.find_opts(_story(a)).get("kid", "%s! Кис-кис-кис!" % name))
 	ui.bubble3d(Vector3(dp.x, game.land.height_at(dp.x, dp.y) + 1.6, dp.y), call, 4.0, 28)
 
 
-## Часы историй: подсказки, след лапки, мальчик сам нашёл (find), ожидание (wait), семья без дома
+## Часы историй: подсказки, след лапки, хозяйка сама нашла (find), ожидание (wait), семья без дома
 func _on_hour() -> void:
 	var s := S()
 	var a: Dictionary = s["active"]
@@ -895,7 +897,7 @@ func found() -> void:
 	_advance(true)
 
 
-## Долго искали — нашёлся сам. Кошка: мальчик нашёл её сам — без очков и ролика, только колокольчик (история кончилась).
+## Долго искали — нашёлся сам. Кошка: Мария нашла её сама — без очков и ролика, только колокольчик (история кончилась).
 ## Ослик: хозяин нашёл его сам, но история идёт дальше — ролик встречи ждёт щелчка, лавка ещё впереди
 func _give_up() -> void:
 	var a: Dictionary = S()["active"]
@@ -1607,7 +1609,8 @@ func _marks(on: bool) -> void:
 		if not cat.is_empty():
 			trail = a
 	if paw and not cat.is_empty():
-		hud.set_badge("story_paw", _cat_pos() + Vector3(0, 0.75, 0), "cat", false, "", found)
+		# значок над кошкой — как у истории (чёрная Мася — чёрная кошка на значке)
+		hud.set_badge("story_paw", _cat_pos() + Vector3(0, 0.75, 0), String(_story(a).get("icon", "cat")), false, "", found)
 	elif paw:
 		hud.set_badge("story_paw", _pet_pos() + Vector3(0, 1.6, 0), "horse", false, "", found)
 	else:
@@ -2477,7 +2480,7 @@ func _speaker(who: String) -> Dictionary:
 	var b: Dictionary = cine["bind"]
 	var sd: Dictionary = cine["story"]
 	if who == "cat":
-		return {"kind": "cat", "fur": int(b.get("fur", 0)), "name": String(b.get("cat_name", "Мурка")),
+		return {"kind": "cat", "fur": int(b.get("fur", 0)), "name": String(b.get("cat_name", "Мася")),
 			"role": "кошка семьи %s" % StoryDefs.fam_gen(String(b.get("fam", "")))}
 	if who == "advisor":
 		return {"kind": "pic", "pic": "advisor.png", "name": "Советник Марк", "role": "советник градоначальника"}
@@ -2492,8 +2495,8 @@ func _speaker(who: String) -> Dictionary:
 
 
 ## Кто играет роль: облик (seed, пол, ребёнок, сословие, старик) — из bind["roles"] или общий (история с одним героем).
-## Чего в привязке нет (в журнале прежних версий не было пола и «ребёнок ли») — как у героя истории (cast): мальчик
-## из «Где Мурка?» — ребёнок, дед из «Скверика» — взрослый и седой
+## Чего в привязке нет (в журнале прежних версий не было пола и «ребёнок ли») — как у героя истории (cast): Мария
+## из «Где Мася?» — взрослая девушка, дед из «Скверика» — взрослый и седой
 func _role(b: Dictionary, role: String) -> Dictionary:
 	var roles: Dictionary = b.get("roles", {})
 	if roles.has(role):
@@ -2965,7 +2968,7 @@ func _clear_view(a: Vector2, b: Vector2) -> bool:
 	return true
 
 
-## Откуда мальчик прибежит к кошке: в 4,2 м от неё, со стороны его дома, по прямой без построек (одно на ролик)
+## Откуда хозяйка прибежит к кошке: в 4,2 м от неё, со стороны её дома, по прямой без построек (одно на ролик)
 func _approach(dist := 4.2) -> Vector2:
 	if cine.has("approach"):
 		return cine["approach"]
@@ -2983,7 +2986,7 @@ func _approach(dist := 4.2) -> Vector2:
 	var p := cp + dir * 4.2 * k_d
 	var cands := []
 	if cine.has("cam_dir"):
-		# камера уже смотрит на кошку: мальчик вбегает в кадр сбоку (не из-за камеры и не заслоняя кошку)
+		# камера уже смотрит на кошку: хозяйка вбегает в кадр сбоку (не из-за камеры и не заслоняя кошку)
 		var cd: Vector2 = cine["cam_dir"]
 		for a: float in [PI / 2, -PI / 2, PI / 2 - 0.35, -PI / 2 + 0.35, PI / 2 + 0.35, -PI / 2 - 0.35, PI / 2 - 0.7, -PI / 2 + 0.7]:
 			cands.append(cp + cd.rotated(a) * 3.2 * maxf(k_d, 0.75))
@@ -3124,10 +3127,11 @@ func _walk_step(role: String, dt: float, target := "cat") -> bool:
 
 
 ## Кошка в ролике: сидит, ласкается, спит (настоящая — через её состояние, в «Пересмотреть» — своя на время);
-## сидит и ласкается — головой к мальчику (или туда, откуда он прибежит)
+## сидит и ласкается — головой к хозяйке (или туда, откуда она прибежит)
 func _cat_state(state: String) -> void:
 	var cp := _who_at("cat")[0] as Vector3
-	var c = cine["actors"].get("kid")
+	var cast: Dictionary = (cine["story"] as Dictionary).get("cast", {})
+	var c = cine["actors"].get(cast.keys()[0] if not cast.is_empty() else "kid")
 	var to := Vector2((c as Node3D).position.x, (c as Node3D).position.z) if c != null and is_instance_valid(c) else _approach()
 	var yaw := atan2(to.x - cp.x, to.y - cp.z)
 	if cine["mode"] == "replay":

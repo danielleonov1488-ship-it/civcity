@@ -1582,7 +1582,7 @@ func _sheep(b: Dictionary, vis: Dictionary) -> void:
 		vis["pets"].append(sh)
 
 
-## «Кошачья корзинка» (награда истории «Где Мурка?»): в корзинке спит рыжая кошка (не в actors_root: её сон
+## «Кошачья корзинка» (награда истории «Где Мася?»): в корзинке спит рыжая кошка (не в actors_root: её сон
 ## медленнее шага игры, скорость игры его не трогает)
 func _catbed(b: Dictionary, vis: Dictionary) -> void:
 	var cat := People.cat_node(0, "Sleep", int(b["id"]) * 7919)

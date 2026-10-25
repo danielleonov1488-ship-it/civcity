@@ -2599,6 +2599,12 @@ const CAT_STEP := 1.74                 # как быстро лапа уходи
 ## Окрасы: шерсть и грудка
 const CAT_FURS := [[Color("e0913f"), Color("f6dcb4")], [Color("7d7a76"), Color("d9d4cc")], [Color("2c2724"), Color("4a423c")],
 	[Color("f2ede4"), Color("ffffff")], [Color("a87447"), Color("efe0c8")], [Color("4a4440"), Color("f2ede4")]]
+## Чёрная Мася из истории «Где Мася?» (решение владельца Д15): свой окрас вне CAT_FURS — случайные кошки города его
+## не получают. Шерсть чёрная, жёлтые глаза, голубоватый отлив по краю (sheen) — видно и в тени, и на мостовой
+const CAT_MASYA := 6
+const CAT_MASYA_FUR := [Color("1d1a19"), Color("2c2725")]
+const CAT_MASYA_LOOK := [0, Color("141110"), Color("f0c232")]
+const CAT_MASYA_SHEEN := 0.45
 ## Состояние кошки → движение и его скорость
 const CAT_CLIP := {"walk": ["Walk", 1.0], "sit": ["Sit", 1.0], "sleep": ["Sleep", 0.3], "pet": ["Pet", 1.0]}
 
@@ -2875,8 +2881,8 @@ static func _cat_dress(m: Node3D, fi: int) -> ShaderMaterial:
 		mi.set_surface_override_material(s, null)
 	if _cat_shader == null:
 		_cat_shader = load("res://shaders/cat_fur.gdshader")
-	var f: Array = CAT_FURS[clampi(fi, 0, CAT_FURS.size() - 1)]
-	var lk: Array = CAT_LOOK[clampi(fi, 0, CAT_LOOK.size() - 1)]
+	var f: Array = cat_fur(fi)
+	var lk: Array = CAT_MASYA_LOOK if fi == CAT_MASYA else CAT_LOOK[clampi(fi, 0, CAT_LOOK.size() - 1)]
 	var mat := ShaderMaterial.new()
 	mat.shader = _cat_shader
 	mat.set_shader_parameter("fur", f[0])
@@ -2885,9 +2891,16 @@ static func _cat_dress(m: Node3D, fi: int) -> ShaderMaterial:
 	mat.set_shader_parameter("mark", lk[1])
 	mat.set_shader_parameter("eye_col", lk[2])
 	mat.set_shader_parameter("blink_ph", float(m.get_instance_id() % 997) / 997.0)
+	if fi == CAT_MASYA:
+		mat.set_shader_parameter("sheen", CAT_MASYA_SHEEN)
 	mi.material_override = mat
 	m.set_meta("fur_mat", mat)
 	return mat
+
+
+## Окрас fi: [шерсть, грудка] (Мася — свой, остальные — CAT_FURS)
+static func cat_fur(fi: int) -> Array:
+	return CAT_MASYA_FUR if fi == CAT_MASYA else CAT_FURS[clampi(fi, 0, CAT_FURS.size() - 1)]
 
 
 static func _cat_mesh(fur: Color, belly: Color) -> Array:
@@ -2922,7 +2935,7 @@ func _make_cat(home: Dictionary, opts := {}) -> Dictionary:
 		return _make_cat_kit(home, opts)
 	var rg: RandomNumberGenerator = opts.get("rng", rng)
 	var fi: int = int(opts["fur"]) if opts.has("fur") else rg.randi() % CAT_FURS.size()
-	var f: Array = CAT_FURS[fi]
+	var f: Array = cat_fur(fi)
 	var root := Node3D.new()
 	var m := _cat_scene.instantiate() as Node3D
 	m.rotation.y = -PI / 2                 # в файле кошка смотрит вдоль +x, у нас — вдоль +z
@@ -2955,7 +2968,7 @@ func _make_cat(home: Dictionary, opts := {}) -> Dictionary:
 ## Прежняя кошка, собранная из Kit (если модели нет)
 func _make_cat_kit(home: Dictionary, opts := {}) -> Dictionary:
 	var rg: RandomNumberGenerator = opts.get("rng", rng)
-	var f: Array = CAT_FURS[int(opts["fur"])] if opts.has("fur") else CAT_FURS[rg.randi() % CAT_FURS.size()]
+	var f: Array = cat_fur(int(opts["fur"])) if opts.has("fur") else CAT_FURS[rg.randi() % CAT_FURS.size()]
 	var meshes := _cat_mesh(f[0], f[1])
 	var mat := Kit.material(0.9)
 	var root := Node3D.new()
@@ -3103,9 +3116,9 @@ func _cats_step(dt: float) -> void:
 
 ## Кошка без жизни на улице — для корзинки-украшения и портрета в облачке: модель окраса fur в позе clip
 ## (Sleep, Sit, Pet), без звука и прогулок. Модели нет — кошка из Kit. length — длина: по умолчанию как в корзинке,
-## в «Пересмотреть» — как на улице (CAT_LEN), чтобы Мурка в ролике не была меньше себя
+## в «Пересмотреть» — как на улице (CAT_LEN), чтобы Мася в ролике не была меньше себя
 static func cat_node(fur: int, clip := "Sleep", seed_v := 0, length := CAT_LEN_BED) -> Node3D:
-	var f: Array = CAT_FURS[clampi(fur, 0, CAT_FURS.size() - 1)]
+	var f: Array = cat_fur(fur)
 	var root := Node3D.new()
 	if not _cat_model_ok():
 		var meshes := _cat_mesh(f[0], f[1])
@@ -3161,7 +3174,7 @@ func pet_cat(home: Dictionary, fur: int, nm: String, seed_v: int, at := Vector2.
 	return c
 
 
-## Кошка истории стала кошкой-наградой: живёт у дома home (мальчик унёс её домой) и гуляет как все
+## Кошка истории стала кошкой-наградой: живёт у дома home (хозяйка унесла её домой) и гуляет как все
 func free_cat(c: Dictionary, home: int, nm: String) -> void:
 	c.erase("story")
 	c["named"] = nm

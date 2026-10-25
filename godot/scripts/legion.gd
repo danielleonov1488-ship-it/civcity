@@ -379,8 +379,17 @@ func window_open() -> bool:
 	return c != null and (c.research as Dictionary).has("legion")
 
 
-## Почему окно ещё закрыто ("" — открыто)
-func lock_text() -> String:
+## Что такое Легион — в подсказке серого медальона (решение владельца Д13: готового Легиона ни у кого нет, его строят)
+const LOCK_ABOUT := "Легион — стража города: походы, бои с другими городами, Слава и чудеса света. Готового Легиона нет: Казармы, Стрельбище, Кузницу и другие его здания вы построите и улучшите сами."
+
+
+## Почему окно ещё закрыто ("" — открыто); about — и что такое Легион (подсказка медальона)
+func lock_text(about := false) -> String:
+	var t := _lock_why()
+	return t + "\n" + LOCK_ABOUT if about and t != "" else t
+
+
+func _lock_why() -> String:
 	if window_open():
 		return ""
 	var c = city()

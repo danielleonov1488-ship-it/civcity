@@ -11,6 +11,8 @@ uniform int pattern = 1;       // 0 — гладкая, 1 — тигровая (
 uniform vec3 eye_col : source_color = vec3(0.55, 0.62, 0.18);
 uniform float sleep = 0.0;     // 1 — глаза закрыты (спит)
 uniform float blink_ph = 0.0;  // сдвиг моргания (кошки моргают не в лад)
+uniform float sheen = 0.0;     // голубоватый отлив по краю (чёрная Мася: видно в тени и на мостовой); 0 — нет
+uniform vec3 sheen_col : source_color = vec3(0.62, 0.68, 0.86);
 uniform vec2 body_x = vec2(-0.0244, 0.0323);   // от кончика хвоста до носа (ед. модели)
 uniform vec2 body_z = vec2(0.0, 0.0343);       // от земли до макушки
 
@@ -83,6 +85,11 @@ void fragment() {
 		}
 	}
 	ALBEDO = c;
+	if (sheen > 0.0 && part < 0.37) {
+		// отлив: светится только край силуэта (как блеск чёрной шерсти), середина, уши и нос — как были
+		float fr = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
+		EMISSION = sheen_col * fr * sheen;
+	}
 	ROUGHNESS = rough;
 	SPECULAR = 0.35;
 }
