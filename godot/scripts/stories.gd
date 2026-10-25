@@ -218,7 +218,24 @@ func time_ok() -> bool:
 			return false
 	if int(s["last_h"]) < 0:
 		return int(s["h"]) >= StoryDefs.FIRST_H
-	return int(s["h"]) - int(s["last_h"]) >= StoryDefs.GAP_H
+	return int(s["h"]) - int(s["last_h"]) >= gap_now()
+
+
+## Пауза до следующей истории: обычно GAP_H; у истории-продолжения (gap_h — «Разбойники у арки» после «Мурки», Д9) —
+## своя, если её очередь: та, что в after, пройдена, ранг и жители позволяют, и её не пропускают (skip_if)
+func gap_now() -> int:
+	var s := S()
+	var done: Dictionary = s["done"]
+	for sd: Dictionary in StoryDefs.all():
+		if not sd.has("gap_h") or done.has(String(sd["id"])) or not done.has(String(sd.get("after", ""))):
+			continue
+		if city.level < int(sd.get("lvl", 0)) or int(city.stats.get("pop", 0)) < int(sd.get("pop", 0)):
+			continue
+		var sk := String(sd.get("skip_if", ""))
+		if sk != "" and city.research.has(sk) and String((s.get("granted", {}) as Dictionary).get(sk, "")) != String(sd["id"]):
+			continue
+		return mini(StoryDefs.GAP_H, int(sd["gap_h"]))
+	return StoryDefs.GAP_H
 
 
 # ---------- предложение ----------
@@ -1621,6 +1638,11 @@ func _marks(on: bool) -> void:
 		if not oa.is_empty():
 			area = oa
 			trail = {}
+	# здание Легиона в руках и других пятен нет — военный квартал у арки (Д10: совет, а не правило)
+	if on and not cine_on and area.is_empty() and t in MILITARY:
+		var lz := _legion_zone()
+		if not lz.is_empty():
+			area = [(lz["hp"] as Vector2).x, (lz["hp"] as Vector2).y, float(lz["r"]), BUILD_GLOW, true]
 	_area_marks(area, trail)
 
 
@@ -1666,9 +1688,15 @@ func zone_goals() -> Array:
 	if city == null or not allowed():
 		return []
 	var out := []
-	for z: Dictionary in [_story_zone(), orders.zone()]:
+	var sz := _story_zone()
+	for z: Dictionary in [sz, orders.zone()]:
 		if not z.is_empty():
 			out.append(z)
+	# здания Легиона — военный квартал и вне истории (Д10), если история сама туда не ведёт
+	if sz.is_empty() or not (sz.get("keys", []) as Array).has("barracks"):
+		var lz := _legion_zone()
+		if not lz.is_empty():
+			out.append(lz)
 	return out
 
 
@@ -3683,8 +3711,24 @@ func _place_pos(s: String) -> Vector2:
 # ---------- арка на въезде и военный квартал (история «Разбойники у арки», Д9; здания Легиона на карте — этап L.2) ----------
 
 ## Военные постройки Легиона: в счёт военного квартала (у курсора — «В военном квартале ✓»)
-const MILITARY := ["barracks", "range", "spearcamp", "ballistae", "catapults"]
+const MILITARY := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory"]
 const QUARTER_R := 11.0                  # радиус военного квартала, м (Казармы — участок ~9×9 м, рядом встанут и другие)
+## Квартал разрастается, когда в нём встают другие здания Легиона (Д10): у курсора и пятно — на столько метров шире
+const QUARTER_GROW := 6.0
+
+
+## Военный квартал вне истории (Д10): здание Легиона в руках — мягкое пятно и у курсора «В военном квартале ✓»
+## (строить можно где угодно: квартал — совет, бонуса «рядом» нет). {} — квартала нет или Легион закрыт
+func _legion_zone() -> Dictionary:
+	if city == null or not city.legion.window_open():
+		return {}
+	var q: Array = city.legion.quarter()
+	if q.size() != 3 and game != null and String(game.tool) in MILITARY:
+		q = quarter()                        # старый город (Легион изучен до истории): квартал ищем, когда здание в руках
+	if q.size() != 3:
+		return {}
+	return {"hp": Vector2(float(q[0]), float(q[1])), "r": float(q[2]) + QUARTER_GROW, "keys": MILITARY.duplicate(), "label": "военного квартала",
+		"ok": "В военном квартале ✓", "far": "Можно и здесь — а военный квартал у арки", "no": "", "after": -1, "room": 0, "skip": []}
 
 
 ## Где у арки стоит телега переселенцев: на обочине большой дороги, по эту сторону арки (помним до конца ролика)

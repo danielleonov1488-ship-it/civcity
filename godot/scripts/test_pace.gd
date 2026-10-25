@@ -609,6 +609,16 @@ var frugal := false                  # бережливый игрок: толь
 ## эта — через GAP_H после неё
 const STORY_H := 12.0                # история — около 5 минут игры
 var d9 := {"state": "wait", "t": -1.0}   # wait → cat (идёт «Мурка») → ask (предложена) → build (нужны Казармы) → fight → done
+## Здания Легиона (Д10) — главная трата денег середины игры: бот ставит Кузницу, Лазарет и Склад оружия, как только
+## откроются, и улучшает здания по таймерам (настоящие часы при 1×: Legion.clock), но только из лишних денег —
+## после покупки в казне не меньше LEG_SAVE × запаса на условия уровня (_bsave) и LEG_KEEP предела казны.
+## Бои бот не ведёт: Слава только учебного боя (уровни с 6-го просят Славы — до них бот не дойдёт)
+const LEG_SAVE := 1.5
+const LEG_KEEP := 0.25
+var clock0 := 0.0
+var leg_keep := LEG_KEEP
+var leg_ups := 0                     # сколько улучшений зданий Легиона куплено за игру
+var leg_spent := 0.0
 
 
 func _bot() -> void:
@@ -618,8 +628,12 @@ func _bot() -> void:
 			c.rng.seed = int(a.substr(5))
 		if a == "frugal=1":
 			frugal = true
+		if a.begins_with("leg_keep="):            # доля казны, которую бот не тратит на Легион (проверка порога)
+			leg_keep = float(a.substr(9))
 	print("PACE BOT start: cart %.1f h each way, walk %.1f h, 1 h = %.0f s at 1x; goal «%s»; seed %d%s; start money %d, econ %d" % [CART_H, WALK_H, SEC_H,
 		Defs.LEVELS[-1]["name"], int(c.rng.seed), " FRUGAL" if frugal else "", int(c.money), int(c.econ)])
+	clock0 = Time.get_unix_time_from_system()
+	Legion.clock = clock0
 	_bot_layout()
 	game.rig.set_view(Vector3(190, 2, 165), 20, 62, 130)
 	_rank_start()
@@ -875,6 +889,7 @@ func _mid() -> Vector2:
 func _bot_step() -> void:
 	var h0 := int(floor(t))
 	t += STEP_H
+	Legion.clock = clock0 + t * SEC_H          # таймеры улучшений Легиона — по «настоящим» часам игры при 1×
 	# повозка: стоит за краем карты, пока некого везти; туда и обратно — по CART_H
 	match cart:
 		"wait":
@@ -983,6 +998,9 @@ func _bplay() -> void:
 	m0 = _m0()
 	_bfloors(save)
 	_spend("floors", m0)
+	m0 = _m0()
+	_blegion(save)
+	_spend("legion", m0)
 	_bland_rich(save)
 	c.compute()
 
@@ -1386,7 +1404,8 @@ func _bstory() -> void:
 			if c.level >= 1 and sh >= StoryDefs.FIRST_H:
 				d9 = {"state": "cat", "t": t}              # «Где Мурка?» — первой
 		"cat":
-			if t >= float(d9["t"]) + STORY_H + StoryDefs.GAP_H:
+			# «Разбойники» — вскоре после «Мурки» (своя пауза gap_h, владелец: Легион почти со старта)
+			if t >= float(d9["t"]) + STORY_H + float(StoryDefs.story("bandits").get("gap_h", StoryDefs.GAP_H)):
 				d9 = {"state": "build", "t": t}
 				c.research["legion"] = true
 				c.legion.flags["advised"] = true
@@ -1417,6 +1436,37 @@ func _bstory_build() -> void:
 		d9 = {"state": "fight", "t": t}
 		_d9_lvl = c.level
 		print("ECOND9 t=%.1f lvl=%d barracks built for %d (waited %.1f h), money left %d" % [t, c.level, int(cost), waited, int(c.money)])
+
+
+## Здания Легиона (Д10): поставить открывшееся здание поддержки, иначе начать самое дешёвое доступное улучшение —
+## только из лишних денег (LEG_SAVE, LEG_KEEP). Таймеры идут сами (Legion.clock), бот только платит
+func _blegion(save: float) -> void:
+	var lg: Legion = c.legion
+	if not lg.window_open() or String(d9["state"]) in ["wait", "cat", "build"]:
+		return
+	var keep := maxf(save * LEG_SAVE, c.money_cap() * leg_keep)
+	for bt: String in Legion.SUPPORT:
+		if c.unlocked(bt) and not lg.b_built(bt) and c.money - float(Defs.B[bt]["cost"]) >= keep:
+			var b := _bput(bt, Land.GATE + Vector2(13.0, 16.0), true)
+			if not b.is_empty():
+				rk["leg_built"] = int(rk.get("leg_built", 0)) + 1
+				print("ECONLEG t=%.1f lvl=%d built %s for %d, money left %d" % [t, c.level, bt, int(Defs.B[bt]["cost"]), int(c.money)])
+				return
+	var best := ""
+	var bc := INF
+	for bt: String in Legion.BUILDING_IDS:
+		var key := Legion.bkey(bt)
+		if lg.can_upgrade(key) != "":
+			continue
+		var cost := float(lg.upgrade_info(key)["cost"].get("money", 0))
+		if cost < bc:
+			bc = cost
+			best = key
+	if best != "" and c.money - bc >= keep and lg.upgrade(best):
+		leg_ups += 1
+		leg_spent += bc
+		print("ECONLEG t=%.1f lvl=%d upgrade %s → %d for %d (ready in %.1f h), money left %d" % [t, c.level, Legion.building_of(best), int(lg.upg[best]["to"]), int(bc),
+			float(lg.upg[best]["total"]) / SEC_H, int(c.money)])
 
 
 ## Есть ли что изучать (без Легиона) и хватает ли очков хоть на что-то; доля казны и полок
@@ -1613,6 +1663,11 @@ func _summary() -> void:
 			float(row.get("h_res", 0.0)), int(row.get("n_res", 0)), roundi(float(row.get("rp_req_pct", 0.0))), roundi(float(row.get("idle", 0.0))),
 			roundi(float(row.get("den_req_pct", 0.0))), roundi(row["poor"]), roundi(row["cap"]), roundi(float(row.get("max_frac", 0.0)))])
 	print("ECON D9 | state %s at %.1f h | barracks on rank %s" % [d9["state"], float(d9["t"]), Defs.LEVELS[int(_d9_rank())]["name"] if _d9_rank() >= 0 else "—"])
+	var lgs := []
+	for bt: String in Legion.BUILDING_IDS:
+		if c.legion.b_built(bt):
+			lgs.append("%s %d" % [Defs.B[bt]["name"], c.legion.b_level(bt)])
+	print("ECON LEGION | buildings %s | upgrades bought %d, spent %d den" % [", ".join(lgs) if not lgs.is_empty() else "—", leg_ups, int(leg_spent)])
 	print("PACE BOT end at %.1f h = %.1f min: level %d «%s» pop=%d happy=%d money=%d rp=%d research=%d houses=%d buildings=%d" % [t, t * SEC_H / 60.0,
 		c.level, Defs.LEVELS[c.level]["name"], int(c.stats["pop"]), int(c.stats["happy"]), int(c.money), int(c.rp), c.research.size(), _houses().size(), c.buildings.size()])
 	var kinds := {}

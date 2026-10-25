@@ -35,7 +35,8 @@ extends RefCounted
 ##   summon {unit, units}            — подмога созвана: units вбегают справа тесной кучей
 ##   end {win}                       — бой окончен (итог — sim.result)
 ## Только походы (бои с городами их не знают — сервер считает без них): волна-«куча» (setup.packs), стрелок «в кустах»
-## отходит от бойцов ближнего боя (статы врага kite — метров в запасе), босс созывает подмогу (статы врага summon).
+## отходит от бойцов ближнего боя (статы врага kite — метров в запасе), босс созывает подмогу (статы врага summon),
+## Лазарет перевязывает раненых перед каждой новой волной (setup.heal_wave — доля здоровья; событие heal).
 ## В итоге боя ещё oil_best (сколько врагов масло накрыло разом в лучший раз), perks_used, summons — для звёзд;
 ## случайных чисел не тратят, сервер их не сверяет
 
@@ -262,6 +263,14 @@ func _next_wave() -> bool:
 		return false
 	var wave: Array = waves[wave_idx]
 	var sum := 0.0
+	# Лазарет (только походы: setup.heal_wave — доля здоровья): перед новой волной раненые перевязаны
+	var hw := float(setup.get("heal_wave", 0.0))
+	if wave_idx > 0 and hw > 0.0:
+		for u in alive_of("ally"):
+			var h := roundi(u.max_hp * hw)
+			if u.hp < u.max_hp and h > 0:
+				events.append({"type": "heal", "unit": u, "amount": mini(h, ceili(u.max_hp - u.hp))})
+				u.hp = minf(u.max_hp, u.hp + h)
 	# волна-«куча» (только походы: setup.packs; бои с городами её не знают — сервер считает их без неё)
 	var packed: bool = wave_idx in (setup.get("packs", []) as Array)
 	for i in wave.size():

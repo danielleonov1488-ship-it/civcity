@@ -4311,7 +4311,8 @@ func _build_here() -> void:
 		if not moving.is_empty():
 			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(moving["color"]), true)
 			b["born"] = int(moving.get("born", b["born"]))
-			b["tier"] = int(moving["tier"])
+			if not Legion.is_building(tool):
+				b["tier"] = int(moving["tier"])   # здание Легиона: облик — по нынешнему уровню (city.place уже посчитал; улучшение могло кончиться в руках)
 			b["pop"] = int(moving["pop"])
 			b["families"] = moving["families"]
 			var h0: Dictionary = moving.get("happy0", {})
@@ -4358,7 +4359,8 @@ func _cancel_move() -> void:
 	moving = {}
 	var b := city.place(m["type"], m["pos"], m["yaw"], int(m["variant"]), int(m["color"]), true)
 	b["born"] = int(m.get("born", b["born"]))
-	b["tier"] = int(m["tier"])
+	if not Legion.is_building(String(m["type"])):
+		b["tier"] = int(m["tier"])            # здание Легиона — в облике своего уровня (city.place)
 	b["pop"] = int(m["pop"])
 	b["families"] = m["families"]
 	_moved(b, m)

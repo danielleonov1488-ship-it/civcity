@@ -1,10 +1,11 @@
 class_name Legion
 extends RefCounted
 ## Легион — армия по мотивам Hustle Castle (старый замысел владельца, перенесён из js/army.js).
-## Военные постройки города только открывают рода войск; всё остальное живёт в окне «Легион»:
+## Здания Легиона стоят на карте города и растут уровнями (решение владельца Д10): улучшение — в карточке здания,
+## по настоящим часам; Казармы — легионеры и места в отряде, Стрельбище — лучники, Кузница — урон и здоровье всем,
+## Лазарет — лечение между волнами, мастерские — машины, Склад оружия — броня (и снаряжение героя, L.3). Окно «Легион»:
 ##   «Походы» — 8 провинций по 10 боёв, в конце каждой босс; после восьмой — «Поход II, III…» без конца;
-##   «Войска» — один уровень на род войск, одна кнопка «Улучшить», улучшение идёт по настоящим часам
-##               (даже когда игра закрыта); предел уровня растёт с уровнем города; отряд; умения;
+##   «Войска» — отряд, уровни зданий Легиона (кнопка «На карте» — к зданию и его карточке), умения;
 ##   «Против городов» — нападение на отряды обороны других игроков (их сохранённый отряд), рейтинг побед,
 ##               заряды атак, лёгкая добыча (ни у кого не отнимается);
 ##   «Чудеса» — чудеса света: первые три открывает рейтинг походов, старшие — рейтинг побед над городами.
@@ -18,7 +19,10 @@ extends RefCounted
 ##             squad (Array id, "" — пусто), set_slot(i, type), auto_squad()/use_auto_squad(), squad_stats(), squad_power()
 ##   прокачка: levels[type], upgrade_info(type) {cur,to,max,blocked,limit,cost{money[,glory]},time},
 ##             can_upgrade(type) -> "" | почему нет, upgrade(type), upgrade_left(type) с, upgrade_progress(type) 0…1,
-##             cap(), next_cap_city_level(); таймеры проверяет City.sim_day → on_hour() (и можно звать tick())
+##             cap(), next_cap_city_level(); таймеры проверяет City.sim_day → on_hour() (и можно звать tick()).
+##             type — род войск или здание поддержки (forge | infirmary | armory); здание → ключ: bkey(здание)
+##   здания:   BUILDING_IDS, bkey(b), b_level(b), b_built(b), b_reserve(b) (уровень «в запасе»), b_effect(b, ур.),
+##             b_upgrade_text(b) («Улучшить — N ден., M Славы, время»), vis_tier(ур.) — облик (City: b.tier)
 ##   умения:   perks[id] (0 — закрыто), perk_cost(id), can_upgrade_perk(id), upgrade_perk(id), open_perks()
 ##   походы:   frontier() {cycle,r,s}, stage_info(c,r,s) {…, waves, reward, open, done, first, stars, power, recommended},
 ##             stage_open/stage_done, region_done, region_rank_ok/region_lock_text, next_stage(st), odds(st) [класс, слова],
@@ -75,6 +79,33 @@ const UNITS := {
 }
 const UNIT_IDS := ["legionary", "spearman", "archer", "ballista", "catapult"]
 const BUILDING_UNIT := {"barracks": "legionary", "spearcamp": "spearman", "range": "archer", "ballistae": "ballista", "catapults": "catapult"}
+
+# =====================================================================
+#   здания Легиона на карте (Д10, как в Hustle Castle)
+# =====================================================================
+## Каждое военное здание растёт уровнями: улучшение — в его карточке, по настоящим часам (UPGRADE_TIME), сразу платится.
+## У зданий бойцов уровень здания — это уровень рода войск (levels: так его знает и сервер боёв с городами);
+## у Кузницы, Лазарета и Склада оружия — свой (blevels). Здание ещё не поставлено, а уровень выше первого — он «в запасе»
+## (старые сохранения: уровни войск и умения перенесены в здания) и заработает, как только здание поставят
+const BUILDING_IDS := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory"]
+## Здания поддержки: max — наивысший уровень (выше — предел уровня города CAP_BY_CITY), cost_k — множитель цены улучшений
+const SUPPORT := {
+	"forge": {"max": 10, "cost_k": 1.2},
+	"infirmary": {"max": 10, "cost_k": 1.0},
+	"armory": {"max": 10, "cost_k": 1.1},
+}
+## Кузница: +FORGE урона и здоровья всем бойцам за уровень (доля); Лазарет: между волнами боя раненые восстанавливают
+## INFIRMARY здоровья за уровень (доля; бой с городом — одна волна, его это не касается); Склад оружия: +ARMORY брони
+const FORGE := 0.03
+const INFIRMARY := 0.06
+const ARMORY := 2.0
+## Места в отряде: каждое новое (после боссов SLOT_BOSSES) — ещё и с Казармами этого уровня (копия в server/pvp.js)
+const SLOT_BARRACKS := [2, 3, 5, 7]
+## Кузница и Склад оружия в боях с городами: только когда сервер (server/legion_sim.js, server/pvp.js) повторяет бой
+## с ними и владелец сказал «да» выкладке. Пока false: в снимках отряда и в бою с городом — только уровни бойцов и чудеса
+const PVP_MODS := false
+## Облик здания растёт с уровнем: 1-й — как построено, дальше — знамёна, пристройки, ограда, статуя, золото (VIS_MAX + 1 обликов)
+const VIS_MAX := 5
 
 # =====================================================================
 #   враги
@@ -273,8 +304,9 @@ const ART_DIR := "res://assets/ui/ai/legion/"
 # =====================================================================
 #   состояние игрока (сохраняется)
 # =====================================================================
-var levels := {}            # род войск → уровень (1…MAX_LEVEL)
-var upg := {}               # идущее улучшение: род → {"to": уровень, "end": unix-время конца, "total": секунд всего}
+var levels := {}            # род войск → уровень (1…MAX_LEVEL) = уровень его здания
+var blevels := {}           # здание поддержки (SUPPORT) → уровень (1…max)
+var upg := {}               # идущее улучшение: род или здание поддержки → {"to": уровень, "end": unix-время конца, "total": секунд всего}
 var squad: Array = ["legionary", "legionary", "legionary"]   # отряд походов (места по порядку, "" — пусто)
 var defense: Array = []     # отряд обороны для боёв с городами ([] — как отряд походов)
 var perks := {}             # умение → уровень (0 — закрыто)
@@ -300,6 +332,9 @@ var flags := {}             # для окна: что уже показано (�
 var time_k := 1.0
 ## Для проверок без города: всё открыто, предел — MAX_LEVEL
 var free_mode := false
+## Для бота темпа: свои «настоящие часы» (секунды; < 0 — часы компьютера). Бот играет по игровым часам, а таймеры
+## улучшений идут по настоящим — бот ведёт их сам (1 игровой час = 25 с при 1×)
+static var clock := -1.0
 
 var _city: WeakRef = null
 
@@ -320,13 +355,16 @@ func _ensure() -> void:
 	for k in UNIT_IDS:
 		if not levels.has(k):
 			levels[k] = 1
+	for k in SUPPORT:
+		if not blevels.has(k):
+			blevels[k] = 1
 	for p in PERK_IDS:
 		if not perks.has(p):
 			perks[p] = 1 if int(PERKS[p]["boss"]) <= 0 else 0      # масло — с первого дня
 
 
 static func now() -> float:
-	return Time.get_unix_time_from_system()
+	return clock if clock >= 0.0 else Time.get_unix_time_from_system()
 
 
 # =====================================================================
@@ -376,8 +414,8 @@ static func story_title() -> String:
 	return String(StoryDefs.story(STORY).get("title", "Разбойники у арки"))
 
 
-## Военный квартал у арки, который предложила история «Разбойники у арки»: [x, z, радиус] или [] (заготовка для
-## зданий Легиона на карте, этап L.2: советник предлагает ставить их сюда, бонуса «рядом» нет)
+## Военный квартал у арки, который предложила история «Разбойники у арки»: [x, z, радиус] или []. Здания Легиона (Д10)
+## предлагается ставить сюда (Stories._legion_zone: пятно и «В военном квартале ✓» у курсора), бонуса «рядом» нет
 func quarter() -> Array:
 	var q: Array = flags.get("quarter", [])
 	return q if q.size() == 3 else []
@@ -407,18 +445,19 @@ func count_type(type: String) -> int:
 	return n
 
 
-## Род войск можно брать в бой: его постройка стоит в городе
+## Род войск можно брать в бой (здание поддержки работает): его постройка стоит в городе
 func available(type: String) -> bool:
 	if free_mode:
 		return true
-	return count_type(String(UNITS[type]["building"])) > 0
+	return count_type(building_of(type)) > 0
 
 
-## Почему род войск недоступен ("" — доступен): нужна победа над боссом, исследование или постройка
+## Почему род войск (здание поддержки) недоступен ("" — доступен): нужна победа над боссом, исследование, уровень города
+## или постройка
 func unit_lock_text(type: String) -> String:
 	if available(type):
 		return ""
-	var b: String = UNITS[type]["building"]
+	var b := building_of(type)
 	var c = city()
 	if c != null and not c.unlocked(b):
 		return "Откроется %s" % Defs.unlock_text(String(Defs.B[b].get("unlock", "")))
@@ -434,11 +473,27 @@ static func boss_name(n: int) -> String:
 	return ENEMIES[R["boss"]]["name"]
 
 
-## Места в отряде: три с начала и ещё по одному за боссов
+## Места в отряде: три с начала и ещё по одному за боссов — каждое с Казармами нужного уровня (SLOT_BARRACKS, Д10).
+## Места, открытые до зданий Легиона (flags.slots0, перенос старого сохранения), не отнимаются
 func slots() -> int:
 	var n := SQUAD_BASE
-	for b in SLOT_BOSSES:
-		if bosses() >= int(b):
+	var bl := _slot_barracks()
+	for i in SLOT_BOSSES.size():
+		if bosses() >= int(SLOT_BOSSES[i]) and bl >= int(SLOT_BARRACKS[i]):
+			n += 1
+	return maxi(n, int(flags.get("slots0", 0)))
+
+
+## Уровень Казарм для мест в отряде (без города и в проверках — без этого условия)
+func _slot_barracks() -> int:
+	return MAX_LEVEL if free_mode or city() == null else int(levels.get("legionary", 1))
+
+
+## Сколько мест в отряде позволяют Казармы уровня lvl (если побеждены все нужные боссы)
+static func slots_at(lvl: int) -> int:
+	var n := SQUAD_BASE
+	for need in SLOT_BARRACKS:
+		if lvl >= int(need):
 			n += 1
 	return n
 
@@ -449,6 +504,19 @@ func next_slot_boss() -> int:
 		if bosses() < int(b):
 			return int(b)
 	return 0
+
+
+## Почему закрыто место отряда номер i (с нуля; "" — открыто): босс и/или уровень Казарм
+func slot_lock_text(i: int) -> String:
+	if i < slots():
+		return ""
+	var k := clampi(i - SQUAD_BASE, 0, SLOT_BOSSES.size() - 1)
+	var parts := []
+	if bosses() < int(SLOT_BOSSES[k]):
+		parts.append("после победы над боссом: %s" % boss_name(int(SLOT_BOSSES[k])))
+	if _slot_barracks() < int(SLOT_BARRACKS[k]):
+		parts.append("с Казармами %d уровня" % int(SLOT_BARRACKS[k]))
+	return "Место откроется " + " и ".join(parts) if not parts.is_empty() else "Место откроется позже"
 
 
 func set_slot(i: int, type: String) -> void:
@@ -571,19 +639,24 @@ func bonus(key: String) -> float:
 #   боевые числа
 # =====================================================================
 
-## Боец рода type на уровне lvl с бонусами чудес (atk_b, hp_b — доли). То же для чужих отрядов в боях с городами
-static func unit_stats(type: String, lvl: int, atk_b := 0.0, hp_b := 0.0) -> Dictionary:
+## Боец рода type на уровне lvl с бонусами чудес и Кузницы (atk_b, hp_b — доли) и Склада оружия (armor_b — броня).
+## То же для чужих отрядов в боях с городами (там armor_b нет: сервер его не знает)
+static func unit_stats(type: String, lvl: int, atk_b := 0.0, hp_b := 0.0, armor_b := 0.0) -> Dictionary:
 	var U: Dictionary = UNITS[type]
 	var hp_k := 1.0 + 0.19 * (lvl - 1) + hp_b
 	var atk_k := 1.0 + 0.22 * (lvl - 1) + atk_b
 	return {"key": type, "name": U["name"], "level": lvl, "hp": roundi(float(U["hp"]) * hp_k), "atk": roundi(float(U["atk"]) * atk_k),
-		"armor": float(U["armor"]) + 6.0 * (lvl - 1), "range": float(U["range"]), "min_range": float(U.get("min_range", 0.0)),
+		"armor": float(U["armor"]) + 6.0 * (lvl - 1) + armor_b, "range": float(U["range"]), "min_range": float(U.get("min_range", 0.0)),
 		"rate": float(U["rate"]), "speed": float(U["speed"]), "shot": String(U.get("shot", "")), "pierce": bool(U.get("pierce", false)),
 		"splash": float(U.get("splash", 0.0)), "vs": U["vs"], "tags": U["tags"], "size": 1.0, "boss": false}
 
 
-func stats(type: String) -> Dictionary:
-	return unit_stats(type, int(levels.get(type, 1)), bonus("atk"), bonus("hp"))
+## Боец нашего Легиона: в походах — с Кузницей и Складом оружия; pvp — как его увидит сервер боёв с городами
+## (без них, пока PVP_MODS выключен)
+func stats(type: String, pvp := false) -> Dictionary:
+	var mods := not pvp or PVP_MODS
+	return unit_stats(type, int(levels.get(type, 1)), bonus("atk") + (forge_b() if mods else 0.0), bonus("hp") + (forge_b() if mods else 0.0),
+		armory_b() if mods else 0.0)
 
 
 ## Враг на силе scale (круг и глубина похода)
@@ -604,15 +677,16 @@ static func power(s: Dictionary) -> int:
 	return roundi(sqrt(ehp * float(s["atk"]) / float(s["rate"]) * mult) * 1.6)
 
 
-## Бойцы отряда походов (только доступные и на открытых местах)
+## Бойцы отряда (только доступные и на открытых местах): "campaign" — походы, "pvp" — тот же отряд в бою с городом,
+## "defense" — отряд обороны (бои с городами считаются без Кузницы и Склада оружия, пока PVP_MODS выключен)
 func squad_stats(which := "campaign") -> Array:
-	var src: Array = squad if which == "campaign" or defense.is_empty() else defense
+	var src: Array = squad if which != "defense" or defense.is_empty() else defense
 	var out := []
 	var n := slots()
 	for i in mini(n, src.size()):
 		var t: String = src[i]
 		if t != "" and UNITS.has(t) and available(t):
-			out.append(stats(t))
+			out.append(stats(t, which != "campaign"))
 	return out
 
 
@@ -624,7 +698,7 @@ func squad_power(which := "campaign") -> int:
 
 
 # =====================================================================
-#   прокачка: один уровень на род войск, одна кнопка, по настоящим часам
+#   прокачка: уровни зданий Легиона (род войск или здание поддержки), по настоящим часам
 # =====================================================================
 
 ## Предел уровня бойцов при нынешнем уровне города
@@ -635,26 +709,63 @@ func cap() -> int:
 	return mini(MAX_LEVEL, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)]) + (CYCLE_CAP * cd + CYCLE_ROOM if cd > 0 else 0))
 
 
+## Предел уровня для ключа: род войск — cap(); здание поддержки — его наивысший уровень и предел города
+## (круги походов его не поднимают)
+func cap_of(key: String) -> int:
+	if UNITS.has(key):
+		return cap()
+	var mx := int(SUPPORT.get(key, {}).get("max", 1))
+	if free_mode:
+		return mx
+	return mini(mx, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)]))
+
+
+## Наивысший уровень ключа вообще
+static func max_of(key: String) -> int:
+	return MAX_LEVEL if UNITS.has(key) else int(SUPPORT.get(key, {}).get("max", 1))
+
+
+## Уровень по ключу (род войск — уровень его здания; здание поддержки — свой)
+func level_of(key: String) -> int:
+	if UNITS.has(key):
+		return int(levels.get(key, 1))
+	return int(blevels.get(key, 1))
+
+
+func _set_level(key: String, v: int) -> void:
+	if UNITS.has(key):
+		levels[key] = v
+	else:
+		blevels[key] = v
+
+
 ## Сколько кругов походов пройдено целиком (побеждён Цербер)
 func cycles_done() -> int:
 	return progress / (REGIONS.size() * STAGES)
 
 
 ## С какого уровня города предел поднимется (−1 — рост города его уже не поднимет). Считает как cap():
-## пройденные круги походов прибавляют к пределу города и после первого круга
-func next_cap_city_level() -> int:
-	var c := cap()
+## пройденные круги походов прибавляют к пределу города и после первого круга (у зданий поддержки — без кругов)
+func next_cap_city_level(key := "") -> int:
+	var sup := SUPPORT.has(key)
+	var c := cap_of(key) if sup else cap()
 	var cd := cycles_done()
-	var extra := (CYCLE_CAP * cd + CYCLE_ROOM) if cd > 0 else 0
+	var extra := (CYCLE_CAP * cd + CYCLE_ROOM) if cd > 0 and not sup else 0
+	var mx := max_of(key) if sup else MAX_LEVEL
 	for i in range(city_level() + 1, CAP_BY_CITY.size()):
-		if mini(MAX_LEVEL, int(CAP_BY_CITY[i]) + extra) > c:
+		if mini(mx, int(CAP_BY_CITY[i]) + extra) > c:
 			return i
 	return -1
 
 
 ## Цена улучшения рода войск до уровня to: денарии, с 6-го уровня — ещё и Слава (выше 10-го растёт медленнее)
 static func unit_cost(type: String, to: int) -> Dictionary:
-	var f := float(UNITS[type]["cost_k"])
+	return level_cost(type, to)
+
+
+## То же для любого ключа (род войск или здание поддержки — свой множитель cost_k)
+static func level_cost(key: String, to: int) -> Dictionary:
+	var f := float((UNITS[key] if UNITS.has(key) else SUPPORT.get(key, {})).get("cost_k", 1.0))
 	var over := maxi(0, to - 10)
 	var c := {"money": int(round(700.0 * pow(1.6, mini(to, 10) - 2) * (1.0 + 0.25 * over) * f / 10.0)) * 10}
 	if to >= 6:
@@ -664,16 +775,17 @@ static func unit_cost(type: String, to: int) -> Dictionary:
 
 ## Всё про следующее улучшение: {cur, to, max, blocked (выше предела города), limit, cost, time (с)}
 func upgrade_info(type: String) -> Dictionary:
-	var cur := int(levels.get(type, 1))
-	var to := mini(cur + 1, MAX_LEVEL)
-	var limit := mini(MAX_LEVEL, cap())
-	return {"cur": cur, "to": to, "max": cur >= MAX_LEVEL, "blocked": cur + 1 > limit, "limit": limit,
-		"cost": unit_cost(type, to), "time": float(UPGRADE_TIME[mini(to, UPGRADE_TIME.size() - 1)]) / maxf(0.001, time_k)}
+	var cur := level_of(type)
+	var mx := max_of(type)
+	var to := mini(cur + 1, mx)
+	var limit := mini(mx, cap_of(type))
+	return {"cur": cur, "to": to, "max": cur >= mx, "blocked": cur + 1 > limit, "limit": limit,
+		"cost": level_cost(type, to), "time": float(UPGRADE_TIME[mini(to, UPGRADE_TIME.size() - 1)]) / maxf(0.001, time_k)}
 
 
 ## Можно ли улучшить ("" — можно, иначе почему нельзя)
 func can_upgrade(type: String) -> String:
-	if not UNITS.has(type):
+	if not UNITS.has(type) and not SUPPORT.has(type):
 		return "Нет такого рода войск"
 	if not available(type):
 		return unit_lock_text(type)
@@ -683,14 +795,14 @@ func can_upgrade(type: String) -> String:
 	if i["max"]:
 		return "Максимальный уровень"
 	if i["blocked"]:
-		var nl := next_cap_city_level()
+		var nl := next_cap_city_level(type)
 		var more := ""
 		if nl >= 0:
 			more = " Дальше — когда город станет «%s»." % Defs.LEVELS[nl]["name"]
-		elif cap() < MAX_LEVEL:
+		elif UNITS.has(type) and cap() < MAX_LEVEL:
 			more = " Дальше — после следующего круга походов."
 		# после первого круга предел складывается из уровня города и пройденных кругов
-		return "Предел %s — %d уровень.%s" % ["города" if cycles_done() == 0 else "сейчас", i["limit"], more]
+		return "Предел %s — %d уровень.%s" % ["города" if cycles_done() == 0 or SUPPORT.has(type) else "сейчас", i["limit"], more]
 	return _afford_text(i["cost"])
 
 
@@ -739,15 +851,22 @@ func upgrade_progress(type: String) -> float:
 	return clampf(1.0 - upgrade_left(type) / maxf(1.0, float(upg[type]["total"])), 0.0, 1.0)
 
 
-## Завершить улучшение (по таймеру; проверки — с ускорением)
+## Завершить улучшение (по таймеру; проверки — с ускорением): уровень вырос — здание на карте меняет облик
 func finish_upgrade(type: String) -> String:
 	if not upg.has(type):
 		return ""
 	var to := int(upg[type]["to"])
-	levels[type] = maxi(int(levels.get(type, 1)), to)
+	var s0 := slots()
+	_set_level(type, maxi(level_of(type), to))
 	upg.erase(type)
+	sync_tiers(true)
 	changed.emit()
-	return "%s теперь %d уровня — сильнее и крепче!" % [UNITS[type]["many"], to]
+	var bn := String(Defs.B[building_of(type)]["name"])
+	if UNITS.has(type):
+		# Казармы доросли до места, которое ждало их уровня (босс уже побеждён), — скажем в том же событии
+		var more := " Открыто ещё одно место в отряде." if slots() > s0 else ""
+		return "%s — %d уровень: %s сильнее и крепче!%s" % [bn, to, String(UNITS[type]["many"]).to_lower(), more]
+	return "%s — %d уровень: %s" % [bn, to, String(b_effect(building_of(type), to)[0]).to_lower()]
 
 
 ## Проверка таймеров по настоящим часам — улучшения идут, даже когда игра закрыта.
@@ -759,6 +878,124 @@ func tick() -> Array:
 		if t >= float(upg[type]["end"]):
 			out.append(finish_upgrade(type))
 	return out
+
+
+# =====================================================================
+#   здания Легиона на карте (Д10)
+# =====================================================================
+
+## Ключ уровня здания: род войск (здания бойцов) или само здание (поддержка)
+static func bkey(btype: String) -> String:
+	return String(BUILDING_UNIT.get(btype, btype))
+
+
+## Здание, которое растит ключ (род войск → его здание)
+static func building_of(key: String) -> String:
+	return String(UNITS[key]["building"]) if UNITS.has(key) else key
+
+
+static func is_building(btype: String) -> bool:
+	return btype in BUILDING_IDS
+
+
+func b_level(btype: String) -> int:
+	return level_of(bkey(btype))
+
+
+func b_built(btype: String) -> bool:
+	return free_mode or count_type(btype) > 0
+
+
+## Уровень «в запасе»: здания нет, а уровень выше первого (перенос старого сохранения, снесли) — 0, если нечего ждать
+func b_reserve(btype: String) -> int:
+	if b_built(btype):
+		return 0
+	var l := b_level(btype)
+	return l if l > 1 else 0
+
+
+## Облик здания (City: запись постройки, поле tier) по уровню: 1-й — как построено (tier 0)
+static func vis_tier(lvl: int) -> int:
+	return clampi(lvl - 1, 0, VIS_MAX)
+
+
+## Запись здания этого типа на карте ({} — не поставлено)
+func building_rec(btype: String) -> Dictionary:
+	var c = city()
+	if c == null:
+		return {}
+	for id in c.buildings:
+		if String(c.buildings[id]["type"]) == btype:
+			return c.buildings[id]
+	return {}
+
+
+## Облик зданий Легиона по их уровням (после загрузки и улучшения); show — перерисовать изменившиеся (с облачком)
+func sync_tiers(show := false) -> void:
+	var c = city()
+	if c == null:
+		return
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if not is_building(String(b["type"])):
+			continue
+		var t := vis_tier(b_level(String(b["type"])))
+		if int(b["tier"]) != t:
+			b["tier"] = t
+			if show and c.has_signal("house_changed"):
+				c.house_changed.emit(b, true)
+
+
+## Кузница, Склад оружия, Лазарет — пока стоят в городе (уровень «в запасе» не действует)
+func forge_b() -> float:
+	return FORGE * level_of("forge") if available("forge") and not free_mode else 0.0
+
+
+func armory_b() -> float:
+	return ARMORY * level_of("armory") if available("armory") and not free_mode else 0.0
+
+
+func heal_b() -> float:
+	return INFIRMARY * level_of("infirmary") if available("infirmary") and not free_mode else 0.0
+
+
+## Что даёт здание на уровне lvl — строки для карточки и окна («сейчас» и «на следующем уровне»)
+func b_effect(btype: String, lvl: int) -> Array:
+	match btype:
+		"forge":
+			return ["+%d%% урона и здоровья всем бойцам в походах" % roundi(FORGE * lvl * 100.0)]
+		"infirmary":
+			return ["Между волнами боя раненые восстанавливают %d%% здоровья" % roundi(INFIRMARY * lvl * 100.0)]
+		"armory":
+			return ["+%d брони всем бойцам в походах" % roundi(ARMORY * lvl), "Позже — снаряжение героя"]
+	var u := bkey(btype)
+	if not UNITS.has(u):
+		return []
+	var s := unit_stats(u, lvl, bonus("atk") + forge_b(), bonus("hp") + forge_b(), armory_b())   # как в походе (stats) и на плитке «Войска»
+	var out := ["%s %d уровня: здоровье %d, урон %d, броня %d" % [UNITS[u]["many"], lvl, int(s["hp"]), int(s["atk"]), roundi(float(s["armor"]))]]
+	if btype == "barracks":
+		# места, открытые до зданий Легиона (slots0), — не меньше: следующий уровень не обещает уже имеющееся место
+		out.append("Мест в отряде — до %d (новые места — и за победы над боссами)" % maxi(slots_at(lvl), int(flags.get("slots0", 0))))
+	return out
+
+
+## Надпись кнопки улучшения: «Улучшить — 1 790 ден., 4 Славы, 1 ч»
+func b_upgrade_text(btype: String) -> String:
+	var i := upgrade_info(bkey(btype))
+	var parts := ["%s ден." % _num(int(i["cost"].get("money", 0)))]
+	if int(i["cost"].get("glory", 0)) > 0:
+		parts.append("%d Славы" % int(i["cost"]["glory"]))
+	parts.append(fmt_duration(float(i["time"])))
+	return "Улучшить — " + ", ".join(parts)
+
+
+static func _num(v: int) -> String:
+	var s := str(absi(v))
+	var out := ""
+	while s.length() > 3:
+		out = " " + s.right(3) + out
+		s = s.left(s.length() - 3)
+	return ("-" if v < 0 else "") + s + out
 
 
 # =====================================================================
@@ -1150,7 +1387,7 @@ func odds_key(st: Dictionary) -> String:
 	var cur := []
 	for u: Dictionary in squad_stats():
 		cur.append(String(u["key"]))
-	var key := [st["key"], cur, open_perks(), bonus("atk"), bonus("hp"), auto_squad(st)]
+	var key := [st["key"], cur, open_perks(), bonus("atk"), bonus("hp"), auto_squad(st), forge_b(), armory_b(), heal_b()]
 	for t in UNIT_IDS:
 		key.append(int(levels.get(t, 1)))
 	return str(key)
@@ -1169,8 +1406,11 @@ func _odds_setups(st: Dictionary, types: Array) -> Array:
 		waves.append(ws)
 	var out := []
 	for i in ODDS_RUNS:
-		out.append({"kind": "campaign", "squad": sq, "waves": waves, "perks": open_perks(), "seed": 1000 + i * 7919,
-			"packs": (st.get("packs", []) as Array).duplicate()})
+		var s := {"kind": "campaign", "squad": sq, "waves": waves, "perks": open_perks(), "seed": 1000 + i * 7919,
+			"packs": (st.get("packs", []) as Array).duplicate()}
+		if heal_b() > 0.0:
+			s["heal_wave"] = heal_b()
+		out.append(s)
 	return out
 
 
@@ -1281,14 +1521,17 @@ func tips(st: Dictionary) -> String:
 	return counter_tips(st, can_get())
 
 
-## Что открыла победа над n-м боссом: умения, место в отряде, военные постройки (строки для окна)
-static func unlocks_at(n: int) -> Array:
+## Что открыла победа над n-м боссом: умения, место в отряде, военные постройки (строки для окна).
+## barracks — уровень Казарм: место открывается, только если они уже нужного уровня (SLOT_BARRACKS, Д10)
+static func unlocks_at(n: int, barracks := MAX_LEVEL) -> Array:
 	var out := []
 	for id in PERK_IDS:
 		if int(PERKS[id]["boss"]) == n:
 			out.append("умение «%s»" % PERKS[id]["name"])
-	if n in SLOT_BOSSES:
-		out.append("ещё одно место в отряде")
+	var si := SLOT_BOSSES.find(n)
+	if si >= 0:
+		var need := int(SLOT_BARRACKS[si])
+		out.append("ещё одно место в отряде" if barracks >= need else "место в отряде — когда Казармы дойдут до %d уровня" % need)
 	for b in BUILDING_UNIT:
 		if String(Defs.B.get(b, {}).get("unlock", "")) == "boss%d" % n:
 			out.append("%s — %s" % [String(Defs.B[b]["name"]).to_lower(), String(UNITS[BUILDING_UNIT[b]]["many"]).to_lower()])
@@ -1316,6 +1559,8 @@ func make_battle(st: Dictionary, seed_v := -1) -> Dictionary:
 		"food": food_cost(st), "packs": (st.get("packs", []) as Array).duplicate()}
 	if tutorial_battle(st):
 		s["tutorial"] = "oil"
+	if heal_b() > 0.0:
+		s["heal_wave"] = heal_b()             # Лазарет: между волнами раненые восстанавливают долю здоровья (только походы)
 	return s
 
 
@@ -1503,7 +1748,7 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 				for id in PERK_IDS:
 					if int(PERKS[id]["boss"]) == n and int(perks.get(id, 0)) == 0:
 						perks[id] = 1
-				out["unlocks"] = unlocks_at(n)
+				out["unlocks"] = unlocks_at(n, _slot_barracks())
 				out["boss_beaten"] = true
 				flags["turn_page"] = true       # карта перелистнётся на следующую провинцию
 				if c != null and c.has_method("_event"):
@@ -1654,11 +1899,12 @@ func city_happy() -> int:
 	return h
 
 
-## Раз в игровой час (City.sim_day): таймеры улучшений, Слава от чудес, триумф. Возвращает события [[текст, значок]]
+## Раз в игровой час (City.sim_day): таймеры улучшений, Слава от чудес, триумф. Возвращает события [[текст, значок, тихо?]]
+## (улучшение здания — только в колокольчик: на карте здание и так меняет облик с облачком)
 func on_hour() -> Array:
 	var out := []
 	for m in tick():
-		out.append([m, "legion"])
+		out.append([m, "legion", true])
 	var gd := 0.0
 	for w: Dictionary in WONDERS:
 		if float(w.get("glory_day", 0.0)) > 0.0 and wonder_built(w):
@@ -1771,8 +2017,13 @@ func defense_snapshot() -> Dictionary:
 		var t: String = src[i]
 		if t != "" and UNITS.has(t) and available(t):
 			sq.append({"type": t, "level": int(levels.get(t, 1))})
-	return {"v": 1, "squad": sq, "perks": open_perks(), "atk_b": bonus("atk"), "hp_b": bonus("hp"),
+	return {"v": 1, "squad": sq, "perks": open_perks(), "atk_b": pvp_bonus("atk"), "hp_b": pvp_bonus("hp"),
 		"power": squad_power("defense"), "rating": pvp_rating, "city_level": city_level()}
+
+
+## Бонус урона или здоровья ("atk" | "hp"), который знает сервер боёв с городами: чудеса (и Кузница — когда PVP_MODS)
+func pvp_bonus(key: String) -> float:
+	return bonus(key) + (forge_b() if PVP_MODS else 0.0)
 
 
 ## Сила снимка соперника (для подбора и окна)
@@ -1793,7 +2044,7 @@ func make_pvp_battle(opp: Dictionary, seed_v := -1) -> Dictionary:
 	var foes := snapshot_stats(snap)
 	var ep := snapshot_perks(snap)
 	var att = opp.get("attack")
-	var mine: Array = snapshot_stats(att) if att is Dictionary else squad_stats()
+	var mine: Array = snapshot_stats(att) if att is Dictionary else squad_stats("pvp")
 	var ap: Dictionary = snapshot_perks(att) if att is Dictionary else open_perks()
 	if seed_v < 0:
 		seed_v = int(opp.get("seed", -1))           # зерно боя выдал сервер (LegionNet.pvp_attack)
@@ -1959,9 +2210,10 @@ static func fmt_duration(sec: float) -> String:
 #   сохранение
 # =====================================================================
 
-## v2 (этап 3b): stars — биты звёзд за мастерство (в v1 — число звёзд по выжившим), chests, trophies
+## v2 (этап 3b): stars — биты звёзд за мастерство (в v1 — число звёзд по выжившим), chests, trophies.
+## v3 (Д10): blevels — уровни Кузницы, Лазарета, Склада оружия; levels — по-прежнему уровни родов войск (= их зданий)
 func to_dict() -> Dictionary:
-	return {"v": 2, "levels": levels, "upg": upg, "squad": squad, "defense": defense, "perks": perks, "stars": stars,
+	return {"v": 3, "levels": levels, "blevels": blevels, "upg": upg, "squad": squad, "defense": defense, "perks": perks, "stars": stars,
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
 		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys()}
@@ -1972,10 +2224,14 @@ func from_dict(d: Dictionary) -> void:
 	for k in d.get("levels", {}):
 		if UNITS.has(k):
 			levels[k] = clampi(int(d["levels"][k]), 1, MAX_LEVEL)
+	blevels = {}
+	for k in d.get("blevels", {}):
+		if SUPPORT.has(k):
+			blevels[k] = clampi(int(d["blevels"][k]), 1, max_of(k))
 	upg = {}
 	for k in d.get("upg", {}):
 		var u: Dictionary = d["upg"][k]
-		if UNITS.has(k):
+		if UNITS.has(k) or SUPPORT.has(k):
 			upg[k] = {"to": int(u.get("to", 2)), "end": float(u.get("end", 0.0)), "total": float(u.get("total", 1.0))}
 	squad = []
 	for t in d.get("squad", ["legionary", "legionary", "legionary"]):
@@ -2027,4 +2283,28 @@ func from_dict(d: Dictionary) -> void:
 	if progress > 0 and not flags.has("tut"):
 		flags["tut"] = "done"
 		flags["tut_oil"] = true
+	if int(d.get("v", 1)) < 3:
+		_migrate_d10()
 	changed.emit()
+
+
+## Старое сохранение (до зданий Легиона, Д10): уровни войск уже стали уровнями их зданий (levels — то же число;
+## здания нет — уровень «в запасе»); умения дают уровни «в запасе» новым зданиям: Перевязка — Лазарету, Черепаха — Складу
+## оружия, Залп и Боевой рог — Кузнице (сами умения не меняются). Места в отряде, открытые до Д10, не отнимаются
+## (новые места просят ещё и Казармы нужного уровня). Идущие улучшения переносятся как есть.
+## flags.d10_new — советник один раз расскажет о зданиях Легиона (LegionUi)
+func _migrate_d10() -> void:
+	var kept := SQUAD_BASE
+	for b in SLOT_BOSSES:
+		if bosses() >= int(b):
+			kept += 1
+	if kept > SQUAD_BASE:
+		flags["slots0"] = kept
+	var from := {"infirmary": ["bandage"], "armory": ["testudo"], "forge": ["volley", "horn"]}
+	for k in from:
+		var l := 1
+		for p in from[k]:
+			l = maxi(l, int(perks.get(p, 0)))
+		blevels[k] = clampi(maxi(int(blevels.get(k, 1)), l), 1, mini(max_of(k), cap_of(k)))   # не выше предела города (уровень города уже загружен)
+	if not flags.is_empty() or progress > 0:
+		flags["d10_new"] = true

@@ -118,7 +118,12 @@ func _run() -> void:
 	await click(center_of(ui.tabs["troops"]))
 	await frames(10)
 	check("вкладка «Войска» щелчком", ui.tab == "troops")
+	check("«Войска»: 8 зданий Легиона, у Казарм — «На карте»", _texts(ui.content).contains("Здания Легиона в городе") and _texts(ui.content).contains("Склад оружия")
+		and ui._upg_btn != null and ui._upg_btn.text == "На карте")
 	await shot("troops")
+	await _d10(c, lg, ui)
+	ui.open("troops")
+	await frames(6)
 	# выбор бойца на 2-е место
 	var slot_btn: Button = null
 	for b in ui.content.find_children("*", "Button", true, false):
@@ -270,6 +275,111 @@ func _run() -> void:
 	get_tree().quit()
 
 
+## Д10: здания Легиона на карте — военный квартал (здания разных уровней), карточка здания: идущее улучшение и кнопка
+## «Улучшить — N ден., M Славы, время», «На карте» из «Войск», облик одного здания на 1, 2 и 3 уровне
+func _d10(c: City, lg: Legion, ui: LegionUi) -> void:
+	var hud = game.hud
+	ui.close()
+	hud.advisor_panel.visible = false
+	# квартал: две улицы, вдоль каждой — четыре здания Легиона фасадом к улице, как поставил бы игрок
+	# (место расчищено: постройки и деревья готового города меню убраны)
+	var rows := [[Vector2(151, 205), "barracks"], [Vector2(158.6, 205), "range"], [Vector2(166.2, 205), "spearcamp"], [Vector2(173.8, 205), "ballistae"],
+		[Vector2(151, 219), "forge"], [Vector2(158.6, 219), "infirmary"], [Vector2(166.2, 219), "armory"], [Vector2(173.8, 219), "catapults"]]
+	for id in c.buildings.keys():
+		var o: Dictionary = c.buildings[id]
+		var q: Vector2 = o["pos"]
+		if q.x > 138.0 and q.x < 210.0 and q.y > 196.0 and q.y < 230.0 and not bool(Defs.B[o["type"]].get("fixed", false)):
+			c.remove(o, false)
+	for kz in range(97, 116):
+		for kx in range(68, 106):
+			for it in (game.nature.get(Vector2i(kx, kz), []) as Array).duplicate():
+				if not String(it["name"]).contains("Grass"):
+					game.remove_nature(it)
+	for zr: float in [209.2, 223.2]:
+		game.land.paint_line(Vector2(144, zr), Vector2(182, zr), 1.3, Land.Kind.ROAD, true)
+	game.people.refresh(game.land.road_chunks.keys())
+	game.hour = 10.5
+	# облик одного здания на 1, 2 и 3 уровне: три Казармы рядом у улицы (только для снимка)
+	var extra := []
+	for k in 3:
+		var b3: Dictionary = c.place("barracks", Vector2(151 + k * 8.6, 205), 0.0, 0, -1, true)
+		b3["tier"] = k
+		game._show(b3)
+		extra.append(b3)
+	game.rig.set_view(Vector3(160.2, 0, 206.5), 15, 40, 25)
+	await frames(24)
+	await shot("d10_levels_123")
+	for b3: Dictionary in extra:
+		c.remove(b3, false)
+	game.rig.set_view(Vector3(162.5, 0, 214), 12, 48, 50)
+	await frames(20)
+	var vp := get_viewport()
+	var dc0 := vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
+	lg.levels = {"legionary": 1, "spearman": 1, "archer": 1, "ballista": 1, "catapult": 1}
+	lg.blevels = {"forge": 1, "infirmary": 1, "armory": 1}
+	var pg0 := lg.progress
+	lg.progress = 50                               # Мастерская катапульт открыта (5-й босс): закрытую place() кладёт без участка
+	for e: Array in rows:
+		c.place(String(e[1]), e[0], 0.0, 0, -1, true)
+	lg.progress = pg0
+	await frames(20)
+	var dc1 := vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
+	lg.levels = {"legionary": 6, "spearman": 5, "archer": 4, "ballista": 3, "catapult": 2}
+	lg.blevels = {"forge": 3, "infirmary": 2, "armory": 5}
+	lg.sync_tiers(true)
+	c.changed.emit()
+	await frames(20)
+	var dc2 := vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
+	var tiers := []
+	for e: Array in rows:
+		tiers.append(int(lg.building_rec(String(e[1])).get("tier", -1)))
+	check("квартал: 8 зданий, облик по уровням %s" % str(tiers), tiers == [5, 3, 4, 2, 2, 1, 4, 1])
+	print("D10 DRAWCALLS quality=%s quarter of 8 Legion buildings: empty %d → all level 1 %d (+%d) → levels 2–6 %d (+%d for growth)" % [str(game.settings.get("quality", "?")),
+		dc0, dc1, dc1 - dc0, dc2, dc2 - dc1])
+	check("облик по уровням стоит не больше 40 вызовов отрисовки на весь квартал (+%d)" % (dc2 - dc1), dc2 - dc1 <= 40)
+	game.rig.set_view(Vector3(163.0, 0, 213.5), 12, 46, 42)
+	await get_tree().create_timer(2.5).timeout           # облачка нового уровня рассеялись
+	await shot("d10_quarter")
+	# карточка Казарм: улучшение идёт — полоска и минуты
+	var bb: Dictionary = lg.building_rec("barracks")
+	lg.upg["legionary"] = {"to": 7, "end": Legion.now() + 754.0, "total": 4000.0}
+	game.select_building(bb)
+	hud.open_info(bb)
+	await frames(8)
+	var tx := _texts(hud.info_box)
+	check("карточка Казарм: уровень, что даёт, «Улучшается до 7 уровня», полоска", tx.contains("Здание Легиона · 6 уровень") and tx.contains("Легионеры 6 уровня")
+		and tx.contains("Улучшается до 7 уровня") and not hud._lg_live.is_empty())
+	await shot("d10_card_upgrading")
+	# Кузница 3 ур. на «Большом городе»: можно улучшить — «Улучшить — N ден., время»; на 6-м уровне — ещё и Слава
+	var fb: Dictionary = lg.building_rec("forge")
+	c.money = 40000.0
+	game.select_building(fb)
+	hud.open_info(fb)
+	await frames(8)
+	var ub: Button = hud.lg_upg_btn
+	check("карточка Кузницы: «%s»" % (ub.text if ub else "—"), ub != null and ub.text.begins_with("Улучшить — ") and ub.text.contains(" ден., ") and not ub.disabled
+		and _texts(hud.info_box).contains("На 4 уровне") and _texts(hud.info_box).contains("+12% урона и здоровья"))
+	game.rig.set_view(Vector3(151, 0, 219), 25, 50, 26)
+	await frames(10)
+	await shot("d10_card_upgrade")
+	lg.blevels["forge"] = 5
+	hud.open_info(fb)
+	await frames(6)
+	var ub6: Button = hud.lg_upg_btn
+	check("6-й уровень просит Славы: «%s»" % (ub6.text if ub6 else "—"), ub6 != null and ub6.text.contains(" Славы, "))
+	hud.close_panels()
+	# «На карте» из «Войск»: камера к зданию, карточка открыта
+	ui.open("troops")
+	await frames(6)
+	ui.show_building("armory")
+	await frames(8)
+	check("«На карте» → карточка Склада оружия", not ui.visible and hud.info_panel.visible and String(hud.info_b.get("type", "")) == "armory")
+	hud.close_panels()
+	lg.upg = {"legionary": {"to": 7, "end": Legion.now() + 754.0, "total": 1200.0}}
+	c.changed.emit()
+	await frames(4)
+
+
 ## Обучение Легиону в 4 шага: Казармы → окно → учебный бой → улучшение; и «Пропустить обучение».
 ## Стрелки и советник — только в настоящей игре: на время проверки город считается игрой (сохранять его всё равно нельзя)
 func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
@@ -311,6 +421,20 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	check("стрелка на раздел «Легион»", hud.pointer_target == hud.cats["military"])
 	await shot("tut1_barracks")
 	hud.advisor_panel.visible = false
+	# Д10: военный квартал и вне истории — здание Легиона в руках: «В военном квартале ✓» / «Можно и здесь» (совет, не правило)
+	var sto = game.stories
+	var f0: bool = sto.force
+	sto.force = true
+	lg.flags["quarter"] = [166.0, 205.0, 11.0]
+	var t0: String = game.tool
+	game.tool = "forge"
+	var zin: Array = sto.zone_note("forge", Vector2(171.0, 208.0))
+	var zfar: Array = sto.zone_note("forge", Vector2(120.0, 150.0))
+	var zno: Array = sto.zone_note("bench", Vector2(171.0, 208.0))
+	game.tool = t0
+	sto.force = f0
+	check("квартал вне истории: «%s» / «%s», украшения — без подписи" % [str(zin), str(zfar)], not zin.is_empty() and String(zin[0]) == "В военном квартале ✓" and bool(zin[1])
+		and not zfar.is_empty() and String(zfar[0]).begins_with("Можно и здесь") and zno.is_empty())
 	# шаг 2: Казармы стоят — стрелка на медальон
 	c.place("barracks", Vector2(166, 205), 0.0, 0, -1, true)
 	c.changed.emit()
@@ -339,11 +463,36 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	await shot("tut4_troops_tab")
 	ui._select_tab("troops")
 	await frames(6)
-	check("стрелка на «Улучшить до 2»", ui._upg_btn != null and hud.pointer_target == ui._upg_btn and ui.tut_lbl.text.begins_with("Шаг 4 из 4"))
+	check("стрелка на «На карте» у Казарм", ui._upg_btn != null and hud.pointer_target == ui._upg_btn and ui.tut_lbl.text.begins_with("Шаг 4 из 4"))
 	await shot("tut4_upgrade")
-	ui._do("upgrade", "legionary")
-	await frames(4)
-	ui._rebuild()
+	# Д10: улучшения — в карточке здания: «На карте» → карточка Казарм, стрелка на «Улучшить — …»
+	await click(center_of(ui._upg_btn))
+	await frames(10)
+	check("«На карте»: окно закрыто, карточка Казарм, стрелка на «Улучшить»", not ui.visible and hud.info_panel.visible and String(hud.info_b.get("type", "")) == "barracks"
+		and hud.lg_upg_btn != null and hud.pointer_target == hud.lg_upg_btn and hud.lg_upg_btn.text.begins_with("Улучшить — 700 ден."))
+	await shot("tut4_card")
+	# стрелка шага 4 — только у Казарм: у Кузницы своя «Улучшить» (доступная), стрелка на ней не стоит — она на медальоне
+	var fbk: Dictionary = lg.building_rec("forge")
+	var bbk: Dictionary = lg.building_rec("barracks")
+	var fl0 := int(lg.blevels.get("forge", 1))
+	lg.blevels["forge"] = 1
+	game.select_building(fbk)
+	hud.open_info(fbk)
+	await frames(6)
+	hud._update_pointer()
+	check("шаг 4, карточка Кузницы: стрелка не на её «Улучшить» (%s)" % (hud.pointer_target.name if hud.pointer_target else "—"), not fbk.is_empty()
+		and String(hud.info_b.get("type", "")) == "forge" and hud.lg_upg_btn != null and not hud.lg_upg_btn.disabled and hud.pointer_target != hud.lg_upg_btn)
+	lg.blevels["forge"] = fl0
+	game.select_building(bbk)
+	hud.open_info(bbk)
+	await frames(6)
+	hud._update_pointer()
+	check("снова карточка Казарм — стрелка на «Улучшить»", String(hud.info_b.get("type", "")) == "barracks" and hud.pointer_target == hud.lg_upg_btn)
+	await click(center_of(hud.lg_upg_btn))
+	await frames(6)
+	check("улучшение Казарм началось из карточки: полоска", lg.upg.has("legionary") and not hud._lg_live.is_empty())
+	hud.close_panels()
+	ui._update_tut()
 	await frames(4)
 	var pt = hud.pointer_target
 	check("обучение пройдено: полосы и стрелки нет", lg.tut_step() == "" and String(lg.flags.get("tut", "")) == "done" and not ui.tut_bar.visible
@@ -391,8 +540,61 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	check("«Лучший состав» в лесу — три легионера", lg.squad == ["legionary", "legionary", "legionary"])
 	ui.close()
 	c.remove(rb, false)
+	await _d10_fixes(c, lg, ui)
 	game.mode = mode0
 	hud._update_pointer()
+
+
+## Правки Д10 (в «игре»): совет о новом здании Легиона ждёт ролик «Новый ранг» (город вырос — сначала ролик);
+## улучшение кончилось, пока здание переносят, — на новом месте и при отмене оно в облике нового уровня
+func _d10_fixes(c: City, lg: Legion, ui: LegionUi) -> void:
+	var hud = game.hud
+	ui.close()
+	hud.close_panels()
+	hud.advisor_panel.visible = false
+	lg.flags["tut"] = "done"
+	lg.flags["seen"] = true
+	# город только что вырос (ролик ждёт), Кузницы в городе нет — совета о ней пока нет
+	var rc = game.rank_cine
+	rc.pending = {"from": 2, "to": 3, "late": true}
+	lg.flags.erase("new_forge")
+	lg.flags.erase("d10_new")
+	for id in c.buildings.keys():
+		if String(c.buildings[id]["type"]) == "forge":
+			c.remove(c.buildings[id], false)
+	c.changed.emit()
+	var during: bool = hud.advisor_panel.visible
+	var spent := lg.flags.has("new_forge")
+	rc.pending = {}
+	check("ролик ранга ждёт: совета о Кузнице нет и он не потрачен", not during and not spent)
+	c.changed.emit()
+	check("ролик позади — «%s»" % hud.adv_title.text, hud.advisor_panel.visible and hud.adv_title.text == "Новое здание Легиона: Кузница" and lg.flags.has("new_forge"))
+	await shot("d10_tip_forge")
+	hud.advisor_panel.visible = false
+	# перенос: улучшение Казарм кончилось «в руках» — отмена переноса
+	var bb: Dictionary = lg.building_rec("barracks")
+	var lv := lg.b_level("barracks")
+	lg.upg["legionary"] = {"to": lv + 1, "end": Legion.now() - 1.0, "total": 60.0}
+	var moved: bool = game.start_move(bb)
+	lg.tick()
+	game._cancel_move()
+	var b2: Dictionary = lg.building_rec("barracks")
+	check("улучшение кончилось в руках, перенос отменён — облик %d уровня (tier %d)" % [lv + 1, int(b2.get("tier", -1))], moved and lg.b_level("barracks") == lv + 1
+		and int(b2.get("tier", -1)) == Legion.vis_tier(lv + 1))
+	# и постановка на место (_build_here)
+	var lv2 := lg.b_level("barracks")
+	lg.upg["legionary"] = {"to": lv2 + 1, "end": Legion.now() - 1.0, "total": 60.0}
+	var pos: Vector2 = b2["pos"]
+	game.start_move(b2)
+	lg.tick()
+	var err := String(game.placement("barracks", pos)["err"])
+	game.hover = pos
+	game._build_here()
+	var b3: Dictionary = lg.building_rec("barracks")
+	check("улучшение кончилось в руках, поставили — облик %d уровня (tier %d) %s" % [lv2 + 1, int(b3.get("tier", -1)), err], game.moving.is_empty() and lg.b_level("barracks") == lv2 + 1
+		and int(b3.get("tier", -1)) == Legion.vis_tier(lv2 + 1))
+	if not game.moving.is_empty():
+		game._cancel_move()
 
 
 ## Лес — загадка на выбор отряда: «Пращники в кустах» тремя легионерами — карточка советует лучника, шансы прикидкой

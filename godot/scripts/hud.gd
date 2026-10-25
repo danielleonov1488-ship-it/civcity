@@ -83,6 +83,9 @@ var tool_btns := {}
 var info_panel: PanelContainer
 var info_box: VBoxContainer
 var info_b := {}
+var lg_upg_btn: Button                    # карточка здания Легиона: «Улучшить — …» (стрелка обучения Легиону, шаг 4)
+var _lg_live := {}                        # карточка здания Легиона: полоска и надпись идущего улучшения {key, bar, label}
+var _lg_live_t := 0.0
 var advisor_panel: PanelContainer
 var adv_title: Label
 var adv_text: Label
@@ -2565,7 +2568,7 @@ func _update_pointer() -> void:
 		var lp: Array = lu.tut_pointer()
 		# шаг «Войска» при закрытом окне уступает стрелку идущей истории горожан — улучшение бойцов подождёт
 		var sto0 = game.get("stories")
-		if lp[0] != null and not lu.visible and lu.lg.tut_step() == "troops" and sto0 != null and not (sto0.pointer_do() as Dictionary).is_empty():
+		if lp[0] != null and lp[0] != lg_upg_btn and not lu.visible and lu.lg.tut_step() == "troops" and sto0 != null and not (sto0.pointer_do() as Dictionary).is_empty():
 			lp = [null, ""]
 		if lp[0] != null:
 			pointer_target = lp[0]
@@ -2886,6 +2889,11 @@ func _process(_dt: float) -> void:
 	_hover_tick()
 	if tool_panel and tool_panel.visible and Engine.get_process_frames() % 30 == 0:
 		refresh_undo()                        # отменить постройку можно 30 с — медаль сереет сама
+	if not _lg_live.is_empty() and info_panel and info_panel.visible:
+		_lg_live_t -= _dt
+		if _lg_live_t <= 0.0:
+			_lg_live_t = 0.25
+			_lg_tick()                        # карточка здания Легиона: идущее улучшение
 	if rank_btn and rank_btn.visible:
 		# город готов к новому уровню: кнопка и надпись уровня мягко светятся
 		var k := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 320.0)
@@ -3362,6 +3370,7 @@ func open_info(b: Dictionary) -> void:
 	info_b = b
 	info_panel.visible = true
 	_fill_info()
+	_update_pointer()                         # обучение Легиону: в карточке Казарм стрелка — на «Улучшить»
 
 
 
@@ -3445,6 +3454,8 @@ func _fill_info() -> void:
 
 func _fill_info_body() -> void:
 	_clear(info_box)
+	lg_upg_btn = null
+	_lg_live = {}
 	var b := info_b
 	if b.is_empty() or not game.city.buildings.has(b["id"]):
 		info_panel.visible = false
@@ -3556,6 +3567,8 @@ func _fill_info_body() -> void:
 		"decor":
 			info_box.add_child(_row("flower", "Очки украшения", "+%d" % int(d.get("deco", 1)), C_GOOD))
 			_cover_rows(b, "Радует домов")
+		"military":
+			_legion_rows(b, tv, cw)
 	if not c.is_house(b):                      # у дома вместо описания — что даёт счастье (см. _fill_house)
 		info_box.add_child(_wrap(_label(d["desc"], 14, false, C_SOFT), cw))
 	if not d.get("fixed", false):
@@ -3581,6 +3594,92 @@ func _fill_info_body() -> void:
 		bc.pressed.connect(func(): close_panels(); game.copy_building(b))
 		h.add_child(bc)
 		info_box.add_child(h)
+
+
+## Карточка здания Легиона (Д10): уровень, что даёт сейчас и на следующем уровне, «Улучшить — N ден., M Славы, время»,
+## полоска идущего улучшения (идёт и когда игра закрыта); «Окно «Легион»» — отряд, походы и умения
+func _legion_rows(b: Dictionary, tv: VBoxContainer, cw: float) -> void:
+	var c: City = game.city
+	var lg: Legion = c.legion
+	var bt := String(b["type"])
+	var key := Legion.bkey(bt)
+	var info := lg.upgrade_info(key)
+	var lvl := int(info["cur"])
+	tv.add_child(_label("Здание Легиона · %d уровень" % lvl, 14, true, C_SOFT))
+	info_box.add_child(_row("level", "Уровень", "%d из %d" % [lvl, int(info["limit"])]))
+	info_box.add_child(_label("Сейчас даёт:", 15, true, C_SOFT))
+	for s in lg.b_effect(bt, lvl):
+		info_box.add_child(_wrap(_label("• " + String(s), 15, true, C_GOOD), cw))
+	if lg.upg.has(key):
+		var u: Dictionary = lg.upg[key]
+		var tl := _label("Улучшается до %d уровня: %s" % [int(u["to"]), Legion.fmt_duration(lg.upgrade_left(key))], 16, true)
+		info_box.add_child(tl)
+		var bar := ProgressBar.new()
+		bar.show_percentage = false
+		bar.min_value = 0.0
+		bar.max_value = 1.0
+		bar.step = 0.001
+		bar.value = lg.upgrade_progress(key)
+		bar.custom_minimum_size = Vector2(cw, 18)
+		bar.add_theme_stylebox_override("background", _ai_box("g_slider", [8, 0, 8, 0], [0, 0, 0, 0]))
+		bar.add_theme_stylebox_override("fill", _ai_box("g_slider_fill", [8, 0, 8, 0], [0, 0, 0, 0]))
+		info_box.add_child(bar)
+		info_box.add_child(_wrap(_label("Улучшение идёт, даже когда игра закрыта. Новый уровень — с облачком над зданием.", 13, false, C_SOFT), cw))
+		_lg_live = {"key": key, "bar": bar, "label": tl}
+	elif bool(info["max"]):
+		info_box.add_child(_wrap(_label("Наивысший уровень!", 16, true, C_GOOD), cw))
+	elif bool(info["blocked"]):
+		info_box.add_child(_wrap(_label(lg.can_upgrade(key), 14, true, C_SOFT), cw))
+	else:
+		info_box.add_child(_label("На %d уровне:" % int(info["to"]), 15, true, C_SOFT))
+		for s in lg.b_effect(bt, int(info["to"])):
+			info_box.add_child(_wrap(_label("• " + String(s), 15, false, C_INK), cw))
+		var why := lg.can_upgrade(key)
+		var ub := Button.new()
+		ub.text = lg.b_upgrade_text(bt)
+		ub.icon = ico("level", 32)
+		ub.focus_mode = Control.FOCUS_NONE
+		ub.add_theme_font_override("font", font_bold)
+		ub.disabled = why != ""
+		ub.tooltip_text = why if why != "" else "Денарии — сразу, новый уровень — через %s (идёт и когда игра закрыта)" % Legion.fmt_duration(float(info["time"]))
+		ub.pressed.connect(func():
+			if lg.upgrade(key) and game.sound:
+				game.sound.ui("coins")
+			_fill_info()
+			_update_pointer())
+		info_box.add_child(ub)
+		lg_upg_btn = ub
+		if why != "":
+			info_box.add_child(_wrap(_label(why, 14, true, C_BAD), cw))
+	var lb := Button.new()
+	lb.text = "Отряд и походы — окно «Легион»"
+	lb.icon = ico("legion", 32)
+	lb.focus_mode = Control.FOCUS_NONE
+	lb.pressed.connect(func():
+		var lu := LegionUi.of(self)
+		if lu != null:
+			lu.open("troops"))
+	info_box.add_child(lb)
+
+
+## Идёт улучшение здания в открытой карточке: полоска и минуты; дошло — завершаем сразу (облачко над зданием)
+func _lg_tick() -> void:
+	var lg: Legion = game.city.legion
+	var key := String(_lg_live.get("key", ""))
+	if not lg.upg.has(key):
+		_fill_info()
+		return
+	if lg.upgrade_left(key) <= 0.0:
+		for m in lg.tick():
+			game.city._quiet(m, "legion")          # колокольчик; карточку перерисует house_changed → house_event
+		_fill_info()
+		return
+	var l: Label = _lg_live.get("label")
+	if l != null and is_instance_valid(l):
+		l.text = "Улучшается до %d уровня: %s" % [int(lg.upg[key]["to"]), Legion.fmt_duration(lg.upgrade_left(key))]
+	var bar: ProgressBar = _lg_live.get("bar")
+	if bar != null and is_instance_valid(bar):
+		bar.value = lg.upgrade_progress(key)
 
 
 ## Лавке нужен склад (3.9): «Товар со склада · 40 м» или «Нет склада рядом — товар не идёт» и «Показать склад»

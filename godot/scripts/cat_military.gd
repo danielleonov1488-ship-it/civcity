@@ -1,6 +1,8 @@
 class_name CatMilitary
 extends RefCounted
-## Облик военных построек Легиона (Казармы, Стрельбище, Лагерь копейщиков, Мастерские баллист и катапульт).
+## Облик военных построек Легиона (Казармы, Стрельбище, Лагерь копейщиков, Мастерские баллист и катапульт, Кузница,
+## Лазарет, Склад оружия). Здание растёт с уровнем (Д10, _grow): высокие значки легиона, знамёна на фасаде и жаровни,
+## золотой орёл на постаменте, портик с колоннами (или легионер на колонне), золотой орёл на коньке крыши.
 ## Чертёж Bp строится в родных размерах Synty, Catalog.make потом уменьшает его до «кукольного» масштаба (Catalog.ARCH).
 ## Фасад смотрит на +Z, вход (b.door) — у переднего края участка, к дороге. Участок ~9×9 м (как у школы и склада).
 ## Чего нет в Synty (палатки, мишени, чучела, значок-аквила, баллиста, онагр, ядра), собрано здесь же из Kit —
@@ -34,13 +36,19 @@ static var _meshes := {}
 #   постройки
 # =====================================================================
 
-static func make(b: Bp, type: String) -> void:
+## tier — облик уровня здания (Legion.vis_tier: 0 — 1-й уровень, как построено): с каждым уровнем прибавляется своё (_grow)
+static func make(b: Bp, type: String, tier := 0) -> void:
 	match type:
 		"barracks": _barracks(b)
 		"range": _range(b)
 		"spearcamp": _spearcamp(b)
 		"ballistae": _ballistae(b)
 		"catapults": _catapults(b)
+		"forge": _forge(b)
+		"infirmary": _infirmary(b)
+		"armory": _armory(b)
+	if tier > 0:
+		_grow(b, type, tier)
 
 
 ## Плац: утоптанный песок (плоская плитка), центр снизу p, размер sx×sz
@@ -270,6 +278,208 @@ static func _catapults(b: Bp) -> void:
 	b.door = Vector3(0.0, 0, 3.4)
 
 
+## Кузница (Д10): кирпичная мастерская слева (широкие ворота, высокая труба с дымом), справа — двор под навесом:
+## горн с огнём, наковальня, точило, бочка для закалки, стойка с мечами, кучи угля; кузнец у наковальни
+static func _forge(b: Bp) -> void:
+	b.paint(-1, false)
+	b.roof_tex = "Roof_Tile_06"
+	var brick := CatCivic._skin(b, "Building_Large_Brick_01", Color(1.0, 0.8, 0.64))
+	b.remap = brick
+	var cx := -2.0
+	var cz := -2.4
+	CatCivic._box(b, cx, cz, 2, 2, [
+		{0: ["SM_Bld_Wall_Door_Double_Large_01", "SM_Bld_Wall_Window_06"], 1: ["SM_Bld_Wall_Window_06", "SM_Bld_Wall_01"],
+			2: ["SM_Bld_Wall_01", "SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06"]}],
+		{"trim": "SM_Bld_Trim_04", "skin": brick})
+	b.remap = brick
+	var ridge := CatCivic._gable2(b, cx - 2.5, cx + 2.5, cz - 2.5, cz + 2.5, FL, 1.5, true)
+	b.remap = b.floor_remap(1)
+	CatCivic._chimney(b, Vector3(cx - 1.4, ridge - 0.9, cz - 1.5), 1.25)
+	b.on_wall("SM_Prop_Symbol_0%d" % (5 + b.rng.randi() % 4), cx, cz, 2, 2, 0, 1.5, 2.25, 0.16, false, 0.45)
+	b.torch_pair(cx, cz, 2, 2, 0.5)
+	var fz := cz + 2.5
+	# двор: сзади — навес (точило, уголь, мечи на стойке), спереди — горн с огнём и наковальня
+	_sand(b, Vector3(2.3, 0, -1.2), 4.4, 7.0)
+	_sand(b, Vector3(-2.0, 0, fz + 1.15), 5.0, 2.3)
+	for p: Vector3 in [Vector3(0.55, 0, -4.4), Vector3(4.15, 0, -4.4), Vector3(0.55, 0, -2.2), Vector3(4.15, 0, -2.2)]:
+		b.add_xf("SM_Prop_Pole_01", Transform3D(Basis.from_scale(Vector3(0.55, 0.92, 0.55)), p))
+	b.add_xf("SM_Prop_Banner_Roof_01", Transform3D(Basis(Vector3.UP, PI / 2).scaled(Vector3(0.88, 1, 1.15)), Vector3(0.5, 2.75, -2.2)))
+	_rack(b, Vector3(2.35, 0, -4.05), 0.0, 2, 0.75)
+	b.add("SM_Prop_Grinding_Wheel_01", Vector3(1.2, 0.3, -3.0), 1.6, 0.8)
+	b.add("SM_Prop_Sack_Stack_01", Vector3(3.6, 0, -3.0), -1.4, 0.7)
+	b.add("SM_Prop_Forge_01", Vector3(3.35, 0, -0.75), -PI / 2, 0.8)
+	b.light(Vector3(2.6, 0.9, -0.75))
+	b.smoke.append(b.base * Vector3(3.35, 2.5, -0.75))
+	b.add("SM_Prop_Anvil_01", Vector3(1.55, 0, -0.45), 0.3, 0.85)
+	b.add("SM_Prop_Tool_Hammer_01", Vector3(1.6, 0.74, -0.45), 1.2)
+	CatCivic._jar(b, Vector3(2.4, 0, 1.55), 0.75)
+	# у ворот: щиты, брусья железа, корзина
+	_lean_shield(b, Vector3(-0.4, 0, fz + 0.4), -0.2, "SM_Wep_Shield_04", 0.25, 0.75)
+	_lean_shield(b, Vector3(-1.0, 0, fz + 0.38), 0.15, "SM_Wep_Shield_0%d" % (1 + b.rng.randi() % 4), 0.3, 0.7)
+	for k in 3:
+		b.add("SM_Prop_Beam_01", Vector3(-3.6, 0.06 + k * 0.12, fz + 1.7 + k * 0.04), 0.03 * k, 0.55)
+	b.add("SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 5), Vector3(4.0, 0, 1.6), 0.0, 0.7)
+	b.actor(Vector3(1.55, 0, 0.4), PI, "Interact", "pleb")
+	b.actor(Vector3(1.6, 0, -2.6), -0.9, "Fixing_Kneeling", "pleb")
+	b.door = Vector3(0.0, 0, 3.4)
+
+
+## Лазарет (Д10): беленый дом под вальмовой крышей, у входа — посох Асклепия; перед домом — полотняный навес на столбах
+## с койками для раненых, грядки с травами, стол с чашами и кувшинами; лекарь у койки, раненый легионер на скамье
+static func _infirmary(b: Bp) -> void:
+	b.paint(0, false)
+	b.ground_style = "plain"
+	b.upper_style = "plain"
+	b.roof_tex = "Roof_Tile_01"
+	b.remap = b.floor_remap(1)
+	var cz := -2.6
+	CatCivic._box(b, 0, cz, 3, 2, [
+		{0: ["SM_Bld_Wall_Window_06", "SM_Bld_Wall_Door_Double_01", "SM_Bld_Wall_Window_06"], 1: ["SM_Bld_Wall_Window_06", "SM_Bld_Wall_01"],
+			2: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06", "SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06"]}],
+		{"trim": "SM_Bld_Trim_02", "plain": [2]})
+	CatCivic._leaf(b, 0, cz, 3, 2, 1, "SM_Bld_Door_02", 0.1)
+	var ridge := CatCivic._hip(b, -3.75, 3.75, cz - 2.5, cz + 2.5, FL, 1.4)
+	b.add("SM_Bld_Roof_Topper_02", Vector3(0, ridge, cz), 0.0)
+	CatCivic._chimney(b, Vector3(2.4, FL + 0.45, cz - 1.3), 0.9)
+	b.on_wall("SM_Prop_Symbol_0%d" % (1 + b.rng.randi() % 4), 0, cz, 3, 2, 0, 1.5, 2.4, 0.16, false, 0.45)
+	b.on_wall("SM_Env_Ivy_Flowers_0%d" % (1 + b.rng.randi() % 9), 0, cz, 3, 2, 0, 0.15, 2.4, 0.13)
+	CatCivic._wall_lamp(b, Vector3(-1.2, 2.3, cz + 2.56))
+	var fz := cz + 2.5
+	# навес с койками слева
+	_sand(b, Vector3(0, 0, fz + 1.6), 8.4, 3.2)
+	for p: Vector3 in [Vector3(-3.95, 0, fz + 0.3), Vector3(-0.45, 0, fz + 0.3), Vector3(-3.95, 0, fz + 3.0), Vector3(-0.45, 0, fz + 3.0)]:
+		b.add_xf("SM_Prop_Pole_01", Transform3D(Basis.from_scale(Vector3(0.5, 0.8, 0.5)), p))
+	b.add_xf("SM_Prop_Banner_Roof_01", Transform3D(Basis(Vector3.UP, PI / 2).scaled(Vector3(1.04, 1, 1.38)), Vector3(-4.0, 2.4, fz + 3.05)))
+	b.add("SM_Prop_Seat_Kline_02", Vector3(-2.2, 0, fz + 0.95), 0.0, 0.85)
+	b.add("SM_Prop_Seat_Kline_02", Vector3(-2.2, 0, fz + 2.3), 0.0, 0.85)
+	b.add("SM_Prop_Pillow_0%d" % (1 + b.rng.randi() % 8), Vector3(-3.0, 0.55, fz + 0.95), 0.3, 0.8)
+	b.add("SM_Prop_Pillow_0%d" % (1 + b.rng.randi() % 8), Vector3(-3.0, 0.55, fz + 2.3), -0.2, 0.8)
+	# справа — травы, стол лекаря, кувшины
+	b.add("SM_Prop_FlowerBed_0%d" % (1 + b.rng.randi() % 2), Vector3(2.65, 0, fz + 0.75), 0.0, 1.0)
+	b.add("SM_Prop_FlowerBed_0%d" % (1 + b.rng.randi() % 2), Vector3(2.65, 0, fz + 1.75), 0.0, 1.0)
+	b.add("SM_Prop_Table_04", Vector3(3.6, 0, fz + 2.8), 0.4, 0.85)
+	b.add("SM_Prop_Bowl_0%d" % (1 + b.rng.randi() % 4), Vector3(3.6, 0.67, fz + 2.8), 0.0, 0.35)
+	b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 6), Vector3(3.95, 0, fz + 2.2), 0.0, 0.8)
+	CatCivic._jar(b, Vector3(3.95, 0, fz + 1.25), 0.65)
+	b.add("SM_Prop_Seat_Bench_01", Vector3(2.3, 0, fz + 2.9), 0.0, 0.8)
+	b.actor(Vector3(-2.15, 0, fz + 1.62), PI, "Fixing_Kneeling", "female")
+	b.actor(Vector3(2.3, 0, fz + 3.0), PI, "Sitting_Idle", "soldier")
+	b.door = Vector3(0, 0, fz + 3.9)
+
+
+## Склад оружия (Д10): каменный склад под двускатной крышей с широкими воротами, над ними — знамя; во дворе — стойки
+## копий и мечей, щиты штабелями, корзины и мешки, телега со снаряжением; у ворот — часовой
+static func _armory(b: Bp) -> void:
+	b.paint(-1, false)
+	b.roof_tex = "Roof_Tile_03"
+	var stone := CatCivic._skin(b, "Building_Large_Brick_01", Color(0.96, 0.92, 0.84))
+	b.remap = stone
+	var cz := -2.6
+	CatCivic._box(b, 0, cz, 3, 2, [
+		{0: ["SM_Bld_Wall_Window_06", "SM_Bld_Wall_Door_Double_Large_01", "SM_Bld_Wall_Window_06"], 1: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06"],
+			2: ["SM_Bld_Wall_01", "SM_Bld_Wall_01", "SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_Window_06", "SM_Bld_Wall_01"]}],
+		{"trim": "SM_Bld_Trim_04", "skin": stone, "plain": [2]})
+	CatCivic._leaf(b, 0, cz, 3, 2, 1, "SM_Bld_Door_01", 0.05)
+	b.remap = stone
+	var ridge := CatCivic._gable2(b, -3.75, 3.75, cz - 2.5, cz + 2.5, FL, 1.6)
+	b.remap = b.floor_remap(1)
+	b.add("SM_Bld_Roof_Topper_01", Vector3(-1.25, ridge - 0.05, cz), 0.0)
+	b.add("SM_Bld_Roof_Topper_01", Vector3(1.25, ridge - 0.05, cz), 0.0)
+	b.on_wall("SM_Prop_Banner_01_%s" % b.pick(["A", "C", "E"]), 0, cz, 3, 2, 0, 1.5, FL + 0.55, 0.12)
+	b.torch_pair(0, cz, 3, 2, 1.5)
+	var fz := cz + 2.5
+	_sand(b, Vector3(0, 0, fz + 1.7), 8.4, 3.4)
+	_rack(b, Vector3(-3.95, 0, fz + 1.7), PI / 2, 1)
+	_rack(b, Vector3(3.95, 0, fz + 1.7), -PI / 2, 2)
+	# щиты штабелями у стены и у стоек
+	for k in 3:
+		_lean_shield(b, Vector3(-2.6 + k * 0.35, 0, fz + 0.35), 0.1 * k, "SM_Wep_Shield_0%d" % (1 + (k + b.rng.randi()) % 4), 0.28, 0.72)
+		_lean_shield(b, Vector3(1.9 + k * 0.38, 0, fz + 0.35), -0.1 * k, "SM_Wep_Shield_04", 0.25, 0.75)
+	b.add("SM_Prop_Basket_Set_0%d" % (1 + b.rng.randi() % 6), Vector3(-2.3, 0, fz + 2.5), 0.3, 0.75)
+	b.add("SM_Prop_Sack_Stack_0%d" % (1 + b.rng.randi() % 2), Vector3(2.4, 0, fz + 2.65), -0.2, 0.7)
+	b.actor(Vector3(1.05, 0, fz + 0.6), 0.0, "Sword_Idle", "soldier")
+	b.door = Vector3(0, 0, fz + 3.9)
+
+
+# =====================================================================
+#   облик по уровню (Д10): что прибавляется с каждым уровнем здания
+# =====================================================================
+
+## Где у здания растёт облик (всё — внутри участка 1-го уровня, проверка test_legion mode=api):
+## poles — два высоких значка легиона (2-й уровень); box — фасад [cx, cz, модулей в ширину, в глубину, этажей]
+## для знамён на стене (3-й); fire — жаровни у входа (3-й); eagle — золотой орёл на высоком постаменте (4-й);
+## porch — портик с колоннами у двери [x0, x1] (5-й: пристройка); statue — легионер на колонне (5-й, где портику
+## не место); ridge — золотой орёл на коньке крыши (6-й), tall — у лагеря без крыши: орёл на высоком древке.
+## Vector3.INF / [] — этого у здания нет
+const NO := Vector3.INF
+const GROW := {
+	"barracks": {"poles": [Vector3(-4.15, 0, 3.2), Vector3(4.15, 0, 3.2)], "box": [0.0, -2.6, 3, 2, 2], "fire": [Vector3(-1.4, 0, 3.25), Vector3(1.4, 0, 3.25)],
+		"eagle": Vector3(-3.1, 0, 2.85), "porch": [-1.25, 1.25], "statue": Vector3(3.1, 0, 2.6), "ridge": Vector3(0, 7.1, -2.6)},
+	"range": {"poles": [Vector3(-1.6, 0, 2.6), Vector3(3.45, 0, 2.7)], "box": [-3.25, -1.1, 1, 1, 1], "fire": [Vector3(-1.0, 0, 2.55), Vector3(4.25, 0, 1.75)],
+		"eagle": Vector3(-1.45, 0, 0.65), "porch": [], "statue": Vector3(-1.45, 0, -1.5), "ridge": Vector3(-3.25, 4.25, -1.1)},
+	"spearcamp": {"poles": [Vector3(-3.35, 0, 3.0), Vector3(3.35, 0, 3.0)], "box": [], "fire": [Vector3(-1.9, 0, 2.85), Vector3(0.6, 0, 2.9)],
+		"eagle": Vector3(2.3, 0, 2.85), "porch": [], "statue": Vector3(-3.15, 0, 1.45), "ridge": NO, "tall": Vector3(0, 0, -4.15)},
+	"ballistae": {"poles": [Vector3(-4.35, 0, 0.55), Vector3(4.4, 0, 1.55)], "box": [-2.0, -2.4, 2, 2, 2], "fire": [Vector3(-0.35, 0, 0.6), Vector3(-1.95, 0, 0.55)],
+		"eagle": Vector3(0.5, 0, 1.45), "porch": [], "statue": NO, "ridge": Vector3(-2.0, 7.25, -2.4)},
+	"catapults": {"poles": [Vector3(-3.75, 0, 2.5), Vector3(-0.3, 0, 2.45)], "box": [2.0, -2.4, 2, 2, 2], "fire": [Vector3(-2.9, 0, 2.5)],
+		"eagle": Vector3(-1.75, 0, 2.45), "porch": [], "statue": NO, "ridge": Vector3(2.0, 7.05, -2.4)},
+	"forge": {"poles": [Vector3(-4.3, 0, 2.15), Vector3(4.3, 0, 2.15)], "box": [-2.0, -2.4, 2, 2, 1], "fire": [Vector3(-4.15, 0, 0.75), Vector3(-1.85, 0, 0.75)],
+		"eagle": Vector3(0.55, 0, 1.75), "porch": [-4.5, -2.0], "statue": NO, "ridge": Vector3(-2.0, 4.9, -2.4)},
+	"infirmary": {"poles": [Vector3(-4.15, 0, 1.6), Vector3(4.05, 0, 3.0)], "box": [0.0, -2.6, 3, 2, 1], "fire": [Vector3(-1.0, 0, 3.1), Vector3(1.0, 0, 3.1)],
+		"eagle": Vector3(3.95, 0, 0.45), "porch": [-1.25, 1.25], "statue": NO, "ridge": Vector3(0, 4.05, -2.6)},
+	"armory": {"poles": [Vector3(-4.0, 0, 3.05), Vector3(4.0, 0, 3.05)], "box": [0.0, -2.6, 3, 2, 1], "fire": [Vector3(-1.1, 0, 3.1), Vector3(1.1, 0, 3.1)],
+		"eagle": Vector3(-2.75, 0, 1.45), "porch": [-1.25, 1.25], "statue": Vector3(2.7, 0, 1.4), "ridge": Vector3(0, 5.0, -2.6)},
+}
+
+
+static func _grow(b: Bp, type: String, t: int) -> void:
+	var G: Dictionary = GROW.get(type, {})
+	if G.is_empty():
+		return
+	var gr := RandomNumberGenerator.new()
+	gr.seed = hash(type) + 17                       # своё для прибавок: облик уровня не зависит от того, что выпало раньше
+	var keep := b.rng
+	b.rng = gr
+	var box: Array = G["box"]
+	# 2-й уровень: два высоких значка легиона (красное полотнище, золотой орёл) у переднего края. Детали прибавок —
+	# те же, что уже есть в городе (значок, жаровня, знамя Казарм, база колонны, колонны портика): почти без новых
+	# вызовов отрисовки (бюджет квартала — test_legion_ui, D10 DRAWCALLS)
+	for p: Vector3 in G["poles"]:
+		add_kit(b, "#mil_standard", p, 0.0, 1.35)
+	if t >= 2:
+		# 3-й: знамёна на фасаде (у дома) и две жаровни с огнём у входа
+		if box.size() >= 5:
+			var y := float(box[4]) * FL - 0.3
+			for i: float in ([0.3, float(box[2]) - 0.3] if int(box[2]) >= 2 else [0.5]):
+				b.on_wall("SM_Prop_Banner_03_A", float(box[0]), float(box[1]), int(box[2]), int(box[3]), 0, i, y, 0.12)
+		for p: Vector3 in G["fire"]:
+			b.brazier(p)
+	if t >= 3:
+		# 4-й: золотой орёл в венке на высоком мраморном постаменте
+		var e: Vector3 = G["eagle"]
+		if e != NO:
+			b.add("SM_Prop_Pillar_Base_02", e, 0.0, 0.8)
+			add_kit(b, "#mil_eagle", e + Vector3(0, 1.2, 0), 0.0, 0.75)
+	if t >= 4:
+		# 5-й: пристройка — портик с колоннами у двери; где ему не место — бронзовый легионер на колонне
+		var pr: Array = G["porch"]
+		if pr.size() == 2 and box.size() >= 5:
+			var front := float(box[1]) + float(box[3]) * M / 2.0
+			b.portico(float(pr[0]), float(pr[1]), front + 1.35, front, 0.92, "SM_Bld_Pillar_02")
+		var s: Vector3 = G["statue"]
+		if s != NO:
+			b.add("SM_Prop_Pillar_Base_02", s, 0.0, 0.8)
+			b.add("SM_Prop_Statue_04", s + Vector3(0, 1.2, 0), PI * 0.1, 0.62)
+	if t >= 5:
+		# 6-й: большой золотой орёл на коньке крыши (у лагеря без крыши — на высоком древке)
+		var r: Vector3 = G["ridge"]
+		if r != NO:
+			add_kit(b, "#mil_eagle", r, 0.0, 1.3)
+		else:
+			add_kit(b, "#mil_standard", G.get("tall", Vector3()), 0.0, 1.9)
+	b.rng = keep
+
+
 ## Деталь Kit в чертёж (имя "#mil_…", положение, поворот)
 static func add_kit(b: Bp, name: String, p: Vector3, yaw := 0.0, s := 1.0) -> void:
 	b.add(name, p, yaw, s)
@@ -296,12 +506,32 @@ static func kit_mesh(name: String) -> Mesh:
 		"#mil_bolts": _k_bolts(k)
 		"#mil_catapult": _k_catapult(k)
 		"#mil_stones": _k_stones(k)
+		"#mil_eagle": _k_eagle(k)
 		_: k.boxc(Vector3(0, 0.5, 0), Vector3.ONE, Color.MAGENTA)
 	var m := k.mesh()
 	if m.get_surface_count() > 0:
 		m.surface_set_material(0, Kit.material(0.9))
 	_meshes[name] = m
 	return m
+
+
+## Большой золотой орёл в лавровом венке на постаменте (Д10, 6-й уровень: на коньке крыши или на высоком древке).
+## Высота ~1 м, крылья вверх, смотрит на +Z
+static func _k_eagle(k: Kit) -> void:
+	k.cyl(Vector3(0, 0, 0), 0.22, 0.14, 8, BRONZE.darkened(0.1))
+	k.cyl(Vector3(0, 0.14, 0), 0.16, 0.08, 8, GOLD)
+	k.blob(Vector3(0, 0.42, 0), Vector3(0.14, 0.24, 0.12), GOLD, 8, 0.15)
+	k.blob(Vector3(0, 0.74, 0.07), Vector3(0.08, 0.09, 0.1), GOLD, 8, 0.1)
+	k.cone(Vector3(0, 0.72, 0.16), 0.035, 0.1, 5, Color("c48a20"))
+	for sx: float in [-1.0, 1.0]:
+		k.quad_out(Vector3(sx * 0.08, 0.36, 0.0), Vector3(sx * 0.08, 0.6, 0.0), Vector3(sx * 0.52, 0.92, -0.05), Vector3(sx * 0.46, 0.5, -0.05), GOLD, Vector3(0, 0.6, -0.6))
+		k.quad_out(Vector3(sx * 0.08, 0.36, 0.0), Vector3(sx * 0.08, 0.6, 0.0), Vector3(sx * 0.52, 0.92, -0.05), Vector3(sx * 0.46, 0.5, -0.05), GOLD.darkened(0.18), Vector3(0, 0.6, 0.6))
+		k.quad_out(Vector3(sx * 0.3, 0.55, -0.04), Vector3(sx * 0.46, 0.5, -0.05), Vector3(sx * 0.6, 0.62, -0.06), Vector3(sx * 0.52, 0.92, -0.05), GOLD.lightened(0.1), Vector3(0, 0.6, 0.6))
+	# венок под орлом
+	for j in 16:
+		var a0 := TAU * j / 16.0
+		var a1 := TAU * (j + 1) / 16.0
+		k.rod(Vector3(cos(a0) * 0.3, 0.42 + sin(a0) * 0.3, -0.06), Vector3(cos(a1) * 0.3, 0.42 + sin(a1) * 0.3, -0.06), 0.045, 4, Color("6f8f3a") if j % 2 else Color("8aa84a"))
 
 
 ## Утоптанный песок плаца: плитка 1×1 м (масштабируется по месту), чуть неровная по краю

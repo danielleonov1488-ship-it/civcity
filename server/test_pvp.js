@@ -332,6 +332,39 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
     ok(me && /^Город 960-1$/.test(me.name), `squatted fallback name → «${me && (me.name || me.error)}», PvP still works`);
     db.close();
   }
+
+  // Места в отряде (здания Легиона, Д10): сохранение v3 — босс и Казармы нужного уровня, как Legion.slots();
+  // места, открытые до зданий (flags.slots0), не отнимаются; сохранение до v3 — по-старому (только боссы).
+  // Сколько мест знает сервер, видно по обороне: лишние бойцы срезаются до «мест + 1»
+  {
+    const { DatabaseSync } = require('node:sqlite');
+    const db = new DatabaseSync(':memory:');
+    db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)');
+    const saves = {};
+    const legionSave = (L) => JSON.stringify({ version: 2, level: 5, research: ['legion'], buildings: [{ id: 1, type: 'barracks', tier: 0, x: 100, z: 90, pop: 0 }],
+      legion: Object.assign({ squad: ['legionary', 'legionary', 'legionary'], perks: {}, glory: 0 }, L) });
+    const cases = [
+      [1, { v: 3, levels: { legionary: 2 }, progress: 30 }, 4, 'v3: boss 3 beaten, Казармы 2 → 4 slots'],
+      [2, { v: 3, levels: { legionary: 3 }, progress: 30 }, 5, 'v3: boss 3, Казармы 3 → 5 slots'],
+      [3, { v: 3, levels: { legionary: 2 }, progress: 30, flags: { slots0: 5 } }, 5, 'v3: Казармы 2 but slots0 = 5 (opened before D10) → 5'],
+      [4, { v: 3, levels: { legionary: 1 }, progress: 10 }, 3, 'v3: boss 1, Казармы 1 → 3 slots'],
+      [5, { v: 3, levels: { legionary: 1 }, upg: { legionary: { to: 2, end: 0, total: 60 } }, progress: 10 }, 4, 'v3: boss 1, Казармы 1→2 upgrading → 4 (cloud lag)'],
+      [6, { v: 2, levels: { legionary: 1 }, progress: 30 }, 5, 'v2 (not migrated yet): bosses only → 5'],
+    ];
+    for (const [uid, L] of cases) { db.prepare('INSERT INTO users (id, email) VALUES (?, ?)').run(uid, `s${uid}@t`); saves[uid] = legionSave(L); }
+    const routes = {};
+    class Fail extends Error { constructor(status, msg) { super(msg); this.status = status; } }
+    pvp.install({ db, routes, auth: req => ({ userId: req.uid }), json: async req => req.body, limited: () => false, Fail,
+      latestSave: uid => (saves[uid] ? { id: 1, load: () => saves[uid] } : null) });
+    for (const [uid, L, slots, msg] of cases) {
+      const lvl = Math.max(L.levels.legionary || 1, L.upg ? L.upg.legionary.to : 1);
+      const one = pvp.power(pvp.unitStats('legionary', lvl, 0, 0));
+      let r2 = null;
+      try { r2 = await routes['PUT /api/pvp/defense']({ uid, body: { snapshot: { squad: Array.from({ length: 7 }, () => ({ type: 'legionary', level: lvl })) } } }); } catch (e) { r2 = { error: e.message }; }
+      ok(r2 && r2.power === one * Math.min(7, slots + 1), `${msg} (defense clamped to ${slots}+1)`, r2);
+    }
+    db.close();
+  }
   console.log(fails ? `${fails} FAILED` : 'ALL OK');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(2); });

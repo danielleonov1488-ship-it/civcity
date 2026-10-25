@@ -4,8 +4,8 @@ extends Control
 ##   «Походы»   — рисованная карта провинции (assets/ui/ai/legion/40a…40h.jpg, пока карты нет — своя нарисованная),
 ##                бои стоят на каменных площадках тропы, в конце — босс; карточка боя: враги по волнам, награда,
 ##                рекомендованный уровень, шансы, провиант, кнопка «В бой»; под картой — 8 провинций (портреты боссов);
-##   «Войска»   — отряд (места по порядку, выбор бойца), 5 родов войск: портрет, уровень, числа, ОДНА кнопка «Улучшить»
-##                с ценой и таймером по настоящим часам; умения в бою (за Славу);
+##   «Войска»   — отряд (места по порядку, выбор бойца), 8 зданий Легиона (Д10): уровень (или «в запасе»), что дают,
+##                идущее улучшение; «На карте» — к зданию и его карточке (улучшения — там); умения в бою (за Славу);
 ##   «Против городов» — рейтинг побед, заряды атак, отряд обороны, соперники с сервера (или «скоро»), летопись боёв;
 ##   «Чудеса»   — 8 чудес: картинка, бонус, нужный рейтинг, цена в денариях и Славе, «Поставить в городе» / «Возвести»;
 ##                Триумф за Славу.
@@ -114,7 +114,7 @@ var tut_lbl: Label
 var tut_act: Button                        # «Поставить Казармы» (шаг 1, если окно открыто раньше)
 var _fight_btn: Button                     # «В бой!» в карточке боя
 var _front_btn: Button                     # передний край на карте
-var _upg_btn: Button                       # «Улучшить до 2» у легионеров
+var _upg_btn: Button                       # «На карте» у Казарм во «Войсках» (обучение, шаг 4: улучшения — в карточке здания)
 
 
 # =====================================================================
@@ -193,10 +193,51 @@ func _update_button() -> void:
 		# исследований закрыто и советник свободен: Esc, правая кнопка и щелчок по карте закрывают окно вместе
 		# с советником — совет погас бы, не показавшись (окно закрыли — hud зовёт эту проверку через кадр)
 		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"] and lg.tut_step() == "barracks" \
-				and not hud.research_panel.visible and not hud.advisor_panel.visible:
+				and not hud.research_panel.visible and not hud.advisor_panel.visible and _cine_free():
 			lg.flags["advised"] = true
 			hud.advisor("Легион собран!", "Сначала поставьте Казармы (раздел «Легион» на нижней полосе) — они дают легионеров. Потом откройте медальон «Легион» сверху справа: там походы, войска и чудеса света.\n\nОтряд дерётся сам; ваше — состав и умения в нужный миг. Победы приносят денарии и Славу.",
 				func(): lg.tut_skip())
+		# советы о зданиях (Д10) — как разовые советы города: игра загружена, советник свободен, не идёт обучение города
+		# и ролики (ранг: город вырос — сначала ролик и «Город стал…», потом этот совет — при следующем обновлении города)
+		elif game.ready_done and hud._tip_free() and not visible and not hud.research_panel.visible and hud._screen_free() and _cine_free():
+			_d10_tips()
+
+
+## Не идёт и не ждёт ролик «Новый ранг» и ролик истории горожан
+func _cine_free() -> bool:
+	var rc = game.get("rank_cine")
+	if rc != null and (not rc.cine.is_empty() or not rc.pending.is_empty()):
+		return false
+	var sto = game.get("stories")
+	return sto == null or not sto.busy()
+
+
+## Советник о зданиях Легиона (Д10) — по разу: старое сохранение (уровни войск стали уровнями зданий, что ждёт «в запасе»);
+## открылось новое здание (Кузница — с «Деревни», Лазарет — с «Посёлка», Склад оружия — с «Городка»)
+func _d10_tips() -> void:
+	var c: City = game.city
+	if lg.flags.has("d10_new"):
+		lg.flags.erase("d10_new")
+		var res := []
+		for bt: String in Legion.BUILDING_IDS:
+			if lg.b_reserve(bt) > 0 and c.unlocked(bt):
+				res.append("%s — %d уровень" % [Defs.B[bt]["name"], lg.b_reserve(bt)])
+		var txt := "Здания Легиона теперь растут прямо в городе: щёлкните Казармы на карте — в карточке видно их уровень, что они дают, и кнопка «Улучшить». С каждым уровнем здание меняется: знамёна, пристройки, статуи. Ваши уровни войск перенесены в здания."
+		if not res.is_empty():
+			txt += "\n\nЕщё не построены, но уровень ждёт «в запасе»: %s. Поставьте их (раздел «Легион» на нижней полосе) — и они сразу будут этого уровня." % ", ".join(res)
+		txt += "\n\nНовые здания — Кузница, Лазарет и Склад оружия — открываются с ростом города. Лучшее место для них — военный квартал у арки."
+		for bt: String in Legion.SUPPORT:
+			if c.unlocked(bt):
+				lg.flags["new_" + bt] = true    # об уже открытых сказано здесь — отдельных советов не будет
+		hud.advisor("Здания Легиона", txt)
+		return
+	for bt: String in Legion.SUPPORT:
+		if c.unlocked(bt) and not lg.b_built(bt) and not lg.flags.has("new_" + bt):
+			lg.flags["new_" + bt] = true
+			var r := lg.b_reserve(bt)
+			hud.advisor("Новое здание Легиона: %s" % Defs.B[bt]["name"], "%s%s\n\nПоставьте его — раздел «Легион» на нижней полосе, лучше всего в военном квартале у арки. Улучшения — в карточке здания." % [
+				Defs.B[bt]["desc"], (" Уровень «в запасе»: %d — здание сразу будет таким." % r) if r > 0 else ""])
+			return
 
 
 func toggle() -> void:
@@ -251,7 +292,7 @@ func _on_city() -> void:
 ## Что в окне зависит от денариев города: перерисовываем, только если тут что-то поменялось
 func _sig() -> String:
 	var a: Array = [lg.city_level(), lg.cap()]
-	for t in Legion.UNIT_IDS:
+	for t in Legion.UNIT_IDS + Legion.SUPPORT.keys():
 		a.append(lg.can_upgrade(t))
 	for id in Legion.PERK_IDS:
 		a.append(lg.can_upgrade_perk(id))
@@ -295,8 +336,8 @@ func _tick_live() -> void:
 			done = true
 	if done:
 		for m in lg.tick():
-			if game.city.has_method("_event"):
-				game.city._event(m, "legion")
+			if game.city.has_method("_quiet"):
+				game.city._quiet(m, "legion")     # здание выросло (облачко на карте) — только в колокольчик
 	for e: Dictionary in _live:
 		var l: Label = e.get("label")
 		if l == null or not is_instance_valid(l):
@@ -468,7 +509,7 @@ const TUT_TEXT := {
 	"barracks": "Поставьте Казармы — они дают легионеров.",
 	"medal": "Откройте медальон «Легион» сверху справа.",
 	"fight": "Первый бой — учебный. Отряд дерётся сам, но в нужный миг нужна ваша команда.",
-	"troops": "Бойцы растут по часам, даже когда игра закрыта. Улучшите легионеров.",
+	"troops": "Бойцы растут вместе с Казармами — по часам, даже когда игра закрыта. Казармы на карте → «Улучшить».",
 }
 
 
@@ -509,6 +550,11 @@ func tut_pointer() -> Array:
 				# «Войска»: пока улучшать не на что (на «Хуторе» и в «Деревне» денариев в обрез) — стрелка остаётся историям и просьбам
 				if step == "troops" and lg.can_upgrade("legionary") != "":
 					return [null, ""]
+				# карточка Казарм открыта — стрелка на «Улучшить» в ней (Д10: улучшения — в карточке здания)
+				# (только карточка Казарм и доступная кнопка: у Кузницы или Стрельбища — своя «Улучшить», шаг не о них)
+				if step == "troops" and hud.lg_upg_btn != null and is_instance_valid(hud.lg_upg_btn) and hud.lg_upg_btn.is_visible_in_tree() \
+						and not hud.lg_upg_btn.disabled and String(hud.info_b.get("type", "")) == "barracks":
+					return [hud.lg_upg_btn, ""]
 				return [btn, "Легион"]
 			if overlay != null and is_instance_valid(overlay):
 				return [null, ""]
@@ -1751,13 +1797,129 @@ func _build_troops() -> Control:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
 	v.add_child(_squad_panel("campaign"))
-	var cards := HBoxContainer.new()
-	cards.add_theme_constant_override("separation", 10)
-	for t: String in Legion.UNIT_IDS:
-		cards.add_child(_unit_card(t))
-	v.add_child(cards)
+	# здания Легиона на карте (Д10): уровень, что дают, идущее улучшение; «На карте» — к зданию и его карточке
+	var hh := HBoxContainer.new()
+	hh.add_theme_constant_override("separation", 10)
+	hh.add_child(_title("Здания Легиона в городе", 21))
+	var hint := _l("бойцы растут вместе со зданиями: улучшайте их в карточке здания на карте", 14, true, C_SOFT)
+	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hh.add_child(hint)
+	v.add_child(hh)
+	var g := GridContainer.new()
+	g.columns = 4
+	g.add_theme_constant_override("h_separation", 10)
+	g.add_theme_constant_override("v_separation", 8)
+	for bt: String in Legion.BUILDING_IDS:
+		g.add_child(_building_tile(bt))
+	v.add_child(g)
 	v.add_child(_perks_panel())
 	return v
+
+
+const B_ALT := {"forge": "swords", "infirmary": "medic", "armory": "shield"}
+
+
+## Плитка здания Легиона: портрет, уровень (или «в запасе»), что даёт сейчас, идущее улучшение, «На карте» / «Построить»
+func _building_tile(bt: String) -> Control:
+	var D: Dictionary = Defs.B[bt]
+	var key := Legion.bkey(bt)
+	var built := lg.b_built(bt)
+	var p := _bar_panel(6)
+	p.custom_minimum_size = Vector2(277, 0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 2)
+	p.add_child(v)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 8)
+	var face: Control
+	if Legion.UNITS.has(key):
+		face = _portrait("unit", key, 54, not built)
+	else:
+		face = Panel.new()
+		face.custom_minimum_size = Vector2(54, 54)
+		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		face.add_theme_stylebox_override("panel", hud._medal("medal" if built else "medal_lock", 54))
+		var ic := _tr(hud.ico(String(B_ALT.get(bt, "legion")), 64), 32, not built)
+		ic.position = Vector2(11, 11)
+		ic.size = Vector2(32, 32)
+		face.add_child(ic)
+	top.add_child(face)
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 0)
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.add_child(_l(String(D["name"]), 17, true, C_INK if built else C_SOFT))
+	var lvl := lg.b_level(bt)
+	var info := lg.upgrade_info(key)
+	if built:
+		tv.add_child(_l("%d уровень из %d" % [lvl, int(info["limit"])], 14, true, C_SOFT))
+	elif lg.b_reserve(bt) > 0:
+		var rl := _l("в запасе: %d уровень" % lg.b_reserve(bt), 14, true, C_GOLD)
+		rl.tooltip_text = "Поставьте здание — и оно сразу будет %d уровня" % lg.b_reserve(bt)
+		rl.mouse_filter = Control.MOUSE_FILTER_PASS
+		tv.add_child(rl)
+	else:
+		tv.add_child(_l("не построено", 14, true, C_SOFT))
+	top.add_child(tv)
+	v.add_child(top)
+	# что даёт: у зданий бойцов — числа бойца, у Казарм — ещё места в отряде; у поддержки — её действие
+	if Legion.UNITS.has(key):
+		var cur := lg.stats(key)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		row.add_child(_stat("medic", "Здоровье", float(cur["hp"]), 0.0, false))
+		row.add_child(_stat("swords", "Урон за удар", float(cur["atk"]), 0.0, false))
+		row.add_child(_stat("shield", "Броня: часть урона гасится", float(cur["armor"]), 0.0, false))
+		v.add_child(row)
+		if bt == "barracks":
+			v.add_child(_wl("Мест в отряде: %d из %d" % [lg.slots(), Legion.SQUAD_MAX], 260, 13, C_INK, true))
+		else:
+			v.add_child(_wl("%s · %s" % [Legion.UNITS[key]["name"], String(Legion.UNITS[key]["strong"])], 260, 12, C_SOFT))
+	else:
+		var ef := String(lg.b_effect(bt, lvl)[0])
+		v.add_child(_wl(ef if built else "Даст: " + ef.left(1).to_lower() + ef.substr(1), 260, 13, C_INK if built else C_SOFT, built))
+	p.tooltip_text = "%s\n%s" % [D["name"], D.get("desc", "")]
+	var fill := Control.new()
+	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(fill)
+	# улучшение идёт — полоска; иначе — можно ли улучшить (сама кнопка — в карточке здания)
+	if built and lg.upg.has(key):
+		var tl := _l("До %d уровня: %s" % [int(lg.upg[key]["to"]), Legion.fmt_duration(lg.upgrade_left(key))], 14, true, C_INK)
+		v.add_child(tl)
+		var bar := _bar(262, lg.upgrade_progress(key))
+		v.add_child(bar)
+		_live.append({"kind": "upg", "type": key, "label": tl, "bar": bar})
+	elif built:
+		var why := lg.can_upgrade(key)
+		if why == "":
+			v.add_child(_l("Можно улучшить: %s ден." % hud.fmt(float(info["cost"].get("money", 0))), 13, true, C_GOOD))
+		elif not bool(info["max"]):
+			v.add_child(_wl(why, 262, 12, C_SOFT, true))
+	var b: Button
+	if built:
+		b = _btn("На карте", 0, 15, hud.ico("view", 64), "", func(): show_building(bt))
+		b.tooltip_text = "Показать здание на карте и открыть его карточку: там — улучшение"
+	elif game.city.unlocked(bt):
+		b = _btn("Построить", 0, 15, hud.ico("hammer", 64), "", func(): close(); hud.select_build(bt))
+		b.tooltip_text = "%s: %s" % [D["name"], D.get("desc", "")]
+	else:
+		v.add_child(_wl(lg.unit_lock_text(key), 262, 12, C_SOFT, true))
+	if b != null:
+		b.size_flags_horizontal = Control.SIZE_SHRINK_END
+		v.add_child(b)
+		if bt == "barracks":
+			_upg_btn = b
+	return p
+
+
+## «На карте»: окно закрывается, камера летит к зданию, оно выделено и открыта его карточка (там — «Улучшить»)
+func show_building(bt: String) -> void:
+	var b := lg.building_rec(bt)
+	if b.is_empty():
+		return
+	close()
+	game.select_building(b)
+	game.rig.fly_to(Vector3((b["pos"] as Vector2).x, float(b["y"]), (b["pos"] as Vector2).y))
+	hud.open_info(b)
 
 
 ## Отряд: места по порядку (первые — впереди строя), запертые места — после боссов
@@ -1806,8 +1968,7 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 			li.size = Vector2(sz * 0.42, sz * 0.42)
 			lk.add_child(li)
 			lk.mouse_filter = Control.MOUSE_FILTER_PASS
-			var nb: int = int(Legion.SLOT_BOSSES[clampi(i - Legion.SQUAD_BASE, 0, Legion.SLOT_BOSSES.size() - 1)])
-			lk.tooltip_text = "Место откроется после победы над боссом: %s" % Legion.boss_name(nb)
+			lk.tooltip_text = lg.slot_lock_text(i)
 			holder.add_child(lk)
 			row.add_child(holder)
 			continue
@@ -1836,110 +1997,6 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 			_badge(holder, str(int(lg.levels.get(t, 1))), Vector2(1, 1), 13)
 		row.add_child(holder)
 	return row
-
-
-func _unit_card(t: String) -> Control:
-	var U: Dictionary = Legion.UNITS[t]
-	var ok := lg.available(t)
-	var p := _bar_panel(6)
-	p.custom_minimum_size = Vector2(220, 0)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 2)
-	p.add_child(v)
-	var face := _portrait("unit", t, 84, not ok)
-	face.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	v.add_child(face)
-	var nm := _title(String(U["name"]), 22)
-	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(nm)
-	var info := lg.upgrade_info(t)
-	var lv := HBoxContainer.new()
-	lv.alignment = BoxContainer.ALIGNMENT_CENTER
-	lv.add_theme_constant_override("separation", 4)
-	lv.add_child(_l("Уровень %d" % int(info["cur"]), 18, true, C_INK if ok else C_SOFT))
-	var lim := _l("из %d" % int(info["limit"]), 14, true, C_SOFT)
-	lim.tooltip_text = "Предел уровня от величины города (и пройденных кругов походов)"
-	lim.mouse_filter = Control.MOUSE_FILTER_PASS
-	lv.add_child(lim)
-	v.add_child(lv)
-	var role := _wl(String(U["role"]), 204, 13, C_SOFT, false, true)
-	role.custom_minimum_size.y = 36
-	v.add_child(role)
-	# числа: сейчас → после улучшения
-	var cur := lg.stats(t)
-	var nxt := Legion.unit_stats(t, int(info["to"]), lg.bonus("atk"), lg.bonus("hp"))
-	var show_next := ok and not bool(info["max"]) and not bool(info["blocked"])
-	var g := GridContainer.new()
-	g.columns = 2
-	g.add_theme_constant_override("h_separation", 10)
-	g.add_theme_constant_override("v_separation", 0)
-	g.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	g.add_child(_stat("medic", "Здоровье", float(cur["hp"]), float(nxt["hp"]), show_next))
-	g.add_child(_stat("swords", "Урон за удар", float(cur["atk"]), float(nxt["atk"]), show_next))
-	g.add_child(_stat("shield", "Броня: часть урона гасится", float(cur["armor"]), float(nxt["armor"]), show_next))
-	var rng := float(U["range"])
-	var rl := HBoxContainer.new()
-	rl.add_theme_constant_override("separation", 3)
-	rl.add_child(_tr(hud.ico("arrow", 64), 20))
-	rl.add_child(_l("вблизи" if rng < 3.0 else "%s м" % String.num(rng, 0), 15, true))
-	rl.tooltip_text = "Дальность удара"
-	rl.mouse_filter = Control.MOUSE_FILTER_PASS
-	g.add_child(rl)
-	v.add_child(g)
-	var strong := _wl("Силён против: " + String(U["strong"]), 204, 13, C_INK, true, true)
-	v.add_child(strong)
-	var fill := Control.new()
-	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	v.add_child(fill)
-	v.add_child(_hdiv(10))
-	# улучшение — одна кнопка
-	var b: String = String(U["building"])
-	if not ok:
-		var lt := lg.unit_lock_text(t)
-		var lh := HBoxContainer.new()
-		lh.add_theme_constant_override("separation", 6)
-		lh.add_child(_tr(_ic39("barracks" if b == "barracks" else ("range" if b == "range" else "siege")), 36, true))
-		lh.add_child(_wl(lt, 160, 13, C_SOFT, true))
-		v.add_child(lh)
-		if game.city.unlocked(b):
-			var bb := _btn("Построить", 190, 16, hud.ico("hammer", 64), "", func(): close(); hud.select_build(b))
-			bb.tooltip_text = "%s: %s" % [Defs.B[b]["name"], Defs.B[b].get("desc", "")]
-			bb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-			v.add_child(bb)
-	elif lg.upg.has(t):
-		var tl := _l("До %d уровня: %s" % [int(lg.upg[t]["to"]), Legion.fmt_duration(lg.upgrade_left(t))], 15, true, C_INK)
-		tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		v.add_child(tl)
-		var bar := _bar(196, lg.upgrade_progress(t))
-		bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		v.add_child(bar)
-		v.add_child(_wl("Тренировка идёт и когда игра закрыта", 204, 12, C_SOFT, false, true))
-		_live.append({"kind": "upg", "type": t, "label": tl, "bar": bar})
-	elif bool(info["max"]):
-		v.add_child(_wl("Наивысший уровень!", 204, 15, C_GOOD, true, true))
-	else:
-		var why := lg.can_upgrade(t)
-		if bool(info["blocked"]):
-			v.add_child(_wl(why, 204, 13, C_SOFT, true, true))
-		else:
-			var ch := HBoxContainer.new()
-			ch.alignment = BoxContainer.ALIGNMENT_CENTER
-			ch.add_theme_constant_override("separation", 8)
-			ch.add_child(_cost_row(info["cost"], 15))
-			var th := HBoxContainer.new()
-			th.add_theme_constant_override("separation", 2)
-			th.add_child(_tr(_ic39("timer"), 22))
-			th.add_child(_l(Legion.fmt_duration(float(info["time"])), 15, true, C_SOFT))
-			ch.add_child(th)
-			v.add_child(ch)
-			var ub := _btn("Улучшить до %d" % int(info["to"]), 196, 17, _ic39("upgrade"), why, func(): _do("upgrade", t))
-			ub.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-			v.add_child(ub)
-			if t == "legionary":
-				_upg_btn = ub
-			if why != "":
-				v.add_child(_wl(why, 204, 12, C_BAD, true, true))
-	return p
 
 
 func _stat(icon: String, tip: String, a: float, b: float, show_next: bool) -> Control:
@@ -2183,7 +2240,7 @@ func _opponents() -> Control:
 	var t := _title("Соперники", 24)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(t)
-	top.add_child(_l("ваш отряд: сила %s" % hud.fmt(lg.squad_power()), 15, true, C_SOFT))
+	top.add_child(_l("ваш отряд: сила %s" % hud.fmt(lg.squad_power("pvp")), 15, true, C_SOFT))
 	top.add_child(_btn("Найти других", 0, 15, hud.ico("redo", 64), "", func(): _load_opponents(); _rebuild()))
 	if _net().has_method("pvp_top"):
 		top.add_child(_btn("Лучшие города", 0, 15, _ic39("trophy"), "", func(): LegionPvpView.top(self)))
@@ -2209,7 +2266,7 @@ func _opponents() -> Control:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	list.add_theme_constant_override("separation", 6)
 	sc.add_child(list)
-	var mine := lg.squad_power()
+	var mine := lg.squad_power("pvp")          # сила, с которой отряд выйдет в бой с городом (без Кузницы и Склада, пока PVP_MODS выключен)
 	var why := lg.pvp_can_attack()
 	for o in _pvp_list:
 		if not (o is Dictionary):
