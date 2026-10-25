@@ -55,6 +55,9 @@ static func _special_mesh(name: String) -> Mesh:
 	if name.begins_with("#mil_"):                  # палатки, мишени, баллисты… Легиона (cat_military.gd)
 		_special[name] = CatMilitary.kit_mesh(name)
 		return _special[name]
+	if name.begins_with("#kerb"):                  # камни бордюра у домуса и храма (kerb.gd)
+		_special[name] = Kerb.mesh(name)
+		return _special[name]
 	var bm := BoxMesh.new()
 	var m := StandardMaterial3D.new()
 	match name:
@@ -84,8 +87,11 @@ static func _special_mesh(name: String) -> Mesh:
 			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 			m.roughness = 0.08
 			m.metallic_specular = 0.7
-		"#duck", "#swan":
-			var am := _bird_mesh(name == "#swan")
+		"#duck", "#duck_f", "#swan":
+			# утка, уточка, лебедь — бесплатные модели в духе Synty (fauna.gd); нет файла — прежние из Kit
+			var am: Mesh = Fauna.bird_mesh(name.substr(1))
+			if am == null:
+				am = _bird_mesh(name == "#swan")
 			_special[name] = am
 			return am
 		"#lamp_post", "#wall_lamp", "#wall_lamp_dim":
@@ -290,6 +296,37 @@ func place_one(name: String, xf: Transform3D, remap := {}, tiled := false) -> Ar
 	for sub in g["subs"]:
 		(sub["mm"] as MultiMesh).set_instance_transform(slot, xf * (sub["local"] as Transform3D))
 	return [[g, slot]]
+
+
+## Спрятать детали на время (ролик: дерево заслонило героя): возвращает [[MultiMesh, место, преобразование], …] для restore
+func hide_handles(handles: Array) -> Array:
+	var saved := []
+	var zero := Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3(0, -100, 0))
+	for h in handles:
+		var g: Dictionary = h[0]
+		var slot: int = h[1]
+		for sub in g["subs"]:
+			var mm: MultiMesh = sub["mm"]
+			if slot < mm.instance_count:
+				saved.append([mm, slot, mm.get_instance_transform(slot)])
+				mm.set_instance_transform(slot, zero)
+	return saved
+
+
+## Деталь ручки h ([группа, место]) сейчас спрятана (нулевой масштаб)
+func is_hidden(h: Array) -> bool:
+	var sub: Dictionary = (h[0] as Dictionary)["subs"][0]
+	var mm: MultiMesh = sub["mm"]
+	return int(h[1]) >= mm.instance_count or mm.get_instance_transform(int(h[1])).basis.get_scale().length() < 1e-6
+
+
+## Вернуть спрятанное hide_handles (место, которое за это время заняли другим, не трогаем)
+func restore(saved: Array) -> void:
+	for e: Array in saved:
+		var mm: MultiMesh = e[0]
+		var slot: int = e[1]
+		if slot < mm.instance_count and mm.get_instance_transform(slot).basis.get_scale().length() < 1e-6:
+			mm.set_instance_transform(slot, e[2])
 
 
 func remove(handles: Array) -> void:

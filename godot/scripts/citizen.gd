@@ -164,6 +164,65 @@ static func _layer(src: Animation, reps: int, offs: Dictionary) -> Animation:
 	return a
 
 
+## Новое движение из застывшего кадра t движения src (длина L); к поворотам костей из offs — смещение по времени (как _layer)
+static func _frozen(src: Animation, t: float, L: float, offs: Dictionary) -> Animation:
+	var a := Animation.new()
+	a.length = L
+	a.loop_mode = Animation.LOOP_LINEAR
+	var node := "%GeneralSkeleton"
+	var done := {}
+	for i in src.get_track_count():
+		var path := String(src.track_get_path(i))
+		node = path.get_slice(":", 0)
+		var bone := path.get_slice(":", 1)
+		var ty := src.track_get_type(i)
+		if ty != Animation.TYPE_ROTATION_3D and ty != Animation.TYPE_POSITION_3D:
+			continue
+		var nt := a.add_track(ty)
+		a.track_set_path(nt, src.track_get_path(i))
+		if ty == Animation.TYPE_POSITION_3D:
+			a.position_track_insert_key(nt, 0.0, src.position_track_interpolate(i, t))
+			continue
+		var q := src.rotation_track_interpolate(i, t)
+		if not offs.has(bone):
+			a.rotation_track_insert_key(nt, 0.0, q)
+			continue
+		done[bone] = true
+		var f: Callable = offs[bone]
+		var n := int(L * 24.0)
+		for k in n + 1:
+			var tt := L * k / n
+			a.rotation_track_insert_key(nt, tt, q * Quaternion.from_euler(f.call(tt)))
+	for bone in offs:
+		if done.has(bone):
+			continue
+		var nt := a.add_track(Animation.TYPE_ROTATION_3D)
+		a.track_set_path(nt, NodePath(node + ":" + bone))
+		var f: Callable = offs[bone]
+		var n := int(L * 24.0)
+		for k in n + 1:
+			var tt := L * k / n
+			a.rotation_track_insert_key(nt, tt, Quaternion.from_euler(f.call(tt)))
+	return a
+
+
+## Движение src, в котором кости bones взяты из кадра t движения donor (и лишь на долю swing ходят, как в src)
+static func _graft(src: Animation, donor: Animation, t: float, bones: Array, swing := 0.0) -> Animation:
+	var a := src.duplicate(true) as Animation
+	for i in a.get_track_count():
+		var bone := String(a.track_get_path(i)).get_slice(":", 1)
+		if a.track_get_type(i) != Animation.TYPE_ROTATION_3D or not (bone in bones):
+			continue
+		var di := donor.find_track(a.track_get_path(i), Animation.TYPE_ROTATION_3D)
+		if di < 0:
+			continue
+		var q := donor.rotation_track_interpolate(di, t)
+		for k in a.track_get_key_count(i):
+			var qs: Quaternion = a.track_get_key_value(i, k)
+			a.track_set_key_value(i, k, q.slerp(qs, swing))
+	return a
+
+
 static func _derive(lib: AnimationLibrary) -> void:
 	var idle := lib.get_animation("Idle")
 	# слушает: дважды кивает, голова чуть набок
@@ -187,6 +246,17 @@ static func _derive(lib: AnimationLibrary) -> void:
 		"Chest": func(t: float) -> Vector3: return Vector3(-0.08 * env.call(t), 0.0, 0.0),
 		"Head": func(t: float) -> Vector3: return Vector3(-(0.22 + 0.06 * sin(TAU * 6.0 * t + 1.0)) * env.call(t), 0.0, 0.06 * env.call(t))})
 	lib.add_animation("Laugh", laugh)
+	# играет на лире (уличный музыкант): сидит, как возница (руки перед собой), лира — в левой руке (HandProps),
+	# правая перебирает струны, голова и плечи — в такт
+	var Lp := 2.4
+	var lyre := _frozen(lib.get_animation("Driving"), 0.8, Lp, {
+		"RightLowerArm": func(t: float) -> Vector3: return Vector3(0.0, 0.22 * sin(TAU * t / 0.6), 0.1 * sin(TAU * t / 0.6 + 0.6)),
+		"RightHand": func(t: float) -> Vector3: return Vector3(0.35 * sin(TAU * t / 0.6 + 0.9), 0.0, 0.0),
+		"Head": func(t: float) -> Vector3: return Vector3(0.07 * sin(TAU * t / 1.2), 0.0, 0.05 * sin(TAU * t / Lp)),
+		"UpperChest": func(t: float) -> Vector3: return Vector3(0.0, 0.0, 0.035 * sin(TAU * t / Lp))})
+	lib.add_animation("Play_Lyre", lyre)
+	# несёт покупку: левая рука почти не машет (опущена, как стоя), вещь в ней (HandProps, People.carry)
+	lib.add_animation("Walk_Carry", _graft(lib.get_animation("Walk"), idle, 0.4, ["LeftShoulder", "LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.25))
 	# зеркальные: жест другой рукой, кивок в другую сторону
 	for n in ["Idle_Talking", "Interact", "PickUp_Table", "Spell_Simple_Idle", "Sitting_Talking", "Sitting_Idle", "Fixing_Kneeling", "Crouch_Idle", "Listen", "Look_Around"]:
 		if lib.has_animation(n):
@@ -347,6 +417,8 @@ static func kid_face(c: Node) -> void:
 
 ## phase ≥ 0 — начать с этой доли движения (чтобы соседи не двигались в такт)
 func play(name: String, blend := 0.25, phase := -1.0) -> void:
+	if carry_walk and (name == "Walk_Loop" or name == "Walk"):
+		name = "Walk_Carry"                  # несёт покупку — левая рука с вещью почти не машет
 	if name == _cur:
 		return
 	_cur = name
@@ -357,6 +429,22 @@ func play(name: String, blend := 0.25, phase := -1.0) -> void:
 		anim.play(short, blend)
 		if phase >= 0.0:
 			anim.seek(fposmod(phase, 1.0) * anim.get_animation(short).length, true)
+
+
+var carry_walk := false
+
+
+## Несёт покупку (People: вещь в левой руке) — шаг с опущенной рукой; перестал — обычный шаг
+func set_carry(on: bool) -> void:
+	if carry_walk == on:
+		return
+	carry_walk = on
+	if on and _cur in ["Walk_Loop", "Walk"]:
+		_cur = ""
+		play("Walk_Loop", 0.2)
+	elif not on and _cur == "Walk_Carry":
+		_cur = ""
+		play("Walk_Loop", 0.2)
 
 
 ## Видимость 0…1 (входит в дверь — тает, выходит — проявляется)

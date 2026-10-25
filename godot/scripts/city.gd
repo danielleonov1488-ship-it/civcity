@@ -94,6 +94,79 @@ func is_house(b: Dictionary) -> bool:
 	return def(b)["kind"] == "house"
 
 
+# ---------- окантовка у построек (Town to City): глина у домов и лавок, у домусов и храмов — каменный бордюр ----------
+
+const APRON_KINDS := ["house", "shop", "rp", "store", "military"]
+const KERB_TYPES := ["house_patrician", "temple", "pantheon"]
+
+
+## 1 — глина вокруг (land.wear), 2 — каменный бордюр (его ставит game._show), 0 — ничего (украшения, поля, площади)
+func apron_of(b: Dictionary) -> int:
+	if b.has("host") or (b["cells"] as PackedInt32Array).is_empty():
+		return 0
+	var d := def(b)
+	if d.get("water", false):
+		return 0
+	if String(b["type"]) in KERB_TYPES:
+		return 2
+	return 1 if d["kind"] in APRON_KINDS else 0
+
+
+func _apron_add(b: Dictionary) -> void:
+	if apron_of(b) == 1:
+		land.wear_stamp(b["cells"], door_point(b))
+
+
+## Все окантовки заново (загрузка сохранения: окантовка не сохраняется — старые города получают её сами).
+## Сначала — какие постройки с бордюром: глина за их стены не заходит, как и при постройке по ходу игры
+func apron_all() -> void:
+	land.wear.fill(0)
+	land.wear_block.clear()
+	for id in buildings:
+		if apron_of(buildings[id]) == 2:
+			land.wear_block[int(id)] = true
+	for id in buildings:
+		_apron_add(buildings[id])
+
+
+## Постройку убрали: её окантовку стереть, кольца соседей в том месте — записать заново (снесли домус — глина
+## соседей снова доходит до этого места)
+func _apron_remove(b: Dictionary) -> void:
+	if apron_of(b) == 0:
+		return
+	land.wear_block.erase(int(b["id"]))
+	_apron_refresh(b)
+
+
+## Окантовку вокруг постройки b — заново: стереть у её клеток и двери, кольца соседей записать заново. Поставили
+## домус — глина соседей уходит с его стен и из сада (порядок постройки не важен: как если бы домус стоял первым)
+func _apron_refresh(b: Dictionary) -> void:
+	var cells: PackedInt32Array = b["cells"]
+	var lo := Vector2i(Land.N, Land.N)
+	var hi := Vector2i(-1, -1)
+	for k in cells:
+		lo = lo.min(Vector2i(k % Land.N, k / Land.N))
+		hi = hi.max(Vector2i(k % Land.N, k / Land.N))
+	var dc := land.cell(door_point(b))
+	var R := Land.APRON_W.size() - 1
+	lo = lo.min(dc - Vector2i(Land.APRON_DOOR, Land.APRON_DOOR)) - Vector2i(R, R)
+	hi = hi.max(dc + Vector2i(Land.APRON_DOOR, Land.APRON_DOOR)) + Vector2i(R, R)
+	land.wear_clear(lo.x, lo.y, hi.x, hi.y)
+	# соседи, чьи кольца и пятна у дверей могли заходить в стёртое (с запасом на кольцо и пятно)
+	var m := R + Land.APRON_DOOR + 2
+	var area := Rect2i(lo - Vector2i(m, m), hi - lo + Vector2i(2 * m + 1, 2 * m + 1))
+	for id in buildings:
+		var o: Dictionary = buildings[id]
+		if int(o["id"]) == int(b["id"]) or apron_of(o) != 1:
+			continue
+		var oc := land.cell(o["pos"])
+		if area.grow(80).has_point(oc):          # грубо по середине (постройки до ~40 м), точнее — по клеткам
+			for k in (o["cells"] as PackedInt32Array):
+				if area.has_point(Vector2i(k % Land.N, k / Land.N)):
+					_apron_add(o)
+					break
+
+
 func unlocked(type: String) -> bool:
 	var u: String = Defs.B[type].get("unlock", "")
 	if u.begins_with("boss"):                 # военные постройки: победа Легиона над N-м боссом
@@ -285,6 +358,10 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		if land.occ[k] >= 0:                   # арку у въезда (занятость < 0) не затираем даже готовым городом
 			land.occ[k] = b["id"]
 	buildings[b["id"]] = b
+	_apron_add(b)
+	if apron_of(b) == 2:
+		land.wear_block[int(b["id"])] = true
+		_apron_refresh(b)
 	if bulk:                                    # готовый город раскладывается разом — пересчёт один раз в конце
 		building_added.emit(b)
 		return b
@@ -323,6 +400,7 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 		if land.occ[k] == int(b["id"]):        # чужое (арку у въезда, соседа) не освобождаем
 			land.occ[k] = 0
 	buildings.erase(b["id"])
+	_apron_remove(b)
 	# украшения на стенах снесённого дома падают вместе с ним
 	for oid in buildings.keys():
 		if buildings.has(oid) and int(buildings[oid].get("host", -1)) == int(b["id"]):
@@ -2489,6 +2567,7 @@ func load_data(d: Dictionary) -> void:
 			if land.occ[k] >= 0:               # арка у въезда остаётся занятой, даже если старое сохранение залезло на неё
 				land.occ[k] = b["id"]
 		next_id = maxi(next_id, int(b["id"]) + 1)
+	apron_all()
 	compute()
 	# старое сохранение (до пометок «НОВОЕ»): всё, что уже открыто, — «видели», новым ничего не горит
 	if not tips.has("seen"):

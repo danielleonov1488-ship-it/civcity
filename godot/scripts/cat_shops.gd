@@ -1049,7 +1049,8 @@ static func _fullonica(b: Bp) -> void:
 	_narrow(b)
 
 
-## Уличные музыканты: скамья под деревом, лира, корзина для монет, коврик
+## Уличные музыканты: скамья под деревом, лира, корзина для монет, коврик. Лира лежит на скамье, пока её нет в руках
+## у музыканта (People._bench_lyres прячет её, когда он с ней играет)
 static func _musicians(b: Bp) -> void:
 	var pal := _pal(b)
 	_put_xf(b, "SM_Prop_Seat_Bench_05", Transform3D(Basis.from_scale(Vector3(0.75, SEAT, 0.85)), Vector3(-0.3, 0, -0.65)))

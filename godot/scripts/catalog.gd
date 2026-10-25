@@ -143,8 +143,9 @@ static func _actors(b: Bp, type: String, tier: int) -> void:
 		"bakery":
 			b.actor(Vector3(-1.2, 0, 1.75), PI, "Interact", "pleb")
 		"barber":
-			b.actor(Vector3(1.25, 0, 1.0), 0.0, "Sitting_Idle", "pleb")
+			# первым — цирюльник с бритвой (работник один — его место первое), вторым — клиент в кресле
 			b.actor(Vector3(1.9, 0, 1.2), -PI / 2, "Interact", "any")
+			b.actor(Vector3(1.25, 0, 1.0), 0.0, "Sitting_Idle", "pleb")
 		"thermopolium":
 			b.actor(Vector3(-1.25, 0, 0.34), 0.0, "Interact", "any")
 		"taberna":

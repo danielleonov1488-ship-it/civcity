@@ -48,6 +48,10 @@ var _paws_key := ""
 var _no_decals := RenderingServer.get_current_rendering_method() == "gl_compatibility"
 var _spot_cache := {}                  # «история:дом:час» → где кошке спрятаться (INF — негде)
 var _hidden: Array = []                # прохожие, спрятанные на время ролика (заслоняли героя)
+var _hid_parts: Array = []             # деревья, кусты и высокие украшения, спрятанные на время ролика (Parts.hide_handles)
+var _hid_lights: Array = []            # и свет спрятанных фонарей (иначе пятно света висит без фонаря)
+var _hid_keys := {}                    # что уже спрятано (не прятать дважды)
+var _tree_t := 0.0
 var _tried := ""                       # с чем последний раз искали, кому предложить историю
 var orders: StoryOrders                # «Заказы старосты» (этап 7.4) — строка между историями
 var beast := {}                        # кого ищут, если не кошку (ослик): {n: Beast, p, kind}
@@ -2424,6 +2428,7 @@ func _cleanup() -> void:
 		if n != null and is_instance_valid(n):
 			(n as Node3D).visible = true
 	_hidden = []
+	trees_back()
 	kit = null
 	var after: Callable = cine.get("after", Callable())
 	if after.is_valid():
@@ -2625,6 +2630,10 @@ func _beat_tick(dt: float) -> void:
 	if fl != null and is_instance_valid(fl) and game.rig != null:
 		(fl as Node3D).global_transform.basis = game.rig.cam.global_transform.basis * Basis(Vector3.RIGHT, -0.3)
 	_crowd_clear()
+	_tree_t -= dt
+	if _tree_t <= 0.0:
+		_tree_t = 0.2
+		_trees_clear()
 	cine["bt"] = float(cine["bt"]) + dt
 	var bt: float = cine["bt"]
 	var beats: Array = cine["beats"]
@@ -2977,6 +2986,82 @@ func _crowd_clear() -> void:
 			_hidden.append(n)
 
 
+## Деревья, кусты и высокие украшения между камерой и героем прячутся до конца ролика (свадебное шествие шло
+## сквозь кроны): луч камера → то, на что смотрит камера, проходит через крону (ствол) по высоте — дерево прячется.
+## У самого героя (ближе 1,2 м) — не прячем: он стоит у этого куста, это видно
+func _trees_clear() -> void:
+	if kit == null or game.rig == null:
+		return
+	var cam3: Vector3 = kit.pos
+	var at3: Vector3 = kit.look
+	var a := Vector2(cam3.x, cam3.z)
+	var b := Vector2(at3.x, at3.z)
+	if a.distance_to(b) < 0.5:
+		return
+	var hit := func(p: Vector2, r: float, y0: float, y1: float) -> bool:
+		var q := Geometry2D.get_closest_point_to_segment(p, a, b)
+		if q.distance_to(p) > r or q.distance_to(b) < 1.2:
+			return false
+		var y := lerpf(cam3.y, at3.y, a.distance_to(q) / maxf(a.distance_to(b), 0.01))
+		return y > y0 - 0.2 and y < y1
+	# украшения: деревья и всё высокое (колонны, статуи, фонари)
+	for id in city.buildings:
+		var bd: Dictionary = city.buildings[id]
+		var key := "b%d" % int(id)
+		if _hid_keys.has(key) or Defs.B.get(bd["type"], {}).get("kind", "") != "decor" or bd.has("host"):
+			continue
+		var p: Vector2 = bd["pos"]
+		if Geometry2D.get_closest_point_to_segment(p, a, b).distance_to(p) > 3.0:
+			continue
+		var top: float = city.blueprint(bd).top_y()
+		var tree := String(Defs.B[bd["type"]].get("sub", "")) == "trees"
+		if not tree and top < 1.6:
+			continue
+		if hit.call(p, clampf(top * 0.4, 0.8, 2.2) if tree else 0.7, float(bd["y"]), float(bd["y"]) + top):
+			var vis: Dictionary = game.visuals.get(id, {})
+			if not vis.is_empty():
+				_hid_parts.append_array(game.parts.hide_handles(vis["h"]))
+				for l in vis.get("lights", []):
+					game.night_lights.erase(l)
+					(l as Node3D).visible = false
+					_hid_lights.append(l)
+				_hid_keys[key] = true
+	# природа: деревья и кусты вдоль луча
+	var lo := a.min(b) - Vector2(3, 3)
+	var hi := a.max(b) + Vector2(3, 3)
+	for kz in range(int(lo.y / 2.0), int(hi.y / 2.0) + 1):
+		for kx in range(int(lo.x / 2.0), int(hi.x / 2.0) + 1):
+			for it: Dictionary in game.nature.get(Vector2i(kx, kz), []):
+				var nm := String(it.get("name", ""))
+				var tree := nm.contains("Tree")
+				if not tree and not nm.contains("Bush"):
+					continue
+				var key := "n%s" % str(it["p"])
+				if _hid_keys.has(key):
+					continue
+				var p: Vector2 = it["p"]
+				var gy: float = game.land.height_at(p.x, p.y)
+				if hit.call(p, 2.0 if tree else 1.0, gy, gy + (6.5 if tree else 1.4)):
+					_hid_parts.append_array(game.parts.hide_handles(it["h"]))
+					_hid_keys[key] = true
+
+
+## Ролик кончился (или пропущен): спрятанные деревья — на место
+func trees_back() -> void:
+	if not _hid_parts.is_empty():
+		game.parts.restore(_hid_parts)
+	_hid_parts = []
+	_hid_keys = {}
+	var relit := false
+	for l in _hid_lights:
+		if is_instance_valid(l) and not (l as Node).is_queued_for_deletion():      # фонарь не снесли за время ролика
+			game.night_lights.append(l)
+			relit = true
+	_hid_lights = []
+	if relit:
+		game._set_hour(game.hour)               # свет фонарей — как положено в этот час
+
+
 ## От a до b (у кошки) — ни построек, ни воды, ни круч
 func _clear_run(a: Vector2, b: Vector2) -> bool:
 	if not game.people._hide_ok(a):
@@ -3042,7 +3127,7 @@ func _tcat() -> Node3D:
 	var sp: Array = b.get("spot", [])
 	var h: Dictionary = city.buildings.get(int(b.get("home", -1)), city.center())
 	var p: Vector2 = Vector2(float(sp[0]), float(sp[1])) if sp.size() == 2 else city.door_point(h) + City.facing(float(h["yaw"])) * 5.0
-	var n := People.cat_node(int(b.get("fur", 0)), "Sit", 3)
+	var n := People.cat_node(int(b.get("fur", 0)), "Sit", 3, People.CAT_LEN)     # того же роста, что на улице
 	game.add_child(n)
 	n.position = Vector3(p.x, game.land.height_at(p.x, p.y), p.y)
 	n.rotation.y = hash(b.get("fam", "")) % 628 / 100.0

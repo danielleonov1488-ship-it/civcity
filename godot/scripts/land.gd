@@ -49,6 +49,11 @@ var dirty_walk := {}                 # куски, где поменялось �
 var mask_lo := Vector2i(1 << 30, 1 << 30)   # прямоугольник маски покрытий (пиксели N/SM), который надо обновить
 var mask_hi := Vector2i(-1, -1)
 var road_chunks := {}                # куски, где есть дороги (для маски покрытий и сетки ходьбы)
+## Утоптанная земля у домов и лавок (окантовка из глины, 0…255 на клетку): не сохраняется — считается по постройкам
+## (City.apron_all при загрузке, City.place / remove по ходу). Видна только на траве: дороги, площади, поля, вода — как были
+var wear := PackedByteArray()
+var wear_chunks := {}                # куски, где есть окантовка (маска покрытий собирается и для них)
+var wear_block := {}                 # id построек с бордюром (домус, храм, пантеон): глина соседей не заходит за их стены в сад
 
 var n1 := FastNoiseLite.new()
 var n2 := FastNoiseLite.new()
@@ -214,6 +219,10 @@ func generate() -> void:
 	kind.fill(Kind.GRASS)
 	occ.resize(N * N)
 	occ.fill(0)
+	wear.resize(N * N)
+	wear.fill(0)
+	wear_chunks.clear()
+	wear_block.clear()
 	var tn := FastNoiseLite.new()
 	tn.seed = 5
 	tn.frequency = 0.035
@@ -697,6 +706,109 @@ func blend_ring(cells: PackedInt32Array, y: float, rc := 7) -> void:
 			_mark(k % N, k / N, hq(k) != old, false)
 
 
+# ---------- окантовка у домов: утоптанная глина (Town to City) ----------
+
+const APRON_W := [255, 255, 240, 170, 80]   # по кольцам от стены (клетки 25 см): под постройкой и у стены — сплошь, дальше реже
+const APRON_DOOR := 5                   # пятно у двери: радиус в клетках (1,25 м) — там ходят
+
+
+## Окантовка вокруг следа постройки cells: кольца от стены (по четырём соседям) и пятно у двери door.
+## Пишется наибольшее (соседние дома друг друга не стирают); маска покрытий обновится по прямоугольнику.
+## Клетки построек с бордюром (wear_block) глина обходит: ни на них, ни сквозь них в сад домуса и двор храма
+func wear_stamp(cells: PackedInt32Array, door := Vector2.INF) -> void:
+	if cells.is_empty():
+		return
+	var seen := {}
+	var front := PackedInt32Array()
+	var i0 := N
+	var j0 := N
+	var i1 := -1
+	var j1 := -1
+	for k in cells:
+		seen[k] = true
+		front.append(k)
+		wear[k] = 255
+		var ci := k % N
+		var cj := k / N
+		i0 = mini(i0, ci)
+		j0 = mini(j0, cj)
+		i1 = maxi(i1, ci)
+		j1 = maxi(j1, cj)
+	for st in range(1, APRON_W.size()):
+		var w: int = APRON_W[st]
+		var nxt := PackedInt32Array()
+		for k in front:
+			var ci := k % N
+			for k2: int in [k + 1 if ci < N - 1 else -1, k - 1 if ci > 0 else -1, k + N, k - N]:
+				if k2 < 0 or k2 >= N * N or seen.has(k2):
+					continue
+				seen[k2] = true
+				if occ[k2] != 0 and wear_block.has(occ[k2]):
+					continue            # стена домуса: не красим и дальше за неё не идём
+				nxt.append(k2)
+				if wear[k2] < w:
+					wear[k2] = w
+		front = nxt
+	var R := APRON_W.size() - 1
+	i0 -= R
+	j0 -= R
+	i1 += R
+	j1 += R
+	if door != Vector2.INF:
+		var dc := cell(door)
+		for dj in range(-APRON_DOOR, APRON_DOOR + 1):
+			for di in range(-APRON_DOOR, APRON_DOOR + 1):
+				var d := sqrt(float(di * di + dj * dj))
+				if d > APRON_DOOR or not inside(dc.x + di, dc.y + dj):
+					continue
+				var w := int(255.0 * clampf(1.2 - d / APRON_DOOR, 0.0, 1.0))
+				var k2 := idx(dc.x + di, dc.y + dj)
+				if occ[k2] != 0 and wear_block.has(occ[k2]):
+					continue
+				if wear[k2] < w:
+					wear[k2] = w
+		i0 = mini(i0, dc.x - APRON_DOOR)
+		j0 = mini(j0, dc.y - APRON_DOOR)
+		i1 = maxi(i1, dc.x + APRON_DOOR)
+		j1 = maxi(j1, dc.y + APRON_DOOR)
+	_wear_dirty(i0, j0, i1, j1)
+
+
+## Стереть окантовку в прямоугольнике клеток (снесли постройку: кольца соседей потом пишутся заново)
+func wear_clear(i0: int, j0: int, i1: int, j1: int) -> void:
+	i0 = clampi(i0, 0, N - 1)
+	j0 = clampi(j0, 0, N - 1)
+	i1 = clampi(i1, 0, N - 1)
+	j1 = clampi(j1, 0, N - 1)
+	for j in range(j0, j1 + 1):
+		var row := j * N
+		for i in range(i0, i1 + 1):
+			wear[row + i] = 0
+	_wear_dirty(i0, j0, i1, j1)
+
+
+## Окантовка поменялась в прямоугольнике: маску покрытий — пересобрать там (кусков сетки и сохранения не трогаем)
+func _wear_dirty(i0: int, j0: int, i1: int, j1: int) -> void:
+	i0 = clampi(i0, 0, N - 1)
+	j0 = clampi(j0, 0, N - 1)
+	i1 = clampi(i1, 0, N - 1)
+	j1 = clampi(j1, 0, N - 1)
+	mask_lo = Vector2i(mini(mask_lo.x, i0 / SM), mini(mask_lo.y, j0 / SM))
+	mask_hi = Vector2i(maxi(mask_hi.x, i1 / SM), maxi(mask_hi.y, j1 / SM))
+	for cj in range(j0 / CH, j1 / CH + 1):
+		for ci in range(i0 / CH, i1 / CH + 1):
+			wear_chunks[Vector2i(ci, cj)] = true
+
+
+## Доля окантовки в пикселе маски (2×2 клетки): только на траве
+func _wear_px(k0: int) -> float:
+	var a := 0
+	for k: int in [k0, k0 + 1, k0 + N, k0 + N + 1]:
+		if kind[k] == Kind.GRASS:
+			a += wear[k]
+	return a / 1020.0
+
+
 # ---------- маска покрытий для шейдера (плавные края дорог) ----------
 
 func make_surface() -> Image:
@@ -704,6 +816,9 @@ func make_surface() -> Image:
 	img.fill(Color(0, 0, 0, 1))
 	for ch in road_chunks:
 		update_surface(img, ch)
+	for ch in wear_chunks:
+		if not road_chunks.has(ch):
+			update_surface(img, ch)
 	mask_lo = Vector2i(1 << 30, 1 << 30)       # маска собрана целиком — обновлять пока нечего
 	mask_hi = Vector2i(-1, -1)
 	return img
@@ -732,6 +847,7 @@ func update_surface_rect(img: Image) -> bool:
 					c.g += 0.25
 				elif kd == Kind.DIRT:
 					c.b += 0.25
+			c.a = 1.0 - _wear_px(k0)            # A: 1 — трава, меньше — окантовка у домов
 			img.set_pixel(i, j, c)
 	return true
 
@@ -754,7 +870,7 @@ func update_surface(img: Image, ch: Vector2i) -> void:
 						g += 0.25
 					elif kd == Kind.DIRT:
 						b += 0.25
-			img.set_pixel(i, j, Color(r, g, b, 1.0))
+			img.set_pixel(i, j, Color(r, g, b, 1.0 - _wear_px((j * SM) * N + i * SM)))
 
 
 # ---------- цвета и сетка ----------

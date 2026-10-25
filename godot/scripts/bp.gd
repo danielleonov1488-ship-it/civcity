@@ -154,11 +154,15 @@ func front_z() -> float:
 
 
 ## Прямоугольники следа (в осях постройки, XZ): из габаритов настоящих деталей, без крыш, плюща, навесов и мелочи
-func footprint() -> Array:
+## all = false — только части здания (SM_Bld_: стены, колонны, ступени) — контур бордюра Kerb идёт по стенам,
+## а не вокруг кипарисов, перголы и скамей в саду
+func footprint(all := true) -> Array:
 	var out := []
 	var fz := front_z()
 	for p in parts:
 		var nm: String = p[0]
+		if not all and not nm.begins_with("SM_Bld_"):
+			continue
 		var skip := false
 		for w in NONSOLID:
 			if nm.contains(w):

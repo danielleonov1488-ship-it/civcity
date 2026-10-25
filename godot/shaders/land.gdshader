@@ -108,6 +108,22 @@ void fragment() {
 			float w_plaza = smoothstep(0.44, 0.54, m.g + wob * 0.04);
 			float edge = smoothstep(0.18, 0.42, max(m.r, m.g)) * (1.0 - max(w_road, w_plaza));
 			c *= 1.0 - 0.18 * edge;                       // притоптанная кромка у мостовой
+			// окантовка у домов и лавок (Land.wear → surf.a: 1 — трава): утоптанная глина с камешками,
+			// край неровный, кое-где уцелели кустики травы
+			float ap = (1.0 - m.a) * (1.0 - max(w_road, w_plaza));
+			if (ap > 0.02) {
+				float n2 = vn(wpos.xz * 1.7) * 0.6 + vn(wpos.xz * 6.0) * 0.4;
+				float w_ap = smoothstep(0.18, 0.58, ap + (n2 - 0.5) * 0.45 + wob * 0.25);
+				vec3 soil = vec3(0.27, 0.155, 0.075) * (0.82 + 0.3 * n2);                 // глина: тёплая, темнее троп
+				soil = mix(soil, vec3(0.33, 0.21, 0.11), smoothstep(0.6, 0.98, ap) * 0.4);   // у стены — суше
+				soil *= 0.92 + 0.12 * r;
+				float pb = h31(cube + 13.0);
+				if (pb > 0.975) soil = mix(soil, vec3(0.5, 0.46, 0.4), 0.7);                // камешки
+				else if (pb < 0.05) soil *= 0.78;
+				float tuft = step(0.82, h31(cube + 23.0)) * (1.0 - smoothstep(0.35, 0.8, ap));
+				c = mix(c, mix(soil, c, tuft), w_ap * 0.92);
+				rough = mix(rough, 1.0, w_ap);
+			}
 			if (w_path > 0.0) {
 				// тропа: утоптанный песок с камешками
 				float n = vn(wpos.xz * 1.3) * 0.6 + vn(wpos.xz * 5.0) * 0.4;

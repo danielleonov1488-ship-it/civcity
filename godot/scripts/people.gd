@@ -437,6 +437,8 @@ func _enter_work(r: Dictionary) -> void:
 		r["p"] = Vector2(xf.origin.x, xf.origin.z)
 		# без собеседника никто не говорит «в воздух»: разговор — только с покупателем (_keeper_react)
 		var sa: String = "Idle" if String(a[2]).begins_with("Idle_Talking") else String(a[2])
+		r["slot_base"] = sa              # движение по чертежу; на лире музыкант играет, только когда она в руках (_slot_clip)
+		r.erase("carry")
 		c.play(sa, 0.3, rng.randf())
 		# продавец за прилавком: помнит, как стоит, чтобы повернуться к покупателю и вернуться обратно
 		r["slot_anim"] = sa
@@ -450,6 +452,7 @@ func _enter_work(r: Dictionary) -> void:
 func _leave_slot(r: Dictionary) -> void:
 	if int(r["slot"]) < 0:
 		return
+	HandProps.drop(r["node"])               # с работы — без лиры и серпа в руках
 	var list: Array = slots.get(r["job"], [])
 	if int(r["slot"]) < list.size():
 		list[r["slot"]] = 0
@@ -572,6 +575,12 @@ var spots := {}                      # id постройки → {номер м�
 var convs := []                      # разговоры: {"m": [rid], "spk": rid, "sw": сек до новой реплики, "left": сек, "open": можно подойти}
 var _bp_spots := {}                  # места в осях постройки (по чертежу) — считаются один раз
 var _vis_t := 0.0
+## Вещи в руках (HandProps): у работников — по месту работы, у прохожих — покупка, которую несут домой.
+## Только вблизи камеры и не больше PROP_CAP разом; на «Низкой» и «Очень низкой» — нет (Gfx.apply)
+var props_on := true
+var _prop_t := 0.0
+const PROP_R := 32.0
+const PROP_CAP := 18
 
 const SIT_BACK := 0.21               # сидящий: таз на столько позади ступней (движение Sitting_* при нашем росте)
 const SIT_SEAT := 0.3                # и на такой высоте над землёй
@@ -1189,6 +1198,10 @@ func _on_step(r: Dictionary, nm: String) -> void:
 					_keeper_react(bid, r, "Idle_Talking" if rng.randf() < 0.5 else "Idle_Talking_M")
 				"PickUp_Table", "PickUp_Table_M":
 					_keeper_react(bid, r, "Interact" if rng.randf() < 0.5 else "Interact_M")
+					# взял покупку — понесёт домой (корзина, амфора, свёрток; HandProps.CARRY)
+					var it := String(HandProps.CARRY.get(String((city.buildings.get(bid, {}) as Dictionary).get("type", "")), ""))
+					if it != "":
+						r["carry"] = it
 		"sit":
 			match nm:
 				"Sitting_Enter":
@@ -1706,6 +1719,7 @@ func _door_step(r: Dictionary, dt: float) -> void:
 func _door_done(r: Dictionary, then: String, b: Dictionary) -> void:
 	_hide(r)
 	r["door"] = {}
+	r.erase("carry")                         # покупку донесли (или зашёл с ней в лавку — дальше без неё)
 	if then == "inside":
 		r["state"] = "idle"
 		r["act"] = "inside"
@@ -1743,6 +1757,10 @@ func _process(dt: float) -> void:
 			_assign_jobs()
 		if speed > 0.0:
 			_schedule(dh)
+	_prop_t -= dt
+	if _prop_t <= 0.0:
+		_prop_t = 0.3
+		_props_tick()
 	if speed <= 0.0:
 		for r in residents:
 			if r["node"] != null:
@@ -1784,6 +1802,112 @@ func _process(dt: float) -> void:
 		_vis_tick()
 	_cart_step(dt * speed)
 	_cats_step(dt * speed)
+
+
+## Что у жителя должно быть в руках сейчас: на работе — вещи места (лира, свиток, серп…), по дороге — покупка
+func props_want(r: Dictionary) -> Array:
+	match r["state"]:
+		"work":
+			if int(r["slot"]) >= 0:
+				return HandProps.work(String((city.buildings.get(r["job"], {}) as Dictionary).get("type", "")), int(r["slot"]))
+		"walk", "door":
+			if String(r.get("carry", "")) != "":
+				return [r["carry"]]
+	return []
+
+
+## Раздать и забрать вещи: ближним к тому, куда смотрит камера (не дальше PROP_R, не больше PROP_CAP), остальным —
+## без вещей. Мерим от точки взгляда, а не от самой камеры: при обычном приближении камера в 80 м от города, и вещей
+## не было бы видно вовсе; в ролике — от камеры (она у героев)
+func _props_tick() -> void:
+	var rig = game.rig
+	var cam: Camera3D = rig.cam if rig else null
+	var at := Vector3.ZERO
+	if cam:
+		at = cam.global_position if rig.cine else rig.target
+	var cands := []
+	var lyres := {}
+	for r in residents:
+		var c: Citizen = r["node"]
+		if c == null:
+			continue
+		var want: Array = props_want(r) if props_on and cam else []
+		var d2 := INF
+		if not want.is_empty():
+			d2 = c.global_position.distance_squared_to(at)
+		if want.is_empty() or d2 > PROP_R * PROP_R:
+			if HandProps.held(c) != "":
+				HandProps.drop(c)
+			c.set_carry(false)
+			_slot_clip(r, false)
+			continue
+		cands.append([d2, r, want])
+	cands.sort_custom(func(a, b): return a[0] < b[0])
+	for i in cands.size():
+		var r: Dictionary = cands[i][1]
+		var c: Citizen = r["node"]
+		if i >= PROP_CAP:
+			HandProps.drop(c)
+			c.set_carry(false)
+			_slot_clip(r, false)
+			continue
+		var carrying: bool = r["state"] != "work"
+		if not carrying:
+			_slot_clip(r, true)              # сначала движение с вещью (лира): хват считается по его позе
+		HandProps.hold(c, cands[i][2], "Idle" if carrying else String(r.get("slot_anim", "Idle")))
+		c.set_carry(carrying)
+		if not carrying and "lyre" in cands[i][2]:
+			lyres[int(r["job"])] = true
+	_bench_lyres(lyres)
+
+
+## Движение работника — в лад с вещью в руках: с лирой музыкант играет (HandProps.WORK_CLIP), без неё — как в чертеже
+## (сидит, а лира лежит на скамье), чтобы не играть на пустой руке
+func _slot_clip(r: Dictionary, with_props: bool) -> void:
+	if r["state"] != "work" or int(r["slot"]) < 0 or not r.has("slot_base"):
+		return
+	var t := String((city.buildings.get(r["job"], {}) as Dictionary).get("type", ""))
+	var want: String = HandProps.work_clip(t, int(r["slot"]), r["slot_base"]) if with_props else String(r["slot_base"])
+	var cur := String(r.get("slot_anim", ""))
+	if want == cur:
+		return
+	var c: Citizen = r["node"]
+	if c and c._cur == cur:                  # отвечает покупателю — не перебиваем, вернётся уже к новому
+		c.play(want, 0.3, rng.randf())
+	r["slot_anim"] = want
+
+
+var _lyre_hid := {}                  # id музыкантов → [ручка лиры на скамье, что спрятано (Parts.hide_handles)]
+
+
+## Лира на скамье музыкантов: пока музыкант играет на ней (в руках), на скамье её нет — лира одна, а не две;
+## положил (далеко от камеры, «Низкая», ушёл с работы) — снова на скамье
+func _bench_lyres(held: Dictionary) -> void:
+	var parts: Parts = game.parts
+	if parts == null:
+		return
+	for id in _lyre_hid.keys():
+		var e: Array = _lyre_hid[id]
+		var h := _lyre_handle(id)
+		var same := not h.is_empty() and is_same(h[0], e[0][0]) and int(h[1]) == int(e[0][1])
+		if held.has(id) and same:
+			continue
+		if same:
+			parts.restore(e[1])             # постройку снесли или показали заново — её новую лиру не трогаем
+		_lyre_hid.erase(id)
+	for id in held:
+		var h := _lyre_handle(id)
+		if not h.is_empty() and not parts.is_hidden(h):
+			_lyre_hid[id] = [h, parts.hide_handles([h])]
+
+
+## Ручка лиры на скамье музыкантов id ([] — нет: постройку ещё не показали или уже снесли)
+func _lyre_handle(id: int) -> Array:
+	var vis: Dictionary = game.visuals.get(id, {})
+	for h: Array in vis.get("h", []):
+		if String((h[0] as Dictionary)["key"]).begins_with("SM_Prop_Lyre_01|"):
+			return h
+	return []
 
 
 ## Кого рисовать: людей больше, чем MAX_VIS, — рисуем тех, кто в кадре, ближних к камере первыми;
@@ -1867,6 +1991,9 @@ func _show(r: Dictionary) -> void:
 			c.transform = xf
 			c.scale = Vector3.ONE * Citizen.SIZE * (0.68 if r["child"] else 1.0)
 			var sa: String = "Idle" if String(a[2]).begins_with("Idle_Talking") else String(a[2])   # не говорит «в воздух»
+			r["slot_base"] = sa
+			if HandProps.held(c) != "":
+				sa = HandProps.work_clip(b["type"], int(r["slot"]), sa)     # лира уже в руках — играет на ней
 			c.play(sa, 0.0, rng.randf())
 			r["slot_anim"] = sa
 			r["slot_yaw"] = c.rotation.y
@@ -2459,7 +2586,14 @@ func _drop() -> void:
 ## Кости модели: Bone — таз, .001 — грудь, .002 — шея, .003 — голова, .004–.007 — хвост; передние лапы .014–.016 и
 ## .017–.019 (плечо, предплечье, кисть), задние .008–.010 и .011–.013 (бедро, голень, стопа)
 const CAT_FILE := "res://assets/cat/Cat.fbx"     # в пакете с кодом, не в пакете моделей: обновление — пара МБ, а не ~100
-const CAT_LEN := 0.5                   # длина кошки от кончика хвоста до носа
+const CAT_LEN := 0.6                   # длина кошки от кончика хвоста до носа (была 0,5 — рядом с жителями терялась)
+const CAT_LEN_BED := 0.5               # кошка в корзинке-украшении и в облачке — прежнего размера (корзинка под неё)
+## Окрас (тем же номером, что CAT_FURS): узор (0 гладкая, 1 тигровая, 2 «во фраке», 3 пятна), цвет полосок, цвет глаз
+const CAT_LOOK := [[1, Color("b05c1c"), Color("c9962c")], [1, Color("4b4844"), Color("86ad3c")], [0, Color("1e1a18"), Color("d8b23a")],
+	[0, Color("e2dccf"), Color("6f9fd2")], [1, Color("6a4322"), Color("a6a63a")], [2, Color("2c2826"), Color("8fb33c")]]
+const CAT_HEAD := 1.22                 # голова крупнее: милее и читается издали
+const CAT_EYE := Vector3(0.0281, 0.00215, 0.0288)   # где глаз в позе покоя (ед. модели, x — вперёд, z — вверх)
+const CAT_EYE_R := 0.00095
 const CAT_WALK := 0.42                 # шаг кошки (прежняя, вдвое крупнее, ходит 0.9)
 const CAT_STEP := 1.74                 # как быстро лапа уходит назад в «Walking» (ед. модели в секунду) — чтобы лапы не скользили
 ## Окрасы: шерсть и грудка
@@ -2473,7 +2607,8 @@ static var _cat_scene: PackedScene
 static var _cat_ok := -1               # -1 — ещё не проверяли, 1 — модель годится, 0 — кошки из Kit
 static var _cat_lib: AnimationLibrary
 static var _cat_size := 1.0            # длина модели в файле
-static var _cat_mats := {}
+static var _cat_v2: ArrayMesh          # общая сетка кошки: одна поверхность, глаза, голова крупнее (_cat_build)
+static var _cat_shader: Shader
 
 
 ## Модель кошки на месте и годится: скелет, «Idle» и «Walking». Заодно один раз собираются её движения
@@ -2518,8 +2653,12 @@ static func _cat_clips(ap: AnimationPlayer, sk: Skeleton3D) -> AnimationLibrary:
 		"Bone.014": Vector3(0, 0.52, 0), "Bone.017": Vector3(0, 0.52, 0),
 		"Bone.008": Vector3(0, -1.14, 0), "Bone.011": Vector3(0, -1.14, 0), "Bone.009": Vector3(0, 2.43, 0), "Bone.012": Vector3(0, 2.43, 0),
 		"Bone.010": Vector3(0, -0.77, 0), "Bone.013": Vector3(0, -0.77, 0),
-		"Bone.004": Vector3(0, -1.68, 0), "Bone.005": Vector3(0, 0.53, 0), "Bone.006": Vector3(0, 0.36, 0), "Bone.007": Vector3(0, -0.27, 0)}
-	lib.add_animation("Sit", _cat_pose(idle, 2, sk, sit, Vector3(0, 0, -1.29)))
+		"Bone.004": Vector3(0, -1.68, 0), "Bone.005": Vector3(0, 0.53, 0.45), "Bone.006": Vector3(0, 0.36, 0.6),
+		"Bone.007": func(t: float) -> Vector3: return Vector3(0, -0.2, 0.5 + 0.35 * sin(TAU * 2.0 * t / L))}
+	# сидит мягче: хвост обвивает бок и кончиком подрагивает, голова чуть набок
+	var sit_soft := sit.duplicate()
+	sit_soft["Bone.003"] = Vector3(0.14, 0.3, 0.08)
+	lib.add_animation("Sit", _cat_pose(idle, 2, sk, sit_soft, Vector3(0, 0, -1.29)))
 	# гладят: голова поднята к человеку, хвост ходит из стороны в сторону
 	var pet := sit.duplicate()
 	pet["Bone.003"] = Vector3(0, 0.0, 0)
@@ -2610,16 +2749,145 @@ static func _cat_off(sk: Skeleton3D, bi: int, pose: Dictionary, t: float) -> Qua
 	return g.inverse() * r * g
 
 
-## Общие материалы кошек — по цвету
-static func _cat_mat(col: Color) -> StandardMaterial3D:
-	var k := col.to_html()
-	if not _cat_mats.has(k):
-		var m := StandardMaterial3D.new()
-		m.albedo_color = col
-		m.roughness = 0.9
-		m.metallic_specular = 0.25
-		_cat_mats[k] = m
-	return _cat_mats[k]
+## Общая сетка кошки из модели: три поверхности (шерсть, грудка и лапки, уши и нос) — в одну (одна отрисовка вместо
+## трёх), голова в CAT_HEAD раз крупнее (вершины головы — от её кости), два глаза (полусферы на кости головы).
+## В вершинах: COLOR.r — часть тела, UV/UV2 — место в позе покоя (по нему окрас шейдера cat_fur), у глаза — его координаты
+static func _cat_build(mi: MeshInstance3D, sk: Skeleton3D) -> ArrayMesh:
+	if _cat_v2:
+		return _cat_v2
+	var src: ArrayMesh = mi.mesh
+	var hb := -1
+	for i in mi.skin.get_bind_count():
+		if mi.skin.get_bind_name(i) == "Bone.003":
+			hb = i
+	var o := sk.get_bone_global_rest(sk.find_bone("Bone.003")).origin
+	var eight := (src.surface_get_format(0) & Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS) != 0
+	var nb := 8 if eight else 4
+	var V := PackedVector3Array()
+	var Nn := PackedVector3Array()
+	var B := PackedInt32Array()
+	var W := PackedFloat32Array()
+	var C := PackedColorArray()
+	var U := PackedVector2Array()
+	var U2 := PackedVector2Array()
+	var I := PackedInt32Array()
+	for s in src.get_surface_count():
+		var arr := src.surface_get_arrays(s)
+		var mn: String = src.surface_get_material(s).resource_name if src.surface_get_material(s) else ""
+		var part := 0.25 if mn == "White" else (0.5 if mn == "Pink" else 0.0)
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var n: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var bo: PackedInt32Array = arr[Mesh.ARRAY_BONES]
+		var we: PackedFloat32Array = arr[Mesh.ARRAY_WEIGHTS]
+		var ix: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+		var base := V.size()
+		for i in v.size():
+			var wh := 0.0
+			for k in nb:
+				if bo[i * nb + k] == hb:
+					wh += we[i * nb + k]
+			var p := o + (v[i] - o) * lerpf(1.0, CAT_HEAD, wh)
+			V.append(p)
+			Nn.append(n[i])
+			C.append(Color(part, 0, 0, 1))
+			U.append(Vector2(v[i].x, v[i].z))
+			U2.append(Vector2(v[i].y, 0))
+		B.append_array(bo)
+		W.append_array(we)
+		for k in ix:
+			I.append(k + base)
+	# глаза: сплюснутые полусферы на морде (точка — где луч из головы выходит наружу), смотрят вперёд, чуть в стороны
+	# и вверх, чуть утоплены
+	var head_tris := []
+	for t in range(0, I.size(), 3):
+		var a := V[I[t]]
+		if a.x > o.x - 0.001 and a.z > o.z - 0.006:
+			head_tris.append([a, V[I[t + 1]], V[I[t + 2]]])
+	for sgn: float in [-1.0, 1.0]:
+		var e0 := Vector3(CAT_EYE.x, CAT_EYE.y * sgn, CAT_EYE.z)
+		var r := CAT_EYE_R * CAT_HEAD
+		var f := Vector3(1.0, 0.55 * sgn, 0.3).normalized()
+		var from := o + Vector3(0.007, CAT_EYE.y * sgn * 0.5, (CAT_EYE.z - o.z) * CAT_HEAD)     # изнутри головы
+		var c := o + (e0 - o) * CAT_HEAD
+		var best := INF
+		for tr: Array in head_tris:
+			var hit = Geometry3D.ray_intersects_triangle(from, f, tr[0], tr[1], tr[2])
+			if hit != null and from.distance_to(hit) < best:
+				best = from.distance_to(hit)
+				c = hit
+		var side := f.cross(Vector3(0, 0, 1)).normalized()
+		var up := side.cross(f).normalized()
+		c -= f * r * 0.35
+		var rings := 4
+		var segs := 10
+		var base := V.size()
+		for ri in rings + 1:
+			var th := PI * 0.5 * ri / rings
+			for j in segs:
+				var ph := TAU * j / segs
+				var d := side * cos(ph) + up * sin(ph)
+				V.append(c + f * (r * cos(th) * 0.6) + d * (r * sin(th)))
+				Nn.append((f * cos(th) + d * sin(th)).normalized())
+				C.append(Color(0.75, 0, 0, 1))
+				U.append(Vector2(cos(ph) * sin(th), sin(ph) * sin(th)))
+				U2.append(Vector2(e0.y, 0))
+				for k in nb:
+					B.append(hb if k == 0 else 0)
+					W.append(1.0 if k == 0 else 0.0)
+				if ri == 0:
+					break                    # полюс — одна вершина
+		for ri in rings:
+			for j in segs:
+				var j2 := (j + 1) % segs
+				var a0 := base if ri == 0 else base + 1 + (ri - 1) * segs + j
+				var a1 := base if ri == 0 else base + 1 + (ri - 1) * segs + j2
+				var b0 := base + 1 + ri * segs + j
+				var b1 := base + 1 + ri * segs + j2
+				var tri3 := [[a0, b1, b0]] if ri == 0 else [[a0, a1, b1], [a0, b1, b0]]
+				for q: Array in tri3:
+					# лицевая сторона в Godot — по часовой: векторное произведение в буфере смотрит внутрь глаза
+					var nrm := (V[q[1]] - V[q[0]]).cross(V[q[2]] - V[q[0]])
+					if nrm.dot((V[q[0]] + V[q[1]] + V[q[2]]) / 3.0 - c) > 0.0:
+						I.append_array([q[0], q[2], q[1]])
+					else:
+						I.append_array(q)
+	var out := []
+	out.resize(Mesh.ARRAY_MAX)
+	out[Mesh.ARRAY_VERTEX] = V
+	out[Mesh.ARRAY_NORMAL] = Nn
+	out[Mesh.ARRAY_COLOR] = C
+	out[Mesh.ARRAY_TEX_UV] = U
+	out[Mesh.ARRAY_TEX_UV2] = U2
+	out[Mesh.ARRAY_BONES] = B
+	out[Mesh.ARRAY_WEIGHTS] = W
+	out[Mesh.ARRAY_INDEX] = I
+	_cat_v2 = ArrayMesh.new()
+	_cat_v2.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, out, [], {}, Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS if eight else 0)
+	return _cat_v2
+
+
+## Одеть модель кошки окрасом fi: общая сетка и свой материал (у каждой кошки — свои моргание и сон). Материал — в meta «fur_mat»
+static func _cat_dress(m: Node3D, fi: int) -> ShaderMaterial:
+	var mi: MeshInstance3D = m.find_children("*", "MeshInstance3D", true, false)[0]
+	var sk: Skeleton3D = m.find_children("*", "Skeleton3D", true, false)[0]
+	mi.mesh = _cat_build(mi, sk)
+	for s in mi.get_surface_override_material_count():
+		mi.set_surface_override_material(s, null)
+	if _cat_shader == null:
+		_cat_shader = load("res://shaders/cat_fur.gdshader")
+	var f: Array = CAT_FURS[clampi(fi, 0, CAT_FURS.size() - 1)]
+	var lk: Array = CAT_LOOK[clampi(fi, 0, CAT_LOOK.size() - 1)]
+	var mat := ShaderMaterial.new()
+	mat.shader = _cat_shader
+	mat.set_shader_parameter("fur", f[0])
+	mat.set_shader_parameter("belly", f[1])
+	mat.set_shader_parameter("pattern", int(lk[0]))
+	mat.set_shader_parameter("mark", lk[1])
+	mat.set_shader_parameter("eye_col", lk[2])
+	mat.set_shader_parameter("blink_ph", float(m.get_instance_id() % 997) / 997.0)
+	mi.material_override = mat
+	m.set_meta("fur_mat", mat)
+	return mat
 
 
 static func _cat_mesh(fur: Color, belly: Color) -> Array:
@@ -2653,20 +2921,16 @@ func _make_cat(home: Dictionary, opts := {}) -> Dictionary:
 	if not _cat_model_ok():
 		return _make_cat_kit(home, opts)
 	var rg: RandomNumberGenerator = opts.get("rng", rng)
-	var f: Array = CAT_FURS[int(opts["fur"])] if opts.has("fur") else CAT_FURS[rg.randi() % CAT_FURS.size()]
+	var fi: int = int(opts["fur"]) if opts.has("fur") else rg.randi() % CAT_FURS.size()
+	var f: Array = CAT_FURS[fi]
 	var root := Node3D.new()
 	var m := _cat_scene.instantiate() as Node3D
 	m.rotation.y = -PI / 2                 # в файле кошка смотрит вдоль +x, у нас — вдоль +z
 	var sc := CAT_LEN / _cat_size * rg.randf_range(0.88, 1.05)
 	m.scale = Vector3.ONE * sc
 	root.add_child(m)
-	# шерсть, грудка и лапки, розовые уши и нос
-	for mi: MeshInstance3D in m.find_children("*", "MeshInstance3D", true, false):
-		for s in mi.mesh.get_surface_count():
-			var m0 := mi.mesh.surface_get_material(s)
-			var mn := m0.resource_name if m0 else ""
-			var col: Color = f[1] if mn == "White" else (Color("e3a3a3") if mn == "Pink" else f[0])
-			mi.set_surface_override_material(s, _cat_mat(col))
+	# окрас: шерсть с узором, грудка и лапки, розовые уши и нос, глаза (cat_fur.gdshader)
+	var fmat := _cat_dress(m, fi)
 	var ap: AnimationPlayer = m.find_children("*", "AnimationPlayer", true, false)[0]
 	ap.add_animation_library("cat", _cat_lib)
 	add_child(root)
@@ -2679,7 +2943,7 @@ func _make_cat(home: Dictionary, opts := {}) -> Dictionary:
 	snd.volume_db = -14.0
 	snd.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	root.add_child(snd)
-	var cat := {"n": root, "anim": ap, "clip": "", "fur": f[0], "k": CAT_WALK / (CAT_STEP * sc), "p": p, "path": PackedVector2Array(), "i": 0,
+	var cat := {"n": root, "anim": ap, "clip": "", "fur": f[0], "mat": fmat, "k": CAT_WALK / (CAT_STEP * sc), "p": p, "path": PackedVector2Array(), "i": 0,
 		"state": "sit", "t": rg.randf_range(2, 6), "home": home["id"], "yaw": rg.randf() * TAU, "walk": 0.0, "ph": rg.randf() * TAU,
 		"snd": snd, "meow_t": rg.randf_range(10, 60)}
 	_cat_place(cat)
@@ -2740,6 +3004,8 @@ func _cat_anim(c: Dictionary) -> void:
 	if c["clip"] != cl[0]:
 		ap.play("cat/" + String(cl[0]), 0.0 if c["clip"] == "" else 0.35)
 		c["clip"] = cl[0]
+		if c.has("mat"):
+			(c["mat"] as ShaderMaterial).set_shader_parameter("sleep", 1.0 if cl[0] == "Sleep" else 0.0)   # спит — глаза закрыты
 	ap.speed_scale = game.speed * (float(c["k"]) if cl[0] == "Walk" else float(cl[1]))
 
 
@@ -2833,19 +3099,12 @@ func _cats_step(dt: float) -> void:
 
 # ---------- истории горожан (scripts/stories.gd): кошка, где ей спрятаться, люди для роликов ----------
 
-## Окрасить модель кошки: шерсть, грудка и лапки, розовые уши и нос
-static func _cat_paint(m: Node3D, f: Array) -> void:
-	for mi: MeshInstance3D in m.find_children("*", "MeshInstance3D", true, false):
-		for s in mi.mesh.get_surface_count():
-			var m0 := mi.mesh.surface_get_material(s)
-			var mn := m0.resource_name if m0 else ""
-			var col: Color = f[1] if mn == "White" else (Color("e3a3a3") if mn == "Pink" else f[0])
-			mi.set_surface_override_material(s, _cat_mat(col))
 
 
 ## Кошка без жизни на улице — для корзинки-украшения и портрета в облачке: модель окраса fur в позе clip
-## (Sleep, Sit, Pet), без звука и прогулок. Модели нет — кошка из Kit
-static func cat_node(fur: int, clip := "Sleep", seed_v := 0) -> Node3D:
+## (Sleep, Sit, Pet), без звука и прогулок. Модели нет — кошка из Kit. length — длина: по умолчанию как в корзинке,
+## в «Пересмотреть» — как на улице (CAT_LEN), чтобы Мурка в ролике не была меньше себя
+static func cat_node(fur: int, clip := "Sleep", seed_v := 0, length := CAT_LEN_BED) -> Node3D:
 	var f: Array = CAT_FURS[clampi(fur, 0, CAT_FURS.size() - 1)]
 	var root := Node3D.new()
 	if not _cat_model_ok():
@@ -2857,15 +3116,17 @@ static func cat_node(fur: int, clip := "Sleep", seed_v := 0) -> Node3D:
 			mi.material_override = mat
 			mi.position = e[1]
 			root.add_child(mi)
+		root.scale = Vector3.ONE * (length / CAT_LEN_BED)
 		return root
 	var m := _cat_scene.instantiate() as Node3D
 	m.rotation.y = -PI / 2
-	m.scale = Vector3.ONE * CAT_LEN / _cat_size * 0.95
+	m.scale = Vector3.ONE * length / _cat_size * 0.95
 	root.add_child(m)
-	_cat_paint(m, f)
+	var fmat := _cat_dress(m, fur)
 	var ap: AnimationPlayer = m.find_children("*", "AnimationPlayer", true, false)[0]
 	ap.add_animation_library("cat", _cat_lib)
 	var cl: Array = CAT_CLIP.get(clip.to_lower(), CAT_CLIP["sleep"])
+	fmat.set_shader_parameter("sleep", 1.0 if cl[0] == "Sleep" else 0.0)
 	ap.play("cat/" + String(cl[0]))
 	ap.speed_scale = float(cl[1])
 	ap.seek(float(seed_v % 1000) / 1000.0 * ap.current_animation_length, true)

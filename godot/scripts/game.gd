@@ -1274,7 +1274,7 @@ func _ponds_life() -> void:
 		for k in 2 + int(r / 6.0):
 			var swan := rng.randf() < 0.35
 			var mi := MeshInstance3D.new()
-			mi.mesh = Parts._special_mesh("#swan" if swan else "#duck")
+			mi.mesh = Parts._special_mesh("#swan" if swan else ("#duck" if k % 2 == 0 else "#duck_f"))   # селезни и уточки
 			add_child(mi)
 			swimmers.append({"n": mi, "c": c, "r": r * rng.randf_range(0.25, 0.5), "a": rng.randf() * TAU, "w": rng.randf_range(0.05, 0.12) * (1.0 if rng.randf() < 0.5 else -1.0), "ph": rng.randf() * TAU})
 
@@ -1383,25 +1383,95 @@ func _on_added(b: Dictionary) -> void:
 		_fest_look(true)                       # новый дом у дороги во время игр — шесты переставим, чтобы не торчали из стены
 
 
-## Стройка как в Town to City: здание вырастает из земли за пару секунд, в пыли; потом — настоящее
+## Стройка как в Town to City: здание вырастает из земли за пару секунд, в пыли; потом — настоящее.
+## Этап 4 (4.6): вокруг — леса (столбы, перекладины, лестница), этажи встают по одному, двое рабочих стучат молотками.
+## Не больше GROW_MAX строек с лесами разом (копия, ряд мышью — остальные растут коротко, как раньше); на ×3 — быстрее
+const GROW_MAX := 3
+var _grows := 0
+var _grow_live := {}                  # id стройки → [tween, призрак, леса] — снесли или отменили, пока растёт: убрать сразу
+
 func _grow_anim(b: Dictionary) -> void:
-	var g := Parts.ghost(city.blueprint(b), "place", Color(1.0, 0.95, 0.85, 0.35))
+	var bp := city.blueprint(b)
+	var g := Parts.ghost(bp, "place", Color(1.0, 0.95, 0.85, 0.35))
 	var xf := city.xf(b)
 	g.transform = xf
 	g.scale = Vector3(1.0, 0.04, 1.0)
 	add_child(g)
 	var id: int = b["id"]
+	var full: bool = _grows < GROW_MAX and city.def(b)["kind"] != "farm"
+	var dur := clampf(3.2 / maxf(1.0, speed), 1.3, 3.2) if full else 1.3
+	var scaf: Node3D = _scaffold(bp, xf) if full else null
+	if full:
+		_grows += 1
 	var tw := create_tween()
-	tw.tween_property(g, "scale", Vector3(1.0, 1.06, 1.0), 1.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_grow_live[id] = [tw, g, scaf]
+	if full:
+		# этажи — по одному: рывок вверх и короткая пауза (стучат молотки)
+		for k in 3:
+			tw.tween_property(g, "scale", Vector3(1.0, 0.04 + 1.02 * (k + 1) / 3.0, 1.0), dur * 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+			tw.tween_interval(dur * 0.09)
+	else:
+		tw.tween_property(g, "scale", Vector3(1.0, 1.06, 1.0), 1.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_property(g, "scale", Vector3.ONE, 0.18)
 	tw.tween_callback(func():
+		if (_grow_live.get(id, [null]) as Array)[0] == tw:
+			_grow_live.erase(id)
 		g.queue_free()
+		if scaf:
+			scaf.queue_free()
+			_grows -= 1
 		if city.buildings.has(id):
 			_show(city.buildings[id])
 			_puff(Vector3(b["pos"].x, float(b["y"]) + 0.3, b["pos"].y), Color("efe3c8")))
-	for k in 3:
-		get_tree().create_timer(0.35 * k).timeout.connect(func(): _puff(xf.origin + Vector3(randf_range(-1.5, 1.5), 0.2, randf_range(-1.5, 1.5)), Color("e8dcc4")))
+	var puffs := 7 if full else 3
+	for k in puffs:
+		get_tree().create_timer(dur / puffs * k).timeout.connect(func(): _puff(xf.origin + Vector3(randf_range(-1.5, 1.5), 0.2, randf_range(-1.5, 1.5)), Color("e8dcc4")))
 
+
+## Леса вокруг стройки (в осях постройки): столбы по углам, перекладины, лестница у фасада, двое рабочих с молотками
+func _scaffold(bp: Bp, xf: Transform3D) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	root.transform = xf
+	var bb: Array = _bounds(bp)
+	var top := minf(bp.top_y() * 0.85, 7.0)
+	var x0 := float(bb[0]) - 0.3
+	var x1 := float(bb[1]) + 0.3
+	var z0 := float(bb[2]) - 0.3
+	var z1 := float(bb[3]) + 0.3
+	var put := func(nm: String, at: Vector3, yaw: float, len: float, axis := 1) -> void:
+		var n := Synty.make(nm)
+		var box := Artisau.aabb(n)
+		var sz: float = [box.size.x, box.size.y, box.size.z][axis]
+		var k := len / maxf(0.01, sz)
+		n.position = at
+		if axis == 0:
+			var t := 0.16 / maxf(0.01, box.size.y)       # перекладина — от at во всю стройку, толщиной 16 см
+			n.scale = Vector3(k, t, t)
+			n.position -= Vector3(box.position.x * k, 0, 0)
+		else:
+			n.scale = Vector3.ONE * k
+		n.rotation.y = yaw
+		root.add_child(n)
+		for gi: GeometryInstance3D in n.find_children("*", "GeometryInstance3D", true, false):
+			gi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for c: Vector2 in [Vector2(x0, z0), Vector2(x1, z0), Vector2(x0, z1), Vector2(x1, z1)]:
+		put.call("SM_Prop_Pole_01", Vector3(c.x, 0, c.y), 0.0, top)
+	for zz: float in [z0, z1]:
+		for hh: float in [top * 0.45, top * 0.9]:
+			put.call("SM_Prop_Beam_01", Vector3(x0, hh, zz), 0.0, x1 - x0, 0)
+	put.call("SM_Prop_Ladder_01", Vector3(x1 - 0.6, 0, z1 + 0.15), 0.0, minf(top * 0.6, 3.2))
+	if people and people.props_on:
+		var rr := RandomNumberGenerator.new()
+		rr.seed = int(xf.origin.x * 13.0 + xf.origin.z * 7.0)
+		for k in 2:
+			var c := Citizen.create(rr, false, false, false, "", "plebs")
+			root.add_child(c)
+			c.position = Vector3(lerpf(x0, x1, 0.3 + 0.4 * k), 0, z1 + 0.7)
+			c.rotation.y = PI
+			c.play("Interact" if k == 0 else "Interact_M", 0.0, rr.randf())
+			HandProps.hold(c, ["hammer"], "Interact" if k == 0 else "Interact_M")
+	return root
 
 func _show(b: Dictionary) -> void:
 	_hide(b)
@@ -1413,6 +1483,8 @@ func _show(b: Dictionary) -> void:
 	if lit:
 		subst["#dark"] = "#lit"
 	var vis := {"h": parts.place(bp, xf, subst), "lights": [], "smoke": [], "actors": []}
+	if city.apron_of(b) == 2:                  # домус, храм: каменный бордюр вокруг (у домов и лавок — глина, Land.wear)
+		(vis["h"] as Array).append_array(parts.place(Kerb.blueprint(bp), xf))
 	for lp in bp.lights:
 		vis["lights"].append(_light(xf * lp, HOUSE_LIGHT if city.is_house(b) else 1.0))
 	var lived: bool = not city.is_house(b) or int(b["pop"]) > 0
@@ -1445,7 +1517,21 @@ func _hide(b: Dictionary) -> void:
 	visuals.erase(b["id"])
 
 
+## Стройку отменили, снесли или перенесли, пока она росла: призрак, леса и рабочие уходят сразу (не стучат на пустом месте)
+func _grow_cancel(id: int) -> void:
+	var e: Array = _grow_live.get(id, [])
+	if e.is_empty():
+		return
+	_grow_live.erase(id)
+	(e[0] as Tween).kill()
+	(e[1] as Node).queue_free()
+	if e[2] != null:
+		(e[2] as Node).queue_free()
+		_grows -= 1
+
+
 func _on_removed(b: Dictionary) -> void:
+	_grow_cancel(int(b["id"]))
 	_hide(b)
 	_puff(Vector3(b["pos"].x, b["y"], b["pos"].y))
 	if selected.get("id", -1) == b["id"]:
@@ -1473,7 +1559,7 @@ static var _sheep_scene: PackedScene
 ## Две овечки пасутся (модель Quaternius CC0)
 func _sheep(b: Dictionary, vis: Dictionary) -> void:
 	if _sheep_scene == null:
-		_sheep_scene = load("res://assets/animals/Sheep_a.glb")
+		_sheep_scene = Fauna.sheep_scene()      # овца Quaternius со своим «пасётся» (fauna.gd)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(b["id"])
 	for k in 2:
@@ -1486,14 +1572,11 @@ func _sheep(b: Dictionary, vis: Dictionary) -> void:
 		var p: Vector2 = (b["pos"] as Vector2) + off
 		sh.position = Vector3(p.x, land.height_at(p.x, p.y), p.y)
 		sh.rotation.y = rng.randf() * TAU
-		var ap: AnimationPlayer = sh.find_children("*", "AnimationPlayer", true, false)[0] if not sh.find_children("*", "AnimationPlayer", true, false).is_empty() else null
-		if ap:
-			for a in ap.get_animation_list():
-				if String(a).ends_with("Eating") or String(a).ends_with("Idle_Eating") or String(a) == "Eating":
-					ap.get_animation(a).loop_mode = Animation.LOOP_LINEAR
-					ap.play(a)
-					ap.seek(rng.randf() * 2.0, true)
-					break
+		var an: Array = Fauna.sheep_anim(sh)
+		var ap: AnimationPlayer = an[0]
+		if ap and String(an[1]) != "":
+			ap.play(an[1])
+			ap.seek(rng.randf() * ap.current_animation_length, true)    # пасутся не в лад
 		if not vis.has("pets"):
 			vis["pets"] = []
 		vis["pets"].append(sh)
@@ -1546,7 +1629,8 @@ func _sync_actors(b: Dictionary) -> void:
 	var xf := city.xf(b)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(b["id"]) * 7919 + int(b["tier"])
-	for a: Array in bp.actors:
+	for ai in bp.actors.size():
+		var a: Array = bp.actors[ai]
 		var who: String = a[3]
 		var model := ""
 		if who == "soldier":
@@ -1565,6 +1649,8 @@ func _sync_actors(b: Dictionary) -> void:
 		var cur := c.anim.current_animation
 		if cur != "":
 			c.anim.seek(rng.randf() * c.anim.get_animation(cur).length, true)
+		if people and people.props_on:
+			HandProps.hold(c, HandProps.work(b["type"], ai), String(a[2]))     # стража у станции — с копьём и щитом
 		vis["actors"].append(c)
 
 
