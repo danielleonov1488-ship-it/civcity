@@ -319,7 +319,7 @@ func _legion_gate() -> void:
 	var t5 := L.lock_text()
 	S["active"] = {}
 	var t6 := L.lock_text()
-	_check(t0.contains("станет «Хутор»") and t1.contains("после истории «Где Мурка?»") and t2.contains("скоро придёт") and not t2.contains("Хутор")
+	_check(t0.contains("станет «Хутор»") and t1.contains("после истории «Где Мася?»") and t2.contains("скоро придёт") and not t2.contains("Хутор")
 		and t3.contains("свиток") and t4.contains("отложили") and t5.contains("после истории «Течь") and t6.contains("скоро придёт") and not t6.contains("Хутор"),
 		"подсказка медальона: «%s» / «%s» / «%s» / «%s» / «%s» / «%s»" % [t0.get_slice("— ", 1), t1.get_slice("— ", 1), t2.get_slice("— ", 1), t3.get_slice("— ", 1), t4.get_slice("— ", 1), t5.get_slice("— ", 1)])
 	c.research["legion"] = true                   # открыт историей «Разбойники у арки»

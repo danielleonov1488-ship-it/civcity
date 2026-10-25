@@ -172,7 +172,14 @@ func _new() -> void:
 	game.people._cat_anim(cat)
 	check(float((cat["mat"] as ShaderMaterial).get_shader_parameter("sleep")) == 0.0, "проснулась — глаза открыты")
 	var fur0 := (game.people._make_cat(a, {"fur": 0, "p": Vector2(X0 - 9.0, Z0 + 0.5)})["mat"] as ShaderMaterial)
-	check(int(fur0.get_shader_parameter("pattern")) == 1 and (fur0.get_shader_parameter("fur") as Color).is_equal_approx(People.CAT_FURS[0][0]), "Мурка (окрас 0) — рыжая тигровая")
+	check(int(fur0.get_shader_parameter("pattern")) == 1 and (fur0.get_shader_parameter("fur") as Color).is_equal_approx(People.CAT_FURS[0][0])
+		and fur0.get_shader_parameter("sheen") == null, "окрас 0 (кошка в корзинке) — рыжая тигровая, без отлива")
+	# Мася из «Где Мася?» (Д15): чёрная, жёлтые глаза, отлив по краю; случайным кошкам города её окрас не выпадает
+	var masya := (game.people._make_cat(a, {"fur": People.CAT_MASYA, "p": Vector2(X0 - 8.0, Z0 + 0.5)})["mat"] as ShaderMaterial)
+	var mc := masya.get_shader_parameter("fur") as Color
+	var me := masya.get_shader_parameter("eye_col") as Color
+	check(mc.get_luminance() < 0.15 and int(masya.get_shader_parameter("pattern")) == 0 and me.r > 0.8 and me.g > 0.6 and float(masya.get_shader_parameter("sheen")) > 0.3
+		and People.CAT_MASYA >= People.CAT_FURS.size(), "Мася — чёрная, глаза жёлтые, отлив по краю; окрас не из случайных (%s)" % mc)
 	var bed := People.cat_node(0, "Sleep", 5)
 	check(float((bed.get_child(0).get_meta("fur_mat") as ShaderMaterial).get_shader_parameter("sleep")) == 1.0, "кошка в корзинке спит с закрытыми глазами")
 	var big := People.cat_node(0, "Sit", 3, People.CAT_LEN)

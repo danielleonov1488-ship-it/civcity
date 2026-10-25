@@ -1,5 +1,5 @@
 extends Node
-## Проверка «Историй горожан» (scripts/stories.gd) и первой истории «Где Мурка?»:
+## Проверка «Историй горожан» (scripts/stories.gd) и первой истории «Где Мася?» (Д15: чёрная Мася, ищет девушка Мария):
 ## часы историй идут после обучения, первая — через FIRST_H, между историями — GAP_H; ранг; предложение и «Отложить»;
 ## одна история за раз; ролик просьбы (облачко с портретом, выбор), rank_cine.calm() — false в ролике; место поисков
 ## теснее через 3 ч, след лапки через 6 ч; щелчок по кошке (34 точки); ролик встречи; награда (украшение, строка счастья
@@ -27,7 +27,7 @@ extends Node
 ## выбор про деда (награда по выбору, журнал), балкон только на дом в 2–3 этажа; «Заказы старосты» — с «Хутора», сами не
 ## открываются (30 ч — камера на месте), точка на свёрнутом свитке, в счёт — после «Взяться», награда без денег, редкий облик,
 ## второй круг вдвое, «Другой заказ», заменить деревянные скамьи.
-## Д9 «Разбойники у арки»: первой остаётся «Мурка», в обучении — нет; медальон «Легион» серый с подсказкой; ролик у арки
+## Д9 «Разбойники у арки»: первой остаётся «Мася», в обучении — нет; медальон «Легион» серый с подсказкой; ролик у арки
 ## с телегой; шаг открывает «Легион» без очков, военный квартал подсвечен (в квартале ✓ / можно и здесь), одна стрелка;
 ## Казармы; «В бой!» из строки — учебный бой; награда без денег — «Сторожевой пост»; старый город с Легионом — без истории.
 var game
@@ -49,7 +49,9 @@ func _ready() -> void:
 			mode = kv[1]
 		if kv[0] == "out" and kv.size() > 1:
 			out = kv[1].trim_suffix("/") + "/"   # куда снимки (проверка под OpenGL — в свою папку)
-	Game.boot = {"play": "1"} if mode == "owner" else {"new": "1"}
+	if mode == "owner_old":
+		_old_cat_save()
+	Game.boot = {"play": "1"} if mode in ["owner", "owner_old"] else {"new": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()
@@ -122,14 +124,22 @@ func deco(type: String, at: Vector2) -> Dictionary:
 	return {}
 
 
-## Семья в дом (как после загрузки): жители, ребёнок — третий
+## Семья в дом (как после загрузки): жители; kid — третья взрослая дочь (Мария из «Где Мася?»)
 func settle(h: Dictionary, nm: String, kid := false) -> void:
 	var n := c.house_cap(h)
 	c.settled(int(h["id"]), n, nm)
 	var fam: Array = game.people._make_family(nm, n, int(h["id"]), c.door_point(h))
 	if kid and fam.size() >= 3:
-		fam[2]["child"] = true
-		fam[2]["female"] = false
+		fam[2]["child"] = false
+		fam[2]["female"] = true
+
+
+## Взрослая жительница семьи fam в доме home (Мария) — или {}
+func woman_of(fam: String, home: int) -> Dictionary:
+	for r in game.people.residents:
+		if r["fam"] == fam and int(r["home"]) == home and bool(r["female"]) and not bool(r["child"]):
+			return r
+	return {}
 
 
 ## Кто у Корнелиев (отладка)
@@ -237,6 +247,12 @@ func _run() -> void:
 		print("STORY DONE fails=", fails)
 		get_tree().quit()
 		return
+	if mode == "owner_old":
+		await _owner_old()
+		print("STORY DONE fails=", fails)
+		get_tree().quit()
+		return
+	await _new_game_no_legion()
 	if game.tutorial.active():
 		game.tutorial.step = Tutorial.STEPS.size()
 		game.tutorial.card.visible = false
@@ -291,6 +307,7 @@ func _run() -> void:
 	await _offer_flow()
 	await _search_and_find()
 	await _journal()
+	await _migrate_old()
 	await _skip_applies()
 	await _give_up()
 	await _save_mid_step()
@@ -339,13 +356,14 @@ func _timing() -> void:
 	c.level = 0
 	c._story_hour()
 	sto.tick()
-	check(sto.time_ok() and (S["offer"] as Dictionary).is_empty(), "4 ч, но ранг 0 (лачуги) — «Где Мурка?» не предлагают")
+	check(sto.time_ok() and (S["offer"] as Dictionary).is_empty(), "4 ч, но ранг 0 (лачуги) — «Где Мася?» не предлагают")
 	c.level = 1
 	var bell0: int = hud.bell_count
 	var notes0: int = hud.notes_box.get_child_count()
 	sto.tick()
-	check(String(S["offer"].get("id", "")) == "cat", "ранг «Хутор» — предложение «Где Мурка?» (%s)" % S["offer"])
-	check(int(S["offer"].get("home", -1)) == int(kid_home["id"]) and String(S["offer"].get("fam", "")) == kid_fam, "просит сын Корнелиев")
+	check(String(S["offer"].get("id", "")) == "cat", "ранг «Хутор» — предложение «Где Мася?» (%s)" % S["offer"])
+	check(int(S["offer"].get("home", -1)) == int(kid_home["id"]) and String(S["offer"].get("fam", "")) == kid_fam and String(S["offer"].get("kid", "")) == "Мария"
+		and bool(S["offer"].get("female", false)) and not bool(S["offer"].get("child", true)), "просит Мария из семьи Корнелиев (девушка, не ребёнок): %s" % S["offer"])
 	check(hud.bell_count == bell0 + 1 and hud.notes_box.get_child_count() == notes0, "событие — в колокольчике, всплывашки нет")
 	# промежуток после истории: GAP_H
 	S["last_h"] = 10
@@ -365,7 +383,7 @@ func _offer_flow() -> void:
 	await frames(30)
 	check(hud.badges.has("story"), "свиток над домом просящего")
 	var info: Dictionary = sto.row_info()
-	check(String(info.get("title", "")) == "Где Мурка?" and (info.get("buttons", []) as Array).size() == 2, "золотая строка: «%s» — %s" % [info.get("title"), info.get("text")])
+	check(String(info.get("title", "")) == "Где Мася?" and (info.get("buttons", []) as Array).size() == 2, "золотая строка: «%s» — %s" % [info.get("title"), info.get("text")])
 	hud.refresh()
 	await frames(2)
 	var has_row := false
@@ -406,12 +424,18 @@ func _offer_flow() -> void:
 	hud._badge_click("story")            # как щелчок по свитку над домом
 	check(sto.kit != null and sto.busy(), "щелчок по свитку — ролик")
 	check(not game.rank_cine.calm(), "пока идёт ролик истории, rank_cine.calm() — false")
-	var said: bool = await wait_beat("say", 6.0)
-	check(said, "реплика мальчика")
+	var said: bool = await wait_beat("say", 12.0)     # первый ролик игры: под нагрузкой (картинки построек) — дольше
+	check(said, "реплика Марии")
 	await frames(70)
 	sto.ui.finish_typing()
 	await frames(10)
-	check(sto.ui.panel != null and sto.ui.panel.modulate.a > 0.9 and sto.ui.name_lbl.text.begins_with(StoryDefs.boy(kid_fam)), "облачко: «%s», %s" % [sto.ui.name_lbl.text, sto.ui.role_lbl.text])
+	check(sto.ui.panel != null and sto.ui.panel.modulate.a > 0.9 and sto.ui.name_lbl.text == "Мария" and sto.ui.role_lbl.text == "дочь семьи Корнелиев",
+		"облачко: «%s», %s" % [sto.ui.name_lbl.text, sto.ui.role_lbl.text])
+	var ro: Dictionary = sto._role(sto.cine["bind"], "maria")
+	var act = sto.cine.get("actors", {}).get("maria")
+	check(bool(ro.get("female", false)) and not bool(ro.get("child", true)) and act is Citizen and (act as Citizen).scale.y > Citizen.SIZE * 0.9,
+		"в ролике и на портрете — девушка, не ребёнок (%s)" % ro)
+	check(String(sto.ui.text_lbl.text).contains("Мася") and String(sto.ui.text_lbl.text).contains("Чёрная"), "Мария: «%s»" % sto.ui.text_lbl.text)
 	check(sto.ui.face_tex.texture is ViewportTexture, "портрет — живая голова (SubViewport)")
 	await shot("story_ask.png")
 	# дальше до выбора
@@ -421,12 +445,12 @@ func _offer_flow() -> void:
 		await frames(3)
 		sto._next()
 		await frames(10)
-	check(sto.ui.choosing() and sto.ui.pills.get_child_count() == 2, "выбор: «Найдём её вместе!» / «Чуть позже, малыш»")
+	check(sto.ui.choosing() and sto.ui.pills.get_child_count() == 2, "выбор: «Найдём её вместе!» / «Чуть позже, Мария»")
 	await frames(30)
 	await shot("story_choice.png")
 	(sto.ui.pills.get_child(0) as Button).pressed.emit()
 	await frames(5)
-	check(String(sto.cine.get("choice", "")) == "go" and sto.ui.text_lbl.text.begins_with("Ура!"), "выбрали помочь — мальчик отвечает")
+	check(String(sto.cine.get("choice", "")) == "go" and sto.ui.text_lbl.text.begins_with("Спасибо тебе!"), "выбрали помочь — Мария отвечает: «%s»" % sto.ui.text_lbl.text)
 	await play_through(10.0)
 	var ended: bool = await wait_kit(false, 4.0)
 	check(ended, "ролик кончился")
@@ -446,6 +470,10 @@ func _search_and_find() -> void:
 	var S := c.stories
 	var A: Dictionary = S["active"]
 	check(not sto.cat.is_empty() and sto.cat.has("story"), "кошка истории спряталась")
+	var fm: ShaderMaterial = sto.cat.get("mat")
+	check(int(A.get("fur", -1)) == People.CAT_MASYA and String(A.get("cat_name", "")) == "Мася" and fm != null
+		and (fm.get_shader_parameter("fur") as Color).get_luminance() < 0.15 and float(fm.get_shader_parameter("sheen")) > 0.0,
+		"прячется чёрная Мася с отливом по краю (окрас %d, %s)" % [int(A.get("fur", -1)), A.get("cat_name", "")])
 	var door: Vector2 = c.door_point(kid_home)
 	var sp: Vector2 = sto.cat["p"]
 	var dd := sp.distance_to(door)
@@ -464,7 +492,7 @@ func _search_and_find() -> void:
 	# мяу: звук в мире и подпись
 	sto.meow()
 	check(sto.cat["state"] == "sit", "мяукнула — села")
-	# снимок: место поисков сверху (между домом мальчика и пятном — видны и следы лапок)
+	# снимок: место поисков сверху (между домом Марии и пятном — видны и следы лапок)
 	var ac := (Vector2(float(a0[0]), float(a0[1])) + door) * 0.5
 	game.rig.set_view(Vector3(ac.x, Land.BASE_Y, ac.y), 200.0, 55.0, 62.0)
 	await frames(40)
@@ -483,6 +511,16 @@ func _search_and_find() -> void:
 	game.rig.set_view(Vector3(ac1.x, Land.BASE_Y, ac1.y), 200.0, 50.0, 40.0)
 	await frames(40)
 	await shot("story_search_6h.png")
+	# крупно: чёрная Мася спит в укрытии (отлив по краю), потом мяукнула и села — жёлтые глаза
+	var cpos: Vector3 = sto._cat_pos()
+	game.rig.set_view(Vector3(cpos.x, Land.BASE_Y, cpos.z), 200.0, 34.0, 6.5)
+	await frames(40)
+	await shot("story_masya_hidden.png")
+	sto.meow()
+	await frames(30)
+	await shot("story_masya_meow.png")
+	game.rig.set_view(Vector3(ac1.x, Land.BASE_Y, ac1.y), 200.0, 50.0, 40.0)
+	await frames(10)
 	# щелчок: мимо (40 точек) — нет; рядом (20 точек) — нашли
 	var cam: Camera3D = game.rig.cam
 	var cp: Vector2 = cam.unproject_position(sto._cat_pos() + Vector3(0, 0.18, 0))
@@ -501,7 +539,7 @@ func _search_and_find() -> void:
 		check(String(S["done"]["cat"].get("text", "")).contains("+25 очков исследований"), "в награде — +25 очков")
 	var line := ""
 	for e: Array in kid_home["happy_parts"]:
-		if String(e[0]).begins_with("Мурка снова дома"):
+		if String(e[0]).begins_with("Мася снова дома"):
 			line = "%s %+d" % [e[0], e[1]]
 	check(line.contains("+8") and line.contains("ещё 3"), "строка счастья дома: «%s»" % line)
 	check(int(kid_home["happy"]) == happy0 + 8 or int(kid_home["happy"]) >= 100, "счастье дома +8 (%d → %d)" % [happy0, int(kid_home["happy"])])
@@ -520,7 +558,7 @@ func _search_and_find() -> void:
 	for cc in game.people.cats:
 		if cc.has("named") and not cc.has("story"):
 			named += 1
-	check(named == 1 and sto.cat.is_empty(), "Мурка теперь живёт у Корнелиев (кошек-наград: %d)" % named)
+	check(named == 1 and sto.cat.is_empty(), "Мася теперь живёт у Корнелиев (кошек-наград: %d)" % named)
 	check(not hud.badges.has("story_paw") and sto._glow == null, "значки и пятно убраны")
 	check(int(S["last_h"]) >= 0 and int(S["h"]) - int(S["last_h"]) <= 1, "часы до следующей истории пошли (last_h=%d, h=%d)" % [int(S["last_h"]), int(S["h"])])
 	# корзинка в мире: с кошкой внутри
@@ -538,7 +576,7 @@ func _search_and_find() -> void:
 	c.compute()
 	var still := false
 	for e: Array in kid_home["happy_parts"]:
-		if String(e[0]).begins_with("Мурка"):
+		if String(e[0]).begins_with("Мася"):
 			still = true
 	check(not still and (S["bonus"] as Array).is_empty(), "через 3 дня бонус дома кончился")
 
@@ -553,7 +591,7 @@ func _journal() -> void:
 	var txt := ""
 	for l: Label in hud.journal_panel.find_children("*", "Label", true, false):
 		txt += l.text + " | "
-	check(txt.contains("Где Мурка?") and txt.contains("Кошачья корзинка"), "в журнале — история и награда")
+	check(txt.contains("Где Мася?") and txt.contains("Кошачья корзинка"), "в журнале — история и награда")
 	await shot("story_journal.png")
 	var btn: Button = null
 	for b: Button in hud.journal_panel.find_children("*", "Button", true, false):
@@ -568,6 +606,207 @@ func _journal() -> void:
 		press_key(KEY_ESCAPE)
 		var ended: bool = await wait_kit(false, 4.0)
 		check(ended and (c.stories["done"] as Dictionary).has("cat"), "Esc — пересмотр кончился, история на месте")
+
+
+# ---------- Д15: старое сохранение с «Где Мурка?» ----------
+
+## Строки колокольчика старого города с «Где Мурка?» (последняя — чужая, с тем же значком: её не трогаем)
+const OLD_BELL := [
+	{"day": 2, "icon": "cat", "text": "Маленький Луций из семьи Корнелиев чем-то расстроен — над их домом свиток с просьбой."},
+	{"day": 3, "icon": "cat", "text": "Луций сам нашёл Мурку — она дремала в укромном уголке. Кошка снова дома."},
+	{"day": 3, "icon": "cat", "text": "История «Где Мурка?» завершена. Луций сам нашёл Мурку — она дремала в укромном уголке. Кошка снова дома. Награда: украшение «Кошачья корзинка» (Украшения), дому Корнелиев +8% счастья на 3 дня, ещё одна кошка в городе."},
+	{"day": 3, "icon": "decor", "text": "Открыто украшение «Кошачья корзинка» (Украшения) — для истории «Где Мурка?»."},
+	{"day": 4, "icon": "cat", "text": "У дома семьи Юлиев теперь живёт кошка."}]
+
+## Пройденная и идущая история «cat», кошка-награда и строка счастья из старого сохранения — с новыми именами
+## (Мария, чёрная Мася), в журнале и «Пересмотреть» — тоже; второй раз загрузка ничего не меняет
+func _migrate_old() -> void:
+	print("== старое сохранение: «Где Мурка?» → «Где Мася?»")
+	var hid := int(kid_home["id"])
+	var old := {"h": 50, "last_h": 40,
+		"done": {"cat": {"day": 3, "h": 40, "home": hid, "fam": kid_fam, "kid": "Луций", "seed": 7, "cls": "plebs", "how": "self",
+			"cat_name": "Мурка", "fur": 0, "child": true, "female": false,
+			"text": "Луций сам нашёл Мурку — она дремала в укромном уголке. Кошка снова дома. Награда: украшение «Кошачья корзинка» (Украшения), дому Корнелиев +8% счастья на 3 дня, ещё одна кошка в городе."}},
+		"pets": [{"home": hid, "fur": 0, "name": "Мурка", "seed": 5}],
+		"bonus": [{"id": "cat", "line": "Мурка снова дома", "pct": 8, "left": 30, "fam": kid_fam}]}
+	var s := City.stories_load(JSON.parse_string(JSON.stringify(old)))
+	var e: Dictionary = s["done"]["cat"]
+	check(String(e["kid"]) == "Мария" and bool(e["female"]) and not bool(e["child"]) and String(e["cat_name"]) == "Мася" and int(e["fur"]) == People.CAT_MASYA
+		and String(e["text"]).begins_with("Мария сама нашла Масю") and String(e["text"]).contains("Награда: украшение «Кошачья корзинка»") and not String(e["text"]).contains("Мурк"),
+		"пройденная история — с новыми именами: «%s»" % e["text"])
+	var p0: Dictionary = s["pets"][0]
+	check(String(p0["name"]) == "Мася" and int(p0["fur"]) == People.CAT_MASYA, "кошка-награда «Мурка» стала чёрной Масей (%s)" % p0)
+	check(String(s["bonus"][0]["line"]) == "Мася снова дома", "строка счастья дома: «%s»" % s["bonus"][0]["line"])
+	var s2 := City.stories_load(JSON.parse_string(JSON.stringify(s)))
+	var e2: Dictionary = s2["done"]["cat"]
+	var p2: Dictionary = s2["pets"][0]
+	check(String(e2["kid"]) == String(e["kid"]) and String(e2["cat_name"]) == String(e["cat_name"]) and int(e2["fur"]) == int(e["fur"]) and String(e2["text"]) == String(e["text"])
+		and bool(e2["female"]) and String(p2["name"]) == String(p0["name"]) and int(p2["fur"]) == int(p0["fur"]) and String(s2["bonus"][0]["line"]) == String(s["bonus"][0]["line"]),
+		"вторая загрузка ничего не меняет")
+	# идущая история: искали Мурку — теперь ищут чёрную Масю, просит Мария
+	var act := {"id": "cat", "step": 1, "t0": 45, "home": hid, "fam": kid_fam, "kid": "Луций", "seed": 7, "cls": "plebs", "child": true, "female": false,
+		"cat_name": "Мурка", "fur": 0, "flags": {}}
+	var sa := City.stories_load(JSON.parse_string(JSON.stringify({"h": 50, "active": act, "offer": {}})))
+	var a2: Dictionary = sa["active"]
+	check(String(a2.get("kid", "")) == "Мария" and String(a2.get("cat_name", "")) == "Мася" and int(a2.get("fur", -1)) == People.CAT_MASYA and bool(a2.get("female", false))
+		and not bool(a2.get("child", true)), "идущая история — ищем Масю, просит Мария (%s)" % a2)
+	var hint := StoryDefs.fill(String((StoryDefs.goal_step(StoryDefs.story("cat"), "find")["hints"] as Array)[0][1]), a2)
+	check(hint.begins_with("Мария:"), "подсказка — от Марии: «%s»" % hint)
+	# колокольчик старого города: просьба, «сам нашёл», «завершена», «для истории» — с новыми именами; чужое не трогаем
+	var evs: Array = JSON.parse_string(JSON.stringify(OLD_BELL))
+	StoryDefs.migrate_events(evs)
+	var bell := ""
+	for ev: Dictionary in evs:
+		bell += String(ev["text"]) + " | "
+	check(not bell.contains("Мурк") and not bell.contains("Маленький") and String(evs[0]["text"]).begins_with("Мария из семьи Корнелиев чем-то расстроена — над их домом свиток")
+		and String(evs[1]["text"]) == "Мария сама нашла Масю — та дремала в укромном уголке. Кошка снова дома."
+		and String(evs[2]["text"]).begins_with("История «Где Мася?» завершена. Мария сама нашла Масю — та дремала") and String(evs[2]["text"]).contains("Награда: украшение")
+		and String(evs[3]["text"]).ends_with("для истории «Где Мася?».") and String(evs[3]["icon"]) == "decor"
+		and String(evs[0]["icon"]) == "cat_black" and String(evs[2]["icon"]) == "cat_black"
+		and String(evs[4]["text"]) == String(OLD_BELL[4]["text"]) and String(evs[4]["icon"]) == "cat", "колокольчик старого города: %s" % bell)
+	var evs2: Array = evs.duplicate(true)
+	StoryDefs.migrate_events(evs2)
+	check(evs2 == evs, "колокольчик: вторая загрузка ничего не меняет")
+	# в городе: кошка-награда — чёрная Мася; журнал и «Пересмотреть» — по-новому
+	var keep: Dictionary = c.stories
+	c.stories = s
+	var n0: int = game.people.cats.size()
+	sto._restore()
+	var pet: Dictionary = game.people.cats[-1] if game.people.cats.size() > n0 else {}
+	var pm: ShaderMaterial = pet.get("mat")
+	check(String(pet.get("named", "")) == "Мася" and pm != null and (pm.get_shader_parameter("fur") as Color).get_luminance() < 0.15,
+		"после загрузки у дома гуляет чёрная Мася (%s)" % pet.get("named", ""))
+	# портрет в карточке кошки — по номеру окраса (cat_node(cat_fi)): чёрная Мася, а не рыжая (и у кошки без «fi» — по цвету)
+	var pf := People.cat_fi(pet)
+	var pn := People.cat_node(pf, "Pet", 7)
+	var pmats := pn.find_children("*", "MeshInstance3D", true, false).map(func(mi): return (mi as MeshInstance3D).get_active_material(0)) \
+		.filter(func(mt): return mt is ShaderMaterial)
+	var pcol: Color = (pmats[0] as ShaderMaterial).get_shader_parameter("fur") if not pmats.is_empty() else Color.WHITE
+	check(pf == People.CAT_MASYA and int(pet.get("fi", -1)) == People.CAT_MASYA and People.cat_fi({"fur": pet["fur"]}) == People.CAT_MASYA
+		and pcol.is_equal_approx(People.CAT_MASYA_FUR[0]), "портрет Маси — чёрный (окрас %d, шерсть %s)" % [pf, pcol.to_html(false)])
+	pn.free()
+	hud.refresh()
+	sto.ui.open_journal()
+	await frames(20)
+	var txt := ""
+	for l: Label in hud.journal_panel.find_children("*", "Label", true, false):
+		txt += l.text + " | "
+	check(txt.contains("Где Мася?") and txt.contains("Мария сама нашла Масю") and not txt.contains("Мурк"), "журнал старого города: «Где Мася?», Мария и Мася")
+	await shot("story_migrated_journal.png")
+	hud.journal_panel.visible = false
+	# ролик начнётся, когда мир свободен (can_start: прошлый ролик закрылся) — под нагрузкой всего набора это не сразу
+	var t0 := Time.get_ticks_msec()
+	while not sto.can_start() and Time.get_ticks_msec() - t0 < 5000:
+		await get_tree().process_frame
+	sto.replay("cat")
+	var started := not sto.cine.is_empty()
+	var said: bool = await wait_beat("say", 12.0)
+	var who: Dictionary = sto._speaker("maria") if not sto.cine.is_empty() else {}
+	var cw: Dictionary = sto._speaker("cat") if not sto.cine.is_empty() else {}
+	check(said and String(who.get("name", "")) == "Мария" and bool(who.get("female", false)) and not bool(who.get("child", true))
+		and String(cw.get("name", "")) == "Мася" and int(cw.get("fur", -1)) == People.CAT_MASYA,
+		"«Пересмотреть»: Мария (девушка) и чёрная Мася (ролик %s, реплика %s, %s / %s)" % [started, said, who.get("name", ""), cw.get("name", "")])
+	press_key(KEY_ESCAPE)
+	await wait_kit(false, 4.0)
+	for cc in game.people.cats.duplicate():
+		if cc.has("named"):
+			game.people.drop_cat(cc)
+	c.stories = keep
+
+
+const OWNER := "D:/CivCity/.work/owner_save/city.json"
+
+
+## Город владельца со старой «Где Мурка?» (пройдена, кошка-награда «Мурка», бонус дома) — в папку сохранений
+## этого запуска (у каждого запуска gpu_run — своя)
+func _old_cat_save() -> void:
+	if not FileAccess.file_exists(OWNER):
+		return
+	var d: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(OWNER))
+	var home := -1
+	var fam := ""
+	for b: Dictionary in d.get("buildings", []):
+		if String(b.get("type", "")).begins_with("house") and not (b.get("families", []) as Array).is_empty():
+			home = int(b["id"])
+			fam = String(b["families"][0]["name"])
+			break
+	d["stories"] = {"v": 1, "h": 120, "last_h": 110, "active": {}, "offer": {}, "later": {}, "orders": {}, "granted": {},
+		"done": {"cat": {"day": 3, "h": 40, "home": home, "fam": fam, "kid": "Луций", "seed": 7, "cls": "plebs", "how": "found",
+			"cat_name": "Мурка", "fur": 0, "text": "Награда: украшение «Кошачья корзинка» (Украшения), дому семьи +8% счастья на 3 дня, +25 очков исследований, ещё одна кошка в городе."}},
+		"bonus": [{"id": "cat", "line": "Мурка снова дома", "pct": 8, "left": 30, "fam": fam}],
+		"pets": [{"home": home, "fur": 0, "name": "Мурка", "seed": 5}]}
+	var evs: Array = d.get("events", [])
+	evs.append_array(OLD_BELL)                 # и в колокольчике — старые строки «Где Мурка?»
+	d["events"] = evs
+	DirAccess.make_dir_recursive_absolute(GamePaths.save_dir())
+	var f := FileAccess.open(GamePaths.save_dir().path_join("city.json"), FileAccess.WRITE)
+	f.store_string(JSON.stringify(d, "", false, true))
+	f.close()
+
+
+## mode=owner_old — город владельца, в сохранение которого вписана старая «Где Мурка?» (пройдена, кошка-награда
+## «Мурка», бонус дома): после загрузки с диска — Мария и чёрная Мася в журнале, у дома гуляет чёрная Мася
+func _owner_old() -> void:
+	var S := c.stories
+	var e: Dictionary = (S["done"] as Dictionary).get("cat", {})
+	check(String(e.get("kid", "")) == "Мария" and String(e.get("cat_name", "")) == "Мася" and int(e.get("fur", -1)) == People.CAT_MASYA
+		and not String(e.get("text", "")).contains("Мурк"), "город владельца со старой «Мурка»: %s" % e)
+	var pet := {}
+	for cc in game.people.cats:
+		if String(cc.get("named", "")) != "":
+			pet = cc
+	var pm: ShaderMaterial = pet.get("mat")
+	check(String(pet.get("named", "")) == "Мася" and pm != null and (pm.get_shader_parameter("fur") as Color).get_luminance() < 0.15,
+		"у дома гуляет чёрная Мася (%s)" % pet.get("named", ""))
+	var line := ""
+	for b: Dictionary in S["bonus"]:
+		line += String(b.get("line", ""))
+	check(line == "Мася снова дома", "строка счастья: «%s»" % line)
+	var bell := ""
+	var fin := ""
+	for ev: Dictionary in c.events:
+		bell += String(ev.get("text", "")) + " | "
+		if String(ev.get("text", "")).begins_with("История «Где Мася?» завершена"):
+			fin = String(ev["text"]) + " [" + String(ev.get("icon", "")) + "]"
+	check(not bell.contains("Мурк") and fin.contains("Мария сама нашла Масю") and fin.ends_with("[cat_black]"), "колокольчик города владельца: «%s»" % fin)
+	hud.advisor_panel.visible = false
+	sto.ui.open_journal()
+	await frames(20)
+	var txt := ""
+	for l: Label in hud.journal_panel.find_children("*", "Label", true, false):
+		txt += l.text + " | "
+	check(txt.contains("Где Мася?") and txt.contains("Мария") and not txt.contains("Мурк"), "журнал: «Где Мася?», Мария")
+	await shot("story_owner_old_journal.png")
+	hud.journal_panel.visible = false
+	if not pet.is_empty():
+		var pp: Vector2 = pet["p"]
+		game.rig.set_view(Vector3(pp.x, Land.BASE_Y, pp.y), 200.0, 34.0, 7.0)
+		await frames(40)
+		await shot("story_owner_old_masya.png")
+
+
+# ---------- Д13: в новой игре Легиона нет ----------
+
+## Новая игра: ни зданий Легиона, ни бойцов в строю, окно закрыто; медальон серый — подсказка, что такое Легион
+## и что его строят сами (история «Разбойники у арки» откроет его)
+func _new_game_no_legion() -> void:
+	print("== новая игра: готового Легиона нет (Д13)")
+	var lg: Legion = c.legion
+	var mil := []
+	for id in c.buildings:
+		if String(c.def(c.buildings[id])["kind"]) == "military":
+			mil.append(String(c.buildings[id]["type"]))
+	var units := []
+	for t in Legion.UNIT_IDS:
+		if lg.available(t):
+			units.append(t)
+	await frames(3)
+	check(mil.is_empty() and units.is_empty() and not lg.window_open() and not c.research.has("legion") and lg.progress == 0 and lg.auto_squad().is_empty(),
+		"новая игра: зданий Легиона %s, бойцов в строю %s, окно закрыто — готового Легиона нет" % [mil, units])
+	var lu := LegionUi.of(hud)
+	var tip := lu.btn.tooltip_text if lu != null else ""
+	check(lu != null and lu.btn_wrap.visible and tip.contains("Разбойники у арки") and tip.contains("Готового Легиона нет") and tip.contains("построите"),
+		"медальон серый: «%s»" % tip)
 
 
 # ---------- пропуск ролика: действие всё равно случилось ----------
@@ -616,10 +855,10 @@ func _give_up() -> void:
 	check((S["done"] as Dictionary).is_empty(), "11 ч — ещё ищем")
 	S["h"] = int(A["t0"]) + 12
 	sto.tick()
-	check(String(S["done"].get("cat", {}).get("how", "")) == "self", "12 ч — мальчик нашёл сам")
+	check(String(S["done"].get("cat", {}).get("how", "")) == "self", "12 ч — Мария нашла сама")
 	check(is_equal_approx(c.rp, rp0), "без очков исследований")
 	check(c.research.has("s_cat") and (S["bonus"] as Array).size() == 1, "корзинка и счастье дома — есть")
-	check(c.events.size() == ev0 + 1 and String(c.events[-1]["text"]).contains("сам нашёл"), "колокольчик: «%s»" % c.events[-1]["text"])
+	check(c.events.size() == ev0 + 1 and String(c.events[-1]["text"]).contains("сама нашла Масю"), "колокольчик: «%s»" % c.events[-1]["text"])
 	check(sto.kit == null, "ролик сам не начался (без всплывашек)")
 
 
@@ -676,7 +915,7 @@ func _save_mid_step() -> void:
 	c.stories = City.stories_load(d2["stories"])
 	S = c.stories
 	sto._restore()
-	check(not sto.cat.is_empty() and (sto.cat["p"] as Vector2).distance_to(sp2) < 0.01, "после загрузки кошка там же (ждёт мальчика)")
+	check(not sto.cat.is_empty() and (sto.cat["p"] as Vector2).distance_to(sp2) < 0.01, "после загрузки кошка там же (ждёт Марию)")
 	check(not sto.try_click(game.rig.cam.unproject_position(sto._cat_pos())), "найденную кошку второй раз не находят")
 	game.rank_cine.pending = {}
 	sto.play_ready()
@@ -724,7 +963,7 @@ func _demolished() -> void:
 	# семья в новом доме — снова просит
 	kid_home = put("house_pleb", Vector2(172, 124))
 	check(rehouse(kid_home), "семья заселилась в новый дом")
-	check(not game.people.child_of(kid_fam, int(kid_home["id"])).is_empty(), "сын с ними")
+	check(not woman_of(kid_fam, int(kid_home["id"])).is_empty(), "Мария с ними")
 	S["last_h"] = -1
 	S["later"] = {}
 	sto._h_seen = -1
@@ -877,7 +1116,7 @@ func _owner() -> void:
 	c._story_hour()
 	sto.tick()
 	var o: Dictionary = S["offer"]
-	check(String(o.get("id", "")) == "cat", "4 ч — «Где Мурка?» (%s)" % o)
+	check(String(o.get("id", "")) == "cat", "4 ч — «Где Мася?» (%s)" % o)
 	if o.is_empty():
 		return
 	var h: Dictionary = c.buildings[int(o["home"])]
@@ -1089,7 +1328,7 @@ func _square() -> void:
 	sto._tried = ""
 	sto.tick()
 	var sq_can := not sto.can_offer(StoryDefs.story("square")).is_empty()
-	check(String(S0["offer"].get("id", "")) == "cat" and sq_can, "«Деревня»: просят «Где Мурка?», скверик тоже можно предложить")
+	check(String(S0["offer"].get("id", "")) == "cat" and sq_can, "«Деревня»: просят «Где Мася?», скверик тоже можно предложить")
 	sto.postpone()
 	var h0 := int(S0["h"])
 	var quiet := true
@@ -1102,7 +1341,7 @@ func _square() -> void:
 	S0["h"] = h0 + StoryDefs.LATER_H
 	sto._tried = ""
 	sto.tick()
-	check(String(S0["offer"].get("id", "")) == "cat", "через сутки — снова «Где Мурка?» (та, что отложили)")
+	check(String(S0["offer"].get("id", "")) == "cat", "через сутки — снова «Где Мася?» (та, что отложили)")
 	c.level = 1
 	fresh(1000, ["cat"])
 	var S := c.stories
@@ -1861,7 +2100,7 @@ func _framework() -> void:
 		"название с семьёй: «%s»" % StoryDefs.title_of(StoryDefs.story("crowded"), {"fam": "Фабии"}))
 	check(StoryDefs.fill("{ref.crowded.elder}", {"refs": {"crowded": StoryDefs.ref_of({"fam": "Фабии"})}}) == "%s Фабий" % StoryDefs.elder("Фабии"),
 		"имя из прошлой истории: «%s»" % StoryDefs.fill("{ref.crowded.elder}", {"refs": {"crowded": StoryDefs.ref_of({"fam": "Фабии"})}}))
-	# порядок списка — порядок предложения (план 7.3): Мурка, течь, скверик, ослик, тесно, свадьба
+	# порядок списка — порядок предложения (план 7.3): Мася, течь, скверик, ослик, тесно, свадьба
 	var ids := []
 	for sd: Dictionary in StoryDefs.STORIES:
 		ids.append(String(sd["id"]))
@@ -1952,12 +2191,12 @@ func _bandits() -> void:
 		"медальон «Легион» виден с начала — серый, подсказка: «%s»" % (lu.btn.tooltip_text if lu != null else ""))
 	check(Defs.unlock_text("legion").contains("Разбойники у арки") and c.can_research("legion").contains("Разбойники у арки") and not c.research_open("legion"),
 		"Казармы и «Легион» — «%s»; в свитке за очки не изучить" % Defs.unlock_text("legion"))
-	# первой — «Мурка»; в обучении — ничего
+	# первой — «Мася»; в обучении — ничего
 	fresh7(4200, [])
 	var S := c.stories
 	sto._tried = ""
 	sto.tick()
-	check(String(S["offer"].get("id", "")) == "cat", "на «Хуторе» первой — «Где Мурка?» (%s)" % S["offer"].get("id", ""))
+	check(String(S["offer"].get("id", "")) == "cat", "на «Хуторе» первой — «Где Мася?» (%s)" % S["offer"].get("id", ""))
 	c.tips["tut"] = 4
 	fresh7(4300, ["cat"])
 	S = c.stories
@@ -1965,7 +2204,7 @@ func _bandits() -> void:
 	sto.tick()
 	check((S["offer"] as Dictionary).is_empty(), "пока идёт обучение — историю не предлагают")
 	c.tips["tut"] = -1
-	# своя пауза после «Мурки» (gap_h, владелец: Легион почти со старта): «Разбойники» — вскоре, а не через GAP_H
+	# своя пауза после «Маси» (gap_h, владелец: Легион почти со старта): «Разбойники» — вскоре, а не через GAP_H
 	var gh := int(StoryDefs.story("bandits")["gap_h"])
 	var h0 := int(S["h"])
 	var l0 := int(S["last_h"])
@@ -1976,11 +2215,11 @@ func _bandits() -> void:
 	var due := sto.time_ok()
 	S["h"] = h0
 	S["last_h"] = l0
-	check(gh < StoryDefs.GAP_H and sto.gap_now() == gh and not early and due, "«Разбойники» — через %d ч после «Мурки» (не %d): раньше нельзя, потом — пора" % [gh, StoryDefs.GAP_H])
+	check(gh < StoryDefs.GAP_H and sto.gap_now() == gh and not early and due, "«Разбойники» — через %d ч после «Маси» (не %d): раньше нельзя, потом — пора" % [gh, StoryDefs.GAP_H])
 	sto._tried = ""
 	sto.tick()
 	var o: Dictionary = S["offer"]
-	check(String(o.get("id", "")) == "bandits", "после «Мурки» — «Разбойники у арки» (%s)" % o.get("id", ""))
+	check(String(o.get("id", "")) == "bandits", "после «Маси» — «Разбойники у арки» (%s)" % o.get("id", ""))
 	if o.is_empty():
 		return
 	# ролик у арки: телега на обочине, переселенец рядом
@@ -1996,7 +2235,7 @@ func _bandits() -> void:
 		"ролик у арки: телега поставлена (%d), переселенец в %.1f м от арки" % [(sto.cine.get("props", []) as Array).size(), ap.distance_to(Land.GATE)])
 	check(sto.ui.role_lbl.text.begins_with("переселенец"), "просит переселенец: %s, %s" % [sto.ui.name_lbl.text, sto.ui.role_lbl.text])
 	await shot("story_bandits_ask.png")
-	await play_through(25.0)
+	await play_through(25.0, "", "", "choice", "story_bandits_choice.png")
 	await wait_kit(false, 4.0)
 	await frames(4)
 	var A: Dictionary = S["active"]
@@ -2017,7 +2256,12 @@ func _bandits() -> void:
 	# советник: военный квартал, один раз
 	hud.advisor_panel.visible = false
 	sto.tick()
-	check(c.tips.has("story_adv_bandits_barracks") and hud.adv_title.text == "Легион и военный квартал", "советник: «%s»" % hud.adv_title.text)
+	check(c.tips.has("story_adv_bandits_barracks") and hud.adv_title.text == StoryDefs.ADV_LEGION and hud.adv_text.text.contains("Готового Легиона нет")
+		and hud.adv_text.text.contains("Стрельбище") and hud.adv_text.text.contains("Улучшить") and hud.adv_text.text.contains("других городов"),
+		"советник: «%s» — что такое Легион и что его строят сами" % hud.adv_title.text)
+	await frames(10)
+	get_viewport().get_texture().get_image().save_png(out + "story_bandits_advice.png")   # с советником (shot() его прячет)
+	print("SHOT story_bandits_advice.png")
 	hud.advisor_panel.visible = false
 	# с Казармами в руках: в квартале ✓, вне его — можно и здесь
 	game.set_tool("barracks")
