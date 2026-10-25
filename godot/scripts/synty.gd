@@ -120,14 +120,14 @@ static func material(slot: String, remap := {}) -> Material:
 			m.albedo_color = tints[albedo]
 		var ap := _tex_path(albedo)
 		if ap != "":
-			m.albedo_texture = load(ap)
+			m.albedo_texture = Gfx.tex(ap)             # на «Очень низкой» — копия поменьше (scripts/gfx.gd)
 		else:
 			unknown["tex:" + albedo] = true
 		# у общей палитры карта рельефа от другого набора — без неё палитра чище (как у Synty)
 		var np := "" if normal.begins_with("PolygonAncientEmpire_") else _tex_path(normal)
 		if np != "":
 			m.normal_enabled = true
-			m.normal_texture = load(np)
+			m.normal_texture = Gfx.tex(np)
 			m.normal_scale = 0.6
 		# решётки окон: просветы прозрачные — за ними тёмная комната, ночью у жилых домов тёплый свет
 		if albedo.begins_with("Window"):
@@ -142,7 +142,7 @@ static func material(slot: String, remap := {}) -> Material:
 			m.cull_mode = BaseMaterial3D.CULL_DISABLED
 	else:
 		unknown[slot] = true
-		m.albedo_texture = load(_tex_path("PolygonAncientEmpire_01_A"))
+		m.albedo_texture = Gfx.tex(_tex_path("PolygonAncientEmpire_01_A"))
 	if remap.has("tint"):
 		m.albedo_color = remap["tint"]
 	_mats[mkey] = m

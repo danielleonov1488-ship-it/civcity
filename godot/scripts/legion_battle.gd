@@ -173,6 +173,8 @@ func _ready() -> void:
 	if game != null:
 		quality = String(game.settings.get("quality", "high"))
 	quality = String(opts.get("quality", quality))
+	if quality == "verylow":
+		quality = "low"                           # бой на «Очень низкой» — как на «Низкой»
 	speed = clampf(float(opts.get("speed", legion.flags.get("battle_speed", 1.0))), 1.0, 3.0)
 	zoom = clampf(float(opts.get("zoom", 1.0)), 0.3, 1.5)
 	_fonts()

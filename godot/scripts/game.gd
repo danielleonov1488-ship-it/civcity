@@ -22,6 +22,9 @@ var env: Environment
 var sky_mat: ProceduralSkyMaterial
 var grade: ShaderMaterial              # цветокоррекция кадра (тёплые света, прохладные тени)
 var chunk_nodes := {}
+var far_near: Array = []              # пейзаж за краем карты вблизи (рощи и кусты с тенью): на «Низкой» без тени
+var far_forest: Array = []            # дальние леса до горизонта: на «Очень низкой» не рисуются
+var gfx: Gfx                          # графика: выбор по видеокарте, сторож кадров, счётчик FPS (scripts/gfx.gd)
 var land_mat: ShaderMaterial
 var surf_img: Image
 var surf_tex: ImageTexture
@@ -52,6 +55,12 @@ var shot_path := ""
 var shot_frame := 200
 var frame := 0
 var autosave_t := 0.0
+var sim_ms := 0.0                     # сколько занял последний ход дня и последнее сохранение (F3, test_perf)
+var save_ms := 0.0
+var _hud_later := false               # идёт ход дня из кадра: окно города обновится в следующем кадре
+var _hud_due := false
+var _actors_due := false
+var _save_gen := 0                    # номер сохранения: автосохранение по кадрам не пишет поверх более нового
 var settings := {"fullscreen": false, "quality": "high", "ui_scale": 1.0, "autosave": true, "music": 0.55, "sfx": 0.7}
 var sound: Sound
 var place_color := -1                 # цвет будущей постройки (не меняется, пока курсор рядом)
@@ -260,14 +269,25 @@ func _ready() -> void:
 	hud = Hud.new()
 	hud.game = self
 	add_child(hud)
+	gfx = Gfx.new()
+	gfx.game = self
+	add_child(gfx)
 	city.event.connect(func(t, i): hud.notify(t, i))
 	city.quiet.connect(func(t, i): hud.bell(t, i))
 	if city.unread > 0 and mode in ["play", "new"]:
 		hud.bell_count += city.unread         # записано при загрузке (например, возврат очков) — только число на колокольчике
 		hud.bell_badge.text = str(hud.bell_count)
 	city.unread = 0
-	city.changed.connect(func(): hud.refresh())
-	city.changed.connect(_sync_all_actors)
+	city.changed.connect(func():
+		if _hud_later:
+			_hud_due = true                   # ход дня: окно — в следующем кадре (рывок кадра меньше)
+		else:
+			hud.refresh())
+	city.changed.connect(func():
+		if _hud_later:
+			_actors_due = true                # ход дня: люди у построек — тоже в следующем кадре
+		else:
+			_sync_all_actors())
 	city.changed.connect(_settle_refresh)
 	city.changed.connect(cover.refresh)       # подсветка охвата и «Обзор» — живые
 	city.family_came.connect(func(f): hud.on_arrival(f))
@@ -445,12 +465,14 @@ func settings_path() -> String:
 
 
 func _load_settings() -> void:
-	if FileAccess.file_exists(settings_path()):
+	var had := FileAccess.file_exists(settings_path())
+	if had:
 		var d = JSON.parse_string(FileAccess.get_file_as_string(settings_path()))
 		if typeof(d) == TYPE_DICTIONARY:
 			for k in d:
 				settings[k] = d[k]
 	if shot_path == "":
+		Gfx.first_launch(self, had)           # первый запуск — графика по видеокарте; кто уже играет — без перемен
 		_window_mode()
 
 
@@ -480,28 +502,13 @@ func apply_settings() -> void:
 	_apply_quality()
 	if hud:
 		hud.apply_scale(float(settings["ui_scale"]))
+	if gfx:
+		gfx.refresh()
 
 
+## Уровни графики «Высокая / Средняя / Низкая / Очень низкая» — scripts/gfx.gd (Средняя и Высокая — как были)
 func _apply_quality() -> void:
-	var q: String = settings["quality"]
-	if env == null:
-		return
-	env.sdfgi_enabled = q == "high"
-	env.ssil_enabled = q == "high"
-	env.ssao_enabled = q != "low"
-	env.glow_enabled = q != "low"
-	if sun:
-		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if q != "low" else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-		sun.directional_shadow_max_distance = 190.0 if q != "low" else 175.0
-	# слабые ноутбуки: картинка считается в 75% размера и аккуратно растягивается (FSR), без размытия глубины
-	var vp := get_viewport()
-	if vp and shot_path == "":
-		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR if q == "low" else Viewport.SCALING_3D_MODE_BILINEAR
-		vp.scaling_3d_scale = 0.75 if q == "low" else 1.0
-	if rig and rig.attrs:
-		rig.attrs.dof_blur_far_enabled = q != "low"
-		rig.attrs.dof_blur_near_enabled = q != "low"
-	Engine.max_fps = 60 if shot_path == "" else 0
+	Gfx.apply(self)
 
 
 # ---------- небо, солнце, свет, цвет ----------
@@ -838,7 +845,7 @@ func _horizon() -> void:
 		if not batches.has(key):
 			batches[key] = {"name": nm, "list": [], "shadow": false, "range": 0.0}
 		batches[key]["list"].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.45, 0.8)), Vector3(p.x, y - 0.3, p.y)))
-	_batch_mm(batches)
+	far_forest = _batch_mm(batches)
 
 
 ## Природа за краем карты вблизи (до 110 м): те же рощи (тот же шум лесов, что в _nature), одиночные деревья,
@@ -904,11 +911,12 @@ func _far_nature() -> void:
 		if not batches.has(key):
 			batches[key] = {"name": name, "list": [], "shadow": not small, "range": 150.0 if small else 0.0}
 		batches[key]["list"].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(x, y, z)))
-	_batch_mm(batches)
+	far_near = _batch_mm(batches)
 
 
-## Много одинаковых деталей одним MultiMesh на кусок: batches[ключ] = {name, list: [Transform3D], shadow, range}
-func _batch_mm(batches: Dictionary) -> void:
+## Много одинаковых деталей одним MultiMesh на кусок: batches[ключ] = {name, list: [Transform3D], shadow, range}; → узлы
+func _batch_mm(batches: Dictionary) -> Array:
+	var made := []
 	var srcs := {}
 	for key in batches:
 		var bt: Dictionary = batches[key]
@@ -943,6 +951,8 @@ func _batch_mm(batches: Dictionary) -> void:
 				mmi.visibility_range_end_margin = 20.0
 				mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			add_child(mmi)
+			made.append(mmi)
+	return made
 
 
 ## Скалы на крутых склонах (вместо голых стенок уступов)
@@ -1695,8 +1705,15 @@ func _process(dt: float) -> void:
 	if not ready_done:
 		return
 	frame += 1
+	if _hud_due:
+		_hud_due = false
+		hud.refresh()
+	if _actors_due:
+		_actors_due = false
+		_sync_all_actors()
 	_minimized_pause()
 	_rebuild_land()
+	land.save_warm()                          # отличия земли для сохранения — заранее, понемногу
 	_swim(dt)
 	var sdt := dt * speed
 	if speed > 0.0 and mode != "menu":
@@ -1706,10 +1723,10 @@ func _process(dt: float) -> void:
 			day_t += sdt
 			if day_t >= DAY_LEN / 24.0:
 				day_t -= DAY_LEN / 24.0
-				city.sim_day()
+				_sim_hour()
 		else:
 			if int(floor(nh)) != int(floor(h0)):
-				city.sim_day()
+				_sim_hour()
 			if nh >= 24.0:
 				city.day += 1
 			_set_hour(nh)
@@ -1736,7 +1753,7 @@ func _process(dt: float) -> void:
 			hud._menu_go(_autogo)
 	if autosave_t > 90.0 and can_save and settings.get("autosave", true) and moving.is_empty() and moving_nature.is_empty():
 		autosave_t = 0.0
-		save()
+		_autosave()
 	if shot_path != "" and frame == shot_frame:
 		var img := get_viewport().get_texture().get_image()
 		img.save_png(shot_path)
@@ -3629,16 +3646,63 @@ func save() -> void:
 		return
 	if not moving.is_empty() or not moving_nature.is_empty():
 		set_tool("")                          # перенос не закончен — вернуть на место, иначе постройка пропадёт
+	_save_gen += 1
+	_write_save(_save_data())
+
+
+func _save_data() -> Dictionary:
 	var data := city.save_data()
 	data["land"] = land.save_changes()
 	data["hour"] = hour
 	data["version"] = 2
+	return data
+
+
+func _write_save(data: Dictionary) -> void:
 	var s := JSON.stringify(data)
 	var f := FileAccess.open(save_path(), FileAccess.WRITE)
 	if f:
 		f.store_string(s)
 		f.close()
 	Account.me().after_save(s)                # и в облако (не чаще раза в минуту, при выходе — сразу)
+
+
+## Автосохранение в три кадра: данные города; земля (её отличия посчитаны заранее, land.save_warm) и строка; файл и
+## облако. Каждый кадр — втрое короче прежнего рывка. Сохранили иначе между кадрами — не пишем (save_ms — самый долгий)
+func _autosave() -> void:
+	_save_gen += 1
+	var gen := _save_gen
+	var t0 := Time.get_ticks_usec()
+	var data := city.save_data()
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	await get_tree().process_frame
+	if gen != _save_gen or not can_save or not is_inside_tree():
+		return
+	t0 = Time.get_ticks_usec()
+	data["land"] = land.save_changes()
+	data["hour"] = hour
+	data["version"] = 2
+	var s := JSON.stringify(data)
+	ms = maxf(ms, (Time.get_ticks_usec() - t0) / 1000.0)
+	await get_tree().process_frame
+	if gen != _save_gen or not can_save or not is_inside_tree():
+		return
+	t0 = Time.get_ticks_usec()
+	var f := FileAccess.open(save_path(), FileAccess.WRITE)
+	if f:
+		f.store_string(s)
+		f.close()
+	Account.me().after_save(s)
+	save_ms = maxf(ms, (Time.get_ticks_usec() - t0) / 1000.0)
+
+
+## Ход дня из кадра игры (окно города обновится в следующем кадре)
+func _sim_hour() -> void:
+	var t0 := Time.get_ticks_usec()
+	_hud_later = hud != null
+	city.sim_day()
+	_hud_later = false
+	sim_ms = (Time.get_ticks_usec() - t0) / 1000.0
 
 
 func _load() -> bool:

@@ -229,6 +229,7 @@ func generate() -> void:
 	base_kind = kind.duplicate()
 	dirty.clear()
 	touched.clear()
+	_save_dirty.clear()
 
 
 ## Своя земля новой игры — START_PLOTS (2×3 участка, ~24,6 тыс. м²): остальное покупается
@@ -273,6 +274,7 @@ func far_height(x: float, z: float) -> float:
 func _mark(i: int, j: int) -> void:
 	dirty[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
 	touched[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
+	_save_dirty[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
 	# стенки уступов на краю куска рисует соседний кусок
 	if i % CH == 0 and i > 0:
 		dirty[Vector2i((i - 1) / CH, clampi(j / CH, 0, CHN - 1))] = true
@@ -619,26 +621,72 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 # ---------- сохранение ----------
 
 func save_changes() -> Dictionary:
-	# сохраняем только клетки, отличающиеся от исходной карты
+	# сохраняем только клетки, отличающиеся от исходной карты; по кускам, которые не менялись с прошлого раза, —
+	# готовое (перебор всех клеток большого города — 60 мс, рывок кадра при автосохранении)
+	if not _save_dirty.is_empty() or _enc.is_empty():
+		_encode()
+	var plots := []
+	for p in owned:
+		plots.append([p.x, p.y])
+	return {"cells": _enc[0], "kinds": _enc[1], "hs": _enc[2], "plots": plots}
+
+
+## Отличия всех изменённых кусков — одной строкой base64 на массив (как в сохранении); пересчёт — только поменявшихся
+func _encode() -> void:
 	var cells := PackedInt32Array()
 	var kinds := PackedByteArray()
 	var hs := PackedFloat32Array()
 	for ch in _changed_chunks():
-		for j in range(ch.y * CH, ch.y * CH + CH):
-			for i in range(ch.x * CH, ch.x * CH + CH):
-				var k := idx(i, j)
-				if kind[k] != base_kind[k] or h[k] != base_h[k]:
-					cells.append(k)
-					kinds.append(kind[k])
-					hs.append(h[k])
-	var plots := []
-	for p in owned:
-		plots.append([p.x, p.y])
-	return {"cells": Marshalls.raw_to_base64(cells.to_byte_array()), "kinds": Marshalls.raw_to_base64(kinds),
-		"hs": Marshalls.raw_to_base64(hs.to_byte_array()), "plots": plots}
+		if _save_dirty.has(ch) or not _sc_cells.has(ch):
+			_save_chunk(ch)
+		cells.append_array(_sc_cells[ch])
+		kinds.append_array(_sc_kinds[ch])
+		hs.append_array(_sc_hs[ch])
+	_save_dirty.clear()
+	_enc = [Marshalls.raw_to_base64(cells.to_byte_array()), Marshalls.raw_to_base64(kinds), Marshalls.raw_to_base64(hs.to_byte_array())]
 
 
 var touched := {}                    # куски, где игрок что-то менял
+var _save_dirty := {}                # куски, поменявшиеся после того, как их отличия посчитаны (save_changes, save_warm)
+var _sc_cells := {}                  # кусок → его отличия от исходной карты: клетки, виды, высоты
+var _sc_kinds := {}
+var _sc_hs := {}
+var _enc := []                       # готовые строки сохранения [клетки, виды, высоты]; пусто — посчитать заново
+
+
+func _save_chunk(ch: Vector2i) -> void:
+	var cells := PackedInt32Array()
+	var kinds := PackedByteArray()
+	var hs := PackedFloat32Array()
+	for j in range(ch.y * CH, ch.y * CH + CH):
+		for i in range(ch.x * CH, ch.x * CH + CH):
+			var k := idx(i, j)
+			if kind[k] != base_kind[k] or h[k] != base_h[k]:
+				cells.append(k)
+				kinds.append(kind[k])
+				hs.append(h[k])
+	_sc_cells[ch] = cells
+	_sc_kinds[ch] = kinds
+	_sc_hs[ch] = hs
+	_save_dirty.erase(ch)
+	_enc = []
+
+
+## Понемногу каждый кадр (game._process): отличия поменявшихся кусков считаются заранее — к сохранению всё готово
+func save_warm(limit := 2) -> void:
+	if _save_dirty.is_empty():
+		if _enc.is_empty() and not touched.is_empty():
+			_encode()                    # все куски посчитаны — строки сохранения заранее (отдельным кадром)
+		return
+	var n := 0
+	for ch in _save_dirty.keys():
+		if not touched.has(ch):
+			_save_dirty.erase(ch)
+			continue
+		_save_chunk(ch)
+		n += 1
+		if n >= limit:
+			return
 
 
 func _changed_chunks() -> Array:
@@ -655,6 +703,7 @@ func load_changes(d: Dictionary) -> void:
 		h[k] = hs[n]
 		var ch := Vector2i((k % N) / CH, (k / N) / CH)
 		touched[ch] = true
+		_save_dirty[ch] = true
 		if walk_kind(kinds[n]):
 			road_chunks[ch] = true
 	owned.clear()
