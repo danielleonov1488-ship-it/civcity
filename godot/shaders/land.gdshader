@@ -10,6 +10,11 @@ uniform sampler2D tile_plaza_c : source_color, filter_linear_mipmap, repeat_enab
 uniform sampler2D tile_plaza_d : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D surf : filter_linear_mipmap, repeat_disable;   // R мостовая, G площадь, B тропа
 uniform float map_size = 256.0;
+// показ мазка до отпускания кнопки (game.gd): R — где ляжет дорога (или что уберёт ластик), G — куда денег не хватит.
+// prev_mode 0 — выключен (картинка как была), 1 — дорога вида prev_kind (4 мостовая, 5 площадь, 1 тропа), 2 — ластик
+uniform sampler2D surf_prev : filter_linear, repeat_disable;
+uniform int prev_mode = 0;
+uniform int prev_kind = 4;
 // пейзаж за краем карты (вид 8): те же 4 оттенка травы чужой земли (линейные), большая дорога на север
 uniform vec3 far_g0 = vec3(0.081, 0.120, 0.025);
 uniform vec3 far_g1 = vec3(0.100, 0.144, 0.030);
@@ -133,6 +138,32 @@ void fragment() {
 				t *= mix(0.82, 1.0, smoothstep(0.5, 0.64, m.g));
 				c = mix(c, t, w_plaza);
 				rough = mix(rough, 0.8, w_plaza);
+			}
+		}
+		if (prev_mode > 0 && !far && k != 2.0 && k != 7.0) {
+			float wob = vn(wpos.xz * 2.3) - 0.5;
+			vec2 pv = texture(surf_prev, wpos.xz / map_size).rg;
+			float wp = smoothstep(0.3, 0.6, pv.r + wob * 0.12);
+			float wr = smoothstep(0.3, 0.6, pv.g + wob * 0.12);
+			if (prev_mode == 1) {
+				// задуманная дорога: плитка её вида чуть светлее, по краю — светлая кайма
+				vec3 t;
+				if (prev_kind == 5) {
+					t = texture(tile_plaza_a, wpos.xz / 2.5).rgb;
+				} else if (prev_kind == 1) {
+					t = vec3(0.56, 0.39, 0.19) * (0.86 + 0.22 * vn(wpos.xz * 1.3));
+				} else {
+					t = texture(tile_road, wpos.xz / 2.5).rgb;
+				}
+				t *= 1.08;
+				float rim = smoothstep(0.08, 0.3, pv.r + pv.g) * (1.0 - smoothstep(0.35, 0.6, pv.r + pv.g));
+				c = mix(c, t, wp * 0.8);
+				c = mix(c, vec3(1.0, 0.96, 0.84), rim * 0.45);
+				// куда денег не хватит — красным
+				c = mix(c, mix(t, vec3(0.85, 0.22, 0.16), 0.6), wr * 0.8);
+			} else {
+				// ластик: дорога, которую он уберёт, — красным
+				c = mix(c, vec3(0.85, 0.22, 0.16), wp * 0.55);
 			}
 		}
 		if (far) {

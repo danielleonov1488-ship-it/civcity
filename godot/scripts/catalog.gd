@@ -17,8 +17,9 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 	var dd0: Dictionary = Defs.B.get(type, {})
 	if dd0.get("kind", "") == "decor":
 		# украшение всегда выглядит как его карточка: облик задаёт тип, а не цвет, место или фасад
+		# (у звена забора variant 1 — калитка)
 		tier = 0
-		variant = 0
+		variant = clampi(variant, 0, 1) if dd0.get("seg", false) else 0
 		color = int(dd0.get("color", 0))
 	var key := "%s:%d:%d:%d" % [type, tier, variant, color]
 	if _cache.has(key):
@@ -60,7 +61,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 		"pantheon": CatMonuments._pantheon(b)
 		"center": CatCivic._center(b, tier)
 		"barracks", "range", "spearcamp", "ballistae", "catapults": CatMilitary.make(b, type)
-		_: CatDecor._decor(b, type)
+		_: CatDecor._decor(b, type, variant)
 	b.base = Transform3D.IDENTITY
 	_actors(b, type, tier)
 	var dd: Dictionary = Defs.B.get(type, {})

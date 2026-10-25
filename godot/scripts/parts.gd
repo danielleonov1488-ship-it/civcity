@@ -288,6 +288,16 @@ func remove(handles: Array) -> void:
 		(g["free"] as Array).append(slot)
 
 
+## Спрятать (нулевой масштаб) или вернуть детали ручки на место xf — деревья под призраком постройки (game.gd, 3.7)
+func set_hidden(handles: Array, hidden: bool, xf := Transform3D.IDENTITY) -> void:
+	var zero := Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3(0, -100, 0))
+	for h in handles:
+		var g: Dictionary = h[0]
+		var slot: int = h[1]
+		for sub in g["subs"]:
+			(sub["mm"] as MultiMesh).set_instance_transform(slot, zero if hidden else xf * (sub["local"] as Transform3D))
+
+
 func count() -> int:
 	var n := 0
 	for k in groups:

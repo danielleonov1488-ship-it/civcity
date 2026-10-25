@@ -303,9 +303,13 @@ const B := {
 	"wall_banner_2": {"kind": "decor", "cat": "decor", "sub": "street", "base": "wall_banner", "look": 1, "name": "Полотнище на стене", "cost": 20, "deco": 3, "wall": true, "unlock": "deco_metal", "desc": "Полотнище с бахромой на перекладине — вешается на стену дома."},
 	"wall_banner_3": {"kind": "decor", "cat": "decor", "sub": "street", "base": "wall_banner", "look": 2, "name": "Два знамени на стене", "cost": 30, "deco": 3, "wall": true, "unlock": "deco_metal", "desc": "Два узких полотнища рядом на стене дома."},
 	# двор и рынок
-	"fence": {"kind": "decor", "cat": "decor", "sub": "yard", "unlock": "q_garden", "name": "Плетень", "cost": 5, "deco": 1, "desc": "Жердяной забор вокруг двора — ставьте рядами."},
+	# заборы (seg): тянут мышью, как дорогу, — звенья по линии; variant 1 — калитка (gate). menu: false — новых нет в витрине меню
+	"fence": {"kind": "decor", "cat": "decor", "sub": "yard", "unlock": "q_garden", "name": "Плетень", "cost": 5, "deco": 1, "seg": true, "gate": true, "desc": "Плетёный забор вокруг двора. Тяните мышью, как дорогу: звенья встанут по линии."},
 	"fence_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "fence", "look": 1, "unlock": "q_garden", "name": "Калитка", "cost": 10, "deco": 2, "desc": "Калитка между каменными столбиками с вазами."},
-	"fence_3": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "fence", "look": 2, "color": 1, "unlock": "q_garden", "name": "Садовая стенка", "cost": 15, "deco": 2, "desc": "Низкая оштукатуренная стенка с вазонами и плющом, как в Помпеях."},
+	"fence_3": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "fence", "look": 2, "color": 1, "unlock": "q_garden", "name": "Садовая стенка", "cost": 15, "deco": 2, "seg": true, "gate": true, "desc": "Низкая оштукатуренная стенка с вазонами и плющом, как в Помпеях. Тяните мышью, как дорогу."},
+	"fence_wood": {"kind": "decor", "cat": "decor", "sub": "yard", "unlock": "q_garden", "name": "Ограда", "cost": 6, "deco": 1, "seg": true, "gate": true, "menu": false, "desc": "Деревянные жерди между каменными столбиками. Тяните мышью, как дорогу: звенья встанут по линии."},
+	"hedge": {"kind": "decor", "cat": "decor", "sub": "yard", "unlock": "q_garden", "name": "Живая изгородь", "cost": 8, "deco": 2, "seg": true, "gate": true, "menu": false, "desc": "Подстриженная зелёная изгородь, в ней цветы. Тяните мышью, как дорогу."},
+	"stonewall": {"kind": "decor", "cat": "decor", "sub": "yard", "unlock": "q_garden", "name": "Каменная стенка", "cost": 12, "deco": 2, "seg": true, "gate": true, "menu": false, "desc": "Низкая стенка из камня с плитами поверху. Тяните мышью, как дорогу."},
 	"hay": {"kind": "decor", "cat": "decor", "sub": "yard", "unlock": "q_garden", "name": "Стог сена", "cost": 6, "deco": 1, "desc": "Копна, прислонённый сноп, мешок и коса."},
 	"hay_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "hay", "look": 1, "unlock": "q_garden", "name": "Большая копна", "cost": 6, "deco": 1, "desc": "Большая копна сена, корзина и мешки."},
 	"amphorae": {"kind": "decor", "cat": "decor", "sub": "yard", "unlock": "q_market", "name": "Амфоры", "cost": 10, "deco": 2, "desc": "Груда амфор с маслом и вином."},
@@ -591,6 +595,15 @@ static func research(id: String) -> Dictionary:
 
 
 ## Вид украшения, к которому относится облик («flowers_2» → «flowers»); у остальных построек — сам тип
+## Наземное украшение у стены дома меняет облик (3.10): фонарь на столбе — фонарь на стене, клумба — ящик под окном,
+## знамя на шесте — знамя на стене. Одна карточка — два облика, по тому, куда навели курсор
+const WALL_FORM := {"lamp_post": "wall_lamp", "lamp_post_2": "wall_lamp_2", "lamp_post_3": "wall_lamp",
+	"flowers": "wall_flowers", "flowers_2": "wall_flowers_2", "flowers_3": "wall_flowers_3",
+	"banner": "wall_banner", "banner_2": "wall_banner_2"}
+## Звено забора вдоль своей оси X (Catalog.DECOR × 2,5 м): так часто по линии встают звенья
+const FENCE_PITCH := 1.95
+
+
 static func base_of(type: String) -> String:
 	return String((B.get(type, {}) as Dictionary).get("base", type))
 

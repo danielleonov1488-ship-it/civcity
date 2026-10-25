@@ -18,6 +18,7 @@ var _target_t := target
 var _orbit := false
 var _pan := false
 var cine := false                    # камеру ведёт вступительный ролик: ввод и плавный ход выключены
+var ground_pick: Callable            # точка земли под курсором (game.gd): колёсико приближает к ней, а не к середине экрана
 
 const DIST_MIN := 4.0
 const DIST_MAX := 130.0
@@ -79,9 +80,9 @@ func _unhandled_input(e: InputEvent) -> void:
 		elif mb.button_index == MOUSE_BUTTON_RIGHT:
 			_pan = mb.pressed
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_dist_t = clampf(_dist_t * 0.88, DIST_MIN, DIST_MAX)
+			_zoom(0.88)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_dist_t = clampf(_dist_t / 0.88, DIST_MIN, DIST_MAX)
+			_zoom(1.0 / 0.88)
 	elif e is InputEventMouseMotion:
 		var mm := e as InputEventMouseMotion
 		if _orbit:
@@ -92,6 +93,25 @@ func _unhandled_input(e: InputEvent) -> void:
 			var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
 			var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
 			_target_t -= right * mm.relative.x * k + fwd * mm.relative.y * k
+
+
+## Колёсико: ближе или дальше к точке земли под курсором (как в Town to City) — она остаётся под курсором:
+## камера и её цель сдвигаются подобием относительно этой точки
+func _zoom(k: float) -> void:
+	var d1 := clampf(_dist_t * k, DIST_MIN, DIST_MAX)
+	var r := d1 / _dist_t
+	if ground_pick.is_valid() and absf(r - 1.0) > 1e-4:
+		var p = ground_pick.call()
+		if p is Vector2 and (p as Vector2).is_finite():
+			var g := Vector3((p as Vector2).x, _target_t.y, (p as Vector2).y)
+			_target_t = g + (_target_t - g) * r
+	_dist_t = d1
+
+
+## Двойной щелчок по постройке: камера плавно летит к ней (3.8)
+func fly_to(p: Vector3) -> void:
+	_target_t = Vector3(p.x, _target_t.y, p.z)
+	_dist_t = minf(_dist_t, 30.0)
 
 
 func _process(dt: float) -> void:

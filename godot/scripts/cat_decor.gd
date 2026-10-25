@@ -21,9 +21,10 @@ const TRUE_COLOR := Color(1, 1, 1)
 const BRONZE := Color(0.62, 0.45, 0.28)
 const GILT := Color(1.0, 1.02, 0.56)
 const LILY := Color(0.72, 0.93, 0.62)
+const HEDGE := Color(0.62, 0.86, 0.5)      # подстриженная изгородь — сочная зелень, а не жёлтый куст
 
 
-static func _decor(b: Bp, type: String) -> void:
+static func _decor(b: Bp, type: String, variant := 0) -> void:
 	b.door = Vector3(0, 0, 1.0)
 	var lk := int((Defs.B.get(type, {}) as Dictionary).get("look", 0))
 	match Defs.base_of(type):
@@ -40,7 +41,10 @@ static func _decor(b: Bp, type: String) -> void:
 		"wall_lamp": _wall_lamp(b, lk)
 		"wall_flowers": _wall_flowers(b, lk)
 		"wall_banner": _wall_banner(b, lk)
-		"fence": _fence(b, lk)
+		"fence": _fence(b, lk, variant)
+		"fence_wood": _fence_wood(b, variant)
+		"hedge": _hedge(b, variant)
+		"stonewall": _stonewall(b, variant)
 		"hay": _hay(b, lk)
 		"amphorae": _amphorae(b, lk)
 		"goods": _goods(b, lk)
@@ -365,7 +369,10 @@ static func _wall_banner(b: Bp, lk: int) -> void:
 
 ## Плетень: чистый жердяной забор (ставится рядами), калитка между каменными столбиками с вазами
 ## или низкая оштукатуренная садовая стенка в цвет дома с вазонами (как в Помпеях)
-static func _fence(b: Bp, lk: int) -> void:
+static func _fence(b: Bp, lk: int, gate := 0) -> void:
+	if gate == 1 and lk != 1:
+		_fence_gate(b, lk)
+		return
 	match lk:
 		0:
 			b.add("SM_Env_Fence_Woof_0%d" % (1 + b.rng.randi() % 3), Vector3(-1.25, 0, 0), 0.0)
@@ -384,6 +391,63 @@ static func _fence(b: Bp, lk: int) -> void:
 				b.add("SM_Prop_Vase_04", Vector3(px, 1.02, 0.0), _yaw(b), 0.5)
 				_bloom(b, Vector3(px, 1.02 + 0.26, 0.0), 0.15)
 			_ground_fp(b, 2.5, 0.45)
+
+
+## Калитка в заборе, протянутом мышью (variant 1): в плетне — плетёная калитка, в садовой стенке — калитка
+## между каменными столбиками с вазами (как карточка «Калитка»). Длина та же, что у звена
+static func _fence_gate(b: Bp, lk: int) -> void:
+	if lk == 0:
+		b.add("SM_Env_Fence_Woof_Gate_01", Vector3(-1.25, 0, 0), 0.0)
+		b.add("SM_Env_Grass_03", Vector3(-1.05, 0, 0.16), 0.0, 0.55)
+		b.add("SM_Env_Grass_01", Vector3(1.0, 0, 0.14), _yaw(b), 0.45)
+		return
+	_sx(b, "SM_Env_Fence_Woof_Gate_01", Vector3(-1.08, 0, 0), 0.0, Vector3(0.86, 1.0, 1.0))
+	for px: float in [-1.3, 1.3]:
+		b.add("SM_Prop_Plinth_02", Vector3(px, 0, 0), 0.0, 0.9)
+		b.add("SM_Prop_Vase_04", Vector3(px, 0.91, 0), _yaw(b), 0.5)
+		_bloom(b, Vector3(px, 0.91 + 0.26, 0), 0.15)
+
+
+## Ограда: две деревянные жерди между каменными столбиками (на углу столбики двух звеньев совпадают)
+## или дощатая калитка между столбиками
+static func _fence_wood(b: Bp, gate: int) -> void:
+	for px: float in [-1.25, 1.25]:
+		b.add("SM_Prop_Plinth_02", Vector3(px, 0, 0), 0.0, 0.9)
+	if gate == 1:
+		_sx(b, "SM_Env_Fence_Wood_Gate_01", Vector3(-1.08, 0, 0), 0.0, Vector3(0.86, 0.8, 1.0))
+	else:
+		for ry: float in [0.42, 0.76]:
+			_sx(b, "SM_Prop_Beam_01", Vector3(-1.25, ry, 0), 0.0, Vector3(1.0, 0.7, 0.45))
+	b.add("SM_Env_Grass_02", Vector3(b.rng.randf_range(-0.9, 0.9), 0, 0.15), _yaw(b), 0.5)
+
+
+## Живая изгородь: кусты, подстриженные в ровный зелёный ряд, в нём редкие цветы; калитка — дощатая между двумя
+## короткими кусками изгороди. Концы звена чуть заходят за его длину — на углу изгородь сходится без щели
+static func _hedge(b: Bp, gate: int) -> void:
+	var green := {"tint": HEDGE}
+	if gate == 1:
+		for px: float in [-1.05, -0.75, 0.75, 1.05]:
+			_sx(b, "SM_Env_Bush_Cluster_0%d" % (1 + b.rng.randi() % 3), Vector3(px, 0.3, 0), b.rng.randf() * PI, Vector3(0.05, 0.15, 0.075), green)
+		_sx(b, "SM_Env_Fence_Wood_Gate_01", Vector3(-0.62, 0, 0), 0.0, Vector3(0.5, 0.85, 1.0))
+		return
+	for k in 5:
+		_sx(b, "SM_Env_Bush_Cluster_0%d" % (1 + (k + b.rng.randi()) % 3), Vector3(-1.0 + k * 0.5, 0.3, 0), b.rng.randf() * PI, Vector3(0.08, 0.15, 0.075), green)
+	if b.chance(0.6):
+		_bloom(b, Vector3(b.rng.randf_range(-0.8, 0.8), 0.66, 0.24), 0.17)
+
+
+## Каменная стенка: низкая кладка из серого камня под мраморными плитами, на концах — каменные столбики
+## (на углу столбики двух звеньев совпадают); калитка — дощатая между столбиками
+static func _stonewall(b: Bp, gate: int) -> void:
+	if gate == 1:
+		_sx(b, "SM_Env_Fence_Wood_Gate_01", Vector3(-1.08, 0, 0), 0.0, Vector3(0.86, 0.85, 1.0))
+	else:
+		b.parts.append(["SM_Bld_Wall_01", b.base * Transform3D(Basis.from_scale(Vector3(1.0, 0.28, 1.6)), Vector3(-1.25, 0, 0)), {"Stucco_White_01": "Brick_Grey_Tex"}])
+		b.parts.append(["SM_Bld_Wall_Tiny_01", b.base * Transform3D(Basis.from_scale(Vector3(1.0, 0.5, 2.0)), Vector3(-1.25, 0.84, 0)), {"Stucco_White_01": "Building_Marble_01"}])
+		if b.chance(0.35):
+			b.add("SM_Env_Grass_03", Vector3(b.rng.randf_range(-0.9, 0.9), 0, 0.3), _yaw(b), 0.5)
+	for px: float in [-1.25, 1.25]:
+		b.add("SM_Prop_Plinth_02", Vector3(px, 0, 0), 0.0, 1.05)
 
 
 ## Стог сена: копна, прислонённый сноп, мешок и коса; или большая копна с корзиной и мешками

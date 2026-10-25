@@ -68,6 +68,11 @@ var open_sub := "food"
 var open_dsub := "plants"             # вкладка украшений
 var tray_dtabs: HBoxContainer
 var tool_panel: PanelContainer
+var undo_btn: Button                      # медаль «Отменить» в панели постройки (3.6)
+var thumb_rect: TextureRect               # живая картинка постройки (3.4)
+var color_box: HBoxContainer              # ряд цветов фасада (3.4)
+var gate_check: CheckBox                  # забор: калитка посередине
+const THUMB := Vector2i(220, 140)
 var tool_title: Label
 var tool_keys: Label
 var tool_err: Label
@@ -1875,6 +1880,19 @@ func cursor_note(text: String, col := Color("fff4dc")) -> void:
 var _cap3 := ["", "", ""]
 var _note := ""
 var _note_col := Color("fff4dc")
+var _err := ""                            # пятая строка — что не так с местом постройки, красным (3.5)
+var _hint := false                        # значок поворота «Z / X» — первые 3 постановки (3.5)
+var _hint_row: HBoxContainer
+
+
+## Почему здесь не поставить — у курсора одной короткой красной строкой (тот же текст, что в панели, тем же кадром);
+## hint — показать значок поворота «Z / X»
+func cursor_error(text: String, hint := false) -> void:
+	if text == _err and hint == _hint:
+		return
+	_err = text
+	_hint = hint
+	_caption_refresh()
 
 
 func _caption_refresh() -> void:
@@ -1882,19 +1900,39 @@ func _caption_refresh() -> void:
 		cover_box = VBoxContainer.new()
 		cover_box.add_theme_constant_override("separation", -2)
 		cover_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		for col in [Color("b4ffae"), Color("a9d4ff"), Color("ffe3a3"), Color("fff4dc")]:
+		for col in [Color("b4ffae"), Color("a9d4ff"), Color("ffe3a3"), Color("fff4dc"), Color("ffab96")]:
 			var l := _label("", 19, true, col)
 			l.add_theme_color_override("font_outline_color", Color("2a1a0c"))
 			l.add_theme_constant_override("outline_size", 8)
 			l.visible = false
 			cover_box.add_child(l)
 			_cover_l.append(l)
+		_hint_row = HBoxContainer.new()
+		_hint_row.add_theme_constant_override("separation", 4)
+		_hint_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var hi := TextureRect.new()
+		hi.texture = load(AI + "cursors/rotate.png")
+		hi.custom_minimum_size = Vector2(26, 26)
+		hi.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		hi.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		hi.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hint_row.add_child(hi)
+		var hl := _label("Z / X — повернуть", 17, true, Color("fff4dc"))
+		hl.add_theme_color_override("font_outline_color", Color("2a1a0c"))
+		hl.add_theme_constant_override("outline_size", 8)
+		_hint_row.add_child(hl)
+		_hint_row.visible = false
+		cover_box.add_child(_hint_row)
 		cover_box.visible = false
 		root.add_child(cover_box)
-	var tx := [_cap3[0], _cap3[1], _cap3[2], _note]
+	var tx := [_cap3[0], _cap3[1], _cap3[2], _note, _err]
 	var on := false
 	var changed := false
-	for i in 4:
+	if _hint_row.visible != _hint:
+		_hint_row.visible = _hint
+		changed = true
+	on = _hint
+	for i in 5:
 		var l: Label = _cover_l[i]
 		on = on or tx[i] != ""
 		if l.text != tx[i]:
@@ -2020,9 +2058,10 @@ func _road_opt(nm: String) -> void:
 			_store_settings()
 		"brushround": game.brush_square = false
 		"brushsquare": game.brush_square = true
-		"undo": game._undo()
+		"undo": game._undo("road")
 		"redo": game._redo()
 	refresh_tools()
+	refresh_undo()
 
 
 func refresh_tools() -> void:
@@ -2801,6 +2840,8 @@ func _process(_dt: float) -> void:
 	_place_overlay()
 	_cursor_tick()
 	_hover_tick()
+	if tool_panel and tool_panel.visible and Engine.get_process_frames() % 30 == 0:
+		refresh_undo()                        # отменить постройку можно 30 с — медаль сереет сама
 	if rank_btn and rank_btn.visible:
 		# город готов к новому уровню: кнопка и надпись уровня мягко светятся
 		var k := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 320.0)
@@ -2851,11 +2892,60 @@ func _tool_panel() -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
 	tool_panel.add_child(v)
+	var tr := HBoxContainer.new()
+	tr.add_theme_constant_override("separation", 6)
 	tool_title = _label("", 21, false, C_INK, font_title)
-	v.add_child(tool_title)
+	tool_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tool_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tr.add_child(tool_title)
+	# 3.6: поставили по ошибке — отменить с полным возвратом (30 с, пока никто не живёт)
+	undo_btn = _round("undo", "Отменить постройку", 38, func(): game._undo("place"); refresh_undo())
+	undo_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tr.add_child(undo_btn)
+	v.add_child(tr)
+	# 3.4: живая картинка постройки — тот же облик и цвет, что у призрака
+	thumb_rect = TextureRect.new()
+	thumb_rect.custom_minimum_size = Vector2(THUMB.x, THUMB.y)
+	thumb_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	thumb_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	thumb_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	thumb_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	thumb_rect.visible = false
+	v.add_child(thumb_rect)
+	# 3.4: цвет фасада — «Авто» (не как у соседей) или один из 10
+	color_box = HBoxContainer.new()
+	color_box.add_theme_constant_override("separation", 3)
+	color_box.visible = false
+	v.add_child(color_box)
+	color_box.add_child(_label("Цвет:", 16, true))
+	var auto := Button.new()
+	auto.text = "Авто"
+	auto.focus_mode = Control.FOCUS_NONE
+	auto.add_theme_font_size_override("font_size", 14)
+	auto.tooltip_text = "Цвет выберет игра — не такой, как у соседних домов (Shift+C — следующий цвет)"
+	auto.set_meta("ci", -1)
+	auto.pressed.connect(func(): game.set_color(-1); thumb_update())
+	color_box.add_child(auto)
+	for i in Defs.PALETTE.size():
+		var ci := i
+		var sw := Button.new()
+		sw.custom_minimum_size = Vector2(22, 22)
+		sw.focus_mode = Control.FOCUS_NONE
+		sw.tooltip_text = "%s (Shift+C — следующий цвет)" % Defs.PALETTE[i]["name"]
+		sw.set_meta("ci", i)
+		sw.pressed.connect(func(): game.set_color(ci); thumb_update())
+		color_box.add_child(sw)
+	color_restyle()
 	variant_box = HBoxContainer.new()
 	variant_box.add_theme_constant_override("separation", 4)
 	v.add_child(variant_box)
+	gate_check = CheckBox.new()
+	gate_check.text = "Калитка посередине (G)"
+	gate_check.add_theme_font_size_override("font_size", 16)
+	gate_check.focus_mode = Control.FOCUS_NONE
+	gate_check.toggled.connect(func(x): game.fence_gate = x; game._fence_key = "")
+	gate_check.visible = false
+	v.add_child(gate_check)
 	tool_keys = _label("", 15, false, C_SOFT)
 	tool_keys.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tool_keys.custom_minimum_size = Vector2(320, 0)
@@ -2892,6 +2982,11 @@ func _fill_tool_panel_body() -> void:
 	tool_panel.visible = t != ""
 	_clear(variant_box)
 	variant_box.visible = false
+	thumb_rect.visible = false
+	color_box.visible = false
+	gate_check.visible = false
+	undo_btn.visible = Defs.B.has(t)          # у дорог свои «Отменить» и «Вернуть» — в панели кисти
+	refresh_undo()
 	if t == "":
 		return
 	if t == "floor":
@@ -2923,7 +3018,20 @@ func _fill_tool_panel_body() -> void:
 	if Defs.B.has(t):
 		var d: Dictionary = Defs.B[t]
 		tool_title.text = "%s · %s ден." % [d["name"], fmt(d["cost"])]
+		thumb_rect.visible = true
+		color_box.visible = d["kind"] != "decor" and game.moving.is_empty()
+		color_restyle()
+		thumb_update()
 		var keys := "Повернуть: зажмите левую кнопку и ведите мышь вбок (или Z/X) · правая кнопка — отмена"
+		if d.get("seg", false):
+			keys = "Тяните с зажатой кнопкой, как дорогу: звенья встанут по линии, цена — у курсора. Щелчок — одно звено (Z/X — повернуть). Esc или правая кнопка посреди — отмена"
+			gate_check.visible = d.get("gate", false)
+			gate_check.set_pressed_no_signal(game.fence_gate)
+		elif d.get("wall", false):
+			keys = "Наведите на стену дома — украшение встанет там, где курсор, на любом этаже, мимо окон и дверей · правая кнопка — отмена"
+		elif Defs.WALL_FORM.has(t):
+			keys += "
+Наведите на стену дома — встанет на стену: «%s»" % Defs.B[Defs.WALL_FORM[t]]["name"]
 		if int(d.get("variants", 1)) > 1:
 			keys = "C/V — другой фасад · " + keys
 			variant_box.visible = true
@@ -2953,7 +3061,7 @@ func _fill_tool_panel_body() -> void:
 		var names := {"road": "Мостовая", "path": "Тропа", "plaza": "Площадь", "erase": "Ластик", "bulldoze": "Снос", "copy": "Копировать", "move": "Перенести", "move_nature": "Перенести"}
 		tool_title.text = names.get(t, t)
 		var keys := {"road": "Каменная улица. Ведите с зажатой левой кнопкой. [ ] — размер, Ctrl+Z — отменить, Esc посреди мазка — отменить его.",
-			"path": "Утоптанная тропа — самая дешёвая дорога: ею удобно тянуть длинные улицы к окраинам.", "plaza": "Плитка для площадей у рынков и храмов — самая дорогая.", "erase": "Стирает дорогу под кистью.",
+			"path": "Утоптанная тропа — самая дешёвая дорога: ею удобно тянуть длинные улицы к окраинам.", "plaza": "Плитка для площадей у рынков и храмов — самая дорогая.", "erase": "Наведите на дорогу — что уберётся, видно красным. Ведите с зажатой кнопкой: дорога уберётся, когда отпустите (Esc посреди — передумать). Звенья заборов под ластиком тоже уберутся.",
 			"bulldoze": "Наведите на постройку, дерево или камень — подсветится красным. Щелчок — снести.", "copy": "Щёлкните по постройке — возьмёте такую же: тот же облик, цвет фасада и поворот. Без инструмента — наведите на постройку и нажмите F.",
 			"move": "Щёлкните по постройке, дереву или камню и поставьте на новое место.", "move_nature": "Поставьте на новое место. Z/X — повернуть."}
 		var txt: String = keys.get(t, "")
@@ -2970,6 +3078,7 @@ func _facade_pick(vi: int) -> void:
 	game.tool_variant = vi
 	game.next_variant = vi
 	_facade_restyle()
+	thumb_update()                            # картинка в панели — сразу, тем же щелчком
 
 
 func _facade_restyle() -> void:
@@ -3003,6 +3112,153 @@ func price_txt(v: float) -> String:
 
 var _stroke_lbl: Label
 var _stroke_tw: Tween
+var _stroke_warn: Label
+
+
+## Подпись у курсора, пока тянут прямую дорогу, ластик или забор (3.1, 3.2): main — «12 м · 42 ден.», warn — вторая
+## строка («Денег хватит до сюда»). Гаснет вместе с подписью мазка (stroke_live(…, done))
+func stroke_text(main: String, warn := "", col := C_CREAM) -> void:
+	stroke_live(0.0, "road", false)           # подпись и казна — как у мазка
+	_stroke_lbl.text = main
+	_stroke_lbl.add_theme_color_override("font_color", col)
+	if _stroke_warn == null:
+		_stroke_warn = _label("", 17, true, Color("ffb09a"))
+		_stroke_warn.add_theme_color_override("font_outline_color", Color("3a2412"))
+		_stroke_warn.add_theme_constant_override("outline_size", 7)
+		_stroke_lbl.add_child(_stroke_warn)
+	_stroke_warn.text = warn
+	_stroke_warn.visible = warn != ""
+	_stroke_warn.position = Vector2(0, 24)
+	_stroke_lbl.reset_size()
+
+
+## Медали «Отменить»: в панели постройки — серая, когда отменять нечего (подсказка — что отменится и сколько
+## вернётся); у дорог «Отменить» и «Вернуть» — серые, когда стопки пусты (3.6)
+func refresh_undo() -> void:
+	if undo_btn:
+		var u: Dictionary = game.undo_place_info()
+		undo_btn.disabled = u.is_empty()
+		if u.is_empty():
+			undo_btn.tooltip_text = "Отменить постройку можно 30 секунд, пока в ней никто не живёт"
+		else:
+			undo_btn.tooltip_text = "Отменить: %s, вернётся %s ден." % [u["name"], fmt(float(u["cost"]))]
+		_grey(undo_btn.get_node("ic") as CanvasItem, u.is_empty())
+	for nm in ["undo", "redo"]:
+		if road_btns.has(nm):
+			var b: Button = road_btns[nm]
+			var empty: bool = (game.undo_stack if nm == "undo" else game.redo_stack).is_empty()
+			if nm == "undo" and not empty:
+				empty = String((game.undo_stack.back() as Dictionary).get("t", "road")) == "place"
+			b.disabled = empty
+			_grey(b.get_node("ic") as CanvasItem, empty)
+
+
+## Ряд цветов: выбранный — в золотой рамке
+func color_restyle() -> void:
+	if color_box == null:
+		return
+	for b in color_box.get_children():
+		if not (b is Button) or not b.has_meta("ci"):
+			continue
+		var ci := int(b.get_meta("ci"))
+		var on: bool = ci == int(game.color_user)
+		if ci < 0:
+			b.custom_minimum_size = Vector2(52, 26)
+			b.add_theme_stylebox_override("normal", _box_pill(8, 2, "g_btn_on" if on else "g_btn"))
+			b.add_theme_stylebox_override("hover", _box_pill(8, 2, "g_btn_hover"))
+			b.add_theme_stylebox_override("pressed", _box_pill(8, 2, "g_btn_on"))
+			continue
+		for st in ["normal", "hover", "pressed", "hover_pressed"]:
+			var sb := StyleBoxFlat.new()
+			sb.bg_color = Defs.PALETTE[ci]["c"]
+			sb.set_corner_radius_all(11)
+			sb.set_border_width_all(3 if on else (2 if st == "hover" else 1))
+			sb.border_color = C_GOLD if on else (C_SOFT if st == "hover" else Color(0.29, 0.17, 0.09, 0.6))
+			b.add_theme_stylebox_override(st, sb)
+	thumb_update()
+
+
+# ---------- живая картинка постройки в панели (3.4) ----------
+
+var _thumb_vp: SubViewport
+var _thumb_cam: Camera3D
+var _thumb_holder: Node3D
+var _thumb_key := ""
+
+
+func _thumb_make() -> void:
+	var vp := SubViewport.new()
+	vp.size = THUMB
+	vp.own_world_3d = true
+	vp.transparent_bg = true
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	vp.msaa_3d = Viewport.MSAA_4X
+	add_child(vp)
+	var we := WorldEnvironment.new()
+	var e := Environment.new()
+	e.background_mode = Environment.BG_CLEAR_COLOR
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	e.ambient_light_color = Color("f3e6cf")
+	e.ambient_light_energy = 0.85
+	e.tonemap_mode = Environment.TONE_MAPPER_AGX
+	e.adjustment_enabled = true
+	e.adjustment_saturation = 1.2
+	we.environment = e
+	vp.add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-45, 30, 0)
+	sun.light_energy = 2.2
+	sun.light_color = Color("fff0d8")
+	vp.add_child(sun)
+	_thumb_cam = Camera3D.new()
+	_thumb_cam.fov = 30
+	vp.add_child(_thumb_cam)
+	_thumb_holder = Node3D.new()
+	vp.add_child(_thumb_holder)
+	_thumb_vp = vp
+	thumb_rect.texture = vp.get_texture()
+
+
+## Облик будущей постройки (тип, этаж, фасад, цвет) — как у призрака; картинка перерисовывается один раз, только
+## когда облик поменялся (без чтения с видеокарты: ViewportTexture прямо в панели)
+func thumb_update() -> void:
+	if thumb_rect == null or not thumb_rect.visible or game == null or not Defs.B.has(game.tool):
+		return
+	var t: String = game.tool
+	var pl: Dictionary = game.place_info if String(game.place_info.get("_t", "")) == t else {}
+	var gt: String = pl.get("form", t)
+	var d: Dictionary = Defs.B[gt]
+	var tier := int(pl.get("tier", 1 if d["kind"] == "house" else 0))
+	var v := int(pl.get("variant", 0))
+	if d["kind"] != "decor" and game.moving.is_empty():
+		v = int(game.next_variant)
+	var c := int(pl.get("color", maxi(0, int(game.place_color))))
+	if int(game.color_user) >= 0 and d["kind"] != "decor":
+		c = int(game.color_user)
+	if d.get("seg", false):
+		v = 1 if game.fence_gate else 0
+	var key := "%s:%d:%d:%d" % [gt, tier, v, c]
+	if key == _thumb_key:
+		return
+	_thumb_key = key
+	if _thumb_vp == null:
+		_thumb_make()
+	for ch in _thumb_holder.get_children():
+		ch.queue_free()
+	var g := Parts.ghost(Catalog.make(gt, tier, v, c), "outline", Color(0, 0, 0, 0))
+	for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
+		gi.material_override = null
+	for ch in g.get_children():
+		if ch is MeshInstance3D and (ch as MeshInstance3D).mesh == Parts._special_mesh("#dark") and (ch as Node3D).position.y < -0.05:
+			g.remove_child(ch)
+			ch.free()
+	_thumb_holder.add_child(g)
+	var box := Artisau.aabb(g)
+	var ctr := box.get_center()
+	var rad := maxf(0.3 if d["kind"] == "decor" else 0.6, box.size.length() * 0.5)
+	var dir := Vector3(0.62, 0.6, 0.95).normalized()
+	_thumb_cam.look_at_from_position(ctr + dir * rad / sin(deg_to_rad(15.0)) * 0.95, ctr, Vector3.UP)
+	_thumb_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 ## Пока ведут кисть: казна меняется сразу, у курсора — сколько стоит этот мазок (или что денег не хватило).
 ## done — мазок окончен, подпись мягко гаснет
@@ -3029,6 +3285,8 @@ func stroke_live(cost: float, t: String, broke := false, done := false) -> void:
 		return
 	if _stroke_tw and _stroke_tw.is_valid():
 		_stroke_tw.kill()
+	if _stroke_warn:
+		_stroke_warn.visible = false
 	if broke:
 		_stroke_lbl.text = "Не хватает денариев · мазок %s ден." % fmt(cost)
 		_stroke_lbl.add_theme_color_override("font_color", Color("ffb09a"))
@@ -3182,6 +3440,8 @@ func _fill_info_body() -> void:
 			info_box.add_child(_row("arrow", "Дальность", Defs.WORD[int(d["range"])]))
 			info_box.add_child(_row("housing", "Обслуживает домов", "%d из %d" % [int(b.get("served", 0)), int(ceil(float(Defs.CAPACITY[int(d["cap"])]) * float(b.get("staff", 1.0))))]))
 			_cover_rows(b, "")
+			if d.get("store", false):
+				_store_row(b)
 			info_box.add_child(_hire_row(b))
 			if not b.get("active", true):
 				var st_txt := c.idle_text(b)            # нет работников: почему именно (никто не живёт, не тот класс, мало мест)
@@ -3279,6 +3539,34 @@ func _fill_info_body() -> void:
 		bc.pressed.connect(func(): close_panels(); game.copy_building(b))
 		h.add_child(bc)
 		info_box.add_child(h)
+
+
+## Лавке нужен склад (3.9): «Товар со склада · 40 м» или «Нет склада рядом — товар не идёт» и «Показать склад»
+func _store_row(b: Dictionary) -> void:
+	var c: City = game.city
+	var st: Dictionary = c.store_for(b)
+	if not st.is_empty() and bool(st["ok"]):
+		info_box.add_child(_row("warehouse", "Товар со склада", "%d м" % roundi(float(st["d"])), C_GOOD))
+	elif not st.is_empty() and bool(st["near"]):
+		info_box.add_child(_wrap(_label("Склад рядом не работает: %s — товар не идёт" % c.idle_text(st["b"]), 15, true, C_BAD), 330))
+	else:
+		info_box.add_child(_wrap(_label("Нет склада рядом — товар не идёт", 15, true, C_BAD), 330))
+	if st.is_empty():
+		info_box.add_child(_wrap(_label("Постройте склад рядом (раздел «Хозяйство»): со склада разносят товар по лавкам.", 14, false, C_SOFT), 330))
+		return
+	var w: Dictionary = st["b"]
+	var sb := Button.new()
+	sb.text = "Показать склад" + ("" if bool(st["near"]) else " (%d м — далеко)" % roundi(float(st["d"])))
+	sb.icon = ico("warehouse", 32)
+	sb.focus_mode = Control.FOCUS_NONE
+	sb.name = "show_store"
+	sb.pressed.connect(func():
+		if not c.buildings.has(int(w["id"])):
+			return
+		game.select_building(w)
+		game.rig.fly_to(Vector3((w["pos"] as Vector2).x, float(w["y"]), (w["pos"] as Vector2).y))
+		open_info(w))
+	info_box.add_child(sb)
 
 
 ## Строки карточки об охвате (те же числа, что подсветка домов, Cover.selected_sets): head — сколько своих домов
