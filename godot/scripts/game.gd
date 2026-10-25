@@ -3993,6 +3993,8 @@ func _unhandled_input(e: InputEvent) -> void:
 		return
 	if e is InputEventMouseButton:
 		var mb := e as InputEventMouseButton
+		if mb.pressed and mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT] and get_viewport().gui_get_focus_owner() is LineEdit:
+			get_viewport().gui_release_focus()    # щелчок по карте — печатать закончили (поиск украшений), клавиши снова у камеры
 		if mb.button_index == MOUSE_BUTTON_RIGHT:
 			if mb.pressed and painting:
 				cancel_stroke()                   # правая кнопка посреди мазка — мазок отменён, инструмент остаётся

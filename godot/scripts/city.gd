@@ -720,7 +720,7 @@ func compute() -> void:
 			if (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DECOR_RADIUS:
 				near.append([Defs.base_of(o["type"]), float(def(o).get("deco", 1))])
 				if econ >= 1:
-					var sk := Defs.set_of(o["type"], decor_v >= 1)
+					var sk := Defs.set_of(o["type"])        # набор — по облику (как в новой игре), чем бы он ни открылся
 					if sk != "":
 						if not sets.has(sk):
 							sets[sk] = {}

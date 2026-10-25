@@ -2161,7 +2161,7 @@ func _bottom_center() -> void:
 	top.add_child(tray_dtabs)
 	for ds: Array in Defs.DECOR_SUBS:
 		var dn: String = ds[0]
-		var b := _round(ds[2], ds[1], 40, func(): open_dsub = dn; decor_mode = ""; _fill_cards())
+		var b := _round(ds[2], ds[1], 40, func(): open_dsub = dn; decor_mode = ""; _clear_search(); _fill_cards())
 		b.set_meta("sub", dn)
 		tray_dtabs.add_child(b)
 		_new_pill(b, "dot")
@@ -2381,12 +2381,22 @@ func _tchip(text: String, tip: String, cb: Callable) -> Button:
 
 func _decor_mode(m: String) -> void:
 	decor_mode = "" if decor_mode == m else m
-	if decor_mode != "search" and decor_search and decor_search.text != "":
+	if decor_mode != "search":
+		_clear_search()
+	_fill_cards()
+
+
+## Ушли из поиска (вкладка, ★, «Недавние»): строку очистить и отпустить клавиатуру
+func _clear_search() -> void:
+	if not decor_search:
+		return
+	if decor_search.text != "":
 		decor_search.set_block_signals(true)
 		decor_search.text = ""
 		decor_search.set_block_signals(false)
-		decor_query = ""
-	_fill_cards()
+	decor_query = ""
+	if decor_search.has_focus():
+		decor_search.release_focus()
 
 
 func decor_favs() -> Array:
@@ -2520,13 +2530,16 @@ func _fill_cards() -> void:
 		pr.name = "price"
 		v.add_child(pr)
 		var tp: String = type
-		b.pressed.connect(func(): select_build(tp))
+		b.pressed.connect(func(): select_build(tp, true))
 		if d["kind"] == "decor":
-			# ★ — правой кнопкой (избранное, этап 5.4); у отмеченных — золотая звёздочка в углу
+			# ★ — правой кнопкой (избранное, этап 5.4); у отмеченных — золотая звёздочка в углу.
+			# Щелчок гасим сразу, пока карточка в дереве, а ряд пересобираем потом: иначе правая кнопка
+			# уходит в game._unhandled_input — и свиток закрывается, инструмент из рук пропадает
 			b.gui_input.connect(func(ev: InputEvent):
-				if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT:
-					toggle_fav(tp)
-					b.accept_event())
+				if ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT:
+					b.accept_event()
+					if (ev as InputEventMouseButton).pressed:
+						toggle_fav.call_deferred(tp))
 			if decor_favs().has(type):
 				var st := _label("★", 22, true, C_GOLD)
 				st.add_theme_color_override("font_outline_color", Color("3a2412"))
@@ -2582,7 +2595,7 @@ func _card_tip(type: String) -> String:
 			if d.has("mon"):
 				t += "\nГлавное украшение: +%d%% счастья домам в %d м — как памятник, сверх предела украшений" % [int(d["mon"]), int(Defs.range_m(d))]
 			if game and game.city and game.city.econ >= 1:
-				var sk := Defs.set_of(type, game.city.decor_v >= 1)
+				var sk := Defs.set_of(type)
 				if sk != "":
 					t += "\nНабор «%s»: три разных вида из него рядом с домом — ещё +%d%% счастья" % [Defs.research(sk)["name"], Defs.SET_BONUS]
 			t += "\nПравая кнопка мыши — убрать из избранного" if decor_favs().has(type) else "\nПравая кнопка мыши — в избранное ★"
@@ -2660,6 +2673,7 @@ func _update_cards() -> void:
 				_grey(img, false)
 				img.modulate = Color(0.16, 0.13, 0.12, 0.78)     # силуэт: что будет — видно, но ещё не открыто
 			else:
+				img.modulate = Color.WHITE                       # город дорос до уровня — силуэт снять
 				_grey(img)
 		elif c.cap_err(type) != "":
 			# предел уровня города: больше таких не поставить, пока город не вырастет
@@ -2685,15 +2699,20 @@ func _update_cards() -> void:
 			_grey(img, false)
 
 
-func select_build(type: String) -> void:
+## from_tray — взяли карточку в самом свитке: вкладку, ★/«Недавние» и поиск не трогаем (там и так видна эта карточка)
+func select_build(type: String, from_tray := false) -> void:
 	if not Defs.B.has(type):
 		return
+	if decor_search and decor_search.has_focus():
+		decor_search.release_focus()          # взяли украшение — клавиши снова у карты (WASD, Z/X, пробел)
 	var cat: String = Defs.B[type]["cat"]
 	if cat == "commerce":
 		open_sub = Defs.B[type]["sub"]
-	if cat == "decor":
-		open_dsub = Defs.decor_sub(type) if Defs.decor_sub(type) != "" else open_dsub
-		decor_mode = "" if decor_mode != "search" else decor_mode
+	if cat == "decor" and not from_tray:
+		# стрелка, строка просьбы, Легион: к вкладке карточки (★/«Недавние»/поиск остаются, если она там есть)
+		if not (decor_mode in ["fav", "recent"] and _decor_list().has(type)):
+			open_dsub = Defs.decor_sub(type) if Defs.decor_sub(type) != "" else open_dsub
+			decor_mode = "" if decor_mode != "search" else decor_mode
 		if tray.visible and open_cat == "decor":
 			_fill_cards()
 	_hide_info()
@@ -3063,9 +3082,11 @@ func _card_or_cat(cat: String, type: String) -> Control:
 				return b
 		# карточка на другой вкладке — показать на вкладку
 		var tabs: HBoxContainer = tray_dtabs if cat == "decor" else (tray_tabs if cat == "commerce" else null)
+		# у украшений — вкладка меню (с переездами этапа 5: колодец — в «Воде», телега — в «Рынке»)
+		var want := Defs.decor_sub(type) if cat == "decor" else String(Defs.B[type].get("sub", ""))
 		if tabs:
 			for t in tabs.get_children():
-				if t.get_meta("sub", "") == Defs.B[type].get("sub", ""):
+				if String(t.get_meta("sub", "")) == want:
 					return t
 	return cats.get(cat)
 

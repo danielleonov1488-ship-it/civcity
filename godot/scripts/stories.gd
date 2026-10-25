@@ -1404,10 +1404,15 @@ func pointer_do() -> Dictionary:
 
 ## Постройка вида base (тип, облик украшения или «a|b» — любой из них)
 static func _is(b: Dictionary, base: String) -> bool:
+	var bt := Defs.base_of(b["type"])
 	for k in base.split("|"):
-		if b["type"] == k or Defs.base_of(b["type"]) == k:
+		if b["type"] == k or bt == k or bt in (KIND_ALSO.get(k, []) as Array):
 			return true
 	return false
+
+
+## Новые виды этапа 5 в счёт прежних: «дерево» — и большие деревья (дуб, олива, пальма), «куст» — и самшит
+const KIND_ALSO := {"tree": ["bigtree"], "bush": ["topiary"]}
 
 
 ## Сколько построек вида base («a|b» — любой) в r м от p; after ≥ 0 — только построенные после (born > after)

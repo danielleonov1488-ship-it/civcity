@@ -194,6 +194,109 @@ func _part(h: Dictionary, prefix: String) -> int:
 	return 0
 
 
+## Что дому дают украшения: очки (до предела), наборы, «главные» и памятники
+func _gain_sum(h: Dictionary) -> int:
+	var s := int(h.get("deco_bonus", 0)) + int(h.get("set_bonus", 0))
+	for t in (h.get("mon_types", {}) as Dictionary):
+		s += int(h["mon_types"][t])
+	return s
+
+
+## Как place, но сперва — подсветка Cover.place_sets в этой точке, а после постройки — сверка с City.compute:
+## зелёные — ровно те дома, кому правда прибавилось. [постройка, расхождения, подсветка]
+func place_cov(type: String, at: Vector2, step := Vector2(0, -0.5), tries := 16) -> Array:
+	for k in tries:
+		var pl: Dictionary = game.placement(type, at + step * k)
+		if pl["err"] != "":
+			continue
+		c.compute()
+		var pre := Cover.place_sets(c, type, pl["pos"])
+		var was := {}
+		for id in c.buildings:
+			if c.is_house(c.buildings[id]):
+				was[id] = _gain_sum(c.buildings[id])
+		var b := c.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"], true)
+		c.compute()
+		var bad := []
+		for id in was:
+			var up: bool = _gain_sum(c.buildings[id]) > int(was[id])
+			if up != (pre["green"] as Array).has(id):
+				bad.append("дом %s: прибавилось %s, а в подсветке %s" % [str(id), up, "зелёный" if not up else "без цвета"])
+		return [b, bad, pre]
+	print("S5 NOTE не встало %s у %s" % [type, str(at)])
+	return [{}, ["не встало"], {}]
+
+
+## 5.4: бонус набора сверх предела — в подсветке домов. Дом с полными украшениями (не из наборов), два вида «Сельского двора»
+## рядом; третий вид — дом зелёный (как City.compute: +SET_BONUS%). Выбранное украшение набора — зелёный дом (без него потеряет)
+func _set_preview(X0: float, Z0: float) -> void:
+	var hs := place("house_pleb", Vector2(X0 + 58.0, Z0 - 3.0), Vector2(0.5, 0), 8)
+	if not check(not hs.is_empty(), "дом для проверки подсветки набора"):
+		return
+	_settle(hs, 2)
+	var bk: Vector2 = (hs["pos"] as Vector2) - City.facing(float(hs["yaw"])) * 6.0
+	var tmp := [hs]
+	for k in 3:
+		tmp.append(place(["statue", "column", "pergola"][k], bk + Vector2(-5.0 + k * 3.5, -1.0), Vector2(0, -0.6), 8))
+	c.compute()
+	var capped := Cover._deco_capped(c, hs)
+	tmp.append(place("veggies", bk + Vector2(-4.0, -5.0), Vector2(-0.6, 0), 8))
+	tmp.append(place("porch", bk + Vector2(1.5, -5.0), Vector2(0.6, 0), 8))
+	c.compute()
+	var two := int(hs.get("set_bonus", 0))
+	var r := place_cov("woodpile", bk + Vector2(5.0, -3.5), Vector2(0.6, 0), 10)
+	var wp: Dictionary = r[0]
+	check(capped and two == 0 and (r[1] as Array).is_empty() and (r[2].get("green", []) as Array).has(hs["id"]) and int(hs.get("set_bonus", 0)) == Defs.SET_BONUS,
+		"подсветка: третий вид набора у дома с полными украшениями — зелёный (+%d%% сверх предела)" % Defs.SET_BONUS, [capped, two, r[1], hs.get("happy_parts", [])])
+	if not wp.is_empty():
+		var sel := Cover.selected_sets(c, wp)
+		check((sel["green"] as Array).has(hs["id"]), "выбранное украшение набора: дом зелёный — без него набор распадётся", sel)
+		tmp.append(wp)
+	# город econ 1 без decor_v (новая игра до этапа 5): набор — по облику; «Южные деревья» (кипарис, пальма, дуб) собираются
+	var short := []
+	for s: String in Defs.DECOR_SETS:
+		var kinds := {}
+		for t in regular_decor():
+			if Defs.set_of(t) == s:
+				kinds[Defs.base_of(t)] = true
+		if kinds.size() < Defs.SET_KINDS:
+			short.append(s)
+	var f := City.facing(float(hs["yaw"]))
+	var sd := Vector2(f.y, -f.x)                 # вбок от дома
+	for k in 3:
+		var sg := 1.0 if k != 1 else -1.0
+		tmp.append(place(["cypress", "palm", "bigtree"][k], (hs["pos"] as Vector2) + sd * sg * 6.5 - f * (1.0 if k < 2 else 5.0), sd * sg * 0.6, 8))
+	c.decor_v = 0
+	c.compute()
+	var sb0 := int(hs.get("set_bonus", 0))
+	c.decor_v = 1
+	check(short.is_empty() and sb0 == 2 * Defs.SET_BONUS, "econ 1 без decor_v: у каждого набора три вида и больше; кипарис, пальма и дуб — набор «Южные деревья»",
+		[short, hs.get("happy_parts", [])])
+	for b: Dictionary in tmp:
+		if not b.is_empty() and c.buildings.has(b["id"]):
+			c.remove(b, false)
+	c.compute()
+
+
+## Истории и заказы: большие деревья — тоже «деревья», самшит — тоже «куст» (Скверик, «Роща», «Сад у домуса»)
+func _kinds_alias(X0: float, Z0: float) -> void:
+	var p := Vector2(X0 + 58.0, Z0 + 12.0)
+	var tmp := []
+	for t in ["bigtree_3", "topiary", "bigtree"]:
+		tmp.append(place(t, p + Vector2(-5.0 + tmp.size() * 4.5, 0.0), Vector2(0, 0.6), 10))
+	var sq := "tree|cypress|palm|bush"
+	var n_sq := Stories.count_near(c, sq, p, 15.0, -1)
+	var n_gr := Stories.count_near(c, "tree|cypress|palm", p, 15.0, -1)
+	var zk := [game.stories._zone_key({"keys": [sq]}, "bigtree_3"), game.stories._zone_key({"keys": [sq]}, "topiary_2"),
+		game.stories._zone_key({"keys": ["tree|cypress|palm"]}, "bigtree_2")]
+	check(tmp.all(func(b): return not b.is_empty()) and n_sq == 3 and n_gr == 2 and zk == [sq, sq, "tree|cypress|palm"],
+		"«Старый дуб», пальма и самшит в счёт деревьев и кустов (Скверик %d из 3, заказ «Деревья» %d из 2)" % [n_sq, n_gr], zk)
+	for b: Dictionary in tmp:
+		if not b.is_empty():
+			c.remove(b, false)
+	c.compute()
+
+
 func _new() -> void:
 	check(c.decor_v == 1 and c.econ == 1, "новая игра: украшения этапа 5 (decor_v 1) и экономика v2")
 	await _census()
@@ -259,10 +362,23 @@ func _new() -> void:
 	c.compute()
 	var deco0 := _part(h0, "Украшения")
 	var mon0 := _part(h0, "Экседра")
-	var ex := place("exedra", (h0["pos"] as Vector2) + City.facing(float(h0["yaw"])) * 9.0 + Vector2(0, 2.0), Vector2(0, 0.6), 12)
+	var exr := place_cov("exedra", (h0["pos"] as Vector2) + City.facing(float(h0["yaw"])) * 9.0 + Vector2(0, 2.0), Vector2(0, 0.6), 12)
+	var ex: Dictionary = exr[0]
 	c.compute()
 	check(deco0 == cap and mon0 == 0 and not ex.is_empty() and _part(h0, "Экседра") == int(Defs.B["exedra"]["mon"]),
 		"экседра у дома с полными украшениями (+%d из %d): +%d%% сверх предела" % [deco0, cap, _part(h0, "Экседра")], [fill_n, h0.get("happy_parts", [])])
+	# подсветка домов у «главного» — как City.compute: дом с полными украшениями и дома дальше 14 м в его дальности — зелёные
+	var far_g := 0
+	for id in (exr[2].get("green", []) as Array):
+		if (c.buildings[id]["pos"] as Vector2).distance_to(ex.get("pos", Vector2.INF)) > Defs.DECOR_RADIUS:
+			far_g += 1
+	check((exr[1] as Array).is_empty() and (exr[2].get("green", []) as Array).has(h0["id"]) and far_g > 0,
+		"подсветка экседры: зелёные — ровно те, кому прибавится (дом с полными украшениями, домов дальше 14 м: %d)" % far_g, exr[1])
+	var sel_ex := Cover.selected_sets(c, ex) if not ex.is_empty() else {}
+	check(not ex.is_empty() and (sel_ex["green"] as Array).has(h0["id"]) and (sel_ex["green"] as Array).size() == (exr[2]["green"] as Array).size(),
+		"выбранная экседра: зелёные — дома, что без неё потеряют (%d)" % (sel_ex.get("green", []) as Array).size(), sel_ex)
+	await _set_preview(X0, Z0)
+	await _kinds_alias(X0, Z0)
 	# --- 5.5 новые здания: лавки торгуют и радуют, памятники радуют округу, работники заняты ---
 	# к югу от первой улицы — шесть зданий фасадом к ней; к северу от второй — дом префекта и нимфей
 	var at := {"ogorod": Vector2(X0 + 2.0, Z0 + 1.8), "shelter": Vector2(X0 + 10.0, Z0 + 1.8), "puppets": Vector2(X0 + 18.0, Z0 + 1.8),
@@ -541,6 +657,7 @@ func _tray() -> void:
 	hud.decor_open_only = false
 	hud.toggle_fav("trough")
 	hud.toggle_fav("pond_3")
+	await _tray_input()
 	# исследования: в подсказке набора — его украшения и бонус
 	hud._toggle(hud.research_panel)
 	hud._fill_research()
@@ -554,6 +671,187 @@ func _tray() -> void:
 	hud.close_panels()
 	get_window().size = Vector2i(1600, 900)
 	await frames(4)
+
+
+# ---------- меню украшений мышью, как игрок ----------
+
+var mask := 0
+
+
+func move(p: Vector2) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = p
+	e.global_position = p
+	e.button_mask = mask
+	Input.parse_input_event(e)
+
+
+func btn(p: Vector2, idx: int, pressed: bool) -> void:
+	var e := InputEventMouseButton.new()
+	e.position = p
+	e.global_position = p
+	e.button_index = idx
+	e.pressed = pressed
+	if pressed:
+		mask |= 1 << (idx - 1)
+	else:
+		mask &= ~(1 << (idx - 1))
+	e.button_mask = mask
+	Input.parse_input_event(e)
+
+
+func click(p: Vector2, idx := MOUSE_BUTTON_LEFT) -> void:
+	move(p)
+	await frames(3)
+	btn(p, idx, true)
+	await frames(2)
+	btn(p, idx, false)
+	await frames(4)
+
+
+func center_of(ct: Control) -> Vector2:
+	return ct.get_viewport().get_final_transform() * (ct.get_global_transform_with_canvas() * (ct.size / 2.0))
+
+
+## Точка окна над картой (не над окнами и свитками) или INF
+func map_point() -> Vector2:
+	var vs: Vector2 = get_viewport().get_visible_rect().size
+	for k in 24:
+		var p := get_viewport().get_final_transform() * Vector2(vs.x * (0.3 + 0.1 * (k % 5)), vs.y * (0.2 + 0.1 * (k / 5)))
+		move(p)
+		await frames(2)
+		if get_viewport().gui_get_hovered_control() == null:
+			return p
+	return Vector2.INF
+
+
+## Что под мышью (для разбора упавших проверок)
+func _hovered() -> String:
+	var hc: Control = get_viewport().gui_get_hovered_control()
+	return str(hc.get_path()) if hc else "карта"
+
+
+## Карточка украшения в ряду свитка, видимая (не за краем прокрутки), или null
+func card_of(type: String) -> Control:
+	var sc: Control = game.hud.tray_grid.get_parent()
+	for b in game.hud.tray_grid.get_children():
+		if b.has_meta("type") and b.get_meta("type") == type and sc.get_global_rect().has_point(b.get_global_rect().get_center()):
+			return b
+	return null
+
+
+## Открытые карточки текущего ряда, что видны целиком
+func open_cards() -> Array:
+	var out := []
+	for b in game.hud.tray_grid.get_children():
+		if b.has_meta("type") and c.unlocked(b.get_meta("type")) and card_of(b.get_meta("type")) != null:
+			out.append(String(b.get_meta("type")))
+	return out
+
+
+func _tray_input() -> void:
+	var hud = game.hud
+	# стрелка к колодцу (переехал во вкладку «Вода»): свиток на другой вкладке — стрелка на «Воду», а не на «Улицу»
+	hud.decor_mode = ""
+	hud.open_dsub = "trees"
+	hud._fill_cards()
+	await frames(3)
+	var tab: Control = hud._card_or_cat("decor", "well")
+	check(tab != null and String(tab.get_meta("sub", "")) == "water", "стрелка к колодцу — на вкладку «Вода»", tab.get_meta("sub", "") if tab else null)
+	var tab2: Control = hud._card_or_cat("decor", "cart")
+	check(tab2 != null and String(tab2.get_meta("sub", "")) == "market", "стрелка к телеге — на вкладку «Рынок и ремесло»", tab2.get_meta("sub", "") if tab2 else null)
+	# правая кнопка по карточке — в ★; свиток открыт, украшение в руках остаётся
+	var oc := []
+	for sub in ["street", "plants", "light", "yard", "trees"]:
+		hud.open_dsub = sub
+		hud._fill_cards()
+		await frames(3)
+		oc = open_cards()
+		if oc.size() >= 2:
+			break
+	if not check(oc.size() >= 2, "в ряду есть две открытые карточки", oc):
+		return
+	var held: String = oc[0]
+	var ft: String = oc[1]
+	hud.select_build(held, true)
+	await frames(2)
+	await click(center_of(card_of(ft)), MOUSE_BUTTON_RIGHT)
+	check(hud.tray.visible and game.tool == held and hud.decor_favs().has(ft),
+		"правая кнопка по карточке «%s»: в ★, свиток открыт, в руках по-прежнему «%s»" % [Defs.B[ft]["name"], Defs.B[held]["name"]], [hud.tray.visible, game.tool, hud.decor_favs()])
+	var c2 := card_of(ft)
+	var c2ok := c2 != null                       # карточку щелчок пересоберёт (старая — освобождена)
+	if c2ok:
+		await click(center_of(c2), MOUSE_BUTTON_RIGHT)
+	check(c2ok and hud.tray.visible and game.tool == held and not hud.decor_favs().has(ft), "ещё раз правой кнопкой — звёздочка снята, свиток на месте",
+		[c2ok, hud.tray.visible, game.tool, hud.decor_favs(), _hovered()])
+	# взяли карточку из ★ — свиток остаётся на ★ (а не прыгает на вкладку карточки)
+	hud.toggle_fav(held)
+	hud.toggle_fav(ft)
+	hud._decor_mode("fav")
+	await frames(3)
+	var fc := card_of(ft)
+	if fc:
+		await click(center_of(fc))
+	check(fc != null and hud.decor_mode == "fav" and game.tool == ft and hud.tray.visible, "карточка из ★ в руках — свиток остаётся на «★ Избранное»", [hud.decor_mode, game.tool])
+	# стрелка или просьба к украшению не из ★ — к его вкладке
+	hud.select_build("well")
+	check(hud.decor_mode == "" and hud.open_dsub == "water", "просьба про колодец — свиток на вкладке «Вода»", [hud.decor_mode, hud.open_dsub])
+	hud.toggle_fav(held)
+	hud.toggle_fav(ft)
+	# поиск: взяли найденную карточку — клавиатура снова у карты (WASD, Z/X), поиск остаётся
+	hud.decor_search.grab_focus()
+	hud.decor_search.text = "пруд"
+	hud.decor_search.text_changed.emit("пруд")
+	await frames(3)
+	var sc0: Control = null
+	for b in hud.tray_grid.get_children():
+		if b.has_meta("type") and card_of(b.get_meta("type")) != null:
+			sc0 = b
+			break
+	var had: bool = hud.decor_search.has_focus()
+	if sc0:
+		await click(center_of(sc0))
+	check(had and sc0 != null and not hud.decor_search.has_focus() and hud.decor_mode == "search", "карточка из поиска — строка поиска отпускает клавиатуру, найденное на месте",
+		[had, hud.decor_search.has_focus(), hud.decor_mode])
+	# вкладка после поиска — строка пустая
+	(hud.tray_dtabs.get_child(0) as Button).pressed.emit()
+	await frames(2)
+	check(hud.decor_search.text == "" and hud.decor_query == "" and hud.decor_mode == "", "вкладка после поиска — строка поиска очищена")
+	# силуэт снимается, когда город дорос до уровня украшения (свиток открыт)
+	hud.open_dsub = "stone"
+	hud._fill_cards()
+	await frames(3)
+	var st := ""
+	var lv := -1
+	for b in hud.tray_grid.get_children():
+		if b.has_meta("type") and not c.unlocked(b.get_meta("type")):
+			var l := int(Defs.research(c.unlock_id(b.get_meta("type"))).get("lvl", -1))
+			if l > c.level and (b.find_child("img", true, false) as TextureRect).modulate.r < 0.3:
+				st = b.get_meta("type")
+				lv = l
+				break
+	var lv0: int = c.level
+	if st != "":
+		c.level = lv
+		hud._update_cards()
+	var img: TextureRect = null
+	for b in hud.tray_grid.get_children():
+		if b.has_meta("type") and b.get_meta("type") == st:
+			img = b.find_child("img", true, false)
+	check(st != "" and img != null and img.modulate == Color.WHITE and not c.unlocked(st), "город дорос до уровня «%s» — силуэт снят, карточка серая с замком" % st)
+	c.level = lv0
+	hud._update_cards()
+	# щелчок по карте — строка поиска отпускает клавиатуру
+	game.set_tool("")
+	hud.decor_search.grab_focus()
+	await frames(2)
+	var mp := await map_point()
+	await click(mp)
+	check(mp.is_finite() and not hud.decor_search.has_focus(), "щелчок по карте — строка поиска отпускает клавиатуру", [mp, _hovered()])
+	game.set_tool("")
+	hud.close_panels()
+	game.select_building({})
+	await frames(2)
 
 
 # ---------- город владельца ----------
