@@ -475,10 +475,25 @@ func _cast_members(role: Dictionary, clss: Array, c0: Vector2) -> Array:
 	var shops: Array = role.get("shops", [])
 	var quiet := float(role.get("quiet", 0.0))
 	var seen := {}
+	var tried := {}                      # «семья|дом» без нужной работы — уже разобрана (второй взрослый той же семьи не нужен)
 	var with_job := []
 	var near_job := []
 	var any_job := []
 	var fits := {}                       # дом → подходит ли (лавки рядом, тишина): один раз на дом
+	# лавки, шумные мастерские и постройки near (гончарные, скриптории) — один проход по городу, а не на каждого жителя
+	var shop_bs := []
+	var noisy_bs := []
+	var near_bs := []
+	if not shops.is_empty() or quiet > 0.0 or not near.is_empty():
+		for id in city.buildings:
+			var o: Dictionary = city.buildings[id]
+			if not shops.is_empty() and String(city.def(o)["kind"]) == "shop":
+				shop_bs.append(o)
+			if quiet > 0.0 and String(o["type"]) in NOISY:
+				noisy_bs.append(o)
+			if not near.is_empty() and _is(o, String(near[0])):
+				near_bs.append(o)
+	var near_c := {}                     # дом → ближняя такая постройка (у обоих взрослых семьи — одна)
 	for r in game.people.residents:
 		if bool(r["child"]) or bool(r.get("old", false)) or int(r["home"]) <= 0:
 			continue
@@ -493,14 +508,14 @@ func _cast_members(role: Dictionary, clss: Array, c0: Vector2) -> Array:
 		if seen.has(key):
 			continue
 		if not fits.has(hid):
-			fits[hid] = _home_fits(h, shops, quiet)
+			fits[hid] = _home_fits(h, shops, quiet, shop_bs, noisy_bs)
 		if not fits[hid]:
 			continue
 		var jb: Dictionary = city.buildings.get(int(r["job"]), {}) if int(r["job"]) >= 0 else {}
 		var jok := job == "" or (not jb.is_empty() and _job_fits(jb, job))
-		var e := _member_bind(r, h, c0)
 		if jok:
 			seen[key] = true
+			var e := _member_bind(r, h, c0)
 			if not jb.is_empty() and job != "":
 				e["job"] = int(jb["id"])
 				var jn := Residents.job_noun(String(jb["type"]), fem)
@@ -509,12 +524,28 @@ func _cast_members(role: Dictionary, clss: Array, c0: Vector2) -> Array:
 				e["job_n"] = jn
 			with_job.append(e)
 		else:
-			var nb := _nearest_of(String(near[0]), h["pos"]) if not near.is_empty() else {}
+			if tried.has(key):
+				continue
+			tried[key] = true
+			var nb := {}
+			if not near_bs.is_empty():
+				if not near_c.has(hid):
+					var bd := INF
+					var best := {}
+					for o: Dictionary in near_bs:
+						var d := (o["pos"] as Vector2).distance_to(h["pos"])
+						if d < bd:
+							bd = d
+							best = o
+					near_c[hid] = best
+				nb = near_c[hid]
 			if not nb.is_empty() and (nb["pos"] as Vector2).distance_to(h["pos"]) <= float(near[1]):
+				var e := _member_bind(r, h, c0)
 				e["job"] = int(nb["id"])
 				e["key"] = key
 				near_job.append(e)
 			elif bool(role.get("soft", false)):
+				var e := _member_bind(r, h, c0)
 				e["key"] = key
 				any_job.append(e)                # такой работы нет ни у кого рядом — подойдёт любой житель (писец переписи)
 	var out := []
@@ -553,10 +584,21 @@ func _member_bind(r: Dictionary, h: Dictionary, c0: Vector2) -> Dictionary:
 
 
 ## Дом подходит герою: у дома в R м уже n разных лавок (shops [R, n]) и нет шумных мастерских ближе quiet м
-func _home_fits(h: Dictionary, shops: Array, quiet: float) -> bool:
-	if not shops.is_empty() and shop_kinds(h["pos"], float(shops[0])).size() < int(shops[1]):
-		return false
-	return quiet <= 0.0 or noisy_near(h["pos"], quiet).is_empty()
+## (shop_bs, noisy_bs — лавки и шумные мастерские города, собранные один раз)
+func _home_fits(h: Dictionary, shops: Array, quiet: float, shop_bs: Array, noisy_bs: Array) -> bool:
+	var hp: Vector2 = h["pos"]
+	if not shops.is_empty():
+		var kinds := {}
+		for o: Dictionary in shop_bs:
+			if (o["pos"] as Vector2).distance_to(hp) <= float(shops[0]):
+				kinds[String(o["type"])] = true
+		if kinds.size() < int(shops[1]):
+			return false
+	if quiet > 0.0:
+		for o: Dictionary in noisy_bs:
+			if (o["pos"] as Vector2).distance_to(hp) <= quiet:
+				return false
+	return true
 
 
 ## Ближняя к точке постройка вида type или {}
@@ -1280,6 +1322,8 @@ func _on_family_left(home: int, nm: String) -> void:
 	var a: Dictionary = s["active"]
 	if not a.is_empty() and String(a.get("fam", "")) == nm:
 		_cancel("Семья %s уехала из города." % StoryDefs.fam_gen(nm))
+	elif not a.is_empty() and _goal_kind(a) == "census" and String((a.get("census", {}) as Dictionary).get("fam", "")) == nm:
+		_poll = POLL                         # уехал тот, кого ищет перепись: писец назовёт другого (_census_seen)
 
 
 ## Дом, где теперь живёт семья (-1 — нет)
@@ -1571,6 +1615,7 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 				var fm := String((h.get("families", [{}]) as Array)[0].get("name", "")) if not (h.get("families", []) as Array).is_empty() else ""
 				out.append({"text": "%s — у семьи %s" % [String(kn[i]) if i < kn.size() else "Котёнок", StoryDefs.fam_gen(fm)], "ok": true, "do": {}})
 		"census":
+			progress(a, g)                         # прежде строк: уехал тот житель — уже названо новое имя
 			var fl: Dictionary = a.get("flags", {})
 			var cz: Dictionary = a.get("census", {})
 			var who := String(cz.get("name", ""))
@@ -1810,10 +1855,12 @@ func press(what: String, val := "") -> void:
 			var n := int(g[2])
 			if String(g[1]) == "glory":
 				if city.legion.glory < n:
+					hud.refresh()                # сколько не хватает — в строке истории
 					return
 				city.legion.glory -= n
 			else:
 				if city.money < n:
+					hud.refresh()
 					return
 				city.money -= n
 				if game.sound:
@@ -2479,6 +2526,11 @@ func row_info() -> Dictionary:
 			var po: Dictionary = g[3] if g.size() > 3 and g[3] is Dictionary else {}
 			if po.has("skip"):
 				info["buttons"].append([String(po["skip"]), press.bind("pay_skip", "")])   # сбор по желанию
+			# не хватает — тихо, прямо в строке (без всплывашек); накопили — строка сама станет прежней
+			var glory := String(g[1]) == "glory"
+			var have := int(city.legion.glory) if glory else int(floor(city.money))
+			if have < int(g[2]):
+				text += " Не хватает %d %s — накопите%s." % [int(g[2]) - have, "Славы" if glory else "ден.", " или обойдитесь без сбора" if po.has("skip") else ""]
 		"choice":
 			var bs := []
 			for op: Array in g[1]:
@@ -2561,6 +2613,7 @@ func part_click(p: Dictionary) -> void:
 		if not b.is_empty():
 			game.rig.look_at_point(Vector3(b["pos"].x, float(b["y"]), b["pos"].y))
 			game.select_building(b)
+			hud.open_info(b)                     # карточка с «Перенести», как обещает подсказка строки
 		return
 	if String(w.get("kind", "")) == "people":
 		open_people(String(w.get("q", "")), String(w.get("f", "")))   # перепись: «Горожане» с поиском
@@ -3199,6 +3252,10 @@ func _make_actor(role: String, festive := false) -> Citizen:
 	var c: Citizen
 	if not lk.is_empty():
 		c = game.people.actor_look(lk, bool(ro["child"]), bool(ro.get("old", false)))   # герой-житель (этап 6.10)
+		var b: Dictionary = cine["bind"]
+		for r in game.people.residents:
+			if String(r["fam"]) == String(b.get("fam", "")) and String(r.get("pn", "")) == String(b.get("pn", "")) and not bool(r["child"]):
+				_twin(r)                         # сам он на улице прячется, пока идёт ролик: в кадре он один
 	else:
 		c = game.people.actor(int(ro["seed"]), bool(ro["female"]), bool(ro["child"]), String(ro["cls"]), bool(ro.get("old", false)))
 	if role == "bride" and festive:
@@ -3366,9 +3423,22 @@ func _approach(dist := 4.2) -> Vector2:
 	return p
 
 
-## Прохожие не заслоняют героя: кто рядом с ним или на линии камеры — прячется до конца ролика
+## Житель r играет в ролике (герой, сосед в толпе): его самого на улице прячем до конца ролика (_crowd_clear)
+func _twin(r: Dictionary) -> void:
+	(cine.get_or_add("twins", {}) as Dictionary)["%s|%s" % [r["fam"], r.get("pn", "")]] = r
+
+
+## Прохожие не заслоняют героя: кто рядом с ним или на линии камеры — прячется до конца ролика.
+## Те, кого играют актёры, — прячутся всегда и каждый такт: вышел из двери — его узел новый
 func _crowd_clear() -> void:
-	if kit == null or not cine.has("focus"):
+	if kit == null:
+		return
+	for r: Dictionary in (cine.get("twins", {}) as Dictionary).values():
+		var tn = r["node"]
+		if tn != null and is_instance_valid(tn) and (tn as Node3D).visible:
+			(tn as Node3D).visible = false
+			_hidden.append(tn)
+	if not cine.has("focus"):
 		return
 	var focus: Vector2 = cine["focus"]
 	var cam := Vector2(kit.pos.x, kit.pos.z)
@@ -4198,10 +4268,19 @@ func _barracks_spot(c: Vector2) -> Vector2:
 	return Vector2.INF
 
 
-## Ближняя к дому истории постройка типа (вид — как у целей, «a|b») или {}
+## Ближняя к дому истории постройка типа (вид — как у целей, «a|b») или {}. Если её просил шаг «у работы» (пост вигилов
+## у гончарной, at: job) — ближняя к работе героя: в ролике тот самый новый пост, а не старый у его дома
 func _near_building(type: String) -> Dictionary:
 	var b: Dictionary = cine["bind"] if not cine.is_empty() else S()["active"]
 	var hp := _home_pos(b)
+	var sd: Dictionary = cine["story"] if not cine.is_empty() else _story(b)
+	for st: Dictionary in sd.get("steps", []):
+		var g: Array = st.get("goal", [])
+		if String(st.get("at", "")) != "job" or g.is_empty():
+			continue
+		for sg in (g[1] if String(g[0]) == "all" else [g]):
+			if sg is Array and String(sg[0]) == "around" and (sg[2] as Dictionary).has(type):
+				hp = _hp(b, st)
 	var best := {}
 	var bd := INF
 	for id in city.buildings:
@@ -4842,14 +4921,17 @@ func _noise_marks(on: bool) -> void:
 		if g.size() > 1 and String(g[0]) == "all":
 			for sg: Array in g[1]:
 				if String(sg[0]) == "quiet":
-					for b: Dictionary in noisy_near(_hp(a), float(sg[1]) + 18.0):
+					var qr := float(sg[1])
+					var hp := _hp(a)
+					for b: Dictionary in noisy_near(hp, qr + 18.0):
 						var top: float = city.blueprint(b).top_y() + 1.0
-						want["story_noise%d" % int(b["id"])] = Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y)
+						# мешает (в счёт цели) только ближе qr м — красный; дальше — просто «шумно неподалёку»
+						want["story_noise%d" % int(b["id"])] = [Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), (b["pos"] as Vector2).distance_to(hp) <= qr]
 	for k in _noise_keys:
 		if not want.has(k):
 			hud.clear_badge(String(k))
 	for k in want:
-		hud.set_badge(k, want[k], "hammer", true, "", Callable(), "mark")
+		hud.set_badge(k, want[k][0], "hammer", bool(want[k][1]), "", Callable(), "mark")
 	_noise_keys = want.keys()
 
 
@@ -5184,6 +5266,7 @@ func _crowd(n: int, place: String, anim: String) -> void:
 		if ni < near.size():
 			var r: Dictionary = near[ni][1]
 			actor = game.people.actor_look(game.people.look_of(r), bool(r["child"]), bool(r.get("old", false)))
+			_twin(r)
 		else:
 			actor = game.people.actor(rg.randi(), rg.randf() < 0.5, rg.randf() < 0.2, String(b.get("cls", "plebs")))
 		actor.position = Vector3(q.x, game.land.height_at(q.x, q.y), q.y)
@@ -5265,7 +5348,9 @@ var _gift_keys: Array = []
 func gift_homes(a: Dictionary, g: Array) -> Array:
 	var o: Dictionary = g[3] if g.size() > 3 else {}
 	var hp := _home_pos(a)
-	var given: Array = (a.get("flags", {}) as Dictionary).get("given", [])
+	var given := {}
+	for x in (a.get("flags", {}) as Dictionary).get("given", []):
+		given[int(x)] = true                 # из сохранения (JSON) номера дробные: 12 in [12.0] в Godot 4 — false
 	var kids := {}
 	for r in game.people.residents:
 		if bool(r["child"]):
@@ -5273,7 +5358,7 @@ func gift_homes(a: Dictionary, g: Array) -> Array:
 	var out := []
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
-		if int(id) == int(a.get("home", -1)) or not city.is_house(b) or not kids.has(int(id)) or int(id) in given:
+		if int(id) == int(a.get("home", -1)) or not city.is_house(b) or not kids.has(int(id)) or given.has(int(id)):
 			continue
 		if (b["pos"] as Vector2).distance_to(hp) <= float(o.get("r", 45.0)):
 			out.append(b)
@@ -5327,7 +5412,7 @@ func gift(hid: int) -> void:
 	if not ok:
 		return
 	var fl: Dictionary = a["flags"]
-	var given: Array = fl.get("given", [])
+	var given: Array = (fl.get("given", []) as Array).map(func(x): return int(x))   # номера домов — целыми
 	var i := given.size()
 	var h: Dictionary = city.buildings[hid]
 	var nm := _kitten_name(i)
@@ -5346,6 +5431,7 @@ func gift(hid: int) -> void:
 	ui.hearts(Vector3(h["pos"].x, float(h["y"]) + top * 0.4, h["pos"].y))
 	city._quiet("Котёнок %s переехал к семье %s." % [nm, StoryDefs.fam_gen(fam)], String(_story(a).get("icon", "cat")))
 	game.select_building(h)                  # карточка дома: кто тут живёт, сколько детей
+	hud.open_info(h)
 	_gift_marks(true)
 	_tick_active()
 	hud.refresh()
@@ -5361,20 +5447,23 @@ func _census_start(a: Dictionary) -> void:
 	var bd := INF
 	var hp := _home_pos(a)
 	for r in game.people.residents:
-		if bool(r["child"]) or int(r["job"]) < 0 or int(r["home"]) == int(a.get("home", -1)):
+		# уходящие из города (home -2) и те, чья семья уже не в своём доме, — не в счёт
+		if bool(r["child"]) or int(r["job"]) < 0 or int(r["home"]) <= 0 or int(r["home"]) == int(a.get("home", -1)):
 			continue
 		var jb: Dictionary = city.buildings.get(int(r["job"]), {})
 		if jb.is_empty() or String(city.def(jb)["kind"]) != "shop" or Residents.job_noun(String(jb["type"]), bool(r["female"])) == "":
 			continue
 		var d := (r["p"] as Vector2).distance_to(hp) + float(hash(String(r.get("pn", ""))) % 7)
-		if d < bd:
+		if d < bd and _lives_in(r):
 			bd = d
 			best = r
 	if best.is_empty():
 		for r in game.people.residents:
-			if not bool(r["child"]) and int(r["home"]) > 0 and int(r["home"]) != int(a.get("home", -1)):
+			if not bool(r["child"]) and int(r["home"]) > 0 and int(r["home"]) != int(a.get("home", -1)) and _lives_in(r):
 				best = r
 				break
+	if best.is_empty():
+		(a["flags"] as Dictionary)["c_person"] = true   # искать некого — строка не держит перепись
 	var job := ""
 	var jb2: Dictionary = city.buildings.get(int(best.get("job", -1)), {})
 	if not jb2.is_empty():
@@ -5393,10 +5482,57 @@ func _best_happy() -> int:
 	return best
 
 
-## Открыта карточка того, кого ищет перепись: житель по имени (hud.info_p), ребёнок, самый счастливый дом (game.selected)
+## Семья жителя r ещё живёт в его доме (уехавшую City убирает из дома раньше, чем жители уходят)
+func _lives_in(r: Dictionary) -> bool:
+	var h: Dictionary = city.buildings.get(int(r["home"]), {})
+	if h.is_empty() or not city.is_house(h):
+		return false
+	for f: Dictionary in h["families"]:
+		if String(f["name"]) == String(r["fam"]):
+			return true
+	return false
+
+
+## Тот, кого ищет перепись, ещё в городе: его семья здесь (в доме, на площади, в пути) и он в ней (семья могла уменьшиться)
+func _census_alive(cz: Dictionary) -> bool:
+	var fam := String(cz.get("fam", ""))
+	if fam == "":
+		return false
+	var hid := _find_family(fam)
+	if hid < 0:
+		return _family_in_city(fam)          # на площади или идёт в новый дом — подождём
+	for f: Dictionary in city.buildings[hid]["families"]:
+		if String(f["name"]) == fam:
+			var ms: Array = f["m"] if typeof(f.get("m")) == TYPE_ARRAY else []
+			if ms.is_empty() or String(cz.get("pn", "")) == "":
+				return true
+			for m in ms:
+				if typeof(m) == TYPE_DICTIONARY and String(m.get("pn", "")) == String(cz.get("pn", "")):
+					return true
+			return false
+	return true
+
+
+## Открыта карточка того, кого ищет перепись: житель по имени (hud.info_p), ребёнок, самый счастливый дом (game.selected).
+## Тот житель уехал с семьёй — писец называет другого (иначе строку не отметить, а пока идёт история, новых не предлагают)
 func _census_seen(a: Dictionary) -> void:
-	var cz: Dictionary = a.get("census", {})
 	var fl: Dictionary = a["flags"]
+	if not bool(fl.get("c_person", false)) and not game.people.residents.is_empty() and not _census_alive(a.get("census", {})):
+		a.erase("census")
+		_census_start(a)
+		if not _census_alive(a.get("census", {})):
+			fl["c_person"] = true                # и нового не найти — строку не требуем (не выбирать заново каждые полсекунды)
+		if hud != null:
+			hud.refresh.call_deferred()          # строка — с новым именем (здесь могли звать из самой строки)
+	if not bool(fl.get("c_child", false)) and not game.people.residents.is_empty():
+		var any_kid := false
+		for rr in game.people.residents:
+			if bool(rr["child"]) and int(rr["home"]) > 0:
+				any_kid = true
+				break
+		if not any_kid:
+			fl["c_child"] = true                 # детей в городе нет — эту строку не требуем
+	var cz: Dictionary = a.get("census", {})
 	var r: Dictionary = (hud.info_p.get("r", {}) as Dictionary) if hud != null else {}
 	if not r.is_empty():
 		if String(r.get("fam", "")) == String(cz.get("fam", "")) and String(r.get("pn", "")) == String(cz.get("pn", "")):

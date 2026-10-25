@@ -3150,6 +3150,17 @@ func _fair() -> void:
 	var bts := row_buttons()
 	check(bts == ["Заплатить 400 ден.", "Без сбора"], "сбор по желанию: %s" % [bts])
 	check(bool(sto.progress({"flags": {"pay_skip": true}}, ["pay", "money", 400, {"skip": "x"}])["ok"]), "«Без сбора» — тоже решение (шаг пройден)")
+	# денег мало: кнопка не молчит — в строке тихо сказано, сколько не хватает; шаг ждёт
+	var m_keep := c.money
+	c.money = 150.0
+	sto.press("pay")
+	var short_t := String(sto.row_info().get("text", ""))
+	check(is_equal_approx(c.money, 150.0) and not bool(A.get("ready", false)) and short_t.contains("Не хватает 250 ден.") and short_t.contains("без сбора"),
+		"150 ден. из 400 — в строке: «%s»" % short_t.substr(maxi(0, short_t.find("Не хватает"))))
+	await frames(10)
+	await shot7("story_fair_short.png")
+	c.money = m_keep
+	check(not String(sto.row_info().get("text", "")).contains("Не хватает"), "накопили — строка снова прежняя")
 	var m0 := c.money
 	sto.press("pay")
 	check(is_equal_approx(c.money, m0 - 400.0) and bool(A.get("ready", false)), "заплатили 400 ден. — ярмарка ждёт «Посмотреть»")
@@ -3161,6 +3172,9 @@ func _fair() -> void:
 	sto.play_ready()
 	var crowd_n := 0
 	var stalls_n := 0
+	var twins_n := 0
+	var twins_seen := 0                      # живой житель на улице рядом со своим двойником-актёром
+	var vis_last := {}
 	var t0 := Time.get_ticks_msec()
 	while sto.kit != null and (Time.get_ticks_msec() - t0) < 40000:
 		await frames(8)
@@ -3173,6 +3187,15 @@ func _fair() -> void:
 		for k in (sto.cine.get("actors", {}) as Dictionary):
 			n += int(String(k).begins_with("crowd"))
 		crowd_n = maxi(crowd_n, n)
+		var tw: Dictionary = sto.cine.get("twins", {})
+		twins_n = maxi(twins_n, tw.size())
+		var vis_now := {}
+		for r: Dictionary in tw.values():
+			var tn = r["node"]
+			if tn != null and is_instance_valid(tn) and (tn as Node3D).visible:
+				vis_now[(tn as Node).get_instance_id()] = true
+				twins_seen += int(vis_last.has((tn as Node).get_instance_id()))   # виден два замера подряд (не только что вышел из двери)
+		vis_last = vis_now
 		stalls_n = maxi(stalls_n, (sto.cine.get("props", []) as Array).size())
 		if kind == "wait" and not sto.cine.has("_t7shot") and int(sto.cine.get("i", 0)) > 3:
 			sto.cine["_t7shot"] = true
@@ -3184,6 +3207,7 @@ func _fair() -> void:
 			sto._next()
 	await wait_kit(false, 4.0)
 	check(crowd_n >= 9 and stalls_n >= 3, "вечер ярмарки: соседей в толпе %d (заплатили — больше), навесов купцов %d" % [crowd_n, stalls_n])
+	check(twins_n >= 3 and twins_seen == 0, "соседи и герой в ролике — без двойников на улице (играют %d, видно двойников %d)" % [twins_n, twins_seen])
 	var e: Dictionary = (S["done"] as Dictionary).get("fair", {})
 	var et := String(e.get("text", ""))
 	var b6 := false
@@ -3269,8 +3293,9 @@ func _grove() -> void:
 	sto.tick()
 	sto._marks(true)
 	var pq := part_of("Шумно")
-	check(not pot.is_empty() and not pq.is_empty() and String(pq["text"]).contains("гончарная") and hud.badges.has("story_noise%d" % int(pot.get("id", -1))),
-		"гончарная рядом: «%s», над ней значок с молотком" % pq.get("text", ""))
+	var pk := "story_noise%d" % int(pot.get("id", -1))
+	check(not pot.is_empty() and not pq.is_empty() and String(pq["text"]).contains("гончарная") and hud.badges.has(pk) and bool(hud.badges[pk]["warn"]),
+		"гончарная рядом: «%s», над ней красный значок с молотком" % pq.get("text", ""))
 	game.set_tool("potter")
 	var zn: Array = sto.zone_note("potter", hp + Vector2(6, 0))
 	check(not zn.is_empty() and not bool(zn[1]) and String(zn[0]).contains("шумит"), "у курсора с гончарной: «%s»" % [zn])
@@ -3279,13 +3304,37 @@ func _grove() -> void:
 	await frames(30)
 	await shot7("story_grove_noise.png")
 	sto.part_click(pq)
-	check(int(game.selected.get("id", -1)) == int(pot.get("id", -2)), "щелчок по «Шумно» — карточка гончарной (её можно перенести)")
+	check(int(game.selected.get("id", -1)) == int(pot.get("id", -2)) and hud.info_panel.visible and int(hud.info_b.get("id", -1)) == int(pot.get("id", -2)),
+		"щелчок по «Шумно» — открыта карточка гончарной (её можно перенести)")
+	hud.close_panels()
 	game.select_building({})
 	c.remove(pot)
 	c.compute()
 	sto.tick()
 	sto._marks(true)
 	check(bool(part_of("Тихо").get("ok", false)) and part_of("Шумно").is_empty() and not hud.badges.has("story_noise%d" % int(pot.get("id", -1))), "гончарную убрали — снова тихо")
+	# мастерская подальше (за 22 м): цели не мешает — «Тихо» ✓, значок не красный (просто «шумно неподалёку»)
+	var far := {}
+	var fd := 0.0
+	for off: Vector2 in [Vector2(-4, -31), Vector2(-4, -36), Vector2(30, 4), Vector2(-30, 4), Vector2(4, 31), Vector2(22, -22), Vector2(-22, -22)]:
+		far = put("potter", hp + off)
+		fd = (far["pos"] as Vector2).distance_to(hp) if not far.is_empty() else 0.0
+		if not far.is_empty() and (fd <= 24.0 or fd > 38.0):
+			c.remove(far)                        # встала не на том расстоянии — пробуем другое место
+			far = {}
+		if not far.is_empty():
+			break
+	c.compute()
+	sto.tick()
+	sto._marks(true)
+	var fk := "story_noise%d" % int(far.get("id", -1))
+	check(not far.is_empty() and fd > 22.0 and fd <= 40.0 and bool(part_of("Тихо").get("ok", false)) and hud.badges.has(fk) and not bool(hud.badges[fk]["warn"]),
+		"гончарная в %d м — не мешает: «Тихо» ✓, значок не красный" % int(round(fd)))
+	if not far.is_empty():
+		c.remove(far)
+		c.compute()
+		sto.tick()
+		sto._marks(true)
 	# «Обзор → Счастье»: рожицы над домами — строка ✓
 	sto.part_click(part_of("Взглянуть"))
 	await frames(6)
@@ -3499,6 +3548,20 @@ func _fire() -> void:
 	check(not vg.is_empty() and not w2.is_empty() and bool(A.get("ready", false)), "пост вигилов и колодец у гончарной — ждём «Посмотреть» (%s)" % parts_txt())
 	if not bool(A.get("ready", false)):
 		return
+	# ролик «спасибо» — у поста при гончарной, а не у другого поста, что ближе к дому героя (гончар живёт далеко от
+	# работы: дом на время проверки — дом Корнелиев, у него ещё один пост)
+	var keep_home := int(A["home"])
+	A["home"] = int(kid_home["id"])
+	var hp7: Vector2 = kid_home["pos"]
+	var decoy := put("vigiles", hp7 + Vector2(6, 8))
+	var nb7: Dictionary = sto._near_building("vigiles")
+	A["home"] = keep_home
+	check(not decoy.is_empty() and (decoy["pos"] as Vector2).distance_to(hp7) < (vg["pos"] as Vector2).distance_to(hp7) and int(nb7.get("id", -1)) == int(vg.get("id", -2)),
+		"ролик «спасибо» — у нового поста при гончарной (другой пост в %.0f м от дома героя — не он)" % (decoy.get("pos", hp7) as Vector2).distance_to(hp7))
+	if not decoy.is_empty():
+		c.remove(decoy)
+		c.compute()
+		sto.tick()
 	var gl0: int = c.legion.glory
 	var m0 := c.money
 	sto.play_ready()
@@ -3548,6 +3611,12 @@ func _owner7b() -> void:
 			S["done"]["cat"] = {"day": 0, "h": 1, "fam": String(b["families"][0]["name"]), "kid": "Мария", "female": true, "seed": 7, "cls": String(c.def(b)["cls"]), "home": int(id)}
 			S["pets"] = [{"home": int(id), "fur": People.CAT_MASYA, "name": "Мася", "seed": 5}]
 			break
+	# подбор героя-жителя в большом городе — быстрый (постройки — один проход, не на каждого жителя): раз в игровой час кадр не дёргается
+	for id in ["fire", "census", "grove", "fair"]:
+		var t0 := Time.get_ticks_usec()
+		var n := sto._cast(StoryDefs.story(id)).size()
+		var ms := (Time.get_ticks_usec() - t0) / 1000.0
+		check(ms < 250.0, "город владельца: подбор героя «%s» — %.0f мс (%d кандидатов)" % [id, ms, n])
 	for id in S7B:
 		var sd := StoryDefs.story(id)
 		if c.level < int(sd.get("lvl", 0)):
@@ -3670,8 +3739,12 @@ func _kittens() -> void:
 	for cc in game.people.cats:
 		if String(cc.get("named", "")) == String(pet.get("name", "?")):
 			named = cc
-	check(given.size() == 1 and int(pet.get("home", -1)) == int(h1["id"]) and not named.is_empty() and int(game.selected.get("id", -1)) == int(h1["id"]),
+	check(given.size() == 1 and int(pet.get("home", -1)) == int(h1["id"]) and not named.is_empty() and int(game.selected.get("id", -1)) == int(h1["id"])
+		and hud.info_panel.visible and int(hud.info_b.get("id", -1)) == int(h1["id"]),
 		"котёнок %s — к семье с детьми (карточка дома открыта, кошка у дома)" % pet.get("name", "?"))
+	await frames(20)
+	await shot7("story_kitten_card.png")
+	hud.close_panels()
 	check(String(c.events[-1].get("text", "")).contains("переехал"), "в колокольчике: «%s»" % c.events[-1].get("text", ""))
 	game.select_building({})
 	sto.gift(int(homes[1]["id"]))
@@ -3681,6 +3754,13 @@ func _kittens() -> void:
 	var dj = JSON.parse_string(JSON.stringify(c.save_data()))
 	var lp: Array = City.stories_load(dj["stories"])["pets"]
 	check(lp.size() == pets0 + 2, "котята сохраняются (%d кошек с именами)" % lp.size())
+	# после загрузки номера домов — дробные (JSON): дома, где котёнок уже есть, значка и второго котёнка не получат
+	var la: Dictionary = City.stories_load(dj["stories"])["active"]
+	var again := sto.gift_homes(la, sto._step(la)["goal"])
+	var twice := false
+	for b: Dictionary in again:
+		twice = twice or int(b["id"]) == int(homes[0]["id"]) or int(b["id"]) == int(homes[1]["id"])
+	check(not again.is_empty() and not twice, "после загрузки: в домах с котятами значка нет (%d домов осталось)" % again.size())
 	if not named.is_empty():
 		var cp: Vector2 = named["p"]
 		game.rig.set_view(Vector3(cp.x, Land.BASE_Y, cp.y), 200.0, 32.0, 7.0)
@@ -3741,6 +3821,32 @@ func _census() -> void:
 	check(sto._goal_kind(A) == "census" and not target.is_empty(), "шаг «перепись»: найти %s (%s)" % [cz.get("name", ""), cz.get("job", "")])
 	var pt := parts_txt()
 	check(pt.contains("· Житель по имени: %s" % String(cz.get("name", "?"))) and pt.contains("· Самая счастливая семья") and pt.contains("· Ребёнок"), "строки: %s" % pt)
+	# семья того, кого ищем, уехала (как City._grow_house: из дома — и сигнал) — писец называет другого, история не застревает
+	var th: Dictionary = c.buildings.get(int(target.get("home", -1)), {})
+	var old_fam := String(cz.get("fam", ""))
+	var left := false
+	if not th.is_empty():
+		var fams: Array = th["families"]
+		for i in fams.size():
+			if String(fams[i]["name"]) == old_fam:
+				var f: Dictionary = fams[i]
+				fams.remove_at(i)
+				th["pop"] = maxi(0, int(th["pop"]) - int(f["n"]))
+				th.erase("_fam_" + old_fam)
+				c.family_left.emit(th["id"], old_fam)
+				c.house_changed.emit(th, false)
+				left = true
+				break
+	await frames(3)
+	sto.tick()
+	cz = A.get("census", {})
+	target = {}
+	for r in game.people.residents:
+		if String(r["fam"]) == String(cz.get("fam", "")) and String(r.get("pn", "")) == String(cz.get("pn", "")) and int(r["home"]) > 0:
+			target = r
+	check(left and not (S["active"] as Dictionary).is_empty() and String(cz.get("fam", "")) != old_fam and not target.is_empty()
+		and parts_txt().contains("· Житель по имени: %s" % String(cz.get("name", "?"))),
+		"семья %s уехала — перепись ищет другого: %s" % [StoryDefs.fam_gen(old_fam), cz.get("name", "")])
 	hud.advisor_panel.visible = false
 	sto.tick()
 	hud.advisor_panel.visible = false
