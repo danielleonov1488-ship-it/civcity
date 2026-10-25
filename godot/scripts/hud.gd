@@ -6941,7 +6941,7 @@ static func add_pets(g: Node3D, type: String) -> void:
 		var n: Node3D
 		if String(e[0]) == "cat":
 			n = People.cat_node(k % 3, String(e[3]), 7 + k)
-			if e.size() > 6:
+			if e.size() > 6 and e[6] is String:          # строка — вещица с витрины (число — окрас котят Маси)
 				People.cat_wear(n, String(e[6]))
 		elif String(e[0]) in ["acc", "toy"]:
 			n = shop_prop(e)

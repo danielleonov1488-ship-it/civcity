@@ -1640,11 +1640,18 @@ func _pets2(b: Dictionary, vis: Dictionary) -> void:
 		var sc := Catalog.DECOR if Defs.B[b["type"]]["kind"] == "decor" else Catalog.ARCH
 		var n: Node3D
 		if String(e[0]) == "cat":
-			# окрас: свой у котят Маси (седьмое поле), у остальных — по номеру постройки
-			n = People.cat_node(int(e[6]) if e.size() > 6 else int(b["id"] + k) % 3, String(e[3]), int(b["id"]) * 7919 + k)
-			add_child(n)
+			# седьмое поле: число — окрас (котята Маси), строка — вещица с витрины «Кошачьей лавки»; иначе окрас по номеру постройки
+			var fur := int(b["id"] + k) % 3
+			var item := ""
 			if e.size() > 6:
-				People.cat_wear(n, String(e[6]))   # кошка «Кошачьей лавки» — в вещице с витрины
+				if e[6] is String:
+					item = e[6]
+				else:
+					fur = int(e[6])
+			n = People.cat_node(fur, String(e[3]), int(b["id"]) * 7919 + k)
+			add_child(n)
+			if item != "":
+				People.cat_wear(n, item)
 		elif String(e[0]) in ["acc", "toy"]:
 			n = Hud.shop_prop(e)                   # вещица на витрине или клубок на нитке (Д14)
 			add_child(n)
