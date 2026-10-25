@@ -57,6 +57,17 @@ func _ready() -> void:
 	_run()
 
 
+## Часы роликов. Ролик за кадр продвигается не больше чем на 0,05 с (Stories._process и RankCine — minf(dt, 0.05):
+## рывок не проматывает ролик). Под нагрузкой (4 кадра/с — несколько проверок на одной видеокарте) ролик идёт в
+## 4–5 раз медленнее настенных часов: Esc возвращает камеру за 0,9 с ролика — это 18 кадров, 4,5 с настоящих. Сроки
+## ожидания роликов поэтому — по этим часам (при 20+ кадрах/с они совпадают с настоящими)
+var cine_t := 0.0
+
+
+func _process(dt: float) -> void:
+	cine_t += minf(dt, 0.05)
+
+
 func frames(n: int) -> void:
 	for i in n:
 		await get_tree().process_frame
@@ -169,18 +180,18 @@ func fresh(h := 100, done := []) -> void:
 	sto.tick()
 
 
-## Ждать, пока ролик начнётся / кончится
+## Ждать, пока ролик начнётся / кончится (sec — по часам роликов)
 func wait_kit(on: bool, sec: float) -> bool:
-	var t0 := Time.get_ticks_msec()
-	while (sto.kit != null) != on and (Time.get_ticks_msec() - t0) / 1000.0 < sec:
+	var t0 := cine_t
+	while (sto.kit != null) != on and cine_t - t0 < sec:
 		await get_tree().process_frame
 	return (sto.kit != null) == on
 
 
-## Ждать такт ролика вида kind (say, choice…), не дольше sec
+## Ждать такт ролика вида kind (say, choice…), не дольше sec (по часам роликов)
 func wait_beat(kind: String, sec: float) -> bool:
-	var t0 := Time.get_ticks_msec()
-	while (Time.get_ticks_msec() - t0) / 1000.0 < sec:
+	var t0 := cine_t
+	while cine_t - t0 < sec:
 		if sto.cine.is_empty():
 			return false
 		var i := int(sto.cine.get("i", -1))
@@ -201,10 +212,10 @@ func press_key(k: Key) -> void:
 
 ## Досмотреть ролик: «дальше», пока не кончится; на выборе — первая кнопка
 func play_through(sec := 30.0, shot_at := "", shot_name := "", shot_at2 := "", shot_name2 := "") -> void:
-	var t0 := Time.get_ticks_msec()
+	var t0 := cine_t
 	var shot_done := false
 	var shot2_done := false
-	while sto.kit != null and (Time.get_ticks_msec() - t0) / 1000.0 < sec:
+	while sto.kit != null and cine_t - t0 < sec:
 		await frames(8)
 		if sto.cine.is_empty():
 			continue
@@ -439,8 +450,8 @@ func _offer_flow() -> void:
 	check(sto.ui.face_tex.texture is ViewportTexture, "портрет — живая голова (SubViewport)")
 	await shot("story_ask.png")
 	# дальше до выбора
-	var t0 := Time.get_ticks_msec()
-	while not sto.ui.choosing() and Time.get_ticks_msec() - t0 < 15000:
+	var t0 := cine_t
+	while not sto.ui.choosing() and cine_t - t0 < 15.0:
 		sto.ui.finish_typing()
 		await frames(3)
 		sto._next()
@@ -695,8 +706,8 @@ func _migrate_old() -> void:
 	await shot("story_migrated_journal.png")
 	hud.journal_panel.visible = false
 	# ролик начнётся, когда мир свободен (can_start: прошлый ролик закрылся) — под нагрузкой всего набора это не сразу
-	var t0 := Time.get_ticks_msec()
-	while not sto.can_start() and Time.get_ticks_msec() - t0 < 5000:
+	var t0 := cine_t
+	while not sto.can_start() and cine_t - t0 < 5.0:
 		await get_tree().process_frame
 	sto.replay("cat")
 	var started := not sto.cine.is_empty()
@@ -1388,8 +1399,8 @@ func _square() -> void:
 			silver = silver or mi.material_override == Citizen._silver
 		check(silver and lay, "старик седой, лицо — на свету для крупного плана")
 	await shot("story_square_ask.png")
-	var t0 := Time.get_ticks_msec()
-	while not sto.ui.choosing() and Time.get_ticks_msec() - t0 < 15000:
+	var t0 := cine_t
+	while not sto.ui.choosing() and cine_t - t0 < 15.0:
 		sto.ui.finish_typing()
 		await frames(3)
 		sto._next()
@@ -2030,10 +2041,10 @@ func _faces() -> void:
 	Citizen.plain_faces = false
 
 
-## Ждать, пока шествие пойдёт (такт ["proc", "walk"])
+## Ждать, пока шествие пойдёт (такт ["proc", "walk"]; sec — по часам роликов)
 func wait_walk(sec: float) -> bool:
-	var t0 := Time.get_ticks_msec()
-	while (Time.get_ticks_msec() - t0) / 1000.0 < sec:
+	var t0 := cine_t
+	while cine_t - t0 < sec:
 		if sto.cine.is_empty():
 			return false
 		var i := int(sto.cine.get("i", -1))
@@ -2046,8 +2057,8 @@ func wait_walk(sec: float) -> bool:
 
 ## Вести ролик (реплики дальше, на выборе — первая кнопка), пока не дойдёт до такта kind
 func drive_until(kind: String, sec: float) -> bool:
-	var t0 := Time.get_ticks_msec()
-	while sto.kit != null and (Time.get_ticks_msec() - t0) / 1000.0 < sec:
+	var t0 := cine_t
+	while sto.kit != null and cine_t - t0 < sec:
 		await frames(6)
 		if sto.cine.is_empty():
 			continue
