@@ -107,17 +107,30 @@ func _apron_add(b: Dictionary) -> void:
 		land.wear_stamp(b["cells"], door_point(b))
 
 
-## Все окантовки заново (загрузка сохранения: окантовка не сохраняется — старые города получают её сами)
+## Все окантовки заново (загрузка сохранения: окантовка не сохраняется — старые города получают её сами).
+## Сначала — какие постройки с бордюром: глина за их стены не заходит, как и при постройке по ходу игры
 func apron_all() -> void:
 	land.wear.fill(0)
+	land.wear_block.clear()
+	for id in buildings:
+		if apron_of(buildings[id]) == 2:
+			land.wear_block[int(id)] = true
 	for id in buildings:
 		_apron_add(buildings[id])
 
 
-## Постройку убрали: её окантовку стереть, кольца соседей в том месте — записать заново
+## Постройку убрали: её окантовку стереть, кольца соседей в том месте — записать заново (снесли домус — глина
+## соседей снова доходит до этого места)
 func _apron_remove(b: Dictionary) -> void:
-	if apron_of(b) != 1:
+	if apron_of(b) == 0:
 		return
+	land.wear_block.erase(int(b["id"]))
+	_apron_refresh(b)
+
+
+## Окантовку вокруг постройки b — заново: стереть у её клеток и двери, кольца соседей записать заново. Поставили
+## домус — глина соседей уходит с его стен и из сада (порядок постройки не важен: как если бы домус стоял первым)
+func _apron_refresh(b: Dictionary) -> void:
 	var cells: PackedInt32Array = b["cells"]
 	var lo := Vector2i(Land.N, Land.N)
 	var hi := Vector2i(-1, -1)
@@ -332,6 +345,9 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 			land.occ[k] = b["id"]
 	buildings[b["id"]] = b
 	_apron_add(b)
+	if apron_of(b) == 2:
+		land.wear_block[int(b["id"])] = true
+		_apron_refresh(b)
 	if bulk:                                    # готовый город раскладывается разом — пересчёт один раз в конце
 		building_added.emit(b)
 		return b

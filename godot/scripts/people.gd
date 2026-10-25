@@ -437,7 +437,7 @@ func _enter_work(r: Dictionary) -> void:
 		r["p"] = Vector2(xf.origin.x, xf.origin.z)
 		# без собеседника никто не говорит «в воздух»: разговор — только с покупателем (_keeper_react)
 		var sa: String = "Idle" if String(a[2]).begins_with("Idle_Talking") else String(a[2])
-		sa = HandProps.work_clip(b["type"], free, sa)        # музыкант — играет на лире
+		r["slot_base"] = sa              # движение по чертежу; на лире музыкант играет, только когда она в руках (_slot_clip)
 		r.erase("carry")
 		c.play(sa, 0.3, rng.randf())
 		# продавец за прилавком: помнит, как стоит, чтобы повернуться к покупателю и вернуться обратно
@@ -1816,10 +1816,17 @@ func props_want(r: Dictionary) -> Array:
 	return []
 
 
-## Раздать и забрать вещи: ближним к камере (не дальше PROP_R, не больше PROP_CAP), остальным — без вещей
+## Раздать и забрать вещи: ближним к тому, куда смотрит камера (не дальше PROP_R, не больше PROP_CAP), остальным —
+## без вещей. Мерим от точки взгляда, а не от самой камеры: при обычном приближении камера в 80 м от города, и вещей
+## не было бы видно вовсе; в ролике — от камеры (она у героев)
 func _props_tick() -> void:
-	var cam: Camera3D = game.rig.cam if game.rig else null
+	var rig = game.rig
+	var cam: Camera3D = rig.cam if rig else null
+	var at := Vector3.ZERO
+	if cam:
+		at = cam.global_position if rig.cine else rig.target
 	var cands := []
+	var lyres := {}
 	for r in residents:
 		var c: Citizen = r["node"]
 		if c == null:
@@ -1827,11 +1834,12 @@ func _props_tick() -> void:
 		var want: Array = props_want(r) if props_on and cam else []
 		var d2 := INF
 		if not want.is_empty():
-			d2 = c.global_position.distance_squared_to(cam.global_position)
+			d2 = c.global_position.distance_squared_to(at)
 		if want.is_empty() or d2 > PROP_R * PROP_R:
 			if HandProps.held(c) != "":
 				HandProps.drop(c)
 			c.set_carry(false)
+			_slot_clip(r, false)
 			continue
 		cands.append([d2, r, want])
 	cands.sort_custom(func(a, b): return a[0] < b[0])
@@ -1841,10 +1849,65 @@ func _props_tick() -> void:
 		if i >= PROP_CAP:
 			HandProps.drop(c)
 			c.set_carry(false)
+			_slot_clip(r, false)
 			continue
 		var carrying: bool = r["state"] != "work"
+		if not carrying:
+			_slot_clip(r, true)              # сначала движение с вещью (лира): хват считается по его позе
 		HandProps.hold(c, cands[i][2], "Idle" if carrying else String(r.get("slot_anim", "Idle")))
 		c.set_carry(carrying)
+		if not carrying and "lyre" in cands[i][2]:
+			lyres[int(r["job"])] = true
+	_bench_lyres(lyres)
+
+
+## Движение работника — в лад с вещью в руках: с лирой музыкант играет (HandProps.WORK_CLIP), без неё — как в чертеже
+## (сидит, а лира лежит на скамье), чтобы не играть на пустой руке
+func _slot_clip(r: Dictionary, with_props: bool) -> void:
+	if r["state"] != "work" or int(r["slot"]) < 0 or not r.has("slot_base"):
+		return
+	var t := String((city.buildings.get(r["job"], {}) as Dictionary).get("type", ""))
+	var want: String = HandProps.work_clip(t, int(r["slot"]), r["slot_base"]) if with_props else String(r["slot_base"])
+	var cur := String(r.get("slot_anim", ""))
+	if want == cur:
+		return
+	var c: Citizen = r["node"]
+	if c and c._cur == cur:                  # отвечает покупателю — не перебиваем, вернётся уже к новому
+		c.play(want, 0.3, rng.randf())
+	r["slot_anim"] = want
+
+
+var _lyre_hid := {}                  # id музыкантов → [ручка лиры на скамье, что спрятано (Parts.hide_handles)]
+
+
+## Лира на скамье музыкантов: пока музыкант играет на ней (в руках), на скамье её нет — лира одна, а не две;
+## положил (далеко от камеры, «Низкая», ушёл с работы) — снова на скамье
+func _bench_lyres(held: Dictionary) -> void:
+	var parts: Parts = game.parts
+	if parts == null:
+		return
+	for id in _lyre_hid.keys():
+		var e: Array = _lyre_hid[id]
+		var h := _lyre_handle(id)
+		var same := not h.is_empty() and is_same(h[0], e[0][0]) and int(h[1]) == int(e[0][1])
+		if held.has(id) and same:
+			continue
+		if same:
+			parts.restore(e[1])             # постройку снесли или показали заново — её новую лиру не трогаем
+		_lyre_hid.erase(id)
+	for id in held:
+		var h := _lyre_handle(id)
+		if not h.is_empty() and not parts.is_hidden(h):
+			_lyre_hid[id] = [h, parts.hide_handles([h])]
+
+
+## Ручка лиры на скамье музыкантов id ([] — нет: постройку ещё не показали или уже снесли)
+func _lyre_handle(id: int) -> Array:
+	var vis: Dictionary = game.visuals.get(id, {})
+	for h: Array in vis.get("h", []):
+		if String((h[0] as Dictionary)["key"]).begins_with("SM_Prop_Lyre_01|"):
+			return h
+	return []
 
 
 ## Кого рисовать: людей больше, чем MAX_VIS, — рисуем тех, кто в кадре, ближних к камере первыми;
@@ -1928,7 +1991,9 @@ func _show(r: Dictionary) -> void:
 			c.transform = xf
 			c.scale = Vector3.ONE * Citizen.SIZE * (0.68 if r["child"] else 1.0)
 			var sa: String = "Idle" if String(a[2]).begins_with("Idle_Talking") else String(a[2])   # не говорит «в воздух»
-			sa = HandProps.work_clip(b["type"], int(r["slot"]), sa)
+			r["slot_base"] = sa
+			if HandProps.held(c) != "":
+				sa = HandProps.work_clip(b["type"], int(r["slot"]), sa)     # лира уже в руках — играет на ней
 			c.play(sa, 0.0, rng.randf())
 			r["slot_anim"] = sa
 			r["slot_yaw"] = c.rotation.y
@@ -3037,8 +3102,9 @@ func _cats_step(dt: float) -> void:
 
 
 ## Кошка без жизни на улице — для корзинки-украшения и портрета в облачке: модель окраса fur в позе clip
-## (Sleep, Sit, Pet), без звука и прогулок. Модели нет — кошка из Kit
-static func cat_node(fur: int, clip := "Sleep", seed_v := 0) -> Node3D:
+## (Sleep, Sit, Pet), без звука и прогулок. Модели нет — кошка из Kit. length — длина: по умолчанию как в корзинке,
+## в «Пересмотреть» — как на улице (CAT_LEN), чтобы Мурка в ролике не была меньше себя
+static func cat_node(fur: int, clip := "Sleep", seed_v := 0, length := CAT_LEN_BED) -> Node3D:
 	var f: Array = CAT_FURS[clampi(fur, 0, CAT_FURS.size() - 1)]
 	var root := Node3D.new()
 	if not _cat_model_ok():
@@ -3050,10 +3116,11 @@ static func cat_node(fur: int, clip := "Sleep", seed_v := 0) -> Node3D:
 			mi.material_override = mat
 			mi.position = e[1]
 			root.add_child(mi)
+		root.scale = Vector3.ONE * (length / CAT_LEN_BED)
 		return root
 	var m := _cat_scene.instantiate() as Node3D
 	m.rotation.y = -PI / 2
-	m.scale = Vector3.ONE * CAT_LEN_BED / _cat_size * 0.95
+	m.scale = Vector3.ONE * length / _cat_size * 0.95
 	root.add_child(m)
 	var fmat := _cat_dress(m, fur)
 	var ap: AnimationPlayer = m.find_children("*", "AnimationPlayer", true, false)[0]

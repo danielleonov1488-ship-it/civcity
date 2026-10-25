@@ -1386,6 +1386,7 @@ func _on_added(b: Dictionary) -> void:
 ## Не больше GROW_MAX строек с лесами разом (копия, ряд мышью — остальные растут коротко, как раньше); на ×3 — быстрее
 const GROW_MAX := 3
 var _grows := 0
+var _grow_live := {}                  # id стройки → [tween, призрак, леса] — снесли или отменили, пока растёт: убрать сразу
 
 func _grow_anim(b: Dictionary) -> void:
 	var bp := city.blueprint(b)
@@ -1401,6 +1402,7 @@ func _grow_anim(b: Dictionary) -> void:
 	if full:
 		_grows += 1
 	var tw := create_tween()
+	_grow_live[id] = [tw, g, scaf]
 	if full:
 		# этажи — по одному: рывок вверх и короткая пауза (стучат молотки)
 		for k in 3:
@@ -1410,6 +1412,8 @@ func _grow_anim(b: Dictionary) -> void:
 		tw.tween_property(g, "scale", Vector3(1.0, 1.06, 1.0), 1.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_property(g, "scale", Vector3.ONE, 0.18)
 	tw.tween_callback(func():
+		if (_grow_live.get(id, [null]) as Array)[0] == tw:
+			_grow_live.erase(id)
 		g.queue_free()
 		if scaf:
 			scaf.queue_free()
@@ -1511,7 +1515,21 @@ func _hide(b: Dictionary) -> void:
 	visuals.erase(b["id"])
 
 
+## Стройку отменили, снесли или перенесли, пока она росла: призрак, леса и рабочие уходят сразу (не стучат на пустом месте)
+func _grow_cancel(id: int) -> void:
+	var e: Array = _grow_live.get(id, [])
+	if e.is_empty():
+		return
+	_grow_live.erase(id)
+	(e[0] as Tween).kill()
+	(e[1] as Node).queue_free()
+	if e[2] != null:
+		(e[2] as Node).queue_free()
+		_grows -= 1
+
+
 func _on_removed(b: Dictionary) -> void:
+	_grow_cancel(int(b["id"]))
 	_hide(b)
 	_puff(Vector3(b["pos"].x, b["y"], b["pos"].y))
 	if selected.get("id", -1) == b["id"]:

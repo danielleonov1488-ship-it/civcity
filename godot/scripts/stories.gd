@@ -49,6 +49,7 @@ var _no_decals := RenderingServer.get_current_rendering_method() == "gl_compatib
 var _spot_cache := {}                  # «история:дом:час» → где кошке спрятаться (INF — негде)
 var _hidden: Array = []                # прохожие, спрятанные на время ролика (заслоняли героя)
 var _hid_parts: Array = []             # деревья, кусты и высокие украшения, спрятанные на время ролика (Parts.hide_handles)
+var _hid_lights: Array = []            # и свет спрятанных фонарей (иначе пятно света висит без фонаря)
 var _hid_keys := {}                    # что уже спрятано (не прятать дважды)
 var _tree_t := 0.0
 var _tried := ""                       # с чем последний раз искали, кому предложить историю
@@ -2963,6 +2964,10 @@ func _trees_clear() -> void:
 			var vis: Dictionary = game.visuals.get(id, {})
 			if not vis.is_empty():
 				_hid_parts.append_array(game.parts.hide_handles(vis["h"]))
+				for l in vis.get("lights", []):
+					game.night_lights.erase(l)
+					(l as Node3D).visible = false
+					_hid_lights.append(l)
 				_hid_keys[key] = true
 	# природа: деревья и кусты вдоль луча
 	var lo := a.min(b) - Vector2(3, 3)
@@ -2990,6 +2995,14 @@ func trees_back() -> void:
 		game.parts.restore(_hid_parts)
 	_hid_parts = []
 	_hid_keys = {}
+	var relit := false
+	for l in _hid_lights:
+		if is_instance_valid(l) and not (l as Node).is_queued_for_deletion():      # фонарь не снесли за время ролика
+			game.night_lights.append(l)
+			relit = true
+	_hid_lights = []
+	if relit:
+		game._set_hour(game.hour)               # свет фонарей — как положено в этот час
 
 
 ## От a до b (у кошки) — ни построек, ни воды, ни круч
@@ -3057,7 +3070,7 @@ func _tcat() -> Node3D:
 	var sp: Array = b.get("spot", [])
 	var h: Dictionary = city.buildings.get(int(b.get("home", -1)), city.center())
 	var p: Vector2 = Vector2(float(sp[0]), float(sp[1])) if sp.size() == 2 else city.door_point(h) + City.facing(float(h["yaw"])) * 5.0
-	var n := People.cat_node(int(b.get("fur", 0)), "Sit", 3)
+	var n := People.cat_node(int(b.get("fur", 0)), "Sit", 3, People.CAT_LEN)     # того же роста, что на улице
 	game.add_child(n)
 	n.position = Vector3(p.x, game.land.height_at(p.x, p.y), p.y)
 	n.rotation.y = hash(b.get("fam", "")) % 628 / 100.0

@@ -53,6 +53,7 @@ var road_chunks := {}                # куски, где есть дороги 
 ## (City.apron_all при загрузке, City.place / remove по ходу). Видна только на траве: дороги, площади, поля, вода — как были
 var wear := PackedByteArray()
 var wear_chunks := {}                # куски, где есть окантовка (маска покрытий собирается и для них)
+var wear_block := {}                 # id построек с бордюром (домус, храм, пантеон): глина соседей не заходит за их стены в сад
 
 var n1 := FastNoiseLite.new()
 var n2 := FastNoiseLite.new()
@@ -221,6 +222,7 @@ func generate() -> void:
 	wear.resize(N * N)
 	wear.fill(0)
 	wear_chunks.clear()
+	wear_block.clear()
 	var tn := FastNoiseLite.new()
 	tn.seed = 5
 	tn.frequency = 0.035
@@ -711,7 +713,8 @@ const APRON_DOOR := 5                   # пятно у двери: радиус
 
 
 ## Окантовка вокруг следа постройки cells: кольца от стены (по четырём соседям) и пятно у двери door.
-## Пишется наибольшее (соседние дома друг друга не стирают); маска покрытий обновится по прямоугольнику
+## Пишется наибольшее (соседние дома друг друга не стирают); маска покрытий обновится по прямоугольнику.
+## Клетки построек с бордюром (wear_block) глина обходит: ни на них, ни сквозь них в сад домуса и двор храма
 func wear_stamp(cells: PackedInt32Array, door := Vector2.INF) -> void:
 	if cells.is_empty():
 		return
@@ -740,6 +743,8 @@ func wear_stamp(cells: PackedInt32Array, door := Vector2.INF) -> void:
 				if k2 < 0 or k2 >= N * N or seen.has(k2):
 					continue
 				seen[k2] = true
+				if occ[k2] != 0 and wear_block.has(occ[k2]):
+					continue            # стена домуса: не красим и дальше за неё не идём
 				nxt.append(k2)
 				if wear[k2] < w:
 					wear[k2] = w
@@ -758,6 +763,8 @@ func wear_stamp(cells: PackedInt32Array, door := Vector2.INF) -> void:
 					continue
 				var w := int(255.0 * clampf(1.2 - d / APRON_DOOR, 0.0, 1.0))
 				var k2 := idx(dc.x + di, dc.y + dj)
+				if occ[k2] != 0 and wear_block.has(occ[k2]):
+					continue
 				if wear[k2] < w:
 					wear[k2] = w
 		i0 = mini(i0, dc.x - APRON_DOOR)

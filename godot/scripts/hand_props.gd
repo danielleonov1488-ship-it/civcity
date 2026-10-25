@@ -1,17 +1,16 @@
 class_name HandProps
 extends RefCounted
-## Вещи в руках жителей (этап 4): лира у музыканта, бубен у танцовщицы, свиток у писца, серп в поле, корзина в роще,
-## хлеб у пекаря, кувшин в таверне, кадильница у жреца, копьё и щит у стражи, бритва у цирюльника; покупки — домой
-## (People.carry). Вещь — на кости кисти (BoneAttachment3D «HandProp»); как её держать — по позе движения: кисть
+## Вещи в руках жителей (этап 4): лира у музыканта, свиток у писца, серп в поле, корзина в роще, хлеб у пекаря,
+## кувшин в таверне, кадильница у жреца, копьё и щит у стражи, бритва у цирюльника; покупки — домой (People.carry).
+## Вещь — на кости кисти (BoneAttachment3D «HandProp», с пометкой hand_prop); как её держать — по позе движения: кисть
 ## в осях скелета на кадре t (LegionFighter._pose), вещь в этих осях стоит так, как задано (up — её ось вверх,
 ## fwd — куда смотрит лицом, off — сдвиг от кисти), и дальше ходит вместе с кистью. Без тени: мелочь, а вызовов вдвое меньше.
-## Вещи — только вблизи камеры и не на «Низкой» (People._props_tick).
+## Вещи — только вблизи того, куда смотрит камера, и не на «Низкой» (People._props_tick).
 
-## mesh: модель Synty («SM_…»), Artisau («@Имя») или своя («#tympanum», «#razor»); h — высота (или длина) вещи в метрах
+## mesh: модель Synty («SM_…»), Artisau («@Имя») или своя («#razor»); h — высота (или длина) вещи в метрах
 ## скелета (житель — 1,8 м до уменьшения); anchor — чем вещь в кисти: center | top (ручка сверху: кувшин, корзина)
 const DEF := {
 	"lyre": {"mesh": "SM_Prop_Lyre_01", "hand": "LeftHand", "h": 0.55, "up": Vector3(0, 1, 0.25), "fwd": Vector3(0.3, 0, 1), "off": Vector3(0.12, 0.1, 0.05)},
-	"tympanum": {"mesh": "#tympanum", "hand": "RightHand", "h": 0.28, "up": Vector3(0, 0.2, 1), "fwd": Vector3(0, 1, -0.2), "off": Vector3(0, 0.02, 0.06), "raw": true},
 	"scroll": {"mesh": "SM_Prop_Scroll_01", "hand": "RightHand", "h": 0.3, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(-0.04, 0.03, 0.06), "raw": true},
 	"sickle": {"mesh": "SM_Prop_Sickle_01", "hand": "RightHand", "h": 0.42, "up": Vector3(0, 0.3, 1), "fwd": Vector3(0, 1, 0), "off": Vector3(0, 0.0, 0.1), "raw": true},
 	"basket": {"mesh": "SM_Prop_Basket_03", "hand": "LeftHand", "h": 0.34, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.02, 0.02), "anchor": "top"},
@@ -29,17 +28,19 @@ const DEF := {
 	"jar": {"mesh": "SM_Prop_Jar_01", "hand": "LeftHand", "h": 0.2, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.01, 0.04), "anchor": "top"},
 }
 
-## Кто что держит на работе: тип постройки → [вещи слота 0, слота 1, …] (пусто — без вещей); clip — своё движение слота
+## Кто что держит на работе: тип постройки → [вещи слота 0, слота 1, …] (пусто — без вещей). Слоты — места работников
+## по порядку (People._enter_work): у музыкантов и цирюльни работник один — его место первое
 const WORK := {
-	"musicians": [["lyre"], ["tympanum"]],
+	"musicians": [["lyre"]],
 	"scriptorium": [["scroll"]], "school": [["scroll"]], "library": [["scroll"]], "academy": [["scroll"]],
 	"farm": [["sickle"], ["sickle"]], "grove": [["basket"]], "vineyard": [["basket"]],
 	"bakery": [["bread"]], "taberna": [["jug"], ["jug"]], "thermopolium": [["jug"]],
-	"temple": [["censer"]], "barber": [[], ["razor"]],
+	"temple": [["censer"]], "barber": [["razor"]],
 	"center": [[], ["spear", "shield"]], "forum": [[], ["spear", "shield"]],
 }
-## Свои движения слотов (вместо записанных в чертеже): музыкант играет на лире, а не говорит «в воздух»
-const WORK_CLIP := {"musicians": ["Play_Lyre", ""]}
+## Свои движения слотов (вместо записанных в чертеже) — только пока вещь в руках: музыкант с лирой играет на ней,
+## без лиры (далеко, «Низкая») — сидит как в чертеже, а лира лежит на скамье (People._slot_clip)
+const WORK_CLIP := {"musicians": ["Play_Lyre"]}
 
 ## Что несут домой из лавки
 const CARRY := {
@@ -88,7 +89,8 @@ static func hold(c: Citizen, whats: Array, clip: String) -> void:
 		if d.is_empty():
 			continue
 		var ba := BoneAttachment3D.new()
-		ba.name = "HandProp"
+		ba.name = "HandProp"                 # вторая вещь получит имя «@BoneAttachment3D@…» — drop ищет по пометке
+		ba.set_meta("hand_prop", true)
 		ba.bone_name = d["hand"]
 		sk.add_child(ba)
 		var holder := Node3D.new()
@@ -108,9 +110,10 @@ static func hold(c: Citizen, whats: Array, clip: String) -> void:
 static func drop(c: Node3D) -> void:
 	if c == null or held(c) == "":
 		return
-	for ba in c.find_children("HandProp", "BoneAttachment3D", true, false):
-		ba.get_parent().remove_child(ba)
-		ba.queue_free()
+	for ba in c.find_children("*", "BoneAttachment3D", true, false):
+		if ba.has_meta("hand_prop"):            # все вещи (копьё и щит), а не только первая по имени
+			ba.get_parent().remove_child(ba)
+			ba.queue_free()
 	c.set_meta("hand_props", "")
 	if c is Citizen:
 		(c as Citizen).meshes = []
@@ -184,16 +187,10 @@ static func _scaled(m: Mesh, s: float) -> ArrayMesh:
 	return out
 
 
-## Свои мелочи: бубен (обод и кожа), бритва
+## Свои мелочи: бритва
 static func _kit(nm: String) -> Mesh:
 	var k := Kit.new()
 	match nm:
-		"#tympanum":
-			k.cyl(Vector3(0, -0.03, 0), 0.5, 0.06, 14, Color("8a5a32"))
-			k.cyl(Vector3(0, -0.031, 0), 0.46, 0.062, 14, Color("e8d6b0"))
-			for i in 4:
-				var a := TAU * i / 4.0
-				k.cyl(Vector3(cos(a) * 0.5, -0.02, sin(a) * 0.5), 0.05, 0.04, 6, Color("d4a548"))
 		"#razor":
 			k.boxc(Vector3(0, 0, 0.0), Vector3(0.12, 0.5, 0.1), Color("6b4a2e"))
 			k.boxc(Vector3(0, 0.45, 0.0), Vector3(0.05, 0.4, 0.3), Color("c9c4b8"))

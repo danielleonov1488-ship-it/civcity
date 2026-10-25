@@ -313,6 +313,13 @@ func hide_handles(handles: Array) -> Array:
 	return saved
 
 
+## Деталь ручки h ([группа, место]) сейчас спрятана (нулевой масштаб)
+func is_hidden(h: Array) -> bool:
+	var sub: Dictionary = (h[0] as Dictionary)["subs"][0]
+	var mm: MultiMesh = sub["mm"]
+	return int(h[1]) >= mm.instance_count or mm.get_instance_transform(int(h[1])).basis.get_scale().length() < 1e-6
+
+
 ## Вернуть спрятанное hide_handles (место, которое за это время заняли другим, не трогаем)
 func restore(saved: Array) -> void:
 	for e: Array in saved:

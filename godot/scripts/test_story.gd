@@ -1588,8 +1588,29 @@ func _wedding() -> void:
 	var tit: Dictionary = (game.nature[Vector2i(int(tree_p.x / 2.0), int(tree_p.y / 2.0))] as Array)[-1]
 	var tree_h: Array = tit["h"]
 	var t_scale := func() -> float: return ((tree_h[0][0]["subs"][0]["mm"]) as MultiMesh).get_instance_transform(int(tree_h[0][1])).basis.get_scale().length()
+	# фонарь на луче камеры прячется вместе со своим светом (пятно света без фонаря не висит)
+	var lamp_p := Vector2.INF
+	for k in range(90, 40, -2):
+		var t := k / 100.0
+		var q := Vector2(lerpf(kc.x, kl.x, t), lerpf(kc.z, kl.z, t))
+		var gy: float = game.land.height_at(q.x, q.y)
+		var ry := lerpf(kc.y, kl.y, t)
+		if q.distance_to(Vector2(kl.x, kl.z)) > 1.6 and ry > gy + 0.3 and ry < gy + 2.2 and game.land.occ_at(q) == 0:
+			lamp_p = q
+			break
+	var lamp := {}
+	var lamp_l: Array = []
+	if lamp_p != Vector2.INF:
+		lamp = c.place("lamp_post", lamp_p, 0.0, 0, 0, true)
+		lamp_l = (game.visuals.get(int(lamp["id"]), {}) as Dictionary).get("lights", [])
+		sto._trees_clear()                # сразу, пока камера шествия там же (через 0,2 с она уже сдвинется)
 	await frames(30)
 	check(t_scale.call() < 1e-6, "дерево между камерой шествия и парой спрятано на время ролика")
+	var lamp_dark := not lamp_l.is_empty()
+	for l in lamp_l:
+		if game.night_lights.has(l) or (l as Node3D).visible:
+			lamp_dark = false
+	check(lamp_dark, "фонарь на луче камеры спрятан вместе со своим светом (огней: %d)" % lamp_l.size())
 	await frames(150)
 	await shot("story_wedding_proc.png")
 	var oh: float = game.land.height_at(208.0, 116.0)
@@ -1606,9 +1627,16 @@ func _wedding() -> void:
 	await play_through(30.0, "say", "story_wedding_say.png")
 	var ended: bool = await wait_kit(false, 5.0)
 	await frames(4)
-	check(ended and is_equal_approx(game.look_hour, -1.0) and game.night_lights.size() == nl0, "ролик кончился: свет как был, жаровни убраны")
+	check(ended and is_equal_approx(game.look_hour, -1.0) and game.night_lights.size() == nl0 + lamp_l.size(), "ролик кончился: свет как был, жаровни убраны")
 	check(t_scale.call() > 0.1, "ролик кончился — спрятанное дерево снова на месте")
+	var lamp_back := not lamp_l.is_empty()
+	for l in lamp_l:
+		if not game.night_lights.has(l):
+			lamp_back = false
+	check(lamp_back, "и фонарь снова светит в свой час")
 	game.remove_nature(tit)
+	if not lamp.is_empty():
+		c.remove(lamp, false)
 	check(is_equal_approx(float(game.speed), 2.0), "скорость вернулась (×%s)" % game.speed)
 	hud.set_speed(0.0)
 	# пересмотр из журнала
