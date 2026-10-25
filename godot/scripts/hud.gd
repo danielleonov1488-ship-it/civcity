@@ -83,6 +83,8 @@ var tool_btns := {}
 var info_panel: PanelContainer
 var info_box: VBoxContainer
 var info_b := {}
+var info_p := {}                      # карточка жителя или кошки (PersonCard): {"r": житель} / {"cat": кошка}
+var person_tag: Label                 # подпись у курсора над жителем: «Гай Юлий · пекарь»
 var lg_upg_btn: Button                    # карточка здания Легиона: «Улучшить — …» (стрелка обучения Легиону, шаг 4)
 var _lg_live := {}                        # карточка здания Легиона: полоска и надпись идущего улучшения {key, bar, label}
 var _lg_live_t := 0.0
@@ -1332,6 +1334,8 @@ func _cursor_world() -> String:
 		var sto = game.get("stories")
 		if sto != null and sto.near_cat(game._mouse_pos):
 			return "hand"
+		if game.people != null and not game.people.hover_pick(game._mouse_pos).is_empty():
+			return "hand"                   # житель или кошка под курсором — откроется их карточка
 		return "hand" if game.plot_fill_key.x >= 0 or not game.pick_building().is_empty() else "arrow"
 	if t in ["bulldoze", "move", "copy"]:
 		var b: Dictionary = game.pick_building()
@@ -1487,9 +1491,12 @@ func _close_tray() -> void:
 
 
 func _hide_info() -> void:
-	if info_panel and (info_panel.visible or not info_b.is_empty()):
+	if info_panel and (info_panel.visible or not info_b.is_empty() or not info_p.is_empty()):
 		info_panel.visible = false
 		info_b = {}
+		if not info_p.is_empty():
+			info_p = {}
+			PersonCard.close()
 		if game:
 			game.select_building({})
 
@@ -2887,6 +2894,9 @@ func _process(_dt: float) -> void:
 	_place_overlay()
 	_cursor_tick()
 	_hover_tick()
+	_person_tag_tick(_dt)
+	if not info_p.is_empty() and info_panel and info_panel.visible:
+		PersonCard.tick(self, info_p, _dt)     # портрет следит за головой, «Сейчас» — дважды в секунду
 	if tool_panel and tool_panel.visible and Engine.get_process_frames() % 30 == 0:
 		refresh_undo()                        # отменить постройку можно 30 с — медаль сереет сама
 	if not _lg_live.is_empty() and info_panel and info_panel.visible:
@@ -3367,10 +3377,56 @@ func _info_panel() -> void:
 func open_info(b: Dictionary) -> void:
 	_close_tray()
 	_close_windows()
+	if not info_p.is_empty():
+		info_p = {}
+		PersonCard.close()
+		if game and game.people:
+			game.people.set_focus(0)
 	info_b = b
 	info_panel.visible = true
 	_fill_info()
 	_update_pointer()                         # обучение Легиону: в карточке Казарм стрелка — на «Улучшить»
+
+
+## Карточка жителя или кошки (щелчок по нему на улице, строка в карточке дома, «Горожане»): {"r": житель} / {"cat": кошка}
+func open_person(sel: Dictionary) -> void:
+	_close_tray()
+	_close_windows()
+	info_b = {}
+	info_p = sel
+	info_panel.visible = true
+	_fill_info()
+
+
+## Подпись у курсора над жителем или кошкой («Гай Юлий · пекарь») — маленькая кремовая табличка, не окно
+func _person_tag_tick(dt: float) -> void:
+	var on := false
+	if game != null and game.ready_done and game.mode != "menu" and game.tool == "" and game.people != null and root.visible \
+			and game.rig != null and not game.rig.cine and not mouse_over_ui() and not Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		var hit: Dictionary = game.people.hover_pick(game._mouse_pos)
+		if not hit.is_empty():
+			if person_tag == null:
+				var pc := PanelContainer.new()
+				pc.add_theme_stylebox_override("panel", _box_pill(10, 3))
+				pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				person_tag = _label("", 15, true, C_INK)
+				pc.add_child(person_tag)
+				root.add_child(pc)
+			person_tag.text = game.people.tag_of(hit["r"]) if hit.has("r") else "%s · %s" % People.cat_name(hit["cat"])
+			var pc: Control = person_tag.get_parent()
+			pc.reset_size()
+			pc.position = root.get_global_mouse_position() + Vector2(20, 24)
+			on = true
+	if person_tag != null:
+		(person_tag.get_parent() as Control).visible = on
+	# советник один раз (этап 6.3): мышь задержалась на прохожем — рассказать, что его можно нажать и что в карточке
+	_tag_dwell = _tag_dwell + dt if on else 0.0
+	if _tag_dwell >= 0.8 and not game.city.tips.has("people_tip") and _tip_free() and _screen_free():
+		game.city.tips["people_tip"] = true
+		advisor("У каждого жителя — имя", "Это житель вашего города. Нажмите на него: узнаете, кто он в семье, где работает, что делает сейчас и чего ему не хватает для счастья. Кнопка «Следовать» — камера пойдёт за ним по улицам; найти любого по имени можно в «Жители и работники» → «Горожане». Причёски и наряды горожане меняют в цирюльне и лавках одежды — а выбрать их можете и вы, кнопкой «Внешность» в его карточке. Кошек тоже можно нажать.")
+
+
+var _tag_dwell := 0.0
 
 
 
@@ -3456,6 +3512,13 @@ func _fill_info_body() -> void:
 	_clear(info_box)
 	lg_upg_btn = null
 	_lg_live = {}
+	if not info_p.is_empty():
+		# карточка жителя или кошки (этапы 6.3–6.5) — в том же окне справа сверху
+		if not PersonCard.fill(self, info_box, info_p):
+			info_p = {}
+			PersonCard.close()
+			info_panel.visible = false
+		return
 	var b := info_b
 	if b.is_empty() or not game.city.buildings.has(b["id"]):
 		info_panel.visible = false
@@ -3985,6 +4048,10 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 		fr.add_child(fl)
 		fr.add_child(_label("%d чел." % int(f["n"]), 15, true, C_SOFT))
 		left.add_child(fr)
+		# кто в семье (этап 6.2): «Гай — пекарь», «Луций, сын»; щелчок — карточка этого жителя
+		var chips := PersonCard.family_chips(self, b, f, lw)
+		if chips:
+			left.add_child(chips)
 	if fams.size() > shown_f.size():
 		var rest := fams.slice(shown_f.size())
 		var ppl := 0
@@ -4115,6 +4182,9 @@ func close_panels() -> bool:
 	advisor_panel.visible = false
 	buy_panel.visible = false
 	info_b = {}
+	if not info_p.is_empty():
+		info_p = {}
+		PersonCard.close()
 	if game:
 		game.select_building({})
 	_update_pointer()
@@ -4489,9 +4559,114 @@ func _finance_panel() -> void:
 func _stats_panel() -> void:
 	var w := _window("Жители и работники", 540)
 	stats_panel = w[0]
+	# две вкладки: «Обзор» (классы, работники) и «Горожане» — найти жителя по имени или семье (этап 6.9)
+	var tabs := HBoxContainer.new()
+	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
+	tabs.add_theme_constant_override("separation", 8)
+	for t: Array in [["", "Обзор", "stats"], ["people", "Горожане", "person"]]:
+		var b := Button.new()
+		b.text = t[1]
+		b.icon = ico(t[2], 26)
+		b.expand_icon = false
+		b.toggle_mode = true
+		b.focus_mode = Control.FOCUS_NONE
+		b.name = "tab_" + (t[0] if t[0] != "" else "main")
+		b.add_theme_font_override("font", font_bold)
+		b.add_theme_stylebox_override("pressed", _box_pill(16, 6, "g_btn_on"))
+		b.add_theme_stylebox_override("hover_pressed", _box_pill(16, 6, "g_btn_on"))
+		var id: String = t[0]
+		b.pressed.connect(func():
+			stats_tab = id
+			_fill_stats())
+		tabs.add_child(b)
+	(w[1] as VBoxContainer).add_child(tabs)
 	var v := VBoxContainer.new()
 	v.name = "body"
 	(w[1] as VBoxContainer).add_child(v)
+	# «Горожане»: строка поиска и фильтры живут, пока окно открыто (часовое обновление их не пересобирает)
+	var pv := VBoxContainer.new()
+	pv.name = "people"
+	pv.add_theme_constant_override("separation", 6)
+	pv.visible = false
+	var q := LineEdit.new()
+	q.name = "q"
+	q.placeholder_text = "Имя или семья: «Гай», «Юлиев»…"
+	q.clear_button_enabled = true
+	q.custom_minimum_size = Vector2(500, 40)
+	q.add_theme_font_size_override("font_size", 18)
+	q.text_changed.connect(func(_t): _fill_people())
+	pv.add_child(q)
+	var fl := HBoxContainer.new()
+	fl.add_theme_constant_override("separation", 6)
+	for f: Array in [["", "Все"], ["nojob", "Без работы"], ["sad", "Несчастные"], ["kids", "Дети"]]:
+		var fb := Button.new()
+		fb.text = f[1]
+		fb.toggle_mode = true
+		fb.focus_mode = Control.FOCUS_NONE
+		fb.name = "f_" + (f[0] if f[0] != "" else "all")
+		fb.add_theme_font_size_override("font_size", 16)
+		fb.add_theme_stylebox_override("pressed", _box_pill(12, 4, "g_btn_on"))
+		fb.add_theme_stylebox_override("hover_pressed", _box_pill(12, 4, "g_btn_on"))
+		var fid: String = f[0]
+		fb.pressed.connect(func():
+			people_filter = fid
+			_fill_people())
+		fl.add_child(fb)
+	pv.add_child(fl)
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(500, 420)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var list := VBoxContainer.new()
+	list.name = "plist"
+	list.add_theme_constant_override("separation", 4)
+	list.custom_minimum_size = Vector2(480, 0)
+	sc.add_child(list)
+	pv.add_child(sc)
+	(w[1] as VBoxContainer).add_child(pv)
+
+
+var stats_tab := ""                    # "" — обзор, "people" — «Горожане»
+var people_filter := ""
+
+
+## «Горожане»: найденные жители строками (имя, кто, работа, счастье дома); щелчок — карточка и камера за ним
+func _fill_people() -> void:
+	var pv: Control = stats_panel.find_child("people", true, false)
+	var list: VBoxContainer = stats_panel.find_child("plist", true, false)
+	if pv == null or list == null or game.people == null:
+		return
+	for b in pv.find_children("f_*", "Button", true, false):
+		(b as Button).set_pressed_no_signal(String(b.name) == "f_" + (people_filter if people_filter != "" else "all"))
+	_clear(list)
+	var q: LineEdit = pv.find_child("q", true, false)
+	var c: City = game.city
+	var ppl: People = game.people
+	var found := PersonCard.search(ppl, q.text if q else "", people_filter)
+	if found.is_empty():
+		list.add_child(_label("Никого не нашли" if (q and q.text != "") or people_filter != "" else "В городе пока никто не живёт", 16, false, C_SOFT))
+		return
+	for r: Dictionary in found:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		row.add_child(_cls_pic(String(r["cls"]), 30))
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", -2)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tv.add_child(_label(People.name_of(r), 17, true))
+		var ms := PersonCard._members(c, r)
+		var who := Residents.role(r.get("m", {}), ms) if r.has("m") else ""
+		var jb: Dictionary = c.buildings.get(int(r["job"]), {})
+		var job := Residents.job_noun(String(jb["type"]), r["female"]) if not jb.is_empty() else ("" if r["child"] else "без работы")
+		tv.add_child(_label("%s · семья %s%s" % [who, StoryDefs.fam_gen(String(r["fam"])), (" · " + job) if job != "" else ""], 13, false, C_SOFT))
+		row.add_child(tv)
+		var h: Dictionary = c.buildings.get(int(r["home"]), {})
+		if not h.is_empty():
+			var hp := int(h["happy"])
+			row.add_child(_label("%d%%" % mini(hp, 100), 16, true, C_GOOD if hp >= 60 else (C_GOLD if hp >= 40 else C_BAD)))
+		list.add_child(_clickable(row, "Карточка жителя, камера пойдёт за ним", func():
+			stats_panel.visible = false
+			game.select_person({"r": r})
+			PersonCard.follow(self, {"r": r})))
 
 
 func _fill_finance() -> void:
@@ -4655,6 +4830,16 @@ func _fill_stats() -> void:
 	var v: VBoxContainer = stats_panel.find_child("body", true, false)
 	for ch in v.get_children():
 		ch.queue_free()
+	var pv: Control = stats_panel.find_child("people", true, false)
+	for b in stats_panel.find_children("tab_*", "Button", true, false):
+		(b as Button).set_pressed_no_signal(String(b.name) == "tab_" + (stats_tab if stats_tab != "" else "main"))
+	v.visible = stats_tab == ""
+	if pv:
+		pv.visible = stats_tab == "people"
+	if stats_tab == "people":
+		_fill_people()
+		_snug(stats_panel)
+		return
 	var c: City = game.city
 	if c.hist.size() >= 2:
 		v.add_child(_spark_row("Жители, последние %d ч" % c.hist.size(), c.hist_series("pop"), C_INK, false))

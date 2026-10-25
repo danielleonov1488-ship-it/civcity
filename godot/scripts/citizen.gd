@@ -310,11 +310,12 @@ static func _bits(cols: Array) -> int:
 	return b
 
 
-## Одежда по сословию: туника/платье — из палитры сословия, тога — белая, кайма и пояс — свои
-static func _dress(body: Node3D, model: String, cls: String, female: bool, child: bool, cr: RandomNumberGenerator) -> void:
+## Одежда по сословию: туника/платье — из палитры сословия, тога — белая, кайма и пояс — свои.
+## Цвета [основной, второй, кайма] (без поправки k — она при раскраске); у модели без своих тканей — []
+static func _cloth_cols(model: String, cls: String, female: bool, child: bool, cr: RandomNumberGenerator) -> Array:
 	var map: Dictionary = CLOTH.get(model, {})
 	if map.is_empty():
-		return
+		return []
 	var rich := cls == "patricians"
 	var pal: Array = PAL.get(cls, PAL["plebs"])
 	if model == "SK_Chr_Politician_Male_01":
@@ -332,71 +333,194 @@ static func _dress(body: Node3D, model: String, cls: String, female: bool, child
 		trim = main.lerp(Color("e8dfcc"), 0.55)   # кайма — светлее той же ткани, как у Synty
 	elif model == "SK_Chr_Upperclass_Female_01":
 		trim = _pick(cr, PAL["gold_trim"])
+	return [main, second, trim]
+
+
+## Раскрасить тело: цвета [основной, второй, кайма] по тканям модели (instance uniform — у каждого свои)
+static func _paint(body: Node3D, model: String, cols: Array) -> void:
+	var map: Dictionary = CLOTH.get(model, {})
+	if map.is_empty() or cols.size() < 3:
+		return
+	var main: Color = cols[0]
 	var k: float = map.get("k", 1.0)
 	main = Color(minf(main.r * k, 1.0), minf(main.g * k, 1.0), minf(main.b * k, 1.0))
 	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
 		mi.set_instance_shader_parameter("cloth_main", main.srgb_to_linear())
-		mi.set_instance_shader_parameter("cloth_second", second.srgb_to_linear())
-		mi.set_instance_shader_parameter("cloth_trim", trim.srgb_to_linear())
+		mi.set_instance_shader_parameter("cloth_second", (cols[1] as Color).srgb_to_linear())
+		mi.set_instance_shader_parameter("cloth_trim", (cols[2] as Color).srgb_to_linear())
 		mi.set_instance_shader_parameter("mask_main", _bits(map.get("main", [])))
 		mi.set_instance_shader_parameter("mask_second", _bits(map.get("second", [])))
 		mi.set_instance_shader_parameter("mask_trim", _bits(map.get("trim", [])))
 
 
-## rich — патриций; child — ребёнок (уменьшенный взрослый); cls — сословие для одежды (по умолчанию по rich)
-static func create(rng: RandomNumberGenerator, is_female: bool, child := false, rich := false, model := "", cls := "") -> Citizen:
-	Synty._index()
-	var c := Citizen.new()
+static func _dress(body: Node3D, model: String, cls: String, female: bool, child: bool, cr: RandomNumberGenerator) -> void:
+	_paint(body, model, _cloth_cols(model, cls, female, child, cr))
+
+
+## Облик жителя (этап 6.5) — всё явно: mdl (модель Synty), skin (тон кожи A/B/C), hair (причёска; у мужчин 0 — бритая
+## голова), beard (борода, 0 — нет), crown (лавровый венок, 0 — нет), main/second/trim (цвета одежды, «rrggbb»),
+## hc (цвет волос: "" — свой, A/B/C — тон палитры Synty, S — седые). Из rng тянется ровно то же и в том же порядке,
+## что раньше в create: облик по тому же зерну прежний (и у героев историй, и у жителей)
+static func roll_look(rng: RandomNumberGenerator, is_female: bool, child := false, rich := false, model := "", cls := "") -> Dictionary:
 	var pool: Array = RICH if rich else PLEBS
 	var choices := pool.filter(func(n): return (n in FEMALE) == is_female)
 	if choices.is_empty():
 		choices = pool
 	var name: String = model if model != "" else choices[rng.randi() % choices.size()]
-	c.female = name in FEMALE
-	var body := _scene(DIR + name + ".fbx").instantiate() as Node3D
-	c.add_child(body)
+	var fem := name in FEMALE
 	var variant: String = ["A", "A", "B", "C"][rng.randi() % 4]
-	var dyed := RenderingServer.get_current_rendering_method() != "gl_compatibility"
-	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
-		mi.material_override = _material(variant) if dyed else _plain(variant)
 	# одежда: свой поток случайностей от СОСТОЯНИЯ rng — rng не сдвигается, лица и причёски прежние,
 	# а один и тот же житель всегда в той же одежде (и на повозке, и на улице, и после возврата в кадр)
 	var cr := RandomNumberGenerator.new()
 	cr.seed = rng.state ^ 0x5DEECE66D
-	if dyed:
-		_dress(body, name, cls if cls != "" else ("patricians" if rich else "plebs"), c.female, child, cr)
-	# причёска (и борода у части мужчин) — на кости головы. Ребёнку — без бороды и венка, и не лысеющая «седьмая»;
+	var cols := _cloth_cols(name, cls if cls != "" else ("patricians" if rich else "plebs"), fem, child, cr)
+	# причёска (и борода у части мужчин). Ребёнку — без бороды и венка, и не лысеющая «седьмая»;
 	# случайности тянем те же и в том же порядке: взрослые и облик героев историй (по seed) не меняются
-	var sk: Skeleton3D = body.find_children("*", "Skeleton3D", true, false)[0]
-	var hm := 1 + rng.randi() % 7 if not c.female else 0
+	var hm := 1 + rng.randi() % 7 if not fem else 0
 	if child and hm == 7:
 		hm = (hm % 6) + 1
-	var hairs: Array = ["SM_Chr_Hair_Female_0%d" % (1 + rng.randi() % 6)] if c.female else ["SM_Chr_Hair_Male_0%d" % hm]
-	if not c.female and rng.randf() < 0.45:
-		var bd := "SM_Chr_Hair_Beard_0%d" % (1 + rng.randi() % 4)
+	var hair := (1 + rng.randi() % 6) if fem else hm
+	var beard := 0
+	if not fem and rng.randf() < 0.45:
+		var bd := 1 + rng.randi() % 4
 		if not child:
-			hairs.append(bd)
+			beard = bd
+	var crown := 0
 	if rich and rng.randf() < 0.3:
-		var cw := "SM_Chr_Attach_Crown_Leaf_0%d" % (1 + rng.randi() % 2)
+		var cw := 1 + rng.randi() % 2
 		if not child:
-			hairs.append(cw)
-	var att := BoneAttachment3D.new()
-	att.bone_name = "Head"
-	sk.add_child(att)
-	for h in hairs:
-		var hn := _scene("res://assets/synty/FBX/Attachments/" + h + ".fbx").instantiate() as Node3D
-		for mi: MeshInstance3D in hn.find_children("*", "MeshInstance3D", true, false):
-			mi.material_override = _plain(variant)
-		att.add_child(hn)
+			crown = cw
+	var lk := {"mdl": name, "skin": variant, "hair": hair, "beard": beard, "crown": crown, "hc": ""}
+	if cols.size() == 3:
+		lk["main"] = (cols[0] as Color).to_html(false)
+		lk["second"] = (cols[1] as Color).to_html(false)
+		lk["trim"] = (cols[2] as Color).to_html(false)
+	return lk
+
+
+## Облик из сохранения — с целыми числами и строками (JSON отдаёт дробные)
+static func norm_look(lk: Dictionary) -> void:
+	for k: String in ["hair", "beard", "crown"]:
+		lk[k] = int(lk.get(k, 0))
+	for k: String in ["mdl", "skin", "hc", "main", "second", "trim"]:
+		if lk.has(k):
+			lk[k] = String(lk[k])
+	if not (String(lk.get("mdl", "")) in PLEBS + RICH):
+		lk["mdl"] = PLEBS[0]
+	if not (String(lk.get("skin", "")) in ["A", "B", "C"]):
+		lk["skin"] = "A"
+
+
+## Отпечаток облика (проверки «облик не поменялся»)
+static func look_key(lk: Dictionary) -> String:
+	return "%s|%s|%d|%d|%d|%s|%s|%s|%s" % [lk.get("mdl", ""), lk.get("skin", ""), int(lk.get("hair", 0)), int(lk.get("beard", 0)),
+		int(lk.get("crown", 0)), lk.get("main", ""), lk.get("second", ""), lk.get("trim", ""), lk.get("hc", "")]
+
+
+## rich — патриций; child — ребёнок (уменьшенный взрослый); cls — сословие для одежды (по умолчанию по rich)
+static func create(rng: RandomNumberGenerator, is_female: bool, child := false, rich := false, model := "", cls := "") -> Citizen:
+	var c := build(roll_look(rng, is_female, child, rich, model, cls), child)
+	c.anim.speed_scale = rng.randf_range(0.92, 1.08)
+	return c
+
+
+var look := {}                         # облик, по которому собран (roll_look)
+var hair_att: BoneAttachment3D         # кость головы: причёска, борода, венок
+var kid := false
+
+
+## Житель по облику look (roll_look; свой у героя и у тех, кто сменил причёску и одежду — этап 6.5)
+static func build(lk: Dictionary, child := false) -> Citizen:
+	Synty._index()
+	var c := Citizen.new()
+	var name := String(lk.get("mdl", PLEBS[0]))
+	c.female = name in FEMALE
+	c.kid = child
+	var body := _scene(DIR + name + ".fbx").instantiate() as Node3D
+	c.add_child(body)
+	var variant := String(lk.get("skin", "A"))
+	var dyed := RenderingServer.get_current_rendering_method() != "gl_compatibility"
+	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
+		mi.material_override = _material(variant) if dyed else _plain(variant)
+	if dyed:
+		_paint(body, name, _cols_of(lk))
+	var sk: Skeleton3D = body.find_children("*", "Skeleton3D", true, false)[0]
+	c.hair_att = BoneAttachment3D.new()
+	c.hair_att.bone_name = "Head"
+	sk.add_child(c.hair_att)
+	c.look = lk
+	c._put_hair()
 	c.anim = AnimationPlayer.new()
 	body.add_child(c.anim)
 	c.anim.root_node = NodePath("..")
 	c.anim.add_animation_library("", library())
-	c.anim.speed_scale = rng.randf_range(0.92, 1.08)
 	c.scale = Vector3.ONE * SIZE * (0.68 if child else 1.0)
 	if child:
 		kid_face(c)
 	return c
+
+
+## Цвета одежды облика: [основной, второй, кайма] или [] (облик без цветов)
+static func _cols_of(lk: Dictionary) -> Array:
+	if not (lk.has("main") and lk.has("second") and lk.has("trim")):
+		return []
+	return [Color(String(lk["main"])), Color(String(lk["second"])), Color(String(lk["trim"]))]
+
+
+## Причёска, борода и венок на кости головы — по облику (прежние убираются)
+func _put_hair() -> void:
+	if hair_att == null:
+		return
+	for ch in hair_att.get_children():
+		hair_att.remove_child(ch)
+		ch.free()
+	var hairs := []
+	var h := int(look.get("hair", 1))
+	if female:
+		hairs.append("SM_Chr_Hair_Female_0%d" % clampi(h, 1, 6))
+	elif h > 0:
+		hairs.append("SM_Chr_Hair_Male_0%d" % clampi(h, 1, 7))
+	if not female and not kid and int(look.get("beard", 0)) > 0:
+		hairs.append("SM_Chr_Hair_Beard_0%d" % clampi(int(look["beard"]), 1, 4))
+	var crown := "SM_Chr_Attach_Crown_Leaf_0%d" % clampi(int(look.get("crown", 0)), 1, 2)
+	if not kid and int(look.get("crown", 0)) > 0:
+		hairs.append(crown)
+	var variant := String(look.get("skin", "A"))
+	var hc := String(look.get("hc", ""))
+	for hn_name: String in hairs:
+		var hn := _scene("res://assets/synty/FBX/Attachments/" + hn_name + ".fbx").instantiate() as Node3D
+		var mat: Material = _plain(variant)
+		if hn_name != crown:
+			mat = _hair_mat(hc, variant)
+		for mi: MeshInstance3D in hn.find_children("*", "MeshInstance3D", true, false):
+			mi.material_override = mat
+		hair_att.add_child(hn)
+	meshes = []                            # set_alpha заново найдёт сетки (причёска новая)
+
+
+## Материал волос: свой тон палитры (A/B/C) или седые
+static func _hair_mat(hc: String, variant: String) -> Material:
+	if hc == "S":
+		if _silver == null:
+			_silver = StandardMaterial3D.new()
+			_silver.albedo_color = Color("d2cdc4")
+			_silver.roughness = 0.9
+		return _silver
+	return _plain(hc if hc in ["A", "B", "C"] else variant)
+
+
+## Сменить облик на ходу (причёска, борода, венок, цвета одежды, цвет волос) — без новой модели: модель и тон кожи
+## у жителя свои навсегда. false — нужна другая модель (такой облик собирать заново)
+func apply_look(lk: Dictionary) -> bool:
+	if String(lk.get("mdl", "")) != String(look.get("mdl", "")) or String(lk.get("skin", "")) != String(look.get("skin", "")):
+		return false
+	look = lk
+	if RenderingServer.get_current_rendering_method() != "gl_compatibility":
+		var body := get_child(0) as Node3D
+		if body:
+			_paint(body, String(lk["mdl"]), _cols_of(lk))
+	_put_hair()
+	return true
 
 
 const KID_HEAD := 1.22                  # голова ребёнка крупнее (как было у детей в роликах)

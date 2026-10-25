@@ -106,7 +106,8 @@ func _restore() -> void:
 		if h.is_empty():
 			h = city.center()
 		if not h.is_empty():
-			game.people.pet_cat(h, int(p.get("fur", 0)), String(p.get("name", "")), int(p.get("seed", 1)))
+			var pc: Dictionary = game.people.pet_cat(h, int(p.get("fur", 0)), String(p.get("name", "")), int(p.get("seed", 1)))
+			pc["pet_rec"] = p                # дом снесли — кошка перейдёт к соседям, и запись с ней (этап 6.4)
 	# кошка живёт, пока её не забрали домой (_after_final): и пока ищут, и когда нашли, а ролик встречи ещё ждёт щелчка;
 	# ослик — пока ищут и пока не досмотрели встречу (дальше он у хозяина)
 	var a: Dictionary = s["active"]
@@ -754,18 +755,24 @@ func _couple(a: Dictionary) -> void:
 	if h.is_empty() or a.has("couple"):
 		return
 	var nm := _couple_name(String(a.get("fam2", a.get("fam", ""))))
-	city.pending[nm] = {"name": nm, "n": 2, "cls": String(city.def(h)["cls"]), "home": hid, "back": true}
+	# молодые — те самые жених и невеста из роликов: имена и облик — в записи членов семьи (сохраняются, этап 6.1)
+	var roles: Dictionary = a.get("roles", {})
+	var ms := Residents.gen(nm, 2, String(city.def(h)["cls"]), hid)
+	for i in 2:
+		var ro: Dictionary = roles.get("groom" if i == 0 else "bride", {})
+		ms[i]["pn"] = "Марк" if i == 0 else "Юлия"
+		if not ro.is_empty():
+			ms[i]["sd"] = int(ro["seed"])
+			var rr := RandomNumberGenerator.new()
+			rr.seed = int(ro["seed"])
+			var rc := String(ro.get("cls", city.def(h)["cls"]))
+			ms[i]["look"] = Citizen.roll_look(rr, i == 1, false, rc == "patricians", "", rc)   # одежда — как в ролике
+	city.pending[nm] = {"name": nm, "n": 2, "cls": String(city.def(h)["cls"]), "home": hid, "back": true, "m": ms}
 	if city.settled(hid, 2, nm) <= 0:
 		city.pending.erase(nm)
 		return
 	a["couple"] = nm
-	var roles: Dictionary = a.get("roles", {})
-	var fam: Array = game.people._make_family(nm, 2, hid, city.door_point(h))
-	for i in fam.size():
-		var ro: Dictionary = roles.get("groom" if i == 0 else "bride", {})
-		if not ro.is_empty():
-			(fam[i] as Dictionary)["seed"] = int(ro["seed"])
-			(fam[i] as Dictionary)["female"] = i == 1
+	game.people._make_family(nm, 2, hid, city.door_point(h))
 	city._quiet("Юлия и Марк поселились в новом доме — теперь это семья %s. Свадьбу сыграют вечером: посмотрите шествие!" \
 		% StoryDefs.fam_gen(nm), "ring")
 
