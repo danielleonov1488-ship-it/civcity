@@ -13,6 +13,10 @@ const PORTRAIT := 112                  # медальон портрета, то
 const CPS := 38.0                      # букв в секунду (печать текста)
 ## Откуда смотрит камера портрета: чуть сбоку и почти вровень с глазами (сверху брови закрывают глаза)
 const FACE_DIR := Vector3(0.3, 0.04, 0.95)
+const BEAST_TURN := 0.6                 # ослик в медальоне: морда — вполоборота от камеры, рад
+const BEAST_FWD := 0.08                 # …смотрим вперёд от кости головы (доля длины ослика)
+const BEAST_UP := 0.02                  # …и чуть выше
+const BEAST_DIST := 0.85                # …с такого расстояния (доля длины ослика)
 
 var st                                 # Stories
 var hud
@@ -237,18 +241,25 @@ func _face(who: Dictionary) -> void:
 	_speaker = key
 	var kind := String(who.get("kind", "pic"))
 	if kind == "pic" or game.get_viewport() == null:
-		face_tex.texture = load(Hud.AI + String(who.get("pic", "advisor.png")))
+		face_tex.texture = _pic_of(who)
 		return
 	if not _vps.has(key):
 		var vp := _portrait_vp(who)
 		if vp == null:
-			face_tex.texture = load(Hud.AI + String(who.get("pic", "advisor.png")))
+			face_tex.texture = _pic_of(who)
 			return
 		_vps[key] = vp
 	var vpk: SubViewport = _vps[key]
 	vpk.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	face_tex.texture = vpk.get_texture()
 	_anim_face(who, true)
+
+
+## Рисованный портрет (советник, или если своего мирка нет): у ослика — значок с лошадкой, не человеческое лицо
+func _pic_of(who: Dictionary) -> Texture2D:
+	if String(who.get("kind", "")) == "beast" or String(who.get("pic", "")) == "":
+		return hud.ico("horse", 128)
+	return load(Hud.AI + String(who.get("pic", "advisor.png")))
 
 
 ## Говорит — движения разговора; молчит — спокойно
@@ -331,6 +342,30 @@ func _portrait_vp(who: Dictionary) -> SubViewport:
 				bone = sk.find_bone("Bone.003")
 			off = Vector3(0, 0.06, 0.03)          # кость — у основания головы: смотрим в мордочку
 			dist = 0.46
+		"beast":
+			# ослик (Quaternius): мордой к камере вполоборота — куда смотрит голова, видно по костям шеи и головы
+			var bn := Stories.beast_node(false)
+			bn.name = "who"
+			vp.add_child(bn)
+			bn.play("Idle", 0.0)
+			var sks := bn.find_children("*", "Skeleton3D", true, false)
+			var fwd := Vector3(0, 0, 1)
+			if not sks.is_empty():
+				sk = sks[0]
+				bone = sk.find_bone("Head")
+				var nb := sk.find_bone("Neck2")
+				if bone >= 0 and nb >= 0:
+					var hd := (sk.global_transform * sk.get_bone_global_pose(bone)).origin
+					var nk := (sk.global_transform * sk.get_bone_global_pose(nb)).origin
+					var d := Vector2(hd.x - nk.x, hd.z - nk.z)
+					if d.length() > 0.0001:
+						fwd = Vector3(d.x, 0.0, d.y).normalized()
+			var want := FACE_DIR.rotated(Vector3.UP, -BEAST_TURN)
+			bn.rotation.y = atan2(want.x, want.z) - atan2(fwd.x, fwd.z)
+			var fw := fwd.rotated(Vector3.UP, bn.rotation.y)
+			# кость головы — у затылка: смотрим вперёд, в середину морды
+			off = fw * Stories.DONKEY_LEN * BEAST_FWD + Vector3(0, Stories.DONKEY_LEN * BEAST_UP, 0) if bone >= 0 				else Vector3(0, Stories.DONKEY_LEN * 0.75, 0) + fw * Stories.DONKEY_LEN * 0.4 - Vector3(0, 0.3, 0.15)
+			dist = Stories.DONKEY_LEN * BEAST_DIST
 		_:
 			vp.queue_free()
 			return null
@@ -364,13 +399,25 @@ func track() -> void:
 
 # ---------- золотая строка в «Просьбах горожан» ----------
 
-## Строка истории наверху свитка: медальон, название, что делать, кнопки (Stories.row_info)
+## Строка истории наверху свитка: медальон, название, что делать, строки цели с ✓, кнопки (Stories.row_info)
 func task_row(box: Control) -> void:
-	var info: Dictionary = st.row_info()
+	_row(box, st.row_info(), true, st.part_click)
+
+
+## Строка заказа старосты (под строкой истории): та же раскладка, но не золотая — это не история, а просьба;
+## заказ ждёт, пока за него возьмутся, — маленькая золотая точка у медальона
+func order_row(box: Control) -> void:
+	_row(box, st.orders.row_info(), false, st.orders.part_click)
+
+
+func _row(box: Control, info: Dictionary, gold: bool, on_part: Callable) -> void:
 	if info.is_empty():
 		return
 	var pc := PanelContainer.new()
-	var sb: StyleBox = hud._box_pill(10, 6, "g_btn_on")
+	pc.name = "story_row" if gold else "order_row"
+	var sb: StyleBox = hud._box_pill(10, 6, "g_btn_on") if gold else hud._box_pill(10, 6)
+	if not gold:
+		(sb as StyleBoxTexture).modulate_color = Color(1, 1, 1, 0.55)
 	pc.add_theme_stylebox_override("panel", sb)
 	pc.mouse_filter = Control.MOUSE_FILTER_PASS
 	pc.tooltip_text = String(info.get("tip", ""))
@@ -387,6 +434,13 @@ func task_row(box: Control) -> void:
 	var ic: TextureRect = hud._icon(String(info.get("icon", "scroll")), 28, hud.C_INK)
 	ic.position = Vector2(8, 8)
 	med.add_child(ic)
+	if bool(info.get("waiting", false)):
+		var dot: Control = Hud.GoldDot.new()        # заказ ждёт, пока за него возьмутся
+		dot.name = "waiting"
+		dot.size = Vector2(13, 13)
+		dot.position = Vector2(31, 0)
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		med.add_child(dot)
 	h.add_child(med)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 2)
@@ -397,6 +451,41 @@ func task_row(box: Control) -> void:
 	v.add_child(t)
 	var sub: Label = hud._wrap(hud._label(String(info.get("text", "")), 13, true, hud.C_SOFT), 222)
 	v.add_child(sub)
+	# строки цели: «✓ Склад рядом» — сделано; «· Мясная лавка: нет склада рядом» — щёлкнуть: сразу к делу
+	var parts: Array = info.get("parts", [])
+	if not parts.is_empty():
+		var pv := VBoxContainer.new()
+		pv.name = "parts"
+		pv.add_theme_constant_override("separation", 0)
+		pv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		for p: Dictionary in parts:
+			var ok := bool(p.get("ok", false))
+			var b := Button.new()
+			b.text = ("✓ " if ok else "· ") + String(p.get("text", ""))
+			b.flat = true
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			b.custom_minimum_size = Vector2(222, 0)
+			b.focus_mode = Control.FOCUS_NONE
+			b.add_theme_font_override("font", hud.font_bold)
+			b.add_theme_font_size_override("font_size", 13)
+			var col: Color = Hud.C_GOOD if ok else Hud.C_INK
+			for s in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
+				b.add_theme_color_override(s, col)
+			if not ok:
+				b.add_theme_color_override("font_hover_color", Hud.C_GOLD.darkened(0.25))
+			var e := StyleBoxEmpty.new()
+			for s in ["normal", "hover", "pressed", "focus", "disabled"]:
+				b.add_theme_stylebox_override(s, e)
+			var can := not ok and not (p.get("do", {}) as Dictionary).is_empty()
+			b.disabled = not can
+			b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if can else Control.CURSOR_ARROW
+			if can:
+				b.tooltip_text = String((p["do"] as Dictionary).get("say", "Щёлкните — и нужное окажется в руках"))
+				var pp := p
+				b.pressed.connect(func(): on_part.call(pp))
+			pv.add_child(b)
+		v.add_child(pv)
 	var btns: Array = info.get("buttons", [])
 	if not btns.is_empty():
 		var row := HBoxContainer.new()
@@ -457,8 +546,15 @@ func fill_journal() -> void:
 		var e: Dictionary = S["done"][id]
 		var who := StoryDefs.fill(String(s.get("who", "")), e)
 		var how := String(e.get("text", ""))
+		# что выбрали (дед остался или ушёл к соседям) и чему история научила
+		var ch := String((e.get("flags", {}) as Dictionary).get("choice", ""))
+		var jl := String((s.get("journal", {}) as Dictionary).get(ch, ""))
+		if jl != "":
+			how = jl + " " + how
+		if s.has("lesson"):
+			how += "\nУрок: " + String(s["lesson"]) + "."
 		var sid := String(id)
-		list.add_child(_entry(String(s.get("icon", "scroll")), String(s["title"]), "%s. %s" % [who, how] if who != "" else how,
+		list.add_child(_entry(String(s.get("icon", "scroll")), StoryDefs.title_of(s, e), "%s. %s" % [who, how] if who != "" else how,
 			"день %d" % (int(e.get("day", 0)) + 1), func(): st.replay(sid)))
 	if not any:
 		var l: Label = hud._wrap(hud._label("Пока ни одной истории. Горожане иногда просят градоначальника о помощи — над домом просящего тогда появляется свиток, а наверху «Просьб горожан» — золотая строка.", 16, false, hud.C_SOFT), 540)

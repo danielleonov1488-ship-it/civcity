@@ -356,6 +356,12 @@ static func overview_sets(c: City, mode: String) -> Dictionary:
 	var miss := []
 	var shops := []
 	var n := [0, 0, 0]
+	var fountains := []                         # «Вода»: фонтаны (как у просьбы «фонтан у домов» — City.progress_of near)
+	if mode == "water":
+		for id in c.buildings:
+			if c.buildings[id]["type"] == "fountain":
+				fountains.append(c.buildings[id])
+				shops.append(id)
 	for id in c.buildings:
 		var b: Dictionary = c.buildings[id]
 		var d := c.def(b)
@@ -365,7 +371,18 @@ static func overview_sets(c: City, mode: String) -> Dictionary:
 			continue
 		if d["kind"] != "house" or int(b["pop"]) + int(b.get("coming", 0)) <= 0:
 			continue
-		if mode == "happy":
+		if mode == "water":
+			# зелёный — фонтан правда поит дом (+6% счастья, как в карточке); золотой — фонтан рядом, но не работает
+			# (нет дороги у входа); красный — фонтана рядом нет
+			var k := 0 if (b.get("mon_types", {}) as Dictionary).has("fountain") else 2
+			if k == 2:
+				for f: Dictionary in fountains:
+					if (f["pos"] as Vector2).distance_to(b["pos"]) <= maxf(18.0, Defs.range_m(c.def(f))):
+						k = 1
+						break
+			tint[id] = [GREEN, GOLD, RED][k]
+			n[k] += 1
+		elif mode == "happy":
 			var hp := clampi(int(b.get("happy", 0)), 0, 100)
 			var k := 0 if hp >= HAPPY_GOOD else (1 if hp >= HAPPY_BAD else 2)
 			tint[id] = [GREEN, GOLD, RED][k]

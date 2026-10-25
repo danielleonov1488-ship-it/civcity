@@ -93,7 +93,7 @@ static func _special_mesh(name: String) -> Mesh:
 			var lm := _lamp_mesh(name != "#lamp_post", name == "#wall_lamp_dim")
 			_special[name] = lm
 			return lm
-		"#shutters_green", "#shutters_brown", "#shutters_blue", "#window_box", "#chimney":
+		"#shutters_green", "#shutters_brown", "#shutters_blue", "#window_box", "#chimney", "#laundry":
 			var km := _small_mesh(name)
 			_special[name] = km
 			return km
@@ -127,6 +127,20 @@ static func _small_mesh(name: String) -> Mesh:
 				k.boxc(Vector3(x, 0.2, 0.1 + (0.04 if i % 2 else -0.04)), Vector3(0.11, 0.1, 0.11), Color("4f7a2e").darkened(0.1 * (i % 3)), [])
 				if i % 2 == 0:
 					k.boxc(Vector3(x, 0.28, 0.1), Vector3(0.07, 0.07, 0.07), cols[i % cols.size()], [])
+		"#laundry":
+			# бельё на балконе (CatDecor._balcony): два столбика по углам, верёвка, на ней туники и простыня — сохнут
+			for sx: float in [-1.08, 1.08]:
+				k.boxc(Vector3(sx, 0.78, 1.02), Vector3(0.06, 1.56, 0.06), Color("7a4e2c"), [])
+			k.rod(Vector3(-1.08, 1.5, 1.02), Vector3(1.08, 1.5, 1.02), 0.012, 4, Color("d8ccb0"))
+			var cloth := [[-0.75, 0.42, 0.5, Color("e8e2d6")], [-0.22, 0.34, 0.42, Color("b4432f")], [0.22, 0.3, 0.36, Color("4d7397")],
+				[0.68, 0.48, 0.56, Color("f4ead6")]]
+			for c: Array in cloth:
+				var w: float = c[1]
+				var h: float = c[2]
+				k.boxc(Vector3(float(c[0]), 1.5 - h / 2.0, 1.02), Vector3(w, h, 0.025), c[3], [])
+				# прищепки
+				for px: float in [-w / 2.0 + 0.04, w / 2.0 - 0.04]:
+					k.boxc(Vector3(float(c[0]) + px, 1.51, 1.02), Vector3(0.025, 0.05, 0.04), Color("8a5a3c"), [])
 		"#chimney":
 			k.boxc(Vector3(0, 0.55, 0), Vector3(0.46, 1.1, 0.46), Color("e9dfcb"))
 			k.boxc(Vector3(0, 1.12, 0), Vector3(0.6, 0.08, 0.6), Color("b5603a"), [])

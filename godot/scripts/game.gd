@@ -1365,6 +1365,8 @@ func _show(b: Dictionary) -> void:
 		_sheep(b, vis)
 	elif b["type"] == "catbasket":
 		_catbed(b, vis)
+	elif b["type"] == "donkeypost":
+		_donkey(b, vis)
 	_sync_actors(b)
 	_set_hour(hour)
 
@@ -1445,6 +1447,21 @@ func _catbed(b: Dictionary, vis: Dictionary) -> void:
 	if not vis.has("pets"):
 		vis["pets"] = []
 	vis["pets"].append(cat)
+
+
+## «Ослик у коновязи» (награда истории «Ослик возчика»): у коновязи жуёт серый ослик (модель Quaternius CC0),
+## иногда поднимает голову
+func _donkey(b: Dictionary, vis: Dictionary) -> void:
+	var dn := Stories.beast_node(false)
+	actors_root.add_child(dn)
+	dn.transform = city.xf(b) * Transform3D(Basis(Vector3.UP, PI / 2), CatDecor.DONKEY_AT * Catalog.DECOR)
+	dn.position.y = land.height_at(dn.position.x, dn.position.z)
+	dn.play("Eating", 0.0)
+	if dn.ap:
+		dn.ap.seek(float(int(b["id"]) % 7) * 0.3, true)
+	if not vis.has("pets"):
+		vis["pets"] = []
+	vis["pets"].append(dn)
 
 
 ## Люди при деле у постройки: появляются, когда она работает, и уходят, когда нет
@@ -2408,14 +2425,16 @@ func _wall_place(type: String, p: Vector2, maxd := 1.8) -> Dictionary:
 						px = float(bb[0]) - 0.02
 						ly = -PI / 2
 				var wp: Vector2 = (b["pos"] as Vector2) + ax * px + fw * pz
-				var hgt: float = {"wall_torch": 2.25, "wall_lamp": 2.45, "wall_flowers": 1.25, "wall_banner": 2.2}.get(Defs.base_of(type), 2.0) * Catalog.ARCH
+				var hgt: float = {"wall_torch": 2.25, "wall_lamp": 2.45, "wall_flowers": 1.25, "wall_banner": 2.2, "balcony": Bp.FL}.get(Defs.base_of(type), 2.0) * Catalog.ARCH
 				# облик настенного украшения задаёт его тип (карточка); цвет — просто цвет дома, на облик не влияет
 				best = {"pos": wp, "yaw": float(b["yaw"]) + ly, "err": "", "cells": PackedInt32Array(), "y": float(b["y"]) + hgt,
 					"variant": 0, "color": int(b.get("color", 0)), "tier": 0, "host": b["id"]}
 	if best.is_empty():
 		var g := land.height_at(p.x, p.y)
 		return {"pos": p, "yaw": tool_yaw, "err": "Наведите на стену дома", "cells": PackedInt32Array(), "y": g + 2.0, "variant": 0, "color": 0, "tier": 0}
-	if city.money < float(Defs.B[type]["cost"]):
+	if type == "balcony" and int((city.buildings.get(int(best.get("host", -1)), {}) as Dictionary).get("tier", 1)) < 2:
+		best["err"] = "Балкон вешается на дом в 2–3 этажа"   # на втором этаже: у одноэтажного дома его некуда повесить
+	elif city.money < float(Defs.B[type]["cost"]):
 		best["err"] = "Не хватает денариев"
 	return best
 
