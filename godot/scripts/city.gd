@@ -41,6 +41,7 @@ var goods := {}                       # сырьё, которое есть в �
 var arrivals: Array = []              # семьи на площади: [{name, n, cls}]
 var pending := {}                     # семьи, которым выбран дом, идут туда: имя → {name, n, cls, home}
 var cats: Array = []                  # кошки города с именами (этап 6.4): [{nm, sx, fur, home, sd}] — сохраняются
+var hero := {}                        # свой герой (Д11, Hero): {v, m: запись, как у жителя, + облик с плащом, made, seen, kit}; {} — ещё нет
 var incoming := 0                     # сколько семей едет в повозке
 var arrive_t := 0.0                   # часов с прошлой повозки
 var arrive_block_h := 0               # сколько часов повозка не везёт семьи из-за низкого счастья
@@ -2503,7 +2504,7 @@ func save_data() -> Dictionary:
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
 		"econ_v": econ, "taxes": taxes, "hist": hist,
-		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true)}
+		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true)}
 
 
 ## Клетки постройки — строкой base64; пустые — пустой строкой (Marshalls ругается на пустой массив в журнал)
@@ -2566,6 +2567,7 @@ func load_data(d: Dictionary) -> void:
 	plots_bought = maxi(0, int(d.get("plots_bought", land.owned.size() - Land.OLD_PLOTS)))
 	_drop_roads2()
 	legion.from_dict(d.get("legion", {}))
+	hero = Hero.norm(d.get("hero", {}))           # старые сохранения — героя ещё нет: его создаст игра (Game._hero_check)
 	cats = []
 	var cl = d.get("cats", [])
 	if typeof(cl) == TYPE_ARRAY:

@@ -172,6 +172,7 @@ func _ready() -> void:
 	_pointer()
 	_hover_tip_panel()
 	LegionUi.attach(self)                      # окно «Легион» и его медальон сверху справа (scripts/legion_ui.gd)
+	_hero_button()                             # медальон «Герой» (Д11): лицо своего героя, щелчок — к нему
 	if game != null and game.city != null:
 		game.city.rp_reward.connect(_fly_rp)      # просьба дала очки — «+25» летит к счётчику свитков (без звука и всплывашки)
 	apply_scale(float(game.settings.get("ui_scale", 1.0)))
@@ -3429,6 +3430,9 @@ func _person_tag_tick(dt: float) -> void:
 			on = true
 	if person_tag != null:
 		(person_tag.get_parent() as Control).visible = on
+	if game != null and game.people != null:
+		var hh: Dictionary = game.people.hover_pick(game._mouse_pos) if on else {}
+		game.people.hero_hover(on and hh.has("r") and (hh["r"] as Dictionary).has("hero"))   # над героем — мягкая обводка
 	# советник один раз (этап 6.3): мышь задержалась на прохожем — рассказать, что его можно нажать и что в карточке
 	_tag_dwell = _tag_dwell + dt if on else 0.0
 	if _tag_dwell >= 0.8 and not game.city.tips.has("people_tip") and _tip_free() and _screen_free():
@@ -5411,6 +5415,12 @@ func _once_tips() -> void:
 	# советы экономики v2 — когда на экране нет окон (Esc закрыл бы совет вместе с окном)
 	if not _screen_free():
 		return
+	# свой герой (Д11): один раз — кто он, где живёт, как его найти и переодеть (экран «Ваш герой» уже закрыт)
+	# (в автопроверках, где экран сам не открывается, — и совета нет: их советы не перебиваются)
+	if Hero.exists(c) and not c.tips.has("hero_tip") and bool(game.get("hero_offer_done")) and bool(game.get("hero_screen_auto")) 			and not HeroScreen.is_open(game) and game.people != null and not game.people.hero_r.is_empty():
+		c.tips["hero_tip"] = true
+		advisor("%s — ваш герой" % Hero.name_of(c), hero_note())
+		return
 	# «Хутор»: дом готов к этажу, а денариев не хватает — один раз: налоги подойдут (этап 2.3, денег впритык)
 	if c.level == 1 and c.research.has("floor2") and not c.tips.has("floor_money") and c.tips.has("floor_tool"):
 		var ready: Array = c.floor_ready(false)
@@ -6037,6 +6047,129 @@ func _place_badges() -> void:
 		var bob := sin(t * 2.2 + float(b.get("ph", 0.0))) * 2.5 if anc.y > 0.9 else 0.0   # пузыри чуть покачиваются
 		p.position = (pt - p.size * anc + Vector2(0, bob)).round()
 		p.visible = vr.grow(30).has_point(pt)
+
+
+# ---------- свой герой (Д11): медальон «Герой» ----------
+
+var hero_btn: Button
+var hero_wrap: Control
+var _hero_face_key := ""
+
+
+## Медальон «Герой» сверху справа, рядом с «Легионом»: лицо героя; щелчок — камера к нему и его карточка
+func _hero_button() -> void:
+	hero_btn = _round("caesar", "Герой: найти его в городе", 48, func(): find_hero())
+	hero_wrap = _shadowed(hero_btn)
+	top_panel.add_child(hero_wrap)
+	top_panel.move_child(hero_wrap, mini(1, top_panel.get_child_count() - 1))
+	top_btns["hero"] = hero_btn
+	hero_btn_refresh()
+
+
+## Медальон — по герою (имя в подсказке, лицо); нет героя (меню, витрина) — не виден
+func hero_btn_refresh() -> void:
+	if hero_wrap == null:
+		return
+	var on: bool = game != null and game.mode in ["play", "new"] and Hero.exists(game.city)
+	hero_wrap.visible = on
+	if not on:
+		return
+	hero_btn.tooltip_text = "%s — ваш герой: найти в городе (карточка, «Следовать», «Гардероб»)" % Hero.name_of(game.city)
+	var key := Citizen.look_key(Hero.look(game.city))
+	if key != _hero_face_key:
+		_hero_face_key = key
+		_hero_face()
+
+
+## Лицо героя в медальоне: рисуется один раз (свой маленький мир, как портрет в карточке) и остаётся картинкой
+func _hero_face() -> void:
+	if DisplayServer.get_name() == "headless" or game.shot_path != "":
+		return
+	var vp := SubViewport.new()
+	vp.size = Vector2i(128, 128)
+	vp.own_world_3d = true
+	vp.transparent_bg = true
+	vp.msaa_3d = Viewport.MSAA_4X
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(vp)
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CLEAR_COLOR
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color("fff1d8")
+	env.ambient_light_energy = 0.6
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	var we := WorldEnvironment.new()
+	we.environment = env
+	vp.add_child(we)
+	var key := DirectionalLight3D.new()
+	key.rotation_degrees = Vector3(-30, 35, 0)
+	key.light_energy = 1.25
+	vp.add_child(key)
+	var front := DirectionalLight3D.new()
+	front.look_at_from_position(Vector3.ZERO, -StoryUi.FACE_DIR + Vector3(0, -0.25, 0), Vector3.UP)
+	front.light_energy = 0.5
+	vp.add_child(front)
+	var c := Citizen.build(Hero.look(game.city).duplicate())
+	c.scale = Vector3.ONE
+	Citizen.face_fix(c)
+	vp.add_child(c)
+	c.play("Idle", 0.0, 0.2)
+	var cam := Camera3D.new()
+	cam.fov = 24.0
+	cam.near = 0.02
+	vp.add_child(cam)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not is_instance_valid(vp) or not is_instance_valid(c):
+		return
+	var sk: Skeleton3D = c.find_children("*", "Skeleton3D", true, false)[0]
+	var head := (sk.global_transform * sk.get_bone_global_pose(sk.find_bone("Head"))).origin + Vector3(0, 0.06, 0)
+	cam.position = head + StoryUi.FACE_DIR * 0.95
+	cam.look_at(head - Vector3(0, 0.02, 0), Vector3.UP)
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	if not is_instance_valid(vp) or not is_instance_valid(hero_btn):
+		return
+	var img := vp.get_texture().get_image()
+	vp.queue_free()
+	if img == null or img.is_empty():
+		return
+	img.generate_mipmaps()
+	var ic := hero_btn.get_node_or_null("ic") as TextureRect
+	if ic == null:
+		return
+	ic.texture = ImageTexture.create_from_image(img)
+	ic.material = StoryUi._mask_mat()
+	var o := 48 * 0.12
+	ic.offset_left = o
+	ic.offset_right = -o
+	ic.offset_top = o
+	ic.offset_bottom = -o
+
+
+## «Герой»: камера идёт за ним, открыта его карточка (дома или в лавке — камера у двери, в карточке «Сейчас»)
+func find_hero() -> void:
+	var ppl: People = game.people
+	if ppl == null or ppl.hero_r.is_empty():
+		return
+	game.select_person({"r": ppl.hero_r})
+	PersonCard.follow(self, {"r": ppl.hero_r})
+
+
+## Совет о герое (один раз)
+func hero_note() -> String:
+	var c: City = game.city
+	var f := Hero.female(c)
+	var t := "%s живёт в городе: гуляет по улицам, заглядывает в лавки, на площади и к зданиям Легиона, а ночует в Казармах (пока их нет — на почтовой станции). %s отличишь издали: лавровый венок и плащ.
+
+Найти героя — медальон с %s лицом сверху справа. Щёлкните по %s на улице — откроется карточка героя: «Следовать», «Гардероб» (новые плащи, цвета и венки открывают рост города, Легион и истории) и «Изменить» — имя и облик." % [
+		"Ваша римлянка" if f else "Ваш римлянин", "Её" if f else "Его", "её" if f else "его", "ней" if f else "нему"]
+	if not bool(c.hero.get("made", false)):
+		t += " Своего героя можно создать там же — «Изменить»."
+	t += "
+
+Когда соберёте Легион, герой первым пойдёт в бой — на своём месте в отряде, со снаряжением со Склада оружия."
+	return t
 
 
 # ---------- стартовое меню ----------

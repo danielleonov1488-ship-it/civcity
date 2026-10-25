@@ -134,6 +134,68 @@ static func create(k: String, size := 1.0, seed_v := 1, rival := false) -> Legio
 	return f
 
 
+## Свой герой (Д11): тело бойца Synty (капитан или воительница) в его цветах, его лицо, причёска, борода, венок и плащ,
+## в руках — снаряжение со Склада оружия (Hero.battle_look: right, left). lk — облик героя (Citizen) + sx, right, left
+static func create_hero(lk: Dictionary, size := 1.0, seed_v := 1) -> LegionFighter:
+	Synty._index()
+	var f := LegionFighter.new()
+	f.key = "hero"
+	f.name = "F_hero"
+	var fem := int(lk.get("sx", 0)) == 1
+	var L := {"model": "SK_Chr_Soldier_Female_02" if fem else "SK_Chr_Captain_Male_01", "var": "01_" + String(lk.get("skin", "A")), "head": [],
+		"right": String(lk.get("right", "SM_Wep_Sword_02")), "left": String(lk.get("left", "SM_Wep_Shield_03")), "style": "sword", "hero": lk}
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_v
+	f._human(L, size, rng)
+	f._collect()
+	f.set_motion(false)
+	return f
+
+
+var _cape_sk: Skeleton3D               # плащ героя: колышется в tick
+var _cape_bones: Array = []
+
+
+## Герой: ткани тела — в его цвета (туника, нижняя туника, кайма — полосы 3, 7, 12 атласа у капитана и воительницы),
+## его волосы, борода и венок на голове, плащ его цвета
+func _hero_dress(lk: Dictionary) -> void:
+	var skin := String(lk.get("skin", "A"))
+	var dyed := RenderingServer.get_current_rendering_method() != "gl_compatibility"
+	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
+		mi.material_override = Citizen._material(skin) if dyed else Citizen._plain(skin)
+		if dyed:
+			mi.set_instance_shader_parameter("cloth_main", Color(String(lk.get("main", "a3283a"))).srgb_to_linear())
+			mi.set_instance_shader_parameter("mask_main", 1 << 3)
+			mi.set_instance_shader_parameter("cloth_second", Color(String(lk.get("second", "e8dfcc"))).srgb_to_linear())
+			mi.set_instance_shader_parameter("mask_second", 1 << 7)
+			mi.set_instance_shader_parameter("cloth_trim", Color(String(lk.get("trim", "c49a4a"))).srgb_to_linear())
+			mi.set_instance_shader_parameter("mask_trim", 1 << 12)
+	var head := BoneAttachment3D.new()
+	head.bone_name = "Head"
+	skel.add_child(head)
+	var fem := int(lk.get("sx", 0)) == 1
+	var h := int(lk.get("hair", 1))
+	var names := []
+	if fem:
+		names.append("SM_Chr_Hair_Female_0%d" % clampi(h, 1, 6))
+	elif h > 0:
+		names.append("SM_Chr_Hair_Male_0%d" % clampi(h, 1, 7))
+	if not fem and int(lk.get("beard", 0)) > 0:
+		names.append("SM_Chr_Hair_Beard_0%d" % clampi(int(lk["beard"]), 1, 4))
+	var crown := "SM_Chr_Attach_Crown_Leaf_0%d" % clampi(int(lk.get("crown", 1)), 1, 2)
+	names.append(crown)
+	for nm: String in names:
+		var hn := _scene(ATT + nm + ".fbx").instantiate() as Node3D
+		var mat: Material = Citizen._plain(skin) if nm == crown else Citizen._hair_mat(String(lk.get("hc", "")), skin)
+		for mi: MeshInstance3D in hn.find_children("*", "MeshInstance3D", true, false):
+			mi.material_override = mat
+		head.add_child(hn)
+	var cape := Citizen.add_cape(skel, String(lk.get("cape", "a3283a")))
+	var rig := Citizen.cape_rig(cape)
+	_cape_sk = rig[0]
+	_cape_bones = rig[1]
+
+
 func _collect() -> void:
 	_geo.clear()
 	for g in find_children("*", "GeometryInstance3D", true, false):
@@ -154,6 +216,8 @@ func _human(L: Dictionary, size: float, rng: RandomNumberGenerator) -> void:
 	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
 		mi.material_override = mat
 	skel = body.find_children("*", "Skeleton3D", true, false)[0]
+	if L.has("hero"):
+		_hero_dress(L["hero"])                # свой герой: его цвета, лицо, венок и плащ
 	# голова: шлем, волосы, борода, венок
 	var head := BoneAttachment3D.new()
 	head.bone_name = "Head"
@@ -799,6 +863,8 @@ func tick(dt: float) -> void:
 	_t += dt
 	if crew:
 		crew.tick(dt)
+	if _cape_sk != null and not dead:
+		Citizen.cape_pose(_cape_sk, _cape_bones, _t, (1.6 if _run else 1.0) if _moving else 0.15)
 	if _hit > 0.0:
 		_hit -= dt
 		_set_overlay(_flash() if _hit > 0.0 else null)

@@ -88,6 +88,7 @@ func setup(l: Land, c: City, g) -> void:
 	_assign_jobs()
 	_start_of_day(true)
 	_cats_load()
+	hero_spawn()                             # свой герой (Д11): ходит по городу, в счёт жителей не входит
 
 
 # ---------- сетка ходьбы ----------
@@ -289,8 +290,8 @@ func sync_members() -> void:
 func _node(r: Dictionary) -> Citizen:
 	if r["node"] != null:
 		return r["node"]
-	if visible_count >= max_vis and int(r["id"]) != focus_rid:
-		return null                          # выбранного (карточка, «Следовать») рисуем всегда
+	if visible_count >= max_vis and int(r["id"]) != focus_rid and not r.has("hero"):
+		return null                          # выбранного (карточка, «Следовать») и героя рисуем всегда
 	var c := Citizen.build(look_of(r), r["child"])
 	add_child(c)
 	if int(r["id"]) == focus_rid:
@@ -340,6 +341,8 @@ const CAT_NAMES := [["Феликс", 0], ["Луна", 1], ["Тигрис", 0], [
 
 ## Облик жителя: из записи члена семьи (Residents.look_of), у кого записи нет — по зерну, как раньше
 func look_of(r: Dictionary) -> Dictionary:
+	if r.has("hero"):
+		return Hero.look(city)                # свой герой: облик из его записи (с плащом и венком)
 	var m: Dictionary = r.get("m", {})
 	if not m.is_empty():
 		return Residents.look_of(m, String(r["cls"]))
@@ -401,7 +404,7 @@ func _sparkle(at: Vector3) -> void:
 
 ## Сходил в лавку типа t (Looks.visit): иногда новая причёска, туника, кайма, венок
 func _shop_visit(r: Dictionary, t: String) -> void:
-	if t == "" or not Looks.CHANCE.has(t) or r.get("m", {}).is_empty():
+	if t == "" or not Looks.CHANCE.has(t) or r.get("m", {}).is_empty() or r.has("hero"):
 		return
 	var lk: Dictionary = look_of(r).duplicate()
 	if Looks.visit(lk, t, r["female"], r["child"], String(r["cls"]), rng):
@@ -489,7 +492,7 @@ func pick(mp: Vector2) -> Dictionary:
 	_occ = []
 	var best := {}
 	var bd := INF
-	for r in residents:
+	for r in (residents if hero_r.is_empty() else residents + [hero_r]):
 		var c: Citizen = r["node"]
 		if c == null or float(r["fade"]) < 0.3 or not c.is_visible_in_tree():
 			continue
@@ -582,6 +585,8 @@ func hover_pick(mp: Vector2) -> Dictionary:
 ## Имя жителя: «Гай Юлий»
 static func name_of(r: Dictionary) -> String:
 	var m: Dictionary = r.get("m", {})
+	if r.has("hero"):
+		return String(m.get("pn", "Герой"))   # имя героя — как его назвал игрок
 	if m.is_empty():
 		return "Житель"
 	return Residents.full_name(m, String(r["fam"]))
@@ -590,6 +595,8 @@ static func name_of(r: Dictionary) -> String:
 ## Подпись у курсора: «Гай Юлий · пекарь»
 func tag_of(r: Dictionary) -> String:
 	var t := name_of(r)
+	if r.has("hero"):
+		return t + " · герой города"
 	if bool(r["child"]):
 		return t + (" · дочь" if r["female"] else " · сын")
 	var jb: Dictionary = city.buildings.get(int(r["job"]), {})
@@ -597,6 +604,271 @@ func tag_of(r: Dictionary) -> String:
 		var noun := Residents.job_noun(String(jb["type"]), r["female"])
 		return t + " · " + (noun if noun != "" else String(city.def(jb)["name"]).to_lower())
 	return t
+
+
+# ---------- свой герой (Д11): живёт в городе ----------
+# Герой — запись жителя с пометкой "hero" (облик и имя — из city.hero, Hero): в by_id (карточка, «Следовать», щелчок),
+# но не в residents — работы не ищет, в счёт жителей, семей и MAX_VIS не входит, рисуется всегда. Днём гуляет: лавки
+# по всему городу, площади, форум и храмы, военный квартал (здания Легиона), статуи, скамьи, кошки, игры в честь богов;
+# ночует в Казармах (нет их — на почтовой станции). Случайности у героя свои (hero_rng) — горожане ходят как раньше.
+
+var hero_r := {}                     # герой на улицах ({} — нет героя)
+var hero_rng := RandomNumberGenerator.new()
+var _hero_dt := 0.0
+var _hero_hov := false               # мышь над героем — мягкая золотая обводка
+static var _hover_mat: ShaderMaterial
+## Куда герой ходит «посмотреть»: площади и большие постройки, здания Легиона
+const HERO_SITES := ["forum", "temple", "pantheon", "colosseum", "baths", "theatre", "odeon", "library", "academy", "fountain"]
+
+
+## Вывести героя на улицы (загрузка, создан, переделан): у двери своего дома; днём — сразу где-нибудь на площади
+func hero_spawn() -> void:
+	hero_despawn()
+	if not Hero.exists(city) or not (game.mode in ["play", "new"]):
+		return
+	var m: Dictionary = city.hero["m"]
+	hero_rng.seed = int(m.get("sd", 1)) ^ 0x2545F491
+	var h := hero_home()
+	var at: Vector2 = city.door_point(h) if not h.is_empty() else Land.CENTER
+	var fem := int(m.get("sx", 0)) == 1
+	hero_r = {"id": Hero.HERO_RID, "hero": true, "home": int(h.get("id", -1)), "fam": "", "female": fem, "child": false, "old": false,
+		"rich": true, "cls": "patricians", "job": -1, "state": "home", "p": at, "path": PackedVector2Array(), "i": 0,
+		"node": null, "yaw": 0.0, "speed": 1.05, "goal": "", "t": 0.0, "slot": -1, "seed": int(m.get("sd", 1)), "dep": 0.0, "ret": 0.0,
+		"done_today": false, "act": "", "dest": {}, "conv": {}, "seq": [], "si": 0, "st": 0.0, "at": 0.0, "face": 0.0, "yoff": 0.0,
+		"yoff_to": 0.0, "fade": 1.0, "outs": 0, "serve": 0, "pal": 0, "door": {}, "m": m, "pn": String(m.get("pn", ""))}
+	by_id[Hero.HERO_RID] = hero_r
+	var hr: float = game.hour
+	if hr >= 6.5 and hr < 21.0:
+		var keep := rng
+		rng = hero_rng
+		var d := _plaza_target(hero_r, at)
+		if not d.is_empty() and d.has("p"):
+			_claim(hero_r, d)
+			hero_r["p"] = d["p"]
+			hero_r["goal"] = "errand"
+			_arrive(hero_r)
+		rng = keep
+
+
+func hero_despawn() -> void:
+	if hero_r.is_empty():
+		return
+	if focus_rid == Hero.HERO_RID:
+		set_focus(0)
+	_release(hero_r)
+	_hide(hero_r)
+	by_id.erase(Hero.HERO_RID)
+	hero_r = {}
+	_hero_hov = false
+
+
+## Где герой ночует: Казармы (первые), нет их — почтовая станция
+func hero_home() -> Dictionary:
+	var best := {}
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if String(b["type"]) == "barracks" and (best.is_empty() or int(id) < int(best["id"])):
+			best = b
+	return best if not best.is_empty() else city.center()
+
+
+## Облик героя поменяли (гардероб, «Изменить»): на улице — сразу, с искорками
+func hero_refresh(sparkle := true) -> void:
+	if hero_r.is_empty():
+		hero_spawn()
+		return
+	var m: Dictionary = city.hero["m"]
+	hero_r["m"] = m
+	hero_r["pn"] = String(m.get("pn", ""))
+	if bool(hero_r["female"]) != (int(m.get("sx", 0)) == 1):
+		hero_r["female"] = int(m.get("sx", 0)) == 1
+		_hide(hero_r)                         # другой пол — другая модель: собрать заново
+		if _drawable(hero_r):
+			_show(hero_r)
+		return
+	set_look(hero_r, Hero.look(city), sparkle)
+
+
+## Мышь над героем (Hud: подпись у курсора): мягкая золотая обводка; выбран (карточка) — обычная кремовая
+func hero_hover(on: bool) -> void:
+	if hero_r.is_empty() or on == _hero_hov:
+		return
+	_hero_hov = on
+	var c: Citizen = hero_r["node"]
+	if c == null or focus_rid == Hero.HERO_RID:
+		return
+	if _hover_mat == null:
+		_hover_mat = ShaderMaterial.new()
+		_hover_mat.shader = load("res://shaders/outline_hull.gdshader")
+		_hover_mat.set_shader_parameter("color", Color(1.0, 0.84, 0.42))
+		_hover_mat.set_shader_parameter("width", 0.013)
+	for mi: MeshInstance3D in c.find_children("*", "MeshInstance3D", true, false):
+		mi.material_overlay = _hover_mat if on else null
+
+
+## Кадр героя: шаг, дело на месте, двери (как у горожан), раз в четверть секунды — распорядок; случайности — свои
+func _hero_tick(dt: float, sdt: float) -> void:
+	var keep := rng
+	rng = hero_rng
+	var r := hero_r
+	_hero_dt += dt
+	if _hero_dt >= 0.25:
+		_hero_schedule(_hero_dt * game.speed * 24.0 / Game.DAY_LEN)
+		_hero_dt = 0.0
+	if not hero_r.is_empty():
+		match r["state"]:
+			"walk":
+				_step(r, sdt)
+			"idle":
+				if r["node"] != null:
+					(r["node"] as Citizen).anim.speed_scale = game.speed
+				if r["act"] != "":
+					_act_step(r, sdt)
+			"door":
+				if r["node"] != null:
+					(r["node"] as Citizen).anim.speed_scale = game.speed
+				_door_step(r, sdt)
+		if r["node"] != null and float(r["fade"]) < 1.0 and r["state"] != "walk" and r["state"] != "door":
+			r["fade"] = minf(1.0, float(r["fade"]) + sdt / 0.6)
+			(r["node"] as Citizen).set_alpha(float(r["fade"]))
+	rng = keep
+
+
+## Распорядок героя: с рассвета до темноты — на улицах (дело за делом), ночью — домой
+func _hero_schedule(dh: float) -> void:
+	var r := hero_r
+	var h: float = game.hour
+	var night := h >= 21.0 or h < 6.5
+	if not city.buildings.has(int(r["home"])):
+		r["home"] = int(hero_home().get("id", -1))
+	match String(r["state"]):
+		"home":
+			if not night and rng.randf() < 0.3 * dh * 40.0:
+				_hero_errand(r)
+		"idle":
+			r["t"] = float(r["t"]) - dh
+			if night and String(r["act"]) != "inside":
+				_hero_go_home(r)
+			elif String(r["act"]) == "" and float(r["t"]) <= 0.0:
+				_hero_next(r)
+		"walk":
+			if night and String(r["goal"]) != "home":
+				_hero_go_home(r)
+
+
+func _hero_go_home(r: Dictionary) -> void:
+	var hb: Dictionary = city.buildings.get(int(r["home"]), {})
+	if hb.is_empty():
+		hb = hero_home()
+		r["home"] = int(hb.get("id", -1))
+	if hb.is_empty():
+		return
+	_go(r, city.door_point(hb), "home")
+
+
+## Дело сделано: днём — следующее, ночью — домой
+func _hero_next(r: Dictionary) -> void:
+	var h: float = game.hour
+	if h >= 21.0 or h < 6.5:
+		_hero_go_home(r)
+	else:
+		_hero_errand(r)
+
+
+## Куда герою пойти: лавка (любая в городе, к прилавку), большая постройка или площадь, здание Легиона, статуя,
+## скамья, кошка; в праздник — на игры у станции. Ближние — чаще
+func _hero_errand(r: Dictionary) -> void:
+	var from: Vector2 = r["p"]
+	var opts := []
+	var shops := []
+	var sites := []
+	var mil := []
+	var last := int((r["dest"] as Dictionary).get("bid", -1))
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if int(id) == last or not b.get("active", true):
+			continue
+		var t := String(b["type"])
+		var dd := (b["pos"] as Vector2).distance_to(from)
+		if dd > 110.0:
+			continue
+		var d: Dictionary = city.def(b)
+		if String(d.get("kind", "")) == "shop" and not (t in ENTER):
+			shops.append([dd + rng.randf() * 30.0, b])
+		elif t in HERO_SITES:
+			sites.append([dd + rng.randf() * 30.0, b])
+		elif Legion.is_building(t):
+			mil.append([dd + rng.randf() * 30.0, b])
+	for e: Array in [[shops, 4.0, "shop"], [sites, 3.0, "look"], [mil, 3.0, "look"]]:
+		var list: Array = e[0]
+		if list.is_empty():
+			continue
+		list.sort_custom(func(a, c): return a[0] < c[0])
+		var b: Dictionary = list[0][1]
+		var tg := {}
+		if String(e[2]) == "shop":
+			tg = _watch_target(r, b) if String(b["type"]) in WATCH else _counter_target(r, b)
+		else:
+			tg = _front_target(r, b, "look")
+		if not tg.is_empty():
+			opts.append([float(e[1]), tg])
+	var pz := _plaza_target(r, from)
+	if not pz.is_empty():
+		opts.append([2.0, pz])
+	for e: Array in [["statue", "look", 70.0, 1.5], ["column", "look", 70.0, 0.8], ["bench", "sit", 50.0, 1.5], ["well", "well", 40.0, 0.6]]:
+		var t := _decor_target(r, from, e[0], e[1], e[2])
+		if not t.is_empty():
+			opts.append([e[3], t])
+	var cat := _cat_free(from, 30.0)
+	if not cat.is_empty():
+		var ct := _cat_target(r, cat)
+		if not ct.is_empty():
+			opts.append([1.2, ct])
+	if city.fest_left > 0:
+		var fz := _fest_target(r, from)
+		if not fz.is_empty():
+			opts.append([6.0, fz])
+	var sum := 0.0
+	for o in opts:
+		sum += float(o[0])
+	var x := rng.randf() * sum
+	var pick := {}
+	for o in opts:
+		x -= float(o[0])
+		if x <= 0.0:
+			pick = o[1]
+			break
+	if pick.is_empty():
+		pick = {"act": "stroll", "p": _near_road(from, 12.0)}
+	_release(r)
+	_claim(r, pick)
+	_go(r, pick["p"], "errand", true)
+
+
+## Постройку убрали: герой ночевал в ней — новый дом (станция или другие Казармы); шёл к ней или стоял у неё — дальше
+func _hero_lost(b: Dictionary) -> void:
+	if hero_r.is_empty():
+		return
+	var r := hero_r
+	var id := int(b["id"])
+	if int(r["home"]) == id and id != city.moving_id:
+		var nh := hero_home()
+		r["home"] = int(nh.get("id", -1))
+		if r["state"] == "home" and not nh.is_empty():
+			r["p"] = city.door_point(b)
+			var keep := rng
+			rng = hero_rng
+			_hero_next(r)
+			rng = keep
+	if int((r["dest"] as Dictionary).get("bid", -1)) == id and r["state"] == "idle" and r["act"] != "":
+		_release(r)
+		r["yoff"] = 0.0
+		r["yoff_to"] = 0.0
+		_place(r)
+		r["t"] = 0.0
+	elif r["state"] == "door" and int((r["door"] as Dictionary).get("bid", -1)) == id and id != city.moving_id:
+		_door_cancel(r)
+		r["t"] = 0.0
 
 
 # ---------- кошки с именами (этап 6.4) ----------
@@ -1130,6 +1402,9 @@ func _seq_next(r: Dictionary) -> bool:
 
 ## Новое дело вне дома: выбрать цель, занять место, идти
 func _errand(r: Dictionary) -> void:
+	if r.has("hero"):
+		_hero_errand(r)
+		return
 	var d := _pick_errand(r)
 	if d.is_empty():
 		var hp: Dictionary = city.buildings.get(r["home"], {})
@@ -1617,7 +1892,7 @@ func _act_done(r: Dictionary) -> void:
 			elif not _join_talk(r):
 				_solo_cycle(r)
 		"look":
-			if rng.randf() < 0.5:
+			if rng.randf() < 0.5 and not r.has("hero"):
 				_social(r)
 			else:
 				_next(r)
@@ -1637,6 +1912,9 @@ func _act_done(r: Dictionary) -> void:
 
 
 func _next(r: Dictionary) -> void:
+	if r.has("hero"):
+		_hero_next(r)
+		return
 	var hp: Dictionary = city.buildings.get(r["home"], {})
 	r["outs"] = int(r["outs"]) + 1
 	var h: float = game.hour
@@ -1830,7 +2108,7 @@ func _solo_cycle(r: Dictionary) -> void:
 
 ## Найти собеседника рядом: разговор, где меньше трёх, или одинокого прохожего. true — идёт к нему
 func _join_talk(r: Dictionary) -> bool:
-	if r["child"] or game.hour >= 21.0:
+	if r["child"] or game.hour >= 21.0 or r.has("hero"):
 		return false
 	var p: Vector2 = r["p"]
 	# одинокий прохожий рядом — чаще заговаривают вдвоём; к паре подходят третьим реже
@@ -2260,7 +2538,7 @@ func _process(dt: float) -> void:
 		_prop_t = 0.3
 		_props_tick()
 	if speed <= 0.0:
-		for r in residents:
+		for r in (residents if hero_r.is_empty() else residents + [hero_r]):
 			if r["node"] != null:
 				(r["node"] as Citizen).anim.speed_scale = 0.0
 		for c in cats:
@@ -2292,6 +2570,8 @@ func _process(dt: float) -> void:
 		if r["node"] != null and float(r["fade"]) < 1.0 and r["state"] != "walk" and r["state"] != "door":
 			r["fade"] = minf(1.0, float(r["fade"]) + sdt / 0.6)
 			(r["node"] as Citizen).set_alpha(float(r["fade"]))
+	if not hero_r.is_empty():
+		_hero_tick(dt, sdt)
 	for cv in convs.duplicate():
 		_conv_step(cv, sdt)
 	_vis_t -= dt
@@ -2424,6 +2704,8 @@ func _vis_tick() -> void:
 	var fr: Dictionary = by_id.get(focus_rid, {})
 	if not fr.is_empty() and fr["node"] == null and _drawable(fr):
 		_show(fr)                            # выбранного — всегда (вышел из дома — сразу на виду)
+	if not hero_r.is_empty() and hero_r["node"] == null and _drawable(hero_r):
+		_show(hero_r)                        # и героя (он в счёт жителей и MAX_VIS не входит)
 	for r in residents:
 		var st: String = r["state"]
 		if not (st in ["walk", "idle", "work"]) or (st == "idle" and r["act"] == "inside") or (st == "work" and int(r["slot"]) < 0):
@@ -2583,6 +2865,10 @@ func _float_text(p: Vector2, text: String) -> void:
 
 func _on_rehomed(old: int, new: int) -> void:
 	var h: Dictionary = city.buildings.get(new, {})
+	if not hero_r.is_empty() and int(hero_r["home"]) == old:
+		hero_r["home"] = new                 # Казармы героя перенесли
+		if hero_r["state"] == "home":
+			hero_r["p"] = city.door_point(h)
 	for r in residents:
 		if int(r["home"]) == old:
 			if r["state"] == "door" and str((r["door"] as Dictionary).get("then", "")) == "home":
@@ -2647,6 +2933,7 @@ func _on_building_added(b: Dictionary) -> void:
 func _on_building_removed(b: Dictionary) -> void:
 	refresh_cells(b.get("cells", PackedInt32Array()))
 	slots.erase(b["id"])
+	_hero_lost(b)
 	# кто стоял у этой лавки, сидел на скамье, был внутри — идут дальше
 	for r in residents.duplicate():
 		if int((r["dest"] as Dictionary).get("bid", -1)) == int(b["id"]) and r["state"] == "idle" and r["act"] != "":

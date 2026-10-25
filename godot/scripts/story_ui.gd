@@ -232,7 +232,7 @@ static func _mask_mat() -> ShaderMaterial:
 
 ## Портрет говорящего: свой маленький мир с клоном (обновляется, только пока он говорит)
 func _face(who: Dictionary) -> void:
-	var key := "%s:%s:%s" % [who.get("kind", ""), who.get("seed", who.get("fur", "")), who.get("pic", "")]
+	var key := "%s:%s:%s" % [who.get("kind", ""), who.get("seed", who.get("fur", Citizen.look_key(who.get("look", {})))), who.get("pic", "")]
 	if key == _speaker and face_tex.texture != null:
 		_anim_face(who, true)
 		return
@@ -331,6 +331,17 @@ func _portrait_vp(who: Dictionary) -> SubViewport:
 			bone = sk.find_bone("Head")
 			off = Vector3(0, 0.05, 0) * c.scale.y / Citizen.SIZE
 			dist = 1.0 * c.scale.y / Citizen.SIZE
+		"look":
+			# свой герой (Д11): облик целиком (плащ, венок, цвета)
+			var hc := Citizen.build((who.get("look", {}) as Dictionary).duplicate())
+			hc.name = "who"
+			vp.add_child(hc)
+			Citizen.face_fix(hc)
+			hc.play("Idle_Talking")
+			sk = hc.find_children("*", "Skeleton3D", true, false)[0]
+			bone = sk.find_bone("Head")
+			off = Vector3(0, 0.05, 0) * hc.scale.y / Citizen.SIZE
+			dist = 1.0 * hc.scale.y / Citizen.SIZE
 		"cat":
 			var cn := People.cat_node(int(who.get("fur", 0)), "Pet", 7)
 			cn.name = "who"

@@ -2494,6 +2494,8 @@ func _speaker(who: String) -> Dictionary:
 			"role": "кошка семьи %s" % StoryDefs.fam_gen(String(b.get("fam", "")))}
 	if who == "advisor":
 		return {"kind": "pic", "pic": "advisor.png", "name": "Советник Марк", "role": "советник градоначальника"}
+	if who == "hero" and Hero.exists(city):
+		return {"kind": "look", "look": Hero.look(city).duplicate(), "name": Hero.name_of(city), "role": "ваш герой", "pic": ""}
 	if who == "donkey":
 		return {"kind": "beast", "beast": "donkey", "name": String(b.get("cat_name", "Пузан")),
 			"role": "ослик семьи %s" % StoryDefs.fam_gen(String(b.get("fam", ""))), "pic": ""}
@@ -2843,6 +2845,13 @@ func _open_spot(c: Vector2) -> Vector2:
 
 ## Человек роли для ролика: облик по роли; festive — на свадьбе невеста в платье цвета огня и с венком
 func _make_actor(role: String, festive := false) -> Citizen:
+	if role == "hero" and Hero.exists(city):
+		# свой герой (Д11): его облик — плащ, венок, цвета (как на улице)
+		var hc := Citizen.build(Hero.look(city).duplicate())
+		Citizen.face_fix(hc)
+		game.people.add_child(hc)
+		hc.anim.speed_scale = 1.0
+		return hc
 	var ro := _role(cine["bind"], role)
 	var c: Citizen = game.people.actor(int(ro["seed"]), bool(ro["female"]), bool(ro["child"]), String(ro["cls"]), bool(ro.get("old", false)))
 	if role == "bride" and festive:
@@ -3683,6 +3692,8 @@ func _look(role: String, target: String, anim: String) -> void:
 
 ## Условие такта «если»: «история» — пройдена; «история=выбор» — пройдена, и выбрали это
 func _cond(c: String) -> bool:
+	if c == "hero":
+		return Hero.exists(city)                 # свой герой (Д11) есть — его такты в ролике
 	var e: Dictionary = (S()["done"] as Dictionary).get(c.get_slice("=", 0), {})
 	if e.is_empty():
 		return false

@@ -1392,7 +1392,10 @@ func _stage_card(st: Dictionary) -> Control:
 	qh.add_child(_l("Отряд:", 15, true, C_SOFT))
 	if sq.is_empty():
 		qh.add_child(_l("никого", 15, true, C_BAD))
-	for u: Dictionary in sq:
+	for u: Dictionary in (lg.battle_squad() if not sq.is_empty() else []):
+		if String(u["key"]) == "hero":
+			qh.add_child(_hero_slot(36, false))  # герой — на первом месте отряда
+			continue
 		var holder := Control.new()
 		holder.custom_minimum_size = Vector2(36, 36)
 		holder.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1954,7 +1957,11 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 	row.add_theme_constant_override("separation", 6)
 	var src: Array = lg.squad if which == "campaign" or lg.defense.is_empty() else lg.defense
 	var n := lg.slots()
+	var hero := which == "campaign" and lg.hero_ready()
 	for i in Legion.SQUAD_MAX:
+		if i == 0 and hero:
+			row.add_child(_hero_slot(sz))        # свой герой (Д11): первое место отряда в походах — его
+			continue
 		var holder := Control.new()
 		holder.custom_minimum_size = Vector2(sz, sz)
 		if i >= n:
@@ -1997,6 +2004,46 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 			_badge(holder, str(int(lg.levels.get(t, 1))), Vector2(1, 1), 13)
 		row.add_child(holder)
 	return row
+
+
+## Место героя в отряде: его лицо (с медальона «Герой») в золотом медальоне, уровень; заменить его нельзя.
+## В боях с городами героя пока нет (Legion.HERO_PVP) — его место только в походах
+func _hero_slot(sz: float, big := true) -> Control:
+	var holder := Control.new()
+	holder.name = "hero_slot"
+	holder.custom_minimum_size = Vector2(sz, sz)
+	var face := Panel.new()
+	face.set_anchors_preset(Control.PRESET_FULL_RECT)
+	face.add_theme_stylebox_override("panel", hud._medal("medal_on", sz))
+	face.mouse_filter = Control.MOUSE_FILTER_PASS
+	var hs := lg.hero_stats()
+	var pvp_t := String(lg.squad[0]) if not lg.squad.is_empty() else ""
+	face.tooltip_text = "%s — ваш герой: первое место отряда в походах, %d уровень (растёт с Казармами, городом и Складом оружия)
+Здоровье %d, урон %d, броня %d · %s
+В боях с городами герой пока не участвует%s" % [
+		Hero.name_of(game.city), int(hs["level"]), int(hs["hp"]), int(hs["atk"]), roundi(float(hs["armor"])), String(Hero.kit_of(lg.hero_kit_level())["n"]).to_lower(),
+		(" — там на этом месте %s" % String(Legion.UNITS[pvp_t]["name"]).to_lower()) if Legion.UNITS.has(pvp_t) else ""]
+	var tex: Texture2D = null
+	var hb: Button = hud.get("hero_btn")
+	if hb != null and hb.get_node_or_null("ic") != null and (hb.get_node("ic") as TextureRect).material != null:
+		tex = (hb.get_node("ic") as TextureRect).texture       # лицо героя, нарисованное для медальона «Герой»
+	var tr := TextureRect.new()
+	tr.texture = tex if tex != null else hud.ico("caesar", 96)
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var o := sz * 0.13
+	tr.offset_left = o
+	tr.offset_top = o
+	tr.offset_right = -o
+	tr.offset_bottom = -o
+	if tex != null:
+		tr.material = StoryUi._mask_mat()
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(tr)
+	holder.add_child(face)
+	_badge(holder, str(int(hs["level"])), Vector2(1, 1), 13 if big else 12)
+	return holder
 
 
 func _stat(icon: String, tip: String, a: float, b: float, show_next: bool) -> Control:

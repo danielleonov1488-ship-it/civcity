@@ -769,6 +769,9 @@ func _view(u: LegionSim.Unit) -> Dictionary:
 	var list: Array = _pool.get(u.key, []) if u.side == "enemy" else []
 	if not list.is_empty():
 		f = list.pop_back()
+	elif u.key == "hero" and u.side == "ally" and setup.has("hero_look"):
+		f = LegionFighter.create_hero(setup["hero_look"], u.size * 1.08, _seed + u.id * 7919)   # свой герой (Д11): его лицо, цвета, плащ, снаряжение; чуть крупнее
+		world.add_child(f)
 	else:
 		f = LegionFighter.create(u.key, u.size, _seed + u.id * 7919, u.side == "enemy" and Legion.UNITS.has(u.key))
 		world.add_child(f)
@@ -1674,8 +1677,12 @@ func _squad_row() -> Control:
 			continue
 		var tr := TextureRect.new()
 		tr.texture = Legion.art_texture("unit", u.key) if Legion.UNITS.has(u.key) else null
+		if u.key == "hero":
+			tr.texture = _hero_face()                 # свой герой — его лицо (с медальона «Герой»), в круге
+			if tr.texture != null:
+				tr.material = StoryUi._mask_mat()
 		if tr.texture == null:
-			tr.texture = _icon_tex(String({"legionary": "helmet", "spearman": "shield", "archer": "arrow", "ballista": "hammer", "catapult": "rock"}.get(u.key, "helmet")))
+			tr.texture = _icon_tex(String({"legionary": "helmet", "spearman": "shield", "archer": "arrow", "ballista": "hammer", "catapult": "rock", "hero": "caesar"}.get(u.key, "helmet")))
 		tr.custom_minimum_size = Vector2(54, 54)
 		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -1684,6 +1691,15 @@ func _squad_row() -> Control:
 			tr.modulate = Color(0.42, 0.38, 0.36, 0.75)
 		h.add_child(tr)
 	return h
+
+
+## Лицо героя для итога боя: картинка медальона «Герой» (null — ещё не нарисована)
+func _hero_face() -> Texture2D:
+	var hud = game.hud if game != null else null
+	var hb: Button = hud.get("hero_btn") if hud != null else null
+	if hb == null or hb.get_node_or_null("ic") == null or (hb.get_node("ic") as TextureRect).material == null:
+		return null
+	return (hb.get_node("ic") as TextureRect).texture
 
 
 ## Картинка с листа владельца (assets/ui/ai/legion/<лист>.png) по номеру; null — листа нет
@@ -1891,6 +1907,14 @@ class BarsLayer extends Control:
 				col = Color("e6b03a")
 			draw_rect(Rect2(r.position, Vector2(w * hp, 7.0)), col)
 			draw_rect(Rect2(r.position, Vector2(w * hp, 2.0)), Color(1, 1, 1, 0.25))
+			if u.key == "hero":
+				# свой герой (Д11): золотая кайма полоски и имя над ней — его видно в толчее
+				draw_rect(r.grow(1.5), Color("e8b84a"), false, 2.0)
+				var nm := u.name
+				var tw := fnt.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+				var np := Vector2(p.x - tw * 0.5, p.y - 9.0)
+				draw_string_outline(fnt, np, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, 5, Color(0.2, 0.08, 0.03, 0.9))
+				draw_string(fnt, np, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("ffe08a"))
 		for fl: Array in floats:
 			var k: float = fl[3]
 			var pos: Vector2 = fl[0] - Vector2(0, 46.0 * ease(k, 0.5))
