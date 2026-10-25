@@ -73,6 +73,12 @@ var econ := 0
 ## Украшения этапа 5 (решение владельца Q17): 0 — живой город (все прежние облики открыты, как были), 1 — новая игра:
 ## часть прежних обликов открывается позже, в наборах (Defs.DECOR_LATER)
 var decor_v := 0
+## Истории этапа 7b (решение владельца Q20): 0 — живой город («Пост вигилов» изучается за очки, как прежде), 1 — новая
+## игра: его открывает история «Пожар у горшечников» (Defs.story_of — свиток исследований смотрит сюда)
+var story_v := 0:
+	set(v):
+		story_v = v
+		Defs.story_rules = v
 ## Налоги по классам (этап 2.7, с «Деревни»): класс → 0 мягкие, 1 обычные, 2 высокие (Defs.TAX_SET)
 var taxes := {}
 ## История денег и жителей (этап 2.4): последние Defs.HIST_N игровых часов, строки по Defs.HIST_KEYS (сохраняются)
@@ -2400,7 +2406,7 @@ func can_research(id: String) -> String:
 	var r := Defs.research(id)
 	if r.is_empty() or research.has(id):
 		return "Уже изучено"
-	if r.has("story"):
+	if Defs.story_of(r) != "":
 		return "Откроется %s" % Defs.unlock_text(id)
 	if int(r["lvl"]) > level:
 		return "Нужен уровень «%s»" % Defs.LEVELS[int(r["lvl"])]["name"]
@@ -2494,7 +2500,7 @@ func mark_seen(type: String) -> bool:
 ## Исследование можно изучать (уровень есть, нужное раньше изучено), но ещё не изучено
 func research_open(id: String) -> bool:
 	var r := Defs.research(id)
-	return not r.is_empty() and not r.has("story") and not research.has(id) and int(r["lvl"]) <= level and (not r.has("after") or research.has(r["after"]))
+	return not r.is_empty() and Defs.story_of(r) == "" and not research.has(id) and int(r["lvl"]) <= level and (not r.has("after") or research.has(r["after"]))
 
 
 func is_new_r(id: String) -> bool:
@@ -2857,8 +2863,8 @@ func story_parts(h: Dictionary) -> Array:
 		elif b.has("x"):
 			ok = (h["pos"] as Vector2).distance_to(Vector2(float(b["x"]), float(b["z"]))) <= float(b.get("r", 0.0))
 		var pct := int(b.get("_live", b.get("pct", 0))) if b.has("at") else int(b.get("pct", 0))
-		if not ok or pct <= 0:
-			continue
+		if not ok or pct == 0:
+			continue                           # меньше нуля — тоже строка: копоть после пожара (этап 7b)
 		var line := String(b.get("line", "История горожан"))
 		var left := int(b.get("left", -1))
 		if left > 0:
@@ -2997,7 +3003,7 @@ func save_data() -> Dictionary:
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
-		"econ_v": econ, "decor_v": decor_v, "taxes": taxes, "hist": hist,
+		"econ_v": econ, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true)}
 
 
@@ -3039,6 +3045,7 @@ func load_data(d: Dictionary) -> void:
 	# старые сохранения — без econ_v: счастье по прежним правилам (лавки и украшения без «повторов»), пока владелец не скажет «да»
 	econ = int(d.get("econ_v", 0))
 	decor_v = int(d.get("decor_v", 0))           # старые сохранения — все прежние облики украшений открыты, как были
+	story_v = int(d.get("story_v", 0))           # старые сохранения — «Пост вигилов» за очки, как был
 	taxes = {}
 	var tx = d.get("taxes", {})
 	if typeof(tx) == TYPE_DICTIONARY:

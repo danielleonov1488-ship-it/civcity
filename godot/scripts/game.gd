@@ -271,6 +271,7 @@ func _ready() -> void:
 		if mode in ["play", "new"]:
 			city.econ = 1                        # и экономика v2: повторы лавок и украшений дают меньше (City.econ)
 			city.decor_v = 1                     # и украшения этапа 5: часть прежних обликов — в наборах позже (Q17)
+			city.story_v = 1                     # и истории этапа 7b: «Пост вигилов» открывает «Пожар у горшечников» (Q20)
 		city.seed_seen()                         # открытое с начала — не «НОВОЕ»; пометки — у того, что откроют исследования
 		if mode in ["play", "new"]:
 			land.own_start()                     # своя земля новой игры — 2×3 участка, остальное покупается (меню и витрина — как были)
@@ -1503,8 +1504,8 @@ func _show(b: Dictionary) -> void:
 		_catbed(b, vis)
 	elif b["type"] == "donkeypost":
 		_donkey(b, vis)
-	elif CatDecor2.PETS.has(Defs.base_of(b["type"])) or CatExtra.PETS.has(b["type"]):
-		_pets2(b, vis)                         # этап 5: корова и лошадь у украшений, кошки и ослик в приюте
+	elif CatDecor2.PETS.has(Defs.base_of(b["type"])) or CatExtra.PETS.has(b["type"]) or CatStory.PETS.has(b["type"]):
+		_pets2(b, vis)                         # этап 5: корова и лошадь у украшений, кошки и ослик в приюте; котята Маси
 	_sync_actors(b)
 	_set_hour(hour)
 
@@ -1629,7 +1630,7 @@ func _donkey(b: Dictionary, vis: Dictionary) -> void:
 ## Животные этапа 5 (CatDecor2.PETS / CatExtra.PETS — что, где, как стоит): корова пасётся, лошадь жуёт у коновязи,
 ## в приюте спят кошки и жуёт ослик. Не в actors_root у кошек — их сон медленнее шага игры
 func _pets2(b: Dictionary, vis: Dictionary) -> void:
-	var list: Array = CatExtra.PETS.get(b["type"], CatDecor2.PETS.get(Defs.base_of(b["type"]), []))
+	var list: Array = CatStory.PETS.get(b["type"], CatExtra.PETS.get(b["type"], CatDecor2.PETS.get(Defs.base_of(b["type"]), [])))
 	var lk := int(Defs.B[b["type"]].get("look", 0))
 	var k := 0
 	for e: Array in list:
@@ -1639,7 +1640,8 @@ func _pets2(b: Dictionary, vis: Dictionary) -> void:
 		var sc := Catalog.DECOR if Defs.B[b["type"]]["kind"] == "decor" else Catalog.ARCH
 		var n: Node3D
 		if String(e[0]) == "cat":
-			n = People.cat_node(int(b["id"] + k) % 3, String(e[3]), int(b["id"]) * 7919 + k)
+			# окрас: свой у котят Маси (седьмое поле), у остальных — по номеру постройки
+			n = People.cat_node(int(e[6]) if e.size() > 6 else int(b["id"] + k) % 3, String(e[3]), int(b["id"]) * 7919 + k)
 			add_child(n)
 			if e.size() > 6:
 				People.cat_wear(n, String(e[6]))   # кошка «Кошачьей лавки» — в вещице с витрины

@@ -412,6 +412,21 @@ const B := {
 		"desc": "Деревянный балкон на втором этаже: на верёвке сохнет бельё, на перилах — ковёр, в углу — цветы. Вешается на дом в 2–3 этажа. Награда за историю горожан «Тесно в доме»."},
 	"legionpost": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Сторожевой пост", "cost": 60, "deco": 5, "light": true, "unlock": "s_bandits", "story": true,
 		"desc": "Знамя легиона с золотым навершием, стойка с копьями, щит и жаровня — дозор у дороги, чтобы разбойникам неповадно было. Ночью горит огонь. Награда за историю горожан «Разбойники у арки»."},
+	# этап 7b: ярмарка, роща поэта, пожар у горшечников
+	"firebarrel": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Бочка с вёдрами", "cost": 35, "deco": 4, "unlock": "s_fire", "story": true,
+		"desc": "Бочка с водой под навесом, на перекладине — вёдра, у столба — лестница и багор, как у вигилов. Вода под рукой — соседям спокойнее. Награда за историю горожан «Пожар у горшечников»."},
+	"fairstall": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Прилавок с пряностями", "cost": 70, "deco": 5, "unlock": "s_fair_spice", "story": true,
+		"desc": "Полосатый навес, под ним — миски с перцем, шафраном и корицей, мешки с пряностями, на перекладине сушатся травы. Награда за историю горожан «Ярмарка в нундины»."},
+	"fairstall_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "fairstall", "look": 1, "name": "Прилавок с вином", "cost": 70, "deco": 5, "unlock": "s_fair_wine", "story": true,
+		"desc": "Навес, увитый лозой, на столе — кувшин и чаши для проб, рядом — амфоры кампанского вина. Награда за историю горожан «Ярмарка в нундины»."},
+	"muse": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Муза с лирой", "cost": 260, "deco": 10, "unlock": "s_grove", "story": true,
+		"desc": "Мраморная муза на постаменте, у подножия — лира и свитки, по углам — цветы. Там, где она стоит, хочется петь. Награда за историю горожан «Роща поэта»."},
+	"kittenbasket": {"kind": "decor", "cat": "decor", "sub": "animals", "name": "Корзинка с котятами", "cost": 25, "deco": 4, "unlock": "s_kittens", "story": true,
+		"desc": "Большая корзина с подушкой: в ней дремлет чёрная Мася, рядом возятся трое котят, миска молока. Награда за историю горожан «Мася и котята»."},
+	"censortable": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Стол цензора", "cost": 45, "deco": 4, "unlock": "s_census", "story": true,
+		"desc": "Стол со свитками и табличками переписи, табурет, полка со свитками и знамя с золотым орлом. Награда за историю горожан «Перепись»."},
+	"lararium": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Ларарий", "cost": 60, "deco": 5, "light": true, "unlock": "s_letter", "story": true,
+		"desc": "Домашний алтарь: мраморная ниша под фронтоном, в ней — фигурки Ларов, перед нишей — курильница с огоньком и цветы. Ночью горит огонёк. Награда за историю горожан «Письмо сыну в Легион»."},
 	# редкие облики — награды «Заказов старосты» (StoryOrders, unlock «o_…»): в витрине меню их нет
 	"lamp_post_4": {"kind": "decor", "cat": "decor", "sub": "light", "base": "lamp_post", "look": 3, "name": "Фонарь с двумя кашпо", "cost": 25, "deco": 4, "light": true, "unlock": "o_well", "story": true,
 		"desc": "Фонарь на столбе, по обе стороны перекладины — кашпо с цветами. Ночью светит на улицу. Награда старосты."},
@@ -669,7 +684,7 @@ const RESEARCH := [
 	{"id": "herbalist", "lvl": 3, "name": "Травник", "cost": 340, "icon": "sprout"},
 	{"id": "deco_craft", "lvl": 3, "name": "Ремесленный двор", "cost": 190, "icon": "anvil", "desc": "Наковальня и горн, ткацкий станок, печь гончара, мраморные глыбы."},
 	{"id": "deco_market", "lvl": 3, "name": "Рыночные мелочи", "cost": 210, "icon": "commerce", "desc": "Навесы с товаром, ковры, тачки, лоток со свитками."},
-	{"id": "vigiles", "lvl": 4, "name": "Пост вигилов", "cost": 640, "icon": "shield"},
+	{"id": "vigiles", "lvl": 4, "name": "Пост вигилов", "cost": 640, "icon": "shield", "story_new": "fire"},   # новая игра — история «Пожар» (Q20)
 	{"id": "sculptor", "lvl": 4, "name": "Мастерская скульптора", "cost": 780, "icon": "mona"},
 	{"id": "deco_garden", "lvl": 4, "name": "Сад", "cost": 380, "icon": "flower", "desc": "Стриженый самшит, шпалеры с лозой и розами, цветочные партеры."},
 	{"id": "deco_sculpt", "lvl": 4, "name": "Статуи и руины", "cost": 420, "icon": "marble", "after": "sculptor", "desc": "Руины, алтари, большие вазы, статуя в работе."},
@@ -822,8 +837,8 @@ static func unlock_text(id: String) -> String:
 			if String(R["id"]) == id.substr(7):
 				return "всеми 30 звёздами Легиона в провинции «%s»" % R["name"]
 	var r := research(id)
-	if r.has("story"):
-		return "в истории горожан «%s»" % String(StoryDefs.story(String(r["story"])).get("title", r["name"]))
+	if story_of(r) != "":
+		return "в истории горожан «%s»" % String(StoryDefs.story(story_of(r)).get("title", r["name"]))
 	if not r.is_empty():
 		return "исследованием «%s»" % r["name"]
 	for q in REQUESTS:
@@ -846,7 +861,7 @@ static func unlock_short(id: String) -> String:
 	if id.begins_with("trophy:"):
 		return "30 звёзд похода"
 	var r := research(id)
-	if r.has("story"):
+	if story_of(r) != "":
 		return "История горожан"
 	if not r.is_empty():
 		return r["name"]
@@ -857,6 +872,19 @@ static func unlock_short(id: String) -> String:
 		return "История горожан"
 	if not StoryOrders.order(id).is_empty():
 		return "Заказ старосты"
+	return ""
+
+
+## Какая история открывает исследование (а не очки): «story» — всегда (Легион, Д9), «story_new» — только в новой игре
+## (City.story_v: Пост вигилов — «Пожар у горшечников», решение владельца Q20; живые города изучают его, как прежде)
+static var story_rules := 0
+
+
+static func story_of(r: Dictionary) -> String:
+	if r.has("story"):
+		return String(r["story"])
+	if story_rules >= 1 and r.has("story_new"):
+		return String(r["story_new"])
 	return ""
 
 

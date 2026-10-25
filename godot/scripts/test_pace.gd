@@ -1067,7 +1067,7 @@ func _bresearch() -> void:
 		order.append(r["id"])
 	for id in order:
 		var r := Defs.research(id)
-		if r.is_empty() or c.research.has(id) or int(r["lvl"]) > c.level or id in B_SKIP or r.has("story"):
+		if r.is_empty() or c.research.has(id) or int(r["lvl"]) > c.level or id in B_SKIP or Defs.story_of(r) != "":
 			continue
 		if r.has("after") and not c.research.has(r["after"]):
 			continue
