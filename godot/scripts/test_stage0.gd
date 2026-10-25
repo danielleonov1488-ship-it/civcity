@@ -548,6 +548,25 @@ func _square() -> void:
 	for b in placed + [t2, t1b]:
 		if c.buildings.has(int(b["id"])):
 			c.remove(b, false)
+	# «Дом молодым» (свадьба): ✓ только над новым домом ремесленников со свободными местами — старый рядом не в счёт
+	var old_a := c.place("house_artisan", hp + Vector2(12, 9), 0.0, 0, -1, true)
+	var wsd := StoryDefs.story("wedding")
+	var wi := 0
+	for i in (wsd["steps"] as Array).size():
+		if String((wsd["steps"][i] as Dictionary).get("id", "")) == "house":
+			wi = i
+	c.stories["active"] = {"id": "wedding", "step": wi, "home": hid, "fam": "Проба", "flags": {"choice": "garden"}, "t0": int(c.stories["h"]), "id0": c.next_id}
+	var new_a := c.place("house_artisan", hp + Vector2(-12, 9), 0.0, 0, -1, true)
+	sto.flash_counted(new_a)
+	var wk := []
+	for k in hud.badges:
+		if String(k).begins_with("zok"):
+			wk.append(String(k))
+	check(wk == ["zok%d" % int(new_a["id"])], "дом молодым: ✓ только над новым домом (%s; старый zok%d)" % [wk, int(old_a["id"])])
+	sto._flash_clear()
+	for b in [old_a, new_a]:
+		if c.buildings.has(int(b["id"])):
+			c.remove(b, false)
 	c.stories["active"] = {}
 	sto._marks(true)
 
@@ -630,6 +649,8 @@ func _line_mode() -> void:
 	var lt := hud.road_panel.find_child("line_tip", true, false) as Label
 	check(lt != null and lt.visible and lt.text.contains("ляжет при отпускании"), "в панели — как работает прямая")
 	await shot("s0_line_tag.png")
+	game.set_tool("")                          # ролик обучения снимает инструмент — «Прямая» гаснет сразу, до кадра
+	check(hud._note == "", "сняли инструмент — «Прямая» у курсора погасла сразу («%s»)" % hud._note)
 	for t in ["path", "plaza"]:
 		game.set_tool(t)
 		await frames(3)
@@ -693,6 +714,29 @@ func _fold() -> void:
 	check(not hud.tasks_folded(), "при обучении свиток не свёрнут")
 	game.tutorial.step = Tutorial.STEPS.size()
 	game.tutorial.card.visible = false
+	# советник про истории и скверик при свёрнутом свитке — как добраться до золотой строки и «Готово»
+	c.tips.erase("story_tip")
+	hud.advisor_panel.visible = false
+	c.stories["offer"] = {"id": "square", "home": -1}
+	game.stories._advise_once()
+	check(hud.advisor_panel.visible and hud.adv_text.text.contains("на свёрнутом свитке") and hud.adv_text.text.contains("разверните свиток и нажмите «Отложить»"),
+		"свиток свёрнут — советник про истории говорит, как его развернуть")
+	c.stories["offer"] = {}
+	hud.advisor_panel.visible = false
+	var sq := put("house_pleb", Vector2(160, 120))
+	var sqd := StoryDefs.story("square")
+	var sqi := 0
+	for i in (sqd["steps"] as Array).size():
+		if String((sqd["steps"][i] as Dictionary).get("id", "")) == "build":
+			sqi = i
+	if check(not sq.is_empty(), "дом для советника про скверик"):
+		c.tips.erase("story_square")
+		c.stories["active"] = {"id": "square", "step": sqi, "home": int(sq["id"]), "fam": "Проба", "flags": {}, "t0": int(c.stories["h"]), "id0": c.next_id}
+		game.stories._advise_square()
+		check(hud.advisor_panel.visible and hud.adv_text.text.contains("сейчас свиток свёрнут, разверните его"), "свиток свёрнут — советник про скверик говорит, где «Готово»")
+		c.stories["active"] = {}
+		c.remove(sq, false)
+	hud.advisor_panel.visible = false
 	# развернуть щелчком по полоске
 	var ub: Button = null
 	for b in hud.tasks_box.find_children("unfold", "Button", true, false):
@@ -802,6 +846,10 @@ func _copy() -> void:
 	btn(scr(src["pos"]), MOUSE_BUTTON_LEFT, false)
 	await frames(4)
 	check(game.tool == "house_pleb" and game.place_color == 5 and game.next_variant == 2, "инструмент «Копия» — тот же облик и цвет")
+	# ту же карточку взяли из свитка сами — копия кончилась: фасад «Случайный», цвет «Авто»
+	hud.select_build("house_pleb")
+	check(game.tool == "house_pleb" and not game.copy_color and not game.color_lock and game.tool_variant == -1 and game.place_color == -1,
+		"карточка «Дом плебеев» после копии — обычная стройка (фасад %d, цвет %d, копия %s)" % [game.tool_variant, game.place_color, game.copy_color])
 	game.set_tool("")
 	check(game.tool_variant == -1 and not game.copy_color, "копию отложили — фасад снова «Случайный» (%d)" % game.tool_variant)
 

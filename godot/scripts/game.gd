@@ -1974,12 +1974,10 @@ func set_tool(t: String) -> void:
 		manual_yaw = false
 		rot_off = Vector2.ZERO
 		last_snap_n = Vector2.ZERO        # новая постройка — к дороге заново, без памяти о прошлой
+		end_copy()                        # копию отложили — фасад снова как выбирал игрок
 		if color_lock:
 			place_color = -1              # и цвет фасада — свой
 		color_lock = false
-		if copy_color:
-			tool_variant = _copy_tv0      # копию отложили — фасад снова как выбирал игрок
-		copy_color = false
 	if t != "settle":
 		settle_fam = {}
 		_clear_settle_marks()
@@ -1999,6 +1997,7 @@ func set_tool(t: String) -> void:
 	if cover:
 		cover.refresh()                       # стройка с охватом — синие дома и значки таких же построек сразу
 	if hud:
+		hud.cursor_note("")                   # инструмент сменили: «Прямая» / «В счёт …» _update_tool посчитает заново
 		hud.on_tool(t)
 		if Cover.kind_of(t) != "":
 			hud.cover_tip()
@@ -2884,6 +2883,16 @@ func copy_building(b: Dictionary) -> bool:
 	if hud:
 		hud.on_tool(t)
 	return true
+
+
+## Копия кончилась (взяли другое или ту же карточку заново): фасад — как выбирал игрок, цвет — снова «Авто»
+func end_copy() -> void:
+	if not copy_color:
+		return
+	tool_variant = _copy_tv0                  # выбор фасада игрока («Случайный» или номер) вернулся
+	place_color = -1
+	color_lock = false
+	copy_color = false
 
 
 ## Тихий статус у курсора (четвёртая строка подписи): «Прямая» — дорога ляжет прямой при отпускании;

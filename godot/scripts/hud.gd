@@ -2462,6 +2462,7 @@ func select_build(type: String) -> void:
 	if game.city.cap_err(type) != "":
 		notify(game.city.cap_err(type), "lock")
 		return
+	game.end_copy()                           # карточку взяли сами — обычная стройка, не продолжение копии
 	game.set_tool(type)
 	_update_pointer()
 

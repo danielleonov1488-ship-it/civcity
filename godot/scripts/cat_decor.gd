@@ -791,12 +791,15 @@ static func _pergola(b: Bp, lk: int) -> void:
 static func _tholos(b: Bp) -> void:
 	var s := 0.8
 	_addr(b, "SM_Prop_Pergola_01", Vector3(0, 0.36 * s, 0), 0.0, s, {"Stucco_Blue_01": "Roof_Tile_03"})
-	# пол беседки (замер лучом вниз по сетке SM_Prop_Pergola_01) — на уровне её начала, т. е. 0,36·s: скамья и плющ
-	# стоят на нём (раньше были на 0,3 м выше — висели в воздухе)
+	# пол беседки (замер лучом вниз по сетке SM_Prop_Pergola_01) — на уровне её начала, т. е. 0,36·s: скамья
+	# стоит на нём (раньше была на 0,3 м выше — висела в воздухе)
 	var fy := 0.36 * s
 	b.add("SM_Prop_Seat_Bench_02", Vector3(0, fy, -0.7), 0.0, 0.85)
-	b.add("SM_Env_Ivy_Pillar_Flowers_0%d" % b.pick([1, 3]), Vector3(-1.55, fy, -0.65), _yaw(b), 0.85)
-	b.add("SM_Env_Ivy_Pillar_Flowers_01", Vector3(1.55, fy, -0.65), _yaw(b), 0.85)
+	# сетка плюща _01 начинается на 15,3 см выше своей точки (·0,85 ≈ 0,13): опускаем — листья до пола;
+	# у _03 сетка и так уходит ниже точки
+	var ivy_l := "SM_Env_Ivy_Pillar_Flowers_0%d" % b.pick([1, 3])
+	b.add(ivy_l, Vector3(-1.55, fy - (0.13 if ivy_l.ends_with("01") else 0.0), -0.65), _yaw(b), 0.85)
+	b.add("SM_Env_Ivy_Pillar_Flowers_01", Vector3(1.55, fy - 0.13, -0.65), _yaw(b), 0.85)
 	for sx: float in [-1.0, 1.0]:
 		_pot(b, Vector3(sx * 0.95, 0, 2.2), 0.85)
 	_bloom(b, Vector3(-2.0, 0, 1.3), 0.3)
