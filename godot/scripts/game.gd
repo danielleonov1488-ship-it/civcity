@@ -230,8 +230,8 @@ func _ready() -> void:
 		if mode in ["play", "new"]:
 			land.own_start()                     # своя земля новой игры — 2×3 участка, остальное покупается (меню и витрина — как были)
 		city.place("center", Land.CENTER, PI / 2, 0, 0, true)
-		# фон меню — тоже витрина (на «низком» качестве — прежний городок: он легче для видеокарты)
-		if promo or (mode == "menu" and settings.get("quality", "high") != "low"):
+		# фон меню — тоже витрина (на «Низкой» и «Очень низкой» — прежний городок: он легче для видеокарты)
+		if promo or (mode == "menu" and not Gfx.is_low(str(settings.get("quality", "high")))):
 			Showcase.build(self, args)
 		elif mode == "demo" or mode == "menu":
 			_demo_town()
@@ -465,15 +465,20 @@ func settings_path() -> String:
 
 
 func _load_settings() -> void:
-	var had := FileAccess.file_exists(settings_path())
-	if had:
-		var d = JSON.parse_string(FileAccess.get_file_as_string(settings_path()))
+	var d = null
+	if FileAccess.file_exists(settings_path()):
+		d = JSON.parse_string(FileAccess.get_file_as_string(settings_path()))
 		if typeof(d) == TYPE_DICTIONARY:
 			for k in d:
 				settings[k] = d[k]
+	# уже играет? (файл настроек пишет и лаунчер — до первой игры; город есть — точно играет)
+	var had := Gfx.installed(settings, d, FileAccess.file_exists(save_path()))
 	if shot_path == "":
 		Gfx.first_launch(self, had)           # первый запуск — графика по видеокарте; кто уже играет — без перемен
+		if typeof(d) == TYPE_DICTIONARY and bool(settings.get("quality_user", false)) and not d.has("quality_user"):
+			Gfx._write(self)                  # качество выбрали в лаунчере до первой игры — запомнить как выбор игрока
 		_window_mode()
+	Gfx.small_textures(str(settings.get("quality", "high")) == "verylow")   # до построек: на «Очень низкой» сразу копии
 
 
 ## Окно на весь экран (или развёрнуто); окно автопроверки (gpu_run.sh: CIVCITY_TESTWIN=hidden) — 1920×1080
@@ -3667,21 +3672,21 @@ func _write_save(data: Dictionary) -> void:
 	Account.me().after_save(s)                # и в облако (не чаще раза в минуту, при выходе — сразу)
 
 
-## Автосохранение в три кадра: данные города; земля (её отличия посчитаны заранее, land.save_warm) и строка; файл и
-## облако. Каждый кадр — втрое короче прежнего рывка. Сохранили иначе между кадрами — не пишем (save_ms — самый долгий)
+## Автосохранение в три кадра: снимок города и земли (её отличия посчитаны заранее, land.save_warm) — весь в одном кадре,
+## чтобы покупка участка или дорога между кадрами не попала в файл без своей цены; строка; файл и облако.
+## Сохранили иначе между кадрами — не пишем (save_ms — самый долгий)
 func _autosave() -> void:
 	_save_gen += 1
 	var gen := _save_gen
 	var t0 := Time.get_ticks_usec()
-	var data := city.save_data()
+	var data := _save_data()
+	for k: String in ["goals", "tips", "events", "legion"]:
+		data[k] = data[k].duplicate(true)     # эти отдаются ссылкой: перемены в следующем кадре не должны попасть в снимок
 	var ms := (Time.get_ticks_usec() - t0) / 1000.0
 	await get_tree().process_frame
 	if gen != _save_gen or not can_save or not is_inside_tree():
 		return
 	t0 = Time.get_ticks_usec()
-	data["land"] = land.save_changes()
-	data["hour"] = hour
-	data["version"] = 2
 	var s := JSON.stringify(data)
 	ms = maxf(ms, (Time.get_ticks_usec() - t0) / 1000.0)
 	await get_tree().process_frame

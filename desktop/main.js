@@ -63,7 +63,7 @@ function log(...a) {
 
 const STORE = path.join(DATA, 'launcher.json');
 const CONTENT = path.join(DATA, 'launcher-content.json');
-const QUALITY = ['low', 'medium', 'high'];
+const QUALITY = ['verylow', 'low', 'medium', 'high'];
 let store = { email: null, token: null, prefs: { autostart: false } };
 
 function loadStore() {
@@ -103,6 +103,8 @@ function gamePrefs() {
 function setGamePref(key, value) {
   const g = readJson(GAME_SETTINGS) || {};
   g[key] = value;
+  // качество, выбранное в лаунчере, — выбор игрока: игра сама его больше не меняет (как выбор в её настройках)
+  if (key === 'quality') g.quality_user = true;
   fs.mkdirSync(SAVES, { recursive: true });
   writeJsonAtomic(GAME_SETTINGS, g);
 }

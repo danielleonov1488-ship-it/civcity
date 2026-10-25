@@ -5,6 +5,7 @@ extends Node
 ##   … -- mode=shots out=ПАПКА [ref=ПАПКА] [q=high,medium]                 — снимки (и сверка с эталоном)
 ##   … -- mode=hitch q=low [frames=1200]                                    — рывки кадра (с автосохранением и ходом дня)
 ##   … -- mode=menu q=high,medium                                           — меню с витриной
+##   … -- mode=menu boot_q=verylow q=verylow                                — меню, запущенное на этом качестве (лёгкий городок)
 ## Город: по умолчанию копия города владельца (D:/CivCity/.work/owner_save/city.json) — кладётся в свою папку
 ## сохранений запуска (gpu_run.sh даёт каждому запуску свою); city=new — новый городок.
 ## Снимки: час 9, время стоит (Engine.time_scale = 0 — вода и дым не двигаются), жители, звери, дым, птицы и
@@ -42,6 +43,11 @@ func _ready() -> void:
 			print("PERF note: нет города ", city_src, " — меряем новый городок")
 		city_src = ""
 	if mode == "menu":
+		if A.has("boot_q"):
+			# меню строится по качеству из настроек: «Низкая» и «Очень низкая» — лёгкий городок, а не витрина
+			var f := FileAccess.open(GamePaths.save_dir().path_join("settings.json"), FileAccess.WRITE)
+			f.store_string(JSON.stringify({"quality": A["boot_q"], "ui_scale": 1.0, "fullscreen": false}))
+			f.close()
 		_boot("menu")
 	elif city_src != "":
 		var dst := GamePaths.save_dir().path_join("city.json")
@@ -84,6 +90,7 @@ func _view(v: Array) -> void:
 func _quality(q: String) -> void:
 	game.settings["quality"] = q
 	game._apply_quality()
+	Gfx.swap_all()                            # картинки «Очень низкой» — сразу (в игре — по одной за кадр)
 	Engine.max_fps = 0
 
 
@@ -195,6 +202,11 @@ func _measure_all() -> void:
 
 
 func _menu() -> void:
+	if A.has("boot_q"):
+		var n: int = game.city.buildings.size()
+		print("PERF menu boot_q=%s: построек %d" % [A["boot_q"], n])
+		if Gfx.is_low(str(A["boot_q"])) and n > 400:
+			fail("меню на «%s» строит витрину (%d построек), а не лёгкий городок" % [A["boot_q"], n])
 	await _settle()
 	for q: String in str(A.get("q", "high,medium")).split(","):
 		_quality(q)

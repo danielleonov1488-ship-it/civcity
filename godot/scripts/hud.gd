@@ -82,6 +82,7 @@ var advisor_panel: PanelContainer
 var adv_title: Label
 var adv_text: Label
 var adv_skip: Button                        # «Пропустить обучение» у совета-шага (advisor(…, skip))
+var adv_ok: Button                          # «Понятно» (у вопроса Gfx — «Не надо»)
 var _adv_skip_cb := Callable()
 var notes_box: VBoxContainer
 var events_panel: PanelContainer
@@ -3433,6 +3434,7 @@ func _advisor() -> void:
 	ok.text = "Понятно"
 	ok.pressed.connect(func(): advisor_panel.visible = false)
 	row.add_child(ok)
+	adv_ok = ok
 
 
 ## Совет: заголовок и текст; skip — совет начинает обучение: рядом с «Понятно» кнопка «Пропустить обучение»
@@ -3440,6 +3442,8 @@ func advisor(title: String, text: String, skip := Callable()) -> void:
 	adv_title.text = title
 	adv_text.text = text
 	adv_skip.text = "Пропустить обучение"     # другое действие (Gfx: «Включить «Низкую»») ставит свою надпись после
+	adv_skip.add_theme_font_size_override("font_size", 14)
+	adv_ok.text = "Понятно"
 	_adv_skip_cb = skip
 	adv_skip.visible = skip.is_valid()
 	advisor_panel.visible = true

@@ -22,8 +22,17 @@ const HALF_FAR := 60.0                 # «Низкая»: жители даль
 
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
-static var _small := {}                # путь картинки 4096² → её копия 2048²
+static var _small := {}                # путь картинки 4096² → её копия 2048² (ImageTexture)
+static var _not_big := {}              # картинки меньше 4096² — копия не нужна
+static var _queue := []                # [материал, свойство]: картинки меняются по одной за кадр (Gfx._process), не в нажатии
+static var _jobs := {}                 # путь → задача WorkerThreadPool: копия готовится в фоне
+static var _imgs := {}                 # путь → готовая в фоне копия (Image; null — не вышло); под _mx
+static var _req := {}                  # оригиналы, которые читаются в фоне (ResourceLoader) при возврате с «Очень низкой»
+static var _mx := Mutex.new()
+static var _tdir := ""
+static var readbacks := 0              # сколько копий сделано чтением с видеокарты (запасной путь; test_gfx ждёт 0)
 const SMALL_FROM := 4096
+const T2K := "T2K1"                    # копия на диске: метка, ширина, высота, формат, мипмапы, точки (zstd)
 
 var game
 ## автопроверки (gpu_run.sh задаёт CIVCITY_NOMINPAUSE=1) — без выбора по видеокарте, сторожа и советов; --autoq — с ними
@@ -47,8 +56,8 @@ var _half := 0
 
 # ---------- выбор уровня по видеокарте ----------
 
-## Уровень по видеокарте: встроенная (и программная) — «Очень низкая»; GTX 10xx/16xx, RTX 2050/3050, MX, RX 5500/6400/6500,
-## Arc A3 — «Низкая»; xx60 — «Средняя»; xx70 и выше — «Высокая». Ноутбучная («Laptop», «Max-Q», RX …M) — на ступень
+## Уровень по видеокарте: встроенная (и программная) — «Очень низкая»; GTX 10xx/16xx, RTX 2050/3050, MX (и 940MX), GT 1030,
+## RX 5500/6400/6500, Arc A3 — «Низкая»; xx60 — «Средняя»; xx70 и выше — «Высокая». Ноутбучная («Laptop», «Max-Q», RX …M) — на ступень
 ## ниже, но не ниже «Низкой» (3060 Laptop — «Низкая», 3070 Laptop — «Средняя», 4080 Laptop — «Высокая»);
 ## незнакомая отдельная — «Средняя»
 static func tier_for(name: String, type: int) -> String:
@@ -77,8 +86,8 @@ static func tier_for(name: String, type: int) -> String:
 			s = 1
 		elif fam == "rtx":
 			var cls := num % 100           # 2050/3050 — 50, 4060 — 60, 3070 — 70, 4090 — 90
-			if letter != "":
-				s = 2                      # RTX A2000 и другие рабочие — как незнакомая
+			if letter != "" or cls == 0:
+				s = 2                      # RTX A2000, Quadro RTX 4000, RTX 4000/6000 Ada — рабочие, как незнакомая
 			else:
 				s = 1 if cls <= 50 else (2 if cls == 60 else (3 if cls == 70 else 4))
 		elif fam == "rx":
@@ -98,6 +107,8 @@ static func tier_for(name: String, type: int) -> String:
 					s = 4
 	elif n.contains("titan"):
 		s = 4
+	elif (n.contains("geforce") or n.contains("nvidia")) and RegEx.create_from_string("\\b(gt\\s*\\d{3,4}|\\d{3}mx?)\\b").search(n):
+		s = 1                                  # GeForce 940MX/930MX/920M, GT 1030/730 — слабые, как MX
 	if laptop:
 		s = maxi(1, s - 1)
 	return ORDER[clampi(s, 1, 3)]
@@ -117,6 +128,16 @@ static func first_launch(g, had_file: bool) -> void:
 		_write(g)
 
 
+## Уже играет (тогда уровень сам не меняется)? Файл настроек пишет и лаунчер — до первой игры в нём только «во весь
+## экран» и качество, — а игра пишет все настройки (с ui_scale). Город есть — точно играет. d — прочитанный файл
+## (null — файла нет). Качество, выбранное в лаунчере до первой игры, — выбор игрока (quality_user)
+static func installed(st: Dictionary, d, city: bool) -> bool:
+	var had := typeof(d) == TYPE_DICTIONARY and (d as Dictionary).has("ui_scale")
+	if typeof(d) == TYPE_DICTIONARY and not had and (d as Dictionary).has("quality") and not (d as Dictionary).has("quality_auto"):
+		st["quality_user"] = true
+	return had or city
+
+
 ## Решение без файлов и видеокарты (его проверяет test_gfx): поменять ли настройки st; true — записать файл
 static func decide(st: Dictionary, had_file: bool, auto_on: bool, name: String, type: int) -> bool:
 	if bool(st.get("quality_user", false)):
@@ -129,6 +150,9 @@ static func decide(st: Dictionary, had_file: bool, auto_on: bool, name: String, 
 		return true
 	if qa == "":
 		st["quality_auto"] = "kept"        # уже играет: уровень не трогаем
+		return true
+	if qa != "kept" and str(st.get("quality", "")) != qa:
+		st["quality_user"] = true          # уровень поменяли не в игре (в лаунчере) — это выбор игрока, сами не трогаем
 		return true
 	if qa != "kept" and str(st.get("adapter", "")) != name and auto_on:
 		_pick(st, name, type)              # выбрано по видеокарте, а видеокарта другая — выбрать заново
@@ -214,16 +238,22 @@ static func apply(g) -> void:
 	if g.people:
 		g.people.max_vis = int(VIS[q])
 	small_textures(q == "verylow")
+	if g.gfx == null:
+		swap_all()                         # загрузка (узла Gfx ещё нет), снимки — сразу; в игре — по одной за кадр
 	Engine.max_fps = 60 if g.shot_path == "" else 0
 
 
 ## «Очень низкая»: картинки 4096² (палитры Synty, мрамор, статуи — по 64 МБ видеопамяти) у материалов заменяются
-## копиями 2048² (16 МБ): на встроенной видеокарте память общая с системой. Другие уровни — снова оригиналы (с диска).
+## копиями 2048² (16 МБ): на встроенной видеокарте память общая с системой. Другие уровни — снова оригиналы.
+## Без чтений с видеокарты (на слабых падала игра): копия делается из файла картинки (.ctex) и один раз на сборку
+## кладётся на диск (user://tex2k, как значки в hud._icon_dir) — дальше берётся оттуда, без картинки 4096².
+## Смена уровня в игре — по одной картинке за кадр (копии и оригиналы готовятся в фоне), а не всё в нажатии.
 ## Новые материалы (новый облик, новый житель) берут картинки через Gfx.tex — сразу маленькие
 static func small_textures(on: bool) -> void:
 	if on == _tex_small:
 		return
 	_tex_small = on
+	_queue.clear()
 	var mats := []
 	mats.append_array(Synty._mats.values())
 	mats.append_array(Citizen._plain_mats.values())
@@ -233,48 +263,324 @@ static func small_textures(on: bool) -> void:
 		mats.append((mb as PrimitiveMesh).material)
 	for m in mats:
 		if m is BaseMaterial3D:
-			var bm := m as BaseMaterial3D
-			bm.albedo_texture = _swap(bm.albedo_texture, on)
-			bm.normal_texture = _swap(bm.normal_texture, on)
-		elif m is ShaderMaterial:
-			var t = (m as ShaderMaterial).get_shader_parameter("albedo_tex")
-			if t is Texture2D:
-				(m as ShaderMaterial).set_shader_parameter("albedo_tex", _swap(t, on))
-	if not on:
-		_small.clear()
+			for p: String in ["albedo_texture", "normal_texture"]:
+				if m.get(p) is Texture2D:
+					_queue.append([m, p])
+		elif m is ShaderMaterial and (m as ShaderMaterial).get_shader_parameter("albedo_tex") is Texture2D:
+			_queue.append([m, "albedo_tex"])
+	# всё, что понадобится, — сразу в фон (параллельно), а меняем по порядку, по мере готовности
+	for e: Array in _queue:
+		var t := _tex_get(e[0], e[1])
+		if on and t is CompressedTexture2D and t.resource_path != "" and t.get_width() >= SMALL_FROM:
+			_start(t.resource_path)
+		elif not on and t.has_meta("orig"):
+			var o := str(t.get_meta("orig"))
+			if not _req.has(o) and not ResourceLoader.has_cached(o) and ResourceLoader.load_threaded_request(o) == OK:
+				_req[o] = true
+
+
+## Идёт замена картинок (Gfx._process зовёт swap_step каждый кадр)
+static func swap_busy() -> bool:
+	return not _queue.is_empty() or not _req.is_empty() or (not _tex_small and not _jobs.is_empty())
+
+
+## Всё сразу, без фона: загрузка города (узла Gfx ещё нет), снимки, замеры test_perf
+static func swap_all() -> void:
+	swap_step(0.0, true)
+
+
+## Картинки из очереди: за кадр — пока не прошло ms (хотя бы одна); то, что ещё готовится в фоне, ждёт следующего
+## кадра. sync — всё сейчас. true — ещё не всё
+static func swap_step(ms := 4.0, sync := false) -> bool:
+	var t0 := Time.get_ticks_usec()
+	_drop_stale(sync)
+	while not _queue.is_empty():
+		var e: Array = _queue[0]
+		var t := _tex_get(e[0], e[1])
+		var r = _next(t, sync)                 # картинка или false — ещё готовится
+		if typeof(r) == TYPE_BOOL:
+			return true
+		if r != t:
+			_tex_set(e[0], e[1], r)
+		_queue.pop_front()
+		if not sync and Time.get_ticks_usec() - t0 > ms * 1000.0:
+			break
+	if _queue.is_empty() and not _tex_small and _jobs.is_empty():
+		_small.clear()                         # оригиналы вернулись — копии больше не нужны
+	return swap_busy()
+
+
+## Уровень успели сменить обратно: ненужные копии и оригиналы из фона — забрать и отпустить
+static func _drop_stale(sync: bool) -> void:
+	if not _tex_small:
+		for k: String in _jobs.keys():
+			if sync or WorkerThreadPool.is_task_completed(_jobs[k]):
+				WorkerThreadPool.wait_for_task_completion(_jobs[k])
+				_jobs.erase(k)
+		if _jobs.is_empty() and not _imgs.is_empty():
+			_mx.lock()
+			_imgs.clear()
+			_mx.unlock()
+	else:
+		for o: String in _req.keys():
+			var s := ResourceLoader.load_threaded_get_status(o)
+			if sync or s != ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+				if s == ResourceLoader.THREAD_LOAD_LOADED or s == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+					ResourceLoader.load_threaded_get(o)
+				_req.erase(o)
+
+
+## Что поставить вместо картинки t сейчас (та же — менять нечего); false — ещё готовится в фоне
+static func _next(t: Texture2D, sync: bool):
+	if t == null:
+		return t
+	if _tex_small:
+		if not (t is CompressedTexture2D) or t.resource_path == "" or t.get_width() < SMALL_FROM:
+			return t
+		var key := t.resource_path
+		if _small.has(key):
+			return _small[key]
+		if _jobs.has(key):
+			if not sync and not WorkerThreadPool.is_task_completed(_jobs[key]):
+				return false
+			WorkerThreadPool.wait_for_task_completion(_jobs[key])
+			_jobs.erase(key)
+		var it := _small_tex(key)
+		return it if it else _readback(t)
+	if not t.has_meta("orig"):
+		return t
+	var o := str(t.get_meta("orig"))
+	if _req.has(o):
+		var s := ResourceLoader.load_threaded_get_status(o)
+		if s == ResourceLoader.THREAD_LOAD_IN_PROGRESS and not sync:
+			return false
+		_req.erase(o)
+		if s == ResourceLoader.THREAD_LOAD_LOADED or s == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			var r = ResourceLoader.load_threaded_get(o)
+			if r is Texture2D:
+				return r
+	return load(o)
+
+
+static func _tex_get(m: Material, p: String) -> Texture2D:
+	return (m as ShaderMaterial).get_shader_parameter(p) if m is ShaderMaterial else m.get(p)
+
+
+static func _tex_set(m: Material, p: String, t: Texture2D) -> void:
+	if m is ShaderMaterial:
+		(m as ShaderMaterial).set_shader_parameter(p, t)
+	else:
+		m.set(p, t)
 
 
 ## Картинка для нового материала (Synty.material, Citizen): на «Очень низкой» — копия 2048², без загрузки оригинала
 static func tex(path: String) -> Texture2D:
 	if path == "":
 		return null
-	if _tex_small and _small.has(path):
-		return _small[path]
+	if _tex_small:
+		if _jobs.has(path):
+			WorkerThreadPool.wait_for_task_completion(_jobs[path])
+			_jobs.erase(path)
+		var it := _small_tex(path)
+		if it:
+			return it
 	var t: Texture2D = load(path)
-	return _swap(t, true) if _tex_small else t
+	return _readback(t) if _tex_small else t
 
 
-static func _swap(t: Texture2D, on: bool) -> Texture2D:
-	if t == null:
+## Копия 2048²: готовая из фона, с диска, иначе из файла картинки; null — картинка меньше 4096² или файла не прочесть
+static func _small_tex(path: String) -> ImageTexture:
+	if _small.has(path):
+		return _small[path]
+	if _not_big.has(path):
+		return null
+	_mx.lock()
+	var got := _imgs.has(path)
+	var img: Image = _imgs.get(path)
+	_imgs.erase(path)
+	_mx.unlock()
+	if not got:
+		var ctex := _ctex(path)
+		if ctex == "":
+			return null
+		if _ctex_width(ctex) < SMALL_FROM:
+			_not_big[path] = true
+			return null
+		img = _prep_img(ctex, _cache_file(path, ctex))
+	if img == null:
+		return null
+	var it := ImageTexture.create_from_image(img)
+	it.set_meta("orig", path)
+	_small[path] = it
+	return it
+
+
+## Копия — в фоне (WorkerThreadPool): чтение файла, распаковка, уменьшение и запись на диск — без видеокарты
+static func _start(path: String) -> void:
+	if _small.has(path) or _jobs.has(path) or _not_big.has(path):
+		return
+	var ctex := _ctex(path)
+	if ctex == "":
+		return
+	var cache := _cache_file(path, ctex)
+	var job := func():
+		var img := _prep_img(ctex, cache)
+		_mx.lock()
+		_imgs[path] = img
+		_mx.unlock()
+	_jobs[path] = WorkerThreadPool.add_task(job, false, "Gfx: копия картинки")
+
+
+## Копия с диска, иначе из файла картинки (и сразу на диск). Можно из фона
+static func _prep_img(ctex: String, cache: String) -> Image:
+	var img := _cache_read(cache)
+	if img == null:
+		img = _from_ctex(ctex)
+		if img != null:
+			_cache_write(cache, img)
+	return img
+
+
+## Файл картинки после импорта (.ctex) — из её .import (он есть и в собранной игре)
+static func _ctex(path: String) -> String:
+	var cf := ConfigFile.new()
+	if cf.load(path + ".import") != OK:
+		return ""
+	return str(cf.get_value("remap", "path", ""))
+
+
+static func _ctex_width(ctex: String) -> int:
+	var f := FileAccess.open(ctex, FileAccess.READ)
+	if f == null or f.get_length() < 16 or f.get_buffer(4).get_string_from_ascii() != "GST2":
+		return 0
+	f.get_32()
+	return f.get_32()
+
+
+## Картинка из .ctex (без потерь: внутри PNG или WebP), уменьшенная вдвое; null — другой формат
+static func _from_ctex(ctex: String) -> Image:
+	var f := FileAccess.open(ctex, FileAccess.READ)
+	if f == null or f.get_length() < 60 or f.get_buffer(4).get_string_from_ascii() != "GST2":
+		return null
+	f.get_32()                                 # версия
+	var w := f.get_32()
+	var h := f.get_32()
+	f.seek(36)
+	var df := f.get_32()                       # 1 — PNG, 2 — WebP
+	f.get_32()                                 # ширина и высота по 16 бит
+	var mips := f.get_32()
+	f.get_32()                                 # формат точек
+	var n := f.get_32()
+	if (df != 1 and df != 2) or n <= 4 or n > f.get_length():
+		return null
+	var buf := f.get_buffer(n)
+	var head := buf.slice(0, 4).get_string_from_ascii()
+	if head == "PNG " or head == "WEBP":
+		buf = buf.slice(4)                     # прежняя метка Godot перед данными
+	var img := Image.new()
+	var err := img.load_png_from_buffer(buf) if df == 1 else img.load_webp_from_buffer(buf)
+	if err != OK or img.get_width() != w or img.get_height() != h:
+		return null
+	img.resize(w / 2, h / 2, Image.INTERPOLATE_BILINEAR)
+	if mips > 0:
+		img.generate_mipmaps()
+	return img
+
+
+static func _bpp(fmt: int) -> int:
+	return {Image.FORMAT_L8: 1, Image.FORMAT_LA8: 2, Image.FORMAT_RGB8: 3, Image.FORMAT_RGBA8: 4}.get(fmt, 0)
+
+
+static func _cache_read(file: String) -> Image:
+	if not FileAccess.file_exists(file):
+		return null
+	var f := FileAccess.open_compressed(file, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	if f == null or f.get_buffer(4).get_string_from_ascii() != T2K:
+		return null
+	var w := f.get_32()
+	var h := f.get_32()
+	var fmt := f.get_32()
+	var mips := f.get_8()
+	var n := w * h * _bpp(fmt)
+	if n <= 0 or w > 8192 or h > 8192:
+		return null
+	var data := f.get_buffer(n)
+	if data.size() != n:
+		return null
+	var img := Image.create_from_data(w, h, false, fmt, data)
+	if mips > 0:
+		img.generate_mipmaps()
+	return img
+
+
+static func _cache_write(file: String, img: Image) -> void:
+	var n := img.get_width() * img.get_height() * _bpp(img.get_format())
+	if n <= 0:
+		return
+	var tmp := "%s.%d.tmp" % [file, OS.get_thread_caller_id()]
+	var f := FileAccess.open_compressed(tmp, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
+	if f == null:
+		return
+	f.store_buffer(T2K.to_ascii_buffer())
+	f.store_32(img.get_width())
+	f.store_32(img.get_height())
+	f.store_32(img.get_format())
+	f.store_8(1 if img.has_mipmaps() else 0)
+	f.store_buffer(img.get_data().slice(0, n))  # без мипмапов: их пересчитаем
+	f.close()
+	DirAccess.rename_absolute(tmp, file)
+
+
+## Имя копии на диске: путь картинки (в редакторе — и время импорта: картинку могли переимпортировать)
+static func _cache_file(path: String, ctex: String) -> String:
+	var tag := path
+	if OS.has_feature("editor"):
+		tag += str(FileAccess.get_modified_time(ctex))
+	return _tex_dir().path_join("%s_%s.bin" % [path.get_file().get_basename(), tag.md5_text().substr(0, 10)])
+
+
+## Папка копий: своя на каждую сборку (как hud._icon_dir), старые удаляются
+static func _tex_dir() -> String:
+	if _tdir != "":
+		return _tdir
+	var key := "t1"
+	if not OS.has_feature("editor"):
+		var exe := OS.get_executable_path()
+		for p: String in [exe.get_basename() + ".pck", exe.get_base_dir().path_join("CivCity_models.pck")]:
+			var fa := FileAccess.open(p, FileAccess.READ)
+			if fa:
+				key += "_%d_%d" % [FileAccess.get_modified_time(p), fa.get_length()]
+	var root := "user://tex2k"
+	var name := key.md5_text().substr(0, 12)
+	DirAccess.make_dir_recursive_absolute(root.path_join(name))
+	for old in DirAccess.get_directories_at(root):
+		if old != name:
+			var od := root.path_join(old)
+			for f in DirAccess.get_files_at(od):
+				DirAccess.remove_absolute(od.path_join(f))
+			DirAccess.remove_absolute(od)
+	_tdir = root.path_join(name)
+	return _tdir
+
+
+## Запасной путь (файла картинки не прочесть): копия через видеокарту, как раньше
+static func _readback(t: Texture2D) -> Texture2D:
+	if not (t is CompressedTexture2D) or t.resource_path == "" or t.get_width() < SMALL_FROM:
 		return t
-	if on:
-		if t is CompressedTexture2D and t.get_width() >= SMALL_FROM and t.resource_path != "":
-			var key := t.resource_path
-			if not _small.has(key):
-				var img := t.get_image()
-				if img == null or img.is_empty():
-					return t
-				if img.is_compressed():
-					img.decompress()
-				img.resize(t.get_width() / 2, t.get_height() / 2, Image.INTERPOLATE_BILINEAR)
-				var it := ImageTexture.create_from_image(img)
-				it.set_meta("orig", key)
-				_small[key] = it
-			return _small[key]
+	var key := t.resource_path
+	if _small.has(key):
+		return _small[key]
+	readbacks += 1
+	var img := t.get_image()
+	if img == null or img.is_empty():
 		return t
-	if t.has_meta("orig"):
-		return load(str(t.get_meta("orig")))
-	return t
+	if img.is_compressed():
+		img.decompress()
+	img.resize(t.get_width() / 2, t.get_height() / 2, Image.INTERPOLATE_BILINEAR)
+	var it := ImageTexture.create_from_image(img)
+	it.set_meta("orig", key)
+	_small[key] = it
+	return it
 
 
 # ---------- в городе: проверка, сторож, счётчик ----------
@@ -302,6 +608,12 @@ func _ready() -> void:
 	refresh()
 	if _check_due():
 		_set_measure(true)
+	# проверка уже прошла, а объяснить не успели (закрыли игру во время обучения) — объясним в этот раз
+	var st: Dictionary = game.settings
+	var qa := str(st.get("quality_auto", ""))
+	if game.mode in ["play", "new"] and game.shot_path == "" and qa != "" and qa != "kept" and bool(st.get("quality_checked", false)) \
+			and not bool(st.get("quality_user", false)) and not bool(st.get("tip_q_auto", false)):
+		_pending.push_front(_tip_auto(str(st.get("quality", qa))))
 	if auto_on and game.mode in ["play", "new"] and game.shot_path == "" and not bool(game.settings.get("tip_igpu", false)) \
 			and tier_for(adapter(), RenderingServer.get_video_adapter_type()) == "verylow":
 		_pending.append(["Встроенная видеокарта", ("Игра идёт на встроенной видеокарте (%s) — ей тяжело. Если в ноутбуке есть вторая, мощная: " +
@@ -339,6 +651,8 @@ func _in_city() -> bool:
 
 
 func _process(dt: float) -> void:
+	if swap_busy():
+		swap_step()                            # «Очень низкая» и обратно: по картинке за кадр
 	if not game.ready_done:
 		return
 	var real := dt / maxf(0.0001, Engine.time_scale)
@@ -363,7 +677,10 @@ func _process(dt: float) -> void:
 		_write(game)
 		game.hud.advisor(p[0], p[1], p[4] if p.size() > 4 else Callable())
 		if p.size() > 4:
+			# вопрос с действием: действие — обычной кнопкой, «Понятно» — «Не надо» (иначе «Понятно» читается как «да»)
 			game.hud.adv_skip.text = p[2]
+			game.hud.adv_skip.add_theme_font_size_override("font_size", 18)
+			game.hud.adv_ok.text = "Не надо"
 
 
 func _adv_free() -> bool:
@@ -404,8 +721,13 @@ func _check_step(dt: float) -> void:
 	game._apply_quality()
 	_set_measure(_dbg != null and _dbg.visible)
 	if not bool(st.get("tip_q_auto", false)):
-		_pending.push_front(["Графика под вашу видеокарту", ("Я выбрал графику «%s» — под вашу видеокарту (%s), чтобы город шёл плавно. " +
-			"Поменять можно в любой момент: Меню → Настройки → Графика.") % [NAMES[q], adapter()], "", "tip_q_auto"])
+		_pending.push_front(_tip_auto(q))
+
+
+## Совет один раз: какой уровень выбран по видеокарте и где поменять
+func _tip_auto(q: String) -> Array:
+	return ["Графика под вашу видеокарту", ("Я выбрал графику «%s» — под вашу видеокарту (%s), чтобы город шёл плавно. " +
+		"Поменять можно в любой момент: Меню → Настройки → Графика.") % [NAMES.get(q, q), adapter()], "", "tip_q_auto"]
 
 
 ## Сторож кадров: 20 с в городе в среднем меньше 40 кадров, а графика выше «Низкой» — один раз предложить «Низкую»
