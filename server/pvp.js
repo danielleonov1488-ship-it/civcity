@@ -32,7 +32,7 @@
    - победа отряда, который слабее соперника больше чем вчетверо (MIN_RATIO), или бой, закончившийся быстрее,
      чем его можно досмотреть на скорости ×3 (по времени повтора), не засчитываются (status rejected, рейтинг не меняется);
    - рейтинг, который живой защитник теряет за сутки, ограничен (DEF_DAY_LOSS): толпой учёток одного не утопить.
-   Числа бойцов и правила рейтинга — копия legion.gd (UNITS, PVP, WONDERS, SLOT_BOSSES): меняете там — меняйте тут. */
+   Числа бойцов и правила рейтинга — копия legion.gd (UNITS, PVP, WONDERS, SLOT_BOSSES, SLOT_BARRACKS): меняете там — меняйте тут. */
 
 const crypto = require('crypto');
 const { replayPvp, cleanInputs } = require('./legion_sim');
@@ -50,6 +50,9 @@ const BUILDING_UNIT = { barracks: 'legionary', spearcamp: 'spearman', range: 'ar
 const PERK_IDS = ['oil', 'testudo', 'bandage', 'volley', 'horn'];
 const PERK_MAX = 5, MAX_LEVEL = 40, SQUAD_BASE = 3, SQUAD_MAX = 7, STAGES = 10;
 const SLOT_BOSSES = [1, 3, 5, 7];
+// каждое новое место — ещё и с Казармами этого уровня (здания Легиона, сохранение Легиона v3); места, открытые
+// до зданий (flags.slots0 — перенос старого сохранения), не отнимаются
+const SLOT_BARRACKS = [2, 3, 5, 7];
 // чудеса, что усиливают армию: памятники в городе (building) и чудеса, возведённые в окне Легиона (id)
 const ARMY_WONDERS = [
   { building: 'arch', atk: 0.05 }, { building: 'colosseum', hp: 0.10 }, { building: 'pantheon', atk: 0.10 },
@@ -307,6 +310,13 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
         levels[t] = clamp(l, 1, MAX_LEVEL);
       }
       const bosses = Math.floor(Math.max(0, int(L.progress)) / STAGES);
+      // места в отряде — как Legion.slots(): босс и Казармы нужного уровня (уровень с идущим улучшением — с запасом,
+      // как и +1 на запаздывание облака); сохранение до v3 ещё не перенесено — по-старому, только боссы
+      const fl = L.flags && typeof L.flags === 'object' ? L.flags : {};
+      const v3 = int(L.v) >= 3;
+      let slots = SQUAD_BASE;
+      SLOT_BOSSES.forEach((b, i) => { if (bosses >= b && (!v3 || levels.legionary >= SLOT_BARRACKS[i])) slots++; });
+      slots = clamp(Math.max(slots, int(fl.slots0)), SQUAD_BASE, SQUAD_MAX);
       const perks = {};
       for (const p of PERK_IDS) perks[p] = clamp(int(pk[p]), 0, PERK_MAX);
       const btypes = new Set();
@@ -318,7 +328,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
       for (const w of ARMY_WONDERS) {
         if (w.building ? btypes.has(w.building) : built.has(w.id)) { atkB += w.atk || 0; hpB += w.hp || 0; }
       }
-      f = { levels, bosses, slots: SQUAD_BASE + SLOT_BOSSES.filter(b => bosses >= b).length, perks, types, atkB, hpB,
+      f = { levels, bosses, slots, perks, types, atkB, hpB,
         cityLevel: clamp(int(d.level), 0, 7), legion: Array.isArray(d.research) && d.research.includes('legion') };
     }
     factsCache.set(uid, { id: s.id, facts: f });

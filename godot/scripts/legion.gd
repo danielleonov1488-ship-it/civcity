@@ -99,7 +99,7 @@ const SUPPORT := {
 const FORGE := 0.03
 const INFIRMARY := 0.06
 const ARMORY := 2.0
-## Места в отряде: каждое новое (после боссов SLOT_BOSSES) — ещё и с Казармами этого уровня
+## Места в отряде: каждое новое (после боссов SLOT_BOSSES) — ещё и с Казармами этого уровня (копия в server/pvp.js)
 const SLOT_BARRACKS := [2, 3, 5, 7]
 ## Кузница и Склад оружия в боях с городами: только когда сервер (server/legion_sim.js, server/pvp.js) повторяет бой
 ## с ними и владелец сказал «да» выкладке. Пока false: в снимках отряда и в бою с городом — только уровни бойцов и чудеса
@@ -856,13 +856,16 @@ func finish_upgrade(type: String) -> String:
 	if not upg.has(type):
 		return ""
 	var to := int(upg[type]["to"])
+	var s0 := slots()
 	_set_level(type, maxi(level_of(type), to))
 	upg.erase(type)
 	sync_tiers(true)
 	changed.emit()
 	var bn := String(Defs.B[building_of(type)]["name"])
 	if UNITS.has(type):
-		return "%s — %d уровень: %s сильнее и крепче!" % [bn, to, String(UNITS[type]["many"]).to_lower()]
+		# Казармы доросли до места, которое ждало их уровня (босс уже побеждён), — скажем в том же событии
+		var more := " Открыто ещё одно место в отряде." if slots() > s0 else ""
+		return "%s — %d уровень: %s сильнее и крепче!%s" % [bn, to, String(UNITS[type]["many"]).to_lower(), more]
 	return "%s — %d уровень: %s" % [bn, to, String(b_effect(building_of(type), to)[0]).to_lower()]
 
 
@@ -968,10 +971,11 @@ func b_effect(btype: String, lvl: int) -> Array:
 	var u := bkey(btype)
 	if not UNITS.has(u):
 		return []
-	var s := unit_stats(u, lvl)
+	var s := unit_stats(u, lvl, bonus("atk") + forge_b(), bonus("hp") + forge_b(), armory_b())   # как в походе (stats) и на плитке «Войска»
 	var out := ["%s %d уровня: здоровье %d, урон %d, броня %d" % [UNITS[u]["many"], lvl, int(s["hp"]), int(s["atk"]), roundi(float(s["armor"]))]]
 	if btype == "barracks":
-		out.append("Мест в отряде — до %d (новые места — и за победы над боссами)" % slots_at(lvl))
+		# места, открытые до зданий Легиона (slots0), — не меньше: следующий уровень не обещает уже имеющееся место
+		out.append("Мест в отряде — до %d (новые места — и за победы над боссами)" % maxi(slots_at(lvl), int(flags.get("slots0", 0))))
 	return out
 
 
@@ -1517,14 +1521,17 @@ func tips(st: Dictionary) -> String:
 	return counter_tips(st, can_get())
 
 
-## Что открыла победа над n-м боссом: умения, место в отряде, военные постройки (строки для окна)
-static func unlocks_at(n: int) -> Array:
+## Что открыла победа над n-м боссом: умения, место в отряде, военные постройки (строки для окна).
+## barracks — уровень Казарм: место открывается, только если они уже нужного уровня (SLOT_BARRACKS, Д10)
+static func unlocks_at(n: int, barracks := MAX_LEVEL) -> Array:
 	var out := []
 	for id in PERK_IDS:
 		if int(PERKS[id]["boss"]) == n:
 			out.append("умение «%s»" % PERKS[id]["name"])
-	if n in SLOT_BOSSES:
-		out.append("ещё одно место в отряде")
+	var si := SLOT_BOSSES.find(n)
+	if si >= 0:
+		var need := int(SLOT_BARRACKS[si])
+		out.append("ещё одно место в отряде" if barracks >= need else "место в отряде — когда Казармы дойдут до %d уровня" % need)
 	for b in BUILDING_UNIT:
 		if String(Defs.B.get(b, {}).get("unlock", "")) == "boss%d" % n:
 			out.append("%s — %s" % [String(Defs.B[b]["name"]).to_lower(), String(UNITS[BUILDING_UNIT[b]]["many"]).to_lower()])
@@ -1741,7 +1748,7 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 				for id in PERK_IDS:
 					if int(PERKS[id]["boss"]) == n and int(perks.get(id, 0)) == 0:
 						perks[id] = 1
-				out["unlocks"] = unlocks_at(n)
+				out["unlocks"] = unlocks_at(n, _slot_barracks())
 				out["boss_beaten"] = true
 				flags["turn_page"] = true       # карта перелистнётся на следующую провинцию
 				if c != null and c.has_method("_event"):
@@ -2298,6 +2305,6 @@ func _migrate_d10() -> void:
 		var l := 1
 		for p in from[k]:
 			l = maxi(l, int(perks.get(p, 0)))
-		blevels[k] = clampi(maxi(int(blevels.get(k, 1)), l), 1, max_of(k))
+		blevels[k] = clampi(maxi(int(blevels.get(k, 1)), l), 1, mini(max_of(k), cap_of(k)))   # не выше предела города (уровень города уже загружен)
 	if not flags.is_empty() or progress > 0:
 		flags["d10_new"] = true

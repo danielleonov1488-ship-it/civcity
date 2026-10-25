@@ -700,6 +700,23 @@ func _d10_api() -> void:
 	L.levels["legionary"] = 2
 	_check(n2 == 4 and n3 == 5 and L.slot_lock_text(4).contains("Казармами 3 уровня") and not L.slot_lock_text(4).contains("боссом"),
 		"места: Казармы 2 ур. — %d, 3 ур. — %d; «%s»" % [n2, n3, L.slot_lock_text(4)])
+	# 3-й босс побеждён при Казармах 2 ур.: итог боя и колокольчик не обещают место (оно ждёт Казарм 3 ур.), мест столько же;
+	# Казармы доросли — событие улучшения говорит, что место открыто
+	L.progress = 29
+	var ns0 := L.slots()
+	var b3out := L.apply_result(L.make_battle(L.stage_info(0, 2, 9), 1), {"win": true, "alive": 3, "total": 3, "timeout": false, "time": 50.0})
+	var u3: Array = b3out["unlocks"]
+	_check(bool(b3out["boss_beaten"]) and ns0 == 4 and L.slots() == 4 and not u3.has("ещё одно место в отряде") and u3.has("место в отряде — когда Казармы дойдут до 3 уровня")
+		and Legion.unlocks_at(3).has("ещё одно место в отряде"), "босс 3 при Казармах 2 ур.: мест %d → %d, «%s»" % [ns0, L.slots(), ", ".join(u3)])
+	_check(L.upgrade("legionary"), "улучшение Казарм до 3 ур.")
+	OS.delay_msec(300)
+	var ev3 := L.tick()
+	_check(L.slots() == 5 and ev3.size() == 1 and String(ev3[0]).ends_with("Открыто ещё одно место в отряде."), "Казармы 3 ур. открыли место: %s" % str(ev3))
+	L.levels["legionary"] = 2
+	# карточка Казарм — те же числа, что плитка «Войска» (с чудесами, Кузницей и Складом оружия)
+	var ef: String = L.b_effect("barracks", 2)[0]
+	var sl := L.stats("legionary")
+	_check(ef.contains("здоровье %d, урон %d, броня %d" % [int(sl["hp"]), int(sl["atk"]), roundi(float(sl["armor"]))]), "карточка Казарм как «Войска»: %s" % ef)
 	# сохранение и загрузка: уровни поддержки, облик по уровням
 	L.upg["infirmary"] = {"to": 2, "end": Legion.now() + 3600.0, "total": 3600.0}
 	var d = JSON.parse_string(JSON.stringify(city.save_data()))
@@ -725,6 +742,17 @@ func _d10_api() -> void:
 		"старое сохранение: Казармы 3 (облик 3), Стрельбище 4 ур. в запасе, Лазарет 3 и Склад 2 из умений, мест 5 как было")
 	L3.levels["legionary"] = 1
 	_check(L3.slots() == 5, "места, открытые до Д10, не отнимаются и с Казармами 1 ур.")
+	var e1: Array = L3.b_effect("barracks", 1)
+	var e2: Array = L3.b_effect("barracks", 2)
+	_check(String(e1[1]).contains("до 5 ") and String(e2[1]).contains("до 5 "), "карточка Казарм после переноса: мест «до 5» и сейчас, и на 2 ур. (%s / %s)" % [e1[1], e2[1]])
+	# перенос на «Посёлке»: Черепаха 5 ур. даёт Складу оружия не больше предела города (4), а не «5 из 4»
+	var old4: Dictionary = old.duplicate(true)
+	old4["level"] = 3
+	old4["legion"]["perks"]["testudo"] = 5
+	var city4 := City.new(Land.new())
+	city4.load_data(old4)
+	_check(city4.legion.b_level("armory") == 4 and city4.legion.cap_of("armory") == 4 and int(city4.legion.perks["testudo"]) == 5,
+		"перенос на «Посёлке»: Склад оружия %d ур. «в запасе» при пределе %d, Черепаха 5 цела" % [city4.legion.b_level("armory"), city4.legion.cap_of("armory")])
 	var rb := city3.place("range", p + Vector2(0, 26), 0.0, 0, -1, true)
 	_check(int(rb["tier"]) == 3 and L3.b_reserve("range") == 0 and L3.available("archer"), "Стрельбище поставили — сразу 4 ур. (облик 4)")
 	# облик по уровню: всё, что прибавляется, — внутри участка 1-го уровня (не залезает на дорогу и к соседям)

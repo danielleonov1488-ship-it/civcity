@@ -193,12 +193,23 @@ func _update_button() -> void:
 		# исследований закрыто и советник свободен: Esc, правая кнопка и щелчок по карте закрывают окно вместе
 		# с советником — совет погас бы, не показавшись (окно закрыли — hud зовёт эту проверку через кадр)
 		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"] and lg.tut_step() == "barracks" \
-				and not hud.research_panel.visible and not hud.advisor_panel.visible:
+				and not hud.research_panel.visible and not hud.advisor_panel.visible and _cine_free():
 			lg.flags["advised"] = true
 			hud.advisor("Легион собран!", "Сначала поставьте Казармы (раздел «Легион» на нижней полосе) — они дают легионеров. Потом откройте медальон «Легион» сверху справа: там походы, войска и чудеса света.\n\nОтряд дерётся сам; ваше — состав и умения в нужный миг. Победы приносят денарии и Славу.",
 				func(): lg.tut_skip())
-		elif game.mode in ["play", "new"] and not visible and not hud.research_panel.visible and not hud.advisor_panel.visible and hud._screen_free():
+		# советы о зданиях (Д10) — как разовые советы города: игра загружена, советник свободен, не идёт обучение города
+		# и ролики (ранг: город вырос — сначала ролик и «Город стал…», потом этот совет — при следующем обновлении города)
+		elif game.ready_done and hud._tip_free() and not visible and not hud.research_panel.visible and hud._screen_free() and _cine_free():
 			_d10_tips()
+
+
+## Не идёт и не ждёт ролик «Новый ранг» и ролик истории горожан
+func _cine_free() -> bool:
+	var rc = game.get("rank_cine")
+	if rc != null and (not rc.cine.is_empty() or not rc.pending.is_empty()):
+		return false
+	var sto = game.get("stories")
+	return sto == null or not sto.busy()
 
 
 ## Советник о зданиях Легиона (Д10) — по разу: старое сохранение (уровни войск стали уровнями зданий, что ждёт «в запасе»);
@@ -540,7 +551,9 @@ func tut_pointer() -> Array:
 				if step == "troops" and lg.can_upgrade("legionary") != "":
 					return [null, ""]
 				# карточка Казарм открыта — стрелка на «Улучшить» в ней (Д10: улучшения — в карточке здания)
-				if step == "troops" and hud.lg_upg_btn != null and is_instance_valid(hud.lg_upg_btn) and hud.lg_upg_btn.is_visible_in_tree():
+				# (только карточка Казарм и доступная кнопка: у Кузницы или Стрельбища — своя «Улучшить», шаг не о них)
+				if step == "troops" and hud.lg_upg_btn != null and is_instance_valid(hud.lg_upg_btn) and hud.lg_upg_btn.is_visible_in_tree() \
+						and not hud.lg_upg_btn.disabled and String(hud.info_b.get("type", "")) == "barracks":
 					return [hud.lg_upg_btn, ""]
 				return [btn, "Легион"]
 			if overlay != null and is_instance_valid(overlay):
@@ -2227,7 +2240,7 @@ func _opponents() -> Control:
 	var t := _title("Соперники", 24)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(t)
-	top.add_child(_l("ваш отряд: сила %s" % hud.fmt(lg.squad_power()), 15, true, C_SOFT))
+	top.add_child(_l("ваш отряд: сила %s" % hud.fmt(lg.squad_power("pvp")), 15, true, C_SOFT))
 	top.add_child(_btn("Найти других", 0, 15, hud.ico("redo", 64), "", func(): _load_opponents(); _rebuild()))
 	if _net().has_method("pvp_top"):
 		top.add_child(_btn("Лучшие города", 0, 15, _ic39("trophy"), "", func(): LegionPvpView.top(self)))
@@ -2253,7 +2266,7 @@ func _opponents() -> Control:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	list.add_theme_constant_override("separation", 6)
 	sc.add_child(list)
-	var mine := lg.squad_power()
+	var mine := lg.squad_power("pvp")          # сила, с которой отряд выйдет в бой с городом (без Кузницы и Склада, пока PVP_MODS выключен)
 	var why := lg.pvp_can_attack()
 	for o in _pvp_list:
 		if not (o is Dictionary):
