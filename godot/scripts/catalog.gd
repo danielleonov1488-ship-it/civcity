@@ -24,7 +24,10 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 	var key := "%s:%d:%d:%d" % [type, tier, variant, color]
 	if _cache.has(key):
 		return _cache[key]
-	var b := Bp.new(hash(key))
+	# здание Легиона растёт с уровнем (tier — облик уровня, Legion.vis_tier): случай — как у 1-го уровня, чтобы
+	# знамёна и плющ не менялись от уровня к уровню, а только прибавлялось новое
+	var mil := String(dd0.get("kind", "")) == "military"
+	var b := Bp.new(hash("%s:0:%d:%d" % [type, variant, color]) if mil else hash(key))
 	b.paint(color)
 	match type:
 		"house_pleb": CatHouses._house_pleb(b, tier, variant)
@@ -60,7 +63,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 		"colosseum": CatMonuments._colosseum(b)
 		"pantheon": CatMonuments._pantheon(b)
 		"center": CatCivic._center(b, tier)
-		"barracks", "range", "spearcamp", "ballistae", "catapults": CatMilitary.make(b, type)
+		"barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory": CatMilitary.make(b, type, tier)
 		_: CatDecor._decor(b, type, variant)
 	b.base = Transform3D.IDENTITY
 	_actors(b, type, tier)

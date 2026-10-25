@@ -98,6 +98,8 @@ func unlocked(type: String) -> bool:
 	var u: String = Defs.B[type].get("unlock", "")
 	if u.begins_with("boss"):                 # военные постройки: победа Легиона над N-м боссом
 		return legion.bosses() >= int(u.substr(4))
+	if u.begins_with("rank:"):                # здания Легиона (Д10): с уровня города, когда Легион собран
+		return level >= int(u.substr(5)) and legion.window_open()
 	if u.begins_with("trophy:"):              # трофей провинции: все 30 звёзд её боёв
 		return legion.has_trophy(u.substr(7))
 	return u == "" or research.has(u) or legion.wonder_unlocks(type)   # чудеса открывает и рейтинг походов
@@ -267,7 +269,8 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	if color < 0:
 		color = pick_color(pos)
 	var chk := check_place(type, pos, yaw, variant, color, -2 if free else -1)
-	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else 0),
+	# здание Легиона встаёт сразу в облике своего уровня (уровень «в запасе» — после переноса старого сохранения)
+	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else (Legion.vis_tier(legion.b_level(type)) if Legion.is_building(type) else 0)),
 		"pos": pos, "yaw": yaw, "variant": variant, "color": color, "y": float(chk["y"]), "cells": chk["cells"],
 		"pop": 0, "families": [], "happy": 50, "up": 0, "down": 0, "staff": 1.0, "active": true, "road": true,
 		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0, "born": next_id}   # born — порядок постройки (перенос его не меняет)
@@ -1338,7 +1341,10 @@ func sim_day() -> void:
 	stats["wages"] = wages
 	stats["rp_day"] = rpd
 	for ev: Array in legion.on_hour():           # Легион: таймеры улучшений (настоящие часы), Слава чудес, триумф
-		_event(ev[0], ev[1])
+		if ev.size() > 2 and bool(ev[2]):
+			_quiet(ev[0], ev[1])                 # здание Легиона выросло — только в колокольчик
+		else:
+			_event(ev[0], ev[1])
 	_fest_hour()
 	_story_hour()
 	_tick_arrivals()
@@ -2489,6 +2495,7 @@ func load_data(d: Dictionary) -> void:
 			if land.occ[k] >= 0:               # арка у въезда остаётся занятой, даже если старое сохранение залезло на неё
 				land.occ[k] = b["id"]
 		next_id = maxi(next_id, int(b["id"]) + 1)
+	legion.sync_tiers()                          # облик зданий Легиона — по их уровням (старые сохранения: уровни войск)
 	compute()
 	# старое сохранение (до пометок «НОВОЕ»): всё, что уже открыто, — «видели», новым ничего не горит
 	if not tips.has("seen"):

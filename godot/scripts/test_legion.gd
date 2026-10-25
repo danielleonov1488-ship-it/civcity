@@ -620,7 +620,132 @@ func _api() -> void:
 	_check(L.pvp_charges_now() == c0 - 1 and L.pvp_rating == r0 + int(po["delta"]) and int(po["delta"]) != 0, "бой с городом: победа=%s, рейтинг %+d, добыча %s, зарядов %d" % [str(pr["win"]), int(po["delta"]), str(po["reward"]), L.pvp_charges_now()])
 	var snap := L.defense_snapshot()
 	_check((snap["squad"] as Array).size() == L.squad_stats().size() and int(snap["power"]) > 0, "снимок обороны: %d бойцов, сила %d" % [(snap["squad"] as Array).size(), int(snap["power"])])
+	_d10_api()
 	print("ИТОГ: %s" % ("всё в порядке" if fails == 0 else "%d ошибок" % fails))
+
+
+## Д10: здания Легиона на карте — уровни и таймеры, цены, что дают (Кузница, Лазарет, Склад оружия), места в отряде
+## с Казармами, облик по уровню (внутри участка), перенос старого сохранения («в запасе»), бои с городами без новых чисел
+func _d10_api() -> void:
+	var land := Land.new()
+	var city := City.new(land)
+	city.place("center", Land.CENTER, PI / 2, 0, 0, true)
+	var L: Legion = city.legion
+	city.level = 2
+	city.research["legion"] = true
+	city.money = 60000.0
+	_check(city.unlocked("forge") and not city.unlocked("infirmary") and not city.unlocked("armory") and Defs.unlock_text("rank:3").contains("Посёлок")
+		and Legion.BUILDING_IDS.size() == 8, "здания Легиона: Кузница с «Деревни», Лазарет — %s" % Defs.unlock_text("rank:3"))
+	city.research.erase("legion")
+	_check(not city.unlocked("forge"), "без Легиона Кузницы нет")
+	city.research["legion"] = true
+	var p := Land.CENTER + Vector2(14, 12)
+	var bb := city.place("barracks", p, 0.0, 0, -1, true)
+	var s0 := L.stats("legionary")
+	_check(int(bb["tier"]) == 0 and L.b_level("barracks") == 1 and L.b_upgrade_text("barracks") == "Улучшить — 700 ден., 5 мин", "Казармы 1-го уровня: «%s»" % L.b_upgrade_text("barracks"))
+	L.time_k = 20000.0
+	_check(L.upgrade(Legion.bkey("barracks")), "улучшение Казарм началось")
+	OS.delay_msec(120)
+	var ev := L.tick()
+	_check(L.b_level("barracks") == 2 and int(L.levels["legionary"]) == 2 and int(bb["tier"]) == 1 and int(L.stats("legionary")["hp"]) > int(s0["hp"])
+		and ev.size() == 1 and String(ev[0]).begins_with("Казармы — 2 уровень"), "Казармы 2-го уровня: легионеры сильнее, облик вырос: %s" % str(ev))
+	# Кузница: в походах +3% урона и здоровья за уровень; в бою с городом и в снимке обороны — без неё (PVP_MODS)
+	var hp1 := int(L.stats("legionary")["hp"])
+	var fb := city.place("forge", p + Vector2(0, 26), 0.0, 0, -1, true)
+	var hp2 := int(L.stats("legionary")["hp"])
+	var snap := L.defense_snapshot()
+	_check(not Legion.PVP_MODS and hp2 > hp1 and int(L.stats("legionary", true)["hp"]) == hp1 and is_equal_approx(float(snap["atk_b"]), L.bonus("atk"))
+		and int(L.squad_stats("pvp")[0]["hp"]) == hp1 and int(L.squad_stats()[0]["hp"]) == hp2, "Кузница 1 ур.: здоровье %d → %d в походах, в боях с городами — %d" % [hp1, hp2, hp1])
+	var m0 := city.money
+	_check(L.upgrade("forge") and is_equal_approx(m0 - city.money, 840.0), "улучшение Кузницы до 2 ур. — 840 ден.")
+	OS.delay_msec(120)
+	L.tick()
+	_check(L.b_level("forge") == 2 and int(fb["tier"]) == 1 and is_equal_approx(L.forge_b(), 0.06) and String(L.b_effect("forge", 2)[0]).begins_with("+6%"),
+		"Кузница 2 ур.: %s" % L.b_effect("forge", 2)[0])
+	L.upgrade("forge")
+	OS.delay_msec(300)
+	L.tick()
+	_check(L.b_level("forge") == 3 and L.can_upgrade("forge").begins_with("Предел города — 3") and L.can_upgrade("forge").contains("Посёлок"), "предел Кузницы на «Деревне»: " + L.can_upgrade("forge"))
+	# Лазарет (с «Посёлка»): между волнами похода раненые перевязаны; бой с городом — одна волна, без этого
+	city.level = 3
+	var ib := city.place("infirmary", p + Vector2(26, 0), 0.0, 0, -1, true)
+	var st := L.stage_info(0, 0, 3)
+	var setup := L.make_battle(st, 5)
+	var sim := LegionSim.new(setup)
+	var heals := 0
+	sim.set_auto(true)
+	while sim.result.is_empty():
+		sim.step(LegionSim.DT)
+		for e: Dictionary in sim.take_events():
+			if String(e["type"]) == "heal" and sim.wave_idx >= 1:
+				heals += 1
+	var opp := {"name": "Проба", "rating": 0, "city_level": 3, "snapshot": {"v": 1, "squad": [{"type": "legionary", "level": 2}], "perks": {}}}
+	var ps := L.make_pvp_battle(opp, 7)
+	_check(not ib.is_empty() and is_equal_approx(float(setup.get("heal_wave", 0.0)), Legion.INFIRMARY) and heals > 0 and not ps.has("heal_wave")
+		and int(ps["squad"][0]["hp"]) == hp1, "Лазарет 1 ур.: перед 2-й волной перевязаны %d раненых; в бою с городом — нет" % heals)
+	# Склад оружия (с «Городка»): +2 брони; уровень «в запасе», пока не поставлен
+	city.level = 4
+	L.blevels["armory"] = 3
+	var a0 := float(L.stats("legionary")["armor"])
+	_check(L.b_reserve("armory") == 3 and is_equal_approx(L.armory_b(), 0.0), "Склад оружия не поставлен: 3 ур. в запасе, брони не даёт")
+	var ab := city.place("armory", p + Vector2(26, 26), 0.0, 0, -1, true)
+	_check(int(ab["tier"]) == 2 and is_equal_approx(float(L.stats("legionary")["armor"]) - a0, 6.0) and L.b_reserve("armory") == 0,
+		"поставили — сразу 3-го уровня: облик 3, брони +%d" % roundi(float(L.stats("legionary")["armor"]) - a0))
+	# места в отряде: 4-е — после 1-го босса и с Казармами 2 ур.; 5-е — после 3-го и с Казармами 3 ур.
+	L.progress = 30
+	L.levels["legionary"] = 2
+	var n2 := L.slots()
+	L.levels["legionary"] = 3
+	var n3 := L.slots()
+	L.levels["legionary"] = 2
+	_check(n2 == 4 and n3 == 5 and L.slot_lock_text(4).contains("Казармами 3 уровня") and not L.slot_lock_text(4).contains("боссом"),
+		"места: Казармы 2 ур. — %d, 3 ур. — %d; «%s»" % [n2, n3, L.slot_lock_text(4)])
+	# сохранение и загрузка: уровни поддержки, облик по уровням
+	L.upg["infirmary"] = {"to": 2, "end": Legion.now() + 3600.0, "total": 3600.0}
+	var d = JSON.parse_string(JSON.stringify(city.save_data()))
+	var city2 := City.new(Land.new())
+	city2.load_data(d)
+	var L2: Legion = city2.legion
+	var fb2: Dictionary = L2.building_rec("forge")
+	_check(L2.b_level("forge") == 3 and L2.b_level("armory") == 3 and L2.upg.has("infirmary") and int(fb2.get("tier", -1)) == 2 and not L2.flags.has("d10_new"),
+		"сохранение v3: Кузница 3, Склад оружия 3, улучшение Лазарета идёт, облик Кузницы 3")
+	# старое сохранение (v2): уровни войск — уровни зданий; без здания — «в запасе»; умения — в запас новым зданиям;
+	# места, открытые боссами до Д10, не отнимаются; облик зданий — по уровням
+	var old := {"money": 9000.0, "level": 5, "research": ["legion", "archery"], "next_id": 3,
+		"buildings": [{"id": 1, "type": "center", "tier": 5, "x": Land.CENTER.x, "z": Land.CENTER.y, "yaw": PI / 2, "pop": 0},
+			{"id": 2, "type": "barracks", "tier": 0, "x": p.x, "z": p.y, "yaw": 0.0, "pop": 0}],
+		"legion": {"v": 2, "levels": {"legionary": 3, "archer": 4}, "perks": {"oil": 2, "bandage": 3, "testudo": 2, "volley": 1}, "progress": 30,
+			"flags": {"seen": true, "tut": "done"}, "upg": {"archer": {"to": 5, "end": Legion.now() + 600.0, "total": 5400.0}}}}
+	var city3 := City.new(Land.new())
+	city3.load_data(old)
+	var L3: Legion = city3.legion
+	_check(int(city3.buildings[2]["tier"]) == 2 and L3.b_level("barracks") == 3 and L3.b_reserve("range") == 4 and L3.upg.has("archer")
+		and L3.b_level("infirmary") == 3 and L3.b_level("armory") == 2 and L3.b_level("forge") == 1 and int(L3.flags.get("slots0", 0)) == 5
+		and L3.slots() == 5 and L3.flags.has("d10_new") and int(L3.perks["bandage"]) == 3,
+		"старое сохранение: Казармы 3 (облик 3), Стрельбище 4 ур. в запасе, Лазарет 3 и Склад 2 из умений, мест 5 как было")
+	L3.levels["legionary"] = 1
+	_check(L3.slots() == 5, "места, открытые до Д10, не отнимаются и с Казармами 1 ур.")
+	var rb := city3.place("range", p + Vector2(0, 26), 0.0, 0, -1, true)
+	_check(int(rb["tier"]) == 3 and L3.b_reserve("range") == 0 and L3.available("archer"), "Стрельбище поставили — сразу 4 ур. (облик 4)")
+	# облик по уровню: всё, что прибавляется, — внутри участка 1-го уровня (не залезает на дорогу и к соседям)
+	var out := []
+	for t: String in Legion.BUILDING_IDS:
+		var b0 := Catalog.make(t, 0, 0, 0)
+		var rects := []
+		for r: Rect2 in b0.footprint():
+			rects.append(r.grow(0.3))           # клетки участка — по прямоугольникам следа (с запасом на клетку)
+		var n0 := b0.parts.size()
+		for tier in range(1, Legion.VIS_MAX + 1):
+			var bt := Catalog.make(t, tier, 0, 0)
+			if bt.parts.size() <= n0:
+				out.append("%s:%d ничего не прибавилось" % [t, tier])
+			for i in range(n0, bt.parts.size()):
+				var o: Vector3 = (bt.parts[i][1] as Transform3D).origin
+				if o.y < 1.6 and not rects.any(func(r: Rect2) -> bool: return r.has_point(Vector2(o.x, o.z))):   # на крыше — землю не занимает
+					out.append("%s:%d %s (%.1f, %.1f)" % [t, tier, bt.parts[i][0], o.x, o.z])
+			if (bt.footprint() as Array).size() < 1:
+				out.append("%s:%d без следа" % [t, tier])
+	_check(out.is_empty(), "облик растёт с уровнем и не выходит за участок: %s" % str(out.slice(0, 6)))
 
 
 ## Этап 3b: звёзды за мастерство (биты), +Слава за первые три, все 30 — сундук Славы и трофей «Телега атамана» в город

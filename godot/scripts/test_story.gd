@@ -1924,6 +1924,18 @@ func _bandits() -> void:
 	sto.tick()
 	check((S["offer"] as Dictionary).is_empty(), "пока идёт обучение — историю не предлагают")
 	c.tips["tut"] = -1
+	# своя пауза после «Мурки» (gap_h, владелец: Легион почти со старта): «Разбойники» — вскоре, а не через GAP_H
+	var gh := int(StoryDefs.story("bandits")["gap_h"])
+	var h0 := int(S["h"])
+	var l0 := int(S["last_h"])
+	S["h"] = maxi(h0, l0 + StoryDefs.GAP_H)
+	S["last_h"] = int(S["h"]) - gh + 1
+	var early := sto.time_ok()
+	S["last_h"] = int(S["h"]) - gh
+	var due := sto.time_ok()
+	S["h"] = h0
+	S["last_h"] = l0
+	check(gh < StoryDefs.GAP_H and sto.gap_now() == gh and not early and due, "«Разбойники» — через %d ч после «Мурки» (не %d): раньше нельзя, потом — пора" % [gh, StoryDefs.GAP_H])
 	sto._tried = ""
 	sto.tick()
 	var o: Dictionary = S["offer"]

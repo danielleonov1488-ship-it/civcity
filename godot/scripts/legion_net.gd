@@ -249,7 +249,7 @@ static func attack_snapshot(lg: Legion) -> Dictionary:
 	var sq := []
 	for s: Dictionary in lg.squad_stats():
 		sq.append({"type": String(s["key"]), "level": int(s["level"])})
-	return {"v": 1, "squad": sq, "perks": lg.open_perks(), "atk_b": lg.bonus("atk"), "hp_b": lg.bonus("hp")}
+	return {"v": 1, "squad": sq, "perks": lg.open_perks(), "atk_b": lg.pvp_bonus("atk"), "hp_b": lg.pvp_bonus("hp")}
 
 
 # ---------- сам по себе ----------
