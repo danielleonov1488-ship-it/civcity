@@ -1727,7 +1727,7 @@ func _close_overlay() -> void:
 
 
 ## Выбор бойца на место i (which: "campaign" — отряд похода, "defense" — отряд обороны)
-func _pick_unit(i: int, which: String, at: Control) -> void:
+func _pick_unit(i: int, which: String, at: Control, head := "") -> void:
 	_close_overlay()
 	overlay = Control.new()
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1740,7 +1740,7 @@ func _pick_unit(i: int, which: String, at: Control) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
 	p.add_child(v)
-	v.add_child(_l("Место %d: кто встанет?" % (i + 1), 16, true))
+	v.add_child(_l(head if head != "" else "Место %d: кто встанет?" % (i + 1), 16, true))
 	var cur: Array = lg.squad if which == "campaign" or lg.defense.is_empty() else lg.defense
 	for t: String in Legion.UNIT_IDS:
 		var U: Dictionary = Legion.UNITS[t]
@@ -1960,7 +1960,7 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 	var hero := which == "campaign" and lg.hero_ready()
 	for i in Legion.SQUAD_MAX:
 		if i == 0 and hero:
-			row.add_child(_hero_slot(sz))        # свой герой (Д11): первое место отряда в походах — его
+			row.add_child(_hero_slot(sz, true, true))   # свой герой (Д11): первое место отряда в походах — его
 			continue
 		var holder := Control.new()
 		holder.custom_minimum_size = Vector2(sz, sz)
@@ -2008,7 +2008,7 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 
 ## Место героя в отряде: его лицо (с медальона «Герой») в золотом медальоне, уровень; заменить его нельзя.
 ## В боях с городами героя пока нет (Legion.HERO_PVP) — его место только в походах
-func _hero_slot(sz: float, big := true) -> Control:
+func _hero_slot(sz: float, big := true, edit := false) -> Control:
 	var holder := Control.new()
 	holder.name = "hero_slot"
 	holder.custom_minimum_size = Vector2(sz, sz)
@@ -2043,6 +2043,27 @@ func _hero_slot(sz: float, big := true) -> Control:
 	face.add_child(tr)
 	holder.add_child(face)
 	_badge(holder, str(int(hs["level"])), Vector2(1, 1), 13 if big else 12)
+	if edit and not Legion.HERO_PVP:
+		# боец этого места в боях с городами (там героя пока нет): маленький медальон в углу — щелчок, выбрать другого
+		var cs := roundf(sz * 0.42)
+		var cf: Control
+		if Legion.UNITS.has(pvp_t):
+			cf = _portrait("unit", pvp_t, cs, not lg.available(pvp_t))
+		else:
+			var e := Panel.new()
+			e.add_theme_stylebox_override("panel", hud._medal("medal", cs))
+			var pl := _title("+", cs * 0.55, C_SOFT)
+			pl.set_anchors_preset(Control.PRESET_FULL_RECT)
+			pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			pl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			e.add_child(pl)
+			cf = e
+		var who := String(Legion.UNITS[pvp_t]["name"]).to_lower() if Legion.UNITS.has(pvp_t) else "никого"
+		var pb := _pic_btn(cf, cs, "В боях с городами на этом месте — %s. Щелчок — поставить другого" % who, Callable())
+		pb.name = "pvp_slot"
+		pb.pressed.connect(func(): _pick_unit(0, "campaign", pb, "В боях с городами на этом месте — кто?"))
+		_pin(pb, Vector2(0, 1), Vector2(5, 4))        # левый нижний угол (в правом — уровень героя)
+		holder.add_child(pb)
 	return holder
 
 

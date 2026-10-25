@@ -3,7 +3,9 @@ extends Node
 ##   bash .work/py/gpu_run.sh res://test_hero.tscn               — новый город: экран «Ваш герой» (наборы, «Случайный», имя),
 ##        герой на улицах (венок, плащ, свои прогулки), щелчок по нему на 34 м, медальон «Герой», карточка и «Гардероб»,
 ##        вещи гардероба → колокольчик, Легион (своё место; бои с городами и снимки отряда — без героя), 3D-бой с героем
-##        (учебный бой с маслом), «Разбойники у арки» — его реплики, сохранение и загрузка; в конце «HERO DONE fails=0»
+##        (учебный бой с маслом), «Разбойники у арки» — его реплики (уличный герой в ролике спрятан), сохранение и загрузка;
+##        постройка на герое и поперёк его пути, Казармы при нём — ночует в них, экран на «Низкой», боец под медальоном
+##        героя не в счёт советов и шансов; в конце «HERO DONE fails=0»
 ##   … -- mode=owner   — копия города владельца: герой создаётся один раз, экран с «Позже»; после «Позже» — случайный герой,
 ##        после загрузки — тот же, экран больше не открывается; город владельца цел
 ## Снимки — .work/gd/a/hero_*.png
@@ -172,10 +174,12 @@ func _new() -> void:
 	check(hud.hero_wrap != null and hud.hero_wrap.visible and (hud.hero_btn.get_node("ic") as TextureRect).material != null, "медальон «Герой» сверху — с лицом героя")
 	await _town()
 	await _walk_test()
+	await _bump_test()
 	await _pick_test()
 	await _button_test()
 	await _card_test()
 	await _wardrobe_unlock_test()
+	await _low_screen_test()
 	await _legion_test()
 	await _story_shot()
 	await _battle_test()
@@ -335,6 +339,88 @@ func _walk_test() -> void:
 	game.rig.stop_follow()
 
 
+## Постройку поставили на героя или поперёк его пути: он выходит из-под неё и обходит её (как горожане)
+func _bump_test() -> void:
+	var sp: float = game.speed
+	game.speed = 0.0
+	var b: Dictionary = shops["forum"]
+	var r: Dictionary = ppl.hero_r
+	var id := int(b["id"])
+	if not check(not b.is_empty() and not r.is_empty(), "форум и герой есть — проверка «встал на героя»"):
+		return
+	var p0: Vector2 = r["p"]
+	ppl._release(r)
+	r["state"] = "idle"
+	r["act"] = ""
+	r["p"] = b["pos"]
+	ppl._on_building_added(b)
+	check(game.land.occ_at(r["p"]) != id, "постройка встала на героя — он вышел из-под неё", r["p"])
+	# шёл по широкой мостовой — посреди пути поставили дом: обходит его
+	var done := false
+	for off: Vector2 in [Vector2(-50, -36), Vector2(50, -36), Vector2(-50, 60), Vector2(50, 60), Vector2(0, -50), Vector2(0, 70)]:
+		var m: Vector2 = Land.CENTER + off
+		var a0: Vector2 = m - Vector2(12, 0)
+		var z0: Vector2 = m + Vector2(12, 0)
+		if game.land.occ_at(m) != 0 or game.land.occ_at(a0) != 0 or game.land.occ_at(z0) != 0:
+			continue
+		var ch: Array = game.land.paint_line(m - Vector2(14, 0), m + Vector2(14, 0), 6.0, Land.Kind.ROAD, true)
+		c.road_cells += ch.size()
+		ppl.refresh(game.land.road_chunks.keys())
+		if not ppl._free(a0) or not ppl._free(z0) or not ppl._free(m):
+			continue
+		ppl._release(r)
+		r["state"] = "idle"
+		r["act"] = ""
+		r["p"] = a0
+		var keep: RandomNumberGenerator = ppl.rng
+		ppl.rng = ppl.hero_rng
+		ppl._go(r, z0, "errand", true)
+		ppl.rng = keep
+		if r["state"] != "walk":
+			continue
+		var old: PackedVector2Array = (r["path"] as PackedVector2Array).duplicate()
+		var h := c.place("house_pleb", m, 0.0, 0, -1, true)
+		var hid := int(h["id"])
+		var hit0: bool = ppl._path_hits(a0, old, 1, hid)
+		check(hit0 and r["state"] == "walk" and not ppl._path_hits(r["p"], r["path"], int(r["i"]), hid), "шёл сквозь новый дом — идёт в обход", [hit0, r["state"]])
+		c.remove(h, false)
+		done = true
+		break
+	check(done, "нашлось место для проверки обхода")
+	ppl._release(r)                               # обратно в городок (дальше — щелчок по нему)
+	r["state"] = "idle"
+	r["act"] = ""
+	r["p"] = ppl._near_free(p0, 80) if game.land.occ_at(p0) != 0 else p0
+	ppl._place(r)
+	r["t"] = 0.0
+	game.speed = sp
+
+
+## Экран «Ваш герой» на «Низкой» графике: мирок меньше и без MSAA, город под ним не рисуется; закрыли — рисуется снова
+func _low_screen_test() -> void:
+	var q0 = game.settings.get("quality", "high")
+	var d0: bool = get_viewport().disable_3d
+	game.settings["quality"] = "low"
+	game.open_hero_screen("edit")
+	await frames(5)
+	var scr := _screen()
+	if check(scr != null, "«Низкая»: экран открылся"):
+		check(get_viewport().disable_3d and scr.vp.size == Vector2i(560, 700) and scr.vp.msaa_3d == Viewport.MSAA_DISABLED,
+			"«Низкая»: город за экраном не рисуется, мирок 560×700 без MSAA", [get_viewport().disable_3d, scr.vp.size])
+		scr._close(false)
+		await frames(3)
+	check(get_viewport().disable_3d == d0, "экран закрыт — город рисуется как прежде")
+	game.settings["quality"] = q0
+	game.open_hero_screen("edit")
+	await frames(5)
+	scr = _screen()
+	check(scr != null and not get_viewport().disable_3d and scr.vp.size == HeroScreen.VP and scr.vp.msaa_3d == Viewport.MSAA_4X,
+		"«Высокая»: экран как был (город за ним, 720×900, MSAA 4×)")
+	if scr != null:
+		scr._close(false)
+		await frames(3)
+
+
 ## Щелчок по герою на 34 м: ≥ 95 % из 20 — его карточка
 func _pick_test() -> void:
 	var cam: Camera3D = game.rig.cam
@@ -438,14 +524,15 @@ func _card_test() -> void:
 	hud.close_panels()
 
 
-## Ранг города открыл вещь гардероба — строчка в колокольчике (одна на вещь), без всплывашек
+## Ранг города открыл вещи гардероба — одна строчка в колокольчике на всё, что открылось за час, без всплывашек
 func _wardrobe_unlock_test() -> void:
 	var b0: int = hud.bell_count
 	var n0 := c.events.size()
 	c.level = 3
 	game._hero_hour()
 	var lines := c.events.slice(n0).filter(func(e): return String(e["text"]).begins_with("В гардеробе героя"))
-	check(lines.size() >= 1 and hud.bell_count > b0 and lines.any(func(e): return String(e["text"]).contains("Шафрановый плащ")), "«Посёлок»: «Шафрановый плащ» — в колокольчике", lines)
+	check(lines.size() == 1 and hud.bell_count > b0 and String(lines[0]["text"]).contains("Шафрановый плащ") and String(lines[0]["text"]).contains("и ещё"),
+		"«Посёлок»: семь вещей — одна строчка в колокольчике («Шафрановый плащ, … и ещё 4»)", lines)
 	var n1 := c.events.size()
 	game._hero_hour()
 	check(c.events.size() == n1, "второй раз о той же вещи не говорит")
@@ -483,7 +570,9 @@ func _legion_test() -> void:
 	var st := lg.stage_info(0, 0, 0)
 	var setup := lg.make_battle(st, 7)
 	check(String(setup["squad"][0]["key"]) == "hero" and setup.has("hero_look") and String(setup.get("tutorial", "")) == "oil", "учебный бой: герой в отряде, его облик — в бою")
-	check(int(ppl.hero_home().get("id", -1)) == int(barracks.get("id", -2)), "герой ночует в Казармах")
+	check(int(ppl.hero_r["home"]) == int(barracks.get("id", -2)), "Казармы поставили при герое — он ночует уже в них, не на станции",
+		[ppl.hero_r["home"], barracks.get("id")])
+	await _squad_keys_test()
 	# Склад оружия: снаряжение героя растёт
 	var k0 := Hero.kit_tier(0)
 	check(k0 == 0 and Hero.kit_tier(1) == 1 and Hero.kit_tier(7) == 3 and String(lg.b_effect("armory", 4)[1]).contains("щит с орлом"), "Склад оружия выдаёт герою снаряжение по уровню")
@@ -491,9 +580,39 @@ func _legion_test() -> void:
 	var ui := LegionUi.of(hud)
 	ui.open("troops")
 	await frames(20)
-	check(not ui.find_children("hero_slot", "", true, false).is_empty(), "«Войска»: место героя в отряде")
+	check(not ui.find_children("hero_slot", "", true, false).is_empty() and not ui.find_children("pvp_slot", "", true, false).is_empty(),
+		"«Войска»: место героя в отряде, в его углу — боец этого места для боёв с городами (выбирается)")
 	await shot("hero_squad.png")
 	ui.close()
+
+
+## Боец первого места спрятан под медальоном героя: советы, шансы и провиант считают тех, кто пойдёт в бой (герой — за
+## легионера); старый город с лучником на первом месте — лучник переходит на видное место
+func _squad_keys_test() -> void:
+	var lg: Legion = c.legion
+	var sq0: Array = lg.squad.duplicate()
+	var rg := put("range", Land.CENTER + Vector2(-12, 22))
+	if rg.is_empty():
+		rg = c.place("range", Land.CENTER + Vector2(-56, 40), 0.0, 0, -1, true)
+	c.compute()
+	var bow := lg.stage_info(0, 0, 1)                # «Пращники в кустах» — нужен лучник
+	if not check(lg.available("archer") and Legion.wants_archer(bow) and lg.slots() == 3, "Стрельбище стоит, бой «Пращники в кустах» — с лучником",
+			[lg.available("archer"), Legion.wants_archer(bow), lg.slots()]):
+		return
+	lg.squad = ["archer", "legionary", "legionary"]
+	check(lg.campaign_keys() == ["legionary", "legionary", "legionary"] and lg.squad_off(bow) and lg.squad_hint(bow).contains("лучника"),
+		"лучник под медальоном героя в бой не идёт — совет «возьмите лучника»", [lg.campaign_keys(), lg.squad_hint(bow)])
+	var wolf := lg.stage_info(0, 0, 2)               # «Волчья тропа»: про спрятанного лучника волки не говорят
+	check(not lg.squad_hint(wolf).contains("Волки"), "волчий бой: о спрятанном лучнике не предупреждает", lg.squad_hint(wolf))
+	lg.hero_squad_fix()
+	check(lg.squad == ["legionary", "archer", "legionary"] and not lg.squad_off(bow) and lg.squad_hint(bow) == "",
+		"старый город: лучник с первого места — на видное, отряд под бой; в боях с городами — те же бойцы", lg.squad)
+	lg.squad = ["", "legionary", "archer"]
+	var job := lg.odds_job(bow)
+	var per := Legion.FOOD["base"] + Legion.FOOD["per_d"] * float(bow["D"])
+	check(lg.battle_squad().size() == 3 and ((job["cur"] as Array)[0]["squad"] as Array).size() == 3 and lg.food_cost(bow) == roundi(3 * per),
+		"пустое первое место: шансы и провиант — на трёх (герой и двое), как в бою", [((job["cur"] as Array)[0]["squad"] as Array).size(), lg.food_cost(bow)])
+	lg.squad = sq0
 
 
 ## 3D-бой: герой — своим бойцом (его лицо, цвета, плащ, снаряжение); учебный бой с маслом выигран
@@ -547,6 +666,20 @@ func _story_shot() -> void:
 			fam = String(b["families"][0]["name"])
 			break
 	game.speed = 1.0
+	# уличный герой стоит на виду (у Казарм, где встанет герой ролика)
+	var hr: Dictionary = ppl.hero_r
+	ppl._release(hr)
+	hr["state"] = "idle"
+	hr["act"] = ""
+	hr["t"] = 99.0
+	var bp: Vector2 = ppl._near_free(c.door_point(barracks) + Vector2(2, 2), 80) if not barracks.is_empty() else hr["p"]
+	if bp != Vector2.INF:
+		hr["p"] = bp
+	ppl._place(hr)
+	await frames(10)
+	var hn0 = hr["node"]
+	var street_seen := hn0 != null and (hn0 as Node3D).visible
+	var twin := false
 	game.stories._play(sd, {"id": "bandits", "fam": fam, "home": hid, "seed": 4242, "cls": "plebs", "female": false}, beats.duplicate(true), "replay", Callable())
 	var t0 := Time.get_ticks_msec()
 	var said := false
@@ -564,12 +697,18 @@ func _story_shot() -> void:
 			sto.ui.finish_typing()
 			if String(b[1]) == "hero" and not said:
 				said = true
+				var hn = ppl.hero_r["node"]
+				twin = hn != null and (hn as Node3D).visible
 				await frames(40)
 				await shot("hero_story.png")
 			await frames(4)
 			sto._next()
 	check(said, "«Разбойники у арки»: герой в ролике — рядом с переселенцем, своя реплика")
+	check(street_seen and not twin, "в ролике со своим героем уличный спрятан — двух одинаковых в кадре нет", [street_seen, twin])
 	await frames(30)
+	var hn1 = ppl.hero_r["node"]
+	check(hn1 != null and (hn1 as Node3D).visible, "ролик кончился — герой на улице снова виден")
+	ppl.hero_r["t"] = 0.0
 
 
 ## «Разбойники у арки»: у героя свои реплики (такты — только если герой есть)

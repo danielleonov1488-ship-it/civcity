@@ -598,9 +598,7 @@ func use_auto_squad(st := {}) -> void:
 ## (squad "any") подходят и три легионера, и легионеры с лучником. С четырёх мест «Лучший состав» уже не ответ на бой
 ## (общий порядок родов войск) — не под бой только лучник в волчьем бою леса (bite)
 func squad_off(st: Dictionary) -> bool:
-	var a := []
-	for u: Dictionary in squad_stats():
-		a.append(String(u["key"]))
+	var a := campaign_keys()
 	a.sort()
 	var b := auto_squad(st)
 	b.sort()
@@ -763,6 +761,27 @@ func battle_squad() -> Array:
 		if t != "" and UNITS.has(t) and available(t):
 			out.append(stats(t))
 	return out
+
+
+## Рода отряда, что пойдёт в поход (советы, «Лучший состав», шансы, провиант): герой — за легионера (загадки леса и
+## «Лучший состав» посчитаны на легионера впереди, герой встаёт вместо него); боец, спрятанный под медальоном героя, — не в счёт
+func campaign_keys() -> Array:
+	var out := []
+	for u: Dictionary in battle_squad():
+		out.append("legionary" if String(u["key"]) == "hero" else String(u["key"]))
+	return out
+
+
+## Герой появился в старом городе: на первом месте отряда не легионер (лучник, пусто) — меняется местами с первым
+## легионером: в походе этот боец виден и выбирается, в боях с городами отряд тот же
+func hero_squad_fix() -> void:
+	if squad.is_empty() or String(squad[0]) == "legionary":
+		return
+	for i in range(1, mini(slots(), squad.size())):
+		if String(squad[i]) == "legionary":
+			squad[i] = squad[0]
+			squad[0] = "legionary"
+			return
 
 
 ## Отряд из родов types (оценка шансов, «Лучший состав»): в походе первое место — герой
@@ -1370,9 +1389,9 @@ static func stage_power(st: Dictionary) -> int:
 ## Без неё — по среднему уровню отряда и рекомендованному (target_level — на нём обычный отряд с умениями побеждает
 ## в 9 боях из 10, без умений нужен уровень выше); отряд не под бой (пока мест три) — как уровень долой
 func odds(st: Dictionary, est := {}) -> Array:
-	var sq := squad_stats()
-	if sq.is_empty():
+	if squad_stats().is_empty():
 		return ["bad", "В отряде никого"]
+	var sq := battle_squad()                     # средний уровень — тех, кто пойдёт в бой (с героем)
 	if not est.is_empty():
 		var p := float(est["cur"])
 		var v := "good" if p >= 0.8 else ("mid" if p >= 0.5 else ("hard" if p >= 0.2 else "bad"))
@@ -1398,9 +1417,7 @@ func odds(st: Dictionary, est := {}) -> Array:
 
 ## Чем «Лучший состав» отличается от нынешнего отряда (для шансов): «с лучником», «без лучника», «лучшим составом»
 func best_words(best_types: Array) -> String:
-	var cur := []
-	for u: Dictionary in squad_stats():
-		cur.append(String(u["key"]))
+	var cur := campaign_keys()
 	var bow_b := "archer" in best_types
 	var bow_c := "archer" in cur
 	if bow_b and not bow_c:
@@ -1427,9 +1444,7 @@ func squad_hint(st: Dictionary) -> String:
 	if not squad_off(st):
 		return ""
 	var best := auto_squad(st)
-	var cur := []
-	for u: Dictionary in squad_stats():
-		cur.append(String(u["key"]))
+	var cur := campaign_keys()
 	if "archer" in best and not "archer" in cur:
 		return "Для этого боя возьмите лучника — «Лучший состав»."
 	if "archer" in cur and not "archer" in best and bool(st.get("bite", false)):
@@ -1448,23 +1463,19 @@ const ODDS_RUNS := 8
 
 
 func odds_job(st: Dictionary) -> Dictionary:
-	var cur := []
-	for u: Dictionary in squad_stats():
-		cur.append(String(u["key"]))
+	var cur := campaign_keys()
 	var best := auto_squad(st)
 	var cs := cur.duplicate()
 	var bs := best.duplicate()
 	cs.sort()
 	bs.sort()
 	var same := cs == bs
-	return {"key": odds_key(st), "cur": _odds_setups(st, cur), "best": [] if same else _odds_setups(st, best), "best_types": best}
+	return {"key": odds_key(st), "cur": _odds_setups(st, [], battle_squad()), "best": [] if same else _odds_setups(st, best), "best_types": best}
 
 
 ## Ключ оценки шансов: бой, отряд, уровни, умения, бонусы чудес (одинаковый ключ — та же оценка)
 func odds_key(st: Dictionary) -> String:
-	var cur := []
-	for u: Dictionary in squad_stats():
-		cur.append(String(u["key"]))
+	var cur := campaign_keys()
 	var key := [st["key"], cur, open_perks(), bonus("atk"), bonus("hp"), auto_squad(st), forge_b(), armory_b(), heal_b(),
 		hero_ready(), hero_kit_level(), city_level()]
 	for t in UNIT_IDS:
@@ -1472,12 +1483,14 @@ func odds_key(st: Dictionary) -> String:
 	return str(key)
 
 
-func _odds_setups(st: Dictionary, types: Array) -> Array:
-	var sq := []
-	for t in types:
-		if available(String(t)):
-			sq.append(stats(String(t)))
-	sq = hero_types(sq)                          # герой идёт в поход на своём месте — и в оценке шансов
+## sq_ready — готовый отряд (нынешний — battle_squad: как пойдёт в бой), иначе — из родов types
+func _odds_setups(st: Dictionary, types: Array, sq_ready := []) -> Array:
+	var sq: Array = sq_ready if not sq_ready.is_empty() else []
+	if sq.is_empty():
+		for t in types:
+			if available(String(t)):
+				sq.append(stats(String(t)))
+		sq = hero_types(sq)                      # герой идёт в поход на своём месте — и в оценке шансов
 	var waves := []
 	for w: Array in st["waves"]:
 		var ws := []
@@ -1534,7 +1547,7 @@ static func reward_for(st: Dictionary, first: bool) -> Dictionary:
 
 ## Провиант на поход (денарии)
 func food_cost(st: Dictionary) -> int:
-	return roundi(squad_stats().size() * (FOOD["base"] + FOOD["per_d"] * float(st["D"])))
+	return roundi(battle_squad().size() * (FOOD["base"] + FOOD["per_d"] * float(st["D"])))
 
 
 ## Можно ли в бой ("" — можно, иначе почему нельзя)

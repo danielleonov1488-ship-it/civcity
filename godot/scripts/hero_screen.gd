@@ -47,6 +47,10 @@ var err_lbl: Label
 var hint_lbl: Label
 var _speed0 := 1.0
 var _cine0 := false
+var _q := "high"                       # качество графики: на «Низкой» и «Очень низкой» мирок проще, город за экраном не рисуется
+var _low := false
+var _d3d0 := false
+var _d3d_set := false
 
 
 ## Открыть экран: m — "new" | "old" | "edit"
@@ -88,6 +92,12 @@ func _ready() -> void:
 	if game.rig != null:
 		_cine0 = bool(game.rig.cine)
 		game.rig.cine = true                   # камера города стоит, пока выбираем
+	_q = str(game.settings.get("quality", "high"))
+	_low = Gfx.is_low(_q)
+	if _low:
+		_d3d0 = get_viewport().disable_3d      # слабый ноутбук: город под затемнением не рисуем (как в 3D-бою)
+		get_viewport().disable_3d = true
+		_d3d_set = true
 	_make_world()
 	_build_ui()
 	_set_who(true)
@@ -100,9 +110,9 @@ func _ready() -> void:
 
 func _make_world() -> void:
 	vp = SubViewport.new()
-	vp.size = VP
+	vp.size = Vector2i(560, 700) if _low else VP      # картинка на экране — не больше 560×700
 	vp.own_world_3d = true
-	vp.msaa_3d = Viewport.MSAA_4X
+	vp.msaa_3d = Viewport.MSAA_DISABLED if _low else Viewport.MSAA_4X
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	add_child(vp)
 	var env := Environment.new()
@@ -113,7 +123,7 @@ func _make_world() -> void:
 	env.ambient_light_energy = 0.24
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.95
-	env.glow_enabled = true
+	env.glow_enabled = not _low
 	env.glow_intensity = 0.25
 	env.glow_hdr_threshold = 1.2
 	var we := WorldEnvironment.new()
@@ -183,12 +193,13 @@ func _make_world() -> void:
 			br.position = Vector3(side * 0.82, 0, -1.25)
 			br.scale = Vector3.ONE * 0.42
 			vp.add_child(br)
-			var fire := OmniLight3D.new()
-			fire.light_color = Color("ff9a3c")
-			fire.light_energy = 1.4
-			fire.omni_range = 2.6
-			fire.position = br.position + Vector3(0, 0.75, 0)
-			vp.add_child(fire)
+			if _q != "verylow":
+				var fire := OmniLight3D.new()
+				fire.light_color = Color("ff9a3c")
+				fire.light_energy = 1.4
+				fire.omni_range = 2.6
+				fire.position = br.position + Vector3(0, 0.75, 0)
+				vp.add_child(fire)
 			var flame := _flame()
 			flame.position = br.position + Vector3(0, _brazier_top(br), 0)
 			vp.add_child(flame)
@@ -196,7 +207,7 @@ func _make_world() -> void:
 	key.rotation_degrees = Vector3(-32, 28, 0)
 	key.light_energy = 1.0
 	key.light_color = Color("ffe6c2")
-	key.shadow_enabled = true
+	key.shadow_enabled = _q != "verylow"
 	vp.add_child(key)
 	var rim := DirectionalLight3D.new()
 	rim.rotation_degrees = Vector3(-18, 180 + 35, 0)
@@ -338,7 +349,7 @@ func _build_ui() -> void:
 	add_child(root)
 	# затемнение города и мягкая виньетка
 	var dim := ColorRect.new()
-	dim.color = Color(0.13, 0.08, 0.04, 0.78)
+	dim.color = Color(0.13, 0.08, 0.04, 1.0 if _low else 0.78)   # на «Низкой» город не рисуется — фон сплошной
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(dim)
@@ -826,8 +837,19 @@ func _close(saved: bool) -> void:
 		game.people.hero_refresh(saved)
 	if hud.has_method("hero_btn_refresh"):
 		hud.hero_btn_refresh()
+	_d3d_back()
 	closed.emit(saved)
 	queue_free()
+
+
+func _exit_tree() -> void:
+	_d3d_back()                            # закрыли не кнопкой (выход в меню) — город снова рисуется
+
+
+func _d3d_back() -> void:
+	if _d3d_set and get_viewport() != null:
+		get_viewport().disable_3d = _d3d0
+	_d3d_set = false
 
 
 func _unhandled_key_input(e: InputEvent) -> void:

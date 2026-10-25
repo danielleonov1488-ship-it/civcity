@@ -5084,6 +5084,7 @@ func _hero_check() -> void:
 	city.hero = Hero.random(rr)
 	Hero.take_new(city, true)
 	city.hero["kit"] = Hero.kit_tier(city.legion.hero_kit_level())
+	city.legion.hero_squad_fix()             # первое место в походах — героя: не легионер оттуда — на видное место
 
 
 ## Экран «Ваш герой»: в начале новой игры; в старом городе — один раз (можно «Позже»). Игрок своего создал или
@@ -5112,8 +5113,12 @@ func open_hero_screen(m: String) -> HeroScreen:
 func _hero_hour() -> void:
 	if not Hero.exists(city) or not (mode in ["play", "new"]):
 		return
-	for n: String in Hero.take_new(city):
-		city._quiet("В гардеробе героя — новое: %s" % n, "cape")
+	var got: Array = Hero.take_new(city)          # всё, что открылось за час, — одной строчкой
+	if not got.is_empty():
+		var s := ", ".join(PackedStringArray(got if got.size() <= 4 else got.slice(0, 3)))
+		if got.size() > 4:
+			s += " и ещё %d" % (got.size() - 3)
+		city._quiet("В гардеробе героя — новое: %s" % s, "cape")
 	var t := Hero.kit_tier(city.legion.hero_kit_level())
 	var was := int(city.hero.get("kit", -1))
 	if t != was:

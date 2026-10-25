@@ -3019,21 +3019,35 @@ func _approach(dist := 4.2) -> Vector2:
 	return p
 
 
-## Прохожие не заслоняют героя: кто рядом с ним или на линии камеры — прячется до конца ролика
+## Прохожие не заслоняют героя: кто рядом с ним или на линии камеры — прячется до конца ролика. Свой герой (Д11) с улицы —
+## тоже; а если у ролика свой герой-актёр — уличный спрятан весь ролик (два одинаковых в кадре). Каждый кадр: вышел из
+## двери (новая модель) — снова спрятан; _cleanup вернёт
 func _crowd_clear() -> void:
-	if kit == null or not cine.has("focus"):
+	if kit == null:
+		return
+	var hr: Dictionary = game.people.hero_r
+	var hn = null if hr.is_empty() else hr["node"]
+	if hn != null and (hn as Node3D).visible and (cine.get("actors", {}) as Dictionary).has("hero"):
+		(hn as Node3D).visible = false
+		_hidden.append(hn)
+	if not cine.has("focus"):
 		return
 	var focus: Vector2 = cine["focus"]
 	var cam := Vector2(kit.pos.x, kit.pos.z)
 	for r in game.people.residents:
-		var n = r["node"]
-		if n == null or not (n as Node3D).visible:
-			continue
-		var p := Vector2((n as Node3D).position.x, (n as Node3D).position.z)
-		var q := Geometry2D.get_closest_point_to_segment(p, cam, focus)
-		if p.distance_to(focus) < 3.0 or p.distance_to(q) < 1.0:
-			(n as Node3D).visible = false
-			_hidden.append(n)
+		_crowd_hide(r["node"], cam, focus)
+	if hn != null:
+		_crowd_hide(hn, cam, focus)
+
+
+func _crowd_hide(n, cam: Vector2, focus: Vector2) -> void:
+	if n == null or not (n as Node3D).visible:
+		return
+	var p := Vector2((n as Node3D).position.x, (n as Node3D).position.z)
+	var q := Geometry2D.get_closest_point_to_segment(p, cam, focus)
+	if p.distance_to(focus) < 3.0 or p.distance_to(q) < 1.0:
+		(n as Node3D).visible = false
+		_hidden.append(n)
 
 
 ## Деревья, кусты и высокие украшения между камерой и героем прячутся до конца ролика (свадебное шествие шло
