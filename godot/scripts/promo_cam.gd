@@ -603,7 +603,7 @@ func _ev_floor() -> void:
 	var city: City = game.city
 	var b := house
 	var cls: String = city.def(b)["cls"]
-	if int(b["tier"]) >= Defs.floors_max(cls):
+	if int(b["tier"]) >= Defs.floors_max(cls, int(b.get("variant", 0))):
 		return
 	var og := Parts.ghost(city.blueprint(b), "place")
 	var old_h := _height(og)

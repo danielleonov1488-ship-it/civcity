@@ -24,6 +24,7 @@ var full_brick := false
 var base := Transform3D.IDENTITY  # общий сдвиг/масштаб (для больших построек)
 var actors := []                # люди при деле: [положение, поворот, движение, кто]
 var _top := -1.0
+var _fp := {}                   # след footprint(all) → [сколько деталей было, прямоугольники]
 
 
 func _init(seed_v := 1) -> void:
@@ -159,6 +160,9 @@ func front_z() -> float:
 ## all = false — только части здания (SM_Bld_: стены, колонны, ступени) — контур бордюра Kerb идёт по стенам,
 ## а не вокруг кипарисов, перголы и скамей в саду
 func footprint(all := true) -> Array:
+	var e: Array = _fp.get(all, [])
+	if e.size() == 2 and int(e[0]) == parts.size():
+		return e[1]                          # след уже считали (облик из Catalog не меняется)
 	var out := []
 	var fz := front_z()
 	for p in parts:
@@ -193,6 +197,7 @@ func footprint(all := true) -> Array:
 		if (hi - lo).x < 0.05 or (hi - lo).y < 0.05:
 			continue
 		out.append(Rect2(lo, hi - lo))
+	_fp[all] = [parts.size(), out]
 	return out
 
 

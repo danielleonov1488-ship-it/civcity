@@ -351,6 +351,22 @@ func look_of(r: Dictionary) -> Dictionary:
 	return Citizen.roll_look(rr, r["female"], r["child"], r["rich"], "", r["cls"])
 
 
+## Дом перестроили в следующий класс (Д12): его жильцы теперь этого класса — одежда по новому классу, у кого облик
+## не выбран сам (запись члена семьи та же: имя, пол, работа)
+func reclass(h: Dictionary) -> void:
+	var cl := h_cls(h)
+	for r in residents:
+		if int(r["home"]) != int(h["id"]) or String(r["cls"]) == cl:
+			continue
+		r["cls"] = cl
+		r["rich"] = cl == "patricians"
+		if r["node"] != null:
+			_hide(r)
+			_show(r)
+			if r["node"] != null:
+				_sparkle((r["node"] as Node3D).global_position + Vector3(0, 0.9, 0))
+
+
 ## Сменить облик жителя (поход в лавку или выбор игрока): запись — сразу, виден — меняется на глазах
 func set_look(r: Dictionary, lk: Dictionary, sparkle := false) -> void:
 	var m: Dictionary = r.get("m", {})
@@ -953,6 +969,13 @@ func _cat_rehome(c: Dictionary, from: Vector2) -> void:
 	if c["state"] != "pet":
 		c["state"] = "sit"
 		c["t"] = 0.5                     # сейчас пойдёт к новому дому
+
+
+## Запись кошки с именем (городская — rec, кошка-награда истории — pet_rec); {} — у кошки записи нет
+static func cat_rec(c: Dictionary) -> Dictionary:
+	if c.has("rec"):
+		return c["rec"]
+	return c.get("pet_rec", {})
 
 
 ## Как зовут кошку и кто она: [имя, «кот»/«кошка»]
@@ -2545,6 +2568,7 @@ func _process(dt: float) -> void:
 			c["walk"] = 0.0
 			if c.has("anim"):
 				(c["anim"] as AnimationPlayer).speed_scale = 0.0
+		_cats_wear()                           # и на паузе: выбрали вещь в карточке — сразу надета
 		return
 	var sdt := dt * speed
 	for r in residents.duplicate():
@@ -3884,6 +3908,15 @@ func _cat_kit_anim(c: Dictionary, dt: float, t: float) -> void:
 	(c["head"] as Node3D).position.y = 0.28 + body_y * 1.6
 
 
+## Вещица из «Кошачьей лавки» (Д14): купили или сменили в карточке — надеть
+func _cats_wear() -> void:
+	for c in cats:
+		var wr := String(cat_rec(c).get("wr", ""))
+		if wr != String(c.get("wr_on", "")):
+			c["wr_on"] = wr
+			cat_wear(c["n"], wr)
+
+
 func _cats_step(dt: float) -> void:
 	var want := clampi(int(city.stats["pop"]) / 14, 0, 12)
 	var own := 0                           # кошки историй (потерянная и найденные, «named») — сверх обычных
@@ -3894,6 +3927,7 @@ func _cats_step(dt: float) -> void:
 		_new_cat()                             # с именем, в сохранение (этап 6.4)
 	var night: bool = game.hour >= 21.0 or game.hour < 6.0
 	var t := AnimClock.now()
+	_cats_wear()
 	for c in cats:
 		if c.has("story"):
 			# потерянная кошка истории: где спит и что делает — решает Stories (scripts/stories.gd)
@@ -3983,6 +4017,177 @@ static func cat_node(fur: int, clip := "Sleep", seed_v := 0, length := CAT_LEN_B
 	ap.speed_scale = float(cl[1])
 	ap.seek(float(seed_v % 1000) / 1000.0 * ap.current_animation_length, true)
 	return root
+
+
+# ---------- вещицы «Кошачьей лавки» на кошке (Д14) ----------
+# Вещь — маленькая сетка из Kit (цвет в вершинах, общий материал, без тени): на голове (шляпка, венок, бантик, цветок),
+# на шее (ошейник с колокольчиком, бандана, бабочка) или на спине (плащик). На модели Quaternius она висит на кости
+# (BoneAttachment3D) и двигается с головой, шеей, спиной; у запасной кошки из Kit — на месте головы. Сетки собраны
+# в метрах для кошки длиной CAT_LEN; к кости — через позу покоя (точки ниже — в единицах скелета, голова уже крупнее)
+
+## Куда крепится вещь: кость и точка в позе покоя (скелет: x — вперёд, y — влево, z — вверх)
+const CAT_SLOT := {
+	"head": ["Bone.003", Vector3(0.0255, 0.0, 0.0332)],     # макушка между ушами
+	"neck": ["Bone.002", Vector3(0.0172, 0.0, 0.0249)],     # шея у головы
+	"back": ["Bone.001", Vector3(0.0035, 0.0, 0.0272)],     # спина у лопаток
+}
+## У запасной кошки из Kit — от её корня (метры, кошка смотрит вдоль +z)
+const CAT_SLOT_KIT := {"head": Vector3(0, 0.39, 0.3), "neck": Vector3(0, 0.28, 0.22), "back": Vector3(0, 0.3, 0.02)}
+const CAT_NECK_TILT := -0.616          # шея идёт вперёд и вверх (35°): ошейник — поперёк неё
+static var _wear_mesh := {}
+static var _wear_mat: StandardMaterial3D
+
+
+## Надеть кошке (узел кошки: живой c["n"] или cat_node) вещь item; "" — снять. Прежняя вещь уходит
+static func cat_wear(root: Node3D, item: String) -> void:
+	if root == null or not is_instance_valid(root):
+		return
+	for old in root.find_children("cat_acc*", "", true, false):
+		old.get_parent().remove_child(old)
+		old.queue_free()
+	if item == "" or not Defs.CAT_ITEMS.has(item):
+		return
+	var slot := String(Defs.CAT_ITEMS[item]["slot"])
+	var mi := MeshInstance3D.new()
+	mi.name = "cat_acc_mesh"
+	mi.mesh = _wear_build(item)
+	if _wear_mat == null:
+		_wear_mat = Kit.material(0.75)
+	mi.material_override = _wear_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var sks := root.find_children("*", "Skeleton3D", true, false)
+	if sks.is_empty():
+		var holder := Node3D.new()
+		holder.name = "cat_acc"
+		holder.position = CAT_SLOT_KIT[slot]
+		holder.add_child(mi)
+		root.add_child(holder)
+		return
+	var sk: Skeleton3D = sks[0]
+	var sl: Array = CAT_SLOT[slot]
+	var bi := sk.find_bone(String(sl[0]))
+	if bi < 0:
+		mi.queue_free()
+		return
+	var ba := BoneAttachment3D.new()
+	ba.name = "cat_acc"
+	ba.bone_name = String(sl[0])
+	sk.add_child(ba)
+	# метры (вещь: x — влево, y — вверх, z — вперёд) → единицы скелета (x — вперёд, y — влево, z — вверх)
+	var k := _cat_size / (100.0 * CAT_LEN) if _cat_size > 0.01 else 0.095
+	var axes := Basis(Vector3(0, 1, 0), Vector3(0, 0, 1), Vector3(1, 0, 0))
+	var t_skel := Transform3D(axes * Basis.from_scale(Vector3.ONE * k), sl[1])
+	mi.transform = sk.get_bone_global_rest(bi).affine_inverse() * t_skel
+	ba.add_child(mi)
+
+
+## Сетка вещи (одна на всех кошек): метры, начало — точка крепления, x — влево, y — вверх, z — вперёд
+static func _wear_build(item: String) -> ArrayMesh:
+	if _wear_mesh.has(item):
+		return _wear_mesh[item]
+	var kt := Kit.new()
+	match item:
+		"bow":
+			# розовый бантик у левого уха: две петли и узелок
+			var c := Vector3(0.036, 0.004, -0.004)
+			kt.xf = Transform3D(Basis(Vector3.FORWARD, 0.35), c)
+			for s: float in [-1.0, 1.0]:
+				kt.blob(Vector3(0.019 * s, 0, 0), Vector3(0.018, 0.013, 0.006), Color("f07fa6"), 3 + int(s), 0.08)
+			kt.blob(Vector3.ZERO, Vector3(0.008, 0.008, 0.008), Color("d9507e"), 7, 0.05)
+			for s: float in [-1.0, 1.0]:
+				kt.rod(Vector3(0.003 * s, -0.004, 0), Vector3(0.012 * s, -0.022, 0.002), 0.004, 4, Color("e86a94"))
+		"wreath":
+			# лавровый венок вокруг макушки: листочки по кругу, спереди — золотые ягодки
+			var n := 16
+			for i in n:
+				var a := TAU * i / n
+				var p := Vector3(sin(a) * 0.056, -0.012 - cos(a) * 0.006, cos(a) * 0.05)
+				var lc := Color("4f8a32") if i % 2 == 0 else Color("6aa83e")
+				kt.xf = Transform3D(Basis(Vector3.UP, a + 0.5) * Basis(Vector3.RIGHT, 0.5), p)
+				kt.blob(Vector3.ZERO, Vector3(0.011, 0.004, 0.019), lc, i, 0.1)
+			kt.xf = Transform3D.IDENTITY
+			for s: float in [-1.0, 1.0]:
+				kt.blob(Vector3(0.012 * s, -0.006, 0.054), Vector3(0.005, 0.005, 0.005), Color("e8b33a"), 11, 0.05)
+		"pileus":
+			# колпачок с помпоном: войлочный конус чуть набок, белый отворот, пушистый помпон
+			kt.xf = Transform3D(Basis(Vector3.FORWARD, -0.18) * Basis(Vector3.RIGHT, -0.12), Vector3(0, -0.004, -0.002))
+			kt.cyl(Vector3.ZERO, 0.037, 0.012, 10, Color("f4efe4"), 0.036)
+			kt.cyl(Vector3(0, 0.011, 0), 0.033, 0.066, 10, Color("c8432f"), 0.006)
+			kt.blob(Vector3(0, 0.08, 0), Vector3(0.014, 0.014, 0.014), Color("fbf7ee"), 5, 0.12)
+		"petasos":
+			# соломенная шляпка-петас: широкие поля, низкая тулья, красная лента
+			kt.xf = Transform3D(Basis(Vector3.RIGHT, -0.1), Vector3(0, -0.002, -0.004))
+			kt.cyl(Vector3.ZERO, 0.074, 0.006, 14, Color("e2bd62"), 0.07)
+			kt.cyl(Vector3(0, 0.006, 0), 0.038, 0.013, 12, Color("c9472f"), 0.038, false)
+			kt.cyl(Vector3(0, 0.019, 0), 0.038, 0.02, 12, Color("ebc86e"), 0.03)
+		"flower":
+			# цветок за правым ухом: пять белых лепестков, жёлтая серединка, листик
+			kt.xf = Transform3D((Basis(Vector3.FORWARD, -0.5) * Basis(Vector3.RIGHT, -0.9)).scaled(Vector3.ONE * 1.35), Vector3(-0.038, 0.002, -0.006))
+			for i in 5:
+				var a := TAU * i / 5.0
+				kt.blob(Vector3(cos(a) * 0.012, 0, sin(a) * 0.012), Vector3(0.009, 0.003, 0.009), Color("fbf4f0") if i % 2 == 0 else Color("ffd6e2"), i, 0.05)
+			kt.blob(Vector3(0, 0.002, 0), Vector3(0.006, 0.004, 0.006), Color("f2c230"), 9, 0.05)
+			kt.blob(Vector3(0.012, -0.002, -0.016), Vector3(0.007, 0.002, 0.013), Color("5c9a3a"), 4, 0.05)
+		"collar":
+			# красный ошейник поперёк шеи и золотой колокольчик внизу спереди
+			kt.xf = Transform3D(Basis(Vector3.RIGHT, CAT_NECK_TILT), Vector3.ZERO)
+			_ring(kt, 0.061, 0.066, 0.008, 0.012, Color("b8322a"))
+			kt.blob(Vector3(0, -0.075, 0.012), Vector3(0.011, 0.011, 0.011), Color("f0c040"), 3, 0.04)
+			kt.boxc(Vector3(0, -0.084, 0.018), Vector3(0.006, 0.003, 0.003), Color("6a4a14"))
+		"bandana":
+			# синяя бандана: узел по шее и треугольник на груди
+			kt.xf = Transform3D(Basis(Vector3.RIGHT, CAT_NECK_TILT), Vector3.ZERO)
+			_ring(kt, 0.062, 0.067, 0.011, 0.014, Color("3d74c4"))
+			var a := Vector3(-0.05, -0.052, 0.045)
+			var b := Vector3(0.05, -0.052, 0.045)
+			var tip := Vector3(0, -0.125, 0.068)
+			kt.tri_out(a, b, tip, Color("3d74c4"), Vector3(0, -0.07, 0.0))
+			kt.tri_out(a, tip, b, Color("2f5ea3"), Vector3(0, -0.07, 0.12))
+			for p: Vector3 in [Vector3(-0.017, -0.072, 0.056), Vector3(0.02, -0.074, 0.056), Vector3(0, -0.098, 0.062)]:
+				kt.blob(p, Vector3(0.005, 0.005, 0.002), Color("f4f0e6"), 2, 0.02)
+		"bowtie":
+			# бабочка под подбородком: два треугольника и узелок, на тонкой ленточке
+			kt.xf = Transform3D(Basis(Vector3.RIGHT, CAT_NECK_TILT), Vector3.ZERO)
+			_ring(kt, 0.06, 0.065, 0.004, 0.006, Color("2a2a3a"))
+			var c := Vector3(0, -0.07, 0.038)
+			for s: float in [-1.0, 1.0]:
+				kt.tri_out(c, c + Vector3(0.041 * s, 0.019, 0.005), c + Vector3(0.041 * s, -0.019, 0.005), Color("c22f4a"), c + Vector3(0.0, 0.0, -0.02))
+				kt.tri_out(c, c + Vector3(0.041 * s, -0.019, 0.005), c + Vector3(0.041 * s, 0.019, 0.005), Color("a1243c"), c + Vector3(0.0, 0.0, 0.03))
+			kt.blob(c + Vector3(0, 0, 0.004), Vector3(0.009, 0.009, 0.007), Color("d9384f"), 4, 0.03)
+		"cape":
+			# плащик легионера: красная ткань по спине и бокам, золотая застёжка у шеи
+			# дуга ткани вокруг спины (туловище в разрезе — около 14 см в ширину, середина на 7 см ниже хребта)
+			var segs := 8
+			for i in segs:
+				var a0 := lerpf(-1.45, 1.45, float(i) / segs)
+				var a1 := lerpf(-1.45, 1.45, float(i + 1) / segs)
+				var p00 := Vector3(sin(a0) * 0.082, cos(a0) * 0.082 - 0.068, 0.03)
+				var p01 := Vector3(sin(a1) * 0.082, cos(a1) * 0.082 - 0.068, 0.03)
+				var p10 := Vector3(sin(a0) * 0.096, cos(a0) * 0.092 - 0.078, -0.165)
+				var p11 := Vector3(sin(a1) * 0.096, cos(a1) * 0.092 - 0.078, -0.165)
+				var col := Color("b52a2a") if i % 2 == 0 else Color("a52424")
+				kt.quad_out(p00, p01, p11, p10, col, Vector3(0, -0.07, -0.07))
+				kt.quad_out(p00, p10, p11, p01, Color("7c1c1c"), Vector3(0, 0.14, -0.07))
+			kt.blob(Vector3(0, 0.016, 0.034), Vector3(0.013, 0.01, 0.007), Color("e7b84a"), 6, 0.05)
+	var m := kt.mesh()
+	_wear_mesh[item] = m
+	return m
+
+
+## Кольцо поперёк шеи (в плоскости xy, ось — z): полуоси rx, ry, толщина th, ширина w
+static func _ring(kt: Kit, rx: float, ry: float, th: float, w: float, col: Color) -> void:
+	var n := 14
+	for i in n:
+		var a0 := TAU * i / n
+		var a1 := TAU * (i + 1) / n
+		var o0 := Vector3(sin(a0) * rx, cos(a0) * ry, 0)
+		var o1 := Vector3(sin(a1) * rx, cos(a1) * ry, 0)
+		var i0 := o0 * (1.0 - th / rx)
+		var i1 := o1 * (1.0 - th / rx)
+		var dz := Vector3(0, 0, w * 0.5)
+		kt.quad_out(o0 - dz, o1 - dz, o1 + dz, o0 + dz, col, Vector3.ZERO)
+		kt.quad_out(i0 + dz, i1 + dz, o1 + dz, o0 + dz, col.lightened(0.08), Vector3(0, 0, -1))
+		kt.quad_out(i0 - dz, o0 - dz, o1 - dz, i1 - dz, col.darkened(0.1), Vector3(0, 0, 1))
 
 
 ## Кошка истории: свой поток случайностей (общий rng жителей не сдвигается — витрина и меню прежние), окрас fur,

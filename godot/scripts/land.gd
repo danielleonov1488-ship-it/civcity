@@ -46,6 +46,7 @@ var owned := {}                      # Vector2i участка → true
 var dirty := {}                      # Vector2i куска → true (перестроить сетку: поменялись видимые уступы)
 var dirty_soft := {}                 # куски, где поменялось только покрытие (стенки уступов) — сетку можно и позже
 var dirty_walk := {}                 # куски, где поменялось покрытие или высота — сетка ходьбы жителей
+var gen := 0                         # счётчик правок земли (клетки, занятость): запасы проверок места сверяются с ним
 var mask_lo := Vector2i(1 << 30, 1 << 30)   # прямоугольник маски покрытий (пиксели N/SM), который надо обновить
 var mask_hi := Vector2i(-1, -1)
 var road_chunks := {}                # куски, где есть дороги (для маски покрытий и сетки ходьбы)
@@ -289,6 +290,7 @@ func far_height(x: float, z: float) -> float:
 ## Клетка поменялась. mesh — поменялся видимый уступ (12,5 см): сетку куска перестроить; mask — поменялось
 ## покрытие: маска для шейдера (и стенки уступов — сетка «потом», dirty_soft). Ни то ни другое — только для сохранения
 func _mark(i: int, j: int, mesh := true, mask := true) -> void:
+	gen += 1
 	var ci := clampi(i / CH, 0, CHN - 1)
 	var cj := clampi(j / CH, 0, CHN - 1)
 	var ch := Vector2i(ci, cj)
@@ -656,6 +658,7 @@ func footprint_cells(rects: Array, pos: Vector2, yaw: float, pad := 0.0) -> Pack
 
 
 func set_occ(cells: PackedInt32Array, id: int) -> void:
+	gen += 1
 	for k in cells:
 		occ[k] = id
 
@@ -1083,6 +1086,7 @@ func _changed_chunks() -> Array:
 
 
 func load_changes(d: Dictionary) -> void:
+	gen += 1
 	var cells := Marshalls.base64_to_raw(d.get("cells", "")).to_int32_array()
 	var kinds := Marshalls.base64_to_raw(d.get("kinds", ""))
 	var hs := Marshalls.base64_to_raw(d.get("hs", "")).to_float32_array()

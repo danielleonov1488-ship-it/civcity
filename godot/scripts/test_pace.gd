@@ -581,8 +581,8 @@ const TUT_MIN := 6.0
 const B_KEY := ["stall_veg", "stall_fish", "scribes1", "floor2", "warehouse", "artisans", "school", "weaver", "musicians",
 	"fountain", "scribes2", "floor3", "temple", "dice", "patricians", "library", "research1", "barber", "balnea", "vault1",
 	"forum", "academy", "odeon", "theatre", "taxes1", "vault2"]
-## не берёт: Легион и его чудеса (у бота нет походов и Славы), животных
-const B_SKIP := ["legion", "archery", "arch", "colosseum", "pantheon", "animals"]
+## не берёт: Легион и его чудеса (у бота нет походов и Славы), животных, «Кошачью лавку» (Д14: для умиления)
+const B_SKIP := ["legion", "archery", "arch", "colosseum", "pantheon", "animals", "catshop"]
 
 var t := 0.0                         # игровых часов от начала
 var cart := "wait"                   # повозка: wait (за краем карты) → in → out → wait

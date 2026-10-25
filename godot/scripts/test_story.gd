@@ -570,6 +570,7 @@ func _search_and_find() -> void:
 		if cc.has("named") and not cc.has("story"):
 			named += 1
 	check(named == 1 and sto.cat.is_empty(), "Мася теперь живёт у Корнелиев (кошек-наград: %d)" % named)
+	await _pet_rec_live("нашли")
 	check(not hud.badges.has("story_paw") and sto._glow == null, "значки и пятно убраны")
 	check(int(S["last_h"]) >= 0 and int(S["h"]) - int(S["last_h"]) <= 1, "часы до следующей истории пошли (last_h=%d, h=%d)" % [int(S["last_h"]), int(S["h"])])
 	# корзинка в мире: с кошкой внутри
@@ -871,6 +872,34 @@ func _give_up() -> void:
 	check(c.research.has("s_cat") and (S["bonus"] as Array).size() == 1, "корзинка и счастье дома — есть")
 	check(c.events.size() == ev0 + 1 and String(c.events[-1]["text"]).contains("сама нашла Масю"), "колокольчик: «%s»" % c.events[-1]["text"])
 	check(sto.kit == null, "ролик сам не начался (без всплывашек)")
+	await _pet_rec_live("сам нашёл")
+
+
+## Кошка-награда сразу, без загрузки, — с записью из stories.pets (Д14): обновку видно на ней, в карточке — «Вещи»
+func _pet_rec_live(how: String) -> void:
+	var pets: Array = c.stories["pets"]
+	var prec: Dictionary = pets.back() if not pets.is_empty() else {}
+	var pet := {}
+	for cc in game.people.cats:
+		if cc.has("named") and not cc.has("story") and is_same(People.cat_rec(cc), prec):
+			pet = cc
+	check(not prec.is_empty() and not pet.is_empty(), "%s: кошка-награда на улице — с записью из pets, не дожидаясь загрузки" % how)
+	if pet.is_empty():
+		return
+	c.buy_cat_item(prec, "bow", false)
+	await frames(3)
+	check(String(pet.get("wr_on", "")) == "bow" and not (pet["n"] as Node).find_children("cat_acc*", "", true, false).is_empty(),
+		"%s: обновка кошке-награде надета сразу (%s)" % [how, pet.get("wr_on", "")])
+	hud.open_person({"cat": pet})
+	await frames(4)
+	var txt := []
+	for l in hud.info_box.find_children("*", "Label", true, false):
+		txt.append((l as Label).text)
+	check(" | ".join(txt).contains("Вещи"), "%s: в карточке кошки-награды — её вещи" % how)
+	hud.close_panels()
+	prec.erase("it")
+	prec.erase("wr")
+	await frames(2)
 
 
 # ---------- сохранение посреди шага ----------
