@@ -194,7 +194,8 @@ static func with_name(type: String) -> String:
 ## (у лавок, памятников и складов — по всему городу, у украшений — в их радиусе, кому больше не прибавится);
 ## new / dup — для подписи: сколько новых и сколько из её охвата уже с такой же. pos = INF — только синие
 ## why — лавка тут не заработает: "store" (нет склада рядом), "good" (нет сырья); тогда зелёных нет.
-## half — украшение: дома, где его очки копятся (прибавит вместе со следующим), — без цвета
+## half — украшение: дома, где его очки копятся (прибавит вместе со следующим), — без цвета.
+## Зелёные у украшения — и сверх предела: «главное» в своей дальности, третий разный вид набора (как City.compute)
 static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	var green := []
@@ -239,11 +240,17 @@ static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 			if at:
 				var pts := float(d.get("deco", 1))
 				var decs := _decor_near(c, pos) if c.econ >= 1 else []
+				var pr := Defs.range_m(d) if d.has("mon") else 0.0     # «главное» радует, как памятник, в своей дальности
 				for id in c.buildings:
 					var h: Dictionary = c.buildings[id]
-					if not c.is_house(h) or (h["pos"] as Vector2).distance_to(pos) > Defs.DECOR_RADIUS:
+					if not c.is_house(h):
 						continue
-					if _deco_gain(c, h, _deco_add(c, h, type, pts, 1.0, decs)) > 0:
+					var dist := (h["pos"] as Vector2).distance_to(pos)
+					var mon_new := pr > 0.0 and dist <= pr and not (h.get("mon_types", {}) as Dictionary).has(type)
+					if dist > Defs.DECOR_RADIUS and not mon_new:
+						continue
+					# прибавит: «главное» сверх предела, очки украшений или третий разный вид набора (тоже сверх предела)
+					if mon_new or _deco_gain(c, h, _deco_add(c, h, type, pts, 1.0, decs)) > 0 or _set_gain(c, h, type, decs):
 						green.append(id)
 					elif _deco_capped(c, h):
 						blue.append(id)              # украшений уже сколько можно — больше не прибавится
@@ -312,12 +319,22 @@ static func selected_sets(c: City, b: Dictionary) -> Dictionary:
 			var pts := float(d.get("deco", 1))
 			var half := 0
 			var decs := _decor_near(c, b["pos"]) if c.econ >= 1 else []
+			var pr := Defs.range_m(d) if d.has("mon") else 0.0
+			var mons := []                   # другие такие же «главные»: их дома порадуются и без этого
+			if pr > 0.0:
+				for id in c.buildings:
+					if c.buildings[id]["type"] == type and int(id) != bid:
+						mons.append(c.buildings[id])
 			for id in c.buildings:
 				var h: Dictionary = c.buildings[id]
-				if not c.is_house(h) or (h["pos"] as Vector2).distance_to(b["pos"]) > Defs.DECOR_RADIUS:
+				if not c.is_house(h):
+					continue
+				var dist := (h["pos"] as Vector2).distance_to(b["pos"])
+				var mon_lose := pr > 0.0 and dist <= pr and not mons.any(func(m): return (h["pos"] as Vector2).distance_to(m["pos"]) <= pr)
+				if dist > Defs.DECOR_RADIUS and not mon_lose:
 					continue
 				own.append(id)
-				if _deco_gain(c, h, _deco_add(c, h, type, pts, -1.0, decs)) < 0:
+				if mon_lose or _deco_gain(c, h, _deco_add(c, h, type, pts, -1.0, decs)) < 0 or _set_loss(c, h, b, decs):
 					green.append(id)
 				elif _deco_capped(c, h):
 					blue.append(id)
@@ -482,7 +499,7 @@ static func _nearest(c: City, pos: Vector2, r: float, n: int) -> Array:
 	return out
 
 
-## Украшения в 2 × DECOR_RADIUS от точки p: [[место, вид, очки], …] — один обход города на place_sets/selected_sets,
+## Украшения в 2 × DECOR_RADIUS от точки p: [[место, вид, очки, облик], …] — один обход города на place_sets/selected_sets,
 ## а не на каждый дом рядом (любое украшение в DECOR_RADIUS от такого дома — в 2 × DECOR_RADIUS от p)
 static func _decor_near(c: City, p: Vector2) -> Array:
 	var out := []
@@ -490,8 +507,50 @@ static func _decor_near(c: City, p: Vector2) -> Array:
 		var o: Dictionary = c.buildings[id]
 		var od := c.def(o)
 		if od["kind"] == "decor" and (o["pos"] as Vector2).distance_to(p) <= Defs.DECOR_RADIUS * 2.0:
-			out.append([o["pos"], Defs.base_of(o["type"]), float(od.get("deco", 1))])
+			out.append([o["pos"], Defs.base_of(o["type"]), float(od.get("deco", 1)), String(o["type"])])
 	return out
+
+
+## Сколько наборов этапа 5 засчитано дому h (как City.set_bonus — не больше SET_MAX). decs — _decor_near;
+## add — ещё один облик рядом; skip — [место, облик] украшения, которого не станет
+static func _sets_done(h: Dictionary, decs: Array, add := "", skip := []) -> int:
+	var sets := {}
+	var skipped := skip.is_empty()
+	for e: Array in decs:
+		if (h["pos"] as Vector2).distance_to(e[0]) > Defs.DECOR_RADIUS:
+			continue
+		if not skipped and String(e[3]) == String(skip[1]) and (e[0] as Vector2).is_equal_approx(skip[0]):
+			skipped = true
+			continue
+		var sk := Defs.set_of(String(e[3]))
+		if sk != "":
+			if not sets.has(sk):
+				sets[sk] = {}
+			sets[sk][String(e[1])] = true
+	var ak := Defs.set_of(add) if add != "" else ""
+	if ak != "":
+		if not sets.has(ak):
+			sets[ak] = {}
+		sets[ak][Defs.base_of(add)] = true
+	var n := 0
+	for sk in sets:
+		if (sets[sk] as Dictionary).size() >= Defs.SET_KINDS:
+			n += 1
+	return mini(n, Defs.SET_MAX)
+
+
+## Поставить type у дома h — новый набор (третий разный вид): +SET_BONUS% и сверх предела украшений
+static func _set_gain(c: City, h: Dictionary, type: String, decs: Array) -> bool:
+	if c.econ < 1 or Defs.set_of(type) == "":
+		return false
+	return _sets_done(h, decs, type) > _sets_done(h, decs)
+
+
+## Убрать украшение b — дом h теряет набор
+static func _set_loss(c: City, h: Dictionary, b: Dictionary, decs: Array) -> bool:
+	if c.econ < 1 or Defs.set_of(String(b["type"])) == "":
+		return false
+	return _sets_done(h, decs, "", [b["pos"], String(b["type"])]) < _sets_done(h, decs)
 
 
 ## На сколько изменятся очки украшений дома, если рядом поставить (sign 1) или убрать (−1) ещё одно такое: по старым

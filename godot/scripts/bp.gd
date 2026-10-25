@@ -115,6 +115,8 @@ static func model_aabb(name: String) -> AABB:
 	var box := AABB(Vector3(-0.5, 0, -0.5), Vector3(1, 1, 1))
 	if name.begins_with("#mil_"):
 		box = CatMilitary.kit_mesh(name).get_aabb()     # детали Легиона из Kit — по их настоящим габаритам
+	elif name.begins_with("#d2_"):
+		box = CatDecor2.kit_mesh(name).get_aabb()       # свои детали украшений этапа 5
 	elif not name.begins_with("#"):
 		var n := Synty.make(name)
 		box = Artisau.aabb(n)

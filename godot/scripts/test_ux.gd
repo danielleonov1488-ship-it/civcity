@@ -783,7 +783,7 @@ func _new_marks() -> void:
 	c.research.erase("deco_trees")
 	check(c.do_research("deco_trees"), "изучили деревья")
 	var ev := last_event("Изучено:")
-	check(ev == "Изучено: Деревья и кусты — карточки в «Украшения · Цветы, Деревья»", "событие: «%s»" % ev)
+	check(ev == "Изучено: Деревья и кусты — карточки в «Украшения · Цветы и сад, Деревья»", "событие: «%s»" % ev)
 	c.research.erase("musicians")
 	c.do_research("musicians")
 	check(last_event("Изучено:") == "Изучено: Уличные музыканты — карточка в «Лавки · Развлечения»", "событие: «%s»" % last_event("Изучено:"))

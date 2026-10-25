@@ -269,6 +269,7 @@ func _ready() -> void:
 		city.tips["v22_pace"] = true             # новая игра — сразу по новым правилам, объяснять перемены не нужно
 		if mode in ["play", "new"]:
 			city.econ = 1                        # и экономика v2: повторы лавок и украшений дают меньше (City.econ)
+			city.decor_v = 1                     # и украшения этапа 5: часть прежних обликов — в наборах позже (Q17)
 		city.seed_seen()                         # открытое с начала — не «НОВОЕ»; пометки — у того, что откроют исследования
 		if mode in ["play", "new"]:
 			land.own_start()                     # своя земля новой игры — 2×3 участка, остальное покупается (меню и витрина — как были)
@@ -1498,6 +1499,8 @@ func _show(b: Dictionary) -> void:
 		_catbed(b, vis)
 	elif b["type"] == "donkeypost":
 		_donkey(b, vis)
+	elif CatDecor2.PETS.has(Defs.base_of(b["type"])) or CatExtra.PETS.has(b["type"]):
+		_pets2(b, vis)                         # этап 5: корова и лошадь у украшений, кошки и ослик в приюте
 	_sync_actors(b)
 	_set_hour(hour)
 
@@ -1606,6 +1609,37 @@ func _donkey(b: Dictionary, vis: Dictionary) -> void:
 	if not vis.has("pets"):
 		vis["pets"] = []
 	vis["pets"].append(dn)
+
+
+## Животные этапа 5 (CatDecor2.PETS / CatExtra.PETS — что, где, как стоит): корова пасётся, лошадь жуёт у коновязи,
+## в приюте спят кошки и жуёт ослик. Не в actors_root у кошек — их сон медленнее шага игры
+func _pets2(b: Dictionary, vis: Dictionary) -> void:
+	var list: Array = CatExtra.PETS.get(b["type"], CatDecor2.PETS.get(Defs.base_of(b["type"]), []))
+	var lk := int(Defs.B[b["type"]].get("look", 0))
+	var k := 0
+	for e: Array in list:
+		if e.size() > 5 and int(e[5]) != lk and int(e[5]) >= 0:
+			continue                           # животное только этого облика
+		var at: Vector3 = e[1]
+		var sc := Catalog.DECOR if Defs.B[b["type"]]["kind"] == "decor" else Catalog.ARCH
+		var n: Node3D
+		if String(e[0]) == "cat":
+			n = People.cat_node(int(b["id"] + k) % 3, String(e[3]), int(b["id"]) * 7919 + k)
+			add_child(n)
+		else:
+			var bn: Stories.Beast = CatDecor2.beast(String(e[0]))
+			actors_root.add_child(bn)
+			bn.play(String(e[3]), 0.0)
+			if bn.ap:
+				bn.ap.seek(float((int(b["id"]) + k) % 7) * 0.37, true)
+			n = bn
+		n.transform = city.xf(b) * Transform3D(Basis(Vector3.UP, float(e[2])).scaled(Vector3.ONE * float(e[4])), at * sc)
+		if String(e[0]) != "cat":
+			n.position.y = land.height_at(n.position.x, n.position.z)
+		if not vis.has("pets"):
+			vis["pets"] = []
+		vis["pets"].append(n)
+		k += 1
 
 
 ## Люди при деле у постройки: появляются, когда она работает, и уходят, когда нет
@@ -4003,6 +4037,8 @@ func _unhandled_input(e: InputEvent) -> void:
 		return
 	if e is InputEventMouseButton:
 		var mb := e as InputEventMouseButton
+		if mb.pressed and mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT] and get_viewport().gui_get_focus_owner() is LineEdit:
+			get_viewport().gui_release_focus()    # щелчок по карте — печатать закончили (поиск украшений), клавиши снова у камеры
 		if mb.button_index == MOUSE_BUTTON_RIGHT:
 			if mb.pressed and painting:
 				cancel_stroke()                   # правая кнопка посреди мазка — мазок отменён, инструмент остаётся
@@ -4393,6 +4429,8 @@ func _build_here() -> void:
 				b["y"] = pl["y"]
 				_show(b)
 			_push_place([b["id"]], float(Defs.B[tool]["cost"]), String(Defs.B[tool]["name"]), snap, float(Defs.B[tool].get("glory", 0)))
+			if hud and Defs.B[tool]["kind"] == "decor":
+				hud.note_recent(tool)              # «Недавние» в меню украшений
 			_rot_hint_count()
 			_happy_pops(h0, pl["pos"])           # лавка, украшение, памятник: рожицы волной над домами, кому стало лучше или хуже
 			if stories != null:

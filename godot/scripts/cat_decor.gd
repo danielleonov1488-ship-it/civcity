@@ -69,6 +69,7 @@ static func _decor(b: Bp, type: String, variant := 0) -> void:
 		"donkeypost": _donkeypost(b)
 		"balcony": _balcony(b)
 		"legionpost": _legionpost(b)
+		_: CatDecor2.make(b, Defs.base_of(type), lk)     # украшения этапа 5
 
 
 # ---------- помощники ----------

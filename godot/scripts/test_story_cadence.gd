@@ -181,7 +181,8 @@ func _rewards() -> void:
 		var sum := 0.0
 		var n := 0
 		for rr: Dictionary in Defs.RESEARCH:
-			if int(rr["lvl"]) == lvl and String(rr["id"]) != "legion" and String(rr["id"]) != "archery":
+			# наборы украшений этапа 5 (и «главные») — не в счёт: они дешевле основных исследований ряда
+			if int(rr["lvl"]) == lvl and String(rr["id"]) != "legion" and String(rr["id"]) != "archery" and not (String(rr["id"]) in Defs.DECOR_SETS or String(rr["id"]).begins_with("prem_")):
 				sum += float(rr["cost"])
 				n += 1
 		var avg := sum / maxf(1.0, n)

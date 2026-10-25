@@ -55,6 +55,9 @@ static func _special_mesh(name: String) -> Mesh:
 	if name.begins_with("#mil_"):                  # палатки, мишени, баллисты… Легиона (cat_military.gd)
 		_special[name] = CatMilitary.kit_mesh(name)
 		return _special[name]
+	if name.begins_with("#d2_"):                   # золотой орёл, обелиск… украшений этапа 5 (cat_decor2.gd)
+		_special[name] = CatDecor2.kit_mesh(name)
+		return _special[name]
 	if name.begins_with("#kerb"):                  # камни бордюра у домуса и храма (kerb.gd)
 		_special[name] = Kerb.mesh(name)
 		return _special[name]

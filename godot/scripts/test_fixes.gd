@@ -338,6 +338,94 @@ func _run() -> void:
 	check(not gc.research.has("roads2") and is_equal_approx(gc.rp, 10.0 + City.ROADS2_RP) and ev_ok and game.hud.bell_count >= 1 and gc.unread == 0,
 		"загрузили город с «Площадями из плитки»: очки вернулись, запись в колокольчике, на нём число", [gc.rp, game.hud.bell_count])
 	DirAccess.remove_absolute(dir + "/city.json")
+	_unlockable(false)
+	_unlockable(true)
 
 	print("FIX DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
+
+
+# ---------- этап 5.2: всё, что просят, открыто к тому уровню, где просят (и в живых городах, и в новой игре) ----------
+
+## С какого уровня открыто исследованием или просьбой u (истории и заказы — 99: их награду никто не обещает)
+func _rank_of(u: String) -> int:
+	if u == "":
+		return 0
+	var r := Defs.research(u)
+	if not r.is_empty():
+		var lv := int(r["lvl"])
+		while r.has("after"):
+			r = Defs.research(String(r["after"]))
+			lv = maxi(lv, int(r.get("lvl", 0)))
+		return 99 if r.has("story") else lv
+	var rk := 0
+	for q in Defs.REQUESTS:
+		if String(q.get("unlock", "")) == u:
+			return rk
+		if String(q["p"][0]) == "rank":
+			rk += 1
+	return 99
+
+
+## Вид (тип, облик или «a|b») можно поставить на уровне lv: хоть один его обычный облик открыт к этому уровню
+func _kind_by(key: String, lv: int, late: bool) -> bool:
+	for k in key.trim_prefix("=").split("|"):
+		if not Defs.B.has(k):
+			continue
+		var looks: Array = [k] if key.begins_with("=") else Defs.looks_of(k)
+		if not looks.has(k):
+			looks.append(k)
+		for t: String in looks:
+			if bool(Defs.B[t].get("story", false)):
+				continue
+			if _rank_of(Defs.unlock_of(t, late)) <= lv:
+				return true
+	return false
+
+
+## Все строки-виды украшений в цели истории (словари {вид: n}, «a|b», вложенные цели)
+func _goal_kinds(g, out: Array) -> void:
+	if g is Array:
+		for x in g:
+			_goal_kinds(x, out)
+	elif g is Dictionary:
+		for k in g:
+			if String(k).split("|")[0] in Defs.B and String(Defs.B[String(k).split("|")[0]].get("kind", "")) == "decor":
+				out.append(String(k))
+			_goal_kinds(g[k], out)
+
+
+func _unlockable(late: bool) -> void:
+	var bad := []
+	var rk := 0
+	for q in Defs.REQUESTS:
+		var pp: Array = q["p"]
+		if String(pp[0]) == "count" and Defs.B.has(String(pp[1])) and String(Defs.B[pp[1]]["kind"]) == "decor" and not _kind_by(String(pp[1]), rk, late):
+			bad.append("просьба %s" % q["id"])
+		if String(pp[0]) == "rank":
+			rk += 1
+	for o: Dictionary in StoryOrders.ORDERS:
+		for e: Array in o["need"]:
+			if not _kind_by(String(e[0]), int(o["lvl"]), late):
+				bad.append("заказ %s: %s" % [o["id"], e[0]])
+	for s: Dictionary in StoryDefs.STORIES:
+		var ks := []
+		for st: Dictionary in s.get("steps", []):
+			_goal_kinds(st.get("goal", []), ks)
+		for k: String in ks:
+			if not _kind_by(k, int(s.get("lvl", 0)), late):
+				bad.append("история %s: %s" % [s["id"], k])
+	# прятки Мурки — на «Хуторе» хоть один вид из укрытий
+	var hide_ok := false
+	for k: String in ["hay", "cart", "amphorae", "goods", "bush", "well", "tree", "cypress", "planter", "fence", "palm"]:
+		hide_ok = hide_ok or _kind_by(k, 1, late)
+	if not hide_ok:
+		bad.append("укрытия Мурки")
+	# «decor5» — пять украшений на «Стоянке»: хоть пять видов открыто с начала
+	var n0 := 0
+	for t in Defs.B:
+		if String(Defs.B[t]["kind"]) == "decor" and Defs.base_of(t) == t and not bool(Defs.B[t].get("story", false)) and _rank_of(Defs.unlock_of(t, late)) == 0:
+			n0 += 1
+	if n0 < 5:
+		bad.append("на Стоянке видов украшений %d < 5" % n0)
+	check(bad.is_empty(), "%s: всё, что просят просьбы, заказы и истории, открыто к своему уровню (видов на Стоянке %d)" % ["новая игра" if late else "живой город", n0], bad)
