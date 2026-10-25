@@ -79,7 +79,7 @@ var taxes := {}
 var hist: Array = []
 var hist_acc := {}                     # движение денег за идущий час по видам (стройка, земля, игры, Легион, награды)
 var hist_mark := NAN                   # казна в конце прошлого часа (NAN — после загрузки ещё не знаем)
-var _street := {}                      # «ухоженная улица» (этап 5.7): id дома → [правка узора земли, вход, бонус] — кэш
+var _street := {}                      # «ухоженная улица» (этап 5.7): id дома → [правка узора земли, вход, бонус, правка покрытий] — кэш
 signal rp_reward(n)                    # просьба принесла очки исследований — «+N» летит к счётчику свитков (без звука)
 ## «Истории горожан» (scripts/stories.gd, данные — StoryDefs): часы, предложение, идущая история, пройденные,
 ## отложенные, бонусы к счастью (их строки — в happy_parts дома), кошки-награды. Сохраняется под ключом "stories"
@@ -296,6 +296,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	var lo := INF
 	var hi := -INF
 	var on_water := 0
+	var arches := not land.under.is_empty()
 	for k in cells:
 		var q := land.cell_center(k % Land.N, k / Land.N)
 		if q.x < 1.0 or q.y < 1.0 or q.x > Land.SIZE - 1.0 or q.y > Land.SIZE - 1.0:
@@ -310,11 +311,23 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 		if o < 0 or (o != 0 and o != ignore_id):
 			res["err"] = "Место занято"
 			return res
+		if arches:
+			var u := int(land.under.get(k, 0))
+			if u != 0 and u != ignore_id:
+				res["err"] = "Место занято: здесь арки акведука"
+				return res
 		var y := land.hq(k)
 		if y < Land.WATER_Y + 0.05:
 			on_water += 1
 		lo = minf(lo, y)
 		hi = maxf(hi, y)
+	# у акведука арки землю не занимают, но и сквозь дом или другие арки не проходят
+	for k in land.footprint_cells(CatGrand.under_rects(type), pos, yaw):
+		var o := land.occ[k]
+		var u := int(land.under.get(k, 0))
+		if o < 0 or (o != 0 and o != ignore_id) or (u != 0 and u != ignore_id):
+			res["err"] = "Место занято"
+			return res
 	if d.get("water", false):
 		if on_water < cells.size():
 			res["err"] = "Ставится только на воду"
@@ -391,6 +404,8 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	for k in cells:
 		if land.occ[k] >= 0:                   # арку у въезда (занятость < 0) не затираем даже готовым городом
 			land.occ[k] = b["id"]
+	land.walk_ver += 1
+	_under_add(b)
 	buildings[b["id"]] = b
 	_apron_add(b)
 	if apron_of(b) == 2:
@@ -404,6 +419,18 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	_check_goals()
 	changed.emit()
 	return b
+
+
+## Полоса под арками постройки (акведук) — в Land.under: b.under — её клетки (не сохраняется, при загрузке — заново)
+func _under_add(b: Dictionary) -> void:
+	var ur := CatGrand.under_rects(String(b["type"]))
+	if ur.is_empty():
+		return
+	var uc := land.footprint_cells(ur, b["pos"], float(b["yaw"]))
+	b["under"] = uc
+	for k in uc:
+		if not land.under.has(k):
+			land.under[k] = int(b["id"])
 
 
 ## Цвет новой постройки: не такой, как у соседей
@@ -433,6 +460,10 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 	for k in (b["cells"] as PackedInt32Array):
 		if land.occ[k] == int(b["id"]):        # чужое (арку у въезда, соседа) не освобождаем
 			land.occ[k] = 0
+	land.walk_ver += 1
+	for k in (b.get("under", PackedInt32Array()) as PackedInt32Array):
+		if int(land.under.get(k, 0)) == int(b["id"]):
+			land.under.erase(k)
 	buildings.erase(b["id"])
 	_apron_remove(b)
 	# украшения на стенах снесённого дома падают вместе с ним
@@ -912,13 +943,14 @@ static func shop_parts(types: Array, score: Dictionary, econ_v: int) -> Array:
 
 
 ## «Ухоженная улица» (этап 5.7): у входа дома (2 м вокруг) мостовая — больше чем наполовину улучшенная (плиты или
-## травертин) — +STREET_BONUS% счастья. Кэш — до новой правки узора земли или переноса дома
+## травертин) — +STREET_BONUS% счастья. Кэш — до новой правки узора, покрытия или занятости земли (Land.walk_ver:
+## простую мостовую у входа дорисовали или стёрли) или переноса дома
 func street_bonus(h: Dictionary) -> int:
 	if land.up_n == 0:
 		return 0
 	var dp := door_point(h)
 	var c: Array = _street.get(int(h["id"]), [])
-	if c.size() == 3 and int(c[0]) == land.deco_ver and (c[1] as Vector2) == dp:
+	if c.size() == 4 and int(c[0]) == land.deco_ver and int(c[3]) == land.walk_ver and (c[1] as Vector2) == dp:
 		return int(c[2])
 	var cc := land.cell(dp)
 	var walk := 0
@@ -933,7 +965,7 @@ func street_bonus(h: Dictionary) -> int:
 				if land.is_up(k):
 					up += 1
 	var v := Defs.STREET_BONUS if up >= 4 and up * 2 >= walk else 0
-	_street[int(h["id"])] = [land.deco_ver, dp, v]
+	_street[int(h["id"])] = [land.deco_ver, dp, v, land.walk_ver]
 	return v
 
 
@@ -2679,6 +2711,7 @@ func load_data(d: Dictionary) -> void:
 					"sd": int(e.get("sd", 1))})
 	next_id = int(d.get("next_id", 1))
 	buildings = {}
+	land.under.clear()
 	for bd in d.get("buildings", []):
 		var c64 := String(bd.get("cells", ""))
 		var cells := Marshalls.base64_to_raw(c64).to_int32_array() if c64 != "" else PackedInt32Array()
@@ -2695,6 +2728,7 @@ func load_data(d: Dictionary) -> void:
 		for k in cells:
 			if land.occ[k] >= 0:               # арка у въезда остаётся занятой, даже если старое сохранение залезло на неё
 				land.occ[k] = b["id"]
+		_under_add(b)                          # полоса под арками акведука — заново (не сохраняется)
 		next_id = maxi(next_id, int(b["id"]) + 1)
 	legion.sync_tiers()                          # облик зданий Легиона — по их уровням (старые сохранения: уровни войск)
 	apron_all()

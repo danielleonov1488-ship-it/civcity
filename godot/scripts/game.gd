@@ -285,6 +285,7 @@ func _ready() -> void:
 	city.seg_thin = true                      # готовый город построен: дальше звенья заборов — узкой полосой (тянут мышью)
 	await _step("Леса и луга", 0.35)
 	_nature()
+	_nature_arches()
 	_ponds_life()
 	_cliff_rocks()
 	surf_img = land.make_surface()
@@ -1329,6 +1330,25 @@ func clear_nature(c: Vector2, r: float, cells := PackedInt32Array()) -> void:
 			nature[key] = keep
 
 
+## Клетки, где под постройкой нет деревьев: её след, а у акведука — ещё полоса под арками с запасом на кроны
+## (арки землю не занимают — Land.under). Природа не сохраняется: после загрузки убирается снова (_ready)
+func _nature_cells(type: String, cells: PackedInt32Array, pos: Vector2, yaw: float) -> PackedInt32Array:
+	var ur := CatGrand.under_rects(type)
+	if ur.is_empty():
+		return cells
+	var out := cells.duplicate()
+	out.append_array(land.footprint_cells(ur, pos, yaw, 0.6))
+	return out
+
+
+## Природа выросла заново (загрузка): под арками акведуков — снова без деревьев, как в день постройки
+func _nature_arches() -> void:
+	for id in city.buildings:
+		var o: Dictionary = city.buildings[id]
+		if o.has("under"):
+			clear_nature_cells(_nature_cells(o["type"], o["cells"], o["pos"], float(o["yaw"])))
+
+
 # ---------- земля ----------
 
 func _build_chunk(ch: Vector2i) -> void:
@@ -1352,10 +1372,20 @@ func _deco_masks() -> void:
 		deco_texs.append(ImageTexture.create_from_image(deco_imgs[i]))
 	land_mat.set_shader_parameter("surf2", deco_texs[0])
 	land_mat.set_shader_parameter("surf3", deco_texs[1])
+	_deco_tiles()
+	land_mat.set_shader_parameter("deco_on", land.up_n + land.ground_n > 0)
+
+
+## Плитки улучшенных дорог для шейдера земли — один раз, когда понадобились (маски узора или показ прямой «Улучшить»
+## ещё до первых плит в городе); город без узора их не грузит
+var _deco_tiles_on := false
+func _deco_tiles() -> void:
+	if _deco_tiles_on:
+		return
+	_deco_tiles_on = true
 	Synty._index()
 	land_mat.set_shader_parameter("tile_slab", load(Synty._tex_path("Floor_Tiles_06")))
 	land_mat.set_shader_parameter("tile_mosaic", load(Synty._tex_path("Floor_Tiles_Circle_01")))
-	land_mat.set_shader_parameter("deco_on", land.up_n + land.ground_n > 0)
 
 
 ## Земля поменялась: маска покрытий — сразу и только поменявшийся прямоугольник; сетка кусков — по времени (не дольше
@@ -1409,7 +1439,8 @@ func _on_added(b: Dictionary) -> void:
 	else:
 		_show(b)
 	if not (b["cells"] as PackedInt32Array).is_empty():
-		clear_nature(b["pos"], 14.0, b["cells"])
+		# окно поиска — по самому следу (у цирка он длиннее 28 м), у акведука — и полоса под арками
+		clear_nature_cells(_nature_cells(b["type"], b["cells"], b["pos"], float(b["yaw"])))
 	var bp: Vector2 = b["pos"]
 	if not fest_vis.is_empty() and absf(bp.x - Land.ROAD_X) < 16.0 and bp.y > FEST_Z[0] - 12 and bp.y < FEST_Z[-1] + 12:
 		_fest_look(true)                       # новый дом у дороги во время игр — шесты переставим, чтобы не торчали из стены
@@ -3425,12 +3456,19 @@ func _ghost_trees(ok: bool, pl := {}) -> void:
 	if _tree_ms < 0 or Time.get_ticks_msec() - _tree_ms < 200:
 		return
 	_tree_ms = -1
+	# прячутся те же деревья, что уберёт постройка (_on_added): окно — по самому следу, у акведука — и под арками
 	var cellset := {}
-	for k in (pl["cells"] as PackedInt32Array):
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for k in _nature_cells(tool, pl["cells"], at, float(pl["yaw"])):
 		cellset[k] = true
-	var r := 14.0
-	for kz in range(int((at.y - r) / 2.0) - 1, int((at.y + r) / 2.0) + 2):
-		for kx in range(int((at.x - r) / 2.0) - 1, int((at.x + r) / 2.0) + 2):
+		var q := land.cell_center(k % Land.N, k / Land.N)
+		lo = lo.min(q)
+		hi = hi.max(q)
+	var ctr := (lo + hi) * 0.5
+	var r := (hi - lo).length() * 0.5 + 0.5
+	for kz in range(int((ctr.y - r) / 2.0) - 1, int((ctr.y + r) / 2.0) + 2):
+		for kx in range(int((ctr.x - r) / 2.0) - 1, int((ctr.x + r) / 2.0) + 2):
 			for it in nature.get(Vector2i(kx, kz), []):
 				var cc := land.cell(it["p"])
 				var inside := false
@@ -4762,23 +4800,10 @@ func _brush_at(q: Vector2) -> void:
 	stroke.append_array(land.brush_apply(cells, _brush_gk()))
 
 
-## Прямая линия «Улучшить» / «Земли»: клетки кисти по линии от a до b (штампы через 0,25 м — как свободный мазок),
-## по порядку вдоль линии; {"cells", "fresh", "t"} как у Land.line_cells
+## Прямая линия «Улучшить» / «Земли»: клетки кисти по линии от a до b (проверки — как у свободного мазка), по порядку
+## вдоль линии; один проход по полосе линии, как у дороги (Land.line_cells), — длинная прямая не тормозит
 func _brush_line_cells(a: Vector2, b: Vector2) -> Dictionary:
-	var seen := {}
-	var cells := PackedInt32Array()
-	var ts := PackedFloat32Array()
-	var n := int(a.distance_to(b) / (Land.CELL * 1.0)) + 1
-	for s in n + 1:
-		var t := float(s) / n
-		var got := land.brush_cells(a.lerp(b, t), brush_r, brush_square, _brush_gk(), seen)
-		cells.append_array(got)
-		for i in got.size():
-			ts.append(snappedf(t * a.distance_to(b), 0.5))
-	var fresh := PackedByteArray()
-	fresh.resize(cells.size())
-	fresh.fill(1)
-	return {"cells": cells, "fresh": fresh, "t": ts}
+	return land.line_cells(a, b, brush_r, Land.Kind.GRASS, brush_square, true, _brush_gk())
 
 
 # ---------- показ мазка до отпускания (3.1 прямая с ценой, 3.2 ластик красным) ----------
@@ -4862,6 +4887,8 @@ func _line_update(force := false) -> void:
 			"upto": (bl["cells"] as PackedInt32Array).size(), "cost": 0.0, "price": _brush_prices(bl["cells"])}
 		_line_cut(bplan)
 		line_plan = bplan
+		if tool == "upgrade":
+			_deco_tiles()                         # показ плит — плитками, даже пока плит в городе нет
 		_prev_put(bplan["cells"], bplan["fresh"], int(bplan["upto"]), 1, 9 if tool == "upgrade" else 10 + ground_kind)
 		return
 	var kd: int = ROAD_KIND[tool]

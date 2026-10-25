@@ -65,9 +65,16 @@ var deco_chunks := {}                # куски, где узор был (ма�
 var up_n := 0                        # клеток улучшенной дороги (0 — «ухоженных улиц» нет, шейдер их не рисует)
 var ground_n := 0                    # клеток с узором «Земли»
 var deco_ver := 0                    # растёт с каждой правкой узора («ухоженная улица» у домов — City)
+var walk_ver := 0                    # растёт, когда меняется покрытие клетки или занятость (тот же кэш «ухоженной улицы»)
 var deco_lo := Vector2i(1 << 30, 1 << 30)   # прямоугольник маски узора (пиксели N/SM), который надо обновить
 var deco_hi := Vector2i(-1, -1)
-var _deco_enc := []                  # готовые строки сохранения узора; пусто — посчитать заново
+var _deco_enc := []                  # готовые строки сохранения узора; пусто — собрать заново из кусков
+var _dc_dirty := {}                  # кусок → true: узор поменялся после того, как кусок посчитан для сохранения
+var _dc_cells := {}                  # кусок → клетки с узором (PackedInt32Array) и их значения (PackedByteArray)
+var _dc_vals := {}
+## Клетки под арками акведука (этап 5.6): клетка → id постройки. Землю они не занимают (под арками ходят и проводят
+## улицы), но другая постройка и деревья сквозь арки не встают. Не сохраняется — City.place / remove / load_data
+var under := {}
 
 var n1 := FastNoiseLite.new()
 var n2 := FastNoiseLite.new()
@@ -244,6 +251,10 @@ func generate() -> void:
 	up_n = 0
 	ground_n = 0
 	_deco_enc = []
+	_dc_dirty.clear()
+	_dc_cells.clear()
+	_dc_vals.clear()
+	under.clear()
 	var tn := FastNoiseLite.new()
 	tn.seed = 5
 	tn.frequency = 0.035
@@ -317,6 +328,7 @@ func _mark(i: int, j: int, mesh := true, mask := true) -> void:
 	_save_dirty[ch] = true
 	dirty_walk[ch] = true
 	if mask:
+		walk_ver += 1
 		var mi := i / SM
 		var mj := j / SM
 		if mi < mask_lo.x:
@@ -440,7 +452,9 @@ func smooth_cells(cells: PackedInt32Array) -> void:
 ## не под постройкой, «поверх других дорог», обрыв), но земля не меняется. Для показа дороги до отпускания кнопки
 ## и для неё же при отпускании: что показали — то и легло, по той же цене.
 ## {"cells": клетки по порядку вдоль линии, "fresh": 1 — покрытие поменяется (за неё платят), "t": доля пути 0…1}
-func line_cells(a: Vector2, b: Vector2, r: float, kd: int, square := false, over := true) -> Dictionary:
+## gk ≥ −1 — прямая кисти «Улучшить» (−1) / «Земля» (вид узора): те же клетки, что у brush_cells, за один проход (kd не нужен)
+func line_cells(a: Vector2, b: Vector2, r: float, kd: int, square := false, over := true, gk := -2) -> Dictionary:
+	var deco_line := gk >= -1
 	var ab := b - a
 	var l2 := ab.length_squared()
 	var len := sqrt(l2)
@@ -528,6 +542,11 @@ func line_cells(a: Vector2, b: Vector2, r: float, kd: int, square := false, over
 					t = clampf((q - a).dot(ab) / l2, 0.0, 1.0)
 				if q.distance_squared_to(a + ab * t) > r2:
 					continue
+			if deco_line:
+				var kq := j * N + i
+				if brush_ok(kq, q, gk):
+					(bk[mini(nb - 1, int(t * len / 0.5))] as Array).append(kq)
+				continue
 			if not is_owned(q):
 				continue
 			var k := j * N + i
@@ -676,6 +695,7 @@ func set_deco(k: int, v: int) -> void:
 	var i := k % N
 	var j := k / N
 	deco_chunks[Vector2i(i / CH, j / CH)] = true
+	_dc_dirty[Vector2i(i / CH, j / CH)] = true
 	deco_lo = deco_lo.min(Vector2i(i / SM, j / SM))
 	deco_hi = deco_hi.max(Vector2i(i / SM, j / SM))
 	deco_ver += 1
@@ -706,17 +726,22 @@ func brush_cells(p: Vector2, r: float, square: bool, gk: int, seen: Dictionary) 
 			elif q.distance_squared_to(p) > r2:
 				continue
 			var k := j * N + i
-			if seen.has(k) or occ[k] != 0 or hq(k) < WATER_Y + 0.05 or not is_owned(q):
-				continue
-			var kd := kind[k]
-			if gk < 0:
-				if not (kd == Kind.DIRT or ((kd == Kind.ROAD or kd == Kind.PLAZA) and (deco[k] & UP) == 0)):
-					continue
-			elif kd != Kind.GRASS or (deco[k] & GMASK) == gk:
+			if seen.has(k) or not brush_ok(k, q, gk):
 				continue
 			seen[k] = true
 			out.append(k)
 	return out
+
+
+## Клетка k (середина q) годится для кисти «Улучшить» (gk < 0) или «Земля» (gk ≥ 0): своя земля, не вода, не под
+## постройкой и ещё не такая. Одна проверка у свободного мазка и у прямой линии — что показали, то и ляжет
+func brush_ok(k: int, q: Vector2, gk: int) -> bool:
+	if occ[k] != 0 or hq(k) < WATER_Y + 0.05 or not is_owned(q):
+		return false
+	var kd := kind[k]
+	if gk < 0:
+		return kd == Kind.DIRT or ((kd == Kind.ROAD or kd == Kind.PLAZA) and (deco[k] & UP) == 0)
+	return kd == Kind.GRASS and (deco[k] & GMASK) != gk
 
 
 ## Доплата за клетку кисти «Улучшить»: тропа → мостовая, мостовая → плиты, площадь → травертин
@@ -803,16 +828,39 @@ func _deco_px(a: Image, b: Image, i: int, j: int) -> void:
 	b.set_pixel(i, j, e)
 
 
-## Узор для сохранения: [клетки, значения] строками base64 (пересчёт — только после правок)
+## Узор для сохранения: [клетки, значения] строками base64. Куски считаются заранее (save_warm, как отличия земли) —
+## здесь только склейка готового: большой город в плитах не дёргает кадр автосохранения
 func _deco_save() -> Array:
 	if _deco_enc.is_empty():
+		for ch in _dc_dirty.keys():          # обычно пусто: save_warm уже посчитал
+			_deco_chunk(ch)
 		var cells := PackedInt32Array()
 		var vals := PackedByteArray()
-		for k: int in deco_cells:
-			cells.append(k)
-			vals.append(deco[k])
+		for ch in _dc_cells:
+			cells.append_array(_dc_cells[ch])
+			vals.append_array(_dc_vals[ch])
 		_deco_enc = [Marshalls.raw_to_base64(cells.to_byte_array()), Marshalls.raw_to_base64(vals)]
 	return _deco_enc
+
+
+## Клетки с узором одного куска (64×64) — для сохранения
+func _deco_chunk(ch: Vector2i) -> void:
+	var cells := PackedInt32Array()
+	var vals := PackedByteArray()
+	for j in range(ch.y * CH, ch.y * CH + CH):
+		var row := j * N
+		for i in range(ch.x * CH, ch.x * CH + CH):
+			var v := deco[row + i]
+			if v != 0:
+				cells.append(row + i)
+				vals.append(v)
+	if cells.is_empty():
+		_dc_cells.erase(ch)
+		_dc_vals.erase(ch)
+	else:
+		_dc_cells[ch] = cells
+		_dc_vals[ch] = vals
+	_dc_dirty.erase(ch)
 
 
 # ---------- постройки на земле ----------
@@ -849,6 +897,7 @@ func footprint_cells(rects: Array, pos: Vector2, yaw: float, pad := 0.0) -> Pack
 func set_occ(cells: PackedInt32Array, id: int) -> void:
 	for k in cells:
 		occ[k] = id
+	walk_ver += 1
 
 
 ## Выровнять клетки под постройкой на высоту y (вокруг остаются уступы — как подпорные стенки)
@@ -1259,6 +1308,18 @@ func _save_chunk(ch: Vector2i) -> void:
 
 ## Понемногу каждый кадр (game._process): отличия поменявшихся кусков считаются заранее — к сохранению всё готово
 func save_warm(limit := 2) -> void:
+	# узор земли (этап 5.7–5.8): поменявшиеся куски, потом склейка строк — каждое своим кадром
+	if not _dc_dirty.is_empty():
+		var dn := 0
+		for ch in _dc_dirty.keys():
+			_deco_chunk(ch)
+			dn += 1
+			if dn >= limit:
+				break
+		return
+	if _deco_enc.is_empty() and not deco_cells.is_empty():
+		_deco_save()
+		return
 	if _save_dirty.is_empty():
 		if _enc.is_empty() and not touched.is_empty():
 			_encode()                    # все куски посчитаны — строки сохранения заранее (отдельным кадром)

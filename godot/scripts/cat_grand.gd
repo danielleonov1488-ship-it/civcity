@@ -13,6 +13,17 @@ const AQ_HALF := 5.0
 const AQ_T := 0.55                    # полутолщина стены арок
 const AQ_PIER := 1.1                  # опора; у концов куска — половинка (две половинки соседей — одна опора)
 
+
+## Полоса под арками (в осях постройки, уже в масштабе Catalog.ARCH): землю не занимает — под ней ходят и проводят
+## улицы, — но постройки и деревья сквозь арки не встают (Land.under). У концов — на 0,3 м короче: там половинки
+## опор, и соседний кусок встаёт вплотную. [] — у постройки арок нет
+static func under_rects(type: String) -> Array:
+	if type != "aqua":
+		return []
+	var hl := AQ_HALF * Catalog.ARCH - 0.3
+	var hw := AQ_T * Catalog.ARCH + 0.15
+	return [Rect2(-hl, -hw, 2.0 * hl, 2.0 * hw)]
+
 ## Лёгкие подмены на «Низкой» / «Очень низкой»: коринфские колонны — гладкие, тяжёлые статуи — лёгкие
 const LOW := {"SM_Bld_Pillar_Large_04": "SM_Bld_Pillar_Large_01", "SM_Bld_Pillar_Large_03": "SM_Bld_Pillar_Large_01",
 	"SM_Prop_Statue_01": "SM_Prop_Statue_05", "SM_Prop_Statue_07": "SM_Prop_Statue_05", "SM_Prop_Statue_04": "SM_Prop_Statue_03",

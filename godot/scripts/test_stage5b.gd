@@ -256,6 +256,17 @@ func _new() -> void:
 				if land.occ[k] == 0:
 					free_road += 1
 		check(under > 0 and free_road * 10 >= under * 7, "под арками акведука улица свободна: %d из %d клеток мостовой" % [free_road, under])
+		# арки землю не занимают, но постройка сквозь них не встаёт: скамья в пролёте, акведук поперёк (правка по проверке)
+		var sp: Vector2 = (a1["pos"] as Vector2) + ax * 0.5 * CatGrand.AQ_HALF * Catalog.ARCH
+		var nrm := Vector2(-ax.y, ax.x)
+		var bch: Dictionary = c.check_place("bench", sp, float(a1["yaw"]))
+		check(String(bch["err"]).contains("арки"), "скамья под аркой акведука не встаёт: «%s»" % bch["err"])
+		var cross: Dictionary = c.check_place("aqua", sp + nrm * 0.5 * CatGrand.AQ_HALF * Catalog.ARCH, float(a1["yaw"]) + PI / 2)
+		check(String(cross["err"]) == "Место занято", "акведук поперёк, сквозь арки другого, не встаёт: «%s»" % cross["err"])
+		var spk := land.idx(land.cell(sp).x, land.cell(sp).y)
+		land.paint_line(sp - nrm * 1.5, sp + nrm * 1.5, 0.6, Land.Kind.ROAD, true)
+		check(land.kind[spk] == Land.Kind.ROAD and land.occ[spk] == 0 and land.under.has(spk),
+			"улицу под аркой можно провести и после постройки (клетка под аркой — мостовая, свободна)")
 	for k in 8:
 		var hb := place(["house_pleb", "house_artisan"][k % 2], Vector2(X0 + 50.0 + k * 6.0, Z0 + 37.0), Vector2(0.5, 0), 12)
 		if not hb.is_empty():
@@ -307,8 +318,11 @@ func _new() -> void:
 	check(built.has("venus") and corin1 == corin0 - 8 and corin2 == corin0, "«Низкая»: у храма Венеры 8 коринфских колонн подменяются лёгкими и возвращаются (%d → %d → %d)" % [corin0, corin1, corin2])
 	# --- 5.7: «Улучшить» ---
 	await _upgrade(X0, Z0, houses)
+	await _street_cache(X0, Z0)
 	# --- 5.8: «Земля» ---
 	await _ground(X0, Z0)
+	await _brush_line_perf(X0, Z0)
+	_deco_save_perf()
 	# --- сохранение и загрузка узора ---
 	var sd: Dictionary = game._save_data()
 	var ld: Dictionary = sd["land"]
@@ -318,6 +332,7 @@ func _new() -> void:
 		"узор земли и плиты сохраняются и загружаются (%d клеток, плит %d, узора %d)" % [l2.deco_cells.size(), l2.up_n, l2.ground_n])
 	if shots:
 		await _shots(built, X0, Z0)
+	await _arch_nature(built)
 
 
 func _used(prefix: String) -> int:
@@ -463,6 +478,273 @@ func _ground(X0: float, Z0: float) -> void:
 	await stroke("ground", [p + Vector2(-8.0, 9.0), p + Vector2(8.0, 9.0)], true)
 	check(land.ground_n > g4 and c.money < m0, "«Земля» прямой линией: гравийная дорожка (%d клеток)" % (land.ground_n - g4))
 	game.set_tool("")
+
+
+## «Ухоженная улица» знает и о простой мостовой у входа (правка по проверке): плит ровно половина — бонус есть;
+## дорисовали две клетки обычной мостовой — плит меньше половины, бонуса нет сразу; отмена — бонус снова
+func _street_cache(X0: float, Z0: float) -> void:
+	# сухое ровное свободное место своей земли
+	var x := X0 + 24.0
+	var y := Z0 + 86.0
+	var found := false
+	for yy in range(84, 130, 6):
+		for xx in range(10, 100, 8):
+			var lo := INF
+			var hi := -INF
+			var ok := true
+			for dz in range(-3, 7):
+				for dx in range(-9, 10):
+					var q := Vector2(X0 + xx + dx, Z0 + yy + dz)
+					var cq := land.cell(q)
+					var kq := land.idx(cq.x, cq.y)
+					if not land.is_owned(q) or land.occ[kq] != 0 or land.under.has(kq) or land.kind[kq] != Land.Kind.GRASS:
+						ok = false
+					lo = minf(lo, land.hq(kq))
+					hi = maxf(hi, land.hq(kq))
+			if ok and lo > Land.WATER_Y + 0.3 and hi - lo < 0.8:
+				x = X0 + xx
+				y = Z0 + yy
+				found = true
+				break
+		if found:
+			break
+	game.clear_nature(Vector2(x, y), 12.0)
+	land.paint_line(Vector2(x - 8.0, y), Vector2(x + 8.0, y), 0.5, Land.Kind.ROAD, true)
+	await frames(2)
+	var h := place("house_pleb", Vector2(x, y + 2.6), Vector2(0.5, 0), 12)
+	if not check(not h.is_empty(), "дом у новой улицы (кэш «ухоженной улицы»)"):
+		return
+	var cc := land.cell(c.door_point(h))
+	var walk := PackedInt32Array()
+	var grass := PackedInt32Array()
+	for dj in range(-8, 9, 2):                # те же клетки, что смотрит City.street_bonus
+		for di in range(-8, 9, 2):
+			if di * di + dj * dj > 64 or not land.inside(cc.x + di, cc.y + dj):
+				continue
+			var k := land.idx(cc.x + di, cc.y + dj)
+			if land.occ[k] != 0 or land.is_up(k):
+				continue
+			if Land.walk_kind(land.kind[k]):
+				walk.append(k)
+			elif land.kind[k] == Land.Kind.GRASS and land.hq(k) > Land.WATER_Y + 0.05:
+				grass.append(k)
+	if not check(walk.size() >= 7 and grass.size() >= 2, "у входа есть мостовая и трава", [walk.size(), grass.size()]):
+		return
+	land.brush_apply(walk.slice(0, (walk.size() + 1) / 2), -1)
+	var b1 := c.street_bonus(h)
+	var ch := land.apply_cells(grass.slice(0, 2), Land.Kind.ROAD)
+	var b2 := c.street_bonus(h)
+	land.undo(ch)
+	var b3 := c.street_bonus(h)
+	check(b1 == Defs.STREET_BONUS and b2 == 0 and b3 == Defs.STREET_BONUS,
+		"«ухоженная улица»: дорисовали простую мостовую у входа — бонус ушёл, отменили — вернулся (%d → %d → %d)" % [b1, b2, b3])
+
+
+## Прямая «Улучшить» / «Земли» — за один проход по полосе (правка по проверке): длинная широкая прямая считается быстро,
+## клетки — те же, что у штампов свободной кисти
+func _brush_line_perf(X0: float, Z0: float) -> void:
+	game.set_tool("ground")
+	game.ground_kind = 3
+	var a := Vector2(X0, Z0 + 100.0)
+	var b := a + Vector2(60.0, 4.0)
+	game.brush_square = false
+	game.brush_r = 4.0
+	var t0 := Time.get_ticks_usec()
+	var bl: Dictionary = game._brush_line_cells(a, b)
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	var t1 := Time.get_ticks_usec()
+	var old := _stamps(a, b, 4.0, false, 3)
+	var ms_old := (Time.get_ticks_usec() - t1) / 1000.0
+	var ts: PackedFloat32Array = bl["t"]
+	var sorted := true
+	for n in range(1, ts.size()):
+		if ts[n] < ts[n - 1]:
+			sorted = false
+	print("S5B PERF прямая «Земли» 60 м, кисть 4 м: %.1f мс за пересчёт (штампами было %.1f мс), клеток %d / %d" % [ms, ms_old, (bl["cells"] as PackedInt32Array).size(), old.size()])
+	check(ms < 150.0 and ms * 5.0 < ms_old and sorted and absi((bl["cells"] as PackedInt32Array).size() - old.size()) * 100 <= old.size() * 2,
+		"прямая «Земли» 60 м кистью 4 м: %.0f мс за пересчёт (было %.0f), клетки по порядку вдоль линии" % [ms, ms_old])
+	# те же клетки, что у штампов: круг и квадрат, наискосок
+	var bad := []
+	for sq: bool in [false, true]:
+		game.brush_square = sq
+		game.brush_r = 2.0
+		var a2 := Vector2(X0 + 4.0, Z0 + 108.0)
+		var b2 := a2 + Vector2(7.0, 5.0)
+		var nw := {}
+		for k in (game._brush_line_cells(a2, b2)["cells"] as PackedInt32Array):
+			nw[k] = true
+		var st := {}
+		for k in _stamps(a2, b2, 2.0, sq, 3):
+			st[k] = true
+		var diff := 0
+		for k in nw:
+			if not st.has(k):
+				diff += 1
+		for k in st:
+			if not nw.has(k):
+				diff += 1
+		if st.is_empty() or diff * 100 > st.size() * 3:
+			bad.append([sq, diff, st.size()])
+	check(bad.is_empty(), "прямая кисти — те же клетки, что штампы свободного мазка (разница ≤ 3%)", bad)
+	game.brush_square = false
+	game.set_tool("")
+
+
+## Прежний способ прямой (для сравнения): штампы кисти через 0,25 м
+func _stamps(a: Vector2, b: Vector2, r: float, sq: bool, gk: int) -> PackedInt32Array:
+	var seen := {}
+	var out := PackedInt32Array()
+	var n := int(a.distance_to(b) / Land.CELL) + 1
+	for s in n + 1:
+		out.append_array(land.brush_cells(a.lerp(b, float(s) / n), r, sq, gk, seen))
+	return out
+
+
+## Сохранение большого узора (правка по проверке): куски узора считаются заранее понемногу (save_warm), в кадре снимка
+## автосохранения — только готовое; строки те же (клетки и значения)
+func _deco_save_perf() -> void:
+	var l3 := Land.new()
+	for j in range(300, 1300):
+		for i in range(300, 450):
+			l3.set_deco(j * Land.N + i, Land.UP if (i + j) % 3 != 0 else 2)
+	l3.set_deco(300 * Land.N + 300, 0)
+	var t0 := Time.get_ticks_usec()
+	var old_c := PackedInt32Array()
+	var old_v := PackedByteArray()
+	for k: int in l3.deco_cells:                 # прежний способ: перебор всех клеток узора в кадре снимка
+		old_c.append(k)
+		old_v.append(l3.deco[k])
+	var old_s := [Marshalls.raw_to_base64(old_c.to_byte_array()), Marshalls.raw_to_base64(old_v)]
+	var ms_old := (Time.get_ticks_usec() - t0) / 1000.0
+	var worst := 0.0
+	var calls := 0
+	while (not l3._dc_dirty.is_empty() or l3._deco_enc.is_empty() or not l3._save_dirty.is_empty()) and calls < 3000:
+		var t1 := Time.get_ticks_usec()
+		l3.save_warm()
+		worst = maxf(worst, (Time.get_ticks_usec() - t1) / 1000.0)
+		calls += 1
+	var sd := {}
+	var snap := INF
+	for rep in 3:                                # меньшее из трёх: соседняя линия может отнять у процесса квант
+		var t2 := Time.get_ticks_usec()
+		sd = l3.save_changes()
+		snap = minf(snap, (Time.get_ticks_usec() - t2) / 1000.0)
+	var dc := Marshalls.base64_to_raw(sd.get("deco", "")).to_int32_array()
+	var dv := Marshalls.base64_to_raw(sd.get("deco_v", ""))
+	var same: bool = dc.size() == l3.deco_cells.size() and dv.size() == dc.size() and String(old_s[0]).length() == String(sd.get("deco", "")).length()
+	for n in dc.size():
+		if l3.deco[dc[n]] != dv[n] or dv[n] == 0:
+			same = false
+			break
+	print("S5B PERF узор %d клеток: снимок %.2f мс (прежде перебор %.1f мс), заранее — %d кадров, самый долгий %.2f мс" % [dc.size(), snap, ms_old, calls, worst])
+	check(same and snap < 8.0 and worst < 12.0, "узор 150 тыс. клеток: в кадре снимка %.1f мс, заранее — не дольше %.1f мс за кадр, строки — те же клетки и значения" % [snap, worst])
+
+
+## Деревья под арками и у концов больших зданий (правки по проверке): природа растёт заново (как при загрузке); акведук
+## через рощу — под арками и у жёлоба ни ствола, ни куста (и призрак прячет их же); после «загрузки» — снова нет;
+## цирк убирает деревья по всему своему следу (он длиннее 28 м)
+func _arch_nature(built: Dictionary) -> void:
+	var cb: Dictionary = built.get("circus_fl", {})
+	var cpl := {}
+	if not cb.is_empty():
+		cpl = {"pos": cb["pos"], "yaw": cb["yaw"], "variant": cb["variant"], "color": cb["color"]}
+		c.remove(cb, false)
+	_regrow()
+	var hl := CatGrand.AQ_HALF * Catalog.ARCH
+	# самое лесистое место своей земли, где кусок встаёт
+	var cand := []
+	for zz in range(70, 252, 3):
+		for xx in range(132, 252, 3):
+			var p := Vector2(xx, zz)
+			var n := _axis_nature(p - Vector2(hl, 0), p + Vector2(hl, 0), 1.2).size()
+			if n > 0:
+				cand.append([n, p])
+	cand.sort_custom(func(u, v): return int(u[0]) > int(v[0]))
+	var at := Vector2.INF
+	var before := 0
+	for e: Array in cand.slice(0, 40):
+		if String(c.check_place("aqua", e[1], 0.0)["err"]) == "":
+			at = e[1]
+			before = int(e[0])
+			break
+	if check(at != Vector2.INF, "акведук встаёт в роще (деревьев у оси до постройки: %d)" % before):
+		var axn := _axis_nature(at - Vector2(hl, 0), at + Vector2(hl, 0), 1.2)
+		# призрак: прячутся те же деревья, что уберёт постройка
+		game.set_tool("aqua")
+		var pl := {"pos": at, "yaw": 0.0, "cells": c.check_place("aqua", at, 0.0)["cells"]}
+		game._ghost_trees(true, pl)
+		game._tree_ms = Time.get_ticks_msec() - 1000
+		game._ghost_trees(true, pl)
+		var hid := 0
+		for it in axn:
+			if game.tree_hidden.any(func(o): return is_same(o, it)):
+				hid += 1
+		check(hid == axn.size(), "призрак акведука прячет все деревья у оси (%d из %d)" % [hid, axn.size()])
+		game.set_tool("")
+		var aq := c.place("aqua", at, 0.0, 0, 0, true)
+		var left := _axis_nature(at - Vector2(hl, 0), at + Vector2(hl, 0), 1.2).size()
+		check(left == 0, "акведук через рощу: у оси ни дерева, ни куста (было %d, осталось %d)" % [before, left])
+		_regrow(false)
+		var grown := _axis_nature(at - Vector2(hl, 0), at + Vector2(hl, 0), 1.2).size()
+		game._nature_arches()
+		var after := _axis_nature(at - Vector2(hl, 0), at + Vector2(hl, 0), 1.2).size()
+		check(after == 0, "после загрузки под арками снова пусто (выросло бы %d, осталось %d)" % [grown, after])
+		c.remove(aq, false)
+		check(not land.under.values().has(int(aq["id"])), "снесли акведук — полоса под арками свободна")
+	# цирк: деревья по всему следу, и у дальних концов (за 14 м от середины)
+	if not cpl.is_empty():
+		var chk: Dictionary = c.check_place("circus_fl", cpl["pos"], float(cpl["yaw"]), int(cpl["variant"]), int(cpl["color"]), -2)
+		var cells := {}
+		for k in (chk["cells"] as PackedInt32Array):
+			cells[k] = true
+		var far0 := _in_cells(cells, cpl["pos"], 14.0)
+		var nb := c.place("circus_fl", cpl["pos"], float(cpl["yaw"]), int(cpl["variant"]), int(cpl["color"]), true)
+		var far1 := _in_cells(cells, cpl["pos"], 14.0)
+		var all1 := _in_cells(cells, cpl["pos"], 0.0)
+		check(not nb.is_empty() and all1 == 0, "цирк убирает деревья по всему следу: у концов дальше 14 м было %d, осталось %d (всего в следе %d)" % [far0, far1, all1])
+
+
+## Вся природа заново, как при загрузке (природа не сохраняется)
+func _regrow(arches := true) -> void:
+	game._trees_restore()
+	for key in game.nature:
+		for it in game.nature[key]:
+			game.parts.remove(it["h"])
+	game.nature.clear()
+	game._nature()
+	if arches:
+		game._nature_arches()
+
+
+## Деревья и кусты ближе r к отрезку a–b
+func _axis_nature(a: Vector2, b: Vector2, r: float) -> Array:
+	var out := []
+	var ab := b - a
+	for kz in range(int((minf(a.y, b.y) - r) / 2.0) - 1, int((maxf(a.y, b.y) + r) / 2.0) + 2):
+		for kx in range(int((minf(a.x, b.x) - r) / 2.0) - 1, int((maxf(a.x, b.x) + r) / 2.0) + 2):
+			for it in game.nature.get(Vector2i(kx, kz), []):
+				var nm: String = it["name"]
+				if not (nm.begins_with("SM_Env_Tree") or nm.begins_with("SM_Env_Bush")):
+					continue
+				var p: Vector2 = it["p"]
+				var t := clampf((p - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+				if p.distance_to(a + ab * t) < r:
+					out.append(it)
+	return out
+
+
+## Природа (любая) на клетках следа — дальше d от середины постройки
+func _in_cells(cells: Dictionary, at: Vector2, d: float) -> int:
+	var n := 0
+	for key in game.nature:
+		for it in game.nature[key]:
+			var p: Vector2 = it["p"]
+			if p.distance_to(at) < d:
+				continue
+			var q := land.cell(p)
+			if cells.has(land.idx(q.x, q.y)):
+				n += 1
+	return n
 
 
 var _tri_c := {}
@@ -664,4 +946,37 @@ func _owner() -> void:
 	c.research["aqua"] = true
 	check(c.unlocked("aqua"), "исследование «Акведук» открывает акведук")
 	c.research.erase("aqua")
+	# первая прямая «Улучшить» в городе без плит (правка по проверке): показ — плитками, текстура плит уже привязана;
+	# недотянутая прямая (сменили инструмент) не ложится
+	c.research[Defs.ROAD_UP_RES] = true
+	var rp := _owner_road()
+	if check(rp != Vector2.INF, "в городе владельца есть улица у середины"):
+		var m0 := c.money
+		var ts0 = game.land_mat.get_shader_parameter("tile_slab")
+		game.set_tool("upgrade")
+		game.brush_line = true
+		game.hover = rp
+		game._click()
+		game.hover = rp + Vector2(5.0, 0.0)
+		game._line_update(true)
+		var ts1 = game.land_mat.get_shader_parameter("tile_slab")
+		var pm: int = game._prev_mode
+		game.set_tool("")
+		check(ts0 == null and ts1 != null and pm == 1, "первая прямая «Улучшить»: показ плитками (текстура плит привязана к показу, до того — нет)", [ts0, ts1, pm])
+		check(land.up_n == 0 and land.deco_cells.is_empty() and absf(c.money - m0) < 0.01, "недотянутая прямая не легла: плит нет, деньги на месте")
+	c.research.erase(Defs.ROAD_UP_RES)
 	await _owner_perf()
+
+
+## Свободная мостовая своей земли поближе к середине города
+func _owner_road() -> Vector2:
+	for r in range(0, 120, 2):
+		for k in 24:
+			var p := Land.START + Vector2(cos(k * TAU / 24.0), sin(k * TAU / 24.0)) * r
+			var cc := land.cell(p)
+			if not land.inside(cc.x, cc.y):
+				continue
+			var kk := land.idx(cc.x, cc.y)
+			if land.kind[kk] == Land.Kind.ROAD and land.occ[kk] == 0 and land.is_owned(p):
+				return p
+	return Vector2.INF

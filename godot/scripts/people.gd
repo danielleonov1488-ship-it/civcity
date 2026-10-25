@@ -2817,17 +2817,20 @@ func _step(r: Dictionary, dt: float) -> void:
 			c.play("Walk_Loop")
 			r["fade"] = 0.0             # место на улице освободилось — проявляется, а не выскакивает
 			c.set_alpha(0.0)
+	var p: Vector2 = r["p"]
+	var sf := 1.0
+	if land.up_n > 0:
+		var pc := land.cell(p)
+		if land.is_up(land.idx(pc.x, pc.y)):
+			sf = Defs.STREET_WALK                # по каменным плитам ходят быстрее (этап 5.7) — и шагают чаще: ноги не скользят
 	if c:
-		c.anim.speed_scale = game.speed * float(r["speed"])
+		c.anim.speed_scale = game.speed * float(r["speed"]) * sf
 		if float(r["fade"]) < 1.0:
 			r["fade"] = minf(1.0, float(r["fade"]) + dt / 0.6)
 			c.set_alpha(float(r["fade"]))
-	var p: Vector2 = r["p"]
 	var to := path[i] - p
 	var dist := to.length()
-	var mv := WALK * float(r["speed"]) * dt
-	if land.up_n > 0 and land.is_up(land.idx(land.cell(p).x, land.cell(p).y)):
-		mv *= Defs.STREET_WALK                  # по каменным плитам ходят быстрее (этап 5.7)
+	var mv := WALK * float(r["speed"]) * sf * dt
 	while dist <= mv and i < path.size() - 1:
 		p = path[i]
 		mv -= dist
