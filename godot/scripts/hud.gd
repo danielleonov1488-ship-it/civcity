@@ -82,6 +82,7 @@ var advisor_panel: PanelContainer
 var adv_title: Label
 var adv_text: Label
 var adv_skip: Button                        # «Пропустить обучение» у совета-шага (advisor(…, skip))
+var adv_ok: Button                          # «Понятно» (у вопроса Gfx — «Не надо»)
 var _adv_skip_cb := Callable()
 var notes_box: VBoxContainer
 var events_panel: PanelContainer
@@ -3740,12 +3741,16 @@ func _advisor() -> void:
 	ok.text = "Понятно"
 	ok.pressed.connect(func(): advisor_panel.visible = false)
 	row.add_child(ok)
+	adv_ok = ok
 
 
 ## Совет: заголовок и текст; skip — совет начинает обучение: рядом с «Понятно» кнопка «Пропустить обучение»
 func advisor(title: String, text: String, skip := Callable()) -> void:
 	adv_title.text = title
 	adv_text.text = text
+	adv_skip.text = "Пропустить обучение"     # другое действие (Gfx: «Включить «Низкую»») ставит свою надпись после
+	adv_skip.add_theme_font_size_override("font_size", 14)
+	adv_ok.text = "Понятно"
 	_adv_skip_cb = skip
 	adv_skip.visible = skip.is_valid()
 	advisor_panel.visible = true
@@ -4144,20 +4149,7 @@ func _settings_panel() -> void:
 	mk_slider.call("Музыка", "music", "music", 0.0, 1.0, 0.05)
 	mk_slider.call("Звуки", "sound", "sfx", 0.0, 1.0, 0.05)
 	mk_slider.call("Размер интерфейса", "view", "ui_scale", 0.8, 1.4, 0.05)
-	var q := HBoxContainer.new()
-	q.add_theme_constant_override("separation", 8)
-	q.add_child(_icon("photo", 26, C_SOFT))
-	var ql := _label("Графика", 18, true)
-	ql.custom_minimum_size = Vector2(190, 0)
-	q.add_child(ql)
-	for opt: Array in [["high", "Высокая"], ["medium", "Средняя"], ["low", "Низкая"]]:
-		var b := Button.new()
-		b.text = opt[1]
-		b.name = "q_" + opt[0]
-		var key: String = opt[0]
-		b.pressed.connect(func(): game.settings["quality"] = key; game.save_settings(); _open_settings(true))
-		q.add_child(b)
-	v.add_child(q)
+	Gfx.settings_block(self, v)               # «Графика» (4 уровня), «Показывать FPS», видеокарта — scripts/gfx.gd
 	var fs := CheckBox.new()
 	fs.text = "Полный экран"
 	fs.name = "fs"
@@ -4327,9 +4319,7 @@ func _open_settings(stay := false) -> void:
 	(settings_panel.find_child("auto", true, false) as CheckBox).set_pressed_no_signal(bool(game.settings["autosave"]))
 	for key in ["music", "sfx", "ui_scale"]:
 		(settings_panel.find_child(key, true, false) as HSlider).set_value_no_signal(float(game.settings.get(key, 1.0)))
-	for q in ["high", "medium", "low"]:
-		var b: Button = settings_panel.find_child("q_" + q, true, false)
-		b.add_theme_stylebox_override("normal", _box_pill(16, 6, "g_btn_on" if game.settings["quality"] == q else "g_btn"))
+	Gfx.settings_refresh(self)
 	AccountUi.settings_refresh(self)
 	if not stay:
 		_toggle(settings_panel)
@@ -5302,8 +5292,42 @@ func _make_icons() -> void:
 	_icons_async(vp, cam, holder)
 
 
+## Папка готовых картинок построек (user://icons/…): своя у каждой сборки — поменялись файлы игры (код, модели), и
+## картинки рисуются заново; старые папки удаляются. В редакторе ключ — сами скрипты построек
+const ICON_V := 1                         # поменяли свет, камеру или размер картинок — увеличить
+const ICON_SRC := ["catalog.gd", "cat_houses.gd", "cat_shops.gd", "cat_civic.gd", "cat_monuments.gd", "cat_decor.gd", "cat_military.gd",
+	"parts.gd", "synty.gd", "kit.gd", "bp.gd", "artisau.gd", "entrance.gd", "hud.gd"]
+
+
+func _icon_dir() -> String:
+	var key := "v%d" % ICON_V
+	if OS.has_feature("editor"):
+		for f: String in ICON_SRC:
+			key += FileAccess.get_md5("res://scripts/" + f)
+	else:
+		var exe := OS.get_executable_path()
+		for p: String in [exe.get_basename() + ".pck", exe.get_base_dir().path_join("CivCity_models.pck")]:
+			var fa := FileAccess.open(p, FileAccess.READ)
+			if fa:
+				key += "_%d_%d" % [FileAccess.get_modified_time(p), fa.get_length()]
+	var root := "user://icons"
+	var name := key.md5_text().substr(0, 12)
+	DirAccess.make_dir_recursive_absolute(root.path_join(name))
+	for old in DirAccess.get_directories_at(root):
+		if old != name:
+			var od := root.path_join(old)
+			for f in DirAccess.get_files_at(od):
+				DirAccess.remove_absolute(od.path_join(f))
+			DirAccess.remove_absolute(od)
+	return root.path_join(name)
+
+
+## Картинки построек для карточек: готовые берём из папки (имя — тип и отпечаток деталей облика), рисуем только
+## недостающие — при запуске почти нет чтений картинки с видеокарты (на слабых видеокартах на них падала игра)
 func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 	var col := 0
+	var idir := _icon_dir()
+	var drawn := 0
 	for type in Defs.B:
 		if type == "center":
 			continue
@@ -5311,7 +5335,15 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		var tier := 2 if d["kind"] == "house" else 0
 		col = (col + 3) % Defs.PALETTE.size()
 		# у украшений облик задаёт тип (Catalog.make сам берёт их постоянный цвет) — картинка как поставленное
-		var g := Parts.ghost(Catalog.make(type, tier, 0, col), "outline", Color(0, 0, 0, 0))
+		var bp: Bp = Catalog.make(type, tier, 0, col)
+		var path := idir.path_join("%s_%s.png" % [type, str(bp.parts).md5_text().substr(0, 12)])
+		if FileAccess.file_exists(path):
+			var ci := Image.load_from_file(path)
+			if ci != null and not ci.is_empty():
+				icons[type] = ImageTexture.create_from_image(ci)
+				continue
+		drawn += 1
+		var g := Parts.ghost(bp, "outline", Color(0, 0, 0, 0))
 		for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
 			gi.material_override = null
 		# тёмная плашка под землёй (ровняет землю под клумбой, лужком, перголой) — на картинке не нужна
@@ -5338,11 +5370,14 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 				r = r.grow(int(maxf(r.size.x, r.size.y) * 0.05)).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
 				img = img.get_region(r)
 		icons[type] = ImageTexture.create_from_image(img)
+		img.save_png(path)
 		g.queue_free()
 		await get_tree().process_frame
 		if not _icons_alive(vp):
 			return
 	vp.queue_free()
+	if drawn > 0:
+		print("Картинки построек: нарисовано %d, остальные — из %s" % [drawn, idir])
 	if tray.visible:
 		_update_cards()
 

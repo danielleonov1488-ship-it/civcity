@@ -24,6 +24,8 @@ var _jobs_dirty := true
 var _hour := 8.0
 
 const MAX_VIS := 150                 # больше людей на улице не рисуем (остальные идут «невидимо»)
+var max_vis := MAX_VIS               # …а на «Низкой» и «Очень низкой» графике — меньше (Gfx.VIS)
+const MENU_RES := 300                # витрина главного меню: жителей не больше (ходят по улицам за меню — меньше работы процессору)
 const RADIUS := 0.3
 const CART_FAR := 46.0               # повозка появляется (и исчезает) так далеко за краем карты на большой дороге
 ## Повозка переселенцев (размеры — в единицах модели телеги Synty, вся она в масштабе построек Catalog.ARCH)
@@ -70,6 +72,8 @@ func setup(l: Land, c: City, g) -> void:
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
 		if city.is_house(b):
+			if game.mode == "menu" and residents.size() >= MENU_RES:
+				break
 			for f in b["families"]:
 				_make_family(f["name"], int(f["n"]), id, city.door_point(b))
 	# семьи, которые ждут жилья на площади
@@ -209,7 +213,7 @@ func _make_family(name: String, n: int, home: int, at: Vector2, cls := "") -> Ar
 func _node(r: Dictionary) -> Citizen:
 	if r["node"] != null:
 		return r["node"]
-	if visible_count >= MAX_VIS:
+	if visible_count >= max_vis:
 		return null
 	var rr := RandomNumberGenerator.new()
 	rr.seed = int(r["seed"])
@@ -1790,6 +1794,9 @@ func _vis_tick() -> void:
 		return
 	var cam: Camera3D = rig.cam
 	var cp := cam.global_position
+	if visible_count > max_vis:
+		_vis_trim(cam)
+		return
 	var want := []
 	var drop := []
 	for r in residents:
@@ -1812,12 +1819,28 @@ func _vis_tick() -> void:
 	for w in want:
 		if made >= 24:
 			break                        # не всех разом — без рывка кадра при повороте камеры
-		if visible_count >= MAX_VIS:
+		if visible_count >= max_vis:
 			if drop.is_empty():
 				break
 			_hide(drop.pop_front()[1])
 		_show(w[1])
 		made += 1
+
+
+## Графику облегчили (людей на улицах меньше): лишних убрать — сначала вне кадра, потом дальних
+func _vis_trim(cam: Camera3D) -> void:
+	var cp := cam.global_position
+	var shown := []
+	for r in residents:
+		var st: String = r["state"]
+		if r["node"] == null or not (st in ["walk", "idle", "work"]):
+			continue
+		var p: Vector2 = r["p"]
+		var p3 := Vector3(p.x, land.height_at(p.x, p.y) + 0.5, p.y)
+		shown.append([p3.distance_squared_to(cp) + (0.0 if cam.is_position_in_frustum(p3) else 1.0e9), r])
+	shown.sort_custom(func(a, b): return a[0] > b[0])
+	for i in mini(visible_count - max_vis, shown.size()):
+		_hide(shown[i][1])
 
 
 ## Житель попал в кадр: создать его и поставить в нужной позе (идёт, сидит, говорит, стоит за прилавком)
@@ -1876,7 +1899,7 @@ func _step(r: Dictionary, dt: float) -> void:
 		_arrive(r)
 		return
 	var c: Citizen = r["node"]
-	if c == null and visible_count < MAX_VIS and (r["p"] as Vector2).distance_to(path[path.size() - 1]) > 3.0:
+	if c == null and visible_count < max_vis and (r["p"] as Vector2).distance_to(path[path.size() - 1]) > 3.0:
 		c = _node(r)
 		if c:
 			c.play("Walk_Loop")

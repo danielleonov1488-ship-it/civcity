@@ -201,7 +201,7 @@ static var _plain_mats := {}
 static func _plain(variant: String) -> StandardMaterial3D:
 	if not _plain_mats.has(variant):
 		var m := StandardMaterial3D.new()
-		m.albedo_texture = load(Synty._tex_path("PolygonAncientEmpire_01_" + variant))
+		m.albedo_texture = Gfx.tex(Synty._tex_path("PolygonAncientEmpire_01_" + variant))   # «Очень низкая» — копия поменьше
 		m.roughness = 0.85
 		_plain_mats[variant] = m
 	return _plain_mats[variant]
@@ -214,7 +214,7 @@ static func _material(variant: String) -> ShaderMaterial:
 			_cloth = load("res://shaders/citizen_cloth.gdshader")
 		var m := ShaderMaterial.new()
 		m.shader = _cloth
-		m.set_shader_parameter("albedo_tex", load(Synty._tex_path("PolygonAncientEmpire_01_" + variant)))
+		m.set_shader_parameter("albedo_tex", Gfx.tex(Synty._tex_path("PolygonAncientEmpire_01_" + variant)))
 		_mats[variant] = m
 	return _mats[variant]
 
