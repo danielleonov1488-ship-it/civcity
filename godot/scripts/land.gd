@@ -43,7 +43,11 @@ var occ := PackedInt32Array()        # id постройки на клетке (
 var base_h := PackedFloat32Array()   # исходная карта — для сохранения только изменений
 var base_kind := PackedByteArray()
 var owned := {}                      # Vector2i участка → true
-var dirty := {}                      # Vector2i куска → true (перестроить сетку)
+var dirty := {}                      # Vector2i куска → true (перестроить сетку: поменялись видимые уступы)
+var dirty_soft := {}                 # куски, где поменялось только покрытие (стенки уступов) — сетку можно и позже
+var dirty_walk := {}                 # куски, где поменялось покрытие или высота — сетка ходьбы жителей
+var mask_lo := Vector2i(1 << 30, 1 << 30)   # прямоугольник маски покрытий (пиксели N/SM), который надо обновить
+var mask_hi := Vector2i(-1, -1)
 var road_chunks := {}                # куски, где есть дороги (для маски покрытий и сетки ходьбы)
 
 var n1 := FastNoiseLite.new()
@@ -228,6 +232,8 @@ func generate() -> void:
 	base_h = h.duplicate()
 	base_kind = kind.duplicate()
 	dirty.clear()
+	dirty_soft.clear()
+	dirty_walk.clear()
 	touched.clear()
 	_save_dirty.clear()
 
@@ -271,29 +277,63 @@ func far_height(x: float, z: float) -> float:
 	return y
 
 
-func _mark(i: int, j: int) -> void:
-	dirty[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
-	touched[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
-	_save_dirty[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
+## Клетка поменялась. mesh — поменялся видимый уступ (12,5 см): сетку куска перестроить; mask — поменялось
+## покрытие: маска для шейдера (и стенки уступов — сетка «потом», dirty_soft). Ни то ни другое — только для сохранения
+func _mark(i: int, j: int, mesh := true, mask := true) -> void:
+	var ci := clampi(i / CH, 0, CHN - 1)
+	var cj := clampi(j / CH, 0, CHN - 1)
+	var ch := Vector2i(ci, cj)
+	touched[ch] = true
+	_save_dirty[ch] = true
+	dirty_walk[ch] = true
+	if mask:
+		var mi := i / SM
+		var mj := j / SM
+		if mi < mask_lo.x:
+			mask_lo.x = mi
+		if mj < mask_lo.y:
+			mask_lo.y = mj
+		if mi > mask_hi.x:
+			mask_hi.x = mi
+		if mj > mask_hi.y:
+			mask_hi.y = mj
+	if not mesh:
+		if mask:
+			dirty_soft[ch] = true
+		return
+	dirty[ch] = true
 	# стенки уступов на краю куска рисует соседний кусок
 	if i % CH == 0 and i > 0:
-		dirty[Vector2i((i - 1) / CH, clampi(j / CH, 0, CHN - 1))] = true
+		dirty[Vector2i((i - 1) / CH, cj)] = true
 	if j % CH == 0 and j > 0:
-		dirty[Vector2i(clampi(i / CH, 0, CHN - 1), (j - 1) / CH)] = true
+		dirty[Vector2i(ci, (j - 1) / CH)] = true
 	if i % CH == CH - 1 and i < N - 1:
-		dirty[Vector2i((i + 1) / CH, clampi(j / CH, 0, CHN - 1))] = true
+		dirty[Vector2i((i + 1) / CH, cj)] = true
 	if j % CH == CH - 1 and j < N - 1:
-		dirty[Vector2i(clampi(i / CH, 0, CHN - 1), (j + 1) / CH)] = true
+		dirty[Vector2i(ci, (j + 1) / CH)] = true
 
 
 # ---------- кисть дорог ----------
 
 ## Покрасить клетки в круге (square — квадрат) радиуса r. over — рисовать поверх других дорог.
-func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := true, square := false, over := true) -> Array:
+## seen — мазок кисти игрока (game.gd): высоты сразу не сглаживаются (smooth_cells — один раз, когда кнопку отпустили,
+## так мазок по склону не тормозит), и клетка, уже взятая этим мазком, второй раз не записывается.
+## Без seen — как раньше: дорога сглаживается сразу
+func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := true, square := false, over := true, seen = null) -> Array:
 	var out := []
 	var c := cell(p)
 	var rc := int(ceil(r / CELL))
 	var y0 := height_at(p.x, p.y)
+	var defer: bool = seen != null
+	# своя ли земля — один раз на всю кисть, если она целиком на одном участке
+	var own_all := -1                         # -1 — смотреть каждую клетку, 1 — вся кисть на своей земле
+	if only_owned:
+		var pa := plot_of(p - Vector2(r, r))
+		if pa == plot_of(p + Vector2(r, r)):
+			if not owned.has(pa):
+				return out
+			own_all = 1
+	var r2 := r * r
 	for j in range(c.y - rc, c.y + rc + 1):
 		for i in range(c.x - rc, c.x + rc + 1):
 			if not inside(i, j):
@@ -302,11 +342,13 @@ func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := tr
 			if square:
 				if absf(q.x - p.x) > r or absf(q.y - p.y) > r:
 					continue
-			elif q.distance_to(p) > r:
+			elif q.distance_squared_to(p) > r2:
 				continue
-			if only_owned and not is_owned(q):
+			if own_all < 0 and only_owned and not is_owned(q):
 				continue
 			var k := idx(i, j)
+			if defer and seen.has(k):
+				continue
 			var kk := kind[k]
 			var y := hq(k)
 			if y < WATER_Y + 0.05 or occ[k] != 0:
@@ -320,13 +362,210 @@ func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := tr
 			if flat and absf(y - y0) > 1.2:
 				continue                         # обрыв кисть не срезает
 			out.append([Vector2i(i, j), kk, h[k]])
+			if defer:
+				seen[k] = true
 			kind[k] = kd
-			if flat and walk_kind(kd):
+			var mesh := false
+			if flat and walk_kind(kd) and not defer:
 				# дорога ложится по земле: только сглаживаем мелкие ступеньки вдоль неё, не поднимая над травой
 				h[k] = _smooth_at(i, j, 3)
-			_mark(i, j)
+				mesh = hq(k) != y
+			_mark(i, j, mesh, kk != kd)
 			if walk_kind(kd):
 				road_chunks[Vector2i(i / CH, j / CH)] = true
+	return out
+
+
+## Мазок окончен: дорога ложится по земле — сгладить мелкие ступеньки один раз по всем клеткам мазка (как _smooth_at)
+func smooth_cells(cells: PackedInt32Array) -> void:
+	for k in cells:
+		var i := k % N
+		var j := k / N
+		var y0 := h[k]
+		var sum := 0.0
+		var n := 0
+		var i0 := maxi(i - 3, 0)
+		var i1 := mini(i + 3, N - 1)
+		for jj in range(maxi(j - 3, 0), mini(j + 3, N - 1) + 1):
+			var row := jj * N
+			for ii in range(i0, i1 + 1):
+				var y := h[row + ii]
+				if y >= WATER_Y + 0.05 and absf(y - y0) < 0.5:   # обрывы и стены в среднее не берём
+					sum += y
+					n += 1
+		if n == 0:
+			continue
+		var old := hq(k)
+		h[k] = sum / n
+		if hq(k) != old:
+			_mark(i, j, true, false)
+		else:
+			touched[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
+			_save_dirty[Vector2i(clampi(i / CH, 0, CHN - 1), clampi(j / CH, 0, CHN - 1))] = true
+
+
+## Клетки прямой линии кисти от a до b — как мазок paint_circle по этой линии (те же проверки: своя земля, не вода,
+## не под постройкой, «поверх других дорог», обрыв), но земля не меняется. Для показа дороги до отпускания кнопки
+## и для неё же при отпускании: что показали — то и легло, по той же цене.
+## {"cells": клетки по порядку вдоль линии, "fresh": 1 — покрытие поменяется (за неё платят), "t": доля пути 0…1}
+func line_cells(a: Vector2, b: Vector2, r: float, kd: int, square := false, over := true) -> Dictionary:
+	var ab := b - a
+	var l2 := ab.length_squared()
+	var len := sqrt(l2)
+	var flat := kd != Kind.GRASS
+	var r2 := r * r
+	var nb := int(len / 0.5) + 2              # по корзинам через 0,5 м вдоль линии — порядок для «денег хватит до сюда»
+	var bk := []                              # обычные массивы: Packed* внутри Array копируются при каждом обращении
+	bk.resize(nb)
+	for i in nb:
+		bk[i] = []
+	var c0 := cell(a.min(b) - Vector2(r, r))
+	var c1 := cell(a.max(b) + Vector2(r, r))
+	var nrm := Vector2(-ab.y, ab.x).normalized() * r if len > 1e-4 else Vector2.ZERO
+	for j in range(c0.y, c1.y + 1):
+		var qy := (j + 0.5) * CELL
+		var i0 := c0.x
+		var i1 := c1.x
+		if not square:
+			# ряд пересекает капсулу одним отрезком: края — по двум кругам и двум сдвинутым сторонам
+			var lo := INF
+			var hi := -INF
+			for e: Vector2 in [a, b]:
+				var dy := qy - e.y
+				if absf(dy) <= r:
+					var dx := sqrt(r2 - dy * dy)
+					lo = minf(lo, e.x - dx)
+					hi = maxf(hi, e.x + dx)
+			if len > 1e-4:
+				for s: float in [-1.0, 1.0]:
+					var p0 := a + nrm * s
+					var p1 := b + nrm * s
+					if absf(p1.y - p0.y) > 1e-6 and (qy - p0.y) * (qy - p1.y) <= 0.0:
+						var x := p0.x + (qy - p0.y) / (p1.y - p0.y) * (p1.x - p0.x)
+						lo = minf(lo, x)
+						hi = maxf(hi, x)
+			if lo > hi:
+				continue
+			i0 = maxi(c0.x, int(floor(lo / CELL)) - 1)
+			i1 = mini(c1.x, int(floor(hi / CELL)) + 1)
+		else:
+			# квадрат по линии: ряд qy даёт отрезок t по оси y, по нему — края ряда по x (а не вся рамка линии)
+			var tl := 0.0
+			var th := 1.0
+			if absf(ab.y) < 1e-6:
+				if absf(qy - a.y) > r:
+					continue
+			else:
+				var t1 := (qy - r - a.y) / ab.y
+				var t2 := (qy + r - a.y) / ab.y
+				tl = maxf(0.0, minf(t1, t2))
+				th = minf(1.0, maxf(t1, t2))
+				if tl > th:
+					continue
+			var xa := a.x + ab.x * tl
+			var xb := a.x + ab.x * th
+			i0 = maxi(c0.x, int(floor((minf(xa, xb) - r) / CELL)) - 1)
+			i1 = mini(c1.x, int(floor((maxf(xa, xb) + r) / CELL)) + 1)
+		for i in range(i0, i1 + 1):
+			if not inside(i, j):
+				continue
+			var q := Vector2((i + 0.5) * CELL, qy)
+			var t := 0.0
+			if square:
+				# квадрат, протянутый по линии: есть t, при котором |q − p(t)| по обеим осям ≤ r
+				var tl := 0.0
+				var th := 1.0
+				var ok := true
+				for ax in 2:
+					var qa: float = q[ax]
+					var aa: float = a[ax]
+					var da: float = ab[ax]
+					if absf(da) < 1e-6:
+						if absf(qa - aa) > r:
+							ok = false
+					else:
+						var t1 := (qa - r - aa) / da
+						var t2 := (qa + r - aa) / da
+						tl = maxf(tl, minf(t1, t2))
+						th = minf(th, maxf(t1, t2))
+				if not ok or tl > th:
+					continue
+				t = (tl + th) * 0.5
+			else:
+				if l2 > 1e-8:
+					t = clampf((q - a).dot(ab) / l2, 0.0, 1.0)
+				if q.distance_squared_to(a + ab * t) > r2:
+					continue
+			if not is_owned(q):
+				continue
+			var k := j * N + i
+			var kk := kind[k]
+			var y := hq(k)
+			if y < WATER_Y + 0.05 or occ[k] != 0:
+				continue
+			if not flat and not walk_kind(kk):
+				continue
+			if flat and walk_kind(kk) and kk != kd and not over:
+				continue
+			if flat:
+				var pt := a + ab * t
+				var y0 := height_at(pt.x, pt.y)
+				if absf(y - y0) > 1.2:
+					continue                     # обрыв кисть не срезает
+				if kk == kd and absf(y - y0) < 0.01:
+					continue
+			var bi := mini(nb - 1, int(t * len / 0.5))
+			(bk[bi] as Array).append(k if kk != kd else -1 - k)     # отрицательное — клетка не меняется (за неё не платят)
+	var cells := PackedInt32Array()
+	var fresh := PackedByteArray()
+	var ts := PackedFloat32Array()
+	for bi in nb:
+		var tv := float(bi) / maxf(1.0, nb - 1.0)
+		for e: int in bk[bi]:
+			cells.append(e if e >= 0 else -1 - e)
+			fresh.append(1 if e >= 0 else 0)
+			ts.append(tv)
+	return {"cells": cells, "fresh": fresh, "t": ts}
+
+
+## Клетки дороги под кистью ластика (своя земля, не под постройкой), ещё не взятые мазком seen — их уберут при отпускании
+func erase_cells(p: Vector2, r: float, square := false, seen := {}) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var c := cell(p)
+	var rc := int(ceil(r / CELL))
+	var r2 := r * r
+	for j in range(c.y - rc, c.y + rc + 1):
+		for i in range(c.x - rc, c.x + rc + 1):
+			if not inside(i, j):
+				continue
+			var q := cell_center(i, j)
+			if square:
+				if absf(q.x - p.x) > r or absf(q.y - p.y) > r:
+					continue
+			elif q.distance_squared_to(p) > r2:
+				continue
+			var k := j * N + i
+			if seen.has(k) or not walk_kind(kind[k]) or occ[k] != 0 or hq(k) < WATER_Y + 0.05 or not is_owned(q):
+				continue
+			seen[k] = true
+			out.append(k)
+	return out
+
+
+## Покрыть клетки видом kd (дорога по готовому списку line_cells, ластик); высоты не трогаем.
+## Возвращает записи для отмены [клетка, вид, высота]
+func apply_cells(cells: PackedInt32Array, kd: int) -> Array:
+	var out := []
+	for k in cells:
+		var i := k % N
+		var j := k / N
+		var kk := kind[k]
+		out.append([Vector2i(i, j), kk, h[k]])
+		if kk != kd:
+			kind[k] = kd
+			_mark(i, j, false, true)
+		if walk_kind(kd):
+			road_chunks[Vector2i(i / CH, j / CH)] = true
 	return out
 
 
@@ -366,9 +605,11 @@ func undo(changes: Array) -> PackedInt32Array:
 		if occ[k] != 0:
 			continue
 		done.append(n)
+		var old_hq := hq(k)
+		var old_kd := kind[k]
 		kind[k] = ch[1]
 		h[k] = ch[2]
-		_mark(c.x, c.y)
+		_mark(c.x, c.y, hq(k) != old_hq, old_kd != kind[k])
 		if walk_kind(ch[1]):
 			road_chunks[Vector2i(c.x / CH, c.y / CH)] = true
 	return done
@@ -414,10 +655,12 @@ func set_occ(cells: PackedInt32Array, id: int) -> void:
 func flatten_cells(cells: PackedInt32Array, y: float, kd := -1) -> void:
 	for k in cells:
 		if hq(k) != y or (kd >= 0 and kind[k] != kd):
+			var step := hq(k) != y
+			var kch := kd >= 0 and kind[k] != kd
 			h[k] = y
 			if kd >= 0:
 				kind[k] = kd
-			_mark(k % N, k / N)
+			_mark(k % N, k / N, step, kch)
 
 
 ## Земля вокруг постройки плавно подходит к её полу — без ям и ступенек (rc клеток вокруг)
@@ -449,8 +692,9 @@ func blend_ring(cells: PackedInt32Array, y: float, rc := 7) -> void:
 		t = t * t * (3.0 - 2.0 * t)
 		var ny := lerpf(h[k], y, t)
 		if absf(ny - h[k]) > 0.01:
+			var old := hq(k)
 			h[k] = ny
-			_mark(k % N, k / N)
+			_mark(k % N, k / N, hq(k) != old, false)
 
 
 # ---------- маска покрытий для шейдера (плавные края дорог) ----------
@@ -460,7 +704,36 @@ func make_surface() -> Image:
 	img.fill(Color(0, 0, 0, 1))
 	for ch in road_chunks:
 		update_surface(img, ch)
+	mask_lo = Vector2i(1 << 30, 1 << 30)       # маска собрана целиком — обновлять пока нечего
+	mask_hi = Vector2i(-1, -1)
 	return img
+
+
+## Обновить в маске только поменявшийся прямоугольник (mask_lo…mask_hi); false — нечего обновлять
+func update_surface_rect(img: Image) -> bool:
+	if mask_hi.x < 0:
+		return false
+	if img.has_mipmaps():
+		img.clear_mipmaps()
+	var x0 := maxi(mask_lo.x, 0)
+	var y0 := maxi(mask_lo.y, 0)
+	var x1 := mini(mask_hi.x, N / SM - 1)
+	var y1 := mini(mask_hi.y, N / SM - 1)
+	mask_lo = Vector2i(1 << 30, 1 << 30)
+	mask_hi = Vector2i(-1, -1)
+	for j in range(y0, y1 + 1):
+		for i in range(x0, x1 + 1):
+			var k0 := (j * SM) * N + i * SM
+			var c := Color(0, 0, 0, 1)
+			for kd: int in [kind[k0], kind[k0 + 1], kind[k0 + N], kind[k0 + N + 1]]:
+				if kd == Kind.ROAD:
+					c.r += 0.25
+				elif kd == Kind.PLAZA:
+					c.g += 0.25
+				elif kd == Kind.DIRT:
+					c.b += 0.25
+			img.set_pixel(i, j, c)
+	return true
 
 
 func update_surface(img: Image, ch: Vector2i) -> void:

@@ -102,9 +102,47 @@ var brush_over := true                # рисовать поверх други
 var line_from := Vector2.INF
 var stroke := []
 var stroke_cost := 0.0
-var undo_stack := []
+var undo_stack := []                  # мазки дорог {"ch", "cost"} и постройки {"t": "place", "ids", "cost", "glory", "ms", "name", …} (3.6)
 var redo_stack := []
 var painting := false
+const UNDO_PLACE_MS := 30000          # постройку можно отменить с полным возвратом 30 с, пока в ней никто не живёт (3.6)
+# показ мазка до отпускания кнопки (3.1, 3.2): маска RG8 как у покрытий (R — ляжет / уберёт, G — денег не хватит)
+var prev_img: Image
+var prev_tex: ImageTexture
+var _prev_lo := Vector2i(1 << 30, 1 << 30)    # где в маске показа что-то нарисовано (пиксели)
+var _prev_hi := Vector2i(-1, -1)
+var _prev_at := Vector2.INF           # где был курсор, когда показ считали (пересчёт — когда сдвинулся на 0,25 м)
+var _prev_r := 0.0
+var line_plan := {}                   # прямая линия: {"cells", "fresh", "upto", "cost", "len", "kd"} — что покажем, то и ляжет
+var erase_cells := PackedInt32Array() # ластик: клетки дороги, которые уберутся при отпускании
+var _erase_seen := {}
+var _erase_len := 0.0                 # сколько метров ластик прошёл по дороге
+var erase_fences := {}                # ластик: id звеньев заборов, которые уберутся при отпускании → подсветка
+var _stroke_seen := {}                # клетки, уже взятые этим мазком (высоты сглаживаются при отпускании, 3.3)
+var _compute_due := false             # мазок окончен: пересчёт города — в следующем кадре (кадр отпускания лёгкий)
+# заборы мышью, как дорога (дополнения владельца): звенья по линии, калитка, цена заранее
+var fence_drag := false
+var fence_from := Vector2.INF
+var fence_plan: Array = []            # [{pos, yaw, variant, y, err}] — звенья, которые встанут
+var fence_gate := false               # калитка посередине (галочка в панели, G)
+var _fence_ghosts: Array = []         # призраки звеньев (переиспользуются)
+var _fence_at := Vector2.INF
+var _fence_key := ""
+var _wall_key := []                   # настенное украшение: последний поиск места по стене (курсор стоит — не ищем заново)
+var _wall_res := {}
+# постановка постройки (3.4–3.7)
+var color_user := -1                  # цвет фасада, выбранный в панели (−1 — «Авто»)
+var door_arrow: MeshInstance3D        # стрелка у входа призрака: зелёная — мостовая рядом, красная — нет
+var door_ok := false
+var _last_sub := ""
+var snap_pulses := 0                  # сколько раз призрак «прилип» к дороге (мягкая вспышка обводки)
+var _tree_at := Vector2.INF           # 3.7: где стоит призрак и с какого мига (деревья под ним прячутся через 0,2 с)
+var _tree_yaw := 0.0
+var _tree_ms := 0
+var tree_hidden: Array = []           # спрятанные под призраком деревья и кусты (природа, nature)
+# подпись при наведении без инструмента (3.8)
+var _hover_id := -1
+var _hover_ms := 0
 var last_paint := Vector2.INF
 var hover := Vector2.INF
 var place_info := {}
@@ -238,6 +276,7 @@ func _ready() -> void:
 			Showcase.build(self, args)
 		elif mode == "demo" or mode == "menu":
 			_demo_town()
+	city.seg_thin = true                      # готовый город построен: дальше звенья заборов — узкой полосой (тянут мышью)
 	await _step("Леса и луга", 0.35)
 	_nature()
 	_ponds_life()
@@ -248,6 +287,8 @@ func _ready() -> void:
 	land_mat.set_shader_parameter("surf", surf_tex)
 	land_mat.set_shader_parameter("map_size", Land.SIZE)
 	land.dirty.clear()
+	land.dirty_soft.clear()
+	land.dirty_walk.clear()
 	var total := Land.CHN * Land.CHN
 	var built := 0
 	var order := []
@@ -265,6 +306,7 @@ func _ready() -> void:
 	rig = CameraRig.new()
 	add_child(rig)
 	rig.land = land
+	rig.ground_pick = ground_at_mouse         # колёсико приближает к точке под курсором (3.8)
 	var v := str(args.get("view", "192,124,15,42,60")).split(",")
 	rig.set_view(Vector3(float(v[0]), Land.BASE_Y, float(v[1])), float(v[2]), float(v[3]), float(v[4]))
 	_make_markers()
@@ -1290,22 +1332,37 @@ func _build_chunk(ch: Vector2i) -> void:
 	mi.mesh = land.chunk_mesh(ch.x, ch.y)
 
 
-func _rebuild_land(limit := 6) -> void:
-	var done := []
-	for ch in land.dirty.keys():
-		if done.size() >= limit:
-			break
-		done.append(ch)
-	for ch in done:
-		land.dirty.erase(ch)
-		_build_chunk(ch)
-		if surf_img:
-			land.update_surface(surf_img, ch)
-	if surf_tex and not done.is_empty():
+## Земля поменялась: маска покрытий — сразу и только поменявшийся прямоугольник; сетка кусков — по времени (не дольше
+## ~8 мс за кадр, хотя бы один кусок). Пока ведут кисть (3.3): сетка — только где поменялись видимые уступы, не больше
+## куска за кадр; куски, где поменялось одно покрытие, и сетка ходьбы — когда мазок кончен
+func _rebuild_land(limit := 6, busy := false) -> void:
+	var stroke_on := painting and is_road_tool(tool)
+	if surf_img and surf_tex and land.update_surface_rect(surf_img):
 		surf_img.generate_mipmaps()
 		surf_tex.update(surf_img)
-	if people and people.land and not done.is_empty():
-		people.refresh(done)
+	if not stroke_on and not land.dirty_soft.is_empty():
+		for ch in land.dirty_soft:
+			land.dirty[ch] = true
+		land.dirty_soft.clear()
+	if busy:
+		return                                # кадр уже занят пересчётом города или окном — сетка подождёт
+	if not land.dirty.is_empty():
+		var t0 := Time.get_ticks_usec()
+		var n := 0
+		for ch in land.dirty.keys():
+			if n >= (1 if stroke_on else limit) or (n > 0 and Time.get_ticks_usec() - t0 > 8000):
+				break
+			land.dirty.erase(ch)
+			_build_chunk(ch)
+			n += 1
+	if people and people.land and not stroke_on and not land.dirty_walk.is_empty():
+		var walk := []
+		for ch in land.dirty_walk.keys():
+			walk.append(ch)
+			land.dirty_walk.erase(ch)
+			if walk.size() >= 3:
+				break                             # сетка ходьбы — по 3 куска за кадр
+		people.refresh(walk)
 
 
 # ---------- постройки: картинка ----------
@@ -1396,6 +1453,8 @@ func _on_removed(b: Dictionary) -> void:
 func _on_house_changed(b: Dictionary, up: bool) -> void:
 	# новую станцию покажет ролик «Новый ранг» — до него стоит старая
 	var held: bool = up and b["type"] == "center" and rank_cine != null and rank_cine.holds_station()
+	if up:
+		_reanchor_decor(b)                    # украшения на стенах — на те же стены нового облика, мимо окон
 	if not held:
 		_show(b)
 		if up:
@@ -1730,14 +1789,21 @@ func _process(dt: float) -> void:
 	if not ready_done:
 		return
 	frame += 1
-	if _hud_due:
+	# тяжёлое — по одному за кадр (3.3: после мазка кадры не дольше ~40 мс): пересчёт города, окно, люди у построек;
+	# в такой кадр сетка земли не перестраивается (маска покрытий — всегда)
+	var heavy := true
+	if _compute_due:
+		_after_stroke()                       # мазок окончен в прошлом кадре: пересчёт города (окно — кадром позже)
+	elif _hud_due:
 		_hud_due = false
 		hud.refresh()
-	if _actors_due:
+	elif _actors_due:
 		_actors_due = false
 		_sync_all_actors()
+	else:
+		heavy = false
 	_minimized_pause()
-	_rebuild_land()
+	_rebuild_land(6, heavy)
 	land.save_warm()                          # отличия земли для сохранения — заранее, понемногу
 	_swim(dt)
 	var sdt := dt * speed
@@ -1828,8 +1894,8 @@ func _input(e: InputEvent) -> void:
 		# правая кнопка: тянули карту — это не щелчок (он закрывает свиток и окна)
 		if _rmb_armed and e is InputEventMouseMotion:
 			_rmb_moved = maxf(_rmb_moved, _mouse_pos.distance_to(_rmb_down))
-		# мазок дороги начат на карте, а кнопку отпустили над окном: окно отпускание себе не возьмёт — мазок кончаем здесь
-		if painting and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
+		# мазок дороги (или забор) начат на карте, а кнопку отпустили над окном: окно отпускание себе не возьмёт — кончаем здесь
+		if (painting or fence_drag) and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
 			_release()
 
 
@@ -1987,10 +2053,25 @@ func pick_building() -> Dictionary:
 
 func set_tool(t: String) -> void:
 	if painting:
-		# инструмент сменили посреди мазка: уже проложенное и оплаченное — в отмену (Ctrl+Z вернёт деньги),
-		# подпись у курсора гаснет; недотянутую прямую линию не рисуем — игрок отменял
-		line_from = Vector2.INF
-		_release()
+		if tool == "erase":
+			cancel_stroke()                       # ластик убирает только при отпускании: сменили инструмент — ничего не убрано
+		else:
+			# инструмент сменили посреди мазка: уже проложенное и оплаченное — в отмену (Ctrl+Z вернёт деньги),
+			# подпись у курсора гаснет; недотянутую прямую линию не рисуем — игрок отменял
+			line_from = Vector2.INF
+			line_plan = {}
+			_release()
+	if fence_drag:
+		_fence_cancel()                           # забор не дотянули — не ставим
+	_prev_clear()
+	_erase_marks_clear()
+	_ghost_trees(false)
+	_fence_ghosts_hide()
+	if door_arrow:
+		door_arrow.visible = false
+	_last_sub = ""
+	if hud:
+		hud.cursor_error("")
 	if floor_drag:
 		_floor_end()                          # мазок «Этажа» прервали — его итог всё равно в колокольчик
 	floor_hover = -1
@@ -2017,6 +2098,7 @@ func set_tool(t: String) -> void:
 		if color_lock:
 			place_color = -1              # и цвет фасада — свой
 		color_lock = false
+		color_user = -1                   # цвет из панели — снова «Авто»
 	if t != "settle":
 		settle_fam = {}
 		_clear_settle_marks()
@@ -2038,6 +2120,7 @@ func set_tool(t: String) -> void:
 	if hud:
 		hud.cursor_note("")                   # инструмент сменили: «Прямая» / «В счёт …» _update_tool посчитает заново
 		hud.on_tool(t)
+		_tool_tip(t)
 		if Cover.kind_of(t) != "":
 			hud.cover_tip()
 		elif t == "floor":
@@ -2127,8 +2210,10 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	var d: Dictionary = Defs.B[type]
 	if d.get("wall", false):
 		return _wall_place(type, p)
-	if d["kind"] == "decor":
+	if d["kind"] == "decor" and not d.get("seg", false):
 		variant = 0                       # облик украшения задаёт его тип (карточка), а не фасад
+	elif d.get("seg", false) and variant < 0:
+		variant = int(moving.get("variant", 0)) if not moving.is_empty() else 0    # звено забора; 1 — калитка
 	elif variant < 0:
 		variant = next_variant
 	if color < 0:
@@ -2365,17 +2450,23 @@ func _road_free_near(p: Vector2, r: float, own: Dictionary) -> bool:
 	return false
 
 
-## Украшение на стену: стена дома, в которую смотрит курсор (луч по деталям), иначе — ближайшая к точке земли
+## Украшение на стену. Курсор игрока над стеной постройки (луч по деталям) — как в Town to City: прилипает там, где курсор,
+## по длине и высоте, на любом этаже, не закрывая окна и двери (WallDecor). Курсор на земле у стены — на ближайшую стену
+## на обычной высоте (тоже мимо окон). Готовый город меню (p не курсор) — прежним способом: он не меняется
 func _wall_place(type: String, p: Vector2, maxd := 1.8) -> Dictionary:
 	var best := {}
 	var bd := maxd
 	var only := -1                        # луч попал в дом (или в украшение на его стене) — вешаем на него
 	var hl := Vector3.ZERO                # точка попадания в осях этого дома
-	var hb := pick_building() if p == hover and p != Vector2.INF else {}     # только для курсора (не для готового города)
+	var cur := p == hover and p != Vector2.INF
+	var hb := pick_building() if cur else {}     # только для курсора (не для готового города)
 	var hp: Variant = _pick_hit.get("p") if int(_pick_hit.get("id", -1)) == int(hb.get("id", -2)) else null
 	if hb.has("host"):
 		hb = city.buildings.get(int(hb["host"]), {})
 	if not hb.is_empty() and hp != null and not (city.def(hb)["kind"] in ["decor", "farm"]):
+		var ws := _wall_solve(type, hb, hp as Vector3, _mouse_dir(), _mouse_origin())
+		if not ws.is_empty():
+			return _balcony_ok(type, ws)
 		only = int(hb["id"])
 		hl = city.xf(hb).affine_inverse() * (hp as Vector3)
 		bd = maxf(maxd, 3.0)
@@ -2432,11 +2523,70 @@ func _wall_place(type: String, p: Vector2, maxd := 1.8) -> Dictionary:
 	if best.is_empty():
 		var g := land.height_at(p.x, p.y)
 		return {"pos": p, "yaw": tool_yaw, "err": "Наведите на стену дома", "cells": PackedInt32Array(), "y": g + 2.0, "variant": 0, "color": 0, "tier": 0}
-	if type == "balcony" and int((city.buildings.get(int(best.get("host", -1)), {}) as Dictionary).get("tier", 1)) < 2:
-		best["err"] = "Балкон вешается на дом в 2–3 этажа"   # на втором этаже: у одноэтажного дома его некуда повесить
-	elif city.money < float(Defs.B[type]["cost"]):
+	if cur:
+		# курсор на земле у стены: на эту стену на обычной высоте — но мимо окон, дверей и других украшений
+		var host: Dictionary = city.buildings[int(best["host"])]
+		var r := WallDecor.rect_of(type)
+		var at := Vector3((best["pos"] as Vector2).x, float(best["y"]), (best["pos"] as Vector2).y)
+		var nb := Basis(Vector3.UP, float(best["yaw"]))
+		var ws := _wall_solve(type, host, at + nb * Vector3(r.get_center().x, r.get_center().y, 0.0), -(nb.z))
+		if not ws.is_empty():
+			return _balcony_ok(type, ws)
+	if city.money < float(Defs.B[type]["cost"]):
 		best["err"] = "Не хватает денариев"
-	return best
+	return _balcony_ok(type, best)
+
+
+## Балкон вешается только на дом в 2–3 этажа (на втором этаже: у одноэтажного дома его некуда повесить)
+func _balcony_ok(type: String, r: Dictionary) -> Dictionary:
+	if type == "balcony" and String(r.get("err", "")) in ["", "Не хватает денариев"] 			and int((city.buildings.get(int(r.get("host", -1)), {}) as Dictionary).get("tier", 1)) < 2:
+		r["err"] = "Балкон вешается на дом в 2–3 этажа"
+	return r
+
+
+## Откуда луч из камеры через курсор, мировые оси
+func _mouse_origin() -> Vector3:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return Vector3.INF
+	var mp := _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
+	return cam.project_ray_origin(mp)
+
+
+## Луч из камеры через курсор (куда смотрит), мировые оси
+func _mouse_dir() -> Vector3:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return Vector3.ZERO
+	var mp := _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
+	return cam.project_ray_normal(mp)
+
+
+## Украшение type на стену постройки host там, куда попал курсор (hit — мировая точка, dir — луч): {} — там не стена
+func _wall_solve(type: String, host: Dictionary, hit: Vector3, dir: Vector3, origin := Vector3.INF) -> Dictionary:
+	var hx := city.xf(host)
+	var inv := hx.affine_inverse()
+	var lo := inv * origin if origin.is_finite() else Vector3.INF
+	# курсор стоит (или сдвинулся меньше 2 см) — тот же ответ без нового поиска места по стене
+	var key := [int(host["id"]), int(host["tier"]), int(host.get("variant", 0)), int(host.get("color", 0)), type,
+		(inv * hit).snapped(Vector3.ONE * 0.02), (inv.basis * dir).snapped(Vector3.ONE * 0.01),
+		lo.snapped(Vector3.ONE * 0.02) if lo.is_finite() else lo, city.buildings.size(), city.next_id]
+	var s: Dictionary
+	if key == _wall_key:
+		s = _wall_res
+	else:
+		s = WallDecor.solve(city.blueprint(host), inv * hit, inv.basis * dir, type, WallDecor.hosted(city, host), lo)
+		_wall_key = key
+		_wall_res = s
+	if s.is_empty():
+		return {}
+	var w := hx * (s["p"] as Vector3)
+	var err: String = s["err"]
+	var chk := city.check_place(type, Vector2(w.x, w.z), 0.0)
+	if chk["err"] != "":
+		err = chk["err"]                       # закрыто, не хватает денариев, предел уровня
+	return {"pos": Vector2(w.x, w.z), "yaw": float(host["yaw"]) + float(s["yaw"]), "err": err, "cells": PackedInt32Array(), "y": w.y,
+		"variant": 0, "color": int(host.get("color", 0)), "tier": 0, "host": host["id"]}
 
 
 ## Ближайшая дорога: точка на её кромке (сюда встанет фасад) и направление n от дома к дороге.
@@ -2795,6 +2945,15 @@ func _update_tool() -> void:
 		cover.preview_off()                   # подпись у курсора — только когда стройка над землёй
 		if ghost:
 			ghost.visible = false
+		_fence_ghosts_hide()
+		_ghost_trees(false)
+		if door_arrow:
+			door_arrow.visible = false
+		if hud:
+			hud.cursor_error("")
+		if tool == "erase" and not painting:
+			_prev_clear()                         # ластик ушёл с земли — красной подсветки нет
+			_erase_marks_clear()
 		if tool in ["bulldoze", "copy", "move", "settle"]:
 			# постройку ловит луч — даже если за ней небо, а не земля
 			if over_ui:
@@ -2804,7 +2963,12 @@ func _update_tool() -> void:
 			else:
 				_hover_any(hover)
 		if painting and hud:
-			hud.stroke_live(stroke_cost, tool, _paint_broke)
+			if brush_line and not line_plan.is_empty():
+				_line_label()
+			elif tool == "erase":
+				_erase_label()
+			else:
+				hud.stroke_live(stroke_cost, tool, _paint_broke)
 		return
 	if is_road_tool(tool):
 		var y := land.height_at(hover.x, hover.y)
@@ -2823,13 +2987,19 @@ func _update_tool() -> void:
 		(brush_ring.material_override as StandardMaterial3D).albedo_color = Color(bc, 0.9 if tool == "erase" else 0.85)
 		(brush_disc.material_override as StandardMaterial3D).albedo_color = Color(bc, 0.14 if tool == "erase" else 0.1)
 		(brush_box.material_override as StandardMaterial3D).albedo_color = Color(bc, 0.35)
-		if painting and not brush_line:
-			_paint_to(hover)
+		if painting and brush_line and line_from != Vector2.INF:
+			_line_update()                        # прямая видна с нажатия: где ляжет и почём (3.1)
+		elif painting:
+			_paint_to(hover)                      # свободно: дорога — сразу под кистью, ластик — красным, уберёт при отпускании
+		elif tool == "erase":
+			_erase_hover()                        # ластик над дорогой — что он уберёт, красным (3.2)
 		if painting and hud:
-			var shown := stroke_cost
-			if brush_line and line_from != Vector2.INF:
-				shown = line_from.distance_to(hover) * hud.road_price_m(tool)   # прямая ляжет при отпускании — примерная цена
-			hud.stroke_live(shown, tool, _paint_broke)     # «этот мазок: N ден.» у курсора, казна — сразу
+			if brush_line and not line_plan.is_empty():
+				_line_label()
+			elif tool == "erase":
+				_erase_label()
+			else:
+				hud.stroke_live(stroke_cost, tool, _paint_broke)     # «этот мазок: N ден.» у курсора, казна — сразу
 		return
 	if tool in ["bulldoze", "copy", "move"]:
 		_hover_any(hover)
@@ -2842,6 +3012,10 @@ func _update_tool() -> void:
 		return
 	if not Defs.B.has(tool):
 		return
+	if Defs.B[tool].get("seg", false) and moving.is_empty():
+		place_info = {}                    # у забора своего призрака-места нет: Z/X крутят его от tool_yaw, а не от прошлого дома
+		_fence_update()                    # забор тянут мышью, как дорогу (перенос звена — как любой постройки)
+		return
 	var pl := placement(tool, hover)
 	color_lock = true                      # цвет призрака выбран — до постройки не меняется
 	pl["_t"] = tool                        # для чего посчитано (статус у курсора берёт место отсюда)
@@ -2853,16 +3027,22 @@ func _update_tool() -> void:
 		ghost = Parts.ghost(Catalog.make(tool, pl["tier"], pl["variant"], pl["color"]), "place")
 		add_child(ghost)
 		ghost_key = key
+		if hud:
+			hud.thumb_update()             # живая картинка в панели — тот же облик и цвет (3.4)
 	ghost.visible = true
 	var ok: bool = pl["err"] == ""
 	_ghost_look(ok)
-	var y := float(pl["y"]) if ok else land.height_at(pl["pos"].x, pl["pos"].y)
+	var y := float(pl["y"]) if (ok or pl.has("host")) else land.height_at(pl["pos"].x, pl["pos"].y)
 	ghost.transform = Transform3D(Basis(Vector3.UP, pl["yaw"]), Vector3(pl["pos"].x, y + 0.02, pl["pos"].y))
+	_snap_pulse(String(pl.get("sub", "")))
+	_door_arrow(pl)
+	_ghost_trees(ok, pl)
 	# охват — без кругов: синие дома уже с такой же, зелёные получат эту (решение владельца Д3)
 	if Cover.kind_of(tool) != "":
 		cover.preview(tool, pl["pos"])
 	if hud:
 		hud.tool_status(pl["err"])
+		hud.cursor_error(_short_err(pl["err"]), rot_hint_on())   # что не так — и у курсора, одной красной строкой (3.5)
 
 
 const GHOST_OK := Color(0.45, 1.0, 0.45, 0.07)     # годное место: настоящие цвета постройки, лишь лёгкая зелень
@@ -2890,17 +3070,367 @@ func _ghost_frozen() -> void:
 	var v := int(pl["variant"])
 	if Defs.B[tool]["kind"] != "decor" and moving.is_empty():
 		v = next_variant
-	var key := "%s:%d:%d:%d" % [tool, pl["tier"], v, pl["color"]]
+	var c := int(pl["color"])
+	if color_user >= 0 and Defs.B[tool]["kind"] != "decor" and moving.is_empty():
+		c = color_user                        # цвет выбрали в панели — призрак сразу этого цвета (3.4)
+	var key := "%s:%d:%d:%d" % [tool, pl["tier"], v, c]
 	if key != ghost_key:
 		var xf := ghost.transform
 		ghost.queue_free()
-		ghost = Parts.ghost(Catalog.make(tool, pl["tier"], v, pl["color"]), "place")
+		ghost = Parts.ghost(Catalog.make(tool, pl["tier"], v, c), "place")
 		add_child(ghost)
 		ghost.transform = xf
 		ghost_key = key
 		pl["variant"] = v
+		pl["color"] = c
 		_ghost_look(pl["err"] == "")
+		if hud:
+			hud.thumb_update()
 	ghost.visible = true
+	if hud:
+		hud.cursor_error("")
+
+
+## Новое у инструмента — советник объясняет один раз на установку (флаг в файле настроек): заборы мышью,
+## украшения на стенах
+func _tool_tip(t: String) -> void:
+	if hud == null or not Defs.B.has(t) or mode == "demo" or not hud._tip_free():
+		return
+	var d: Dictionary = Defs.B[t]
+	var key := ""
+	var title := ""
+	var text := ""
+	if d.get("seg", false):
+		key = "tip_fence"
+		title = "Заборы тянут мышью"
+		text = "Нажмите в начале забора и ведите мышь, как дорогу: звенья встанут по линии, у курсора — сколько звеньев и почём. Отпустите — забор готов. Начните у конца другого забора — угол сойдётся без щели.\n\nКалитка посередине — галочка в панели (или G). Убрать звено — ластиком дорог (уберёт при отпускании) или сносом."
+	elif d.get("wall", false):
+		key = "tip_wall"
+		title = "Украшения на стенах"
+		text = "Наведите на стену дома — украшение прилипнет там, где курсор: на любой высоте, на любом этаже. Окна и двери оно не закроет — встанет рядом.\n\nНадстроите этаж или перенесёте дом — украшения останутся на своей стене."
+	if key == "" or bool(settings.get(key, false)):
+		return
+	settings[key] = true
+	hud._store_settings()
+	hud.advisor(title, text)
+
+
+## Ошибка у курсора — коротко: без пояснения в скобках
+func _short_err(err: String) -> String:
+	var i := err.find(" (")
+	return err.substr(0, i) if i > 0 else err
+
+
+## Стрелка у входа призрака (3.5): у дома, лавки, склада, писцов — зелёная, если у входа есть мостовая (до 1,7 м,
+## как проверка «Нужна дорога у входа»), иначе красная
+func _door_arrow(pl: Dictionary) -> void:
+	var t: String = tool
+	if not (String(Defs.B[t]["kind"]) in ["house", "shop", "rp", "store"]) or pl.has("host") or not pave_build:
+		if door_arrow:
+			door_arrow.visible = false
+		return
+	if door_arrow == null:
+		_make_door_arrow()
+	var bp := Catalog.make(t, int(pl["tier"]), int(pl["variant"]), int(pl["color"]))
+	var yaw := float(pl["yaw"])
+	var dp: Vector2 = (pl["pos"] as Vector2) + City.axis(yaw) * bp.door.x + City.facing(yaw) * bp.door.z
+	var own := {}
+	for k in (pl["cells"] as PackedInt32Array):
+		own[k] = true
+	door_ok = _road_free_near(dp, 1.7, own)
+	var at := dp - City.facing(yaw) * 0.3
+	door_arrow.transform = Transform3D(Basis(Vector3.UP, yaw), Vector3(at.x, land.height_at(at.x, at.y) + 0.07, at.y))
+	(door_arrow.material_override as StandardMaterial3D).albedo_color = Color(0.4, 1.0, 0.42, 0.9) if door_ok else Color(1.0, 0.3, 0.22, 0.9)
+	door_arrow.visible = true
+
+
+## Плоская стрелка на земле, остриём от двери (+Z постройки)
+func _make_door_arrow() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var p := [Vector3(-0.08, 0, 0), Vector3(0.08, 0, 0), Vector3(0.08, 0, 0.38), Vector3(-0.08, 0, 0.38),
+		Vector3(-0.24, 0, 0.36), Vector3(0.24, 0, 0.36), Vector3(0, 0, 0.72)]
+	for i: int in [0, 2, 1, 0, 3, 2, 4, 6, 5]:
+		st.set_normal(Vector3.UP)
+		st.add_vertex(p[i])
+	door_arrow = MeshInstance3D.new()
+	door_arrow.mesh = st.commit()
+	var m := StandardMaterial3D.new()
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.render_priority = 2
+	door_arrow.material_override = m
+	door_arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	door_arrow.visible = false
+	add_child(door_arrow)
+
+
+## Призрак прилип к дороге — одна мягкая вспышка обводки, без звука (3.5)
+func _snap_pulse(sub: String) -> void:
+	if sub == "road" and _last_sub != "road" and _ghost_line != null and place_info.get("err", "x") == "":
+		snap_pulses += 1
+		var m := _ghost_line
+		var tw := create_tween()
+		tw.tween_method(func(w: float): m.set_shader_parameter("width", w), 0.11, 0.035, 0.45).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	_last_sub = sub
+
+
+## Деревья сквозь призрак (3.7): годный призрак стоит на месте 0,2 с — деревья и кусты в его следе прячутся;
+## сдвинули, убрали инструмент — снова на месте. В сохранение это не попадает (природа не сохраняется)
+func _ghost_trees(ok: bool, pl := {}) -> void:
+	if not ok or pl.is_empty() or (pl.get("cells", PackedInt32Array()) as PackedInt32Array).is_empty():
+		_trees_restore()
+		_tree_at = Vector2.INF
+		return
+	var at: Vector2 = pl["pos"]
+	if _tree_at == Vector2.INF or at.distance_to(_tree_at) > 0.05 or absf(angle_difference(float(pl["yaw"]), _tree_yaw)) > 0.01:
+		_trees_restore()
+		_tree_at = at
+		_tree_yaw = float(pl["yaw"])
+		_tree_ms = Time.get_ticks_msec()
+		return
+	if _tree_ms < 0 or Time.get_ticks_msec() - _tree_ms < 200:
+		return
+	_tree_ms = -1
+	var cellset := {}
+	for k in (pl["cells"] as PackedInt32Array):
+		cellset[k] = true
+	var r := 14.0
+	for kz in range(int((at.y - r) / 2.0) - 1, int((at.y + r) / 2.0) + 2):
+		for kx in range(int((at.x - r) / 2.0) - 1, int((at.x + r) / 2.0) + 2):
+			for it in nature.get(Vector2i(kx, kz), []):
+				var cc := land.cell(it["p"])
+				var inside := false
+				for dj in range(-2, 3):
+					for di in range(-2, 3):
+						if cellset.has(land.idx(clampi(cc.x + di, 0, Land.N - 1), clampi(cc.y + dj, 0, Land.N - 1))):
+							inside = true
+				if inside:
+					parts.set_hidden(it["h"], true)
+					tree_hidden.append(it)
+
+
+func _trees_restore() -> void:
+	for it in tree_hidden:
+		var key := Vector2i(int((it["p"] as Vector2).x / 2.0), int((it["p"] as Vector2).y / 2.0))
+		for o in nature.get(key, []):
+			if is_same(o, it):
+				parts.set_hidden(it["h"], false, it["xf"])    # постройку туда не поставили — дерево на месте
+				break
+	tree_hidden = []
+
+
+## Первые 3 постановки за установку — у курсора значок поворота «Z / X» (3.5); счётчик — в файле настроек
+func _rot_hint_count() -> void:
+	var n := int(settings.get("rot_hint", 0))
+	if n < 3:
+		settings["rot_hint"] = n + 1
+		if hud:
+			hud._store_settings()
+
+
+func rot_hint_on() -> bool:
+	return int(settings.get("rot_hint", 0)) < 3 and Defs.B.has(tool) and moving.is_empty() \
+		and not Defs.B[tool].get("wall", false) and not Defs.B[tool].get("seg", false)
+
+
+# ---------- заборы мышью, как дорогу (дополнения владельца) ----------
+
+## Начало забора у конца уже стоящего звена (до 0,6 м) — встаёт ровно к нему: угол без щели
+func _fence_snap(p: Vector2) -> Vector2:
+	var best := p
+	var bd := 0.6
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if not city.def(b).get("seg", false) or (b["pos"] as Vector2).distance_squared_to(p) > 9.0:
+			continue
+		var ax := City.axis(float(b["yaw"])) * Defs.FENCE_PITCH * 0.5
+		for e: Vector2 in [(b["pos"] as Vector2) + ax, (b["pos"] as Vector2) - ax]:
+			if e.distance_to(p) < bd:
+				bd = e.distance_to(p)
+				best = e
+	return best
+
+
+## Звенья забора tool: тянут от a до b — по линии через FENCE_PITCH (поворот — через 5°); без мыши — одно звено
+## от курсора (у конца стоящего звена — от его конца), поворот Z/X: щелчок ставит ровно показанное. Калитка —
+## посередине. Каждое звено — своя проверка места; денег не хватает — дальние звенья красные
+func fence_plan_of(type: String, a: Vector2, b: Vector2, gate: bool) -> Array:
+	var d: Dictionary = Defs.B[type]
+	var pitch := Defs.FENCE_PITCH
+	var yaw := tool_yaw
+	var n := 1
+	var start := a
+	if b != Vector2.INF:
+		var v := b - a
+		if v.length() > 0.3:
+			yaw = snappedf(atan2(-v.y, v.x), deg_to_rad(5.0))
+		n = clampi(roundi(v.length() / pitch), 1, 80)
+	var dir := City.axis(yaw)
+	var gi := n / 2 if gate and d.get("gate", false) else -1
+	var out := []
+	var cost := 0.0
+	var price := float(d["cost"])
+	for i in n:
+		var c := start + dir * pitch * (i + 0.5)
+		var v := 1 if i == gi else 0
+		var chk := city.check_place(type, c, yaw, v, 0)
+		var err: String = chk["err"]
+		if err == "":
+			for k in (chk["cells"] as PackedInt32Array):
+				if Land.walk_kind(land.base_kind[k]):
+					err = "По большой дороге ездят повозки — здесь не строят"
+					break
+		if err == "":
+			for s: Dictionary in out:
+				if s["err"] == "" and (s["pos"] as Vector2).distance_to(c) < pitch * 0.6:
+					err = "Место занято"
+		if err == "":
+			if cost + price > city.money + 0.001:
+				err = "Не хватает денариев"
+			else:
+				cost += price
+		out.append({"pos": c, "yaw": yaw, "variant": v, "y": float(chk["y"]), "err": err})
+	return out
+
+
+func _fence_update() -> void:
+	var key := "%s|%s|%d|%d|%d" % [tool, str(fence_from), int(fence_gate), roundi(city.money), roundi(rad_to_deg(tool_yaw))]
+	if _fence_at == Vector2.INF or hover.distance_to(_fence_at) > 0.1 or key != _fence_key:
+		_fence_at = hover
+		_fence_key = key
+		# до нажатия — то же звено, что поставит щелчок: от курсора, у конца стоящего звена — от его конца (к курсору)
+		var a := fence_from if fence_drag else _fence_snap(hover)
+		fence_plan = fence_plan_of(tool, a, hover if fence_drag or a != hover else Vector2.INF, fence_gate)
+	_fence_show()
+	var ok := 0
+	var cost := 0.0
+	var err := ""
+	for s: Dictionary in fence_plan:
+		if s["err"] == "":
+			ok += 1
+			cost += float(Defs.B[tool]["cost"])
+		elif err == "":
+			err = s["err"]
+	if fence_drag and hud:
+		hud.cursor_error("")                # пока тянут, что не так — строкой под ценой (а не прежней ошибкой у курсора)
+		var warn := ""
+		if err == "Не хватает денариев":
+			warn = "Денег хватит на %d — дальше красным" % ok
+		elif err != "":
+			warn = "Красные не встанут: " + _short_err(err).to_lower()
+		hud.stroke_text("%s · %d %s · %s ден." % [Defs.B[tool]["name"], ok, _plural(ok, "звено", "звена", "звеньев"), hud.price_txt(cost)], warn)
+	elif hud:
+		hud.cursor_error(_short_err(err))
+	if hud:
+		hud.tool_status(err)
+
+
+static func _plural(n: int, one: String, few: String, many: String) -> String:
+	var m := n % 100
+	if m >= 11 and m <= 14:
+		return many
+	match n % 10:
+		1: return one
+		2, 3, 4: return few
+	return many
+
+
+func _fence_show() -> void:
+	for i in fence_plan.size():
+		var s: Dictionary = fence_plan[i]
+		var gk := "%s:%d" % [tool, int(s["variant"])]
+		var g: Node3D = _fence_ghosts[i] if i < _fence_ghosts.size() else null
+		if g == null or String(g.get_meta("key", "")) != gk:
+			if g:
+				g.queue_free()
+			g = Parts.ghost(Catalog.make(tool, 0, int(s["variant"]), 0), "place")
+			g.set_meta("key", gk)
+			add_child(g)
+			if i < _fence_ghosts.size():
+				_fence_ghosts[i] = g
+			else:
+				_fence_ghosts.append(g)
+		g.visible = true
+		var p: Vector2 = s["pos"]
+		var y := float(s["y"]) if s["err"] == "" else land.height_at(p.x, p.y)
+		g.transform = Transform3D(Basis(Vector3.UP, float(s["yaw"])), Vector3(p.x, y + 0.02, p.y))
+		Parts.ghost_color(g, GHOST_OK if s["err"] == "" else GHOST_BAD)
+	for i in range(fence_plan.size(), _fence_ghosts.size()):
+		(_fence_ghosts[i] as Node3D).visible = false
+
+
+func _fence_ghosts_hide() -> void:
+	for g in _fence_ghosts:
+		(g as Node3D).visible = false
+
+
+## Esc, правая кнопка, другой инструмент посреди забора — ничего не ставим
+func _fence_cancel() -> void:
+	fence_drag = false
+	fence_from = Vector2.INF
+	_fence_at = Vector2.INF
+	if hud:
+		hud.stroke_live(0.0, tool, false, true)
+
+
+## Отпустили кнопку: встают все годные звенья (сколько хватило денег), одна запись в отмену — весь забор
+func _fence_commit() -> void:
+	fence_drag = false
+	_fence_at = Vector2.INF
+	fence_from = Vector2.INF
+	if hud:
+		hud.stroke_live(0.0, tool, false, true)
+	var ids := []
+	var cost := 0.0
+	var d: Dictionary = Defs.B[tool]
+	var snap := _undo_snap()               # до звеньев и до проверки просьб ниже
+	city.bulk = true
+	for s: Dictionary in fence_plan:
+		if s["err"] != "" or city.money < float(d["cost"]):
+			continue
+		var b := city.place(tool, s["pos"], float(s["yaw"]), int(s["variant"]), int(d.get("color", 0)))
+		ids.append(b["id"])
+		cost += float(d["cost"])
+	city.bulk = false
+	if ids.is_empty():
+		sound.ui("error")
+		return
+	city.compute()
+	city._check_goals()
+	city.changed.emit()
+	_push_place(ids, cost, "%s · %d %s" % [d["name"], ids.size(), _plural(ids.size(), "звено", "звена", "звеньев")], snap)
+	_fence_at = Vector2.INF
+	sound.ui("place")
+
+
+## Надстроили этаж: украшения на стенах дома встают на те же стены заново — мимо окон нового облика
+func _reanchor_decor(b: Dictionary) -> void:
+	for id in city.buildings.keys():
+		var o: Dictionary = city.buildings.get(id, {})
+		if not o.is_empty() and int(o.get("host", -1)) == int(b["id"]) and WallDecor.reanchor(city, b, o):
+			_show(o)
+
+
+## Подпись при наведении без инструмента (3.8): «Дом плебеев · Ливии · 92% · этаж 2/3», «Пекарня · 3/4 работника»
+func hover_text(b: Dictionary) -> String:
+	var d := city.def(b)
+	var nm := String(d["name"])
+	match String(d["kind"]):
+		"house":
+			var fams: Array = b.get("families", [])
+			var t := nm + (" · " + String(fams[0]["name"]) if not fams.is_empty() else " · пустой")
+			if int(b.get("pop", 0)) > 0:
+				t += " · %d%%" % clampi(int(b.get("happy", 0)), 0, 100)
+			t += " · этаж %d/%d" % [int(b["tier"]), Defs.floors_max(String(d["cls"]))]
+			return t
+		"shop", "rp", "farm", "store":
+			var mx := city.job_max(b)
+			if mx > 0:
+				var w := roundi(float(b.get("staff", 1.0)) * city.hired_of(b))
+				return "%s · %d/%d %s" % [nm, w, mx, _plural(mx, "работник", "работника", "работников")]
+	return nm
 
 
 ## «Копировать»: в руках такая же постройка — тип, облик (фасад), цвет фасада и поворот (кнопка в карточке,
@@ -2918,6 +3448,8 @@ func copy_building(b: Dictionary) -> bool:
 	place_color = int(b["color"])
 	color_lock = true
 	copy_color = true                         # цвет копии держится и для следующих (пока не взяли другое)
+	if city.def(b)["kind"] != "decor":
+		color_user = int(b["color"])          # в ряду цветов панели — цвет копии
 	tool_yaw = float(b["yaw"])                # поворот: у украшений — как был; у домов — там, где нет дороги рядом
 	free_yaw = tool_yaw
 	yaw_set = true
@@ -2934,6 +3466,21 @@ func end_copy() -> void:
 	place_color = -1
 	color_lock = false
 	copy_color = false
+	color_user = -1
+
+
+## Цвет фасада будущей постройки (ряд цветов в панели, Shift+C; 3.4): −1 — «Авто» (не как у соседей), иначе — цвет
+## палитры; держится, пока в руках эта постройка
+func set_color(c: int) -> void:
+	color_user = clampi(c, -1, Defs.PALETTE.size() - 1)
+	if color_user >= 0:
+		place_color = color_user
+		color_lock = true
+	else:
+		place_color = -1
+		color_lock = false
+	if hud:
+		hud.color_restyle()
 
 
 ## Тихий статус у курсора (четвёртая строка подписи): «Прямая» — дорога ляжет прямой при отпускании;
@@ -2943,6 +3490,17 @@ func _tool_note(over_ui: bool) -> void:
 		return
 	var txt := ""
 	var col := Color("fff4dc")
+	if tool == "" and not over_ui and mode != "menu" and not (rig and rig.cine) and hud.root.visible:
+		# без инструмента: постройка под курсором 0,4 с — что это и как она (3.8)
+		var b := pick_building()
+		var id := int(b.get("id", -1))
+		if id != _hover_id:
+			_hover_id = id
+			_hover_ms = Time.get_ticks_msec()
+		elif id >= 0 and Time.get_ticks_msec() - _hover_ms >= 400:
+			txt = hover_text(b)
+	elif tool != "":
+		_hover_id = -1
 	if is_road_tool(tool) and brush_line and hover != Vector2.INF and not over_ui:
 		txt = "Прямая" if line_from == Vector2.INF else "Прямая · отпустите в конце"
 	elif Defs.B.has(tool) and stories != null and hover != Vector2.INF and not over_ui and String(place_info.get("_t", "")) == tool:
@@ -3317,6 +3875,9 @@ func _unhandled_input(e: InputEvent) -> void:
 			if mb.pressed and painting:
 				cancel_stroke()                   # правая кнопка посреди мазка — мазок отменён, инструмент остаётся
 				_rmb_armed = false
+			elif mb.pressed and fence_drag:
+				_fence_cancel()                   # и посреди забора — забор не ставим, инструмент остаётся
+				_rmb_armed = false
 			elif mb.pressed:
 				_rmb_down = mb.position
 				_rmb_moved = 0.0
@@ -3338,6 +3899,10 @@ func _unhandled_input(e: InputEvent) -> void:
 				press_screen = mb.position
 				press_hover = hover
 				press_pl = place_info.duplicate() if Defs.B.has(tool) else {}
+				if mb.double_click and tool == "" and rig != null:
+					var db := pick_building()
+					if not db.is_empty():
+						rig.fly_to(Vector3((db["pos"] as Vector2).x, float(db["y"]), (db["pos"] as Vector2).y))   # двойной щелчок — камера к постройке (3.8)
 				_click()
 			else:
 				_release()
@@ -3363,6 +3928,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				# как в Town to City: отменить мазок → инструмент → закрыть окна → снять выбор → меню игры
 				if painting:
 					cancel_stroke()                   # мазок дороги отменён целиком; второй Esc снимет инструмент
+				elif fence_drag:
+					_fence_cancel()                   # забор не дотянули — не ставим; второй Esc снимет инструмент
 				elif tool != "":
 					set_tool("")
 				elif hud.close_panels():
@@ -3394,6 +3961,8 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_C:
 				if k.ctrl_pressed:
 					set_tool("copy")
+				elif k.shift_pressed and Defs.B.has(tool) and Defs.B[tool]["kind"] != "decor":
+					set_color(color_user + 1 if color_user + 1 < Defs.PALETTE.size() else -1)   # Shift+C — следующий цвет (3.4)
 				elif Defs.B.has(tool):
 					next_variant = posmod(next_variant + 1, int(Defs.B[tool].get("variants", 1)))
 			KEY_V:
@@ -3413,6 +3982,11 @@ func _unhandled_input(e: InputEvent) -> void:
 						copy_building(cb)
 			KEY_M:
 				set_tool("move")
+			KEY_G:
+				if Defs.B.has(tool) and Defs.B[tool].get("gate", false):
+					fence_gate = not fence_gate           # забор: калитка посередине
+					_fence_key = ""
+					hud.refresh_tools()
 			KEY_U:
 				set_tool("" if tool == "floor" else "floor")
 			KEY_DELETE:
@@ -3449,11 +4023,19 @@ func _click() -> void:
 		stroke = []
 		stroke_cost = 0.0
 		_paint_broke = false
+		_stroke_seen = {}
+		erase_cells = PackedInt32Array()
+		_erase_seen = {}
+		_erase_len = 0.0
+		_erase_marks_clear()
 		if hud:
 			hud.tool_status("")       # старое «не хватает денариев» — только если и этот мазок упрётся в казну
 		last_paint = Vector2.INF
+		_prev_clear()
 		if brush_line:
 			line_from = hover
+			line_plan = {}
+			_line_update(true)        # дорога видна с нажатия (пока — пятно кисти), дальше тянется за курсором
 		else:
 			_paint_to(hover)
 		return
@@ -3527,6 +4109,12 @@ func _click() -> void:
 			start_move(b)
 			return
 	if Defs.B.has(tool):
+		if Defs.B[tool].get("seg", false) and moving.is_empty():
+			# забор: тянут мышью от точки нажатия (у конца стоящего звена — от него, без щели на углу)
+			fence_drag = true
+			fence_from = _fence_snap(hover)
+			_fence_at = Vector2.INF
+			return
 		if not Defs.B[tool].get("wall", false):
 			pressing = true
 			rot_drag = false
@@ -3626,6 +4214,10 @@ func _build_here() -> void:
 			hud.tool_status(pl["err"])        # повёрнутый призрак остаётся на месте — можно довернуть
 			sound.ui("error")
 			return
+		if not moving.is_empty() and pl.has("host"):
+			hud.tool_status("Сюда не перенести — поставьте на землю")   # перенос — только на землю (стена — для настенных)
+			sound.ui("error")
+			return
 		place_lock = {}
 		var b: Dictionary
 		if not moving.is_empty():
@@ -3643,6 +4235,7 @@ func _build_here() -> void:
 			_happy_pops(h0, pl["pos"])
 		else:
 			var h0 := city.happy_map() if _pops_for(tool) else {}
+			var snap := _undo_snap()           # до постановки: просьба или ранг, которые она даст, — уже без полного возврата
 			build_anim = true
 			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
 			build_anim = false
@@ -3650,17 +4243,19 @@ func _build_here() -> void:
 				b["host"] = pl["host"]
 				b["y"] = pl["y"]
 				_show(b)
+			_push_place([b["id"]], float(Defs.B[tool]["cost"]), String(Defs.B[tool]["name"]), snap, float(Defs.B[tool].get("glory", 0)))
+			_rot_hint_count()
 			_happy_pops(h0, pl["pos"])           # лавка, украшение, памятник: рожицы волной над домами, кому стало лучше или хуже
 			if stories != null:
 				stories.flash_counted(b)           # история «рядом с домом»: на 3 с ✓ над всем, что идёт в счёт
 			if tool_variant < 0:
 				next_variant = randi() % int(Defs.B[tool].get("variants", 1))
-			if not copy_color:
+			if not copy_color and color_user < 0:
 				place_color = -1                  # следующему дому — свой цвет «Авто» (не как у соседа)
 				color_lock = false
 			if pl.get("sub", "") == "free" and not city.tips.has("free_place") and mode != "demo" and not (tutorial and tutorial.active()):
 				city.tips["free_place"] = true
-				hud.advisor("Строим где хотите", "Дом встаёт там, куда вы навели, — на траве, на площади, хоть на мостовой. Повернуть — зажмите кнопку мыши и ведите вбок (или Z / X); этот поворот запомнится и для следующих домов.\n\nПодведите дом вплотную к дороге — он сам встанет ровно фасадом к ней. Нужно одно: у входа должна быть мостовая, иначе жители не дойдут.")
+				hud.advisor("Строим где хотите", "Дом встаёт там, куда вы навели, — на траве, на площади, хоть на мостовой. Повернуть — зажмите кнопку мыши и ведите вбок (или Z / X); этот поворот запомнится и для следующих домов.\n\nПодведите дом вплотную к дороге — он сам встанет ровно фасадом к ней. Нужно одно: у входа должна быть мостовая, иначе жители не дойдут.\n\nПоставили не туда — Ctrl+Z (или «Отменить» в панели) в первые 30 секунд вернёт всю цену, пока в дом никто не въехал.")
 			# поворот был для этой постройки: следующая снова сама встанет фасадом к дороге (а поворот
 			# tool_yaw остаётся — для мест без дороги и для украшений)
 			manual_yaw = false
@@ -3687,6 +4282,9 @@ func _release() -> void:
 	if floor_drag:
 		_floor_end()
 		return
+	if fence_drag:
+		_fence_commit()
+		return
 	if pressing:
 		pressing = false
 		if rot_drag:
@@ -3708,40 +4306,86 @@ func _release() -> void:
 		return
 	if not painting:
 		return
-	if brush_line and line_from != Vector2.INF and hover != Vector2.INF and not _paint_broke:
-		var a := line_from
-		var n := int(a.distance_to(hover) / (Land.CELL * 2.0)) + 1
-		last_paint = Vector2.INF
-		for s in n + 1:
-			_paint_at(a.lerp(hover, float(s) / n))
-			if _paint_broke:
-				break                 # деньги кончились — дальше линию не тянем (без дыр в мостовой)
+	var erased_fences := []
+	if tool == "erase":
+		# ластик: всё, что было красным, уходит разом (3.2); под ним и звенья заборов
+		var pts := []
+		if brush_line and not line_plan.is_empty():
+			erase_cells = (line_plan["cells"] as PackedInt32Array).slice(0, int(line_plan["upto"]))
+		if not erase_cells.is_empty():
+			stroke = land.apply_cells(erase_cells, Land.Kind.GRASS)
+			var step := maxi(1, erase_cells.size() / 5)
+			for i in range(0, erase_cells.size(), step):
+				var k: int = erase_cells[i]
+				pts.append(land.cell_center(k % Land.N, k / Land.N))
+		erased_fences = _erase_fences_now()
+		for q: Vector2 in pts.slice(0, 6):
+			_puff(Vector3(q.x, land.height_at(q.x, q.y) + 0.1, q.y), Color("e3d6bc"))
+	elif brush_line and not line_plan.is_empty() and not _paint_broke:
+		# прямая: ложится ровно то, что было видно, и по той же цене (3.1)
+		var plan := line_plan
+		if float(plan["cost"]) > city.money + 0.001:
+			_line_cut(plan)                       # пока тянули, казна убавилась — сколько хватит сейчас
+		var cells: PackedInt32Array = (plan["cells"] as PackedInt32Array).slice(0, int(plan["upto"]))
+		if not cells.is_empty():
+			stroke = land.apply_cells(cells, int(plan["kd"]))
+			land.smooth_cells(cells)
+			stroke_cost = float(plan["cost"])
+			city.money -= stroke_cost
+			clear_nature_cells(cells)
+		_paint_broke = int(plan["upto"]) < (plan["cells"] as PackedInt32Array).size()
+	elif not stroke.is_empty():
+		# свободный мазок: высоты дороги сглаживаются один раз, сейчас (3.3)
+		var cells := PackedInt32Array()
+		for c in stroke:
+			cells.append(land.idx(c[0].x, c[0].y))
+		land.smooth_cells(cells)
 	if hud:
-		if brush_line:
-			hud.stroke_live(stroke_cost, tool, _paint_broke)   # вместо прикидки — сколько списано на самом деле
+		if brush_line and tool != "erase":
+			hud.stroke_live(stroke_cost, tool, _paint_broke)   # сколько списано на самом деле
 		hud.stroke_live(stroke_cost, tool, false, true)    # мазок окончен — подпись у курсора гаснет
 	line_from = Vector2.INF
+	line_plan = {}
 	painting = false
-	if not stroke.is_empty():
-		if tool != "erase":
-			city.road_cells += stroke.size()
-			city._check_goals()
-		undo_stack.append({"ch": stroke, "cost": stroke_cost})
+	_prev_clear()
+	_erase_marks_clear()
+	erase_cells = PackedInt32Array()
+	_erase_seen = {}
+	_stroke_seen = {}
+	if not stroke.is_empty() or not erased_fences.is_empty():
+		var u := {"ch": stroke, "cost": stroke_cost}
+		if not erased_fences.is_empty():
+			u["fences"] = erased_fences           # ластик убрал звенья забора — отмена вернёт и их
+		undo_stack.append(u)
 		redo_stack.clear()
 		if undo_stack.size() > 40:
 			undo_stack.pop_front()
-		city.compute()
-		hud.refresh()
+		if tool != "erase":
+			city.road_cells += stroke.size()
+		_compute_due = true                   # пересчёт города и окно — в следующих кадрах (3.3)
+		if hud:
+			hud.refresh_undo()
 	stroke = []
 
 
+## Кадр после мазка: цели (сколько дорог), пересчёт города; окно города — ещё кадром позже
+func _after_stroke() -> void:
+	_compute_due = false
+	_hud_later = hud != null
+	city._check_goals()
+	city.compute()
+	city.changed.emit()
+	_hud_later = false
+
+
 ## Esc или правая кнопка посреди мазка дороги: мазок отменяется целиком — мостовая и деньги как до него,
-## инструмент остаётся в руках (второй Esc его снимет). Недотянутая прямая линия не ложится
+## инструмент остаётся в руках (второй Esc его снимет). Недотянутая прямая линия не ложится, ластик ничего не убирает
 func cancel_stroke() -> void:
 	if not painting:
 		return
 	painting = false
 	line_from = Vector2.INF
+	line_plan = {}
 	if not stroke.is_empty():
 		land.undo(stroke)                     # пока кнопка зажата, дом на эти клетки встать не мог — откат полный
 		city.money += stroke_cost
@@ -3750,6 +4394,11 @@ func cancel_stroke() -> void:
 	stroke_cost = 0.0
 	_paint_broke = false
 	last_paint = Vector2.INF
+	_stroke_seen = {}
+	erase_cells = PackedInt32Array()
+	_erase_seen = {}
+	_prev_clear()
+	_erase_marks_clear()
 	if hud:
 		hud.stroke_live(0.0, tool, false, true)   # подпись «этот мазок: N ден.» у курсора гаснет
 		hud.tool_status("")
@@ -3763,22 +4412,25 @@ func _paint_to(p: Vector2) -> void:
 	var n := int(a.distance_to(p) / (Land.CELL * 2.0)) + 1
 	for s in n + 1:
 		_paint_at(a.lerp(p, float(s) / n))
+	if tool == "erase" and last_paint != Vector2.INF and not erase_cells.is_empty():
+		_erase_len += a.distance_to(p)
 	last_paint = p
 
 
 func _paint_at(q: Vector2) -> void:
-	var kinds := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": Land.Kind.DIRT, "erase": Land.Kind.GRASS}
+	if tool == "erase":
+		_erase_at(q)
+		return
+	var kinds := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": Land.Kind.DIRT}
 	var kd: int = kinds[tool]
-	var ch := land.paint_circle(q, brush_r, kd, kd != Land.Kind.GRASS, true, brush_square, brush_over)
+	var ch := land.paint_circle(q, brush_r, kd, true, true, brush_square, brush_over, _stroke_seen)
 	if ch.is_empty():
 		return
-	var cost := 0.0
-	if tool != "erase":
-		var fresh := 0
-		for c in ch:
-			if int(c[1]) != kd:
-				fresh += 1        # где покрытие уже было, кисть только подравнивает высоту — это бесплатно
-		cost = fresh * float(Defs.ROAD_COST[tool])
+	var fresh := 0
+	for c in ch:
+		if int(c[1]) != kd:
+			fresh += 1            # где покрытие уже было, кисть только подравнивает высоту — это бесплатно
+	var cost := fresh * float(Defs.ROAD_COST[tool])
 	if cost > city.money:
 		# денег не хватило: дальше этот мазок не рисуется, но уже проложенное остаётся (и отменяется Ctrl+Z целиком)
 		land.undo(ch)
@@ -3793,10 +4445,259 @@ func _paint_at(q: Vector2) -> void:
 	clear_nature(q, brush_r + 0.3)
 
 
-func _undo() -> void:
+const ROAD_KIND := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": Land.Kind.DIRT, "erase": Land.Kind.GRASS}
+
+
+# ---------- показ мазка до отпускания (3.1 прямая с ценой, 3.2 ластик красным) ----------
+
+func _prev_ensure() -> void:
+	if prev_img != null:
+		return
+	prev_img = Image.create(Land.N / Land.SM, Land.N / Land.SM, false, Image.FORMAT_RG8)
+	prev_tex = ImageTexture.create_from_image(prev_img)
+	land_mat.set_shader_parameter("surf_prev", prev_tex)
+
+
+var _prev_mode := 0
+
+
+func _prev_set_mode(m: int, kd := 4) -> void:
+	if m != _prev_mode:
+		_prev_mode = m
+		land_mat.set_shader_parameter("prev_mode", m)
+	if m > 0:
+		land_mat.set_shader_parameter("prev_kind", kd)
+
+
+## Показа нет: маска показа снова пустая, шейдер земли — как без него (картинка ровно та же)
+func _prev_clear() -> void:
+	_prev_at = Vector2.INF
+	if prev_img != null and _prev_hi.x >= 0:
+		prev_img.fill_rect(Rect2i(_prev_lo, _prev_hi - _prev_lo + Vector2i.ONE), Color(0, 0, 0, 0))
+		prev_tex.update(prev_img)
+	_prev_lo = Vector2i(1 << 30, 1 << 30)
+	_prev_hi = Vector2i(-1, -1)
+	if land_mat and _prev_mode != 0:
+		_prev_set_mode(0)
+
+
+## Нарисовать клетки в маске показа: до upto — «ляжет» (R), дальше — «денег не хватит» (G). fresh[n] == 0 — клетка не
+## меняется (уже такое покрытие) — не показываем. add — к уже нарисованному (ластик свободной кистью)
+func _prev_put(cells: PackedInt32Array, fresh: PackedByteArray, upto: int, mode: int, kd: int, add := false) -> void:
+	_prev_ensure()
+	if not add and _prev_hi.x >= 0:
+		prev_img.fill_rect(Rect2i(_prev_lo, _prev_hi - _prev_lo + Vector2i.ONE), Color(0, 0, 0, 0))
+		_prev_lo = Vector2i(1 << 30, 1 << 30)
+		_prev_hi = Vector2i(-1, -1)
+	var acc := {}
+	for n in cells.size():
+		if not fresh.is_empty() and fresh[n] == 0:
+			continue
+		var k: int = cells[n]
+		var px := Vector2i((k % Land.N) / Land.SM, (k / Land.N) / Land.SM)
+		var v: Vector2 = acc.get(px, Vector2.ZERO)
+		if n < upto:
+			v.x += 0.25
+		else:
+			v.y += 0.25
+		acc[px] = v
+	for px: Vector2i in acc:
+		var v: Vector2 = acc[px]
+		if add:
+			var o := prev_img.get_pixelv(px)
+			v += Vector2(o.r, o.g)
+		prev_img.set_pixelv(px, Color(minf(v.x, 1.0), minf(v.y, 1.0), 0.0))
+		_prev_lo = _prev_lo.min(px)
+		_prev_hi = _prev_hi.max(px)
+	prev_tex.update(prev_img)
+	_prev_set_mode(mode, kd)
+
+
+## Прямая линия, пока кнопка зажата: клетки, которые лягут (land.line_cells — как при отпускании), цена, «денег хватит
+## до сюда». Пересчёт — когда курсор сдвинулся на 0,25 м или поменяли кисть
+func _line_update(force := false) -> void:
+	if hover == Vector2.INF or line_from == Vector2.INF:
+		return
+	if not force and _prev_at != Vector2.INF and hover.distance_to(_prev_at) < 0.25 and is_equal_approx(brush_r, _prev_r):
+		return
+	_prev_at = hover
+	_prev_r = brush_r
+	var kd: int = ROAD_KIND[tool]
+	var lc := land.line_cells(line_from, hover, brush_r, kd, brush_square, brush_over)
+	var plan := {"cells": lc["cells"], "fresh": lc["fresh"], "t": lc["t"], "kd": kd, "len": line_from.distance_to(hover),
+		"upto": (lc["cells"] as PackedInt32Array).size(), "cost": 0.0}
+	if tool != "erase":
+		_line_cut(plan)
+	line_plan = plan
+	_prev_put(plan["cells"], plan["fresh"], int(plan["upto"]), 2 if tool == "erase" else 1, kd)
+	if tool == "erase":
+		_erase_marks_clear()
+		_erase_fences_line(line_from, hover, brush_r)
+
+
+## Цена прямой и докуда хватит денег: клетки по порядку вдоль линии, обрыв — на границе полуметра (как раньше мазок
+## останавливался на штампе, которому не хватило)
+func _line_cut(plan: Dictionary) -> void:
+	var price := float(Defs.ROAD_COST.get(tool, 0.0))
+	var cells: PackedInt32Array = plan["cells"]
+	var fresh: PackedByteArray = plan["fresh"]
+	var ts: PackedFloat32Array = plan["t"]
+	var cost := 0.0
+	var upto := cells.size()
+	for n in cells.size():
+		if fresh[n] == 0:
+			continue
+		if cost + price > city.money + 1e-6:
+			upto = n
+			while upto > 0 and ts[upto - 1] == ts[n]:
+				upto -= 1
+			break
+		cost += price
+	if upto < cells.size():
+		cost = 0.0
+		for n in upto:
+			if fresh[n] == 1:
+				cost += price
+	plan["upto"] = upto
+	plan["cost"] = cost
+
+
+## Подпись у курсора у прямой: «12 м · 42 ден.», денег не хватает — «Денег хватит до сюда»
+func _line_label() -> void:
+	var plan := line_plan
+	var m := _len_txt(float(plan["len"]))
+	if tool == "erase":
+		_erase_label()
+		return
+	var cut := int(plan["upto"]) < (plan["cells"] as PackedInt32Array).size()
+	hud.stroke_text("%s м · %s ден." % [m, hud.price_txt(float(plan["cost"]))], "Денег хватит до сюда — дальше красным" if cut else "")
+
+
+func _len_txt(m: float) -> String:
+	return str(roundi(m)) if m >= 9.5 else ("%.1f" % m).replace(".", ",").trim_suffix(",0")
+
+
+## Ластик над землёй (кнопка не зажата): дорога, которую он уберёт, — красным, и звенья заборов под ним
+func _erase_hover() -> void:
+	if _prev_at != Vector2.INF and hover.distance_to(_prev_at) < 0.25 and is_equal_approx(brush_r, _prev_r):
+		return
+	_prev_at = hover
+	_prev_r = brush_r
+	var cells := land.erase_cells(hover, brush_r, brush_square, {})
+	_prev_put(cells, PackedByteArray(), cells.size(), 2, Land.Kind.GRASS)
+	_erase_marks_clear()
+	_erase_fences_at(hover, brush_r)
+
+
+## Свободный ластик с зажатой кнопкой: клетки копятся (красным), уберутся при отпускании
+func _erase_at(q: Vector2) -> void:
+	var new := land.erase_cells(q, brush_r, brush_square, _erase_seen)
+	if not new.is_empty():
+		erase_cells.append_array(new)
+		_prev_put(new, PackedByteArray(), new.size(), 2, Land.Kind.GRASS, true)
+	_erase_fences_at(q, brush_r)
+
+
+## «Убрать 18 м дороги · бесплатно» (и звенья забора — сколько вернётся)
+func _erase_label() -> void:
+	var m := _erase_len
+	var n := erase_cells.size()
+	if brush_line and not line_plan.is_empty():
+		m = float(line_plan["len"])
+		n = int(line_plan["upto"])
+	var txt := "Убрать %s м дороги · бесплатно" % _len_txt(maxf(m, brush_r)) if n > 0 else ""
+	var warn := ""
+	if not erase_fences.is_empty():
+		var back := 0.0
+		for id in erase_fences:
+			if city.buildings.has(id):
+				back += float(city.def(city.buildings[id])["cost"]) * Defs.REFUND
+		warn = "Убрать звеньев забора: %d · вернётся %s ден." % [erase_fences.size(), hud.price_txt(back)]
+	if txt == "" and warn == "":
+		txt = "Здесь нечего стирать"
+	elif txt == "":
+		txt = warn
+		warn = ""
+	hud.stroke_text(txt, warn, Color("ffd2c4"))
+
+
+## Звенья заборов, чья середина под кистью ластика в точке p: подсветить красным, уберутся при отпускании
+func _erase_fences_at(p: Vector2, r: float) -> void:
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if erase_fences.has(id) or not city.def(b).get("seg", false):
+			continue
+		if (b["pos"] as Vector2).distance_to(p) <= r + 0.35:
+			_erase_mark(b)
+
+
+func _erase_fences_line(a: Vector2, c: Vector2, r: float) -> void:
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if erase_fences.has(id) or not city.def(b).get("seg", false):
+			continue
+		var p: Vector2 = b["pos"]
+		var ab := c - a
+		var t := clampf((p - a).dot(ab) / maxf(ab.length_squared(), 1e-6), 0.0, 1.0)
+		if p.distance_to(a + ab * t) <= r + 0.35:
+			_erase_mark(b)
+
+
+func _erase_mark(b: Dictionary) -> void:
+	var g := Parts.ghost(city.blueprint(b), "shell", Color(1.0, 0.18, 0.12, 0.55))
+	g.transform = city.xf(b)
+	add_child(g)
+	erase_fences[b["id"]] = g
+
+
+func _erase_marks_clear() -> void:
+	for id in erase_fences:
+		var g = erase_fences[id]
+		if is_instance_valid(g):
+			(g as Node).queue_free()
+	erase_fences = {}
+
+
+## Ластик отпустили: звенья заборов под ним — убрать (вернётся половина цены, как при сносе). Для отмены — что было
+func _erase_fences_now() -> Array:
+	var out := []
+	for id in erase_fences.keys():
+		if not city.buildings.has(id):
+			continue
+		var b: Dictionary = city.buildings[id]
+		out.append({"type": b["type"], "pos": b["pos"], "yaw": b["yaw"], "variant": b["variant"], "color": b["color"],
+			"back": float(city.def(b)["cost"]) * Defs.REFUND})
+		city.remove(b, true, true)
+	return out
+
+
+## Убрать природу под готовым списком клеток (прямая линия дороги)
+func clear_nature_cells(cells: PackedInt32Array) -> void:
+	if cells.is_empty():
+		return
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for k in cells:
+		var q := land.cell_center(k % Land.N, k / Land.N)
+		lo = lo.min(q)
+		hi = hi.max(q)
+	clear_nature((lo + hi) * 0.5, (hi - lo).length() * 0.5 + 0.5, cells)
+
+
+## Отменить последнее (Ctrl+Z, медали «Отменить»): мазок дороги или ластика — как раньше; постройку — с полным
+## возвратом, пока ей меньше 30 с и в ней никто не живёт (3.6). only — "place" или "road": только такое (медаль панели)
+func _undo(only := "") -> void:
+	_undo_prune()
 	if undo_stack.is_empty():
 		return
-	var u: Dictionary = undo_stack.pop_back()
+	var u: Dictionary = undo_stack.back()
+	var kind := String(u.get("t", "road"))
+	if only != "" and kind != only:
+		return
+	undo_stack.pop_back()
+	if kind == "place":
+		_undo_place(u)
+		return
 	var now := []
 	for c in u["ch"]:
 		var k := land.idx(c[0].x, c[0].y)
@@ -3808,10 +4709,23 @@ func _undo() -> void:
 	for i in done:
 		back.append(now[i])
 	var cost := float(u["cost"]) * part
-	redo_stack.append({"ch": back, "cost": cost})
+	var r := {"ch": back, "cost": cost}
+	# ластик убрал звенья забора — они встают обратно (возврат за них — обратно в казну)
+	var fids := []
+	for f: Dictionary in u.get("fences", []):
+		var chk := city.check_place(f["type"], f["pos"], f["yaw"], int(f["variant"]), int(f["color"]), -2)
+		if chk["err"] != "" and not String(chk["err"]).begins_with("Не хватает"):
+			continue
+		var fb := city.place(f["type"], f["pos"], f["yaw"], int(f["variant"]), int(f["color"]), true)
+		city.money -= float(f["back"])
+		fids.append(int(fb["id"]))
+	if not fids.is_empty():
+		r["fence_ids"] = fids
+	redo_stack.append(r)
 	city.money += cost
 	city.compute()
 	hud.refresh()
+	hud.refresh_undo()
 
 
 func _redo() -> void:
@@ -3830,10 +4744,101 @@ func _redo() -> void:
 	for i in done:
 		keep.append(back[i])
 	var cost := float(r["cost"]) * part
-	undo_stack.append({"ch": keep, "cost": cost})
+	var u := {"ch": keep, "cost": cost}
+	var fences := []
+	for id in r.get("fence_ids", []):
+		if city.buildings.has(id):
+			var b: Dictionary = city.buildings[id]
+			fences.append({"type": b["type"], "pos": b["pos"], "yaw": b["yaw"], "variant": b["variant"], "color": b["color"],
+				"back": float(city.def(b)["cost"]) * Defs.REFUND})
+			city.remove(b, true, true)
+	if not fences.is_empty():
+		u["fences"] = fences
+	undo_stack.append(u)
 	city.money -= cost
 	city.compute()
 	hud.refresh()
+	hud.refresh_undo()
+
+
+## Поставили постройку (или протянули забор) игроком — её можно отменить 30 с с полным возвратом (3.6).
+## snap — _undo_snap() ДО постановки: просьба, история, заказ старосты или новый ранг, которые она дала, — уже не отменить
+func _push_place(ids: Array, cost: float, name: String, snap: Dictionary, glory := 0.0) -> void:
+	if ids.is_empty():
+		return
+	undo_stack.append({"t": "place", "ids": ids, "cost": cost, "glory": glory, "name": name, "ms": Time.get_ticks_msec(),
+		"goals": int(snap["goals"]), "stories": int(snap["stories"]), "level": int(snap["level"]), "money0": float(snap["money"])})
+	if undo_stack.size() > 40:
+		undo_stack.pop_front()
+	if hud:
+		hud.refresh_undo()
+
+
+## Сколько выполнено просьб, историй и заказов, какой ранг и сколько в казне — до постановки (для отмены)
+func _undo_snap() -> Dictionary:
+	return {"goals": city.goals_done.size(), "stories": _stories_done(), "level": city.level, "money": city.money}
+
+
+func _stories_done() -> int:
+	var d: Variant = city.stories.get("done", {})
+	var k := (d as Dictionary).size() if d is Dictionary else (d as Array).size() if d is Array else 0
+	var o: Variant = city.stories.get("orders", {})
+	if o is Dictionary and (o as Dictionary).get("n") is Dictionary:
+		for v in ((o as Dictionary)["n"] as Dictionary).values():
+			k += int(v)                   # заказ старосты выполнен — постройки под ним уже не отменить с полным возвратом
+	return k
+
+
+## Можно ли ещё отменить постройку с полным возвратом: не старше 30 с, никто не живёт и не идёт жить, работников
+## игрок не нанимал, просьба, история или заказ с тех пор не выполнились и ранг тот же (решение D-l)
+func _place_undoable(u: Dictionary) -> bool:
+	if Time.get_ticks_msec() - int(u["ms"]) > UNDO_PLACE_MS:
+		return false
+	if city.goals_done.size() != int(u["goals"]) or _stories_done() != int(u["stories"]) or city.level != int(u.get("level", city.level)):
+		return false
+	for id in u["ids"]:
+		if not city.buildings.has(id):
+			return false
+		var b: Dictionary = city.buildings[id]
+		if int(b.get("pop", 0)) > 0 or not (b.get("families", []) as Array).is_empty() or int(b.get("coming", 0)) > 0 or b.has("hire"):
+			return false
+	return true
+
+
+## Убрать из отмены постройки, которые отменить уже нельзя
+func _undo_prune() -> void:
+	for i in range(undo_stack.size() - 1, -1, -1):
+		var u: Dictionary = undo_stack[i]
+		if String(u.get("t", "road")) == "place" and not _place_undoable(u):
+			undo_stack.remove_at(i)
+
+
+## Что отменит медаль «Отменить» в панели постройки: {"name", "cost"} или {} — нечего (или наверху — мазок дороги)
+func undo_place_info() -> Dictionary:
+	_undo_prune()
+	if undo_stack.is_empty() or String((undo_stack.back() as Dictionary).get("t", "road")) != "place":
+		return {}
+	return undo_stack.back()
+
+
+func _undo_place(u: Dictionary) -> void:
+	for id in u["ids"]:
+		if not city.buildings.has(id):
+			continue
+		var b: Dictionary = city.buildings[id]
+		for oid in city.buildings.keys():
+			if city.buildings.has(oid) and int(city.buildings[oid].get("host", -1)) == int(id):
+				city.remove(city.buildings[oid], true, true)     # украшения на её стенах — как при сносе
+		city.remove(b, false, true)
+	# 100%: постройку поставили по ошибке — но казна не полнее, чем была до неё и чем её предел (доход за эти
+	# секунды не копится сверх предела); памятник Легиона — и его Славу
+	var top := maxf(city.money_cap(), float(u.get("money0", INF)))
+	city.money = maxf(city.money, minf(top, city.money + float(u["cost"])))
+	city.legion.glory += float(u.get("glory", 0.0))
+	city.compute()
+	city.changed.emit()
+	if hud:
+		hud.refresh_undo()
 
 
 # ---------- сохранение ----------

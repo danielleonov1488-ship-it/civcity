@@ -346,8 +346,8 @@ func _floor_tool() -> void:
 			extra += 1
 	check(ok and extra == 0 and cover.want.size() == ready.size(), "над каждым готовым домом стрелка с ценой (%d), он зелёный; у других стрелок нет" % ready.size())
 	check(hud.tool_title.text == "Этаж · готовы домов: %d" % ready.size(), "окно инструмента: «%s»" % hud.tool_title.text)
-	var btns: Array = hud.tool_panel.find_children("*", "Button", true, false)
-	check(btns.is_empty(), "кнопки «надстроить все готовые разом» нет (решение Д4): кнопок в окне %d" % btns.size())
+	var btns: Array = hud.tool_panel.find_children("*", "Button", true, false).filter(func(x): return (x as Control).is_visible_in_tree())
+	check(btns.is_empty(), "кнопки «надстроить все готовые разом» нет (решение Д4): видимых кнопок в окне %d" % btns.size())
 	await frames(20)
 	await shot("ux_floor_tool.png")
 

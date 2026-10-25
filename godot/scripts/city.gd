@@ -64,6 +64,7 @@ var fest_left := 0                    # сколько игровых часов
 var fest_cd := 0                      # через сколько часов можно устроить новые игры
 var plots_bought := 0                 # сколько участков земли куплено (от него цена следующего)
 var name := ""                        # название города — копия имени с сервера (CityName); "" — ещё не знаем («Новый Рим»)
+var seg_thin := false                 # звено забора — узкой полосой (заборы мышью); готовый город меню — по-старому
 ## «Истории горожан» (scripts/stories.gd, данные — StoryDefs): часы, предложение, идущая история, пройденные,
 ## отложенные, бонусы к счастью (их строки — в happy_parts дома), кошки-награды. Сохраняется под ключом "stories"
 var stories := stories_new()
@@ -183,7 +184,11 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 		return res                            # украшение на стене: место выбирает игра (стена дома)
 	var tier := 1 if d["kind"] == "house" else (6 if type == "center" else 0)   # станция занимает место на вырост
 	var bp := Catalog.make(type, tier, variant, color)
-	var cells := land.footprint_cells(bp.footprint(), pos, yaw)
+	var rects: Array = bp.footprint()
+	if d.get("seg", false) and seg_thin:
+		# звено забора занимает узкую полосу посередине: концы свободны — соседнее звено (и угол) встаёт вплотную
+		rects = [Rect2(-0.82, -0.14, 1.64, 0.28)]
+	var cells := land.footprint_cells(rects, pos, yaw)
 	if cells.is_empty():
 		cells = land.footprint_cells([Rect2(-0.4, -0.4, 0.8, 0.8)], pos, yaw)
 	res["cells"] = cells
@@ -292,7 +297,9 @@ func pick_color(pos: Vector2) -> int:
 	return opts[rng.randi() % opts.size()]
 
 
-func remove(b: Dictionary, refund := true) -> void:
+## quiet — без пересчёта города и сигнала changed (убирают сразу несколько: ластик по забору, отмена постройки —
+## пересчитает тот, кто убирал)
+func remove(b: Dictionary, refund := true, quiet := false) -> void:
 	if def(b).get("fixed", false):
 		return
 	if refund:
@@ -304,13 +311,16 @@ func remove(b: Dictionary, refund := true) -> void:
 	# украшения на стенах снесённого дома падают вместе с ним
 	for oid in buildings.keys():
 		if buildings.has(oid) and int(buildings[oid].get("host", -1)) == int(b["id"]):
-			remove(buildings[oid], refund)
+			remove(buildings[oid], refund, quiet)
 	# семьи, которые шли в этот дом, возвращаются на площадь
 	for nm in pending.keys():
 		if int(pending[nm]["home"]) == int(b["id"]) and int(b["id"]) != moving_id:
 			var f: Dictionary = pending[nm]
 			pending.erase(nm)
 			arrivals.append({"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false))})
+	if quiet:
+		building_removed.emit(b)
+		return
 	compute()
 	building_removed.emit(b)
 	arrivals_changed.emit()
@@ -995,6 +1005,31 @@ func idle_text(b: Dictionary) -> String:
 				return "не хватает работников — нужно больше жителей"
 			return "мало работников — наймите кнопкой «+» в карточке постройки"
 	return "не работает"
+
+
+## Склад лавки (3.9): ближайший работающий в дальности {"b", "d" — м, "ok": true, "near": true}; в дальности только
+## неработающий — он же с "ok": false; в дальности нет — ближайший любой ("near": false); складов нет — {}
+func store_for(s: Dictionary) -> Dictionary:
+	var r := float(Defs.RANGE[4]) * (2.0 if research.has("store1") else 1.0)
+	var best := {}
+	var idle := {}
+	var any := {}
+	for id in buildings:
+		var w: Dictionary = buildings[id]
+		if def(w)["kind"] != "store":
+			continue
+		var d := (w["pos"] as Vector2).distance_to(s["pos"])
+		if d <= r:
+			if bool(w.get("active", false)):
+				if best.is_empty() or d < float(best["d"]):
+					best = {"b": w, "d": d, "ok": true, "near": true}
+			elif idle.is_empty() or d < float(idle["d"]):
+				idle = {"b": w, "d": d, "ok": false, "near": true}
+		if any.is_empty() or d < float(any["d"]):
+			any = {"b": w, "d": d, "ok": false, "near": false}
+	if not best.is_empty():
+		return best
+	return idle if not idle.is_empty() else any
 
 
 func _store_near(s: Dictionary, stores: Array) -> bool:
