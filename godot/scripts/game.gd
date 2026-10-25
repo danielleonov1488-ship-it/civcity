@@ -305,6 +305,7 @@ func _ready() -> void:
 		if built % 16 == 0:
 			await _step("Рисуем землю", 0.4 + 0.45 * built / total)
 	await _step("Жители", 0.9)
+	_hero_check()                             # свой герой (Д11): в своей игре он есть всегда (старый город — случайный, пока игрок не создаст)
 	people.setup(land, city, self)
 	rig = CameraRig.new()
 	add_child(rig)
@@ -377,6 +378,7 @@ func _ready() -> void:
 	LegionBattle.attach(self)                 # 3D-бой Легиона: «В бой» в окне «Легион» открывает поле боя (scripts/legion_battle.gd)
 	LegionNet.me().attach_city()              # бои с городами по сети: отряд обороны на сервер, отчёты о нападениях; имя города с сервера (scripts/legion_net.gd)
 	QaDrive.attach(self)                      # автопроверка собранной игры, только с аргументом --qa=… (scripts/qa_drive.gd)
+	_hero_offer(loaded)                       # экран «Ваш герой»: начало новой игры, старый город — один раз (Д11)
 
 
 func _step(text: String, k: float) -> void:
@@ -5099,7 +5101,68 @@ func _sim_hour() -> void:
 	_hud_later = hud != null
 	city.sim_day()
 	_hud_later = false
+	_hero_hour()
 	sim_ms = (Time.get_ticks_usec() - t0) / 1000.0
+
+
+# ---------- свой герой (Д11) ----------
+
+## Проверки окна не ждут: экран «Ваш герой» сам не открывается в автопроверках (gpu_run: CIVCITY_NOMINPAUSE=1),
+## если не попросить (CIVCITY_HEROSCREEN=1) — герой там случайный, как у игрока, отложившего выбор
+var hero_screen_auto := OS.get_environment("CIVCITY_NOMINPAUSE") != "1" or OS.get_environment("CIVCITY_HEROSCREEN") == "1"
+
+
+## Героя ещё нет (новая игра, старый город после обновления) — случайный (по городу — всегда тот же). Всё, что
+## в гардеробе уже открыто, — «видели» (в колокольчик — только новое)
+func _hero_check() -> void:
+	if not (mode in ["play", "new"]) or Hero.exists(city):
+		return
+	var rr := RandomNumberGenerator.new()
+	rr.seed = hash([city.name, city.day, city.buildings.size(), city.settled_total, "hero"])
+	city.hero = Hero.random(rr)
+	Hero.take_new(city, true)
+	city.hero["kit"] = Hero.kit_tier(city.legion.hero_kit_level())
+	city.legion.hero_squad_fix()             # первое место в походах — героя: не легионер оттуда — на видное место
+
+
+## Экран «Ваш герой»: в начале новой игры; в старом городе — один раз (можно «Позже»). Игрок своего создал или
+## отложил — больше сам не открывается (переделать — «Изменить» в карточке героя)
+func _hero_offer(loaded: bool) -> void:
+	if not (mode in ["play", "new"]) or shot_path != "" or not hero_screen_auto or not Hero.exists(city) or hud == null 			or bool(city.hero.get("made", false)) or city.tips.has("hero_screen"):
+		hero_offer_done = true
+		return
+	var scr := open_hero_screen("old" if loaded else "new")
+	if scr == null:
+		hero_offer_done = true
+	else:
+		scr.closed.connect(func(_s): hero_offer_done = true)
+
+
+var hero_offer_done := false              # экран «Ваш герой» в начале позади (или не нужен): советник о герое — после него
+
+
+func open_hero_screen(m: String) -> HeroScreen:
+	if hud == null or not Hero.exists(city):
+		return null
+	return HeroScreen.open(self, m)
+
+
+## Раз в игровой час: открылись вещи гардероба — строчка в колокольчике; Склад оружия выдал новое снаряжение — тоже
+func _hero_hour() -> void:
+	if not Hero.exists(city) or not (mode in ["play", "new"]):
+		return
+	var got: Array = Hero.take_new(city)          # всё, что открылось за час, — одной строчкой
+	if not got.is_empty():
+		var s := ", ".join(PackedStringArray(got if got.size() <= 4 else got.slice(0, 3)))
+		if got.size() > 4:
+			s += " и ещё %d" % (got.size() - 3)
+		city._quiet("В гардеробе героя — новое: %s" % s, "cape")
+	var t := Hero.kit_tier(city.legion.hero_kit_level())
+	var was := int(city.hero.get("kit", -1))
+	if t != was:
+		if was >= 0 and t > was:
+			city._quiet("Склад оружия выдал герою: %s" % String(Hero.KIT[t]["n"]).to_lower(), "shield")
+		city.hero["kit"] = t
 
 
 func _load() -> bool:

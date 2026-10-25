@@ -2502,6 +2502,8 @@ func _speaker(who: String) -> Dictionary:
 			"role": "кошка семьи %s" % StoryDefs.fam_gen(String(b.get("fam", "")))}
 	if who == "advisor":
 		return {"kind": "pic", "pic": "advisor.png", "name": "Советник Марк", "role": "советник градоначальника"}
+	if who == "hero" and Hero.exists(city):
+		return {"kind": "look", "look": Hero.look(city).duplicate(), "name": Hero.name_of(city), "role": "ваш герой", "pic": ""}
 	if who == "donkey":
 		return {"kind": "beast", "beast": "donkey", "name": String(b.get("cat_name", "Пузан")),
 			"role": "ослик семьи %s" % StoryDefs.fam_gen(String(b.get("fam", ""))), "pic": ""}
@@ -2851,6 +2853,13 @@ func _open_spot(c: Vector2) -> Vector2:
 
 ## Человек роли для ролика: облик по роли; festive — на свадьбе невеста в платье цвета огня и с венком
 func _make_actor(role: String, festive := false) -> Citizen:
+	if role == "hero" and Hero.exists(city):
+		# свой герой (Д11): его облик — плащ, венок, цвета (как на улице)
+		var hc := Citizen.build(Hero.look(city).duplicate())
+		Citizen.face_fix(hc)
+		game.people.add_child(hc)
+		hc.anim.speed_scale = 1.0
+		return hc
 	var ro := _role(cine["bind"], role)
 	var c: Citizen = game.people.actor(int(ro["seed"]), bool(ro["female"]), bool(ro["child"]), String(ro["cls"]), bool(ro.get("old", false)))
 	if role == "bride" and festive:
@@ -3018,21 +3027,35 @@ func _approach(dist := 4.2) -> Vector2:
 	return p
 
 
-## Прохожие не заслоняют героя: кто рядом с ним или на линии камеры — прячется до конца ролика
+## Прохожие не заслоняют героя: кто рядом с ним или на линии камеры — прячется до конца ролика. Свой герой (Д11) с улицы —
+## тоже; а если у ролика свой герой-актёр — уличный спрятан весь ролик (два одинаковых в кадре). Каждый кадр: вышел из
+## двери (новая модель) — снова спрятан; _cleanup вернёт
 func _crowd_clear() -> void:
-	if kit == null or not cine.has("focus"):
+	if kit == null:
+		return
+	var hr: Dictionary = game.people.hero_r
+	var hn = null if hr.is_empty() else hr["node"]
+	if hn != null and (hn as Node3D).visible and (cine.get("actors", {}) as Dictionary).has("hero"):
+		(hn as Node3D).visible = false
+		_hidden.append(hn)
+	if not cine.has("focus"):
 		return
 	var focus: Vector2 = cine["focus"]
 	var cam := Vector2(kit.pos.x, kit.pos.z)
 	for r in game.people.residents:
-		var n = r["node"]
-		if n == null or not (n as Node3D).visible:
-			continue
-		var p := Vector2((n as Node3D).position.x, (n as Node3D).position.z)
-		var q := Geometry2D.get_closest_point_to_segment(p, cam, focus)
-		if p.distance_to(focus) < 3.0 or p.distance_to(q) < 1.0:
-			(n as Node3D).visible = false
-			_hidden.append(n)
+		_crowd_hide(r["node"], cam, focus)
+	if hn != null:
+		_crowd_hide(hn, cam, focus)
+
+
+func _crowd_hide(n, cam: Vector2, focus: Vector2) -> void:
+	if n == null or not (n as Node3D).visible:
+		return
+	var p := Vector2((n as Node3D).position.x, (n as Node3D).position.z)
+	var q := Geometry2D.get_closest_point_to_segment(p, cam, focus)
+	if p.distance_to(focus) < 3.0 or p.distance_to(q) < 1.0:
+		(n as Node3D).visible = false
+		_hidden.append(n)
 
 
 ## Деревья, кусты и высокие украшения между камерой и героем прячутся до конца ролика (свадебное шествие шло
@@ -3692,6 +3715,8 @@ func _look(role: String, target: String, anim: String) -> void:
 
 ## Условие такта «если»: «история» — пройдена; «история=выбор» — пройдена, и выбрали это
 func _cond(c: String) -> bool:
+	if c == "hero":
+		return Hero.exists(city)                 # свой герой (Д11) есть — его такты в ролике
 	var e: Dictionary = (S()["done"] as Dictionary).get(c.get_slice("=", 0), {})
 	if e.is_empty():
 		return false

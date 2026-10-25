@@ -411,10 +411,11 @@ static func norm_look(lk: Dictionary) -> void:
 		lk["skin"] = "A"
 
 
-## Отпечаток облика (проверки «облик не поменялся»)
+## Отпечаток облика (проверки «облик не поменялся»); плащ — только у героя
 static func look_key(lk: Dictionary) -> String:
-	return "%s|%s|%d|%d|%d|%s|%s|%s|%s" % [lk.get("mdl", ""), lk.get("skin", ""), int(lk.get("hair", 0)), int(lk.get("beard", 0)),
-		int(lk.get("crown", 0)), lk.get("main", ""), lk.get("second", ""), lk.get("trim", ""), lk.get("hc", "")]
+	return "%s|%s|%d|%d|%d|%s|%s|%s|%s%s" % [lk.get("mdl", ""), lk.get("skin", ""), int(lk.get("hair", 0)), int(lk.get("beard", 0)),
+		int(lk.get("crown", 0)), lk.get("main", ""), lk.get("second", ""), lk.get("trim", ""), lk.get("hc", ""),
+		("|" + String(lk["cape"])) if lk.has("cape") else ""]
 
 
 ## rich — патриций; child — ребёнок (уменьшенный взрослый); cls — сословие для одежды (по умолчанию по rich)
@@ -457,6 +458,7 @@ static func build(lk: Dictionary, child := false) -> Citizen:
 	c.scale = Vector3.ONE * SIZE * (0.68 if child else 1.0)
 	if child:
 		kid_face(c)
+	c._put_cape(sk)
 	return c
 
 
@@ -520,7 +522,113 @@ func apply_look(lk: Dictionary) -> bool:
 		if body:
 			_paint(body, String(lk["mdl"]), _cols_of(lk))
 	_put_hair()
+	var sks := find_children("*", "Skeleton3D", true, false)
+	if not sks.is_empty():
+		_put_cape(sks[0])
 	return true
+
+
+# ---------- плащ героя (Д11) ----------
+
+const CAPE := "res://assets/synty/FBX/Attachments/SK_Chr_Attach_Cape_01.fbx"
+const CAPE_STRIP := 3                  # плащ Synty — одна полоса тканей атласа: красим её в цвет плаща
+var cape_root: Node3D                  # плащ на кости груди (только у героя: в облике есть cape)
+var cape_sk: Skeleton3D                # его кости Cape_01…06 — колышутся кодом (на ходу — назад, стоя — едва)
+var _cape_bones: Array = []            # [номер кости, ось поворота в её осях, её покой]
+var _cape_t := 0.0
+var _cape_k := 0.0                     # 0 — стоит, 1 — идёт (плавно)
+
+
+## Плащ по облику (look.cape — цвет «rrggbb»; нет — без плаща): на кости груди, у шеи, за спиной
+func _put_cape(sk: Skeleton3D) -> void:
+	var col := String(look.get("cape", "")) if not kid else ""
+	if col == "":
+		if cape_root != null and is_instance_valid(cape_root):
+			cape_root.queue_free()
+		cape_root = null
+		cape_sk = null
+		set_process(false)
+		meshes = []
+		return
+	if cape_root == null or not is_instance_valid(cape_root):
+		cape_root = add_cape(sk, col)
+		var rig := cape_rig(cape_root)
+		cape_sk = rig[0]
+		_cape_bones = rig[1]
+		meshes = []
+	else:
+		paint_cape(cape_root, col)
+	set_process(cape_sk != null)
+
+
+## Кости плаща: [скелет плаща или null, [[номер кости, ось поворота в её осях, её покой], …]]
+static func cape_rig(root: Node3D) -> Array:
+	var sks := root.find_children("*", "Skeleton3D", true, false)
+	if sks.is_empty():
+		return [null, []]
+	var sk: Skeleton3D = sks[0]
+	var bones := []
+	for i in sk.get_bone_count():
+		if sk.get_bone_name(i).begins_with("Cape_0"):
+			var gb := sk.get_bone_global_rest(i).basis
+			bones.append([i, (gb.inverse() * Vector3.RIGHT).normalized(), sk.get_bone_rest(i).basis.get_rotation_quaternion()])
+	return [sk, bones]
+
+
+## Плащ на скелет sk (житель-герой, боец героя в бою, портрет): узел плаща под костью груди
+static func add_cape(sk: Skeleton3D, col: String) -> Node3D:
+	var ba := BoneAttachment3D.new()
+	ba.name = "Cape"
+	ba.bone_name = "UpperChest"
+	sk.add_child(ba)
+	var cape := _scene(CAPE).instantiate() as Node3D
+	var bi := sk.find_bone("UpperChest")
+	var rest := sk.get_bone_global_rest(bi) if bi >= 0 else Transform3D.IDENTITY
+	# верх плаща — у шеи, чуть за спиной; чуть шире плеч (драпировка тоги не протыкает его сзади)
+	cape.transform = rest.affine_inverse() * Transform3D(Basis.from_scale(Vector3(1.07, 1.0, 1.08)), Vector3(0, rest.origin.y + 0.06, -0.015))
+	ba.add_child(cape)
+	paint_cape(ba, col)
+	return ba
+
+
+static func paint_cape(n: Node, col: String) -> void:
+	var dyed := RenderingServer.get_current_rendering_method() != "gl_compatibility"
+	for mi: MeshInstance3D in n.find_children("*", "MeshInstance3D", true, false):
+		mi.material_override = _material("A") if dyed else _plain("A")
+		if dyed:
+			mi.set_instance_shader_parameter("cloth_main", Color(col).srgb_to_linear())
+			mi.set_instance_shader_parameter("mask_main", 1 << CAPE_STRIP)
+			mi.set_instance_shader_parameter("mask_second", 0)
+			mi.set_instance_shader_parameter("mask_trim", 0)
+
+
+## Движок сам включает _process при входе в дерево — у жителей без плаща выключаем (их сотни, считать нечего)
+func _ready() -> void:
+	set_process(cape_sk != null)
+
+
+## Плащ колышется: на ходу отлетает назад и мягко бьётся в такт шагу, стоя — едва дышит (только у героя: у прочих
+## плаща нет — и _process выключен)
+func _process(dt: float) -> void:
+	if cape_sk == null or anim == null:
+		return
+	var sp := anim.speed_scale
+	if sp <= 0.0:
+		return
+	var walking := _cur.begins_with("Walk") or _cur.begins_with("Jog") or _cur.begins_with("G_Walk") or _cur.begins_with("G_Jog")
+	var run := _cur.contains("Jog")
+	_cape_k = move_toward(_cape_k, (1.6 if run else 1.0) if walking else 0.0, dt * sp * 2.5)
+	_cape_t += dt * sp
+	cape_pose(cape_sk, _cape_bones, _cape_t, _cape_k)
+
+
+## Поза плаща: t — время, k — сколько отлетает (0 стоит, 1 идёт, 1,6 бежит)
+static func cape_pose(sk: Skeleton3D, bones: Array, t: float, k: float) -> void:
+	for j in bones.size():
+		var e: Array = bones[j]
+		var a := (0.035 + 0.02 * sin(t * 1.3 + j * 0.5)) * (1.0 if j == 0 else 0.4)
+		a += k * ((0.2 if j == 0 else 0.07) + 0.035 * sin(t * 6.3 - j * 0.8))
+		sk.set_bone_pose_rotation(int(e[0]), (e[2] as Quaternion) * Quaternion(e[1] as Vector3, a))
 
 
 const KID_HEAD := 1.22                  # голова ребёнка крупнее (как было у детей в роликах)

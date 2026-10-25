@@ -608,9 +608,7 @@ func use_auto_squad(st := {}) -> void:
 ## (squad "any") подходят и три легионера, и легионеры с лучником. С четырёх мест «Лучший состав» уже не ответ на бой
 ## (общий порядок родов войск) — не под бой только лучник в волчьем бою леса (bite)
 func squad_off(st: Dictionary) -> bool:
-	var a := []
-	for u: Dictionary in squad_stats():
-		a.append(String(u["key"]))
+	var a := campaign_keys()
 	a.sort()
 	var b := auto_squad(st)
 	b.sort()
@@ -704,7 +702,105 @@ func squad_power(which := "campaign") -> int:
 	var p := 0
 	for s: Dictionary in squad_stats(which):
 		p += power(s)
+	if which == "campaign" and hero_ready():
+		p = 0
+		for s: Dictionary in battle_squad():
+			p += power(s)                          # в походе первое место — герой
 	return p
+
+
+# =====================================================================
+#   свой герой (Д11): первый и главный воин Легиона
+# =====================================================================
+## Своё место героя в отряде — первое (место 0): в походах на нём всегда герой, остальные места — бойцы на выбор. Числа на
+## 1 уровне — как у легионера, чуть крепче (щит и меч, сильнее против людей): «Лучший состав» и загадки леса посчитаны
+## на легионера впереди — герой встаёт вместо него, бои остаются задачей (учебный бой — с маслом; test_legion hero=1).
+## Уровень героя — уровень Казарм; город прибавляет HERO_CITY урона и здоровья за каждый уровень после «Хутора»,
+## Склад оружия — снаряжение (Hero.KIT: свой меч и щит, броня и урон за уровень) — этим герой и растёт сверх легионера
+const HERO := {"name": "Герой", "hp": 285, "atk": 23, "armor": 34, "range": 1.0, "rate": 1.0, "speed": 1.7,
+	"vs": {"human": 1.3}, "tags": ["human"]}
+const HERO_CITY := 0.03
+## Герой в боях с городами — только когда сервер (server/legion_sim.js, server/pvp.js) повторяет бой с ним и владелец сказал
+## «да» выкладке. Пока false: снимки отряда, бой с городом и оборона — без героя (squad_stats его не знает), он — в походах
+const HERO_PVP := false
+
+
+## Герой в походах: в городе есть свой герой и Легион открыт (проверки без города — без героя: баланс посчитан без него)
+func hero_ready() -> bool:
+	var c = city()
+	return not free_mode and c != null and c.get("hero") != null and Hero.exists(c) and window_open()
+
+
+## Уровень героя — уровень Казарм (и не выше предела уровня города)
+func hero_level() -> int:
+	return clampi(int(levels.get("legionary", 1)), 1, cap())
+
+
+## Уровень Склада оружия, что даёт снаряжение героя (не построен — 0)
+func hero_kit_level() -> int:
+	return level_of("armory") if available("armory") and not free_mode else 0
+
+
+## Боец-герой на уровне lvl при уровне города city_lvl и Складе оружия armory_lvl (бонусы чудес и Кузницы — atk_b, hp_b;
+## общая броня Склада — armor_b)
+static func hero_unit_stats(lvl: int, city_lvl: int, armory_lvl: int, atk_b := 0.0, hp_b := 0.0, armor_b := 0.0) -> Dictionary:
+	var ck := HERO_CITY * maxi(0, city_lvl - 1)
+	var hp_k := 1.0 + 0.19 * (lvl - 1) + hp_b + ck
+	var atk_k := 1.0 + 0.22 * (lvl - 1) + atk_b + ck + Hero.KIT_ATK * armory_lvl
+	return {"key": "hero", "name": HERO["name"], "level": lvl, "hp": roundi(float(HERO["hp"]) * hp_k), "atk": roundi(float(HERO["atk"]) * atk_k),
+		"armor": float(HERO["armor"]) + 6.0 * (lvl - 1) + armor_b + Hero.KIT_ARMOR * armory_lvl, "range": float(HERO["range"]), "min_range": 0.0,
+		"rate": float(HERO["rate"]), "speed": float(HERO["speed"]), "shot": "", "pierce": false, "splash": 0.0, "vs": HERO["vs"],
+		"tags": HERO["tags"], "size": 1.0, "boss": false}
+
+
+## Наш герой в походе: с чудесами, Кузницей и Складом оружия; имя — его
+func hero_stats() -> Dictionary:
+	var s := hero_unit_stats(hero_level(), city_level(), hero_kit_level(), bonus("atk") + forge_b(), bonus("hp") + forge_b(), armory_b())
+	s["name"] = Hero.name_of(city())
+	return s
+
+
+## Отряд в поход: на первом месте — герой (вместо бойца этого места), дальше — бойцы остальных мест. Бои с городами и
+## оборона — squad_stats: все места как были (на первом — его боец), без героя, пока HERO_PVP выключен (сервер его не знает)
+func battle_squad() -> Array:
+	if not hero_ready():
+		return squad_stats()
+	var out := [hero_stats()]
+	for i in range(1, mini(slots(), squad.size())):
+		var t: String = squad[i]
+		if t != "" and UNITS.has(t) and available(t):
+			out.append(stats(t))
+	return out
+
+
+## Рода отряда, что пойдёт в поход (советы, «Лучший состав», шансы, провиант): герой — за легионера (загадки леса и
+## «Лучший состав» посчитаны на легионера впереди, герой встаёт вместо него); боец, спрятанный под медальоном героя, — не в счёт
+func campaign_keys() -> Array:
+	var out := []
+	for u: Dictionary in battle_squad():
+		out.append("legionary" if String(u["key"]) == "hero" else String(u["key"]))
+	return out
+
+
+## Герой появился в старом городе: на первом месте отряда не легионер (лучник, пусто) — меняется местами с первым
+## легионером: в походе этот боец виден и выбирается, в боях с городами отряд тот же
+func hero_squad_fix() -> void:
+	if squad.is_empty() or String(squad[0]) == "legionary":
+		return
+	for i in range(1, mini(slots(), squad.size())):
+		if String(squad[i]) == "legionary":
+			squad[i] = squad[0]
+			squad[0] = "legionary"
+			return
+
+
+## Отряд из родов types (оценка шансов, «Лучший состав»): в походе первое место — герой
+func hero_types(sq: Array) -> Array:
+	if hero_ready() and not sq.is_empty():
+		var out := sq.duplicate()
+		out[0] = hero_stats()
+		return out
+	return sq
 
 
 # =====================================================================
@@ -977,7 +1073,8 @@ func b_effect(btype: String, lvl: int) -> Array:
 		"infirmary":
 			return ["Между волнами боя раненые восстанавливают %d%% здоровья" % roundi(INFIRMARY * lvl * 100.0)]
 		"armory":
-			return ["+%d брони всем бойцам в походах" % roundi(ARMORY * lvl), "Позже — снаряжение героя"]
+			return ["+%d брони всем бойцам в походах" % roundi(ARMORY * lvl), "Герою — %s (+%d брони, +%d%% урона)" % [
+				String(Hero.kit_of(lvl)["n"]).to_lower(), roundi(Hero.KIT_ARMOR * lvl), roundi(Hero.KIT_ATK * lvl * 100.0)]]
 	var u := bkey(btype)
 	if not UNITS.has(u):
 		return []
@@ -1302,9 +1399,9 @@ static func stage_power(st: Dictionary) -> int:
 ## Без неё — по среднему уровню отряда и рекомендованному (target_level — на нём обычный отряд с умениями побеждает
 ## в 9 боях из 10, без умений нужен уровень выше); отряд не под бой (пока мест три) — как уровень долой
 func odds(st: Dictionary, est := {}) -> Array:
-	var sq := squad_stats()
-	if sq.is_empty():
+	if squad_stats().is_empty():
 		return ["bad", "В отряде никого"]
+	var sq := battle_squad()                     # средний уровень — тех, кто пойдёт в бой (с героем)
 	if not est.is_empty():
 		var p := float(est["cur"])
 		var v := "good" if p >= 0.8 else ("mid" if p >= 0.5 else ("hard" if p >= 0.2 else "bad"))
@@ -1330,9 +1427,7 @@ func odds(st: Dictionary, est := {}) -> Array:
 
 ## Чем «Лучший состав» отличается от нынешнего отряда (для шансов): «с лучником», «без лучника», «лучшим составом»
 func best_words(best_types: Array) -> String:
-	var cur := []
-	for u: Dictionary in squad_stats():
-		cur.append(String(u["key"]))
+	var cur := campaign_keys()
 	var bow_b := "archer" in best_types
 	var bow_c := "archer" in cur
 	if bow_b and not bow_c:
@@ -1359,9 +1454,7 @@ func squad_hint(st: Dictionary) -> String:
 	if not squad_off(st):
 		return ""
 	var best := auto_squad(st)
-	var cur := []
-	for u: Dictionary in squad_stats():
-		cur.append(String(u["key"]))
+	var cur := campaign_keys()
 	if "archer" in best and not "archer" in cur:
 		return "Для этого боя возьмите лучника — «Лучший состав»."
 	if "archer" in cur and not "archer" in best and bool(st.get("bite", false)):
@@ -1380,34 +1473,34 @@ const ODDS_RUNS := 8
 
 
 func odds_job(st: Dictionary) -> Dictionary:
-	var cur := []
-	for u: Dictionary in squad_stats():
-		cur.append(String(u["key"]))
+	var cur := campaign_keys()
 	var best := auto_squad(st)
 	var cs := cur.duplicate()
 	var bs := best.duplicate()
 	cs.sort()
 	bs.sort()
 	var same := cs == bs
-	return {"key": odds_key(st), "cur": _odds_setups(st, cur), "best": [] if same else _odds_setups(st, best), "best_types": best}
+	return {"key": odds_key(st), "cur": _odds_setups(st, [], battle_squad()), "best": [] if same else _odds_setups(st, best), "best_types": best}
 
 
 ## Ключ оценки шансов: бой, отряд, уровни, умения, бонусы чудес (одинаковый ключ — та же оценка)
 func odds_key(st: Dictionary) -> String:
-	var cur := []
-	for u: Dictionary in squad_stats():
-		cur.append(String(u["key"]))
-	var key := [st["key"], cur, open_perks(), bonus("atk"), bonus("hp"), auto_squad(st), forge_b(), armory_b(), heal_b()]
+	var cur := campaign_keys()
+	var key := [st["key"], cur, open_perks(), bonus("atk"), bonus("hp"), auto_squad(st), forge_b(), armory_b(), heal_b(),
+		hero_ready(), hero_kit_level(), city_level()]
 	for t in UNIT_IDS:
 		key.append(int(levels.get(t, 1)))
 	return str(key)
 
 
-func _odds_setups(st: Dictionary, types: Array) -> Array:
-	var sq := []
-	for t in types:
-		if available(String(t)):
-			sq.append(stats(String(t)))
+## sq_ready — готовый отряд (нынешний — battle_squad: как пойдёт в бой), иначе — из родов types
+func _odds_setups(st: Dictionary, types: Array, sq_ready := []) -> Array:
+	var sq: Array = sq_ready if not sq_ready.is_empty() else []
+	if sq.is_empty():
+		for t in types:
+			if available(String(t)):
+				sq.append(stats(String(t)))
+		sq = hero_types(sq)                      # герой идёт в поход на своём месте — и в оценке шансов
 	var waves := []
 	for w: Array in st["waves"]:
 		var ws := []
@@ -1464,7 +1557,7 @@ static func reward_for(st: Dictionary, first: bool) -> Dictionary:
 
 ## Провиант на поход (денарии)
 func food_cost(st: Dictionary) -> int:
-	return roundi(squad_stats().size() * (FOOD["base"] + FOOD["per_d"] * float(st["D"])))
+	return roundi(battle_squad().size() * (FOOD["base"] + FOOD["per_d"] * float(st["D"])))
 
 
 ## Можно ли в бой ("" — можно, иначе почему нельзя)
@@ -1558,6 +1651,7 @@ static func unlocks_at(n: int, barracks := MAX_LEVEL) -> Array:
 ## packs и tutorial — только в походах: бои с городами (сервер, server/legion_sim.js) их не знают
 func make_battle(st: Dictionary, seed_v := -1) -> Dictionary:
 	var waves := []
+	var sq := battle_squad()
 	for w: Array in st["waves"]:
 		var ws := []
 		for k in w:
@@ -1565,8 +1659,10 @@ func make_battle(st: Dictionary, seed_v := -1) -> Dictionary:
 		waves.append(ws)
 	if seed_v < 0:
 		seed_v = (int(now() * 1000.0) & 0xffffff) + 1
-	var s := {"kind": "campaign", "stage": st, "squad": squad_stats(), "waves": waves, "perks": open_perks(), "seed": seed_v,
+	var s := {"kind": "campaign", "stage": st, "squad": sq, "waves": waves, "perks": open_perks(), "seed": seed_v,
 		"food": food_cost(st), "packs": (st.get("packs", []) as Array).duplicate()}
+	if hero_ready():
+		s["hero_look"] = Hero.battle_look(city(), hero_kit_level())   # облик героя в бою (3D-бой: LegionFighter.create_hero)
 	if tutorial_battle(st):
 		s["tutorial"] = "oil"
 	if heal_b() > 0.0:

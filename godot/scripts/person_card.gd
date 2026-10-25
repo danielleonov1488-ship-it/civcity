@@ -45,6 +45,9 @@ static func fill(hud: Hud, box: VBoxContainer, sel: Dictionary) -> bool:
 	if _edit_rid != int(r["id"]):
 		edit = false
 		_edit_rid = int(r["id"])
+	if r.has("hero"):
+		_fill_hero(hud, box, r)                 # свой герой (Д11): своя карточка — Легион, снаряжение, «Гардероб»
+		return true
 	_fill_person(hud, box, r)
 	return true
 
@@ -261,6 +264,13 @@ static func _no_job(c: City, r: Dictionary) -> String:
 ## Что житель делает сейчас — простыми словами
 static func activity(ppl: People, r: Dictionary) -> String:
 	var c: City = ppl.city
+	if r.has("hero"):
+		var hh: Dictionary = c.buildings.get(int(r["home"]), {})
+		var where := "в Казармах" if String(hh.get("type", "")) == "barracks" else "на почтовой станции"
+		if String(r["state"]) == "home":
+			return ("спит " if ppl.game.hour >= 21.5 or ppl.game.hour < 5.0 else "отдыхает ") + where
+		if String(r["state"]) == "walk" and String(r["goal"]) == "home":
+			return "идёт ночевать " + where
 	var bn := func(id) -> String:
 		var b: Dictionary = c.buildings.get(int(id), {})
 		return ("«%s»" % String(c.def(b)["name"])) if not b.is_empty() else ""
@@ -404,6 +414,210 @@ static func _shop_for(c: City, n: String) -> String:
 			bc = float(d["cost"])
 			best = String(d["name"])
 	return best
+
+
+# ---------- свой герой (Д11) ----------
+
+## Карточка героя: портрет, имя, «Герой города · первый воин Легиона», что делает, место в отряде и числа, снаряжение
+## со Склада оружия, гардероб (сколько открыто, что скоро); «Следовать», «Гардероб» (переодеть тут же), «Изменить»
+## (экран «Ваш герой»: имя, пол, наборы)
+static func _fill_hero(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
+	var ppl: People = hud.game.people
+	var c: City = hud.game.city
+	var lg: Legion = c.legion
+	var hdr := HBoxContainer.new()
+	hdr.add_theme_constant_override("separation", 10)
+	hdr.add_child(_portrait_box(hud, "h:%s" % Citizen.look_key(Hero.look(c)), func(vp: SubViewport): _person_subject(vp, ppl, r)))
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 1)
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.add_child(hud._wrap(hud._label(Hero.name_of(c), 24, false, Hud.C_INK, hud.font_title), W - PORTRAIT - 60.0))
+	var sub := "Герой города" + (" · первый воин Легиона" if lg.window_open() else "")
+	tv.add_child(hud._wrap(hud._label(sub, 15, true, Hud.C_SOFT), W - PORTRAIT - 60.0))
+	var chip := HBoxContainer.new()
+	chip.add_theme_constant_override("separation", 4)
+	chip.add_child(hud._icon("laurels", 24))
+	chip.add_child(hud._label("Ваша римлянка" if Hero.female(c) else "Ваш римлянин", 15, true, Hud.C_GOLD))
+	tv.add_child(chip)
+	hdr.add_child(tv)
+	var close := hud._bare("close", "Закрыть", 34, func(): hud._hide_info())
+	close.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	hdr.add_child(close)
+	box.add_child(hdr)
+	box.add_child(hud._divider(16))
+	# сейчас
+	var nr := hud._row("time", "Сейчас", "")
+	_now = nr.get_child(2) as Label
+	_now_key = "p:%d" % int(r["id"])
+	_now.text = activity(ppl, r)
+	_now.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_now.custom_minimum_size = Vector2(230, 0)
+	_now.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	box.add_child(nr)
+	# Легион: своё место в отряде и числа; ещё не собран — какая история его откроет
+	if lg.window_open():
+		var hs := lg.hero_stats()
+		var lr := hud._row("legion", "Легион", "первое место в отряде · %d ур." % int(hs["level"]))
+		box.add_child(hud._clickable(lr, "Окно «Легион»: отряд и походы", func():
+			var lu := LegionUi.of(hud)
+			if lu != null:
+				hud._hide_info()
+				lu.open("troops")))
+		var sr := HBoxContainer.new()
+		sr.add_theme_constant_override("separation", 12)
+		sr.alignment = BoxContainer.ALIGNMENT_END
+		for e: Array in [["medic", "Здоровье", float(hs["hp"])], ["swords", "Урон за удар", float(hs["atk"])], ["shield", "Броня", float(hs["armor"])]]:
+			var h := HBoxContainer.new()
+			h.add_theme_constant_override("separation", 3)
+			h.tooltip_text = String(e[1])
+			h.mouse_filter = Control.MOUSE_FILTER_PASS
+			h.add_child(hud._icon(String(e[0]), 20))
+			h.add_child(hud._label(hud.fmt(float(e[2])), 15, true))
+			sr.add_child(h)
+		box.add_child(sr)
+	else:
+		box.add_child(hud._row("legion", "Легион", "ещё не собран", Hud.C_SOFT))
+		box.add_child(hud._wrap(hud._label("   Легион откроет история «%s» — герой пойдёт в бой первым" % Legion.story_title(), 13, false, Hud.C_SOFT), W))
+	# снаряжение со Склада оружия
+	var kl := lg.hero_kit_level()
+	var kit := Hero.kit_of(kl)
+	box.add_child(hud._row("shield", "Снаряжение", "", Hud.C_INK))
+	box.add_child(hud._wrap(hud._label("   " + String(kit["n"]) + ("" if kl > 0 else " — лучшее даст Склад оружия"), 14, true, Hud.C_INK if kl > 0 else Hud.C_SOFT), W))
+	# гардероб
+	var wc := Hero.wardrobe_count(c, 1 if Hero.female(c) else 0)
+	box.add_child(hud._row("cape", "Гардероб", "открыто %d из %d" % [int(wc[0]), int(wc[1])]))
+	var nx := Hero.next_item(c, 1 if Hero.female(c) else 0)
+	if not nx.is_empty():
+		box.add_child(hud._wrap(hud._label("   Скоро: %s — %s" % [String(nx["n"]), String(nx["why"]).trim_prefix("Откроется: ")], 13, false, Hud.C_SOFT), W))
+	# кнопки
+	box.add_child(hud._divider(12))
+	var btns := HBoxContainer.new()
+	btns.add_theme_constant_override("separation", 6)
+	btns.alignment = BoxContainer.ALIGNMENT_CENTER
+	_follow_btn = _btn(hud, "Следовать", "view", "Камера пойдёт за героем (WASD, Esc или правая кнопка — перестать)", func(): toggle_follow(hud, {"r": r}))
+	_follow_btn.toggle_mode = true
+	_follow_btn.set_pressed_no_signal(_following(hud, r))
+	btns.add_child(_follow_btn)
+	var eb := _btn(hud, "Гардероб", "cape", "Переодеть героя: плащ, цвета, причёска, венок — из того, что открыто", func():
+		edit = not edit
+		hud._fill_info())
+	eb.name = "wardrobe"
+	eb.toggle_mode = true
+	eb.set_pressed_no_signal(edit)
+	btns.add_child(eb)
+	var ch := _btn(hud, "Изменить", "person", "Имя, пол и облик целиком — экран «Ваш герой»", func():
+		hud._hide_info()
+		hud.game.open_hero_screen("edit"))
+	ch.name = "change"
+	btns.add_child(ch)
+	box.add_child(btns)
+	if edit:
+		_hero_wardrobe(hud, box, r)
+
+
+## «Гардероб» героя прямо в карточке: наряд, причёска, борода, волосы, цвета, плащ, венок. Закрытое — серым
+## с замочком (почему — в подсказке); выбранное — сразу на герое и на портрете
+static func _hero_wardrobe(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
+	var c: City = hud.game.city
+	var ppl: People = hud.game.people
+	var lk: Dictionary = Hero.look(c).duplicate()
+	var fem := Hero.female(c)
+	var pan := hud._chip(false, 10.0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	pan.add_child(v)
+	box.add_child(pan)
+	var apply := func(nl: Dictionary):
+		Hero.set_look(c, nl)
+		ppl.hero_refresh(true)
+		if _who is Citizen:
+			(_who as Citizen).apply_look(Hero.look(c).duplicate())
+		hud.hero_btn_refresh()
+		hud._fill_info()
+	var set_k := func(k: String, x):
+		var nl := lk.duplicate()
+		nl[k] = x
+		if k == "main" or (k == "mdl" and String(x) == "SK_Chr_Worker_Male_01"):
+			Looks.set_main(nl, String(nl.get("main", "a3283a")))
+		apply.call(nl)
+	var outfits := Hero.items(c, "mdl", lk).filter(func(e): return bool(e["open"]))
+	var oi := 0
+	for i in outfits.size():
+		if String(outfits[i]["v"]) == String(lk.get("mdl", "")):
+			oi = i
+	if outfits.size() > 1:
+		var orow := _stepper(hud, "Наряд", oi + 1, 1, outfits.size(), "", func(x: int): set_k.call("mdl", outfits[x - 1]["v"]))
+		(orow.get_child(2) as Label).text = String(outfits[oi]["n"])     # название наряда, а не номер
+		(orow.get_child(2) as Label).custom_minimum_size = Vector2(150, 0)
+		v.add_child(orow)
+	v.add_child(_stepper(hud, "Причёска", int(lk.get("hair", 1)), 1 if fem else 0, Looks.hair_max(fem), "бритая" if not fem else "", func(x: int): set_k.call("hair", x)))
+	if not fem:
+		v.add_child(_stepper(hud, "Борода", int(lk.get("beard", 0)), 0, Looks.BEARDS, "нет", func(x: int): set_k.call("beard", x)))
+	v.add_child(_item_row(hud, "Волосы", Hero.items(c, "hc", lk), String(lk.get("hc", "A")), func(x): set_k.call("hc", x), HeroScreen.HAIR_COL))
+	for e: Array in [["main", "Туника"], ["second", "Тога" if not fem else "Нижняя туника"], ["trim", "Кайма"], ["cape", "Плащ"]]:
+		var its := Hero.items(c, String(e[0]), lk)
+		if its.is_empty():
+			continue
+		var k := String(e[0])
+		v.add_child(_item_row(hud, String(e[1]), its, String(lk.get(k, "")), func(x): set_k.call(k, x), {}))
+	var crowns := Hero.items(c, "crown", lk)
+	var cr_open := crowns.filter(func(e): return bool(e["open"]))
+	if cr_open.size() > 1:
+		v.add_child(_stepper(hud, "Венок", int(lk.get("crown", 1)), 1, cr_open.size(), "", func(x: int): set_k.call("crown", x)))
+	else:
+		var why := String(crowns[1]["why"]) if crowns.size() > 1 else ""
+		v.add_child(hud._wrap(hud._label("Венок: лавровый. «Венок победителя» — %s" % why.trim_prefix("Откроется: "), 13, false, Hud.C_SOFT), W - 40.0))
+
+
+## Ряд вещей-цветов: открытые — щёлкнуть, закрытые — серые с замочком (почему — в подсказке)
+static func _item_row(hud: Hud, title: String, its: Array, cur: String, cb: Callable, cols: Dictionary) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	var l := hud._label(title, 16, true)
+	l.custom_minimum_size = Vector2(110, 0)
+	row.add_child(l)
+	var flow := HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", 4)
+	flow.add_theme_constant_override("v_separation", 4)
+	flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for e: Dictionary in its:
+		var val = e["v"]
+		var col: Color = cols.get(val, Color(String(val)) if String(val).is_valid_html_color() else Color.GRAY)
+		var ok := bool(e["open"])
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(26, 26)
+		b.focus_mode = Control.FOCUS_NONE
+		b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if ok else Control.CURSOR_FORBIDDEN
+		b.tooltip_text = String(e["n"]) + ("" if ok else "\n" + String(e["why"]))
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = col if ok else col.lerp(Color("9a8f80"), 0.6)
+		sb.set_corner_radius_all(13)
+		var on := str(val).to_lower() == cur.to_lower()
+		sb.set_border_width_all(3 if on else 1)
+		sb.border_color = Color("fff3c4") if on else Color("5a4128")
+		b.add_theme_stylebox_override("normal", sb)
+		var sh := sb.duplicate() as StyleBoxFlat
+		sh.border_color = Color("ffe08a")
+		sh.set_border_width_all(3)
+		b.add_theme_stylebox_override("hover", sh)
+		b.add_theme_stylebox_override("pressed", sh)
+		if ok:
+			b.pressed.connect(func(): cb.call(val))
+		else:
+			var li := TextureRect.new()
+			li.texture = hud.ico("lock", 32)
+			li.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			li.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			li.set_anchors_preset(Control.PRESET_FULL_RECT)
+			li.offset_left = 6
+			li.offset_top = 6
+			li.offset_right = -6
+			li.offset_bottom = -6
+			li.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			b.add_child(li)
+		flow.add_child(b)
+	row.add_child(flow)
+	return row
 
 
 # ---------- кошка ----------

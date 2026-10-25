@@ -14,6 +14,7 @@ extends SceneTree
 ## Состав и умения — как у игрока, дошедшего до боя (места и рода войск открываются боссами); умения жмёт сам бой
 ## (auto) — как внимательный игрок. noarcher=1 — без лучников (до исследования «Стрельбище»); пока мест три
 ## (лес) — и так три легионера, как собирает «Лучший состав» (bow=1 — с лучником; mode=tut archer=1 — то же в учебном бою).
+## hero=1 — с героем (Д11) на первом месте отряда вместо его бойца (city=N — уровень города для его прибавки); без него — как раньше
 
 const WIN_NEED := 0.75
 ## Обычный уровень бойцов игрока, который подходит к провинции (с учётом предела города: Посёлок → 3, Городок → 4,
@@ -248,6 +249,8 @@ func _player(st: Dictionary, lvl: int, with_perks: bool) -> Dictionary:
 	var sq := []
 	for t in types:
 		sq.append(Legion.unit_stats(t, lvl))
+	if args.get("hero", "0") == "1" and not sq.is_empty():
+		sq[0] = Legion.hero_unit_stats(lvl, int(args.get("city", "1")), 0)   # свой герой (Д11) — на первом месте
 	var perks := {}
 	if with_perks:
 		for p in Legion.PERK_IDS:
@@ -360,15 +363,17 @@ func _oil_room(st: Dictionary, lvl: int, seeds: int, n: int) -> float:
 ## none — без масла; auto — «Авто» с начала (повтор пройденного боя)
 func _tut_rate(how: String, seeds: int, lvl: int, arch := false) -> Dictionary:
 	var st := Legion.stage(0, 0, 0)
+	var sq := []
+	for t in (["legionary", "archer", "legionary"] if arch else ["legionary", "legionary", "legionary"]):
+		sq.append(Legion.unit_stats(t, lvl))
+	if args.get("hero", "0") == "1":
+		sq[0] = Legion.hero_unit_stats(lvl, int(args.get("city", "1")), 0)   # свой герой (Д11) — на первом месте
 	var waves := []
 	for w: Array in st["waves"]:
 		var ws := []
 		for k in w:
 			ws.append(Legion.foe_stats(st, k))
 		waves.append(ws)
-	var sq := []
-	for t in (["legionary", "archer", "legionary"] if arch else ["legionary", "legionary", "legionary"]):
-		sq.append(Legion.unit_stats(t, lvl))
 	var win := 0
 	var hit := 0
 	var hp := 0.0
