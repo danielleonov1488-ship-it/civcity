@@ -40,6 +40,7 @@ var goods := {}                       # сырьё, которое есть в �
 ## пока игрок не выберет ей дом. Ждать могут не больше ARRIVAL_MAX семей — тогда новые не едут.
 var arrivals: Array = []              # семьи на площади: [{name, n, cls}]
 var pending := {}                     # семьи, которым выбран дом, идут туда: имя → {name, n, cls, home}
+var cats: Array = []                  # кошки города с именами (этап 6.4): [{nm, sx, fur, home, sd}] — сохраняются
 var incoming := 0                     # сколько семей едет в повозке
 var arrive_t := 0.0                   # часов с прошлой повозки
 var arrive_block_h := 0               # сколько часов повозка не везёт семьи из-за низкого счастья
@@ -413,7 +414,7 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 		if int(pending[nm]["home"]) == int(b["id"]) and int(b["id"]) != moving_id:
 			var f: Dictionary = pending[nm]
 			pending.erase(nm)
-			arrivals.append({"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false))})
+			arrivals.append({"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false)), "m": f.get("m", [])})
 	if quiet:
 		building_removed.emit(b)
 		return
@@ -1838,7 +1839,10 @@ func family_arrived(f: Dictionary, from_cart := true) -> void:
 	for a in arrivals:
 		if a["name"] == f["name"]:
 			return
-	arrivals.append({"name": f["name"], "n": int(f["n"]), "cls": f["cls"], "back": back})
+	var af := {"name": f["name"], "n": int(f["n"]), "cls": f["cls"], "back": back}
+	if typeof(f.get("m")) == TYPE_ARRAY and not (f["m"] as Array).is_empty():
+		af["m"] = f["m"]                     # члены семьи с именами (Residents) — те же, что сошли с повозки
+	arrivals.append(af)
 	arrivals_changed.emit()
 	changed.emit()
 	if from_cart:
@@ -1882,7 +1886,7 @@ func assign(name: String, home: int) -> bool:
 	arrivals.erase(f)
 	var b: Dictionary = buildings[home]
 	b["coming"] = int(b.get("coming", 0)) + int(f["n"])
-	pending[name] = {"name": name, "n": f["n"], "cls": f["cls"], "home": home, "back": bool(f.get("back", false))}
+	pending[name] = {"name": name, "n": f["n"], "cls": f["cls"], "home": home, "back": bool(f.get("back", false)), "m": f.get("m", [])}
 	family_assigned.emit(name, home)
 	arrivals_changed.emit()
 	changed.emit()
@@ -1901,10 +1905,14 @@ func settled(id: int, n: int, name := "") -> int:
 	if name == "":
 		name = Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()]
 	var back := bool((pending.get(name, {}) as Dictionary).get("back", false))
+	var pm: Array = (pending.get(name, {}) as Dictionary).get("m", [])
 	pending.erase(name)
 	if not back:
 		settled_total += 1                 # семья, что уже жила в городе и переезжает снова, — не новая
-	(b["families"] as Array).append({"name": name, "n": n})
+	var fam := {"name": name, "n": n}
+	if pm.size() >= n:
+		fam["m"] = pm.slice(0, n)          # члены семьи с именами (Residents); кто вошёл — уточнит People при входе
+	(b["families"] as Array).append(fam)
 	b["pop"] = int(b["pop"]) + n
 	compute()
 	_check_goals()
@@ -2489,13 +2497,13 @@ func save_data() -> Dictionary:
 			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": b.get("hire", -1),
 			"born": int(b.get("born", id)), "cells": _cells64(b["cells"])})
 	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
-		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false))}),
+		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false)), "m": f.get("m", [])}),
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
 		"econ_v": econ, "taxes": taxes, "hist": hist,
-		"stories": stories.duplicate(true), "legion": legion.to_dict()}
+		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true)}
 
 
 ## Клетки постройки — строкой base64; пустые — пустой строкой (Marshalls ругается на пустой массив в журнал)
@@ -2517,7 +2525,11 @@ func load_data(d: Dictionary) -> void:
 			research[g["unlock"]] = true
 	arrivals = []
 	for f in d.get("arrivals", []):
-		arrivals.append({"name": f["name"], "n": int(f["n"]), "cls": f.get("cls", "plebs"), "back": bool(f.get("back", false))})
+		var af := {"name": f["name"], "n": int(f["n"]), "cls": f.get("cls", "plebs"), "back": bool(f.get("back", false))}
+		if typeof(f.get("m")) == TYPE_ARRAY and not (f["m"] as Array).is_empty():
+			af["m"] = f["m"]
+			Residents.fit(af, hash([String(af["name"]), -1]))    # члены семьи из сохранения (числа — целыми)
+		arrivals.append(af)
 	pending = {}
 	incoming = maxi(0, int(d.get("incoming", 0)))
 	arrive_t = float(d.get("arrive_t", 0.0))
@@ -2554,6 +2566,13 @@ func load_data(d: Dictionary) -> void:
 	plots_bought = maxi(0, int(d.get("plots_bought", land.owned.size() - Land.OLD_PLOTS)))
 	_drop_roads2()
 	legion.from_dict(d.get("legion", {}))
+	cats = []
+	var cl = d.get("cats", [])
+	if typeof(cl) == TYPE_ARRAY:
+		for e in cl:
+			if typeof(e) == TYPE_DICTIONARY:
+				cats.append({"nm": String(e.get("nm", "")), "sx": int(e.get("sx", 1)), "fur": int(e.get("fur", 0)), "home": int(e.get("home", -1)),
+					"sd": int(e.get("sd", 1))})
 	next_id = int(d.get("next_id", 1))
 	buildings = {}
 	for bd in d.get("buildings", []):

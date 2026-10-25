@@ -19,6 +19,8 @@ var _orbit := false
 var _pan := false
 var cine := false                    # камеру ведёт вступительный ролик: ввод и плавный ход выключены
 var ground_pick: Callable            # точка земли под курсором (game.gd): колёсико приближает к ней, а не к середине экрана
+var follow: Callable                # «Следовать» (карточка жителя, этап 6.3): где он сейчас (Vector3; не Vector3 — перестать)
+signal follow_ended                 # камера перестала следовать (WASD, тянут карту, Esc, правая кнопка)
 
 const DIST_MIN := 4.0
 const DIST_MAX := 130.0
@@ -89,6 +91,8 @@ func _unhandled_input(e: InputEvent) -> void:
 			_yaw_t -= mm.relative.x * 0.006
 			_pitch_t = clampf(_pitch_t + mm.relative.y * 0.005, deg_to_rad(8), deg_to_rad(80))
 		elif _pan:
+			if mm.relative.length() > 2.0:
+				stop_follow()                # потянули карту — сами ведём камеру
 			var k := _dist_t * 0.0016
 			var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
 			var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
@@ -108,10 +112,34 @@ func _zoom(k: float) -> void:
 	_dist_t = d1
 
 
-## Двойной щелчок по постройке: камера плавно летит к ней (3.8)
+## Следовать за жителем (кошкой): f() — где он; камера чуть ближе, ведёт его, пока игрок сам не сдвинет
+func start_follow(f: Callable) -> void:
+	follow = f
+	_dist_t = minf(_dist_t, 26.0)
+
+
+func stop_follow() -> void:
+	if follow.is_valid():
+		follow = Callable()
+		follow_ended.emit()
+
+
+func following() -> bool:
+	return follow.is_valid()
+
+
+## Двойной щелчок по постройке: камера плавно летит к ней (3.8); за жителем больше не идёт
 func fly_to(p: Vector3) -> void:
+	stop_follow()
 	_target_t = Vector3(p.x, _target_t.y, p.z)
 	_dist_t = minf(_dist_t, 30.0)
+
+
+## «Показать» (история, заказ): камера к точке p, даль — в пределах [dmin, dmax]; за жителем больше не идёт
+func look_at_point(p: Vector3, dmin := 30.0, dmax := 55.0) -> void:
+	stop_follow()
+	_target_t = p
+	_dist_t = clampf(_dist_t, dmin, dmax)
 
 
 func _process(dt: float) -> void:
@@ -127,9 +155,16 @@ func _process(dt: float) -> void:
 		if Input.is_key_pressed(KEY_Q): _yaw_t += dt * 1.4
 		if Input.is_key_pressed(KEY_E): _yaw_t -= dt * 1.4
 	if mv != Vector2.ZERO:
+		stop_follow()
 		var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
 		var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
 		_target_t += (right * mv.x + fwd * mv.y) * _dist_t * 0.9 * dt
+	if follow.is_valid():
+		var fp = follow.call()
+		if fp is Vector3 and (fp as Vector3).is_finite():
+			_target_t = Vector3(fp.x, _target_t.y, fp.z)
+		else:
+			stop_follow()
 	_target_t.x = clampf(_target_t.x, 4.0, Land.SIZE - 4.0)
 	_target_t.z = clampf(_target_t.z, 4.0, Land.SIZE - 4.0)
 	var a := 1.0 - pow(0.0008, dt)

@@ -2075,7 +2075,7 @@ func _pick_entry(b: Dictionary) -> Dictionary:
 
 ## Во что попадает луч из камеры: ближайшая постройка {id, t, p (точка попадания)} или {}.
 ## Сначала грубо — по общей коробке постройки, потом по коробкам деталей; холм перед постройкой заслоняет её
-func _ray_pick(o: Vector3, d: Vector3) -> Dictionary:
+func _ray_pick(o: Vector3, d: Vector3, ground := true) -> Dictionary:
 	if _pick_cache.size() > city.buildings.size() + 32:
 		for id in _pick_cache.keys():
 			if not city.buildings.has(id):
@@ -2094,7 +2094,7 @@ func _ray_pick(o: Vector3, d: Vector3) -> Dictionary:
 		return {}
 	cands.sort_custom(func(a, b): return a[0] < b[0])
 	var tg := INF
-	if hover != Vector2.INF:
+	if ground and hover != Vector2.INF:
 		tg = o.distance_to(Vector3(hover.x, maxf(land.height_at(hover.x, hover.y), Land.WATER_Y), hover.y)) + 0.6
 	var best_t := tg
 	var best := {}
@@ -2137,9 +2137,33 @@ func pick_building() -> Dictionary:
 	return city.building_at(hover)
 
 
+## Постройка на луче из камеры через точку экрана mp — {id, t, p} или {}: житель или кошка дальше неё не видны.
+## Мышь там же — луч из кэша pick_building (лишнего счёта нет)
+func ray_hit(mp: Vector2) -> Dictionary:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null or city == null:
+		return {}
+	var m0 := _mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()
+	if mp.distance_squared_to(m0) < 0.25:
+		pick_building()
+		return _pick_hit
+	return _ray_pick(cam.project_ray_origin(mp), cam.project_ray_normal(mp))
+
+
+## Постройка заслоняет точку to, если смотреть из from (камера «Погладить» выбирает сторону, откуда кошку видно)
+func view_blocked(from: Vector3, to: Vector3) -> bool:
+	var d := from.distance_to(to)
+	if d < 0.01:
+		return false
+	var h := _ray_pick(from, (to - from) / d, false)
+	return not h.is_empty() and float(h["t"]) < d - 0.3
+
+
 # ---------- инструменты ----------
 
 func set_tool(t: String) -> void:
+	if t != "" and rig != null:
+		rig.stop_follow()                         # взяли инструмент — камера больше не идёт за жителем (карточка остаётся)
 	if painting:
 		if tool == "erase":
 			cancel_stroke()                       # ластик убирает только при отпускании: сменили инструмент — ничего не убрано
@@ -3581,6 +3605,8 @@ func _tool_note(over_ui: bool) -> void:
 	if tool == "" and not over_ui and mode != "menu" and not (rig and rig.cine) and hud.root.visible:
 		# без инструмента: постройка под курсором 0,4 с — что это и как она (3.8)
 		var b := pick_building()
+		if people != null and not people.hover_pick(_mouse_pos).is_empty():
+			b = {}                                # житель или кошка под курсором — щелчок их, подпись постройки не показываем
 		var id := int(b.get("id", -1))
 		if id != _hover_id:
 			_hover_id = id
@@ -3945,6 +3971,11 @@ func select_building(b: Dictionary) -> void:
 		select_outline.queue_free()
 		select_outline = null
 	selected = b
+	if people:
+		people.set_focus(0)                   # выбор жителя или кошки снят (карточка — у постройки или закрыта)
+		people.set_focus_cat({})
+	if rig:
+		rig.stop_follow()
 	if cover:
 		cover.refresh()
 	if b.is_empty():
@@ -3952,6 +3983,19 @@ func select_building(b: Dictionary) -> void:
 	select_outline = Parts.ghost(city.blueprint(b), "outline", Color(1.0, 0.96, 0.82))
 	select_outline.transform = city.xf(b)
 	add_child(select_outline)
+
+
+## Выбрать жителя или кошку ({"r": житель} / {"cat": кошка}): обводка, рисуется всегда, карточка справа (этап 6.3)
+func select_person(sel: Dictionary) -> void:
+	if people == null or sel.is_empty():
+		return
+	select_building({})
+	if sel.has("cat"):
+		people.set_focus_cat(sel["cat"])
+	else:
+		people.set_focus(int((sel["r"] as Dictionary)["id"]))
+	if hud:
+		hud.open_person(sel)
 
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -3978,6 +4022,8 @@ func _unhandled_input(e: InputEvent) -> void:
 					hud._close_tray()
 					if tool != "":
 						set_tool("")
+					elif rig != null and rig.following():
+						rig.stop_follow()             # камера шла за жителем — перестала (карточка остаётся)
 					elif not hud.close_panels() and selected.is_empty() and hud.overlay != "":
 						hud.set_overlay("")           # окон и выбора нет — правая кнопка закрывает «Обзор»
 					else:
@@ -3987,6 +4033,11 @@ func _unhandled_input(e: InputEvent) -> void:
 				press_screen = mb.position
 				press_hover = hover
 				press_pl = place_info.duplicate() if Defs.B.has(tool) else {}
+				var dp: Dictionary = people.pick(_mouse_pos if _mouse_pos.x >= 0.0 else mb.position) if mb.double_click and tool == "" and people != null else {}
+				if not dp.is_empty() and rig != null:
+					select_person(dp)
+					PersonCard.follow(hud, dp)        # двойной щелчок по жителю — камера пойдёт за ним
+					return
 				if mb.double_click and tool == "" and rig != null:
 					var db := pick_building()
 					if not db.is_empty():
@@ -4020,6 +4071,8 @@ func _unhandled_input(e: InputEvent) -> void:
 					_fence_cancel()                   # забор не дотянули — не ставим; второй Esc снимет инструмент
 				elif tool != "":
 					set_tool("")
+				elif rig != null and rig.following():
+					rig.stop_follow()                 # камера шла за жителем — перестала (карточка остаётся)
 				elif hud.close_panels():
 					pass
 				elif not selected.is_empty():
@@ -4103,6 +4156,13 @@ func _click() -> void:
 	# история горожан: щёлкнули по потерянной кошке (или по тому, что ищем) — нашли
 	if tool == "" and stories != null and stories.try_click(_mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()):
 		return
+	# житель или кошка под курсором — их карточка (постройка за ними щелчок не забирает, а та, что их заслоняет, — забирает);
+	# никого — щелчок постройке
+	if tool == "" and people != null:
+		var pk: Dictionary = people.pick(_mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position())
+		if not pk.is_empty():
+			select_person(pk)
+			return
 	# постройку ловит луч по всей модели — щёлкнуть можно и по крыше на фоне неба (земли под курсором нет)
 	if hover == Vector2.INF and not tool in ["", "settle", "bulldoze", "copy", "move", "floor"]:
 		return
@@ -4948,6 +5008,8 @@ func save() -> void:
 
 
 func _save_data() -> Dictionary:
+	if people:
+		people.sync_members()                 # кто где работает — в записи членов семей (этап 6.1)
 	var data := city.save_data()
 	data["land"] = land.save_changes()
 	data["hour"] = hour

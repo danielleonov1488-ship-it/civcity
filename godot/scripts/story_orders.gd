@@ -434,9 +434,7 @@ func show() -> void:
 	var p := anchor_pos(o)
 	if p == Vector2.INF:
 		return
-	var rig = st.game.rig
-	rig._target_t = Vector3(p.x, st.game.land.height_at(p.x, p.y), p.y)
-	rig._dist_t = clampf(rig._dist_t, 30.0, 55.0)
+	st.game.rig.look_at_point(Vector3(p.x, st.game.land.height_at(p.x, p.y), p.y))    # и перестаёт следовать за жителем
 	_show_until = Time.get_ticks_msec() + SHOW_MS
 	st._marks(true)
 

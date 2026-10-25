@@ -68,6 +68,7 @@ func setup(l: Land, c: City, g) -> void:
 	city.family_left.connect(_on_family_left)
 	city.family_assigned.connect(_on_assigned)
 	city.rehomed.connect(_on_rehomed)
+	_old_couples()
 	# жители уже заселённых домов (загрузка, готовый город)
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
@@ -75,10 +76,10 @@ func setup(l: Land, c: City, g) -> void:
 			if game.mode == "menu" and residents.size() >= MENU_RES:
 				break
 			for f in b["families"]:
-				_make_family(f["name"], int(f["n"]), id, city.door_point(b))
+				_make_family(f["name"], int(f["n"]), id, city.door_point(b), "", f)
 	# семьи, которые ждут жилья на площади
 	for f in city.arrivals:
-		var fam := _make_family(f["name"], int(f["n"]), -1, Land.CENTER, f["cls"])
+		var fam := _make_family(f["name"], int(f["n"]), -1, Land.CENTER, f["cls"], f)
 		for r in fam:
 			r["p"] = _plaza_point()
 			r["goal"] = "plaza"
@@ -86,6 +87,7 @@ func setup(l: Land, c: City, g) -> void:
 		waiting_fams.append({"name": f["name"], "members": fam.map(func(x): return x["id"])})
 	_assign_jobs()
 	_start_of_day(true)
+	_cats_load()
 
 
 # ---------- сетка ходьбы ----------
@@ -187,22 +189,36 @@ func _clear(a: Vector2, b: Vector2) -> bool:
 
 # ---------- жители ----------
 
-func _make_family(name: String, n: int, home: int, at: Vector2, cls := "") -> Array:
+## Люди семьи name (n человек) у дома home. fam — запись семьи (в доме, на площади, в повозке): её члены (fam.m,
+## Residents) и есть эти люди — имя, пол, возраст, облик, работа. Без записи — ищем её в доме или на площади по имени;
+## нет и там (проверки) — члены по правилам Residents, не сохраняются
+func _make_family(name: String, n: int, home: int, at: Vector2, cls := "", fam := {}) -> Array:
 	var out := []
 	var house: Dictionary = city.buildings.get(home, {})
 	if not house.is_empty():
 		cls = city.def(house)["cls"]
 	elif cls == "":
 		cls = "plebs"
-	for m in n:
-		var child := m >= 2 and rng.randf() < 0.6
-		var r := {"id": next_rid, "home": home, "fam": name, "female": m == 1 or (m > 1 and rng.randf() < 0.5), "child": child,
+	if fam.is_empty():
+		fam = _family_rec(name, home)
+	if fam.is_empty() or int(fam.get("n", -1)) != n:
+		fam = {"name": name, "n": n, "cls": cls}
+	var ms := Residents.fit(fam, hash([name, home]), cls)
+	for i in n:
+		var m: Dictionary = ms[i]
+		var child := int(m["age"]) == 0
+		var r := {"id": next_rid, "home": home, "fam": name, "female": int(m["sx"]) == 1, "child": child, "old": int(m["age"]) == 2,
 			"rich": cls == "patricians", "cls": cls, "job": -1, "state": "home", "p": at, "path": PackedVector2Array(), "i": 0,
 			"node": null, "yaw": rng.randf() * TAU, "speed": rng.randf_range(0.92, 1.12) * (0.8 if child else 1.0), "goal": "",
-			"t": 0.0, "slot": -1, "seed": rng.randi(), "dep": rng.randf_range(-0.6, 0.6), "ret": rng.randf_range(0.0, 1.2), "done_today": false,
+			"t": 0.0, "slot": -1, "seed": int(m["sd"]), "dep": rng.randf_range(-0.6, 0.6), "ret": rng.randf_range(0.0, 1.2), "done_today": false,
 			# что делает на месте (лавка, скамья, кошка, разговор…), куда шёл, с кем говорит, череда движений
 			"act": "", "dest": {}, "conv": {}, "seq": [], "si": 0, "st": 0.0, "at": 0.0, "face": 0.0, "yoff": 0.0, "yoff_to": 0.0,
-			"fade": 1.0, "outs": 0, "serve": 0, "pal": 0, "door": {}}
+			"fade": 1.0, "outs": 0, "serve": 0, "pal": 0, "door": {},
+			"m": m, "pn": String(m["pn"])}          # запись члена семьи (сохраняется) и имя
+		# работа из сохранения — если та постройка ещё стоит и берёт работников (лишних отпустит _assign_jobs)
+		var jb := int(m.get("job", -1))
+		if jb >= 0 and home > 0 and not child and city.buildings.has(jb) and city.def(city.buildings[jb]).has("jobs"):
+			r["job"] = jb
 		next_rid += 1
 		residents.append(r)
 		by_id[r["id"]] = r
@@ -210,15 +226,75 @@ func _make_family(name: String, n: int, home: int, at: Vector2, cls := "") -> Ar
 	return out
 
 
+## Старое сохранение, где «Свадьба» уже сыграна, а у молодых ещё нет записей: один раз — жених и невеста из роликов
+## (Марк и Юлия, облик по зерну роли), как у новых свадеб (Stories.couple_members); дальше записи сохраняются
+func _old_couples() -> void:
+	var st: Dictionary = city.stories if typeof(city.stories) == TYPE_DICTIONARY else {}
+	var recs: Array = (st.get("done", {}) as Dictionary).values() if typeof(st.get("done")) == TYPE_DICTIONARY else []
+	if typeof(st.get("active")) == TYPE_DICTIONARY and not (st["active"] as Dictionary).is_empty():
+		recs.append(st["active"])
+	for rec in recs:
+		if typeof(rec) != TYPE_DICTIONARY or String(rec.get("couple", "")) == "" or typeof(rec.get("roles")) != TYPE_DICTIONARY:
+			continue
+		var nm := String(rec["couple"])
+		var f := {}
+		var cls := ""
+		var key := -1
+		for id in city.buildings:
+			var b: Dictionary = city.buildings[id]
+			if not city.is_house(b):
+				continue
+			for fm: Dictionary in b.get("families", []):
+				if String(fm.get("name", "")) == nm:
+					f = fm
+					cls = String(city.def(b)["cls"])
+					key = int(id)
+		if f.is_empty():
+			for fm: Dictionary in city.arrivals:
+				if String(fm.get("name", "")) == nm:
+					f = fm
+					cls = String(fm.get("cls", "plebs"))
+		if f.is_empty() or (typeof(f.get("m")) == TYPE_ARRAY and not (f["m"] as Array).is_empty()):
+			continue
+		f["m"] = Stories.couple_members(nm, int(f.get("n", 2)), cls, key, rec["roles"])
+
+
+## Запись семьи name: в доме home (последняя с этим именем) или на площади; {} — нет такой
+func _family_rec(name: String, home: int) -> Dictionary:
+	var h: Dictionary = city.buildings.get(home, {})
+	if not h.is_empty():
+		var fs: Array = h.get("families", [])
+		for k in range(fs.size() - 1, -1, -1):
+			if String(fs[k].get("name", "")) == name:
+				return fs[k]
+		return {}
+	for f: Dictionary in city.arrivals:
+		if String(f.get("name", "")) == name:
+			return f
+	return {}
+
+
+## Перед сохранением: кто где работает — в записи членов семей (после загрузки работа та же)
+func sync_members() -> void:
+	for r in residents:
+		var m: Dictionary = r.get("m", {})
+		if m.is_empty():
+			continue
+		if int(r["job"]) >= 0 and int(r["home"]) > 0:
+			m["job"] = int(r["job"])
+		else:
+			m.erase("job")
+
+
 func _node(r: Dictionary) -> Citizen:
 	if r["node"] != null:
 		return r["node"]
-	if visible_count >= max_vis:
-		return null
-	var rr := RandomNumberGenerator.new()
-	rr.seed = int(r["seed"])
-	var c := Citizen.create(rr, r["female"], r["child"], r["rich"], "", r["cls"])
+	if visible_count >= max_vis and int(r["id"]) != focus_rid:
+		return null                          # выбранного (карточка, «Следовать») рисуем всегда
+	var c := Citizen.build(look_of(r), r["child"])
 	add_child(c)
+	if int(r["id"]) == focus_rid:
+		_outline(c, true)
 	c.anim.speed_scale = maxf(0.01, game.speed)
 	r["node"] = c
 	visible_count += 1
@@ -240,6 +316,407 @@ func _place(r: Dictionary) -> void:
 	var p: Vector2 = r["p"]
 	c.position = Vector3(p.x, land.height_at(p.x, p.y) + float(r["yoff"]), p.y)
 	c.rotation.y = float(r["yaw"])
+
+
+# ---------- житель с именем: щелчок, обводка, «Следовать», облик (этапы 6.3–6.5) ----------
+
+var focus_rid := 0                   # выбранный житель (открыта его карточка): рисуется всегда, с обводкой
+var focus_cat := {}                  # выбранная кошка
+var _hov_mp := Vector2(-999, -999)
+var _hov_t := 0
+var _hov_hit := {}
+static var _outline_mat: ShaderMaterial
+const PICK_MIN_PX := 10.0            # щелчок по жителю: не дальше max(10 точек, 0.35 его роста на экране) от него
+const PICK_K := 0.35
+const CAT_PICK_PX := 30.0            # по кошке — 0,9 её длины на экране, не больше 30 точек (вблизи) и не меньше 10 (издали)
+const CAT_NEAR_PX := 12.0            # …а если под курсором и житель — кошка, только когда курсор почти на ней
+const OCC_M := 0.4                   # житель или кошка у самой стены (в дверях) — ещё не «за постройкой»
+var _occ := []                       # постройка на луче под курсором (pick): [расстояние, id], пусто — ещё не считали
+## Имена кошек [имя, 0 — кот, 1 — кошка]; «Мурка» — у кошки истории
+const CAT_NAMES := [["Феликс", 0], ["Луна", 1], ["Тигрис", 0], ["Пушинка", 1], ["Мелла", 1], ["Минерва", 1], ["Бусина", 1], ["Цезарь", 0],
+	["Венера", 1], ["Плутон", 0], ["Каштан", 0], ["Уголёк", 0], ["Снежка", 1], ["Рыжик", 0], ["Дымка", 1], ["Юнона", 1], ["Марсик", 0],
+	["Ночка", 1], ["Купидон", 0], ["Флора", 1], ["Пирожок", 0], ["Ласка", 1], ["Бруно", 0], ["Аврора", 1]]
+
+
+## Облик жителя: из записи члена семьи (Residents.look_of), у кого записи нет — по зерну, как раньше
+func look_of(r: Dictionary) -> Dictionary:
+	var m: Dictionary = r.get("m", {})
+	if not m.is_empty():
+		return Residents.look_of(m, String(r["cls"]))
+	var rr := RandomNumberGenerator.new()
+	rr.seed = int(r["seed"])
+	return Citizen.roll_look(rr, r["female"], r["child"], r["rich"], "", r["cls"])
+
+
+## Сменить облик жителя (поход в лавку или выбор игрока): запись — сразу, виден — меняется на глазах
+func set_look(r: Dictionary, lk: Dictionary, sparkle := false) -> void:
+	var m: Dictionary = r.get("m", {})
+	if not m.is_empty():
+		m["look"] = lk
+	var c: Citizen = r["node"]
+	if c == null:
+		return
+	if not c.apply_look(lk):
+		_hide(r)                          # другая модель — собрать заново
+		_show(r)
+		c = r["node"]
+	if c and int(r["id"]) == focus_rid:
+		_outline(c, true)
+	if c and sparkle:
+		_sparkle(c.global_position + Vector3(0, 1.0 * c.scale.y / Citizen.SIZE, 0))
+
+
+## Искорки над тем, кто сменил облик (вышел от цирюльника, из красильни)
+func _sparkle(at: Vector3) -> void:
+	var p := CPUParticles3D.new()
+	p.one_shot = true
+	p.amount = 10
+	p.lifetime = 0.9
+	p.explosiveness = 0.85
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	p.emission_sphere_radius = 0.25
+	p.direction = Vector3.UP
+	p.spread = 70.0
+	p.initial_velocity_min = 0.3
+	p.initial_velocity_max = 0.8
+	p.gravity = Vector3(0, -0.4, 0)
+	p.scale_amount_min = 0.5
+	p.scale_amount_max = 1.0
+	var qm := QuadMesh.new()
+	qm.size = Vector2(0.07, 0.07)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color("ffe9a8")
+	mat.emission_enabled = true
+	mat.emission = Color("ffd86a")
+	qm.material = mat
+	p.mesh = qm
+	add_child(p)
+	p.global_position = at
+	p.emitting = true
+	get_tree().create_timer(1.5).timeout.connect(p.queue_free)
+
+
+## Сходил в лавку типа t (Looks.visit): иногда новая причёска, туника, кайма, венок
+func _shop_visit(r: Dictionary, t: String) -> void:
+	if t == "" or not Looks.CHANCE.has(t) or r.get("m", {}).is_empty():
+		return
+	var lk: Dictionary = look_of(r).duplicate()
+	if Looks.visit(lk, t, r["female"], r["child"], String(r["cls"]), rng):
+		set_look(r, lk, true)
+
+
+## Мягкая светлая обводка выбранного (переднюю сторону сетки раздуваем и красим, видна только кайма вокруг)
+static func _outline_material() -> ShaderMaterial:
+	if _outline_mat == null:
+		_outline_mat = ShaderMaterial.new()
+		_outline_mat.shader = load("res://shaders/outline_hull.gdshader")
+	return _outline_mat
+
+
+func _outline(c: Node, on: bool) -> void:
+	if c == null or not is_instance_valid(c):
+		return
+	for mi: MeshInstance3D in c.find_children("*", "MeshInstance3D", true, false):
+		mi.material_overlay = _outline_material() if on else null
+
+
+## Выбрать жителя (rid; 0 — снять выбор): обводка, рисуется всегда, даже сверх MAX_VIS
+func set_focus(rid: int) -> void:
+	if focus_rid == rid:
+		return
+	var old: Dictionary = by_id.get(focus_rid, {})
+	if not old.is_empty() and old["node"] != null:
+		_outline(old["node"], false)
+	focus_rid = rid
+	var r: Dictionary = by_id.get(rid, {})
+	if r.is_empty():
+		focus_rid = 0
+		return
+	if r["node"] != null:
+		_outline(r["node"], true)
+	elif _drawable(r):
+		_show(r)
+
+
+## Выбрать кошку ({} — снять): обводка
+func set_focus_cat(c: Dictionary) -> void:
+	if not focus_cat.is_empty() and is_same(focus_cat, c):
+		return
+	if not focus_cat.is_empty():
+		_outline(focus_cat.get("n"), false)
+	focus_cat = c
+	if not c.is_empty():
+		_outline(c.get("n"), true)
+
+
+## Житель на виду (на улице, у прилавка): его можно рисовать
+func _drawable(r: Dictionary) -> bool:
+	var st: String = r["state"]
+	return st in ["walk", "idle", "work"] and not (st == "idle" and r["act"] == "inside") and not (st == "work" and int(r["slot"]) < 0)
+
+
+## Где житель (камера «Следовать»): на улице — он сам; в доме или в лавке — у двери, куда вошёл
+func person_pos(r: Dictionary) -> Vector3:
+	var c: Node3D = r["node"]
+	if c != null and is_instance_valid(c):
+		return c.global_position
+	var p: Vector2 = r["p"]
+	return Vector3(p.x, land.height_at(p.x, p.y), p.y)
+
+
+func cat_pos(c: Dictionary) -> Vector3:
+	var n: Node3D = c.get("n")
+	if n != null and is_instance_valid(n):
+		return n.global_position
+	var p: Vector2 = c["p"]
+	return Vector3(p.x, land.height_at(p.x, p.y), p.y)
+
+
+## Кто под курсором: житель (ближний к камере) или кошка — {"r": житель} / {"cat": кошка} / {}.
+## Житель — отрезок от ступней до макушки на экране; кошка — круг по её размеру на экране (вблизи щедро, издали — 10 точек).
+## Кого заслоняет постройка (дальше от камеры, чем постройка на луче под курсором), того не ловим: щелчок и подпись — постройке
+func pick(mp: Vector2) -> Dictionary:
+	var rig = game.rig
+	var cam: Camera3D = rig.cam if rig else null
+	if cam == null:
+		return {}
+	if game.tutorial != null and game.tutorial.cur_id() == "house":
+		return {}                            # обучение «Щёлкните по дому»: щелчок — дому, а не семье у его двери
+	var cp := cam.global_position
+	_occ = []
+	var best := {}
+	var bd := INF
+	for r in residents:
+		var c: Citizen = r["node"]
+		if c == null or float(r["fade"]) < 0.3 or not c.is_visible_in_tree():
+			continue
+		var feet := c.global_position
+		if cam.is_position_behind(feet):
+			continue
+		var head := feet + Vector3(0, 1.3 * c.scale.y / Citizen.SIZE, 0)
+		if c.hair_att != null:
+			head = c.hair_att.global_position + Vector3(0, 0.12 * c.scale.y / Citizen.SIZE, 0)
+		var a := cam.unproject_position(feet)
+		var b := cam.unproject_position(head)
+		var tol := maxf(PICK_MIN_PX, PICK_K * a.distance_to(b))
+		var q := Geometry2D.get_closest_point_to_segment(mp, a, b)
+		if q.distance_to(mp) > tol:
+			continue
+		var d := cp.distance_squared_to(feet)
+		if d >= bd:
+			continue
+		# точка жителя под курсором: за постройкой (не той, у которой он стоит) — не виден
+		var ab := a.distance_to(b)
+		var wp := feet.lerp(head, clampf(a.distance_to(q) / ab, 0.0, 1.0) if ab > 0.01 else 0.5)
+		var wl := _wall(mp)
+		if cp.distance_to(wp) > float(wl[0]) + OCC_M and int(wl[1]) != at_bid(r):
+			continue
+		bd = d
+		best = {"r": r}
+	# кошка: круг по её длине на экране, но жителя под курсором она не перебивает — только если курсор почти на ней
+	var cat := {}
+	var cd := INF
+	var ctol := CAT_PICK_PX
+	for ct in cats:
+		if ct.has("story"):
+			continue                         # потерянную кошку ищут — щелчок по ней забирает история
+		var n: Node3D = ct.get("n")
+		if n == null or not n.is_visible_in_tree():
+			continue
+		var w := n.global_position + Vector3(0, 0.18, 0)
+		if cam.is_position_behind(w):
+			continue
+		var sp := cam.unproject_position(w)
+		var px := sp.distance_to(mp)
+		if px > CAT_PICK_PX or px >= cd:
+			continue
+		var tol := clampf(sp.distance_to(cam.unproject_position(w + cam.global_basis.x * CAT_LEN)) * 0.9, PICK_MIN_PX, CAT_PICK_PX)
+		if px > tol:
+			continue
+		if cp.distance_to(w) > float(_wall(mp)[0]) + OCC_M:
+			continue                         # кошка за постройкой (у двери с той стороны) — щелчок постройке
+		cd = px
+		cat = ct
+		ctol = tol
+	if not cat.is_empty() and (best.is_empty() or cd <= minf(CAT_NEAR_PX, ctol)):
+		return {"cat": cat}
+	return best
+
+
+## Постройка на луче под курсором: [расстояние до неё от камеры, её id] (нет — [INF, -1]); один раз за pick и только
+## когда кто-то уже попал по экрану — лишнего счёта на кадр нет
+func _wall(mp: Vector2) -> Array:
+	if _occ.is_empty():
+		var h: Dictionary = game.ray_hit(mp) if game.has_method("ray_hit") else {}
+		_occ = [float(h.get("t", INF)), int(h.get("id", -1))]
+	return _occ
+
+
+## Постройка, у которой житель сейчас стоит (за прилавком, в поле, в дверях, у лавки, на скамье): его она не заслоняет
+func at_bid(r: Dictionary) -> int:
+	var dr: Dictionary = r["door"]
+	if not dr.is_empty():
+		return int(dr.get("bid", -1))
+	match String(r["state"]):
+		"work":
+			return int(r["job"])
+		"idle":
+			return int((r["dest"] as Dictionary).get("bid", -1))
+	return -1
+
+
+## То же для курсора и подписи у мыши: считаем заново, только когда мышь сдвинулась или прошло 0,15 с
+func hover_pick(mp: Vector2) -> Dictionary:
+	var now := Time.get_ticks_msec()
+	if mp.distance_to(_hov_mp) < 2.0 and now - _hov_t < 150:
+		return _hov_hit
+	_hov_mp = mp
+	_hov_t = now
+	_hov_hit = pick(mp)
+	return _hov_hit
+
+
+## Имя жителя: «Гай Юлий»
+static func name_of(r: Dictionary) -> String:
+	var m: Dictionary = r.get("m", {})
+	if m.is_empty():
+		return "Житель"
+	return Residents.full_name(m, String(r["fam"]))
+
+
+## Подпись у курсора: «Гай Юлий · пекарь»
+func tag_of(r: Dictionary) -> String:
+	var t := name_of(r)
+	if bool(r["child"]):
+		return t + (" · дочь" if r["female"] else " · сын")
+	var jb: Dictionary = city.buildings.get(int(r["job"]), {})
+	if not jb.is_empty():
+		var noun := Residents.job_noun(String(jb["type"]), r["female"])
+		return t + " · " + (noun if noun != "" else String(city.def(jb)["name"]).to_lower())
+	return t
+
+
+# ---------- кошки с именами (этап 6.4) ----------
+
+## Кошки из сохранения; старое сохранение (кошек с именами ещё не было) — сразу столько, сколько городу положено
+func _cats_load() -> void:
+	var houses := _lived_houses()
+	if houses.is_empty():
+		return
+	for rec: Dictionary in city.cats:
+		var h: Dictionary = city.buildings.get(int(rec["home"]), {})
+		if h.is_empty() or not city.is_house(h):
+			h = houses[absi(hash(String(rec["nm"]))) % houses.size()]
+			rec["home"] = int(h["id"])
+		cats.append(_cat_from(rec, h))
+	if city.cats.is_empty() and game.mode == "play":
+		for k in clampi(int(city.stats["pop"]) / 14, 0, 12):
+			_new_cat()
+
+
+func _lived_houses() -> Array:
+	return city.buildings.values().filter(func(b): return city.is_house(b) and int(b["pop"]) > 0)
+
+
+## Новая кошка с именем у случайного дома — и в сохранение
+func _new_cat() -> Dictionary:
+	var houses := _lived_houses()
+	if houses.is_empty():
+		return {}
+	var h: Dictionary = houses[rng.randi() % houses.size()]
+	var used := {}
+	for e: Dictionary in city.cats:
+		used[String(e["nm"])] = true
+	for c in cats:
+		used[String(c.get("named", c.get("nm", "")))] = true
+	var nm := ""
+	var sx := 1
+	var k0 := rng.randi() % CAT_NAMES.size()
+	for k in CAT_NAMES.size():
+		var e: Array = CAT_NAMES[(k0 + k) % CAT_NAMES.size()]
+		if not used.has(e[0]):
+			nm = e[0]
+			sx = int(e[1])
+			break
+	if nm == "":
+		nm = "Мурлыка %d" % (city.cats.size() + 1)
+	var rec := {"nm": nm, "sx": sx, "fur": rng.randi() % CAT_FURS.size(), "home": int(h["id"]), "sd": rng.randi()}
+	city.cats.append(rec)
+	var c := _cat_from(rec, h)
+	cats.append(c)
+	return c
+
+
+## Живая кошка по записи (окрас и рост — из своего зерна: после загрузки та же)
+func _cat_from(rec: Dictionary, h: Dictionary) -> Dictionary:
+	var rg := RandomNumberGenerator.new()
+	rg.seed = int(rec["sd"])
+	var c := _make_cat(h, {"fur": int(rec["fur"]), "rng": rg})
+	c["rec"] = rec
+	c["nm"] = String(rec["nm"])
+	c["sx"] = int(rec.get("sx", 1))
+	return c
+
+
+## Дом кошки снесли — она переходит к ближнему дому, где живут
+func _cat_rehome(c: Dictionary, from: Vector2) -> void:
+	var best := {}
+	var bd := INF
+	for h in _lived_houses():
+		if int(h["id"]) == int(c.get("home", -1)):
+			continue
+		var d := (h["pos"] as Vector2).distance_squared_to(from)
+		if d < bd:
+			bd = d
+			best = h
+	if best.is_empty():
+		return
+	c["home"] = int(best["id"])
+	for k: String in ["rec", "pet_rec"]:
+		if c.has(k):
+			(c[k] as Dictionary)["home"] = int(best["id"])
+	if c["state"] != "pet":
+		c["state"] = "sit"
+		c["t"] = 0.5                     # сейчас пойдёт к новому дому
+
+
+## Как зовут кошку и кто она: [имя, «кот»/«кошка»]
+static func cat_name(c: Dictionary) -> Array:
+	var nm := String(c.get("nm", c.get("named", "")))
+	var sx := int(c.get("sx", 1))
+	return [nm if nm != "" else ("Кошка" if sx == 1 else "Кот"), "кошка" if sx == 1 else "кот"]
+
+
+## Погладить кошку (карточка): садится, поднимает голову, сердечки над ней. Без звука и без пользы для города
+func pet_now(c: Dictionary) -> void:
+	if c.is_empty() or c.has("story"):
+		return
+	c["state"] = "pet"
+	c["t"] = 5.0
+	c["path"] = PackedVector2Array()
+	c["walk"] = 0.0
+	var at := cat_pos(c) + Vector3(0, 0.45, 0)
+	for k in 4:
+		var l := Label3D.new()
+		l.text = "♥"
+		l.font_size = 64
+		l.outline_size = 10
+		l.modulate = Color("ff8fa8")
+		l.outline_modulate = Color("8a2a3a")
+		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		l.pixel_size = 0.004                 # без no_depth_test: сквозь стену сердечки не видны
+		add_child(l)
+		l.global_position = at + Vector3(randf_range(-0.15, 0.15), 0, randf_range(-0.15, 0.15))
+		l.modulate.a = 0.0
+		var tw := create_tween()
+		tw.tween_interval(k * 0.35)
+		tw.tween_property(l, "modulate:a", 1.0, 0.2)
+		tw.parallel().tween_property(l, "global_position:y", at.y + 0.7, 1.4)
+		tw.tween_property(l, "modulate:a", 0.0, 0.5)
+		tw.tween_callback(l.queue_free)
 
 
 ## Начать прогулку к точке to; goal — что будет по приходу. keep — не отпускать занятое место (скамью, разговор)
@@ -310,9 +787,10 @@ func _arrive(r: Dictionary) -> void:
 				var took := city.settled(r["home"], n, nm)
 				_float_text(city.door_point(h), "+ семья %s" % nm)
 				# кому не хватило места — уходят ждать на площадь
+				var extra := []
 				if took < fam.size():
 					var keep := [r] if took > 0 else []
-					var extra: Array = fam.filter(func(x): return not keep.has(x))
+					extra = fam.filter(func(x): return not keep.has(x))
 					extra = extra.slice(0, fam.size() - took)
 					for m: Dictionary in extra:
 						m["home"] = -1
@@ -320,7 +798,13 @@ func _arrive(r: Dictionary) -> void:
 							m["p"] = city.door_point(h)
 						_go(m, _plaza_point(), "plaza")
 					waiting_fams.append({"name": nm, "members": extra.map(func(x): return x["id"])})
-					city.family_arrived({"name": nm, "n": extra.size(), "cls": h_cls(h)}, false)
+					city.family_arrived({"name": nm, "n": extra.size(), "cls": h_cls(h), "m": _recs(extra)}, false)
+				# в записи семьи в доме — именно те, кто вошёл (имена и облик остаются при них)
+				var hf := _family_rec(nm, int(r["home"]))
+				if took > 0 and not hf.is_empty():
+					var stay := _recs(fam.filter(func(x): return not extra.has(x)))
+					if stay.size() == int(hf["n"]):
+						hf["m"] = stay
 		"leave":
 			_remove(r)
 
@@ -333,7 +817,18 @@ func _fam_members(name: String, home: int) -> Array:
 	return residents.filter(func(x): return x["fam"] == name and x["home"] == home)
 
 
+## Записи членов семьи у этих жителей (Residents)
+static func _recs(rs: Array) -> Array:
+	var out := []
+	for r: Dictionary in rs:
+		if r.has("m"):
+			out.append(r["m"])
+	return out
+
+
 func _remove(r: Dictionary) -> void:
+	if int(r["id"]) == focus_rid:
+		set_focus(0)
 	_leave_slot(r)
 	_release(r)
 	_hide(r)
@@ -1112,6 +1607,9 @@ func _begin(r: Dictionary) -> void:
 
 ## Дело сделано: дальше — ещё куда-нибудь или домой
 func _act_done(r: Dictionary) -> void:
+	if r["act"] in ["shop", "inside"]:
+		# вышел от цирюльника, из красильни, от ткача — иногда в новом облике (этап 6.5)
+		_shop_visit(r, String((city.buildings.get(int((r["dest"] as Dictionary).get("bid", -1)), {}) as Dictionary).get("type", "")))
 	match r["act"]:
 		"solo":
 			if float(r["at"]) <= 0.0:
@@ -1923,6 +2421,9 @@ func _vis_tick() -> void:
 		return
 	var want := []
 	var drop := []
+	var fr: Dictionary = by_id.get(focus_rid, {})
+	if not fr.is_empty() and fr["node"] == null and _drawable(fr):
+		_show(fr)                            # выбранного — всегда (вышел из дома — сразу на виду)
 	for r in residents:
 		var st: String = r["state"]
 		if not (st in ["walk", "idle", "work"]) or (st == "idle" and r["act"] == "inside") or (st == "work" and int(r["slot"]) < 0):
@@ -1933,7 +2434,7 @@ func _vis_tick() -> void:
 		if r["node"] == null:
 			if seen:
 				want.append([p3.distance_squared_to(cp), r])
-		elif not seen:
+		elif not seen and int(r["id"]) != focus_rid:
 			drop.append([p3.distance_squared_to(cp), r])
 	if want.is_empty():
 		return
@@ -1957,7 +2458,7 @@ func _vis_trim(cam: Camera3D) -> void:
 	var shown := []
 	for r in residents:
 		var st: String = r["state"]
-		if r["node"] == null or not (st in ["walk", "idle", "work"]):
+		if r["node"] == null or not (st in ["walk", "idle", "work"]) or int(r["id"]) == focus_rid:
 			continue
 		var p: Vector2 = r["p"]
 		var p3 := Vector3(p.x, land.height_at(p.x, p.y) + 0.5, p.y)
@@ -2097,6 +2598,13 @@ func _on_rehomed(old: int, new: int) -> void:
 				r["p"] = city.door_point(h)
 			elif r["state"] == "walk" and r["goal"] in ["home", "settle"]:
 				_go(r, city.door_point(h), r["goal"])
+	# кошки дома — за ним (и в записи)
+	for c in cats:
+		if int(c.get("home", -1)) == old:
+			c["home"] = new
+			for k: String in ["rec", "pet_rec"]:
+				if c.has(k):
+					(c[k] as Dictionary)["home"] = new
 	_jobs_dirty = true
 
 
@@ -2167,10 +2675,15 @@ func _on_building_removed(b: Dictionary) -> void:
 				r["p"] = city.door_point(b) if r["state"] == "home" else r["p"]
 				_go(r, _plaza_point(), "plaza")
 		for f in fams:
-			var ids: Array = residents.filter(func(x): return x["fam"] == f and int(x["home"]) <= 0).map(func(x): return x["id"])
+			var rs: Array = residents.filter(func(x): return x["fam"] == f and int(x["home"]) <= 0)
+			var ids: Array = rs.map(func(x): return x["id"])
 			waiting_fams.append({"name": f, "members": ids})
 			# «back»: семья уже жила в городе — в счёт приехавших (первые три семьи, просьба «Заселите три семьи») второй раз не идёт
-			city.family_arrived({"name": f, "n": ids.size(), "cls": city.def(b)["cls"], "back": true}, false)
+			city.family_arrived({"name": f, "n": ids.size(), "cls": city.def(b)["cls"], "back": true, "m": _recs(rs)}, false)
+		# кошки снесённого дома переходят к ближнему дому (этап 6.4)
+		for ct in cats:
+			if int(ct.get("home", -1)) == int(b["id"]):
+				_cat_rehome(ct, b["pos"])
 	for r in residents:
 		if r["job"] == b["id"]:
 			_quit_job(r)
@@ -2338,9 +2851,10 @@ func _cart_board(load: Array) -> void:
 	var w := 0.0
 	for f in load:
 		var ms := []
-		for m in int(f["n"]):
-			ms.append({"female": m == 1 or (m > 1 and rng.randf() < 0.5), "child": m >= 2 and rng.randf() < 0.6,
-				"rich": f["cls"] == "patricians", "cls": f["cls"], "seed": rng.randi()})
+		# седоки — те самые члены семьи (Residents): тот же облик и на повозке, и на площади, и дома
+		for m: Dictionary in Residents.fit(f, Residents.key_new(city, String(f["name"])), String(f["cls"])):
+			ms.append({"female": int(m["sx"]) == 1, "child": int(m["age"]) == 0, "rich": f["cls"] == "patricians", "cls": f["cls"],
+				"seed": int(m["sd"]), "rec": m})
 		f["members"] = ms
 		for m in ms:
 			var mw := 0.4 if m["child"] else 0.56
@@ -2382,9 +2896,7 @@ func _cart_board(load: Array) -> void:
 	(root.get_node("bolster") as Node3D).visible = tail.is_empty()
 	for s in seats:
 		var m: Dictionary = s[0]
-		var rr := RandomNumberGenerator.new()
-		rr.seed = int(m["seed"])
-		var c := Citizen.create(rr, m["female"], m["child"], m["rich"], "", m["cls"])
+		var c := Citizen.build(Residents.look_of(m["rec"], String(m["cls"])), m["child"])
 		root.add_child(c)
 		var k := 0.68 if m["child"] else 1.0
 		var back: bool = s[4]
@@ -2550,18 +3062,14 @@ func _drop() -> void:
 	var root: Node3D = cart["body"]
 	var base := Vector2(n.position.x, n.position.z)
 	for f in cart["load"]:
-		var fam := _make_family(f["name"], int(f["n"]), -1, base, f["cls"])
 		var ms: Array = f.get("members", [])
+		f.erase("members")                       # места в повозке — не для сохранения
+		var fam := _make_family(f["name"], int(f["n"]), -1, base, f["cls"], f)
 		for i in fam.size():
 			var r: Dictionary = fam[i]
 			var q := base + Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0))
 			if i < ms.size():
 				var m: Dictionary = ms[i]
-				r["female"] = m["female"]
-				r["child"] = m["child"]
-				r["rich"] = m["rich"]
-				r["seed"] = m["seed"]
-				r["speed"] = rng.randf_range(0.92, 1.12) * (0.8 if m["child"] else 1.0)
 				if m.has("seat"):
 					var sp: Vector3 = m["seat"]
 					var w := root.to_global(Vector3(sp.x, 0.0, -2.3) if m.get("tail", false) else Vector3(1.7 if sp.x >= 0.0 else -1.7, 0.0, sp.z - CART_HIP_BACK))
@@ -3037,9 +3545,7 @@ func _cats_step(dt: float) -> void:
 		if c.has("story") or c.has("named"):
 			own += 1
 	if cats.size() - own < want and rng.randf() < 0.02:
-		var houses := city.buildings.values().filter(func(b): return city.is_house(b) and int(b["pop"]) > 0)
-		if not houses.is_empty():
-			cats.append(_make_cat(houses[rng.randi() % houses.size()]))
+		_new_cat()                             # с именем, в сохранение (этап 6.4)
 	var night: bool = game.hour >= 21.0 or game.hour < 6.0
 	var t := AnimClock.now()
 	for c in cats:
