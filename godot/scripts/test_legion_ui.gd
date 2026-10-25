@@ -226,6 +226,15 @@ func _run() -> void:
 	var net := FakeNet.new()
 	ui._net_obj = net
 	ui._net_checked = true
+	# Легион с «Хутора», бои с городами — с «Посёлка»: в «Деревне» вкладка объясняет, без списка соперников и добычи
+	var lv_was: int = c.level
+	c.level = 2
+	ui._select_tab("pvp")
+	await frames(4)
+	var ptx := _texts(ui.content)
+	check("«Деревня»: бои с городами — с «Посёлка», соперников нет", ptx.contains("Бои с городами — впереди") and ptx.contains("станет «Посёлок»") and not ptx.contains("Соперники") and not ptx.contains("· рейтинг ") and lg.pvp_can_attack().contains("Посёлок"))
+	await shot("pvp_closed")
+	c.level = lv_was
 	ui._select_tab("pvp")
 	await frames(4)
 	await shot("pvp_list")

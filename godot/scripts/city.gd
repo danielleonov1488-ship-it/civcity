@@ -146,7 +146,10 @@ func money_cap() -> float:
 
 ## Сколько вмещает казна на уровне lvl (с уже изученными хранилищами)
 func money_cap_for(lvl: int) -> float:
-	var c := float(Defs.LEVELS[clampi(lvl, 0, Defs.LEVELS.size() - 1)]["money"])
+	var li := clampi(lvl, 0, Defs.LEVELS.size() - 1)
+	var c := float(Defs.LEVELS[li]["money"])
+	if econ < 1 and li <= 1:
+		c = [3000.0, 5000.0][li]          # живые города (без econ_v): казна «Стоянки» и «Хутора» — прежняя, деньги не срезаем (D-q)
 	if research.has("vault1"):
 		c *= 2.0
 	if research.has("vault2"):
@@ -796,6 +799,52 @@ func _shop_rank(t: String) -> int:
 	return Defs.NEED_ORDER.find(d.get("sub", "")) * 100 - int(d.get("bonus", 0))
 
 
+## Лавки дома по видам потребности: вид → бонусы по убыванию (для _shop_gain; один раз на дом в _happy_tips)
+static func _shop_subs(score: Dictionary) -> Dictionary:
+	var out := {}
+	for t in score:
+		var sub := String(Defs.B[t].get("sub", ""))
+		if not out.has(sub):
+			out[sub] = []
+		(out[sub] as Array).append(int(score[t]))
+	for sub in out:
+		(out[sub] as Array).sort()
+		(out[sub] as Array).reverse()
+	return out
+
+
+## На сколько вырастет счастье дома от лавок, если новая лавка t (бонус b) начнёт его снабжать: по старым правилам —
+## целиком, в новой игре (econ) — как в shop_parts: внутри вида первая целиком, вторая вполовину, дальше четверть.
+## subs — _shop_subs(score) этого дома
+func _shop_gain(subs: Dictionary, t: String, b: int) -> int:
+	if econ < 1:
+		return b
+	var vs: Array = subs.get(String(Defs.B[t].get("sub", "")), [])
+	if vs.is_empty():
+		return b
+	var before := 0
+	var after := 0
+	var j := 0                          # место в ряду вместе с новой лавкой
+	var put := false
+	for i in vs.size():
+		var v := int(vs[i])
+		before += _rep_part(v, i)
+		if not put and b > v:
+			after += _rep_part(b, j)
+			j += 1
+			put = true
+		after += _rep_part(v, j)
+		j += 1
+	if not put:
+		after += _rep_part(b, j)
+	return after - before
+
+
+## Доля k-й (с нуля) лавки одного вида у дома (Defs.SHOP_REPEAT, как в shop_parts)
+static func _rep_part(v: int, k: int) -> int:
+	return v if k == 0 else roundi(v * float(Defs.SHOP_REPEAT[mini(k, Defs.SHOP_REPEAT.size() - 1)]))
+
+
 static func plural(n: int, one: String, few: String, many: String) -> String:
 	var m := n % 100
 	if m >= 11 and m <= 14:
@@ -861,7 +910,11 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 			cands.append([g_need, "У %d %s нет рядом лавки «%s» — поставьте её поближе (+%d%%)" % [cnt, plural(cnt, "дома", "домов", "домов"), nm, Defs.MISSING_PENALTY]])
 		else:
 			cands.append([Defs.MISSING_PENALTY * w / tot + 2.0, "Изучите лавку вида «%s» — её не хватает %d %s" % [nm, cnt, plural(cnt, "дому", "домам", "домам")]])
-	# новая лавка, которой у домов ещё нет (разнообразие)
+	# новая лавка, которой у домов ещё нет (разнообразие); в новой игре — сколько она правда прибавит с повторами
+	var subs := {}
+	if econ >= 1:
+		for h in houses:
+			subs[h["id"]] = _shop_subs(h["score"])
 	var best := [0.0, ""]
 	for t in Defs.B:
 		var d: Dictionary = Defs.B[t]
@@ -876,12 +929,16 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 		if nobody:
 			continue                            # пока никто не живёт, разнообразие не к спеху
 		var w := 0.0
+		var gs := 0.0                           # прибавка, взвешенная по жителям
 		for h in houses:
 			if not (h["score"] as Dictionary).has(t):
-				w += float(ws[h["id"]])
-		var g := float(d["bonus"]) * w / tot
+				var hw := float(ws[h["id"]])
+				w += hw
+				gs += (float(_shop_gain(subs[h["id"]], t, int(d["bonus"]))) if econ >= 1 else float(d["bonus"])) * hw
+		var g := gs / tot
 		if g > float(best[0]):
-			best = [g, "Новая лавка у домов: «%s» — +%d%% каждому дому рядом" % [d["name"], int(d["bonus"])]]
+			var pct := int(d["bonus"]) if econ < 1 or w <= 0.0 else int(roundf(gs / w))
+			best = [g, "Новая лавка у домов: «%s» — +%d%% каждому дому рядом" % [d["name"], pct]]
 	if float(best[0]) >= 1.0:
 		cands.append(best)
 	# исследование новой лавки (если готовые уже стоят)
@@ -892,9 +949,16 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 		for t in Defs.B:
 			var d: Dictionary = Defs.B[t]
 			if d["kind"] == "shop" and d.get("unlock", "") == r["id"] and _staffable(d):
-				var g := float(d["bonus"]) * 0.4 - float(r["cost"]) * 0.001
+				var avg := float(d["bonus"])
+				if econ >= 1:
+					# новая игра: средняя настоящая прибавка домам, где живут (у кого уже есть лавка того же вида — меньше)
+					var sg := 0.0
+					for h in houses:
+						sg += float(_shop_gain(subs[h["id"]], t, int(d["bonus"]))) * float(ws[h["id"]])
+					avg = sg / tot
+				var g := avg * 0.4 - float(r["cost"]) * 0.001
 				if g > float(rb[0]):
-					rb = [g, "Изучите «%s» — новая лавка даст домам ещё +%d%%" % [r["name"], int(d["bonus"])]]
+					rb = [g, "Изучите «%s» — новая лавка даст домам ещё +%d%%" % [r["name"], int(roundf(avg))]]
 	if float(rb[0]) > 0.0:
 		cands.append(rb)
 	# украшения
@@ -1125,20 +1189,25 @@ func set_tax(cls: String, v: int) -> void:
 	changed.emit()
 
 
-## Каким станет счастье города, если налоги класса cls будут v (окно «Финансы» — предупреждение до выбора)
+## Каким станет счастье города, если налоги класса cls будут v (окно «Финансы» — предупреждение до выбора).
+## Без пересчёта города: налог — просто слагаемое счастья домов класса, прибавляем разницу к их счастью (как compute).
+## Для «высоких» точно; неточно только для домов, уже упёршихся в 0%, при более мягких налогах
 func happy_if_tax(cls: String, v: int) -> int:
 	var was := tax_of(cls)
 	if was == v:
 		return int(stats.get("happy", 0))
-	taxes[cls] = v
-	compute()
-	var out := int(stats.get("happy", 0))
-	if was == 1:
-		taxes.erase(cls)
-	else:
-		taxes[cls] = was
-	compute()
-	return out
+	var dt := int(Defs.TAX_SET[v]["happy"]) - int(Defs.TAX_SET[was]["happy"])
+	var s := 0.0
+	var pop := 0
+	for id in buildings:
+		var h: Dictionary = buildings[id]
+		var d := def(h)
+		if d["kind"] != "house":
+			continue
+		var hp := int(h.get("happy", 0)) + (dt if String(d["cls"]) == cls else 0)
+		s += clampf(float(hp), 0.0, 100.0) * int(h["pop"])
+		pop += int(h["pop"])
+	return roundi(s / pop) if pop > 0 else 0
 
 
 ## Движение денег вне часа налогов (история за сутки, этап 2.4): dv < 0 — потратили, > 0 — пришло. cat: build, fest,
@@ -2202,7 +2271,8 @@ func _quiet(text: String, icon: String) -> void:
 ## Пустое состояние: часы историй (идут после обучения), когда кончилась прошлая (-1 — ещё ни одной), пройденные,
 ## идущая, предложенная, отложенные (id → до какого часа), бонусы к счастью, кошки-награды, заказы старосты (StoryOrders)
 static func stories_new() -> Dictionary:
-	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {}}
+	# granted — исследование → история, чей шаг его открыл («legion» → «bandits»): прерванную такую историю предложат снова
+	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {}, "granted": {}}
 
 
 ## Из сохранения: чего нет — по умолчанию (старые сохранения — без историй: ничего не идёт, часы с нуля)
@@ -2213,7 +2283,7 @@ static func stories_load(d: Variant) -> Dictionary:
 	var dd: Dictionary = d
 	s["h"] = int(dd.get("h", 0))
 	s["last_h"] = int(dd.get("last_h", -1))
-	for k in ["done", "active", "offer", "later", "orders"]:
+	for k in ["done", "active", "offer", "later", "orders", "granted"]:
 		if typeof(dd.get(k)) == TYPE_DICTIONARY:
 			s[k] = dd[k]
 	for k in ["bonus", "pets"]:
@@ -2223,6 +2293,14 @@ static func stories_load(d: Variant) -> Dictionary:
 	for k in ["active", "offer"]:
 		if not (s[k] as Dictionary).is_empty() and StoryDefs.story(String(s[k].get("id", ""))).is_empty():
 			s[k] = {}
+	# сохранено посреди истории до записи granted: что открыли её пройденные шаги — открыла она
+	var a0: Dictionary = s["active"]
+	if not a0.is_empty():
+		var steps: Array = StoryDefs.story(String(a0.get("id", ""))).get("steps", [])
+		for i in mini(int(a0.get("step", 0)) + 1, steps.size()):
+			for r in (steps[i] as Dictionary).get("grant", []):
+				if not (s["granted"] as Dictionary).has(String(r)):
+					s["granted"][String(r)] = String(a0["id"])
 	return s
 
 

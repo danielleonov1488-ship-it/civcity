@@ -506,6 +506,9 @@ func tut_pointer() -> Array:
 			return [btn, "Легион"]
 		"fight", "troops":
 			if not visible:
+				# «Войска»: пока улучшать не на что (на «Хуторе» и в «Деревне» денариев в обрез) — стрелка остаётся историям и просьбам
+				if step == "troops" and lg.can_upgrade("legionary") != "":
+					return [null, ""]
 				return [btn, "Легион"]
 			if overlay != null and is_instance_valid(overlay):
 				return [null, ""]
@@ -2143,6 +2146,21 @@ func _build_pvp() -> Control:
 func _opponents() -> Control:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
+	var rk := lg.pvp_rank_text()
+	if rk != "":
+		# до «Посёлка»: объясняем, когда откроются, — без списка соперников, добычи и отряда обороны на сервере
+		var rh := HBoxContainer.new()
+		rh.add_theme_constant_override("separation", 14)
+		rh.add_child(_tr(_ic39("attack"), 110))
+		var rv := VBoxContainer.new()
+		rv.add_theme_constant_override("separation", 6)
+		rv.add_child(_title("Бои с городами — впереди", 26))
+		rv.add_child(_wl(rk + " Тогда ваш легион сможет нападать на отряды обороны других игроков сайта: победа приносит денарии, Славу и рейтинг побед.", 540, 16, C_INK))
+		rv.add_child(_wl("А пока водите отряд в походы: там бойцы набираются опыта, а город получает Славу и звёзды. Отряд обороны слева можно собрать уже сейчас.", 540, 15, C_SOFT))
+		rh.add_child(rv)
+		v.add_child(_gap(0, 30))
+		v.add_child(rh)
+		return v
 	if not _net_ready():
 		# сервера боёв пока нет — объясняем, что будет
 		var hh := HBoxContainer.new()

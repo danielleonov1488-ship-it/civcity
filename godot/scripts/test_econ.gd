@@ -18,6 +18,9 @@ func _ready() -> void:
 	_taxes()
 	_history()
 	_old_save()
+	_shop_gain()
+	_old_caps()
+	_legion_gate()
 	print("ECON DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -104,8 +107,13 @@ func _repeats() -> void:
 	var add_same := Cover._deco_add(c, h, "candelabrum", one, 1.0)
 	var add_other := Cover._deco_add(c, h, "bench", 3.0, 1.0)
 	var drop_one := Cover._deco_add(c, h, "candelabrum", one, -1.0)
-	_check(is_equal_approx(add_same, 0.3 * one) and is_equal_approx(add_other, 3.0) and is_equal_approx(drop_one, -0.3 * one),
-		"подсветка: ещё светильник +%.1f, скамья +%.1f, убрать светильник %.1f" % [add_same, add_other, drop_one])
+	# украшения вокруг места собираются один раз на все дома рядом (Cover._decor_near) — то же число
+	var decs := Cover._decor_near(c, (h["pos"] as Vector2) + Vector2(10.0, 0.0))
+	var add_same2 := Cover._deco_add(c, h, "candelabrum", one, 1.0, decs)
+	var drop_one2 := Cover._deco_add(c, h, "candelabrum", one, -1.0, decs)
+	_check(is_equal_approx(add_same, 0.3 * one) and is_equal_approx(add_other, 3.0) and is_equal_approx(drop_one, -0.3 * one)
+		and is_equal_approx(add_same2, add_same) and is_equal_approx(drop_one2, drop_one) and decs.size() == 3,
+		"подсветка: ещё светильник +%.1f, скамья +%.1f, убрать светильник %.1f (с общим списком — так же)" % [add_same, add_other, drop_one])
 
 
 ## Налоги по классам: ×0,8 / ×1,3 к налогу и +5 / −8 к счастью дома на следующем пересчёте; с «Деревни»; сохраняются
@@ -124,12 +132,20 @@ func _taxes() -> void:
 	var t0 := c.house_tax(h)
 	var proj := c.happy_if_tax("plebs", 2)
 	_check(int(h["happy"]) == hap0 and c.tax_of("plebs") == 1, "прикидка «если высокие» (%d%%) ничего не меняет в городе" % proj)
+	# прикидка — без пересчёта города (окно «Финансы» открыто — без рывков), но то же число, что даст сам пересчёт
+	var t_us := Time.get_ticks_usec()
+	for k in 50:
+		c.happy_if_tax("plebs", 2)
+	t_us = Time.get_ticks_usec() - t_us
 	c.set_tax("plebs", 0)
 	var soft_h := int(h["happy"]) - hap0
 	var soft_t := c.house_tax(h) / t0
+	var proj_soft := c.happy_if_tax("plebs", 2)
 	c.set_tax("plebs", 2)
 	var high_h := int(h["happy"]) - hap0
 	var high_t := c.house_tax(h) / t0
+	_check(proj == int(c.stats["happy"]) and proj_soft == proj,
+		"прикидка = счастье после пересчёта (%d = %d, с мягких тоже %d), 50 прикидок за %d мкс" % [proj, int(c.stats["happy"]), proj_soft, t_us])
 	_check(soft_h == 5 and is_equal_approx(soft_t, 0.8) and high_h == -8 and is_equal_approx(high_t, 1.3),
 		"мягкие: счастье %+d, налог ×%.2f; высокие: счастье %+d, налог ×%.2f" % [soft_h, soft_t, high_h, high_t])
 	var has_line := false
@@ -197,3 +213,119 @@ func _old_save() -> void:
 	_check(c2.econ == 0 and c2.taxes.is_empty() and c2.hist.is_empty() and int(h2["happy"]) == int(h["happy"]) and is_equal_approx(float(h2["deco"]), float(h["deco"])),
 		"без econ_v: прежние правила, счастье %d = %d" % [int(h2["happy"]), int(h["happy"])])
 	_check(c2.legion.window_open() and c2.can_research("legion") == "Уже изучено", "Легион, изученный за очки, остаётся")
+
+
+## Советы о лавках в новой игре: прибавка новой лавки — с повторами, ровно как в карточке дома (shop_parts); по старым
+## правилам — её бонус целиком
+func _shop_gain() -> void:
+	print("== советы о лавках с повторами")
+	var shops := []
+	for t in Defs.B:
+		if Defs.B[t]["kind"] == "shop":
+			shops.append(t)
+	var c := City.new(Land.new())
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var bad := []
+	var n := 0
+	for i in 400:
+		var sc := {}
+		for k in rng.randi_range(0, 6):
+			var t0: String = shops[rng.randi() % shops.size()]
+			sc[t0] = int(Defs.B[t0]["bonus"])
+		var t: String = shops[rng.randi() % shops.size()]
+		if sc.has(t):
+			continue
+		n += 1
+		var b := int(Defs.B[t]["bonus"])
+		var sc2 := sc.duplicate()
+		sc2[t] = b
+		c.econ = 1
+		var want := _parts_sum(c, sc2) - _parts_sum(c, sc)
+		var got := c._shop_gain(City._shop_subs(sc), t, b)
+		c.econ = 0
+		var old := c._shop_gain(City._shop_subs(sc), t, b)
+		if got != want or old != b:
+			bad.append([sc, t, got, want])
+	_check(bad.is_empty() and n > 200, "прибавка новой лавки = разница слагаемых карточки дома (%d наборов, расхождений %d %s)" % [n, bad.size(), bad.slice(0, 2)])
+	c.econ = 1
+	var subs := City._shop_subs({"stall_fruit": int(Defs.B["stall_fruit"]["bonus"])})
+	var food2 := ""
+	var fun1 := ""
+	for t in shops:
+		if t != "stall_fruit" and food2 == "" and String(Defs.B[t]["sub"]) == "food" and int(Defs.B[t]["bonus"]) <= int(Defs.B["stall_fruit"]["bonus"]):
+			food2 = t
+		if fun1 == "" and String(Defs.B[t]["sub"]) == "fun":
+			fun1 = t
+	var g_food := c._shop_gain(subs, food2, int(Defs.B[food2]["bonus"]))
+	var g_fun := c._shop_gain(subs, fun1, int(Defs.B[fun1]["bonus"]))
+	_check(g_food == roundi(int(Defs.B[food2]["bonus"]) * 0.5) and g_fun == int(Defs.B[fun1]["bonus"]),
+		"у дома фруктовая лавка: «%s» прибавит +%d (вполовину), «%s» — +%d (целиком)" % [Defs.B[food2]["name"], g_food, Defs.B[fun1]["name"], g_fun])
+
+
+func _parts_sum(c: City, sc: Dictionary) -> int:
+	var ts: Array = sc.keys()
+	ts.sort_custom(func(x, y): return c._shop_rank(x) < c._shop_rank(y))
+	var s := 0
+	for e: Array in City.shop_parts(ts, sc, c.econ):
+		s += int(e[1])
+	return s
+
+
+## Казна старых городов (без econ_v) на «Стоянке» и «Хуторе» — прежняя (3000 / 5000): деньги при загрузке не срезаются;
+## новая игра — 2500 / 4000
+func _old_caps() -> void:
+	print("== казна старых городов")
+	var c := City.new(Land.new())
+	c.place("center", Land.CENTER, PI / 2, 0, 0, true)
+	var h := c.place("house_pleb", Land.START, 0.0, 0, 0, true)
+	c.settled(int(h["id"]), 4, "Проба")
+	c.level = 1
+	c.money = 4800.0
+	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	d.erase("econ_v")
+	var c2 := City.new(Land.new())
+	c2.load_data(d)
+	c2.sim_day()
+	var net := float(c2.stats["income"]) - float(c2.stats["upkeep"])
+	_check(c2.econ == 0 and is_equal_approx(c2.money_cap(), 5000.0) and is_equal_approx(c2.money_cap_for(0), 3000.0) and net > 0.0 and c2.money >= 4800.0,
+		"старый «Хутор» с 4800 ден.: казна %d, через час %d (доход %+.0f) — не срезано" % [int(c2.money_cap()), int(c2.money), net])
+	c2.econ = 1
+	_check(is_equal_approx(c2.money_cap_for(0), 2500.0) and is_equal_approx(c2.money_cap_for(1), 4000.0) and is_equal_approx(c2.money_cap_for(2), 8000.0),
+		"новая игра: казна «Стоянки» 2500, «Хутора» 4000, дальше как у всех")
+
+
+## Медальон «Легион»: подсказка говорит, чего история ждёт на самом деле; бои с городами — с «Посёлка» (добыча — для его казны)
+func _legion_gate() -> void:
+	print("== Легион: подсказка и бои с городами")
+	var c := City.new(Land.new())
+	c.place("center", Land.CENTER, PI / 2, 0, 0, true)
+	var L: Legion = c.legion
+	var S: Dictionary = c.stories
+	c.level = 0
+	var t0 := L.lock_text()
+	c.level = 1
+	var t1 := L.lock_text()
+	S["done"]["cat"] = {"day": 0, "h": 1}
+	var t2 := L.lock_text()
+	S["offer"] = {"id": "bandits"}
+	var t3 := L.lock_text()
+	S["offer"] = {}
+	S["later"]["bandits"] = 10
+	var t4 := L.lock_text()
+	S["later"] = {}
+	c.level = 3                                   # старый город без Легиона, идёт другая история
+	S["active"] = {"id": "leak", "step": 1}
+	var t5 := L.lock_text()
+	S["active"] = {}
+	var t6 := L.lock_text()
+	_check(t0.contains("станет «Хутор»") and t1.contains("после истории «Где Мурка?»") and t2.contains("скоро придёт") and not t2.contains("Хутор")
+		and t3.contains("свиток") and t4.contains("отложили") and t5.contains("после истории «Течь") and t6.contains("скоро придёт") and not t6.contains("Хутор"),
+		"подсказка медальона: «%s» / «%s» / «%s» / «%s» / «%s» / «%s»" % [t0.get_slice("— ", 1), t1.get_slice("— ", 1), t2.get_slice("— ", 1), t3.get_slice("— ", 1), t4.get_slice("— ", 1), t5.get_slice("— ", 1)])
+	c.research["legion"] = true                   # открыт историей «Разбойники у арки»
+	var by_lvl := []
+	for lv in [1, 2, 3]:
+		c.level = lv
+		by_lvl.append([L.window_open(), L.pvp_open(), L.pvp_can_attack().contains("Посёлок")])
+	_check(by_lvl == [[true, false, true], [true, false, true], [true, true, false]] and L.lock_text() == "",
+		"Легион с «Хутора», бои с городами — с «Посёлка»: %s" % [by_lvl])

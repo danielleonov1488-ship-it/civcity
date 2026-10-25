@@ -248,8 +248,10 @@ func _try_offer() -> void:
 func can_offer(sd: Dictionary) -> Dictionary:
 	if city.level < int(sd.get("lvl", 0)) or int(city.stats.get("pop", 0)) < int(sd.get("pop", 0)):
 		return {}
-	# Легион уже открыт (старый город изучил его за очки) — «Разбойники у арки» не нужны
-	if String(sd.get("skip_if", "")) != "" and city.research.has(String(sd["skip_if"])):
+	# Легион уже открыт (старый город изучил его за очки) — «Разбойники у арки» не нужны. Открыла его сама эта история,
+	# а потом она прервалась (семья уехала, дом снесли) — предлагаем снова, как любую прерванную: награда не пропадёт
+	var sk := String(sd.get("skip_if", ""))
+	if sk != "" and city.research.has(sk) and String((S().get("granted", {}) as Dictionary).get(sk, "")) != String(sd["id"]):
 		return {}
 	# сначала та история (на «Хуторе» первой остаётся «Где Мурка?»); с «Деревни» не держим, если ту сейчас не предложить
 	var af := String(sd.get("after", ""))
@@ -579,6 +581,8 @@ func _enter_step(i: int) -> void:
 		# шаг открывает исследование (Легион из истории): без очков, событие — в колокольчик
 		if not city.research.has(String(r)):
 			city.research[String(r)] = true
+			# кто открыл: прервётся история — её предложат снова, skip_if её не остановит (can_offer)
+			(S().get_or_add("granted", {}) as Dictionary)[String(r)] = String(a.get("id", ""))
 			var rd := Defs.research(String(r))
 			city._quiet("Открыто: «%s» — для истории «%s»." % [rd.get("name", r), StoryDefs.title_of(_story(a), a)], "research")
 		if String(r) == "legion":

@@ -2524,6 +2524,10 @@ func _update_pointer() -> void:
 	var lu := LegionUi.of(self)
 	if lu != null and lu.tut_active():
 		var lp: Array = lu.tut_pointer()
+		# шаг «Войска» при закрытом окне уступает стрелку идущей истории горожан — улучшение бойцов подождёт
+		var sto0 = game.get("stories")
+		if lp[0] != null and not lu.visible and lu.lg.tut_step() == "troops" and sto0 != null and not (sto0.pointer_do() as Dictionary).is_empty():
+			lp = [null, ""]
 		if lp[0] != null:
 			pointer_target = lp[0]
 			pointer_text.text = lp[1]
@@ -4191,9 +4195,11 @@ func _tax_rows(v: VBoxContainer) -> void:
 	var key := "%d|%d|%s|%d" % [c.hour_n, c.level, str(c.taxes), c.buildings.size()]
 	if String(_tax_warn.get("key", "")) != key:
 		_tax_warn = {"key": key}
-		for cl in Defs.CLASS_ORDER:
-			if int(c.stats["residents"].get(cl, 0)) > 0 and c.tax_of(cl) != 2:
-				_tax_warn[cl] = c.happy_if_tax(cl, 2)
+		# прикидка нужна, только когда предупреждение может показаться: счастья сейчас хватает на следующий уровень
+		if need > 0 and int(c.stats.get("happy", 0)) >= need:
+			for cl in Defs.CLASS_ORDER:
+				if int(c.stats["residents"].get(cl, 0)) > 0 and c.tax_of(cl) != 2:
+					_tax_warn[cl] = c.happy_if_tax(cl, 2)
 	for cl in Defs.CLASS_ORDER:
 		if int(c.stats["residents"].get(cl, 0)) <= 0 and c.tax_of(cl) == 1:
 			continue

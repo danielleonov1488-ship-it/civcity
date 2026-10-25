@@ -1949,6 +1949,7 @@ func _bandits() -> void:
 	var A: Dictionary = S["active"]
 	check(String(A.get("id", "")) == "bandits" and int(A.get("step", -1)) == 1, "история идёт: шаг «Казармы»")
 	check(c.research.has("legion") and lg.window_open() and bool(lg.flags.get("advised", false)), "шаг открыл «Легион» без очков; окно Легиона своего совета не скажет")
+	check(String((S.get("granted", {}) as Dictionary).get("legion", "")) == "bandits", "записано, что «Легион» открыла эта история (%s)" % [S.get("granted")])
 	var q: Array = lg.quarter()
 	var qc := Vector2(float(q[0]), float(q[1])) if q.size() == 3 else Vector2.INF
 	check(q.size() == 3 and qc.distance_to(Land.GATE) < 70.0 and game.land.is_owned(qc), "военный квартал у арки: %s (%.0f м от арки)" % [q, qc.distance_to(Land.GATE)])
@@ -2036,12 +2037,44 @@ func _bandits() -> void:
 		await frames(40)
 		await shot("story_bandits_post.png")
 		game._set_hour(10.5)
+	# обучение Легиону, шаг 4 «Войска»: пока на улучшение не хватает денариев, стрелка не держит медальон — она у просьб
+	lg.flags["seen"] = true
+	lg.flags["tut_fought"] = true
+	lg.flags.erase("tut")
+	lg.upg = {}
+	lg.levels["legionary"] = 1
+	lu.visible = false
+	c.money = 100.0
+	var p_poor = lu.tut_pointer()[0]
+	hud._update_pointer()
+	var hp_poor = hud.pointer_target
+	c.money = 5000.0
+	var p_rich = lu.tut_pointer()[0]
+	check(lg.tut_step() == "troops" and p_poor == null and hp_poor != lu.btn and p_rich == lu.btn,
+		"шаг «Войска»: без денариев стрелка у просьб (%s), с денариями — на медальоне" % [hp_poor])
+	lg.flags["tut"] = "done"
 	# старый город с изученным Легионом — история не нужна
 	fresh7(4400, ["cat"])
 	S = c.stories
 	sto._tried = ""
 	sto.tick()
 	check(String(S["offer"].get("id", "")) != "bandits", "Легион уже открыт — «Разбойников» не предлагают (%s)" % S["offer"].get("id", ""))
+	# «Легион» открыла сама история, а потом она прервалась (семья уехала) — её предложат снова: Казармы и бой уже
+	# засчитаны, награда («Сторожевой пост», очки, Слава) не пропадёт
+	fresh7(4500, ["cat"])
+	S = c.stories
+	S["granted"] = {"legion": "bandits"}
+	S["active"] = {"id": "bandits", "step": 3, "flags": {}, "home": -1}
+	sto._cancel("Семья уехала из города.")
+	check((S["active"] as Dictionary).is_empty() and not (S["done"] as Dictionary).has("bandits"), "история прервалась после «Легиона»")
+	S["h"] = int(S["h"]) + StoryDefs.GAP_H
+	sto._tried = ""
+	sto.tick()
+	check(String(S["offer"].get("id", "")) == "bandits", "прерванных «Разбойников» предлагают снова (%s)" % S["offer"].get("id", ""))
+	var dj: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	check(String((City.stories_load(dj["stories"])["granted"] as Dictionary).get("legion", "")) == "bandits", "кто открыл «Легион» — сохраняется")
+	S["offer"] = {}
+	sto._marks(true)
 
 
 # ---------- «Течь в водопроводе»: лужи вдоль улицы → мастер идёт к трубе → фонтан у 6 домов ----------
