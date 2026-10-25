@@ -218,6 +218,7 @@ func _run() -> void:
 	hud = game.hud
 	sto = game.stories
 	game.can_save = false                # тест не пишет сохранение
+	game.settings["tasks_folded"] = false   # gpu_run копирует saves/settings.json: свиток просьб — развёрнут
 	sto.force = true
 	game.rank_cine.force = false
 	if mode == "owner":
@@ -1049,7 +1050,7 @@ func _square() -> void:
 	print("  было рядом: ", pr["parts"])
 	if int(pr["tier"]) == 0:
 		var t0txt := String(sto.row_info()["text"])
-		check(t0txt.contains("Бронза — 3 скамьи.") and t0txt.contains("посаженных деревьев"), "строка в начале: «%s»" % t0txt)
+		check(t0txt.contains("Бронза — 3 скамьи.") and t0txt.contains("деревьев и кустов"), "строка в начале: «%s»" % t0txt)
 	var dirs := [Vector2(6, 2), Vector2(-6, 3), Vector2(2, 7), Vector2(-3, -7), Vector2(7, -4), Vector2(-7, -3), Vector2(4, 8), Vector2(-5, 7), Vector2(8, 5)]
 	var di := 0
 	while int(sto.progress(A, g)["benches"]) < 3 and di < 9:

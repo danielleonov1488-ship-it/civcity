@@ -2990,10 +2990,7 @@ func actor(seed_v: int, female: bool, child: bool, cls: String, old := false) ->
 ## вблизи, в ролике, иначе выходит маленький бородач)
 static func kid_look(c: Node) -> void:
 	no_beard(c)
-	for sk: Skeleton3D in c.find_children("*", "Skeleton3D", true, false):
-		var hb := sk.find_bone("Head")
-		if hb >= 0:
-			sk.set_bone_pose_scale(hb, Vector3.ONE * 1.22)
+	Citizen.kid_face(c)                       # то же, что у детей на улице (Citizen.create): без щетины, голова крупнее
 
 
 ## Борода ни к чему (причёску жителя выбирает Citizen.create)

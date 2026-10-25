@@ -1440,7 +1440,7 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 		if (old | mask) == STAR_ALL and old != STAR_ALL:
 			reward["glory"] = int(reward.get("glory", 0)) + STAR_GLORY
 			out["star_glory"] = STAR_GLORY
-		_give(reward)
+		out["money_lost"] = _give(reward)      # казна полна — сколько денариев не уместилось (окно итога скажет честно)
 		out["reward"] = reward
 		out["chest"] = _chest(int(st["cycle"]), int(st["r"]))
 		wins += 1
@@ -1489,8 +1489,10 @@ func _chest(cycle: int, r: int) -> Dictionary:
 	return {"glory": g, "trophy": tr, "region": String(R["name"])}
 
 
-func _give(reward: Dictionary) -> void:
+## Выдать награду; вернёт, сколько денариев не уместилось в казну (полна — предел остаётся, но говорим честно)
+func _give(reward: Dictionary) -> int:
 	var c = city()
+	var lost := 0
 	for k in reward:
 		var v := float(reward[k])
 		match k:
@@ -1498,10 +1500,12 @@ func _give(reward: Dictionary) -> void:
 				glory += v
 			"money":
 				if c != null:
+					lost = maxi(0, roundi(v - maxf(0.0, c.money_cap() - c.money)))
 					c.money = minf(c.money_cap(), c.money + v)
 			"rp":
 				if c != null:
 					c.rp = maxf(c.rp, minf(c.rp_cap(), c.rp + v))   # сверх полок (возврат очков) не срезаем — как в sim_day
+	return lost
 
 
 # =====================================================================
@@ -1778,6 +1782,7 @@ func apply_pvp_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 		d = int(stakes["win" if win else "loss"])
 	pvp_rating = maxi(0, pvp_rating + d)
 	var reward := {}
+	var lost := 0
 	if win:
 		pvp_wins += 1
 		var op := snapshot_power(opp.get("snapshot", {}))
@@ -1785,7 +1790,7 @@ func apply_pvp_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 		var sr: Dictionary = opp.get("reward", {})
 		if sr.has("money"):
 			reward = {"money": int(sr["money"]), "glory": int(sr.get("glory", 0))}
-		_give(reward)
+		lost = _give(reward)
 	else:
 		pvp_losses += 1
 	pvp_log.push_front({"t": now(), "name": String(opp.get("name", "?")), "win": win, "delta": d, "money": int(reward.get("money", 0)), "attack": true,
@@ -1795,6 +1800,7 @@ func apply_pvp_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 	var out := result.duplicate()
 	out["delta"] = d
 	out["reward"] = reward
+	out["money_lost"] = lost
 	var c = city()
 	if c != null:
 		c.changed.emit()

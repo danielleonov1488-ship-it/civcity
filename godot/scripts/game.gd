@@ -56,6 +56,9 @@ var settings := {"fullscreen": false, "quality": "high", "ui_scale": 1.0, "autos
 var sound: Sound
 var place_color := -1                 # цвет будущей постройки (не меняется, пока курсор рядом)
 var place_color_pos := Vector2.INF
+var copy_color := false               # «Копировать»: цвет фасада копии держится и для следующих построек
+var _copy_tv0 := -1                   # какой фасад выбирал игрок до копии (-1 — «Случайный»)
+var color_lock := false               # цвет призрака игрока выбран и держится до постройки (0.7)
 var last_snap_n := Vector2.ZERO       # куда смотрел фасад в прошлый раз — чтобы дом не дёргался
 var moving_nature := {}               # переносимое дерево или камень
 var hover_nature := {}
@@ -1727,6 +1730,7 @@ func _process(dt: float) -> void:
 		_plot_hover(Vector2i(-1, -1))         # в ролике камеру ведёт он: без подсветки участка под мышью
 		brush_ring.visible = false            # …и без кольца кисти на земле (подсветку домов прячет cover.gd)
 		brush_box.visible = false
+		brush_disc.visible = false
 	else:
 		_update_tool()
 	autosave_t += dt
@@ -1785,6 +1789,9 @@ func _input(e: InputEvent) -> void:
 		# правая кнопка: тянули карту — это не щелчок (он закрывает свиток и окна)
 		if _rmb_armed and e is InputEventMouseMotion:
 			_rmb_moved = maxf(_rmb_moved, _mouse_pos.distance_to(_rmb_down))
+		# мазок дороги начат на карте, а кнопку отпустили над окном: окно отпускание себе не возьмёт — мазок кончаем здесь
+		if painting and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
+			_release()
 
 
 func ground_at_mouse() -> Vector2:
@@ -1955,6 +1962,9 @@ func set_tool(t: String) -> void:
 		_add_nature(moving_nature["name"], moving_nature["xf"], moving_nature["p"])
 		moving_nature = {}
 	tool = t
+	if is_road_tool(t):
+		# «Прямая линия» помнится отдельно у дорог и у ластика (и после перезапуска — в настройках)
+		brush_line = bool(settings.get("line_erase" if t == "erase" else "line_road", false))
 	place_lock = {}
 	pressing = false
 	rot_drag = false
@@ -1964,6 +1974,12 @@ func set_tool(t: String) -> void:
 		manual_yaw = false
 		rot_off = Vector2.ZERO
 		last_snap_n = Vector2.ZERO        # новая постройка — к дороге заново, без памяти о прошлой
+		if color_lock:
+			place_color = -1              # и цвет фасада — свой
+		color_lock = false
+		if copy_color:
+			tool_variant = _copy_tv0      # копию отложили — фасад снова как выбирал игрок
+		copy_color = false
 	if t != "settle":
 		settle_fam = {}
 		_clear_settle_marks()
@@ -1988,14 +2004,38 @@ func set_tool(t: String) -> void:
 			hud.cover_tip()
 		elif t == "floor":
 			hud.floor_tip()
+	if stories != null and stories.allowed():
+		stories._marks(true)                  # место истории: с нужным украшением в руках — чёткий край, без — мягкое пятно
 
 
 func is_road_tool(t: String) -> bool:
 	return t in ["road", "plaza", "path", "erase"]
 
 
+## Цвет кольца кисти по инструменту: мостовая — кремовая, тропа — песочная, площадь — светлый камень, ластик — красный
+const BRUSH_COL := {"road": Color(1.0, 0.97, 0.88), "path": Color(0.95, 0.8, 0.55), "plaza": Color(0.86, 0.88, 0.92), "erase": Color(1.0, 0.32, 0.26)}
+var brush_disc: MeshInstance3D            # чуть заметный круг внутри кольца (цвет инструмента)
+
+
 func _make_markers() -> void:
 	brush_ring = _ring(Color(1, 0.98, 0.9, 0.85))
+	brush_disc = MeshInstance3D.new()
+	var dm := CylinderMesh.new()
+	dm.top_radius = 0.97
+	dm.bottom_radius = 0.97
+	dm.height = 0.01
+	dm.radial_segments = 64
+	dm.rings = 1
+	brush_disc.mesh = dm
+	var dmat := StandardMaterial3D.new()
+	dmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	dmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dmat.albedo_color = Color(1, 0.98, 0.9, 0.1)
+	dmat.no_depth_test = true
+	brush_disc.material_override = dmat
+	brush_disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	brush_disc.visible = false
+	add_child(brush_disc)
 	brush_box = MeshInstance3D.new()
 	var bm := BoxMesh.new()
 	bm.size = Vector3(2, 0.06, 2)
@@ -2057,7 +2097,9 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 		if not moving.is_empty():
 			color = int(moving.get("color", 0))
 		else:
-			if place_color < 0 or (place_lock.is_empty() and place_color_pos.distance_to(p) > 5.0):
+			# у призрака игрока цвет «Авто» выбирается один раз на постановку и не прыгает, пока ведут мышь (после
+			# постройки — новый); без призрака (готовый город меню, проверки) — как раньше: новый через каждые 5 м
+			if place_color < 0 or (not color_lock and place_lock.is_empty() and place_color_pos.distance_to(p) > 5.0):
 				place_color = city.pick_color(p)
 				place_color_pos = p
 			color = place_color
@@ -2694,6 +2736,10 @@ func _update_tool() -> void:
 	brush_ring.visible = false
 	brush_box.visible = false
 	var over_ui := hud and hud.mouse_over_ui()
+	if over_ui and painting and is_road_tool(tool):
+		over_ui = false                       # мазок начат на карте: над окнами кисть ведём дальше по земле под курсором
+	brush_disc.visible = false
+	_tool_note(over_ui)
 	if tool == "" and hover != Vector2.INF and not over_ui:
 		var pl := land.plot_of(hover)
 		_plot_hover(pl if plot_signs.has(pl) and not land.is_owned(hover) else Vector2i(-1, -1))
@@ -2701,6 +2747,9 @@ func _update_tool() -> void:
 		_plot_hover(Vector2i(-1, -1))
 	if tool == "floor":
 		_floor_hover(over_ui)                 # дом ловит луч (и стрелка над крышей) — даже на фоне неба
+		return
+	if over_ui and Defs.B.has(tool) and ghost != null and String(place_info.get("_t", "")) == tool:
+		_ghost_frozen()                       # над окном (фасад, поворот…): призрак стоит, где был, и сразу меняет облик
 		return
 	if tool == "" or hover == Vector2.INF or over_ui:
 		cover.preview_off()                   # подпись у курсора — только когда стройка над землёй
@@ -2727,6 +2776,13 @@ func _update_tool() -> void:
 			brush_ring.visible = true
 			brush_ring.position = Vector3(hover.x, y + 0.08, hover.y)
 			brush_ring.scale = Vector3(brush_r, 1.0, brush_r)
+			brush_disc.visible = true
+			brush_disc.position = Vector3(hover.x, y + 0.07, hover.y)
+			brush_disc.scale = Vector3(brush_r, 1.0, brush_r)
+		var bc: Color = BRUSH_COL.get(tool, Color(1, 0.98, 0.9))
+		(brush_ring.material_override as StandardMaterial3D).albedo_color = Color(bc, 0.9 if tool == "erase" else 0.85)
+		(brush_disc.material_override as StandardMaterial3D).albedo_color = Color(bc, 0.14 if tool == "erase" else 0.1)
+		(brush_box.material_override as StandardMaterial3D).albedo_color = Color(bc, 0.35)
 		if painting and not brush_line:
 			_paint_to(hover)
 		if painting and hud:
@@ -2747,6 +2803,8 @@ func _update_tool() -> void:
 	if not Defs.B.has(tool):
 		return
 	var pl := placement(tool, hover)
+	color_lock = true                      # цвет призрака выбран — до постройки не меняется
+	pl["_t"] = tool                        # для чего посчитано (статус у курсора берёт место отсюда)
 	place_info = pl
 	var key := "%s:%d:%d:%d" % [tool, pl["tier"], pl["variant"], pl["color"]]
 	if ghost == null or ghost_key != key:
@@ -2757,7 +2815,7 @@ func _update_tool() -> void:
 		ghost_key = key
 	ghost.visible = true
 	var ok: bool = pl["err"] == ""
-	Parts.ghost_color(ghost, Color(0.45, 1.0, 0.45, 0.32) if ok else Color(1.0, 0.25, 0.2, 0.5))
+	_ghost_look(ok)
 	var y := float(pl["y"]) if ok else land.height_at(pl["pos"].x, pl["pos"].y)
 	ghost.transform = Transform3D(Basis(Vector3.UP, pl["yaw"]), Vector3(pl["pos"].x, y + 0.02, pl["pos"].y))
 	# охват — без кругов: синие дома уже с такой же, зелёные получат эту (решение владельца Д3)
@@ -2765,6 +2823,84 @@ func _update_tool() -> void:
 		cover.preview(tool, pl["pos"])
 	if hud:
 		hud.tool_status(pl["err"])
+
+
+const GHOST_OK := Color(0.45, 1.0, 0.45, 0.07)     # годное место: настоящие цвета постройки, лишь лёгкая зелень
+const GHOST_BAD := Color(1.0, 0.25, 0.2, 0.5)
+var _ghost_line: ShaderMaterial                       # тонкая светлая обводка годного призрака
+
+
+## Призрак: годное место — настоящие цвета (видно, какой будет фасад) с лёгкой зеленью и тонкой светлой обводкой;
+## негодное — красный, как раньше
+func _ghost_look(ok: bool) -> void:
+	Parts.ghost_color(ghost, GHOST_OK if ok else GHOST_BAD)
+	var m := ghost.get_meta("mat", null) as ShaderMaterial
+	if m == null:
+		return
+	if ok and _ghost_line == null:
+		_ghost_line = Parts.outline_material(Color(1.0, 0.97, 0.88), 0.035)
+	m.next_pass = _ghost_line if ok else null
+
+
+## Курсор над окном, постройка в руках: призрак стоит, где был, место и цвет не пересчитываются;
+## другой фасад (кнопки «Фасад», C/V) — сразу на призраке
+func _ghost_frozen() -> void:
+	cover.preview_off()
+	var pl := place_info
+	var v := int(pl["variant"])
+	if Defs.B[tool]["kind"] != "decor" and moving.is_empty():
+		v = next_variant
+	var key := "%s:%d:%d:%d" % [tool, pl["tier"], v, pl["color"]]
+	if key != ghost_key:
+		var xf := ghost.transform
+		ghost.queue_free()
+		ghost = Parts.ghost(Catalog.make(tool, pl["tier"], v, pl["color"]), "place")
+		add_child(ghost)
+		ghost.transform = xf
+		ghost_key = key
+		pl["variant"] = v
+		_ghost_look(pl["err"] == "")
+	ghost.visible = true
+
+
+## «Копировать»: в руках такая же постройка — тип, облик (фасад), цвет фасада и поворот (кнопка в карточке,
+## F над постройкой, инструмент «Копия» / Ctrl+C). false — эту не копируют (станция)
+func copy_building(b: Dictionary) -> bool:
+	if b.is_empty() or not city.buildings.has(int(b["id"])) or city.def(b).get("fixed", false):
+		return false
+	var t := String(b["type"])
+	var tv0: int = _copy_tv0 if copy_color else tool_variant
+	set_tool(t)
+	_copy_tv0 = tv0                           # взяли другое — выбор фасада («Случайный» или номер) вернётся
+	if int(Defs.B[t].get("variants", 1)) > 1:
+		tool_variant = int(b["variant"])     # тот же фасад и у следующих копий
+	next_variant = int(b["variant"])
+	place_color = int(b["color"])
+	color_lock = true
+	copy_color = true                         # цвет копии держится и для следующих (пока не взяли другое)
+	tool_yaw = float(b["yaw"])                # поворот: у украшений — как был; у домов — там, где нет дороги рядом
+	free_yaw = tool_yaw
+	yaw_set = true
+	if hud:
+		hud.on_tool(t)
+	return true
+
+
+## Тихий статус у курсора (четвёртая строка подписи): «Прямая» — дорога ляжет прямой при отпускании;
+## украшение для истории рядом с домом — «В счёт скверика ✓» / «Далеко от дома — не в счёт» / «Это не дерево — не в счёт»
+func _tool_note(over_ui: bool) -> void:
+	if hud == null:
+		return
+	var txt := ""
+	var col := Color("fff4dc")
+	if is_road_tool(tool) and brush_line and hover != Vector2.INF and not over_ui:
+		txt = "Прямая" if line_from == Vector2.INF else "Прямая · отпустите в конце"
+	elif Defs.B.has(tool) and stories != null and hover != Vector2.INF and not over_ui and String(place_info.get("_t", "")) == tool:
+		var zn: Array = stories.zone_note(tool, place_info.get("pos", Vector2.INF))
+		if not zn.is_empty():
+			txt = String(zn[0])
+			col = Color("b4ffae") if bool(zn[1]) else Color("ffc59a")
+	hud.cursor_note(txt, col)
 
 
 ## Подсветка постройки под курсором: снос — красная, копировать и перенести — золотая
@@ -3128,7 +3264,10 @@ func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventMouseButton:
 		var mb := e as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_RIGHT:
-			if mb.pressed:
+			if mb.pressed and painting:
+				cancel_stroke()                   # правая кнопка посреди мазка — мазок отменён, инструмент остаётся
+				_rmb_armed = false
+			elif mb.pressed:
 				_rmb_down = mb.position
 				_rmb_moved = 0.0
 				_rmb_armed = true
@@ -3171,8 +3310,10 @@ func _unhandled_input(e: InputEvent) -> void:
 		var k := e as InputEventKey
 		match k.keycode:
 			KEY_ESCAPE:
-				# как в Town to City: отменить инструмент → закрыть окна → снять выбор → меню игры
-				if tool != "":
+				# как в Town to City: отменить мазок → инструмент → закрыть окна → снять выбор → меню игры
+				if painting:
+					cancel_stroke()                   # мазок дороги отменён целиком; второй Esc снимет инструмент
+				elif tool != "":
 					set_tool("")
 				elif hud.close_panels():
 					pass
@@ -3214,6 +3355,12 @@ func _unhandled_input(e: InputEvent) -> void:
 				else:
 					snap = not snap
 				hud.refresh_tools()
+			KEY_F:
+				# навели на постройку и F — в руках такая же (облик, цвет, поворот); Q/E заняты поворотом камеры
+				if not k.ctrl_pressed and moving.is_empty() and not painting:
+					var cb := pick_building()
+					if not cb.is_empty() and not city.def(cb).get("fixed", false):
+						copy_building(cb)
 			KEY_M:
 				set_tool("move")
 			KEY_U:
@@ -3308,11 +3455,7 @@ func _click() -> void:
 					_happy_pops(h0, b["pos"])     # снесли лавку или украшение — над кем стало хуже, грустные рожицы
 			return
 		"copy":
-			var b := pick_building()
-			if not b.is_empty() and not city.def(b).get("fixed", false):
-				tool_variant = -1
-				set_tool(b["type"])
-				next_variant = int(b["variant"])
+			copy_building(pick_building())
 			return
 		"move":
 			if not moving.is_empty():
@@ -3458,8 +3601,13 @@ func _build_here() -> void:
 				b["y"] = pl["y"]
 				_show(b)
 			_happy_pops(h0, pl["pos"])           # лавка, украшение, памятник: рожицы волной над домами, кому стало лучше или хуже
+			if stories != null:
+				stories.flash_counted(b)           # история «рядом с домом»: на 3 с ✓ над всем, что идёт в счёт
 			if tool_variant < 0:
 				next_variant = randi() % int(Defs.B[tool].get("variants", 1))
+			if not copy_color:
+				place_color = -1                  # следующему дому — свой цвет «Авто» (не как у соседа)
+				color_lock = false
 			if pl.get("sub", "") == "free" and not city.tips.has("free_place") and mode != "demo" and not (tutorial and tutorial.active()):
 				city.tips["free_place"] = true
 				hud.advisor("Строим где хотите", "Дом встаёт там, куда вы навели, — на траве, на площади, хоть на мостовой. Повернуть — зажмите кнопку мыши и ведите вбок (или Z / X); этот поворот запомнится и для следующих домов.\n\nПодведите дом вплотную к дороге — он сам встанет ровно фасадом к ней. Нужно одно: у входа должна быть мостовая, иначе жители не дойдут.")
@@ -3535,6 +3683,27 @@ func _release() -> void:
 		city.compute()
 		hud.refresh()
 	stroke = []
+
+
+## Esc или правая кнопка посреди мазка дороги: мазок отменяется целиком — мостовая и деньги как до него,
+## инструмент остаётся в руках (второй Esc его снимет). Недотянутая прямая линия не ложится
+func cancel_stroke() -> void:
+	if not painting:
+		return
+	painting = false
+	line_from = Vector2.INF
+	if not stroke.is_empty():
+		land.undo(stroke)                     # пока кнопка зажата, дом на эти клетки встать не мог — откат полный
+		city.money += stroke_cost
+		city.compute()
+	stroke = []
+	stroke_cost = 0.0
+	_paint_broke = false
+	last_paint = Vector2.INF
+	if hud:
+		hud.stroke_live(0.0, tool, false, true)   # подпись «этот мазок: N ден.» у курсора гаснет
+		hud.tool_status("")
+		hud.refresh()
 
 
 func _paint_to(p: Vector2) -> void:

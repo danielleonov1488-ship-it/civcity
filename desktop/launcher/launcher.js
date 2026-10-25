@@ -26,6 +26,7 @@ const L = {
     $('saves').onclick = () => civ.openSaves();
     $('play').onclick = () => this.play();
     $('shell-dl').onclick = () => civ.downloadShell();
+    $('retry').onclick = () => { $('retry').hidden = true; civ.retry(); };
     civ.onUpdate(s => this.onUpdate(s));
     this.drawAccount();
     this.loadContent();
@@ -134,6 +135,7 @@ const L = {
     this.update = s;
     $('upd-text').textContent = s.text || '';
     $('upd-sub').textContent = s.sub || '';
+    $('retry').hidden = !s.retry || !!s.busy;     // ошибка связи — «Повторить» под кодом
     const bar = $('upd-bar');
     bar.classList.toggle('wait', s.p === null || s.p === undefined);
     $('upd-fill').style.width = s.p == null ? '' : Math.round(s.p * 100) + '%';

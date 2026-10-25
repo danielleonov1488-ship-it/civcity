@@ -1549,6 +1549,11 @@ func _show_result() -> void:
 			if rw.has(key):
 				rh.add_child(_reward_chip(key, int(rw[key])))
 		v.add_child(rh)
+		if int(out.get("money_lost", 0)) > 0:
+			# казна полна: предел остаётся, но честно — сколько не уместилось
+			var ll := _label("Казна полна — не уместилось %d ден." % int(out["money_lost"]), 15, true, C_BAD)
+			ll.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			v.add_child(ll)
 		if bool(out.get("first", false)):
 			var fl := _label("Первая победа здесь — добыча больше!", 16, true, C_GOOD)
 			fl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

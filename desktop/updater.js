@@ -139,6 +139,33 @@ async function linkOrCopy(src, dst) {
   try { await fsp.link(src, dst); } catch (e) { await fsp.copyFile(src, dst); }
 }
 
+// Почему не вышло связаться с сайтом — как в игре (net_http.gd): timeout | dns | tls | connect.
+// Ошибки бывают от net.fetch Electron («net::ERR_NAME_NOT_RESOLVED») и от fetch Node (cause.code «ENOTFOUND»)
+function netKind(e) {
+  if (!e) return 'connect';
+  if (e.name === 'AbortError' || e.name === 'TimeoutError') return 'timeout';
+  const s = [e.code, e.cause && e.cause.code, e.message, e.cause && e.cause.message].filter(Boolean).join(' ').toUpperCase();
+  if (/TIMED_OUT|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|ABORTED/.test(s)) return 'timeout';
+  if (/NAME_NOT_RESOLVED|ENOTFOUND|EAI_AGAIN|EAI_NONAME|NAME_RESOLUTION/.test(s)) return 'dns';
+  if (/CERT|SSL|TLS|UNABLE_TO_VERIFY|SELF_SIGNED|EPROTO/.test(s)) return 'tls';
+  return 'connect';
+}
+
+// Понятный текст для лаунчера: { kind, title, text, code } — никогда не «проверьте интернет»:
+// браузер у игрока работает, и такая фраза только путает (чаще мешает VPN или антивирус)
+function netExplain(e) {
+  const kind = netKind(e);
+  const at = new Date().toTimeString().slice(0, 5);
+  const title = { timeout: 'Сервер CivCity долго не отвечает', dns: 'Адрес civcity.ru не нашёлся',
+    tls: 'Защищённое соединение не установилось', connect: 'Сервер CivCity не отвечает' }[kind];
+  const text = kind === 'tls'
+    ? 'Чаще всего мешают VPN, антивирус с проверкой HTTPS или старые сертификаты Windows. Попробуйте без VPN или обновите Windows.'
+    : kind === 'dns'
+      ? 'Имя сервера не нашлось: так бывает с VPN, прокси или DNS провайдера. Выключите VPN или добавьте CivCity в исключения и нажмите «Повторить».'
+      : 'Если включён VPN или прокси — выключите его или добавьте CivCity в исключения и нажмите «Повторить».';
+  return { kind, title, text, code: `Код: ${kind} · ${at}` };
+}
+
 async function fetchBuf(url, ms) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), ms);
@@ -262,7 +289,8 @@ class Updater {
           : { state: 'error', error: 'Скачать игру не вышло: ' + why + '. Попробуйте позже.' };
       }
       if (have) return { state: 'offline', manifest: have };
-      return { state: 'error', error: 'Нет связи с сервером, а игра ещё не скачана. Проверьте интернет и попробуйте ещё раз.' };
+      const ex = netExplain(e);
+      return { state: 'error', error: ex.title + ', а игра ещё не скачана. ' + ex.text, code: ex.code, retry: true };
     }
     if (remote.launcher && cmpVer(remote.launcher, app.getVersion()) > 0) return { state: 'shell', manifest: this.installed() };
 
@@ -447,4 +475,4 @@ class Updater {
   }
 }
 
-module.exports = { Updater, SITE, cmpVer, mb, readJson, writeJsonAtomic, validManifest, openSigned, PUBKEY_B64 };
+module.exports = { Updater, SITE, cmpVer, mb, readJson, writeJsonAtomic, validManifest, openSigned, PUBKEY_B64, netKind, netExplain };

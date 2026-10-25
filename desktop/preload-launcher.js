@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('civ', {
   setPref: (key, value) => ipcRenderer.invoke('l:setPref', key, value),
   play: () => ipcRenderer.invoke('l:play'),
   verify: () => ipcRenderer.invoke('l:verify'),
+  retry: () => ipcRenderer.invoke('l:retry'),
   openSaves: () => ipcRenderer.invoke('l:saves'),
   downloadShell: () => ipcRenderer.invoke('l:shell'),
   open: url => ipcRenderer.invoke('l:open', url),

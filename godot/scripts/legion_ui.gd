@@ -1564,6 +1564,8 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 			rh.add_child(_tr(hud.ico("research", 64), 26))
 			rh.add_child(_l("+%d" % int(rw["rp"]), 20, true, C_GOOD))
 		v.add_child(rh)
+		if int(out.get("money_lost", 0)) > 0:      # казна полна — честно, сколько не уместилось
+			v.add_child(_wl("Казна полна — не уместилось %d ден." % int(out["money_lost"]), 420, 15, C_BAD, true, true))
 	if pvp:
 		var d := int(out.get("delta", 0))
 		v.add_child(_wl("Рейтинг побед: %s%d" % ["+" if d >= 0 else "", d], 420, 18, C_GOOD if d >= 0 else C_BAD, true, true))

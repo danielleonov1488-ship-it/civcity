@@ -295,13 +295,21 @@ static func create(rng: RandomNumberGenerator, is_female: bool, child := false, 
 	cr.seed = rng.state ^ 0x5DEECE66D
 	if dyed:
 		_dress(body, name, cls if cls != "" else ("patricians" if rich else "plebs"), c.female, child, cr)
-	# причёска (и борода у части мужчин) — на кости головы
+	# причёска (и борода у части мужчин) — на кости головы. Ребёнку — без бороды и венка, и не лысеющая «седьмая»;
+	# случайности тянем те же и в том же порядке: взрослые и облик героев историй (по seed) не меняются
 	var sk: Skeleton3D = body.find_children("*", "Skeleton3D", true, false)[0]
-	var hairs: Array = ["SM_Chr_Hair_Female_0%d" % (1 + rng.randi() % 6)] if c.female else ["SM_Chr_Hair_Male_0%d" % (1 + rng.randi() % 7)]
+	var hm := 1 + rng.randi() % 7 if not c.female else 0
+	if child and hm == 7:
+		hm = (hm % 6) + 1
+	var hairs: Array = ["SM_Chr_Hair_Female_0%d" % (1 + rng.randi() % 6)] if c.female else ["SM_Chr_Hair_Male_0%d" % hm]
 	if not c.female and rng.randf() < 0.45:
-		hairs.append("SM_Chr_Hair_Beard_0%d" % (1 + rng.randi() % 4))
+		var bd := "SM_Chr_Hair_Beard_0%d" % (1 + rng.randi() % 4)
+		if not child:
+			hairs.append(bd)
 	if rich and rng.randf() < 0.3:
-		hairs.append("SM_Chr_Attach_Crown_Leaf_0%d" % (1 + rng.randi() % 2))
+		var cw := "SM_Chr_Attach_Crown_Leaf_0%d" % (1 + rng.randi() % 2)
+		if not child:
+			hairs.append(cw)
 	var att := BoneAttachment3D.new()
 	att.bone_name = "Head"
 	sk.add_child(att)
@@ -316,7 +324,25 @@ static func create(rng: RandomNumberGenerator, is_female: bool, child := false, 
 	c.anim.add_animation_library("", library())
 	c.anim.speed_scale = rng.randf_range(0.92, 1.08)
 	c.scale = Vector3.ONE * SIZE * (0.68 if child else 1.0)
+	if child:
+		kid_face(c)
 	return c
+
+
+const KID_HEAD := 1.22                  # голова ребёнка крупнее (как было у детей в роликах)
+
+
+## Ребёнок — на улице, в повозке, в ролике и на портрете одинаково: без щетины на подбородке и бритой голове
+## (пятно щетины атласа → кожа), брови тоньше, голова крупнее. Дети у нас — уменьшенные взрослые Synty; одна копия
+## сетки на модель тела, в кадре ничего не считается. Повторно — ничего не меняет
+static func kid_face(c: Node) -> void:
+	for mi: MeshInstance3D in c.find_children("*", "MeshInstance3D", true, false):
+		if mi.skin != null and mi.mesh is ArrayMesh:
+			mi.mesh = _face_mesh(mi.mesh, false, true)
+	for sk: Skeleton3D in c.find_children("*", "Skeleton3D", true, false):
+		var hb := sk.find_bone("Head")
+		if hb >= 0:
+			sk.set_bone_pose_scale(hb, Vector3.ONE * KID_HEAD)
 
 
 ## phase ≥ 0 — начать с этой доли движения (чтобы соседи не двигались в такт)
@@ -421,8 +447,9 @@ static func _face_mesh(m: ArrayMesh, old := false, young := false) -> ArrayMesh:
 		if old:
 			uv[i] = GREY_UV
 	if young:
+		# щетина у мужчин Synty — два пятна атласа: бритая голова (STUBBLE_UV) и подбородок (≈0,022–0,028; 0,833)
 		for i in v.size():
-			if v[i].y > 1.45 and absf(uv[i].x - STUBBLE_UV.x) < 0.005 and absf(uv[i].y - STUBBLE_UV.y) < 0.005:
+			if v[i].y > 1.45 and uv[i].x < 0.035 and uv[i].y > 0.825 and uv[i].y < 0.845:
 				uv[i] = SKIN_UV
 	arr[Mesh.ARRAY_VERTEX] = v
 	arr[Mesh.ARRAY_TEX_UV] = uv
@@ -432,6 +459,7 @@ static func _face_mesh(m: ArrayMesh, old := false, young := false) -> ArrayMesh:
 	out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [], {}, flags)
 	out.surface_set_material(0, m.surface_get_material(0))
 	_face_meshes[key] = out
+	_face_meshes["%d:%s:%s" % [out.get_instance_id(), old, young]] = out   # копию ещё раз — та же (ребёнок в ролике)
 	return out
 
 

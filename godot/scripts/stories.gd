@@ -40,6 +40,9 @@ var _sit_t := 0.0                      # кошка мяукнула — сид�
 var _glow: Node3D = null               # пятно поисков: Decal (Forward+, Mobile) или сетка по земле (OpenGL — там Decal нет)
 var _glow_key := ""
 var _glow_r := 0.0                     # радиус пятна сейчас (0 — нет)
+var _glow_edge := false                # пятно с чёткой границей (в руках то, что идёт в счёт цели)
+const EDGE_OUT := 0.5                  # чёткая граница: свет гаснет к R + 0,5 м…
+const EDGE_AL := 0.22                  # …а внутри — ровный, такой яркости
 var _paws: Array = []
 var _paws_key := ""
 var _no_decals := RenderingServer.get_current_rendering_method() == "gl_compatibility"
@@ -109,6 +112,8 @@ func _process(dt: float) -> void:
 		return
 	if game == null or not game.ready_done or city == null:
 		return
+	if not _flash.is_empty() and Time.get_ticks_msec() > _flash_until:
+		_flash_clear()                   # ✓ над тем, что в счёт, — гаснут через 3 с
 	_live(dt * float(game.speed))
 	_poll += dt
 	if _poll < POLL:
@@ -1199,22 +1204,149 @@ func _marks(on: bool) -> void:
 	_area_marks(area, a)
 
 
-## Где выполнять цель шага: [x, z, радиус] у дома просящего — или []
+## Где выполнять цель шага: [x, z, радиус, яркость, край] у дома просящего — или []. Край (чёткая граница, без кольца) —
+## только пока в руках то, что идёт в счёт цели (украшение для скверика и сада, дом для молодых): иначе мягкое пятно
 func _goal_area(a: Dictionary) -> Array:
 	var g: Array = _step(a).get("goal", [])
 	if g.is_empty():
 		return []
 	var hp := _home_pos(a)
+	var edge := game != null and zone_tool(String(game.tool))
 	match String(g[0]):
 		"square", "around":
-			return [hp.x, hp.y, float(g[1]), BUILD_GLOW]
+			return [hp.x, hp.y, float(g[1]), BUILD_GLOW, edge]
 		"built_after":
-			return [hp.x, hp.y, float(g[2]), BUILD_GLOW]
+			return [hp.x, hp.y, float(g[2]), BUILD_GLOW, edge]
 		"flag":
 			var sub: Array = (g[2] as Dictionary).get(String((a.get("flags", {}) as Dictionary).get(String(g[1]), "")), [])
 			if not sub.is_empty() and String(sub[0]) == "around":
-				return [hp.x, hp.y, float(sub[1]), BUILD_GLOW]
+				return [hp.x, hp.y, float(sub[1]), BUILD_GLOW, edge]
 	return []
+
+
+# ---------- «рядом с домом» (скверик, свадебный сад, дом молодым): у курсора — в счёт ли, ✓ над тем, что в счёт ----------
+
+## Цель шага «рядом с домом» сейчас: {hp, r, keys: [вид…], label — «скверика», no — «Это не дерево»} или {}
+func zone_goal() -> Dictionary:
+	if city == null or not allowed():
+		return {}
+	var a: Dictionary = S()["active"]
+	if a.is_empty() or a.get("ready", false) or a.has("homeless"):
+		return {}
+	var st := _step(a)
+	var g: Array = st.get("goal", [])
+	if g.is_empty():
+		return {}
+	var zl = st.get("zone", [])
+	var keys := []
+	var r := 0.0
+	match String(g[0]):
+		"square":
+			r = float(g[1])
+			keys = (g[2] as Dictionary).keys()
+			if not keys.has(String(g[3])):
+				keys.append(String(g[3]))
+			if g.size() > 5:
+				keys.append(String(g[5]))       # солнечные часы — для золота
+		"around":
+			r = float(g[1])
+			keys = (g[2] as Dictionary).keys()
+		"built_after":
+			r = float(g[2])
+			keys = [String(g[1])]
+		"flag":
+			var ch := String((a.get("flags", {}) as Dictionary).get(String(g[1]), ""))
+			var sub: Array = (g[2] as Dictionary).get(ch, [])
+			if sub.is_empty() or String(sub[0]) != "around":
+				return {}
+			r = float(sub[1])
+			keys = (sub[2] as Dictionary).keys()
+			zl = (zl as Dictionary).get(ch, []) if zl is Dictionary else zl
+		_:
+			return {}
+	var lab: Array = zl if zl is Array else []
+	return {"hp": _home_pos(a), "r": r, "keys": keys, "label": String(lab[0]) if lab.size() > 0 else "цели",
+		"no": String(lab[1]) if lab.size() > 1 else ""}
+
+
+## Постройка type идёт в счёт цели «рядом с домом» (или похожа на нужное — тогда у курсора скажем «не в счёт»)
+func zone_tool(type: String) -> bool:
+	var z := zone_goal()
+	if z.is_empty() or not Defs.B.has(type):
+		return false
+	return _zone_key(z, type) != "" or (String(z["no"]) != "" and String(Defs.B[type].get("sub", "")) in ["plants", "trees"])
+
+
+func _zone_key(z: Dictionary, type: String) -> String:
+	for k in z["keys"]:
+		if _is({"type": type}, String(k)):
+			return String(k)
+	return ""
+
+
+## Строка у курсора для постройки type в точке p: [текст, в счёт ли] или [] (цели нет / к ней не относится)
+func zone_note(type: String, p: Vector2) -> Array:
+	var z := zone_goal()
+	if z.is_empty() or not Defs.B.has(type) or not p.is_finite():
+		return []
+	if _zone_key(z, type) == "":
+		if String(z["no"]) != "" and String(Defs.B[type].get("sub", "")) in ["plants", "trees"]:
+			return ["%s — не в счёт" % String(z["no"]), false]     # горшки, вазы, клумбы — не деревья
+		return []
+	if p.distance_to(z["hp"]) <= float(z["r"]):
+		return ["В счёт %s ✓" % String(z["label"]), true]
+	return ["Далеко от дома — не в счёт", false]
+
+
+const ZONE_FLASH_MS := 3000                # ✓ над тем, что в счёт, — столько после постановки
+var _flash: Array = []                     # ключи значков ✓
+var _flash_until := 0
+
+
+## Поставили постройку: на 3 с ✓ над всем, что идёт в счёт цели «рядом с домом» (если поставленное к ней относится)
+func flash_counted(b: Dictionary) -> void:
+	var z := zone_goal()
+	if z.is_empty() or _zone_key(z, String(b.get("type", ""))) == "":
+		return
+	_flash_clear()
+	for id in city.buildings:
+		var o: Dictionary = city.buildings[id]
+		if (o["pos"] as Vector2).distance_to(z["hp"]) > float(z["r"]) or _zone_key(z, String(o["type"])) == "":
+			continue
+		var top: float = city.blueprint(o).top_y() + 0.6
+		var key := "zok%d" % int(id)
+		hud.set_badge(key, Vector3(o["pos"].x, float(o["y"]) + top, o["pos"].y), "check", false, "", Callable(), "mark")
+		_flash.append(key)
+	_flash_until = Time.get_ticks_msec() + ZONE_FLASH_MS
+
+
+func _flash_clear() -> void:
+	for k in _flash:
+		hud.clear_badge(String(k))
+	_flash = []
+
+
+## «Ещё 2 дерева стоят дальше 15 м — подвиньте их ближе»: того, чего не хватает, — сколько стоит чуть дальше (до +12 м)
+func near_miss(hp: Vector2, r: float, need: Dictionary) -> String:
+	var out := ""
+	for base in need:
+		var n := _count_near(String(base), hp, r, -1)
+		if n >= int(need[base]):
+			continue
+		var far := _count_near(String(base), hp, r + 12.0, -1) - n
+		if far <= 0:
+			continue
+		var k := mini(far, int(need[base]) - n)
+		var w: Array = ZONE_WORDS.get(String(base), ["постройка", "постройки", "построек", "её"])
+		out += " Ещё %d %s %s дальше %d м — подвиньте %s ближе." % [k, Hud._plural(k, w[0], w[1], w[2]), "стоит" if k == 1 else "стоят",
+			int(r), w[3] if k == 1 else "их"]
+	return out
+
+
+## Слова для «Ещё 2 дерева…»: одно, два, пять, «подвиньте его/её»
+const ZONE_WORDS := {"bench": ["скамья", "скамьи", "скамей", "её"], "tree|cypress|palm|bush": ["дерево", "дерева", "деревьев", "его"],
+	"well|smallfountain": ["колодец", "колодца", "колодцев", "его"], "flowers|planter|bush|wall_flowers": ["цветник", "цветника", "цветников", "его"],
+	"pergola|rosearch": ["беседка", "беседки", "беседок", "её"], "taberna|thermopolium": ["таверна", "таверны", "таверн", "её"]}
 
 
 ## Место поисков: мягкое пятно тёплого света на земле (не кольцо) и цепочка следов лапок от дома в его сторону
@@ -1225,6 +1357,7 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 			_glow = null
 		_glow_key = ""
 		_glow_r = 0.0
+		_glow_edge = false
 		for p in _paws:
 			(p as Node).queue_free()
 		_paws = []
@@ -1233,17 +1366,22 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 	var c := Vector2(float(area[0]), float(area[1]))
 	var r := float(area[2])
 	var al := float(area[3]) if area.size() > 3 else 0.5   # где строить — свет мягче, чем где искать кошку
-	var k := "%.1f,%.1f,%.1f,%.2f" % [c.x, c.y, r, al]
+	var edge := area.size() > 4 and bool(area[4])
+	# с нужным украшением в руках — ровный свет до R−1,5 м и чёткий спад к R+0,5 м (граница видна, но это не кольцо)
+	var rr := r + (EDGE_OUT if edge else 0.0)
+	var tex: Texture2D = StoryUi.edge_tex(r, EDGE_OUT) if edge else StoryUi.glow_tex()
+	if edge:
+		al = EDGE_AL
+	var k := "%.1f,%.1f,%.1f,%.2f,%s" % [c.x, c.y, r, al, edge]
 	if _no_decals:
 		if k != _glow_key:
 			if _glow != null:
 				_glow.queue_free()
-			_glow = _glow_mesh(c, r, al)
+			_glow = _glow_mesh(c, rr, al, tex)
 			game.add_child(_glow)
 	else:
 		if _glow == null:
 			var dc := Decal.new()
-			dc.texture_albedo = StoryUi.glow_tex()
 			dc.modulate = Color(1.0, 0.82, 0.42, 0.5)
 			dc.albedo_mix = 1.0
 			dc.normal_fade = 0.6
@@ -1252,11 +1390,13 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 			dc.cull_mask = Game.LAND_LAYER   # только земля: дома, люди и деревья не светятся
 			game.add_child(dc)
 			_glow = dc
-		(_glow as Decal).size = Vector3(r * 2.0, 8.0, r * 2.0)
+		(_glow as Decal).texture_albedo = tex
+		(_glow as Decal).size = Vector3(rr * 2.0, 8.0, rr * 2.0)
 		(_glow as Decal).modulate = Color(1.0, 0.82, 0.42, al)
 		_glow.position = Vector3(c.x, game.land.height_at(c.x, c.y), c.y)
 	_glow_key = k
 	_glow_r = r
+	_glow_edge = edge
 	if k == _paws_key:
 		return
 	_paws_key = k
@@ -1302,7 +1442,7 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 
 
 ## Пятно поисков без Decal (OpenGL): сетка по земле чуть выше неё, мягкий свет без теней; дома и деревья его заслоняют
-func _glow_mesh(c: Vector2, r: float, al := 0.5) -> MeshInstance3D:
+func _glow_mesh(c: Vector2, r: float, al := 0.5, tex: Texture2D = null) -> MeshInstance3D:
 	var n := 24
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -1323,7 +1463,7 @@ func _glow_mesh(c: Vector2, r: float, al := 0.5) -> MeshInstance3D:
 				st.add_index(v)
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
-	mi.material_override = _flat_mat(StoryUi.glow_tex(), Color(1.0, 0.82, 0.42, al))
+	mi.material_override = _flat_mat(tex if tex != null else StoryUi.glow_tex(), Color(1.0, 0.82, 0.42, al))
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return mi
 
@@ -1390,7 +1530,7 @@ func _advise_square() -> void:
 	if a.is_empty() or _goal_kind(a) != "square" or city.tips.has("story_square") or not hud._tip_free() or kit != null:
 		return
 	city.tips["story_square"] = true
-	hud.advisor("Скверик для стариков", "Скамьи, деревья из раздела «Украшения» и колодец ставьте рядом с домом просящего — это место подсвечено на земле. Дикие деревья, что выросли сами, не в счёт. Старики начнут приходить, как только появятся скамьи: чем больше скамей, тем больше стариков.\n\n" \
+	hud.advisor("Скверик для стариков", "Скамьи, деревья или кусты из раздела «Украшения» и колодец ставьте не дальше 15 м от середины дома просящего — это место подсвечено на земле. С украшением в руках у курсора видно, в счёт ли оно, а край места светится чётче. Дикие деревья, что выросли сами, не в счёт. Старики начнут приходить, как только появятся скамьи: чем больше скамей, тем больше стариков.\n\n" \
 		+ "Когда хватит самого нужного, в «Просьбах горожан» появится «Готово». Нажмёте сразу — бронза (3 скамьи): +3% счастья домам вокруг. Пять скамей — серебро, +5%. Семь скамей и солнечные часы — золото, +7%. Награда остаётся, пока стоит скверик.")
 
 
@@ -1473,6 +1613,9 @@ func row_info() -> Dictionary:
 				var pr := progress(a, g)
 				if String(pr["txt"]) != "":
 					text += " Сейчас: %s." % pr["txt"]
+				var sg: Array = (g[2] as Dictionary).get(ch, [])
+				if not sg.is_empty() and String(sg[0]) == "around":
+					text += near_miss(_home_pos(a), float(sg[1]), sg[2])
 				info["buttons"] = [["Показать", show_area]]
 				for op: Array in choice_opts(sd):
 					if String(op[1]) != ch:
@@ -1487,18 +1630,23 @@ func row_info() -> Dictionary:
 				var pr := progress(a, g)
 				if String(pr["txt"]) != "":
 					text += " %s." % pr["txt"]
+				if kind == "around":
+					text += near_miss(_home_pos(a), float(g[1]), g[2])
 	info["text"] = text
 	return info
 
 
 ## Строка скверика: что уже есть, какой порог сейчас и что нужно до следующего
 func _square_text(sd: Dictionary, g: Array, pr: Dictionary) -> String:
-	var names := {"bench": "скамей", "tree|cypress|palm": "посаженных деревьев", "well|smallfountain": "колодцев"}
+	var names := {"bench": "скамей", "tree|cypress|palm|bush": "деревьев и кустов", "well|smallfountain": "колодцев"}
 	var bits := []
 	for e: Array in pr["parts"]:
 		var nm := String(names.get(String(e[0]), String(e[0])))
 		bits.append("%s %d" % [nm, int(e[1])] if String(e[0]) == String(g[3]) else "%s %d/%d" % [nm, mini(int(e[1]), int(e[2])), int(e[2])])
 	var out := "Сейчас: " + ", ".join(bits) + "."
+	var a: Dictionary = S()["active"]
+	if not a.is_empty():
+		out += near_miss(_home_pos(a), float(g[1]), g[2])
 	var tier := int(pr["tier"])
 	var tiers: Array = g[4]
 	var pct: Array = ((sd.get("reward", {}) as Dictionary).get("monument", [[0]]) as Array)[0]

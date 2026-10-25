@@ -1289,7 +1289,7 @@ static func _theatre(b: Bp) -> void:
 	b.brazier(Vector3(5.9, y1, 4.6), true)
 	# на сцене: ковёр, лира
 	b.add("SM_Prop_Rug_0%d" % (1 + b.rng.randi() % 3), Vector3(0, y1 + 0.01, 5.6), PI / 2, 1.0)
-	b.add("SM_Prop_Lyre_01", Vector3(3.3, y1 + 0.3, 6.1), PI, 0.8)
+	b.add("SM_Prop_Lyre_01", Vector3(3.3, y1, 6.1), PI, 0.8)    # стоит на сцене (было на 0,3 м выше — висела в воздухе)
 	# улица: фасад скены — факелы у боковых арок, длинные знамёна на нишах, табличка над главной дверью
 	for x: float in [-2.5, 2.5]:
 		for dx: float in [-1.05, 1.05]:

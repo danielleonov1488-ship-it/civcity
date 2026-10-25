@@ -791,7 +791,9 @@ static func _pergola(b: Bp, lk: int) -> void:
 static func _tholos(b: Bp) -> void:
 	var s := 0.8
 	_addr(b, "SM_Prop_Pergola_01", Vector3(0, 0.36 * s, 0), 0.0, s, {"Stucco_Blue_01": "Roof_Tile_03"})
-	var fy := 0.36 * s + 0.3
+	# пол беседки (замер лучом вниз по сетке SM_Prop_Pergola_01) — на уровне её начала, т. е. 0,36·s: скамья и плющ
+	# стоят на нём (раньше были на 0,3 м выше — висели в воздухе)
+	var fy := 0.36 * s
 	b.add("SM_Prop_Seat_Bench_02", Vector3(0, fy, -0.7), 0.0, 0.85)
 	b.add("SM_Env_Ivy_Pillar_Flowers_0%d" % b.pick([1, 3]), Vector3(-1.55, fy, -0.65), _yaw(b), 0.85)
 	b.add("SM_Env_Ivy_Pillar_Flowers_01", Vector3(1.55, fy, -0.65), _yaw(b), 0.85)

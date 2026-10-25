@@ -50,7 +50,7 @@ main { height: calc(100% - 34px); display: grid; grid-template-columns: 1fr 340p
 .field { display: block; margin-bottom: 8px; font-size: 12.5px; font-weight: 700; color: var(--ink-soft); }
 .field input { display: block; width: 100%; margin-top: 3px; padding: 8px 10px; border: 1px solid #d8c6a4; border-radius: 8px; background: #fff; user-select: text; }
 .field input:focus, select:focus { outline: 2px solid var(--gold-soft); outline-offset: 0; }
-.msg { margin: 4px 0 8px; font-size: 12.5px; }
+.msg { margin: 4px 0 8px; font-size: 12.5px; white-space: pre-line; }
 .msg.bad { color: var(--bad); }
 .msg.good { color: var(--good); }
 .consent { display: flex; align-items: flex-start; gap: 8px; margin: 2px 0 10px; font-size: 12px; line-height: 1.4; color: var(--ink-soft); cursor: pointer; }
@@ -76,6 +76,7 @@ select { padding: 5px 8px; border: 1px solid #d8c6a4; border-radius: 8px; backgr
 .update { margin-top: auto; }
 .upd-text { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 5px; min-height: 18px; font-variant-numeric: tabular-nums; }
 .upd-sub { margin-top: 3px; min-height: 15px; text-align: right; font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#retry { margin-top: 6px; }
 .upd-bar { height: 8px; border-radius: 5px; background: #e3d5bc; overflow: hidden; }
 #upd-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--terra), var(--gold-soft)); transition: width 0.2s; }
 .upd-bar.wait #upd-fill { width: 30%; animation: wait 1.2s ease-in-out infinite alternate; }

@@ -1561,12 +1561,13 @@ func rank_needs(lvl := -1) -> Array:
 	var L: Dictionary = Defs.LEVELS[lvl]
 	var pop := int(stats.get("pop", 0))
 	var hp := int(stats.get("happy", 0))
-	var out := [{"text": "Жителей", "icon": "family", "have": pop, "need": int(L["pop"]), "ok": pop >= int(L["pop"]), "pct": false},
-		{"text": "Счастье города", "icon": "happy", "have": hp, "need": int(L["happy"]), "ok": hp >= int(L["happy"]), "pct": true}]
+	# p (и tool) — то же условие, что у просьб: по нему интерфейс знает, куда показать стрелку (Hud.need_do)
+	var out := [{"text": "Жителей", "icon": "family", "have": pop, "need": int(L["pop"]), "ok": pop >= int(L["pop"]), "pct": false, "p": ["pop"]},
+		{"text": "Счастье города", "icon": "happy", "have": hp, "need": int(L["happy"]), "ok": hp >= int(L["happy"]), "pct": true, "p": ["happy"]}]
 	for n: Dictionary in L.get("need", []):
 		var have := progress_of(n["p"])
 		out.append({"text": n["text"], "say": n.get("say", String(n["text"]).to_lower()), "icon": n.get("icon", "check"), "have": have,
-			"need": int(n["n"]), "ok": have >= int(n["n"]), "pct": false})
+			"need": int(n["n"]), "ok": have >= int(n["n"]), "pct": false, "p": n["p"], "tool": String(n.get("tool", ""))})
 	return out
 
 
@@ -1955,13 +1956,16 @@ func _check_goals() -> void:
 			continue                                # «Станьте хутором» — только когда игрок нажал кнопку
 		if goal_progress(g["id"]) >= int(g["need"]):
 			goals_done.append(g["id"])
+			# казна полна — предел остаётся, но в колокольчике честно: сколько не уместилось (как у историй)
+			var lost := maxi(0, roundi(float(g["money"]) - maxf(0.0, money_cap() - money)))
 			money = minf(money_cap(), money + float(g["money"]))
 			rp = maxf(rp, minf(rp_cap(), rp + float(g["rp"])))
 			var extra := ""
 			if g.has("unlock"):
 				research[g["unlock"]] = true
 				extra = ". Открыто: %s" % g.get("reward", "новые украшения")
-			_event("Просьба выполнена: %s (+%d ден.%s)%s" % [g["text"], g["money"], (", +%d оч." % g["rp"]) if int(g["rp"]) > 0 else "", extra], "check")
+			var mtxt := ("+%d ден." % g["money"]) if lost <= 0 else ("+%d ден. (казна полна — не уместилось %d)" % [g["money"], lost])
+			_event("Просьба выполнена: %s (%s%s)%s" % [g["text"], mtxt, (", +%d оч." % g["rp"]) if int(g["rp"]) > 0 else "", extra], "check")
 
 
 ## Старые сохранения: исследование «Площади из плитки» (roads2) ничего не давало — площадь открыта с начала.
@@ -2089,7 +2093,7 @@ func save_data() -> Dictionary:
 		var b: Dictionary = buildings[id]
 		bl.append({"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
 			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": b.get("hire", -1),
-			"born": int(b.get("born", id)), "cells": Marshalls.raw_to_base64((b["cells"] as PackedInt32Array).to_byte_array())})
+			"born": int(b.get("born", id)), "cells": _cells64(b["cells"])})
 	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
 		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false))}),
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
@@ -2097,6 +2101,11 @@ func save_data() -> Dictionary:
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
 		"stories": stories.duplicate(true), "legion": legion.to_dict()}
+
+
+## Клетки постройки — строкой base64; пустые — пустой строкой (Marshalls ругается на пустой массив в журнал)
+static func _cells64(cells: PackedInt32Array) -> String:
+	return "" if cells.is_empty() else Marshalls.raw_to_base64(cells.to_byte_array())
 
 
 func load_data(d: Dictionary) -> void:
@@ -2136,7 +2145,8 @@ func load_data(d: Dictionary) -> void:
 	next_id = int(d.get("next_id", 1))
 	buildings = {}
 	for bd in d.get("buildings", []):
-		var cells := Marshalls.base64_to_raw(bd.get("cells", "")).to_int32_array()
+		var c64 := String(bd.get("cells", ""))
+		var cells := Marshalls.base64_to_raw(c64).to_int32_array() if c64 != "" else PackedInt32Array()
 		var b := {"id": int(bd["id"]), "type": bd["type"], "tier": int(bd["tier"]), "pos": Vector2(float(bd["x"]), float(bd["z"])),
 			"yaw": float(bd["yaw"]), "variant": int(bd.get("variant", 0)), "color": int(bd.get("color", 0)), "y": float(bd.get("y", Land.BASE_Y)),
 			"cells": cells, "pop": int(bd["pop"]), "families": bd.get("families", []), "happy": 50, "up": 0, "down": 0, "staff": 1.0,

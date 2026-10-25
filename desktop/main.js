@@ -18,7 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
-const { Updater, SITE, readJson, writeJsonAtomic } = require('./updater');
+const { Updater, SITE, readJson, writeJsonAtomic, netExplain } = require('./updater');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -121,7 +121,9 @@ async function api(method, p, body, token) {
     if (!r.ok) return { error: data.error || 'Сервер не ответил, попробуйте позже', status: r.status };
     return data;
   } catch (e) {
-    return { error: 'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.', status: 0 };
+    const ex = netExplain(e);              // timeout / dns / connect / tls — как в игре, с кодом и временем
+    return { error: `${ex.title}. ${ex.text}
+${ex.code}`, status: 0 };
   } finally { clearTimeout(t); }
 }
 
@@ -167,11 +169,11 @@ function prepare(opts = {}) {
     lastCheck = Date.now();
     log('обновление:', r.state, r.manifest ? `${r.manifest.version}/${r.manifest.build}` : '-', r.error || '');
     const m = r.manifest || updater.installed();
-    const s = { busy: false, sub: '', p: 1, ready: !!m, game: gameInfo(m), shell: r.state === 'shell' };
+    const s = { busy: false, sub: '', p: 1, ready: !!m, game: gameInfo(m), shell: r.state === 'shell', retry: false };
     if (r.state === 'ready' || r.state === 'updated') s.text = r.state === 'updated' && !r.fresh ? 'Игра обновлена · ' + readyText(m).replace('Игра готова · ', '') : readyText(m);
     else if (r.state === 'offline') s.text = 'Нет связи с сервером — играем в установленной версии';
     else if (r.state === 'shell') s.text = m ? 'Вышла новая версия программы — играть можно и в этой' : 'Нужна новая версия программы CivCity';
-    else { s.text = r.error; s.p = m ? 1 : 0; }
+    else { s.text = r.error; s.p = m ? 1 : 0; s.sub = r.code || ''; s.retry = !!r.retry; }   // «Код: dns · 14:32» и «Повторить»
     sendUpdate(s);
     return r;
   })().finally(() => { task = null; });
@@ -348,6 +350,7 @@ ipcMain.handle('l:setPref', (e, key, value) => {
 });
 
 ipcMain.handle('l:play', e => (fromLauncher(e) ? play('button') : null));
+ipcMain.handle('l:retry', e => (fromLauncher(e) ? prepare().then(() => true) : null));   // «Повторить» после ошибки связи
 ipcMain.handle('l:verify', async e => {
   if (!fromLauncher(e) || child || task) return;
   await prepare({ verify: true });

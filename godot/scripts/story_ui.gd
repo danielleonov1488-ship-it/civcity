@@ -34,6 +34,7 @@ static var _heart: Texture2D
 static var _petal: Texture2D
 static var _paw: Texture2D
 static var _glow: Texture2D
+static var _edges := {}                # пятна с чёткой границей: радиус → картинка
 static var _mask: Shader
 
 
@@ -633,6 +634,27 @@ static func paw_tex() -> Texture2D:
 
 
 ## Мягкое пятно света: ярко в середине, к краю сходит на нет (без кольца — не «круг охвата»)
+## Пятно «где строить» с чёткой границей (без кольца): ровный свет до R − 1,5 м, плавный спад к R + out
+## (картинка закрывает квадрат 2·(R + out); у каждого радиуса своя)
+static func edge_tex(r: float, out := 0.5) -> Texture2D:
+	var key := "%.1f:%.2f" % [r, out]
+	if _edges.has(key):
+		return _edges[key]
+	var n := 256
+	var full := r + out
+	var a0 := maxf(0.0, (r - 1.5) / full)    # до сюда — ровно
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	for y in n:
+		for x in n:
+			var d := Vector2((x + 0.5) / n - 0.5, (y + 0.5) / n - 0.5).length() * 2.0
+			var a := 1.0 - smoothstep(a0, 1.0, d)
+			img.set_pixel(x, y, Color(1, 1, 1, a))
+	img.generate_mipmaps()
+	var t := ImageTexture.create_from_image(img)
+	_edges[key] = t
+	return t
+
+
 static func glow_tex() -> Texture2D:
 	if _glow == null:
 		var n := 128
