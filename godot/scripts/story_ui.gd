@@ -507,11 +507,37 @@ func _row(box: Control, info: Dictionary, gold: bool, on_part: Callable) -> void
 
 # ---------- журнал «Истории горожан» ----------
 
-func open_journal() -> void:
+var journal_tab := ""                    # "" — истории горожан, "chron" — «Летопись города» (Chronicle)
+
+
+## Журнал: две вкладки — «Истории» (пройденные, «Пересмотреть») и «Летопись» (счётчики города и лавровые венки)
+func open_journal(tab := "") -> void:
 	if hud.journal_panel == null:
-		var w: Array = hud._window("Истории горожан", 600)
+		var w: Array = hud._window("Журнал города", 600)
 		hud.journal_panel = w[0]
+		var tabs := HBoxContainer.new()
+		tabs.name = "tabs"
+		tabs.alignment = BoxContainer.ALIGNMENT_CENTER
+		tabs.add_theme_constant_override("separation", 8)
+		for t: Array in [["", "Истории горожан", "scroll"], ["chron", "Летопись", "laurels"]]:
+			var b := Button.new()
+			b.text = t[1]
+			b.icon = hud.ico(t[2], 26)
+			b.expand_icon = false
+			b.toggle_mode = true
+			b.focus_mode = Control.FOCUS_NONE
+			b.name = "tab_" + (t[0] if t[0] != "" else "stories")
+			b.add_theme_font_override("font", hud.font_bold)
+			b.add_theme_stylebox_override("pressed", hud._box_pill(16, 6, "g_btn_on"))
+			b.add_theme_stylebox_override("hover_pressed", hud._box_pill(16, 6, "g_btn_on"))
+			var id: String = t[0]
+			b.pressed.connect(func():
+				journal_tab = id
+				fill_journal())
+			tabs.add_child(b)
+		(w[1] as VBoxContainer).add_child(tabs)
 		var sc := ScrollContainer.new()
+		sc.name = "scroll"
 		sc.custom_minimum_size = Vector2(560, 420)
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		(w[1] as VBoxContainer).add_child(sc)
@@ -520,6 +546,7 @@ func open_journal() -> void:
 		list.add_theme_constant_override("separation", 8)
 		list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sc.add_child(list)
+	journal_tab = tab
 	fill_journal()
 	if not hud.journal_panel.visible:
 		hud._toggle(hud.journal_panel)
@@ -530,6 +557,12 @@ func fill_journal() -> void:
 		return
 	var list: VBoxContainer = hud.journal_panel.find_child("list", true, false)
 	hud._clear(list)
+	for b: Button in (hud.journal_panel.find_child("tabs", true, false) as Node).get_children():
+		b.set_pressed_no_signal(b.name == "tab_" + (journal_tab if journal_tab != "" else "stories"))
+	(hud.journal_panel.find_child("scroll", true, false) as ScrollContainer).scroll_vertical = 0
+	if journal_tab == "chron":
+		Chronicle.fill(hud, list)
+		return
 	var S: Dictionary = game.city.stories
 	var any := false
 	var info: Dictionary = st.row_info()

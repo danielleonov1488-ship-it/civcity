@@ -243,6 +243,8 @@ static func apply(g) -> void:
 				for a in (g.visuals[id] as Dictionary).get("actors", []):
 					HandProps.drop(a)
 	small_textures(q == "verylow")
+	if g.get("clouds") != null:
+		g.clouds.set_enabled(not low)          # тени облаков — только «Высокая» и «Средняя»
 	if g.gfx == null:
 		swap_all()                         # загрузка (узла Gfx ещё нет), снимки — сразу; в игре — по одной за кадр
 	Engine.max_fps = 60 if g.shot_path == "" else 0
