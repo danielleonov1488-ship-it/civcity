@@ -431,9 +431,11 @@ func _api() -> void:
 	var city := City.new(land)
 	city.place("center", Land.CENTER, PI / 2, 0, 0, true)
 	var L: Legion = city.legion
-	_check(not L.window_open() and L.lock_text().contains("Посёлок"), "окно закрыто до исследования «Легион»: " + L.lock_text())
-	# Д5: Легион с «Посёлка» — исследование того же ряда, провинции раньше, предел бойцов не ниже самого трудного боя
-	_check(int(Defs.research("legion")["lvl"]) == int(Legion.REGIONS[0]["rank"]) and int(Legion.REGIONS[0]["rank"]) == 3, "«Легион» изучается на «%s» — там же открыт лес" % Defs.LEVELS[int(Defs.research("legion")["lvl"])]["name"])
+	_check(not L.window_open() and L.lock_text().contains("Разбойники у арки") and L.lock_text().contains("Хутор"), "окно закрыто, пока Легион не открыт историей: " + L.lock_text())
+	# Д9: Легион с «Хутора» через историю «Разбойники у арки» (без очков), лес — там же, предел бойцов не ниже самого трудного боя
+	_check(int(Defs.research("legion")["lvl"]) == int(Legion.REGIONS[0]["rank"]) and int(Legion.REGIONS[0]["rank"]) == 1 and Defs.research("legion").has("story")
+		and city.can_research("legion").contains("Разбойники у арки"), "«Легион» — история на «%s», там же открыт лес; за очки не изучить: «%s»" % [
+		Defs.LEVELS[int(Defs.research("legion")["lvl"])]["name"], city.can_research("legion")])
 	var ranks := []
 	var walls := []
 	for r in Legion.REGIONS.size():
@@ -444,11 +446,16 @@ func _api() -> void:
 			mx = maxi(mx, Legion.target_level(0, r, s))
 		if mx > int(Legion.CAP_BY_CITY[rk]):
 			walls.append("%s: бой %d ур. > предел %d" % [Legion.REGIONS[r]["name"], mx, int(Legion.CAP_BY_CITY[rk])])
-	_check(ranks == [3, 4, 5, 5, 6, 6, 7, 7] and walls.is_empty(), "провинции по уровням города %s, стен нет %s" % [ranks, walls])
+	_check(ranks == [1, 3, 5, 5, 6, 6, 7, 7] and walls.is_empty(), "провинции по уровням города %s, стен нет %s" % [ranks, walls])
 	_check(int(L.perks["oil"]) == 1 and L.open_perks().has("oil"), "«Кипящее масло» — с первого дня")
-	city.level = 3
+	city.level = 1
 	city.research["legion"] = true
 	_check(L.window_open(), "окно открыто после «Легиона»")
+	# «Стрельбище» — в ряду «Деревни», после «Легиона» из истории (прежние 480 очков не нужны)
+	city.level = 2
+	city.rp = 500.0
+	_check(city.can_research("archery") == "" and int(Defs.research("archery")["lvl"]) == 2, "«Стрельбище» можно изучить после истории: «%s»" % city.can_research("archery"))
+	city.level = 1
 	_check(city.unlocked("barracks") and not city.unlocked("range"), "Казармы — исследованием «Легион», Стрельбище — «Стрельбищем»")
 	_check(not city.unlocked("spearcamp") and Defs.unlock_text("boss1").contains("Атаман"), "Лагерь копейщиков закрыт до первого босса: " + Defs.unlock_text("boss1"))
 	# обучение: шаги выводятся из состояния игры
@@ -538,12 +545,12 @@ func _api() -> void:
 	L.upgrade("legionary")
 	OS.delay_msec(300)
 	L.tick()
-	_check(int(L.levels["legionary"]) == 3 and L.can_upgrade("legionary").begins_with("Предел города"), "предел «Посёлка» — 3 ур.: " + L.can_upgrade("legionary"))
+	_check(int(L.levels["legionary"]) == 3 and L.can_upgrade("legionary").begins_with("Предел города"), "предел «Хутора» — 3 ур.: " + L.can_upgrade("legionary"))
 	# провинции за уровнем города
 	L.progress = 10
-	_check(not L.stage_open(0, 1, 0) and L.region_lock_text(1).contains("Городок"), "вторая провинция ждёт «Городка»: " + L.region_lock_text(1))
-	city.level = 4
-	_check(L.stage_open(0, 1, 0) and L.cap() == 4, "на «Городке» открыта, предел 4")
+	_check(not L.stage_open(0, 1, 0) and L.region_lock_text(1).contains("Посёлок"), "вторая провинция ждёт «Посёлка»: " + L.region_lock_text(1))
+	city.level = 3
+	_check(L.stage_open(0, 1, 0) and L.cap() == 4, "на «Посёлке» открыта, предел 4")
 	city.level = 6
 	_check(L.cap() == 8, "на «Большом городе» предел 8")
 	# босс: место в отряде, новая постройка (масло уже было)

@@ -275,6 +275,7 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	c.level = 3
 	c.money = 20000.0
 	c.tips["rank_pressed"] = true                  # стрелка «новый уровень» не перебивает обучение Легиону
+	c.tips["tax_tip"] = true                       # и советы экономики (налоги по классам с «Деревни») — тоже
 	lg.progress = 0
 	lg.stars = {}
 	lg.upg = {}

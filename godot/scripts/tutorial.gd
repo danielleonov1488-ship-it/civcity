@@ -169,7 +169,7 @@ func _enter(i: int) -> void:
 			# первое исследование в обучении — сразу по карману (одно; дальше очки копит скрипторий)
 			var cheapest := 1e9
 			for r in Defs.RESEARCH:
-				if int(r["lvl"]) <= c.level and not r.has("after") and not c.research.has(r["id"]):
+				if int(r["lvl"]) <= c.level and not r.has("after") and not r.has("story") and not c.research.has(r["id"]):
 					cheapest = minf(cheapest, float(r["cost"]))
 			if cheapest < 1e9:
 				c.rp = maxf(c.rp, minf(c.rp_cap(), cheapest))

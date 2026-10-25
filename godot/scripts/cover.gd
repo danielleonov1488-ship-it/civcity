@@ -242,7 +242,7 @@ static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 					var h: Dictionary = c.buildings[id]
 					if not c.is_house(h) or (h["pos"] as Vector2).distance_to(pos) > Defs.DECOR_RADIUS:
 						continue
-					if _deco_gain(c, h, pts) > 0:
+					if _deco_gain(c, h, _deco_add(c, h, type, pts, 1.0)) > 0:
 						green.append(id)
 					elif _deco_capped(c, h):
 						blue.append(id)              # украшений уже сколько можно — больше не прибавится
@@ -315,7 +315,7 @@ static func selected_sets(c: City, b: Dictionary) -> Dictionary:
 				if not c.is_house(h) or (h["pos"] as Vector2).distance_to(b["pos"]) > Defs.DECOR_RADIUS:
 					continue
 				own.append(id)
-				if _deco_gain(c, h, -pts) < 0:
+				if _deco_gain(c, h, _deco_add(c, h, type, pts, -1.0)) < 0:
 					green.append(id)
 				elif _deco_capped(c, h):
 					blue.append(id)
@@ -481,6 +481,30 @@ static func _nearest(c: City, pos: Vector2, r: float, n: int) -> Array:
 
 
 ## На сколько процентов изменится украшение дома, если рядом прибавить (или убрать) pts очков (как в City.compute)
+## На сколько изменятся очки украшений дома, если рядом поставить (sign 1) или убрать (−1) ещё одно такое: по старым
+## правилам — ровно его очки; в новой игре (City.econ) одинаковые рядом считаются 100 / 60 / 30% (City.deco_points)
+static func _deco_add(c: City, h: Dictionary, type: String, pts: float, sign: float) -> float:
+	if c.econ < 1:
+		return pts * sign
+	var near := []
+	var base := Defs.base_of(type)
+	var drop := sign < 0.0
+	for id in c.buildings:
+		var o: Dictionary = c.buildings[id]
+		if c.def(o)["kind"] != "decor" or (h["pos"] as Vector2).distance_to(o["pos"]) > Defs.DECOR_RADIUS:
+			continue
+		near.append([Defs.base_of(o["type"]), float(c.def(o).get("deco", 1))])
+	var now: float = City.deco_points(near, 1)[0]
+	if not drop:
+		near.append([base, pts])
+	else:
+		for i in near.size():
+			if String(near[i][0]) == base and is_equal_approx(float(near[i][1]), pts):
+				near.remove_at(i)
+				break
+	return float(City.deco_points(near, 1)[0]) - now
+
+
 static func _deco_gain(c: City, h: Dictionary, pts: float) -> int:
 	var cd: Dictionary = Defs.CLASSES[c.def(h)["cls"]]
 	var now := int(h.get("deco_bonus", 0))

@@ -226,6 +226,7 @@ func _town() -> void:
 		if g.has("unlock"):
 			c.research[g["unlock"]] = true    # как в игре: награда просьбы открывает постройку
 	c.money = 500000.0
+	c.econ = 0                                # этажи проверяем на прежних правилах счастья (повторы лавок — test_econ)
 	for r in ["stall_veg", "stall_fish", "deco_flowers"]:
 		c.research[r] = true
 	street(Vector2(150, 150), Vector2(214, 150))
@@ -544,6 +545,9 @@ func _floor_why() -> void:
 			up = id
 			break
 	if up >= 0:
+		# камера — на этот дом: у края экрана его закрыла бы нижняя правая полоса (казна с «+N/ч» шире)
+		game.rig.set_view(Vector3(c.buildings[up]["pos"].x, 2, c.buildings[up]["pos"].y), 0, 50, 46)
+		await frames(8)
 		move(house_scr(up))
 		await frames(4)
 		check(cover.cap[2] == "Сначала изучите «Третий жилой этаж»", "надстроенный дом (3-й этаж не изучен): «%s»" % cover.cap[2])

@@ -165,10 +165,10 @@ func _buy_window() -> void:
 	var lbl: Label = hud.buy_panel.find_child("text", true, false)
 	var ok: Button = hud.buy_panel.find_child("ok", true, false)
 	var notes0: int = hud.notes_box.get_child_count()
-	c.level = 0                                   # Стоянка: казна 3000, участок 6000
+	c.level = 0                                   # Стоянка: казна 2500, участок 6000
 	hud.ask_buy(Vector2i(4, 2))
-	check(hud.buy_panel.visible and ok.disabled and lbl.text.contains("вмещает только 3 000") and lbl.text.contains("на уровне «Деревня»") and not lbl.text.contains("хранилище"),
-		"«Стоянка»: 6000 > cap 3000 — button off, «%s»" % lbl.text.get_slice("\n\n", 1))
+	check(hud.buy_panel.visible and ok.disabled and lbl.text.contains("вмещает только %s" % hud.fmt(c.money_cap())) and lbl.text.contains("на уровне «Деревня»") and not lbl.text.contains("хранилище"),
+		"«Стоянка»: 6000 > cap %d — button off, «%s»" % [int(c.money_cap()), lbl.text.get_slice("\n\n", 1)])
 	c.money = c.money_cap()
 	c.stats["income"] = 50.0
 	c.stats["upkeep"] = 0.0

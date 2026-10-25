@@ -5,6 +5,8 @@ extends Node
 ## (с играми в честь богов и покупкой земли; сами траты этапа 1b проверяет test_sinks.tscn).
 ##   bash .work/py/gpu_run.sh res://test_pace.tscn             — проверки, в конце «PACE CHECKS fails=0»
 ##   bash .work/py/gpu_run.sh --headless res://test_pace.tscn -- bot   — бот: «RANK …» по рангам и итог «PACE BOT …»
+##     seed=N — другой случай; frugal=1 — бережливый игрок (только условия уровня и нужды: без лишних украшений, этажей,
+##     разнообразия лавок и игр); строки ECONREQ / ECONRES / ECONRANK и таблица «ECON TABLE» — очки и деньги по рангам (этап 2.0)
 ## Время идёт вручную (скорость 0, city.sim_day() по часам); повозку и путь семьи до дома бот
 ## изображает сам (CART_H, WALK_H).
 
@@ -194,9 +196,10 @@ func _checks() -> void:
 	rpd = float(c.stats["rp_day"])
 	check(c.goals_done.has("hamlet"), "«Станьте хутором» done after one hour (already «Хутор»)")
 	check(is_equal_approx(rpd, 4.5), "rp/h at «Хутор» = 2 + 2.5: %.2f" % rpd)
-	check(is_equal_approx(float(c.rp), 97.0 + rpd + 40.0), "rp after the hour = 97 + %.1f + 40: %.1f" % [rpd, float(c.rp)])
+	var hamlet_rp := float(Defs.request("hamlet")["rp"])
+	check(is_equal_approx(float(c.rp), 97.0 + rpd + hamlet_rp), "rp after the hour = 97 + %.1f + %d: %.1f" % [rpd, int(hamlet_rp), float(c.rp)])
 	check(c.level == 1 and int(c.stats["pop"]) == 51, "still «Хутор»: pop %d, level %d" % [int(c.stats["pop"]), c.level])
-	check(c.can_research("floor2") == "", "«Второй жилой этаж» (50) affordable: «%s»" % c.can_research("floor2"))
+	check(c.can_research("floor2") == "", "«Второй жилой этаж» (%d) affordable: «%s»" % [int(Defs.research("floor2")["cost"]), c.can_research("floor2")])
 	var w1: Array = ids(c.active_goals())
 	check(w1 == ["scriptorium2", "market", "floor2"], "window after the hour: %s" % [w1])
 	# 4) Хутор: второй скрипторий можно, третий — нет; перенос (−3) и готовый город (−2) — без предела
@@ -572,7 +575,7 @@ const B_HOME := Vector2(185.0, 128.0)            # от станции горо�
 const B_BIG := ["school", "library", "academy", "temple", "forum", "odeon", "theatre", "baths", "balnea", "fountain",
 	"farm", "grove", "vineyard", "warehouse", "taberna"]
 ## минут на ранге по плану экономики (Стоянка — вместе с обучением; бот его не проходит — прибавляем TUT_MIN)
-const B_TARGET := [10.0, 10.0, 31.0, 31.0, 41.0, 56.0, 71.0]
+const B_TARGET := [12.0, 10.0, 30.0, 35.0, 40.0, 55.0, 71.0]
 const TUT_MIN := 6.0
 ## исследования, которые бот берёт в первую очередь (после нужных для следующего уровня); дальше — от дешёвого
 const B_KEY := ["stall_veg", "stall_fish", "scribes1", "floor2", "warehouse", "artisans", "school", "weaver", "musicians",
@@ -600,6 +603,12 @@ var dead := {}                       # тип → {точка: true}: там э�
 var rk := {}                         # счёт текущего ранга
 var rows_out: Array = []             # итоги рангов
 var headless := false
+var frugal := false                  # бережливый игрок: только условия уровня и нужды (frugal=1)
+## История «Разбойники у арки» (Д9): бот не играет истории, но как игрок соглашается помочь — Казармы и учебный бой.
+## Когда её предложат — по правилам историй: «Где Мурка?» через FIRST_H после обучения на «Хуторе» (~STORY_H на неё),
+## эта — через GAP_H после неё
+const STORY_H := 12.0                # история — около 5 минут игры
+var d9 := {"state": "wait", "t": -1.0}   # wait → cat (идёт «Мурка») → ask (предложена) → build (нужны Казармы) → fight → done
 
 
 func _bot() -> void:
@@ -607,7 +616,10 @@ func _bot() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("seed="):                # «-- bot seed=7» — другой случай: семьи, цвета (разброс итогов)
 			c.rng.seed = int(a.substr(5))
-	print("PACE BOT start: cart %.1f h each way, walk %.1f h, 1 h = %.0f s at 1x; goal «%s»; seed %d" % [CART_H, WALK_H, SEC_H, Defs.LEVELS[-1]["name"], int(c.rng.seed)])
+		if a == "frugal=1":
+			frugal = true
+	print("PACE BOT start: cart %.1f h each way, walk %.1f h, 1 h = %.0f s at 1x; goal «%s»; seed %d%s; start money %d, econ %d" % [CART_H, WALK_H, SEC_H,
+		Defs.LEVELS[-1]["name"], int(c.rng.seed), " FRUGAL" if frugal else "", int(c.money), int(c.econ)])
 	_bot_layout()
 	game.rig.set_view(Vector3(190, 2, 165), 20, 62, 130)
 	_rank_start()
@@ -902,6 +914,13 @@ func _bot_step() -> void:
 		for g in c.goals_done:
 			if not reqs.has(g):
 				reqs[g] = t
+				var gq := Defs.request(g)
+				if not gq.is_empty():
+					rk["rp_req"] = float(rk["rp_req"]) + float(gq["rp"])
+					rk["den_req"] = float(rk.get("den_req", 0.0)) + float(gq["money"])
+					print("ECONREQ t=%.1f lvl=%d %s +%d rp +%d den (rp now %d/%d, money %d/%d)" % [t, c.level, g, int(gq["rp"]), int(gq["money"]), int(c.rp), int(c.rp_cap()), int(c.money), int(c.money_cap())])
+		_econ_hour()
+		_bstory()
 		if c.rank_ok():
 			_press()
 
@@ -938,6 +957,9 @@ func _bplay() -> void:
 		return
 	var save := _bsave()
 	var m0 := _m0()
+	_bstory_build()
+	_spend("legion", m0)
+	m0 = _m0()
 	_bneed()
 	_spend("need", m0)
 	m0 = _m0()
@@ -998,6 +1020,8 @@ func _fest_back() -> void:
 
 ## Игры в честь богов (с «Посёлка»): как только можно и хватает (запас на условия уровня — как у лавок, наполовину)
 func _bfest(save: float) -> void:
+	if frugal:
+		return
 	var pr: int = c.fest_price()
 	if c.can_festival() == "" and c.money - float(pr) >= save * (1.0 if _pop_met() else 0.5) and c.festival():
 		rk["fests"] = int(rk["fests"]) + 1
@@ -1025,13 +1049,18 @@ func _bresearch() -> void:
 		order.append(r["id"])
 	for id in order:
 		var r := Defs.research(id)
-		if r.is_empty() or c.research.has(id) or int(r["lvl"]) > c.level or id in B_SKIP:
+		if r.is_empty() or c.research.has(id) or int(r["lvl"]) > c.level or id in B_SKIP or r.has("story"):
 			continue
 		if r.has("after") and not c.research.has(r["after"]):
 			continue
 		var why: String = c.can_research(id)
 		if why == "":
+			var rp_before: float = c.rp
 			c.do_research(id)
+			rk["n_res"] = int(rk.get("n_res", 0)) + 1
+			rk["res_rp"] = float(rk.get("res_rp", 0.0)) + float(r["cost"])
+			rk["res_max_frac"] = maxf(float(rk.get("res_max_frac", 0.0)), float(r["cost"]) / maxf(1.0, rp_before))
+			print("ECONRES t=%.1f lvl=%d %s cost %d (lvl%d) rp before %d -> %d, cap %d, rp/h %.1f" % [t, c.level, id, int(r["cost"]), int(r["lvl"]), int(rp_before), int(c.rp), int(c.rp_cap()), float(c.stats.get("rp_day", 0.0))])
 			continue
 		if why.begins_with("Не помещается"):
 			continue                              # дороже полок — копить бесполезно: сперва другое (полки — в B_KEY)
@@ -1233,6 +1262,8 @@ func _bshops(save: float) -> void:
 		if placed >= 3:
 			return
 	# разнообразие — как у игрока: домам, где счастье ниже 80%, и не больше лавки на дом
+	if frugal:
+		return
 	var shops := 0
 	for id in c.buildings:
 		if c.def(c.buildings[id])["kind"] == "shop":
@@ -1242,7 +1273,9 @@ func _bshops(save: float) -> void:
 			return
 		if not _can_staff(tp) or c.money - float(Defs.B[tp]["cost"]) < save + 150.0:
 			continue
-		var un := hs.filter(func(h): return int(h["pop"]) > 0 and int(h["happy"]) < 80 and not (h["score"] as Dictionary).has(tp))
+		# новая игра (econ): вторая лавка того же вида даёт вполовину — бот, как игрок, берёт вид, которого у дома ещё нет
+		var sub := String(Defs.B[tp].get("sub", ""))
+		var un := hs.filter(func(h): return int(h["pop"]) > 0 and int(h["happy"]) < 80 and not (h["score"] as Dictionary).has(tp) and (c.econ < 1 or not (h.get("needs", {}) as Dictionary).has(sub)))
 		if un.size() < 6:
 			continue
 		if _bshop(tp, un):
@@ -1305,6 +1338,8 @@ func _bmonuments(save: float) -> void:
 func _bdecor(save: float) -> void:
 	if c.money < save + 120.0:
 		return
+	if frugal and c.goals_done.has("lights") and c.goals_done.has("decor5") and c.level >= 1:
+		return                                    # бережливый: украшения — только для первых просьб
 	var hs := _houses()
 	hs.sort_custom(func(x, y): return int(x.get("deco_bonus", 0)) < int(y.get("deco_bonus", 0)))
 	var k := 0
@@ -1317,6 +1352,8 @@ func _bdecor(save: float) -> void:
 		var type := "lamp_post" if n_of("lamp_post") < 3 else ("flowers" if c.unlocked("flowers") else "bench")
 		if k % 2 == 1 and c.unlocked("tree"):
 			type = "tree"
+		if c.econ >= 1 and n_of("lamp_post") >= 3:
+			type = _fresh_decor(h)                # новая игра: одинаковые рядом дают меньше — берёт вид, которого у дома меньше всего
 		# только в полосе за задней стеной (между рядами 3 м) — место под дома соседнего ряда не занимаем
 		var f := City.facing(float(h["yaw"]))
 		var ax := City.axis(float(h["yaw"]))
@@ -1326,6 +1363,100 @@ func _bdecor(save: float) -> void:
 			ring.append(back + ax * s)
 		if not _try_pool(type, back, ring, 5).is_empty():
 			k += 1
+
+
+## Бережливому игроку этаж нужен: условие следующего уровня (дома в N этажей) или просьба об этажах ещё не выполнены,
+## либо повозке некуда везти семьи
+func _floor_needed() -> bool:
+	for e: Dictionary in _needs_left():
+		if String((e["p"] as Array)[0]) == "floors":
+			return true
+	for g in c.active_goals():
+		if String((g["p"] as Array)[0]) == "floors":
+			return true
+	return c.free_fit() < 2
+
+
+## История «Разбойники у арки» (Д9) — по правилам предложения историй (StoryDefs.FIRST_H, GAP_H, lvl, «после Мурки»);
+## игрок соглашается сразу: Легион открыт, Казармы — как только хватает денариев, потом учебный бой (победа с маслом)
+func _bstory() -> void:
+	var sh := float(c.stories["h"])
+	match String(d9["state"]):
+		"wait":
+			if c.level >= 1 and sh >= StoryDefs.FIRST_H:
+				d9 = {"state": "cat", "t": t}              # «Где Мурка?» — первой
+		"cat":
+			if t >= float(d9["t"]) + STORY_H + StoryDefs.GAP_H:
+				d9 = {"state": "build", "t": t}
+				c.research["legion"] = true
+				c.legion.flags["advised"] = true
+				print("ECOND9 t=%.1f lvl=%d story «Разбойники у арки» offered and accepted: Legion opened (money %d)" % [t, c.level, int(c.money)])
+		"fight":
+			if t >= float(d9["t"]) + 0.5:
+				var lg: Legion = c.legion
+				var setup := lg.make_battle(lg.stage_info(0, 0, 0), 1)
+				var m0: float = c.money
+				var out := lg.apply_result(setup, {"win": true, "alive": 3, "total": 3, "timeout": false, "time": 45.0})
+				var r0: float = c.rp
+				c.rp = maxf(c.rp, minf(c.rp_cap(), c.rp + float(StoryDefs.story("bandits")["reward"]["rp"])))
+				rk["rp_req"] = float(rk["rp_req"]) + (c.rp - r0)
+				d9 = {"state": "done", "t": t}
+				print("ECOND9 t=%.1f lvl=%d training battle won (%s), money %+d, story done: +%d rp" % [t, c.level, str(out.get("reward", {})), int(c.money - m0), int(c.rp - r0)])
+
+
+## Казармы для истории: как только хватает (и не в ущерб половине запаса на условия уровня; через 6 ч ждать — хватит и денег)
+func _bstory_build() -> void:
+	if String(d9["state"]) != "build":
+		return
+	var cost := float(Defs.B["barracks"]["cost"])
+	if c.money < cost or (c.money - cost < _bsave() * 0.5 and t < float(d9["t"]) + 6.0):
+		return
+	var b := _bput("barracks", Land.GATE + Vector2(13.0, 16.0), true)
+	if not b.is_empty():
+		var waited := t - float(d9["t"])
+		d9 = {"state": "fight", "t": t}
+		_d9_lvl = c.level
+		print("ECOND9 t=%.1f lvl=%d barracks built for %d (waited %.1f h), money left %d" % [t, c.level, int(cost), waited, int(c.money)])
+
+
+## Есть ли что изучать (без Легиона) и хватает ли очков хоть на что-то; доля казны и полок
+func _econ_hour() -> void:
+	var avail := []
+	for r in Defs.RESEARCH:
+		if c.research.has(r["id"]) or int(r["lvl"]) > c.level or r["id"] in B_SKIP or r.has("story"):
+			continue
+		if r.has("after") and not c.research.has(r["after"]):
+			continue
+		avail.append(float(r["cost"]))
+	if avail.is_empty():
+		rk["idle"] = int(rk.get("idle", 0)) + 1
+	elif c.rp < avail.min():
+		rk["starved"] = int(rk.get("starved", 0)) + 1
+	rk["mfrac"] = float(rk.get("mfrac", 0.0)) + c.money / maxf(1.0, c.money_cap())
+	rk["rfrac"] = float(rk.get("rfrac", 0.0)) + c.rp / maxf(1.0, c.rp_cap())
+
+
+## Виды украшений, которые бот ставит в полосе за домами (небольшие: в полосе 3 м между рядами, не на место домов)
+const B_DECOR := ["flowers", "tree", "bench", "planter", "bush", "lamp_post"]
+
+
+## Вид украшения, которого у дома (в DECOR_RADIUS) меньше всего, — как игрок, который прочёл совет «Разнообразие»
+func _fresh_decor(h: Dictionary) -> String:
+	var best := "bench"
+	var bk := 1 << 20
+	for base: String in B_DECOR:
+		if not c.unlocked(base):
+			continue
+		var n := 0
+		for id in c.buildings:
+			var o: Dictionary = c.buildings[id]
+			if Defs.base_of(o["type"]) == base and (o["pos"] as Vector2).distance_to(h["pos"]) <= Defs.DECOR_RADIUS:
+				n += 1
+		var key := n * 100 - int(Defs.B[base]["deco"])
+		if key < bk:
+			bk = key
+			best = base
+	return best
 
 
 ## Глубина постройки (по следу), м
@@ -1345,6 +1476,8 @@ func _depth(type: String) -> float:
 
 ## Этажи — всем домам, которым можно (полный дом, счастье от 65% / 75%), пока хватает и на условия уровня
 func _bfloors(save: float) -> void:
+	if frugal and not _floor_needed():
+		return
 	for h in _houses():
 		if c.can_buy_floor(h) == "" and c.money - float(c.floor_price(h)) >= save * (1.0 if _pop_met() else 0.3):
 			c.buy_floor(h)
@@ -1393,7 +1526,20 @@ func _press() -> void:
 		"seek": int(rk["seek"]), "poor": 100.0 * int(rk["poor_h"]) / hrs, "mlost": float(rk["money_lost"]), "fests": int(rk["fests"]),
 		"plots": int(rk["plots"]), "earned": float(rk["rp_earned"]), "net": float(rk["net"]),
 		"fnet": float(rk["fest_cost"]) - float(rk["fest_back"])}
+	var hh := maxf(1.0, float(rk["hours"]))
+	var tot_rp := float(rk["rp_earned"]) + float(rk["rp_req"])
+	row["rp_req_pct"] = 100.0 * float(rk["rp_req"]) / maxf(1.0, tot_rp)
+	row["den_req_pct"] = 100.0 * float(rk.get("den_req", 0.0)) / maxf(1.0, float(rk["net"]) + float(rk.get("den_req", 0.0)))
+	row["n_res"] = int(rk.get("n_res", 0))
+	row["h_res"] = hh / maxf(1.0, float(rk.get("n_res", 0)))
+	row["idle"] = 100.0 * float(rk.get("idle", 0)) / hh
+	row["starved"] = 100.0 * float(rk.get("starved", 0)) / hh
+	row["max_frac"] = 100.0 * float(rk.get("res_max_frac", 0.0))
 	rows_out.append(row)
+	print("ECONRANK %s | hours %d | rp passive %d, requests %d (%d%% of rp) | money requests %d vs net taxes %d (%d%%) | researches %d (%.1f h apart) rp spent %d | starved h %d%% | idle-research h %d%% | avg money/cap %d%% | avg rp/cap %d%% | below 150 den %d%% | at cap %d%%" % [Defs.LEVELS[L]["name"], int(hh),
+		int(rk["rp_earned"]), int(rk["rp_req"]), roundi(row["rp_req_pct"]), int(rk.get("den_req", 0.0)), int(rk["net"]), roundi(row["den_req_pct"]),
+		int(rk.get("n_res", 0)), float(row["h_res"]), int(rk.get("res_rp", 0.0)), roundi(row["starved"]), roundi(row["idle"]),
+		roundi(100.0 * float(rk.get("mfrac", 0.0)) / hh), roundi(100.0 * float(rk.get("rfrac", 0.0)) / hh), roundi(row["poor"]), roundi(row["cap"])])
 	var sp: Dictionary = rk["spend"]
 	var parts := []
 	var tot := 0.0
@@ -1414,6 +1560,14 @@ func _press() -> void:
 		int(float(c.stats["income"]) - float(c.stats["upkeep"]))])
 	c.rank_up()
 	_rank_start()
+
+
+## На каком ранге бот поставил Казармы для истории Д9 (−1 — не поставил)
+var _d9_lvl := -1
+
+
+func _d9_rank() -> int:
+	return _d9_lvl
 
 
 ## Итог: минуты по рангам против плана, доля ряда к переходу, казна у предела, пропавшие очки, ожидание семей
@@ -1451,6 +1605,14 @@ func _summary() -> void:
 		var m: float = float(row["min"]) + (TUT_MIN if L == 0 else 0.0)
 		print("PACE TABLE | %s | %.1f | %s | %d%% | %d%% | %d%% | %d | %d | %d | %d |" % [Defs.LEVELS[L]["name"], m, ("%.0f" % B_TARGET[L]) if L < B_TARGET.size() else "-",
 			roundi(row["tier"]), roundi(row["cap"]), roundi(row["lost"]), int(row["wait"]), int(row["fests"]), int(row["fnet"]), int(row["plots"])])
+	# очки и деньги по рангам (этап 2.0): доля очков и денег от просьб, часов между исследованиями, без дела, казна
+	print("ECON TABLE | rank | min | h between researches | researches | rp from requests | idle-research h | money from requests | below 150 den | treasury at cap | dearest research / rp before |")
+	for row: Dictionary in rows_out:
+		var L: int = row["lvl"]
+		print("ECON TABLE | %s | %.1f | %.1f | %d | %d%% | %d%% | %d%% | %d%% | %d%% | %d%% |" % [Defs.LEVELS[L]["name"], float(row["min"]) + (TUT_MIN if L == 0 else 0.0),
+			float(row.get("h_res", 0.0)), int(row.get("n_res", 0)), roundi(float(row.get("rp_req_pct", 0.0))), roundi(float(row.get("idle", 0.0))),
+			roundi(float(row.get("den_req_pct", 0.0))), roundi(row["poor"]), roundi(row["cap"]), roundi(float(row.get("max_frac", 0.0)))])
+	print("ECON D9 | state %s at %.1f h | barracks on rank %s" % [d9["state"], float(d9["t"]), Defs.LEVELS[int(_d9_rank())]["name"] if _d9_rank() >= 0 else "—"])
 	print("PACE BOT end at %.1f h = %.1f min: level %d «%s» pop=%d happy=%d money=%d rp=%d research=%d houses=%d buildings=%d" % [t, t * SEC_H / 60.0,
 		c.level, Defs.LEVELS[c.level]["name"], int(c.stats["pop"]), int(c.stats["happy"]), int(c.money), int(c.rp), c.research.size(), _houses().size(), c.buildings.size()])
 	var kinds := {}

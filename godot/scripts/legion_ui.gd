@@ -173,12 +173,20 @@ func _make_button() -> void:
 	hud.top_btns["legion"] = btn
 
 
-## Медальон виден, когда изучен «Легион»; пока окно ни разу не открывали — светится
+## Медальон виден с начала своей игры: пока Легион не открыт (история «Разбойники у арки», Д9) — серый, с подсказкой,
+## окно не открывается; открыт — обычный, пока окно ни разу не открывали — светится
 func _update_button() -> void:
 	if btn_wrap == null:
 		return
 	var on: bool = lg != null and lg.window_open() and game != null and game.mode != "menu"
-	btn_wrap.visible = on
+	var own: bool = lg != null and game != null and game.mode in ["play", "new"]
+	btn_wrap.visible = on or own
+	var tip := "Легион: походы, войска и чудеса света" if on or lg == null else lg.lock_text()
+	if btn.tooltip_text != tip:
+		btn.tooltip_text = tip
+	if bool(btn.get_meta("grey", false)) != (not on):
+		btn.set_meta("grey", not on)
+		hud._grey(btn.get_node("ic"), not on)
 	if on:
 		hud._set_on(btn, not bool(lg.flags.get("seen", false)) or visible)
 		# обучение, шаг 1: один раз советник рассказывает, с чего начать (стрелка — на Казармы). Только когда окно
@@ -202,7 +210,7 @@ func open(tab_id := "") -> void:
 	if lg == null:
 		return
 	if not lg.window_open():
-		hud.notify(lg.lock_text(), "lock")
+		hud.notify(lg.lock_text(), "lock")         # серый медальон: только строка почему (пустого окна нет)
 		return
 	hud._close_windows()
 	hud._close_tray()

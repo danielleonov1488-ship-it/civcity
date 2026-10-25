@@ -4,7 +4,8 @@ extends RefCounted
 ## три класса жителей (у каждого свой дом), лавки по видам потребностей с дальностью, рабочими и
 ## производительностью, исследования за отдельную валюту, уровни города от Стоянки до Вечного города.
 
-const START_MONEY := 2500
+## Старт — 2000 ден.: на «Стоянке» и «Хуторе» денег впритык (этап 2.3), щедрые награды просьб — с «Деревни»
+const START_MONEY := 2000
 const REFUND := 0.5
 ## денариев за клетку 25 см (16 клеток на м²): мостовая 40 м кистью 2,0 (4 м шириной) ≈ 150 ден.,
 ## тропинка — вчетверо дешевле, площадь — в полтора раза дороже мостовой
@@ -16,6 +17,19 @@ const DENSITY_FREE := 12              # столько соседей в рад�
 const DENSITY_STEP := 2               # −2% за каждого лишнего соседа
 const DENSITY_MAX := 16               # теснота отнимает не больше
 const MISSING_PENALTY := 10           # −10% за каждый вид нужной лавки, которой нет рядом
+## Новая игра (City.econ, решение владельца Q3/Q4 — только в новых городах): внутри одного вида лавок (еда, одежда…)
+## первая даёт бонус целиком, вторая — вполовину, третья и дальше — четверть; одинаковые украшения рядом (один вид,
+## любой облик) — 100% / 60% / 30%: выгоднее разнообразие, чем десять одинаковых светильников
+const SHOP_REPEAT := [1.0, 0.5, 0.25]
+const DECO_REPEAT := [1.0, 0.6, 0.3]
+## Налоги по классам (этап 2.7, как в Town to City; с уровня TAX_LVL — «Деревни»): k — во сколько раз налог,
+## happy — % счастья домам класса (снимается со счастья без потолка, то есть сперва съедает «запас» выше 100%)
+const TAX_SET := [{"name": "Мягкие", "k": 0.8, "happy": 5}, {"name": "Обычные", "k": 1.0, "happy": 0}, {"name": "Высокие", "k": 1.3, "happy": -8}]
+const TAX_LVL := 2
+## История денег и жителей (этап 2.4): последние HIST_N игровых часов; в строке — по порядку HIST_KEYS
+## (налоги, жалованье, содержание, стройка, игры, земля, Легион, награды, прочее, не уместилось в казну, казна, жители, счастье)
+const HIST_N := 48
+const HIST_KEYS := ["tax", "wage", "upkeep", "build", "fest", "land", "legion", "reward", "other", "lost", "money", "pop", "happy"]
 ## Этажи покупает игрок инструментом «Этаж» (U) или в карточке дома (как в Town to City): нужен открытый этаж, полный дом и счастье
 const FLOOR_HAPPY := {2: 65, 3: 75}   # счастье дома, с которого можно надстроить этаж
 const FLOOR_PRICE := {"plebs": {2: 200, 3: 450}, "artisans": {2: 550, 3: 1000}, "patricians": {2: 1800, 3: 1500}}
@@ -85,31 +99,31 @@ const COGNOMENS := ["Максимы", "Руфы", "Галлы", "Флакки", 
 ## открыть исследованиями ПРЕДЫДУЩЕГО уровня или раньше (иначе тупик): p — как у просьб (City.progress_of), n — сколько
 ## text — строка чек-листа, say — то же во фразе советника («нужно 60 жителей, … и склад»)
 const LEVELS := [
-	{"name": "Стоянка", "pop": 0, "happy": 0, "money": 3000, "rp": 300, "rp_h": 1.0, "need": []},
-	{"name": "Хутор", "pop": 20, "happy": 55, "money": 5000, "rp": 400, "rp_h": 2.5, "need": [
+	{"name": "Стоянка", "pop": 0, "happy": 0, "money": 2500, "rp": 250, "rp_h": 1.0, "need": []},
+	{"name": "Хутор", "pop": 20, "happy": 55, "money": 4000, "rp": 500, "rp_h": 2.5, "need": [
 		{"p": ["count", "stall_fruit"], "n": 1, "text": "Фруктовая лавка", "icon": "food", "say": "фруктовая лавка"},
 		{"p": ["count", "scriptorium"], "n": 1, "text": "Скрипторий", "icon": "quill", "say": "скрипторий"}]},
-	{"name": "Деревня", "pop": 60, "happy": 58, "money": 8000, "rp": 600, "rp_h": 3.0, "need": [
+	{"name": "Деревня", "pop": 60, "happy": 58, "money": 8000, "rp": 800, "rp_h": 4.5, "need": [
 		{"p": ["shops", "food"], "n": 3, "text": "Разные лавки еды", "icon": "food", "say": "три разные лавки еды"},
 		{"p": ["count", "warehouse"], "n": 1, "text": "Склад", "icon": "warehouse", "say": "склад"},
 		{"p": ["floors", 2], "n": 2, "text": "Дома в 2 этажа", "icon": "housing", "say": "два дома в 2 этажа"}]},
-	{"name": "Посёлок", "pop": 180, "happy": 60, "money": 12000, "rp": 900, "rp_h": 3.5, "need": [
+	{"name": "Посёлок", "pop": 180, "happy": 60, "money": 12000, "rp": 1100, "rp_h": 5.0, "need": [
 		{"p": ["count", "school"], "n": 1, "text": "Школа", "icon": "teacher", "say": "школа"},
 		{"p": ["count", "house_artisan"], "n": 4, "text": "Дома ремесленников", "icon": "hammer", "say": "четыре дома ремесленников"},
 		{"p": ["count", "fountain"], "n": 1, "text": "Фонтан", "icon": "water", "say": "фонтан"}]},
-	{"name": "Городок", "pop": 320, "happy": 62, "money": 20000, "rp": 1000, "rp_h": 4.0, "need": [
+	{"name": "Городок", "pop": 320, "happy": 62, "money": 20000, "rp": 1300, "rp_h": 5.5, "need": [
 		{"p": ["count", "temple"], "n": 1, "text": "Храм", "icon": "level", "say": "храм"},
 		{"p": ["shops", "clothes"], "n": 2, "text": "Разные лавки одежды", "icon": "clothes", "say": "две разные лавки одежды"},
 		{"p": ["floors", 2], "n": 10, "text": "Дома в 2 этажа", "icon": "housing", "say": "десять домов в 2 этажа"}]},
-	{"name": "Город", "pop": 520, "happy": 64, "money": 30000, "rp": 1600, "rp_h": 5.0, "need": [
+	{"name": "Город", "pop": 520, "happy": 64, "money": 30000, "rp": 1600, "rp_h": 6.0, "need": [
 		{"p": ["count", "house_patrician"], "n": 3, "text": "Домусы патрициев", "icon": "toga", "say": "три домуса патрициев"},
 		{"p": ["count", "library"], "n": 1, "text": "Библиотека", "icon": "bookshelf", "say": "библиотека"},
 		{"p": ["floors", 3], "n": 3, "text": "Дома в 3 этажа", "icon": "housing", "say": "три дома в 3 этажа"}]},
-	{"name": "Большой город", "pop": 800, "happy": 66, "money": 50000, "rp": 2800, "rp_h": 6.0, "need": [
+	{"name": "Большой город", "pop": 800, "happy": 66, "money": 50000, "rp": 2800, "rp_h": 7.0, "need": [
 		{"p": ["count", "forum"], "n": 1, "text": "Форум", "icon": "caesar", "say": "форум"},
 		{"p": ["shops", "services"], "n": 2, "text": "Разные лавки услуг", "icon": "services", "say": "две разные лавки услуг"},
 		{"p": ["cls", "patricians"], "n": 30, "text": "Патриции", "icon": "toga", "say": "30 патрициев"}]},
-	{"name": "Вечный город", "pop": 1200, "happy": 68, "money": 100000, "rp": 6000, "rp_h": 8.0, "need": [
+	{"name": "Вечный город", "pop": 1200, "happy": 68, "money": 100000, "rp": 6000, "rp_h": 9.0, "need": [
 		{"p": ["count", "academy"], "n": 1, "text": "Академия", "icon": "book", "say": "академия"},
 		{"p": ["count", "theatre"], "n": 1, "text": "Театр", "icon": "fun", "say": "театр"},
 		{"p": ["floors", 3], "n": 15, "text": "Дома в 3 этажа", "icon": "housing", "say": "15 домов в 3 этажа"}]},
@@ -240,10 +254,12 @@ const B := {
 		"desc": "Сюда по большой дороге приезжают повозки с переселенцами и товарами."},
 
 	# Легион: военные постройки только открывают рода войск — отряд, прокачка и походы живут в окне «Легион».
-	# unique — одна на город; unlock "bossN" — открывается победой над N-м боссом походов (Legion.boss_name)
-	"barracks": {"kind": "military", "cat": "military", "name": "Казармы", "cost": 1500, "unlock": "legion", "unique": true, "icon": "legion",
-		"desc": "Открывает легионеров — щит и меч, держат строй. Отряд, прокачка и походы — в окне «Легион»."},
-	"range": {"kind": "military", "cat": "military", "name": "Стрельбище", "cost": 1200, "unlock": "archery", "unique": true, "icon": "arrow",
+	# unique — одна на город; unlock "bossN" — открывается победой над N-м боссом походов (Legion.boss_name).
+	# Казармы — с «Хутора», историей «Разбойники у арки» (Д9): 400 вместо прежних 1500 — встают на первые деньги «Деревни»,
+	# не отнимая школу и дома ремесленников (бот темпа)
+	"barracks": {"kind": "military", "cat": "military", "name": "Казармы", "cost": 400, "unlock": "legion", "unique": true, "icon": "legion",
+		"desc": "Открывает легионеров — щит и меч, держат строй. Лучше всего — в военном квартале у арки. Отряд, прокачка и походы — в окне «Легион»."},
+	"range": {"kind": "military", "cat": "military", "name": "Стрельбище", "cost": 800, "unlock": "archery", "unique": true, "icon": "arrow",
 		"desc": "Мишени и навес для стрелков: открывает лучников. Прокачка — в окне «Легион»."},
 	"spearcamp": {"kind": "military", "cat": "military", "name": "Лагерь копейщиков", "cost": 1800, "unlock": "boss1", "unique": true, "icon": "tent",
 		"desc": "Палатки и чучела для учёбы: открывает копейщиков в тяжёлой броне — грозу зверей и великанов."},
@@ -351,6 +367,8 @@ const B := {
 		"desc": "Коновязь с поилкой и охапкой сена, у неё жуёт серый ослик. Награда за историю «Ослик возчика»."},
 	"balcony": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Балкон с бельём", "cost": 40, "deco": 4, "wall": true, "unlock": "s_crowded", "story": true,
 		"desc": "Деревянный балкон на втором этаже: на верёвке сохнет бельё, на перилах — ковёр, в углу — цветы. Вешается на дом в 2–3 этажа. Награда за историю горожан «Тесно в доме»."},
+	"legionpost": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Сторожевой пост", "cost": 60, "deco": 5, "light": true, "unlock": "s_bandits", "story": true,
+		"desc": "Знамя легиона с золотым навершием, стойка с копьями, щит и жаровня — дозор у дороги, чтобы разбойникам неповадно было. Ночью горит огонь. Награда за историю горожан «Разбойники у арки»."},
 	# редкие облики — награды «Заказов старосты» (StoryOrders, unlock «o_…»): в витрине меню их нет
 	"lamp_post_4": {"kind": "decor", "cat": "decor", "sub": "light", "base": "lamp_post", "look": 3, "name": "Фонарь с двумя кашпо", "cost": 25, "deco": 4, "light": true, "unlock": "o_well", "story": true,
 		"desc": "Фонарь на столбе, по обе стороны перекладины — кашпо с цветами. Ночью светит на улицу. Награда старосты."},
@@ -380,9 +398,12 @@ const CAT_SHORT := {"housing": "Жильё", "commerce": "Лавки", "farming"
 # ---------- исследования ----------
 ## Каждый уровень города открывает свой раздел. unlock — что даёт (постройку открывает её ключ в B.unlock).
 ## Цены рядов подобраны ботом темпа (test_pace -- bot): к новому уровню изучено около 70–90% своего ряда, а самое
-## дорогое в ряду помещается на полки этого уровня (с «Новыми полками» — вдвое больше, с Городка)
+## дорогое в ряду помещается на полки этого уровня (с «Новыми полками» — вдвое больше, с Городка).
+## Кривая очков v2 (этап 2.1, решение владельца Q1): на «Хуторе» исследование — раз в ~1,8 мин, а не раз в минуту;
+## Пекарня и Сапожник — в ряду «Деревни»; самое дорогое в ряду «Деревни» — четверть полок, а не половина.
+## story — исследование открывает история горожан (без очков): в свитке оно серое, изучить нельзя
 const RESEARCH := [
-	# первые исследования дешёвые: просьбы до хутора дают ~165 очков
+	# первые исследования дешёвые: просьбы до хутора дают ~65 очков
 	{"id": "stall_veg", "lvl": 0, "name": "Овощная лавка", "cost": 20, "icon": "veg"},
 	{"id": "stall_fish", "lvl": 0, "name": "Рыбная лавка", "cost": 30, "icon": "fish"},
 	{"id": "reach1", "lvl": 0, "name": "Больший охват", "cost": 80, "icon": "arrow", "after": "stall_veg",
@@ -392,31 +413,36 @@ const RESEARCH := [
 	{"id": "deco_trees", "lvl": 0, "name": "Деревья и кусты", "cost": 15, "icon": "tree"},
 	{"id": "musicians", "lvl": 0, "name": "Уличные музыканты", "cost": 40, "icon": "lyre"},
 
-	{"id": "floor2", "lvl": 1, "name": "Второй жилой этаж", "cost": 50, "icon": "housing",
+	{"id": "floor2", "lvl": 1, "name": "Второй жилой этаж", "cost": 60, "icon": "housing",
 		"desc": "Открывает инструмент «Этаж» (справа внизу, клавиша U): второй этаж можно купить дому, когда он полон, а счастье в нём не ниже 65%. Туда въедет ещё одна семья."},
-	{"id": "weaver", "lvl": 1, "name": "Ткацкая лавка", "cost": 40, "icon": "wool"},
-	{"id": "warehouse", "lvl": 1, "name": "Склад", "cost": 50, "icon": "warehouse"},
-	{"id": "butcher", "lvl": 1, "name": "Мясная лавка", "cost": 60, "icon": "meat", "after": "warehouse"},
-	{"id": "cobbler", "lvl": 1, "name": "Сапожник", "cost": 60, "icon": "boots", "after": "weaver"},
-	{"id": "bakery", "lvl": 1, "name": "Пекарня", "cost": 80, "icon": "bread", "after": "warehouse"},
-	{"id": "fountain", "lvl": 1, "name": "Фонтаны", "cost": 60, "icon": "water"},
-	{"id": "animals", "lvl": 1, "name": "Животные: утки, лебеди, овцы", "cost": 20, "icon": "swan"},
-	{"id": "scribes1", "lvl": 1, "name": "Ученики писцов", "cost": 30, "icon": "quill",
+	{"id": "weaver", "lvl": 1, "name": "Ткацкая лавка", "cost": 50, "icon": "wool"},
+	{"id": "warehouse", "lvl": 1, "name": "Склад", "cost": 60, "icon": "warehouse"},
+	{"id": "butcher", "lvl": 1, "name": "Мясная лавка", "cost": 80, "icon": "meat", "after": "warehouse"},
+	{"id": "fountain", "lvl": 1, "name": "Фонтаны", "cost": 90, "icon": "water"},
+	{"id": "animals", "lvl": 1, "name": "Животные: утки, лебеди, овцы", "cost": 40, "icon": "swan"},
+	{"id": "scribes1", "lvl": 1, "name": "Ученики писцов", "cost": 40, "icon": "quill",
 		"desc": "За писцами садятся ученики: каждый скрипторий даёт 3 очка исследований в час вместо 2."},
+	# Легион — с «Хутора», но не за очки: его открывает история «Разбойники у арки» (решение владельца Д9)
+	{"id": "legion", "lvl": 1, "name": "Легион", "cost": 0, "icon": "legion", "story": "bandits",
+		"desc": "Открывает Казармы и окно «Легион»: отряд идёт походом против разбойников, зверей и чудовищ, добывает Славу и денарии. Новые провинции открываются по мере роста города."},
 
-	{"id": "artisans", "lvl": 2, "name": "Класс ремесленников", "cost": 290, "icon": "hammer",
+	{"id": "artisans", "lvl": 2, "name": "Класс ремесленников", "cost": 180, "icon": "hammer",
 		"desc": "Открывает дома ремесленников. Им нужны еда, одежда и развлечения."},
-	{"id": "dice", "lvl": 2, "name": "Игра в кости", "cost": 160, "icon": "dice"},
-	{"id": "barber", "lvl": 2, "name": "Цирюльня", "cost": 210, "icon": "razor"},
-	{"id": "thermopolium", "lvl": 2, "name": "Термополий", "cost": 250, "icon": "meal"},
-	{"id": "school", "lvl": 2, "name": "Школа", "cost": 290, "icon": "teacher"},
+	{"id": "cobbler", "lvl": 2, "name": "Сапожник", "cost": 120, "icon": "boots", "after": "weaver"},
+	{"id": "bakery", "lvl": 2, "name": "Пекарня", "cost": 130, "icon": "bread", "after": "warehouse"},
+	{"id": "dice", "lvl": 2, "name": "Игра в кости", "cost": 180, "icon": "dice"},
+	{"id": "barber", "lvl": 2, "name": "Цирюльня", "cost": 200, "icon": "razor"},
+	{"id": "thermopolium", "lvl": 2, "name": "Термополий", "cost": 220, "icon": "meal"},
+	{"id": "school", "lvl": 2, "name": "Школа", "cost": 180, "icon": "teacher"},
 	{"id": "grove", "lvl": 2, "name": "Оливковая роща", "cost": 160, "icon": "olive"},
-	{"id": "oilshop", "lvl": 2, "name": "Масляная лавка", "cost": 220, "icon": "amphora", "after": "grove"},
-	{"id": "deco_stone", "lvl": 2, "name": "Каменные украшения", "cost": 180, "icon": "mona"},
+	{"id": "oilshop", "lvl": 2, "name": "Масляная лавка", "cost": 200, "icon": "amphora", "after": "grove"},
+	{"id": "deco_stone", "lvl": 2, "name": "Каменные украшения", "cost": 200, "icon": "mona"},
 	{"id": "store1", "lvl": 2, "name": "Больше носильщиков", "cost": 220, "icon": "warehouse", "after": "warehouse",
 		"desc": "Склад разносит товары вдвое дальше."},
+	# лучники — с «Деревни»: лес (с «Хутора») просит лучника уже во втором бою — «пращники в кустах»
+	{"id": "archery", "lvl": 2, "name": "Стрельбище", "cost": 200, "icon": "arrow", "after": "legion", "desc": "Лучники для Легиона: бьют издалека и снимают вражеских стрелков."},
 
-	{"id": "floor3", "lvl": 3, "name": "Третий жилой этаж", "cost": 490, "icon": "housing", "after": "floor2",
+	{"id": "floor3", "lvl": 3, "name": "Третий жилой этаж", "cost": 450, "icon": "housing", "after": "floor2",
 		"desc": "Третий этаж — тем же инструментом «Этаж» (U): полному дому со счастьем не ниже 75%."},
 	{"id": "dyer", "lvl": 3, "name": "Красильня", "cost": 360, "icon": "cape"},
 	{"id": "potter", "lvl": 3, "name": "Гончарная", "cost": 320, "icon": "pottery"},
@@ -427,11 +453,6 @@ const RESEARCH := [
 	{"id": "vault1", "lvl": 3, "name": "Новое хранилище денег", "cost": 370, "icon": "money", "desc": "Казна вмещает вдвое больше."},
 	{"id": "scribes2", "lvl": 3, "name": "Мастерская писцов", "cost": 330, "icon": "quill", "after": "scribes1",
 		"desc": "Скрипторий даёт 4 очка исследований в час."},
-	# Легион — с «Посёлка» (решение владельца Д5): первая провинция «Лес разбойников» открыта сразу
-	{"id": "legion", "lvl": 3, "name": "Легион", "cost": 480, "icon": "legion",
-		"desc": "Открывает Казармы и окно «Легион»: отряд идёт походом против разбойников, зверей и чудовищ, добывает Славу и денарии. Новые провинции открываются по мере роста города."},
-	# лучники — тоже с «Посёлка» (этап 3b): в лесу у них свои бои — «пращники в кустах — берите лучника»
-	{"id": "archery", "lvl": 3, "name": "Стрельбище", "cost": 490, "icon": "arrow", "after": "legion", "desc": "Лучники для Легиона: бьют издалека и снимают вражеских стрелков."},
 
 	{"id": "patricians", "lvl": 4, "name": "Класс патрициев", "cost": 750, "icon": "toga",
 		"desc": "Открывает домусы патрициев. Им нужно всё: еда, одежда, развлечения, услуги и товары."},
@@ -481,67 +502,69 @@ const PALETTE := [
 ## p: [вид, параметр] — road, houses, fam, count <тип>, kind <вид>, pop, happy, cls <класс>, floors <этажей>,
 ## fed <потребность>, research, shops, near <тип> <класс>, store, light
 const REQUESTS := [
-	# первые просьбы — до хутора и деревни — лёгкие и щедрые на очки: город растёт быстро
-	{"id": "road1", "who": "advisor", "text": "Проложите мостовую от станции", "p": ["road"], "need": 40, "money": 100, "rp": 5, "icon": "road",
+	# первые просьбы — до хутора и деревни — лёгкие, но скупые на очки и денарии (этап 2.1/2.3: исследование на «Хуторе» —
+	# раз в ~1,8 мин, денег впритык); щедрые денежные награды — с «Деревни» (просьбы «Деревни» — на ~40% щедрее прежнего:
+	# там надо разом и школу, и дома ремесленников, и Казармы, и этажи)
+	{"id": "road1", "who": "advisor", "text": "Проложите мостовую от станции", "p": ["road"], "need": 40, "money": 50, "rp": 0, "icon": "road",
 		"hint": "Выберите «Мостовую» слева внизу и ведите кисть с зажатой левой кнопкой мыши от площади у станции."},
-	{"id": "houses3", "who": "advisor", "text": "Постройте 3 дома у дороги", "p": ["houses"], "need": 3, "money": 150, "rp": 10, "tool": "house_pleb", "icon": "housing",
+	{"id": "houses3", "who": "advisor", "text": "Постройте 3 дома у дороги", "p": ["houses"], "need": 3, "money": 50, "rp": 5, "tool": "house_pleb", "icon": "housing",
 		"hint": "Дом ставится фасадом к дороге. Повозка привезёт семьи по большой дороге."},
-	{"id": "fam3", "who": "advisor", "text": "Заселите три семьи", "p": ["fam"], "need": 3, "money": 100, "rp": 10, "icon": "family",
+	{"id": "fam3", "who": "advisor", "text": "Заселите три семьи", "p": ["fam"], "need": 3, "money": 50, "rp": 5, "icon": "family",
 		"hint": "Семьи ждут на площади у станции. Нажмите на значок семьи слева вверху и выберите им дом."},
-	{"id": "fruit", "who": "plebs", "text": "Нам бы поесть: фруктовая лавка", "p": ["count", "stall_fruit"], "need": 1, "money": 100, "rp": 10, "tool": "stall_fruit", "icon": "food",
+	{"id": "fruit", "who": "plebs", "text": "Нам бы поесть: фруктовая лавка", "p": ["count", "stall_fruit"], "need": 1, "money": 40, "rp": 5, "tool": "stall_fruit", "icon": "food",
 		"hint": "Лавка кормит ближайшие дома в своей дальности. Чем больше разных лавок рядом, тем счастливее дом."},
-	{"id": "scriptorium", "who": "advisor", "text": "Постройте скрипторий", "p": ["count", "scriptorium"], "need": 1, "money": 100, "rp": 20, "tool": "scriptorium", "icon": "quill",
+	{"id": "scriptorium", "who": "advisor", "text": "Постройте скрипторий", "p": ["count", "scriptorium"], "need": 1, "money": 50, "rp": 10, "tool": "scriptorium", "icon": "quill",
 		"hint": "Скрипторий даёт очки исследований — за них открываются новые постройки."},
-	{"id": "research1", "who": "advisor", "text": "Изучите что-нибудь", "p": ["research"], "need": 1, "money": 150, "rp": 20, "icon": "research",
+	{"id": "research1", "who": "advisor", "text": "Изучите что-нибудь", "p": ["research"], "need": 1, "money": 50, "rp": 10, "icon": "research",
 		"hint": "Нажмите на свиток вверху справа — откроется меню исследований. Очки исследований дают скрипторий, школа и библиотека."},
-	{"id": "lights", "who": "plebs", "text": "Ночью темно: 3 фонаря на столбах", "p": ["count", "lamp_post"], "need": 3, "money": 120, "rp": 15, "tool": "lamp_post", "icon": "candle",
+	{"id": "lights", "who": "plebs", "text": "Ночью темно: 3 фонаря на столбах", "p": ["count", "lamp_post"], "need": 3, "money": 40, "rp": 10, "tool": "lamp_post", "icon": "candle",
 		"unlock": "q_lights", "reward": "факелы и фонари на стены, светильники",
 		"hint": "Фонари радуют дома вокруг и светят ночью. Поставьте их вдоль улиц."},
-	{"id": "decor5", "who": "plebs", "text": "Красоты хочется: 5 украшений", "p": ["kind", "decor"], "need": 5, "money": 120, "rp": 15, "icon": "flower",
+	{"id": "decor5", "who": "plebs", "text": "Красоты хочется: 5 украшений", "p": ["kind", "decor"], "need": 5, "money": 40, "rp": 10, "icon": "flower",
 		"unlock": "q_garden", "reward": "цветы на стены, плетень, стог сена",
 		"hint": "Украшения дают дому очки красоты: +1% счастья за каждые 2 очка (у плебеев до +12%). Ставьте их в промежутках между домами."},
-	{"id": "fed6", "who": "plebs", "text": "Еды на всех: 6 сытых домов", "p": ["fed", "food"], "need": 6, "money": 150, "rp": 20, "icon": "food",
+	{"id": "fed6", "who": "plebs", "text": "Еды на всех: 6 сытых домов", "p": ["fed", "food"], "need": 6, "money": 60, "rp": 10, "icon": "food",
 		"hint": "Дом сыт, если рядом лавка с едой и в ней хватает работников. Откройте «Обзор» (глаз вверху справа) и выберите «Еда» — красные дома без еды."},
-	{"id": "hamlet", "who": "advisor", "text": "Станьте хутором", "p": ["rank", 1], "need": 4, "money": 200, "rp": 40, "icon": "level",
+	{"id": "hamlet", "who": "advisor", "text": "Станьте хутором", "p": ["rank", 1], "need": 4, "money": 150, "rp": 25, "icon": "level",
 		"hint": RANK_HINT},
-	{"id": "scriptorium2", "who": "advisor", "text": "Второй скрипторий", "p": ["count", "scriptorium"], "need": 2, "money": 150, "rp": 20, "tool": "scriptorium", "icon": "quill",
+	{"id": "scriptorium2", "who": "advisor", "text": "Второй скрипторий", "p": ["count", "scriptorium"], "need": 2, "money": 80, "rp": 15, "tool": "scriptorium", "icon": "quill",
 		"hint": "На хуторе можно держать два скриптория, в деревне — три. Больше скрипториев — быстрее исследования."},
-	{"id": "market", "who": "plebs", "text": "Рынок: 4 разные лавки", "p": ["shops"], "need": 4, "money": 220, "rp": 40, "icon": "commerce",
+	{"id": "market", "who": "plebs", "text": "Рынок: 4 разные лавки", "p": ["shops"], "need": 4, "money": 140, "rp": 25, "icon": "commerce",
 		"unlock": "q_market", "reward": "телега, корзины и амфоры",
 		"hint": "Разные лавки рядом делают дома счастливее. Откройте новые в исследованиях."},
-	{"id": "floor2", "who": "plebs", "text": "Нам тесно: дом в 2 этажа", "p": ["floors", 2], "need": 1, "money": 250, "rp": 50, "icon": "housing",
+	{"id": "floor2", "who": "plebs", "text": "Нам тесно: дом в 2 этажа", "p": ["floors", 2], "need": 1, "money": 250, "rp": 30, "icon": "housing",
 		"hint": "Изучите «Второй жилой этаж». Потом нажмите «Этаж» справа внизу (или U) и щёлкните по дому со стрелкой — это полный дом со счастьем от 65%."},
-	{"id": "pop40", "who": "advisor", "text": "Соберите 40 жителей", "p": ["pop"], "need": 40, "money": 250, "rp": 40, "icon": "family",
+	{"id": "pop40", "who": "advisor", "text": "Соберите 40 жителей", "p": ["pop"], "need": 40, "money": 140, "rp": 25, "icon": "family",
 		"hint": POP_HINT},
-	{"id": "fountain4", "who": "plebs", "text": "Вода рядом: фонтан у 4 домов", "p": ["near", "fountain", "plebs"], "need": 4, "money": 300, "rp": 50, "icon": "water",
+	{"id": "fountain4", "who": "plebs", "text": "Вода рядом: фонтан у 4 домов", "p": ["near", "fountain", "plebs"], "need": 4, "money": 200, "rp": 30, "icon": "water",
 		"hint": "Изучите «Фонтаны» и поставьте фонтан посреди домов плебеев."},
-	{"id": "village", "who": "advisor", "text": "Станьте деревней", "p": ["rank", 2], "need": 5, "money": 400, "rp": 80, "icon": "level",
+	{"id": "village", "who": "advisor", "text": "Станьте деревней", "p": ["rank", 2], "need": 5, "money": 800, "rp": 60, "icon": "level",
 		"hint": RANK_HINT},
-	{"id": "store", "who": "plebs", "text": "Склад и мясная лавка", "p": ["store"], "need": 2, "money": 200, "rp": 40, "icon": "warehouse",
+	{"id": "store", "who": "plebs", "text": "Склад и мясная лавка", "p": ["store"], "need": 2, "money": 300, "rp": 40, "icon": "warehouse",
 		"parts": [{"p": ["count", "warehouse"], "n": 1, "tool": "warehouse", "text": "Склад", "icon": "warehouse"},
 			{"p": ["count", "butcher"], "n": 1, "tool": "butcher", "text": "Мясная лавка", "icon": "meat"}],
 		"hint": "Склад хранит товары и разносит их лавкам вокруг себя. Мясная лавка берёт мясо со склада — ставьте её в охвате склада: с лавкой в руках дома и лавки в охвате подсвечиваются. Обе открываются исследованиями — сначала «Склад», потом «Мясная лавка»."},
-	{"id": "happy60", "who": "advisor", "text": "Счастье города 60%", "p": ["happy"], "need": 60, "money": 300, "rp": 60, "icon": "happy",
+	{"id": "happy60", "who": "advisor", "text": "Счастье города 60%", "p": ["happy"], "need": 60, "money": 300, "rp": 50, "icon": "happy",
 		"hint": "Новые семьи едут только в город, где счастье не ниже 60%. Разные лавки рядом с домами, украшения и памятники поднимают счастье."},
-	{"id": "pop100", "who": "advisor", "text": "Соберите 100 жителей", "p": ["pop"], "need": 100, "money": 400, "rp": 80, "icon": "family",
+	{"id": "pop100", "who": "advisor", "text": "Соберите 100 жителей", "p": ["pop"], "need": 100, "money": 500, "rp": 60, "icon": "family",
 		"hint": POP_HINT},
-	{"id": "artisan", "who": "advisor", "text": "Постройте дом ремесленников", "p": ["count", "house_artisan"], "need": 1, "money": 300, "rp": 60, "tool": "house_artisan", "icon": "hammer",
+	{"id": "artisan", "who": "advisor", "text": "Постройте дом ремесленников", "p": ["count", "house_artisan"], "need": 1, "money": 400, "rp": 50, "tool": "house_artisan", "icon": "hammer",
 		"hint": "Дом ремесленников открывает исследование «Класс ремесленников». Ставится, как плебейский, — фасадом к дороге. Ремесленникам нужны рядом еда, одежда и развлечения."},
-	{"id": "art12", "who": "artisans", "text": "Поселите 12 ремесленников", "p": ["cls", "artisans"], "need": 12, "money": 350, "rp": 70, "icon": "hammer",
+	{"id": "art12", "who": "artisans", "text": "Поселите 12 ремесленников", "p": ["cls", "artisans"], "need": 12, "money": 450, "rp": 60, "icon": "hammer",
 		"hint": "Ремесленники приезжают в повозке, когда есть свободные дома ремесленников. Постройте ещё таких домов у дорог, а рядом — еду, одежду и развлечения: тогда семьи едут охотно."},
-	{"id": "clothes8", "who": "artisans", "text": "Одежду всем: 8 домов с одеждой", "p": ["fed", "clothes"], "need": 8, "money": 380, "rp": 70, "icon": "clothes",
+	{"id": "clothes8", "who": "artisans", "text": "Одежду всем: 8 домов с одеждой", "p": ["fed", "clothes"], "need": 8, "money": 450, "rp": 60, "icon": "clothes",
 		"hint": "Дом одет, если рядом лавка одежды и в ней хватает работников. Откройте «Обзор» (глаз вверху справа) → «Одежда»: красные дома без одежды — поставьте лавку одежды между ними."},
-	{"id": "floor2x5", "who": "plebs", "text": "Пять домов в 2 этажа", "p": ["floors", 2], "need": 5, "money": 400, "rp": 80, "icon": "housing",
+	{"id": "floor2x5", "who": "plebs", "text": "Пять домов в 2 этажа", "p": ["floors", 2], "need": 5, "money": 500, "rp": 60, "icon": "housing",
 		"hint": "Этаж надстраивают полному дому, где счастье от 65%. Нажмите «Этаж» справа внизу (или U) и ведите мышью вдоль улицы — этаж получат все готовые дома под курсором."},
-	{"id": "temple", "who": "artisans", "text": "Постройте храм", "p": ["count", "temple"], "need": 1, "money": 800, "rp": 100, "tool": "temple", "icon": "level",
+	{"id": "temple", "who": "artisans", "text": "Постройте храм", "p": ["count", "temple"], "need": 1, "money": 800, "rp": 150, "tool": "temple", "icon": "level",
 		"hint": "Храм открывает исследование «Храм» (уровень «Посёлок»). Это большой памятник: радует все дома в своём охвате — ставьте его посреди кварталов."},
-	{"id": "school", "who": "artisans", "text": "Детям нужна школа", "p": ["count", "school"], "need": 1, "money": 450, "rp": 100, "tool": "school", "icon": "teacher",
+	{"id": "school", "who": "artisans", "text": "Детям нужна школа", "p": ["count", "school"], "need": 1, "money": 450, "rp": 120, "tool": "school", "icon": "teacher",
 		"hint": "Школу открывает исследование «Школа» (уровень «Деревня»). Она даёт очки исследований, а работают в ней ремесленники — без них школа стоит."},
-	{"id": "pop300", "who": "advisor", "text": "Соберите 300 жителей", "p": ["pop"], "need": 300, "money": 900, "rp": 150, "icon": "family",
+	{"id": "pop300", "who": "advisor", "text": "Соберите 300 жителей", "p": ["pop"], "need": 300, "money": 900, "rp": 200, "icon": "family",
 		"hint": POP_HINT},
-	{"id": "patrician", "who": "advisor", "text": "Постройте домус патрициев", "p": ["count", "house_patrician"], "need": 1, "money": 800, "rp": 150, "tool": "house_patrician", "icon": "toga",
+	{"id": "patrician", "who": "advisor", "text": "Постройте домус патрициев", "p": ["count", "house_patrician"], "need": 1, "money": 800, "rp": 250, "tool": "house_patrician", "icon": "toga",
 		"hint": "Домус открывает исследование «Класс патрициев» (уровень «Городок»). Патрициям нужно рядом всё: еда, одежда, развлечения, услуги и товары."},
-	{"id": "floor3", "who": "artisans", "text": "Дом в 3 этажа", "p": ["floors", 3], "need": 1, "money": 700, "rp": 140, "icon": "housing",
+	{"id": "floor3", "who": "artisans", "text": "Дом в 3 этажа", "p": ["floors", 3], "need": 1, "money": 700, "rp": 200, "icon": "housing",
 		"hint": "Изучите «Третий жилой этаж». Третий этаж получает дом в 2 этажа, когда он полон и счастье в нём от 75%: «Этаж» справа внизу (или U)."},
 	{"id": "pat10", "who": "patricians", "text": "Поселите 10 патрициев", "p": ["cls", "patricians"], "need": 10, "money": 900, "rp": 180, "icon": "toga",
 		"hint": "Патриции приезжают в свободные домусы, если городу хорошо. Постройте ещё домусов и окружите их лавками всех пяти видов."},
@@ -577,6 +600,8 @@ static func unlock_text(id: String) -> String:
 			if String(R["id"]) == id.substr(7):
 				return "всеми 30 звёздами Легиона в провинции «%s»" % R["name"]
 	var r := research(id)
+	if r.has("story"):
+		return "в истории горожан «%s»" % String(StoryDefs.story(String(r["story"])).get("title", r["name"]))
 	if not r.is_empty():
 		return "исследованием «%s»" % r["name"]
 	for q in REQUESTS:
@@ -597,6 +622,8 @@ static func unlock_short(id: String) -> String:
 	if id.begins_with("trophy:"):
 		return "30 звёзд похода"
 	var r := research(id)
+	if r.has("story"):
+		return "История горожан"
 	if not r.is_empty():
 		return r["name"]
 	for q in REQUESTS:

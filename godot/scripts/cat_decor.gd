@@ -64,6 +64,7 @@ static func _decor(b: Bp, type: String) -> void:
 		"rosearch": _rosearch(b)
 		"donkeypost": _donkeypost(b)
 		"balcony": _balcony(b)
+		"legionpost": _legionpost(b)
 
 
 # ---------- помощники ----------
@@ -529,6 +530,30 @@ static func _trophy_cart(b: Bp) -> void:
 	b.add("SM_Bld_Ornament_09", Vector3(-1.35, 3.12, -0.45), 0.0, 0.9)
 	b.add("SM_Prop_Sack_Stack_01", Vector3(1.15, 0.12, 0.55), 0.3, 0.5)
 	b.door = Vector3(0, 0, 1.4)
+
+
+## Награда истории «Разбойники у арки»: дозорный пост у дороги — знамя легиона с золотым навершием (как у телеги атамана),
+## стойка с копьями, прислонённый щит и жаровня с огнём (ночью светит)
+static func _legionpost(b: Bp) -> void:
+	# знамя на каменной тумбе посередине сзади, стойка с копьями сбоку, щит у древка, жаровня впереди — всё видно спереди
+	b.add("SM_Prop_Plinth_03", Vector3(-0.35, 0, -0.35), 0.0, 0.6)
+	_sx(b, "SM_Prop_Pole_02", Vector3(-0.35, 0.1, -0.35), 0.0, Vector3(0.9, 0.95, 0.9))
+	_sx(b, "SM_Prop_Beam_01", Vector3(-0.85, 2.64, -0.28), 0.0, Vector3(0.42, 0.55, 0.55))
+	b.add("SM_Prop_Banner_01_C", Vector3(-0.35, 2.6, -0.37), 0.0, 0.85)
+	b.parts.append(["SM_Bld_Ornament_09", b.base * Transform3D(Basis.from_scale(Vector3.ONE * 0.9), Vector3(-0.35, 3.1, -0.35)), {"tint": GILT}])
+	CatMilitary._rack(b, Vector3(0.62, 0, -0.42), -0.5, 1, 0.38)
+	CatMilitary._lean_shield(b, Vector3(-0.62, 0, 0.12), 0.35, "SM_Wep_Shield_01", 0.28, 0.55)
+	b.add("SM_Prop_Brazier_03", Vector3(0.42, 0, 0.42), 0.0, 0.72)
+	b.add("SM_Prop_Brazier_03_Insert_01", Vector3(0.42, 0, 0.42), 0.0, 0.72)
+	_fire(b, Vector3(0.42, 0.62, 0.42), 0.07, 5, 0.08, 0.05)
+	b.light(Vector3(0.42, 0.8, 0.42))
+	b.smoke.append(Vector3(0.42, 0.8, 0.42))
+	# трава и цветы у подножия
+	b.add("SM_Env_Grass_02", Vector3(-0.85, 0, -0.6), _yaw(b), 0.55)
+	b.add("SM_Env_Grass_01", Vector3(0.95, 0, 0.1), _yaw(b), 0.6)
+	b.add("SM_Env_Flowers_0%d" % (1 + b.rng.randi() % 5), Vector3(-0.1, 0, 0.6), _yaw(b), 1.1)
+	_ground_fp(b, 2.1, 1.7)
+	b.door = Vector3(0, 0, 1.1)
 
 
 # ---------- огонь, знамёна ----------
