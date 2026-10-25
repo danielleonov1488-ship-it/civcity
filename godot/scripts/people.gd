@@ -1379,8 +1379,8 @@ const RUN := 2.3                     # дети бегают (м/с)
 const TALK_ANIMS := ["Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Interact", "Interact_M", "Spell_Simple_Idle", "Spell_Simple_Idle_M"]
 const LISTEN_ANIMS := ["Listen", "Listen_M", "Listen", "Listen_M", "Idle"]
 const SOLO_ANIMS := ["Idle", "Look_Around", "Look_Around_M", "Idle"]
-const WATCH := ["musicians", "dice", "mimes", "puppets"]                          # смотрят представление
-const ENTER := ["odeon", "theatre", "balnea", "baths", "medic", "taberna", "fullonica", "dyer"]   # заходят внутрь
+const WATCH := ["musicians", "dice", "mimes", "puppets", "ludus"]                 # смотрят представление
+const ENTER := ["odeon", "theatre", "balnea", "baths", "medic", "taberna", "fullonica", "dyer", "thermae"]   # заходят внутрь
 const STAND := ["Idle_Talking", "Interact", "Idle"]                    # продавцы, что стоят и могут повернуться
 
 
@@ -2048,6 +2048,8 @@ func _watch_pick(r: Dictionary) -> void:
 		opts += ["Dance", "Listen"]
 	elif t == "dice":
 		opts += ["Look_Around", "Laugh"]
+	elif t == "ludus":
+		opts += ["Look_Around", "Listen", "Dance"]          # лудус: болеют за гладиаторов
 	var a: String = opts[rng.randi() % opts.size()]
 	_seq(r, [[a, rng.randf_range(2.5, 5.0) if a != "Laugh" else 2.5]])
 
@@ -2839,15 +2841,20 @@ func _step(r: Dictionary, dt: float) -> void:
 			c.play("Walk_Loop")
 			r["fade"] = 0.0             # место на улице освободилось — проявляется, а не выскакивает
 			c.set_alpha(0.0)
+	var p: Vector2 = r["p"]
+	var sf := 1.0
+	if land.up_n > 0:
+		var pc := land.cell(p)
+		if land.is_up(land.idx(pc.x, pc.y)):
+			sf = Defs.STREET_WALK                # по каменным плитам ходят быстрее (этап 5.7) — и шагают чаще: ноги не скользят
 	if c:
-		c.anim.speed_scale = game.speed * float(r["speed"])
+		c.anim.speed_scale = game.speed * float(r["speed"]) * sf
 		if float(r["fade"]) < 1.0:
 			r["fade"] = minf(1.0, float(r["fade"]) + dt / 0.6)
 			c.set_alpha(float(r["fade"]))
-	var p: Vector2 = r["p"]
 	var to := path[i] - p
 	var dist := to.length()
-	var mv := WALK * float(r["speed"]) * dt
+	var mv := WALK * float(r["speed"]) * sf * dt
 	while dist <= mv and i < path.size() - 1:
 		p = path[i]
 		mv -= dist

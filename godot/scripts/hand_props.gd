@@ -19,6 +19,8 @@ const DEF := {
 	"censer": {"mesh": "SM_Prop_Senser_02", "hand": "RightHand", "h": 0.3, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.02, 0.04), "anchor": "top"},
 	"spear": {"mesh": "SM_Wep_Spear_01", "hand": "RightHand", "h": 2.1, "up": Vector3(0, 1, 0.05), "fwd": Vector3(1, 0, 0), "off": Vector3(0, 0.25, 0.02)},
 	"shield": {"mesh": "SM_Wep_Shield_01", "hand": "LeftHand", "h": 0.9, "up": Vector3(0, 1, 0.1), "fwd": Vector3(0.35, 0, 1), "off": Vector3(0.06, 0.1, 0.12)},
+	# гладиатор в лудусе (этап 5, волна 2): короткий меч остриём вперёд
+	"sword": {"mesh": "SM_Wep_Sword_01", "hand": "RightHand", "h": 0.8, "up": Vector3(0, 0.25, 1), "fwd": Vector3(0, 1, 0), "off": Vector3(0, 0.02, 0.06), "raw": true},
 	"hammer": {"mesh": "SM_Prop_Tool_Hammer_01", "hand": "RightHand", "h": 0.3, "up": Vector3(0, 0.5, 1), "fwd": Vector3(0, 1, -0.3), "off": Vector3(0, 0.02, 0.08), "raw": true},
 	"razor": {"mesh": "#razor", "hand": "RightHand", "h": 0.14, "up": Vector3(0, 0.2, 1), "fwd": Vector3(0, 1, 0), "off": Vector3(0, 0.02, 0.06), "raw": true},
 	# покупки
@@ -40,6 +42,9 @@ const WORK := {
 	# этап 5: новые здания
 	"ogorod": [["basket"]], "shelter": [["basket"]], "vigiles": [["jug"], []], "sculptor": [["hammer"], ["hammer"]],
 	"herbalist": [["jar"]], "prefect": [["scroll"], []],
+	# этап 5, волна 2: гладиаторы лудуса, жрец храма, служитель терм, стартёр цирка
+	"ludus": [["sword", "shield"], ["sword", "shield"], []], "venus": [["censer"], []], "thermae": [["jug"], [], ["cloth"]],
+	"pharos": [["basket"], []], "circus_fl": [[], ["jug"]],
 }
 ## Свои движения слотов (вместо записанных в чертеже) — только пока вещь в руках: музыкант с лирой играет на ней,
 ## без лиры (далеко, «Низкая») — сидит как в чертеже, а лира лежит на скамье (People._slot_clip)

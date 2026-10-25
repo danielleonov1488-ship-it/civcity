@@ -3,7 +3,7 @@ extends Control
 ##   bash .work/py/gpu_run.sh res://test_sheet.tscn -- types=a,b,c cols=4 out=D:/CivCity/.work/gd/b/sheet.png [yaw=35] [fp=1]
 ## types — список типов Defs.B (или «set:<исследование>» — все облики, что оно открывает; «tier»/«variant» — тип:этаж:фасад)
 
-const CELL := Vector2i(384, 300)
+var CELL := Vector2i(384, 300)
 
 
 func _ready() -> void:
@@ -19,6 +19,8 @@ func _ready() -> void:
 					list.append(k)
 		else:
 			list.append(t)
+	if args.has("cell"):
+		CELL = Vector2i(int(String(args["cell"]).get_slice("x", 0)), int(String(args["cell"]).get_slice("x", 1)))   # окошко побольше (большие памятники)
 	var cols := int(args.get("cols", "4"))
 	var yaw := deg_to_rad(float(args.get("yaw", "32")))
 	var out := String(args.get("out", "D:/CivCity/.work/gd/b/sheet.png"))

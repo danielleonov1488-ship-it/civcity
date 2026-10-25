@@ -2058,11 +2058,16 @@ func _bottom_left() -> void:
 	h.add_theme_constant_override("separation", 6)
 	p.add_child(h)
 	for t: Array in [["road", "road", "Мостовая", "Мостовая: каменная улица. Ведите с зажатой кнопкой; R — поверх других дорог"], ["path", "path", "Тропа", "Тропа: утоптанная дорожка — почти даром"],
-			["plaza", "plaza", "Площадь", "Площадь из узорной плитки"], ["erase", "eraser", "Ластик", "Ластик: стереть дорогу"]]:
+			["plaza", "plaza", "Площадь", "Площадь из узорной плитки"], ["erase", "eraser", "Ластик", "Ластик: стереть дорогу или узор земли"],
+			["upgrade", "hammer", "Улучшить", "Улучшить дорогу: тропа станет мостовой, мостовая — каменными плитами, площадь — травертином"],
+			["ground", "flower", "Земля", "Земля: трава, цветы, песок, глина и гравий — узор для красоты"]]:
 		var tn: String = t[0]
 		var v := _round_lbl(t[1], t[2], t[3], 50, func(): game.set_tool("" if game.tool == tn else tn))
 		h.add_child(v)
 		road_btns[tn] = v.get_meta("btn")
+		if tn == "upgrade":
+			v.name = "upgrade_box"
+			v.visible = false                     # «Улучшить» — когда изучена «Базальтовая мостовая» (этап 5.7)
 	# настройки кисти над кнопками
 	road_panel = _panel(null, "bar", 0, 6)
 	_put(road_panel, Control.PRESET_BOTTOM_LEFT, Vector2(10, -BAR_H - 10))
@@ -2112,6 +2117,32 @@ func _bottom_left() -> void:
 	over.name = "over"
 	road_btns["over"] = over
 	vb.add_child(over)
+	# кисть «Земля» (этап 5.8): какой узор — кружки цвета узора с подписью
+	var gr := HBoxContainer.new()
+	gr.name = "ground_row"
+	gr.add_theme_constant_override("separation", 6)
+	gr.visible = false
+	for gi in Defs.GROUND.size():
+		var gk := gi
+		var gb := Button.new()
+		gb.custom_minimum_size = Vector2(44, 44)
+		gb.focus_mode = Control.FOCUS_NONE
+		gb.tooltip_text = "%s — %s" % [Defs.GROUND[gi][0], String(Defs.GROUND[gi][1]).to_lower()]
+		for st in ["normal", "hover", "pressed"]:
+			var sb := StyleBoxFlat.new()
+			sb.bg_color = GROUND_COL[gi]
+			sb.set_corner_radius_all(22)
+			sb.set_border_width_all(3 if st == "normal" else 4)
+			sb.border_color = Color("6b4a2a") if st == "normal" else C_GOLD
+			gb.add_theme_stylebox_override(st, sb)
+		gb.pressed.connect(func(): game.ground_kind = gk; refresh_tools())
+		gb.name = "g%d" % gi
+		gr.add_child(gb)
+	vb.add_child(gr)
+
+
+## Кружки кисти «Земля» (Defs.GROUND): обычная трава, сочная, луг, песок, глина, гравий
+const GROUND_COL := [Color("6d7d36"), Color("3f5a1e"), Color("8c9a3e"), Color("dccb9c"), Color("8a5a32"), Color("a19b8e")]
 
 
 func _road_opt(nm: String) -> void:
@@ -2151,11 +2182,24 @@ func _refresh_brush() -> void:
 		(road_panel.find_child("size_val", true, false) as Label).text = ("%.2f" % game.brush_r).trim_suffix("0").replace(".", ",")
 		var t: String = game.tool
 		var pl := road_panel.find_child("price", true, false) as Label
+		var strip := 2.0 * float(game.brush_r) / Land.CELL / Land.CELL     # клеток в метре полосы
 		if Defs.ROAD_COST.has(t):
 			pl.text = "Метр — около %s ден. (полоса %s м)" % [price_txt(road_price_m(t)), ("%.1f" % (game.brush_r * 2.0)).replace(".", ",")]
+		elif t == "upgrade":
+			pl.text = "Метр: тропа → мостовая ~%s · мостовая → плиты ~%s · площадь → травертин ~%s ден." % [price_txt(strip * float(Defs.ROAD_UP["path"])),
+				price_txt(strip * float(Defs.ROAD_UP["road"])), price_txt(strip * float(Defs.ROAD_UP["plaza"]))]
+		elif t == "ground":
+			pl.text = "«%s» · метр — около %s ден." % [Defs.GROUND[game.ground_kind][0], price_txt(strip * Defs.GROUND_COST)]
 		else:
 			pl.text = "Стирать дорогу — бесплатно" if t == "erase" else ""
 		pl.visible = pl.text != ""
+		(road_btns["over"] as CheckBox).visible = not game.is_deco_tool(t)
+		var gr := road_panel.find_child("ground_row", true, false) as HBoxContainer
+		gr.visible = t == "ground"
+		for gb: Button in gr.get_children():
+			var on := gb.name == "g%d" % game.ground_kind
+			(gb.get_theme_stylebox("normal") as StyleBoxFlat).border_color = C_GOLD if on else Color("6b4a2a")
+			(gb.get_theme_stylebox("normal") as StyleBoxFlat).set_border_width_all(5 if on else 3)
 
 
 func _bottom_center() -> void:
@@ -2658,6 +2702,19 @@ func _card_tip(type: String) -> String:
 		"farm", "store":
 			if d.has("jobs"):
 				t += "\n\nРабочие: %s" % _jobs_text(d)
+	# этап 5, волна 2: Слава в цене и каждый день, одна на город, у воды, без дороги
+	if d["kind"] == "monument" and d.has("jobs"):
+		t += "\nРабочие: %s" % _jobs_text(d)
+	if d.has("glory"):
+		t += "\nСтоит ещё %d Славы (Слава — за победы Легиона)" % int(d["glory"])
+	if d.has("glory_day"):
+		t += "\nПриносит Славу: +%s в день" % String.num(float(d["glory_day"]), 1).replace(".", ",")
+	if d.get("unique", false) and d["kind"] != "military":
+		t += "\nОдна на город"
+	if d.get("shore", false):
+		t += "\nСтавится у самой воды"
+	if d.get("noroad", false):
+		t += "\nДорога у входа не нужна"
 	if game and game.city and not game.city.unlocked(type):
 		var uid: String = game.city.unlock_id(type)
 		t += "\n\nОткроется %s" % Defs.unlock_text(uid)
@@ -3307,7 +3364,7 @@ func _tool_panel() -> void:
 
 func on_tool(t: String) -> void:
 	for k in road_btns:
-		if road_btns[k] is Button and k in ["road", "path", "plaza", "erase"]:
+		if road_btns[k] is Button and k in ["road", "path", "plaza", "erase", "upgrade", "ground"]:
 			_set_on(road_btns[k], k == t)
 	for k in tool_btns:
 		_set_on(tool_btns[k], k == t or (k == "move" and t == "move_nature"))
@@ -3415,12 +3472,15 @@ func _fill_tool_panel_body() -> void:
 			keys += "\nПривязка к дороге (R): " + ("вкл" if game.snap else "выкл")
 		tool_keys.text = keys
 	else:
-		var names := {"road": "Мостовая", "path": "Тропа", "plaza": "Площадь", "erase": "Ластик", "bulldoze": "Снос", "copy": "Копировать", "move": "Перенести", "move_nature": "Перенести"}
+		var names := {"road": "Мостовая", "path": "Тропа", "plaza": "Площадь", "erase": "Ластик", "bulldoze": "Снос", "copy": "Копировать", "move": "Перенести", "move_nature": "Перенести",
+			"upgrade": "Улучшить дорогу", "ground": "Земля"}
 		tool_title.text = names.get(t, t)
 		var keys := {"road": "Каменная улица. Ведите с зажатой левой кнопкой. [ ] — размер, Ctrl+Z — отменить, Esc посреди мазка — отменить его.",
 			"path": "Утоптанная тропа — самая дешёвая дорога: ею удобно тянуть длинные улицы к окраинам.", "plaza": "Плитка для площадей у рынков и храмов — самая дорогая.", "erase": "Наведите на дорогу — что уберётся, видно красным. Ведите с зажатой кнопкой: дорога уберётся, когда отпустите (Esc посреди — передумать). Звенья заборов под ластиком тоже уберутся.",
 			"bulldoze": "Наведите на постройку, дерево или камень — подсветится красным. Щелчок — снести.", "copy": "Щёлкните по постройке — возьмёте такую же: тот же облик, цвет фасада и поворот. Без инструмента — наведите на постройку и нажмите F.",
-			"move": "Щёлкните по постройке, дереву или камню и поставьте на новое место.", "move_nature": "Поставьте на новое место. Z/X — повернуть."}
+			"move": "Щёлкните по постройке, дереву или камню и поставьте на новое место.", "move_nature": "Поставьте на новое место. Z/X — повернуть.",
+			"upgrade": "Ведите по улице с зажатой кнопкой: тропа станет мостовой, мостовая — дорогой из больших каменных плит, площадь — травертином с мозаикой. По плитам горожане ходят быстрее, а дома у ухоженной улицы счастливее на %d%%." % Defs.STREET_BONUS,
+			"ground": "Узор на траве — для красоты: выберите кружок и ведите с зажатой кнопкой. Счастья не прибавляет, зато город становится живым. Кружок «Трава» и «Ластик» стирают узор."}
 		var txt: String = keys.get(t, "")
 		if Defs.ROAD_COST.has(t):
 			# цена видна сразу: сколько стоит метр при нынешней кисти — у всех трёх видов дороги
@@ -3638,7 +3698,7 @@ func stroke_live(cost: float, t: String, broke := false, done := false) -> void:
 			_stroke_tw.tween_property(_stroke_lbl, "modulate:a", 0.0, 0.6)
 			_stroke_tw.tween_callback(func(): _stroke_lbl.visible = false)
 		return
-	if t == "erase" or not Defs.ROAD_COST.has(t):
+	if t == "erase" or not (Defs.ROAD_COST.has(t) or game.is_deco_tool(t)):
 		_stroke_lbl.visible = false
 		return
 	if _stroke_tw and _stroke_tw.is_valid():
@@ -5681,6 +5741,9 @@ func refresh() -> void:
 	_update_rank_ui()
 	_update_floor_btn()
 	_update_upg_btn()
+	var ub := bar_left.find_child("upgrade_box", true, false) if bar_left else null
+	if ub:
+		ub.visible = c.research.has(Defs.ROAD_UP_RES)    # кисть «Улучшить» — после «Базальтовой мостовой» (этап 5.7)
 	update_new_marks()
 	_fit_bottom()                             # казна длиннее, «Полки полны» — правая полоса шире
 	_fill_classes()
@@ -5962,6 +6025,10 @@ func _once_tips() -> void:
 	if c.econ >= 1 and not c.tips.has("set_tip") and Defs.DECOR_SETS.any(func(s): return c.research.has(s)):
 		c.tips["set_tip"] = true
 		advisor("Наборы украшений", "Украшения из одного исследования — это набор: «Сельский двор», «Вода в саду», «Сад»… Поставьте рядом с домом три разных вида из одного набора — дом станет счастливее ещё на %d%%, даже если украшений у него уже вдоволь.\n\nК какому набору относится украшение — видно в подсказке на его карточке. В меню украшений есть «★ Избранное», «Недавние» и поиск." % Defs.SET_BONUS)
+		return
+	if not c.tips.has("pave_up_tip") and c.research.has(Defs.ROAD_UP_RES):
+		c.tips["pave_up_tip"] = true
+		advisor("Улучшенные улицы", "Слева внизу появилась кисть «Улучшить». Проведите ею по улице: тропа станет мостовой, мостовая — дорогой из больших каменных плит, площадь — травертином с мозаикой.\n\nПо плитам горожане ходят быстрее, а дом, у входа которого улица ухоженная, счастливее на %d%%. Платить — только за то, что улучшили." % Defs.STREET_BONUS)
 		return
 	if not c.tips.has("prem_tip") and ["prem_patrician", "prem_mosaic", "prem_triumph", "prem_eternal"].any(func(s): return c.research.has(s)):
 		c.tips["prem_tip"] = true
@@ -6839,7 +6906,7 @@ func _make_icons() -> void:
 ## картинки рисуются заново; старые папки удаляются. В редакторе ключ — сами скрипты построек
 const ICON_V := 1                         # поменяли свет, камеру или размер картинок — увеличить
 const ICON_SRC := ["catalog.gd", "cat_houses.gd", "cat_shops.gd", "cat_civic.gd", "cat_monuments.gd", "cat_decor.gd", "cat_military.gd",
-	"parts.gd", "synty.gd", "kit.gd", "bp.gd", "artisau.gd", "entrance.gd", "hud.gd", "cat_decor2.gd", "cat_extra.gd"]
+	"parts.gd", "synty.gd", "kit.gd", "bp.gd", "artisau.gd", "entrance.gd", "hud.gd", "cat_decor2.gd", "cat_extra.gd", "cat_grand.gd"]
 
 
 func _icon_dir() -> String:
@@ -6929,7 +6996,7 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 ## Животные этапа 5 у постройки (CatDecor2.PETS / CatExtra.PETS) для этого облика
 static func pets_of(type: String) -> Array:
 	var lk := int((Defs.B.get(type, {}) as Dictionary).get("look", 0))
-	var list: Array = CatExtra.PETS.get(type, CatDecor2.PETS.get(Defs.base_of(type), []))
+	var list: Array = CatGrand.PETS.get(type, CatExtra.PETS.get(type, CatDecor2.PETS.get(Defs.base_of(type), [])))
 	return list.filter(func(e: Array): return e.size() <= 5 or int(e[5]) < 0 or int(e[5]) == lk)
 
 

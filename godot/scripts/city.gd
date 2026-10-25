@@ -85,6 +85,7 @@ var taxes := {}
 var hist: Array = []
 var hist_acc := {}                     # движение денег за идущий час по видам (стройка, земля, игры, Легион, награды)
 var hist_mark := NAN                   # казна в конце прошлого часа (NAN — после загрузки ещё не знаем)
+var _street := {}                      # «ухоженная улица» (этап 5.7): id дома → [правка узора земли, вход, бонус, правка покрытий] — кэш
 signal rp_reward(n)                    # просьба принесла очки исследований — «+N» летит к счётчику свитков (без звука)
 ## «Истории горожан» (scripts/stories.gd, данные — StoryDefs): часы, предложение, идущая история, пройденные,
 ## отложенные, бонусы к счастью (их строки — в happy_parts дома), кошки-награды. Сохраняется под ключом "stories"
@@ -302,6 +303,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	var lo := INF
 	var hi := -INF
 	var on_water := 0
+	var arches := not land.under.is_empty()
 	for k in cells:
 		var q := land.cell_center(k % Land.N, k / Land.N)
 		if q.x < 1.0 or q.y < 1.0 or q.x > Land.SIZE - 1.0 or q.y > Land.SIZE - 1.0:
@@ -316,11 +318,23 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 		if o < 0 or (o != 0 and o != ignore_id):
 			res["err"] = "Место занято"
 			return res
+		if arches:
+			var u := int(land.under.get(k, 0))
+			if u != 0 and u != ignore_id:
+				res["err"] = "Место занято: здесь арки акведука"
+				return res
 		var y := land.hq(k)
 		if y < Land.WATER_Y + 0.05:
 			on_water += 1
 		lo = minf(lo, y)
 		hi = maxf(hi, y)
+	# у акведука арки землю не занимают, но и сквозь дом или другие арки не проходят
+	for k in land.footprint_cells(CatGrand.under_rects(type), pos, yaw):
+		var o := land.occ[k]
+		var u := int(land.under.get(k, 0))
+		if o < 0 or (o != 0 and o != ignore_id) or (u != 0 and u != ignore_id):
+			res["err"] = "Место занято"
+			return res
 	if d.get("water", false):
 		if on_water < cells.size():
 			res["err"] = "Ставится только на воду"
@@ -333,13 +347,31 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	if hi - lo > 1.3:
 		res["err"] = "Слишком круто"
 		return res
+	if d.get("shore", false) and not _near_water(cells, 3.0):
+		res["err"] = "Ставится у самой воды — у пруда или озера"
+		return res
 	res["y"] = roundf((lo + hi) * 0.5 / Land.STEP) * Land.STEP
-	if d["kind"] != "decor" and d["kind"] != "farm" and type != "center":
+	if d["kind"] != "decor" and d["kind"] != "farm" and type != "center" and not d.get("noroad", false):
 		var dp3: Vector3 = Transform3D(Basis(Vector3.UP, yaw), Vector3(pos.x, 0, pos.y)) * bp.door
 		if not _road_near(Vector2(dp3.x, dp3.z), 1.7, cells):
 			res["err"] = "Нужна дорога у входа"
 			return res
 	return res
+
+
+## Вода ближе r метров к следу постройки (маяк — у пруда, этап 5.6)
+func _near_water(cells: PackedInt32Array, r: float) -> bool:
+	var lo := Vector2i(Land.N, Land.N)
+	var hi := Vector2i(-1, -1)
+	for k in cells:
+		lo = lo.min(Vector2i(k % Land.N, k / Land.N))
+		hi = hi.max(Vector2i(k % Land.N, k / Land.N))
+	var rc := int(ceil(r / Land.CELL))
+	for j in range(lo.y - rc, hi.y + rc + 1, 2):
+		for i in range(lo.x - rc, hi.x + rc + 1, 2):
+			if land.inside(i, j) and land.hq(land.idx(i, j)) < Land.WATER_Y + 0.05:
+				return true
+	return false
 
 
 func _road_near(p: Vector2, r: float, own_cells: PackedInt32Array) -> bool:
@@ -380,6 +412,8 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	for k in cells:
 		if land.occ[k] >= 0:                   # арку у въезда (занятость < 0) не затираем даже готовым городом
 			land.occ[k] = b["id"]
+	land.walk_ver += 1
+	_under_add(b)
 	buildings[b["id"]] = b
 	_apron_add(b)
 	if apron_of(b) == 2:
@@ -393,6 +427,18 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	_check_goals()
 	changed.emit()
 	return b
+
+
+## Полоса под арками постройки (акведук) — в Land.under: b.under — её клетки (не сохраняется, при загрузке — заново)
+func _under_add(b: Dictionary) -> void:
+	var ur := CatGrand.under_rects(String(b["type"]))
+	if ur.is_empty():
+		return
+	var uc := land.footprint_cells(ur, b["pos"], float(b["yaw"]))
+	b["under"] = uc
+	for k in uc:
+		if not land.under.has(k):
+			land.under[k] = int(b["id"])
 
 
 ## Цвет новой постройки: не такой, как у соседей
@@ -423,6 +469,10 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 	for k in (b["cells"] as PackedInt32Array):
 		if land.occ[k] == int(b["id"]):        # чужое (арку у въезда, соседа) не освобождаем
 			land.occ[k] = 0
+	land.walk_ver += 1
+	for k in (b.get("under", PackedInt32Array()) as PackedInt32Array):
+		if int(land.under.get(k, 0)) == int(b["id"]):
+			land.under.erase(k)
 	buildings.erase(b["id"])
 	_apron_remove(b)
 	# украшения на стенах снесённого дома падают вместе с ним
@@ -603,7 +653,7 @@ func compute(same_place := false) -> void:
 				if d.has("mon"):
 					prem.append(b)
 				continue
-		b["road"] = d["kind"] in ["farm", "center"] or _road_near(door_point(b), 1.7, b["cells"])
+		b["road"] = d["kind"] in ["farm", "center"] or d.get("noroad", false) or _road_near(door_point(b), 1.7, b["cells"])
 		if d.has("jobs") and b["road"] and not oc.has(int(id)):
 			var jb := jobs_of(b)
 			for c in jb:
@@ -771,6 +821,9 @@ func compute(same_place := false) -> void:
 		for e: Array in story_parts(h):
 			parts.append(e)
 			st_sum += int(e[1])
+		var sb := street_bonus(h)               # «ухоженная улица» (этап 5.7): у входа — улучшенная мостовая
+		if sb > 0:
+			parts.append(["Ухоженная улица", sb])
 		# налоги класса (с «Деревни»): мягкие +5%, высокие −8% — от счастья без потолка, то есть съедают «запас»
 		var tx := int(Defs.TAX_SET[tax_of(cls)]["happy"])
 		if tx != 0:
@@ -787,10 +840,11 @@ func compute(same_place := false) -> void:
 			if not h["needs"].has(n):
 				missing.append(n)
 				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + set_b + mon_sum + fb + st_sum + tx + dens - missing.size() * Defs.MISSING_PENALTY
+		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + tx + dens - missing.size() * Defs.MISSING_PENALTY
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["set_bonus"] = set_b
+		h["street"] = sb
 		h["monuments"] = float(mon_sum)
 		h["mon_types"] = mon
 		h["density"] = dens
@@ -803,7 +857,7 @@ func compute(same_place := false) -> void:
 		sums["w"] += w
 		sums["base"] += base * w
 		sums["shops"] += shop_sum * w
-		sums["deco"] += (deco_b + set_b) * w
+		sums["deco"] += (deco_b + set_b + sb) * w
 		sums["mon"] += mon_sum * w
 		sums["fest"] += fb * w
 		sums["story"] = float(sums.get("story", 0.0)) + st_sum * w
@@ -899,6 +953,33 @@ static func shop_parts(types: Array, score: Dictionary, econ_v: int) -> Array:
 				dim = true
 		out.append([nm, v, dim])
 	return out
+
+
+## «Ухоженная улица» (этап 5.7): у входа дома (2 м вокруг) мостовая — больше чем наполовину улучшенная (плиты или
+## травертин) — +STREET_BONUS% счастья. Кэш — до новой правки узора, покрытия или занятости земли (Land.walk_ver:
+## простую мостовую у входа дорисовали или стёрли) или переноса дома
+func street_bonus(h: Dictionary) -> int:
+	if land.up_n == 0:
+		return 0
+	var dp := door_point(h)
+	var c: Array = _street.get(int(h["id"]), [])
+	if c.size() == 4 and int(c[0]) == land.deco_ver and int(c[3]) == land.walk_ver and (c[1] as Vector2) == dp:
+		return int(c[2])
+	var cc := land.cell(dp)
+	var walk := 0
+	var up := 0
+	for dj in range(-8, 9, 2):                # клетки через одну (0,5 м) — быстрее, точности хватает
+		for di in range(-8, 9, 2):
+			if di * di + dj * dj > 64 or not land.inside(cc.x + di, cc.y + dj):
+				continue
+			var k := land.idx(cc.x + di, cc.y + dj)
+			if Land.walk_kind(land.kind[k]) and land.occ[k] == 0:
+				walk += 1
+				if land.is_up(k):
+					up += 1
+	var v := Defs.STREET_BONUS if up >= 4 and up * 2 >= walk else 0
+	_street[int(h["id"])] = [land.deco_ver, dp, v, land.walk_ver]
+	return v
 
 
 ## Бонус наборов этапа 5 (Defs.DECOR_SETS): sets — набор → {вид: true} рядом с домом; три разных вида — +SET_BONUS%,
@@ -1446,9 +1527,12 @@ func sim_day() -> void:
 	var upkeep := 0.0
 	var wages := 0.0
 	var rpd := 0.0
+	var gday := 0.0                               # Слава в день от лудуса, маяка, цирка (этап 5, glory_day)
 	for id in buildings.keys():
 		var b: Dictionary = buildings[id]
 		var d := def(b)
+		if d.has("glory_day") and bool(b.get("active", false)):
+			gday += float(d["glory_day"])
 		match d["kind"]:
 			"house":
 				income += int(b["pop"]) * house_tax(b) * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
@@ -1474,6 +1558,12 @@ func sim_day() -> void:
 	stats["upkeep"] = upkeep
 	stats["wages"] = wages
 	stats["rp_day"] = rpd
+	if gday > 0.0:
+		legion.glory_acc += gday / 24.0          # копится, как у чудес Легиона: набралась целая Слава — в казну Славы
+		if legion.glory_acc >= 1.0:
+			var gw := floorf(legion.glory_acc)
+			legion.glory += gw
+			legion.glory_acc -= gw
 	for ev: Array in legion.on_hour():           # Легион: таймеры улучшений (настоящие часы), Слава чудес, триумф
 		if ev.size() > 2 and bool(ev[2]):
 			_quiet(ev[0], ev[1])                 # здание Легиона выросло — только в колокольчик
@@ -3082,6 +3172,7 @@ func load_data(d: Dictionary) -> void:
 				cats.append(ce)
 	next_id = int(d.get("next_id", 1))
 	buildings = {}
+	land.under.clear()
 	for bd in d.get("buildings", []):
 		var c64 := String(bd.get("cells", ""))
 		var cells := Marshalls.base64_to_raw(c64).to_int32_array() if c64 != "" else PackedInt32Array()
@@ -3098,6 +3189,7 @@ func load_data(d: Dictionary) -> void:
 		for k in cells:
 			if land.occ[k] >= 0:               # арка у въезда остаётся занятой, даже если старое сохранение залезло на неё
 				land.occ[k] = b["id"]
+		_under_add(b)                          # полоса под арками акведука — заново (не сохраняется)
 		next_id = maxi(next_id, int(b["id"]) + 1)
 	legion.sync_tiers()                          # облик зданий Легиона — по их уровням (старые сохранения: уровни войск)
 	apron_all()
