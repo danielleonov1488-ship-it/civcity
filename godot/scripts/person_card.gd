@@ -415,7 +415,8 @@ static func _fill_cat(hud: Hud, box: VBoxContainer, ct: Dictionary) -> void:
 	var h: Dictionary = c.buildings.get(int(ct.get("home", -1)), {})
 	var hdr := HBoxContainer.new()
 	hdr.add_theme_constant_override("separation", 10)
-	hdr.add_child(_portrait_box(hud, "c:%d" % ct.get("n").get_instance_id(), func(vp: SubViewport): _cat_subject(vp, ct)))
+	# портрет — в надетой вещице (сменили вещь — портрет новый)
+	hdr.add_child(_portrait_box(hud, "c:%d:%s" % [ct.get("n").get_instance_id(), String(People.cat_rec(ct).get("wr", ""))], func(vp: SubViewport): _cat_subject(vp, ct)))
 	var tv := VBoxContainer.new()
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tv.add_child(hud._label(String(nm[0]), 26, false, Hud.C_INK, hud.font_title))
@@ -440,6 +441,11 @@ static func _fill_cat(hud: Hud, box: VBoxContainer, ct: Dictionary) -> void:
 	_now.custom_minimum_size = Vector2(240, 0)
 	_now.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	box.add_child(nr)
+	# вещицы из «Кошачьей лавки» (Д14): что у неё есть и что можно выбрать ей самим
+	var rec := People.cat_rec(ct)
+	if not rec.is_empty():
+		box.add_child(hud._divider(10))
+		_cat_items(hud, box, rec)
 	box.add_child(hud._divider(12))
 	var btns := HBoxContainer.new()
 	btns.add_theme_constant_override("separation", 6)
@@ -509,6 +515,111 @@ static func pet_view(hud: Hud, ct: Dictionary) -> void:
 static func _near_home(ppl: People, ct: Dictionary) -> bool:
 	var h: Dictionary = ppl.city.buildings.get(int(ct.get("home", -1)), {})
 	return not h.is_empty() and (ct["p"] as Vector2).distance_to(ppl.city.door_point(h)) < 2.5
+
+
+# ---------- вещицы кошки из «Кошачьей лавки» (Д14) ----------
+
+## Цвет вещицы — кружок на её кнопке
+const ITEM_COL := {"bow": Color("f07fa6"), "wreath": Color("5c9a3a"), "pileus": Color("c8432f"), "petasos": Color("e2bd62"),
+	"flower": Color("ffd6e2"), "collar": Color("b8322a"), "bandana": Color("3d74c4"), "bowtie": Color("c22f4a"), "cape": Color("b52a2a")}
+static var _dots := {}
+
+
+static func _dot(item: String) -> Texture2D:
+	if _dots.has(item):
+		return _dots[item]
+	var n := 18
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	var col: Color = ITEM_COL.get(item, Color("c9a46a"))
+	for y in n:
+		for x in n:
+			var d := Vector2(x + 0.5 - n * 0.5, y + 0.5 - n * 0.5).length()
+			if d <= n * 0.5 - 0.5:
+				img.set_pixel(x, y, Color("3a2412") if d > n * 0.5 - 2.2 else col)
+	var t := ImageTexture.create_from_image(img)
+	_dots[item] = t
+	return t
+
+
+## Карточка кошки: её вещи (надетая подсвечена; щелчок — надеть или снять) и что можно выбрать ей в лавке
+static func _cat_items(hud: Hud, box: VBoxContainer, rec: Dictionary) -> void:
+	var c: City = hud.game.city
+	var it: Array = rec.get("it", [])
+	var wr := String(rec.get("wr", ""))
+	box.add_child(hud._label("Вещи · %d" % it.size() if not it.is_empty() else "Вещи", 16, true, Hud.C_SOFT))
+	if it.is_empty():
+		box.add_child(hud._wrap(hud._label("Пока без обновок: их покупают хозяева в «Кошачьей лавке»", 14, false, Hud.C_SOFT), W - 20.0))
+	else:
+		var fl := HFlowContainer.new()
+		fl.add_theme_constant_override("h_separation", 6)
+		fl.add_theme_constant_override("v_separation", 6)
+		for x in Defs.CAT_ITEM_ORDER:
+			if not it.has(x):
+				continue
+			var item := String(x)
+			var bt := Button.new()
+			bt.focus_mode = Control.FOCUS_NONE
+			bt.toggle_mode = true
+			bt.text = String(Defs.CAT_ITEMS[item]["name"])
+			bt.icon = _dot(item)
+			bt.set_pressed_no_signal(item == wr)
+			bt.tooltip_text = "Снять" if item == wr else "Надеть"
+			bt.pressed.connect(func():
+				c.wear_cat_item(rec, "" if String(rec.get("wr", "")) == item else item)
+				hud._fill_info())
+			fl.add_child(bt)
+		box.add_child(fl)
+	# лавка: что ещё можно выбрать кошке (за денарии города)
+	var left: Array = Defs.CAT_ITEM_ORDER.filter(func(x): return not it.has(x))
+	if left.is_empty():
+		return
+	if not c.cat_shop_open():
+		var why := "Постройте «Кошачью лавку» — там можно выбрать кошке шляпку, бантик или ошейник с колокольчиком" if c.unlocked("catshop") \
+			else "Шляпки и бантики продаёт «Кошачья лавка» — её откроет исследование «%s»" % Defs.research("catshop")["name"]
+		box.add_child(hud._wrap(hud._label(why, 13, false, Hud.C_SOFT), W - 20.0))
+		return
+	box.add_child(hud._label("Выбрать в «Кошачьей лавке»", 15, true, Hud.C_SOFT))
+	var sf := HFlowContainer.new()
+	sf.add_theme_constant_override("h_separation", 6)
+	sf.add_theme_constant_override("v_separation", 6)
+	for x in left:
+		var item := String(x)
+		var price := int(Defs.CAT_ITEMS[item]["price"])
+		var bt := Button.new()
+		bt.focus_mode = Control.FOCUS_NONE
+		bt.text = "%s · %d ден." % [String(Defs.CAT_ITEMS[item]["name"]), price]
+		bt.icon = _dot(item)
+		bt.disabled = c.money < float(price)
+		bt.tooltip_text = "Не хватает денариев" if bt.disabled else "Купить и сразу надеть"
+		bt.pressed.connect(func():
+			if c.buy_cat_item(rec, item):
+				if hud.game.sound:
+					hud.game.sound.ui("coins")
+				hud._fill_info())
+		sf.add_child(bt)
+	box.add_child(sf)
+
+
+## Портрет кошки «Кошачьей лавки» (её карточка): кошка окраса fur в вещице item
+static func shop_cat_subject(vp: SubViewport, fur: int, item: String) -> void:
+	var cn := People.cat_node(fur, "Pet", 11)
+	People.cat_wear(cn, item)
+	cn.name = "who"
+	cn.rotation.y = 0.35
+	vp.add_child(cn)
+	_who = cn
+	var sk = null
+	var bone := -1
+	var sks := cn.find_children("*", "Skeleton3D", true, false)
+	if not sks.is_empty():
+		sk = sks[0]
+		bone = (sk as Skeleton3D).find_bone("Bone.003")
+	_face = [vp.get_node("cam"), sk, bone, Vector3(0, 0.06, 0.03), 0.5]
+
+
+## Портрет для карточки постройки (у «Кошачьей лавки»): тот же мирок, что у кошки
+static func portrait(hud: Hud, key: String, make: Callable) -> Control:
+	return _portrait_box(hud, key, make)
 
 
 # ---------- «Следовать», камера к дому ----------
@@ -812,6 +923,7 @@ static func _cat_subject(vp: SubViewport, ct: Dictionary) -> void:
 		if (People.CAT_FURS[i][0] as Color).is_equal_approx(ct.get("fur", Color.BLACK)):
 			fur = i
 	var cn := People.cat_node(fur, "Pet", 7)
+	People.cat_wear(cn, String(People.cat_rec(ct).get("wr", "")))
 	cn.name = "who"
 	cn.rotation.y = 0.35
 	vp.add_child(cn)

@@ -8,9 +8,16 @@ const M := Bp.M
 const FL := Bp.FL
 
 ## Животные при здании (game._pets2): тип → [[кто, где, поворот, движение, масштаб, облик (−1 — всегда)], …]
+## «Кошачья лавка» (Д14): кошка может носить вещицу — седьмое поле (Defs.CAT_ITEMS); «acc» — вещица на витрине
+## (движение — её id), «toy» — клубок на нитке качается под навесом (кошка в «Pet» тянется к нему)
 const PETS := {
 	"shelter": [["cat", Vector3(1.1, 0.5, -3.25), 2.4, "sleep", 1.0, -1], ["cat", Vector3(2.1, 0.5, -3.25), 0.6, "sleep", 1.0, -1],
 		["donkey", Vector3(2.7, 0, -1.9), PI / 2 + 0.2, "Eating", 0.95, -1]],
+	"catshop": [["cat", Vector3(1.55, 0.97, 1.5), 0.35, "sit", 1.0, -1, "petasos"], ["cat", Vector3(-2.1, 0.14, 1.0), 2.2, "sleep", 0.9, -1, "bow"],
+		["cat", Vector3(-0.45, 0.0, 1.05), 0.1, "pet", 1.0, -1, "collar"], ["cat", Vector3(1.0, 1.62, -0.55), 0.2, "sleep", 0.9, -1, "bandana"],
+		["toy", Vector3(-0.45, 2.42, 1.42), 0.0, "", 1.0, -1], ["acc", Vector3(0.75, 1.05, 1.42), 0.4, "pileus", 1.6, -1],
+		["acc", Vector3(2.0, 1.02, 1.4), -0.3, "wreath", 1.5, -1], ["acc", Vector3(-0.15, 1.0, -0.55), 0.3, "cape", 1.3, -1],
+		["acc", Vector3(-0.85, 1.48, -0.55), 0.0, "flower", 1.8, -1]],
 }
 
 
@@ -18,6 +25,7 @@ static func make(b: Bp, type: String) -> void:
 	match type:
 		"ogorod": _ogorod(b)
 		"shelter": _shelter(b)
+		"catshop": _catshop(b)
 		"puppets": _puppets(b)
 		"herbalist": _herbalist(b)
 		"vigiles": _vigiles(b)
@@ -124,6 +132,51 @@ static func _shelter(b: Bp) -> void:
 	b.add("SM_Prop_Sack_0%d" % (3 + b.rng.randi() % 3), Vector3(-2.75, 0, 0.35), 0.5, 0.7)
 	b.actor(Vector3(0.6, 0, -0.5), -PI / 2 - 0.4, "Interact", "any")
 	b.door = Vector3(cx, 0, 0.9)
+
+
+# ---------- кошачья лавка (Д14) ----------
+
+## «Кошачья лавка»: розовый домик под черепицей, слева дверь, справа широкий открытый проём с полками; перед ним
+## розово-белый навес на столбах, под ним прилавок со шляпками и бантиками на подставках. Кошки (game._pets2): на
+## прилавке сидит кошка в соломенной шляпке, в корзинке у двери спит кошка с бантиком, под навесом кошка тянется
+## к клубку на нитке, на верхней полке дремлет кошка в венке; миски у порога (хозяйка — за прилавком)
+static func _catshop(b: Bp) -> void:
+	b.paint(2, false)
+	b.ground_style = "plain"
+	b.upper_style = "plain"
+	b.roof_tex = "Roof_Tile_03"
+	b.remap = b.floor_remap(1)
+	CatShops._box(b, -2.5, 2.5, -2.5, 0.0, [{0: [CatShops.DOOR, CatShops.SHOP], 1: ["SM_Bld_Wall_Window_03"], 3: ["SM_Bld_Wall_Window_03"],
+		2: ["SM_Bld_Wall_Window_03", CatShops.DOOR]}], {"cornice": "SM_Bld_Trim_03", "dark": 1.4})
+	var ridge := CatShops._roof_z(b, -2.5, 2.5, -2.5, 0.0, FL, 1.9)
+	b.add("SM_Bld_Roof_Topper_05", Vector3(0, ridge, 0.1), 0.0)
+	CatShops._chimney(b, Vector3(1.4, FL + 0.55, -1.6))
+	CatShops._ivy(b, -2.5, 2.5, -2.5, 0.0, 3, 0.4, 1.3, 2)
+	# навес в розовую и белую полоску над входом и прилавком
+	CatShops._awning(b, -2.55, 2.55, 0.12, 1.72, 2.8, 2.4, CatShops.PINK, CatShops.WHITE)
+	for x: float in [-2.35, 0.0, 2.35]:
+		CatShops._pole(b, Vector3(x, 0, 1.58), 2.4)
+	CatShops._counter(b, 0.25, 2.2, 1.62)
+	# подставки для вещиц на прилавке (сами вещицы и кошки — game._pets2)
+	for x: float in [0.75, 2.0]:
+		b.add("SM_Prop_Bowl_04", Vector3(x, CatShops.CTR, 1.4), 0.0, 0.5)
+	# полки в проёме: корзинки, подушки, клубки шерсти в мисках; на верхней — подушка для кошки
+	var c := Vector3(1.25, 0, -0.6)
+	b.add("SM_Prop_Shelf_02", c, 0.0, 0.8)
+	for j in 4:
+		var sl: Vector2 = CatShops.SHELF_SLOTS[j]
+		b.add(["SM_Prop_Basket_06", "SM_Prop_Pillow_05", "SM_Prop_Basket_12", "SM_Prop_Pillow_06"][j], c + Vector3(sl.x, sl.y, 0.0), j * 0.7, [0.45, 0.42, 0.5, 0.45][j])
+	b.add("SM_Prop_Pillow_06", Vector3(1.0, 1.58, -0.55), 0.3, 0.55)
+	# у двери: корзинка-лежанка с подушкой (в ней спит кошка), миски с молоком и рыбкой
+	b.add("SM_Prop_Basket_11", Vector3(-2.15, 0, 0.95), 0.3, 0.8)
+	b.add("SM_Prop_Pillow_06", Vector3(-2.15, 0.06, 0.95), 0.5, 0.65)
+	for x: float in [-0.75, -0.45]:
+		b.add("SM_Prop_Bowl_04", Vector3(x, 0, 1.15), 0.0, 0.5)
+	CatShops._sign(b, Vector3(-1.25, 2.6, 0.14), 0.0, "H", CatShops.PINK, 0.5)
+	CatShops._lamp(b, Vector3(-0.3, 2.15, 0.12))
+	b.add("SM_Prop_FlowerPot_Fancy_01", Vector3(2.15, 0, 0.62), 0.0, 0.55)
+	b.actor(Vector3(1.25, 0, 0.75), 0.0, "Interact", "any")
+	b.door = Vector3(-1.25, 0, 2.3)
 
 
 # ---------- кукольный театр ----------

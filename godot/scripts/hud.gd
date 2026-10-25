@@ -124,7 +124,11 @@ var hidden_ui := false
 var bell_count := 0
 var bell_badge: Label
 var floor_badge: Label                    # на кнопке «Этаж»: сколько домов готовы к этажу
+var upg_badge: Label                      # на кнопке «Перестроить»: сколько домов готовы к перестройке
 const FLOOR_TIP := "Этаж (U): щёлкните по дому со стрелкой или ведите с зажатой кнопкой вдоль улицы — этаж получат все готовые дома под курсором"
+const UPG_TIP := "Перестроить (Shift+U): дом плебеев — в дом ремесленников, дом ремесленников — в городской домус. Щёлкните по дому с двойной стрелкой или ведите вдоль улицы"
+## Двойная стрелка «Перестроить» — цвета класса, которым станет дом
+const UPC_COL := {"upc_a": Color("e0904a"), "upc_p": Color("a77ee0")}
 var cloud_off: CloudBadge             # значок «нет связи с облаком» слева от колокольчика
 var pointer: TextureRect
 var pointer_target: Control
@@ -1361,7 +1365,7 @@ func _cursor_world() -> String:
 		return "move" if ok else "arrow_red"
 	if t == "settle":
 		return "people"
-	if t == "floor":
+	if t == "floor" or t == "upgrade":
 		# над домом, которому можно этаж, — «строить»; над домом, которому нельзя, — красная стрелка (у курсора — почему)
 		return {1: "build", 0: "arrow_red"}.get(int(game.floor_hover), "arrow")
 	if Defs.B.has(t):
@@ -1501,6 +1505,8 @@ func _close_tray() -> void:
 func _hide_info() -> void:
 	if info_panel and (info_panel.visible or not info_b.is_empty() or not info_p.is_empty()):
 		info_panel.visible = false
+		if not info_b.is_empty():
+			PersonCard.close()                # портрет «Кошачьей лавки» — долой
 		info_b = {}
 		if not info_p.is_empty():
 			info_p = {}
@@ -1680,9 +1686,27 @@ class FaceIcon extends Control:
 				draw_line(c + Vector2(-r * 0.34, r * 0.34), c + Vector2(r * 0.34, r * 0.34), ink, w, true)
 
 
-## Золотая стрелка вверх, нарисованная кодом: «можно надстроить этаж» (над крышей и на кнопке «Этаж»)
+## Золотая стрелка вверх, нарисованная кодом: «можно надстроить этаж» (над крышей и на кнопке «Этаж»).
+## dbl — двойной шеврон «Перестроить» (Д12) цвета нового класса: медный — ремесленники, лиловый — патриции
 class UpArrow extends Control:
+	var dbl := false
+	var col := Color("f2c14e")
+
 	func _draw() -> void:
+		if dbl:
+			var ink := Color("3a2412")
+			var w := maxf(1.5, minf(size.x, size.y) * 0.08)
+			for k in 2:
+				var y0 := 0.06 + k * 0.42
+				var ch := PackedVector2Array()
+				for p: Vector2 in [Vector2(0.5, y0), Vector2(0.97, y0 + 0.4), Vector2(0.72, y0 + 0.5), Vector2(0.5, y0 + 0.3), Vector2(0.28, y0 + 0.5), Vector2(0.03, y0 + 0.4)]:
+					ch.append(p * size)
+				draw_colored_polygon(ch, col if k == 0 else col.darkened(0.15))
+				draw_colored_polygon(PackedVector2Array([Vector2(0.5, y0 + 0.08) * size, Vector2(0.5, y0 + 0.26) * size, Vector2(0.2, y0 + 0.4) * size]), col.lightened(0.35))
+				var ln := ch.duplicate()
+				ln.append(ch[0])
+				draw_polyline(ln, ink, w, true)
+			return
 		var pts := PackedVector2Array()
 		for p: Vector2 in [Vector2(0.5, 0.03), Vector2(0.97, 0.5), Vector2(0.69, 0.5), Vector2(0.69, 0.97), Vector2(0.31, 0.97), Vector2(0.31, 0.5), Vector2(0.03, 0.5)]:
 			pts.append(p * size)
@@ -1698,8 +1722,11 @@ class UpArrow extends Control:
 func _drawn(icon: String, size: int) -> Control:
 	if icon.begins_with("face_"):
 		return _face(icon, size)
-	if icon == "up":
+	if icon == "up" or icon.begins_with("upc"):
 		var a := UpArrow.new()
+		if icon.begins_with("upc"):
+			a.dbl = true
+			a.col = UPC_COL.get(icon, Color("f2c14e"))
 		a.custom_minimum_size = Vector2(size * 0.8, size)
 		a.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		return a
@@ -1875,6 +1902,8 @@ func update_new_marks() -> void:
 	_show_new(top_btns["research"], play and c.new_research() > 0)
 	_show_new(tool_btns["floor"], play and c.is_new("@floor"))
 	floor_badge.visible = not (play and c.is_new("@floor"))      # число готовых домов — когда «НОВОЕ» снято (они на одном месте)
+	_show_new(tool_btns["upgrade"], play and c.research.has("artisans") and c.is_new("@upgrade"))
+	upg_badge.visible = not (play and c.research.has("artisans") and c.is_new("@upgrade"))
 	for b in tray_grid.get_children():
 		if b.has_meta("type"):
 			_show_new(b, play and c.is_new(b.get_meta("type")))
@@ -2208,7 +2237,7 @@ func _bottom_right() -> void:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
 	pv.add_child(h)
-	for t: Array in [["floor", "housing", "Этаж", FLOOR_TIP], ["copy", "copy", "Копия", "Копировать постройку (Ctrl+C) — тот же облик, цвет и поворот. Быстро: наведите на постройку и нажмите F"], ["move", "move", "Перенос", "Перенести постройку, дерево или камень (M)"],
+	for t: Array in [["floor", "housing", "Этаж", FLOOR_TIP], ["upgrade", "housing", "Перестроить", UPG_TIP], ["copy", "copy", "Копия", "Копировать постройку (Ctrl+C) — тот же облик, цвет и поворот. Быстро: наведите на постройку и нажмите F"], ["move", "move", "Перенос", "Перенести постройку, дерево или камень (M)"],
 			["bulldoze", "demolish", "Снос", "Снос (Delete): постройки, деревья, камни"]]:
 		var tn: String = t[0]
 		var v := _round_lbl(t[1], t[2], t[3], 48, func(): game.set_tool("" if game.tool == tn else tn))
@@ -2228,6 +2257,22 @@ func _bottom_right() -> void:
 	floor_badge.position = Vector2(35, -4)
 	fb.add_child(floor_badge)
 	_new_pill(fb, "top")
+	# «Перестроить» (Д12): на доме — двойная стрелка; число — сколько домов готовы стать следующим классом
+	var ub: Button = tool_btns["upgrade"]
+	var ua := UpArrow.new()
+	ua.name = "up"
+	ua.dbl = true
+	ua.col = UPC_COL["upc_a"]
+	ua.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ua.position = Vector2(27, 21)
+	ua.size = Vector2(17, 21)
+	ub.add_child(ua)
+	upg_badge = _label("", 15, true, C_CREAM)
+	upg_badge.add_theme_color_override("font_outline_color", C_GOOD)
+	upg_badge.add_theme_constant_override("outline_size", 9)
+	upg_badge.position = Vector2(35, -4)
+	ub.add_child(upg_badge)
+	_new_pill(ub, "top")
 	var sep := Control.new()
 	sep.custom_minimum_size = Vector2(6, 0)
 	h.add_child(sep)
@@ -2848,6 +2893,9 @@ func need_do(p: Array, tool := "") -> Dictionary:
 					"say": "«Обзор» (глаз вверху справа) → «Вода»: красные дома — без воды; поставьте фонтан посреди них"}
 			return _do_type(tool if tool != "" else String(arg))
 		"count":
+			var up := _do_upgrade(String(arg))
+			if not up.is_empty():
+				return up                     # дома ремесленников и домусы: есть готовые к перестройке — «Перестроить»
 			return _do_type(tool if tool != "" else String(arg))
 		"houses":
 			return _do_type(tool if tool != "" else "house_pleb")
@@ -2860,6 +2908,9 @@ func need_do(p: Array, tool := "") -> Dictionary:
 				if Defs.B[t]["kind"] == arg and String(Defs.B[t].get("cat", "")) != "":
 					return _do_type(t)
 		"cls":
+			var upc := _do_upgrade(String(Defs.CLASSES[String(arg)]["house"]))
+			if not upc.is_empty():
+				return upc
 			return _do_type(tool if tool != "" else String(Defs.CLASSES[String(arg)]["house"]))
 		"store":
 			for t in ["warehouse", "butcher"]:
@@ -2906,6 +2957,22 @@ func need_do(p: Array, tool := "") -> Dictionary:
 				if not e["ok"] and e.has("p"):
 					return need_do(e["p"], String(e.get("tool", "")))
 	return {}
+
+
+## Дом класса type можно получить перестройкой (Д12) и такие дома уже готовы — «Перестроить» справа внизу; иначе {}
+func _do_upgrade(type: String) -> Dictionary:
+	var c: City = game.city
+	if not (type in ["house_artisan", "house_patrician"]) or not c.unlocked(type):
+		return {}
+	var n := 0
+	for id in c.upgrade_ready(false):
+		if c.upgrade_to(c.buildings[id]) == type:
+			n += 1
+	if n == 0:
+		return {}
+	var what := "домами ремесленников" if type == "house_artisan" else "городскими домусами"
+	return {"kind": "upgrade", "tip": "Перестроить",
+		"say": "«Перестроить» справа внизу (Shift+U): %d %s готовы стать %s" % [n, _plural(n, "дом", "дома", "домов"), what]}
 
 
 ## Постройка type: открыта — взять её; закрыта — исследование (доступное: «Мясная лавка» после «Склада»); предел уровня
@@ -2988,6 +3055,8 @@ func _do_target(w: Dictionary) -> Control:
 			return rank_btn if rank_btn.visible else hover_level
 		"floor":
 			return null if game.tool == "floor" else tool_btns.get("floor")
+		"upgrade":
+			return null if game.tool == "upgrade" else tool_btns.get("upgrade")
 		"view":
 			var layer := String(w["layer"])
 			if overlay == layer:
@@ -3020,6 +3089,9 @@ func _do_click(w: Dictionary) -> void:
 		"floor":
 			if game.tool != "floor":
 				game.set_tool("floor")
+		"upgrade":
+			if game.tool != "upgrade":
+				game.set_tool("upgrade")
 		"view":
 			set_overlay(String(w["layer"]))
 		"road":
@@ -3273,6 +3345,17 @@ func _fill_tool_panel_body() -> void:
 		tool_keys.text = "Щёлкните по дому со стрелкой — над ним вырастет этаж, туда въедет ещё семья. Ведите с зажатой кнопкой вдоль улицы — этаж получат все готовые дома под курсором, пока хватает денариев.\nГотов дом, когда он полон, а счастье в нём от %d%% (3-й этаж — от %d%%). Esc или правая кнопка — выход." % [int(Defs.FLOOR_HAPPY[2]), int(Defs.FLOOR_HAPPY[3])]
 		if not c.research.has("floor2"):
 			tool_err.text = "Этажи откроет исследование «%s» (уровень «%s»)" % [Defs.research("floor2")["name"], Defs.LEVELS[int(Defs.research("floor2")["lvl"])]["name"]]
+		elif n == 0:
+			tool_err.text = "Пока ни один дом не готов: наведите на дом — у курсора будет написано, чего ему не хватает"
+		return
+	if t == "upgrade":
+		var c: City = game.city
+		var n: int = c.upgrade_ready(false).size()
+		tool_title.text = "Перестроить · готовы домов: %d" % n
+		tool_err.text = ""
+		tool_keys.text = "Щёлкните по дому с двойной стрелкой — он станет следующим классом: дом плебеев — домом ремесленников, дом ремесленников — городским домусом. Ведите с зажатой кнопкой вдоль улицы — перестроятся все готовые дома под курсором, пока хватает денариев.\nГотов дом, где живут, когда рядом есть всё для нового класса, а счастье после перестройки — от %d%% (домус — от %d%%). Esc или правая кнопка — выход." % [int(Defs.UPGRADE_HAPPY["artisans"]), int(Defs.UPGRADE_HAPPY["patricians"])]
+		if not c.research.has("artisans"):
+			tool_err.text = "Перестройку откроет исследование «%s» (уровень «%s»)" % [Defs.research("artisans")["name"], Defs.LEVELS[int(Defs.research("artisans")["lvl"])]["name"]]
 		elif n == 0:
 			tool_err.text = "Пока ни один дом не готов: наведите на дом — у курсора будет написано, чего ему не хватает"
 		return
@@ -3596,6 +3679,8 @@ func open_info(b: Dictionary) -> void:
 		PersonCard.close()
 		if game and game.people:
 			game.people.set_focus(0)
+	elif not info_b.is_empty() and int(info_b.get("id", -1)) != int(b.get("id", -2)):
+		PersonCard.close()                    # была карточка «Кошачьей лавки» с портретом
 	info_b = b
 	info_panel.visible = true
 	_fill_info()
@@ -3783,6 +3868,9 @@ func _fill_info_body() -> void:
 			if d.get("store", false):
 				_store_row(b)
 			info_box.add_child(_hire_row(b))
+			if String(b["type"]) == "catshop":
+				info_box.add_child(_divider(10))
+				_catshop_rows(b, cw)
 			if not b.get("active", true):
 				var st_txt := c.idle_text(b)            # нет работников: почему именно (никто не живёт, не тот класс, мало мест)
 				var why := {"store": "Нет склада рядом — нечем торговать", "good": "Нет сырья: %s" % {"wheat": "постройте пшеничное поле", "olives": "посадите оливковую рощу", "grapes": "посадите виноградник"}.get(d.get("needs_good", ""), ""),
@@ -3881,6 +3969,52 @@ func _fill_info_body() -> void:
 		bc.pressed.connect(func(): close_panels(); game.copy_building(b))
 		h.add_child(bc)
 		info_box.add_child(h)
+
+
+## Карточка «Кошачьей лавки» (Д14): кошка в вещице дня (живой портрет), что продаётся, у скольких кошек обновки
+func _catshop_rows(b: Dictionary, cw: float) -> void:
+	var c: City = game.city
+	var order: Array = Defs.CAT_ITEM_ORDER
+	var item := String(order[posmod(c.day + int(b["id"]), order.size())])
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 10)
+	var fur := int(b["id"]) % People.CAT_FURS.size()
+	hb.add_child(PersonCard.portrait(self, "shop:%d:%s" % [int(b["id"]), item], func(vp: SubViewport): PersonCard.shop_cat_subject(vp, fur, item)))
+	var tv := VBoxContainer.new()
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.add_child(_label("Сегодня на витрине", 14, true, C_SOFT))
+	tv.add_child(_wrap(_label(String(Defs.CAT_ITEMS[item]["name"]), 20, false, C_INK, font_title), cw - 130.0))
+	var recs: Array = c.cat_recs()
+	var dressed := 0
+	var near := 0
+	var homes: Dictionary = {}
+	for h in b.get("serves", []):
+		homes[int(h)] = true
+	for rec: Dictionary in recs:
+		if not (rec.get("it", []) as Array).is_empty():
+			dressed += 1
+		if homes.has(int(rec.get("home", -1))):
+			near += 1
+	tv.add_child(_wrap(_label("Кошек с обновками в городе: %d из %d" % [dressed, recs.size()], 14, false, C_SOFT), cw - 130.0))
+	tv.add_child(_wrap(_label("Кошек в домах рядом: %d" % near, 14, false, C_SOFT), cw - 130.0))
+	hb.add_child(tv)
+	info_box.add_child(hb)
+	info_box.add_child(_label("В продаже", 15, true, C_SOFT))
+	var fl := HFlowContainer.new()
+	fl.add_theme_constant_override("h_separation", 10)
+	fl.add_theme_constant_override("v_separation", 2)
+	for x in order:
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 3)
+		var dot := TextureRect.new()
+		dot.texture = PersonCard._dot(String(x))
+		dot.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		r.add_child(dot)
+		r.add_child(_label(String(Defs.CAT_ITEMS[x]["name"]), 13, false, C_INK))
+		fl.add_child(r)
+	info_box.add_child(fl)
+	info_box.add_child(_wrap(_label("Выбрать кошке вещь самим: щёлкните по кошке на улице.", 13, true, C_SOFT), cw))
 
 
 ## Карточка здания Легиона (Д10): уровень, что даёт сейчас и на следующем уровне, «Улучшить — N ден., M Славы, время»,
@@ -4134,7 +4268,7 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	var cl: String = d["cls"]
 	var cls: Dictionary = Defs.CLASSES[cl]
 	var tier := int(b["tier"])
-	var fmax := Defs.floors_max(cl)
+	var fmax := Defs.floors_max(cl, int(b.get("variant", 0)))
 	tv.add_child(_label("%s · этаж %d из %d · цвет «%s»" % [cls["name"], tier, fmax, Defs.PALETTE[int(b["color"])]["name"]], 14, true, C_SOFT))
 	var hp := int(b["happy"])
 	var hcol := C_GOOD if hp >= 60 else (C_GOLD if hp >= 40 else C_BAD)
@@ -4256,7 +4390,8 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 		r.add_child(nv)
 		left.add_child(r)
 	# слева: жильцы
-	left.add_child(_label("Жильцы · %d из %d мест" % [int(b["pop"]), c.house_cap(b)], 16, true, C_SOFT))
+	var tight := " — тесновато" if int(b["pop"]) > c.house_cap(b) else ""      # после перестройки мест меньше (Q9: никого не выселяем)
+	left.add_child(_label("Жильцы · %d из %d мест%s" % [int(b["pop"]), c.house_cap(b), tight], 16, true, C_BAD if tight != "" else C_SOFT))
 	var fams: Array = b.get("families", [])
 	if fams.is_empty():
 		left.add_child(_wrap(_label("Пока пусто: семья приедет на повозке — заселите её значком слева вверху", 13, false, C_SOFT), lw))
@@ -4317,6 +4452,11 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	tr.add_child(tl)
 	tr.add_child(_label("%d%%" % hp, 17, true, hcol))
 	right.add_child(tr)
+	# перестройка в следующий класс (Д12): галочки условий и кнопка с ценой
+	if c.upgrade_to(b) != "" and c.research.has("artisans"):
+		info_box.add_child(_divider(10))
+		_upgrade_rows(b, cw)
+		info_box.add_child(_divider(10))
 	# внизу: этаж покупает игрок
 	if tier >= fmax:
 		info_box.add_child(_wrap(_label("Выше этот дом не строят: этаж %d из %d" % [tier, fmax], 14, false, C_SOFT), cw))
@@ -4351,6 +4491,69 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 		var tk := _wrap(_label("Много домов сразу — инструментом «Этаж» справа внизу (U): ведите мышью по улице", 13, false, C_SOFT), cw)
 		tk.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		info_box.add_child(tk)
+
+
+## Карточка дома: «Перестроить» (Д12) — во что, галочки условий (класс изучен, нужды нового класса, счастье после
+## перестройки с запасом, место позади дома) и кнопка с ценой; много домов сразу — инструментом (Shift+U)
+func _upgrade_rows(b: Dictionary, cw: float) -> void:
+	var c: City = game.city
+	var nt := c.upgrade_to(b)
+	if nt == "":
+		return
+	var nd: Dictionary = Defs.B[nt]
+	var cl1 := String(nd["cls"])
+	var title := "Перестроить в дом ремесленников" if nt == "house_artisan" else "Перестроить в городской домус"
+	info_box.add_child(_label(title, 16, true, C_SOFT))
+	var rows := []
+	var res_ok := c.unlocked(nt)
+	rows.append([res_ok, "Изучен «%s»" % Defs.research(String(nd.get("unlock", "")))["name"]])
+	var miss := c.upgrade_missing(b)
+	var needs := []
+	for n in Defs.CLASSES[cl1]["needs"]:
+		needs.append(String(Defs.NEEDS[n]["name"]).to_lower())
+	rows.append([miss.is_empty(), ("Рядом есть всё для класса: " + ", ".join(needs)) if miss.is_empty() else "Не хватает: " + ", ".join(miss)])
+	var need := int(Defs.UPGRADE_HAPPY.get(cl1, 65))
+	var hp := c.upgrade_happy(b)
+	var res := " (запас +%d в счёт)" % (int(b["happy"]) - 100) if int(b["happy"]) > 100 else ""
+	rows.append([hp >= need, "Счастье после перестройки: %d%% — нужно от %d%%%s" % [clampi(hp, 0, 100), need, res]])
+	var room := String(c.upgrade_place(b)["err"]) == ""
+	rows.append([room, "За домом есть место" if room else "За домом нет места — мешает соседняя постройка"])
+	for e: Array in rows:
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 6)
+		var mk := _icon("check" if e[0] else "close", 18)
+		mk.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		r.add_child(mk)
+		r.add_child(_wrap(_label(String(e[1]), 14, false, C_INK if e[0] else C_BAD), cw - 30.0))
+		info_box.add_child(r)
+	var cap := int(Defs.CLASSES[cl1]["per_floor"]) * c.upgrade_tier(b)
+	if int(b["pop"]) > cap:
+		info_box.add_child(_wrap(_label("После перестройки мест будет %d, а жильцов %d — тесновато, но никто не уедет; надстройте этаж." % [cap, int(b["pop"])], 13, false, C_SOFT), cw))
+	var price := c.upgrade_price(b)
+	var why := c.can_upgrade(b)
+	var ub := Button.new()
+	ub.focus_mode = Control.FOCUS_NONE
+	ub.text = "Перестроить · %s ден." % fmt(price)
+	ub.icon = ico(String(Defs.CLASSES[cl1]["icon"]), 36)
+	ub.expand_icon = false
+	ub.custom_minimum_size = Vector2(cw, 50)
+	ub.add_theme_font_size_override("font_size", 21)
+	ub.add_theme_font_override("font", font_bold)
+	ub.disabled = why != ""
+	ub.tooltip_text = why if why != "" else "Семья останется и станет классом «%s»: налог с дома выше" % String(Defs.CLASSES[cl1]["name"])
+	ub.pressed.connect(func():
+		if c.upgrade_house(b):
+			if game.sound:
+				game.sound.ui("coins")
+			_fill_info())
+	info_box.add_child(ub)
+	if why != "":
+		var wl := _wrap(_label(why, 14, true, C_BAD), cw)
+		wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		info_box.add_child(wl)
+	var tk := _wrap(_label("Много домов сразу — «Перестроить» справа внизу (Shift+U): ведите мышью по улице", 13, false, C_SOFT), cw)
+	tk.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	info_box.add_child(tk)
 
 
 ## Слагаемые счастья дома по старым полям (если City.compute их ещё не считает)
@@ -4405,6 +4608,8 @@ func close_panels() -> bool:
 	info_panel.visible = false
 	advisor_panel.visible = false
 	buy_panel.visible = false
+	if not info_b.is_empty():
+		PersonCard.close()
 	info_b = {}
 	if not info_p.is_empty():
 		info_p = {}
@@ -5439,6 +5644,7 @@ func refresh() -> void:
 	_update_full_marks()
 	_update_rank_ui()
 	_update_floor_btn()
+	_update_upg_btn()
 	update_new_marks()
 	_fit_bottom()                             # казна длиннее, «Полки полны» — правая полоса шире
 	_fill_classes()
@@ -5574,6 +5780,39 @@ func _update_floor_btn() -> void:
 		(fb.get_node("up") as CanvasItem).modulate = Color.WHITE if open else Color(0.62, 0.6, 0.56, 0.75)
 
 
+## Кнопка «Перестроить» (Д12): до «Класса ремесленников» серая (в подсказке — чем откроется); потом число — сколько
+## домов готовы стать следующим классом (денариев может и не хватать — тогда над домом красная цена)
+func _update_upg_btn() -> void:
+	var c: City = game.city
+	var ub: Button = tool_btns["upgrade"]
+	var open := c.research.has("artisans")
+	var n: int = c.upgrade_ready(false).size() if open and game.mode in ["new", "play"] else 0
+	var txt := str(n) if n > 0 else ""
+	if upg_badge.text != txt:
+		upg_badge.text = txt
+	var tip := UPG_TIP + ("\nГотовы к перестройке сейчас: %d" % n if open else "")
+	if not open:
+		tip = "Перестроить (Shift+U): дом плебеев — в дом ремесленников, потом — в городской домус. Откроется исследованием «%s» (уровень «%s»)" % [
+			Defs.research("artisans")["name"], Defs.LEVELS[int(Defs.research("artisans")["lvl"])]["name"]]
+	if ub.tooltip_text != tip:
+		ub.tooltip_text = tip
+	if game.tool == "upgrade" and tool_panel.visible:
+		_fill_tool_panel()                    # «готовы домов: N» — живое
+	if bool(ub.get_meta("open", true)) != open or not ub.has_meta("open"):
+		ub.set_meta("open", open)
+		_grey(ub.get_node("ic"), not open)
+		(ub.get_node("up") as CanvasItem).modulate = Color.WHITE if open else Color(0.62, 0.6, 0.56, 0.75)
+
+
+## Советник один раз (tips.upgrade_tool): дома растут в следующий класс только по щелчку игрока
+func upgrade_tip() -> void:
+	var c: City = game.city
+	if c.tips.has("upgrade_tool") or not c.research.has("artisans") or not _tip_free():
+		return
+	c.tips["upgrade_tool"] = true
+	advisor("Перестроить дом", "Дом плебеев можно перестроить в дом ремесленников, а дом ремесленников — в городской домус патрициев. Сам дом никогда не растёт — только когда вы этого захотите: кнопка «Перестроить» справа внизу (или Shift+U). Над готовыми домами — двойная стрелка с ценой: медная — станет домом ремесленников, лиловая — домусом. Щёлкните по такому дому или ведите мышью вдоль улицы.\n\nГотов дом, где живут, когда рядом есть всё, что нужно новому классу, и счастье в нём после перестройки будет не ниже %d%% (для домуса — %d%%). Запас счастья выше 100%% тоже идёт в счёт. Семья остаётся и становится новым классом; если мест станет меньше, чем жильцов, — тесновато, но никто не уедет. Наведите на дом без стрелки — у курсора будет написано, чего ему не хватает." % [int(Defs.UPGRADE_HAPPY["artisans"]), int(Defs.UPGRADE_HAPPY["patricians"])])
+
+
 ## Советник один раз (tips.floor_tool): этажи — инструментом «Этаж», без карточки каждого дома
 func floor_tip() -> void:
 	var c: City = game.city
@@ -5618,6 +5857,13 @@ func _once_tips() -> void:
 		return
 	if c.research.has("floor2") and not c.tips.has("floor_tool") and not research_panel.visible:
 		floor_tip()                           # изучили второй этаж (или старый город после обновления) — один раз про «Этаж»
+		return
+	if c.research.has("artisans") and not c.tips.has("upgrade_tool") and not research_panel.visible and not c.upgrade_ready(false).is_empty():
+		upgrade_tip()                         # первый дом готов стать следующим классом (или старый город после обновления) — про «Перестроить»
+		return
+	if c.tips.has("cat_item_first") and not c.tips.has("cat_item_tip"):
+		c.tips["cat_item_tip"] = true
+		advisor("Обновка для кошки", "Хозяева кошки купили ей вещицу в «Кошачьей лавке» — теперь она так и гуляет по городу! Хозяева кошек из домов поблизости от лавки иногда покупают им шляпки, бантики, ошейники с колокольчиком и банданы.\n\nЩёлкните по кошке на улице: в её карточке видны её вещи — можно надеть другую или выбрать ей обновку из лавки самим.")
 		return
 	if full_money.visible and not c.tips.has("full_money"):
 		c.tips["full_money"] = true
@@ -6511,6 +6757,10 @@ static func add_pets(g: Node3D, type: String) -> void:
 		var n: Node3D
 		if String(e[0]) == "cat":
 			n = People.cat_node(k % 3, String(e[3]), 7 + k)
+			if e.size() > 6:
+				People.cat_wear(n, String(e[6]))
+		elif String(e[0]) in ["acc", "toy"]:
+			n = shop_prop(e)
 		else:
 			var bn: Stories.Beast = CatDecor2.beast(String(e[0]))
 			bn.play(String(e[3]), 0.0)
@@ -6520,6 +6770,26 @@ static func add_pets(g: Node3D, type: String) -> void:
 		n.transform = Transform3D(Basis(Vector3.UP, float(e[2])).scaled(Vector3.ONE * float(e[4])), (e[1] as Vector3) * sc)
 		g.add_child(n)
 		k += 1
+
+
+## Вещица на витрине «Кошачьей лавки» (["acc", где, поворот, id вещицы, масштаб]) или клубок на нитке (["toy", …]:
+## узел — в точке крепления нитки, клубок висит под ней; качает его game._toy_swing)
+static func shop_prop(e: Array) -> Node3D:
+	var root := Node3D.new()
+	var mi := MeshInstance3D.new()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if String(e[0]) == "acc":
+		mi.mesh = People._wear_build(String(e[3]))
+		mi.material_override = Kit.material(0.75)
+	else:
+		var kt := Kit.new()
+		kt.rod(Vector3.ZERO, Vector3(0, -1.25, 0), 0.006, 4, Color("e8dcc8"))
+		kt.blob(Vector3(0, -1.32, 0), Vector3(0.07, 0.07, 0.07), Color("d9506e"), 3, 0.1)
+		kt.blob(Vector3(0.03, -1.3, 0.04), Vector3(0.04, 0.03, 0.02), Color("f07fa0"), 5, 0.1)
+		mi.mesh = kt.mesh()
+		mi.material_override = Kit.material(0.85)
+	root.add_child(mi)
+	return root
 
 
 ## Картинки карточек ещё можно рисовать: игра не закрывается, интерфейс и его окошко для картинок на месте

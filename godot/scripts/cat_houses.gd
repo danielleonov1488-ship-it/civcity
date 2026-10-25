@@ -1531,6 +1531,111 @@ static func _pat_arcade(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> 
 		_win(b, rm, 0, pd, 1, shut)
 
 
+## Городской домус (этап 6.7, Д12): дом патрициев, в который перестраивают дом ремесленников, — в той же коробке
+## 2×2 пролёта, дверь на том же месте, до трёх этажей (третий в глубине, впереди терраса с перголой). Богатство — в
+## отделке: мраморная ступень и пилястры у парадной двустворчатой двери, жаровни у входа, каменные балконы с
+## драпировкой, фриз, статуи; за домом вместо мастерской — садик за стеной с кипарисом (там, где был двор)
+static func _house_patrician_town(b: Bp, floors: int, v: int) -> void:
+	floors = clampi(floors, 1, 3)
+	var k := posmod(v - Defs.PAT_TOWN, Defs.PAT_TOWN_N)
+	_begin(b, "patrician", 10 + k)
+	var r0 := R(-2.5, 2.5, -2.5, 2.5)
+	var pd := b.rng.randi() % 2           # пролёт парадной двери, в другом — окно
+	match k:
+		0: _town_loggia(b, r0, floors, pd)
+		_: _town_temple(b, r0, floors, pd)
+	_use(b, "g")
+	_town_garden(b, r0, k, floors)
+	_narrow(b)
+
+
+## Парадный вход городского домуса: двустворчатая дверь, мраморная ступень во весь проём, пилястры по бокам
+## с фонарями; у двери на мостовой — пара золотых жаровен (у одноэтажного — горшки с цветами)
+static func _town_entry(b: Bp, r0: PackedFloat32Array, pd: int, floors: int) -> void:
+	_grand_door(b, r0, pd)
+	var st := _sp(r0, 0, pd * M + 0.3, 0.0, 0.07)
+	_put(b, "SM_Bld_Floor_Trim_01", st[0], st[1], Vector3(0.76, 1.0, 0.6), MARBLE_FLOOR)
+	for u: float in [pd * M + 0.08, pd * M + M - 0.08]:
+		var a := _sp(r0, 0, u, 0.0, 0.16)
+		_put(b, "SM_Bld_Pillar_06", a[0], 0.0, Vector3(0.36, 2.7 / 3.0, 0.36))
+	_lamp(b, r0, 0, pd * M + (M + 0.3 if pd == 0 else -0.3), 2.15)
+	var other := 1 - pd
+	for u: float in [pd * M + 0.35, other * M + (0.4 if other == 0 else M - 0.4)]:
+		if floors >= 2:
+			_gold_brazier(b, Vector3(r0[0] + u, 0, r0[3] + CLEAR + 0.08 - Bp.model_aabb("SM_Prop_Brazier_01").position.z * BRAZ), BRAZ)
+		else:
+			_front_pot(b, r0, u, 0.5)
+
+
+## 0 «Городской домус с лоджией»: внизу парадная дверь и окно с фронтончиком и цветами; наверху каменный балкон
+## с драпировкой над окном и окно с фронтончиком; вальмовая крыша; у трёхэтажного — терраса с перголой и статуей
+static func _town_loggia(b: Bp, r0: PackedFloat32Array, floors: int, pd: int) -> void:
+	var wi := 1 - pd
+	var o := _frame(b, r0, floors, {"g": _bays(2, pd, DOUBLE, W5), "u": _bays(2, wi, D4, W5), "t": _bays(2, pd, D4, W5),
+		"roof": "hip", "troof": "hip", "rise": RISE_PAT, "chim": 0.6 if wi == 0 else -0.6, "dress": false})
+	_wbox(b, r0, 0, wi, 0.0)
+	_town_entry(b, r0, pd, floors)
+	_side_ivy(b, r0, 3 if wi == 0 else 1, 1.5)
+	if floors >= 2:
+		_use(b, "f1")
+		_jbal(b, r0, 0, wi, 1, false)
+		_door2(b, r0, 0, wi, 1)
+		var dr := _sp(r0, 0, wi * M + 1.25, FL + 2.75, 0.14)
+		_put(b, "SM_Prop_Drapery_0%d" % b.pick([1, 3]), dr[0], dr[1], Vector3(0.62, 0.62, 0.62))
+		_wbox(b, r0, 0, pd, FL)
+	if floors >= 3:
+		_use(b, "f2")
+		_terrace_pergola(b, o, wi)
+		var rf: PackedFloat32Array = o["rf"]
+		_statue(b, Vector3(rf[0] + pd * M + 1.25, 2 * FL + 0.07, rf[3] - 0.55), 0.0, 0.42)
+
+
+## 1 «Городской домус с фронтоном»: дом фронтоном к улице с медальоном; внизу парадная дверь и окно; наверху два
+## окна со ставнями, между ними статуя в нише на консоли и расписной фриз; у трёхэтажного — терраса со статуями по углам
+static func _town_temple(b: Bp, r0: PackedFloat32Array, floors: int, pd: int) -> void:
+	var wi := 1 - pd
+	var u := [W1, W1]
+	var o := _frame(b, r0, floors, {"g": _bays(2, pd, DOUBLE, W5), "u": u, "t": _bays(2, wi, D4, W5),
+		"roof": "gz", "troof": "gz", "rise": RISE_PAT, "chim": -0.5, "medal": true})
+	var shut: String = o["shut"]
+	_wbox(b, r0, 0, wi, 0.0)
+	_town_entry(b, r0, pd, floors)
+	_side_ivy(b, r0, b.pick([1, 3]), 1.6)
+	if floors >= 2:
+		_use(b, "f1")
+		_win(b, r0, 0, wi, 1, shut, false)
+		_win(b, r0, 0, pd, 1, shut, false)
+		_frieze(b, r0, 0, 1, u)
+		var c := _sp(r0, 0, M, FL + 0.55, 0.2)
+		_put(b, "SM_Prop_Bracket_01", (c[0] as Vector3) - Vector3(0, 0.25, 0.08), c[1], Vector3.ONE * 0.6)
+		_put(b, "SM_Prop_Statue_0%d" % b.pick([3, 5, 6]), c[0], float(c[1]) + PI, Vector3.ONE * 0.3)
+	if floors >= 3:
+		_use(b, "f2")
+		var rf: PackedFloat32Array = o["rf"]
+		for x: float in [rf[0] + 0.45, rf[1] - 0.45]:
+			_statue(b, Vector3(x, 2 * FL + 0.07, rf[3] - 0.45), 0.0, 0.42)
+
+
+## Садик за городским домусом — на месте двора-мастерской (YARD): низкие стены, кипарис выглядывает из-за крыши,
+## клумба, посредине фонтанчик или скамья под шпалерой; дверь в сад — у −X (как задняя дверь _bk), садовник — у +X
+static func _town_garden(b: Bp, r0: PackedFloat32Array, kind: int, floors: int) -> void:
+	var z1 := r0[2] - 0.05
+	var zb := r0[2] - YARD
+	var xl := r0[0]
+	var xr := r0[1]
+	_lowwall(b, Vector3(xl, 0, z1), Vector3(xl, 0, zb), 1.1, false)
+	_lowwall(b, Vector3(xl, 0, zb), Vector3(xr, 0, zb), 1.1, false)
+	_lowwall(b, Vector3(xr, 0, zb), Vector3(xr, 0, z1), 1.1, false)
+	_ivy(b, R(xl, xr, zb, z1), 2, b.rng.randf_range(1.4, 3.6), 0.62, true, 0.55)
+	_cypress(b, Vector3(xl + 0.5, 0, zb + 0.5), 0.5 if floors < 2 else 0.8)
+	_bed(b, Vector3(xl + 0.55, 0, z1 - 0.5), PI / 2, 0.55)
+	if kind == 0:
+		_fountain(b, Vector3(0.2, 0, (zb + z1) / 2.0), 0.36)
+	else:
+		_put(b, "SM_Prop_Seat_Kline_0%d" % (1 + b.rng.randi() % 3), Vector3(0.0, 0, zb + 0.55), 0.0, Vector3.ONE * 0.5)
+		_pot(b, Vector3(-1.6, 0, (zb + z1) / 2.0), 0.45)
+
+
 ## Сад за домусом — у всех обликов один участок 2 пролёта × 4 м (стены, кипарисы, клумба у окна; дверь в сад —
 ## у +X); разное — середина: фонтан, пергола, статуя или колодец. Место садовника (1,5; −4,2) до сжатия
 ## (после — (1,2; −4,2)) свободно

@@ -32,14 +32,18 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 	match type:
 		"house_pleb": CatHouses._house_pleb(b, tier, variant)
 		"house_artisan": CatHouses._house_artisan(b, tier, variant)
-		"house_patrician": CatHouses._house_patrician(b, tier, variant)
+		"house_patrician":
+			if variant >= Defs.PAT_TOWN:
+				CatHouses._house_patrician_town(b, tier, variant)     # городской домус — после перестройки (Д12)
+			else:
+				CatHouses._house_patrician(b, tier, variant)
 		"stall_fruit": CatShops._stall(b, "fruit", variant)
 		"stall_veg": CatShops._stall(b, "veg", variant)
 		"stall_fish": CatShops._stall(b, "fish", variant)
 		"butcher", "bakery", "cobbler", "dyer", "tailor", "potter", "oilshop", "lamps", "wineshop", "perfumer", "jeweler", "weaver", "barber", "medic":
 			CatShops._shop(b, type, variant)
 		"thermopolium": CatShops._thermopolium(b)
-		"ogorod", "shelter", "puppets", "herbalist", "vigiles", "sculptor", "prefect", "nymphaeum": CatExtra.make(b, type)   # этап 5
+		"ogorod", "shelter", "catshop", "puppets", "herbalist", "vigiles", "sculptor", "prefect", "nymphaeum": CatExtra.make(b, type)   # этап 5
 		"taberna": CatShops._taberna(b)
 		"fullonica": CatShops._fullonica(b)
 		"musicians": CatShops._musicians(b)

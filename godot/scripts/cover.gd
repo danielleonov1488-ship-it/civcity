@@ -437,6 +437,25 @@ static func floor_sets(c: City) -> Dictionary:
 	return {"ready": ready, "short": short, "price": price}
 
 
+## Инструмент «Перестроить» (Shift+U, Д12): ready — дома, которые можно перестроить сейчас (зелёные, над крышей
+## стрелка с ценой цвета нового класса); short — готовы, но не хватает денариев (цена красная); price — id → цена
+static func upgrade_sets(c: City) -> Dictionary:
+	var ready := []
+	var short := []
+	var price := {}
+	if c.research.has("artisans"):
+		for id in c.buildings:
+			var h: Dictionary = c.buildings[id]
+			if not c.is_house(h) or c.upgrade_to(h) == "" or c.can_upgrade(h, false) != "":
+				continue
+			price[id] = c.upgrade_price(h)
+			if c.money >= float(price[id]):
+				ready.append(id)
+			else:
+				short.append(id)
+	return {"ready": ready, "short": short, "price": price}
+
+
 ## Подпись у курсора: [сколько новых (зелёным), сколько уже с такой же (синим), третья строка — предупреждение
 ## (лавка тут не заработает) или у украшения — скольким прибавит вместе со следующим]
 static func caption(type: String, s: Dictionary) -> Array:
@@ -629,6 +648,8 @@ func refresh() -> void:
 		_overview(hud.overlay)
 	elif t == "floor":
 		_floor()
+	elif t == "upgrade":
+		_upgrade()
 	elif kind_of(t) != "":
 		if t != _type:
 			_near = Vector2.INF                  # новая стройка: зелёные — когда курсор встанет на землю
@@ -739,6 +760,25 @@ func _floor() -> void:
 		for id in sets[k]:
 			var price := int(sets["price"][id])
 			mk["fl%d" % id] = [id, "up", k == "short", game.hud.fmt(price) if game.hud else str(price), ""]
+	_marks(mk)
+
+
+## Инструмент «Перестроить»: готовые дома зелёные, над каждым — двойная стрелка цвета нового класса с ценой
+## (медная — в дом ремесленников, лиловая — в домус; не хватает денариев — цена красная)
+func _upgrade() -> void:
+	var c: City = game.city
+	sets = upgrade_sets(c)
+	state = "upgrade"
+	var w := {}
+	for id in sets["ready"]:
+		w[id] = GREEN
+	_apply(w, game.hover)
+	var mk := {}
+	for k in ["ready", "short"]:
+		for id in sets[k]:
+			var price := int(sets["price"][id])
+			var ic := "upc_p" if c.upgrade_to(c.buildings[id]) == "house_patrician" else "upc_a"
+			mk["mo%d" % id] = [id, ic, k == "short", game.hud.fmt(price) if game.hud else str(price), ""]
 	_marks(mk)
 
 

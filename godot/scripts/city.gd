@@ -859,6 +859,7 @@ func compute() -> void:
 	stats["class_happy"] = per_class
 	stats["happy_tips"] = _happy_tips(houses, stores)
 	stats["arrive_block"] = arrivals_blocked()
+	_upg_ready = null                          # готовность к перестройке — заново (счастье, лавки, соседи могли поменяться)
 
 
 ## «вторая лавка с едой — вполовину»: вид потребности в творительном падеже
@@ -1466,6 +1467,7 @@ func sim_day() -> void:
 		else:
 			_event(ev[0], ev[1])
 	_fest_hour()
+	_cat_shop_hour()
 	_story_hour()
 	_tick_arrivals()
 	_update_level()
@@ -1506,7 +1508,7 @@ func floor_price(b: Dictionary) -> int:
 		return 0
 	var cls: String = def(b)["cls"]
 	var nx := int(b["tier"]) + 1
-	if nx > Defs.floors_max(cls):
+	if nx > Defs.floors_max(cls, int(b.get("variant", 0))):
 		return 0
 	return int((Defs.FLOOR_PRICE[cls] as Dictionary).get(nx, 0))
 
@@ -1523,8 +1525,9 @@ func can_buy_floor(b: Dictionary, check_money := true) -> String:
 		return "Этаж можно надстроить только жилому дому"
 	var h: Dictionary = buildings[b["id"]]
 	var nx := int(h["tier"]) + 1
-	if nx > Defs.floors_max(def(h)["cls"]):
-		return "Выше не строят: у «%s» не больше %d этажей" % [def(h)["name"], Defs.floors_max(def(h)["cls"])]
+	var fmx := Defs.floors_max(def(h)["cls"], int(h.get("variant", 0)))
+	if nx > fmx:
+		return "Выше не строят: у «%s» не больше %d этажей" % [def(h)["name"], fmx]
 	var rid: String = Defs.FLOOR_RESEARCH.get(nx, "")
 	if rid != "" and not research.has(rid):
 		return "Сначала изучите «%s»" % Defs.research(rid)["name"]
@@ -1588,6 +1591,204 @@ func floors_done(ids: Array, spent: int) -> void:
 		return
 	var who := ", ".join(names.slice(0, 3)) + (" и ещё %d" % (names.size() - 3) if names.size() > 3 else "")
 	_quiet("Надстроили %d %s за %d ден. (дома семей %s) — место ещё для %d жителей" % [ids.size(), plural(ids.size(), "этаж", "этажа", "этажей"), spent, who, room], "housing")
+
+
+# ---------- «Перестроить» (Shift+U, Д12): дом в следующий класс — только щелчком игрока, как в Town to City ----------
+
+var _upg_ready = null                  # готовые к перестройке (без денариев) — до следующего compute
+
+## Тип дома следующего класса ("" — выше некуда)
+func upgrade_to(b: Dictionary) -> String:
+	return String(Defs.UPGRADE_NEXT.get(String(b.get("type", "")), "")) if not b.is_empty() else ""
+
+
+## Облик после перестройки: дом ремесленников — тем же номером фасада, домус — городской (в коробке дома ремесленников)
+func upgrade_variant(b: Dictionary) -> int:
+	if upgrade_to(b) == "house_patrician":
+		return Defs.PAT_TOWN + int(b.get("variant", 0)) % Defs.PAT_TOWN_N
+	return int(b.get("variant", 0)) % int(Defs.B["house_artisan"]["variants"])
+
+
+## Этажей после перестройки: столько же, сколько было (не выше, чем строят у нового облика)
+func upgrade_tier(b: Dictionary) -> int:
+	var nt := upgrade_to(b)
+	if nt == "":
+		return int(b.get("tier", 1))
+	return mini(int(b["tier"]), Defs.floors_max(String(Defs.B[nt]["cls"]), upgrade_variant(b)))
+
+
+## Цена перестройки (0 — нельзя): по классу и этажам дома сейчас
+func upgrade_price(b: Dictionary) -> int:
+	if upgrade_to(b) == "":
+		return 0
+	return int((Defs.UPGRADE_PRICE.get(String(def(b)["cls"]), {}) as Dictionary).get(int(b["tier"]), 0))
+
+
+## Счастье, какое было бы в доме, живи в нём следующий класс: те же лавки, украшения, памятники и истории (без потолка —
+## «запас» выше 100% идёт в счёт), но основа, предел украшений, налоги и нужды — нового класса (план 6.6, D-e)
+func upgrade_happy(b: Dictionary) -> int:
+	var nt := upgrade_to(b)
+	if nt == "":
+		return 0
+	var c0: Dictionary = Defs.CLASSES[String(def(b)["cls"])]
+	var cl1 := String(Defs.B[nt]["cls"])
+	var c1: Dictionary = Defs.CLASSES[cl1]
+	var raw := 0
+	for p: Array in b.get("happy_parts", []):
+		raw += int(p[1])
+	var deco1 := mini(int(c1.get("deco_max", 12)), int(floor(float(b.get("deco", 0.0)) * Defs.DECO_RATE)))
+	var tx0 := int(Defs.TAX_SET[tax_of(String(def(b)["cls"]))]["happy"])
+	var tx1 := int(Defs.TAX_SET[tax_of(cl1)]["happy"])
+	var miss1 := 0
+	for n in c1["needs"]:
+		if not (b.get("needs", {}) as Dictionary).has(n):
+			miss1 += 1
+	var miss0 := (b.get("missing", []) as Array).size()
+	return raw - int(c0.get("base", 40)) + int(c1.get("base", 40)) - int(b.get("deco_bonus", 0)) + deco1 - tx0 + tx1 \
+		+ (miss0 - miss1) * Defs.MISSING_PENALTY
+
+
+## Нужды следующего класса, которых у дома нет: ["одежда", "развлечения"]
+func upgrade_missing(b: Dictionary) -> Array:
+	var out := []
+	var nt := upgrade_to(b)
+	if nt == "":
+		return out
+	for n in Defs.CLASSES[String(Defs.B[nt]["cls"])]["needs"]:
+		if not (b.get("needs", {}) as Dictionary).has(n):
+			out.append(String(Defs.NEEDS[n]["name"]).to_lower())
+	return out
+
+
+## Встанет ли новый облик на место дома: {err, cells, y} (свои клетки не в счёт; дверь — там же, у той же дороги)
+func upgrade_place(b: Dictionary) -> Dictionary:
+	return check_place(upgrade_to(b), b["pos"], float(b["yaw"]), upgrade_variant(b), int(b.get("color", 0)), int(b["id"]))
+
+
+## Что мешает новому облику встать (для подсказки): «дом за ним», «Фонтан» — постройка на нужных клетках
+func _upgrade_blocker(b: Dictionary) -> String:
+	var bp := Catalog.make(upgrade_to(b), 1, upgrade_variant(b), int(b.get("color", 0)))
+	for k in land.footprint_cells(bp.footprint(), b["pos"], float(b["yaw"])):
+		var o := land.occ[k]
+		if o < 0:
+			return "арка у въезда"
+		if o != 0 and o != int(b["id"]) and buildings.has(o):
+			var ob: Dictionary = buildings[o]
+			return "дом за ним" if is_house(ob) else "«%s»" % String(def(ob)["name"])
+	return ""
+
+
+## "" — дом можно перестроить; иначе — почему нельзя (подпись у курсора, кнопка в карточке).
+## check_money = false — готов, а хватит ли денариев, не смотрим (стрелка с красной ценой)
+func can_upgrade(b: Dictionary, check_money := true) -> String:
+	if b.is_empty() or not buildings.has(b.get("id", -1)) or not is_house(b):
+		return "Перестроить можно только жилой дом"
+	var h: Dictionary = buildings[b["id"]]
+	var nt := upgrade_to(h)
+	if nt == "":
+		return "Это уже домус патрициев — выше класса нет"
+	var nd: Dictionary = Defs.B[nt]
+	var cl1 := String(nd["cls"])
+	if not unlocked(nt):
+		return "Сначала изучите «%s»" % Defs.research(String(nd.get("unlock", "")))["name"]
+	if int(h["pop"]) <= 0:
+		return "Дом пока пустой — перестраивают дом, где уже живут"
+	if int(h.get("coming", 0)) > 0:
+		return "Семья ещё идёт в этот дом — подождите, пока она заселится"
+	var miss := upgrade_missing(h)
+	if not miss.is_empty():
+		return "%s нужны ещё: %s — поставьте лавки рядом" % [{"artisans": "Ремесленникам", "patricians": "Патрициям"}.get(cl1, ""), ", ".join(miss)]
+	var need := int(Defs.UPGRADE_HAPPY.get(cl1, 65))
+	var hp := upgrade_happy(h)
+	if hp < need:
+		return "Счастье после перестройки было бы %d%% — нужно от %d%% (украшения и лавки рядом его поднимут)" % [clampi(hp, 0, 100), need]
+	var chk := upgrade_place(h)
+	if String(chk["err"]) != "":
+		var who := _upgrade_blocker(h)
+		if String(chk["err"]) == "Место занято":
+			return "Не помещается: %s дому нужно больше места сзади%s" % [{"artisans": "новому", "patricians": "городскому"}.get(cl1, ""), (" — мешает " + who) if who != "" else ""]
+		return "Не помещается: %s" % String(chk["err"]).to_lower()
+	if check_money and money < float(upgrade_price(h)):
+		return "Не хватает денариев"
+	return ""
+
+
+## Дома, которые можно перестроить прямо сейчас; check_money = false — и те, кому не хватает только денариев.
+## Список без денариев считается раз на пересчёт города (compute сбрасывает): кнопка с числом и стрелки — без пересчёта мест
+func upgrade_ready(check_money := true) -> Array:
+	if _upg_ready == null:
+		var all := []
+		for id in buildings:
+			var b: Dictionary = buildings[id]
+			if is_house(b) and upgrade_to(b) != "" and can_upgrade(b, false) == "":
+				all.append(id)
+		_upg_ready = all
+	if not check_money:
+		return (_upg_ready as Array).duplicate()
+	return (_upg_ready as Array).filter(func(id): return buildings.has(id) and money >= float(upgrade_price(buildings[id])))
+
+
+## Перестроить дом: деньги списываются, дом тот же (номер, семьи, цвет, этажи — сколько влезет), класс — следующий.
+## Семьи остаются и становятся этим классом; мест меньше, чем жильцов, — «тесновато», никого не выселяют (Q9).
+## quiet — инструментом «Перестроить»: итог мазка — одной строкой в колокольчик (upgrades_done)
+func upgrade_house(b: Dictionary, quiet := false) -> bool:
+	if can_upgrade(b) != "":
+		return false
+	var h: Dictionary = buildings[b["id"]]
+	var price := upgrade_price(h)
+	var chk := upgrade_place(h)
+	var nt := upgrade_to(h)
+	var nv := upgrade_variant(h)
+	var nf := upgrade_tier(h)
+	money -= float(price)
+	flow("build", -float(price))
+	_apron_remove(h)
+	for k in (h["cells"] as PackedInt32Array):
+		if land.occ[k] == int(h["id"]):
+			land.occ[k] = 0
+	h["type"] = nt
+	h["variant"] = nv
+	h["tier"] = nf
+	h["cells"] = chk["cells"]
+	var cells: PackedInt32Array = h["cells"]
+	land.flatten_cells(cells, h["y"])          # высота дома прежняя: двор позади подравнивается к ней
+	land.blend_ring(cells, h["y"], 8)
+	for k in cells:
+		if land.occ[k] >= 0:
+			land.occ[k] = h["id"]
+	_apron_add(h)
+	if apron_of(h) == 2:
+		land.wear_block[int(h["id"])] = true
+		_apron_refresh(h)
+	compute()
+	h["_upg"] = true                           # game: леса и рабочие, жители — в новом классе
+	house_changed.emit(h, true)
+	h.erase("_upg")
+	if not quiet:
+		# только в колокольчик (без всплывашки): перестроили сами, щелчком в карточке
+		_quiet("Дом семьи %s перестроили: теперь это %s" % [_fam_name(h), String(Defs.B[nt]["name"]).to_lower()], String(Defs.CLASSES[String(Defs.B[nt]["cls"])]["icon"]))
+	_check_goals()
+	changed.emit()
+	return true
+
+
+## Мазок «Перестроить» окончен: одна запись в колокольчик (без всплывашки) — сколько домов, кому и за сколько
+func upgrades_done(ids: Array, spent: int) -> void:
+	if ids.is_empty():
+		return
+	var names := []
+	var tight := 0
+	for id in ids:
+		if buildings.has(id):
+			names.append(_fam_name(buildings[id]))
+			if int(buildings[id]["pop"]) > house_cap(buildings[id]):
+				tight += 1
+	var tail := " Где жильцов больше, чем мест, — тесновато, но никто не уехал: надстройте этаж." if tight > 0 else ""
+	if ids.size() == 1 and buildings.has(ids[0]):
+		_quiet("Дом семьи %s перестроили за %d ден.: теперь это %s.%s" % [names[0], spent, String(def(buildings[ids[0]])["name"]).to_lower(), tail], "housing")
+		return
+	var who := ", ".join(names.slice(0, 3)) + (" и ещё %d" % (names.size() - 3) if names.size() > 3 else "")
+	_quiet("Перестроили %d %s за %d ден. (семьи %s).%s" % [ids.size(), plural(ids.size(), "дом", "дома", "домов"), spent, who, tail], "housing")
 
 
 ## Счастье жилых домов, где живут (0…100), — до и после стройки: над кем оно поменялось, всплывают рожицы (game._happy_pops)
@@ -2131,6 +2332,8 @@ static func sub_name(type: String) -> String:
 func is_new(type: String) -> bool:
 	if type == "@floor":
 		return research.has("floor2") and not (tips.get("seen", {}) as Dictionary).has(type)
+	if type == "@upgrade":
+		return research.has("artisans") and not (tips.get("seen", {}) as Dictionary).has(type)
 	return String(Defs.B[type].get("cat", "")) != "" and unlocked(type) and not (tips.get("seen", {}) as Dictionary).has(type)
 
 
@@ -2457,6 +2660,13 @@ static func stories_load(d: Variant) -> Dictionary:
 	for k in ["bonus", "pets"]:
 		if typeof(dd.get(k)) == TYPE_ARRAY:
 			s[k] = dd[k]
+	for p in s["pets"]:
+		if typeof(p) == TYPE_DICTIONARY and (p.has("it") or p.has("wr")):
+			var pe := {}
+			cat_items_load(p, pe)              # вещицы кошки-награды — только известные
+			p.erase("it")
+			p.erase("wr")
+			p.merge(pe)
 	# истории, которой в игре больше нет, — не продолжаем
 	for k in ["active", "offer"]:
 		if not (s[k] as Dictionary).is_empty() and StoryDefs.story(String(s[k].get("id", ""))).is_empty():
@@ -2526,6 +2736,105 @@ func _story_rehome(old: int, new: int) -> void:
 	for e: Dictionary in stories["bonus"] + stories["pets"] + (stories["done"] as Dictionary).values():
 		if e.has("home") and int(e["home"]) == old:
 			e["home"] = new
+
+
+# ---------- «Кошачья лавка» (Д14): вещицы кошек — в записи кошки: it — что есть, wr — что надето ("" — ничего) ----------
+
+## Записи всех кошек с именами: городские (cats) и кошки-награды историй (stories.pets)
+func cat_recs() -> Array:
+	return cats + (stories.get("pets", []) as Array)
+
+
+## Имя кошки по записи (у кошек-наград — name)
+static func cat_rec_name(rec: Dictionary) -> String:
+	return String(rec.get("nm", rec.get("name", "")))
+
+
+## Работает ли в городе хоть одна «Кошачья лавка»
+func cat_shop_open() -> bool:
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if String(b["type"]) == "catshop" and bool(b.get("active", false)):
+			return true
+	return false
+
+
+## Дома, которые обслуживают работающие «Кошачьи лавки»
+func cat_shop_homes() -> Dictionary:
+	var out := {}
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if String(b["type"]) == "catshop" and bool(b.get("active", false)):
+			for h in b.get("serves", []):
+				out[int(h)] = true
+	return out
+
+
+## Вещь item кошке rec: в её вещи и сразу надеть. by_player — выбрал игрок в карточке кошки: нужна работающая лавка
+## и денарии (цена из CAT_ITEMS); хозяева покупают сами — город не платит
+func buy_cat_item(rec: Dictionary, item: String, by_player := true) -> bool:
+	if rec.is_empty() or not Defs.CAT_ITEMS.has(item):
+		return false
+	var it: Array = rec.get("it", [])
+	if not it.has(item):
+		if by_player:
+			var price := float(Defs.CAT_ITEMS[item]["price"])
+			if not cat_shop_open() or money < price:
+				return false
+			money -= price
+			flow("other", -price)
+		it.append(item)
+		rec["it"] = it
+	rec["wr"] = item
+	changed.emit()
+	return true
+
+
+## Надеть кошке её вещь item ("" — снять всё)
+func wear_cat_item(rec: Dictionary, item: String) -> bool:
+	if rec.is_empty() or (item != "" and not (rec.get("it", []) as Array).has(item)):
+		return false
+	rec["wr"] = item
+	changed.emit()
+	return true
+
+
+## Час «Кошачьих лавок»: хозяева кошки из дома, который обслуживает лавка, иногда покупают ей обновку (не больше
+## CAT_ITEMS_MAX вещиц) и сразу надевают. Свой поток случайностей: общий rng города (семьи, цвета) не сдвигается
+func _cat_shop_hour() -> void:
+	var homes := cat_shop_homes()
+	if homes.is_empty():
+		return
+	var rg := RandomNumberGenerator.new()
+	rg.seed = hash([hour_n, day, "cats"])
+	for rec: Dictionary in cat_recs():
+		if not homes.has(int(rec.get("home", -1))):
+			continue
+		var it: Array = rec.get("it", [])
+		if it.size() >= Defs.CAT_ITEMS_MAX or rg.randf() >= Defs.CAT_BUY_P:
+			continue
+		var opts: Array = Defs.CAT_ITEM_ORDER.filter(func(x): return not it.has(x))
+		if opts.is_empty():
+			continue
+		var item: String = opts[rg.randi() % opts.size()]
+		buy_cat_item(rec, item, false)
+		var h: Dictionary = buildings.get(int(rec.get("home", -1)), {})
+		var who := ("Семья %s купила" % _fam_name(h)) if not h.is_empty() and not (h.get("families", []) as Array).is_empty() else "Хозяева купили"
+		_quiet("%s в «Кошачьей лавке» обновку: %s теперь %s" % [who, cat_rec_name(rec), String(Defs.CAT_ITEMS[item]["wear"])], "cat")
+		tips["cat_item_first"] = true            # советник объяснит один раз (hud._once_tips)
+
+
+## Вещи кошки из сохранения: только известные; надето — из её вещей (старые сохранения — без вещей)
+static func cat_items_load(e: Dictionary, out: Dictionary) -> void:
+	var it := []
+	if typeof(e.get("it")) == TYPE_ARRAY:
+		for x in e["it"]:
+			if Defs.CAT_ITEMS.has(String(x)) and not it.has(String(x)):
+				it.append(String(x))
+	if not it.is_empty():
+		out["it"] = it
+		var wr := String(e.get("wr", ""))
+		out["wr"] = wr if it.has(wr) else ""
 
 
 # ---------- сохранение ----------
@@ -2613,8 +2922,10 @@ func load_data(d: Dictionary) -> void:
 	if typeof(cl) == TYPE_ARRAY:
 		for e in cl:
 			if typeof(e) == TYPE_DICTIONARY:
-				cats.append({"nm": String(e.get("nm", "")), "sx": int(e.get("sx", 1)), "fur": int(e.get("fur", 0)), "home": int(e.get("home", -1)),
-					"sd": int(e.get("sd", 1))})
+				var ce := {"nm": String(e.get("nm", "")), "sx": int(e.get("sx", 1)), "fur": int(e.get("fur", 0)), "home": int(e.get("home", -1)),
+					"sd": int(e.get("sd", 1))}
+				cat_items_load(e, ce)            # вещицы из «Кошачьей лавки» (Д14); старые сохранения — без них
+				cats.append(ce)
 	next_id = int(d.get("next_id", 1))
 	buildings = {}
 	for bd in d.get("buildings", []):

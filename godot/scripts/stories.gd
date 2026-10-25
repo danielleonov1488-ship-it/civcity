@@ -425,7 +425,7 @@ func _cast(sd: Dictionary) -> Array:
 		var b: Dictionary = city.buildings[id]
 		if not city.is_house(b) or not (String(city.def(b)["cls"]) in clss) or int(b["pop"]) <= 0:
 			continue
-		if floors > 0 and (int(b.get("tier", 1)) != floors or Defs.floors_max(String(city.def(b)["cls"])) <= floors):
+		if floors > 0 and (int(b.get("tier", 1)) != floors or Defs.floors_max(String(city.def(b)["cls"]), int(b.get("variant", 0))) <= floors):
 			continue
 		for f: Dictionary in b["families"]:
 			var fam := String(f["name"])
