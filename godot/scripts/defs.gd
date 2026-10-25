@@ -594,16 +594,11 @@ static func research(id: String) -> Dictionary:
 	return {}
 
 
-## Вид украшения, к которому относится облик («flowers_2» → «flowers»); у остальных построек — сам тип
-## Наземное украшение у стены дома меняет облик (3.10): фонарь на столбе — фонарь на стене, клумба — ящик под окном,
-## знамя на шесте — знамя на стене. Одна карточка — два облика, по тому, куда навели курсор
-const WALL_FORM := {"lamp_post": "wall_lamp", "lamp_post_2": "wall_lamp_2", "lamp_post_3": "wall_lamp",
-	"flowers": "wall_flowers", "flowers_2": "wall_flowers_2", "flowers_3": "wall_flowers_3",
-	"banner": "wall_banner", "banner_2": "wall_banner_2"}
 ## Звено забора вдоль своей оси X (Catalog.DECOR × 2,5 м): так часто по линии встают звенья
 const FENCE_PITCH := 1.95
 
 
+## Вид украшения, к которому относится облик («flowers_2» → «flowers»); у остальных построек — сам тип
 static func base_of(type: String) -> String:
 	return String((B.get(type, {}) as Dictionary).get("base", type))
 

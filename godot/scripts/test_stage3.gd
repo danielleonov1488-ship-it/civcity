@@ -8,7 +8,8 @@ extends Node
 ## 3.3 мазок: высоты и пересчёт города — после отпускания, сетка — только где поменялись уступы
 ## 3.4 живая картинка и ряд цветов; 3.5 ошибка у курсора, стрелка у входа, вспышка у дороги, значок «Z/X» 3 раза
 ## 3.6 отмена постройки 30 с; 3.7 деревья сквозь призрак; 3.8 подпись при наведении, колёсико к курсору, двойной щелчок
-## 3.9 склад и лавки; 3.10 фонарь у стены — фонарь на стене; заборы; настенные украшения (этаж, перенос, окна)
+## 3.9 склад и лавки; 3.10 выключен (владелец 12.10: без превращений) — фонарь у стены остаётся фонарём на столбе;
+## заборы; настенные украшения (этаж, перенос, окна)
 
 var game
 var c: City
@@ -175,6 +176,27 @@ func put(type: String, target: Vector2) -> Dictionary:
 	return {}
 
 
+## Поставить игроком (как щелчком — _build_here, с отменой 30 с) у дороги в ближайшей к цели годной точке
+func build_at(type: String, target: Vector2) -> Dictionary:
+	game.set_tool(type)
+	cands.sort_custom(func(p, q): return p.distance_squared_to(target) < q.distance_squared_to(target))
+	for p in cands.slice(0, 200):
+		reset()
+		var pl: Dictionary = game.placement(type, p)
+		if pl["err"] != "":
+			continue
+		game.place_lock = {"p": pl["pos"]}
+		game.tool_yaw = float(pl["yaw"])
+		if game.placement(type, p)["err"] != "":
+			continue
+		var n0: int = c.next_id
+		game._build_here()
+		reset()
+		return c.buildings.get(n0, {})
+	reset()
+	return {}
+
+
 func texts(n: Node) -> String:
 	var out := []
 	for l in n.find_children("*", "Label", true, false):
@@ -242,6 +264,7 @@ func _run() -> void:
 	await _line()
 	await _eraser()
 	await _stroke_cost()
+	await _square_line()
 	await _thumb_color()
 	await _cursor_feedback()
 	await _undo_place()
@@ -436,6 +459,99 @@ func _stroke_cost() -> void:
 	game.set_tool("")
 
 
+## Клетки прямой квадратной кистью перебором всей рамки линии (как до сужения рядов): {клетка: 1 — платная, 0 — нет}
+func _line_ref(a: Vector2, b: Vector2, r: float, kd: int) -> Dictionary:
+	var ab := b - a
+	var out := {}
+	var c0 := land.cell(a.min(b) - Vector2(r, r))
+	var c1 := land.cell(a.max(b) + Vector2(r, r))
+	var flat := kd != Land.Kind.GRASS
+	for j in range(c0.y, c1.y + 1):
+		for i in range(c0.x, c1.x + 1):
+			if not land.inside(i, j):
+				continue
+			var q := Vector2((i + 0.5) * Land.CELL, (j + 0.5) * Land.CELL)
+			var tl := 0.0
+			var th := 1.0
+			var ok := true
+			for ax in 2:
+				var qa: float = q[ax]
+				var aa: float = a[ax]
+				var da: float = ab[ax]
+				if absf(da) < 1e-6:
+					if absf(qa - aa) > r:
+						ok = false
+				else:
+					tl = maxf(tl, minf((qa - r - aa) / da, (qa + r - aa) / da))
+					th = minf(th, maxf((qa - r - aa) / da, (qa + r - aa) / da))
+			if not ok or tl > th or not land.is_owned(q):
+				continue
+			var k := j * Land.N + i
+			var kk: int = land.kind[k]
+			var y: float = land.hq(k)
+			if y < Land.WATER_Y + 0.05 or land.occ[k] != 0:
+				continue
+			if not flat and not Land.walk_kind(kk):
+				continue
+			if flat:
+				var pt := a + ab * ((tl + th) * 0.5)
+				var y0 := land.height_at(pt.x, pt.y)
+				if absf(y - y0) > 1.2 or (kk == kd and absf(y - y0) < 0.01):
+					continue
+			out[k] = 1 if kk != kd else 0
+	return out
+
+
+func _line_set(lc: Dictionary) -> Dictionary:
+	var out := {}
+	for n in (lc["cells"] as PackedInt32Array).size():
+		out[int(lc["cells"][n])] = int(lc["fresh"][n])
+	return out
+
+
+# ---------- 3.3: прямая квадратной кистью — только полоса линии, а не вся её рамка ----------
+
+func _square_line() -> void:
+	print("== 3.3 прямая квадратной кистью")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 2410
+	var bad := []
+	for n in 40:
+		var a := Vector2(rng.randf_range(160, 225), rng.randf_range(115, 195))
+		var b := a + Vector2.from_angle(rng.randf() * TAU) * (rng.randf_range(0, 45) if n % 5 else 0.0)
+		if n % 7 == 3:
+			b = Vector2(b.x, a.y)                   # и ровно вдоль осей
+		elif n % 7 == 5:
+			b = Vector2(a.x, b.y)
+		var r: float = [0.5, 1.0, 2.0, 3.0][n % 4]
+		var kd: int = Land.Kind.GRASS if n % 3 == 0 else Land.Kind.ROAD
+		if _line_set(land.line_cells(a, b, r, kd, true, true)) != _line_ref(a, b, r, kd):
+			bad.append([a, b, r, kd])
+	check(bad.is_empty(), "квадратная кисть: клетки и цена те же, что перебором всей рамки (40 линий)", bad)
+	# диагональ 80 м: раньше — ~51 тыс. клеток рамки на каждые 0,25 м мыши; теперь — как круглой кистью (полоса
+	# квадрата по диагонали шире круга в √2 раз). Время — лучшее из трёх (вторая линия может грузить машину)
+	var a := Vector2(150, 112)
+	var b := a + Vector2(56.5, 56.5)
+	var ms := INF
+	var round_ms := INF
+	var ref_ms := INF
+	var lc: Dictionary = {}
+	var ref := {}
+	for k in 3:
+		var t0 := Time.get_ticks_usec()
+		lc = land.line_cells(a, b, 2.0, Land.Kind.ROAD, true, true)
+		ms = minf(ms, (Time.get_ticks_usec() - t0) / 1000.0)
+		t0 = Time.get_ticks_usec()
+		land.line_cells(a, b, 2.0, Land.Kind.ROAD, false, true)
+		round_ms = minf(round_ms, (Time.get_ticks_usec() - t0) / 1000.0)
+		t0 = Time.get_ticks_usec()
+		ref = _line_ref(a, b, 2.0, Land.Kind.ROAD)
+		ref_ms = minf(ref_ms, (Time.get_ticks_usec() - t0) / 1000.0)
+	print("S3 SQUARE диагональ 80 м: квадрат %.1f мс, круг %.1f мс, перебор рамки %.1f мс, клеток %d" % [ms, round_ms, ref_ms, (lc["cells"] as PackedInt32Array).size()])
+	check(_line_set(lc) == ref, "диагональ 80 м квадратной кистью — те же клетки, что перебором рамки")
+	check(ms < ref_ms and ms <= round_ms * 1.8 + 2.0, "…и почти как круглой: %.1f мс (круг %.1f, перебор рамки %.1f)" % [ms, round_ms, ref_ms])
+
+
 # ---------- 3.4: живая картинка и цвета ----------
 
 func _thumb_color() -> void:
@@ -608,6 +724,45 @@ func _undo_place() -> void:
 	(game.undo_stack.back() as Dictionary)["ms"] = Time.get_ticks_msec() - 31000
 	game._undo("place")
 	check(c.buildings.has(int(h2["id"])), "через 30 с отмена не сносит")
+	# постройка выполнила просьбу — награда уже выдана: полного возврата нет (снимок — до постановки)
+	game.undo_stack.clear()
+	c.goals_done.erase("fruit")
+	var st := build_at("stall_fruit", Vector2(200, 158))
+	check(not st.is_empty() and c.goals_done.has("fruit"), "фруктовая лавка выполнила просьбу «%s»" % Defs.REQUESTS.filter(func(g): return g["id"] == "fruit")[0]["text"])
+	check(game.undo_place_info().is_empty(), "просьба выполнена — медаль «Отменить» пуста")
+	var mf: float = c.money
+	await key(KEY_Z, true)
+	check(not st.is_empty() and c.buildings.has(int(st["id"])) and is_equal_approx(c.money, mf), "Ctrl+Z: лавка стоит, денег не вернулось")
+	c.money = 50000.0
+	# новый ранг за эти 30 с и выполненный заказ старосты — тоже
+	var hr := build_at("house_pleb", Vector2(176, 158))
+	check(not hr.is_empty() and not game.undo_place_info().is_empty(), "дом — отменить можно")
+	c.level += 1
+	check(game.undo_place_info().is_empty(), "город получил новый ранг — отмены с полным возвратом нет")
+	c.level -= 1
+	var ho := build_at("house_pleb", Vector2(184, 158))
+	c.stories["orders"] = {"n": {"lights": 1}}
+	check(not ho.is_empty() and game.undo_place_info().is_empty(), "выполнен заказ старосты — отмены с полным возвратом нет")
+	c.stories.erase("orders")
+	# казна у предела: доход дополнил её, пока дом стоял — отмена не поднимает казну выше предела
+	c.money = c.money_cap() - 5.0
+	var hm := build_at("house_pleb", Vector2(192, 158))
+	c.money = c.money_cap()
+	await key(KEY_Z, true)
+	check(not hm.is_empty() and not c.buildings.has(int(hm["id"])) and is_equal_approx(c.money, c.money_cap()), "отмена у полной казны: дом убран, казна %.0f из %.0f" % [c.money, c.money_cap()])
+	c.money = 50000.0
+	# памятник Легиона: вместе с денариями возвращается и Слава
+	c.research["arch"] = true
+	c.legion.glory = 100.0
+	game.undo_stack.clear()
+	var ma: float = c.money
+	var arch := build_at("arch", Vector2(196, 166))
+	check(not arch.is_empty() and is_equal_approx(c.legion.glory, 75.0), "арка поставлена: Славы %.0f из 100" % c.legion.glory)
+	hud.refresh_undo()
+	check(hud.undo_btn.tooltip_text == "Отменить: Триумфальная арка, вернётся %s ден. и 25 Славы" % hud.fmt(float(Defs.B["arch"]["cost"])), "медаль: «%s»" % hud.undo_btn.tooltip_text)
+	await key(KEY_Z, true)
+	check(not arch.is_empty() and not c.buildings.has(int(arch["id"])) and is_equal_approx(c.money, ma) and is_equal_approx(c.legion.glory, 100.0),
+		"Ctrl+Z: арки нет, вернулись %.0f ден. и Слава (%.0f)" % [c.money - (ma - float(Defs.B["arch"]["cost"])), c.legion.glory])
 	game.set_tool("road")
 	await frames(2)
 	game.undo_stack.clear()
@@ -870,6 +1025,43 @@ func _fences() -> void:
 			back = true
 	check(back, "Ctrl+Z — звено снова на месте")
 	game.brush_r = 2.0
+	# до нажатия видно ровно то звено, которое поставит щелчок (от курсора, а не серединой на нём)
+	game.set_tool("fence")
+	game.fence_gate = false
+	reset()
+	var P := Vector2(212.3, 125.4)
+	move(scr(P))
+	await frames(4)
+	var shown: Vector2 = game.fence_plan[0]["pos"] if game.fence_plan.size() == 1 else Vector2.INF
+	var n6: int = c.next_id
+	await click(scr(P))
+	var one: Dictionary = c.buildings.get(n6, {})
+	check(not one.is_empty() and (one["pos"] as Vector2).distance_to(shown) < 0.05, "щелчок — звено там же, где было показано (сдвиг %.2f м)" % ((one.get("pos", Vector2.INF) as Vector2).distance_to(shown)))
+	if not one.is_empty():
+		# у конца звена: показ — от его конца, без ложного «Место занято»
+		var e1: Vector2 = (one["pos"] as Vector2) + City.axis(float(one["yaw"])) * Defs.FENCE_PITCH * 0.5
+		move(scr(e1 + Vector2(0.12, 0.15)))
+		await frames(4)
+		var s0: Dictionary = game.fence_plan[0] if game.fence_plan.size() == 1 else {}
+		check(not s0.is_empty() and s0["err"] == "" and hud._err == "" and ((s0["pos"] as Vector2) - City.axis(float(s0["yaw"])) * Defs.FENCE_PITCH * 0.5).distance_to(e1) < 0.01,
+			"у конца звена — звено от его конца, у курсора без ошибки («%s», «%s»)" % [s0.get("err", "?"), hud._err])
+		# над серединой звена — «Место занято»; нажали и тянем — у курсора прежней красной строки нет (что не так — под ценой)
+		move(scr(one["pos"]))
+		await frames(4)
+		var was: String = hud._err
+		await drag(scr(one["pos"]), scr((one["pos"] as Vector2) + Vector2(0, 5.8)), 10, false)
+		check(was != "" and game.fence_drag and hud._err == "", "тянем забор: красная строка у курсора погасла («%s» → «%s»)" % [was, hud._err])
+		await key(KEY_ESCAPE)
+		btn(scr((one["pos"] as Vector2) + Vector2(0, 5.8)), MOUSE_BUTTON_LEFT, false)
+		await frames(3)
+	# Z/X с забором — от его поворота, а не от поворота прошлой постройки
+	game.set_tool("fence")
+	game.tool_yaw = 0.0
+	game.place_info = {"yaw": PI * 0.5, "pos": P, "tier": 1, "variant": 0, "color": 0, "_t": "house_pleb"}   # как после дома у дороги
+	move(scr(P + Vector2(0, 2)))
+	await frames(4)
+	await key(KEY_Z)
+	check(absf(game.tool_yaw - deg_to_rad(-15.0)) < 0.001, "Z с забором: −15° от его поворота, а не от дома (%.0f°)" % rad_to_deg(game.tool_yaw))
 	game.set_tool("")
 
 
@@ -1147,10 +1339,10 @@ func _wall_decor() -> void:
 	game.set_tool("")
 
 
-# ---------- 3.10: украшение у стены — в настенном облике ----------
+# ---------- у стены украшение не превращается (решение владельца 12.10); настенные — свои карточки ----------
 
 func _wall_forms() -> void:
-	print("== 3.10 облик у стены")
+	print("== у стены — без превращений")
 	var h := put("house_pleb", Vector2(232, 154))
 	if not check(not h.is_empty(), "дом для фонаря"):
 		return
@@ -1158,12 +1350,12 @@ func _wall_forms() -> void:
 	game._show(h)
 	var hp: Vector2 = h["pos"]
 	var bp := c.blueprint(h)
-	# стена с местом для всех трёх обликов (у узкого фасада окна и двери почти везде — берём боковую, если там просторнее)
+	# стена с местом для всех трёх настенных (у узкого фасада окна и двери почти везде — берём боковую, если там просторнее)
 	var wall := {}
 	for f: Dictionary in WallDecor.faces(bp):
 		var room := true
-		for form: String in ["wall_lamp", "wall_flowers", "wall_banner"]:
-			if roomy(f, WallDecor.rect_of(form), (f["bound"] as Rect2).get_center().x, (f["bound"] as Rect2).get_center().y, []) == Vector2.INF:
+		for wt: String in ["wall_lamp", "wall_flowers", "wall_banner"]:
+			if roomy(f, WallDecor.rect_of(wt), (f["bound"] as Rect2).get_center().x, (f["bound"] as Rect2).get_center().y, []) == Vector2.INF:
 				room = false
 		if room and (wall.is_empty() or (f["bound"] as Rect2).get_area() > (wall["bound"] as Rect2).get_area()):
 			wall = f
@@ -1172,38 +1364,79 @@ func _wall_forms() -> void:
 	var side := atan2((wall["n"] as Vector3).x, (wall["n"] as Vector3).z)
 	await _look_front(h, side)
 	var bd: Rect2 = wall["bound"]
-	for t: String in ["lamp_post", "flowers", "banner"]:
-		game.set_tool(t)
-		var form: String = Defs.WALL_FORM[t]
-		var rect := WallDecor.rect_of(form)
+	var lamp_wp := Vector3.INF
+	for pair: Array in [["lamp_post", "wall_lamp"], ["flowers", "wall_flowers"], ["banner", "wall_banner"]]:
+		var t: String = pair[0]
+		var wt: String = pair[1]
+		var rect := WallDecor.rect_of(wt)
 		var at := roomy(wall, rect, bd.get_center().x, bd.get_center().y, WallDecor._extra_on(wall, WallDecor.hosted(c, h)))
 		if at == Vector2.INF:
-			print("S3 note: на стене нет места для «%s»" % form)
+			print("S3 note: на стене нет места для «%s»" % wt)
 			at = bd.get_center()
 		var lp: Vector3 = (wall["a"] as Vector3) * (at.x + rect.get_center().x) + (wall["n"] as Vector3) * float(wall["d"])
 		lp.y = at.y + rect.get_center().y
 		var wp := c.xf(h) * lp
+		if t == "lamp_post":
+			lamp_wp = wp
+		# наземное украшение, наведённое на стену, — собой: ни настенного облика, ни стены
+		game.set_tool(t)
 		await aim(wp)
 		var pl: Dictionary = game.place_info
-		var got := String(pl.get("form", ""))
-		var ok: bool = got == form and int(pl.get("host", -1)) == int(h["id"]) and pl["err"] == ""
-		if ok:
+		var ok: bool = String(pl.get("_t", "")) == t and not pl.has("form") and not pl.has("host")
+		var why := "для «%s», host %d, err «%s»" % [pl.get("_t", ""), int(pl.get("host", -1)), pl.get("err", "")]
+		if ok and pl["err"] == "":
 			var n1: int = c.buildings.size()
 			await click(scr3(wp))
 			var nb: Dictionary = c.buildings.get(c.next_id - 1, {})
-			ok = c.buildings.size() == n1 + 1 and String(nb.get("type", "")) == form and int(nb.get("host", -1)) == int(h["id"])
-			if ok and t == "flowers":
-				await shot("s3_wall_forms.png")
+			ok = c.buildings.size() == n1 + 1 and String(nb.get("type", "")) == t and not nb.has("host")
+			why += ", построек +%d, новая «%s» host %d, место «%s»" % [c.buildings.size() - n1, nb.get("type", ""), int(nb.get("host", -1)), game.place_info.get("err", "")]
 			if ok:
-				c.remove(nb, false)                  # стена снова свободна — следующему облику есть место
-		check(ok, "«%s» у стены — «%s» на стене" % [Defs.B[t]["name"], Defs.B[form]["name"]], "host %d/%d, form «%s», err «%s»" % [int(pl.get("host", -1)), int(h["id"]), got, pl.get("err", "")])
+				c.remove(nb, false)
+		check(ok, "«%s» у стены — так и остаётся «%s»" % [Defs.B[t]["name"], Defs.B[t]["name"]], why)
+		# настенная карточка — на стене, там, где курсор
+		game.set_tool(wt)
+		await aim(wp)
+		pl = game.place_info
+		var ok2: bool = int(pl.get("host", -1)) == int(h["id"]) and pl["err"] == ""
+		if ok2:
+			var n2: int = c.buildings.size()
+			await click(scr3(wp))
+			var nw: Dictionary = c.buildings.get(c.next_id - 1, {})
+			ok2 = c.buildings.size() == n2 + 1 and String(nw.get("type", "")) == wt and int(nw.get("host", -1)) == int(h["id"])
+			if ok2 and t == "flowers":
+				await shot("s3_wall_card.png")
+			if ok2:
+				c.remove(nw, false)                  # стена снова свободна — следующему есть место
+		check(ok2, "«%s» — на стене дома" % Defs.B[wt]["name"], "host %d/%d, err «%s»" % [int(pl.get("host", -1)), int(h["id"]), pl.get("err", "")])
+	# перенос фонаря на стену дома: на стену он не встаёт, клетки и высоты дома не трогаются
+	var lamp := put("lamp_post", hp - City.facing(h["yaw"]) * 6.5)
+	if check(not lamp.is_empty() and lamp_wp.is_finite(), "фонарь для переноса"):
+		var cells: PackedInt32Array = h["cells"]
+		var occ0 := []
+		var hh0 := []
+		for k in cells:
+			occ0.append(land.occ[k])
+			hh0.append(land.h[k])
+		game.start_move(lamp)
+		await aim(lamp_wp)
+		var mp: Dictionary = game.place_info
+		check(not mp.has("form") and not mp.has("host"), "перенос фонаря к стене — без настенного облика («%s»)" % mp.get("err", ""))
+		var n3: int = c.next_id
+		game._build_here()
+		var same := true
+		for i in cells.size():
+			if land.occ[cells[i]] != int(occ0[i]) or absf(land.h[cells[i]] - float(hh0[i])) > 1e-4:
+				same = false
+		var nl: Dictionary = c.buildings.get(n3, {})
+		check(same and (nl.is_empty() or (String(nl["type"]) == "lamp_post" and not nl.has("host"))), "клетки и высоты дома не тронуты, фонарь — на земле", nl.get("type", ""))
+		game.set_tool("")
 	# на земле — как был
 	game.set_tool("lamp_post")
 	game.rig.set_view(Vector3(hp.x, 2, hp.y), rad_to_deg(float(h["yaw"])) + 180.0, 60, 22)
 	await frames(20)
 	move(scr(hp - City.facing(h["yaw"]) * 6.5))
 	await frames(4)
-	check(not game.place_info.has("form") and not game.place_info.has("host"), "на земле — фонарь на столбе (без настенного облика)", game._pick_hit)
+	check(not game.place_info.has("form") and not game.place_info.has("host"), "на земле — фонарь на столбе", game._pick_hit)
 	game.set_tool("")
 
 

@@ -175,6 +175,18 @@ static func fits(f: Dictionary, rect: Rect2, u: float, y: float, extra: Array) -
 	var r := Rect2(u + rect.position.x, y + rect.position.y, rect.size.x, rect.size.y)
 	if not (f["bound"] as Rect2).grow(0.01).encloses(r):
 		return false
+	# сначала — что закрывать нельзя: в занятом месте почти все проверки кончаются здесь
+	for b: Rect2 in f["block"]:
+		if b.intersects(r):
+			return false
+	for b: Rect2 in extra:
+		if b.intersects(r):
+			return false
+	# обычно украшение целиком на одном модуле: оба угла в нём — значит, и все пять точек
+	for m: Rect2 in f["mods"]:
+		var mg := m.grow(0.01)
+		if mg.has_point(r.position) and mg.has_point(r.end):
+			return true
 	for pt: Vector2 in [r.position, r.position + Vector2(r.size.x, 0), r.position + Vector2(0, r.size.y), r.end, r.get_center()]:
 		var inside := false
 		for m: Rect2 in f["mods"]:
@@ -182,12 +194,6 @@ static func fits(f: Dictionary, rect: Rect2, u: float, y: float, extra: Array) -
 				inside = true
 				break
 		if not inside:
-			return false
-	for b: Rect2 in f["block"]:
-		if b.intersects(r):
-			return false
-	for b: Rect2 in extra:
-		if b.intersects(r):
 			return false
 	return true
 
@@ -208,6 +214,24 @@ static func _extra_on(f: Dictionary, others: Array) -> Array:
 
 ## Ближайшее к (u, y) годное место на стене f: Vector2(u, y) или Vector2.INF
 static func nearest(f: Dictionary, rect: Rect2, u: float, y: float, extra: Array) -> Vector2:
+	# ищем не дальше RING_U/RING_Y шагов: модули, проёмы и украшения дальше этого окна не мешают — проверяем только
+	# ближние (на стене из одних окон и балконов иначе — тысячи лишних сравнений за кадр)
+	var win := Rect2(u + rect.position.x - RING_U * STEP, y + rect.position.y - RING_Y * STEP,
+		rect.size.x + 2.0 * RING_U * STEP, rect.size.y + 2.0 * RING_Y * STEP).grow(0.05)
+	var lmods := []
+	for m: Rect2 in f["mods"]:
+		if m.grow(0.01).intersects(win, true):
+			lmods.append(m)
+	var lblock := []
+	for b: Rect2 in f["block"]:
+		if b.intersects(win, true):
+			lblock.append(b)
+	var lextra := []
+	for b: Rect2 in extra:
+		if b.intersects(win, true):
+			lextra.append(b)
+	f = {"bound": f["bound"], "mods": lmods, "block": lblock}
+	extra = lextra
 	if fits(f, rect, u, y, extra):
 		return Vector2(u, y)
 	var best := Vector2.INF
@@ -243,10 +267,12 @@ static func nearest(f: Dictionary, rect: Rect2, u: float, y: float, extra: Array
 	for ring in range(1, RING_U + 1):
 		if ring > stop:
 			break
+		var m := mini(ring, RING_Y)
 		for iu in range(-ring, ring + 1):
-			for iy in range(-mini(ring, RING_Y), mini(ring, RING_Y) + 1):
-				if maxi(absi(iu), absi(iy)) != ring:
-					continue
+			# только край кольца (в том же порядке, что и прежний обход квадрата — при равных расстояниях выбор тот же)
+			var full := absi(iu) == ring
+			var y1 := m if full else (ring if m == ring else -ring - 1)
+			for iy in range(-m if full else -ring, y1 + 1, 1 if full else 2 * ring):
 				var du := iu * STEP
 				var dy := iy * STEP
 				var dd := du * du + dy * dy * 1.3      # по высоте сдвигаем чуть неохотнее, чем вдоль стены

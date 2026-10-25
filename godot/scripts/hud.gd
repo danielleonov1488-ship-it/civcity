@@ -3029,9 +3029,6 @@ func _fill_tool_panel_body() -> void:
 			gate_check.set_pressed_no_signal(game.fence_gate)
 		elif d.get("wall", false):
 			keys = "Наведите на стену дома — украшение встанет там, где курсор, на любом этаже, мимо окон и дверей · правая кнопка — отмена"
-		elif Defs.WALL_FORM.has(t):
-			keys += "
-Наведите на стену дома — встанет на стену: «%s»" % Defs.B[Defs.WALL_FORM[t]]["name"]
 		if int(d.get("variants", 1)) > 1:
 			keys = "C/V — другой фасад · " + keys
 			variant_box.visible = true
@@ -3142,6 +3139,8 @@ func refresh_undo() -> void:
 			undo_btn.tooltip_text = "Отменить постройку можно 30 секунд, пока в ней никто не живёт"
 		else:
 			undo_btn.tooltip_text = "Отменить: %s, вернётся %s ден." % [u["name"], fmt(float(u["cost"]))]
+			if float(u.get("glory", 0.0)) > 0.0:
+				undo_btn.tooltip_text += " и %d Славы" % roundi(float(u["glory"]))     # памятник Легиона
 		_grey(undo_btn.get_node("ic") as CanvasItem, u.is_empty())
 	for nm in ["undo", "redo"]:
 		if road_btns.has(nm):
@@ -3226,8 +3225,7 @@ func thumb_update() -> void:
 		return
 	var t: String = game.tool
 	var pl: Dictionary = game.place_info if String(game.place_info.get("_t", "")) == t else {}
-	var gt: String = pl.get("form", t)
-	var d: Dictionary = Defs.B[gt]
+	var d: Dictionary = Defs.B[t]
 	var tier := int(pl.get("tier", 1 if d["kind"] == "house" else 0))
 	var v := int(pl.get("variant", 0))
 	if d["kind"] != "decor" and game.moving.is_empty():
@@ -3237,7 +3235,7 @@ func thumb_update() -> void:
 		c = int(game.color_user)
 	if d.get("seg", false):
 		v = 1 if game.fence_gate else 0
-	var key := "%s:%d:%d:%d" % [gt, tier, v, c]
+	var key := "%s:%d:%d:%d" % [t, tier, v, c]
 	if key == _thumb_key:
 		return
 	_thumb_key = key
@@ -3245,7 +3243,7 @@ func thumb_update() -> void:
 		_thumb_make()
 	for ch in _thumb_holder.get_children():
 		ch.queue_free()
-	var g := Parts.ghost(Catalog.make(gt, tier, v, c), "outline", Color(0, 0, 0, 0))
+	var g := Parts.ghost(Catalog.make(t, tier, v, c), "outline", Color(0, 0, 0, 0))
 	for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
 		gi.material_override = null
 	for ch in g.get_children():

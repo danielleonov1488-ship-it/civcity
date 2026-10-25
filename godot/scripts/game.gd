@@ -102,7 +102,7 @@ var brush_over := true                # рисовать поверх други
 var line_from := Vector2.INF
 var stroke := []
 var stroke_cost := 0.0
-var undo_stack := []                  # мазки дорог {"ch", "cost"} и постройки {"t": "place", "ids", "cost", "ms", "name"} (3.6)
+var undo_stack := []                  # мазки дорог {"ch", "cost"} и постройки {"t": "place", "ids", "cost", "glory", "ms", "name", …} (3.6)
 var redo_stack := []
 var painting := false
 const UNDO_PLACE_MS := 30000          # постройку можно отменить с полным возвратом 30 с, пока в ней никто не живёт (3.6)
@@ -128,6 +128,8 @@ var fence_gate := false               # калитка посередине (г�
 var _fence_ghosts: Array = []         # призраки звеньев (переиспользуются)
 var _fence_at := Vector2.INF
 var _fence_key := ""
+var _wall_key := []                   # настенное украшение: последний поиск места по стене (курсор стоит — не ищем заново)
+var _wall_res := {}
 # постановка постройки (3.4–3.7)
 var color_user := -1                  # цвет фасада, выбранный в панели (−1 — «Авто»)
 var door_arrow: MeshInstance3D        # стрелка у входа призрака: зелёная — мостовая рядом, красная — нет
@@ -2187,20 +2189,10 @@ func _bounds(bp: Bp) -> Array:
 ## Куда встанет постройка: у дороги — фасадом к ней, вплотную к соседям в ряд; иначе — как повернул игрок.
 ## Украшение всегда ровно то, что выбрано в меню (у каждого облика своя карточка): у стены оно ни во что
 ## не превращается; настенные украшения — отдельные карточки и вешаются только на стены
-func placement(type: String, p: Vector2, variant := -1, color := -1, cursor := false) -> Dictionary:
+func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	if d.get("wall", false):
 		return _wall_place(type, p)
-	# курсор игрока над стеной дома: фонарь на столбе становится фонарём на стене, клумба — ящиком под окном,
-	# знамя на шесте — знаменем на стене (3.10); одна карточка — два облика, по тому, куда навели
-	if cursor and pave_build and Defs.WALL_FORM.has(type) and city.unlocked(String(Defs.WALL_FORM[type])):
-		var hb := pick_building()
-		if not hb.is_empty() and int(_pick_hit.get("id", -1)) == int(hb["id"]) and not (city.def(hb)["kind"] in ["farm"]) \
-				and (city.def(hb)["kind"] != "decor" or hb.has("host")):
-			var wf := _wall_place(String(Defs.WALL_FORM[type]), p)
-			if wf.get("wall_hit", false):
-				wf["form"] = String(Defs.WALL_FORM[type])
-				return wf
 	if d["kind"] == "decor" and not d.get("seg", false):
 		variant = 0                       # облик украшения задаёт его тип (карточка), а не фасад
 	elif d.get("seg", false) and variant < 0:
@@ -2550,8 +2542,18 @@ func _mouse_dir() -> Vector3:
 func _wall_solve(type: String, host: Dictionary, hit: Vector3, dir: Vector3, origin := Vector3.INF) -> Dictionary:
 	var hx := city.xf(host)
 	var inv := hx.affine_inverse()
-	var s := WallDecor.solve(city.blueprint(host), inv * hit, inv.basis * dir, type, WallDecor.hosted(city, host),
-		inv * origin if origin.is_finite() else Vector3.INF)
+	var lo := inv * origin if origin.is_finite() else Vector3.INF
+	# курсор стоит (или сдвинулся меньше 2 см) — тот же ответ без нового поиска места по стене
+	var key := [int(host["id"]), int(host["tier"]), int(host.get("variant", 0)), int(host.get("color", 0)), type,
+		(inv * hit).snapped(Vector3.ONE * 0.02), (inv.basis * dir).snapped(Vector3.ONE * 0.01),
+		lo.snapped(Vector3.ONE * 0.02) if lo.is_finite() else lo, city.buildings.size(), city.next_id]
+	var s: Dictionary
+	if key == _wall_key:
+		s = _wall_res
+	else:
+		s = WallDecor.solve(city.blueprint(host), inv * hit, inv.basis * dir, type, WallDecor.hosted(city, host), lo)
+		_wall_key = key
+		_wall_res = s
 	if s.is_empty():
 		return {}
 	var w := hx * (s["p"] as Vector3)
@@ -2560,7 +2562,7 @@ func _wall_solve(type: String, host: Dictionary, hit: Vector3, dir: Vector3, ori
 	if chk["err"] != "":
 		err = chk["err"]                       # закрыто, не хватает денариев, предел уровня
 	return {"pos": Vector2(w.x, w.z), "yaw": float(host["yaw"]) + float(s["yaw"]), "err": err, "cells": PackedInt32Array(), "y": w.y,
-		"variant": 0, "color": int(host.get("color", 0)), "tier": 0, "host": host["id"], "wall_hit": true}
+		"variant": 0, "color": int(host.get("color", 0)), "tier": 0, "host": host["id"]}
 
 
 ## Ближайшая дорога: точка на её кромке (сюда встанет фасад) и направление n от дома к дороге.
@@ -2987,18 +2989,18 @@ func _update_tool() -> void:
 	if not Defs.B.has(tool):
 		return
 	if Defs.B[tool].get("seg", false) and moving.is_empty():
+		place_info = {}                    # у забора своего призрака-места нет: Z/X крутят его от tool_yaw, а не от прошлого дома
 		_fence_update()                    # забор тянут мышью, как дорогу (перенос звена — как любой постройки)
 		return
-	var pl := placement(tool, hover, -1, -1, true)
+	var pl := placement(tool, hover)
 	color_lock = true                      # цвет призрака выбран — до постройки не меняется
 	pl["_t"] = tool                        # для чего посчитано (статус у курсора берёт место отсюда)
 	place_info = pl
-	var gt: String = pl.get("form", tool)  # у стены — настенный облик (3.10)
-	var key := "%s:%d:%d:%d" % [gt, pl["tier"], pl["variant"], pl["color"]]
+	var key := "%s:%d:%d:%d" % [tool, pl["tier"], pl["variant"], pl["color"]]
 	if ghost == null or ghost_key != key:
 		if ghost:
 			ghost.queue_free()
-		ghost = Parts.ghost(Catalog.make(gt, pl["tier"], pl["variant"], pl["color"]), "place")
+		ghost = Parts.ghost(Catalog.make(tool, pl["tier"], pl["variant"], pl["color"]), "place")
 		add_child(ghost)
 		ghost_key = key
 		if hud:
@@ -3012,11 +3014,11 @@ func _update_tool() -> void:
 	_door_arrow(pl)
 	_ghost_trees(ok, pl)
 	# охват — без кругов: синие дома уже с такой же, зелёные получат эту (решение владельца Д3)
-	if Cover.kind_of(gt) != "":
-		cover.preview(gt, pl["pos"])
+	if Cover.kind_of(tool) != "":
+		cover.preview(tool, pl["pos"])
 	if hud:
 		hud.tool_status(pl["err"])
-		hud.cursor_error(_short_err(pl["err"]), rot_hint_on() and not pl.has("form"))   # что не так — и у курсора, одной красной строкой (3.5)
+		hud.cursor_error(_short_err(pl["err"]), rot_hint_on())   # что не так — и у курсора, одной красной строкой (3.5)
 
 
 const GHOST_OK := Color(0.45, 1.0, 0.45, 0.07)     # годное место: настоящие цвета постройки, лишь лёгкая зелень
@@ -3047,12 +3049,11 @@ func _ghost_frozen() -> void:
 	var c := int(pl["color"])
 	if color_user >= 0 and Defs.B[tool]["kind"] != "decor" and moving.is_empty():
 		c = color_user                        # цвет выбрали в панели — призрак сразу этого цвета (3.4)
-	var gt: String = pl.get("form", tool)
-	var key := "%s:%d:%d:%d" % [gt, pl["tier"], v, c]
+	var key := "%s:%d:%d:%d" % [tool, pl["tier"], v, c]
 	if key != ghost_key:
 		var xf := ghost.transform
 		ghost.queue_free()
-		ghost = Parts.ghost(Catalog.make(gt, pl["tier"], v, c), "place")
+		ghost = Parts.ghost(Catalog.make(tool, pl["tier"], v, c), "place")
 		add_child(ghost)
 		ghost.transform = xf
 		ghost_key = key
@@ -3082,7 +3083,7 @@ func _tool_tip(t: String) -> void:
 	elif d.get("wall", false):
 		key = "tip_wall"
 		title = "Украшения на стенах"
-		text = "Наведите на стену дома — украшение прилипнет там, где курсор: на любой высоте, на любом этаже. Окна и двери оно не закроет — встанет рядом.\n\nФонарь на столбе, клумба и знамя, если навести их на стену, тоже повиснут на ней. Надстроите этаж или перенесёте дом — украшения останутся на своей стене."
+		text = "Наведите на стену дома — украшение прилипнет там, где курсор: на любой высоте, на любом этаже. Окна и двери оно не закроет — встанет рядом.\n\nНадстроите этаж или перенесёте дом — украшения останутся на своей стене."
 	if key == "" or bool(settings.get(key, false)):
 		return
 	settings[key] = true
@@ -3099,7 +3100,7 @@ func _short_err(err: String) -> String:
 ## Стрелка у входа призрака (3.5): у дома, лавки, склада, писцов — зелёная, если у входа есть мостовая (до 1,7 м,
 ## как проверка «Нужна дорога у входа»), иначе красная
 func _door_arrow(pl: Dictionary) -> void:
-	var t: String = pl.get("form", tool)
+	var t: String = tool
 	if not (String(Defs.B[t]["kind"]) in ["house", "shop", "rp", "store"]) or pl.has("host") or not pave_build:
 		if door_arrow:
 			door_arrow.visible = false
@@ -3229,16 +3230,15 @@ func _fence_snap(p: Vector2) -> Vector2:
 
 
 ## Звенья забора tool: тянут от a до b — по линии через FENCE_PITCH (поворот — через 5°); без мыши — одно звено
-## серединой на курсоре, поворот Z/X. Калитка — посередине. Каждое звено — своя проверка места; денег не хватает —
-## дальние звенья красные
+## от курсора (у конца стоящего звена — от его конца), поворот Z/X: щелчок ставит ровно показанное. Калитка —
+## посередине. Каждое звено — своя проверка места; денег не хватает — дальние звенья красные
 func fence_plan_of(type: String, a: Vector2, b: Vector2, gate: bool) -> Array:
 	var d: Dictionary = Defs.B[type]
 	var pitch := Defs.FENCE_PITCH
 	var yaw := tool_yaw
 	var n := 1
-	var start := a - City.axis(yaw) * pitch * 0.5
+	var start := a
 	if b != Vector2.INF:
-		start = a
 		var v := b - a
 		if v.length() > 0.3:
 			yaw = snappedf(atan2(-v.y, v.x), deg_to_rad(5.0))
@@ -3276,7 +3276,9 @@ func _fence_update() -> void:
 	if _fence_at == Vector2.INF or hover.distance_to(_fence_at) > 0.1 or key != _fence_key:
 		_fence_at = hover
 		_fence_key = key
-		fence_plan = fence_plan_of(tool, fence_from if fence_drag else hover, hover if fence_drag else Vector2.INF, fence_gate)
+		# до нажатия — то же звено, что поставит щелчок: от курсора, у конца стоящего звена — от его конца (к курсору)
+		var a := fence_from if fence_drag else _fence_snap(hover)
+		fence_plan = fence_plan_of(tool, a, hover if fence_drag or a != hover else Vector2.INF, fence_gate)
 	_fence_show()
 	var ok := 0
 	var cost := 0.0
@@ -3288,6 +3290,7 @@ func _fence_update() -> void:
 		elif err == "":
 			err = s["err"]
 	if fence_drag and hud:
+		hud.cursor_error("")                # пока тянут, что не так — строкой под ценой (а не прежней ошибкой у курсора)
 		var warn := ""
 		if err == "Не хватает денариев":
 			warn = "Денег хватит на %d — дальше красным" % ok
@@ -3358,6 +3361,7 @@ func _fence_commit() -> void:
 	var ids := []
 	var cost := 0.0
 	var d: Dictionary = Defs.B[tool]
+	var snap := _undo_snap()               # до звеньев и до проверки просьб ниже
 	city.bulk = true
 	for s: Dictionary in fence_plan:
 		if s["err"] != "" or city.money < float(d["cost"]):
@@ -3372,7 +3376,7 @@ func _fence_commit() -> void:
 	city.compute()
 	city._check_goals()
 	city.changed.emit()
-	_push_place(ids, cost, "%s · %d %s" % [d["name"], ids.size(), _plural(ids.size(), "звено", "звена", "звеньев")])
+	_push_place(ids, cost, "%s · %d %s" % [d["name"], ids.size(), _plural(ids.size(), "звено", "звена", "звеньев")], snap)
 	_fence_at = Vector2.INF
 	sound.ui("place")
 
@@ -3480,8 +3484,6 @@ func _tool_note(over_ui: bool) -> void:
 		if not zn.is_empty():
 			txt = String(zn[0])
 			col = Color("b4ffae") if bool(zn[1]) else Color("ffc59a")
-		elif place_info.has("form"):
-			txt = "На стену: %s · %s ден." % [Defs.B[place_info["form"]]["name"], hud.fmt(float(Defs.B[place_info["form"]]["cost"]))]
 	hud.cursor_note(txt, col)
 
 
@@ -4183,9 +4185,13 @@ func _yaw_now() -> float:
 ## Поставить постройку там, где призрак (после щелчка без поворота)
 func _build_here() -> void:
 	if Defs.B.has(tool):
-		var pl := placement(tool, hover, -1, -1, true)
+		var pl := placement(tool, hover)
 		if pl["err"] != "":
 			hud.tool_status(pl["err"])        # повёрнутый призрак остаётся на месте — можно довернуть
+			sound.ui("error")
+			return
+		if not moving.is_empty() and pl.has("host"):
+			hud.tool_status("Сюда не перенести — поставьте на землю")   # перенос — только на землю (стена — для настенных)
 			sound.ui("error")
 			return
 		place_lock = {}
@@ -4204,16 +4210,16 @@ func _build_here() -> void:
 			set_tool("")
 			_happy_pops(h0, pl["pos"])
 		else:
-			var pt: String = pl.get("form", tool)  # украшение у стены — в своём настенном облике (3.10)
-			var h0 := city.happy_map() if _pops_for(pt) else {}
+			var h0 := city.happy_map() if _pops_for(tool) else {}
+			var snap := _undo_snap()           # до постановки: просьба или ранг, которые она даст, — уже без полного возврата
 			build_anim = true
-			b = city.place(pt, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
+			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
 			build_anim = false
 			if pl.has("host"):
 				b["host"] = pl["host"]
 				b["y"] = pl["y"]
 				_show(b)
-			_push_place([b["id"]], float(Defs.B[pt]["cost"]), String(Defs.B[pt]["name"]))
+			_push_place([b["id"]], float(Defs.B[tool]["cost"]), String(Defs.B[tool]["name"]), snap, float(Defs.B[tool].get("glory", 0)))
 			_rot_hint_count()
 			_happy_pops(h0, pl["pos"])           # лавка, украшение, памятник: рожицы волной над домами, кому стало лучше или хуже
 			if stories != null:
@@ -4731,29 +4737,40 @@ func _redo() -> void:
 	hud.refresh_undo()
 
 
-## Поставили постройку (или протянули забор) игроком — её можно отменить 30 с с полным возвратом (3.6)
-func _push_place(ids: Array, cost: float, name: String) -> void:
+## Поставили постройку (или протянули забор) игроком — её можно отменить 30 с с полным возвратом (3.6).
+## snap — _undo_snap() ДО постановки: просьба, история, заказ старосты или новый ранг, которые она дала, — уже не отменить
+func _push_place(ids: Array, cost: float, name: String, snap: Dictionary, glory := 0.0) -> void:
 	if ids.is_empty():
 		return
-	undo_stack.append({"t": "place", "ids": ids, "cost": cost, "name": name, "ms": Time.get_ticks_msec(),
-		"goals": city.goals_done.size(), "stories": _stories_done()})
+	undo_stack.append({"t": "place", "ids": ids, "cost": cost, "glory": glory, "name": name, "ms": Time.get_ticks_msec(),
+		"goals": int(snap["goals"]), "stories": int(snap["stories"]), "level": int(snap["level"]), "money0": float(snap["money"])})
 	if undo_stack.size() > 40:
 		undo_stack.pop_front()
 	if hud:
 		hud.refresh_undo()
 
 
+## Сколько выполнено просьб, историй и заказов, какой ранг и сколько в казне — до постановки (для отмены)
+func _undo_snap() -> Dictionary:
+	return {"goals": city.goals_done.size(), "stories": _stories_done(), "level": city.level, "money": city.money}
+
+
 func _stories_done() -> int:
 	var d: Variant = city.stories.get("done", {})
-	return (d as Dictionary).size() if d is Dictionary else (d as Array).size() if d is Array else 0
+	var k := (d as Dictionary).size() if d is Dictionary else (d as Array).size() if d is Array else 0
+	var o: Variant = city.stories.get("orders", {})
+	if o is Dictionary and (o as Dictionary).get("n") is Dictionary:
+		for v in ((o as Dictionary)["n"] as Dictionary).values():
+			k += int(v)                   # заказ старосты выполнен — постройки под ним уже не отменить с полным возвратом
+	return k
 
 
 ## Можно ли ещё отменить постройку с полным возвратом: не старше 30 с, никто не живёт и не идёт жить, работников
-## игрок не нанимал, просьба или история с тех пор не выполнилась (решение D-l)
+## игрок не нанимал, просьба, история или заказ с тех пор не выполнились и ранг тот же (решение D-l)
 func _place_undoable(u: Dictionary) -> bool:
 	if Time.get_ticks_msec() - int(u["ms"]) > UNDO_PLACE_MS:
 		return false
-	if city.goals_done.size() != int(u["goals"]) or _stories_done() != int(u["stories"]):
+	if city.goals_done.size() != int(u["goals"]) or _stories_done() != int(u["stories"]) or city.level != int(u.get("level", city.level)):
 		return false
 	for id in u["ids"]:
 		if not city.buildings.has(id):
@@ -4789,7 +4806,11 @@ func _undo_place(u: Dictionary) -> void:
 			if city.buildings.has(oid) and int(city.buildings[oid].get("host", -1)) == int(id):
 				city.remove(city.buildings[oid], true, true)     # украшения на её стенах — как при сносе
 		city.remove(b, false, true)
-	city.money += float(u["cost"])            # 100%: постройку поставили по ошибке
+	# 100%: постройку поставили по ошибке — но казна не полнее, чем была до неё и чем её предел (доход за эти
+	# секунды не копится сверх предела); памятник Легиона — и его Славу
+	var top := maxf(city.money_cap(), float(u.get("money0", INF)))
+	city.money = maxf(city.money, minf(top, city.money + float(u["cost"])))
+	city.legion.glory += float(u.get("glory", 0.0))
 	city.compute()
 	city.changed.emit()
 	if hud:

@@ -448,6 +448,24 @@ func line_cells(a: Vector2, b: Vector2, r: float, kd: int, square := false, over
 				continue
 			i0 = maxi(c0.x, int(floor(lo / CELL)) - 1)
 			i1 = mini(c1.x, int(floor(hi / CELL)) + 1)
+		else:
+			# квадрат по линии: ряд qy даёт отрезок t по оси y, по нему — края ряда по x (а не вся рамка линии)
+			var tl := 0.0
+			var th := 1.0
+			if absf(ab.y) < 1e-6:
+				if absf(qy - a.y) > r:
+					continue
+			else:
+				var t1 := (qy - r - a.y) / ab.y
+				var t2 := (qy + r - a.y) / ab.y
+				tl = maxf(0.0, minf(t1, t2))
+				th = minf(1.0, maxf(t1, t2))
+				if tl > th:
+					continue
+			var xa := a.x + ab.x * tl
+			var xb := a.x + ab.x * th
+			i0 = maxi(c0.x, int(floor((minf(xa, xb) - r) / CELL)) - 1)
+			i1 = mini(c1.x, int(floor((maxf(xa, xb) + r) / CELL)) + 1)
 		for i in range(i0, i1 + 1):
 			if not inside(i, j):
 				continue
