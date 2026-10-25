@@ -135,21 +135,30 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 			var rk := int(offer_rank.get(String(sd["id"]), 99))
 			check(rk < int(need_rank), "сид %d: «%s» — на ранге «%s», раньше условий «%s»" % [seed, sd["title"],
 				Defs.LEVELS[mini(rk, 7)]["name"] if rk < 99 else "не предложена", Defs.LEVELS[int(need_rank)]["name"]])
-	# с заказами старосты: минут без истории и без заказа ≤ 10% на каждом ранге (заказ — всегда, кроме часа между ними)
+	# с заказами старосты: минут без истории и без заказа ≤ 10% на каждом ранге (заказ — всегда, кроме часа между ними;
+	# когда все заказы, открытые к рангу, сделаны по разу, — второй круг: следующий через REPEAT_GAP_H)
+	var firsts := 0                       # сколько заказов сделано в первый раз (с прошлых рангов тоже)
 	for rk in range(1, 8):
 		var a := float(rh[rk])
 		var b := float(rh[mini(rk + 1, 7)]) if rk < 7 else a + 60.0
+		var avail := 0
+		for o: Dictionary in StoryOrders.ORDERS:
+			avail += int(int(o["lvl"]) <= rk)
 		var idle := 0.0
 		var tot := 0.0
 		var x := a
 		var next_order := a                 # когда появится следующий заказ
 		var order_until := -1.0
+		var again := false                  # идущий заказ — повтор
 		while x < b:
 			if order_until >= 0.0 and x >= order_until:
 				order_until = -1.0
-				next_order = x + StoryOrders.GAP_H
+				next_order = x + (maxf(StoryOrders.GAP_H, StoryOrders.REPEAT_GAP_H - ORDER_H) if again else StoryOrders.GAP_H)
 			if order_until < 0.0 and x >= next_order:
 				order_until = x + ORDER_H
+				again = firsts >= avail
+				if not again:
+					firsts += 1
 			var st_on := false
 			for c: Array in cover:
 				st_on = st_on or (x >= float(c[0]) and x < float(c[1]))

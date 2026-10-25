@@ -260,7 +260,7 @@ const STORIES := [
 
 	# «Тесно у Валериев» (Посёлок, до этажей «Городка» и «Города»): родились двойняшки — нужен третий этаж; строки цели
 	# говорят, чего не хватает до 75%; в конце выбор: дед остаётся или идёт к соседям (его вспомнят на свадьбе)
-	{"id": "crowded", "title": "Тесно у Валериев", "title_f": "Тесно у {fam_gen}", "icon": "housing", "lvl": 3, "pop": 0,
+	{"id": "crowded", "title": "Тесно в доме", "title_f": "Тесно у {fam_gen}", "icon": "housing", "lvl": 3, "pop": 0,
 		"needs": ["floor3"], "teaches": [4, 5], "lesson": "Этажи: дом полон и счастлив — 65% на второй, 75% на третий",
 		"cast": {"father": {"cls": "plebs|artisans", "female": false, "floors": 2}},
 		"extras": {"grandpa": {"female": false, "old": true}},
@@ -471,5 +471,14 @@ static func click_goal(s: Dictionary) -> Array:
 	for st: Dictionary in s.get("steps", []):
 		var g: Array = st.get("goal", [])
 		if not g.is_empty() and String(g[0]) == "click":
+			return g
+	return []
+
+
+## Цель «лавка у дома торгует» истории (ослик) — или []
+static func works_goal(s: Dictionary) -> Array:
+	for st: Dictionary in s.get("steps", []):
+		var g: Array = st.get("goal", [])
+		if not g.is_empty() and String(g[0]) == "works":
 			return g
 	return []

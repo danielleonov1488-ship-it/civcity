@@ -13,6 +13,10 @@ const PORTRAIT := 112                  # медальон портрета, то
 const CPS := 38.0                      # букв в секунду (печать текста)
 ## Откуда смотрит камера портрета: чуть сбоку и почти вровень с глазами (сверху брови закрывают глаза)
 const FACE_DIR := Vector3(0.3, 0.04, 0.95)
+const BEAST_TURN := 0.6                 # ослик в медальоне: морда — вполоборота от камеры, рад
+const BEAST_FWD := 0.08                 # …смотрим вперёд от кости головы (доля длины ослика)
+const BEAST_UP := 0.02                  # …и чуть выше
+const BEAST_DIST := 0.85                # …с такого расстояния (доля длины ослика)
 
 var st                                 # Stories
 var hud
@@ -237,18 +241,25 @@ func _face(who: Dictionary) -> void:
 	_speaker = key
 	var kind := String(who.get("kind", "pic"))
 	if kind == "pic" or game.get_viewport() == null:
-		face_tex.texture = load(Hud.AI + String(who.get("pic", "advisor.png")))
+		face_tex.texture = _pic_of(who)
 		return
 	if not _vps.has(key):
 		var vp := _portrait_vp(who)
 		if vp == null:
-			face_tex.texture = load(Hud.AI + String(who.get("pic", "advisor.png")))
+			face_tex.texture = _pic_of(who)
 			return
 		_vps[key] = vp
 	var vpk: SubViewport = _vps[key]
 	vpk.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	face_tex.texture = vpk.get_texture()
 	_anim_face(who, true)
+
+
+## Рисованный портрет (советник, или если своего мирка нет): у ослика — значок с лошадкой, не человеческое лицо
+func _pic_of(who: Dictionary) -> Texture2D:
+	if String(who.get("kind", "")) == "beast" or String(who.get("pic", "")) == "":
+		return hud.ico("horse", 128)
+	return load(Hud.AI + String(who.get("pic", "advisor.png")))
 
 
 ## Говорит — движения разговора; молчит — спокойно
@@ -331,6 +342,30 @@ func _portrait_vp(who: Dictionary) -> SubViewport:
 				bone = sk.find_bone("Bone.003")
 			off = Vector3(0, 0.06, 0.03)          # кость — у основания головы: смотрим в мордочку
 			dist = 0.46
+		"beast":
+			# ослик (Quaternius): мордой к камере вполоборота — куда смотрит голова, видно по костям шеи и головы
+			var bn := Stories.beast_node(false)
+			bn.name = "who"
+			vp.add_child(bn)
+			bn.play("Idle", 0.0)
+			var sks := bn.find_children("*", "Skeleton3D", true, false)
+			var fwd := Vector3(0, 0, 1)
+			if not sks.is_empty():
+				sk = sks[0]
+				bone = sk.find_bone("Head")
+				var nb := sk.find_bone("Neck2")
+				if bone >= 0 and nb >= 0:
+					var hd := (sk.global_transform * sk.get_bone_global_pose(bone)).origin
+					var nk := (sk.global_transform * sk.get_bone_global_pose(nb)).origin
+					var d := Vector2(hd.x - nk.x, hd.z - nk.z)
+					if d.length() > 0.0001:
+						fwd = Vector3(d.x, 0.0, d.y).normalized()
+			var want := FACE_DIR.rotated(Vector3.UP, -BEAST_TURN)
+			bn.rotation.y = atan2(want.x, want.z) - atan2(fwd.x, fwd.z)
+			var fw := fwd.rotated(Vector3.UP, bn.rotation.y)
+			# кость головы — у затылка: смотрим вперёд, в середину морды
+			off = fw * Stories.DONKEY_LEN * BEAST_FWD + Vector3(0, Stories.DONKEY_LEN * BEAST_UP, 0) if bone >= 0 				else Vector3(0, Stories.DONKEY_LEN * 0.75, 0) + fw * Stories.DONKEY_LEN * 0.4 - Vector3(0, 0.3, 0.15)
+			dist = Stories.DONKEY_LEN * BEAST_DIST
 		_:
 			vp.queue_free()
 			return null

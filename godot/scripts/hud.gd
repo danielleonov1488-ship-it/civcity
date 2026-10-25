@@ -1567,6 +1567,8 @@ func fill_overlay() -> void:
 	elif overlay == "water":
 		_ov_title.text = "Вода"
 		_ov_row(_swatch(Cover.GREEN), "Фонтан рядом: +%d%% счастья" % int(Defs.B["fountain"]["bonus"]), n[0])
+		if int(n[1]) > 0:
+			_ov_row(_swatch(Cover.GOLD), "Фонтан рядом не работает — нет дороги у входа", n[1])
 		_ov_row(_swatch(Cover.RED), "Фонтана рядом нет", n[2])
 		var r := HBoxContainer.new()
 		r.add_theme_constant_override("separation", 8)

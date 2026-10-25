@@ -56,6 +56,7 @@ var _clicks_key := ""
 const CLICK_HINT := "story_click"      # значки над лужами (через hint_h часов)
 const WALK_MAX := 16.0                 # в ролике идут не дальше стольких метров пути (остальное — за кадром)
 const DONKEY_LEN := 1.55               # ослик от морды до хвоста, м
+var works_room := 40                   # «лавка у дома» (ослик): столько м² свободной земли рядом нужно под новую лавку
 
 
 func setup(g) -> void:
@@ -105,6 +106,13 @@ func _restore() -> void:
 	# кошка живёт, пока её не забрали домой (_after_final): и пока ищут, и когда нашли, а ролик встречи ещё ждёт щелчка;
 	# ослик — пока ищут и пока не досмотрели встречу (дальше он у хозяина)
 	var a: Dictionary = s["active"]
+	if not a.is_empty():
+		var st0 := _step(a)
+		if st0.has("cine") and not st0.has("goal") and not bool(a.get("ready", false)):
+			a["ready"] = true                # сохранились посреди ролика-шага (труба, встреча с осликом): снова ждём щелчка
+			for b: Array in st0["cine"]:
+				if String(b[0]) == "fix":
+					a.erase("fixed")         # ролик с мастером покажут заново — течь пока не заделана
 	if not a.is_empty() and a.has("spot") and _find_live(a):
 		if _find_what(a) == "cat":
 			_spawn_cat(a)
@@ -248,6 +256,7 @@ func can_offer(sd: Dictionary) -> Dictionary:
 			return {}
 	var fo := StoryDefs.find_opts(sd)
 	var cg := StoryDefs.click_goal(sd)
+	var wg := StoryDefs.works_goal(sd)
 	var room: Array = sd.get("space", [])
 	# сначала — семьи, которые ещё ни о чём не просили (разные истории — у разных соседей)
 	var asked := {}
@@ -263,6 +272,8 @@ func can_offer(sd: Dictionary) -> Dictionary:
 			continue                         # вокруг всё застроено: скверик или новый дом ставить негде
 		if not cg.is_empty() and click_spots(bind, int(cg[2]), cg[3] if cg.size() > 3 else {}).size() < int(cg[2]):
 			continue                         # у дома нет улицы, по которой бежит вода: лужи класть некуда
+		if not wg.is_empty() and not _works_room(bind, wg):
+			continue                         # у дома возчика ни лавки, ни места под неё: историю не пройти без сноса
 		var sp := Vector2.INF if fo.is_empty() else _spot_for(bind, fo)
 		if fo.is_empty() or sp != Vector2.INF:
 			if sp != Vector2.INF:
@@ -273,6 +284,16 @@ func can_offer(sd: Dictionary) -> Dictionary:
 				continue
 			return bind
 	return {}
+
+
+## Цель «лавка у дома торгует» можно выполнить: такая лавка уже стоит рядом или есть где её поставить
+func _works_room(bind: Dictionary, wg: Array) -> bool:
+	var hp := _home_pos(bind)
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if _is(b, String(wg[1])) and (b["pos"] as Vector2).distance_to(hp) <= float(wg[2]):
+			return true
+	return free_near(hp, float(wg[2])) >= works_room
 
 
 ## Свободной земли (м², по точкам через 2 м) в r м от p: своя земля, не постройка, не дорога, не вода
@@ -539,6 +560,12 @@ func _enter_step(i: int) -> void:
 	a["t0"] = int(S()["h"])
 	a["id0"] = city.next_id
 	a.erase("ready")
+	# ролик прошлого шага заделал течь (даже если его пропустили Esc): лужи и труба больше не появятся
+	if i > 0:
+		for b: Array in (steps[i - 1] as Dictionary).get("cine", []):
+			if String(b[0]) == "fix":
+				a["fixed"] = true
+				break
 	var st: Dictionary = steps[i]
 	for r in st.get("grant", []):
 		# шаг открывает исследование (Легион из истории): без очков, событие — в колокольчик
@@ -660,7 +687,7 @@ func _tick_active(play_now := false) -> void:
 		elif not a.has("homeless"):
 			a["homeless"] = int(s["h"])
 			city._quiet("История «%s» ждёт: дом семьи %s снесли. Когда семья заселится в новый дом, история продолжится." \
-				% [_story(a)["title"], StoryDefs.fam_gen(String(a.get("fam", "")))], "scroll")
+				% [StoryDefs.title_of(_story(a), a), StoryDefs.fam_gen(String(a.get("fam", "")))], "scroll")
 			hud.refresh()
 	if a.get("ready", false) or a.has("homeless"):
 		return                           # семья без дома — история ждёт: цели не меряем (иначе мерили бы от станции)
@@ -1241,7 +1268,9 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			for k in String(g[1]).split("|"):
 				names.append(String(Defs.B.get(k, {}).get("name", k)).to_lower())
 			if (w["shops"] as Array).is_empty():
-				out.append({"text": "%s у дома (в %d м): нет" % [" или ".join(names).capitalize(), int(g[2])], "ok": false,
+				var sn := " или ".join(names)
+				sn = sn.left(1).to_upper() + sn.substr(1)     # «Мясная лавка или пекарня» (capitalize() — каждое слово с большой)
+				out.append({"text": "%s у дома (в %d м): нет" % [sn, int(g[2])], "ok": false,
 					"do": hud.need_do(["count", String(g[1]).split("|")[0]])})
 			for e: Array in w["shops"]:
 				var b: Dictionary = city.buildings[int(e[0])]
@@ -1516,11 +1545,14 @@ func _marks(on: bool) -> void:
 	# след лапки над кошкой (значок над осликом) — через paw_h часов поисков
 	var paw := false
 	var area := []
+	var trail := {}                          # след лапок от двери — только к месту, где ищут кошку (не к заказу, не к ослику)
 	if on and not cine_on and not a.is_empty() and _goal_kind(a) == "find" and (not cat.is_empty() or not beast.is_empty()):
 		var g: Dictionary = _step(a)["goal"][2]
 		var hours := int(s["h"]) - int(a.get("t0", s["h"]))
 		paw = hours >= int(g.get("paw_h", 6))
 		area = a.get("area1" if hours >= int(g.get("shrink_h", 3)) else "area0", [])
+		if not cat.is_empty():
+			trail = a
 	if paw and not cat.is_empty():
 		hud.set_badge("story_paw", _cat_pos() + Vector3(0, 0.75, 0), "cat", false, "", found)
 	elif paw:
@@ -1544,10 +1576,16 @@ func _marks(on: bool) -> void:
 		hud.set_badge(k, hints[k][0], "water", false, "", click_target.bind(int(hints[k][1])), "mark")
 	if on and not cine_on and area.is_empty() and not a.is_empty() and not a.get("ready", false) and not a.has("homeless"):
 		area = _goal_area(a)                # где строить (скверик, сад, новый дом): то же мягкое пятно света
-	if on and not cine_on and area.is_empty():
-		# заказ старосты: пятно у его места — пока в руках то, что идёт в счёт (или после «Показать»)
-		area = orders.area(game != null and Defs.B.has(String(game.tool)) and not orders.zone().is_empty() and zone_tool(String(game.tool)))
-	_area_marks(area, a)
+	# заказ старосты: пятно у его места — пока в руках то, что идёт в счёт (или после «Показать»); у истории своё место —
+	# заказ берёт пятно себе, когда в руках то, что в счёт заказа, а не истории
+	var t := String(game.tool) if game != null else ""
+	var ord_tool := _zone_hit(orders.zone(), t)
+	if on and not cine_on and (area.is_empty() or (ord_tool and not _zone_hit(_story_zone(), t)) or orders.showing()):
+		var oa := orders.area(ord_tool)
+		if not oa.is_empty():
+			area = oa
+			trail = {}
+	_area_marks(area, trail)
 
 
 ## Где выполнять цель шага: [x, z, радиус, яркость, край] у дома просящего — или []. Край (чёткая граница, без кольца) —
@@ -1558,7 +1596,7 @@ func _goal_area(a: Dictionary, g: Array = []) -> Array:
 	if g.is_empty():
 		return []
 	var hp := _home_pos(a)
-	var edge := game != null and zone_tool(String(game.tool))
+	var edge := game != null and _zone_hit(_story_zone(), String(game.tool))   # только цель истории (не заказа)
 	match String(g[0]):
 		"square", "around":
 			return [hp.x, hp.y, float(g[1]), BUILD_GLOW, edge]
@@ -1581,13 +1619,22 @@ func _goal_area(a: Dictionary, g: Array = []) -> Array:
 
 # ---------- «рядом с домом» (скверик, свадебный сад, дом молодым): у курсора — в счёт ли, ✓ над тем, что в счёт ----------
 
-## Цель шага «рядом с домом» сейчас: {hp, r, keys: [вид…], label — «скверика», no — «Это не дерево»} или {};
-## нет такой у истории — место взятого заказа старосты
-func zone_goal() -> Dictionary:
+## Цели «рядом с домом» сейчас: шаг истории и взятый заказ старосты (бывают обе) — [{hp, r, keys: [вид…],
+## label — «скверика», no — «Это не дерево», none — чего не надо (деревянные скамьи у заказа мраморных)}]
+func zone_goals() -> Array:
 	if city == null or not allowed():
-		return {}
-	var z := _story_zone()
-	return z if not z.is_empty() else orders.zone()
+		return []
+	var out := []
+	for z: Dictionary in [_story_zone(), orders.zone()]:
+		if not z.is_empty():
+			out.append(z)
+	return out
+
+
+## Первая из целей (история, иначе заказ) — прежним вызовам и проверкам
+func zone_goal() -> Dictionary:
+	var zz := zone_goals()
+	return zz[0] if not zz.is_empty() else {}
 
 
 func _story_zone() -> Dictionary:
@@ -1649,37 +1696,63 @@ func _story_zone() -> Dictionary:
 		"no": String(lab[1]) if lab.size() > 1 else "", "after": after, "room": room, "skip": skip}
 
 
-## Постройка type идёт в счёт цели «рядом с домом» (или похожа на нужное — тогда у курсора скажем «не в счёт»)
+## Постройка type идёт в счёт какой-то цели «рядом с домом» (или похожа на нужное — тогда у курсора скажем «не в счёт»)
 func zone_tool(type: String) -> bool:
-	var z := zone_goal()
-	if z.is_empty() or not Defs.B.has(type):
-		return false
-	return _zone_key(z, type) != "" or (String(z["no"]) != "" and String(Defs.B[type].get("sub", "")) in ["plants", "trees"])
+	for z: Dictionary in zone_goals():
+		if _zone_hit(z, type):
+			return true
+	return false
+
+
+## type относится к этой цели: идёт в счёт или похож на нужное (у курсора скажем «не в счёт»)
+func _zone_hit(z: Dictionary, type: String) -> bool:
+	return not z.is_empty() and Defs.B.has(type) and (_zone_key(z, type) != "" or _zone_no(z, type) != "")
+
+
+## Похожее на нужное, но не в счёт: горшки и вазы у скверика («Это не дерево»), деревянная скамья у заказа мраморных
+func _zone_no(z: Dictionary, type: String) -> String:
+	if type in (z.get("none", []) as Array):
+		return "%s — не в счёт" % String(Defs.B[type]["name"])
+	if String(z.get("no", "")) != "" and String(Defs.B[type].get("sub", "")) in ["plants", "trees"]:
+		return "%s — не в счёт" % String(z["no"])
+	return ""
 
 
 func _zone_key(z: Dictionary, type: String) -> String:
 	for k in z["keys"]:
-		if String(k) == "*decor":
+		var ks := String(k)
+		if ks == "*decor":
 			if Defs.B.has(type) and String(Defs.B[type]["kind"]) == "decor":
 				return "*decor"                 # любое украшение: красота дома
 			continue
-		if _is({"type": type}, String(k)):
-			return String(k)
+		if ks.begins_with("="):
+			if type == ks.substr(1):
+				return ks                       # «=bench» — только этот облик (мраморная скамья, не деревянная)
+			continue
+		if _is({"type": type}, ks):
+			return ks
 	return ""
 
 
-## Строка у курсора для постройки type в точке p: [текст, в счёт ли] или [] (цели нет / к ней не относится)
+## Строка у курсора для постройки type в точке p: [текст, в счёт ли] или [] (целей нет / к ним не относится).
+## В счёт хоть одной цели (истории или заказа) — так и говорим; иначе «далеко от …» той, к которой относится
 func zone_note(type: String, p: Vector2) -> Array:
-	var z := zone_goal()
-	if z.is_empty() or not Defs.B.has(type) or not p.is_finite():
+	if not Defs.B.has(type) or not p.is_finite():
 		return []
-	if _zone_key(z, type) == "":
-		if String(z["no"]) != "" and String(Defs.B[type].get("sub", "")) in ["plants", "trees"]:
-			return ["%s — не в счёт" % String(z["no"]), false]     # горшки, вазы, клумбы — не деревья
-		return []
-	if p.distance_to(z["hp"]) <= float(z["r"]):
-		return ["В счёт %s ✓" % String(z["label"]), true]
-	return [String(z.get("far", "Далеко от дома — не в счёт")), false]
+	var far := []
+	var no := ""
+	for z: Dictionary in zone_goals():
+		if _zone_key(z, type) == "":
+			if no == "":
+				no = _zone_no(z, type)
+			continue
+		if p.distance_to(z["hp"]) <= float(z["r"]):
+			return ["В счёт %s ✓" % String(z["label"]), true]
+		if far.is_empty():
+			far = [String(z.get("far", "Далеко от дома — не в счёт")), false]
+	if not far.is_empty():
+		return far
+	return [] if no == "" else [no, false]
 
 
 const ZONE_FLASH_MS := 3000                # ✓ над тем, что в счёт, — столько после постановки
@@ -1689,24 +1762,38 @@ var _flash_until := 0
 
 ## Поставили постройку: на 3 с ✓ над всем, что идёт в счёт цели «рядом с домом» (если поставленное к ней относится)
 func flash_counted(b: Dictionary) -> void:
-	var z := zone_goal()
-	if z.is_empty() or _zone_key(z, String(b.get("type", ""))) == "":
+	var t := String(b.get("type", ""))
+	# цели, в счёт которых идёт поставленное: сначала те, у чьего места его поставили (история или заказ)
+	var zs := []
+	var all := []
+	for z: Dictionary in zone_goals():
+		if _zone_key(z, t) == "":
+			continue
+		all.append(z)
+		if (b.get("pos", Vector2.INF) as Vector2).distance_to(z["hp"]) <= float(z["r"]):
+			zs.append(z)
+	if zs.is_empty():
+		zs = all
+	if zs.is_empty():
 		return
 	_flash_clear()
-	for id in city.buildings:
-		var o: Dictionary = city.buildings[id]
-		if (o["pos"] as Vector2).distance_to(z["hp"]) > float(z["r"]) or _zone_key(z, String(o["type"])) == "":
-			continue
-		if int(z["after"]) >= 0:
-			# дом молодым: только новые дома (не семьи и не жениха) со свободными местами — как в _new_near
-			if int(o.get("born", id)) < int(z["after"]) or int(id) in z["skip"]:
+	var seen := {}
+	for z: Dictionary in zs:
+		for id in city.buildings:
+			var o: Dictionary = city.buildings[id]
+			if seen.has(int(id)) or (o["pos"] as Vector2).distance_to(z["hp"]) > float(z["r"]) or _zone_key(z, String(o["type"])) == "":
 				continue
-			if int(z["room"]) > 0 and (not city.is_house(o) or city.house_cap(o) - int(o["pop"]) - int(o.get("coming", 0)) < int(z["room"])):
-				continue
-		var top: float = city.blueprint(o).top_y() + 0.6
-		var key := "zok%d" % int(id)
-		hud.set_badge(key, Vector3(o["pos"].x, float(o["y"]) + top, o["pos"].y), "check", false, "", Callable(), "mark")
-		_flash.append(key)
+			if int(z["after"]) >= 0:
+				# дом молодым: только новые дома (не семьи и не жениха) со свободными местами — как в _new_near
+				if int(o.get("born", id)) < int(z["after"]) or int(id) in z["skip"]:
+					continue
+				if int(z["room"]) > 0 and (not city.is_house(o) or city.house_cap(o) - int(o["pop"]) - int(o.get("coming", 0)) < int(z["room"])):
+					continue
+			seen[int(id)] = true
+			var top: float = city.blueprint(o).top_y() + 0.6
+			var key := "zok%d" % int(id)
+			hud.set_badge(key, Vector3(o["pos"].x, float(o["y"]) + top, o["pos"].y), "check", false, "", Callable(), "mark")
+			_flash.append(key)
 	_flash_until = Time.get_ticks_msec() + ZONE_FLASH_MS
 
 
@@ -1794,9 +1881,10 @@ func _area_marks(area: Array, a: Dictionary) -> void:
 	_glow_key = k
 	_glow_r = r
 	_glow_edge = edge
-	if k == _paws_key:
+	var pk := k + "|" + str(a.get("home", -1))     # след — от двери этого дома (или его нет вовсе)
+	if pk == _paws_key:
 		return
-	_paws_key = k
+	_paws_key = pk
 	for p in _paws:
 		(p as Node).queue_free()
 	_paws = []
@@ -2314,7 +2402,7 @@ func _speaker(who: String) -> Dictionary:
 		return {"kind": "pic", "pic": "advisor.png", "name": "Советник Марк", "role": "советник градоначальника"}
 	if who == "donkey":
 		return {"kind": "beast", "beast": "donkey", "name": String(b.get("cat_name", "Пузан")),
-			"role": "ослик семьи %s" % StoryDefs.fam_gen(String(b.get("fam", ""))), "pic": "class_plebs.png"}
+			"role": "ослик семьи %s" % StoryDefs.fam_gen(String(b.get("fam", ""))), "pic": ""}
 	var ro := _role(b, who)
 	var nm: Array = (sd.get("roles", {}) as Dictionary).get(who, [sd.get("who", ""), sd.get("role", "")])
 	return {"kind": "citizen", "seed": int(ro["seed"]), "female": bool(ro["female"]), "child": bool(ro["child"]), "old": bool(ro.get("old", false)),

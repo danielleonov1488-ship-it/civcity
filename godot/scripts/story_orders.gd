@@ -4,11 +4,15 @@ extends RefCounted
 ## станции, кипарисы у храма… Одна строка в «Просьбах горожан», только по желанию игрока: сама не открывается и камеру
 ## не двигает. «Взяться» — и в счёт идёт то, что поставлено после этого рядом с нужным местом (у курсора видно, в счёт
 ## ли украшение; край места светится, пока оно в руках). Награда — очки исследований, Слава, иногда редкий облик украшения
-## (не деньги, Д7). Когда заказы уровня сделаны — те же снова, вдвое больше (и награда вдвое, без облика).
+## (не деньги, Д7). Когда заказы уровня сделаны — те же снова, вдвое больше (и награда вдвое, без облика); но тот же
+## заказ — не раньше чем через двое суток, а повторы — не чаще раза в 6 ч (не ферма очков и Славы через снос за полцены).
 ## Ведёт узел Stories (scripts/stories.gd): tick, строка, место для пятна и подписи у курсора.
-## Состояние — city.stories["orders"]: {cur, taken, id0, since, last_h, n: {id: сколько раз сделан}, skip: {id: до часа}}.
+## Состояние — city.stories["orders"]: {cur, taken, id0, since, last_h, gap, n: {id: сколько раз сделан}, skip: {id: до часа},
+## done_h: {id: в какой час сделан последний раз}}.
 
 const GAP_H := 1                       # новый заказ — через час после прошлого
+const REPEAT_H := 48                   # тот же заказ снова — не раньше чем через двое суток после того, как его сделали
+const REPEAT_GAP_H := 6                # на втором круге повторы — не чаще раза в 6 ч (делали заказ дольше — следующий через час)
 const SKIP_H := 48                     # «Другой заказ»: этот — не раньше чем через двое суток
 const SHOW_MS := 10000                 # «Показать»: мягкое пятно у места заказа столько мс
 const ICON := "laurels"
@@ -88,6 +92,8 @@ func S() -> Dictionary:
 		o["n"] = {}
 	if typeof(o.get("skip")) != TYPE_DICTIONARY:
 		o["skip"] = {}
+	if typeof(o.get("done_h")) != TYPE_DICTIONARY:
+		o["done_h"] = {}
 	return o
 
 
@@ -191,9 +197,12 @@ func next_order() -> Dictionary:
 	var bt := 1 << 30
 	var h := int(st.city.stories.get("h", 0))
 	var skip: Dictionary = S()["skip"]
+	var dh: Dictionary = S()["done_h"]
 	for o: Dictionary in ORDERS:
 		if h < int(skip.get(String(o["id"]), -1)) or not can(o):
 			continue
+		if times(String(o["id"])) > 0 and h < int(dh.get(String(o["id"]), -999)) + REPEAT_H:
+			continue                              # этот недавно сделали: не раньше чем через двое суток
 		var t := times(String(o["id"]))
 		if t < bt:
 			bt = t
@@ -220,7 +229,7 @@ func tick() -> void:
 		_drop()                                   # места заказа больше нет (снесли храм): заказ снимаем молча
 		return
 	if cu.is_empty():
-		if h - int(o.get("last_h", -999)) < GAP_H:
+		if h - int(o.get("last_h", -999)) < int(o.get("gap", GAP_H)):
 			return
 		var nx := next_order()
 		if nx.is_empty():
@@ -231,6 +240,7 @@ func tick() -> void:
 		st.hud.refresh()
 		_advise_once()
 		return
+	_advise_once()                            # заказ пришёл в ролик ранга или при другом совете: объясним, когда советник свободен
 	if taken() and done():
 		complete()
 
@@ -264,7 +274,7 @@ func skip() -> void:
 	(o["skip"] as Dictionary)[id] = int(st.city.stories.get("h", 0)) + SKIP_H
 	o["cur"] = ""
 	o["taken"] = false
-	o["last_h"] = int(st.city.stories.get("h", 0)) - GAP_H     # следующий — сразу
+	o["last_h"] = int(st.city.stories.get("h", 0)) - int(o.get("gap", GAP_H))     # следующий — сразу
 	st._marks(true)
 	st.hud.refresh()
 
@@ -339,6 +349,11 @@ func complete() -> void:
 			out.append("редкое украшение «%s» (Украшения)" % Defs.B[t]["name"])
 	var id := String(o["id"])
 	(s["n"] as Dictionary)[id] = times(id) + 1
+	var h := int(c.stories.get("h", 0))
+	(s["done_h"] as Dictionary)[id] = h
+	# повтор: следующий заказ — не раньше чем через REPEAT_GAP_H от появления этого (кто делает за минуту — ждёт;
+	# кто строил как обычно, по часам, — через час, как на первом круге)
+	s["gap"] = GAP_H if times(id) == 1 else maxi(GAP_H, REPEAT_GAP_H - (h - int(s.get("since", h))))
 	s["cur"] = ""
 	s["taken"] = false
 	s["last_h"] = int(c.stories.get("h", 0))
@@ -426,7 +441,8 @@ func show() -> void:
 	st._marks(true)
 
 
-## Для подписи у курсора и ✓ над тем, что в счёт (Stories.zone_goal): место взятого заказа или {}
+## Для подписи у курсора и ✓ над тем, что в счёт (Stories.zone_goals): место взятого заказа или {}.
+## «=bench» остаётся точным (только мраморная скамья); none — чего не надо (у курсора: «… — не в счёт»)
 func zone() -> Dictionary:
 	if not taken():
 		return {}
@@ -436,15 +452,20 @@ func zone() -> Dictionary:
 		return {}
 	var keys := []
 	for e: Array in o["need"]:
-		keys.append(_key(String(e[0])))
-	return {"hp": p, "r": float(o["r"]), "keys": keys, "label": "заказа", "no": "", "after": int(S().get("id0", 0)), "room": 0,
-		"skip": [], "far": "Далеко от %s — не в счёт" % String(AT.get(String(o["anchor"]), "места"))}
+		keys.append(String(e[0]))
+	return {"hp": p, "r": float(o["r"]), "keys": keys, "label": "заказа", "no": "", "none": (o.get("none", []) as Array).duplicate(),
+		"after": int(S().get("id0", 0)), "room": 0, "skip": [], "far": "Далеко от %s — не в счёт" % String(AT.get(String(o["anchor"]), "места"))}
+
+
+## Идёт «Показать» (мягкое пятно у места заказа)
+func showing() -> bool:
+	return Time.get_ticks_msec() < _show_until
 
 
 ## Пятно у места заказа: [x, z, радиус, яркость, край] — пока в руках то, что идёт в счёт (край), или после «Показать»
 func area(edge: bool) -> Array:
 	var z := zone()
-	if z.is_empty() or not (edge or Time.get_ticks_msec() < _show_until):
+	if z.is_empty() or not (edge or showing()):
 		return []
 	var p: Vector2 = z["hp"]
 	return [p.x, p.y, float(z["r"]), Stories.BUILD_GLOW, edge]
