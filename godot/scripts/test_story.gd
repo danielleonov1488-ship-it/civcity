@@ -27,6 +27,9 @@ extends Node
 ## выбор про деда (награда по выбору, журнал), балкон только на дом в 2–3 этажа; «Заказы старосты» — с «Хутора», сами не
 ## открываются (30 ч — камера на месте), точка на свёрнутом свитке, в счёт — после «Взяться», награда без денег, редкий облик,
 ## второй круг вдвое, «Другой заказ», заменить деревянные скамьи.
+## Д9 «Разбойники у арки»: первой остаётся «Мурка», в обучении — нет; медальон «Легион» серый с подсказкой; ролик у арки
+## с телегой; шаг открывает «Легион» без очков, военный квартал подсвечен (в квартале ✓ / можно и здесь), одна стрелка;
+## Казармы; «В бой!» из строки — учебный бой; награда без денег — «Сторожевой пост»; старый город с Легионом — без истории.
 var game
 var c: City
 var hud
@@ -241,8 +244,11 @@ func _run() -> void:
 	c.tips["ui"] = 3
 	hud.apply_reveal(3)
 	hud.advisor_panel.visible = false
-	for t in ["rank_tip", "fest_tip", "floor_tool", "full_money", "full_rp", "name_tip", "v22_pace", "orders_tip"]:
+	for t in ["rank_tip", "fest_tip", "floor_tool", "full_money", "full_rp", "name_tip", "v22_pace", "orders_tip", "tax_tip", "dim_tip", "floor_money"]:
 		c.tips[t] = true                 # чужие советы не мешают проверить совет историй
+	# Легион уже открыт (как в старом городе): «Разбойники у арки» не встают между прежними историями — их проверяет _bandits
+	c.research["legion"] = true
+	c.legion.flags["tut"] = "done"
 	game._set_hour(10.5)
 	hud.set_speed(0.0)                   # часы игры стоят (часы историй двигает проверка); ролик сам ставит ×1
 	c.money = 5000.0
@@ -273,7 +279,7 @@ func _run() -> void:
 	if mode == "stage7":
 		# только этап 7: каркас, течь, ослик, тесно, заказы (быстрее, чем весь набор)
 		_block()
-		for f: Callable in [_framework, _leak, _donkey, _crowded, _orders]:
+		for f: Callable in [_framework, _leak, _donkey, _crowded, _orders, _bandits]:
 			c.money = 50000.0
 			await f.call()
 		StoryDefs.extra = []
@@ -305,6 +311,8 @@ func _run() -> void:
 	await _crowded()
 	c.money = 50000.0
 	await _orders()
+	c.money = 50000.0
+	await _bandits()
 	StoryDefs.extra = []
 	print("STORY DONE fails=", fails)
 	get_tree().quit()
@@ -487,9 +495,9 @@ func _search_and_find() -> void:
 	check(sto.kit != null, "ролик встречи")
 	check((S["done"] as Dictionary).has("cat") and (S["active"] as Dictionary).is_empty(), "история пройдена сразу (действие — до ролика)")
 	check(c.research.has("s_cat") and c.unlocked("catbasket"), "украшение «Кошачья корзинка» открыто")
-	check(is_equal_approx(c.rp, minf(c.rp_cap(), rp0 + 20.0)) or c.rp >= rp0 + 19.9, "+20 очков исследований (%.0f → %.0f)" % [rp0, c.rp])
-	if rp0 + 20.0 <= c.rp_cap():
-		check(String(S["done"]["cat"].get("text", "")).contains("+20 очков исследований"), "в награде — +20 очков")
+	check(is_equal_approx(c.rp, minf(c.rp_cap(), rp0 + 25.0)) or c.rp >= rp0 + 24.9, "+25 очков исследований (%.0f → %.0f)" % [rp0, c.rp])
+	if rp0 + 25.0 <= c.rp_cap():
+		check(String(S["done"]["cat"].get("text", "")).contains("+25 очков исследований"), "в награде — +25 очков")
 	var line := ""
 	for e: Array in kid_home["happy_parts"]:
 		if String(e[0]).begins_with("Мурка снова дома"):
@@ -580,7 +588,7 @@ func _skip_applies() -> void:
 	sto.found()
 	check(sto.kit != null, "нашли — ролик встречи")
 	var rtxt := String(S["done"].get("cat", {}).get("text", ""))
-	check(is_equal_approx(c.rp, c.rp_cap()) and not rtxt.contains("+20 очков") and rtxt.contains("полки полны"), "полки полны — в награде честно: «%s»" % rtxt)
+	check(is_equal_approx(c.rp, c.rp_cap()) and not rtxt.contains("+25 очков") and rtxt.contains("полки полны"), "полки полны — в награде честно: «%s»" % rtxt)
 	await frames(40)
 	press_key(KEY_ESCAPE)
 	ended = await wait_kit(false, 4.0)
@@ -1816,7 +1824,7 @@ func _framework() -> void:
 	var ids := []
 	for sd: Dictionary in StoryDefs.STORIES:
 		ids.append(String(sd["id"]))
-	check(ids == ["cat", "leak", "square", "donkey", "crowded", "wedding"], "порядок историй: %s" % [ids])
+	check(ids == ["cat", "bandits", "leak", "square", "donkey", "crowded", "wedding"], "порядок историй: %s" % [ids])
 	for sd: Dictionary in StoryDefs.STORIES:
 		check(String(sd.get("lesson", "")) != "", "«%s» говорит, чему учит (журнал): %s" % [sd["title"], sd.get("lesson", "")])
 	# цели «красота», «игры», «победы Легиона» — на пробной записи истории
@@ -1876,6 +1884,197 @@ func _framework() -> void:
 	check(sto._cond("crowded") and sto._cond("crowded=neighbours") and not sto._cond("crowded=stay") and not sto._cond("t_none"),
 		"«если»: тесно у Фабиев пройдено, дед у соседей")
 	(S["done"] as Dictionary).erase("crowded")
+
+
+# ---------- Д9 «Разбойники у арки»: телега у арки → «Легион» → Казармы в военном квартале → учебный бой → пост ----------
+
+func _bandits() -> void:
+	print("== разбойники у арки (Д9)")
+	StoryDefs.extra = []
+	var lg: Legion = c.legion
+	var lu := LegionUi.of(hud)
+	# город без Легиона, Хутор
+	for id in c.buildings.keys():
+		if String(c.buildings[id]["type"]) in sto.MILITARY:
+			c.remove(c.buildings[id], false)
+	c.research.erase("legion")
+	c.research.erase("archery")
+	c.research.erase("s_bandits")
+	lg.flags = {}
+	lg.progress = 0
+	lg.stars = {}
+	lg.upg = {}
+	c.level = 1
+	c.changed.emit()
+	await frames(3)
+	check(lu != null and lu.btn_wrap.visible and not lg.window_open() and lu.btn.tooltip_text.contains("Разбойники у арки") and lu.btn.get_node("ic").material != null,
+		"медальон «Легион» виден с начала — серый, подсказка: «%s»" % (lu.btn.tooltip_text if lu != null else ""))
+	check(Defs.unlock_text("legion").contains("Разбойники у арки") and c.can_research("legion").contains("Разбойники у арки") and not c.research_open("legion"),
+		"Казармы и «Легион» — «%s»; в свитке за очки не изучить" % Defs.unlock_text("legion"))
+	# первой — «Мурка»; в обучении — ничего
+	fresh7(4200, [])
+	var S := c.stories
+	sto._tried = ""
+	sto.tick()
+	check(String(S["offer"].get("id", "")) == "cat", "на «Хуторе» первой — «Где Мурка?» (%s)" % S["offer"].get("id", ""))
+	c.tips["tut"] = 4
+	fresh7(4300, ["cat"])
+	S = c.stories
+	sto._tried = ""
+	sto.tick()
+	check((S["offer"] as Dictionary).is_empty(), "пока идёт обучение — историю не предлагают")
+	c.tips["tut"] = -1
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "bandits", "после «Мурки» — «Разбойники у арки» (%s)" % o.get("id", ""))
+	if o.is_empty():
+		return
+	# ролик у арки: телега на обочине, переселенец рядом
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	var said: bool = await wait_beat("say", 8.0)
+	await frames(50)
+	sto.ui.finish_typing()
+	await frames(8)
+	var act = sto.cine.get("actors", {}).get("settler")
+	var ap := Vector2((act as Node3D).position.x, (act as Node3D).position.z) if act != null else Vector2.INF
+	check(said and (sto.cine.get("props", []) as Array).size() >= 1 and ap.distance_to(Land.GATE) < 20.0,
+		"ролик у арки: телега поставлена (%d), переселенец в %.1f м от арки" % [(sto.cine.get("props", []) as Array).size(), ap.distance_to(Land.GATE)])
+	check(sto.ui.role_lbl.text.begins_with("переселенец"), "просит переселенец: %s, %s" % [sto.ui.name_lbl.text, sto.ui.role_lbl.text])
+	await shot("story_bandits_ask.png")
+	await play_through(25.0)
+	await wait_kit(false, 4.0)
+	await frames(4)
+	var A: Dictionary = S["active"]
+	check(String(A.get("id", "")) == "bandits" and int(A.get("step", -1)) == 1, "история идёт: шаг «Казармы»")
+	check(c.research.has("legion") and lg.window_open() and bool(lg.flags.get("advised", false)), "шаг открыл «Легион» без очков; окно Легиона своего совета не скажет")
+	check(String((S.get("granted", {}) as Dictionary).get("legion", "")) == "bandits", "записано, что «Легион» открыла эта история (%s)" % [S.get("granted")])
+	var q: Array = lg.quarter()
+	var qc := Vector2(float(q[0]), float(q[1])) if q.size() == 3 else Vector2.INF
+	check(q.size() == 3 and qc.distance_to(Land.GATE) < 70.0 and game.land.is_owned(qc), "военный квартал у арки: %s (%.0f м от арки)" % [q, qc.distance_to(Land.GATE)])
+	var ga: Array = sto._goal_area(A)
+	check(ga.size() >= 3 and Vector2(float(ga[0]), float(ga[1])).distance_to(qc) < 0.1, "квартал подсвечен на земле (пятно, не кольцо)")
+	# одна стрелка: обучение Легиону и история показывают на одно и то же — Казармы
+	await frames(3)
+	hud._update_pointer()
+	var tut_t = lu.tut_pointer()[0]
+	check(lu.tut_active() and hud.pointer_target != null and hud.pointer_target == tut_t and String(sto.pointer_do().get("type", "")) == "barracks",
+		"одна стрелка — на Казармы (обучение Легиону; история показала бы туда же)")
+	# советник: военный квартал, один раз
+	hud.advisor_panel.visible = false
+	sto.tick()
+	check(c.tips.has("story_adv_bandits_barracks") and hud.adv_title.text == "Легион и военный квартал", "советник: «%s»" % hud.adv_title.text)
+	hud.advisor_panel.visible = false
+	# с Казармами в руках: в квартале ✓, вне его — можно и здесь
+	game.set_tool("barracks")
+	var zin: Array = sto.zone_note("barracks", qc)
+	var zout: Array = sto.zone_note("barracks", qc + Vector2(60, 60))
+	check(not zin.is_empty() and bool(zin[1]) and String(zin[0]).contains("военном квартале") and not zout.is_empty() and String(zout[0]).contains("здесь"),
+		"у курсора: «%s» / «%s»" % [zin[0] if not zin.is_empty() else "", zout[0] if not zout.is_empty() else ""])
+	await look_at_pt(qc, 38.0)
+	sto._marks(true)
+	await frames(30)
+	await shot("story_bandits_quarter.png")
+	game.set_tool("")
+	# Казармы — прямо в середине квартала (там они встают: дорога у входа)
+	c.money = 5000.0
+	var bar := {}
+	for yaw: float in [0.0, PI / 2.0, PI, -PI / 2.0]:
+		if String(c.check_place("barracks", qc, yaw)["err"]) == "":
+			bar = c.place("barracks", qc, yaw)
+			game._show(bar)
+			break
+	check(not bar.is_empty() and float(Defs.B["barracks"]["cost"]) <= 600.0, "Казармы встают в середине квартала (%s), стоят %d ден." % [bar.get("pos"), int(Defs.B["barracks"]["cost"])])
+	if bar.is_empty():
+		bar = put("barracks", qc)
+	await look_at_pt(qc, 30.0)
+	await frames(20)
+	await shot("story_bandits_barracks.png")
+	sto.tick()
+	check(bool(A.get("ready", false)) and int(A["step"]) == 2, "Казармы есть — ролик ждёт «Посмотреть»")
+	sto.play_ready()
+	await play_through(25.0)
+	await wait_kit(false, 4.0)
+	await frames(4)
+	check(sto._goal_kind(A) == "legion_win", "шаг «учебный бой»")
+	var info: Dictionary = sto.row_info()
+	var bts: Array = info.get("buttons", [])
+	check(not bts.is_empty() and String(bts[0][0]) == "В бой!", "в строке истории — «В бой!» (%s)" % [bts])
+	# «В бой!» — учебный бой леса (3D-бой подделан: ловим сигнал)
+	var got := []
+	var cons: Array = lg.battle_requested.get_connections()
+	for cn: Dictionary in cons:
+		lg.battle_requested.disconnect(cn["callable"])
+	var catch := func(s: Dictionary) -> void: got.append(s)
+	lg.battle_requested.connect(catch)
+	sto.press("battle")
+	lg.battle_requested.disconnect(catch)
+	for cn: Dictionary in cons:
+		lg.battle_requested.connect(cn["callable"])
+	check(got.size() == 1 and String(got[0].get("tutorial", "")) == "oil" and int(got[0]["stage"]["idx"]) == 0, "«В бой!» — учебный бой с маслом (бой 0-0-0)")
+	if got.size() == 1:
+		var m0 := c.money
+		lg.apply_result(got[0], {"win": true, "alive": 3, "total": 3, "timeout": false, "time": 40.0})
+		check(lg.progress == 1, "учебный бой выигран (деньги за бой: %+d)" % int(c.money - m0))
+	sto.tick()
+	check(bool(A.get("ready", false)), "бой выигран — последний ролик ждёт")
+	c.rp = minf(c.rp, c.rp_cap() - 100.0)
+	var rp0 := c.rp
+	var gl0 := lg.glory
+	var mon0 := c.money
+	sto.play_ready()
+	await play_through(30.0, "reward", "story_bandits_final.png")
+	await wait_kit(false, 4.0)
+	var et := String((S["done"] as Dictionary).get("bandits", {}).get("text", ""))
+	check((S["done"] as Dictionary).has("bandits") and c.unlocked("legionpost") and c.rp >= rp0 + 29.0 and lg.glory >= gl0 + 4.9 and is_equal_approx(c.money, mon0) and not et.contains("ден"),
+		"история пройдена: «Сторожевой пост», +очки, +Слава, денег нет (%s)" % et)
+	var lp := deco("legionpost", qc + Vector2(0, -10))
+	check(not lp.is_empty(), "сторожевой пост ставится")
+	if not lp.is_empty():
+		game._set_hour(19.5)
+		game.rig.set_view(Vector3(lp["pos"].x, Land.BASE_Y, lp["pos"].y), 160.0, 32.0, 8.0)
+		await frames(40)
+		await shot("story_bandits_post.png")
+		game._set_hour(10.5)
+	# обучение Легиону, шаг 4 «Войска»: пока на улучшение не хватает денариев, стрелка не держит медальон — она у просьб
+	lg.flags["seen"] = true
+	lg.flags["tut_fought"] = true
+	lg.flags.erase("tut")
+	lg.upg = {}
+	lg.levels["legionary"] = 1
+	lu.visible = false
+	c.money = 100.0
+	var p_poor = lu.tut_pointer()[0]
+	hud._update_pointer()
+	var hp_poor = hud.pointer_target
+	c.money = 5000.0
+	var p_rich = lu.tut_pointer()[0]
+	check(lg.tut_step() == "troops" and p_poor == null and hp_poor != lu.btn and p_rich == lu.btn,
+		"шаг «Войска»: без денариев стрелка у просьб (%s), с денариями — на медальоне" % [hp_poor])
+	lg.flags["tut"] = "done"
+	# старый город с изученным Легионом — история не нужна
+	fresh7(4400, ["cat"])
+	S = c.stories
+	sto._tried = ""
+	sto.tick()
+	check(String(S["offer"].get("id", "")) != "bandits", "Легион уже открыт — «Разбойников» не предлагают (%s)" % S["offer"].get("id", ""))
+	# «Легион» открыла сама история, а потом она прервалась (семья уехала) — её предложат снова: Казармы и бой уже
+	# засчитаны, награда («Сторожевой пост», очки, Слава) не пропадёт
+	fresh7(4500, ["cat"])
+	S = c.stories
+	S["granted"] = {"legion": "bandits"}
+	S["active"] = {"id": "bandits", "step": 3, "flags": {}, "home": -1}
+	sto._cancel("Семья уехала из города.")
+	check((S["active"] as Dictionary).is_empty() and not (S["done"] as Dictionary).has("bandits"), "история прервалась после «Легиона»")
+	S["h"] = int(S["h"]) + StoryDefs.GAP_H
+	sto._tried = ""
+	sto.tick()
+	check(String(S["offer"].get("id", "")) == "bandits", "прерванных «Разбойников» предлагают снова (%s)" % S["offer"].get("id", ""))
+	var dj: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	check(String((City.stories_load(dj["stories"])["granted"] as Dictionary).get("legion", "")) == "bandits", "кто открыл «Легион» — сохраняется")
+	S["offer"] = {}
+	sto._marks(true)
 
 
 # ---------- «Течь в водопроводе»: лужи вдоль улицы → мастер идёт к трубе → фонтан у 6 домов ----------

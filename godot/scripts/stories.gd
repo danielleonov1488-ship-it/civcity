@@ -248,6 +248,16 @@ func _try_offer() -> void:
 func can_offer(sd: Dictionary) -> Dictionary:
 	if city.level < int(sd.get("lvl", 0)) or int(city.stats.get("pop", 0)) < int(sd.get("pop", 0)):
 		return {}
+	# Легион уже открыт (старый город изучил его за очки) — «Разбойники у арки» не нужны. Открыла его сама эта история,
+	# а потом она прервалась (семья уехала, дом снесли) — предлагаем снова, как любую прерванную: награда не пропадёт
+	var sk := String(sd.get("skip_if", ""))
+	if sk != "" and city.research.has(sk) and String((S().get("granted", {}) as Dictionary).get(sk, "")) != String(sd["id"]):
+		return {}
+	# сначала та история (на «Хуторе» первой остаётся «Где Мурка?»); с «Деревни» не держим, если ту сейчас не предложить
+	var af := String(sd.get("after", ""))
+	if af != "" and not (S()["done"] as Dictionary).has(af) and not StoryDefs.story(af).is_empty():
+		if city.level < 2 or not can_offer(StoryDefs.story(af)).is_empty():
+			return {}
 	for r in sd.get("needs", []):
 		if not city.research.has(r):
 			return {}
@@ -571,8 +581,16 @@ func _enter_step(i: int) -> void:
 		# шаг открывает исследование (Легион из истории): без очков, событие — в колокольчик
 		if not city.research.has(String(r)):
 			city.research[String(r)] = true
+			# кто открыл: прервётся история — её предложат снова, skip_if её не остановит (can_offer)
+			(S().get_or_add("granted", {}) as Dictionary)[String(r)] = String(a.get("id", ""))
 			var rd := Defs.research(String(r))
 			city._quiet("Открыто: «%s» — для истории «%s»." % [rd.get("name", r), StoryDefs.title_of(_story(a), a)], "research")
+		if String(r) == "legion":
+			city.legion.flags["advised"] = true   # «Легион собран!» скажет совет шага (с военным кварталом), не окно Легиона
+	if bool(st.get("quarter", false)):
+		quarter()                        # военный квартал у арки — один раз на город (Legion.flags.quarter)
+	if not (st.get("grant", []) as Array).is_empty():
+		city.changed.emit()              # медальон «Легион» и карточки стройки — сразу, не через игровой час
 	if st.has("goal"):
 		var g: Array = st["goal"]
 		if String(g[0]) == "find":
@@ -1369,6 +1387,8 @@ func pointer_do() -> Dictionary:
 				return {"kind": "view", "layer": String(pt[1]), "tip": "Обзор"}
 			"research":
 				return hud._do_research(String(pt[1]), "")
+			"legion":
+				return {"kind": "legion", "tip": "Легион"}
 	var g: Array = st.get("goal", [])
 	if g.is_empty() or not (String(g[0]) in PART_KINDS or String(g[0]) == "built_after"):
 		return {}
@@ -1513,6 +1533,18 @@ func press(what: String, val := "") -> void:
 			flags["paid"] = true
 		"choice":
 			_choose(a, val)
+		"battle":
+			# бой Легиона прямо из истории (учебный бой леса с маслом): 3D-бой откроется по сигналу legion.battle_requested
+			var lg = city.legion
+			var bt: Array = _step(a).get("battle", [0, 0, 0])
+			var st: Dictionary = lg.stage_info(int(bt[0]), int(bt[1]), int(bt[2]))
+			var why: String = lg.can_fight(st)
+			if why != "":
+				hud.notify(why, "lock")
+				return
+			lg.flags["tut_fought"] = true            # обучение Легиону: шаг «первый бой» позади
+			lg.start_battle(st)
+			return
 	_tick_active(what == "ready")
 	hud.refresh()
 
@@ -1592,6 +1624,11 @@ func _marks(on: bool) -> void:
 ## только пока в руках то, что идёт в счёт цели (украшение для скверика и сада, дом для молодых): иначе мягкое пятно
 func _goal_area(a: Dictionary, g: Array = []) -> Array:
 	if g.is_empty():
+		if bool(_step(a).get("quarter", false)):
+			# военный квартал у арки: мягкое пятно; с военной постройкой в руках — чёткий край (не кольцо)
+			var q := quarter()
+			var qe := game != null and _zone_hit(_story_zone(), String(game.tool))
+			return [float(q[0]), float(q[1]), float(q[2]), BUILD_GLOW, qe]
 		g = _step(a).get("goal", [])
 	if g.is_empty():
 		return []
@@ -1642,6 +1679,11 @@ func _story_zone() -> Dictionary:
 	if a.is_empty() or a.get("ready", false) or a.has("homeless"):
 		return {}
 	var st := _step(a)
+	if bool(st.get("quarter", false)):
+		# военный квартал: у курсора — в квартале ли; вне его строить тоже можно (подсказка, а не «не в счёт»)
+		var q := quarter()
+		return {"hp": Vector2(float(q[0]), float(q[1])), "r": float(q[2]), "keys": MILITARY.duplicate(), "label": "военного квартала",
+			"ok": "В военном квартале ✓", "far": "Можно и здесь — а военный квартал у арки", "no": "", "after": -1, "room": 0, "skip": []}
 	var g: Array = st.get("goal", [])
 	if g.is_empty():
 		return {}
@@ -1747,7 +1789,7 @@ func zone_note(type: String, p: Vector2) -> Array:
 				no = _zone_no(z, type)
 			continue
 		if p.distance_to(z["hp"]) <= float(z["r"]):
-			return ["В счёт %s ✓" % String(z["label"]), true]
+			return [String(z.get("ok", "В счёт %s ✓" % String(z["label"]))), true]
 		if far.is_empty():
 			far = [String(z.get("far", "Далеко от дома — не в счёт")), false]
 	if not far.is_empty():
@@ -2150,6 +2192,12 @@ func row_info() -> Dictionary:
 				info["buttons"] = [["Готово (%s)" % TIER[int(pr["tier"])], press.bind("ready", "")], ["Показать", show_area]]
 		"works", "floor", "happy_home", "all":
 			info["buttons"] = [["Показать", show_area]]
+		"legion_win":
+			if st.has("battle") and not bool(progress(a, g)["ok"]):
+				info["buttons"] = [["В бой!", press.bind("battle", "")]]
+		"p":
+			if bool(st.get("quarter", false)):
+				info["buttons"] = [["Показать", show_area]]
 		"", "around", "wait":
 			if kind != "":
 				var pr := progress(a, g)
@@ -2560,6 +2608,8 @@ func _beat_start(b: Array) -> void:
 				_proc_set()
 		"cheer":
 			_cheer(String(b[1]))
+		"cart":
+			_gate_cart()
 		"enter":
 			_enter_house()
 		"wait":
@@ -2586,7 +2636,7 @@ func _beat_tick(dt: float) -> void:
 		"fly":
 			if not kit.moving() or bt > 3.0:
 				_next_beat()
-		"anim", "actor", "cat", "elders", "dusk", "donkey", "fix":
+		"anim", "actor", "cat", "elders", "dusk", "donkey", "fix", "cart":
 			if bt >= 0.35:
 				_next_beat()
 		"look":
@@ -2704,6 +2754,13 @@ func _actor(role: String, where: String) -> void:
 		var sc := _sq_center(b)
 		p = _open_spot(sc)
 		var to: Vector2 = (h["pos"] as Vector2) if not h.is_empty() else p + Vector2(0, 1)
+		yaw = atan2(to.x - p.x, to.y - p.y)
+	elif where == "gate":
+		# у арки, рядом с телегой, лицом от дороги: камера встаёт перед ним, за спиной — дорога и арка (столбы с
+		# флажками вдоль дороги не заслоняют кадр)
+		var g0 := gate_spot()
+		p = _open_spot(g0 + Vector2(-1.6, 1.8))
+		var to := p + Vector2(1.0, 0.45)
 		yaw = atan2(to.x - p.x, to.y - p.y)
 	elif where == "near_cat":
 		var cp3: Vector3 = _who_at("cat")[0]
@@ -3510,7 +3567,7 @@ func _cond(c: String) -> bool:
 
 ## Место для ролика: «spot» (где шла цель — труба), «home», «shop» (лавка, что заработала), «warehouse», «near:тип»
 static func _is_place(s: String) -> bool:
-	return s in ["spot", "home", "shop", "warehouse"] or s.begins_with("near:")
+	return s in ["spot", "home", "shop", "warehouse", "gate"] or s.begins_with("near:")
 
 
 func _place_pos(s: String) -> Vector2:
@@ -3529,11 +3586,96 @@ func _place_pos(s: String) -> Vector2:
 			var wh := _nearest_store(_home_pos(b))
 			if not wh.is_empty():
 				return city.door_point(wh)
+		"gate":
+			return gate_spot()
 	if s.begins_with("near:"):
 		var nb := _near_building(s.substr(5))
 		if not nb.is_empty():
 			return nb["pos"]
 	return city.door_point(h) if not h.is_empty() else (city.center()["pos"] as Vector2)
+
+
+# ---------- арка на въезде и военный квартал (история «Разбойники у арки», Д9; здания Легиона на карте — этап L.2) ----------
+
+## Военные постройки Легиона: в счёт военного квартала (у курсора — «В военном квартале ✓»)
+const MILITARY := ["barracks", "range", "spearcamp", "ballistae", "catapults"]
+const QUARTER_R := 11.0                  # радиус военного квартала, м (Казармы — участок ~9×9 м, рядом встанут и другие)
+
+
+## Где у арки стоит телега переселенцев: на обочине большой дороги, по эту сторону арки (помним до конца ролика)
+func gate_spot() -> Vector2:
+	if not cine.is_empty() and cine.has("gate_at"):
+		return cine["gate_at"]
+	var q := _open_spot(Land.GATE + Vector2(4.6, 8.5))
+	if not cine.is_empty():
+		cine["gate_at"] = q
+	return q
+
+
+## Такт «cart»: у арки — телега с мешками и рассыпанный товар (только на время ролика)
+func _gate_cart() -> void:
+	if cine.has("cart_on"):
+		return
+	cine["cart_on"] = true
+	var q := gate_spot()
+	for e: Array in [["cart", Vector2.ZERO, 0.35], ["goods_3", Vector2(1.5, -1.3), 1.1]]:
+		var p: Vector2 = q + (e[1] as Vector2)
+		if game.land.occ_at(p) != 0:
+			continue
+		var bp := Catalog.make(String(e[0]))
+		var xf := Transform3D(Basis(Vector3.UP, float(e[2])), Vector3(p.x, game.land.height_at(p.x, p.y), p.y))
+		cine["props"].append(game.parts.place(bp, xf))
+
+
+## Военный квартал у арки: [x, z, радиус] — свободное место у большой дороги между аркой и станцией (один раз на город:
+## Legion.flags.quarter; здания Легиона на карте, этап L.2, советник предложит ставить сюда же)
+func quarter() -> Array:
+	var q: Array = city.legion.quarter()
+	if q.is_empty():
+		q = _find_quarter()
+		city.legion.flags["quarter"] = q
+	return q
+
+
+## Где поставить военный квартал: у большой дороги между аркой и станцией, ближе к арке; весь круг — на своей земле,
+## а Казармы там правда встают (дорога у входа, не круто, свободно — City.check_place). Всё застроено — дальше по городу
+func _find_quarter() -> Array:
+	var cands := []
+	for z: float in [77.0, 83.0, 89.0, 95.0]:
+		for dx: float in [-8.5, 8.5, -10.5, 10.5]:
+			cands.append(Vector2(Land.ROAD_X + dx, z))
+	for z: float in [104.0, 112.0, 120.0, 128.0]:
+		for dx: float in [-8.5, 8.5]:
+			cands.append(Vector2(Land.ROAD_X + dx, z))
+	for k in 36:                           # запас: кольца вокруг станции
+		cands.append(Land.CENTER + Vector2(cos(k * TAU / 12.0), sin(k * TAU / 12.0)) * (24.0 + 12.0 * (k / 12)))
+	var scored := []
+	for c: Vector2 in cands:
+		var whole: bool = game.land.is_owned(c)
+		for k in 8:
+			whole = whole and game.land.is_owned(c + Vector2(cos(k * TAU / 8.0), sin(k * TAU / 8.0)) * (QUARTER_R - 1.0))
+		if not whole:
+			continue
+		var free := free_near(c, QUARTER_R)
+		if free < 120:
+			continue
+		scored.append([float(mini(free, 300)) * 0.2 - c.distance_to(Land.GATE), c])
+	scored.sort_custom(func(x, y): return float(x[0]) > float(y[0]))
+	for e2: Array in scored:
+		var spot := _barracks_spot(e2[1])
+		if spot != Vector2.INF:
+			return [spot.x, spot.y, QUARTER_R]           # середина квартала — ровно там, где встают Казармы
+	var best: Vector2 = scored[0][1] if not scored.is_empty() else Land.GATE + Vector2(10.0, 16.0)
+	return [snappedf(best.x, 0.5), snappedf(best.y, 0.5), QUARTER_R]
+
+
+## Встают ли здесь Казармы (у входа дорога, свободно, не круто): точка у c или INF
+func _barracks_spot(c: Vector2) -> Vector2:
+	for off: Vector2 in [Vector2.ZERO, Vector2(0, 3.0), Vector2(0, -3.0), Vector2(2.5, 0), Vector2(-2.5, 0)]:
+		for yaw: float in [0.0, PI / 2.0, PI, -PI / 2.0]:
+			if String(city.check_place("barracks", c + off, yaw, 0, 0, -3)["err"]) == "":
+				return c + off
+	return Vector2.INF
 
 
 ## Ближняя к дому истории постройка типа (вид — как у целей, «a|b») или {}

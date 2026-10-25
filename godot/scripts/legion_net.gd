@@ -260,8 +260,9 @@ func _tick() -> void:
 	if not force_on and not _acc().synced:
 		return                                      # сначала город сверяется с облаком
 	_check_account()
-	if not _lg().window_open():
-		# Легиона ещё нет: оборону не выставляем, только своё состояние — в нём имя города (табличка вверху слева)
+	if not _lg().pvp_open():
+		# Легиона ещё нет (или город ещё не «Посёлок» — Legion.PVP_MIN_LEVEL): оборону не выставляем, только своё
+		# состояние — в нём имя города (табличка вверху слева)
 		if _now() - _state_t >= STATE_GAP:
 			_busy = true
 			await refresh()
@@ -296,7 +297,7 @@ func refresh() -> void:
 ## Ответ сервера — или {}, если отправлять было нечего
 func _publish(force: bool) -> Dictionary:
 	var lg := _lg()
-	if lg == null or not lg.window_open():
+	if lg == null or not lg.pvp_open():
 		return {}
 	_chk_t = _now()
 	var snap := lg.defense_snapshot()

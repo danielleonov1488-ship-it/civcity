@@ -57,6 +57,8 @@ const ARMY_WONDERS = [
 ];
 const PVP = { charges: 5, regen: 1800e3, win_base: 20, win_min: 8, win_max: 40, loss_base: 10, loss_min: 3, loss_max: 20,
   loot_money: 2.0, loot_base: 150, glory: 2 };
+// бои с городами — с «Посёлка» (как в игре: Legion.PVP_MIN_LEVEL): Легион теперь с «Хутора», а добыча рассчитана на казну «Посёлка»
+const PVP_MIN_LEVEL = 3;
 
 const BATTLE_TTL = +process.env.PVP_TTL_MS || 30 * 60e3;   // за сколько надо доложить бой
 const BATTLE_BUSY = Math.min(BATTLE_TTL, 5 * 60e3);         // самый долгий бой (181 с на ×1) с запасом на доклад
@@ -517,6 +519,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     const now = Date.now();
     const recent = new Set(q.recentTargets.all(a.userId, now - ATTACK_GAP).map(r => r.defender));
     const f = facts(a.userId);
+    if (f && f.cityLevel < PVP_MIN_LEVEL) throw new Fail(409, 'Бои с городами — с «Посёлка»');
     const mine = potential(f, p);
     const real = q.candidates.all(a.userId, now - STALE, now, p.rating).filter(r => !recent.has(r.user_id));
     // ближние по рейтингу; из них — ближние по силе
@@ -573,6 +576,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     }
     const f = facts(a.userId);
     if (f && !f.legion) throw new Fail(409, 'Легион ещё не собран');
+    if (f && f.cityLevel < PVP_MIN_LEVEL) throw new Fail(409, 'Бои с городами — с «Посёлка»');
     const att = checkSquad(f, b.squad);
     if (!att.snap.squad.length) throw new Fail(400, 'В отряде нет бойцов');
     let def, defUid = null, defName, defRating, defLevel;

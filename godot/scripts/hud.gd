@@ -94,6 +94,8 @@ var events_panel: PanelContainer
 var research_panel: PanelContainer
 var research_box: VBoxContainer
 var lbl_research_rp: Label
+var lbl_research_rate: Label              # «+11 в час» у очков в окне исследований (этап 2.2)
+var _tax_warn := {}                       # окно «Финансы»: предупреждения о налогах — пересчёт раз в игровой час
 var finance_panel: PanelContainer
 var stats_panel: PanelContainer
 var pause_panel: PanelContainer
@@ -165,6 +167,8 @@ func _ready() -> void:
 	_pointer()
 	_hover_tip_panel()
 	LegionUi.attach(self)                      # окно «Легион» и его медальон сверху справа (scripts/legion_ui.gd)
+	if game != null and game.city != null:
+		game.city.rp_reward.connect(_fly_rp)      # просьба дала очки — «+25» летит к счётчику свитков (без звука и всплывашки)
 	apply_scale(float(game.settings.get("ui_scale", 1.0)))
 	get_window().size_changed.connect(func(): apply_scale(float(game.settings.get("ui_scale", 1.0))))
 	get_tree().node_added.connect(_on_node_added)
@@ -2559,6 +2563,10 @@ func _update_pointer() -> void:
 	var lu := LegionUi.of(self)
 	if lu != null and lu.tut_active():
 		var lp: Array = lu.tut_pointer()
+		# шаг «Войска» при закрытом окне уступает стрелку идущей истории горожан — улучшение бойцов подождёт
+		var sto0 = game.get("stories")
+		if lp[0] != null and not lu.visible and lu.lg.tut_step() == "troops" and sto0 != null and not (sto0.pointer_do() as Dictionary).is_empty():
+			lp = [null, ""]
 		if lp[0] != null:
 			pointer_target = lp[0]
 			pointer_text.text = lp[1]
@@ -2687,7 +2695,7 @@ func _do_type(type: String) -> Dictionary:
 	var nm := String(d["name"])
 	if not c.unlocked(type):
 		var rid := String(d.get("unlock", ""))
-		if Defs.research(rid).is_empty():
+		if Defs.research(rid).is_empty() or Defs.research(rid).has("story"):
 			return {"kind": "locked", "type": type, "tip": nm, "say": "«%s» откроется %s" % [nm, Defs.unlock_text(rid)]}
 		var w := _do_research(rid, "«%s» открывает исследование «%s»" % [nm, Defs.research(rid)["name"]])
 		w["type"] = type
@@ -2771,6 +2779,9 @@ func _do_target(w: Dictionary) -> Control:
 					return x
 		"rank":
 			return rank_btn
+		"legion":
+			var lu := LegionUi.of(self)
+			return null if lu == null or lu.visible else lu.btn
 	return null
 
 
@@ -2795,6 +2806,10 @@ func _do_click(w: Dictionary) -> void:
 		"fam":
 			if not game.city.arrivals.is_empty():
 				game.start_settle(game.city.arrivals[0]["name"])
+		"legion":
+			var lu := LegionUi.of(self)
+			if lu != null and not lu.visible:
+				lu.open("campaign")
 	_update_pointer()
 
 
@@ -3743,14 +3758,15 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	var hi := _icon("happy", 36)
 	_grey(hi, hp < 40)
 	top.add_child(hi)
-	var hl := _label("Счастье %d%%" % hp, 25, true, hcol)
+	# выше 100% — «запас» (этап 2.5): налог и так по полной, а запас съедают высокие налоги и повторы лавок
+	var hl := _label(("Счастье 100%% · запас +%d" % (hp - 100)) if hp > 100 else "Счастье %d%%" % hp, 25, true, hcol)
 	hl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	if hp > 100:
+		hl.mouse_filter = Control.MOUSE_FILTER_PASS
+		hl.tooltip_text = "Счастья больше, чем нужно: налог дом и так платит по полной. Запас бережёт дом, когда налоги высокие или рядом повторяются одинаковые лавки, — и пригодится, чтобы перестроить дом в следующий класс."
 	top.add_child(hl)
-	var tax := float(cls["tax"])
-	if cl == "patricians" and c.research.has("taxes1"):
-		tax *= 1.25
-	var inc := int(b["pop"]) * tax * (0.5 + minf(100.0, float(hp)) / 100.0)
+	var inc := int(b["pop"]) * c.house_tax(b) * (0.5 + minf(100.0, float(hp)) / 100.0)
 	var chip := _chip(false, 10.0)
 	chip.mouse_filter = Control.MOUSE_FILTER_PASS
 	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -4221,12 +4237,15 @@ func _research_panel() -> void:
 	rp.add_child(_icon("research", 28, C_SOFT))
 	lbl_research_rp = _label("0", 22, true)
 	rp.add_child(lbl_research_rp)
+	lbl_research_rate = _label("", 15, true, C_GOOD)
+	lbl_research_rate.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	rp.add_child(lbl_research_rate)
 	rp.add_theme_constant_override("separation", 4)
 	rp.alignment = BoxContainer.ALIGNMENT_END
-	rp.custom_minimum_size = Vector2(170, 0)
+	rp.custom_minimum_size = Vector2(250, 0)
 	hdr.add_child(rp)
 	hdr.move_child(rp, hdr.get_child_count() - 2)
-	(hdr.get_child(0) as Control).custom_minimum_size = Vector2(170 + 36 + 4, 0)
+	(hdr.get_child(0) as Control).custom_minimum_size = Vector2(250 + 36 + 4, 0)
 	var sc := ScrollContainer.new()
 	sc.custom_minimum_size = Vector2(760, 520)
 
@@ -4255,7 +4274,7 @@ func _fill_research() -> void:
 	if not research_panel.visible:
 		return
 	var c: City = game.city
-	lbl_research_rp.text = "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]
+	_research_head()
 	for ch in research_box.get_children():
 		ch.queue_free()
 	for lvl in Defs.LEVELS.size():
@@ -4295,11 +4314,17 @@ func _fill_research() -> void:
 					tip += "\nОткрывает: " + Defs.B[type]["name"] + " — " + Defs.B[type]["desc"]
 			if r.has("after"):
 				tip += "\nПосле: «%s»" % Defs.research(r["after"])["name"]
-			tip += "\n\n" + ("Изучено" if done else ("Стоимость: %d очков" % r["cost"]) + ("" if why == "" else "\n" + why))
+			var story: bool = r.has("story")         # «Легион» открывает история горожан, не очки
+			var eta: String = "" if done or story else rp_eta(float(r["cost"]))
+			if story:
+				tip += "\n\n" + ("Открыто" if done else why)
+			else:
+				tip += "\n\n" + ("Изучено" if done else ("Стоимость: %d очков" % r["cost"]) + ("" if why == "" else "\n" + why)
+					+ ("" if eta == "" else "\nХватит через %s (+%s в час)" % [eta, fmt_rate(float(c.stats.get("rp_day", 0.0)))]))
 			b.tooltip_text = tip
 			# светится то, что можно изучить прямо сейчас; изученное — обычный медальон (ниже галочка);
-			# не хватает очков — обычный; закрыто уровнем или порядком — серый
-			var locked: bool = int(r["lvl"]) > c.level or (r.has("after") and not c.research.has(r["after"]))
+			# не хватает очков — обычный; закрыто уровнем или порядком (или его открывает история) — серый
+			var locked: bool = story or int(r["lvl"]) > c.level or (r.has("after") and not c.research.has(r["after"]))
 			if not done and why == "":
 				_set_on(b, true)
 			elif locked and not done:
@@ -4333,12 +4358,21 @@ func _fill_research() -> void:
 				ok.alignment = BoxContainer.ALIGNMENT_CENTER
 				ok.add_child(_icon("check", 22, C_GOOD))
 				cell.add_child(ok)
+			elif story:
+				var sl := _label("история горожан", 13, true, C_SOFT)
+				sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				cell.add_child(sl)
 			else:
 				var cost := HBoxContainer.new()
 				cost.alignment = BoxContainer.ALIGNMENT_CENTER
 				cost.add_child(_icon("research", 20, C_SOFT))
 				cost.add_child(_label(str(r["cost"]), 15, true, C_INK if c.rp >= float(r["cost"]) else C_BAD))
 				cell.add_child(cost)
+				# не хватает очков — через сколько хватит по нынешней прибавке (только то, что уже можно изучать)
+				if eta != "" and not locked:
+					var el := _label(eta, 13, true, C_SOFT)
+					el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+					cell.add_child(el)
 			grid.add_child(cell)
 
 
@@ -4366,10 +4400,29 @@ func _fill_finance() -> void:
 	for ch in v.get_children():
 		ch.queue_free()
 	var c: City = game.city
+	var wages := float(c.stats.get("wages", 0.0))
+	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0))
 	v.add_child(_row("coins", "В казне", "%s / %s" % [fmt(c.money), fmt(c.money_cap())]))
 	v.add_child(_row("income", "Налоги за час", "+%s" % fmt(c.stats.get("income", 0.0)), C_GOOD))
-	v.add_child(_row("hammer", "Содержание построек за час", "−%s" % fmt(c.stats.get("upkeep", 0.0)), C_BAD))
-	v.add_child(_row("research", "Очки исследований", "%s / %s (+%.1f в час)" % [fmt(c.rp), fmt(c.rp_cap()), float(c.stats.get("rp_day", 0.0))]))
+	v.add_child(_row("family", "Жалованье работникам за час", "−%s" % fmt(wages), C_BAD))
+	v.add_child(_row("hammer", "Содержание построек за час", "−%s" % fmt(float(c.stats.get("upkeep", 0.0)) - wages), C_BAD))
+	v.add_child(_row("check", "Итого за час", ("+" if net >= 0 else "−") + fmt(absf(net)), C_GOOD if net >= 0 else C_BAD))
+	v.add_child(_row("research", "Очки исследований", "%s / %s (+%s в час)" % [fmt(c.rp), fmt(c.rp_cap()), fmt_rate(float(c.stats.get("rp_day", 0.0)))]))
+	# история: доход за час и казна — последние 48 игровых часов; «За сутки» — куда ушли и откуда пришли денарии
+	if c.hist.size() >= 2:
+		var nets := []
+		for i in c.hist_series("tax").size():
+			nets.append(int(c.hist_series("tax")[i]) + int(c.hist_series("wage")[i]) + int(c.hist_series("upkeep")[i]))
+		v.add_child(_spark_row("Доход за час, последние %d ч" % nets.size(), nets, C_GOOD, true))
+		v.add_child(_spark_row("Казна, последние %d ч" % nets.size(), c.hist_series("money"), C_GOLD, false))
+	if not c.hist.is_empty():
+		var day_l := _label(day_line(), 14, false, C_INK)
+		day_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		day_l.custom_minimum_size = Vector2(420, 0)
+		v.add_child(day_l)
+	if c.tax_open():
+		v.add_child(_divider(14))
+		_tax_rows(v)
 	var tx := []
 	for cl in ["plebs", "artisans", "patricians"]:
 		tx.append(String.num(float(Defs.CLASSES[cl]["tax"]), 1).replace(".", ","))
@@ -4379,11 +4432,134 @@ func _fill_finance() -> void:
 	v.add_child(hint)
 
 
+## «За сутки: налоги +4 200, жалованье −1 100, содержание −900, стройка −2 300» — по истории денег (City.hist)
+func day_line() -> String:
+	var c: City = game.city
+	var n := mini(24, c.hist.size())
+	var names := {"tax": "налоги", "wage": "жалованье", "upkeep": "содержание", "build": "стройка", "fest": "игры", "land": "земля",
+		"legion": "Легион", "reward": "награды", "other": "дороги и прочее"}
+	var bits := []
+	var tot := 0
+	for k in ["tax", "wage", "upkeep", "build", "fest", "land", "legion", "reward", "other"]:
+		var s := c.hist_sum(k, n)
+		tot += s
+		if s != 0:
+			bits.append("%s %s%s" % [names[k], "+" if s > 0 else "−", fmt(absi(s))])
+	var lost := c.hist_sum("lost", n)
+	tot -= lost                                # итого = сколько правда прибыло в казну (что не уместилось — пропало)
+	var head := "За сутки" if n >= 24 else "За %d ч" % n
+	var t := "%s: %s. Итого %s%s ден." % [head, ", ".join(bits) if not bits.is_empty() else "без движения", "+" if tot >= 0 else "−", fmt(absi(tot))]
+	if lost > 0:
+		t += " Не уместилось в казну: %s." % fmt(lost)
+	return t
+
+
+## Строка с искоркой: подпись, последнее число и тонкая линия за последние часы
+func _spark_row(title: String, data: Array, col: Color, zero: bool) -> Control:
+	var r := HBoxContainer.new()
+	r.add_theme_constant_override("separation", 10)
+	var l := _label("%s: %s" % [title, fmt(float(data[-1])) if not data.is_empty() else "—"], 14, true, C_SOFT)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	r.add_child(l)
+	var sp := Spark.new()
+	sp.data = data
+	sp.col = col
+	sp.zero = zero
+	sp.custom_minimum_size = Vector2(200, 34)
+	r.add_child(sp)
+	return r
+
+
+## Налоги по классам (с «Деревни», как в Town to City): мягкие / обычные / высокие; предупреждение, если высокие
+## опустят счастье города ниже нужного для следующего уровня
+func _tax_rows(v: VBoxContainer) -> void:
+	var c: City = game.city
+	v.add_child(_label("Налоги по классам", 18, false, C_INK, font_title))
+	var nx := c.level + 1
+	var need := int(Defs.LEVELS[nx]["happy"]) if nx < Defs.LEVELS.size() else 0
+	var key := "%d|%d|%s|%d" % [c.hour_n, c.level, str(c.taxes), c.buildings.size()]
+	if String(_tax_warn.get("key", "")) != key:
+		_tax_warn = {"key": key}
+		# прикидка нужна, только когда предупреждение может показаться: счастья сейчас хватает на следующий уровень
+		if need > 0 and int(c.stats.get("happy", 0)) >= need:
+			for cl in Defs.CLASS_ORDER:
+				if int(c.stats["residents"].get(cl, 0)) > 0 and c.tax_of(cl) != 2:
+					_tax_warn[cl] = c.happy_if_tax(cl, 2)
+	for cl in Defs.CLASS_ORDER:
+		if int(c.stats["residents"].get(cl, 0)) <= 0 and c.tax_of(cl) == 1:
+			continue
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 6)
+		r.add_child(_cls_pic(cl, 30))
+		var nl := _label(String(Defs.CLASSES[cl]["name"]), 16, true, C_INK)
+		nl.custom_minimum_size = Vector2(130, 0)
+		nl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		r.add_child(nl)
+		for i in Defs.TAX_SET.size():
+			var ts: Dictionary = Defs.TAX_SET[i]
+			var b := Button.new()
+			b.focus_mode = Control.FOCUS_NONE
+			var on := c.tax_of(cl) == i
+			b.text = ("✓ " if on else "") + String(ts["name"])
+			b.disabled = on
+			b.tooltip_text = "%s: налог ×%s, счастье домов класса %s" % [ts["name"], String.num(float(ts["k"]), 1).replace(".", ","),
+				("%+d%%" % int(ts["happy"])) if int(ts["happy"]) != 0 else "без изменений"]
+			var ci: int = i
+			var cc: String = cl
+			b.pressed.connect(func():
+				game.city.set_tax(cc, ci)
+				_fill_finance())
+			r.add_child(b)
+		v.add_child(r)
+		if _tax_warn.has(cl) and need > 0 and int(_tax_warn[cl]) < need and int(c.stats.get("happy", 0)) >= need:
+			var wl := _label("Высокие налоги опустят счастье города до %d%%, а для уровня «%s» нужно %d%%." % [int(_tax_warn[cl]), Defs.LEVELS[nx]["name"], need], 13, true, C_BAD)
+			wl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			wl.custom_minimum_size = Vector2(420, 0)
+			v.add_child(wl)
+	if need > 0 and int(c.stats.get("happy", 0)) < need and not c.taxes.values().filter(func(x): return int(x) == 2).is_empty():
+		var wl2 := _label("Счастье города %d%%, а для уровня «%s» нужно %d%%: высокие налоги мешают." % [int(c.stats.get("happy", 0)), Defs.LEVELS[nx]["name"], need], 13, true, C_BAD)
+		wl2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		wl2.custom_minimum_size = Vector2(420, 0)
+		v.add_child(wl2)
+
+
+## Искорка: ряд чисел за последние часы — тонкая линия с точкой на конце (окна «Финансы» и «Жители»)
+class Spark extends Control:
+	var data: Array = []
+	var col := Color("6b8f3a")
+	var zero := false                     # с нулевой линией: доход бывает и в минус
+
+	func _draw() -> void:
+		if data.size() < 2:
+			return
+		var lo := float(data.min())
+		var hi := float(data.max())
+		if zero:
+			lo = minf(lo, 0.0)
+			hi = maxf(hi, 0.0)
+		if hi - lo < 0.001:
+			hi = lo + 1.0
+		var w := size.x
+		var h := size.y
+		var pts := PackedVector2Array()
+		for i in data.size():
+			pts.append(Vector2(w * i / float(data.size() - 1), h - 3.0 - (h - 6.0) * (float(data[i]) - lo) / (hi - lo)))
+		if zero and lo < 0.0:
+			var zy := h - 3.0 - (h - 6.0) * (0.0 - lo) / (hi - lo)
+			draw_line(Vector2(0, zy), Vector2(w, zy), Color(col, 0.35), 1.0)
+		draw_polyline(pts, col, 2.0, true)
+		draw_circle(pts[pts.size() - 1], 3.0, col)
+
+
 func _fill_stats() -> void:
 	var v: VBoxContainer = stats_panel.find_child("body", true, false)
 	for ch in v.get_children():
 		ch.queue_free()
 	var c: City = game.city
+	if c.hist.size() >= 2:
+		v.add_child(_spark_row("Жители, последние %d ч" % c.hist.size(), c.hist_series("pop"), C_INK, false))
+		v.add_child(_spark_row("Счастье города, %", c.hist_series("happy"), C_GOOD, false))
 	for cl in Defs.CLASS_ORDER:
 		var cd: Dictionary = Defs.CLASSES[cl]
 		var hd := HBoxContainer.new()
@@ -4727,11 +4903,12 @@ func refresh() -> void:
 	lbl_money.text = "%s / %s" % [fmt(c.money), fmt(c.money_cap())]
 	lbl_money.tooltip_text = "Денарии в казне / предел казны"
 	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0))
-	lbl_income.text = ("+" if net >= 0 else "") + fmt(net)
-	lbl_income.tooltip_text = "Доход за час"
+	lbl_income.text = ("+" if net >= 0 else "") + fmt(net) + "/ч"
+	lbl_income.tooltip_text = "Доход за прошлый час: налоги минус жалованье и содержание построек. Подробно и за сутки — в «Финансах»"
 	lbl_income.add_theme_color_override("font_color", C_GOOD if net >= 0 else C_BAD)
-	lbl_rp.text = "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]
-	lbl_rp.tooltip_text = "Очки исследований / предел. Дают почта на станции, скрипторий, школа, библиотека"
+	# сверх полок (вернули очки) — честно «сверх полок», а не «4160 / 3200»
+	lbl_rp.text = ("%s (сверх полок)" % fmt(c.rp)) if c.rp > c.rp_cap() + 0.5 else "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]
+	lbl_rp.tooltip_text = rp_tip()
 	lbl_rp_day.text = "+%.1f" % float(c.stats.get("rp_day", 0.0)) if float(c.stats.get("rp_day", 0.0)) > 0.0 else ""
 	for sb in speed_btns:
 		_set_on(sb[0], is_equal_approx(game.speed, sb[1]))
@@ -4749,7 +4926,7 @@ func refresh() -> void:
 	if info_panel.visible:
 		_fill_info()
 	if research_panel.visible:
-		lbl_research_rp.text = "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]
+		_research_head()
 	if finance_panel.visible:
 		_fill_finance()
 	if stats_panel.visible:
@@ -4758,6 +4935,72 @@ func refresh() -> void:
 	_update_pointer()
 	if hover_src:
 		_fill_hover()                       # числа в открытой подсказке живые
+
+
+## Заголовок окна исследований: очки / полки и «+N в час»
+func _research_head() -> void:
+	var c: City = game.city
+	lbl_research_rp.text = ("%s (сверх полок)" % fmt(c.rp)) if c.rp > c.rp_cap() + 0.5 else "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]
+	var ph := float(c.stats.get("rp_day", 0.0))
+	lbl_research_rate.text = ("+%s в час" % fmt_rate(ph)) if ph > 0.0 else ""
+	lbl_research_rp.get_parent().set("tooltip_text", rp_tip())
+
+
+## «13,5» — прибавка в час с одной цифрой после запятой (целые — без неё)
+static func fmt_rate(v: float) -> String:
+	return str(roundi(v)) if is_equal_approx(v, roundf(v)) or v >= 100.0 else String.num(v, 1).replace(".", ",")
+
+
+## Через сколько хватит очков на исследование ценой cost: «~2 мин» — по нынешней прибавке в час и скорости игры
+## (1 игровой час — Game.DAY_LEN / 24 с при ×1); "" — уже хватает, прибавки нет или дороже полок
+func rp_eta(cost: float) -> String:
+	var c: City = game.city
+	var ph := float(c.stats.get("rp_day", 0.0))
+	var need := cost - c.rp
+	if need <= 0.0 or ph <= 0.0 or cost > c.rp_cap():
+		return ""
+	var sec := need / ph * (Game.DAY_LEN / 24.0) / maxf(1.0, float(game.speed))
+	var m := ceili(sec / 60.0)
+	if m >= 60:
+		return "~%d ч %d мин" % [m / 60, m % 60]
+	return "~%d мин" % maxi(1, m)
+
+
+## Подсказка у счётчика свитков: сколько и откуда очки в час (почта, скриптории, школы…)
+func rp_tip() -> String:
+	var c: City = game.city
+	var t := "Очки исследований: %s, на полках помещается %s." % [fmt(c.rp), fmt(c.rp_cap())]
+	if c.rp > c.rp_cap() + 0.5:
+		t += " Сверх полок — возвращённые очки: их можно тратить, но новые не копятся, пока не станет меньше."
+	var src: Dictionary = c.rp_sources()
+	var bits := []
+	if float(src.get("post", 0.0)) > 0.0:
+		bits.append("почта на станции +%s" % fmt_rate(float(src["post"])))
+	for tp in ["scriptorium", "school", "library", "academy"]:
+		if float(src.get(tp, 0.0)) > 0.0:
+			var nm := String(Defs.B[tp].get("gen", tp))
+			bits.append("%s +%s" % [nm.left(1).to_upper() + nm.substr(1) if bits.is_empty() else nm, fmt_rate(float(src[tp]))])
+	if not bits.is_empty():
+		t += "\nВ час: +%s — %s." % [fmt_rate(float(c.stats.get("rp_day", 0.0))), ", ".join(bits)]
+	t += "\nПолки растут с уровнем города и исследованием «Новые полки для свитков»."
+	return t
+
+
+## «+25» летит от свитка просьб к счётчику очков (просьба выполнена) — тихо, без звука и всплывашки
+func _fly_rp(n: int) -> void:
+	if n <= 0 or lbl_rp == null or not lbl_rp.is_visible_in_tree() or game == null or not (game.mode in ["new", "play"]):
+		return
+	var l := _label("+%d" % n, 20, true, C_GOOD)
+	l.add_theme_color_override("font_outline_color", Color("fff4dc"))
+	l.add_theme_constant_override("outline_size", 6)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(l)
+	var to := lbl_rp.global_position - root.global_position
+	l.position = to + Vector2(-60, -70)
+	var tw := l.create_tween()
+	tw.tween_property(l, "position", to + Vector2(4, -4), 0.9).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(l, "modulate:a", 0.0, 0.35).set_delay(0.75)
+	tw.tween_callback(l.queue_free)
 
 
 ## «Казна полна — доход пропадает» / «Полки полны — очки пропадают»: казна или полки у предела, а прибавка есть
@@ -4863,6 +5106,26 @@ func _once_tips() -> void:
 	if full_rp.visible and not c.tips.has("full_rp"):
 		c.tips["full_rp"] = true
 		advisor("Полки полны", "Очков исследований столько, сколько вмещают полки, — новые пропадают. Изучите что-нибудь в свитке исследований вверху справа. Полки вырастут на новом уровне города и с исследованием «Новые полки для свитков».")
+		return
+	# советы экономики v2 — когда на экране нет окон (Esc закрыл бы совет вместе с окном)
+	if not _screen_free():
+		return
+	# «Хутор»: дом готов к этажу, а денариев не хватает — один раз: налоги подойдут (этап 2.3, денег впритык)
+	if c.level == 1 and c.research.has("floor2") and not c.tips.has("floor_money") and c.tips.has("floor_tool"):
+		var ready: Array = c.floor_ready(false)
+		if not ready.is_empty() and c.money < float(c.floor_price(c.buildings[ready[0]])):
+			c.tips["floor_money"] = true
+			advisor("На этаж пока не хватает", "Дом готов к новому этажу, но этаж стоит %s денариев, а в казне меньше. Не беда: налоги приходят каждый час — подождите немного, и денариев хватит. На «Хуторе» денег впритык; щедрые награды за просьбы — с «Деревни»." % fmt(c.floor_price(c.buildings[ready[0]])))
+			return
+	# налоги по классам открылись (с «Деревни») — один раз
+	if c.tax_open() and not c.tips.has("tax_tip") and int(c.stats.get("pop", 0)) > 0:
+		c.tips["tax_tip"] = true
+		advisor("Налоги по классам", "Теперь налоги можно настроить для каждого класса — в «Финансах» (монеты вверху справа). Мягкие: налог ×0,8, зато дома этого класса на 5% счастливее. Высокие: налог ×1,3, но счастье −8%. Счастье выше 100% — запас: дом с запасом платит высокий налог, ничуть не грустнея.\n\nОкно предупредит, если высокие налоги опустят счастье города ниже, чем нужно для следующего уровня.")
+		return
+	# новая игра: повтор лавки того же вида и одинаковые украшения рядом дают меньше — один раз, когда это впервые случилось
+	if c.econ >= 1 and bool(c.stats.get("dim_any", false)) and not c.tips.has("dim_tip"):
+		c.tips["dim_tip"] = true
+		advisor("Разнообразие радует больше", "Лавки одного вида рядом с домом складываются не целиком: вторая лавка с едой даёт половину своей радости, третья — четверть. А вот лавка другого вида — одежда, развлечения, услуги — снова целиком. С украшениями так же: второе такое же рядом — 60%, третье — 30%, а разные — целиком.\n\nИз чего складывается счастье дома, видно в его карточке.")
 		return
 	# название: сервер дал городу имя сам (игрок его ещё не выбирал) — один раз, когда на экране ничего не открыто;
 	# rename — сервер уже умеет менять название (старый сервер его не шлёт: совет не тратим на смену, которая не выйдет)

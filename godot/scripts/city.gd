@@ -65,6 +65,16 @@ var fest_cd := 0                      # через сколько часов м�
 var plots_bought := 0                 # сколько участков земли куплено (от него цена следующего)
 var name := ""                        # название города — копия имени с сервера (CityName); "" — ещё не знаем («Новый Рим»)
 var seg_thin := false                 # звено забора — узкой полосой (заборы мышью); готовый город меню — по-старому
+## Правила экономики (этап 2.5/2.6, решение владельца Q3/Q4): 0 — как до сборки 35 (живые города без «да» владельца:
+## счастье не меняется), 1 — новая игра: вторая лавка того же вида — вполовину, одинаковые украшения рядом — всё меньше
+var econ := 0
+## Налоги по классам (этап 2.7, с «Деревни»): класс → 0 мягкие, 1 обычные, 2 высокие (Defs.TAX_SET)
+var taxes := {}
+## История денег и жителей (этап 2.4): последние Defs.HIST_N игровых часов, строки по Defs.HIST_KEYS (сохраняются)
+var hist: Array = []
+var hist_acc := {}                     # движение денег за идущий час по видам (стройка, земля, игры, Легион, награды)
+var hist_mark := NAN                   # казна в конце прошлого часа (NAN — после загрузки ещё не знаем)
+signal rp_reward(n)                    # просьба принесла очки исследований — «+N» летит к счётчику свитков (без звука)
 ## «Истории горожан» (scripts/stories.gd, данные — StoryDefs): часы, предложение, идущая история, пройденные,
 ## отложенные, бонусы к счастью (их строки — в happy_parts дома), кошки-награды. Сохраняется под ключом "stories"
 var stories := stories_new()
@@ -137,7 +147,10 @@ func money_cap() -> float:
 
 ## Сколько вмещает казна на уровне lvl (с уже изученными хранилищами)
 func money_cap_for(lvl: int) -> float:
-	var c := float(Defs.LEVELS[clampi(lvl, 0, Defs.LEVELS.size() - 1)]["money"])
+	var li := clampi(lvl, 0, Defs.LEVELS.size() - 1)
+	var c := float(Defs.LEVELS[li]["money"])
+	if econ < 1 and li <= 1:
+		c = [3000.0, 5000.0][li]          # живые города (без econ_v): казна «Стоянки» и «Хутора» — прежняя, деньги не срезаем (D-q)
 	if research.has("vault1"):
 		c *= 2.0
 	if research.has("vault2"):
@@ -261,6 +274,7 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	next_id += 1
 	if not free:
 		money -= float(d["cost"])
+		flow("build", -float(d["cost"]))
 		legion.glory = maxf(0.0, legion.glory - float(d.get("glory", 0)))   # чудеса Легиона стоят ещё и Славы
 	var cells: PackedInt32Array = b["cells"]
 	if not d.get("water", false):
@@ -304,6 +318,7 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 		return
 	if refund:
 		money += float(def(b)["cost"]) * Defs.REFUND
+		flow("build", float(def(b)["cost"]) * Defs.REFUND)
 	for k in (b["cells"] as PackedInt32Array):
 		if land.occ[k] == int(b["id"]):        # чужое (арку у въезда, соседа) не освобождаем
 			land.occ[k] = 0
@@ -587,6 +602,7 @@ func compute() -> void:
 	# две лавки еды и украшения; 65% (второй этаж) — три разные лавки и украшения; 75% (третий) — ещё мясо, хлеб, фонтан.
 	var happy_sum := 0.0
 	var pop := 0
+	var dim_any := false                       # где-то повтор лавки или украшения дал меньше (совет «Разнообразие» — один раз)
 	var sums := {"base": 0.0, "shops": 0.0, "deco": 0.0, "mon": 0.0, "fest": 0.0, "crowd": 0.0, "miss": 0.0, "w": 0.0}
 	var fb := fest_bonus()                     # игры в честь богов — всем домам, как триумф Легиона
 	for b: Dictionary in stories["bonus"]:
@@ -601,13 +617,19 @@ func compute() -> void:
 		var shop_sum := 0
 		var types: Array = (h["score"] as Dictionary).keys()
 		types.sort_custom(func(a, b): return _shop_rank(a) < _shop_rank(b))
-		for t in types:
-			parts.append([Defs.B[t]["name"], int(h["score"][t])])
-			shop_sum += int(h["score"][t])
-		var deco := 0.0
+		# новая игра (econ): внутри одного вида лавок первая — целиком, вторая — вполовину, дальше — четверть (shop_parts)
+		for e2: Array in shop_parts(types, h["score"], econ):
+			parts.append([e2[0], e2[1]])
+			shop_sum += int(e2[1])
+			dim_any = dim_any or bool(e2[2])
+		# украшения рядом: [вид, очки]; новая игра — одинаковые 100% / 60% / 30% (deco_points)
+		var near := []
 		for o in decor:
 			if (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DECOR_RADIUS:
-				deco += float(def(o).get("deco", 1))
+				near.append([Defs.base_of(o["type"]), float(def(o).get("deco", 1))])
+		var dp := deco_points(near, econ)
+		var deco: float = dp[0]
+		dim_any = dim_any or bool(dp[1])
 		var deco_b := mini(int(cd.get("deco_max", 12)), int(floor(deco * Defs.DECO_RATE)))
 		parts.append(["Украшения", deco_b])
 		var mon := {}                   # вид памятника → бонус (одинаковые не складываются)
@@ -629,6 +651,10 @@ func compute() -> void:
 		for e: Array in story_parts(h):
 			parts.append(e)
 			st_sum += int(e[1])
+		# налоги класса (с «Деревни»): мягкие +5%, высокие −8% — от счастья без потолка, то есть съедают «запас»
+		var tx := int(Defs.TAX_SET[tax_of(cls)]["happy"])
+		if tx != 0:
+			parts.append(["Налоги: %s" % String(Defs.TAX_SET[tax_of(cls)]["name"]).to_lower(), tx])
 		var crowd := 0
 		for o in houses:
 			if o != h and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DENSITY_RADIUS:
@@ -641,7 +667,7 @@ func compute() -> void:
 			if not h["needs"].has(n):
 				missing.append(n)
 				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + mon_sum + fb + st_sum + dens - missing.size() * Defs.MISSING_PENALTY
+		var hp := base + shop_sum + deco_b + mon_sum + fb + st_sum + tx + dens - missing.size() * Defs.MISSING_PENALTY
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["monuments"] = float(mon_sum)
@@ -660,6 +686,7 @@ func compute() -> void:
 		sums["mon"] += mon_sum * w
 		sums["fest"] += fb * w
 		sums["story"] = float(sums.get("story", 0.0)) + st_sum * w
+		sums["tax"] = float(sums.get("tax", 0.0)) + tx * w
 		sums["crowd"] += dens * w
 		sums["miss"] += -missing.size() * Defs.MISSING_PENALTY * w
 		sums["clip"] = float(sums.get("clip", 0.0)) + (clampf(hp, 0.0, 100.0) - hp) * w   # счастье дома — от 0 до 100%
@@ -670,7 +697,7 @@ func compute() -> void:
 	if float(sums["w"]) > 0.0:
 		var wt: float = sums["w"]
 		var rows := [["Основа", "base", true], ["Лавки", "shops", true], ["Украшения", "deco", true], ["Памятники", "mon", false],
-				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Теснота", "crowd", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
+				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Налоги", "tax", false], ["Теснота", "crowd", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
 		var fv := []
 		var vi := []
 		var acc := 0
@@ -696,6 +723,7 @@ func compute() -> void:
 				nm = "Больше 100% не бывает" if v < 0 else "Меньше 0% не бывает"
 			cp.append([nm, v])
 	stats["happy_parts"] = cp
+	stats["dim_any"] = dim_any
 	stats["pop"] = pop
 	stats["residents"] = residents
 	stats["workers"] = workers
@@ -725,10 +753,106 @@ func compute() -> void:
 	stats["arrive_block"] = arrivals_blocked()
 
 
+## «вторая лавка с едой — вполовину»: вид потребности в творительном падеже
+const SUB_WITH := {"food": "с едой", "clothes": "с одеждой", "fun": "с развлечениями", "services": "с услугами", "goods": "с товарами"}
+
+
+## Слагаемые счастья от лавок дома: types — разные лавки по порядку (_shop_rank), score — тип → бонус. econ ≥ 1 (новая
+## игра): внутри одного вида первая — целиком, вторая — вполовину, дальше — четверть (Defs.SHOP_REPEAT).
+## [[строка, %, меньше ли из-за повтора], …]
+static func shop_parts(types: Array, score: Dictionary, econ_v: int) -> Array:
+	var out := []
+	var nth := {}
+	for t in types:
+		var v := int(score[t])
+		var nm := String(Defs.B[t]["name"])
+		var dim := false
+		if econ_v >= 1:
+			var sub := String(Defs.B[t].get("sub", ""))
+			var k := int(nth.get(sub, 0))
+			nth[sub] = k + 1
+			if k > 0:
+				v = roundi(v * float(Defs.SHOP_REPEAT[mini(k, Defs.SHOP_REPEAT.size() - 1)]))
+				nm += " (%s %s — %s)" % ["вторая" if k == 1 else "ещё одна", SUB_WITH.get(sub, ""), "вполовину" if k == 1 else "на четверть"]
+				dim = true
+		out.append([nm, v, dim])
+	return out
+
+
+## Очки украшений рядом с домом: near — [[вид, очки], …]. econ ≥ 1: одинаковые (один вид, любой облик) — 100% / 60% /
+## 30% (Defs.DECO_REPEAT), разные — целиком; иначе простая сумма. [очки, был ли повтор]
+static func deco_points(near: Array, econ_v: int) -> Array:
+	var s := 0.0
+	if econ_v < 1:
+		for e2: Array in near:
+			s += float(e2[1])
+		return [s, false]
+	var by := {}
+	for e2: Array in near:
+		if not by.has(e2[0]):
+			by[e2[0]] = []
+		(by[e2[0]] as Array).append(float(e2[1]))
+	var rep := false
+	for bk in by:
+		var vs: Array = by[bk]
+		vs.sort()
+		vs.reverse()
+		for i in vs.size():
+			s += float(vs[i]) * float(Defs.DECO_REPEAT[mini(i, Defs.DECO_REPEAT.size() - 1)])
+		rep = rep or vs.size() > 1
+	return [s, rep]
+
+
 ## Порядок лавок в списке слагаемых: по виду потребности (еда, одежда…), внутри — по бонусу
 func _shop_rank(t: String) -> int:
 	var d: Dictionary = Defs.B[t]
 	return Defs.NEED_ORDER.find(d.get("sub", "")) * 100 - int(d.get("bonus", 0))
+
+
+## Лавки дома по видам потребности: вид → бонусы по убыванию (для _shop_gain; один раз на дом в _happy_tips)
+static func _shop_subs(score: Dictionary) -> Dictionary:
+	var out := {}
+	for t in score:
+		var sub := String(Defs.B[t].get("sub", ""))
+		if not out.has(sub):
+			out[sub] = []
+		(out[sub] as Array).append(int(score[t]))
+	for sub in out:
+		(out[sub] as Array).sort()
+		(out[sub] as Array).reverse()
+	return out
+
+
+## На сколько вырастет счастье дома от лавок, если новая лавка t (бонус b) начнёт его снабжать: по старым правилам —
+## целиком, в новой игре (econ) — как в shop_parts: внутри вида первая целиком, вторая вполовину, дальше четверть.
+## subs — _shop_subs(score) этого дома
+func _shop_gain(subs: Dictionary, t: String, b: int) -> int:
+	if econ < 1:
+		return b
+	var vs: Array = subs.get(String(Defs.B[t].get("sub", "")), [])
+	if vs.is_empty():
+		return b
+	var before := 0
+	var after := 0
+	var j := 0                          # место в ряду вместе с новой лавкой
+	var put := false
+	for i in vs.size():
+		var v := int(vs[i])
+		before += _rep_part(v, i)
+		if not put and b > v:
+			after += _rep_part(b, j)
+			j += 1
+			put = true
+		after += _rep_part(v, j)
+		j += 1
+	if not put:
+		after += _rep_part(b, j)
+	return after - before
+
+
+## Доля k-й (с нуля) лавки одного вида у дома (Defs.SHOP_REPEAT, как в shop_parts)
+static func _rep_part(v: int, k: int) -> int:
+	return v if k == 0 else roundi(v * float(Defs.SHOP_REPEAT[mini(k, Defs.SHOP_REPEAT.size() - 1)]))
 
 
 static func plural(n: int, one: String, few: String, many: String) -> String:
@@ -796,7 +920,11 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 			cands.append([g_need, "У %d %s нет рядом лавки «%s» — поставьте её поближе (+%d%%)" % [cnt, plural(cnt, "дома", "домов", "домов"), nm, Defs.MISSING_PENALTY]])
 		else:
 			cands.append([Defs.MISSING_PENALTY * w / tot + 2.0, "Изучите лавку вида «%s» — её не хватает %d %s" % [nm, cnt, plural(cnt, "дому", "домам", "домам")]])
-	# новая лавка, которой у домов ещё нет (разнообразие)
+	# новая лавка, которой у домов ещё нет (разнообразие); в новой игре — сколько она правда прибавит с повторами
+	var subs := {}
+	if econ >= 1:
+		for h in houses:
+			subs[h["id"]] = _shop_subs(h["score"])
 	var best := [0.0, ""]
 	for t in Defs.B:
 		var d: Dictionary = Defs.B[t]
@@ -811,12 +939,16 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 		if nobody:
 			continue                            # пока никто не живёт, разнообразие не к спеху
 		var w := 0.0
+		var gs := 0.0                           # прибавка, взвешенная по жителям
 		for h in houses:
 			if not (h["score"] as Dictionary).has(t):
-				w += float(ws[h["id"]])
-		var g := float(d["bonus"]) * w / tot
+				var hw := float(ws[h["id"]])
+				w += hw
+				gs += (float(_shop_gain(subs[h["id"]], t, int(d["bonus"]))) if econ >= 1 else float(d["bonus"])) * hw
+		var g := gs / tot
 		if g > float(best[0]):
-			best = [g, "Новая лавка у домов: «%s» — +%d%% каждому дому рядом" % [d["name"], int(d["bonus"])]]
+			var pct := int(d["bonus"]) if econ < 1 or w <= 0.0 else int(roundf(gs / w))
+			best = [g, "Новая лавка у домов: «%s» — +%d%% каждому дому рядом" % [d["name"], pct]]
 	if float(best[0]) >= 1.0:
 		cands.append(best)
 	# исследование новой лавки (если готовые уже стоят)
@@ -827,9 +959,16 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 		for t in Defs.B:
 			var d: Dictionary = Defs.B[t]
 			if d["kind"] == "shop" and d.get("unlock", "") == r["id"] and _staffable(d):
-				var g := float(d["bonus"]) * 0.4 - float(r["cost"]) * 0.001
+				var avg := float(d["bonus"])
+				if econ >= 1:
+					# новая игра: средняя настоящая прибавка домам, где живут (у кого уже есть лавка того же вида — меньше)
+					var sg := 0.0
+					for h in houses:
+						sg += float(_shop_gain(subs[h["id"]], t, int(d["bonus"]))) * float(ws[h["id"]])
+					avg = sg / tot
+				var g := avg * 0.4 - float(r["cost"]) * 0.001
 				if g > float(rb[0]):
-					rb = [g, "Изучите «%s» — новая лавка даст домам ещё +%d%%" % [r["name"], int(d["bonus"])]]
+					rb = [g, "Изучите «%s» — новая лавка даст домам ещё +%d%%" % [r["name"], int(roundf(avg))]]
 	if float(rb[0]) > 0.0:
 		cands.append(rb)
 	# украшения
@@ -1048,7 +1187,119 @@ func house_tax(b: Dictionary) -> float:
 	var tax := float(Defs.CLASSES[cls]["tax"])
 	if cls == "patricians" and research.has("taxes1"):
 		tax *= 1.25
-	return tax
+	return tax * float(Defs.TAX_SET[tax_of(cls)]["k"])
+
+
+## Откуда очки исследований в час: {"post": почта на станции, тип постройки: сумма} (подсказка у счётчика свитков)
+func rp_sources() -> Dictionary:
+	var out := {}
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if def(b)["kind"] == "rp" and not b.get("over", false):
+			out[b["type"]] = float(out.get(b["type"], 0.0)) + rp_per_hour(b["type"]) * float(b.get("staff", 0.0))
+	if not center().is_empty():
+		out["post"] = float(Defs.LEVELS[level].get("rp_h", 0.0))
+	return out
+
+
+## Налоги класса: 0 мягкие, 1 обычные, 2 высокие (Defs.TAX_SET)
+func tax_of(cls: String) -> int:
+	return clampi(int(taxes.get(cls, 1)), 0, Defs.TAX_SET.size() - 1)
+
+
+## Налоги по классам можно менять: с «Деревни» (Defs.TAX_LVL)
+func tax_open() -> bool:
+	return level >= Defs.TAX_LVL
+
+
+func set_tax(cls: String, v: int) -> void:
+	if not Defs.CLASSES.has(cls):
+		return
+	v = clampi(v, 0, Defs.TAX_SET.size() - 1)
+	if v == 1:
+		taxes.erase(cls)
+	else:
+		taxes[cls] = v
+	compute()
+	changed.emit()
+
+
+## Каким станет счастье города, если налоги класса cls будут v (окно «Финансы» — предупреждение до выбора).
+## Без пересчёта города: налог — просто слагаемое счастья домов класса, прибавляем разницу к их счастью (как compute).
+## Для «высоких» точно; неточно только для домов, уже упёршихся в 0%, при более мягких налогах
+func happy_if_tax(cls: String, v: int) -> int:
+	var was := tax_of(cls)
+	if was == v:
+		return int(stats.get("happy", 0))
+	var dt := int(Defs.TAX_SET[v]["happy"]) - int(Defs.TAX_SET[was]["happy"])
+	var s := 0.0
+	var pop := 0
+	for id in buildings:
+		var h: Dictionary = buildings[id]
+		var d := def(h)
+		if d["kind"] != "house":
+			continue
+		var hp := int(h.get("happy", 0)) + (dt if String(d["cls"]) == cls else 0)
+		s += clampf(float(hp), 0.0, 100.0) * int(h["pop"])
+		pop += int(h["pop"])
+	return roundi(s / pop) if pop > 0 else 0
+
+
+## Движение денег вне часа налогов (история за сутки, этап 2.4): dv < 0 — потратили, > 0 — пришло. cat: build, fest,
+## land, legion, reward (что не учтено ни здесь, ни налогами, — «прочее» в конце часа)
+func flow(cat: String, dv: float) -> void:
+	hist_acc[cat] = float(hist_acc.get(cat, 0.0)) + dv
+
+
+## Конец игрового часа: строка истории — налоги, жалованье, содержание, траты по видам, «прочее» (чтобы сумма за сутки
+## сходилась с казной), сколько не уместилось в казну, казна, жители, счастье
+func _hist_hour(tax: float, wages: float, upk: float, lost: float) -> void:
+	var row := []
+	var known := 0                         # сумма уже округлённых видов (без «прочего»), минус то, что не уместилось
+	for k: String in Defs.HIST_KEYS:
+		var v := 0
+		match k:
+			"tax": v = roundi(tax)
+			"wage": v = -roundi(wages)
+			"upkeep": v = -roundi(upk)
+			"lost": v = roundi(lost)
+			"money": v = roundi(money)
+			"pop": v = int(stats.get("pop", 0))
+			"happy": v = int(stats.get("happy", 0))
+			"other": v = 0
+			_: v = roundi(float(hist_acc.get(k, 0.0)))
+		if not (k in ["lost", "money", "pop", "happy", "other"]):
+			known += v
+		elif k == "lost":
+			known -= v
+		row.append(v)
+	# «прочее» — чтобы строка точно сходилась с казной (дороги, истории…): за сутки сумма = изменение казны
+	if not is_nan(hist_mark):
+		row[Defs.HIST_KEYS.find("other")] = roundi(money) - roundi(hist_mark) - known
+	hist.append(row)
+	while hist.size() > Defs.HIST_N:
+		hist.pop_front()
+	hist_acc = {}
+	hist_mark = money
+
+
+## Сумма по виду за последние n часов истории (окно «Финансы»: «За сутки»)
+func hist_sum(key: String, n := 24) -> int:
+	var i := Defs.HIST_KEYS.find(key)
+	var s := 0
+	for row: Array in hist.slice(maxi(0, hist.size() - n)):
+		if i < row.size():
+			s += int(row[i])
+	return s
+
+
+## Ряд истории по виду (для искорки в «Финансах» и «Жителях»): последние n часов
+func hist_series(key: String, n := 48) -> Array:
+	var out := []
+	var i := Defs.HIST_KEYS.find(key)
+	for row: Array in hist.slice(maxi(0, hist.size() - n)):
+		out.append(int(row[i]) if i < row.size() else 0)
+	return out
 
 
 ## Раз в игровой час: налоги, очки исследований, рост домов, переселенцы, уровень города
@@ -1056,6 +1307,7 @@ func sim_day() -> void:
 	compute()
 	var income := 0.0
 	var upkeep := 0.0
+	var wages := 0.0
 	var rpd := 0.0
 	for id in buildings.keys():
 		var b: Dictionary = buildings[id]
@@ -1069,8 +1321,10 @@ func sim_day() -> void:
 					continue                              # сверх предела уровня: стоит, не работает, не стоит денег
 				rpd += rp_per_hour(b["type"]) * float(b["staff"])
 				upkeep += float(d["cost"]) * Defs.UPKEEP + wage() * hired_of(b)     # писцам и учителям тоже платят
+				wages += wage() * hired_of(b)
 			"shop", "monument", "store", "farm", "military":
 				upkeep += float(d["cost"]) * Defs.UPKEEP + wage() * hired_of(b)
+				wages += wage() * hired_of(b)
 	if not center().is_empty():
 		rpd += float(Defs.LEVELS[level].get("rp_h", 0.0))   # почта привозит на станцию свитки
 	hour_n += 1
@@ -1081,6 +1335,7 @@ func sim_day() -> void:
 	rp = maxf(rp, minf(rp_cap(), rp + rpd))      # сверх полок (возврат очков) не срезаем — просто не копим дальше
 	stats["income"] = income
 	stats["upkeep"] = upkeep
+	stats["wages"] = wages
 	stats["rp_day"] = rpd
 	for ev: Array in legion.on_hour():           # Легион: таймеры улучшений (настоящие часы), Слава чудес, триумф
 		_event(ev[0], ev[1])
@@ -1089,6 +1344,7 @@ func sim_day() -> void:
 	_tick_arrivals()
 	_update_level()
 	_check_goals()
+	_hist_hour(income, wages, upkeep - wages, float(stats["money_lost"]))
 	changed.emit()
 
 
@@ -1179,6 +1435,7 @@ func buy_floor(b: Dictionary, quiet := false) -> bool:
 		return false
 	var h: Dictionary = buildings[b["id"]]
 	money -= float(floor_price(h))
+	flow("build", -float(floor_price(h)))
 	h["tier"] = int(h["tier"]) + 1
 	compute()
 	house_changed.emit(h, true)
@@ -1665,6 +1922,8 @@ func can_research(id: String) -> String:
 	var r := Defs.research(id)
 	if r.is_empty() or research.has(id):
 		return "Уже изучено"
+	if r.has("story"):
+		return "Откроется %s" % Defs.unlock_text(id)
 	if int(r["lvl"]) > level:
 		return "Нужен уровень «%s»" % Defs.LEVELS[int(r["lvl"])]["name"]
 	if r.has("after") and not research.has(r["after"]):
@@ -1755,7 +2014,7 @@ func mark_seen(type: String) -> bool:
 ## Исследование можно изучать (уровень есть, нужное раньше изучено), но ещё не изучено
 func research_open(id: String) -> bool:
 	var r := Defs.research(id)
-	return not r.is_empty() and not research.has(id) and int(r["lvl"]) <= level and (not r.has("after") or research.has(r["after"]))
+	return not r.is_empty() and not r.has("story") and not research.has(id) and int(r["lvl"]) <= level and (not r.has("after") or research.has(r["after"]))
 
 
 func is_new_r(id: String) -> bool:
@@ -1859,6 +2118,7 @@ func festival() -> bool:
 	if can_festival() != "":
 		return false
 	var F: Dictionary = Defs.FESTIVAL
+	flow("fest", -float(fest_price()))
 	money -= float(fest_price())
 	fest_left = int(F["hours"])
 	fest_cd = int(F["cd"])
@@ -1901,6 +2161,7 @@ func can_buy(p: Vector2i) -> bool:
 func buy_plot(p: Vector2i) -> bool:
 	if not can_buy(p) or money < plot_price():
 		return false
+	flow("land", -float(plot_price()))
 	money -= plot_price()
 	plots_bought += 1
 	land.owned[p] = true
@@ -1993,8 +2254,13 @@ func _check_goals() -> void:
 			goals_done.append(g["id"])
 			# казна полна — предел остаётся, но в колокольчике честно: сколько не уместилось (как у историй)
 			var lost := maxi(0, roundi(float(g["money"]) - maxf(0.0, money_cap() - money)))
+			var m0 := money
 			money = minf(money_cap(), money + float(g["money"]))
+			flow("reward", money - m0)
+			var r0 := rp
 			rp = maxf(rp, minf(rp_cap(), rp + float(g["rp"])))
+			if rp - r0 >= 0.5:
+				rp_reward.emit(roundi(rp - r0))
 			var extra := ""
 			if g.has("unlock"):
 				research[g["unlock"]] = true
@@ -2040,7 +2306,8 @@ func _quiet(text: String, icon: String) -> void:
 ## Пустое состояние: часы историй (идут после обучения), когда кончилась прошлая (-1 — ещё ни одной), пройденные,
 ## идущая, предложенная, отложенные (id → до какого часа), бонусы к счастью, кошки-награды, заказы старосты (StoryOrders)
 static func stories_new() -> Dictionary:
-	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {}}
+	# granted — исследование → история, чей шаг его открыл («legion» → «bandits»): прерванную такую историю предложат снова
+	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {}, "granted": {}}
 
 
 ## Из сохранения: чего нет — по умолчанию (старые сохранения — без историй: ничего не идёт, часы с нуля)
@@ -2051,7 +2318,7 @@ static func stories_load(d: Variant) -> Dictionary:
 	var dd: Dictionary = d
 	s["h"] = int(dd.get("h", 0))
 	s["last_h"] = int(dd.get("last_h", -1))
-	for k in ["done", "active", "offer", "later", "orders"]:
+	for k in ["done", "active", "offer", "later", "orders", "granted"]:
 		if typeof(dd.get(k)) == TYPE_DICTIONARY:
 			s[k] = dd[k]
 	for k in ["bonus", "pets"]:
@@ -2061,6 +2328,14 @@ static func stories_load(d: Variant) -> Dictionary:
 	for k in ["active", "offer"]:
 		if not (s[k] as Dictionary).is_empty() and StoryDefs.story(String(s[k].get("id", ""))).is_empty():
 			s[k] = {}
+	# сохранено посреди истории до записи granted: что открыли её пройденные шаги — открыла она
+	var a0: Dictionary = s["active"]
+	if not a0.is_empty():
+		var steps: Array = StoryDefs.story(String(a0.get("id", ""))).get("steps", [])
+		for i in mini(int(a0.get("step", 0)) + 1, steps.size()):
+			for r in (steps[i] as Dictionary).get("grant", []):
+				if not (s["granted"] as Dictionary).has(String(r)):
+					s["granted"][String(r)] = String(a0["id"])
 	return s
 
 
@@ -2135,6 +2410,7 @@ func save_data() -> Dictionary:
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
+		"econ_v": econ, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict()}
 
 
@@ -2168,6 +2444,23 @@ func load_data(d: Dictionary) -> void:
 	fest_left = maxi(0, int(d.get("fest_left", 0)))
 	fest_cd = maxi(0, int(d.get("fest_cd", 0)))
 	name = String(d.get("name", ""))             # старые сохранения — без названия: его скажет сервер
+	# старые сохранения — без econ_v: счастье по прежним правилам (лавки и украшения без «повторов»), пока владелец не скажет «да»
+	econ = int(d.get("econ_v", 0))
+	taxes = {}
+	var tx = d.get("taxes", {})
+	if typeof(tx) == TYPE_DICTIONARY:
+		for cl in tx:
+			if Defs.CLASSES.has(String(cl)) and int(tx[cl]) != 1:
+				taxes[String(cl)] = clampi(int(tx[cl]), 0, Defs.TAX_SET.size() - 1)
+	hist = []
+	var hs = d.get("hist", [])
+	if typeof(hs) == TYPE_ARRAY:
+		for row in hs:
+			if typeof(row) == TYPE_ARRAY:
+				hist.append((row as Array).map(func(x): return int(x)))
+	hist = hist.slice(maxi(0, hist.size() - Defs.HIST_N))
+	hist_acc = {}
+	hist_mark = NAN
 	stories = stories_load(d.get("stories", {}))  # старые сохранения — историй ещё не было: часы с нуля, ничего не идёт
 	for sid in stories["done"]:
 		var su := String((StoryDefs.story(sid).get("reward", {}) as Dictionary).get("unlock", ""))

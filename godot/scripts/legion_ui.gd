@@ -173,12 +173,20 @@ func _make_button() -> void:
 	hud.top_btns["legion"] = btn
 
 
-## Медальон виден, когда изучен «Легион»; пока окно ни разу не открывали — светится
+## Медальон виден с начала своей игры: пока Легион не открыт (история «Разбойники у арки», Д9) — серый, с подсказкой,
+## окно не открывается; открыт — обычный, пока окно ни разу не открывали — светится
 func _update_button() -> void:
 	if btn_wrap == null:
 		return
 	var on: bool = lg != null and lg.window_open() and game != null and game.mode != "menu"
-	btn_wrap.visible = on
+	var own: bool = lg != null and game != null and game.mode in ["play", "new"]
+	btn_wrap.visible = on or own
+	var tip := "Легион: походы, войска и чудеса света" if on or lg == null else lg.lock_text()
+	if btn.tooltip_text != tip:
+		btn.tooltip_text = tip
+	if bool(btn.get_meta("grey", false)) != (not on):
+		btn.set_meta("grey", not on)
+		hud._grey(btn.get_node("ic"), not on)
 	if on:
 		hud._set_on(btn, not bool(lg.flags.get("seen", false)) or visible)
 		# обучение, шаг 1: один раз советник рассказывает, с чего начать (стрелка — на Казармы). Только когда окно
@@ -202,7 +210,7 @@ func open(tab_id := "") -> void:
 	if lg == null:
 		return
 	if not lg.window_open():
-		hud.notify(lg.lock_text(), "lock")
+		hud.notify(lg.lock_text(), "lock")         # серый медальон: только строка почему (пустого окна нет)
 		return
 	hud._close_windows()
 	hud._close_tray()
@@ -498,6 +506,9 @@ func tut_pointer() -> Array:
 			return [btn, "Легион"]
 		"fight", "troops":
 			if not visible:
+				# «Войска»: пока улучшать не на что (на «Хуторе» и в «Деревне» денариев в обрез) — стрелка остаётся историям и просьбам
+				if step == "troops" and lg.can_upgrade("legionary") != "":
+					return [null, ""]
 				return [btn, "Легион"]
 			if overlay != null and is_instance_valid(overlay):
 				return [null, ""]
@@ -2135,6 +2146,21 @@ func _build_pvp() -> Control:
 func _opponents() -> Control:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
+	var rk := lg.pvp_rank_text()
+	if rk != "":
+		# до «Посёлка»: объясняем, когда откроются, — без списка соперников, добычи и отряда обороны на сервере
+		var rh := HBoxContainer.new()
+		rh.add_theme_constant_override("separation", 14)
+		rh.add_child(_tr(_ic39("attack"), 110))
+		var rv := VBoxContainer.new()
+		rv.add_theme_constant_override("separation", 6)
+		rv.add_child(_title("Бои с городами — впереди", 26))
+		rv.add_child(_wl(rk + " Тогда ваш легион сможет нападать на отряды обороны других игроков сайта: победа приносит денарии, Славу и рейтинг побед.", 540, 16, C_INK))
+		rv.add_child(_wl("А пока водите отряд в походы: там бойцы набираются опыта, а город получает Славу и звёзды. Отряд обороны слева можно собрать уже сейчас.", 540, 15, C_SOFT))
+		rh.add_child(rv)
+		v.add_child(_gap(0, 30))
+		v.add_child(rh)
+		return v
 	if not _net_ready():
 		# сервера боёв пока нет — объясняем, что будет
 		var hh := HBoxContainer.new()

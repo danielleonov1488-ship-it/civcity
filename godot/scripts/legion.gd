@@ -114,15 +114,16 @@ const ENEMIES := {
 #   провинции карты походов
 # =====================================================================
 ## Каждая — своя карта на весь экран (рисованный фон 40a…40h), тропа из STAGES боёв, последний — босс.
-## rank — с какого уровня города (Defs.LEVELS) провинция открыта: первая — с «Посёлка» (там изучается «Легион»),
-## дальше — по две на уровень, без пустоты после леса (решение владельца Д5 от 14.10: Легион — раньше).
+## rank — с какого уровня города (Defs.LEVELS) провинция открыта: первая — с «Хутора» (там Легион открывает история
+## «Разбойники у арки», решение владельца Д9 от 25.10), холмы — с «Посёлка» (лес по таймерам улучшений тянется через
+## «Деревню»), дальше — по две на уровень.
 ## Самый трудный бой провинции (target_level) не выше предела бойцов CAP_BY_CITY её уровня — стены нет.
 ## trophy — украшение в город за все 30 звёзд провинции (Defs.B, unlock «trophy:<id провинции>»)
 const REGIONS := [
-	{"id": "forest", "name": "Лес разбойников", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "wolf"], "boss": "chief", "rank": 3,
+	{"id": "forest", "name": "Лес разбойников", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "wolf"], "boss": "chief", "rank": 1,
 		"desc": "Шайки на лесной дороге: пращники в кустах, волчьи тропы, атаман с шайкой. Подбирайте отряд под бой.", "map": "40a",
 		"trophy": "trophy_cart"},
-	{"id": "hills", "name": "Дикие холмы", "biome": "hills", "foes": ["wolf", "wolf", "boar", "bear"], "boss": "greatbear", "rank": 4,
+	{"id": "hills", "name": "Дикие холмы", "biome": "hills", "foes": ["wolf", "wolf", "boar", "bear"], "boss": "greatbear", "rank": 3,
 		"desc": "Волчьи стаи и медведи. Копейщики держат зверя на расстоянии.", "map": "40b"},
 	{"id": "gaul", "name": "Галльская чаща", "biome": "darkforest", "foes": ["gaul", "gaul", "gaulArcher", "boar"], "boss": "gaulKing", "rank": 5,
 		"desc": "Галлы бьются отчаянно, их лучники прячутся за деревьями.", "map": "40c"},
@@ -209,8 +210,9 @@ const MAX_LEVEL := 40
 ## Секунд настоящего времени на улучшение до уровня n: от 5 минут до двух суток (выше 10-го — по двое суток)
 const UPGRADE_TIME := [0, 0, 300, 1800, 3600, 5400, 7200, 14400, 28800, 86400, 172800]
 ## Предел уровня бойцов от уровня города (индекс — Defs.LEVELS): растите город, чтобы растить армию.
-## На уровне города, где открывается провинция, предел не ниже её самого трудного боя (target_level)
-const CAP_BY_CITY := [3, 3, 3, 3, 4, 6, 8, 10]
+## На уровне города, где открывается провинция, предел не ниже её самого трудного боя (target_level):
+## лес (до 3-го) — с «Хутора», холмы (до 4-го) — с «Посёлка»
+const CAP_BY_CITY := [3, 3, 3, 4, 4, 6, 8, 10]
 const SQUAD_BASE := 3
 const SQUAD_MAX := 7
 ## После скольких боссов открывается ещё одно место в отряде
@@ -257,6 +259,9 @@ const WONDERS := [
 ## charges — сколько атак в запасе, regen — секунд на один заряд; рейтинг побед не уходит ниже нуля
 const PVP := {"charges": 5, "regen": 1800, "win_base": 20, "win_min": 8, "win_max": 40, "loss_base": 10, "loss_min": 3, "loss_max": 20,
 	"loot_money": 2.0, "loot_base": 150, "glory": 2}
+## Бои с городами — с «Посёлка», как до Д9: Легион теперь с «Хутора», а добыча боёв (~1000 ден. за победу) рассчитана
+## на казну «Посёлка»; на «Хуторе» и в «Деревне» она обесценила бы тесные деньги. Сервер проверяет то же (server/pvp.js)
+const PVP_MIN_LEVEL := 3
 
 # =====================================================================
 #   картинки (владелец пришлёт: D:/CivCity/assets/incoming/ui_ai/35.png … 41.png, разложим в assets/ui/ai/legion)
@@ -328,7 +333,7 @@ static func now() -> float:
 #   доступ: окно, рода войск, отряд
 # =====================================================================
 
-## Окно «Легион» открыто: изучено «Легион» (Defs.RESEARCH)
+## Окно «Легион» открыто: «Легион» открыт (историей «Разбойники у арки» или прежним исследованием — Defs.RESEARCH)
 func window_open() -> bool:
 	if free_mode:
 		return true
@@ -340,7 +345,42 @@ func window_open() -> bool:
 func lock_text() -> String:
 	if window_open():
 		return ""
-	return "Легион собирается, когда город станет «%s»: изучите «Легион» в исследованиях и постройте Казармы." % Defs.LEVELS[REGIONS[0]["rank"]]["name"]
+	var c = city()
+	var rank := int(REGIONS[0]["rank"])
+	var head := "Легион откроется в истории горожан «%s»" % story_title()
+	if c == null or int(c.level) < rank:
+		return head + " — она придёт, когда город станет «%s»." % Defs.LEVELS[rank]["name"]
+	# город уже дорос: говорим, чего история ждёт на самом деле (старый город без Легиона — тоже сюда)
+	var s: Dictionary = c.stories
+	var off: Dictionary = s.get("offer", {})
+	if String(off.get("id", "")) == STORY:
+		return head + " — она уже ждёт вас: над домом переселенца свиток с просьбой, щёлкните его."
+	if (s.get("later", {}) as Dictionary).has(STORY):
+		return head + " — вы её отложили, она скоро вернётся."
+	# истории идут по одной: сначала та, что идёт (или ждёт ответа)
+	var act: Dictionary = s.get("active", {})
+	var busy: Dictionary = act if not act.is_empty() else off
+	if not busy.is_empty():
+		return head + " — она придёт после истории «%s»." % StoryDefs.title_of(StoryDefs.story(String(busy.get("id", ""))), busy)
+	var af := String(StoryDefs.story(STORY).get("after", ""))
+	if af != "" and int(c.level) < 2 and not (s.get("done", {}) as Dictionary).has(af):
+		return head + " — она придёт после истории «%s»." % String(StoryDefs.story(af).get("title", af))
+	return head + " — она скоро придёт: горожане попросят о защите."
+
+
+## История, которая открывает Легион (Д9), и её название
+const STORY := "bandits"
+
+
+static func story_title() -> String:
+	return String(StoryDefs.story(STORY).get("title", "Разбойники у арки"))
+
+
+## Военный квартал у арки, который предложила история «Разбойники у арки»: [x, z, радиус] или [] (заготовка для
+## зданий Легиона на карте, этап L.2: советник предлагает ставить их сюда, бонуса «рядом» нет)
+func quarter() -> Array:
+	var q: Array = flags.get("quarter", [])
+	return q if q.size() == 3 else []
 
 
 func city_level() -> int:
@@ -666,6 +706,8 @@ func _pay(cost: Dictionary) -> void:
 	var c = city()
 	if c != null:
 		c.money -= float(cost.get("money", 0))
+		if c.has_method("flow"):
+			c.flow("legion", -float(cost.get("money", 0)))   # история денег за сутки (этап 2.4)
 	glory -= float(cost.get("glory", 0))
 
 
@@ -1062,6 +1104,11 @@ func squad_hint(st: Dictionary) -> String:
 		if c != null and not c.unlocked("range"):
 			return "Тут пригодится лучник: изучите «Стрельбище» и поставьте его в городе."
 		return "Тут пригодится лучник: поставьте в городе Стрельбище."
+	if slots() <= SQUAD_BASE and wants_archer(st) and not available("archer"):
+		# лес открыт с «Хутора», а «Стрельбище» — в ряду «Деревни»: скажем, когда лучник появится
+		var ra := Defs.research(String(Defs.B["range"].get("unlock", "")))
+		if not ra.is_empty() and int(ra["lvl"]) > city_level():
+			return "Тут пригодится лучник: «Стрельбище» откроется в исследованиях, когда город станет «%s»." % Defs.LEVELS[int(ra["lvl"])]["name"]
 	if not squad_off(st):
 		return ""
 	var best := auto_squad(st)
@@ -1416,6 +1463,8 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 	var c = city()
 	if c != null:
 		c.money -= float(setup.get("food", 0))
+		if c.has_method("flow"):
+			c.flow("legion", -float(setup.get("food", 0)))
 	var first := bool(result.get("win", false)) and int(st["idx"]) == progress
 	var out := result.duplicate()
 	out["first"] = first
@@ -1501,7 +1550,10 @@ func _give(reward: Dictionary) -> int:
 			"money":
 				if c != null:
 					lost = maxi(0, roundi(v - maxf(0.0, c.money_cap() - c.money)))
+					var m0: float = c.money
 					c.money = minf(c.money_cap(), c.money + v)
+					if c.has_method("flow"):
+						c.flow("legion", c.money - m0)
 			"rp":
 				if c != null:
 					c.rp = maxf(c.rp, minf(c.rp_cap(), c.rp + v))   # сверх полок (возврат очков) не срезаем — как в sim_day
@@ -1687,9 +1739,23 @@ func _pvp_regen() -> void:
 			pvp_charge_t = t
 
 
+## Бои с городами открыты: Легион собран и город уже «Посёлок» (PVP_MIN_LEVEL)
+func pvp_open() -> bool:
+	return window_open() and pvp_rank_text() == ""
+
+
+## Почему бои с городами ещё закрыты по уровню города ("" — открыты)
+func pvp_rank_text() -> String:
+	if free_mode or city_level() >= PVP_MIN_LEVEL:
+		return ""
+	return "Бои с городами откроются, когда город станет «%s»." % Defs.LEVELS[PVP_MIN_LEVEL]["name"]
+
+
 func pvp_can_attack() -> String:
 	if not window_open():
 		return lock_text()
+	if pvp_rank_text() != "":
+		return pvp_rank_text()
 	if squad_stats().is_empty():
 		return "В отряде нет бойцов"
 	if pvp_charges_now() <= 0:

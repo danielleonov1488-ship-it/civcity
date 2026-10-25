@@ -107,6 +107,10 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
     ok(r.status === 200 && r.data.power === 142, 'defense C published');
     r = await call('PUT', '/pvp/defense', { snapshot: { squad: sq(['legionary', 1]) } }, tok.d);
     ok(r.status === 409, 'no «Легион» research in cloud city → 409');
+    // Легион с «Хутора» (история «Разбойники у арки»), а бои с городами — с «Посёлка» (PVP_MIN_LEVEL)
+    ok(await save('e', city({ level: 1, buildings: ['barracks'] })) === 200, 'cloud city E: «Хутор» with the Legion');
+    r = await call('GET', '/pvp/opponents', undefined, tok.e);
+    ok(r.status === 409 && /Посёлка/.test(r.data.error), '«Хутор» with the Legion: no opponents until «Посёлок» → 409', r.data);
     r = await call('PUT', '/pvp/defense', { snapshot: { squad: 'x' } }, tok.a);
     ok(r.status === 400, 'broken snapshot → 400');
 

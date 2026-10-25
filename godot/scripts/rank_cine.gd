@@ -612,7 +612,7 @@ func _say_text() -> String:
 		out.append("Станция выросла — почта привозит %s в час." % _scrolls(rh))
 	var names := []
 	for r in Defs.RESEARCH:
-		if int(r["lvl"]) > from and int(r["lvl"]) <= to:
+		if int(r["lvl"]) > from and int(r["lvl"]) <= to and not r.has("story"):   # Легион открывает история, не свиток
 			names.append(String(r["name"]))
 	if names.size() > 3:
 		out.append("Открылись исследования: %s и ещё\u00a0%d." % [", ".join(names.slice(0, 3)), names.size() - 3])
@@ -669,7 +669,7 @@ func _advise(to: int) -> void:
 	for r in Defs.RESEARCH:
 		if names.size() >= 3:
 			break
-		if int(r["lvl"]) == to and not (r["id"] in PICK):
+		if int(r["lvl"]) == to and not (r["id"] in PICK) and not r.has("story"):
 			names.append("«%s»" % r["name"])
 	if not names.is_empty():
 		t += "В свитке исследований вверху справа открылись %s и другие." % ", ".join(names)
