@@ -75,6 +75,13 @@ func _run() -> void:
 		lg.battle_requested.disconnect(cn["callable"])
 	check("окно создано", ui != null)
 	check("медальон виден только с исследованием «Легион»", ui.btn_wrap.visible == lg.window_open())
+	# подсказка серого медальона (почему закрыт + что такое Легион) не шире MIN_W: подсказка Godot строки не переносит
+	var tf: Font = game.hud.theme_main.get_font("font", "TooltipLabel")
+	var tw := 0.0
+	var why := "Легион откроется в истории горожан «%s» — она уже ждёт вас: над домом переселенца свиток с просьбой, щёлкните его." % Legion.story_title()
+	for ln in (why + "\n" + Legion.LOCK_ABOUT).split("\n"):
+		tw = maxf(tw, tf.get_string_size(ln, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 32.0)
+	check("подсказка серого медальона умещается при крупном интерфейсе: %d из %d точек" % [tw, Hud.MIN_W], tw < Hud.MIN_W)
 	# --- середина игры: «Большой город», Крит, бой 4 ---
 	c.level = 6
 	c.research["legion"] = true

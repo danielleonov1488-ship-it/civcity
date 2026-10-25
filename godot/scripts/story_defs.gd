@@ -539,6 +539,37 @@ static func migrate(s: Dictionary) -> void:
 			b["line"] = String(sd.get("line", b.get("line", "")))
 
 
+## Д15: старые строки колокольчика из «Где Мурка?» (просьба «Маленький Луций… расстроен», «сам нашёл Мурку», «завершена»,
+## «для истории «Где Мурка?»») — с новыми именами (Мария, Мася) и значком чёрной кошки; второй раз ничего не меняет
+static func migrate_events(evs: Array) -> void:
+	var sd := story("cat")
+	if sd.is_empty():
+		return
+	var hero := String(((sd.get("cast", {}) as Dictionary).values()[0] as Dictionary).get("name", ""))
+	var re_ask := RegEx.create_from_string("^Маленький \\S+ из семьи (.+?) чем-то расстроен — над их домом свиток с просьбой\\.")
+	var re_self := RegEx.create_from_string("\\S+ сам нашёл Мурку — она дремала в укромном уголке\\. Кошка снова дома\\.")
+	var self_new := fill(String(goal_step(sd, "find").get("giveup", "")), {"kid": hero})
+	for e in evs:
+		if typeof(e) != TYPE_DICTIONARY:
+			continue
+		var t0 := String(e.get("text", ""))
+		var t := t0
+		var m := re_ask.search(t)
+		if m != null:
+			t = fill(String(sd.get("ask", "")).replace("{fam_gen}", m.get_string(1)), {"kid": hero}) + t.substr(m.get_end())
+		if t.contains(OLD_CAT.left(4)):
+			t = t.replace("«Где Мурка?»", "«%s»" % String(sd["title"]))
+			var ms := re_self.search(t)
+			if ms != null:
+				t = t.left(ms.get_start()) + self_new + t.substr(ms.get_end())
+			t = t.replace("Муркой", "Масей").replace("Мурку", "Масю").replace("Мурке", "Масе").replace("Мурки", "Маси").replace(OLD_CAT, "Мася")
+		if t == t0:
+			continue
+		e["text"] = t
+		if String(e.get("icon", "")) == "cat":
+			e["icon"] = String(sd.get("icon", "cat"))
+
+
 ## Что пройденная история может сказать другим ({ref.история.поле}): имена её семьи
 static func ref_of(e: Dictionary) -> Dictionary:
 	var fam := String(e.get("fam", ""))

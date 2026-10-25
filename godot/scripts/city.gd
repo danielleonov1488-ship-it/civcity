@@ -2526,6 +2526,7 @@ func load_data(d: Dictionary) -> void:
 	tips = d.get("tips", {})
 	road_cells = int(d.get("road_cells", 0))
 	events = d.get("events", [])
+	StoryDefs.migrate_events(events)             # колокольчик: «Где Мурка?» → «Где Мася?» (Д15), как журнал
 	fest_left = maxi(0, int(d.get("fest_left", 0)))
 	fest_cd = maxi(0, int(d.get("fest_cd", 0)))
 	name = String(d.get("name", ""))             # старые сохранения — без названия: его скажет сервер

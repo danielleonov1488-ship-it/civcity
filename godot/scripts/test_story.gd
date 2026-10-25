@@ -609,6 +609,14 @@ func _journal() -> void:
 
 # ---------- Д15: старое сохранение с «Где Мурка?» ----------
 
+## Строки колокольчика старого города с «Где Мурка?» (последняя — чужая, с тем же значком: её не трогаем)
+const OLD_BELL := [
+	{"day": 2, "icon": "cat", "text": "Маленький Луций из семьи Корнелиев чем-то расстроен — над их домом свиток с просьбой."},
+	{"day": 3, "icon": "cat", "text": "Луций сам нашёл Мурку — она дремала в укромном уголке. Кошка снова дома."},
+	{"day": 3, "icon": "cat", "text": "История «Где Мурка?» завершена. Луций сам нашёл Мурку — она дремала в укромном уголке. Кошка снова дома. Награда: украшение «Кошачья корзинка» (Украшения), дому Корнелиев +8% счастья на 3 дня, ещё одна кошка в городе."},
+	{"day": 3, "icon": "decor", "text": "Открыто украшение «Кошачья корзинка» (Украшения) — для истории «Где Мурка?»."},
+	{"day": 4, "icon": "cat", "text": "У дома семьи Юлиев теперь живёт кошка."}]
+
 ## Пройденная и идущая история «cat», кошка-награда и строка счастья из старого сохранения — с новыми именами
 ## (Мария, чёрная Мася), в журнале и «Пересмотреть» — тоже; второй раз загрузка ничего не меняет
 func _migrate_old() -> void:
@@ -643,6 +651,21 @@ func _migrate_old() -> void:
 		and not bool(a2.get("child", true)), "идущая история — ищем Масю, просит Мария (%s)" % a2)
 	var hint := StoryDefs.fill(String((StoryDefs.goal_step(StoryDefs.story("cat"), "find")["hints"] as Array)[0][1]), a2)
 	check(hint.begins_with("Мария:"), "подсказка — от Марии: «%s»" % hint)
+	# колокольчик старого города: просьба, «сам нашёл», «завершена», «для истории» — с новыми именами; чужое не трогаем
+	var evs: Array = JSON.parse_string(JSON.stringify(OLD_BELL))
+	StoryDefs.migrate_events(evs)
+	var bell := ""
+	for ev: Dictionary in evs:
+		bell += String(ev["text"]) + " | "
+	check(not bell.contains("Мурк") and not bell.contains("Маленький") and String(evs[0]["text"]).begins_with("Мария из семьи Корнелиев чем-то расстроена — над их домом свиток")
+		and String(evs[1]["text"]) == "Мария сама нашла Масю — та дремала в укромном уголке. Кошка снова дома."
+		and String(evs[2]["text"]).begins_with("История «Где Мася?» завершена. Мария сама нашла Масю — та дремала") and String(evs[2]["text"]).contains("Награда: украшение")
+		and String(evs[3]["text"]).ends_with("для истории «Где Мася?».") and String(evs[3]["icon"]) == "decor"
+		and String(evs[0]["icon"]) == "cat_black" and String(evs[2]["icon"]) == "cat_black"
+		and String(evs[4]["text"]) == String(OLD_BELL[4]["text"]) and String(evs[4]["icon"]) == "cat", "колокольчик старого города: %s" % bell)
+	var evs2: Array = evs.duplicate(true)
+	StoryDefs.migrate_events(evs2)
+	check(evs2 == evs, "колокольчик: вторая загрузка ничего не меняет")
 	# в городе: кошка-награда — чёрная Мася; журнал и «Пересмотреть» — по-новому
 	var keep: Dictionary = c.stories
 	c.stories = s
@@ -652,6 +675,15 @@ func _migrate_old() -> void:
 	var pm: ShaderMaterial = pet.get("mat")
 	check(String(pet.get("named", "")) == "Мася" and pm != null and (pm.get_shader_parameter("fur") as Color).get_luminance() < 0.15,
 		"после загрузки у дома гуляет чёрная Мася (%s)" % pet.get("named", ""))
+	# портрет в карточке кошки — по номеру окраса (cat_node(cat_fi)): чёрная Мася, а не рыжая (и у кошки без «fi» — по цвету)
+	var pf := People.cat_fi(pet)
+	var pn := People.cat_node(pf, "Pet", 7)
+	var pmats := pn.find_children("*", "MeshInstance3D", true, false).map(func(mi): return (mi as MeshInstance3D).get_active_material(0)) \
+		.filter(func(mt): return mt is ShaderMaterial)
+	var pcol: Color = (pmats[0] as ShaderMaterial).get_shader_parameter("fur") if not pmats.is_empty() else Color.WHITE
+	check(pf == People.CAT_MASYA and int(pet.get("fi", -1)) == People.CAT_MASYA and People.cat_fi({"fur": pet["fur"]}) == People.CAT_MASYA
+		and pcol.is_equal_approx(People.CAT_MASYA_FUR[0]), "портрет Маси — чёрный (окрас %d, шерсть %s)" % [pf, pcol.to_html(false)])
+	pn.free()
 	hud.refresh()
 	sto.ui.open_journal()
 	await frames(20)
@@ -661,12 +693,18 @@ func _migrate_old() -> void:
 	check(txt.contains("Где Мася?") and txt.contains("Мария сама нашла Масю") and not txt.contains("Мурк"), "журнал старого города: «Где Мася?», Мария и Мася")
 	await shot("story_migrated_journal.png")
 	hud.journal_panel.visible = false
+	# ролик начнётся, когда мир свободен (can_start: прошлый ролик закрылся) — под нагрузкой всего набора это не сразу
+	var t0 := Time.get_ticks_msec()
+	while not sto.can_start() and Time.get_ticks_msec() - t0 < 5000:
+		await get_tree().process_frame
 	sto.replay("cat")
-	var said: bool = await wait_beat("say", 8.0)
+	var started := not sto.cine.is_empty()
+	var said: bool = await wait_beat("say", 12.0)
 	var who: Dictionary = sto._speaker("maria") if not sto.cine.is_empty() else {}
 	var cw: Dictionary = sto._speaker("cat") if not sto.cine.is_empty() else {}
 	check(said and String(who.get("name", "")) == "Мария" and bool(who.get("female", false)) and not bool(who.get("child", true))
-		and String(cw.get("name", "")) == "Мася" and int(cw.get("fur", -1)) == People.CAT_MASYA, "«Пересмотреть»: Мария (девушка) и чёрная Мася")
+		and String(cw.get("name", "")) == "Мася" and int(cw.get("fur", -1)) == People.CAT_MASYA,
+		"«Пересмотреть»: Мария (девушка) и чёрная Мася (ролик %s, реплика %s, %s / %s)" % [started, said, who.get("name", ""), cw.get("name", "")])
 	press_key(KEY_ESCAPE)
 	await wait_kit(false, 4.0)
 	for cc in game.people.cats.duplicate():
@@ -696,6 +734,9 @@ func _old_cat_save() -> void:
 			"cat_name": "Мурка", "fur": 0, "text": "Награда: украшение «Кошачья корзинка» (Украшения), дому семьи +8% счастья на 3 дня, +25 очков исследований, ещё одна кошка в городе."}},
 		"bonus": [{"id": "cat", "line": "Мурка снова дома", "pct": 8, "left": 30, "fam": fam}],
 		"pets": [{"home": home, "fur": 0, "name": "Мурка", "seed": 5}]}
+	var evs: Array = d.get("events", [])
+	evs.append_array(OLD_BELL)                 # и в колокольчике — старые строки «Где Мурка?»
+	d["events"] = evs
 	DirAccess.make_dir_recursive_absolute(GamePaths.save_dir())
 	var f := FileAccess.open(GamePaths.save_dir().path_join("city.json"), FileAccess.WRITE)
 	f.store_string(JSON.stringify(d, "", false, true))
@@ -720,6 +761,13 @@ func _owner_old() -> void:
 	for b: Dictionary in S["bonus"]:
 		line += String(b.get("line", ""))
 	check(line == "Мася снова дома", "строка счастья: «%s»" % line)
+	var bell := ""
+	var fin := ""
+	for ev: Dictionary in c.events:
+		bell += String(ev.get("text", "")) + " | "
+		if String(ev.get("text", "")).begins_with("История «Где Мася?» завершена"):
+			fin = String(ev["text"]) + " [" + String(ev.get("icon", "")) + "]"
+	check(not bell.contains("Мурк") and fin.contains("Мария сама нашла Масю") and fin.ends_with("[cat_black]"), "колокольчик города владельца: «%s»" % fin)
 	hud.advisor_panel.visible = false
 	sto.ui.open_journal()
 	await frames(20)

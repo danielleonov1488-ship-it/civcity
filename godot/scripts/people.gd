@@ -2903,6 +2903,20 @@ static func cat_fur(fi: int) -> Array:
 	return CAT_MASYA_FUR if fi == CAT_MASYA else CAT_FURS[clampi(fi, 0, CAT_FURS.size() - 1)]
 
 
+## Номер окраса кошки (для портрета в карточке: cat_node(cat_fi(c), …)): из «fi», у кошки без него — по цвету шерсти
+## (чёрная Мася — вне CAT_FURS, её цвет проверяем отдельно)
+static func cat_fi(ct: Dictionary) -> int:
+	if ct.has("fi"):
+		return int(ct["fi"])
+	var col: Color = ct.get("fur", Color.BLACK)
+	if (CAT_MASYA_FUR[0] as Color).is_equal_approx(col):
+		return CAT_MASYA
+	for i in CAT_FURS.size():
+		if (CAT_FURS[i][0] as Color).is_equal_approx(col):
+			return i
+	return 0
+
+
 static func _cat_mesh(fur: Color, belly: Color) -> Array:
 	var key := fur.to_html() + belly.to_html()
 	if _cat_parts.has(key):
@@ -2956,7 +2970,7 @@ func _make_cat(home: Dictionary, opts := {}) -> Dictionary:
 	snd.volume_db = -14.0
 	snd.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	root.add_child(snd)
-	var cat := {"n": root, "anim": ap, "clip": "", "fur": f[0], "mat": fmat, "k": CAT_WALK / (CAT_STEP * sc), "p": p, "path": PackedVector2Array(), "i": 0,
+	var cat := {"n": root, "anim": ap, "clip": "", "fur": f[0], "fi": fi, "mat": fmat, "k": CAT_WALK / (CAT_STEP * sc), "p": p, "path": PackedVector2Array(), "i": 0,
 		"state": "sit", "t": rg.randf_range(2, 6), "home": home["id"], "yaw": rg.randf() * TAU, "walk": 0.0, "ph": rg.randf() * TAU,
 		"snd": snd, "meow_t": rg.randf_range(10, 60)}
 	_cat_place(cat)
@@ -2968,7 +2982,8 @@ func _make_cat(home: Dictionary, opts := {}) -> Dictionary:
 ## Прежняя кошка, собранная из Kit (если модели нет)
 func _make_cat_kit(home: Dictionary, opts := {}) -> Dictionary:
 	var rg: RandomNumberGenerator = opts.get("rng", rng)
-	var f: Array = cat_fur(int(opts["fur"])) if opts.has("fur") else CAT_FURS[rg.randi() % CAT_FURS.size()]
+	var fi: int = int(opts["fur"]) if opts.has("fur") else rg.randi() % CAT_FURS.size()
+	var f: Array = cat_fur(fi)
 	var meshes := _cat_mesh(f[0], f[1])
 	var mat := Kit.material(0.9)
 	var root := Node3D.new()
@@ -2997,7 +3012,7 @@ func _make_cat_kit(home: Dictionary, opts := {}) -> Dictionary:
 	snd.volume_db = -14.0
 	snd.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	root.add_child(snd)
-	var cat := {"n": root, "head": head, "tail": tail, "legs": legs, "fur": f[0], "p": p, "path": PackedVector2Array(), "i": 0, "state": "sit", "t": rg.randf_range(2, 6),
+	var cat := {"n": root, "head": head, "tail": tail, "legs": legs, "fur": f[0], "fi": fi, "p": p, "path": PackedVector2Array(), "i": 0, "state": "sit", "t": rg.randf_range(2, 6),
 		"home": home["id"], "yaw": rg.randf() * TAU, "walk": 0.0, "ph": rg.randf() * TAU, "snd": snd, "meow_t": rg.randf_range(10, 60)}
 	_cat_place(cat)
 	return cat
