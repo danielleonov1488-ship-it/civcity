@@ -410,10 +410,15 @@ func _unlockable(late: bool) -> void:
 				bad.append("заказ %s: %s" % [o["id"], e[0]])
 	for s: Dictionary in StoryDefs.STORIES:
 		var ks := []
+		var granted := []                    # что история открывает сама (ларарий в «Письме сыну»)
 		for st: Dictionary in s.get("steps", []):
 			_goal_kinds(st.get("goal", []), ks)
+			granted.append_array(st.get("grant", []))
 		for k: String in ks:
-			if not _kind_by(k, int(s.get("lvl", 0)), late):
+			var by_story := false
+			for t in k.trim_prefix("=").split("|"):
+				by_story = by_story or (Defs.B.has(t) and String(Defs.B[t].get("unlock", "")) in granted)
+			if not _kind_by(k, int(s.get("lvl", 0)), late) and not by_story:
 				bad.append("история %s: %s" % [s["id"], k])
 	# прятки Мурки — на «Хуторе» хоть один вид из укрытий
 	var hide_ok := false

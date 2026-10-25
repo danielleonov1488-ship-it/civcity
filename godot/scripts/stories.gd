@@ -59,8 +59,10 @@ var _clicks: Array = []                # места «щёлкнуть» в ми
 var _clicks_key := ""
 const CLICK_HINT := "story_click"      # значки над лужами (через hint_h часов)
 const WALK_MAX := 16.0                 # в ролике идут не дальше стольких метров пути (остальное — за кадром)
+const RIDE_MAX := 34.0                 # всадник (гонец) скачет дольше — галопом по улице
 const DONKEY_LEN := 1.55               # ослик от морды до хвоста, м
 var works_room := 40                   # «лавка у дома» (ослик): столько м² свободной земли рядом нужно под новую лавку
+var off: Array = []                    # проверки: эти истории не предлагать (игра — не трогает)
 
 
 func setup(g) -> void:
@@ -75,6 +77,9 @@ func setup(g) -> void:
 	city.building_removed.connect(_on_removed)
 	city.family_left.connect(_on_family_left)
 	city.festival_changed.connect(_on_fest)
+	if city.legion != null:
+		city.legion.battle_requested.connect(_on_battle_req)   # письмо сыну: победа в провинции после начала шага
+		city.legion.battle_closed.connect(_on_battle_done)
 	if game.mode in ["new", "play"]:
 		_restore()
 
@@ -150,6 +155,8 @@ func _process(dt: float) -> void:
 
 ## Кошка мяукает (тихо, в мире — слышно, только если камера рядом) и над ней «мяу!»; ослик кричит «И-а!»
 func _live(sdt: float) -> void:
+	if not _chains.is_empty() and sdt > 0.0:
+		_chains_tick(sdt)                    # пожар: вёдра идут по цепочке
 	if (cat.is_empty() and beast.is_empty()) or sdt <= 0.0 or not allowed():
 		return
 	if _sit_t > 0.0:
@@ -250,7 +257,7 @@ func _try_offer() -> void:
 	_tried = key
 	for sd: Dictionary in StoryDefs.all():
 		var id := String(sd["id"])
-		if (s["done"] as Dictionary).has(id):
+		if (s["done"] as Dictionary).has(id) or id in off:
 			continue
 		if (s["later"] as Dictionary).has(id) and int(s["h"]) < int(s["later"][id]):
 			continue
@@ -283,6 +290,9 @@ func can_offer(sd: Dictionary) -> Dictionary:
 	for r in sd.get("needs", []):
 		if not city.research.has(r):
 			return {}
+	for r in sd.get("req", []):
+		if not (S()["done"] as Dictionary).has(String(r)):
+			return {}                        # продолжение: сначала та история («Мася и котята» — после «Где Мася?»)
 	for np: Array in sd.get("need_p", []):
 		if city.progress_of(np[0]) < int(np[1]):
 			return {}
@@ -302,15 +312,20 @@ func can_offer(sd: Dictionary) -> Dictionary:
 		bind["id"] = String(sd["id"])        # тот же посев _rng, что в _start_find: проверяем то самое место
 		if not room.is_empty() and free_near(_home_pos(bind), float(room[0])) < int(room[1]):
 			continue                         # вокруг всё застроено: скверик или новый дом ставить негде
-		if not cg.is_empty() and click_spots(bind, int(cg[2]), cg[3] if cg.size() > 3 else {}).size() < int(cg[2]):
-			continue                         # у дома нет улицы, по которой бежит вода: лужи класть некуда
+		if not cg.is_empty() and click_spots(bind, int(cg[2]), cg[3] if cg.size() > 3 else {}, String(cg[1])).size() < int(cg[2]):
+			continue                         # у дома нет улицы, по которой бежит вода (у гончарной нет домов): места нет
 		if not wg.is_empty() and not _works_room(bind, wg):
 			continue                         # у дома возчика ни лавки, ни места под неё: историю не пройти без сноса
+		var gg: Array = StoryDefs.goal_step(sd, "give").get("goal", [])
+		if not gg.is_empty() and gift_homes(bind, gg).size() < int(gg[2]):
+			continue                         # котятам некуда: рядом мало семей с детьми
 		var sp := Vector2.INF if fo.is_empty() else _spot_for(bind, fo)
 		if fo.is_empty() or sp != Vector2.INF:
 			if sp != Vector2.INF:
 				bind["spot0"] = [sp.x, sp.y]
-			if bind.has("fam"):
+			if bind.has("msd"):
+				bind["seed"] = int(bind["msd"])  # герой-житель: облик — его собственный (этап 6.10)
+			elif bind.has("fam"):
 				bind["seed"] = _fair_seed(hash(String(bind["fam"])) & 0xffffff)
 			if not _bind_roles(sd, bind):
 				continue
@@ -352,8 +367,10 @@ func _bind_roles(sd: Dictionary, bind: Dictionary) -> bool:
 	var roles := {}
 	var keys := cast.keys()
 	var r0: Dictionary = cast[keys[0]]
-	roles[keys[0]] = {"seed": int(bind.get("seed", 1)), "female": bool(r0.get("female", false)), "child": false, "cls": String(bind.get("cls", "plebs")),
-		"old": bool(r0.get("old", false))}
+	roles[keys[0]] = {"seed": int(bind.get("seed", 1)), "female": bool(bind.get("female", r0.get("female", false))), "child": false,
+		"cls": String(bind.get("cls", "plebs")), "old": bool(r0.get("old", false))}
+	if bind.has("mlook"):
+		roles[keys[0]]["look"] = bind["mlook"]   # герой-житель — в своём облике (этап 6.10)
 	for k in keys.slice(1):
 		var r: Dictionary = cast[k]
 		if not bool(r.get("other", false)):
@@ -413,6 +430,10 @@ func _cast(sd: Dictionary) -> Array:
 		return [] if ctr.is_empty() else [{"home": int(ctr["id"]), "fam": "", "kid": ""}]
 	var role: Dictionary = cast.values()[0]
 	var clss := String(role.get("cls", "plebs")).split("|")
+	if role.has("member"):
+		return _cast_members(role, clss, ctr["pos"] if not ctr.is_empty() else Land.CENTER)
+	if role.has("from"):
+		return _cast_from(String(role["from"]))
 	var child := bool(role.get("child", false))
 	var floors := int(role.get("floors", 0))     # дом ровно в столько этажей («Тесно у …» — в два, чтобы надстроить третий)
 	var c0: Vector2 = ctr["pos"] if not ctr.is_empty() else Land.CENTER
@@ -442,6 +463,128 @@ func _cast(sd: Dictionary) -> Array:
 	for e: Dictionary in out:
 		e.erase("d")
 	return out
+
+
+## Герой — настоящий житель (этап 6.10): взрослый нужного пола из дома нужного сословия, работает там, где надо (job),
+## у дома — что нужно (shops, quiet). Имя, облик и пол — из записи члена семьи (r.m): на улице он тот же, что в ролике.
+## Работника такой постройки нет — семья, что живёт рядом с ней (near). По герою на семью; ближние к станции — первыми
+func _cast_members(role: Dictionary, clss: Array, c0: Vector2) -> Array:
+	var want := String(role.get("member", "adult"))
+	var job := String(role.get("job", ""))
+	var near: Array = role.get("near", [])
+	var shops: Array = role.get("shops", [])
+	var quiet := float(role.get("quiet", 0.0))
+	var seen := {}
+	var with_job := []
+	var near_job := []
+	var any_job := []
+	var fits := {}                       # дом → подходит ли (лавки рядом, тишина): один раз на дом
+	for r in game.people.residents:
+		if bool(r["child"]) or bool(r.get("old", false)) or int(r["home"]) <= 0:
+			continue
+		var fem := bool(r["female"])
+		if (want == "man" and fem) or (want == "woman" and not fem):
+			continue
+		var hid := int(r["home"])
+		var h: Dictionary = city.buildings.get(hid, {})
+		if h.is_empty() or not city.is_house(h) or not (String(city.def(h)["cls"]) in clss) or int(h["pop"]) <= 0:
+			continue
+		var key := "%s|%d" % [r["fam"], hid]
+		if seen.has(key):
+			continue
+		if not fits.has(hid):
+			fits[hid] = _home_fits(h, shops, quiet)
+		if not fits[hid]:
+			continue
+		var jb: Dictionary = city.buildings.get(int(r["job"]), {}) if int(r["job"]) >= 0 else {}
+		var jok := job == "" or (not jb.is_empty() and _job_fits(jb, job))
+		var e := _member_bind(r, h, c0)
+		if jok:
+			seen[key] = true
+			if not jb.is_empty() and job != "":
+				e["job"] = int(jb["id"])
+				var jn := Residents.job_noun(String(jb["type"]), fem)
+				if jn == "":
+					jn = ("торговка" if fem else "торговец") if String(city.def(jb)["kind"]) == "shop" else ("мастерица" if fem else "мастер")
+				e["job_n"] = jn
+			with_job.append(e)
+		else:
+			var nb := _nearest_of(String(near[0]), h["pos"]) if not near.is_empty() else {}
+			if not nb.is_empty() and (nb["pos"] as Vector2).distance_to(h["pos"]) <= float(near[1]):
+				e["job"] = int(nb["id"])
+				e["key"] = key
+				near_job.append(e)
+			elif bool(role.get("soft", false)):
+				e["key"] = key
+				any_job.append(e)                # такой работы нет ни у кого рядом — подойдёт любой житель (писец переписи)
+	var out := []
+	for lst: Array in [with_job, near_job, any_job]:
+		lst.sort_custom(func(x, y): return float(x["d"]) < float(y["d"]))
+		for e: Dictionary in lst:
+			var k := String(e.get("key", ""))
+			if k != "":
+				if seen.has(k):
+					continue
+				seen[k] = true
+				e.erase("key")
+			e.erase("d")
+			out.append(e)
+	return out
+
+
+## Работа подходит роли: тип постройки («potter»), «shop» — любая лавка, «shop:food|clothes» — лавка этих видов (торговец, не музыкант)
+func _job_fits(jb: Dictionary, job: String) -> bool:
+	var d := city.def(jb)
+	if job.begins_with("shop"):
+		return String(d["kind"]) == "shop" and (job == "shop" or String(d.get("sub", "")) in job.substr(5).split("|"))
+	return _is(jb, job)
+
+
+## Привязка истории к жителю r из дома h: имя, пол, облик (как на улице), зерно облика
+func _member_bind(r: Dictionary, h: Dictionary, c0: Vector2) -> Dictionary:
+	var m: Dictionary = r.get("m", {})
+	var fam := String(r["fam"])
+	var cls := String(city.def(h)["cls"])
+	var fem := bool(r["female"])
+	var nm := Residents.full_name(m, fam) if not m.is_empty() else (StoryDefs.nomen_f(fam) if fem else "%s %s" % [StoryDefs.father(fam), StoryDefs.nomen(fam)])
+	var lk: Dictionary = game.people.look_of(r)
+	return {"home": int(h["id"]), "fam": fam, "kid": nm, "hero": nm, "pn": String(m.get("pn", nm)), "cls": cls, "female": fem, "child": false,
+		"msd": int(m.get("sd", r.get("seed", 1))), "mlook": lk.duplicate(true), "d": (h["pos"] as Vector2).distance_to(c0)}
+
+
+## Дом подходит герою: у дома в R м уже n разных лавок (shops [R, n]) и нет шумных мастерских ближе quiet м
+func _home_fits(h: Dictionary, shops: Array, quiet: float) -> bool:
+	if not shops.is_empty() and shop_kinds(h["pos"], float(shops[0])).size() < int(shops[1]):
+		return false
+	return quiet <= 0.0 or noisy_near(h["pos"], quiet).is_empty()
+
+
+## Ближняя к точке постройка вида type или {}
+func _nearest_of(type: String, p: Vector2) -> Dictionary:
+	var best := {}
+	var bd := INF
+	for id in city.buildings:
+		var o: Dictionary = city.buildings[id]
+		if not _is(o, type):
+			continue
+		var d := (o["pos"] as Vector2).distance_to(p)
+		if d < bd:
+			bd = d
+			best = o
+	return best
+
+
+## Облик героя-жителя сейчас: тот житель на улице (сменил причёску у цирюльника — и в ролике так же), иначе — запомненный
+func _hero_look(b: Dictionary) -> Dictionary:
+	var pn := String(b.get("pn", ""))
+	if pn != "" and game.people != null:
+		for r in game.people.residents:
+			if String(r["fam"]) == String(b.get("fam", "")) and String(r.get("pn", "")) == pn and not bool(r["child"]):
+				return game.people.look_of(r)
+	var lk: Dictionary = (b.get("mlook", {}) as Dictionary).duplicate(true)
+	if not lk.is_empty():
+		Citizen.norm_look(lk)              # из сохранения (JSON) — числа целыми
+	return lk
 
 
 ## Облик героя ролика: светлый вариант палитры Synty (у тёмных вблизи нарисована щетина — ребёнку не к лицу).
@@ -608,7 +751,16 @@ func _enter_step(i: int) -> void:
 			# кто открыл: прервётся история — её предложат снова, skip_if её не остановит (can_offer)
 			(S().get_or_add("granted", {}) as Dictionary)[String(r)] = String(a.get("id", ""))
 			var rd := Defs.research(String(r))
-			city._quiet("Открыто: «%s» — для истории «%s»." % [rd.get("name", r), StoryDefs.title_of(_story(a), a)], "research")
+			var dn := ""
+			if rd.is_empty():
+				for t in Defs.B:                  # украшение истории (ларарий): его и называем
+					if String(Defs.B[t].get("unlock", "")) == String(r):
+						dn = String(Defs.B[t]["name"])
+						break
+			if dn != "":
+				city._quiet("Открыто украшение «%s» (Украшения) — для истории «%s»." % [dn, StoryDefs.title_of(_story(a), a)], "decor")
+			else:
+				city._quiet("Открыто: «%s» — для истории «%s»." % [rd.get("name", r), StoryDefs.title_of(_story(a), a)], "research")
 		if String(r) == "legion":
 			city.legion.flags["advised"] = true   # что такое Легион и как его строить, скажет совет шага (с военным кварталом), не окно Легиона
 	if bool(st.get("quarter", false)):
@@ -621,6 +773,10 @@ func _enter_step(i: int) -> void:
 			_start_find(a, g[2], String(g[1]))
 		elif String(g[0]) == "click":
 			_start_click(a, g)
+		elif String(g[0]) == "census":
+			_census_start(a)                 # кого ищет перепись — один раз
+		elif String(g[0]) == "legion_win":
+			(a["flags"] as Dictionary).erase("won")   # победы — с начала шага
 	elif st.has("cine"):
 		a["ready"] = true                # ролик-шаг ждёт щелчка игрока (свиток над домом, «Посмотреть»)
 	_sync_beast()
@@ -699,6 +855,8 @@ func _on_hour() -> void:
 			_call_kid(a)
 		hud.refresh()
 	elif _goal_kind(a) in ["click", "wait", "fest"]:
+		if _smoke_on(a):
+			_smoke_hour(a, hours)            # пожар: не успели — копоть (ничего не сгорает)
 		hud.refresh()                        # «ищем N ч», значки над лужами, часы ожидания
 
 
@@ -738,6 +896,8 @@ func _tick_active(play_now := false) -> void:
 		return
 	var pr := progress(a, st["goal"])
 	if bool(pr["ok"]):
+		if bool(st.get("center", false)):
+			_remember_center(a, st)             # роща: где она — для ролика (как скверик)
 		if _goal_kind(a) == "square":
 			var sq := square_center(a, float(st["goal"][1]))
 			var at := _home_pos(a)
@@ -948,7 +1108,7 @@ func _finish(how: String, text := "") -> void:
 		"seed": int(a.get("seed", 1)), "cls": a.get("cls", "plebs"), "how": how, "cat_name": a.get("cat_name", ""), "fur": int(a.get("fur", 0))}
 	if a.has("spot"):
 		e["spot"] = a["spot"]
-	for k in ["roles", "flags", "fam2", "home2", "couple", "old", "child", "female", "at"]:
+	for k in ["roles", "flags", "fam2", "home2", "couple", "old", "child", "female", "at", "hero", "pn", "msd", "mlook", "job", "job_n"]:
 		if a.has(k):
 			e[k] = a[k]                      # для «Пересмотреть»: кто был в роликах (и каков облик), что выбрали, где новый дом
 	e["text"] = (text + " " if text != "" else "") + "Награда: " + rw + "."
@@ -969,6 +1129,8 @@ func _reward(sd: Dictionary, a: Dictionary, full: bool) -> String:
 	var bc: Dictionary = r.get("by_choice", {})
 	if bc.has(ch):
 		r.merge(bc[ch], true)
+	if bool((a.get("flags", {}) as Dictionary).get("paid", false)) and r.has("if_paid"):
+		r.merge(r["if_paid"], true)          # сбор заплатили (ярмарка): праздник щедрее
 	return _give(r, sd, a, full)
 
 
@@ -1013,6 +1175,8 @@ func _give(r: Dictionary, sd: Dictionary, a: Dictionary, full: bool) -> String:
 	if r.has("happy_area"):
 		var ha: Array = r["happy_area"]
 		var hp := _built_pos(a) if ha.size() > 3 and String(ha[3]) == "built" else _home_pos(a)
+		if ha.size() > 3 and String(ha[3]) == "job" and not _job_b(a).is_empty():
+			hp = _job_b(a)["pos"]            # у работы героя (гончарная после пожара), а не у его дома
 		(s["bonus"] as Array).append({"id": id, "line": line, "pct": int(ha[0]), "x": hp.x, "z": hp.y, "r": float(ha[1]), "left": int(ha[2])})
 		out.append("домам в %d м +%d%% счастья на %s" % [int(ha[1]), int(ha[0]), _hours(int(ha[2]))])
 	if r.has("happy_all"):
@@ -1146,7 +1310,7 @@ func _family_in_city(fam: String) -> bool:
 ## Сколько сделано по цели шага: {have, need, ok, txt}
 func progress(a: Dictionary, g: Array) -> Dictionary:
 	var flags: Dictionary = a.get("flags", {})
-	var hp := _home_pos(a)
+	var hp := _hp(a)
 	match String(g[0]):
 		"find":
 			var f := bool(flags.get("found", false))
@@ -1192,8 +1356,27 @@ func progress(a: Dictionary, g: Array) -> Dictionary:
 			var c := String(flags.get("choice", ""))
 			return {"have": int(c != ""), "need": 1, "ok": c != "", "txt": ""}
 		"pay":
-			var paid := bool(flags.get("paid", false))
+			# сбор по желанию (ярмарка): «обойдёмся» — тоже решение
+			var paid := bool(flags.get("paid", false)) or bool(flags.get("pay_skip", false))
 			return {"have": int(paid), "need": 1, "ok": paid, "txt": ""}
+		"variety":
+			var kinds := shop_kinds(hp, float(g[1]))
+			var ok := kinds.size() >= int(g[2])
+			var subs: Dictionary = g[3] if g.size() > 3 else {}
+			for sb in subs:
+				ok = ok and _kinds_of(kinds, String(sb)) >= int(subs[sb])
+			return {"have": mini(kinds.size(), int(g[2])), "need": int(g[2]), "ok": ok, "txt": "%d/%d" % [mini(kinds.size(), int(g[2])), int(g[2])]}
+		"quiet":
+			var nz := noisy_near(hp, float(g[1]))
+			return {"have": int(nz.is_empty()), "need": 1, "ok": nz.is_empty(), "txt": ""}
+		"view":
+			# заглянули в «Обзор» с этим слоем (пока шаг идёт): запоминаем — закрыли «Обзор», а строка уже ✓
+			var vw: Dictionary = flags.get("viewed", {})
+			if not bool(vw.get(String(g[1]), false)) and hud != null and String(hud.overlay) == String(g[1]) and kit == null:
+				vw[String(g[1])] = true
+				flags["viewed"] = vw
+			var seen := bool(vw.get(String(g[1]), false))
+			return {"have": int(seen), "need": 1, "ok": seen, "txt": ""}
 		"wait":
 			var hrs := int(S()["h"]) - int(a.get("t0", S()["h"]))
 			return {"have": mini(hrs, int(g[1])), "need": int(g[1]), "ok": hrs >= int(g[1]), "txt": "%d/%d ч" % [mini(hrs, int(g[1])), int(g[1])]}
@@ -1205,9 +1388,12 @@ func progress(a: Dictionary, g: Array) -> Dictionary:
 			return {"have": 0, "need": 1, "ok": false, "txt": ""}
 		"click":
 			var n := 0
+			var smoke := String(g[1]) == "smoke"     # пожар: в счёт — потушенные (и закопчённые) крыши, а не щелчки
 			for c: Array in a.get("clicks", []):
-				n += int(int(c[2]) > 0)
+				n += int(int(c[2]) >= 2) if smoke else int(int(c[2]) > 0)
 			var need := int(g[2])
+			if smoke and not (a.get("clicks", []) as Array).is_empty():
+				need = mini(need, (a["clicks"] as Array).size())   # домов у гончарной меньше — сколько есть
 			return {"have": n, "need": need, "ok": n >= need and not (a.get("clicks", []) as Array).is_empty(), "txt": "%d/%d" % [mini(n, need), need]}
 		"works":
 			var w := works_eval(a, g)
@@ -1238,8 +1424,18 @@ func progress(a: Dictionary, g: Array) -> Dictionary:
 			var n := int(flags.get("fest", 0))
 			return {"have": mini(n, int(g[1])), "need": int(g[1]), "ok": n >= int(g[1]), "txt": "%d/%d" % [mini(n, int(g[1])), int(g[1])]}
 		"legion_win":
-			var n := legion_wins(int(g[1]))
+			# {new: true} — победы после начала шага (письмо сыну), иначе — звёзды первого круга в провинции
+			var lo: Dictionary = g[3] if g.size() > 3 else {}
+			var n := int(flags.get("won", 0)) if bool(lo.get("new", false)) else legion_wins(int(g[1]))
 			return {"have": mini(n, int(g[2])), "need": int(g[2]), "ok": n >= int(g[2]), "txt": "%d/%d" % [mini(n, int(g[2])), int(g[2])]}
+		"give":
+			var gv: Array = flags.get("given", [])
+			return {"have": mini(gv.size(), int(g[2])), "need": int(g[2]), "ok": gv.size() >= int(g[2]), "txt": "%d/%d" % [mini(gv.size(), int(g[2])), int(g[2])]}
+		"census":
+			if kit == null:
+				_census_seen(a)
+			var nc := int(bool(flags.get("c_person", false))) + int(bool(flags.get("c_best", false))) + int(bool(flags.get("c_child", false)))
+			return {"have": nc, "need": int(g[1]), "ok": nc >= int(g[1]), "txt": "%d/%d" % [nc, int(g[1])]}
 		"all":
 			var have := 0
 			var subs: Array = g[1]
@@ -1251,7 +1447,7 @@ func progress(a: Dictionary, g: Array) -> Dictionary:
 
 ## Цель «лавка у дома торгует»: {shops: [[id, почему не торгует ("" — торгует)]], ok_id — первая торгующая или -1}
 func works_eval(a: Dictionary, g: Array) -> Dictionary:
-	var hp := _home_pos(a)
+	var hp := _hp(a)
 	var out := []
 	var ok_id := -1
 	if g.size() < 3:
@@ -1303,7 +1499,7 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 	if g.is_empty():
 		return []
 	var out := []
-	var hp := _home_pos(a)
+	var hp := _hp(a)
 	match String(g[0]):
 		"p":
 			var n := city.progress_of(g[1])
@@ -1362,11 +1558,60 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 		"legion_win":
 			var pr := progress(a, g)
 			var rn := String((Legion.REGIONS[int(g[1])] as Dictionary).get("name", "")) if int(g[1]) < Legion.REGIONS.size() else ""
-			out.append({"text": "Победы в «%s» %s" % [rn, pr["txt"]], "ok": bool(pr["ok"]), "do": {}})
+			out.append({"text": "Победы в «%s» %s" % [rn, pr["txt"]], "ok": bool(pr["ok"]),
+				"do": {} if bool(pr["ok"]) else {"kind": "legion", "tip": "Легион", "say": "Медальон «Легион» сверху справа → «Походы»"}})
+		"give":
+			var pr := progress(a, g)
+			var fl: Dictionary = a.get("flags", {})
+			out.append({"text": "Котята в новых семьях %s" % pr["txt"], "ok": bool(pr["ok"]), "do": {}})
+			var gv: Array = fl.get("given", [])
+			var kn: Array = fl.get("kittens", [])
+			for i in gv.size():
+				var h: Dictionary = city.buildings.get(int(gv[i]), {})
+				var fm := String((h.get("families", [{}]) as Array)[0].get("name", "")) if not (h.get("families", []) as Array).is_empty() else ""
+				out.append({"text": "%s — у семьи %s" % [String(kn[i]) if i < kn.size() else "Котёнок", StoryDefs.fam_gen(fm)], "ok": true, "do": {}})
+		"census":
+			var fl: Dictionary = a.get("flags", {})
+			var cz: Dictionary = a.get("census", {})
+			var who := String(cz.get("name", ""))
+			if String(cz.get("job", "")) != "":
+				who += ", " + String(cz["job"])
+			out.append({"text": "Житель по имени: %s" % who, "ok": bool(fl.get("c_person", false)),
+				"do": {"kind": "people", "q": String(cz.get("pn", "")), "f": "", "say": "«Горожане»: поиск по имени — щёлкните по найденному"}})
+			out.append({"text": "Самая счастливая семья — карточка её дома", "ok": bool(fl.get("c_best", false)),
+				"do": {"kind": "view", "layer": "happy", "tip": "Обзор", "say": "«Обзор» → «Счастье»: щёлкните по дому с самым большим процентом"}})
+			out.append({"text": "Ребёнок — будущий ученик (карточка жителя)", "ok": bool(fl.get("c_child", false)),
+				"do": {"kind": "people", "q": "", "f": "kids", "say": "«Горожане» → «Дети»: щёлкните по любому"}})
 		"built_after":
 			var pr := progress(a, g)
 			out.append({"text": "Новый %s в %d м" % [String(Defs.B.get(String(g[1]), {}).get("name", "дом")).to_lower(), int(g[2])], "ok": bool(pr["ok"]),
 				"do": {} if bool(pr["ok"]) else hud._do_type(String(g[1]))})
+		"variety":
+			# разные лавки у площади (ярмарка): сколько разных видов, из них — нужного (одежды); щелчок — лавка, которой тут нет
+			var kinds := shop_kinds(hp, float(g[1]))
+			var need := int(g[2])
+			out.append({"text": "Разные лавки рядом %d/%d" % [mini(kinds.size(), need), need], "ok": kinds.size() >= need,
+				"do": {} if kinds.size() >= need else _do_new_shop(kinds, "")})
+			var subs: Dictionary = g[3] if g.size() > 3 else {}
+			for sb in subs:
+				var k := _kinds_of(kinds, String(sb))
+				var nk := int(subs[sb])
+				out.append({"text": "Из них разные лавки %s %d/%d" % [String(SUB_GEN.get(String(sb), sb)), mini(k, nk), nk], "ok": k >= nk,
+					"do": {} if k >= nk else _do_new_shop(kinds, String(sb))})
+		"quiet":
+			var nz := noisy_near(hp, float(g[1]))
+			if nz.is_empty():
+				out.append({"text": "Тихо: мастерских ближе %d м нет" % int(g[1]), "ok": true, "do": {}})
+			else:
+				var nb: Dictionary = nz[0]
+				out.append({"text": "Шумно: %s в %d м" % [String(city.def(nb)["name"]).to_lower(), int(round((nb["pos"] as Vector2).distance_to(hp)))], "ok": false,
+					"do": {"kind": "look", "id": int(nb["id"]), "say": "Показать шумную мастерскую: её можно перенести подальше (кнопка в её карточке)"}})
+		"view":
+			var pr := progress(a, g)
+			var lt := "Счастье" if String(g[1]) == "happy" else String(Defs.NEEDS.get(String(g[1]), {}).get("name", g[1]))
+			out.append({"text": "Взглянуть в «Обзоре» → «%s», как живётся соседям" % lt, "ok": bool(pr["ok"]),
+				"do": {} if bool(pr["ok"]) else {"kind": "view", "layer": String(g[1]), "tip": "Обзор",
+					"say": "«Обзор» — глаз вверху справа: над домами рожицы, красные — людям грустно"}})
 		"all":
 			for sg: Array in g[1]:
 				out.append_array(goal_parts(a, sg, st))
@@ -1574,6 +1819,8 @@ func press(what: String, val := "") -> void:
 				if game.sound:
 					game.sound.ui("coins")
 			flags["paid"] = true
+		"pay_skip":
+			flags["pay_skip"] = true               # сбор по желанию — без него праздник скромнее
 		"choice":
 			_choose(a, val)
 		"battle":
@@ -1644,12 +1891,15 @@ func _marks(on: bool) -> void:
 			for i in cl.size():
 				if int(cl[i][2]) == 0:
 					var q := Vector2(float(cl[i][0]), float(cl[i][1]))
-					hints["%s%d" % [CLICK_HINT, i]] = [Vector3(q.x, game.land.height_at(q.x, q.y) + 1.1, q.y), i]
+					var hy: float = float(cl[i][4]) + 1.6 if (cl[i] as Array).size() > 4 else game.land.height_at(q.x, q.y) + 1.1   # над дымом крыши
+					hints["%s%d" % [CLICK_HINT, i]] = [Vector3(q.x, hy, q.y), i]
 	for k in hud.badges.keys():
 		if String(k).begins_with(CLICK_HINT) and not hints.has(k):
 			hud.clear_badge(k)
 	for k in hints:
 		hud.set_badge(k, hints[k][0], "water", false, "", click_target.bind(int(hints[k][1])), "mark")
+	_noise_marks(on and not cine_on and not a.is_empty() and not a.get("ready", false) and not a.has("homeless"))
+	_gift_marks(on and not cine_on and not a.is_empty() and not a.get("ready", false) and not a.has("homeless"))
 	if on and not cine_on and area.is_empty() and not a.is_empty() and not a.get("ready", false) and not a.has("homeless"):
 		area = _goal_area(a)                # где строить (скверик, сад, новый дом): то же мягкое пятно света
 	# заказ старосты: пятно у его места — пока в руках то, что идёт в счёт (или после «Показать»); у истории своё место —
@@ -1681,7 +1931,7 @@ func _goal_area(a: Dictionary, g: Array = []) -> Array:
 		g = _step(a).get("goal", [])
 	if g.is_empty():
 		return []
-	var hp := _home_pos(a)
+	var hp := _hp(a)
 	var edge := game != null and _zone_hit(_story_zone(), String(game.tool))   # только цель истории (не заказа)
 	match String(g[0]):
 		"square", "around":
@@ -1712,7 +1962,7 @@ func zone_goals() -> Array:
 		return []
 	var out := []
 	var sz := _story_zone()
-	for z: Dictionary in [sz, orders.zone()]:
+	for z: Dictionary in _story_zones(sz) + [orders.zone()]:
 		if not z.is_empty():
 			out.append(z)
 	# здания Легиона — военный квартал и вне истории (Д10), если история сама туда не ведёт
@@ -1789,8 +2039,14 @@ func _story_zone() -> Dictionary:
 		_:
 			return {}
 	var lab: Array = zl if zl is Array else []
-	return {"hp": _home_pos(a), "r": r, "keys": keys, "label": String(lab[0]) if lab.size() > 0 else "цели",
+	var out := {"hp": _hp(a), "r": r, "keys": keys, "label": String(lab[0]) if lab.size() > 0 else "цели",
 		"no": String(lab[1]) if lab.size() > 1 else "", "after": after, "room": room, "skip": skip}
+	var gq: Array = st.get("goal", [])
+	if String(gq[0]) == "all":
+		for sg: Array in gq[1]:
+			if String(sg[0]) == "quiet":
+				out["noisy"] = float(sg[1])     # роща поэта: шумные мастерские ближе — «не надо» у курсора
+	return out
 
 
 ## Постройка type идёт в счёт какой-то цели «рядом с домом» (или похожа на нужное — тогда у курсора скажем «не в счёт»)
@@ -1838,7 +2094,12 @@ func zone_note(type: String, p: Vector2) -> Array:
 		return []
 	var far := []
 	var no := ""
-	for z: Dictionary in zone_goals():
+	var zz := zone_goals()
+	for z: Dictionary in zz:
+		# роща поэта: шумную мастерскую рядом с ней — «не надо» прямо у курсора
+		if z.has("noisy") and type in NOISY and p.distance_to(z["hp"]) <= float(z["noisy"]):
+			return ["%s шумит — роще поэта нужна тишина" % String(Defs.B[type]["name"]), false]
+	for z: Dictionary in zz:
 		if _zone_key(z, type) == "":
 			if no == "":
 				no = _zone_no(z, type)
@@ -1919,15 +2180,25 @@ func near_miss(hp: Vector2, r: float, need: Dictionary) -> String:
 
 ## Строки цели «рядом с домом»: как назвать вид
 const PART_WORDS := {"bench": "Скамьи", "tree|cypress|palm|bush": "Деревья и кусты", "well|smallfountain": "Колодец",
-	"flowers|planter|bush|wall_flowers": "Цветы", "pergola|rosearch": "Беседка или арка", "taberna|thermopolium": "Таверна"}
+	"flowers|planter|bush|wall_flowers": "Цветы", "pergola|rosearch": "Беседка или арка", "taberna|thermopolium": "Таверна",
+	# этап 7b: ярмарка, роща поэта, пожар
+	"awning|rugs|handcart|scrolls|goods|amphorae|cart": "Навесы и прилавки", "banner|wall_banner|garland|bigbanner|lamp_post": "Знамёна или фонари",
+	"tree|cypress|palm|bigtree": "Деревья", "well|smallfountain|fountain|pond|basin": "Родник или фонтан",
+	"vigiles": "Пост вигилов у гончарной", "well|smallfountain|fountain": "Колодец или фонтан рядом"}
 ## Цели, у которых в золотой строке — строки с ✓ (у прежних историй своя строка текста)
-const PART_KINDS := ["p", "works", "floor", "happy_home", "beauty", "fest", "legion_win", "all"]
+const PART_KINDS := ["p", "works", "floor", "happy_home", "beauty", "fest", "legion_win", "all", "variety", "quiet", "view", "give", "census"]
+## «Разные лавки …» какого вида (родительный падеж)
+const SUB_GEN := {"food": "еды", "clothes": "одежды", "fun": "развлечений", "services": "услуг", "goods": "товаров"}
 
 
 ## Слова для «Ещё 2 дерева…»: одно, два, пять, «подвиньте его/её»
 const ZONE_WORDS := {"bench": ["скамья", "скамьи", "скамей", "её"], "tree|cypress|palm|bush": ["дерево", "дерева", "деревьев", "его"],
 	"well|smallfountain": ["колодец", "колодца", "колодцев", "его"], "flowers|planter|bush|wall_flowers": ["цветник", "цветника", "цветников", "его"],
-	"pergola|rosearch": ["беседка", "беседки", "беседок", "её"], "taberna|thermopolium": ["таверна", "таверны", "таверн", "её"]}
+	"pergola|rosearch": ["беседка", "беседки", "беседок", "её"], "taberna|thermopolium": ["таверна", "таверны", "таверн", "её"],
+	"awning|rugs|handcart|scrolls|goods|amphorae|cart": ["прилавок", "прилавка", "прилавков", "его"],
+	"banner|wall_banner|garland|bigbanner|lamp_post": ["знамя", "знамени", "знамён", "его"],
+	"tree|cypress|palm|bigtree": ["дерево", "дерева", "деревьев", "его"], "well|smallfountain|fountain|pond|basin": ["родник", "родника", "родников", "его"],
+	"vigiles": ["пост", "поста", "постов", "его"], "well|smallfountain|fountain": ["колодец", "колодца", "колодцев", "его"]}
 
 
 ## Место поисков: мягкое пятно тёплого света на земле (не кольцо) и цепочка следов лапок от дома в его сторону
@@ -2091,7 +2362,7 @@ func show_area() -> void:
 	var a: Dictionary = S()["active"]
 	if a.is_empty():
 		return
-	var c := _home_pos(a)
+	var c := _hp(a)
 	var ga := _goal_area(a)
 	if not ga.is_empty():
 		c = Vector2(float(ga[0]), float(ga[1]))
@@ -2100,6 +2371,10 @@ func show_area() -> void:
 			if int(cl[2]) == 0:
 				c = Vector2(float(cl[0]), float(cl[1]))   # к первой ещё не найденной луже
 				break
+	if _goal_kind(a) == "give":
+		var gh := gift_homes(a, _step(a)["goal"])
+		if not gh.is_empty():
+			c = gh[0]["pos"]
 	if _goal_kind(a) == "find":
 		var g: Dictionary = _step(a)["goal"][2]
 		var hours := int(S()["h"]) - int(a.get("t0", S()["h"]))
@@ -2201,6 +2476,9 @@ func row_info() -> Dictionary:
 				info["buttons"] = [["Готово", press.bind("ready", "")]]
 		"pay":
 			info["buttons"] = [["Заплатить %d %s" % [int(g[2]), "Славы" if String(g[1]) == "glory" else "ден."], press.bind("pay", "")]]
+			var po: Dictionary = g[3] if g.size() > 3 and g[3] is Dictionary else {}
+			if po.has("skip"):
+				info["buttons"].append([String(po["skip"]), press.bind("pay_skip", "")])   # сбор по желанию
 		"choice":
 			var bs := []
 			for op: Array in g[1]:
@@ -2224,7 +2502,7 @@ func row_info() -> Dictionary:
 					text += " Сейчас: %s." % pr["txt"]
 				var sg: Array = (g[2] as Dictionary).get(ch, [])
 				if not sg.is_empty() and String(sg[0]) == "around":
-					text += near_miss(_home_pos(a), float(sg[1]), sg[2])
+					text += near_miss(_hp(a), float(sg[1]), sg[2])
 				info["buttons"] = [["Показать", show_area]]
 				for op: Array in choice_opts(sd):
 					if String(op[1]) != ch:
@@ -2236,18 +2514,24 @@ func row_info() -> Dictionary:
 			info["buttons"] = [["Показать", show_area]]
 		"click":
 			var pr := progress(a, g)
-			text += " Найдено: %s." % pr["txt"]
+			text += (" Потушено: %s." if String(g[1]) == "smoke" else " Найдено: %s.") % pr["txt"]
 			info["buttons"] = [["Показать", show_area]]
 		"beauty":
 			var pr := progress(a, g)
 			info["buttons"] = [["Показать", show_area]]
 			if int(pr.get("tier", 0)) >= 1:
 				info["buttons"] = [["Готово (%s)" % TIER[int(pr["tier"])], press.bind("ready", "")], ["Показать", show_area]]
-		"works", "floor", "happy_home", "all":
+		"works", "floor", "happy_home", "all", "variety", "quiet", "view":
 			info["buttons"] = [["Показать", show_area]]
+			var bt := _all_tier(a, g) if kind == "all" else 0
+			if bt >= 1:
+				# всё сразу и красота (роща поэта): «Готово» — как только хватает остального, а красоты — на бронзу
+				info["buttons"] = [["Готово (%s)" % TIER[bt], press.bind("ready", "")], ["Показать", show_area]]
 		"legion_win":
 			if st.has("battle") and not bool(progress(a, g)["ok"]):
 				info["buttons"] = [["В бой!", press.bind("battle", "")]]
+		"give":
+			info["buttons"] = [["Показать", show_area]]
 		"p":
 			if bool(st.get("quarter", false)):
 				info["buttons"] = [["Показать", show_area]]
@@ -2257,9 +2541,13 @@ func row_info() -> Dictionary:
 				if String(pr["txt"]) != "":
 					text += " %s." % pr["txt"]
 				if kind == "around":
-					text += near_miss(_home_pos(a), float(g[1]), g[2])
+					text += near_miss(_hp(a), float(g[1]), g[2])
 	if kind in PART_KINDS:
 		info["parts"] = goal_parts(a, g, st)    # строки с ✓: щёлкнуть невыполненную — сразу к делу
+	var vs := _verses(sd, a)
+	if not vs.is_empty():
+		# поэт сочиняет, пока растёт роща: последний стих — в строке (порог красоты выше — стих новый)
+		text += "\n%s бормочет: «%s»" % [StoryDefs.fill("{hero}", a), String(vs[vs.size() - 1]).replace("\n", " / ")]
 	info["text"] = text
 	return info
 
@@ -2267,6 +2555,16 @@ func row_info() -> Dictionary:
 ## Щелчок по строке цели истории: нужная постройка, исследование, «Этаж» или «Обзор» (как у просьб горожан)
 func part_click(p: Dictionary) -> void:
 	var w: Dictionary = p.get("do", {})
+	if String(w.get("kind", "")) == "look":
+		# шумная мастерская у рощи: камера к ней, её карточка (там — «Перенести»)
+		var b: Dictionary = city.buildings.get(int(w.get("id", -1)), {})
+		if not b.is_empty():
+			game.rig.look_at_point(Vector3(b["pos"].x, float(b["y"]), b["pos"].y))
+			game.select_building(b)
+		return
+	if String(w.get("kind", "")) == "people":
+		open_people(String(w.get("q", "")), String(w.get("f", "")))   # перепись: «Горожане» с поиском
+		return
 	if not w.is_empty():
 		hud._do_click(w)
 
@@ -2355,11 +2653,16 @@ func _play(sd: Dictionary, bind: Dictionary, beats: Array, mode: String, after: 
 	bind["refs"] = refs
 	var bs := []
 	for b: Array in beats:
+		var bb: Array = b
 		if String(b[0]) == "if":
-			if _cond(String(b[1])):
-				bs.append(b[2])
+			if not _cond(String(b[1])):
+				continue
+			bb = b[2]
+		if String(bb[0]) == "verse":
+			for v in _verses(sd, bind):
+				bs.append(["say", bb[1], "«%s»" % v])   # стихи поэта: каждый — своей репликой
 		else:
-			bs.append(b)
+			bs.append(bb)
 	beats = bs
 	kit = CineKit.new()
 	add_child(kit)
@@ -2507,9 +2810,12 @@ func _speaker(who: String) -> Dictionary:
 			"role": "ослик семьи %s" % StoryDefs.fam_gen(String(b.get("fam", ""))), "pic": ""}
 	var ro := _role(b, who)
 	var nm: Array = (sd.get("roles", {}) as Dictionary).get(who, [sd.get("who", ""), sd.get("role", "")])
-	return {"kind": "citizen", "seed": int(ro["seed"]), "female": bool(ro["female"]), "child": bool(ro["child"]), "old": bool(ro.get("old", false)),
+	var out := {"kind": "citizen", "seed": int(ro["seed"]), "female": bool(ro["female"]), "child": bool(ro["child"]), "old": bool(ro.get("old", false)),
 		"cls": String(ro["cls"]), "name": StoryDefs.fill(String(nm[0]), b), "role": StoryDefs.fill(String(nm[1]), b),
 		"pic": "class_%s.png" % String(ro["cls"])}
+	if not (ro.get("look", {}) as Dictionary).is_empty():
+		out["look"] = ro["look"]              # портрет в облачке — тот же житель, что на улице
+	return out
 
 
 ## Кто играет роль: облик (seed, пол, ребёнок, сословие, старик) — из bind["roles"] или общий (история с одним героем).
@@ -2517,13 +2823,21 @@ func _speaker(who: String) -> Dictionary:
 ## из «Где Мася?» — взрослая девушка, дед из «Скверика» — взрослый и седой
 func _role(b: Dictionary, role: String) -> Dictionary:
 	var roles: Dictionary = b.get("roles", {})
-	if roles.has(role):
-		return roles[role]
 	var cast: Dictionary = (cine.get("story", StoryDefs.story(String(b.get("id", "")))) as Dictionary).get("cast", {})
+	var hero := not cast.is_empty() and role == String(cast.keys()[0]) and b.has("mlook")
+	if roles.has(role):
+		if not hero:
+			return roles[role]
+		var ro: Dictionary = (roles[role] as Dictionary).duplicate()
+		ro["look"] = _hero_look(b)           # герой-житель — каким он ходит по улице сейчас
+		return ro
 	var r0: Dictionary = cast.get(role, cast.values()[0] if not cast.is_empty() else {})
-	return {"seed": int(b.get("seed", 1)), "female": bool(b.get("female", r0.get("female", false))),
+	var out := {"seed": int(b.get("seed", 1)), "female": bool(b.get("female", r0.get("female", false))),
 		"child": bool(b.get("child", r0.get("child", false))), "cls": String(b.get("cls", "plebs")),
 		"old": bool(b.get("old", r0.get("old", false)))}
+	if hero:
+		out["look"] = _hero_look(b)
+	return out
 
 
 ## Где стоит человек роли who (кошка, ослик, место): точка на земле и куда смотрит
@@ -2614,7 +2928,12 @@ func _beat_start(b: Array) -> void:
 		"look":
 			_look(String(b[1]), String(b[2]), String(b[3]) if b.size() > 3 else "")
 		"say":
-			ui.say(_speaker(String(b[1])), StoryDefs.fill(String(b[2]), bind))
+			var line = b[2]
+			if line is Dictionary:
+				# реплика по выбору (ярмарка: вино или пряности)
+				var ch := String((bind.get("flags", {}) as Dictionary).get("choice", ""))
+				line = (line as Dictionary).get(ch, (line as Dictionary).values()[0])
+			ui.say(_speaker(String(b[1])), StoryDefs.fill(String(line), bind))
 			var c = cine["actors"].get(String(b[1]))
 			if c != null and c is Citizen and String(b[1]) != "cat" and (c as Citizen)._cur in ["Idle", "Look_Around"]:
 				(c as Citizen).play("Idle_Talking")
@@ -2666,6 +2985,19 @@ func _beat_start(b: Array) -> void:
 			_gate_cart()
 		"enter":
 			_enter_house()
+		"crowd":
+			_crowd(int(b[1]), String(b[2]) if b.size() > 2 else "home", String(b[3]) if b.size() > 3 else "Idle")
+		"hold":
+			# вещь в руки герою ролика (вигил с ведром): ["hold", роль, [вещи], движение]
+			var hc = cine["actors"].get(String(b[1]))
+			if hc is Citizen:
+				HandProps.hold(hc, b[2], String(b[3]) if b.size() > 3 else "Idle")
+				if b.size() > 3:
+					(hc as Citizen).play(String(b[3]))
+		"stalls":
+			_stalls()
+		"ride":
+			_ride_begin(b)
 		"wait":
 			pass
 
@@ -2694,7 +3026,7 @@ func _beat_tick(dt: float) -> void:
 		"fly":
 			if not kit.moving() or bt > 3.0:
 				_next_beat()
-		"anim", "actor", "cat", "elders", "dusk", "donkey", "fix", "cart":
+		"anim", "actor", "cat", "elders", "dusk", "donkey", "fix", "cart", "crowd", "stalls", "hold":
 			if bt >= 0.35:
 				_next_beat()
 		"look":
@@ -2718,6 +3050,11 @@ func _beat_tick(dt: float) -> void:
 				_next_beat()
 		"wait":
 			if bt >= float(b[1]):
+				_next_beat()
+		"ride":
+			if _walk_to_step(dt) or bt > 30.0:
+				_walk_end()
+				_ride_end()
 				_next_beat()
 		"walk":
 			if b.size() > 3 and String(b[2]) == "to":
@@ -2795,6 +3132,12 @@ func _actor(role: String, where: String) -> void:
 			yaw = atan2(to.x - p.x, to.y - p.y)
 		elif not h.is_empty():
 			p = city.door_point(h) + City.facing(float(h["yaw"]))
+	elif where == "job" and not _job_b(b).is_empty():
+		# у своей работы (гончар у гончарной): перед входом, лицом на улицу — мастерская за спиной
+		var jb := _job_b(b)
+		var f := City.facing(float(jb["yaw"]))
+		p = _open_spot(city.door_point(jb) + f * 1.4)
+		yaw = atan2(f.x, f.y)
 	elif where == "near_pet":
 		var cp3: Vector3 = _who_at("donkey")[0]
 		var cp := Vector2(cp3.x, cp3.z)
@@ -2852,7 +3195,12 @@ func _open_spot(c: Vector2) -> Vector2:
 ## Человек роли для ролика: облик по роли; festive — на свадьбе невеста в платье цвета огня и с венком
 func _make_actor(role: String, festive := false) -> Citizen:
 	var ro := _role(cine["bind"], role)
-	var c: Citizen = game.people.actor(int(ro["seed"]), bool(ro["female"]), bool(ro["child"]), String(ro["cls"]), bool(ro.get("old", false)))
+	var lk: Dictionary = ro.get("look", {})
+	var c: Citizen
+	if not lk.is_empty():
+		c = game.people.actor_look(lk, bool(ro["child"]), bool(ro.get("old", false)))   # герой-житель (этап 6.10)
+	else:
+		c = game.people.actor(int(ro["seed"]), bool(ro["female"]), bool(ro["child"]), String(ro["cls"]), bool(ro.get("old", false)))
 	if role == "bride" and festive:
 		_bride_look(c)
 	return c
@@ -3690,8 +4038,12 @@ func _look(role: String, target: String, anim: String) -> void:
 		_act(c, anim)
 
 
-## Условие такта «если»: «история» — пройдена; «история=выбор» — пройдена, и выбрали это
+## Условие такта «если»: «история» — пройдена; «история=выбор» — пройдена, и выбрали это; «история+флаг» — и флаг
+## («fair+paid» — сбор за ярмарку заплатили)
 func _cond(c: String) -> bool:
+	if c.contains("+"):
+		var ef: Dictionary = (S()["done"] as Dictionary).get(c.get_slice("+", 0), {})
+		return not ef.is_empty() and bool((ef.get("flags", {}) as Dictionary).get(c.get_slice("+", 1), false))
 	var e: Dictionary = (S()["done"] as Dictionary).get(c.get_slice("=", 0), {})
 	if e.is_empty():
 		return false
@@ -3702,7 +4054,7 @@ func _cond(c: String) -> bool:
 
 ## Место для ролика: «spot» (где шла цель — труба), «home», «shop» (лавка, что заработала), «warehouse», «near:тип»
 static func _is_place(s: String) -> bool:
-	return s in ["spot", "home", "shop", "warehouse", "gate"] or s.begins_with("near:")
+	return s in ["spot", "home", "shop", "warehouse", "gate", "job", "gift", "plaza"] or s.begins_with("near:")
 
 
 func _place_pos(s: String) -> Vector2:
@@ -3723,6 +4075,23 @@ func _place_pos(s: String) -> Vector2:
 				return city.door_point(wh)
 		"gate":
 			return gate_spot()
+		"job":
+			var jb := _job_b(b)                  # работа героя (гончарная)
+			if not jb.is_empty():
+				return city.door_point(jb)
+		"plaza":
+			# площадь перед домом (ярмарка): на улице перед дверью — там толпа и навесы купцов, дом — фоном
+			if not h.is_empty():
+				if not cine.is_empty() and cine.has("plaza_at"):
+					return cine["plaza_at"]
+				var pz := _open_spot(city.door_point(h) + City.facing(float(h["yaw"])) * 6.0)
+				if not cine.is_empty():
+					cine["plaza_at"] = pz
+				return pz
+		"gift":
+			var gv: Array = (b.get("flags", {}) as Dictionary).get("given", [])
+			if not gv.is_empty() and city.buildings.has(int(gv[0])):
+				return city.door_point(city.buildings[int(gv[0])])   # дом, куда переехал первый котёнок
 	if s.begins_with("near:"):
 		var nb := _near_building(s.substr(5))
 		if not nb.is_empty():
@@ -3867,6 +4236,12 @@ func _walk_path(dest: String) -> PackedVector2Array:
 	if cine.has(key):
 		return cine[key]
 	var to := _place_pos(dest)
+	if dest == "home":
+		# к дому идут (гонец скачет) по его улице — последние метры мостовой до двери
+		var sp := _street_path(to, RIDE_MAX if cine.has("ride") else WALK_MAX)
+		if sp.size() >= 2:
+			cine[key] = sp
+			return sp
 	var b: Dictionary = cine["bind"]
 	var h: Dictionary = city.buildings.get(int(b.get("home", -1)), {})
 	var from: Vector2 = city.door_point(h) if not h.is_empty() else to + Vector2(6, 0)
@@ -3874,10 +4249,12 @@ func _walk_path(dest: String) -> PackedVector2Array:
 		var wh := _nearest_store(to)
 		if not wh.is_empty():
 			from = city.door_point(wh)
+	elif dest == "home":
+		from = gate_spot()                   # улицы у дома нет — издалека, от арки на въезде
 	var path: PackedVector2Array = game.people._path(from, to)
 	if path.size() < 2:
 		path = PackedVector2Array([from, to])
-	var pts := _tail(path, WALK_MAX)
+	var pts := _tail(path, RIDE_MAX if cine.has("ride") else WALK_MAX)
 	if pts.size() < 2 or _plen(pts) < 0.5:
 		var back := (from - to).normalized() if from.distance_to(to) > 0.01 else Vector2(1, 0)
 		pts = PackedVector2Array([to + back * 4.0, to])
@@ -3978,11 +4355,11 @@ func _walk_end() -> void:
 
 ## Места у дома просящего: вдоль улицы от двери — первое через from м, дальше через step м (последнее — у трубы).
 ## [] — у дома нет такой улицы (этому дому историю не предлагаем). Ответ помним до конца игрового часа
-func click_spots(bind: Dictionary, n: int, o: Dictionary = {}) -> Array:
-	var key := "clk:%s:%d:%d" % [String(bind.get("id", "")), int(bind.get("home", -1)), int(S()["h"])]
+func click_spots(bind: Dictionary, n: int, o: Dictionary = {}, kind := "puddle") -> Array:
+	var key := "clk:%s:%d:%d:%d" % [String(bind.get("id", "")), int(bind.get("home", -1)), int(bind.get("job", -1)), int(S()["h"])]
 	if _spot_cache.has(key):
 		return _spot_cache[key]
-	var out := _click_spots(bind, n, float(o.get("from", 4.0)), float(o.get("step", 5.0)))
+	var out := _smoke_spots(bind, n, o) if kind == "smoke" else _click_spots(bind, n, float(o.get("from", 4.0)), float(o.get("step", 5.0)))
 	if _spot_cache.size() > 64:
 		_spot_cache.clear()
 	_spot_cache[key] = out
@@ -4055,6 +4432,9 @@ func _click_spots(bind: Dictionary, n: int, d0: float, dstep: float) -> Array:
 ## Шаг «щёлкнуть»: где лужи (последняя — у трубы: туда потом пойдёт мастер — «spot»)
 func _start_click(a: Dictionary, g: Array) -> void:
 	var n := int(g[2])
+	if String(g[1]) == "smoke":
+		_start_smoke(a, g)
+		return
 	var sp := click_spots(a, n, g[3] if g.size() > 3 else {})
 	if sp.size() < n:
 		# с предложения улицу перестроили: лужи — прямо перед домом
@@ -4088,21 +4468,26 @@ func _sync_clicks() -> void:
 	if key == _clicks_key:
 		return
 	_clicks_key = key
-	_clear_clicks()
+	_clear_clicks(not want)                  # цепочки с вёдрами — не трогаем, пока пожар идёт (_sync_smoke)
 	if not want:
 		return
 	var cl: Array = a["clicks"]
+	if _smoke_on(a):
+		_sync_smoke(a)                         # пожар: дым над крышами, цепочки с вёдрами
+		return
 	for i in cl.size():
 		var n := _puddle_node(Vector2(float(cl[i][0]), float(cl[i][1])), int(cl[i][2]) > 0, i == cl.size() - 1, _rng(a, 10 + i))
 		game.add_child(n)
 		_clicks.append(n)
 
 
-func _clear_clicks() -> void:
+func _clear_clicks(chains := true) -> void:
 	for n in _clicks:
 		if n != null and is_instance_valid(n):
 			(n as Node).queue_free()
 	_clicks = []
+	if chains:
+		_chains_clear()
 	for k in hud.badges.keys():
 		if String(k).begins_with(CLICK_HINT):
 			hud.clear_badge(k)
@@ -4255,7 +4640,8 @@ func _click_at(mp: Vector2) -> int:
 		if int(cl[i][2]) > 0:
 			continue
 		var q := Vector2(float(cl[i][0]), float(cl[i][1]))
-		var w := Vector3(q.x, game.land.height_at(q.x, q.y) + 0.1, q.y)
+		# дым над крышей (пожар) — щёлкают по крыше, лужа — по мостовой
+		var w := Vector3(q.x, float(cl[i][4]) if (cl[i] as Array).size() > 4 else game.land.height_at(q.x, q.y) + 0.1, q.y)
 		if cam.is_position_behind(w):
 			continue
 		var d := cam.unproject_position(w).distance_to(mp)
@@ -4273,6 +4659,9 @@ func click_target(i: int) -> void:
 	var cl: Array = a.get("clicks", [])
 	if i < 0 or i >= cl.size() or int(cl[i][2]) > 0:
 		return
+	if _smoke_on(a):
+		_smoke_click(a, i)                   # пожар: цепочка с вёдрами от ближней воды
+		return
 	cl[i][2] = 1
 	var p := Vector2(float(cl[i][0]), float(cl[i][1]))
 	var y: float = game.land.height_at(p.x, p.y)
@@ -4288,3 +4677,912 @@ func click_target(i: int) -> void:
 	hud.clear_badge("%s%d" % [CLICK_HINT, i])
 	_tick_active(true)
 	hud.refresh()
+
+
+# ---------- этап 7b: место цели, разные лавки, тишина, стихи (ярмарка, роща поэта, пожар у горшечников) ----------
+
+## Шумные мастерские: роще поэта нужна тишина (шум — только в историях, на счастье домов не влияет)
+const NOISY := ["potter", "dyer", "fullonica", "forge", "sculptor", "barracks", "range"]
+
+
+## Откуда меряем цель шага: обычно — дом просящего; шаг с at: "job" — работа героя (гончарная)
+func _hp(a: Dictionary, st: Dictionary = {}) -> Vector2:
+	if st.is_empty():
+		st = _step(a)
+	if String(st.get("at", "")) == "job":
+		var jb := _job_b(a)
+		if not jb.is_empty():
+			return jb["pos"]
+	return _home_pos(a)
+
+
+## Работа героя (постройка): его собственная, а снесли — ближняя такая же к его дому; {} — нет
+func _job_b(a: Dictionary) -> Dictionary:
+	var jb: Dictionary = city.buildings.get(int(a.get("job", -1)), {})
+	if not jb.is_empty():
+		return jb
+	var cast: Dictionary = _story(a).get("cast", {})
+	if cast.is_empty():
+		return {}
+	var role: Dictionary = cast.values()[0]
+	var t := String((role.get("near", []) as Array)[0]) if role.has("near") else String(role.get("job", ""))
+	if t == "" or t.begins_with("shop"):
+		return {}
+	return _nearest_of(t, _home_pos(a))
+
+
+## Разные лавки в r м от p: {тип: вид лавки (food, clothes…)}
+func shop_kinds(p: Vector2, r: float) -> Dictionary:
+	var out := {}
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		var d := city.def(b)
+		if String(d["kind"]) == "shop" and (b["pos"] as Vector2).distance_to(p) <= r:
+			out[String(b["type"])] = String(d.get("sub", ""))
+	return out
+
+
+func _kinds_of(kinds: Dictionary, sub: String) -> int:
+	var n := 0
+	for t in kinds:
+		n += int(String(kinds[t]) == sub)
+	return n
+
+
+## Лавка (вида sub, "" — любого), какой у площади ещё нет: открытая — взять, закрытая — её исследование
+func _do_new_shop(kinds: Dictionary, sub: String) -> Dictionary:
+	var locked := ""
+	for t in Defs.B:
+		var d: Dictionary = Defs.B[t]
+		if String(d["kind"]) != "shop" or kinds.has(t) or (sub != "" and String(d.get("sub", "")) != sub) or String(d.get("cat", "")) == "":
+			continue
+		if city.unlocked(t):
+			return hud._do_type(t)
+		if locked == "":
+			locked = t
+	return hud._do_type(locked) if locked != "" else hud._do_shop(sub if sub != "" else null)
+
+
+## Шумные мастерские в r м от p — ближние первыми
+func noisy_near(p: Vector2, r: float) -> Array:
+	var out := []
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if String(b["type"]) in NOISY and (b["pos"] as Vector2).distance_to(p) <= r:
+			out.append(b)
+	out.sort_custom(func(x, y): return (x["pos"] as Vector2).distance_to(p) < (y["pos"] as Vector2).distance_to(p))
+	return out
+
+
+## «Всё сразу» с красотой (роща поэта): остальное выполнено — порог красоты (1…3), иначе 0
+func _all_tier(a: Dictionary, g: Array) -> int:
+	var tier := 0
+	var rest := true
+	var any := false
+	for sg: Array in g[1]:
+		if String(sg[0]) == "beauty":
+			any = true
+			tier = int(progress(a, sg).get("tier", 0))
+		else:
+			rest = rest and bool(progress(a, sg)["ok"])
+	return tier if rest and any else 0
+
+
+## Стихи поэта: по выбранной теме, до нынешнего порога красоты рощи (в ролике — все, что сочинил)
+func _verses(sd: Dictionary, a: Dictionary) -> Array:
+	var vv: Dictionary = sd.get("verses", {})
+	if vv.is_empty():
+		return []
+	var fl: Dictionary = a.get("flags", {})
+	var lst: Array = vv.get(String(fl.get("choice", "")), vv.values()[0])
+	var out := []
+	for i in clampi(int(fl.get("tier", 0)), 0, lst.size()):
+		out.append(String(lst[i]).replace(" / ", "\n"))
+	return out
+
+
+## Цель выполнена (роща): середина того, что в счёт (деревья, скамьи, вода), — для ролика: туда летит камера, там читают стихи
+func _remember_center(a: Dictionary, st: Dictionary) -> void:
+	var g: Array = st.get("goal", [])
+	var subs: Array = g[1] if String(g[0]) == "all" else [g]
+	var hp := _hp(a, st)
+	var sum := Vector2.ZERO
+	var n := 0
+	for sg: Array in subs:
+		if String(sg[0]) != "around":
+			continue
+		for id in city.buildings:
+			var b: Dictionary = city.buildings[id]
+			if (b["pos"] as Vector2).distance_to(hp) > float(sg[1]):
+				continue
+			for k in (sg[2] as Dictionary):
+				if _is(b, String(k)):
+					sum += b["pos"]
+					n += 1
+					break
+	var c := sum / n if n > 0 else hp
+	var fl: Dictionary = a["flags"]
+	fl["sq"] = [c.x, c.y]
+	fl["sq_at"] = [hp.x, hp.y]
+
+
+## Цели «рядом с домом» шага: первая — как прежде (_story_zone); «всё сразу» с несколькими «рядом» (пост вигилов в 30 м
+## и колодец в 20 м) — у каждой свой радиус: у курсора «в счёт» — честно
+func _story_zones(z: Dictionary) -> Array:
+	if z.is_empty():
+		return [z]
+	var out := [z]
+	var a: Dictionary = S()["active"]
+	var g: Array = _step(a).get("goal", [])
+	if g.size() < 2 or String(g[0]) != "all":
+		return out
+	var first := true
+	for sg: Array in g[1]:
+		if String(sg[0]) != "around":
+			continue
+		if first:
+			first = false
+			continue
+		var z2 := z.duplicate()
+		z2["r"] = float(sg[1])
+		z2["keys"] = (sg[2] as Dictionary).keys()
+		out.append(z2)
+	return out
+
+
+## Роща поэта: над шумными мастерскими поблизости — значок с молотком (мягкая подсветка, не круг)
+var _noise_keys: Array = []
+
+
+func _noise_marks(on: bool) -> void:
+	var want := {}
+	if on:
+		var a: Dictionary = S()["active"]
+		var g: Array = _step(a).get("goal", [])
+		if g.size() > 1 and String(g[0]) == "all":
+			for sg: Array in g[1]:
+				if String(sg[0]) == "quiet":
+					for b: Dictionary in noisy_near(_hp(a), float(sg[1]) + 18.0):
+						var top: float = city.blueprint(b).top_y() + 1.0
+						want["story_noise%d" % int(b["id"])] = Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y)
+	for k in _noise_keys:
+		if not want.has(k):
+			hud.clear_badge(String(k))
+	for k in want:
+		hud.set_badge(k, want[k], "hammer", true, "", Callable(), "mark")
+	_noise_keys = want.keys()
+
+
+# ---------- пожар у горшечников: дым над крышами, цепочка с вёдрами от ближней воды, копоть ----------
+
+## Откуда носят воду (ближняя к дому): колодец, фонтанчик, фонтан, нимфей, пруд, поилка, чаша, пост вигилов
+const WATER := ["well", "smallfountain", "fountain", "nymphaeum", "pond", "trough", "basin", "vigiles"]
+const CHAIN_BASE := 2.5                    # цепочка с вёдрами: столько секунд (при ×1) и ещё секунда на CHAIN_M м до воды
+const CHAIN_M := 5.0
+const RIVER_M := 70.0                      # воды ближе нет — несут издалека
+const SOOT := -5                           # копоть: столько счастья…
+const SOOT_H := 24                         # …на столько часов
+var _chains := {}                          # номер крыши → {n: цепочка (узел), t: осталось, len, p: крыша, sp: до брызг}
+
+
+## Идёт пожар (цель — дымящиеся крыши) или ролик сразу после него
+func _smoke_on(a: Dictionary) -> bool:
+	var cg := StoryDefs.click_goal(_story(a))
+	return not cg.is_empty() and String(cg[1]) == "smoke"
+
+
+## Крыши, что задымятся: жилые дома в r м от гончарной, ближние первыми — [x, z, состояние, дом, высота крыши]
+func _smoke_spots(bind: Dictionary, n: int, o: Dictionary) -> Array:
+	var jb := _job_b(bind)
+	var c: Vector2 = jb["pos"] if not jb.is_empty() else _home_pos(bind)
+	var cands := []
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if not city.is_house(b) or int(b["pop"]) <= 0:
+			continue
+		var d := (b["pos"] as Vector2).distance_to(c)
+		if d <= float(o.get("r", 28.0)):
+			cands.append([d, int(id)])
+	cands.sort_custom(func(x, y): return float(x[0]) < float(y[0]))
+	var out := []
+	for e: Array in cands.slice(0, n):
+		var b: Dictionary = city.buildings[int(e[1])]
+		out.append([(b["pos"] as Vector2).x, (b["pos"] as Vector2).y, 0, int(e[1]), float(b["y"]) + city.blueprint(b).top_y() * 0.9])
+	return out
+
+
+func _start_smoke(a: Dictionary, g: Array) -> void:
+	var sp := click_spots(a, int(g[2]), g[3] if g.size() > 3 else {}, "smoke")
+	if sp.is_empty():
+		# с предложения у гончарной снесли дома — дымится крыша самого героя
+		var h: Dictionary = city.buildings.get(int(a.get("home", -1)), city.center())
+		sp = [[(h["pos"] as Vector2).x, (h["pos"] as Vector2).y, 0, int(h["id"]), float(h["y"]) + city.blueprint(h).top_y() * 0.9]]
+	var cl := []
+	for p: Array in sp:
+		cl.append(p.duplicate())
+	a["clicks"] = cl
+	var jb := _job_b(a)
+	var at: Vector2 = jb["pos"] if not jb.is_empty() else _home_pos(a)
+	a["at"] = [at.x, at.y]
+	_clicks_key = "-"
+	_sync_clicks()
+
+
+## Дым над крышами (ещё не потушенными) и цепочки с вёдрами у тех, что тушат (после загрузки — заново)
+func _sync_smoke(a: Dictionary) -> void:
+	var cl: Array = a["clicks"]
+	for i in cl.size():
+		var st := int(cl[i][2])
+		if st <= 1:
+			var n := _smoke_node(Vector3(float(cl[i][0]), float(cl[i][4]), float(cl[i][1])), st == 1)
+			game.add_child(n)
+			_clicks.append(n)
+		if st == 1 and not _chains.has(i):
+			_chain_make(a, i)
+		elif st != 1 and _chains.has(i):
+			_chain_drop(i)
+
+
+## Дым над крышей: тёмные клубы тянутся по ветру, под ними — рыжий отсвет и искры; dim — уже заливают (дым реже и светлее)
+func _smoke_node(p: Vector3, dim := false) -> Node3D:
+	var root := Node3D.new()
+	root.position = p
+	var pp := CPUParticles3D.new()
+	pp.amount = 18 if dim else 40
+	pp.lifetime = 3.2
+	pp.preprocess = 2.0
+	pp.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	pp.emission_sphere_radius = 0.55
+	pp.direction = Vector3(0.2, 1, 0.05)
+	pp.spread = 16.0
+	pp.initial_velocity_min = 0.4
+	pp.initial_velocity_max = 0.8
+	pp.gravity = Vector3(0.35, 0.3, 0.1)
+	pp.scale_amount_min = 1.3
+	pp.scale_amount_max = 2.3
+	var sc := Curve.new()
+	sc.add_point(Vector2(0, 0.4))
+	sc.add_point(Vector2(1, 1.0))
+	pp.scale_amount_curve = sc
+	var ramp := Gradient.new()                 # цвет — у материала, тут только прозрачность: возник — густой — растаял
+	ramp.set_color(0, Color(1, 1, 1, 0.0))
+	ramp.add_point(0.12, Color(1, 1, 1, 1.0 if not dim else 0.6))
+	ramp.add_point(0.55, Color(1, 1, 1, 0.8 if not dim else 0.4))
+	ramp.set_color(1, Color(1.4, 1.4, 1.4, 0.0))
+	pp.color_ramp = ramp
+	var qm := QuadMesh.new()
+	qm.size = Vector2(1.0, 1.0)
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.vertex_color_use_as_albedo = true
+	m.albedo_color = Color(0.55, 0.53, 0.5) if dim else Color(0.12, 0.11, 0.1)
+	m.albedo_texture = _smoke_tex()
+	qm.material = m
+	pp.mesh = qm
+	root.add_child(pp)
+	if not dim:
+		# рыжий отсвет на крыше (тлеет солома) и искры: взлетают и гаснут
+		var gq := QuadMesh.new()
+		gq.size = Vector2(1.3, 1.3)
+		var gm := StandardMaterial3D.new()
+		gm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		gm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		gm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		gm.albedo_color = Color(1.0, 0.45, 0.12, 0.8)
+		gm.albedo_texture = StoryUi.glow_tex()
+		gq.material = gm
+		var glow := MeshInstance3D.new()
+		glow.mesh = gq
+		glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		glow.position = Vector3(0, 0.15, 0)
+		root.add_child(glow)
+		var tw := glow.create_tween().set_loops()
+		tw.tween_property(glow, "scale", Vector3.ONE * 1.25, 0.35).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(glow, "scale", Vector3.ONE * 0.85, 0.45).set_trans(Tween.TRANS_SINE)
+		var ep := CPUParticles3D.new()
+		ep.amount = 16
+		ep.lifetime = 1.1
+		ep.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+		ep.emission_sphere_radius = 0.4
+		ep.direction = Vector3(0, 1, 0)
+		ep.spread = 30.0
+		ep.initial_velocity_min = 0.9
+		ep.initial_velocity_max = 1.8
+		ep.gravity = Vector3(0.2, -0.4, 0)
+		var eq := QuadMesh.new()
+		eq.size = Vector2(0.09, 0.09)
+		var em := StandardMaterial3D.new()
+		em.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		em.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+		em.albedo_color = Color(1.0, 0.6, 0.15)
+		eq.material = em
+		ep.mesh = eq
+		root.add_child(ep)
+	return root
+
+
+## Щёлкнули по дымящейся крыше: соседи встают цепочкой от ближней воды; чем она ближе, тем быстрее зальют
+func _smoke_click(a: Dictionary, i: int) -> void:
+	var cl: Array = a["clicks"]
+	cl[i][2] = 1
+	var ch := _chain_make(a, i)
+	var d := float(ch.get("d", RIVER_M))
+	var p := Vector3(float(cl[i][0]), float(cl[i][4]), float(cl[i][1]))
+	var what := String(ch.get("src", ""))
+	ui.bubble3d(p + Vector3(0, 1.0, 0), ("Вёдра! %s — в %d м" % [what, int(round(d))]) if what != "" else "Воды рядом нет — несут издалека!", 3.0, 28)
+	hud.clear_badge("%s%d" % [CLICK_HINT, i])
+	_clicks_key = "-"
+	_sync_clicks()
+	hud.refresh()
+
+
+## Ближняя к точке вода: [постройка, расстояние] ({} — ближе RIVER_M нет)
+func _water_near(p: Vector2) -> Array:
+	var best := {}
+	var bd := RIVER_M
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if not (Defs.base_of(String(b["type"])) in WATER or String(b["type"]) in WATER):
+			continue
+		var d := (b["pos"] as Vector2).distance_to(p)
+		if d < bd:
+			bd = d
+			best = b
+	return [best, bd]
+
+
+## Цепочка с вёдрами к крыше i: люди с кувшинами вдоль линии от воды к двери передают вёдра; сколько тушить — по
+## расстоянию до воды. Возвращает запись цепочки
+func _chain_make(a: Dictionary, i: int) -> Dictionary:
+	_chain_drop(i)
+	var cl: Array = a["clicks"]
+	var h: Dictionary = city.buildings.get(int(cl[i][3]), {})
+	var door: Vector2 = city.door_point(h) if not h.is_empty() else Vector2(float(cl[i][0]), float(cl[i][1]))
+	var wn := _water_near(door)
+	var src: Dictionary = wn[0]
+	var d := float(wn[1])
+	var away := (door - Vector2(float(cl[i][0]), float(cl[i][1])))
+	var from: Vector2 = city.door_point(src) if not src.is_empty() else door + (away.normalized() if away.length() > 0.01 else Vector2(1, 0)) * 6.0
+	var root := Node3D.new()
+	game.add_child(root)
+	var k := clampi(int(from.distance_to(door) / 2.5), 3, 6)
+	var rg := _rng(a, 40 + i)
+	var dir := (door - from).normalized() if from.distance_to(door) > 0.1 else Vector2(1, 0)
+	for j in k:
+		var q := from.lerp(door, (j + 0.5) / float(k))
+		q += Vector2(-dir.y, dir.x) * (0.35 if j % 2 == 0 else -0.35)
+		var c: Citizen = game.people.actor(rg.randi(), rg.randf() < 0.4, false, "plebs")
+		c.reparent(root)
+		c.position = Vector3(q.x, game.land.height_at(q.x, q.y), q.y)
+		# соседи стоят вполоборота: принял ведро слева — передал направо
+		c.rotation.y = atan2(dir.x, dir.y) + PI / 2.0 * (1.0 if j % 2 == 0 else -1.0)
+		HandProps.hold(c, ["jug"], "PickUp_Table")
+		c.play("PickUp_Table" if j % 2 == 0 else "Interact", 0.2, rg.randf())
+	var total := CHAIN_BASE + d / CHAIN_M
+	var nm := String(Defs.B.get(String(src.get("type", "")), {}).get("name", "")) if not src.is_empty() else ""
+	var ch := {"n": root, "t": total, "len": total, "sp": 0.4, "d": d, "src": nm,
+		"p": Vector3(float(cl[i][0]), float(cl[i][4]), float(cl[i][1]))}
+	_chains[i] = ch
+	return ch
+
+
+func _chain_drop(i: int) -> void:
+	var ch: Dictionary = _chains.get(i, {})
+	var n = ch.get("n")
+	if n != null and is_instance_valid(n):
+		(n as Node).queue_free()
+	_chains.erase(i)
+
+
+func _chains_clear() -> void:
+	for i in _chains.keys():
+		_chain_drop(int(i))
+
+
+## Вёдра идут: брызги на крыше; время вышло — потушили (крыша мокрая, дыма нет); все потушены — шаг дальше
+func _chains_tick(sdt: float) -> void:
+	var a: Dictionary = S()["active"]
+	if a.is_empty() or not a.has("clicks") or not _smoke_on(a):
+		_chains_clear()
+		return
+	var cl: Array = a["clicks"]
+	var done := []
+	for i in _chains:
+		var ch: Dictionary = _chains[i]
+		ch["t"] = float(ch["t"]) - sdt
+		ch["sp"] = float(ch["sp"]) - sdt
+		if float(ch["sp"]) <= 0.0:
+			ch["sp"] = 0.8
+			splash(ch["p"])
+		if float(ch["t"]) <= 0.0:
+			done.append(int(i))
+	for i in done:
+		var p: Vector3 = _chains[i]["p"]
+		_chain_drop(i)
+		if i < cl.size() and int(cl[i][2]) == 1:
+			cl[i][2] = 2
+			ui.bubble3d(p + Vector3(0, 1.0, 0), "Потушили!", 2.4, 28)
+	if not done.is_empty():
+		_clicks_key = "-"
+		_sync_clicks()
+		_tick_active(true)
+		hud.refresh()
+
+
+## Час пожара: за timer_h часов не потушили — огонь гаснет сам, но на крышах копоть: дому −5% на сутки (ничего не сгорает)
+func _smoke_hour(a: Dictionary, hours: int) -> void:
+	var g: Array = _step(a).get("goal", [])
+	var o: Dictionary = g[3] if g.size() > 3 else {}
+	var fl: Dictionary = a["flags"]
+	if hours < int(o.get("timer_h", 6)) or bool(fl.get("soot_done", false)):
+		return
+	fl["soot_done"] = true
+	var n := 0
+	for c: Array in a.get("clicks", []):
+		if int(c[2]) != 0:
+			continue
+		c[2] = 3
+		n += 1
+		(S()["bonus"] as Array).append({"id": String(a.get("id", "")), "line": "Копоть после пожара", "pct": SOOT, "home": int(c[3]), "left": SOOT_H})
+	if n > 0:
+		fl["soot"] = n
+		city._quiet("Вёдра не поспели: огонь погас сам, но на %d %s копоть — их жителям сутки невесело (%d%%). Дома целы." \
+			% [n, Hud._plural(n, "крыше", "крышах", "крышах"), SOOT], String(_story(a).get("icon", "scroll")))
+		city.compute()
+	_clicks_key = "-"
+	_sync_clicks()
+	_tick_active()
+
+
+# ---------- праздник: соседи собираются, купцы разворачивают навесы ----------
+
+## Соседи у места (настоящие жители ближних домов — их облик, как на улице): кругом, лицом к середине, движение — у каждого
+## своё (вразнобой); не хватает соседей — гости по зерну
+func _crowd(n: int, place: String, anim: String) -> void:
+	var b: Dictionary = cine["bind"]
+	var c: Vector2 = _sq_center(b) if place == "square" else _place_pos(place)
+	var hero := String(b.get("pn", ""))
+	var near := []
+	for r in game.people.residents:
+		var h: Dictionary = city.buildings.get(int(r["home"]), {})
+		if h.is_empty() or (h["pos"] as Vector2).distance_to(c) > 50.0:
+			continue
+		if hero != "" and String(r.get("pn", "")) == hero and String(r["fam"]) == String(b.get("fam", "")):
+			continue                           # сам герой стоит в середине
+		near.append([(h["pos"] as Vector2).distance_to(c), r])
+	near.sort_custom(func(x, y): return float(x[0]) < float(y[0]))
+	var k0 := 0
+	for k in (cine["actors"] as Dictionary):
+		k0 += int(String(k).begins_with("crowd"))
+	var rg := RandomNumberGenerator.new()
+	rg.seed = hash([String(b.get("fam", "")), place, k0])
+	var used := []
+	for k in (cine["actors"] as Dictionary):
+		var o = cine["actors"][k]
+		if o != null and is_instance_valid(o):
+			used.append(Vector2((o as Node3D).position.x, (o as Node3D).position.z))
+	for i in n:
+		var ang := (i + (0.5 if k0 > 0 else 0.0)) / float(n) * TAU + rg.randf_range(-0.2, 0.2)
+		var rad := 3.0 + float((i + k0) % 3) * 1.1 + (1.6 if k0 > 0 else 0.0)
+		var q := Vector2.INF
+		for t in 8:
+			var qq := c + Vector2(cos(ang + t * 0.3), sin(ang + t * 0.3)) * (rad + t * 0.35)
+			var far := true
+			for u: Vector2 in used:
+				far = far and u.distance_to(qq) > 0.9
+			if far and game.people._hide_ok(qq):
+				q = qq
+				break
+		if q == Vector2.INF:
+			continue
+		used.append(q)
+		var actor: Citizen
+		var ni := k0 + i
+		if ni < near.size():
+			var r: Dictionary = near[ni][1]
+			actor = game.people.actor_look(game.people.look_of(r), bool(r["child"]), bool(r.get("old", false)))
+		else:
+			actor = game.people.actor(rg.randi(), rg.randf() < 0.5, rg.randf() < 0.2, String(b.get("cls", "plebs")))
+		actor.position = Vector3(q.x, game.land.height_at(q.x, q.y), q.y)
+		actor.rotation.y = atan2(c.x - q.x, c.y - q.y)
+		var an := anim
+		if ni % 3 == 1 and anim in ["Dance", "Listen"]:
+			an = "Laugh" if anim == "Dance" else "Idle"
+		if ni % 2 == 1 and actor.anim.has_animation(an + "_M"):
+			an += "_M"
+		actor.play(an, 0.3, rg.randf())
+		_put_actor("crowd%d" % ni, actor)
+
+
+## Купцы развернули товар у дома (только на время ролика): навесы, ковры, тачки — на свободной земле вокруг
+func _stalls() -> void:
+	if cine.has("stalls_on"):
+		return
+	cine["stalls_on"] = true
+	var c := _place_pos("plaza")
+	var rg := RandomNumberGenerator.new()
+	rg.seed = hash([String(cine["bind"].get("fam", "")), "stalls"])
+	var types := ["awning", "awning_2", "rugs_2", "handcart_2", "awning_3"]
+	var used := []
+	var put := 0
+	for k in 30:
+		if put >= types.size():
+			break
+		var ang := k * 2.39996 + rg.randf_range(-0.2, 0.2)
+		var q := c + Vector2(cos(ang), sin(ang)) * (6.5 + (k % 4) * 1.8)
+		var ok: bool = game.land.occ_at(q) == 0 and not game.land.is_water(q) and game.land.is_owned(q)
+		for j in 6:
+			ok = ok and game.land.occ_at(q + Vector2(cos(j * TAU / 6.0), sin(j * TAU / 6.0)) * 1.4) == 0
+		for u: Vector2 in used:
+			ok = ok and u.distance_to(q) > 3.2
+		if not ok:
+			continue
+		used.append(q)
+		var bp := Catalog.make(types[put])
+		var yaw := atan2(c.x - q.x, c.y - q.y)
+		var xf := Transform3D(Basis(Vector3.UP, yaw), Vector3(q.x, game.land.height_at(q.x, q.y), q.y))
+		cine["props"].append(game.parts.place(bp, xf))
+		put += 1
+
+
+# ---------- этап 7b, третья тройка: котята Маси, перепись, письмо сыну в Легион ----------
+
+## Продолжение истории (котята Маси): та же семья, что в пройденной истории from (Мария), если она ещё в городе
+func _cast_from(sid: String) -> Array:
+	var e: Dictionary = (S()["done"] as Dictionary).get(sid, {})
+	if e.is_empty():
+		return []
+	var fam := String(e.get("fam", ""))
+	var hid := _find_family(fam)
+	if hid < 0:
+		# семья уехала — котята у той, у кого живёт кошка-награда
+		for p: Dictionary in S()["pets"]:
+			if city.buildings.has(int(p.get("home", -1))):
+				var h0: Dictionary = city.buildings[int(p["home"])]
+				if not (h0.get("families", []) as Array).is_empty():
+					hid = int(p["home"])
+					fam = String(h0["families"][0]["name"])
+					break
+	if hid < 0:
+		return []
+	var h: Dictionary = city.buildings[hid]
+	return [{"home": hid, "fam": fam, "kid": String(e.get("kid", "")), "cls": String(city.def(h)["cls"]), "female": bool(e.get("female", true)),
+		"child": false, "old": false}]
+
+
+# ---------- котята: значки над домами с детьми, щелчок — котёнок переезжает ----------
+
+const GIFT := "story_gift"                  # значки над домами, куда можно отдать котёнка
+## Котята Маси: окрас (номер People.CAT_FURS / CAT_MASYA) — чёрный, как мама; серенький; «во фраке» (в белых носочках)
+const KITTEN_FURS := [People.CAT_MASYA, 1, 5]
+var _gift_keys: Array = []
+
+
+## Дома, где котёнку будут рады: жилые, в r м от дома просящей (не её), где есть дети и котёнка ещё не отдали
+func gift_homes(a: Dictionary, g: Array) -> Array:
+	var o: Dictionary = g[3] if g.size() > 3 else {}
+	var hp := _home_pos(a)
+	var given: Array = (a.get("flags", {}) as Dictionary).get("given", [])
+	var kids := {}
+	for r in game.people.residents:
+		if bool(r["child"]):
+			kids[int(r["home"])] = true
+	var out := []
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if int(id) == int(a.get("home", -1)) or not city.is_house(b) or not kids.has(int(id)) or int(id) in given:
+			continue
+		if (b["pos"] as Vector2).distance_to(hp) <= float(o.get("r", 45.0)):
+			out.append(b)
+	out.sort_custom(func(x, y): return (x["pos"] as Vector2).distance_to(hp) < (y["pos"] as Vector2).distance_to(hp))
+	return out
+
+
+## Значки с кошкой над домами с детьми (пока идёт шаг «котята»): щелчок — отдать котёнка
+func _gift_marks(on: bool) -> void:
+	var want := {}
+	if on:
+		var a: Dictionary = S()["active"]
+		var g: Array = _step(a).get("goal", [])
+		if not g.is_empty() and String(g[0]) == "give" and int(progress(a, g)["have"]) < int(g[2]):
+			for b: Dictionary in gift_homes(a, g):
+				var top: float = city.blueprint(b).top_y() + 1.2
+				want["%s%d" % [GIFT, int(b["id"])]] = [Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), int(b["id"])]
+	for k in _gift_keys:
+		if not want.has(k):
+			hud.clear_badge(String(k))
+	for k in want:
+		hud.set_badge(k, want[k][0], "cat", false, "", gift.bind(int(want[k][1])), "mark")
+	_gift_keys = want.keys()
+
+
+## Имя котёнку — какого в городе ещё нет (у кошек с именами и наград историй)
+func _kitten_name(i: int) -> String:
+	var used := {}
+	for p: Dictionary in S()["pets"]:
+		used[String(p.get("name", ""))] = true
+	for c in game.people.cats:
+		used[String(c.get("named", ""))] = true
+	var names := ["Уголёк", "Дымка", "Носочек", "Ночка", "Пушинка", "Бусина", "Каштан", "Снежка"]
+	for k in names.size():
+		var nm: String = names[(i + k) % names.size()]
+		if not used.has(nm):
+			return nm
+	return "Малыш %d" % (i + 1)
+
+
+## Котёнка — в дом hid: кошка с именем живёт у этой семьи (сохраняется, как кошки-награды); открывается карточка дома —
+## видно, кто там живёт; подпись над домом
+func gift(hid: int) -> void:
+	var a: Dictionary = S()["active"]
+	if a.is_empty() or _goal_kind(a) != "give" or kit != null:
+		return
+	var g: Array = _step(a)["goal"]
+	var ok := false
+	for b: Dictionary in gift_homes(a, g):
+		ok = ok or int(b["id"]) == hid
+	if not ok:
+		return
+	var fl: Dictionary = a["flags"]
+	var given: Array = fl.get("given", [])
+	var i := given.size()
+	var h: Dictionary = city.buildings[hid]
+	var nm := _kitten_name(i)
+	var rec := {"home": hid, "fur": int(KITTEN_FURS[i % KITTEN_FURS.size()]), "name": nm, "seed": hash([String(a.get("fam", "")), i]) & 0xffff}
+	(S()["pets"] as Array).append(rec)
+	var pc: Dictionary = game.people.pet_cat(h, int(rec["fur"]), nm, int(rec["seed"]), city.door_point(h) + City.facing(float(h.get("yaw", 0.0))) * 1.2)
+	pc["pet_rec"] = rec
+	given.append(hid)
+	fl["given"] = given
+	var names: Array = fl.get("kittens", [])
+	names.append(nm)
+	fl["kittens"] = names
+	var fam := String((h.get("families", [{}]) as Array)[0].get("name", "")) if not (h.get("families", []) as Array).is_empty() else ""
+	var top: float = city.blueprint(h).top_y()
+	ui.bubble3d(Vector3(h["pos"].x, float(h["y"]) + top + 0.8, h["pos"].y), "%s — семье %s!" % [nm, StoryDefs.fam_gen(fam)], 3.0, 28)
+	ui.hearts(Vector3(h["pos"].x, float(h["y"]) + top * 0.4, h["pos"].y))
+	city._quiet("Котёнок %s переехал к семье %s." % [nm, StoryDefs.fam_gen(fam)], String(_story(a).get("icon", "cat")))
+	game.select_building(h)                  # карточка дома: кто тут живёт, сколько детей
+	_gift_marks(true)
+	_tick_active()
+	hud.refresh()
+
+
+# ---------- перепись: найти жителя по имени, самую счастливую семью и ребёнка — по их карточкам ----------
+
+## Кого ищет перепись (выбирается, когда шаг начался): житель-ремесленник по имени (из лавки), сохраняется в a.census
+func _census_start(a: Dictionary) -> void:
+	if a.has("census"):
+		return
+	var best := {}
+	var bd := INF
+	var hp := _home_pos(a)
+	for r in game.people.residents:
+		if bool(r["child"]) or int(r["job"]) < 0 or int(r["home"]) == int(a.get("home", -1)):
+			continue
+		var jb: Dictionary = city.buildings.get(int(r["job"]), {})
+		if jb.is_empty() or String(city.def(jb)["kind"]) != "shop" or Residents.job_noun(String(jb["type"]), bool(r["female"])) == "":
+			continue
+		var d := (r["p"] as Vector2).distance_to(hp) + float(hash(String(r.get("pn", ""))) % 7)
+		if d < bd:
+			bd = d
+			best = r
+	if best.is_empty():
+		for r in game.people.residents:
+			if not bool(r["child"]) and int(r["home"]) > 0 and int(r["home"]) != int(a.get("home", -1)):
+				best = r
+				break
+	var job := ""
+	var jb2: Dictionary = city.buildings.get(int(best.get("job", -1)), {})
+	if not jb2.is_empty():
+		job = Residents.job_noun(String(jb2["type"]), bool(best["female"]))
+	a["census"] = {"fam": String(best.get("fam", "")), "pn": String(best.get("pn", "")), "job": job,
+		"name": Residents.full_name(best.get("m", {}), String(best.get("fam", ""))) if not best.is_empty() else ""}
+
+
+## Самый счастливый жилой дом сейчас (счастье — как в «Обзоре»): его счастье или -1
+func _best_happy() -> int:
+	var best := -1
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if city.is_house(b) and int(b["pop"]) > 0:
+			best = maxi(best, clampi(int(b.get("happy", 0)), 0, 100))
+	return best
+
+
+## Открыта карточка того, кого ищет перепись: житель по имени (hud.info_p), ребёнок, самый счастливый дом (game.selected)
+func _census_seen(a: Dictionary) -> void:
+	var cz: Dictionary = a.get("census", {})
+	var fl: Dictionary = a["flags"]
+	var r: Dictionary = (hud.info_p.get("r", {}) as Dictionary) if hud != null else {}
+	if not r.is_empty():
+		if String(r.get("fam", "")) == String(cz.get("fam", "")) and String(r.get("pn", "")) == String(cz.get("pn", "")):
+			fl["c_person"] = true
+		if bool(r.get("child", false)):
+			fl["c_child"] = true
+	var sel: Dictionary = game.selected if game != null else {}
+	if not sel.is_empty() and city.buildings.has(int(sel.get("id", -1))):
+		var b: Dictionary = city.buildings[int(sel["id"])]
+		if city.is_house(b) and int(b["pop"]) > 0 and clampi(int(b.get("happy", 0)), 0, 100) >= _best_happy():
+			fl["c_best"] = true
+
+
+## «Горожане» (окно «Жители и работники»): с поиском по имени или фильтром — так перепись учит находить жителей
+func open_people(q: String, filt := "") -> void:
+	if hud.stats_panel == null:
+		return
+	if not hud.stats_panel.visible:
+		hud._top_action("stats")
+	hud.stats_tab = "people"
+	hud.people_filter = filt
+	var le: LineEdit = hud.stats_panel.find_child("q", true, false)
+	if le != null:
+		le.text = q
+	hud._fill_stats()
+
+
+# ---------- письмо сыну: победа Легиона в провинции после начала шага (по сигналам боя) ----------
+
+var _battle_r := -1                         # провинция последнего начатого боя Легиона
+
+
+func _on_battle_req(setup: Dictionary) -> void:
+	var st: Dictionary = setup.get("stage", {})
+	_battle_r = int(st.get("r", -1)) if not st.is_empty() else -1
+
+
+## Бой кончился: победа в провинции цели «legion_win … new» идущей истории — в счёт
+func _on_battle_done(out: Dictionary) -> void:
+	if city == null or not bool(out.get("win", false)) or bool(out.get("retreat", false)):
+		return
+	var a: Dictionary = S()["active"]
+	if a.is_empty() or _goal_kind(a) != "legion_win":
+		return
+	var g: Array = _step(a)["goal"]
+	if _battle_r == int(g[1]):
+		var fl: Dictionary = a["flags"]
+		fl["won"] = int(fl.get("won", 0)) + 1
+	_battle_r = -1
+	_poll = POLL
+
+
+# ---------- гонец на коне: такт ride — скачет улицами к месту, спешивается ----------
+
+const HORSE_LEN := 1.9                      # конь от морды до хвоста, м
+const SADDLE := 0.98                        # высота седла (над землёй, при длине HORSE_LEN)
+const HORSE_V := 5.5                        # галоп, м/с
+
+
+## Конь (модель Quaternius, CC0): те же движения по именам, что у ослика
+static func horse_node() -> Beast:
+	var bn := Beast.new()
+	var m := (load("res://assets/animals/Horse_b.glb") as PackedScene).instantiate() as Node3D
+	bn.add_child(m)
+	var box := Artisau.aabb(m)
+	m.scale = Vector3.ONE * HORSE_LEN / maxf(0.01, maxf(box.size.x, box.size.z))
+	# седло — над серединой туловища (середина модели — не там, где её начало координат)
+	var mid := (box.position + box.size * 0.5) * m.scale
+	bn.set_meta("saddle", Vector3(mid.x, SADDLE - 0.06, mid.z + 0.25))   # чуть ближе к холке
+	var aps := m.find_children("*", "AnimationPlayer", true, false)
+	if not aps.is_empty():
+		bn.ap = aps[0]
+		for an in ["Walk", "Idle", "Eating", "Gallop", "Idle_2", "Idle_Headlow"]:
+			if bn.ap.has_animation(an):
+				bn.ap.get_animation(an).loop_mode = Animation.LOOP_LINEAR
+	return bn
+
+
+## Такт ride: всадник (роль) на коне — с начала пути к месту (последние WALK_MAX м) скачет галопом, у места спешивается
+func _ride_begin(b: Array) -> void:
+	var role := String(b[1])
+	var dest := String(b[2]) if b.size() > 2 else "home"
+	var horse := horse_node()
+	game.add_child(horse)
+	horse.play("Idle", 0.0)
+	_put_actor("horse", horse)
+	var rider := _make_actor(role)
+	rider.reparent(horse)
+	rider.position = horse.get_meta("saddle", Vector3(0, SADDLE, 0))
+	rider.rotation = Vector3.ZERO
+	rider.play("Driving", 0.0)               # сидит в седле
+	cine["actors"][role] = rider
+	cine["ride"] = {"role": role}
+	var pts := _walk_path(dest)
+	horse.position = Vector3(pts[0].x, game.land.height_at(pts[0].x, pts[0].y), pts[0].y)
+	# камера — общим планом места (такт fly … wide перед этим): конь влетает в кадр; за ним не гонимся — сквозь дома
+	_walk_begin(["walk", "horse", "to", dest, "Jog_Fwd"])
+	if cine.has("walk"):
+		cine["walk"]["v"] = HORSE_V             # конь галопом — быстрее бегущего человека
+
+
+## Доскакал: спешиться — всадник рядом с конём, лицом к месту
+func _ride_end() -> void:
+	var rd: Dictionary = cine.get("ride", {})
+	if rd.is_empty():
+		return
+	var horse = cine["actors"].get("horse")
+	var rider = cine["actors"].get(String(rd["role"]))
+	if horse != null and is_instance_valid(horse) and rider != null and is_instance_valid(rider):
+		var hn := horse as Node3D
+		var f := Vector2(sin(hn.rotation.y), cos(hn.rotation.y))
+		var side := Vector2(f.y, -f.x)
+		var q: Vector2 = Vector2(hn.position.x, hn.position.z) + side * 0.9 + f * 0.4
+		(rider as Node3D).reparent(game)
+		(rider as Node3D).position = Vector3(q.x, game.land.height_at(q.x, q.y), q.y)
+		(rider as Node3D).rotation = Vector3(0, hn.rotation.y, 0)
+		(rider as Citizen).play("Idle", 0.2)
+		(horse as Beast).play("Idle")
+	cine.erase("ride")
+
+
+## Клуб дыма: мягкое пятно поплотнее, чем свет (glow_tex) — дым виден и днём
+static var _smoke_t: Texture2D
+
+
+static func _smoke_tex() -> Texture2D:
+	if _smoke_t == null:
+		var n := 64
+		var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+		for y in n:
+			for x in n:
+				var r := Vector2((x + 0.5) / n - 0.5, (y + 0.5) / n - 0.5).length() * 2.0
+				img.set_pixel(x, y, Color(1, 1, 1, clampf(1.0 - r * r, 0.0, 1.0)))
+		img.generate_mipmaps()
+		_smoke_t = ImageTexture.create_from_image(img)
+	return _smoke_t
+
+
+## Путь по улице к точке to: мостовая у неё и дальше вдоль улицы — до want м по мостовой (обход клеток по 1 м, как у луж);
+## точки — от дальнего конца к to. Пусто — мостовой рядом нет
+func _street_path(to: Vector2, want: float) -> PackedVector2Array:
+	var land: Land = game.land
+	var start := Vector2.INF
+	for r in range(0, 13):
+		for k in (1 if r == 0 else 12):
+			var q := to + Vector2(cos(k * TAU / 12.0), sin(k * TAU / 12.0)) * r * 0.5
+			if land.is_road(q) and land.occ_at(q) == 0:
+				start = q
+				break
+		if start != Vector2.INF:
+			break
+	if start == Vector2.INF:
+		return PackedVector2Array()
+	var seen := {Vector2i(0, 0): 0.0}
+	var par := {}
+	var qq := [Vector2i(0, 0)]
+	var far := Vector2i(0, 0)
+	var far_s := -1.0
+	var head := 0
+	while head < qq.size() and qq.size() < 4000:
+		var c: Vector2i = qq[head]
+		head += 1
+		var cd: float = seen[c]
+		if cd >= want:
+			continue
+		for dv: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nb: Vector2i = c + dv
+			if seen.has(nb):
+				continue
+			var p := start + Vector2(nb)
+			if not land.is_road(p) or land.occ_at(p) != 0 or land.is_water(p):
+				continue
+			seen[nb] = cd + 1.0
+			par[nb] = c
+			qq.append(nb)
+			if cd + 1.0 > far_s:
+				far_s = cd + 1.0
+				far = nb
+	if far_s < 6.0:
+		return PackedVector2Array()
+	var chain := [far]
+	while chain[chain.size() - 1] != Vector2i(0, 0):
+		chain.append(par[chain[chain.size() - 1]])
+	var out := PackedVector2Array()
+	for i in chain.size():
+		if i % 2 == 0 or i == chain.size() - 1:      # через клетку: ступеньки обхода не дёргают идущего
+			out.append(start + Vector2(chain[i]))
+	out.append(to)
+	return out

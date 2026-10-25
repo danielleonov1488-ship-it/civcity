@@ -3804,6 +3804,20 @@ func actor(seed_v: int, female: bool, child: bool, cls: String, old := false) ->
 	return c
 
 
+## Человек для ролика по облику (герой истории — настоящий житель, этап 6.10): тот же, что на улице, лицо — для крупного плана
+func actor_look(lk: Dictionary, child := false, old := false) -> Citizen:
+	var c := Citizen.build(lk, child)
+	if child:
+		kid_look(c)
+	if old:
+		Citizen.elder_look(c)
+	else:
+		Citizen.face_fix(c, false, child)
+	add_child(c)
+	c.anim.speed_scale = 1.0
+	return c
+
+
 ## Ребёнок в ролике и на портрете: без бороды, голова чуть крупнее (дети у нас — уменьшенные взрослые Synty;
 ## вблизи, в ролике, иначе выходит маленький бородач)
 static func kid_look(c: Node) -> void:

@@ -232,7 +232,8 @@ static func _mask_mat() -> ShaderMaterial:
 
 ## Портрет говорящего: свой маленький мир с клоном (обновляется, только пока он говорит)
 func _face(who: Dictionary) -> void:
-	var key := "%s:%s:%s" % [who.get("kind", ""), who.get("seed", who.get("fur", "")), who.get("pic", "")]
+	var key := "%s:%s:%s:%s" % [who.get("kind", ""), who.get("seed", who.get("fur", "")), who.get("pic", ""),
+		Citizen.look_key(who["look"]) if who.has("look") else ""]
 	if key == _speaker and face_tex.texture != null:
 		_anim_face(who, true)
 		return
@@ -317,7 +318,10 @@ func _portrait_vp(who: Dictionary) -> SubViewport:
 		"citizen":
 			var rr := RandomNumberGenerator.new()
 			rr.seed = int(who.get("seed", 1))
-			var c := Citizen.create(rr, bool(who.get("female", false)), bool(who.get("child", false)), String(who.get("cls", "")) == "patricians", "", String(who.get("cls", "plebs")))
+			var lk: Dictionary = who.get("look", {})
+			# герой-житель (этап 6.10) — в своём облике, как на улице; остальные — по зерну
+			var c := Citizen.build(lk, bool(who.get("child", false))) if not lk.is_empty() else \
+				Citizen.create(rr, bool(who.get("female", false)), bool(who.get("child", false)), String(who.get("cls", "")) == "patricians", "", String(who.get("cls", "plebs")))
 			c.name = "who"
 			vp.add_child(c)
 			if bool(who.get("child", false)):

@@ -2917,7 +2917,7 @@ func _do_type(type: String) -> Dictionary:
 	var nm := String(d["name"])
 	if not c.unlocked(type):
 		var rid := c.unlock_id(type)
-		if Defs.research(rid).is_empty() or Defs.research(rid).has("story"):
+		if Defs.research(rid).is_empty() or Defs.story_of(Defs.research(rid)) != "":
 			return {"kind": "locked", "type": type, "tip": nm, "say": "«%s» откроется %s" % [nm, Defs.unlock_text(rid)]}
 		var w := _do_research(rid, "«%s» открывает исследование «%s»" % [nm, Defs.research(rid)["name"]])
 		w["type"] = type
@@ -4716,7 +4716,7 @@ func _fill_research() -> void:
 					tip += "\nНабор: три разных вида из него рядом с домом — ещё +%d%% счастья." % Defs.SET_BONUS
 			if r.has("after"):
 				tip += "\nПосле: «%s»" % Defs.research(r["after"])["name"]
-			var story: bool = r.has("story")         # «Легион» открывает история горожан, не очки
+			var story: bool = Defs.story_of(r) != ""   # «Легион» (и в новой игре «Пост вигилов») открывает история горожан, не очки
 			var eta: String = "" if done or story else rp_eta(float(r["cost"]))
 			if story:
 				tip += "\n\n" + ("Открыто" if done else why)

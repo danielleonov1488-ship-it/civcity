@@ -30,6 +30,13 @@ extends Node
 ## Д9 «Разбойники у арки»: первой остаётся «Мася», в обучении — нет; медальон «Легион» серый с подсказкой; ролик у арки
 ## с телегой; шаг открывает «Легион» без очков, военный квартал подсвечен (в квартале ✓ / можно и здесь), одна стрелка;
 ## Казармы; «В бой!» из строки — учебный бой; награда без денег — «Сторожевой пост»; старый город с Легионом — без истории.
+## Этап 7b (mode=stage7b; в прежних разделах эти истории не предлагаются): «Ярмарка в нундины» — герой-житель из лавки,
+## разные лавки (две — одежды), навесы и фонари, купец с осликом, гости — вино, сбор по желанию, вечер с толпой соседей;
+## «Роща поэта» — дом у гончарной не годится, «Обзор → Счастье», «Шумно» со значком и у курсора, стихи по порогу, чтение;
+## «Пожар у горшечников» — «Пост вигилов» в новой игре — по истории, дым над крышами, цепочка с вёдрами (ближе вода — быстрее),
+## копоть −5% через 6 ч, вигилы, пост и колодец; «Мася и котята» — та же Мария, значки над домами с детьми, котята-кошки
+## с именами; «Перепись» — «Горожане» с поиском, самый счастливый дом, ребёнок; «Письмо сыну» — победа в Лесу разбойников
+## после начала шага, гонец на коне, ларарий. mode=owner7b — те же истории в городе владельца (story_v 0).
 var game
 var c: City
 var hud
@@ -51,7 +58,9 @@ func _ready() -> void:
 			out = kv[1].trim_suffix("/") + "/"   # куда снимки (проверка под OpenGL — в свою папку)
 	if mode == "owner_old":
 		_old_cat_save()
-	Game.boot = {"play": "1"} if mode in ["owner", "owner_old"] else {"new": "1"}
+	if mode == "owner7b":
+		_owner_copy()
+	Game.boot = {"play": "1"} if mode in ["owner", "owner_old", "owner7b"] else {"new": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()
@@ -151,6 +160,12 @@ func who_kid(tag: String) -> void:
 	print("  [%s] Корнелии: %s; дом %s; семьи в доме: %s; предложение: %s" % [tag, rs, kid_home.get("id"), kid_home.get("families"), c.stories["offer"]])
 
 
+## Истории этапа 7b (ярмарка, роща поэта, пожар…) в прежних разделах проверки не предлагаются (Stories.off) — те разделы
+## проверяют свои истории; разделы этапа 7b (mode=stage7b) их включают
+var skip7b := true
+const S7B := ["fair", "kittens", "census", "grove", "fire", "letter"]
+
+
 ## Состояние историй с нуля (а город, дома, жители — те же); done — эти истории уже пройдены
 func fresh(h := 100, done := []) -> void:
 	if not sto.cat.is_empty():
@@ -163,6 +178,7 @@ func fresh(h := 100, done := []) -> void:
 	c.stories["h"] = h
 	for id in done:
 		c.stories["done"][id] = {"day": 0, "h": 1}
+	sto.off = S7B.duplicate() if skip7b else []
 	c.research.erase("s_cat")
 	sto._h_seen = -1
 	sto._tried = ""
@@ -242,6 +258,13 @@ func _run() -> void:
 	game.settings["tasks_folded"] = false   # gpu_run копирует saves/settings.json: свиток просьб — развёрнут
 	sto.force = true
 	game.rank_cine.force = false
+	skip7b = not (mode in ["stage7b", "owner7b"])
+	sto.off = S7B.duplicate() if skip7b else []
+	if mode == "owner7b":
+		await _owner7b()
+		print("STORY DONE fails=", fails)
+		get_tree().quit()
+		return
 	if mode == "owner":
 		await _owner()
 		print("STORY DONE fails=", fails)
@@ -260,7 +283,7 @@ func _run() -> void:
 	c.tips["ui"] = 3
 	hud.apply_reveal(3)
 	hud.advisor_panel.visible = false
-	for t in ["rank_tip", "fest_tip", "floor_tool", "full_money", "full_rp", "name_tip", "v22_pace", "orders_tip", "tax_tip", "dim_tip", "floor_money"]:
+	for t in ["rank_tip", "fest_tip", "floor_tool", "full_money", "full_rp", "name_tip", "v22_pace", "orders_tip", "tax_tip", "dim_tip", "floor_money", "people_tip"]:
 		c.tips[t] = true                 # чужие советы не мешают проверить совет историй
 	# Легион уже открыт (как в старом городе): «Разбойники у арки» не встают между прежними историями — их проверяет _bandits
 	c.research["legion"] = true
@@ -290,6 +313,16 @@ func _run() -> void:
 	check(not kid_home.is_empty() and int(c.stats["pop"]) >= 20, "городок: дом Корнелиев и %d жителей" % int(c.stats["pop"]))
 	if mode == "faces":
 		await _faces()
+		print("STORY DONE fails=", fails)
+		get_tree().quit()
+		return
+	if mode == "stage7b":
+		# только этап 7b: ярмарка, роща поэта, пожар у горшечников
+		town7b()
+		for f: Callable in [_fair, _grove, _fire, _kittens, _census, _letter]:
+			c.money = 50000.0
+			await f.call()
+		StoryDefs.extra = []
 		print("STORY DONE fails=", fails)
 		get_tree().quit()
 		return
@@ -2104,7 +2137,7 @@ func _framework() -> void:
 	var ids := []
 	for sd: Dictionary in StoryDefs.STORIES:
 		ids.append(String(sd["id"]))
-	check(ids == ["cat", "bandits", "leak", "square", "donkey", "crowded", "wedding"], "порядок историй: %s" % [ids])
+	check(ids == ["cat", "bandits", "leak", "square", "donkey", "crowded", "fair", "wedding", "kittens", "census", "grove", "fire", "letter"], "порядок историй: %s" % [ids])
 	for sd: Dictionary in StoryDefs.STORIES:
 		check(String(sd.get("lesson", "")) != "", "«%s» говорит, чему учит (журнал): %s" % [sd["title"], sd.get("lesson", "")])
 	# цели «красота», «игры», «победы Легиона» — на пробной записи истории
@@ -2940,3 +2973,926 @@ func _orders() -> void:
 	var old := {"h": 5, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": []}
 	var ld := City.stories_load(old)
 	check(typeof(ld.get("orders")) == TYPE_DICTIONARY and (ld["orders"] as Dictionary).is_empty(), "старое сохранение: заказов нет — появятся сами")
+
+
+# ---------- этап 7b: «Ярмарка в нундины», «Роща поэта», «Пожар у горшечников» ----------
+
+var out7 := "D:/CivCity/.work/gd/c/"
+
+
+## Камера на украшение спереди (с той стороны, куда оно смотрит), чуть сверху — дома за ним не заслоняют
+func front_view(b: Dictionary, pitch: float, dist: float) -> void:
+	game.rig.set_view(Vector3(b["pos"].x, float(b.get("y", Land.BASE_Y)) + 0.5, b["pos"].y), rad_to_deg(float(b.get("yaw", 0.0))), pitch, dist)
+
+
+## Снимок этапа 7b — в свою папку (D:/CivCity/.work/gd/c/)
+func shot7(name: String) -> void:
+	var keep := out
+	out = out7
+	await shot(name)
+	out = keep
+
+
+## Улицы для историй этапа 7b: торговая площадь и гончарная (z = 236), роща — к востоку от большой дороги (x = 240)
+func town7b() -> void:
+	street(Vector2(165, 206), Vector2(165, 238))
+	street(Vector2(134, 238), Vector2(214, 238))
+	street(Vector2(212, 206), Vector2(242, 206))
+	street(Vector2(242, 150), Vector2(242, 206))
+	c.compute()
+
+
+## Житель с именем героя (тот самый, кого показали в ролике) — на улице: {} — нет
+func hero_resident(o: Dictionary) -> Dictionary:
+	for r in game.people.residents:
+		if String(r["fam"]) == String(o.get("fam", "")) and String(r.get("pn", "")) == String(o.get("pn", "?")):
+			return r
+	return {}
+
+
+## Шаг истории дошёл до ролика: досмотреть (на выборе — кнопка pick)
+func play_pick(pick: int, sec := 40.0, shot_at := "", shot_name := "") -> void:
+	var t0 := Time.get_ticks_msec()
+	var shot_done := false
+	while sto.kit != null and (Time.get_ticks_msec() - t0) / 1000.0 < sec:
+		await frames(8)
+		if sto.cine.is_empty():
+			continue
+		var i := int(sto.cine.get("i", -1))
+		var beats: Array = sto.cine.get("beats", [])
+		if i < 0 or i >= beats.size():
+			continue
+		var kind := String(beats[i][0])
+		if shot_at != "" and kind == shot_at and not shot_done and not sto.ui.typing():
+			shot_done = true
+			await frames(30)
+			await shot7(shot_name)
+		if kind in ["say", "choice"] and sto.cine.get("wait", false):
+			sto.ui.finish_typing()
+			await frames(4)
+			sto._next()
+		elif kind == "choice" and sto.ui.choosing():
+			sto.ui.finish_typing()
+			var n: int = sto.ui.pills.get_child_count()
+			(sto.ui.pills.get_child(clampi(pick, 0, n - 1)) as Button).pressed.emit()
+
+
+## Строки цели в золотой строке: «· Разные лавки рядом 2/4 | ✓ …»
+func parts_txt() -> String:
+	var bits := []
+	for p: Dictionary in sto.row_info().get("parts", []):
+		bits.append(("✓ " if bool(p["ok"]) else "· ") + String(p["text"]))
+	return " | ".join(bits)
+
+
+func part_of(prefix: String) -> Dictionary:
+	for p: Dictionary in sto.row_info().get("parts", []):
+		if String(p["text"]).begins_with(prefix):
+			return p
+	return {}
+
+
+func row_buttons() -> Array:
+	var out_b := []
+	for b: Array in sto.row_info().get("buttons", []):
+		out_b.append(String(b[0]))
+	return out_b
+
+
+func _fair() -> void:
+	print("== ярмарка в нундины")
+	StoryDefs.extra = []
+	c.level = 3
+	for r in ["weaver", "cobbler", "butcher", "warehouse", "stall_veg", "deco_metal"]:
+		c.research[r] = true
+	c.research.erase("deco_market")
+	c.research.erase("s_fair_spice")
+	c.research.erase("s_fair_wine")
+	# дом торговки на площади: рядом фруктовая лавка и ткацкая — в них работают соседи
+	var h := put("house_pleb", Vector2(146, 241))
+	var h2 := put("house_pleb", Vector2(152, 241))
+	if h.is_empty() or h2.is_empty():
+		check(false, "дома для ярмарки не поставились")
+		return
+	settle(h, "Фабии")
+	settle(h2, "Клавдии")
+	var s1 := put("stall_fruit", Vector2(141, 235))
+	var s2 := put("weaver", Vector2(150, 235))
+	c.compute()
+	game.people._assign_jobs()
+	fresh7(5000, ["cat", "leak", "square", "donkey", "crowded"])
+	var S := c.stories
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "fair", "«Посёлок» — «Ярмарка в нундины» (%s, %s)" % [o.get("id"), o.get("hero")])
+	if String(o.get("id", "")) != "fair":
+		return
+	# герой — настоящий житель: торгует в лавке у площади, ходит по улице с тем же именем и обликом
+	var hr := hero_resident(o)
+	var jb: Dictionary = c.buildings.get(int(hr.get("job", -1)), {})
+	check(not hr.is_empty() and not jb.is_empty() and String(c.def(jb)["kind"]) == "shop" and int(o.get("seed", -1)) == int((hr.get("m", {}) as Dictionary).get("sd", -2)),
+		"герой — житель %s (%s в «%s»), облик — его собственный" % [o.get("hero"), o.get("job_n"), c.def(jb).get("name", "?") if not jb.is_empty() else "?"])
+	check(String(sto.row_info().get("tip", "")).contains(String(o.get("hero", "?"))), "в просьбе — имя героя: «%s»" % String(sto.row_info().get("tip", "")).left(80))
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	var said: bool = await wait_beat("say", 8.0)
+	await frames(60)
+	sto.ui.finish_typing()
+	await frames(8)
+	check(said and sto.ui.name_lbl.text == String(o["hero"]) and sto.ui.role_lbl.text.contains(String(o.get("job_n", "?"))),
+		"в облачке — %s, %s" % [sto.ui.name_lbl.text, sto.ui.role_lbl.text])
+	var act = sto.cine.get("actors", {}).get("trader")
+	check(act != null and Citizen.look_key((act as Citizen).look) == Citizen.look_key(game.people.look_of(hr)), "в ролике — тот же облик, что у жителя на улице")
+	await shot7("story_fair_ask.png")
+	await play_pick(0, 25.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	check(sto._goal_kind(A) == "all" and c.research.has("deco_market"), "шаг «площадь»; «Рыночные мелочи» открыла история")
+	var pt := parts_txt()
+	check(pt.contains("Разные лавки рядом 2/4") and pt.contains("Из них разные лавки одежды 1/2") and pt.contains("Навесы и прилавки 0/3") and pt.contains("Знамёна или фонари 0/2"),
+		"строки: %s" % pt)
+	var pc := part_of("Из них разные лавки одежды")
+	check(String((pc.get("do", {}) as Dictionary).get("type", "")) in ["cobbler", "dyer", "fullonica"], "щелчок по «одежде» — лавка одежды, какой у площади нет (%s)" % pc.get("do", {}).get("type", ""))
+	hud.advisor_panel.visible = false
+	sto.tick()
+	check(c.tips.has("story_adv_fair_square") and hud.adv_title.text == "Разные лавки радуют больше", "советник: «%s»" % hud.adv_title.text)
+	hud.advisor_panel.visible = false
+	# площадь: ещё сапожник и мясная лавка (4 разные, 2 — одежда), три навеса, два фонаря
+	var hp: Vector2 = h["pos"]
+	put("cobbler", Vector2(158, 235))
+	put("butcher", Vector2(136, 241))
+	game.set_tool("awning")
+	var zn: Array = sto.zone_note("awning", hp + Vector2(4, -8))
+	check(not zn.is_empty() and bool(zn[1]) and String(zn[0]).contains("ярмарки"), "у курсора: «%s»" % [zn])
+	game.set_tool("")
+	for e: Array in [["awning", Vector2(-3, -10)], ["awning_2", Vector2(5, -11)], ["rugs", Vector2(12, -9)], ["lamp_post", Vector2(-6, 5)], ["lamp_post", Vector2(9, 5)]]:
+		deco(String(e[0]), hp + (e[1] as Vector2))
+	c.compute()
+	sto.tick()
+	await look_at_pt(hp + Vector2(4, -4), 30.0)
+	sto._marks(true)
+	hud.refresh()
+	await frames(30)
+	await shot7("story_fair_square.png")
+	check(bool(A.get("ready", false)), "площадь готова — ролик с купцом ждёт «Посмотреть» (%s)" % parts_txt())
+	if not bool(A.get("ready", false)):
+		return
+	sto.play_ready()
+	var walking: bool = await drive_until("walk", 20.0)
+	check(walking and sto.cine["actors"].has("merchant"), "купец идёт к площади")
+	if walking:
+		await get_tree().create_timer(1.3).timeout
+		await shot7("story_fair_merchant.png")
+	await play_pick(0, 30.0, "choice", "story_fair_guests.png")
+	await wait_kit(false, 4.0)
+	check(String((A["flags"] as Dictionary).get("choice", "")) == "wine" and sto._goal_kind(A) == "pay", "выбор — вино из Кампании; шаг «сбор эдилу»")
+	var bts := row_buttons()
+	check(bts == ["Заплатить 400 ден.", "Без сбора"], "сбор по желанию: %s" % [bts])
+	check(bool(sto.progress({"flags": {"pay_skip": true}}, ["pay", "money", 400, {"skip": "x"}])["ok"]), "«Без сбора» — тоже решение (шаг пройден)")
+	var m0 := c.money
+	sto.press("pay")
+	check(is_equal_approx(c.money, m0 - 400.0) and bool(A.get("ready", false)), "заплатили 400 ден. — ярмарка ждёт «Посмотреть»")
+	var gl0: int = c.legion.glory
+	var rp0 := c.rp
+	c.rp = minf(c.rp, c.rp_cap() - 250.0)
+	rp0 = c.rp
+	var m1 := c.money
+	sto.play_ready()
+	var crowd_n := 0
+	var stalls_n := 0
+	var t0 := Time.get_ticks_msec()
+	while sto.kit != null and (Time.get_ticks_msec() - t0) < 40000:
+		await frames(8)
+		var i := int(sto.cine.get("i", -1))
+		var beats: Array = sto.cine.get("beats", [])
+		if i < 0 or i >= beats.size():
+			continue
+		var kind := String(beats[i][0])
+		var n := 0
+		for k in (sto.cine.get("actors", {}) as Dictionary):
+			n += int(String(k).begins_with("crowd"))
+		crowd_n = maxi(crowd_n, n)
+		stalls_n = maxi(stalls_n, (sto.cine.get("props", []) as Array).size())
+		if kind == "wait" and not sto.cine.has("_t7shot") and int(sto.cine.get("i", 0)) > 3:
+			sto.cine["_t7shot"] = true
+			await frames(10)
+			await shot7("story_fair_evening.png")
+		if kind in ["say", "choice"] and sto.cine.get("wait", false):
+			sto.ui.finish_typing()
+			await frames(4)
+			sto._next()
+	await wait_kit(false, 4.0)
+	check(crowd_n >= 9 and stalls_n >= 3, "вечер ярмарки: соседей в толпе %d (заплатили — больше), навесов купцов %d" % [crowd_n, stalls_n])
+	var e: Dictionary = (S["done"] as Dictionary).get("fair", {})
+	var et := String(e.get("text", ""))
+	var b6 := false
+	for b: Dictionary in S["bonus"]:
+		b6 = b6 or (String(b.get("id", "")) == "fair" and int(b.get("pct", 0)) == 6)
+	check(not e.is_empty() and c.unlocked("fairstall_2") and not c.unlocked("fairstall") and c.legion.glory >= gl0 + 3 and b6 and c.rp >= rp0 + 179.0
+		and absf(c.money - m1) < 150.0 and not et.contains("ден"), "награда: прилавок с вином, +6%% рядом (сбор), +3 Славы, очки, денег нет (%s)" % et)
+	sto.ui.open_journal()
+	await frames(3)
+	var jt := ""
+	for l: Label in hud.journal_panel.find_children("*", "Label", true, false):
+		jt += l.text + "\n"
+	check(jt.contains("фалернское") and jt.contains("Урок: Разные лавки"), "в журнале — выбор (вино) и урок")
+	hud.close_panels()
+	var fs := deco("fairstall_2", hp + Vector2(-12, -12))
+	check(not fs.is_empty() and Defs.unlock_text("s_fair_wine").contains("Ярмарка"), "прилавок с вином ставится; открывается «%s»" % Defs.unlock_text("s_fair_wine"))
+	if not fs.is_empty():
+		front_view(fs, 38.0, 9.5)
+		await frames(40)
+		await shot7("story_fairstall.png")
+
+
+func _grove() -> void:
+	print("== роща поэта")
+	StoryDefs.extra = []
+	c.level = 4
+	for r in ["artisans", "deco_trees", "deco_flowers", "deco_south", "fountain", "deco_stone", "potter"]:
+		c.research[r] = true
+	c.research.erase("s_grove")
+	var h := put("house_artisan", Vector2(246, 168))
+	if h.is_empty():
+		check(false, "дом поэта не поставился")
+		return
+	settle(h, "Лицинии")
+	c.compute()
+	fresh7(5200, ["cat", "leak", "square", "donkey", "crowded", "fair", "wedding", "kittens", "census"])
+	var S := c.stories
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "grove" and int(o.get("home", -1)) == int(h["id"]), "«Городок» — «Роща поэта» у дома ремесленников (%s, %s)" % [o.get("id"), o.get("hero")])
+	if String(o.get("id", "")) != "grove":
+		return
+	var hr := hero_resident(o)
+	check(not hr.is_empty() and not bool(hr["female"]) and not bool(hr["child"]), "поэт — житель %s (мужчина, взрослый)" % o.get("hero"))
+	# шумная мастерская у дома — поэту там не писать: дом с гончарной рядом историю не получит
+	var pot0 := put("potter", (h["pos"] as Vector2) + Vector2(-4, -12))
+	var near_noise := not sto.noisy_near(h["pos"], 22.0).is_empty()
+	var none := sto.can_offer(StoryDefs.story("grove")).is_empty()
+	if not pot0.is_empty():
+		c.remove(pot0)
+	c.compute()
+	check(near_noise and none, "гончарная в 12 м от дома — рощу этому поэту не предлагают (тишины нет)")
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	var chose: bool = await drive_until("choice", 25.0)
+	while chose and not sto.ui.choosing():
+		sto.ui.finish_typing()
+		await frames(3)
+	check(chose and sto.ui.pills.get_child_count() >= 3, "выбор темы: город, любовь%s, позже" % (", Легион" if sto.ui.pills.get_child_count() >= 4 else ""))
+	await frames(20)
+	await shot7("story_grove_ask.png")
+	if chose:
+		(sto.ui.pills.get_child(1) as Button).pressed.emit()
+	await play_pick(0, 20.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	check(String((A.get("flags", {}) as Dictionary).get("choice", "")) == "love" and sto._goal_kind(A) == "all", "тема — любовь; шаг «роща»")
+	var pt := parts_txt()
+	check(pt.contains("· Взглянуть в «Обзоре» → «Счастье»") and pt.contains("· Деревья 0/4") and pt.contains("· Скамьи 0/1") and pt.contains("· Родник или фонтан 0/1")
+		and pt.contains("✓ Тихо: мастерских ближе 22 м нет") and pt.contains("· Очков красоты"), "строки: %s" % pt)
+	hud.advisor_panel.visible = false
+	sto.tick()
+	check(c.tips.has("story_adv_grove_grove") and hud.adv_text.text.contains("Обзор") and hud.adv_text.text.contains("шумят"), "советник: красота, «Обзор», шумные мастерские")
+	hud.advisor_panel.visible = false
+	# стрелка — к «Обзору» (первая невыполненная строка)
+	hud._update_pointer()
+	check(String(sto.pointer_do().get("kind", "")) == "view" and String(sto.pointer_do().get("layer", "")) == "happy", "стрелка — на «Обзор → Счастье»")
+	# гончарную поставили у рощи — «Шумно», над ней значок, у курсора — «шумит»
+	var hp: Vector2 = h["pos"]
+	var pot := put("potter", hp + Vector2(-4, -12))
+	c.compute()
+	sto.tick()
+	sto._marks(true)
+	var pq := part_of("Шумно")
+	check(not pot.is_empty() and not pq.is_empty() and String(pq["text"]).contains("гончарная") and hud.badges.has("story_noise%d" % int(pot.get("id", -1))),
+		"гончарная рядом: «%s», над ней значок с молотком" % pq.get("text", ""))
+	game.set_tool("potter")
+	var zn: Array = sto.zone_note("potter", hp + Vector2(6, 0))
+	check(not zn.is_empty() and not bool(zn[1]) and String(zn[0]).contains("шумит"), "у курсора с гончарной: «%s»" % [zn])
+	game.set_tool("")
+	await look_at_pt(hp, 34.0)
+	await frames(30)
+	await shot7("story_grove_noise.png")
+	sto.part_click(pq)
+	check(int(game.selected.get("id", -1)) == int(pot.get("id", -2)), "щелчок по «Шумно» — карточка гончарной (её можно перенести)")
+	game.select_building({})
+	c.remove(pot)
+	c.compute()
+	sto.tick()
+	sto._marks(true)
+	check(bool(part_of("Тихо").get("ok", false)) and part_of("Шумно").is_empty() and not hud.badges.has("story_noise%d" % int(pot.get("id", -1))), "гончарную убрали — снова тихо")
+	# «Обзор → Счастье»: рожицы над домами — строка ✓
+	sto.part_click(part_of("Взглянуть"))
+	await frames(6)
+	sto.tick()
+	check(hud.overlay == "happy" and bool(part_of("Взглянуть").get("ok", false)), "щелчок — «Обзор → Счастье», строка ✓")
+	await frames(20)
+	await shot7("story_grove_overview.png")
+	hud.set_overlay("")
+	sto.tick()
+	check(bool(part_of("Взглянуть").get("ok", false)), "«Обзор» закрыли — строка осталась ✓")
+	# роща: 4 дерева, скамья, колодец; цветы и статуя — для красоты
+	for e: Array in [["tree", Vector2(-6, 6)], ["cypress", Vector2(6, 7)], ["palm", Vector2(-7, -3)], ["tree_2", Vector2(8, -2)], ["bench", Vector2(0, 8)],
+			["well", Vector2(-3, 10)], ["flowers", Vector2(3, 11)], ["flowers_2", Vector2(-9, 9)], ["statue", Vector2(10, 6)]]:
+		deco(String(e[0]), hp + (e[1] as Vector2))
+	c.compute()
+	sto.tick()
+	var info: Dictionary = sto.row_info()
+	var bts := row_buttons()
+	check(not bts.is_empty() and String(bts[0]).begins_with("Готово (") and String(info.get("text", "")).contains("бормочет") and String(info.get("text", "")).contains(" / "),
+		"роща собрана: %s; стих в строке: «%s»" % [bts, String(info.get("text", "")).get_slice("\n", 1)])
+	check(not bool(A.get("ready", false)), "«Готово» — по кнопке (можно сделать рощу красивее)")
+	hud.refresh()
+	await look_at_pt(hp + Vector2(0, 4), 22.0)
+	await frames(30)
+	await shot7("story_grove_row.png")
+	var tier := int((A["flags"] as Dictionary).get("tier", 0))
+	sto.press("ready")
+	var started: bool = await wait_kit(true, 3.0)
+	check(started and (A.get("flags", {}) as Dictionary).has("sq"), "«Готово» — сразу чтение стихов; середина рощи запомнена")
+	var listeners := 0
+	var verses := 0
+	var t0 := Time.get_ticks_msec()
+	while sto.kit != null and (Time.get_ticks_msec() - t0) < 45000:
+		await frames(8)
+		var i := int(sto.cine.get("i", -1))
+		var beats: Array = sto.cine.get("beats", [])
+		if i < 0 or i >= beats.size():
+			continue
+		var n := 0
+		for k in (sto.cine.get("actors", {}) as Dictionary):
+			n += int(String(k).begins_with("crowd"))
+		listeners = maxi(listeners, n)
+		var kind := String(beats[i][0])
+		if kind == "say" and String(beats[i][2]).begins_with("«") and not sto.cine.has("_v%d" % i):
+			sto.cine["_v%d" % i] = true
+			verses += 1
+			if verses == 1:
+				sto.ui.finish_typing()
+				await frames(30)
+				await shot7("story_grove_reading.png")
+		if kind in ["say", "choice"] and sto.cine.get("wait", false):
+			sto.ui.finish_typing()
+			await frames(4)
+			sto._next()
+	await wait_kit(false, 4.0)
+	check(listeners >= 3 and verses == tier, "чтение: соседей слушает %d, стихов прочитано %d (порог %d)" % [listeners, verses, tier])
+	var e: Dictionary = (S["done"] as Dictionary).get("grove", {})
+	check(not e.is_empty() and c.unlocked("muse") and not String(e.get("text", "")).contains("ден"), "роща готова: муза с лирой, без денег (%s)" % e.get("text", ""))
+	sto.ui.open_journal()
+	await frames(3)
+	var jt := ""
+	for l: Label in hud.journal_panel.find_children("*", "Label", true, false):
+		jt += l.text + "\n"
+	check(jt.contains("стихи о любви") and jt.contains("Урок: Украшения"), "в журнале — тема (любовь) и урок")
+	hud.close_panels()
+	var mu := deco("muse", hp + Vector2(-12, 2))
+	check(not mu.is_empty(), "муза с лирой ставится")
+	if not mu.is_empty():
+		front_view(mu, 30.0, 7.5)
+		await frames(40)
+		await shot7("story_muse.png")
+
+
+func _fire() -> void:
+	print("== пожар у горшечников")
+	StoryDefs.extra = []
+	c.level = 4
+	c.research["potter"] = true
+	c.research.erase("vigiles")
+	c.research.erase("s_fire")
+	# новая игра: «Пост вигилов» открывает история (Q20); живой город — изучает за очки, как прежде
+	var sv: int = c.story_v
+	check(sv == 1 and not c.research_open("vigiles") and c.can_research("vigiles").contains("Пожар у горшечников") and Defs.unlock_text("vigiles").contains("Пожар у горшечников"),
+		"новая игра: «Пост вигилов» — «%s»" % c.can_research("vigiles"))
+	c.story_v = 0
+	var old_open := c.research_open("vigiles")
+	c.story_v = sv
+	check(old_open and int(c.save_data().get("story_v", -1)) == 1, "живой город (story_v 0): «Пост вигилов» за очки, как прежде; новая игра помнит story_v = 1")
+	# гончарная и дома вокруг
+	var pot := put("potter", Vector2(188, 235))
+	var hs := []
+	for x: float in [182.0, 194.0, 200.0]:
+		var hh := put("house_pleb", Vector2(x, 241))
+		if not hh.is_empty():
+			settle(hh, ["Сульпиции", "Атилии", "Элии"][hs.size()])
+			hs.append(hh)
+	if pot.is_empty() or hs.size() < 3:
+		check(false, "гончарная и дома для пожара не поставились")
+		return
+	var well := deco("well", Vector2(206, 243))
+	c.compute()
+	game.people._assign_jobs()
+	fresh7(5400, ["cat", "leak", "square", "donkey", "crowded", "fair", "wedding", "kittens", "census", "grove"])
+	var S := c.stories
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "fire", "«Городок», гончарная — «Пожар у горшечников» (%s, %s)" % [o.get("id"), o.get("hero")])
+	if String(o.get("id", "")) != "fire":
+		return
+	var hr := hero_resident(o)
+	check(not hr.is_empty() and int(o.get("job", -1)) == int(pot["id"]), "герой — %s, %s в этой гончарной (%s)" % [o.get("hero"), o.get("job_n"), "работает" if int(hr.get("job", -1)) == int(pot["id"]) else "живёт рядом"])
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	await wait_beat("say", 10.0)
+	await frames(60)
+	sto.ui.finish_typing()
+	await frames(8)
+	var act = sto.cine.get("actors", {}).get("potter")
+	var ap := Vector2((act as Node3D).position.x, (act as Node3D).position.z) if act != null else Vector2.INF
+	check(ap.distance_to(c.door_point(pot)) < 6.0, "гончар — у своей гончарной (%.1f м от двери)" % ap.distance_to(c.door_point(pot)))
+	await shot7("story_fire_ask.png")
+	await play_pick(0, 25.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	var cl: Array = A.get("clicks", [])
+	check(sto._goal_kind(A) == "click" and cl.size() == 3 and sto._clicks.size() == 3, "дымятся крыши трёх домов у гончарной (дыма над крышами: %d)" % sto._clicks.size())
+	if cl.size() < 3:
+		return
+	var mid := (Vector2(float(cl[0][0]), float(cl[0][1])) + Vector2(float(cl[2][0]), float(cl[2][1]))) * 0.5
+	await look_at_pt(mid, 30.0)
+	await frames(40)
+	await shot7("story_fire_smoke.png")
+	hud.advisor_panel.visible = false
+	sto.tick()
+	check(c.tips.has("story_adv_fire_smoke") and hud.adv_title.text == "Вода тушит огонь", "советник: «%s»" % hud.adv_title.text)
+	hud.advisor_panel.visible = false
+	# ближе вода — быстрее: колодец в паре шагов против «несут издалека»
+	var wn: Array = sto._water_near(c.door_point(hs[2]))
+	var far := Stories.CHAIN_BASE + Stories.RIVER_M / Stories.CHAIN_M
+	var near_t := Stories.CHAIN_BASE + float(wn[1]) / Stories.CHAIN_M
+	check(not (wn[0] as Dictionary).is_empty() and near_t < far * 0.6, "колодец в %.0f м — цепочка %.1f с, без воды рядом — %.1f с" % [float(wn[1]), near_t, far])
+	# щелчок по дыму над крышей — цепочка с вёдрами
+	var ri := -1
+	for i in cl.size():
+		if int(cl[i][3]) == int(hs[2]["id"]):
+			ri = i
+	if ri < 0:
+		ri = 0
+	var mp: Vector2 = game.rig.cam.unproject_position(Vector3(float(cl[ri][0]), float(cl[ri][4]), float(cl[ri][1])))
+	check(sto.near_cat(mp) and sto.try_click(mp), "щелчок по дыму над крышей засчитан")
+	await frames(10)
+	var ch: Dictionary = sto._chains.get(ri, {})
+	var npeople := (ch.get("n") as Node).get_child_count() if ch.has("n") else 0
+	check(int(cl[ri][2]) == 1 and npeople >= 2, "соседи встали цепочкой с вёдрами (%d человек), тушить %.1f с" % [npeople, float(ch.get("len", 0.0))])
+	await get_tree().create_timer(1.0).timeout
+	var cp: Vector3 = ch.get("p", Vector3.ZERO)
+	game.rig.set_view(Vector3(cp.x, Land.BASE_Y, cp.z), 210.0, 30.0, 16.0)
+	await frames(40)
+	await shot7("story_fire_chain.png")
+	sto._chains_tick(float(ch.get("t", 0.0)) + 0.1)
+	await frames(3)
+	check(int(cl[ri][2]) == 2 and not sto._chains.has(ri), "крышу залили — дыма нет")
+	# сохранение посреди пожара: какие крыши потушены — помнит
+	var data = JSON.parse_string(JSON.stringify(c.save_data()))
+	var lcl: Array = City.stories_load(data["stories"])["active"].get("clicks", [])
+	check(lcl.size() == 3 and int(lcl[ri][2]) == 2, "после сохранения: потушенная крыша помнится")
+	# вторую тушим, третью — нет: через 6 ч копоть (ничего не сгорает), −5% на сутки
+	var rj := (ri + 1) % 3
+	var rk := (ri + 2) % 3
+	sto.click_target(rj)
+	sto._chains_tick(999.0)
+	check(int(cl[rj][2]) == 2 and sto._goal_kind(A) == "click", "вторую потушили, третья ещё дымится")
+	var hk: Dictionary = c.buildings[int(cl[rk][3])]
+	var bell0: int = c.events.size()
+	for i in 6:
+		S["h"] = int(S["h"]) + 1
+		sto._on_hour()
+	c.compute()
+	var soot := 0
+	for e: Array in hk.get("happy_parts", []):
+		if String(e[0]).begins_with("Копоть после пожара"):
+			soot = int(e[1])
+	var bell := String(c.events[-1].get("text", "")) if c.events.size() > bell0 else ""
+	check(int(cl[rk][2]) == 3 and soot == Stories.SOOT and bell.contains("копоть") and bell.contains("Дома целы") and c.buildings.has(int(hk["id"])),
+		"6 ч не тушили — копоть: %+d%% в счастье дома, дом цел; в колокольчике: «%s»" % [soot, bell.left(60)])
+	sto.tick()
+	check(bool(A.get("ready", false)), "пожар кончился — ролик с вигилами ждёт «Посмотреть»")
+	sto.play_ready()
+	var walking: bool = await drive_until("walk", 20.0)
+	if walking:
+		await get_tree().create_timer(1.2).timeout
+		await shot7("story_fire_captain.png")
+	await play_pick(0, 30.0)
+	await wait_kit(false, 4.0)
+	check(c.research.has("vigiles") and String((S.get("granted", {}) as Dictionary).get("vigiles", "")) == "fire" and sto._goal_kind(A) == "all",
+		"шаг «пост»: «Пост вигилов» открыла история")
+	var pt := parts_txt()
+	check(pt.contains("· Пост вигилов у гончарной 0/1") and pt.contains("Колодец или фонтан рядом"), "строки: %s" % pt)
+	check(String(sto.pointer_do().get("type", "")) == "vigiles", "стрелка — к Посту вигилов (%s)" % sto.pointer_do())
+	hud.advisor_panel.visible = false
+	sto.tick()
+	hud.advisor_panel.visible = false
+	var pp: Vector2 = pot["pos"]
+	var vg := put("vigiles", pp + Vector2(-12, 0))
+	if vg.is_empty():
+		vg = put("vigiles", pp + Vector2(10, 0))
+	var w2 := deco("well", pp + Vector2(0, -7))
+	c.compute()
+	sto.tick()
+	check(not vg.is_empty() and not w2.is_empty() and bool(A.get("ready", false)), "пост вигилов и колодец у гончарной — ждём «Посмотреть» (%s)" % parts_txt())
+	if not bool(A.get("ready", false)):
+		return
+	var gl0: int = c.legion.glory
+	var m0 := c.money
+	sto.play_ready()
+	await play_pick(0, 40.0, "reward", "story_fire_final.png")
+	await wait_kit(false, 4.0)
+	var e: Dictionary = (S["done"] as Dictionary).get("fire", {})
+	check(not e.is_empty() and c.unlocked("firebarrel") and c.legion.glory >= gl0 + 5 and absf(c.money - m0) < 150.0 and not String(e.get("text", "")).contains("ден"),
+		"пожар позади: бочка с вёдрами, +5 Славы, без денег (%s)" % e.get("text", ""))
+	var fb := deco("firebarrel", pp + Vector2(-6, 8))
+	check(not fb.is_empty(), "бочка с вёдрами ставится")
+	if not fb.is_empty():
+		front_view(fb, 34.0, 7.5)
+		await frames(40)
+		await shot7("story_firebarrel.png")
+
+
+const OWNER7 := "D:/CivCity/.work/owner_save/city.json"
+
+
+## Город владельца — в папку сохранений этого запуска (как есть)
+func _owner_copy() -> void:
+	if not FileAccess.file_exists(OWNER7):
+		return
+	DirAccess.make_dir_recursive_absolute(GamePaths.save_dir())
+	var src := FileAccess.get_file_as_string(OWNER7)
+	var f := FileAccess.open(GamePaths.save_dir().path_join("city.json"), FileAccess.WRITE)
+	f.store_string(src)
+	f.close()
+
+
+## mode=owner7b — город владельца: «Пост вигилов» за очки, как прежде (story_v 0); прежние истории пройдены — ярмарка,
+## роща поэта и пожар предлагаются его жителям и начинаются (герой — житель с именем, цели меряются у его дома)
+func _owner7b() -> void:
+	var S := c.stories
+	print("owner: level=", c.level, " pop=", c.stats["pop"], " story_v=", c.story_v)
+	check(c.story_v == 0 and (c.research.has("vigiles") or c.research_open("vigiles") or c.level < 4), "город владельца: «Пост вигилов» — как прежде (за очки или уже изучен)")
+	for t in ["people_tip", "orders_tip", "name_tip", "v22_pace", "set_tip", "dim_tip", "story_tip"]:
+		c.tips[t] = true                     # чужие советы не заслоняют снимки
+	hud.advisor_panel.visible = false
+	game._set_hour(10.5)
+	for id in ["cat", "bandits", "leak", "square", "donkey", "crowded", "wedding"]:
+		S["done"][id] = {"day": 0, "h": 1}
+	# «Где Мася?» пройдена у первой семьи с девушкой (для «Мася и котята»), Мася живёт у них
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if c.is_house(b) and not (b.get("families", []) as Array).is_empty():
+			S["done"]["cat"] = {"day": 0, "h": 1, "fam": String(b["families"][0]["name"]), "kid": "Мария", "female": true, "seed": 7, "cls": String(c.def(b)["cls"]), "home": int(id)}
+			S["pets"] = [{"home": int(id), "fur": People.CAT_MASYA, "name": "Мася", "seed": 5}]
+			break
+	for id in S7B:
+		var sd := StoryDefs.story(id)
+		if c.level < int(sd.get("lvl", 0)):
+			print("owner: %s — с ранга «%s», у владельца «%s»" % [id, Defs.LEVELS[int(sd["lvl"])]["name"], Defs.LEVELS[c.level]["name"]])
+			continue
+		S["active"] = {}
+		S["offer"] = {}
+		S["h"] = 400 + S7B.find(id) * 100
+		S["last_h"] = int(S["h"]) - StoryDefs.GAP_H
+		for other in S7B:
+			if other != id:
+				S["done"][other] = {"day": 0, "h": 1}
+			else:
+				(S["done"] as Dictionary).erase(other)
+		sto._tried = ""
+		sto.tick()
+		var o: Dictionary = S["offer"]
+		print("owner: %s — %s" % [id, o])
+		# герой — житель с именем (у котят — та же Мария, что искала Масю)
+		var ok_hero: bool = not hero_resident(o).is_empty() or (id == "kittens" and String(o.get("kid", "")) == "Мария")
+		check(String(o.get("id", "")) == id and ok_hero, "в городе владельца — «%s», просит %s (%s)" % [sd["title"], o.get("hero", o.get("kid", "?")), o.get("job_n", "")])
+		if String(o.get("id", "")) != id:
+			continue
+		sto.open_offer()
+		await wait_beat("say", 10.0)
+		await frames(60)
+		sto.ui.finish_typing()
+		await frames(8)
+		await shot7("story_owner_%s_ask.png" % id)
+		await play_pick(0, 30.0)
+		await wait_kit(false, 4.0)
+		var A: Dictionary = S["active"]
+		print("owner: %s шаг %s: %s %s" % [id, A.get("step"), parts_txt(), sto.row_info().get("text", "")])
+		check(not A.is_empty() and int(A.get("step", 0)) == 1 and String(sto.row_info().get("text", "")) != "", "в городе владельца «%s» идёт: шаг 2" % sd["title"])
+		if id == "fire":
+			check(not (A.get("clicks", []) as Array).is_empty() and sto._clicks.size() >= 1, "в городе владельца дымятся крыши у гончарной (%d)" % sto._clicks.size())
+			var cl: Array = A.get("clicks", [])
+			if not cl.is_empty():
+				await look_at_pt(Vector2(float(cl[0][0]), float(cl[0][1])), 30.0)
+				await frames(40)
+				await shot7("story_owner_fire_smoke.png")
+		else:
+			await look_at_pt(sto._hp(A), 34.0)
+			sto._marks(true)
+			hud.refresh()
+			await frames(40)
+			await shot7("story_owner_%s_goal.png" % id)
+		sto._cancel("Проверка.")
+
+
+# ---------- этап 7b, третья тройка: «Мася и котята», «Перепись», «Письмо сыну в Легион» ----------
+
+func _kittens() -> void:
+	print("== мася и котята")
+	StoryDefs.extra = []
+	c.level = 3
+	c.research.erase("s_kittens")
+	fresh7(5600, ["cat", "leak", "square", "donkey", "crowded", "fair", "wedding"])
+	var S := c.stories
+	# «Где Мася?» пройдена: Мария из семьи Корнелиев, Мася живёт у них
+	S["done"]["cat"] = {"day": 0, "h": 1, "fam": kid_fam, "kid": "Мария", "female": true, "child": false, "seed": 7, "cls": "plebs", "home": int(kid_home["id"])}
+	S["offer"] = {}
+	S["pets"] = [{"home": int(kid_home["id"]), "fur": People.CAT_MASYA, "name": "Мася", "seed": 5}]
+	var pets0 := (S["pets"] as Array).size()
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "kittens" and String(o.get("kid", "")) == "Мария" and int(o.get("home", -1)) == int(kid_home["id"]),
+		"после «Где Мася?» — «Мася и котята»: просит та же Мария из семьи %s (%s)" % [StoryDefs.fam_gen(String(o.get("fam", ""))), o.get("id")])
+	if String(o.get("id", "")) != "kittens":
+		return
+	# без «Где Мася?» продолжение не предлагают
+	var keep: Dictionary = S["done"]["cat"]
+	(S["done"] as Dictionary).erase("cat")
+	var none := sto.can_offer(StoryDefs.story("kittens")).is_empty()
+	S["done"]["cat"] = keep
+	check(none, "«Мася и котята» — только после «Где Мася?»")
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	await wait_beat("say", 8.0)
+	await frames(50)
+	sto.ui.finish_typing()
+	await frames(8)
+	check(sto.ui.name_lbl.text == "Мария", "в облачке — Мария (%s)" % sto.ui.role_lbl.text)
+	await shot7("story_kittens_ask.png")
+	await play_pick(0, 25.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	check(sto._goal_kind(A) == "give", "шаг «котята»")
+	sto._marks(true)
+	var homes := sto.gift_homes(A, sto._step(A)["goal"])
+	var badges := 0
+	for k in hud.badges:
+		badges += int(String(k).begins_with(Stories.GIFT))
+	check(homes.size() >= 3 and badges == homes.size(), "над домами с детьми — значки с кошкой (%d)" % badges)
+	hud.advisor_panel.visible = false
+	sto.tick()
+	check(c.tips.has("story_adv_kittens_give") and hud.adv_title.text == "Карточка дома", "советник: «%s»" % hud.adv_title.text)
+	hud.advisor_panel.visible = false
+	await look_at_pt(kid_home["pos"] + Vector2(6, 12), 40.0)
+	await frames(30)
+	await shot7("story_kittens_badges.png")
+	# дом без детей котёнка не получит
+	var nokid := {}
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if c.is_house(b) and int(b["pop"]) > 0 and not homes.has(b) and int(id) != int(kid_home["id"]):
+			nokid = b
+			break
+	if not nokid.is_empty():
+		sto.gift(int(nokid["id"]))
+		check(((A["flags"] as Dictionary).get("given", []) as Array).is_empty(), "дом без детей котёнка не получает")
+	# первый котёнок — щелчком по значку: карточка дома открыта, кошка с именем у этой семьи
+	var h1: Dictionary = homes[0]
+	hud._badge_click("%s%d" % [Stories.GIFT, int(h1["id"])])
+	await frames(3)
+	var given: Array = (A["flags"] as Dictionary).get("given", [])
+	var pet: Dictionary = (S["pets"] as Array)[-1] if (S["pets"] as Array).size() > pets0 else {}
+	var named := {}
+	for cc in game.people.cats:
+		if String(cc.get("named", "")) == String(pet.get("name", "?")):
+			named = cc
+	check(given.size() == 1 and int(pet.get("home", -1)) == int(h1["id"]) and not named.is_empty() and int(game.selected.get("id", -1)) == int(h1["id"]),
+		"котёнок %s — к семье с детьми (карточка дома открыта, кошка у дома)" % pet.get("name", "?"))
+	check(String(c.events[-1].get("text", "")).contains("переехал"), "в колокольчике: «%s»" % c.events[-1].get("text", ""))
+	game.select_building({})
+	sto.gift(int(homes[1]["id"]))
+	var pt := parts_txt()
+	check(pt.contains("Котята в новых семьях 2/3") and pt.contains("— у семьи"), "строки: %s" % pt)
+	# сохранение: котята — кошки с именами, остаются
+	var dj = JSON.parse_string(JSON.stringify(c.save_data()))
+	var lp: Array = City.stories_load(dj["stories"])["pets"]
+	check(lp.size() == pets0 + 2, "котята сохраняются (%d кошек с именами)" % lp.size())
+	if not named.is_empty():
+		var cp: Vector2 = named["p"]
+		game.rig.set_view(Vector3(cp.x, Land.BASE_Y, cp.y), 200.0, 32.0, 7.0)
+		await frames(40)
+		await shot7("story_kitten_home.png")
+	game.select_building({})
+	sto.gift(int(homes[2]["id"]))
+	sto.tick()
+	check(bool(A.get("ready", false)), "все трое пристроены — ролик ждёт «Посмотреть»")
+	sto.play_ready()
+	await play_pick(0, 30.0, "reward", "story_kittens_final.png")
+	await wait_kit(false, 4.0)
+	var e: Dictionary = (S["done"] as Dictionary).get("kittens", {})
+	check(not e.is_empty() and c.unlocked("kittenbasket") and (S["pets"] as Array).size() == pets0 + 3 and not String(e.get("text", "")).contains("ден"),
+		"котята в добрых руках: корзинка с котятами, три кошки с именами (%s)" % e.get("text", ""))
+	var kb := deco("kittenbasket", kid_home["pos"] + Vector2(-8, -6))
+	await frames(4)
+	var pets: Array = (game.visuals.get(int(kb.get("id", -1)), {}) as Dictionary).get("pets", [])
+	check(not kb.is_empty() and pets.size() == 4, "в корзинке — Мася и трое котят (%d)" % pets.size())
+	if not kb.is_empty():
+		front_view(kb, 42.0, 6.0)
+		await frames(40)
+		await shot7("story_kittenbasket.png")
+
+
+func _census() -> void:
+	print("== перепись")
+	StoryDefs.extra = []
+	c.level = 3
+	c.research.erase("s_census")
+	if c.count_type("scriptorium") == 0:
+		put("scriptorium", kid_home["pos"] + Vector2(-2, 10))
+	c.compute()
+	game.people._assign_jobs()
+	fresh7(5800, ["cat", "leak", "square", "donkey", "crowded", "fair", "wedding", "kittens"])
+	var S := c.stories
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "census" and not hero_resident(o).is_empty(), "«Посёлок» — «Перепись», просит %s (%s)" % [o.get("hero", "?"), o.get("job_n", "")])
+	if String(o.get("id", "")) != "census":
+		return
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	await wait_beat("say", 8.0)
+	await frames(50)
+	sto.ui.finish_typing()
+	await frames(8)
+	await shot7("story_census_ask.png")
+	await play_pick(0, 25.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	var cz: Dictionary = A.get("census", {})
+	var target := {}
+	for r in game.people.residents:
+		if String(r["fam"]) == String(cz.get("fam", "")) and String(r.get("pn", "")) == String(cz.get("pn", "")):
+			target = r
+	check(sto._goal_kind(A) == "census" and not target.is_empty(), "шаг «перепись»: найти %s (%s)" % [cz.get("name", ""), cz.get("job", "")])
+	var pt := parts_txt()
+	check(pt.contains("· Житель по имени: %s" % String(cz.get("name", "?"))) and pt.contains("· Самая счастливая семья") and pt.contains("· Ребёнок"), "строки: %s" % pt)
+	hud.advisor_panel.visible = false
+	sto.tick()
+	hud.advisor_panel.visible = false
+	# строка «житель по имени» — «Горожане» с поиском
+	sto.part_click(part_of("Житель по имени"))
+	await frames(6)
+	var le: LineEdit = hud.stats_panel.find_child("q", true, false) if hud.stats_panel != null else null
+	check(hud.stats_panel != null and hud.stats_panel.visible and hud.stats_tab == "people" and le != null and le.text == String(cz.get("pn", "?")),
+		"щелчок по строке — «Горожане», в поиске — «%s»" % (le.text if le != null else ""))
+	await frames(10)
+	await shot7("story_census_people.png")
+	# нашли — открыли его карточку
+	if not target.is_empty():
+		hud.open_person({"r": target})
+		await frames(4)
+		sto.tick()
+	check(bool(part_of("Житель по имени").get("ok", false)), "карточка %s открыта — ✓" % cz.get("name", ""))
+	await frames(10)
+	await shot7("story_census_card.png")
+	hud.close_panels()
+	# самая счастливая семья: «Обзор → Счастье» и карточка её дома (не самого счастливого — не в счёт)
+	sto.part_click(part_of("Самая счастливая"))
+	check(hud.overlay == "happy", "щелчок — «Обзор → Счастье»")
+	var best := {}
+	var worst := {}
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if c.is_house(b) and int(b["pop"]) > 0:
+			if best.is_empty() or int(b.get("happy", 0)) > int(best.get("happy", 0)):
+				best = b
+			if worst.is_empty() or int(b.get("happy", 0)) < int(worst.get("happy", 0)):
+				worst = b
+	if int(worst.get("happy", 0)) < int(best.get("happy", 0)):
+		game.select_building(worst)
+		sto.tick()
+		check(not bool(part_of("Самая счастливая").get("ok", false)), "дом не самый счастливый (%d%% < %d%%) — не в счёт" % [int(worst.get("happy", 0)), int(best.get("happy", 0))])
+	game.select_building(best)
+	sto.tick()
+	check(bool(part_of("Самая счастливая").get("ok", false)), "карточка самого счастливого дома (%d%%) — ✓" % int(best.get("happy", 0)))
+	game.select_building({})
+	hud.set_overlay("")
+	# ребёнок: «Горожане» → «Дети», карточка
+	sto.part_click(part_of("Ребёнок"))
+	await frames(4)
+	check(hud.people_filter == "kids", "строка «ребёнок» — «Горожане» → «Дети»")
+	var kid := {}
+	for r in game.people.residents:
+		if bool(r["child"]):
+			kid = r
+			break
+	if not kid.is_empty():
+		hud.open_person({"r": kid})
+		await frames(4)
+	sto.tick()
+	check(bool(A.get("ready", false)), "перепись готова — ролик с цензором ждёт «Посмотреть»")
+	hud.close_panels()
+	sto.play_ready()
+	await play_pick(0, 30.0, "reward", "story_census_final.png")
+	await wait_kit(false, 4.0)
+	var e: Dictionary = (S["done"] as Dictionary).get("census", {})
+	check(not e.is_empty() and c.unlocked("censortable") and not String(e.get("text", "")).contains("ден"), "перепись готова: стол цензора, без денег (%s)" % e.get("text", ""))
+	var ct := deco("censortable", kid_home["pos"] + Vector2(-10, 4))
+	if not ct.is_empty():
+		front_view(ct, 36.0, 7.5)
+		await frames(40)
+		await shot7("story_censortable.png")
+
+
+func _letter() -> void:
+	print("== письмо сыну в Легион")
+	StoryDefs.extra = []
+	c.level = 6
+	c.research["legion"] = true
+	c.research.erase("s_letter")
+	if c.count_type("barracks") == 0:
+		var bar := put("barracks", Vector2(150, 232))
+		check(not bar.is_empty(), "Казармы поставлены (%s)" % bar.get("pos"))
+	c.compute()
+	fresh7(6000, ["cat", "leak", "square", "donkey", "crowded", "fair", "wedding", "kittens", "census", "grove", "fire"])
+	var S := c.stories
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	var hr := hero_resident(o)
+	check(String(o.get("id", "")) == "letter" and not hr.is_empty() and bool(hr["female"]), "«Большой город» — «Письмо сыну в Легион», просит %s" % o.get("hero", "?"))
+	if String(o.get("id", "")) != "letter":
+		return
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	await wait_beat("say", 8.0)
+	await frames(50)
+	sto.ui.finish_typing()
+	await frames(8)
+	await shot7("story_letter_ask.png")
+	await play_pick(0, 25.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	check(sto._goal_kind(A) == "legion_win" and int((A["flags"] as Dictionary).get("won", 0)) == 0, "шаг «поход»: побед с начала шага — 0")
+	check(String(sto.pointer_do().get("kind", "")) == "legion", "стрелка — на медальон «Легион»")
+	var pt := parts_txt()
+	check(pt.contains("· Победы в «Лес разбойников» 0/1"), "строка: %s" % pt)
+	# победа в другой провинции — не в счёт; в Лесу разбойников — в счёт
+	sto._on_battle_req({"stage": {"r": 1, "s": 0}})
+	sto._on_battle_done({"win": true})
+	sto.tick()
+	check(int((A["flags"] as Dictionary).get("won", 0)) == 0 and not bool(A.get("ready", false)), "победа в «Диких холмах» — не в счёт")
+	sto._on_battle_req({"stage": {"r": 0, "s": 3}})
+	sto._on_battle_done({"win": false})
+	sto.tick()
+	check(not bool(A.get("ready", false)), "поражение — не в счёт")
+	sto._on_battle_req({"stage": {"r": 0, "s": 3}})
+	sto._on_battle_done({"win": true})
+	sto.tick()
+	check(bool(A.get("ready", false)), "победа в «Лесу разбойников» — гонец в пути (ролик ждёт «Посмотреть»)")
+	sto.play_ready()
+	var rode: bool = await drive_until("ride", 20.0)
+	check(rode and sto.cine["actors"].has("horse"), "гонец скачет на коне к её дому")
+	var rider = sto.cine.get("actors", {}).get("courier") if rode else null
+	check(rider != null and (rider as Node).get_parent() == sto.cine["actors"]["horse"], "гонец — в седле")
+	if rode:
+		# снимок — когда конь уже в кадре, у дома (в 6 м от конца пути)
+		var t0 := Time.get_ticks_msec()
+		while sto.cine.has("walk") and (Time.get_ticks_msec() - t0) < 9000:
+			var w: Dictionary = sto.cine["walk"]
+			if float(w["len"]) - float(w["s"]) < 6.0:
+				break
+			await frames(2)
+		await shot7("story_letter_ride.png")
+	var said: bool = await drive_until("say", 30.0)
+	check(said and rider != null and is_instance_valid(rider) and (rider as Node).get_parent() == game, "доскакал — спешился у двери")
+	await play_pick(0, 40.0, "say", "story_letter_courier.png")
+	await wait_kit(false, 4.0)
+	check(sto._goal_kind(A) == "around" and c.research.has("s_letter") and String(c.events[-1].get("text", "")).contains("Ларарий"),
+		"шаг «ларарий»: украшение открыла история (%s)" % c.events[-1].get("text", ""))
+	var hp: Vector2 = c.buildings[int(A["home"])]["pos"]
+	game.set_tool("lararium")
+	var zn: Array = sto.zone_note("lararium", hp + Vector2(4, 0))
+	check(not zn.is_empty() and bool(zn[1]), "у курсора: «%s»" % [zn])
+	game.set_tool("")
+	var lr := deco("lararium", hp + Vector2(3, 6))
+	c.compute()
+	sto.tick()
+	check(not lr.is_empty() and bool(A.get("ready", false)), "ларарий у дома — ждём «Посмотреть»")
+	var gl0: int = c.legion.glory
+	sto.play_ready()
+	await play_pick(0, 40.0, "reward", "story_letter_final.png")
+	await wait_kit(false, 4.0)
+	var e: Dictionary = (S["done"] as Dictionary).get("letter", {})
+	check(not e.is_empty() and c.legion.glory >= gl0 + 12 and not String(e.get("text", "")).contains("ден"), "весточка от сына: +12 Славы, без денег (%s)" % e.get("text", ""))
+	if not lr.is_empty():
+		game._set_hour(19.8)
+		front_view(lr, 32.0, 6.5)
+		await frames(40)
+		await shot7("story_lararium.png")
+		game._set_hour(10.5)
