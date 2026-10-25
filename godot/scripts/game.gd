@@ -28,6 +28,9 @@ var gfx: Gfx                          # графика: выбор по виде
 var land_mat: ShaderMaterial
 var surf_img: Image
 var surf_tex: ImageTexture
+var deco_imgs := []                   # маски узора земли и улучшенных дорог (этап 5.7–5.8, Land.make_deco_masks)
+var deco_texs := []
+var ground_kind := 2                  # кисть «Земля»: какой узор в руках (Defs.GROUND; 0 — обычная трава)
 var visuals := {}                     # id постройки → {h, lights, smoke, actors}
 var nature := {}                      # Vector2i(2-метровая клетка) → [{h, p}]
 var plot_signs := {}
@@ -289,6 +292,8 @@ func _ready() -> void:
 	surf_tex = ImageTexture.create_from_image(surf_img)
 	land_mat.set_shader_parameter("surf", surf_tex)
 	land_mat.set_shader_parameter("map_size", Land.SIZE)
+	if not land.deco_cells.is_empty():
+		_deco_masks()                         # узор земли из сохранения (без него маски не заводим вовсе)
 	land.dirty.clear()
 	land.dirty_soft.clear()
 	land.dirty_walk.clear()
@@ -1337,6 +1342,22 @@ func _build_chunk(ch: Vector2i) -> void:
 	mi.mesh = land.chunk_mesh(ch.x, ch.y)
 
 
+## Маски узора земли и улучшенных дорог (этап 5.7–5.8) и плитки к ним. Пока узора в городе нет — их нет совсем,
+## шейдер земли его не читает (deco_on = false): картинка и память — как были
+func _deco_masks() -> void:
+	deco_imgs = land.make_deco_masks()
+	deco_texs = []
+	for i in 2:
+		(deco_imgs[i] as Image).generate_mipmaps()
+		deco_texs.append(ImageTexture.create_from_image(deco_imgs[i]))
+	land_mat.set_shader_parameter("surf2", deco_texs[0])
+	land_mat.set_shader_parameter("surf3", deco_texs[1])
+	Synty._index()
+	land_mat.set_shader_parameter("tile_slab", load(Synty._tex_path("Floor_Tiles_06")))
+	land_mat.set_shader_parameter("tile_mosaic", load(Synty._tex_path("Floor_Tiles_Circle_01")))
+	land_mat.set_shader_parameter("deco_on", land.up_n + land.ground_n > 0)
+
+
 ## Земля поменялась: маска покрытий — сразу и только поменявшийся прямоугольник; сетка кусков — по времени (не дольше
 ## ~8 мс за кадр, хотя бы один кусок). Пока ведут кисть (3.3): сетка — только где поменялись видимые уступы, не больше
 ## куска за кадр; куски, где поменялось одно покрытие, и сетка ходьбы — когда мазок кончен
@@ -1345,6 +1366,14 @@ func _rebuild_land(limit := 6, busy := false) -> void:
 	if surf_img and surf_tex and land.update_surface_rect(surf_img):
 		surf_img.generate_mipmaps()
 		surf_tex.update(surf_img)
+	if deco_imgs.is_empty():
+		if land.deco_hi.x >= 0 and surf_img:
+			_deco_masks()                     # первый узор в городе — маски заводятся сейчас
+	elif land.update_deco_masks(deco_imgs[0], deco_imgs[1]):
+		for i in 2:
+			(deco_imgs[i] as Image).generate_mipmaps()
+			(deco_texs[i] as ImageTexture).update(deco_imgs[i])
+		land_mat.set_shader_parameter("deco_on", land.up_n + land.ground_n > 0)
 	if not stroke_on and not land.dirty_soft.is_empty():
 		for ch in land.dirty_soft:
 			land.dirty[ch] = true
@@ -1485,6 +1514,8 @@ func _show(b: Dictionary) -> void:
 	var subst := {"#wall_lamp": "#wall_lamp_dim"} if city.is_house(b) else {}
 	if lit:
 		subst["#dark"] = "#lit"
+	if b["type"] in CatGrand.TYPES and Gfx.is_low(str(settings.get("quality", "high"))):
+		subst.merge(CatGrand.LOW)               # на «Низкой» — лёгкие колонны и статуи у больших построек этапа 5
 	var vis := {"h": parts.place(bp, xf, subst), "lights": [], "smoke": [], "actors": []}
 	if city.apron_of(b) == 2:                  # домус, храм: каменный бордюр вокруг (у домов и лавок — глина, Land.wear)
 		(vis["h"] as Array).append_array(parts.place(Kerb.blueprint(bp), xf))
@@ -1501,7 +1532,7 @@ func _show(b: Dictionary) -> void:
 		_catbed(b, vis)
 	elif b["type"] == "donkeypost":
 		_donkey(b, vis)
-	elif CatDecor2.PETS.has(Defs.base_of(b["type"])) or CatExtra.PETS.has(b["type"]):
+	elif CatDecor2.PETS.has(Defs.base_of(b["type"])) or CatExtra.PETS.has(b["type"]) or CatGrand.PETS.has(b["type"]):
 		_pets2(b, vis)                         # этап 5: корова и лошадь у украшений, кошки и ослик в приюте
 	_sync_actors(b)
 	_set_hour(hour)
@@ -1616,7 +1647,7 @@ func _donkey(b: Dictionary, vis: Dictionary) -> void:
 ## Животные этапа 5 (CatDecor2.PETS / CatExtra.PETS — что, где, как стоит): корова пасётся, лошадь жуёт у коновязи,
 ## в приюте спят кошки и жуёт ослик. Не в actors_root у кошек — их сон медленнее шага игры
 func _pets2(b: Dictionary, vis: Dictionary) -> void:
-	var list: Array = CatExtra.PETS.get(b["type"], CatDecor2.PETS.get(Defs.base_of(b["type"]), []))
+	var list: Array = CatGrand.PETS.get(b["type"], CatExtra.PETS.get(b["type"], CatDecor2.PETS.get(Defs.base_of(b["type"]), [])))
 	var lk := int(Defs.B[b["type"]].get("look", 0))
 	var k := 0
 	for e: Array in list:
@@ -2278,11 +2309,18 @@ func set_tool(t: String) -> void:
 
 
 func is_road_tool(t: String) -> bool:
-	return t in ["road", "plaza", "path", "erase"]
+	return t in ["road", "plaza", "path", "erase", "upgrade", "ground"]
 
 
-## Цвет кольца кисти по инструменту: мостовая — кремовая, тропа — песочная, площадь — светлый камень, ластик — красный
-const BRUSH_COL := {"road": Color(1.0, 0.97, 0.88), "path": Color(0.95, 0.8, 0.55), "plaza": Color(0.86, 0.88, 0.92), "erase": Color(1.0, 0.32, 0.26)}
+## Кисть узора, а не дороги: «Улучшить» (этап 5.7) и «Земля» (5.8) — красят слой Land.deco, клетки берут brush_cells
+func is_deco_tool(t: String) -> bool:
+	return t == "upgrade" or t == "ground"
+
+
+## Цвет кольца кисти по инструменту: мостовая — кремовая, тропа — песочная, площадь — светлый камень, ластик — красный,
+## «Улучшить» — золотистый, «Земля» — зелёный
+const BRUSH_COL := {"road": Color(1.0, 0.97, 0.88), "path": Color(0.95, 0.8, 0.55), "plaza": Color(0.86, 0.88, 0.92), "erase": Color(1.0, 0.32, 0.26),
+	"upgrade": Color(1.0, 0.86, 0.45), "ground": Color(0.6, 0.95, 0.5)}
 var brush_disc: MeshInstance3D            # чуть заметный круг внутри кольца (цвет инструмента)
 
 
@@ -2437,6 +2475,12 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 				var f := City.facing(yaw)
 				pos = (e["p"] as Vector2) - f * (float(bb[3]) + 0.02)
 				pos = _snap_row(pos, yaw, bb, int(moving.get("id", -1)))
+	if type == "aqua" and moving.is_empty() and not locked:
+		var sn := _aqua_snap(p)
+		if not sn.is_empty():
+			pos = sn["pos"]                       # кусок акведука у конца другого — встаёт следом по той же линии
+			yaw = sn["yaw"]
+			sub = "aqua"
 	var chk := city.check_place(type, pos, yaw, variant, color, -3 if not moving.is_empty() else -1)
 	var err: String = chk["err"]
 	if err == "" and free:
@@ -2454,6 +2498,34 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 			err = "По большой дороге ездят повозки — здесь не строят"
 	return {"pos": pos, "yaw": yaw, "err": err, "cells": chk["cells"], "y": chk["y"], "variant": variant, "color": color, "tier": tier,
 		"mode": "free" if free else "", "sub": sub}
+
+
+## Акведук кусками (этап 5.6): курсор ближе 3,5 м к свободному концу поставленного куска — новый встаёт вплотную
+## следом, по той же линии (половинки опор у концов складываются в одну). {} — рядом конца нет
+func _aqua_snap(p: Vector2) -> Dictionary:
+	var half := CatGrand.AQ_HALF * Catalog.ARCH
+	var best := {}
+	var bd := 3.5
+	for id in city.buildings:
+		var o: Dictionary = city.buildings[id]
+		if o["type"] != "aqua":
+			continue
+		var ax := City.axis(float(o["yaw"]))
+		for sd: float in [-1.0, 1.0]:
+			var c: Vector2 = (o["pos"] as Vector2) + ax * sd * 2.0 * half
+			var dd := p.distance_to((o["pos"] as Vector2) + ax * sd * half)
+			if dd >= bd:
+				continue
+			var taken := false
+			for id2 in city.buildings:
+				var o2: Dictionary = city.buildings[id2]
+				if o2["type"] == "aqua" and (o2["pos"] as Vector2).distance_to(c) < half:
+					taken = true
+					break
+			if not taken:
+				bd = dd
+				best = {"pos": c, "yaw": float(o["yaw"])}
+	return best
 
 
 ## Клетки следа заходят на дорогу глубже кромки фасада?
@@ -2558,7 +2630,7 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 	var bp := Catalog.make(type, tier, variant, color)
 	var ax := City.axis(yaw)
 	var f := City.facing(yaw)
-	if not _road_free_near(pos + ax * bp.door.x + f * bp.door.z, 1.7, own):
+	if not d.get("noroad", false) and not _road_free_near(pos + ax * bp.door.x + f * bp.door.z, 1.7, own):
 		return "Нужна дорога у входа"
 	var rects: Array = bp.footprint()
 	if rects.is_empty():
@@ -2570,7 +2642,7 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 		if (o["pos"] as Vector2).distance_squared_to(pos) > 225.0:
 			continue
 		var od: Dictionary = city.def(o)
-		if od["kind"] == "decor" or od["kind"] == "farm":
+		if od["kind"] == "decor" or od["kind"] == "farm" or od.get("noroad", false):
 			continue
 		var odp := city.door_point(o)
 		var rel := odp - pos
@@ -2579,7 +2651,7 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 			if r.grow(0.4).has_point(lp):
 				return "Так загородится вход соседней постройки"
 		# сосед сейчас у дороги, а новая постройка закроет ему всю мостовую у входа
-		if od["kind"] != "center" and bool(o.get("road", false)) and not _road_free_near(odp, 1.7, own):
+		if od["kind"] != "center" and not od.get("noroad", false) and bool(o.get("road", false)) and not _road_free_near(odp, 1.7, own):
 			return "Так загородится вход соседней постройки"
 	return ""
 
@@ -3242,13 +3314,25 @@ func _ghost_frozen() -> void:
 ## Новое у инструмента — советник объясняет один раз на установку (флаг в файле настроек): заборы мышью,
 ## украшения на стенах
 func _tool_tip(t: String) -> void:
-	if hud == null or not Defs.B.has(t) or mode == "demo" or not hud._tip_free():
+	if hud == null or not (Defs.B.has(t) or t == "ground") or mode == "demo" or not hud._tip_free():
 		return
-	var d: Dictionary = Defs.B[t]
+	var d: Dictionary = Defs.B.get(t, {})
 	var key := ""
 	var title := ""
 	var text := ""
-	if d.get("seg", false):
+	if t == "ground":
+		key = "tip_ground"
+		title = "Кисть «Земля»"
+		text = "Узор на траве — для красоты: сочная трава, луг в цветах, песок, утоптанная земля, гравий. Выберите кружок над кнопками и ведите с зажатой кнопкой, как дорогу. Счастья узор не прибавляет — он просто делает город живым.
+
+Стереть — кружком «Трава» или ластиком."
+	elif t == "aqua":
+		key = "tip_aqua"
+		title = "Акведук кусками"
+		text = "Поставьте первый кусок, а следующий подведите к его концу — он встанет вплотную, по той же линии. Так акведук протянется через весь город.
+
+Под арками можно провести улицу: жители ходят прямо под ними. Дорога у входа акведуку не нужна."
+	elif d.get("seg", false):
 		key = "tip_fence"
 		title = "Заборы тянут мышью"
 		text = "Нажмите в начале забора и ведите мышь, как дорогу: звенья встанут по линии, у курсора — сколько звеньев и почём. Отпустите — забор готов. Начните у конца другого забора — угол сойдётся без щели.\n\nКалитка посередине — галочка в панели (или G). Убрать звено — ластиком дорог (уберёт при отпускании) или сносом."
@@ -4517,14 +4601,18 @@ func _release() -> void:
 		if float(plan["cost"]) > city.money + 0.001:
 			_line_cut(plan)                       # пока тянули, казна убавилась — сколько хватит сейчас
 		var cells: PackedInt32Array = (plan["cells"] as PackedInt32Array).slice(0, int(plan["upto"]))
-		if not cells.is_empty():
+		if not cells.is_empty() and is_deco_tool(tool):
+			stroke = land.brush_apply(cells, _brush_gk())     # «Улучшить» / «Земля»: высоты и деревья — как были
+			stroke_cost = float(plan["cost"])
+			city.money -= stroke_cost
+		elif not cells.is_empty():
 			stroke = land.apply_cells(cells, int(plan["kd"]))
 			land.smooth_cells(cells)
 			stroke_cost = float(plan["cost"])
 			city.money -= stroke_cost
 			clear_nature_cells(cells)
 		_paint_broke = int(plan["upto"]) < (plan["cells"] as PackedInt32Array).size()
-	elif not stroke.is_empty():
+	elif not stroke.is_empty() and not is_deco_tool(tool):
 		# свободный мазок: высоты дороги сглаживаются один раз, сейчас (3.3)
 		var cells := PackedInt32Array()
 		for c in stroke:
@@ -4550,7 +4638,7 @@ func _release() -> void:
 		redo_stack.clear()
 		if undo_stack.size() > 40:
 			undo_stack.pop_front()
-		if tool != "erase":
+		if tool != "erase" and not is_deco_tool(tool):
 			city.road_cells += stroke.size()
 		_compute_due = true                   # пересчёт города и окно — в следующих кадрах (3.3)
 		if hud:
@@ -4611,6 +4699,9 @@ func _paint_at(q: Vector2) -> void:
 	if tool == "erase":
 		_erase_at(q)
 		return
+	if is_deco_tool(tool):
+		_brush_at(q)
+		return
 	var kinds := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": Land.Kind.DIRT}
 	var kd: int = kinds[tool]
 	var ch := land.paint_circle(q, brush_r, kd, true, true, brush_square, brush_over, _stroke_seen)
@@ -4636,6 +4727,58 @@ func _paint_at(q: Vector2) -> void:
 
 
 const ROAD_KIND := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": Land.Kind.DIRT, "erase": Land.Kind.GRASS}
+
+
+## Кисть «Улучшить» / «Земля»: какой узор кладёт (−1 — улучшение дороги; для «Земли» — ground_kind)
+func _brush_gk() -> int:
+	return -1 if tool == "upgrade" else ground_kind
+
+
+## Цена клеток мазка «Улучшить» (у каждой своя: тропа, мостовая, площадь) или «Земли» (одна на все)
+func _brush_prices(cells: PackedInt32Array) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	out.resize(cells.size())
+	for n in cells.size():
+		out[n] = land.up_price(cells[n]) if tool == "upgrade" else Defs.GROUND_COST
+	return out
+
+
+## Свободный мазок «Улучшить» / «Земли»: клетки под кистью — сразу (как дорога), денег не хватило — дальше не рисуется
+func _brush_at(q: Vector2) -> void:
+	var cells := land.brush_cells(q, brush_r, brush_square, _brush_gk(), _stroke_seen)
+	if cells.is_empty():
+		return
+	var cost := 0.0
+	for pr in _brush_prices(cells):
+		cost += pr
+	if cost > city.money:
+		hud.tool_status("Не хватает денариев: в казне %s ден." % hud.fmt(city.money))
+		hud.stroke_live(stroke_cost, tool, true)
+		_paint_broke = true
+		sound.ui("error")
+		return
+	city.money -= cost
+	stroke_cost += cost
+	stroke.append_array(land.brush_apply(cells, _brush_gk()))
+
+
+## Прямая линия «Улучшить» / «Земли»: клетки кисти по линии от a до b (штампы через 0,25 м — как свободный мазок),
+## по порядку вдоль линии; {"cells", "fresh", "t"} как у Land.line_cells
+func _brush_line_cells(a: Vector2, b: Vector2) -> Dictionary:
+	var seen := {}
+	var cells := PackedInt32Array()
+	var ts := PackedFloat32Array()
+	var n := int(a.distance_to(b) / (Land.CELL * 1.0)) + 1
+	for s in n + 1:
+		var t := float(s) / n
+		var got := land.brush_cells(a.lerp(b, t), brush_r, brush_square, _brush_gk(), seen)
+		cells.append_array(got)
+		for i in got.size():
+			ts.append(snappedf(t * a.distance_to(b), 0.5))
+	var fresh := PackedByteArray()
+	fresh.resize(cells.size())
+	fresh.fill(1)
+	return {"cells": cells, "fresh": fresh, "t": ts}
 
 
 # ---------- показ мазка до отпускания (3.1 прямая с ценой, 3.2 ластик красным) ----------
@@ -4712,6 +4855,15 @@ func _line_update(force := false) -> void:
 		return
 	_prev_at = hover
 	_prev_r = brush_r
+	if is_deco_tool(tool):
+		# «Улучшить» и «Земля» (этап 5.7–5.8): своя раскладка клеток и цена у каждой клетки
+		var bl := _brush_line_cells(line_from, hover)
+		var bplan := {"cells": bl["cells"], "fresh": bl["fresh"], "t": bl["t"], "kd": -1, "len": line_from.distance_to(hover),
+			"upto": (bl["cells"] as PackedInt32Array).size(), "cost": 0.0, "price": _brush_prices(bl["cells"])}
+		_line_cut(bplan)
+		line_plan = bplan
+		_prev_put(bplan["cells"], bplan["fresh"], int(bplan["upto"]), 1, 9 if tool == "upgrade" else 10 + ground_kind)
+		return
 	var kd: int = ROAD_KIND[tool]
 	var lc := land.line_cells(line_from, hover, brush_r, kd, brush_square, brush_over)
 	var plan := {"cells": lc["cells"], "fresh": lc["fresh"], "t": lc["t"], "kd": kd, "len": line_from.distance_to(hover),
@@ -4732,22 +4884,24 @@ func _line_cut(plan: Dictionary) -> void:
 	var cells: PackedInt32Array = plan["cells"]
 	var fresh: PackedByteArray = plan["fresh"]
 	var ts: PackedFloat32Array = plan["t"]
+	var pv: PackedFloat32Array = plan.get("price", PackedFloat32Array())   # своя цена у каждой клетки («Улучшить»)
 	var cost := 0.0
 	var upto := cells.size()
 	for n in cells.size():
 		if fresh[n] == 0:
 			continue
-		if cost + price > city.money + 1e-6:
+		var pn := pv[n] if not pv.is_empty() else price
+		if cost + pn > city.money + 1e-6:
 			upto = n
 			while upto > 0 and ts[upto - 1] == ts[n]:
 				upto -= 1
 			break
-		cost += price
+		cost += pn
 	if upto < cells.size():
 		cost = 0.0
 		for n in upto:
 			if fresh[n] == 1:
-				cost += price
+				cost += pv[n] if not pv.is_empty() else price
 	plan["upto"] = upto
 	plan["cost"] = cost
 
@@ -4796,6 +4950,16 @@ func _erase_label() -> void:
 		m = float(line_plan["len"])
 		n = int(line_plan["upto"])
 	var txt := "Убрать %s м дороги · бесплатно" % _len_txt(maxf(m, brush_r)) if n > 0 else ""
+	if n > 0:
+		# под ластиком только узор «Земли» (этап 5.8) — так и сказать
+		var cs: PackedInt32Array = erase_cells if not (brush_line and not line_plan.is_empty()) else (line_plan["cells"] as PackedInt32Array).slice(0, n)
+		var road := false
+		for k in cs:
+			if Land.walk_kind(land.kind[k]):
+				road = true
+				break
+		if not road:
+			txt = "Стереть узор земли · бесплатно"
 	var warn := ""
 	if not erase_fences.is_empty():
 		var back := 0.0
@@ -4891,7 +5055,7 @@ func _undo(only := "") -> void:
 	var now := []
 	for c in u["ch"]:
 		var k := land.idx(c[0].x, c[0].y)
-		now.append([c[0], land.kind[k], land.h[k]])
+		now.append([c[0], land.kind[k], land.h[k], land.deco[k]])
 	# клетки, где после мазка поставили дом, не откатываются (land.undo их пропускает) — и денег за них не вернём
 	var done := land.undo(u["ch"])
 	var part := float(done.size()) / maxf(1.0, float(u["ch"].size()))
@@ -4927,7 +5091,7 @@ func _redo() -> void:
 	var back := []
 	for c in r["ch"]:
 		var k := land.idx(c[0].x, c[0].y)
-		back.append([c[0], land.kind[k], land.h[k]])
+		back.append([c[0], land.kind[k], land.h[k], land.deco[k]])
 	var done := land.undo(r["ch"])
 	var part := float(done.size()) / maxf(1.0, float(r["ch"].size()))
 	var keep := []

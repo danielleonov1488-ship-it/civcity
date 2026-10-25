@@ -255,6 +255,11 @@ static func _derive(lib: AnimationLibrary) -> void:
 		"Head": func(t: float) -> Vector3: return Vector3(0.07 * sin(TAU * t / 1.2), 0.0, 0.05 * sin(TAU * t / Lp)),
 		"UpperChest": func(t: float) -> Vector3: return Vector3(0.0, 0.0, 0.035 * sin(TAU * t / Lp))})
 	lib.add_animation("Play_Lyre", lyre)
+	# спарринг в лудусе (этап 5, волна 2): удар мечом сверху — снова и снова (копия: у бойцов Легиона удар разовый)
+	if lib.has_animation("Sword_Attack"):
+		var spar := lib.get_animation("Sword_Attack").duplicate(true) as Animation
+		spar.loop_mode = Animation.LOOP_LINEAR
+		lib.add_animation("Spar", spar)
 	# несёт покупку: левая рука почти не машет (опущена, как стоя), вещь в ней (HandProps, People.carry)
 	lib.add_animation("Walk_Carry", _graft(lib.get_animation("Walk"), idle, 0.4, ["LeftShoulder", "LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.25))
 	# зеркальные: жест другой рукой, кивок в другую сторону

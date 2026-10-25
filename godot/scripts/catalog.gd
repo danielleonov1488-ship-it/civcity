@@ -40,6 +40,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 			CatShops._shop(b, type, variant)
 		"thermopolium": CatShops._thermopolium(b)
 		"ogorod", "shelter", "puppets", "herbalist", "vigiles", "sculptor", "prefect", "nymphaeum": CatExtra.make(b, type)   # этап 5
+		"ludus", "aqua", "venus", "thermae", "pharos", "circus_fl": CatGrand.make(b, type)   # этап 5, волна 2
 		"taberna": CatShops._taberna(b)
 		"fullonica": CatShops._fullonica(b)
 		"musicians": CatShops._musicians(b)

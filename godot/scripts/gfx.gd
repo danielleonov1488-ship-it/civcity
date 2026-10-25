@@ -22,6 +22,7 @@ const HALF_FAR := 60.0                 # «Низкая»: жители даль
 
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
+static var _grand_low := false         # большие постройки этапа 5 показаны с лёгкими деталями («Низкая», CatGrand.LOW)
 static var _small := {}                # путь картинки 4096² → её копия 2048² (ImageTexture)
 static var _not_big := {}              # картинки меньше 4096² — копия не нужна
 static var _queue := []                # [материал, свойство]: картинки меняются по одной за кадр (Gfx._process), не в нажатии
@@ -243,6 +244,13 @@ static func apply(g) -> void:
 				for a in (g.visuals[id] as Dictionary).get("actors", []):
 					HandProps.drop(a)
 	small_textures(q == "verylow")
+	# большие постройки этапа 5 (CatGrand.LOW): на «Низкой» — лёгкие колонны и статуи; уровень поменяли — их облик заново
+	if low != _grand_low:
+		_grand_low = low
+		if g.city != null and g.ready_done:
+			for id in g.city.buildings:
+				if g.city.buildings[id]["type"] in CatGrand.TYPES and g.visuals.has(id):
+					g._show(g.city.buildings[id])
 	if g.gfx == null:
 		swap_all()                         # загрузка (узла Gfx ещё нет), снимки — сразу; в игре — по одной за кадр
 	Engine.max_fps = 60 if g.shot_path == "" else 0

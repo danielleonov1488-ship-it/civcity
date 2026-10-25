@@ -23,6 +23,7 @@ var roof_tex := "Roof_Tile_01"
 var full_brick := false
 var base := Transform3D.IDENTITY  # общий сдвиг/масштаб (для больших построек)
 var actors := []                # люди при деле: [положение, поворот, движение, кто]
+var free_parts := {}            # номера деталей, что землю не занимают (арки акведука: под ними ходят)
 var _top := -1.0
 
 
@@ -161,8 +162,11 @@ func front_z() -> float:
 func footprint(all := true) -> Array:
 	var out := []
 	var fz := front_z()
-	for p in parts:
+	for pi in parts.size():
+		var p: Array = parts[pi]
 		var nm: String = p[0]
+		if free_parts.has(pi):
+			continue
 		if not all and not nm.begins_with("SM_Bld_"):
 			continue
 		var skip := false
