@@ -2290,6 +2290,7 @@ func _process(dt: float) -> void:
 			c["walk"] = 0.0
 			if c.has("anim"):
 				(c["anim"] as AnimationPlayer).speed_scale = 0.0
+		_cats_wear()                           # и на паузе: выбрали вещь в карточке — сразу надета
 		return
 	var sdt := dt * speed
 	for r in residents.duplicate():
@@ -3561,6 +3562,15 @@ func _cat_kit_anim(c: Dictionary, dt: float, t: float) -> void:
 	(c["head"] as Node3D).position.y = 0.28 + body_y * 1.6
 
 
+## Вещица из «Кошачьей лавки» (Д14): купили или сменили в карточке — надеть
+func _cats_wear() -> void:
+	for c in cats:
+		var wr := String(cat_rec(c).get("wr", ""))
+		if wr != String(c.get("wr_on", "")):
+			c["wr_on"] = wr
+			cat_wear(c["n"], wr)
+
+
 func _cats_step(dt: float) -> void:
 	var want := clampi(int(city.stats["pop"]) / 14, 0, 12)
 	var own := 0                           # кошки историй (потерянная и найденные, «named») — сверх обычных
@@ -3571,12 +3581,8 @@ func _cats_step(dt: float) -> void:
 		_new_cat()                             # с именем, в сохранение (этап 6.4)
 	var night: bool = game.hour >= 21.0 or game.hour < 6.0
 	var t := AnimClock.now()
+	_cats_wear()
 	for c in cats:
-		# вещица из «Кошачьей лавки» (Д14): купили или сменили в карточке — надеть
-		var wr := String(cat_rec(c).get("wr", ""))
-		if wr != String(c.get("wr_on", "")):
-			c["wr_on"] = wr
-			cat_wear(c["n"], wr)
 		if c.has("story"):
 			# потерянная кошка истории: где спит и что делает — решает Stories (scripts/stories.gd)
 			_cat_place(c)

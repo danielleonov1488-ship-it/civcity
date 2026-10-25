@@ -444,10 +444,8 @@ static func upgrade_sets(c: City) -> Dictionary:
 	var short := []
 	var price := {}
 	if c.research.has("artisans"):
-		for id in c.buildings:
+		for id in c.upgrade_ready(false):         # список готовых — из запаса города (до следующего compute)
 			var h: Dictionary = c.buildings[id]
-			if not c.is_house(h) or c.upgrade_to(h) == "" or c.can_upgrade(h, false) != "":
-				continue
 			price[id] = c.upgrade_price(h)
 			if c.money >= float(price[id]):
 				ready.append(id)
@@ -952,14 +950,14 @@ func _light_some(t0 := -1) -> void:
 			continue
 		var b: Dictionary = c.buildings[id]
 		var h := pool.place_tinted(c.blueprint(b), c.xf(b), _gpu(want[id]))
-		lit[id] = {"h": h, "col": want[id], "tier": int(b["tier"]), "variant": int(b.get("variant", 0)), "color": int(b.get("color", 0)),
-			"pos": b["pos"], "yaw": float(b["yaw"])}
+		lit[id] = {"h": h, "col": want[id], "type": String(b["type"]), "tier": int(b["tier"]), "variant": int(b.get("variant", 0)),
+			"color": int(b.get("color", 0)), "pos": b["pos"], "yaw": float(b["yaw"])}
 		n += 1
 
 
-## Дом с тех пор не перестроили (этаж, цвет, перенос) — его оболочка всё ещё по нему
+## Дом с тех пор не перестроили (класс, этаж, цвет, перенос) — его оболочка всё ещё по нему
 static func _same_look(e: Dictionary, b: Dictionary) -> bool:
-	return int(e["tier"]) == int(b["tier"]) and int(e["variant"]) == int(b.get("variant", 0)) and int(e["color"]) == int(b.get("color", 0)) \
+	return String(e.get("type", "")) == String(b.get("type", "")) and int(e["tier"]) == int(b["tier"]) and int(e["variant"]) == int(b.get("variant", 0)) and int(e["color"]) == int(b.get("color", 0)) \
 		and e["pos"] == b["pos"] and is_equal_approx(float(e["yaw"]), float(b["yaw"]))
 
 

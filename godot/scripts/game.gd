@@ -172,7 +172,7 @@ var rot_off := Vector2.ZERO            # Z/X: середина постройк�
 var press_pl := {}                     # какую постройку показывала тень в миг нажатия (поворот зажатой мышью — от неё)
 const SNAP_R := 0.8                    # фасад (постройка серединой на курсоре) ближе этого к краю дороги — прилипает к краю
 const SNAP_STAY := 1.5                 # …и держится, пока фасад не отошёл дальше этого (без дёрганья на границе)
-const PAVE_SLOPE := 0.5                # дом и лавка на мостовой — только на почти ровном месте (иначе ступени вокруг)
+const PAVE_SLOPE := City.PAVE_SLOPE    # дом и лавка на мостовой — только на почти ровном месте (и двор при перестройке)
 var settle_marks := []                # подсветка подходящих домов
 var settle_keys := []                 # значки «ключи» над ними
 var floor_drag := false               # «Этаж» (U): левая кнопка зажата — готовые дома под курсором получают этаж
@@ -1555,6 +1555,8 @@ func _on_house_changed(b: Dictionary, up: bool) -> void:
 		_grow_anim(b)
 		clear_nature(b["pos"], 8.0, b["cells"])
 		if people:
+			people._on_building_added(b)       # двор и садик позади: сетка ходьбы, жители и кошки — прочь, пути — в обход
+			people.refresh_cells(b.get("_old_cells", PackedInt32Array()))     # и клетки прежнего облика
 			people.reclass(b)
 		held = true
 	if not held:
@@ -2614,16 +2616,7 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 
 ## Есть ли свободная мостовая (не под постройкой и не под этой же постройкой own) ближе r к точке
 func _road_free_near(p: Vector2, r: float, own: Dictionary) -> bool:
-	var c := land.cell(p)
-	var rc := int(ceil(r / Land.CELL))
-	for j in range(c.y - rc, c.y + rc + 1):
-		for i in range(c.x - rc, c.x + rc + 1):
-			if not land.inside(i, j):
-				continue
-			var k := land.idx(i, j)
-			if Land.walk_kind(land.kind[k]) and land.occ[k] == 0 and not own.has(k) and land.cell_center(i, j).distance_to(p) <= r:
-				return true
-	return false
+	return city._road_free_near_excl(p, r, own)
 
 
 ## Украшение на стену. Курсор игрока над стеной постройки (луч по деталям) — как в Town to City: прилипает там, где курсор,
@@ -3618,9 +3611,12 @@ func copy_building(b: Dictionary) -> bool:
 	var tv0: int = _copy_tv0 if copy_color else tool_variant
 	set_tool(t)
 	_copy_tv0 = tv0                           # взяли другое — выбор фасада («Случайный» или номер) вернётся
+	var v := int(b["variant"])
+	if t == "house_patrician" and v >= Defs.PAT_TOWN:
+		v = (v - Defs.PAT_TOWN) % int(Defs.B[t]["variants"])    # городской домус — только перестройкой (6.7): копия — обычный домус
 	if int(Defs.B[t].get("variants", 1)) > 1:
-		tool_variant = int(b["variant"])     # тот же фасад и у следующих копий
-	next_variant = int(b["variant"])
+		tool_variant = v                      # тот же фасад и у следующих копий
+	next_variant = v
 	place_color = int(b["color"])
 	color_lock = true
 	copy_color = true                         # цвет копии держится и для следующих (пока не взяли другое)
@@ -3924,12 +3920,14 @@ func _floor_hover(over_ui: bool) -> void:
 		_clear_highlight()
 		cover.preview_off()
 		return
-	cover.say(_upg_lines(b) if _up_tool() else _floor_lines(b))
+	# «Перестроить»: готовность дома под курсором — раз на кадр (место нового облика считать дорого)
+	var why0 := city.can_upgrade(b, false) if _up_tool() and not b.is_empty() else ""
+	cover.say(_upg_lines(b, why0) if _up_tool() else _floor_lines(b))
 	if b.is_empty():
 		floor_hover = -1
 		_clear_highlight()
 		return
-	var ok := _fl_why(b) == ""
+	var ok := (why0 == "" and city.money >= float(city.upgrade_price(b))) if _up_tool() else _fl_why(b) == ""
 	floor_hover = 1 if ok else 0
 	var key := "%s:%d:%d:%s:%s" % [tool, int(b["id"]), int(b["tier"]), ok, String(b["type"])]
 	if key != highlight_key:
@@ -3965,8 +3963,8 @@ func _floor_lines(b: Dictionary) -> Array:
 	return ["", tot, why]
 
 
-## Подпись у курсора «Перестроить»: [что станет и цена, итог мазка, почему нельзя]
-func _upg_lines(b: Dictionary) -> Array:
+## Подпись у курсора «Перестроить»: [что станет и цена, итог мазка, почему нельзя]; why0 — city.can_upgrade(b, false)
+func _upg_lines(b: Dictionary, why0: String) -> Array:
 	var tot := ""
 	if not floor_done.is_empty():
 		tot = "Этот мазок: %d %s · %s ден." % [floor_done.size(), City.plural(floor_done.size(), "дом", "дома", "домов"), hud.fmt(floor_spent)]
@@ -3974,16 +3972,16 @@ func _upg_lines(b: Dictionary) -> Array:
 		return ["", tot, "Не хватает денариев" if floor_broke else ""]
 	if floor_done.has(int(b["id"])):
 		return ["Перестроили: теперь это %s" % String(city.def(b)["name"]).to_lower(), tot, ""]
-	var why := city.can_upgrade(b)
 	var price := city.upgrade_price(b)
+	var why := why0
+	if why0 == "" and city.money < float(price):
+		why = "Не хватает денариев: перестройка стоит %s ден." % hud.fmt(price)
 	if why == "":
 		var nt := city.upgrade_to(b)
 		var cap := int(Defs.CLASSES[String(Defs.B[nt]["cls"])]["per_floor"]) * city.upgrade_tier(b)
 		var tight := " · тесновато: %d жильцов, мест %d" % [int(b["pop"]), cap] if int(b["pop"]) > cap else ""
 		return ["Дом семьи %s → %s · %s ден. · счастье станет %d%%%s" % [city._fam_name(b), String(Defs.B[nt]["name"]).to_lower(), hud.fmt(price),
 			clampi(city.upgrade_happy(b), 0, 100), tight], tot, ""]
-	if city.can_upgrade(b, false) == "":
-		why = "Не хватает денариев: перестройка стоит %s ден." % hud.fmt(price)
 	return ["", tot, why]
 
 

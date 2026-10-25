@@ -3830,6 +3830,9 @@ func _fill_info_body() -> void:
 		return
 	var b := info_b
 	if b.is_empty() or not game.city.buildings.has(b["id"]):
+		if not b.is_empty():
+			PersonCard.close()                # портрет кошки в карточке «Кошачьей лавки» — вместе с карточкой
+			info_b = {}
 		info_panel.visible = false
 		return
 	var c: City = game.city
@@ -4516,8 +4519,11 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 	var hp := c.upgrade_happy(b)
 	var res := " (запас +%d в счёт)" % (int(b["happy"]) - 100) if int(b["happy"]) > 100 else ""
 	rows.append([hp >= need, "Счастье после перестройки: %d%% — нужно от %d%%%s" % [clampi(hp, 0, 100), need, res]])
-	var room := String(c.upgrade_place(b)["err"]) == ""
-	rows.append([room, "За домом есть место" if room else "За домом нет места — мешает соседняя постройка"])
+	# место позади — когда класс изучен (до того check_place клетки не смотрит); текст — тот же, что у кнопки
+	var room := ""
+	if res_ok:
+		room = c.upgrade_room(b)
+		rows.append([room == "", "За домом есть место" if room == "" else room])
 	for e: Array in rows:
 		var r := HBoxContainer.new()
 		r.add_theme_constant_override("separation", 6)
@@ -4526,9 +4532,35 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 		r.add_child(mk)
 		r.add_child(_wrap(_label(String(e[1]), 14, false, C_INK if e[0] else C_BAD), cw - 30.0))
 		info_box.add_child(r)
-	var cap := int(Defs.CLASSES[cl1]["per_floor"]) * c.upgrade_tier(b)
+	# мешают только украшения — снести их за возврат, как в Town to City (план 6.6)
+	var dec: Array = c.upgrade_decor_blockers(b) if res_ok and room != "" else []
+	if not dec.is_empty():
+		var nms := []
+		var back := 0.0
+		for id in dec:
+			var o: Dictionary = c.buildings[id]
+			if not nms.has(String(c.def(o)["name"])):
+				nms.append(String(c.def(o)["name"]))
+			back += float(c.def(o)["cost"]) * Defs.REFUND
+		var db := Button.new()
+		db.focus_mode = Control.FOCUS_NONE
+		db.text = "Снести мешающее: %s (вернётся %s ден.)" % [", ".join(nms.map(func(x): return "«%s»" % x)), fmt(int(back))]
+		db.icon = ico("demolish", 28)
+		db.expand_icon = false
+		db.custom_minimum_size = Vector2(cw, 40)
+		db.clip_text = true
+		db.tooltip_text = "Украшения за домом уберут, половина их цены вернётся в казну — дому хватит места"
+		db.pressed.connect(func():
+			for id in dec:
+				if c.buildings.has(id):
+					c.remove(c.buildings[id])
+			_fill_info())
+		info_box.add_child(db)
+	var ntier := c.upgrade_tier(b)
+	var cap := int(Defs.CLASSES[cl1]["per_floor"]) * ntier
 	if int(b["pop"]) > cap:
-		info_box.add_child(_wrap(_label("После перестройки мест будет %d, а жильцов %d — тесновато, но никто не уедет; надстройте этаж." % [cap, int(b["pop"])], 13, false, C_SOFT), cw))
+		var more := "надстройте этаж." if ntier < Defs.floors_max(cl1, c.upgrade_variant(b)) else "выше этот дом не строят, новые семьи туда не въедут."
+		info_box.add_child(_wrap(_label("После перестройки мест будет %d, а жильцов %d — тесновато, но никто не уедет; %s" % [cap, int(b["pop"]), more], 13, false, C_SOFT), cw))
 	var price := c.upgrade_price(b)
 	var why := c.can_upgrade(b)
 	var ub := Button.new()
@@ -5733,6 +5765,20 @@ func _fly_rp(n: int) -> void:
 	tw.tween_callback(l.queue_free)
 
 
+## «Казна полна»: сколько домов готовы к перестройке и во что она встанет — «готовы 3 дома на 3 600 ден.» ("" — ни одного)
+func _upg_spend() -> String:
+	var c: City = game.city
+	if not c.research.has("artisans"):
+		return ""
+	var ups: Array = c.upgrade_ready(false)
+	if ups.is_empty():
+		return ""
+	var sum := 0
+	for id in ups:
+		sum += c.upgrade_price(c.buildings[id])
+	return "%s %d %s на %s ден." % [_plural(ups.size(), "готов", "готовы", "готовы"), ups.size(), _plural(ups.size(), "дом", "дома", "домов"), fmt(sum)]
+
+
 ## «Казна полна — доход пропадает» / «Полки полны — очки пропадают»: казна или полки у предела, а прибавка есть
 func _update_full_marks() -> void:
 	var c: City = game.city
@@ -5748,6 +5794,9 @@ func _update_full_marks() -> void:
 			+ (("\nИли изучите «%s» — полки вместят вдвое больше." % r1["name"]) if not c.research.has("research1") and c.level >= int(r1["lvl"]) else "")
 		# куда пустить денарии: игры — когда открыты, участки — когда следующий не дороже предела казны
 		var ways := "дома, этажи, лавки, памятники, украшения"
+		var upg := _upg_spend()
+		if upg != "":
+			ways += ", перестройка домов (%s)" % upg.trim_suffix(".")
 		if c.fest_open():
 			ways += ", игры в честь богов (в карточке почтовой станции)"
 		if _plot_fits():
@@ -5871,7 +5920,9 @@ func _once_tips() -> void:
 		# участки — только когда следующий по карману (дороже предела казны его не купить)
 		var land := ", участки земли за краем своей" if _plot_fits() else ""
 		var vault := " и изучите «%s»" % Defs.research("vault1")["name"] if not c.research.has("vault1") else ""
-		advisor("Казна полна", "Казна заполнена до предела — новые денарии пропадают. Пустите их в дело: новые дома и этажи, лавки, украшения и памятники%s.%s Чтобы казна вмещала больше, поднимайте уровень города%s." % [land, fest, vault])
+		var upg := _upg_spend()
+		var upg_t := (" К перестройке %s — инструмент «Перестроить» (Shift+U)." % upg.trim_suffix(".")) if upg != "" else ""
+		advisor("Казна полна", "Казна заполнена до предела — новые денарии пропадают. Пустите их в дело: новые дома и этажи, лавки, украшения и памятники%s.%s%s Чтобы казна вмещала больше, поднимайте уровень города%s." % [land, fest, upg_t, vault])
 		return
 	if full_rp.visible and not c.tips.has("full_rp"):
 		c.tips["full_rp"] = true

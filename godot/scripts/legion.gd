@@ -942,6 +942,8 @@ func sync_tiers(show := false) -> void:
 		var t := vis_tier(b_level(String(b["type"])))
 		if int(b["tier"]) != t:
 			b["tier"] = t
+			if "place_gen" in c:
+				c.place_gen += 1               # облик другой (и вход): проверки места перестройки — заново
 			if show and c.has_signal("house_changed"):
 				c.house_changed.emit(b, true)
 

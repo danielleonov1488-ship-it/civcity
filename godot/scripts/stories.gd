@@ -1050,8 +1050,11 @@ func _give(r: Dictionary, sd: Dictionary, a: Dictionary, full: bool) -> String:
 	if bool(r.get("family", false)) and String(a.get("couple", "")) != "":
 		out.append("молодые живут своим домом — семья %s" % StoryDefs.fam_gen(String(a["couple"])))
 	if int(r.get("cats", 0)) > 0:
-		(s["pets"] as Array).append({"home": int(a.get("home", -1)), "fur": int(a.get("fur", 0)), "name": String(a.get("cat_name", "")),
-			"seed": hash(fam) & 0xffff})
+		var pr := {"home": int(a.get("home", -1)), "fur": int(a.get("fur", 0)), "name": String(a.get("cat_name", "")),
+			"seed": hash(fam) & 0xffff}
+		(s["pets"] as Array).append(pr)
+		if not cat.is_empty():
+			cat["pet_rec"] = pr              # живая кошка истории — с этой записью сразу (вещицы Д14, переезд), не ждём загрузки
 		out.append("ещё одна кошка в городе")
 	return ", ".join(out) if not out.is_empty() else "радость горожан"
 

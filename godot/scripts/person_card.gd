@@ -574,6 +574,12 @@ static func _cat_items(hud: Hud, box: VBoxContainer, rec: Dictionary) -> void:
 	if left.is_empty():
 		return
 	if not c.cat_shop_open():
+		for id in c.buildings:
+			var sb: Dictionary = c.buildings[id]
+			if String(sb["type"]) == "catshop":
+				# лавка есть, но стоит — почему (а не «постройте» вторую)
+				box.add_child(hud._wrap(hud._label("«Кошачья лавка» пока не работает: %s" % c.idle_text(sb), 13, false, Hud.C_SOFT), W - 20.0))
+				return
 		var why := "Постройте «Кошачью лавку» — там можно выбрать кошке шляпку, бантик или ошейник с колокольчиком" if c.unlocked("catshop") \
 			else "Шляпки и бантики продаёт «Кошачья лавка» — её откроет исследование «%s»" % Defs.research("catshop")["name"]
 		box.add_child(hud._wrap(hud._label(why, 13, false, Hud.C_SOFT), W - 20.0))

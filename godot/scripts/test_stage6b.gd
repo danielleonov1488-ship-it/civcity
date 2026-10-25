@@ -224,8 +224,18 @@ func _new() -> void:
 			(sc as ScrollContainer).scroll_vertical = 100000      # вниз — к «Перестроить»
 		await shot("s6b_house_card.png")
 	game.hud.close_panels()
+	# --- за домом обычная мостовая: перестройке не мешает, а люди по новому двору потом не ходят ---
+	var yard := _yard_cells(hp3)
+	var f3 := City.facing(float(hp3["yaw"]))
+	var ax3 := City.axis(float(hp3["yaw"]))
+	var zb := _back(Catalog.make("house_pleb", 1, int(hp3["variant"]), int(hp3["color"])).footprint())
+	var pc: Vector2 = (hp3["pos"] as Vector2) + f3 * (zb - 0.6)
+	land.paint_line(pc - ax3 * 2.0, pc + ax3 * 2.0, 0.75, Land.Kind.PLAZA, false)
+	await frames(8)
+	var gfree := _grid_in(yard)
+	check(gfree != Vector2i(-1, -1) and not game.people.grid.is_point_solid(gfree), "за домом мостовая — по ней ходят (точка сетки %s)" % str(gfree))
 	# --- перестройка: тот же дом, семьи, цвет; счастье — как обещано ---
-	if not check(c.can_upgrade(hp3) == "", "трёхэтажный дом плебеев готов к перестройке", c.can_upgrade(hp3)):
+	if not check(c.can_upgrade(hp3) == "", "трёхэтажный дом плебеев готов к перестройке (мостовая позади не мешает)", c.can_upgrade(hp3)):
 		return
 	var promise := c.upgrade_happy(hp3)
 	var id3 := int(hp3["id"])
@@ -245,6 +255,7 @@ func _new() -> void:
 		await frames(20)
 		await shot("s6b_upgrade_before.png")
 	check(c.upgrade_house(hp3), "перестроили дом")
+	check(gfree == Vector2i(-1, -1) or game.people.grid.is_point_solid(gfree), "новый двор — сразу не для прохода (сетка ходьбы обновлена)")
 	var h3: Dictionary = c.buildings.get(id3, {})
 	check(not h3.is_empty() and String(h3["type"]) == "house_artisan" and int(h3["tier"]) == 3, "тот же дом №%d стал домом ремесленников в 3 этажа" % id3)
 	check(JSON.stringify(h3["families"]) == fam0 and int(h3["color"]) == col0, "семьи и цвет фасада — прежние")
@@ -252,6 +263,9 @@ func _new() -> void:
 	check(_raw(h3) == promise, "счастье после перестройки — как обещал прогноз (%d)" % promise, _raw(h3))
 	check(int(h3["pop"]) == 12 and c.house_cap(h3) == 9, "12 жильцов на 9 мест — тесновато, никто не выселен", [h3["pop"], c.house_cap(h3)])
 	check(c.settled(id3, 2, "Новые") == 0, "в тесный дом новая семья не въезжает")
+	c.upgrades_done([id3], 1200)
+	var tl := String(c.events[-1]["text"])
+	check(tl.contains("тесновато") and not tl.contains("надстройте"), "тесный дом уже в 3 этажа — без совета надстроить: «%s»" % tl)
 	check(c.progress_of(["count", "house_artisan"]) == art0 + 1, "условие «дома ремесленников» считает перестроенный дом")
 	var occ_ok := true
 	for k in (h3["cells"] as PackedInt32Array):
@@ -281,11 +295,21 @@ func _new() -> void:
 		wa = c.can_upgrade(ha3)
 	if check(wa == "", "дом ремесленников готов стать домусом", wa):
 		var ida := int(ha3["id"])
+		game.hud.set_overlay("happy")            # «Обзор»: оболочка дома после перестройки — по новому облику
+		await frames(8)
 		c.upgrade_house(ha3)
+		await frames(8)
+		var le: Dictionary = game.cover.lit.get(ida, {})
+		check(String(le.get("type", "")) == "house_patrician", "«Обзор»: подсветка перестроенного дома — по новому облику", le.get("type", "нет"))
+		game.hud.set_overlay("")
 		var hd: Dictionary = c.buildings[ida]
 		check(String(hd["type"]) == "house_patrician" and int(hd["variant"]) >= Defs.PAT_TOWN and int(hd["tier"]) == 3, "стал городским домусом в 3 этажа",
 			[hd["type"], hd["variant"], hd["tier"]])
 		check(c.floor_price(hd) == 0 and Defs.floors_max("patricians", int(hd["variant"])) == 3, "городскому домусу выше трёх этажей не строят")
+		game.copy_building(hd)
+		check(game.tool == "house_patrician" and int(game.next_variant) < Defs.PAT_TOWN, "«Копировать» городской домус — в руках обычный домус (городской — только перестройкой)",
+			game.next_variant)
+		game.set_tool("")
 	# --- мазок инструментом: два дома за раз, одна строка в колокольчик ---
 	var ready := c.upgrade_ready()
 	print("S6B NOTE готовы к перестройке: ", ready)
@@ -309,7 +333,180 @@ func _new() -> void:
 	_relink()
 	var h3b: Dictionary = c.buildings.get(id3, {})
 	check(not h3b.is_empty() and String(h3b["type"]) == "house_artisan" and int(h3b["pop"]) == 12, "после загрузки дом ремесленников с 12 жильцами")
+	await _decor_blocker(int(hblk["id"]))
+	await _rules()
 	await _cats(cs, houses)
+
+
+# ---------- двор нового облика ----------
+
+## Задний край следа (наименьший z в осях дома)
+func _back(rects: Array) -> float:
+	var z := 0.0
+	for r: Rect2 in rects:
+		z = minf(z, r.position.y)
+	return z
+
+
+## Клетки, которые займёт новый облик сверх нынешних (двор, садик позади)
+func _yard_cells(h: Dictionary) -> Array:
+	var old := {}
+	for k in (h["cells"] as PackedInt32Array):
+		old[k] = true
+	var out := []
+	for k in c._upgrade_cells(h):
+		if not old.has(k):
+			out.append(k)
+	return out
+
+
+## Точка сетки ходьбы (2×2 клетки), целиком внутри клеток cells и на мостовой; (-1, -1) — нет такой
+func _grid_in(cells: Array) -> Vector2i:
+	var set := {}
+	for k in cells:
+		set[k] = true
+	for k in cells:
+		var g := Vector2i((k % Land.N) / People.G, (k / Land.N) / People.G)
+		var all := true
+		for dj in People.G:
+			for di in People.G:
+				var kk := land.idx(g.x * People.G + di, g.y * People.G + dj)
+				all = all and set.has(kk) and Land.walk_kind(land.kind[kk]) and land.occ[kk] == 0
+		if all:
+			return g
+	return Vector2i(-1, -1)
+
+
+## За домом только украшение: в карточке — «Снести мешающее» с возвратом, после сноса дом помещается (план 6.6)
+func _decor_blocker(hid: int) -> void:
+	var hb: Dictionary = c.buildings.get(hid, {})
+	if hb.is_empty() or c.upgrade_to(hb) == "":
+		return
+	# фонтан — памятник (охват счастья): снести его карточка не предлагает
+	check(c.upgrade_decor_blockers(hb).is_empty(), "за домом фонтан (памятник) — сносить не предлагаем")
+	for id in c.buildings.keys():
+		if String(c.buildings[id]["type"]) == "fountain":
+			c.remove(c.buildings[id], false)
+	# вместо него — статуя вплотную за домом
+	var f := City.facing(float(hb["yaw"]))
+	var zb := _back(Catalog.make("house_pleb", 1, int(hb["variant"]), int(hb["color"])).footprint())
+	var hs := 0.0
+	for r: Rect2 in Catalog.make("statue", 0, 0, 0).footprint():
+		hs = maxf(hs, maxf(absf(r.position.y), absf(r.end.y)))
+	# на самую заднюю деталь нового облика (двор не сплошной), но не на нынешний дом
+	var rear := Rect2(0, 0, 0, 0)
+	for r: Rect2 in Catalog.make("house_artisan", 1, c.upgrade_variant(hb), int(hb["color"])).footprint():
+		if rear.size == Vector2.ZERO or r.position.y < rear.position.y:
+			rear = r
+	var sc := Vector2(rear.get_center().x, minf(rear.get_center().y, zb - 0.12 - hs))
+	c.place("statue", (hb["pos"] as Vector2) + City.axis(float(hb["yaw"])) * sc.x + f * sc.y, float(hb["yaw"]), 0, -1, true)
+	c.compute()
+	var dec: Array = c.upgrade_decor_blockers(hb)
+	check(dec.size() == 1 and String(c.buildings[dec[0]]["type"]) == "statue", "мешает только статуя — её можно снести", [dec, c.upgrade_room(hb)])
+	game.select_building(hb)
+	game.hud.open_info(hb)
+	await frames(6)
+	var btn: Button = null
+	for bt in game.hud.info_box.find_children("*", "Button", true, false):
+		if (bt as Button).text.begins_with("Снести мешающее"):
+			btn = bt
+	if check(btn != null and btn.text.contains("«Статуя воина»") and btn.text.contains("вернётся"), "карточка дома: «%s»" % (btn.text if btn else "нет кнопки")):
+		var m0 := c.money
+		btn.pressed.emit()
+		await frames(3)
+		check(dec.all(func(id): return not c.buildings.has(id)) and c.money > m0 and String(c.upgrade_place(hb)["err"]) == "",
+			"статуя снесена с возвратом — новый облик помещается", c.upgrade_place(hb)["err"])
+	game.hud.close_panels()
+
+
+## Двор нового облика — по правилам постановки игрока: не на большую дорогу, вход соседа не загородить
+## (ни крыльцо, ни всю мостовую у его двери); обычная мостовая — можно (проверено выше, у дома №3)
+func _rules() -> void:
+	var X1 := 150.0
+	var Z1 := 172.0
+	game.clear_nature(Vector2(X1 + 18.0, Z1 - 4.0), 30.0)
+	land.paint_line(Vector2(X1 - 4.0, Z1), Vector2(X1 + 40.0, Z1), 1.6, Land.Kind.ROAD, true)
+	await frames(4)
+	var hs := []
+	for k in 3:
+		var hb := place("house_pleb", Vector2(X1 + k * 12.0, Z1 - 3.0), Vector2(0.3, 0), 8, 0)
+		if not hb.is_empty():
+			hs.append(hb)
+	if not check(hs.size() == 3, "три дома для правил двора (%d)" % hs.size()):
+		return
+	var free_ok := true
+	for h in hs:
+		free_ok = free_ok and String(c.upgrade_place(h)["err"]) == ""
+	check(free_ok, "позади пусто — новый облик помещается у всех трёх", hs.map(func(h): return c.upgrade_place(h)["err"]))
+	# (а) большая дорога к станции вплотную за домом
+	var h0: Dictionary = hs[0]
+	var f := City.facing(float(h0["yaw"]))
+	var ax := City.axis(float(h0["yaw"]))
+	var zb := _back(Catalog.make("house_pleb", 1, int(h0["variant"]), int(h0["color"])).footprint())
+	var za := _back(Catalog.make("house_artisan", 1, c.upgrade_variant(h0), int(h0["color"])).footprint())
+	# поперёк — по середине самой задней детали нового облика (двор не сплошной: столбы, станок)
+	var lx := 0.0
+	for r: Rect2 in Catalog.make("house_artisan", 1, c.upgrade_variant(h0), int(h0["color"])).footprint():
+		if is_equal_approx(r.position.y, za):
+			lx = r.get_center().x
+	print("S6B NOTE задний край: плебеи %.2f, ремесленники %.2f (поперёк %.2f)" % [zb, za, lx])
+	var rc: Vector2 = (h0["pos"] as Vector2) + f * (zb - 0.95)
+	land.paint_line(rc - ax * 2.5, rc + ax * 2.5, 0.6, Land.Kind.ROAD, false)
+	var was := {}
+	for k in land.footprint_cells([Rect2(-3.2, zb - 1.7, 6.4, 1.6)], h0["pos"], float(h0["yaw"])):
+		if Land.walk_kind(land.kind[k]) and land.occ[k] == 0:
+			was[k] = land.base_kind[k]
+			land.base_kind[k] = land.kind[k]
+	land.gen += 1                                # правка клеток мимо Land — проверки места из запаса не годятся
+	var r0 := c.upgrade_room(h0)
+	check(r0.contains("большая дорога"), "за домом большая дорога — не помещается: «%s»" % r0)
+	for k in was:
+		land.base_kind[k] = was[k]
+	land.gen += 1
+	check(c.upgrade_room(h0) == "", "та же мостовая, но не большая дорога — помещается", c.upgrade_room(h0))
+	# (б) крыльцо лавки позади: новый двор встал бы прямо на её вход
+	var h1: Dictionary = hs[1]
+	var sbp := Catalog.make("bakery", 0, 0, 0)
+	var sfront := -INF
+	for r: Rect2 in sbp.footprint():
+		sfront = maxf(sfront, r.end.y)
+	var gap := sbp.door.z - sfront
+	var d := maxf(0.5, zb - za - gap + 0.12)
+	if d < zb - za + 0.35:
+		var tgt: Vector2 = (h1["pos"] as Vector2) + ax * lx + f * (zb - d)
+		var sp := tgt - ax * sbp.door.x - f * sbp.door.z
+		var shop := c.place("bakery", sp, float(h1["yaw"]), 0, -1, true)
+		var r1 := c.upgrade_room(h1)
+		check(not shop.is_empty() and r1.contains("вход соседней"), "вход лавки в %.2f м за домом — не помещается: «%s»" % [d, r1])
+		if not shop.is_empty():
+			c.remove(shop, false)
+	else:
+		print("S6B NOTE лавка вплотную не встаёт: зазор %.2f, глубже на %.2f" % [gap, zb - za])
+	# (в) переулок позади, лавка дверью к нему: новый двор закрыл бы ей всю мостовую у входа
+	var h2: Dictionary = hs[2]
+	var lane := _yard_cells(h2)
+	var kinds := {}
+	for k in lane:
+		kinds[k] = land.kind[k]
+		land.kind[k] = Land.Kind.ROAD
+	land.gen += 1
+	var tgt2: Vector2 = (h2["pos"] as Vector2) + ax * lx + f * (za - 0.6)
+	var sp2 := tgt2 - ax * sbp.door.x - f * sbp.door.z
+	var shop2 := c.place("bakery", sp2, float(h2["yaw"]), 0, -1, true)
+	c.compute()
+	check(not shop2.is_empty() and bool(shop2.get("road", false)), "лавка у переулка — у дороги")
+	var r2 := c.upgrade_room(h2)
+	check(r2.contains("вход соседней"), "переулок — единственная мостовая у входа лавки: не помещается «%s»" % r2)
+	c.compute()
+	check(bool(shop2.get("road", false)), "лавка у переулка так и работает у дороги")
+	if not shop2.is_empty():
+		c.remove(shop2, false)
+	for k in kinds:
+		land.kind[k] = kinds[k]
+	land.gen += 1
+	for h in hs:
+		c.remove(c.buildings[int(h["id"])], false)
+	c.compute()
 
 
 # ---------- кошки и «Кошачья лавка» ----------
@@ -491,17 +688,55 @@ func _cats(cs: Dictionary, houses: Array) -> void:
 	for i in mini(recs.size(), c.cats.size()):
 		same = same and JSON.stringify(c.cats[i].get("it", [])) == JSON.stringify(sd["cats"][i].get("it", []))
 	check(same, "после загрузки у кошек те же вещи")
-	# без лавки игрок вещь не купит
-	c.remove(c.buildings[int(cs["id"])], false)
+	# без лавки игрок вещь не купит; карточку лавки сносом закрыли — живой портрет кошки уходит с ней
+	var csl: Dictionary = c.buildings[int(cs["id"])]
+	game.select_building(csl)
+	game.hud.open_info(csl)
+	await frames(6)
+	var had_vp: bool = PersonCard._vp != null
+	c.remove(csl, false)
+	game.hud._fill_info()
+	await frames(2)
+	check(had_vp and PersonCard._vp == null and game.hud.info_b.is_empty() and not game.hud.info_panel.visible,
+		"лавку снесли при открытой карточке — портрет кошки больше не рисуется", [had_vp, PersonCard._vp])
 	var rec2: Dictionary = c.cats[0]
 	var left2: Array = Defs.CAT_ITEM_ORDER.filter(func(x): return not (rec2.get("it", []) as Array).has(x))
 	check(left2.is_empty() or not c.buy_cat_item(rec2, String(left2[0])), "лавки нет — выбрать кошке вещь нельзя")
+	# лавка есть, но стоит (нет дороги) — карточка кошки говорит почему, а не «постройте»
+	var idle := {}
+	for p in [Vector2(140.0, 150.0), Vector2(236.0, 120.0), Vector2(140.0, 236.0)]:
+		idle = c.place("catshop", p, 0.0, 0, -1, true)
+		c.compute()
+		if not bool(idle.get("active", true)):
+			break
+		c.remove(idle, false)
+		idle = {}
+	if not ct1.is_empty() and not idle.is_empty():
+		game.select_person({"cat": ct1})
+		game.hud.open_person({"cat": ct1})
+		await frames(6)
+		var tx := _labels(game.hud.info_box)
+		check(tx.contains("«Кошачья лавка» пока не работает") and not tx.contains("Постройте «Кошачью лавку»"), "лавка без дороги — в карточке кошки почему она стоит")
+		game.hud.close_panels()
+		c.remove(idle, false)
 
 
 # ---------- город владельца ----------
 
 func _owner() -> void:
 	c.compute()
+	# готовность к перестройке: после стройки — полный проход; часовой пересчёт города место не трогает — из запаса
+	var t0 := Time.get_ticks_usec()
+	c.upgrade_ready(false)
+	var cold := (Time.get_ticks_usec() - t0) / 1000.0
+	t0 = Time.get_ticks_usec()
+	c.compute(true)
+	var tc := (Time.get_ticks_usec() - t0) / 1000.0
+	t0 = Time.get_ticks_usec()
+	var n_ready: int = c.upgrade_ready(false).size()
+	var warm := (Time.get_ticks_usec() - t0) / 1000.0
+	print("S6B NOTE готовность к перестройке (%d домов): после стройки %.1f мс, после часового пересчёта %.1f мс (сам пересчёт %.1f мс)" % [n_ready, cold, warm, tc])
+	check(warm < 15.0, "часовой пересчёт: готовность к перестройке — из запаса, быстро (%.1f мс)" % warm)
 	var plebs := 0
 	var fit_a := 0
 	var arts := 0

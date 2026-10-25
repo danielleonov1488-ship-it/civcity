@@ -102,6 +102,7 @@ func is_house(b: Dictionary) -> bool:
 
 const APRON_KINDS := ["house", "shop", "rp", "store", "military"]
 const KERB_TYPES := ["house_patrician", "temple", "pantheon"]
+const PAVE_SLOPE := 0.5                # дом и лавка на мостовой — только на почти ровном месте (иначе ступени вокруг)
 
 
 ## 1 — глина вокруг (land.wear), 2 — каменный бордюр (его ставит game._show), 0 — ничего (украшения, поля, площади)
@@ -261,7 +262,7 @@ func house_cap(b: Dictionary) -> int:
 # ---------- стройка ----------
 
 ## Можно ли поставить; возвращает {"err": текст или "", "cells": клетки, "y": высота}
-func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 0, ignore_id := -1) -> Dictionary:
+func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 0, ignore_id := -1, pre := PackedInt32Array()) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	var res := {"err": "", "cells": PackedInt32Array(), "y": 0.0}
 	if not unlocked(type):
@@ -287,7 +288,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	if d.get("seg", false) and seg_thin:
 		# звено забора занимает узкую полосу посередине: концы свободны — соседнее звено (и угол) встаёт вплотную
 		rects = [Rect2(-0.82, -0.14, 1.64, 0.28)]
-	var cells := land.footprint_cells(rects, pos, yaw)
+	var cells := pre if not pre.is_empty() else land.footprint_cells(rects, pos, yaw)     # pre — след уже посчитан (перестройка)
 	if cells.is_empty():
 		cells = land.footprint_cells([Rect2(-0.4, -0.4, 0.8, 0.8)], pos, yaw)
 	res["cells"] = cells
@@ -349,6 +350,7 @@ func _road_near(p: Vector2, r: float, own_cells: PackedInt32Array) -> bool:
 
 ## Поставить постройку (деньги списываются); возвращает запись. free — даром и без проверок (готовый город)
 func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false) -> Dictionary:
+	place_gen += 1
 	var d: Dictionary = Defs.B[type]
 	if color < 0:
 		color = pick_color(pos)
@@ -407,6 +409,7 @@ func pick_color(pos: Vector2) -> int:
 func remove(b: Dictionary, refund := true, quiet := false) -> void:
 	if def(b).get("fixed", false):
 		return
+	place_gen += 1
 	if refund:
 		money += float(def(b)["cost"]) * Defs.REFUND
 		flow("build", float(def(b)["cost"]) * Defs.REFUND)
@@ -559,13 +562,16 @@ func hired_of(b: Dictionary) -> int:
 
 func set_hire(b: Dictionary, n: int) -> void:
 	b["hire"] = clampi(n, 0, job_max(b))
-	compute()
+	compute(true)
 	changed.emit()
 
 
 # ---------- расчёт: обслуживание, счастье ----------
 
-func compute() -> void:
+## same_place — постройки и земля те же (час игры, заселение, налоги, наём, игры): проверки места перестройки — из запаса
+func compute(same_place := false) -> void:
+	if not same_place:
+		place_gen += 1
 	var houses := []
 	var residents := {}
 	var jobs := {}
@@ -1344,7 +1350,7 @@ func set_tax(cls: String, v: int) -> void:
 		taxes.erase(cls)
 	else:
 		taxes[cls] = v
-	compute()
+	compute(true)
 	changed.emit()
 
 
@@ -1428,7 +1434,7 @@ func hist_series(key: String, n := 48) -> Array:
 
 ## Раз в игровой час: налоги, очки исследований, рост домов, переселенцы, уровень города
 func sim_day() -> void:
-	compute()
+	compute(true)
 	var income := 0.0
 	var upkeep := 0.0
 	var wages := 0.0
@@ -1660,15 +1666,117 @@ func upgrade_missing(b: Dictionary) -> Array:
 	return out
 
 
-## Встанет ли новый облик на место дома: {err, cells, y} (свои клетки не в счёт; дверь — там же, у той же дороги)
+var _upg_cells := {}                   # id дома → [облик и место, клетки нового облика]: след модели не считать заново
+var _upg_fit := {}                     # id дома → [облик, место и счётчики правок, итог upgrade_place]
+var place_gen := 0                     # правки построек (поставили, снесли, перестроили, пересчёт после действия игрока)
+
+## Клетки нового облика дома (из запаса, пока облик и место те же)
+func _upgrade_cells(b: Dictionary) -> PackedInt32Array:
+	var nt := upgrade_to(b)
+	var nv := upgrade_variant(b)
+	var col := int(b.get("color", 0))
+	var key := "%s:%d:%d:%s:%s" % [nt, nv, col, b["pos"], b["yaw"]]
+	var e: Array = _upg_cells.get(int(b["id"]), [])
+	if e.size() == 2 and String(e[0]) == key:
+		return e[1]
+	var cells := land.footprint_cells(Catalog.make(nt, 1, nv, col).footprint(), b["pos"], float(b["yaw"]))
+	_upg_cells[int(b["id"])] = [key, cells]
+	return cells
+
+
+## Встанет ли новый облик на место дома: {err, cells, y} (свои клетки не в счёт; дверь — там же, у той же дороги).
+## Новые клетки (двор, садик позади) — по правилам постановки игрока (_upgrade_rules)
 func upgrade_place(b: Dictionary) -> Dictionary:
-	return check_place(upgrade_to(b), b["pos"], float(b["yaw"]), upgrade_variant(b), int(b.get("color", 0)), int(b["id"]))
+	# итог — из запаса, пока ни постройки, ни земля не менялись (часовой пересчёт города место не трогает)
+	var nt := upgrade_to(b)
+	var key := "%s:%d:%d:%s:%s:%d:%d:%s" % [nt, upgrade_variant(b), int(b.get("color", 0)), b["pos"], b["yaw"], place_gen, land.gen, unlocked(nt)]
+	var e: Array = _upg_fit.get(int(b["id"]), [])
+	if e.size() == 2 and String(e[0]) == key:
+		return e[1]
+	var res := check_place(nt, b["pos"], float(b["yaw"]), upgrade_variant(b), int(b.get("color", 0)), int(b["id"]), _upgrade_cells(b))
+	if String(res["err"]) == "":
+		res["err"] = _upgrade_rules(b, res["cells"])
+	_upg_fit[int(b["id"])] = [key, res]
+	return res
+
+
+## Новые клетки перестройки — как постановка игрока (game._free_checks): не на большую дорогу к станции, вход соседа
+## не загородить (ни его крыльцо, ни всю мостовую у его двери), мостовая под двором — почти ровная. "" — можно
+func _upgrade_rules(h: Dictionary, cells: PackedInt32Array) -> String:
+	var old := {}
+	for k in (h["cells"] as PackedInt32Array):
+		old[k] = true
+	var mine := {}
+	var paved := 0
+	var lo := float(h["y"])
+	var hi := lo
+	for k in cells:
+		if old.has(k):
+			continue
+		mine[k] = true
+		if Land.walk_kind(land.base_kind[k]):
+			return "За домом большая дорога — по ней ездят повозки"
+		if Land.walk_kind(land.kind[k]):
+			paved += 1
+			lo = minf(lo, land.hq(k))
+			hi = maxf(hi, land.hq(k))
+	if mine.is_empty():
+		return ""
+	if paved * 2 >= mine.size() and hi - lo > PAVE_SLOPE:
+		return "Мостовая за домом слишком наклонная"
+	var col := int(h.get("color", 0))
+	var rects: Array = Catalog.make(upgrade_to(h), 1, upgrade_variant(h), col).footprint()
+	var rects0: Array = Catalog.make(String(h["type"]), 1, int(h.get("variant", 0)), col).footprint()
+	var hp: Vector2 = h["pos"]
+	var ax := axis(float(h["yaw"]))
+	var f := facing(float(h["yaw"]))
+	for id in buildings:
+		if id == h["id"]:
+			continue
+		var o: Dictionary = buildings[id]
+		if (o["pos"] as Vector2).distance_squared_to(hp) > 225.0:
+			continue
+		var od := def(o)
+		if od["kind"] == "decor" or od["kind"] == "farm":
+			continue
+		var odp := door_point(o)
+		var rel := odp - hp
+		var lp := Vector2(rel.dot(ax), rel.dot(f))
+		if not _in_rects(rects, lp, 1.9):
+			continue                               # вход далеко от нового облика — ему не мешает
+		if _in_rects(rects, lp, 0.4) and not _in_rects(rects0, lp, 0.4):
+			return "Так загородится вход соседней постройки"
+		# сосед у дороги, а новый двор закроет ему всю мостовую у входа
+		if od["kind"] != "center" and bool(o.get("road", false)) and not _road_free_near_excl(odp, 1.7, mine) \
+				and _road_free_near_excl(odp, 1.7, {}):
+			return "Так загородится вход соседней постройки"
+	return ""
+
+
+static func _in_rects(rects: Array, p: Vector2, grow: float) -> bool:
+	for r: Rect2 in rects:
+		if r.grow(grow).has_point(p):
+			return true
+	return false
+
+
+## Есть ли свободная мостовая (не под постройкой и не среди клеток excl) ближе r к точке
+func _road_free_near_excl(p: Vector2, r: float, excl: Dictionary) -> bool:
+	var c := land.cell(p)
+	var rc := int(ceil(r / Land.CELL))
+	for j in range(c.y - rc, c.y + rc + 1):
+		for i in range(c.x - rc, c.x + rc + 1):
+			if not land.inside(i, j):
+				continue
+			var k := land.idx(i, j)
+			if Land.walk_kind(land.kind[k]) and land.occ[k] == 0 and not excl.has(k) and land.cell_center(i, j).distance_to(p) <= r:
+				return true
+	return false
 
 
 ## Что мешает новому облику встать (для подсказки): «дом за ним», «Фонтан» — постройка на нужных клетках
 func _upgrade_blocker(b: Dictionary) -> String:
-	var bp := Catalog.make(upgrade_to(b), 1, upgrade_variant(b), int(b.get("color", 0)))
-	for k in land.footprint_cells(bp.footprint(), b["pos"], float(b["yaw"])):
+	for k in _upgrade_cells(b):
 		var o := land.occ[k]
 		if o < 0:
 			return "арка у въезда"
@@ -1676,6 +1784,34 @@ func _upgrade_blocker(b: Dictionary) -> String:
 			var ob: Dictionary = buildings[o]
 			return "дом за ним" if is_house(ob) else "«%s»" % String(def(ob)["name"])
 	return ""
+
+
+## Украшения, которые одни мешают новому облику (их можно снести за возврат, как в Town to City); [] — мешает
+## что-то другое (дом, лавка, арка) или ничего
+func upgrade_decor_blockers(b: Dictionary) -> Array:
+	var ids := []
+	for k in _upgrade_cells(b):
+		var o := land.occ[k]
+		if o < 0:
+			return []
+		if o != 0 and o != int(b["id"]) and buildings.has(o):
+			if String(def(buildings[o])["kind"]) != "decor":
+				return []
+			if not ids.has(o):
+				ids.append(o)
+	return ids
+
+
+## Место для нового облика: "" — помещается; иначе — почему нет (подпись у курсора, кнопка и галочка в карточке)
+func upgrade_room(b: Dictionary) -> String:
+	var err := String(upgrade_place(b)["err"])
+	if err == "":
+		return ""
+	if err == "Место занято":
+		var who := _upgrade_blocker(b)
+		return "Не помещается: %s дому нужно больше места сзади%s" % [{"artisans": "новому", "patricians": "городскому"}.get(String(Defs.B[upgrade_to(b)]["cls"]), ""),
+			(" — мешает " + who) if who != "" else ""]
+	return "Не помещается: " + err.to_lower()
 
 
 ## "" — дом можно перестроить; иначе — почему нельзя (подпись у курсора, кнопка в карточке).
@@ -1702,12 +1838,9 @@ func can_upgrade(b: Dictionary, check_money := true) -> String:
 	var hp := upgrade_happy(h)
 	if hp < need:
 		return "Счастье после перестройки было бы %d%% — нужно от %d%% (украшения и лавки рядом его поднимут)" % [clampi(hp, 0, 100), need]
-	var chk := upgrade_place(h)
-	if String(chk["err"]) != "":
-		var who := _upgrade_blocker(h)
-		if String(chk["err"]) == "Место занято":
-			return "Не помещается: %s дому нужно больше места сзади%s" % [{"artisans": "новому", "patricians": "городскому"}.get(cl1, ""), (" — мешает " + who) if who != "" else ""]
-		return "Не помещается: %s" % String(chk["err"]).to_lower()
+	var room := upgrade_room(h)
+	if room != "":
+		return room
 	if check_money and money < float(upgrade_price(h)):
 		return "Не хватает денариев"
 	return ""
@@ -1723,9 +1856,10 @@ func upgrade_ready(check_money := true) -> Array:
 			if is_house(b) and upgrade_to(b) != "" and can_upgrade(b, false) == "":
 				all.append(id)
 		_upg_ready = all
+	var live := (_upg_ready as Array).filter(func(id): return buildings.has(id))     # снесли без пересчёта — не в счёт
 	if not check_money:
-		return (_upg_ready as Array).duplicate()
-	return (_upg_ready as Array).filter(func(id): return buildings.has(id) and money >= float(upgrade_price(buildings[id])))
+		return live
+	return live.filter(func(id): return money >= float(upgrade_price(buildings[id])))
 
 
 ## Перестроить дом: деньги списываются, дом тот же (номер, семьи, цвет, этажи — сколько влезет), класс — следующий.
@@ -1743,13 +1877,14 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 	money -= float(price)
 	flow("build", -float(price))
 	_apron_remove(h)
-	for k in (h["cells"] as PackedInt32Array):
+	var old: PackedInt32Array = h["cells"]
+	for k in old:
 		if land.occ[k] == int(h["id"]):
 			land.occ[k] = 0
 	h["type"] = nt
 	h["variant"] = nv
 	h["tier"] = nf
-	h["cells"] = chk["cells"]
+	h["cells"] = (chk["cells"] as PackedInt32Array).duplicate()     # свой список: запас следов (_upg_cells) не делим
 	var cells: PackedInt32Array = h["cells"]
 	land.flatten_cells(cells, h["y"])          # высота дома прежняя: двор позади подравнивается к ней
 	land.blend_ring(cells, h["y"], 8)
@@ -1762,8 +1897,10 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 		_apron_refresh(h)
 	compute()
 	h["_upg"] = true                           # game: леса и рабочие, жители — в новом классе
+	h["_old_cells"] = old                      # game → People: сетка ходьбы и под прежним обликом
 	house_changed.emit(h, true)
 	h.erase("_upg")
+	h.erase("_old_cells")
 	if not quiet:
 		# только в колокольчик (без всплывашки): перестроили сами, щелчком в карточке
 		_quiet("Дом семьи %s перестроили: теперь это %s" % [_fam_name(h), String(Defs.B[nt]["name"]).to_lower()], String(Defs.CLASSES[String(Defs.B[nt]["cls"])]["icon"]))
@@ -1778,12 +1915,18 @@ func upgrades_done(ids: Array, spent: int) -> void:
 		return
 	var names := []
 	var tight := 0
+	var grow := 0                              # из тесных — сколько ещё можно надстроить
 	for id in ids:
 		if buildings.has(id):
-			names.append(_fam_name(buildings[id]))
-			if int(buildings[id]["pop"]) > house_cap(buildings[id]):
+			var bb: Dictionary = buildings[id]
+			names.append(_fam_name(bb))
+			if int(bb["pop"]) > house_cap(bb):
 				tight += 1
-	var tail := " Где жильцов больше, чем мест, — тесновато, но никто не уехал: надстройте этаж." if tight > 0 else ""
+				if int(bb["tier"]) < Defs.floors_max(String(def(bb)["cls"]), int(bb.get("variant", 0))):
+					grow += 1
+	var tail := ""
+	if tight > 0:
+		tail = " Где жильцов больше, чем мест, — тесновато, но никто не уехал" + (": надстройте этаж." if grow > 0 else "; новые семьи туда не въедут, пока не станет свободнее.")
 	if ids.size() == 1 and buildings.has(ids[0]):
 		_quiet("Дом семьи %s перестроили за %d ден.: теперь это %s.%s" % [names[0], spent, String(def(buildings[ids[0]])["name"]).to_lower(), tail], "housing")
 		return
@@ -2156,7 +2299,7 @@ func settled(id: int, n: int, name := "") -> int:
 		fam["m"] = pm.slice(0, n)          # члены семьи с именами (Residents); кто вошёл — уточнит People при входе
 	(b["families"] as Array).append(fam)
 	b["pop"] = int(b["pop"]) + n
-	compute()
+	compute(true)
 	_check_goals()
 	house_changed.emit(b, false)
 	changed.emit()
@@ -2459,7 +2602,7 @@ func festival() -> bool:
 	fest_left = int(F["hours"])
 	fest_cd = int(F["cd"])
 	_quiet("Игры в честь богов! %d ч счастье всех домов +%d%%, повозка с семьями ходит чаще" % [int(F["hours"]), int(F["happy"])], "laurels")
-	compute()
+	compute(true)
 	festival_changed.emit(true)
 	_check_goals()
 	changed.emit()
@@ -2474,7 +2617,7 @@ func _fest_hour() -> void:
 	fest_left -= 1
 	if fest_left == 0:
 		_quiet("Игры в честь богов окончены. Новые можно устроить через %d ч — в карточке почтовой станции" % fest_cd, "laurels")
-		compute()
+		compute(true)
 		festival_changed.emit(false)
 
 
