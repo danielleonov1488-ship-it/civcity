@@ -1516,10 +1516,11 @@ func _overlay_panel() -> void:
 	v.add_child(top)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
-	for m: String in ["happy"] + Defs.NEED_ORDER:
+	for m: String in ["happy"] + Defs.NEED_ORDER + ["water"]:
 		var mm := m
-		var icon: String = "happy" if m == "happy" else Defs.NEEDS[m]["icon"]
-		var tip: String = "Счастье каждого дома" if m == "happy" else "%s: где есть, а где нет" % Defs.NEEDS[m]["name"]
+		var icon: String = "happy" if m == "happy" else ("water" if m == "water" else Defs.NEEDS[m]["icon"])
+		var tip: String = "Счастье каждого дома" if m == "happy" else ("Вода: у каких домов фонтан рядом, а у каких нет" if m == "water" \
+			else "%s: где есть, а где нет" % Defs.NEEDS[m]["name"])
 		var b := _round(icon, tip, 46, func(): set_overlay(mm))
 		row.add_child(b)
 		_ov_btns[m] = b
@@ -1563,6 +1564,16 @@ func fill_overlay() -> void:
 		_ov_row(_face("face_mid", 24), "%d–%d%% — так себе" % [Cover.HAPPY_BAD, Cover.HAPPY_GOOD - 1], n[1])
 		_ov_row(_face("face_bad", 24), "Меньше %d%% — плохо" % Cover.HAPPY_BAD, n[2])
 		_ov_legend.add_child(_wrap(_label("Щёлкните по дому — в карточке видно, из чего его счастье. Пустые дома не подсвечены.", 14, false, C_SOFT), 340))
+	elif overlay == "water":
+		_ov_title.text = "Вода"
+		_ov_row(_swatch(Cover.GREEN), "Фонтан рядом: +%d%% счастья" % int(Defs.B["fountain"]["bonus"]), n[0])
+		_ov_row(_swatch(Cover.RED), "Фонтана рядом нет", n[2])
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 8)
+		r.add_child(_icon("water", 24))
+		r.add_child(_wrap(_label("Значки над крышами — где стоят фонтаны", 15, false, C_INK), 300))
+		_ov_legend.add_child(r)
+		_ov_legend.add_child(_wrap(_label("Фонтан поит дома вокруг себя. Для «Посёлка» нужен хотя бы один. Пустые дома не подсвечены.", 14, false, C_SOFT), 340))
 	else:
 		var nd: Dictionary = Defs.NEEDS[overlay]
 		_ov_title.text = nd["name"]
@@ -2512,6 +2523,16 @@ func _update_pointer() -> void:
 			return
 	if ui_level() < 3:
 		return
+	# идущая история горожан: стрелка — к тому, чего не хватает по её шагу (лавка, склад, «Этаж», «Обзор → Вода»)
+	var sto = game.get("stories")
+	if sto != null:
+		var sp: Dictionary = sto.pointer_do()
+		if not sp.is_empty():
+			pointer_target = _do_target(sp)
+			if game.tool != "" and Defs.B.has(game.tool):
+				pointer_target = null
+			pointer_text.text = String(sp.get("tip", ""))
+			return
 	var goals: Array = game.city.active_goals(1)
 	if goals.is_empty():
 		return
@@ -2548,7 +2569,13 @@ func need_do(p: Array, tool := "") -> Dictionary:
 	var c: City = game.city
 	var arg = p[1] if p.size() > 1 else null
 	match String(p[0]):
-		"count", "near":
+		"near":
+			# фонтан у домов: фонтана ещё нет — поставить; есть — «Обзор → Вода»: где вода есть, а где нет
+			if String(arg) == "fountain" and c.count_type("fountain") > 0 and tool == "":
+				return {"kind": "view", "layer": "water", "tip": "Обзор",
+					"say": "«Обзор» (глаз вверху справа) → «Вода»: красные дома — без воды; поставьте фонтан посреди них"}
+			return _do_type(tool if tool != "" else String(arg))
+		"count":
 			return _do_type(tool if tool != "" else String(arg))
 		"houses":
 			return _do_type(tool if tool != "" else "house_pleb")
@@ -4660,7 +4687,7 @@ func _fill_tasks() -> void:
 	var c: City = game.city
 	var goals := c.active_goals(3)
 	var sto = game.get("stories")
-	var story: bool = sto != null and (not sto.row_info().is_empty() or sto.journal_any())   # история горожан — золотая строка сверху
+	var story: bool = sto != null and (not sto.row_info().is_empty() or sto.journal_any() or not sto.orders.row_info().is_empty())   # история горожан — золотая строка сверху, заказ старосты — под ней
 	tasks_panel.visible = (not goals.is_empty() or story) and game.mode != "demo" and ui_level() >= 3
 	if _fold_city != c:
 		_fold_city = c                           # другой город (новая игра, загрузка) — счёт «✓» с нуля
@@ -4742,8 +4769,9 @@ func _fill_tasks_folded(goals: Array) -> void:
 			_fold_glow_until = Time.get_ticks_msec() + 2000    # новое — мягко светится 2 с
 	_fold_badge_n = done
 	var sto = game.get("stories")
-	if sto != null and not sto.row_info().is_empty():
-		var dot := GoldDot.new()                 # история горожан ждёт
+	if sto != null and (not sto.row_info().is_empty() or bool(sto.orders.row_info().get("waiting", false))):
+		var dot := GoldDot.new()                 # история горожан ждёт (или заказ старосты, за который ещё не взялись)
+		dot.name = "story_dot"
 		dot.custom_minimum_size = Vector2(14, 14)
 		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -4839,6 +4867,7 @@ func _fill_tasks_body(goals: Array) -> void:
 	tasks_box.add_child(_divider(14))
 	if sto != null:
 		sto.ui.task_row(tasks_box)           # история горожан — золотая строка наверху
+		sto.ui.order_row(tasks_box)          # заказ старосты — под ней (сам не открывается)
 	var first := true
 	for g in goals:
 		var prog := mini(c.goal_progress(g["id"]), int(g["need"]))

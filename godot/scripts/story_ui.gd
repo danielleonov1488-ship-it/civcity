@@ -364,13 +364,25 @@ func track() -> void:
 
 # ---------- золотая строка в «Просьбах горожан» ----------
 
-## Строка истории наверху свитка: медальон, название, что делать, кнопки (Stories.row_info)
+## Строка истории наверху свитка: медальон, название, что делать, строки цели с ✓, кнопки (Stories.row_info)
 func task_row(box: Control) -> void:
-	var info: Dictionary = st.row_info()
+	_row(box, st.row_info(), true, st.part_click)
+
+
+## Строка заказа старосты (под строкой истории): та же раскладка, но не золотая — это не история, а просьба;
+## заказ ждёт, пока за него возьмутся, — маленькая золотая точка у медальона
+func order_row(box: Control) -> void:
+	_row(box, st.orders.row_info(), false, st.orders.part_click)
+
+
+func _row(box: Control, info: Dictionary, gold: bool, on_part: Callable) -> void:
 	if info.is_empty():
 		return
 	var pc := PanelContainer.new()
-	var sb: StyleBox = hud._box_pill(10, 6, "g_btn_on")
+	pc.name = "story_row" if gold else "order_row"
+	var sb: StyleBox = hud._box_pill(10, 6, "g_btn_on") if gold else hud._box_pill(10, 6)
+	if not gold:
+		(sb as StyleBoxTexture).modulate_color = Color(1, 1, 1, 0.55)
 	pc.add_theme_stylebox_override("panel", sb)
 	pc.mouse_filter = Control.MOUSE_FILTER_PASS
 	pc.tooltip_text = String(info.get("tip", ""))
@@ -387,6 +399,13 @@ func task_row(box: Control) -> void:
 	var ic: TextureRect = hud._icon(String(info.get("icon", "scroll")), 28, hud.C_INK)
 	ic.position = Vector2(8, 8)
 	med.add_child(ic)
+	if bool(info.get("waiting", false)):
+		var dot: Control = Hud.GoldDot.new()        # заказ ждёт, пока за него возьмутся
+		dot.name = "waiting"
+		dot.size = Vector2(13, 13)
+		dot.position = Vector2(31, 0)
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		med.add_child(dot)
 	h.add_child(med)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 2)
@@ -397,6 +416,41 @@ func task_row(box: Control) -> void:
 	v.add_child(t)
 	var sub: Label = hud._wrap(hud._label(String(info.get("text", "")), 13, true, hud.C_SOFT), 222)
 	v.add_child(sub)
+	# строки цели: «✓ Склад рядом» — сделано; «· Мясная лавка: нет склада рядом» — щёлкнуть: сразу к делу
+	var parts: Array = info.get("parts", [])
+	if not parts.is_empty():
+		var pv := VBoxContainer.new()
+		pv.name = "parts"
+		pv.add_theme_constant_override("separation", 0)
+		pv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		for p: Dictionary in parts:
+			var ok := bool(p.get("ok", false))
+			var b := Button.new()
+			b.text = ("✓ " if ok else "· ") + String(p.get("text", ""))
+			b.flat = true
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			b.custom_minimum_size = Vector2(222, 0)
+			b.focus_mode = Control.FOCUS_NONE
+			b.add_theme_font_override("font", hud.font_bold)
+			b.add_theme_font_size_override("font_size", 13)
+			var col: Color = Hud.C_GOOD if ok else Hud.C_INK
+			for s in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
+				b.add_theme_color_override(s, col)
+			if not ok:
+				b.add_theme_color_override("font_hover_color", Hud.C_GOLD.darkened(0.25))
+			var e := StyleBoxEmpty.new()
+			for s in ["normal", "hover", "pressed", "focus", "disabled"]:
+				b.add_theme_stylebox_override(s, e)
+			var can := not ok and not (p.get("do", {}) as Dictionary).is_empty()
+			b.disabled = not can
+			b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if can else Control.CURSOR_ARROW
+			if can:
+				b.tooltip_text = String((p["do"] as Dictionary).get("say", "Щёлкните — и нужное окажется в руках"))
+				var pp := p
+				b.pressed.connect(func(): on_part.call(pp))
+			pv.add_child(b)
+		v.add_child(pv)
 	var btns: Array = info.get("buttons", [])
 	if not btns.is_empty():
 		var row := HBoxContainer.new()
@@ -457,8 +511,15 @@ func fill_journal() -> void:
 		var e: Dictionary = S["done"][id]
 		var who := StoryDefs.fill(String(s.get("who", "")), e)
 		var how := String(e.get("text", ""))
+		# что выбрали (дед остался или ушёл к соседям) и чему история научила
+		var ch := String((e.get("flags", {}) as Dictionary).get("choice", ""))
+		var jl := String((s.get("journal", {}) as Dictionary).get(ch, ""))
+		if jl != "":
+			how = jl + " " + how
+		if s.has("lesson"):
+			how += "\nУрок: " + String(s["lesson"]) + "."
 		var sid := String(id)
-		list.add_child(_entry(String(s.get("icon", "scroll")), String(s["title"]), "%s. %s" % [who, how] if who != "" else how,
+		list.add_child(_entry(String(s.get("icon", "scroll")), StoryDefs.title_of(s, e), "%s. %s" % [who, how] if who != "" else how,
 			"день %d" % (int(e.get("day", 0)) + 1), func(): st.replay(sid)))
 	if not any:
 		var l: Label = hud._wrap(hud._label("Пока ни одной истории. Горожане иногда просят градоначальника о помощи — над домом просящего тогда появляется свиток, а наверху «Просьб горожан» — золотая строка.", 16, false, hud.C_SOFT), 540)

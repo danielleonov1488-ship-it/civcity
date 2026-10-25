@@ -345,6 +345,27 @@ const B := {
 		"desc": "Столик с доской для латрункулов, два табурета, кувшин и чаши. По утрам старики садятся играть. Награда за историю «Скверик для стариков»."},
 	"rosearch": {"kind": "decor", "cat": "decor", "sub": "plants", "name": "Арка из роз", "cost": 60, "deco": 5, "unlock": "s_wedding", "story": true,
 		"desc": "Садовая арка, увитая цветущими розами, у подножия — вазоны. Под такой аркой гуляют молодые. Награда за историю «Свадьба Юлии»."},
+	"nymphfountain": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "smallfountain", "look": 3, "name": "Фонтан с нимфой", "cost": 120, "deco": 6, "unlock": "s_leak", "story": true,
+		"desc": "Круглая чаша, посреди — мраморная нимфа льёт воду из кувшина. Из такого фонтана пьют и старики в скверике. Награда за историю «Течь в водопроводе»."},
+	"donkeypost": {"kind": "decor", "cat": "decor", "sub": "animals", "name": "Ослик у коновязи", "cost": 40, "deco": 4, "unlock": "s_donkey", "story": true,
+		"desc": "Коновязь с поилкой и охапкой сена, у неё жуёт серый ослик. Награда за историю «Ослик возчика»."},
+	"balcony": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Балкон с бельём", "cost": 40, "deco": 4, "wall": true, "unlock": "s_crowded", "story": true,
+		"desc": "Деревянный балкон на втором этаже: на верёвке сохнет бельё, на перилах — ковёр, в углу — цветы. Вешается на дом в 2–3 этажа. Награда за историю «Тесно у Валериев»."},
+	# редкие облики — награды «Заказов старосты» (StoryOrders, unlock «o_…»): в витрине меню их нет
+	"lamp_post_4": {"kind": "decor", "cat": "decor", "sub": "light", "base": "lamp_post", "look": 3, "name": "Фонарь с двумя кашпо", "cost": 25, "deco": 4, "light": true, "unlock": "o_well", "story": true,
+		"desc": "Фонарь на столбе, по обе стороны перекладины — кашпо с цветами. Ночью светит на улицу. Награда старосты."},
+	"planter_4": {"kind": "decor", "cat": "decor", "sub": "plants", "base": "planter", "look": 3, "name": "Пальма в мраморной кадке", "cost": 18, "deco": 4, "unlock": "o_yard", "story": true,
+		"desc": "Южная пальма в мраморной кадке на ступени, у подножия — горшочки с цветами. Награда старосты."},
+	"smallfountain_3": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "smallfountain", "look": 2, "name": "Фонтан-раковина", "cost": 90, "deco": 6, "unlock": "o_benches", "story": true,
+		"desc": "Золочёная раковина на мраморной подставке, из неё стекает вода в низкую чашу. Награда старосты."},
+	"banner_3": {"kind": "decor", "cat": "decor", "sub": "street", "base": "banner", "look": 2, "name": "Знамя старосты", "cost": 35, "deco": 4, "unlock": "o_park", "story": true,
+		"desc": "Пурпурное знамя на высоком шесте с позолоченными бляхами, у подножия — вазоны. Награда старосты."},
+	"statue_5": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "statue", "look": 4, "name": "Мальчик с птицей", "cost": 240, "deco": 10, "unlock": "o_night", "story": true,
+		"desc": "Мраморный мальчик выпускает птицу, постамент в цветах. Награда старосты."},
+	"column_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "column", "look": 1, "name": "Колонна с золотым навершием", "cost": 320, "deco": 11, "unlock": "o_temple", "story": true,
+		"desc": "Колонна в розах, наверху — позолоченное навершие, как у знамён легиона. Награда старосты."},
+	"sundial_3": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "sundial", "look": 2, "name": "Часы с позолотой", "cost": 140, "deco": 7, "unlock": "o_eternal", "story": true,
+		"desc": "Солнечные часы на мраморной колонне с позолоченным навершием, вокруг — вазоны. Награда старосты."},
 }
 
 ## Разделы меню стройки (снизу посередине) и вкладки коммерции
@@ -564,6 +585,9 @@ static func unlock_text(id: String) -> String:
 	var s := StoryDefs.by_unlock(id)
 	if not s.is_empty():
 		return "наградой за историю горожан «%s»" % s["title"]
+	var o := StoryOrders.order(id)
+	if not o.is_empty():
+		return "наградой за заказ старосты «%s»" % o["title"]
 	return ""
 
 
@@ -580,6 +604,8 @@ static func unlock_short(id: String) -> String:
 			return "Просьба горожан"
 	if not StoryDefs.by_unlock(id).is_empty():
 		return "История горожан"
+	if not StoryOrders.order(id).is_empty():
+		return "Заказ старосты"
 	return ""
 
 
@@ -595,11 +621,12 @@ static func base_of(type: String) -> String:
 	return String((B.get(type, {}) as Dictionary).get("base", type))
 
 
-## Все облики вида украшения (карточки по порядку): «flowers» → [flowers, flowers_2, flowers_3]
+## Все облики вида украшения (карточки по порядку): «flowers» → [flowers, flowers_2, flowers_3]. Редкие облики-награды
+## (истории, заказы старосты — story) сюда не входят: их не ставит готовый город меню, у просьб — обычные облики
 static func looks_of(base: String) -> Array:
 	var out := []
 	for t in B:
-		if t == base or (B[t] as Dictionary).get("base", "") == base:
+		if t == base or ((B[t] as Dictionary).get("base", "") == base and not (B[t] as Dictionary).get("story", false)):
 			out.append(t)
 	return out
 

@@ -1912,8 +1912,8 @@ func progress_of(pp: Array) -> int:
 		"cls": return int(stats["residents"].get(arg, 0))
 		"floors": return _count(func(b): return is_house(b) and int(b["tier"]) >= int(arg))
 		"fed": return _count(func(b): return is_house(b) and bool((b.get("needs", {}) as Dictionary).get(arg, false)))
-		# награды просьб (q_) и историй (s_) — не исследования
-		"research": return research.keys().filter(func(k): return not (String(k).begins_with("q_") or String(k).begins_with("s_"))).size()
+		# награды просьб (q_), историй (s_) и заказов старосты (o_) — не исследования
+		"research": return research.keys().filter(func(k): return not (String(k).begins_with("q_") or String(k).begins_with("s_") or String(k).begins_with("o_"))).size()
 		"shops":                                    # разные лавки (["shops", "food"] — только этого вида)
 			var kinds := {}
 			for id2 in buildings:
@@ -2003,9 +2003,9 @@ func _quiet(text: String, icon: String) -> void:
 # ---------- истории горожан: данные (ведёт их scripts/stories.gd, тексты — StoryDefs) ----------
 
 ## Пустое состояние: часы историй (идут после обучения), когда кончилась прошлая (-1 — ещё ни одной), пройденные,
-## идущая, предложенная, отложенные (id → до какого часа), бонусы к счастью, кошки-награды
+## идущая, предложенная, отложенные (id → до какого часа), бонусы к счастью, кошки-награды, заказы старосты (StoryOrders)
 static func stories_new() -> Dictionary:
-	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": []}
+	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {}}
 
 
 ## Из сохранения: чего нет — по умолчанию (старые сохранения — без историй: ничего не идёт, часы с нуля)
@@ -2016,7 +2016,7 @@ static func stories_load(d: Variant) -> Dictionary:
 	var dd: Dictionary = d
 	s["h"] = int(dd.get("h", 0))
 	s["last_h"] = int(dd.get("last_h", -1))
-	for k in ["done", "active", "offer", "later"]:
+	for k in ["done", "active", "offer", "later", "orders"]:
 		if typeof(dd.get(k)) == TYPE_DICTIONARY:
 			s[k] = dd[k]
 	for k in ["bonus", "pets"]:
