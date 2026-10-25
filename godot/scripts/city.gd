@@ -68,6 +68,9 @@ var seg_thin := false                 # звено забора — узкой �
 ## Правила экономики (этап 2.5/2.6, решение владельца Q3/Q4): 0 — как до сборки 35 (живые города без «да» владельца:
 ## счастье не меняется), 1 — новая игра: вторая лавка того же вида — вполовину, одинаковые украшения рядом — всё меньше
 var econ := 0
+## Украшения этапа 5 (решение владельца Q17): 0 — живой город (все прежние облики открыты, как были), 1 — новая игра:
+## часть прежних обликов открывается позже, в наборах (Defs.DECOR_LATER)
+var decor_v := 0
 ## Налоги по классам (этап 2.7, с «Деревни»): класс → 0 мягкие, 1 обычные, 2 высокие (Defs.TAX_SET)
 var taxes := {}
 ## История денег и жителей (этап 2.4): последние Defs.HIST_N игровых часов, строки по Defs.HIST_KEYS (сохраняются)
@@ -168,12 +171,19 @@ func _apron_refresh(b: Dictionary) -> void:
 
 
 func unlocked(type: String) -> bool:
+	if decor_v >= 1 and Defs.DECOR_LATER.has(type):      # новая игра: этот облик — в наборе этапа 5
+		return research.has(String(Defs.DECOR_LATER[type]))
 	var u: String = Defs.B[type].get("unlock", "")
 	if u.begins_with("boss"):                 # военные постройки: победа Легиона над N-м боссом
 		return legion.bosses() >= int(u.substr(4))
 	if u.begins_with("trophy:"):              # трофей провинции: все 30 звёзд её боёв
 		return legion.has_trophy(u.substr(7))
 	return u == "" or research.has(u) or legion.wonder_unlocks(type)   # чудеса открывает и рейтинг походов
+
+
+## Чем открывается постройка в этом городе (новая игра — с переездами обликов этапа 5)
+func unlock_id(type: String) -> String:
+	return Defs.unlock_of(type, decor_v >= 1)
 
 
 func blueprint(b: Dictionary) -> Bp:
@@ -252,7 +262,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	var d: Dictionary = Defs.B[type]
 	var res := {"err": "", "cells": PackedInt32Array(), "y": 0.0}
 	if not unlocked(type):
-		res["err"] = "Откроется %s" % Defs.unlock_text(d["unlock"])
+		res["err"] = "Откроется %s" % Defs.unlock_text(unlock_id(type))
 		return res
 	if money < float(d["cost"]) and ignore_id == -1:
 		res["err"] = "Не хватает денариев"
@@ -561,6 +571,7 @@ func compute() -> void:
 	var shops := []
 	var monuments := []
 	var decor := []
+	var prem := []                          # «главные» украшения (этап 5.3): радуют, как маленький памятник
 	var stores := []
 	var oc := over_cap()                    # сверх предела уровня — не работают и не берут работников
 	for id in buildings:
@@ -572,6 +583,8 @@ func compute() -> void:
 				residents[d["cls"]] += int(b["pop"])
 			"decor":
 				decor.append(b)
+				if d.has("mon"):
+					prem.append(b)
 				continue
 		b["road"] = d["kind"] in ["farm", "center"] or _road_near(door_point(b), 1.7, b["cells"])
 		if d.has("jobs") and b["road"] and not oc.has(int(id)):
@@ -702,19 +715,31 @@ func compute() -> void:
 			dim_any = dim_any or bool(e2[2])
 		# украшения рядом: [вид, очки]; новая игра — одинаковые 100% / 60% / 30% (deco_points)
 		var near := []
+		var sets := {}                  # набор этапа 5 → его виды рядом (новая игра: три разных — бонус набора)
 		for o in decor:
 			if (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DECOR_RADIUS:
 				near.append([Defs.base_of(o["type"]), float(def(o).get("deco", 1))])
+				if econ >= 1:
+					var sk := Defs.set_of(o["type"], decor_v >= 1)
+					if sk != "":
+						if not sets.has(sk):
+							sets[sk] = {}
+						sets[sk][Defs.base_of(o["type"])] = true
 		var dp := deco_points(near, econ)
 		var deco: float = dp[0]
 		dim_any = dim_any or bool(dp[1])
 		var deco_b := mini(int(cd.get("deco_max", 12)), int(floor(deco * Defs.DECO_RATE)))
 		parts.append(["Украшения", deco_b])
+		var set_b := set_bonus(sets, parts)
 		var mon := {}                   # вид памятника → бонус (одинаковые не складываются)
 		for m in monuments:
 			var md := def(m)
 			if (h["pos"] as Vector2).distance_to(m["pos"]) <= Defs.range_m(md):
 				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), int(md["bonus"]))
+		for m in prem:                  # «главные» украшения — каждый вид один раз, сверх предела украшений
+			var pd := def(m)
+			if (h["pos"] as Vector2).distance_to(m["pos"]) <= Defs.range_m(pd):
+				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), int(pd["mon"]))
 		var mon_sum := 0
 		for t in mon:
 			parts.append([Defs.B[t]["name"], int(mon[t])])
@@ -745,9 +770,10 @@ func compute() -> void:
 			if not h["needs"].has(n):
 				missing.append(n)
 				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + mon_sum + fb + st_sum + tx + dens - missing.size() * Defs.MISSING_PENALTY
+		var hp := base + shop_sum + deco_b + set_b + mon_sum + fb + st_sum + tx + dens - missing.size() * Defs.MISSING_PENALTY
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
+		h["set_bonus"] = set_b
 		h["monuments"] = float(mon_sum)
 		h["mon_types"] = mon
 		h["density"] = dens
@@ -760,7 +786,7 @@ func compute() -> void:
 		sums["w"] += w
 		sums["base"] += base * w
 		sums["shops"] += shop_sum * w
-		sums["deco"] += deco_b * w
+		sums["deco"] += (deco_b + set_b) * w
 		sums["mon"] += mon_sum * w
 		sums["fest"] += fb * w
 		sums["story"] = float(sums.get("story", 0.0)) + st_sum * w
@@ -855,6 +881,21 @@ static func shop_parts(types: Array, score: Dictionary, econ_v: int) -> Array:
 				dim = true
 		out.append([nm, v, dim])
 	return out
+
+
+## Бонус наборов этапа 5 (Defs.DECOR_SETS): sets — набор → {вид: true} рядом с домом; три разных вида — +SET_BONUS%,
+## не больше SET_MAX наборов; строки — в parts. Сколько всего %
+static func set_bonus(sets: Dictionary, parts: Array) -> int:
+	var got := []
+	for sk in sets:
+		if (sets[sk] as Dictionary).size() >= Defs.SET_KINDS:
+			got.append(String(sk))
+	got.sort_custom(func(a, b): return Defs.DECOR_SETS.find(a) < Defs.DECOR_SETS.find(b))
+	var s := 0
+	for sk: String in got.slice(0, Defs.SET_MAX):
+		parts.append(["Набор «%s»" % String(Defs.research(sk).get("name", sk)), Defs.SET_BONUS])
+		s += Defs.SET_BONUS
+	return s
 
 
 ## Очки украшений рядом с домом: near — [[вид, очки], …]. econ ≥ 1: одинаковые (один вид, любой облик) — 100% / 60% /
@@ -2039,7 +2080,7 @@ func research_where(id: String) -> String:
 	var n := 0
 	for t in Defs.B:
 		var d: Dictionary = Defs.B[t]
-		if d.get("unlock", "") != id or String(d.get("cat", "")) == "":
+		if unlock_id(t) != id or String(d.get("cat", "")) == "":
 			continue
 		n += 1
 		var cl: String = Defs.CAT_SHORT.get(d["cat"], d["cat"])
@@ -2064,7 +2105,7 @@ static func sub_name(type: String) -> String:
 		return String(Defs.NEEDS[d["sub"]]["name"])
 	if d.get("cat", "") == "decor":
 		for ds: Array in Defs.DECOR_SUBS:
-			if ds[0] == d.get("sub", ""):
+			if ds[0] == Defs.decor_sub(type):
 				return String(ds[1])
 	return ""
 
@@ -2126,7 +2167,7 @@ func new_counts() -> Dictionary:
 			var d: Dictionary = Defs.B[t]
 			var cat: String = d["cat"]
 			out[cat] = int(out.get(cat, 0)) + 1
-			var k := cat + "|" + String(d.get("sub", ""))
+			var k := cat + "|" + (Defs.decor_sub(t) if cat == "decor" else String(d.get("sub", "")))
 			out[k] = int(out.get(k, 0)) + 1
 	return out
 
@@ -2488,7 +2529,7 @@ func save_data() -> Dictionary:
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
-		"econ_v": econ, "taxes": taxes, "hist": hist,
+		"econ_v": econ, "decor_v": decor_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict()}
 
 
@@ -2524,6 +2565,7 @@ func load_data(d: Dictionary) -> void:
 	name = String(d.get("name", ""))             # старые сохранения — без названия: его скажет сервер
 	# старые сохранения — без econ_v: счастье по прежним правилам (лавки и украшения без «повторов»), пока владелец не скажет «да»
 	econ = int(d.get("econ_v", 0))
+	decor_v = int(d.get("decor_v", 0))           # старые сохранения — все прежние облики украшений открыты, как были
 	taxes = {}
 	var tx = d.get("taxes", {})
 	if typeof(tx) == TYPE_DICTIONARY:

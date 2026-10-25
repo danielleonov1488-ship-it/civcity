@@ -252,7 +252,8 @@ func _run() -> void:
 	game._set_hour(10.5)
 	hud.set_speed(0.0)                   # часы игры стоят (часы историй двигает проверка); ролик сам ставит ×1
 	c.money = 5000.0
-	for r in ["q_garden", "q_market", "deco_trees", "deco_flowers"]:
+	c.tips["set_tip"] = true                # совет о наборах украшений (этап 5) — не в этой проверке
+	for r in ["q_garden", "q_market", "deco_trees", "deco_flowers", "deco_south"]:   # «Южные деревья» — кипарис и пальма в новой игре (этап 5)
 		c.research[r] = true
 	# ---------- городок: улица, дома с семьями (у Корнелиев — сын), сено и куст в 15–30 м ----------
 	street(Vector2(170, 110), Vector2(170, 178))
@@ -1500,7 +1501,7 @@ func _wedding() -> void:
 	check(not th.is_empty() and bool(sto.progress(a2, g)["ok"]), "таверна: термополий в 25 м — пир есть")
 	check(not bool(sto.progress(A, g)["ok"]), "сад: ещё не готов")
 	# сад: 8 цветов и арка
-	var fl := ["flowers", "planter", "bush", "flowers_2", "planter_2", "bush_2", "flowers_3", "planter_3"]
+	var fl := ["flowers", "planter", "bush", "flowers_2", "planter_2", "bush_2", "flowers", "planter"]   # третьи облики — в «Саду» (этап 5)
 	for i in 8:
 		deco(fl[i], bp + Vector2(cos(i * 0.8), sin(i * 0.8)) * 6.0)
 	sto.tick()
@@ -1689,7 +1690,7 @@ func _wedding_more() -> void:
 	var nd: float = (nh.get("pos", Vector2.INF) as Vector2).distance_to(bp)
 	sto.tick()
 	print("  дом до пира: %s в %.1f м, шаг %d" % [nh.get("id"), nd, int(A["step"])])
-	var fl := ["flowers", "planter", "bush", "flowers_2", "planter_2", "bush_2", "flowers_3", "planter_3"]
+	var fl := ["flowers", "planter", "bush", "flowers_2", "planter_2", "bush_2", "flowers", "planter"]   # третьи облики — в «Саду» (этап 5)
 	for i in 8:
 		deco(fl[i], bp + Vector2(cos(i * 0.8 + 0.3), sin(i * 0.8 + 0.3)) * 6.5)
 	deco("pergola" if c.unlocked("pergola") else "rosearch", bp + Vector2(-6, -4))

@@ -67,6 +67,14 @@ var open_cat := ""
 var open_sub := "food"
 var open_dsub := "plants"             # вкладка украшений
 var tray_dtabs: HBoxContainer
+## Меню украшений (этап 5.4): «Избранное» (★ правой кнопкой по карточке), «Недавние» (8 последних), поиск по названию,
+## «Только открытые». decor_mode: "" — вкладка, fav, recent, search. Избранное и недавние — в настройках игрока
+var tray_dtools: HBoxContainer
+var decor_mode := ""
+var decor_query := ""
+var decor_open_only := false
+var decor_search: LineEdit
+const RECENT_N := 8
 var tool_panel: PanelContainer
 var undo_btn: Button                      # медаль «Отменить» в панели постройки (3.6)
 var thumb_rect: TextureRect               # живая картинка постройки (3.4)
@@ -2153,10 +2161,11 @@ func _bottom_center() -> void:
 	top.add_child(tray_dtabs)
 	for ds: Array in Defs.DECOR_SUBS:
 		var dn: String = ds[0]
-		var b := _round(ds[2], ds[1], 40, func(): open_dsub = dn; _fill_cards())
+		var b := _round(ds[2], ds[1], 40, func(): open_dsub = dn; decor_mode = ""; _fill_cards())
 		b.set_meta("sub", dn)
 		tray_dtabs.add_child(b)
 		_new_pill(b, "dot")
+	_decor_tools(v)
 	var sc := ScrollContainer.new()
 	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sc.name = "scroll"
@@ -2294,9 +2303,143 @@ func _types_in(cat: String, sub := "") -> Array:
 			continue
 		if cat == "commerce" and d.get("sub", "") != sub:
 			continue
-		if cat == "decor" and sub != "" and d.get("sub", "") != sub:
+		if cat == "decor" and sub != "" and Defs.decor_sub(type) != sub:
 			continue
 		out.append(type)
+	return out
+
+
+# ---------- меню украшений (этап 5.4): избранное, недавние, поиск ----------
+
+## Ряд под вкладками украшений: «★ Избранное», «Недавние», поиск, «Только открытые»
+func _decor_tools(v: VBoxContainer) -> void:
+	tray_dtools = HBoxContainer.new()
+	tray_dtools.alignment = BoxContainer.ALIGNMENT_CENTER
+	tray_dtools.add_theme_constant_override("separation", 8)
+	tray_dtools.visible = false
+	v.add_child(tray_dtools)
+	var fav := _tchip("★ Избранное", "Украшения со звёздочкой. Отметить или снять — правой кнопкой мыши по карточке", func(): _decor_mode("fav"))
+	fav.name = "fav"
+	tray_dtools.add_child(fav)
+	var rec := _tchip("Недавние", "%d украшений, что вы ставили последними" % RECENT_N, func(): _decor_mode("recent"))
+	rec.name = "recent"
+	tray_dtools.add_child(rec)
+	decor_search = LineEdit.new()
+	decor_search.name = "search"
+	decor_search.placeholder_text = "Найти украшение…"
+	decor_search.custom_minimum_size = Vector2(230, 32)
+	decor_search.clear_button_enabled = true
+	decor_search.add_theme_stylebox_override("normal", _box_pill(14, 3, "g_btn"))
+	var fo := StyleBoxFlat.new()
+	fo.draw_center = false
+	fo.border_color = C_GOLD
+	fo.set_border_width_all(2)
+	fo.set_corner_radius_all(16)
+	decor_search.add_theme_stylebox_override("focus", fo)
+	decor_search.add_theme_font_override("font", font_bold)
+	decor_search.add_theme_font_size_override("font_size", 15)
+	decor_search.add_theme_color_override("font_color", C_INK)
+	decor_search.add_theme_color_override("font_placeholder_color", Color(C_SOFT, 0.6))
+	decor_search.add_theme_color_override("caret_color", C_INK)
+	decor_search.text_changed.connect(func(t: String):
+		decor_query = t.strip_edges()
+		decor_mode = "search" if decor_query != "" else ("" if decor_mode == "search" else decor_mode)
+		_fill_cards())
+	decor_search.text_submitted.connect(func(_t: String): decor_search.release_focus())
+	tray_dtools.add_child(decor_search)
+	var only := CheckBox.new()
+	only.name = "only"
+	only.text = "Только открытые"
+	only.tooltip_text = "Спрятать украшения, которые ещё не открыты"
+	only.focus_mode = Control.FOCUS_NONE
+	only.add_theme_font_override("font", font_bold)
+	only.add_theme_font_size_override("font_size", 15)
+	for k in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+		only.add_theme_color_override(k, C_INK)
+	only.toggled.connect(func(x: bool): decor_open_only = x; _fill_cards())
+	tray_dtools.add_child(only)
+
+
+## Кнопка-«таблетка» с надписью (переключатель)
+func _tchip(text: String, tip: String, cb: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.tooltip_text = tip
+	b.focus_mode = Control.FOCUS_NONE
+	b.toggle_mode = true
+	b.add_theme_stylebox_override("normal", _box_pill(14, 3, "g_btn"))
+	b.add_theme_stylebox_override("hover", _box_pill(14, 3, "g_btn_on"))
+	b.add_theme_stylebox_override("pressed", _box_pill(14, 3, "g_btn_on"))
+	b.add_theme_stylebox_override("hover_pressed", _box_pill(14, 3, "g_btn_on"))
+	b.add_theme_font_override("font", font_bold)
+	b.add_theme_font_size_override("font_size", 15)
+	for k in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+		b.add_theme_color_override(k, C_INK)
+	b.pressed.connect(cb)
+	return b
+
+
+func _decor_mode(m: String) -> void:
+	decor_mode = "" if decor_mode == m else m
+	if decor_mode != "search" and decor_search and decor_search.text != "":
+		decor_search.set_block_signals(true)
+		decor_search.text = ""
+		decor_search.set_block_signals(false)
+		decor_query = ""
+	_fill_cards()
+
+
+func decor_favs() -> Array:
+	return (game.settings.get("fav_decor", []) as Array) if game else []
+
+
+func decor_recent() -> Array:
+	return (game.settings.get("recent_decor", []) as Array) if game else []
+
+
+## ★ — отметить украшение или снять отметку (правая кнопка по карточке)
+func toggle_fav(type: String) -> void:
+	var f: Array = decor_favs().duplicate()
+	if f.has(type):
+		f.erase(type)
+	else:
+		f.append(type)
+	game.settings["fav_decor"] = f
+	_store_settings()
+	_fill_cards()
+
+
+## Украшение поставили — в начало «Недавних» (game._build_here)
+func note_recent(type: String) -> void:
+	var r: Array = decor_recent().duplicate()
+	r.erase(type)
+	r.push_front(type)
+	game.settings["recent_decor"] = r.slice(0, RECENT_N)
+	_store_settings()
+
+
+## Карточки меню украшений по выбранному: вкладка, избранное, недавние или поиск; «Только открытые» — без закрытых
+func _decor_list() -> Array:
+	var out := []
+	match decor_mode:
+		"fav":
+			for t in Defs.B:
+				if decor_favs().has(t) and Defs.B[t]["cat"] == "decor":
+					out.append(t)
+		"recent":
+			for t in decor_recent():
+				if Defs.B.has(String(t)):
+					out.append(String(t))
+		"search":
+			var q := decor_query.to_lower()
+			for t in Defs.B:
+				var d: Dictionary = Defs.B[t]
+				if d["cat"] == "decor" and (String(d["name"]).to_lower().contains(q) or String(d.get("desc", "")).to_lower().contains(q)):
+					out.append(t)
+		_:
+			out = _types_in("decor", open_dsub)
+	if decor_open_only and game and game.city:
+		out = out.filter(func(t): return game.city.unlocked(t))
 	return out
 
 
@@ -2309,17 +2452,32 @@ func _fill_cards() -> void:
 		_set_on(b, b.get_meta("sub") == open_sub)
 	tray_dtabs.visible = open_cat == "decor"
 	for b in tray_dtabs.get_children():
-		_set_on(b, b.get_meta("sub") == open_dsub)
+		_set_on(b, b.get_meta("sub") == open_dsub and decor_mode == "")
+	tray_dtools.visible = open_cat == "decor"
+	(tray_dtools.get_node("fav") as Button).set_pressed_no_signal(decor_mode == "fav")
+	(tray_dtools.get_node("recent") as Button).set_pressed_no_signal(decor_mode == "recent")
 	var names := {"housing": "Жильё", "commerce": "Лавки и мастерские", "farming": "Хозяйство и науки", "decor": "Украшения", "special": "Памятники",
 		"military": "Военные постройки Легиона"}
 	tray_title.text = names.get(open_cat, "")
 	if open_cat == "commerce":
 		tray_title.text += " · " + Defs.NEEDS[open_sub]["name"]
 	if open_cat == "decor":
-		for ds: Array in Defs.DECOR_SUBS:
-			if ds[0] == open_dsub:
-				tray_title.text += " · " + String(ds[1])
-	var list := _types_in(open_cat, open_dsub if open_cat == "decor" else open_sub)
+		match decor_mode:
+			"fav": tray_title.text += " · Избранное"
+			"recent": tray_title.text += " · Недавние"
+			"search": tray_title.text += " · Поиск"
+			_:
+				for ds: Array in Defs.DECOR_SUBS:
+					if ds[0] == open_dsub:
+						tray_title.text += " · " + String(ds[1])
+	var list := _decor_list() if open_cat == "decor" else _types_in(open_cat, open_sub)
+	if list.is_empty() and open_cat == "decor":
+		var em := _label({"fav": "Здесь будут украшения со звёздочкой ★ — правая кнопка мыши по карточке.",
+			"recent": "Здесь будут украшения, что вы ставили последними.", "search": "Ничего не нашлось — попробуйте другое слово."}.get(decor_mode, "Здесь пока пусто."), 16, true, C_SOFT)
+		em.custom_minimum_size = Vector2(560, CARD.y - 40.0)
+		em.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		em.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		tray_grid.add_child(em)
 	for type in list:
 		var d: Dictionary = Defs.B[type]
 		var b := Button.new()
@@ -2363,10 +2521,22 @@ func _fill_cards() -> void:
 		v.add_child(pr)
 		var tp: String = type
 		b.pressed.connect(func(): select_build(tp))
+		if d["kind"] == "decor":
+			# ★ — правой кнопкой (избранное, этап 5.4); у отмеченных — золотая звёздочка в углу
+			b.gui_input.connect(func(ev: InputEvent):
+				if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT:
+					toggle_fav(tp)
+					b.accept_event())
+			if decor_favs().has(type):
+				var st := _label("★", 22, true, C_GOLD)
+				st.add_theme_color_override("font_outline_color", Color("3a2412"))
+				st.add_theme_constant_override("outline_size", 6)
+				st.position = Vector2(CARD.x - 30, 2)
+				b.add_child(st)
 		_new_pill(b, "card")
 		b.mouse_entered.connect(func(): _card_hovered(b, tp))
 		tray_grid.add_child(b)
-	var w := minf(1180.0, list.size() * (CARD.x + 10.0) - 10.0)
+	var w := minf(1180.0, maxf(list.size() * (CARD.x + 10.0) - 10.0, 560.0 if open_cat == "decor" else 0.0))
 	_snug(tray)
 	# полоса прокрутки (если карточек больше, чем влезает) — ниже лавров карточек
 	(tray.find_child("scroll", true, false) as Control).custom_minimum_size = Vector2(w, CARD.y + (20.0 if list.size() * (CARD.x + 10.0) - 10.0 > 1180.0 else 2.0))
@@ -2409,11 +2579,22 @@ func _card_tip(type: String) -> String:
 			t += "\n\nЖители: %s, %d на этаж\nНужно им: %s" % [c["name"].to_lower(), c["per_floor"], ", ".join(c["needs"].map(func(n): return Defs.NEEDS[n]["name"].to_lower()))]
 		"decor":
 			t += "\n\nОчки украшения: %d" % int(d.get("deco", 1))
+			if d.has("mon"):
+				t += "\nГлавное украшение: +%d%% счастья домам в %d м — как памятник, сверх предела украшений" % [int(d["mon"]), int(Defs.range_m(d))]
+			if game and game.city and game.city.econ >= 1:
+				var sk := Defs.set_of(type, game.city.decor_v >= 1)
+				if sk != "":
+					t += "\nНабор «%s»: три разных вида из него рядом с домом — ещё +%d%% счастья" % [Defs.research(sk)["name"], Defs.SET_BONUS]
+			t += "\nПравая кнопка мыши — убрать из избранного" if decor_favs().has(type) else "\nПравая кнопка мыши — в избранное ★"
 		"farm", "store":
 			if d.has("jobs"):
 				t += "\n\nРабочие: %s" % _jobs_text(d)
 	if game and game.city and not game.city.unlocked(type):
-		t += "\n\nОткроется %s" % Defs.unlock_text(d["unlock"])
+		var uid: String = game.city.unlock_id(type)
+		t += "\n\nОткроется %s" % Defs.unlock_text(uid)
+		var rr := Defs.research(uid)
+		if not rr.is_empty() and int(rr["lvl"]) > game.city.level:
+			t += " (уровень «%s»)" % Defs.LEVELS[int(rr["lvl"])]["name"]
 	var cnt := 0
 	if game and game.city:
 		for id in game.city.buildings:
@@ -2458,8 +2639,12 @@ func _update_cards() -> void:
 		for x in pr.get_children():
 			x.queue_free()
 		if not c.unlocked(type):
-			# серая карточка с замком (замок нарисован на рамке)
-			var why := Defs.unlock_short(d["unlock"])
+			# серая карточка с замком (замок нарисован на рамке); украшение уровней впереди — тёмный силуэт и уровень
+			var uid := c.unlock_id(type)
+			var why := Defs.unlock_short(uid)
+			var lv_u := int(Defs.research(uid).get("lvl", -1))
+			if d["kind"] == "decor" and lv_u > c.level:
+				why = String(Defs.LEVELS[lv_u]["name"])
 			if why == d["name"]:
 				why = "Исследование"
 			var ln := _label(why, 12, true, C_SOFT)
@@ -2471,7 +2656,11 @@ func _update_cards() -> void:
 			sp.custom_minimum_size = Vector2(16, 0)
 			pr.add_child(sp)
 			b.add_theme_stylebox_override("normal", _card_box("g_card_lock"))
-			_grey(img)
+			if d["kind"] == "decor" and lv_u > c.level:
+				_grey(img, false)
+				img.modulate = Color(0.16, 0.13, 0.12, 0.78)     # силуэт: что будет — видно, но ещё не открыто
+			else:
+				_grey(img)
 		elif c.cap_err(type) != "":
 			# предел уровня города: больше таких не поставить, пока город не вырастет
 			var lm := _label("Предел: %d" % c.build_max(type), 12, true, C_SOFT)
@@ -2479,17 +2668,20 @@ func _update_cards() -> void:
 			lm.custom_minimum_size = Vector2(84, 0)
 			pr.add_child(lm)
 			b.add_theme_stylebox_override("normal", _card_box("g_card"))
+			img.modulate = Color.WHITE
 			_grey(img)
 		elif d.get("trophy", false):
 			# трофей Легиона — бесплатно
 			pr.add_child(_icon("laurels", 22))
 			pr.add_child(_label("Трофей", 16, true, C_GOOD))
 			b.add_theme_stylebox_override("normal", _card_box("g_card"))
+			img.modulate = Color.WHITE
 			_grey(img, false)
 		else:
 			pr.add_child(_icon("coins", 22))
 			pr.add_child(_label(fmt(d["cost"]), 18, true, C_INK if c.money >= float(d["cost"]) else C_BAD))
 			b.add_theme_stylebox_override("normal", _card_box("g_card"))
+			img.modulate = Color.WHITE
 			_grey(img, false)
 
 
@@ -2500,7 +2692,8 @@ func select_build(type: String) -> void:
 	if cat == "commerce":
 		open_sub = Defs.B[type]["sub"]
 	if cat == "decor":
-		open_dsub = Defs.B[type].get("sub", open_dsub)
+		open_dsub = Defs.decor_sub(type) if Defs.decor_sub(type) != "" else open_dsub
+		decor_mode = "" if decor_mode != "search" else decor_mode
 		if tray.visible and open_cat == "decor":
 			_fill_cards()
 	_hide_info()
@@ -2512,7 +2705,7 @@ func select_build(type: String) -> void:
 		_refresh_cat_buttons()
 		_unroll()
 	if not game.city.unlocked(type):
-		notify("«%s» откроется %s" % [Defs.B[type]["name"], Defs.unlock_text(Defs.B[type]["unlock"])], "lock")
+		notify("«%s» откроется %s" % [Defs.B[type]["name"], Defs.unlock_text(game.city.unlock_id(type))], "lock")
 		return
 	if game.mode in ["new", "play"] and game.city.mark_seen(type):
 		update_new_marks()                    # взяли карточку — она больше не «НОВОЕ»
@@ -2694,7 +2887,7 @@ func _do_type(type: String) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	var nm := String(d["name"])
 	if not c.unlocked(type):
-		var rid := String(d.get("unlock", ""))
+		var rid := c.unlock_id(type)
 		if Defs.research(rid).is_empty() or Defs.research(rid).has("story"):
 			return {"kind": "locked", "type": type, "tip": nm, "say": "«%s» откроется %s" % [nm, Defs.unlock_text(rid)]}
 		var w := _do_research(rid, "«%s» открывает исследование «%s»" % [nm, Defs.research(rid)["name"]])
@@ -4309,9 +4502,18 @@ func _fill_research() -> void:
 			var tip: String = r["name"].to_upper()
 			if r.has("desc"):
 				tip += "\n" + r["desc"]
+			var dnames := []
 			for type in Defs.B:
-				if Defs.B[type].get("unlock", "") == id:
+				if c.unlock_id(type) != id:
+					continue
+				if Defs.B[type]["cat"] == "decor":
+					dnames.append(String(Defs.B[type]["name"]))
+				else:
 					tip += "\nОткрывает: " + Defs.B[type]["name"] + " — " + Defs.B[type]["desc"]
+			if not dnames.is_empty():
+				tip += "\nОткрывает украшения: " + ", ".join(dnames) + "."
+				if c.econ >= 1 and id in Defs.DECOR_SETS:
+					tip += "\nНабор: три разных вида из него рядом с домом — ещё +%d%% счастья." % Defs.SET_BONUS
 			if r.has("after"):
 				tip += "\nПосле: «%s»" % Defs.research(r["after"])["name"]
 			var story: bool = r.has("story")         # «Легион» открывает история горожан, не очки
@@ -5129,6 +5331,15 @@ func _once_tips() -> void:
 		c.tips["dim_tip"] = true
 		advisor("Разнообразие радует больше", "Лавки одного вида рядом с домом складываются не целиком: вторая лавка с едой даёт половину своей радости, третья — четверть. А вот лавка другого вида — одежда, развлечения, услуги — снова целиком. С украшениями так же: второе такое же рядом — 60%, третье — 30%, а разные — целиком.\n\nИз чего складывается счастье дома, видно в его карточке.")
 		return
+	# этап 5: наборы украшений (новая игра) и «главные» украшения — один раз, когда открылись
+	if c.econ >= 1 and not c.tips.has("set_tip") and Defs.DECOR_SETS.any(func(s): return c.research.has(s)):
+		c.tips["set_tip"] = true
+		advisor("Наборы украшений", "Украшения из одного исследования — это набор: «Сельский двор», «Вода в саду», «Сад»… Поставьте рядом с домом три разных вида из одного набора — дом станет счастливее ещё на %d%%, даже если украшений у него уже вдоволь.\n\nК какому набору относится украшение — видно в подсказке на его карточке. В меню украшений есть «★ Избранное», «Недавние» и поиск." % Defs.SET_BONUS)
+		return
+	if not c.tips.has("prem_tip") and ["prem_patrician", "prem_mosaic", "prem_triumph", "prem_eternal"].any(func(s): return c.research.has(s)):
+		c.tips["prem_tip"] = true
+		advisor("Главные украшения", "Во вкладке «Главные» — дорогие украшения: экседра, бассейн, мозаики, обелиск… Каждое радует дома вокруг себя, как маленький памятник, — сверх того, что дают обычные украшения. Хорошее дело для полной казны.")
+		return
 	# название: сервер дал городу имя сам (игрок его ещё не выбирал) — один раз, когда на экране ничего не открыто;
 	# rename — сервер уже умеет менять название (старый сервер его не шлёт: совет не тратим на смену, которая не выйдет)
 	var me: Dictionary = LegionNet.me().me_state
@@ -5878,7 +6089,7 @@ func _make_icons() -> void:
 ## картинки рисуются заново; старые папки удаляются. В редакторе ключ — сами скрипты построек
 const ICON_V := 1                         # поменяли свет, камеру или размер картинок — увеличить
 const ICON_SRC := ["catalog.gd", "cat_houses.gd", "cat_shops.gd", "cat_civic.gd", "cat_monuments.gd", "cat_decor.gd", "cat_military.gd",
-	"parts.gd", "synty.gd", "kit.gd", "bp.gd", "artisau.gd", "entrance.gd", "hud.gd"]
+	"parts.gd", "synty.gd", "kit.gd", "bp.gd", "artisau.gd", "entrance.gd", "hud.gd", "cat_decor2.gd", "cat_extra.gd"]
 
 
 func _icon_dir() -> String:
@@ -5918,7 +6129,7 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		col = (col + 3) % Defs.PALETTE.size()
 		# у украшений облик задаёт тип (Catalog.make сам берёт их постоянный цвет) — картинка как поставленное
 		var bp: Bp = Catalog.make(type, tier, 0, col)
-		var path := idir.path_join("%s_%s.png" % [type, str(bp.parts).md5_text().substr(0, 12)])
+		var path := idir.path_join("%s_%s%s.png" % [type, str(bp.parts).md5_text().substr(0, 12), "_p" if pets_of(type).size() > 0 else ""])
 		if FileAccess.file_exists(path):
 			var ci := Image.load_from_file(path)
 			if ci != null and not ci.is_empty():
@@ -5933,6 +6144,7 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 			if ch is MeshInstance3D and (ch as MeshInstance3D).mesh == Parts._special_mesh("#dark") and (ch as Node3D).position.y < -0.05:
 				g.remove_child(ch)
 				ch.free()
+		add_pets(g, type)                         # корова, лошадь, кошки приюта — и на картинке карточки
 		holder.add_child(g)
 		var box := Artisau.aabb(g)
 		var c := box.get_center()
@@ -5962,6 +6174,32 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		print("Картинки построек: нарисовано %d, остальные — из %s" % [drawn, idir])
 	if tray.visible:
 		_update_cards()
+
+
+## Животные этапа 5 у постройки (CatDecor2.PETS / CatExtra.PETS) для этого облика
+static func pets_of(type: String) -> Array:
+	var lk := int((Defs.B.get(type, {}) as Dictionary).get("look", 0))
+	var list: Array = CatExtra.PETS.get(type, CatDecor2.PETS.get(Defs.base_of(type), []))
+	return list.filter(func(e: Array): return e.size() <= 5 or int(e[5]) < 0 or int(e[5]) == lk)
+
+
+## Поставить животных постройки в узел-призрак g (картинка карточки, лист обликов): как в игре (game._pets2), без движения
+static func add_pets(g: Node3D, type: String) -> void:
+	var sc := Catalog.DECOR if String(Defs.B[type]["kind"]) == "decor" else Catalog.ARCH
+	var k := 0
+	for e: Array in pets_of(type):
+		var n: Node3D
+		if String(e[0]) == "cat":
+			n = People.cat_node(k % 3, String(e[3]), 7 + k)
+		else:
+			var bn: Stories.Beast = CatDecor2.beast(String(e[0]))
+			bn.play(String(e[3]), 0.0)
+			if bn.ap:
+				bn.ap.seek(0.6, true)
+			n = bn
+		n.transform = Transform3D(Basis(Vector3.UP, float(e[2])).scaled(Vector3.ONE * float(e[4])), (e[1] as Vector3) * sc)
+		g.add_child(n)
+		k += 1
 
 
 ## Картинки карточек ещё можно рисовать: игра не закрывается, интерфейс и его окошко для картинок на месте

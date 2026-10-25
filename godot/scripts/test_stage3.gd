@@ -247,11 +247,12 @@ func _run() -> void:
 	c.tips["floor_tool"] = true
 	# советы экономики v2 — тоже не в проверке: «Разнообразие радует больше» (второй такой же факел у дома) вставал
 	# свитком посреди экрана, прямо над верхним этажом, куда наводим украшения
-	for t in ["dim_tip", "floor_money", "tax_tip"]:
+	for t in ["dim_tip", "floor_money", "tax_tip", "set_tip", "prem_tip"]:
 		c.tips[t] = true
 	hud.apply_reveal(3)
 	hud.advisor_panel.visible = false
-	for r in ["q_garden", "q_lights", "deco_metal", "deco_flowers", "deco_trees", "warehouse", "butcher", "bakery", "floor2", "floor3"]:
+	# (+ наборы этапа 5: в новой игре каменная стенка и изгородь — в «Саду», вторые факелы и лампы — в «Ночных огнях»)
+	for r in ["q_garden", "q_lights", "deco_metal", "deco_flowers", "deco_trees", "warehouse", "butcher", "bakery", "floor2", "floor3", "deco_garden", "deco_night"]:
 		c.research[r] = true
 	for t in ["house_artisan", "house_patrician", "taberna"]:
 		if String(Defs.B[t].get("unlock", "")) != "":

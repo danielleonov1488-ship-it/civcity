@@ -156,6 +156,9 @@ const B := {
 		"jobs": {"plebs": 1}, "unlock": "stall_veg", "icon": "veg", "desc": "Капуста, лук, бобы и чеснок."},
 	"stall_fish": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Рыбная лавка", "cost": 45, "bonus": 5, "range": 2, "cap": 3,
 		"jobs": {"plebs": 1}, "unlock": "stall_fish", "icon": "fish", "desc": "Свежая рыба и гарум — римский соус."},
+	# этап 5 (новые здания): огород — дешёвая еда для пары ближних домов
+	"ogorod": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Огород", "cost": 60, "bonus": 4, "range": 1, "cap": 2,
+		"jobs": {"plebs": 1}, "unlock": "ogorod", "icon": "veg", "desc": "Грядки капусты, лука и бобов за плетнём. Кормит пару ближних домов — дёшево, но недалеко."},
 	"butcher": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Мясная лавка", "cost": 200, "bonus": 7, "range": 2, "cap": 3,
 		"jobs": {"plebs": 2}, "store": true, "unlock": "butcher", "icon": "meat", "desc": "Колбасы и окорока. Товар берёт со склада."},
 	"bakery": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Пекарня", "cost": 450, "bonus": 8, "range": 3, "cap": 4,
@@ -181,6 +184,8 @@ const B := {
 		"jobs": {"plebs": 1}, "unlock": "musicians", "icon": "lyre", "desc": "Лира и флейта на углу улицы."},
 	"dice": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Игра в кости", "cost": 180, "bonus": 6, "range": 2, "cap": 3,
 		"jobs": {"plebs": 1}, "unlock": "dice", "icon": "dice", "desc": "Стол под навесом, где кидают кости и спорят."},
+	"puppets": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Кукольный театр", "cost": 200, "bonus": 6, "range": 2, "cap": 3,
+		"jobs": {"plebs": 1}, "unlock": "puppets", "icon": "puppet", "desc": "Ширма с куклами: смешные сценки про жадного купца и хитрого раба. Дети не отходят."},
 	"mimes": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Помост мимов", "cost": 360, "bonus": 8, "range": 3, "cap": 4,
 		"jobs": {"artisans": 2}, "unlock": "mimes", "icon": "puppet", "desc": "Весёлые сценки на деревянном помосте."},
 	"odeon": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Одеон", "cost": 900, "bonus": 10, "range": 4, "cap": 5,
@@ -188,8 +193,12 @@ const B := {
 	"theatre": {"kind": "shop", "cat": "commerce", "sub": "fun", "name": "Театр", "cost": 2600, "bonus": 13, "range": 5, "cap": 5,
 		"jobs": {"patricians": 2}, "unlock": "theatre", "icon": "fun", "desc": "Комедии и трагедии под открытым небом."},
 	# услуги
+	"shelter": {"kind": "shop", "cat": "commerce", "sub": "services", "name": "Приют для животных", "cost": 140, "bonus": 4, "range": 2, "cap": 2,
+		"jobs": {"plebs": 1}, "unlock": "shelter", "icon": "cat", "desc": "Здесь кормят бездомных кошек и лечат усталых осликов. Соседям спокойнее, а детям — радость."},
 	"barber": {"kind": "shop", "cat": "commerce", "sub": "services", "name": "Цирюльня", "cost": 250, "bonus": 6, "range": 2, "cap": 3,
 		"jobs": {"artisans": 1}, "unlock": "barber", "icon": "razor", "desc": "Бритьё, стрижка и свежие сплетни."},
+	"herbalist": {"kind": "shop", "cat": "commerce", "sub": "services", "name": "Травник", "cost": 380, "bonus": 6, "range": 3, "cap": 4,
+		"jobs": {"artisans": 1}, "unlock": "herbalist", "icon": "sprout", "desc": "Сушёные травы, мёд и отвары от кашля — у травника всегда пахнет мятой."},
 	"balnea": {"kind": "shop", "cat": "commerce", "sub": "services", "name": "Бани", "cost": 650, "bonus": 8, "range": 3, "cap": 4,
 		"jobs": {"plebs": 2}, "unlock": "balnea", "icon": "bath", "desc": "Маленькие бани квартала с тёплым бассейном."},
 	"medic": {"kind": "shop", "cat": "commerce", "sub": "services", "name": "Лекарь", "cost": 700, "bonus": 8, "range": 4, "cap": 4,
@@ -209,6 +218,8 @@ const B := {
 		"desc": "Фалернское и местное вино. Нужен виноградник."},
 	"perfumer": {"kind": "shop", "cat": "commerce", "sub": "goods", "name": "Парфюмер", "cost": 800, "bonus": 9, "range": 4, "cap": 4,
 		"jobs": {"artisans": 2}, "store": true, "unlock": "perfumer", "icon": "perfume", "desc": "Розовое масло и мирра в стеклянных флаконах."},
+	"sculptor": {"kind": "shop", "cat": "commerce", "sub": "goods", "name": "Мастерская скульптора", "cost": 900, "bonus": 8, "range": 3, "cap": 4,
+		"jobs": {"artisans": 2}, "unlock": "sculptor", "icon": "mona", "desc": "Мраморные глыбы, леса и стук резца: здесь рождаются статуи для всего города. За ней открываются статуи и руины в «Украшениях»."},
 	"jeweler": {"kind": "shop", "cat": "commerce", "sub": "goods", "name": "Ювелир", "cost": 1300, "bonus": 11, "range": 4, "cap": 4,
 		"jobs": {"artisans": 2}, "store": true, "unlock": "jeweler", "icon": "ring", "desc": "Кольца, фибулы и жемчужные серьги."},
 
@@ -239,8 +250,14 @@ const B := {
 	# особые: памятники радуют всех вокруг
 	"fountain": {"kind": "monument", "cat": "special", "name": "Фонтан", "cost": 400, "bonus": 6, "range": 3, "unlock": "fountain",
 		"icon": "water", "desc": "Фонтан для квартала: вода и радость всем вокруг."},
+	"vigiles": {"kind": "monument", "cat": "special", "name": "Пост вигилов", "cost": 650, "bonus": 4, "range": 3, "jobs": {"plebs": 2}, "unlock": "vigiles",
+		"icon": "shield", "desc": "Вигилы — пожарные и ночная стража Рима: бочки с водой, вёдра, лестницы и дозор до рассвета. Дома вокруг спят спокойно."},
 	"temple": {"kind": "monument", "cat": "special", "name": "Храм Юпитера", "cost": 2500, "bonus": 10, "range": 4, "jobs": {"plebs": 2}, "unlock": "temple",
 		"icon": "level", "desc": "Храм на подиуме с колоннадой. Значительно повышает счастье жителей поблизости."},
+	"prefect": {"kind": "monument", "cat": "special", "name": "Дом префекта", "cost": 3200, "bonus": 7, "range": 4, "jobs": {"patricians": 2}, "unlock": "prefect",
+		"icon": "scroll", "desc": "Префект следит за порядком, рынками и водой. Кварталу рядом с его домом живётся спокойнее."},
+	"nymphaeum": {"kind": "monument", "cat": "special", "name": "Нимфей", "cost": 4000, "bonus": 10, "range": 4, "unlock": "nymphaeum",
+		"icon": "fountain", "desc": "Святилище нимф: стена с нишами и статуями, вода льётся из львиных пастей в длинный бассейн. Радует весь квартал."},
 	"forum": {"kind": "monument", "cat": "special", "name": "Форум", "cost": 8000, "bonus": 12, "range": 5, "unlock": "forum",
 		"icon": "caesar", "desc": "Сердце города: колоннада, статуи и трибуна."},
 	# чудеса Легиона (Legion.WONDERS): открываются исследованием или рейтингом походов, сверх денариев стоят Славы (glory)
@@ -388,12 +405,143 @@ const B := {
 		"desc": "Колонна в розах, наверху — позолоченное навершие, как у знамён легиона. Награда старосты."},
 	"sundial_3": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "sundial", "look": 2, "name": "Часы с позолотой", "cost": 140, "deco": 7, "unlock": "o_eternal", "story": true,
 		"desc": "Солнечные часы на мраморной колонне с позолоченным навершием, вокруг — вазоны. Награда старосты."},
+
+	# ---------- этап 5: наборы украшений — по исследованию на набор, на всех уровнях (CatDecor2). Каждый набор — три-четыре
+	# вида; три разных вида одного набора рядом с домом — бонус набора (новая игра, Defs.SET_BONUS). В витрине меню их нет ----------
+	# «Сельский двор» (Стоянка)
+	"veggies": {"kind": "decor", "cat": "decor", "sub": "yard", "name": "Грядка капусты", "cost": 6, "deco": 1, "unlock": "deco_rustic", "menu": false, "desc": "Дощатая грядка с кочанами капусты и луком."},
+	"veggies_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "veggies", "look": 1, "name": "Бобы на колышках", "cost": 6, "deco": 1, "unlock": "deco_rustic", "menu": false, "desc": "Ряд вьющихся бобов на колышках, рядом корзина."},
+	"veggies_3": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "veggies", "look": 2, "name": "Тыквы у плетня", "cost": 8, "deco": 2, "unlock": "deco_rustic", "menu": false, "desc": "Тыквы и кабачки у короткого плетня."},
+	"porch": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Лавка у порога", "cost": 8, "deco": 2, "unlock": "deco_rustic", "menu": false, "desc": "Простая деревянная лавка, корзины и кувшин — посидеть вечером."},
+	"porch_2": {"kind": "decor", "cat": "decor", "sub": "street", "base": "porch", "look": 1, "name": "Табурет с кувшином", "cost": 6, "deco": 1, "unlock": "deco_rustic", "menu": false, "desc": "Табурет, кувшин с водой и корзина с шерстью."},
+	"woodpile": {"kind": "decor", "cat": "decor", "sub": "yard", "name": "Поленница", "cost": 6, "deco": 1, "unlock": "deco_rustic", "menu": false, "desc": "Дрова, сложенные под дощатым навесом."},
+	"woodpile_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "woodpile", "look": 1, "name": "Лестница у штабеля", "cost": 7, "deco": 1, "unlock": "deco_rustic", "menu": false, "desc": "Штабель досок, прислонённая лестница и мешок."},
+	# «Южные деревья» (Хутор; в новой игре сюда же — кипарисы и пальмы, Defs.DECOR_LATER)
+	"bigtree": {"kind": "decor", "cat": "decor", "sub": "trees", "name": "Старый дуб", "cost": 25, "deco": 4, "unlock": "deco_south", "menu": false, "desc": "Могучий дуб с густой кроной — тень на полдвора."},
+	"bigtree_2": {"kind": "decor", "cat": "decor", "sub": "trees", "base": "bigtree", "look": 1, "name": "Раскидистая олива", "cost": 25, "deco": 4, "unlock": "deco_south", "menu": false, "desc": "Старая олива с серебристой листвой в кругу камней."},
+	"bigtree_3": {"kind": "decor", "cat": "decor", "sub": "trees", "base": "bigtree", "look": 2, "name": "Высокая пальма", "cost": 30, "deco": 4, "unlock": "deco_south", "menu": false, "desc": "Стройная высокая пальма, у корней — кусты и цветы."},
+	# «Вода в саду» (Деревня)
+	"pond": {"kind": "decor", "cat": "decor", "sub": "water", "name": "Пруд с кувшинками", "cost": 35, "deco": 4, "unlock": "deco_water", "menu": false, "desc": "Маленький пруд в кольце камней, на воде — кувшинки."},
+	"pond_2": {"kind": "decor", "cat": "decor", "sub": "water", "base": "pond", "look": 1, "name": "Пруд с утками", "cost": 45, "deco": 5, "unlock": "deco_water", "menu": false, "desc": "Пруд в камышах, по воде плавают утки."},
+	"pond_3": {"kind": "decor", "cat": "decor", "sub": "water", "base": "pond", "look": 2, "name": "Пруд с мостком", "cost": 45, "deco": 5, "unlock": "deco_water", "menu": false, "desc": "Пруд с дощатым мостком и камнями по берегу."},
+	"trough": {"kind": "decor", "cat": "decor", "sub": "water", "name": "Каменная поилка", "cost": 20, "deco": 3, "unlock": "deco_water", "menu": false, "desc": "Длинное каменное корыто с водой, рядом вёдра."},
+	"trough_2": {"kind": "decor", "cat": "decor", "sub": "water", "base": "trough", "look": 1, "name": "Деревянное корыто", "cost": 18, "deco": 3, "unlock": "deco_water", "menu": false, "desc": "Дощатое корыто с водой и охапка сена."},
+	"basin": {"kind": "decor", "cat": "decor", "sub": "water", "name": "Чаша для птиц", "cost": 25, "deco": 3, "unlock": "deco_water", "menu": false, "desc": "Каменная чаша с водой на столбике — сюда слетаются птицы."},
+	"basin_2": {"kind": "decor", "cat": "decor", "sub": "water", "base": "basin", "look": 1, "name": "Родник у камня", "cost": 30, "deco": 4, "unlock": "deco_water", "menu": false, "desc": "Струйка воды из маски на камне падает в низкую чашу."},
+	# «Скотный двор» (Деревня): корова и лошадь живые — пасутся и жуют (game._show)
+	"cow": {"kind": "decor", "cat": "decor", "sub": "animals", "name": "Корова на лугу", "cost": 60, "deco": 4, "unlock": "deco_farmyard", "menu": false, "desc": "Рыжая корова пасётся на лужке с цветами."},
+	"cow_2": {"kind": "decor", "cat": "decor", "sub": "animals", "base": "cow", "look": 1, "name": "Корова у кормушки", "cost": 70, "deco": 5, "unlock": "deco_farmyard", "menu": false, "desc": "Корова жуёт сено у яслей за плетнём."},
+	"horse": {"kind": "decor", "cat": "decor", "sub": "animals", "name": "Лошадь у коновязи", "cost": 70, "deco": 5, "unlock": "deco_farmyard", "menu": false, "desc": "Гнедая лошадь у коновязи с поилкой."},
+	"horse_2": {"kind": "decor", "cat": "decor", "sub": "animals", "base": "horse", "look": 1, "name": "Лошадь под навесом", "cost": 80, "deco": 5, "unlock": "deco_farmyard", "menu": false, "desc": "Лошадь под дощатым навесом, у стены — сено и седло."},
+	"manger": {"kind": "decor", "cat": "decor", "sub": "yard", "name": "Ясли с сеном", "cost": 20, "deco": 2, "unlock": "deco_farmyard", "menu": false, "desc": "Деревянные ясли с сеном, мешки с овсом."},
+	"manger_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "manger", "look": 1, "name": "Плуг и мешки", "cost": 20, "deco": 2, "unlock": "deco_farmyard", "menu": false, "desc": "Плуг, серп и мешки с зерном у копны."},
+	# «Ремесленный двор» (Посёлок)
+	"forge_corner": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Наковальня и точило", "cost": 40, "deco": 3, "unlock": "deco_craft", "menu": false, "desc": "Наковальня, точильный круг и молот — уголок кузнеца."},
+	"forge_corner_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "forge_corner", "look": 1, "name": "Горн кузнеца", "cost": 60, "deco": 4, "light": true, "unlock": "deco_craft", "menu": false, "desc": "Каменный горн с огнём и наковальня рядом. Ночью светится."},
+	"loom": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Ткацкий станок", "cost": 35, "deco": 3, "unlock": "deco_craft", "menu": false, "desc": "Станок с натянутой основой, корзины шерсти и рулоны."},
+	"loom_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "loom", "look": 1, "name": "Сушка тканей", "cost": 40, "deco": 3, "unlock": "deco_craft", "menu": false, "desc": "Крашеные ткани сохнут на жердях."},
+	"kiln": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Печь гончара", "cost": 45, "deco": 3, "unlock": "deco_craft", "menu": false, "desc": "Купол гончарной печи, рядом — свежие амфоры."},
+	"kiln_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "kiln", "look": 1, "name": "Гончарный стол", "cost": 35, "deco": 3, "unlock": "deco_craft", "menu": false, "desc": "Стол с мисками и кувшинами, табурет мастера."},
+	"marble_yard": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Глыбы мрамора", "cost": 50, "deco": 4, "unlock": "deco_craft", "menu": false, "desc": "Белые мраморные глыбы с каменоломни, резец и молоток."},
+	"marble_yard_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "marble_yard", "look": 1, "name": "Мраморный штабель", "cost": 60, "deco": 4, "unlock": "deco_craft", "menu": false, "desc": "Штабель мраморных плит и лестница."},
+	# «Рыночные мелочи» (Посёлок)
+	"awning": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Навес с фруктами", "cost": 60, "deco": 4, "unlock": "deco_market", "menu": false, "desc": "Полосатый навес, под ним — стол с корзинами фруктов."},
+	"awning_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "awning", "look": 1, "name": "Навес с тканями", "cost": 60, "deco": 4, "unlock": "deco_market", "menu": false, "desc": "Яркие ткани на перекладине, рулоны и ковры на продажу."},
+	"awning_3": {"kind": "decor", "cat": "decor", "sub": "market", "base": "awning", "look": 2, "name": "Навес с посудой", "cost": 65, "deco": 4, "unlock": "deco_market", "menu": false, "desc": "Полки с вазами, мисками и кувшинами под навесом."},
+	"rugs": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Ковры на продажу", "cost": 45, "deco": 3, "unlock": "deco_market", "menu": false, "desc": "Расстеленный ковёр, стопка свёрнутых и подушки."},
+	"rugs_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "rugs", "look": 1, "name": "Гора подушек", "cost": 45, "deco": 3, "unlock": "deco_market", "menu": false, "desc": "Пёстрые подушки горой на ковре — для покупателей."},
+	"handcart": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Тачка с овощами", "cost": 40, "deco": 3, "unlock": "deco_market", "menu": false, "desc": "Тачка торговца с корзинами овощей."},
+	"handcart_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "handcart", "look": 1, "name": "Тачка с амфорами", "cost": 40, "deco": 3, "unlock": "deco_market", "menu": false, "desc": "Тачка с амфорами вина и мешком."},
+	"scrolls": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Лоток со свитками", "cost": 55, "deco": 4, "unlock": "deco_market", "menu": false, "desc": "Стол букиниста со свитками и полка с книгами."},
+	# «Сад» (Городок; в новой игре сюда же — изгороди, садовая стенка и третьи облики клумбы, вазона, скамьи)
+	"topiary": {"kind": "decor", "cat": "decor", "sub": "plants", "name": "Самшит-шар в кадке", "cost": 45, "deco": 4, "unlock": "deco_garden", "menu": false, "desc": "Подстриженный шаром самшит в мраморной кадке."},
+	"topiary_2": {"kind": "decor", "cat": "decor", "sub": "plants", "base": "topiary", "look": 1, "name": "Самшит-конус", "cost": 45, "deco": 4, "unlock": "deco_garden", "menu": false, "desc": "Самшит, подстриженный конусом, в кругу цветов."},
+	"topiary_3": {"kind": "decor", "cat": "decor", "sub": "plants", "base": "topiary", "look": 2, "name": "Три шара самшита", "cost": 60, "deco": 5, "unlock": "deco_garden", "menu": false, "desc": "Три стриженых шара самшита на плитах."},
+	"trellis": {"kind": "decor", "cat": "decor", "sub": "plants", "name": "Шпалера с виноградом", "cost": 50, "deco": 4, "unlock": "deco_garden", "menu": false, "desc": "Деревянная решётка, увитая виноградной лозой."},
+	"trellis_2": {"kind": "decor", "cat": "decor", "sub": "plants", "base": "trellis", "look": 1, "name": "Шпалера с розами", "cost": 55, "deco": 4, "unlock": "deco_garden", "menu": false, "desc": "Низкая решётка в цветущих розах, у подножия — вазоны."},
+	"parterre": {"kind": "decor", "cat": "decor", "sub": "plants", "name": "Цветочный партер", "cost": 90, "deco": 6, "unlock": "deco_garden", "menu": false, "desc": "Четыре цветника вокруг вазы — как в садах патрициев."},
+	"parterre_2": {"kind": "decor", "cat": "decor", "sub": "plants", "base": "parterre", "look": 1, "name": "Партер с фонтанчиком", "cost": 110, "deco": 6, "unlock": "deco_garden", "menu": false, "desc": "Стриженые квадраты самшита вокруг чаши с водой."},
+	# «Статуи и руины» (Городок, после «Мастерской скульптора»; в новой игре сюда же — львы и две статуи)
+	"ruins": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Обломок колонны", "cost": 150, "deco": 7, "unlock": "deco_sculpt", "menu": false, "desc": "Старая колонна с отбитой верхушкой, вокруг — мраморные обломки и плющ."},
+	"ruins_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "ruins", "look": 1, "name": "Упавшая статуя", "cost": 150, "deco": 7, "unlock": "deco_sculpt", "menu": false, "desc": "Мраморная статуя, разбитая на куски, в траве и цветах."},
+	"altar": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Алтарь с огнём", "cost": 180, "deco": 7, "light": true, "unlock": "deco_sculpt", "menu": false, "desc": "Мраморный алтарь, на нём горит огонь. Ночью светит."},
+	"altar_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "altar", "look": 1, "name": "Алтарь с дарами", "cost": 180, "deco": 7, "unlock": "deco_sculpt", "menu": false, "desc": "Алтарь с чашами, фруктами и курильницей."},
+	"bigvase": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Ваза на постаменте", "cost": 140, "deco": 6, "unlock": "deco_sculpt", "menu": false, "desc": "Большая мраморная ваза на постаменте."},
+	"bigvase_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "bigvase", "look": 1, "name": "Пара амфор у ступени", "cost": 150, "deco": 6, "unlock": "deco_sculpt", "menu": false, "desc": "Две высокие расписные амфоры на мраморной ступени."},
+	"unfinished": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Статуя в работе", "cost": 160, "deco": 7, "unlock": "deco_sculpt", "menu": false, "desc": "Недоделанная статуя в лесах, рядом — резцы и глыба мрамора."},
+	# «Ночные огни» (Город; в новой игре сюда же — большие жаровни и вторые облики фонарей)
+	"torchpost": {"kind": "decor", "cat": "decor", "sub": "light", "name": "Факел на шесте", "cost": 60, "deco": 4, "light": true, "unlock": "deco_night", "menu": false, "desc": "Смоляной факел на высоком шесте. Ночью горит."},
+	"torchpost_2": {"kind": "decor", "cat": "decor", "sub": "light", "base": "torchpost", "look": 1, "name": "Факелы у входа", "cost": 90, "deco": 5, "light": true, "unlock": "deco_night", "menu": false, "desc": "Два факела на шестах — как у входа в храм. Ночью горят."},
+	"incense": {"kind": "decor", "cat": "decor", "sub": "light", "name": "Курильница на треноге", "cost": 90, "deco": 5, "light": true, "unlock": "deco_night", "menu": false, "desc": "Бронзовая курильница с тлеющими углями и тонкой струйкой дыма."},
+	"incense_2": {"kind": "decor", "cat": "decor", "sub": "light", "base": "incense", "look": 1, "name": "Курильница на колонне", "cost": 100, "deco": 5, "light": true, "unlock": "deco_night", "menu": false, "desc": "Курильница на мраморной колонне, у подножия — цветы."},
+	"lanterns": {"kind": "decor", "cat": "decor", "sub": "light", "name": "Гирлянда фонарей", "cost": 120, "deco": 6, "light": true, "unlock": "deco_night", "menu": false, "desc": "Три фонаря на перекладине между столбами. Ночью светят."},
+	"lanterns_2": {"kind": "decor", "cat": "decor", "sub": "light", "base": "lanterns", "look": 1, "name": "Фонари на арке", "cost": 140, "deco": 6, "light": true, "unlock": "deco_night", "menu": false, "desc": "Садовая арка в плюще с фонарями. Ночью светит."},
+	# «Фрески и мозаики» (Город): на стены домов
+	"fresco": {"kind": "decor", "cat": "decor", "sub": "wall", "name": "Фреска с птицами", "cost": 120, "deco": 5, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Расписная фреска на стене дома."},
+	"fresco_2": {"kind": "decor", "cat": "decor", "sub": "wall", "base": "fresco", "look": 1, "name": "Фреска с садом", "cost": 120, "deco": 5, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Фреска с садом и колоннами на стене дома."},
+	"fresco_3": {"kind": "decor", "cat": "decor", "sub": "wall", "base": "fresco", "look": 2, "name": "Расписной фриз", "cost": 90, "deco": 4, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Длинная расписная полоса под карнизом."},
+	"fresco_4": {"kind": "decor", "cat": "decor", "sub": "wall", "base": "fresco", "look": 3, "name": "Узорный фриз", "cost": 90, "deco": 4, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Полоса с меандром и цветами на стене дома."},
+	"emblem": {"kind": "decor", "cat": "decor", "sub": "wall", "name": "Мозаичная эмблема", "cost": 90, "deco": 4, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Эмблема из мозаики над дверью."},
+	"emblem_2": {"kind": "decor", "cat": "decor", "sub": "wall", "base": "emblem", "look": 1, "name": "Эмблема в венке", "cost": 100, "deco": 4, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Мозаичный знак в лавровом венке."},
+	"emblem_3": {"kind": "decor", "cat": "decor", "sub": "wall", "base": "emblem", "look": 2, "name": "Две эмблемы", "cost": 120, "deco": 5, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Пара мозаичных знаков на стене."},
+	"drape": {"kind": "decor", "cat": "decor", "sub": "wall", "name": "Драпировка", "cost": 70, "deco": 4, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Полотно с кистями фестонами вдоль стены."},
+	"drape_2": {"kind": "decor", "cat": "decor", "sub": "wall", "base": "drape", "look": 1, "name": "Ткань с подхватами", "cost": 70, "deco": 4, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Две ткани с подхватами — как у богатого дома."},
+	"numeral": {"kind": "decor", "cat": "decor", "sub": "wall", "name": "Табличка с номером", "cost": 60, "deco": 3, "wall": true, "unlock": "deco_mosaic", "menu": false, "desc": "Бронзовые римские цифры на мраморной табличке."},
+	# «Праздник» (Большой город; в новой игре сюда же — знамя на постаменте и два знамени на стене)
+	"garland": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Гирлянда флажков", "cost": 160, "deco": 6, "unlock": "deco_fest", "menu": false, "desc": "Пёстрые полотнища между двумя шестами — к празднику."},
+	"garland_2": {"kind": "decor", "cat": "decor", "sub": "street", "base": "garland", "look": 1, "name": "Лавровая арка", "cost": 200, "deco": 7, "unlock": "deco_fest", "menu": false, "desc": "Арка, увитая лавром и лентами, — через неё идёт шествие."},
+	"bigbanner": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Большое полотнище", "cost": 220, "deco": 7, "unlock": "deco_fest", "menu": false, "desc": "Длинное полотнище на двух высоких шестах."},
+	"bigbanner_2": {"kind": "decor", "cat": "decor", "sub": "street", "base": "bigbanner", "look": 1, "name": "Три знамени", "cost": 240, "deco": 7, "unlock": "deco_fest", "menu": false, "desc": "Три знамени разной высоты на мраморной ступени."},
+	"feast": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Стол с угощением", "cost": 260, "deco": 7, "unlock": "deco_fest", "menu": false, "desc": "Длинный стол: блюда, кубки и кувшины вина для всех."},
+	"feast_2": {"kind": "decor", "cat": "decor", "sub": "street", "base": "feast", "look": 1, "name": "Ложе для пира", "cost": 280, "deco": 7, "unlock": "deco_fest", "menu": false, "desc": "Пиршественное ложе с подушками и столик с угощением."},
+	"poet": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Помост поэта", "cost": 200, "deco": 7, "unlock": "deco_fest", "menu": false, "desc": "Невысокий помост с лирой и ковром — читать стихи на празднике."},
+	# «Боги и герои» (Вечный город)
+	"colossus": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Центурион на пьедестале", "cost": 600, "deco": 12, "unlock": "deco_gods", "menu": false, "desc": "Мраморный центурион вдвое выше человека на высоком пьедестале."},
+	"colossus_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "colossus", "look": 1, "name": "Полководец на пьедестале", "cost": 700, "deco": 12, "unlock": "deco_gods", "menu": false, "desc": "Великий полководец в плаще на ступенчатом пьедестале."},
+	"colossus_3": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "colossus", "look": 2, "name": "Нимфа с кувшином", "cost": 650, "deco": 12, "unlock": "deco_gods", "menu": false, "desc": "Большая мраморная нимфа на пьедестале в цветах."},
+	"bigtorch": {"kind": "decor", "cat": "decor", "sub": "light", "name": "Бронзовый треножник", "cost": 450, "deco": 9, "light": true, "unlock": "deco_gods", "menu": false, "desc": "Огромная бронзовая чаша с огнём на высокой колонне."},
+	"eagle": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Золотой орёл", "cost": 700, "deco": 11, "unlock": "deco_gods", "menu": false, "desc": "Позолоченный орёл — знак Рима — на колонне в лаврах."},
+	# «Главные» украшения (этап 5.3): деньги сверх предела украшений — каждый вид радует дома вокруг, как маленький
+	# памятник (mon — % счастья, range — дальность), и сверх deco_max класса
+	"exedra": {"kind": "decor", "cat": "decor", "sub": "premium", "name": "Экседра", "cost": 1200, "deco": 8, "mon": 3, "range": 2, "unlock": "prem_patrician", "menu": false, "desc": "Полукруглая мраморная скамья со статуями и вазонами — сердце сада патриция."},
+	"garden_pool": {"kind": "decor", "cat": "decor", "sub": "premium", "name": "Мраморный бассейн", "cost": 900, "deco": 7, "mon": 2, "range": 2, "unlock": "prem_patrician", "menu": false, "desc": "Бассейн с мраморным бортиком, в воде — кувшинки, у края — статуя."},
+	"mosaic_panel": {"kind": "decor", "cat": "decor", "sub": "premium", "name": "Мозаичное панно", "cost": 800, "deco": 6, "mon": 2, "range": 2, "unlock": "prem_mosaic", "menu": false, "desc": "Мозаичный ковёр из камешков на мостовой, вокруг — вазоны."},
+	"mosaic_court": {"kind": "decor", "cat": "decor", "sub": "premium", "name": "Мозаичный дворик", "cost": 1600, "deco": 8, "mon": 3, "range": 3, "unlock": "prem_mosaic", "menu": false, "desc": "Мозаичная площадка с фонтанчиком и скамьями по краям."},
+	"obelisk": {"kind": "decor", "cat": "decor", "sub": "premium", "name": "Обелиск", "cost": 1500, "deco": 9, "mon": 3, "range": 3, "unlock": "prem_triumph", "menu": false, "desc": "Высокий каменный обелиск с золотым навершием на ступенях."},
+	"victory_col": {"kind": "decor", "cat": "decor", "sub": "premium", "name": "Колонна победы", "cost": 3000, "deco": 10, "mon": 4, "range": 4, "unlock": "prem_triumph", "menu": false, "desc": "Колонна в честь побед Рима, наверху — золотой орёл, у подножия — трофеи."},
+	"emperor": {"kind": "decor", "cat": "decor", "sub": "premium", "name": "Статуя триумфатора", "cost": 5000, "deco": 12, "mon": 5, "range": 4, "unlock": "prem_eternal", "menu": false, "desc": "Полководец-триумфатор в шлеме с гребнем на огромном пьедестале, по углам — огни. Вся площадь смотрит на него."},
+	"great_fountain": {"kind": "decor", "cat": "decor", "sub": "premium", "name": "Фонтан с тритонами", "cost": 4000, "deco": 11, "mon": 4, "range": 3, "unlock": "prem_eternal", "menu": false, "desc": "Большая чаша в три яруса, вокруг — статуи и львиные маски."},
 }
 
 ## Разделы меню стройки (снизу посередине) и вкладки коммерции
 ## Вкладки раздела «Украшения» (как вкладки потребностей у лавок)
-const DECOR_SUBS := [["plants", "Цветы", "daisy"], ["trees", "Деревья", "pine"], ["light", "Свет", "lamp"],
-	["street", "Улица", "bench"], ["yard", "Двор и рынок", "cart"], ["stone", "Статуи и камень", "mona"], ["animals", "Животные", "swan"]]
+## (этап 5: «Вода», «На стены», «Рынок и ремесло», «Главные» — новые; прежние облики переезжают туда через DECOR_TAB)
+const DECOR_SUBS := [["plants", "Цветы и сад", "daisy"], ["trees", "Деревья", "pine"], ["water", "Вода", "fountain"], ["light", "Свет", "lamp"],
+	["street", "Улица", "bench"], ["wall", "На стены", "brick"], ["yard", "Двор и хозяйство", "fence"], ["market", "Рынок и ремесло", "cart"],
+	["stone", "Статуи и камень", "mona"], ["animals", "Животные", "swan"], ["premium", "Главные", "laurels"]]
+## Прежние облики в новых вкладках (поле sub в B не трогаем — так проще слияние)
+const DECOR_TAB := {"wall_flowers": "wall", "wall_flowers_2": "wall", "wall_flowers_3": "wall", "wall_torch": "wall", "wall_torch_2": "wall",
+	"wall_lamp": "wall", "wall_lamp_2": "wall", "wall_banner": "wall", "wall_banner_2": "wall", "wall_banner_3": "wall", "balcony": "wall",
+	"well": "water", "well_2": "water", "well_3": "water", "smallfountain": "water", "smallfountain_2": "water", "smallfountain_3": "water",
+	"nymphfountain": "water", "amphorae": "market", "amphorae_2": "market", "amphorae_3": "market", "goods": "market", "goods_2": "market",
+	"goods_3": "market", "cart": "market", "cart_2": "market"}
+## Новая игра (решение владельца Q17): часть прежних обликов открывается позже — в наборах этапа 5. Живые города
+## (City.decor_v = 0) открывают их, как раньше. Просьбы, истории и заказы просят виды, у которых облик остаётся раньше
+## (проверка — test_fixes: «всё, что просят, открыто к тому уровню, где просят»)
+const DECOR_LATER := {"cypress": "deco_south", "cypress_2": "deco_south", "palm": "deco_south", "palm_2": "deco_south",
+	"tree_2": "deco_south", "bush_3": "deco_south", "well_2": "deco_water", "well_3": "deco_water", "smallfountain_2": "deco_water",
+	"amphorae_3": "deco_market", "goods_3": "deco_market", "cart_2": "deco_market",
+	"fence_3": "deco_garden", "hedge": "deco_garden", "stonewall": "deco_garden", "bench_3": "deco_garden", "flowers_3": "deco_garden",
+	"planter_3": "deco_garden", "wall_flowers_3": "deco_garden", "lion": "deco_sculpt", "lion_2": "deco_sculpt", "statue_3": "deco_sculpt",
+	"statue_4": "deco_sculpt", "bigbrazier": "deco_night", "bigbrazier_2": "deco_night", "lamp_post_3": "deco_night",
+	"wall_lamp_2": "deco_night", "wall_torch_2": "deco_night", "banner_2": "deco_fest", "wall_banner_3": "deco_fest"}
+## Наборы украшений (исследование = набор): три разных вида одного набора в DECOR_RADIUS от дома — +SET_BONUS% счастья
+## (новая игра, City.econ ≥ 1; не больше SET_MAX наборов на дом, сверх предела украшений класса)
+const DECOR_SETS := ["deco_rustic", "deco_south", "deco_water", "deco_farmyard", "deco_craft", "deco_market", "deco_garden", "deco_sculpt",
+	"deco_night", "deco_mosaic", "deco_fest", "deco_gods"]
+const SET_BONUS := 2
+const SET_MAX := 2
+const SET_KINDS := 3
 const CATS := [["housing", "Жильё", "housing"], ["commerce", "Коммерция", "commerce"], ["farming", "Хозяйство и науки", "farming"],
 	["decor", "Украшения", "decor"], ["special", "Особые постройки", "special"], ["military", "Легион", "legion"]]
 ## Подписи разделов на кнопках меню стройки (и в событии «Изучено: … — карточка в «Лавки · Товары»»)
@@ -485,6 +633,33 @@ const RESEARCH := [
 	{"id": "colosseum", "lvl": 7, "name": "Амфитеатр", "cost": 10000, "icon": "swords"},
 	# не дороже предела очков на высшем уровне (6000 × 2 с «research1») — иначе изучить нельзя вовсе
 	{"id": "pantheon", "lvl": 7, "name": "Пантеон", "cost": 11500, "icon": "level"},
+
+	# этап 5: новые здания (по одному-два на уровень) и наборы украшений (по исследованию на набор, на всех уровнях;
+	# «Главные» — дорогие украшения сверх предела, как маленькие памятники)
+	{"id": "deco_rustic", "lvl": 0, "name": "Сельский двор", "cost": 25, "icon": "wheat", "desc": "Грядки, лавка у порога, поленница."},
+	{"id": "ogorod", "lvl": 1, "name": "Огород", "cost": 60, "icon": "veg"},
+	{"id": "shelter", "lvl": 1, "name": "Приют для животных", "cost": 100, "icon": "cat"},
+	{"id": "deco_south", "lvl": 1, "name": "Южные деревья", "cost": 55, "icon": "pine", "desc": "Большие деревья: дуб, олива, высокая пальма."},
+	{"id": "puppets", "lvl": 2, "name": "Кукольный театр", "cost": 190, "icon": "puppet"},
+	{"id": "deco_water", "lvl": 2, "name": "Вода в саду", "cost": 110, "icon": "water", "desc": "Пруды, поилки, чаши и родники."},
+	{"id": "deco_farmyard", "lvl": 2, "name": "Скотный двор", "cost": 120, "icon": "cow", "desc": "Живые корова и лошадь, ясли с сеном, плуг."},
+	{"id": "herbalist", "lvl": 3, "name": "Травник", "cost": 340, "icon": "sprout"},
+	{"id": "deco_craft", "lvl": 3, "name": "Ремесленный двор", "cost": 190, "icon": "anvil", "desc": "Наковальня и горн, ткацкий станок, печь гончара, мраморные глыбы."},
+	{"id": "deco_market", "lvl": 3, "name": "Рыночные мелочи", "cost": 210, "icon": "commerce", "desc": "Навесы с товаром, ковры, тачки, лоток со свитками."},
+	{"id": "vigiles", "lvl": 4, "name": "Пост вигилов", "cost": 640, "icon": "shield"},
+	{"id": "sculptor", "lvl": 4, "name": "Мастерская скульптора", "cost": 780, "icon": "mona"},
+	{"id": "deco_garden", "lvl": 4, "name": "Сад", "cost": 380, "icon": "flower", "desc": "Стриженый самшит, шпалеры с лозой и розами, цветочные партеры."},
+	{"id": "deco_sculpt", "lvl": 4, "name": "Статуи и руины", "cost": 420, "icon": "marble", "after": "sculptor", "desc": "Руины, алтари, большие вазы, статуя в работе."},
+	{"id": "prem_patrician", "lvl": 4, "name": "Сад патриция", "cost": 500, "icon": "laurels", "desc": "Главные украшения: экседра и мраморный бассейн — радуют дома вокруг сверх предела украшений."},
+	{"id": "prefect", "lvl": 5, "name": "Дом префекта", "cost": 1600, "icon": "scroll"},
+	{"id": "deco_night", "lvl": 5, "name": "Ночные огни", "cost": 600, "icon": "candle", "desc": "Факелы на шестах, курильницы, гирлянды фонарей."},
+	{"id": "deco_mosaic", "lvl": 5, "name": "Фрески и мозаики", "cost": 720, "icon": "color", "desc": "Фрески, мозаичные эмблемы, драпировки и таблички — на стены домов."},
+	{"id": "prem_mosaic", "lvl": 5, "name": "Мозаики", "cost": 900, "icon": "laurels", "desc": "Главные украшения: мозаичное панно и мозаичный дворик."},
+	{"id": "nymphaeum", "lvl": 6, "name": "Нимфей", "cost": 3600, "icon": "fountain"},
+	{"id": "deco_fest", "lvl": 6, "name": "Праздник", "cost": 1500, "icon": "drum", "desc": "Гирлянды, большие знамёна, столы для пира, помост поэта."},
+	{"id": "prem_triumph", "lvl": 6, "name": "Триумф", "cost": 1800, "icon": "laurels", "desc": "Главные украшения: обелиск и колонна победы."},
+	{"id": "deco_gods", "lvl": 7, "name": "Боги и герои", "cost": 2900, "icon": "eagle", "desc": "Статуи на высоких пьедесталах, бронзовый треножник, золотой орёл."},
+	{"id": "prem_eternal", "lvl": 7, "name": "Вечный Рим", "cost": 3600, "icon": "laurels", "desc": "Главные украшения: статуя триумфатора и фонтан с тритонами."},
 ]
 
 ## Цвета домов: штукатурка подкрашивается (у соседей — всегда разные)
@@ -654,6 +829,24 @@ const FENCE_PITCH := 1.95
 ## Вид украшения, к которому относится облик («flowers_2» → «flowers»); у остальных построек — сам тип
 static func base_of(type: String) -> String:
 	return String((B.get(type, {}) as Dictionary).get("base", type))
+
+
+## Вкладка украшения в меню стройки (с переездами этапа 5 — DECOR_TAB)
+static func decor_sub(type: String) -> String:
+	return String(DECOR_TAB.get(type, (B.get(type, {}) as Dictionary).get("sub", "")))
+
+
+## Чем открывается постройка: в новой игре (late) часть прежних обликов — набором этапа 5 (DECOR_LATER)
+static func unlock_of(type: String, late: bool) -> String:
+	if late and DECOR_LATER.has(type):
+		return String(DECOR_LATER[type])
+	return String((B.get(type, {}) as Dictionary).get("unlock", ""))
+
+
+## Набор украшения (исследование из DECOR_SETS) или "" — не из набора
+static func set_of(type: String, late := true) -> String:
+	var u := unlock_of(type, late)
+	return u if u in DECOR_SETS else ""
 
 
 ## Все облики вида украшения (карточки по порядку): «flowers» → [flowers, flowers_2, flowers_3]. Редкие облики-награды

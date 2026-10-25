@@ -36,6 +36,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 		"butcher", "bakery", "cobbler", "dyer", "tailor", "potter", "oilshop", "lamps", "wineshop", "perfumer", "jeweler", "weaver", "barber", "medic":
 			CatShops._shop(b, type, variant)
 		"thermopolium": CatShops._thermopolium(b)
+		"ogorod", "shelter", "puppets", "herbalist", "vigiles", "sculptor", "prefect", "nymphaeum": CatExtra.make(b, type)   # этап 5
 		"taberna": CatShops._taberna(b)
 		"fullonica": CatShops._fullonica(b)
 		"musicians": CatShops._musicians(b)

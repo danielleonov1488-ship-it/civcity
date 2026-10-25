@@ -589,7 +589,7 @@ const RUN := 2.3                     # дети бегают (м/с)
 const TALK_ANIMS := ["Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Interact", "Interact_M", "Spell_Simple_Idle", "Spell_Simple_Idle_M"]
 const LISTEN_ANIMS := ["Listen", "Listen_M", "Listen", "Listen_M", "Idle"]
 const SOLO_ANIMS := ["Idle", "Look_Around", "Look_Around_M", "Idle"]
-const WATCH := ["musicians", "dice", "mimes"]                          # смотрят представление
+const WATCH := ["musicians", "dice", "mimes", "puppets"]                          # смотрят представление
 const ENTER := ["odeon", "theatre", "balnea", "baths", "medic", "taberna", "fullonica", "dyer"]   # заходят внутрь
 const STAND := ["Idle_Talking", "Interact", "Idle"]                    # продавцы, что стоят и могут повернуться
 
@@ -1243,7 +1243,7 @@ func _sit_pick(r: Dictionary) -> void:
 func _watch_pick(r: Dictionary) -> void:
 	var t: String = (r["dest"] as Dictionary).get("type", "")
 	var opts := ["Idle", "Listen", "Listen_M", "Idle"]
-	if t == "mimes":
+	if t == "mimes" or t == "puppets":
 		opts += ["Laugh", "Laugh"]
 	elif t == "musicians":
 		opts += ["Dance", "Listen"]

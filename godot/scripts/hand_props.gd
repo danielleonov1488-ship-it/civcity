@@ -37,6 +37,9 @@ const WORK := {
 	"bakery": [["bread"]], "taberna": [["jug"], ["jug"]], "thermopolium": [["jug"]],
 	"temple": [["censer"]], "barber": [["razor"]],
 	"center": [[], ["spear", "shield"]], "forum": [[], ["spear", "shield"]],
+	# этап 5: новые здания
+	"ogorod": [["basket"]], "shelter": [["basket"]], "vigiles": [["jug"], []], "sculptor": [["hammer"], ["hammer"]],
+	"herbalist": [["jar"]], "prefect": [["scroll"], []],
 }
 ## Свои движения слотов (вместо записанных в чертеже) — только пока вещь в руках: музыкант с лирой играет на ней,
 ## без лиры (далеко, «Низкая») — сидит как в чертеже, а лира лежит на скамье (People._slot_clip)
@@ -47,6 +50,7 @@ const CARRY := {
 	"stall_fruit": "basket", "stall_veg": "basket", "stall_fish": "basket", "butcher": "basket", "bakery": "basket",
 	"wineshop": "amphora", "oilshop": "amphora", "potter": "pot", "weaver": "cloth", "tailor": "cloth", "dyer": "cloth",
 	"fullonica": "cloth", "cobbler": "cloth", "lamps": "jar", "perfumer": "jar", "jeweler": "jar", "medic": "jar",
+	"ogorod": "basket", "herbalist": "jar", "sculptor": "pot",
 }
 
 static var _grips := {}
