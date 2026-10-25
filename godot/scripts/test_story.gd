@@ -1580,6 +1580,16 @@ func _wedding() -> void:
 	var walked: bool = await wait_walk(12.0)
 	check(walked and is_equal_approx(game.look_hour, Stories.DUSK) and sto.cine["actors"].size() == Stories.PROC.size(), "шествие: вечер, %d человек" % sto.cine.get("actors", {}).size())
 	check((sto.cine.get("props", []) as Array).size() >= 1 and game.night_lights.size() > nl0, "у двери нового дома горят жаровни")
+	# этап 4 (4.8): дерево между камерой шествия и парой прячется на время ролика (после ролика — на месте)
+	var kc: Vector3 = sto.kit.pos
+	var kl: Vector3 = sto.kit.look
+	var tree_p := Vector2(lerpf(kc.x, kl.x, 0.45), lerpf(kc.z, kl.z, 0.45))
+	game._add_nature("SM_Env_Tree_01", Transform3D(Basis.IDENTITY, Vector3(tree_p.x, game.land.height_at(tree_p.x, tree_p.y), tree_p.y)), tree_p)
+	var tit: Dictionary = (game.nature[Vector2i(int(tree_p.x / 2.0), int(tree_p.y / 2.0))] as Array)[-1]
+	var tree_h: Array = tit["h"]
+	var t_scale := func() -> float: return ((tree_h[0][0]["subs"][0]["mm"]) as MultiMesh).get_instance_transform(int(tree_h[0][1])).basis.get_scale().length()
+	await frames(30)
+	check(t_scale.call() < 1e-6, "дерево между камерой шествия и парой спрятано на время ролика")
 	await frames(150)
 	await shot("story_wedding_proc.png")
 	var oh: float = game.land.height_at(208.0, 116.0)
@@ -1597,6 +1607,8 @@ func _wedding() -> void:
 	var ended: bool = await wait_kit(false, 5.0)
 	await frames(4)
 	check(ended and is_equal_approx(game.look_hour, -1.0) and game.night_lights.size() == nl0, "ролик кончился: свет как был, жаровни убраны")
+	check(t_scale.call() > 0.1, "ролик кончился — спрятанное дерево снова на месте")
+	game.remove_nature(tit)
 	check(is_equal_approx(float(game.speed), 2.0), "скорость вернулась (×%s)" % game.speed)
 	hud.set_speed(0.0)
 	# пересмотр из журнала

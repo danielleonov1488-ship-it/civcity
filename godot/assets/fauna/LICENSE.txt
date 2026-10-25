@@ -1,0 +1,14 @@
+Животные для прудов и лугов (CivCity, этап 4 плана от 24.10). Бесплатные модели, лицензии ниже.
+Модели переделываются в игре (scripts/fauna.gd): цвета, водная линия, свои позы — сами файлы не менялись.
+
+Duck.glb  — "Duck" by jeremy, CC-BY 3.0 (https://creativecommons.org/licenses/by/3.0/),
+            from Poly Pizza: https://poly.pizza/m/2KHEgw1ztVI
+            (в игре — селезень кряквы и перекрашенная уточка)
+
+Swan.glb  — "Duck" by Poly by Google, CC-BY 3.0 (https://creativecommons.org/licenses/by/3.0/),
+            from Poly Pizza: https://poly.pizza/m/4hp6pk_ojG2
+            (в игре — лебедь: белая птица с длинной шеей, клюв перекрашен в оранжевый с чёрным)
+
+Sheep.glb — "Sheep" by Quaternius, CC0 1.0 Universal (public domain),
+            from Poly Pizza: https://poly.pizza/m/C39AUXUUes
+            (в игре — овцы в загоне и на лугу: свои движения «пасётся» поверх модели)

@@ -745,7 +745,7 @@ static func _rosearch(b: Bp) -> void:
 
 static func _duck(b: Bp) -> void:
 	for k in 3:
-		b.add("#duck", Vector3(cos(k * 2.1) * 0.7, 0, sin(k * 2.1) * 0.6), k * 1.7, 1.0 - k * 0.15)
+		b.add("#duck" if k == 0 else "#duck_f", Vector3(cos(k * 2.1) * 0.7, 0, sin(k * 2.1) * 0.6), k * 1.7, 1.0 - k * 0.15)   # селезень и две уточки
 	_lilies(b, Vector3(-0.9, 0, -0.5), 0.8)
 	_lilies(b, Vector3(0.8, 0, 0.7), 0.6)
 

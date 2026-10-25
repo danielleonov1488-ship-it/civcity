@@ -14,7 +14,9 @@ extends Node
 ## вида Средней/Высокой это то же самое, что сейчас).
 
 const OWNER := "D:/CivCity/.work/owner_save/city.json"
-const GOLDEN := "D:/CivCity/.work/perf_ref/golden"
+## Этап 4 (окантовка у домов, бордюры, новые утки) намеренно поменял картинку города — эталон записан заново в свою папку
+## (… -- mode=shots rec=1 на сборке этапа 4): прежний «golden» остаётся у линии, где этапа 4 ещё нет
+const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s4"
 const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)

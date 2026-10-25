@@ -237,6 +237,11 @@ static func apply(g) -> void:
 		mmi.visible = q != "verylow"
 	if g.people:
 		g.people.max_vis = int(VIS[q])
+		g.people.props_on = not low            # вещи в руках жителей (HandProps) — не на «Низкой»
+		if low:
+			for id in g.visuals:
+				for a in (g.visuals[id] as Dictionary).get("actors", []):
+					HandProps.drop(a)
 	small_textures(q == "verylow")
 	if g.gfx == null:
 		swap_all()                         # загрузка (узла Gfx ещё нет), снимки — сразу; в игре — по одной за кадр

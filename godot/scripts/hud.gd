@@ -4494,7 +4494,9 @@ const CREDITS := [
 	["Жители и животные", "family", [
 		["Quaternius — Universal Base Characters, Modular Character Outfits", "жители города · CC0"],
 		["Quaternius — Universal Animation Library", "походка, работа и отдых жителей · CC0"],
-		["Quaternius — коровы, ослы, лошади, овцы, кошки, волк, бык", "животные в городе и звери в боях Легиона · CC0"]]],
+		["Quaternius — коровы, ослы, лошади, овцы, кошки, волк, бык", "животные в городе и звери в боях Легиона · CC0"],
+		["jeremy — «Duck» (Poly Pizza)", "утки на прудах · CC-BY 3.0"],
+		["Poly by Google — «Duck» (Poly Pizza)", "лебедь на прудах (перекрашен) · CC-BY 3.0"]]],
 	["Музыка", "music", [
 		["Записи из Викисклада и Musopen", "общественное достояние (PD) и CC0 · громкость выровнена для игры"],
 		["Эрик Сати — Гимнопедия № 1", "PD"],

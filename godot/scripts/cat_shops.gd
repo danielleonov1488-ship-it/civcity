@@ -1049,13 +1049,12 @@ static func _fullonica(b: Bp) -> void:
 	_narrow(b)
 
 
-## Уличные музыканты: скамья под деревом, лира, корзина для монет, коврик
+## Уличные музыканты: скамья под деревом, корзина для монет, коврик (лира — в руках у музыканта, HandProps)
 static func _musicians(b: Bp) -> void:
 	var pal := _pal(b)
 	_put_xf(b, "SM_Prop_Seat_Bench_05", Transform3D(Basis.from_scale(Vector3(0.75, SEAT, 0.85)), Vector3(-0.3, 0, -0.65)))
 	_put(b, "SM_Prop_Rug_0%d" % (1 + pal % 4), Vector3(0.1, 0.01, 0.2), PI / 2, 0.55, _rug(["01_A", "01_B", "03_A", "02_B"][pal % 4]))
 	b.add("SM_Prop_Basket_0%d" % (1 + pal % 4), Vector3(0.0, 0, 0.95), 0.0, 0.5)
-	b.add_xf("SM_Prop_Lyre_01", Transform3D(Basis(Vector3.UP, 0.4) * Basis(Vector3.RIGHT, -0.25), Vector3(0.45, 0.42, -0.75)))
 	b.add("SM_Env_Tree_0%d" % (1 + pal % 4), Vector3(-1.2, 0, -1.3), pal * 0.9, 0.33)
 	b.add("SM_Prop_FlowerPot_Fancy_01", Vector3(1.25, 0, -1.05), 0.0, 0.55)
 	b.add("SM_Prop_Stool_01", Vector3(-1.25, 0, 0.1), 0.6, 0.9)
