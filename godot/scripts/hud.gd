@@ -3415,7 +3415,17 @@ func _person_tag_tick(dt: float) -> void:
 			person_tag.text = game.people.tag_of(hit["r"]) if hit.has("r") else "%s · %s" % People.cat_name(hit["cat"])
 			var pc: Control = person_tag.get_parent()
 			pc.reset_size()
-			pc.position = root.get_global_mouse_position() + Vector2(20, 24)
+			# справа снизу от курсора; не влезает — по другую сторону, всегда целиком на экране (как _place_caption)
+			var mp: Vector2 = game._mouse_pos if game._mouse_pos.x >= 0.0 else root.get_local_mouse_position()
+			var sz := pc.get_combined_minimum_size()
+			var p := mp + Vector2(20, 24)
+			if p.x + sz.x > root.size.x - 6.0:
+				p.x = mp.x - 18.0 - sz.x
+			if p.y + sz.y > root.size.y - 6.0:
+				p.y = mp.y - 14.0 - sz.y
+			p.x = clampf(p.x, 6.0, maxf(6.0, root.size.x - sz.x - 6.0))
+			p.y = clampf(p.y, 6.0, maxf(6.0, root.size.y - sz.y - 6.0))
+			pc.position = p.round()
 			on = true
 	if person_tag != null:
 		(person_tag.get_parent() as Control).visible = on
@@ -4641,7 +4651,8 @@ func _fill_people() -> void:
 	var q: LineEdit = pv.find_child("q", true, false)
 	var c: City = game.city
 	var ppl: People = game.people
-	var found := PersonCard.search(ppl, q.text if q else "", people_filter)
+	var info := {}
+	var found := PersonCard.search(ppl, q.text if q else "", people_filter, info)
 	if found.is_empty():
 		list.add_child(_label("Никого не нашли" if (q and q.text != "") or people_filter != "" else "В городе пока никто не живёт", 16, false, C_SOFT))
 		return
@@ -4653,7 +4664,7 @@ func _fill_people() -> void:
 		tv.add_theme_constant_override("separation", -2)
 		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		tv.add_child(_label(People.name_of(r), 17, true))
-		var ms := PersonCard._members(c, r)
+		var ms := PersonCard.members_of(ppl, r)
 		var who := Residents.role(r.get("m", {}), ms) if r.has("m") else ""
 		var jb: Dictionary = c.buildings.get(int(r["job"]), {})
 		var job := Residents.job_noun(String(jb["type"]), r["female"]) if not jb.is_empty() else ("" if r["child"] else "без работы")
@@ -4667,6 +4678,10 @@ func _fill_people() -> void:
 			stats_panel.visible = false
 			game.select_person({"r": r})
 			PersonCard.follow(self, {"r": r})))
+	if int(info.get("total", 0)) > found.size():
+		var more := _label("Показаны %d из %d — уточните имя или семью" % [found.size(), int(info["total"])], 14, false, C_SOFT)
+		more.name = "more"
+		list.add_child(more)
 
 
 func _fill_finance() -> void:

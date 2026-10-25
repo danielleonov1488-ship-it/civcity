@@ -128,10 +128,18 @@ func following() -> bool:
 	return follow.is_valid()
 
 
-## Двойной щелчок по постройке: камера плавно летит к ней (3.8)
+## Двойной щелчок по постройке: камера плавно летит к ней (3.8); за жителем больше не идёт
 func fly_to(p: Vector3) -> void:
+	stop_follow()
 	_target_t = Vector3(p.x, _target_t.y, p.z)
 	_dist_t = minf(_dist_t, 30.0)
+
+
+## «Показать» (история, заказ): камера к точке p, даль — в пределах [dmin, dmax]; за жителем больше не идёт
+func look_at_point(p: Vector3, dmin := 30.0, dmax := 55.0) -> void:
+	stop_follow()
+	_target_t = p
+	_dist_t = clampf(_dist_t, dmin, dmax)
 
 
 func _process(dt: float) -> void:

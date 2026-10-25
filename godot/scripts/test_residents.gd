@@ -187,6 +187,29 @@ func _new() -> void:
 	# повозка: седоки — те же люди, что сойдут на площадь (облик тот же)
 	var load: Array = c.make_load(2)
 	check(not load.is_empty(), "повозка везёт семьи", load.size())
+	# имя мальчика из историй (StoryDefs.boy) — только маленькому сыну, взрослый сын его не занимает
+	var adult_boy := 0
+	var kid_ok := 0
+	var kid_all := 0
+	for i in 400:
+		var fn := "%s%d" % [Defs.FAMILIES[i % Defs.FAMILIES.size()], i]
+		var gms := Residents.gen(fn, 6, "plebs", i)
+		var boy := StoryDefs.boy(fn)
+		if boy == StoryDefs.father(fn) or boy == StoryDefs.elder(fn):
+			continue
+		var first_kid := {}
+		for kk in range(1, gms.size()):
+			var gm: Dictionary = gms[kk]
+			if int(gm["sx"]) == 0 and int(gm["age"]) != 0 and String(gm["pn"]) == boy:
+				adult_boy += 1
+			if int(gm["sx"]) == 0 and int(gm["age"]) == 0 and first_kid.is_empty():
+				first_kid = gm
+		if not first_kid.is_empty():
+			kid_all += 1
+			kid_ok += 1 if String(first_kid["pn"]) == boy else 0
+	check(adult_boy == 0 and kid_ok == kid_all and kid_all > 50, "имя мальчика из историй — у маленького сына (%d из %d), у взрослых сыновей — нет (%d)" % [kid_ok, kid_all, adult_boy])
+	check(Residents.role({"sx": 0, "age": 1}, []) == "житель" and Residents.role({"sx": 1, "age": 0}, []) == "дочь",
+		"кого нет в списке семьи — не «глава семьи» и не «взрослый сын»")
 	if not load.is_empty():
 		ppl.cart["load"] = load
 		ppl._cart_board(load)
@@ -207,6 +230,11 @@ func _new() -> void:
 		var hh: Dictionary = houses[houses.size() - 2]
 		if c.assign(String(af["name"]), int(hh["id"])):
 			var fam := ppl._fam_members(String(af["name"]), int(hh["id"]))
+			# идут к выбранному дому (в доме записи ещё нет): в карточке — вся семья и верные роли
+			var msw := PersonCard.members_of(ppl, fam[fam.size() - 1])
+			var roles_w := fam.map(func(x): return Residents.role(x["m"], msw))
+			check(msw.size() == int(af["n"]) and roles_w[0] == ("отец семьи" if fam.size() > 1 else "глава семьи") and not roles_w.has("житель") \
+				and not roles_w.slice(1).has("глава семьи"), "семья идёт в дом: в карточке вся семья (%d чел.) и роли %s" % [msw.size(), str(roles_w)])
 			var r0: Dictionary = fam[0]
 			r0["p"] = c.door_point(hh)
 			r0["goal"] = "settle"
@@ -230,6 +258,7 @@ func _new() -> void:
 	await _pick_test(20)
 	await _tip_test()
 	await _building_click(houses)
+	await _occlusion_test(houses)
 	await _card_test()
 	await _looks_test(shops)
 	await _cat_test()
@@ -237,6 +266,8 @@ func _new() -> void:
 	_search_test()
 	await _demolish_test(houses)
 	await _save_load_test()
+	_couple_test()
+	await _leaving_test()
 
 
 ## Щелчок по 20 случайным жителям на 34 м: ≥ 95 % — карточка именно его
@@ -254,13 +285,19 @@ func _pick_test(n: int) -> void:
 			game._mouse_pos = Vector2(5, 5)      # мышь — в сторону (не задерживаться на прохожем: совет — в своей проверке)
 			await frames(45)
 		var vis := []
+		var near := []                              # все, кого ловит щелчок (и полупрозрачные, и за домом), — для «рядом никого»
 		for r in ppl.residents:
 			var cz: Citizen = r["node"]
-			if cz == null or float(r["fade"]) < 1.0 or not cz.is_visible_in_tree():
+			if cz == null or float(r["fade"]) < 0.3 or not cz.is_visible_in_tree():
 				continue
 			var p := cz.global_position + Vector3(0, 0.45 * cz.scale.y / Citizen.SIZE, 0)
-			if cam.is_position_behind(p) or not cam.is_position_in_frustum(p):
+			if cam.is_position_behind(p):
 				continue
+			near.append([r, cam.unproject_position(p)])
+			if float(r["fade"]) < 1.0 or not cam.is_position_in_frustum(p):
+				continue
+			if not _seen(r, cam.unproject_position(p), p):
+				continue                            # за домом его не видно — щелчок честно достанется дому
 			vis.append([r, cam.unproject_position(p)])
 		seen = maxi(seen, vis.size())
 		# только те, рядом с кем на экране (40 точек) никого: иначе щелчок честно достанется ближнему к камере
@@ -268,8 +305,8 @@ func _pick_test(n: int) -> void:
 		var sz: Vector2 = get_viewport().get_visible_rect().size
 		for e: Array in vis:
 			var alone := true
-			for e2: Array in vis:
-				if e2 != e and (e2[1] as Vector2).distance_to(e[1]) < 40.0:
+			for e2: Array in near:
+				if not is_same(e2[0], e[0]) and (e2[1] as Vector2).distance_to(e[1]) < 40.0:
 					alone = false
 			for ct in ppl.cats:
 				var cn: Node3D = ct.get("n")
@@ -298,6 +335,13 @@ func _pick_test(n: int) -> void:
 		await shot("res_card_person.png")
 
 
+## Точку жителя p (на экране sp) не заслоняет постройка — кроме той, у которой он стоит (как в People.pick)
+func _seen(r: Dictionary, sp: Vector2, p: Vector3) -> bool:
+	var cam: Camera3D = game.rig.cam
+	var h: Dictionary = game._ray_pick(cam.project_ray_origin(sp), cam.project_ray_normal(sp))
+	return h.is_empty() or cam.global_position.distance_to(p) <= float(h["t"]) + People.OCC_M or int(h["id"]) == ppl.at_bid(r)
+
+
 ## Советник один раз: мышь задержалась на прохожем (не по времени — не мешает стройке)
 func _tip_test() -> void:
 	hud.close_panels()
@@ -306,6 +350,9 @@ func _tip_test() -> void:
 	for r in ppl.residents:
 		var cz: Citizen = r["node"]
 		if cz != null and float(r["fade"]) >= 1.0 and cam.is_position_in_frustum(cz.global_position):
+			var sp := cam.unproject_position(cz.global_position + Vector3(0, 0.45 * cz.scale.y / Citizen.SIZE, 0))
+			if not is_same(ppl.pick(sp).get("r", {}), r):
+				continue                          # за домом или рядом другой — не он под курсором
 			who = r
 			if r["state"] != "walk":
 				break                             # стоит на месте — лучше всего
@@ -323,6 +370,42 @@ func _tip_test() -> void:
 			break
 	check(c.tips.has("people_tip") and hud.advisor_panel.visible, "мышь задержалась на прохожем — советник рассказал о карточке жителя")
 	hud.advisor_panel.visible = false
+	# под курсором житель: подпись постройки (0,4 с) не показываем — щелчок его; табличка с именем — целиком на экране
+	var tag_ok := false
+	if who["node"] != null:
+		var cz: Citizen = who["node"]
+		game._mouse_pos = cam.unproject_position(cz.global_position + Vector3(0, 0.45 * cz.scale.y / Citizen.SIZE, 0))
+		game._tool_note(false)
+		await frames(2)
+		game._tool_note(false)
+		check(int(game._hover_id) == -1, "житель под курсором — подписи постройки нет (одна табличка, с его именем)")
+		# у правого нижнего края табличка — по другую сторону курсора, не за краем экрана (житель «под курсором» — из кэша)
+		var corner: Vector2 = hud.root.size - Vector2(6, 6)
+		game._mouse_pos = corner
+		ppl._hov_mp = corner
+		ppl._hov_t = Time.get_ticks_msec()
+		ppl._hov_hit = {"r": who}
+		hud._person_tag_tick(0.0)
+		var pc: Control = hud.person_tag.get_parent() if hud.person_tag != null else null
+		if pc != null and pc.visible:
+			tag_ok = Rect2(Vector2.ZERO, hud.root.size).encloses(Rect2(pc.position, pc.get_combined_minimum_size()))
+		else:
+			tag_ok = hud.mouse_over_ui()            # настоящая мышь над окном игры — табличку не рисуем, проверить нечем
+			print("  табличка у края не показана: mouse_over_ui=", hud.mouse_over_ui())
+	check(tag_ok, "табличка с именем у края экрана — целиком на экране")
+	# обучение «Как им живётся? Щёлкните по дому»: жители у двери щелчок у дома не забирают
+	var hs := -1
+	for i in Tutorial.STEPS.size():
+		if String(Tutorial.STEPS[i]["id"]) == "house":
+			hs = i
+	if who["node"] != null and hs >= 0:
+		var cz: Citizen = who["node"]
+		var sp := cam.unproject_position(cz.global_position + Vector3(0, 0.45 * cz.scale.y / Citizen.SIZE, 0))
+		var st0: int = game.tutorial.step
+		game.tutorial.step = hs
+		var pk: Dictionary = ppl.pick(sp)
+		game.tutorial.step = st0
+		check(pk.is_empty() and not ppl.pick(sp).is_empty(), "обучение «Щёлкните по дому»: щелчок — дому, не жителю у двери")
 	game._mouse_pos = Vector2(5, 5)
 
 
@@ -354,6 +437,117 @@ func _building_click(houses: Array) -> void:
 		else:
 			print("  мимо дома %d: info_p=%s info_b=%s" % [int(h["id"]), str(hud.info_p.keys()), str(hud.info_b.get("type", "—"))])
 	check(real >= 2 and got == tried, "щелчок мимо людей — карточка постройки, как раньше (%d из %d, с постройкой %d)" % [got, tried, real])
+
+
+## Дальний край постройки b от её середины по направлению dir (по клеткам следа), м
+func _reach(b: Dictionary, dir: Vector2) -> float:
+	var hp: Vector2 = b["pos"]
+	var m := 0.0
+	for k in (b["cells"] as PackedInt32Array):
+		var cp := Vector2((k % Land.N) + 0.5, (k / Land.N) + 0.5) * Land.CELL
+		m = maxf(m, (cp - hp).dot(dir))
+	return m
+
+
+## Кого заслоняет дом — того щелчок и подпись у дома не забирают: житель за домом, кошка у двери с той стороны;
+## издали кошка у двери ловится по своему размеру, а не кругом в 30 точек
+func _occlusion_test(houses: Array) -> void:
+	hud.close_panels()
+	var cam: Camera3D = game.rig.cam
+	var sp0: float = game.speed
+	hud.set_speed(0.0)
+	var keep: Array = [game.rig.target, game.rig.yaw, game.rig.pitch, game.rig.dist]
+	var h: Dictionary = houses[1]
+	var hp: Vector2 = h["pos"]
+	var fwd := City.facing(float(h["yaw"]))
+	var r := {}
+	for x in ppl.residents:
+		if x["node"] != null and float(x["fade"]) >= 1.0 and not x["child"] and x["state"] != "work":
+			r = x
+			break
+	if check(not r.is_empty(), "житель для проверки «за домом»"):
+		var put_at := func(p2: Vector2) -> Vector2:
+			r["state"] = "idle"
+			r["act"] = ""
+			r["goal"] = ""
+			r["dest"] = {}
+			r["door"] = {}
+			r["path"] = PackedVector2Array()
+			r["t"] = 9999.0
+			r["p"] = p2
+			r["yoff"] = 0.0
+			var cz: Citizen = r["node"]
+			cz.position = Vector3(p2.x, game.land.height_at(p2.x, p2.y), p2.y)
+			return cam.unproject_position(cz.global_position + Vector3(0, 0.45 * cz.scale.y / Citizen.SIZE, 0))
+		game.rig.set_view(Vector3(hp.x, Land.BASE_Y, hp.y), rad_to_deg(float(h["yaw"])), 45, 30)
+		await frames(3)
+		var sp: Vector2 = put_at.call(hp - fwd * (_reach(h, -fwd) + 1.0))
+		await frames(1)
+		sp = put_at.call(r["p"])
+		var hit: Dictionary = game._ray_pick(cam.project_ray_origin(sp), cam.project_ray_normal(sp))
+		check(int(hit.get("id", -1)) == int(h["id"]), "житель стоит за домом (луч в доме)", hit)
+		var pk: Dictionary = ppl.pick(sp)
+		check(not is_same(pk.get("r", {}), r), "житель за домом — щелчок у дома не его", pk.keys())
+		game._mouse_pos = sp
+		game._click()
+		check(hud.info_p.is_empty() and int(hud.info_b.get("id", -1)) == int(h["id"]), "щелчок по стене, за которой житель, — карточка дома", [hud.info_p.keys(), hud.info_b.get("type", "—")])
+		hud.close_panels()
+		ppl._hov_t = 0
+		await frames(3)
+		check(hud.person_tag == null or not (hud.person_tag.get_parent() as Control).visible, "за домом — таблички с именем нет")
+		await shot("res_behind_house.png")
+		# тот же житель перед фасадом — у стены его видно, щелчок — его (камера круче: дом через улицу его не заслоняет)
+		game.rig.set_view(Vector3(hp.x, Land.BASE_Y, hp.y), rad_to_deg(float(h["yaw"])), 58, 30)
+		await frames(3)
+		sp = put_at.call(hp + fwd * (_reach(h, fwd) + 1.2))
+		await frames(1)
+		sp = put_at.call(r["p"])
+		check(is_same(ppl.pick(sp).get("r", {}), r), "житель перед домом — щелчок его (стена за ним щелчок не забирает)")
+		r["t"] = 1.0                              # дальше живёт как жил
+		game._mouse_pos = Vector2(5, 5)
+	# кошка у двери своего дома
+	var ct := {}
+	for x in ppl.cats:
+		if x.has("rec") and c.buildings.has(int(x["home"])):
+			ct = x
+			break
+	if check(not ct.is_empty(), "кошка с домом"):
+		var ch: Dictionary = c.buildings[int(ct["home"])]
+		var chp: Vector2 = ch["pos"]
+		ct["state"] = "sit"
+		ct["t"] = 9999.0
+		ct["path"] = PackedVector2Array()
+		ct["p"] = c.door_point(ch)
+		ppl._cat_place(ct)
+		# со стороны задней стены: кошку у двери не видно — щелчок дому
+		game.rig.set_view(Vector3(chp.x, Land.BASE_Y, chp.y), rad_to_deg(float(ch["yaw"]) + PI), 42, 34)
+		await frames(3)
+		var w: Vector3 = ppl.cat_pos(ct) + Vector3(0, 0.18, 0)
+		var sp := cam.unproject_position(w)
+		check(not is_same(ppl.pick(sp).get("cat", {}), ct), "кошка у двери с той стороны дома — щелчок не её")
+		# спереди издали (130 м): по самой кошке — она, в 25 точках над ней (фасад) — дом
+		game.rig.set_view(Vector3(chp.x, Land.BASE_Y, chp.y), rad_to_deg(float(ch["yaw"])), 60, 130)
+		await frames(3)
+		sp = cam.unproject_position(w)
+		var near: Dictionary = ppl.pick(sp)
+		var off: Dictionary = ppl.pick(sp + Vector2(0, -25))
+		check(is_same(near.get("cat", {}), ct) and not is_same(off.get("cat", {}), ct), "130 м: по кошке — она, в 25 точках от неё — не она", [near.keys(), off.keys()])
+		game._mouse_pos = sp + Vector2(0, -25)
+		game._click()
+		check(hud.info_p.is_empty(), "130 м: щелчок по фасаду у кошки — не карточка кошки", hud.info_p.keys())
+		hud.close_panels()
+		# 34 м спереди: щелчок по кошке по-прежнему щедрый
+		game.rig.set_view(Vector3(chp.x, Land.BASE_Y, chp.y), rad_to_deg(float(ch["yaw"])), 60, 34)
+		await frames(3)
+		var tol: float = clampf(cam.unproject_position(w).distance_to(cam.unproject_position(w + cam.global_basis.x * People.CAT_LEN)) * 0.9, People.PICK_MIN_PX, People.CAT_PICK_PX)
+		print("  кошка: круг щелчка на 34 м — %.1f точки" % tol)
+		check(tol >= 12.0, "34 м: круг щелчка по кошке не меньше 12 точек (%.1f)" % tol)
+		ct["t"] = 3.0
+	game.rig.set_view(keep[0], rad_to_deg(keep[1]), rad_to_deg(keep[2]), keep[3])
+	game._mouse_pos = Vector2(5, 5)
+	hud.set_speed(sp0)
+	await frames(3)
+
 
 
 func _texts(n: Node) -> String:
@@ -418,6 +612,31 @@ func _card_test() -> void:
 	wu.pressed = false
 	Input.parse_input_event(wu)
 	check(not game.rig.following(), "WASD — камера перестала следовать")
+	await frames(3)                            # отпущенная W дошла до Input (иначе камера ещё едет)
+	# взяли инструмент — камера стоит (мостовая не тянется за жителем), карточка остаётся
+	PersonCard.toggle_follow(hud, {"r": r})
+	game.set_tool("road")
+	check(not game.rig.following() and hud.info_panel.visible and not hud.info_p.is_empty(), "взяли «Мостовую» — камера перестала следовать, карточка осталась")
+	PersonCard.follow(hud, {"r": r})
+	check(game.tool == "" and game.rig.following(), "«Следовать» с инструментом в руках — инструмент убран, камера идёт за жителем")
+	# «Показать» в истории или заказе — камера летит к месту (а не остаётся у жителя)
+	var to: Vector3 = game.rig._target_t + Vector3(12, 0, 6)
+	game.rig.look_at_point(to)
+	await frames(2)
+	check(not game.rig.following() and Vector2(game.rig._target_t.x - to.x, game.rig._target_t.z - to.z).length() < 0.1, "«Показать» — камера перестала следовать и летит к месту",
+		[game.rig.following(), game.rig._target_t, to])
+	# житель уехал из города, пока открыта его карточка: закрывается только карточка, совет советника остаётся
+	game.select_person({"r": r})
+	await frames(2)
+	hud.advisor_panel.visible = true
+	var rid := int(r["id"])
+	ppl.by_id.erase(rid)
+	PersonCard._t = 0.0
+	PersonCard.tick(hud, hud.info_p, 0.1)
+	check(not hud.info_panel.visible and hud.info_p.is_empty() and hud.advisor_panel.visible, "житель уехал — закрылась только его карточка, совет на месте")
+	ppl.by_id[rid] = r
+	ppl._outline(r["node"], false)
+	hud.advisor_panel.visible = false
 	# выбранный рисуется и сверх MAX_VIS
 	var mv: int = ppl.max_vis
 	ppl.max_vis = ppl.visible_count
@@ -519,7 +738,12 @@ func _cat_test() -> void:
 	ct["state"] = "sit"
 	ct["t"] = 30.0
 	var cp: Vector3 = ppl.cat_pos(ct)
-	game.rig.set_view(Vector3(cp.x, Land.BASE_Y, cp.z), 200, 42, 34)
+	# камера с той стороны, откуда кошку видно (у двери с той стороны дома щелчок честно достаётся дому)
+	for yd: float in [200.0, 20.0, 110.0, 290.0]:
+		game.rig.set_view(Vector3(cp.x, Land.BASE_Y, cp.z), yd, 42, 34)
+		await frames(2)
+		if not game.view_blocked(cam.global_position, cp + Vector3(0, 0.18, 0)):
+			break
 	await frames(20)
 	var hits := 0
 	for i in 20:
@@ -537,13 +761,34 @@ func _cat_test() -> void:
 	var money := c.money
 	var hp := int(c.stats.get("happy", 0))
 	var snd0: Dictionary = (game.sound.played as Dictionary).duplicate()
-	ppl.pet_now(ct)
+	var pet: Button = null
+	for b in hud.info_box.find_children("*", "Button", true, false):
+		if (b as Button).text == "Погладить":
+			pet = b
+	ct["meow_t"] = 999.0                       # мяуканье по часам (звук мира, можно) не путает проверку
+	ppl.pet_now(ct)                            # то же, что кнопка «Погладить» (у кнопки — свой щелчок интерфейса)
+	PersonCard.pet_view(hud, ct)
 	await frames(2)
 	check(ct["state"] == "pet" and (game.sound.played as Dictionary) == snd0 and not (ct["snd"] as AudioStreamPlayer3D).playing 		and is_equal_approx(money, c.money) and hp == int(c.stats.get("happy", 0)),
 		"«Погладить»: кошка мурлычет без звука, городу ничего не прибавилось", [ct["state"], snd0, game.sound.played, money, c.money])
-	hud.set_speed(sp0)
-	game.rig.set_view(ppl.cat_pos(ct), 200, 34, 6)
+	await frames(150)                          # камера долетела
+	var see: bool = not game.view_blocked(cam.global_position, ppl.cat_pos(ct) + Vector3(0, 0.2, 0))
+	check(pet != null and see and game.rig.dist < 13.0, "«Погладить»: камера близко, кошку не заслоняет стена (%.1f м)" % game.rig.dist)
 	await shot("res_card_cat.png")
+	# кошка у двери, камера со стороны задней стены — «Погладить» разворачивает камеру к двери
+	var ch: Dictionary = c.buildings.get(int(ct.get("home", -1)), {})
+	if not ch.is_empty():
+		ct["p"] = c.door_point(ch)
+		ppl._cat_place(ct)
+		var chp: Vector2 = ch["pos"]
+		game.rig.set_view(Vector3(chp.x, Land.BASE_Y, chp.y), rad_to_deg(float(ch["yaw"]) + PI), 42, 34)
+		await frames(2)
+		PersonCard.pet_view(hud, ct)
+		await frames(150)
+		var see2: bool = not game.view_blocked(cam.global_position, ppl.cat_pos(ct) + Vector3(0, 0.2, 0))
+		check(see2, "«Погладить» кошку у двери с той стороны дома — камера повернула к двери, кошку видно")
+		await shot("res_card_cat_door.png")
+	hud.set_speed(sp0)
 	hud.close_panels()
 
 
@@ -656,6 +901,66 @@ func _save_load_test() -> void:
 	check(cats2 == cats and ppl.cats.filter(func(x): return x.has("rec")).size() == cats.size(), "загрузка: кошки те же (имя, окрас, дом)", [cats, cats2])
 
 
+## Старое сохранение: «Свадьба» сыграна, у молодых нет записей — один раз жених и невеста из роликов (Марк, Юлия)
+func _couple_test() -> void:
+	var f := {}
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if c.is_house(b) and not (b.get("families", []) as Array).is_empty() and int(b["families"][0]["n"]) >= 2:
+			f = b["families"][0]
+			break
+	if not check(not f.is_empty(), "семья для «старой свадьбы»"):
+		return
+	if not c.stories.has("done") or typeof(c.stories["done"]) != TYPE_DICTIONARY:
+		c.stories["done"] = {}
+	var roles := {"groom": {"seed": 4242, "cls": "plebs"}, "bride": {"seed": 777, "cls": "plebs"}}
+	c.stories["done"]["wedding_old"] = {"couple": String(f["name"]), "roles": roles}
+	var was = f.get("m")
+	f.erase("m")
+	ppl._old_couples()
+	var ms: Array = f.get("m", [])
+	var rr := RandomNumberGenerator.new()
+	rr.seed = 777
+	var lk := Citizen.roll_look(rr, true, false, false, "", "plebs")
+	check(ms.size() == int(f["n"]) and String(ms[0]["pn"]) == "Марк" and String(ms[1]["pn"]) == "Юлия" and int(ms[0]["sd"]) == 4242 \
+		and Citizen.look_key(ms[1]["look"]) == Citizen.look_key(lk), "старое сохранение со свадьбой: у молодых — Марк и Юлия из роликов",
+		ms.map(func(m): return m.get("pn")) if not ms.is_empty() else [])
+	var keep := ms
+	ppl._old_couples()
+	check(is_same(f["m"], keep), "записи молодых больше не пересоздаются")
+	c.stories["done"].erase("wedding_old")
+	f["m"] = was
+
+
+## Семья уезжает (дом −2, записи уже нет): в карточке вся семья, верные роли, «уезжает из города»
+func _leaving_test() -> void:
+	var h := {}
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if c.is_house(b) and not (b.get("families", []) as Array).is_empty() and int((b["families"] as Array).back()["n"]) >= 3:
+			h = b
+			break
+	if not check(not h.is_empty(), "дом с семьёй для «уезжают»"):
+		return
+	var f: Dictionary = (h["families"] as Array).pop_back()
+	h["pop"] = maxi(0, int(h["pop"]) - int(f["n"]))
+	c.family_left.emit(int(h["id"]), String(f["name"]))
+	await frames(2)
+	var fam := ppl.residents.filter(func(x): return x["fam"] == f["name"] and int(x["home"]) == -2)
+	fam.sort_custom(func(a, b): return int(a["id"]) < int(b["id"]))
+	if not check(fam.size() == int(f["n"]), "уезжают все (%d из %d)" % [fam.size(), int(f["n"])]):
+		return
+	var ms := PersonCard.members_of(ppl, fam[fam.size() - 1])
+	var rl := fam.map(func(x): return Residents.role(x["m"], ms))
+	check(ms.size() == fam.size() and rl[0] == "отец семьи" and not rl.slice(1).has("глава семьи"), "уезжающие: роли по-прежнему %s" % str(rl))
+	game.select_person({"r": fam[fam.size() - 1]})
+	await frames(2)
+	var t := _texts(hud.info_box)
+	check(t.contains("уезжает из города") and not t.contains("ждёт жилья") and t.contains("— отец семьи"), "карточка уезжающего: «уезжает из города», отец — «отец семьи»",
+		t.replace("\n", " | ").left(300))
+	hud._hide_info()
+
+
 # ---------- город владельца ----------
 
 func _adult_looks() -> String:
@@ -685,6 +990,24 @@ func _owner() -> void:
 	var res := PersonCard.search(ppl, "Гай", "")
 	var ms := (Time.get_ticks_usec() - t0) / 1000.0
 	check(not res.is_empty() and ms < 16.0, "«Горожане»: «Гай» среди %d жителей — %.2f мс" % [ppl.residents.size(), ms])
+	# список не молчит, что обрезан: «Показаны 40 из …»
+	var info := {}
+	var all := PersonCard.search(ppl, "", "", info)
+	var total := int(info.get("total", 0))
+	check(all.size() == PersonCard.LIST_MAX and total == ppl.residents.filter(func(x): return int(x["home"]) != -2).size(),
+		"«Горожане»: строк %d, всего найдено %d" % [all.size(), total])
+	hud._top_action("stats")
+	hud.stats_tab = "people"
+	hud._fill_stats()
+	var q: LineEdit = hud.stats_panel.find_child("q", true, false)
+	q.text = ""
+	hud.people_filter = ""
+	hud._fill_people()
+	var list: Node = hud.stats_panel.find_child("plist", true, false)
+	var more: Node = list.find_child("more", true, false) if list else null
+	check(more != null and (more as Label).text.contains("из %d" % total), "«Горожане»: внизу «Показаны 40 из %d»" % total, (more as Label).text if more else "—")
+	hud.stats_tab = ""
+	hud.close_panels()
 	game.speed = 1.0
 	hud.set_speed(1.0)
 	var ctr: Dictionary = c.center()

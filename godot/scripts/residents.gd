@@ -75,15 +75,23 @@ static func _name_for(fam: String, m: Dictionary, have: Array, rg: RandomNumberG
 			if not used.has(nf + " " + t):
 				return nf + " " + t
 		return _free(nf, used)
-	var want := StoryDefs.father(fam) if have.is_empty() else (StoryDefs.elder(fam) if int(m["age"]) == 2 else StoryDefs.boy(fam))
-	if not used.has(want):
+	# имя мальчика из историй — только маленькому сыну (первому); взрослый сын его не занимает и случайно из MEN
+	var boy := StoryDefs.boy(fam)
+	var want := ""
+	if have.is_empty():
+		want = StoryDefs.father(fam)
+	elif int(m["age"]) == 2:
+		want = StoryDefs.elder(fam)
+	elif int(m["age"]) == 0:
+		want = boy
+	if want != "" and not used.has(want):
 		return want
 	var k0 := rg.randi() % MEN.size()
 	for k in MEN.size():
 		var nm: String = MEN[(k0 + k) % MEN.size()]
-		if not used.has(nm):
+		if not used.has(nm) and (int(m["age"]) == 0 or nm != boy):
 			return nm
-	return want
+	return want if want != "" else boy
 
 
 static func _free(nm: String, used: Dictionary) -> String:
@@ -156,6 +164,10 @@ static func role(m: Dictionary, ms: Array) -> String:
 	var age := int(m.get("age", 1))
 	if age == 2:
 		return "бабушка" if sx == 1 else "дедушка"
+	if age == 0:
+		return "дочь" if sx == 1 else "сын"
+	if i < 0:
+		return "жительница" if sx == 1 else "житель"     # семьи не нашли — главой и сыном не называем
 	var kids := false
 	for o: Dictionary in ms:
 		kids = kids or int(o.get("age", 1)) == 0
@@ -163,8 +175,6 @@ static func role(m: Dictionary, ms: Array) -> String:
 		return "отец семьи" if ms.size() > 1 else "глава семьи"
 	if i == 1 and sx == 1 and age == 1:
 		return "мать семьи" if kids else "жена"
-	if age == 0:
-		return "дочь" if sx == 1 else "сын"
 	return "взрослая дочь" if sx == 1 else "взрослый сын"
 
 

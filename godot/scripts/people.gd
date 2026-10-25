@@ -68,6 +68,7 @@ func setup(l: Land, c: City, g) -> void:
 	city.family_left.connect(_on_family_left)
 	city.family_assigned.connect(_on_assigned)
 	city.rehomed.connect(_on_rehomed)
+	_old_couples()
 	# жители уже заселённых домов (загрузка, готовый город)
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]
@@ -225,6 +226,39 @@ func _make_family(name: String, n: int, home: int, at: Vector2, cls := "", fam :
 	return out
 
 
+## Старое сохранение, где «Свадьба» уже сыграна, а у молодых ещё нет записей: один раз — жених и невеста из роликов
+## (Марк и Юлия, облик по зерну роли), как у новых свадеб (Stories.couple_members); дальше записи сохраняются
+func _old_couples() -> void:
+	var st: Dictionary = city.stories if typeof(city.stories) == TYPE_DICTIONARY else {}
+	var recs: Array = (st.get("done", {}) as Dictionary).values() if typeof(st.get("done")) == TYPE_DICTIONARY else []
+	if typeof(st.get("active")) == TYPE_DICTIONARY and not (st["active"] as Dictionary).is_empty():
+		recs.append(st["active"])
+	for rec in recs:
+		if typeof(rec) != TYPE_DICTIONARY or String(rec.get("couple", "")) == "" or typeof(rec.get("roles")) != TYPE_DICTIONARY:
+			continue
+		var nm := String(rec["couple"])
+		var f := {}
+		var cls := ""
+		var key := -1
+		for id in city.buildings:
+			var b: Dictionary = city.buildings[id]
+			if not city.is_house(b):
+				continue
+			for fm: Dictionary in b.get("families", []):
+				if String(fm.get("name", "")) == nm:
+					f = fm
+					cls = String(city.def(b)["cls"])
+					key = int(id)
+		if f.is_empty():
+			for fm: Dictionary in city.arrivals:
+				if String(fm.get("name", "")) == nm:
+					f = fm
+					cls = String(fm.get("cls", "plebs"))
+		if f.is_empty() or (typeof(f.get("m")) == TYPE_ARRAY and not (f["m"] as Array).is_empty()):
+			continue
+		f["m"] = Stories.couple_members(nm, int(f.get("n", 2)), cls, key, rec["roles"])
+
+
 ## Запись семьи name: в доме home (последняя с этим именем) или на площади; {} — нет такой
 func _family_rec(name: String, home: int) -> Dictionary:
 	var h: Dictionary = city.buildings.get(home, {})
@@ -294,8 +328,10 @@ var _hov_hit := {}
 static var _outline_mat: ShaderMaterial
 const PICK_MIN_PX := 10.0            # щелчок по жителю: не дальше max(10 точек, 0.35 его роста на экране) от него
 const PICK_K := 0.35
-const CAT_PICK_PX := 30.0            # по кошке — щедро, как в истории (Stories.CLICK_PX)
+const CAT_PICK_PX := 30.0            # по кошке — 0,9 её длины на экране, не больше 30 точек (вблизи) и не меньше 10 (издали)
 const CAT_NEAR_PX := 12.0            # …а если под курсором и житель — кошка, только когда курсор почти на ней
+const OCC_M := 0.4                   # житель или кошка у самой стены (в дверях) — ещё не «за постройкой»
+var _occ := []                       # постройка на луче под курсором (pick): [расстояние, id], пусто — ещё не считали
 ## Имена кошек [имя, 0 — кот, 1 — кошка]; «Мурка» — у кошки истории
 const CAT_NAMES := [["Феликс", 0], ["Луна", 1], ["Тигрис", 0], ["Пушинка", 1], ["Мелла", 1], ["Минерва", 1], ["Бусина", 1], ["Цезарь", 0],
 	["Венера", 1], ["Плутон", 0], ["Каштан", 0], ["Уголёк", 0], ["Снежка", 1], ["Рыжик", 0], ["Дымка", 1], ["Юнона", 1], ["Марсик", 0],
@@ -440,13 +476,17 @@ func cat_pos(c: Dictionary) -> Vector3:
 
 
 ## Кто под курсором: житель (ближний к камере) или кошка — {"r": житель} / {"cat": кошка} / {}.
-## Житель — отрезок от ступней до макушки на экране; кошка — точка над спиной (щедро)
+## Житель — отрезок от ступней до макушки на экране; кошка — круг по её размеру на экране (вблизи щедро, издали — 10 точек).
+## Кого заслоняет постройка (дальше от камеры, чем постройка на луче под курсором), того не ловим: щелчок и подпись — постройке
 func pick(mp: Vector2) -> Dictionary:
 	var rig = game.rig
 	var cam: Camera3D = rig.cam if rig else null
 	if cam == null:
 		return {}
+	if game.tutorial != null and game.tutorial.cur_id() == "house":
+		return {}                            # обучение «Щёлкните по дому»: щелчок — дому, а не семье у его двери
 	var cp := cam.global_position
+	_occ = []
 	var best := {}
 	var bd := INF
 	for r in residents:
@@ -462,15 +502,24 @@ func pick(mp: Vector2) -> Dictionary:
 		var a := cam.unproject_position(feet)
 		var b := cam.unproject_position(head)
 		var tol := maxf(PICK_MIN_PX, PICK_K * a.distance_to(b))
-		if Geometry2D.get_closest_point_to_segment(mp, a, b).distance_to(mp) > tol:
+		var q := Geometry2D.get_closest_point_to_segment(mp, a, b)
+		if q.distance_to(mp) > tol:
 			continue
 		var d := cp.distance_squared_to(feet)
-		if d < bd:
-			bd = d
-			best = {"r": r}
-	# кошка: щедрый круг, но жителя под курсором она не перебивает — только если курсор почти на ней
+		if d >= bd:
+			continue
+		# точка жителя под курсором: за постройкой (не той, у которой он стоит) — не виден
+		var ab := a.distance_to(b)
+		var wp := feet.lerp(head, clampf(a.distance_to(q) / ab, 0.0, 1.0) if ab > 0.01 else 0.5)
+		var wl := _wall(mp)
+		if cp.distance_to(wp) > float(wl[0]) + OCC_M and int(wl[1]) != at_bid(r):
+			continue
+		bd = d
+		best = {"r": r}
+	# кошка: круг по её длине на экране, но жителя под курсором она не перебивает — только если курсор почти на ней
 	var cat := {}
 	var cd := INF
+	var ctol := CAT_PICK_PX
 	for ct in cats:
 		if ct.has("story"):
 			continue                         # потерянную кошку ищут — щелчок по ней забирает история
@@ -480,13 +529,43 @@ func pick(mp: Vector2) -> Dictionary:
 		var w := n.global_position + Vector3(0, 0.18, 0)
 		if cam.is_position_behind(w):
 			continue
-		var px := cam.unproject_position(w).distance_to(mp)
-		if px <= CAT_PICK_PX and px < cd:
-			cd = px
-			cat = ct
-	if not cat.is_empty() and (best.is_empty() or cd <= CAT_NEAR_PX):
+		var sp := cam.unproject_position(w)
+		var px := sp.distance_to(mp)
+		if px > CAT_PICK_PX or px >= cd:
+			continue
+		var tol := clampf(sp.distance_to(cam.unproject_position(w + cam.global_basis.x * CAT_LEN)) * 0.9, PICK_MIN_PX, CAT_PICK_PX)
+		if px > tol:
+			continue
+		if cp.distance_to(w) > float(_wall(mp)[0]) + OCC_M:
+			continue                         # кошка за постройкой (у двери с той стороны) — щелчок постройке
+		cd = px
+		cat = ct
+		ctol = tol
+	if not cat.is_empty() and (best.is_empty() or cd <= minf(CAT_NEAR_PX, ctol)):
 		return {"cat": cat}
 	return best
+
+
+## Постройка на луче под курсором: [расстояние до неё от камеры, её id] (нет — [INF, -1]); один раз за pick и только
+## когда кто-то уже попал по экрану — лишнего счёта на кадр нет
+func _wall(mp: Vector2) -> Array:
+	if _occ.is_empty():
+		var h: Dictionary = game.ray_hit(mp) if game.has_method("ray_hit") else {}
+		_occ = [float(h.get("t", INF)), int(h.get("id", -1))]
+	return _occ
+
+
+## Постройка, у которой житель сейчас стоит (за прилавком, в поле, в дверях, у лавки, на скамье): его она не заслоняет
+func at_bid(r: Dictionary) -> int:
+	var dr: Dictionary = r["door"]
+	if not dr.is_empty():
+		return int(dr.get("bid", -1))
+	match String(r["state"]):
+		"work":
+			return int(r["job"])
+		"idle":
+			return int((r["dest"] as Dictionary).get("bid", -1))
+	return -1
 
 
 ## То же для курсора и подписи у мыши: считаем заново, только когда мышь сдвинулась или прошло 0,15 с
@@ -628,8 +707,7 @@ func pet_now(c: Dictionary) -> void:
 		l.modulate = Color("ff8fa8")
 		l.outline_modulate = Color("8a2a3a")
 		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		l.pixel_size = 0.004
-		l.no_depth_test = true
+		l.pixel_size = 0.004                 # без no_depth_test: сквозь стену сердечки не видны
 		add_child(l)
 		l.global_position = at + Vector3(randf_range(-0.15, 0.15), 0, randf_range(-0.15, 0.15))
 		l.modulate.a = 0.0

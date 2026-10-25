@@ -756,17 +756,7 @@ func _couple(a: Dictionary) -> void:
 		return
 	var nm := _couple_name(String(a.get("fam2", a.get("fam", ""))))
 	# молодые — те самые жених и невеста из роликов: имена и облик — в записи членов семьи (сохраняются, этап 6.1)
-	var roles: Dictionary = a.get("roles", {})
-	var ms := Residents.gen(nm, 2, String(city.def(h)["cls"]), hid)
-	for i in 2:
-		var ro: Dictionary = roles.get("groom" if i == 0 else "bride", {})
-		ms[i]["pn"] = "Марк" if i == 0 else "Юлия"
-		if not ro.is_empty():
-			ms[i]["sd"] = int(ro["seed"])
-			var rr := RandomNumberGenerator.new()
-			rr.seed = int(ro["seed"])
-			var rc := String(ro.get("cls", city.def(h)["cls"]))
-			ms[i]["look"] = Citizen.roll_look(rr, i == 1, false, rc == "patricians", "", rc)   # одежда — как в ролике
+	var ms := couple_members(nm, 2, String(city.def(h)["cls"]), hid, a.get("roles", {}))
 	city.pending[nm] = {"name": nm, "n": 2, "cls": String(city.def(h)["cls"]), "home": hid, "back": true, "m": ms}
 	if city.settled(hid, 2, nm) <= 0:
 		city.pending.erase(nm)
@@ -775,6 +765,24 @@ func _couple(a: Dictionary) -> void:
 	game.people._make_family(nm, 2, hid, city.door_point(h))
 	city._quiet("Юлия и Марк поселились в новом доме — теперь это семья %s. Свадьбу сыграют вечером: посмотрите шествие!" \
 		% StoryDefs.fam_gen(nm), "ring")
+
+
+## Записи молодых (Residents): Марк и Юлия, облик — как у жениха и невесты в роликах (зерно роли); n > 2 — дальше по правилам.
+## Та же — для старых сохранений, где свадьбу сыграли до записей (People._old_couples)
+static func couple_members(nm: String, n: int, cls: String, key: int, roles: Dictionary) -> Array:
+	var ms := Residents.gen(nm, 2, cls, key)
+	for i in 2:
+		var ro: Dictionary = roles.get("groom" if i == 0 else "bride", {})
+		ms[i]["pn"] = "Марк" if i == 0 else "Юлия"
+		if not ro.is_empty():
+			ms[i]["sd"] = int(ro.get("seed", 1))
+			var rr := RandomNumberGenerator.new()
+			rr.seed = int(ro.get("seed", 1))
+			var rc := String(ro.get("cls", cls))
+			ms[i]["look"] = Citizen.roll_look(rr, i == 1, false, rc == "patricians", "", rc)   # одежда — как в ролике
+	if n > 2:
+		ms = Residents.gen(nm, n, cls, key, ms)
+	return ms
 
 
 ## Имя новой семьи: род жениха и своё прозвище («Валерии Руфы»), какого в городе ещё нет
@@ -2090,9 +2098,7 @@ func show_area() -> void:
 		var ar: Array = a.get("area1" if hours >= int(g.get("shrink_h", 3)) else "area0", [])
 		if not ar.is_empty():
 			c = Vector2(float(ar[0]), float(ar[1]))
-	var rig = game.rig
-	rig._target_t = Vector3(c.x, game.land.height_at(c.x, c.y), c.y)
-	rig._dist_t = clampf(rig._dist_t, 30.0, 55.0)
+	game.rig.look_at_point(Vector3(c.x, game.land.height_at(c.x, c.y), c.y))    # и перестаёт следовать за жителем
 
 
 ## Советник один раз: как устроен скверик — пороги по скамьям и «Готово»

@@ -56,7 +56,7 @@ static func _fill_person(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 	var fam := String(r["fam"])
 	var h: Dictionary = c.buildings.get(int(r["home"]), {})
 	var cls := String(r["cls"])
-	var ms: Array = _members(c, r)
+	var ms: Array = members_of(ppl, r)
 	# шапка: портрет, имя, кто в семье
 	var hdr := HBoxContainer.new()
 	hdr.add_theme_constant_override("separation", 10)
@@ -73,7 +73,7 @@ static func _fill_person(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 	chip.add_child(hud._label(String(Defs.CLASSES[cls]["name"]), 15, true, Hud.C_SOFT))
 	tv.add_child(chip)
 	hdr.add_child(tv)
-	var close := hud._bare("close", "Закрыть", 34, func(): hud.close_panels())
+	var close := hud._bare("close", "Закрыть", 34, func(): hud._hide_info())    # только карточку (совет и другие окна — как были)
 	close.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	hdr.add_child(close)
 	box.add_child(hdr)
@@ -84,6 +84,8 @@ static func _fill_person(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 		box.add_child(hud._clickable(fr, "Карточка дома: счастье, нужды, кто где живёт", func():
 			hud.game.select_building(h)
 			hud.open_info(h)))
+	elif int(r["home"]) == -2:
+		box.add_child(hud._row("family", "Семья %s" % StoryDefs.fam_gen(fam), "уезжает из города", Hud.C_BAD))
 	else:
 		box.add_child(hud._row("family", "Семья %s" % StoryDefs.fam_gen(fam), "ждёт жилья", Hud.C_BAD))
 	var flow := HFlowContainer.new()
@@ -200,19 +202,42 @@ static func _btn(hud: Hud, text: String, icon: String, tip: String, cb: Callable
 	return b
 
 
-## Члены семьи (записи) — из дома или с площади
+## Члены семьи (записи) — из дома, по пути в выбранный дом (запись в доме появится, когда первый дойдёт до двери)
+## или с площади; не нашли — только он сам
 static func _members(c: City, r: Dictionary) -> Array:
+	var me: Dictionary = r.get("m", {})
+	var fam := String(r["fam"])
 	var h: Dictionary = c.buildings.get(int(r["home"]), {})
-	for f: Dictionary in (h.get("families", []) if not h.is_empty() else c.arrivals):
-		if String(f.get("name", "")) == String(r["fam"]) and (f.get("m", []) as Array).has(r.get("m", {})):
+	if not h.is_empty():
+		for f: Dictionary in h.get("families", []):
+			if String(f.get("name", "")) == fam and (f.get("m", []) as Array).has(me):
+				return f["m"]
+	var pf: Dictionary = c.pending.get(fam, {})
+	if (pf.get("m", []) as Array).has(me):
+		return pf["m"]
+	for f: Dictionary in c.arrivals:
+		if String(f.get("name", "")) == fam and (f.get("m", []) as Array).has(me):
 			return f["m"]
-	return [r.get("m", {})]
+	return [me]
+
+
+## Члены семьи для карточки и «Горожан»: уезжающие (дом −2) записи уже не имеют — по людям семьи на улице
+## (номера жителей идут в порядке записей)
+static func members_of(ppl: People, r: Dictionary) -> Array:
+	var ms := _members(ppl.city, r)
+	if ms.size() > 1 or int(r["home"]) != -2:
+		return ms
+	var out := ppl.residents.filter(func(x): return x["fam"] == r["fam"] and int(x["home"]) == -2 and x.has("m"))
+	if out.size() <= 1:
+		return ms
+	out.sort_custom(func(a, b): return int(a["id"]) < int(b["id"]))
+	return out.map(func(x): return x["m"])
 
 
 ## Люди той же семьи (на улице и дома) — по порядку записей
 static func _family_people(ppl: People, r: Dictionary) -> Array:
 	var out := ppl.residents.filter(func(x): return x["fam"] == r["fam"] and int(x["home"]) == int(r["home"]))
-	var ms := _members(ppl.city, r)
+	var ms := members_of(ppl, r)
 	out.sort_custom(func(a, b): return ms.find(a.get("m", {})) < ms.find(b.get("m", {})))
 	return out
 
@@ -221,6 +246,8 @@ static func _family_people(ppl: People, r: Dictionary) -> Array:
 static func _no_job(c: City, r: Dictionary) -> String:
 	if r["child"]:
 		return "ребёнок — играет у дома"
+	if int(r["home"]) == -2:
+		return "уезжает из города"
 	if int(r["home"]) <= 0:
 		return "сначала — дом"
 	var cl := String(r["cls"])
@@ -311,6 +338,8 @@ static func _act_text(a: String, d: Dictionary, bn: Callable, going: bool) -> St
 static func wish(c: City, r: Dictionary) -> Array:
 	var h: Dictionary = c.buildings.get(int(r["home"]), {})
 	var cls := String(r["cls"])
+	if int(r["home"]) == -2:
+		return ["уехать туда, где живётся лучше — семья покидает город", true]
 	if h.is_empty():
 		var ht := String(Defs.CLASSES[cls].get("house", "house_pleb"))
 		return ["свой дом — поставьте «%s» у дороги и заселите семью" % String(Defs.B.get(ht, {"name": "Дом"})["name"]), true]
@@ -398,7 +427,7 @@ static func _fill_cat(hud: Hud, box: VBoxContainer, ct: Dictionary) -> void:
 	if ct.has("named"):
 		tv.add_child(hud._wrap(hud._label("Из истории горожан", 14, false, Hud.C_GOLD), W - PORTRAIT - 60.0))
 	hdr.add_child(tv)
-	var close := hud._bare("close", "Закрыть", 34, func(): hud.close_panels())
+	var close := hud._bare("close", "Закрыть", 34, func(): hud._hide_info())    # только карточку
 	close.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	hdr.add_child(close)
 	box.add_child(hdr)
@@ -421,10 +450,7 @@ static func _fill_cat(hud: Hud, box: VBoxContainer, ct: Dictionary) -> void:
 	btns.add_child(_follow_btn)
 	btns.add_child(_btn(hud, "Погладить", "cat", "Погладить — ей приятно", func():
 		ppl.pet_now(ct)
-		if hud.game.rig:
-			var p: Vector3 = ppl.cat_pos(ct)
-			hud.game.rig.fly_to(p)
-			hud.game.rig._dist_t = minf(hud.game.rig._dist_t, 12.0)))
+		pet_view(hud, ct)))
 	if not h.is_empty():
 		btns.add_child(_btn(hud, "Дом", "housing", "Показать, где она живёт", func(): _fly(hud, h)))
 	box.add_child(btns)
@@ -444,6 +470,40 @@ static func cat_activity(ppl: People, ct: Dictionary) -> String:
 				return "%s гладит %s" % ["её" if her else "его", People.name_of(ppl.by_id[rid])]
 			return "мурлычет — %s гладят" % ("её" if her else "его")
 	return "сидит у двери" if _near_home(ppl, ct) else "сидит, смотрит на прохожих"
+
+
+## «Погладить»: камера близко к кошке — с той стороны, откуда её видно (у двери — со стороны двери, чуть наискосок),
+## а не в стену дома; поворот — ближний к нынешнему (без долгого разворота)
+static func pet_view(hud: Hud, ct: Dictionary) -> void:
+	var rig = hud.game.rig
+	var ppl: People = hud.game.people
+	if rig == null or ppl == null:
+		return
+	var p: Vector3 = ppl.cat_pos(ct)
+	rig.fly_to(p)
+	rig._dist_t = minf(rig._dist_t, 12.0)
+	var y0: float = rig._yaw_t
+	var yaws := []
+	var c: City = hud.game.city
+	var h: Dictionary = c.buildings.get(int(ct.get("home", -1)), {})
+	if not h.is_empty() and _near_home(ppl, ct):
+		var dir: Vector2 = c.door_point(h) - (h["pos"] as Vector2)
+		if dir.length() > 0.1:
+			var ty := atan2(dir.x, dir.y)
+			var a := y0 + wrapf(ty + 0.4 - y0, -PI, PI)
+			var b := y0 + wrapf(ty - 0.4 - y0, -PI, PI)
+			yaws.append_array([a, b] if absf(a - y0) <= absf(b - y0) else [b, a])
+	yaws.append_array([y0, y0 + PI / 2.0, y0 - PI / 2.0, y0 + PI])
+	var d: float = rig._dist_t * CameraRig.K
+	var pt: float = rig._pitch_t
+	var t := Vector3(p.x, maxf(1.0, p.y), p.z)
+	var look := p + Vector3(0, 0.2, 0)
+	for y: float in yaws:
+		var cpos := t + Vector3(sin(y) * cos(pt), sin(pt), cos(y) * cos(pt)) * d
+		if not hud.game.view_blocked(cpos, look):
+			rig._yaw_t = y
+			return
+	rig._yaw_t = float(yaws[0])
 
 
 static func _near_home(ppl: People, ct: Dictionary) -> bool:
@@ -477,6 +537,8 @@ static func follow(hud: Hud, sel: Dictionary) -> void:
 	var ppl: People = hud.game.people
 	if rig == null or ppl == null:
 		return
+	if hud.game.tool != "":
+		hud.game.set_tool("")                    # с инструментом в руках камера не ездит (мостовая не тянулась бы за жителем)
 	if sel.has("cat"):
 		var ct: Dictionary = sel["cat"]
 		rig.start_follow(func():
@@ -807,7 +869,7 @@ static func tick(hud: Hud, sel: Dictionary, dt: float) -> void:
 	else:
 		var r: Dictionary = ppl.by_id.get(int((sel.get("r", {}) as Dictionary).get("id", -1)), {})
 		if r.is_empty():
-			hud.close_panels()                  # уехал из города
+			hud._hide_info()                    # уехал из города — закрыть только карточку (совет и другие окна — как были)
 			return
 		_now.text = activity(ppl, r)
 		# сходил к цирюльнику, пока карточка открыта, — портрет в новом облике
@@ -866,11 +928,13 @@ static func family_chips(hud: Hud, b: Dictionary, f: Dictionary, w: float) -> Co
 
 # ---------- «Горожане» (этап 6.9): поиск по имени и семье ----------
 
-## Жители по запросу q (имя или семья) и фильтру f ("" все, "nojob" без работы, "sad" несчастные, "kids" дети)
-static func search(ppl: People, q: String, f: String) -> Array:
+## Жители по запросу q (имя или семья) и фильтру f ("" все, "nojob" без работы, "sad" несчастные, "kids" дети):
+## не больше LIST_MAX строк; info.total — сколько нашлось всего (в «Горожанах» — «Показаны 40 из …»)
+static func search(ppl: People, q: String, f: String, info: Dictionary = {}) -> Array:
 	var c: City = ppl.city
 	q = q.strip_edges().to_lower()
 	var out := []
+	var total := 0
 	for r in ppl.residents:
 		if int(r["home"]) == -2:
 			continue                            # уезжает
@@ -889,7 +953,8 @@ static func search(ppl: People, q: String, f: String) -> Array:
 			var nm := People.name_of(r).to_lower()
 			if not (nm.contains(q) or String(r["fam"]).to_lower().contains(q) or StoryDefs.fam_gen(String(r["fam"])).to_lower().contains(q)):
 				continue
-		out.append(r)
-		if out.size() >= LIST_MAX:
-			break
+		total += 1
+		if out.size() < LIST_MAX:
+			out.append(r)
+	info["total"] = total
 	return out
