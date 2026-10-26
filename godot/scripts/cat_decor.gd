@@ -69,7 +69,7 @@ static func _decor(b: Bp, type: String, variant := 0) -> void:
 		"donkeypost": _donkeypost(b)
 		"balcony": _balcony(b)
 		"legionpost": _legionpost(b)
-		"firebarrel", "fairstall", "muse", "kittenbasket", "censortable", "lararium": CatStory.make(b, Defs.base_of(type), lk)   # награды историй этапа 7b
+		"firebarrel", "fairstall", "muse", "kittenbasket", "censortable", "lararium", "curulechair", "minotaur", "gladstatue", "saturntable": CatStory.make(b, Defs.base_of(type), lk)   # награды историй этапа 7b
 		_: CatDecor2.make(b, Defs.base_of(type), lk)     # украшения этапа 5
 
 

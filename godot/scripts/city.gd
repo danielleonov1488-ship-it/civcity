@@ -2506,6 +2506,8 @@ func story_parts(h: Dictionary) -> Array:
 					ok = true
 		elif b.has("home"):
 			ok = int(b["home"]) == int(h["id"])
+		elif b.has("cls"):
+			ok = String(def(h).get("cls", "")) == String(b["cls"])   # всем домам сословия (лабиринт — патрициям)
 		elif b.has("x"):
 			ok = (h["pos"] as Vector2).distance_to(Vector2(float(b["x"]), float(b["z"]))) <= float(b.get("r", 0.0))
 		var pct := int(b.get("_live", b.get("pct", 0))) if b.has("at") else int(b.get("pct", 0))

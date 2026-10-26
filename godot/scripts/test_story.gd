@@ -37,6 +37,13 @@ extends Node
 ## копоть −5% через 6 ч, вигилы, пост и колодец; «Мася и котята» — та же Мария, значки над домами с детьми, котята-кошки
 ## с именами; «Перепись» — «Горожане» с поиском, самый счастливый дом, ребёнок; «Письмо сыну» — победа в Лесу разбойников
 ## после начала шага, гонец на коне, ларарий. mode=owner7b — те же истории в городе владельца (story_v 0).
+## Четвёртая партия (mode=stage7c): «Сенатор проездом» — путь от арки до двери на земле, красные значки над грустными домами,
+## знамёна и статуи вдоль пути (у курсора — «далеко от пути»), площадь, шествие с ликторами и сенатором верхом, кресло;
+## «Лабиринт Тесея» — Минотавр открыт историей, изгородь мышью (24 звена тесно), дети бегут с нитью Ариадны, патрициям +5%;
+## «Школа гладиаторов» — с 1030 жителей, место по выбору (совет, не правило), Лудус (пока его нет — одеон), где встал — то
+## и в награде (в центре — шумно рядом), чемпион по выбору бьётся в ролике и выходит на игры; «Сатурналии» — раз в год,
+## уступают место обычной истории, огни у станции и игры, подарки по числу жителей или день отдыха, царь в венке, через год —
+## снова, другой подарок, награда — радость. mode=owner7c — четвёртая партия в городе владельца.
 var game
 var c: City
 var hud
@@ -58,9 +65,9 @@ func _ready() -> void:
 			out = kv[1].trim_suffix("/") + "/"   # куда снимки (проверка под OpenGL — в свою папку)
 	if mode == "owner_old":
 		_old_cat_save()
-	if mode == "owner7b":
+	if mode in ["owner7b", "owner7c"]:
 		_owner_copy()
-	Game.boot = {"play": "1"} if mode in ["owner", "owner_old", "owner7b"] else {"new": "1"}
+	Game.boot = {"play": "1"} if mode in ["owner", "owner_old", "owner7b", "owner7c"] else {"new": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()
@@ -164,6 +171,9 @@ func who_kid(tag: String) -> void:
 ## проверяют свои истории; разделы этапа 7b (mode=stage7b) их включают
 var skip7b := true
 const S7B := ["fair", "kittens", "census", "grove", "fire", "letter"]
+## Четвёртая партия (mode=stage7c, owner7c): в прежних разделах (и в разделах 7b) не предлагаются
+const S7C := ["senator", "maze", "gladiators", "saturnalia"]
+var skip_ids: Array = S7B + S7C
 
 
 ## Состояние историй с нуля (а город, дома, жители — те же); done — эти истории уже пройдены
@@ -178,7 +188,7 @@ func fresh(h := 100, done := []) -> void:
 	c.stories["h"] = h
 	for id in done:
 		c.stories["done"][id] = {"day": 0, "h": 1}
-	sto.off = S7B.duplicate() if skip7b else []
+	sto.off = skip_ids.duplicate()
 	c.research.erase("s_cat")
 	sto._h_seen = -1
 	sto._tried = ""
@@ -259,7 +269,13 @@ func _run() -> void:
 	sto.force = true
 	game.rank_cine.force = false
 	skip7b = not (mode in ["stage7b", "owner7b"])
-	sto.off = S7B.duplicate() if skip7b else []
+	skip_ids = S7C.duplicate() if mode in ["stage7b", "owner7b"] else (S7B.duplicate() if mode in ["stage7c", "owner7c"] else S7B + S7C)
+	sto.off = skip_ids.duplicate()
+	if mode == "owner7c":
+		await _owner7c()
+		print("STORY DONE fails=", fails)
+		get_tree().quit()
+		return
 	if mode == "owner7b":
 		await _owner7b()
 		print("STORY DONE fails=", fails)
@@ -320,6 +336,16 @@ func _run() -> void:
 		# только этап 7b: ярмарка, роща поэта, пожар у горшечников
 		town7b()
 		for f: Callable in [_fair, _grove, _fire, _kittens, _census, _letter]:
+			c.money = 50000.0
+			await f.call()
+		StoryDefs.extra = []
+		print("STORY DONE fails=", fails)
+		get_tree().quit()
+		return
+	if mode == "stage7c":
+		# только четвёртая партия этапа 7b: сенатор, лабиринт, школа гладиаторов, Сатурналии
+		town7b()
+		for f: Callable in [_senator, _maze, _gladiators, _saturnalia]:
 			c.money = 50000.0
 			await f.call()
 		StoryDefs.extra = []
@@ -2137,7 +2163,8 @@ func _framework() -> void:
 	var ids := []
 	for sd: Dictionary in StoryDefs.STORIES:
 		ids.append(String(sd["id"]))
-	check(ids == ["cat", "bandits", "leak", "square", "donkey", "crowded", "fair", "wedding", "kittens", "census", "grove", "fire", "letter"], "порядок историй: %s" % [ids])
+	check(ids == ["cat", "bandits", "leak", "square", "donkey", "crowded", "fair", "wedding", "kittens", "census", "grove", "fire", "senator", "maze", "letter",
+		"gladiators", "saturnalia"], "порядок историй: %s" % [ids])
 	for sd: Dictionary in StoryDefs.STORIES:
 		check(String(sd.get("lesson", "")) != "", "«%s» говорит, чему учит (журнал): %s" % [sd["title"], sd.get("lesson", "")])
 	# цели «красота», «игры», «победы Легиона» — на пробной записи истории
@@ -3927,6 +3954,7 @@ func _letter() -> void:
 	c.compute()
 	fresh7(6000, ["cat", "leak", "square", "donkey", "crowded", "fair", "wedding", "kittens", "census", "grove", "fire"])
 	var S := c.stories
+	c.stats["pop"] = 900                     # письмо сыну — с 880 жителей (каденция четвёртой партии)
 	sto._tried = ""
 	sto.tick()
 	var o: Dictionary = S["offer"]
@@ -4002,3 +4030,638 @@ func _letter() -> void:
 		await frames(40)
 		await shot7("story_lararium.png")
 		game._set_hour(10.5)
+
+
+# ---------- этап 7b, четвёртая партия: «Сенатор проездом», «Лабиринт Тесея», «Школа гладиаторов», «Сатурналии» ----------
+
+## Прежние истории — пройдены (новые четвёртой партии предлагаются им вслед)
+const DONE_EARLY := ["cat", "bandits", "leak", "square", "donkey", "crowded", "wedding"]
+
+
+## Звенья забора type по прямой от a до b (как мышью — fence_plan_of): встают годные; калитка посередине — gate
+func fence_line(type: String, a: Vector2, b: Vector2, gate := false) -> int:
+	var n := 0
+	reset_place()
+	for s: Dictionary in game.fence_plan_of(type, a, b, gate):
+		if String(s["err"]) != "":
+			continue
+		var bb := c.place(type, s["pos"], float(s["yaw"]), int(s["variant"]), 0)
+		game._show(bb)
+		n += 1
+	return n
+
+
+## Красные значки над грустными домами вдоль пути сенатора
+func route_badges() -> int:
+	var n := 0
+	for k in hud.badges:
+		n += int(String(k).begins_with("story_route"))
+	return n
+
+
+func _senator() -> void:
+	print("== сенатор проездом")
+	StoryDefs.extra = []
+	c.level = 5
+	for r in ["deco_metal", "deco_stone", "artisans"]:
+		c.research[r] = true
+	c.research.erase("s_senator")
+	# от большой дороги — улица к кварталу (z = 144), дом хозяина на её конце, дома вдоль пути
+	street(Vector2(192, 124), Vector2(192, 146))
+	var host := put("house_artisan", Vector2(205, 148))
+	if host.is_empty():
+		check(false, "дом хозяина не поставился")
+		return
+	settle(host, "Гортензии")
+	var hs := []
+	for t: Vector2 in [Vector2(199, 140), Vector2(203, 140), Vector2(196, 136), Vector2(196, 130), Vector2(188, 136), Vector2(199, 148)]:
+		var h := put("house_pleb", t)
+		if not h.is_empty():
+			settle(h, "Вдоль %d" % hs.size())
+			hs.append(h)
+	c.compute()
+	fresh7(7000, DONE_EARLY)
+	var S := c.stories
+	sto._tried = ""
+	var t0 := Time.get_ticks_usec()
+	sto.tick()
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "senator" and int(o.get("home", -1)) == int(host["id"]), "«Город» — «Сенатор проездом» у дома ремесленника (%s, %s; подбор %.0f мс)" % [o.get("id"), o.get("hero"), ms])
+	if String(o.get("id", "")) != "senator":
+		return
+	var rh0 := sto.route_houses(o)
+	var rc0: Array = o.get("route", [])
+	check(rc0.size() >= 6 and rh0.size() >= 6, "путь от арки до двери — %d точек, домов вдоль пути %d" % [rc0.size(), rh0.size()])
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	await wait_beat("say", 10.0)
+	await frames(60)
+	sto.ui.finish_typing()
+	await frames(8)
+	check(sto.ui.name_lbl.text == String(o.get("hero", "?")), "в облачке — хозяин дома %s" % sto.ui.name_lbl.text)
+	await shot7("story_senator_ask.png")
+	await play_pick(0, 25.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	check(sto._goal_kind(A) == "all" and not (A.get("route", []) as Array).is_empty(), "шаг «путь сенатора»: путь отмечен (%d точек)" % (A.get("route", []) as Array).size())
+	var pt := parts_txt()
+	check(pt.contains("Дома вдоль пути счастливы (от 66%)") and pt.contains("Знамёна вдоль пути 0/4") and pt.contains("Статуи вдоль пути 0/2") and pt.contains("Мощёная площадь у дома: 0/20 м²"),
+		"строки: %s" % pt)
+	hud.advisor_panel.visible = false
+	sto.tick()
+	check(c.tips.has("story_adv_senator_prep") and hud.adv_title.text == "Счастье вдоль улицы", "советник: «%s»" % hud.adv_title.text)
+	hud.advisor_panel.visible = false
+	sto._marks(true)
+	var sad := 0
+	var rh := sto.route_houses(A)
+	for h: Dictionary in rh.slice(0, 12):
+		sad += int(clampi(int(h.get("happy", 0)), 0, 100) < 66)
+	check(sto._route_nodes.size() >= 4 and route_badges() == sad, "путь на земле — %d пятен; красных значков над грустными домами %d из %d" % [sto._route_nodes.size(), route_badges(), sad])
+	var worst := part_of("Грустнее всех")
+	if sad > 0:
+		check(not worst.is_empty() and String((worst.get("do", {}) as Dictionary).get("kind", "")) == "look", "строка «%s» — щелчок открывает карточку дома" % worst.get("text", ""))
+	# знамя у пути — в счёт, далеко от пути — нет
+	var pts: PackedVector2Array = Stories._pts(A["route"])
+	var mid: Vector2 = Stories._proc_at(pts, Stories._plen(pts) * 0.5)[0]
+	game.set_tool("banner")
+	var zn: Array = sto.zone_note("banner", mid + Vector2(3.0, 0.5))
+	var zf: Array = sto.zone_note("banner", mid + Vector2(40.0, 30.0))
+	check(not zn.is_empty() and bool(zn[1]) and not zf.is_empty() and not bool(zf[1]) and String(zf[0]).contains("пути сенатора"), "у курсора: у пути «%s», далеко «%s»" % [zn, zf])
+	game.set_tool("")
+	await look_at_pt(mid, 40.0)
+	sto._marks(true)
+	hud.refresh()
+	await frames(40)
+	await shot7("story_senator_route.png")
+	# знамёна и статуи вдоль пути, площадь у двери
+	var placed := 0
+	var plen := Stories._plen(pts)
+	for k in 10:
+		var at := Stories._proc_at(pts, plen * (0.15 + 0.08 * k))
+		var f: Vector2 = at[1]
+		var side := Vector2(-f.y, f.x) * (1.0 if k % 2 == 0 else -1.0)
+		var t: String = "statue" if k in [3, 6] else "banner"
+		var d := deco(t, (at[0] as Vector2) + side * 3.0)
+		placed += int(not d.is_empty())
+	var dp: Vector2 = c.door_point(c.buildings[int(A["home"])])
+	game.land.paint_circle(dp + City.facing(float(c.buildings[int(A["home"])]["yaw"])) * 2.0, 3.0, Land.Kind.PLAZA, false, false)
+	c.compute()
+	sto.tick()
+	pt = parts_txt()
+	check(pt.contains("✓ Знамёна вдоль пути") and pt.contains("✓ Статуи вдоль пути") and pt.contains("✓ Мощёная площадь у дома"), "знамёна, статуи, площадь (поставлено %d): %s" % [placed, pt])
+	check(not bool(A.get("ready", false)) or sad == 0, "пока дома вдоль пути грустные — шествие ждёт")
+	# дома вдоль пути повеселели (счастье — как в «Обзоре»): шествие ждёт «Посмотреть»
+	for h: Dictionary in sto.route_houses(A).slice(0, 12):
+		h["happy"] = 72
+	sto._tick_active()
+	sto._marks(true)
+	check(bool(A.get("ready", false)) and route_badges() == 0, "все дома вдоль пути счастливы — красных значков нет, шествие ждёт «Посмотреть»")
+	# сохранение посреди истории: путь — числами, переживает JSON
+	var back: Dictionary = JSON.parse_string(JSON.stringify(c.stories))
+	check((back["active"]["route"] as Array).size() == (A["route"] as Array).size(), "путь сенатора сохраняется (%d точек)" % (back["active"]["route"] as Array).size())
+	if not bool(A.get("ready", false)):
+		return
+	var gl0: int = c.legion.glory
+	var rp0 := minf(c.rp, c.rp_cap() - 900.0)
+	c.rp = rp0
+	sto.play_ready()
+	var walking: bool = await drive_until("parade", 20.0)
+	var t1 := Time.get_ticks_msec()
+	while walking and sto.kit != null and Time.get_ticks_msec() - t1 < 9000:
+		var i := int(sto.cine.get("i", -1))
+		var beats: Array = sto.cine.get("beats", [])
+		if i >= 0 and i < beats.size() and String(beats[i][0]) == "parade" and String(beats[i][1]) == "walk" and float((sto.cine.get("proc", {}) as Dictionary).get("s", 0.0)) > 7.0:
+			break
+		if i >= 0 and i < beats.size() and String(beats[i][0]) in ["say", "choice"] and sto.cine.get("wait", false):
+			sto.ui.finish_typing()
+			sto._next()
+		await frames(2)
+	var acts: Dictionary = sto.cine.get("actors", {})
+	var crowd := 0
+	for k in acts:
+		crowd += int(String(k).begins_with("crowd"))
+	var rider = acts.get("senator")
+	check(walking and acts.has("horse") and acts.has("lictor1") and rider != null and (rider as Node).get_parent() == acts.get("horse") and crowd >= 6,
+		"шествие: ликторы впереди, сенатор верхом, соседей вдоль улицы %d" % crowd)
+	await shot7("story_senator_parade.png")
+	await play_pick(0, 45.0, "reward", "story_senator_final.png")
+	await wait_kit(false, 4.0)
+	var e: Dictionary = (S["done"] as Dictionary).get("senator", {})
+	check(not e.is_empty() and c.unlocked("curulechair") and c.legion.glory >= gl0 + 10 and c.rp >= rp0 + 849.0 and not String(e.get("text", "")).contains("ден"),
+		"награда: курульное кресло (%s), +10 Славы (%d → %d), очки (%.0f → %.0f), денег нет (%s)" % [c.unlocked("curulechair"), gl0, c.legion.glory, rp0, c.rp, e.get("text", "")])
+	var ch := deco("curulechair", dp + Vector2(-6, 8))
+	check(not ch.is_empty(), "курульное кресло ставится")
+	if not ch.is_empty():
+		front_view(ch, 30.0, 7.5)
+		await frames(40)
+		await shot7("story_curulechair.png")
+
+
+func _maze() -> void:
+	print("== лабиринт тесея")
+	StoryDefs.extra = []
+	c.level = 5
+	for r in ["deco_garden", "q_garden", "patricians", "artisans"]:
+		c.research[r] = true
+	c.research.erase("s_maze")
+	var h := put("house_patrician", Vector2(238, 186))
+	if h.is_empty():
+		check(false, "домус не поставился")
+		return
+	settle(h, "Корнелии Сципионы")
+	c.compute()
+	fresh7(7200, DONE_EARLY + ["senator"])
+	var S := c.stories
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	var hr := hero_resident(o)
+	check(String(o.get("id", "")) == "maze" and int(o.get("home", -1)) == int(h["id"]) and not hr.is_empty() and bool(hr["female"]),
+		"«Город» — «Лабиринт Тесея», просит хозяйка домуса %s" % o.get("hero", "?"))
+	if String(o.get("id", "")) != "maze":
+		return
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	await wait_beat("say", 10.0)
+	await frames(60)
+	sto.ui.finish_typing()
+	await frames(8)
+	await shot7("story_maze_ask.png")
+	await play_pick(0, 25.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	check(sto._goal_kind(A) == "maze" and c.research.has("s_maze") and String(c.events[-1].get("text", "")).contains("Минотавр"),
+		"шаг «лабиринт»: Минотавра открыла история (%s)" % c.events[-1].get("text", ""))
+	var pt := parts_txt()
+	check(pt.contains("· Звеньев изгороди в лабиринте: 0/24") and pt.contains("· Минотавр из самшита в середине"), "строки: %s" % pt)
+	check(String((part_of("Звеньев").get("do", {}) as Dictionary).get("type", "")) == "hedge", "щелчок по строке — в руках «Живая изгородь»")
+	hud.advisor_panel.visible = false
+	sto.tick()
+	check(c.tips.has("story_adv_maze_maze") and hud.adv_title.text == "Живая изгородь", "советник: «%s»" % hud.adv_title.text)
+	hud.advisor_panel.visible = false
+	# лабиринт к западу от домуса: два квадрата живой изгороди с проходами (внешний — к дому, внутренний — с другой стороны)
+	var cc: Vector2 = (h["pos"] as Vector2) + Vector2(-16.0, 0.0)
+	var n := 0
+	var R1 := 6.8
+	var R2 := 3.9
+	n += fence_line("hedge", cc + Vector2(-R1, -R1), cc + Vector2(R1, -R1))
+	n += fence_line("hedge", cc + Vector2(R1, -R1), cc + Vector2(R1, -1.2))
+	n += fence_line("hedge", cc + Vector2(R1, 1.2), cc + Vector2(R1, R1))
+	n += fence_line("hedge", cc + Vector2(R1, R1), cc + Vector2(-R1, R1))
+	n += fence_line("hedge", cc + Vector2(-R1, R1), cc + Vector2(-R1, -R1))
+	n += fence_line("hedge", cc + Vector2(-R2, -R2), cc + Vector2(R2, -R2))
+	n += fence_line("hedge", cc + Vector2(R2, -R2), cc + Vector2(R2, R2))
+	n += fence_line("hedge", cc + Vector2(R2, R2), cc + Vector2(-R2, R2))
+	n += fence_line("hedge", cc + Vector2(-R2, R2), cc + Vector2(-R2, 1.0))
+	n += fence_line("hedge", cc + Vector2(-R2, -1.0), cc + Vector2(-R2, -R2))
+	c.compute()
+	sto.tick()
+	var mz := sto.maze_eval(A, StoryDefs.step_at(StoryDefs.story("maze"), 1)["goal"])
+	check(n >= 24 and int(mz["have"]) >= 24 and not bool(A.get("ready", false)), "звеньев изгороди %d, в лабиринте %d — Минотавра ещё нет, ждём" % [n, int(mz["have"])])
+	await look_at_pt(cc, 34.0)
+	sto._marks(true)
+	hud.refresh()
+	await frames(30)
+	await shot7("story_maze_hedges.png")
+	var mn := deco("minotaur", cc)
+	c.compute()
+	sto.tick()
+	check(not mn.is_empty() and bool(A.get("ready", false)), "Минотавр в середине — лабиринт готов, ролик ждёт «Посмотреть» (%s)" % parts_txt())
+	if not bool(A.get("ready", false)):
+		return
+	sto.play_ready()
+	var ran: bool = await drive_until("maze", 20.0)
+	var path_n := 0
+	var kids := 0
+	var thread := false
+	var t1 := Time.get_ticks_msec()
+	var shot_done := false
+	while sto.kit != null and Time.get_ticks_msec() - t1 < 45000:
+		await frames(4)
+		var i := int(sto.cine.get("i", -1))
+		var beats: Array = sto.cine.get("beats", [])
+		if i < 0 or i >= beats.size():
+			continue
+		var mzc: Dictionary = sto.cine.get("maze", {})
+		path_n = maxi(path_n, (mzc.get("pts", PackedVector2Array()) as PackedVector2Array).size())
+		var acts: Dictionary = sto.cine.get("actors", {})
+		var kn := 0
+		for k in ["kid1", "kid2", "kid3"]:
+			kn += int(acts.has(k))
+		kids = maxi(kids, kn)
+		if String(beats[i][0]) == "maze" and String(beats[i][1]) == "run" and float(mzc.get("s", 0.0)) > float(mzc.get("len", 1.0)) * 0.45 and not shot_done:
+			shot_done = true
+			var th = acts.get("_thread")
+			thread = th != null and ((th as MeshInstance3D).mesh as ImmediateMesh).get_surface_count() > 0
+			await shot7("story_maze_run.png")
+		if String(beats[i][0]) == "reward" and not sto.cine.has("_t7r"):
+			sto.cine["_t7r"] = true
+			await frames(20)
+			await shot7("story_maze_final.png")
+		if String(beats[i][0]) in ["say", "choice"] and sto.cine.get("wait", false):
+			sto.ui.finish_typing()
+			await frames(4)
+			sto._next()
+	await wait_kit(false, 4.0)
+	check(ran and kids == 3 and path_n >= 4 and thread, "дети бегут лабиринтом (%d, путь из %d точек), за ними — нить Ариадны" % [kids, path_n])
+	var e: Dictionary = (S["done"] as Dictionary).get("maze", {})
+	var pat := false
+	for hb: Dictionary in c.stories["bonus"]:
+		pat = pat or (String(hb.get("id", "")) == "maze" and String(hb.get("cls", "")) == "patricians")
+	var line_ok := false
+	for p: Array in c.story_parts(h):
+		line_ok = line_ok or String(p[0]).begins_with("Лабиринт Тесея")
+	check(not e.is_empty() and c.unlocked("minotaur") and pat and line_ok and not String(e.get("text", "")).contains("ден"),
+		"награда: Минотавр, домам патрициев +5%% (строка в счастье домуса), без денег (%s)" % e.get("text", ""))
+	if not mn.is_empty():
+		front_view(mn, 26.0, 6.0)
+		await frames(40)
+		await shot7("story_minotaur.png")
+
+
+func _gladiators() -> void:
+	print("== школа гладиаторов")
+	StoryDefs.extra = []
+	c.level = 6
+	c.research.erase("s_gladiators")
+	var bt := "ludus" if Defs.B.has("ludus") else "odeon"   # в этой сборке Лудуса может ещё не быть — школа при одеоне
+	c.research.erase(bt)
+	var bst := StoryDefs.step_at(StoryDefs.story("gladiators"), 1)
+	check(String((bst["goal"] as Array)[1][1]) == bt, "шаг «Лудус»: цель — %s (%s)" % [bt, "Лудус есть в игре" if bt == "ludus" else "Лудуса пока нет — школа при одеоне"])
+	c.compute()
+	fresh7(7400, DONE_EARLY + ["senator", "maze"])
+	var S := c.stories
+	c.stats["pop"] = 900
+	sto._tried = ""
+	sto.tick()
+	check(String((S["offer"] as Dictionary).get("id", "")) != "gladiators", "900 жителей — школу гладиаторов ещё не предлагают (с 1030)")
+	S["offer"] = {}
+	c.stats["pop"] = 1100
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	var hr := hero_resident(o)
+	check(String(o.get("id", "")) == "gladiators" and not hr.is_empty() and not bool(hr["female"]), "«Большой город», 1100 жителей — «Школа гладиаторов», просит %s" % o.get("hero", "?"))
+	if String(o.get("id", "")) != "gladiators":
+		return
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	var chose: bool = await drive_until("choice", 25.0)
+	while chose and not sto.ui.choosing():
+		sto.ui.finish_typing()
+		await frames(3)
+	check(chose and sto.ui.pills.get_child_count() == 3, "выбор: у стен, в центре, позже")
+	await frames(20)
+	await shot7("story_gladiators_ask.png")
+	if chose:
+		(sto.ui.pills.get_child(1) as Button).pressed.emit()   # в центре
+	await play_pick(0, 20.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	check(String((A.get("flags", {}) as Dictionary).get("choice", "")) == "center" and c.research.has(bt) and sto._goal_kind(A) == "p",
+		"выбрали «в центре»; %s открыла история (без очков)" % bt)
+	var ga: Array = sto._goal_area(A)
+	var ctr := c.center()
+	check(not ga.is_empty() and Vector2(float(ga[0]), float(ga[1])).distance_to(ctr["pos"]) < 1.0, "подсвечено место у почтовой станции — совет ланисты")
+	game.set_tool(bt)
+	var zn: Array = sto.zone_note(bt, (ctr["pos"] as Vector2) + Vector2(6, 6))
+	var zf: Array = sto.zone_note(bt, (ctr["pos"] as Vector2) + Vector2(55, 90))
+	check(not zn.is_empty() and bool(zn[1]) and not zf.is_empty() and not bool(zf[1]) and String(zf[0]).contains("в центре"), "у курсора: «%s» / «%s»" % [zn, zf])
+	game.set_tool("")
+	hud.advisor_panel.visible = false
+	sto.tick()
+	check(c.tips.has("story_adv_gladiators_build") and hud.adv_title.text == "Развлечения и шум", "советник: «%s»" % hud.adv_title.text)
+	hud.advisor_panel.visible = false
+	var lb := put(bt, (ctr["pos"] as Vector2) + Vector2(-12, 14))
+	c.compute()
+	sto.tick()
+	check(not lb.is_empty() and bool(A.get("ready", false)) and String((A["flags"] as Dictionary).get("where", "")) == "center",
+		"%s у станции (%s): где — «%s», ролик ждёт «Посмотреть»" % [bt, lb.get("pos"), (A["flags"] as Dictionary).get("where", "")])
+	if not bool(A.get("ready", false)):
+		return
+	var gl0: int = c.legion.glory
+	sto.play_ready()
+	var picked: bool = await drive_until("choice", 25.0)
+	while picked and not sto.ui.choosing():
+		sto.ui.finish_typing()
+		await frames(3)
+	check(picked and sto.ui.pills.get_child_count() == 3, "чемпион: мирмиллон, ретиарий, фракиец")
+	if picked:
+		(sto.ui.pills.get_child(1) as Button).pressed.emit()   # ретиарий
+	var fought: bool = await drive_until("spar", 20.0)
+	var hits := 0
+	var t1 := Time.get_ticks_msec()
+	var shot_done := false
+	while sto.kit != null and Time.get_ticks_msec() - t1 < 40000:
+		await frames(4)
+		var i := int(sto.cine.get("i", -1))
+		var beats: Array = sto.cine.get("beats", [])
+		if i < 0 or i >= beats.size():
+			continue
+		var sp: Dictionary = sto.cine.get("spar", {})
+		hits = maxi(hits, int(sp.get("turn", 0)))
+		if String(beats[i][0]) == "spar" and String(beats[i][1]) == "fight" and float(sp.get("t", 0.0)) > 1.5 and not shot_done:
+			shot_done = true
+			await shot7("story_gladiators_spar.png")
+		if String(beats[i][0]) == "reward" and not sto.cine.has("_t7r"):
+			sto.cine["_t7r"] = true
+			await frames(20)
+			await shot7("story_gladiators_final.png")
+		if String(beats[i][0]) in ["say", "choice"] and sto.cine.get("wait", false):
+			sto.ui.finish_typing()
+			await frames(4)
+			sto._next()
+	await wait_kit(false, 4.0)
+	var e: Dictionary = (S["done"] as Dictionary).get("gladiators", {})
+	check(fought and hits >= 3 and String((e.get("flags", {}) as Dictionary).get("champ", "")) == "retiarius", "бой гладиаторов (ударов %d), чемпион — ретиарий" % hits)
+	var noise := false
+	var joy := false
+	for b: Dictionary in c.stories["bonus"]:
+		if String(b.get("id", "")) == "gladiators":
+			noise = noise or (int(b.get("pct", 0)) < 0 and String(b.get("line", "")).contains("Шумно"))
+			joy = joy or int(b.get("pct", 0)) == 7
+	check(not e.is_empty() and c.unlocked("gladstatue_2") and c.legion.glory >= gl0 + 12 and noise and joy and not String(e.get("text", "")).contains("ден"),
+		"награда: статуи гладиаторов, +12 Славы, в центре — +7%% и «Шумно» рядом, без денег (%s)" % e.get("text", ""))
+	sto.ui.open_journal()
+	await frames(3)
+	var jt := ""
+	for l: Label in hud.journal_panel.find_children("*", "Label", true, false):
+		jt += l.text + "\n"
+	check(jt.contains("в самом центре") and jt.contains("ретиарий"), "в журнале — место и чемпион")
+	hud.close_panels()
+	# игры в честь богов: чемпион выходит на площадь у станции
+	c.fest_left = 0
+	c.fest_cd = 0
+	c.money = 50000.0
+	var fest_ok := c.festival()
+	await frames(20)
+	var ch = sto.life.champ
+	check(fest_ok and ch != null and is_instance_valid(ch) and String((ch as Node).name).contains("retiarius"), "на играх у станции — чемпион школы (ретиарий)")
+	if ch != null and is_instance_valid(ch):
+		look_at_pt(Vector2((ch as Node3D).position.x, (ch as Node3D).position.z), 14.0)
+		await frames(50)
+		await shot7("story_gladiators_games.png")
+	c.fest_left = 1
+	c._fest_hour()
+	await frames(10)
+	check(sto.life.champ == null, "игры кончились — чемпион ушёл")
+	var gs := deco("gladstatue_2", (ctr["pos"] as Vector2) + Vector2(14, 10))
+	if not gs.is_empty():
+		front_view(gs, 26.0, 6.5)
+		await frames(40)
+		await shot7("story_gladstatue.png")
+
+
+func _saturnalia() -> void:
+	print("== сатурналии")
+	StoryDefs.extra = []
+	c.level = 4
+	c.research.erase("s_saturn")
+	fresh7(7600, DONE_EARLY + ["senator", "maze", "gladiators"])
+	var S := c.stories
+	c.compute()
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "saturnalia" and int(o.get("year_n", -1)) == 0 and (o.get("vary", {}) as Dictionary).has("gift"),
+		"«Городок», других историй нет — «Сатурналии» (год %s, подарки: %s)" % [o.get("year_n"), (o.get("vary", {}) as Dictionary).get("gift", "")])
+	if String(o.get("id", "")) != "saturnalia":
+		return
+	# праздник ждёт щелчка и уступает место обычной истории: появилась — предложена она, Сатурналии вернутся потом
+	var tst := {"id": "t_yield", "title": "Проба уступить", "lvl": 1, "pop": 0, "steps": [{"id": "ask", "cine": []}], "reward": {}}
+	StoryDefs.extra = [tst]
+	sto._tried = ""
+	sto.tick()
+	check(String((S["offer"] as Dictionary).get("id", "")) == "t_yield", "Сатурналии уступили место обычной истории (%s)" % (S["offer"] as Dictionary).get("id", ""))
+	StoryDefs.extra = []
+	S["offer"] = {}
+	sto._tried = ""
+	sto.tick()
+	o = S["offer"]
+	check(String(o.get("id", "")) == "saturnalia", "место освободилось — снова «Сатурналии»")
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	await wait_beat("say", 10.0)
+	await frames(60)
+	sto.ui.finish_typing()
+	await frames(8)
+	await shot7("story_saturnalia_ask.png")
+	await play_pick(0, 25.0)
+	await wait_kit(false, 4.0)
+	var A: Dictionary = S["active"]
+	var ctr := c.center()
+	check(sto._goal_kind(A) == "all" and sto._hp(A).distance_to(ctr["pos"]) < 0.5, "шаг «огни и игры» — у почтовой станции (форума нет)")
+	var pt := parts_txt()
+	check(pt.contains("· Огни на площади 0/6") and pt.contains("· Игры в честь богов 0/1"), "строки: %s" % pt)
+	check(String((part_of("Игры").get("do", {}) as Dictionary).get("kind", "")) == "look", "щелчок по «Играм» — карточка почтовой станции")
+	for k in 6:
+		deco("lamp_post", (ctr["pos"] as Vector2) + Vector2(cos(k * 1.05), sin(k * 1.05)) * 11.0)
+	c.compute()
+	sto.tick()
+	check(parts_txt().contains("✓ Огни на площади 6/6") and not bool(A.get("ready", false)), "огни горят — ждём игр")
+	c.fest_left = 0
+	c.fest_cd = 0
+	c.festival()
+	sto.tick()
+	check(bool(A.get("ready", false)), "игры начались — ролик «как праздновать» ждёт «Посмотреть»")
+	sto.play_ready()
+	await play_pick(0, 25.0)                     # подарки каждому дому
+	await wait_kit(false, 4.0)
+	var pn := int(A.get("pay_n", 0))
+	check(String((A["flags"] as Dictionary).get("choice", "")) == "gifts" and sto._goal_kind(A) == "pay" and pn == clampi(int(c.stats["pop"]) * 2, 300, 4000)
+		and row_buttons() == ["Заплатить %d ден." % pn, "Обойдёмся без подарков"], "подарки: сбор %d ден. по числу жителей; кнопки %s" % [pn, row_buttons()])
+	check(String(sto.row_info().get("text", "")).contains("%d ден." % pn), "в строке — сумма: «%s»" % String(sto.row_info().get("text", "")).left(70))
+	var m0 := c.money
+	sto.press("pay")
+	check(is_equal_approx(c.money, m0 - pn) and bool(A.get("ready", false)), "заплатили %d — праздник ждёт «Посмотреть»" % pn)
+	var gl0: int = c.legion.glory
+	var rp0 := minf(c.rp, c.rp_cap() - 400.0)
+	c.rp = rp0
+	sto.play_ready()
+	var t1 := Time.get_ticks_msec()
+	var crowned := false
+	var shot_done := false
+	while sto.kit != null and Time.get_ticks_msec() - t1 < 45000:
+		await frames(4)
+		var i := int(sto.cine.get("i", -1))
+		var beats: Array = sto.cine.get("beats", [])
+		if i < 0 or i >= beats.size():
+			continue
+		var king = (sto.cine.get("actors", {}) as Dictionary).get("king")
+		crowned = crowned or (king != null and is_instance_valid(king) and not (king as Node).find_children("*", "BoneAttachment3D", true, false).is_empty())
+		if String(beats[i][0]) == "say" and String(beats[i][1]) == "king" and not shot_done:
+			shot_done = true
+			sto.ui.finish_typing()
+			await frames(30)
+			await shot7("story_saturnalia_king.png")
+		if String(beats[i][0]) == "fx" and not sto.cine.has("_t7w"):
+			sto.cine["_t7w"] = true
+			await frames(10)
+			await shot7("story_saturnalia_feast.png")
+		if String(beats[i][0]) in ["say", "choice"] and sto.cine.get("wait", false):
+			sto.ui.finish_typing()
+			await frames(4)
+			sto._next()
+	await wait_kit(false, 4.0)
+	var e: Dictionary = (S["done"] as Dictionary).get("saturnalia", {})
+	var all7 := false
+	for b: Dictionary in c.stories["bonus"]:
+		all7 = all7 or (String(b.get("id", "")) == "saturnalia" and int(b.get("pct", 0)) == 7 and not b.has("x") and not b.has("home") and not b.has("cls"))
+	check(crowned and not e.is_empty() and int(e.get("n", 0)) == 1 and c.unlocked("saturntable") and all7 and c.legion.glory >= gl0 + 2 and c.rp >= rp0 + 359.0,
+		"праздник: царь в венке; стол Сатурналий, всем +7%% на 2 дня (подарки), +2 Славы, очки (%s)" % e.get("text", ""))
+	# через год — снова (по щелчку): подарок другой, день отдыха — без сбора, награда — только радость
+	S["h"] = int(S["h"]) + StoryDefs.YEAR_H - 2
+	S["last_h"] = int(S["h"]) - StoryDefs.GAP_H
+	sto._tried = ""
+	sto.tick()
+	check((S["offer"] as Dictionary).is_empty(), "год ещё не прошёл — Сатурналии не предлагают")
+	S["h"] = int(S["h"]) + 2
+	sto._tried = ""
+	sto.tick()
+	o = S["offer"]
+	check(String(o.get("id", "")) == "saturnalia" and int(o.get("year_n", 0)) == 1 and String((o.get("vary", {}) as Dictionary).get("gift", "")) != String((e.get("vary", {}) as Dictionary).get("gift", "")),
+		"прошёл год — снова «Сатурналии», подарок другой: %s" % (o.get("vary", {}) as Dictionary).get("gift", ""))
+	if String(o.get("id", "")) != "saturnalia":
+		return
+	sto.accept()
+	A = S["active"]
+	c.fest_left = 3
+	sto.tick()
+	check(bool(A.get("ready", false)), "огни остались с прошлого года, игры идут — сразу к празднику")
+	A["step"] = 2
+	(A["flags"] as Dictionary)["choice"] = "rest"
+	sto._advance(false)
+	check(int(A.get("step", 0)) == 4 and bool(A.get("ready", false)), "день отдыха — шаг подарков пропущен")
+	var un0 := c.research.size()
+	sto.play_ready()
+	await play_pick(0, 40.0)
+	await wait_kit(false, 4.0)
+	e = (S["done"] as Dictionary).get("saturnalia", {})
+	var et := String(e.get("text", ""))
+	check(int(e.get("n", 0)) == 2 and not et.contains("очков") and not et.contains("украшение") and et.contains("+6%") and c.research.size() == un0,
+		"второй год (день отдыха): только радость горожан — без очков и украшений (%s)" % et)
+	sto.ui.open_journal()
+	await frames(3)
+	var jt := ""
+	for l: Label in hud.journal_panel.find_children("*", "Label", true, false):
+		jt += l.text + "\n"
+	check(jt.contains("Праздновали уже 2 раза") and jt.contains("лавки закрыли ставни"), "в журнале — «праздновали 2 раза» и день отдыха")
+	hud.close_panels()
+	var st2 := deco("saturntable", Vector2(228, 160))
+	if not st2.is_empty():
+		game._set_hour(19.6)
+		front_view(st2, 30.0, 6.0)
+		await frames(40)
+		await shot7("story_saturntable.png")
+		game._set_hour(10.5)
+
+
+## mode=owner7c — город владельца: истории четвёртой партии в его городе (ранг «Город»: сенатор, лабиринт, Сатурналии;
+## гладиаторы — с «Большого города»); подбор героя и путь сенатора — быстрые; шаг 2 начинается, цели меряются у дома
+func _owner7c() -> void:
+	var S := c.stories
+	print("owner: level=", c.level, " pop=", c.stats["pop"])
+	for t in ["people_tip", "orders_tip", "name_tip", "v22_pace", "set_tip", "dim_tip", "story_tip", "tip_fence"]:
+		c.tips[t] = true
+	hud.advisor_panel.visible = false
+	game._set_hour(10.5)
+	for id in DONE_EARLY + S7B:
+		S["done"][id] = {"day": 0, "h": 1}
+	for id in S7C:
+		var sd := StoryDefs.story(id)
+		if c.level < int(sd.get("lvl", 0)):
+			print("owner: %s — с ранга «%s», у владельца «%s»" % [id, Defs.LEVELS[int(sd["lvl"])]["name"], Defs.LEVELS[c.level]["name"]])
+			continue
+		S["active"] = {}
+		S["offer"] = {}
+		S["h"] = 900 + S7C.find(id) * 100
+		S["last_h"] = int(S["h"]) - StoryDefs.GAP_H
+		for other in S7C:
+			if other != id:
+				S["done"][other] = {"day": 0, "h": 1}
+			else:
+				(S["done"] as Dictionary).erase(other)
+		sto._flood = {}
+		sto._tried = ""
+		var t0 := Time.get_ticks_usec()
+		sto.tick()
+		var ms := (Time.get_ticks_usec() - t0) / 1000.0
+		var o: Dictionary = S["offer"]
+		print("owner: %s — %s" % [id, o.keys()])
+		check(String(o.get("id", "")) == id and not hero_resident(o).is_empty() and ms < 400.0, "в городе владельца — «%s», просит %s (подбор %.0f мс)" % [sd["title"], o.get("hero", "?"), ms])
+		if String(o.get("id", "")) != id:
+			var cs := sto._cast(sd)
+			var fr := []
+			for e: Dictionary in cs.slice(0, 12):
+				fr.append(sto.free_near(sto._home_pos(e), 25.0))
+			print("owner: %s не предложена — кандидатов %d, свободно у их домов (м²): %s" % [id, cs.size(), fr])
+			continue
+		sto.open_offer()
+		await wait_beat("say", 10.0)
+		await frames(60)
+		sto.ui.finish_typing()
+		await frames(8)
+		await shot7("story_owner_%s_ask.png" % id)
+		await play_pick(0, 30.0)
+		await wait_kit(false, 4.0)
+		var A: Dictionary = S["active"]
+		print("owner: %s шаг %s: %s %s" % [id, A.get("step"), parts_txt(), sto.row_info().get("text", "")])
+		check(not A.is_empty() and int(A.get("step", 0)) == 1 and String(sto.row_info().get("text", "")) != "", "в городе владельца «%s» идёт: шаг 2" % sd["title"])
+		if id == "senator":
+			var t1 := Time.get_ticks_usec()
+			var rh := sto.route_houses(A)
+			var pr := sto.progress(A, StoryDefs.step_at(sd, 1)["goal"])
+			var ms2 := (Time.get_ticks_usec() - t1) / 1000.0
+			check((A.get("route", []) as Array).size() >= 6 and rh.size() >= 6, "в городе владельца путь сенатора — %d точек, домов вдоль пути %d (%s)" % [(A.get("route", []) as Array).size(), rh.size(), pr.get("txt", "")])
+			check(ms2 < 60.0, "строки сенатора в городе владельца — %.1f мс" % ms2)
+			var pts: PackedVector2Array = Stories._pts(A.get("route", []))
+			if pts.size() >= 2:
+				await look_at_pt(Stories._proc_at(pts, Stories._plen(pts) * 0.5)[0], 44.0)
+		else:
+			await look_at_pt(sto._hp(A), 36.0)
+		sto._marks(true)
+		hud.refresh()
+		await frames(40)
+		await shot7("story_owner_%s_goal.png" % id)
+		sto._cancel("Проверка.")
