@@ -198,14 +198,33 @@ func _ready() -> void:
 ## Размер интерфейса из настроек, но не крупнее, чем помещается по ширине окна (MIN_W логических точек):
 ## иначе нижние полосы и кнопки наверху наезжают друг на друга
 func apply_scale(s: float) -> void:
+	get_window().content_scale_factor = clampf(s, 0.7, ui_cap())
+	var ws := Vector2(get_window().size)
+	if ws.x >= 64.0 and ws.y >= 64.0:
+		_fit_bottom.call_deferred()           # экран в точках стал уже — полосы внизу подогнать
+	if settings_panel != null and settings_panel.visible:
+		_ui_slider_fit()                      # окно поменяло размер при открытых настройках
+
+
+## Самый крупный интерфейс, что помещается в окно по ширине (MIN_W логических точек)
+func ui_cap() -> float:
 	var ws := Vector2(get_window().size)
 	if ws.x < 64.0 or ws.y < 64.0:
-		get_window().content_scale_factor = clampf(s, 0.7, 1.6)
-		return
+		return 1.6
 	var st := minf(ws.x / 1600.0, ws.y / 900.0)          # растяжение canvas_items от базовых 1600×900
-	var top := minf(1.6, ws.x / (st * MIN_W))
-	get_window().content_scale_factor = clampf(s, 0.7, maxf(0.7, top))
-	_fit_bottom.call_deferred()               # экран в точках стал уже — полосы внизу подогнать
+	return maxf(0.7, minf(1.6, ws.x / (st * MIN_W)))
+
+
+## Ползунок «Размер интерфейса» — только до того, что помещается в окно (дальше он ничего не менял бы);
+## сохранённый выбор не трогаем: в окне пошире снова станет крупнее
+func _ui_slider_fit() -> void:
+	var us := settings_panel.find_child("ui_scale", true, false) as HSlider
+	if us == null:
+		return
+	us.set_block_signals(true)                # меньший предел не должен переписать настройку через value_changed
+	us.max_value = clampf(floorf(ui_cap() / 0.05 + 0.001) * 0.05, 1.0, 1.4)
+	us.set_value_no_signal(float(game.settings.get("ui_scale", 1.0)))
+	us.set_block_signals(false)
 
 
 ## Щелчок у каждой кнопки интерфейса
@@ -883,12 +902,21 @@ func _fill_families() -> void:
 
 
 
-## Повозка впервые встала из-за низкого счастья: объясняет советник (дальше — обычная всплывашка)
+## Повозка впервые встала из-за низкого счастья: объясняет советник (дальше — обычная всплывашка). Открыт другой
+## совет — ждёт, пока его закроют (_once_tips), и говорит о счастье на тот момент
 func on_arrive_block(text: String) -> void:
 	if game.mode == "demo" or game.mode == "menu" or (game.tutorial and game.tutorial.active()):
 		notify(text, "happy")
 		return
+	if not _tip_free():
+		game.city.tips["arrive_wait"] = true    # открытый совет (или ролик ранга) не перебиваем — скажем, когда советник свободен
+		return
+	_arrive_advice()
+
+
+func _arrive_advice() -> void:
 	var c: City = game.city
+	c.tips.erase("arrive_wait")
 	var ht: Array = c.stats.get("happy_tips", [])
 	var tip := ("\n\nСовет: " + String(ht[0]) + ".") if not ht.is_empty() else ""
 	var nf := int(_defc("ARRIVE_FREE", 3))
@@ -5483,7 +5511,8 @@ func _settings_panel() -> void:
 		return sl
 	mk_slider.call("Музыка", "music", "music", 0.0, 1.0, 0.05)
 	mk_slider.call("Звуки", "sound", "sfx", 0.0, 1.0, 0.05)
-	mk_slider.call("Размер интерфейса", "view", "ui_scale", 0.8, 1.4, 0.05)
+	var us: HSlider = mk_slider.call("Размер интерфейса", "view", "ui_scale", 0.8, 1.4, 0.05)
+	us.tooltip_text = "Размер кнопок и надписей — до самого крупного, что помещается в это окно (иначе полосы внизу наехали бы друг на друга)"
 	Gfx.settings_block(self, v)               # «Графика» (4 уровня), «Показывать FPS», видеокарта — scripts/gfx.gd
 	var fs := CheckBox.new()
 	fs.text = "Полный экран"
@@ -5654,6 +5683,7 @@ func open_credits() -> void:
 func _open_settings(stay := false) -> void:
 	(settings_panel.find_child("fs", true, false) as CheckBox).set_pressed_no_signal(bool(game.settings["fullscreen"]))
 	(settings_panel.find_child("auto", true, false) as CheckBox).set_pressed_no_signal(bool(game.settings["autosave"]))
+	_ui_slider_fit()
 	for key in ["music", "sfx", "ui_scale"]:
 		(settings_panel.find_child(key, true, false) as HSlider).set_value_no_signal(float(game.settings.get(key, 1.0)))
 	Gfx.settings_refresh(self)
@@ -5773,7 +5803,7 @@ func refresh() -> void:
 	_once_tips()
 	if tray.visible:
 		_update_cards()
-	if info_panel.visible:
+	if info_panel.visible and not PersonCard.editing(info_p):     # открыт «Гардероб» / «Внешность» — не пересобираем («Сейчас» живёт сам)
 		_fill_info()
 	if research_panel.visible:
 		_research_head()
@@ -5982,6 +6012,9 @@ func _tip_free() -> bool:
 func _once_tips() -> void:
 	var c: City = game.city
 	if not _tip_free():
+		return
+	if c.tips.has("arrive_wait") and String(c.stats.get("arrive_block", "")) != "":
+		_arrive_advice()                      # «Новые семьи не едут» ждал, пока закроют другой совет; повозка уже едет — подождёт, пока встанет снова
 		return
 	if rank_btn.visible and not c.tips.has("rank_tip"):
 		c.tips["rank_tip"] = true

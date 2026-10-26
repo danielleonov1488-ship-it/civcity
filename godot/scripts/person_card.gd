@@ -529,7 +529,6 @@ static func _hero_wardrobe(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	pan.add_child(v)
-	_scrolled(hud, box, pan)
 	var apply := func(nl: Dictionary):
 		Hero.set_look(c, nl)
 		ppl.hero_refresh(true)
@@ -570,6 +569,7 @@ static func _hero_wardrobe(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 	else:
 		var why := String(crowns[1]["why"]) if crowns.size() > 1 else ""
 		v.add_child(hud._wrap(hud._label("Венок: лавровый. «Венок победителя» — %s" % why.trim_prefix("Откроется: "), 13, false, Hud.C_SOFT), W - 40.0))
+	_scrolled(hud, box, pan)                  # в прокрутку — когда строки уже внутри: высота сразу настоящая
 
 
 ## «Внешность» и «Гардероб» — в прокрутке: карточка не ниже верха нижних полос (проверка 26.10: с открытым гардеробом
@@ -583,20 +583,33 @@ static func _scrolled(hud: Hud, box: VBoxContainer, pan: Control) -> void:
 	sc.add_child(pan)
 	box.add_child(sc)
 	hud._fit_house_scroll(sc, pan)
-	_scroll_later(hud, sc, pan)
+	# прокрутка — на прежнее место ещё до первой отрисовки: всякий раз, как раскладка меняет длину полосы
+	# (первая — ещё пустая), пока окно не устоится (_scroll_later)
+	var keep := func(): sc.scroll_vertical = _ed_scroll
+	sc.get_v_scroll_bar().changed.connect(keep)
+	_scroll_later(hud, sc, pan, keep)
 
 
-static func _scroll_later(hud: Hud, sc: ScrollContainer, pan: Control) -> void:
+## Через кадр (перенос строк посчитан) — высота по настоящей; прокрутку ставим и в этом кадре, и в следующем
+## (как карточка дома): после выбора в гардеробе список не прыгает наверх
+static func _scroll_later(hud: Hud, sc: ScrollContainer, pan: Control, keep: Callable) -> void:
 	await hud.get_tree().process_frame
 	if not is_instance_valid(sc) or not is_instance_valid(pan):
 		return
-	hud._fit_house_scroll(sc, pan)           # перенос строк уже посчитан — по настоящей высоте
+	hud._fit_house_scroll(sc, pan)
 	hud._snug(hud.info_panel)
+	sc.scroll_vertical = _ed_scroll
 	await hud.get_tree().process_frame
 	if not is_instance_valid(sc):
 		return
 	sc.scroll_vertical = _ed_scroll
+	sc.get_v_scroll_bar().changed.disconnect(keep)
 	sc.get_v_scroll_bar().value_changed.connect(func(x: float): _ed_scroll = int(x))
+
+
+## Открыт выбор облика этого жителя (героя): карточку не пересобирают каждый игровой час — иначе прокрутка мигает
+static func editing(sel: Dictionary) -> bool:
+	return edit and sel.has("r") and int((sel["r"] as Dictionary).get("id", -1)) == _edit_rid
 
 
 ## Ряд вещей-цветов: открытые — щёлкнуть, закрытые — серые с замочком (почему — в подсказке)
@@ -933,7 +946,6 @@ static func _fill_looks(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	pan.add_child(v)
-	_scrolled(hud, box, pan)
 	var apply := func(nl: Dictionary):
 		ppl.set_look(r, nl)
 		if _who is Citizen:
@@ -993,6 +1005,7 @@ static func _fill_looks(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 		hints.append("яркие краски откроет «%s»" % need["dyes"])
 	if not hints.is_empty():
 		v.add_child(hud._wrap(hud._label(_cap(", ".join(hints)) + ".", 13, false, Hud.C_SOFT), W - 40.0))
+	_scrolled(hud, box, pan)                  # в прокрутку — когда строки уже внутри: высота сразу настоящая
 
 
 ## «Причёска  ◄ 3 из 7 ►»

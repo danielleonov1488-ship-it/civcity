@@ -198,6 +198,7 @@ func _run() -> void:
 	await _new_research()
 	await _new_save()
 	await _bars_scale()
+	await _arrive_wait()
 	print("UX DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -913,6 +914,15 @@ func _bars_scale() -> void:
 	check(ub != null and (ub as Control).visible and not m.intersects(r) and m.position.x > l.end.x, "нижние полосы (с «Улучшить» и «Легионом») не наезжают: дороги %s, разделы %s, инструменты %s" % [l, m, r])
 	check(tp.position.x > cb.end.x and tp.end.x <= hud.root.size.x + 1.0, "медальоны сверху справа (с облачком) не наезжают на фишки классов: %s / %s" % [tp, cb])
 	await shot("ux_bars_scale14.png")
+	# «Размер интерфейса» в настройках — только до того, что помещается в окно: дальше ползунок ничего не менял (проверка 26.10)
+	hud._open_settings()
+	await frames(2)
+	var us: HSlider = hud.settings_panel.find_child("ui_scale", true, false)
+	var cap: float = hud.ui_cap()
+	check(us != null and us.max_value <= cap + 0.001 and (us.max_value > cap - 0.05 or is_equal_approx(us.max_value, 1.4)) and is_equal_approx(us.value, us.max_value)
+		and is_equal_approx(float(game.settings["ui_scale"]), 1.4) and absf(get_window().content_scale_factor - us.max_value) < 0.05,
+		"ползунок «Размер интерфейса» до %.2f (влезает %.2f, сейчас %.2f), сохранённые 1.4 не тронуты" % [us.max_value if us else -1.0, cap, get_window().content_scale_factor])
+	hud._toggle(hud.settings_panel)
 	hud.cloud_off.holder.visible = false
 	if not r_up:
 		c.research.erase(Defs.ROAD_UP_RES)
@@ -927,3 +937,28 @@ func _bars_scale() -> void:
 	await frames(6)
 	var mc: float = hud.bar_mid.get_global_rect().get_center().x
 	check(absf(mc - hud.root.size.x * 0.5) < 1.0, "обычный размер — разделы снова посередине (%.0f из %.0f)" % [mc, hud.root.size.x])
+
+
+# ---------- «Новые семьи не едут» не перебивает открытый совет и не теряется (проверка 26.10) ----------
+
+func _arrive_wait() -> void:
+	var st0: Dictionary = c.stats.duplicate()
+	var w0 := c.tips.has("arrive_wait")
+	hud.advisor("Другой совет", "Совет, который игрок ещё читает")
+	hud.on_arrive_block("Новые семьи не едут")
+	check(hud.advisor_panel.visible and hud.adv_title.text == "Другой совет" and c.tips.has("arrive_wait"), "«Новые семьи не едут» не перебил открытый совет — ждёт («%s»)" % hud.adv_title.text)
+	# закрыли совет, а повозка уже едет — объяснять незачем, но ждём, пока встанет снова
+	hud.advisor_panel.visible = false
+	c.stats["arrive_block"] = ""
+	hud.refresh()
+	check(not (hud.advisor_panel.visible and hud.adv_title.text == "Новые семьи не едут") and c.tips.has("arrive_wait"), "повозка едет — совет ждёт дальше")
+	hud.advisor_panel.visible = false
+	c.stats["arrive_block"] = "Новые семьи приедут, когда счастье города будет не ниже 60% (сейчас 41%)"
+	c.stats["happy"] = 41
+	hud.refresh()
+	check(hud.advisor_panel.visible and hud.adv_title.text == "Новые семьи не едут" and hud.adv_text.text.contains("Сейчас — 41%") and not c.tips.has("arrive_wait"),
+		"советник свободен — «Новые семьи не едут» с нынешним счастьем («%s»)" % hud.adv_title.text)
+	hud.advisor_panel.visible = false
+	c.stats = st0
+	if w0:
+		c.tips["arrive_wait"] = true
