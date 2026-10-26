@@ -1369,6 +1369,13 @@ var spots := {}                      # id постройки → {номер м�
 var convs := []                      # разговоры: {"m": [rid], "spk": rid, "sw": сек до новой реплики, "left": сек, "open": можно подойти}
 var _bp_spots := {}                  # места в осях постройки (по чертежу) — считаются один раз
 var _vis_t := 0.0
+## Жители без узла (их не видно: идут «невидимо», вне кадра) шагают не каждый кадр, а по очереди: за кадр — каждый
+## FAR_N-й (по номеру жителя), за всё время, накопленное его очередью (1.7 плана 24.10): на экране то же самое,
+## процессору меньше работы и без рывков (не все разом). far_n = 1 — каждый кадр (сверка в test_perf)
+const FAR_N := 8
+var far_n := FAR_N
+var _far_acc := PackedFloat32Array()   # сколько времени накопила каждая очередь
+var _far_ph := 0
 ## Вещи в руках (HandProps): у работников — по месту работы, у прохожих — покупка, которую несут домой.
 ## Только вблизи камеры и не больше PROP_CAP разом; на «Низкой» и «Очень низкой» — нет (Gfx.apply)
 var props_on := true
@@ -2577,19 +2584,32 @@ func _process(dt: float) -> void:
 		_cats_wear()                           # и на паузе: выбрали вещь в карточке — сразу надета
 		return
 	var sdt := dt * speed
+	if _far_acc.size() != far_n:
+		_far_acc.resize(far_n)
+		_far_acc.fill(0.0)
+	for k in far_n:
+		_far_acc[k] += sdt
+	_far_ph = (_far_ph + 1) % far_n
+	var fdt := _far_acc[_far_ph]
+	_far_acc[_far_ph] = 0.0
 	for r in residents.duplicate():
+		var rdt := sdt
+		if r["node"] == null:
+			if int(r["id"]) % far_n != _far_ph:
+				continue                       # невидимого — в его очередь, за всё накопленное время
+			rdt = fdt
 		match r["state"]:
 			"walk":
-				_step(r, sdt)
+				_step(r, rdt)
 			"idle":
 				if r["node"] != null:
 					(r["node"] as Citizen).anim.speed_scale = speed
 				if r["act"] != "":
-					_act_step(r, sdt)
+					_act_step(r, rdt)
 			"door":
 				if r["node"] != null:
 					(r["node"] as Citizen).anim.speed_scale = speed
-				_door_step(r, sdt)
+				_door_step(r, rdt)
 			"work":
 				if r["node"] != null:
 					(r["node"] as Citizen).anim.speed_scale = speed

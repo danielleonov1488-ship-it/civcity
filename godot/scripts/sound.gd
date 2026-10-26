@@ -43,14 +43,21 @@ func _ready() -> void:
 		p.bus = "SFX"
 		add_child(p)
 		pool.append(p)
-	# список музыки (в собранной игре тоже: ResourceLoader видит и упакованные файлы)
+	_scan_music()
+	apply_volumes()
+
+
+## Список музыки (в собранной игре тоже: ResourceLoader видит и упакованные файлы). Набора музыки ещё нет (лаунчер
+## докачивает его после «Играть») — пусто; _process заглядывает снова, пока он не подключится (scripts/packs.gd)
+func _scan_music() -> void:
+	tracks.clear()
 	for f in ResourceLoader.list_directory("res://assets/music"):
 		if String(f).ends_with(".ogg"):
 			tracks.append("res://assets/music/" + String(f))
 	tracks.sort()
 	order = range(tracks.size())
 	order.shuffle()
-	apply_volumes()
+	cur = -1
 
 
 func apply_volumes() -> void:
@@ -68,9 +75,17 @@ func _load(name: String) -> AudioStream:
 	return st
 
 
+var _rescan_t := 0.0
+
+
 func _process(dt: float) -> void:
 	if tracks.is_empty():
-		return
+		_rescan_t -= dt
+		if _rescan_t <= 0.0:
+			_rescan_t = 6.0
+			_scan_music()
+		if tracks.is_empty():
+			return
 	if not music.playing:
 		_pause_t -= dt
 		if _pause_t <= 0.0:

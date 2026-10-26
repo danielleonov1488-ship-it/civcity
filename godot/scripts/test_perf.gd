@@ -90,6 +90,9 @@ func _view(v: Array) -> void:
 
 
 func _quality(q: String) -> void:
+	# «medium_light» — облегчённая «Средняя» (Gfx.medium_light, 1.10): предложение владельцу, по умолчанию выключено
+	Gfx.medium_light = q == "medium_light"
+	q = "medium" if q == "medium_light" else q
 	game.settings["quality"] = q
 	game._apply_quality()
 	Gfx.swap_all()                            # картинки «Очень низкой» — сразу (в игре — по одной за кадр)
@@ -99,6 +102,7 @@ func _quality(q: String) -> void:
 func _run(mode: String) -> void:
 	while not game.ready_done:
 		await frames(5)
+	print("PERF ready: город готов через %.1f с после запуска" % (Time.get_ticks_msec() / 1000.0))
 	game.can_save = mode == "hitch"           # копия города — только в своей папке запуска; пишем лишь в замере рывков
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	vp = get_viewport().get_viewport_rid()
@@ -114,6 +118,9 @@ func _run(mode: String) -> void:
 		"menu": await _menu()
 		"prof": await _prof()
 		"probe": await _probe()
+		"vram": await _vram()
+		"groups": await _groups()
+		"offer": await _offer()
 		_: await _regress()
 	print("PERF DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
@@ -279,6 +286,16 @@ func _prof() -> void:
 	await t.call("cover.refresh", func(): game.cover.refresh())
 	await t.call("people._assign_jobs", func(): game.people._assign_jobs())
 	await t.call("people._vis_tick", func(): game.people._vis_tick())
+	# 1.7: невидимые жители — по очереди (каждый 8-й за кадр) против всех каждый кадр (far_n = 1); дважды, чередуя
+	var sp: float = game.speed
+	game.hud.set_speed(1.0)
+	for k in 2:
+		game.people.far_n = People.FAR_N
+		await t.call("people._process (по очереди)", func(): game.people._process(1.0 / 60.0), 60)
+		game.people.far_n = 1
+		await t.call("people._process (каждый кадр)", func(): game.people._process(1.0 / 60.0), 60)
+	game.people.far_n = People.FAR_N
+	game.hud.set_speed(sp)
 	var box := {}                                # лямбды видят словарь по ссылке (переменные — копией)
 	await t.call("save: city.save_data", func(): box["d"] = c.save_data())
 	await t.call("save: land.save_changes", func(): box["land"] = game.land.save_changes())
@@ -341,6 +358,21 @@ func _probe() -> void:
 		"fxaa_off": [func(): vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED, func(): vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA],
 		"fog_off": [func(): game.env.fog_enabled = false, func(): game.env.fog_enabled = true],
 		"grade_off": [func(): game.grade.shader = null, func(): game.grade.shader = load("res://shaders/grade.gdshader")],
+		# кандидаты облегчённой «Средней» (1.10)
+		"pcss_off": [func(): game.sun.light_angular_distance = 0.0, func(): game._apply_quality()],
+		"msaa2": [func(): vp.msaa_3d = Viewport.MSAA_2X, func(): game._apply_quality()],
+		"msaa_off": [func(): vp.msaa_3d = Viewport.MSAA_DISABLED, func(): game._apply_quality()],
+		"fsr085": [func(): vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR; vp.scaling_3d_scale = 0.85, func(): game._apply_quality()],
+		"splits2": [func(): game.sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS, func(): game._apply_quality()],
+		"soft_med": [func(): RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM),
+			func(): RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)],
+		"atlas4096": [func(): RenderingServer.directional_shadow_atlas_set_size(4096, true), func(): RenderingServer.directional_shadow_atlas_set_size(8192, true)],
+		"ssao_q2": [func(): RenderingServer.environment_set_ssao_quality(RenderingServer.ENV_SSAO_QUALITY_MEDIUM, true, 0.5, 2, 50, 300),
+			func(): RenderingServer.environment_set_ssao_quality(RenderingServer.ENV_SSAO_QUALITY_HIGH, true, 0.5, 2, 50, 300)],
+		"ssao_off": [func(): game.env.ssao_enabled = false, func(): game._apply_quality()],
+		"glow_off": [func(): game.env.glow_enabled = false, func(): game._apply_quality()],
+		"dof_off": [func(): game.rig.attrs.dof_blur_far_enabled = false; game.rig.attrs.dof_blur_near_enabled = false, func(): game._apply_quality()],
+		"clouds_off": [func(): game.clouds.set_enabled(false), func(): game.clouds.set_enabled(true)],
 	}
 	var only: String = A.get("only", "")
 	for t: String in tests:
@@ -352,6 +384,164 @@ func _probe() -> void:
 		var b2 := await _measure("%s base-after" % q)
 		print("DELTA %-14s gpu %+6.2f ms  cpu %+6.2f  dc %+5d  tris %+.2fM" % [t, float(r["gpu"]) - float(b2["gpu"]), float(r["cpu"]) - float(b2["cpu"]),
 			int(r["vis_d"]) - int(b2["vis_d"]), (float(r["vis_p"]) - float(b2["vis_p"])) / 1.0e6])
+
+
+## Для владельца (1.9, 1.10): снимки каждой графики на трёх видах (без жителей, время стоит) и замеры по кругу —
+## графики чередуются, чтобы чужая нагрузка на видеокарту (вторая линия проверок) делилась поровну; итог — медианы
+##   … -- mode=offer q=high,medium,medium_light out=ПАПКА tag=lossless rounds=3
+func _offer() -> void:
+	await _settle()
+	var qs := Array(str(A.get("q", "high,medium,medium_light")).split(","))
+	var views := _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)
+	var tag: String = A.get("tag", "set")
+	var out: String = A.get("out", "")
+	if out != "" and not A.has("noshots"):
+		_freeze()
+		var shots := await _shots(qs, views, tag)
+		DirAccess.make_dir_recursive_absolute(out)
+		for k: String in shots:
+			(shots[k] as Image).save_png(out.path_join("%s_%s.png" % [tag, k.replace("/", "_")]))
+		_unfreeze()
+		await frames(60)
+	var res := {}
+	var rounds := int(A.get("rounds", "3"))
+	for r in rounds:
+		var order := qs.duplicate()
+		for i in r % order.size():
+			order.push_back(order.pop_front())
+		for q: String in order:
+			_quality(q)
+			for v: Array in views:
+				_view(v)
+				game._set_hour(9.0)
+				var m := await _measure("%s %s %s r%d" % [tag, v[0], q, r])
+				var key := "%s|%s" % [q, v[0]]
+				if not res.has(key):
+					res[key] = []
+				res[key].append(m)
+	var summary := {}
+	for key: String in res:
+		var g := PackedFloat32Array()
+		var p10 := PackedFloat32Array()
+		var cpu := PackedFloat32Array()
+		var fr := PackedFloat32Array()
+		var vr := 0
+		var tx := 0
+		for m: Dictionary in res[key]:
+			g.append(m["gpu"])
+			p10.append(m["p10"])
+			cpu.append(m["cpu"])
+			fr.append(m["frame"])
+			vr = maxi(vr, int(m["vram"]))
+			tx = maxi(tx, int(m["tex"]))
+		summary[key] = {"gpu": _pct(g, 0.5), "p10": _pct(p10, 0.5), "cpu": _pct(cpu, 0.5), "frame": _pct(fr, 0.5), "vram": vr, "tex": tx}
+		print("OFFER %s %-22s gpu %5.2f (p10 %5.2f) cpu %5.2f frame %5.2f | vram %d MB tex %d MB" % [tag, key, summary[key]["gpu"], summary[key]["p10"],
+			summary[key]["cpu"], summary[key]["frame"], vr, tx])
+	print("OFFER JSON %s %s" % [tag, JSON.stringify(summary)])
+	Gfx.medium_light = Gfx.MEDIUM_LIGHT
+
+
+## 1.6: сколько групп деталей (MultiMesh) и сколько их было бы, если бы оттенок (remap «tints») шёл в данные экземпляра
+func _groups() -> void:
+	await _settle()
+	var n_grp := 0
+	var n_inst := 0
+	var merged := {}
+	var small := 0
+	var by_mesh := {}
+	for key: String in game.parts.groups:
+		var g: Dictionary = game.parts.groups[key]
+		var live: int = int(g["used"]) - (g["free"] as Array).size()
+		if live <= 0:
+			continue
+		n_grp += 1
+		n_inst += live
+		if live <= 2:
+			small += 1
+		var parts := key.split("|")
+		var name: String = parts[0]
+		by_mesh[name] = int(by_mesh.get(name, 0)) + 1
+		# ключ без цветов оттенка: tints → только какие картинки подкрашены
+		var mk := key
+		var rx := RegEx.create_from_string("\"tints\": \\{([^}]*)\\}")
+		var m := rx.search(key)
+		if m:
+			var inner := m.get_string(1)
+			var names := []
+			for e in inner.split("), "):
+				names.append(e.get_slice(":", 0))
+			mk = key.replace(m.get_string(0), "tints:" + ",".join(names))
+		rx = RegEx.create_from_string("\"tint\": \\([^)]*\\)")
+		mk = rx.sub(mk, "tint:*", true)
+		merged[mk] = int(merged.get(mk, 0)) + live
+	print("GROUPS живых групп %d (экземпляров %d, групп с ≤2: %d), разных моделей %d; без цветов оттенка групп было бы %d" % [n_grp, n_inst, small, by_mesh.size(), merged.size()])
+
+
+## Какие картинки материалов сколько видеопамяти занимают (по заголовкам .ctex: размер, формат, мипмапы) и итог
+## по папкам; плюс общий счёт Godot (Performance: текстуры и вся видеопамять)
+func _vram() -> void:
+	await _settle()
+	for q: String in str(A.get("q", "high")).split(","):
+		_quality(q)
+		await frames(30)
+		var seen := {}
+		var mats := []
+		mats.append_array(Synty._mats.values())
+		mats.append_array(Citizen._plain_mats.values())
+		mats.append_array(Citizen._mats.values())
+		for m in mats:
+			for pn: String in ["albedo_texture", "normal_texture", "roughness_texture", "orm_texture"]:
+				var t = m.get(pn) if m is BaseMaterial3D else null
+				if t is Texture2D:
+					seen[t] = true
+			if m is ShaderMaterial and (m as ShaderMaterial).get_shader_parameter("albedo_tex") is Texture2D:
+				seen[(m as ShaderMaterial).get_shader_parameter("albedo_tex")] = true
+		var rows := []
+		var total := 0
+		var by := {}
+		for t: Texture2D in seen:
+			var info := _tex_info(t)
+			total += int(info["bytes"])
+			var dir: String = str(info["path"]).get_base_dir().trim_prefix("res://")
+			by[dir] = int(by.get(dir, 0)) + int(info["bytes"])
+			rows.append(info)
+		rows.sort_custom(func(a, b): return int(a["bytes"]) > int(b["bytes"]))
+		print("VRAM %s: картинок материалов %d, по заголовкам %d МБ | Godot: текстуры %d МБ, вся видеопамять %d МБ" % [q, rows.size(), total / 1048576,
+			int(Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / 1048576.0), int(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0)])
+		for i in mini(int(A.get("top", "40")), rows.size()):
+			var r: Dictionary = rows[i]
+			print("VRAM %s top %2d %6.1f МБ %4dx%-4d %-8s mip %d %s" % [q, i, int(r["bytes"]) / 1048576.0, int(r["w"]), int(r["h"]), r["fmt"], int(r["mips"]), r["path"]])
+		var dirs := by.keys()
+		dirs.sort_custom(func(a, b): return int(by[a]) > int(by[b]))
+		for d in dirs.slice(0, 15):
+			print("VRAM %s dir %7.1f МБ %s" % [q, int(by[d]) / 1048576.0, d])
+
+
+## Сколько картинка занимает в видеопамяти: копия «Очень низкой» (ImageTexture) — по самой картинке; файл — по
+## заголовку .ctex (Gfx._ctex): RGB8 на видеокарте — как RGBA8; мипмапы — ещё треть
+func _tex_info(t: Texture2D) -> Dictionary:
+	var w := t.get_width()
+	var h := t.get_height()
+	var fmt := -1
+	var mips := 0
+	var path := t.resource_path if t.resource_path != "" else str(t.get_meta("orig", "")) + " (копия)"
+	if t is ImageTexture:
+		fmt = (t as ImageTexture).get_format()
+		mips = 1 if (t as ImageTexture).has_mipmaps() else 0
+	elif t.resource_path != "":
+		var f := FileAccess.open(Gfx._ctex(t.resource_path), FileAccess.READ)
+		if f and f.get_length() > 52:
+			f.seek(36)
+			f.get_32()
+			f.get_32()
+			mips = f.get_32()
+			fmt = f.get_32()
+	var bpp: float = {Image.FORMAT_L8: 1.0, Image.FORMAT_LA8: 2.0, Image.FORMAT_RGB8: 4.0, Image.FORMAT_RGBA8: 4.0, Image.FORMAT_DXT1: 0.5,
+		Image.FORMAT_DXT3: 1.0, Image.FORMAT_DXT5: 1.0, Image.FORMAT_RGTC_R: 0.5, Image.FORMAT_RGTC_RG: 1.0, Image.FORMAT_BPTC_RGBA: 1.0}.get(fmt, 4.0)
+	var names := {Image.FORMAT_L8: "L8", Image.FORMAT_LA8: "LA8", Image.FORMAT_RGB8: "RGB8", Image.FORMAT_RGBA8: "RGBA8", Image.FORMAT_DXT1: "DXT1",
+		Image.FORMAT_DXT5: "DXT5", Image.FORMAT_RGTC_RG: "RGTC_RG", Image.FORMAT_BPTC_RGBA: "BC7"}
+	var bytes: float = w * h * bpp * (4.0 / 3.0 if mips > 0 else 1.0)
+	return {"path": path, "w": w, "h": h, "fmt": names.get(fmt, str(fmt)), "mips": mips, "bytes": int(bytes)}
 
 
 ## Природа — куски по 48 м (ключ «…|x,z»); постройки — куски по участку («…|bx,z», Parts._bgroup) или вся карта

@@ -23,7 +23,13 @@
    подпись проверяется по байтам текста ДО того, как опись читается, а sha256 файлов идут из уже проверенной описи —
    подменённый на сервере файл или опись лаунчер не примет. Так же проверяется и опись установленной копии.
    Опись со сборкой старше установленной не ставится (откат на сервере — только с "rollback": true в подписанной
-   описи, его ставит deploy.sh rollback). */
+   описи, его ставит deploy.sh rollback).
+
+   Музыка — потом (LATER). Без набора музыки играть можно (игра сама подхватит его, когда файл появится), поэтому
+   ensure() ставит копию игры без него, если он ещё не скачан, — «Играть» доступна раньше. Сам набор докачивает
+   fetchLater() уже после этого (и пока идёт игра): проверенный по sha256 файл кладётся прямо в game/ (копия →
+   .tmp → переименование) и только если опись установленной копии за это время не сменилась. В game/ такой набор
+   либо верный (по описи), либо его нет. playable() — можно играть (всё, кроме LATER, на месте); installed() — всё. */
 const { app, net } = require('electron');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -40,6 +46,8 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/;   // только прос�
 const HEX_RE = /^[0-9a-f]{64}$/;
 const WORKERS = 2;
 const TRIES = 6;
+// без этих наборов играть можно — докачиваются после «Играть» (fetchLater)
+const LATER = new Set(['CivCity_music.pck']);
 // открытый ключ подписи описи (Ed25519, SPKI DER в base64); закрытый — secrets/manifest_ed25519.pem у владельца
 const PUBKEY_B64 = 'MCowBQYDK2VwAyEANXsEFXqsQwc8CKbwH7mEhyXsdmYB3+e2ulq6Y4bkALc=';
 const PUBKEY = crypto.createPublicKey({ key: Buffer.from(PUBKEY_B64, 'base64'), format: 'der', type: 'spki' });
@@ -92,12 +100,13 @@ function validManifest(m) {
 
 // Подписанная опись (байты обёртки) → опись или null. Сначала подпись по байтам текста, потом разбор и проверка
 // формы. У описи остаётся скрытое поле raw — байты обёртки, их и кладём к установленной игре.
-function openSigned(buf) {
+// key — открытый ключ (другой — только в проверке test_updater.js, лаунчер всегда с PUBKEY)
+function openSigned(buf, key = PUBKEY) {
   let w;
   try { w = JSON.parse(Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf)); } catch (e) { return null; }
   if (!w || typeof w !== 'object' || typeof w.manifest !== 'string' || typeof w.sig !== 'string') return null;
   let ok = false;
-  try { ok = crypto.verify(null, Buffer.from(w.manifest, 'utf8'), PUBKEY, Buffer.from(w.sig, 'base64')); } catch (e) { ok = false; }
+  try { ok = crypto.verify(null, Buffer.from(w.manifest, 'utf8'), key, Buffer.from(w.sig, 'base64')); } catch (e) { ok = false; }
   if (!ok) return null;
   let m;
   try { m = JSON.parse(w.manifest); } catch (e) { return null; }
@@ -224,18 +233,22 @@ async function unpack(src, dst, f) {
 }
 
 class Updater {
-  constructor(dataDir) {
+  // opts.pubkey, opts.tries, opts.pauseMs — только для проверки test_updater.js
+  constructor(dataDir, opts = {}) {
     this.dir = path.join(dataDir, 'game');
     this.next = this.dir + '-new';
     this.old = this.dir + '-old';
     this.dl = this.dir + '-dl';
+    this.key = opts.pubkey || PUBKEY;
+    this.tries = opts.tries || TRIES;
+    this.pauseMs = opts.pauseMs || 1000;
   }
 
   // опись установленной копии (подпись проверяется, файлы — нет) или null
   localManifest(dir = this.dir) {
     let buf;
     try { buf = fs.readFileSync(path.join(dir, MANIFEST)); } catch (e) { return null; }
-    return openSigned(buf);
+    return openSigned(buf, this.key);
   }
 
   // установленная копия: опись, если все файлы на месте и нужного размера
@@ -246,12 +259,25 @@ class Updater {
     return m;
   }
 
+  // можно играть: опись, если на месте все файлы, кроме тех, что докачиваются потом (музыка)
+  playable(dir = this.dir) {
+    const m = this.localManifest(dir);
+    if (!m) return null;
+    for (const [n, f] of Object.entries(m.files)) if (!LATER.has(n) && sizeOf(path.join(dir, n)) !== f.size) return null;
+    return m;
+  }
+
+  // каких наборов «потом» (музыки) по описи m в установленной копии ещё нет
+  missingLater(m, dir = this.dir) {
+    return m ? Object.keys(m.files).filter(n => LATER.has(n) && sizeOf(path.join(dir, n)) !== m.files[n].size) : [];
+  }
+
   exePath(m) { return path.join(this.dir, m.exe || 'CivCity.exe'); }
 
   // доделать замену папок, если прошлый раз её оборвали (выключили компьютер и т. п.)
   async recover() {
     if (!fs.existsSync(this.dir)) {
-      if (this.installed(this.next)) await rename(this.next, this.dir);
+      if (this.playable(this.next)) await rename(this.next, this.dir);
       else if (fs.existsSync(this.old)) await rename(this.old, this.dir);
     }
     await rmrf(this.old).catch(() => {});
@@ -262,7 +288,7 @@ class Updater {
     let last = null;
     for (let i = 0; i < 2; i++) {
       try {
-        const m = openSigned(await fetchBuf(GAME_URL + MANIFEST + '?t=' + Date.now(), 10000));
+        const m = openSigned(await fetchBuf(GAME_URL + MANIFEST + '?t=' + Date.now(), 10000), this.key);
         if (!m) throw Object.assign(new Error('опись игры на сайте не прошла проверку подписи'), { unsigned: true });
         return m;
       } catch (e) { last = e; if (i === 0) await sleep(1000); }
@@ -271,10 +297,11 @@ class Updater {
   }
 
   /* Привести игру к версии с сайта. opts.verify — заново посчитать sha256 установленных файлов («Проверить файлы»).
-     opts.onStatus(текст, доля 0..1 или null, подстрочник). Возвращает { state, manifest, error }:
+     opts.onStatus(текст, доля 0..1 или null, подстрочник). Возвращает { state, manifest, error, later }:
        ready   — игра уже свежая;      updated — скачали и поставили новую;
        offline — нет связи, играем в установленной;  shell — нужна новая версия лаунчера (manifest — установленная, если есть);
-       failed  — обновить не вышло (manifest — установленная, если есть);  error — игры нет и скачать не вышло */
+       failed  — обновить не вышло (manifest — установленная, если есть);  error — игры нет и скачать не вышло.
+     later — каких наборов «потом» (музыки) ещё нет: играть уже можно, докачает fetchLater(manifest) */
   async ensure(opts = {}) {
     const say = opts.onStatus || (() => {});
     try { await this.recover(); } catch (e) { console.log('recover:', e.message); }
@@ -282,7 +309,7 @@ class Updater {
     let remote;
     try { remote = await this.fetchManifest(); } catch (e) {
       console.log('опись игры:', e.message);
-      const have = this.installed();
+      const have = this.playable();
       if (e.unsigned) {
         const why = 'опись игры на сайте не прошла проверку подписи';
         return have ? { state: 'failed', manifest: have, error: 'Обновить не вышло: ' + why }
@@ -292,14 +319,14 @@ class Updater {
       const ex = netExplain(e);
       return { state: 'error', error: ex.title + ', а игра ещё не скачана. ' + ex.text, code: ex.code, retry: true };
     }
-    if (remote.launcher && cmpVer(remote.launcher, app.getVersion()) > 0) return { state: 'shell', manifest: this.installed() };
+    if (remote.launcher && cmpVer(remote.launcher, app.getVersion()) > 0) return { state: 'shell', manifest: this.playable() };
 
     const local = this.localManifest();
     // сборка на сайте старше установленной: ставим, только если это подписанный откат ("rollback": true)
     if (local && Number.isInteger(local.build) && Number.isInteger(remote.build) && remote.build < local.build && remote.rollback !== true) {
       console.log(`опись игры: на сайте сборка ${remote.build} старше установленной ${local.build} — не ставлю`);
-      const have = this.installed();
-      if (have) return { state: 'ready', manifest: have };
+      const have = this.playable();
+      if (have) return { state: 'ready', manifest: have, later: this.missingLater(have) };
       return { state: 'error', error: 'Скачать игру не вышло: на сайте сборка старее установленной. Попробуйте позже.' };
     }
     const names = Object.keys(remote.files);
@@ -315,40 +342,87 @@ class Updater {
       if (ok) keep.add(n);
     }
     const need = names.filter(n => !keep.has(n));
-    if (!need.length) {
-      // всё на месте: обновить опись (если поменялись только сведения о сборке) и убрать лишние старые файлы
+    // наборы «потом» (музыка) не держат «Играть»: их докачает fetchLater — здесь только то, без чего не играть
+    const now = need.filter(n => !LATER.has(n));
+    const later = need.filter(n => LATER.has(n));
+    if (!now.length && (!later.length || (local && local.raw.equals(remote.raw)))) {
+      // всё на месте: обновить опись (если поменялись только сведения о сборке) и убрать лишние старые файлы;
+      // набор «потом», что не сошёлся с описью («Проверить файлы»), — убрать: его скачает fetchLater заново
+      for (const n of later) { try { fs.rmSync(path.join(this.dir, n), { force: true }); } catch (e) { /* занят игрой — в другой раз */ } }
       try {
         if (!local.raw.equals(remote.raw)) {
           for (const n of Object.keys(local.files)) if (!remote.files[n]) fs.rmSync(path.join(this.dir, n), { force: true });
           writeAtomic(path.join(this.dir, MANIFEST), remote.raw);
         }
       } catch (e) { console.log('опись игры:', e.message); }
-      return { state: 'ready', manifest: remote };
+      return { state: 'ready', manifest: remote, later };
     }
 
-    const fresh = !this.installed();
+    const fresh = !this.playable();
     try {
-      await this.fetchAll(need.map(n => remote.files[n]), fresh, say);
+      // куски наборов «потом» в game-dl/ не трогаем (их, может быть, как раз докачивает fetchLater)
+      if (now.length) await this.fetchAll(now.map(n => remote.files[n]), fresh, say, later.map(n => remote.files[n]));
       say('Устанавливаю…', 1);
       await this.assemble(remote, keep);
       await this.swap();
-      await rmrf(this.dl).catch(() => {});
-      return { state: 'updated', manifest: remote, fresh };
+      const left = this.missingLater(remote);
+      if (!left.length) await rmrf(this.dl).catch(() => {});
+      return { state: 'updated', manifest: remote, fresh, later: left };
     } catch (e) {
       console.log('обновление не удалось:', e.message);
       await rmrf(this.next).catch(() => {});
-      const have = this.installed();
+      const have = this.playable();
       const msg = e.code === 'ENOSPC' ? 'на диске не хватает места' : e.message;
-      return { state: have ? 'failed' : 'error', manifest: have, error: (have ? 'Обновить не вышло' : 'Скачать игру не вышло') + ': ' + msg };
+      return { state: have ? 'failed' : 'error', manifest: have, error: (have ? 'Обновить не вышло' : 'Скачать игру не вышло') + ': ' + msg,
+        later: have ? this.missingLater(have) : [] };
     }
   }
 
-  // скачать нужные файлы в game-dl/ (с докачкой, проверкой и повторами)
-  async fetchAll(files, fresh, say) {
+  /* Докачать наборы «потом» (музыку) по описи m — когда играть уже можно (и пока идёт игра). Скачанный и проверенный
+     файл ложится прямо в game/: новый файл рядом с работающей игрой ей не мешает, а игра сама его подхватит. Кладётся,
+     только если опись установленной копии — всё та же m (обновление могло сменить её, пока качали; тогда поставит
+     следующая проверка). onStatus(текст, доля). Возвращает имена поставленных файлов. Ошибки — исключением. */
+  async fetchLater(m, onStatus, signal) {
+    const say = onStatus || (() => {});
+    const names = this.missingLater(m);
+    if (!names.length) return [];
+    await fsp.mkdir(this.dl, { recursive: true });
+    const files = names.map(n => m.files[n]);
+    const total = files.reduce((s, f) => s + (f.zst || f.size), 0);
+    let done = 0;
+    for (const f of files) done += sizeOf(path.join(this.dl, f.sha256)) === f.size ? (f.zst || f.size) : Math.max(0, sizeOf(this.partOf(f)));
+    let shown = 0;
+    const onBytes = n => {
+      done += n;
+      const now = Date.now();
+      if (now - shown > 500) { shown = now; say(`Музыка докачивается: ${mb(Math.min(done, total)).replace(' МБ', '')} из ${mb(total)}`, total ? done / total : 1); }
+    };
+    say(`Музыка докачивается: ${mb(Math.min(done, total)).replace(' МБ', '')} из ${mb(total)}`, total ? done / total : 1);
+    for (const f of files) await this.fetchOne(f, onBytes, signal);
+    const placed = [];
+    for (const n of names) {
+      const cur = this.localManifest();
+      if (!cur || !cur.raw.equals(m.raw)) break;
+      const f = m.files[n];
+      const src = path.join(this.dl, f.sha256), dst = path.join(this.dir, n), tmp = dst + '.tmp';
+      if (sizeOf(dst) === f.size) continue;
+      await fsp.rm(tmp, { force: true });
+      await linkOrCopy(src, tmp);
+      if (sizeOf(tmp) !== f.size) { await fsp.rm(tmp, { force: true }); throw new Error('файл не скопировался целиком'); }
+      await rename(tmp, dst);
+      placed.push(n);
+      // скачанное больше не нужно (в game/ — жёсткая ссылка на тот же файл); остальное в game-dl/ — не наше, не трогаем
+      await fsp.rm(src, { force: true }).catch(() => {});
+    }
+    return placed;
+  }
+
+  // скачать нужные файлы в game-dl/ (с докачкой, проверкой и повторами); keepAlso — файлы, чьи куски в game-dl/ не трогать
+  async fetchAll(files, fresh, say, keepAlso = []) {
     await fsp.mkdir(this.dl, { recursive: true });
     const uniq = [...new Map(files.map(f => [f.sha256, f])).values()];
-    // в game-dl/ — только куски нужных сейчас файлов; прочее (от старых версий) убираем
-    const wanted = new Set(uniq.flatMap(f => [f.sha256, f.sha256 + '.part', f.zst ? f.zsha + '.zst.part' : '']));
+    // в game-dl/ — только куски нужных сейчас файлов (и наборов «потом»); прочее (от старых версий) убираем
+    const wanted = new Set(uniq.concat(keepAlso).flatMap(f => [f.sha256, f.sha256 + '.part', f.zst ? f.zsha + '.zst.part' : '']));
     for (const n of fs.readdirSync(this.dl)) if (!wanted.has(n)) fs.rmSync(path.join(this.dl, n), { recursive: true, force: true });
 
     const total = uniq.reduce((s, f) => s + (f.zst || f.size), 0);
@@ -440,23 +514,29 @@ class Updater {
         return;
       } catch (e) {
         if (e.bad) { onBytes(-Math.max(0, sizeOf(part))); fs.rmSync(part, { force: true }); }
-        if (e.stopped || (stop && stop.aborted) || e.code === 'ENOSPC' || attempt >= TRIES) throw e;
+        if (e.stopped || (stop && stop.aborted) || e.code === 'ENOSPC' || attempt >= this.tries) throw e;
         console.log(`попытка ${attempt}: ${f.sha256.slice(0, 12)} — ${e.message}`);
-        await pause(Math.min(15000, 1000 * 2 ** (attempt - 1)), stop);
+        await pause(Math.min(15000, this.pauseMs * 2 ** (attempt - 1)), stop);
       }
     }
   }
 
-  // новая копия игры в game-new/: неизменные файлы — ссылками на установленные, новые — из game-dl/
+  // новая копия игры в game-new/: неизменные файлы — ссылками на установленные, новые — из game-dl/;
+  // набора «потом», которого ещё нет (не скачан), в копии нет — его положит fetchLater
   async assemble(remote, keep) {
     await rmrf(this.next);
     await fsp.mkdir(this.next, { recursive: true });
     for (const [n, f] of Object.entries(remote.files)) {
       const src = keep.has(n) ? path.join(this.dir, n) : path.join(this.dl, f.sha256);
+      if (LATER.has(n) && !keep.has(n)) {
+        if (sizeOf(src) !== f.size) continue;
+        await linkOrCopy(src, path.join(this.next, n)).catch(() => fsp.rm(path.join(this.next, n), { force: true }));
+        continue;
+      }
       await linkOrCopy(src, path.join(this.next, n));
     }
     writeAtomic(path.join(this.next, MANIFEST), remote.raw);
-    if (!this.installed(this.next)) throw new Error('новая копия игры собралась не целиком');
+    if (!this.playable(this.next)) throw new Error('новая копия игры собралась не целиком');
   }
 
   // game-new/ встаёт на место game/ (старая копия — в game-old/ и удаляется)
@@ -475,4 +555,4 @@ class Updater {
   }
 }
 
-module.exports = { Updater, SITE, cmpVer, mb, readJson, writeJsonAtomic, validManifest, openSigned, PUBKEY_B64, netKind, netExplain };
+module.exports = { Updater, SITE, cmpVer, mb, readJson, writeJsonAtomic, validManifest, openSigned, PUBKEY_B64, netKind, netExplain, LATER };
