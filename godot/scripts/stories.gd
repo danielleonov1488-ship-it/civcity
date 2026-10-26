@@ -1855,6 +1855,8 @@ func press(what: String, val := "") -> void:
 		"ready":
 			flags["ready"] = true
 		"pay":
+			if g.size() < 3 or String(g[0]) != "pay":
+				return                           # шаг уже другой (нажали в тот кадр, когда цель сменилась)
 			var n := int(g[2])
 			if String(g[1]) == "glory":
 				if city.legion.glory < n:

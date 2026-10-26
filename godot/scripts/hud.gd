@@ -2354,6 +2354,12 @@ func _fit_bottom() -> void:
 	var wl := maxf(bar_left.size.x, bar_left.get_combined_minimum_size().x)
 	var wm := maxf(bar_mid.size.x, bar_mid.get_combined_minimum_size().x)
 	var wr := maxf(bar_right.size.x, bar_right.get_combined_minimum_size().x)
+	# три полосы шире экрана (крупный интерфейс, кнопок стало больше) — правая чуть мельче, к своему правому нижнему углу
+	var k := clampf((vw - 36.0 - wl - wm) / maxf(wr, 1.0), 0.8, 1.0)
+	bar_right.pivot_offset = bar_right.size
+	if not is_equal_approx(bar_right.scale.x, k):
+		bar_right.scale = Vector2(k, k)
+	wr *= k
 	var mid_l := (vw - wm) * 0.5
 	var over := mid_l + wm + 8.0 - (vw - 10.0 - wr)              # насколько середина наехала бы на правую
 	var room := mid_l - (10.0 + wl + 8.0)                          # сколько места до полосы дорог
