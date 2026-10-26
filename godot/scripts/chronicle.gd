@@ -79,10 +79,10 @@ static func badge(id: String) -> Dictionary:
 	return {}
 
 
-## +n к счётчику (постройки, этажи, перестройки, игры, горожане)
+## +n к счётчику (постройки, этажи, перестройки, игры, горожане); −n — отменили постройку (не меньше нуля)
 static func add(c: City, k: String, n := 1) -> void:
 	var cc: Dictionary = c.chron["c"]
-	cc[k] = int(cc.get(k, 0)) + n
+	cc[k] = maxi(0, int(cc.get(k, 0)) + n)
 
 
 ## Значение счётчика: свои — из city.chron, остальные — из города

@@ -4644,6 +4644,10 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 		db.custom_minimum_size = Vector2(cw, 40)
 		db.clip_text = true
 		db.tooltip_text = "Украшения за домом уберут, половина их цены вернётся в казну — дому хватит места"
+		var hp2 := c.upgrade_happy_without(b, dec)
+		if hp >= need and hp2 < need:
+			# они же и радуют дом: без них перестройка не выйдет — сказать до сноса
+			info_box.add_child(_wrap(_label("Но без них счастье после перестройки упадёт до %d%% — нужно от %d%%" % [clampi(hp2, 0, 100), need], 13, false, C_BAD), cw))
 		db.pressed.connect(func():
 			for id in dec:
 				if c.buildings.has(id):

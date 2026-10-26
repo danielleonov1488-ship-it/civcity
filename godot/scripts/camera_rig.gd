@@ -238,7 +238,10 @@ func _update(_snap: bool, dt := 1.0 / 60.0, a := 1.0) -> void:
 		if _snap:
 			target.y = g
 		else:
-			target.y = lerpf(lerpf(g, _target_t.y, Y_W), target.y, pow(Y_K, dt * 60.0))
+			# режим фото: цель — на земле под ней (за жителем — с подъёмом lift до груди, на любом холме);
+			# обычный вид — к земле с долей высоты вида, как прежде (кадр игрока тот же)
+			var goal := g if photo else lerpf(g, _target_t.y, Y_W)
+			target.y = lerpf(goal, target.y, pow(Y_K, dt * 60.0))
 	elif not _snap:
 		target.y = lerpf(target.y, _target_t.y, a)
 	var d := dist * K

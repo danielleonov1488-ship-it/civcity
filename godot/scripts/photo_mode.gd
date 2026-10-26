@@ -32,11 +32,13 @@ var follow_rid := -1                   # за каким жителем идёт
 var follow_cat := {}
 var _hidden: Array = []                # [узел, был ли виден] — интерфейс до режима фото
 var _look0 := -1.0                     # свет «как в час» до режима фото (обычно −1 — по часам игры)
+var _cam0: Array = []                  # камера до режима фото: [цель, поворот, наклон, даль — куда ведёт; и где сейчас]
 var _fps0 := false
 var _last := Vector3.INF               # где был тот, за кем идём, в прошлый кадр (куда он идёт)
 var _dir := Vector2.ZERO
 var _snapping := false
 var _gone_t := 0.0                     # сколько секунд того, за кем идём, не видно (зашёл в дом)
+var _raised := false                   # камера сама поднялась над крышами (низко — стены): опустится, когда станет видно
 var _rng := RandomNumberGenerator.new()     # свой случай: выбор жителя не трогает случай города
 var snaps := 0                         # сколько снимков за игру (проверки)
 
@@ -67,6 +69,8 @@ func open() -> void:
 	game.select_building({})
 	game._clear_highlight()
 	game.rig.stop_follow()
+	var rg: CameraRig = game.rig
+	_cam0 = [rg._target_t, rg._yaw_t, rg._pitch_t, rg._dist_t, rg.target, rg.yaw, rg.pitch, rg.dist]
 	# весь интерфейс игры — прочь (окна, значки над домами, подписи); своё — видно
 	_hidden = []
 	for ch in hud.get_children():
@@ -115,6 +119,20 @@ func close() -> void:
 	game.hud.hidden_ui = false
 	_stop_follow()
 	game.rig.set_photo(false)
+	if _cam0.size() == 8:
+		# камера — туда, где была до режима фото (плывёт назад); поворот — ближним путём, без лишнего круга
+		var rg: CameraRig = game.rig
+		rg._target_t = _cam0[0]
+		rg._yaw_t = rg.yaw + angle_difference(rg.yaw, float(_cam0[1]))
+		rg._pitch_t = _cam0[2]
+		rg._dist_t = _cam0[3]
+		if rg.cine:                            # уже идёт ролик: сразу — он вернётся к прежнему виду, а не к снимку
+			rg.target = _cam0[4]
+			rg.yaw = _cam0[5]
+			rg._yaw_t = _cam0[1]
+			rg.pitch = _cam0[6]
+			rg.dist = _cam0[7]
+	_cam0 = []
 	game.people.outline_off = false
 	if game.people.focus_rid != 0:
 		game.people.set_focus(0)
@@ -205,6 +223,7 @@ func _follow_camera() -> void:
 	game.rig.set_pitch_deg(FOLLOW_PITCH)
 	game.rig.lift = FOLLOW_LIFT
 	sl_pitch.set_value_no_signal(FOLLOW_PITCH)
+	_raised = false
 	_last = Vector3.INF
 	_dir = Vector2.ZERO
 	_follow_buttons()
@@ -282,39 +301,75 @@ func _process(dt: float) -> void:
 			_dir = _dir.lerp(v.normalized(), clampf(dt * 3.0, 0.0, 1.0))
 	_last = p
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
+		_raised = false
 		return                                 # игрок сам поворачивает камеру
 	var moving := _dir.length() >= 0.2
-	var cd: float = game.rig.dist * CameraRig.K * cos(game.rig.pitch)
+	var look: Vector3 = p + Vector3(0, game.rig.lift, 0)
 	var base: float = atan2(-_dir.x, -_dir.y) - 0.5 if moving else game.rig.yaw
-	if not moving and _clear(p, base, cd):
-		return                                 # стоит у прилавка — камера там, где была, если не в стене
-	var want := base
-	var found := false
-	for da: float in [0.0, 0.7, -0.7, 1.4, -1.4, 2.2, -2.2, PI]:
-		if _clear(p, base + da, cd):
-			want = base + da
-			found = true
-			break
-	if not found and game.rig.pitch_deg() < 35.0:
-		game.rig.set_pitch_deg(35.0)           # кругом стены — смотрим поверх крыш
-		sl_pitch.set_value_no_signal(35.0)
+	var pd: float = game.rig.pitch_deg()
+	# поднимались над крышами, а теперь и низко видно — опускаемся обратно к жителю
+	if _raised and pd > FOLLOW_PITCH and _clear(look, base, FOLLOW_PITCH):
+		_raised = false
+		_set_pitch(FOLLOW_PITCH)
+		pd = FOLLOW_PITCH
+	if not moving and _clear(look, base, pd):
+		return                                 # стоит у прилавка — камера там, где была, если не за стеной
+	var want := _turn(look, base, pd)
+	if want == INF:
+		# кругом стены и крыши — смотрим сверху, пока луч до жителя не пройдёт над ними
+		for pu: float in [35.0, 50.0, 65.0]:
+			if pu > pd:
+				want = _turn(look, base, pu)
+				if want != INF:
+					_raised = true
+					_set_pitch(pu)
+					break
+	if want == INF:
+		want = base
+		if pd < 35.0:
+			_raised = true
+			_set_pitch(35.0)
 	game.rig.turn_to(want, dt * (1.5 if moving else 4.0))
 
 
-## Между тем, за кем идём, и камерой (направление a, даль d) нет стен построек
-func _clear(p: Vector3, a: float, d: float) -> bool:
-	for k: float in [0.3, 0.6, 1.0]:
-		if _solid(Vector2(p.x + sin(a) * d * k, p.z + cos(a) * d * k)):
+## Поворот камеры около base, откуда при наклоне pitch_d тот, за кем идём, виден (INF — ниоткуда)
+func _turn(look: Vector3, base: float, pitch_d: float) -> float:
+	for da: float in [0.0, 0.7, -0.7, 1.4, -1.4, 2.2, -2.2, PI]:
+		if _clear(look, base + da, pitch_d):
+			return base + da
+	return INF
+
+
+func _set_pitch(deg: float) -> void:
+	game.rig.set_pitch_deg(deg)
+	sl_pitch.set_value_no_signal(deg)
+
+
+## От того, за кем идём (look — куда смотрит камера), до камеры (поворот a, наклон pitch_d, даль — как сейчас) луч
+## идёт над постройками: верхушка постройки под лучом ниже него — и на полметра по бокам (угол дома не срежет кадр);
+## сама камера не вплотную к стене
+func _clear(look: Vector3, a: float, pitch_d: float) -> bool:
+	var d: float = game.rig.dist * CameraRig.K
+	var pr := deg_to_rad(pitch_d)
+	var dir := Vector2(sin(a), cos(a))
+	var side := Vector2(dir.y, -dir.x) * 0.6
+	for k: float in [0.2, 0.35, 0.5, 0.65, 0.8, 0.9, 1.0, 1.1]:
+		var q := Vector2(look.x, look.z) + dir * d * cos(pr) * k
+		var y := look.y + d * sin(pr) * k
+		if _solid(q, y) or _solid(q + side, y) or _solid(q - side, y):
 			return false
 	return true
 
 
-func _solid(q: Vector2) -> bool:
+## Постройка в точке q выше высоты y (украшения не в счёт)
+func _solid(q: Vector2, y: float) -> bool:
 	var id: int = game.land.occ_at(q)
 	if id < 0:
-		return true                            # арка у въезда
+		return y < Land.BASE_Y + 9.0           # арка у въезда
 	var b: Dictionary = game.city.buildings.get(id, {})
-	return not b.is_empty() and String(game.city.def(b)["kind"]) != "decor"
+	if b.is_empty() or String(game.city.def(b)["kind"]) == "decor":
+		return false
+	return float(b["y"]) + game.city.blueprint(b).top_y() + 0.3 > y
 
 
 # ---------- снимок ----------
@@ -404,7 +459,9 @@ func _build() -> void:
 	r1.add_child(hud._icon("photo", 26, hud.C_SOFT))
 	r1.add_child(hud._label("Фото", 20, false, hud.C_INK, hud.font_title))
 	sl_pitch = _slider(r1, "Наклон", 2.0, 80.0, 1.0, "Наклон камеры: от взгляда сверху до самой земли (средняя кнопка мыши — тоже)",
-		func(x: float): game.rig.set_pitch_deg(x))
+		func(x: float):
+			_raised = false                    # наклон выбрал игрок — сама камера его не меняет обратно
+			game.rig.set_pitch_deg(x))
 	sl_time = _slider(r1, "Время суток", 0.0, 24.0, 0.25, "Свет как в этот час (часы города идут как шли)", _set_time)
 	lbl_time = hud._label("12:00", 15, true, hud.C_SOFT)
 	lbl_time.custom_minimum_size = Vector2(44, 0)

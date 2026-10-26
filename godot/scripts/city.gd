@@ -1661,6 +1661,41 @@ func upgrade_happy(b: Dictionary) -> int:
 		+ (miss0 - miss1) * Defs.MISSING_PENALTY
 
 
+## Счастье после перестройки, если украшений ids не станет («Сносить мешающие украшения»): их очки, наборы и «главные»
+## украшения — не в счёт (как посчитал бы compute без них)
+func upgrade_happy_without(b: Dictionary, ids: Array) -> int:
+	var hp := upgrade_happy(b)
+	if ids.is_empty() or upgrade_to(b) == "":
+		return hp
+	var dmax := int(Defs.CLASSES[String(Defs.B[upgrade_to(b)]["cls"])].get("deco_max", 12))
+	var near := [[], []]                       # 0 — как сейчас, 1 — без снесённых
+	var sets := [{}, {}]
+	var mon := [{}, {}]
+	for id in buildings:
+		var o: Dictionary = buildings[id]
+		var d := def(o)
+		if String(d["kind"]) != "decor":
+			continue
+		var dist := (b["pos"] as Vector2).distance_to(o["pos"])
+		var bk := Defs.base_of(o["type"])
+		var sk := Defs.set_of(o["type"]) if econ >= 1 else ""
+		for k in (1 if ids.has(id) else 2):
+			if dist <= Defs.DECOR_RADIUS:
+				(near[k] as Array).append([bk, float(d.get("deco", 1))])
+				if sk != "":
+					if not (sets[k] as Dictionary).has(sk):
+						sets[k][sk] = {}
+					sets[k][sk][bk] = true
+			if d.has("mon") and dist <= Defs.range_m(d):
+				mon[k][o["type"]] = maxi(int((mon[k] as Dictionary).get(o["type"], 0)), int(d["mon"]))
+	var sc := [0, 0]
+	for k in 2:
+		sc[k] = mini(dmax, int(floor(float(deco_points(near[k], econ)[0]) * Defs.DECO_RATE))) + set_bonus(sets[k], [])
+		for t in mon[k]:
+			sc[k] += int(mon[k][t])
+	return hp - (int(sc[0]) - int(sc[1]))
+
+
 ## Нужды следующего класса, которых у дома нет: ["одежда", "развлечения"]
 func upgrade_missing(b: Dictionary) -> Array:
 	var out := []
@@ -1858,22 +1893,55 @@ func can_upgrade_clearing(b: Dictionary, check_money := true) -> String:
 	var e2 := upgrade_room_clearing(b)
 	if e2 != "":
 		return e2
+	# украшения позади радуют и этот дом: без них счастье может не дотянуть — тогда и сносить нечего
+	var need := int(Defs.UPGRADE_HAPPY.get(String(Defs.B[upgrade_to(b)]["cls"]), 65))
+	var hp := upgrade_happy_without(b, upgrade_decor_blockers(b))
+	if hp < need:
+		return "Без украшений позади счастье после перестройки было бы %d%% — нужно от %d%%" % [clampi(hp, 0, 100), need]
 	if check_money and money + float(upgrade_decor_refund(b)) < float(upgrade_price(b)):
 		return "Не хватает денариев"
 	return ""
 
 
-## Перестроить, снеся мешающие украшения (деньги за них вернутся, как при сносе)
+## Перестроить, снеся мешающие украшения (деньги за них вернутся, как при сносе). Сначала — на пробу, без сноса:
+## не выйдет и без них — украшения остаются, ничего не списано
 func upgrade_clearing(b: Dictionary, quiet := false) -> bool:
 	if can_upgrade_clearing(b) != "":
 		return false
 	if can_upgrade(b) == "":
 		return upgrade_house(b, quiet)
-	for id in upgrade_decor_blockers(b):
+	var dec := upgrade_decor_blockers(b)
+	if not _upgrade_try_without(b, dec):
+		return false
+	for id in dec:
 		if buildings.has(id):
 			remove(buildings[id], true, true)
 	compute()
 	return upgrade_house(b, quiet)
+
+
+## На пробу: готов ли дом к перестройке (без денариев), если украшений ids не станет — их будто нет, город пересчитан;
+## потом всё как было (без сигналов: ни модели, ни жители не трогаются)
+func _upgrade_try_without(b: Dictionary, ids: Array) -> bool:
+	var keep := {}
+	var occ := {}
+	for id in ids:
+		if not buildings.has(id):
+			continue
+		keep[id] = buildings[id]
+		for k in (buildings[id]["cells"] as PackedInt32Array):
+			if land.occ[k] == int(id):
+				occ[k] = int(id)
+				land.occ[k] = 0
+		buildings.erase(id)
+	compute()
+	var err := can_upgrade(b, false)
+	for id in keep:
+		buildings[id] = keep[id]
+	for k in occ:
+		land.occ[k] = occ[k]
+	compute()
+	return err == ""
 
 
 ## Место для нового облика: "" — помещается; иначе — почему нет (подпись у курсора, кнопка и галочка в карточке)

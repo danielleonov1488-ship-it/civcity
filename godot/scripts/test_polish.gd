@@ -129,6 +129,7 @@ func _new() -> void:
 	await _clouds_quality()
 	await _chron_new()
 	await _hire_new()
+	await _clear_edge_new()
 	_cam_steady()
 
 
@@ -152,6 +153,7 @@ func _photo_basic() -> void:
 	var rig: CameraRig = game.rig
 	rig.set_view(Vector3(192, Land.BASE_Y, 140), 15, 42, 40)
 	await frames(10)
+	var cam0 := [rig._target_t, rig._yaw_t, rig._pitch_t, rig._dist_t]
 	game.set_tool("road")
 	key(KEY_P)
 	var ph: PhotoMode = game.photo
@@ -184,12 +186,43 @@ func _photo_basic() -> void:
 		img.save_png(SHOTS + "pol_photo_snapshot.png")
 	ph.sl_time.value = 11.0
 	ph.sl_blur.value = 19.0
-	rig.set_pitch_deg(14.0)
+	# цель камеры в режиме фото — на земле под ней (не на высоте вида): низкий кадр смотрит на землю, а не под неё
+	var best := Vector2(192, 140)
+	var bd := 0.0
+	for j in range(100, 200, 4):
+		for i in range(140, 250, 4):
+			var hh: float = land.height_at(float(i), float(j))
+			if absf(hh - Land.BASE_Y) > bd and hh > Land.WATER_Y + 0.2:
+				bd = absf(hh - Land.BASE_Y)
+				best = Vector2(i, j)
+	rig._target_t = Vector3(best.x, Land.BASE_Y, best.y)
+	var tg := Time.get_ticks_msec()
+	var gy: float = maxf(1.0, land.height_at(best.x, best.y))
+	var on_ground := func() -> bool:
+		return Vector2(rig.target.x, rig.target.z).distance_to(best) < 0.05 and absf(rig.target.y - gy) < 0.05
+	while not on_ground.call() and Time.get_ticks_msec() - tg < 4000:
+		await frames(5)
+	check(on_ground.call(), "в режиме фото цель на земле и на склоне (%.2f, земля %.2f, высота вида %.1f)" % [rig.target.y, gy, Land.BASE_Y])
+	# ниже предела игры, к самой земле и в сторону — после выхода камера вернётся
+	rig.set_dist(1.5)
+	rig.set_pitch_deg(3.0)
+	rig._target_t += Vector3(30, 0, -20)
+	rig._yaw_t += TAU + 1.0
+	await frames(30)
 	key(KEY_ESCAPE)
 	await frames(10)
 	check(not ph.on and hud.root.visible and hud.badge_layer.visible and not rig.photo and not hud.hidden_ui, "Esc — режим фото выключен, интерфейс вернулся")
 	check(is_equal_approx(game.look_hour, -1.0) and rig.pitch_deg() >= 8.0 - 0.01 and is_equal_approx(rig.attrs.dof_blur_amount, 0.09),
 		"свет по часам, наклон в обычных пределах (%.1f°), размытие игры (%.2f)" % [rig.pitch_deg(), rig.attrs.dof_blur_amount])
+	check((rig._target_t as Vector3).is_equal_approx(cam0[0]) and is_equal_approx(rig._pitch_t, cam0[2]) and is_equal_approx(rig._dist_t, cam0[3])
+		and absf(angle_difference(rig._yaw_t, cam0[1])) < 0.001 and absf(rig._yaw_t - rig.yaw) < PI,
+		"после выхода камера плывёт туда, где была (цель %s, наклон %.1f°, даль %.1f)" % [str(rig._target_t), rig.pitch_deg(), rig._dist_t])
+	var back := func() -> bool:
+		return rig.target.distance_to(Vector3(cam0[0].x, rig.target.y, cam0[0].z)) < 0.2 and absf(rig.dist - float(cam0[3])) < 0.2 and absf(rig.pitch - float(cam0[2])) < 0.01
+	var tb := Time.get_ticks_msec()
+	while not back.call() and Time.get_ticks_msec() - tb < 4000:
+		await frames(5)
+	check(back.call(), "…и доплыла за %.1f с (даль %.1f, наклон %.1f°)" % [(Time.get_ticks_msec() - tb) / 1000.0, rig.dist, rad_to_deg(rig.pitch)])
 	key(KEY_P)
 	check(ph.on and not ph.hint.visible, "второй раз — без подсказки")
 	hud._top_action("photo")
@@ -202,7 +235,7 @@ func _clouds_quality() -> void:
 	var cl: Clouds = game.clouds
 	game.hud.set_speed(1.0)
 	game._set_hour(11.0)
-	check(cl != null and cl.enabled and cl.visible and cl.tiles.size() == 9, "«Высокая»: облака есть")
+	check(cl != null and cl.enabled and cl.visible and cl.tiles.size() == Clouds.N * Clouds.N, "«Высокая»: облака есть (%d плиток)" % cl.tiles.size())
 	var o0 := cl.off
 	await frames(20)
 	check(cl.off != o0, "облака плывут (сдвиг %s → %s)" % [str(o0), str(cl.off)])
@@ -217,13 +250,60 @@ func _clouds_quality() -> void:
 	await frames(2)
 	var t: Vector3 = game.rig.target
 	var inside := false
+	var lo := Vector2(INF, INF)
+	var hi := -lo
 	for d: Decal in cl.tiles:
 		var p := d.global_position
 		inside = inside or (absf(p.x - t.x) <= Clouds.TILE * 0.5 + 0.01 and absf(p.z - t.z) <= Clouds.TILE * 0.5 + 0.01)
-	check(inside, "камера над серединой плиток")
+		lo = lo.min(Vector2(p.x, p.z))
+		hi = hi.max(Vector2(p.x, p.z))
+	# край теней — далеко от камеры, в дымке (не обрывается посреди кадра)
+	var reach := minf(minf(t.x - lo.x, hi.x - t.x), minf(t.z - lo.y, hi.y - t.z)) + Clouds.TILE * 0.5
+	check(inside and reach >= Clouds.TILE * float(Clouds.N / 2) - 0.01, "камера над серединой плиток, до края теней %.0f м" % reach)
 	# test_perf прячет Decal на снимках — облака на сверку с эталоном не попадут
 	var dec: Array = game.find_children("*", "Decal", true, false)
-	check(dec.size() >= 9, "облака — Decal (снимки test_perf их прячут): %d" % dec.size())
+	check(dec.size() >= Clouds.N * Clouds.N, "облака — Decal (снимки test_perf их прячут): %d" % dec.size())
+
+
+## Летопись и отмена: Ctrl+Z за 30 с возвращает деньги — и счётчик (поставить и отменить венок не даёт); звенья
+## забора — украшения (как и при переносе старого города)
+func _chron_undo(x0: float, z0: float) -> void:
+	for r in ["deco_trees", "q_garden"]:
+		c.research[r] = true
+	game.undo_stack.clear()
+	var dec0 := Chronicle.value(c, "decor")
+	var blt0 := Chronicle.value(c, "built")
+	var bush := place("bush", Vector2(x0 + 6.0, z0 + 4.0), Vector2(0.4, 0), 12)
+	if not check(not bush.is_empty() and Chronicle.value(c, "decor") == dec0 + 1, "куст — украшений +1"):
+		return
+	game._push_place([bush["id"]], float(Defs.B["bush"]["cost"]), "Куст", game._undo_snap())
+	for k in 3:
+		game._undo("place")
+		if k < 2:
+			var b2 := place("bush", Vector2(x0 + 6.0, z0 + 4.0), Vector2(0.4, 0), 12)
+			if not b2.is_empty():
+				game._push_place([b2["id"]], float(Defs.B["bush"]["cost"]), "Куст", game._undo_snap())
+	check(Chronicle.value(c, "decor") == dec0 and Chronicle.value(c, "built") == blt0, "поставили и отменили трижды — счётчик тот же (%d)" % Chronicle.value(c, "decor"))
+	var sh := place("stall_fruit", Vector2(x0 + 40.0, z0 + 2.0), Vector2(0, 0.4), 12)
+	if not sh.is_empty():
+		game._push_place([sh["id"]], float(Defs.B["stall_fruit"]["cost"]), "Лавка", game._undo_snap())
+		game._undo("place")
+		check(Chronicle.value(c, "built") == blt0, "лавку отменили — «построено» как было (%d)" % Chronicle.value(c, "built"))
+	# забор: звенья — украшения
+	game.set_tool("fence")
+	var plan := []
+	for k in 4:
+		var pl: Dictionary = game.placement("fence", Vector2(x0 + 4.0 + k * 3.0, z0 + 9.0))
+		if pl["err"] == "":
+			plan.append({"err": "", "pos": pl["pos"], "yaw": float(pl["yaw"]), "variant": int(pl["variant"])})
+	game.fence_plan = plan
+	game._fence_commit()
+	var links := plan.size()
+	check(links > 0 and Chronicle.value(c, "decor") == dec0 + links, "забор из %d звеньев — украшений +%d" % [links, Chronicle.value(c, "decor") - dec0])
+	game._undo("place")
+	check(Chronicle.value(c, "decor") == dec0, "забор отменили — счётчик как был")
+	game.set_tool("")
+	game.undo_stack.clear()
 
 
 ## «Летопись города»: счётчики, венок — строка в колокольчик (без всплывашки), сохранение, старое сохранение, журнал
@@ -244,6 +324,7 @@ func _chron_new() -> void:
 	check(houses.size() == 6 and Chronicle.value(c, "built") == built0 + 6, "построено домов: +%d" % (Chronicle.value(c, "built") - built0))
 	if houses.size() < 6:
 		return
+	await _chron_undo(X0, Z0)
 	var p0 := Chronicle.value(c, "people")
 	c.settled(int(houses[0]["id"]), 4, "Летописцы")
 	check(Chronicle.value(c, "people") == p0 + 4 and Chronicle.value(c, "fams") >= 1, "горожан поселилось: +4")
@@ -437,6 +518,7 @@ func _classes_owner() -> void:
 		print("POL NOTE в городе нет дома, которому мешают одни украшения — снос не проверяем")
 	else:
 		var dec: Array = c.upgrade_decor_blockers(dh)
+		await _clearing_happy(dh, dec)
 		var why_clear := c.can_upgrade_clearing(dh)
 		print("POL note дом %d: мешают %d украшений, без них — «%s»" % [int(dh["id"]), dec.size(), why_clear])
 		game.upg_decor = false
@@ -462,6 +544,141 @@ func _classes_owner() -> void:
 			check(not in1, "без места и с галочкой дом не готов: «%s»" % why_clear)
 		hud.upg_decor_check.button_pressed = false
 	game.set_tool("")
+
+
+## «Сносить мешающие украшения» на грани: колодец позади радует и сам дом. С ним счастья хватает, без него — нет:
+## дом не готов, ничего не сносится, подпись и карточка говорят счастье без него. Прогноз «можно», а пересчёт города
+## без колодца — нет (здесь нужды дома подставлены, пересчёт их сбросит): проба до сноса — колодец на месте
+func _clear_edge_new() -> void:
+	print("== снос украшений: грань счастья")
+	var X0 := 150.0
+	var Z0 := 228.0
+	game.clear_nature(Vector2(X0 + 10.0, Z0), 30.0)
+	land.paint_line(Vector2(X0 - 6.0, Z0), Vector2(X0 + 26.0, Z0), 1.6, Land.Kind.ROAD, true)
+	await frames(4)
+	var h := place("house_pleb", Vector2(X0 + 8.0, Z0 - 3.0), Vector2(0.3, 0), 8, 0)
+	if not check(not h.is_empty(), "дом плебеев у дороги"):
+		return
+	h["pop"] = 2
+	var old := {}
+	for k in (h["cells"] as PackedInt32Array):
+		old[k] = true
+	var well := {}
+	for k in c._upgrade_cells(h):
+		if old.has(k) or land.occ[k] != 0:
+			continue
+		var pl: Dictionary = game.placement("well", land.cell_center(k % Land.N, k / Land.N))
+		if pl["err"] != "":
+			continue
+		well = c.place("well", pl["pos"], pl["yaw"], pl["variant"], pl["color"])
+		if c.upgrade_decor_blockers(h).has(int(well["id"])):
+			break
+		c.remove(well, false)
+		well = {}
+	if not check(not well.is_empty() and c.upgrade_decor_blockers(h).size() == 1, "колодец позади дома мешает перестройке"):
+		if not well.is_empty():
+			c.remove(well, false)
+		c.remove(h, false)
+		return
+	c.compute()
+	var ids: Array = c.upgrade_decor_blockers(h)
+	var cl1 := String(Defs.B[c.upgrade_to(h)]["cls"])
+	var need := int(Defs.UPGRADE_HAPPY.get(cl1, 65))
+	# нужды класса — есть; счастье без колодца — ровно target (с ним — больше на его очки)
+	var prep := func(target: int) -> void:
+		for n in Defs.CLASSES[cl1]["needs"]:
+			h["needs"][n] = true
+		h["missing"] = []
+		(h["happy_parts"] as Array).append(["проба", target - c.upgrade_happy_without(h, ids)])
+	prep.call(need - 1)
+	var drop := c.upgrade_happy(h) - c.upgrade_happy_without(h, ids)
+	var m0 := c.money
+	var why := c.can_upgrade_clearing(h)
+	check(drop >= 1 and c.can_upgrade(h, false) == c.upgrade_room(h) and why.begins_with("Без украшений позади"),
+		"с колодцем %d%%, без него %d%% (нужно %d%%): «%s»" % [c.upgrade_happy(h), c.upgrade_happy_without(h, ids), need, why])
+	var ok := c.upgrade_clearing(h)
+	check(not ok and c.buildings.has(int(well["id"])) and String(h["type"]) == "house_pleb" and is_equal_approx(c.money, m0), "на грани — колодец на месте, дом тот же, деньги те же")
+	game.upg_decor = true
+	var sets: Dictionary = Cover.upgrade_sets(c, true)
+	check(not (sets["ready"] as Array).has(int(h["id"])) and not (sets["short"] as Array).has(int(h["id"])), "с галочкой дом на грани — не в готовых (без зелёной подсветки)")
+	game.select_building(h)
+	hud.open_info(h)
+	await frames(3)
+	var card := _labels(hud.info_box)
+	check(card.contains("Но без них счастье после перестройки упадёт до %d%%" % (need - 1)), "карточка: кнопка сноса предупреждает про счастье")
+	game.rig.set_view(Vector3((h["pos"] as Vector2).x, Land.BASE_Y, (h["pos"] as Vector2).y), 30, 48, 26)
+	await frames(30)
+	await shot("pol_clear_edge_card.png")
+	hud._hide_info()
+	game.select_building({})
+	# прогноз «можно» (с запасом): подпись обещает счастье без колодца; а пересчёт без него — нет (нужд у дома нет): не сносим
+	c.compute()
+	h["pop"] = 2
+	prep.call(need + 5)
+	var ln: Array = game._upg_lines(h, c.can_upgrade_clearing(h, false))
+	check(String(ln[0]).contains("счастье станет %d%%" % (need + 5)) and String(ln[0]).contains("украшения позади уберём"), "подпись у курсора — счастье без колодца: «%s»" % ln[0])
+	m0 = c.money
+	ok = c.upgrade_clearing(h)
+	check(not ok and c.buildings.has(int(well["id"])) and String(h["type"]) == "house_pleb" and is_equal_approx(c.money, m0) and land.occ[(well["cells"] as PackedInt32Array)[0]] == int(well["id"]),
+		"проба без колодца не прошла — колодец на месте, клетки его, деньги те же")
+	game.upg_decor = false
+	c.remove(well, false)
+	c.remove(h, false)
+
+
+## Снос мешающих украшений и счастье: они радуют и сам дом. Прогноз «без них» — как пересчёт города, где их правда нет;
+## на грани (с ними хватает, без них — нет) дом не готов и ничего не сносится; проба сноса возвращает город как был
+func _clearing_happy(dh: Dictionary, dec: Array) -> void:
+	var need := int(Defs.UPGRADE_HAPPY.get(String(Defs.B[c.upgrade_to(dh)]["cls"]), 65))
+	var hp1 := c.upgrade_happy(dh)
+	var hp0 := c.upgrade_happy_without(dh, dec)
+	# пересчёт без них по-настоящему: убрать из города на миг (без сигналов) и вернуть
+	var keep := {}
+	for id in dec:
+		keep[id] = c.buildings[id]
+		c.buildings.erase(id)
+	c.compute()
+	var real := c.upgrade_happy(c.buildings[dh["id"]])
+	for id in keep:
+		c.buildings[id] = keep[id]
+	c.compute()
+	check(hp0 == real and c.upgrade_happy(dh) == hp1, "прогноз счастья без украшений позади: %d%% (пересчёт без них — %d%%, с ними %d%%)" % [hp0, real, hp1])
+	var n0 := c.buildings.size()
+	var occ0 := []
+	for id in dec:
+		occ0.append(Array(c.buildings[id]["cells"]).filter(func(k): return land.occ[k] == int(id)).size())
+	if hp1 > hp0:
+		# на грани: с украшениями прогноз need + (hp1 − hp0) − 1, без них — need − 1
+		(dh["happy_parts"] as Array).append(["проба", need - 1 - hp0])
+		var why_b := c.can_upgrade_clearing(dh)
+		var m0 := c.money
+		var t0 := String(dh["type"])
+		var ok_b := c.upgrade_clearing(dh)
+		check(c.upgrade_happy(dh) >= need and why_b.begins_with("Без украшений позади") and not ok_b and String(dh["type"]) == t0
+			and dec.all(func(i): return c.buildings.has(i)) and is_equal_approx(c.money, m0),
+			"на грани: «%s» — украшения на месте, деньги те же" % why_b)
+		# подпись у курсора с галочкой: обещанное счастье — без них (сама подпись — как если бы на грани не было)
+		(dh["happy_parts"] as Array).pop_back()
+		var mm := c.money
+		c.money = maxf(mm, 1e6)
+		game.upg_decor = true
+		var ln: Array = game._upg_lines(dh, c.can_upgrade_clearing(dh, false))
+		game.upg_decor = false
+		c.money = mm
+		check(ln[0] == "" or String(ln[0]).contains("счастье станет %d%%" % clampi(hp0, 0, 100)), "подпись у курсора — счастье без них (%d%%): «%s»" % [hp0, ln[0]])
+		c.compute()
+	else:
+		print("POL NOTE украшения позади дома %d счастья не прибавляют — грань не проверяем" % int(dh["id"]))
+	# проба сноса: ни одной постройки не пропало, клетки снова заняты ими
+	var cm0 = dh.get("coming", 0)
+	dh["coming"] = 1
+	var ok_t := c._upgrade_try_without(dh, dec)
+	dh["coming"] = cm0
+	var occ1 := []
+	for id in dec:
+		occ1.append(Array(c.buildings[id]["cells"]).filter(func(k): return land.occ[k] == int(id)).size() if c.buildings.has(id) else -1)
+	check(not ok_t and c.buildings.size() == n0 and occ1 == occ0, "проба без украшений (семья ещё идёт — нельзя): город как был, клетки %s" % str(occ1))
+	c.compute()
 
 
 ## 6.12 в живом городе: лавка на одного — её места уходят из города (в лавке работает не больше одного)
@@ -498,6 +715,8 @@ func _photo_owner() -> void:
 	print("== фото в городе владельца")
 	game.rig.set_view(Vector3(205, Land.BASE_Y, 140), 30, 42, 40)
 	await frames(60)
+	var t_0: Vector3 = game.rig._target_t
+	var d_0: float = game.rig._dist_t
 	key(KEY_P)
 	var ph: PhotoMode = game.photo
 	var rid := ph.pick_walker()
@@ -518,6 +737,13 @@ func _photo_owner() -> void:
 	var p: Vector3 = game.people.person_pos(game.people.by_id.get(ph.follow_rid, r))
 	var t: Vector3 = game.rig.target
 	check(Vector2(p.x - t.x, p.z - t.z).length() < 3.0 and game.rig.dist < 10.0, "камера рядом с жителем (%.1f м, даль %.1f)" % [Vector2(p.x - t.x, p.z - t.z).length(), game.rig.dist])
+	# житель — посередине кадра по высоте: камера смотрит ему в грудь, на какой бы высоте ни была земля
+	var vh: float = get_viewport().get_visible_rect().size.y
+	var chest: Vector2 = game.rig.cam.unproject_position(p + Vector3(0, 0.9, 0))
+	var head: Vector2 = game.rig.cam.unproject_position(p + Vector3(0, 1.7, 0))
+	var gy: float = maxf(1.0, game.land.height_at(t.x, t.z))
+	check(chest.y > vh * 0.3 and chest.y < vh * 0.7 and head.y > vh * 0.05 and absf(t.y - gy) < 0.3,
+		"житель в середине кадра: грудь на %.0f%%, голова на %.0f%% высоты; цель %.2f, земля %.2f" % [chest.y / vh * 100.0, head.y / vh * 100.0, t.y, gy])
 	ph.sl_time.value = 18.5
 	await frames(30)
 	var path: String = await ph.snap()
@@ -537,6 +763,8 @@ func _photo_owner() -> void:
 	key(KEY_P)
 	await frames(5)
 	check(not ph.on and hud.root.visible and is_equal_approx(game.look_hour, -1.0), "выход — всё как было")
+	check((game.rig._target_t as Vector3).is_equal_approx(t_0) and is_equal_approx(game.rig._dist_t, d_0),
+		"камера — туда, где была до фото, а не у жителя (цель %s, даль %.1f)" % [str(game.rig._target_t), game.rig._dist_t])
 
 
 func _clouds_owner() -> void:
@@ -605,7 +833,7 @@ func _clouds() -> void:
 	game.rig.set_view(Vector3(192, Land.BASE_Y, 140), 15, 42, 70)
 	game._set_hour(11.0)
 	await frames(120)
-	check(cl != null and cl.enabled and cl.visible and cl.tiles.size() == 9, "облака: 9 плиток, на «Высокой» включены")
+	check(cl != null and cl.enabled and cl.visible and cl.tiles.size() == Clouds.N * Clouds.N, "облака: %d плиток, на «Высокой» включены" % cl.tiles.size())
 	await shot("clouds_on.png")
 	cl.set_enabled(false)
 	await frames(30)
@@ -614,4 +842,17 @@ func _clouds() -> void:
 	game.rig.set_view(Vector3(192, Land.BASE_Y, 150), 25, 55, 130)
 	await frames(90)
 	await shot("clouds_far.png")
+	# низкая камера к горизонту: край теней — далеко, в дымке (не обрывается прямой линией)
+	game.rig.set_view(Vector3(192, Land.BASE_Y, 150), 200, 8, 60)
+	await frames(90)
+	await shot("clouds_low.png")
+	# для сравнения — как было (3×3: внешнее кольцо плиток спрятано)
+	for j in Clouds.N:
+		for i in Clouds.N:
+			if i == 0 or j == 0 or i == Clouds.N - 1 or j == Clouds.N - 1:
+				cl.tiles[j * Clouds.N + i].visible = false
+	await frames(10)
+	await shot("clouds_low_3x3.png")
+	for d: Decal in cl.tiles:
+		d.visible = true
 	game.hud.visible = true

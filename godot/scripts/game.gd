@@ -3580,6 +3580,7 @@ func _fence_commit() -> void:
 	if ids.is_empty():
 		sound.ui("error")
 		return
+	Chronicle.add(city, "decor" if String(d["kind"]) == "decor" else "built", ids.size())   # летопись: звенья забора — тоже украшения
 	city.compute()
 	city._check_goals()
 	city.changed.emit()
@@ -4003,9 +4004,12 @@ func _upg_lines(b: Dictionary, why0: String) -> Array:
 		var nt := city.upgrade_to(b)
 		var cap := int(Defs.CLASSES[String(Defs.B[nt]["cls"])]["per_floor"]) * city.upgrade_tier(b)
 		var tight := " · тесновато: %d жильцов, мест %d" % [int(b["pop"]), cap] if int(b["pop"]) > cap else ""
-		var clr := " · украшения позади уберём (вернётся %s ден.)" % hud.fmt(_upg_refund(b)) if _upg_refund(b) > 0 else ""
+		var back := _upg_refund(b)
+		var clr := " · украшения позади уберём (вернётся %s ден.)" % hud.fmt(back) if back > 0 else ""
+		# украшения снесут — и счастье без них (их очки и наборы уйдут)
+		var hp := city.upgrade_happy_without(b, city.upgrade_decor_blockers(b)) if back > 0 else city.upgrade_happy(b)
 		return ["Дом семьи %s → %s · %s ден. · счастье станет %d%%%s%s" % [city._fam_name(b), String(Defs.B[nt]["name"]).to_lower(), hud.fmt(price),
-			clampi(city.upgrade_happy(b), 0, 100), tight, clr], tot, ""]
+			clampi(hp, 0, 100), tight, clr], tot, ""]
 	return ["", tot, why]
 
 
@@ -5129,6 +5133,7 @@ func _undo_place(u: Dictionary) -> void:
 		if not city.buildings.has(id):
 			continue
 		var b: Dictionary = city.buildings[id]
+		Chronicle.add(city, "decor" if String(city.def(b)["kind"]) == "decor" else "built", -1)   # летопись: отменённая — не в счёт
 		for oid in city.buildings.keys():
 			if city.buildings.has(oid) and int(city.buildings[oid].get("host", -1)) == int(id):
 				city.remove(city.buildings[oid], true, true)     # украшения на её стенах — как при сносе
