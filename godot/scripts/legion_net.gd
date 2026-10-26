@@ -111,7 +111,8 @@ func pvp_opponents(cb: Callable) -> void:
 	if int(pr.get("status", 200)) == 0:
 		cb.call([], _err(pr))                       # связи нет — второй запрос не ждём, говорим сразу
 		return
-	var r := await _call(HTTPClient.METHOD_GET, "/pvp/opponents")
+	# hero=1: мы понимаем героя в отряде обороны (старым играм сервер отдаёт отряды без героя)
+	var r := await _call(HTTPClient.METHOD_GET, "/pvp/opponents?hero=1")
 	if r["status"] != 200:
 		cb.call([], _err(r))
 		return
@@ -141,7 +142,8 @@ func pvp_attack(opp: Dictionary, cb: Callable) -> void:
 		last_fail = {"title": "Итог прошлого боя ещё в пути", "text": wait, "short": wait, "code": ""}
 		cb.call({}, wait)
 		return
-	var r := await _call(HTTPClient.METHOD_POST, "/pvp/attack", {"target": String(opp.get("id", "")), "squad": attack_snapshot(lg)})
+	# hero: true — мы понимаем героя в отряде обороны соперника (старой игре сервер ставит соперника без героя)
+	var r := await _call(HTTPClient.METHOD_POST, "/pvp/attack", {"target": String(opp.get("id", "")), "squad": attack_snapshot(lg), "hero": true})
 	if r["status"] != 200:
 		if (r["data"] as Dictionary).get("me") is Dictionary:
 			_apply_me(r["data"]["me"])
@@ -244,12 +246,10 @@ func pvp_rename(nm: String, cb: Callable) -> void:
 		cb.call(""))
 
 
-## Отряд похода — тот, что пойдёт в бой (сервер сверит его с городом в облаке)
+## Отряд похода — тот, что пойдёт в бой (сервер сверит его с городом в облаке); герой — на первом месте, если сервер
+## его знает (Legion.pvp_hero)
 static func attack_snapshot(lg: Legion) -> Dictionary:
-	var sq := []
-	for s: Dictionary in lg.squad_stats():
-		sq.append({"type": String(s["key"]), "level": int(s["level"])})
-	return {"v": 1, "squad": sq, "perks": lg.open_perks(), "atk_b": lg.pvp_bonus("atk"), "hp_b": lg.pvp_bonus("hp")}
+	return lg.pvp_snapshot("pvp")
 
 
 # ---------- сам по себе ----------
@@ -308,6 +308,9 @@ func _publish(force: bool) -> Dictionary:
 	var r := await _call(HTTPClient.METHOD_PUT, "/pvp/defense", {"snapshot": snap, "city_level": int(snap.get("city_level", 0))})
 	if r["status"] == 200:
 		_pub_hash = h
+		if bool(r["data"].get("clamped", false)):
+			# сервер срезал отряд по облаку (оно отстаёт: новый уровень, герой ещё не там) — повторим через 10 минут, не через 6 часов
+			_pub_t = _now() - PUB_REFRESH + 600.0
 		_apply_me(r["data"].get("me", {}))
 	return r
 
@@ -380,6 +383,13 @@ func _apply_me(m: Dictionary, extra := 0) -> void:
 	me_state = m
 	_apply_name(String(m.get("name", "")))
 	var lg := _lg()
+	# сервер знает героя (me.hero) — герой и в боях с городами; узнали только что — отряд обороны выставим заново сразу
+	var hs := bool(m.get("hero", false))
+	if hs != Legion.pvp_hero_srv:
+		Legion.pvp_hero_srv = hs
+		_chk_t = -1.0e9
+		if lg != null:
+			lg.changed.emit()
 	if lg != null:
 		var before := [lg.pvp_rating, lg.pvp_wins, lg.pvp_losses, lg.pvp_charges]
 		lg.pvp_rating = int(m.get("rating", lg.pvp_rating))
@@ -484,6 +494,7 @@ func _check_account() -> void:
 	_state_t = -1.0e9
 	_retry = []
 	unsupported = false
+	Legion.pvp_hero_srv = false
 
 
 ## Итог боя с городом из 3D-боя — сразу по окончании (вдруг игру закроют на экране итога)

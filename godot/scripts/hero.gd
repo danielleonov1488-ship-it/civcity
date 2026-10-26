@@ -81,7 +81,7 @@ const PRESETS := [
 ]
 
 ## Снаряжение со Склада оружия (Д10: здание даёт снаряжение героя): ступень по уровню Склада (0 — Склада нет).
-## right/left — оружие Synty в руках бойца; броня и урон — только герою, только в походах
+## right/left — оружие Synty в руках бойца; броня и урон — только герою (в походах и в боях с городами: Legion.snap_hero)
 const KIT := [
 	{"lvl": 0, "n": "Гладиус и деревянный щит", "right": "SM_Wep_Sword_02", "left": "SM_Wep_Shield_03"},
 	{"lvl": 1, "n": "Гладиус и скутум легионера", "right": "SM_Wep_Sword_02", "left": "SM_Wep_Shield_04"},
@@ -392,6 +392,24 @@ static func battle_look(c: City, armory_lvl: int) -> Dictionary:
 	lk["right"] = k["right"]
 	lk["left"] = k["left"]
 	lk["sx"] = 1 if female(c) else 0
+	return lk
+
+
+## Облик чужого героя в бою с городом: облик из снимка обороны (сервер взял его из сохранения того города), приведённый
+## к правилам, и снаряжение по уровню его Склада оружия (kit снимка). Облика нет (сервер не прислал) — «Полководец»
+static func rival_look(e: Dictionary) -> Dictionary:
+	var src = e.get("look")
+	var lk: Dictionary = (src as Dictionary).duplicate() if src is Dictionary and not (src as Dictionary).is_empty() else (PRESETS[0]["look"] as Dictionary).duplicate()
+	var sx := 1 if int(lk.get("sx", 0)) == 1 else 0
+	for key in lk.keys():
+		var v = lk[key]
+		if not (v is String or v is int or v is float):
+			lk.erase(key)                                     # только строки и числа: облик пришёл по сети
+	fix_look(lk, sx)
+	var kt := kit_of(clampi(int(e.get("kit", 0)), 0, 10))
+	lk["right"] = kt["right"]
+	lk["left"] = kt["left"]
+	lk["sx"] = sx
 	return lk
 
 

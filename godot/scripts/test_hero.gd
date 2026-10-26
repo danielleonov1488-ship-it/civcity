@@ -2,16 +2,18 @@ extends Node
 ## Свой герой (решение владельца Д11, этап L.3 плана от 24.10).
 ##   bash .work/py/gpu_run.sh res://test_hero.tscn               — новый город: экран «Ваш герой» (наборы, «Случайный», имя),
 ##        герой на улицах (венок, плащ, свои прогулки), щелчок по нему на 34 м, медальон «Герой», карточка и «Гардероб»,
-##        вещи гардероба → колокольчик, Легион (своё место; бои с городами и снимки отряда — без героя), 3D-бой с героем
+##        вещи гардероба → колокольчик, Легион (своё место; в боях с городами — первым, если сервер знает героя, иначе без
+##        него; снимки отряда, числа как у сервера), 3D-бой с героем, бой с городом с героями с обеих сторон
 ##        (учебный бой с маслом), «Разбойники у арки» — его реплики (уличный герой в ролике спрятан), сохранение и загрузка;
 ##        постройка на герое и поперёк его пути, Казармы при нём — ночует в них, экран на «Низкой», боец под медальоном
 ##        героя не в счёт советов и шансов; в конце «HERO DONE fails=0»
 ##   … -- mode=owner   — копия города владельца: герой создаётся один раз, экран с «Позже»; после «Позже» — случайный герой,
 ##        после загрузки — тот же, экран больше не открывается; город владельца цел
-## Снимки — .work/gd/a/hero_*.png
+## Снимки — .work/gd/a/hero_*.png (бои с городами — .work/gd/c/hero_pvp_*.png)
 
 const OWNER := "D:/CivCity/.work/owner_save/city.json"
 const SHOTS := "D:/CivCity/.work/gd/a/"
+const SHOTS_PVP := "D:/CivCity/.work/gd/c/"
 var game
 var c: City
 var ppl: People
@@ -71,12 +73,12 @@ func check(ok: bool, what: String, extra = null) -> bool:
 	return ok
 
 
-func shot(name: String) -> void:
+func shot(name: String, dir := SHOTS) -> void:
 	if hud != null and hud.advisor_panel != null:
 		hud.advisor_panel.visible = false
 	await frames(8)
-	DirAccess.make_dir_recursive_absolute(SHOTS)
-	get_viewport().get_texture().get_image().save_png(SHOTS + name)
+	DirAccess.make_dir_recursive_absolute(dir)
+	get_viewport().get_texture().get_image().save_png(dir + name)
 	print("SHOT ", name)
 
 
@@ -183,6 +185,7 @@ func _new() -> void:
 	await _legion_test()
 	await _story_shot()
 	await _battle_test()
+	await _pvp_test()
 	_story_test()
 	await _save_load_test()
 
@@ -547,7 +550,8 @@ func _texts(n: Node) -> String:
 	return s
 
 
-## Легион: герой — на своём месте впереди отряда в походах; в боях с городами и в снимке отряда обороны — без него
+## Легион: герой — на своём месте впереди отряда в походах; в боях с городами — пока сервер боёв его не знает (старый
+## сервер: Legion.pvp_hero_srv выключен) — без него, как раньше (_pvp_test — с ним)
 func _legion_test() -> void:
 	var lg: Legion = c.legion
 	check(not lg.hero_ready(), "Легион не открыт — героя в отряде нет")
@@ -562,11 +566,14 @@ func _legion_test() -> void:
 	check(not bs.is_empty() and String(bs[0]["key"]) == "hero" and bs.size() == lg.squad_stats().size() and String(bs[0]["name"]) == "Гай Валерий",
 		"в поход: герой — на первом месте отряда (своё место), остальные места — бойцы", bs.map(func(x): return x["key"]))
 	check(not lg.squad_stats().any(func(x): return String(x["key"]) == "hero") and not lg.squad_stats("pvp").any(func(x): return String(x["key"]) == "hero"),
-		"отряд для боёв с городами — без героя (Legion.HERO_PVP выключен)")
+		"отряд для боёв с городами — без героя (старый сервер: Legion.pvp_hero_srv выключен)")
+	Legion.pvp_hero_srv = false
+	check(Legion.HERO_PVP and not lg.pvp_hero(), "старый сервер боёв (без me.hero) — герой в боях с городами не участвует")
 	var snap := lg.defense_snapshot()
-	check(not (snap["squad"] as Array).any(func(x): return String(x.get("type", "")) == "hero"), "снимок отряда обороны на сервер — без героя")
+	check(not (snap["squad"] as Array).any(func(x): return String(x.get("type", "")) == "hero"), "старый сервер: снимок отряда обороны — без героя")
+	check(not (LegionNet.attack_snapshot(lg)["squad"] as Array).any(func(x): return String(x.get("type", "")) == "hero"), "старый сервер: отряд нападения — без героя")
 	var pv := lg.make_pvp_battle({"name": "Проба", "rating": 0, "city_level": 3, "snapshot": snap}, 5)
-	check(not (pv["squad"] as Array).any(func(x): return String(x["key"]) == "hero") and not pv.has("hero_look"), "бой с городом — без героя")
+	check(not (pv["squad"] as Array).any(func(x): return String(x["key"]) == "hero") and not pv.has("hero_look"), "старый сервер: бой с городом — без героя")
 	var st := lg.stage_info(0, 0, 0)
 	var setup := lg.make_battle(st, 7)
 	check(String(setup["squad"][0]["key"]) == "hero" and setup.has("hero_look") and String(setup.get("tutorial", "")) == "oil", "учебный бой: герой в отряде, его облик — в бою")
@@ -651,6 +658,125 @@ func _battle_test() -> void:
 	await shot("hero_battle_result.png")
 	battle._close()
 	await frames(60)
+
+
+## Бои с городами с героем (сервер знает героя: Legion.pvp_hero_srv): отряды нападения и обороны — герой первым (уровень
+## Казарм, город, Склад оружия), числа — как у сервера (server/test_pvp.js: те же 150 / 379 / 717); вкладка «Против городов»
+## — герой в отряде обороны, у соперника — его герой; 3D-бой с городом: наш герой и герой соперника, каждый в своём облике;
+## советник говорит об этом один раз
+func _pvp_test() -> void:
+	var lg: Legion = c.legion
+	check(Legion.power(Legion.snap_hero({"level": 1}, 0.0, 0.0)) == 150 and Legion.power(Legion.snap_hero({"level": 6, "city": 5, "kit": 5}, 0.0, 0.0)) == 379
+		and Legion.power(Legion.snap_hero({"level": 12, "city": 7, "kit": 10}, 0.15, 0.1)) == 717, "числа героя в бою с городом — как у сервера (150, 379, 717)")
+	var lv0: int = c.level
+	c.level = 3                                       # бои с городами — с «Посёлка»
+	Legion.pvp_hero_srv = true
+	check(lg.pvp_hero(), "сервер знает героя — герой и в боях с городами")
+	var att := LegionNet.attack_snapshot(lg)
+	var sq: Array = att["squad"]
+	var he: Dictionary = sq[0] if not sq.is_empty() else {}
+	check(String(he.get("type", "")) == "hero" and int(he["level"]) == lg.hero_level() and int(he["city"]) == 3 and int(he["kit"]) == lg.hero_kit_level()
+		and sq.size() == lg.squad_stats().size() and String(he["name"]) == Hero.name_of(c), "отряд нападения: герой первым (Казармы, город, Склад оружия), вместо бойца первого места", sq)
+	var dsn := lg.defense_snapshot()
+	check(String(((dsn["squad"] as Array)[0] as Dictionary).get("type", "")) == "hero" and int(dsn["power"]) == Legion.snapshot_power(dsn)
+		and lg.squad_power("defense") == int(dsn["power"]) and lg.squad_power("pvp") == Legion.snapshot_power(att), "отряд обороны: герой первым, сила — с ним (как посчитает сервер)", dsn)
+	check(Legion.snapshot_stats({"squad": [{"type": "legionary", "level": 2}, he]}).size() == 1, "герой не на первом месте — не в счёт (как на сервере)")
+	var rival := {"v": 1, "squad": [{"type": "hero", "level": 2, "city": 3, "kit": 1, "name": "Марк Туллий", "look": {"sx": 0, "mdl": "SK_Chr_Worker_Male_01",
+		"skin": "C", "hair": 6, "beard": 2, "hc": "S", "main": "4d7397", "second": "e3d8c3", "cape": "b0202e", "crown": 2}},
+		{"type": "legionary", "level": 1}, {"type": "archer", "level": 1}], "perks": {"oil": 1}}
+	var opp := {"name": "Тускулум", "rating": 120, "city_level": 4, "snapshot": rival, "power": Legion.snapshot_power(rival)}
+	var ps := lg.make_pvp_battle(opp, 11)
+	var foe0: Dictionary = (ps["waves"][0] as Array)[0]
+	check(String(ps["squad"][0]["key"]) == "hero" and ps.has("hero_look") and String(foe0["key"]) == "hero" and String(foe0["name"]) == "Марк Туллий"
+		and String(ps["enemy_hero_look"]["cape"]) == "b0202e" and String(ps["enemy_hero_look"]["right"]) == String(Hero.kit_of(1)["right"]),
+		"бой с городом: наш герой и герой соперника (его облик и снаряжение)", [ps["squad"].map(func(x): return x["key"]), foe0.get("name"), ps.get("enemy_hero_look")])
+	# сервер ещё без героя в облаке: вернул отряд нападения без него — воюем им, героя в бою нет
+	var ps2 := lg.make_pvp_battle({"name": "Проба", "rating": 0, "city_level": 3, "snapshot": rival, "attack": {"v": 1, "squad": [{"type": "legionary", "level": 1}]}}, 3)
+	check((ps2["squad"] as Array).size() == 1 and String(ps2["squad"][0]["key"]) == "legionary" and not ps2.has("hero_look"), "сервер вернул отряд без героя — бой без него")
+	# сервер без героя (старый, откатили), а в снимке соперника герой остался: сервер повторит бой без него — и игра так же
+	Legion.pvp_hero_srv = false
+	var ps3 := lg.make_pvp_battle(opp, 11)
+	check(not (ps3["waves"][0] as Array).any(func(x): return String(x["key"]) == "hero") and not ps3.has("enemy_hero_look") and not ps3.has("hero_look"),
+		"сервер героя не знает — герой соперника в бой не идёт (как в повторе старого сервера)")
+	Legion.pvp_hero_srv = true
+	# советник — один раз
+	var fl0: Dictionary = lg.flags.duplicate()
+	for k: String in Legion.SUPPORT:
+		lg.flags["new_" + k] = true
+	lg.flags.erase("d10_new")
+	var ui := LegionUi.of(hud)
+	hud.advisor_panel.visible = false
+	ui._d10_tips()
+	check(hud.advisor_panel.visible and hud.adv_title.text == "Герой в боях с городами" and hud.adv_text.text.contains(Hero.name_of(c)), "советник один раз: «Герой в боях с городами»", hud.adv_title.text)
+	hud.advisor_panel.visible = false
+	ui._d10_tips()
+	check(not hud.advisor_panel.visible, "второй раз советник о герое в боях не говорит")
+	lg.flags = fl0
+	lg.flags["tip_hero_pvp"] = true
+	# окно «Легион»: «Войска» — герой без медальона «боец для боёв с городами»; «Против городов» — герой в отряде обороны,
+	# у соперника — его герой
+	var net := FakePvpNet.new()
+	net.list = [opp.merged({"id": "t1", "bot": false})]
+	ui._net_obj = net
+	ui._net_checked = true
+	ui.open("troops")
+	await frames(20)
+	var hsl := ui.find_children("hero_slot", "", true, false)
+	check(not hsl.is_empty() and ui.find_children("pvp_slot", "", true, false).is_empty()
+		and String(((hsl[0] as Control).get_child(0) as Control).tooltip_text).contains("в боях с городами"), "«Войска»: герой — первый и в боях с городами (бойца в углу нет)")
+	ui._select_tab("pvp")
+	await frames(30)
+	check(not ui.find_children("hero_slot", "", true, false).is_empty() and not ui.find_children("rival_hero", "", true, false).is_empty(),
+		"«Против городов»: герой — в отряде обороны, у соперника виден его герой")
+	await shot("hero_pvp_squad.png", SHOTS_PVP)
+	ui.close()
+	ui._net_obj = null
+	ui._net_checked = false
+	# 3D-бой с городом: оба героя — в своих обликах, с плащами; бой доходит до итога
+	lg.flags["battle_speed"] = 3.0
+	lg.flags["battle_auto"] = true
+	check(lg.pvp_can_attack() == "", "нападать можно", lg.pvp_can_attack())
+	lg.start_pvp_battle(opp)
+	await frames(3)
+	var battle: LegionBattle = LegionBattle.current
+	if check(battle != null and battle.pvp, "3D-бой с городом открылся"):
+		var shot_done := false
+		var t0 := Time.get_ticks_msec()
+		while battle.phase != "result" and (Time.get_ticks_msec() - t0) < 150000:
+			await frames(1)
+			if battle.sim == null:
+				continue
+			if not shot_done and battle.sim.t > 4.5:
+				shot_done = true
+				var hv := []
+				for id in battle.views:
+					var u: LegionSim.Unit = battle.views[id]["u"]
+					if u.key == "hero":
+						hv.append([u.side, (battle.views[id]["f"] as LegionFighter)._cape_sk != null, u.name])
+				check(hv.size() == 2 and hv.all(func(x): return x[1]) and hv.any(func(x): return x[0] == "enemy" and x[2] == "Марк Туллий"),
+					"в бою — наш герой и герой соперника, оба с плащами", hv)
+				await shot("hero_pvp_battle.png", SHOTS_PVP)
+		check(battle.phase == "result", "бой с городом с героями дошёл до итога", battle.phase)
+		await frames(40)
+		await shot("hero_pvp_result.png", SHOTS_PVP)
+		battle._close()
+		await frames(60)
+	c.level = lv0
+	Legion.pvp_hero_srv = false
+
+
+## Сеть боёв с городами для проверки окна (то, что окно спрашивает у LegionNet)
+class FakePvpNet extends RefCounted:
+	var list := []
+
+	func pvp_ready() -> bool:
+		return true
+
+	func pvp_opponents(cb: Callable) -> void:
+		cb.call(list, "")
+
+	func pvp_report(_setup: Dictionary, _out: Dictionary) -> void:
+		pass
 
 
 ## Ролик «Разбойники у арки» (шаг «Казармы готовы»): герой встаёт рядом с переселенцем и говорит — снимок

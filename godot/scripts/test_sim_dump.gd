@@ -4,7 +4,8 @@ extends SceneTree
 ## node server/test_sim.js повторяет каждый на server/legion_sim.js и сравнивает итог до бита.
 ##   Godot_console --headless --path godot --script res://scripts/test_sim_dump.gd -- n=300 out=D:/CivCity/.work/sim_dump.json
 ##   node server/test_sim.js D:/CivCity/.work/sim_dump.json
-## (seed=N — другой набор случайных боёв)
+## (seed=N — другой набор случайных боёв). В части отрядов — свой герой (Д11) на первом месте (уровень, город, Склад оружия,
+## имя и облик, как их кладёт сервер), изредка — «герой» не на первом месте (его обе стороны не берут в бой)
 ## Без графики, замок видеокарты не нужен.
 
 const TYPES := ["legionary", "spearman", "archer", "ballista", "catapult"]
@@ -25,14 +26,18 @@ func _initialize() -> void:
 	var r := RandomNumberGenerator.new()
 	r.seed = rs
 	var lg := Legion.new()
+	Legion.pvp_hero_srv = true                 # сервер знает героя (иначе игра убирает героев из отряда соперника)
 	var list := []
 	var wins := 0
+	var heroes := 0
 	for i in n:
 		var att := _snap(r)
 		var def := _snap(r)
 		var sd := r.randi_range(1, 0xfffffe)
-		var opp := {"name": "Проба", "rating": 0, "city_level": 6, "snapshot": def, "attack": att, "seed": sd}
+		# отряды — как их получает игра от сервера: через JSON (числа — дробные, облик героя — словарь)
+		var opp := {"name": "Проба", "rating": 0, "city_level": 6, "snapshot": JSON.parse_string(JSON.stringify(def)), "attack": JSON.parse_string(JSON.stringify(att)), "seed": sd}
 		var setup := lg.make_pvp_battle(opp)
+		heroes += int(not Legion.snap_hero_entry(att).is_empty()) + int(not Legion.snap_hero_entry(def).is_empty())
 		var sim := LegionSim.new(setup)
 		# «игрок»: «Авто» с начала в части боёв; умения — в случайные шаги (часть нажатий не срабатывает — так и в игре)
 		if r.randf() < 0.3:
@@ -53,7 +58,7 @@ func _initialize() -> void:
 	var f := FileAccess.open(out_path, FileAccess.WRITE)
 	f.store_string(JSON.stringify(list))
 	f.close()
-	print("SIMDUMP %d боёв (побед нападающего %d) → %s" % [n, wins, out_path])
+	print("SIMDUMP %d боёв (побед нападающего %d, отрядов с героем %d) → %s" % [n, wins, heroes, out_path])
 	quit()
 
 
@@ -63,6 +68,17 @@ func _snap(r: RandomNumberGenerator) -> Dictionary:
 	var base := r.randi_range(1, 30)
 	for i in r.randi_range(1, 7):
 		sq.append({"type": TYPES[r.randi_range(0, TYPES.size() - 1)], "level": clampi(base + r.randi_range(-3, 3), 1, 40)})
+	var hk := r.randf()
+	if hk < 0.45:
+		# свой герой на первом месте (вместо бойца этого места)
+		var h := {"type": "hero", "level": clampi(base + r.randi_range(-2, 2), 1, 40), "city": r.randi_range(0, 7), "kit": r.randi_range(0, 10),
+			"name": "Гай Валерий", "look": {"sx": 0, "mdl": "SK_Chr_Upperclass_Male_01", "skin": "B", "hair": 3, "main": "a3283a", "cape": "2f5585"}}
+		if sq.size() >= 2:
+			sq[0] = h
+		else:
+			sq.push_front(h)
+	elif hk < 0.5:
+		sq.insert(mini(1, sq.size()), {"type": "hero", "level": 30, "city": 7, "kit": 10})   # не на первом месте — не в счёт
 	var perks := {}
 	for p in Legion.PERK_IDS:
 		if r.randf() < 0.5:

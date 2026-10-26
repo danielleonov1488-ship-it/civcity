@@ -239,6 +239,10 @@ func _d10_tips() -> void:
 			hud.advisor("Новое здание Легиона: %s" % Defs.B[bt]["name"], "%s%s\n\nПоставьте его — раздел «Легион» на нижней полосе, лучше всего в военном квартале у арки. Улучшения — в карточке здания." % [
 				Defs.B[bt]["desc"], (" Уровень «в запасе»: %d — здание сразу будет таким." % r) if r > 0 else ""])
 			return
+	# герой и в боях с городами (сервер боёв его знает) — сказать один раз, когда бои с городами открыты
+	if lg.pvp_hero() and lg.pvp_open() and not lg.flags.has("tip_hero_pvp"):
+		lg.flags["tip_hero_pvp"] = true
+		hud.advisor("Герой в боях с городами", "%s теперь сражается и в боях с другими городами: идёт первым в отряде нападения и стоит первым в отряде обороны — как в походах. Уровень героя растёт с Казармами и городом, снаряжение — со Складом оружия.\n\nУ соперников тоже бывают свои герои — их видно по имени над головой." % Hero.name_of(c))
 
 
 func toggle() -> void:
@@ -1958,10 +1962,11 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 	row.add_theme_constant_override("separation", 6)
 	var src: Array = lg.squad if which == "campaign" or lg.defense.is_empty() else lg.defense
 	var n := lg.slots()
-	var hero := which == "campaign" and lg.hero_ready()
+	# свой герой (Д11): первое место отряда в походах — его; в отряде обороны — тоже, когда сервер боёв знает героя
+	var hero: bool = lg.hero_ready() if which == "campaign" else lg.pvp_hero()
 	for i in Legion.SQUAD_MAX:
 		if i == 0 and hero:
-			row.add_child(_hero_slot(sz, true, true))   # свой герой (Д11): первое место отряда в походах — его
+			row.add_child(_hero_slot(sz, true, which == "campaign"))
 			continue
 		var holder := Control.new()
 		holder.custom_minimum_size = Vector2(sz, sz)
@@ -2008,7 +2013,8 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 
 
 ## Место героя в отряде: его лицо (с медальона «Герой») в золотом медальоне, уровень; заменить его нельзя.
-## В боях с городами героя пока нет (Legion.HERO_PVP) — его место только в походах
+## В боях с городами он тоже первый, когда сервер боёв его знает (Legion.pvp_hero); иначе там на его месте — боец
+## этого места (маленький медальон в углу, выбирается)
 func _hero_slot(sz: float, big := true, edit := false) -> Control:
 	var holder := Control.new()
 	holder.name = "hero_slot"
@@ -2019,11 +2025,19 @@ func _hero_slot(sz: float, big := true, edit := false) -> Control:
 	face.mouse_filter = Control.MOUSE_FILTER_PASS
 	var hs := lg.hero_stats()
 	var pvp_t := String(lg.squad[0]) if not lg.squad.is_empty() else ""
-	face.tooltip_text = "%s — ваш герой: первое место отряда в походах, %d уровень (растёт с Казармами, городом и Складом оружия)
+	var pv := lg.pvp_hero()
+	var pvl := ""
+	if pv:
+		# в боях с городами — без Кузницы и общей брони Склада (сервер их пока не знает): свои числа
+		var ps := Legion.snap_hero(lg.hero_entry(), lg.pvp_bonus("atk"), lg.pvp_bonus("hp"))
+		pvl = "В боях с городами он тоже впереди: здоровье %d, урон %d, броня %d" % [int(ps["hp"]), int(ps["atk"]), roundi(float(ps["armor"]))]
+	else:
+		pvl = "В боях с городами герой пока не участвует" + ((" — там на этом месте %s" % String(Legion.UNITS[pvp_t]["name"]).to_lower()) if Legion.UNITS.has(pvp_t) else "")
+	face.tooltip_text = "%s — ваш герой: первое место отряда %s, %d уровень (растёт с Казармами, городом и Складом оружия)
 Здоровье %d, урон %d, броня %d · %s
-В боях с городами герой пока не участвует%s" % [
-		Hero.name_of(game.city), int(hs["level"]), int(hs["hp"]), int(hs["atk"]), roundi(float(hs["armor"])), String(Hero.kit_of(lg.hero_kit_level())["n"]).to_lower(),
-		(" — там на этом месте %s" % String(Legion.UNITS[pvp_t]["name"]).to_lower()) if Legion.UNITS.has(pvp_t) else ""]
+%s" % [
+		Hero.name_of(game.city), "в походах и в боях с городами" if pv else "в походах", int(hs["level"]), int(hs["hp"]), int(hs["atk"]), roundi(float(hs["armor"])),
+		String(Hero.kit_of(lg.hero_kit_level())["n"]).to_lower(), pvl]
 	var tex: Texture2D = null
 	var hb: Button = hud.get("hero_btn")
 	if hb != null and hb.get_node_or_null("ic") != null and (hb.get_node("ic") as TextureRect).material != null:
@@ -2044,8 +2058,8 @@ func _hero_slot(sz: float, big := true, edit := false) -> Control:
 	face.add_child(tr)
 	holder.add_child(face)
 	_badge(holder, str(int(hs["level"])), Vector2(1, 1), 13 if big else 12)
-	if edit and not Legion.HERO_PVP:
-		# боец этого места в боях с городами (там героя пока нет): маленький медальон в углу — щелчок, выбрать другого
+	if edit and not pv:
+		# боец этого места в боях с городами (сервер боёв героя не знает): маленький медальон в углу — щелчок, выбрать другого
 		var cs := roundf(sz * 0.42)
 		var cf: Control
 		if Legion.UNITS.has(pvp_t):

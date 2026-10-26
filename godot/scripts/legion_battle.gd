@@ -745,6 +745,8 @@ func _prewarm() -> void:
 	for i in range(1 if not bool(setup.get("enemy_formation", false)) else 0, waves.size()):
 		for st: Dictionary in waves[i]:
 			var k := String(st["key"])
+			if k == "hero":
+				continue                              # чужой герой (бой с городом) — свой облик, его собирает _view
 			need[k] = int(need.get(k, 0)) + 1
 	# шайка атамана: на три созыва вперёд
 	for w: Array in waves:
@@ -769,8 +771,13 @@ func _view(u: LegionSim.Unit) -> Dictionary:
 	var list: Array = _pool.get(u.key, []) if u.side == "enemy" else []
 	if not list.is_empty():
 		f = list.pop_back()
-	elif u.key == "hero" and u.side == "ally" and setup.has("hero_look"):
-		f = LegionFighter.create_hero(setup["hero_look"], u.size * 1.08, _seed + u.id * 7919)   # свой герой (Д11): его лицо, цвета, плащ, снаряжение; чуть крупнее
+	elif u.key == "hero":
+		# свой герой (Д11): его лицо, цвета, плащ, снаряжение; чуть крупнее. Чужой (бой с городом) — в облике из его
+		# сохранения (enemy_hero_look); облика нет — «Полководец»
+		var lk: Dictionary = setup.get("hero_look" if u.side == "ally" else "enemy_hero_look", {})
+		if lk.is_empty():
+			lk = Hero.rival_look({})
+		f = LegionFighter.create_hero(lk, u.size * 1.08, _seed + u.id * 7919)
 		world.add_child(f)
 	else:
 		f = LegionFighter.create(u.key, u.size, _seed + u.id * 7919, u.side == "enemy" and Legion.UNITS.has(u.key))

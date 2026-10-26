@@ -33,7 +33,8 @@ extends RefCounted
 ##   чудеса:   WONDERS, wonder_state(id) built|open|locked, wonder_cost(id), can_build_wonder(id), build_wonder(id)
 ##             (чудеса-постройки ставит игрок: game.set_tool(w.building), Слава спишется в City.place)
 ##   город:    glory, rating, triumph()/can_triumph(), city_happy()
-##   города:   pvp_rating, pvp_charges_now(), pvp_next_charge(), pvp_can_attack(), defense_snapshot() (на сервер),
+##   города:   pvp_rating, pvp_charges_now(), pvp_next_charge(), pvp_can_attack(), defense_snapshot() / pvp_snapshot() (на сервер;
+##             герой — на первом месте, когда pvp_hero()),
 ##             make_pvp_battle({name, rating, city_level, snapshot[, battle, seed, stakes, reward]}) → LegionSim →
 ##             apply_pvp_result(setup, result), pvp_defense([{name, win, delta, t[, glory]}]) — итоги нападений на нас,
 ##             pvp_log. Сеть (сервер /api/pvp, рейтинг и заряды с сервера) — LegionNet (legion_net.gd)
@@ -699,6 +700,8 @@ func squad_stats(which := "campaign") -> Array:
 
 
 func squad_power(which := "campaign") -> int:
+	if which != "campaign":
+		return snapshot_power(pvp_snapshot(which))   # бой с городом — как его посчитает сервер (с героем, если он там есть)
 	var p := 0
 	for s: Dictionary in squad_stats(which):
 		p += power(s)
@@ -720,9 +723,17 @@ func squad_power(which := "campaign") -> int:
 const HERO := {"name": "Герой", "hp": 285, "atk": 23, "armor": 34, "range": 1.0, "rate": 1.0, "speed": 1.7,
 	"vs": {"human": 1.3}, "tags": ["human"]}
 const HERO_CITY := 0.03
-## Герой в боях с городами — только когда сервер (server/legion_sim.js, server/pvp.js) повторяет бой с ним и владелец сказал
-## «да» выкладке. Пока false: снимки отряда, бой с городом и оборона — без героя (squad_stats его не знает), он — в походах
-const HERO_PVP := false
+## Герой в боях с городами: первое место отряда нападения и отряда обороны (как в походах), если сервер его знает.
+## В снимке отряда он — {type: "hero", level: Казармы, city: уровень города, kit: уровень Склада оружия}; числа бойца —
+## snap_hero (без Кузницы и общей брони Склада, пока PVP_MODS выключен); сервер (server/pvp.js) сверяет их с сохранением
+## в облаке и повторяет бой с ним (server/legion_sim.js — та же формула). false — герой только в походах, как раньше
+const HERO_PVP := true
+## Сервер боёв с городами знает героя: в его ответах me.hero (server/pvp.js с героем; ставит LegionNet). Старый сервер —
+## без героя, как раньше: на первом месте в боях с городами — боец этого места
+static var pvp_hero_srv := false
+## Ступеней уровня города и Склада оружия, которые знает герой в снимке (как CITY_MAX, KIT_MAX в server/legion_sim.js)
+const HERO_CITY_MAX := 7
+const HERO_KIT_MAX := 10
 
 
 ## Герой в походах: в городе есть свой герой и Легион открыт (проверки без города — без героя: баланс посчитан без него)
@@ -760,8 +771,31 @@ func hero_stats() -> Dictionary:
 	return s
 
 
+## Герой и в боях с городами: он есть, HERO_PVP включён и сервер его знает (pvp_hero_srv)
+func pvp_hero() -> bool:
+	return HERO_PVP and pvp_hero_srv and hero_ready()
+
+
+## Герой в снимке отряда для сервера: уровень (Казармы), уровень города, уровень Склада оружия (его снаряжение); имя —
+## для боя без сервера (сервер имя и облик берёт из сохранения в облаке, не отсюда)
+func hero_entry() -> Dictionary:
+	return {"type": "hero", "level": hero_level(), "city": clampi(city_level(), 0, HERO_CITY_MAX), "kit": clampi(hero_kit_level(), 0, HERO_KIT_MAX),
+		"name": Hero.name_of(city())}
+
+
+## Боец-герой из снимка отряда (бой с городом): числа — из уровней снимка и бонусов чудес снимка, без брони Склада
+## (сервер считает так же: server/legion_sim.js heroStats); имя — из снимка (его прислал сервер из сохранения героя)
+static func snap_hero(e: Dictionary, atk_b: float, hp_b: float) -> Dictionary:
+	var s := hero_unit_stats(clampi(int(e.get("level", 1)), 1, MAX_LEVEL), clampi(int(e.get("city", 0)), 0, HERO_CITY_MAX),
+		clampi(int(e.get("kit", 0)), 0, HERO_KIT_MAX), atk_b, hp_b, 0.0)
+	var nm := String(e.get("name", "")) if e.get("name") is String else ""
+	if nm != "":
+		s["name"] = nm
+	return s
+
+
 ## Отряд в поход: на первом месте — герой (вместо бойца этого места), дальше — бойцы остальных мест. Бои с городами и
-## оборона — squad_stats: все места как были (на первом — его боец), без героя, пока HERO_PVP выключен (сервер его не знает)
+## оборона — pvp_entries: так же, когда сервер знает героя (pvp_hero), иначе все места как были (на первом — его боец)
 func battle_squad() -> Array:
 	if not hero_ready():
 		return squad_stats()
@@ -2119,14 +2153,31 @@ func pvp_can_attack() -> String:
 
 ## Снимок отряда обороны для сервера (его увидят нападающие). Только числа — без имён и денег
 func defense_snapshot() -> Dictionary:
+	var s := pvp_snapshot("defense")
+	s["power"] = snapshot_power(s)
+	s["rating"] = pvp_rating
+	s["city_level"] = city_level()
+	return s
+
+
+## Места отряда для боя с городом (снимок для сервера): which "pvp" — отряд нападения (отряд походов), "defense" — отряд
+## обороны ([] — как отряд походов). Герой (pvp_hero) — на первом месте вместо бойца этого места, как в походах
+func pvp_entries(which := "pvp") -> Array:
 	var sq := []
-	var src: Array = defense if not defense.is_empty() else squad
-	for i in mini(slots(), src.size()):
+	var src: Array = defense if which == "defense" and not defense.is_empty() else squad
+	var hero := pvp_hero()
+	if hero:
+		sq.append(hero_entry())
+	for i in range(1 if hero else 0, mini(slots(), src.size())):
 		var t: String = src[i]
 		if t != "" and UNITS.has(t) and available(t):
 			sq.append({"type": t, "level": int(levels.get(t, 1))})
-	return {"v": 1, "squad": sq, "perks": open_perks(), "atk_b": pvp_bonus("atk"), "hp_b": pvp_bonus("hp"),
-		"power": squad_power("defense"), "rating": pvp_rating, "city_level": city_level()}
+	return sq
+
+
+## Снимок отряда для сервера: места (pvp_entries), умения и бонусы чудес, которые знает сервер
+func pvp_snapshot(which := "pvp") -> Dictionary:
+	return {"v": 1, "squad": pvp_entries(which), "perks": open_perks(), "atk_b": pvp_bonus("atk"), "hp_b": pvp_bonus("hp")}
 
 
 ## Бонус урона или здоровья ("atk" | "hp"), который знает сервер боёв с городами: чудеса (и Кузница — когда PVP_MODS)
@@ -2134,12 +2185,11 @@ func pvp_bonus(key: String) -> float:
 	return bonus(key) + (forge_b() if PVP_MODS else 0.0)
 
 
-## Сила снимка соперника (для подбора и окна)
+## Сила снимка соперника (для подбора и окна; герой — тоже)
 static func snapshot_power(snap: Dictionary) -> int:
 	var p := 0
-	for e: Dictionary in snap.get("squad", []):
-		if UNITS.has(String(e.get("type", ""))):
-			p += power(unit_stats(String(e["type"]), clampi(int(e.get("level", 1)), 1, MAX_LEVEL), float(snap.get("atk_b", 0.0)), float(snap.get("hp_b", 0.0))))
+	for s: Dictionary in snapshot_stats(snap):
+		p += power(s)
 	return p
 
 
@@ -2149,28 +2199,70 @@ static func snapshot_power(snap: Dictionary) -> int:
 ## повторит бой с тем же зерном и нашими нажатиями (server/legion_sim.js) и засчитает итог повтора
 func make_pvp_battle(opp: Dictionary, seed_v := -1) -> Dictionary:
 	var snap: Dictionary = opp.get("snapshot", {})
+	if not pvp_hero_srv:
+		snap = no_hero(snap)                      # сервер без героя (старый, откатили) повторит бой без него — и мы так же
 	var foes := snapshot_stats(snap)
 	var ep := snapshot_perks(snap)
 	var att = opp.get("attack")
-	var mine: Array = snapshot_stats(att) if att is Dictionary else squad_stats("pvp")
-	var ap: Dictionary = snapshot_perks(att) if att is Dictionary else open_perks()
+	var own: Dictionary = att if att is Dictionary else pvp_snapshot("pvp")
+	var mine: Array = snapshot_stats(own)
+	var ap: Dictionary = snapshot_perks(own)
 	if seed_v < 0:
 		seed_v = int(opp.get("seed", -1))           # зерно боя выдал сервер (LegionNet.pvp_attack)
 	if seed_v < 0:
 		seed_v = (int(now() * 1000.0) & 0xffffff) + 1
-	return {"kind": "pvp", "opponent": opp, "squad": mine, "waves": [foes], "perks": ap, "enemy_perks": ep,
+	var s := {"kind": "pvp", "opponent": opp, "squad": mine, "waves": [foes], "perks": ap, "enemy_perks": ep,
 		"enemy_auto": true, "enemy_formation": true, "seed": seed_v}
+	# герои в 3D-бою: наш — в своём облике (из города), чужой — в облике из его сохранения (снимок прислал сервер);
+	# на бой (LegionSim) облик не влияет. Сервер героя не принял (облако ещё без него) — героя в бою нет
+	var hk := snap_hero_entry(own)
+	var c = city()
+	if not hk.is_empty() and c != null and c.get("hero") != null and Hero.exists(c):
+		s["hero_look"] = Hero.battle_look(c, clampi(int(hk.get("kit", 0)), 0, HERO_KIT_MAX))
+	var ek := snap_hero_entry(snap)
+	if not ek.is_empty():
+		s["enemy_hero_look"] = Hero.rival_look(ek)
+	return s
 
 
-## Бойцы снимка отряда (свой отряд с сервера или отряд обороны соперника) — так же считает server/legion_sim.js
+## Снимок без героя (как noHero в server/pvp.js)
+static func no_hero(snap: Dictionary) -> Dictionary:
+	if not (snap.get("squad") is Array) or not (snap["squad"] as Array).any(func(e): return e is Dictionary and String(e.get("type", "")) == "hero"):
+		return snap
+	var out := snap.duplicate()
+	out["squad"] = (snap["squad"] as Array).filter(func(e): return not (e is Dictionary and String(e.get("type", "")) == "hero"))
+	return out
+
+
+## Герой снимка отряда ({} — героя нет): только первое место (так же server/legion_sim.js и server/pvp.js)
+static func snap_hero_entry(snap) -> Dictionary:
+	if not (snap is Dictionary) or not ((snap as Dictionary).get("squad") is Array):
+		return {}
+	var list: Array = snap["squad"]
+	if list.is_empty() or not (list[0] is Dictionary) or String((list[0] as Dictionary).get("type", "")) != "hero":
+		return {}
+	return list[0]
+
+
+## Бойцы снимка отряда (свой отряд с сервера или отряд обороны соперника) — так же считает server/legion_sim.js.
+## Герой — только на первом месте (на других местах не в счёт)
 static func snapshot_stats(snap: Dictionary) -> Array:
 	var out := []
-	for e in snap.get("squad", []):
+	var list = snap.get("squad", [])
+	if not (list is Array):
+		return out
+	var ab := clampf(float(snap.get("atk_b", 0.0)), 0.0, 0.6)
+	var hb := clampf(float(snap.get("hp_b", 0.0)), 0.0, 0.6)
+	for i in (list as Array).size():
+		var e = list[i]
 		if not (e is Dictionary):
 			continue
 		var t := String(e.get("type", ""))
-		if UNITS.has(t):
-			out.append(unit_stats(t, clampi(int(e.get("level", 1)), 1, MAX_LEVEL), clampf(float(snap.get("atk_b", 0.0)), 0.0, 0.6), clampf(float(snap.get("hp_b", 0.0)), 0.0, 0.6)))
+		if t == "hero":
+			if i == 0:
+				out.append(snap_hero(e, ab, hb))
+		elif UNITS.has(t):
+			out.append(unit_stats(t, clampi(int(e.get("level", 1)), 1, MAX_LEVEL), ab, hb))
 	return out
 
 
