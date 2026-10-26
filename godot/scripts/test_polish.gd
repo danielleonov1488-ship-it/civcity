@@ -333,9 +333,11 @@ func _chron_new() -> void:
 	var notes0: int = hud.notes_box.get_child_count()
 	c.sim_day()
 	var got: Array = (c.chron["b"] as Dictionary).keys()
-	var lines := c.events.slice(ev0).filter(func(e): return String(e["text"]).begins_with("Летопись города: лавровый венок"))
-	check(got.has("fam1") and lines.size() == got.size() and hud.bell_count >= bell0 + lines.size() and hud.notes_box.get_child_count() == notes0,
-		"венок «Первая семья» — строка в колокольчик, без всплывашки: %s" % [lines.map(func(e): return e["text"])])
+	# венки за час — одной строкой (26.10: колокольчик без лишних строк)
+	var lines := c.events.slice(ev0).filter(func(e): return String(e["text"]).begins_with("Летопись города: лавров"))
+	var all_named := lines.size() == 1 and got.all(func(id): return String(lines[0]["text"]).contains("«%s»" % Chronicle.badge(String(id)).get("name", "")))
+	check(got.has("fam1") and all_named and hud.bell_count >= bell0 + 1 and hud.notes_box.get_child_count() == notes0,
+		"венок «Первая семья» — одна строка в колокольчик на все венки часа, без всплывашки: %s" % [lines.map(func(e): return e["text"])])
 	var n1 := Chronicle.count(c)
 	c.sim_day()
 	check(Chronicle.count(c) == n1 and c.events.slice(ev0).filter(func(e): return String(e["text"]).contains("«Первая семья»")).size() == 1, "второй раз тот же венок не даётся")

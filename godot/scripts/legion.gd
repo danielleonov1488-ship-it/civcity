@@ -742,9 +742,11 @@ func hero_ready() -> bool:
 	return not free_mode and c != null and c.get("hero") != null and Hero.exists(c) and window_open()
 
 
-## Уровень героя — уровень Казарм (и не выше предела уровня города)
+## Уровень героя — уровень Казарм, ровно как у легионера, которого он заменил (26.10: герой — главный воин и никогда не
+## слабее; прежде он ещё обрезался пределом города — легионер выше предела оказался бы сильнее героя; сервер берёт тот же
+## уровень Казарм из сохранения)
 func hero_level() -> int:
-	return clampi(int(levels.get("legionary", 1)), 1, cap())
+	return clampi(int(levels.get("legionary", 1)), 1, MAX_LEVEL)
 
 
 ## Уровень Склада оружия, что даёт снаряжение героя (не построен — 0)
@@ -990,7 +992,7 @@ func _afford_text(cost: Dictionary) -> String:
 func _pay(cost: Dictionary) -> void:
 	var c = city()
 	if c != null:
-		c.money -= float(cost.get("money", 0))
+		c.money = maxf(0.0, float(c.money) - float(cost.get("money", 0)))   # платят только с хватающей казной (_afford_text)
 		if c.has_method("flow"):
 			c.flow("legion", -float(cost.get("money", 0)))   # история денег за сутки (этап 2.4)
 	glory -= float(cost.get("glory", 0))
@@ -1882,9 +1884,11 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 	var st: Dictionary = setup["stage"]
 	var c = city()
 	if c != null:
-		c.money -= float(setup.get("food", 0))
+		# провиант — сколько есть в казне: пока шёл бой, казна могла опустеть (в минус она не уходит)
+		var food := minf(float(setup.get("food", 0)), maxf(0.0, float(c.money)))
+		c.money -= food
 		if c.has_method("flow"):
-			c.flow("legion", -float(setup.get("food", 0)))
+			c.flow("legion", -food)
 	var first := bool(result.get("win", false)) and int(st["idx"]) == progress
 	var out := result.duplicate()
 	out["first"] = first

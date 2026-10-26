@@ -3,13 +3,16 @@ extends Node
 ## GAP_H после конца прошлой, ранг lvl — не ниже, исследования needs, порядок списка) прогоняем по времени рангов бота
 ## темпа (экономика v2 и Д9, сиды 5/7/11), каждая история — 5 минут игры (и строгий вариант — 12 минут).
 ## Порог по жителям (pop) — когда город дорастёт до стольких (между рангами — ровно); праздник раз в год (Сатурналии,
-## yearly) — последним, когда других нет, и снова — через YEAR_H часов после прошлого.
+## yearly) — последним, когда других нет, и снова — через YEAR_H часов после прошлого. Спокойный темп (26.10): истории
+## и заказы старосты идут вместе, час за часом; новое (история, заказ) — не раньше Stories.OFFER_GAP_H после прошлого
+## нового или нового ранга; первый заказ на «Хуторе» — после «Где Мася?»; «Разбойники у арки» — через свою паузу gap_h.
 ## Печатает, на каком ранге какая история предложена, и проверяет:
 ##  - на каждом ранге 1–7 — хотя бы одна история (четвёртая партия: на «Городе» — сенатор и лабиринт, на «Большом городе» —
 ##    письмо сыну и школа гладиаторов, на «Вечном городе» — Сатурналии);
 ##  - на рангах 1–6 без историй подряд не дольше 25 минут;
 ##  - «урок раньше нужды»: история с teaches предложена на ранг раньше, чем город станет тем рангом, чьи условия она готовит;
 ##  - очки исследований в награду — 40–60% средней цены исследования её ряда (никаких денег — Д7);
+##  - «Разбойники у арки» — на «Хуторе» (Легион почти со старта);
 ##  - с заказами старосты: минут, когда нет ни истории, ни заказа, — не больше 10% на каждом ранге 1–7;
 ##  - у каждого заказа место — постройка, которую условия уровня обещают к его рангу, и всё нужное открывается к нему.
 ## Итог: «CADENCE DONE fails=N».
@@ -110,14 +113,31 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 	var cover := []                       # [от, до) — часы, когда история предложена или идёт
 	var offers := {}                      # ранг → [история…]
 	var offer_rank := {}
+	# спокойный темп (26.10): новая история или заказ — не раньше OFFER_GAP_H после прошлого нового (история, заказ,
+	# новый ранг); первый заказ на «Хуторе» — когда «Где Мася?» пройдена (или через ORDER_WAIT_H); истории и заказы
+	# идут вместе, час за часом
+	var pace_h := -999.0
+	var rk_prev := 0
+	var order_until := -1.0
+	var next_order := float(rh[1])        # заказы — с «Хутора»
+	var again := false                    # идущий заказ — повтор
+	var firsts := 0                       # сколько заказов сделано в первый раз
+	var wait0 := -1.0                     # с какого часа первый заказ на «Хуторе» ждёт «Масю»
+	var cat_end := INF
+	var idle := {}                        # ранг → часов без истории и без заказа
+	var tot := {}
 	var h := float(TUT_H)
 	while h < end_h:
+		var rk := _rank_at(rh, h)
+		if rk != rk_prev:
+			rk_prev = rk
+			pace_h = h                    # новый ранг: ролик, исследования — сперва осмотреться
 		if active_until >= 0.0 and h >= active_until:
 			last_end = active_until
 			active_until = -1.0
 		if active_until < 0.0:
-			var ok_time := (last_end < 0.0 and h - TUT_H >= StoryDefs.FIRST_H) or (last_end >= 0.0 and h - last_end >= StoryDefs.GAP_H)
-			if ok_time:
+			var ok_time := (last_end < 0.0 and h - TUT_H >= StoryDefs.FIRST_H) or (last_end >= 0.0 and h - last_end >= _gap_after(done, rh, h))
+			if ok_time and h - pace_h >= Stories.OFFER_GAP_H:
 				var pick := {}
 				for sd: Dictionary in StoryDefs.STORIES:
 					if not bool(sd.get("yearly", false)) and not done.has(String(sd["id"])) and _ready_h(rh, sd) <= h:
@@ -134,25 +154,60 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 					var id := String(pick["id"])
 					done[id] = true
 					active_until = h + play_h
+					pace_h = h
+					if id == "cat":
+						cat_end = active_until
 					if bool(pick.get("yearly", false)):
 						year_end[id] = active_until
 					cover.append([h, active_until])
-					var rk := _rank_at(rh, h)
 					if not offer_rank.has(id):
 						offer_rank[id] = rk
 					if not offers.has(rk):
 						offers[rk] = []
 					(offers[rk] as Array).append(id)
+		# заказы старосты (заказ — всегда, кроме часа между ними; когда все заказы, открытые к рангу, сделаны по разу, —
+		# второй круг: следующий через REPEAT_GAP_H)
+		if order_until >= 0.0 and h >= order_until:
+			order_until = -1.0
+			next_order = h + (maxf(StoryOrders.GAP_H, StoryOrders.REPEAT_GAP_H - ORDER_H) if again else StoryOrders.GAP_H)
+		# история вот-вот придёт по срокам — заказ уступает ей (Stories.story_soon)
+		var due := (float(TUT_H + StoryDefs.FIRST_H) if last_end < 0.0 else last_end + _gap_after(done, rh, h)) if active_until < 0.0 else -INF
+		var soon := due > h and due - h < Stories.OFFER_GAP_H
+		if rk >= 1 and order_until < 0.0 and h >= next_order and h - pace_h >= Stories.OFFER_GAP_H and not soon:
+			var first_ok := rk != 1 or firsts > 0
+			if not first_ok:
+				if wait0 < 0.0:
+					wait0 = h
+				first_ok = h >= cat_end or h - wait0 >= Stories.ORDER_WAIT_H
+			if first_ok:
+				var avail := 0
+				for o: Dictionary in StoryOrders.ORDERS:
+					avail += int(int(o["lvl"]) <= rk)
+				order_until = h + ORDER_H
+				pace_h = h
+				again = firsts >= avail
+				if not again:
+					firsts += 1
+		if rk >= 1 and (rk < 7 or h < float(rh[7]) + 60.0):     # «Вечный город» — первые 60 ч
+			var st_on := false
+			for c: Array in cover:
+				st_on = st_on or (h >= float(c[0]) and h < float(c[1]))
+			tot[rk] = int(tot.get(rk, 0)) + 1
+			if not st_on and order_until < 0.0:
+				idle[rk] = int(idle.get(rk, 0)) + 1
 		h += 1.0
 	var line := []
-	for rk in range(0, 8):
-		line.append("%s: %s" % [Defs.LEVELS[rk]["name"], ", ".join(offers.get(rk, [])) if offers.has(rk) else "—"])
+	for r in range(0, 8):
+		line.append("%s: %s" % [Defs.LEVELS[r]["name"], ", ".join(offers.get(r, [])) if offers.has(r) else "—"])
 	print("  сид %d: %s" % [seed, " | ".join(line)])
+	print("  сид %d: «Где Мася?» — с %.0f ч (Хутор с %d ч), «Разбойники у арки» — с ранга «%s»" % [seed, _first_cover(cover), int(rh[1]),
+		Defs.LEVELS[int(offer_rank.get("bandits", 0))]["name"]])
 	if not gate:
 		return
 	# хотя бы одна история на каждом ранге 1–7 и без историй — не дольше 25 минут (ранги 1–6)
-	for rk in STORY_RANKS:
-		check(offers.has(rk), "сид %d: на ранге «%s» есть история (%s)" % [seed, Defs.LEVELS[rk]["name"], offers.get(rk, [])])
+	for r in STORY_RANKS:
+		check(offers.has(r), "сид %d: на ранге «%s» есть история (%s)" % [seed, Defs.LEVELS[r]["name"], offers.get(r, [])])
+	check(int(offer_rank.get("bandits", 99)) == 1, "сид %d: «Разбойники у арки» — на «Хуторе» (Легион почти со старта)" % seed)
 	var t0 := float(rh[GAP_STORIES_RANKS[0]])
 	var t1 := float(rh[GAP_STORIES_RANKS[-1] + 1])
 	var longest := 0.0
@@ -181,41 +236,29 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 	# урок раньше нужды: условия ранга i готовят во время ранга i−1
 	for sd: Dictionary in StoryDefs.STORIES:
 		for need_rank in sd.get("teaches", []):
-			var rk := int(offer_rank.get(String(sd["id"]), 99))
-			check(rk < int(need_rank), "сид %d: «%s» — на ранге «%s», раньше условий «%s»" % [seed, sd["title"],
-				Defs.LEVELS[mini(rk, 7)]["name"] if rk < 99 else "не предложена", Defs.LEVELS[int(need_rank)]["name"]])
-	# с заказами старосты: минут без истории и без заказа ≤ 10% на каждом ранге (заказ — всегда, кроме часа между ними;
-	# когда все заказы, открытые к рангу, сделаны по разу, — второй круг: следующий через REPEAT_GAP_H)
-	var firsts := 0                       # сколько заказов сделано в первый раз (с прошлых рангов тоже)
-	for rk in range(1, 8):
-		var a := float(rh[rk])
-		var b := float(rh[mini(rk + 1, 7)]) if rk < 7 else a + 60.0
-		var avail := 0
-		for o: Dictionary in StoryOrders.ORDERS:
-			avail += int(int(o["lvl"]) <= rk)
-		var idle := 0.0
-		var tot := 0.0
-		var x := a
-		var next_order := a                 # когда появится следующий заказ
-		var order_until := -1.0
-		var again := false                  # идущий заказ — повтор
-		while x < b:
-			if order_until >= 0.0 and x >= order_until:
-				order_until = -1.0
-				next_order = x + (maxf(StoryOrders.GAP_H, StoryOrders.REPEAT_GAP_H - ORDER_H) if again else StoryOrders.GAP_H)
-			if order_until < 0.0 and x >= next_order:
-				order_until = x + ORDER_H
-				again = firsts >= avail
-				if not again:
-					firsts += 1
-			var st_on := false
-			for c: Array in cover:
-				st_on = st_on or (x >= float(c[0]) and x < float(c[1]))
-			if not st_on and order_until < 0.0:
-				idle += 1.0
-			tot += 1.0
-			x += 1.0
-		check(idle / maxf(1.0, tot) <= 0.10, "сид %d: ранг «%s»: без истории и заказа %.0f%% минут" % [seed, Defs.LEVELS[rk]["name"], 100.0 * idle / maxf(1.0, tot)])
+			var r2 := int(offer_rank.get(String(sd["id"]), 99))
+			check(r2 < int(need_rank), "сид %d: «%s» — на ранге «%s», раньше условий «%s»" % [seed, sd["title"],
+				Defs.LEVELS[mini(r2, 7)]["name"] if r2 < 99 else "не предложена", Defs.LEVELS[int(need_rank)]["name"]])
+	# с заказами старосты: минут без истории и без заказа ≤ 10% на каждом ранге (на «Вечном городе» — первые 60 ч)
+	for r in range(1, 8):
+		var n_tot := int(tot.get(r, 0))
+		var n_idle := int(idle.get(r, 0))
+		check(float(n_idle) / maxf(1.0, n_tot) <= 0.10, "сид %d: ранг «%s»: без истории и заказа %.0f%% минут" % [seed, Defs.LEVELS[r]["name"], 100.0 * n_idle / maxf(1.0, n_tot)])
+
+## Пауза после конца истории: обычно GAP_H; у истории-продолжения (gap_h — «Разбойники у арки» после «Маси») — своя,
+## если её очередь (та, что в after, пройдена, ранг позволяет) — как Stories.gap_now
+func _gap_after(done: Dictionary, rh: Array, h: float) -> float:
+	for sd: Dictionary in StoryDefs.STORIES:
+		if not sd.has("gap_h") or done.has(String(sd["id"])) or not done.has(String(sd.get("after", ""))):
+			continue
+		if _rank_at(rh, h) < int(sd.get("lvl", 0)):
+			continue
+		return float(mini(StoryDefs.GAP_H, int(sd["gap_h"])))
+	return float(StoryDefs.GAP_H)
+
+
+func _first_cover(cover: Array) -> float:
+	return float((cover[0] as Array)[0]) if not cover.is_empty() else -1.0
 
 
 ## Награды историй: очки исследований — 40–60% средней цены исследования своего ряда; денег — никогда

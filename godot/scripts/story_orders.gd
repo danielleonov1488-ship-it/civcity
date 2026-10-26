@@ -231,12 +231,18 @@ func tick() -> void:
 	if cu.is_empty():
 		if h - int(o.get("last_h", -999)) < int(o.get("gap", GAP_H)):
 			return
+		var now := bool(o.get("now", false))      # «Другой заказ»: игрок сам попросил — сразу, без передышки
+		if not first_ok(h) or (not now and (not st.pace_ok() or st.story_soon(h))):
+			return                                # спокойный темп: не в один час с историей и новым рангом; история вот-вот — уступаем
 		var nx := next_order()
 		if nx.is_empty():
+			o.erase("now")                        # заменить сразу нечем — следующий придёт в спокойном темпе
 			return
 		o["cur"] = String(nx["id"])
 		o["taken"] = false
 		o["since"] = h
+		o.erase("now")
+		st.pace_mark()
 		st.hud.refresh()
 		_advise_once()
 		return
@@ -245,11 +251,26 @@ func tick() -> void:
 		complete()
 
 
+## Первый заказ на «Хуторе» — когда «Где Мася?» пройдена (первые минуты — история, не всё разом), или через
+## Stories.ORDER_WAIT_H, если её отложили или не взялись; с «Деревни» (и у городов, где заказы уже были) — как всегда
+func first_ok(h: int) -> bool:
+	var o := S()
+	if not st.pacing() or city().level != 1 or not (o["n"] as Dictionary).is_empty() or bool(o.get("first", false)):
+		return true
+	if int(o.get("wait0", -1)) < 0:
+		o["wait0"] = h
+	if (st.S()["done"] as Dictionary).has("cat") or h - int(o["wait0"]) >= Stories.ORDER_WAIT_H:
+		o["first"] = true
+		return true
+	return false
+
+
 func _drop() -> void:
 	var o := S()
 	o["cur"] = ""
 	o["taken"] = false
 	o["last_h"] = int(st.city.stories.get("h", 0))
+	o.erase("now")
 	st._marks(true)
 	st.hud.refresh()
 
@@ -275,8 +296,10 @@ func skip() -> void:
 	o["cur"] = ""
 	o["taken"] = false
 	o["last_h"] = int(st.city.stories.get("h", 0)) - int(o.get("gap", GAP_H))     # следующий — сразу
+	o["now"] = true
 	st._marks(true)
 	st.hud.refresh()
+	tick()                                    # следующий — по щелчку, раньше истории, что могла бы прийти в этот же час
 
 
 ## Сколько нужно (второй раз и дальше — вдвое): [[вид, n, подпись]]

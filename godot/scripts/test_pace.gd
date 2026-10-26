@@ -739,7 +739,10 @@ func _bstreet() -> bool:
 	var s: Array = segs[si]
 	var a: Vector2 = s[0]
 	var b: Vector2 = s[1]
-	_paint(a, b)
+	if not _paint(a, b):
+		seg_done.erase(si)                    # денариев на улицу нет — как у игрока: подождём налогов
+		seg_i -= 1
+		return false
 	# поперечные: к ближнему ряду выше (к станции), если его нет — не надо
 	var ri := -1
 	for i in B_ROWS.size():
@@ -754,8 +757,9 @@ func _bstreet() -> bool:
 			var top := Vector2(x, float(B_ROWS[ri - 1][0]))
 			var own: bool = game.land.is_owned(top) and game.land.is_owned((top + Vector2(x, a.y)) * 0.5)
 			if not cols_done.has(key) and own and not _wet(top, Vector2(x, a.y)):
-				cols_done[key] = true
-				_paint(top, Vector2(x, a.y))
+				cols_done[key] = _paint(top, Vector2(x, a.y))
+				if not cols_done[key]:
+					cols_done.erase(key)
 	var dir := (b - a).normalized()
 	var side := Vector2(-dir.y, dir.x)
 	for i in int(a.distance_to(b)) + 1:
@@ -771,11 +775,17 @@ func _bstreet() -> bool:
 	return true
 
 
-func _paint(a: Vector2, b: Vector2) -> void:
+## Улица бота: денариев не хватает — не кладётся (казна в минус не уходит, 26.10), false
+func _paint(a: Vector2, b: Vector2) -> bool:
 	var ch: Array = game.land.paint_line(a, b, 1.3, Land.Kind.ROAD, true)
+	var cost := ch.size() * float(Defs.ROAD_COST["road"])
+	if cost > c.money:
+		game.land.undo(ch)
+		return false
 	c.road_cells += ch.size()
-	_spent("roads", ch.size() * float(Defs.ROAD_COST["road"]))
-	c.money -= ch.size() * float(Defs.ROAD_COST["road"])
+	_spent("roads", cost)
+	c.money -= cost
+	return true
 
 
 ## Поставить постройку у дорог бота поближе к цели. big — сперва у площадных рядов. Мест нет — новая улица
@@ -889,8 +899,12 @@ func _mid() -> Vector2:
 	return m / hs.size()
 
 
+var money_min := INF                  # казна в минус не уходит (26.10): самое малое, что бот видел в казне
+
+
 func _bot_step() -> void:
 	var h0 := int(floor(t))
+	money_min = minf(money_min, c.money)
 	t += STEP_H
 	Legion.clock = clock0 + t * SEC_H          # таймеры улучшений Легиона — по «настоящим» часам игры при 1×
 	# повозка: стоит за краем карты, пока некого везти; туда и обратно — по CART_H
@@ -1725,4 +1739,6 @@ func _summary() -> void:
 	for row: Dictionary in rows_out:
 		w = maxi(w, int(row["wait"]))
 	check(w <= 3, "families waiting at once ≤ 3 (max %d)" % w)
+	money_min = minf(money_min, c.money)
+	check(money_min >= 0.0, "treasury never below 0 (min %.1f; hours unpaid %d)" % [money_min, c.unpaid_n])
 	print("PACE BOT fails=%d" % fails)
