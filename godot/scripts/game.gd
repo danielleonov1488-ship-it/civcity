@@ -341,6 +341,8 @@ func _ready() -> void:
 		add_child(photo)
 	city.event.connect(func(t, i): hud.notify(t, i))
 	city.quiet.connect(func(t, i): hud.bell(t, i))
+	city.quiet_seen.connect(func(t, i): hud.bell(t, i, true))
+	city.event_seen.connect(func(t, i): hud.notify(t, i, true))
 	city.chron_on = mode in ["play", "new"]   # «Летопись города»: венки — только в своём городе
 	if city.unread > 0 and mode in ["play", "new"]:
 		hud.bell_count += city.unread         # записано при загрузке (например, возврат очков) — только число на колокольчике
@@ -4771,12 +4773,12 @@ func _release() -> void:
 		if not cells.is_empty() and is_deco_tool(tool):
 			stroke = land.brush_apply(cells, _brush_gk())     # «Улучшить» / «Земля»: высоты и деревья — как были
 			stroke_cost = float(plan["cost"])
-			city.money -= stroke_cost
+			city.money = maxf(0.0, city.money - stroke_cost)   # цена — по казне (_line_cut), в минус не уходим и на копейку
 		elif not cells.is_empty():
 			stroke = land.apply_cells(cells, int(plan["kd"]))
 			land.smooth_cells(cells)
 			stroke_cost = float(plan["cost"])
-			city.money -= stroke_cost
+			city.money = maxf(0.0, city.money - stroke_cost)
 			clear_nature_cells(cells)
 		_paint_broke = int(plan["upto"]) < (plan["cells"] as PackedInt32Array).size()
 	elif not stroke.is_empty() and not is_deco_tool(tool):
@@ -5222,15 +5224,21 @@ func _undo(only := "") -> void:
 	var r := {"ch": back, "cost": cost}
 	# ластик убрал звенья забора — они встают обратно (возврат за них — обратно в казну)
 	var fids := []
+	var broke := false
 	for f: Dictionary in u.get("fences", []):
 		var chk := city.check_place(f["type"], f["pos"], f["yaw"], int(f["variant"]), int(f["color"]), -2)
 		if chk["err"] != "" and not String(chk["err"]).begins_with("Не хватает"):
+			continue
+		if city.money + cost < float(f["back"]):
+			broke = true                          # возврат за звено уже потрачен — в долг звено не встаёт
 			continue
 		var fb := city.place(f["type"], f["pos"], f["yaw"], int(f["variant"]), int(f["color"]), true)
 		city.money -= float(f["back"])
 		fids.append(int(fb["id"]))
 	if not fids.is_empty():
 		r["fence_ids"] = fids
+	if broke:
+		hud.tool_status("Часть забора не вернулась: возврат за звенья уже потрачен, а в долг город не строит")
 	redo_stack.append(r)
 	city.money += cost
 	city.compute()

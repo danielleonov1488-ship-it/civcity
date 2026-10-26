@@ -130,6 +130,7 @@ var bell_badge: Label
 var floor_badge: Label                    # на кнопке «Этаж»: сколько домов готовы к этажу
 var upg_badge: Label                      # на кнопке «Перестроить»: сколько домов готовы к перестройке
 const FLOOR_TIP := "Этаж (U): щёлкните по дому со стрелкой или ведите с зажатой кнопкой вдоль улицы — этаж получат все готовые дома под курсором"
+const EMPTY_TIP := "Казна пуста: жалованья работникам и содержания построек за час больше, чем пришло налогов. Город в долг не живёт — недоплаченное просто не плачено, а жители обижены: счастье всех домов ниже, пока казна снова не сможет платить. Подробно — в «Финансах»."
 const UPG_TIP := "Перестроить (Shift+U): дом плебеев — в дом ремесленников, дом ремесленников — в городской домус. Щёлкните по дому с двойной стрелкой или ведите вдоль улицы"
 ## Двойная стрелка «Перестроить» — цвета класса, которым станет дом
 const UPC_COL := {"upc_a": Color("e0904a"), "upc_p": Color("a77ee0")}
@@ -147,6 +148,13 @@ var hover_pop: Control
 var hover_happy: Control
 var rank_btn: Button                      # «Перейти на новый уровень» — под табличкой города, когда все условия выполнены
 var full_money: Label                     # «Казна полна — доход пропадает» над казной
+var empty_money: Label                    # «Казна пуста — жалованье не плачено» над казной (казна в минус не уходит)
+## Советы не друг за другом (решение владельца 26.10): закрыли совет — следующий сам (раз на механику) не раньше чем
+## через TIP_GAP_MS. Только в своей игре (игра — главная сцена; проверка темпа ставит tip_gap сама): в автопроверках
+## советы идут подряд, как раньше. Совет по щелчку игрока (строка просьбы, шаг истории) — сразу
+const TIP_GAP_MS := 30000
+var tip_gap := false
+var _tip_next := 0
 var full_rp: Label                        # «Полки полны — очки пропадают»
 var _cursor_key := ""                     # какой рисованный курсор стоит на обычной стрелке (по инструменту, см. _cursor_world)
 var _cursor_px := 0
@@ -2381,6 +2389,12 @@ func _bottom_right() -> void:
 	full_money.tooltip_text = "Казна заполнена до предела — новые денарии пропадают. Потратьте их: дома, этажи, лавки, памятники, украшения, игры в честь богов (с уровня «Посёлок» — в карточке почтовой станции), новые участки земли. Предел растёт с уровнем города и исследованиями хранилищ."
 	full_money.visible = false
 	pv.add_child(full_money)
+	empty_money = _label("Казна пуста — жалованье не плачено", 14, true, C_BAD)
+	empty_money.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	empty_money.mouse_filter = Control.MOUSE_FILTER_PASS
+	empty_money.tooltip_text = EMPTY_TIP
+	empty_money.visible = false
+	pv.add_child(empty_money)
 	full_rp = _label("Полки полны — очки пропадают", 14, true, C_BAD)
 	full_rp.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	full_rp.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -4882,7 +4896,10 @@ func _advisor() -> void:
 
 	advisor_panel.custom_minimum_size = Vector2(640, 0)
 	advisor_panel.visible = false
-	advisor_panel.visibility_changed.connect(func(): notes_box.visible = not advisor_panel.visible)
+	advisor_panel.visibility_changed.connect(func():
+		notes_box.visible = not advisor_panel.visible
+		if not advisor_panel.visible:
+			_tip_next = Time.get_ticks_msec() + TIP_GAP_MS)   # следующий совет — не сразу
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 12)
 	advisor_panel.add_child(h)
@@ -4977,15 +4994,17 @@ func _place_notes() -> void:
 
 
 ## Событие: короткая плашка наверху (не посреди экрана) и запись в колокольчике
-func notify(text: String, icon := "info") -> void:
+## seen — о том, что игрок сделал сам (изучил, надстроил): всплывашка есть, а число на колокольчике не растёт
+func notify(text: String, icon := "info", seen := false) -> void:
 	var rc = game.get("rank_cine") if game else null
 	if icon == "level" and rc != null and rc.covers_toast():
 		bell_count += 1                   # новый ранг покажет ролик — всплывашка не нужна, только колокольчик
 		bell_badge.text = str(bell_count)
 		return
 	if game and game.tutorial and game.tutorial.active() and icon in ["check", "research", "info"]:
-		bell_count += 1                   # во время обучения не мешаем всплывашками — только в колокольчик
-		bell_badge.text = str(bell_count)
+		if not seen:
+			bell_count += 1               # во время обучения не мешаем всплывашками — только в колокольчик
+			bell_badge.text = str(bell_count)
 		return
 	var p := _chip(false, 12.0)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -5009,7 +5028,9 @@ func notify(text: String, icon := "info") -> void:
 	tw.tween_interval(5.0)
 	tw.tween_property(p, "modulate:a", 0.0, 0.6)
 	tw.tween_callback(p.queue_free)
-	if not events_panel.visible:
+	if events_panel.visible:
+		_fill_events()
+	elif not seen:
 		bell_count += 1
 		bell_badge.text = str(bell_count)
 
@@ -5373,6 +5394,9 @@ func _fill_finance() -> void:
 	v.add_child(_row("family", "Жалованье работникам за час", "−%s" % fmt(wages), C_BAD))
 	v.add_child(_row("hammer", "Содержание построек за час", "−%s" % fmt(float(c.stats.get("upkeep", 0.0)) - wages), C_BAD))
 	v.add_child(_row("check", "Итого за час", ("+" if net >= 0 else "−") + fmt(absf(net)), C_GOOD if net >= 0 else C_BAD))
+	if c.unpaid_h > 0:
+		v.add_child(_row("coins", "Казна пуста — не плачено за час", fmt(float(c.stats.get("unpaid", 0.0))), C_BAD))
+		v.add_child(_wrap(_label("Город в долг не живёт: недоплаченное не плачено, а жители обижены — счастье всех домов −%d%%, пока казна снова не сможет платить. Поднимите налоги (с «Деревни»), заселяйте дома, уберите лишних работников «−» в карточках построек." % Defs.UNPAID_HAPPY, 14, false, C_BAD), 420))
 	v.add_child(_row("research", "Очки исследований", "%s / %s (+%s в час)" % [fmt(c.rp), fmt(c.rp_cap()), fmt_rate(float(c.stats.get("rp_day", 0.0)))]))
 	# история: доход за час и казна — последние 48 игровых часов; «За сутки» — куда ушли и откуда пришли денарии
 	if c.hist.size() >= 2:
@@ -5413,10 +5437,14 @@ func day_line() -> String:
 			bits.append("%s %s%s" % [names[k], "+" if s > 0 else "−", fmt(absi(s))])
 	var lost := c.hist_sum("lost", n)
 	tot -= lost                                # итого = сколько правда прибыло в казну (что не уместилось — пропало)
+	var unpaid := c.hist_sum("unpaid", n)
+	tot += unpaid                              # не плачено (казна была пуста) — эти денарии и не уходили
 	var head := "За сутки" if n >= 24 else "За %d ч" % n
 	var t := "%s: %s. Итого %s%s ден." % [head, ", ".join(bits) if not bits.is_empty() else "без движения", "+" if tot >= 0 else "−", fmt(absi(tot))]
 	if lost > 0:
 		t += " Не уместилось в казну: %s." % fmt(lost)
+	if unpaid > 0:
+		t += " Не плачено жалованья и содержания (казна была пуста): %s." % fmt(unpaid)
 	return t
 
 
@@ -6008,6 +6036,11 @@ func _update_full_marks() -> void:
 	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0))
 	var m_on := play and c.money >= c.money_cap() - 0.5 and net > 0.0
 	var r_on := play and c.rp >= c.rp_cap() - 0.05 and float(c.stats.get("rp_day", 0.0)) > 0.0
+	var e_on := play and c.unpaid_h > 0
+	if empty_money.visible != e_on:
+		empty_money.visible = e_on                # казна пуста: жалованье не плачено — красным над казной, пока держится обида
+		lbl_money.add_theme_color_override("font_color", C_BAD if e_on else C_INK)
+		_snug(empty_money.get_parent().get_parent() as Control)
 	if full_money.visible != m_on or full_rp.visible != r_on:
 		full_money.visible = m_on
 		full_rp.visible = r_on
@@ -6108,6 +6141,8 @@ func _tip_free() -> bool:
 		return false
 	if advisor_panel.visible:
 		return false
+	if (tip_gap or game == get_tree().current_scene) and Time.get_ticks_msec() < _tip_next:
+		return false                          # только что закрыли совет — дадим осмотреться
 	var rc = game.get("rank_cine")
 	return rc == null or (rc.cine.is_empty() and rc.pending.is_empty())
 
@@ -6136,6 +6171,10 @@ func _once_tips() -> void:
 		return
 	if c.tips.has("arrive_wait") and String(c.stats.get("arrive_block", "")) != "":
 		_arrive_advice()                      # «Новые семьи не едут» ждал, пока закроют другой совет; повозка уже едет — подождёт, пока встанет снова
+		return
+	if c.unpaid_h > 0 and not c.tips.has("unpaid_tip"):
+		c.tips["unpaid_tip"] = true
+		advisor("Казна пуста", unpaid_note())   # казна в минус не уходит: один раз — что случилось и как поправить
 		return
 	if rank_btn.visible and not c.tips.has("rank_tip"):
 		c.tips["rank_tip"] = true
@@ -6234,6 +6273,13 @@ func _once_tips() -> void:
 		return
 
 
+## Советник один раз (tips.unpaid_tip), когда казна впервые не смогла заплатить жалованье: что случилось и как поправить
+func unpaid_note() -> String:
+	var c: City = game.city
+	var tax := "поднимите налоги в «Финансах» (монеты вверху справа)" if c.tax_open() else "стройте дома и заселяйте семьи — налоги платят жители"
+	return "Жалованья работникам и содержания построек за час набралось больше, чем есть в казне. В долг город не живёт: казна встала на нуле, недоплаченное не плачено — и жители обижены: счастье всех домов −%d%%, пока казна снова не сможет платить.\n\nКак поправить: %s; ставьте лавки и памятники, которые радуют дома, — счастливые платят больше; в карточках построек, где работники нужны меньше, нажмите «−» у «Работников» — меньше жалованья. Что съедает казну — видно в «Финансах»." % [Defs.UNPAID_HAPPY, tax]
+
+
 ## Советник один раз (tips.fest_tip), когда открылись игры в честь богов: что дают, сколько стоят, где кнопка
 func fest_note() -> String:
 	var c: City = game.city
@@ -6268,9 +6314,12 @@ func pace_note() -> String:
 
 
 ## Событие только в колокольчик: число на значке, без всплывашки
-func bell(_text: String, _icon := "info") -> void:
+## seen — игрок и так это видел (сам сделал; строка слилась с прежней за этот час): число на значке не растёт
+func bell(_text: String, _icon := "info", seen := false) -> void:
 	if events_panel.visible:
 		_fill_events()
+		return
+	if seen:
 		return
 	bell_count += 1
 	bell_badge.text = str(bell_count)

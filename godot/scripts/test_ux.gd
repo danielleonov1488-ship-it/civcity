@@ -408,7 +408,8 @@ func _floor_stroke() -> void:
 	check(int(game.sound.played.get("coins", 0)) == coins0 + 1, "монетки звякнули один раз")
 	check(not hud.badges.has("fl%d" % one) and not cover.want.has(one), "у надстроенного стрелки и подсветки больше нет")
 	var last: Dictionary = c.events[-1]
-	check(c.events.size() > ev0 and String(last["text"]).begins_with("Дому семьи Проба %d надстроили 2-й этаж за %d ден." % [one, p0]) and hud.bell_count > bell0, "итог — в колокольчик: «%s»" % last["text"])
+	# надстроил сам игрок — строка в колокольчике есть, а число на нём не растёт (26.10: колокольчик без лишнего)
+	check(c.events.size() > ev0 and String(last["text"]).begins_with("Дому семьи Проба %d надстроили 2-й этаж за %d ден." % [one, p0]) and hud.bell_count == bell0, "итог — в колокольчик (без числа на значке): «%s»" % last["text"])
 	# мазок вдоль улицы по стрелкам: этаж — каждому готовому дому под курсором, монетки — один раз
 	var seg: Array = r.slice(1, 6)
 	var pts := []

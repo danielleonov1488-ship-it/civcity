@@ -129,7 +129,10 @@ static func check(c: City) -> Array:
 			continue
 		got[b["id"]] = c.day
 		out.append(b["id"])
-		c._quiet("Летопись города: лавровый венок «%s» — %s" % [b["name"], b["text"]], "laurels")
+		# венки за час — одной строкой (несколько разом — не несколько строк)
+		c._quiet_m("chron", "laurels", {"b": ["«%s» — %s" % [b["name"], b["text"]]]}, func(a: Dictionary) -> String:
+			var bb: Array = a["b"]
+			return ("Летопись города: лавровый венок " if bb.size() == 1 else "Летопись города: лавровые венки ") + "; ".join(PackedStringArray(bb)))
 	return out
 
 

@@ -21,6 +21,8 @@ signal family_assigned(name, home)   # игрок выбрал семье дом
 signal arrive_advice(text)           # повозка впервые встала из-за низкого счастья — объясняет советник
 signal level_up(lvl)                 # город перешёл на новый уровень — ролик «Новый ранг» (rank_cine.gd)
 signal quiet(text, icon)             # событие только в колокольчик, без всплывашки
+signal quiet_seen(text, icon)        # строка в колокольчик, которую игрок и так видел (сам сделал, слилась с прежней) — без числа на значке
+signal event_seen(text, icon)        # всплывашка о том, что игрок сделал сам (изучил): в колокольчик — без числа на значке
 signal festival_changed(on)          # игры в честь богов начались / кончились — город наряжается (game.gd)
 
 var land: Land
@@ -64,6 +66,8 @@ var bulk := false                     # place() без пересчёта (ви�
 var legion := Legion.new()            # армия: походы, Слава, чудеса (legion.gd); сохраняется под ключом "legion"
 var fest_left := 0                    # сколько игровых часов ещё идут игры в честь богов (Defs.FESTIVAL)
 var fest_cd := 0                      # через сколько часов можно устроить новые игры
+var unpaid_h := 0                     # жалованье не плачено (казна пуста): столько часов ещё держится обида (Defs.UNPAID_H)
+var unpaid_n := 0                     # сколько часов за игру казна не смогла заплатить (для проверок и советника)
 var plots_bought := 0                 # сколько участков земли куплено (от него цена следующего)
 var name := ""                        # название города — копия имени с сервера (CityName); "" — ещё не знаем («Новый Рим»)
 var seg_thin := false                 # звено забора — узкой полосой (заборы мышью); готовый город меню — по-старому
@@ -834,6 +838,9 @@ func compute(same_place := false) -> void:
 		var tx := int(Defs.TAX_SET[tax_of(cls)]["happy"])
 		if tx != 0:
 			parts.append(["Налоги: %s" % String(Defs.TAX_SET[tax_of(cls)]["name"]).to_lower(), tx])
+		var unp := -Defs.UNPAID_HAPPY if unpaid_h > 0 else 0   # казна пуста — жалованье не плачено: обида всем домам
+		if unp != 0:
+			parts.append(["Жалованье не плачено", unp])
 		var crowd := 0
 		for o in houses:
 			if o != h and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DENSITY_RADIUS:
@@ -846,7 +853,7 @@ func compute(same_place := false) -> void:
 			if not h["needs"].has(n):
 				missing.append(n)
 				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + tx + dens - missing.size() * Defs.MISSING_PENALTY
+		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + tx + unp + dens - missing.size() * Defs.MISSING_PENALTY
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["set_bonus"] = set_b
@@ -868,6 +875,7 @@ func compute(same_place := false) -> void:
 		sums["fest"] += fb * w
 		sums["story"] = float(sums.get("story", 0.0)) + st_sum * w
 		sums["tax"] = float(sums.get("tax", 0.0)) + tx * w
+		sums["unpaid"] = float(sums.get("unpaid", 0.0)) + unp * w
 		sums["crowd"] += dens * w
 		sums["miss"] += -missing.size() * Defs.MISSING_PENALTY * w
 		sums["clip"] = float(sums.get("clip", 0.0)) + (clampf(hp, 0.0, 100.0) - hp) * w   # счастье дома — от 0 до 100%
@@ -878,7 +886,7 @@ func compute(same_place := false) -> void:
 	if float(sums["w"]) > 0.0:
 		var wt: float = sums["w"]
 		var rows := [["Основа", "base", true], ["Лавки", "shops", true], ["Украшения", "deco", true], ["Памятники", "mon", false],
-				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Налоги", "tax", false], ["Теснота", "crowd", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
+				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Налоги", "tax", false], ["Жалованье не плачено", "unpaid", false], ["Теснота", "crowd", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
 		var fv := []
 		var vi := []
 		var acc := 0
@@ -1487,6 +1495,7 @@ func _hist_hour(tax: float, wages: float, upk: float, lost: float) -> void:
 			"wage": v = -roundi(wages)
 			"upkeep": v = -roundi(upk)
 			"lost": v = roundi(lost)
+			"unpaid": v = roundi(float(stats.get("unpaid", 0.0)))   # не плачено — денарии остались в казне (её не было)
 			"money": v = roundi(money)
 			"pop": v = int(stats.get("pop", 0))
 			"happy": v = int(stats.get("happy", 0))
@@ -1560,7 +1569,23 @@ func sim_day() -> void:
 	# что пропало за час: казна и полки полны (значки «Казна полна», «Полки полны»)
 	stats["money_lost"] = maxf(0.0, money + income - upkeep - money_cap()) if income > upkeep else 0.0
 	stats["rp_lost"] = maxf(0.0, rp + rpd - maxf(rp, rp_cap()))
-	money = minf(money_cap(), money + income - upkeep)
+	# казна в минус не уходит: не хватает на жалованье и содержание — платим, сколько есть, остальное не плачено
+	# (жители обижены — Defs.UNPAID_HAPPY в счастье домов, советник объяснит, что делать; в долг город не живёт)
+	var left := money + income - upkeep
+	stats["unpaid"] = maxf(0.0, -left)
+	if left < 0.0:
+		left = 0.0
+		unpaid_n += 1
+		var was := unpaid_h
+		unpaid_h = Defs.UNPAID_H
+		if was <= 0:
+			_quiet("Казна пуста — жалованье работникам и содержание построек оплачены не полностью. Жители недовольны: счастье всех домов −%d%%, пока казна снова не сможет платить." % Defs.UNPAID_HAPPY, "coins")
+	elif unpaid_h > 0:
+		unpaid_h -= 1
+	money = minf(money_cap(), left)
+	if (unpaid_h > 0) != bool(stats.get("unpaid_on", false)):
+		stats["unpaid_on"] = unpaid_h > 0
+		compute()                                 # обида началась или прошла — счастье домов сразу
 	rp = maxf(rp, minf(rp_cap(), rp + rpd))      # сверх полок (возврат очков) не срезаем — просто не копим дальше
 	stats["income"] = income
 	stats["upkeep"] = upkeep
@@ -1683,7 +1708,8 @@ func buy_floor(b: Dictionary, quiet := false) -> bool:
 	compute()
 	house_changed.emit(h, true)
 	if not quiet:
-		_event("Дому семьи %s надстроили %d-й этаж — место ещё для %d жителей" % [_fam_name(h), int(h["tier"]), int(Defs.CLASSES[def(h)["cls"]]["per_floor"])], "housing")
+		# надстроил сам игрок (карточка дома): всплывашка — да, число на колокольчике — нет
+		_seen("Дому семьи %s надстроили %d-й этаж — место ещё для %d жителей" % [_fam_name(h), int(h["tier"]), int(Defs.CLASSES[def(h)["cls"]]["per_floor"])], "housing", true)
 	_check_goals()
 	changed.emit()
 	return true
@@ -1700,11 +1726,11 @@ func floors_done(ids: Array, spent: int) -> void:
 			var h: Dictionary = buildings[id]
 			names.append(_fam_name(h))
 			room += int(Defs.CLASSES[def(h)["cls"]]["per_floor"])
+	# сделал сам игрок — строка в колокольчик, а число на нём не растёт
 	if ids.size() == 1 and buildings.has(ids[0]):
-		_quiet("Дому семьи %s надстроили %d-й этаж за %d ден. — место ещё для %d жителей" % [names[0], int(buildings[ids[0]]["tier"]), spent, room], "housing")
+		_seen("Дому семьи %s надстроили %d-й этаж за %d ден. — место ещё для %d жителей" % [names[0], int(buildings[ids[0]]["tier"]), spent, room], "housing")
 		return
-	var who := ", ".join(names.slice(0, 3)) + (" и ещё %d" % (names.size() - 3) if names.size() > 3 else "")
-	_quiet("Надстроили %d %s за %d ден. (дома семей %s) — место ещё для %d жителей" % [ids.size(), plural(ids.size(), "этаж", "этажа", "этажей"), spent, who, room], "housing")
+	_seen("Надстроили %d %s за %d ден. (дома семей %s) — место ещё для %d жителей" % [ids.size(), plural(ids.size(), "этаж", "этажа", "этажей"), spent, _who(names), room], "housing")
 
 
 # ---------- «Перестроить» (Shift+U, Д12): дом в следующий класс — только щелчком игрока, как в Town to City ----------
@@ -2171,11 +2197,11 @@ func upgrades_done(ids: Array, spent: int) -> void:
 	var tail := ""
 	if tight > 0:
 		tail = " Где жильцов больше, чем мест, — тесновато, но никто не уехал" + (": надстройте этаж." if grow > 0 else "; новые семьи туда не въедут, пока не станет свободнее.")
+	# сделал сам игрок — строка в колокольчик, а число на нём не растёт
 	if ids.size() == 1 and buildings.has(ids[0]):
-		_quiet("Дом семьи %s перестроили за %d ден.: теперь это %s.%s" % [names[0], spent, String(def(buildings[ids[0]])["name"]).to_lower(), tail], "housing")
+		_seen("Дом семьи %s перестроили за %d ден.: теперь это %s.%s" % [names[0], spent, String(def(buildings[ids[0]])["name"]).to_lower(), tail], "housing")
 		return
-	var who := ", ".join(names.slice(0, 3)) + (" и ещё %d" % (names.size() - 3) if names.size() > 3 else "")
-	_quiet("Перестроили %d %s за %d ден. (семьи %s).%s" % [ids.size(), plural(ids.size(), "дом", "дома", "домов"), spent, who, tail], "housing")
+	_seen("Перестроили %d %s за %d ден. (семьи %s).%s" % [ids.size(), plural(ids.size(), "дом", "дома", "домов"), spent, _who(names), tail], "housing")
 
 
 ## Счастье жилых домов, где живут (0…100), — до и после стройки: над кем оно поменялось, всплывают рожицы (game._happy_pops)
@@ -2667,7 +2693,8 @@ func do_research(id: String) -> bool:
 	rp -= float(r["cost"])
 	research[id] = true
 	var where := research_where(id)
-	_event("Изучено: %s%s" % [r["name"], (" — " + where) if where != "" else ""], "research")
+	# изучил сам игрок: всплывашка и строка в колокольчике — да, число на нём — нет
+	_seen("Изучено: %s%s" % [r["name"], (" — " + where) if where != "" else ""], "research", true)
 	compute()
 	_check_goals()
 	changed.emit()
@@ -2894,7 +2921,7 @@ func buy_plot(p: Vector2i) -> bool:
 	for j in range(p.y * c, p.y * c + c, Land.CH):
 		for i in range(p.x * c, p.x * c + c, Land.CH):
 			land._mark(i + 1, j + 1)
-	_quiet("Куплен новый участок земли — на нём можно строить", "keys")
+	_seen("Куплен новый участок земли — на нём можно строить", "keys")   # купил сам игрок — число на значке не растёт
 	_check_goals()
 	changed.emit()
 	return true
@@ -2962,12 +2989,20 @@ func progress_of(pp: Array) -> int:
 
 func active_goals(n := 3) -> Array:
 	var out := []
+	n = mini(n, goals_vis)
 	for g in Defs.REQUESTS:
 		if not goals_done.has(g["id"]):
 			out.append(g)
 			if out.size() >= n:
 				break
 	return out
+
+
+## Просьбы приходят по одной (26.10): сделали просьбу — новая на её место встаёт не сразу, а когда истории дадут
+## (Stories._pace_requests: через Stories.REQ_GAP_H, не в один час с историей или заказом). Только в своей игре
+## с «Хутора» (goal_pace ставят истории); иначе — сразу три, как было
+var goals_vis := 3
+var goal_pace := false
 
 
 func _check_goals() -> void:
@@ -2977,6 +3012,10 @@ func _check_goals() -> void:
 			continue                                # «Станьте хутором» — только когда игрок нажал кнопку
 		if goal_progress(g["id"]) >= int(g["need"]):
 			goals_done.append(g["id"])
+			if goal_pace:
+				goals_vis = maxi(1, goals_vis - 1)   # новая просьба на это место придёт чуть погодя
+				if typeof(stories.get("pace")) == TYPE_DICTIONARY:
+					stories["pace"]["req"] = int(stories["h"])
 			# казна полна — предел остаётся, но в колокольчике честно: сколько не уместилось (как у историй)
 			var lost := maxi(0, roundi(float(g["money"]) - maxf(0.0, money_cap() - money)))
 			var m0 := money
@@ -3012,7 +3051,7 @@ func _drop_roads2() -> void:
 
 
 func _event(text: String, icon: String) -> void:
-	events.append({"day": day, "text": text, "icon": icon})
+	events.append({"day": day, "text": text, "icon": icon, "hn": hour_n})
 	if events.size() > 60:
 		events.pop_front()
 	event.emit(text, icon)
@@ -3020,10 +3059,59 @@ func _event(text: String, icon: String) -> void:
 
 ## Событие только в колокольчик (без всплывашки)
 func _quiet(text: String, icon: String) -> void:
-	events.append({"day": day, "text": text, "icon": icon})
+	events.append({"day": day, "text": text, "icon": icon, "hn": hour_n})
 	if events.size() > 60:
 		events.pop_front()
 	quiet.emit(text, icon)
+
+
+## Колокольчик без лишних строк (решение владельца 26.10): строка вида kind сливается с такой же за этот игровой час
+## (day_span — за этот день): прежняя строка переписывается итогом (fmt(acc)), число на значке не растёт. add —
+## что прибавить: числа складываются, списки дописываются, строки заменяются. seen — сделал сам игрок (этажи мазком,
+## исследование): число на значке не растёт и у новой строки. toast — ещё и всплывашка с этим текстом (только новое)
+func _quiet_m(kind: String, icon: String, add: Dictionary, fmt: Callable, seen := false, toast := "", day_span := false) -> void:
+	var i := events.size() - 1
+	while i >= 0:
+		var e: Dictionary = events[i]
+		if (int(e.get("day", -1)) != day) if day_span else (int(e.get("hn", -1)) != hour_n):
+			break
+		if String(e.get("k", "")) == kind and e.get("acc") is Dictionary:
+			var acc: Dictionary = e["acc"]
+			for k in add:
+				if add[k] is Array:
+					acc[k] = (acc.get(k, []) as Array) + (add[k] as Array)
+				elif add[k] is int or add[k] is float:
+					acc[k] = float(acc.get(k, 0)) + float(add[k])
+				else:
+					acc[k] = add[k]
+			e["text"] = String(fmt.call(acc))
+			if toast != "":
+				event_seen.emit(toast, icon)
+			else:
+				quiet_seen.emit(e["text"], icon)
+			return
+		i -= 1
+	var t := String(fmt.call(add))
+	events.append({"day": day, "text": t, "icon": icon, "hn": hour_n, "k": kind, "acc": add.duplicate(true)})
+	if events.size() > 60:
+		events.pop_front()
+	if toast != "":
+		(event_seen if seen else event).emit(toast, icon)
+	else:
+		(quiet_seen if seen else quiet).emit(t, icon)
+
+
+## Сделал сам игрок (изучил, надстроил, купил участок): строка в колокольчик, а число на нём не растёт; toast — и всплывашка
+func _seen(text: String, icon: String, toast := false) -> void:
+	events.append({"day": day, "text": text, "icon": icon, "hn": hour_n})
+	if events.size() > 60:
+		events.pop_front()
+	(event_seen if toast else quiet_seen).emit(text, icon)
+
+
+## «Семьи А, Б, В и ещё N» — для строк колокольчика
+static func _who(names: Array) -> String:
+	return ", ".join(PackedStringArray(names.slice(0, 3))) + (" и ещё %d" % (names.size() - 3) if names.size() > 3 else "")
 
 
 # ---------- истории горожан: данные (ведёт их scripts/stories.gd, тексты — StoryDefs) ----------
@@ -3032,7 +3120,8 @@ func _quiet(text: String, icon: String) -> void:
 ## идущая, предложенная, отложенные (id → до какого часа), бонусы к счастью, кошки-награды, заказы старосты (StoryOrders)
 static func stories_new() -> Dictionary:
 	# granted — исследование → история, чей шаг его открыл («legion» → «bandits»): прерванную такую историю предложат снова
-	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {}, "granted": {}}
+	# pace — спокойный темп (26.10): {h: час последнего нового (история, заказ, новый ранг), req: час последней новой просьбы}
+	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {}, "granted": {}, "pace": {}}
 
 
 ## Из сохранения: чего нет — по умолчанию (старые сохранения — без историй: ничего не идёт, часы с нуля)
@@ -3043,7 +3132,7 @@ static func stories_load(d: Variant) -> Dictionary:
 	var dd: Dictionary = d
 	s["h"] = int(dd.get("h", 0))
 	s["last_h"] = int(dd.get("last_h", -1))
-	for k in ["done", "active", "offer", "later", "orders", "granted"]:
+	for k in ["done", "active", "offer", "later", "orders", "granted", "pace"]:
 		if typeof(dd.get(k)) == TYPE_DICTIONARY:
 			s[k] = dd[k]
 	for k in ["bonus", "pets"]:
@@ -3216,7 +3305,12 @@ func _cat_shop_hour() -> void:
 		buy_cat_item(rec, item, false)
 		var h: Dictionary = buildings.get(int(rec.get("home", -1)), {})
 		var who := ("Семья %s купила" % _fam_name(h)) if not h.is_empty() and not (h.get("families", []) as Array).is_empty() else "Хозяева купили"
-		_quiet("%s в «Кошачьей лавке» обновку: %s теперь %s" % [who, cat_rec_name(rec), String(Defs.CAT_ITEMS[item]["wear"])], "cat")
+		# обновки кошек за день — одной строкой
+		var ct := "%s в «Кошачьей лавке» обновку: %s теперь %s" % [who, cat_rec_name(rec), String(Defs.CAT_ITEMS[item]["wear"])]
+		_quiet_m("cat_items", "cat", {"t": [ct], "c": ["%s — %s" % [cat_rec_name(rec), String(Defs.CAT_ITEMS[item]["wear"])]]}, func(a: Dictionary) -> String:
+			if (a["t"] as Array).size() == 1:
+				return String((a["t"] as Array)[0])
+			return "Обновки в «Кошачьей лавке» за день: %s" % "; ".join(PackedStringArray(a["c"])), false, "", true)
 		tips["cat_item_first"] = true            # советник объяснит один раз (hud._once_tips)
 
 
@@ -3247,7 +3341,7 @@ func save_data() -> Dictionary:
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
-		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
+		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n,
 		"econ_v": econ, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
@@ -3258,7 +3352,10 @@ static func _cells64(cells: PackedInt32Array) -> String:
 
 
 func load_data(d: Dictionary) -> void:
-	money = float(d.get("money", Defs.START_MONEY))
+	# казна в минус не уходит (26.10): старое сохранение с долгом — с нуля
+	money = maxf(0.0, float(d.get("money", Defs.START_MONEY)))
+	unpaid_h = clampi(int(d.get("unpaid_h", 0)), 0, Defs.UNPAID_H)
+	unpaid_n = maxi(0, int(d.get("unpaid_n", 0)))
 	rp = float(d.get("rp", 0))
 	day = int(d.get("day", 0))
 	level = int(d.get("level", 0))
@@ -3283,6 +3380,9 @@ func load_data(d: Dictionary) -> void:
 	tips = d.get("tips", {})
 	road_cells = int(d.get("road_cells", 0))
 	events = d.get("events", [])
+	for e in events:
+		if e is Dictionary:
+			(e as Dictionary).erase("hn")        # час строки — счёт этой игры (после загрузки он с нуля): старые не сливаются
 	StoryDefs.migrate_events(events)             # колокольчик: «Где Мурка?» → «Где Мася?» (Д15), как журнал
 	fest_left = maxi(0, int(d.get("fest_left", 0)))
 	fest_cd = maxi(0, int(d.get("fest_cd", 0)))

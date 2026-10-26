@@ -63,6 +63,17 @@ const RIDE_MAX := 34.0                 # всадник (гонец) скаче�
 const DONKEY_LEN := 1.55               # ослик от морды до хвоста, м
 var works_room := 40                   # «лавка у дома» (ослик): столько м² свободной земли рядом нужно под новую лавку
 var off: Array = []                    # проверки: эти истории не предлагать (игра — не трогает)
+## Спокойный темп (решение владельца 26.10: «на хуторе разнести по времени»): новое приходит, когда игрок успел
+## разобраться с прошлым. Новая история или заказ старосты — не раньше OFFER_GAP_H игровых часов после прошлого
+## нового (история, заказ, новый ранг; история за историей — и так через GAP_H или свою паузу gap_h); первый заказ
+## на «Хуторе» — когда «Где Мася?» пройдена (или через ORDER_WAIT_H, если её отложили); сделанную просьбу новая
+## сменяет через REQ_GAP_H и не в один час с историей или заказом. Советы — не подряд (Hud.TIP_GAP_MS).
+## Состояние — city.stories["pace"]: {h — час последнего нового, req — час последней новой просьбы}. Только в своей
+## игре (игра — главная сцена) или когда проверка включила pace_on: автопроверки историй идут без передышек, как раньше
+const OFFER_GAP_H := 2
+const REQ_GAP_H := 2
+const ORDER_WAIT_H := 24
+var pace_on := false
 
 
 func setup(g) -> void:
@@ -77,6 +88,7 @@ func setup(g) -> void:
 	city.building_removed.connect(_on_removed)
 	city.family_left.connect(_on_family_left)
 	city.festival_changed.connect(_on_fest)
+	city.level_up.connect(func(_l): pace_mark())   # новый ранг: ролик, исследования — сперва осмотреться
 	if city.legion != null:
 		city.legion.battle_requested.connect(_on_battle_req)   # письмо сыну: победа в провинции после начала шага
 		city.legion.battle_closed.connect(_on_battle_done)
@@ -187,10 +199,68 @@ func meow() -> void:
 	ui.bubble3d(_cat_pos() + Vector3(0, 0.55, 0), "мяу!", 2.6, 26)
 
 
+# ---------- спокойный темп ----------
+
+func pace() -> Dictionary:
+	var s := S()
+	if typeof(s.get("pace")) != TYPE_DICTIONARY:
+		s["pace"] = {}
+	return s["pace"]
+
+
+## Спокойный темп включён: своя игра или проверка темпа (pace_on)
+func pacing() -> bool:
+	return pace_on or (game != null and game == get_tree().current_scene)
+
+
+## Можно предложить новое (историю, заказ): с прошлого нового прошло OFFER_GAP_H
+func pace_ok() -> bool:
+	return not pacing() or int(S()["h"]) - int(pace().get("h", -999)) >= OFFER_GAP_H
+
+
+## История вот-вот придёт по срокам (через час — меньше OFFER_GAP_H): заказ уступает ей место, а не заслоняет её
+## своей передышкой (отложенная «на сутки» приходит ровно через сутки)
+func story_soon(h: int) -> bool:
+	var s := S()
+	if not pacing() or not (s["active"] as Dictionary).is_empty() or not (s["offer"] as Dictionary).is_empty() or int(city.tips.get("tut", -1)) >= 0:
+		return false
+	var due := StoryDefs.FIRST_H if int(s["last_h"]) < 0 else int(s["last_h"]) + gap_now()
+	for id in (s["later"] as Dictionary):
+		if not bool(StoryDefs.story(String(id)).get("yearly", false)):
+			due = maxi(due, int(s["later"][id]))
+	return due > h and due - h < OFFER_GAP_H
+
+
+## Пришло новое (история, заказ, новый ранг) — следующее подождёт
+func pace_mark() -> void:
+	pace()["h"] = int(S()["h"])
+
+
+## Просьбы по одной: в своей игре с «Хутора» сделанную просьбу новая сменяет не сразу (City.goals_vis)
+func _pace_requests() -> void:
+	var on: bool = pacing() and city.level >= 1 and int(city.tips.get("tut", -1)) < 0
+	city.goal_pace = on
+	if city.goals_vis >= 3:
+		return
+	var h := int(S()["h"])
+	if not on:
+		city.goals_vis = 3
+	elif h - int(pace().get("req", -999)) >= REQ_GAP_H and h != int(pace().get("h", -999)):
+		city.goals_vis += 1
+		pace()["req"] = h
+	else:
+		return
+	city._check_goals()                        # новая просьба уже сделана — засчитаем сразу (её место освободится снова)
+	hud.refresh()
+
+
 ## Раз в POLL: часы, предложение, шаги, значки
 func tick() -> void:
 	if not allowed():
 		_marks(false)
+		if city != null and (city.goal_pace or city.goals_vis < 3):
+			city.goal_pace = false
+			city.goals_vis = 3                 # не своя игра (снимок, автопроверка) — просьбы как раньше, три сразу
 		return
 	var s := S()
 	var h := int(s["h"])
@@ -205,10 +275,11 @@ func tick() -> void:
 		_tick_offer()
 	elif time_ok():
 		_try_offer()
-	# первое предложение истории объясняется раньше заказа старосты: на «Хуторе» они приходят разом, и совет о заказах
-	# занимал советника, пока игрок уже слушал первую историю (проверка 26.10)
+	# первое предложение истории объясняется раньше заказа старосты (совет о заказах занимал советника, пока игрок уже
+	# слушал первую историю — проверка 26.10); теперь они и приходят порознь (спокойный темп, pace_ok)
 	_advise_once()
 	orders.tick()
+	_pace_requests()
 	_sync_beast()
 	_sync_clicks()
 	_marks(true)
@@ -227,6 +298,8 @@ func time_ok() -> bool:
 	for id in (s["later"] as Dictionary):
 		if int(s["h"]) < int(s["later"][id]) and not bool(StoryDefs.story(String(id)).get("yearly", false)):
 			return false
+	if not pace_ok():
+		return false                           # только что было новое (новый ранг, заказ) — не всё разом
 	if int(s["last_h"]) < 0:
 		return int(s["h"]) >= StoryDefs.FIRST_H
 	return int(s["h"]) - int(s["last_h"]) >= gap_now()
@@ -278,6 +351,7 @@ func _offer_first(only_regular: bool) -> bool:
 		bind["id"] = id
 		bind["since"] = int(s["h"])
 		s["offer"] = bind
+		pace_mark()
 		(s["later"] as Dictionary).erase(id)
 		city._quiet(StoryDefs.fill(String(sd.get("ask", sd["title"])), bind), String(sd.get("icon", "scroll")))
 		hud.refresh()
