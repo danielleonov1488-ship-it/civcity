@@ -370,6 +370,8 @@ static func selected_sets(c: City, b: Dictionary) -> Dictionary:
 ## tint — id → цвет; faces — id → счастье (рожицы); miss — дома, где этого нет (значок ✗);
 ## shops — лавки этой потребности (их значки); n — [хорошо / есть, так себе, плохо / нет]
 static func overview_sets(c: City, mode: String) -> Dictionary:
+	if mode == "classes":
+		return class_sets(c)
 	var tint := {}
 	var faces := {}
 	var miss := []
@@ -418,6 +420,58 @@ static func overview_sets(c: City, mode: String) -> Dictionary:
 	return {"tint": tint, "faces": faces, "miss": miss, "shops": shops, "n": n}
 
 
+## «Обзор → Классы»: какие дома, где живут, можно перестроить в следующий класс («Перестроить», Д12) и что мешает
+## остальным. tint — зелёный (можно сейчас), золотой (готов, не хватает денариев), красный (мешает); why — id → [значок,
+## почему] (нужда класса, счастье, место позади, украшения позади — их можно снести из карточки дома); price — id → цена;
+## n — [можно, денарии, мешает]; top — домусов (выше некуда); locked — класс ещё не изучен (сколько таких домов)
+static func class_sets(c: City) -> Dictionary:
+	var tint := {}
+	var why := {}
+	var price := {}
+	var n := [0, 0, 0]
+	var top := 0
+	var locked := 0
+	var decor := 0
+	for id in c.buildings:
+		var h: Dictionary = c.buildings[id]
+		if not c.is_house(h) or int(h["pop"]) <= 0:
+			continue
+		var nt := c.upgrade_to(h)
+		if nt == "":
+			top += 1
+			continue
+		if not c.unlocked(nt):
+			locked += 1
+			continue
+		var err := c.can_upgrade(h, false)
+		price[id] = c.upgrade_price(h)
+		if err == "":
+			var k := 0 if c.money >= float(price[id]) else 1
+			tint[id] = [GREEN, GOLD][k]
+			n[k] += 1
+			continue
+		tint[id] = RED
+		n[2] += 1
+		var miss := c.upgrade_missing(h)
+		if int(h.get("coming", 0)) > 0:
+			why[id] = ["time", err]
+		elif not miss.is_empty():
+			var need := ""
+			for nd in Defs.CLASSES[String(Defs.B[nt]["cls"])]["needs"]:
+				if not (h.get("needs", {}) as Dictionary).has(nd):
+					need = String(nd)
+					break
+			why[id] = [String(Defs.NEEDS[need]["icon"]) if need != "" else "info", err]
+		elif c.upgrade_happy(h) < int(Defs.UPGRADE_HAPPY.get(String(Defs.B[nt]["cls"]), 65)):
+			why[id] = ["face_bad", err]
+		elif not c.upgrade_decor_blockers(h).is_empty():
+			why[id] = ["decor", err]
+			decor += 1
+		else:
+			why[id] = ["housing", err]
+	return {"tint": tint, "why": why, "price": price, "n": n, "top": top, "locked": locked, "decor": decor, "faces": {}, "miss": [], "shops": []}
+
+
 ## Инструмент «Этаж» (U): ready — дома, которым можно надстроить этаж прямо сейчас (зелёные, над крышей стрелка с ценой);
 ## short — готовы, но не хватает денариев (стрелка с красной ценой, без подсветки); price — id → цена следующего этажа
 static func floor_sets(c: City) -> Dictionary:
@@ -439,15 +493,24 @@ static func floor_sets(c: City) -> Dictionary:
 
 ## Инструмент «Перестроить» (Shift+U, Д12): ready — дома, которые можно перестроить сейчас (зелёные, над крышей
 ## стрелка с ценой цвета нового класса); short — готовы, но не хватает денариев (цена красная); price — id → цена
-static func upgrade_sets(c: City) -> Dictionary:
+static func upgrade_sets(c: City, clearing := false) -> Dictionary:
 	var ready := []
 	var short := []
 	var price := {}
 	if c.research.has("artisans"):
-		for id in c.upgrade_ready(false):         # список готовых — из запаса города (до следующего compute)
+		var ids: Array = c.upgrade_ready(false)   # список готовых — из запаса города (до следующего compute)
+		if clearing:
+			# «Сносить мешающие украшения»: и дома, которым мешают одни украшения позади
+			for id in c.buildings:
+				var h: Dictionary = c.buildings[id]
+				if c.is_house(h) and int(h["pop"]) > 0 and not ids.has(id) and c.upgrade_to(h) != "" \
+						and not c.upgrade_decor_blockers(h).is_empty() and c.can_upgrade_clearing(h, false) == "":
+					ids = ids + [id]
+		for id in ids:
 			var h: Dictionary = c.buildings[id]
 			price[id] = c.upgrade_price(h)
-			if c.money >= float(price[id]):
+			var back := c.upgrade_decor_refund(h) if clearing and c.can_upgrade(h, false) != "" else 0
+			if c.money + float(back) >= float(price[id]):
 				ready.append(id)
 			else:
 				short.append(id)
@@ -733,6 +796,17 @@ func _overview(mode: String) -> void:
 			var hp: int = sets["faces"][id]
 			var face := "face_good" if hp >= HAPPY_GOOD else ("face_mid" if hp >= HAPPY_BAD else "face_bad")
 			mk["ov%d" % id] = [id, face, false, "", "plain"] if _far else [id, face, false, "%d%%" % hp]
+	elif mode == "classes":
+		# готовые — двойная стрелка цвета нового класса с ценой (как у «Перестроить»); остальным — значок помехи
+		for id in sets["tint"]:
+			var h: Dictionary = c.buildings[id]
+			if sets["why"].has(id):
+				var w: Array = sets["why"][id]
+				mk["ov%d" % id] = [id, String(w[0]), String(w[0]) != "decor", "", "plain" if String(w[0]).begins_with("face_") else "mark"]
+			else:
+				var ic := "upc_p" if c.upgrade_to(h) == "house_patrician" else "upc_a"
+				var pr := int(sets["price"].get(id, 0))
+				mk["ov%d" % id] = [id, ic, c.money < float(pr), game.hud.fmt(pr) if game.hud else str(pr), ""]
 	else:
 		for id in sets["miss"]:
 			mk["ov%d" % id] = [id, "close", true, "", "plain"]
@@ -765,7 +839,7 @@ func _floor() -> void:
 ## (медная — в дом ремесленников, лиловая — в домус; не хватает денариев — цена красная)
 func _upgrade() -> void:
 	var c: City = game.city
-	sets = upgrade_sets(c)
+	sets = upgrade_sets(c, bool(game.get("upg_decor")))
 	state = "upgrade"
 	var w := {}
 	for id in sets["ready"]:

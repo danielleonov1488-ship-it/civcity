@@ -618,6 +618,9 @@ const LEG_KEEP := 0.25
 var clock0 := 0.0
 var leg_keep := LEG_KEEP
 var leg_ups := 0                     # сколько улучшений зданий Легиона куплено за игру
+const UPG_RICH := 0.7                 # «Перестроить» из лишних денег — когда казна заполнена на столько
+var upg_n := 0                       # сколько домов бот перестроил («Перестроить», Д12)
+var upg_spent := 0.0
 var leg_spent := 0.0
 
 
@@ -977,6 +980,9 @@ func _bplay() -> void:
 	m0 = _m0()
 	_bneed()
 	_spend("need", m0)
+	m0 = _m0()
+	_bupgrade(save)
+	_spend("upgrades", m0)
 	m0 = _m0()
 	_bfest(save)
 	_spend("festivals", m0)
@@ -1524,6 +1530,40 @@ func _depth(type: String) -> float:
 	return float(_depths[type])
 
 
+## «Перестроить» (Д12), как игрок: дома ремесленников и домусы для условий уровня — перестройкой готовых домов
+## (по одному за час, запас на условия — наполовину); казна почти полна — лишние деньги тоже в перестройку
+func _bupgrade(save: float) -> void:
+	if frugal or not c.research.has("artisans"):
+		return
+	var ready: Array = c.upgrade_ready(true)
+	if ready.is_empty():
+		return
+	var need := {}
+	for e: Dictionary in _needs_left():
+		var p: Array = e["p"]
+		if String(p[0]) == "count" and p[1] in ["house_artisan", "house_patrician"]:
+			need[p[1]] = true
+	var rich: bool = c.money >= c.money_cap() * UPG_RICH
+	for id in ready:
+		if not c.buildings.has(id):
+			continue
+		var h: Dictionary = c.buildings[id]
+		var nt: String = c.upgrade_to(h)
+		if not need.has(nt) and not rich:
+			continue
+		var price := float(c.upgrade_price(h))
+		if c.money - price < save * (0.5 if need.has(nt) else 1.0):
+			continue
+		var was := String(c.def(h)["name"])
+		if c.upgrade_house(h, true):
+			upg_n += 1
+			upg_spent += price
+			print("ECONUPG t=%.1f lvl=%d %s → %s for %d (%s), money left %d" % [t, c.level, was, Defs.B[nt]["name"], int(price), "rank need" if need.has(nt) else "spare money", int(c.money)])
+			if not rich:
+				return
+		rich = c.money >= c.money_cap() * UPG_RICH
+
+
 ## Этажи — всем домам, которым можно (полный дом, счастье от 65% / 75%), пока хватает и на условия уровня
 func _bfloors(save: float) -> void:
 	if frugal and not _floor_needed():
@@ -1668,6 +1708,7 @@ func _summary() -> void:
 		if c.legion.b_built(bt):
 			lgs.append("%s %d" % [Defs.B[bt]["name"], c.legion.b_level(bt)])
 	print("ECON LEGION | buildings %s | upgrades bought %d, spent %d den" % [", ".join(lgs) if not lgs.is_empty() else "—", leg_ups, int(leg_spent)])
+	print("ECON UPGRADE | houses rebuilt %d («Перестроить»), spent %d den" % [upg_n, int(upg_spent)])
 	print("PACE BOT end at %.1f h = %.1f min: level %d «%s» pop=%d happy=%d money=%d rp=%d research=%d houses=%d buildings=%d" % [t, t * SEC_H / 60.0,
 		c.level, Defs.LEVELS[c.level]["name"], int(c.stats["pop"]), int(c.stats["happy"]), int(c.money), int(c.rp), c.research.size(), _houses().size(), c.buildings.size()])
 	var kinds := {}

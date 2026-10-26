@@ -25,6 +25,8 @@ var chunk_nodes := {}
 var far_near: Array = []              # пейзаж за краем карты вблизи (рощи и кусты с тенью): на «Низкой» без тени
 var far_forest: Array = []            # дальние леса до горизонта: на «Очень низкой» не рисуются
 var gfx: Gfx                          # графика: выбор по видеокарте, сторож кадров, счётчик FPS (scripts/gfx.gd)
+var photo: PhotoMode                  # режим фото (P): интерфейс спрятан, наклон, время суток, снимок (scripts/photo_mode.gd)
+var clouds: Clouds                    # тени облаков по городу (scripts/clouds.gd)
 var land_mat: ShaderMaterial
 var surf_img: Image
 var surf_tex: ImageTexture
@@ -187,6 +189,7 @@ var floor_last := Vector2.INF         # где был курсор в прошл
 var floor_moved := false              # мазок ушёл от места нажатия: красные стрелки больше не заслоняют дома под ними
 var floor_hover := -1                 # под курсором: 1 — дом, которому можно этаж, 0 — дом, которому нельзя, −1 — не дом
 var floor_up := false                 # этот мазок — «Перестроить» (итог в колокольчик — про перестройку)
+var upg_decor := false                # «Перестроить»: сносить мешающие украшения позади дома (как в Town to City; деньги вернутся)
 const POPS_MAX := 40                  # рожиц после стройки за раз не больше (самые большие перемены счастья)
 var _rmb_down := Vector2.ZERO
 var _rmb_armed := false               # правую кнопку нажали над миром (а не над окном)
@@ -321,6 +324,9 @@ func _ready() -> void:
 	rig.ground_pick = ground_at_mouse         # колёсико приближает к точке под курсором (3.8)
 	var v := str(args.get("view", "192,124,15,42,60")).split(",")
 	rig.set_view(Vector3(float(v[0]), Land.BASE_Y, float(v[1])), float(v[2]), float(v[3]), float(v[4]))
+	clouds = Clouds.new()                     # тени облаков (scripts/clouds.gd): только «Высокая» и «Средняя»
+	clouds.game = self
+	add_child(clouds)
 	_make_markers()
 	_apply_quality()
 	hud = Hud.new()
@@ -329,8 +335,13 @@ func _ready() -> void:
 	gfx = Gfx.new()
 	gfx.game = self
 	add_child(gfx)
+	if mode != "menu":
+		photo = PhotoMode.new()              # режим фото (P): scripts/photo_mode.gd
+		photo.game = self
+		add_child(photo)
 	city.event.connect(func(t, i): hud.notify(t, i))
 	city.quiet.connect(func(t, i): hud.bell(t, i))
+	city.chron_on = mode in ["play", "new"]   # «Летопись города»: венки — только в своём городе
 	if city.unread > 0 and mode in ["play", "new"]:
 		hud.bell_count += city.unread         # записано при загрузке (например, возврат очков) — только число на колокольчике
 		hud.bell_badge.text = str(hud.bell_count)
@@ -653,6 +664,8 @@ func _set_hour(h: float) -> void:
 	var lh := look_hour if look_hour >= 0.0 else hour   # свет: часы игры или час ролика
 	# день: 0 — ночь, 1 — полный день; рассвет 4.6–7.2, закат 18.6–21.6
 	var day := smoothstep(4.3, 6.4, lh) * (1.0 - smoothstep(19.8, 22.4, lh))
+	if clouds:
+		clouds.set_day(day)                   # тени облаков — только днём
 	# золото: утро и вечер
 	var gold := (smoothstep(4.5, 6.0, lh) * (1.0 - smoothstep(7.5, 10.5, lh))) + (smoothstep(15.5, 18.5, lh) * (1.0 - smoothstep(21.0, 22.4, lh)))
 	gold = clampf(gold, 0.0, 1.0)
@@ -2000,6 +2013,7 @@ func _update_plot_signs() -> void:
 			add_child(sign)
 			# золотая пунктирная рамка по земле вокруг участка и табличка с ценой (всегда одного размера)
 			var border := _plot_border(p)
+			border.name = "border"                 # режим фото прячет рамку (photo_mode.gd)
 			sign.add_child(border)
 			border.global_transform = Transform3D.IDENTITY
 			hud.set_badge("plot%d_%d" % [i, j], Vector3(at.x, y + 4.4, at.y), "coins", false, "%s ден." % hud.fmt(city.plot_price()))
@@ -2054,8 +2068,8 @@ func _process(dt: float) -> void:
 			else:
 				for ap in a.find_children("*", "AnimationPlayer", true, false):
 					(ap as AnimationPlayer).speed_scale = speed
-	if rig and rig.cine:
-		_plot_hover(Vector2i(-1, -1))         # в ролике камеру ведёт он: без подсветки участка под мышью
+	if rig and (rig.cine or (photo != null and photo.on)):
+		_plot_hover(Vector2i(-1, -1))         # в ролике камеру ведёт он (и в режиме фото): без подсветки участка под мышью
 		brush_ring.visible = false            # …и без кольца кисти на земле (подсветку домов прячет cover.gd)
 		brush_box.visible = false
 		brush_disc.visible = false
@@ -3699,6 +3713,7 @@ func _fence_commit() -> void:
 	if ids.is_empty():
 		sound.ui("error")
 		return
+	Chronicle.add(city, "decor" if String(d["kind"]) == "decor" else "built", ids.size())   # летопись: звенья забора — тоже украшения
 	city.compute()
 	city._check_goals()
 	city.changed.emit()
@@ -4016,7 +4031,16 @@ func _up_tool() -> bool:
 
 ## Можно ли этот дом прямо сейчас (этаж или перестройка); check_money = false — не глядя на казну
 func _fl_why(b: Dictionary, check_money := true) -> String:
-	return city.can_upgrade(b, check_money) if _up_tool() else city.can_buy_floor(b, check_money)
+	if _up_tool():
+		return city.can_upgrade_clearing(b, check_money) if upg_decor else city.can_upgrade(b, check_money)
+	return city.can_buy_floor(b, check_money)
+
+
+## «Сносить мешающие украшения» включено и дому мешают только они: сколько вернётся за них (иначе 0)
+func _upg_refund(b: Dictionary) -> int:
+	if not upg_decor or b.is_empty() or city.can_upgrade(b, false) == "" or city.upgrade_decor_blockers(b).is_empty():
+		return 0
+	return city.upgrade_decor_refund(b)
 
 
 func _fl_price(b: Dictionary) -> int:
@@ -4054,13 +4078,13 @@ func _floor_hover(over_ui: bool) -> void:
 		cover.preview_off()
 		return
 	# «Перестроить»: готовность дома под курсором — раз на кадр (место нового облика считать дорого)
-	var why0 := city.can_upgrade(b, false) if _up_tool() and not b.is_empty() else ""
+	var why0 := _fl_why(b, false) if _up_tool() and not b.is_empty() else ""
 	cover.say(_upg_lines(b, why0) if _up_tool() else _floor_lines(b))
 	if b.is_empty():
 		floor_hover = -1
 		_clear_highlight()
 		return
-	var ok := (why0 == "" and city.money >= float(city.upgrade_price(b))) if _up_tool() else _fl_why(b) == ""
+	var ok := (why0 == "" and city.money + float(_upg_refund(b)) >= float(city.upgrade_price(b))) if _up_tool() else _fl_why(b) == ""
 	floor_hover = 1 if ok else 0
 	var key := "%s:%d:%d:%s:%s" % [tool, int(b["id"]), int(b["tier"]), ok, String(b["type"])]
 	if key != highlight_key:
@@ -4107,14 +4131,18 @@ func _upg_lines(b: Dictionary, why0: String) -> Array:
 		return ["Перестроили: теперь это %s" % String(city.def(b)["name"]).to_lower(), tot, ""]
 	var price := city.upgrade_price(b)
 	var why := why0
-	if why0 == "" and city.money < float(price):
+	if why0 == "" and city.money + float(_upg_refund(b)) < float(price):
 		why = "Не хватает денариев: перестройка стоит %s ден." % hud.fmt(price)
 	if why == "":
 		var nt := city.upgrade_to(b)
 		var cap := int(Defs.CLASSES[String(Defs.B[nt]["cls"])]["per_floor"]) * city.upgrade_tier(b)
 		var tight := " · тесновато: %d жильцов, мест %d" % [int(b["pop"]), cap] if int(b["pop"]) > cap else ""
-		return ["Дом семьи %s → %s · %s ден. · счастье станет %d%%%s" % [city._fam_name(b), String(Defs.B[nt]["name"]).to_lower(), hud.fmt(price),
-			clampi(city.upgrade_happy(b), 0, 100), tight], tot, ""]
+		var back := _upg_refund(b)
+		var clr := " · украшения позади уберём (вернётся %s ден.)" % hud.fmt(back) if back > 0 else ""
+		# украшения снесут — и счастье без них (их очки и наборы уйдут)
+		var hp := city.upgrade_happy_without(b, city.upgrade_decor_blockers(b)) if back > 0 else city.upgrade_happy(b)
+		return ["Дом семьи %s → %s · %s ден. · счастье станет %d%%%s%s" % [city._fam_name(b), String(Defs.B[nt]["name"]).to_lower(), hud.fmt(price),
+			clampi(hp, 0, 100), tight, clr], tot, ""]
 	return ["", tot, why]
 
 
@@ -4147,7 +4175,7 @@ func _floor_buy(b: Dictionary) -> void:
 	if floor_done.has(int(b["id"])) or _fl_why(b, false) != "":
 		return
 	var price := _fl_price(b)
-	if city.money < float(price):
+	if city.money + float(_upg_refund(b) if _up_tool() else 0) < float(price):
 		# «Не хватает денариев» у курсора — только когда не по карману ни один из оставшихся готовых
 		var cheap := INF
 		var pr: Dictionary = cover.sets.get("price", {}) if cover.state == ("upgrade" if _up_tool() else "floor") else {}
@@ -4156,7 +4184,7 @@ func _floor_buy(b: Dictionary) -> void:
 				cheap = minf(cheap, float(pr[id]))
 		floor_broke = city.money < cheap
 		return
-	var ok: bool = city.upgrade_house(b, true) if _up_tool() else city.buy_floor(b, true)
+	var ok: bool = (city.upgrade_clearing(b, true) if upg_decor else city.upgrade_house(b, true)) if _up_tool() else city.buy_floor(b, true)
 	if ok:
 		floor_done.append(int(b["id"]))
 		floor_spent += price
@@ -4247,6 +4275,13 @@ func select_person(sel: Dictionary) -> void:
 func _unhandled_input(e: InputEvent) -> void:
 	if not ready_done or mode == "menu":
 		return
+	if photo != null and photo.on:
+		# режим фото: камеру ведёт CameraRig; щелчок по жителю — камера за ним; клавиши — свои (photo.key)
+		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			photo.click(_mouse_pos if _mouse_pos.x >= 0.0 else (e as InputEventMouseButton).position)
+			return
+		if not (e is InputEventKey and e.pressed and not e.echo) or photo.key(e as InputEventKey):
+			return
 	if e is InputEventMouseButton:
 		var mb := e as InputEventMouseButton
 		if mb.pressed and mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT] and get_viewport().gui_get_focus_owner() is LineEdit:
@@ -4371,6 +4406,9 @@ func _unhandled_input(e: InputEvent) -> void:
 						copy_building(cb)
 			KEY_M:
 				set_tool("move")
+			KEY_P:
+				if photo != null and not k.ctrl_pressed:
+					photo.toggle()                    # режим фото
 			KEY_G:
 				if Defs.B.has(tool) and Defs.B[tool].get("gate", false):
 					fence_gate = not fence_gate           # забор: калитка посередине
@@ -5297,6 +5335,7 @@ func _undo_place(u: Dictionary) -> void:
 		if not city.buildings.has(id):
 			continue
 		var b: Dictionary = city.buildings[id]
+		Chronicle.add(city, "decor" if String(city.def(b)["kind"]) == "decor" else "built", -1)   # летопись: отменённая — не в счёт
 		for oid in city.buildings.keys():
 			if city.buildings.has(oid) and int(city.buildings[oid].get("host", -1)) == int(id):
 				city.remove(city.buildings[oid], true, true)     # украшения на её стенах — как при сносе
@@ -5326,6 +5365,8 @@ func save() -> void:
 		set_tool("")                          # перенос не закончен — вернуть на место, иначе постройка пропадёт
 	_save_gen += 1
 	_write_save(_save_data())
+	if hud:
+		hud.saving()                          # перо у часов
 
 
 func _save_data() -> Dictionary:
@@ -5352,6 +5393,8 @@ func _write_save(data: Dictionary) -> void:
 ## Сохранили иначе между кадрами — не пишем (save_ms — самый долгий)
 func _autosave() -> void:
 	_save_gen += 1
+	if hud:
+		hud.saving()                          # перо у часов
 	var gen := _save_gen
 	var t0 := Time.get_ticks_usec()
 	var data := _save_data()

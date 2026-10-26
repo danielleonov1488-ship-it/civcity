@@ -251,6 +251,8 @@ static func apply(g) -> void:
 			for id in g.city.buildings:
 				if g.city.buildings[id]["type"] in CatGrand.TYPES and g.visuals.has(id):
 					g._show(g.city.buildings[id])
+	if g.get("clouds") != null:
+		g.clouds.set_enabled(not low)          # тени облаков — только «Высокая» и «Средняя»
 	if g.gfx == null:
 		swap_all()                         # загрузка (узла Gfx ещё нет), снимки — сразу; в игре — по одной за кадр
 	Engine.max_fps = 60 if g.shot_path == "" else 0

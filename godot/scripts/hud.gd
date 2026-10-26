@@ -42,6 +42,8 @@ var lbl_pop: Label
 var lbl_happy: Label
 var lbl_day: Label
 var lbl_clock: Label
+var save_quill: TextureRect               # перо у часов — идёт сохранение (saving)
+var _quill_tw: Tween
 var speed_btns := []
 var class_box: HBoxContainer
 var city_card: Control
@@ -80,6 +82,7 @@ var undo_btn: Button                      # медаль «Отменить» в
 var thumb_rect: TextureRect               # живая картинка постройки (3.4)
 var color_box: HBoxContainer              # ряд цветов фасада (3.4)
 var gate_check: CheckBox                  # забор: калитка посередине
+var upg_decor_check: CheckBox             # «Перестроить»: сносить мешающие украшения
 const THUMB := Vector2i(220, 140)
 var tool_title: Label
 var tool_keys: Label
@@ -737,6 +740,29 @@ func _city_card() -> void:
 	lbl_clock = _label("08:00", 14, true, C_SOFT)
 	t.add_child(lbl_clock)
 	col.add_child(t)
+	# перо у часов: пока город сохраняется (автосохранение, F5), оно видно и чуть «пишет», потом тает
+	save_quill = _icon("quill", 20, C_INK)
+	save_quill.pivot_offset = Vector2(10, 10)
+	save_quill.visible = false
+	lbl_clock.add_child(save_quill)
+
+
+## Город сохраняется: перо у часов (без звука и всплывашки) — видно полторы секунды, чуть покачивается и тает
+func saving() -> void:
+	if save_quill == null or game == null or not (game.mode in ["play", "new"]):
+		return
+	save_quill.position = Vector2(lbl_clock.size.x + 1.0, -3.0)
+	save_quill.visible = true
+	save_quill.modulate.a = 1.0
+	save_quill.rotation = 0.0
+	if _quill_tw and _quill_tw.is_valid():
+		_quill_tw.kill()
+	_quill_tw = create_tween()
+	for i in 3:
+		_quill_tw.tween_property(save_quill, "rotation", -0.22, 0.2)
+		_quill_tw.tween_property(save_quill, "rotation", 0.12, 0.2)
+	_quill_tw.tween_property(save_quill, "modulate:a", 0.0, 0.5)
+	_quill_tw.tween_callback(func(): save_quill.visible = false)
 
 
 ## Название города на табличке: имя с сервера (city.name), пока его нет — «Новый Рим» (в меню и готовом городе — всегда).
@@ -1412,7 +1438,7 @@ func _top_right() -> void:
 	bell_badge.position = Vector2(35, -4)
 	bell.add_child(bell_badge)
 	for t: Array in [["research", "research", "Исследования"], ["finance", "finance", "Финансы"], ["stats", "stats", "Жители и работники"],
-			["view", "view", "Обзор: счастье каждого дома и где чего не хватает"], ["photo", "photo", "Фото: спрятать интерфейс (любая клавиша — вернуть)"], ["menu", "menu", "Меню игры"]]:
+			["view", "view", "Обзор: счастье каждого дома и где чего не хватает"], ["photo", "photo", "Режим фото (P): интерфейс прячется, камера — к самой земле, время суток, размытие, снимок"], ["menu", "menu", "Меню игры"]]:
 		var id: String = t[0]
 		var b := _round(t[1], t[2], 48, func(): _top_action(id))
 		h.add_child(_shadowed(b))
@@ -1551,11 +1577,11 @@ func _overlay_panel() -> void:
 	v.add_child(top)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
-	for m: String in ["happy"] + Defs.NEED_ORDER + ["water"]:
+	for m: String in ["happy"] + Defs.NEED_ORDER + ["water", "classes"]:
 		var mm := m
-		var icon: String = "happy" if m == "happy" else ("water" if m == "water" else Defs.NEEDS[m]["icon"])
+		var icon: String = String({"happy": "happy", "water": "water", "classes": "toga"}.get(m, "")) if m in ["happy", "water", "classes"] else String(Defs.NEEDS[m]["icon"])
 		var tip: String = "Счастье каждого дома" if m == "happy" else ("Вода: у каких домов фонтан рядом, а у каких нет" if m == "water" \
-			else "%s: где есть, а где нет" % Defs.NEEDS[m]["name"])
+			else ("Классы: какие дома можно перестроить в следующий класс и что мешает остальным" if m == "classes" else "%s: где есть, а где нет" % Defs.NEEDS[m]["name"]))
 		var b := _round(icon, tip, 46, func(): set_overlay(mm))
 		row.add_child(b)
 		_ov_btns[m] = b
@@ -1611,6 +1637,8 @@ func fill_overlay() -> void:
 		r.add_child(_wrap(_label("Значки над крышами — где стоят фонтаны", 15, false, C_INK), 300))
 		_ov_legend.add_child(r)
 		_ov_legend.add_child(_wrap(_label("Фонтан поит дома вокруг себя. Для «Посёлка» нужен хотя бы один. Пустые дома не подсвечены.", 14, false, C_SOFT), 340))
+	elif overlay == "classes":
+		_fill_overlay_classes(s, n)
 	else:
 		var nd: Dictionary = Defs.NEEDS[overlay]
 		_ov_title.text = nd["name"]
@@ -1627,6 +1655,49 @@ func fill_overlay() -> void:
 		_ov_legend.add_child(r)
 		_ov_legend.add_child(_wrap(_label("Нужно: %s. Пустые дома не подсвечены." % ", ".join(who), 14, false, C_SOFT), 340))
 	_snug(overlay_panel)
+
+
+## «Обзор → Классы»: кого можно перестроить (Д12), кому не хватает денариев, что мешает остальным; кнопка «Перестроить»
+func _fill_overlay_classes(s: Dictionary, n: Array) -> void:
+	var c: City = game.city
+	_ov_title.text = "Классы: кого можно перестроить"
+	if not c.research.has("artisans"):
+		_ov_legend.add_child(_wrap(_label("Дом плебеев можно перестроить в дом ремесленников, а дом ремесленников — в городской домус. Сначала изучите «%s»." % Defs.research("artisans").get("name", ""), 15, false, C_INK), 340))
+		return
+	_ov_row(_drawn("upc_a", 26), "Можно перестроить сейчас (над крышей — цена)", n[0])
+	_ov_row(_swatch(Cover.GOLD), "Готов, но не хватает денариев", n[1])
+	_ov_row(_swatch(Cover.RED), "Что-то мешает — значок над крышей", n[2])
+	if int(n[2]) > 0:
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 6)
+		for e: Array in [["food", "нужды класса"], ["face_bad", "счастье"], ["housing", "место позади"], ["decor", "украшения"]]:
+			var ic: Control = _drawn(String(e[0]), 22) if String(e[0]).begins_with("face_") else _icon(String(e[0]), 22)
+			r.add_child(ic)
+			r.add_child(_label(String(e[1]), 14, false, C_SOFT))
+		_ov_legend.add_child(r)
+	if int(s.get("decor", 0)) > 0:
+		_ov_legend.add_child(_wrap(_label("Где мешают одни украшения позади дома — в карточке дома есть «Снести мешающее» (денарии за них вернутся).", 14, false, C_SOFT), 340))
+	var tail := []
+	if int(s.get("top", 0)) > 0:
+		tail.append("Домусов (выше класса нет): %d" % int(s["top"]))
+	if int(s.get("locked", 0)) > 0:
+		tail.append("домов ремесленников ждут «%s»: %d" % [Defs.research("patricians").get("name", ""), int(s["locked"])])
+	if not tail.is_empty():
+		var tt := "; ".join(tail)
+		_ov_legend.add_child(_wrap(_label(tt.left(1).to_upper() + tt.substr(1) + ".", 14, false, C_SOFT), 340))
+	var b := Button.new()
+	b.text = "Перестроить (Shift+U)"
+	b.name = "classes_tool"
+	b.focus_mode = Control.FOCUS_NONE
+	b.tooltip_text = UPG_TIP
+	b.add_theme_font_size_override("font_size", 15)
+	b.add_theme_stylebox_override("normal", _box_pill(14, 4))
+	b.add_theme_stylebox_override("hover", _box_pill(14, 4, "g_btn_hover"))
+	b.add_theme_stylebox_override("pressed", _box_pill(14, 4, "g_btn_on"))
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	b.pressed.connect(func(): game.set_tool("upgrade"))
+	_ov_legend.add_child(b)
+	_ov_legend.add_child(_wrap(_label("Щёлкните по дому — в карточке видно, каких условий не хватает. Сам дом класс не меняет — только по вашему щелчку.", 14, false, C_SOFT), 340))
 
 
 func _ov_row(mark: Control, text: String, count: int) -> void:
@@ -2036,16 +2107,10 @@ func cover_tip() -> void:
 	advisor("Кому достанется лавка", "Кругов охвата больше нет — смотрите на цвет домов. Пока ставите лавку, зелёные дома получат её впервые, а синие уже снабжает такая же лавка: вторая такая же им ничего не прибавит. У курсора написано, сколько новых домов, а значки над крышами показывают, где такие лавки уже стоят. С памятниками и украшениями так же: зелёным домам станет лучше.\n\nКнопка «Обзор» вверху справа (глаз) покажет счастье каждого дома или одну потребность — где еда, одежда и прочее есть, а где нет.")
 
 
+## Кнопка «Фото» — режим фото (scripts/photo_mode.gd): интерфейс прячется, наклон, время суток, размытие, снимок
 func _photo() -> void:
-	hidden_ui = true
-	root.visible = false
-
-
-func _unhandled_key_input(e: InputEvent) -> void:
-	if hidden_ui and e.is_pressed():
-		hidden_ui = false
-		root.visible = true
-		get_viewport().set_input_as_handled()
+	if game and game.get("photo") != null:
+		game.photo.toggle()
 
 
 # ---------- снизу ----------
@@ -3358,6 +3423,19 @@ func _tool_panel() -> void:
 	gate_check.toggled.connect(func(x): game.fence_gate = x; game._fence_key = "")
 	gate_check.visible = false
 	v.add_child(gate_check)
+	# «Перестроить»: как в Town to City — украшения позади дома, что мешают новому облику, сносятся (деньги вернутся)
+	upg_decor_check = CheckBox.new()
+	upg_decor_check.text = "Сносить мешающие украшения (половина цены вернётся)"
+	upg_decor_check.add_theme_font_size_override("font_size", 15)
+	upg_decor_check.focus_mode = Control.FOCUS_NONE
+	upg_decor_check.tooltip_text = "Дому для нового класса нужно больше места сзади, а там стоят украшения — их уберут, как сносом, и дом перестроится"
+	upg_decor_check.toggled.connect(func(x):
+		game.upg_decor = x
+		if game.cover:
+			game.cover.refresh()
+		_fill_tool_panel())
+	upg_decor_check.visible = false
+	v.add_child(upg_decor_check)
 	tool_keys = _label("", 15, false, C_SOFT)
 	tool_keys.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tool_keys.custom_minimum_size = Vector2(320, 0)
@@ -3397,6 +3475,8 @@ func _fill_tool_panel_body() -> void:
 	thumb_rect.visible = false
 	color_box.visible = false
 	gate_check.visible = false
+	upg_decor_check.visible = t == "upgrade" and game.city.research.has("artisans")
+	upg_decor_check.set_pressed_no_signal(game.upg_decor)
 	undo_btn.visible = Defs.B.has(t)          # у дорог свои «Отменить» и «Вернуть» — в панели кисти
 	refresh_undo()
 	if t == "":
@@ -3415,6 +3495,9 @@ func _fill_tool_panel_body() -> void:
 	if t == "upgrade":
 		var c: City = game.city
 		var n: int = c.upgrade_ready(false).size()
+		if game.upg_decor:
+			var us := Cover.upgrade_sets(c, true)          # и дома, которым мешают одни украшения позади
+			n = (us["ready"] as Array).size() + (us["short"] as Array).size()
 		tool_title.text = "Перестроить · готовы домов: %d" % n
 		tool_err.text = ""
 		tool_keys.text = "Щёлкните по дому с двойной стрелкой — он станет следующим классом: дом плебеев — домом ремесленников, дом ремесленников — городским домусом. Ведите с зажатой кнопкой вдоль улицы — перестроятся все готовые дома под курсором, пока хватает денариев.\nГотов дом, где живут, когда рядом есть всё для нового класса, а счастье после перестройки — от %d%% (домус — от %d%%). Esc или правая кнопка — выход." % [int(Defs.UPGRADE_HAPPY["artisans"]), int(Defs.UPGRADE_HAPPY["patricians"])]
@@ -3814,8 +3897,13 @@ func _hire_row(b: Dictionary) -> HBoxContainer:
 	var c: City = game.city
 	var mx := c.job_max(b)
 	var h := c.hired_of(b)
-	var row := _row("hammer", "Работники", "%d / %d · %d%%" % [h, mx, int(float(b.get("staff", 1.0)) * 100.0)], C_GOOD if float(b.get("fill", 1.0)) >= 0.99 and h > 0 else C_BAD)
-	row.tooltip_text = "Сколько работников нанять. Чем больше — тем больше домов обслуживает постройка, но каждый работник стоит %s ден. в час (жалованье растёт с уровнем города) и нужен жителям ниже классом" % String.num(c.wage(), 2).replace(".", ",")
+	# как в Town to City: «−  1 / 3  +», а сколько от полной силы работает — мельче справа
+	var row := _row("hammer", "Работники", "", C_INK)
+	var val: Label = row.get_child(row.get_child_count() - 1)
+	row.remove_child(val)
+	val.queue_free()
+	var col := C_GOOD if float(b.get("fill", 1.0)) >= 0.99 and h > 0 else C_BAD
+	row.tooltip_text = "Сколько работников нанять (как в Town to City). Меньше — места отдадутся другим постройкам, постройка работает слабее; больше — обслуживает больше домов, но каждый работник стоит %s ден. в час (жалованье растёт с уровнем города). Сейчас работает на %d%%" % [String.num(c.wage(), 2).replace(".", ","), int(float(b.get("staff", 1.0)) * 100.0)]
 	var minus := Button.new()
 	minus.text = "−"
 	_small(minus)
@@ -3830,8 +3918,14 @@ func _hire_row(b: Dictionary) -> HBoxContainer:
 	plus.disabled = h >= mx
 	plus.tooltip_text = "Нанять работника"
 	plus.pressed.connect(func(): game.happy_action(func(): c.set_hire(b, h + 1), b["pos"]); _fill_info())
+	var n := _label("%d / %d" % [h, mx], 18, true, col)
+	n.custom_minimum_size = Vector2(52, 0)
+	n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	n.name = "hire_n"
 	row.add_child(minus)
+	row.add_child(n)
 	row.add_child(plus)
+	row.add_child(_label("%d%%" % int(float(b.get("staff", 1.0)) * 100.0), 14, true, C_SOFT))
 	return row
 
 
@@ -4620,6 +4714,10 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 		db.custom_minimum_size = Vector2(cw, 40)
 		db.clip_text = true
 		db.tooltip_text = "Украшения за домом уберут, половина их цены вернётся в казну — дому хватит места"
+		var hp2 := c.upgrade_happy_without(b, dec)
+		if hp >= need and hp2 < need:
+			# они же и радуют дом: без них перестройка не выйдет — сказать до сноса
+			info_box.add_child(_wrap(_label("Но без них счастье после перестройки упадёт до %d%% — нужно от %d%%" % [clampi(hp2, 0, 100), need], 13, false, C_BAD), cw))
 		db.pressed.connect(func():
 			for id in dec:
 				if c.buildings.has(id):
@@ -5963,6 +6061,23 @@ func _tip_free() -> bool:
 	return rc == null or (rc.cine.is_empty() and rc.pending.is_empty())
 
 
+## Каких работников («Плебеев», «Ремесленников») заметно меньше, чем мест, и мест этого класса не в одной постройке; "" — хватает
+func _hire_short() -> String:
+	var c: City = game.city
+	var ratio: Dictionary = c.stats.get("ratio", {})
+	for cl in Defs.CLASS_ORDER:
+		if float(ratio.get(cl, 1.0)) >= 0.75:
+			continue
+		var n := 0
+		for id in c.buildings:
+			var b: Dictionary = c.buildings[id]
+			if not c.is_house(b) and int(c.jobs_of(b).get(cl, 0)) > 0:
+				n += 1
+		if n >= 3:
+			return String({"plebs": "Плебеев", "artisans": "Ремесленников", "patricians": "Патрициев"}.get(cl, ""))
+	return ""
+
+
 ## Советы один раз: город готов к новому уровню; казна полна; полки полны
 func _once_tips() -> void:
 	var c: City = game.city
@@ -6046,6 +6161,23 @@ func _once_tips() -> void:
 	if not c.tips.has("name_tip") and not me.is_empty() and bool(me.get("rename", false)) and not bool(me.get("custom", true)) and _screen_free():
 		c.tips["name_tip"] = true
 		advisor("Как назовём город?", "Дайте городу имя — щёлкните по табличке с названием вверху слева. Это имя увидят соперники и таблица лучших городов.")
+		return
+	# «Летопись города»: венки уже есть — один раз, где их смотреть (сами венки — тихо, в колокольчик); не в первые
+	# минуты игры (там и так много нового) — с «Хутора»
+	if Chronicle.any(c) and not c.tips.has("chron_tip") and c.chron_on and c.level >= 1:
+		c.tips["chron_tip"] = true
+		var nb := Chronicle.count(c)
+		var first := ""
+		for id in c.chron["b"]:
+			first = String(Chronicle.badge(String(id)).get("name", ""))
+		var got := ("Город заслужил лавровый венок «%s»!" % first) if nb == 1 else ("Город заслужил уже %d %s!" % [nb, _plural(nb, "лавровый венок", "лавровых венка", "лавровых венков")])
+		advisor("Летопись города", got + " Венки даются за вехи: сто горожан, первую победу Легиона, полсотни украшений, сто дней городу… О каждом — одна строка в колокольчике.\n\nВсе венки и счётчики города — в журнале: свиток «Просьбы горожан» → книжка → вкладка «Летопись».")
+		return
+	# 6.12: работников меньше, чем мест, — один раз про «−» в карточке менее нужной постройки (как в Town to City)
+	if not c.tips.has("hire_tip") and int(c.stats.get("pop", 0)) >= 30 and _hire_short() != "":
+		c.tips["hire_tip"] = true
+		advisor("Кому работать", "%s на все рабочие места не хватает — каждая постройка их класса работает слабее. Сколько нанять, решаете вы, как в Town to City: в карточке постройки, что нужна меньше, нажмите «−» у строки «Работники» — освободившиеся люди пойдут туда, где нужнее. «+» вернёт их. А больше жителей — больше работников." % _hire_short())
+		return
 
 
 ## Советник один раз (tips.fest_tip), когда открылись игры в честь богов: что дают, сколько стоят, где кнопка
@@ -6141,7 +6273,7 @@ func _fill_tasks() -> void:
 	var c: City = game.city
 	var goals := c.active_goals(3)
 	var sto = game.get("stories")
-	var story: bool = sto != null and (not sto.row_info().is_empty() or sto.journal_any() or not sto.orders.row_info().is_empty())   # история горожан — золотая строка сверху, заказ старосты — под ней
+	var story: bool = sto != null and (not sto.row_info().is_empty() or sto.journal_any() or Chronicle.any(c) or not sto.orders.row_info().is_empty())   # история горожан — золотая строка сверху, заказ старосты — под ней
 	tasks_panel.visible = (not goals.is_empty() or story) and game.mode != "demo" and ui_level() >= 3
 	if _fold_city != c:
 		_fold_city = c                           # другой город (новая игра, загрузка) — счёт «✓» с нуля
@@ -6310,9 +6442,9 @@ func _fill_tasks_body(goals: Array) -> void:
 	hdr.add_child(_icon("scroll", 26, C_SOFT))
 	hdr.add_child(_label("Просьбы горожан", 20, false, C_INK, font_title))
 	var sto = game.get("stories")
-	if sto != null and sto.journal_any():
-		# книжка — журнал «Истории горожан» (пройденные истории, «Пересмотреть»)
-		hdr.add_child(_bare("bookshelf", "Истории горожан: журнал", 28, func(): sto.ui.open_journal()))
+	if sto != null and (sto.journal_any() or Chronicle.any(c)):
+		# книжка — журнал: пройденные истории («Пересмотреть») и «Летопись города» (счётчики и лавровые венки)
+		hdr.add_child(_bare("bookshelf", "Журнал: истории горожан и летопись города", 28, func(): sto.ui.open_journal("" if sto.journal_any() else "chron")))
 	if not (game.tutorial and game.tutorial.active()):
 		var fb := _chevron_btn(false, "Свернуть свиток", 28, fold_tasks.bind(true))
 		fb.name = "fold"

@@ -90,6 +90,8 @@ signal rp_reward(n)                    # просьба принесла очк�
 ## «Истории горожан» (scripts/stories.gd, данные — StoryDefs): часы, предложение, идущая история, пройденные,
 ## отложенные, бонусы к счастью (их строки — в happy_parts дома), кошки-награды. Сохраняется под ключом "stories"
 var stories := stories_new()
+var chron := Chronicle.fresh()         # «Летопись города»: счётчики и лавровые венки (scripts/chronicle.gd)
+var chron_on := false                  # венки проверяются только в своём городе (game: play/new), не в меню и не в готовом
 
 
 func _init(l: Land) -> void:
@@ -404,6 +406,8 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		money -= float(d["cost"])
 		flow("build", -float(d["cost"]))
 		legion.glory = maxf(0.0, legion.glory - float(d.get("glory", 0)))   # чудеса Легиона стоят ещё и Славы
+		if not bulk:
+			Chronicle.add(self, "decor" if d["kind"] == "decor" else "built")   # летопись: построено игроком
 	var cells: PackedInt32Array = b["cells"]
 	if not d.get("water", false):
 		land.flatten_cells(cells, b["y"], Land.Kind.FIELD if d["kind"] == "farm" else -1)
@@ -1575,6 +1579,8 @@ func sim_day() -> void:
 	_tick_arrivals()
 	_update_level()
 	_check_goals()
+	if chron_on:
+		Chronicle.check(self)                    # летопись: новые лавровые венки — по строке в колокольчик
 	_hist_hour(income, wages, upkeep - wages, float(stats["money_lost"]))
 	changed.emit()
 
@@ -1669,6 +1675,7 @@ func buy_floor(b: Dictionary, quiet := false) -> bool:
 	money -= float(floor_price(h))
 	flow("build", -float(floor_price(h)))
 	h["tier"] = int(h["tier"]) + 1
+	Chronicle.add(self, "floors")
 	compute()
 	house_changed.emit(h, true)
 	if not quiet:
@@ -1749,6 +1756,41 @@ func upgrade_happy(b: Dictionary) -> int:
 	var miss0 := (b.get("missing", []) as Array).size()
 	return raw - int(c0.get("base", 40)) + int(c1.get("base", 40)) - int(b.get("deco_bonus", 0)) + deco1 - tx0 + tx1 \
 		+ (miss0 - miss1) * Defs.MISSING_PENALTY
+
+
+## Счастье после перестройки, если украшений ids не станет («Сносить мешающие украшения»): их очки, наборы и «главные»
+## украшения — не в счёт (как посчитал бы compute без них)
+func upgrade_happy_without(b: Dictionary, ids: Array) -> int:
+	var hp := upgrade_happy(b)
+	if ids.is_empty() or upgrade_to(b) == "":
+		return hp
+	var dmax := int(Defs.CLASSES[String(Defs.B[upgrade_to(b)]["cls"])].get("deco_max", 12))
+	var near := [[], []]                       # 0 — как сейчас, 1 — без снесённых
+	var sets := [{}, {}]
+	var mon := [{}, {}]
+	for id in buildings:
+		var o: Dictionary = buildings[id]
+		var d := def(o)
+		if String(d["kind"]) != "decor":
+			continue
+		var dist := (b["pos"] as Vector2).distance_to(o["pos"])
+		var bk := Defs.base_of(o["type"])
+		var sk := Defs.set_of(o["type"]) if econ >= 1 else ""
+		for k in (1 if ids.has(id) else 2):
+			if dist <= Defs.DECOR_RADIUS:
+				(near[k] as Array).append([bk, float(d.get("deco", 1))])
+				if sk != "":
+					if not (sets[k] as Dictionary).has(sk):
+						sets[k][sk] = {}
+					sets[k][sk][bk] = true
+			if d.has("mon") and dist <= Defs.range_m(d):
+				mon[k][o["type"]] = maxi(int((mon[k] as Dictionary).get(o["type"], 0)), int(d["mon"]))
+	var sc := [0, 0]
+	for k in 2:
+		sc[k] = mini(dmax, int(floor(float(deco_points(near[k], econ)[0]) * Defs.DECO_RATE))) + set_bonus(sets[k], [])
+		for t in mon[k]:
+			sc[k] += int(mon[k][t])
+	return hp - (int(sc[0]) - int(sc[1]))
 
 
 ## Нужды следующего класса, которых у дома нет: ["одежда", "развлечения"]
@@ -1899,6 +1941,106 @@ func upgrade_decor_blockers(b: Dictionary) -> Array:
 	return ids
 
 
+var _upg_clear := {}                   # id дома → [облик, место и счётчики правок, итог upgrade_room_clearing]
+
+## «Сносить мешающие украшения» (как в Town to City): встанет ли новый облик, если убрать украшения позади ("" — да).
+## Как upgrade_place, но клетки этих украшений на миг считаются свободными; итог — из запаса, пока ничего не менялось
+func upgrade_room_clearing(b: Dictionary) -> String:
+	var dec := upgrade_decor_blockers(b)
+	if dec.is_empty():
+		return upgrade_room(b)
+	var nt := upgrade_to(b)
+	var key := "%s:%d:%d:%s:%s:%d:%d" % [nt, upgrade_variant(b), int(b.get("color", 0)), b["pos"], b["yaw"], place_gen, land.gen]
+	var e: Array = _upg_clear.get(int(b["id"]), [])
+	if e.size() == 2 and String(e[0]) == key:
+		return e[1]
+	var keep := {}
+	for id in dec:
+		for k in (buildings[id]["cells"] as PackedInt32Array):
+			if land.occ[k] == int(id):
+				keep[k] = int(id)
+				land.occ[k] = 0
+	var res := check_place(nt, b["pos"], float(b["yaw"]), upgrade_variant(b), int(b.get("color", 0)), int(b["id"]), _upgrade_cells(b))
+	var err := String(res["err"])
+	if err == "":
+		err = _upgrade_rules(b, res["cells"])
+	for k in keep:
+		land.occ[k] = keep[k]
+	if err != "":
+		err = "Не помещается и без украшений: " + err.to_lower()
+	_upg_clear[int(b["id"])] = [key, err]
+	return err
+
+
+## Сколько вернётся за украшения, мешающие перестройке (половина цены, как при сносе)
+func upgrade_decor_refund(b: Dictionary) -> int:
+	var back := 0.0
+	for id in upgrade_decor_blockers(b):
+		back += float(def(buildings[id])["cost"]) * Defs.REFUND
+	return int(back)
+
+
+## Как can_upgrade, но украшения позади дома не помеха — их снесут за возврат ("" — можно перестроить так)
+func can_upgrade_clearing(b: Dictionary, check_money := true) -> String:
+	var err := can_upgrade(b, false)
+	if err == "":
+		return can_upgrade(b, check_money)
+	if upgrade_decor_blockers(b).is_empty() or err != upgrade_room(b):
+		return err                                 # мешает не место позади (нужды, счастье, дом за ним)
+	var e2 := upgrade_room_clearing(b)
+	if e2 != "":
+		return e2
+	# украшения позади радуют и этот дом: без них счастье может не дотянуть — тогда и сносить нечего
+	var need := int(Defs.UPGRADE_HAPPY.get(String(Defs.B[upgrade_to(b)]["cls"]), 65))
+	var hp := upgrade_happy_without(b, upgrade_decor_blockers(b))
+	if hp < need:
+		return "Без украшений позади счастье после перестройки было бы %d%% — нужно от %d%%" % [clampi(hp, 0, 100), need]
+	if check_money and money + float(upgrade_decor_refund(b)) < float(upgrade_price(b)):
+		return "Не хватает денариев"
+	return ""
+
+
+## Перестроить, снеся мешающие украшения (деньги за них вернутся, как при сносе). Сначала — на пробу, без сноса:
+## не выйдет и без них — украшения остаются, ничего не списано
+func upgrade_clearing(b: Dictionary, quiet := false) -> bool:
+	if can_upgrade_clearing(b) != "":
+		return false
+	if can_upgrade(b) == "":
+		return upgrade_house(b, quiet)
+	var dec := upgrade_decor_blockers(b)
+	if not _upgrade_try_without(b, dec):
+		return false
+	for id in dec:
+		if buildings.has(id):
+			remove(buildings[id], true, true)
+	compute()
+	return upgrade_house(b, quiet)
+
+
+## На пробу: готов ли дом к перестройке (без денариев), если украшений ids не станет — их будто нет, город пересчитан;
+## потом всё как было (без сигналов: ни модели, ни жители не трогаются)
+func _upgrade_try_without(b: Dictionary, ids: Array) -> bool:
+	var keep := {}
+	var occ := {}
+	for id in ids:
+		if not buildings.has(id):
+			continue
+		keep[id] = buildings[id]
+		for k in (buildings[id]["cells"] as PackedInt32Array):
+			if land.occ[k] == int(id):
+				occ[k] = int(id)
+				land.occ[k] = 0
+		buildings.erase(id)
+	compute()
+	var err := can_upgrade(b, false)
+	for id in keep:
+		buildings[id] = keep[id]
+	for k in occ:
+		land.occ[k] = occ[k]
+	compute()
+	return err == ""
+
+
 ## Место для нового облика: "" — помещается; иначе — почему нет (подпись у курсора, кнопка и галочка в карточке)
 func upgrade_room(b: Dictionary) -> String:
 	var err := String(upgrade_place(b)["err"])
@@ -1981,6 +2123,7 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 	h["type"] = nt
 	h["variant"] = nv
 	h["tier"] = nf
+	Chronicle.add(self, "upg")
 	h["cells"] = (chk["cells"] as PackedInt32Array).duplicate()     # свой список: запас следов (_upg_cells) не делим
 	var cells: PackedInt32Array = h["cells"]
 	land.flatten_cells(cells, h["y"])          # высота дома прежняя: двор позади подравнивается к ней
@@ -2391,6 +2534,7 @@ func settled(id: int, n: int, name := "") -> int:
 	pending.erase(name)
 	if not back:
 		settled_total += 1                 # семья, что уже жила в городе и переезжает снова, — не новая
+		Chronicle.add(self, "people", n)
 	var fam := {"name": name, "n": n}
 	if pm.size() >= n:
 		fam["m"] = pm.slice(0, n)          # члены семьи с именами (Residents); кто вошёл — уточнит People при входе
@@ -2698,6 +2842,7 @@ func festival() -> bool:
 	money -= float(fest_price())
 	fest_left = int(F["hours"])
 	fest_cd = int(F["cd"])
+	Chronicle.add(self, "fests")
 	_quiet("Игры в честь богов! %d ч счастье всех домов +%d%%, повозка с семьями ходит чаще" % [int(F["hours"]), int(F["happy"])], "laurels")
 	compute(true)
 	festival_changed.emit(true)
@@ -3094,7 +3239,7 @@ func save_data() -> Dictionary:
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name,
 		"econ_v": econ, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
-		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true)}
+		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
 
 ## Клетки постройки — строкой base64; пустые — пустой строкой (Marshalls ругается на пустой массив в журнал)
@@ -3194,6 +3339,10 @@ func load_data(d: Dictionary) -> void:
 	legion.sync_tiers()                          # облик зданий Легиона — по их уровням (старые сохранения: уровни войск)
 	apron_all()
 	compute()
+	# летопись: старое сохранение без неё — счётчики из того, что стоит, заслуженные венки разом (одна строка)
+	chron = Chronicle.load_from(d.get("chron"))
+	if chron.is_empty():
+		Chronicle.migrate(self)
 	# старое сохранение (до пометок «НОВОЕ»): всё, что уже открыто, — «видели», новым ничего не горит
 	if not tips.has("seen"):
 		seed_seen()

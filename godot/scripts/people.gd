@@ -438,8 +438,12 @@ static func _outline_material() -> ShaderMaterial:
 func _outline(c: Node, on: bool) -> void:
 	if c == null or not is_instance_valid(c):
 		return
+	on = on and not outline_off
 	for mi: MeshInstance3D in c.find_children("*", "MeshInstance3D", true, false):
 		mi.material_overlay = _outline_material() if on else null
+
+
+var outline_off := false             # режим фото: за кем идёт камера, тот рисуется всегда, но без обводки
 
 
 ## Выбрать жителя (rid; 0 — снять выбор): обводка, рисуется всегда, даже сверх MAX_VIS
