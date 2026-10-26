@@ -11,7 +11,8 @@ const C_BAD := Color("b0402a")
 const C_GOLD := Color("a8740f")
 
 
-## Отряд соперника: портреты родов войск (одинаковые — «×n»), уровни в подсказке
+## Отряд соперника: его герой (если есть — первым, в золотом кружке), портреты родов войск (одинаковые — «×n»),
+## уровни в подсказке
 static func squad_strip(ui: LegionUi, parent: Control, snap) -> void:
 	if not (snap is Dictionary):
 		return
@@ -25,11 +26,29 @@ static func squad_strip(ui: LegionUi, parent: Control, snap) -> void:
 			by[t] = []
 			order.append(t)
 		by[t].append(int(e.get("level", 1)))
-	if order.is_empty():
+	var he := Legion.snap_hero_entry(snap)
+	if order.is_empty() and he.is_empty():
 		return
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 2)
 	h.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	if not he.is_empty():
+		var hc := Panel.new()
+		hc.name = "rival_hero"
+		hc.custom_minimum_size = Vector2(30, 30)
+		hc.add_theme_stylebox_override("panel", ui.hud._medal("medal_on", 30))
+		hc.mouse_filter = Control.MOUSE_FILTER_PASS
+		var hs := Legion.snap_hero(he, clampf(float(snap.get("atk_b", 0.0)), 0.0, 0.6), clampf(float(snap.get("hp_b", 0.0)), 0.0, 0.6))
+		hc.tooltip_text = "Их герой — %s, ур. %d: здоровье %d, урон %d" % [String(hs["name"]), int(hs["level"]), int(hs["hp"]), int(hs["atk"])]
+		var ic := ui._tr(ui.hud.ico("caesar", 64), 22)
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ic.set_anchors_preset(Control.PRESET_FULL_RECT)
+		ic.offset_left = 4
+		ic.offset_top = 4
+		ic.offset_right = -4
+		ic.offset_bottom = -4
+		hc.add_child(ic)
+		h.add_child(hc)
 	for t: String in order:
 		var lv: Array = by[t]
 		var lo: int = lv.min()

@@ -32,6 +32,11 @@ const UNITS = {
   catapult: { hp: 240, atk: 40, armor: 22, range: 14.0, min_range: 2.5, rate: 4.0, speed: 0.0, shot: 'stone', splash: 1.6, vs: { swarm: 1.4, human: 1.15 }, tags: ['machine'] },
 };
 
+// свой герой (Д11) — как Legion.HERO, Legion.HERO_CITY, Hero.KIT_ATK, Hero.KIT_ARMOR; уровень города и Склада оружия
+// в снимке — не выше CITY_MAX, KIT_MAX (Legion.HERO_CITY_MAX, HERO_KIT_MAX)
+const HERO = { hp: 285, atk: 23, armor: 34, range: 1.0, rate: 1.0, speed: 1.7, vs: { human: 1.3 }, tags: ['human'] };
+const HERO_CITY = 0.03, KIT_ATK = 0.02, KIT_ARMOR = 3.0, CITY_MAX = 7, KIT_MAX = 10;
+
 const f32 = Math.fround;
 // Vector2(x, y).length() движка: компоненты во float32, x*x + y*y и корень — тоже
 function vlen(x, y) {
@@ -82,6 +87,19 @@ function unitStats(type, lvl, atkB = 0, hpB = 0) {
     range: U.range, min_range: U.min_range || 0.0, rate: U.rate, speed: U.speed, shot: U.shot || '', pierce: !!U.pierce,
     splash: U.splash || 0.0, vs: U.vs, tags: U.tags, size: 1.0, boss: false };
 }
+
+// Legion.hero_unit_stats в бою с городом (Legion.snap_hero): уровень — Казармы, город прибавляет HERO_CITY урона
+// и здоровья за уровень после «Хутора», Склад оружия — снаряжение (KIT_ATK урона, KIT_ARMOR брони за уровень);
+// общей брони Склада нет (armor_b = 0, как в снимках отряда)
+function heroStats(lvl, cityLvl, kit, atkB = 0, hpB = 0) {
+  const ck = HERO_CITY * Math.max(0, cityLvl - 1);
+  const hpK = 1.0 + 0.19 * (lvl - 1) + hpB + ck;
+  const atkK = 1.0 + 0.22 * (lvl - 1) + atkB + ck + KIT_ATK * kit;
+  return { key: 'hero', level: lvl, hp: roundi(HERO.hp * hpK), atk: roundi(HERO.atk * atkK), armor: HERO.armor + 6.0 * (lvl - 1) + 0.0 + KIT_ARMOR * kit,
+    range: HERO.range, min_range: 0.0, rate: HERO.rate, speed: HERO.speed, shot: '', pierce: false, splash: 0.0, vs: HERO.vs, tags: HERO.tags,
+    size: 1.0, boss: false };
+}
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 class Unit {
   constructor() {
@@ -538,11 +556,25 @@ function cleanInputs(list) {
   return out;
 }
 
+// Бойцы снимка отряда — как Legion.snapshot_stats: герой — только на первом месте (на других не в счёт)
+function snapStats(snap) {
+  const ab = clamp(num(snap.atk_b), 0.0, 0.6), hb = clamp(num(snap.hp_b), 0.0, 0.6);
+  const out = [];
+  (Array.isArray(snap.squad) ? snap.squad : []).forEach((e, i) => {
+    if (!e || typeof e !== 'object' || Array.isArray(e)) return;
+    if (e.type === 'hero') {
+      if (i === 0) out.push(heroStats(clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), clamp(Math.trunc(num(e.city)), 0, CITY_MAX), clamp(Math.trunc(num(e.kit)), 0, KIT_MAX), ab, hb));
+    } else if (typeof e.type === 'string' && own(UNITS, e.type)) {
+      out.push(unitStats(e.type, clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), ab, hb));
+    }
+  });
+  return out;
+}
+
 // Настройка боя с городом — как Legion.make_pvp_battle: наш отряд и умения — из проверенного снимка нападения
 // (его же сервер отдал клиенту, и клиент воюет ровно им), соперник — из снимка обороны
 function pvpSetup(att, def, seed) {
-  const stats = snap => (Array.isArray(snap.squad) ? snap.squad : []).filter(e => e && UNITS[e.type])
-    .map(e => unitStats(e.type, clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), clamp(num(snap.atk_b), 0.0, 0.6), clamp(num(snap.hp_b), 0.0, 0.6)));
+  const stats = snapStats;
   const perks = p => {
     const o = {};
     for (const id of Object.keys(p && typeof p === 'object' ? p : {})) if (PERKS[id]) o[id] = clamp(Math.trunc(num(p[id])), 0, PERK_MAX);
@@ -557,4 +589,4 @@ function replayPvp(att, def, seed, inputs) {
   return sim.run(inputs);
 }
 
-module.exports = { Sim, Rng, unitStats, vlen, cleanInputs, pvpSetup, replayPvp, DT, TIME_LIMIT };
+module.exports = { Sim, Rng, unitStats, heroStats, snapStats, vlen, cleanInputs, pvpSetup, replayPvp, DT, TIME_LIMIT, CITY_MAX, KIT_MAX };

@@ -365,6 +365,171 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
     }
     db.close();
   }
+
+  // Свой герой (Д11) в боях с городами: первое место отряда; числа — из сохранения в облаке (Казармы, город, Склад оружия),
+  // имя и облик — тоже оттуда (не со слов игры); подделки срезаются; старые сохранения без героя и старые игры (без hero=1 /
+  // hero: true) — как раньше, и бой всегда повторяется так, как его видела игра
+  await heroTests();
   console.log(fails ? `${fails} FAILED` : 'ALL OK');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(2); });
+
+// Герой в боях с городами — без сети (pvp.install на базе в памяти, свои сохранения; часы — свои, чтобы бой «досмотрели»)
+async function heroTests() {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)');
+  const saves = {};
+  const look = { mdl: 'SK_Chr_Upperclass_Male_01', skin: 'B', hair: 3, beard: 1, hc: 'B', main: 'a3283a', second: 'f4f1ea', trim: 'c49a4a', cape: '2F5585', crown: 1 };
+  const hero = (pn, lk = look, sx = 0) => ({ v: 1, m: { pn, sx, age: 1, sd: 77, look: lk }, made: true, seen: [], kit: -1 });
+  const mk = ({ level, buildings, levels, blevels = {}, upg = {}, progress = 30, h = null }) => {
+    const d = { version: 2, level, research: ['legion'], buildings: buildings.map((t, i) => ({ id: i + 1, type: t, tier: 1, x: 100 + i * 4, z: 90, pop: 0 })),
+      legion: { v: 3, levels, blevels, upg, squad: ['legionary', 'legionary', 'legionary'], defense: [], perks: { oil: 1 }, progress, built: [], glory: 0 } };
+    if (h) d.hero = h;
+    return JSON.stringify(d);
+  };
+  // H — герой «Гай Валерий», Казармы 6, город 5, Склад оружия 4 (улучшается до 5), 5 мест
+  saves[11] = mk({ level: 5, buildings: ['barracks', 'range', 'armory'], levels: { legionary: 6, archer: 5 }, blevels: { armory: 4 }, upg: { armory: { to: 5, end: 0, total: 60 } }, h: hero('Гай Валерий') });
+  saves[12] = mk({ level: 4, buildings: ['barracks'], levels: { legionary: 3 } });                       // старое сохранение: героя нет
+  saves[13] = mk({ level: 4, buildings: ['barracks'], levels: { legionary: 3 },                         // имя грубое, облик испорчен
+    h: hero('Хуй Иванов', { mdl: '<script>', skin: 'Q', hair: 99, beard: -3, main: 'zzzzzz', cape: 12, crown: 9 }, 1) });
+  saves[14] = mk({ level: 4, buildings: ['barracks'], levels: { legionary: 3 }, blevels: { armory: 7 }, h: hero('Марк Туллий') });   // Склад «в запасе», не построен
+  saves[15] = mk({ level: 6, buildings: ['barracks', 'range'], levels: { legionary: 20, archer: 20 }, h: hero('Луций Корнелий') });  // сильный нападающий (новая игра)
+  saves[16] = mk({ level: 6, buildings: ['barracks', 'range'], levels: { legionary: 20, archer: 20 } });                          // нападающий старой игры
+  for (const uid of Object.keys(saves)) db.prepare('INSERT INTO users (id, email) VALUES (?, ?)').run(+uid, `h${uid}@t`);
+  db.prepare('INSERT INTO users (id, email) VALUES (?, ?)').run(17, 'h17@t');                        // игрок без сохранения в облаке
+  const sid = {};                    // номер сохранения игрока (новое сохранение — новый номер: сервер перечитывает его)
+  const routes = {};
+  class Fail extends Error { constructor(status, msg) { super(msg); this.status = status; } }
+  pvp.install({ db, routes, auth: req => ({ userId: req.uid }), json: async req => req.body, limited: () => false, Fail,
+    latestSave: uid => (saves[uid] ? { id: sid[uid] || 1, load: () => saves[uid] } : null) });
+  const realNow = Date.now;
+  let clock = realNow();
+  Date.now = () => clock;
+  const call2 = async (route, uid, body, q = '') => { try { return await routes[route]({ uid, body }, new URL('http://x/api' + q)); } catch (e) { return { error: e.message, status: e.status }; } };
+  const H = (level, city, kit, extra = {}) => Object.assign({ type: 'hero', level, city, kit }, extra);
+  try {
+    // формула героя — та же, что Legion.snap_hero (числа сверены с Godot: test_hero.gd проверяет те же)
+    const h1 = sim.heroStats(1, 0, 0), h6 = sim.heroStats(6, 5, 5), h12 = sim.heroStats(12, 7, 10, 0.15, 0.1);
+    ok(h1.hp === 285 && h1.atk === 23 && h1.armor === 34 && pvp.power(h1) === 150 && pvp.power(h6) === 379 && h6.hp === 590 && h6.atk === 53 && h6.armor === 79 &&
+      pvp.power(h12) === 717, 'hero stats/power like Legion.snap_hero: L1 150, L6 city 5 kit 5 → 379, L12 city 7 kit 10 +15%/+10% → 717');
+    const st = await call2('GET /api/pvp/state', 11, undefined, '/pvp/state');
+    ok(st.me && st.me.hero === true, 'state: me.hero = true (the game puts the hero into city battles only then)', st);
+
+    // оборона H: герой с подделанными числами, именем и обликом → срезан до облака, имя и облик — из сохранения
+    let r = await call2('PUT /api/pvp/defense', 11, { snapshot: { squad: [H(40, 7, 10, { name: 'Взломщик', look: { mdl: 'X' } }), { type: 'legionary', level: 6 },
+      { type: 'archer', level: 5 }, { type: 'legionary', level: 6 }, { type: 'archer', level: 5 }] } });
+    const defH = { squad: [H(6, 5, 5), { type: 'legionary', level: 6 }, { type: 'archer', level: 5 }, { type: 'legionary', level: 6 }, { type: 'archer', level: 5 }] };
+    ok(r.clamped === true && r.power === pvp.snapPower(defH), `defense H: forged hero (40/7/10) clamped to Казармы 6, city 5, Склад 4→5 (power ${r.power})`, r);
+    let o = await call2('GET /api/pvp/opponents', 15, undefined, '/pvp/opponents?hero=1');
+    const oH = (o.opponents || []).find(x => !x.bot);
+    const h0 = oH && oH.snapshot.squad[0];
+    ok(h0 && h0.type === 'hero' && h0.level === 6 && h0.city === 5 && h0.kit === 5 && h0.name === 'Гай Валерий' && h0.look.mdl === look.mdl && h0.look.cape === '2f5585' &&
+      h0.look.sx === 0 && oH.power === pvp.snapPower(defH), 'new game (hero=1) sees H\'s hero first: numbers from the cloud, name and look from the save', oH);
+    o = await call2('GET /api/pvp/opponents', 16, undefined, '/pvp/opponents');
+    const oH2 = (o.opponents || []).find(x => !x.bot);
+    ok(oH2 && !oH2.snapshot.squad.some(e => e.type === 'hero') && oH2.snapshot.squad.length === 5 && oH2.snapshot.squad[0].type === 'legionary' &&
+      oH2.snapshot.squad[0].level === 6 && oH2.power === pvp.snapPower(pvp.noHero(defH)),
+      'old game (no hero=1): opponent without the hero — a legionary of his level in his place (5 fighters, not 4)', oH2);
+
+    // герой не первым, два героя, старое сохранение без героя, грубое имя, Склад не построен
+    r = await call2('PUT /api/pvp/defense', 11, { snapshot: { squad: [{ type: 'legionary', level: 6 }, H(6, 5, 5)] } });
+    ok(r.clamped && r.power === pvp.snapPower({ squad: [{ type: 'legionary', level: 6 }] }), 'hero not in the first place → dropped', r);
+    r = await call2('PUT /api/pvp/defense', 11, { snapshot: { squad: [H(6, 5, 5), H(6, 5, 5), { type: 'legionary', level: 6 }] } });
+    ok(r.clamped && r.power === pvp.snapPower({ squad: [H(6, 5, 5), { type: 'legionary', level: 6 }] }), 'second hero → dropped', r);
+    r = await call2('PUT /api/pvp/defense', 12, { snapshot: { squad: [H(3, 4, 0), { type: 'legionary', level: 3 }, { type: 'legionary', level: 3 }] } });
+    ok(r.clamped && r.power === 3 * pvp.power(pvp.unitStats('legionary', 3, 0, 0)), 'old save without a hero: a legionary (Казармы 3) in the hero\'s place, the rest stays', r);
+    r = await call2('PUT /api/pvp/defense', 12, { snapshot: { squad: [{ type: 'legionary', level: 3 }, { type: 'legionary', level: 3 }] } });
+    ok(!r.clamped && r.power === 2 * pvp.power(pvp.unitStats('legionary', 3, 0, 0)), 'old save, old squad: works as before', r);
+    r = await call2('PUT /api/pvp/defense', 13, { snapshot: { squad: [H(3, 4, 0)] } });
+    o = await call2('GET /api/pvp/opponents', 16, undefined, '/pvp/opponents?hero=1');
+    const oR = (o.opponents || []).find(x => !x.bot && x.snapshot.squad[0] && x.snapshot.squad[0].type === 'hero' && x.snapshot.squad[0].look.sx === 1);
+    const hr = oR && oR.snapshot.squad[0];
+    ok(hr && !('name' in hr) && !('mdl' in hr.look) && !('skin' in hr.look) && !('main' in hr.look) && !('cape' in hr.look) && hr.look.hair === 7 && hr.look.beard === 0 &&
+      hr.look.crown === 2, 'rude hero name dropped, broken look cleaned (only known fields and values)', hr);
+    r = await call2('PUT /api/pvp/defense', 14, { snapshot: { squad: [H(3, 4, 7)] } });
+    ok(r.clamped && r.power === pvp.snapPower({ squad: [H(3, 4, 0)] }), 'Склад оружия not built (level «в запасе») → kit 0', r);
+    r = await call2('PUT /api/pvp/defense', 11, { snapshot: { squad: 'x' } });
+    ok(r.status === 400, 'broken snapshot still → 400', r);
+    // H снова выставляет героя (для боёв ниже)
+    r = await call2('PUT /api/pvp/defense', 11, { snapshot: defH });
+    ok(!r.clamped && r.power === pvp.snapPower(defH), 'defense H with the hero republished (nothing clamped)', r);
+
+    // нападение новой игры (hero: true): герой в отряде нападения, у соперника — его герой; сервер повторяет бой с обоими
+    o = await call2('GET /api/pvp/opponents', 15, undefined, '/pvp/opponents?hero=1');
+    let tH = (o.opponents || []).find(x => !x.bot && x.snapshot.squad[0] && x.snapshot.squad[0].name === 'Гай Валерий');
+    const att15 = { v: 1, squad: [H(20, 6, 0, { name: 'Подделка' }), { type: 'legionary', level: 20 }, { type: 'archer', level: 20 }], perks: { oil: 1 }, atk_b: 0, hp_b: 0 };
+    let a = await call2('POST /api/pvp/attack', 15, { target: tH && tH.id, squad: att15, hero: true });
+    ok(a.battle && a.attack.squad[0].type === 'hero' && a.attack.squad[0].name === 'Луций Корнелий' && a.attack.squad[0].level === 20 &&
+      a.opponent.snapshot.squad[0].type === 'hero' && a.opponent.power === pvp.snapPower(defH),
+      'attack (new game): checked attack squad has our hero (name from our save), the defender keeps his hero', a);
+    const inputs = [[0, 'auto', true]];
+    let rp = sim.replayPvp(a.attack, a.opponent.snapshot, a.seed, inputs);
+    ok(rp.win && rp.total === 3, `local replay with both heroes: ${rp.win ? 'win' : 'loss'} ${rp.alive}/${rp.total}, ${rp.time.toFixed(1)} s`, rp);
+    clock += 200e3;
+    r = await call2('POST /api/pvp/result', 15, { battle: a.battle, win: rp.win, alive: rp.alive, total: rp.total, time: rp.time, inputs });
+    ok(r.accepted && r.win === rp.win && r.status === 'done', 'result with heroes on both sides accepted (server replay = game)', r);
+
+    // нападение старой игры (без hero): соперник — без героя, бой повторяется без него (H полчаса под защитой — ждём)
+    clock += 31 * 60e3;
+    o = await call2('GET /api/pvp/opponents', 16, undefined, '/pvp/opponents');
+    ok(!(o.opponents || []).some(x => !x.bot && (!x.snapshot.squad.length || x.snapshot.squad.some(e => e.type === 'hero'))) &&
+      (o.opponents || []).filter(x => !x.bot && x.snapshot.squad.length === 1 && x.snapshot.squad[0].type === 'legionary' && x.snapshot.squad[0].level === 3).length === 2,
+      'old game: a defense of the hero alone is offered as one legionary of his level (cities 13 and 14)', o.opponents);
+    tH = (o.opponents || []).find(x => !x.bot && x.snapshot.squad.length === 5 && x.snapshot.squad[0].type === 'legionary' && x.snapshot.squad[0].level === 6);
+    const att16 = { v: 1, squad: [{ type: 'legionary', level: 20 }, { type: 'legionary', level: 20 }, { type: 'archer', level: 20 }], perks: { oil: 1 }, atk_b: 0, hp_b: 0 };
+    a = await call2('POST /api/pvp/attack', 16, { target: tH && tH.id, squad: att16 });
+    ok(a.battle && !a.opponent.snapshot.squad.some(e => e.type === 'hero') && a.opponent.snapshot.squad.length === 5 && a.opponent.snapshot.squad[0].type === 'legionary' &&
+      a.opponent.power === pvp.snapPower(pvp.noHero(defH)), 'attack (old game): the defender\'s snapshot comes without the hero — his legionary in his place', a);
+    rp = sim.replayPvp(a.attack, a.opponent.snapshot, a.seed, inputs);
+    clock += 200e3;
+    r = await call2('POST /api/pvp/result', 16, { battle: a.battle, win: rp.win, alive: rp.alive, total: rp.total, time: rp.time, inputs });
+    ok(rp.win && r.accepted && r.win, 'old game\'s win against a hero city accepted (replayed without the hero, as the game saw it)', [rp, r]);
+
+    // H переименовал героя и переодел его после выставления обороны: соперники видят нынешние имя и облик (из сохранения),
+    // числа — прежние. Нападение с героем, но без hero: true (подделка запроса) — у защитника герой остаётся
+    clock += 7 * 3600e3;
+    saves[11] = mk({ level: 5, buildings: ['barracks', 'range', 'armory'], levels: { legionary: 6, archer: 5 }, blevels: { armory: 4 }, upg: { armory: { to: 5, end: 0, total: 60 } },
+      h: hero('Гай Север', Object.assign({}, look, { cape: 'AA0000' })) });
+    sid[11] = 2;
+    o = await call2('GET /api/pvp/opponents', 15, undefined, '/pvp/opponents?hero=1');
+    tH = (o.opponents || []).find(x => !x.bot && x.snapshot.squad[0] && x.snapshot.squad[0].type === 'hero' && x.snapshot.squad[0].level === 6);
+    ok(tH && tH.snapshot.squad[0].name === 'Гай Север' && tH.snapshot.squad[0].look.cape === 'aa0000' && tH.power === pvp.snapPower(defH),
+      'renamed and re-dressed hero: rivals see the new name and look at once (numbers unchanged)', tH);
+    a = await call2('POST /api/pvp/attack', 15, { target: tH && tH.id, squad: att15 });
+    ok(a.battle && a.attack.squad[0].type === 'hero' && a.opponent.snapshot.squad[0].type === 'hero' && a.opponent.snapshot.squad[0].name === 'Гай Север' &&
+      a.opponent.snapshot.squad[0].look.cape === 'aa0000' && a.opponent.power === pvp.snapPower(defH),
+      'attack with our hero but without hero: true — the defender keeps his hero too (no one-sided hero)', a);
+    rp = sim.replayPvp(a.attack, a.opponent.snapshot, a.seed, inputs);
+    clock += 200e3;
+    r = await call2('POST /api/pvp/result', 15, { battle: a.battle, win: rp.win, alive: rp.alive, total: rp.total, time: rp.time, inputs });
+    ok(r.accepted && r.win === rp.win, 'that battle replays with both heroes as the game saw it', [rp, r]);
+
+    // героя в облаке ещё нет (сохранение отстаёт) — сервер убирает его из отряда нападения, игра воюет тем, что вернул сервер
+    saves[12] = mk({ level: 4, buildings: ['barracks'], levels: { legionary: 3 } });
+    o = await call2('GET /api/pvp/opponents', 12, undefined, '/pvp/opponents?hero=1');
+    const tb = (o.opponents || []).find(x => x.bot);
+    a = await call2('POST /api/pvp/attack', 12, { target: tb && tb.id, squad: { squad: [H(3, 4, 0), { type: 'legionary', level: 3 }] }, hero: true });
+    ok(a.battle && a.attack.squad.length === 2 && a.attack.squad.every(e => e.type === 'legionary' && e.level === 3),
+      'no hero in the cloud save: a legionary in his place (Казармы 3), the game fights the returned squad', a);
+
+    // вольные города под силу игрока с героем — сила считается и с ним
+    const fct = routes['GET /api/pvp/opponents'] && (await call2('GET /api/pvp/opponents', 14, undefined, '/pvp/opponents?hero=1'));
+    ok(fct && Array.isArray(fct.opponents) && fct.opponents.filter(x => x.bot).every(x => x.power > 0 && !x.snapshot.squad.some(e => e.type === 'hero')),
+      'free cities for a player with a hero: listed, without heroes', fct);
+
+    // нет сохранения в облаке: на месте героя — легионер (не выше 10, как и остальные)
+    r = await call2('PUT /api/pvp/defense', 17, { snapshot: { squad: [H(12, 7, 10), { type: 'legionary', level: 12 }] }, city_level: 4 });
+    ok(r.clamped && r.power === 2 * pvp.power(pvp.unitStats('legionary', 10, 0, 0)), 'no cloud save: a legionary L10 in the hero\'s place', r);
+
+    // откат сервера на версию без героя: pvp_nohero.js убирает героя из выставленных отрядов (старый pvp.js на нём падает)
+    const n = require('./pvp_nohero').stripHeroes(db);
+    const rows = db.prepare('SELECT user_id, snapshot, power FROM pvp_players WHERE snapshot IS NOT NULL').all();
+    ok(n === 3 && rows.every(x => !x.snapshot.includes('"hero"') && x.power === pvp.snapPower(JSON.parse(x.snapshot))) &&
+      rows.filter(x => x.user_id === 13 || x.user_id === 14).every(x => x.power === pvp.power(pvp.unitStats('legionary', 3, 0, 0))),
+      `rollback helper: heroes stripped from ${n} stored defenses (a legionary in his place, power recounted)`, rows);
+  } finally {
+    Date.now = realNow;
+    db.close();
+  }
+}

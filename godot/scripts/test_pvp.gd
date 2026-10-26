@@ -77,6 +77,9 @@ func _run() -> void:
 	var snap_b := lb.defense_snapshot()
 	check("B: оборона выставлена, город назван «%s»" % name_b, String(st.get("err", "?")) == "" and String(net.me_state.get("name", "")) == name_b and bool(net.me_state.get("published", false)), [st, net.me_state])
 	check("B: сила обороны на сервере = Legion.snapshot_power (%d)" % Legion.snapshot_power(snap_b), int(net.me_state.get("power", -1)) == Legion.snapshot_power(snap_b), net.me_state)
+	# сервер с героем (Д11) говорит me.hero — игра ставит героя в бои с городами (у проверочного легиона без города героя нет)
+	check("сервер знает героя: me.hero → Legion.pvp_hero_srv", bool(net.me_state.get("hero", false)) == Legion.pvp_hero_srv and Legion.pvp_hero_srv and not lb.pvp_hero(),
+		[net.me_state.get("hero"), Legion.pvp_hero_srv])
 
 	# --- A: соперники, нападение, бой, итог ---
 	acc.token = String(tk["a"])
