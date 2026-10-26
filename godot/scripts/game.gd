@@ -2387,11 +2387,11 @@ func set_tool(t: String) -> void:
 		hud.on_tool(t)
 		_tool_tip(t)
 		if Cover.kind_of(t) != "":
-			hud.cover_tip()
+			hud.cover_tip(true)                   # инструмент взял сам игрок — совет сразу, без паузы после прошлого
 		elif t == "floor":
-			hud.floor_tip()
+			hud.floor_tip(true)
 		elif t == "upgrade":
-			hud.upgrade_tip()
+			hud.upgrade_tip(true)
 	if stories != null and stories.allowed():
 		stories._marks(true)                  # место истории: с нужным украшением в руках — чёткий край, без — мягкое пятно
 
@@ -3393,7 +3393,7 @@ func _ghost_frozen() -> void:
 ## Новое у инструмента — советник объясняет один раз на установку (флаг в файле настроек): заборы мышью,
 ## украшения на стенах
 func _tool_tip(t: String) -> void:
-	if hud == null or not (Defs.B.has(t) or t == "ground") or mode == "demo" or not hud._tip_free():
+	if hud == null or not (Defs.B.has(t) or t == "ground") or mode == "demo" or not hud._tip_free(false):
 		return
 	var d: Dictionary = Defs.B.get(t, {})
 	var key := ""
@@ -5249,9 +5249,13 @@ func _undo(only := "") -> void:
 func _redo() -> void:
 	if redo_stack.is_empty():
 		return
-	var r: Dictionary = redo_stack.pop_back()
+	var r: Dictionary = redo_stack.back()
 	if city.money < float(r["cost"]):
+		if hud:
+			hud.tool_status("Не хватает денариев: вернуть мазок стоит %s ден." % hud.price_txt(float(r["cost"])))   # мазок ждёт в стопке
+		sound.ui("error")
 		return
+	redo_stack.pop_back()
 	var back := []
 	for c in r["ch"]:
 		var k := land.idx(c[0].x, c[0].y)

@@ -1572,14 +1572,22 @@ func sim_day() -> void:
 	# казна в минус не уходит: не хватает на жалованье и содержание — платим, сколько есть, остальное не плачено
 	# (жители обижены — Defs.UNPAID_HAPPY в счастье домов, советник объяснит, что делать; в долг город не живёт)
 	var left := money + income - upkeep
+	var rest_day := int(stories.get("tax_off", 0)) > 0   # Сатурналии, день отдыха: налогов нет по выбору игрока
 	stats["unpaid"] = maxf(0.0, -left)
 	if left < 0.0:
 		left = 0.0
-		unpaid_n += 1
-		var was := unpaid_h
-		unpaid_h = Defs.UNPAID_H
-		if was <= 0:
-			_quiet("Казна пуста — жалованье работникам и содержание построек оплачены не полностью. Жители недовольны: счастье всех домов −%d%%, пока казна снова не сможет платить." % Defs.UNPAID_HAPPY, "coins")
+		if rest_day:
+			# в день отдыха недоплату прощают: казна на нуле, но без обиды и без «поднимите налоги»
+			if money > 0.0:
+				_quiet("Сатурналии: в день отдыха налогов нет — казна опустела. Жители не в обиде, праздник же! Налоги вернутся, когда день отдыха кончится.", "coins")
+			if unpaid_h > 0:
+				unpaid_h -= 1
+		else:
+			unpaid_n += 1
+			var was := unpaid_h
+			unpaid_h = Defs.UNPAID_H
+			if was <= 0:
+				_quiet("Казна пуста — жалованье работникам и содержание построек оплачены не полностью. Жители недовольны: счастье всех домов −%d%% — и ещё %d ч после того, как казна снова сможет платить." % [Defs.UNPAID_HAPPY, Defs.UNPAID_H - 1], "coins")
 	elif unpaid_h > 0:
 		unpaid_h -= 1
 	money = minf(money_cap(), left)
@@ -2173,7 +2181,7 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 	h.erase("_old_cells")
 	if not quiet:
 		# только в колокольчик (без всплывашки): перестроили сами, щелчком в карточке
-		_quiet("Дом семьи %s перестроили: теперь это %s" % [_fam_name(h), String(Defs.B[nt]["name"]).to_lower()], String(Defs.CLASSES[String(Defs.B[nt]["cls"])]["icon"]))
+		_seen("Дом семьи %s перестроили: теперь это %s" % [_fam_name(h), String(Defs.B[nt]["name"]).to_lower()], String(Defs.CLASSES[String(Defs.B[nt]["cls"])]["icon"]))
 	_check_goals()
 	changed.emit()
 	return true
@@ -3341,7 +3349,7 @@ func save_data() -> Dictionary:
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
-		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n,
+		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n, "goals_vis": goals_vis,
 		"econ_v": econ, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
@@ -3363,6 +3371,7 @@ func load_data(d: Dictionary) -> void:
 	for r in d.get("research", []):
 		research[r] = true
 	goals_done = d.get("goals", [])
+	goals_vis = clampi(int(d.get("goals_vis", 3)), 1, 3)   # просьбы по одной — и после загрузки (старые файлы — три сразу)
 	for g in Defs.REQUESTS:
 		if goals_done.has(g["id"]) and g.has("unlock"):
 			research[g["unlock"]] = true

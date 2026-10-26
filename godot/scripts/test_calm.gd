@@ -125,9 +125,7 @@ func _treasury() -> void:
 	c.compute()
 	var happy0 := int(h["happy"])
 	var e00 := c.events.size()
-	c.money = 0.0
-	c.stories["tax_off"] = 1                 # день без налогов (как в Сатурналии): жалованье и содержание — из пустой казны
-	c.sim_day()
+	_broke_hour()
 	var hp: Array = h.get("happy_parts", [])
 	var line := hp.filter(func(p): return String(p[0]) == "Жалованье не плачено")
 	check(c.money >= 0.0 and c.money < 0.01, "казна на нуле, не в минусе (%.2f)" % c.money)
@@ -164,31 +162,64 @@ func _treasury() -> void:
 	hud.finance_panel.visible = false
 	# второй час без денег — снова 0, строка в колокольчике одна (обида держится)
 	var ev0 := c.events.size()
-	c.money = 0.0
-	c.stories["tax_off"] = 1
-	c.sim_day()
+	_broke_hour()
 	check(c.money >= 0.0 and c.unpaid_n == 2 and c.events.slice(ev0).filter(func(e): return String(e["text"]).begins_with("Казна пуста")).is_empty(), "второй час — казна снова 0, новой строки «Казна пуста» нет")
-	# казна снова платит — обида проходит через UNPAID_H часов
+	# казна снова платит: красная строка гаснет сразу, обида в домах держится ещё UNPAID_H − 1 ч (как и сказано в текстах)
 	c.money = 5000.0
-	for i in Defs.UNPAID_H:
+	c.sim_day()
+	c.compute()
+	hud.refresh()
+	check(c.unpaid_h == Defs.UNPAID_H - 1 and not hud.empty_money.visible, "час оплачен — красной строки над казной нет (обида ещё %d ч)" % c.unpaid_h)
+	check((h.get("happy_parts", []) as Array).any(func(p): return String(p[0]) == "Жалованье не плачено"), "в карточке дома обида ещё держится")
+	hud._fill_finance()
+	await frames(1)                          # старые строки «Финансов» уходят в конце кадра
+	ft = _texts(hud.finance_panel)
+	check(not ft.contains("Казна пуста — не плачено за час") and ft.contains("Жители ещё обижены за жалованье"), "в «Финансах» — не «не плачено: 0», а «Жители ещё обижены»")
+	check(hud.unpaid_note().contains("ещё %d ч после того" % (Defs.UNPAID_H - 1)), "советник честно говорит, сколько держится обида")
+	for i in Defs.UNPAID_H - 1:
 		c.sim_day()
 	c.compute()
 	check(c.unpaid_h == 0 and not (h.get("happy_parts", []) as Array).any(func(p): return String(p[0]) == "Жалованье не плачено"), "казна платит %d ч — обида прошла" % Defs.UNPAID_H)
 	hud.refresh()
 	check(not hud.empty_money.visible, "красной строки над казной больше нет")
-	# сохранение: обида и счётчик — в файле; старое сохранение с долгом — казна с нуля
+	# Сатурналии, день отдыха: налогов нет по выбору игрока — казна встаёт на 0, но без обиды и без «поднимите налоги»
+	var n_un := c.unpaid_n
+	ev0 = c.events.size()
+	c.money = 0.01
+	c.stories["tax_off"] = 1
+	c.sim_day()
+	c.compute()
+	hud.refresh()
+	var since := c.events.slice(ev0)
+	check(c.money == 0.0 and c.unpaid_h == 0 and c.unpaid_n == n_un and not hud.empty_money.visible, "день отдыха: казна 0, обиды нет (обида %d ч), красной строки нет" % c.unpaid_h)
+	check(not (h.get("happy_parts", []) as Array).any(func(p): return String(p[0]) == "Жалованье не плачено"), "в карточке дома — без «Жалованье не плачено»")
+	check(since.filter(func(e): return String(e["text"]).begins_with("Казна пуста")).is_empty() and since.filter(func(e): return String(e["text"]).begins_with("Сатурналии: в день отдыха")).size() == 1,
+		"в колокольчике — «Сатурналии: в день отдыха налогов нет…», а не «Казна пуста»")
+	# сохранение: обида, счётчик и просьбы по одной — в файле; старое сохранение с долгом — казна с нуля
 	c.unpaid_h = 2
+	c.goals_vis = 1
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(Land.new())
 	c2.load_data(d)
 	check(c2.unpaid_h == 2 and c2.unpaid_n == c.unpaid_n, "обида и счётчик сохраняются (%d, %d)" % [c2.unpaid_h, c2.unpaid_n])
+	check(c2.goals_vis == 1 and c2.active_goals(3).size() <= 1, "просьбы по одной — и после загрузки (видно %d)" % c2.active_goals(3).size())
 	d["money"] = -509.6
 	d.erase("unpaid_h")
+	d.erase("goals_vis")
 	var c3 := City.new(Land.new())
 	c3.load_data(d)
 	check(c3.money == 0.0 and c3.unpaid_h == 0, "старое сохранение с долгом −509 — казна 0 (%.1f)" % c3.money)
+	check(c3.goals_vis == 3, "старое сохранение — просьбы три сразу, как было")
 	c.unpaid_h = 0
+	c.goals_vis = 3
 	c.compute()
+
+
+## Час, когда налогов не хватает на жалованье и содержание: казна «ниже нуля» на входе — только так проверка
+## получает недоплату, не трогая жителей и постройки (в игре казна в минус не уходит)
+func _broke_hour() -> void:
+	c.money = -10000.0
+	c.sim_day()
 
 
 func _texts(n: Node) -> String:
@@ -289,11 +320,22 @@ func _pace() -> void:
 	check(sto.gap_now() == mini(StoryDefs.GAP_H, int(StoryDefs.story("bandits").get("gap_h", 99))), "после «Маси» — своя пауза «Разбойников» (%d ч)" % sto.gap_now())
 	S["h"] = int(S["h"]) + maxi(sto.gap_now(), Stories.OFFER_GAP_H)
 	check(sto.time_ok(), "«Разбойники у арки» — когда пауза прошла (на «Хуторе»)")
-	# «Другой заказ» — сразу, без передышки
+	# «Другой заказ» — следующий сразу, по щелчку, даже когда история вот-вот (и не в один час с ней)
 	(S["orders"] as Dictionary)["cur"] = "o_lamps"
 	sto.pace_mark()
+	var lh0 := int(S["last_h"])
+	S["last_h"] = int(S["h"]) - sto.gap_now() + 1      # история — через час
+	check(sto.story_soon(int(S["h"])), "история вот-вот придёт")
 	od.skip()
-	check(bool((S["orders"] as Dictionary).get("now", false)), "«Другой заказ» — следующий сразу (без передышки)")
+	var cur_o := String((S["orders"] as Dictionary).get("cur", ""))
+	if cur_o != "":
+		check((S["offer"] as Dictionary).is_empty() and not (S["orders"] as Dictionary).has("now"), "«Другой заказ» — следующий сразу, по щелчку: «%s»" % od.cur().get("title", ""))
+	else:
+		check(not (S["orders"] as Dictionary).has("now"), "«Другой заказ»: заменить нечем — следующий придёт в спокойном темпе (флаг снят)")
+	sto._tried = ""
+	sto.tick()
+	check((S["offer"] as Dictionary).is_empty(), "история — не в один час с заказом (заказ «%s»)" % cur_o)
+	S["last_h"] = lh0
 	S["orders"] = {}
 	# просьбы — по одной
 	print("== просьбы по одной")
@@ -331,6 +373,7 @@ func _pace() -> void:
 	hud.advisor("Проба", "первый совет")
 	hud.advisor_panel.visible = false
 	check(not hud._tip_free(), "закрыли совет — следующий сам не приходит сразу")
+	check(hud._tip_free(false), "совет по действию игрока (взял инструмент, открыл «Обзор») — сразу")
 	hud._tip_next = Time.get_ticks_msec() - 1
 	check(hud._tip_free(), "через %d с — можно" % (Hud.TIP_GAP_MS / 1000))
 	hud.tip_gap = false

@@ -231,10 +231,12 @@ func tick() -> void:
 	if cu.is_empty():
 		if h - int(o.get("last_h", -999)) < int(o.get("gap", GAP_H)):
 			return
-		if not first_ok(h) or (not st.pace_ok() and not bool(o.get("now", false))) or st.story_soon(h):
-			return                                # спокойный темп: не в один час с историей и новым рангом («Другой заказ» — сразу); история вот-вот — уступаем
+		var now := bool(o.get("now", false))      # «Другой заказ»: игрок сам попросил — сразу, без передышки
+		if not first_ok(h) or (not now and (not st.pace_ok() or st.story_soon(h))):
+			return                                # спокойный темп: не в один час с историей и новым рангом; история вот-вот — уступаем
 		var nx := next_order()
 		if nx.is_empty():
+			o.erase("now")                        # заменить сразу нечем — следующий придёт в спокойном темпе
 			return
 		o["cur"] = String(nx["id"])
 		o["taken"] = false
@@ -268,6 +270,7 @@ func _drop() -> void:
 	o["cur"] = ""
 	o["taken"] = false
 	o["last_h"] = int(st.city.stories.get("h", 0))
+	o.erase("now")
 	st._marks(true)
 	st.hud.refresh()
 
@@ -296,6 +299,7 @@ func skip() -> void:
 	o["now"] = true
 	st._marks(true)
 	st.hud.refresh()
+	tick()                                    # следующий — по щелчку, раньше истории, что могла бы прийти в этот же час
 
 
 ## Сколько нужно (второй раз и дальше — вдвое): [[вид, n, подпись]]
