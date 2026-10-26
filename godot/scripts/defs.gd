@@ -570,6 +570,9 @@ const DECOR_LATER := {"cypress": "deco_south", "cypress_2": "deco_south", "palm"
 	"planter_3": "deco_garden", "wall_flowers_3": "deco_garden", "lion": "deco_sculpt", "lion_2": "deco_sculpt", "statue_3": "deco_sculpt",
 	"statue_4": "deco_sculpt", "bigbrazier": "deco_night", "bigbrazier_2": "deco_night", "lamp_post_3": "deco_night",
 	"wall_lamp_2": "deco_night", "wall_torch_2": "deco_night", "banner_2": "deco_fest", "wall_banner_3": "deco_fest"}
+## Что открывает и история горожан (вид → её украшение «s_…»), кроме своего исследования: живую изгородь — «Лабиринт Тесея»
+## (набор «Сад» — по желанию, а без изгороди лабиринт не посадить)
+const STORY_OPENS := {"hedge": "s_maze"}
 ## Наборы украшений (исследование = набор): три разных вида одного набора в DECOR_RADIUS от дома — +SET_BONUS% счастья
 ## (новая игра, City.econ ≥ 1; не больше SET_MAX наборов на дом, сверх предела украшений класса)
 const DECOR_SETS := ["deco_rustic", "deco_south", "deco_water", "deco_farmyard", "deco_craft", "deco_market", "deco_garden", "deco_sculpt",
@@ -857,6 +860,8 @@ static func unlock_short(id: String) -> String:
 ## Какая история открывает исследование (а не очки): «story» — всегда (Легион, Д9), «story_new» — только в новой игре
 ## (City.story_v: Пост вигилов — «Пожар у горшечников», решение владельца Q20; живые города изучают его, как прежде)
 static var story_rules := 0
+## То же для исследований, что добавляют другие линии (Лудус — «Школа гладиаторов», Q20): без правки их строки в RESEARCH
+const STORY_NEW := {"ludus": "gladiators"}
 
 
 static func story_of(r: Dictionary) -> String:
@@ -864,6 +869,8 @@ static func story_of(r: Dictionary) -> String:
 		return String(r["story"])
 	if story_rules >= 1 and r.has("story_new"):
 		return String(r["story_new"])
+	if story_rules >= 1 and STORY_NEW.has(String(r.get("id", ""))):
+		return String(STORY_NEW[String(r["id"])])
 	return ""
 
 

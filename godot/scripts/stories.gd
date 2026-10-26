@@ -220,9 +220,10 @@ func time_ok() -> bool:
 		return false
 	var s := S()
 	# «Отложить» (и снятое предложение) — пауза для всех историй, а не только для этой: сказали «не сейчас» — не просим
-	# тут же о другом; пауза кончилась — первой снова та, что отложили
-	for t in (s["later"] as Dictionary).values():
-		if int(s["h"]) < int(t):
+	# тут же о другом; пауза кончилась — первой снова та, что отложили. Праздник раз в год (Сатурналии) никого не держит:
+	# отказались от него — обычные истории идут, как шли
+	for id in (s["later"] as Dictionary):
+		if int(s["h"]) < int(s["later"][id]) and not bool(StoryDefs.story(String(id)).get("yearly", false)):
 			return false
 	if int(s["last_h"]) < 0:
 		return int(s["h"]) >= StoryDefs.FIRST_H
@@ -736,13 +737,14 @@ func _lives(b: Dictionary) -> bool:
 	return false
 
 
-## «Отложить»: снова через сутки
-func postpone() -> void:
+## «Отложить»: снова через сутки; year — праздник раз в год («В этот раз без меня» в ролике Сатурналий): до следующего года
+func postpone(year := false) -> void:
 	var s := S()
 	var o: Dictionary = s["offer"]
 	if o.is_empty():
 		return
-	s["later"][String(o["id"])] = int(s["h"]) + StoryDefs.LATER_H
+	var yearly := bool(StoryDefs.story(String(o["id"])).get("yearly", false))
+	s["later"][String(o["id"])] = int(s["h"]) + (StoryDefs.YEAR_H if year and yearly else StoryDefs.LATER_H)
 	s["offer"] = {}
 	_marks(true)
 	hud.refresh()
@@ -754,8 +756,22 @@ func open_offer() -> void:
 	if o.is_empty() or not can_start():
 		return
 	var sd := StoryDefs.story(String(o["id"]))
+	_play(sd, o, _ask_beats(sd, o), "ask", _after_ask)
+
+
+## Ролик просьбы: постройка следующего шага уже стоит (Лудус, изученный за очки в живом городе) — свой ролик (cine_had),
+## без вопроса «где поставим»
+func _ask_beats(sd: Dictionary, o: Dictionary) -> Array:
 	var steps: Array = sd["steps"]
-	_play(sd, o, (steps[0] as Dictionary).get("cine", []), "ask", _after_ask)
+	var st0: Dictionary = steps[0]
+	o.erase("had")
+	var alt: Dictionary = (steps[1] as Dictionary).get("alt", {}) if steps.size() > 1 else {}
+	if st0.has("cine_had") and (alt.is_empty() or Defs.B.has(String(alt.get("if_no", "")))):   # не замена (одеон вместо Лудуса)
+		var g: Array = StoryDefs.step_at(sd, 1).get("goal", [])
+		if g.size() > 2 and String(g[0]) == "p" and city.progress_of(g[1]) >= int(g[2]):
+			o["had"] = true
+			return st0["cine_had"]
+	return st0.get("cine", [])
 
 
 func _after_ask() -> void:
@@ -764,7 +780,7 @@ func _after_ask() -> void:
 		return
 	var ch := String(cine.get("choice", "go"))
 	if ch == "later":
-		postpone()
+		postpone(true)                       # Сатурналии «в этот раз без меня» — до следующего года (обычная — через сутки)
 		return
 	accept(ch)
 
@@ -776,7 +792,8 @@ func accept(choice := "go") -> void:
 	if o.is_empty():
 		return
 	var a := o.duplicate(true)
-	a["flags"] = {}
+	a["flags"] = {"had": true} if bool(a.get("had", false)) else {}   # Лудус уже стоял — для «Пересмотреть»
+	a.erase("had")
 	a["step"] = 0
 	s["active"] = a
 	s["offer"] = {}
@@ -844,6 +861,11 @@ func _enter_step(i: int) -> void:
 	for r in st.get("grant", []):
 		# шаг открывает исследование (Легион из истории): без очков, событие — в колокольчик
 		if not city.research.has(String(r)):
+			# что ещё откроет это украшение истории (живую изгородь — Минотавр лабиринта, Defs.STORY_OPENS), если ещё закрыто
+			var also := []
+			for t in Defs.STORY_OPENS:
+				if String(Defs.STORY_OPENS[t]) == String(r) and Defs.B.has(t) and not city.unlocked(t):
+					also.append(String(Defs.B[t]["name"]))
 			city.research[String(r)] = true
 			# кто открыл: прервётся история — её предложат снова, skip_if её не остановит (can_offer)
 			(S().get_or_add("granted", {}) as Dictionary)[String(r)] = String(a.get("id", ""))
@@ -854,7 +876,9 @@ func _enter_step(i: int) -> void:
 					if String(Defs.B[t].get("unlock", "")) == String(r):
 						dn = String(Defs.B[t]["name"])
 						break
-			if dn != "":
+			if dn != "" and not also.is_empty():
+				city._quiet("Открыты украшения «%s» и «%s» (Украшения) — для истории «%s»." % [dn, "», «".join(also), StoryDefs.title_of(_story(a), a)], "decor")
+			elif dn != "":
 				city._quiet("Открыто украшение «%s» (Украшения) — для истории «%s»." % [dn, StoryDefs.title_of(_story(a), a)], "decor")
 			else:
 				city._quiet("Открыто: «%s» — для истории «%s»." % [rd.get("name", r), StoryDefs.title_of(_story(a), a)], "research")
@@ -878,7 +902,8 @@ func _enter_step(i: int) -> void:
 			a["pay_n"] = _pay_n(a, g)                 # сбор по числу жителей (подарки на Сатурналии) — один раз, в начале шага
 		if _has_goal(g, "route"):
 			a.erase("route")
-			_route_of(a)                              # путь сенатора — сразу (отмечен на земле)
+			a.erase("route_k")
+			_route_of(a)                              # путь сенатора — сразу, заново (отмечен на земле и дальше не сдвигается)
 	elif st.has("cine"):
 		a["ready"] = true                # ролик-шаг ждёт щелчка игрока (свиток над домом, «Посмотреть»)
 	_sync_beast()
@@ -1343,6 +1368,10 @@ func _give(r: Dictionary, sd: Dictionary, a: Dictionary, full: bool) -> String:
 	if r.has("glory"):
 		city.legion.glory += int(r["glory"])
 		out.append("+%d Славы" % int(r["glory"]))
+	if int(r.get("tax_off", 0)) > 0:
+		# день отдыха (Сатурналии): лавки закрыты — столько часов без налогов (City.sim_day)
+		s["tax_off"] = maxi(int(s.get("tax_off", 0)), int(r["tax_off"]))
+		out.append("день отдыха: лавки закрыты, %s без налогов" % ("сутки" if int(r["tax_off"]) == 24 else _hours(int(r["tax_off"]))))
 	if bool(r.get("family", false)) and String(a.get("couple", "")) != "":
 		out.append("молодые живут своим домом — семья %s" % StoryDefs.fam_gen(String(a["couple"])))
 	if int(r.get("cats", 0)) > 0:
@@ -1553,10 +1582,11 @@ func progress(a: Dictionary, g: Array) -> Dictionary:
 			return {"have": n, "need": int(tiers[0]), "ok": tier >= 1 and bool(flags.get("ready", false)), "tier": tier,
 				"txt": "%d (%s)" % [n, TIER[mini(tier, 3)]]}
 		"fest":
-			var n := int(flags.get("fest", 0))
-			# {now: true} — игры, что идут сейчас, тоже в счёт (Сатурналии: устроили игры до просьбы — не ждать новых)
+			# {now: true} — игры, что идут сейчас, тоже в счёт (Сатурналии: устроили игры до просьбы — не ждать новых);
+			# засчитанные — так и остаются, когда игры кончатся (огни ещё ставят — платить за новые игры не надо)
 			if g.size() > 2 and bool((g[2] as Dictionary).get("now", false)) and city.fest_left > 0:
-				n = maxi(n, 1)
+				flags["fest"] = maxi(int(flags.get("fest", 0)), 1)
+			var n := int(flags.get("fest", 0))
 			return {"have": mini(n, int(g[1])), "need": int(g[1]), "ok": n >= int(g[1]), "txt": "%d/%d" % [mini(n, int(g[1])), int(g[1])]}
 		"route":
 			# дома вдоль пути сенатора: счастливых (не меньше %) — столько, сколько домов вдоль пути (до n)
@@ -1651,7 +1681,7 @@ func _on_fest(on: bool) -> void:
 	if not on or city == null:
 		return
 	var a: Dictionary = S()["active"]
-	if not a.is_empty() and _goal_kind(a) == "fest":
+	if not a.is_empty() and _has_goal(_step(a).get("goal", []), "fest"):   # и в «всё сразу» (огни и игры Сатурналий)
 		var fl: Dictionary = a["flags"]
 		fl["fest"] = int(fl.get("fest", 0)) + 1
 
@@ -1722,6 +1752,11 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			out.append({"text": "Игры в честь богов %s" % pr["txt"], "ok": bool(pr["ok"]),
 				"do": {} if bool(pr["ok"]) or ctr.is_empty() else {"kind": "look", "id": int(ctr["id"]), "say": "Игры устраивают в карточке почтовой станции"}})
 		"route":
+			if _route_of(a).size() < 2:
+				# мостовую от арки до двери стёрли (или не дотянули): «0/0» ничего не скажет — говорим, что сделать
+				out.append({"text": "От арки до дома %s не проехать — соедините улицы с аркой" % StoryDefs.fam_gen(String(a.get("fam", ""))), "ok": false,
+					"do": {"kind": "road", "tip": "Мостовая", "say": "Сенатор едет от арки по мостовой — до двери хозяина"}})
+				return out
 			var pr := progress(a, g)
 			out.append({"text": "Дома вдоль пути счастливы (от %d%%): %s" % [int(g[1]), pr["txt"]], "ok": bool(pr["ok"]),
 				"do": {} if bool(pr["ok"]) else {"kind": "view", "layer": "happy", "tip": "Обзор", "say": "«Обзор» → «Счастье»: где людям грустно"}})
@@ -2273,6 +2308,7 @@ func _story_zone() -> Dictionary:
 		"no": String(lab[1]) if lab.size() > 1 else "", "after": after, "room": room, "skip": skip}
 	if String(g[0]) == "along":
 		out["route"] = _route_of(a)             # вдоль пути сенатора: «в счёт» — у пути, а не у дома
+		out["route_p"] = _pts(out["route"])     # точками — один раз (_zone_in зовут на каждую постройку города)
 		out["far"] = "Далеко от пути сенатора — не в счёт"
 	var gq: Array = st.get("goal", [])
 	if String(gq[0]) == "all":
@@ -2372,7 +2408,7 @@ func flash_counted(b: Dictionary) -> void:
 	for z: Dictionary in zs:
 		for id in city.buildings:
 			var o: Dictionary = city.buildings[id]
-			if seen.has(int(id)) or not _zone_in(z, o["pos"]) or _zone_key(z, String(o["type"])) == "":
+			if seen.has(int(id)) or _zone_key(z, String(o["type"])) == "" or not _zone_in(z, o["pos"]):   # дешёвое — первым
 				continue
 			if int(z["after"]) >= 0:
 				# дом молодым: только новые дома (не семьи и не жениха) со свободными местами — как в _new_near
@@ -2883,6 +2919,8 @@ func replay(id: String) -> void:
 	var beats: Array = []
 	for i in steps.size():
 		var b: Array = (steps[i] as Dictionary).get("cine", [])
+		if i == 0 and bool((e.get("flags", {}) as Dictionary).get("had", false)) and (steps[0] as Dictionary).has("cine_had"):
+			b = steps[0]["cine_had"]           # Лудус уже стоял — и просьба была другой
 		if b.is_empty():
 			continue
 		if not beats.is_empty():
@@ -3186,16 +3224,7 @@ func _beat_start(b: Array) -> void:
 		"look":
 			_look(String(b[1]), String(b[2]), String(b[3]) if b.size() > 3 else "")
 		"say":
-			var line = b[2]
-			if line is Dictionary:
-				# реплика по выбору (ярмарка: вино или пряности) или по другому флагу (Лудус — у стен или в центре)
-				var bfl: Dictionary = bind.get("flags", {})
-				var pick = (line as Dictionary).get(String(bfl.get("choice", "")))
-				for fk in bfl:
-					if pick == null and (line as Dictionary).has(str(bfl[fk])):
-						pick = line[str(bfl[fk])]
-				line = pick if pick != null else (line as Dictionary).values()[0]
-			ui.say(_speaker(String(b[1])), StoryDefs.fill(String(line), bind))
+			ui.say(_speaker(String(b[1])), StoryDefs.fill(line_of(b[2], bind), bind))
 			var c = cine["actors"].get(String(b[1]))
 			if c != null and c is Citizen and String(b[1]) != "cat" and (c as Citizen)._cur in ["Idle", "Look_Around"]:
 				(c as Citizen).play("Idle_Talking")
@@ -3382,6 +3411,26 @@ func _beat_tick(dt: float) -> void:
 				var tw := veil.create_tween()
 				tw.tween_property(veil, "color:a", 0.0, 0.5)
 				_next_beat()
+
+
+## Реплика такта «say»: строка — как есть; словарь — по выбору (ярмарка: вино или пряности) или по другому флагу.
+## Лудус: сперва — где школа правда встала (flags.where), а не где советовали; выбрали подарки, а заплатить
+## передумали — «выбор_skip»
+static func line_of(line, bind: Dictionary) -> String:
+	if not (line is Dictionary):
+		return String(line)
+	var ld: Dictionary = line
+	var bfl: Dictionary = bind.get("flags", {})
+	var ck := String(bfl.get("choice", ""))
+	if bool(bfl.get("pay_skip", false)) and ld.has(ck + "_skip"):
+		ck += "_skip"
+	var pick = ld.get(String(bfl.get("where", "")))
+	if pick == null:
+		pick = ld.get(ck)
+	for fk in bfl:
+		if pick == null and ld.has(str(bfl[fk])):
+			pick = ld[str(bfl[fk])]
+	return String(pick if pick != null else ld.values()[0])
 
 
 ## Подпись внизу ролика: что дала история
@@ -6075,6 +6124,9 @@ static func _has_goal(g: Array, kind: String) -> bool:
 func _zone_in(z: Dictionary, p: Vector2) -> bool:
 	if not p.is_finite():
 		return false
+	var pp: PackedVector2Array = z.get("route_p", PackedVector2Array())
+	if pp.size() >= 2:
+		return _dist_pts(pp, p) <= float(z["r"])
 	var rc: Array = z.get("route", [])
 	if rc.size() >= 2:
 		return _dist_pts(_pts(rc), p) <= float(z["r"])
@@ -6104,9 +6156,11 @@ var _rh_cache := {}                         # дома вдоль пути (пе
 var _route_nodes: Array = []                # золотые пятна пути на земле
 var _route_key := ""
 var _route_badges: Array = []               # красные значки над грустными домами вдоль пути
+const DIRS4: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
 
-## Обход мостовой от арки клетками по 1 м (один на город, пока не проложили новых улиц): откуда пришли к каждой клетке
+## Обход мостовой от арки клетками по 1 м (один на город, пока не проложили новых улиц; ластик road_cells не меняет —
+## обход сбрасывает _route_of, когда путь разорван): откуда пришли к каждой клетке
 func _road_flood() -> Dictionary:
 	var land: Land = game.land
 	var key := "%d|%d" % [int(city.road_cells), land.road_chunks.size()]
@@ -6129,7 +6183,7 @@ func _road_flood() -> Dictionary:
 		while head < qq.size() and qq.size() < 60000:
 			var c: Vector2i = qq[head]
 			head += 1
-			for dv: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			for dv: Vector2i in DIRS4:
 				var nb: Vector2i = c + dv
 				if par.has(nb) or not land.is_road(start + Vector2(nb)):
 					continue
@@ -6174,18 +6228,43 @@ func route_pts(a: Dictionary) -> PackedVector2Array:
 	return out
 
 
-## Путь сенатора у истории (в a.route — [[x, z], …], сохраняется); переложили улицы или хозяин переехал — заново
+## Путь сенатора у истории (в a.route — [[x, z], …], сохраняется). Отмечен — и не сдвигается от новых улиц и площадей
+## (знамёна вдоль него остаются в счёт, кисть не пересчитывает обход); заново — когда хозяин переехал или путь разорвали
+## (стёрли мостовую на нём). Пути нет — пробуем снова, когда проложат новые улицы
 func _route_of(a: Dictionary) -> Array:
-	var key := "%d|%d" % [int(a.get("home", -1)), int(city.road_cells)]
+	var hk := str(int(a.get("home", -1)))
+	var key := "%s|%d" % [hk, int(city.road_cells)]
 	var rc: Array = a.get("route", [])
-	if not rc.is_empty() and String(a.get("route_k", "")) == key:
-		return rc
+	var rk := String(a.get("route_k", ""))
+	if rc.size() >= 2 and rk.get_slice("|", 0) == hk:
+		if rk == key + "|x" or _route_whole(rc):
+			return rc
+		_flood = {}                          # путь разорвали — обход мостовой устарел (ластик не меняет road_cells)
+	elif rc.size() < 2 and rk == key:
+		return rc                            # пути нет, новых улиц нет — не обходим заново каждый кадр
 	rc = []
 	for p: Vector2 in route_pts(a):
 		rc.append([snappedf(p.x, 0.01), snappedf(p.y, 0.01)])
 	a["route"] = rc
-	a["route_k"] = key
+	# только что проложенный путь не прошёл проверку (край мостовой) — верим ему, пока не проложат новых улиц
+	a["route_k"] = key + ("|x" if rc.size() >= 2 and not _route_whole(rc) else "")
 	return rc
+
+
+## Путь цел: каждая его точка (кроме двери) — на мостовой, площади или тропе (с допуском 30 см — край дороги)
+func _route_whole(rc: Array) -> bool:
+	var land: Land = game.land
+	for i in rc.size() - 1:
+		var x := float(rc[i][0])
+		var z := float(rc[i][1])
+		if Land.walk_kind(land.kind_at(x, z)):
+			continue
+		var near := false
+		for d: Vector2 in [Vector2(0.3, 0), Vector2(-0.3, 0), Vector2(0, 0.3), Vector2(0, -0.3)]:
+			near = near or Land.walk_kind(land.kind_at(x + d.x, z + d.y))
+		if not near:
+			return false
+	return true
 
 
 ## Дома с жителями вдоль пути сенатора (в r м от пути): ближние к двери хозяина (по пути) — первыми
@@ -6277,7 +6356,7 @@ func _route_marks(on: bool) -> void:
 				if sg is Array and String(sg[0]) == "route":
 					rg = sg
 	var rc: Array = _route_of(a) if not rg.is_empty() else []
-	var key := "" if rc.size() < 2 else "%s|%s|%d" % [str(rc[0]), str(rc[rc.size() - 1]), rc.size()]
+	var key := "" if rc.size() < 2 else str(rc.hash())    # весь путь: проложили заново (разорвали) — пятна заново
 	if key != _route_key:
 		_route_key = key
 		for n in _route_nodes:
@@ -6387,7 +6466,8 @@ func maze_eval(a: Dictionary, g: Array) -> Dictionary:
 
 # ---------- Лудус: где советуют, где встал ----------
 
-## Где встала постройка шага (Лудус): самая новая такая; у станции (в R м) — «center», иначе «walls»
+## Где встала постройка шага (Лудус): самая новая такая; flags.where — к какому из советов шага (place) она ближе
+## (расстояние в долях их R): встала там, где подсвечено, — то и засчитано
 func _remember_where(a: Dictionary, wh: Array) -> void:
 	var best := {}
 	for id in city.buildings:
@@ -6397,9 +6477,51 @@ func _remember_where(a: Dictionary, wh: Array) -> void:
 	if best.is_empty():
 		return
 	var fl: Dictionary = a["flags"]
-	var ctr := city.center()
 	fl["where_b"] = int(best["id"])
-	fl["where"] = "center" if not ctr.is_empty() and (best["pos"] as Vector2).distance_to(ctr["pos"]) <= float(wh[1]) else "walls"
+	var p: Vector2 = best["pos"]
+	var at := _place_at(a)
+	var bk := ""
+	var bd := INF
+	for k in at:
+		var d := p.distance_to(at[k][0]) / maxf(1.0, float(at[k][1]))
+		if d < bd:
+			bd = d
+			bk = String(k)
+	if bk != "":
+		fl["where"] = bk
+
+
+## Места, что советует шаг (place {выбор: [место, R]}): {выбор: [точка, R]}. Считаются один раз, в начале шага, и живут
+## во флагах истории (середина домов не уползает, пока строят); два места не накладываются — второе отодвинуто от первого
+func _place_at(a: Dictionary) -> Dictionary:
+	var pl: Dictionary = _step(a).get("place", {})
+	if pl.is_empty():
+		return {}
+	var fl: Dictionary = a.get("flags", {})
+	var at: Dictionary = fl.get("place_at", {})
+	var same := at.size() == pl.size()
+	for k in pl:
+		same = same and at.has(String(k))
+	if not same:
+		at = {}
+		var prev := []
+		for k in pl:
+			var p := _anchor(String(pl[k][0]))
+			var r := float(pl[k][1])
+			for q: Array in prev:
+				var q0 := Vector2(float(q[0]), float(q[1]))
+				var need := r + float(q[2]) + 4.0
+				if p.distance_to(q0) < need:
+					var dir := (p - q0).normalized() if p.distance_to(q0) > 0.5 else (Land.START - q0).normalized()
+					p = q0 + (dir if dir != Vector2.ZERO else Vector2(0, 1)) * need
+			at[String(k)] = [snappedf(p.x, 0.1), snappedf(p.y, 0.1), r]
+			prev.append(at[String(k)])
+		if a.has("flags"):
+			fl["place_at"] = at
+	var out := {}
+	for k in at:
+		out[k] = [Vector2(float(at[k][0]), float(at[k][1])), float(at[k][2])]
+	return out
 
 
 ## Лудус истории (где встал), а снесли — ближний такой же к дому; {} — нет
@@ -6421,7 +6543,8 @@ func _forum_b() -> Dictionary:
 	return f if not f.is_empty() else city.center()
 
 
-## Место по имени: «gate» — у арки на своей земле, «center» — станция, «forum» — форум (нет — станция)
+## Место по имени: «gate» — у арки на своей земле, «center» — станция, «forum» — форум (нет — станция),
+## «walls» — у городских стен: сбоку от арки, где свободнее (Лудус у стен), «heart» — середина домов (по жителям)
 func _anchor(nm: String) -> Vector2:
 	match nm:
 		"gate":
@@ -6430,18 +6553,38 @@ func _anchor(nm: String) -> Vector2:
 			var fb := _forum_b()
 			if not fb.is_empty():
 				return fb["pos"]
+		"walls":
+			var best := Land.GATE + Vector2(26.0, 16.0)
+			var bs := -INF
+			for off: Vector2 in [Vector2(-26, 16), Vector2(26, 16), Vector2(-36, 22), Vector2(36, 22), Vector2(-26, 28), Vector2(26, 28)]:
+				var q := Land.GATE + off
+				if not game.land.is_owned(q):
+					continue
+				var sc := float(free_near(q, 12.0)) - q.distance_to(Land.GATE) * 2.0
+				if sc > bs:
+					bs = sc
+					best = q
+			return best
+		"heart":
+			var sum := Vector2.ZERO
+			var w := 0.0
+			for id in city.buildings:
+				var b: Dictionary = city.buildings[id]
+				if city.is_house(b) and int(b["pop"]) > 0:
+					sum += (b["pos"] as Vector2) * float(b["pop"])
+					w += float(b["pop"])
+			return sum / w if w > 0.0 else Land.START
 	var ctr := city.center()
 	return ctr["pos"] if not ctr.is_empty() else Land.CENTER
 
 
-## Где советуют строить по выбору (Лудус: у стен — арка, в центре — станция): [точка, R] или []
+## Где советуют строить по выбору (Лудус: у стен — у арки, в центре — среди домов): [точка, R] или []
 func _place_rec(a: Dictionary) -> Array:
-	var st := _step(a)
-	if not st.has("place"):
+	var at := _place_at(a)
+	if at.is_empty():
 		return []
-	var pl: Dictionary = st["place"]
-	var pr: Array = pl.get(String((a.get("flags", {}) as Dictionary).get("choice", "")), pl.values()[0])
-	return [_anchor(String(pr[0])), float(pr[1])]
+	var ch := String((a.get("flags", {}) as Dictionary).get("choice", ""))
+	return at.get(ch, at.values()[0])
 
 
 # ---------- ролики: первый в кадре, выбор под ключом, дети соседей, одежда, венок ----------

@@ -38,12 +38,15 @@ extends Node
 ## с именами; «Перепись» — «Горожане» с поиском, самый счастливый дом, ребёнок; «Письмо сыну» — победа в Лесу разбойников
 ## после начала шага, гонец на коне, ларарий. mode=owner7b — те же истории в городе владельца (story_v 0).
 ## Четвёртая партия (mode=stage7c): «Сенатор проездом» — путь от арки до двери на земле, красные значки над грустными домами,
-## знамёна и статуи вдоль пути (у курсора — «далеко от пути»), площадь, шествие с ликторами и сенатором верхом, кресло;
-## «Лабиринт Тесея» — Минотавр открыт историей, изгородь мышью (24 звена тесно), дети бегут с нитью Ариадны, патрициям +5%;
-## «Школа гладиаторов» — с 1030 жителей, место по выбору (совет, не правило), Лудус (пока его нет — одеон), где встал — то
-## и в награде (в центре — шумно рядом), чемпион по выбору бьётся в ролике и выходит на игры; «Сатурналии» — раз в год,
-## уступают место обычной истории, огни у станции и игры, подарки по числу жителей или день отдыха, царь в венке, через год —
-## снова, другой подарок, награда — радость. mode=owner7c — четвёртая партия в городе владельца.
+## знамёна и статуи вдоль пути (у курсора — «далеко от пути»), путь не сдвигается от новой улицы, стёрли мостовую — путь
+## заново (или «не проехать»), площадь, шествие с ликторами и сенатором верхом, кресло;
+## «Лабиринт Тесея» — без набора «Сад»: Минотавра и живую изгородь открывает история, изгородь мышью (24 звена тесно), дети
+## бегут с нитью Ариадны, патрициям +5%; «Школа гладиаторов» — с 1030 жителей, место по выбору (совет, не правило; у стен —
+## у арки, в центре — среди домов, места не накладываются), Лудус (пока его нет — одеон), где встал — то и в награде и в
+## словах ланисты (в центре — шумно рядом, у стен — +4% без шума), чемпион по выбору бьётся в ролике и выходит на игры;
+## «Сатурналии» — раз в год, уступают место обычной истории, отказ — до следующего года и никого не держит, огни у станции
+## и игры (игры раньше огней — в счёт и после конца), подарки по числу жителей или день отдыха (сутки без налогов), царь
+## в венке, через год — снова, другой подарок, награда — радость. mode=owner7c — четвёртая партия в городе владельца.
 var game
 var c: City
 var hud
@@ -4151,6 +4154,26 @@ func _senator() -> void:
 	pt = parts_txt()
 	check(pt.contains("✓ Знамёна вдоль пути") and pt.contains("✓ Статуи вдоль пути") and pt.contains("✓ Мощёная площадь у дома"), "знамёна, статуи, площадь (поставлено %d): %s" % [placed, pt])
 	check(not bool(A.get("ready", false)) or sad == 0, "пока дома вдоль пути грустные — шествие ждёт")
+	# путь отмечен — и не сдвигается от новых улиц (знамёна вдоль него остаются в счёт); стёрли мостовую на нём — путь
+	# заново, по живым улицам (или строка «не проехать»); всё — в один кадр, без await (иначе тик пересчитал бы путь A)
+	var rhash: int = (A["route"] as Array).hash()
+	street(Vector2(150, 214), Vector2(150, 232))         # новая улица в стороне — road_cells вырос
+	check((sto._route_of(A) as Array).hash() == rhash and (A["route"] as Array).hash() == rhash, "новая улица в стороне — путь сенатора тот же (пятна не прыгают)")
+	var B: Dictionary = A.duplicate(true)
+	var cut: Vector2 = Stories._proc_at(pts, plen * 0.5)[0]
+	var erased: Array = game.land.paint_circle(cut, 1.6, Land.Kind.GRASS, false, false)
+	var rb: Array = sto._route_of(B)
+	var away := true
+	for e2: Array in rb:
+		away = away and Vector2(float(e2[0]), float(e2[1])).distance_to(cut) > 1.0
+	var pb := ""
+	for p2: Dictionary in sto.goal_parts(B, StoryDefs.step_at(StoryDefs.story("senator"), 1)["goal"]):
+		pb += String(p2["text"]) + " | "
+	check(not erased.is_empty() and ((rb.size() >= 2 and away and sto._route_whole(rb)) or (rb.is_empty() and pb.contains("не проехать — соедините улицы с аркой"))),
+		"стёрли мостовую на пути (%d клеток) — путь заново: %d точек, мимо стёртого %s; строки: %s" % [erased.size(), rb.size(), away, pb.left(120)])
+	game.land.undo(erased)
+	c.road_cells += 1                                    # мазок вернули (как «Отменить»)
+	check(sto._route_whole(A["route"]) and (sto._route_of(A) as Array).hash() == rhash, "мостовую вернули — путь сенатора прежний")
 	# дома вдоль пути повеселели (счастье — как в «Обзоре»): шествие ждёт «Посмотреть»
 	for h: Dictionary in sto.route_houses(A).slice(0, 12):
 		h["happy"] = 72
@@ -4202,9 +4225,11 @@ func _maze() -> void:
 	print("== лабиринт тесея")
 	StoryDefs.extra = []
 	c.level = 5
-	for r in ["deco_garden", "q_garden", "patricians", "artisans"]:
+	for r in ["q_garden", "patricians", "artisans"]:
 		c.research[r] = true
 	c.research.erase("s_maze")
+	c.research.erase("deco_garden")         # набор «Сад» — по желанию: без него живую изгородь откроет сама история
+	check(c.decor_v < 1 or not c.unlocked("hedge"), "без набора «Сад» живой изгороди ещё нет (новая игра)")
 	var h := put("house_patrician", Vector2(238, 186))
 	if h.is_empty():
 		check(false, "домус не поставился")
@@ -4231,8 +4256,9 @@ func _maze() -> void:
 	await play_pick(0, 25.0)
 	await wait_kit(false, 4.0)
 	var A: Dictionary = S["active"]
-	check(sto._goal_kind(A) == "maze" and c.research.has("s_maze") and String(c.events[-1].get("text", "")).contains("Минотавр"),
-		"шаг «лабиринт»: Минотавра открыла история (%s)" % c.events[-1].get("text", ""))
+	check(sto._goal_kind(A) == "maze" and c.research.has("s_maze") and String(c.events[-1].get("text", "")).contains("Минотавр")
+		and c.unlocked("hedge") and (c.decor_v < 1 or String(c.events[-1].get("text", "")).contains("Живая изгородь")),
+		"шаг «лабиринт»: Минотавра и живую изгородь открыла история (%s)" % c.events[-1].get("text", ""))
 	var pt := parts_txt()
 	check(pt.contains("· Звеньев изгороди в лабиринте: 0/24") and pt.contains("· Минотавр из самшита в середине"), "строки: %s" % pt)
 	check(String((part_of("Звеньев").get("do", {}) as Dictionary).get("type", "")) == "hedge", "щелчок по строке — в руках «Живая изгородь»")
@@ -4329,6 +4355,15 @@ func _gladiators() -> void:
 	c.research.erase(bt)
 	var bst := StoryDefs.step_at(StoryDefs.story("gladiators"), 1)
 	check(String((bst["goal"] as Array)[1][1]) == bt, "шаг «Лудус»: цель — %s (%s)" % [bt, "Лудус есть в игре" if bt == "ludus" else "Лудуса пока нет — школа при одеоне"])
+	# Лудус в новой игре открывает история (Q20), и когда его исследование добавит другая линия
+	check(Defs.story_of({"id": "ludus", "lvl": 6}) == ("gladiators" if Defs.story_rules >= 1 else ""), "исследование «Лудус» — в истории «Школа гладиаторов» (новая игра)")
+	# Лудус уже стоит (живой город изучил его за очки): ролик просьбы — свой, без «где поставим»; в пересмотре — он же
+	var th := {"id": "t_had", "steps": [{"id": "ask", "cine": [["say", "fan", "где?"]], "cine_had": [["say", "fan", "уже стоит"]]},
+		{"id": "b", "goal": ["p", ["count", bt], 1]}]}
+	var ob := {}
+	var b0: Array = sto._ask_beats(th, ob)
+	var had0 := c.progress_of(["count", bt]) >= 1
+	check(b0 == (th["steps"][0]["cine_had"] if had0 else th["steps"][0]["cine"]) and bool(ob.get("had", false)) == had0, "ролик просьбы: %s стоит — %s" % [bt, had0])
 	c.compute()
 	fresh7(7400, DONE_EARLY + ["senator", "maze"])
 	var S := c.stories
@@ -4363,21 +4398,25 @@ func _gladiators() -> void:
 		"выбрали «в центре»; %s открыла история (без очков)" % bt)
 	var ga: Array = sto._goal_area(A)
 	var ctr := c.center()
-	check(not ga.is_empty() and Vector2(float(ga[0]), float(ga[1])).distance_to(ctr["pos"]) < 1.0, "подсвечено место у почтовой станции — совет ланисты")
+	var pa: Dictionary = sto._place_at(A)
+	var hc: Vector2 = pa["center"][0]
+	var wc: Vector2 = pa["walls"][0]
+	check(not ga.is_empty() and Vector2(float(ga[0]), float(ga[1])).distance_to(hc) < 1.0 and hc.distance_to(wc) >= float(pa["center"][1]) + float(pa["walls"][1])
+		and (A["flags"] as Dictionary).has("place_at"), "подсвечено место в центре, среди домов (%s), — совет ланисты; у стен — у арки (%s): места не накладываются и запомнены" % [hc, wc])
 	game.set_tool(bt)
-	var zn: Array = sto.zone_note(bt, (ctr["pos"] as Vector2) + Vector2(6, 6))
-	var zf: Array = sto.zone_note(bt, (ctr["pos"] as Vector2) + Vector2(55, 90))
+	var zn: Array = sto.zone_note(bt, hc + Vector2(6, 6))
+	var zf: Array = sto.zone_note(bt, hc + Vector2(55, 90))
 	check(not zn.is_empty() and bool(zn[1]) and not zf.is_empty() and not bool(zf[1]) and String(zf[0]).contains("в центре"), "у курсора: «%s» / «%s»" % [zn, zf])
 	game.set_tool("")
 	hud.advisor_panel.visible = false
 	sto.tick()
 	check(c.tips.has("story_adv_gladiators_build") and hud.adv_title.text == "Развлечения и шум", "советник: «%s»" % hud.adv_title.text)
 	hud.advisor_panel.visible = false
-	var lb := put(bt, (ctr["pos"] as Vector2) + Vector2(-12, 14))
+	var lb := put(bt, hc)
 	c.compute()
 	sto.tick()
 	check(not lb.is_empty() and bool(A.get("ready", false)) and String((A["flags"] as Dictionary).get("where", "")) == "center",
-		"%s у станции (%s): где — «%s», ролик ждёт «Посмотреть»" % [bt, lb.get("pos"), (A["flags"] as Dictionary).get("where", "")])
+		"%s в центре (%s, до места %.0f м): где — «%s», ролик ждёт «Посмотреть»" % [bt, lb.get("pos"), (lb.get("pos", hc) as Vector2).distance_to(hc), (A["flags"] as Dictionary).get("where", "")])
 	if not bool(A.get("ready", false)):
 		return
 	var gl0: int = c.legion.glory
@@ -4451,6 +4490,69 @@ func _gladiators() -> void:
 		front_view(gs, 26.0, 6.5)
 		await frames(40)
 		await shot7("story_gladstatue.png")
+	# слова ланисты — по тому, где школа правда встала, а не где советовали
+	var spar_line := {}
+	for b: Array in (StoryDefs.story("gladiators")["steps"][2] as Dictionary)["cine"]:
+		if String(b[0]) == "say" and b[2] is Dictionary:
+			spar_line = b[2]
+	check(Stories.line_of(spar_line, {"flags": {"choice": "center", "where": "walls"}}).contains("У стен тихо")
+		and Stories.line_of(spar_line, {"flags": {"choice": "walls", "where": "center"}}).contains("сердце города"), "ланиста говорит о том месте, где Лудус правда встал")
+	# у стен: подсвечено у арки — построили там, там и засчитано: +4%, без «Шумно», ланиста — «у стен тихо»
+	c.remove(lb)
+	(S["done"] as Dictionary).erase("gladiators")
+	S["active"] = {}
+	S["offer"] = {}
+	S["later"] = {}
+	S["last_h"] = int(S["h"]) - StoryDefs.GAP_H
+	var keep_b := []
+	for b: Dictionary in S["bonus"]:
+		if String(b.get("id", "")) != "gladiators":
+			keep_b.append(b)
+	S["bonus"] = keep_b
+	c.compute()
+	c.stats["pop"] = 1100
+	sto._tried = ""
+	sto.tick()
+	if String((S["offer"] as Dictionary).get("id", "")) != "gladiators":
+		check(false, "школа гладиаторов снова — не предложена (%s)" % (S["offer"] as Dictionary).get("id", ""))
+		return
+	sto.accept("walls")
+	var A2: Dictionary = S["active"]
+	var pa2: Dictionary = sto._place_at(A2)
+	var w2: Vector2 = pa2["walls"][0]
+	var ga2: Array = sto._goal_area(A2)
+	game.set_tool(bt)
+	var zw: Array = sto.zone_note(bt, w2 + Vector2(3, 3))
+	game.set_tool("")
+	check(not ga2.is_empty() and Vector2(float(ga2[0]), float(ga2[1])).distance_to(w2) < 1.0 and w2.distance_to(Land.GATE) < 50.0
+		and not zw.is_empty() and bool(zw[1]) and String(zw[0]).contains("Там, где просил ланиста"), "у стен: подсвечено у арки (%s), у курсора «%s»" % [w2, zw])
+	street(Vector2(Land.ROAD_X, w2.y), w2 + Vector2(signf(w2.x - Land.ROAD_X) * 14.0, 0.0))   # улица от большой дороги к месту у стен
+	var lw := put(bt, w2)
+	c.compute()
+	sto.tick()
+	var wd := (lw.get("pos", Vector2.INF) as Vector2).distance_to(w2) if not lw.is_empty() else INF
+	check(not lw.is_empty() and wd <= float(pa2["walls"][1]) and String((A2["flags"] as Dictionary).get("where", "")) == "walls" and bool(A2.get("ready", false)),
+		"%s у стен, в подсвеченном месте (%.0f м от середины): где — «%s»" % [bt, wd, (A2["flags"] as Dictionary).get("where", "")])
+	check(Stories.line_of(spar_line, A2).contains("У стен тихо"), "ланиста у стен: «%s»" % Stories.line_of(spar_line, A2).left(40))
+	sto._finish("found")
+	var noise2 := false
+	var joy2 := 0
+	for b: Dictionary in c.stories["bonus"]:
+		if String(b.get("id", "")) == "gladiators":
+			noise2 = noise2 or int(b.get("pct", 0)) < 0
+			joy2 = maxi(joy2, int(b.get("pct", 0)))
+	check(not noise2 and joy2 == 4, "награда у стен: +4%% домам рядом, без «Шумно» (%s)" % (S["done"] as Dictionary).get("gladiators", {}).get("text", ""))
+	sto.ui.open_journal()
+	await frames(3)
+	var jt2 := ""
+	for l: Label in hud.journal_panel.find_children("*", "Label", true, false):
+		jt2 += l.text + "\n"
+	check(jt2.contains("встал у городских стен"), "в журнале — Лудус встал у городских стен")
+	hud.close_panels()
+	if not lw.is_empty():
+		await look_at_pt(lw["pos"], 44.0)
+		await frames(30)
+		await shot7("story_gladiators_walls.png")
 
 
 func _saturnalia() -> void:
@@ -4480,6 +4582,38 @@ func _saturnalia() -> void:
 	sto.tick()
 	o = S["offer"]
 	check(String(o.get("id", "")) == "saturnalia", "место освободилось — снова «Сатурналии»")
+	# «В этот раз без меня» (ролик) — до следующего года, и обычные истории это не держит
+	var h0 := int(S["h"])
+	sto.postpone(true)
+	check(int((S["later"] as Dictionary).get("saturnalia", 0)) == h0 + StoryDefs.YEAR_H and (S["offer"] as Dictionary).is_empty() and sto.time_ok(),
+		"отказались от Сатурналий — до следующего года, другие истории не ждут")
+	StoryDefs.extra = [tst]
+	sto._tried = ""
+	sto.tick()
+	check(String((S["offer"] as Dictionary).get("id", "")) == "t_yield", "после отказа обычная история предложена сразу (%s)" % (S["offer"] as Dictionary).get("id", ""))
+	StoryDefs.extra = []
+	S["offer"] = {}
+	S["h"] = h0 + StoryDefs.LATER_H + 6
+	sto._tried = ""
+	sto.tick()
+	check((S["offer"] as Dictionary).is_empty(), "через сутки после отказа Сатурналии не возвращаются (только через год)")
+	# «Отложить» в золотой строке — на сутки, и тоже никого не держит
+	(S["later"] as Dictionary).erase("saturnalia")
+	sto._tried = ""
+	sto.tick()
+	sto.postpone()
+	check(int((S["later"] as Dictionary).get("saturnalia", 0)) == int(S["h"]) + StoryDefs.LATER_H and sto.time_ok(), "«Отложить» в строке — на сутки, другим историям не мешает")
+	(S["later"] as Dictionary).erase("saturnalia")
+	sto._tried = ""
+	sto.tick()
+	o = S["offer"]
+	check(String(o.get("id", "")) == "saturnalia", "снова «Сатурналии»")
+	# царь праздника в ролике — мальчик: и в тексте каждого года — мальчик
+	var girl := false
+	for v in (StoryDefs.story("saturnalia")["vary"] as Dictionary)["king"]:
+		girl = girl or String(v).contains("девочк")
+	var kr: Dictionary = (o.get("roles", {}) as Dictionary).get("king", {})
+	check(not girl and not bool(kr.get("female", true)), "царь Сатурналий — мальчик, и в тексте ни одного года не девочка")
 	hud.advisor_panel.visible = false
 	sto.open_offer()
 	await wait_beat("say", 10.0)
@@ -4495,16 +4629,21 @@ func _saturnalia() -> void:
 	var pt := parts_txt()
 	check(pt.contains("· Огни на площади 0/6") and pt.contains("· Игры в честь богов 0/1"), "строки: %s" % pt)
 	check(String((part_of("Игры").get("do", {}) as Dictionary).get("kind", "")) == "look", "щелчок по «Играм» — карточка почтовой станции")
-	for k in 6:
-		deco("lamp_post", (ctr["pos"] as Vector2) + Vector2(cos(k * 1.05), sin(k * 1.05)) * 11.0)
-	c.compute()
-	sto.tick()
-	check(parts_txt().contains("✓ Огни на площади 6/6") and not bool(A.get("ready", false)), "огни горят — ждём игр")
+	# игры — раньше огней: в счёт, и кончились — остаются в счёт (за новые игры платить не надо)
 	c.fest_left = 0
 	c.fest_cd = 0
 	c.festival()
 	sto.tick()
-	check(bool(A.get("ready", false)), "игры начались — ролик «как праздновать» ждёт «Посмотреть»")
+	check(parts_txt().contains("✓ Игры в честь богов 1/1") and not bool(A.get("ready", false)), "игры устроили раньше огней — в счёт, ждём огней")
+	c.fest_left = 1
+	c._fest_hour()                               # сутки игр прошли, огней ещё нет
+	sto.tick()
+	check(c.fest_left == 0 and parts_txt().contains("✓ Игры в честь богов 1/1") and not bool(A.get("ready", false)), "игры кончились — а в счёт остались")
+	for k in 6:
+		deco("lamp_post", (ctr["pos"] as Vector2) + Vector2(cos(k * 1.05), sin(k * 1.05)) * 11.0)
+	c.compute()
+	sto.tick()
+	check(bool(A.get("ready", false)), "огни зажгли — ролик «как праздновать» ждёт «Посмотреть»")
 	sto.play_ready()
 	await play_pick(0, 25.0)                     # подарки каждому дому
 	await wait_kit(false, 4.0)
@@ -4579,8 +4718,9 @@ func _saturnalia() -> void:
 	await wait_kit(false, 4.0)
 	e = (S["done"] as Dictionary).get("saturnalia", {})
 	var et := String(e.get("text", ""))
-	check(int(e.get("n", 0)) == 2 and not et.contains("очков") and not et.contains("украшение") and et.contains("+6%") and c.research.size() == un0,
-		"второй год (день отдыха): только радость горожан — без очков и украшений (%s)" % et)
+	check(int(e.get("n", 0)) == 2 and not et.contains("очков") and not et.contains("украшение") and et.contains("+8%") and et.contains("без налогов")
+		and c.research.size() == un0 and int(S.get("tax_off", 0)) >= 20 and int(S.get("tax_off", 0)) <= 24,
+		"второй год (день отдыха): радость горожан и сутки без налогов — без очков и украшений (%s)" % et)
 	sto.ui.open_journal()
 	await frames(3)
 	var jt := ""
@@ -4588,6 +4728,33 @@ func _saturnalia() -> void:
 		jt += l.text + "\n"
 	check(jt.contains("Праздновали уже 2 раза") and jt.contains("лавки закрыли ставни"), "в журнале — «праздновали 2 раза» и день отдыха")
 	hud.close_panels()
+	# выбрали подарки, а заплатить передумали: и в журнале, и в последней реплике — без подарков
+	var feast_line := {}
+	for b: Array in (StoryDefs.story("saturnalia")["steps"][4] as Dictionary)["cine"]:
+		if String(b[0]) == "say" and b[2] is Dictionary:
+			feast_line = b[2]
+	check(Stories.line_of(feast_line, {"flags": {"choice": "gifts", "pay_skip": true}}).contains("Подарков в этот раз не было")
+		and Stories.line_of(feast_line, {"flags": {"choice": "gifts", "paid": true}}).contains("Подарки разнесли"), "реплика хозяина: без подарков — так и говорит")
+	var ef0: Dictionary = e.get("flags", {})
+	e["flags"] = {"choice": "gifts", "pay_skip": true}
+	sto.ui.open_journal()
+	await frames(3)
+	var jt3 := ""
+	for l: Label in hud.journal_panel.find_children("*", "Label", true, false):
+		jt3 += l.text + "\n"
+	check(jt3.contains("Подарков в этот раз не дарили") and not jt3.contains("Каждой семье — подарки"), "в журнале: подарков не дарили (заплатить передумали)")
+	hud.close_panels()
+	e["flags"] = ef0
+	# день отдыха: лавки закрыты — сутки без налогов (переживает сохранение), потом налоги снова
+	var tx0 := int(S.get("tax_off", 0))
+	check(tx0 > 0 and int(City.stories_load(JSON.parse_string(JSON.stringify(c.stories))).get("tax_off", 0)) == tx0, "часы без налогов сохраняются (%d)" % tx0)
+	c.sim_day()
+	var inc0 := float(c.stats["income"])
+	check(inc0 == 0.0 and int(S.get("tax_off", 0)) == tx0 - 1, "день отдыха: налогов нет (доход за час %.0f), часов без налогов осталось %d" % [inc0, int(S.get("tax_off", 0))])
+	S["tax_off"] = 1
+	c.sim_day()
+	c.sim_day()
+	check(float(c.stats["income"]) > 0.0 and int(S.get("tax_off", 0)) == 0, "день отдыха прошёл — налоги снова (%.0f за час)" % float(c.stats["income"]))
 	var st2 := deco("saturntable", Vector2(228, 160))
 	if not st2.is_empty():
 		game._set_hour(19.6)

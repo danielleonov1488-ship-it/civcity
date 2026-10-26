@@ -77,7 +77,10 @@ func _ready_h(rh: Array, sd: Dictionary) -> float:
 	for r in sd.get("needs", []):
 		h = maxf(h, _research_h(rh, String(r)))
 	for t in sd.get("need_b", []):
-		h = maxf(h, _research_h(rh, Defs.unlock_of(String(t), true)))   # постройка открыта (в новой игре)
+		var u := Defs.unlock_of(String(t), true)
+		if u in Defs.DECOR_SETS:
+			return INF                        # набор украшений — по желанию: игрок, что его не купил, истории не дождётся
+		h = maxf(h, _research_h(rh, u))       # постройка открыта (в новой игре)
 	for np: Array in sd.get("need_p", []):
 		h = maxf(h, _need_p_h(rh, np))
 	if int(sd.get("pop", 0)) > 0:
@@ -219,6 +222,9 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 func _rewards() -> void:
 	print("== награды историй")
 	for sd: Dictionary in StoryDefs.STORIES:
+		# история не ждёт набора украшений по желанию (лабиринт: живую изгородь открывает сама история)
+		for t in sd.get("need_b", []):
+			check(not (Defs.unlock_of(String(t), true) in Defs.DECOR_SETS), "«%s»: нужна «%s» — не из набора по желанию" % [sd["title"], t])
 		var r: Dictionary = sd.get("reward", {})
 		check(not r.has("money"), "«%s»: награда без денег" % sd["title"])
 		if not r.has("rp"):

@@ -552,6 +552,8 @@ func fill_journal() -> void:
 		var how := String(e.get("text", ""))
 		# что выбрали (дед остался или ушёл к соседям) и чему история научила
 		var ch := String((e.get("flags", {}) as Dictionary).get("choice", ""))
+		if bool((e.get("flags", {}) as Dictionary).get("pay_skip", false)) and (s.get("journal", {}) as Dictionary).has(ch + "_skip"):
+			ch += "_skip"                    # выбрали подарки, а заплатить передумали
 		var jl := StoryDefs.fill(String((s.get("journal", {}) as Dictionary).get(ch, "")), e)
 		# и другие выборы (чемпион школы гладиаторов) — своими строками
 		var jf: Dictionary = s.get("journal_f", {})
