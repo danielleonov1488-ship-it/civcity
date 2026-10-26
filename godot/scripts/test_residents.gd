@@ -267,7 +267,34 @@ func _new() -> void:
 	await _demolish_test(houses)
 	await _save_load_test()
 	_couple_test()
+	await _fade_test()
 	await _leaving_test()
+
+
+## Невидимый прохожий шагает в свою очередь (1.7: каждый 8-й кадр, накопленным временем); освободилось место на
+## улице — получил узел и проявляется по кадру, а не выскакивает сразу видимым (x4, слабый ноутбук: dt ≈ 1 с)
+func _fade_test() -> void:
+	var r := {}
+	for k in 60:                                 # прохожий в пути, далеко от цели (в маленьком городе узлы есть у всех)
+		for x: Dictionary in ppl.residents:
+			var pth: PackedVector2Array = x.get("path", PackedVector2Array())
+			if x["state"] == "walk" and int(x["id"]) != ppl.focus_rid and pth.size() > 1 and int(x["i"]) < pth.size() \
+					and (x["p"] as Vector2).distance_to(pth[pth.size() - 1]) > 8.0:
+				r = x
+				break
+		if not r.is_empty():
+			break
+		await frames(10)
+	if not check(not r.is_empty(), "прохожий в пути (для проявления)"):
+		return
+	ppl._hide(r)                                 # ушёл с улицы: идёт невидимо, без узла
+	var keep: int = ppl.max_vis
+	ppl.max_vis = ppl.visible_count + 1           # одно место на улице освободилось
+	ppl._frame_sdt = 4.0 / 30.0                   # кадр: x4 при 30 к/с
+	ppl._step(r, 8.0 * 4.0 / 30.0)                # его очередь: 8 кадров разом
+	ppl.max_vis = keep
+	check(r["node"] != null and float(r["fade"]) <= 4.0 / 30.0 / 0.6 + 0.001,
+		"прохожий получил узел в свою очередь — проявляется по кадру (%.2f), а не сразу" % float(r["fade"]), r["node"] != null)
 
 
 ## Щелчок по 20 случайным жителям на 34 м: ≥ 95 % — карточка именно его

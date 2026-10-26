@@ -3,7 +3,9 @@
    Сайт — в памяти (подмена net.fetch), опись подписана своим ключом этой проверки (настоящий ключ — только у владельца).
    Проверяет: «Играть» доступна, пока музыка ещё не скачана (1.11 плана 24.10); музыка докачивается потом и ложится в
    game/; подмена описи и файлов не проходит (подпись, sha256); обновление посреди докачки не теряет её куски и
-   не кладёт музыку от другой описи. В конце — «UPDATER DONE fails=N». */
+   не кладёт музыку от другой описи; что откладывать, решает опись ("later"): без него (старые сборки, откат) музыка
+   качается сразу; при новой версии лаунчера на сайте музыка докачивается для установленной копии; мало места — музыку
+   не качаем; «Проверить файлы» посреди докачки не удаляет только что положенную музыку. В конце — «UPDATER DONE fails=N». */
 const Module = require('module');
 const fs = require('fs');
 const path = require('path');
@@ -39,7 +41,7 @@ Module._load = function (req, parent, isMain) {
   if (req === 'electron') return { app: { getVersion: () => '1.0.3' }, net: fakeNet };
   return origLoad.apply(this, arguments);
 };
-const { Updater, LATER } = require('./updater');
+const { Updater, LATER_OK, laterOf, validManifest } = require('./updater');
 
 let fails = 0;
 function check(ok, what) {
@@ -52,9 +54,9 @@ const gate = p => { let open; const promise = new Promise(r => { open = r; }); g
 const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
 const other = crypto.generateKeyPairSync('ed25519');
 
-// выложить сборку: файлы по sha256 и подписанная опись
-function publish(build, files, key = privateKey) {
-  const m = { version: '1.0.0', build, launcher: '1.0.0', exe: 'CivCity.exe', files: {} };
+// выложить сборку: файлы по sha256 и подписанная опись; extra — поля описи (по умолчанию музыка — «потом»)
+function publish(build, files, key = privateKey, extra = { later: ['CivCity_music.pck'] }) {
+  const m = { version: '1.0.0', build, launcher: '1.0.0', exe: 'CivCity.exe', ...extra, files: {} };
   for (const [n, b] of Object.entries(files)) {
     const h = sha(b);
     m.files[n] = { size: b.length, sha256: h };
@@ -73,7 +75,7 @@ const rnd = n => crypto.randomBytes(n);
   fs.mkdirSync(tmpBase, { recursive: true });
   const root = fs.mkdtempSync(path.join(tmpBase, 'civ_upd_'));
   try {
-    check(LATER.has('CivCity_music.pck') && !LATER.has('CivCity.pck') && !LATER.has('CivCity.exe'), 'потом — только музыка');
+    check(LATER_OK.has('CivCity_music.pck') && !LATER_OK.has('CivCity.pck') && !LATER_OK.has('CivCity.exe'), 'потом — только музыка');
     const up = new Updater(root, { pubkey: publicKey, tries: 2, pauseMs: 20 });
     const music1 = rnd(300000);
     const files1 = { 'CivCity.exe': rnd(5000), 'CivCity.pck': rnd(2000), 'CivCity_models.pck': rnd(100000), 'CivCity_ui.pck': rnd(20000), 'CivCity_music.pck': music1 };
@@ -103,12 +105,14 @@ const rnd = n => crypto.randomBytes(n);
     check(!!up.installed() && up.missingLater(up.installed()).length === 0, 'теперь установлено всё');
     check(said.startsWith('Музыка докачивается'), 'ход докачки для лаунчера: ' + said);
     check(!fs.existsSync(path.join(up.dir, 'CivCity_music.pck.tmp')), 'без .tmp в game/');
+    check(fs.existsSync(path.join(up.dl, m1.files['CivCity_music.pck'].sha256)), 'скачанная копия в game-dl/ осталась (до следующей проверки)');
 
     // 3. ничего не поменялось — готово, ничего не качаем
     hits.clear();
     const r3 = await up.ensure();
     check(r3.state === 'ready' && r3.later.length === 0, `повторная проверка: ${r3.state}, later ${JSON.stringify(r3.later)}`);
     check([...hits.keys()].every(k => k === '/game/manifest.json'), 'скачана только опись');
+    check(!fs.existsSync(up.dl), 'всё на месте — game-dl/ убран');
 
     // 4. подменённая опись (подпись другим ключом) — не принимается, установленная остаётся
     const good = site.get('/game/manifest.json');
@@ -147,8 +151,10 @@ const rnd = n => crypto.randomBytes(n);
     openMusic();
     const placed6 = await lp6;
     check(placed6.length === 0 && !fs.existsSync(path.join(up.dir, 'CivCity_music.pck')), 'музыку от прежней описи (сборка 3) в новую копию не положили');
+    hits.clear();
     const placed6b = await up.fetchLater(r6.manifest);
     check(JSON.stringify(placed6b) === '["CivCity_music.pck"]' && !!up.installed(), 'с новой описью — сразу (уже скачана) и всё установлено');
+    check(!hits.get(mus2Path), 'и без новой загрузки (копия из game-dl/)');
 
     // 7. музыка пришла испорченной (sha256 не тот) — в game/ не кладётся, ошибка наружу
     const music3 = rnd(200000);
@@ -188,6 +194,104 @@ const rnd = n => crypto.randomBytes(n);
     fs.renameSync(up.dir, up.next);
     await up.recover();
     check(!!up.playable(), 'recover() поднял копию без музыки');
+
+    const mk = name => new Updater(path.join(root, name), { pubkey: publicKey, tries: 2, pauseMs: 20 });
+    const MUS = 'CivCity_music.pck';
+
+    // 10. на сайте новая версия лаунчера (shell): играть можно в установленной — и музыку для неё докачать
+    {
+      const u = mk('s');
+      const f10 = { 'CivCity.exe': rnd(3000), 'CivCity.pck': rnd(1000), [MUS]: rnd(50000) };
+      publish(20, f10);
+      const a = await u.ensure();
+      check(a.state === 'updated' && !!u.playable() && !u.installed(), 'shell: сначала установлена без музыки');
+      publish(21, f10, privateKey, { later: [MUS], launcher: '9.0.0' });
+      const b = await u.ensure();
+      check(b.state === 'shell' && JSON.stringify(b.later) === '["CivCity_music.pck"]' && !!b.manifest && b.manifest.build === 20,
+        `shell: ${b.state}, later ${JSON.stringify(b.later)}`);
+      check((await u.fetchLater(b.manifest)).length === 1 && !!u.installed(), 'shell: музыка докачана для установленной копии');
+    }
+
+    // 11. опись без "later" (сборка старее этого лаунчера, откат на неё): музыка — сразу, без неё играть нельзя
+    {
+      const u = mk('o');
+      const f11 = { 'CivCity.exe': rnd(3000), 'CivCity.pck': rnd(1000), [MUS]: rnd(40000) };
+      const m11 = publish(30, f11, privateKey, {});
+      check(laterOf(m11).size === 0, 'без "later" — откладывать нечего');
+      const a = await u.ensure();
+      check(a.state === 'updated' && a.later.length === 0 && !!u.installed(), `без "later": музыка скачана до «Играть» (${a.state})`);
+      fs.rmSync(path.join(u.dir, MUS));
+      check(!u.playable(), 'без "later": без музыки играть нельзя (playable — нет)');
+      const b = await u.ensure();
+      check(b.state === 'updated' && !!u.installed(), `без "later": недостающая музыка скачана в ensure() (${b.state})`);
+      // установлена сборка с "later" без музыки, откат на прежнюю (без "later") — музыка качается сразу
+      const f11b = { ...f11, 'CivCity.pck': rnd(1100), [MUS]: rnd(41000) };
+      publish(32, f11b);
+      const c = await u.ensure();
+      check(c.state === 'updated' && !!u.playable() && !u.installed(), 'сборка с "later" — без музыки');
+      publish(31, { ...f11b, 'CivCity.pck': rnd(1200) }, privateKey, { rollback: true });
+      const d = await u.ensure();
+      check(d.state === 'updated' && d.manifest.build === 31 && d.later.length === 0 && !!u.installed(), `откат на сборку без "later": с музыкой (${d.state})`);
+    }
+
+    // 12. опись: "later" — список имён из этой же описи, без самой игры; незнакомые лаунчеру — не откладываются
+    {
+      const fz = { size: 1, sha256: 'a'.repeat(64) };
+      const base = { exe: 'CivCity.exe', files: { 'CivCity.exe': fz, [MUS]: fz, 'CivCity_x.pck': fz } };
+      check(validManifest({ ...base, later: [MUS] }) && validManifest(base), 'опись с "later" и без — годится');
+      check(!validManifest({ ...base, later: ['CivCity.exe'] }), '"later" с самой игрой — не годится');
+      check(!validManifest({ ...base, later: ['CivCity_y.pck'] }), '"later" с файлом не из описи — не годится');
+      check(!validManifest({ ...base, later: MUS }) && !validManifest({ ...base, later: [5] }), '"later" не список имён — не годится');
+      check(JSON.stringify([...laterOf({ ...base, later: ['CivCity_x.pck', MUS] })]) === '["CivCity_music.pck"]', 'незнакомый лаунчеру набор не откладывается');
+    }
+
+    // 13. мало места на диске: музыку не качаем совсем (без куска .part) — NOSPACE; переполнился посреди — кусок убран
+    {
+      const u = mk('n');
+      const f13 = { 'CivCity.exe': rnd(3000), 'CivCity.pck': rnd(1000), [MUS]: rnd(70000) };
+      const m13 = publish(40, f13);
+      const mp = '/game/f/' + m13.files[MUS].sha256;
+      await u.ensure();
+      const part13 = u.partOf(m13.files[MUS]);
+      const statfs = fs.promises.statfs;
+      fs.promises.statfs = async () => ({ bavail: 1000, bsize: 4096 });
+      hits.clear();
+      let e13 = null;
+      try { await u.fetchLater(u.playable()); } catch (e) { e13 = e; } finally { fs.promises.statfs = statfs; }
+      check(!!e13 && e13.code === 'NOSPACE' && /освободите ещё/.test(e13.message), 'мало места: ' + (e13 && e13.message));
+      check(!fs.existsSync(part13) && !hits.get(mp) && !u.installed(), 'мало места: и не начинали (нет .part, запроса нет)');
+      const one = u.fetchOne;
+      u.fetchOne = async f => { fs.writeFileSync(u.partOf(f), Buffer.alloc(100)); throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); };
+      e13 = null;
+      await u.fetchLater(u.playable()).catch(e => { e13 = e; });
+      u.fetchOne = one;
+      check(!!e13 && e13.code === 'ENOSPC' && !fs.existsSync(part13), 'диск переполнился посреди: кусок .part убран');
+      check(u.fetching === 0, 'счётчик докачек вернулся к нулю');
+      check((await u.fetchLater(u.playable())).length === 1 && !!u.installed(), 'место есть — докачана');
+    }
+
+    // 14. «Проверить файлы», пока докачивается музыка: набор, что лёг в game/ посреди сверки (его положил fetchLater,
+    //     уже проверенным), не удаляется; при обновлении новая копия берёт его из game/
+    {
+      const u = mk('v');
+      const mus = rnd(60000);
+      const f14 = { [MUS]: mus, 'CivCity.exe': rnd(3000), 'CivCity.pck': rnd(1000), 'CivCity_ui.pck': rnd(2000) };   // музыка — первой: сверяется раньше прочих
+      publish(50, f14);
+      await u.ensure();
+      const mpath = path.join(u.dir, MUS);
+      let put = false;
+      const onStatus = (t, p, n) => { if (n === 'CivCity.exe' && !put) { put = true; fs.writeFileSync(mpath, mus); } };
+      const a = await u.ensure({ verify: true, onStatus });
+      check(put && a.state === 'ready' && a.later.length === 0 && fs.existsSync(mpath) && !!u.installed(),
+        `проверка посреди докачки: музыка цела (${a.state}, later ${JSON.stringify(a.later)})`);
+      fs.rmSync(mpath);
+      fs.rmSync(u.dl, { recursive: true, force: true });
+      publish(51, { ...f14, 'CivCity.pck': rnd(1100) });
+      put = false;
+      const b = await u.ensure({ verify: true, onStatus });
+      check(put && b.state === 'updated' && b.later.length === 0 && !!u.installed() && sha(fs.readFileSync(mpath)) === sha(mus),
+        `обновление посреди докачки: музыка из game/ в новой копии (${b.state}, later ${JSON.stringify(b.later)})`);
+    }
   } catch (e) {
     console.log('FAIL исключение:', e && e.stack);
     fails++;

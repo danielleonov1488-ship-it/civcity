@@ -1376,6 +1376,7 @@ const FAR_N := 8
 var far_n := FAR_N
 var _far_acc := PackedFloat32Array()   # сколько времени накопила каждая очередь
 var _far_ph := 0
+var _frame_sdt := 0.0                # игровое время этого кадра: проявление не быстрее, чем за кадр (не по накопленному)
 ## Вещи в руках (HandProps): у работников — по месту работы, у прохожих — покупка, которую несут домой.
 ## Только вблизи камеры и не больше PROP_CAP разом; на «Низкой» и «Очень низкой» — нет (Gfx.apply)
 var props_on := true
@@ -2584,6 +2585,7 @@ func _process(dt: float) -> void:
 		_cats_wear()                           # и на паузе: выбрали вещь в карточке — сразу надета
 		return
 	var sdt := dt * speed
+	_frame_sdt = sdt
 	if _far_acc.size() != far_n:
 		_far_acc.resize(far_n)
 		_far_acc.fill(0.0)
@@ -2874,7 +2876,8 @@ func _step(r: Dictionary, dt: float) -> void:
 	if c:
 		c.anim.speed_scale = game.speed * float(r["speed"]) * sf
 		if float(r["fade"]) < 1.0:
-			r["fade"] = minf(1.0, float(r["fade"]) + dt / 0.6)
+			# получил узел в свою очередь — dt за 8 кадров; проявляется всё равно по кадру, а не выскакивает
+			r["fade"] = minf(1.0, float(r["fade"]) + minf(dt, _frame_sdt) / 0.6)
 			c.set_alpha(float(r["fade"]))
 	var to := path[i] - p
 	var dist := to.length()

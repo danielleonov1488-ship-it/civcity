@@ -137,6 +137,7 @@ let launcher = null;
 let links = [];
 let task = null;          // идущая проверка/загрузка игры
 let later = null;         // идущая докачка музыки (играть уже можно)
+let laterNote = '';       // почему музыка не докачалась (мало места) — подстрочник, пока не попробуем снова
 let lastCheck = 0;        // когда в последний раз сверялись с сайтом
 let child = null;         // запущенная игра
 let starting = false;     // «Играть» нажато, игра ещё запускается
@@ -158,15 +159,21 @@ function readyText(m) {
 // Докачать музыку (наборы «потом») по описи m — в фоне, «Играть» не ждёт; надпись — подстрочником
 function startLater(m) {
   if (later || !m || !updater.missingLater(m).length) return;
-  let again = null;         // пока качали, игру обновили (опись другая) — докачать уже для новой
+  let again = null;         // в установленной копии музыки всё ещё нет (обновили посреди докачки) — ещё раз, уже для неё
+  laterNote = '';
   later = (async () => {
     const placed = await updater.fetchLater(m, text => { if (!task && !child && !starting) sendUpdate({ sub: text }); });
     log('докачка музыки:', placed.length ? 'поставлено ' + placed.join(', ') : 'опись сменилась — докачаю для новой');
+    // замена папок могла выбросить только что положенное — тогда возьмётся из game-dl/, без новой загрузки
     const cur = updater.playable();
-    if (!placed.length && cur && !cur.raw.equals(m.raw)) again = cur;
-  })().catch(e => log('докачка музыки не удалась:', e.message)).finally(() => {
+    if (cur && updater.missingLater(cur).length) again = cur;
+  })().catch(e => {
+    log('докачка музыки не удалась:', e.message);
+    // мало места — тихо, подстрочником: играть можно и без музыки, следующий запуск попробует снова
+    if (e.code === 'NOSPACE' || e.code === 'ENOSPC') laterNote = 'Музыка не докачалась: ' + (e.code === 'ENOSPC' ? 'на диске не хватает места' : e.message);
+  }).finally(() => {
     later = null;
-    if (!task && !child && !starting) sendUpdate({ sub: '' });
+    if (!task && !child && !starting) sendUpdate({ sub: laterNote });
     if (again) startLater(again);
   });
 }
@@ -274,7 +281,7 @@ function launch(m, why) {
     const text = err ? 'Не удалось запустить игру: ' + err.message
       : crashed ? `Игра закрылась с ошибкой (код ${code}). Нажмите «Играть» ещё раз; не поможет — «Проверить файлы игры».`
       : readyText(updater.playable());
-    sendUpdate({ running: false, text, sub: '', p: 1 });
+    sendUpdate({ running: false, text, sub: err || crashed ? '' : laterNote, p: 1 });
     showLauncher();
     if (SHOTS) setTimeout(() => shot('after'), 800);
   };
