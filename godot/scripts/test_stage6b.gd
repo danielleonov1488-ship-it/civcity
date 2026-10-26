@@ -325,6 +325,12 @@ func _new() -> void:
 	game._floor_end()
 	var last := String(c.events[-1]["text"]) if c.events.size() > ev0 else ""
 	check(ready.size() < 2 or (c.events.size() == ev0 + 1 and last.contains("Перестроили 2 дома")), "мазок: одна строка в колокольчик «%s»" % last)
+	# «Перестроить» и кисть дорог «Улучшить» — разные инструменты (проверка 26.10: оба звались "upgrade" — щелчок
+	# «Перестроить» вёл мазок по мостовой, а с «Улучшить» в руках курсор показывал перестройку домов)
+	check(not game.is_road_tool("upgrade") and game.is_road_tool("roadup") and game.is_deco_tool("roadup"), "«Перестроить» — не кисть дорог, «Улучшить» — кисть")
+	game._click()
+	check(game.floor_drag and not game.painting, "щелчок с «Перестроить» — мазок по домам, а не по дороге", [game.floor_drag, game.painting])
+	game._floor_end()
 	game.set_tool("")
 	# --- сохранение: перестроенные дома те же после загрузки ---
 	var sd := c.save_data()

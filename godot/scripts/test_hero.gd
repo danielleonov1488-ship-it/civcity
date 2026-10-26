@@ -481,6 +481,11 @@ func _card_test() -> void:
 	hud._fill_info()
 	await frames(20)
 	await shot("hero_card.png")
+	# с открытым гардеробом карточка не ниже верха нижних полос (проверка 26.10: закрывала «Этаж», «Перестроить» и казну)
+	var ir: Rect2 = hud.info_panel.get_global_rect()
+	var br: Rect2 = hud.bar_right.get_global_rect()
+	check(hud.info_box.find_child("editor_scroll", true, false) != null and ir.end.y <= br.position.y + 4.0,
+		"«Гардероб» — в прокрутке, карточка над полосой инструментов (низ %.0f, полоса с %.0f)" % [ir.end.y, br.position.y])
 	var lk: Dictionary = Hero.look(c).duplicate()
 	var blue := "2f5585"
 	lk["cape"] = blue

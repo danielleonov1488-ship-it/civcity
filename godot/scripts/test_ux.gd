@@ -893,14 +893,31 @@ func _bars_scale() -> void:
 	var st0: Dictionary = c.stats.duplicate()
 	c.stats["rp_day"] = 12.5
 	c.stats["income"] = float(c.stats.get("upkeep", 0.0)) + 1234.0
+	# всё, что бывает на полосах и сверху (проверка 26.10): кисть «Улучшить» дорог, раздел «Легион», медальоны «Легион»
+	# и «Герой», облачко «нет связи» — после слияний полосы шире, а медальоны наезжали на фишку патрициев
+	var r_up := c.research.has(Defs.ROAD_UP_RES)
+	var r_lg := c.research.has("legion")
+	c.research[Defs.ROAD_UP_RES] = true
+	c.research["legion"] = true
 	hud.refresh()
-	await frames(6)
+	await frames(4)
+	hud.cloud_off.holder.visible = true
+	await frames(3)
 	var l: Rect2 = hud.bar_left.get_global_rect()
 	var m: Rect2 = hud.bar_mid.get_global_rect()
 	var r: Rect2 = hud.bar_right.get_global_rect()
+	var tp: Rect2 = hud.top_panel.get_global_rect()
+	var cb: Rect2 = hud.class_box.get_global_rect()
+	var ub = hud.bar_left.find_child("upgrade_box", true, false)
 	check(get_window().content_scale_factor > 1.1 and hud.full_rp.visible and hud.full_money.visible, "крупный интерфейс (%.2f), «Полки полны» и «Казна полна» видно" % get_window().content_scale_factor)
-	check(not m.intersects(r) and m.position.x > l.end.x, "нижние полосы не наезжают: дороги %s, разделы %s, инструменты %s" % [l, m, r])
+	check(ub != null and (ub as Control).visible and not m.intersects(r) and m.position.x > l.end.x, "нижние полосы (с «Улучшить» и «Легионом») не наезжают: дороги %s, разделы %s, инструменты %s" % [l, m, r])
+	check(tp.position.x > cb.end.x and tp.end.x <= hud.root.size.x + 1.0, "медальоны сверху справа (с облачком) не наезжают на фишки классов: %s / %s" % [tp, cb])
 	await shot("ux_bars_scale14.png")
+	hud.cloud_off.holder.visible = false
+	if not r_up:
+		c.research.erase(Defs.ROAD_UP_RES)
+	if not r_lg:
+		c.research.erase("legion")
 	game.settings["ui_scale"] = sc0
 	hud.apply_scale(sc0)
 	c.money = m0
