@@ -1,5 +1,5 @@
 extends Node
-## Этап 1 (1.12): замеры скорости и проверка «Средняя и Высокая — ни пикселя не изменилось».
+## Этап 1 (1.12): замеры скорости и проверка «Средняя и Высокая — ни пикселя не изменилось» (против эталона GOLDEN).
 ##   bash .work/py/gpu_run.sh res://test_perf.tscn -- mode=regress          — для regress.sh: в конце «PERF DONE fails=0»
 ##   … -- mode=measure q=high,medium,low,verylow [city=new|путь] [views=имя:x:z:yaw:pitch:dist,…] [n=120 warm=60 settle=20]
 ##   … -- mode=shots out=ПАПКА [ref=ПАПКА] [q=high,medium]                 — снимки (и сверка с эталоном)
@@ -15,8 +15,12 @@ extends Node
 
 const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## Этап 4 (окантовка у домов, бордюры, новые утки) намеренно поменял картинку города — эталон записан заново в свою папку
-## (… -- mode=shots rec=1 на сборке этапа 4): прежний «golden» остаётся у линии, где этапа 4 ещё нет
-const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s4"
+## (… -- mode=shots rec=1 на сборке этапа 4): прежний «golden» остаётся у линии, где этапа 4 ещё нет.
+## 26.10 включены облегчённая «Средняя» (Gfx.MEDIUM_LIGHT) и сжатие картинок Synty Basis (deploy/tex_vram.py basis) —
+## эталон записан заново: … -- mode=shots rec=1 ref=D:/CivCity/.work/perf_ref/golden_s5 (снимки «было/стало» —
+## .work/enable_gfx). Нужен импорт с Basis: линия с прежними несжатыми картинками в .godot/imported на «Высокой»
+## разойдётся с ним (средняя разница ~2) — там сначала tools/godot.sh --headless --path godot --import
+const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s5"
 const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)
@@ -90,9 +94,10 @@ func _view(v: Array) -> void:
 
 
 func _quality(q: String) -> void:
-	# «medium_light» — облегчённая «Средняя» (Gfx.medium_light, 1.10): предложение владельцу, по умолчанию выключено
-	Gfx.medium_light = q == "medium_light"
-	q = "medium" if q == "medium_light" else q
+	# «Средняя» — как в игре (Gfx.MEDIUM_LIGHT, 1.10: облегчённая, включена 26.10); для сравнений: «medium_light» —
+	# облегчённая, «medium_full» — прежняя (с PCSS и MSAA 4x)
+	Gfx.medium_light = true if q == "medium_light" else (false if q == "medium_full" else Gfx.MEDIUM_LIGHT)
+	q = "medium" if q in ["medium_light", "medium_full"] else q
 	game.settings["quality"] = q
 	game._apply_quality()
 	Gfx.swap_all()                            # картинки «Очень низкой» — сразу (в игре — по одной за кадр)
@@ -388,10 +393,10 @@ func _probe() -> void:
 
 ## Для владельца (1.9, 1.10): снимки каждой графики на трёх видах (без жителей, время стоит) и замеры по кругу —
 ## графики чередуются, чтобы чужая нагрузка на видеокарту (вторая линия проверок) делилась поровну; итог — медианы
-##   … -- mode=offer q=high,medium,medium_light out=ПАПКА tag=lossless rounds=3
+##   … -- mode=offer q=high,medium_full,medium_light out=ПАПКА tag=lossless rounds=3
 func _offer() -> void:
 	await _settle()
-	var qs := Array(str(A.get("q", "high,medium,medium_light")).split(","))
+	var qs := Array(str(A.get("q", "high,medium_full,medium_light")).split(","))
 	var views := _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)
 	var tag: String = A.get("tag", "set")
 	var out: String = A.get("out", "")
@@ -532,10 +537,12 @@ func _tex_info(t: Texture2D) -> Dictionary:
 		var f := FileAccess.open(Gfx._ctex(t.resource_path), FileAccess.READ)
 		if f and f.get_length() > 52:
 			f.seek(36)
-			f.get_32()
+			var df := f.get_32()
 			f.get_32()
 			mips = f.get_32()
 			fmt = f.get_32()
+			if df == 3:                        # Basis (1.9): в заголовке — формат исходной картинки, на видеокарте — BC7 (рельеф — BC5)
+				fmt = Image.FORMAT_BPTC_RGBA
 	var bpp: float = {Image.FORMAT_L8: 1.0, Image.FORMAT_LA8: 2.0, Image.FORMAT_RGB8: 4.0, Image.FORMAT_RGBA8: 4.0, Image.FORMAT_DXT1: 0.5,
 		Image.FORMAT_DXT3: 1.0, Image.FORMAT_DXT5: 1.0, Image.FORMAT_RGTC_R: 0.5, Image.FORMAT_RGTC_RG: 1.0, Image.FORMAT_BPTC_RGBA: 1.0}.get(fmt, 4.0)
 	var names := {Image.FORMAT_L8: "L8", Image.FORMAT_LA8: "LA8", Image.FORMAT_RGB8: "RGB8", Image.FORMAT_RGBA8: "RGBA8", Image.FORMAT_DXT1: "DXT1",

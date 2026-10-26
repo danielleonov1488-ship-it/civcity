@@ -8,8 +8,9 @@ extends Node
 ## совет не увидели); файл только от лаунчера — ещё новая установка, город без настроек — уже играет; уровень из
 ## лаунчера — выбор игрока; копии картинок «Очень низкой» — из файла картинки и с диска, без чтений с видеокарты,
 ## меняются по одной за кадр; у вопроса сторожа — «Не надо» вместо «Понятно».
-## Предложения владельцу (по умолчанию выключены): облегчённая «Средняя» (Gfx.MEDIUM_LIGHT, 1.10) и картинки, сжатые
-## для видеокарты (deploy/tex_vram.py, 1.9) — копия «Очень низкой» из такой картинки — её мипмап 1, без видеокарты.
+## Включено 26.10 (решение владельца): облегчённая «Средняя» (Gfx.MEDIUM_LIGHT, 1.10) и картинки Synty, сжатые Basis
+## (deploy/tex_vram.py basis, 1.9) — копия «Очень низкой» из такой картинки — её мипмапы со второго, байт в байт то, что
+## на видеокарте, без чтений с неё; так же для сжатой BC7 (tex_vram.py bc7) и прежних несжатых (tex_vram.py off).
 
 const SHOTS := "D:/CivCity/.work/gd/b/"
 
@@ -117,27 +118,30 @@ func _decide() -> void:
 	check(Gfx.installed(st, st.duplicate(), false) and not st.has("quality_user"), "файл, записанный игрой (с ui_scale), — уже играет")
 
 
-## 1.10: облегчённая «Средняя» — только за переключателем (по умолчанию «Средняя» прежняя); «Высокую» не трогает
+## 1.10: «Средняя» облегчённая (Gfx.MEDIUM_LIGHT включён 26.10); переключатель возвращает прежнюю; «Высокую» не трогает
 func _medium_light() -> void:
 	var vp := get_viewport()
-	check(not Gfx.MEDIUM_LIGHT and not Gfx.medium_light, "облегчённая «Средняя» выключена (ждёт решения владельца)")
+	check(Gfx.MEDIUM_LIGHT and Gfx.medium_light, "облегчённая «Средняя» включена для всех (решение владельца 26.10)")
 	game.settings["quality"] = "medium"
 	game._apply_quality()
-	var was := [game.sun.light_angular_distance, vp.msaa_3d, game.env.ssao_enabled, game.env.sdfgi_enabled]
-	check(is_equal_approx(was[0], 2.2) and was[1] == Viewport.MSAA_4X and was[2] and not was[3], "«Средняя» как была: мягкие тени PCSS, MSAA 4x, SSAO, без SDFGI", was)
-	Gfx.medium_light = true
-	game._apply_quality()
 	check(is_equal_approx(game.sun.light_angular_distance, 0.0) and vp.msaa_3d == Viewport.MSAA_2X and game.env.ssao_enabled and game.sun.shadow_enabled
-		and game.sun.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS and is_equal_approx(vp.scaling_3d_scale, 1.0),
-		"облегчённая «Средняя»: без PCSS и MSAA 2x, остальное как у «Средней» (4 полосы теней, SSAO, полный размер)")
+		and not game.env.sdfgi_enabled and game.sun.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+		and is_equal_approx(vp.scaling_3d_scale, 1.0) and is_equal_approx(game.sun.directional_shadow_max_distance, 190.0),
+		"«Средняя»: без PCSS и MSAA 2x, остальное как у прежней «Средней» (4 полосы теней до 190 м, SSAO, без SDFGI, полный размер)",
+		[game.sun.light_angular_distance, vp.msaa_3d, game.env.ssao_enabled, game.env.sdfgi_enabled])
+	Gfx.medium_light = false
+	game._apply_quality()
+	var was := [game.sun.light_angular_distance, vp.msaa_3d, game.env.ssao_enabled, game.env.sdfgi_enabled]
+	check(is_equal_approx(was[0], 2.2) and was[1] == Viewport.MSAA_4X and was[2] and not was[3],
+		"переключатель выключили — «Средняя» прежняя: мягкие тени PCSS, MSAA 4x, SSAO, без SDFGI", was)
+	Gfx.medium_light = true
 	game.settings["quality"] = "high"
 	game._apply_quality()
 	check(is_equal_approx(game.sun.light_angular_distance, 2.2) and vp.msaa_3d == Viewport.MSAA_4X and game.env.sdfgi_enabled,
-		"переключатель «Средней» «Высокую» не трогает")
-	Gfx.medium_light = false
+		"облегчённая «Средняя» «Высокую» не трогает (PCSS, MSAA 4x, SDFGI)")
 	game.settings["quality"] = "medium"
 	game._apply_quality()
-	check(is_equal_approx(game.sun.light_angular_distance, 2.2) and vp.msaa_3d == Viewport.MSAA_4X, "выключили — «Средняя» снова прежняя")
+	check(is_equal_approx(game.sun.light_angular_distance, 0.0) and vp.msaa_3d == Viewport.MSAA_2X, "после «Высокой» — снова облегчённая «Средняя»")
 
 
 ## 1.9: картинка, сжатая для видеокарты (BC7 с мипмапами, как после deploy/tex_vram.py bc7), — копия вдвое меньше для
@@ -166,10 +170,40 @@ func _vram_copy() -> void:
 	_write_ctex(p1, nm, 0)
 	var p3 := dir.path_join("basis.ctex")
 	_write_ctex(p3, img, 3)
-	check(Gfx._from_ctex(p1) == null and not Gfx._ctex_small_ok(p1) and not Gfx._ctex_small_ok(p3),
-		"сжатая без мипмапов и Basis — копию не делаем (остаётся оригинал, без чтения с видеокарты)")
+	check(Gfx._from_ctex(p1) == null and not Gfx._ctex_small_ok(p1) and not Gfx._ctex_small_ok(p3) and Gfx._from_ctex(p3) == null,
+		"сжатая без мипмапов и пустой Basis — копию не делаем (остаётся оригинал, без чтения с видеокарты)")
+	# Basis из настоящей картинки игры (палитра 4096²): метка «рельеф» (RG) и обрезанный файл — оригинал, без ошибок
+	var bm := _big_mat()
+	var src := Gfx._ctex(bm.albedo_texture.resource_path) if bm else ""
+	var raw := FileAccess.get_file_as_bytes(src) if src != "" else PackedByteArray()
+	if raw.size() > 60 and raw.decode_u32(36) == 3:
+		var p4 := dir.path_join("basis_ok.ctex")
+		_put(p4, raw)
+		var rg := raw.duplicate()
+		rg.encode_u32(56, 0x80000000)
+		var p5 := dir.path_join("basis_rg.ctex")
+		_put(p5, rg)
+		var p6 := dir.path_join("basis_cut.ctex")
+		_put(p6, raw.slice(0, raw.size() / 2))
+		var cut := raw.duplicate()                 # длина данных та же, а оглавление уровней указывает за край
+		cut.encode_u64(56 + 4 + 80, raw.size())
+		var p7 := dir.path_join("basis_bad_index.ctex")
+		_put(p7, cut)
+		var h4 := Gfx._from_ctex(p4)
+		check(Gfx._ctex_small_ok(p4) and h4 != null and h4.get_width() == 2048 and h4.has_mipmaps() and h4.is_compressed(),
+			"Basis (настоящий файл): копия 2048², сжатая, с мипмапами", h4)
+		check(not Gfx._ctex_small_ok(p5) and not Gfx._ctex_small_ok(p6) and Gfx._from_ctex(p6) == null and Gfx._from_ctex(p7) == null and Gfx.readbacks == rb0,
+			"Basis: карта рельефа (RG), обрезанный файл и испорченное оглавление — копии нет (оригинал), без чтения с видеокарты")
+	else:
+		print("GFX note: картинки Synty не в Basis (deploy/tex_vram.py status) — проверки файла Basis пропущены")
 	for f in DirAccess.get_files_at(dir):
 		DirAccess.remove_absolute(dir.path_join(f))
+
+
+func _put(path: String, b: PackedByteArray) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_buffer(b)
+	f.close()
 
 
 ## Файл картинки в виде, как его пишет импорт Godot (GST2): df 0 — данные картинки как есть, 3 — Basis (здесь — пустышка)
@@ -254,14 +288,22 @@ func _run() -> void:
 	var miss_ms := (Time.get_ticks_usec() - t0) / 1000.0
 	var rb: Image = mat.albedo_texture.get_image() if mat else null
 	var same := false
+	# сжатая (Basis, 1.9): копия — мипмапы со второго, байт в байт то, что лежит на видеокарте; несжатая — уменьшение
+	var packed := a != null and a.is_compressed()
 	if a and rb:
-		rb.resize(rb.get_width() / 2, rb.get_height() / 2, Image.INTERPOLATE_BILINEAR)
-		var a2 := a.duplicate() as Image
-		a2.convert(Image.FORMAT_RGBA8)
-		rb.convert(Image.FORMAT_RGBA8)
-		same = a2.get_data() == rb.get_data()
+		if packed:
+			same = rb.is_compressed() and rb.has_mipmaps() and rb.get_format() == a.get_format() and a.has_mipmaps() \
+				and rb.get_data().slice(rb.get_mipmap_offset(1)) == a.get_data()
+		else:
+			rb.resize(rb.get_width() / 2, rb.get_height() / 2, Image.INTERPOLATE_BILINEAR)
+			var a2 := a.duplicate() as Image
+			a2.convert(Image.FORMAT_RGBA8)
+			rb.convert(Image.FORMAT_RGBA8)
+			same = a2.get_data() == rb.get_data()
+	var kind := "сжатая Basis: мипмапы со второго, %s" % ("BC7" if a and a.get_format() == Image.FORMAT_BPTC_RGBA else str(a.get_format() if a else -1)) if packed else "без сжатия: уменьшение"
 	check(mat != null and a != null and a.get_width() == 2048 and same,
-		"копия 2048² из файла картинки (без видеокарты) — та же, что прежняя через видеокарту (%s, %.0f мс)" % [path.get_file(), miss_ms])
+		"копия 2048² из файла картинки (без видеокарты) — та же, что на видеокарте (%s; %s, %.0f мс)" % [kind, path.get_file(), miss_ms],
+		[a.get_format() if a else -1, rb.get_format() if rb else -1])
 	Gfx.readbacks = 0
 	# Очень низкая — и обратно: нажатие не ждёт картинок, они меняются в фоне по одной за кадр
 	var bv: Button = sp.find_child("q_verylow", true, false)
@@ -281,17 +323,20 @@ func _run() -> void:
 	await frames(40)
 	check(game.people.visible_count <= 40, "лишние прохожие убраны", game.people.visible_count)
 	var at = mat.albedo_texture
-	check(not Gfx.swap_busy() and at is ImageTexture and at.get_width() == 2048 and str(at.get_meta("orig", "")) == path and FileAccess.file_exists(cache)
-		and Gfx.readbacks == 0, "«Очень низкая»: за %d кадров у материалов копии 2048², копия на диске, ни одного чтения с видеокарты" % nf,
+	# копия на диске — только у несжатой (её уменьшать долго); сжатую каждый раз берём из файла — десятки мс
+	check(not Gfx.swap_busy() and at is ImageTexture and at.get_width() == 2048 and str(at.get_meta("orig", "")) == path
+		and FileAccess.file_exists(cache) != packed and (at as ImageTexture).get_format() == a.get_format() and Gfx.readbacks == 0,
+		"«Очень низкая»: за %d кадров у материалов копии 2048² (%s), ни одного чтения с видеокарты" % [nf, "сжатые, как оригинал" if packed else "копия на диске"],
 		[at, Gfx.readbacks, FileAccess.file_exists(cache)])
 	check(Gfx.tex(path) == at, "новый материал берёт ту же копию (без картинки 4096²)")
 	Gfx._small.erase(path)
 	t0 = Time.get_ticks_usec()
 	var hit := Gfx._small_tex(path)
 	var hit_ms := (Time.get_ticks_usec() - t0) / 1000.0
-	var ci := Gfx._cache_read(cache)
+	var ci := Gfx._from_ctex(ctex) if packed else Gfx._cache_read(cache)
 	check(hit != null and hit.get_width() == 2048 and Gfx.readbacks == 0 and ci != null and ci.get_data() == a.get_data(),
-		"копия с диска — та же картинка (%.0f мс вместо %.0f мс из файла 4096²)" % [hit_ms, miss_ms])
+		("копия заново из сжатого файла — та же картинка (%.0f мс)" % hit_ms) if packed else
+		("копия с диска — та же картинка (%.0f мс вместо %.0f мс из файла 4096²)" % [hit_ms, miss_ms]))
 	await _press(sp.find_child("q_low", true, false))
 	check(game.sun.shadow_enabled and is_equal_approx(game.sun.light_angular_distance, 0.0) and game.people.max_vis == 70
 		and is_equal_approx(game.sun.directional_shadow_max_distance, 175.0) and vp.msaa_3d == Viewport.MSAA_DISABLED

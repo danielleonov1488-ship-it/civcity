@@ -7,7 +7,8 @@ extends Node
 ##  - сторож кадров: в городе 20 с подряд меньше 40 кадров на «Высокой» или «Средней» — советник один раз предложит
 ##    «Низкую» (кнопкой); встроенная видеокарта — один раз подскажет, как включить мощную;
 ##  - счётчик кадров в углу (настройки → «Показывать FPS»), F3 — подробно для проверяющих (с копированием).
-## «Средняя» и «Высокая» — ровно как были (снимки test_perf совпадают до бита); облегчения — только на «Низкой» и ниже.
+## «Высокая» — ровно как была (снимки test_perf совпадают с эталоном); «Средняя» — облегчённая (MEDIUM_LIGHT, решение
+## владельца 26.10); остальные облегчения — только на «Низкой» и ниже.
 
 const ORDER := ["verylow", "low", "medium", "high"]
 const NAMES := {"high": "Высокая", "medium": "Средняя", "low": "Низкая", "verylow": "Очень низкая"}
@@ -19,11 +20,11 @@ const WATCH_SEC := 20.0                # …за столько секунд в 
 const WATCH_START := 15.0              # первые секунды после загрузки не в счёт
 const VIS := {"high": 150, "medium": 150, "low": 70, "verylow": 40}     # сколько жителей рисуем на улицах
 const HALF_FAR := 60.0                 # «Низкая»: жители дальше — движения через кадр; «Очень низкая» — все
-## «Средняя» полегче (1.10 плана 24.10, ждёт решения владельца — пока выключено, «Средняя» прежняя): без «мягких» теней
-## PCSS и со сглаживанием MSAA 2x вместо 4x — видеокарте на ~40% легче «Высокой» и на ~35% легче прежней «Средней»
+## «Средняя» полегче (1.10 плана 24.10, владелец одобрил 26.10 — включено для всех): без «мягких» теней PCSS и со
+## сглаживанием MSAA 2x вместо 4x — видеокарте на ~40% легче «Высокой» и на ~35% легче прежней «Средней»
 ## (город владельца, RTX 3060: 21,5 / 18,9 → 12,3 мс; замеры и снимки «было/стало» — .work/gd/b/perf_offer).
-## Включить для всех — здесь true (одно место)
-const MEDIUM_LIGHT := false
+## Вернуть прежнюю «Среднюю» — здесь false (одно место)
+const MEDIUM_LIGHT := true
 static var medium_light := MEDIUM_LIGHT   # проверки (test_perf mode=offer) переключают на ходу
 
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
@@ -265,9 +266,10 @@ static func apply(g) -> void:
 	Engine.max_fps = 60 if g.shot_path == "" else 0
 
 
-## «Очень низкая»: картинки 4096² (палитры Synty, мрамор, статуи — по 64 МБ видеопамяти) у материалов заменяются
-## копиями 2048² (16 МБ): на встроенной видеокарте память общая с системой. Другие уровни — снова оригиналы.
-## Без чтений с видеокарты (на слабых падала игра): копия делается из файла картинки (.ctex) и один раз на сборку
+## «Очень низкая»: картинки 4096² (палитры Synty, мрамор, статуи — по 21 МБ видеопамяти сжатыми Basis, 64 МБ — без
+## сжатия) у материалов заменяются копиями 2048² (5 / 16 МБ): на встроенной видеокарте память общая с системой. Другие
+## уровни — снова оригиналы. Без чтений с видеокарты (на слабых падала игра): копия делается из файла картинки (.ctex);
+## у сжатой (Basis, 1.9) это её же мипмапы со второго (десятки мс), у несжатой — уменьшение, и она один раз на сборку
 ## кладётся на диск (user://tex2k, как значки в hud._icon_dir) — дальше берётся оттуда, без картинки 4096².
 ## Смена уровня в игре — по одной картинке за кадр (копии и оригиналы готовятся в фоне), а не всё в нажатии.
 ## Новые материалы (новый облик, новый житель) берут картинки через Gfx.tex — сразу маленькие
@@ -426,7 +428,7 @@ static func _small_tex(path: String) -> ImageTexture:
 		if ctex == "":
 			return null
 		if _ctex_width(ctex) < SMALL_FROM or not _ctex_small_ok(ctex):
-			_not_big[path] = true                  # меньше 4096² или сжата так, что копию не сделать (Basis), — оригинал
+			_not_big[path] = true                  # меньше 4096² или сжата так, что копию не сделать (рельеф в Basis), — оригинал
 			return null
 		img = _prep_img(ctex, _cache_file(path, ctex))
 	if img == null:
@@ -479,7 +481,8 @@ static func _ctex(path: String) -> String:
 
 
 ## Из файла картинки можно сделать копию вдвое меньше: без потерь (PNG/WebP внутри) — уменьшением; сжатая для
-## видеокарты (1.9, deploy/tex_vram.py) с мипмапами — это готовый мипмап 1; Basis Universal и сжатая без мипмапов — нет
+## видеокарты (1.9, deploy/tex_vram.py) с мипмапами — это готовый мипмап 1; Basis Universal (цветная) — её мипмапы
+## со второго (_basis_half); сжатая без мипмапов и карта рельефа в Basis — нет
 static func _ctex_small_ok(ctex: String) -> bool:
 	var f := FileAccess.open(ctex, FileAccess.READ)
 	if f == null or f.get_length() < 52 or f.get_buffer(4).get_string_from_ascii() != "GST2":
@@ -488,7 +491,29 @@ static func _ctex_small_ok(ctex: String) -> bool:
 	var df := f.get_32()
 	f.get_32()
 	var mips := f.get_32()
+	if df == 3:
+		f.seek(52)
+		var n := f.get_32()
+		return n <= f.get_length() - 56 and _basis_ok(f.get_buffer(mini(n, 4 + 48)))
 	return df == 1 or df == 2 or (df == 0 and mips > 0)
+
+
+const KTX2_ID := [0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A]
+
+
+## Начало данных Basis из .ctex (метка распаковки Godot + KTX2): копия вдвое меньше выйдет — цветная (RGB или RGBA;
+## на ПК и оригинал, и копия — BC7), KTX2 (старший бит метки), мипмапов хотя бы два. Карту рельефа (RG) Godot
+## раскладывает в BC5, а Image.load_ktx_from_buffer — в BC7 (каналы другие), — для неё оригинал
+static func _basis_ok(b: PackedByteArray) -> bool:
+	if b.size() < 4 + 48:
+		return false
+	var dfmt := b.decode_u32(0)
+	if (dfmt & 0x80000000) == 0 or not ((dfmt & 0x7FFFFFFF) in [1, 2]):
+		return false
+	for i in KTX2_ID.size():
+		if b[4 + i] != KTX2_ID[i]:
+			return false
+	return b.decode_u32(4 + 40) >= 2
 
 
 static func _ctex_width(ctex: String) -> int:
@@ -499,8 +524,8 @@ static func _ctex_width(ctex: String) -> int:
 	return f.get_32()
 
 
-## Картинка из .ctex вдвое меньше: без потерь (внутри PNG или WebP) — уменьшением, сжатая для видеокарты — её мипмап 1;
-## null — другой формат
+## Картинка из .ctex вдвое меньше: без потерь (внутри PNG или WebP) — уменьшением, сжатая для видеокарты — её мипмап 1,
+## Basis — её мипмапы со второго; null — другой формат
 static func _from_ctex(ctex: String) -> Image:
 	var f := FileAccess.open(ctex, FileAccess.READ)
 	if f == null or f.get_length() < 60 or f.get_buffer(4).get_string_from_ascii() != "GST2":
@@ -515,6 +540,9 @@ static func _from_ctex(ctex: String) -> Image:
 	var fmt := f.get_32()                      # формат точек
 	if df == 0:
 		return _mip1(f, w, h, mips, fmt)
+	if df == 3:
+		var hb := _basis_half(f)
+		return hb if hb != null and hb.get_width() == w / 2 and hb.get_height() == h / 2 else null
 	var n := f.get_32()
 	if (df != 1 and df != 2) or n <= 4 or n > f.get_length():
 		return null
@@ -543,6 +571,62 @@ static func _mip1(f: FileAccess, w: int, h: int, mips: int, fmt: int) -> Image:
 		return null
 	var img := Image.create_from_data(w / 2, h / 2, true, fmt, data.slice(full.get_mipmap_offset(1)))
 	return img if img != null and not img.is_empty() else null
+
+
+## Basis Universal (1.9, deploy/tex_vram.py basis): в .ctex после заголовка — размер, метка распаковки Godot и файл KTX2
+## (UASTC, уровни сжаты zstd по отдельности). Копия вдвое меньше — тот же KTX2 без уровня 0 (уровни переносятся как
+## есть, без распаковки); раскладывает его Image.load_ktx_from_buffer — на ПК в BC7, как и сам Godot оригинал, так что
+## это байт в байт мипмап 1 оригинала (десятки мс на 4096², без видеокарты; пересжимать в игре нечем и не нужно)
+static func _basis_half(f: FileAccess) -> Image:
+	f.seek(52)
+	var n := f.get_32()
+	if n < 4 + 80 or n > f.get_length() - 56:
+		return null
+	var b := f.get_buffer(n)
+	if not _basis_ok(b):
+		return null
+	var k := b.slice(4)
+	var L := k.decode_u32(40)
+	var idx_end := 80 + L * 24
+	var dfd_o := k.decode_u32(48)
+	if L < 2 or L > 16 or idx_end > k.size() or dfd_o < idx_end:
+		return null
+	var lv := []                               # [смещение, длина, длина без сжатия] по уровням
+	var data_from := k.size()
+	for i in L:
+		var o := k.decode_u64(80 + i * 24)
+		var ln := k.decode_u64(80 + i * 24 + 8)
+		if o < idx_end or ln <= 0 or o + ln > k.size():
+			return null
+		lv.append([o, ln, k.decode_u64(80 + i * 24 + 16)])
+		data_from = mini(data_from, o)
+	if dfd_o > data_from:
+		return null
+	const SHIFT := -24                         # в оглавлении уровней на одну строку меньше
+	var out := k.slice(0, 80)
+	out.encode_u32(20, maxi(1, k.decode_u32(20) / 2))
+	out.encode_u32(24, maxi(1, k.decode_u32(24) / 2))
+	out.encode_u32(40, L - 1)
+	out.encode_u32(48, dfd_o + SHIFT)
+	if k.decode_u32(60) > 0:
+		out.encode_u32(56, k.decode_u32(56) + SHIFT)
+	if k.decode_u64(72) > 0:
+		out.encode_u64(64, k.decode_u64(64) + SHIFT)
+	out.resize(80 + (L - 1) * 24)
+	out.append_array(k.slice(dfd_o, data_from))  # описание формата, ключи, общие данные сжатия — как были
+	var align := 1 if k.decode_u32(44) != 0 else 16  # без сжатия уровни выровнены по блоку 16 байт
+	for i in range(L - 1, 0, -1):              # уровни в файле — от меньшего к большему, как в оригинале
+		while out.size() % align != 0:
+			out.append(0)
+		var e := 80 + (i - 1) * 24
+		out.encode_u64(e, out.size())
+		out.encode_u64(e + 8, lv[i][1])
+		out.encode_u64(e + 16, lv[i][2])
+		out.append_array(k.slice(lv[i][0], lv[i][0] + lv[i][1]))
+	var img := Image.new()
+	if img.load_ktx_from_buffer(out) != OK or img.is_empty() or not img.has_mipmaps():
+		return null
+	return img
 
 
 static func _bpp(fmt: int) -> int:
