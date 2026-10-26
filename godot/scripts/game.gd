@@ -2395,18 +2395,18 @@ func set_tool(t: String) -> void:
 
 
 func is_road_tool(t: String) -> bool:
-	return t in ["road", "plaza", "path", "erase", "upgrade", "ground"]
+	return t in ["road", "plaza", "path", "erase", "roadup", "ground"]
 
 
 ## Кисть узора, а не дороги: «Улучшить» (этап 5.7) и «Земля» (5.8) — красят слой Land.deco, клетки берут brush_cells
 func is_deco_tool(t: String) -> bool:
-	return t == "upgrade" or t == "ground"
+	return t == "roadup" or t == "ground"
 
 
 ## Цвет кольца кисти по инструменту: мостовая — кремовая, тропа — песочная, площадь — светлый камень, ластик — красный,
 ## «Улучшить» — золотистый, «Земля» — зелёный
 const BRUSH_COL := {"road": Color(1.0, 0.97, 0.88), "path": Color(0.95, 0.8, 0.55), "plaza": Color(0.86, 0.88, 0.92), "erase": Color(1.0, 0.32, 0.26),
-	"upgrade": Color(1.0, 0.86, 0.45), "ground": Color(0.6, 0.95, 0.5)}
+	"roadup": Color(1.0, 0.86, 0.45), "ground": Color(0.6, 0.95, 0.5)}
 var brush_disc: MeshInstance3D            # чуть заметный круг внутри кольца (цвет инструмента)
 
 
@@ -4692,7 +4692,8 @@ func _build_here() -> void:
 			if not copy_color and color_user < 0:
 				place_color = -1                  # следующему дому — свой цвет «Авто» (не как у соседа)
 				color_lock = false
-			if pl.get("sub", "") == "free" and not city.tips.has("free_place") and mode != "demo" and not (tutorial and tutorial.active()):
+			if pl.get("sub", "") == "free" and not city.tips.has("free_place") and mode != "demo" and not (tutorial and tutorial.active()) \
+					and not hud.advisor_panel.visible:   # открытый совет не перебиваем — скажем при следующей постановке
 				city.tips["free_place"] = true
 				hud.advisor("Строим где хотите", "Дом встаёт там, куда вы навели, — на траве, на площади, хоть на мостовой. Повернуть — зажмите кнопку мыши и ведите вбок (или Z / X); этот поворот запомнится и для следующих домов.\n\nПодведите дом вплотную к дороге — он сам встанет ровно фасадом к ней. Нужно одно: у входа должна быть мостовая, иначе жители не дойдут.\n\nПоставили не туда — Ctrl+Z (или «Отменить» в панели) в первые 30 секунд вернёт всю цену, пока в дом никто не въехал.")
 			# поворот был для этой постройки: следующая снова сама встанет фасадом к дороге (а поворот
@@ -4897,7 +4898,7 @@ const ROAD_KIND := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": La
 
 ## Кисть «Улучшить» / «Земля»: какой узор кладёт (−1 — улучшение дороги; для «Земли» — ground_kind)
 func _brush_gk() -> int:
-	return -1 if tool == "upgrade" else ground_kind
+	return -1 if tool == "roadup" else ground_kind
 
 
 ## Цена клеток мазка «Улучшить» (у каждой своя: тропа, мостовая, площадь) или «Земли» (одна на все)
@@ -4905,7 +4906,7 @@ func _brush_prices(cells: PackedInt32Array) -> PackedFloat32Array:
 	var out := PackedFloat32Array()
 	out.resize(cells.size())
 	for n in cells.size():
-		out[n] = land.up_price(cells[n]) if tool == "upgrade" else Defs.GROUND_COST
+		out[n] = land.up_price(cells[n]) if tool == "roadup" else Defs.GROUND_COST
 	return out
 
 
@@ -5015,9 +5016,9 @@ func _line_update(force := false) -> void:
 			"upto": (bl["cells"] as PackedInt32Array).size(), "cost": 0.0, "price": _brush_prices(bl["cells"])}
 		_line_cut(bplan)
 		line_plan = bplan
-		if tool == "upgrade":
+		if tool == "roadup":
 			_deco_tiles()                         # показ плит — плитками, даже пока плит в городе нет
-		_prev_put(bplan["cells"], bplan["fresh"], int(bplan["upto"]), 1, 9 if tool == "upgrade" else 10 + ground_kind)
+		_prev_put(bplan["cells"], bplan["fresh"], int(bplan["upto"]), 1, 9 if tool == "roadup" else 10 + ground_kind)
 		return
 	var kd: int = ROAD_KIND[tool]
 	var lc := land.line_cells(line_from, hover, brush_r, kd, brush_square, brush_over)

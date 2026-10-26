@@ -205,11 +205,13 @@ func tick() -> void:
 		_tick_offer()
 	elif time_ok():
 		_try_offer()
+	# первое предложение истории объясняется раньше заказа старосты: на «Хуторе» они приходят разом, и совет о заказах
+	# занимал советника, пока игрок уже слушал первую историю (проверка 26.10)
+	_advise_once()
 	orders.tick()
 	_sync_beast()
 	_sync_clicks()
 	_marks(true)
-	_advise_once()
 	_advise_square()
 	_advise_step()
 

@@ -2910,6 +2910,11 @@ func _orders() -> void:
 	hud.advisor_panel.visible = false
 	hud.refresh()
 	await frames(3)
+	# свиток просьб пересобирается при каждом обновлении города: кнопки строк — по нажатию, щелчок по «Взяться» не
+	# пропадает, если свиток пересобрали между нажатием и отпусканием (проверка 26.10)
+	var tbs: Array = hud.tasks_box.find_children("*", "BaseButton", true, false)
+	check(not tbs.is_empty() and tbs.all(func(x): return (x as BaseButton).action_mode == BaseButton.ACTION_MODE_BUTTON_PRESS),
+		"кнопки свитка просьб («Взяться»…) срабатывают по нажатию (%d)" % tbs.size())
 	check(hud.tasks_box.find_child("order_row", true, false) != null, "строка заказа — в «Просьбах горожан»")
 	# сам не открывается: 30 игровых часов — камера на месте, окон нет, заказ не взят
 	var pose0: Array = game.rig.pose()

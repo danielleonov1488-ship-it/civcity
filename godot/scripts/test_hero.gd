@@ -484,6 +484,33 @@ func _card_test() -> void:
 	hud._fill_info()
 	await frames(20)
 	await shot("hero_card.png")
+	# с открытым гардеробом карточка не ниже верха нижних полос (проверка 26.10: закрывала «Этаж», «Перестроить» и казну)
+	var ir: Rect2 = hud.info_panel.get_global_rect()
+	var br: Rect2 = hud.bar_right.get_global_rect()
+	check(hud.info_box.find_child("editor_scroll", true, false) != null and ir.end.y <= br.position.y + 4.0,
+		"«Гардероб» — в прокрутке, карточка над полосой инструментов (низ %.0f, полоса с %.0f)" % [ir.end.y, br.position.y])
+	# прокрутка «Гардероба» не прыгает наверх: ни от обновления города, ни в кадре после выбора (проверка 26.10)
+	var es: ScrollContainer = hud.info_box.find_child("editor_scroll", true, false)
+	if es != null:
+		var vb := es.get_v_scroll_bar()
+		es.scroll_vertical = int(vb.max_value - vb.page)
+		await frames(2)
+		var want := es.scroll_vertical
+		hud.refresh()
+		await frames(2)
+		check(is_instance_valid(es) and hud.info_box.find_child("editor_scroll", true, false) == es and es.scroll_vertical == want,
+			"обновление города не пересобирает открытый «Гардероб» (прокрутка %d)" % want)
+		var seen := [-1, 0.0]
+		var probe := func():                       # начало следующего кадра — то, что игрок увидел сразу после выбора
+			var e: ScrollContainer = hud.info_box.find_child("editor_scroll", true, false)
+			seen[0] = e.scroll_vertical if e != null else -2
+			seen[1] = e.size.y if e != null else 0.0
+		get_tree().process_frame.connect(probe, CONNECT_ONE_SHOT)
+		hud._fill_info()                           # как после щелчка по цвету: карточку пересобрали
+		await frames(3)
+		var e2: ScrollContainer = hud.info_box.find_child("editor_scroll", true, false)
+		check(want > 0 and int(seen[0]) == want and e2 != null and e2.scroll_vertical == want and float(seen[1]) > 100.0,
+			"после выбора «Гардероб» на месте уже в первом кадре: прокрутка %d (была %d), высота %.0f" % [int(seen[0]), want, float(seen[1])])
 	var lk: Dictionary = Hero.look(c).duplicate()
 	var blue := "2f5585"
 	lk["cape"] = blue

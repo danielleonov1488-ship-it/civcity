@@ -22,7 +22,8 @@ const CARD := Vector2(128, 176)       # карточка постройки в �
 const PLATE := Vector2(264, 70)       # табличка с названием города (картинка 640×169)
 const TASKS_Y := 128                  # просьбы горожан (и карточка обучения) — под табличкой города
 const BAR_H := 92                     # высота нижних полос: окна инструментов встают над ними
-const MIN_W := 1300.0                 # интерфейс не крупнее, чем помещается в 1300 точек по ширине
+const MIN_W := 1440.0                 # интерфейс не крупнее, чем помещается в 1440 точек по ширине: снизу — дороги с «Улучшить» и «Земля»,
+                                      # разделы с «Легионом» и инструменты (~1375); сверху — фишки классов и 10 медальонов с «Героем», «Легионом» и облачком (~1430)
 const FAM_Y := 70                     # семьи на площади — под фишками классов, справа от таблички
 const NOTES_Y := 68                   # всплывашки — под фишками классов (сдвигаются вправо от значков семей)
 const ADV_Y := 136                    # советник — ниже значков семей
@@ -200,14 +201,33 @@ func _ready() -> void:
 ## Размер интерфейса из настроек, но не крупнее, чем помещается по ширине окна (MIN_W логических точек):
 ## иначе нижние полосы и кнопки наверху наезжают друг на друга
 func apply_scale(s: float) -> void:
+	get_window().content_scale_factor = clampf(s, 0.7, ui_cap())
+	var ws := Vector2(get_window().size)
+	if ws.x >= 64.0 and ws.y >= 64.0:
+		_fit_bottom.call_deferred()           # экран в точках стал уже — полосы внизу подогнать
+	if settings_panel != null and settings_panel.visible:
+		_ui_slider_fit()                      # окно поменяло размер при открытых настройках
+
+
+## Самый крупный интерфейс, что помещается в окно по ширине (MIN_W логических точек)
+func ui_cap() -> float:
 	var ws := Vector2(get_window().size)
 	if ws.x < 64.0 or ws.y < 64.0:
-		get_window().content_scale_factor = clampf(s, 0.7, 1.6)
-		return
+		return 1.6
 	var st := minf(ws.x / 1600.0, ws.y / 900.0)          # растяжение canvas_items от базовых 1600×900
-	var top := minf(1.6, ws.x / (st * MIN_W))
-	get_window().content_scale_factor = clampf(s, 0.7, maxf(0.7, top))
-	_fit_bottom.call_deferred()               # экран в точках стал уже — полосы внизу подогнать
+	return maxf(0.7, minf(1.6, ws.x / (st * MIN_W)))
+
+
+## Ползунок «Размер интерфейса» — только до того, что помещается в окно (дальше он ничего не менял бы);
+## сохранённый выбор не трогаем: в окне пошире снова станет крупнее
+func _ui_slider_fit() -> void:
+	var us := settings_panel.find_child("ui_scale", true, false) as HSlider
+	if us == null:
+		return
+	us.set_block_signals(true)                # меньший предел не должен переписать настройку через value_changed
+	us.max_value = clampf(floorf(ui_cap() / 0.05 + 0.001) * 0.05, 1.0, 1.4)
+	us.set_value_no_signal(float(game.settings.get("ui_scale", 1.0)))
+	us.set_block_signals(false)
 
 
 ## Щелчок у каждой кнопки интерфейса
@@ -658,6 +678,20 @@ func mouse_over_ui() -> bool:
 	if menu_root and menu_root.visible:
 		return true
 	var h := root.get_viewport().gui_get_hovered_control()
+	if h == null and game != null and game._mouse_pos.x >= 0.0:
+		# окно под мышью только что пересобрали (карточка после «Гардероб», «Внешность», «+ работник»): до первого
+		# движения мыши Godot не знает, над чем она, — смотрим сами, чтобы подпись постройки за карточкой не легла
+		# поверх неё (проверка 26.10)
+		# где мышь — по последнему событию мыши (как game.ground_at_mouse): у корневого окна get_mouse_position — курсор ОС
+		var mp: Vector2 = game._mouse_pos
+		var lu := LegionUi.of(self)
+		for p in [info_panel, tool_panel, tasks_panel, tray, overlay_panel, advisor_panel, bar_left, bar_mid, bar_right, city_card, top_panel,
+				research_panel, finance_panel, stats_panel, events_panel, pause_panel, settings_panel, buy_panel, credits_panel, journal_panel,
+				lu.win if lu != null and lu.visible else null]:
+			# только то, что и так ловит мышь (рамки-контейнеры вроде ряда медальонов щелчок пропускают в мир)
+			if p != null and (p as Control).is_visible_in_tree() and ((p as Control).mouse_filter != Control.MOUSE_FILTER_IGNORE
+					and (p as Control).get_global_rect().has_point(mp)):
+				return true
 	return h != null and h != root
 
 
@@ -894,12 +928,21 @@ func _fill_families() -> void:
 
 
 
-## Повозка впервые встала из-за низкого счастья: объясняет советник (дальше — обычная всплывашка)
+## Повозка впервые встала из-за низкого счастья: объясняет советник (дальше — обычная всплывашка). Открыт другой
+## совет — ждёт, пока его закроют (_once_tips), и говорит о счастье на тот момент
 func on_arrive_block(text: String) -> void:
 	if game.mode == "demo" or game.mode == "menu" or (game.tutorial and game.tutorial.active()):
 		notify(text, "happy")
 		return
+	if not _tip_free():
+		game.city.tips["arrive_wait"] = true    # открытый совет (или ролик ранга) не перебиваем — скажем, когда советник свободен
+		return
+	_arrive_advice()
+
+
+func _arrive_advice() -> void:
 	var c: City = game.city
+	c.tips.erase("arrive_wait")
 	var ht: Array = c.stats.get("happy_tips", [])
 	var tip := ("\n\nСовет: " + String(ht[0]) + ".") if not ht.is_empty() else ""
 	var nf := int(_defc("ARRIVE_FREE", 3))
@@ -917,7 +960,7 @@ func on_arrival(f: Dictionary) -> void:
 
 Пока семьи ждут, новые не едут: на площади помещается всего несколько семей. А везёт их повозка только туда, где в домах есть свободное место, — стройте дома заранее. Так город растёт постепенно.")
 		return
-	if c.homes_for(f).is_empty() and not c.tips.has("nohome_" + f["cls"]):
+	if c.homes_for(f).is_empty() and not c.tips.has("nohome_" + f["cls"]) and not advisor_panel.visible:   # открытый совет не перебиваем
 		c.tips["nohome_" + f["cls"]] = true
 		var cd: Dictionary = Defs.CLASSES[f["cls"]]
 		advisor("Семье негде жить", "Семья %s (%s) ищет «%s», а свободных мест нет. Постройте дом у дороги — семья подождёт на площади." % [f["name"], cd["name"].to_lower(), Defs.B[cd["house"]]["name"]])
@@ -2124,13 +2167,13 @@ func _bottom_left() -> void:
 	p.add_child(h)
 	for t: Array in [["road", "road", "Мостовая", "Мостовая: каменная улица. Ведите с зажатой кнопкой; R — поверх других дорог"], ["path", "path", "Тропа", "Тропа: утоптанная дорожка — почти даром"],
 			["plaza", "plaza", "Площадь", "Площадь из узорной плитки"], ["erase", "eraser", "Ластик", "Ластик: стереть дорогу или узор земли"],
-			["upgrade", "hammer", "Улучшить", "Улучшить дорогу: тропа станет мостовой, мостовая — каменными плитами, площадь — травертином"],
+			["roadup", "hammer", "Улучшить", "Улучшить дорогу: тропа станет мостовой, мостовая — каменными плитами, площадь — травертином"],
 			["ground", "flower", "Земля", "Земля: трава, цветы, песок, глина и гравий — узор для красоты"]]:
 		var tn: String = t[0]
 		var v := _round_lbl(t[1], t[2], t[3], 50, func(): game.set_tool("" if game.tool == tn else tn))
 		h.add_child(v)
 		road_btns[tn] = v.get_meta("btn")
-		if tn == "upgrade":
+		if tn == "roadup":
 			v.name = "upgrade_box"
 			v.visible = false                     # «Улучшить» — когда изучена «Базальтовая мостовая» (этап 5.7)
 	# настройки кисти над кнопками
@@ -2250,7 +2293,7 @@ func _refresh_brush() -> void:
 		var strip := 2.0 * float(game.brush_r) / Land.CELL / Land.CELL     # клеток в метре полосы
 		if Defs.ROAD_COST.has(t):
 			pl.text = "Метр — около %s ден. (полоса %s м)" % [price_txt(road_price_m(t)), ("%.1f" % (game.brush_r * 2.0)).replace(".", ",")]
-		elif t == "upgrade":
+		elif t == "roadup":
 			pl.text = "Метр: тропа → мостовая ~%s · мостовая → плиты ~%s · площадь → травертин ~%s ден." % [price_txt(strip * float(Defs.ROAD_UP["path"])),
 				price_txt(strip * float(Defs.ROAD_UP["road"])), price_txt(strip * float(Defs.ROAD_UP["plaza"]))]
 		elif t == "ground":
@@ -3356,6 +3399,12 @@ func _process(_dt: float) -> void:
 				if px + pointer_text.size.x > vw - 6.0:
 					px = pointer.position.x + 2.0 - pointer_text.size.x
 				pointer_text.position = Vector2(px, pointer.position.y + 26.0 - pointer_text.size.y / 2.0)
+			# стрелка к медальону или кнопке легла бы на открытую карточку (подпись — поверх имени героя): пока карточка
+			# открыта, стрелки нет (проверка 26.10); стрелка к кнопке в самой карточке («Улучшить» Казарм) — остаётся
+			if info_panel.visible and not info_panel.is_ancestor_of(t) and Rect2(pointer.position, pointer.size).merge(
+					Rect2(pointer_text.position, pointer_text.size)).intersects(info_panel.get_global_rect()):
+				pointer.visible = false
+				pointer_text.visible = false
 
 
 
@@ -3448,7 +3497,7 @@ func _tool_panel() -> void:
 
 func on_tool(t: String) -> void:
 	for k in road_btns:
-		if road_btns[k] is Button and k in ["road", "path", "plaza", "erase", "upgrade", "ground"]:
+		if road_btns[k] is Button and k in ["road", "path", "plaza", "erase", "roadup", "ground"]:
 			_set_on(road_btns[k], k == t)
 	for k in tool_btns:
 		_set_on(tool_btns[k], k == t or (k == "move" and t == "move_nature"))
@@ -3562,13 +3611,13 @@ func _fill_tool_panel_body() -> void:
 		tool_keys.text = keys
 	else:
 		var names := {"road": "Мостовая", "path": "Тропа", "plaza": "Площадь", "erase": "Ластик", "bulldoze": "Снос", "copy": "Копировать", "move": "Перенести", "move_nature": "Перенести",
-			"upgrade": "Улучшить дорогу", "ground": "Земля"}
+			"roadup": "Улучшить дорогу", "ground": "Земля"}
 		tool_title.text = names.get(t, t)
 		var keys := {"road": "Каменная улица. Ведите с зажатой левой кнопкой. [ ] — размер, Ctrl+Z — отменить, Esc посреди мазка — отменить его.",
 			"path": "Утоптанная тропа — самая дешёвая дорога: ею удобно тянуть длинные улицы к окраинам.", "plaza": "Плитка для площадей у рынков и храмов — самая дорогая.", "erase": "Наведите на дорогу — что уберётся, видно красным. Ведите с зажатой кнопкой: дорога уберётся, когда отпустите (Esc посреди — передумать). Звенья заборов под ластиком тоже уберутся.",
 			"bulldoze": "Наведите на постройку, дерево или камень — подсветится красным. Щелчок — снести.", "copy": "Щёлкните по постройке — возьмёте такую же: тот же облик, цвет фасада и поворот. Без инструмента — наведите на постройку и нажмите F.",
 			"move": "Щёлкните по постройке, дереву или камню и поставьте на новое место.", "move_nature": "Поставьте на новое место. Z/X — повернуть.",
-			"upgrade": "Ведите по улице с зажатой кнопкой: тропа станет мостовой, мостовая — дорогой из больших каменных плит, площадь — травертином с мозаикой. По плитам горожане ходят быстрее, а дома у ухоженной улицы счастливее на %d%%." % Defs.STREET_BONUS,
+			"roadup": "Ведите по улице с зажатой кнопкой: тропа станет мостовой, мостовая — дорогой из больших каменных плит, площадь — травертином с мозаикой. По плитам горожане ходят быстрее, а дома у ухоженной улицы счастливее на %d%%." % Defs.STREET_BONUS,
 			"ground": "Узор на траве — для красоты: выберите кружок и ведите с зажатой кнопкой. Счастья не прибавляет, зато город становится живым. Кружок «Трава» и «Ластик» стирают узор."}
 		var txt: String = keys.get(t, "")
 		if Defs.ROAD_COST.has(t):
@@ -5566,7 +5615,8 @@ func _settings_panel() -> void:
 		return sl
 	mk_slider.call("Музыка", "music", "music", 0.0, 1.0, 0.05)
 	mk_slider.call("Звуки", "sound", "sfx", 0.0, 1.0, 0.05)
-	mk_slider.call("Размер интерфейса", "view", "ui_scale", 0.8, 1.4, 0.05)
+	var us: HSlider = mk_slider.call("Размер интерфейса", "view", "ui_scale", 0.8, 1.4, 0.05)
+	us.tooltip_text = "Размер кнопок и надписей — до самого крупного, что помещается в это окно (иначе полосы внизу наехали бы друг на друга)"
 	Gfx.settings_block(self, v)               # «Графика» (4 уровня), «Показывать FPS», видеокарта — scripts/gfx.gd
 	var fs := CheckBox.new()
 	fs.text = "Полный экран"
@@ -5737,6 +5787,7 @@ func open_credits() -> void:
 func _open_settings(stay := false) -> void:
 	(settings_panel.find_child("fs", true, false) as CheckBox).set_pressed_no_signal(bool(game.settings["fullscreen"]))
 	(settings_panel.find_child("auto", true, false) as CheckBox).set_pressed_no_signal(bool(game.settings["autosave"]))
+	_ui_slider_fit()
 	for key in ["music", "sfx", "ui_scale"]:
 		(settings_panel.find_child(key, true, false) as HSlider).set_value_no_signal(float(game.settings.get(key, 1.0)))
 	Gfx.settings_refresh(self)
@@ -5856,7 +5907,7 @@ func refresh() -> void:
 	_once_tips()
 	if tray.visible:
 		_update_cards()
-	if info_panel.visible:
+	if info_panel.visible and not PersonCard.editing(info_p):     # открыт «Гардероб» / «Внешность» — не пересобираем («Сейчас» живёт сам)
 		_fill_info()
 	if research_panel.visible:
 		_research_head()
@@ -6083,6 +6134,9 @@ func _once_tips() -> void:
 	var c: City = game.city
 	if not _tip_free():
 		return
+	if c.tips.has("arrive_wait") and String(c.stats.get("arrive_block", "")) != "":
+		_arrive_advice()                      # «Новые семьи не едут» ждал, пока закроют другой совет; повозка уже едет — подождёт, пока встанет снова
+		return
 	if rank_btn.visible and not c.tips.has("rank_tip"):
 		c.tips["rank_tip"] = true
 		var nx := c.next_level()
@@ -6185,7 +6239,9 @@ func fest_note() -> String:
 	var c: City = game.city
 	var F: Dictionary = Defs.FESTIVAL
 	var often := "раз в двое суток" if int(F["cd"]) == 48 else "раз в %d ч" % int(F["cd"])
-	return ("Город дорос до уровня «%s» — теперь можно устраивать игры в честь богов. Целые сутки весь город празднует: счастье всех домов на %d%% выше, а повозка с семьями ходит чаще.\n\n" \
+	# город давно выше «Посёлка» (старое сохранение) — «дорос до „Посёлка“» звучало бы странно
+	var head := "Город дорос до уровня «%s» — теперь можно устраивать игры в честь богов." if c.level <= int(F["lvl"]) else "С уровня «%s» в городе можно устраивать игры в честь богов."
+	return (head + " Целые сутки весь город празднует: счастье всех домов на %d%% выше, а повозка с семьями ходит чаще.\n\n" \
 		+ "Чем больше налогов платит город, тем дороже игры: %s (сейчас — %s ден.). Устраивать их можно %s. Щёлкните по почтовой станции — кнопка «Устроить игры» в её карточке.") \
 		% [Defs.LEVELS[int(F["lvl"])]["name"], int(F["happy"]), fest_rates(), fmt(c.fest_price()), often]
 
@@ -6283,6 +6339,11 @@ func _fill_tasks() -> void:
 			_fill_tasks_folded(goals)
 		else:
 			_fill_tasks_body(goals)
+	# свиток пересобирается при каждом обновлении города (в большом городе на ×3 — раз в несколько секунд): кнопки
+	# строк («Выслушать», «Взяться», «В бой!», части цели) срабатывают по нажатию, а не по отпусканию — иначе щелчок,
+	# попавший на пересборку, пропадал (проверка 26.10)
+	for b in tasks_box.find_children("*", "BaseButton", true, false):
+		(b as BaseButton).action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
 	# свиток по содержимому: прикрепить заново уже ПОСЛЕ заполнения (иначе он сжимается до пустого и
 	# просьбы вылезают за нижний валик) и ещё раз через кадр, когда перенос строк уже посчитан
 	_snug(tasks_panel)

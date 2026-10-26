@@ -357,13 +357,13 @@ func _upgrade(X0: float, Z0: float, houses: Array) -> void:
 	var cells := land.brush_cells(Vector2(X0 + 6.0, y), 0.9, true, -1, {})
 	var path_n := _count(func(k): return land.kind[k] == Land.Kind.DIRT, cells)
 	var m0 := c.money
-	await stroke("upgrade", [Vector2(X0 + 6.0, y)])
+	await stroke("roadup", [Vector2(X0 + 6.0, y)])
 	var now_road := _count(func(k): return land.kind[k] == Land.Kind.ROAD, cells)
 	check(path_n > 0 and now_road == path_n and absf((m0 - c.money) - path_n * float(Defs.ROAD_UP["path"])) < 0.01,
 		"«Улучшить» по тропе: тропа стала мостовой (%d клеток), цена — %s за клетку" % [now_road, Defs.ROAD_UP["path"]], [path_n, m0 - c.money])
 	# по мостовой — плиты, по площади — травертин (своя цена)
 	m0 = c.money
-	await stroke("upgrade", [Vector2(X0 + 15.0, y), Vector2(X0 + 25.0, y)])
+	await stroke("roadup", [Vector2(X0 + 15.0, y), Vector2(X0 + 25.0, y)])
 	var rc := land.brush_cells(Vector2(X0 + 20.0, y), 0.9, true, -1, {})
 	var up_road := 0
 	for k in land.deco_cells:
@@ -372,7 +372,7 @@ func _upgrade(X0: float, Z0: float, houses: Array) -> void:
 	check(up_road > 0 and rc.is_empty(), "по мостовой — каменные плиты (%d клеток), второй раз там улучшать нечего" % up_road)
 	var spent_road := m0 - c.money
 	m0 = c.money
-	await stroke("upgrade", [Vector2(X0 + 29.0, y), Vector2(X0 + 39.0, y)])
+	await stroke("roadup", [Vector2(X0 + 29.0, y), Vector2(X0 + 39.0, y)])
 	var up_pl := 0
 	for k in land.deco_cells:
 		if land.is_up(k) and land.kind[k] == Land.Kind.PLAZA:
@@ -392,7 +392,7 @@ func _upgrade(X0: float, Z0: float, houses: Array) -> void:
 	await frames(2)
 	game.brush_r = 1.0
 	m0 = c.money
-	await stroke("upgrade", [Vector2(X0 + 1.0, y + 6.0), Vector2(X0 + 19.0, y + 6.0)], true)
+	await stroke("roadup", [Vector2(X0 + 1.0, y + 6.0), Vector2(X0 + 19.0, y + 6.0)], true)
 	var lc := land.brush_cells(Vector2(X0 + 10.0, y + 6.0), 0.9, false, -1, {})
 	check(lc.is_empty() and c.money < m0, "«Улучшить» прямой линией: вся улица в плитах, списано %s ден." % str(snappedf(m0 - c.money, 0.1)))
 	# ухоженная улица: дом у плит счастливее на 2%
@@ -953,7 +953,7 @@ func _owner() -> void:
 	if check(rp != Vector2.INF, "в городе владельца есть улица у середины"):
 		var m0 := c.money
 		var ts0 = game.land_mat.get_shader_parameter("tile_slab")
-		game.set_tool("upgrade")
+		game.set_tool("roadup")
 		game.brush_line = true
 		game.hover = rp
 		game._click()
@@ -961,7 +961,11 @@ func _owner() -> void:
 		game._line_update(true)
 		var ts1 = game.land_mat.get_shader_parameter("tile_slab")
 		var pm: int = game._prev_mode
+		var tt: String = game.hud.tool_title.text
+		var cst: String = game.cover.state
 		game.set_tool("")
+		# кисть «Улучшить» — не «Перестроить» домов (проверка 26.10: оба инструмента звались "upgrade")
+		check(tt == "Улучшить дорогу" and cst != "upgrade" and game.hud.road_btns.has("roadup"), "в руках «Улучшить» — кисть дорог, а не «Перестроить» («%s», подсветка «%s»)" % [tt, cst])
 		check(ts0 == null and ts1 != null and pm == 1, "первая прямая «Улучшить»: показ плитками (текстура плит привязана к показу, до того — нет)", [ts0, ts1, pm])
 		check(land.up_n == 0 and land.deco_cells.is_empty() and absf(c.money - m0) < 0.01, "недотянутая прямая не легла: плит нет, деньги на месте")
 	c.research.erase(Defs.ROAD_UP_RES)

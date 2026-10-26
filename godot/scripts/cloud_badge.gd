@@ -76,6 +76,6 @@ func _process(dt: float) -> void:
 	tooltip_text = "%s\nЩёлкните по облачку — попробуем снова сейчас." % AccountUi.status_text()
 	if not a.off_told:
 		var rc = g.get("rank_cine")
-		if rc != null and rc.calm():
+		if rc != null and rc.calm() and not hud.advisor_panel.visible:   # чужой совет не перебиваем — скажем, когда он закрыт
 			a.off_told = true
 			hud.advisor("Нет связи с облаком", TEXT)
