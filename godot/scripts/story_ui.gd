@@ -596,9 +596,19 @@ func fill_journal() -> void:
 		var how := String(e.get("text", ""))
 		# что выбрали (дед остался или ушёл к соседям) и чему история научила
 		var ch := String((e.get("flags", {}) as Dictionary).get("choice", ""))
-		var jl := String((s.get("journal", {}) as Dictionary).get(ch, ""))
+		if bool((e.get("flags", {}) as Dictionary).get("pay_skip", false)) and (s.get("journal", {}) as Dictionary).has(ch + "_skip"):
+			ch += "_skip"                    # выбрали подарки, а заплатить передумали
+		var jl := StoryDefs.fill(String((s.get("journal", {}) as Dictionary).get(ch, "")), e)
+		# и другие выборы (чемпион школы гладиаторов) — своими строками
+		var jf: Dictionary = s.get("journal_f", {})
+		for fk in jf:
+			var jv := String((jf[fk] as Dictionary).get(String((e.get("flags", {}) as Dictionary).get(fk, "")), ""))
+			if jv != "":
+				jl = (jl + " " + jv).strip_edges()
 		if jl != "":
 			how = jl + " " + how
+		if bool(s.get("yearly", false)) and int(e.get("n", 1)) > 1:
+			how = "Праздновали уже %d раз%s. " % [int(e["n"]), "а" if int(e["n"]) % 10 in [2, 3, 4] and not (int(e["n"]) % 100 in [12, 13, 14]) else ""] + how
 		if s.has("lesson"):
 			how += "\nУрок: " + String(s["lesson"]) + "."
 		var sid := String(id)

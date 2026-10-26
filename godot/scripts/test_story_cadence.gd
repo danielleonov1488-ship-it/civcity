@@ -2,9 +2,12 @@ extends Node
 ## Как часто приходят истории (этап 7, проверка без игры — только данные): правила предложения (FIRST_H после обучения,
 ## GAP_H после конца прошлой, ранг lvl — не ниже, исследования needs, порядок списка) прогоняем по времени рангов бота
 ## темпа (экономика v2 и Д9, сиды 5/7/11), каждая история — 5 минут игры (и строгий вариант — 12 минут).
+## Порог по жителям (pop) — когда город дорастёт до стольких (между рангами — ровно); праздник раз в год (Сатурналии,
+## yearly) — последним, когда других нет, и снова — через YEAR_H часов после прошлого.
 ## Печатает, на каком ранге какая история предложена, и проверяет:
-##  - на каждом ранге 1–6 — хотя бы одна история (первая–третья партии: на «Городе» — пожар, на «Большом городе» — письмо сыну);
-##  - на рангах 1–4 без историй подряд не дольше 25 минут (на 5–6 — печатаем: промежутки закроет четвёртая партия);
+##  - на каждом ранге 1–7 — хотя бы одна история (четвёртая партия: на «Городе» — сенатор и лабиринт, на «Большом городе» —
+##    письмо сыну и школа гладиаторов, на «Вечном городе» — Сатурналии);
+##  - на рангах 1–6 без историй подряд не дольше 25 минут;
 ##  - «урок раньше нужды»: история с teaches предложена на ранг раньше, чем город станет тем рангом, чьи условия она готовит;
 ##  - очки исследований в награду — 40–60% средней цены исследования её ряда (никаких денег — Д7);
 ##  - с заказами старосты: минут, когда нет ни истории, ни заказа, — не больше 10% на каждом ранге 1–7;
@@ -16,8 +19,8 @@ const RANK_H := {5: [0, 17, 42, 120, 205, 306, 437, 603], 7: [0, 17, 45, 132, 21
 const TUT_H := 6                       # обучение кончается примерно на шестом часу (бот: первое исследование — t=4)
 const H_MIN := 25.0 / 60.0             # минут в игровом часе (сутки — 600 с)
 const ORDER_H := 9.6                   # заказ старосты делают за ~4 минуты
-const STORY_RANKS := [1, 2, 3, 4, 5, 6]   # на каждом из этих рангов — хотя бы одна история (партии 1–3)
-const GAP_STORIES_RANKS := [1, 2, 3, 4]   # тут историй хватает подряд, без промежутков дольше 25 минут
+const STORY_RANKS := [1, 2, 3, 4, 5, 6, 7]   # на каждом ранге — хотя бы одна история (с четвёртой партией)
+const GAP_STORIES_RANKS := [1, 2, 3, 4, 5, 6]   # без промежутков дольше 25 минут
 var fails := 0
 
 
@@ -73,15 +76,35 @@ func _ready_h(rh: Array, sd: Dictionary) -> float:
 	var h := float(rh[int(sd.get("lvl", 0))])
 	for r in sd.get("needs", []):
 		h = maxf(h, _research_h(rh, String(r)))
+	for t in sd.get("need_b", []):
+		var u := Defs.unlock_of(String(t), true)
+		if u in Defs.DECOR_SETS:
+			return INF                        # набор украшений — по желанию: игрок, что его не купил, истории не дождётся
+		h = maxf(h, _research_h(rh, u))       # постройка открыта (в новой игре)
 	for np: Array in sd.get("need_p", []):
 		h = maxf(h, _need_p_h(rh, np))
+	if int(sd.get("pop", 0)) > 0:
+		h = maxf(h, _pop_h(rh, int(sd["pop"])))
 	return h
+
+
+## Когда в городе столько жителей: между рангами — ровно (на ранге i — LEVELS[i].pop), после последнего — тем же шагом
+func _pop_h(rh: Array, pop: int) -> float:
+	for i in rh.size() - 1:
+		var p0 := int(Defs.LEVELS[i]["pop"])
+		var p1 := int(Defs.LEVELS[i + 1]["pop"])
+		if pop <= p1:
+			return float(rh[i]) + (float(rh[i + 1]) - float(rh[i])) * clampf(float(pop - p0) / maxf(1.0, p1 - p0), 0.0, 1.0)
+	var pl := int(Defs.LEVELS[rh.size() - 1]["pop"])
+	var step := (float(rh[rh.size() - 1]) - float(rh[rh.size() - 2])) / maxf(1.0, pl - int(Defs.LEVELS[rh.size() - 2]["pop"]))
+	return float(rh[rh.size() - 1]) + (pop - pl) * step
 
 
 func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 	var rh: Array = RANK_H[seed]
-	var end_h := float(rh[7])
+	var end_h := float(rh[7]) + 2.0 * StoryDefs.YEAR_H   # «Вечный город» — без конца: первые два года
 	var done := {}
+	var year_end := {}                    # праздник раз в год → когда кончился прошлый
 	var last_end := -1.0
 	var active_until := -1.0
 	var cover := []                       # [от, до) — часы, когда история предложена или идёт
@@ -95,27 +118,39 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 		if active_until < 0.0:
 			var ok_time := (last_end < 0.0 and h - TUT_H >= StoryDefs.FIRST_H) or (last_end >= 0.0 and h - last_end >= StoryDefs.GAP_H)
 			if ok_time:
+				var pick := {}
 				for sd: Dictionary in StoryDefs.STORIES:
-					var id := String(sd["id"])
-					if done.has(id) or _ready_h(rh, sd) > h:
-						continue
+					if not bool(sd.get("yearly", false)) and not done.has(String(sd["id"])) and _ready_h(rh, sd) <= h:
+						pick = sd
+						break
+				if pick.is_empty():
+					# обычных нет — праздник раз в год (Сатурналии), если год прошёл
+					for sd: Dictionary in StoryDefs.STORIES:
+						var yid := String(sd["id"])
+						if bool(sd.get("yearly", false)) and _ready_h(rh, sd) <= h and (not year_end.has(yid) or h - float(year_end[yid]) >= StoryDefs.YEAR_H):
+							pick = sd
+							break
+				if not pick.is_empty():
+					var id := String(pick["id"])
 					done[id] = true
 					active_until = h + play_h
+					if bool(pick.get("yearly", false)):
+						year_end[id] = active_until
 					cover.append([h, active_until])
 					var rk := _rank_at(rh, h)
-					offer_rank[id] = rk
+					if not offer_rank.has(id):
+						offer_rank[id] = rk
 					if not offers.has(rk):
 						offers[rk] = []
 					(offers[rk] as Array).append(id)
-					break
 		h += 1.0
 	var line := []
-	for rk in range(1, 8):
-		line.append("%s: %s" % [Defs.LEVELS[rk - 1]["name"] if rk > 0 else "", ", ".join(offers.get(rk - 1, [])) if offers.has(rk - 1) else "—"])
+	for rk in range(0, 8):
+		line.append("%s: %s" % [Defs.LEVELS[rk]["name"], ", ".join(offers.get(rk, [])) if offers.has(rk) else "—"])
 	print("  сид %d: %s" % [seed, " | ".join(line)])
 	if not gate:
 		return
-	# хотя бы одна история на каждом ранге 1–6 и без историй — не дольше 25 минут (ранги 1–4)
+	# хотя бы одна история на каждом ранге 1–7 и без историй — не дольше 25 минут (ранги 1–6)
 	for rk in STORY_RANKS:
 		check(offers.has(rk), "сид %d: на ранге «%s» есть история (%s)" % [seed, Defs.LEVELS[rk]["name"], offers.get(rk, [])])
 	var t0 := float(rh[GAP_STORIES_RANKS[0]])
@@ -130,8 +165,8 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 		gap = 0.0 if on else gap + 1.0
 		longest = maxf(longest, gap)
 		t += 1.0
-	check(longest * H_MIN <= 25.0, "сид %d: на рангах 1–4 без истории подряд не дольше 25 мин (%.1f мин)" % [seed, longest * H_MIN])
-	# ранги 5–6: самый долгий промежуток — для сведения (его закроют истории четвёртой партии, план 7.3)
+	check(longest * H_MIN <= 25.0, "сид %d: на рангах 1–6 без истории подряд не дольше 25 мин (%.1f мин)" % [seed, longest * H_MIN])
+	# отдельно — ранги 5–6 (до четвёртой партии там было до 64–68 минут без историй)
 	var l56 := 0.0
 	var g56 := 0.0
 	var t56 := float(rh[5])
@@ -142,7 +177,7 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 		g56 = 0.0 if on56 else g56 + 1.0
 		l56 = maxf(l56, g56)
 		t56 += 1.0
-	print("  info сид %d: на рангах 5–6 без истории подряд до %.0f мин (четвёртая партия закроет)" % [seed, l56 * H_MIN])
+	check(l56 * H_MIN <= 25.0, "сид %d: на рангах 5–6 без истории подряд не дольше 25 мин (%.1f мин)" % [seed, l56 * H_MIN])
 	# урок раньше нужды: условия ранга i готовят во время ранга i−1
 	for sd: Dictionary in StoryDefs.STORIES:
 		for need_rank in sd.get("teaches", []):
@@ -187,6 +222,9 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 func _rewards() -> void:
 	print("== награды историй")
 	for sd: Dictionary in StoryDefs.STORIES:
+		# история не ждёт набора украшений по желанию (лабиринт: живую изгородь открывает сама история)
+		for t in sd.get("need_b", []):
+			check(not (Defs.unlock_of(String(t), true) in Defs.DECOR_SETS), "«%s»: нужна «%s» — не из набора по желанию" % [sd["title"], t])
 		var r: Dictionary = sd.get("reward", {})
 		check(not r.has("money"), "«%s»: награда без денег" % sd["title"])
 		if not r.has("rp"):

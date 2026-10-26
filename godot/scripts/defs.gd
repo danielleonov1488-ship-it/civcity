@@ -460,6 +460,19 @@ const B := {
 		"desc": "Стол со свитками и табличками переписи, табурет, полка со свитками и знамя с золотым орлом. Награда за историю горожан «Перепись»."},
 	"lararium": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Ларарий", "cost": 60, "deco": 5, "light": true, "unlock": "s_letter", "story": true,
 		"desc": "Домашний алтарь: мраморная ниша под фронтоном, в ней — фигурки Ларов, перед нишей — курильница с огоньком и цветы. Ночью горит огонёк. Награда за историю горожан «Письмо сыну в Легион»."},
+	# этап 7b, четвёртая партия: сенатор, лабиринт, школа гладиаторов, Сатурналии
+	"curulechair": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Курульное кресло", "cost": 180, "deco": 8, "unlock": "s_senator", "story": true,
+		"desc": "Кресло из слоновой кости на мраморном помосте — на таком сидят в курии. По бокам — ликторские фасции, позади — пурпурный полог. Награда за историю горожан «Сенатор проездом»."},
+	"minotaur": {"kind": "decor", "cat": "decor", "sub": "plants", "name": "Минотавр из самшита", "cost": 90, "deco": 6, "unlock": "s_maze", "story": true,
+		"desc": "Стриженный из самшита Минотавр с рогами — в мраморной кадке, вокруг цветы. Сердце любого лабиринта. Награда за историю горожан «Лабиринт Тесея»."},
+	"gladstatue": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Статуя гладиатора", "cost": 240, "deco": 9, "unlock": "s_gladiators", "story": true,
+		"desc": "Мраморный гладиатор-мирмиллон на постаменте: у ног — большой щит и меч, на постаменте — золотой венок победителя. Награда за историю горожан «Школа гладиаторов»."},
+	"gladstatue_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "gladstatue", "look": 1, "name": "Статуя ретиария", "cost": 240, "deco": 9, "unlock": "s_gladiators", "story": true,
+		"desc": "Мраморный гладиатор с золочёным трезубцем, у ног — сеть, на постаменте — венок победителя. Награда за историю горожан «Школа гладиаторов»."},
+	"gladstatue_3": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "gladstatue", "look": 2, "name": "Статуя фракийца", "cost": 240, "deco": 9, "unlock": "s_gladiators", "story": true,
+		"desc": "Мраморный гладиатор с малым щитом и кривым мечом, на постаменте — венок победителя. Награда за историю горожан «Школа гладиаторов»."},
+	"saturntable": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Стол Сатурналий", "cost": 50, "deco": 5, "light": true, "unlock": "s_saturn", "story": true,
+		"desc": "Праздничный стол: свечи, глиняные фигурки-сигиллярии, орехи и сладости, над ним — гирлянда из зелени. Ночью горят свечи. Награда за историю горожан «Сатурналии»."},
 	# редкие облики — награды «Заказов старосты» (StoryOrders, unlock «o_…»): в витрине меню их нет
 	"lamp_post_4": {"kind": "decor", "cat": "decor", "sub": "light", "base": "lamp_post", "look": 3, "name": "Фонарь с двумя кашпо", "cost": 25, "deco": 4, "light": true, "unlock": "o_well", "story": true,
 		"desc": "Фонарь на столбе, по обе стороны перекладины — кашпо с цветами. Ночью светит на улицу. Награда старосты."},
@@ -605,6 +618,9 @@ const DECOR_LATER := {"cypress": "deco_south", "cypress_2": "deco_south", "palm"
 	"planter_3": "deco_garden", "wall_flowers_3": "deco_garden", "lion": "deco_sculpt", "lion_2": "deco_sculpt", "statue_3": "deco_sculpt",
 	"statue_4": "deco_sculpt", "bigbrazier": "deco_night", "bigbrazier_2": "deco_night", "lamp_post_3": "deco_night",
 	"wall_lamp_2": "deco_night", "wall_torch_2": "deco_night", "banner_2": "deco_fest", "wall_banner_3": "deco_fest"}
+## Что открывает и история горожан (вид → её украшение «s_…»), кроме своего исследования: живую изгородь — «Лабиринт Тесея»
+## (набор «Сад» — по желанию, а без изгороди лабиринт не посадить)
+const STORY_OPENS := {"hedge": "s_maze"}
 ## Наборы украшений (исследование = набор): три разных вида одного набора в DECOR_RADIUS от дома — +SET_BONUS% счастья
 ## (новая игра, City.econ ≥ 1; не больше SET_MAX наборов на дом, сверх предела украшений класса)
 const DECOR_SETS := ["deco_rustic", "deco_south", "deco_water", "deco_farmyard", "deco_craft", "deco_market", "deco_garden", "deco_sculpt",
@@ -920,6 +936,8 @@ static func unlock_short(id: String) -> String:
 ## Какая история открывает исследование (а не очки): «story» — всегда (Легион, Д9), «story_new» — только в новой игре
 ## (City.story_v: Пост вигилов — «Пожар у горшечников», решение владельца Q20; живые города изучают его, как прежде)
 static var story_rules := 0
+## То же для исследований, что добавляют другие линии (Лудус — «Школа гладиаторов», Q20): без правки их строки в RESEARCH
+const STORY_NEW := {"ludus": "gladiators"}
 
 
 static func story_of(r: Dictionary) -> String:
@@ -927,6 +945,8 @@ static func story_of(r: Dictionary) -> String:
 		return String(r["story"])
 	if story_rules >= 1 and r.has("story_new"):
 		return String(r["story_new"])
+	if story_rules >= 1 and STORY_NEW.has(String(r.get("id", ""))):
+		return String(STORY_NEW[String(r["id"])])
 	return ""
 
 

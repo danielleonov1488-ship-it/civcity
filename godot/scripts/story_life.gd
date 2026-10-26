@@ -73,6 +73,7 @@ func _process(dt: float) -> void:
 	if not st.allowed():
 		if not elders.is_empty():
 			clear()
+		_champ_off()
 		return
 	var sp := float(game.speed)
 	if sp != _speed:
@@ -84,6 +85,7 @@ func _process(dt: float) -> void:
 	var sdt := dt * sp
 	for key in elders.keys():
 		_step(key, elders[key], sdt, dt)
+	_champ_tick(dt)
 	_t -= dt
 	if _t <= 0.0:
 		_t = SYNC
@@ -384,3 +386,49 @@ func clear() -> void:
 			(n as Node).queue_free()
 	elders = {}
 	_instant = true
+
+
+# ---------- «Школа гладиаторов»: на играх в честь богов чемпион школы выходит на площадь у станции ----------
+
+var champ: LegionFighter = null          # чемпион на площади (пока идут игры)
+var _champ_t := 0.0
+var _champ_said := false                 # подпись «Чемпион школы…» — раз за игры
+
+
+## Игры идут, школа гладиаторов открыта: чемпион (мирмиллон, ретиарий или фракиец — как выбрали) бьётся с невидимым
+## соперником у станции, где собирается город, и ликует; кончились игры — уходит
+func _champ_tick(dt: float) -> void:
+	var e: Dictionary = (city.stories["done"] as Dictionary).get("gladiators", {})
+	if e.is_empty() or city.fest_left <= 0 or st.busy():
+		_champ_off()
+		if city.fest_left <= 0:
+			_champ_said = false
+		return
+	if champ == null or not is_instance_valid(champ):
+		var ctr := city.center()
+		if ctr.is_empty():
+			return
+		var f := City.facing(float(ctr["yaw"]))
+		var p: Vector2 = st._open_spot(city.door_point(ctr) + f * 7.5 + Vector2(f.y, -f.x) * 3.0)
+		champ = Stories.gladiator(String((e.get("flags", {}) as Dictionary).get("champ", "murmillo")), 21)
+		game.add_child(champ)
+		champ.position = Vector3(p.x, game.land.height_at(p.x, p.y), p.y)
+		champ.rotation.y = atan2(f.x, f.y)
+		_champ_t = 1.0
+		if not _champ_said:
+			_champ_said = true
+			st.ui.bubble3d(champ.position + Vector3(0, 2.3, 0), "Чемпион школы гладиаторов!", 3.5, 28)
+	champ.tick(dt)
+	_champ_t -= dt * maxf(0.0, float(game.speed))
+	if _champ_t <= 0.0:
+		_champ_t = randf_range(1.6, 3.2)
+		if randf() < 0.75:
+			champ.attack()
+		else:
+			champ.cheer()
+
+
+func _champ_off() -> void:
+	if champ != null and is_instance_valid(champ):
+		champ.queue_free()
+	champ = null

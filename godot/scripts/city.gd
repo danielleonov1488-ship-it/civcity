@@ -183,6 +183,8 @@ func _apron_refresh(b: Dictionary) -> void:
 
 
 func unlocked(type: String) -> bool:
+	if Defs.STORY_OPENS.has(type) and research.has(String(Defs.STORY_OPENS[type])):
+		return true                               # открыла история (живую изгородь — «Лабиринт Тесея»)
 	if decor_v >= 1 and Defs.DECOR_LATER.has(type):      # новая игра: этот облик — в наборе этапа 5
 		return research.has(String(Defs.DECOR_LATER[type]))
 	var u: String = Defs.B[type].get("unlock", "")
@@ -1553,6 +1555,8 @@ func sim_day() -> void:
 	if not center().is_empty():
 		rpd += float(Defs.LEVELS[level].get("rp_h", 0.0))   # почта привозит на станцию свитки
 	hour_n += 1
+	if int(stories.get("tax_off", 0)) > 0:
+		income = 0.0                              # Сатурналии, день отдыха: лавки закрыты — налогов нет (часы тают в _story_hour)
 	# что пропало за час: казна и полки полны (значки «Казна полна», «Полки полны»)
 	stats["money_lost"] = maxf(0.0, money + income - upkeep - money_cap()) if income > upkeep else 0.0
 	stats["rp_lost"] = maxf(0.0, rp + rpd - maxf(rp, rp_cap()))
@@ -3052,6 +3056,8 @@ static func stories_load(d: Variant) -> Dictionary:
 			p.erase("it")
 			p.erase("wr")
 			p.merge(pe)
+	if int(dd.get("tax_off", 0)) > 0:
+		s["tax_off"] = int(dd["tax_off"])     # Сатурналии, день отдыха: часов без налогов осталось
 	# истории, которой в игре больше нет, — не продолжаем
 	for k in ["active", "offer"]:
 		if not (s[k] as Dictionary).is_empty() and StoryDefs.story(String(s[k].get("id", ""))).is_empty():
@@ -3081,6 +3087,8 @@ func _story_hour() -> void:
 				continue
 		keep.append(b)
 	stories["bonus"] = keep
+	if int(stories.get("tax_off", 0)) > 0:
+		stories["tax_off"] = int(stories["tax_off"]) - 1     # день отдыха: часы без налогов тают
 
 
 ## Слагаемые счастья дома h от историй: [[строка, %], …] (семье, дому, соседям в радиусе, всем)
@@ -3095,6 +3103,8 @@ func story_parts(h: Dictionary) -> Array:
 					ok = true
 		elif b.has("home"):
 			ok = int(b["home"]) == int(h["id"])
+		elif b.has("cls"):
+			ok = String(def(h).get("cls", "")) == String(b["cls"])   # всем домам сословия (лабиринт — патрициям)
 		elif b.has("x"):
 			ok = (h["pos"] as Vector2).distance_to(Vector2(float(b["x"]), float(b["z"]))) <= float(b.get("r", 0.0))
 		var pct := int(b.get("_live", b.get("pct", 0))) if b.has("at") else int(b.get("pct", 0))
