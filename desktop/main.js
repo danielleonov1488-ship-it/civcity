@@ -6,6 +6,8 @@
      CIVCITY_SESSION = {"token": "…", "email": "…", "api": "https://civcity.ru/api"}
      CIVCITY_SAVEDIR = <папка данных>/saves   (город city.json и настройки игры settings.json)
    Пока игра открыта, лаунчер спрятан; закрыли игру — он возвращается.
+   Музыку (набор CivCity_music.pck) лаунчер докачивает уже после того, как «Играть» стала доступна (updater.fetchLater):
+   игра запускается и без неё и сама подхватывает набор, когда файл появится.
    Вход хранится в папке данных, токен зашифрован средствами Windows (пароль нигде не хранится).
 
    Для проверок (переменные окружения): CIVCITY_USERDATA — своя папка данных, CIVCITY_UPDATE_URL — свой сайт
@@ -134,6 +136,8 @@ ${ex.code}`, status: 0 };
 let launcher = null;
 let links = [];
 let task = null;          // идущая проверка/загрузка игры
+let later = null;         // идущая докачка музыки (играть уже можно)
+let laterNote = '';       // почему музыка не докачалась (мало места) — подстрочник, пока не попробуем снова
 let lastCheck = 0;        // когда в последний раз сверялись с сайтом
 let child = null;         // запущенная игра
 let starting = false;     // «Играть» нажато, игра ещё запускается
@@ -150,6 +154,28 @@ function sendUpdate(s) {
 
 function readyText(m) {
   return m ? `Игра готова · версия ${m.version || '?'}${m.build ? ` (сборка ${m.build})` : ''}` : 'Игра ещё не скачана';
+}
+
+// Докачать музыку (наборы «потом») по описи m — в фоне, «Играть» не ждёт; надпись — подстрочником
+function startLater(m) {
+  if (later || !m || !updater.missingLater(m).length) return;
+  let again = null;         // в установленной копии музыки всё ещё нет (обновили посреди докачки) — ещё раз, уже для неё
+  laterNote = '';
+  later = (async () => {
+    const placed = await updater.fetchLater(m, text => { if (!task && !child && !starting) sendUpdate({ sub: text }); });
+    log('докачка музыки:', placed.length ? 'поставлено ' + placed.join(', ') : 'опись сменилась — докачаю для новой');
+    // замена папок могла выбросить только что положенное — тогда возьмётся из game-dl/, без новой загрузки
+    const cur = updater.playable();
+    if (cur && updater.missingLater(cur).length) again = cur;
+  })().catch(e => {
+    log('докачка музыки не удалась:', e.message);
+    // мало места — тихо, подстрочником: играть можно и без музыки, следующий запуск попробует снова
+    if (e.code === 'NOSPACE' || e.code === 'ENOSPC') laterNote = 'Музыка не докачалась: ' + (e.code === 'ENOSPC' ? 'на диске не хватает места' : e.message);
+  }).finally(() => {
+    later = null;
+    if (!task && !child && !starting) sendUpdate({ sub: laterNote });
+    if (again) startLater(again);
+  });
 }
 
 // Проверить и при нужде скачать игру; одновременно — только одна такая работа
@@ -170,13 +196,16 @@ function prepare(opts = {}) {
     live = false;
     lastCheck = Date.now();
     log('обновление:', r.state, r.manifest ? `${r.manifest.version}/${r.manifest.build}` : '-', r.error || '');
-    const m = r.manifest || updater.installed();
+    const m = r.manifest || updater.playable();
     const s = { busy: false, sub: '', p: 1, ready: !!m, game: gameInfo(m), shell: r.state === 'shell', retry: false };
     if (r.state === 'ready' || r.state === 'updated') s.text = r.state === 'updated' && !r.fresh ? 'Игра обновлена · ' + readyText(m).replace('Игра готова · ', '') : readyText(m);
     else if (r.state === 'offline') s.text = 'Нет связи с сервером — играем в установленной версии';
     else if (r.state === 'shell') s.text = m ? 'Вышла новая версия программы — играть можно и в этой' : 'Нужна новая версия программы CivCity';
     else { s.text = r.error; s.p = m ? 1 : 0; s.sub = r.code || ''; s.retry = !!r.retry; }   // «Код: dns · 14:32» и «Повторить»
+    // музыки ещё нет: играть можно уже сейчас, она докачается сама
+    if (m && !s.sub && (r.later || []).length && r.state !== 'offline') s.sub = 'Музыка докачается сама — играть можно уже сейчас';
     sendUpdate(s);
+    if (m && (r.later || []).length && ['ready', 'updated', 'failed', 'shell'].includes(r.state)) startLater(m);
     return r;
   })().finally(() => { task = null; });
   return task;
@@ -198,8 +227,8 @@ async function play(why) {
     }
     if (me.email && me.email !== store.email) { store.email = me.email; saveStore(); }
     if (task) await task;
-    else if (!updater.installed() || Date.now() - lastCheck > 60000) await prepare();
-    const m = updater.installed();
+    else if (!updater.playable() || Date.now() - lastCheck > 60000) await prepare();
+    const m = updater.playable();      // без музыки — тоже: игра подхватит её, когда докачается
     if (!m) return { error: upd.text };
     return launch(m, why);
   } finally {
@@ -251,8 +280,8 @@ function launch(m, why) {
     if ((why === 'autostart' && !crashed && !smoke) || !launcher || launcher.isDestroyed()) { if (!smoke) app.quit(); return; }
     const text = err ? 'Не удалось запустить игру: ' + err.message
       : crashed ? `Игра закрылась с ошибкой (код ${code}). Нажмите «Играть» ещё раз; не поможет — «Проверить файлы игры».`
-      : readyText(updater.installed());
-    sendUpdate({ running: false, text, sub: '', p: 1 });
+      : readyText(updater.playable());
+    sendUpdate({ running: false, text, sub: err || crashed ? '' : laterNote, p: 1 });
     showLauncher();
     if (SHOTS) setTimeout(() => shot('after'), 800);
   };
@@ -301,7 +330,7 @@ const fromLauncher = e => !!launcher && !launcher.isDestroyed() && e.sender === 
 
 ipcMain.handle('l:info', e => {
   if (!fromLauncher(e)) return null;
-  return { email: store.token ? store.email : null, prefs: gamePrefs(), version: app.getVersion(), game: gameInfo(updater.installed()) };
+  return { email: store.token ? store.email : null, prefs: gamePrefs(), version: app.getVersion(), game: gameInfo(updater.playable()) };
 });
 
 // новости и ссылки; без сети — те, что были в прошлый раз
@@ -404,7 +433,7 @@ app.whenReady().then(async () => {
   fs.mkdirSync(DATA, { recursive: true });
   loadStore();
   log(`лаунчер ${app.getVersion()} запущен; сайт ${SITE}, сервер ${API}`);
-  const have = updater.installed();
+  const have = updater.playable();
   sendUpdate({ ready: !!have, game: gameInfo(have) });
   createLauncher();
 

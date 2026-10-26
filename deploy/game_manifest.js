@@ -5,7 +5,8 @@
    папка выкладки — по умолчанию .work/deploy. В ней получается:
      game/manifest.json  — подписанная опись (её читает desktop/updater.js): обёртка
                            { "format": 2, "manifest": "<текст описи>", "sig": "<подпись Ed25519 текста, base64>" };
-                           в описи — версия, сборка, файлы с размером и sha256 (у сжатых — ещё zst и zsha);
+                           в описи — версия, сборка, файлы с размером и sha256 (у сжатых — ещё zst и zsha),
+                           "later" — наборы, которые лаунчер может докачать уже после «Играть» (музыка);
      game/f/<sha256>     — файл как есть (жёсткая ссылка на файл сборки, места не занимает);
      game/f/<zsha>.zst   — сжатая копия, если сжатие экономит хотя бы 8 % (так, exe — 104 → ~28 МБ); имя — sha256
                            самой сжатой копии: другое сжатие того же файла (другая версия zstd) — другое имя, и на
@@ -38,6 +39,8 @@ const { pipeline } = require('stream/promises');
 const LAUNCHER_MIN = '1.0.0';
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/;   // как в desktop/updater.js
 const EXE = 'CivCity.exe';
+// что может подождать после «Играть» (поле "later" описи; лаунчер берёт оттуда лишь известные ему имена)
+const LATER = ['CivCity_music.pck'];
 
 const ROOT = path.join(__dirname, '..');
 const ROLLBACK = process.argv[2] === '--rollback';
@@ -189,6 +192,10 @@ async function main() {
     download,
     files,
   };
+  // наборы, без которых эта сборка играет (и подхватывает их на ходу, packs.gd): новый лаунчер докачивает их после
+  // «Играть». Прежние описи (и откат на них) этого поля не имеют — там лаунчер ставит всё сразу, как раньше
+  const later = LATER.filter(n => files[n]);
+  if (later.length) manifest.later = later;
   fs.writeFileSync(path.join(GAME, 'manifest.json'), wrap(JSON.stringify(manifest, null, 1) + '\n', key));
   fs.writeFileSync(path.join(GAME, 'blobs.txt'), [...new Set(blobLines(manifest))].join('\n') + '\n');
   fs.writeFileSync(path.join(GAME, 'build.txt'), String(manifest.build) + '\n');

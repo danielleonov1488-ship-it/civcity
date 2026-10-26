@@ -19,6 +19,12 @@ const WATCH_SEC := 20.0                # …за столько секунд в 
 const WATCH_START := 15.0              # первые секунды после загрузки не в счёт
 const VIS := {"high": 150, "medium": 150, "low": 70, "verylow": 40}     # сколько жителей рисуем на улицах
 const HALF_FAR := 60.0                 # «Низкая»: жители дальше — движения через кадр; «Очень низкая» — все
+## «Средняя» полегче (1.10 плана 24.10, ждёт решения владельца — пока выключено, «Средняя» прежняя): без «мягких» теней
+## PCSS и со сглаживанием MSAA 2x вместо 4x — видеокарте на ~40% легче «Высокой» и на ~35% легче прежней «Средней»
+## (город владельца, RTX 3060: 21,5 / 18,9 → 12,3 мс; замеры и снимки «было/стало» — .work/gd/b/perf_offer).
+## Включить для всех — здесь true (одно место)
+const MEDIUM_LIGHT := false
+static var medium_light := MEDIUM_LIGHT   # проверки (test_perf mode=offer) переключают на ходу
 
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
@@ -196,6 +202,7 @@ static func apply(g) -> void:
 	if env == null:
 		return
 	var low := is_low(q)
+	var ml := q == "medium" and medium_light
 	env.sdfgi_enabled = q == "high"
 	env.ssil_enabled = q == "high"
 	env.ssao_enabled = not low
@@ -205,7 +212,7 @@ static func apply(g) -> void:
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if low else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 		# 175 м, как и прежняя «Низкая»: при 120 м (по плану) издалека город совсем без теней — плоский
 		sun.directional_shadow_max_distance = 175.0 if low else 190.0
-		sun.light_angular_distance = 0.0 if low else 2.2          # без «мягких» теней PCSS — они самые дорогие
+		sun.light_angular_distance = 0.0 if low or ml else 2.2    # без «мягких» теней PCSS — они самые дорогие
 		sun.shadow_enabled = q != "verylow"
 	# атлас теней солнца и его фильтр — общие настройки отрисовки (project.godot: 8192, мягкие высокие)
 	var sl := 1 if low else 0
@@ -216,7 +223,7 @@ static func apply(g) -> void:
 		_sun_low = sl
 	var vp: Viewport = g.get_viewport()
 	if vp:
-		vp.msaa_3d = Viewport.MSAA_DISABLED if low else Viewport.MSAA_4X
+		vp.msaa_3d = Viewport.MSAA_DISABLED if low else (Viewport.MSAA_2X if ml else Viewport.MSAA_4X)
 		# «Очень низкая»: дальние модели (деревья, жители, детали построек) упрощаются раньше (по умолчанию — 1 точка экрана)
 		vp.mesh_lod_threshold = 4.0 if q == "verylow" else 1.0
 		# слабые видеокарты: картинка считается меньше и аккуратно растягивается (FSR); снимки (--shot) — в полном размере
@@ -361,7 +368,7 @@ static func _next(t: Texture2D, sync: bool):
 			WorkerThreadPool.wait_for_task_completion(_jobs[key])
 			_jobs.erase(key)
 		var it := _small_tex(key)
-		return it if it else _readback(t)
+		return it if it else (t if _not_big.has(key) else _readback(t))
 	if not t.has_meta("orig"):
 		return t
 	var o := str(t.get_meta("orig"))
@@ -400,7 +407,7 @@ static func tex(path: String) -> Texture2D:
 		if it:
 			return it
 	var t: Texture2D = load(path)
-	return _readback(t) if _tex_small else t
+	return _readback(t) if _tex_small and not _not_big.has(path) else t
 
 
 ## Копия 2048²: готовая из фона, с диска, иначе из файла картинки; null — картинка меньше 4096² или файла не прочесть
@@ -418,8 +425,8 @@ static func _small_tex(path: String) -> ImageTexture:
 		var ctex := _ctex(path)
 		if ctex == "":
 			return null
-		if _ctex_width(ctex) < SMALL_FROM:
-			_not_big[path] = true
+		if _ctex_width(ctex) < SMALL_FROM or not _ctex_small_ok(ctex):
+			_not_big[path] = true                  # меньше 4096² или сжата так, что копию не сделать (Basis), — оригинал
 			return null
 		img = _prep_img(ctex, _cache_file(path, ctex))
 	if img == null:
@@ -436,6 +443,9 @@ static func _start(path: String) -> void:
 		return
 	var ctex := _ctex(path)
 	if ctex == "":
+		return
+	if not _ctex_small_ok(ctex):
+		_not_big[path] = true
 		return
 	var cache := _cache_file(path, ctex)
 	var job := func():
@@ -456,12 +466,29 @@ static func _prep_img(ctex: String, cache: String) -> Image:
 	return img
 
 
-## Файл картинки после импорта (.ctex) — из её .import (он есть и в собранной игре)
+## Файл картинки после импорта (.ctex) — из её .import (он есть и в собранной игре); у сжатой для видеокарты (1.9) —
+## путь с меткой формата («path.bptc», «path.s3tc»)
 static func _ctex(path: String) -> String:
 	var cf := ConfigFile.new()
 	if cf.load(path + ".import") != OK:
 		return ""
-	return str(cf.get_value("remap", "path", ""))
+	for k: String in ["path", "path.bptc", "path.s3tc"]:
+		if cf.has_section_key("remap", k):
+			return str(cf.get_value("remap", k, ""))
+	return ""
+
+
+## Из файла картинки можно сделать копию вдвое меньше: без потерь (PNG/WebP внутри) — уменьшением; сжатая для
+## видеокарты (1.9, deploy/tex_vram.py) с мипмапами — это готовый мипмап 1; Basis Universal и сжатая без мипмапов — нет
+static func _ctex_small_ok(ctex: String) -> bool:
+	var f := FileAccess.open(ctex, FileAccess.READ)
+	if f == null or f.get_length() < 52 or f.get_buffer(4).get_string_from_ascii() != "GST2":
+		return false
+	f.seek(36)
+	var df := f.get_32()
+	f.get_32()
+	var mips := f.get_32()
+	return df == 1 or df == 2 or (df == 0 and mips > 0)
 
 
 static func _ctex_width(ctex: String) -> int:
@@ -472,7 +499,8 @@ static func _ctex_width(ctex: String) -> int:
 	return f.get_32()
 
 
-## Картинка из .ctex (без потерь: внутри PNG или WebP), уменьшенная вдвое; null — другой формат
+## Картинка из .ctex вдвое меньше: без потерь (внутри PNG или WebP) — уменьшением, сжатая для видеокарты — её мипмап 1;
+## null — другой формат
 static func _from_ctex(ctex: String) -> Image:
 	var f := FileAccess.open(ctex, FileAccess.READ)
 	if f == null or f.get_length() < 60 or f.get_buffer(4).get_string_from_ascii() != "GST2":
@@ -481,10 +509,12 @@ static func _from_ctex(ctex: String) -> Image:
 	var w := f.get_32()
 	var h := f.get_32()
 	f.seek(36)
-	var df := f.get_32()                       # 1 — PNG, 2 — WebP
+	var df := f.get_32()                       # 0 — сжатая для видеокарты, 1 — PNG, 2 — WebP, 3 — Basis
 	f.get_32()                                 # ширина и высота по 16 бит
 	var mips := f.get_32()
-	f.get_32()                                 # формат точек
+	var fmt := f.get_32()                      # формат точек
+	if df == 0:
+		return _mip1(f, w, h, mips, fmt)
 	var n := f.get_32()
 	if (df != 1 and df != 2) or n <= 4 or n > f.get_length():
 		return null
@@ -500,6 +530,19 @@ static func _from_ctex(ctex: String) -> Image:
 	if mips > 0:
 		img.generate_mipmaps()
 	return img
+
+
+## Сжатая для видеокарты картинка (данные с мипмапами сразу после заголовка): мипмап 1 и ниже — это и есть копия
+## вдвое меньше, без распаковки и пересжатия (в собранной игре сжимать нечем)
+static func _mip1(f: FileAccess, w: int, h: int, mips: int, fmt: int) -> Image:
+	if mips <= 0:
+		return null
+	var data := f.get_buffer(f.get_length() - f.get_position())
+	var full := Image.create_from_data(w, h, true, fmt, data)
+	if full == null or full.is_empty() or full.get_mipmap_count() < 1:
+		return null
+	var img := Image.create_from_data(w / 2, h / 2, true, fmt, data.slice(full.get_mipmap_offset(1)))
+	return img if img != null and not img.is_empty() else null
 
 
 static func _bpp(fmt: int) -> int:

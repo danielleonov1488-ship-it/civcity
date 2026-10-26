@@ -8,6 +8,8 @@ extends Node
 ## совет не увидели); файл только от лаунчера — ещё новая установка, город без настроек — уже играет; уровень из
 ## лаунчера — выбор игрока; копии картинок «Очень низкой» — из файла картинки и с диска, без чтений с видеокарты,
 ## меняются по одной за кадр; у вопроса сторожа — «Не надо» вместо «Понятно».
+## Предложения владельцу (по умолчанию выключены): облегчённая «Средняя» (Gfx.MEDIUM_LIGHT, 1.10) и картинки, сжатые
+## для видеокарты (deploy/tex_vram.py, 1.9) — копия «Очень низкой» из такой картинки — её мипмап 1, без видеокарты.
 
 const SHOTS := "D:/CivCity/.work/gd/b/"
 
@@ -113,6 +115,86 @@ func _decide() -> void:
 		"качество выбрали в лаунчере до первой игры — выбор игрока, по видеокарте не меняем", st)
 	st = {"quality": "high", "ui_scale": 1.0}
 	check(Gfx.installed(st, st.duplicate(), false) and not st.has("quality_user"), "файл, записанный игрой (с ui_scale), — уже играет")
+
+
+## 1.10: облегчённая «Средняя» — только за переключателем (по умолчанию «Средняя» прежняя); «Высокую» не трогает
+func _medium_light() -> void:
+	var vp := get_viewport()
+	check(not Gfx.MEDIUM_LIGHT and not Gfx.medium_light, "облегчённая «Средняя» выключена (ждёт решения владельца)")
+	game.settings["quality"] = "medium"
+	game._apply_quality()
+	var was := [game.sun.light_angular_distance, vp.msaa_3d, game.env.ssao_enabled, game.env.sdfgi_enabled]
+	check(is_equal_approx(was[0], 2.2) and was[1] == Viewport.MSAA_4X and was[2] and not was[3], "«Средняя» как была: мягкие тени PCSS, MSAA 4x, SSAO, без SDFGI", was)
+	Gfx.medium_light = true
+	game._apply_quality()
+	check(is_equal_approx(game.sun.light_angular_distance, 0.0) and vp.msaa_3d == Viewport.MSAA_2X and game.env.ssao_enabled and game.sun.shadow_enabled
+		and game.sun.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS and is_equal_approx(vp.scaling_3d_scale, 1.0),
+		"облегчённая «Средняя»: без PCSS и MSAA 2x, остальное как у «Средней» (4 полосы теней, SSAO, полный размер)")
+	game.settings["quality"] = "high"
+	game._apply_quality()
+	check(is_equal_approx(game.sun.light_angular_distance, 2.2) and vp.msaa_3d == Viewport.MSAA_4X and game.env.sdfgi_enabled,
+		"переключатель «Средней» «Высокую» не трогает")
+	Gfx.medium_light = false
+	game.settings["quality"] = "medium"
+	game._apply_quality()
+	check(is_equal_approx(game.sun.light_angular_distance, 2.2) and vp.msaa_3d == Viewport.MSAA_4X, "выключили — «Средняя» снова прежняя")
+
+
+## 1.9: картинка, сжатая для видеокарты (BC7 с мипмапами, как после deploy/tex_vram.py bc7), — копия вдвое меньше для
+## «Очень низкой» — её мипмап 1 из файла, байт в байт, без чтения с видеокарты; Basis и сжатая без мипмапов — оригинал
+func _vram_copy() -> void:
+	var img := Image.create(512, 512, false, Image.FORMAT_RGBA8)
+	for y in 512:
+		for x in 512:
+			img.set_pixel(x, y, Color(float(x % 64) / 64.0, float(y % 32) / 32.0, 0.5 if (x / 128 + y / 128) % 2 == 0 else 0.2, 1.0))
+	img.generate_mipmaps()
+	var err := img.compress(Image.COMPRESS_BPTC)
+	var dir := "user://test_gfx_ctex"
+	DirAccess.make_dir_recursive_absolute(dir)
+	var p0 := dir.path_join("bc7.ctex")
+	_write_ctex(p0, img, 0)
+	var rb0 := Gfx.readbacks
+	var c := Gfx._from_ctex(p0)
+	var off := img.get_mipmap_offset(1)
+	check(err == OK and img.get_format() == Image.FORMAT_BPTC_RGBA and c != null and c.get_width() == 256 and c.get_format() == Image.FORMAT_BPTC_RGBA
+		and c.has_mipmaps() and c.get_data() == img.get_data().slice(off) and Gfx.readbacks == rb0 and Gfx._ctex_small_ok(p0),
+		"сжатая для видеокарты (BC7 с мипмапами): копия «Очень низкой» — её мипмап 1 байт в байт, без видеокарты",
+		[err, img.get_format(), c.get_width() if c else -1])
+	var nm := img.duplicate() as Image
+	nm.clear_mipmaps()
+	var p1 := dir.path_join("bc7_nomip.ctex")
+	_write_ctex(p1, nm, 0)
+	var p3 := dir.path_join("basis.ctex")
+	_write_ctex(p3, img, 3)
+	check(Gfx._from_ctex(p1) == null and not Gfx._ctex_small_ok(p1) and not Gfx._ctex_small_ok(p3),
+		"сжатая без мипмапов и Basis — копию не делаем (остаётся оригинал, без чтения с видеокарты)")
+	for f in DirAccess.get_files_at(dir):
+		DirAccess.remove_absolute(dir.path_join(f))
+
+
+## Файл картинки в виде, как его пишет импорт Godot (GST2): df 0 — данные картинки как есть, 3 — Basis (здесь — пустышка)
+func _write_ctex(path: String, img: Image, df: int) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_buffer("GST2".to_ascii_buffer())
+	f.store_32(1)
+	f.store_32(img.get_width())
+	f.store_32(img.get_height())
+	f.store_32(0)
+	f.store_32(0)
+	f.store_32(0)
+	f.store_32(0)
+	f.store_32(0)
+	f.store_32(df)
+	f.store_16(img.get_width())
+	f.store_16(img.get_height())
+	f.store_32(img.get_mipmap_count())
+	f.store_32(img.get_format())
+	if df == 3:
+		f.store_32(4)
+		f.store_32(0)
+	else:
+		f.store_buffer(img.get_data())
+	f.close()
 
 
 ## Материал с картинкой 4096² (палитра Synty)
@@ -313,6 +395,8 @@ func _run() -> void:
 	var saved = JSON.parse_string(FileAccess.get_file_as_string(game.settings_path()))
 	check(typeof(saved) == TYPE_DICTIONARY and saved.get("quality") == "low" and bool(saved.get("tip_q_auto", false)) and bool(saved.get("tip_q_low", false)),
 		"всё записано в settings.json (уровень и флаги советов)", saved)
+	_medium_light()
+	_vram_copy()
 	game.can_save = false
 	print("GFX DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
