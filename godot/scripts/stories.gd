@@ -918,7 +918,9 @@ func _final_ready(a: Dictionary) -> bool:
 
 func _enter_step(i: int) -> void:
 	var a: Dictionary = S()["active"]
-	var steps: Array = _story(a)["steps"]
+	if a.is_empty() or _story(a).is_empty():
+		return                               # история уже кончилась или прервана в этот же кадр
+	var steps: Array = _story(a).get("steps", [])
 	i = _skip_only(a, i)                     # шаг «только при этом выборе» (подарки на Сатурналии) — мимо
 	if i >= steps.size():
 		_finish("done")
