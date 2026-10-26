@@ -130,10 +130,25 @@ function snapPower(snap) {
   });
   return p;
 }
-// снимок без героя — для старых игр (они героя не знают и воюют без него: бой повторяется так же)
+// снимок без героя — для старых игр (они героя не знают; бой повторяется так же): на месте героя — легионер его уровня
+// (уровень героя — уровень Казарм, легионер есть всегда), чтобы город не стоял на бойца меньше; герой не первым — не в счёт
 function noHero(snap) {
   if (!snap || !Array.isArray(snap.squad) || !snap.squad.some(e => e && e.type === 'hero')) return snap;
-  return Object.assign({}, snap, { squad: snap.squad.filter(e => !(e && e.type === 'hero')) });
+  const squad = [];
+  snap.squad.forEach((e, i) => {
+    if (!(e && e.type === 'hero')) squad.push(e);
+    else if (i === 0) squad.push({ type: 'legionary', level: clamp(int(e.level) || 1, 1, MAX_LEVEL) });
+  });
+  return Object.assign({}, snap, { squad });
+}
+// имя и облик героя снимка — из нынешнего сохранения защитника f (переименовали, переодели после выставления обороны);
+// на бой они не влияют, числа остаются прежними
+function freshHero(snap, f) {
+  const e = snap && Array.isArray(snap.squad) ? snap.squad[0] : null;
+  if (!e || typeof e !== 'object' || e.type !== 'hero' || !f || !f.hero) return snap;
+  const h = Object.assign({}, e, { look: f.hero.look });
+  if (f.hero.name) h.name = f.hero.name; else delete h.name;
+  return Object.assign({}, snap, { squad: [h, ...snap.squad.slice(1)] });
 }
 
 /* ---------- свой герой из сохранения ---------- */
@@ -396,7 +411,15 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     for (const [i, e] of snap.squad.slice(0, SQUAD_MAX).entries()) {
       if (e && typeof e === 'object' && e.type === 'hero') {
         // герой — только первым и только если он есть в сохранении; числа — не выше, чем в облаке
-        if (i !== 0 || !f || !f.hero) { clamped = true; continue; }
+        if (i !== 0) { clamped = true; continue; }
+        if (!f || !f.hero) {
+          // героя в облаке ещё нет (сохранение отстаёт): на его месте — легионер его уровня (не выше Казарм), отряд не короче
+          clamped = true;
+          const lvl = clamp(int(e.level) || 1, 1, MAX_LEVEL);
+          const max = f ? (f.types.has('legionary') ? f.levels.legionary : 1) : 10;
+          squad.push({ type: 'legionary', level: Math.min(lvl, max) });
+          continue;
+        }
         const h = { type: 'hero', level: clamp(int(e.level) || 1, 1, MAX_LEVEL), city: clamp(int(e.city), 0, CITY_MAX), kit: clamp(int(e.kit), 0, KIT_MAX) };
         const lim = { level: f.levels.legionary, city: Math.min(CITY_MAX, f.cityLevel), kit: f.armory };
         for (const k of ['level', 'city', 'kit']) if (h[k] > lim[k]) { h[k] = lim[k]; clamped = true; }
@@ -607,11 +630,12 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     for (const r of pick) {
       let snap;
       try { snap = JSON.parse(r.snapshot); } catch (e) { continue; }
+      snap = freshHero(snap, facts(r.user_id));
       let pw = r.power;
       if (!heroOk && snap.squad && snap.squad.some(e => e && e.type === 'hero')) {
         snap = noHero(snap);
         pw = snapPower(snap);
-        if (!snap.squad.length) continue;      // в обороне один герой — старой игре такого соперника не показываем
+        if (!snap.squad.length) continue;      // пустой отряд старой игре не показываем
       }
       const id = crypto.randomBytes(9).toString('base64url');
       items.set(id, { kind: 'user', uid: r.user_id });
@@ -662,6 +686,10 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     if (f && f.cityLevel < PVP_MIN_LEVEL) throw new Fail(409, 'Бои с городами — с «Посёлка»');
     const att = checkSquad(f, b.squad);
     if (!att.snap.squad.length) throw new Fail(400, 'В отряде нет бойцов');
+    // игра знает героя: так говорит hero: true — или сам отряд с героем (старые игры героя не шлют). Иначе нападающий
+    // со своим героем, убрав hero, воевал бы против города без героя
+    const raw = b.squad && typeof b.squad === 'object' && Array.isArray(b.squad.squad) ? b.squad.squad : [];
+    const heroGame = !!b.hero || raw.some(e => e && typeof e === 'object' && e.type === 'hero');
     let def, defUid = null, defName, defRating, defLevel;
     if (target.kind === 'user') {
       const d = q.player.get(target.uid);
@@ -669,8 +697,9 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
       if (d.shield_until > now) throw new Fail(409, 'Этот город только что отбивался — выберите другой');
       if (q.recentTargets.all(a.userId, now - ATTACK_GAP).some(r => r.defender === d.user_id)) throw new Fail(409, 'На этот город вы уже нападали недавно');
       try { def = JSON.parse(d.snapshot); } catch (e) { throw new Fail(409, 'Этот город распустил оборону — выберите другой'); }
-      if (!b.hero) def = noHero(def);          // старая игра героя не знает: соперник для неё — без героя (и повтор боя тоже)
-      if (!Array.isArray(def.squad) || !def.squad.length) throw new Fail(409, 'Этот город распустил оборону — выберите другой');
+      def = freshHero(def, facts(d.user_id));  // имя и облик героя — из нынешнего сохранения защитника
+      if (!heroGame) def = noHero(def);        // старая игра героя не знает: соперник для неё — без героя (и повтор боя тоже)
+      if (!def || !Array.isArray(def.squad) || !def.squad.length) throw new Fail(409, 'Этот город распустил оборону — выберите другой');
       defUid = d.user_id; defName = d.name; defRating = d.rating; defLevel = d.city_level;
     } else {
       def = target.snap; defName = target.name; defRating = target.rating; defLevel = target.city_level;

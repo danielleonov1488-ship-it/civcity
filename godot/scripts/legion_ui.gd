@@ -242,7 +242,10 @@ func _d10_tips() -> void:
 	# герой и в боях с городами (сервер боёв его знает) — сказать один раз, когда бои с городами открыты
 	if lg.pvp_hero() and lg.pvp_open() and not lg.flags.has("tip_hero_pvp"):
 		lg.flags["tip_hero_pvp"] = true
-		hud.advisor("Герой в боях с городами", "%s теперь сражается и в боях с другими городами: идёт первым в отряде нападения и стоит первым в отряде обороны — как в походах. Уровень героя растёт с Казармами и городом, снаряжение — со Складом оружия.\n\nУ соперников тоже бывают свои герои — их видно по имени над головой." % Hero.name_of(c))
+		lg.hero_pvp_check()
+		var pf := "первой" if Hero.female(c) else "первым"
+		var mv := " Боец, который раньше стоял на этом месте в боях с городами, перешёл на другое место отряда." if str(lg.flags.get("hero_pvp_fix", "")) == "moved" else ""
+		hud.advisor("Герой в боях с городами", "%s теперь сражается и в боях с другими городами: идёт %s в отряде нападения и стоит %s в отряде обороны — как в походах.%s Уровень героя растёт с Казармами и городом, снаряжение — со Складом оружия.\n\nУ соперников тоже бывают свои герои — их видно по имени над головой." % [Hero.name_of(c), pf, pf, mv])
 
 
 func toggle() -> void:
@@ -1964,6 +1967,7 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 	var n := lg.slots()
 	# свой герой (Д11): первое место отряда в походах — его; в отряде обороны — тоже, когда сервер боёв знает героя
 	var hero: bool = lg.hero_ready() if which == "campaign" else lg.pvp_hero()
+	lg.hero_pvp_check()                         # герой пришёл в бои с городами: боец первого места — на видное
 	for i in Legion.SQUAD_MAX:
 		if i == 0 and hero:
 			row.add_child(_hero_slot(sz, true, which == "campaign"))
@@ -2030,7 +2034,7 @@ func _hero_slot(sz: float, big := true, edit := false) -> Control:
 	if pv:
 		# в боях с городами — без Кузницы и общей брони Склада (сервер их пока не знает): свои числа
 		var ps := Legion.snap_hero(lg.hero_entry(), lg.pvp_bonus("atk"), lg.pvp_bonus("hp"))
-		pvl = "В боях с городами он тоже впереди: здоровье %d, урон %d, броня %d" % [int(ps["hp"]), int(ps["atk"]), roundi(float(ps["armor"]))]
+		pvl = "В боях с городами %s тоже впереди: здоровье %d, урон %d, броня %d" % [Hero.he(game.city), int(ps["hp"]), int(ps["atk"]), roundi(float(ps["armor"]))]
 	else:
 		pvl = "В боях с городами герой пока не участвует" + ((" — там на этом месте %s" % String(Legion.UNITS[pvp_t]["name"]).to_lower()) if Legion.UNITS.has(pvp_t) else "")
 	face.tooltip_text = "%s — ваш герой: первое место отряда %s, %d уровень (растёт с Казармами, городом и Складом оружия)

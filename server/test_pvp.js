@@ -397,10 +397,12 @@ async function heroTests() {
   saves[15] = mk({ level: 6, buildings: ['barracks', 'range'], levels: { legionary: 20, archer: 20 }, h: hero('Луций Корнелий') });  // сильный нападающий (новая игра)
   saves[16] = mk({ level: 6, buildings: ['barracks', 'range'], levels: { legionary: 20, archer: 20 } });                          // нападающий старой игры
   for (const uid of Object.keys(saves)) db.prepare('INSERT INTO users (id, email) VALUES (?, ?)').run(+uid, `h${uid}@t`);
+  db.prepare('INSERT INTO users (id, email) VALUES (?, ?)').run(17, 'h17@t');                        // игрок без сохранения в облаке
+  const sid = {};                    // номер сохранения игрока (новое сохранение — новый номер: сервер перечитывает его)
   const routes = {};
   class Fail extends Error { constructor(status, msg) { super(msg); this.status = status; } }
   pvp.install({ db, routes, auth: req => ({ userId: req.uid }), json: async req => req.body, limited: () => false, Fail,
-    latestSave: uid => (saves[uid] ? { id: 1, load: () => saves[uid] } : null) });
+    latestSave: uid => (saves[uid] ? { id: sid[uid] || 1, load: () => saves[uid] } : null) });
   const realNow = Date.now;
   let clock = realNow();
   Date.now = () => clock;
@@ -426,8 +428,9 @@ async function heroTests() {
       h0.look.sx === 0 && oH.power === pvp.snapPower(defH), 'new game (hero=1) sees H\'s hero first: numbers from the cloud, name and look from the save', oH);
     o = await call2('GET /api/pvp/opponents', 16, undefined, '/pvp/opponents');
     const oH2 = (o.opponents || []).find(x => !x.bot);
-    ok(oH2 && !oH2.snapshot.squad.some(e => e.type === 'hero') && oH2.snapshot.squad.length === 4 && oH2.power === pvp.snapPower(pvp.noHero(defH)),
-      'old game (no hero=1): opponent without the hero, power without him', oH2);
+    ok(oH2 && !oH2.snapshot.squad.some(e => e.type === 'hero') && oH2.snapshot.squad.length === 5 && oH2.snapshot.squad[0].type === 'legionary' &&
+      oH2.snapshot.squad[0].level === 6 && oH2.power === pvp.snapPower(pvp.noHero(defH)),
+      'old game (no hero=1): opponent without the hero — a legionary of his level in his place (5 fighters, not 4)', oH2);
 
     // герой не первым, два героя, старое сохранение без героя, грубое имя, Склад не построен
     r = await call2('PUT /api/pvp/defense', 11, { snapshot: { squad: [{ type: 'legionary', level: 6 }, H(6, 5, 5)] } });
@@ -435,7 +438,7 @@ async function heroTests() {
     r = await call2('PUT /api/pvp/defense', 11, { snapshot: { squad: [H(6, 5, 5), H(6, 5, 5), { type: 'legionary', level: 6 }] } });
     ok(r.clamped && r.power === pvp.snapPower({ squad: [H(6, 5, 5), { type: 'legionary', level: 6 }] }), 'second hero → dropped', r);
     r = await call2('PUT /api/pvp/defense', 12, { snapshot: { squad: [H(3, 4, 0), { type: 'legionary', level: 3 }, { type: 'legionary', level: 3 }] } });
-    ok(r.clamped && r.power === 2 * pvp.power(pvp.unitStats('legionary', 3, 0, 0)), 'old save without a hero: hero dropped, the rest of the squad stays', r);
+    ok(r.clamped && r.power === 3 * pvp.power(pvp.unitStats('legionary', 3, 0, 0)), 'old save without a hero: a legionary (Казармы 3) in the hero\'s place, the rest stays', r);
     r = await call2('PUT /api/pvp/defense', 12, { snapshot: { squad: [{ type: 'legionary', level: 3 }, { type: 'legionary', level: 3 }] } });
     ok(!r.clamped && r.power === 2 * pvp.power(pvp.unitStats('legionary', 3, 0, 0)), 'old save, old squad: works as before', r);
     r = await call2('PUT /api/pvp/defense', 13, { snapshot: { squad: [H(3, 4, 0)] } });
@@ -470,28 +473,61 @@ async function heroTests() {
     // нападение старой игры (без hero): соперник — без героя, бой повторяется без него (H полчаса под защитой — ждём)
     clock += 31 * 60e3;
     o = await call2('GET /api/pvp/opponents', 16, undefined, '/pvp/opponents');
-    ok(!(o.opponents || []).some(x => !x.bot && !x.snapshot.squad.length), 'old game: a defense of the hero alone is not offered (empty without him)', o.opponents);
-    tH = (o.opponents || []).find(x => !x.bot && x.snapshot.squad.length === 4 && x.snapshot.squad[0].type === 'legionary' && x.snapshot.squad[0].level === 6);
+    ok(!(o.opponents || []).some(x => !x.bot && (!x.snapshot.squad.length || x.snapshot.squad.some(e => e.type === 'hero'))) &&
+      (o.opponents || []).filter(x => !x.bot && x.snapshot.squad.length === 1 && x.snapshot.squad[0].type === 'legionary' && x.snapshot.squad[0].level === 3).length === 2,
+      'old game: a defense of the hero alone is offered as one legionary of his level (cities 13 and 14)', o.opponents);
+    tH = (o.opponents || []).find(x => !x.bot && x.snapshot.squad.length === 5 && x.snapshot.squad[0].type === 'legionary' && x.snapshot.squad[0].level === 6);
     const att16 = { v: 1, squad: [{ type: 'legionary', level: 20 }, { type: 'legionary', level: 20 }, { type: 'archer', level: 20 }], perks: { oil: 1 }, atk_b: 0, hp_b: 0 };
     a = await call2('POST /api/pvp/attack', 16, { target: tH && tH.id, squad: att16 });
-    ok(a.battle && !a.opponent.snapshot.squad.some(e => e.type === 'hero') && a.opponent.power === pvp.snapPower(pvp.noHero(defH)),
-      'attack (old game): the defender\'s snapshot comes without the hero', a);
+    ok(a.battle && !a.opponent.snapshot.squad.some(e => e.type === 'hero') && a.opponent.snapshot.squad.length === 5 && a.opponent.snapshot.squad[0].type === 'legionary' &&
+      a.opponent.power === pvp.snapPower(pvp.noHero(defH)), 'attack (old game): the defender\'s snapshot comes without the hero — his legionary in his place', a);
     rp = sim.replayPvp(a.attack, a.opponent.snapshot, a.seed, inputs);
     clock += 200e3;
     r = await call2('POST /api/pvp/result', 16, { battle: a.battle, win: rp.win, alive: rp.alive, total: rp.total, time: rp.time, inputs });
     ok(rp.win && r.accepted && r.win, 'old game\'s win against a hero city accepted (replayed without the hero, as the game saw it)', [rp, r]);
+
+    // H переименовал героя и переодел его после выставления обороны: соперники видят нынешние имя и облик (из сохранения),
+    // числа — прежние. Нападение с героем, но без hero: true (подделка запроса) — у защитника герой остаётся
+    clock += 7 * 3600e3;
+    saves[11] = mk({ level: 5, buildings: ['barracks', 'range', 'armory'], levels: { legionary: 6, archer: 5 }, blevels: { armory: 4 }, upg: { armory: { to: 5, end: 0, total: 60 } },
+      h: hero('Гай Север', Object.assign({}, look, { cape: 'AA0000' })) });
+    sid[11] = 2;
+    o = await call2('GET /api/pvp/opponents', 15, undefined, '/pvp/opponents?hero=1');
+    tH = (o.opponents || []).find(x => !x.bot && x.snapshot.squad[0] && x.snapshot.squad[0].type === 'hero' && x.snapshot.squad[0].level === 6);
+    ok(tH && tH.snapshot.squad[0].name === 'Гай Север' && tH.snapshot.squad[0].look.cape === 'aa0000' && tH.power === pvp.snapPower(defH),
+      'renamed and re-dressed hero: rivals see the new name and look at once (numbers unchanged)', tH);
+    a = await call2('POST /api/pvp/attack', 15, { target: tH && tH.id, squad: att15 });
+    ok(a.battle && a.attack.squad[0].type === 'hero' && a.opponent.snapshot.squad[0].type === 'hero' && a.opponent.snapshot.squad[0].name === 'Гай Север' &&
+      a.opponent.snapshot.squad[0].look.cape === 'aa0000' && a.opponent.power === pvp.snapPower(defH),
+      'attack with our hero but without hero: true — the defender keeps his hero too (no one-sided hero)', a);
+    rp = sim.replayPvp(a.attack, a.opponent.snapshot, a.seed, inputs);
+    clock += 200e3;
+    r = await call2('POST /api/pvp/result', 15, { battle: a.battle, win: rp.win, alive: rp.alive, total: rp.total, time: rp.time, inputs });
+    ok(r.accepted && r.win === rp.win, 'that battle replays with both heroes as the game saw it', [rp, r]);
 
     // героя в облаке ещё нет (сохранение отстаёт) — сервер убирает его из отряда нападения, игра воюет тем, что вернул сервер
     saves[12] = mk({ level: 4, buildings: ['barracks'], levels: { legionary: 3 } });
     o = await call2('GET /api/pvp/opponents', 12, undefined, '/pvp/opponents?hero=1');
     const tb = (o.opponents || []).find(x => x.bot);
     a = await call2('POST /api/pvp/attack', 12, { target: tb && tb.id, squad: { squad: [H(3, 4, 0), { type: 'legionary', level: 3 }] }, hero: true });
-    ok(a.battle && a.attack.squad.length === 1 && a.attack.squad[0].type === 'legionary', 'no hero in the cloud save: attack squad returned without him (the game fights that)', a);
+    ok(a.battle && a.attack.squad.length === 2 && a.attack.squad.every(e => e.type === 'legionary' && e.level === 3),
+      'no hero in the cloud save: a legionary in his place (Казармы 3), the game fights the returned squad', a);
 
     // вольные города под силу игрока с героем — сила считается и с ним
     const fct = routes['GET /api/pvp/opponents'] && (await call2('GET /api/pvp/opponents', 14, undefined, '/pvp/opponents?hero=1'));
     ok(fct && Array.isArray(fct.opponents) && fct.opponents.filter(x => x.bot).every(x => x.power > 0 && !x.snapshot.squad.some(e => e.type === 'hero')),
       'free cities for a player with a hero: listed, without heroes', fct);
+
+    // нет сохранения в облаке: на месте героя — легионер (не выше 10, как и остальные)
+    r = await call2('PUT /api/pvp/defense', 17, { snapshot: { squad: [H(12, 7, 10), { type: 'legionary', level: 12 }] }, city_level: 4 });
+    ok(r.clamped && r.power === 2 * pvp.power(pvp.unitStats('legionary', 10, 0, 0)), 'no cloud save: a legionary L10 in the hero\'s place', r);
+
+    // откат сервера на версию без героя: pvp_nohero.js убирает героя из выставленных отрядов (старый pvp.js на нём падает)
+    const n = require('./pvp_nohero').stripHeroes(db);
+    const rows = db.prepare('SELECT user_id, snapshot, power FROM pvp_players WHERE snapshot IS NOT NULL').all();
+    ok(n === 3 && rows.every(x => !x.snapshot.includes('"hero"') && x.power === pvp.snapPower(JSON.parse(x.snapshot))) &&
+      rows.filter(x => x.user_id === 13 || x.user_id === 14).every(x => x.power === pvp.power(pvp.unitStats('legionary', 3, 0, 0))),
+      `rollback helper: heroes stripped from ${n} stored defenses (a legionary in his place, power recounted)`, rows);
   } finally {
     Date.now = realNow;
     db.close();

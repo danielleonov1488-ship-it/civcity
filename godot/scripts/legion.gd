@@ -828,6 +828,39 @@ func hero_squad_fix() -> void:
 			return
 
 
+## Герой пришёл в бои с городами (один раз на город): боец, что игрок ставил первым для боёв с городами (медальон
+## в углу места героя прежней версии), в отряде нападения и в своём отряде обороны переходит на видное место — к первому
+## легионеру (меняются местами) или на первое пустое место; иначе он пропал бы под героем. flags.hero_pvp_fix: "moved" — перешёл
+func hero_pvp_fix() -> bool:
+	if flags.has("hero_pvp_fix"):
+		return false
+	var moved := _hero_fix_arr(squad)
+	if not defense.is_empty():
+		moved = _hero_fix_arr(defense) or moved
+	flags["hero_pvp_fix"] = "moved" if moved else true
+	return moved
+
+
+func _hero_fix_arr(a: Array) -> bool:
+	if a.is_empty() or String(a[0]) in ["", "legionary"]:
+		return false
+	for want: String in ["legionary", ""]:
+		for i in range(1, slots()):
+			if (String(a[i]) if i < a.size() else "") == want:
+				while a.size() <= i:
+					a.append("")
+				a[i] = a[0]
+				a[0] = want
+				return true
+	return false
+
+
+## Герой в боях с городами — сразу и боец первого места на видное (hero_pvp_fix); поменялось — окно перерисуется
+func hero_pvp_check() -> void:
+	if pvp_hero() and not flags.has("hero_pvp_fix") and hero_pvp_fix():
+		changed.emit()
+
+
 ## Отряд из родов types (оценка шансов, «Лучший состав»): в походе первое место — герой
 func hero_types(sq: Array) -> Array:
 	if hero_ready() and not sq.is_empty():
@@ -2164,8 +2197,10 @@ func defense_snapshot() -> Dictionary:
 ## обороны ([] — как отряд походов). Герой (pvp_hero) — на первом месте вместо бойца этого места, как в походах
 func pvp_entries(which := "pvp") -> Array:
 	var sq := []
-	var src: Array = defense if which == "defense" and not defense.is_empty() else squad
 	var hero := pvp_hero()
+	if hero:
+		hero_pvp_check()                          # боец, что стоял первым, — на видное место (один раз)
+	var src: Array = defense if which == "defense" and not defense.is_empty() else squad
 	if hero:
 		sq.append(hero_entry())
 	for i in range(1 if hero else 0, mini(slots(), src.size())):
@@ -2225,7 +2260,8 @@ func make_pvp_battle(opp: Dictionary, seed_v := -1) -> Dictionary:
 	return s
 
 
-## Снимок без героя (как noHero в server/pvp.js)
+## Снимок без героя — для старого (откатанного) сервера: его повтор боя незнакомого бойца пропускает, и мы так же.
+## (noHero в server/pvp.js — другое: старым играм новый сервер ставит на место героя легионера, это обычный боец)
 static func no_hero(snap: Dictionary) -> Dictionary:
 	if not (snap.get("squad") is Array) or not (snap["squad"] as Array).any(func(e): return e is Dictionary and String(e.get("type", "")) == "hero"):
 		return snap

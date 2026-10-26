@@ -672,6 +672,7 @@ func _pvp_test() -> void:
 	c.level = 3                                       # бои с городами — с «Посёлка»
 	Legion.pvp_hero_srv = true
 	check(lg.pvp_hero(), "сервер знает героя — герой и в боях с городами")
+	await _pvp_fix_test()
 	var att := LegionNet.attack_snapshot(lg)
 	var sq: Array = att["squad"]
 	var he: Dictionary = sq[0] if not sq.is_empty() else {}
@@ -707,7 +708,9 @@ func _pvp_test() -> void:
 	var ui := LegionUi.of(hud)
 	hud.advisor_panel.visible = false
 	ui._d10_tips()
-	check(hud.advisor_panel.visible and hud.adv_title.text == "Герой в боях с городами" and hud.adv_text.text.contains(Hero.name_of(c)), "советник один раз: «Герой в боях с городами»", hud.adv_title.text)
+	check(hud.advisor_panel.visible and hud.adv_title.text == "Герой в боях с городами" and hud.adv_text.text.contains(Hero.name_of(c))
+		and hud.adv_text.text.contains("идёт первым") and hud.adv_text.text.contains("перешёл на другое место"),
+		"советник один раз: «Герой в боях с городами» (и о бойце, что стоял первым)", [hud.adv_title.text, hud.adv_text.text])
 	hud.advisor_panel.visible = false
 	ui._d10_tips()
 	check(not hud.advisor_panel.visible, "второй раз советник о герое в боях не говорит")
@@ -763,6 +766,30 @@ func _pvp_test() -> void:
 		await frames(60)
 	c.level = lv0
 	Legion.pvp_hero_srv = false
+
+
+## Город прежней версии: в боях с городами первым стоял выбранный боец (лучник в отряде нападения, лучник в обороне) —
+## герой пришёл в бои с городами, боец переходит на видное место (к легионеру, нет его — на пустое) и остаётся в снимках; один раз
+func _pvp_fix_test() -> void:
+	var lg: Legion = c.legion
+	var sq0: Array = lg.squad.duplicate()
+	var df0: Array = lg.defense.duplicate()
+	lg.flags.erase("hero_pvp_fix")
+	lg.squad = ["archer", "legionary", "legionary"]
+	lg.defense = ["archer", "", "archer"]
+	var att := LegionNet.attack_snapshot(lg)
+	var dsn := lg.defense_snapshot()
+	var kinds := func(s: Dictionary) -> Array: return (s["squad"] as Array).map(func(x): return String(x.get("type", "")))
+	check(lg.squad == ["legionary", "archer", "legionary"] and lg.defense == ["", "archer", "archer"] and str(lg.flags.get("hero_pvp_fix")) == "moved",
+		"герой пришёл в бои с городами: лучник с первого места — к легионеру (нападение) и на пустое место (оборона)", [lg.squad, lg.defense])
+	check(kinds.call(att) == ["hero", "archer", "legionary"] and kinds.call(dsn) == ["hero", "archer", "archer"],
+		"лучник остался в отряде нападения и в отряде обороны", [kinds.call(att), kinds.call(dsn)])
+	lg.squad = ["archer", "legionary", "legionary"]
+	lg.pvp_entries()
+	check(lg.squad[0] == "archer", "второй раз бойцов не переставляет (один раз на город)")
+	lg.squad = sq0
+	lg.defense = df0                                  # flags.hero_pvp_fix = "moved" остаётся: советник скажет и о бойце
+	await frames(1)
 
 
 ## Сеть боёв с городами для проверки окна (то, что окно спрашивает у LegionNet)
