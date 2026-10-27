@@ -186,9 +186,11 @@ func _hero_dress(lk: Dictionary) -> void:
 	names.append(crown)
 	for nm: String in names:
 		var hn := _scene(ATT + nm + ".fbx").instantiate() as Node3D
-		var mat: Material = Citizen._plain(skin) if nm == crown else Citizen._hair_mat(String(lk.get("hc", "")), skin)
-		for mi: MeshInstance3D in hn.find_children("*", "MeshInstance3D", true, false):
-			mi.material_override = mat
+		if nm == crown:
+			for mi: MeshInstance3D in hn.find_children("*", "MeshInstance3D", true, false):
+				mi.material_override = Citizen._plain(skin)
+		else:
+			Citizen.paint_hair(hn, String(lk.get("hc", "")), skin, nm.contains("Beard"))
 		head.add_child(hn)
 	var cape := Citizen.add_cape(skel, String(lk.get("cape", "a3283a")))
 	var rig := Citizen.cape_rig(cape)

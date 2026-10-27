@@ -184,6 +184,7 @@ func _run() -> void:
 	await _requests()
 	await _all_requests()
 	await _rank_rows()
+	await _resolver()
 	await _treasury()
 	await _kids()
 	await _square()
@@ -208,8 +209,12 @@ func _requests() -> void:
 	hud.refresh()
 	await frames(2)
 	check(String(c.active_goals(1)[0]["id"]) == "store", "первая просьба — «Склад и мясная лавка»")
-	# (b) ничего не изучено — стрелка на «Исследования»
+	# просьба после «Хутора» — стрелка сама не показывает (отзывы 27.10), только по щелчку строки (show_pointer);
+	# куда она покажет — проверяем через show_pointer (то же, что делает щелчок)
 	hud._update_pointer()
+	check(hud.pointer_target == null, "просьба после «Хутора»: стрелки нет, пока не щёлкнули по строке", hud.pointer_target)
+	# (b) ничего не изучено — стрелка на «Исследования»
+	hud.show_pointer(hud.request_do(c.active_goals(1)[0]))
 	check(hud.pointer_target == hud.top_btns["research"] and hud.pointer_text.text == "Исследования", "(b) ничего не изучено → кнопка исследований", hud.pointer_text.text)
 	hud._top_action("research")
 	await frames(3)
@@ -219,7 +224,7 @@ func _requests() -> void:
 	var wh := put("warehouse", Vector2(174, 125))
 	check(not wh.is_empty() and c.goal_progress("store") == 1, "склад построен: 1/2")
 	# (e) склад есть, мясная лавка не изучена — к исследованиям, в окне — на карточку мясной лавки
-	hud._update_pointer()
+	hud.show_pointer(hud.request_do(c.active_goals(1)[0]))
 	check(hud.pointer_target == hud.top_btns["research"], "(e) мясная лавка закрыта → кнопка исследований")
 	hud._top_action("research")
 	await frames(3)
@@ -231,7 +236,7 @@ func _requests() -> void:
 	# (a) мясная лавка изучена, меню закрыто — к «Лавкам» с подписью «Мясная лавка»; открыто — вкладка «Еда», потом карточка
 	c.research["butcher"] = true
 	hud._close_tray()
-	hud._update_pointer()
+	hud.show_pointer(hud.request_do(c.active_goals(1)[0]))
 	check(hud.pointer_target == hud.cats["commerce"] and hud.pointer_text.text == "Мясная лавка", "(a) меню закрыто → «Лавки», подпись «Мясная лавка»", hud.pointer_text.text)
 	hud.open_sub = "clothes"
 	hud._toggle_cat("commerce")
@@ -249,13 +254,22 @@ func _requests() -> void:
 	await frames(2)
 	# строка: «Склад ✓ · Мясная лавка 0/1»; щелчок — мясная лавка в руках
 	var tb := task_btn("store")
+	var t_shown := Time.get_ticks_msec()
 	check(tb != null and texts(tb.get_parent()).contains("Склад ✓ · Мясная лавка 0/1"), "строка: «Склад ✓ · Мясная лавка 0/1»", texts(tb.get_parent()) if tb else "нет строки")
 	if tb:
 		tb.pressed.emit()
+		t_shown = Time.get_ticks_msec()
 		await frames(3)
 		check(game.tool == "butcher", "(d) щелчок по строке → мясная лавка в руках (%s)" % game.tool)
 		check(hud.advisor_panel.visible and hud.adv_text.text.contains("Мясная лавка берёт мясо со склада"), "у просьбы — подсказка советника")
+		check(hud.pointer_target != null and String(hud.pointer_target.get_meta("type", "")) == "butcher",
+			"(d) и стрелка на несколько секунд — на её карточку в меню (%s)" % hud.pointer_target)
 	await shot("s0_store_row.png")
+	# через PTR_SHOW_MS стрелка гаснет сама
+	while hud.pointer_target != null and Time.get_ticks_msec() - t_shown < Hud.PTR_SHOW_MS + 2000:
+		await frames(5)
+	var gone := Time.get_ticks_msec() - t_shown
+	check(hud.pointer_target == null and gone >= Hud.PTR_SHOW_MS - 600, "стрелка по щелчку погасла сама через %.1f с" % (gone / 1000.0))
 	game.set_tool("")
 	hud.advisor_panel.visible = false
 
@@ -283,7 +297,7 @@ func _all_requests() -> void:
 		var w: Dictionary = rt["do"]
 		if w.is_empty() or String(w.get("say", "")) == "":
 			no_do.append(g["id"])
-		if rt["target"] == null:
+		if rt["target"] == null and String(w.get("kind", "")) != "wait":      # «ждём переселенцев» — стрелки и не должно быть
 			no_target.append("%s(%s)" % [g["id"], w.get("kind", "")])
 	c.goals_done = saved
 	c.arrivals = []
@@ -303,7 +317,7 @@ func _rank_rows() -> void:
 		for e: Dictionary in c.rank_needs(lv):
 			var w: Dictionary = hud.need_do(e["p"], String(e.get("tool", "")))
 			var t: Control = hud._do_target(w)
-			if w.is_empty() or String(w.get("say", "")) == "" or t == null:
+			if w.is_empty() or String(w.get("say", "")) == "" or (t == null and String(w.get("kind", "")) != "wait"):
 				bad.append("%d:%s(%s)" % [lv, e["text"], w.get("kind", "")])
 	c.level = lvl0
 	check(bad.is_empty(), "строк условий без цели: %s" % [bad])
@@ -326,6 +340,141 @@ func _rank_rows() -> void:
 	await shot("s0_level_tip.png")
 	hud._hide_hover()
 	c.level = lvl0
+
+
+# ---------- отзывы игроков 27.10: золотая стрелка ----------
+
+## Стрелка — к тому, чего правда не хватает («6 сытых домов»: домов мало — к домам, а не к «Обзору»; жилья на нужных
+## жителей хватает — ждём повозку, стрелки нет); сама — только в начале (до «Хутора»), дальше — по щелчку строки
+func _resolver() -> void:
+	print("== стрелка: к настоящей нехватке; сама — только до «Хутора»")
+	var saved: Array = c.goals_done.duplicate()
+	var lvl0 := c.level
+	var money0 := c.money
+	var had := {}
+	for id in c.buildings:
+		had[id] = true
+	hud._ptr_shown = {}
+	# «6 сытых домов», домов меньше шести — к жилью
+	var w: Dictionary = hud.need_do(["fed", "food"], "", 6)
+	check(c.progress_of(["houses"]) >= 6 or (String(w.get("kind", "")) == "build" and String(w.get("type", "")) == "house_pleb"),
+		"«6 сытых домов», домов %d: стрелка к жилью, а не к «Обзору» (%s)" % [c.progress_of(["houses"]), w.get("type", w.get("kind", ""))])
+	# шесть домов с жильцами, лавок еды нет — к лавке еды
+	var hs := []
+	for k in 12:
+		if hs.size() >= 6:
+			break
+		var h := put("house_pleb", Vector2(196 + (k % 6) * 5.0, 150))
+		if not h.is_empty():
+			hs.append(h)
+	for h: Dictionary in hs:
+		h["pop"] = c.house_cap(h)
+	c.compute()
+	var foods := c._count(func(b): return c.def(b)["kind"] == "shop" and String(c.def(b).get("sub", "")) == "food")
+	w = hud.need_do(["fed", "food"], "", 6)
+	check(hs.size() == 6 and (foods > 0 or (String(w.get("kind", "")) == "build" and String(Defs.B.get(String(w.get("type", "")), {}).get("sub", "")) == "food")),
+		"шесть домов с жильцами, лавок еды нет — к лавке еды (%s)" % w.get("type", w.get("kind", "")))
+	# в начале (до «Хутора») стрелка к этой просьбе — сама
+	c.level = 0
+	c.goals_done = []
+	for g in Defs.REQUESTS:
+		if g["id"] == "fed6":
+			break
+		c.goals_done.append(g["id"])
+	hud.refresh()
+	await frames(2)
+	hud._update_pointer()
+	var g6: Dictionary = c.active_goals(1)[0]
+	check(String(g6["id"]) == "fed6" and hud.early_request(g6) and hud.pointer_target != null and hud.pointer_target == hud._request_target(g6)["target"],
+		"до «Хутора» стрелка к «6 сытых домов» сама (%s)" % hud.pointer_target)
+	# стал хутором — сама стрелка больше не показывает
+	c.level = 1
+	for g in Defs.REQUESTS:
+		if not c.goals_done.has(g["id"]):
+			c.goals_done.append(g["id"])
+		if g["id"] == "hamlet":
+			break
+	hud.refresh()
+	await frames(2)
+	hud._update_pointer()
+	var g1: Dictionary = c.active_goals(1)[0]
+	check(not hud.early_request(g1) and hud.pointer_target == null, "после «Хутора» («%s») стрелка сама не показывает (%s)" % [g1["text"], hud.pointer_target])
+	# щелчок по строке — стрелка на несколько секунд (постройка в руках — стрелка на её карточку в меню)
+	var tb := task_btn(String(g1["id"]))
+	if check(tb != null, "строка «%s» в свитке" % g1["text"]):
+		tb.pressed.emit()
+		await frames(3)
+		check(hud.pointer_target != null and hud.pointer.visible, "щелчок по строке «%s» — стрелка показалась (%s)" % [g1["text"], hud.pointer_target])
+		await shot("s0_ptr_click.png")
+		hud._ptr_shown["until"] = Time.get_ticks_msec() - 1
+		await frames(20)
+		check(hud.pointer_target == null, "через %d с стрелка гаснет" % (Hud.PTR_SHOW_MS / 1000))
+	game.set_tool("")
+	hud._close_tray()
+	hud.advisor_panel.visible = false
+	# лавка еды далеко от домов: дома есть, но голодные — к лавке еды ещё раз (а не к «Обзору»)
+	var far := put("stall_fruit", Vector2(170, 112))
+	c.compute()
+	w = hud.need_do(["fed", "food"], "", 6)
+	check(c.progress_of(["fed", "food"]) >= 6 or (String(w.get("kind", "")) == "build" and String(w.get("say", "")).contains("Не всем домам хватает")),
+		"дома голодные, лавка далеко — ещё лавку еды рядом с ними (%s: %s)" % [w.get("type", w.get("kind", "")), w.get("say", "")])
+	# в части домов никто не живёт, лавка есть — ждём переселенцев, стрелки нет
+	for h: Dictionary in hs.slice(0, 3):
+		h["pop"] = 0
+	c.compute()
+	w = hud.need_do(["fed", "food"], "", 6)
+	check(far.is_empty() or (String(w.get("kind", "")) == "wait" and hud._do_target(w) == null), "дома стоят пустые — ждём переселенцев (%s)" % w.get("kind", ""))
+	# жители: жилья на нужное число хватает — ждём повозку (стрелки нет), не хватает — к домам
+	c.arrivals = []
+	hud._fill_families()
+	w = hud.need_do(["pop"], "", c.house_room())
+	check(String(w.get("kind", "")) == "wait" and hud._do_target(w) == null and String(w.get("say", "")).begins_with("Ждём переселенцев"),
+		"жилья на %d жителей хватает — «%s», стрелки нет" % [c.house_room(), w.get("say", "")])
+	w = hud.need_do(["pop"], "", c.house_room() + 40)
+	check(String(w.get("kind", "")) == "build" and String(w.get("type", "")) == "house_pleb", "жилья мало — к домам (%s)" % w.get("type", w.get("kind", "")))
+	# «Станьте деревней»: жителей ждём, а склада нет — к складу, а не «ждём» и не к плебейскому дому
+	c.level = 1
+	var ok_r := true
+	var wr: Dictionary = hud.need_do(["rank", 2])
+	for e: Dictionary in c.rank_needs(2):
+		if not e["ok"] and String(e["p"][0]) != "pop" and String(e["p"][0]) != "happy":
+			ok_r = String(wr.get("kind", "")) != "wait" and not (String(wr.get("kind", "")) == "build" and String(wr.get("type", "")) == "house_pleb" and c.house_room() >= 60)
+			break
+	check(ok_r, "«Станьте деревней»: к тому, что правда не готово (%s)" % [wr.get("type", wr.get("kind", ""))])
+	# строка «Соберите 40 жителей» при хватающем жилье: «Ждём переселенцев» прямо в строке
+	c.goals_done = []
+	for g in Defs.REQUESTS:
+		if g["id"] == "pop40":
+			break
+		c.goals_done.append(g["id"])
+	for h: Dictionary in hs:
+		h["pop"] = 0
+	var extra := []
+	for k in 10:
+		if c.house_room() >= 40:
+			break
+		var h := put("house_pleb", Vector2(150 + k * 5.0, 150))
+		if not h.is_empty():
+			extra.append(h)
+	c.compute()
+	hud.refresh()
+	await frames(3)
+	var pb := task_btn("pop40")
+	check(c.house_room() < 40 or (pb != null and texts(pb.get_parent()).contains(Hud.WAIT_ROW)), "строка «Соберите 40 жителей»: «%s» (жилья на %d)" % [Hud.WAIT_ROW, c.house_room()],
+		texts(pb.get_parent()) if pb else "нет строки")
+	await shot("s0_wait_row.png")
+	# убрать за собой
+	for id in c.buildings.keys():
+		if not had.has(id) and c.buildings.has(id):
+			c.buildings[id]["pop"] = 0
+			c.remove(c.buildings[id], false, true)
+	c.level = lvl0
+	c.goals_done = saved
+	c.money = money0
+	hud._ptr_shown = {}
+	c.compute()
+	hud.refresh()
+	await frames(2)
 
 
 # ---------- 0.4: казна полна ----------

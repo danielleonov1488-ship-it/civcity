@@ -12,7 +12,7 @@ signal closed(saved: bool)
 const LAYER := 42                      # над интерфейсом и обучением (10), под роликом повозки (40)? — над: экран — первым
 const VP := Vector2i(720, 900)         # мирок героя (картинка слева)
 const SKIN_COL := {"A": Color("efc9a4"), "B": Color("b98355"), "C": Color("dcaa7c")}
-const HAIR_COL := {"A": Color("6b4a2e"), "B": Color("2e241c"), "C": Color("b08850"), "S": Color("d2cdc4")}
+const HAIR_COL := {"A": Color("6b4a2e"), "B": Color("2b2a2b"), "C": Color("c49a64"), "S": Color("d2cdc4")}   # как волосы (Citizen._hair_mat)
 const C_INK := Color("4a2c17")
 const C_SOFT := Color("7a5a3c")
 const C_BAD := Color("b0402a")

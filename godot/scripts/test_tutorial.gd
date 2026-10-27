@@ -125,5 +125,60 @@ func _run() -> void:
 	game.tutorial.next_btn.emit_signal("pressed")
 	await frames(60)
 	await shot("t11_full.png")
+	await _arrow_after()
 	print("done tut=", c.tips, " arrivals=", c.arrivals, " pending=", c.pending.keys(), " incoming=", c.incoming, " settled=", c.settled_total)
 	get_tree().quit()
+
+
+func check(ok: bool, what: String) -> void:
+	print(("PTR PASS " if ok else "FAIL ") + what)
+
+
+## Отзывы игроков 27.10: после обучения стрелка сама показывает только первые просьбы (до «Хутора» включительно);
+## город стал хутором — сама больше не показывает; щелчок по строке просьбы — стрелка на несколько секунд, потом гаснет
+func _arrow_after() -> void:
+	var c: City = game.city
+	var hud = game.hud
+	game.set_tool("")
+	hud.advisor_panel.visible = false
+	var g0: Dictionary = c.active_goals(1)[0] if not c.active_goals(1).is_empty() else {}
+	hud._update_pointer()
+	var want = hud._request_target(g0)["target"] if not g0.is_empty() else null
+	check(c.level == 0 and not g0.is_empty() and hud.early_request(g0) and hud.pointer_target == want,
+		"после обучения, до «Хутора»: стрелка к просьбе «%s» сама (%s)" % [g0.get("text", ""), hud.pointer_target])
+	# стал хутором
+	c.level = 1
+	for g in Defs.REQUESTS:
+		if not c.goals_done.has(g["id"]):
+			c.goals_done.append(g["id"])
+		if g["id"] == "hamlet":
+			break
+	hud.refresh()
+	await frames(5)
+	hud._update_pointer()
+	var g1: Dictionary = c.active_goals(1)[0]
+	check(hud.pointer_target == null and not hud.pointer.visible, "«Хутор»: просьба «%s» — стрелка сама не показывает (%s)" % [g1["text"], hud.pointer_target])
+	# щелчок по строке просьбы — стрелка на несколько секунд
+	var tb: Button = null
+	for row in hud.tasks_box.get_children():
+		if row is MarginContainer:
+			for l in row.find_children("*", "Label", true, false):
+				if (l as Label).text == String(g1["text"]):
+					for b in row.get_children():
+						if b is Button:
+							tb = b
+	check(tb != null, "строка «%s» в свитке" % g1["text"])
+	if tb == null:
+		return
+	tb.pressed.emit()
+	var t0 := Time.get_ticks_msec()
+	await frames(5)
+	check(hud.pointer_target != null and hud.pointer.visible, "щелчок по строке — стрелка показалась (%s)" % hud.pointer_target)
+	await shot("t12_arrow_click.png")
+	while hud.pointer_target != null and Time.get_ticks_msec() - t0 < Hud.PTR_SHOW_MS + 3000:
+		await frames(5)
+	var dt := (Time.get_ticks_msec() - t0) / 1000.0
+	check(hud.pointer_target == null and dt >= Hud.PTR_SHOW_MS / 1000.0 - 0.5 and dt <= Hud.PTR_SHOW_MS / 1000.0 + 1.5,
+		"стрелка по щелчку погасла сама через %.1f с" % dt)
+	game.set_tool("")
+	hud.advisor_panel.visible = false

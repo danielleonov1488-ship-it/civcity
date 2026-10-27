@@ -324,7 +324,10 @@ func _new() -> void:
 	game.speed = 1.0
 	var nb := place("house_artisan", Vector2(X0 - 2.0, Z0 + 3.0), 0.5)
 	game.build_anim = false
-	check(int(game._grows) == 1 and not game.visuals.has(nb.get("id", -1)), "стройка: леса и рабочие, дом растёт")
+	check(int(game._grows) == 1 and not game.visuals.has(nb.get("id", -1)), "стройка: леса, дом растёт")
+	var scaf0 = (game._grow_live.get(int(nb.get("id", -1)), [null, null, null]) as Array)[2]
+	check(scaf0 != null and (scaf0 as Node).find_children("*", "", true, false).filter(func(n): return n is Citizen).is_empty() and (scaf0 as Node).get_child_count() >= 7,
+		"на лесах нет рабочих, что появлялись и пропадали рывком (отзывы 27.10): столбы, перекладины, лестница (%d)" % ((scaf0 as Node).get_child_count() if scaf0 else -1))
 	var gp: Vector2 = nb.get("pos", Vector2(X0, Z0))
 	game.rig.cine_look(Vector3(gp.x + 6.0, land.height_at(gp.x, gp.y) + 5.0, gp.y + 8.0), Vector3(gp.x, land.height_at(gp.x, gp.y) + 1.5, gp.y))
 	await get_tree().create_timer(1.6).timeout

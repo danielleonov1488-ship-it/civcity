@@ -1465,7 +1465,7 @@ func _on_added(b: Dictionary) -> void:
 
 
 ## Стройка как в Town to City: здание вырастает из земли за пару секунд, в пыли; потом — настоящее.
-## Этап 4 (4.6): вокруг — леса (столбы, перекладины, лестница), этажи встают по одному, двое рабочих стучат молотками.
+## Этап 4 (4.6): вокруг — леса (столбы, перекладины, лестница), этажи встают по одному (рабочих нет: отзывы игроков 27.10).
 ## Не больше GROW_MAX строек с лесами разом (копия, ряд мышью — остальные растут коротко, как раньше); на ×3 — быстрее
 const GROW_MAX := 3
 var _grows := 0
@@ -1487,7 +1487,7 @@ func _grow_anim(b: Dictionary) -> void:
 	var tw := create_tween()
 	_grow_live[id] = [tw, g, scaf]
 	if full:
-		# этажи — по одному: рывок вверх и короткая пауза (стучат молотки)
+		# этажи — по одному: рывок вверх и короткая пауза
 		for k in 3:
 			tw.tween_property(g, "scale", Vector3(1.0, 0.04 + 1.02 * (k + 1) / 3.0, 1.0), dur * 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 			tw.tween_interval(dur * 0.09)
@@ -1509,7 +1509,7 @@ func _grow_anim(b: Dictionary) -> void:
 		get_tree().create_timer(dur / puffs * k).timeout.connect(func(): _puff(xf.origin + Vector3(randf_range(-1.5, 1.5), 0.2, randf_range(-1.5, 1.5)), Color("e8dcc4")))
 
 
-## Леса вокруг стройки (в осях постройки): столбы по углам, перекладины, лестница у фасада, двое рабочих с молотками
+## Леса вокруг стройки (в осях постройки): столбы по углам, перекладины, лестница у фасада
 func _scaffold(bp: Bp, xf: Transform3D) -> Node3D:
 	var root := Node3D.new()
 	add_child(root)
@@ -1542,16 +1542,7 @@ func _scaffold(bp: Bp, xf: Transform3D) -> Node3D:
 		for hh: float in [top * 0.45, top * 0.9]:
 			put.call("SM_Prop_Beam_01", Vector3(x0, hh, zz), 0.0, x1 - x0, 0)
 	put.call("SM_Prop_Ladder_01", Vector3(x1 - 0.6, 0, z1 + 0.15), 0.0, minf(top * 0.6, 3.2))
-	if people and people.props_on:
-		var rr := RandomNumberGenerator.new()
-		rr.seed = int(xf.origin.x * 13.0 + xf.origin.z * 7.0)
-		for k in 2:
-			var c := Citizen.create(rr, false, false, false, "", "plebs")
-			root.add_child(c)
-			c.position = Vector3(lerpf(x0, x1, 0.3 + 0.4 * k), 0, z1 + 0.7)
-			c.rotation.y = PI
-			c.play("Interact" if k == 0 else "Interact_M", 0.0, rr.randf())
-			HandProps.hold(c, ["hammer"], "Interact" if k == 0 else "Interact_M")
+	# рабочих с молотками больше нет (отзывы игроков 27.10: появлялись и пропадали рывком) — леса и этажи как были
 	return root
 
 func _show(b: Dictionary) -> void:
@@ -1602,7 +1593,7 @@ func _hide(b: Dictionary) -> void:
 	visuals.erase(b["id"])
 
 
-## Стройку отменили, снесли или перенесли, пока она росла: призрак, леса и рабочие уходят сразу (не стучат на пустом месте)
+## Стройку отменили, снесли или перенесли, пока она росла: призрак и леса уходят сразу
 func _grow_cancel(id: int) -> void:
 	var e: Array = _grow_live.get(id, [])
 	if e.is_empty():
@@ -1629,7 +1620,7 @@ func _on_house_changed(b: Dictionary, up: bool) -> void:
 	if up:
 		_reanchor_decor(b)                    # украшения на стенах — на те же стены нового облика, мимо окон
 	if bool(b.get("_upg", false)):
-		# перестройка (Д12): дом встаёт заново в лесах, с рабочими; жильцы — уже в новом классе
+		# перестройка (Д12): дом встаёт заново в лесах; жильцы — уже в новом классе
 		_grow_cancel(int(b["id"]))
 		_hide(b)
 		_grow_anim(b)

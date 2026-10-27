@@ -404,9 +404,80 @@ func _run() -> void:
 	await _orders()
 	c.money = 50000.0
 	await _bandits()
+	await _calm_talk()
 	StoryDefs.extra = []
 	print("STORY DONE fails=", fails)
 	get_tree().quit()
+
+
+# ---------- отзывы игроков 27.10: в роликах не кивают без конца ----------
+
+## Наклон головы относительно груди, градусы
+func _head_pitch(cz: Citizen) -> float:
+	var sk: Skeleton3D = cz.find_children("*", "Skeleton3D", true, false)[0]
+	var rel := sk.get_bone_global_pose(sk.find_bone("UpperChest")).basis.inverse() * sk.get_bone_global_pose(sk.find_bone("Head")).basis
+	return rad_to_deg(rel.get_euler().x)
+
+
+## «Разбойники у арки», у телеги: переселенец без конца кивал — смех («Laugh») шёл по кругу всю реплику (голова меняла
+## направление ~10 раз в секунду, пока висит текст). Теперь отсмеялся один раз — говорит спокойно; пока говорит герой,
+## переселенец слушает (Idle), а не «говорит» сам
+func _calm_talk() -> void:
+	print("== ролики: смех — один раз, слушающий не кивает")
+	if not Hero.exists(c):
+		c.hero = Hero.random(RandomNumberGenerator.new())
+	var sd := StoryDefs.story("bandits")
+	var beats: Array = ((sd["steps"] as Array)[4] as Dictionary)["cine"]
+	sto._play(sd, {"id": "bandits", "fam": kid_fam, "home": int(kid_home.get("id", -1)), "seed": 4242, "cls": "plebs", "female": false},
+		beats.duplicate(true), "replay", Callable())
+	var laugh_seen := false
+	var calm := ""
+	var rate := 99.0
+	var listen := ""
+	var t0 := Time.get_ticks_msec()
+	while sto.kit != null and Time.get_ticks_msec() - t0 < 60000:
+		await frames(2)
+		if sto.cine.is_empty():
+			continue
+		var i := int(sto.cine.get("i", -1))
+		var bs: Array = sto.cine.get("beats", [])
+		if i < 0 or i >= bs.size():
+			continue
+		var b: Array = bs[i]
+		var st = (sto.cine.get("actors", {}) as Dictionary).get("settler")
+		if not (String(b[0]) == "say" and sto.cine.get("wait", false)):
+			continue
+		sto.ui.finish_typing()
+		if String(b[1]) == "settler" and is_instance_valid(st) and (st as Citizen)._cur == "Laugh" and not laugh_seen:
+			laugh_seen = true
+			# держим реплику, как игрок, что читает (4 с); после смеха — сколько раз в секунду голова меняет направление
+			var rev := 0
+			var prev := INF
+			var pd := 0.0
+			var t1 := Time.get_ticks_msec()
+			while Time.get_ticks_msec() - t1 < 4000:
+				await frames(1)
+				if Time.get_ticks_msec() - t1 < 2500 or not is_instance_valid(st):
+					continue
+				var a := _head_pitch(st)
+				if prev != INF and absf(a - prev) > 0.15:
+					if pd != 0.0 and signf(a - prev) != signf(pd):
+						rev += 1
+					pd = a - prev
+				prev = a
+			calm = (st as Citizen)._cur if is_instance_valid(st) else "-"
+			rate = rev / 1.5
+			await shot("story_calm_settler.png")
+		elif String(b[1]) == "hero" and listen == "":
+			await frames(20)
+			listen = (st as Citizen)._cur if is_instance_valid(st) else "-"
+			await shot("story_calm_listen.png")
+		await frames(4)
+		sto._next()
+	check(laugh_seen and calm == "Idle_Talking" and rate < 6.0,
+		"переселенец у телеги отсмеялся один раз — дальше говорит спокойно (%s, голова меняет направление %.1f раз/с; было ~10)" % [calm, rate])
+	check(listen == "Idle", "пока говорит герой, переселенец слушает спокойно, а не «говорит» и кивает (%s)" % listen)
+	await frames(30)
 
 
 # ---------- часы, первая история, ранг, промежуток ----------
