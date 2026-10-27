@@ -158,5 +158,214 @@ func _run() -> void:
 		# шаг: лапы не скользят — скорость клипа × длина шага = скорость кошки
 		var w: Dictionary = ppl.cats[16]
 		print("CAT walk k=%.2f clip=%s" % [float(w.get("k", 0.0)), w.get("clip", "")])
+	await _kitten(home)
 	print("CAT DONE fails=%d cats=%d" % [fails, ppl.cats.size()])
 	get_tree().quit()
+
+
+# ---------- кошка «Kitten» на скелете Quaternius (27.10) ----------
+
+## Узлы живой кошки (или cat_node): скелет, сетка
+func _parts(root: Node3D) -> Array:
+	var sk: Skeleton3D = root.find_children("*", "Skeleton3D", true, false)[0]
+	var mi: MeshInstance3D = root.find_children("*", "MeshInstance3D", true, false)[0]
+	return [sk, mi]
+
+
+## Сетка кошки в позе сейчас — как её гнёт видеокарта (вершины в осях скелета: x — вперёд, y — влево, z — вверх)
+func _posed(sk: Skeleton3D, mi: MeshInstance3D) -> PackedVector3Array:
+	var arr := mi.mesh.surface_get_arrays(0)
+	var skin: Skin = mi.skin
+	var mats: Array[Transform3D] = []
+	for b in skin.get_bind_count():
+		mats.append(sk.get_bone_global_pose(sk.find_bone(skin.get_bind_name(b))) * skin.get_bind_pose(b))
+	var V: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var B: PackedInt32Array = arr[Mesh.ARRAY_BONES]
+	var W: PackedFloat32Array = arr[Mesh.ARRAY_WEIGHTS]
+	var out := PackedVector3Array()
+	out.resize(V.size())
+	for i in V.size():
+		var p := Vector3.ZERO
+		for k in 4:
+			p += (mats[B[i * 4 + k]] * V[i]) * W[i * 4 + k]
+		out[i] = p
+	return out
+
+
+## Растяжение рёбер граней в позе (posed) против покоя (rest): [самое длинное / в покое, самое короткое / в покое];
+## без глаз (их грани — доли миллиметра)
+func _stretch(rest: PackedVector3Array, posed: PackedVector3Array, col: PackedColorArray) -> Vector2:
+	var mx := 0.0
+	var mn := INF
+	for t in range(0, rest.size(), 3):
+		if col[t].r > 0.7:
+			continue
+		for e in 3:
+			var a := t + e
+			var b := t + (e + 1) % 3
+			var l0 := rest[a].distance_to(rest[b])
+			if l0 < 0.0004:
+				continue
+			var r := posed[a].distance_to(posed[b]) / l0
+			mx = maxf(mx, r)
+			mn = minf(mn, r)
+	return Vector2(mx, mn)
+
+
+## Сантиметры на улице из единиц скелета
+func _cm(v: float) -> float:
+	return v * 100.0 * People.CAT_LEN / (People._cat_size / 100.0)
+
+
+func _kitten(home: Dictionary) -> void:
+	var ppl = game.people
+	var mesh: ArrayMesh = People._cat_v2
+	check(mesh != null and mesh.get_surface_count() == 1, "сетка «Kitten» собрана (%s)" % People.CAT_MESH)
+	if mesh == null:
+		return
+	var arr := mesh.surface_get_arrays(0)
+	var V: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var col: PackedColorArray = arr[Mesh.ARRAY_COLOR]
+	var W: PackedFloat32Array = arr[Mesh.ARRAY_WEIGHTS]
+	var wok := W.size() == V.size() * 4
+	for i in V.size():
+		if not wok:
+			break
+		var s := W[i * 4] + W[i * 4 + 1] + W[i * 4 + 2] + W[i * 4 + 3]
+		wok = absf(s - 1.0) < 0.001
+	var eyes := 0
+	var parts := {}
+	for c: Color in col:
+		eyes += 1 if c.r > 0.7 else 0
+		parts["%.2f" % c.r] = true
+		parts["g%.1f" % c.g] = true
+		parts["b%.2f" % c.b] = true
+	check(V.size() == 650 * 3 and wok and People._cat_skin.get_bind_count() == People.CAT_NEXT.size(),
+		"сетка на скелете: %d треугольников, веса костей у всех вершин (сумма 1), привязок %d" % [V.size() / 3, People._cat_skin.get_bind_count()])
+	check(eyes >= 60 and parts.size() >= 11, "в вершинах — части тела, «маска», места на теле, глаза (%d вершин глаз; %s)" % [eyes, str(parts.keys())])
+	# живая кошка: сетка «Kitten», привязка, суставы под неё; длина на улице — как прежде (около CAT_LEN)
+	var c: Dictionary = ppl._make_cat(home, {"fur": 0, "p": Vector2(X0 + 2.0, Z0 + 4.0), "rng": RandomNumberGenerator.new()})
+	var pr := _parts(c["n"])
+	var sk: Skeleton3D = pr[0]
+	var mi: MeshInstance3D = pr[1]
+	var J := People._cat_joints()
+	var head_ok: bool = (sk.get_bone_global_rest(sk.find_bone("Bone.003")).origin - (J["Bone.003"] as Vector3)).length() < 0.0001
+	check(mi.mesh == mesh and mi.skin == People._cat_skin and head_ok, "у кошки — сетка «Kitten» и её привязка, суставы под неё")
+	var box := Artisau.aabb((c["n"] as Node3D).get_child(0))
+	var L := maxf(box.size.x, box.size.z)
+	check(L > People.CAT_LEN * 0.85 and L < People.CAT_LEN * 1.07, "длина кошки на улице %.2f м (CAT_LEN %.2f)" % [L, People.CAT_LEN])
+	# все движения: идут (кости двигаются), сетка не рвётся и не тянется, в землю не уходит, лапы в шаге ступают по земле
+	var ap: AnimationPlayer = c["anim"]
+	for st: String in ["walk", "sit", "pet", "sleep"]:
+		c["state"] = st
+		c["clip"] = ""                            # без плавного перехода: на паузе он не идёт
+		ppl._cat_anim(c)
+		ap.speed_scale = 0.0
+		var cl := String(People.CAT_CLIP[st][0])
+		var Lc := ap.current_animation_length
+		var worst := Vector2(0.0, INF)
+		var low := INF
+		var high := -INF
+		var leg_low := INF
+		var moved := 0.0
+		var prev := PackedVector3Array()
+		for f in 8:
+			ap.seek(Lc * f / 8.0, true)
+			await frames(2)                       # позы костей скелет пересчитывает к кадру
+			var ps := _posed(sk, mi)
+			var sr := _stretch(V, ps, col)
+			worst = Vector2(maxf(worst.x, sr.x), minf(worst.y, sr.y))
+			var fl := INF
+			for i in ps.size():
+				if absf(col[i].b - 0.25) < 0.05:
+					leg_low = minf(leg_low, ps[i].z)          # лапы
+				else:
+					low = minf(low, ps[i].z)                  # туловище, голова, хвост
+				fl = minf(fl, ps[i].z)
+			high = maxf(high, fl)
+			if not prev.is_empty():
+				for i in range(0, ps.size(), 7):
+					moved = maxf(moved, ps[i].distance_to(prev[i]))
+			prev = ps
+		print("CAT kitten %s: stretch %.2f…%.2f, lowest body %.1f cm, legs %.1f cm, highest lowest %.1f cm, moved %.4f" % [cl, worst.y, worst.x, _cm(low), _cm(leg_low), _cm(high), moved])
+		check(ap.current_animation == "cat/" + cl and moved > 0.0002, "«%s» играет (кости двигаются)" % cl)
+		# сгиб сжимает внутреннюю сторону сустава (локоть, скакательный сустав сложены) — это можно, но не в точку
+		check(worst.x < 2.3 and worst.y > 0.12, "«%s»: грани не рвутся и не тянутся (рёбра от %.2f до %.2f длины в покое)" % [cl, worst.y, worst.x])
+		# спит — туловище на земле, сложенные лапы под ним могут уйти в землю (их не видно); в остальных — и лапы на земле
+		var leg_lim := -7.0 if st == "sleep" else -1.5
+		check(_cm(low) > -1.5 and _cm(leg_low) > leg_lim and _cm(high) < 1.5,
+			"«%s»: стоит/лежит на земле — не тонет и не висит (туловище %.1f см, лапы %.1f см, в каждом кадре касается земли)" % [cl, _cm(low), _cm(leg_low)])
+	# все окрасы: свои шерсть и узор; глаза не цвета шерсти; Мася — с отливом, сиамская — с «маской»
+	var furs := []
+	for f in People.CAT_FURS.size():
+		furs.append(f)
+	furs.append_array([People.CAT_MASYA, People.CAT_SIAMESE])
+	var seen := {}
+	for f: int in furs:
+		var cf: Dictionary = ppl._make_cat(home, {"fur": f, "p": Vector2(X0 + 3.0, Z0 + 4.0), "rng": RandomNumberGenerator.new()})
+		var mt: ShaderMaterial = cf["mat"]
+		var fc: Color = mt.get_shader_parameter("fur")
+		var ec: Color = mt.get_shader_parameter("eye_col")
+		var ok: bool = fc.is_equal_approx(People.cat_fur(f)[0]) and int(mt.get_shader_parameter("pattern")) == int(People.cat_look(f)[0]) \
+			and Vector3(fc.r - ec.r, fc.g - ec.g, fc.b - ec.b).length() > 0.1 and int(cf["fi"]) == f
+		if f == People.CAT_MASYA:
+			ok = ok and float(mt.get_shader_parameter("sheen")) > 0.3
+		if f == People.CAT_SIAMESE:
+			ok = ok and int(mt.get_shader_parameter("pattern")) == 4
+		seen[fc.to_html()] = true
+		check(ok, "окрас %d: шерсть %s, узор %d, глаза %s" % [f, fc.to_html(false), int(mt.get_shader_parameter("pattern")), ec.to_html(false)])
+		(cf["n"] as Node).queue_free()
+	check(seen.size() == furs.size(), "все %d окрасов разные" % furs.size())
+	# вещицы лавки: на своей кости, у своего места (голова, шея, спина) — и в позах
+	for item: String in Defs.CAT_ITEMS:
+		People.cat_wear(c["n"], item)
+		var bas := (c["n"] as Node3D).find_children("cat_acc", "BoneAttachment3D", true, false)
+		var slot := String(Defs.CAT_ITEMS[item]["slot"])
+		var want_bone := String(People.CAT_SLOT[slot][0])
+		var ok := bas.size() == 1 and (bas[0] as BoneAttachment3D).bone_name == want_bone
+		var far := 0.0
+		for st: String in ["walk", "sit", "sleep"]:
+			if not ok:
+				break
+			c["state"] = st
+			c["clip"] = ""
+			ppl._cat_anim(c)
+			ap.speed_scale = 0.0
+			ap.seek(0.3, true)
+			await frames(1)
+			var am: MeshInstance3D = (bas[0] as Node).find_children("cat_acc_mesh", "MeshInstance3D", true, false)[0]
+			var cen: Vector3 = am.global_transform * am.mesh.get_aabb().get_center()
+			# место крепления в этой позе: точка покоя на кости → туда, где кость сейчас
+			var bi := sk.find_bone(want_bone)
+			var at: Vector3 = sk.global_transform * (sk.get_bone_global_pose(bi) * sk.get_bone_global_rest(bi).affine_inverse() * ((People.CAT_SLOT[slot][1] as Vector3) * People.CAT_K))
+			far = maxf(far, cen.distance_to(at))
+		check(ok and far < 0.14, "вещица «%s» (%s): на кости %s, у своего места (до %.1f см)" % [item, slot, want_bone, far * 100.0])
+	People.cat_wear(c["n"], "")
+	check((c["n"] as Node3D).find_children("cat_acc*", "", true, false).is_empty(), "вещицу можно снять")
+	(c["n"] as Node).queue_free()
+	# портрет в карточке и кошка в корзинке — та же сетка
+	var pn := People.cat_node(People.CAT_MASYA, "Pet", 7)
+	var pp := _parts(pn)
+	check((pp[1] as MeshInstance3D).mesh == mesh and (pp[1] as MeshInstance3D).skin == People._cat_skin, "портрет и корзинка — тоже «Kitten»")
+	pn.free()
+	# старые сохранения: окрас и вещица из записи — те же (номера окрасов не менялись)
+	for f in [0, 3, 5, People.CAT_MASYA]:
+		var rec := {"nm": "Проба", "sx": 1, "fur": f, "home": int(home["id"]), "sd": 12345, "wr": "collar"}
+		var lc: Dictionary = ppl._cat_from(rec, home)
+		check(int(lc["fi"]) == f, "старая запись: окрас %d остался" % f)
+		(lc["n"] as Node).queue_free()
+	# новая кошка: поток случайностей жителей — как раньше (дом, имя, окрас, зерно); сиамская — по зерну, не из потока
+	ppl.rng.seed = 777
+	var r2 := RandomNumberGenerator.new()
+	r2.seed = 777
+	var nc: Dictionary = ppl._new_cat()
+	if not nc.is_empty():
+		for i in 4:
+			r2.randi()
+		var rec: Dictionary = game.city.cats[-1]
+		var siam: bool = int(rec["fur"]) == People.CAT_SIAMESE
+		var siam_ok: bool = not siam or ((int(rec["sd"]) >> 3) & 1 == 1 and int(nc["fi"]) == People.CAT_SIAMESE)
+		check(ppl.rng.state == r2.state and siam_ok, "новая кошка берёт из потока столько же, сколько прежде (окрас %d)" % int(rec["fur"]))
+		ppl.drop_cat(nc)
+		game.city.cats.pop_back()
+	await frames(2)

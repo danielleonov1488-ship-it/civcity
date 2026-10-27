@@ -877,7 +877,7 @@ static func shop_cat_subject(vp: SubViewport, fur: int, item: String) -> void:
 	if not sks.is_empty():
 		sk = sks[0]
 		bone = (sk as Skeleton3D).find_bone("Bone.003")
-	_face = [vp.get_node("cam"), sk, bone, Vector3(0, 0.06, 0.03), 0.5]
+	_face = [vp.get_node("cam"), sk, bone, Vector3(0, 0.055, 0.045), 0.56]      # голова «Kitten» крупнее: камера дальше, в кадре и уши, и шляпка
 
 
 ## Портрет для карточки постройки (у «Кошачьей лавки»): тот же мирок, что у кошки
@@ -1194,7 +1194,7 @@ static func _cat_subject(vp: SubViewport, ct: Dictionary) -> void:
 	if not sks.is_empty():
 		sk = sks[0]
 		bone = (sk as Skeleton3D).find_bone("Bone.003")
-	_face = [vp.get_node("cam"), sk, bone, Vector3(0, 0.06, 0.03), 0.46]
+	_face = [vp.get_node("cam"), sk, bone, Vector3(0, 0.055, 0.045), 0.52]      # голова «Kitten» крупнее: камера дальше, в кадре и уши, и шляпка
 
 
 ## Камера портрета — на голову (голова движется: каждый кадр, пока карточка открыта)

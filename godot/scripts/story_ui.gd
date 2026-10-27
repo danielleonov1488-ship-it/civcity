@@ -355,8 +355,8 @@ func _portrait_vp(who: Dictionary) -> SubViewport:
 			if not sks.is_empty():
 				sk = sks[0]
 				bone = sk.find_bone("Bone.003")
-			off = Vector3(0, 0.06, 0.03)          # кость — у основания головы: смотрим в мордочку
-			dist = 0.46
+			off = Vector3(0, 0.055, 0.045)        # кость — у основания головы: смотрим в мордочку
+			dist = 0.52                            # голова «Kitten» крупнее прежней: в кадре и уши
 		"beast":
 			# ослик (Quaternius): мордой к камере вполоборота — куда смотрит голова, видно по костям шеи и головы
 			var bn := Stories.beast_node(false)
