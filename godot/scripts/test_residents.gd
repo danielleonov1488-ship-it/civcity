@@ -827,19 +827,26 @@ func _house_card_test(houses: Array) -> void:
 	await frames(3)
 	var f: Dictionary = h["families"][0]
 	var first := String(f["m"][0]["pn"])
-	var chip: Button = null
-	var cl: Node = hud.info_box.find_child("m_" + first, true, false)
-	if cl != null:
-		for b in cl.find_children("*", "Button", true, false):
-			chip = b
+	var chip := _family_chip(first)
 	var t := _texts(hud.info_box)
 	if check(chip != null and (t.contains(first + " —") or t.contains(first + ",")), "в карточке дома — члены семьи («%s — …»)" % first):
 		await shot("res_house_family.png")
-		chip.pressed.emit()
+		chip = _family_chip(first)                   # карточка могла пересобраться, пока снимали, — фишка уже новая
+		if chip != null:
+			chip.pressed.emit()
 		await frames(2)
 		var sel: Dictionary = hud.info_p.get("r", {})
 		check(not sel.is_empty() and String(sel["m"]["pn"]) == first, "щелчок по члену семьи — его карточка")
 	hud.close_panels()
+
+
+func _family_chip(pn: String) -> Button:
+	var chip: Button = null
+	var cl: Node = hud.info_box.find_child("m_" + pn, true, false)
+	if cl != null:
+		for b in cl.find_children("*", "Button", true, false):
+			chip = b
+	return chip
 
 
 ## «Горожане»: поиск по имени и по семье
