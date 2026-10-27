@@ -1779,7 +1779,7 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			var n := city.progress_of(g[1])
 			var need := int(g[2])
 			out.append({"text": "%s %d/%d" % [String(st.get("label", "Сделано")), mini(n, need), need], "ok": n >= need,
-				"do": {} if n >= need else hud.need_do(g[1], String(st.get("tool", "")))})
+				"do": {} if n >= need else hud.need_do(g[1], String(st.get("tool", "")), need)})
 		"around":
 			for base in (g[2] as Dictionary):
 				var n := _count_near(String(base), hp, float(g[1]), -1)
@@ -1969,6 +1969,15 @@ func happy_gaps(h: Dictionary) -> Array:
 
 ## Куда показать золотой стрелкой по идущей истории (Hud._update_pointer — после обучения, до просьб): Hud.need_do-вид
 ## (+ tip) или {} — истории стрелка не нужна (ищут в мире, ждут ролика, выбирают)
+## Стрелка истории показывает сама (без щелчка по строке цели) — только у шагов, что явно ведут игрока (point:
+## «Легион», «Этаж»); у остальных — по щелчку строки цели, на несколько секунд (Hud.show_pointer, отзывы игроков 27.10)
+func pointer_auto() -> bool:
+	if city == null or not allowed():
+		return false
+	var a: Dictionary = S()["active"]
+	return not a.is_empty() and not a.get("ready", false) and _step(a).has("point")
+
+
 func pointer_do() -> Dictionary:
 	if city == null or not allowed():
 		return {}
@@ -3310,14 +3319,13 @@ func _beat_start(b: Array) -> void:
 			_look(String(b[1]), String(b[2]), String(b[3]) if b.size() > 3 else "")
 		"say":
 			ui.say(_speaker(String(b[1])), StoryDefs.fill(line_of(b[2], bind), bind))
-			var c = cine["actors"].get(String(b[1]))
-			if c != null and c is Citizen and String(b[1]) != "cat" and (c as Citizen)._cur in ["Idle", "Look_Around"]:
-				(c as Citizen).play("Idle_Talking")
-			elif String(b[1]) == "donkey":
+			_talker(String(b[1]))
+			if String(b[1]) == "donkey":
 				_beast_play("Idle_2")
 			cine["wait"] = true
 		"choice":
 			ui.say(_speaker(String(b[1])), StoryDefs.fill(String(b[2]), bind))
+			_talker(String(b[1]))
 			var opts := _avail(b[3])
 			cine["opts"] = opts
 			ui.choices(opts, _picked)
@@ -3421,6 +3429,7 @@ func _beat_tick(dt: float) -> void:
 	var b: Array = beats[i]
 	if cine.has("spar"):
 		_spar_tick(dt, String(b[0]) == "spar" and String(b[1]) == "fight")   # гладиаторы живут весь ролик (замах, вспышка)
+	_laugh_once(dt, b)
 	match String(b[0]):
 		"parade":
 			if String(b[1]) != "walk" or _parade_step(dt) or bt > 30.0:
@@ -3496,6 +3505,42 @@ func _beat_tick(dt: float) -> void:
 				var tw := veil.create_tween()
 				tw.tween_property(veil, "color:a", 0.0, 0.5)
 				_next_beat()
+
+
+## Реплика роли who: он говорит (стоял, оглядывался — заговорил), а кто говорил до него, теперь слушает спокойно —
+## жестикулирует только говорящий (прежде прошлый говорящий «говорил» и кивал всю чужую реплику)
+func _talker(who: String) -> void:
+	var c = cine["actors"].get(who)
+	if is_instance_valid(c) and c is Citizen and who != "cat" and (c as Citizen)._cur in ["Idle", "Look_Around"]:
+		(c as Citizen).play("Idle_Talking")
+	for r in cine["actors"]:
+		var o = cine["actors"][r]
+		if String(r) != who and is_instance_valid(o) and o is Citizen and (o as Citizen)._cur in ["Idle_Talking", "Idle_Talking_M"]:
+			(o as Citizen).play("Idle", 0.4)
+
+
+const LAUGH_ONCE := 2.3                # смех в ролике — один раз (Citizen: «ха-ха-ха» за ~2 с), потом спокойно
+
+## Смех героя ролика — один раз: отсмеялся — говорит дальше спокойно (Idle_Talking, если реплика его) или просто стоит.
+## Прежде «Laugh» шёл по кругу, пока висит реплика (а висит она, пока игрок читает): переселенец у телеги в «Разбойниках
+## у арки» без конца кивал туда-сюда (отзывы игроков 27.10). Так же — у всех историй, где кто-то смеётся
+func _laugh_once(dt: float, b: Array) -> void:
+	for r in cine["actors"]:
+		var a = cine["actors"][r]
+		if not is_instance_valid(a) or not (a is Citizen):
+			continue
+		var cz := a as Citizen
+		if cz._cur != "Laugh":
+			if cz.has_meta("laugh_t"):
+				cz.remove_meta("laugh_t")
+			continue
+		var t := float(cz.get_meta("laugh_t", 0.0)) + dt
+		if t < LAUGH_ONCE:
+			cz.set_meta("laugh_t", t)
+			continue
+		cz.remove_meta("laugh_t")
+		var talks := String(b[0]) in ["say", "choice"] and b.size() > 1 and String(b[1]) == String(r)
+		cz.play("Idle_Talking" if talks else "Idle", 0.5)
 
 
 ## Реплика такта «say»: строка — как есть; словарь — по выбору (ярмарка: вино или пряности) или по другому флагу.

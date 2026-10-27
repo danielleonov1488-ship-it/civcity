@@ -238,13 +238,14 @@ static func _derive(lib: AnimationLibrary) -> void:
 		"Neck": func(t: float) -> Vector3: return Vector3(0.0, 0.25 * _curve(t, look), 0.0),
 		"UpperChest": func(t: float) -> Vector3: return Vector3(0.0, 0.2 * _curve(t, look), 0.0)})
 	lib.add_animation("Look_Around", la)
-	# смеётся: откидывается назад, плечи часто подрагивают
-	var Lg := idle.length
-	var env := func(t: float) -> float: return _curve(t, [[0.0, 0.0], [0.35, 1.0], [Lg - 0.5, 1.0], [Lg, 0.0]])
-	var laugh := _layer(idle, 1, {
-		"UpperChest": func(t: float) -> Vector3: return Vector3(-(0.14 + 0.07 * sin(TAU * 6.0 * t)) * env.call(t), 0.0, 0.0),
-		"Chest": func(t: float) -> Vector3: return Vector3(-0.08 * env.call(t), 0.0, 0.0),
-		"Head": func(t: float) -> Vector3: return Vector3(-(0.22 + 0.06 * sin(TAU * 6.0 * t + 1.0)) * env.call(t), 0.0, 0.06 * env.call(t))})
+	# смеётся: откидывается назад, плечи подрагивают («ха-ха-ха») — и снова стоит спокойно до конца круга. Прежде смех
+	# шёл весь круг и сразу начинался заново, голова тряслась 6 раз в секунду: в роликах, пока висит реплика, человек
+	# без конца кивал туда-сюда (отзывы игроков 27.10, «Разбойники у арки»)
+	var env := func(t: float) -> float: return _curve(t, [[0.0, 0.0], [0.3, 1.0], [1.5, 1.0], [2.2, 0.0]])
+	var laugh := _layer(idle, 2, {
+		"UpperChest": func(t: float) -> Vector3: return Vector3(-(0.12 + 0.05 * sin(TAU * 4.5 * t)) * env.call(t), 0.0, 0.0),
+		"Chest": func(t: float) -> Vector3: return Vector3(-0.07 * env.call(t), 0.0, 0.0),
+		"Head": func(t: float) -> Vector3: return Vector3(-(0.18 + 0.03 * sin(TAU * 4.5 * t + 1.0)) * env.call(t), 0.0, 0.05 * env.call(t))})
 	lib.add_animation("Laugh", laugh)
 	# играет на лире (уличный музыкант): сидит, как возница (руки перед собой), лира — в левой руке (HandProps),
 	# правая перебирает струны, голова и плечи — в такт
@@ -496,24 +497,104 @@ func _put_hair() -> void:
 	var hc := String(look.get("hc", ""))
 	for hn_name: String in hairs:
 		var hn := _scene("res://assets/synty/FBX/Attachments/" + hn_name + ".fbx").instantiate() as Node3D
-		var mat: Material = _plain(variant)
-		if hn_name != crown:
-			mat = _hair_mat(hc, variant)
-		for mi: MeshInstance3D in hn.find_children("*", "MeshInstance3D", true, false):
-			mi.material_override = mat
+		if hn_name == crown:
+			for mi: MeshInstance3D in hn.find_children("*", "MeshInstance3D", true, false):
+				mi.material_override = _plain(variant)
+		else:
+			paint_hair(hn, hc, variant, hn_name.contains("Beard"))
 		hair_att.add_child(hn)
 	meshes = []                            # set_alpha заново найдёт сетки (причёска новая)
 
 
-## Материал волос: свой тон палитры (A/B/C) или седые
-static func _hair_mat(hc: String, variant: String) -> Material:
-	if hc == "S":
-		if _silver == null:
-			_silver = StandardMaterial3D.new()
-			_silver.albedo_color = Color("d2cdc4")
-			_silver.roughness = 0.9
-		return _silver
-	return _plain(hc if hc in ["A", "B", "C"] else variant)
+## Цвет волос (hc). У Synty цвет волос нарисован в атласе тона кожи, и вариантов там мало: в атласах A и B — один и тот
+## же каштановый, в C — почти чёрный, светлых нет вовсе. Прежде hc просто выбирал атлас — и «Тёмные» (B) выходили такими
+## же каштановыми, как «Каштановые», а «Светлые» (C) — чёрными. Теперь цвет — по смыслу: A — каштановые (атлас A),
+## B — тёмные (атлас C), C — светлые (ровный цвет: светлые волосы и борода Synty из атласа 02_A), S — седые.
+## "" — свои, как нарисовал Synty под тон кожи (у A и B — каштановые, у C — тёмные): облик жителей прежний
+const HAIR_TONES := ["A", "B", "C", "S"]
+const HAIR_BLOND := [Color("c49a64"), Color("a57c52")]   # светлые: волосы, борода (на тон темнее — как у Synty)
+static var _blond := []
+static var _hair_split := {}           # сетка причёски → копия, где вплетённая лента — своей поверхностью
+
+
+## Какой цвет волос виден: выбранный или свой (по тону кожи) — для подсветки выбранного в «Внешности»
+static func hair_tone(lk: Dictionary) -> String:
+	var hc := String(lk.get("hc", ""))
+	if hc in HAIR_TONES:
+		return hc
+	return "B" if String(lk.get("skin", "A")) == "C" else "A"
+
+
+## Материал волос по цвету hc (см. HAIR_TONES); beard — борода (светлая — на тон темнее)
+static func _hair_mat(hc: String, variant: String, beard := false) -> Material:
+	match hc:
+		"S":
+			if _silver == null:
+				_silver = StandardMaterial3D.new()
+				_silver.albedo_color = Color("d2cdc4")
+				_silver.roughness = 0.9
+			return _silver
+		"C":
+			if _blond.is_empty():
+				for col: Color in HAIR_BLOND:
+					var m := StandardMaterial3D.new()
+					m.albedo_color = col
+					m.roughness = 0.85
+					_blond.append(m)
+			return _blond[1 if beard else 0]
+		"B":
+			return _plain("C")
+		"A":
+			return _plain("A")
+	return _plain(variant)
+
+
+## Причёска или борода hn (узел из FBX) — в цвет волос hc. У ровного цвета (светлые, седые) лента, вплетённая
+## в причёску (женская 05), остаётся своей — по атласу
+static func paint_hair(hn: Node3D, hc: String, variant: String, beard := false) -> void:
+	var mat := _hair_mat(hc, variant, beard)
+	var flat := hc == "C" or hc == "S"
+	for mi: MeshInstance3D in hn.find_children("*", "MeshInstance3D", true, false):
+		mi.material_override = mat
+		if flat and mi.mesh is ArrayMesh:
+			var sp := _ribbon_split(mi.mesh)
+			if sp != mi.mesh:
+				mi.mesh = sp
+				mi.material_override = null
+				mi.set_surface_override_material(0, mat)
+				mi.set_surface_override_material(1, _plain(variant))
+
+
+## Копия сетки причёски: волосы (клетка волос атласа) — поверхность 0, остальное (лента) — 1; нечего делить — та же сетка
+static func _ribbon_split(m: ArrayMesh) -> ArrayMesh:
+	var key := m.get_instance_id()
+	if _hair_split.has(key):
+		return _hair_split[key]
+	_hair_split[key] = m
+	if m.get_surface_count() != 1 or m.get_blend_shape_count() > 0:
+		return m
+	var arr := m.surface_get_arrays(0)
+	var uv: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
+	var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+	if uv.is_empty() or idx.is_empty():
+		return m
+	var hair_i := PackedInt32Array()
+	var rest_i := PackedInt32Array()
+	for t in range(0, idx.size() - 2, 3):
+		var u := uv[idx[t]]
+		if u.x < 0.07 and u.y > 0.78 and u.y < 0.83:          # клетка волос и бород атласа (~0.05, 0.80)
+			hair_i.append_array([idx[t], idx[t + 1], idx[t + 2]])
+		else:
+			rest_i.append_array([idx[t], idx[t + 1], idx[t + 2]])
+	if rest_i.is_empty() or hair_i.is_empty():
+		return m
+	var out := ArrayMesh.new()
+	for part: PackedInt32Array in [hair_i, rest_i]:
+		var a := arr.duplicate()
+		a[Mesh.ARRAY_INDEX] = part
+		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
+	_hair_split[key] = out
+	return out
 
 
 ## Сменить облик на ходу (причёска, борода, венок, цвета одежды, цвет волос) — без новой модели: модель и тон кожи

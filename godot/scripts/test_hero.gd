@@ -131,7 +131,9 @@ func _new() -> void:
 					check(false, "набор «%s»: %s закрыт" % [Hero.PRESETS[i]["n"], k])
 	check(ok_presets == Hero.PRESETS.size(), "все %d наборов собираются (с плащом и венком)" % Hero.PRESETS.size(), ok_presets)
 	scr._preset(4)                                 # «Матрона»
-	await frames(40)
+	await frames(10)
+	await shot("hero_create_sparkle.png")          # искры в момент вспышки — мягкие точки, не квадраты
+	await frames(30)
 	await shot("hero_create_f.png")
 	scr._preset(0)                                 # «Полководец»
 	await frames(50)

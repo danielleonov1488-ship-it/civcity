@@ -1219,7 +1219,7 @@ func _tip_level(v: VBoxContainer) -> void:
 		_tip_row(v, e["icon"], e["text"], val, C_GOOD if e["ok"] else C_BAD, 1 if e["ok"] else 0)
 		if not e["ok"] and e["icon"] != "family" and not e["pct"]:
 			# постройка условия: что сделать прямо сейчас (та же подсказка, что у стрелки просьб и в карточке станции)
-			var say := String(need_do(e["p"], String(e.get("tool", ""))).get("say", ""))
+			var say := String(need_do(e["p"], String(e.get("tool", "")), int(e.get("need", 0))).get("say", ""))
 			if say != "":
 				_tip_text(v, "   → " + say + ".", C_SOFT, 13)
 	if met == nd.size():
@@ -3018,7 +3018,8 @@ func _update_pointer() -> void:
 		var lp: Array = lu.tut_pointer()
 		# шаг «Войска» при закрытом окне уступает стрелку идущей истории горожан — улучшение бойцов подождёт
 		var sto0 = game.get("stories")
-		if lp[0] != null and lp[0] != lg_upg_btn and not lu.visible and lu.lg.tut_step() == "troops" and sto0 != null and not (sto0.pointer_do() as Dictionary).is_empty():
+		if lp[0] != null and lp[0] != lg_upg_btn and not lu.visible and lu.lg.tut_step() == "troops" and sto0 != null and sto0.pointer_auto() \
+				and not (sto0.pointer_do() as Dictionary).is_empty():
 			lp = [null, ""]
 		if lp[0] != null:
 			pointer_target = lp[0]
@@ -3026,9 +3027,20 @@ func _update_pointer() -> void:
 			return
 	if ui_level() < 3:
 		return
-	# идущая история горожан: стрелка — к тому, чего не хватает по её шагу (лавка, склад, «Этаж», «Обзор → Вода»)
+	# щёлкнули по строке (просьба, условие уровня, цель истории) — стрелка PTR_SHOW_MS к тому, что нужно сделать
+	if not _ptr_shown.is_empty():
+		if Time.get_ticks_msec() < int(_ptr_shown["until"]):
+			pointer_target = _do_target(_ptr_shown["do"], true)
+			pointer_text.text = String((_ptr_shown["do"] as Dictionary).get("tip", ""))
+			if pointer_target != null:
+				return
+		else:
+			_ptr_shown = {}
+	# Сама стрелка (отзывы игроков 27.10: путала — «Обзор» вместо домов, дома при хватающем жилье) — только в начале:
+	# обучение, первые просьбы до «Хутора» включительно и шаги историй, что явно показывают, куда идти (point:
+	# «Легион», «Этаж»). Дальше — по щелчку строки (show_pointer)
 	var sto = game.get("stories")
-	if sto != null:
+	if sto != null and sto.pointer_auto():
 		var sp: Dictionary = sto.pointer_do()
 		if not sp.is_empty():
 			pointer_target = _do_target(sp)
@@ -3037,15 +3049,40 @@ func _update_pointer() -> void:
 			pointer_text.text = String(sp.get("tip", ""))
 			return
 	var goals: Array = game.city.active_goals(1)
-	if goals.is_empty():
+	if goals.is_empty() or not early_request(goals[0]):
 		return
-	# стрелка — к тому, чего не хватает: первая невыполненная часть просьбы (склад → мясная лавка), закрытое —
-	# к исследованиям, этажи — к «Этажу», счастье и снабжение — к «Обзору» (need_do / _do_target)
+	# стрелка — к тому, чего не хватает: первая невыполненная часть просьбы, закрытое — к исследованиям, жители —
+	# к домам, только если жилья мало (хватает — ждём повозку, без стрелки), сытые дома — к домам или лавке еды
 	var rt := _request_target(goals[0])
 	pointer_target = rt["target"]
 	if game.tool != "" and Defs.B.has(game.tool):
 		pointer_target = null
 	pointer_text.text = String(rt["tip"])
+
+
+const PTR_SHOW_MS := 6000              # стрелка по щелчку строки — столько мс, потом гаснет
+var _ptr_shown := {}                   # {"do": need_do, "until": мс} — стрелка по щелчку
+var _ptr_tick := 0.0
+
+
+## Первые просьбы — до «Хутора» включительно, пока город не стал хутором: к ним стрелка показывает сама
+func early_request(g: Dictionary) -> bool:
+	if game.city.level >= 1:
+		return false
+	for r: Dictionary in Defs.REQUESTS:
+		if r["id"] == g["id"]:
+			return true
+		if r["id"] == "hamlet":
+			return false
+	return false
+
+
+## Показать стрелкой (на PTR_SHOW_MS) то, что нужно сделать (need_do): щелчок по строке просьбы, условия уровня, цели
+func show_pointer(w: Dictionary) -> void:
+	if w.is_empty() or _do_target(w, true) == null and String(w.get("kind", "")) in ["", "wait", "locked"]:
+		return
+	_ptr_shown = {"do": w, "until": Time.get_ticks_msec() + PTR_SHOW_MS}
+	_update_pointer()
 
 
 # ---------- что сделать по условию: просьбы, их части и строки уровня (стрелка, подпись, щелчок) ----------
@@ -3060,15 +3097,21 @@ func _request_target(g: Dictionary) -> Dictionary:
 func request_do(g: Dictionary) -> Dictionary:
 	for pt: Dictionary in g.get("parts", []):
 		if game.city.progress_of(pt["p"]) < int(pt.get("n", 1)):
-			return need_do(pt["p"], String(pt.get("tool", "")))
-	return need_do(g["p"], String(g.get("tool", "")))
+			return need_do(pt["p"], String(pt.get("tool", "")), int(pt.get("n", 1)))
+	return need_do(g["p"], String(g.get("tool", "")), int(g.get("need", 0)))
 
 
-## Что сделать по условию p (вид — как у просьб и условий уровня; tool — какую постройку взять):
-## {kind, type, rid, layer, tip — подпись у стрелки, say — что сделать, одной фразой}. kind: build — взять постройку type;
-## research — она закрыта, нужно исследование rid; research_any — любое исследование; cap — предел уровня; floor — «Этаж»;
-## view — «Обзор» со слоем layer; road — «Мостовая»; fam — семья на площади; rank — кнопка нового уровня; {} — делать нечего
-func need_do(p: Array, tool := "") -> Dictionary:
+## Ждём повозку: жилья хватает, не хватает только людей — стрелки нет, советник и строка говорят, что ждать
+const WAIT_SETTLERS := "Ждём переселенцев — повозка привезёт новые семьи: жилья хватает"
+const WAIT_ROW := "Ждём переселенцев — повозка привезёт новые семьи"
+
+
+## Что сделать по условию p (вид — как у просьб и условий уровня; tool — какую постройку взять; n — сколько нужно,
+## 0 — не знаем): {kind, type, rid, layer, tip — подпись у стрелки, say — что сделать, одной фразой}. kind: build —
+## взять постройку type; research — она закрыта, нужно исследование rid; research_any — любое исследование; cap — предел
+## уровня; floor — «Этаж»; view — «Обзор» со слоем layer; road — «Мостовая»; fam — семья на площади; rank — кнопка
+## нового уровня; wait — делать нечего, ждём переселенцев (стрелки нет); {} — делать нечего
+func need_do(p: Array, tool := "", n := 0) -> Dictionary:
 	var c: City = game.city
 	var arg = p[1] if p.size() > 1 else null
 	match String(p[0]):
@@ -3106,11 +3149,22 @@ func need_do(p: Array, tool := "") -> Dictionary:
 		"shops":
 			return _do_shop(arg)
 		"fed":
-			# лавок этого вида ещё нет — сначала поставить (или открыть); есть — «Обзор»: где их не хватает
-			if _shops_of(String(arg)) == 0:
-				return _do_shop(String(arg))
-			return {"kind": "view", "layer": String(arg), "tip": "Обзор",
-				"say": "«Обзор» (глаз вверху справа) → «%s»: красные дома — без неё; поставьте лавку между ними" % Defs.NEEDS[arg]["name"]}
+			# «6 сытых домов»: самих домов меньше — сначала дома (а не «Обзор», отзывы 27.10); дома стоят, но пусты —
+			# ждём переселенцев; лавок этого вида нет — поставить (или открыть); есть, а дома голодные — ещё лавку рядом с ними
+			var nm_need := String({"food": "лавку еды", "clothes": "лавку одежды", "fun": "развлечения", "services": "лавку услуг",
+				"goods": "лавку товаров"}.get(String(arg), "лавку"))
+			if n > 0 and c.progress_of(["houses"]) < n:
+				var wh := _do_type("house_pleb")
+				wh["say"] = "Пока домов меньше %d — постройте ещё дома, а рядом с ними %s" % [n, nm_need]
+				return wh
+			var lived := c._count(func(b): return c.is_house(b) and int(b["pop"]) > 0)
+			if n > 0 and lived < n and _shops_of(String(arg)) > 0:
+				return {"kind": "wait", "tip": "", "say": "Дома стоят, но в части ещё никто не живёт. " + WAIT_SETTLERS}
+			var ws := _do_shop(String(arg))
+			if _shops_of(String(arg)) > 0 and String(ws.get("kind", "")) == "build":
+				ws["say"] = "Не всем домам хватает: поставьте ещё %s возле них — «Обзор» → «%s» покажет такие дома красным" % [
+					nm_need, Defs.NEEDS[arg]["name"]]
+			return ws
 		"floors":
 			var rid := "floor%d" % int(arg)
 			if not c.research.has(rid):
@@ -3124,14 +3178,26 @@ func need_do(p: Array, tool := "") -> Dictionary:
 				return {"kind": "fam", "tip": "Семья", "say": "Семьи ждут на площади: нажмите на значок семьи и выберите им дом"}
 			if String(c.stats.get("arrive_block", "")) != "":
 				return {"kind": "view", "layer": "happy", "tip": "Обзор", "say": String(c.stats["arrive_block"])}
+			# жилья на нужное число людей хватает — не хватает только переселенцев: ждём повозку, стрелки нет (прежде
+			# стрелка без конца звала строить плебейский дом — отзывы 27.10)
+			if (n > 0 and c.house_room() >= n) or (n <= 0 and c.free_fit() > 0):
+				return {"kind": "wait", "tip": "", "say": WAIT_SETTLERS}
 			var w := _do_type("house_pleb")
-			w["say"] = "Стройте дома заранее: повозка везёт семьи только туда, где есть свободное место"
+			w["say"] = "Стройте дома заранее: повозка везёт семьи только туда, где есть свободное место" if n <= 0 else \
+				"Домов на %d жителей не хватает (места — на %d): постройте ещё дома, повозка привезёт в них семьи" % [n, c.house_room()]
 			return w
 		"research":
 			return {"kind": "research_any", "tip": "Исследования", "say": "Свиток вверху справа — меню исследований"}
 		"road":
 			return {"kind": "road", "tip": "Мостовая", "say": "«Мостовая» слева внизу: ведите с зажатой кнопкой"}
 		"fam":
+			# семьи на площади — к значку семьи; нет их и мест нет — строить дома; места есть — ждём повозку
+			if c.arrivals.is_empty() and c.free_fit() <= 0 and c.incoming == 0:
+				var wf := _do_type("house_pleb")
+				wf["say"] = "Свободных мест в домах нет: постройте дом — повозка привезёт в него семью"
+				return wf
+			if c.arrivals.is_empty():
+				return {"kind": "wait", "tip": "", "say": WAIT_SETTLERS}
 			return {"kind": "fam", "tip": "Семья", "say": "Нажмите на значок семьи слева вверху и выберите им дом"}
 		"rank":
 			var lv := int(arg)
@@ -3139,9 +3205,16 @@ func need_do(p: Array, tool := "") -> Dictionary:
 				return {}
 			if c.rank_ok():
 				return {"kind": "rank", "tip": "", "say": "Нажмите «Перейти на новый уровень» под табличкой города"}
+			# первое невыполненное условие, где правда есть что сделать; жителей ждём (жилья хватает) — к следующему
+			var wait := {}
 			for e: Dictionary in c.rank_needs(lv):
 				if not e["ok"] and e.has("p"):
-					return need_do(e["p"], String(e.get("tool", "")))
+					var we := need_do(e["p"], String(e.get("tool", "")), int(e.get("need", 0)))
+					if String(we.get("kind", "")) != "wait":
+						return we
+					if wait.is_empty():
+						wait = we
+			return wait
 	return {}
 
 
@@ -3224,13 +3297,14 @@ func _shops_of(sub: String) -> int:
 
 
 ## Куда показать стрелкой то, что нужно сделать (need_do): карточка (сначала её раздел и вкладка), исследования
-## (в открытом окне — сама карточка исследования), «Этаж», «Обзор», уровень города
-func _do_target(w: Dictionary) -> Control:
+## (в открытом окне — сама карточка исследования), «Этаж», «Обзор», уровень города. shown — стрелка по щелчку строки:
+## постройка уже в руках (инструмент выбран, слой открыт) — всё равно показать, где её карточка (кнопка), чтобы запомнить
+func _do_target(w: Dictionary, shown := false) -> Control:
 	match String(w.get("kind", "")):
 		"build":
 			var type := String(w["type"])
 			var cat := String(Defs.B[type].get("cat", ""))
-			if game.tool == type or cat == "":
+			if (game.tool == type and not shown) or cat == "":
 				return null
 			return _card_or_cat(cat, type)
 		"research", "research_any":
@@ -3240,16 +3314,16 @@ func _do_target(w: Dictionary) -> Control:
 		"cap":
 			return rank_btn if rank_btn.visible else hover_level
 		"floor":
-			return null if game.tool == "floor" else tool_btns.get("floor")
+			return null if game.tool == "floor" and not shown else tool_btns.get("floor")
 		"upgrade":
-			return null if game.tool == "upgrade" else tool_btns.get("upgrade")
+			return null if game.tool == "upgrade" and not shown else tool_btns.get("upgrade")
 		"view":
 			var layer := String(w["layer"])
-			if overlay == layer:
+			if overlay == layer and not shown:
 				return null
 			return _ov_btns.get(layer) if overlay != "" else top_btns.get("view")
 		"road":
-			return null if game.tool == "road" else road_btns.get("road")
+			return null if game.tool == "road" and not shown else road_btns.get("road")
 		"fam":
 			if game.tool != "settle" and fam_box.visible and fam_box.get_child_count() > 0:
 				for x in fam_box.get_child(0).find_children("*", "Button", true, false):
@@ -3290,6 +3364,7 @@ func _do_click(w: Dictionary) -> void:
 			var lu := LegionUi.of(self)
 			if lu != null and not lu.visible:
 				lu.open("campaign")
+	show_pointer(w)                           # и стрелка на несколько секунд — куда дальше (карточка исследования, семья…)
 	_update_pointer()
 
 
@@ -3392,6 +3467,12 @@ func _process(_dt: float) -> void:
 		var h := int(game.hour)
 		var m := int((game.hour - h) * 60.0) / 10 * 10
 		lbl_clock.text = "%02d:%02d" % [h, m]
+	if not _ptr_shown.is_empty():
+		# стрелка по щелчку строки: следует за тем, что открылось (раздел → вкладка → карточка), и гаснет через PTR_SHOW_MS
+		_ptr_tick -= _dt
+		if _ptr_tick <= 0.0:
+			_ptr_tick = 0.25
+			_update_pointer()
 	if pointer:
 		var t: Control = pointer_target
 		var show := t != null and is_instance_valid(t) and t.is_visible_in_tree() and root.visible
@@ -4148,11 +4229,11 @@ func _fill_info_body() -> void:
 					mk.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 					r.add_child(mk)
 					# невыполненное условие — щелчком к делу (та же стрелка, что у просьб): постройка, исследование, «Этаж», «Обзор»
-					var w: Dictionary = {} if e["ok"] else need_do(e["p"], String(e.get("tool", "")))
+					var w: Dictionary = {} if e["ok"] else need_do(e["p"], String(e.get("tool", "")), int(e.get("need", 0)))
 					if w.is_empty():
 						info_box.add_child(r)
 					else:
-						info_box.add_child(_clickable(r, String(w.get("say", "")) + ".", func(): _do_click(need_do(e["p"], String(e.get("tool", ""))))))
+						info_box.add_child(_clickable(r, String(w.get("say", "")) + ".", func(): _do_click(need_do(e["p"], String(e.get("tool", "")), int(e.get("need", 0))))))
 				if rank_shown():
 					var rb := Button.new()
 					rb.text = "Перейти на новый уровень"
@@ -6645,6 +6726,8 @@ func _fill_tasks_body(goals: Array) -> void:
 			sub = parts_line(g["parts"])
 		elif rank_lv > c.level:
 			sub = parts_line(c.rank_needs(rank_lv).filter(func(e): return not e["ok"]))
+		if prog < int(g["need"]) and String(request_do(g).get("kind", "")) == "wait":
+			sub = (sub + "\n" if sub != "" else "") + WAIT_ROW      # делать нечего — ждём повозку (стрелки нет)
 		if sub != "" and prog < int(g["need"]):
 			var sl := _wrap(_label(sub, 13, true, C_SOFT), 222)
 			sl.name = "parts"
@@ -6659,7 +6742,7 @@ func _fill_tasks_body(goals: Array) -> void:
 			var w := request_do(gg)
 			var say := String(w.get("say", ""))
 			if gh != "":
-				advisor(gg["text"], gh + (("\n\nСейчас: " + say + ".") if say != "" and (gg.has("parts") or rank_lv > 0) else ""))
+				advisor(gg["text"], gh + (("\n\nСейчас: " + say + ".") if say != "" and (gg.has("parts") or rank_lv > 0 or String(w.get("kind", "")) in ["wait", "build"] and (gg["p"] as Array)[0] in ["fed", "pop", "fam"]) else ""))
 			elif say != "":
 				advisor(gg["text"], say + ".")
 			_do_click(w))

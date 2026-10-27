@@ -12,7 +12,7 @@ signal closed(saved: bool)
 const LAYER := 42                      # над интерфейсом и обучением (10), под роликом повозки (40)? — над: экран — первым
 const VP := Vector2i(720, 900)         # мирок героя (картинка слева)
 const SKIN_COL := {"A": Color("efc9a4"), "B": Color("b98355"), "C": Color("dcaa7c")}
-const HAIR_COL := {"A": Color("6b4a2e"), "B": Color("2e241c"), "C": Color("b08850"), "S": Color("d2cdc4")}
+const HAIR_COL := {"A": Color("6b4a2e"), "B": Color("2b2a2b"), "C": Color("c49a64"), "S": Color("d2cdc4")}   # как волосы (Citizen._hair_mat)
 const C_INK := Color("4a2c17")
 const C_SOFT := Color("7a5a3c")
 const C_BAD := Color("b0402a")
@@ -250,12 +250,13 @@ func _flame() -> CPUParticles3D:
 	p.scale_amount_min = 0.6
 	p.scale_amount_max = 1.2
 	var qm := QuadMesh.new()
-	qm.size = Vector2(0.075, 0.1)
+	qm.size = Vector2(0.12, 0.16)
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	m.albedo_texture = StoryUi.glow_tex()               # мягкие язычки, без квадратных краёв
 	m.vertex_color_use_as_albedo = true
 	m.albedo_color = Color(1.0, 0.72, 0.38, 0.9)
 	qm.material = m
@@ -299,15 +300,24 @@ func _sparkle() -> void:
 	p.initial_velocity_min = 0.3
 	p.initial_velocity_max = 0.9
 	p.gravity = Vector3(0, -0.4, 0)
+	p.scale_amount_min = 0.5
+	p.scale_amount_max = 1.0
 	var qm := QuadMesh.new()
-	qm.size = Vector2(0.06, 0.06)
-	var mat := StandardMaterial3D.new()
+	qm.size = Vector2(0.09, 0.09)
+	var mat := StandardMaterial3D.new()                 # мягкие светящиеся точки, а не белые квадратики
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.albedo_color = Color("ffe9a8")
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.albedo_texture = StoryUi.glow_tex()
+	mat.vertex_color_use_as_albedo = true
 	qm.material = mat
 	p.mesh = qm
+	var ramp := Gradient.new()                          # вспыхнули — и тают
+	ramp.set_color(0, Color(1.0, 0.92, 0.66, 0.0))
+	ramp.set_color(1, Color(1.0, 0.78, 0.4, 0.0))
+	ramp.add_point(0.15, Color(1.0, 0.9, 0.6, 0.9))
+	p.color_ramp = ramp
 	vp.add_child(p)
 	p.position = Vector3(0, 1.2, 0.2)
 	p.emitting = true

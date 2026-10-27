@@ -2324,6 +2324,16 @@ func _take_room(free: Dictionary, cls: String, n: int) -> bool:
 	return true
 
 
+## Сколько людей вместят все дома открытых классов (жильё на столько жителей — с теми, кто уже живёт)
+func house_room() -> int:
+	var n := 0
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if is_house(b) and unlocked(Defs.CLASSES[def(b)["cls"]]["house"]):
+			n += house_cap(b)
+	return n
+
+
 ## Сколько ещё семей можно везти: влезут в дома, минус те, что уже едут в повозке
 func free_fit() -> int:
 	var n := 0

@@ -970,7 +970,7 @@ static func _fill_looks(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 			tl.custom_minimum_size = Vector2(110, 0)
 			row.add_child(tl)
 			for t: String in Looks.TONES:
-				row.add_child(_tone_btn(hud, t, String(lk.get("hc", "")) == t or (String(lk.get("hc", "")) == "" and t == String(lk.get("skin", "A"))), func():
+				row.add_child(_tone_btn(hud, t, Citizen.hair_tone(lk) == t, func():
 					var nl := lk.duplicate()
 					nl["hc"] = t
 					apply.call(nl)))
@@ -1076,7 +1076,7 @@ static func _tone_btn(hud: Hud, t: String, on: bool, cb: Callable) -> Button:
 	b.focus_mode = Control.FOCUS_NONE
 	b.tooltip_text = {"A": "Каштановые", "B": "Тёмные", "C": "Светлые"}.get(t, "")
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = {"A": Color("6b4a2e"), "B": Color("2e241c"), "C": Color("b08850")}.get(t, Color.GRAY)
+	sb.bg_color = HeroScreen.HAIR_COL.get(t, Color.GRAY)
 	sb.set_corner_radius_all(13)
 	sb.set_border_width_all(3 if on else 1)
 	sb.border_color = Color("fff3c4") if on else Color("5a4128")
