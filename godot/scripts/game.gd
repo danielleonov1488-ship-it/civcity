@@ -165,7 +165,7 @@ var rot_drag := false
 var press_screen := Vector2.ZERO
 var press_hover := Vector2.INF
 var rot_yaw0 := 0.0
-var manual_yaw := false               # игрок сам повернул эту постройку — к дороге её не разворачиваем (до постановки)
+var manual_yaw := false               # игрок сам повернул эту постройку (до постановки): у дороги — его четверть оборота, без дороги — его угол
 const ROT_DRAG_PX := 14.0             # с какого сдвига мыши вбок (зажатая левая) начинается поворот — дрожь щелчка не в счёт
 var last_snap_p := Vector2.INF        # где был курсор, когда фасад последний раз нашёл дорогу
 # постановка, как в Town to City: куда навёл и как повернул (на траве, площади, мостовой); вплотную к дороге — фасадом
@@ -177,6 +177,13 @@ var rot_off := Vector2.ZERO            # Z/X: середина постройк�
 var press_pl := {}                     # какую постройку показывала тень в миг нажатия (поворот зажатой мышью — от неё)
 const SNAP_R := 0.8                    # фасад (постройка серединой на курсоре) ближе этого к краю дороги — прилипает к краю
 const SNAP_STAY := 1.5                 # …и держится, пока фасад не отошёл дальше этого (без дёрганья на границе)
+# у дороги — всегда ровно по ней (жалоба 27.10: «то прямо, то под углом»): постройка ближе ALIGN_R к краю мостовой
+# (от следа; у входа мостовая нужна не дальше 1,7 м) стоит фасадом к дороге или поперёк, поворот игрока — четвертями
+const ALIGN_R := 2.0
+const ALIGN_STAY := 2.6                # …и держится, пока не отошли дальше этого (на границе не крутится туда-сюда)
+const EDGE_R := 3.0                    # направление кромки — по её клеткам не дальше этого от ближайшей точки
+var last_glued := false                # в прошлый раз постройка прилипла к краю (last_snap_n — куда смотрела)
+var last_on := false                   # …или стояла на самой мостовой
 const PAVE_SLOPE := City.PAVE_SLOPE    # дом и лавка на мостовой — только на почти ровном месте (и двор при перестройке)
 var settle_marks := []                # подсветка подходящих домов
 var settle_keys := []                 # значки «ключи» над ними
@@ -2512,14 +2519,17 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	var pos := p
 	var mid := int(moving.get("id", -1))
 	var sub := ""
+	var ry: Variant = null                    # поворот «фасадом к дороге», если постройка у дороги (Z/X там — четвертями)
 	# игрок: свободная постановка, как в Town to City — куда навёл и как повернул; вплотную к дороге — фасадом к ней.
 	# Готовый город меню (витрина, старый городок) раскладывается по прежним правилам — он не меняется
 	var free: bool = pave_build and not (d["kind"] in ["decor", "farm", "center"])
 	if free:
-		var r := _free_place(p, bb, mid, locked)
+		var door_r := 0.0 if d.get("noroad", false) else Vector2(bp.door.x, bp.door.z).distance_to(Vector2((float(bb[0]) + float(bb[1])) * 0.5, (float(bb[2]) + float(bb[3])) * 0.5))
+		var r := _free_place(p, bb, mid, locked, door_r)
 		pos = r["pos"]
 		yaw = r["yaw"]
 		sub = r["sub"]
+		ry = r.get("ry")
 	else:
 		var road_snap: bool = snap and not locked and d["kind"] != "decor" and d["kind"] != "farm"
 		if road_snap and manual_yaw:
@@ -2569,6 +2579,7 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 			pos = sn["pos"]                       # кусок акведука у конца другого — встаёт следом по той же линии
 			yaw = sn["yaw"]
 			sub = "aqua"
+			ry = null
 	var chk := city.check_place(type, pos, yaw, variant, color, -3 if not moving.is_empty() else -1)
 	var err: String = chk["err"]
 	if err == "" and free:
@@ -2584,8 +2595,11 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 				on_big += 1
 		if on_big > (0 if d["kind"] == "farm" else 16):
 			err = "По большой дороге ездят повозки — здесь не строят"
-	return {"pos": pos, "yaw": yaw, "err": err, "cells": chk["cells"], "y": chk["y"], "variant": variant, "color": color, "tier": tier,
+	var res := {"pos": pos, "yaw": yaw, "err": err, "cells": chk["cells"], "y": chk["y"], "variant": variant, "color": color, "tier": tier,
 		"mode": "free" if free else "", "sub": sub}
+	if ry != null:
+		res["ry"] = ry
+	return res
 
 
 ## Акведук кусками (этап 5.6): курсор ближе 3,5 м к свободному концу поставленного куска — новый встаёт вплотную
@@ -2647,53 +2661,345 @@ func _rot_keep() -> void:
 	rot_off = c - hover
 
 
-## Свободная постановка игрока: {"pos", "yaw", "sub"}.
-## sub: "road" — курсор на траве вплотную к дороге, постройка фасадом к ней ровно у края (в ряд с соседями);
-##      "free" — серединой следа на курсор, своим поворотом (на траве, площади, мостовой);
-##      "lock" — крутят зажатой мышью: на месте, поворот из tool_yaw
-func _free_place(p: Vector2, bb: Array, mid: int, locked: bool) -> Dictionary:
+## Свободная постановка игрока: {"pos", "yaw", "sub"} (+ "ry" — поворот «фасадом к дороге», если дорога рядом).
+## Как в Town to City: у дороги постройка всегда стоит ровно по ней — фасадом к дороге или поперёк, без косых углов
+## (жалоба 27.10: «то прямо, то под углом» — раньше чуть дальше от края, на мостовой и после Z/X поворот был свой).
+## sub: "road" — курсор на траве у края, постройка фасадом к дороге ровно у кромки (в ряд с соседями);
+##      "square" — дорога рядом (ближе ALIGN_R от следа): серединой на курсоре, поворот — ровно по дороге: на траве фасадом
+##                 к ней, на мостовой — ближе всего к прежнему (к камере); повернутая игроком — его четверть оборота;
+##      "free" — дороги рядом нет: серединой на курсоре, своим поворотом (запомненным или к камере);
+##      "lock" — крутят зажатой мышью: на месте, у дороги — четвертями
+## door_r — вход от середины следа: дорогу ищем так далеко, чтобы постройка, которой хватает мостовой у входа, всегда
+## стояла ровно по дороге (косо — только там, где ей всё равно нельзя: дороги у входа нет)
+func _free_place(p: Vector2, bb: Array, mid: int, locked: bool, door_r := 0.0) -> Dictionary:
 	if locked:
+		if place_lock.has("ry"):
+			return {"pos": p, "yaw": _square_yaw(float(place_lock["ry"]), tool_yaw), "sub": "lock", "ry": float(place_lock["ry"])}
 		return {"pos": p, "yaw": tool_yaw, "sub": "lock"}
-	# вплотную к дороге (курсор на траве у края) — фасадом к ней. Свой поворот этой постройки (Z/X, зажатая мышь)
-	# и выключенная привязка (R) — не прилипает. Войти — ближе SNAP_R, выйти — дальше SNAP_STAY: на границе не дёргается
+	var hd := (float(bb[3]) - float(bb[2])) * 0.5
+	var hw := (float(bb[1]) - float(bb[0])) * 0.5
+	var mx := (float(bb[0]) + float(bb[1])) * 0.5
+	var mz := (float(bb[2]) + float(bb[3])) * 0.5
+	var c := p + rot_off if manual_yaw else p    # середина постройки: повернутая Z/X крутится вокруг неё, не прыгает
 	var near_prev := last_snap_n != Vector2.ZERO and last_snap_p.distance_to(p) < 2.0
-	var side_ok := not land.is_road(p)
-	if not side_ok and near_prev:
-		# курсор заехал на дорогу у самого края (до 1 м) — постройка остаётся прилипшей, а не прыгает на мостовую
-		var dd0 := 0.0
-		while dd0 <= 1.0 and land.is_road(p - last_snap_n * dd0):
-			dd0 += 0.1
-		side_ok = dd0 <= 1.0
-	if snap and not manual_yaw and side_ok:
-		var keep := last_snap_n if near_prev else Vector2.ZERO
-		var reach := (float(bb[3]) - float(bb[2])) * 0.5 + (SNAP_STAY if near_prev else SNAP_R)     # от середины до фасада + зазор
-		var e := _nearest_road(p, reach, (float(bb[1]) - float(bb[0])) * 0.5, keep)
-		if not e.is_empty():
-			var nrm: Vector2 = e["n"]
-			# не дёргаться: пока курсор плавно ведут, прежняя дорога остаётся, если она почти так же близко
+	# выключенная привязка (R) — совсем свободно: ни к краю, ни ровно по дороге
+	if snap:
+		var probe := c
+		if near_prev and last_glued and land.is_road(c):
+			# курсор заехал на дорогу у самого края (до 1 м) — постройка остаётся прилипшей, а не прыгает на мостовую
+			var dd0 := 0.0
+			while dd0 <= 1.0 and land.is_road(c - last_snap_n * dd0):
+				dd0 += 0.1
+			if dd0 <= 1.0:
+				probe = c - last_snap_n * (dd0 + 0.15)
+		var fr := _road_frame(probe, maxf(maxf(hd, hw), door_r) + (ALIGN_STAY if near_prev else ALIGN_R))
+		if not fr.is_empty():
+			var on: bool = fr["on"]
+			var n: Vector2 = fr["n"]
+			var ry := snappedf(atan2(n.x, n.y), deg_to_rad(0.5))
 			if near_prev:
-				var ang := absf(nrm.angle_to(last_snap_n))
-				if ang > 0.0 and (ang < deg_to_rad(10.0) or ang > deg_to_rad(60.0)):
-					var dd := 0.0
-					while dd <= reach + 0.5 and not land.is_road(p + last_snap_n * dd):
-						dd += 0.1
-					if dd <= p.distance_to(e["p"]) + (0.25 if ang < deg_to_rad(10.0) else 0.6):
-						nrm = last_snap_n
-						e["p"] = p + nrm * dd
-			last_snap_n = nrm
+				var ly := atan2(last_snap_n.x, last_snap_n.y)
+				var keep_old := false
+				if not on and not last_on and absf(angle_difference(ly, ry)) > deg_to_rad(25.0):
+					# у перекрёстка: прежняя улица остаётся, пока она почти так же близко (дом не перескакивает туда-сюда)
+					var dk := 0.0
+					while dk <= float(fr["d"]) + 0.8 and not land.is_road(probe + last_snap_n * dk):
+						dk += 0.1
+					if dk <= float(fr["d"]) + 0.6:
+						keep_old = true
+						fr["d"] = dk
+				var lyk := ly + roundf(angle_difference(ly, ry) / (PI / 2)) * (PI / 2)
+				if keep_old:
+					ry = ly
+				elif absf(angle_difference(lyk, ry)) < deg_to_rad(1.5):
+					ry = lyk                              # пока курсор ведут — направление не дрожит на лесенке клеток
+			ry = wrapf(ry, -PI, PI)
+			var yaw := ry                                 # на траве — фасадом к дороге
+			if manual_yaw:
+				yaw = _square_yaw(ry, tool_yaw)           # повернул игрок — его четверть оборота относительно дороги
+			elif on:
+				yaw = _square_yaw(ry, _free_yaw())        # на мостовой — ровно по ней, ближе всего к прежнему (к камере)
+			yaw = wrapf(yaw, -PI, PI)
+			var was_glued := near_prev and last_glued
+			last_snap_n = City.facing(ry)
 			last_snap_p = p
-			var yr := snappedf(atan2(nrm.x, nrm.y), deg_to_rad(5.0))
-			var pr := (e["p"] as Vector2) - City.facing(yr) * (float(bb[3]) + 0.02)
-			return {"pos": _snap_row(pr, yr, bb, mid), "yaw": yr, "sub": "road"}
+			last_on = on
+			last_glued = false
+			if not on and absf(angle_difference(yaw, ry)) < 0.01 and float(fr["d"]) <= hd + (SNAP_STAY if was_glued else SNAP_R):
+				# вплотную к дороге — фасадом ровно к кромке (по ближайшей из трёх точек фасада: нигде не на мостовой)
+				var f := City.facing(ry)
+				var pr := _probe3(probe, f, clampf(hw * 0.85, 0.0, 3.0), float(fr["d"]) + 3.0)
+				var best: float = minf(pr[1], minf(pr[0], pr[2]))
+				if best < INF:
+					last_glued = true
+					var pg := probe + f * best - f * (float(bb[3]) + 0.02)
+					return {"pos": _snap_row(pg, ry, bb, mid), "yaw": ry, "sub": "road", "ry": ry}
+			var ps := c - City.axis(yaw) * mx - City.facing(yaw) * mz
+			return {"pos": _snap_row(ps, yaw, bb, mid), "yaw": yaw, "sub": "square", "ry": ry}
 	last_snap_n = Vector2.ZERO
 	last_snap_p = Vector2.INF
+	last_glued = false
 	var y0 := _free_yaw()
-	if manual_yaw:
-		p += rot_off                          # повернули Z/X — середина остаётся, где была
-	var pc := p - City.axis(y0) * ((float(bb[0]) + float(bb[1])) * 0.5) - City.facing(y0) * ((float(bb[2]) + float(bb[3])) * 0.5)
+	var pc := c - City.axis(y0) * mx - City.facing(y0) * mz
 	if snap:
 		pc = _snap_row(pc, y0, bb, mid)       # рядом дом с тем же поворотом — встать с ним в ряд
 	return {"pos": pc, "yaw": y0, "sub": "free"}
+
+
+## Ровно по дороге: из четырёх поворотов ry + k·90° — ближайший к want
+func _square_yaw(ry: float, want: float) -> float:
+	return ry + roundf(angle_difference(ry, want) / (PI / 2)) * (PI / 2)
+
+
+## Мостовая ли клетка (i, j) (без построек на ней); за краем карты — нет
+func _road_cell(i: int, j: int) -> bool:
+	if i < 0 or j < 0 or i >= Land.N or j >= Land.N:
+		return false
+	var k := j * Land.N + i
+	var kd: int = land.kind[k]
+	return (kd == Land.Kind.ROAD or kd == Land.Kind.PLAZA or kd == Land.Kind.DIRT) and land.occ[k] == 0
+
+
+## Дорога у постройки (свободная постановка игрока): ближайшая к точке c кромка мостовой не дальше maxd и куда она идёт.
+## c на траве — ищем мостовую; c на мостовой — её край (трава, соседний дом). {"q": первая клетка за кромкой,
+## "n": единичный от c поперёк кромки к ней, "d": расстояние до кромки, "on": c на мостовой}; {} — рядом нет.
+## Направление — прямая по клеткам кромки около q: та прямая через q, на которую ложится больше всего клеток (у перекрёстка —
+## одна из улиц, а не середина между ними; на изгибе — касательная; лесенка клеток косой улицы сглаживается). Короткая кривая
+## кромка (скруглённый конец узкой улицы) — по оси самой улицы
+func _road_frame(c: Vector2, maxd: float) -> Dictionary:
+	var on := land.is_road(c)
+	var ci := int(floor(c.x / Land.CELL))
+	var cj := int(floor(c.y / Land.CELL))
+	var kmax := int(ceil(maxd / Land.CELL)) + 1
+	var bi := -1
+	var bj := -1
+	var bd2 := (maxd + Land.CELL * 0.5) * (maxd + Land.CELL * 0.5)
+	var kind_a := land.kind
+	var occ_a := land.occ
+	var nn_ := Land.N
+	for k in range(1, kmax + 1):
+		if bi >= 0 and (float(k) - 0.5) * Land.CELL > sqrt(bd2):
+			break                                 # дальние кольца клеток ближе уже не будут
+		for t in 8 * k:
+			var di: int
+			var dj: int
+			if t < 2 * k:
+				di = -k + t
+				dj = -k
+			elif t < 4 * k:
+				di = k
+				dj = -k + (t - 2 * k)
+			elif t < 6 * k:
+				di = k - (t - 4 * k)
+				dj = k
+			else:
+				di = -k
+				dj = k - (t - 6 * k)
+			var ii := ci + di
+			var jj := cj + dj
+			var rd := false
+			if ii >= 0 and jj >= 0 and ii < nn_ and jj < nn_:
+				var kk := jj * nn_ + ii
+				var kd: int = kind_a[kk]
+				rd = (kd == Land.Kind.ROAD or kd == Land.Kind.PLAZA or kd == Land.Kind.DIRT) and occ_a[kk] == 0
+			if rd == on:
+				continue
+			var d2 := Vector2((ci + di + 0.5) * Land.CELL - c.x, (cj + dj + 0.5) * Land.CELL - c.y).length_squared()
+			if d2 < bd2:
+				bd2 = d2
+				bi = ci + di
+				bj = cj + dj
+	if bi < 0:
+		return {}
+	var q := Vector2((bi + 0.5) * Land.CELL, (bj + 0.5) * Land.CELL)
+	# клетки кромки по ту сторону около q (связные): мостовая у травы (или, с мостовой, трава у мостовой)
+	var pts: Array[Vector2] = []
+	var seen := {bj * Land.N + bi: true}
+	var stack: Array[Vector2i] = [Vector2i(bi, bj)]
+	var r2 := EDGE_R * EDGE_R
+	while not stack.is_empty():
+		var v: Vector2i = stack.pop_back()
+		pts.append(Vector2((v.x + 0.5) * Land.CELL, (v.y + 0.5) * Land.CELL))
+		for o: Vector2i in NEIGH8:
+			var w := v + o
+			var key := w.y * Land.N + w.x
+			if seen.has(key):
+				continue
+			seen[key] = true
+			if _road_cell(w.x, w.y) == on or Vector2((w.x + 0.5) * Land.CELL, (w.y + 0.5) * Land.CELL).distance_squared_to(q) > r2:
+				continue
+			if _road_cell(w.x + 1, w.y) == on or _road_cell(w.x - 1, w.y) == on or _road_cell(w.x, w.y + 1) == on or _road_cell(w.x, w.y - 1) == on:
+				stack.append(w)
+	var n := (q - c).normalized() if q.distance_squared_to(c) > 0.0001 else Vector2(0, 1)
+	var tg := Vector2(-n.y, n.x)
+	var ext := 0.0
+	if pts.size() >= 4:
+		# прямая через q, на которую ложится больше всего клеток кромки (±20 см) — и поровну по обе стороны от q: на изгибе
+		# так выходит касательная в q, а не хорда в одну сторону; у угла (клетки только с одной стороны) — по числу клеток
+		var best_s := -1.0
+		var bdir := Vector2.ZERO
+		for b: Vector2 in pts:
+			var v := b - q
+			if v.length_squared() < 0.36:
+				continue
+			var dv := v.normalized()
+			var nv := Vector2(-dv.y, dv.x)
+			var cl := 0
+			var cr := 0
+			for pt: Vector2 in pts:
+				var r := pt - q
+				if absf(r.dot(nv)) <= 0.2:
+					var a := r.dot(dv)
+					if a < -0.05:
+						cl += 1
+					elif a > 0.05:
+						cr += 1
+			var sc := 2.0 * mini(cl, cr) + 0.01 * (cl + cr)
+			if sc > best_s:
+				best_s = sc
+				bdir = dv
+		if bdir != Vector2.ZERO:
+			var fit := _edge_pca(pts, q, bdir)
+			# ближайшая клетка кромки — с точностью до клетки, на изгибе она уезжает вбок от точки напротив c: опора —
+			# клетка у основания перпендикуляра из c на найденную прямую (два-три шага — и касательная ровно напротив)
+			for it in 3:
+				var tv: Vector2 = fit[0]
+				var foot := q + tv * (c - q).dot(tv)
+				if foot.distance_to(q) < 0.15:
+					break
+				var nb := q
+				var nd := 0.35
+				for pt: Vector2 in pts:
+					var dd := pt.distance_to(foot)
+					if dd < nd:
+						nd = dd
+						nb = pt
+				if nb == q:
+					break
+				q = nb
+				fit = _edge_pca(pts, q, tv)
+			tg = fit[0]
+			ext = fit[1]
+	if not on and ext < 2.0:
+		# прямой кромки тут почти нет (скруглённый конец узкой улицы, тесный изгиб) — ровно по оси самой улицы
+		var ax := _road_axis(q + n * 0.4, 2.5)
+		if ax != Vector2.ZERO:
+			tg = ax if absf(ax.dot(tg)) >= absf(ax.orthogonal().dot(tg)) else ax.orthogonal()
+	var nn := Vector2(-tg.y, tg.x)
+	if nn.dot(q - c) < 0.0:
+		nn = -nn
+	return {"q": q, "n": nn, "d": maxf(0.0, (q - c).dot(nn) - Land.CELL * 0.5), "on": on, "ext": ext}
+
+
+## Уточнить направление кромки у точки q (dir — примерное): главная ось клеток кромки у прямой через q (±20 см), в окне
+## поровну по обе стороны от q (если оно не совсем узкое — у угла клетки только с одной стороны); на изгибе — ещё и
+## касательная в q к параболе по клеткам пошире (лесенка клеток на коротком окне косит). [направление, длина прямой]
+func _edge_pca(pts: Array[Vector2], q: Vector2, dir: Vector2) -> Array:
+	var nv := Vector2(-dir.y, dir.x)
+	var lo := 0.0
+	var hi := 0.0
+	for pt: Vector2 in pts:
+		var r := pt - q
+		if absf(r.dot(nv)) <= 0.2:
+			lo = minf(lo, r.dot(dir))
+			hi = maxf(hi, r.dot(dir))
+	var w := minf(-lo, hi)
+	var win := w + 0.01 if w >= 0.7 else INF
+	var m := Vector2.ZERO
+	var cnt := 0
+	for pt: Vector2 in pts:
+		var r := pt - q
+		if absf(r.dot(nv)) <= 0.2 and absf(r.dot(dir)) <= win:
+			m += pt
+			cnt += 1
+	if cnt < 3:
+		return [dir, hi - lo]
+	m /= cnt
+	var cxx := 0.0
+	var cyy := 0.0
+	var cxy := 0.0
+	for pt: Vector2 in pts:
+		var r := pt - q
+		if absf(r.dot(nv)) <= 0.2 and absf(r.dot(dir)) <= win:
+			var dm := pt - m
+			cxx += dm.x * dm.x
+			cyy += dm.y * dm.y
+			cxy += dm.x * dm.y
+	var ang := 0.5 * atan2(2.0 * cxy, cxx - cyy)
+	var t := Vector2(cos(ang), sin(ang))
+	if t.dot(dir) < 0.0:
+		t = -t
+	# ещё раз — по клеткам у найденной прямой (±15 см): у перекрёстка в полосу у q попадают клетки соседней улицы
+	var tn0 := Vector2(-t.y, t.x)
+	var m2 := Vector2.ZERO
+	var cnt2 := 0
+	for pt: Vector2 in pts:
+		if absf((pt - m).dot(tn0)) <= 0.15 and absf((pt - q).dot(dir)) <= win:
+			m2 += pt
+			cnt2 += 1
+	if cnt2 >= 4:
+		m2 /= cnt2
+		cxx = 0.0
+		cyy = 0.0
+		cxy = 0.0
+		for pt: Vector2 in pts:
+			if absf((pt - m).dot(tn0)) <= 0.15 and absf((pt - q).dot(dir)) <= win:
+				var dm := pt - m2
+				cxx += dm.x * dm.x
+				cyy += dm.y * dm.y
+				cxy += dm.x * dm.y
+		ang = 0.5 * atan2(2.0 * cxy, cxx - cyy)
+		t = Vector2(cos(ang), sin(ang))
+		if t.dot(dir) < 0.0:
+			t = -t
+	# изгиб: клетки у кривой y = a + b·x + c·x² (в осях прямой t), окно поровну по обе стороны; касательная в q — наклон b
+	var tn := Vector2(-t.y, t.x)
+	var lo2 := 0.0
+	var hi2 := 0.0
+	for pt: Vector2 in pts:
+		var r := pt - q
+		var x := r.dot(t)
+		if absf(r.dot(tn)) <= 0.2 + 0.1 * x * x:
+			lo2 = minf(lo2, x)
+			hi2 = maxf(hi2, x)
+	var w2 := minf(-lo2, hi2) + 0.01
+	if w2 < 1.2:
+		return [t, hi - lo]
+	var s := PackedFloat64Array([0, 0, 0, 0, 0, 0, 0, 0])     # n, Σx, Σx², Σx³, Σx⁴, Σy, Σxy, Σx²y
+	for pt: Vector2 in pts:
+		var r := pt - q
+		var x := r.dot(t)
+		var y := r.dot(tn)
+		if absf(x) <= w2 and absf(y) <= 0.2 + 0.1 * x * x:
+			var x2 := x * x
+			s[0] += 1.0
+			s[1] += x
+			s[2] += x2
+			s[3] += x2 * x
+			s[4] += x2 * x2
+			s[5] += y
+			s[6] += x * y
+			s[7] += x2 * y
+	if s[0] < 8.0:
+		return [t, hi - lo]
+	# нормальные уравнения 3×3 (Крамер): [n Σx Σx²; Σx Σx² Σx³; Σx² Σx³ Σx⁴]·[a b c] = [Σy Σxy Σx²y]
+	var det := s[0] * (s[2] * s[4] - s[3] * s[3]) - s[1] * (s[1] * s[4] - s[3] * s[2]) + s[2] * (s[1] * s[3] - s[2] * s[2])
+	if absf(det) < 1e-6:
+		return [t, hi - lo]
+	var a := (s[5] * (s[2] * s[4] - s[3] * s[3]) - s[1] * (s[6] * s[4] - s[3] * s[7]) + s[2] * (s[6] * s[3] - s[2] * s[7])) / det
+	var b := (s[0] * (s[6] * s[4] - s[7] * s[3]) - s[5] * (s[1] * s[4] - s[3] * s[2]) + s[2] * (s[1] * s[7] - s[6] * s[2])) / det
+	var c := (s[0] * (s[2] * s[7] - s[3] * s[6]) - s[1] * (s[1] * s[7] - s[6] * s[2]) + s[5] * (s[1] * s[3] - s[2] * s[2])) / det
+	# кривая должна правда ложиться на клетки (у угла двух улиц — не ложится: там прямая)
+	for pt: Vector2 in pts:
+		var r := pt - q
+		var x := r.dot(t)
+		var y := r.dot(tn)
+		if absf(x) <= w2 and absf(y) <= 0.2 + 0.1 * x * x and absf(y - (a + b * x + c * x * x)) > 0.2:
+			return [t, hi - lo]
+	return [(t + tn * b).normalized(), hi - lo]
+
+
+const NEIGH8: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1)]
 
 
 ## Проверки свободной постановки (после check_place): не на большой дороге к станции, у входа — мостовая (не своя),
@@ -4339,6 +4645,8 @@ func _unhandled_input(e: InputEvent) -> void:
 			if place_lock.is_empty():
 				var pl0 := press_pl if press_pl.has("pos") else placement(tool, press_hover)
 				place_lock = {"p": pl0["pos"]}
+				if pl0.has("ry"):
+					place_lock["ry"] = float(pl0["ry"])    # у дороги крутится четвертями — ровно по ней
 				rot_yaw0 = float(pl0["yaw"])
 			else:
 				rot_yaw0 = tool_yaw
@@ -4371,7 +4679,7 @@ func _unhandled_input(e: InputEvent) -> void:
 					_undo()
 				else:
 					_rot_keep()
-					tool_yaw = _yaw_now() - deg_to_rad(15)
+					tool_yaw = _yaw_now() - _rot_step()
 					manual_yaw = true
 					yaw_set = true
 					free_yaw = tool_yaw
@@ -4380,7 +4688,7 @@ func _unhandled_input(e: InputEvent) -> void:
 					_redo()
 			KEY_X:
 				_rot_keep()
-				tool_yaw = _yaw_now() + deg_to_rad(15)
+				tool_yaw = _yaw_now() + _rot_step()
 				manual_yaw = true
 				yaw_set = true
 				free_yaw = tool_yaw
@@ -4639,9 +4947,14 @@ func _moved(b: Dictionary, m := {}) -> void:
 
 ## Поворот призрака сейчас (если он стоит у дороги — повёрнут к ней)
 func _yaw_now() -> float:
-	if not manual_yaw and place_info.has("yaw"):
-		return float(place_info["yaw"])
+	if place_info.has("yaw") and (not manual_yaw or place_info.has("ry")):
+		return float(place_info["yaw"])       # у дороги — показанный (ровный) поворот: Z/X крутят от него
 	return tool_yaw
+
+
+## Шаг Z/X: у дороги — четверть оборота (постройка остаётся ровно по дороге), без дороги — 15°
+func _rot_step() -> float:
+	return PI / 2 if place_info.has("ry") else deg_to_rad(15)
 
 
 ## Поставить постройку там, где призрак (после щелчка без поворота)
@@ -4694,10 +5007,10 @@ func _build_here() -> void:
 			if not copy_color and color_user < 0:
 				place_color = -1                  # следующему дому — свой цвет «Авто» (не как у соседа)
 				color_lock = false
-			if pl.get("sub", "") == "free" and not city.tips.has("free_place") and mode != "demo" and not (tutorial and tutorial.active()) \
+			if pl.get("sub", "") in ["free", "square"] and not city.tips.has("free_place") and mode != "demo" and not (tutorial and tutorial.active()) \
 					and not hud.advisor_panel.visible:   # открытый совет не перебиваем — скажем при следующей постановке
 				city.tips["free_place"] = true
-				hud.advisor("Строим где хотите", "Дом встаёт там, куда вы навели, — на траве, на площади, хоть на мостовой. Повернуть — зажмите кнопку мыши и ведите вбок (или Z / X); этот поворот запомнится и для следующих домов.\n\nПодведите дом вплотную к дороге — он сам встанет ровно фасадом к ней. Нужно одно: у входа должна быть мостовая, иначе жители не дойдут.\n\nПоставили не туда — Ctrl+Z (или «Отменить» в панели) в первые 30 секунд вернёт всю цену, пока в дом никто не въехал.")
+				hud.advisor("Строим где хотите", "Дом встаёт там, куда вы навели, — на траве, на площади, хоть на мостовой. Повернуть — зажмите кнопку мыши и ведите вбок (или Z / X); этот поворот запомнится и для следующих домов.\n\nПодведите дом вплотную к дороге — он сам встанет ровно фасадом к ней. Рядом с дорогой дом всегда стоит ровно по ней: повернуть его там можно только на четверть оборота — боком или спиной к улице. Нужно одно: у входа должна быть мостовая, иначе жители не дойдут.\n\nПоставили не туда — Ctrl+Z (или «Отменить» в панели) в первые 30 секунд вернёт всю цену, пока в дом никто не въехал.")
 			# поворот был для этой постройки: следующая снова сама встанет фасадом к дороге (а поворот
 			# tool_yaw остаётся — для мест без дороги и для украшений)
 			manual_yaw = false
@@ -4739,6 +5052,8 @@ func _release() -> void:
 					_build_here()
 				place_lock = {}
 			else:
+				if place_lock.has("ry"):
+					tool_yaw = _square_yaw(float(place_lock["ry"]), tool_yaw)   # у дороги — та четверть, что была видна
 				place_lock = {}                   # повернули — дальше постройка едет за мышкой, щелчок — построить
 				manual_yaw = true
 				yaw_set = true
