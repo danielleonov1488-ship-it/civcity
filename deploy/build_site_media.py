@@ -8,7 +8,7 @@
 #                         VP9 (webm) + H.264 (mp4) + кадр-заставка webp. Источник — 7-секундные клипы promo/video/public2/shots2
 #                         (если их нет — 5-секундные петли из site_media/loops)
 #   site/media/loops/   — 8 бесшовных петель 960×540 для «Живого города» (из site_media/loops)
-#   site/media/screens/ — 12 снимков 1920×1080 webp + миниатюры 640×360 (из site_media/screens/*.png)
+#   site/media/screens/ — снимки 1920×1080 webp + миниатюры 640×360 (из site_media/screens/*.png, список SCREENS)
 #   site/media/trailer/ — ролик со звуком 1080p и 720p (H.264, faststart) + заставка (из promo/video/out/civcity-promo-2.mp4)
 #   site/credits/index.html — список музыки между <!-- music:start --> и <!-- music:end --> (из godot/assets/music/CREDITS.txt)
 # site/media/ большая (в .gitignore) — перед выкладкой сайта (bash deploy/deploy.sh site) её нужно собрать этим скриптом.
@@ -35,6 +35,9 @@ FP = shutil.which('ffprobe') or 'ffprobe'
 
 LOOPS = ['market', 'street', 'park', 'villa', 'forum', 'temple', 'night', 'fields']
 SCREENS = ['overview', 'market', 'main-street', 'cat', 'villas', 'temple-sunset', 'park', 'forum', 'arrival', 'dusk', 'night', 'aqueduct']
+# новые снимки (26.10, сборка 44): герой, экран героя, «Кошачья лавка», «Где Мася?», военный квартал, бой с маслом, сенатор, маяк, карточка жителя;
+# battle-oil — учебный бой за миг до масла («Разбойники сбились в кучу!»), понятнее, чем battle
+SCREENS += ['hero', 'hero-create', 'catshop', 'masya', 'legion-quarter', 'battle', 'battle-oil', 'senator-parade', 'pharos-night', 'pharos-aqueduct', 'resident-card']
 HERO = ['market', 'villa', 'park', 'forum']      # порядок сцен в петле первого экрана
 ICONS = ['housing', 'family', 'cat', 'legion', 'save', 'scroll', 'fountain', 'commerce', 'laurels', 'swords', 'helmet', 'sun',
          'moon', 'cart', 'coins', 'decor', 'research', 'happy', 'keys', 'level', 'play', 'shield', 'eagle', 'lamp', 'tree', 'time']

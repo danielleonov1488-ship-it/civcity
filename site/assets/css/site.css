@@ -487,6 +487,75 @@ button, input { font: inherit; color: inherit; }
   .top .btn-sm { font-size: 0.88rem; padding: 0.5em 0.9em; }
 }
 
+/* ---------- обновление 26.10: истории и горожане, Легион строите сами ---------- */
+
+/* истории и горожане: снимок + текст, через раз зеркально */
+.tales { display: grid; gap: clamp(44px, 6vw, 76px); }
+.tale { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: clamp(24px, 4vw, 56px); align-items: center; }
+.tale.flip { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+.tale.flip .tale-media { order: 2; }
+.tale-media { position: relative; margin: 0; overflow: hidden; border-radius: 12px; aspect-ratio: 16 / 9; background: #2b1a0f;
+  box-shadow: 0 0 0 3px #e9cf96, 0 0 0 4px rgba(122, 79, 28, 0.55), 0 18px 34px rgba(60, 35, 10, 0.2); }
+.tale-media img { width: 100%; height: 100%; object-fit: cover; }
+.tale-text .kicker { margin-bottom: 10px; }
+.tale-text h3 { font-size: clamp(1.55rem, 1.25rem + 1vw, 2.05rem); color: var(--red-deep); margin-bottom: 14px; }
+.tale-text p { color: var(--ink-soft); font-size: 1.06rem; }
+.tale-text p:last-child { margin-bottom: 0; }
+.story-chips { display: flex; flex-wrap: wrap; gap: 7px 8px; margin: 0; padding: 0; list-style: none; }
+.story-chips li { padding: 3px 11px; border-radius: 999px; font-weight: 700; font-size: 0.9rem; line-height: 1.45; color: var(--ink);
+  background: rgba(216, 165, 65, 0.16); border: 1px solid var(--line); }
+.story-chips li:first-child { color: #fff; background: var(--olive); border-color: var(--olive-deep); }
+
+/* Легион: два снимка над текстом, здания под портретами бойцов, подпись под картой */
+.legion-shots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(14px, 2vw, 22px); margin: 0 0 clamp(36px, 5vw, 56px); }
+.legion-shots figure { position: relative; margin: 0; overflow: hidden; border-radius: 10px; aspect-ratio: 16 / 9; background: #1d0f08;
+  box-shadow: 0 0 0 3px #e2b75c, 0 0 0 4px rgba(0, 0, 0, 0.45), 0 20px 40px rgba(0, 0, 0, 0.4); }
+.legion-shots img { width: 100%; height: 100%; object-fit: cover; }
+.legion-shots figcaption { position: absolute; left: 0; right: 0; bottom: 0; padding: 34px 16px 12px; color: #fff4dc; font-weight: 700; font-size: 1rem; line-height: 1.3;
+  background: linear-gradient(180deg, transparent, rgba(20, 10, 3, 0.82)); text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7); }
+.units small { display: block; margin-top: 3px; font-size: 0.74rem; font-weight: 700; line-height: 1.15; color: #c9ad80; }
+.perks-buildings { margin-top: 20px; }
+.legion-text > p + h3 { margin-top: 26px; }
+.map-note { margin: 16px 0 0; text-align: center; color: #e2cfaa; font-size: 0.98rem; }
+/* карта провинций едет рядом с длинным текстом (clip вместо hidden — иначе раздел сам себе «прокрутка» и sticky не работает) */
+@supports (overflow: clip) {
+  .legion { overflow: clip; }
+}
+@media (min-width: 981px) {
+  .legion-map { position: sticky; top: 88px; }
+}
+
+/* подвал: ссылки справа больше не сжимают подпись посередине в столбик по слову */
+@media (min-width: 721px) {
+  .foot-grid { grid-template-columns: auto minmax(220px, 1fr) minmax(0, auto); }
+}
+
+/* шапка: десять разделов в строку помещаются только от 1201 точки — уже сворачиваем в меню (как ниже 980),
+   иначе кнопка «Скачать» уезжает за край экрана */
+@media (max-width: 1200px) {
+  .menu-btn { display: block; }
+  .nav { position: absolute; top: 64px; left: 0; right: 0; flex-direction: column; align-items: stretch; gap: 0; padding: 8px var(--gutter) 16px;
+    background: rgba(34, 21, 12, 0.97); box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3); display: none; }
+  .top.open .nav { display: flex; }
+  .nav a { padding: 12px 6px; border-bottom: 1px solid rgba(226, 183, 92, 0.15); border-radius: 0; font-size: 1.08rem; }
+  .top .btn-sm { margin-left: auto; }
+  .nav.nav-plain { position: static; display: flex; flex-direction: row; padding: 0; background: none; box-shadow: none; margin-left: auto; }
+  .nav.nav-plain a { padding: 8px 10px; border: 0; font-size: 1rem; }
+  .nav.nav-plain + .btn-sm { margin-left: 0; }
+}
+
+@media (max-width: 980px) {
+  .tale, .tale.flip { grid-template-columns: minmax(0, 1fr); max-width: 760px; margin-inline: auto; }
+  .tale.flip .tale-media { order: 0; }
+}
+@media (max-width: 720px) {
+  .legion-shots { grid-template-columns: minmax(0, 1fr); }
+  .legion-shots figcaption { font-size: 0.9rem; padding: 26px 12px 10px; }
+  .tale-text p { font-size: 1rem; }
+  .story-chips li { font-size: 0.85rem; }
+  .units small { font-size: 0.68rem; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: 0.01ms !important; animation: none !important; }
