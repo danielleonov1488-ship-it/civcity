@@ -169,7 +169,7 @@ static func sheep_anim(sh: Node3D) -> Array:
 		var graze := {
 			"Neck": func(t: float) -> Vector3: return Vector3(0.95 * down.call(t) - 0.08, 0, 0),
 			"Head": func(t: float) -> Vector3: return Vector3((0.35 + 0.09 * sin(TAU * t * 2.2)) * down.call(t), 0, 0.4 * (1.0 - down.call(t)) * sin(TAU * t / 2.6))}
-		_sheep_lib.add_animation("Graze", People._cat_pose(src, 2, sk, graze, Vector3.ZERO))
+		_sheep_lib.add_animation("Graze", People._cat_pose(src, 2, sk, graze))
 	if not ap.has_animation_library("fauna"):
 		ap.add_animation_library("fauna", _sheep_lib)
 	return [ap, "fauna/Graze"]

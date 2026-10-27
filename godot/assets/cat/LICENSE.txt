@@ -1,1 +1,8 @@
 Cat.fbx - Quaternius, "Animated Animales Low Poly" (Animal Pack Vol.2) - CC0 1.0 Universal (public domain), from OpenGameArt (https://opengameart.org/content/animated-animales-low-poly).
+
+Kitten.glb - "Kitten" by Poly by Google, CC-BY 3.0 (https://creativecommons.org/licenses/by/3.0/),
+             from Poly Pizza: https://poly.pizza/m/dBJgGEu5bHW
+             (в игре — сетка всех кошек: натянута на скелет и движения Cat.fbx (scripts/people.gd, _cat_build),
+             окрасы и глаза рисует шейдер shaders/cat_fur.gdshader; сам файл не менялся)
+
+Cat.fbx в игре — только скелет и движения кошки (его сетка не показывается).

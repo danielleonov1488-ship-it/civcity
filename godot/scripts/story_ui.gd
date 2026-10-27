@@ -355,8 +355,9 @@ func _portrait_vp(who: Dictionary) -> SubViewport:
 			if not sks.is_empty():
 				sk = sks[0]
 				bone = sk.find_bone("Bone.003")
-			off = Vector3(0, 0.06, 0.03)          # кость — у основания головы: смотрим в мордочку
-			dist = 0.46
+			var fc := People.cat_face()            # кость — у основания головы: вся голова с ушами — в медальоне
+			off = fc[0]
+			dist = fc[1]
 		"beast":
 			# ослик (Quaternius): мордой к камере вполоборота — куда смотрит голова, видно по костям шеи и головы
 			var bn := Stories.beast_node(false)

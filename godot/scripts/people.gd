@@ -936,6 +936,9 @@ func _new_cat() -> Dictionary:
 	if nm == "":
 		nm = "Мурлыка %d" % (city.cats.size() + 1)
 	var rec := {"nm": nm, "sx": sx, "fur": rng.randi() % CAT_FURS.size(), "home": int(h["id"]), "sd": rng.randi()}
+	# каждая вторая светлая — сиамская, как сама «Kitten» (по зерну кошки: поток случайностей не сдвигается)
+	if int(rec["fur"]) == 3 and (int(rec["sd"]) >> 3) & 1 == 1:
+		rec["fur"] = CAT_SIAMESE
 	city.cats.append(rec)
 	var c := _cat_from(rec, h)
 	cats.append(c)
@@ -3466,20 +3469,21 @@ func _drop() -> void:
 
 # ---------- кошки ----------
 
-## Кошка — модель Quaternius (Animal Pack Vol.2, CC0) со своими позами; нет файла (старый пакет моделей) — прежняя, из Kit.
-## Кости модели: Bone — таз, .001 — грудь, .002 — шея, .003 — голова, .004–.007 — хвост; передние лапы .014–.016 и
+## Кошка: скелет и движения — модель Quaternius (Animal Pack Vol.2, CC0) со своими позами, сетка — «Kitten» (Poly by Google,
+## CC BY 3.0, через Poly Pizza; решение владельца 27.10), натянутая на этот скелет здесь же (_cat_build). Нет файлов
+## (старый пакет моделей) — прежняя кошка из Kit.
+## Кости скелета: Bone — таз, .001 — грудь, .002 — шея, .003 — голова, .004–.007 — хвост; передние лапы .014–.016 и
 ## .017–.019 (плечо, предплечье, кисть), задние .008–.010 и .011–.013 (бедро, голень, стопа)
 const CAT_FILE := "res://assets/cat/Cat.fbx"     # в пакете с кодом, не в пакете моделей: обновление — пара МБ, а не ~100
+const CAT_MESH := "res://assets/cat/Kitten.glb"  # сетка кошки (650 треугольников) — тоже в пакете с кодом
 const CAT_LEN := 0.6                   # длина кошки от кончика хвоста до носа (была 0,5 — рядом с жителями терялась)
 const CAT_LEN_BED := 0.5               # кошка в корзинке-украшении и в облачке — прежнего размера (корзинка под неё)
-## Окрас (тем же номером, что CAT_FURS): узор (0 гладкая, 1 тигровая, 2 «во фраке», 3 пятна), цвет полосок, цвет глаз
+## Окрас (тем же номером, что CAT_FURS): узор (0 гладкая, 1 тигровая, 2 «во фраке», 3 пятна, 4 сиамская — тёмные мордочка,
+## уши, лапки и хвост), цвет полосок (у сиамской — «маски»), цвет глаз
 const CAT_LOOK := [[1, Color("b05c1c"), Color("c9962c")], [1, Color("4b4844"), Color("86ad3c")], [0, Color("1e1a18"), Color("d8b23a")],
 	[0, Color("e2dccf"), Color("6f9fd2")], [1, Color("6a4322"), Color("a6a63a")], [2, Color("2c2826"), Color("8fb33c")]]
-const CAT_HEAD := 1.22                 # голова крупнее: милее и читается издали
-const CAT_EYE := Vector3(0.0281, 0.00215, 0.0288)   # где глаз в позе покоя (ед. модели, x — вперёд, z — вверх)
-const CAT_EYE_R := 0.00095
 const CAT_WALK := 0.42                 # шаг кошки (прежняя, вдвое крупнее, ходит 0.9)
-const CAT_STEP := 1.74                 # как быстро лапа уходит назад в «Walking» (ед. модели в секунду) — чтобы лапы не скользили
+const CAT_STEP := 1.74                 # как быстро лапа уходит назад в «Walking» (ед. модели в секунду; у «Kitten» — ещё × CAT_STRIDE) — чтобы лапы не скользили
 ## Окрасы: шерсть и грудка
 const CAT_FURS := [[Color("e0913f"), Color("f6dcb4")], [Color("7d7a76"), Color("d9d4cc")], [Color("2c2724"), Color("4a423c")],
 	[Color("f2ede4"), Color("ffffff")], [Color("a87447"), Color("efe0c8")], [Color("4a4440"), Color("f2ede4")]]
@@ -3489,24 +3493,62 @@ const CAT_MASYA := 6
 const CAT_MASYA_FUR := [Color("1d1a19"), Color("2c2725")]
 const CAT_MASYA_LOOK := [0, Color("141110"), Color("f0c232")]
 const CAT_MASYA_SHEEN := 0.45
+## Сиамская — окрас самой «Kitten»: светлая, мордочка, уши, лапки и хвост тёмные, глаза голубые. Тоже вне CAT_FURS (номер
+## сохраняется, случайный выбор окраса и его поток прежние): ею становится каждая вторая новая светлая кошка (_new_cat)
+const CAT_SIAMESE := 7
+const CAT_SIAMESE_FUR := [Color("e8dccd"), Color("f3ebe0")]
+const CAT_SIAMESE_LOOK := [4, Color("785138"), Color("5f93d6")]
 ## Состояние кошки → движение и его скорость
 const CAT_CLIP := {"walk": ["Walk", 1.0], "sit": ["Sit", 1.0], "sleep": ["Sleep", 0.3], "pet": ["Pet", 1.0]}
+## Сетка «Kitten» → скелет: её единица — CAT_K единиц скелета (кошка той же длины, что прежняя); в файле она стоит на
+## y = −CAT_FLOOR, нос — к +z
+const CAT_K := 0.0015
+const CAT_FLOOR := 20.575
+## Суставы скелета под «Kitten» (её единицы, но оси скелета: x — вперёд, y — влево, z — вверх от земли): кость → где её
+## начало, конец — начало следующей по CAT_NEXT. Лапы — левые (y > 0), правые — зеркально (CAT_MIRROR). Повороты костей
+## в покое прежние, поэтому движения файла (повороты) годятся как есть: двигаются только суставы
+const CAT_JOINTS := {
+	"Bone": Vector3(-11.0, 0.0, 20.5), "Bone.001": Vector3(-3.5, 0.0, 18.8), "Bone.002": Vector3(7.0, 0.0, 21.0),
+	"Bone.003": Vector3(11.5, 0.0, 25.5), "Bone.003_end": Vector3(18.8, 0.0, 24.5),
+	"Bone.004": Vector3(-14.0, 0.0, 24.0), "Bone.005": Vector3(-15.6, 0.0, 28.5), "Bone.006": Vector3(-16.6, 0.0, 32.5),
+	"Bone.007": Vector3(-17.4, 0.0, 36.5), "Bone.007_end": Vector3(-18.2, 0.0, 40.8),
+	"Bone.017": Vector3(8.0, 2.4, 18.0), "Bone.018": Vector3(8.2, 2.6, 9.5), "Bone.019": Vector3(8.0, 2.3, 2.0), "Bone.019_end": Vector3(11.0, 2.3, 1.0),
+	"Bone.008": Vector3(-11.0, 2.4, 17.5), "Bone.009": Vector3(-13.2, 2.6, 9.0), "Bone.010": Vector3(-11.8, 2.3, 2.0), "Bone.010_end": Vector3(-7.6, 2.3, 1.0),
+}
+const CAT_MIRROR := {"Bone.014": "Bone.017", "Bone.015": "Bone.018", "Bone.016": "Bone.019", "Bone.016_end": "Bone.019_end",
+	"Bone.011": "Bone.008", "Bone.012": "Bone.009", "Bone.013": "Bone.010", "Bone.013_end": "Bone.010_end"}
+## Кости, ведущие сетку: кость → следующая (общий с ней сустав — её конец)
+const CAT_NEXT := {"Bone": "Bone.001", "Bone.001": "Bone.002", "Bone.002": "Bone.003", "Bone.003": "Bone.003_end",
+	"Bone.004": "Bone.005", "Bone.005": "Bone.006", "Bone.006": "Bone.007", "Bone.007": "Bone.007_end",
+	"Bone.014": "Bone.015", "Bone.015": "Bone.016", "Bone.016": "Bone.016_end", "Bone.017": "Bone.018", "Bone.018": "Bone.019", "Bone.019": "Bone.019_end",
+	"Bone.008": "Bone.009", "Bone.009": "Bone.010", "Bone.010": "Bone.010_end", "Bone.011": "Bone.012", "Bone.012": "Bone.013", "Bone.013": "Bone.013_end"}
+## Полуширина сгиба у начала кости (ед. «Kitten»): ближе к суставу вершина идёт пополам с соседней костью
+const CAT_BEND := {"Bone.001": 3.0, "Bone.002": 3.0, "Bone.003": 1.6, "Bone.004": 1.6, "Bone.005": 1.6, "Bone.006": 1.6, "Bone.007": 1.6,
+	"Bone.014": 2.5, "Bone.015": 2.0, "Bone.016": 0.8, "Bone.017": 2.5, "Bone.018": 2.0, "Bone.019": 0.8,
+	"Bone.008": 2.5, "Bone.009": 2.0, "Bone.010": 0.8, "Bone.011": 2.5, "Bone.012": 2.0, "Bone.013": 0.8}
+## Где лапа уходит в туловище (высота, ед. «Kitten»): выше — вершины плеча (бедра) плавно, до половины, идут за грудью
+## (тазом) — кожа между лапами и под грудью не рвётся, когда лапа шагает
+const CAT_ROOT := {"Bone.014": [10.0, 14.0], "Bone.017": [10.0, 14.0], "Bone.008": [11.5, 15.5], "Bone.011": [11.5, 15.5]}
 
 static var _cat_parts := {}
 static var _cat_scene: PackedScene
 static var _cat_ok := -1               # -1 — ещё не проверяли, 1 — модель годится, 0 — кошки из Kit
 static var _cat_lib: AnimationLibrary
 static var _cat_size := 1.0            # длина модели в файле
-static var _cat_v2: ArrayMesh          # общая сетка кошки: одна поверхность, глаза, голова крупнее (_cat_build)
+static var _cat_v2: ArrayMesh          # общая сетка кошки «Kitten» на скелете (_cat_build)
+static var _cat_skin: Skin             # её привязка к костям
+static var _cat_rest: Array[Transform3D] = []      # покой костей под «Kitten» (_cat_fit)
+static var _cat_rest0: Array[Transform3D] = []     # покой костей в файле
 static var _cat_shader: Shader
 
 
-## Модель кошки на месте и годится: скелет, «Idle» и «Walking». Заодно один раз собираются её движения
+## Модель кошки на месте и годится: скелет, «Idle» и «Walking», сетка «Kitten». Заодно один раз суставы скелета
+## встают под «Kitten», собираются её сетка и движения
 static func _cat_model_ok() -> bool:
 	if _cat_ok >= 0:
 		return _cat_ok == 1
 	_cat_ok = 0
-	if not ResourceLoader.exists(CAT_FILE):
+	if not ResourceLoader.exists(CAT_FILE) or not ResourceLoader.exists(CAT_MESH):
 		return false
 	_cat_scene = load(CAT_FILE) as PackedScene
 	if _cat_scene == null:
@@ -3517,61 +3559,233 @@ static func _cat_model_ok() -> bool:
 	var aps := m.find_children("*", "AnimationPlayer", true, false)
 	var sks := m.find_children("*", "Skeleton3D", true, false)
 	if not aps.is_empty() and not sks.is_empty() and LegionFighter._find(aps[0], ["Idle"]) != "" \
-			and LegionFighter._find(aps[0], ["Walking", "Walk"]) != "":
+			and LegionFighter._find(aps[0], ["Walking", "Walk"]) != "" and _cat_fit(sks[0]):
+		_cat_dress(m, 0)
 		var box := Artisau.aabb(m)
 		_cat_size = maxf(0.01, maxf(box.size.x, box.size.z))
 		_cat_lib = _cat_clips(aps[0], sks[0])
 		_cat_ok = 1
 	root.free()
-	print("Кошки: ", "модель Quaternius" if _cat_ok == 1 else "запасные (модели нет)")
+	print("Кошки: ", "«Kitten» на скелете Quaternius" if _cat_ok == 1 else "запасные (модели нет)")
 	return _cat_ok == 1
 
 
+## Суставы кошки под «Kitten» (CAT_JOINTS, с зеркальными) в единицах скелета (k = 1 — в единицах «Kitten»): кость → где
+## её начало в покое
+static func _cat_joints(k := CAT_K) -> Dictionary:
+	var J := {}
+	for nm: String in CAT_JOINTS:
+		J[nm] = CAT_JOINTS[nm] * k
+	for nm: String in CAT_MIRROR:
+		var p: Vector3 = CAT_JOINTS[CAT_MIRROR[nm]]
+		J[nm] = Vector3(p.x, -p.y, p.z) * k
+	return J
+
+
+## Покой костей под «Kitten» (_cat_rest): повороты прежние, начала — по CAT_JOINTS (кости без своего сустава, IK — как
+## в файле); сетка и её привязка (_cat_build). false — в файле не тот скелет
+static func _cat_fit(sk: Skeleton3D) -> bool:
+	if not _cat_rest.is_empty():
+		return true
+	var J := _cat_joints()
+	var n := sk.get_bone_count()
+	for nm: String in J:
+		if sk.find_bone(nm) < 0:
+			return false
+	var glob: Array[Transform3D] = []
+	for i in n:
+		_cat_rest0.append(sk.get_bone_rest(i))
+		var g := sk.get_bone_global_rest(i)
+		var nm := sk.get_bone_name(i)
+		if J.has(nm):
+			g.origin = J[nm]
+		glob.append(g)
+	for i in n:
+		var p := sk.get_bone_parent(i)
+		var r := _cat_rest0[i]
+		if p >= 0:
+			r.origin = Transform3D(sk.get_bone_global_rest(p).basis, glob[p].origin).affine_inverse() * glob[i].origin
+		else:
+			r.origin = glob[i].origin
+		_cat_rest.append(r)
+	_cat_skin = Skin.new()
+	for nm: String in CAT_NEXT:
+		var bi := sk.find_bone(nm)
+		_cat_skin.add_named_bind(nm, glob[bi].affine_inverse())
+	_cat_v2 = _cat_build(sk)
+	return true
+
+
+## Движение из файла под суставы «Kitten»: дорожки места (таз, плечи, бёдра) — от нового покоя, сдвиг в движении — как был,
+## только в k раз длиннее (лапы «Kitten» длиннее прежних)
+static func _cat_refit(a: Animation, sk: Skeleton3D) -> void:
+	for t in a.get_track_count():
+		if a.track_get_type(t) != Animation.TYPE_POSITION_3D:
+			continue
+		var bone := String(a.track_get_path(t)).get_slice(":", 1)
+		var bi := sk.find_bone(bone)
+		if bi < 0 or not (CAT_NEXT.has(bone)):
+			continue
+		var k := 1.0
+		var ch := String(CAT_NEXT[bone])
+		var c2 := String(CAT_NEXT.get(ch, ""))
+		if bone != "Bone" and c2 != "":
+			# лапа: длина плеча и предплечья (бедра и голени) — у «Kitten» и в файле
+			var b1 := sk.find_bone(ch)
+			var b2 := sk.find_bone(c2)
+			k = (_cat_rest[b1].origin.length() + _cat_rest[b2].origin.length()) / maxf(0.0001, _cat_rest0[b1].origin.length() + _cat_rest0[b2].origin.length())
+		for i in a.track_get_key_count(t):
+			var v: Vector3 = a.track_get_key_value(t, i)
+			a.track_set_key_value(t, i, _cat_rest[bi].origin + (v - _cat_rest0[bi].origin) * k)
+
+
+## Лапы скелета: [плечо (бедро), предплечье (голень), кисть (стопа), IK-цель в файле — где в движении кисть (стопа)]
+const CAT_LEGS := [["Bone.014", "Bone.015", "Bone.016", "IKFrontRight"], ["Bone.017", "Bone.018", "Bone.019", "IKFrontLeft"],
+	["Bone.008", "Bone.009", "Bone.010", "IKBackLeft"], ["Bone.011", "Bone.012", "Bone.013", "IKBackRight"]]
+const CAT_STRIDE := 1.39               # шаг «Kitten» шире прежнего во столько раз, во сколько длиннее её лапы (передние 1,48, задние 1,31)
+
+
 ## Движения кошки, общие на всех: «Idle» и «Walk» из файла (по кругу) и свои позы поверх «Idle» (дыхание, хвост):
-## «Sit» — сидит, «Pet» — сидит, подняв голову к человеку, хвост ходит, «Sleep» — спит клубком
+## «Sit» — сидит, «Pet» — сидит, подняв голову к человеку, хвост ходит, «Sleep» — спит клубком. Лапы везде ставятся
+## по двум костям (_cat_ik): в «Idle» и «Walk» — куда в файле вела их IK-цель, в позах — в свои точки на земле
 static func _cat_clips(ap: AnimationPlayer, sk: Skeleton3D) -> AnimationLibrary:
 	var lib := AnimationLibrary.new()
 	var idle := ap.get_animation(LegionFighter._find(ap, ["Idle"])).duplicate(true) as Animation
 	var walk := ap.get_animation(LegionFighter._find(ap, ["Walking", "Walk"])).duplicate(true) as Animation
+	_cat_refit(idle, sk)
+	_cat_refit(walk, sk)
+	# лапы: шаг прежней кошки (IK-цели файла, от её стойки в «Idle») — от стойки «Kitten», в CAT_STRIDE раз шире
+	var J := _cat_joints()
+	var stand := []
+	for lg: Array in CAT_LEGS:
+		var tr := idle.find_track(NodePath(_cat_node(idle) + ":" + String(lg[3])), Animation.TYPE_POSITION_3D)
+		stand.append(idle.position_track_interpolate(tr, 0.0) if tr >= 0 else Vector3.ZERO)
+	for a: Animation in [idle, walk]:
+		var feet := func(li: int, t: float) -> Vector3:
+			var tr := a.find_track(NodePath(_cat_node(a) + ":" + String(CAT_LEGS[li][3])), Animation.TYPE_POSITION_3D)
+			var q: Vector3 = a.position_track_interpolate(tr, t) if tr >= 0 else stand[li]
+			return (J[CAT_LEGS[li][2]] as Vector3) + (q - (stand[li] as Vector3)) * CAT_STRIDE
+		_cat_ik(a, sk, feet, false)
 	idle.loop_mode = Animation.LOOP_LINEAR
 	walk.loop_mode = Animation.LOOP_LINEAR
 	lib.add_animation("Idle", idle)
 	lib.add_animation("Walk", walk)
 	var L := idle.length * 2.0
-	# сидит: таз ниже и откинут назад, передние лапы прямо, задние сложены, хвост лежит позади
-	var sit := {"Bone": Vector3(0, -0.52, 0), "Bone.002": Vector3(0, 0.2, 0), "Bone.003": Vector3(0, 0.3, 0),
-		"Bone.014": Vector3(0, 0.52, 0), "Bone.017": Vector3(0, 0.52, 0),
-		"Bone.008": Vector3(0, -1.14, 0), "Bone.011": Vector3(0, -1.14, 0), "Bone.009": Vector3(0, 2.43, 0), "Bone.012": Vector3(0, 2.43, 0),
-		"Bone.010": Vector3(0, -0.77, 0), "Bone.013": Vector3(0, -0.77, 0),
+	# сидит: таз опущен (круп на земле) и откинут назад, передние лапы прямо под грудью, задние сложены — скакательный
+	# сустав на земле позади, лапка вперёд; хвост лежит позади
+	var sit := {"Bone": Vector3(0, -0.64, 0), "Bone.002": Vector3(0, 0.25, 0), "Bone.003": Vector3(0, 0.35, 0),
 		"Bone.004": Vector3(0, -1.68, 0), "Bone.005": Vector3(0, 0.53, 0.45), "Bone.006": Vector3(0, 0.36, 0.6),
 		"Bone.007": func(t: float) -> Vector3: return Vector3(0, -0.2, 0.5 + 0.35 * sin(TAU * 2.0 * t / L))}
+	var sit_feet := [Vector3(9.0, 2.3, 2.0), Vector3(-9.0, 3.0, 2.4)]
 	# сидит мягче: хвост обвивает бок и кончиком подрагивает, голова чуть набок
 	var sit_soft := sit.duplicate()
-	sit_soft["Bone.003"] = Vector3(0.14, 0.3, 0.08)
-	lib.add_animation("Sit", _cat_pose(idle, 2, sk, sit_soft, Vector3(0, 0, -1.29)))
+	sit_soft["Bone.003"] = Vector3(0.14, 0.35, 0.08)
+	lib.add_animation("Sit", _cat_pose(idle, 2, sk, sit_soft, 10.9, sit_feet))
 	# гладят: голова поднята к человеку, хвост ходит из стороны в сторону
 	var pet := sit.duplicate()
-	pet["Bone.003"] = Vector3(0, 0.0, 0)
+	pet["Bone.003"] = Vector3(0, 0.05, 0)
 	pet["Bone.006"] = func(t: float) -> Vector3: return Vector3(0, 0.36, sin(TAU * 4.0 * t / L) * 0.4)
 	pet["Bone.007"] = func(t: float) -> Vector3: return Vector3(0, -0.27, sin(TAU * 4.0 * t / L - 0.8) * 0.5)
-	lib.add_animation("Pet", _cat_pose(idle, 2, sk, pet, Vector3(0, 0, -1.29)))
+	lib.add_animation("Pet", _cat_pose(idle, 2, sk, pet, 10.9, sit_feet))
 	# спит клубком на животе: передние лапы вперёд по земле, задние поджаты, голова лежит, повёрнута к боку,
 	# хвост лёг на землю и обвил бок
-	var sleep := {"Bone.001": Vector3(0, 0, -0.2), "Bone.002": Vector3(0, 0.25, -0.9), "Bone.003": Vector3(0, 0.3, -0.4),
-		"Bone.014": Vector3(0, 1.24, 0), "Bone.017": Vector3(0, 1.24, 0), "Bone.015": Vector3(0, -2.85, 0), "Bone.018": Vector3(0, -2.85, 0),
-		"Bone.016": Vector3(0, 1.7, 0), "Bone.019": Vector3(0, 1.7, 0),
-		"Bone.008": Vector3(0, -1.41, 0), "Bone.011": Vector3(0, -1.41, 0), "Bone.009": Vector3(0, 2.41, 0), "Bone.012": Vector3(0, 2.41, 0),
-		"Bone.010": Vector3(0, -1.0, 0), "Bone.013": Vector3(0, -1.0, 0),
+	var sleep := {"Bone.001": Vector3(0, 0, -0.2), "Bone.002": Vector3(0, 0.6, -0.8), "Bone.003": Vector3(0.25, 0.45, -0.35),
 		"Bone.004": Vector3(0, -2.55, 0), "Bone.005": Vector3(0, 0.27, 0), "Bone.006": Vector3(0, 0.8, 1.3), "Bone.007": Vector3(0, -0.25, 0.9)}
-	lib.add_animation("Sleep", _cat_pose(idle, 2, sk, sleep, Vector3(0, 0, -1.15)))
+	lib.add_animation("Sleep", _cat_pose(idle, 2, sk, sleep, 11.5, [Vector3(7.5, 2.3, 1.6), Vector3(-7.0, 3.4, 1.8)]))
 	return lib
+
+
+## Путь к скелету в дорожках движения a («CatArmature/Skeleton3D»)
+static func _cat_node(a: Animation) -> String:
+	return String(a.track_get_path(0)).get_slice(":", 0) if a.get_track_count() > 0 else "CatArmature/Skeleton3D"
+
+
+## Позы всех костей скелета в момент t движения a (оси скелета): из дорожек, у кости без дорожки — покой
+static func _cat_globals(a: Animation, sk: Skeleton3D, t: float) -> Array[Transform3D]:
+	var n := sk.get_bone_count()
+	var pos := []
+	var rot := []
+	for i in n:
+		pos.append(sk.get_bone_rest(i).origin)
+		rot.append(sk.get_bone_rest(i).basis.get_rotation_quaternion())
+	for k in a.get_track_count():
+		var bi := sk.find_bone(String(a.track_get_path(k)).get_slice(":", 1))
+		if bi < 0:
+			continue
+		match a.track_get_type(k):
+			Animation.TYPE_POSITION_3D:
+				pos[bi] = a.position_track_interpolate(k, t)
+			Animation.TYPE_ROTATION_3D:
+				rot[bi] = a.rotation_track_interpolate(k, t)
+	var g: Array[Transform3D] = []
+	for i in n:
+		var l := Transform3D(Basis(rot[i] as Quaternion), pos[i])
+		var p := sk.get_bone_parent(i)
+		g.append(g[p] * l if p >= 0 else l)
+	return g
+
+
+## Лапы в движении a — в цели feet (Callable(лапа — номер в CAT_LEGS, t) → куда встать кисти/стопе, оси скелета): поворот
+## плеча и предплечья (бедра и голени) — по двум костям, локоть и скакательный сустав сгибаются назад; кисть (стопа)
+## на земле лежит плашмя, как в покое, поднятая — смотрит, как в движении (flat — всегда плашмя). Дорожки этих костей
+## пересчитываются 30 раз в секунду
+static func _cat_ik(a: Animation, sk: Skeleton3D, feet: Callable, flat: bool) -> void:
+	var n := maxi(2, int(round(a.length * 30.0)))
+	var keys := {}
+	for lg: Array in CAT_LEGS:
+		for k in 3:
+			keys[lg[k]] = []
+	for i in n + 1:
+		var t := a.length * i / n
+		var G := _cat_globals(a, sk, t)
+		for li in CAT_LEGS.size():
+			var lg: Array = CAT_LEGS[li]
+			var bu := sk.find_bone(lg[0])
+			var bl := sk.find_bone(lg[1])
+			var bf := sk.find_bone(lg[2])
+			var T: Vector3 = feet.call(li, t)
+			var S := G[bu].origin
+			var E0 := G[bl].origin
+			var W0 := G[bf].origin
+			var L1 := _cat_rest[bl].origin.length()
+			var L2 := _cat_rest[bf].origin.length()
+			var d := clampf(S.distance_to(T), absf(L1 - L2) + 0.00001, (L1 + L2) * 0.999)
+			var dir := (T - S).normalized()
+			var back := Vector3(-1, 0, 0)
+			var perp := (back - dir * back.dot(dir)).normalized()
+			var ca := (L1 * L1 - L2 * L2 + d * d) / (2.0 * d)
+			var E := S + dir * ca + perp * sqrt(maxf(0.0, L1 * L1 - ca * ca))
+			var W := S + dir * d
+			var q1 := Quaternion((E0 - S).normalized(), (E - S).normalized())
+			var ru := q1 * G[bu].basis.get_rotation_quaternion()
+			var q2 := Quaternion((q1 * (W0 - E0)).normalized(), (W - E).normalized())
+			var rl := q2 * q1 * G[bl].basis.get_rotation_quaternion()
+			# кисть на земле — плашмя, как в покое; поднялась — как в движении
+			var up := 0.0 if flat else clampf((T.z - sk.get_bone_global_rest(bf).origin.z) / (2.5 * CAT_K), 0.0, 1.0)
+			var rf := sk.get_bone_global_rest(bf).basis.get_rotation_quaternion().slerp(G[bf].basis.get_rotation_quaternion(), up)
+			var rp := G[sk.get_bone_parent(bu)].basis.get_rotation_quaternion()
+			(keys[lg[0]] as Array).append([t, (rp.inverse() * ru).normalized()])
+			(keys[lg[1]] as Array).append([t, (ru.inverse() * rl).normalized()])
+			(keys[lg[2]] as Array).append([t, (rl.inverse() * rf).normalized()])
+	var node := _cat_node(a)
+	for bone: String in keys:
+		var path := NodePath(node + ":" + bone)
+		var tr := a.find_track(path, Animation.TYPE_ROTATION_3D)
+		if tr < 0:
+			tr = a.add_track(Animation.TYPE_ROTATION_3D)
+			a.track_set_path(tr, path)
+		for k in range(a.track_get_key_count(tr) - 1, -1, -1):
+			a.track_remove_key(tr, k)
+		for e: Array in keys[bone]:
+			a.rotation_track_insert_key(tr, e[0], e[1])
 
 
 ## Поза поверх src (повторяется reps раз): pose — кость → поворот в осях скелета (x — вперёд, y — вбок, z — вверх):
 ## Vector3 углов — сначала кивок y (носом вниз), потом крен x, потом поворот z (влево) — или Callable(t) → такие углы.
-## Кость поворачивается вместе с родителем, а потом ещё на свой угол. lift — сдвиг таза (в единицах модели:
-## скелет в файле в 100 раз мельче)
-static func _cat_pose(src: Animation, reps: int, sk: Skeleton3D, pose: Dictionary, lift: Vector3) -> Animation:
+## Кость поворачивается вместе с родителем, а потом ещё на свой угол. lift — насколько ниже таз (единицы «Kitten»);
+## feet — куда встать кистям и стопам (левым; правым — зеркально; единицы «Kitten» от земли): [передние, задние].
+## Позы овец (Fauna) — без них
+static func _cat_pose(src: Animation, reps: int, sk: Skeleton3D, pose: Dictionary, lift := 0.0, feet := []) -> Animation:
 	var a := Animation.new()
 	var L := src.length * reps
 	a.length = L
@@ -3594,7 +3808,7 @@ static func _cat_pose(src: Animation, reps: int, sk: Skeleton3D, pose: Dictionar
 				var tt := L * i / n
 				a.rotation_track_insert_key(nt, tt, _cat_off(sk, bi, pose, tt) * src.rotation_track_interpolate(t, fmod(tt, src.length)))
 			continue
-		var up := lift * 0.01 if ty == Animation.TYPE_POSITION_3D and bone == "Bone" else Vector3.ZERO
+		var up := Vector3(0, 0, -lift * CAT_K) if ty == Animation.TYPE_POSITION_3D and bone == "Bone" else Vector3.ZERO
 		for r in reps:
 			for k in src.track_get_key_count(t):
 				var v = src.track_get_key_value(t, k)
@@ -3609,6 +3823,12 @@ static func _cat_pose(src: Animation, reps: int, sk: Skeleton3D, pose: Dictionar
 		for i in n + 1:
 			var tt := L * i / n
 			a.rotation_track_insert_key(nt, tt, _cat_off(sk, bi, pose, tt) * sk.get_bone_rest(bi).basis.get_rotation_quaternion())
+	# лапы — в свои точки на земле, плашмя
+	if feet.is_empty():
+		return a
+	_cat_ik(a, sk, func(li: int, _t: float) -> Vector3:
+		var f: Vector3 = feet[0 if li < 2 else 1]
+		return Vector3(f.x, f.y * (-1.0 if li == 0 or li == 3 else 1.0), f.z) * CAT_K, true)
 	return a
 
 
@@ -3639,108 +3859,175 @@ static func _cat_off(sk: Skeleton3D, bi: int, pose: Dictionary, t: float) -> Qua
 	return g.inverse() * r * g
 
 
-## Общая сетка кошки из модели: три поверхности (шерсть, грудка и лапки, уши и нос) — в одну (одна отрисовка вместо
-## трёх), голова в CAT_HEAD раз крупнее (вершины головы — от её кости), два глаза (полусферы на кости головы).
-## В вершинах: COLOR.r — часть тела, UV/UV2 — место в позе покоя (по нему окрас шейдера cat_fur), у глаза — его координаты
-static func _cat_build(mi: MeshInstance3D, sk: Skeleton3D) -> ArrayMesh:
-	if _cat_v2:
-		return _cat_v2
-	var src: ArrayMesh = mi.mesh
-	var hb := -1
-	for i in mi.skin.get_bind_count():
-		if mi.skin.get_bind_name(i) == "Bone.003":
-			hb = i
-	var o := sk.get_bone_global_rest(sk.find_bone("Bone.003")).origin
-	var eight := (src.surface_get_format(0) & Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS) != 0
-	var nb := 8 if eight else 4
+## Лапы, хвост скелета (кто ведёт какие вершины, _cat_may)
+const CAT_FRONT := ["Bone.014", "Bone.015", "Bone.016", "Bone.017", "Bone.018", "Bone.019"]
+const CAT_HIND := ["Bone.008", "Bone.009", "Bone.010", "Bone.011", "Bone.012", "Bone.013"]
+const CAT_TAIL := ["Bone.004", "Bone.005", "Bone.006", "Bone.007"]
+## Цвета картинки «Kitten» → что это: светлая шерсть, «маска» (мордочка, уши, лапки), тёмное (хвост, нос, уши изнутри), глаз
+const CAT_TEX := {"cream": Color("e3d1c0"), "mid": Color("785138"), "dark": Color("442a1c"), "eye": Color("4e525a")}
+const CAT_EYE_K := 1.3                 # глаза «Kitten» крупнее (по месту на мордочке): видны и издали, и на тёмной шерсти
+
+
+## Сетка «Kitten» на скелете кошки: одна поверхность, у каждой грани свои вершины (грани плоские, как в файле).
+## Вес вершины — по её месту (_cat_weights: у одинаковых точек одинаковый, сетка не рвётся), окрас — по цвету грани
+## в картинке «Kitten» и месту на теле. В вершинах: COLOR.r — часть (0 шерсть, 0.25 светлые грудка, живот, лапки и
+## мордочка, 0.5 розовые уши изнутри и нос, 0.75 глаз), COLOR.g — «маска» сиамской (0.5 мордочка, уши, лапки; 1 — хвост,
+## нос, уши изнутри, темнее), COLOR.b — где на теле (0 туловище, 0.25 лапа, 0.5 голова, 0.75 хвост); UV и UV2.x — место
+## в покое (оси скелета: по нему узор шейдера cat_fur), у глаза в UV — свои координаты (−1…1 по ширине и высоте глаза)
+static func _cat_build(sk: Skeleton3D) -> ArrayMesh:
+	var kn := (load(CAT_MESH) as PackedScene).instantiate()
+	var src: Mesh = (kn.find_children("*", "MeshInstance3D", true, false)[0] as MeshInstance3D).mesh
+	var arr := src.surface_get_arrays(0)
+	var img: Image = null
+	var smat := src.surface_get_material(0)
+	if smat is BaseMaterial3D and (smat as BaseMaterial3D).albedo_texture != null:
+		img = (smat as BaseMaterial3D).albedo_texture.get_image()
+		if img != null and img.is_compressed():
+			img.decompress()
+	kn.free()
+	var kv: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var knr: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+	var kuv: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
+	var ix: PackedInt32Array = arr[Mesh.ARRAY_INDEX] if arr[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+	if ix.is_empty():
+		for i in kv.size():
+			ix.append(i)
+	# точки «Kitten» в осях скелета (её единицы, от земли): x — вперёд (у неё z), y — влево (x), z — вверх (y)
+	var P := PackedVector3Array()
+	var Nk := PackedVector3Array()
+	for i in kv.size():
+		P.append(Vector3(kv[i].z, kv[i].x, kv[i].y + CAT_FLOOR))
+		Nk.append(Vector3(knr[i].z, knr[i].x, knr[i].y))
+	var J := _cat_joints(1.0)
+	var par := {}
+	var bind := {}
+	for nm: String in CAT_NEXT:
+		var p := sk.get_bone_parent(sk.find_bone(nm))
+		par[nm] = sk.get_bone_name(p) if p >= 0 else ""
+		bind[nm] = bind.size()             # номер привязки в _cat_skin — тот же порядок CAT_NEXT
+	# грани: что за цвет, где на теле
+	var faces := []
+	for t in range(0, ix.size(), 3):
+		var a := ix[t]
+		var b := ix[t + 1]
+		var c := ix[t + 2]
+		var cen := (P[a] + P[b] + P[c]) / 3.0
+		var fn := (Nk[a] + Nk[b] + Nk[c]).normalized()
+		var kind := "cream"
+		if img != null:
+			var u := (kuv[a] + kuv[b] + kuv[c]) / 3.0
+			var px := img.get_pixel(clampi(int(floorf(fposmod(u.x, 1.0) * img.get_width())), 0, img.get_width() - 1),
+				clampi(int(floorf(fposmod(u.y, 1.0) * img.get_height())), 0, img.get_height() - 1))
+			var bd := INF
+			for k: String in CAT_TEX:
+				var q: Color = CAT_TEX[k]
+				var d := Vector3(px.r - q.r, px.g - q.g, px.b - q.b).length_squared()
+				if d < bd:
+					bd = d
+					kind = k
+		faces.append([a, b, c, cen, fn, kind])
+	# глаза: середина, куда смотрит, ширина и высота — свои координаты для шейдера; крупнее в CAT_EYE_K раз (по мордочке)
+	var eyes := {}
+	for f: Array in faces:
+		if f[5] != "eye":
+			continue
+		var sd := 1 if (f[3] as Vector3).y > 0.0 else -1
+		if not eyes.has(sd):
+			eyes[sd] = {"c": Vector3.ZERO, "n": Vector3.ZERO, "ids": {}}
+		var e: Dictionary = eyes[sd]
+		var ar: float = (P[f[1]] - P[f[0]]).cross(P[f[2]] - P[f[0]]).length()
+		e["n"] = (e["n"] as Vector3) + (f[4] as Vector3) * ar
+		for k in 3:
+			(e["ids"] as Dictionary)[P[f[k]]] = true
+	for sd: int in eyes:
+		var e: Dictionary = eyes[sd]
+		var c := Vector3.ZERO
+		for q: Vector3 in e["ids"]:
+			c += q
+		c /= float((e["ids"] as Dictionary).size())
+		var n := (e["n"] as Vector3).normalized()
+		var up := (Vector3(0, 0, 1) - n * n.z).normalized()
+		var side := up.cross(n).normalized()
+		var hs := 0.001
+		var hu := 0.001
+		for q: Vector3 in e["ids"]:
+			hs = maxf(hs, absf((q - c).dot(side)))
+			hu = maxf(hu, absf((q - c).dot(up)))
+		e["c"] = c
+		e["n"] = n
+		e["side"] = side
+		e["up"] = up
+		e["hs"] = hs
+		e["hu"] = hu
+	var wcache := {}
 	var V := PackedVector3Array()
 	var Nn := PackedVector3Array()
-	var B := PackedInt32Array()
-	var W := PackedFloat32Array()
 	var C := PackedColorArray()
 	var U := PackedVector2Array()
 	var U2 := PackedVector2Array()
-	var I := PackedInt32Array()
-	for s in src.get_surface_count():
-		var arr := src.surface_get_arrays(s)
-		var mn: String = src.surface_get_material(s).resource_name if src.surface_get_material(s) else ""
-		var part := 0.25 if mn == "White" else (0.5 if mn == "Pink" else 0.0)
-		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
-		var n: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
-		var bo: PackedInt32Array = arr[Mesh.ARRAY_BONES]
-		var we: PackedFloat32Array = arr[Mesh.ARRAY_WEIGHTS]
-		var ix: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
-		var base := V.size()
-		for i in v.size():
-			var wh := 0.0
-			for k in nb:
-				if bo[i * nb + k] == hb:
-					wh += we[i * nb + k]
-			var p := o + (v[i] - o) * lerpf(1.0, CAT_HEAD, wh)
-			V.append(p)
-			Nn.append(n[i])
-			C.append(Color(part, 0, 0, 1))
-			U.append(Vector2(v[i].x, v[i].z))
-			U2.append(Vector2(v[i].y, 0))
-		B.append_array(bo)
-		W.append_array(we)
-		for k in ix:
-			I.append(k + base)
-	# глаза: сплюснутые полусферы на морде (точка — где луч из головы выходит наружу), смотрят вперёд, чуть в стороны
-	# и вверх, чуть утоплены
-	var head_tris := []
-	for t in range(0, I.size(), 3):
-		var a := V[I[t]]
-		if a.x > o.x - 0.001 and a.z > o.z - 0.006:
-			head_tris.append([a, V[I[t + 1]], V[I[t + 2]]])
-	for sgn: float in [-1.0, 1.0]:
-		var e0 := Vector3(CAT_EYE.x, CAT_EYE.y * sgn, CAT_EYE.z)
-		var r := CAT_EYE_R * CAT_HEAD
-		var f := Vector3(1.0, 0.55 * sgn, 0.3).normalized()
-		var from := o + Vector3(0.007, CAT_EYE.y * sgn * 0.5, (CAT_EYE.z - o.z) * CAT_HEAD)     # изнутри головы
-		var c := o + (e0 - o) * CAT_HEAD
-		var best := INF
-		for tr: Array in head_tris:
-			var hit = Geometry3D.ray_intersects_triangle(from, f, tr[0], tr[1], tr[2])
-			if hit != null and from.distance_to(hit) < best:
-				best = from.distance_to(hit)
-				c = hit
-		var side := f.cross(Vector3(0, 0, 1)).normalized()
-		var up := side.cross(f).normalized()
-		c -= f * r * 0.35
-		var rings := 4
-		var segs := 10
-		var base := V.size()
-		for ri in rings + 1:
-			var th := PI * 0.5 * ri / rings
-			for j in segs:
-				var ph := TAU * j / segs
-				var d := side * cos(ph) + up * sin(ph)
-				V.append(c + f * (r * cos(th) * 0.6) + d * (r * sin(th)))
-				Nn.append((f * cos(th) + d * sin(th)).normalized())
-				C.append(Color(0.75, 0, 0, 1))
-				U.append(Vector2(cos(ph) * sin(th), sin(ph) * sin(th)))
-				U2.append(Vector2(e0.y, 0))
-				for k in nb:
-					B.append(hb if k == 0 else 0)
-					W.append(1.0 if k == 0 else 0.0)
-				if ri == 0:
-					break                    # полюс — одна вершина
-		for ri in rings:
-			for j in segs:
-				var j2 := (j + 1) % segs
-				var a0 := base if ri == 0 else base + 1 + (ri - 1) * segs + j
-				var a1 := base if ri == 0 else base + 1 + (ri - 1) * segs + j2
-				var b0 := base + 1 + ri * segs + j
-				var b1 := base + 1 + ri * segs + j2
-				var tri3 := [[a0, b1, b0]] if ri == 0 else [[a0, a1, b1], [a0, b1, b0]]
-				for q: Array in tri3:
-					# лицевая сторона в Godot — по часовой: векторное произведение в буфере смотрит внутрь глаза
-					var nrm := (V[q[1]] - V[q[0]]).cross(V[q[2]] - V[q[0]])
-					if nrm.dot((V[q[0]] + V[q[1]] + V[q[2]]) / 3.0 - c) > 0.0:
-						I.append_array([q[0], q[2], q[1]])
-					else:
-						I.append_array(q)
+	var B := PackedInt32Array()
+	var W := PackedFloat32Array()
+	for f: Array in faces:
+		var cen: Vector3 = f[3]
+		var fn: Vector3 = f[4]
+		var kind: String = f[5]
+		var reg := 0.0
+		if cen.z > 25.5 and cen.x < -12.5:
+			reg = 0.75                         # хвост
+		elif cen.x > 10.0 and cen.z > 20.0:
+			reg = 0.5                          # голова
+		elif cen.z < 12.5 and absf(cen.y) > 0.6 and (cen.x > 3.0 or cen.x < -5.0):
+			reg = 0.25                         # лапы
+		var part := 0.0
+		var pts := 0.0
+		match kind:
+			"eye":
+				part = 0.75
+			"dark":
+				pts = 1.0
+				if reg == 0.5:
+					part = 0.5                 # нос и уши изнутри — розовые
+				elif cen.z < 1.0:
+					part = 0.25                # подушечки лап
+			"mid":
+				pts = 0.5
+				if cen.z < 3.0:
+					part = 0.25                # лапки — светлые «носочки»
+				elif reg == 0.5 and cen.z < 24.6 and cen.x > 15.5:
+					part = 0.25                # мордочка ниже глаз
+			_:
+				if (fn.z < -0.5 and cen.z < 16.0) or (cen.x > 8.0 and cen.z > 10.5 and cen.z < 21.5 and fn.x > 0.35 and absf(cen.y) < 3.0):
+					part = 0.25                # живот и грудка
+		for k in 3:
+			var i: int = f[k]
+			var p := P[i]
+			if not wcache.has(p):
+				wcache[p] = _cat_weights(p, J, par)
+			var w: Dictionary = wcache[p]
+			var uvv := Vector2(p.x * CAT_K, p.z * CAT_K)
+			var uv2 := Vector2(p.y * CAT_K, 0.0)
+			if kind == "eye":
+				var e: Dictionary = eyes[1 if cen.y > 0.0 else -1]
+				var ec: Vector3 = e["c"]
+				var en: Vector3 = e["n"]
+				var d := p - ec
+				var dn := en * d.dot(en)
+				uvv = Vector2((d - dn).dot(e["side"]) / float(e["hs"]), (d - dn).dot(e["up"]) / float(e["hu"]))
+				p = ec + dn + (d - dn) * CAT_EYE_K + en * 0.06
+			V.append(p * CAT_K)
+			Nn.append(fn)
+			C.append(Color(part, pts, reg, 1.0))
+			U.append(uvv)
+			U2.append(uv2)
+			# четыре самые тяжёлые кости
+			var ks: Array = w.keys()
+			ks.sort_custom(func(x, y): return float(w[x]) > float(w[y]))
+			var sum := 0.0
+			for j in mini(4, ks.size()):
+				sum += float(w[ks[j]])
+			for j in 4:
+				B.append(int(bind[ks[j]]) if j < ks.size() else 0)
+				W.append(float(w[ks[j]]) / sum if j < ks.size() else 0.0)
 	var out := []
 	out.resize(Mesh.ARRAY_MAX)
 	out[Mesh.ARRAY_VERTEX] = V
@@ -3750,23 +4037,94 @@ static func _cat_build(mi: MeshInstance3D, sk: Skeleton3D) -> ArrayMesh:
 	out[Mesh.ARRAY_TEX_UV2] = U2
 	out[Mesh.ARRAY_BONES] = B
 	out[Mesh.ARRAY_WEIGHTS] = W
-	out[Mesh.ARRAY_INDEX] = I
-	_cat_v2 = ArrayMesh.new()
-	_cat_v2.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, out, [], {}, Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS if eight else 0)
-	return _cat_v2
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, out)
+	return am
 
 
-## Одеть модель кошки окрасом fi: общая сетка и свой материал (у каждой кошки — свои моргание и сон). Материал — в meta «fur_mat»
+## Может ли кость nm вести точку p (ед. «Kitten») в d от себя: лапа — только своей стороны, ниже спины и рядом (передняя —
+## спереди, задняя — сзади), хвост — над крупом и рядом, голова — перед шеей, таз и грудь — не голова и не хвост
+static func _cat_may(nm: String, p: Vector3, d: float) -> bool:
+	var front := nm in CAT_FRONT
+	if front or nm in CAT_HIND:
+		var side := 1.0 if CAT_JOINTS.has(nm) else -1.0      # левые лапы — в CAT_JOINTS, правые — зеркальные
+		return p.y * side > 0.5 and p.z < 19.5 and d < 3.8 and (p.x > 1.0 if front else p.x < -4.0)
+	if nm in CAT_TAIL:
+		return p.z > 23.0 and p.x < -12.0 and d < 3.2
+	if nm == "Bone.003":
+		return p.x > 9.5
+	if nm == "Bone.002":
+		return p.x > 2.0
+	return not (p.x > 12.5 and p.z > 20.0) and not (p.z > 27.5 and p.x < -12.0)
+
+
+## Веса костей для точки p (ед. «Kitten»): кость → вес. Хозяйка — ближняя из тех, что могут её вести (_cat_may); у сустава
+## вершина идёт пополам с соседней по цепочке (у начала кости — с родителем, у конца — со следующей), дальше от него — к хозяйке
+static func _cat_weights(p: Vector3, J: Dictionary, par: Dictionary) -> Dictionary:
+	var best := "Bone.001"
+	var bd := INF
+	var bt := 0.5
+	for nm: String in CAT_NEXT:
+		var a: Vector3 = J[nm]
+		var ab: Vector3 = (J[CAT_NEXT[nm]] as Vector3) - a
+		var t := clampf((p - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+		var d := p.distance_to(a + ab * t)
+		if d < bd and _cat_may(nm, p, d):
+			bd = d
+			best = nm
+			bt = t
+	var L := ((J[CAT_NEXT[best]] as Vector3) - (J[best] as Vector3)).length()
+	var w := {}
+	var s0 := 0.0
+	var pr := String(par.get(best, ""))
+	if pr != "" and CAT_NEXT.has(pr) and CAT_BEND.has(best):
+		s0 = 0.5 - 0.5 * smoothstep(0.0, float(CAT_BEND[best]), bt * L)
+		if CAT_ROOT.has(best):
+			s0 = maxf(s0, 0.5 * smoothstep(float(CAT_ROOT[best][0]), float(CAT_ROOT[best][1]), p.z))
+		w[pr] = s0
+	var s1 := 0.0
+	var nx := String(CAT_NEXT[best])
+	if CAT_BEND.has(nx):
+		s1 = 0.5 - 0.5 * smoothstep(0.0, float(CAT_BEND[nx]), (1.0 - bt) * L)
+		w[nx] = s1
+	w[best] = maxf(0.0, 1.0 - s0 - s1)
+	# туловище у лапы: вершина почти так же близко к плечу (бедру), как к своей кости, — часть веса у лапы (кожа на боку
+	# и в паху тянется на несколько граней, а не на одну, когда лапа складывается)
+	if best == "Bone" or best == "Bone.001":
+		for ul: String in ["Bone.014", "Bone.017", "Bone.008", "Bone.011"]:
+			if String(par.get(ul, "")) != best:
+				continue
+			var a: Vector3 = J[ul]
+			var ab: Vector3 = (J[CAT_NEXT[ul]] as Vector3) - a
+			var d := p.distance_to(a + ab * clampf((p - a).dot(ab) / ab.length_squared(), 0.0, 1.0))
+			var side := 1.0 if CAT_JOINTS.has(ul) else -1.0
+			if p.z > 17.0:
+				continue
+			# к середине живота — на нет (обе лапы тянут его поровну, он не рвётся посередине)
+			var s := 0.45 * (1.0 - smoothstep(0.0, 2.5, d - bd)) * smoothstep(0.0, 2.0, p.y * side)
+			if s > 0.0:
+				w[ul] = s
+				w[best] = maxf(0.0, float(w[best]) - s)
+	return w
+
+
+## Одеть модель кошки окрасом fi: суставы под «Kitten», общая сетка и свой материал (у каждой кошки — свои моргание и сон).
+## Материал — в meta «fur_mat»
 static func _cat_dress(m: Node3D, fi: int) -> ShaderMaterial:
 	var mi: MeshInstance3D = m.find_children("*", "MeshInstance3D", true, false)[0]
 	var sk: Skeleton3D = m.find_children("*", "Skeleton3D", true, false)[0]
-	mi.mesh = _cat_build(mi, sk)
+	# покой — до первого кадра движения: от него и начальные места дорожек
+	for i in mini(sk.get_bone_count(), _cat_rest.size()):
+		sk.set_bone_rest(i, _cat_rest[i])
+	sk.reset_bone_poses()
+	mi.mesh = _cat_v2
+	mi.skin = _cat_skin
 	for s in mi.get_surface_override_material_count():
 		mi.set_surface_override_material(s, null)
 	if _cat_shader == null:
 		_cat_shader = load("res://shaders/cat_fur.gdshader")
 	var f: Array = cat_fur(fi)
-	var lk: Array = CAT_MASYA_LOOK if fi == CAT_MASYA else CAT_LOOK[clampi(fi, 0, CAT_LOOK.size() - 1)]
+	var lk: Array = cat_look(fi)
 	var mat := ShaderMaterial.new()
 	mat.shader = _cat_shader
 	mat.set_shader_parameter("fur", f[0])
@@ -3782,19 +4140,34 @@ static func _cat_dress(m: Node3D, fi: int) -> ShaderMaterial:
 	return mat
 
 
-## Окрас fi: [шерсть, грудка] (Мася — свой, остальные — CAT_FURS)
+## Окрас fi: [шерсть, грудка] (Мася и сиамская — свои, остальные — CAT_FURS)
 static func cat_fur(fi: int) -> Array:
-	return CAT_MASYA_FUR if fi == CAT_MASYA else CAT_FURS[clampi(fi, 0, CAT_FURS.size() - 1)]
+	if fi == CAT_MASYA:
+		return CAT_MASYA_FUR
+	if fi == CAT_SIAMESE:
+		return CAT_SIAMESE_FUR
+	return CAT_FURS[clampi(fi, 0, CAT_FURS.size() - 1)]
+
+
+## Узор окраса fi: [узор, цвет полосок или «маски», цвет глаз]
+static func cat_look(fi: int) -> Array:
+	if fi == CAT_MASYA:
+		return CAT_MASYA_LOOK
+	if fi == CAT_SIAMESE:
+		return CAT_SIAMESE_LOOK
+	return CAT_LOOK[clampi(fi, 0, CAT_LOOK.size() - 1)]
 
 
 ## Номер окраса кошки (для портрета в карточке: cat_node(cat_fi(c), …)): из «fi», у кошки без него — по цвету шерсти
-## (чёрная Мася — вне CAT_FURS, её цвет проверяем отдельно)
+## (чёрная Мася и сиамская — вне CAT_FURS, их цвет проверяем отдельно)
 static func cat_fi(ct: Dictionary) -> int:
 	if ct.has("fi"):
 		return int(ct["fi"])
 	var col: Color = ct.get("fur", Color.BLACK)
 	if (CAT_MASYA_FUR[0] as Color).is_equal_approx(col):
 		return CAT_MASYA
+	if (CAT_SIAMESE_FUR[0] as Color).is_equal_approx(col):
+		return CAT_SIAMESE
 	for i in CAT_FURS.size():
 		if (CAT_FURS[i][0] as Color).is_equal_approx(col):
 			return i
@@ -3854,7 +4227,7 @@ func _make_cat(home: Dictionary, opts := {}) -> Dictionary:
 	snd.volume_db = -14.0
 	snd.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	root.add_child(snd)
-	var cat := {"n": root, "anim": ap, "clip": "", "fur": f[0], "fi": fi, "mat": fmat, "k": CAT_WALK / (CAT_STEP * sc), "p": p, "path": PackedVector2Array(), "i": 0,
+	var cat := {"n": root, "anim": ap, "clip": "", "fur": f[0], "fi": fi, "mat": fmat, "k": CAT_WALK / (CAT_STEP * CAT_STRIDE * sc), "p": p, "path": PackedVector2Array(), "i": 0,
 		"state": "sit", "t": rg.randf_range(2, 6), "home": home["id"], "yaw": rg.randf() * TAU, "walk": 0.0, "ph": rg.randf() * TAU,
 		"snd": snd, "meow_t": rg.randf_range(10, 60)}
 	_cat_place(cat)
@@ -4021,6 +4394,15 @@ func _cats_step(dt: float) -> void:
 
 
 
+## Портрет кошки (карточка, лавка, облачко истории): куда смотреть от кости головы (метры, оси мира) и с какого
+## расстояния — в медальоне вся голова «Kitten» с ушами и с полями; с вещицей на голове (шляпка, колпачок, венок) —
+## дальше и выше, чтобы и она поместилась
+static func cat_face(item := "") -> Array:
+	if item != "" and Defs.CAT_ITEMS.has(item) and String(Defs.CAT_ITEMS[item]["slot"]) == "head":
+		return [Vector3(0, 0.07, 0.035), 0.8]
+	return [Vector3(0, 0.05, 0.04), 0.66]
+
+
 ## Кошка без жизни на улице — для корзинки-украшения и портрета в облачке: модель окраса fur в позе clip
 ## (Sleep, Sit, Pet), без звука и прогулок. Модели нет — кошка из Kit. length — длина: по умолчанию как в корзинке,
 ## в «Пересмотреть» — как на улице (CAT_LEN), чтобы Мася в ролике не была меньше себя
@@ -4055,19 +4437,19 @@ static func cat_node(fur: int, clip := "Sleep", seed_v := 0, length := CAT_LEN_B
 
 # ---------- вещицы «Кошачьей лавки» на кошке (Д14) ----------
 # Вещь — маленькая сетка из Kit (цвет в вершинах, общий материал, без тени): на голове (шляпка, венок, бантик, цветок),
-# на шее (ошейник с колокольчиком, бандана, бабочка) или на спине (плащик). На модели Quaternius она висит на кости
+# на шее (ошейник с колокольчиком, бандана, бабочка) или на спине (плащик). На кошке «Kitten» она висит на кости
 # (BoneAttachment3D) и двигается с головой, шеей, спиной; у запасной кошки из Kit — на месте головы. Сетки собраны
-# в метрах для кошки длиной CAT_LEN; к кости — через позу покоя (точки ниже — в единицах скелета, голова уже крупнее)
+# в метрах для кошки длиной CAT_LEN; к кости — через позу покоя (точки ниже — на сетке «Kitten»)
 
-## Куда крепится вещь: кость и точка в позе покоя (скелет: x — вперёд, y — влево, z — вверх)
+## Куда крепится вещь: кость и точка в позе покоя (единицы «Kitten», оси скелета: x — вперёд, y — влево, z — вверх от земли)
 const CAT_SLOT := {
-	"head": ["Bone.003", Vector3(0.0255, 0.0, 0.0332)],     # макушка между ушами
-	"neck": ["Bone.002", Vector3(0.0172, 0.0, 0.0249)],     # шея у головы
-	"back": ["Bone.001", Vector3(0.0035, 0.0, 0.0272)],     # спина у лопаток
+	"head": ["Bone.003", Vector3(15.0, 0.0, 30.8)],     # макушка между ушами
+	"neck": ["Bone.002", Vector3(9.6, 0.0, 23.2)],     # шея у головы
+	"back": ["Bone.001", Vector3(5.0, 0.0, 25.2)],      # спина у лопаток
 }
 ## У запасной кошки из Kit — от её корня (метры, кошка смотрит вдоль +z)
 const CAT_SLOT_KIT := {"head": Vector3(0, 0.39, 0.3), "neck": Vector3(0, 0.28, 0.22), "back": Vector3(0, 0.3, 0.02)}
-const CAT_NECK_TILT := -0.616          # шея идёт вперёд и вверх (35°): ошейник — поперёк неё
+const CAT_NECK_TILT := -0.45           # шея идёт вперёд и вверх (26°): ошейник — поперёк неё
 static var _wear_mesh := {}
 static var _wear_mat: StandardMaterial3D
 
@@ -4110,7 +4492,7 @@ static func cat_wear(root: Node3D, item: String) -> void:
 	# метры (вещь: x — влево, y — вверх, z — вперёд) → единицы скелета (x — вперёд, y — влево, z — вверх)
 	var k := _cat_size / (100.0 * CAT_LEN) if _cat_size > 0.01 else 0.095
 	var axes := Basis(Vector3(0, 1, 0), Vector3(0, 0, 1), Vector3(1, 0, 0))
-	var t_skel := Transform3D(axes * Basis.from_scale(Vector3.ONE * k), sl[1])
+	var t_skel := Transform3D(axes * Basis.from_scale(Vector3.ONE * k), (sl[1] as Vector3) * CAT_K)
 	mi.transform = sk.get_bone_global_rest(bi).affine_inverse() * t_skel
 	ba.add_child(mi)
 

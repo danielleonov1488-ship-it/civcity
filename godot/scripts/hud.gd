@@ -5760,7 +5760,8 @@ const CREDITS := [
 	["Жители и животные", "family", [
 		["Quaternius — Universal Base Characters, Modular Character Outfits", "жители города · CC0"],
 		["Quaternius — Universal Animation Library", "походка, работа и отдых жителей · CC0"],
-		["Quaternius — коровы, ослы, лошади, овцы, кошки, волк, бык", "животные в городе и звери в боях Легиона · CC0"],
+		["Quaternius — коровы, ослы, лошади, овцы, кошки, волк, бык", "животные в городе и звери в боях Легиона, скелет и движения кошек · CC0"],
+		["Poly by Google — «Kitten» (Poly Pizza, poly.pizza/m/dBJgGEu5bHW)", "кошки города (надета на скелет кошки Quaternius, окрасы — в игре) · CC-BY 3.0"],
 		["jeremy — «Duck» (Poly Pizza)", "утки на прудах · CC-BY 3.0"],
 		["Poly by Google — «Duck» (Poly Pizza)", "лебедь на прудах (перекрашен) · CC-BY 3.0"]]],
 	["Музыка", "music", [
