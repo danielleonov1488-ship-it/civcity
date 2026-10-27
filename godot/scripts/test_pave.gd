@@ -1,6 +1,8 @@
 extends Node
 ## Свободная постановка (как в Town to City): дом — куда навёл и как повернул (трава, площадь, мостовая); курсор на
 ## траве вплотную к дороге — фасадом к ней ровно у края, без дёрганья; издалека к дороге не улетает. У входа — мостовая.
+## У дороги дом всегда ровно по ней (F10: косые, кривые, прямые улицы; рядом, чуть дальше, на мостовой; после Z/X,
+## запомненного поворота и постановки у другой дороги) — фасадом к ней или поперёк, поворот игрока там — четвертями.
 ## Плюс сетка ходьбы, отмена мазка, большая дорога, повороты, перенос.
 ## Запуск: bash .work/py/gpu_run.sh res://test_pave.tscn            — всё (печатает PAVE PASS|FAIL …, в конце PAVE DONE fails=N)
 ##         bash .work/py/gpu_run.sh res://test_pave.tscn -- menu_hash=promo | menu_hash=demo — отпечаток готового города меню
@@ -95,11 +97,27 @@ func shot(name: String) -> void:
 func reset() -> void:
 	game.last_snap_n = Vector2.ZERO
 	game.last_snap_p = Vector2.INF
+	game.last_glued = false
+	game.last_on = false
+	game.rot_off = Vector2.ZERO
 	game.manual_yaw = false
 	game.yaw_set = false
 	game.place_lock = {}
 	game.tool_yaw = 0.0
 	game.snap = true
+
+
+## Нажать Z/X, как игрок, курсор в p (призрак до и после — как в кадре игры). Вернуть новое место
+func key_rot(code: Key, p: Vector2, type := "house_pleb") -> Dictionary:
+	game.hover = p
+	game.place_info = game.placement(type, p)
+	var ev := InputEventKey.new()
+	ev.keycode = code
+	ev.pressed = true
+	game._unhandled_input(ev)
+	var pl: Dictionary = game.placement(type, p)
+	game.place_info = pl
+	return pl
 
 
 func probe(type: String, p: Vector2) -> Dictionary:
@@ -173,6 +191,7 @@ func _run() -> void:
 	_f7_yaw_kept()
 	_f8_rules()
 	await _f9_review()
+	await _f10_angles()
 	await _t8_rotate()
 	await _t9_move()
 	_t10_walk()
@@ -254,10 +273,12 @@ func _f1_snap() -> void:
 	ok("F1 next to a street: house at the edge, facing it", bad == 0, "%d/%d" % [n - bad, n])
 
 
-## F2: если фасад дальше ~1 м от улицы — дом не улетает к ней, стоит, где курсор
+## F2: если фасад дальше ~1 м от улицы — дом не улетает к ней, стоит, где курсор; пока вход достаёт до улицы — ровно
+## фасадом к ней ("square"), дальше — к камере ("free"), и там строить нельзя (дороги у входа нет)
 func _f2_no_fly() -> void:
 	var bad := 0
 	var n := 0
+	var subs := {}
 	for st: Array in [STREETS[2]]:          # с севера у широкой улицы других дорог нет
 		for x in range(168, 188, 4):
 			for dz: float in [3.6, 4.5, 6.0]:
@@ -266,11 +287,14 @@ func _f2_no_fly() -> void:
 					continue
 				var pl := probe("house_pleb", p)
 				n += 1
-				if pl.get("sub", "") != "free" or centre("house_pleb", pl).distance_to(p) > 0.05 or not yaw_is(float(pl["yaw"]), cam_yaw(), 0.01):
+				var sub: String = pl.get("sub", "")
+				subs[sub] = int(subs.get(sub, 0)) + 1
+				var yaw_ok: bool = yaw_is(float(pl["yaw"]), PI, 0.01) if sub == "square" else yaw_is(float(pl["yaw"]), cam_yaw(), 0.01)
+				if not (sub in ["free", "square"]) or centre("house_pleb", pl).distance_to(p) > 0.05 or not yaw_ok or (sub == "free" and pl["err"] == ""):
 					bad += 1
 					if bad <= 4:
-						print("PAVE   fly p=", p, " sub=", pl.get("sub", ""), " c=", centre("house_pleb", pl))
-	ok("F2 a few metres away: stays at the cursor", bad == 0, "%d/%d" % [n - bad, n])
+						print("PAVE   fly p=", p, " sub=", sub, " c=", centre("house_pleb", pl), " yaw=", rad_to_deg(float(pl["yaw"])), " err=", pl["err"])
+	ok("F2 a few metres away: stays at the cursor (square to the street while the door reaches it)", bad == 0 and subs.has("square") and subs.has("free"), "%d/%d %s" % [n - bad, n, str(subs)])
 	var far := probe("house_pleb", Vector2(176, 125))
 	ok("F2 far from any road: needs a road at the door", far["err"] == "Нужна дорога у входа", str(far["err"]))
 
@@ -290,14 +314,14 @@ func _f3_steady() -> void:
 		trail.append(pl.get("sub", ""))
 	ok("F3 once at the street it holds on (no flicker at the border)", not ("free" in trail), str(trail))
 	var away: Dictionary = game.placement("house_pleb", Vector2(176, 184.0 + 4.4))
-	ok("F3 moving well away lets go", away.get("sub", "") == "free", str(away.get("sub", "")))
+	ok("F3 moving well away lets go", away.get("sub", "") != "road", str(away.get("sub", "")))
 
 
 ## F4: курсор на самой мостовой (улица, площадь) — дом там, где курсор
 func _f4_on_paving() -> void:
 	for p: Vector2 in [Vector2(178, 180), S1 + Vector2(1, 1), S2 + Vector2(-4, 3)]:
 		var pl := probe("house_pleb", p)
-		ok("F4 on paving at %s: at the cursor" % str(p), pl.get("sub", "") == "free" and pl["err"] == "" and centre("house_pleb", pl).distance_to(p) <= 0.05 and all_paved(pl["cells"]),
+		ok("F4 on paving at %s: at the cursor" % str(p), pl.get("sub", "") in ["free", "square"] and pl["err"] == "" and centre("house_pleb", pl).distance_to(p) <= 0.05 and all_paved(pl["cells"]),
 			"sub=%s err=%s" % [pl.get("sub", ""), pl["err"]])
 
 
@@ -397,7 +421,8 @@ func _f7_yaw_kept() -> void:
 	game.manual_yaw = true
 	game.tool_yaw = 1.0
 	var c: Dictionary = game.placement("house_pleb", Vector2(176, 166.0 - 2.0 - 0.8))
-	ok("F7 a rotated house does not snap to the street", c.get("sub", "") == "free" and yaw_is(float(c["yaw"]), 1.0, 0.001))
+	ok("F7 a rotated house next to a street: not glued, but square to it (its quarter turn)", c.get("sub", "") == "square" and yaw_is(float(c["yaw"]), PI / 2, 0.001)
+		and centre("house_pleb", c).distance_to(Vector2(176, 166.0 - 2.0 - 0.8)) <= 0.05, "sub=%s yaw=%.1f" % [c.get("sub", ""), rad_to_deg(float(c["yaw"]))])
 	reset()
 	game.snap = false
 	var e: Dictionary = game.placement("house_pleb", Vector2(176, 166.0 - 2.0 - 0.8))
@@ -443,19 +468,19 @@ func _f9_review() -> void:
 	ok("F9 cursor slips onto the street edge: still snapped, no jump", a.get("sub", "") == "road" and b.get("sub", "") == "road"
 		and (a["pos"] as Vector2).distance_to(b["pos"]) <= 0.05 and yaw_is(float(a["yaw"]), float(b["yaw"]), 0.001), "a=%s b=%s %s" % [a.get("sub", ""), b.get("sub", ""), (a["pos"] as Vector2).distance_to(b["pos"])])
 	var c: Dictionary = game.placement("house_pleb", Vector2(176, 168.0 - 1.6))
-	ok("F9 deeper into the street: free on the paving", c.get("sub", "") == "free")
-	# Z у дороги — поворачивается на месте (середина остаётся)
+	ok("F9 deeper into the street: at the cursor on the paving", c.get("sub", "") == "square" and centre("house_pleb", c).distance_to(Vector2(176, 168.0 - 1.6)) <= 0.05, str(c.get("sub", "")))
+	# X у дороги — четверть оборота на месте (середина остаётся); четыре раза — снова фасадом к дороге у края
 	reset()
 	var p := Vector2(176, 168.0 + 0.6)
 	var s0: Dictionary = game.placement("house_pleb", p)
-	game.place_info = s0
-	game.hover = p
-	game._rot_keep()
-	game.tool_yaw = float(s0["yaw"]) + deg_to_rad(15)
-	game.manual_yaw = true
-	var s1: Dictionary = game.placement("house_pleb", p)
-	ok("F9 Z/X next to a road turns it in place", centre("house_pleb", s1).distance_to(centre("house_pleb", s0)) <= 0.05 and yaw_is(float(s1["yaw"]), float(s0["yaw"]) + deg_to_rad(15), 0.002),
-		"moved %.2f" % centre("house_pleb", s1).distance_to(centre("house_pleb", s0)))
+	var s1 := key_rot(KEY_X, p)
+	ok("F9 X next to a road: a quarter turn in place", centre("house_pleb", s1).distance_to(centre("house_pleb", s0)) <= 0.05 and yaw_is(float(s1["yaw"]), float(s0["yaw"]) + PI / 2, 0.002),
+		"moved %.2f yaw %.1f -> %.1f" % [centre("house_pleb", s1).distance_to(centre("house_pleb", s0)), rad_to_deg(float(s0["yaw"])), rad_to_deg(float(s1["yaw"]))])
+	key_rot(KEY_X, p)
+	key_rot(KEY_X, p)
+	var s4 := key_rot(KEY_X, p)
+	ok("F9 four quarter turns: facing the road at the edge again", s4.get("sub", "") == "road" and yaw_is(float(s4["yaw"]), float(s0["yaw"]), 0.002)
+		and (s4["pos"] as Vector2).distance_to(s0["pos"]) <= 0.05, "sub=%s" % s4.get("sub", ""))
 	# свой поворот не сбивается переносом дома
 	reset()
 	game.yaw_set = true
@@ -469,7 +494,7 @@ func _f9_review() -> void:
 		game.set_tool("")                    # отменили перенос
 		game.set_tool("house_pleb")
 	game.yaw_set = true
-	var k: Dictionary = game.placement("house_pleb", S2 + Vector2(9, -9))
+	var k: Dictionary = game.placement("house_pleb", S2 + Vector2(6, -6))     # посреди площади: у её края дом ровнялся бы по кромке
 	ok("F9 remembered rotation survives moving a house", yaw_is(float(k["yaw"]), 0.7, 0.001), "yaw=%.3f" % float(k["yaw"]))
 	# новая постройка не отрезает соседа от дороги (его дверь не накрыта, но мостовая у входа закрыта вся)
 	reset()
@@ -497,6 +522,218 @@ func _f9_review() -> void:
 	game.city.research[ft] = true
 	var f: Dictionary = game.placement(ft, Vector2(192, 100))
 	ok("F9 a farm cannot cover the big road", f["err"] == "По большой дороге ездят повозки — здесь не строят", str(f["err"]))
+	reset()
+
+
+## F10 (жалоба 27.10 «то прямо, то под углом»): у дороги дом всегда ровно по ней. Угол между фасадом и касательной
+## ближайшей улицы (по модулю 90°) — у косой улицы (31°, с ответвлением под 76°), у дуги R=10 м и у прямых улиц вдоль x и z;
+## курсор на траве вплотную, чуть дальше (дальше прилипания, но вход достаёт до дороги), на мостовой; после Z/X; с
+## запомненным поворотом; после постановки у другой дороги; у перекрёстка; зажатой мышью. На траве без поворота — фасадом к улице
+const F10_A := Vector2(134, 134)
+const F10_B := Vector2(154, 146)        # косая улица 31° (кисть 1,5 — ширина 3 м)
+const F10_BR := Vector2(138, 162)       # ответвление от её середины (144, 140) под 76° к ней
+const F10_C := Vector2(136, 178)        # дуга R = 10 м (0…90°), кисть 1 м
+const F10_R := 10.0
+
+
+func f10_roads() -> Array:
+	var mid := (F10_A + F10_B) * 0.5
+	return [{"a": F10_A, "b": F10_B, "r": 1.5}, {"a": mid, "b": F10_BR, "r": 1.0},
+		{"a": Vector2(164, 156), "b": Vector2(190, 156), "r": 1.0}, {"a": Vector2(164, 166), "b": Vector2(190, 166), "r": 2.0},
+		{"a": Vector2(196, 150), "b": Vector2(196, 172), "r": 2.0}]
+
+
+## Направления улиц, чья кромка ближе 4,5 м к точке (у перекрёстка верно по любой из них); у дуги — касательная.
+## [направления, есть ли среди них дуга]
+func f10_tangents(p: Vector2) -> Array:
+	var out := []
+	for rd: Dictionary in f10_roads():
+		var q := Geometry2D.get_closest_point_to_segment(p, rd["a"], rd["b"])
+		if q.distance_to(p) - float(rd["r"]) <= 4.5:
+			out.append(((rd["b"] as Vector2) - (rd["a"] as Vector2)).normalized())
+	var rel := p - F10_C
+	var ang := rad_to_deg(atan2(rel.y, rel.x))
+	var arc := ang >= 0.0 and ang <= 90.0 and absf(rel.length() - F10_R) - 1.0 <= 4.5
+	if arc:
+		out.append(Vector2(-rel.y, rel.x).normalized())
+	return [out, arc]
+
+
+## Угол (°) между фасадом и ближайшим из направлений дороги, по модулю 90° (0 — параллельно или поперёк)
+func f10_err(yaw: float, tans: Array) -> float:
+	var a := City.axis(yaw)
+	var best := 90.0
+	for u: Vector2 in tans:
+		var d := fmod(absf(rad_to_deg(angle_difference(atan2(a.y, a.x), atan2(u.y, u.x)))), 90.0)
+		best = minf(best, minf(d, 90.0 - d))
+	return best
+
+
+## Смотрит ли фасад на дорогу: впереди, не дальше 3,5 м от фасада, мостовая
+func f10_faces(pl: Dictionary) -> bool:
+	var bb := bounds("house_pleb", pl)
+	var f := City.facing(float(pl["yaw"]))
+	var front := centre("house_pleb", pl) + f * ((float(bb[3]) - float(bb[2])) * 0.5)
+	for k in 36:
+		if game.land.is_road(front + f * (0.1 * k)):
+			return true
+	return false
+
+
+func _f10_angles() -> void:
+	var L: Land = game.land
+	flat_zone(Vector2(144, 150), 28, 40)
+	flat_zone(Vector2(144, 186), 28, 28)
+	L.paint_line(F10_A, F10_B, 1.5, Land.Kind.ROAD, true)
+	L.paint_line((F10_A + F10_B) * 0.5, F10_BR, 1.0, Land.Kind.ROAD, true)
+	for k in 30:
+		var a0 := deg_to_rad(90.0 * k / 30.0)
+		var a1 := deg_to_rad(90.0 * (k + 1) / 30.0)
+		L.paint_line(F10_C + Vector2(cos(a0), sin(a0)) * F10_R, F10_C + Vector2(cos(a1), sin(a1)) * F10_R, 1.0, Land.Kind.ROAD, true)
+	# точки: вдоль косой улицы и ответвления (обе стороны), вдоль дуги (снаружи и внутри), у прямых улиц; отступ от кромки
+	var pts := []                         # [точка, отступ от кромки (минус — на мостовой)]
+	var offs := [-0.6, 0.3, 0.9, 1.6, 2.4, 3.1, 3.8]
+	var u := (F10_B - F10_A).normalized()
+	for t: float in [2.5, 5.0, 7.5, 12.5, 15.0, 17.5]:
+		for sd: float in [1.0, -1.0]:
+			for o: float in offs:
+				pts.append([F10_A + u * t + u.orthogonal() * sd * (1.5 + o), o])
+	var mid := (F10_A + F10_B) * 0.5
+	var ub := (F10_BR - mid).normalized()
+	for t: float in [5.0, 8.0, 11.0, 14.0]:
+		for sd: float in [1.0, -1.0]:
+			for o: float in offs:
+				pts.append([mid + ub * t + ub.orthogonal() * sd * (1.0 + o), o])
+	for a: float in [12.0, 27.0, 45.0, 63.0, 78.0]:
+		var dv := Vector2(cos(deg_to_rad(a)), sin(deg_to_rad(a)))
+		for o: float in offs:
+			pts.append([F10_C + dv * (F10_R + 1.0 + o), o])
+			pts.append([F10_C + dv * (F10_R - 1.0 - o), o])
+	for x: float in [170.0, 178.0, 186.0]:
+		for o: float in offs:
+			pts.append([Vector2(x, 156.0 - 1.0 - o), o])
+	for z: float in [154.0, 162.0, 168.0]:
+		for o: float in offs:
+			pts.append([Vector2(196.0 + 2.0 + o, z), o])
+	var scens := ["plain", "remembered", "keyZ", "keyX2", "after_other_road"]
+	var worst := {}
+	var bad := {}
+	var cnt := {}
+	var facing_bad := 0
+	var facing_n := 0
+	var subs := {}
+	var ex := []
+	for scen: String in scens:
+		worst[scen] = 0.0
+		bad[scen] = 0
+		cnt[scen] = 0
+		for it: Array in pts:
+			var p: Vector2 = it[0]
+			var tt := f10_tangents(p)
+			var tans: Array = tt[0]
+			if tans.is_empty():
+				continue
+			reset()
+			var pl: Dictionary
+			match scen:
+				"plain":
+					pl = game.placement("house_pleb", p)
+				"remembered":
+					game.yaw_set = true             # игрок раньше крутил дом (или скопировал повёрнутый): 0,7 рад
+					game.free_yaw = 0.7
+					pl = game.placement("house_pleb", p)
+				"keyZ":
+					pl = key_rot(KEY_Z, p)
+				"keyX2":
+					key_rot(KEY_X, p)
+					pl = key_rot(KEY_X, p)
+				"after_other_road":
+					# у прямой улицы z=166 повернул дом X и поставил (как _build_here: свой поворот снят, запомненный остался),
+					# потом повёл курсор сюда
+					key_rot(KEY_X, Vector2(176, 168.0 + 0.6))
+					game.manual_yaw = false
+					game.rot_off = Vector2.ZERO
+					pl = game.placement("house_pleb", p)
+			if pl["err"] != "":
+				continue
+			var e := f10_err(float(pl["yaw"]), tans)
+			var tol := 3.0 if bool(tt[1]) else 2.0      # кромка — лесенка клеток по 25 см (у перекрёстка короткая, у дуги кривая)
+			cnt[scen] += 1
+			subs[pl.get("sub", "")] = int(subs.get(pl.get("sub", ""), 0)) + 1
+			worst[scen] = maxf(worst[scen], e)
+			if e > tol:
+				bad[scen] += 1
+				if ex.size() < 6:
+					ex.append("%s p=(%.1f,%.1f) sub=%s yaw=%.1f e=%.1f" % [scen, p.x, p.y, pl.get("sub", ""), rad_to_deg(float(pl["yaw"])), e])
+			if scen in ["plain", "remembered", "after_other_road"] and float(it[1]) > 0.0 and not game.land.is_road(p):
+				facing_n += 1
+				if not f10_faces(pl):
+					facing_bad += 1
+					if ex.size() < 10:
+						ex.append("not facing %s p=(%.1f,%.1f) sub=%s yaw=%.1f" % [scen, p.x, p.y, pl.get("sub", ""), rad_to_deg(float(pl["yaw"]))])
+	for line: String in ex:
+		print("PAVE   F10 ", line)
+	print("PAVE   F10 worst=", worst, " placed=", cnt, " subs=", subs)
+	for scen: String in scens:
+		# спиной к дороге (X дважды) у входа мостовой почти никогда нет — таких мест мало
+		ok("F10 next to a road always square to it: %s" % scen, int(bad[scen]) == 0 and int(cnt[scen]) > (20 if scen == "keyX2" else 40), "max %.2f deg, %d of %d off" % [worst[scen], bad[scen], cnt[scen]])
+	ok("F10 on grass next to a road the front faces it", facing_bad == 0 and facing_n > 100, "%d of %d not facing" % [facing_bad, facing_n])
+	# у перекрёстка: курсор плавно ведут от косой улицы к ответвлению — всё время ровно по одной из них, без косых углов
+	reset()
+	var sbad := 0
+	var sn := 0
+	var smax := 0.0
+	var p0 := mid + u * 2.6 + u.orthogonal() * (1.5 + 1.0) * signf(u.orthogonal().dot(ub))
+	for k in 24:
+		var p := p0 + (ub - u * 0.4).normalized() * (0.25 * k)
+		var pl: Dictionary = game.placement("house_pleb", p)
+		if pl["err"] != "":
+			continue
+		sn += 1
+		var se := f10_err(float(pl["yaw"]), [u, ub])
+		smax = maxf(smax, se)
+		if se > 2.5:                          # у самого угла кромка каждой улицы короткая — лесенка клеток косит чуть больше
+			sbad += 1
+			print("PAVE   F10 slide off p=", p, " sub=", pl.get("sub", ""), " yaw=", rad_to_deg(float(pl["yaw"])), " e=", se, " on=", game.land.is_road(p))
+	ok("F10 sliding past a junction: square to one of the streets all the way", sbad == 0 and sn > 8, "%d of %d off, max %.2f deg" % [sbad, sn, smax])
+	# зажатой мышью у косой улицы — четвертями; отпустили — та четверть, что была видна
+	reset()
+	var pg := F10_A + u * 5.0 + u.orthogonal() * (1.5 + 0.6)
+	var g0: Dictionary = game.placement("house_pleb", pg)
+	var ry := float(g0.get("ry", 0.0))
+	game.place_lock = {"p": g0["pos"], "ry": ry}
+	game.tool_yaw = ry + 0.6
+	var g1: Dictionary = game.placement("house_pleb", pg)
+	game.tool_yaw = ry + 1.1
+	var g2: Dictionary = game.placement("house_pleb", pg)
+	ok("F10 drag-rotate next to a road turns in quarter steps", g0.get("sub", "") == "road" and g0.has("ry") and yaw_is(float(g1["yaw"]), ry, 0.002) and yaw_is(float(g2["yaw"]), ry + PI / 2, 0.002),
+		"%.1f %.1f %.1f" % [rad_to_deg(ry), rad_to_deg(float(g1["yaw"])), rad_to_deg(float(g2["yaw"]))])
+	game.pressing = true
+	game.rot_drag = true
+	game.rot_yaw0 = ry
+	game._release()
+	ok("F10 released: keeps the visible quarter", game.manual_yaw and game.place_lock.is_empty() and yaw_is(game.tool_yaw, ry + PI / 2, 0.002), "tool_yaw=%.1f" % rad_to_deg(game.tool_yaw))
+	# далеко от дорог — поворот свой (запомненный), косо можно: там и строить нельзя (дороги у входа нет)
+	reset()
+	game.yaw_set = true
+	game.free_yaw = 0.7
+	var fz: Dictionary = game.placement("house_pleb", F10_C + Vector2(-2, 17))
+	ok("F10 far from roads: own rotation, and no road at the door", fz.get("sub", "") == "free" and yaw_is(float(fz["yaw"]), 0.7, 0.001) and fz["err"] == "Нужна дорога у входа",
+		"sub=%s err=%s" % [fz.get("sub", ""), fz["err"]])
+	reset()
+	# снимок: призрак у косой улицы чуть дальше прилипания — ровно фасадом к ней
+	game.set_tool("house_pleb")
+	game.rig.set_view(Vector3(146, 2, 146), 15, 62, 40)
+	await frames(60)
+	var ghost_at := F10_A + u * 12.5 + u.orthogonal() * (1.5 + 2.9)
+	for tr in 5:
+		move(scr(ghost_at))
+		await frames(8)
+		if game.hover.distance_to(ghost_at) < 0.3:
+			break
+	var gi: Dictionary = game.place_info
+	ok("F10 ghost by the diagonal street is square to it", gi.get("err", "?") == "" and f10_err(float(gi.get("yaw", 0.0)), [u]) <= 1.0, "sub=%s err=%s yaw=%.1f" % [gi.get("sub", ""), gi.get("err", "?"), rad_to_deg(float(gi.get("yaw", 0.0)))])
+	shot("pave5_diagonal_ghost.png")
 	reset()
 
 
@@ -532,7 +769,7 @@ func _t8_rotate() -> void:
 	ok("T8 rotating keeps the ghost in place", mid_ok)
 	ok("T8 release after rotating does not build", game.city.buildings.size() == n0 and game.place_lock.is_empty() and game.manual_yaw)
 	var ty: float = game.tool_yaw
-	var b := scr(Vector2(222, 240))
+	var b := scr(Vector2(222, 236))             # подальше от края площади (у края она ровняла бы дом по кромке)
 	move(b)
 	await frames(8)
 	var pl2: Dictionary = game.place_info
@@ -541,7 +778,9 @@ func _t8_rotate() -> void:
 	var before: Dictionary = game.city.buildings.duplicate()
 	await click(b)
 	var ids := new_ids(before)
-	ok("T8 click builds it rotated, on paving", ids.size() == 1 and yaw_is(float(game.city.buildings[ids[0]]["yaw"]), ty, 0.002) and all_paved(game.city.buildings[ids[0]]["cells"]))
+	ok("T8 click builds it rotated, on paving", ids.size() == 1 and yaw_is(float(game.city.buildings[ids[0]]["yaw"]), ty, 0.002) and all_paved(game.city.buildings[ids[0]]["cells"]),
+		"new=%d yaw=%.1f ty=%.1f paved=%s" % [ids.size(), rad_to_deg(float(game.city.buildings[ids[0]]["yaw"])) if ids.size() == 1 else 0.0, rad_to_deg(ty),
+		str(all_paved(game.city.buildings[ids[0]]["cells"])) if ids.size() == 1 else "-"])
 	# короткое движение (меньше 4°) — это щелчок: строит там, где была тень до нажатия
 	reset()
 	game.rig.set_view(Vector3(238, 2, 234), 15, 58, 40)
@@ -591,7 +830,7 @@ func _t9_move() -> void:
 	game.start_move(src)
 	reset()
 	game.tool_yaw = y0
-	var to := Vector2(222, 224)
+	var to := Vector2(224, 226)
 	var pl: Dictionary = game.placement("house_pleb", to)
 	ok("T9 moving keeps the old yaw", pl.get("sub", "") == "free" and pl["err"] == "" and yaw_is(float(pl["yaw"]), y0, 0.02), "sub=%s err=%s" % [pl.get("sub", ""), pl["err"]])
 	game.hover = to
