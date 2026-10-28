@@ -503,7 +503,9 @@ func _build() -> void:
 	# подсказка — над панелью, один раз за город
 	var hp: PanelContainer = hud._chip(false, 12.0)
 	hp.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hp.add_child(hud._wrap(hud._label("Режим фото. Колёсико — ближе, средняя кнопка — повернуть и наклонить, правая кнопка или WASD — двигать. Щёлкните по жителю — камера пойдёт за ним. F12 — снимок, P или Esc — выйти.", 15, true, hud.C_INK), 560))
+	var how := "Щипок — ближе, Option + два пальца — повернуть и наклонить, два пальца или WASD — двигать." if OS.has_feature("macos") \
+		else "Колёсико — ближе, средняя кнопка — повернуть и наклонить, правая кнопка или WASD — двигать."    # Mac — про трекпад
+	hp.add_child(hud._wrap(hud._label("Режим фото. " + how + " Щёлкните по жителю — камера пойдёт за ним. F12 — снимок, P или Esc — выйти.", 15, true, hud.C_INK), 560))
 	root.add_child(hp)
 	hud._put(hp, Control.PRESET_CENTER_BOTTOM, Vector2(0, -150))
 	hint = hp

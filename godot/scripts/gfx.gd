@@ -15,6 +15,9 @@ const NAMES := {"high": "Высокая", "medium": "Средняя", "low": "Н
 const CHECK_MS := 11.0                 # проверка в городе: видеокарте нужно больше — на ступень ниже
 const CHECK_SKIP := 60                 # …первые кадры не в счёт (тени, шейдеры)
 const CHECK_SEC := 4.0
+## Mac на Apple M (Metal): времени видеокарты Godot там не знает (drivers/metal: «Metal doesn't support timestamp
+## queries»), и проверка смотрит на сами кадры — медиана длиннее стольких мс (меньше ~50 кадров в секунду) — ступенью ниже
+const CHECK_FRAME_MS := 20.0
 const WATCH_FPS := 40.0                # сторож: меньше стольких кадров в среднем…
 const WATCH_SEC := 20.0                # …за столько секунд в городе
 const WATCH_START := 15.0              # первые секунды после загрузки не в счёт
@@ -50,6 +53,7 @@ var _measure := false
 var _check_n := 0
 var _check_t := 0.0
 var _check_ms := PackedFloat32Array()
+var _check_frame := PackedFloat32Array()   # длина кадров за проверку (Mac на Metal — вместо времени видеокарты)
 var _watch_t := 0.0
 var _watch_n := 0
 var _alive_t := 0.0
@@ -67,9 +71,13 @@ var _half := 0
 ## Уровень по видеокарте: встроенная (и программная) — «Очень низкая»; GTX 10xx/16xx, RTX 2050/3050, MX (и 940MX), GT 1030,
 ## RX 5500/6400/6500, Arc A3 — «Низкая»; xx60 — «Средняя»; xx70 и выше — «Высокая». Ноутбучная («Laptop», «Max-Q», RX …M) — на ступень
 ## ниже, но не ниже «Низкой» (3060 Laptop — «Низкая», 3070 Laptop — «Средняя», 4080 Laptop — «Высокая»);
-## незнакомая отдельная — «Средняя»
+## незнакомая отдельная — «Средняя». Mac: видеокарты Apple — по _apple_tier (Godot на Metal считает их встроенными),
+## встроенные Intel (Iris, UHD) — «Очень низкая», как на ПК, слабые AMD из Intel-Mac (Radeon Pro 560X, 5500M) — «Низкая»
 static func tier_for(name: String, type: int) -> String:
 	var n := name.to_lower()
+	var apple := _apple_tier(n)
+	if apple != "":
+		return apple
 	if type == RenderingDevice.DEVICE_TYPE_INTEGRATED_GPU or type == RenderingDevice.DEVICE_TYPE_VIRTUAL_GPU or type == RenderingDevice.DEVICE_TYPE_CPU:
 		return "verylow"
 	for w in ["llvmpipe", "swiftshader", "basic render", "software", "intel(r) uhd", "intel(r) hd", "intel(r) iris", "uhd graphics", "iris(r) xe",
@@ -78,6 +86,11 @@ static func tier_for(name: String, type: int) -> String:
 			return "verylow"
 	if n.contains("vega"):
 		return "low"                       # отдельная Vega 56/64 (встроенные Vega узнаны выше)
+	# AMD в Intel-Mac (MoltenVK): Radeon Pro 455…580X (iMac, MacBook Pro 2016–2019) и 5300M/5500M/5600M (MacBook Pro 16") —
+	# не сильнее GTX 1650; Radeon Pro 5700 XT, W5700X и выше остаются «Средней»
+	var rp := RegEx.create_from_string("\\bradeon pro (\\d{3,4})\\s*(m|x)?\\b").search(n)
+	if rp and (rp.get_string(1).length() == 3 or rp.get_string(2) == "m"):
+		return "low"
 	var laptop := n.contains("laptop") or n.contains("max-q") or n.contains("mobile")
 	var s := 2                             # 1 — «Низкая», 2 — «Средняя», 3 — «Высокая», 4 — с запасом (xx80, xx90)
 	var re := RegEx.create_from_string("\\b(rtx|gtx|mx|rx|arc)(?:\\(tm\\))?\\s*([a-z]?)(\\d{3,4})([a-z]?)")
@@ -120,6 +133,43 @@ static func tier_for(name: String, type: int) -> String:
 	if laptop:
 		s = maxi(1, s - 1)
 	return ORDER[clampi(s, 1, 3)]
+
+
+## Видеокарта Apple (Mac на M1 и новее). Godot на Metal называет её «Apple M2 Pro (Apple8)» и считает встроенной —
+## без этого все Mac получали бы «Очень низкую». Мерка — 3DMark Wild Life Extreme (один тест и для Mac, и для ПК):
+## M1 ≈ 4 500 очков — как GTX 1650 (у нас «Низкая»), M1 Max ≈ 18 000 — как RTX 3060 (у нас «Средняя»), M4 Max ≈ 30–37 тыс. —
+## как RTX 3070 Ti–3080 («Высокая»); простые M2/M3/M4 — примерно +35/+70/+100% к M1, M1 Pro — около половины M1 Max.
+## Итого: простые M1–M3 — «Низкая», M4 и новее — «Средняя»; Pro — «Средняя»; Max: M1–M2 — «Средняя», M3 и новее —
+## «Высокая»; Ultra — «Высокая». Экран Retina вдвое плотнее экрана ПК — 3D на нём считается мельче (hidpi_scale), и уровень
+## подобран как для экрана ПК. Дальше, как на ПК: проверка в городе (на Metal — по кадрам, _check_step) и сторож кадров.
+## Не Apple — "" (решает tier_for); незнакомое Apple — «Низкая»; Mac в виртуальной машине — «Очень низкая»
+static func _apple_tier(n: String) -> String:
+	if not n.begins_with("apple"):
+		return ""
+	if n.contains("paravirtual"):
+		return "verylow"
+	var m := RegEx.create_from_string("^apple m(\\d+)(?:\\s+(pro|max|ultra))?\\b").search(n)
+	if m == null:
+		return "low"
+	var gen := int(m.get_string(1))
+	match m.get_string(2):
+		"ultra":
+			return "high"
+		"max":
+			return "high" if gen >= 3 else "medium"
+		"pro":
+			return "medium"
+	return "medium" if gen >= 4 else "low"
+
+
+## Mac с экраном Retina (у окна вдвое больше точек, чем у экрана ПК того же размера): 3D считается в 0,7 от размера
+## окна и растягивается FSR — точек столько же, сколько у ПК с экраном 1920×1080 при той же графике (2880×1800 × 0,7 ≈
+## 2016×1260), а интерфейс остаётся чётким. Иначе Retina вдвое-втрое тяжелее для видеокарты, и подобранный по видеокарте
+## уровень не тянул бы. На Windows (и на Mac без Retina) — 1: всё как прежде
+static func hidpi_scale() -> float:
+	if not OS.has_feature("macos") or DisplayServer.get_name() == "headless":
+		return 1.0
+	return 0.7 if DisplayServer.screen_get_scale() >= 1.75 else 1.0
 
 
 ## Видеокарта для надписи в настройках и отчёта F3
@@ -229,8 +279,9 @@ static func apply(g) -> void:
 		vp.mesh_lod_threshold = 4.0 if q == "verylow" else 1.0
 		# слабые видеокарты: картинка считается меньше и аккуратно растягивается (FSR); снимки (--shot) — в полном размере
 		if g.shot_path == "":
-			vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR if low else Viewport.SCALING_3D_MODE_BILINEAR
-			vp.scaling_3d_scale = 0.5 if q == "verylow" else (0.75 if q == "low" else 1.0)
+			var hk := hidpi_scale()                # Mac с Retina — 0,7 (на Windows 1 — как прежде)
+			vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR if low or hk < 1.0 else Viewport.SCALING_3D_MODE_BILINEAR
+			vp.scaling_3d_scale = (0.5 if q == "verylow" else (0.75 if q == "low" else 1.0)) * hk
 	if g.rig and g.rig.attrs:
 		g.rig.attrs.dof_blur_far_enabled = not low
 		g.rig.attrs.dof_blur_near_enabled = not low
@@ -758,9 +809,14 @@ func _ready() -> void:
 		_pending.push_front(_tip_auto(str(st.get("quality", qa))))
 	if auto_on and game.mode in ["play", "new"] and game.shot_path == "" and not bool(game.settings.get("tip_igpu", false)) \
 			and tier_for(adapter(), RenderingServer.get_video_adapter_type()) == "verylow":
-		_pending.append(["Встроенная видеокарта", ("Игра идёт на встроенной видеокарте (%s) — ей тяжело. Если в ноутбуке есть вторая, мощная: " +
-			"Параметры Windows → Система → Дисплей → Графика → CivCity → «Высокая производительность». И подключите зарядку — без неё " +
-			"ноутбук сам замедляет видеокарту.") % adapter(), "", "tip_igpu"])
+		if OS.has_feature("macos"):
+			# Mac со встроенной Intel: второй видеокарты нет или macOS включает её сам — про Windows ни слова
+			_pending.append(["Встроенная видеокарта", ("Игра идёт на встроенной видеокарте (%s) — ей тяжело, поэтому графика " +
+				"самая простая. Подключите зарядку — без неё Mac сам замедляет видеокарту.") % adapter(), "", "tip_igpu"])
+		else:
+			_pending.append(["Встроенная видеокарта", ("Игра идёт на встроенной видеокарте (%s) — ей тяжело. Если в ноутбуке есть вторая, мощная: " +
+				"Параметры Windows → Система → Дисплей → Графика → CivCity → «Высокая производительность». И подключите зарядку — без неё " +
+				"ноутбук сам замедляет видеокарту.") % adapter(), "", "tip_igpu"])
 
 
 ## Настройки поменялись: счётчик кадров
@@ -843,6 +899,7 @@ func _check_step(dt: float) -> void:
 	var ms := RenderingServer.viewport_get_measured_render_time_gpu(_vp)
 	if ms > 0.0:
 		_check_ms.append(ms)
+	_check_frame.append(dt * 1000.0)
 	_check_t += dt
 	if _check_t < CHECK_SEC:
 		return
@@ -853,12 +910,17 @@ func _check_step(dt: float) -> void:
 		var s := _check_ms.duplicate()
 		s.sort()
 		med = s[s.size() / 2]
-	if med > CHECK_MS and q != "verylow":
+	var by_frames := _check_ms.is_empty() and OS.has_feature("macos") and not _check_frame.is_empty()
+	if by_frames:
+		var s := _check_frame.duplicate()      # Mac на Metal: видеокарта не говорит своё время — смотрим на кадры
+		s.sort()
+		med = s[s.size() / 2]
+	if med > (CHECK_FRAME_MS if by_frames else CHECK_MS) and q != "verylow":
 		q = lower(q)
 		st["quality"] = q
 		st["quality_auto"] = q
 	st["quality_checked"] = true
-	print("Графика: проверка в городе — видеокарта %.1f мс, уровень «%s»" % [med, NAMES[q]])
+	print("Графика: проверка в городе — %s %.1f мс, уровень «%s»" % ["кадр" if by_frames else "видеокарта", med, NAMES[q]])
 	_write(game)
 	game._apply_quality()
 	_set_measure(_dbg != null and _dbg.visible)
@@ -992,9 +1054,11 @@ func report() -> String:
 		"вызовов %d + тени %d · треугольников %.2fM + тени %.2fM" % [vis_d, sh_d, vis_p / 1.0e6, sh_p / 1.0e6],
 		"видеопамять %d МБ (текстуры %d)" % [int(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0), int(Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / 1048576.0)],
 		"графика «%s»%s · окно %s · масштаб %.2f" % [NAMES.get(q, q), " (по видеокарте)" if str(game.settings.get("quality_auto", "")) == q else "", str(get_window().size), get_viewport().scaling_3d_scale],
-		"%s · %s · Vulkan %s" % [adapter(), RS.get_video_adapter_vendor(), RS.get_video_adapter_api_version()],
+		"%s · %s · %s %s" % [adapter(), RS.get_video_adapter_vendor(), "Metal" if RS.get_current_rendering_driver_name() == "metal" else "Vulkan",
+			RS.get_video_adapter_api_version()],
 		"жителей на улицах %d из %d · построек %d" % [game.people.visible_count if game.people else 0, game.people.residents.size() if game.people else 0, game.city.buildings.size() if game.city else 0],
-		"версия %s" % ProjectSettings.get_setting("application/config/version", "?")]
+		"версия %s%s" % [ProjectSettings.get_setting("application/config/version", "?"),
+			(" · Mac, сборка %d" % MacUpdate.our_build()) if OS.has_feature("macos") else ""]]
 	return "\n".join(lines)
 
 
