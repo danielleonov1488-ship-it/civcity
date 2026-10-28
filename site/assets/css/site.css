@@ -560,3 +560,8 @@ button, input { font: inherit; color: inherit; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: 0.01ms !important; animation: none !important; }
 }
+
+/* мелкая ссылка «Скачать для Mac» под обычной кнопкой «Скачать» */
+.alt-os { margin: 6px 0 0; font-size: 0.82rem; }
+.alt-os a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.alt-os a:hover { opacity: 0.8; }

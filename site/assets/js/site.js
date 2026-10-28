@@ -292,11 +292,13 @@
   var ua = navigator.userAgent || '';
   var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
   var isWindows = /win/i.test(platform) || /Windows NT/.test(ua);
+  var isMac = /mac/i.test(platform) || /Macintosh/.test(ua);
   var isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (navigator.userAgentData && navigator.userAgentData.mobile);
-  if (!isWindows || isMobile) {
+  if ((!isWindows && !isMac) || isMobile) {   // на Mac подсказка не нужна: под кнопкой и так ссылка «Скачать для Mac»
     var note = $('[data-os-note]');
     if (note) {
-      if (!isMobile) note.textContent = 'Пока CivCity работает только на Windows 10 и 11.';
+      note.textContent = isMobile ? 'CivCity — игра для компьютера с Windows или Mac. Откройте civcity.ru на компьютере, чтобы скачать её.'
+        : 'Пока CivCity работает на Windows 10 и 11 и в тестовой версии на Mac.';
       note.hidden = false;
     }
   }
