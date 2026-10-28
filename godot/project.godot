@@ -39,3 +39,6 @@ lights_and_shadows/directional_shadow/soft_shadow_filter_quality=4
 environment/ssao/quality=3
 global_illumination/sdfgi/probe_ray_count=2
 textures/default_filters/anisotropic_filtering_level=4
+; сборка для Mac (Intel + Apple M одним приложением) без этого не экспортируется. Сжатых VRAM-картинок у игры нет
+; (Synty — Basis, остальное — без потерь), поэтому импорт не меняется, а наборы Windows не растут (проверено 28.10)
+textures/vram_compression/import_etc2_astc=true
