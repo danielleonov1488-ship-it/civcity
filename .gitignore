@@ -38,6 +38,8 @@ tools/
 # собранная игра Godot (deploy/build_game.sh): exe и .pck — только на сервер, не в git
 # (с косой чертой — только папка в корне: desktop/build/ с installer.nsh и значком должна попасть в git)
 /build/
+# номер сборки для Mac: его на время сборки кладёт deploy/build_game.sh mac (в набор «macOS»), потом убирает
+godot/mac_build.txt
 
 # ключ подписи описи игры (deploy/game_manifest.js): только на компьютере владельца — не в git и не на сервер
 /secrets/

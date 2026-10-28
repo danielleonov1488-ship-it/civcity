@@ -2,10 +2,14 @@
 # Выкладка CivCity на сервер — одной командой: сайт, игра для лаунчера, установщик, сервер аккаунтов, Caddy.
 #   bash deploy/deploy.sh                 — всё
 #   bash deploy/deploy.sh game site …     — только названное: site | game | installer | server (можно несколько)
+#   bash deploy/deploy.sh mac             — игра для Mac: build/mac/CivCity-mac.zip → /download/ и /game/mac.json
+#                                           (в «всё» не входит; страница https://civcity.ru/mac/ — часть сайта, site)
+#   bash deploy/deploy.sh caddy           — только Caddyfile (проверить и перечитать Caddy, сервер аккаунтов не трогать)
 #   bash deploy/deploy.sh setup           — сначала первая настройка сервера (пользователь, папки, служба), потом всё
 #   bash deploy/deploy.sh check           — всё подготовить и проверить у себя, на сервер ничего не отправлять
 #   bash deploy/deploy.sh rollback N      — вернуть на сайт игру сборки N (из пяти последних выложенных)
 # Перед выкладкой: bash tools/build_game.sh (игра → build/game), bash deploy/build_launcher.sh (установщик),
+# bash tools/build_game.sh mac (игра для Mac → build/mac),
 # сайт — в папке site/. По шагам — deploy/RELEASE.md. Ключ — ~/.ssh/civcity_ed25519; CIVCITY_HOST — другой сервер.
 #
 # Что где на сервере:
@@ -18,6 +22,11 @@
 #       f/<sha256>, f/<zsha>.zst — файлы и сжатые копии по содержимому (заливаются только новые; перед заменой
 #                       описи все нужные ей файлы сверяются по sha256),
 #       releases/<сборка>.json — описи пяти последних сборок (для отката); ненужные им файлы удаляются
+#       mac.json — сборка для Mac: {build, min, url, size, sha256, version}. Игра на Mac читает его при запуске
+#                       (scripts/mac_update.gd): её сборка меньше min — окно «скачайте новую версию», играть нельзя;
+#                       меньше build — тихая строка в меню. min = build (каждый выпуск обязателен), иначе MAC_MIN=N
+#   /srv/civcity/www/download/CivCity-mac.zip, CivCity-mac-<сборка>.zip — архив для Mac (три последние сборки;
+#                       в mac.json — адрес с номером: кэш браузера не подсунет прежний архив)
 #   /srv/civcity/server/           сервер аккаунтов (служба civcity), его база — /srv/civcity/data
 #   /srv/civcity/incoming/         то, что заливается сейчас (снаружи не видно)
 # Для проверки самой выкладки без сервера: CIVCITY_SSH — своя команда вместо ssh, CIVCITY_REMOTE_ROOT — своя папка
@@ -31,6 +40,7 @@ SSH=${CIVCITY_SSH:-ssh -i $KEY -o BatchMode=yes $HOST}
 R=${CIVCITY_REMOTE_ROOT:-/srv/civcity}
 SITE=${CIVCITY_SITE:-https://civcity.ru}
 GAME_DIR=${CIVCITY_GAME_DIR:-build/game}
+MAC_DIR=${CIVCITY_MAC_DIR:-build/mac}
 SITE_DIR=${CIVCITY_SITE_DIR:-site}
 STAGE=.work/deploy
 KEEP=5
@@ -46,7 +56,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     setup) SETUP=1 ;;
     check) CHECK=1 ;;
-    site|game|installer|server) PARTS+=("$1") ;;
+    site|game|installer|server|mac|caddy) PARTS+=("$1") ;;
     rollback)
       N=${2:-}
       [[ "$N" =~ ^[0-9]+$ ]] || die "rollback: укажите номер сборки, например: bash deploy/deploy.sh rollback 12"
@@ -76,7 +86,7 @@ rm -rf "$M" "$1/incoming/rollback.tar"
 echo "Игра на сайте — сборка $2. Лаунчеры поставят её при следующем «Играть»."
 EOF
       exit 0 ;;
-    *) die "не знаю «$1». Можно: site, game, installer, server, setup, check, rollback N" ;;
+    *) die "не знаю «$1». Можно: site, game, installer, server, mac, caddy, setup, check, rollback N" ;;
   esac
   shift
 done
@@ -95,6 +105,22 @@ if has game; then
   echo "== опись игры ($GAME_DIR)"
   node deploy/game_manifest.js "$GAME_DIR" "$STAGE" || die "опись игры не получилась"
   BUILD=$(tr -d '\r\n' < "$STAGE/game/build.txt")
+fi
+if has mac; then
+  MZIP=$MAC_DIR/CivCity-mac.zip
+  [ -f "$MZIP" ] && [ -f "$MAC_DIR/version.json" ] || die "нет $MZIP — соберите: bash tools/build_game.sh mac"
+  echo "== игра для Mac ($MZIP)"
+  python -I deploy/mac_zip_check.py "$MZIP" || die "архив для Mac неправильный — не выкладываю"
+  MBUILD=$(python -I -c "import json,sys;print(int(json.load(open(sys.argv[1]))['build']))" "$MAC_DIR/version.json") || die "$MAC_DIR/version.json не читается"
+  MVER=$(python -I -c "import json,sys;print(json.load(open(sys.argv[1])).get('version',''))" "$MAC_DIR/version.json")
+  MMIN=${MAC_MIN:-$MBUILD}
+  [[ "$MMIN" =~ ^[0-9]+$ ]] && [ "$MMIN" -le "$MBUILD" ] || die "MAC_MIN=$MMIN: нужен номер сборки не больше $MBUILD"
+  MSIZE=$(stat -c %s "$MZIP")
+  MSUM=$(sha256sum "$MZIP" | cut -d' ' -f1)
+  MURL="$SITE/download/CivCity-mac-$MBUILD.zip"
+  printf '{"build": %d, "min": %d, "url": "%s", "size": %d, "sha256": "%s", "version": "%s"}\n' \
+    "$MBUILD" "$MMIN" "$MURL" "$MSIZE" "$MSUM" "$MVER" > "$STAGE/mac.json"
+  echo "   сборка $MBUILD, обязательна для всех ниже $MMIN, $(mb "$MSIZE")"
 fi
 if has site; then
   [ -f "$SITE_DIR/index.html" ] || die "нет сайта: $SITE_DIR/index.html"
@@ -122,6 +148,7 @@ if [ $CHECK -eq 1 ]; then
   echo "Проверка у себя закончена, на сервер ничего не отправлено. Будет выложено: ${PARTS[*]}"
   if has game; then echo "  игра: сборка $BUILD → $STAGE/game (проверить лаунчером — см. deploy/RELEASE.md)"; fi
   if has installer; then echo "  установщик: $SETUP_EXE ($(mb "$(stat -c %s "$SETUP_EXE")"))"; fi
+  if has mac; then echo "  Mac: $MZIP → /download/CivCity-mac.zip и CivCity-mac-$MBUILD.zip; /game/mac.json: $(cat "$STAGE/mac.json")"; fi
   exit 0
 fi
 
@@ -231,6 +258,50 @@ EOF
   fi
 fi
 
+# ---------- 4б. игра для Mac ----------
+
+if has mac; then
+  echo "== игра для Mac: сборка $MBUILD"
+  # сначала архив (под номером сборки и под постоянным именем для страницы /mac/), потом mac.json — игры узнают о
+  # новой сборке, только когда её уже можно скачать
+  old=$(run "$MBUILD" <<'EOF'
+sha256sum "$1/www/download/CivCity-mac-$2.zip" 2>/dev/null | cut -d" " -f1 || true
+EOF
+)
+  if [ "$MSUM" = "$old" ]; then
+    echo "   архив этой сборки уже на сервере"
+  else
+    echo "   заливаю $(mb "$MSIZE")…"
+    up CivCity-mac.zip.part < "$MZIP"
+  fi
+  run "$MSUM" "$MBUILD" "$([ "$MSUM" = "$old" ] && echo have || echo new)" <<'EOF'
+set -e
+D="$1/www/download"
+mkdir -p "$D"
+if [ "$4" = new ]; then
+  cd "$1/incoming"
+  echo "$2  CivCity-mac.zip.part" | sha256sum -c --quiet || { echo "архив для Mac пришёл повреждённым"; exit 1; }
+  chmod 644 CivCity-mac.zip.part
+  mv -f CivCity-mac.zip.part "$D/CivCity-mac-$3.zip"
+fi
+rm -f "$D/CivCity-mac.zip.new"
+if ! [ "$D/CivCity-mac-$3.zip" -ef "$D/CivCity-mac.zip" ]; then
+  # постоянное имя (кнопка на странице /mac/) — та же сборка, одним переименованием
+  ln -f "$D/CivCity-mac-$3.zip" "$D/CivCity-mac.zip.new"
+  mv -f "$D/CivCity-mac.zip.new" "$D/CivCity-mac.zip"
+fi
+# три последние сборки (кто-то как раз скачивает по ссылке из mac.json), остальные — убрать
+ls -1 "$D"/CivCity-mac-*.zip 2>/dev/null | sed -n 's#.*/CivCity-mac-\([0-9]*\)\.zip$#\1#p' | sort -n | head -n -3 | while read -r n; do rm -f "$D/CivCity-mac-$n.zip"; done
+EOF
+  up mac.json < "$STAGE/mac.json"
+  run <<'EOF'
+set -e
+chmod 644 "$1/incoming/mac.json"
+mv -f "$1/incoming/mac.json" "$1/game/mac.json"
+EOF
+  echo "   /game/mac.json: сборка $MBUILD, обязательна с $MMIN"
+fi
+
 # ---------- 5. сайт ----------
 
 if has site; then
@@ -324,6 +395,24 @@ echo "   сервер аккаунтов отвечает"
 EOF
 fi
 
+# ---------- 6б. только Caddy (без перезапуска сервера аккаунтов) ----------
+
+if has caddy && ! has server; then
+  echo "== Caddy"
+  up Caddyfile < deploy/Caddyfile
+  run <<'EOF'
+set -e
+I="$1/incoming"
+if ! caddy validate --config "$I/Caddyfile" --adapter caddyfile >/dev/null 2>&1; then
+  echo "Caddyfile с ошибкой — оставляю прежний:"; caddy validate --config "$I/Caddyfile" --adapter caddyfile 2>&1 | tail -5; exit 1
+fi
+mv -f "$I/Caddyfile" /etc/caddy/Caddyfile
+systemctl reload caddy || systemctl restart caddy
+systemctl is-active --quiet caddy || { echo "Caddy не поднялся"; exit 1; }
+echo "   Caddy перечитал настройки"
+EOF
+fi
+
 # ---------- 7. проверка снаружи ----------
 
 echo "== проверка $SITE"
@@ -339,6 +428,17 @@ if has installer; then
 fi
 if has site; then
   if curl -fsS --max-time 15 "$SITE/game-manifest.json" | grep -q "\"shell\":\"$VER\""; then echo "   старые лаунчеры увидят «Вышла новая версия» ($VER)"; else echo "   ВНИМАНИЕ: $SITE/game-manifest.json не тот"; ok=0; fi
+fi
+if has mac; then
+  got=$(curl -fsS --max-time 15 "$SITE/game/mac.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);console.log(j.build+" "+j.min+" "+j.url)}catch(e){console.log("?")}})' || true)
+  if [ "$got" = "$MBUILD $MMIN $MURL" ]; then echo "   /game/mac.json: сборка $MBUILD, обязательна с $MMIN"; else echo "   ВНИМАНИЕ: $SITE/game/mac.json даёт «$got», ждали «$MBUILD $MMIN $MURL»"; ok=0; fi
+  for u in "$MURL" "$SITE/download/CivCity-mac.zip"; do
+    hdr=$(curl -fsSI --max-time 15 "$u" | tr -d '\r' || true)
+    len=$(awk 'tolower($1)=="content-length:"{print $2}' <<< "$hdr")
+    typ=$(awk 'tolower($1)=="content-type:"{print $2}' <<< "$hdr")
+    if [ "$len" = "$MSIZE" ] && [ "$typ" = "application/zip" ]; then echo "   архив для Mac скачивается: ${u#$SITE} ($(mb "$len"), $typ)"
+    else echo "   ВНИМАНИЕ: ${u#$SITE}: размер «$len» (ждали $MSIZE), тип «$typ» (ждали application/zip; тип задаёт Caddyfile — bash deploy/deploy.sh caddy)"; ok=0; fi
+  done
 fi
 # код выхода: 0 — выложено и проверено; 1 — выкладка оборвалась (die); 2 — файлы ушли, но проверка снаружи не прошла
 if [ $ok -eq 1 ]; then echo "выложено"; else echo "выложено, но проверка нашла неполадки (см. выше)"; exit 2; fi

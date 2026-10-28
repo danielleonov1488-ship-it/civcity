@@ -237,6 +237,7 @@ func _ready() -> void:
 	if args.has("hour"):
 		clock_hours = false
 	can_save = shot_path == "" and (mode == "play" or mode == "new")
+	MacUpdate.check_at_start(self)            # Mac: вышла ли новая версия (scripts/mac_update.gd), пока грузится город
 	_load_settings()
 	sound = Sound.new()
 	sound.game = self
@@ -401,8 +402,11 @@ func _ready() -> void:
 		city.tips["v22_pace"] = true
 		hud.advisor("В городе новые правила", hud.pace_note())
 	elif not loaded and shot_path == "" and not tutorial.active():
-		hud.advisor("Аве! Я Марк, твой советник.", "По большой дороге через арку к почтовой станции приезжают повозки с переселенцами. Проложи дорогу кистью (слева внизу) и поставь вдоль неё дома — они сами встанут фасадом к дороге. Рядом поставь лавки: каждая кормит и радует дома в своей дальности.\n\nКамера: колёсико — масштаб, зажатое колёсико — вращать, правая кнопка — двигать (или WASD, Q/E).")
+		hud.advisor("Аве! Я Марк, твой советник.", "По большой дороге через арку к почтовой станции приезжают повозки с переселенцами. Проложи дорогу кистью (слева внизу) и поставь вдоль неё дома — они сами встанут фасадом к дороге. Рядом поставь лавки: каждая кормит и радует дома в своей дальности.\n\n" +
+			("Камера: щипок на трекпаде — масштаб, два пальца — двигать, Option + два пальца — вращать (или WASD, Q/E)." if OS.has_feature("macos")
+			else "Камера: колёсико — масштаб, зажатое колёсико — вращать, правая кнопка — двигать (или WASD, Q/E)."))
 	Account.me().attach(self)                 # вход в аккаунт и сверка города с облаком (scripts/account.gd)
+	MacUpdate.attach_game(self)               # Mac: строка «Вышла новая версия» в меню или окно «скачайте новую версию»
 	LegionBattle.attach(self)                 # 3D-бой Легиона: «В бой» в окне «Легион» открывает поле боя (scripts/legion_battle.gd)
 	LegionNet.me().attach_city()              # бои с городами по сети: отряд обороны на сервер, отчёты о нападениях; имя города с сервера (scripts/legion_net.gd)
 	QaDrive.attach(self)                      # автопроверка собранной игры, только с аргументом --qa=… (scripts/qa_drive.gd)
@@ -4571,6 +4575,12 @@ func select_person(sel: Dictionary) -> void:
 		hud.open_person(sel)
 
 
+## Ctrl+Z, Ctrl+Y, Ctrl+C: на Mac то же самое и с ⌘ Cmd (как в любой программе для Mac). На Windows
+## is_command_or_control_pressed — это и есть Ctrl, так что там всё как прежде
+static func cmd_key(k: InputEventWithModifiers) -> bool:
+	return k.ctrl_pressed or k.is_command_or_control_pressed()
+
+
 func _unhandled_input(e: InputEvent) -> void:
 	if not ready_done or mode == "menu":
 		return
@@ -4666,7 +4676,9 @@ func _unhandled_input(e: InputEvent) -> void:
 				else:
 					hud._top_action("menu")
 			KEY_Z:
-				if k.ctrl_pressed:
+				if cmd_key(k) and k.shift_pressed and OS.has_feature("macos"):
+					_redo()                           # Mac: ⌘⇧Z — повторить, как в программах для Mac
+				elif cmd_key(k):
 					_undo()
 				else:
 					_rot_keep()
@@ -4675,7 +4687,7 @@ func _unhandled_input(e: InputEvent) -> void:
 					yaw_set = true
 					free_yaw = tool_yaw
 			KEY_Y:
-				if k.ctrl_pressed:
+				if cmd_key(k):
 					_redo()
 			KEY_X:
 				_rot_keep()
@@ -4684,7 +4696,7 @@ func _unhandled_input(e: InputEvent) -> void:
 				yaw_set = true
 				free_yaw = tool_yaw
 			KEY_C:
-				if k.ctrl_pressed:
+				if cmd_key(k):
 					set_tool("copy")
 				elif k.shift_pressed and Defs.B.has(tool) and Defs.B[tool]["kind"] != "decor":
 					set_color(color_user + 1 if color_user + 1 < Defs.PALETTE.size() else -1)   # Shift+C — следующий цвет (3.4)
@@ -4701,14 +4713,14 @@ func _unhandled_input(e: InputEvent) -> void:
 				hud.refresh_tools()
 			KEY_F:
 				# навели на постройку и F — в руках такая же (облик, цвет, поворот); Q/E заняты поворотом камеры
-				if not k.ctrl_pressed and moving.is_empty() and not painting:
+				if not cmd_key(k) and moving.is_empty() and not painting:
 					var cb := pick_building()
 					if not cb.is_empty() and not city.def(cb).get("fixed", false):
 						copy_building(cb)
 			KEY_M:
 				set_tool("move")
 			KEY_P:
-				if photo != null and not k.ctrl_pressed:
+				if photo != null and not cmd_key(k):
 					photo.toggle()                    # режим фото
 			KEY_G:
 				if Defs.B.has(tool) and Defs.B[tool].get("gate", false):
@@ -4721,6 +4733,9 @@ func _unhandled_input(e: InputEvent) -> void:
 				set_tool("" if tool == tu else tu)
 			KEY_DELETE:
 				set_tool("bulldoze")
+			KEY_BACKSPACE:
+				if OS.has_feature("macos"):
+					set_tool("bulldoze")              # на клавиатуре Mac «delete» — это Backspace
 			KEY_SPACE:
 				hud.toggle_pause()
 			KEY_1:

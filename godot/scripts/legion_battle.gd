@@ -247,7 +247,17 @@ func _build_screen() -> void:
 			if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 				zoom = clampf(zoom * 0.92, 0.6, 1.2)
 			elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				zoom = clampf(zoom / 0.92, 0.6, 1.2))
+				zoom = clampf(zoom / 0.92, 0.6, 1.2)
+		# трекпад Mac: щипок и два пальца вверх-вниз — ближе/дальше, как колёсико (двигать поле боя нечем и незачем)
+		# (Godot отдаёт каждый жест дважды — копию пропускает CameraRig.gesture_once)
+		elif e is InputEventMagnifyGesture and (e as InputEventMagnifyGesture).factor > 0.0:
+			if CameraRig.gesture_once(e as InputEventGesture, "battle"):
+				zoom = clampf(zoom / (e as InputEventMagnifyGesture).factor, 0.6, 1.2)
+			view_rect.accept_event()
+		elif e is InputEventPanGesture:
+			if CameraRig.gesture_once(e as InputEventGesture, "battle"):
+				zoom = clampf(zoom * exp(-(e as InputEventPanGesture).delta.y * 0.08), 0.6, 1.2)
+			view_rect.accept_event())
 	canvas.add_child(view_rect)
 	var gr := ColorRect.new()
 	gr.set_anchors_preset(Control.PRESET_FULL_RECT)

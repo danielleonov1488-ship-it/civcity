@@ -2,6 +2,11 @@ class_name CameraRig
 extends Node3D
 ## Камера как в Town to City: зажатое колёсико — вращать под любым углом, колёсико — ближе/дальше,
 ## правая кнопка или WASD — двигать, Q/E — поворот. Ближе к земле камера сама наклоняется ниже.
+## Трекпад Mac: Godot присылает с него не колёсико, а жесты (platform/macos/godot_content_view.mm: прокрутка с фазой
+## касания — InputEventPanGesture, щипок — InputEventMagnifyGesture; колёсико обычной мыши — по-прежнему колёсико):
+## щипок — ближе/дальше к точке под курсором, два пальца — двигать карту, ⌥ Option + два пальца — вращать (вбок) и
+## наклонять (вверх-вниз), ⌘ + два пальца вверх-вниз — ближе/дальше (Magic Mouse: щипка у неё нет). Над окнами жест
+## камеру не трогает — его берут списки (ScrollContainer сам листает жестом). На Windows этих событий нет.
 
 var yaw := deg_to_rad(200.0)
 var pitch := deg_to_rad(38.0)
@@ -35,6 +40,10 @@ const PHOTO_PITCH_MIN := 2.0
 const Y_W := 0.50212
 const Y_K := 0.79915
 const FOV := 30.0                    # узкий объектив — город как игрушечная миниатюра (Town to City)
+## Жест трекпада: единица delta — около 33 точек движения пальцев (scrollingDelta × 0,03); ход камеры за единицу —
+## как у мыши за 33 пикселя (правая кнопка — 0,0016 масштаба кадра на пиксель, колёсико зажато — 0,006/0,005 радиана)
+const GESTURE_PX := 33.0
+const GESTURE_ZOOM := 0.12           # ⌘ + два пальца: множитель масштаба exp(0,12) на единицу жеста
 ## dist — «масштаб кадра» (как при прежнем объективе 40°), камера отъезжает дальше, чтобы кадр был тот же
 static var K := tan(deg_to_rad(20.0)) / tan(deg_to_rad(FOV / 2.0))
 
@@ -107,6 +116,71 @@ func _unhandled_input(e: InputEvent) -> void:
 			var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
 			var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
 			_target_t -= right * mm.relative.x * k + fwd * mm.relative.y * k
+	elif e is InputEventMagnifyGesture:
+		var f := (e as InputEventMagnifyGesture).factor
+		if f > 0.0 and gesture_once(e as InputEventGesture) and not gesture_on_ui(get_viewport()):
+			_zoom(1.0 / f)                   # пальцы врозь (factor > 1) — ближе
+	elif e is InputEventPanGesture:
+		if gesture_once(e as InputEventGesture):
+			pan_gesture(e as InputEventPanGesture)
+
+
+## Godot 4.4–4.7 отдаёт каждый жест дважды подряд (core/input/input.cpp, Input::_parse_input_event_impl: жест уходит в
+## event_dispatch_function отдельно и ещё раз вместе со всеми событиями) — и на Mac так же. Копию, пришедшую сразу
+## следом (те же значения, меньше 3 мс), пропускаем. Пары «жест + копия» идут без промежутка, поэтому одинаковые
+## соседние жесты (пальцы ведут ровно) не теряются: после копии пара закрыта, следующий такой же — новый жест.
+## who — у кого свой счёт (камера города, камера боя)
+static var _g_last := {}
+
+
+static func gesture_once(e: InputEventGesture, who := "city") -> bool:
+	var v = (e as InputEventPanGesture).delta if e is InputEventPanGesture else (e as InputEventMagnifyGesture).factor if e is InputEventMagnifyGesture else 0
+	var sig := [e.get_class(), v, e.position, e.alt_pressed, e.shift_pressed, e.ctrl_pressed, e.meta_pressed]
+	var now := Time.get_ticks_usec()
+	var prev: Array = _g_last.get(who, [])
+	if prev.size() == 3 and bool(prev[2]) and prev[0] == sig and now - int(prev[1]) < 3000:
+		_g_last[who] = [sig, now, false]     # копия — пара закрыта
+		return false
+	_g_last[who] = [sig, now, true]
+	return true
+
+
+## Два пальца по трекпаду (Mac). delta — куда сдвигается вид, как у прокрутки страницы: при обычной для Mac
+## «естественной» прокрутке пальцы вверх — delta.y > 0, вид уходит вниз, а карта едет вверх вместе с пальцами —
+## как если бы её тянули правой кнопкой мыши (палец = −delta × GESTURE_PX пикселей мыши)
+func pan_gesture(pg: InputEventPanGesture) -> void:
+	if gesture_on_ui(get_viewport()):
+		return
+	var d := pg.delta
+	if pg.alt_pressed:
+		# ⌥ Option + два пальца — вращать и наклонять, как зажатым колёсиком
+		_yaw_t += d.x * GESTURE_PX * 0.006
+		_pitch_t = clampf(_pitch_t - d.y * GESTURE_PX * 0.005, deg_to_rad(pitch_min()), deg_to_rad(80))
+	elif pg.is_command_or_control_pressed():
+		_zoom(exp(-d.y * GESTURE_ZOOM))      # ⌘ + пальцы вверх — ближе
+	else:
+		if d.length() * GESTURE_PX > 2.0:
+			stop_follow()                    # повели карту — сами ведём камеру
+		var k := _dist_t * 0.0016 * GESTURE_PX
+		var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
+		var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
+		_target_t += right * d.x * k + fwd * d.y * k
+
+
+## Жест над окном интерфейса? Жесты не «мышь», и Godot передаёт их родителям окна и дальше в игру, даже если окно
+## ловит мышь (Viewport._gui_call_input: MOUSE_FILTER_STOP держит только события мыши). Список, который пролистал,
+## жест забирает сам; остальные окна — здесь: над окном, которое ловит мышь, камера не едет
+static func gesture_on_ui(vp: Viewport) -> bool:
+	if vp == null:
+		return false
+	var c: Control = vp.gui_get_hovered_control()
+	while c != null:
+		if c.is_visible_in_tree() and c.mouse_filter == Control.MOUSE_FILTER_STOP:
+			return true
+		if c.top_level:
+			break
+		c = c.get_parent() as Control
+	return false
 
 
 ## Колёсико: ближе или дальше к точке земли под курсором (как в Town to City) — она остаётся под курсором:

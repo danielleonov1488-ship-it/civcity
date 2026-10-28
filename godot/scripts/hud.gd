@@ -2369,10 +2369,27 @@ func _bottom_center() -> void:
 	var sc := ScrollContainer.new()
 	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sc.name = "scroll"
+	sc.gui_input.connect(_pan_sideways.bind(sc))
 	v.add_child(sc)
 	tray_grid = HBoxContainer.new()
 	tray_grid.add_theme_constant_override("separation", 10)
 	sc.add_child(tray_grid)
+
+
+## Трекпад Mac: свиток стройки листается вбок, а пальцы по привычке ведут вверх-вниз — такой жест тоже листает его
+## вбок (колёсико мыши ScrollContainer и так листает вбок, когда прокрутки вверх-вниз нет; жест сам — только вбок).
+## На Windows жестов нет — там ничего не меняется
+func _pan_sideways(ev: InputEvent, sc: ScrollContainer) -> void:
+	if not ev is InputEventPanGesture:
+		return
+	var d := (ev as InputEventPanGesture).delta
+	if absf(d.y) <= absf(d.x):
+		return                                # вбок — листает сам ScrollContainer
+	var hs := sc.get_h_scroll_bar()
+	var before := hs.value
+	hs.value += hs.page * d.y / 8.0           # как ScrollContainer (ScrollBar::PAGE_DIVISOR = 8)
+	if hs.value != before:
+		sc.accept_event()
 
 
 func _bottom_right() -> void:
@@ -5869,9 +5886,9 @@ func _credits_panel() -> void:
 	var gap3 := Control.new()
 	gap3.custom_minimum_size = Vector2(0, 30)
 	col.add_child(gap3)
-	# игрок крутит колёсико или тянет полосу — титры больше не плывут сами
+	# игрок крутит колёсико (на Mac — ведёт двумя пальцами) или тянет полосу — титры больше не плывут сами
 	var stop := func(e: InputEvent):
-		if e is InputEventMouseButton and credits_panel.has_meta("roll"):
+		if (e is InputEventMouseButton or e is InputEventPanGesture) and credits_panel.has_meta("roll"):
 			(credits_panel.get_meta("roll") as Tween).kill()
 			credits_panel.remove_meta("roll")
 	sc.gui_input.connect(stop)
@@ -7149,7 +7166,8 @@ func show_menu(has_save: bool) -> void:
 	mk.call("Настройки", "settings", func(): _menu_settings())
 	mk.call("Титры", "laurels", func(): _menu_credits())
 	mk.call("Выход", "exit", func(): Account.me().quit_game())
-	var foot := _label("Колёсико — масштаб · зажатое колёсико — вращать · правая кнопка — двигать", 16, true, C_CREAM)
+	var foot := _label("Щипок — масштаб · два пальца — двигать · Option + два пальца — вращать" if OS.has_feature("macos")
+		else "Колёсико — масштаб · зажатое колёсико — вращать · правая кнопка — двигать", 16, true, C_CREAM)   # Mac — про трекпад
 	foot.add_theme_color_override("font_outline_color", Color("3a2412"))
 	foot.add_theme_constant_override("outline_size", 6)
 	_put(foot, Control.PRESET_BOTTOM_LEFT, Vector2(80, -36))
@@ -7193,6 +7211,8 @@ func _menu_credits_closed() -> void:
 
 
 func _menu_go(m: String) -> void:
+	if not await MacUpdate.allow_play():      # Mac: эта сборка устарела — окно «скачайте новую версию» (mac_update.gd)
+		return
 	if not Account.me().may_play(m):          # без входа не играем; сначала сверка города с облаком (account.gd)
 		return
 	var l := _label("Загрузка…", 32, false, C_CREAM, font_title)

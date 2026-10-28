@@ -3,8 +3,9 @@
 # По адресу сервера (http://159.194.249.20) всё тоже открывается — на случай, если с доменом что-то случится.
 #
 #   /api/*     → сервер аккаунтов (вход, сохранения городов в облаке, новости лаунчера)
-#   /game/*    → /srv/civcity/game: опись игры manifest.json и файлы игры f/<sha256>[.zst] (их выкладывает deploy.sh)
-#   остальное  → /srv/civcity/www: сайт, установщики в /download/, game-manifest.json для лаунчеров 0.9.x
+#   /game/*    → /srv/civcity/game: опись игры manifest.json и файлы игры f/<sha256>[.zst] (их выкладывает deploy.sh),
+#                mac.json — какая сборка для Mac свежая и какая обязательна (deploy.sh mac)
+#   остальное  → /srv/civcity/www: сайт, установщики и архив для Mac в /download/, game-manifest.json для лаунчеров 0.9.x
 
 {
 	# сертификаты — от Let's Encrypt (у запасного ZeroSSL в этой версии Caddy сломан вход)
@@ -26,6 +27,7 @@
 	@blob path /game/f/*
 	@meta not path /game/f/*
 	@download path /download/*
+	@zip path /download/*.zip
 	@page not path /download/*
 
 	handle /api/* {
@@ -46,6 +48,9 @@
 		# страницы браузер каждый раз сверяет с сервером (быстро, через ETag) — обновления сайта видны сразу
 		header @page Cache-Control "no-cache"
 		header @download Cache-Control "public, max-age=3600"
+		# архив для Mac (CivCity-mac.zip): тип — явно. Caddy берёт его из /etc/mime.types, а если там .zip нет —
+		# не пишет никакого (сам не угадывает), и Safari может не узнать архив. Размер файла Caddy не ограничивает
+		header @zip Content-Type "application/zip"
 		file_server
 	}
 

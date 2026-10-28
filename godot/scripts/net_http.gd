@@ -5,8 +5,9 @@ extends RefCounted
 ##   status — код ответа сервера; 0 — ответа нет, и тогда net — почему:
 ##     dns — имя сервера не нашлось; connect — не соединиться или связь оборвалась; tls — не вышло защищённое
 ##     соединение; timeout — долго нет ответа; read — ответ пришёл, но не читается; local:<ошибка> — запрос не ушёл.
-##   opts: timeout (с, по умолчанию 20), gzip_body (сжать тело), accept_gzip (по умолчанию да),
-##         safe (повторить не страшно — по умолчанию да).
+##   opts: timeout (с, по умолчанию 20; 0 — без тайм-аута: сколько ждать, решает вызывающий — так делает
+##         mac_update.gd, чьи часы не должны съедать долгие кадры загрузки), gzip_body (сжать тело), accept_gzip
+##         (по умолчанию да), safe (повторить не страшно — по умолчанию да).
 ## При dns / connect / tls / timeout игра забывает адрес сервера (IP.clear_cache: VPN мог его поменять, а Godot помнит
 ## адреса до перезапуска игры), ждёт полсекунды и пробует ещё раз. Запрос с safe = false повторяется, только если он
 ## точно не дошёл до сервера (имя не нашлось, соединения не было, защищённое соединение не вышло).
@@ -46,7 +47,7 @@ static func _once(owner: Node, api: String, method: int, path: String, body, tok
 	var t0 := Time.get_ticks_msec()
 	var rq := HTTPRequest.new()
 	rq.timeout = float(opts.get("timeout", 20.0))
-	if test_timeout > 0.0:
+	if test_timeout > 0.0 and rq.timeout > 0.0:
 		rq.timeout = minf(rq.timeout, test_timeout)
 	rq.accept_gzip = bool(opts.get("accept_gzip", true))
 	owner.add_child(rq)

@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
-# Сборка CivCity для Windows → D:/CivCity/build/game/
+# Сборка CivCity для Windows → D:/CivCity/build/game/ (и для Mac → D:/CivCity/build/mac/, см. ниже)
 #
 #   bash deploy/build_game.sh            # обычная сборка (то же: bash tools/build_game.sh)
 #   bash deploy/build_game.sh --force    # пересобрать и большие наборы, даже если их файлы не менялись
+#   bash deploy/build_game.sh mac        # сборка для Mac (для друзей, без App Store): build/mac/CivCity-mac.zip
+#
+# Mac: один архив CivCity-mac.zip, в нём CivCity.app (движок сразу для Intel и для Apple M1 и новее) и ВСЯ игра одним
+# файлом CivCity.app/Contents/Resources/CivCity.pck (код, модели, интерфейс, музыка — набор «macOS» в
+# export_presets.cfg). Приложение подписано «ad-hoc» (аккаунта разработчика Apple нет): в готовый .app ничего не
+# добавлять — подпись сломается, и macOS скажет «приложение повреждено». Архив .zip, а не папка .app: на Windows у
+# файла нет признака «исполняемый», а в zip Godot его записывает. Рядом — version.json {"version", "build"}: номер
+# сборки Mac свой (растёт на 1), он же лежит внутри игры (res://mac_build.txt — для проверки «вышла новая версия»,
+# scripts/mac_update.gd) и уходит на сайт в /game/mac.json (bash deploy/deploy.sh mac). Windows-сборку этот режим
+# не трогает.
 #
 # Что получается (договорённость с программой запуска и сервером):
 #   CivCity.exe          — движок Godot 4.7.2 (меняется только при смене версии движка, значка или подписи файла)
@@ -17,16 +27,26 @@
 # Сборка не рисует (headless), замок видеокарты не нужен. Запуск собранной игры для проверки — deploy/run_exported.sh.
 set -uo pipefail
 
-ROOT=/d/CivCity
-GODOT=$ROOT/tools/godot/Godot_v4.7.2-stable_win64_console.exe
-TEMPLATES=$ROOT/tools/godot/editor_data/export_templates/4.7.2.stable
-PROJ=D:/CivCity/godot
+# корень рабочей копии — там, где лежит этот сценарий: D:/CivCity, а рабочая копия-«линия» .work/lanes/<x> собирает
+# в свою папку build/, не трогая D:/CivCity/build. Движок и шаблоны — общие, в D:/CivCity/tools
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+TOOLS=/d/CivCity/tools
+GODOT=$TOOLS/godot/Godot_v4.7.2-stable_win64_console.exe
+TEMPLATES=$TOOLS/godot/editor_data/export_templates/4.7.2.stable
+PROJ=$(cygpath -m "$ROOT/godot")
 OUT=$ROOT/build/game
 STAGE=$ROOT/build/.stage
 STATE=$ROOT/build/packs_state.json
-LOGS=$ROOT/.work/build_game
+if [ "$ROOT" = /d/CivCity ]; then LOGS=$ROOT/.work/build_game; else LOGS=/d/CivCity/.work/build_game_$(basename "$ROOT"); fi
 FORCE=0
-[ "${1:-}" = "--force" ] && FORCE=1
+MAC=0
+for a in "$@"; do
+  case "$a" in
+    --force) FORCE=1 ;;
+    mac|--mac) MAC=1 ;;
+    *) echo "ОШИБКА: не знаю «$a». Можно: --force, mac" >&2; exit 1 ;;
+  esac
+done
 
 # имя набора в export_presets.cfg : файл. Папки набора берутся из его include_filter («assets/synty/*,…»).
 # Новая большая папка с картинками/моделями: добавить её в include_filter нужного набора И в exclude_filter набора
@@ -40,8 +60,8 @@ PACKS=(
 die() { echo "ОШИБКА: $*" >&2; exit 1; }
 [ -x "$GODOT" ] || die "нет движка $GODOT"
 [ -f "$TEMPLATES/windows_release_x86_64.exe" ] || die "нет шаблонов экспорта в $TEMPLATES (tools/godot-dl/Godot_v4.7.2-stable_export_templates.tpz)"
-mkdir -p "$OUT" "$LOGS"
-rm -rf "$STAGE" && mkdir -p "$STAGE"
+[ $MAC -eq 0 ] || [ -f "$TEMPLATES/macos.zip" ] || die "нет шаблона для Mac $TEMPLATES/macos.zip (он в том же tools/godot-dl/Godot_v4.7.2-stable_export_templates.tpz)"
+mkdir -p "$LOGS"
 
 # никаких файлов Godot на диске C: кэш/журналы редактора уже в tools/godot/editor_data (._sc_), а user:// игры —
 # в .work (на случай, если экспорт что-то туда пишет)
@@ -52,11 +72,44 @@ check_log() {   # ошибки экспорта (не прогресс)
   grep -E "^(ERROR|SCRIPT ERROR)|Export failed|failed to export" "$1" | grep -v "RID allocations\|resources still in use\|ObjectDB instances" | head -20
 }
 
-echo "== 1/4 импорт ресурсов"
-godot --import > "$LOGS/import.log" 2>&1 || die "импорт упал, см. $LOGS/import.log"
-
 VERSION=$(sed -n 's/^config\/version="\(.*\)"/\1/p' $ROOT/godot/project.godot | head -1)
 [ -n "$VERSION" ] || VERSION="1.0.0"
+
+if [ $MAC -eq 1 ]; then
+  # ---------- Mac → build/mac/CivCity-mac.zip (Windows-сборку не трогаем) ----------
+  MOUT=$ROOT/build/mac
+  MSTAGE=$ROOT/build/.stage_mac
+  mkdir -p "$MOUT"
+  rm -rf "$MSTAGE" && mkdir -p "$MSTAGE"
+  echo "== 1/3 импорт ресурсов"
+  godot --import > "$LOGS/import.log" 2>&1 || die "импорт упал, см. $LOGS/import.log"
+  BUILD=$(python -I -c "import json,sys;print(int(json.load(open(sys.argv[1])).get('build',0))+1)" "$MOUT/version.json" 2>/dev/null || echo 1)
+  echo "== 2/3 CivCity.app для Mac (Intel + Apple M), сборка $BUILD — вся игра одним файлом, несколько минут"
+  # номер сборки — внутрь игры: набор «macOS» берёт этот файл своим include_filter (у набора «Windows» его нет)
+  printf '%d\n' "$BUILD" > "$ROOT/godot/mac_build.txt"
+  godot --export-release "macOS" "$(cygpath -m "$MSTAGE")/CivCity-mac.zip" > "$LOGS/export_mac.log" 2>&1
+  code=$?
+  rm -f "$ROOT/godot/mac_build.txt"
+  [ $code -eq 0 ] && [ -f "$MSTAGE/CivCity-mac.zip" ] || { check_log "$LOGS/export_mac.log"; die "сборка для Mac не удалась (код $code), см. $LOGS/export_mac.log"; }
+  check_log "$LOGS/export_mac.log"
+  echo "== 3/3 проверка архива"
+  python -I "$ROOT/deploy/mac_zip_check.py" "$MSTAGE/CivCity-mac.zip" "$BUILD" || die "архив для Mac неправильный (см. выше) — не выкладывать"
+  printf '{"version": "%s", "build": %d}\n' "$VERSION" "$BUILD" > "$MSTAGE/version.json"
+  mv -f "$MSTAGE/CivCity-mac.zip" "$MSTAGE/version.json" "$MOUT/" || die "не удалось положить сборку в $MOUT"
+  rm -rf "$MSTAGE"
+  s=$(stat -c %s "$MOUT/CivCity-mac.zip")
+  echo
+  echo "Готово: CivCity $VERSION для Mac, сборка $BUILD → $MOUT"
+  printf '  %-20s %9.2f МБ  %s\n' "CivCity-mac.zip" "$(echo "$s" | awk '{print $1/1048576}')" "$(sha256sum "$MOUT/CivCity-mac.zip" | cut -c1-12)"
+  echo "  Выложить на сайт (архив и /game/mac.json; прежние сборки для Mac попросят обновиться): bash deploy/deploy.sh mac"
+  exit 0
+fi
+
+mkdir -p "$OUT"
+rm -rf "$STAGE" && mkdir -p "$STAGE"
+
+echo "== 1/4 импорт ресурсов"
+godot --import > "$LOGS/import.log" 2>&1 || die "импорт упал, см. $LOGS/import.log"
 
 echo "== 2/4 код и движок (CivCity.exe + CivCity.pck)"
 godot --export-release "Windows" "$(cygpath -m "$STAGE")/CivCity.exe" > "$LOGS/export_main.log" 2>&1
