@@ -5697,7 +5697,7 @@ func _tax_rows(v: VBoxContainer) -> void:
 	var c: City = game.city
 	v.add_child(_label("Налоги по классам", 18, false, C_INK, font_title))
 	var nx := c.level + 1
-	var need := int(Defs.LEVELS[nx]["happy"]) if nx < Defs.LEVELS.size() else 0
+	var need := int(c.lv(nx)["happy"]) if nx < Defs.LEVELS.size() else 0
 	var key := "%d|%d|%s|%d" % [c.hour_n, c.level, str(c.taxes), c.buildings.size()]
 	if String(_tax_warn.get("key", "")) != key:
 		_tax_warn = {"key": key}

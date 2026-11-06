@@ -348,8 +348,9 @@ func _checks_1a(houses: Array) -> void:
 	c.stats["happy"] = 85
 	var e85: float = c.arrive_every()
 	c.stats["happy"] = 65
-	check(is_equal_approx(m72, 0.8) and is_equal_approx(e85, 2.5 * 0.65) and is_equal_approx(c.arrive_every(), 2.5),
-		"happy city calls more often: 72%% ×%.2f, 85%% → every %.2f h, 65%% → %.2f h" % [m72, e85, c.arrive_every()])
+	var sl: float = Balance.arrive_slow(int(c.stats["pop"])) if int(c.cozy_v) >= 1 else 1.0   # «Уютный Рим»: большой город — реже
+	check(is_equal_approx(m72, 0.8) and is_equal_approx(e85, 2.5 * 0.65 * sl) and is_equal_approx(c.arrive_every(), 2.5 * sl),
+		"happy city calls more often: 72%% ×%.2f, 85%% → every %.2f h, 65%% → %.2f h (size ×%.2f)" % [m72, e85, c.arrive_every(), sl])
 	# 10) лишние школы (старые города): работают первые по номеру, остальные — «сверх предела», их не сносим
 	c.research["school"] = true
 	c.research["artisans"] = true

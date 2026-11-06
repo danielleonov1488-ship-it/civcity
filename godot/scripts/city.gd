@@ -74,6 +74,9 @@ var seg_thin := false                 # звено забора — узкой �
 ## Правила экономики (этап 2.5/2.6, решение владельца Q3/Q4): 0 — как до сборки 35 (живые города без «да» владельца:
 ## счастье не меняется), 1 — новая игра: вторая лавка того же вида — вполовину, одинаковые украшения рядом — всё меньше
 var econ := 0
+## «Уютный Рим» (docs/PLAN_COZY.md, этап 1): 0 — прежние правила, 1 — новая игра после переработки: ранги за качество
+## и меньше жителей (Balance.LEVELS), повозка в большом городе реже, «Большой город» отнимает счастье (Balance)
+var cozy_v := 0
 ## Украшения этапа 5 (решение владельца Q17): 0 — живой город (все прежние облики открыты, как были), 1 — новая игра:
 ## часть прежних обликов открывается позже, в наборах (Defs.DECOR_LATER)
 var decor_v := 0
@@ -817,6 +820,12 @@ func compute(same_place := false) -> void:
 	var dim_any := false                       # где-то повтор лавки или украшения дал меньше (совет «Разнообразие» — один раз)
 	var sums := {"base": 0.0, "shops": 0.0, "deco": 0.0, "mon": 0.0, "fest": 0.0, "crowd": 0.0, "miss": 0.0, "w": 0.0}
 	var fb := fest_bonus()                     # игры в честь богов — всем домам, как триумф Легиона
+	var size_p := 0                            # «Уютный Рим»: большой город капризнее (Balance.size_penalty)
+	if cozy_v >= 1:
+		var pop0 := 0
+		for h0 in houses:
+			pop0 += int(h0["pop"])
+		size_p = Balance.size_penalty(pop0)
 	for b: Dictionary in stories["bonus"]:
 		if b.has("at"):                        # «памятник» скверика: пока скверик стоит (разобрали — бонуса нет)
 			b["_live"] = Stories.square_live_pct(self, b)
@@ -894,12 +903,14 @@ func compute(same_place := false) -> void:
 		var dens := -mini(Defs.DENSITY_MAX, maxi(0, crowd - Defs.DENSITY_FREE) * Defs.DENSITY_STEP)
 		if dens < 0:
 			parts.append(["Теснота", dens])
+		if size_p < 0:
+			parts.append(["Большой город", size_p])
 		var missing := []
 		for n in cd["needs"]:
 			if not h["needs"].has(n):
 				missing.append(n)
 				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + tx + unp + dens - missing.size() * Defs.MISSING_PENALTY
+		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + tx + unp + dens + size_p - missing.size() * Defs.MISSING_PENALTY
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["set_bonus"] = set_b
@@ -923,6 +934,7 @@ func compute(same_place := false) -> void:
 		sums["tax"] = float(sums.get("tax", 0.0)) + tx * w
 		sums["unpaid"] = float(sums.get("unpaid", 0.0)) + unp * w
 		sums["crowd"] += dens * w
+		sums["size"] = float(sums.get("size", 0.0)) + size_p * w
 		sums["miss"] += -missing.size() * Defs.MISSING_PENALTY * w
 		sums["clip"] = float(sums.get("clip", 0.0)) + (clampf(hp, 0.0, 100.0) - hp) * w   # счастье дома — от 0 до 100%
 	# счастье города — среднее по жителям, округлённое; его слагаемые округляем так, чтобы в сумме вышло
@@ -932,7 +944,7 @@ func compute(same_place := false) -> void:
 	if float(sums["w"]) > 0.0:
 		var wt: float = sums["w"]
 		var rows := [["Основа", "base", true], ["Лавки", "shops", true], ["Украшения", "deco", true], ["Памятники", "mon", false],
-				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Налоги", "tax", false], ["Жалованье не плачено", "unpaid", false], ["Теснота", "crowd", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
+				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Налоги", "tax", false], ["Жалованье не плачено", "unpaid", false], ["Теснота", "crowd", false], ["Большой город", "size", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
 		var fv := []
 		var vi := []
 		var acc := 0
@@ -2286,7 +2298,7 @@ func families_came() -> int:
 ## Семьи едут без условия счастья: первые Defs.ARRIVE_FREE семей, а на стоянке — пока людей меньше, чем нужно
 ## хутору (семьи бывают по 2 человека — семи семей может не хватить до 20)
 func _arrive_free() -> bool:
-	return families_came() < Defs.ARRIVE_FREE or (level == 0 and int(stats.get("pop", 0)) < int(Defs.LEVELS[1]["pop"]))
+	return families_came() < Defs.ARRIVE_FREE or (level == 0 and int(stats.get("pop", 0)) < int(lv(1)["pop"]))
 
 
 ## Почему повозка не везёт новые семьи ("" — везёт): первые Defs.ARRIVE_FREE семей едут всегда,
@@ -2407,7 +2419,8 @@ func arrive_mult() -> Array:
 
 ## Повозка раз в столько игровых часов — с поправкой на счастье
 func arrive_every() -> float:
-	return float(Defs.ARRIVE_EVERY[clampi(level, 0, Defs.ARRIVE_EVERY.size() - 1)]) * float(arrive_mult()[0])
+	var slow := Balance.arrive_slow(int(stats.get("pop", 0))) if cozy_v >= 1 else 1.0     # большой город — реже (Balance)
+	return float(Defs.ARRIVE_EVERY[clampi(level, 0, Defs.ARRIVE_EVERY.size() - 1)]) * float(arrive_mult()[0]) * slow
 
 
 ## Почему повозка ждёт из-за жилья ("" — не ждёт): мест нет, едет или ждёт семья «ищет жильё»
@@ -2652,7 +2665,17 @@ func _update_level() -> void:
 
 
 func next_level() -> Dictionary:
-	return Defs.LEVELS[level + 1] if level < Defs.LEVELS.size() - 1 else {}
+	return lv(level + 1) if level < Defs.LEVELS.size() - 1 else {}
+
+
+## Уровень города i: Defs.LEVELS, а в «Уютном Риме» (cozy_v) жители, счастье и условия — из Balance.LEVELS
+func lv(i: int) -> Dictionary:
+	var base: Dictionary = Defs.LEVELS[clampi(i, 0, Defs.LEVELS.size() - 1)]
+	if cozy_v < 1 or i <= 0 or i >= Balance.LEVELS.size() or (Balance.LEVELS[i] as Dictionary).is_empty():
+		return base
+	var m := base.duplicate()
+	m.merge(Balance.LEVELS[i], true)
+	return m
 
 
 ## Условия перехода на уровень lvl (по умолчанию — следующий): [{text, icon, have, need, ok}]
@@ -2662,7 +2685,7 @@ func rank_needs(lvl := -1) -> Array:
 		lvl = level + 1
 	if lvl <= 0 or lvl >= Defs.LEVELS.size():
 		return []
-	var L: Dictionary = Defs.LEVELS[lvl]
+	var L: Dictionary = lv(lvl)
 	var pop := int(stats.get("pop", 0))
 	var hp := int(stats.get("happy", 0))
 	# p (и tool) — то же условие, что у просьб: по нему интерфейс знает, куда показать стрелку (Hud.need_do)
@@ -3406,7 +3429,7 @@ func save_data() -> Dictionary:
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n, "goals_vis": goals_vis,
-		"econ_v": econ, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
+		"econ_v": econ, "cozy_v": cozy_v, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
 
@@ -3454,6 +3477,7 @@ func load_data(d: Dictionary) -> void:
 	name = String(d.get("name", ""))             # старые сохранения — без названия: его скажет сервер
 	# старые сохранения — без econ_v: счастье по прежним правилам (лавки и украшения без «повторов»), пока владелец не скажет «да»
 	econ = int(d.get("econ_v", 0))
+	cozy_v = int(d.get("cozy_v", 0))
 	decor_v = int(d.get("decor_v", 0))           # старые сохранения — все прежние облики украшений открыты, как были
 	story_v = int(d.get("story_v", 0))           # старые сохранения — «Пост вигилов» за очки, как был
 	taxes = {}
