@@ -18,6 +18,12 @@ var _medals := {}
 var _grey_mat: ShaderMaterial
 
 const AI := "res://assets/ui/ai/"     # рисованный интерфейс (иконки, рамки, медальоны, значки)
+## Новый интерфейс «пергамент» (2026-11-06, гибрид 1): светлые окна с тонкой коричневой обводкой, медальоны — светлые
+## кружки с тонким кольцом; рисуется кодом (art/ui_pa/gen.py, gen_icons.py). Картинки с тем же именем берутся отсюда вместо AI;
+## --oldui — прежние бронзовые рамки (сравнить)
+const PA := "res://assets/ui/pa/"
+const PA_PAD := 6.0                   # тень вокруг рамок нового интерфейса — за краем панели (expand_margin)
+static var old_ui := OS.get_cmdline_user_args().has("--oldui") or OS.get_cmdline_args().has("--oldui")
 const CARD := Vector2(128, 176)       # карточка постройки в свитке стройки
 const PLATE := Vector2(264, 70)       # табличка с названием города (картинка 640×169)
 const TASKS_Y := 128                  # просьбы горожан (и карточка обучения) — под табличкой города
@@ -37,7 +43,7 @@ const C_CREAM := Color("fff4dc")
 
 var lbl_city: Label
 var name_plate: TextureRect           # табличка с названием: в своём городе её можно нажать (окно «Название города»)
-const CITY_FONT := 20                 # размер названия на ленте (длинное — мельче, show_city_name)
+const CITY_FONT := 24                 # размер названия на ленте (длинное — мельче, show_city_name)
 var lbl_level: Label
 var lbl_pop: Label
 var lbl_happy: Label
@@ -93,6 +99,7 @@ var road_panel: PanelContainer
 var road_btns := {}
 var tool_btns := {}
 var info_panel: PanelContainer
+var house_more := false                 # карточка дома подробная (две колонки) или короткая (по умолчанию)
 var info_box: VBoxContainer
 var info_b := {}
 var info_p := {}                      # карточка жителя или кошки (PersonCard): {"r": житель} / {"cat": кошка}
@@ -278,9 +285,23 @@ func _lining(f: Font) -> Font:
 
 ## Рисованная рамка 9-slice: поля картинки m и поля текста cm — [слева, сверху, справа, снизу].
 ## Поля замерены по картинкам (углы, валики и розетки не растягиваются); tile — края плиткой (меандр)
-func _ai_box(name: String, m: Array, cm: Array, tile := false) -> StyleBoxTexture:
+## pm, pcm — поля картинки и текста у нового интерфейса (если картинка есть в PA); у окон, кнопок и карточек
+## вокруг — тень PA_PAD за краем
+func _ai_box(name: String, m: Array, cm: Array, tile := false, pm: Array = [], pcm: Array = []) -> StyleBoxTexture:
 	var s := StyleBoxTexture.new()
-	s.texture = load(AI + name + ".png")
+	var pa := pa_has(name)
+	s.texture = load(ui_tex(name))
+	if pa:
+		var e := PA_PAD if name.begins_with("g_panel") or name.begins_with("g_btn") or name.begins_with("g_card") or name.begins_with("g_scroll") else 0.0
+		var tm: Array = pm if not pm.is_empty() else m
+		m = [float(tm[0]) + e, float(tm[1]) + e, float(tm[2]) + e, float(tm[3]) + e]
+		if not pcm.is_empty():
+			cm = pcm
+		s.expand_margin_left = e
+		s.expand_margin_top = e
+		s.expand_margin_right = e
+		s.expand_margin_bottom = e
+		tile = false
 	s.texture_margin_left = m[0]
 	s.texture_margin_top = m[1]
 	s.texture_margin_right = m[2]
@@ -295,30 +316,42 @@ func _ai_box(name: String, m: Array, cm: Array, tile := false) -> StyleBoxTextur
 	return s
 
 
-## Резная рамка с меандром и розетками по углам — окна (рамка 21 px)
+## Есть ли картинка нового интерфейса с этим именем (и он не выключен --oldui)
+static func pa_has(name: String) -> bool:
+	return not old_ui and ResourceLoader.exists(PA + name + ".png")
+
+
+## Путь картинки интерфейса: новая (PA), если есть, иначе прежняя (AI). name — без «.png»
+static func ui_tex(name: String) -> String:
+	return (PA if pa_has(name) else AI) + name + ".png"
+
+
+## Резная рамка с меандром и розетками по углам — окна (рамка 21 px); новый интерфейс — тонкая обводка
 func _box_panel(pad := 8.0) -> StyleBoxTexture:
-	return _ai_box("g_panel", [46, 46, 45, 47], [21 + pad, 20 + pad, 21 + pad, 21 + pad], true)
+	return _ai_box("g_panel", [46, 46, 45, 47], [21 + pad, 20 + pad, 21 + pad, 21 + pad], true, [14, 14, 14, 14], [12 + pad, 10 + pad, 12 + pad, 11 + pad])
 
 
 ## Та же рамка потоньше (10 px) — полосы внизу экрана, панели инструментов
 func _box_bar(pad := 4.0) -> StyleBoxTexture:
-	return _ai_box("g_panel_xs", [23, 23, 22, 24], [10 + pad, 9 + pad, 10 + pad, 13 + pad], true)
+	return _ai_box("g_panel_xs", [23, 23, 22, 24], [10 + pad, 9 + pad, 10 + pad, 13 + pad], true, [11, 11, 11, 11], [8 + pad, 6 + pad, 8 + pad, 7 + pad])
 
 
 ## Вертикальный свиток: валики сверху и снизу (просьбы, карточка постройки, главное меню).
 ## Пергамент начинается на 31-й точке под верхним валиком и кончается за 32 точки до низа, по бокам — с 27-й
 func _box_scroll_v(pad := 10.0) -> StyleBoxTexture:
-	return _ai_box("g_scroll_v", [34, 33, 34, 36], [27 + pad, 28 + pad * 0.5, 27 + pad, 32 + pad * 0.5])
+	return _ai_box("g_scroll_v", [34, 33, 34, 36], [27 + pad, 28 + pad * 0.5, 27 + pad, 32 + pad * 0.5], false, [14, 14, 14, 14],
+		[14 + pad, 12 + pad * 0.5, 14 + pad, 12 + pad * 0.5])
 
 
 ## Горизонтальный свиток: валики слева и справа (стройка, советник, обучение)
 func _box_scroll_h(pad := 8.0) -> StyleBoxTexture:
-	return _ai_box("g_scroll_h", [45, 58, 45, 63], [44 + pad * 1.5, 26 + pad, 44 + pad * 1.5, 29 + pad])
+	return _ai_box("g_scroll_h", [45, 58, 45, 63], [44 + pad * 1.5, 26 + pad, 44 + pad * 1.5, 29 + pad], false, [14, 14, 14, 14],
+		[16 + pad * 1.5, 12 + pad, 16 + pad * 1.5, 12 + pad])
 
 
 ## Плашка — длинная бронзовая кнопка (кнопки, фишки, всплывашки, подсказки)
 func _box_pill(h := 16.0, v := 6.0, name := "g_btn") -> StyleBoxTexture:
-	return _ai_box(name, [22, 12, 22, 12], [h, v, h, v])
+	return _ai_box(name, [22, 12, 22, 12], [h, v, h, v], false, [11, 11, 11, 11])
 
 
 ## Бронзовый медальон под размер кнопки; у «нажатого» свечение выходит за край (рамка совпадает с обычным)
@@ -327,8 +360,8 @@ func _medal(name: String, size: float) -> StyleBoxTexture:
 	if _medals.has(key):
 		return _medals[key]
 	var s := StyleBoxTexture.new()
-	s.texture = load(AI + name + ".png")
-	if name == "medal_on":
+	s.texture = load(ui_tex(name))
+	if name == "medal_on" and not pa_has(name):
 		var e := size * 0.077
 		s.expand_margin_left = e
 		s.expand_margin_right = e
@@ -368,8 +401,8 @@ func _theme() -> Theme:
 		t.set_color(c, "CheckBox", C_INK)
 	for st in ["normal", "hover", "pressed", "focus", "hover_pressed", "disabled"]:
 		t.set_stylebox(st, "CheckBox", StyleBoxEmpty.new())
-	var on: Texture2D = load(AI + "g_check_on.png")
-	var off: Texture2D = load(AI + "g_check_off.png")
+	var on: Texture2D = load(ui_tex("g_check_on"))
+	var off: Texture2D = load(ui_tex("g_check_off"))
 	t.set_icon("checked", "CheckBox", on)
 	t.set_icon("unchecked", "CheckBox", off)
 	t.set_icon("checked_disabled", "CheckBox", on)
@@ -403,7 +436,7 @@ func _theme() -> Theme:
 	var fill := _ai_box("g_slider_fill", [8, 0, 8, 0], [0, 8, 0, 8])
 	t.set_stylebox("grabber_area", "HSlider", fill)
 	t.set_stylebox("grabber_area_highlight", "HSlider", fill)
-	var knob: Texture2D = load(AI + "g_knob.png")
+	var knob: Texture2D = load(ui_tex("g_knob"))
 	t.set_icon("grabber", "HSlider", knob)
 	t.set_icon("grabber_highlight", "HSlider", knob)
 	t.set_icon("grabber_disabled", "HSlider", knob)
@@ -412,7 +445,7 @@ func _theme() -> Theme:
 
 ## Есть ли рисованная (цветная) иконка
 func painted(name: String) -> bool:
-	return ResourceLoader.exists(AI + "icons/%s.png" % name)
+	return ResourceLoader.exists(AI + "icons/%s.png" % name) or pa_has("icons/" + name)
 
 
 ## Иконка нужного размера: рисованная PNG из assets/ui/ai/icons (цветная — не красится),
@@ -422,7 +455,7 @@ func ico(name: String, size := 64) -> Texture2D:
 	if _ico.has(key):
 		return _ico[key]
 	var tex: Texture2D = null
-	var png := AI + "icons/%s.png" % name
+	var png := ui_tex("icons/" + name)
 	if ResourceLoader.exists(png):
 		var img := (load(png) as Texture2D).get_image()
 		if img.is_compressed():
@@ -476,7 +509,7 @@ func _icon(name: String, size := 22, col := C_INK) -> TextureRect:
 ## Картинка из рисованного набора (портрет, табличка, логотип…) с сохранением пропорций
 func _pic(name: String, size: Vector2) -> TextureRect:
 	var r := TextureRect.new()
-	r.texture = load(AI + name)
+	r.texture = load(ui_tex(name.get_basename()) if name.get_extension() == "png" else AI + name)
 	r.custom_minimum_size = size
 	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -558,7 +591,12 @@ func _bare(name: String, tip: String, size := 34, cb: Callable = Callable()) -> 
 func _set_on(b: Button, on: bool) -> void:
 	var s: float = b.custom_minimum_size.x
 	if b.has_meta("bare"):
-		b.add_theme_stylebox_override("normal", _medal("medal_on", s) if on else StyleBoxEmpty.new())
+		var mo := _medal("medal_on", s)
+		if on and pa_has("medal_on"):
+			mo = mo.duplicate() as StyleBoxTexture      # новый интерфейс: у значка своё кольцо — золотое кольцо чуть шире него
+			for sd in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+				mo.set_expand_margin(sd, maxf(3.0, s * 0.1))
+		b.add_theme_stylebox_override("normal", mo if on else StyleBoxEmpty.new())
 		(b.get_node("ic") as CanvasItem).modulate = Color.WHITE if on else Color(0.86, 0.82, 0.76)
 		return
 	b.add_theme_stylebox_override("normal", _medal("medal_on" if on else "medal", s))
@@ -716,18 +754,20 @@ func _city_card() -> void:
 	var plate := _pic("plate.png", PLATE)
 	plate.stretch_mode = TextureRect.STRETCH_SCALE
 	plate.z_index = 1
-	lbl_city = _label(CityName.PLACEHOLDER, CITY_FONT, false, C_CREAM, font_title)
-	lbl_city.add_theme_color_override("font_outline_color", Color("4a120c"))
-	lbl_city.add_theme_constant_override("outline_size", 6)
+	var pa := pa_has("plate")
+	lbl_city = _label(CityName.PLACEHOLDER, CITY_FONT, false, C_INK if pa else C_CREAM, font_title)
+	if not pa:
+		lbl_city.add_theme_color_override("font_outline_color", Color("4a120c"))
+		lbl_city.add_theme_constant_override("outline_size", 6)
 	lbl_city.set_anchors_preset(Control.PRESET_FULL_RECT)
 	lbl_city.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl_city.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	lbl_city.clip_text = true
 	# лента на картинке: x 0.33…0.91, y 0.29…0.71
-	lbl_city.offset_left = PLATE.x * 0.335
-	lbl_city.offset_right = -PLATE.x * 0.095
-	lbl_city.offset_top = PLATE.y * 0.27
-	lbl_city.offset_bottom = -PLATE.y * 0.3
+	lbl_city.offset_left = PLATE.x * (0.13 if pa else 0.335)          # новая табличка: между веточками лавра
+	lbl_city.offset_right = -PLATE.x * (0.13 if pa else 0.095)
+	lbl_city.offset_top = PLATE.y * (0.14 if pa else 0.27)
+	lbl_city.offset_bottom = -PLATE.y * (0.22 if pa else 0.3)
 	plate.add_child(lbl_city)
 	v.add_child(plate)
 	name_plate = plate
@@ -817,7 +857,7 @@ func show_city_name() -> void:
 		return
 	lbl_city.text = nm
 	lbl_city.set_meta("fit", true)
-	var w := PLATE.x * (1.0 - 0.335 - 0.095) - 6.0
+	var w := PLATE.x * ((1.0 - 0.26) if pa_has("plate") else (1.0 - 0.335 - 0.095)) - 6.0
 	var sz := CITY_FONT
 	while sz > 11 and font_title.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x > w:
 		sz -= 1
@@ -2810,7 +2850,10 @@ func _card_box(name: String) -> StyleBoxTexture:
 	if _medals.has(key):
 		return _medals[key]
 	var g := 8.0 if name == "g_card_hover" else 0.0
-	var s := _ai_box(name, [10 + g, 10 + g, 10 + g, 32 + g], [0, 0, 0, 0])
+	var s := _ai_box(name, [10 + g, 10 + g, 10 + g, 32 + g], [0, 0, 0, 0], false, [11, 11, 11, 11])
+	if pa_has(name):
+		_medals[key] = s                    # новый интерфейс: подсветка — та же рамка золотом, без выноса за край
+		return s
 	s.expand_margin_left = g
 	s.expand_margin_right = g
 	s.expand_margin_top = g
@@ -4165,7 +4208,7 @@ func _fill_info_body() -> void:
 	var c: City = game.city
 	var d := c.def(b)
 	# у дома карточка шире: слева — нужды и жильцы, справа — из чего складывается счастье
-	var cw := 500.0 if c.is_house(b) else 330.0
+	var cw := (500.0 if house_more else 320.0) if c.is_house(b) else 330.0
 	info_box.custom_minimum_size = Vector2(cw, 0)
 	info_panel.custom_minimum_size = Vector2(cw + 40.0, 0)
 	var hdr := HBoxContainer.new()
@@ -4298,7 +4341,21 @@ func _fill_info_body() -> void:
 		bc.tooltip_text = "Взять такую же: тот же облик, цвет фасада и поворот.\nБыстро — наведите на любую постройку и нажмите F"
 		bc.pressed.connect(func(): close_panels(); game.copy_building(b))
 		h.add_child(bc)
+		for x in h.get_children():
+			_small_btn(x as Button)              # три кнопки — в ширину карточки, не шире
 		info_box.add_child(h)
+
+
+## Небольшая кнопка карточки: шрифт и значок поменьше, тянется на свою долю ряда
+func _small_btn(x: Button) -> void:
+	x.add_theme_font_size_override("font_size", 15)
+	x.expand_icon = false
+	x.add_theme_constant_override("icon_max_width", 24)
+	x.add_theme_constant_override("h_separation", 4)
+	x.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	x.focus_mode = Control.FOCUS_NONE
+	for st: Array in [["normal", "g_btn"], ["hover", "g_btn_hover"], ["pressed", "g_btn_on"], ["hover_pressed", "g_btn_on"]]:
+		x.add_theme_stylebox_override(st[0], _box_pill(8, 4, st[1]))
 
 
 ## Карточка «Кошачьей лавки» (Д14): кошка в вещице дня (живой портрет), что продаётся, у скольких кошек обновки
@@ -4609,7 +4666,7 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	_grey(hi, hp < 40)
 	top.add_child(hi)
 	# выше 100% — «запас» (этап 2.5): налог и так по полной, а запас съедают высокие налоги и повторы лавок
-	var hl := _label(("Счастье 100%% · запас +%d" % (hp - 100)) if hp > 100 else "Счастье %d%%" % hp, 25, true, hcol)
+	var hl := _label(("Счастье 100%% · запас +%d" % (hp - 100)) if hp > 100 else "Счастье %d%%" % hp, 25 if house_more else 21, true, hcol)
 	hl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	if hp > 100:
@@ -4628,6 +4685,9 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	chip.add_child(ch)
 	top.add_child(chip)
 	info_box.add_child(top)
+	if not house_more:
+		_fill_house_short(b, d, cw, hp)
+		return
 	# что даёт счастье — одной строкой
 	var why_happy := "Счастливые жители платят больше налогов, а новые семьи едут, пока счастье города не ниже %d%%" % int(_defc("ARRIVE_HAPPY", 60))
 	if tier < fmax:
@@ -4653,6 +4713,172 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	# слева: нужды класса — значок с галочкой или крестиком и лавка, что её закрывает
 	var dat := {"plebs": "Плебеям", "artisans": "Ремесленникам", "patricians": "Патрициям"}
 	left.add_child(_label("%s нужно" % dat.get(cl, cls["name"]), 16, true, C_SOFT))
+	_need_rows(b, cls, left, lw)
+	# слева: жильцы
+	var tight := " — тесновато" if int(b["pop"]) > c.house_cap(b) else ""      # после перестройки мест меньше (Q9: никого не выселяем)
+	left.add_child(_label("Жильцы · %d из %d мест%s" % [int(b["pop"]), c.house_cap(b), tight], 16, true, C_BAD if tight != "" else C_SOFT))
+	var fams: Array = b.get("families", [])
+	if fams.is_empty():
+		left.add_child(_wrap(_label("Пока пусто: семья приедет на повозке — заселите её значком слева вверху", 13, false, C_SOFT), lw))
+	# больше четырёх семей (домус патрициев) — первые три строками, остальные одной строкой
+	var shown_f := fams if fams.size() <= 4 else fams.slice(0, 3)
+	for f in shown_f:
+		var fr := HBoxContainer.new()
+		fr.add_theme_constant_override("separation", 6)
+		fr.add_child(_cls_pic(cl, 26))
+		var fl := _label("Семья %s" % f["name"], 15, true)
+		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		fl.clip_text = true
+		fr.add_child(fl)
+		fr.add_child(_label("%d чел." % int(f["n"]), 15, true, C_SOFT))
+		left.add_child(fr)
+		# кто в семье (этап 6.2): «Гай — пекарь», «Луций, сын»; щелчок — карточка этого жителя
+		var chips := PersonCard.family_chips(self, b, f, lw)
+		if chips:
+			left.add_child(chips)
+	if fams.size() > shown_f.size():
+		var rest := fams.slice(shown_f.size())
+		var ppl := 0
+		var names := []
+		for f in rest:
+			ppl += int(f["n"])
+			names.append("%s (%d)" % [f["name"], int(f["n"])])
+		var more := _label("и ещё %d %s · %d чел." % [rest.size(), _plural(rest.size(), "семья", "семьи", "семей"), ppl], 14, true, C_SOFT)
+		more.mouse_filter = Control.MOUSE_FILTER_PASS
+		more.tooltip_text = "Семьи: " + ", ".join(names)
+		left.add_child(more)
+	# справа: из чего складывается счастье
+	right.add_child(_label("Из чего счастье", 16, true, C_SOFT))
+	var parts: Array = b.get("happy_parts", [])
+	if parts.is_empty():
+		parts = _happy_parts_old(b, cl)
+	var first := true
+	for p: Array in parts:
+		var v := int(p[1])
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 4)
+		var l := _wrap(_label(String(p[0]), 14, false, C_INK), rw - 52.0)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		r.add_child(l)
+		var vl := _label(("%d%%" % v) if first else _pct(v), 15, true, C_INK if first else (C_GOOD if v > 0 else (C_BAD if v < 0 else C_SOFT)))
+		vl.custom_minimum_size = Vector2(46, 0)
+		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		vl.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		r.add_child(vl)
+		right.add_child(r)
+		first = false
+	var line := ColorRect.new()
+	line.color = Color(C_SOFT, 0.45)
+	line.custom_minimum_size = Vector2(0, 2)
+	right.add_child(line)
+	var tr := HBoxContainer.new()
+	var tl := _label("Итого", 16, true)
+	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tr.add_child(tl)
+	tr.add_child(_label("%d%%" % hp, 17, true, hcol))
+	right.add_child(tr)
+	info_box.add_child(_more_btn(false))
+	# перестройка в следующий класс (Д12): галочки условий и кнопка с ценой
+	if c.upgrade_to(b) != "" and c.research.has("artisans"):
+		info_box.add_child(_divider(10))
+		_upgrade_rows(b, cw)
+		info_box.add_child(_divider(10))
+	# внизу: этаж покупает игрок
+	if tier >= fmax:
+		info_box.add_child(_wrap(_label("Выше этот дом не строят: этаж %d из %d" % [tier, fmax], 14, false, C_SOFT), cw))
+		return
+	if not c.has_method("can_buy_floor"):
+		var hint := "Надстроит этаж, когда дом полон и счастье не ниже %d%%" % _floor_need(b)
+		info_box.add_child(_wrap(_label(hint, 14, false, C_SOFT), cw))
+		return
+	var price := int(c.call("floor_price", b))
+	var why := String(c.call("can_buy_floor", b))
+	var fb := Button.new()
+	fb.focus_mode = Control.FOCUS_NONE
+	fb.text = "Надстроить этаж · %s ден." % fmt(price)
+	fb.icon = ico("housing", 36)
+	fb.expand_icon = false
+	fb.custom_minimum_size = Vector2(cw, 50)
+	fb.add_theme_font_size_override("font_size", 21)
+	fb.add_theme_font_override("font", font_bold)
+	fb.disabled = why != ""
+	fb.tooltip_text = why if why != "" else "Ещё %d места — в дом въедет новая семья" % int(cls["per_floor"])
+	fb.pressed.connect(func():
+		if c.call("buy_floor", b):
+			if game.sound:
+				game.sound.ui("coins")
+			_fill_info())
+	info_box.add_child(fb)
+	if why != "":
+		var wl := _wrap(_label(why, 14, true, C_BAD), cw)
+		wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		info_box.add_child(wl)
+	if c.research.has("floor2"):
+		var tk := _wrap(_label("Много домов сразу — инструментом «Этаж» справа внизу (U): ведите мышью по улице", 13, false, C_SOFT), cw)
+		tk.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		info_box.add_child(tk)
+
+
+## Короткая карточка дома (по умолчанию, как в Town to City): счастье, нужды, жильцы и этаж; подробности — «Подробнее»
+func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void:
+	var c: City = game.city
+	var cl: String = d["cls"]
+	var cls: Dictionary = Defs.CLASSES[cl]
+	if hp < 25 and int(b["pop"]) > 0:
+		info_box.add_child(_wrap(_label("Счастье ниже 25% — семьи скоро начнут уезжать!", 14, true, C_BAD), cw))
+	var needs := VBoxContainer.new()
+	needs.add_theme_constant_override("separation", 3)
+	info_box.add_child(needs)
+	_need_rows(b, cls, needs, cw)
+	var tight := " — тесновато" if int(b["pop"]) > c.house_cap(b) else ""
+	var fams: Array = b.get("families", [])
+	var who := "Жильцы · %d из %d мест%s" % [int(b["pop"]), c.house_cap(b), tight]
+	if fams.size() == 1:
+		who = "Семья %s · %d из %d мест%s" % [fams[0]["name"], int(b["pop"]), c.house_cap(b), tight]
+	info_box.add_child(_wrap(_label(who, 14, true, C_BAD if tight != "" else C_SOFT), cw))
+	var tier := int(b["tier"])
+	var fmax := Defs.floors_max(cl, int(b.get("variant", 0)))
+	if tier < fmax and c.has_method("can_buy_floor"):
+		var price := int(c.call("floor_price", b))
+		var why := String(c.call("can_buy_floor", b))
+		var fb := Button.new()
+		fb.focus_mode = Control.FOCUS_NONE
+		fb.text = "Этаж · %s ден." % fmt(price)
+		fb.icon = ico("housing", 28)
+		fb.expand_icon = false
+		fb.custom_minimum_size = Vector2(cw, 38)
+		fb.add_theme_font_size_override("font_size", 17)
+		fb.add_theme_font_override("font", font_bold)
+		fb.disabled = why != ""
+		fb.tooltip_text = why if why != "" else "Надстроить этаж: ещё %d места — в дом въедет новая семья" % int(cls["per_floor"])
+		fb.pressed.connect(func():
+			if c.call("buy_floor", b):
+				if game.sound:
+					game.sound.ui("coins")
+				_fill_info())
+		info_box.add_child(fb)
+	info_box.add_child(_more_btn(true))
+
+
+## «Подробнее» / «Короче»: короткая или подробная карточка дома (запоминается до выхода из игры)
+func _more_btn(to_more: bool) -> Button:
+	var mb := Button.new()
+	mb.focus_mode = Control.FOCUS_NONE
+	mb.flat = true
+	mb.text = "Подробнее: из чего счастье, жильцы ▾" if to_more else "Короче ▴"
+	mb.add_theme_font_size_override("font_size", 14)
+	mb.add_theme_color_override("font_color", C_SOFT)
+	mb.add_theme_color_override("font_hover_color", C_INK)
+	mb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	mb.pressed.connect(func():
+		house_more = to_more
+		_fill_info())
+	return mb
+
+
+## Нужды класса в карточке дома: значок с галочкой или крестиком, лавка, что закрывает нужду, или почему её нет
+func _need_rows(b: Dictionary, cls: Dictionary, left: VBoxContainer, lw: float) -> void:
+	var c: City = game.city
 	var pen := int(_defc("MISSING_PENALTY", 10))
 	for n in Defs.NEED_ORDER:
 		var need: Dictionary = Defs.NEEDS[n]
@@ -4719,108 +4945,6 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 		nv.add_child(_wrap(_label(sub, 13, false, C_SOFT if ok else C_BAD), lw - 38.0))
 		r.add_child(nv)
 		left.add_child(r)
-	# слева: жильцы
-	var tight := " — тесновато" if int(b["pop"]) > c.house_cap(b) else ""      # после перестройки мест меньше (Q9: никого не выселяем)
-	left.add_child(_label("Жильцы · %d из %d мест%s" % [int(b["pop"]), c.house_cap(b), tight], 16, true, C_BAD if tight != "" else C_SOFT))
-	var fams: Array = b.get("families", [])
-	if fams.is_empty():
-		left.add_child(_wrap(_label("Пока пусто: семья приедет на повозке — заселите её значком слева вверху", 13, false, C_SOFT), lw))
-	# больше четырёх семей (домус патрициев) — первые три строками, остальные одной строкой
-	var shown_f := fams if fams.size() <= 4 else fams.slice(0, 3)
-	for f in shown_f:
-		var fr := HBoxContainer.new()
-		fr.add_theme_constant_override("separation", 6)
-		fr.add_child(_cls_pic(cl, 26))
-		var fl := _label("Семья %s" % f["name"], 15, true)
-		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		fl.clip_text = true
-		fr.add_child(fl)
-		fr.add_child(_label("%d чел." % int(f["n"]), 15, true, C_SOFT))
-		left.add_child(fr)
-		# кто в семье (этап 6.2): «Гай — пекарь», «Луций, сын»; щелчок — карточка этого жителя
-		var chips := PersonCard.family_chips(self, b, f, lw)
-		if chips:
-			left.add_child(chips)
-	if fams.size() > shown_f.size():
-		var rest := fams.slice(shown_f.size())
-		var ppl := 0
-		var names := []
-		for f in rest:
-			ppl += int(f["n"])
-			names.append("%s (%d)" % [f["name"], int(f["n"])])
-		var more := _label("и ещё %d %s · %d чел." % [rest.size(), _plural(rest.size(), "семья", "семьи", "семей"), ppl], 14, true, C_SOFT)
-		more.mouse_filter = Control.MOUSE_FILTER_PASS
-		more.tooltip_text = "Семьи: " + ", ".join(names)
-		left.add_child(more)
-	# справа: из чего складывается счастье
-	right.add_child(_label("Из чего счастье", 16, true, C_SOFT))
-	var parts: Array = b.get("happy_parts", [])
-	if parts.is_empty():
-		parts = _happy_parts_old(b, cl)
-	var first := true
-	for p: Array in parts:
-		var v := int(p[1])
-		var r := HBoxContainer.new()
-		r.add_theme_constant_override("separation", 4)
-		var l := _wrap(_label(String(p[0]), 14, false, C_INK), rw - 52.0)
-		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		r.add_child(l)
-		var vl := _label(("%d%%" % v) if first else _pct(v), 15, true, C_INK if first else (C_GOOD if v > 0 else (C_BAD if v < 0 else C_SOFT)))
-		vl.custom_minimum_size = Vector2(46, 0)
-		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		vl.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-		r.add_child(vl)
-		right.add_child(r)
-		first = false
-	var line := ColorRect.new()
-	line.color = Color(C_SOFT, 0.45)
-	line.custom_minimum_size = Vector2(0, 2)
-	right.add_child(line)
-	var tr := HBoxContainer.new()
-	var tl := _label("Итого", 16, true)
-	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tr.add_child(tl)
-	tr.add_child(_label("%d%%" % hp, 17, true, hcol))
-	right.add_child(tr)
-	# перестройка в следующий класс (Д12): галочки условий и кнопка с ценой
-	if c.upgrade_to(b) != "" and c.research.has("artisans"):
-		info_box.add_child(_divider(10))
-		_upgrade_rows(b, cw)
-		info_box.add_child(_divider(10))
-	# внизу: этаж покупает игрок
-	if tier >= fmax:
-		info_box.add_child(_wrap(_label("Выше этот дом не строят: этаж %d из %d" % [tier, fmax], 14, false, C_SOFT), cw))
-		return
-	if not c.has_method("can_buy_floor"):
-		var hint := "Надстроит этаж, когда дом полон и счастье не ниже %d%%" % _floor_need(b)
-		info_box.add_child(_wrap(_label(hint, 14, false, C_SOFT), cw))
-		return
-	var price := int(c.call("floor_price", b))
-	var why := String(c.call("can_buy_floor", b))
-	var fb := Button.new()
-	fb.focus_mode = Control.FOCUS_NONE
-	fb.text = "Надстроить этаж · %s ден." % fmt(price)
-	fb.icon = ico("housing", 36)
-	fb.expand_icon = false
-	fb.custom_minimum_size = Vector2(cw, 50)
-	fb.add_theme_font_size_override("font_size", 21)
-	fb.add_theme_font_override("font", font_bold)
-	fb.disabled = why != ""
-	fb.tooltip_text = why if why != "" else "Ещё %d места — в дом въедет новая семья" % int(cls["per_floor"])
-	fb.pressed.connect(func():
-		if c.call("buy_floor", b):
-			if game.sound:
-				game.sound.ui("coins")
-			_fill_info())
-	info_box.add_child(fb)
-	if why != "":
-		var wl := _wrap(_label(why, 14, true, C_BAD), cw)
-		wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		info_box.add_child(wl)
-	if c.research.has("floor2"):
-		var tk := _wrap(_label("Много домов сразу — инструментом «Этаж» справа внизу (U): ведите мышью по улице", 13, false, C_SOFT), cw)
-		tk.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		info_box.add_child(tk)
 
 
 ## Карточка дома: «Перестроить» (Д12) — во что, галочки условий (класс изучен, нужды нового класса, счастье после
