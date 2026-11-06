@@ -532,9 +532,14 @@ static func _colosseum(b: Bp) -> void:
 	var TH := 3.01                       # высота яруса
 	for i in 8:
 		_put(b, "SM_Bld_Amphitheatre_01", Transform3D(Basis(Vector3.UP, i * PI / 4).scaled(Vector3.ONE * S), Vector3(0, raise, 0)))
-	# сплошное ядро под рядами (скрыто подиумом, сиденьями и стеной галереи): постройка занимает землю целиком
+	# сплошное ядро под рядами (скрыто подиумом, сиденьями и стеной галереи): постройка занимает землю целиком.
+	# За воротами арены (секторы 3 и 11) — не тёмное ядро, а проход: каменные стены, пол, свод, в глубине стена
+	# (в проёме ворот видно освещённый ход, а не чёрную дыру; створки и огонь в проходе ставит Spectacle)
 	for i in 16:
 		var a := i * PI / 8
+		if i == 3 or i == 11:
+			_gate_tunnel(b, a, r_in, raise)
+			continue
 		_box(b, "#dark", Vector3(sin(a), 0, cos(a)) * 7.75 + Vector3(0, 1.55, 0), Vector3(2.0 * 11.5 * tan(PI / 16) + 0.1, 3.1, 7.5), a)
 	# арена: песок, красный подиум с воротами, алтарь с огнём
 	var aw := r_in + 0.15
@@ -564,8 +569,10 @@ static func _colosseum(b: Bp) -> void:
 		var dir := Vector3(sin(ang), 0, cos(ang))
 		_ring_put(b, "SM_Bld_Wall_Door_Large_01" if k % 4 == 0 else "SM_Bld_Wall_01", ang, ri, 0.0, iw, 2.5, (raise - 0.25) / 3.01, 1.0, STONE_WALL)
 		_put(b, "SM_Bld_Base_Floor_01", Transform3D(bs * Basis.from_scale(Vector3(wf / 2.5, 1, 1.2 / 2.5)), dir * 11.75 + Vector3(0, 0.025, 0) - bs * Vector3(wf / 2.0, 0, 0)), PAVING)
-		# тёмная галерея за арками второго яруса и над ней — верхний обход (закрывает её сверху)
-		_box(b, "#dark", dir * ap + Vector3(0, 4.5, 0), Vector3(2.0 * ap * tan(PI / 16) + 0.05, 3.0, 0.15), ang)
+		# за арками второго яруса — светлая галерея: травертиновая стена, мощёный пол (прежде — тёмная заглушка,
+		# издали арки выглядели чёрными дырами); над ней — верхний обход (закрывает её сверху)
+		_ring_put(b, "SM_Bld_Wall_01", ang, ap + 0.06, TH, 2.0 * (ap + 0.06) * tan(PI / 16.0) + 0.06, 2.5, 3.0 / 3.01, 1.0, STONE_WALL)
+		_put(b, "SM_Bld_Base_Floor_01", Transform3D(bs * Basis.from_scale(Vector3(wf / 2.5, 1, 0.75 / 2.5)), dir * (R + 0.1) + Vector3(0, TH + 0.02, 0) - bs * Vector3(wf / 2.0, 0, 0)), PAVING)
 		_put(b, "SM_Bld_Base_Floor_01", Transform3D(bs * Basis.from_scale(Vector3(ww / 2.5, 1, 0.7 / 2.5)), dir * 12.0 + Vector3(0, raise + 4.58 * S + 0.04, 0) - bs * Vector3(ww / 2.0, 0, 0)))
 	# аркады: два яруса арок, пилястры и колонны, карнизы, аттик
 	var bw := 2.0 * R * tan(PI / n)
@@ -614,6 +621,29 @@ static func _colosseum(b: Bp) -> void:
 		b.add("SM_Prop_Statue_Lion_01", Vector3(sd * 1.75, 8.12, zp - 0.9), 0.0, 0.36)
 		b.add("SM_Prop_Banner_03_%s" % ["E", "B"][int(sd > 0)], Vector3(sd * 1.0, 6.0, zp + 0.25), 0.0, 0.6)
 	b.door = Vector3(0, 0, zp + 1.0)
+
+
+## Проход за воротами арены (сектор с осью ang): стены из тёсаного травертина по бокам, мощёный пол, свод,
+## в глубине — глухая стена; высота — до низа рядов (raise). Вокруг — тёмное ядро, как в соседних секторах
+static func _gate_tunnel(b: Bp, ang: float, r_in: float, raise: float) -> void:
+	var d := Vector3(sin(ang), 0, cos(ang))          # от центра арены наружу
+	var side := Vector3(cos(ang), 0, -sin(ang))      # поперёк прохода (side × вверх = −d: базис (side, вверх, d) — поворот)
+	var r0 := r_in + 0.2
+	var r1 := r_in + 2.6
+	var hw := 0.85
+	var h := raise - 0.35
+	var L := r1 - r0
+	# боковые стены лицом в проход: (d, вверх, −side) и (−d, вверх, side) — повороты без зеркала
+	_put(b, "SM_Bld_Wall_01", Transform3D(Basis(d * (L / 2.5), Vector3.UP * (h / 3.01), -side), d * r0 + side * (hw + 0.11)), STONE_WALL)
+	_put(b, "SM_Bld_Wall_01", Transform3D(Basis(-d * (L / 2.5), Vector3.UP * (h / 3.01), side), d * r1 - side * (hw + 0.11)), STONE_WALL)
+	_ring_put(b, "SM_Bld_Wall_01", ang, r1 + 0.1, 0.0, 2.0 * hw + 0.3, 2.5, h / 3.01, 1.0, STONE_WALL, true)
+	var fw := 2.0 * hw + 0.2
+	_put(b, "SM_Bld_Base_Floor_01", Transform3D(Basis(side * (fw / 2.5), Vector3.UP, d * ((L + 0.4) / 2.5)), d * (r0 - 0.2) - side * (fw / 2.0) + Vector3(0, 0.03, 0)), PAVING)
+	_box(b, "#marble", d * (r0 + r1) * 0.5 + Vector3(0, h + 0.08, 0), Vector3(2.0 * hw + 0.5, 0.16, L + 0.3), ang)
+	# ядро вокруг прохода: по бокам (вдоль прохода) и за глухой стеной
+	for sd: float in [-1.0, 1.0]:
+		_box(b, "#dark", d * 7.75 + side * sd * (hw + 0.25 + 0.75) + Vector3(0, 1.55, 0), Vector3(1.5, 3.1, 7.5), ang)
+	_box(b, "#dark", d * ((r1 + 0.35 + 11.5) * 0.5) + Vector3(0, 1.55, 0), Vector3(2.0 * hw + 0.6, 3.1, 11.5 - r1 - 0.35), ang)
 
 
 # ---------- пантеон ----------

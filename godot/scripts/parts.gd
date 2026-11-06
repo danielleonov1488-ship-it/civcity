@@ -81,7 +81,8 @@ static func _special_mesh(name: String) -> Mesh:
 			m.emission_enabled = true
 			m.emission = Color("ffb35c")
 			m.emission_energy_multiplier = 0.0
-		"#marble":
+		"#marble", "#bench":
+			# #bench — каменная скамья трибуны (как мрамор; по ней рассаживает зрителей Spectacle)
 			m = Synty.material("Marble_01").duplicate()
 			m.uv1_triplanar = true
 			m.uv1_scale = Vector3(0.4, 0.4, 0.4)

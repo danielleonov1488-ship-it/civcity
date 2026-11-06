@@ -7,3 +7,6 @@ birds.ogg — isaiah658, «Ambient Bird Sounds», OpenGameArt, CC0
 coins.ogg — Kenney «RPG Audio» / «UI Audio» (www.kenney.nl), CC0 — выбран владельцем как «Монетки: A»
 
 battle/*.ogg (удары, щиты, падение, скрип машин, монеты в бою Легиона) — Kenney «RPG Audio» (www.kenney.nl), CC0
+
+arena/crowd_murmur, crowd_cheer, crowd_roar (шум и ликование трибун) — Gregor Quendel, «Free Crowd Cheering Sounds», OpenGameArt, CC BY 4.0 (https://opengameart.org/content/free-crowd-cheering-sounds); фрагменты, громкость выровнена
+arena/gallop (топот коня) — по мотивам «Single Horse Galopp» by D4XX (freesound 564628), из набора congusbongus «Horse gallop on different surfaces», OpenGameArt, CC0

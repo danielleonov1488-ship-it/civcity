@@ -77,6 +77,26 @@ const CLIPS := {
 	"night": {"dur": 9.0, "hour": [22.2, 22.3],
 		"keys": [[0.0, Vector3(192, 0, 170), 34.0, 31.0, 44.0], [9.0, Vector3(192, 0, 171), 14.0, 29.0, 38.0]],
 		"v": {"dist": 1.1, "fov": 30.0, "dur": 7.0}},
+	# ---- зрелища (spectacle.gd): follow venue — точка, поворот и наклон от постройки (поворот 0 — камера перед входом);
+	# show — [что идёт (gather/show/leave), доля мест, рассадить сразу]; sp — события по времени клипа ----
+	# горожане идут по улице к амфитеатру
+	"arena_street": {"dur": 7.0, "hour": [13.2, 13.3], "life": 13.0, "follow": "venue", "venue": "colosseum", "show": ["gather", 0.86, 0.0],
+		"keys": [[0.0, Vector3(14.0, 1.5, 13.0), 86.0, 13.0, 6.0], [7.0, Vector3(10.0, 1.7, 12.6), 83.0, 15.0, 6.0]], "warm": 22.0, "blur": 0.04},
+	# трибуны заполняются: зрители спускаются по проходам и садятся
+	"arena_fill": {"dur": 8.0, "hour": [13.6, 13.75], "life": 13.0, "follow": "venue", "venue": "colosseum", "show": ["gather", 0.86, 0.3],
+		"keys": [[0.0, Vector3(0, 3.0, -0.5), 18.0, 34.0, 10.5], [8.0, Vector3(0, 3.0, -0.5), 44.0, 31.0, 9.0]]},
+	# гладиаторы бьются, трибуны кричат
+	"arena_fight": {"dur": 9.0, "hour": [14.6, 14.8], "life": 13.0, "follow": "venue", "venue": "colosseum", "show": ["show", 0.9, 1.0],
+		"keys": [[0.0, Vector3(0, 0.6, 0), 96.0, 50.0, 4.7], [9.0, Vector3(0, 0.6, 0), 122.0, 47.0, 4.3]], "warm": 10.0},
+	# скачки: камера идёт рядом с колесницей (follow chariot: точка и поворот — от неё, поворот 0 — камера впереди)
+	"circus_race": {"dur": 4.2, "hour": [11.0, 11.1], "life": 11.0, "follow": "chariot", "venue": "circus_fl", "show": ["show", 0.86, 1.0], "team": 0,
+		"keys": [[0.0, Vector3(0, 0.8, 0.5), 172.0, 24.0, 4.4], [4.2, Vector3(0, 0.8, 0.5), 184.0, 22.0, 4.1]], "warm": 1.0},
+	# скачки, общий план: колесницы несутся по прямой на камеру и огибают мету, трибуны кричат
+	"circus_wide": {"dur": 5.0, "hour": [11.1, 11.2], "life": 11.0, "follow": "venue", "venue": "circus_fl", "show": ["show", 0.86, 1.0],
+		"keys": [[0.0, Vector3(11.0, 0.6, 0.0), 96.0, 30.0, 9.0], [5.0, Vector3(9.5, 0.6, 0.0), 86.0, 27.0, 8.2]], "warm": 10.0},
+	# закат: от амфитеатра — на весь город
+	"arena_sunset": {"dur": 8.0, "hour": [18.75, 19.05], "life": 13.0, "follow": "venue", "venue": "colosseum", "show": ["show", 0.9, 1.0], "ease": "out",
+		"keys": [[0.0, Vector3(0, 2.5, 0), 196.0, 34.0, 13.0], [8.0, Vector3(0, 0, 14), 190.0, 31.0, 42.0]]},
 	# ---- петли для сайта: камера почти стоит, жизнь идёт (7 с, склейка в петлю 5 с) ----
 	"loop_market": {"dur": 7.0, "hour": [10.0, 10.0], "size": Vector2i(1920, 1080),
 		"keys": [[0.0, Vector3(192, 0, 172), 33.0, 35.0, 24.0], [7.0, Vector3(192, 0, 172), 34.0, 35.0, 24.0]]},
@@ -153,6 +173,8 @@ func _ready() -> void:
 			return
 		h0 = float(CLIPS[clip_name].get("life", LIFE))
 	Game.boot = {"promo": "1", "noui": "1", "hour": str(h0), "shot": "D:/CivCity/.work/promo/_unused.png", "frames": "999999999"}
+	if clip_name.begins_with("arena") or clip_name.begins_with("circus") or args.has("circus"):
+		Game.boot["circus"] = "1"                 # зрелища: в витрине и цирк (Showcase)
 	var t0 := Time.get_ticks_msec()
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -246,7 +268,7 @@ func _start_clip() -> void:
 	out = str(args.get("out", SHOTS.path_join(clip_name + ("_v" if vertical else "") + ".mp4")))
 	DirAccess.make_dir_recursive_absolute(out.get_base_dir())
 	_setup(true)
-	warm_n = int(float(args.get("warm", "8")) * FPS)
+	warm_n = int(float(args.get("warm", str(clip.get("warm", 8.0)))) * FPS)
 	life_until = frames_total + maxi(0, warm_n - 75)    # последние 2,5 с прогрева — уже при свете клипа
 	rec_n = int(round(dur * FPS))
 	state = "warm"
@@ -264,6 +286,8 @@ func _setup(full: bool) -> void:
 			_setup_cart()
 		"house":
 			_setup_house(full)
+		"venue", "chariot":
+			_setup_venue()
 
 
 func _process(_dt: float) -> void:
@@ -282,6 +306,7 @@ func _process(_dt: float) -> void:
 		var t := rec_i / float(FPS)
 		_events(t)
 		_pose(t)
+		_log_cam()
 
 
 func _rec_start() -> void:
@@ -322,6 +347,7 @@ func _post_draw() -> void:
 
 
 func _finish() -> void:
+	_save_logs()
 	pipe.flush()
 	pipe.close()
 	var t0 := Time.get_ticks_msec()
@@ -403,12 +429,85 @@ func _pose(t: float) -> void:
 
 func _anchor() -> void:
 	match follow:
+		"chariot":
+			var V: Dictionary = game.spectacle.venue_of(str(clip.get("venue", "circus_fl")))
+			if not V.is_empty() and V["act"] != null and not (V["act"].chariots as Array).is_empty():
+				var c: Dictionary = V["act"].chariots[int(clip.get("team", 0))]
+				var n: Node3D = c["n"]
+				anchor_pos = n.global_position
+				var f := n.global_transform.basis.z
+				var want := rad_to_deg(atan2(f.x, f.z))
+				# поворот вокруг меты — камера поворачивает вслед, но мягко
+				anchor_yaw = want if not _ay_set else anchor_yaw + clampf(wrapf(want - anchor_yaw, -180.0, 180.0), -2.2, 2.2)
+				_ay_set = true
+		"venue":
+			var V: Dictionary = game.spectacle.venue_of(str(clip.get("venue", "colosseum")))
+			if not V.is_empty():
+				var xf: Transform3D = (V["root"] as Node3D).global_transform
+				anchor_pos = xf.origin
+				var f := xf.basis.z
+				anchor_yaw = rad_to_deg(atan2(f.x, f.z))
 		"cart":
 			var c: Dictionary = game.people.cart
 			if not c.is_empty():
 				var n: Node3D = c["n"]
 				anchor_pos = n.position
 			anchor_yaw = 0.0
+
+
+# ---------- зрелища: амфитеатр, цирк ----------
+
+var sfx_log := []                    # звуки зрелищ по времени клипа: [t, вид, x, y, z, громкость]
+var _ay_set := false
+var cam_log := []                    # [t, камера x, y, z, зрителей на площадке]
+
+
+## Представление в нужной поре: show = [пора, доля мест, сразу рассажено (доля от занятых)]; звуки — в журнал
+func _setup_venue() -> void:
+	var sp: Spectacle = game.spectacle
+	var V: Dictionary = sp.venue_of(str(clip.get("venue", "colosseum")))
+	if V.is_empty():
+		push_warning("нет площадки " + str(clip.get("venue")))
+		return
+	var sh: Array = clip.get("show", ["show", 0.9, 1.0])
+	var ph := str(sh[0])
+	sp.force(int(V["id"]), ph, float(sh[1]), false)
+	if float(sh[2]) > 0.0:
+		# часть мест уже занята (сразу), дальше — своим ходом; пора включится на следующем кадре (Spectacle._enter_phase)
+		var keep := float(sh[1])
+		sp.force(int(V["id"]), "show", keep * float(sh[2]), true)
+		sp.force(int(V["id"]), ph, keep, false)
+	if not sp.sfx.is_connected(_on_sfx):
+		sp.sfx.connect(_on_sfx)
+	_anchor()
+
+
+func _on_sfx(kind: String, at: Vector3, vol: float) -> void:
+	if state == "rec":
+		sfx_log.append([rec_i / float(FPS), kind, at.x, at.y, at.z, vol])
+
+
+func _log_cam() -> void:
+	if not (follow in ["venue", "chariot"]) or rec_i % 3 != 0:
+		return
+	var cam: Camera3D = rig.cam
+	var V: Dictionary = game.spectacle.venue_of(str(clip.get("venue", "colosseum")))
+	var n := 0 if V.is_empty() else (V["who"] as Array).size()
+	var c := Vector3.ZERO if V.is_empty() else (V["root"] as Node3D).global_position
+	# до ближайшей колесницы (гул копыт)
+	var near := 999.0
+	if not V.is_empty() and V["act"] is CircusShow:
+		for ch: Dictionary in V["act"].chariots:
+			near = minf(near, (ch["n"] as Node3D).global_position.distance_to(cam.global_position))
+	cam_log.append([rec_i / float(FPS), cam.global_position.x, cam.global_position.y, cam.global_position.z, n, c.x, c.y, c.z, near])
+
+
+func _save_logs() -> void:
+	if not (follow in ["venue", "chariot"]):
+		return
+	var f := FileAccess.open(out.get_basename() + "_sfx.json", FileAccess.WRITE)
+	f.store_string(JSON.stringify({"fps": FPS, "dur": dur, "sfx": sfx_log, "cam": cam_log}))
+	f.close()
 
 
 # ---------- кошка: ребёнок выходит из дома погладить её ----------
