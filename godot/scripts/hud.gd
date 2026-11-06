@@ -5813,6 +5813,8 @@ const CREDITS := [
 	["Звуки", "sound", [
 		["Kenney — Interface Sounds, RPG Audio, UI Audio", "щелчки, стройка, монеты, звуки боя · CC0 · kenney.nl"],
 		["Kerzoven — «Cat Purr & Meow», IgnasD — «Meow»", "кошки · OpenGameArt, CC0"],
+		["Gregor Quendel — «Free Crowd Cheering Sounds»", "шум и ликование трибун · OpenGameArt, CC BY 4.0"],
+		["D4XX — «Single Horse Galopp» (набор congusbongus)", "топот коней в цирке · OpenGameArt, CC0"],
 		["isaiah658 — «Ambient Bird Sounds»", "птицы · OpenGameArt, CC0"]]],
 	["Интерфейс", "scroll", [
 		["Рисованные рамки, свитки, медальоны, иконки, портреты и логотип", "нарисованы для CivCity"],

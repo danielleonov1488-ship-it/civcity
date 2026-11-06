@@ -15,6 +15,7 @@ var land: Land
 var city: City
 var parts: Parts
 var people: People
+var spectacle: Spectacle              # зрелища: зрители на трибунах, гладиаторы, колесницы (scripts/spectacle.gd)
 var rig: CameraRig
 var hud: Hud
 var sun: DirectionalLight3D
@@ -276,6 +277,10 @@ func _ready() -> void:
 	city.house_changed.connect(_on_house_changed)
 	people = People.new()
 	add_child(people)
+	spectacle = Spectacle.new()
+	spectacle.name = "Spectacle"
+	add_child(spectacle)
+	spectacle.setup(self, args)
 	await _step("Город", 0.25)
 	var loaded := false
 	if mode == "play":
@@ -1586,10 +1591,14 @@ func _show(b: Dictionary) -> void:
 	elif CatDecor2.PETS.has(Defs.base_of(b["type"])) or CatExtra.PETS.has(b["type"]) or CatStory.PETS.has(b["type"]) or CatGrand.PETS.has(b["type"]):
 		_pets2(b, vis)                         # этап 5: корова и лошадь у украшений, кошки и ослик в приюте; котята Маси; гладиаторы лудуса
 	_sync_actors(b)
+	if spectacle and Spectacle.is_venue(b["type"]):
+		spectacle.venue_show(b)               # трибуны и арена: зрители, гладиаторы, колесницы
 	_set_hour(hour)
 
 
 func _hide(b: Dictionary) -> void:
+	if spectacle:
+		spectacle.venue_hide(b)
 	var vis: Dictionary = visuals.get(b["id"], {})
 	if vis.is_empty():
 		return

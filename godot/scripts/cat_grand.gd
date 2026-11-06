@@ -446,22 +446,52 @@ static func _circus(b: Bp) -> void:
 		for j in 3:
 			b.add("#d2_obelisk", Vector3(e, 1.0, -0.55 + j * 0.55), 0.0, 0.42)
 		b.add("SM_Prop_Senser_01", Vector3(e + signf(e) * 0.9, 1.0, 0.0), 0.0, 0.7)
-	# трибуны: ступени из лестниц амфитеатра, сзади — аркада наружу, поверху — навесы
-	var n := int((2.0 * L) / M)
+	# трибуны: ряды «ступень для ног + каменная скамья» (на них сидят зрители Spectacle: таз на скамье, ступни на ступени
+	# ниже ровно на Crowd.SEAT_DROP), между секторами — лестницы-проходы, позади верхнего ряда — обход; снаружи — аркада,
+	# за её арками — сами трибуны (а не тёмная заглушка); поверху — навесы
+	var rows := 4
+	var P := 0.72                        # глубина ряда: ступень 0,36 + скамья 0,36
+	var Df := 0.36
+	var Bh := Crowd.SEAT_DROP / Catalog.ARCH
+	var Rr := 0.5                        # ряд выше прежнего
+	var y0 := 0.6                        # первый ряд — над дорожкой, за низкой стенкой
+	var stairs := [-L + 1.2, -L * 0.5, -3.0, 3.0, L * 0.5, L - 1.2]
+	var sw := 0.9                        # ширина лестницы
 	for side: float in [-1.0, 1.0]:
 		var zi := side * (tw + 0.2)
-		for i in n:
-			var x := -L + i * M
-			if side > 0.0 and absf(x + M * 0.5) < 2.6:
-				continue                         # посредине передней трибуны — проход и ложа
-			# ступени поднимаются от дорожки наружу: у детали низ — у z = −6,23, верх — у z = −22,5 (x от −2,5 до 0)
-			var kz := sd_d / 16.27
-			var ys := sh / 5.18
-			if side < 0.0:
-				_put(b, "SM_Bld_Amphitheatre_End_01", Transform3D(Basis.from_scale(Vector3(1.0, ys, kz)), Vector3(x + M, 0.5 * ys - 0.1, zi + 6.23 * kz)))
-			else:
-				_put(b, "SM_Bld_Amphitheatre_End_01", Transform3D(Basis(Vector3.UP, PI) * Basis.from_scale(Vector3(1.0, ys, kz)), Vector3(x, 0.5 * ys - 0.1, zi - 6.23 * kz)))
+		var F := Vector3(0, 0, -side)    # к дорожке
+		var X := Vector3(-side, 0, 0)    # вдоль ряда (X × вверх = F: поворот без зеркала)
+		var cuts := stairs.duplicate()
+		var segs := []
+		var x0 := -L
+		for xs: float in cuts:
+			segs.append([x0, xs - sw * 0.5])
+			x0 = xs + sw * 0.5
+		segs.append([x0, L])
+		for k in rows:
+			var zf := zi + side * k * P              # передний край ступени ряда k
+			var yf := y0 + k * Rr
+			for sg: Array in segs:
+				var xa: float = sg[0]
+				var xb: float = sg[1]
+				if side > 0.0 and k < 2 and xa < 2.6 and xb > -2.6:
+					# посредине передней трибуны — ложа: ряды до неё и после
+					for part: Array in [[xa, -2.6], [2.6, xb]]:
+						if part[1] - part[0] > 0.6:
+							_row(b, part[0], part[1], zf, side, yf, Df, P, Bh, X, F)
+					continue
+				_row(b, xa, xb, zf, side, yf, Df, P, Bh, X, F)
+			# лестницы: на месте скамьи — полступени, ступень ряда — как у ряда
+			for xs: float in cuts:
+				var zc := zf + side * Df * 0.5
+				CatMonuments._box(b, "#marble", Vector3(xs, yf * 0.5, zc), Vector3(sw, yf, Df))
+				CatMonuments._box(b, "#marble", Vector3(xs, (yf + Rr * 0.5) * 0.5, zf + side * (Df + (P - Df) * 0.5)), Vector3(sw, yf + Rr * 0.5, P - Df))
+		# верхний обход позади рядов — до аркады
+		var zw0 := zi + side * rows * P
 		var zo := side * (tw + 0.2 + sd_d)
+		var yw := y0 + rows * Rr
+		CatMonuments._box(b, "#marble", Vector3(0, yw * 0.5, (zw0 + zo - side * 0.3) * 0.5), Vector3(2.0 * L, yw, absf(zo - side * 0.3 - zw0)))
+		# аркада наружу
 		for i in int((2.0 * L) / 5.0):
 			var x := -L + i * 5.0
 			var yaw := 0.0 if side > 0.0 else PI
@@ -472,7 +502,6 @@ static func _circus(b: Bp) -> void:
 			for j in 2:
 				var pj := p + Basis(Vector3.UP, yaw) * Vector3(j * M, 0, 0)
 				_put(b, "SM_Bld_Wall_Door_Double_Large_01", Transform3D(Basis(Vector3.UP, yaw) * Basis.from_scale(Vector3(1.0, (sh + 0.6) / 3.01, 1.0)), pj), TRAV)
-		CatMonuments._box(b, "#dark", Vector3(0, (sh + 0.5) / 2.0, zo - side * 0.42), Vector3(2.0 * L - 0.2, sh + 0.5, 0.3))   # за арками — темно
 		CatMonuments._run(b, "SM_Bld_Wall_Large_Cap_01", Vector3(-L if side > 0.0 else L, sh + 0.55, zo), Vector3(side, 0, 0), 2.0 * L, 5.0, 1.0, 0.9)
 		# навесы: полосатые полотнища над верхними рядами, через одно — шафран
 		for i in int((2.0 * L) / 5.1):
@@ -500,7 +529,7 @@ static func _circus(b: Bp) -> void:
 	for i in 6:
 		var z := -tw + 0.7 + i * (2.0 * tw - 1.4) / 5.0
 		_put(b, "SM_Bld_Wall_Door_Double_01", Transform3D(Basis(Vector3.UP, PI / 2) * Basis.from_scale(Vector3(1.4 / M, 1.0, 1.0)), Vector3(gx, 0, z + 0.7)), TRAV)
-	CatMonuments._box(b, "#dark", Vector3(gx - 1.0, 1.5, 0), Vector3(1.8, 3.0, 2.0 * tw))
+	CatMonuments._box(b, "#marble", Vector3(gx - 1.1, 1.5, 0), Vector3(1.6, 3.0, 2.0 * tw))     # за арками стойл — светлый камень, не чёрная дыра
 	for sd: float in [-1.0, 1.0]:
 		var tz := sd * (tw + 1.2)
 		CatCivic._box(b, gx - 0.6, tz, 1, 1, [{0: ["SM_Bld_Wall_Window_06"], 1: ["SM_Bld_Wall_01"], 2: ["SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_01"]},
@@ -528,3 +557,13 @@ static func _circus(b: Bp) -> void:
 	b.actor(Vector3(0, 0, tw + 0.2 + sd_d + 0.6), PI, "Idle", "pleb")
 	b.actor(Vector3(1.6, 1.2, lz + 0.4), PI, "Idle", "rich")
 	b.actor(Vector3(-1.6, 1.2, lz + 0.4), PI + 0.3, "Idle_Talking", "rich")
+
+
+## Ряд трибуны цирка от xa до xb: ступень для ног (на всю высоту ряда) и скамья (#bench: по ней Spectacle рассаживает
+## зрителей; лицо детали — к дорожке)
+static func _row(b: Bp, xa: float, xb: float, zf: float, side: float, yf: float, Df: float, P: float, Bh: float, X: Vector3, F: Vector3) -> void:
+	var w := xb - xa
+	CatMonuments._box(b, "#marble", Vector3((xa + xb) * 0.5, yf * 0.5, zf + side * Df * 0.5), Vector3(w, yf, Df))
+	var bd := P - Df
+	var c := Vector3((xa + xb) * 0.5, (yf + Bh) * 0.5, zf + side * (Df + bd * 0.5))
+	_put(b, "#bench", Transform3D(Basis(X * w, Vector3.UP * (yf + Bh), F * bd), c))

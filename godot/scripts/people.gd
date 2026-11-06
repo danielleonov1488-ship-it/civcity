@@ -1026,7 +1026,7 @@ func _go(r: Dictionary, to: Vector2, goal: String, keep := false) -> void:
 	_leave_slot(r)
 	# выходит из дома или лавки — появляется в дверях, а не посреди улицы
 	var in_shop: bool = r["state"] == "work" and int(r["slot"]) < 0 and r["node"] == null
-	var from_in: bool = r["state"] == "home" or (r["state"] == "idle" and r["act"] == "inside") or in_shop
+	var from_in: bool = r["state"] == "home" or (r["state"] == "idle" and r["act"] in ["inside", "show"]) or in_shop
 	var door_id: int = int(r["home"]) if r["state"] == "home" else (int(r["job"]) if in_shop else int((r["dest"] as Dictionary).get("bid", -1)))
 	var door_b: Dictionary = city.buildings.get(door_id, {})
 	if r["state"] == "door":
@@ -1878,6 +1878,9 @@ func _begin(r: Dictionary) -> void:
 	if act == "enter":
 		_door_in(r, city.buildings.get(d["bid"], {}), "inside")
 		return
+	if act == "show":
+		_door_in(r, city.buildings.get(d["bid"], {}), "show")   # на представление: внутрь — и на трибуну (Spectacle)
+		return
 	_node(r)
 	match act:
 		"shop":
@@ -1916,6 +1919,24 @@ func _begin(r: Dictionary) -> void:
 			_play_begin(r)
 		_:
 			_social(r)
+
+
+## Позвать на представление (Spectacle): житель идёт к входу амфитеатра, цирка или театра и заходит внутрь
+func show_call(r: Dictionary, b: Dictionary) -> void:
+	if r["state"] == "door":
+		return
+	var d := {"act": "show", "bid": b["id"], "p": city.door_point(b)}
+	_release(r)
+	_claim(r, d)
+	_go(r, d["p"], "errand", true)
+
+
+## Представление кончилось (или житель ушёл с трибуны): выходит из дверей — и дальше по своим делам
+func show_out(r: Dictionary) -> void:
+	if r["state"] == "idle" and r["act"] == "show":
+		r["seq"] = [["", 0.0]]
+		r["si"] = 0
+		r["st"] = 0.0
 
 
 ## Дело сделано: дальше — ещё куда-нибудь или домой
@@ -2542,6 +2563,15 @@ func _door_done(r: Dictionary, then: String, b: Dictionary) -> void:
 		r["seq"] = [["", rng.randf_range(15.0, 40.0)]]
 		r["si"] = 0
 		r["st"] = float(r["seq"][0][1])
+	elif then == "show":
+		# на трибуне до конца представления: выпустит Spectacle (show_out)
+		r["state"] = "idle"
+		r["act"] = "show"
+		r["seq"] = [["", 9999.0]]
+		r["si"] = 0
+		r["st"] = 9999.0
+		if game.spectacle and not b.is_empty():
+			game.spectacle.admit(r, int(b["id"]))
 	else:
 		r["state"] = then
 
