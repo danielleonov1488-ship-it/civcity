@@ -10,7 +10,10 @@ const PLEBS := ["SK_Chr_Worker_Male_01", "SK_Chr_Worker_Female_01", "SK_Chr_Farm
 const RICH := ["SK_Chr_Upperclass_Male_01", "SK_Chr_Upperclass_Female_01", "SK_Chr_Politician_Male_01"]
 const FEMALE := ["SK_Chr_Worker_Female_01", "SK_Chr_Farmer_Female_01", "SK_Chr_Upperclass_Female_01", "SK_Chr_Soldier_Female_02"]
 
-const SIZE := 0.72                   # люди «кукольные», ниже дверей — как в Town to City
+const SIZE := 0.61                   # люди «кукольные», ниже дверей — как в Town to City («Уютный Рим», этап 2: было 0,72)
+## Рост, под который подогнаны сидения, шаг и позы (0,72); всё, что зависит от тела (таз над ступнями, шаг), — × K
+const BASE := 0.72
+const K := SIZE / BASE
 var anim: AnimationPlayer
 var female := false
 var meshes := []

@@ -10,7 +10,7 @@ extends Node3D
 
 const FPS := 30.0
 const SIZE := Citizen.SIZE
-const SEAT_RISE := 0.30          # обычное сидение: таз над ступнями (как People.SIT_SEAT)
+const SEAT_RISE := 0.30 * Citizen.K   # обычное сидение: таз над ступнями (как People.SIT_SEAT)
 const SEAT_DROP := 0.19          # ступень трибуны: от сиденья до ступени ниже (колизей, театр, цирк — одинаково)
 const BLEND := 0.35
 ## Клипы: имя, движение-источник, петля, правка позы

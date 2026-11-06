@@ -45,7 +45,7 @@ const CART_HORSE_LEN := 2.5          # лошадь от морды до хво�
 const CART_HORSE_Z := 2.72           # её середина: круп — у облучка, оглобли — по бокам до груди
 const G := 2                         # клетка сетки ходьбы — 2×2 клетки земли (50 см)
 const GN := Land.N / G
-const WALK := 1.15                   # м/с при обычной скорости (люди маленькие — и шаг короче)
+const WALK := 1.15 * Citizen.K       # м/с при обычной скорости (люди маленькие — и шаг короче; ноги не скользят)
 
 
 func setup(l: Land, c: City, g) -> void:
@@ -1387,10 +1387,10 @@ var _prop_t := 0.0
 const PROP_R := 32.0
 const PROP_CAP := 18
 
-const SIT_BACK := 0.21               # сидящий: таз на столько позади ступней (движение Sitting_* при нашем росте)
-const SIT_SEAT := 0.3                # и на такой высоте над землёй
-const TALK_D := 0.85                 # расстояние между собеседниками
-const RUN := 2.3                     # дети бегают (м/с)
+const SIT_BACK := 0.21 * Citizen.K   # сидящий: таз на столько позади ступней (движение Sitting_* при нашем росте)
+const SIT_SEAT := 0.3 * Citizen.K    # и на такой высоте над землёй (сиденье выше — подсаживаем на разницу)
+const TALK_D := 0.85 * Citizen.K     # расстояние между собеседниками
+const RUN := 2.3 * Citizen.K         # дети бегают (м/с)
 const TALK_ANIMS := ["Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Interact", "Interact_M", "Spell_Simple_Idle", "Spell_Simple_Idle_M"]
 const LISTEN_ANIMS := ["Listen", "Listen_M", "Listen", "Listen_M", "Idle"]
 const SOLO_ANIMS := ["Idle", "Look_Around", "Look_Around_M", "Idle"]
