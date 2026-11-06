@@ -3248,6 +3248,10 @@ func need_do(p: Array, tool := "", n := 0) -> Dictionary:
 			return w
 		"research":
 			return {"kind": "research_any", "tip": "Исследования", "say": "Свиток вверху справа — меню исследований"}
+		"tier":
+			# «Уютный Рим»: изучить больше исследований ряда arg (очки копят скриптории, школы и почта)
+			return {"kind": "research_any", "tip": "Исследования",
+				"say": "Свиток вверху справа: изучите ещё исследования ряда «%s» — очки копят скриптории, школы и почта" % Defs.LEVELS[clampi(int(arg), 0, Defs.LEVELS.size() - 1)]["name"]}
 		"road":
 			return {"kind": "road", "tip": "Мостовая", "say": "«Мостовая» слева внизу: ведите с зажатой кнопкой"}
 		"fam":
