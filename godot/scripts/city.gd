@@ -382,17 +382,58 @@ func _near_water(cells: PackedInt32Array, r: float) -> bool:
 	return false
 
 
+static var _rn_off := {}       # полуширина квадрата в клетках → смещения клеток квадрата, ближние первыми
+
+
+## Есть ли рядом дорога. Тот же квадрат клеток, что и раньше, но от середины к краям: у постройки на улице дорога
+## находится с первых клеток, а не после обхода всех 225 (клетка 25 см) — пересчёт города в разы быстрее
 func _road_near(p: Vector2, r: float, own_cells: PackedInt32Array) -> bool:
 	var c := land.cell(p)
 	var rc := int(ceil(r / Land.CELL))
-	for j in range(c.y - rc, c.y + rc + 1):
-		for i in range(c.x - rc, c.x + rc + 1):
-			if not land.inside(i, j):
-				continue
-			var k := land.idx(i, j)
-			if Land.walk_kind(land.kind[k]) and land.occ[k] == 0 and land.cell_center(i, j).distance_to(p) <= r:
-				return true
+	var offs: Array = _rn_off.get(rc, [])
+	if offs.is_empty():
+		for dj in range(-rc, rc + 1):
+			for di in range(-rc, rc + 1):
+				offs.append(Vector2i(di, dj))
+		offs.sort_custom(func(a: Vector2i, b: Vector2i): return a.length_squared() < b.length_squared())
+		_rn_off[rc] = offs
+	for o: Vector2i in offs:
+		var i := c.x + o.x
+		var j := c.y + o.y
+		if i < 0 or j < 0 or i >= Land.N or j >= Land.N:
+			continue
+		var k := j * Land.N + i
+		if Land.walk_kind(land.kind[k]) and land.occ[k] == 0 and land.cell_center(i, j).distance_to(p) <= r:
+			return true
 	return false
+
+
+## Сетка «что где» на один пересчёт: квадрат GRID м → номера в списке
+const GRID := 16.0
+
+
+static func _grid(list: Array) -> Dictionary:
+	var g := {}
+	for n in list.size():
+		var p: Vector2 = list[n]["pos"]
+		var key := Vector2i(floori(p.x / GRID), floori(p.y / GRID))
+		if g.has(key):
+			(g[key] as Array).append(n)
+		else:
+			g[key] = [n]
+	return g
+
+
+## Номера из сетки, что могут быть в r от p, — по возрастанию (обход в том же порядке, что и весь список)
+static func _grid_near(g: Dictionary, p: Vector2, r: float) -> Array:
+	var out := []
+	for gj in range(floori((p.y - r) / GRID), floori((p.y + r) / GRID) + 1):
+		for gi in range(floori((p.x - r) / GRID), floori((p.x + r) / GRID) + 1):
+			var a = g.get(Vector2i(gi, gj))
+			if a != null:
+				out.append_array(a)
+	out.sort()
+	return out
 
 
 ## Поставить постройку (деньги списываются); возвращает запись. free — даром и без проверок (готовый город)
@@ -731,12 +772,15 @@ func compute(same_place := false) -> void:
 		h["score"] = {}            # тип лавки → бонус
 		h["needs"] = {}            # вид потребности → true
 		h["monuments"] = 0.0
+	var hgrid := _grid(houses)
+	var dgrid := _grid(decor)
 	for s in shops:
 		var d := def(s)
 		var r := shop_range(d)
 		var cap := int(ceil(float(Defs.CAPACITY[int(d["cap"])]) * float(s["staff"])))
 		var near := []
-		for h in houses:
+		for hn: int in _grid_near(hgrid, s["pos"], r):
+			var h: Dictionary = houses[hn]
 			var dd := (h["pos"] as Vector2).distance_to(s["pos"])
 			if dd <= r:
 				# сначала — дома, где живут (или куда уже идёт семья), потом пустые; среди них — ближние
@@ -793,7 +837,8 @@ func compute(same_place := false) -> void:
 		# украшения рядом: [вид, очки]; новая игра — одинаковые 100% / 60% / 30% (deco_points)
 		var near := []
 		var sets := {}                  # набор этапа 5 → его виды рядом (новая игра: три разных — бонус набора)
-		for o in decor:
+		for on: int in _grid_near(dgrid, h["pos"], Defs.DECOR_RADIUS):
+			var o: Dictionary = decor[on]
 			if (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DECOR_RADIUS:
 				near.append([Defs.base_of(o["type"]), float(def(o).get("deco", 1))])
 				if econ >= 1:
@@ -842,7 +887,8 @@ func compute(same_place := false) -> void:
 		if unp != 0:
 			parts.append(["Жалованье не плачено", unp])
 		var crowd := 0
-		for o in houses:
+		for on: int in _grid_near(hgrid, h["pos"], Defs.DENSITY_RADIUS):
+			var o: Dictionary = houses[on]
 			if o != h and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.DENSITY_RADIUS:
 				crowd += 1
 		var dens := -mini(Defs.DENSITY_MAX, maxi(0, crowd - Defs.DENSITY_FREE) * Defs.DENSITY_STEP)
