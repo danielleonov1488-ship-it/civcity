@@ -635,7 +635,12 @@ func rp_per_hour(type: String) -> float:
 	for r in up:
 		if research.has(r):
 			out += rate * float(up[r])
-	return out
+	return out * rp_mult()
+
+
+## «Уютный Рим»: очки исследований копятся медленнее (Balance.RP_MULT) — город растёт вместе с открытиями
+func rp_mult() -> float:
+	return Balance.RP_MULT if cozy_v >= 1 else 1.0
 
 
 func job_max(b: Dictionary) -> int:
@@ -1488,7 +1493,7 @@ func rp_sources() -> Dictionary:
 		if def(b)["kind"] == "rp" and not b.get("over", false):
 			out[b["type"]] = float(out.get(b["type"], 0.0)) + rp_per_hour(b["type"]) * float(b.get("staff", 0.0))
 	if not center().is_empty():
-		out["post"] = float(Defs.LEVELS[level].get("rp_h", 0.0))
+		out["post"] = float(Defs.LEVELS[level].get("rp_h", 0.0)) * rp_mult()
 	return out
 
 
@@ -1620,7 +1625,7 @@ func sim_day() -> void:
 				upkeep += float(d["cost"]) * Defs.UPKEEP + wage() * hired_of(b)
 				wages += wage() * hired_of(b)
 	if not center().is_empty():
-		rpd += float(Defs.LEVELS[level].get("rp_h", 0.0))   # почта привозит на станцию свитки
+		rpd += float(Defs.LEVELS[level].get("rp_h", 0.0)) * rp_mult()   # почта привозит на станцию свитки
 	hour_n += 1
 	if int(stories.get("tax_off", 0)) > 0:
 		income = 0.0                              # Сатурналии, день отдыха: лавки закрыты — налогов нет (часы тают в _story_hour)
@@ -2419,7 +2424,7 @@ func arrive_mult() -> Array:
 
 ## Повозка раз в столько игровых часов — с поправкой на счастье
 func arrive_every() -> float:
-	var slow := Balance.arrive_slow(int(stats.get("pop", 0))) if cozy_v >= 1 else 1.0     # большой город — реже (Balance)
+	var slow := Balance.arrive_slow(int(stats.get("pop", 0)), int(next_level().get("pop", 0))) if cozy_v >= 1 else 1.0   # большой город — реже (Balance)
 	return float(Defs.ARRIVE_EVERY[clampi(level, 0, Defs.ARRIVE_EVERY.size() - 1)]) * float(arrive_mult()[0]) * slow
 
 
@@ -2694,7 +2699,7 @@ func rank_needs(lvl := -1) -> Array:
 	for n: Dictionary in L.get("need", []):
 		var have := progress_of(n["p"])
 		out.append({"text": n["text"], "say": n.get("say", String(n["text"]).to_lower()), "icon": n.get("icon", "check"), "have": have,
-			"need": int(n["n"]), "ok": have >= int(n["n"]), "pct": false, "p": n["p"], "tool": String(n.get("tool", ""))})
+			"need": int(n["n"]), "ok": have >= int(n["n"]), "pct": bool(n.get("pct", false)), "p": n["p"], "tool": String(n.get("tool", ""))})
 	return out
 
 
@@ -3048,6 +3053,14 @@ func progress_of(pp: Array) -> int:
 		"floors": return _count(func(b): return is_house(b) and int(b["tier"]) >= int(arg))
 		"fed": return _count(func(b): return is_house(b) and bool((b.get("needs", {}) as Dictionary).get(arg, false)))
 		# награды просьб (q_), историй (s_) и заказов старосты (o_) — не исследования
+		"tier":                                     # «Уютный Рим»: сколько процентов исследований ряда arg изучено
+			var all := 0
+			var done := 0
+			for r: Dictionary in Defs.RESEARCH:
+				if int(r["lvl"]) == int(arg) and not r.has("story"):
+					all += 1
+					done += 1 if research.has(r["id"]) else 0
+			return int(floor(100.0 * done / all)) if all > 0 else 100
 		"research": return research.keys().filter(func(k): return not (String(k).begins_with("q_") or String(k).begins_with("s_") or String(k).begins_with("o_"))).size()
 		"shops":                                    # разные лавки (["shops", "food"] — только этого вида)
 			var kinds := {}

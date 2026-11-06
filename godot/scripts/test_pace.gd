@@ -15,7 +15,7 @@ const SEC_H := 25.0                  # секунд в игровом часе �
 const CART_H := 1.3                  # повозка от края карты до станции, часов (за кадром втрое быстрее)
 const WALK_H := 0.5                  # семья идёт от станции до дома
 const STEP_H := 0.25
-const MAX_H := 1400.0
+const MAX_H := 4000.0
 ## улицы по порядку: следующая кладётся, когда домам не хватает места
 const STREETS := [
 	[Vector2(192, 128), Vector2(192, 150)], [Vector2(172, 136), Vector2(192, 136)], [Vector2(172, 150), Vector2(192, 150)],
@@ -662,7 +662,7 @@ func _bot() -> void:
 					left.append("%s %d/%d" % [e["text"], int(e["have"]), int(e["need"])])
 			print("  .. %d h (%.0f min): lvl %d pop %d happy %d money %d rp %d houses %d buildings %d · wall %.0f s · next needs %s" % [int(t), t * SEC_H / 60.0, c.level,
 				int(c.stats["pop"]), int(c.stats["happy"]), int(c.money), int(c.rp), _houses().size(), c.buildings.size(), (Time.get_ticks_msec() - wall0) / 1000.0, left])
-		if t - float(rk["t0"]) > 250.0:
+		if t - float(rk["t0"]) > (700.0 if int(c.cozy_v) >= 1 else 250.0):   # «Уютный Рим»: ранг — сотни часов
 			var alive := {}
 			for tp in ["house_pleb", "house_artisan", "house_patrician"]:
 				var dd: Dictionary = dead.get(tp, {})
@@ -1151,7 +1151,8 @@ func _needs_left() -> Array:
 	var out := []
 	if c.level >= Defs.LEVELS.size() - 1:
 		return out
-	for n: Dictionary in Defs.LEVELS[c.level + 1]["need"]:
+	var lvd: Dictionary = c.lv(c.level + 1) if c.has_method("lv") else Defs.LEVELS[c.level + 1]   # «Уютный Рим» — свои условия
+	for n: Dictionary in lvd["need"]:
 		if c.progress_of(n["p"]) < int(n["n"]):
 			out.append(n)
 	return out

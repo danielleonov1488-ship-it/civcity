@@ -4276,7 +4276,7 @@ func _fill_info_body() -> void:
 			info_box.add_child(_hire_row(b))
 		"center":
 			tv.add_child(_label("Уровень города: %s" % Defs.LEVELS[c.level]["name"], 14, true, C_SOFT))
-			info_box.add_child(_row("scroll", "Почта привозит свитки", "+%s в час" % String.num(float(Defs.LEVELS[c.level].get("rp_h", 0.0)), 1), C_GOOD))
+			info_box.add_child(_row("scroll", "Почта привозит свитки", "+%s в час" % String.num(float(Defs.LEVELS[c.level].get("rp_h", 0.0)) * c.rp_mult(), 1), C_GOOD))
 			var nx := c.next_level()
 			if not nx.is_empty():
 				# чек-лист условий следующего уровня; когда всё готово — кнопка «Перейти на новый уровень»

@@ -607,7 +607,7 @@ func _say_text() -> String:
 		for l in range(from + 1, to + 1):
 			ranks.append(String(Defs.LEVELS[l]["name"]))
 		out.append("Город прошёл сразу %d %s: %s." % [to - from, Hud._plural(to - from, "ранг", "ранга", "рангов"), _join(ranks)])
-	var rh := float(Defs.LEVELS[to].get("rp_h", 0.0))
+	var rh: float = float(Defs.LEVELS[to].get("rp_h", 0.0)) * game.city.rp_mult()
 	if rh > 0.0:
 		out.append("Станция выросла — почта привозит %s в час." % _scrolls(rh))
 	var names := []
