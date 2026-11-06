@@ -15,7 +15,7 @@ const SEC_H := 25.0                  # секунд в игровом часе �
 const CART_H := 1.3                  # повозка от края карты до станции, часов (за кадром втрое быстрее)
 const WALK_H := 0.5                  # семья идёт от станции до дома
 const STEP_H := 0.25
-const MAX_H := 1400.0
+const MAX_H := 4000.0
 ## улицы по порядку: следующая кладётся, когда домам не хватает места
 const STREETS := [
 	[Vector2(192, 128), Vector2(192, 150)], [Vector2(172, 136), Vector2(192, 136)], [Vector2(172, 150), Vector2(192, 150)],
@@ -348,8 +348,9 @@ func _checks_1a(houses: Array) -> void:
 	c.stats["happy"] = 85
 	var e85: float = c.arrive_every()
 	c.stats["happy"] = 65
-	check(is_equal_approx(m72, 0.8) and is_equal_approx(e85, 2.5 * 0.65) and is_equal_approx(c.arrive_every(), 2.5),
-		"happy city calls more often: 72%% ×%.2f, 85%% → every %.2f h, 65%% → %.2f h" % [m72, e85, c.arrive_every()])
+	var sl: float = Balance.arrive_slow(int(c.stats["pop"])) if int(c.cozy_v) >= 1 else 1.0   # «Уютный Рим»: большой город — реже
+	check(is_equal_approx(m72, 0.8) and is_equal_approx(e85, 2.5 * 0.65 * sl) and is_equal_approx(c.arrive_every(), 2.5 * sl),
+		"happy city calls more often: 72%% ×%.2f, 85%% → every %.2f h, 65%% → %.2f h (size ×%.2f)" % [m72, e85, c.arrive_every(), sl])
 	# 10) лишние школы (старые города): работают первые по номеру, остальные — «сверх предела», их не сносим
 	c.research["school"] = true
 	c.research["artisans"] = true
@@ -661,7 +662,7 @@ func _bot() -> void:
 					left.append("%s %d/%d" % [e["text"], int(e["have"]), int(e["need"])])
 			print("  .. %d h (%.0f min): lvl %d pop %d happy %d money %d rp %d houses %d buildings %d · wall %.0f s · next needs %s" % [int(t), t * SEC_H / 60.0, c.level,
 				int(c.stats["pop"]), int(c.stats["happy"]), int(c.money), int(c.rp), _houses().size(), c.buildings.size(), (Time.get_ticks_msec() - wall0) / 1000.0, left])
-		if t - float(rk["t0"]) > 250.0:
+		if t - float(rk["t0"]) > (700.0 if int(c.cozy_v) >= 1 else 250.0):   # «Уютный Рим»: ранг — сотни часов
 			var alive := {}
 			for tp in ["house_pleb", "house_artisan", "house_patrician"]:
 				var dd: Dictionary = dead.get(tp, {})
@@ -1150,7 +1151,8 @@ func _needs_left() -> Array:
 	var out := []
 	if c.level >= Defs.LEVELS.size() - 1:
 		return out
-	for n: Dictionary in Defs.LEVELS[c.level + 1]["need"]:
+	var lvd: Dictionary = c.lv(c.level + 1) if c.has_method("lv") else Defs.LEVELS[c.level + 1]   # «Уютный Рим» — свои условия
+	for n: Dictionary in lvd["need"]:
 		if c.progress_of(n["p"]) < int(n["n"]):
 			out.append(n)
 	return out
