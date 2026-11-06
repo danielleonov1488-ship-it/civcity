@@ -83,6 +83,7 @@ func _run() -> void:
 	c = game.city
 	land = game.land
 	hud = game.hud
+	hud.house_more = true                 # карточка дома — подробная (проверки её строк); короткую смотрит test_ux
 	game.can_save = false
 	if mode == "cam":
 		await _cam()

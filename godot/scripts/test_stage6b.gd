@@ -212,6 +212,7 @@ func _new() -> void:
 	check(blk.begins_with("Не помещается") or not c.upgrade_missing(hblk).is_empty() or c.upgrade_happy(hblk) < 65, "у курсора — почему: «%s»" % blk)
 	# --- карточка дома: галочки и кнопка ---
 	game.select_building(hp3)
+	game.hud.house_more = true                    # подробная карточка дома: «Перестроить» с условиями
 	game.hud.open_info(hp3)
 	await frames(6)
 	var card := _labels(game.hud.info_box)

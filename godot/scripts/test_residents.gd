@@ -52,6 +52,7 @@ func _bind() -> void:
 	c = game.city
 	ppl = game.people
 	hud = game.hud
+	hud.house_more = true                 # карточка дома — подробная (проверки её строк); короткую смотрит test_ux
 	game.can_save = false
 
 
