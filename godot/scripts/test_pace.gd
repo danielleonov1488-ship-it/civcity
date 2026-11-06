@@ -74,6 +74,7 @@ func _run() -> void:
 	if "bot" in OS.get_cmdline_user_args():
 		await _bot()
 	else:
+		c.cozy_v = 0                             # проверки — на прежних числах темпа; «Уютный Рим» — test_cozy и бот
 		await _checks()
 	get_tree().quit()
 
