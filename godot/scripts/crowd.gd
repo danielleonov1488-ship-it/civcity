@@ -27,6 +27,10 @@ const CLIPS := [
 	["walk", "Walk", true, ""],
 	["stand", "Idle", true, ""],
 	["drive", "Idle", true, "drive"],
+	["s_talk", "Idle_Talking", true, ""],        # стоя: разговор, кивки, жрец с поднятыми руками («Уютный Рим», этап 3)
+	["s_talk_m", "Idle_Talking_M", true, ""],
+	["listen", "Listen", true, ""],
+	["pray", "Spell_Simple_Idle", true, ""],
 ]
 ## Длина собранных клипов (с), чтобы движение рук укладывалось в круг целое число раз
 const DERIVED_LEN := {"clap": 3.333, "cheer": 3.333, "cheer_l": 3.333, "lean": 3.333, "drive": 2.5}

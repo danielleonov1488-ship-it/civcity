@@ -124,7 +124,56 @@ func _run() -> void:
 	sp._target(V2)
 	check(int(V2["target"]) < full * 0.7, "на «Низкой» зрителей меньше: %d из %d" % [int(V2["target"]), full])
 	game.settings["quality"] = "high"
+	game.city.remove(b2, false)
+	await _life()
 	_end()
+
+
+## «Уютный Рим», этап 3: утренняя служба в храме (люди стоят на ступенях лицом к жрецу) и купальщики в термах
+func _life() -> void:
+	var sp: Spectacle = game.spectacle
+	var t := _place_venue("temple")
+	var th := _place_venue("baths")
+	if not check(not t.is_empty() and not th.is_empty(), "храм и термы встали"):
+		return
+	await frames(10)
+	var T: Dictionary = sp.venues.get(int(t["id"]), {})
+	var B: Dictionary = sp.venues.get(int(th["id"]), {})
+	check(not T.is_empty() and (T["lay"]["seats"] as Array).size() >= 30 and (T["lay"] as Dictionary).has("priest"),
+		"храм: мест на ступенях %d, жрец наверху" % (0 if T.is_empty() else (T["lay"]["seats"] as Array).size()))
+	var wet := true
+	for s: Dictionary in (B["lay"]["seats"] as Array):
+		wet = wet and String(s["pose"]) == "bath" and (s["root"] as Vector3).y < -0.3
+	check(not B.is_empty() and (B["lay"]["seats"] as Array).size() >= 10 and wet, "термы: купальщиков в бассейнах %d, по грудь в воде" % (B["lay"]["seats"] as Array).size())
+	game._set_hour(6.95)
+	var ok := await _until(func(): return T["phase"] == "gather" and T.has("priest_cp"), 20.0)
+	check(ok, "в 7 утра — сбор на службу, жрец вышел")
+	ok = await _until(func(): return (T["who"] as Array).filter(func(s): return s["st"] == "sit").size() > 10, 40.0)
+	check(ok, "горожане стоят на службе: %d" % (T["who"] as Array).size())
+	var bad := 0
+	var pr: Vector3 = T["lay"]["priest"]["root"]
+	for s: Dictionary in T["who"]:
+		var seat: Dictionary = T["lay"]["seats"][s["seat"]]
+		var f := Vector3(sin(float(seat["yaw"])), 0, cos(float(seat["yaw"])))
+		var to_p := Vector3(pr.x - (seat["root"] as Vector3).x, 0, pr.z - (seat["root"] as Vector3).z).normalized()
+		if f.dot(to_p) < 0.85:
+			bad += 1
+	check(bad == 0, "все на службе — лицом к жрецу (не так: %d)" % bad)
+	game._set_hour(9.75)
+	ok = await _until(func(): return B["phase"] == "gather" or B["phase"] == "show", 20.0)
+	ok = ok and await _until(func(): return (B["who"] as Array).size() > 4, 40.0)
+	check(ok, "термы открылись — купаются: %d" % (B["who"] as Array).size())
+	game._set_hour(10.05)
+	ok = await _until(func(): return T["phase"] == "idle" and (T["who"] as Array).is_empty() and not T.has("priest_cp"), 60.0)
+	check(ok, "служба кончилась — все разошлись, жрец ушёл")
+	var gone := [int(t["id"]), int(th["id"])]
+	game.city.remove(t, false)
+	game.city.remove(th, false)
+	await frames(10)
+	# в готовом городе свои храм и термы тоже живут — смотрим только тех, кто шёл в снесённые
+	var stuck := func() -> int: return game.people.residents.filter(func(r): return r["act"] == "show" and int((r["dest"] as Dictionary).get("bid", -1)) in gone).size()
+	ok = await _until(func(): return stuck.call() == 0, 20.0)
+	check(ok, "снесли храм и термы — горожан отпустили (осталось %d)" % stuck.call())
 
 
 func _end() -> void:

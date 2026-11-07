@@ -18,6 +18,7 @@ func _ready() -> void:
 	_size()
 	_arrive()
 	_save()
+	_visits()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -116,3 +117,38 @@ func _save() -> void:
 	var c3 := City.new(Land.new())
 	c3.load_data(d)
 	_check(c2.cozy_v == 1 and c3.cozy_v == 0, "cozy_v после загрузки: %d; старое сохранение: %d" % [c2.cozy_v, c3.cozy_v])
+
+
+## Этап 3: семья сходила в термы — дому +3% на 48 ч; потом бонус проходит; в старом городе походы не считаются
+func _visits() -> void:
+	print("== походы")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 1e6
+	var h := c.place("house_pleb", Land.START, 0.0, 0, 0, true)
+	h["pop"] = 5
+	c.note_visit(int(h["id"]), "bath")
+	c.note_visit(int(h["id"]), "temple")
+	c.compute()
+	var got := {}
+	for p: Array in h["happy_parts"]:
+		got[String(p[0])] = int(p[1])
+	var city_row := 0
+	for p: Array in c.stats["happy_parts"]:
+		if String(p[0]).begins_with("Походы"):
+			city_row = int(p[1])
+	_check(got.get("Ходили в термы", 0) == 3 and got.get("Были на службе в храме", 0) == 3 and city_row == 6,
+		"после терм и службы: дому +3%% и +3%%, в счастье города — строка «Походы» %d%%" % city_row)
+	c.clock_h += Balance.VISIT_H + 1
+	c.compute()
+	var left := false
+	for p: Array in h["happy_parts"]:
+		left = left or String(p[0]) == "Ходили в термы"
+	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var c2 := City.new(Land.new())
+	c2.load_data(d)
+	_check(not left and c2.clock_h == c.clock_h and (c2.visits.get(int(h["id"]), {}) as Dictionary).has("bath"), "через %d ч бонус прошёл; походы и часы сохраняются" % (Balance.VISIT_H + 1))
+	var c0 := City.new(Land.new())
+	var h0 := c0.place("house_pleb", Land.START, 0.0, 0, 0, true)
+	c0.note_visit(int(h0["id"]), "bath")
+	_check(c0.visits.is_empty(), "старый город — походы не считаются")
