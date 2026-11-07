@@ -30,6 +30,8 @@ const VENUES := {
 	# форум: днём сенатор говорит с ростр, горожане слушают на площади; одеон: вечерний концерт
 	"forum": {"kind": "forum", "hours": [10.6, 11.3, 14.0, 14.6], "fill": 0.55},
 	"odeon": {"kind": "theatre", "hours": [18.4, 19.2, 21.2, 21.8], "fill": 0.8},
+	# школа: утром дети сидят на скамьях под перголой, учитель рассказывает
+	"school": {"kind": "school", "hours": [7.7, 8.3, 12.4, 12.9], "fill": 0.9},
 }
 ## Площадки-зрелища (овация в конце, совет «Зрелища»); остальные — храм, термы
 const SHOWS := ["arena", "circus", "theatre"]
@@ -156,6 +158,8 @@ func layout(b: Dictionary) -> Dictionary:
 			_bath(lay, bp, tris)
 		"forum":
 			_forum(lay, bp, tris)
+		"school":
+			_school(lay, bp, tris)
 		_:
 			for p in bp.parts:
 				if p[0] == "SM_Bld_Amphitheatre_01":
@@ -469,6 +473,41 @@ func _forum(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 		ids.append((lay["seats"] as Array).size())
 		(lay["seats"] as Array).append(s)
 	lay["groups"]["forum"] = ids
+
+
+## Школа: ученики на скамьях (SM_Prop_Seat_Bench — лицом к учителю, +Z), учитель у своего кресла лицом к ним
+func _school(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+	var door := bp.door
+	var list := []
+	var teacher := Vector3.INF
+	for p in bp.parts:
+		var nm := String(p[0])
+		var x: Transform3D = p[1]
+		if nm.begins_with("SM_Prop_Seat_Chair"):
+			teacher = x.origin
+		if not nm.begins_with("SM_Prop_Seat_Bench"):
+			continue
+		var box := Bp.model_aabb(nm)
+		var sc := x.basis.get_scale()
+		var w := box.size.x * sc.x
+		var F := x.basis.z.normalized()
+		var side := x.basis.x.normalized()
+		var top := x.origin.y + minf(box.size.y, 0.5) * sc.y
+		var n := 3 if w > 1.1 else 2
+		for i in n:
+			var o := (i - (n - 1) / 2.0) * w * 0.3
+			var pelvis := x.origin + side * o
+			var root := pelvis + F * People.SIT_BACK * 0.68
+			root.y = top - Crowd.SEAT_RISE * 0.68
+			var path := PackedVector3Array([Vector3(door.x, 0, door.z + 0.4), Vector3(root.x, 0, root.z + 0.45), Vector3(root.x, root.y + (Crowd.SEAT_RISE - Crowd.SEAT_DROP) * 0.68, root.z)])
+			list.append({"root": root, "yaw": atan2(F.x, F.z), "row": 0, "path": path, "far": -x.origin.z + absf(o) * 0.1, "pose": "sit", "child": true})
+	var ids := []
+	for s in list:
+		ids.append((lay["seats"] as Array).size())
+		(lay["seats"] as Array).append(s)
+	lay["groups"]["school"] = ids
+	if teacher != Vector3.INF:
+		lay["priest"] = {"root": Vector3(0, 0, teacher.z - 0.1), "yaw": PI, "row": 0, "path": PackedVector3Array(), "far": 0.0, "pose": "orator"}
 
 
 ## Театр и одеон: на сцене (#marble — самый широкий помост) — актёр или музыкант лицом к трибунам (к −Z)
@@ -918,11 +957,13 @@ func _call_residents(V: Dictionary) -> void:
 	var door: Vector2 = city.door_point(b)
 	var want := int(V["target"]) / 3
 	var cands := []
+	var school: bool = V["kind"] == "school"
 	for r: Dictionary in ppl.residents:
 		if r.has("hero") or int(r["home"]) <= 0 or r["state"] != "home":
 			continue
-		if r["child"] and rng.randf() < 0.7:
-			continue
+		if school != bool(r["child"]):
+			if school or rng.randf() < 0.7:
+				continue                         # в школу — только дети; на зрелища дети ходят реже взрослых
 		var h: Dictionary = city.buildings.get(r["home"], {})
 		if h.is_empty():
 			continue
@@ -962,6 +1003,9 @@ func _arrive(V: Dictionary, r: Dictionary, instant: bool) -> bool:
 		lk = game.people.look_of(r)
 		child = bool(r["child"])
 		city.note_visit(int(r.get("home", 0)), String(V["kind"]))   # «Уютный Рим»: семья сходила — дому счастье
+	elif V["kind"] == "school":
+		lk = Citizen.roll_look(rng, rng.randf() < 0.5, true)
+		child = true
 	else:
 		lk = _guest_look()
 	var cr: Crowd = V["crowd"]
