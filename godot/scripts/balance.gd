@@ -68,6 +68,13 @@ const SIZE_MAX := 8
 const AHEAD_SLOW := 2.0
 
 
+## Этап 3: походы жителей в большие здания. Семья побывала на службе, в термах, на зрелище — её дому +% счастья
+## (каждый вид — один раз), пока с похода прошло не больше VISIT_H игровых часов
+const VISIT_BONUS := {"temple": 3, "bath": 3, "arena": 4, "circus": 4, "theatre": 3}
+const VISIT_NAME := {"temple": "Были на службе в храме", "bath": "Ходили в термы", "arena": "Смотрели гладиаторов", "circus": "Смотрели скачки", "theatre": "Были в театре"}
+const VISIT_H := 48
+
+
 ## Штраф за величину города при pop жителях (≤ 0)
 static func size_penalty(pop: int) -> int:
 	return -mini(SIZE_MAX, maxi(0, pop - SIZE_FREE) / SIZE_STEP)

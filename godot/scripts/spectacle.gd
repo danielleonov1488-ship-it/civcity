@@ -23,7 +23,15 @@ const VENUES := {
 	"colosseum": {"kind": "arena", "hours": [12.6, 14.0, 17.4, 18.2], "fill": 0.86},
 	"circus_fl": {"kind": "circus", "hours": [9.0, 10.2, 13.0, 13.8], "fill": 0.82},
 	"theatre": {"kind": "theatre", "hours": [16.4, 17.6, 20.4, 21.0], "fill": 0.8},
+	# «Уютный Рим», этап 3: большие здания работают — утренняя служба в храме, термы открыты днём
+	"temple": {"kind": "temple", "hours": [7.0, 7.8, 9.4, 10.0], "fill": 0.9},
+	"baths": {"kind": "bath", "hours": [9.0, 9.8, 16.6, 17.4], "fill": 0.75},
+	"thermae": {"kind": "bath", "hours": [8.6, 9.4, 17.4, 18.2], "fill": 0.75},
 }
+## Площадки-зрелища (овация в конце, совет «Зрелища»); остальные — храм, термы
+const SHOWS := ["arena", "circus", "theatre"]
+const BATH_DEPTH := 0.7                 # купальщик в бассейне: ступни на столько ниже воды (видны голова, плечи и грудь)
+const STAND_GAP := 0.62                  # между стоящими (храм, бассейн), м
 ## Профиль ступеней Synty «SM_Bld_Amphitheatre_01» (в осях детали, до масштаба; снят с модели): ряды —
 ## [радиус переднего края сиденья, высота сиденья]; проход — посредине сектора; верхний обход
 const AMPHI_ROWS := [[8.02, 0.96], [9.32, 1.41], [10.66, 1.86], [11.97, 2.31], [13.30, 2.76], [14.61, 3.21], [15.92, 3.66], [17.26, 4.11]]
@@ -121,6 +129,7 @@ func venue_hide(b: Dictionary) -> void:
 	if V.is_empty():
 		return
 	_release_all(V)
+	_fx(V, false)
 	if V["act"] != null:
 		V["act"].free_all()
 	(V["root"] as Node).queue_free()
@@ -137,11 +146,17 @@ func layout(b: Dictionary) -> Dictionary:
 	var tris := Tris.new()
 	tris.build(bp)
 	var lay := {"seats": [], "groups": {}, "tris": tris}
-	for p in bp.parts:
-		if p[0] == "SM_Bld_Amphitheatre_01":
-			_amphi(lay, p[1], tris)
-		elif p[0] == "#bench":
-			_bench(lay, p[1], tris)
+	match String(VENUES[b["type"]]["kind"]):
+		"temple":
+			_temple(lay, bp, tris)
+		"bath":
+			_bath(lay, bp, tris)
+		_:
+			for p in bp.parts:
+				if p[0] == "SM_Bld_Amphitheatre_01":
+					_amphi(lay, p[1], tris)
+				elif p[0] == "#bench":
+					_bench(lay, p[1], tris)
 	lay["ms"] = Time.get_ticks_msec() - t0
 	print("SPECTACLE layout %s: %d seats (dropped %d), %d tris, %d ms" % [key, (lay["seats"] as Array).size(), int(lay.get("dropped", 0)), tris.count, lay["ms"]])
 	_layouts[key] = lay
@@ -287,6 +302,124 @@ func _bench(lay: Dictionary, xf: Transform3D, tris: Tris) -> void:
 		ids.append((lay["seats"] as Array).size())
 		(lay["seats"] as Array).append(s)
 	lay["groups"]["bench%d" % (lay["groups"] as Dictionary).size()] = ids
+
+
+## Путь от точки a по земле и ступеням к точке b (высоты — лучом сверху, не выше прежней + подъём ступени)
+func _ground_path(tris: Tris, a: Vector3, b: Vector3) -> PackedVector3Array:
+	var out := PackedVector3Array([a])
+	var n := maxi(1, int(a.distance_to(Vector3(b.x, a.y, b.z)) / 0.25))
+	var y := a.y
+	for k in range(1, n + 1):
+		var q := a.lerp(b, float(k) / n)
+		var h := tris.surface(q.x, q.z, y + 0.45)
+		y = h if h > -INF else y
+		out.append(Vector3(q.x, y, q.z))
+	return out
+
+
+## Над точкой открыто: до высоты up нет ни кровли, ни колонны, ни статуи (и рядом — на r в четыре стороны)
+func _open(tris: Tris, p: Vector3, up: float, r := 0.22) -> bool:
+	for o: Vector2 in [Vector2.ZERO, Vector2(r, 0), Vector2(-r, 0), Vector2(0, r), Vector2(0, -r)]:
+		if tris.any_in(p.x + o.x, p.z + o.y, p.y + 0.06, p.y + up):
+			return false
+	return true
+
+
+## Храм: утренняя служба — горожане стоят на ступенях и перед ними лицом к храму (к −Z), жрец наверху лестницы
+## поднимает руки к ним. Места — где под ногами ступень или мостовая, а над головой открыто (не под портиком)
+func _temple(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+	var door := bp.door
+	var lo: Vector2 = tris.lo_xz
+	var hi: Vector2 = tris.hi_xz
+	var hw := minf(absf(lo.x), absf(hi.x)) - 0.3
+	# жрец: вверх по середине лестницы — где ступени кончились (подиум), там его место
+	var y := 0.0
+	var found := false
+	var flat := 0.0
+	var top := Vector3(0, 0, door.z)
+	var z := door.z + 0.2
+	while z > lo.y:
+		var h := tris.surface(0.0, z, y + 0.45)
+		if h == -INF:
+			if found:
+				break
+			z -= 0.1
+			continue
+		found = true
+		if h > y + 0.02:
+			flat = 0.0
+			top = Vector3(0, h, z)
+		else:
+			flat += 0.1
+		y = maxf(y, h)
+		if flat > 0.45:
+			break
+		z -= 0.1
+	var list := []
+	var x := -hw
+	while x <= hw:
+		z = top.z + 0.35
+		while z < door.z + 3.2:
+			var h := tris.surface(x, z, top.y + 0.1)
+			if h == -INF and z > top.z + 0.2:
+				h = 0.0                          # перед храмом — мостовая (за чертежом): стоят и там
+			var jx := x + rng.randf_range(-0.13, 0.13)          # не строем: чуть вразброс
+			var jz := z + rng.randf_range(-0.1, 0.1)
+			if h > -INF and absf(x) > 0.55 and _open(tris, Vector3(jx, h, jz), 1.9) and rng.randf() < 0.88:
+				var root := Vector3(jx, h, jz)
+				var path := _ground_path(tris, Vector3(door.x + clampf(jx, -1.5, 1.5), 0.0, door.z + 3.6), root)
+				var yaw := atan2(top.x - jx, top.z - jz) + rng.randf_range(-0.2, 0.2)     # лицом к жрецу
+				list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": -h * 10.0 + absf(x) * 0.1 + z * 0.3, "pose": "stand"})
+			z += STAND_GAP
+		x += STAND_GAP
+	list.sort_custom(func(a, b): return a["far"] < b["far"])     # сначала выше по лестнице и ближе к середине
+	var ids := []
+	for s in list:
+		ids.append((lay["seats"] as Array).size())
+		(lay["seats"] as Array).append(s)
+	lay["groups"]["temple"] = ids
+	lay["fx"] = []
+	for p in bp.parts:
+		if String(p[0]) == "SM_Prop_Brazier_01":           # жаровни у лестницы: во время службы — дым благовоний
+			var bx: Transform3D = p[1]
+			(lay["fx"] as Array).append(["incense", bx.origin + Vector3(0, bx.basis.y.length() * 1.25, 0), Vector3.ZERO])
+	if top.y > 0.2:
+		lay["priest"] = {"root": top + Vector3(0, 0, -0.3), "yaw": 0.0, "row": 0, "path": PackedVector3Array(), "far": 0.0, "pose": "priest"}
+
+
+## Термы: купальщики стоят в бассейнах по грудь в воде и болтают (#water — вода, коробка); входят от двери
+func _bath(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+	var door := bp.door
+	var list := []
+	for p in bp.parts:
+		if String(p[0]) != "#water":
+			continue
+		var xf: Transform3D = p[1]
+		var sx := xf.basis.x.length()
+		var sz := xf.basis.z.length()
+		var c := xf.origin
+		var wy := c.y + xf.basis.y.length() * 0.5
+		if not lay.has("fx"):
+			lay["fx"] = []
+		(lay["fx"] as Array).append(["steam", Vector3(c.x, wy + 0.05, c.z), Vector3(sx, 0, sz)])
+		var nx := maxi(1, int(floor((sx - 0.5) / 0.5)))
+		var nz := maxi(1, int(floor((sz - 0.5) / 0.55)))
+		for i in nx:
+			for j in nz:
+				var lp := Vector3(-sx / 2.0 + 0.25 + (i + 0.5) * (sx - 0.5) / nx, 0, -sz / 2.0 + 0.25 + (j + 0.5) * (sz - 0.5) / nz)
+				var w := c + xf.basis.x.normalized() * lp.x + xf.basis.z.normalized() * lp.z
+				var root := Vector3(w.x, wy - BATH_DEPTH, w.z)
+				# к бассейну от двери, у края — вниз по ступеням в воду
+				var edge := Vector3(w.x, 0.0, c.z + sz / 2.0 + 0.35)
+				var path := PackedVector3Array([Vector3(door.x, 0.0, door.z + 0.6), edge, Vector3(w.x, wy - BATH_DEPTH * 0.5, c.z + sz / 2.0 - 0.3), root])
+				var yaw := atan2(c.x - w.x + 0.01, c.z - w.z) + rng.randf_range(-0.6, 0.6)
+				list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": rng.randf(), "pose": "bath"})
+	list.sort_custom(func(a, b): return a["far"] < b["far"])
+	var ids := []
+	for s in list:
+		ids.append((lay["seats"] as Array).size())
+		(lay["seats"] as Array).append(s)
+	lay["groups"]["bath"] = ids
 
 
 ## Можно ли сесть (высота сиденья по модели или −INF): под тазом — сиденье (у задуманной высоты top), под ступнями —
@@ -557,6 +690,8 @@ func _step(dt: float) -> void:
 func _first_tip(V: Dictionary) -> void:
 	if game.mode != "play" and game.mode != "new":
 		return
+	if not (V["kind"] in SHOWS):
+		return
 	var hud = game.hud
 	if hud == null or city.tips.has("spectacle_tip") or not hud._tip_free() or not hud._screen_free():
 		return
@@ -570,6 +705,8 @@ func _first_tip(V: Dictionary) -> void:
 func _enter_phase(V: Dictionary, ph: String) -> void:
 	var old: String = V["phase"]
 	V["phase"] = ph
+	_priest(V, ph != "idle")
+	_fx(V, ph != "idle")
 	match ph:
 		"gather":
 			_target(V)
@@ -587,13 +724,67 @@ func _enter_phase(V: Dictionary, ph: String) -> void:
 			# конец представления: овация, потом встают и расходятся
 			V["due"] = 0.0
 			V["wait"] = 3.5
-			if (V["who"] as Array).size() > 0:
+			if (V["who"] as Array).size() > 0 and V["kind"] in SHOWS:
 				react(V, 0.9, 3.5)
 				sfx.emit("roar", (V["root"] as Node3D).global_position + Vector3(0, 3, 0), 1.0)
 		"idle":
 			_release_all(V)
 	if V["act"] != null:
 		V["act"].phase(ph)
+
+
+## Жрец храма наверху лестницы (лицом к людям, руки к небу): с начала сбора до конца расхода
+func _priest(V: Dictionary, on: bool) -> void:
+	var pr: Dictionary = (V["lay"] as Dictionary).get("priest", {})
+	if pr.is_empty():
+		return
+	var cr: Crowd = V["crowd"]
+	if on and not V.has("priest_cp"):
+		var lk := Citizen.roll_look(rng, false, false, true, "", "patricians")
+		V["priest_cp"] = cr.add(lk, _seat_xf(pr), "pray", Crowd.now() - rng.randf() * 3.0, false)
+		V["priest_t"] = 4.0
+	elif not on and V.has("priest_cp"):
+		cr.remove(V["priest_cp"])
+		V.erase("priest_cp")
+
+
+## Дым благовоний у храма и пар над бассейнами терм — пока площадка живёт (не на «Очень низкой»)
+func _fx(V: Dictionary, on: bool) -> void:
+	if on and not V.has("fx") and not str(game.settings.get("quality", "high")) == "verylow":
+		var list := []
+		for e: Array in (V["lay"] as Dictionary).get("fx", []):
+			var p: GPUParticles3D = game._smoke((V["root"] as Node3D).global_transform * (e[1] as Vector3))
+			var pm := p.process_material as ParticleProcessMaterial
+			if String(e[0]) == "incense":
+				p.amount = 12
+				p.lifetime = 5.0
+				pm.initial_velocity_min = 0.45
+				pm.initial_velocity_max = 0.7
+			else:                                # пар: низко, широко, медленно, над всей водой
+				var sz: Vector3 = e[2]
+				p.amount = maxi(6, int(sz.x * sz.z * 1.5))
+				p.lifetime = 3.5
+				pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+				pm.emission_box_extents = Vector3(sz.x * 0.4, 0.02, sz.z * 0.4)
+				pm.direction = Vector3(0, 1, 0)
+				pm.initial_velocity_min = 0.08
+				pm.initial_velocity_max = 0.18
+				pm.gravity = Vector3(0.03, 0.02, 0.0)
+				pm.scale_min = 0.35
+				pm.scale_max = 0.6
+				var grad := Gradient.new()
+				grad.set_color(0, Color(1, 1, 1, 0.16))
+				grad.set_color(1, Color(1, 1, 1, 0.0))
+				var gt := GradientTexture1D.new()
+				gt.gradient = grad
+				pm.color_ramp = gt
+			list.append(p)
+		V["fx"] = list
+	elif not on and V.has("fx"):
+		for p: Node in V["fx"]:
+			if is_instance_valid(p):
+				p.queue_free()
+		V.erase("fx")
 
 
 ## Сбор: зовём горожан к входу, гостей сажаем понемногу (за час — все). На ×1 час — 15 с
@@ -699,6 +890,7 @@ func _arrive(V: Dictionary, r: Dictionary, instant: bool) -> bool:
 	if not r.is_empty():
 		lk = game.people.look_of(r)
 		child = bool(r["child"])
+		city.note_visit(int(r.get("home", 0)), String(V["kind"]))   # «Уютный Рим»: семья сходила — дому счастье
 	else:
 		lk = _guest_look()
 	var cr: Crowd = V["crowd"]
@@ -708,7 +900,7 @@ func _arrive(V: Dictionary, r: Dictionary, instant: bool) -> bool:
 	var path: PackedVector3Array = seat["path"]
 	if instant or path.size() < 2:
 		s["st"] = "sit"
-		s["cp"] = cr.add(lk, _seat_xf(seat), _idle_clip(V), Crowd.now() - rng.randf() * 4.0, child)
+		s["cp"] = cr.add(lk, _seat_xf(seat), _idle_clip(V, seat), Crowd.now() - rng.randf() * 4.0, child)
 		s["next"] = rng.randf_range(2.0, 9.0)
 	else:
 		s["st"] = "walk"
@@ -774,8 +966,13 @@ func _people_step(V: Dictionary, sdt: float) -> void:
 				var k := clampf(float(s["t"]) / 0.35, 0.0, 1.0)
 				var yaw := lerp_angle(float(s["yaw0"]), float(seat["yaw"]), k * k * (3.0 - 2.0 * k))
 				var root: Vector3 = seat["root"]
-				cr.move(s["cp"], Transform3D(Basis(Vector3.UP, yaw), root + Vector3(0, Crowd.SEAT_RISE - Crowd.SEAT_DROP, 0)))
-				if k >= 1.0:
+				var stands := String(seat.get("pose", "sit")) != "sit"
+				cr.move(s["cp"], Transform3D(Basis(Vector3.UP, yaw), root + (Vector3.ZERO if stands else Vector3(0, Crowd.SEAT_RISE - Crowd.SEAT_DROP, 0))))
+				if k >= 1.0 and stands:
+					s["st"] = "sit"                  # стоит на месте (храм, бассейн): сразу своим делом
+					s["next"] = rng.randf_range(3.0, 8.0)
+					cr.play(s["cp"], _idle_clip(V, seat))
+				elif k >= 1.0:
 					s["st"] = "sitdown"
 					s["t"] = 0.0
 					cr.move(s["cp"], _seat_xf(seat))
@@ -785,18 +982,18 @@ func _people_step(V: Dictionary, sdt: float) -> void:
 				if float(s["t"]) >= Crowd.clip_len("enter") - 0.05:
 					s["st"] = "sit"
 					s["next"] = rng.randf_range(3.0, 8.0)
-					cr.play(s["cp"], _idle_clip(V))
+					cr.play(s["cp"], _idle_clip(V, lay["seats"][s["seat"]]))
 			"sit":
 				s["next"] = float(s["next"]) - sdt
 				if float(s["next"]) <= 0.0:
 					s["next"] = rng.randf_range(4.0, 11.0)
-					cr.play(s["cp"], _idle_clip(V))
+					cr.play(s["cp"], _idle_clip(V, lay["seats"][s["seat"]]))
 			"cheer":
 				s["next"] = float(s["next"]) - sdt
 				if float(s["next"]) <= 0.0:
 					s["st"] = "sit"
 					s["next"] = rng.randf_range(3.0, 9.0)
-					cr.play(s["cp"], _idle_clip(V))
+					cr.play(s["cp"], _idle_clip(V, lay["seats"][s["seat"]]))
 			"standup":
 				s["t"] = float(s["t"]) + sdt
 				if float(s["t"]) >= 0.45:
@@ -823,6 +1020,10 @@ func _stand_up(V: Dictionary, s: Dictionary) -> void:
 	s["st"] = "standup"
 	s["t"] = 0.0
 	var cr: Crowd = V["crowd"]
+	if String(seat.get("pose", "sit")) != "sit":
+		s["st"] = "out"                          # стоял (храм, бассейн) — сразу уходит
+		cr.play(s["cp"], "walk")
+		return
 	cr.move(s["cp"], Transform3D(Basis(Vector3.UP, float(seat["yaw"])), (seat["root"] as Vector3) + Vector3(0, Crowd.SEAT_RISE - Crowd.SEAT_DROP, 0)))
 	cr.play(s["cp"], "stand")
 
@@ -850,7 +1051,16 @@ func _release_all(V: Dictionary) -> void:
 
 
 ## Чем занят сидящий: сидит спокойно, разговорился с соседом, оглядывается; во время боя — подался вперёд
-func _idle_clip(V: Dictionary) -> String:
+func _idle_clip(V: Dictionary, seat := {}) -> String:
+	match String(seat.get("pose", "sit")):
+		"priest":
+			return "pray" if rng.randf() < 0.7 else "s_talk"
+		"stand":                                 # на службе: слушают жреца, кивают, перешёптываются
+			var y := rng.randf()
+			return "listen" if y < 0.45 else ("stand" if y < 0.75 else ("s_talk" if y < 0.88 else "s_talk_m"))
+		"bath":                                  # в бассейне: болтают, оглядываются
+			var y2 := rng.randf()
+			return "s_talk" if y2 < 0.35 else ("s_talk_m" if y2 < 0.6 else ("listen" if y2 < 0.8 else "stand"))
 	var show: bool = V["phase"] == "show"
 	var x := rng.randf()
 	if show and x < 0.22:
@@ -916,6 +1126,8 @@ class Tris:
 	var nx := 0
 	var nz := 0
 	var count := 0
+	var lo_xz := Vector2.ZERO               # границы треугольников по x и z (в осях постройки)
+	var hi_xz := Vector2.ZERO
 
 	## Все треугольники чертежа (в осях постройки), кроме отвесных: им вертикальный луч не нужен
 	func build(bp: Bp) -> void:
@@ -942,6 +1154,8 @@ class Tris:
 				hi.x = maxf(hi.x, maxf(a.x, maxf(b.x, c.x)))
 				hi.y = maxf(hi.y, maxf(a.z, maxf(b.z, c.z)))
 		gh.free()
+		lo_xz = lo
+		hi_xz = hi
 		count = v.size() / 3
 		ox = lo.x
 		oz = lo.y
