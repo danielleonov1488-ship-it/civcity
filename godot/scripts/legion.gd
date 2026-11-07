@@ -343,6 +343,8 @@ var sid_next := 1
 ## Легион 2.0, этап 2 (Gear): вещи — [{id, slot, cls, rarity, ilvl, engine?, on (id воина или 0)}]
 var items: Array = []
 var iid_next := 1
+var shards := [0, 0, 0, 0, 0]  # обломки по редкости (Кузница, этап 3)
+var forging := {}           # куётся: {slot, cls, rarity, ilvl, end, total} или {}
 var _rng := RandomNumberGenerator.new()
 
 ## Для проверок: ускорение таймеров улучшений (не сохраняется)
@@ -494,6 +496,10 @@ func army_tick() -> Array:
 			s["train_end"] = 0.0
 			out.append("%s закончил тренировку: теперь он «%s»" % [s["name"], Soldiers.rank_name(int(s["rank"]))])
 			ch = true
+	var fm := _forge_tick()
+	if fm != "":
+		out.append(fm)
+		ch = true
 	var d := Soldiers.day_of(t)
 	if d != recruit_day:
 		recruit_day = d
@@ -717,6 +723,94 @@ func sell_item(iid: int) -> bool:
 	items.erase(it)
 	changed.emit()
 	return true
+
+
+# ---------- Кузница (этап 3) ----------
+
+func forge_lvl() -> int:
+	return level_of("forge") if available("forge") else 0
+
+
+## Уровень выкованной вещи: по глубине похода, не выше 5 × уровень Кузницы
+func forge_ilvl() -> int:
+	return clampi(1 + progress / 3, 1, maxi(1, 5 * forge_lvl()))
+
+
+func can_smelt(iid: int) -> String:
+	var it := item(iid)
+	if it.is_empty():
+		return "Нет такой вещи"
+	if int(it.get("on", 0)) != 0:
+		return "Сначала снимите её с воина"
+	if forge_lvl() <= 0:
+		return "Постройте Кузницу"
+	return ""
+
+
+## Разобрать вещь: обломок её редкости
+func smelt(iid: int) -> bool:
+	if can_smelt(iid) != "":
+		return false
+	var it := item(iid)
+	shards[int(it["rarity"])] = int(shards[int(it["rarity"])]) + 1
+	items.erase(it)
+	changed.emit()
+	return true
+
+
+func can_forge(slot: String, cls: String, r: int) -> String:
+	if not army_on():
+		return "Кузница вещей — в новой игре"
+	if forge_lvl() <= 0:
+		return "Постройте Кузницу"
+	if not forging.is_empty():
+		return "Кузница занята: ещё %s" % fmt_duration(forge_left())
+	var F: Dictionary = Gear.FORGE[clampi(r, 0, 4)]
+	if forge_lvl() < int(F["lvl"]):
+		return "Нужна Кузница %d уровня" % int(F["lvl"])
+	if slot in ["weapon", "offhand"] and not class_open(cls):
+		return "Класс «%s» ещё не открыт" % Soldiers.class_name_of(cls)
+	if r > 0 and int(shards[r - 1]) < int(F["shards"]):
+		return "Нужно обломков: %d (%s), есть %d" % [int(F["shards"]), Gear.SHARD[r - 1], int(shards[r - 1])]
+	if float(F["money"]) > city_money():
+		return "Не хватает денариев: нужно %d" % int(F["money"])
+	return ""
+
+
+func forge(slot: String, cls: String, r: int) -> bool:
+	if can_forge(slot, cls, r) != "":
+		return false
+	var F: Dictionary = Gear.FORGE[r]
+	_pay({"money": int(F["money"])})
+	if r > 0:
+		shards[r - 1] = int(shards[r - 1]) - int(F["shards"])
+	var secs := float(F["h"]) * 3600.0 / maxf(0.001, time_k)
+	forging = {"slot": slot, "cls": cls if slot in ["weapon", "offhand"] else "", "rarity": r, "ilvl": forge_ilvl(), "end": now() + secs, "total": secs}
+	if slot == "weapon" and cls == "engineer":
+		forging["engine"] = "catapult" if _rng.randf() < 0.5 else "ballista"
+	changed.emit()
+	return true
+
+
+func forge_left() -> float:
+	return maxf(0.0, float(forging.get("end", 0.0)) - now()) if not forging.is_empty() else 0.0
+
+
+## Вещь выкована — на Склад (полон — ждёт в Кузнице); текст для колокольчика или ""
+func _forge_tick() -> String:
+	if forging.is_empty() or now() < float(forging["end"]):
+		return ""
+	var e := forging.duplicate()
+	for k in ["end", "total"]:
+		e.erase(k)
+	var it := add_item(e)
+	if it.is_empty():
+		if not forging.has("wait"):
+			forging["wait"] = true
+			return "Кузница выковала вещь, но Склад полон — она подождёт в Кузнице"
+		return ""
+	forging = {}
+	return "Кузница выковала: %s" % Gear.name_of(it)
 
 
 ## Добыча после победы (новая игра): шанс вещи, босс — наверняка и лучше; уровень — по глубине похода
@@ -2961,7 +3055,7 @@ func to_dict() -> Dictionary:
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
 		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
-		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next}
+		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -3043,6 +3137,18 @@ func from_dict(d: Dictionary) -> void:
 			e["ilvl"] = maxi(1, int(e.get("ilvl", 1)))
 			items.append(e)
 	iid_next = int(d.get("iid_next", 1))
+	shards = [0, 0, 0, 0, 0]
+	var sh: Array = d.get("shards", [])
+	for i in mini(5, sh.size()):
+		shards[i] = maxi(0, int(sh[i]))
+	forging = {}
+	var fg = d.get("forging", {})
+	if fg is Dictionary and not (fg as Dictionary).is_empty() and String(fg.get("slot", "")) in Gear.SLOTS:
+		forging = (fg as Dictionary).duplicate()
+		forging["rarity"] = clampi(int(forging.get("rarity", 0)), 0, 4)
+		forging["ilvl"] = maxi(1, int(forging.get("ilvl", 1)))
+		forging["end"] = float(forging.get("end", 0.0))
+		forging["total"] = float(forging.get("total", 1.0))
 	for it: Dictionary in items:
 		iid_next = maxi(iid_next, int(it["id"]) + 1)
 	for s: Dictionary in soldiers:

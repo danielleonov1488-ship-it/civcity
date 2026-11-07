@@ -913,6 +913,10 @@ func _do(what: String, id: String) -> void:
 				_say(lg.can_train(int(id)))
 		"sell":
 			ok = lg.sell_item(int(id))
+		"smelt":
+			ok = lg.smelt(int(id))
+			if not ok:
+				_say(lg.can_smelt(int(id)))
 	if ok and game and game.sound:
 		game.sound.ui("coins")
 
@@ -1909,8 +1913,11 @@ func _build_soldiers() -> Control:
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hh.add_child(sp)
 	var stb := _btn("Склад: %d из %d" % [lg.store_count(), lg.store_cap()], 0, 14, _ic39("trophy"), "", func(): _store())
-	stb.tooltip_text = "Вещи из добычи, что не надеты: посмотреть и продать лишнее"
+	stb.tooltip_text = "Вещи из добычи, что не надеты: посмотреть, продать или разобрать лишнее"
 	hh.add_child(stb)
+	var fgb := _btn("Кузница" + (" · %s" % Legion.fmt_duration(lg.forge_left()) if not lg.forging.is_empty() else ""), 0, 14, _ic39("siege"), "", func(): _forge_win())
+	fgb.tooltip_text = "Разобрать ненужные вещи на обломки и выковать из них вещь лучше"
+	hh.add_child(fgb)
 	left.add_child(hh)
 	var sc := ScrollContainer.new()
 	sc.custom_minimum_size = Vector2(0, CH - 50)
@@ -2149,10 +2156,84 @@ func _store() -> void:
 		tv.add_child(_l(Gear.stats_text(it), 13, false, C_SOFT))
 		h.add_child(tv)
 		var iid := str(int(it["id"]))
+		if lg.forge_lvl() > 0:
+			var smb := _btn("Разобрать", 0, 14, null, "", func(): _do("smelt", iid); _store())
+			smb.tooltip_text = "В Кузнице: +1 %s" % Gear.SHARD[int(it["rarity"])]
+			h.add_child(smb)
 		h.add_child(_btn("Продать · %s" % hud.fmt(float(Legion.item_price(it))), 0, 14, hud.ico("coins", 64), "", func(): _do("sell", iid); _store()))
 		lv.add_child(h)
 	sc.add_child(lv)
 	v.add_child(sc)
+	v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
+	_center_later(p)
+
+
+var _f_slot := "weapon"
+var _f_cls := "legionary"
+
+
+## Кузница: обломки, что куётся; выбрать слот и класс — и редкость (цена, время)
+func _forge_win() -> void:
+	var p := _modal(600)
+	var v: VBoxContainer = p.get_child(0)
+	v.add_child(_title("Кузница" + (" · %d уровень" % lg.forge_lvl() if lg.forge_lvl() > 0 else ""), 22))
+	if lg.forge_lvl() <= 0:
+		v.add_child(_wl("Постройте Кузницу в военном квартале — здесь будут разбирать лишние вещи на обломки и ковать новые.", 560, 15, C_INK))
+		v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
+		_center_later(p)
+		return
+	var sh := HBoxContainer.new()
+	sh.add_theme_constant_override("separation", 14)
+	sh.add_child(_l("Обломки:", 15, true, C_INK))
+	for r in 5:
+		sh.add_child(_l("%d %s" % [int(lg.shards[r]), "●"], 16, true, Gear.color(r)))
+	v.add_child(sh)
+	v.add_child(_wl("Обломки — из разобранных вещей (Склад → «Разобрать»). Уровень новой вещи: %d (по походу, не выше 5 × уровень Кузницы)." % lg.forge_ilvl(), 560, 13, C_SOFT))
+	if not lg.forging.is_empty():
+		var fh := HBoxContainer.new()
+		fh.add_theme_constant_override("separation", 8)
+		var fl := _l("Куётся: %s · %d ур. — ещё %s" % [Gear.name_of(lg.forging), int(lg.forging["ilvl"]), Legion.fmt_duration(lg.forge_left())], 15, true, Gear.color(int(lg.forging["rarity"])))
+		fh.add_child(fl)
+		v.add_child(fh)
+	v.add_child(_hdiv(8))
+	# что ковать: слот и (для оружия и щита) класс
+	var srow := HBoxContainer.new()
+	srow.add_theme_constant_override("separation", 6)
+	for slot: String in Gear.SLOTS:
+		var sl := slot
+		var b := _btn(String(Gear.SLOT_NAME[slot]).capitalize(), 0, 14, null, "", func(): _f_slot = sl; _forge_win())
+		if slot == _f_slot:
+			b.add_theme_stylebox_override("normal", hud._box_pill(16, 6, "g_btn_on"))
+		srow.add_child(b)
+	v.add_child(srow)
+	if _f_slot in ["weapon", "offhand"]:
+		var crow := HBoxContainer.new()
+		crow.add_theme_constant_override("separation", 6)
+		for cls: String in Soldiers.CLASS_IDS:
+			var cl := cls
+			var cb := _btn(Soldiers.class_name_of(cls), 0, 14, null, "" if lg.class_open(cls) else "Класс ещё не открыт", func(): _f_cls = cl; _forge_win())
+			if cls == _f_cls:
+				cb.add_theme_stylebox_override("normal", hud._box_pill(16, 6, "g_btn_on"))
+			crow.add_child(cb)
+		v.add_child(crow)
+	for r in 5:
+		var F: Dictionary = Gear.FORGE[r]
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		var probe := {"slot": _f_slot, "cls": _f_cls if _f_slot in ["weapon", "offhand"] else "", "rarity": r, "ilvl": lg.forge_ilvl()}
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", -2)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tv.add_child(_l(Gear.name_of(probe), 15, true, Gear.color(r)))
+		var need := "%s ден." % hud.fmt(float(F["money"]))
+		if r > 0:
+			need = "%d × %s, %s" % [int(F["shards"]), Gear.SHARD[r - 1], need]
+		tv.add_child(_l("%s · %s · %s" % [Gear.stats_text(probe), need, Legion.fmt_duration(float(F["h"]) * 3600.0)], 12, false, C_SOFT))
+		h.add_child(tv)
+		var rr := r
+		var why := lg.can_forge(_f_slot, _f_cls, r)
+		h.add_child(_btn("Ковать", 0, 14, null, why, func(): lg.forge(_f_slot, _f_cls, rr); _forge_win()))
+		v.add_child(h)
 	v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
 	_center_later(p)
 

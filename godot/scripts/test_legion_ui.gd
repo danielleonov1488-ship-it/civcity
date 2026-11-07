@@ -747,6 +747,14 @@ func _soldiers(c: City, lg: Legion, ui) -> void:
 	await frames(6)
 	check("Склад: продать", ui.overlay != null and _texts(ui.overlay).contains("Склад:") and _texts(ui.overlay).contains("урона"))
 	await shot("soldiers_store")
+	lg.shards = [6, 3, 1, 0, 0]
+	lg.forging = {"slot": "weapon", "cls": "legionary", "rarity": 2, "ilvl": 6, "end": Legion.now() + 3000.0, "total": 14400.0}
+	ui._forge_win()
+	await frames(6)
+	check("Кузница: обломки, ковка, редкости", ui.overlay != null and _texts(ui.overlay).contains("Обломки") and _texts(ui.overlay).contains("Куётся")
+		and _texts(ui.overlay).contains("Легендарный"))
+	await shot("soldiers_forge")
+	lg.forging = {}
 	ui._close_overlay()
 	c.cozy_v = cv
 	ui._select_tab("campaign")

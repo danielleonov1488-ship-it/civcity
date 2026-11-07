@@ -22,6 +22,7 @@ func _ready() -> void:
 	_legion()
 	_army()
 	_gear()
+	_forge()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -311,3 +312,44 @@ func _gear() -> void:
 	var s3 := L2.soldier(sid)
 	_check(L2.items.size() == L.items.size() and int((s3["gear"] as Dictionary).get("weapon", 0)) == int(sw["id"]) and L2.iid_next == L.iid_next
 		and int(L2.soldier_stats(s3, "legionary")["atk"]) == int(after["atk"]), "сохранение: вещей %d, меч на месте, урон тот же" % L2.items.size())
+
+
+## Легион 2.0, этап 3: Кузница — разобрать на обломки, выковать вещь (обломки, денарии, время), полный Склад — ждёт, сохранение
+func _forge() -> void:
+	print("== Легион: Кузница")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 5000.0
+	var L: Legion = c.legion
+	c.research["legion"] = true
+	c.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
+	L.army_tick()
+	var no := L.can_forge("helmet", "", 0)
+	c.place("forge", Land.START + Vector2(-20, 0), 0.0, 0, 0, true)
+	var ids := []
+	for i in 3:
+		ids.append(int(L.add_item({"slot": "badge", "cls": "", "rarity": 0, "ilvl": 2})["id"]))
+	for id in ids:
+		L.smelt(id)
+	var why1 := L.can_forge("helmet", "", 1)
+	var why2 := L.can_forge("helmet", "", 2)
+	_check(no == "Постройте Кузницу" and int(L.shards[0]) == 3 and L.items.is_empty() and why1 == "" and why2.begins_with("Нужна Кузница"),
+		"без Кузницы — «%s»; разобрали 3 вещи — серых обломков %d; добротную можно, редкую — «%s»" % [no, int(L.shards[0]), why2])
+	var m0 := float(c.money)
+	var ok := L.forge("helmet", "", 1)
+	var busy := L.can_forge("armor", "", 0)
+	_check(ok and int(L.shards[0]) == 0 and is_equal_approx(m0 - float(c.money), 150.0) and busy.begins_with("Кузница занята"), "куём добротный шлем: обломки ушли, 150 ден.; вторая ковка — «%s»" % busy)
+	L.forging["end"] = Legion.now() - 1.0
+	L.army_tick()
+	var it: Dictionary = L.items[0] if not L.items.is_empty() else {}
+	_check(L.forging.is_empty() and not it.is_empty() and int(it["rarity"]) == 1 and String(it["slot"]) == "helmet", "выкован: %s" % (Gear.name_of(it) if not it.is_empty() else "—"))
+	# полный Склад — вещь ждёт в Кузнице
+	L.forge("armor", "", 0)
+	while L.store_count() < L.store_cap():
+		L.add_item({"slot": "badge", "cls": "", "rarity": 0, "ilvl": 1})
+	L.forging["end"] = Legion.now() - 1.0
+	var msgs := L.army_tick()
+	_check(not L.forging.is_empty() and bool(L.forging.get("wait", false)) and ", ".join(msgs).contains("Склад полон"), "Склад полон — вещь ждёт: «%s»" % ", ".join(msgs))
+	var L2 := Legion.new()
+	L2.from_dict(JSON.parse_string(JSON.stringify(L.to_dict())))
+	_check(not L2.forging.is_empty() and String(L2.forging["slot"]) == "armor" and L2.shards.size() == 5, "сохранение: ковка и обломки на месте")
