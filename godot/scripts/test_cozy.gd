@@ -20,6 +20,7 @@ func _ready() -> void:
 	_save()
 	_visits()
 	_legion()
+	_army()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -181,3 +182,74 @@ func _legion() -> void:
 	var rep0: int = int(Legion.reward_for(st, false)["money"])
 	c.legion.tick()
 	_check(rep == 35 and rep0 == 100 and c0.legion.builders() > 5, "повтор боя: в новой игре %d из 100, в старой %d; в старой строители без предела" % [rep, rep0])
+
+
+## Легион 2.0, этап 1: воины-новобранцы — трое с городом, новобранцы дня, тренировка, ранения, сохранение; старый город — без них
+func _army() -> void:
+	print("== Легион: воины-новобранцы")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 1e6
+	var L: Legion = c.legion
+	c.research["legion"] = true
+	c.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
+	L.army_tick()
+	var c0 := City.new(Land.new())
+	c0.legion.army_tick()
+	_check(L.soldiers.size() == 3 and L.recruits.size() == 3 and c0.legion.soldiers.is_empty() and not c0.legion.army_on(),
+		"с городом пришли %d воина, новобранцев %d; в старом городе воинов %d" % [L.soldiers.size(), L.recruits.size(), c0.legion.soldiers.size()])
+	var m0 := float(c.money)
+	var cost := L.recruit_cost(0)
+	var ok := L.recruit(0)
+	_check(ok and L.soldiers.size() == 4 and L.recruits.size() == 2 and is_equal_approx(m0 - float(c.money), float(cost)),
+		"взяли новобранца за %d ден.: воинов %d, кандидатов осталось %d" % [cost, L.soldiers.size(), L.recruits.size()])
+	# тренировка: место одно (Казармы 1), ранг растёт по таймеру
+	var a: Dictionary = L.soldiers[0]
+	var b: Dictionary = L.soldiers[1]
+	var t1 := L.train(int(a["id"]))
+	var why := L.can_train(int(b["id"]))
+	a["train_end"] = Legion.now() - 1.0
+	L.army_tick()
+	_check(t1 and why.begins_with("Все места тренировки заняты") and int(a["rank"]) == 1 and L.s_state(a) == "ready",
+		"тренировка: второй ждёт («%s»), первый теперь ранга %d" % [why, int(a["rank"])])
+	# в бой — воины с прибавкой звёзд и ранга; павший ранен, его место занимает запасной
+	L.squad = ["legionary", "legionary", "legionary"]
+	var sq := L.battle_squad()
+	var plain: Dictionary = Legion.unit_stats("legionary", 1)
+	var strong := 0
+	for u: Dictionary in sq:
+		if int(u["hp"]) > int(plain["hp"]):
+			strong += 1
+	_check(sq.size() == (4 if L.hero_ready() else 3) and int(sq[sq.size() - 1].get("sid", -1)) > 0 and strong >= 1,
+		"в бою %d бойцов с именами (%s), сильнее простого — %d" % [sq.size(), String(sq[sq.size() - 1].get("sname", "")), strong])
+	var setup := {"squad": sq}
+	var sid := int(sq[sq.size() - 1]["sid"])
+	var hurt := L._army_after(setup, {"fallen": [sid]})
+	var sq2 := L.battle_squad()
+	var ids := []
+	for u: Dictionary in sq2:
+		ids.append(int(u.get("sid", -1)))
+	_check(hurt.size() == 1 and L.s_state(L.soldier(sid)) == "wound" and not (sid in ids) and sq2.size() == sq.size(),
+		"павший ранен (%s), в отряде его заменил запасной" % ", ".join(hurt))
+	for s: Dictionary in L.soldiers:
+		s["wound_end"] = Legion.now() + 600.0
+	_check(L._army_squad().is_empty() and L.auto_squad().count("") == L.auto_squad().size(), "все ранены — в бой идти некому, «Лучший состав» пуст")
+	# настоящий бой: павшие воины приходят в итоге (fallen)
+	for s: Dictionary in L.soldiers:
+		s["wound_end"] = 0.0
+	var sim_setup := {"kind": "campaign", "squad": L._army_squad(), "waves": [[Legion.enemy_stats("wolf", 6.0), Legion.enemy_stats("wolf", 6.0), Legion.enemy_stats("wolf", 6.0)]],
+		"perks": {}, "seed": 7, "food": 0, "packs": []}
+	var res := LegionSim.new(sim_setup).run(true)
+	_check(not bool(res["win"]) and (res.get("fallen", []) as Array).size() == int(res["total"]) - int(res["alive"]),
+		"бой с сильными волками проигран: пали %d воинов (их номера в итоге)" % (res.get("fallen", []) as Array).size())
+	# сохранение
+	var d := L.to_dict()
+	var L2 := Legion.new()
+	L2.from_dict(JSON.parse_string(JSON.stringify(d)))
+	_check(L2.soldiers.size() == L.soldiers.size() and int(L2.soldier(int(a["id"]))["rank"]) == 1 and L2.sid_next == L.sid_next and L2.recruits.size() == 2,
+		"сохранение: воинов %d, ранг первого %d, кандидатов %d" % [L2.soldiers.size(), int(L2.soldier(int(a["id"])).get("rank", -1)), L2.recruits.size()])
+	# счастливый большой город — звёзды лучше
+	var lo: Array = Soldiers.star_odds(Soldiers.quality(45, 0))
+	var hi: Array = Soldiers.star_odds(Soldiers.quality(90, 7))
+	_check(float(hi[2]) + float(hi[3]) + float(hi[4]) > 2.5 * (float(lo[2]) + float(lo[3]) + float(lo[4])),
+		"шанс 3★+: обычный город %.0f%%, счастливый большой %.0f%%" % [float(lo[2]) + float(lo[3]) + float(lo[4]), float(hi[2]) + float(hi[3]) + float(hi[4])])

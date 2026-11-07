@@ -307,6 +307,12 @@ func _sig() -> String:
 	for w: Dictionary in Legion.WONDERS:
 		a.append(lg.can_build_wonder(String(w["id"])))
 	a.append(lg.can_triumph())
+	if lg.army_on():
+		a.append(lg.soldiers.size())
+		for i in lg.recruits.size():
+			a.append(lg.can_recruit(i))
+		for s: Dictionary in lg.soldiers:
+			a.append(lg.can_train(int(s["id"])))
 	if not sel.is_empty():
 		var st := lg.stage_info(int(sel["c"]), int(sel["r"]), int(sel["s"]))
 		a.append(lg.can_fight(st))
@@ -338,6 +344,10 @@ func _process(dt: float) -> void:
 ## Таймеры: полоски улучшений, заряды атак. Улучшение дошло — завершаем сразу (не ждём игрового часа)
 func _tick_live() -> void:
 	_odds_poll()
+	if lg.army_on():
+		for m in lg.army_tick():
+			if game.city.has_method("_quiet"):
+				game.city._quiet(m, "legion")
 	var done := false
 	for type in lg.upg.keys():
 		if lg.upgrade_left(type) <= 0.0:
@@ -365,6 +375,16 @@ func _tick_live() -> void:
 					var od := lg.odds(e["st"], est)
 					l.text = String(od[1])
 					l.add_theme_color_override("font_color", ODDS_COL.get(String(od[0]), C_INK))
+			"soldier":
+				var s := lg.soldier(int(e["sid"]))
+				if s.is_empty():
+					continue
+				l.text = _soldier_status(s)
+				var sb: ProgressBar = e.get("bar")
+				if sb != null and is_instance_valid(sb):
+					sb.value = lg.train_progress(s)
+			"recruits":
+				l.text = "Новые придут через %s." % Legion.fmt_duration(lg.recruits_next())
 			"pvp":
 				var n := lg.pvp_charges_now()
 				l.text = "Атак в запасе: %d из %d" % [n, int(Legion.PVP["charges"])] + ("" if n >= int(Legion.PVP["charges"]) else " · ещё одна через %s" % Legion.fmt_duration(lg.pvp_next_charge()))
@@ -413,7 +433,7 @@ func _make_window() -> void:
 	var tb := HBoxContainer.new()
 	tb.alignment = BoxContainer.ALIGNMENT_CENTER
 	tb.add_theme_constant_override("separation", 10)
-	for d: Array in [["campaign", "Походы", _ic39("map")], ["troops", "Войска", _ic39("battle")],
+	for d: Array in [["campaign", "Походы", _ic39("map")], ["troops", "Войска", _ic39("battle")], ["soldiers", "Воины", _ic39("barracks")],
 			["pvp", "Против городов", _ic39("attack")], ["wonders", "Чудеса", hud.ico("special", 64)]]:
 		var id: String = d[0]
 		var b := _tab_btn(String(d[1]), d[2])
@@ -490,8 +510,18 @@ func _rebuild() -> void:
 	_fight_btn = null
 	_front_btn = null
 	_upg_btn = null
+	# «Воины» (Легион 2.0, этап 1) — только в новой игре «Уютного Рима»; вкладки чуть уже, чтобы уместились пять
+	var army := lg.army_on()
+	if tabs.has("soldiers"):
+		(tabs["soldiers"] as Button).visible = army
+		for k in tabs:
+			(tabs[k] as Button).custom_minimum_size.x = 200.0 if army else 214.0
+	if tab == "soldiers" and not army:
+		tab = "campaign"
 	var body: Control
 	match tab:
+		"soldiers":
+			body = _build_soldiers()
 		"troops":
 			body = _build_troops()
 		"pvp":
@@ -872,6 +902,15 @@ func _do(what: String, id: String) -> void:
 			ok = lg.build_wonder(id)
 			if not ok:
 				_say(lg.can_build_wonder(id))
+		"recruit":
+			var why := lg.can_recruit(int(id))
+			ok = lg.recruit(int(id))
+			if not ok:
+				_say(why)
+		"train":
+			ok = lg.train(int(id))
+			if not ok:
+				_say(lg.can_train(int(id)))
 	if ok and game and game.sound:
 		game.sound.ui("coins")
 
@@ -1616,6 +1655,9 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 		if not ch.is_empty():
 			v.add_child(_wl("Все 30 звёзд «%s»! Сундук Славы +%d." % [ch["region"], int(ch["glory"])], 420, 16, C_GOLD, true, true))
 	v.add_child(_wl("Вернулись %d из %d бойцов" % [int(out.get("alive", 0)), int(out.get("total", 0))], 420, 16, C_INK, true, true))
+	var hurt: Array = out.get("wounded", [])
+	if not hurt.is_empty():                  # Легион 2.0: павшие ранены, лечатся (насмерть никто не гибнет)
+		v.add_child(_wl("Ранены: %s — поправятся во вкладке «Воины»" % ", ".join(hurt), 420, 14, C_BAD, false, true))
 	var rw: Dictionary = out.get("reward", {})
 	if not rw.is_empty():
 		var rh := HBoxContainer.new()
@@ -1830,6 +1872,159 @@ func _build_troops() -> Control:
 const B_ALT := {"forge": "swords", "infirmary": "medic", "armory": "shield"}
 
 
+# =====================================================================
+#   «Воины» (Легион 2.0, этап 1): свои воины, тренировка, раненые; новобранцы дня
+# =====================================================================
+
+const UNIT_OF_CLASS := {"legionary": "legionary", "spearman": "spearman", "archer": "archer", "engineer": "ballista"}
+
+
+func _build_soldiers() -> Control:
+	lg.army_tick()
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.add_theme_constant_override("separation", 6)
+	var hh := HBoxContainer.new()
+	hh.add_theme_constant_override("separation", 10)
+	hh.add_child(_title("Ваши воины: %d из %d" % [lg.soldiers.size(), lg.roster_cap()], 21))
+	var hint := _l("тренируются %d из %d · раненых %d, коек в Лазарете %d" % [lg.count_state("train"), lg.train_places(), lg.count_state("wound"), lg.beds()], 14, true, C_SOFT)
+	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hh.add_child(hint)
+	left.add_child(hh)
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(0, CH - 50)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var g := GridContainer.new()
+	g.columns = 2
+	g.add_theme_constant_override("h_separation", 8)
+	g.add_theme_constant_override("v_separation", 8)
+	var list := lg.soldiers.duplicate()
+	list.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var ca := Soldiers.CLASS_IDS.find(a["cls"])
+		var cb := Soldiers.CLASS_IDS.find(b["cls"])
+		if ca != cb:
+			return ca < cb
+		return Soldiers.bonus(a) > Soldiers.bonus(b))
+	for s: Dictionary in list:
+		g.add_child(_soldier_card(s))
+	if list.is_empty():
+		g.add_child(_wl("Воинов пока нет — возьмите новобранцев справа.", 360, 16, C_INK, true))
+	sc.add_child(g)
+	left.add_child(sc)
+	h.add_child(left)
+	# справа — новобранцы дня
+	var right := _bar_panel(10)
+	right.custom_minimum_size = Vector2(352, 0)
+	right.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 6)
+	right.add_child(rv)
+	rv.add_child(_title("Новобранцы сегодня", 20))
+	rv.add_child(_wl("Пришли в Казармы проситься в Легион. Берите тех, кто нравится, — или ждите завтрашних.", 330, 13, C_SOFT))
+	var nl := _wl("Новые придут через %s." % Legion.fmt_duration(lg.recruits_next()), 330, 13, C_SOFT, true)
+	rv.add_child(nl)
+	_live.append({"kind": "recruits", "label": nl})
+	if lg.recruits.is_empty():
+		rv.add_child(_wl("Сегодня все уже в Легионе.", 330, 15, C_INK, true))
+	for i in lg.recruits.size():
+		rv.add_child(_recruit_row(i))
+	rv.add_child(_hdiv(10))
+	var od := Soldiers.star_odds(lg.recruit_quality())
+	rv.add_child(_wl("Счастливый и большой город привлекает лучших: сейчас шанс на ★★★ и выше — %d%%." % roundi(float(od[2]) + float(od[3]) + float(od[4])), 330, 13, C_SOFT))
+	rv.add_child(_wl("Звёзды и ранг прибавляют воину силы к уровню его рода. Павший в бою ранен и лечится — держите запас.", 330, 13, C_SOFT))
+	h.add_child(right)
+	return h
+
+
+func _soldier_status(s: Dictionary) -> String:
+	match lg.s_state(s):
+		"wound":
+			return "Ранен: поправится через %s" % Legion.fmt_duration(lg.s_left(s))
+		"train":
+			return "Тренируется: ещё %s" % Legion.fmt_duration(lg.s_left(s))
+	return "Готов к бою · боёв: %d" % int(s.get("battles", 0))
+
+
+func _soldier_card(s: Dictionary) -> Control:
+	var p := _bar_panel(6)
+	p.custom_minimum_size = Vector2(380, 0)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	p.add_child(h)
+	var st := lg.s_state(s)
+	var pt := _portrait("unit", String(UNIT_OF_CLASS.get(s["cls"], "legionary")), 58, st == "wound")
+	pt.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(pt)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 0)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(v)
+	var nh := HBoxContainer.new()
+	nh.add_theme_constant_override("separation", 6)
+	nh.add_child(_l(String(s["name"]), 16, true, C_INK))
+	nh.add_child(_l(Soldiers.stars_text(int(s["stars"])), 15, true, C_GOLD))
+	v.add_child(nh)
+	var r := int(s["rank"])
+	v.add_child(_l("%s · %s (%d из %d) · +%d%% силы" % [Soldiers.class_name_of(String(s["cls"])), Soldiers.rank_name(r), r, Soldiers.rank_max(s),
+		roundi(Soldiers.bonus(s) * 100.0)], 13, false, C_SOFT))
+	var stl := _l(_soldier_status(s), 13, true, C_BAD if st == "wound" else (C_GOLD if st == "train" else C_GOOD))
+	v.add_child(stl)
+	var bar: ProgressBar = null
+	if st == "train":
+		bar = _bar(200, lg.train_progress(s))
+		v.add_child(bar)
+	if st != "ready":
+		_live.append({"kind": "soldier", "sid": int(s["id"]), "label": stl, "bar": bar})
+	var bv := VBoxContainer.new()
+	bv.add_theme_constant_override("separation", 4)
+	bv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var id := str(int(s["id"]))
+	if st == "ready" and r < Soldiers.rank_max(s):
+		var why := lg.can_train(int(s["id"]))
+		var tb := _btn("Тренировать · %s" % hud.fmt(float(Soldiers.train_cost(r))), 0, 13, hud.ico("coins", 64), why, func(): _do("train", id))
+		tb.tooltip_text = (why + "\n" if why != "" else "") + "Ранг «%s» за %s" % [Soldiers.rank_name(r + 1), Legion.fmt_duration(Soldiers.train_h(r) * 3600.0)]
+		bv.add_child(tb)
+	var db := _btn("Отпустить", 0, 12, null, "", func(): pass)
+	db.tooltip_text = "Отпустить домой — освободится место в Легионе"
+	db.pressed.connect(func():
+		if db.text != "Точно отпустить?":
+			db.text = "Точно отпустить?"
+		else:
+			lg.dismiss(int(id)))
+	bv.add_child(db)
+	h.add_child(bv)
+	return p
+
+
+func _recruit_row(i: int) -> Control:
+	var c: Dictionary = lg.recruits[i]
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	var pt := _portrait("unit", String(UNIT_OF_CLASS.get(c["cls"], "legionary")), 46)
+	pt.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(pt)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 0)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(_l(String(c["name"]), 15, true, C_INK))
+	var sh := HBoxContainer.new()
+	sh.add_theme_constant_override("separation", 6)
+	sh.add_child(_l(Soldiers.class_name_of(String(c["cls"])), 13, false, C_SOFT))
+	sh.add_child(_l(Soldiers.stars_text(int(c["stars"])), 13, true, C_GOLD))
+	v.add_child(sh)
+	v.add_child(_l(String(c.get("from", "")), 12, false, C_SOFT))
+	h.add_child(v)
+	var why := lg.can_recruit(i)
+	var ii := str(i)
+	var b := _btn("Взять · %s" % hud.fmt(float(lg.recruit_cost(i))), 0, 13, hud.ico("coins", 64), why, func(): _do("recruit", ii))
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(b)
+	return h
+
+
 ## Плитка здания Легиона: портрет, уровень (или «в запасе»), что даёт сейчас, идущее улучшение, «На карте» / «Построить»
 func _building_tile(bt: String) -> Control:
 	var D: Dictionary = Defs.B[bt]
@@ -1993,8 +2188,16 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 		var face: Control
 		var tip := ""
 		if t != "" and Legion.UNITS.has(t):
-			face = _portrait("unit", t, sz, not lg.available(t))
-			tip = "%s, %d уровень%s\nЩелчок — поставить другого" % [Legion.UNITS[t]["name"], int(lg.levels.get(t, 1)), "" if lg.available(t) else "\n" + lg.unit_lock_text(t)]
+			var who := ""
+			var none := false
+			if which == "campaign" and lg.army_on():
+				var ss := lg.slot_soldiers()
+				var sd: Dictionary = ss[i] if i < ss.size() else {}
+				none = sd.is_empty()
+				who = "\nНет готового воина этого рода (раненые лечатся, тренирующиеся заняты) — место пустует" if none else \
+					"\nВ бой пойдёт: %s %s, %s" % [sd["name"], Soldiers.stars_text(int(sd["stars"])), Soldiers.rank_name(int(sd["rank"]))]
+			face = _portrait("unit", t, sz, not lg.available(t) or none)
+			tip = "%s, %d уровень%s%s\nЩелчок — поставить другого" % [Legion.UNITS[t]["name"], int(lg.levels.get(t, 1)), "" if lg.available(t) else "\n" + lg.unit_lock_text(t), who]
 		else:
 			var e := Panel.new()
 			e.add_theme_stylebox_override("panel", hud._medal("medal", sz))
