@@ -281,6 +281,10 @@ func _ready() -> void:
 	spectacle.name = "Spectacle"
 	add_child(spectacle)
 	spectacle.setup(self, args)
+	var br := Breathe.new()                   # «город дышит»: бабочки, светлячки, птицы («Уютный Рим», этап 5)
+	br.name = "Breathe"
+	add_child(br)
+	br.setup(self)
 	await _step("Город", 0.25)
 	var loaded := false
 	if mode == "play":
