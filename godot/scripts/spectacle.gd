@@ -27,6 +27,9 @@ const VENUES := {
 	"temple": {"kind": "temple", "hours": [7.0, 7.8, 9.4, 10.0], "fill": 0.9},
 	"baths": {"kind": "bath", "hours": [9.0, 9.8, 16.6, 17.4], "fill": 0.75},
 	"thermae": {"kind": "bath", "hours": [8.6, 9.4, 17.4, 18.2], "fill": 0.75},
+	# форум: днём сенатор говорит с ростр, горожане слушают на площади; одеон: вечерний концерт
+	"forum": {"kind": "forum", "hours": [10.6, 11.3, 14.0, 14.6], "fill": 0.55},
+	"odeon": {"kind": "theatre", "hours": [18.4, 19.2, 21.2, 21.8], "fill": 0.8},
 }
 ## Площадки-зрелища (овация в конце, совет «Зрелища»); остальные — храм, термы
 const SHOWS := ["arena", "circus", "theatre"]
@@ -151,12 +154,16 @@ func layout(b: Dictionary) -> Dictionary:
 			_temple(lay, bp, tris)
 		"bath":
 			_bath(lay, bp, tris)
+		"forum":
+			_forum(lay, bp, tris)
 		_:
 			for p in bp.parts:
 				if p[0] == "SM_Bld_Amphitheatre_01":
 					_amphi(lay, p[1], tris)
 				elif p[0] == "#bench":
 					_bench(lay, p[1], tris)
+	if String(VENUES[b["type"]]["kind"]) == "theatre":
+		_stage(lay, bp)
 	lay["ms"] = Time.get_ticks_msec() - t0
 	print("SPECTACLE layout %s: %d seats (dropped %d), %d tris, %d ms" % [key, (lay["seats"] as Array).size(), int(lay.get("dropped", 0)), tris.count, lay["ms"]])
 	_layouts[key] = lay
@@ -422,6 +429,65 @@ func _bath(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 	lay["groups"]["bath"] = ids
 
 
+## Форум: оратор на рострах (#marble — помост посредине, самый широкий) лицом к площади, слушатели стоят на
+## площади перед рострами лицом к нему (где над головой открыто — не под портиками)
+func _forum(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+	var ro: Transform3D
+	var best := 0.0
+	for p in bp.parts:
+		if String(p[0]) == "#marble":
+			var x: Transform3D = p[1]
+			if absf(x.origin.x) < 0.5 and x.basis.x.length() > best:
+				best = x.basis.x.length()
+				ro = x
+	if best <= 0.0:
+		return
+	var top := ro.origin.y + ro.basis.y.length() * 0.5
+	var front := ro.origin.z + ro.basis.z.length() * 0.5
+	var spk := Vector3(0, top, front - 0.45)
+	lay["priest"] = {"root": spk, "yaw": 0.0, "row": 0, "path": PackedVector3Array(), "far": 0.0, "pose": "orator"}
+	var door := bp.door
+	var hw := minf(absf(tris.lo_xz.x), absf(tris.hi_xz.x)) - 0.6
+	var list := []
+	var x := -hw
+	while x <= hw:
+		var z := front + 0.9
+		while z < door.z - 0.2:
+			var jx := x + rng.randf_range(-0.14, 0.14)
+			var jz := z + rng.randf_range(-0.12, 0.12)
+			var h := tris.surface(jx, jz, 0.6)
+			if h > -INF and _open(tris, Vector3(jx, h, jz), 1.9) and rng.randf() < 0.85:
+				var root := Vector3(jx, h, jz)
+				var path := _ground_path(tris, Vector3(door.x + clampf(jx, -1.5, 1.5), 0.0, door.z + 0.6), root)
+				var yaw := atan2(spk.x - jx, spk.z - jz) + rng.randf_range(-0.25, 0.25)
+				list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": jz + absf(jx) * 0.3, "pose": "stand"})
+			z += STAND_GAP
+		x += STAND_GAP
+	list.sort_custom(func(a, b): return a["far"] < b["far"])     # сначала ближе к рострам
+	var ids := []
+	for s in list:
+		ids.append((lay["seats"] as Array).size())
+		(lay["seats"] as Array).append(s)
+	lay["groups"]["forum"] = ids
+
+
+## Театр и одеон: на сцене (#marble — самый широкий помост) — актёр или музыкант лицом к трибунам (к −Z)
+func _stage(lay: Dictionary, bp: Bp) -> void:
+	var st: Transform3D
+	var best := 0.0
+	for p in bp.parts:
+		if String(p[0]) == "#marble":
+			var x: Transform3D = p[1]
+			if x.basis.y.length() > 0.2 and x.basis.x.length() > best:
+				best = x.basis.x.length()
+				st = x
+	if best <= 0.0:
+		return
+	var top := st.origin.y + st.basis.y.length() * 0.5
+	lay["priest"] = {"root": Vector3(st.origin.x, top, st.origin.z - st.basis.z.length() * 0.2), "yaw": PI, "row": 0,
+		"path": PackedVector3Array(), "far": 0.0, "pose": "actor"}
+
+
 ## Можно ли сесть (высота сиденья по модели или −INF): под тазом — сиденье (у задуманной высоты top), под ступнями —
 ## ступень ниже ровно на Crowd.SEAT_DROP (ноги на ступени, а не в воздухе и не в камне), над ступнями и перед коленями
 ## ничего не торчит (парапет), над головой — пусто (навесы, статуи, жаровни)
@@ -674,6 +740,11 @@ func _step(dt: float) -> void:
 				_leave_step(V, sdt)
 		_people_step(V, sdt)
 		_doors_step(V, sdt)
+		if V.has("priest_cp"):
+			V["priest_t"] = float(V.get("priest_t", 4.0)) - sdt
+			if float(V["priest_t"]) <= 0.0:
+				V["priest_t"] = rng.randf_range(3.5, 7.0)
+				(V["crowd"] as Crowd).play(V["priest_cp"], _idle_clip(V, V["lay"]["priest"]))
 		var mur: AudioStreamPlayer3D = V["murmur"]
 		var full := float((V["who"] as Array).size()) / maxf(1.0, float((V["lay"]["seats"] as Array).size()))
 		var want := -80.0 if full <= 0.01 else linear_to_db(clampf(full, 0.08, 1.0)) - 4.0
@@ -740,8 +811,8 @@ func _priest(V: Dictionary, on: bool) -> void:
 		return
 	var cr: Crowd = V["crowd"]
 	if on and not V.has("priest_cp"):
-		var lk := Citizen.roll_look(rng, false, false, true, "", "patricians")
-		V["priest_cp"] = cr.add(lk, _seat_xf(pr), "pray", Crowd.now() - rng.randf() * 3.0, false)
+		var lk := Citizen.roll_look(rng, rng.randf() < 0.4 and String(pr["pose"]) == "actor", false, true, "", "patricians")
+		V["priest_cp"] = cr.add(lk, _seat_xf(pr), _idle_clip(V, pr), Crowd.now() - rng.randf() * 3.0, false)
 		V["priest_t"] = 4.0
 	elif not on and V.has("priest_cp"):
 		cr.remove(V["priest_cp"])
@@ -1055,6 +1126,9 @@ func _idle_clip(V: Dictionary, seat := {}) -> String:
 	match String(seat.get("pose", "sit")):
 		"priest":
 			return "pray" if rng.randf() < 0.7 else "s_talk"
+		"orator", "actor":                       # говорит с ростр, играет на сцене: жесты обеими руками, иногда — руки к небу
+			var z := rng.randf()
+			return "s_talk" if z < 0.42 else ("s_talk_m" if z < 0.84 else "pray")
 		"stand":                                 # на службе: слушают жреца, кивают, перешёптываются
 			var y := rng.randf()
 			return "listen" if y < 0.45 else ("stand" if y < 0.75 else ("s_talk" if y < 0.88 else "s_talk_m"))

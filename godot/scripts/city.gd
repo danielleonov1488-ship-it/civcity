@@ -121,6 +121,8 @@ func is_house(b: Dictionary) -> bool:
 
 const APRON_KINDS := ["house", "shop", "rp", "store", "military"]
 const KERB_TYPES := ["house_patrician", "temple", "pantheon"]
+## Большие постройки, под которыми весь след — мостовая (Land.pave_under): между ними и улицей нет травы
+const PAVE_TYPES := ["colosseum", "circus_fl", "forum", "theatre", "odeon", "thermae", "ludus"]
 const PAVE_SLOPE := 0.5                # дом и лавка на мостовой — только на почти ровном месте (иначе ступени вокруг)
 
 
@@ -133,12 +135,18 @@ func apron_of(b: Dictionary) -> int:
 		return 0
 	if String(b["type"]) in KERB_TYPES:
 		return 2
+	if String(b["type"]) in PAVE_TYPES:
+		return 3
 	return 1 if d["kind"] in APRON_KINDS else 0
 
 
 func _apron_add(b: Dictionary) -> void:
-	if apron_of(b) == 1:
-		land.wear_stamp(b["cells"], door_point(b))
+	match apron_of(b):
+		1:
+			land.wear_stamp(b["cells"], door_point(b))
+		3:
+			land.pave_under(b["cells"], true)
+			land.wear_stamp(b["cells"], door_point(b))   # и утоптанная кайма: щели между круглой стеной и улицей не зелёные
 
 
 ## Все окантовки заново (загрузка сохранения: окантовка не сохраняется — старые города получают её сами).
@@ -158,6 +166,8 @@ func apron_all() -> void:
 func _apron_remove(b: Dictionary) -> void:
 	if apron_of(b) == 0:
 		return
+	if apron_of(b) == 3:
+		land.pave_under(b["cells"], false)
 	land.wear_block.erase(int(b["id"]))
 	_apron_refresh(b)
 
@@ -181,7 +191,7 @@ func _apron_refresh(b: Dictionary) -> void:
 	var area := Rect2i(lo - Vector2i(m, m), hi - lo + Vector2i(2 * m + 1, 2 * m + 1))
 	for id in buildings:
 		var o: Dictionary = buildings[id]
-		if int(o["id"]) == int(b["id"]) or apron_of(o) != 1:
+		if int(o["id"]) == int(b["id"]) or not (apron_of(o) in [1, 3]):
 			continue
 		var oc := land.cell(o["pos"])
 		if area.grow(80).has_point(oc):          # грубо по середине (постройки до ~40 м), точнее — по клеткам
