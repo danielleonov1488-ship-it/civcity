@@ -241,6 +241,13 @@ const PERK_MAX := 5
 const MAX_LEVEL := 40
 ## Секунд настоящего времени на улучшение до уровня n: от 5 минут до двух суток (выше 10-го — по двое суток)
 const UPGRADE_TIME := [0, 0, 300, 1800, 3600, 5400, 7200, 14400, 28800, 86400, 172800]
+## «Уютный Рим» / Легион 2.0, этап 0 (docs/LEGION_V2.md 4.2–4.3): в новой игре (City.cozy_v) — дольше стройки, строителей
+## мало (1, с «Посёлка» — 2, с «Города» — 3: всё сразу не улучшить), повтор пройденного боя приносит меньше (не ферма)
+const COZY_TIME_H := [0, 0, 0.25, 1, 2, 4, 8, 12, 18, 26, 36]
+const COZY_TIME_OVER_H := 48.0             # выше 10-го уровня (круги походов) — двое суток на шаг
+const COZY_BUILDERS := [[0, 1], [3, 2], [5, 3]]     # [с уровня города, строителей]
+const COZY_REPEAT_K := 0.35                # повтор пройденного боя: доля награды
+static var repeat_k := 1.0                 # множитель награды за повтор (выставляет bind: в новой игре — COZY_REPEAT_K)
 ## Предел уровня бойцов от уровня города (индекс — Defs.LEVELS): растите город, чтобы растить армию.
 ## На уровне города, где открывается провинция, предел не ниже её самого трудного боя (target_level):
 ## лес (до 3-го) — с «Хутора», холмы (до 4-го) — с «Посёлка»
@@ -346,6 +353,32 @@ func _init() -> void:
 
 func bind(c: Object) -> void:
 	_city = weakref(c) if c != null else null
+	repeat_k = COZY_REPEAT_K if cozy() else 1.0
+
+
+## Новая игра «Уютного Рима» (City.cozy_v ≥ 1): строители, долгие стройки, повтор боёв дешевле
+func cozy() -> bool:
+	var c = city()
+	return c != null and int(c.get("cozy_v")) >= 1
+
+
+## Сколько улучшений может идти сразу ([] — без предела, старые города)
+func builders() -> int:
+	if not cozy():
+		return 99
+	var n := 1
+	for e: Array in COZY_BUILDERS:
+		if city_level() >= int(e[0]):
+			n = int(e[1])
+	return n
+
+
+## С какого уровня города будет ещё строитель (−1 — больше не будет)
+func next_builder_level() -> int:
+	for e: Array in COZY_BUILDERS:
+		if city_level() < int(e[0]):
+			return int(e[0])
+	return -1
 
 
 func city() -> Object:
@@ -954,8 +987,11 @@ func upgrade_info(type: String) -> Dictionary:
 	var mx := max_of(type)
 	var to := mini(cur + 1, mx)
 	var limit := mini(mx, cap_of(type))
+	var secs := float(UPGRADE_TIME[mini(to, UPGRADE_TIME.size() - 1)])
+	if cozy():
+		secs = 3600.0 * (float(COZY_TIME_H[to]) if to < COZY_TIME_H.size() else COZY_TIME_OVER_H)
 	return {"cur": cur, "to": to, "max": cur >= mx, "blocked": cur + 1 > limit, "limit": limit,
-		"cost": level_cost(type, to), "time": float(UPGRADE_TIME[mini(to, UPGRADE_TIME.size() - 1)]) / maxf(0.001, time_k)}
+		"cost": level_cost(type, to), "time": secs / maxf(0.001, time_k)}
 
 
 ## Можно ли улучшить ("" — можно, иначе почему нельзя)
@@ -966,6 +1002,9 @@ func can_upgrade(type: String) -> String:
 		return unit_lock_text(type)
 	if upg.has(type):
 		return "Уже улучшается"
+	if upg.size() >= builders():
+		var nb := next_builder_level()
+		return "Все строители заняты (%d из %d).%s" % [upg.size(), builders(), (" Ещё строитель — когда город станет «%s»." % Defs.LEVELS[nb]["name"]) if nb >= 0 else ""]
 	var i := upgrade_info(type)
 	if i["max"]:
 		return "Максимальный уровень"
@@ -1047,6 +1086,7 @@ func finish_upgrade(type: String) -> String:
 ## Проверка таймеров по настоящим часам — улучшения идут, даже когда игра закрыта.
 ## Возвращает тексты событий (City кладёт их в колокольчик)
 func tick() -> Array:
+	repeat_k = COZY_REPEAT_K if cozy() else 1.0
 	var out := []
 	var t := now()
 	for type in upg.keys():
@@ -1619,7 +1659,7 @@ static func recommended_level(st: Dictionary) -> int:
 
 ## Награда с учётом первой победы
 static func reward_for(st: Dictionary, first: bool) -> Dictionary:
-	var k := FIRST_K if first else 1.0
+	var k := FIRST_K if first else repeat_k
 	var out := {}
 	for res in st["reward"]:
 		out[res] = maxi(1, roundi(float(st["reward"][res]) * k))
@@ -1633,6 +1673,7 @@ func food_cost(st: Dictionary) -> int:
 
 ## Можно ли в бой ("" — можно, иначе почему нельзя)
 func can_fight(st: Dictionary) -> String:
+	repeat_k = COZY_REPEAT_K if cozy() else 1.0     # город мог стать «Уютным Римом» после bind (новая игра)
 	if not window_open():
 		return lock_text()
 	if not region_rank_ok(int(st["r"])):

@@ -19,6 +19,7 @@ func _ready() -> void:
 	_arrive()
 	_save()
 	_visits()
+	_legion()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -152,3 +153,31 @@ func _visits() -> void:
 	var h0 := c0.place("house_pleb", Land.START, 0.0, 0, 0, true)
 	c0.note_visit(int(h0["id"]), "bath")
 	_check(c0.visits.is_empty(), "старый город — походы не считаются")
+
+
+## Легион 2.0, этап 0 в новой игре: строитель один (всё сразу не улучшить), стройки дольше, повтор боя — треть награды
+func _legion() -> void:
+	print("== Легион: строители и время")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 1e7
+	var L: Legion = c.legion
+	c.research["legion"] = true
+	c.research["archery"] = true
+	c.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
+	c.place("range", Land.START + Vector2(-20, 0), 0.0, 0, 0, true)
+	L._set_level("legionary", 8)
+	var t9 := float(L.upgrade_info("legionary")["time"])
+	L._set_level("legionary", 1)
+	var ok1 := L.upgrade("legionary")
+	var why := L.can_upgrade("archer")
+	_check(L.builders() == 1 and ok1 and why.begins_with("Все строители заняты") and is_equal_approx(t9, 26.0 * 3600.0),
+		"строитель один: второе улучшение — «%s»; 9-й уровень — %.0f ч" % [why, t9 / 3600.0])
+	L.tick()
+	var st := {"reward": {"money": 100}}
+	var rep: int = int(Legion.reward_for(st, false)["money"])
+	var c0 := City.new(Land.new())
+	c0.legion.tick()
+	var rep0: int = int(Legion.reward_for(st, false)["money"])
+	c.legion.tick()
+	_check(rep == 35 and rep0 == 100 and c0.legion.builders() > 5, "повтор боя: в новой игре %d из 100, в старой %d; в старой строители без предела" % [rep, rep0])
