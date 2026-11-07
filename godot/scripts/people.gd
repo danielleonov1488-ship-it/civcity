@@ -919,6 +919,12 @@ func _new_cat() -> Dictionary:
 	if houses.is_empty():
 		return {}
 	var h: Dictionary = houses[rng.randi() % houses.size()]
+	if int(city.cozy_v) >= 1:
+		# «Уютный Рим», этап 4: кошка охотнее приходит к семье, которая её хочет (и где кошки ещё нет)
+		var want := houses.filter(func(b): return (b.get("families", []) as Array).any(func(f): return Balance.traits_of(String(f["name"])).has("cat"))
+			and not city.cats.any(func(e): return int(e.get("home", -1)) == int(b["id"])))
+		if not want.is_empty() and rng.randf() < 0.75:
+			h = want[rng.randi() % want.size()]
 	var used := {}
 	for e: Dictionary in city.cats:
 		used[String(e["nm"])] = true

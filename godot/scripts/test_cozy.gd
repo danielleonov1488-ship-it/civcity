@@ -19,6 +19,7 @@ func _ready() -> void:
 	_arrive()
 	_save()
 	_visits()
+	_traits()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -152,3 +153,36 @@ func _visits() -> void:
 	var h0 := c0.place("house_pleb", Land.START, 0.0, 0, 0, true)
 	c0.note_visit(int(h0["id"]), "bath")
 	_check(c0.visits.is_empty(), "старый город — походы не считаются")
+
+
+## Этап 4: черты семей — по фамилии, всегда одни и те же, без противоречий; цветовод радуется цветам у дома
+func _traits() -> void:
+	print("== черты семей")
+	var all_ok := true
+	var same := true
+	var with_fl := ""
+	for nm: String in Defs.FAMILIES:
+		var t := Balance.traits_of(nm)
+		same = same and t == Balance.traits_of(nm)
+		all_ok = all_ok and t.size() >= 1 and t.size() <= 2 and not (t.has("crowd") and t.has("quiet")) and not (t.has("cat") and t.has("allergy"))
+		if with_fl == "" and t.has("flowers") and t.size() == 1:
+			with_fl = nm
+	_check(all_ok and same and with_fl != "", "черты: у каждой семьи 1–2, всегда те же, без противоречий (цветоводы — %s)" % with_fl)
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 1e6
+	var h := c.place("house_pleb", Land.START, 0.0, 0, 0, true)
+	h["pop"] = 4
+	h["families"] = [{"name": with_fl, "n": 4}]
+	c.compute()
+	var bad := 0
+	for p: Array in h["happy_parts"]:
+		bad += int(p[1]) if String(p[0]).begins_with("Цветоводы") else 0
+	c.research["q_lights"] = true
+	c.place("flowers", Land.START + Vector2(0, 4), 0.0, 0, 0, true)
+	c.compute()
+	var good := 0
+	for p: Array in h["happy_parts"]:
+		good += int(p[1]) if String(p[0]).begins_with("Цветоводы") else 0
+	_check(bad == Balance.TRAIT_BAD and good == Balance.TRAIT_OK and City.trait_text(with_fl) == "цветовод",
+		"цветоводы: без цветов %d%%, с клумбой у дома %+d%% («%s»)" % [bad, good, City.trait_text(with_fl)])

@@ -76,6 +76,45 @@ const VISIT_NAME := {"temple": "Были на службе в храме", "bath
 const VISIT_H := 48
 
 
+## Этап 4: черты семей — у каждой семьи 1–2 (по фамилии, всегда те же): одно рядом радует, другое мешает.
+## name — в карточке, why — строка счастья, когда черта довольна / недовольна
+const TRAITS := {
+	"crowd": {"name": "любит шумные улицы", "ok": "Любят шум: людная улица"},
+	"quiet": {"name": "любит тишину", "ok": "Любят тишину: спокойно", "bad": "Любят тишину: слишком людно"},
+	"flowers": {"name": "цветовод", "ok": "Цветоводы: цветы у дома", "bad": "Цветоводы: цветов рядом нет"},
+	"dark": {"name": "боится темноты", "ok": "Боятся темноты: фонарь рядом", "bad": "Боятся темноты: ни одного фонаря"},
+	"pious": {"name": "набожные", "ok": "Набожные: храм рядом или служба", "bad": "Набожные: нет храма"},
+	"bather": {"name": "любят термы", "ok": "Любят термы: сходили", "bad": "Любят термы: давно не были"},
+	"theatre": {"name": "театралы", "ok": "Театралы: были на представлении"},
+	"cat": {"name": "хотят кошку", "ok": "Хотят кошку: кошка дома или рядом"},
+	"allergy": {"name": "аллергия на животных", "bad": "Аллергия: животные у дома"},
+	"green": {"name": "любят зелень", "ok": "Любят зелень: деревья рядом"},
+	"market": {"name": "любят рынок", "ok": "Любят рынок: много разных лавок"},
+}
+const TRAIT_ORDER := ["crowd", "quiet", "flowers", "dark", "pious", "bather", "theatre", "cat", "allergy", "green", "market"]
+const TRAIT_OK := 3                        # довольная черта, %
+const TRAIT_BAD := -3                      # недовольная черта, %
+## что считается рядом (DECOR_RADIUS от дома): виды украшений по облику (Defs.base_of)
+const T_FLOWERS := ["flowers", "planter", "wall_flowers", "rosearch", "parterre", "topiary", "garland", "trellis", "veggies"]
+const T_LIGHTS := ["lamp_post", "candelabrum", "wall_torch", "wall_lamp", "brazier", "bigbrazier", "torchpost", "lanterns", "bigtorch", "firebarrel"]
+const T_GREEN := ["tree", "cypress", "palm", "bush", "hedge", "bigtree", "topiary", "garden_pool"]
+const T_PETS := ["sheep", "duck", "swan", "catbasket", "kittenbasket", "donkeypost", "cow", "horse"]
+const T_CATS := ["catbasket", "kittenbasket"]
+
+
+## Черты семьи по фамилии: 1–2, всегда одни и те же (переезд, загрузка); «тишина» и «шум», «кошка» и «аллергия» — не вместе
+static func traits_of(fam_name: String) -> Array:
+	var h := absi(hash(fam_name + "·черты"))
+	var a: String = TRAIT_ORDER[h % TRAIT_ORDER.size()]
+	var out := [a]
+	if (h >> 8) % 3 != 0:
+		var b: String = TRAIT_ORDER[(h >> 12) % TRAIT_ORDER.size()]
+		var clash := {"crowd": "quiet", "quiet": "crowd", "cat": "allergy", "allergy": "cat"}
+		if b != a and clash.get(a, "") != b:
+			out.append(b)
+	return out
+
+
 ## Штраф за величину города при pop жителях (≤ 0)
 static func size_penalty(pop: int) -> int:
 	return -mini(SIZE_MAX, maxi(0, pop - SIZE_FREE) / SIZE_STEP)
