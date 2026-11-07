@@ -340,8 +340,42 @@ func _run() -> void:
 	DirAccess.remove_absolute(dir + "/city.json")
 	_unlockable(false)
 	_unlockable(true)
+	_bench_face()
 
 	print("FIX DONE fails=%d" % fails)
+
+
+## Скамья без спинки у стены: житель садится лицом к свободной стороне, а не к стене; обе стороны заняты — не садится
+func _bench_face() -> void:
+	var c: City = game.city
+	var ppl = game.people
+	var bp := Land.START + Vector2(6, 9)
+	var bench := c.place("bench", bp, 0.0, 0, 0, true)
+	var d0: Dictionary = ppl._seat_target({}, bench)
+	var seats: Array = ppl._bench_seats(bench)
+	var xf := c.xf(bench)
+	var mid: Vector3 = xf * (seats[int(d0.get("k", 0))][3] as Vector3)
+	var f := (d0["p"] as Vector2 - Vector2(mid.x, mid.z)).normalized()
+	var L: Land = game.land
+	var saved := {}
+	var block := func(dir: Vector2) -> void:
+		for dd: float in [0.55, 0.7, 0.9]:
+			for so: float in [-1.2, -0.6, 0.0, 0.6, 1.2]:
+				var q := Vector2(mid.x, mid.z) + dir * dd + Vector2(-dir.y, dir.x) * so
+				var cc := L.cell(q)
+				var k := L.idx(cc.x, cc.y)
+				if not saved.has(k):
+					saved[k] = L.occ[k]
+				L.occ[k] = 987654
+	block.call(f)
+	var d1: Dictionary = ppl._seat_target({}, bench)
+	var turned := not d1.is_empty() and absf(wrapf(float(d1["yaw"]) - float(d0["yaw"]) - PI, -PI, PI)) < 0.01 		and (d1["p"] as Vector2).distance_to(Vector2(mid.x, mid.z) - f * People.SIT_BACK) < 0.3
+	block.call(-f)
+	var d2: Dictionary = ppl._seat_target({}, bench)
+	for k in saved:
+		L.occ[k] = saved[k]
+	c.remove(bench, false, true)
+	check(not d0.is_empty() and turned and d2.is_empty(), "скамья у стены: садятся лицом к свободной стороне, обе заняты — не садятся", [d0.get("yaw"), d1.get("yaw"), d2])
 	get_tree().quit(1 if fails > 0 else 0)
 
 

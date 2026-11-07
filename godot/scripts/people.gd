@@ -1691,7 +1691,11 @@ func _decor_target(r: Dictionary, from: Vector2, base: String, act: String, maxd
 	return {}
 
 
-## Сиденья скамьи (в осях постройки): [где стоят ступни, куда смотрит, высота сиденья]
+## Скамьи без спинки (садиться можно с обеих сторон): житель садится лицом туда, где свободно, а не к стене
+const BENCH_TWO_SIDED := ["SM_Prop_Seat_Bench_01", "SM_Prop_Seat_Bench_02", "SM_Prop_Seat_Bench_03", "SM_Prop_Seat_Bench_05"]
+
+
+## Сиденья скамьи (в осях постройки): [где стоят ступни, куда смотрит, высота сиденья, середина сиденья, без спинки ли]
 func _bench_seats(b: Dictionary) -> Array:
 	var key := "s:%s:%d:%d" % [b["type"], int(b.get("variant", 0)), int(b.get("color", 0))]
 	if _bp_spots.has(key):
@@ -1713,7 +1717,7 @@ func _bench_seats(b: Dictionary) -> Array:
 		var n := 3 if w > 1.55 else 2
 		for i in n:
 			var o := (i - (n - 1) / 2.0) * w * (0.3 if n == 3 else 0.44)
-			out.append([mid + side * o + fwd * SIT_BACK, atan2(fwd.x, fwd.z), seat_h])
+			out.append([mid + side * o + fwd * SIT_BACK, atan2(fwd.x, fwd.z), seat_h, mid + side * o, nm in BENCH_TWO_SIDED])
 		break
 	_bp_spots[key] = out
 	return out
@@ -1731,8 +1735,28 @@ func _seat_target(r: Dictionary, b: Dictionary) -> Dictionary:
 			continue
 		var s: Array = seats[k]
 		var w: Vector3 = xf * (s[0] as Vector3)
-		return {"act": "sit", "bid": b["id"], "k": k, "p": Vector2(w.x, w.z), "yaw": float(b["yaw"]) + float(s[1]), "seat": float(s[2])}
+		var yaw := float(b["yaw"]) + float(s[1])
+		# лицом к стене или к постройке не садятся: у скамьи без спинки — на другую сторону, у скамьи со спинкой — не сюда
+		var mw: Vector3 = xf * (s[3] as Vector3) if s.size() > 3 else w
+		var f := Vector2(w.x - mw.x, w.z - mw.z).normalized()
+		if f != Vector2.ZERO and not _front_free(Vector2(mw.x, mw.z), f, int(b["id"])):
+			if s.size() > 4 and bool(s[4]) and _front_free(Vector2(mw.x, mw.z), -f, int(b["id"])):
+				w = mw - (w - mw)
+				yaw += PI
+			else:
+				continue
+		return {"act": "sit", "bid": b["id"], "k": k, "p": Vector2(w.x, w.z), "yaw": yaw, "seat": float(s[2])}
 	return {}
+
+
+## Перед сидящим свободно: на 0,55 и 0,9 м от середины сиденья нет другой постройки (стены дома, ограды, изгороди)
+func _front_free(mid: Vector2, f: Vector2, own: int) -> bool:
+	for d: float in [0.55, 0.9]:
+		var c := land.cell(mid + f * d)
+		var o := int(land.occ[land.idx(c.x, c.y)])
+		if o != 0 and o != own:
+			return false
+	return true
 
 
 func _front_target(r: Dictionary, b: Dictionary, act: String) -> Dictionary:
