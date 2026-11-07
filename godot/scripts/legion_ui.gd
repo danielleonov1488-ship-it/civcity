@@ -911,6 +911,8 @@ func _do(what: String, id: String) -> void:
 			ok = lg.train(int(id))
 			if not ok:
 				_say(lg.can_train(int(id)))
+		"sell":
+			ok = lg.sell_item(int(id))
 	if ok and game and game.sound:
 		game.sound.ui("coins")
 
@@ -1655,6 +1657,17 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 		if not ch.is_empty():
 			v.add_child(_wl("Все 30 звёзд «%s»! Сундук Славы +%d." % [ch["region"], int(ch["glory"])], 420, 16, C_GOLD, true, true))
 	v.add_child(_wl("Вернулись %d из %d бойцов" % [int(out.get("alive", 0)), int(out.get("total", 0))], 420, 16, C_INK, true, true))
+	var drop: Dictionary = out.get("item", {})
+	if drop.has("full"):
+		v.add_child(_wl("Склад полон — вещь из добычи не уместилась. Продайте лишнее во вкладке «Воины».", 420, 14, C_BAD, false, true))
+	elif not drop.is_empty():
+		var dh := HBoxContainer.new()
+		dh.alignment = BoxContainer.ALIGNMENT_CENTER
+		dh.add_theme_constant_override("separation", 6)
+		dh.add_child(_l("Добыча:", 17, true, C_INK))
+		dh.add_child(_l("%s · %d ур." % [Gear.name_of(drop), int(drop["ilvl"])], 17, true, Gear.color(int(drop["rarity"]))))
+		v.add_child(dh)
+		v.add_child(_wl(Gear.stats_text(drop), 420, 14, C_SOFT, false, true))
 	var hurt: Array = out.get("wounded", [])
 	if not hurt.is_empty():                  # Легион 2.0: павшие ранены, лечатся (насмерть никто не гибнет)
 		v.add_child(_wl("Ранены: %s — поправятся во вкладке «Воины»" % ", ".join(hurt), 420, 14, C_BAD, false, true))
@@ -1892,6 +1905,12 @@ func _build_soldiers() -> Control:
 	var hint := _l("тренируются %d из %d · раненых %d, коек в Лазарете %d" % [lg.count_state("train"), lg.train_places(), lg.count_state("wound"), lg.beds()], 14, true, C_SOFT)
 	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hh.add_child(hint)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hh.add_child(sp)
+	var stb := _btn("Склад: %d из %d" % [lg.store_count(), lg.store_cap()], 0, 14, _ic39("trophy"), "", func(): _store())
+	stb.tooltip_text = "Вещи из добычи, что не надеты: посмотреть и продать лишнее"
+	hh.add_child(stb)
 	left.add_child(hh)
 	var sc := ScrollContainer.new()
 	sc.custom_minimum_size = Vector2(0, CH - 50)
@@ -1978,6 +1997,11 @@ func _soldier_card(s: Dictionary) -> Control:
 		v.add_child(bar)
 	if st != "ready":
 		_live.append({"kind": "soldier", "sid": int(s["id"]), "label": stl, "bar": bar})
+	var gh := HBoxContainer.new()
+	gh.add_theme_constant_override("separation", 4)
+	for slot: String in Gear.SLOTS:
+		gh.add_child(_gear_slot(s, slot))
+	v.add_child(gh)
 	var bv := VBoxContainer.new()
 	bv.add_theme_constant_override("separation", 4)
 	bv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1997,6 +2021,140 @@ func _soldier_card(s: Dictionary) -> Control:
 	bv.add_child(db)
 	h.add_child(bv)
 	return p
+
+
+const GEAR_ICON := {"weapon": "swords", "offhand": "shield", "helmet": "helmet", "armor": "legion", "badge": "laurels"}
+
+
+## Слот вещи воина: цвет — редкость надетой вещи (пусто — бледный); щелчок — выбрать вещь
+func _gear_slot(s: Dictionary, slot: String) -> Control:
+	var sz := 34.0
+	var it := lg.item(int((s.get("gear", {}) as Dictionary).get(slot, 0)))
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(sz, sz)
+	var sb := StyleBoxFlat.new()
+	sb.set_corner_radius_all(6)
+	sb.set_border_width_all(2)
+	if it.is_empty():
+		sb.bg_color = Color(1, 0.97, 0.9, 0.5)
+		sb.border_color = Color(C_SOFT, 0.35)
+	else:
+		var col := Gear.color(int(it["rarity"]))
+		sb.bg_color = col.lerp(Color.WHITE, 0.55)
+		sb.border_color = col
+	b.add_theme_stylebox_override("normal", sb)
+	var sh := sb.duplicate() as StyleBoxFlat
+	sh.bg_color = sb.bg_color.lightened(0.15)
+	b.add_theme_stylebox_override("hover", sh)
+	b.add_theme_stylebox_override("pressed", sh)
+	var ic := _tr(hud.ico(String(GEAR_ICON[slot]), 64), sz - 10, it.is_empty())
+	ic.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ic.offset_left = 5
+	ic.offset_top = 5
+	ic.offset_right = -5
+	ic.offset_bottom = -5
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(ic)
+	var sn := String(Gear.SLOT_NAME[slot])
+	if slot == "offhand" and String(s["cls"]) == "archer":
+		sn = "колчан"
+	b.tooltip_text = ("%s: пусто — щелчок, чтобы надеть" % sn.capitalize()) if it.is_empty() else \
+		"%s · %d ур.\n%s\nЩелчок — заменить или снять" % [Gear.name_of(it), int(it["ilvl"]), Gear.stats_text(it)]
+	var sid := int(s["id"])
+	b.pressed.connect(func(): _gear_pick(sid, slot))
+	return b
+
+
+## Выбор вещи на слот: надетая сверху (снять), дальше подходящие со Склада — лучшие первыми
+func _gear_pick(sid: int, slot: String) -> void:
+	var s := lg.soldier(sid)
+	if s.is_empty():
+		return
+	var p := _modal(520)
+	var v: VBoxContainer = p.get_child(0)
+	v.add_child(_title("%s: %s" % [String(s["name"]), String(Gear.SLOT_NAME[slot])], 22))
+	var cur := lg.item(int((s.get("gear", {}) as Dictionary).get(slot, 0)))
+	if not cur.is_empty():
+		var ch := HBoxContainer.new()
+		ch.add_theme_constant_override("separation", 8)
+		ch.add_child(_l("Надето: %s · %d ур." % [Gear.name_of(cur), int(cur["ilvl"])], 16, true, Gear.color(int(cur["rarity"]))))
+		var sp := Control.new()
+		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ch.add_child(sp)
+		ch.add_child(_btn("Снять", 0, 14, null, "" if lg.store_count() < lg.store_cap() else "Склад полон", func(): lg.unequip(sid, slot); _close_overlay()))
+		v.add_child(ch)
+		v.add_child(_wl(Gear.stats_text(cur), 480, 13, C_SOFT))
+		v.add_child(_hdiv(10))
+	var list := []
+	for it: Dictionary in lg.items:
+		if String(it["slot"]) == slot and int(it.get("on", 0)) != sid and Gear.fits(it, String(s["cls"])):
+			list.append(it)
+	list.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return Gear.score(a) > Gear.score(b))
+	if list.is_empty():
+		v.add_child(_wl("Подходящих вещей нет. Вещи приносят победы в походах — боссы наверняка и получше.", 480, 15, C_SOFT))
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(0, mini(list.size(), 6) * 52)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 4)
+	lv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for it: Dictionary in list:
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", -2)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tv.add_child(_l("%s · %d ур." % [Gear.name_of(it), int(it["ilvl"])], 15, true, Gear.color(int(it["rarity"]))))
+		var who := ""
+		if int(it.get("on", 0)) != 0:
+			who = " · сейчас у: %s" % String(lg.soldier(int(it["on"])).get("name", "?"))
+		tv.add_child(_l(Gear.stats_text(it) + who, 13, false, C_SOFT))
+		h.add_child(tv)
+		var iid := int(it["id"])
+		h.add_child(_btn("Надеть", 0, 14, null, "", func(): lg.equip(sid, iid); _close_overlay()))
+		lv.add_child(h)
+	sc.add_child(lv)
+	v.add_child(sc)
+	v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
+	_center_later(p)
+
+
+## Склад: вещи, что не надеты, — продать лишнее (денарии в казну)
+func _store() -> void:
+	var p := _modal(560)
+	var v: VBoxContainer = p.get_child(0)
+	v.add_child(_title("Склад: %d из %d" % [lg.store_count(), lg.store_cap()], 22))
+	v.add_child(_wl("Вещи из добычи, что сейчас никто не носит. Надеть — щелчком по слоту в карточке воина. Лишнее можно продать.", 520, 13, C_SOFT))
+	var list := []
+	for it: Dictionary in lg.items:
+		if int(it.get("on", 0)) == 0:
+			list.append(it)
+	list.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return Gear.score(a) > Gear.score(b))
+	if list.is_empty():
+		v.add_child(_wl("Пока пусто.", 520, 15, C_INK, true))
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(0, mini(list.size(), 7) * 50)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 4)
+	lv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for it: Dictionary in list:
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", -2)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tv.add_child(_l("%s · %d ур." % [Gear.name_of(it), int(it["ilvl"])], 15, true, Gear.color(int(it["rarity"]))))
+		tv.add_child(_l(Gear.stats_text(it), 13, false, C_SOFT))
+		h.add_child(tv)
+		var iid := str(int(it["id"]))
+		h.add_child(_btn("Продать · %s" % hud.fmt(float(Legion.item_price(it))), 0, 14, hud.ico("coins", 64), "", func(): _do("sell", iid); _store()))
+		lv.add_child(h)
+	sc.add_child(lv)
+	v.add_child(sc)
+	v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
+	_center_later(p)
 
 
 func _recruit_row(i: int) -> Control:

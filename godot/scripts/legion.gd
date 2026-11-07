@@ -340,6 +340,9 @@ var soldiers: Array = []    # [{id, name, from, cls, stars, rank, train_end, tra
 var recruits: Array = []    # новобранцы сегодня: [{name, from, cls, stars}]
 var recruit_day := -1       # день (по Москве), когда пришли эти новобранцы
 var sid_next := 1
+## Легион 2.0, этап 2 (Gear): вещи — [{id, slot, cls, rarity, ilvl, engine?, on (id воина или 0)}]
+var items: Array = []
+var iid_next := 1
 var _rng := RandomNumberGenerator.new()
 
 ## Для проверок: ускорение таймеров улучшений (не сохраняется)
@@ -464,7 +467,7 @@ func class_open(cls: String) -> bool:
 
 func _add_soldier(d: Dictionary) -> Dictionary:
 	var s := {"id": sid_next, "name": String(d.get("name", "")), "from": String(d.get("from", "")), "cls": String(d.get("cls", "legionary")),
-		"stars": clampi(int(d.get("stars", 1)), 1, 5), "rank": 0, "train_end": 0.0, "train_total": 0.0, "wound_end": 0.0, "battles": 0, "falls": 0}
+		"stars": clampi(int(d.get("stars", 1)), 1, 5), "rank": 0, "train_end": 0.0, "train_total": 0.0, "wound_end": 0.0, "battles": 0, "falls": 0, "gear": {}}
 	sid_next += 1
 	soldiers.append(s)
 	return s
@@ -560,6 +563,10 @@ func dismiss(id: int) -> bool:
 	var s := soldier(id)
 	if s.is_empty():
 		return false
+	for slot in (s.get("gear", {}) as Dictionary):
+		var it := item(int(s["gear"][slot]))
+		if not it.is_empty():
+			it["on"] = 0                         # вещи — обратно на Склад
 	soldiers.erase(s)
 	changed.emit()
 	return true
@@ -601,6 +608,134 @@ func train_progress(s: Dictionary) -> float:
 	return clampf(1.0 - s_left(s) / maxf(1.0, tot), 0.0, 1.0)
 
 
+# ---------- снаряжение (этап 2) ----------
+
+## Мест на Складе (вещи, что не надеты): 20 + 5 × уровень Склада оружия
+func store_cap() -> int:
+	return Gear.STORE_BASE + Gear.STORE_PER * (int(blevels.get("armory", 1)) if b_built("armory") else 0)
+
+
+func store_count() -> int:
+	var n := 0
+	for it: Dictionary in items:
+		if int(it.get("on", 0)) == 0:
+			n += 1
+	return n
+
+
+func item(id: int) -> Dictionary:
+	for it: Dictionary in items:
+		if int(it["id"]) == id:
+			return it
+	return {}
+
+
+## Положить вещь на Склад (полон — {}); возвращает вещь с номером
+func add_item(it: Dictionary) -> Dictionary:
+	if store_count() >= store_cap():
+		return {}
+	var e := it.duplicate()
+	e["id"] = iid_next
+	e["on"] = 0
+	iid_next += 1
+	items.append(e)
+	return e
+
+
+## Что дают надетые вещи воина: {atk, hp, armor}
+func gear_bonus(s: Dictionary) -> Dictionary:
+	var out := {"atk": 0.0, "hp": 0.0, "armor": 0.0}
+	for slot in (s.get("gear", {}) as Dictionary):
+		var it := item(int(s["gear"][slot]))
+		if it.is_empty():
+			continue
+		var st := Gear.stats(it)
+		for k in out:
+			out[k] = float(out[k]) + float(st[k])
+	return out
+
+
+func can_equip(sid: int, iid: int) -> String:
+	var s := soldier(sid)
+	var it := item(iid)
+	if s.is_empty() or it.is_empty():
+		return "Нет такой вещи"
+	if not Gear.fits(it, String(s["cls"])):
+		return "Это для класса «%s»" % Soldiers.class_name_of(String(it["cls"]))
+	return ""
+
+
+## Надеть вещь (снимает прежнюю того же слота на Склад; вещь с другого воина переходит)
+func equip(sid: int, iid: int) -> bool:
+	if can_equip(sid, iid) != "":
+		return false
+	var s := soldier(sid)
+	var it := item(iid)
+	var slot := String(it["slot"])
+	var was := int(it.get("on", 0))
+	if was != 0 and was != sid:
+		var o := soldier(was)
+		if not o.is_empty():
+			(o["gear"] as Dictionary).erase(slot)
+	if not s.has("gear"):
+		s["gear"] = {}
+	var old := item(int((s["gear"] as Dictionary).get(slot, 0)))
+	if not old.is_empty():
+		old["on"] = 0
+	s["gear"][slot] = iid
+	it["on"] = sid
+	changed.emit()
+	return true
+
+
+func unequip(sid: int, slot: String) -> bool:
+	var s := soldier(sid)
+	if s.is_empty() or not (s.get("gear", {}) as Dictionary).has(slot):
+		return false
+	if store_count() >= store_cap():
+		return false
+	var it := item(int(s["gear"][slot]))
+	if not it.is_empty():
+		it["on"] = 0
+	(s["gear"] as Dictionary).erase(slot)
+	changed.emit()
+	return true
+
+
+## Цена вещи у торговца: денарии в казну
+static func item_price(it: Dictionary) -> int:
+	return int(round(6.0 * int(it.get("ilvl", 1)) * pow(1.0 + int(it.get("rarity", 0)), 1.6) / 5.0)) * 5
+
+
+func sell_item(iid: int) -> bool:
+	var it := item(iid)
+	if it.is_empty() or int(it.get("on", 0)) != 0:
+		return false
+	var c = city()
+	if c != null:
+		c.money = minf(float(c.money) + item_price(it), maxf(float(c.money), float(c.money_cap())))
+	items.erase(it)
+	changed.emit()
+	return true
+
+
+## Добыча после победы (новая игра): шанс вещи, босс — наверняка и лучше; уровень — по глубине похода
+func _drop(st: Dictionary, first: bool) -> Dictionary:
+	var boss := bool(st.get("boss", false))
+	var p := 1.0 if boss and first else (Gear.DROP_FIRST if first else Gear.DROP_REPEAT)
+	if _rng.randf() > p:
+		return {}
+	var open := []
+	for cls in Soldiers.CLASS_IDS:
+		if class_open(cls):
+			open.append(cls)
+	var ilvl := 1 + int(st.get("idx", 0)) / 3
+	var it := add_item(Gear.roll(_rng, ilvl, boss, open))
+	if it.is_empty():
+		return {"full": true}
+	return it
+
+
 ## Лучший готовый воин класса cls, ещё не занятый (used: id → true)
 func _best_ready(cls: String, used: Dictionary) -> Dictionary:
 	var best := {}
@@ -629,7 +764,9 @@ func slot_soldiers() -> Array:
 ## Боец-воин: числа его рода (уровень здания) + звёзды и ранг; sid и sname — для ранений и окна
 func soldier_stats(s: Dictionary, type: String) -> Dictionary:
 	var b := Soldiers.bonus(s)
-	var st := unit_stats(type, int(levels.get(type, 1)), bonus("atk") + forge_b() + b, bonus("hp") + forge_b() + b, armory_b())
+	var g := gear_bonus(s)
+	var st := unit_stats(type, int(levels.get(type, 1)), bonus("atk") + forge_b() + b + float(g["atk"]), bonus("hp") + forge_b() + b + float(g["hp"]),
+		armory_b() + float(g["armor"]))
 	st["sid"] = int(s["id"])
 	st["sname"] = String(s["name"])
 	return st
@@ -2278,6 +2415,8 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 			reward["glory"] = int(reward.get("glory", 0)) + STAR_GLORY
 			out["star_glory"] = STAR_GLORY
 		out["money_lost"] = _give(reward)      # казна полна — сколько денариев не уместилось (окно итога скажет честно)
+		if army_on():
+			out["item"] = _drop(st, first)       # Легион 2.0: вещь в добычу (или {"full": true} — Склад полон)
 		out["reward"] = reward
 		out["chest"] = _chest(int(st["cycle"]), int(st["r"]))
 		wins += 1
@@ -2822,7 +2961,7 @@ func to_dict() -> Dictionary:
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
 		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
-		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next}
+		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -2894,6 +3033,23 @@ func from_dict(d: Dictionary) -> void:
 	for s in d.get("recruits", []):
 		if s is Dictionary and Soldiers.CLASSES.has(String(s.get("cls", ""))):
 			recruits.append((s as Dictionary).duplicate())
+	items = []
+	for it in d.get("items", []):
+		if it is Dictionary and String(it.get("slot", "")) in Gear.SLOTS:
+			var e: Dictionary = (it as Dictionary).duplicate()
+			e["id"] = int(e.get("id", 0))
+			e["on"] = int(e.get("on", 0))
+			e["rarity"] = clampi(int(e.get("rarity", 0)), 0, 4)
+			e["ilvl"] = maxi(1, int(e.get("ilvl", 1)))
+			items.append(e)
+	iid_next = int(d.get("iid_next", 1))
+	for it: Dictionary in items:
+		iid_next = maxi(iid_next, int(it["id"]) + 1)
+	for s: Dictionary in soldiers:
+		var gd := {}
+		for slot in (s.get("gear", {}) as Dictionary):
+			gd[String(slot)] = int(s["gear"][slot])
+		s["gear"] = gd
 	recruit_day = int(d.get("recruit_day", -1))
 	sid_next = int(d.get("sid_next", 1))
 	for s: Dictionary in soldiers:

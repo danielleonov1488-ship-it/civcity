@@ -21,6 +21,7 @@ func _ready() -> void:
 	_visits()
 	_legion()
 	_army()
+	_gear()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -253,3 +254,60 @@ func _army() -> void:
 	var hi: Array = Soldiers.star_odds(Soldiers.quality(90, 7))
 	_check(float(hi[2]) + float(hi[3]) + float(hi[4]) > 2.5 * (float(lo[2]) + float(lo[3]) + float(lo[4])),
 		"шанс 3★+: обычный город %.0f%%, счастливый большой %.0f%%" % [float(lo[2]) + float(lo[3]) + float(lo[4]), float(hi[2]) + float(hi[3]) + float(hi[4])])
+
+
+## Легион 2.0, этап 2: вещи 5 редкостей — числа, надеть/снять, класс, бой сильнее, добыча, Склад, продажа, сохранение
+func _gear() -> void:
+	print("== Легион: снаряжение")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 1e5
+	var L: Legion = c.legion
+	c.research["legion"] = true
+	c.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
+	L.army_tick()
+	var w0 := Gear.stats({"slot": "weapon", "rarity": 0, "ilvl": 1})
+	var w4 := Gear.stats({"slot": "weapon", "rarity": 4, "ilvl": 10})
+	_check(is_equal_approx(float(w4["atk"]) / float(w0["atk"]), 2.8 * 1.45), "легендарный 10-го уровня сильнее обычного 1-го в %.2f раза" % (float(w4["atk"]) / float(w0["atk"])))
+	var s: Dictionary = L.soldiers[0]
+	var sid := int(s["id"])
+	var before := L.soldier_stats(s, "legionary")
+	var sw := L.add_item({"slot": "weapon", "cls": "legionary", "rarity": 3, "ilvl": 5})
+	var bow := L.add_item({"slot": "weapon", "cls": "archer", "rarity": 2, "ilvl": 5})
+	var arm := L.add_item({"slot": "armor", "cls": "", "rarity": 1, "ilvl": 5})
+	var why := L.can_equip(sid, int(bow["id"]))
+	var ok := L.equip(sid, int(sw["id"])) and L.equip(sid, int(arm["id"]))
+	var after := L.soldier_stats(s, "legionary")
+	_check(ok and why.begins_with("Это для класса") and int(after["atk"]) > int(before["atk"]) and int(after["hp"]) > int(before["hp"]) and float(after["armor"]) > float(before["armor"]),
+		"надели меч и доспех: урон %d → %d, здоровье %d → %d; лук легионеру — «%s»" % [int(before["atk"]), int(after["atk"]), int(before["hp"]), int(after["hp"]), why])
+	_check(L.store_count() == 1 and Gear.name_of(sw) == "Эпический гладий" and Gear.name_of(arm) == "Добротная лорика", "на Складе 1 (лук); «%s», «%s»" % [Gear.name_of(sw), Gear.name_of(arm)])
+	# вещь переходит от воина к воину
+	var s2: Dictionary = L.soldiers[1]
+	L.equip(int(s2["id"]), int(arm["id"]))
+	_check(not (s["gear"] as Dictionary).has("armor") and int(L.item(int(arm["id"]))["on"]) == int(s2["id"]), "доспех перешёл ко второму воину")
+	L.unequip(int(s2["id"]), "armor")
+	_check(L.store_count() == 2 and int(L.item(int(arm["id"]))["on"]) == 0, "сняли — на Складе 2")
+	# продажа
+	c.money = 100.0
+	var m0 := float(c.money)
+	var price := Legion.item_price(bow)
+	L.sell_item(int(bow["id"]))
+	_check(L.store_count() == 1 and is_equal_approx(float(c.money) - m0, float(price)) and price > 0, "продали лук за %d ден." % price)
+	# добыча: босс — наверняка; Склад полон — честно
+	var boss := {"boss": true, "idx": 29}
+	var d := L._drop(boss, true)
+	_check(not d.is_empty() and not d.has("full") and int(d["ilvl"]) >= 9, "босс 3-й провинции: %s %d ур." % [Gear.name_of(d), int(d.get("ilvl", 0))])
+	var rar := [0, 0, 0, 0, 0]
+	for i in 400:
+		var it := Gear.roll(L._rng, 5, false, ["legionary"])
+		rar[int(it["rarity"])] += 1
+	while L.store_count() < L.store_cap():
+		L.add_item({"slot": "badge", "cls": "", "rarity": 0, "ilvl": 1})
+	var full := L._drop(boss, true)
+	_check(full.has("full") and rar[0] > rar[2] and rar[2] > rar[4], "Склад полон (%d) — «не уместилась»; редкости из 400: %s" % [L.store_cap(), str(rar)])
+	# сохранение
+	var L2 := Legion.new()
+	L2.from_dict(JSON.parse_string(JSON.stringify(L.to_dict())))
+	var s3 := L2.soldier(sid)
+	_check(L2.items.size() == L.items.size() and int((s3["gear"] as Dictionary).get("weapon", 0)) == int(sw["id"]) and L2.iid_next == L.iid_next
+		and int(L2.soldier_stats(s3, "legionary")["atk"]) == int(after["atk"]), "сохранение: вещей %d, меч на месте, урон тот же" % L2.items.size())

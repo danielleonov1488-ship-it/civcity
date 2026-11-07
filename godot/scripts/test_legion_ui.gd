@@ -725,11 +725,28 @@ func _soldiers(c: City, lg: Legion, ui) -> void:
 	(lg.soldiers[3] as Dictionary)["wound_end"] = Legion.now() + 1500.0
 	lg.recruit_day = -1
 	lg.army_tick()
+	# вещи разной редкости: на втором воине — меч, доспех, шлем, знак; на Складе — ещё несколько
+	var s0: Dictionary = lg.soldiers[1]
+	for e in [{"slot": "weapon", "cls": String(s0["cls"]), "rarity": 3, "ilvl": 6}, {"slot": "armor", "cls": "", "rarity": 2, "ilvl": 5},
+			{"slot": "helmet", "cls": "", "rarity": 4, "ilvl": 7}, {"slot": "badge", "cls": "", "rarity": 1, "ilvl": 4}]:
+		lg.equip(int(s0["id"]), int(lg.add_item(e)["id"]))
+	for e in [{"slot": "weapon", "cls": String(s0["cls"]), "rarity": 1, "ilvl": 6}, {"slot": "weapon", "cls": String(s0["cls"]), "rarity": 0, "ilvl": 3},
+			{"slot": "offhand", "cls": String(s0["cls"]), "rarity": 2, "ilvl": 5}, {"slot": "armor", "cls": "", "rarity": 0, "ilvl": 2}]:
+		lg.add_item(e)
 	ui._select_tab("soldiers")
 	await frames(6)
 	var tx := _texts(ui.content)
 	check("«Воины»: видна вкладка, воины и новобранцы", (ui.tabs["soldiers"] as Button).visible and tx.contains("Ваши воины") and tx.contains("Новобранцы сегодня")
 		and tx.contains("Тренируется") and tx.contains("Ранен"))
 	await shot("soldiers")
+	ui._gear_pick(int(s0["id"]), "weapon")
+	await frames(6)
+	check("выбор вещи: надетая и запасные", ui.overlay != null and _texts(ui.overlay).contains("Надето") and _texts(ui.overlay).contains("Добротный"))
+	await shot("soldiers_gear")
+	ui._store()
+	await frames(6)
+	check("Склад: продать", ui.overlay != null and _texts(ui.overlay).contains("Склад:") and _texts(ui.overlay).contains("урона"))
+	await shot("soldiers_store")
+	ui._close_overlay()
 	c.cozy_v = cv
 	ui._select_tab("campaign")
