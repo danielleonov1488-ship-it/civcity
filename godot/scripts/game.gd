@@ -290,6 +290,10 @@ func _ready() -> void:
 	weather.name = "Weather"
 	add_child(weather)
 	weather.setup(self)
+	var boats := Boats.new()                  # лодки с гребцами на больших прудах («Уютный Рим», этап 7; новая игра)
+	boats.name = "Boats"
+	add_child(boats)
+	boats.setup(self)
 	var br := Breathe.new()                   # «город дышит»: бабочки, светлячки, птицы («Уютный Рим», этап 5)
 	br.name = "Breathe"
 	add_child(br)
