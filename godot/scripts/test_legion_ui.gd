@@ -756,5 +756,13 @@ func _soldiers(c: City, lg: Legion, ui) -> void:
 	await shot("soldiers_forge")
 	lg.forging = {}
 	ui._close_overlay()
+	# мастерские: плитки на «Войсках» (только новая игра), материалы в шапке «Воинов»
+	check("мастерские есть в новой игре", Legion.BUILDING_IDS.has("smelter") and c.unlocked("smelter") == (c.level >= 2))
+	ui._select_tab("troops")
+	await frames(6)
+	check("«Войска»: мастерских в сетке нет — окно не растёт", not _texts(ui).contains("Плавильня"))
+	await shot("troops_cozy")
+	ui._select_tab("soldiers")
+	await frames(4)
 	c.cozy_v = cv
 	ui._select_tab("campaign")

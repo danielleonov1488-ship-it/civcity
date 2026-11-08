@@ -2590,6 +2590,8 @@ func _types_in(cat: String, sub := "") -> Array:
 			continue
 		if cat == "decor" and sub != "" and Defs.decor_sub(type) != sub:
 			continue
+		if String(d.get("unlock", "")).begins_with("army:") and game != null and int(game.city.cozy_v) < 1:
+			continue                          # мастерские Легиона 2.0 — только в новой игре
 		out.append(type)
 	return out
 

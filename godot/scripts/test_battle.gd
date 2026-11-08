@@ -11,6 +11,7 @@ extends Node
 ## с подсказкой). Учебный бой — region=0 stage=0 (первый бой, масло ещё не жали): кадр, когда бой замер со стрелкой
 ## на масле (…_tut_freeze), потом «нажимает» масло и снимает …_tut_after; печатает TUT freeze/press.
 ## crowd_shot=1 — кадр «Толпа!» (волна-«куча», красный круг) …_crowd; warn_shot=1 — кадр рога Атамана …_warn.
+## gear=1 — бойцам отряда «надеты» вещи разной редкости (Легион 2.0: кайма цвета редкости).
 ## Печатает средний FPS, итог боя и куда сохранены кадры. Запускать только через .work/py/gpu_run.sh (замок видеокарты).
 
 var args := {}
@@ -77,6 +78,12 @@ func _ready() -> void:
 	else:
 		var st := legion.stage_info(c, r, s)
 		setup = legion.make_battle(st, int(args.get("seed", "7")))
+	if args.get("gear", "0") == "1":      # Легион 2.0: вещи разной редкости на бойцах отряда (свечение каймой)
+		var sq2: Array = setup.get("squad", [])
+		for i in sq2.size():
+			var rr := (i % 4) + 1
+			sq2[i]["sid"] = 100 + i
+			sq2[i]["gear_look"] = {"weapon": rr, "offhand": rr, "helmet": maxi(1, rr - 1), "armor": rr}
 	print("BATTLE ", "pvp" if args.has("pvp") else "%d-%d-%d" % [c, r, s], " lvl=", lvl, " squad=", legion.squad_stats().map(func(x): return x["key"]), " perks=", legion.open_perks())
 	print("BATTLE tutorial=", setup.get("tutorial", ""), " packs=", setup.get("packs", []))
 	battle = LegionBattle.open(self, setup, _on_done, {"legion": legion, "speed": float(args.get("speed", "1")), "auto": args.get("auto", "0") == "1",

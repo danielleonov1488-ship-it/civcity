@@ -340,6 +340,14 @@ const B := {
 		"desc": "Здесь строят онагры: камень накрывает толпу врагов. Улучшения — в карточке мастерской."},
 	"forge": {"kind": "military", "cat": "military", "name": "Кузница", "cost": 900, "unlock": "rank:2", "unique": true, "icon": "swords",
 		"desc": "Кузнецы куют мечи и доспехи для Легиона: каждый уровень — +3% урона и здоровья всем бойцам в походах."},
+	# Легион 2.0, этап 3: мастерские дают материалы для Кузницы в настоящем времени; без рабочих — вчетверо медленнее.
+	# Только в новой игре («army:N» — с уровня города N, когда Легион собран)
+	"smelter": {"kind": "military", "cat": "military", "name": "Плавильня", "cost": 600, "unlock": "army:2", "unique": true, "icon": "anvil",
+		"jobs": {"plebs": 2}, "desc": "Печь, мехи и руда: плавильщики льют железо для Кузницы. Чем выше уровень — тем больше железа в час и больше места под запас."},
+	"sawmill": {"kind": "military", "cat": "military", "name": "Лесопилка", "cost": 500, "unlock": "army:2", "unique": true, "icon": "saw",
+		"jobs": {"plebs": 2}, "desc": "Брёвна, козлы и большая пила: пильщики готовят дерево — древки копий, луки, щиты и станки машин."},
+	"tannery": {"kind": "military", "cat": "military", "name": "Дубильня", "cost": 550, "unlock": "army:3", "unique": true, "icon": "boots",
+		"jobs": {"plebs": 2}, "desc": "Чаны с дубильным отваром и рамы с растянутыми шкурами: кожа на ремни, щиты и доспехи."},
 	"infirmary": {"kind": "military", "cat": "military", "name": "Лазарет", "cost": 1300, "unlock": "rank:3", "unique": true, "icon": "medic",
 		"desc": "Лекари и койки для раненых: между волнами боя бойцы восстанавливают здоровье — с каждым уровнем больше."},
 	"armory": {"kind": "military", "cat": "military", "name": "Склад оружия", "cost": 2000, "unlock": "rank:4", "unique": true, "icon": "shield",
@@ -895,6 +903,8 @@ static func unlock_text(id: String) -> String:
 		return "победой Легиона над боссом «%s»" % Legion.boss_name(int(id.substr(4)))
 	if id.begins_with("rank:"):
 		return "на уровне «%s» (когда Легион открыт)" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
+	if id.begins_with("army:"):
+		return "на уровне «%s» (когда Легион открыт)" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
 	if id.begins_with("trophy:"):
 		for R: Dictionary in Legion.REGIONS:
 			if String(R["id"]) == id.substr(7):
@@ -919,7 +929,7 @@ static func unlock_text(id: String) -> String:
 static func unlock_short(id: String) -> String:
 	if id.begins_with("boss"):
 		return "Победа над боссом"
-	if id.begins_with("rank:"):
+	if id.begins_with("rank:") or id.begins_with("army:"):
 		return "Уровень «%s»" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
 	if id.begins_with("trophy:"):
 		return "30 звёзд похода"

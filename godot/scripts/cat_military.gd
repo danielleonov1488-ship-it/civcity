@@ -47,6 +47,9 @@ static func make(b: Bp, type: String, tier := 0) -> void:
 		"forge": _forge(b)
 		"infirmary": _infirmary(b)
 		"armory": _armory(b)
+		"smelter": _smelter(b)
+		"sawmill": _sawmill(b)
+		"tannery": _tannery(b)
 	if tier > 0:
 		_grow(b, type, tier)
 
@@ -429,6 +432,12 @@ const GROW := {
 		"eagle": Vector3(3.95, 0, 0.45), "porch": [-1.25, 1.25], "statue": NO, "ridge": Vector3(0, 4.05, -2.6)},
 	"armory": {"poles": [Vector3(-4.0, 0, 3.05), Vector3(4.0, 0, 3.05)], "box": [0.0, -2.6, 3, 2, 1], "fire": [Vector3(-1.1, 0, 3.1), Vector3(1.1, 0, 3.1)],
 		"eagle": Vector3(-2.75, 0, 1.45), "porch": [-1.25, 1.25], "statue": Vector3(2.7, 0, 1.4), "ridge": Vector3(0, 5.0, -2.6)},
+	"smelter": {"poles": [Vector3(-4.3, 0, 2.3), Vector3(4.4, 0, 3.4)], "box": [-2.0, -2.6, 2, 2, 1], "fire": [Vector3(-3.7, 0, 0.5), Vector3(-0.3, 0, 0.5)],
+		"eagle": Vector3(2.0, 0, 3.0), "porch": [], "statue": NO, "ridge": Vector3(-2.0, 4.9, -2.6)},
+	"sawmill": {"poles": [Vector3(-0.9, 0, 1.7), Vector3(4.6, 0, 1.7)], "box": [-2.6, -2.8, 1, 2, 1], "fire": [Vector3(-3.7, 0, 0.4), Vector3(-1.5, 0, 0.4)],
+		"eagle": Vector3(-3.9, 0, 2.6), "porch": [], "statue": NO, "ridge": Vector3(-2.6, 4.3, -2.8)},
+	"tannery": {"poles": [Vector3(-4.3, 0, 2.8), Vector3(4.2, 0, 2.0)], "box": [2.0, -2.6, 2, 2, 1], "fire": [Vector3(0.6, 0, 0.5), Vector3(3.4, 0, 0.5)],
+		"eagle": Vector3(-1.6, 0, 2.9), "porch": [], "statue": NO, "ridge": Vector3(2.0, 4.7, -2.6)},
 }
 
 
@@ -507,6 +516,13 @@ static func kit_mesh(name: String) -> Mesh:
 		"#mil_catapult": _k_catapult(k)
 		"#mil_stones": _k_stones(k)
 		"#mil_eagle": _k_eagle(k)
+		"#mil_ore": _k_ore(k)
+		"#mil_ingots": _k_ingots(k)
+		"#mil_logs": _k_logs(k)
+		"#mil_planks": _k_planks(k)
+		"#mil_saw": _k_saw(k)
+		"#mil_hides": _k_hides(k)
+		"#mil_vat": _k_vat(k)
 		_: k.boxc(Vector3(0, 0.5, 0), Vector3.ONE, Color.MAGENTA)
 	var m := k.mesh()
 	if m.get_surface_count() > 0:
@@ -758,3 +774,197 @@ static func _k_stones(k: Kit) -> void:
 	for i in pts.size():
 		var r := 0.17 + (i % 3) * 0.015
 		k.blob(pts[i], Vector3(r, r * 0.95, r), STONE.darkened(0.08 * (i % 3)), 40 + i, 0.1)
+
+# =====================================================================
+#   мастерские Легиона 2.0 (этап 3): Плавильня, Лесопилка, Дубильня — маленькие, уютные, люди при деле
+# =====================================================================
+
+## Плавильня: каменный домик с трубой; во дворе — печь с огнём и дымом, куча руды, бруски железа, наковальня, тачка
+static func _smelter(b: Bp) -> void:
+	b.paint(-1, false)
+	b.roof_tex = "Roof_Tile_06"
+	var stone := CatCivic._skin(b, "Building_Large_Brick_01", Color(0.9, 0.84, 0.78))
+	b.remap = stone
+	var cx := -2.0
+	var cz := -2.6
+	CatCivic._box(b, cx, cz, 2, 2, [
+		{0: ["SM_Bld_Wall_Door_Double_Large_01", "SM_Bld_Wall_Window_06"], 1: ["SM_Bld_Wall_01", "SM_Bld_Wall_01"],
+			2: ["SM_Bld_Wall_01", "SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06"]}],
+		{"trim": "SM_Bld_Trim_04", "skin": stone})
+	b.remap = stone
+	var ridge := CatCivic._gable2(b, cx - 2.5, cx + 2.5, cz - 2.5, cz + 2.5, FL, 1.5, true)
+	b.remap = b.floor_remap(1)
+	CatCivic._chimney(b, Vector3(cx + 1.3, ridge - 0.9, cz - 1.4), 1.3)
+	b.torch_pair(cx, cz, 2, 2, 0.5)
+	var fz := cz + 2.5
+	_sand(b, Vector3(2.4, 0, -0.6), 4.6, 7.6)
+	_sand(b, Vector3(-2.0, 0, fz + 1.2), 5.0, 2.4)
+	# печь: обжиговая печь Synty, огонь и дым; рядом мехи (мешки) и уголь
+	b.add("SM_Prop_Kiln_01", Vector3(2.6, 0, -2.6), PI, 0.85)
+	b.light(Vector3(2.6, 0.8, -1.6))
+	b.smoke.append(b.base * Vector3(2.6, 3.0, -2.8))
+	add_kit(b, "#mil_ore", Vector3(4.0, 0, -0.6), 0.4, 1.0)
+	add_kit(b, "#mil_ore", Vector3(3.6, 0, 0.6), 2.1, 0.75)
+	add_kit(b, "#mil_ingots", Vector3(1.2, 0, 1.2), 0.2, 1.0)
+	add_kit(b, "#mil_ingots", Vector3(-3.6, 0, fz + 1.6), -0.3, 0.9)
+	b.add("SM_Prop_Anvil_01", Vector3(1.0, 0, -0.6), 0.5, 0.8)
+	b.add("SM_Prop_Tool_Hammer_01", Vector3(1.05, 0.7, -0.6), 1.0)
+	b.add("SM_Prop_Cart_01", Vector3(3.9, 0, 2.6), -PI / 2 + 0.2, 0.7)
+	b.add("SM_Prop_Sack_Stack_01", Vector3(-0.3, 0, fz + 0.5), 0.6, 0.65)
+	b.actor(Vector3(2.5, 0, -1.2), PI, "Interact", "pleb")
+	b.actor(Vector3(1.0, 0, 0.2), PI + 0.4, "Fixing_Kneeling", "pleb")
+	b.door = Vector3(0.0, 0, 3.6)
+
+
+## Лесопилка: домик пильщиков слева, справа — навес на столбах: козлы с бревном и большой пилой, штабеля брёвен и досок
+static func _sawmill(b: Bp) -> void:
+	b.paint(-1, false)
+	b.roof_tex = "Roof_Tile_06"
+	var wall := CatCivic._skin(b, "Building_Large_Brick_01", Color(1.0, 0.9, 0.74))
+	b.remap = wall
+	var cx := -2.6
+	var cz := -2.8
+	CatCivic._box(b, cx, cz, 1, 2, [
+		{0: ["SM_Bld_Wall_Door_01"], 1: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06"], 2: ["SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_Window_06", "SM_Bld_Wall_01"]}],
+		{"trim": "SM_Bld_Trim_04", "skin": wall})
+	b.remap = wall
+	CatCivic._gable2(b, cx - 1.25, cx + 1.25, cz - 2.5, cz + 2.5, FL, 1.4, true)
+	b.remap = b.floor_remap(1)
+	# навес: столбы спереди, крыша скатом назад к низкой стенке из досок
+	CatCivic._shed(b, -0.8, 4.2, -0.2, -4.6, 2.5, "SM_Prop_Pole_01", 0.7, true, 0.7)
+	for x: float in [-0.4, 1.4, 3.2]:
+		b.add_xf("SM_Prop_Beam_01", Transform3D(Basis(Vector3.UP, 0.0).scaled_local(Vector3(0.75, 1.2, 1.2)), Vector3(x + 0.55, 0.45, -4.4)))
+	_sand(b, Vector3(1.8, 0, -1.4), 6.4, 6.8)
+	_sand(b, Vector3(-2.6, 0, 1.3), 2.8, 3.0)
+	add_kit(b, "#mil_saw", Vector3(1.6, 0, -2.0), 0.0, 1.0)
+	add_kit(b, "#mil_logs", Vector3(3.6, 0, -3.4), PI / 2, 1.0)
+	add_kit(b, "#mil_logs", Vector3(3.9, 0, 1.4), 0.15, 0.85)
+	add_kit(b, "#mil_planks", Vector3(-0.2, 0, -3.6), 0.0, 1.0)
+	add_kit(b, "#mil_planks", Vector3(-2.6, 0, 1.0), PI / 2, 0.9)
+	b.add("SM_Prop_Cart_01", Vector3(1.6, 0, 2.2), PI / 2 - 0.15, 0.7)
+	b.add("SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 5), Vector3(-1.2, 0, 2.6), 0.0, 0.65)
+	b.actor(Vector3(0.75, 0, -2.0), PI / 2, "Interact", "pleb")
+	b.actor(Vector3(2.45, 0, -2.0), -PI / 2, "Interact", "pleb")
+	b.door = Vector3(0.0, 0, 3.6)
+
+
+## Дубильня: беленый домик, во дворе — рамы с растянутыми шкурами, чаны с отваром, кувшины, сушка на верёвке
+static func _tannery(b: Bp) -> void:
+	b.paint(0, false)
+	b.ground_style = "plain"
+	b.upper_style = "plain"
+	b.roof_tex = "Roof_Tile_01"
+	var cx := 2.0
+	var cz := -2.6
+	b.block(cx, cz, 2, 2, 1, {"door_i": 0, "win_p": 0.6})
+	b.gable(cx, cz, 2, 2, FL, false)
+	b.torch_pair(cx, cz, 2, 2, 0.5)
+	var fz := cz + 2.5
+	_sand(b, Vector3(-2.2, 0, -0.8), 5.2, 7.2)
+	_sand(b, Vector3(2.0, 0, fz + 1.2), 5.0, 2.4)
+	add_kit(b, "#mil_hides", Vector3(-3.4, 0, -3.0), 0.3, 1.0)
+	add_kit(b, "#mil_hides", Vector3(-1.4, 0, -3.5), -0.15, 0.95)
+	add_kit(b, "#mil_vat", Vector3(-3.3, 0, -0.6), 0.0, 1.0)
+	add_kit(b, "#mil_vat", Vector3(-1.7, 0, -0.2), 0.7, 0.9)
+	add_kit(b, "#mil_vat", Vector3(-2.6, 0, 1.2), 1.3, 0.8)
+	CatCivic._jar(b, Vector3(-0.5, 0, 1.4), 0.7)
+	CatCivic._jar(b, Vector3(-0.1, 0, 1.0), 0.6)
+	add_kit(b, "#mil_hides", Vector3(3.8, 0, fz + 1.4), -PI / 2, 0.8)
+	b.add("SM_Prop_Rug_Folded_0%d" % (1 + b.rng.randi() % 3), Vector3(0.6, 0, fz + 0.7), 0.2, 0.7)
+	b.actor(Vector3(-2.4, 0, -0.6), -PI / 2, "Interact", "pleb")
+	b.actor(Vector3(-2.4, 0, -2.4), PI, "Fixing_Kneeling", "pleb")
+	b.door = Vector3(2.0, 0, 3.6)
+
+
+## Куча руды: тёмные камни с рыжими прожилками, ~1,2 м
+static func _k_ore(k: Kit) -> void:
+	var pts := [Vector3(0, 0.16, 0), Vector3(0.32, 0.14, 0.08), Vector3(-0.3, 0.14, 0.1), Vector3(0.06, 0.14, 0.32), Vector3(0.0, 0.14, -0.3),
+		Vector3(0.1, 0.38, 0.06), Vector3(-0.12, 0.36, -0.06), Vector3(0.24, 0.3, -0.18)]
+	for i in pts.size():
+		var r := 0.15 + (i % 3) * 0.02
+		var c := Color("4a4440").lerp(Color("8a4a2a"), 0.25 * (i % 3))
+		k.blob(pts[i], Vector3(r, r * 0.85, r), c, 70 + i, 0.2)
+
+
+## Бруски железа штабелем (3 ряда крест-накрест), ~0,6 м
+static func _k_ingots(k: Kit) -> void:
+	for row in 3:
+		for j in 3:
+			var y := row * 0.09
+			var off := (j - 1) * 0.16
+			var c := IRON.lightened(0.08 * ((row + j) % 2))
+			if row % 2 == 0:
+				k.boxc(Vector3(off, y, 0), Vector3(0.13, 0.08, 0.42), c, [])
+			else:
+				k.boxc(Vector3(0, y, off), Vector3(0.42, 0.08, 0.13), c, [])
+
+
+## Брёвна пирамидой (3–2–1), длина 2 м вдоль X
+static func _k_logs(k: Kit) -> void:
+	var r := 0.15
+	var rows := [[-0.32, 0.0, 0.32], [-0.16, 0.16], [0.0]]
+	for i in rows.size():
+		for z: float in rows[i]:
+			var y := r + i * r * 1.7
+			var c := WOOD.lerp(WOOD_D, 0.3 * ((i + int(z * 10)) % 2))
+			k.rod(Vector3(-1.0, y, z), Vector3(1.0, y, z), r, 7, c)
+	# светлые торцы: тонкие диски
+	for i in rows.size():
+		for z: float in rows[i]:
+			var y := r + i * r * 1.7
+			for sx: float in [-1.0, 1.0]:
+				k.xf = Transform3D(Basis(Vector3.BACK, PI / 2 * sx), Vector3(sx * 1.0, y, z))
+				k.cyl(Vector3(0, 0, 0), r * 0.92, 0.015, 7, WOOD_L.lightened(0.15))
+				k.xf = Transform3D.IDENTITY
+
+
+## Доски штабелем, 2,2 × 0,7 м
+static func _k_planks(k: Kit) -> void:
+	for row in 5:
+		for j in 3:
+			k.boxc(Vector3(0, 0.05 + row * 0.07, (j - 1) * 0.24), Vector3(2.2, 0.06, 0.22), WOOD_L.lerp(WOOD, 0.25 * ((row + j) % 3)), [])
+	k.boxc(Vector3(-0.8, 0.0, 0), Vector3(0.1, 0.05, 0.8), WOOD_D, [])
+	k.boxc(Vector3(0.8, 0.0, 0), Vector3(0.1, 0.05, 0.8), WOOD_D, [])
+
+
+## Козлы с бревном и большой двуручной пилой (пилят двое, по сторонам X)
+static func _k_saw(k: Kit) -> void:
+	for sz: float in [-0.7, 0.7]:
+		k.rod(Vector3(-0.35, 0, sz), Vector3(0.0, 0.85, sz), 0.04, 5, WOOD_D)
+		k.rod(Vector3(0.35, 0, sz), Vector3(0.0, 0.85, sz), 0.04, 5, WOOD_D)
+	k.rod(Vector3(0, 0.95, -1.2), Vector3(0, 0.95, 1.2), 0.16, 8, WOOD)
+	for sz: float in [-1.2, 1.2]:
+		k.xf = Transform3D(Basis(Vector3.RIGHT, PI / 2 * signf(sz)), Vector3(0, 0.95, sz))
+		k.cyl(Vector3(0, 0, 0), 0.15, 0.015, 8, WOOD_L.lightened(0.15))
+		k.xf = Transform3D.IDENTITY
+	# полотно пилы поперёк бревна (наклонно), ручки на концах
+	k.boxc(Vector3(0, 0.95, 0.15), Vector3(1.5, 0.16, 0.012), Color("b8b8bc"), [])
+	for sx: float in [-0.8, 0.8]:
+		k.rod(Vector3(sx, 0.85, 0.15), Vector3(sx, 1.12, 0.15), 0.025, 5, WOOD_D)
+	# опилки
+	k.blob(Vector3(0, 0.03, 0.15), Vector3(0.45, 0.04, 0.35), Color("d8b47a"), 91, 0.1)
+
+
+## Рама со шкурой: два столба, перекладины, кожа на шнуровке; ширина ~1,6 м, высота ~1,7 м
+static func _k_hides(k: Kit) -> void:
+	for sx: float in [-0.8, 0.8]:
+		k.rod(Vector3(sx, 0, 0), Vector3(sx, 1.75, 0), 0.04, 5, WOOD_D)
+	k.rod(Vector3(-0.85, 1.6, 0), Vector3(0.85, 1.6, 0), 0.035, 5, WOOD)
+	k.rod(Vector3(-0.85, 0.35, 0), Vector3(0.85, 0.35, 0), 0.035, 5, WOOD)
+	var a := Vector3(-0.6, 1.5, 0.0)
+	var b2 := Vector3(0.62, 1.48, 0.0)
+	var c := Vector3(0.55, 0.45, 0.0)
+	var d := Vector3(-0.58, 0.48, 0.0)
+	k.quad_out(a, b2, c, d, LEATHER, Vector3(0, 1.0, -0.5))
+	k.quad_out(a, b2, c, d, LEATHER_D, Vector3(0, 1.0, 0.5))
+	for p: Vector3 in [a, b2, c, d]:
+		var q := Vector3(signf(p.x) * 0.8, 1.6 if p.y > 1.0 else 0.35, 0.0)
+		k.rod(p, q, 0.008, 3, ROPE)
+
+
+## Чан с дубильным отваром: деревянная кадка с обручами, внутри тёмная жидкость
+static func _k_vat(k: Kit) -> void:
+	k.cyl(Vector3(0, 0, 0), 0.5, 0.7, 12, WOOD, 0.55, false)
+	k.cyl(Vector3(0, 0.62, 0), 0.52, 0.02, 12, Color("5a3a1e"))
+	for y: float in [0.15, 0.5]:
+		k.cyl(Vector3(0, y, 0), 0.525 + y * 0.07, 0.05, 12, IRON, -1.0, false)

@@ -692,6 +692,34 @@ func _gear_tex(idx: int, slot := "weapon") -> Texture2D:
 	return t if t != null else hud.ico(String(GEAR_ICON.get(slot, "swords")), 64)
 
 
+const WS_ICON := {"smelter": 4, "sawmill": 5, "tannery": 6}
+
+
+func _mat_tex(m: String) -> Texture2D:
+	var t := _sheet("43", int(Gear.MAT_ICON.get(m, 0)))
+	return t if t != null else hud.ico("hammer", 64)
+
+
+## Ряд материалов: значок, «40 / 120», «+4/ч» (подсказка — откуда берётся)
+func _mats_row(sz := 26.0) -> HBoxContainer:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 14)
+	for m: String in Gear.MATS:
+		var c := HBoxContainer.new()
+		c.add_theme_constant_override("separation", 3)
+		c.mouse_filter = Control.MOUSE_FILTER_PASS
+		c.add_child(_tr(_mat_tex(m), sz))
+		var rate := lg.mat_rate(m)
+		c.add_child(_l("%d / %d" % [lg.mat(m), lg.mat_cap(m)], 15, true, C_INK))
+		if rate > 0.0:
+			c.add_child(_l("+%s/ч" % str(snappedf(rate, 0.1)).trim_suffix(".0"), 12, false, C_GOOD))
+		var w := Legion.workshop_of(m)
+		c.tooltip_text = "%s — %s. %s" % [String(Gear.MAT_NAME[m]).capitalize(), "делает " + String(Defs.B[w]["name"]),
+			("Сейчас %s в час; чем больше работников и выше уровень — тем быстрее." % str(snappedf(rate, 0.1))) if rate > 0.0 else "Постройте её в военном квартале (раздел «Легион»)."]
+		h.add_child(c)
+	return h
+
+
 ## Вещь в рамке её редкости (для списков, Кузницы, добычи)
 func _item_ic(it: Dictionary, sz := 40.0) -> Control:
 	var pc := PanelContainer.new()
@@ -1904,6 +1932,8 @@ func _build_troops() -> Control:
 	g.add_theme_constant_override("h_separation", 10)
 	g.add_theme_constant_override("v_separation", 8)
 	for bt: String in Legion.BUILDING_IDS:
+		if Legion.WORKSHOPS.has(bt):
+			continue                          # мастерские Легиона 2.0: их материалы — в шапке «Воинов» (окно не растёт), улучшения — в карточке на карте
 		g.add_child(_building_tile(bt))
 	v.add_child(g)
 	v.add_child(_perks_panel())
@@ -1936,6 +1966,9 @@ func _build_soldiers() -> Control:
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hh.add_child(sp)
+	var mr := _mats_row(22)
+	mr.add_theme_constant_override("separation", 10)
+	hh.add_child(mr)
 	var stb := _btn("Склад: %d из %d" % [lg.store_count(), lg.store_cap()], 0, 14, _gear_tex(Gear.ICON_STORE), "", func(): _store())
 	stb.tooltip_text = "Вещи из добычи, что не надеты: посмотреть, продать или разобрать лишнее"
 	hh.add_child(stb)
@@ -2226,7 +2259,14 @@ func _forge_win() -> void:
 		shc.add_child(_l(str(int(lg.shards[r])), 16, true, Gear.color(r)))
 		sh.add_child(shc)
 	v.add_child(sh)
-	v.add_child(_wl("Обломки — из разобранных вещей (Склад → «Разобрать»). Уровень новой вещи: %d (по походу, не выше 5 × уровень Кузницы)." % lg.forge_ilvl(), 560, 13, C_SOFT))
+	if lg.army_on():
+		var mh := _mats_row()
+		var mrow := HBoxContainer.new()
+		mrow.add_theme_constant_override("separation", 14)
+		mrow.add_child(_l("Материалы:", 15, true, C_INK))
+		mrow.add_child(mh)
+		v.add_child(mrow)
+	v.add_child(_wl("Обломки — из разобранных вещей (Склад → «Разобрать»), материалы — из мастерских (Плавильня, Лесопилка, Дубильня) и тоже от разобранных вещей. Уровень новой вещи: %d (по походу, не выше 5 × уровень Кузницы)." % lg.forge_ilvl(), 560, 13, C_SOFT))
 	if not lg.forging.is_empty():
 		var fh := HBoxContainer.new()
 		fh.add_theme_constant_override("separation", 8)
@@ -2266,6 +2306,7 @@ func _forge_win() -> void:
 		h.add_child(_item_ic(probe, 40))
 		tv.add_child(_l(Gear.name_of(probe), 15, true, Gear.color(r)))
 		var need := "%s ден." % hud.fmt(float(F["money"]))
+		need = "%s, %s" % [Gear.mats_text(Gear.forge_mats(_f_slot, r)), need]
 		if r > 0:
 			need = "%d × %s, %s" % [int(F["shards"]), Gear.SHARD[r - 1], need]
 		tv.add_child(_l("%s · %s · %s" % [Gear.stats_text(probe), need, Legion.fmt_duration(float(F["h"]) * 3600.0)], 12, false, C_SOFT))
@@ -2324,9 +2365,13 @@ func _building_tile(bt: String) -> Control:
 		face.custom_minimum_size = Vector2(54, 54)
 		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		face.add_theme_stylebox_override("panel", hud._medal("medal" if built else "medal_lock", 54))
-		var ic := _tr(hud.ico(String(B_ALT.get(bt, "legion")), 64), 32, not built)
+		var wt: Texture2D = _sheet("43", int(WS_ICON[bt])) if WS_ICON.has(bt) else null
+		var ic := _tr(wt if wt != null else hud.ico(String(B_ALT.get(bt, "legion")), 64), 32, not built)
 		ic.position = Vector2(11, 11)
 		ic.size = Vector2(32, 32)
+		if wt != null:
+			ic.position = Vector2(7, 7)
+			ic.size = Vector2(40, 40)
 		face.add_child(ic)
 	top.add_child(face)
 	var tv := VBoxContainer.new()

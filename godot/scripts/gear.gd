@@ -44,6 +44,50 @@ const FORGE := [
 	{"shards": 5, "money": 1200, "h": 8.0, "lvl": 5},
 	{"shards": 5, "money": 3500, "h": 12.0, "lvl": 8},
 ]
+## Материалы (этап 3, мастерские): железо (Плавильня), дерево (Лесопилка), кожа (Дубильня).
+## Ковка берёт материалы по слоту (MAT_OF — доли), всего FORGE_MAT[редкость]; разобранная вещь возвращает SMELT_K от них
+const MATS := ["iron", "wood", "leather"]
+const MAT_NAME := {"iron": "железо", "wood": "дерево", "leather": "кожа"}
+const MAT_ICON := {"iron": 0, "wood": 1, "leather": 2}       # лист 43
+const MAT_OF := {
+	"weapon": {"iron": 0.6, "wood": 0.4},
+	"offhand": {"wood": 0.6, "leather": 0.4},
+	"helmet": {"iron": 0.7, "leather": 0.3},
+	"armor": {"iron": 0.5, "leather": 0.5},
+	"badge": {"iron": 0.6, "leather": 0.4},
+}
+const FORGE_MAT := [20, 60, 160, 400, 900]
+const SMELT_K := 0.3
+
+
+## Сколько материалов на ковку вещи слота slot редкости r: {iron: 30, wood: 20}
+static func forge_mats(slot: String, r: int) -> Dictionary:
+	var out := {}
+	var n := float(FORGE_MAT[clampi(r, 0, 4)])
+	var w: Dictionary = MAT_OF.get(slot, {"iron": 1.0})
+	for m: String in w:
+		out[m] = maxi(5, roundi(n * float(w[m]) / 5.0) * 5)
+	return out
+
+
+## Что вернёт разобранная вещь
+static func smelt_mats(it: Dictionary) -> Dictionary:
+	var out := {}
+	var fm := forge_mats(String(it.get("slot", "")), int(it.get("rarity", 0)))
+	for m: String in fm:
+		out[m] = maxi(1, roundi(float(fm[m]) * SMELT_K))
+	return out
+
+
+## «30 железа, 20 дерева»
+static func mats_text(d: Dictionary) -> String:
+	var out := []
+	for m: String in MATS:
+		if d.has(m):
+			out.append("%d %s" % [int(d[m]), String(MAT_NAME[m])])
+	return ", ".join(out)
+
+
 const SHARD := ["серый обломок", "зелёный обломок", "синий обломок", "фиолетовый обломок", "золотой обломок"]
 ## Значки вещей: лист 42.png 4×4 (Codex) — у каждой вещи свой рисунок по слоту и классу
 const ICON := {

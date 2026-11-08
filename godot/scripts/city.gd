@@ -201,6 +201,8 @@ func unlocked(type: String) -> bool:
 		return legion.bosses() >= int(u.substr(4))
 	if u.begins_with("rank:"):                # здания Легиона (Д10): с уровня города, когда Легион собран
 		return level >= int(u.substr(5)) and legion.window_open()
+	if u.begins_with("army:"):                # Легион 2.0 (мастерские): то же, но только в новой игре
+		return level >= int(u.substr(5)) and legion.window_open() and legion.army_on()
 	if u.begins_with("trophy:"):              # трофей провинции: все 30 звёзд её боёв
 		return legion.has_trophy(u.substr(7))
 	return u == "" or research.has(u) or legion.wonder_unlocks(type)   # чудеса открывает и рейтинг походов

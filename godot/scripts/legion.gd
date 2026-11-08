@@ -88,13 +88,23 @@ const BUILDING_UNIT := {"barracks": "legionary", "spearcamp": "spearman", "range
 ## У зданий бойцов уровень здания — это уровень рода войск (levels: так его знает и сервер боёв с городами);
 ## у Кузницы, Лазарета и Склада оружия — свой (blevels). Здание ещё не поставлено, а уровень выше первого — он «в запасе»
 ## (старые сохранения: уровни войск и умения перенесены в здания) и заработает, как только здание поставят
-const BUILDING_IDS := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory"]
+const BUILDING_IDS := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery"]
 ## Здания поддержки: max — наивысший уровень (выше — предел уровня города CAP_BY_CITY), cost_k — множитель цены улучшений
 const SUPPORT := {
 	"forge": {"max": 10, "cost_k": 1.2},
 	"infirmary": {"max": 10, "cost_k": 1.0},
 	"armory": {"max": 10, "cost_k": 1.1},
+	"smelter": {"max": 10, "cost_k": 0.8},
+	"sawmill": {"max": 10, "cost_k": 0.8},
+	"tannery": {"max": 10, "cost_k": 0.8},
 }
+## Мастерские (Легион 2.0, этап 3, только новая игра): материал, MAT_RATE · L^1,3 в час при полном штате
+## (без рабочих — четверть), запас MAT_CAP0 + MAT_CAP_PER · L; в начале — MAT_GIFT каждого
+const WORKSHOPS := {"smelter": "iron", "sawmill": "wood", "tannery": "leather"}
+const MAT_RATE := 4.0
+const MAT_CAP0 := 120
+const MAT_CAP_PER := 80
+const MAT_GIFT := 40
 ## Кузница: +FORGE урона и здоровья всем бойцам за уровень (доля); Лазарет: между волнами боя раненые восстанавливают
 ## INFIRMARY здоровья за уровень (доля; бой с городом — одна волна, его это не касается); Склад оружия: +ARMORY брони
 const FORGE := 0.03
@@ -344,6 +354,8 @@ var sid_next := 1
 var items: Array = []
 var iid_next := 1
 var shards := [0, 0, 0, 0, 0]  # обломки по редкости (Кузница, этап 3)
+var mats := {}                  # материалы мастерских: iron / wood / leather → количество (дробное — копится по часам)
+var mats_t := 0.0               # когда материалы считались последний раз (Legion.now)
 var forging := {}           # куётся: {slot, cls, rarity, ilvl, end, total} или {}
 var _rng := RandomNumberGenerator.new()
 
@@ -485,6 +497,12 @@ func army_tick() -> Array:
 		flags["army0"] = true                  # первые трое — легионеры, что пришли с городом
 		for st in [2, 1, 1]:
 			_add_soldier({"name": Soldiers.roll_name(_rng), "from": Soldiers.ORIGINS[_rng.randi() % Soldiers.ORIGINS.size()], "cls": "legionary", "stars": st})
+	if not flags.has("mats0"):
+		flags["mats0"] = true                  # немного материалов с собой — на первые вещи до мастерских
+		for m: String in Gear.MATS:
+			mats[m] = float(mats.get(m, 0.0)) + MAT_GIFT
+		mats_t = t
+	_mats_tick(t)
 	var ch := false
 	for s: Dictionary in soldiers:
 		if float(s.get("wound_end", 0.0)) > 0.0 and t >= float(s["wound_end"]):
@@ -753,6 +771,9 @@ func smelt(iid: int) -> bool:
 		return false
 	var it := item(iid)
 	shards[int(it["rarity"])] = int(shards[int(it["rarity"])]) + 1
+	var back := Gear.smelt_mats(it)
+	for m: String in back:
+		mats[m] = float(mats.get(m, 0.0)) + float(back[m])
 	items.erase(it)
 	changed.emit()
 	return true
@@ -772,6 +793,9 @@ func can_forge(slot: String, cls: String, r: int) -> String:
 		return "Класс «%s» ещё не открыт" % Soldiers.class_name_of(cls)
 	if r > 0 and int(shards[r - 1]) < int(F["shards"]):
 		return "Нужно обломков: %d (%s), есть %d" % [int(F["shards"]), Gear.SHARD[r - 1], int(shards[r - 1])]
+	var ms := mats_short(Gear.forge_mats(slot, r))
+	if ms != "":
+		return ms
 	if float(F["money"]) > city_money():
 		return "Не хватает денариев: нужно %d" % int(F["money"])
 	return ""
@@ -784,6 +808,9 @@ func forge(slot: String, cls: String, r: int) -> bool:
 	_pay({"money": int(F["money"])})
 	if r > 0:
 		shards[r - 1] = int(shards[r - 1]) - int(F["shards"])
+	var need := Gear.forge_mats(slot, r)
+	for m: String in need:
+		mats[m] = float(mats.get(m, 0.0)) - float(need[m])
 	var secs := float(F["h"]) * 3600.0 / maxf(0.001, time_k)
 	forging = {"slot": slot, "cls": cls if slot in ["weapon", "offhand"] else "", "rarity": r, "ilvl": forge_ilvl(), "end": now() + secs, "total": secs}
 	if slot == "weapon" and cls == "engineer":
@@ -811,6 +838,66 @@ func _forge_tick() -> String:
 		return ""
 	forging = {}
 	return "Кузница выковала: %s" % Gear.name_of(it)
+
+
+# ---------- Мастерские и материалы (этап 3) ----------
+
+static func workshop_of(m: String) -> String:
+	for w: String in WORKSHOPS:
+		if String(WORKSHOPS[w]) == m:
+			return w
+	return ""
+
+
+func mat(m: String) -> int:
+	return int(float(mats.get(m, 0.0)))
+
+
+## Доля работы мастерской: штат города (0…1) → 0,25…1 (без дороги — стоит)
+func workshop_k(w: String) -> float:
+	var r := building_rec(w)
+	if r.is_empty():
+		return 0.0
+	if not bool(r.get("road", true)):
+		return 0.0
+	return 0.25 + 0.75 * clampf(float(r.get("staff", 1.0)), 0.0, 1.0)
+
+
+## Материала в час сейчас (0 — мастерской нет)
+func mat_rate(m: String) -> float:
+	var w := workshop_of(m)
+	if w == "" or not army_on() or count_type(w) <= 0:
+		return 0.0
+	return MAT_RATE * pow(float(level_of(w)), 1.3) * workshop_k(w) * time_k
+
+
+func mat_cap(m: String) -> int:
+	var w := workshop_of(m)
+	return MAT_CAP0 + (MAT_CAP_PER * level_of(w) if w != "" and count_type(w) > 0 else 0)
+
+
+func _mats_tick(t: float) -> void:
+	if mats_t <= 0.0:
+		mats_t = t
+		return
+	var dh := clampf(t - mats_t, 0.0, 3.0 * 86400.0) / 3600.0
+	mats_t = t
+	if dh <= 0.0:
+		return
+	for m: String in Gear.MATS:
+		var r := mat_rate(m)
+		var cur := float(mats.get(m, 0.0))
+		if r > 0.0 and cur < mat_cap(m):
+			mats[m] = minf(float(mat_cap(m)), cur + r * dh)
+
+
+## Хватает ли материалов: "" или «не хватает: железо 12 из 30»
+func mats_short(need: Dictionary) -> String:
+	var lack := []
+	for m: String in need:
+		if mat(m) < int(need[m]):
+			lack.append("%s %d из %d" % [String(Gear.MAT_NAME[m]), mat(m), int(need[m])])
+	return ("Не хватает: " + ", ".join(lack)) if not lack.is_empty() else ""
 
 
 ## Добыча после победы (новая игра): шанс вещи, босс — наверняка и лучше; уровень — по глубине похода
@@ -863,6 +950,14 @@ func soldier_stats(s: Dictionary, type: String) -> Dictionary:
 		armory_b() + float(g["armor"]))
 	st["sid"] = int(s["id"])
 	st["sname"] = String(s["name"])
+	# облик в 3D-бою: редкость надетых вещей (оружие, щит, шлем, доспех) — LegionFighter.dress_gear
+	var look := {}
+	for sl in ["weapon", "offhand", "helmet", "armor"]:
+		var it := item(int((s.get("gear", {}) as Dictionary).get(sl, 0)))
+		if not it.is_empty():
+			look[sl] = int(it["rarity"])
+	if not look.is_empty():
+		st["gear_look"] = look
 	return st
 
 
@@ -1735,6 +1830,10 @@ func b_effect(btype: String, lvl: int) -> Array:
 			return ["+%d%% урона и здоровья всем бойцам в походах" % roundi(FORGE * lvl * 100.0)]
 		"infirmary":
 			return ["Между волнами боя раненые восстанавливают %d%% здоровья" % roundi(INFIRMARY * lvl * 100.0)]
+		"smelter", "sawmill", "tannery":
+			var m := String(WORKSHOPS[btype])
+			return ["%s: %d в час (при полном числе работников), запас до %d" % [String(Gear.MAT_NAME[m]).capitalize(),
+				roundi(MAT_RATE * pow(float(lvl), 1.3)), MAT_CAP0 + MAT_CAP_PER * lvl]]
 		"armory":
 			return ["+%d брони всем бойцам в походах" % roundi(ARMORY * lvl), "Герою — %s (+%d брони, +%d%% урона)" % [
 				String(Hero.kit_of(lvl)["n"]).to_lower(), roundi(Hero.KIT_ARMOR * lvl), roundi(Hero.KIT_ATK * lvl * 100.0)]]
@@ -3055,7 +3154,7 @@ func to_dict() -> Dictionary:
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
 		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
-		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging}
+		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "mats": mats, "mats_t": mats_t}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -3141,6 +3240,13 @@ func from_dict(d: Dictionary) -> void:
 	var sh: Array = d.get("shards", [])
 	for i in mini(5, sh.size()):
 		shards[i] = maxi(0, int(sh[i]))
+	mats = {}
+	var md = d.get("mats", {})
+	if md is Dictionary:
+		for m: String in Gear.MATS:
+			if (md as Dictionary).has(m):
+				mats[m] = maxf(0.0, float(md[m]))
+	mats_t = float(d.get("mats_t", 0.0))
 	forging = {}
 	var fg = d.get("forging", {})
 	if fg is Dictionary and not (fg as Dictionary).is_empty() and String(fg.get("slot", "")) in Gear.SLOTS:

@@ -23,6 +23,7 @@ func _ready() -> void:
 	_army()
 	_gear()
 	_forge()
+	_mats()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -324,6 +325,7 @@ func _forge() -> void:
 	c.research["legion"] = true
 	c.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
 	L.army_tick()
+	L.mats = {"iron": 5000.0, "wood": 5000.0, "leather": 5000.0}
 	var no := L.can_forge("helmet", "", 0)
 	c.place("forge", Land.START + Vector2(-20, 0), 0.0, 0, 0, true)
 	var ids := []
@@ -353,3 +355,56 @@ func _forge() -> void:
 	var L2 := Legion.new()
 	L2.from_dict(JSON.parse_string(JSON.stringify(L.to_dict())))
 	_check(not L2.forging.is_empty() and String(L2.forging["slot"]) == "armor" and L2.shards.size() == 5, "сохранение: ковка и обломки на месте")
+
+
+## Легион 2.0, этап 3: мастерские — материалы по часам (без рабочих медленнее), запас, ковка тратит, разборка возвращает,
+## мастерские только в новой игре, сохранение
+func _mats() -> void:
+	print("== Легион: мастерские и материалы")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 5000.0
+	c.level = 3
+	var L: Legion = c.legion
+	c.research["legion"] = true
+	c.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
+	L.army_tick()
+	var gift := L.mat("iron") == Legion.MAT_GIFT and L.mat("leather") == Legion.MAT_GIFT
+	var old := City.new(Land.new())
+	old.level = 3
+	old.research["legion"] = true
+	old.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
+	_check(gift and c.unlocked("smelter") and c.unlocked("tannery") and not old.unlocked("smelter") and L.mat_rate("iron") == 0.0,
+		"подарок по %d; мастерские открыты в новой игре, в старой — нет; без Плавильни железа не прибавляется" % Legion.MAT_GIFT)
+	var sm := c.place("smelter", Land.START + Vector2(-20, 0), 0.0, 0, 0, true)
+	sm["staff"] = 1.0
+	sm["road"] = true
+	var full := L.mat_rate("iron")
+	sm["staff"] = 0.0
+	var empty := L.mat_rate("iron")
+	sm["staff"] = 1.0
+	_check(is_equal_approx(full, Legion.MAT_RATE) and is_equal_approx(empty, Legion.MAT_RATE * 0.25), "Плавильня 1 ур.: %.1f в час, без работников — %.1f" % [full, empty])
+	# 10 часов — +40, но не выше запаса 200
+	L.mats_t = Legion.now() - 10.0 * 3600.0
+	L.army_tick()
+	var i10 := L.mat("iron")
+	L.mats_t = Legion.now() - 100.0 * 3600.0
+	L.army_tick()
+	_check(i10 == Legion.MAT_GIFT + 40 and L.mat("iron") == L.mat_cap("iron") and L.mat_cap("iron") == Legion.MAT_CAP0 + Legion.MAT_CAP_PER, "10 ч — железа %d; долго — упёрлось в запас %d" % [i10, L.mat_cap("iron")])
+	# ковка тратит материалы по слоту, разборка возвращает часть
+	c.place("forge", Land.START + Vector2(0, 20), 0.0, 0, 0, true)
+	var need := Gear.forge_mats("helmet", 0)
+	var i0 := L.mat("iron")
+	var l0 := L.mat("leather")
+	var ok := L.forge("helmet", "", 0)
+	_check(ok and L.mat("iron") == i0 - int(need["iron"]) and L.mat("leather") == l0 - int(need["leather"]), "обычный шлем: %s" % Gear.mats_text(need))
+	L.forging = {}
+	L.mats["leather"] = 0.0
+	var why := L.can_forge("armor", "", 0)
+	var it := L.add_item({"slot": "armor", "cls": "", "rarity": 2, "ilvl": 3})
+	L.smelt(int(it["id"]))
+	var back := Gear.smelt_mats({"slot": "armor", "rarity": 2})
+	_check(why.begins_with("Не хватает: кожа") and L.mat("leather") == int(back["leather"]) and int(back["leather"]) > 0, "без кожи — «%s»; разобрали редкую лорику — кожи %d" % [why, L.mat("leather")])
+	var L2 := Legion.new()
+	L2.from_dict(JSON.parse_string(JSON.stringify(L.to_dict())))
+	_check(L2.mat("iron") == L.mat("iron") and L2.mat("leather") == L.mat("leather") and is_equal_approx(L2.mats_t, L.mats_t), "сохранение: материалы и время на месте")
