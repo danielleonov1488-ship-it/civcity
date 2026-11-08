@@ -1586,6 +1586,10 @@ func _show(b: Dictionary) -> void:
 	var vis := {"h": parts.place(bp, xf, subst), "lights": [], "smoke": [], "actors": []}
 	if city.apron_of(b) == 2:                  # домус, храм: каменный бордюр вокруг (у домов и лавок — глина, Land.wear)
 		(vis["h"] as Array).append_array(parts.place(Kerb.blueprint(bp), xf))
+	var ivs := Ivy.stage(city, b)                # плющ на старом доме (новая игра)
+	vis["ivy"] = ivs
+	if ivs > 0:
+		(vis["h"] as Array).append_array(parts.place(Ivy.blueprint(bp, ivs, int(b["id"]) * 31 + 7), xf))
 	for lp in bp.lights:
 		vis["lights"].append(_light(xf * lp, HOUSE_LIGHT if city.is_house(b) else 1.0))
 	var lived: bool = not city.is_house(b) or int(b["pop"]) > 0
@@ -2046,7 +2050,31 @@ func _update_plot_signs() -> void:
 
 # ---------- кадр ----------
 
+var _ivy_t := 0.0
+
+
+## Раз в несколько секунд: дом дорос до новой стадии плюща — перерисовать (лоза появилась или разрослась)
+func _ivy_tick(dt: float) -> void:
+	_ivy_t -= dt
+	if _ivy_t > 0.0 or city == null or int(city.cozy_v) < 1:
+		return
+	_ivy_t = 5.0
+	var n := 0
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		var vis: Dictionary = visuals.get(id, {})
+		if vis.is_empty() or not city.is_house(b):
+			continue
+		if int(vis.get("ivy", 0)) != Ivy.stage(city, b):
+			_show(b)
+			n += 1
+			if n >= 6:
+				return                            # понемногу — кадр не дёргается
+
+
 func _process(dt: float) -> void:
+	if ready_done:
+		_ivy_tick(dt)
 	if not ready_done:
 		return
 	frame += 1

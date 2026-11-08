@@ -466,7 +466,7 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else (Legion.vis_tier(legion.b_level(type)) if Legion.is_building(type) else 0)),
 		"pos": pos, "yaw": yaw, "variant": variant, "color": color, "y": float(chk["y"]), "cells": chk["cells"],
 		"pop": 0, "families": [], "happy": 50, "up": 0, "down": 0, "staff": 1.0, "active": true, "road": true,
-		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0, "born": next_id}   # born — порядок постройки (перенос его не меняет)
+		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0, "born": next_id, "hz": clock_h}   # born — порядок постройки (перенос его не меняет)
 	next_id += 1
 	if not free:
 		money -= float(d["cost"])
