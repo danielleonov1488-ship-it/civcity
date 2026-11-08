@@ -20,7 +20,9 @@ const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## эталон записан заново: … -- mode=shots rec=1 ref=D:/CivCity/.work/perf_ref/golden_s5 (снимки «было/стало» —
 ## .work/enable_gfx). Нужен импорт с Basis: линия с прежними несжатыми картинками в .godot/imported на «Высокой»
 ## разойдётся с ним (средняя разница ~2) — там сначала tools/godot.sh --headless --path godot --import
-const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s5"
+## 8.11 одеон получил трибуны круче (зрители садятся) — в городе владельца два одеона: эталон записан заново (golden_s6);
+## прежний golden_s5 остаётся у линий без этой правки
+const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s6"
 const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)
