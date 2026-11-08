@@ -140,6 +140,16 @@ class Unit:
 	var immune_ev := 0.0
 	var burned := false            # пал от масла или ожога — не встанет
 	var raised := false
+	# наборы снаряжения воинов (Легион 2.0, этап 6; только походы): свойства 4 вещей набора
+	var set_stun := false          # первый удар оглушает на 1 с
+	var stunned_one := false
+	var stun_t := 0.0              # оглушён до этого времени
+	var set_rage := false          # ниже 30% здоровья +25% урона
+	var set_reflect := false       # отражает 10% урона
+	var set_drain := false         # павший рядом враг лечит воина и соседей
+	var set_revive := false        # первый раз пав — встаёт с 30%
+	var revived := false
+	var heal_k := 1.0              # лечение по воину (Египетский набор)
 	var enter_dir := -1.0          # откуда входит: −1 — справа (как все), 1 — слева, с тыла (засада)
 
 	func ranged() -> bool:
@@ -287,6 +297,14 @@ func _add(side: String, s: Dictionary, x: float, z: float) -> Unit:
 	u.kite_k = s.has("bush")
 	u.summon = s.get("summon", {})
 	u.summon_t = float(u.summon.get("first", u.summon.get("every", 0.0)))
+	u.set_stun = bool(s.get("set_stun", false))
+	u.set_rage = bool(s.get("set_rage", false))
+	u.set_reflect = bool(s.get("set_reflect", false))
+	u.set_drain = bool(s.get("set_drain", false))
+	u.set_revive = bool(s.get("set_revive", false))
+	u.heal_k = float(s.get("heal_k", 1.0))
+	if bool(s.get("set_kite", false)) and u.range_m > 3.0:
+		u.kite = 4.0                               # Парфянский набор: стрелок отходит от мечей
 	if s.has("abil") or s.has("aura") or s.has("poison") or s.has("sunder") or s.has("guard"):
 		u.src = s
 		u.abil = s.get("abil", {})
@@ -313,7 +331,7 @@ func _next_wave() -> bool:
 	var hw := float(setup.get("heal_wave", 0.0))
 	if wave_idx > 0 and hw > 0.0:
 		for u in alive_of("ally"):
-			var h := roundi(u.max_hp * hw)
+			var h := roundi(u.max_hp * hw * u.heal_k)
 			if u.hp < u.max_hp and h > 0:
 				events.append({"type": "heal", "unit": u, "amount": mini(h, ceili(u.max_hp - u.hp))})
 				u.hp = minf(u.max_hp, u.hp + h)
@@ -450,6 +468,8 @@ func _damage(atk: float, vs: Dictionary, from: Unit, tg: Unit, k := 1.0) -> void
 	if from != null:
 		if from.rage_t > t:
 			d *= from.rage_k
+		if from.set_rage and from.hp_frac() < 0.3:
+			d *= 1.25
 		if tg.ward_t > t and ((tg.ward == "melee" and from.shot == "") or (tg.ward == "ranged" and from.shot != "")):
 			d *= 0.25
 		if storm_t > t and from.side == "ally" and from.shot != "":
@@ -464,6 +484,12 @@ func _damage(atk: float, vs: Dictionary, from: Unit, tg: Unit, k := 1.0) -> void
 	events.append({"type": "hit", "unit": tg, "dmg": dmg, "crit": crit, "from": from})
 	if from != null and from.poison_k > 0.0 and tg.poison.size() < 8:
 		tg.poison.append([t + 5.0, from.atk * from.poison_k])
+	if from != null and from.set_stun and not from.stunned_one:
+		from.stunned_one = true
+		tg.stun_t = t + 1.0
+		tg.timer = maxf(tg.timer, 1.0)
+	if tg.set_reflect and from != null and from.alive and from != tg:
+		_hurt(from, dmg * 0.1)
 	if tg.hp <= 0.0:
 		tg.burned = from == null
 		_kill(tg)
@@ -472,6 +498,22 @@ func _damage(atk: float, vs: Dictionary, from: Unit, tg: Unit, k := 1.0) -> void
 func _kill(tg: Unit) -> void:
 	if not tg.alive:
 		return
+	if tg.set_revive and not tg.revived:
+		tg.revived = true                          # Преторианский набор: легион не дрогнет
+		tg.hp = tg.max_hp * 0.3
+		tg.poison.clear()
+		tg.burn = 0.0
+		events.append({"type": "heal", "unit": tg, "amount": roundi(tg.hp)})
+		events.append({"type": "revive", "unit": tg})
+		return
+	if tg.side == "enemy":
+		for a in units:
+			if a.alive and a.set_drain and dist(a, tg) < 3.0:
+				for o in units:                    # Египетский набор: павший рядом враг лечит воина и соседей
+					if o.alive and o.side == a.side and dist(o, a) < 2.2 and o.hp < o.max_hp:
+						var hh := mini(roundi(o.max_hp * 0.05 * o.heal_k), ceili(o.max_hp - o.hp))
+						o.hp += hh
+						events.append({"type": "heal", "unit": o, "amount": hh})
 	tg.alive = false
 	tg.hp = 0.0
 	tg.target = null
@@ -608,7 +650,7 @@ func use_perk(id: String, side := "ally") -> bool:
 			events.append({"type": "perk", "id": id, "side": side})
 		"bandage":
 			for u in allies:
-				var h := roundi(u.max_hp * (PERK_K["bandage"][0] + PERK_K["bandage"][1] * (lvl - 1)))
+				var h := roundi(u.max_hp * (PERK_K["bandage"][0] + PERK_K["bandage"][1] * (lvl - 1)) * u.heal_k)
 				u.hp = minf(u.max_hp, u.hp + h)
 				u.poison.clear()
 				events.append({"type": "heal", "unit": u, "amount": h})
@@ -792,6 +834,9 @@ func step(dt := DT) -> void:
 				u.summon_t = float(u.summon.get("every", 16.0))
 				u.summon_warned = false
 				callers.append(u)
+		if u.stun_t > t:
+			u.moving = false
+			continue
 		u.retarget -= dt
 		if u.target == null or not u.target.alive or u.retarget <= 0.0:
 			u.target = _pick_target(u)
@@ -826,9 +871,10 @@ func step(dt := DT) -> void:
 		else:
 			u.moving = false
 			# походы: стрелок в кустах отходит от мечей (и стреляет на ходу), пока есть куда — лучники снимают его издалека
-			if u.kite > 0.0 and u.x < FIELD_X.y - 0.6 and _melee_near(u, 2.0):
+			var kdir := -1.0 if u.side == "ally" else 1.0
+			if u.kite > 0.0 and (u.x < FIELD_X.y - 0.6 if kdir > 0.0 else u.x > FIELD_X.x + 0.6) and _melee_near(u, 2.0):
 				var back := minf(u.speed * fast * dt, u.kite)
-				u.x += back
+				u.x += back * kdir
 				u.kite -= back
 				u.moving = true
 			if u.min_range > 0.0 and d < u.min_range:

@@ -733,6 +733,9 @@ func _item_ic(it: Dictionary, sz := 40.0) -> Control:
 	var col := Gear.color(int(it.get("rarity", 0)))
 	sb.bg_color = col.lerp(Color.WHITE, 0.6)
 	sb.border_color = col
+	if String(it.get("set", "")) != "" and Gear.SETS.has(String(it["set"])):
+		sb.border_color = Color(String(Gear.SETS[String(it["set"])]["col"]))      # вещь набора — кайма цвета набора, толще
+		sb.set_border_width_all(3)
 	sb.set_content_margin_all(3)
 	pc.add_theme_stylebox_override("panel", sb)
 	pc.add_child(_tr(_gear_tex(Gear.icon_of(it), String(it.get("slot", ""))), sz - 6))
@@ -1751,7 +1754,7 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 				v.add_child(_wl("Нет звезды «%s»: %s" % [tx[i], Legion.star_miss(i, out, stg)], 420, 14, C_BAD, false, true))
 		var ch: Dictionary = out.get("chest", {})
 		if not ch.is_empty():
-			v.add_child(_wl("Все 30 звёзд «%s»! Сундук Славы +%d." % [ch["region"], int(ch["glory"])], 420, 16, C_GOLD, true, true))
+			v.add_child(_wl("Все %d звёзд «%s»! Сундук Славы +%d." % [Legion.stages() * 3, ch["region"], int(ch["glory"])], 420, 16, C_GOLD, true, true))
 	v.add_child(_wl("Вернулись %d из %d бойцов" % [int(out.get("alive", 0)), int(out.get("total", 0))], 420, 16, C_INK, true, true))
 	var drop: Dictionary = out.get("item", {})
 	if drop.has("full"):
@@ -1765,6 +1768,9 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 		dh.add_child(_l("%s · %d ур." % [Gear.name_of(drop), int(drop["ilvl"])], 17, true, Gear.color(int(drop["rarity"]))))
 		v.add_child(dh)
 		v.add_child(_wl(Gear.stats_text(drop), 420, 14, C_SOFT, false, true))
+	var rel := String(out.get("relic", ""))
+	if rel != "":
+		v.add_child(_wl("Реликвия набора «%s»! Из неё в Кузнице куётся вещь набора." % Gear.SETS[rel]["name"], 420, 16, C_GOLD, true, true))
 	var hurt: Array = out.get("wounded", [])
 	if not hurt.is_empty():                  # Легион 2.0: павшие ранены, лечатся (насмерть никто не гибнет)
 		v.add_child(_wl("Ранены: %s — поправятся во вкладке «Воины»" % ", ".join(hurt), 420, 14, C_BAD, false, true))
@@ -2126,6 +2132,8 @@ func _soldier_card(s: Dictionary) -> Control:
 	for slot: String in Gear.SLOTS:
 		gh.add_child(_gear_slot(s, slot))
 	v.add_child(gh)
+	for ln in Gear.set_lines(Gear.set_bonus(lg.worn(s))["sets"]):
+		v.add_child(_wl(String(ln), 300, 12, C_GOLD, true))
 	var bv := VBoxContainer.new()
 	bv.add_theme_constant_override("separation", 4)
 	bv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -2375,8 +2383,46 @@ func _forge_win() -> void:
 		var why := lg.can_forge(_f_slot, _f_cls, r)
 		h.add_child(_btn("Ковать", 0, 14, null, why, func(): lg.forge(_f_slot, _f_cls, rr); _forge_win()))
 		v.add_child(h)
+	if lg.army_on():
+		_forge_sets(v)
 	v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
 	_center_later(p)
+
+
+## Кузница: вещи наборов — по реликвиям провинций (выбранный выше слот и класс)
+func _forge_sets(v: VBoxContainer) -> void:
+	v.add_child(_hdiv(8))
+	var have := 0
+	for k: String in Gear.SET_IDS:
+		have += int(lg.relics.get(k, 0))
+	v.add_child(_l("Вещи наборов · реликвий: %d" % have, 16, true, C_INK))
+	v.add_child(_wl("Реликвии приносят боссы провинций похода. Две вещи одного набора на воине дают прибавку, четыре — особое свойство в бою.", 560, 12, C_SOFT))
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 4)
+	for k: String in Gear.SET_IDS:
+		var S: Dictionary = Gear.SETS[k]
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 6)
+		h.custom_minimum_size = Vector2(275, 0)
+		var probe := {"slot": _f_slot, "cls": _f_cls if _f_slot in ["weapon", "offhand"] else "", "rarity": Gear.SET_RARITY, "ilvl": lg.forge_ilvl(), "set": k}
+		h.add_child(_item_ic(probe, 34))
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", -2)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tv.add_child(_l("%s · реликвий %d" % [S["name"], int(lg.relics.get(k, 0))], 14, true, Color(String(S["col"]))))
+		tv.add_child(_l("2: %s" % S["d2"], 11, false, C_SOFT))
+		h.add_child(tv)
+		h.tooltip_text = "%s\n2 вещи: %s\n4 вещи: %s\nКовка: реликвия, %d × %s, %s, %s ден., %s" % [Gear.name_of(probe), S["d2"], S["d4"],
+			int(Gear.SET_FORGE["shards"]), Gear.SHARD[Gear.SET_RARITY - 1], Gear.mats_text(lg.set_mats(_f_slot)), hud.fmt(float(Gear.SET_FORGE["money"])),
+			Legion.fmt_duration(float(Gear.SET_FORGE["h"]) * 3600.0)]
+		h.mouse_filter = Control.MOUSE_FILTER_PASS
+		var kk := k
+		var why := lg.can_forge_set(k, _f_slot, _f_cls)
+		h.add_child(_btn("Ковать", 0, 12, null, why, func(): lg.forge_set(kk, _f_slot, _f_cls); _forge_win()))
+		grid.add_child(h)
+	v.add_child(grid)
 
 
 func _recruit_row(i: int) -> Control:
