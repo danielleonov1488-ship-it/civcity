@@ -45,6 +45,17 @@ const FORGE := [
 	{"shards": 5, "money": 3500, "h": 12.0, "lvl": 8},
 ]
 const SHARD := ["серый обломок", "зелёный обломок", "синий обломок", "фиолетовый обломок", "золотой обломок"]
+## Значки вещей: лист 42.png 4×4 (Codex) — у каждой вещи свой рисунок по слоту и классу
+const ICON := {
+	"weapon": {"legionary": 0, "spearman": 1, "archer": 2, "engineer": 3},
+	"offhand": {"legionary": 5, "spearman": 6, "archer": 7, "engineer": 8},
+	"helmet": {"": 9}, "armor": {"": 10}, "badge": {"": 11},
+}
+const ICON_CATAPULT := 4
+const ICON_SHARD := 12
+const ICON_FORGE := 13
+const ICON_STORE := 14
+const ICON_PILA := 15
 const STORE_BASE := 20                     # мест на Складе: 20 + 5 × уровень Склада оружия
 const STORE_PER := 5
 
@@ -81,6 +92,18 @@ static func name_of(it: Dictionary) -> String:
 		var d: Dictionary = NAMES.get(slot, {})
 		e = d.get(cls, d.get("", ["вещь", "f"]))
 	return "%s %s" % [rarity_word(int(it.get("rarity", 0)), String(e[1])).capitalize(), String(e[0])]
+
+
+## Номер рисунка вещи в листе 42 (для пустого слота — по слоту и классу воина)
+static func icon_idx(slot: String, cls: String, engine := "") -> int:
+	if slot == "weapon" and cls == "engineer" and engine == "catapult":
+		return ICON_CATAPULT
+	var d: Dictionary = ICON.get(slot, {})
+	return int(d.get(cls, d.get("", d.get("legionary", 0))))
+
+
+static func icon_of(it: Dictionary) -> int:
+	return icon_idx(String(it.get("slot", "")), String(it.get("cls", "")), String(it.get("engine", "")))
 
 
 ## Строка чисел: «+12% урона, +4 брони»
