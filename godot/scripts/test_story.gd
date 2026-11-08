@@ -4094,7 +4094,7 @@ func _letter() -> void:
 	check(sto._goal_kind(A) == "legion_win" and int((A["flags"] as Dictionary).get("won", 0)) == 0, "шаг «поход»: побед с начала шага — 0")
 	check(String(sto.pointer_do().get("kind", "")) == "legion", "стрелка — на медальон «Легион»")
 	var pt := parts_txt()
-	check(pt.contains("· Победы в «Лес разбойников» 0/1"), "строка: %s" % pt)
+	check(pt.contains("· Победы в «%s» 0/1" % Legion.regions()[0]["name"]), "строка: %s" % pt)    # в новой игре — «Италия» (поход 2.0)
 	# победа в другой провинции — не в счёт; в Лесу разбойников — в счёт
 	sto._on_battle_req({"stage": {"r": 1, "s": 0}})
 	sto._on_battle_done({"win": true})

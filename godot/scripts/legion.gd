@@ -1254,7 +1254,7 @@ func _lock_why() -> String:
 	if window_open():
 		return ""
 	var c = city()
-	var rank := int(regions()[0]["rank"])
+	var rank := int(REGIONS[0]["rank"])         # Легион открывается с этого уровня города (и в походе 2.0)
 	var head := "Легион откроется в истории горожан «%s»" % story_title()
 	if c == null or int(c.level) < rank:
 		return head + " — она придёт, когда город станет «%s»." % Defs.LEVELS[rank]["name"]
