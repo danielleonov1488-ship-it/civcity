@@ -7252,14 +7252,14 @@ const GLAD_RIVAL := {"murmillo": "thraex", "retiarius": "murmillo", "thraex": "r
 
 
 ## Гладиатор вида kind (чемпион школы, соперник; на играх — StoryLife) — боец Легиона в своём облике
-static func gladiator(kind: String, seed_v := 1) -> LegionFighter:
+static func gladiator(kind: String, seed_v := 1, size := 1.0) -> LegionFighter:
 	Synty._index()
 	var f := LegionFighter.new()
 	f.key = "glad_" + kind
 	f.name = "Glad_" + kind
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_v
-	f._human(GLAD_LOOKS.get(kind, GLAD_LOOKS["murmillo"]), 1.0, rng)
+	f._human(GLAD_LOOKS.get(kind, GLAD_LOOKS["murmillo"]), size, rng)
 	f._collect()
 	f.set_motion(false)
 	return f

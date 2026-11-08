@@ -1,7 +1,7 @@
 class_name Breathe
 extends Node3D
 ## «Город дышит» («Уютный Рим», этап 5, docs/PLAN_COZY.md): днём над травой и цветами порхают бабочки, ночью у земли
-## мерцают светлячки, по небу изредка пролетает стайка птиц. Всё — частицы вокруг точки, куда смотрит камера
+## мерцают светлячки, по небу изредка пролетает стайка птиц, утром над водой стелется туман. Всё — частицы вокруг точки, куда смотрит камера
 ## (где игрок, там и жизнь; за краем экрана ничего не считается). На «Очень низкой» выключено, на «Низкой» — вдвое меньше.
 ## Картинки бабочек и птиц рисуются кодом (крылья — два кадра: взмах), без файлов.
 
@@ -10,11 +10,16 @@ const BUTTERFLY_H := [7.0, 18.5]         # часы бабочек
 const FIREFLY_H := [20.5, 4.8]           # часы светлячков (через полночь)
 const BIRD_GAP := [35.0, 70.0]           # секунд между стайками
 const BIRD_H := [6.0, 19.5]
+const MIST_H := [4.4, 9.0]               # утренний туман над водой: с рассвета до девяти, гуще всего в шесть-семь
+const MIST_A := 0.2                      # прозрачность клубка в самый густой час
 
 var game
 var bfly: GPUParticles3D
 var ffly: GPUParticles3D
 var birds: GPUParticles3D
+var mist: GPUParticles3D
+var _mist_t := 0.0
+var _mist_at := Vector3.INF               # середина воды рядом с точкой взгляда (INF — воды нет)
 var _bird_t := 20.0
 var _q := "high"
 
@@ -24,7 +29,8 @@ func setup(g) -> void:
 	bfly = _butterflies()
 	ffly = _fireflies()
 	birds = _birds()
-	for p: GPUParticles3D in [bfly, ffly, birds]:
+	mist = _mist()
+	for p: GPUParticles3D in [bfly, ffly, birds, mist]:
 		add_child(p)
 		p.emitting = false
 
@@ -52,6 +58,20 @@ func _process(dt: float) -> void:
 	ffly.emitting = night and not off
 	bfly.speed_scale = clampf(float(game.speed), 0.0, 2.0) if not game.promo else 1.0
 	ffly.speed_scale = bfly.speed_scale
+	# утренний туман: клубится над водой у точки взгляда (вода ищется раз в полторы секунды)
+	_mist_t -= dt
+	if _mist_t <= 0.0:
+		_mist_t = 1.5
+		_mist_at = _water_near(at)
+	var mh: bool = h >= MIST_H[0] and h < MIST_H[1]
+	mist.emitting = mh and not off and _mist_at != Vector3.INF
+	if mist.emitting:
+		mist.global_position = _mist_at
+		var f := clampf((h - MIST_H[0]) / 1.2, 0.0, 1.0) * clampf((MIST_H[1] - h) / 1.8, 0.0, 1.0)
+		var mm := (mist.draw_pass_1 as QuadMesh).material as StandardMaterial3D
+		mm.albedo_color.a = MIST_A * f
+		mist.amount_ratio = k
+		mist.speed_scale = bfly.speed_scale
 	# птицы: стайка раз в полминуты-минуту, через небо над точкой взгляда
 	_bird_t -= dt * maxf(0.0, float(game.speed) if not game.promo else 1.0)
 	if _bird_t <= 0.0 and not off and h >= BIRD_H[0] and h < BIRD_H[1]:
@@ -245,6 +265,71 @@ func _birds() -> GPUParticles3D:
 	var q := QuadMesh.new()
 	q.size = Vector2(1.0, 0.5)
 	q.material = _quad_mat(_bird_tex(), 2)
+	p.draw_pass_1 = q
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return p
+
+
+## Середина воды у точки взгляда: клетки 5 м в квадрате 40 × 40 м; меньше трёх водных — воды нет (INF)
+func _water_near(at: Vector3) -> Vector3:
+	if game.land == null:
+		return Vector3.INF
+	var sum := Vector2.ZERO
+	var n := 0
+	for i in range(-4, 5):
+		for j in range(-4, 5):
+			var p := Vector2(at.x + i * 5.0, at.z + j * 5.0)
+			if game.land.is_water(p):
+				sum += p
+				n += 1
+	if n < 3:
+		return Vector3.INF
+	var c := sum / n
+	return Vector3(c.x, Land.WATER_Y + 0.3, c.y)
+
+
+## Туман: большие мягкие клубки над водой, медленно плывут и тают; прозрачность — по часу (_process)
+func _mist() -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	p.name = "Mist"
+	p.amount = 70
+	p.lifetime = 14.0
+	p.preprocess = 14.0
+	p.local_coords = false
+	p.visibility_aabb = AABB(Vector3(-40, -4, -40), Vector3(80, 10, 80))
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(13.0, 0.18, 13.0)
+	pm.direction = Vector3(1, 0, 0.35)
+	pm.spread = 40.0
+	pm.flatness = 1.0
+	pm.initial_velocity_min = 0.12
+	pm.initial_velocity_max = 0.35
+	pm.gravity = Vector3.ZERO
+	pm.scale_min = 6.0
+	pm.scale_max = 10.0
+	var fade := Gradient.new()
+	fade.offsets = PackedFloat32Array([0.0, 0.3, 0.7, 1.0])
+	fade.colors = PackedColorArray([Color(1, 1, 1, 0), Color(1, 1, 1, 1), Color(1, 1, 1, 0.8), Color(1, 1, 1, 0)])
+	var ft := GradientTexture1D.new()
+	ft.gradient = fade
+	pm.color_ramp = ft
+	p.process_material = pm
+	pm.angle_min = 0.0                          # плоские пласты лежат над водой под разными углами
+	pm.angle_max = 360.0
+	pm.particle_flag_rotate_y = true
+	var q: QuadMesh = (Game._puff_quad() as QuadMesh).duplicate()
+	q.orientation = PlaneMesh.FACE_Y            # плоско над водой: не врезается в неё прямой кромкой
+	var m := (q.material as StandardMaterial3D).duplicate() as StandardMaterial3D
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_DISABLED
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = Color(0.93, 0.95, 1.0, MIST_A)
+	m.vertex_color_use_as_albedo = true
+	m.proximity_fade_enabled = true             # мягко входит в воду и берег, без резкой кромки
+	m.proximity_fade_distance = 1.2
+	m.no_depth_test = false
+	q.material = m
 	p.draw_pass_1 = q
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return p

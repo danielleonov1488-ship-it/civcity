@@ -32,6 +32,8 @@ const VENUES := {
 	"odeon": {"kind": "theatre", "hours": [18.4, 19.2, 21.2, 21.8], "fill": 0.8},
 	# школа: утром дети сидят на скамьях под перголой, учитель рассказывает
 	"school": {"kind": "school", "hours": [7.7, 8.3, 12.4, 12.9], "fill": 0.9},
+	# «Уютный Рим», этап 5: вечером в таверне — за столиками и на скамьях, пара человек стоит у жаровни (только новая игра)
+	"taberna": {"kind": "tavern", "hours": [18.2, 18.8, 22.0, 22.6], "fill": 0.85},
 }
 ## Площадки-зрелища (овация в конце, совет «Зрелища»); остальные — храм, термы
 const SHOWS := ["arena", "circus", "theatre"]
@@ -90,6 +92,8 @@ static func is_venue(type: String) -> bool:
 func venue_show(b: Dictionary) -> void:
 	if not VENUES.has(b["type"]):
 		return
+	if String(VENUES[b["type"]]["kind"]) == "tavern" and int(city.cozy_v) < 1:
+		return                                   # вечер в таверне — в новой игре
 	venue_hide(b)
 	var lay := layout(b)
 	var root := Node3D.new()
@@ -160,6 +164,8 @@ func layout(b: Dictionary) -> Dictionary:
 			_forum(lay, bp, tris)
 		"school":
 			_school(lay, bp, tris)
+		"tavern":
+			_tavern(lay, bp, tris)
 		_:
 			for p in bp.parts:
 				if p[0] == "SM_Bld_Amphitheatre_01":
@@ -473,6 +479,83 @@ func _forum(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 		ids.append((lay["seats"] as Array).size())
 		(lay["seats"] as Array).append(s)
 	lay["groups"]["forum"] = ids
+
+
+## Таверна: посетители на стульях у круглых столиков и на скамьях у длинного стола (лицом к столу), двое-трое стоят
+## во дворе друг к другу лицом — болтают у жаровни. Высота сиденья — по самой модели (луч сверху)
+func _tavern(lay: Dictionary, bp: Bp, tris: Tris) -> void:
+	var door := bp.door
+	var tables := []
+	for p in bp.parts:
+		if String(p[0]).begins_with("SM_Prop_Table_0"):
+			tables.append((p[1] as Transform3D).origin)
+	if tables.is_empty():
+		return
+	var near_t := func(o: Vector3) -> Vector3:
+		var best: Vector3 = tables[0]
+		for t: Vector3 in tables:
+			if Vector2(t.x, t.z).distance_to(Vector2(o.x, o.z)) < Vector2(best.x, best.z).distance_to(Vector2(o.x, o.z)):
+				best = t
+		return best
+	var list := []
+	for p in bp.parts:
+		var nm := String(p[0])
+		var x: Transform3D = p[1]
+		var spots := []                          # [таз, лицом куда]
+		if nm.begins_with("SM_Prop_Seat_Chair"):
+			var t: Vector3 = near_t.call(x.origin)
+			var F := Vector3(t.x - x.origin.x, 0, t.z - x.origin.z).normalized()
+			spots.append([x.origin - F * 0.04, F])
+		elif nm.begins_with("SM_Prop_Seat_Bench"):
+			var t2: Vector3 = near_t.call(x.origin)
+			var ax := x.basis.z.normalized()
+			var F2 := ax if ax.dot(t2 - x.origin) > 0.0 else -ax
+			var side := x.basis.x.normalized()
+			var bb := Bp.model_aabb(nm)
+			var mid := x * bb.get_center()               # у скамьи начало координат — не середина сиденья
+			mid.y = x.origin.y
+			var w := bb.size.x * x.basis.get_scale().x
+			var n := 3 if w > 1.4 else 2
+			for i in n:
+				spots.append([mid + side * (i - (n - 1) / 2.0) * w * 0.3, F2])
+		for e in spots:
+			var pelvis: Vector3 = e[0]
+			var F3: Vector3 = e[1]
+			var seat := -INF                       # сиденье из реек: ищем верх рядом с тазом
+			for o: Vector2 in [Vector2.ZERO, Vector2(0.07, 0), Vector2(-0.07, 0), Vector2(0, 0.07), Vector2(0, -0.07), Vector2(0.14, 0), Vector2(-0.14, 0)]:
+				seat = maxf(seat, tris.surface(pelvis.x + o.x, pelvis.z + o.y, x.origin.y + 0.55))
+			if seat == -INF or seat < x.origin.y + 0.2:
+				continue
+			var root := pelvis + F3 * People.SIT_BACK
+			root.y = seat - Crowd.SEAT_RISE
+			var path := PackedVector3Array([Vector3(door.x, 0, door.z + 0.4), Vector3(root.x - F3.x * 0.5, 0, root.z - F3.z * 0.5),
+				Vector3(root.x, root.y + Crowd.SEAT_RISE - Crowd.SEAT_DROP, root.z)])
+			list.append({"root": root, "yaw": atan2(F3.x, F3.z), "row": 0, "path": path, "far": rng.randf(), "pose": "sit"})
+	# стоят у жаровни: пары лицом друг к другу
+	var pairs := 0
+	var z := door.z - 0.7
+	while z > 0.6 and pairs < 2:
+		for x0: float in [-2.0, 1.6]:
+			if pairs >= 2:
+				break
+			var a := Vector3(x0, 0, z)
+			var c := a + Vector3(0.55, 0, 0)
+			var ha := maxf(tris.surface(a.x, a.z, 0.6), 0.0)    # двор — земля (у постройки под ним своих граней нет)
+			var hc := maxf(tris.surface(c.x, c.z, 0.6), 0.0)
+			if ha > 0.05 or hc > 0.05 or not _open(tris, Vector3(a.x, ha, a.z), 1.9) or not _open(tris, Vector3(c.x, hc, c.z), 1.9):
+				continue
+			for q: Array in [[Vector3(a.x, ha, a.z), PI / 2], [Vector3(c.x, hc, c.z), -PI / 2]]:
+				var r0: Vector3 = q[0]
+				list.append({"root": r0, "yaw": float(q[1]) + rng.randf_range(-0.2, 0.2), "row": 0,
+					"path": _ground_path(tris, Vector3(door.x, 0.0, door.z + 0.4), r0), "far": 2.0 + rng.randf(), "pose": "stand"})
+			pairs += 1
+		z -= 0.8
+	list.sort_custom(func(a2, b2): return a2["far"] < b2["far"])
+	var ids := []
+	for s2 in list:
+		ids.append((lay["seats"] as Array).size())
+		(lay["seats"] as Array).append(s2)
+	lay["groups"]["tavern"] = ids
 
 
 ## Школа: ученики на скамьях (SM_Prop_Seat_Bench — лицом к учителю, +Z), учитель у своего кресла лицом к ним
@@ -794,6 +877,7 @@ func _step(dt: float) -> void:
 			mur.stop()
 		if V["act"] != null:
 			V["act"].tick(sdt, ph)
+	_proc_step(dt, sdt)
 
 
 ## Советник один раз, когда в городе впервые собираются на представление: что происходит и куда смотреть
@@ -815,6 +899,8 @@ func _first_tip(V: Dictionary) -> void:
 func _enter_phase(V: Dictionary, ph: String) -> void:
 	var old: String = V["phase"]
 	V["phase"] = ph
+	if ph == "gather" and V["kind"] == "arena":
+		_procession(V)
 	_priest(V, ph != "idle")
 	_fx(V, ph != "idle")
 	match ph:
@@ -962,8 +1048,8 @@ func _call_residents(V: Dictionary) -> void:
 		if r.has("hero") or int(r["home"]) <= 0 or r["state"] != "home":
 			continue
 		if school != bool(r["child"]):
-			if school or rng.randf() < 0.7:
-				continue                         # в школу — только дети; на зрелища дети ходят реже взрослых
+			if school or rng.randf() < 0.7 or V["kind"] == "tavern":
+				continue                         # в таверну детей не берут                         # в школу — только дети; на зрелища дети ходят реже взрослых
 		var h: Dictionary = city.buildings.get(r["home"], {})
 		if h.is_empty():
 			continue
@@ -1343,3 +1429,78 @@ class Tris:
 			if h <= below and h > best:
 				best = h
 		return best
+
+
+# ---------- шествие перед играми («Уютный Рим», этап 3) ----------
+## Перед боями в амфитеатре из школы гладиаторов (Лудус) по улицам идёт колонна: впереди знаменосец Легиона,
+## за ним гладиаторы — мирмиллоны, ретиарии, фракийцы; у амфитеатра входят внутрь. Только в новой игре, не на «Очень низкой»
+const PROC_N := 6
+const PROC_GAP := 1.15                   # между идущими, м
+const PROC_SPEED := 1.25                 # м/с при скорости игры ×1
+var _procs: Array = []                   # [{f, path, len, off}]
+
+
+func _procession(V: Dictionary, a := Vector2.INF, z := Vector2.INF) -> void:
+	if int(city.cozy_v) < 1 or str(game.settings.get("quality", "high")) == "verylow" or game.people == null or not _procs.is_empty():
+		return
+	var from := {}
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if String(b["type"]) == "ludus":
+			from = b
+			break
+	if from.is_empty() and a == Vector2.INF:
+		return
+	var path: PackedVector2Array = game.people._path(city.door_point(from) if a == Vector2.INF else a, city.door_point(V["b"]) if z == Vector2.INF else z)
+	if path.size() < 2:
+		return
+	var total := 0.0
+	for i in range(1, path.size()):
+		total += path[i - 1].distance_to(path[i])
+	var kinds := ["murmillo", "retiarius", "thraex"]
+	var sz := Citizen.SIZE / LegionFighter.HUMAN
+	for i in PROC_N + 1:
+		var f: LegionFighter = LegionFighter.create("legionary", sz, 77) if i == 0 else Stories.gladiator(kinds[(i - 1) % 3], 300 + i, sz)
+		f.name = "Procession_%d" % i
+		add_child(f)
+		f.visible = false
+		_procs.append({"f": f, "path": path, "len": total, "off": i * PROC_GAP, "d": 0.0})
+
+
+## Точка пути на расстоянии d от начала и направление
+func _along(path: PackedVector2Array, d: float) -> Array:
+	for i in range(1, path.size()):
+		var seg := path[i - 1].distance_to(path[i])
+		if d <= seg or i == path.size() - 1:
+			var t := clampf(d / maxf(seg, 0.001), 0.0, 1.0)
+			return [path[i - 1].lerp(path[i], t), (path[i] - path[i - 1]).normalized()]
+		d -= seg
+	return [path[path.size() - 1], Vector2(0, 1)]
+
+
+func _proc_step(dt: float, sdt: float) -> void:
+	if _procs.is_empty():
+		return
+	var left := []
+	for p: Dictionary in _procs:
+		var f: LegionFighter = p["f"]
+		if not is_instance_valid(f):
+			continue
+		p["d"] = float(p["d"]) + sdt * PROC_SPEED
+		var at := float(p["d"]) - float(p["off"])
+		if at >= float(p["len"]):
+			f.queue_free()                       # дошёл до амфитеатра — внутрь
+			continue
+		left.append(p)
+		if at < 0.0:
+			continue
+		var e := _along(p["path"], at)
+		var q: Vector2 = e[0]
+		var dir: Vector2 = e[1]
+		f.visible = true
+		f.position = Vector3(q.x, game.land.height_at(q.x, q.y), q.y)
+		f.rotation.y = lerp_angle(f.rotation.y, atan2(dir.x, dir.y), minf(1.0, dt * 6.0))
+		f.set_motion(true)
+		f.set_speed(maxf(0.5, speed))
+		f.tick(dt)
+	_procs = left

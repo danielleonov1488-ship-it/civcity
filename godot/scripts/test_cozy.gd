@@ -26,6 +26,7 @@ func _ready() -> void:
 	_mats()
 	_principia()
 	_traits()
+	_odeon()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -485,3 +486,14 @@ func _traits() -> void:
 		good += int(p[1]) if String(p[0]).begins_with("Цветоводы") else 0
 	_check(bad == Balance.TRAIT_BAD and good == Balance.TRAIT_OK and City.trait_text(with_fl) == "цветовод",
 		"цветоводы: без цветов %d%%, с клумбой у дома %+d%% («%s»)" % [bad, good, City.trait_text(with_fl)])
+
+
+## Одеон: на ступенях есть места (ступени круче — зритель садится: таз на ступени, ступни на ступени ниже)
+func _odeon() -> void:
+	print("== одеон: места на трибунах")
+	var sp := Spectacle.new()
+	sp.city = City.new(Land.new())
+	var n := (sp.layout({"type": "odeon", "tier": 1, "variant": 0, "color": 0})["seats"] as Array).size()
+	var nt := (sp.layout({"type": "theatre", "tier": 1, "variant": 0, "color": 0})["seats"] as Array).size()
+	sp.free()
+	_check(n >= 16 and nt >= 60, "мест в одеоне %d, в театре %d" % [n, nt])

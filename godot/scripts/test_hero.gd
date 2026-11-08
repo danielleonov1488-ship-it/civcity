@@ -170,8 +170,13 @@ func _new() -> void:
 	check(int(c.stats.get("pop", 0)) == 0, "герой не входит в число жителей", c.stats.get("pop"))
 	# советник один раз: кто он и где его найти
 	hud.advisor_panel.visible = false
-	hud._once_tips()
-	check(c.tips.has("hero_tip") and hud.adv_title.text.contains("ваш герой") and hud.adv_text.text.contains("медальон"), "советник один раз: «… — ваш герой»", hud.adv_title.text)
+	for k in 8:                                # другие разовые советы (праздник, этаж…) идут раньше — закрываем их по очереди
+		hud._tip_next = 0
+		hud._once_tips()
+		if c.tips.has("hero_tip"):
+			break
+		hud.advisor_panel.visible = false
+	check(c.tips.has("hero_tip") and hud.adv_title.text.contains("ваш герой") and hud.adv_text.text.contains("медальон"), "советник один раз: «… — ваш герой»", [hud.adv_title.text, c.tips.has("hero_tip"), hud._tip_free(), game.mode, game.shot_path, hud.visible, hud.root.visible, game.tutorial != null and game.tutorial.active(), hud.advisor_panel.visible])
 	hud.advisor_panel.visible = false
 	# медальон «Герой» с лицом
 	await frames(30)
@@ -591,6 +596,12 @@ func _legion_test() -> void:
 	c.compute()
 	lg.perks["oil"] = 1
 	check(lg.hero_ready(), "Легион открыт и Казармы стоят — герой в строю")
+	# Легион 2.0 (новый город): герой первым, дальше — воины-новобранцы (первые трое приходят с городом)
+	lg.army_tick()
+	var abs := lg.battle_squad()
+	check(lg.army_on() and not abs.is_empty() and String(abs[0]["key"]) == "hero" and abs.size() >= 2 and abs.slice(1).all(func(x): return int(x.get("sid", -1)) > 0),
+		"Легион 2.0: в поход — герой первым, за ним воины", abs.map(func(x): return [x["key"], x.get("sname", "")]))
+	lg.army_off = true                        # дальше — проверки прежнего отряда из родов войск (старые города)
 	var bs := lg.battle_squad()
 	check(not bs.is_empty() and String(bs[0]["key"]) == "hero" and bs.size() == lg.squad_stats().size() and String(bs[0]["name"]) == "Гай Валерий",
 		"в поход: герой — на первом месте отряда (своё место), остальные места — бойцы", bs.map(func(x): return x["key"]))
