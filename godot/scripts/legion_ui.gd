@@ -2134,6 +2134,17 @@ func _soldier_card(s: Dictionary) -> Control:
 	v.add_child(gh)
 	for ln in Gear.set_lines(Gear.set_bonus(lg.worn(s))["sets"]):
 		v.add_child(_wl(String(ln), 300, 12, C_GOLD, true))
+	var tls := Soldiers.talents_of(s)
+	var tfree := Soldiers.talent_free(s)
+	if not tls.is_empty() or tfree > 0:
+		var tn := []
+		for T: Dictionary in tls:
+			tn.append(String(T["name"]))
+		var tb2 := _btn(("Таланты: " + ", ".join(tn)) if not tn.is_empty() else "Таланты", 0, 12, null, "", func(): _talents_win(int(s["id"])))
+		if tfree > 0:
+			tb2.text += "  · выбрать: %d" % tfree
+			tb2.add_theme_color_override("font_color", C_GOOD)
+		v.add_child(tb2)
 	var bv := VBoxContainer.new()
 	bv.add_theme_constant_override("separation", 4)
 	bv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -2202,6 +2213,45 @@ func _gear_slot(s: Dictionary, slot: String) -> Control:
 
 
 ## Выбор вещи на слот: надетая сверху (снять), дальше подходящие со Склада — лучшие первыми
+## Таланты воина: на рангах 2, 4, 6, 8, 10 — один из двух; сброс за Славу
+func _talents_win(sid: int) -> void:
+	var s := lg.soldier(sid)
+	if s.is_empty():
+		return
+	var p := _modal(560)
+	var v: VBoxContainer = p.get_child(0)
+	v.add_child(_title("Таланты: %s" % s["name"], 21))
+	v.add_child(_l("%s · ранг «%s»" % [Soldiers.class_name_of(String(s["cls"])), Soldiers.rank_name(int(s["rank"]))], 14, false, C_SOFT))
+	var tab: Array = Soldiers.TALENTS.get(String(s["cls"]), [])
+	var tl: Array = s.get("tal", [])
+	for i in tab.size():
+		var rk := int(Soldiers.TALENT_RANKS[i])
+		var open := int(s["rank"]) >= rk
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		h.add_child(_l("Ранг %d" % rk, 14, true, C_INK if open else C_SOFT))
+		for c in 2:
+			var T: Dictionary = tab[i][c]
+			var chosen := i < tl.size() and int(tl[i]) == c
+			var ii := i
+			var cc := c
+			var why := lg.can_talent(sid, i, c)
+			var b := _btn("%s\n%s" % [T["name"], T["d"]], 236, 13, null, "" if chosen else why, func(): lg.set_talent(sid, ii, cc); _talents_win(sid))
+			if chosen:
+				b.add_theme_stylebox_override("normal", hud._box_pill(16, 6, "g_btn_on"))
+				b.add_theme_stylebox_override("disabled", hud._box_pill(16, 6, "g_btn_on"))
+				b.disabled = true
+			h.add_child(b)
+		v.add_child(h)
+	var bh := HBoxContainer.new()
+	bh.add_theme_constant_override("separation", 10)
+	bh.alignment = BoxContainer.ALIGNMENT_CENTER
+	bh.add_child(_btn("Сбросить · %d Славы" % Soldiers.TALENT_RESET, 0, 14, null, lg.can_reset_talents(sid), func(): lg.reset_talents(sid); _talents_win(sid)))
+	bh.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay(); _rebuild()))
+	v.add_child(bh)
+	_center_later(p)
+
+
 func _gear_pick(sid: int, slot: String) -> void:
 	var s := lg.soldier(sid)
 	if s.is_empty():
