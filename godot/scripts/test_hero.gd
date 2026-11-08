@@ -170,8 +170,13 @@ func _new() -> void:
 	check(int(c.stats.get("pop", 0)) == 0, "герой не входит в число жителей", c.stats.get("pop"))
 	# советник один раз: кто он и где его найти
 	hud.advisor_panel.visible = false
-	hud._once_tips()
-	check(c.tips.has("hero_tip") and hud.adv_title.text.contains("ваш герой") and hud.adv_text.text.contains("медальон"), "советник один раз: «… — ваш герой»", hud.adv_title.text)
+	for k in 8:                                # другие разовые советы (праздник, этаж…) идут раньше — закрываем их по очереди
+		hud._tip_next = 0
+		hud._once_tips()
+		if c.tips.has("hero_tip"):
+			break
+		hud.advisor_panel.visible = false
+	check(c.tips.has("hero_tip") and hud.adv_title.text.contains("ваш герой") and hud.adv_text.text.contains("медальон"), "советник один раз: «… — ваш герой»", [hud.adv_title.text, c.tips.has("hero_tip"), hud._tip_free(), game.mode, game.shot_path, hud.visible, hud.root.visible, game.tutorial != null and game.tutorial.active(), hud.advisor_panel.visible])
 	hud.advisor_panel.visible = false
 	# медальон «Герой» с лицом
 	await frames(30)

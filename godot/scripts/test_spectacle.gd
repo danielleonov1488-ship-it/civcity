@@ -209,6 +209,40 @@ func _life() -> void:
 		game._set_hour(hr)
 		sp.force(int(tv["id"]), "")
 		game.city.remove(tv, false)
+	# шествие перед играми: из Лудуса к амфитеатру — знаменосец и шестеро гладиаторов (новая игра)
+	var lu := _place_venue("ludus")
+	var co := _place_venue("colosseum")
+	await frames(10)
+	var CV: Dictionary = sp.venues.get(int(co.get("id", -1)), {})
+	if not lu.is_empty() and not CV.is_empty():
+		sp._procs.clear()
+		var pth: PackedVector2Array = game.people._path(game.city.door_point(lu), game.city.door_point(co))
+		print("SPEC путь шествия: точек %d, от %s до %s" % [pth.size(), game.city.door_point(lu), game.city.door_point(co)])
+		sp._procession(CV)
+		if sp._procs.is_empty() and pth.is_empty():
+			sp._procession(CV, Land.START + Vector2(-20, 0), Land.START + Vector2(20, 4))   # в проверке у построек нет дорог — путь по площади
+		var np: int = sp._procs.size()
+		var hr2: float = game.hour
+		var sp0: float = game.speed
+		game.speed = 3.0
+		var moved := await _until(func(): return sp._procs.filter(func(q): return is_instance_valid(q["f"]) and (q["f"] as Node3D).visible).size() >= 4, 30.0)
+		check(np == sp.PROC_N + 1 and moved, "шествие: идут %d (видно не меньше четырёх)" % np)
+		var lead: Dictionary = sp._procs[sp._procs.size() / 2] if not sp._procs.is_empty() else {}
+		if not lead.is_empty() and is_instance_valid(lead["f"]):
+			var fp: Vector3 = (lead["f"] as Node3D).position
+			game.rig.set_view(fp, 30.0, 62, 14)
+			await frames(30)
+			var img2 := get_viewport().get_texture().get_image()
+			if img2 != null:
+				img2.save_png("D:/CivCity/.work/spectacle/procession.png")
+		var done := await _until(func(): return sp._procs.is_empty(), 120.0)
+		check(done, "шествие дошло до амфитеатра — все вошли")
+		game.speed = sp0
+		game._set_hour(hr2)
+	if not co.is_empty():
+		game.city.remove(co, false)
+	if not lu.is_empty():
+		game.city.remove(lu, false)
 	game.city.cozy_v = cv
 	var gone := [int(t["id"]), int(th["id"])]
 	game.city.remove(t, false)
