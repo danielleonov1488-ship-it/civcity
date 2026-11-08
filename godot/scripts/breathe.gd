@@ -108,6 +108,7 @@ func _quad_mat(tex: Texture2D, frames: int, emit := false) -> StandardMaterial3D
 
 ## Бабочка: два кадра — крылья раскрыты и сложены; крылья жёлто-оранжевые с тёмной каймой и светлым пятнышком,
 ## у каждой бабочки свой оттенок (hue_variation)
+## Прежняя плоская бабочка (два кадра) — больше не рисуется, оставлена для сравнения
 func _butterfly_tex() -> ImageTexture:
 	var S := 48
 	var img := Image.create(S * 2, S, false, Image.FORMAT_RGBA8)
@@ -138,47 +139,138 @@ func _butterfly_tex() -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
+## Бабочки — объёмные: два крыла на тонком тельце машут вверх-вниз (шейдер), у каждой свой взмах и оттенок.
+## Размах ~13 см (жители 0,61 м) — мелкие, как настоящие; летают у земли поодиночке, их немного
 func _butterflies() -> GPUParticles3D:
 	var p := GPUParticles3D.new()
 	p.name = "Butterflies"
-	p.amount = 48
-	p.lifetime = 7.0
-	p.preprocess = 7.0
+	p.amount = 20
+	p.lifetime = 8.0
+	p.preprocess = 8.0
 	p.local_coords = false
 	p.visibility_aabb = AABB(Vector3(-AREA - 4, -3, -AREA - 4), Vector3(2 * AREA + 8, 8, 2 * AREA + 8))
 	var pm := ParticleProcessMaterial.new()
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	pm.emission_box_extents = Vector3(AREA, 0.5, AREA)
+	pm.emission_box_extents = Vector3(AREA, 0.35, AREA)
 	pm.direction = Vector3(1, 0, 0)
 	pm.spread = 180.0
 	pm.flatness = 1.0                          # летят над землёй, не вверх (иначе ветер уносил их к камере)
-	pm.initial_velocity_min = 0.35
-	pm.initial_velocity_max = 0.7
+	pm.initial_velocity_min = 0.3
+	pm.initial_velocity_max = 0.55
 	pm.gravity = Vector3.ZERO
 	pm.turbulence_enabled = true
-	pm.turbulence_noise_strength = 0.35
-	pm.turbulence_noise_scale = 3.0
-	pm.turbulence_influence_min = 0.12
-	pm.turbulence_influence_max = 0.25
-	pm.scale_min = 0.24                        # крупнее настоящих — иначе сверху их не разглядеть (жители 0,61 м)
-	pm.scale_max = 0.32
-	pm.anim_speed_min = 7.0
-	pm.anim_speed_max = 10.0
+	pm.turbulence_noise_strength = 0.45
+	pm.turbulence_noise_scale = 2.5
+	pm.turbulence_influence_min = 0.15
+	pm.turbulence_influence_max = 0.3
+	pm.particle_flag_rotate_y = true           # каждая смотрит в свою сторону
+	pm.angle_min = -180.0
+	pm.angle_max = 180.0
+	pm.scale_min = 0.055                       # половина размаха, м (сетка — от −1 до 1)
+	pm.scale_max = 0.07
+	if OS.get_environment("CIVCITY_BF_BIG") == "1":
+		pm.scale_min *= 5.0                    # проверка облика на снимке
+		pm.scale_max *= 5.0
 	pm.hue_variation_min = -0.1                # от красноватых до лимонных — у каждой свой оттенок
 	pm.hue_variation_max = 0.08
-	var fade := Gradient.new()                 # появляются и исчезают плавно
+	var fade := Gradient.new()                 # появляются и исчезают плавно (крылья раскрываются из точки)
 	fade.offsets = PackedFloat32Array([0.0, 0.1, 0.9, 1.0])
 	fade.colors = PackedColorArray([Color(1, 1, 1, 0), Color(1, 1, 1, 1), Color(1, 1, 1, 1), Color(1, 1, 1, 0)])
 	var ft := GradientTexture1D.new()
 	ft.gradient = fade
 	pm.color_ramp = ft
 	p.process_material = pm
-	var q := QuadMesh.new()
-	q.size = Vector2(1, 1)
-	q.material = _quad_mat(_butterfly_tex(), 2)
-	p.draw_pass_1 = q
+	var mesh := _butterfly_mesh()
+	var sm := ShaderMaterial.new()
+	sm.shader = _butterfly_shader()
+	sm.set_shader_parameter("wing", _wing_tex())
+	mesh.surface_set_material(0, sm)
+	p.draw_pass_1 = mesh
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return p
+
+
+## Сетка бабочки: левое и правое крыло (по x от тельца, −1…1), вдоль z — от головы к хвосту; тельце — узкая полоска
+func _butterfly_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for sd: float in [-1.0, 1.0]:
+		var q := [Vector3(0.0, 0, -0.75), Vector3(sd, 0, -0.75), Vector3(sd, 0, 0.75), Vector3(0.0, 0, 0.75)]
+		var uv := [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]
+		for k: int in [0, 1, 2, 0, 2, 3]:
+			st.set_normal(Vector3.UP)
+			st.set_uv(uv[k])
+			st.add_vertex(q[k])
+	st.set_normal(Vector3.UP)
+	return st.commit()
+
+
+func _butterfly_shader() -> Shader:
+	var sh := Shader.new()
+	sh.code = """
+shader_type spatial;
+render_mode cull_disabled, diffuse_lambert, specular_disabled;
+uniform sampler2D wing : source_color, filter_linear_mipmap;
+varying float side;
+void vertex() {
+	float ph = fract(sin(float(INSTANCE_ID) * 12.9898) * 43758.5453) * 6.2832;
+	float sp = 17.0 + fract(float(INSTANCE_ID) * 0.618) * 6.0;
+	// взмах: крылья то почти сомкнуты над спиной, то раскрыты чуть ниже горизонта
+	float a = 0.55 + 0.75 * sin(TIME * sp + ph);
+	float x = VERTEX.x;
+	VERTEX = vec3(x * cos(a), abs(x) * sin(a), VERTEX.z);
+	VERTEX *= smoothstep(0.0, 1.0, COLOR.a);
+	VERTEX.y += 0.06 * sin(TIME * sp * 0.5 + ph);
+	side = x;
+}
+void fragment() {
+	vec4 t = texture(wing, UV);
+	if (t.a < 0.5) { discard; }
+	ALBEDO = mix(t.rgb, t.rgb * COLOR.rgb * 1.15, t.g > t.b ? 1.0 : 0.0);
+	BACKLIGHT = vec3(0.35);
+	ROUGHNESS = 0.9;
+}
+"""
+	return sh
+
+
+## Одно крыло бабочки (u — от тельца к кончику, v — от головы к хвосту): переднее крыло больше, заднее круглее;
+## оранжевое с тёмной каймой, светлые пятнышки у кончика, у тельца — тёмное тельце
+func _wing_tex() -> ImageTexture:
+	var W := 64
+	var H := 96
+	var img := Image.create(W, H, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var wing := Color("f0a83a")
+	var rim := Color("2e1c10")
+	for y in H:
+		for x in W:
+			var u := (x + 0.5) / W
+			var v := (y + 0.5) / H
+			var col := Color(0, 0, 0, 0)
+			# переднее крыло — вытянутый овал, кончик чуть приподнят; заднее — круглее
+			var ca := cos(-0.26)
+			var sa := sin(-0.26)
+			var fu := (u - 0.5) * ca - (v - 0.3) * sa
+			var fv := (u - 0.5) * sa + (v - 0.3) * ca
+			var ef := pow(fu / 0.52, 2) + pow(fv / 0.2, 2)
+			var eh := pow((u - 0.36) / 0.36, 2) + pow((v - 0.66) / 0.25, 2)
+			if ef < 1.0:
+				col = rim if ef > 0.72 and u > 0.35 else wing.darkened(0.1 * (1.0 - u))
+				for sp: Vector2 in [Vector2(0.84, 0.17), Vector2(0.9, 0.25), Vector2(0.78, 0.25)]:
+					if Vector2(u, v).distance_to(sp) < 0.032:
+						col = Color("fff4d8")            # светлые пятна у кончика
+			elif eh < 1.0:
+				col = rim if eh > 0.75 else wing
+				var dv := Vector2(u, v).distance_to(Vector2(0.42, 0.7))
+				if dv < 0.07:
+					col = Color("2a1a10") if dv > 0.03 else Color("ffe9b0")   # «глазок» на заднем крыле
+			if u < 0.07 and v > 0.18 and v < 0.86:
+				col = Color("24170e")                    # тельце
+			if col.a > 0.0:
+				img.set_pixel(x, y, col)
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
 
 
 func _fireflies() -> GPUParticles3D:
