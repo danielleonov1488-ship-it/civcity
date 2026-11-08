@@ -180,6 +180,36 @@ func _life() -> void:
 		check((S["who"] as Array).size() >= 8 and kids == (S["who"] as Array).size(), "на уроке — одни дети: %d из %d" % [kids, (S["who"] as Array).size()])
 		sp.force(int(sc["id"]), "")
 		game.city.remove(sc, false)
+	# таверна (этап 5, только новая игра): вечером — за столиками и на скамьях, двое стоят у жаровни; взрослые
+	var cv: int = game.city.cozy_v
+	game.city.cozy_v = 1
+	var tv := _place_venue("taberna")
+	await frames(10)
+	var TV: Dictionary = sp.venues.get(int(tv.get("id", -1)), {})
+	var nsit := 0
+	if not TV.is_empty():
+		for st: Dictionary in TV["lay"]["seats"]:
+			nsit += 1 if String(st["pose"]) == "sit" else 0
+	check(not TV.is_empty() and nsit >= 6 and (TV["lay"]["seats"] as Array).size() > nsit, "таверна: сидячих мест %d, стоячих %d" % [nsit, 0 if TV.is_empty() else (TV["lay"]["seats"] as Array).size() - nsit])
+	if not TV.is_empty():
+		sp.force(int(tv["id"]), "show", 1.0, true)
+		var grown := 0
+		for st: Dictionary in TV["who"]:
+			grown += 1 if float((st["cp"] as Dictionary)["s"]) >= Crowd.SIZE * 0.9 else 0
+		check((TV["who"] as Array).size() >= 6 and grown == (TV["who"] as Array).size(), "вечер в таверне — одни взрослые: %d" % grown)
+		var hr: float = game.hour
+		game._set_hour(20.0)
+		var tp: Vector2 = tv["pos"]
+		game.rig.set_view(Vector3(tp.x, Land.BASE_Y, tp.y), rad_to_deg(float(tv["yaw"])) + 20.0, 46, 10)
+		await frames(90)
+		var img := get_viewport().get_texture().get_image()
+		if img != null:
+			DirAccess.make_dir_recursive_absolute("D:/CivCity/.work/spectacle")
+			img.save_png("D:/CivCity/.work/spectacle/tavern_evening.png")
+		game._set_hour(hr)
+		sp.force(int(tv["id"]), "")
+		game.city.remove(tv, false)
+	game.city.cozy_v = cv
 	var gone := [int(t["id"]), int(th["id"])]
 	game.city.remove(t, false)
 	game.city.remove(th, false)

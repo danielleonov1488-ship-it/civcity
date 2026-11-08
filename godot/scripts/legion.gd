@@ -419,8 +419,11 @@ func city() -> Object:
 #   Легион 2.0, этап 1: воины-новобранцы (Soldiers) — только новая игра
 # =====================================================================
 
+var army_off := false          # проверки прежнего Легиона в новом городе (test_hero): отряд из родов войск, как в старой игре
+
+
 func army_on() -> bool:
-	return cozy()
+	return cozy() and not army_off
 
 
 func barracks_lvl() -> int:

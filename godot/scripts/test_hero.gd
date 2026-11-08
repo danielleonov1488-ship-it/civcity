@@ -591,6 +591,12 @@ func _legion_test() -> void:
 	c.compute()
 	lg.perks["oil"] = 1
 	check(lg.hero_ready(), "Легион открыт и Казармы стоят — герой в строю")
+	# Легион 2.0 (новый город): герой первым, дальше — воины-новобранцы (первые трое приходят с городом)
+	lg.army_tick()
+	var abs := lg.battle_squad()
+	check(lg.army_on() and not abs.is_empty() and String(abs[0]["key"]) == "hero" and abs.size() >= 2 and abs.slice(1).all(func(x): return int(x.get("sid", -1)) > 0),
+		"Легион 2.0: в поход — герой первым, за ним воины", abs.map(func(x): return [x["key"], x.get("sname", "")]))
+	lg.army_off = true                        # дальше — проверки прежнего отряда из родов войск (старые города)
 	var bs := lg.battle_squad()
 	check(not bs.is_empty() and String(bs[0]["key"]) == "hero" and bs.size() == lg.squad_stats().size() and String(bs[0]["name"]) == "Гай Валерий",
 		"в поход: герой — на первом месте отряда (своё место), остальные места — бойцы", bs.map(func(x): return x["key"]))
