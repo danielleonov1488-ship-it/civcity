@@ -34,6 +34,15 @@ extends RefCounted
 ##   warn {kind: "summon", unit}     — босс вот-вот созовёт подмогу (за summon.warn секунд; только походы)
 ##   summon {unit, units}            — подмога созвана: units вбегают справа тесной кучей
 ##   end {win}                       — бой окончен (итог — sim.result)
+## Поход Легиона 2.0 (10 провинций × 15 боёв, только новая игра) — приёмы боссов (статы врага abil, aura, poison, sunder, guard):
+##   warn {kind, unit, z?}           — босс готовит приём (raise | avalanche | warcry | ambush | chariot | ward | storm)
+##   summon {unit, units, kind?, rear?} — подмога (raise — встали павшие, rear — засада с тыла)
+##   avalanche {z, w}                — лавина прошла по ряду z (±w)
+##   chariot {z, stopped}            — колесницы пронеслись по ряду (копейщики остановили — stopped)
+##   cry {unit} / interrupt {unit}   — боевой клич (враги бьют сильнее) / клич сорван ударом машины или умением
+##   ward {unit, kind}               — враги прикрылись от "melee" (мечей) или "ranged" (стрел и камней)
+##   storm {dur}                     — песчаная буря: стрелы и камни отряда бьют слабее
+##   immune {unit}                   — удар по неуязвимому боссу (пока живы его пращники)
 ## Только походы (бои с городами их не знают — сервер считает без них): волна-«куча» (setup.packs), стрелок «в кустах»
 ## отходит от бойцов ближнего боя (статы врага kite — метров в запасе), босс созывает подмогу (статы врага summon),
 ## Лазарет перевязывает раненых перед каждой новой волной (setup.heal_wave — доля здоровья; событие heal).
@@ -110,6 +119,28 @@ class Unit:
 	var summon := {}               # походы: босс созывает подмогу {first, every, warn, foes: [статы]}
 	var summon_t := 0.0            # секунд до созыва
 	var summon_warned := false
+	# поход Легиона 2.0: приёмы боссов (всё пусто у прежних врагов и в боях с городами)
+	var src := {}                  # статы, из которых боец собран (встать из павших)
+	var abil := {}                 # приём {kind, first, every, warn, …}
+	var abil_t := 0.0
+	var abil_warned := false
+	var abil_z := 0.0              # ряд, куда пойдёт лавина или колесницы
+	var abil_n := 0                # сколько раз приём уже был
+	var abil_cancel := false       # клич сорван
+	var aura := {}                 # лечит своих {every, k}
+	var aura_t := 0.0
+	var rage_t := 0.0              # до какого времени бьёт сильнее (клич)
+	var rage_k := 1.0
+	var ward_t := 0.0              # до какого времени прикрыт от одного вида урона
+	var ward := ""                 # melee | ranged
+	var poison_k := 0.0            # яд в ударе (доля своего урона в секунду, 5 с, складывается)
+	var poison: Array = []         # [[до какого времени, урон в секунду], …]
+	var sunder := false            # фалькс: броня цели не считается
+	var guard: Array = []          # неуязвим, пока жив кто-то из этих врагов
+	var immune_ev := 0.0
+	var burned := false            # пал от масла или ожога — не встанет
+	var raised := false
+	var enter_dir := -1.0          # откуда входит: −1 — справа (как все), 1 — слева, с тыла (засада)
 
 	func ranged() -> bool:
 		return range_m > 3.0
@@ -159,6 +190,8 @@ var inputs: Array = []
 var oil_best := 0
 var perks_used := 0
 var summons := 0
+var storm_t := 0.0                 # песчаная буря до этого времени (стрелы отряда слабее на storm_k)
+var storm_k := 0.0
 var _uid := 1
 var _formation := false
 
@@ -254,6 +287,17 @@ func _add(side: String, s: Dictionary, x: float, z: float) -> Unit:
 	u.kite_k = s.has("bush")
 	u.summon = s.get("summon", {})
 	u.summon_t = float(u.summon.get("first", u.summon.get("every", 0.0)))
+	if s.has("abil") or s.has("aura") or s.has("poison") or s.has("sunder") or s.has("guard"):
+		u.src = s
+		u.abil = s.get("abil", {})
+		u.abil_t = float(u.abil.get("first", u.abil.get("every", 0.0)))
+		u.aura = s.get("aura", {})
+		u.aura_t = float(u.aura.get("every", 0.0))
+		u.poison_k = float(s.get("poison", 0.0))
+		u.sunder = bool(s.get("sunder", false))
+		u.guard = s.get("guard", [])
+	elif side == "enemy" and s.has("tags") and "human" in (s["tags"] as Array):
+		u.src = s                                  # может встать из павших (Спартак)
 	u.timer = 0.3 + rng.randf() * 0.6
 	units.append(u)
 	return u
@@ -341,6 +385,8 @@ func _pick_target(u: Unit) -> Unit:
 				bush.append(o)
 		if not bush.is_empty():
 			pool = bush
+	if u.side == "ally" and pool == foes:
+		pool = _v2_pool(u, foes)
 	if u.prefer == "ranged":
 		var r: Array[Unit] = []
 		for o in foes:
@@ -394,14 +440,32 @@ func _damage(atk: float, vs: Dictionary, from: Unit, tg: Unit, k := 1.0) -> void
 	var d := atk * _mult(vs, tg) * (0.9 + rng.randf() * 0.2) * k * (1.6 if crit else 1.0)
 	if tg.kite_k and from != null:
 		d *= tg.bush if from.shot == "" else tg.bush_shot   # походы: стрелка в кустах мечом не достать, стрелой — да
-	d *= 1.0 - tg.armor / (tg.armor + 100.0)
+	if not tg.guard.is_empty() and _guarded(tg):
+		if t >= tg.immune_ev:
+			tg.immune_ev = t + 1.2
+			events.append({"type": "immune", "unit": tg})
+		return
+	if not tg.abil.is_empty() and tg.abil_warned and String(tg.abil.get("kind", "")) == "warcry" and (from == null or from.shot == "stone" or from.shot == "bolt"):
+		tg.abil_cancel = true                     # удар машины или умение сбивает клич
+	if from != null:
+		if from.rage_t > t:
+			d *= from.rage_k
+		if tg.ward_t > t and ((tg.ward == "melee" and from.shot == "") or (tg.ward == "ranged" and from.shot != "")):
+			d *= 0.25
+		if storm_t > t and from.side == "ally" and from.shot != "":
+			d *= 1.0 - storm_k
+	if from == null or not from.sunder:
+		d *= 1.0 - tg.armor / (tg.armor + 100.0)
 	if tg.testudo > t:
 		d *= 1.0 - tg.testudo_k
 	var dmg := maxi(1, roundi(d))
 	tg.hp -= dmg
 	tg.hit_t = 0.25
 	events.append({"type": "hit", "unit": tg, "dmg": dmg, "crit": crit, "from": from})
+	if from != null and from.poison_k > 0.0 and tg.poison.size() < 8:
+		tg.poison.append([t + 5.0, from.atk * from.poison_k])
 	if tg.hp <= 0.0:
+		tg.burned = from == null
 		_kill(tg)
 
 
@@ -546,6 +610,7 @@ func use_perk(id: String, side := "ally") -> bool:
 			for u in allies:
 				var h := roundi(u.max_hp * (PERK_K["bandage"][0] + PERK_K["bandage"][1] * (lvl - 1)))
 				u.hp = minf(u.max_hp, u.hp + h)
+				u.poison.clear()
 				events.append({"type": "heal", "unit": u, "amount": h})
 			events.append({"type": "perk", "id": id, "side": side})
 		"horn":
@@ -599,7 +664,15 @@ func _auto_perks(side: String) -> void:
 		if u.target != null and u.target.alive and dist(u, u.target) <= u.range_m + 0.6:
 			engaged = true
 	avg /= allies.size()
-	if ps.has("bandage") and float(ps["bandage"]["ready"]) <= 0.0 and (avg < 0.6 or low < 0.35):
+	var danger := false                          # поход 2.0: лавина или колесницы вот-вот — черепаха
+	var venom := 0
+	for o in foes:
+		danger = danger or (o.abil_warned and String(o.abil.get("kind", "")) in ["avalanche", "chariot"])
+	for u in allies:
+		venom = maxi(venom, u.poison.size())
+	if ps.has("testudo") and float(ps["testudo"]["ready"]) <= 0.0 and danger:
+		use_perk("testudo", side)
+	if ps.has("bandage") and float(ps["bandage"]["ready"]) <= 0.0 and (avg < 0.6 or low < 0.35 or venom >= 3):
 		use_perk("bandage", side)
 	if ps.has("testudo") and float(ps["testudo"]["ready"]) <= 0.0 and engaged and (boss or low < 0.55 or foes.size() >= 4):
 		use_perk("testudo", side)
@@ -665,15 +738,50 @@ func step(dt := DT) -> void:
 		if u.burn > t:
 			u.hp -= u.burn_dps * dt
 			if u.hp <= 0.0:
+				u.burned = true
 				_kill(u)
 				continue
-		# враги новой волны сначала выходят на поле
+		if not u.poison.is_empty():
+			var dps := 0.0
+			var left: Array = []
+			for pz: Array in u.poison:
+				if float(pz[0]) > t:
+					dps += float(pz[1])
+					left.append(pz)
+			u.poison = left
+			u.hp -= dps * dt
+			if u.hp <= 0.0:
+				_kill(u)
+				continue
+		# враги новой волны сначала выходят на поле (засада — слева, с тыла)
 		if u.entering:
-			u.x -= u.speed * 1.4 * dt
+			u.x += u.enter_dir * u.speed * 1.4 * dt
 			u.moving = true
-			if u.x < 3.5 + (1.8 if u.ranged() else 0.0):
+			if (u.enter_dir < 0.0 and u.x < 3.5 + (1.8 if u.ranged() else 0.0)) or (u.enter_dir > 0.0 and u.x > FIELD_X.x + 2.4):
 				u.entering = false
 			continue
+		if not u.aura.is_empty():
+			u.aura_t -= dt
+			if u.aura_t <= 0.0:
+				u.aura_t = float(u.aura.get("every", 5.0))
+				for o in alive_of(u.side):
+					if o != u and o.hp < o.max_hp:
+						var h := mini(roundi(o.max_hp * float(u.aura.get("k", 0.05))), ceili(o.max_hp - o.hp))
+						if h > 0:
+							o.hp += h
+							events.append({"type": "heal", "unit": o, "amount": h})
+		if not u.abil.is_empty():
+			u.abil_t -= dt
+			if not u.abil_warned and u.abil_t <= float(u.abil.get("warn", 0.0)):
+				u.abil_warned = true
+				u.abil_cancel = false
+				u.abil_z = _busy_lane()
+				events.append({"type": "warn", "kind": String(u.abil["kind"]), "unit": u, "z": u.abil_z})
+			if u.abil_t <= 0.0:
+				u.abil_warned = false
+				u.abil_t = float(u.abil.get("every", 0.0)) if float(u.abil.get("every", 0.0)) > 0.0 else INF
+				_abil(u)
+				u.abil_n += 1
 		# походы: босс созывает подмогу — за summon.warn секунд предупреждение (рог), потом шайка вбегает справа
 		if not u.summon.is_empty():
 			u.summon_t -= dt
@@ -713,7 +821,7 @@ func step(dt := DT) -> void:
 				u.charge_cd = 7.0
 				events.append({"type": "charge", "unit": u, "target": tg})
 				_damage(u.atk, u.vs, u, tg, 1.8)
-				tg.x += signf(tg.x - u.x) * 1.2
+				tg.x = clampf(tg.x + signf(tg.x - u.x) * 1.2, FIELD_X.x, FIELD_X.y)
 				events.append({"type": "slam", "x": tg.x, "z": tg.z, "r": 1.0})
 		else:
 			u.moving = false
@@ -790,6 +898,145 @@ func step(dt := DT) -> void:
 			return
 	if t > TIME_LIMIT:
 		_end(false, allies, true)
+
+
+# =====================================================================
+#   поход Легиона 2.0: приёмы боссов (только новые враги — у прежних полей нет)
+# =====================================================================
+
+## Неуязвим: жив кто-то из его стражей (Вириат — пока живы пращники)
+func _guarded(u: Unit) -> bool:
+	for o in units:
+		if o.alive and o.side == u.side and o != u and o.key in u.guard:
+			return true
+	return false
+
+
+## Кого бить отряду: стрелки — сперва лекарей врага и стражей неуязвимого; никто — не неуязвимого, пока есть другие
+func _v2_pool(u: Unit, foes: Array[Unit]) -> Array[Unit]:
+	var guards := {}
+	var shield := false
+	for o in foes:
+		if not o.guard.is_empty() and _guarded(o):
+			shield = true
+			for k in o.guard:
+				guards[k] = true
+	if not shield and u.shot == "":
+		return foes
+	var pri: Array[Unit] = []
+	var rest: Array[Unit] = []
+	for o in foes:
+		if shield and o.guard.size() > 0 and _guarded(o):
+			continue
+		rest.append(o)
+		if u.shot != "" and (guards.has(o.key) or not o.aura.is_empty()):
+			pri.append(o)
+	if not pri.is_empty():
+		return pri
+	if u.shot != "":
+		for o in rest:
+			if not o.aura.is_empty():
+				pri.append(o)
+		if not pri.is_empty():
+			return pri
+	return rest if not rest.is_empty() else foes
+
+
+## Ряд поперёк поля (z), где больше всего наших бойцов — туда идёт лавина или колесницы
+func _busy_lane() -> float:
+	var best := 0.0
+	var bn := -1
+	for z0: float in [-1.6, -0.8, 0.0, 0.8, 1.6]:
+		var n := 0
+		for o in units:
+			if o.alive and o.side == "ally" and absf(o.z - z0) < 0.85:
+				n += 1
+		if n > bn:
+			bn = n
+			best = z0
+	return best
+
+
+## Урон без брони и удачи (лавина)
+func _hurt(tg: Unit, dmg: float) -> void:
+	if not tg.alive:
+		return
+	var d := maxi(1, roundi(dmg))
+	tg.hp -= d
+	tg.hit_t = 0.25
+	events.append({"type": "hit", "unit": tg, "dmg": d, "crit": false, "from": null})
+	if tg.hp <= 0.0:
+		_kill(tg)
+
+
+func _abil(u: Unit) -> void:
+	var A := u.abil
+	match String(A["kind"]):
+		"raise":
+			# Спартак поднимает павших людей (кого не сожгло масло)
+			var dead: Array[Unit] = []
+			for o in units:
+				if not o.alive and o.side == u.side and not o.boss and not o.burned and not o.raised and not o.src.is_empty() and o.wave >= 0:
+					dead.append(o)
+			dead.sort_custom(func(a: Unit, b: Unit) -> bool: return dist(a, u) < dist(b, u))
+			var fresh: Array[Unit] = []
+			for i in mini(int(A.get("n", 3)), dead.size()):
+				var c := dead[i]
+				c.raised = true
+				var nu := _add(u.side, c.src, c.x, c.z)
+				nu.hp = nu.max_hp * float(A.get("k", 0.6))
+				nu.raised = true
+				nu.wave = wave_idx
+				fresh.append(nu)
+			if not fresh.is_empty():
+				events.append({"type": "summon", "unit": u, "units": fresh, "kind": "raise"})
+		"avalanche":
+			var w := float(A.get("w", 0.9))
+			for o in alive_of(_other(u.side)):
+				if absf(o.z - u.abil_z) < w:
+					_hurt(o, o.max_hp * float(A.get("k", 0.3)) * (0.3 if o.testudo > t else 1.0))
+			events.append({"type": "avalanche", "z": u.abil_z, "w": w})
+		"warcry":
+			if u.abil_cancel:
+				u.abil_cancel = false
+				events.append({"type": "interrupt", "unit": u})
+				return
+			for o in alive_of(u.side):
+				o.rage_t = t + float(A.get("dur", 6.0))
+				o.rage_k = 1.0 + float(A.get("k", 0.3))
+			events.append({"type": "cry", "unit": u})
+		"ambush":
+			var fresh: Array[Unit] = []
+			var fs: Array = A.get("foes", [])
+			for i in fs.size():
+				var nu := _add(u.side, fs[i], FIELD_X.x + 0.3 + (i % 2) * 0.5, float(LANES[i % LANES.size()]) * 1.2)
+				nu.entering = true
+				nu.enter_dir = 1.0
+				nu.prefer = "ranged"
+				nu.wave = wave_idx
+				fresh.append(nu)
+			summons += 1
+			events.append({"type": "summon", "unit": u, "units": fresh, "rear": true})
+		"chariot":
+			var band: Array[Unit] = []
+			var stop := false
+			for o in alive_of(_other(u.side)):
+				if absf(o.z - u.abil_z) < 0.85:
+					band.append(o)
+					stop = stop or o.key == "spearman"
+			for o in band:
+				_damage(u.atk * float(A.get("k", 1.5)) * (0.35 if stop else 1.0), {}, null, o)
+			events.append({"type": "chariot", "z": u.abil_z, "stopped": stop})
+		"ward":
+			var kind := "ranged" if u.abil_n % 2 == 0 else "melee"
+			for o in alive_of(u.side):
+				o.ward_t = t + float(A.get("dur", 6.0))
+				o.ward = kind
+			events.append({"type": "ward", "unit": u, "kind": kind})
+		"storm":
+			storm_t = t + float(A.get("dur", 7.0))
+			storm_k = float(A.get("k", 0.4))
+			events.append({"type": "storm", "dur": float(A.get("dur", 7.0))})
 
 
 func _end(win: bool, alive: int, timeout := false) -> void:

@@ -12,6 +12,7 @@ extends Node
 ## на масле (…_tut_freeze), потом «нажимает» масло и снимает …_tut_after; печатает TUT freeze/press.
 ## crowd_shot=1 — кадр «Толпа!» (волна-«куча», красный круг) …_crowd; warn_shot=1 — кадр рога Атамана …_warn.
 ## gear=1 — бойцам отряда «надеты» вещи разной редкости (Легион 2.0: кайма цвета редкости).
+## v2=1 — поход Легиона 2.0 (10 провинций × 15 боёв, боссы с приёмами): region=0…9, stage=0…14.
 ## Печатает средний FPS, итог боя и куда сохранены кадры. Запускать только через .work/py/gpu_run.sh (замок видеокарты).
 
 var args := {}
@@ -47,6 +48,9 @@ func _ready() -> void:
 	for p in String(args.get("perk_at", "")).split(",", false):
 		var kv := p.split(":")
 		perk_at.append([float(kv[0]), kv[1]])
+	if args.get("v2", "0") == "1":
+		Legion.v2_test = true                    # поход Легиона 2.0 (10 провинций × 15 боёв)
+		Legion.V2 = true
 	var c := int(args.get("cycle", "0"))
 	var r := int(args.get("region", "0"))
 	var s := int(args.get("stage", "0"))

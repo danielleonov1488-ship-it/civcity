@@ -629,7 +629,7 @@ func _start(s: Dictionary) -> void:
 		biome = PVP_BIOMES[absi(nm.hash()) % PVP_BIOMES.size()]
 	else:
 		var r := int(stage.get("r", 0))
-		biome = String(Legion.REGIONS[clampi(r, 0, Legion.REGIONS.size() - 1)]["biome"])
+		biome = String(Legion.regions()[clampi(r, 0, Legion.regions().size() - 1)]["biome"])
 	world = Node3D.new()
 	world.name = "BattleWorld"
 	sub.add_child(world)
@@ -720,8 +720,8 @@ func _loading(s: Dictionary) -> void:
 		fade_map.texture = null
 		fade_lbl.text = "Легион выступает: город «%s»" % String((s.get("opponent", {}) as Dictionary).get("name", "?"))
 	else:
-		var r := clampi(int(st.get("r", 0)), 0, Legion.REGIONS.size() - 1)
-		fade_map.texture = Legion.art_texture("map", String(Legion.REGIONS[r]["id"]))
+		var r := clampi(int(st.get("r", 0)), 0, Legion.regions().size() - 1)
+		fade_map.texture = Legion.art_texture("map", String(Legion.regions()[r]["id"]))
 		var nm := String(st.get("theme", "")) if String(st.get("theme", "")) != "" else String(st.get("name", ""))
 		fade_lbl.text = "%s — %s" % [String(st.get("title", "")), nm] if nm != "" else String(st.get("title", ""))
 
@@ -833,7 +833,7 @@ func _title() -> void:
 	else:
 		title_lbl.text = String(stage.get("title", ""))
 		var s := int(stage.get("s", 0))
-		sub_lbl.text = String(stage.get("name", "")) if bool(stage.get("boss", false)) else "Бой %d из %d" % [s + 1, Legion.STAGES]
+		sub_lbl.text = String(stage.get("name", "")) if bool(stage.get("boss", false)) else "Бой %d из %d" % [s + 1, Legion.stages()]
 		if String(stage.get("theme", "")) != "":
 			sub_lbl.text += " · " + String(stage["theme"])
 	_waves_ui()
@@ -938,6 +938,10 @@ func _handle(evs: Array) -> void:
 				if pack:
 					_crowd(fresh, "Толпа! Масло накроет всех разом")
 				_waves_ui()
+			"warn" when String(e.get("kind", "summon")) != "summon":
+				_warn2(e)
+			"avalanche", "chariot", "cry", "interrupt", "ward", "storm", "immune":
+				_v2_event(e)
 			"warn":
 				# Атаман трубит в рог: через warn секунд вбежит шайка (круг под ним пульсирует — _update_views)
 				_summon_warns += 1
@@ -952,7 +956,15 @@ func _handle(evs: Array) -> void:
 					_view(nu)
 					fresh.append(nu)
 					fx.dust(Vector3(nu.x, _h(nu.x, nu.z), nu.z), 0.8)
-				_crowd(fresh)
+					if String(e.get("kind", "")) == "raise":
+						fx.burst(Vector3(nu.x, _h(nu.x, nu.z) + 0.3, nu.z), Color(0.75, 0.9, 1.0, 0.9), 10, 0.6, 2.0, 0.12, 0.9, true, -0.5, 0.2)
+				if String(e.get("kind", "")) == "raise":
+					say("Павшие встают! Жгите их маслом — сожжённые не поднимутся", 2.4)
+				elif bool(e.get("rear", false)):
+					say("Засада с тыла!", 1.8)
+					shake = maxf(shake, 0.15)
+				else:
+					_crowd(fresh)
 			"attack":
 				var u: LegionSim.Unit = e["unit"]
 				var v := _view(u)
@@ -1000,7 +1012,7 @@ func _handle(evs: Array) -> void:
 				v["dead"] = true
 				fx.dust(Vector3(f.global_position.x, f.global_position.y, f.global_position.z), 1.2 * maxf(1.0, u.size))
 				_play("fall", -10.0, randf_range(0.85, 1.05))
-				for k in ["testudo", "horn", "summon"]:
+				for k in ["testudo", "horn", "summon", "rage", "ward"]:
 					if v.has(k) and is_instance_valid(v[k]):
 						(v[k] as Node).queue_free()
 						v.erase(k)
@@ -1034,6 +1046,83 @@ func _handle(evs: Array) -> void:
 				bars.float_text(_screen(f.global_position + Vector3(0, f.top + 0.3, 0)), "+%d" % int(e["amount"]), "heal")
 			"end":
 				pass
+
+
+## Поход Легиона 2.0: босс готовит приём — надпись, рог, круг под ним; лавина и колесницы — полоса по ряду
+const WARN2 := {"raise": "%s поднимает павших!", "avalanche": "Лавина! Сомкните «Черепаху»", "warcry": "%s трубит боевой клич — собьёте ударом машины или умением!",
+	"ambush": "%s: засада заходит с тыла!", "chariot": "Колесницы! Копейщики — в их ряд, или «Черепаха»", "ward": "%s перестраивает войско", "storm": "%s поднимает песчаную бурю!"}
+
+
+func _warn2(e: Dictionary) -> void:
+	var u: LegionSim.Unit = e["unit"]
+	var k := String(e.get("kind", ""))
+	var txt := String(WARN2.get(k, "%s готовит удар!"))
+	say(txt % u.name if txt.contains("%s") else txt, 2.2)
+	_play("horn", -5.0, 0.8)
+	var f: LegionFighter = _view(u)["f"]
+	fx.ring(f.position, 2.4, Color(0.95, 0.18, 0.1, 0.9), 0.9, 1.0)
+	if k == "avalanche" or k == "chariot":
+		var z := float(e.get("z", 0.0))
+		for i in 9:
+			var x := -9.0 + i * 1.6
+			fx.ring(Vector3(x, _h(x, z), z), 0.75, Color(1.0, 0.3, 0.15, 0.8), 1.4, 0.8)
+
+
+func _v2_event(e: Dictionary) -> void:
+	match String(e["type"]):
+		"avalanche":
+			var z := float(e["z"])
+			for i in 14:
+				var x := -9.5 + i * 1.0
+				var at := Vector3(x, _h(x, z), z)
+				fx.burst(at + Vector3(0, 0.4, 0), Color(0.95, 0.97, 1.0, 0.95), 6, float(e["w"]), 2.2, 0.22, 1.1, false, 4.0, 0.8)
+			shake = maxf(shake, 0.35)
+			_play("boom", -6.0, 0.6)
+		"chariot":
+			var z := float(e["z"])
+			for i in 12:
+				var x := 12.0 - i * 1.8
+				fx.dust(Vector3(x, _h(x, z), z), 1.4)
+			_chariot_dash(z)
+			shake = maxf(shake, 0.25)
+			say("Копейщики остановили колесницы!" if bool(e["stopped"]) else "Колесницы прошли по ряду!", 1.6)
+		"cry":
+			say("Боевой клич! Враги бьют сильнее", 1.8)
+			_play("horn", -3.0, 0.6)
+		"interrupt":
+			say("Клич сорван!", 1.6)
+			var u: LegionSim.Unit = e["unit"]
+			fx.burst(Vector3(u.x, _h(u.x, u.z) + 1.4, u.z), Color(1.0, 0.95, 0.6, 1.0), 12, 0.8, 1.4, 0.1, 0.6, true, 2.0, 0.0)
+		"ward":
+			say("Щиты от стрел и камней — бейте мечами!" if String(e["kind"]) == "ranged" else "Щиты от мечей — бейте стрелами!", 2.0)
+		"storm":
+			say("Песчаная буря: стрелы бьют слабее", 1.8)
+			for i in 40:
+				var x := randf_range(-9.0, 13.0)
+				var z := randf_range(-2.6, 2.6)
+				fx.add(Vector3(x, _h(x, z) + randf_range(0.2, 2.0), z), Vector3(-2.5, 0.2, randf_range(-0.3, 0.3)), Color(0.85, 0.7, 0.45, 0.55), 0.5, 2.5, 0.0, 1.5)
+		"immune":
+			var u: LegionSim.Unit = e["unit"]
+			var f: LegionFighter = _view(u)["f"]
+			bars.float_text(_screen(f.global_position + Vector3(0, f.top + 0.3, 0)), "неуязвим", "hurt")
+			if not _immune_said:
+				_immune_said = true
+				say("%s неуязвим, пока живы его пращники" % u.name, 2.2)
+
+
+var _immune_said := false
+
+
+## Колесница проносится по ряду z справа налево (только картинка: урон считает бой)
+func _chariot_dash(z: float) -> void:
+	var c := LegionFighter.create("chariot", 1.2, 7)
+	world.add_child(c)
+	c.position = Vector3(13.0, _h(13.0, z), z)
+	c.rotation.y = -PI / 2
+	c.set_motion(true, 6.0)
+	var tw := create_tween()
+	tw.tween_property(c, "position:x", -11.0, 1.4)
+	tw.tween_callback(c.queue_free)
 
 
 func _perk_fx(e: Dictionary) -> void:
@@ -1134,7 +1223,12 @@ func _update_views(gdt: float, dt: float) -> void:
 		# черепаха и рог — круги под ногами; ожог — языки пламени
 		_status(v, "testudo", u.testudo > sim.t, Color(1.0, 0.82, 0.35, 0.85))
 		_status(v, "horn", u.horn > sim.t, Color(1.0, 0.5, 0.25, 0.8))
-		_status(v, "summon", u.summon_warned and phase == "fight", Color(0.95, 0.16, 0.08, 0.9))
+		_status(v, "summon", (u.summon_warned or u.abil_warned) and phase == "fight", Color(0.95, 0.16, 0.08, 0.9))
+		_status(v, "rage", u.rage_t > sim.t, Color(1.0, 0.25, 0.1, 0.75))
+		_status(v, "ward", u.ward_t > sim.t, Color(0.35, 0.7, 1.0, 0.8) if u.ward == "ranged" else Color(0.9, 0.9, 0.95, 0.8))
+		if not u.poison.is_empty() and gdt > 0.0 and randf() < 0.35:
+			fx.add(f.global_position + Vector3(randf_range(-0.25, 0.25), randf_range(0.3, 1.0) * u.size, randf_range(-0.2, 0.2)), Vector3(0, 0.7, 0),
+				Color(0.45, 0.95, 0.3, 0.9), 0.1, 0.7, -0.2, 0.0, true)
 		if u.burn > sim.t and gdt > 0.0 and randf() < 0.5:
 			fx.add(f.global_position + Vector3(randf_range(-0.3, 0.3), randf_range(0.2, 1.1) * u.size, randf_range(-0.2, 0.2)), Vector3(0, 1.3, 0),
 				Color(1.0, 0.55 + randf() * 0.3, 0.15, 0.95), 0.16, 0.5, -0.5, -0.4, true)

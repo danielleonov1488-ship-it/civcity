@@ -167,12 +167,12 @@ func _run() -> void:
 		await shot("map_r%d" % r)
 	# своя нарисованная карта — если картинки провинции нет (кэш картинок «без файла»)
 	for r in [0, 3]:
-		ui._tex["map:" + String(Legion.REGIONS[r]["id"])] = null
+		ui._tex["map:" + String(Legion.regions()[r]["id"])] = null
 		ui.view_r = r
 		ui.sel = {}
 		ui._rebuild()
 		await shot("placeholder_r%d" % r)
-		ui._tex.erase("map:" + String(Legion.REGIONS[r]["id"]))
+		ui._tex.erase("map:" + String(Legion.regions()[r]["id"]))
 	# бой без 3D: окно считает само и показывает итог
 	ui.view_r = 4
 	ui.sel = {}
@@ -715,6 +715,7 @@ class FakeNet extends RefCounted:
 func _soldiers(c: City, lg: Legion, ui) -> void:
 	check("«Воины» в старом городе не видно", not (ui.tabs["soldiers"] as Button).visible or c.cozy_v >= 1)
 	var cv := c.cozy_v
+	var prog0 := lg.progress                 # поход 2.0 переводит продвижение (flags.camp2) — после снимков вернём как было
 	c.cozy_v = 1
 	lg.army_tick()
 	for i in 3:
@@ -762,7 +763,43 @@ func _soldiers(c: City, lg: Legion, ui) -> void:
 	await frames(6)
 	check("«Войска»: мастерских в сетке нет — окно не растёт", not _texts(ui).contains("Плавильня"))
 	await shot("troops_cozy")
+	await _camp2(c, lg, ui)
 	ui._select_tab("soldiers")
 	await frames(4)
 	c.cozy_v = cv
+	lg.progress = prog0
+	lg.flags.erase("camp2")
+	lg.sync_v2()
 	ui._select_tab("campaign")
+
+
+## Поход Легиона 2.0 (новая игра): 10 провинций по 15 боёв — на старой карте 9 площадок, ещё 5 встают между ними;
+## младший босс на 8-м бою, провиант — очки; карточка главного босса с советом о его приёме
+func _camp2(c: City, lg: Legion, ui) -> void:
+	check("поход 2.0 включён в новой игре", Legion.V2 and Legion.regions().size() == 10 and Legion.stages() == 15)
+	var fm: bool = lg.free_mode
+	lg.free_mode = true
+	lg.progress = 4 * 15 + 7
+	ui._select_tab("campaign")
+	ui.view_r = 4
+	ui.view_c = 0
+	ui.sel = {"c": 0, "r": 4, "s": 7}
+	ui._rebuild()
+	await frames(6)
+	var tx := _texts(ui.content)
+	check("поход 2.0: Британия, бой 8 из 15 — младший босс", tx.contains("Британия") and tx.contains("Колесничий"))
+	check("поход 2.0: провиант — очки", tx.contains("есть") and tx.contains("из %d" % lg.food_cap()))
+	await shot("camp2_junior")
+	ui.sel = {"c": 0, "r": 4, "s": 14}
+	ui._rebuild()
+	await frames(6)
+	check("поход 2.0: Боудикка и её колесницы", _texts(ui.content).contains("Боудикка") and _texts(ui.content).contains("олесниц"))
+	await shot("camp2_boss")
+	ui.view_r = 0
+	ui.sel = {"c": 0, "r": 0, "s": 14}
+	lg.progress = 14
+	ui._rebuild()
+	await frames(6)
+	check("поход 2.0: Италия — Спартак", _texts(ui.content).contains("Спартак"))
+	await shot("camp2_italy")
+	lg.free_mode = fm

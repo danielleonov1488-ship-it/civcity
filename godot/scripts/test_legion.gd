@@ -58,8 +58,11 @@ func _init() -> void:
 	var regions: Array = []
 	for x in String(args.get("regions", "0,1,2,3,4,5,6,7")).split(","):
 		regions.append(int(x))
+	if args.get("v2", "0") == "1":
+		Legion.V2 = true                         # поход Легиона 2.0 (10 × 15): «обычный игрок» — с вещами, рангами, Кузницей (Legion.exp2)
 	if args.has("notune"):
 		Legion.TUNE = []
+		Legion.TUNE2 = []
 	if args.has("set"):
 		# set=r,s,множитель — подменить одну клетку TUNE (подбор вручную)
 		var sv: PackedStringArray = String(args["set"]).split(",")
@@ -68,14 +71,16 @@ func _init() -> void:
 		"calibrate":
 			# множитель силы врагов, при котором отряд на уровне target_level побеждает в ≥80% боёв
 			var cyc := int(args.get("cycle", "0"))
-			if cyc == 0:
+			if Legion.V2:
+				Legion.TUNE2 = []
+			elif cyc == 0:
 				Legion.TUNE = []
 			elif cyc == 1:
 				Legion.TUNE_C = []
 			for r: int in regions:
 				var row := []
 				var info := ""
-				for s in Legion.STAGES:
+				for s in Legion.stages():
 					if not only.is_empty() and not s in only:
 						continue
 					var T := Legion.target_level(cyc, r, s)
@@ -90,13 +95,13 @@ func _init() -> void:
 					row.append(snappedf(lo, 0.01))
 					info += " %d:%d%%/%d%%/%d%%" % [T, roundi(float(_rate_m(cyc, r, s, T, lo, seeds)["win"]) * 100), roundi(float(_rate_m(cyc, r, s, maxi(1, T - 1), lo, seeds)["win"]) * 100),
 					roundi(float(_rate_m(cyc, r, s, T + int(args.get("np_off", "1")), lo, seeds, false)["win"]) * 100)]
-				print("	%s,   # %s %s" % [str(row), Legion.REGIONS[r]["name"], info])
+				print("	%s,   # %s %s" % [str(row), Legion.regions()[r]["name"], info])
 		"target":
 			# доля побед на целевом уровне и на уровень ниже (с подгонкой TUNE)
 			for c in range(int(args.get("from", "0")), cycles):
 				for r: int in regions:
-					var line := "%-22s|" % (Legion.REGIONS[r]["name"] + (" " + Legion.roman(c + 1) if c > 0 else ""))
-					for s in Legion.STAGES:
+					var line := "%-22s|" % (Legion.regions()[r]["name"] + (" " + Legion.roman(c + 1) if c > 0 else ""))
+					for s in Legion.stages():
 						if not only.is_empty() and not s in only:
 							continue
 						var T := Legion.target_level(c, r, s)
@@ -113,7 +118,7 @@ func _init() -> void:
 			# check=1 — проверка (regress.sh): «Лучший состав» с умениями ≥90%, в боях-загадках (squad bow/leg) «не тот» ≤60%
 			var sq_fails := 0
 			for r: int in regions:
-				for s in Legion.STAGES:
+				for s in Legion.stages():
 					if not only.is_empty() and not s in only:
 						continue
 					var cyc := int(args.get("cycle", "0"))
@@ -149,8 +154,8 @@ func _init() -> void:
 			var cyc := int(args.get("cycle", "0"))
 			var up := int(args.get("up", "2"))
 			for r: int in regions:
-				var line := "%-22s|" % Legion.REGIONS[r]["name"]
-				for s in Legion.STAGES:
+				var line := "%-22s|" % Legion.regions()[r]["name"]
+				for s in Legion.stages():
 					if not only.is_empty() and not s in only:
 						continue
 					var st := Legion.stage(cyc, r, s)
@@ -160,7 +165,7 @@ func _init() -> void:
 					if String(t[0]) == "oil":
 						p = _oil_room(st, T, seeds, int(t[1]))
 					else:
-						var lv := mini(T + up, int(Legion.CAP_BY_CITY[int(Legion.REGIONS[r]["rank"])]) + cyc * Legion.CYCLE_CAP)
+						var lv := mini(T + up, (12 if Legion.V2 else int(Legion.CAP_BY_CITY[int(Legion.regions()[r]["rank"])])) + cyc * Legion.CYCLE_CAP)
 						var rr := _rate(st, mini(Legion.MAX_LEVEL, lv), seeds, true)
 						p = float(rr["task"]) * float(rr["win"])
 					line += " %s%d:%3d" % [String(t[0]).left(1), int(t[1]), roundi(p * 100)]
@@ -186,11 +191,11 @@ func _init() -> void:
 			print("%s %s: ур.%d — побед %d%%, звёзды %.1f, время %.0f с, здоровья осталось %d%%, не успели %d%%" % [st["key"], st["name"], lvl, roundi(r["win"] * 100), r["stars"], r["time"], roundi(r["hp"] * 100), roundi(r["timeout"] * 100)])
 		"table":
 			for c in cycles:
-				for r in Legion.REGIONS.size():
-					var line := "%-22s" % (Legion.REGIONS[r]["name"] + (" " + Legion.roman(c + 1) if c > 0 else ""))
+				for r in Legion.regions().size():
+					var line := "%-22s" % (Legion.regions()[r]["name"] + (" " + Legion.roman(c + 1) if c > 0 else ""))
 					var lvl: int = mini(Legion.MAX_LEVEL, int(EXPECT[r]) + c * 2)
 					line += " ур.%2d |" % lvl
-					for s in Legion.STAGES:
+					for s in Legion.stages():
 						var st := Legion.stage(c, r, s)
 						var rr := _rate(st, lvl, seeds, true)
 						line += " %3d" % roundi(rr["win"] * 100)
@@ -198,10 +203,10 @@ func _init() -> void:
 		_:
 			print("Бой: уровень, с которого побед ≥%d%% (n=%d боёв на точку). Ниже — сила отряда/врага на этом уровне." % [roundi(WIN_NEED * 100), seeds])
 			for c in cycles:
-				for r in Legion.REGIONS.size():
-					var line := "%-22s|" % (Legion.REGIONS[r]["name"] + (" " + Legion.roman(c + 1) if c > 0 else ""))
+				for r in Legion.regions().size():
+					var line := "%-22s|" % (Legion.regions()[r]["name"] + (" " + Legion.roman(c + 1) if c > 0 else ""))
 					var lo := 1
-					for s in Legion.STAGES:
+					for s in Legion.stages():
 						if not only.is_empty() and not s in only:
 							continue
 						var st := Legion.stage(c, r, s)
@@ -222,7 +227,7 @@ func _init() -> void:
 ## Состав и умения игрока, который дошёл до боя st: места и рода войск открываются боссами (как в игре)
 func _player(st: Dictionary, lvl: int, with_perks: bool) -> Dictionary:
 	var idx: int = st["idx"]
-	var b := idx / Legion.STAGES                   # боссов побеждено до этого боя
+	var b := idx / Legion.stages()                   # боссов побеждено до этого боя
 	var slots := Legion.SQUAD_BASE
 	for sb in Legion.SLOT_BOSSES:
 		if b >= int(sb):
@@ -247,8 +252,9 @@ func _player(st: Dictionary, lvl: int, with_perks: bool) -> Dictionary:
 			with_bow = false
 		types = ["legionary", "archer", "legionary"] if with_bow else ["legionary", "legionary", "legionary"]
 	var sq := []
+	var e := Legion.exp2(int(st["r"]), int(st["s"])) if Legion.V2 else {"atk": 0.0, "hp": 0.0, "armor": 0.0}
 	for t in types:
-		sq.append(Legion.unit_stats(t, lvl))
+		sq.append(Legion.unit_stats(t, lvl, float(e["atk"]), float(e["hp"]), float(e["armor"])))
 	if args.get("hero", "0") == "1" and not sq.is_empty():
 		sq[0] = Legion.hero_unit_stats(lvl, int(args.get("city", "1")), 0)   # свой герой (Д11) — на первом месте
 	var perks := {}
@@ -295,8 +301,11 @@ func _rate(st: Dictionary, lvl: int, seeds: int, with_perks: bool) -> Dictionary
 	var wtimes := []
 	var whp := []
 	for i in seeds:
-		var sim := LegionSim.new({"kind": "campaign", "squad": pl["squad"], "waves": waves, "perks": pl["perks"], "seed": 1000 + i * 7919,
-			"packs": st.get("packs", [])})
+		var setup := {"kind": "campaign", "squad": pl["squad"], "waves": waves, "perks": pl["perks"], "seed": 1000 + i * 7919,
+			"packs": st.get("packs", [])}
+		if Legion.V2:
+			setup["heal_wave"] = float(Legion.exp2(int(st["r"]), int(st["s"]))["heal"])
+		var sim := LegionSim.new(setup)
 		var r := sim.run(true)
 		if r["win"]:
 			win += 1
@@ -438,19 +447,19 @@ func _api() -> void:
 	var L: Legion = city.legion
 	_check(not L.window_open() and L.lock_text().contains("Разбойники у арки") and L.lock_text().contains("Хутор"), "окно закрыто, пока Легион не открыт историей: " + L.lock_text())
 	# Д9: Легион с «Хутора» через историю «Разбойники у арки» (без очков), лес — там же, предел бойцов не ниже самого трудного боя
-	_check(int(Defs.research("legion")["lvl"]) == int(Legion.REGIONS[0]["rank"]) and int(Legion.REGIONS[0]["rank"]) == 1 and Defs.research("legion").has("story")
+	_check(int(Defs.research("legion")["lvl"]) == int(Legion.regions()[0]["rank"]) and int(Legion.regions()[0]["rank"]) == 1 and Defs.research("legion").has("story")
 		and city.can_research("legion").contains("Разбойники у арки"), "«Легион» — история на «%s», там же открыт лес; за очки не изучить: «%s»" % [
 		Defs.LEVELS[int(Defs.research("legion")["lvl"])]["name"], city.can_research("legion")])
 	var ranks := []
 	var walls := []
-	for r in Legion.REGIONS.size():
-		var rk := int(Legion.REGIONS[r]["rank"])
+	for r in Legion.regions().size():
+		var rk := int(Legion.regions()[r]["rank"])
 		ranks.append(rk)
 		var mx := 0
-		for s in Legion.STAGES:
+		for s in Legion.stages():
 			mx = maxi(mx, Legion.target_level(0, r, s))
 		if mx > int(Legion.CAP_BY_CITY[rk]):
-			walls.append("%s: бой %d ур. > предел %d" % [Legion.REGIONS[r]["name"], mx, int(Legion.CAP_BY_CITY[rk])])
+			walls.append("%s: бой %d ур. > предел %d" % [Legion.regions()[r]["name"], mx, int(Legion.CAP_BY_CITY[rk])])
 	_check(ranks == [1, 3, 5, 5, 6, 6, 7, 7] and walls.is_empty(), "провинции по уровням города %s, стен нет %s" % [ranks, walls])
 	_check(int(L.perks["oil"]) == 1 and L.open_perks().has("oil"), "«Кипящее масло» — с первого дня")
 	city.level = 1
@@ -805,7 +814,7 @@ func _stars_api(city: City, L: Legion) -> void:
 		"звёзды копятся: 2★ (все вернулись), потом задание — лучшее 3★, +%d Славы один раз" % Legion.STAR_GLORY)
 	# все 30 звёзд леса: сундук Славы и трофей в город (украшение бесплатно, одно на город); второй раз — ничего
 	_check(not city.unlocked("trophy_cart") and Defs.unlock_text("trophy:forest").contains("30 звёздами"), "трофей закрыт: открывается " + Defs.unlock_text("trophy:forest"))
-	for s in Legion.STAGES:
+	for s in Legion.stages():
 		L.stars[Legion.stage_key(0, 0, s)] = Legion.STAR_ALL
 	var s9 := L.stage_info(0, 0, 9)
 	L.stars[String(s9["key"])] = Legion.STAR_WIN
@@ -854,8 +863,8 @@ func _tasks_api() -> void:
 	var bad := []
 	var hp := []
 	for c in 2:
-		for r in Legion.REGIONS.size():
-			for s in Legion.STAGES:
+		for r in Legion.regions().size():
+			for s in Legion.stages():
 				var st := Legion.stage(c, r, s)
 				var t := Legion.task_of(st)
 				if String(t[0]) == "hp" and c == 0 and not bool(st["fixed"]):

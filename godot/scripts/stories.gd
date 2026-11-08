@@ -1751,7 +1751,7 @@ func beauty_near(p: Vector2, r: float) -> int:
 func legion_wins(r: int) -> int:
 	var lg = city.legion
 	var n := 0
-	for s in Legion.STAGES:
+	for s in Legion.stages():
 		if lg.stage_done(0, r, s):
 			n += 1
 	return n
@@ -1873,7 +1873,7 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			out.append({"text": "%s в середине" % mn, "ok": bool(mz["mid"]), "do": {} if bool(mz["mid"]) else hud._do_type(String(g[4]))})
 		"legion_win":
 			var pr := progress(a, g)
-			var rn := String((Legion.REGIONS[int(g[1])] as Dictionary).get("name", "")) if int(g[1]) < Legion.REGIONS.size() else ""
+			var rn := String((Legion.regions()[int(g[1])] as Dictionary).get("name", "")) if int(g[1]) < Legion.regions().size() else ""
 			out.append({"text": "Победы в «%s» %s" % [rn, pr["txt"]], "ok": bool(pr["ok"]),
 				"do": {} if bool(pr["ok"]) else {"kind": "legion", "tip": "Легион", "say": "Медальон «Легион» сверху справа → «Походы»"}})
 		"give":

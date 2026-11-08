@@ -438,7 +438,7 @@ const B := {
 	"smallfountain_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "smallfountain", "look": 1, "name": "Фонтан с резной стенкой", "cost": 70, "deco": 5, "unlock": "fountain", "desc": "Каменная чаша с водой у резной стенки."},
 	"pergola": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Пергола", "cost": 200, "deco": 8, "unlock": "deco_stone", "desc": "Увитая виноградом пергола с ложем и столиком — как в садах Помпей."},
 	"pergola_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "pergola", "look": 1, "name": "Беседка-толос", "cost": 200, "deco": 8, "unlock": "deco_stone", "desc": "Круглая беседка под черепичным куполом, внутри скамья, колонны в розах."},
-	# трофеи Легиона: все 30 звёзд провинции (Legion.REGIONS trophy) — бесплатно, одна на город
+	# трофеи Легиона: все 30 звёзд провинции (Legion.regions() trophy) — бесплатно, одна на город
 	"trophy_cart": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Телега атамана", "cost": 0, "deco": 10, "unlock": "trophy:forest", "unique": true, "trophy": true,
 		"desc": "Трофей Легиона за все 30 звёзд «Леса разбойников»: телега атамана со щитами, копьями и знаменем шайки."},
 	# животные
@@ -909,9 +909,9 @@ static func unlock_text(id: String) -> String:
 	if id.begins_with("army:"):
 		return "на уровне «%s» (когда Легион открыт)" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
 	if id.begins_with("trophy:"):
-		for R: Dictionary in Legion.REGIONS:
+		for R: Dictionary in Legion.regions():
 			if String(R["id"]) == id.substr(7):
-				return "всеми 30 звёздами Легиона в провинции «%s»" % R["name"]
+				return "всеми %d звёздами Легиона в провинции «%s»" % [Legion.stages() * 3, R["name"]]
 	var r := research(id)
 	if story_of(r) != "":
 		return "в истории горожан «%s»" % String(StoryDefs.story(story_of(r)).get("title", r["name"]))
@@ -935,7 +935,7 @@ static func unlock_short(id: String) -> String:
 	if id.begins_with("rank:") or id.begins_with("army:"):
 		return "Уровень «%s»" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
 	if id.begins_with("trophy:"):
-		return "30 звёзд похода"
+		return "%d звёзд похода" % (Legion.stages() * 3)
 	var r := research(id)
 	if story_of(r) != "":
 		return "История горожан"
