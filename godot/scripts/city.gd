@@ -3103,6 +3103,7 @@ func cal_fest_tick() -> void:
 	cal_fest_day = day
 	if fest_left > 0:
 		return
+	Chronicle.add(self, "cal_" + String(f["id"]))   # коллекция праздников (журнал → «Коллекции»)
 	fest_left = int(Defs.FESTIVAL["hours"])
 	cal_fest_id = String(f["id"])
 	if cal_fest_id == "saturnalia":

@@ -535,7 +535,7 @@ func open_journal(tab := "") -> void:
 		tabs.name = "tabs"
 		tabs.alignment = BoxContainer.ALIGNMENT_CENTER
 		tabs.add_theme_constant_override("separation", 8)
-		for t: Array in [["", "Истории горожан", "scroll"], ["chron", "Летопись", "laurels"]]:
+		for t: Array in [["", "Истории горожан", "scroll"], ["chron", "Летопись", "laurels"], ["coll", "Коллекции", "keys"]]:
 			var b := Button.new()
 			b.text = t[1]
 			b.icon = hud.ico(t[2], 26)
@@ -578,6 +578,9 @@ func fill_journal() -> void:
 	(hud.journal_panel.find_child("scroll", true, false) as ScrollContainer).scroll_vertical = 0
 	if journal_tab == "chron":
 		Chronicle.fill(hud, list)
+		return
+	if journal_tab == "coll":
+		Collections.fill(hud, list)             # что собрано: кошки, статуи, трофеи, наборы, праздники, титулы
 		return
 	var S: Dictionary = game.city.stories
 	var any := false

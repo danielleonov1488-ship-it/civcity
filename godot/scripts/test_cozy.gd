@@ -565,6 +565,10 @@ func _renown() -> void:
 	c0.day = 21
 	c0.cal_fest_tick()
 	_check(c0.fest_left == 0, "старый город — праздников календаря нет")
+	var secs := Collections.sections(c)
+	var fest_sec := secs.filter(func(x): return String(x["title"]) == "Римские праздники")
+	_check(secs.size() >= 5 and not fest_sec.is_empty() and "Сатурналии" in (fest_sec[0]["have"] as Array),
+		"коллекции: %d разделов, праздники — %s" % [secs.size(), str(fest_sec[0]["have"]) if not fest_sec.is_empty() else "нет"])
 
 
 func _odeon() -> void:
