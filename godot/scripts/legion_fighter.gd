@@ -40,6 +40,32 @@ const LOOKS := {
 	"giant": {"model": "SK_Chr_Solider_Male_01", "var": "04_B", "head": ["SM_Chr_Hair_Male_06", "SM_Chr_Hair_Beard_04"], "right": "#club", "style": "club"},
 	"cyclops": {"model": "SK_Chr_Solider_Male_01", "var": "04_A", "head": ["SM_Chr_Hair_Beard_04"], "right": "#boulder", "style": "throw", "tint": Color(0.74, 0.8, 0.96), "eye": true},
 	"crew": {"model": "SK_Chr_Worker_Male_01", "var": "01", "head": ["hair"], "style": "sling"},
+	# поход Легиона 2.0: враги провинций
+	"druid": {"model": "SK_Chr_Politician_Male_01", "var": "03", "head": ["SM_Chr_Hair_Male_05", "SM_Chr_Hair_Beard_03", "SM_Chr_Attach_Crown_Leaf_01"], "right": "#stone", "style": "sling"},
+	"germArcher": {"model": "SK_Chr_Farmer_Male_01", "var": "04", "head": ["hair", "SM_Chr_Hair_Beard_04"], "left": "#bow", "back": "#quiver", "style": "bow"},
+	"briton": {"model": "SK_Chr_Captain_Male_01", "var": "04", "head": ["hair", "beard"], "right": "SM_Wep_Sword_02", "left": "SM_Wep_Shield_01", "style": "sword", "tint": Color(0.86, 0.9, 1.0)},
+	"celtiberian": {"model": "SK_Chr_Solider_Male_01", "var": "03", "head": ["SM_Chr_Attach_Helmet_07"], "right": "SM_Wep_Sword_02", "left": "SM_Wep_Shield_03", "style": "sword"},
+	"numidian": {"model": "SK_Chr_Farmer_Male_01", "var": "03_C", "head": ["hair"], "right": "SM_Wep_Spear_01", "style": "sling"},
+	"nileArcher": {"model": "SK_Chr_Farmer_Male_01", "var": "01_C", "head": ["hair"], "left": "#bow", "back": "#quiver", "style": "bow"},
+	"khopesh": {"model": "SK_Chr_Solider_Male_01", "var": "02_C", "head": ["SM_Chr_Attach_Helmet_02"], "right": "SM_Wep_Sword_03", "left": "SM_Wep_Shield_02", "style": "sword"},
+	"priest": {"model": "SK_Chr_Politician_Male_01", "var": "02_C", "head": ["SM_Chr_Hair_Male_01"], "right": "#stone", "style": "sling"},
+	"horseArcher": {"model": "SK_Chr_Captain_Male_01", "var": "02_B", "head": ["SM_Chr_Attach_Helmet_01"], "left": "#bow", "back": "#quiver", "style": "bow"},
+	"cataphractFoe": {"model": "SK_Chr_Solider_Male_01", "var": "04_A", "head": ["SM_Chr_Attach_Helmet_08"], "right": "SM_Wep_Spear_03", "left": "SM_Wep_Shield_02", "style": "spear", "tint": Color(0.82, 0.84, 0.9)},
+	"dacian": {"model": "SK_Chr_Worker_Male_01", "var": "03", "head": ["hair", "beard"], "right": "SM_Wep_Sword_03", "style": "axe"},
+	"druidBoss": {"model": "SK_Chr_Politician_Male_01", "var": "03_A", "head": ["SM_Chr_Hair_Male_05", "SM_Chr_Hair_Beard_04", "SM_Chr_Attach_Crown_Leaf_01"], "right": "#stone", "style": "sling"},
+	"setPriest": {"model": "SK_Chr_Politician_Male_01", "var": "04_C", "head": ["SM_Chr_Attach_Crown_Leaf_02"], "right": "#stone", "style": "sling", "tint": Color(1.0, 0.9, 0.72)},
+	"cataphract": {"model": "SK_Chr_Solider_Male_01", "var": "04_A", "head": ["SM_Chr_Attach_Helmet_08"], "right": "SM_Wep_Spear_03", "left": "SM_Wep_Shield_02", "style": "spear", "tint": Color(0.78, 0.8, 0.88)},
+	"zalPriest": {"model": "SK_Chr_Politician_Male_01", "var": "01_B", "head": ["SM_Chr_Hair_Male_06", "SM_Chr_Hair_Beard_04"], "right": "#stone", "style": "sling"},
+	"spartacus": {"model": "SK_Chr_Leader_Male_01", "var": "03_A", "head": ["SM_Chr_Hair_Male_03", "SM_Chr_Hair_Beard_02"], "right": "SM_Wep_Sword_01", "left": "SM_Wep_Shield_04", "style": "sword"},
+	"salassi": {"model": "SK_Chr_Captain_Male_01", "var": "04_B", "head": ["SM_Chr_Hair_Male_06", "SM_Chr_Hair_Beard_04", "SM_Chr_Attach_Crown_Leaf_02"], "right": "SM_Wep_Axe_02", "style": "axe"},
+	"vercingetorix": {"model": "SK_Chr_Captain_Male_01", "var": "03_B", "head": ["SM_Chr_Hair_Male_04", "SM_Chr_Hair_Beard_01", "SM_Chr_Attach_Helmet_07"], "right": "SM_Wep_Sword_02", "left": "SM_Wep_Shield_03", "style": "sword"},
+	"arminius": {"model": "SK_Chr_Leader_Male_01", "var": "04_B", "head": ["SM_Chr_Hair_Beard_03", "SM_Chr_Attach_Helmet_04"], "right": "SM_Wep_Spear_03", "left": "SM_Wep_Shield_03", "style": "spear"},
+	"boudicca": {"model": "SK_Chr_Soldier_Female_02", "var": "03_A", "head": ["SM_Chr_Hair_Female_04"], "right": "SM_Wep_Spear_01", "left": "SM_Wep_Shield_01", "style": "spear"},
+	"viriathus": {"model": "SK_Chr_Captain_Male_01", "var": "02_A", "head": ["SM_Chr_Hair_Male_02", "SM_Chr_Hair_Beard_01"], "right": "SM_Wep_Sword_02", "left": "SM_Wep_Shield_03", "style": "sword"},
+	"hannibal": {"model": "SK_Chr_Leader_Male_01", "var": "02_C", "head": ["SM_Chr_Hair_Beard_02", "SM_Chr_Attach_Helmet_02"], "right": "SM_Wep_Sword_01", "left": "SM_Wep_Shield_02", "style": "sword"},
+	"pharaoh": {"model": "SK_Chr_Upperclass_Male_01", "var": "04_C", "head": ["SM_Chr_Attach_Crown_Leaf_02"], "right": "SM_Wep_Spear_02", "style": "spear", "tint": Color(1.0, 0.93, 0.75)},
+	"surena": {"model": "SK_Chr_Captain_Male_01", "var": "02_B", "head": ["SM_Chr_Attach_Helmet_01", "SM_Chr_Hair_Beard_03"], "left": "#bow", "back": "#quiver", "style": "bow"},
+	"decebalus": {"model": "SK_Chr_Leader_Male_01", "var": "04_A", "head": ["SM_Chr_Hair_Male_06", "SM_Chr_Hair_Beard_04", "SM_Chr_Attach_Crown_Leaf_01"], "right": "SM_Wep_Sword_03", "style": "axe"},
 }
 ## Звери: файл Quaternius, длина тела (м), раскраска поверхностей (по порядку: основной, светлый, глаза, нос …)
 const BEASTS := {
@@ -50,6 +76,11 @@ const BEASTS := {
 	"greatbear": {"file": "Wolf_a", "len": 1.7, "cols": ["4e321f", "5a3b27", "141010", "1a1010"], "sculpt": "bear"},
 	"bull": {"file": "Bull", "len": 2.0},
 	"cerberus": {"file": "Wolf_a", "len": 1.6, "cols": ["2b2326", "7a2a1c", "ff7a1a", "1a1414"], "glow": [2], "embers": true, "heads": 3},
+	# поход Легиона 2.0
+	"jackal": {"file": "Wolf_a", "len": 1.15, "cols": ["a8834e", "cdb07c", "120d0b", "2a1c18"]},
+	"chariot": {"file": "Horse_b", "len": 1.7, "cart": true},
+	"charioteer": {"file": "Horse_b", "len": 1.9, "cart": true},
+	"bullLeader": {"file": "Bull", "len": 2.3},
 }
 ## Чудовища без скелета — статуи Artisau: высота (м) при size 1
 const STATUES := {
@@ -548,6 +579,42 @@ func _beast(B: Dictionary, size: float) -> void:
 	var aabb := Artisau.aabb(models[0])
 	top = aabb.size.y * k * 0.8 + 0.25
 	_anim_k = 1.0 / sqrt(maxf(1.0, size))
+	if bool(B.get("cart", false)):
+		_cart(aabb.size.z * k, size)
+
+
+## Колесница за конём (поход Легиона 2.0): пол, борта и два колеса из коробок — в осях бойца (смотрит вдоль +Z)
+func _cart(horse_len: float, size: float) -> void:
+	var c := Node3D.new()
+	c.name = "Cart"
+	add_child(c)
+	c.position = Vector3(0, 0, -horse_len * 0.55)
+	c.scale = Vector3.ONE * clampf(size, 1.0, 1.4)
+	var wood := StandardMaterial3D.new()
+	wood.albedo_color = Color("6b4a2e")
+	var paint := StandardMaterial3D.new()
+	paint.albedo_color = Color("7a2a1c")
+	for e: Array in [[Vector3(0, 0.38, -0.2), Vector3(0.8, 0.05, 0.6), wood], [Vector3(0, 0.62, 0.08), Vector3(0.84, 0.46, 0.05), paint],
+			[Vector3(-0.41, 0.55, -0.2), Vector3(0.05, 0.32, 0.58), paint], [Vector3(0.41, 0.55, -0.2), Vector3(0.05, 0.32, 0.58), paint],
+			[Vector3(0, 0.42, 0.45), Vector3(0.06, 0.06, 0.9), wood]]:
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = e[1]
+		mi.mesh = bm
+		mi.material_override = e[2]
+		mi.position = e[0]
+		c.add_child(mi)
+	for sd: float in [-1.0, 1.0]:
+		var w := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.34
+		cm.bottom_radius = 0.34
+		cm.height = 0.06
+		w.mesh = cm
+		w.material_override = wood
+		w.rotation.z = PI / 2
+		w.position = Vector3(sd * 0.47, 0.34, -0.2)
+		c.add_child(w)
 
 
 var _followers: Array[AnimationPlayer] = []

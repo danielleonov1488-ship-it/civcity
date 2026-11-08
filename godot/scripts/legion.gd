@@ -156,6 +156,71 @@ const ENEMIES := {
 	"cyclops": {"name": "Циклоп", "boss": true, "hp": 3000, "atk": 62, "armor": 30, "range": 8.0, "rate": 2.6, "speed": 1.1, "size": 2.1, "shot": "boulder", "splash": 1.8, "tags": ["giant"], "art": 5},
 	"elephant": {"name": "Боевой слон Ганнибала", "boss": true, "hp": 4000, "atk": 70, "armor": 50, "range": 1.7, "rate": 1.8, "speed": 1.2, "size": 1.45, "cleave": 1.8, "tags": ["beast", "giant", "armored"], "art": 6},
 	"cerberus": {"name": "Цербер", "boss": true, "hp": 4600, "atk": 80, "armor": 40, "range": 1.5, "rate": 1.1, "speed": 1.9, "size": 1.9, "bites": 3, "tags": ["beast", "giant"], "art": 7},
+	# ---- поход Легиона 2.0 (10 провинций × 15 боёв, только новая игра; docs/LEGION_V2.md 3.6). sheet — лист портретов:
+	# 44 — враги (4×4), 45 — боссы (4×4). Приёмы (legion_sim.gd): aura — лечит своих {every, k}; poison — яд в ударе;
+	# sunder — броня не спасает; kite — отходит от мечей и стреляет; guard — неуязвим, пока живы эти враги;
+	# abil — приём босса {kind: raise | avalanche | warcry | ambush | chariot | ward | storm, first, every, warn, …}
+	"druid": {"name": "Друид", "hp": 110, "atk": 9, "armor": 4, "range": 6.0, "rate": 1.6, "speed": 1.4, "shot": "sling", "tags": ["human", "ranged"],
+		"aura": {"every": 5.0, "k": 0.05}, "sheet": "44", "art": 0},
+	"germArcher": {"name": "Германский лучник", "hp": 120, "atk": 17, "armor": 6, "range": 7.0, "rate": 1.25, "speed": 1.5, "shot": "arrow", "tags": ["human", "ranged"], "sheet": "44", "art": 1},
+	"briton": {"name": "Бритт", "hp": 210, "atk": 19, "armor": 10, "range": 1.0, "rate": 1.0, "speed": 1.7, "tags": ["human"], "sheet": "44", "art": 2},
+	"chariot": {"name": "Колесница", "hp": 260, "atk": 24, "armor": 16, "range": 1.1, "rate": 1.3, "speed": 2.6, "size": 1.15, "charge": true, "tags": ["beast", "swift"], "sheet": "44", "art": 3},
+	"celtiberian": {"name": "Кельтибер", "hp": 230, "atk": 21, "armor": 18, "range": 1.0, "rate": 1.0, "speed": 1.7, "tags": ["human"], "sheet": "44", "art": 4},
+	"numidian": {"name": "Нумидиец", "hp": 130, "atk": 18, "armor": 4, "range": 6.0, "rate": 1.4, "speed": 2.4, "shot": "arrow", "tags": ["human", "ranged", "swift"], "sheet": "44", "art": 5},
+	"nileArcher": {"name": "Лучник Нила", "hp": 140, "atk": 20, "armor": 6, "range": 7.0, "rate": 1.25, "speed": 1.5, "shot": "arrow", "tags": ["human", "ranged"], "sheet": "44", "art": 6},
+	"jackal": {"name": "Шакал", "hp": 120, "atk": 15, "armor": 4, "range": 0.85, "rate": 0.7, "speed": 3.0, "prefer": "ranged", "poison": 0.2, "tags": ["beast", "swift", "swarm"], "sheet": "44", "art": 7},
+	"khopesh": {"name": "Страж с хопешем", "hp": 280, "atk": 24, "armor": 26, "range": 1.0, "rate": 1.05, "speed": 1.5, "tags": ["human", "armored"], "sheet": "44", "art": 8},
+	"priest": {"name": "Жрец", "hp": 160, "atk": 12, "armor": 6, "range": 6.0, "rate": 1.6, "speed": 1.4, "shot": "sling", "tags": ["human", "ranged"],
+		"aura": {"every": 5.0, "k": 0.05}, "sheet": "44", "art": 9},
+	"horseArcher": {"name": "Парфянский лучник", "hp": 170, "atk": 22, "armor": 10, "range": 7.0, "rate": 1.15, "speed": 2.6, "shot": "arrow", "kite": 6.0,
+		"tags": ["human", "ranged", "swift"], "sheet": "44", "art": 10},
+	"cataphractFoe": {"name": "Катафракт", "hp": 380, "atk": 26, "armor": 60, "range": 1.1, "rate": 1.15, "speed": 1.3, "tags": ["human", "armored"], "sheet": "44", "art": 11},
+	"dacian": {"name": "Дак с фальксом", "hp": 260, "atk": 30, "armor": 8, "range": 1.05, "rate": 1.1, "speed": 1.8, "sunder": true, "tags": ["human"], "sheet": "44", "art": 12},
+	# младшие боссы (8-й бой провинции)
+	"druidBoss": {"name": "Верховный друид", "boss": true, "hp": 900, "atk": 22, "armor": 12, "range": 6.5, "rate": 1.5, "speed": 1.3, "size": 1.25, "shot": "sling",
+		"tags": ["human", "ranged"], "aura": {"every": 4.0, "k": 0.07}, "sheet": "45", "art": 0},
+	"charioteer": {"name": "Колесничий", "boss": true, "hp": 1500, "atk": 40, "armor": 24, "range": 1.2, "rate": 1.3, "speed": 2.2, "size": 1.35, "charge": true,
+		"tags": ["beast", "giant"], "sheet": "45", "art": 1},
+	"bullLeader": {"name": "Бык-вожак", "boss": true, "hp": 1800, "atk": 44, "armor": 30, "range": 1.1, "rate": 1.3, "speed": 2.2, "size": 1.4, "charge": true, "cleave": 1.0,
+		"tags": ["beast", "giant"], "sheet": "45", "art": 2},
+	"setPriest": {"name": "Жрец Сета", "boss": true, "hp": 2600, "atk": 40, "armor": 20, "range": 6.5, "rate": 1.6, "speed": 1.3, "size": 1.3, "shot": "sling",
+		"tags": ["human", "ranged"], "abil": {"kind": "storm", "first": 5.0, "every": 18.0, "warn": 2.5, "dur": 7.0, "k": 0.4},
+		"summon": {"first": 10.0, "every": 18.0, "warn": 3.0, "foes": ["jackal", "jackal", "jackal"]}, "sheet": "45", "art": 3},
+	"cataphract": {"name": "Катафракт-вожак", "boss": true, "hp": 3200, "atk": 58, "armor": 85, "range": 1.3, "rate": 1.3, "speed": 1.3, "size": 1.4, "cleave": 1.0,
+		"tags": ["human", "armored"], "sheet": "45", "art": 4},
+	"zalPriest": {"name": "Жрец Залмоксиса", "boss": true, "hp": 3600, "atk": 50, "armor": 25, "range": 6.5, "rate": 1.5, "speed": 1.3, "size": 1.3, "shot": "sling",
+		"tags": ["human", "ranged"], "aura": {"every": 4.0, "k": 0.06}, "summon": {"first": 8.0, "every": 16.0, "warn": 3.0, "foes": ["wolf", "wolf", "wolf"]},
+		"sheet": "45", "art": 5},
+	# главные боссы (15-й бой провинции)
+	"spartacus": {"name": "Спартак-самозванец", "boss": true, "hp": 900, "atk": 30, "armor": 20, "range": 1.1, "rate": 1.0, "speed": 1.6, "size": 1.35, "tags": ["human"],
+		"abil": {"kind": "raise", "first": 8.0, "every": 14.0, "warn": 2.5, "n": 3, "k": 0.6}, "sheet": "45", "art": 6,
+		"tip": "Поднимает павших разбойников — добивайте их маслом: сожжённые не встают."},
+	"salassi": {"name": "Вождь салассов", "boss": true, "hp": 1300, "atk": 38, "armor": 26, "range": 1.2, "rate": 1.2, "speed": 1.5, "size": 1.4, "tags": ["human"],
+		"abil": {"kind": "avalanche", "first": 7.0, "every": 18.0, "warn": 3.0, "k": 0.28, "w": 0.9}, "sheet": "45", "art": 7,
+		"tip": "Обрушивает лавину на ряд, где больше всего ваших, — сомкните «Черепаху»."},
+	"vercingetorix": {"name": "Верцингеторикс", "boss": true, "hp": 1600, "atk": 40, "armor": 34, "range": 1.2, "rate": 1.0, "speed": 1.6, "size": 1.4, "cleave": 1.0,
+		"tags": ["human", "armored"], "abil": {"kind": "warcry", "first": 6.0, "every": 16.0, "warn": 2.5, "dur": 6.0, "k": 0.3}, "sheet": "45", "art": 8,
+		"tip": "Боевой клич: враги бьют на треть сильнее. Сбить клич — удар баллисты, катапульты или умение, пока он трубит."},
+	"arminius": {"name": "Арминий", "boss": true, "hp": 2100, "atk": 46, "armor": 30, "range": 1.2, "rate": 1.1, "speed": 1.6, "size": 1.4, "tags": ["human"],
+		"abil": {"kind": "ambush", "first": 6.0, "every": 24.0, "warn": 3.0, "foes": ["berserker", "berserker", "germArcher", "wolf"]}, "sheet": "45", "art": 9,
+		"tip": "Засада: волна заходит с тыла и бьёт по лучникам и машинам — держите сзади легионера."},
+	"boudicca": {"name": "Боудикка", "boss": true, "hp": 2500, "atk": 48, "armor": 26, "range": 1.1, "rate": 1.1, "speed": 1.8, "size": 1.35, "tags": ["human"],
+		"abil": {"kind": "chariot", "first": 6.0, "every": 14.0, "warn": 2.5, "k": 1.6}, "sheet": "45", "art": 10,
+		"tip": "Колесницы проносятся по ряду: копейщики в ряду их останавливают, «Черепаха» гасит удар."},
+	"viriathus": {"name": "Вириат", "boss": true, "hp": 2900, "atk": 52, "armor": 34, "range": 1.2, "rate": 1.1, "speed": 1.6, "size": 1.4, "tags": ["human"],
+		"guard": ["slinger"], "summon": {"first": 14.0, "every": 18.0, "warn": 3.0, "foes": ["slinger", "slinger"]}, "sheet": "45", "art": 11,
+		"tip": "Неуязвим, пока живы его пращники, и зовёт новых — нужны лучники."},
+	"hannibal": {"name": "Ганнибал", "boss": true, "hp": 3400, "atk": 58, "armor": 40, "range": 1.2, "rate": 1.1, "speed": 1.5, "size": 1.4, "cleave": 0.9,
+		"tags": ["human", "armored"], "abil": {"kind": "ward", "first": 5.0, "every": 15.0, "warn": 0.0, "dur": 6.0}, "sheet": "45", "art": 12,
+		"tip": "Перестраивает войско: то щиты от стрел, то от мечей. Нужны и стрелки, и мечи."},
+	"pharaoh": {"name": "Последний фараон", "boss": true, "hp": 3800, "atk": 60, "armor": 34, "range": 1.2, "rate": 1.1, "speed": 1.5, "size": 1.4, "poison": 0.3,
+		"tags": ["human"], "summon": {"first": 8.0, "every": 18.0, "warn": 3.0, "foes": ["jackal", "jackal", "jackal"]}, "sheet": "45", "art": 13,
+		"tip": "Яд его и шакалов копится — «Перевязка» снимает яд."},
+	"surena": {"name": "Сурена", "boss": true, "hp": 4000, "atk": 64, "armor": 30, "range": 7.5, "rate": 1.4, "speed": 2.0, "size": 1.35, "shot": "arrow", "kite": 8.0,
+		"tags": ["human", "ranged"], "summon": {"first": 10.0, "every": 20.0, "warn": 3.0, "foes": ["horseArcher", "horseArcher"]}, "sheet": "45", "art": 14,
+		"tip": "Парфянский выстрел: его лучники отходят и стреляют — догонят баллисты и лучники."},
+	"decebalus": {"name": "Децебал", "boss": true, "hp": 4800, "atk": 76, "armor": 40, "range": 1.3, "rate": 1.2, "speed": 1.6, "size": 1.45, "cleave": 1.1, "sunder": true,
+		"tags": ["human"], "sheet": "45", "art": 15, "tip": "Фалькс бьёт сквозь щит — броня не спасает. Нужны лекари-перевязки и лучники."},
 }
 
 # =====================================================================
@@ -187,6 +252,91 @@ const REGIONS := [
 		"desc": "Тени и адские псы стерегут вход. За ними — Цербер.", "map": "40h"},
 ]
 const STAGES := 10
+## ---- Поход Легиона 2.0 (только новая игра, Legion.V2 — выставляет army_on): 10 провинций по 15 боёв, 8-й — младший
+## босс (junior), 15-й — главный со своим приёмом (docs/LEGION_V2.md 3.6). prin — с какого уровня Принципии открыта
+## (без Принципии — как PRIN_NONE). map — рисованная карта (нет файла — окно рисует свою)
+const REGIONS2 := [
+	{"id": "forest", "name": "Италия", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "wolf"], "junior": "chief", "boss": "spartacus",
+		"prin": 1, "map": "40a", "trophy": "trophy_cart", "desc": "Шайки на дорогах Италии, пращники в кустах, волчьи тропы. В конце — Спартак-самозванец."},
+	{"id": "alps", "name": "Альпы", "biome": "rocks", "foes": ["wolf", "wolf", "boar", "bear"], "junior": "greatbear", "boss": "salassi",
+		"prin": 2, "map": "40b", "desc": "Перевалы, волки и медведи. Вождь салассов обрушивает лавины."},
+	{"id": "gaul", "name": "Галлия", "biome": "darkforest", "foes": ["gaul", "gaul", "gaulArcher", "druid"], "junior": "druidBoss", "boss": "vercingetorix",
+		"prin": 3, "map": "40c", "desc": "Галлы, лучники за деревьями и друиды, что лечат своих. Друидов — первыми."},
+	{"id": "germania", "name": "Германия", "biome": "swamp", "foes": ["berserker", "wolf", "germArcher", "berserker"], "junior": "giant", "boss": "arminius",
+		"prin": 4, "map": "40d", "desc": "Берсерки в болотах, великан в тумане. Арминий заходит с тыла."},
+	{"id": "britannia", "name": "Британия", "biome": "hills", "foes": ["briton", "briton", "chariot", "druid"], "junior": "charioteer", "boss": "boudicca",
+		"prin": 5, "map": "40i", "desc": "Бритты на холмах и боевые колесницы. Копейщики их держат."},
+	{"id": "hispania", "name": "Испания", "biome": "rocks", "foes": ["celtiberian", "slinger", "celtiberian", "bull"], "junior": "bullLeader", "boss": "viriathus",
+		"prin": 6, "map": "40f", "desc": "Кельтиберы, пращники в скалах и быки. Вириат неуязвим, пока живы его пращники."},
+	{"id": "africa", "name": "Африка", "biome": "desert", "foes": ["mercenary", "numidian", "mercenary", "slinger"], "junior": "elephant", "boss": "hannibal",
+		"prin": 7, "map": "40g", "desc": "Наёмники в броне, нумидийцы с дротиками, боевые слоны. Ганнибал меняет строй."},
+	{"id": "egypt", "name": "Египет", "biome": "desert", "foes": ["nileArcher", "jackal", "khopesh", "priest"], "junior": "setPriest", "boss": "pharaoh",
+		"prin": 8, "map": "40j", "desc": "Лучники Нила, шакалы с ядом и жрецы. Песчаная буря слепит стрелков."},
+	{"id": "parthia", "name": "Парфия", "biome": "rocks", "foes": ["horseArcher", "cataphractFoe", "horseArcher", "numidian"], "junior": "cataphract", "boss": "surena",
+		"prin": 10, "map": "40k", "desc": "Лучники, что стреляют на отходе, и катафракты в тяжёлой броне."},
+	{"id": "dacia", "name": "Дакия", "biome": "darkforest", "foes": ["dacian", "wolf", "dacian", "priest"], "junior": "zalPriest", "boss": "decebalus",
+		"prin": 11, "map": "40l", "desc": "Даки с фальксами бьют сквозь щит. Децебал — последний враг похода."},
+]
+const STAGES2 := 15
+const JUNIOR2 := 7                      # 8-й бой провинции — младший босс
+## Сложность и добыча растут так же, как в старом походе (там 80 боёв × 0,8): 150 × STEP2 ≈ 64
+const STEP2 := 0.43
+## Бои Италии — свои, как лес старого похода (загадки на состав, учебный первый бой): номер боя → ключ FIXED
+const FIXED2_FOREST := {0: "0-0", 1: "0-1", 2: "0-2", 3: "0-3", 4: "0-4", 5: "0-5", 6: "0-6", 7: "0-9", 8: "0-7", 9: "0-8"}
+## Подгонка силы врагов каждого боя похода 2.0 (test_legion.gd mode=calibrate v2=1): отряд «обычного игрока» (уровень
+## target2, звёзды, ранги, вещи и Кузница — exp2) с умениями побеждает в ≥90%. Пусто — без подгонки
+static var TUNE2: Array = [
+	[2.4, 2.98, 2.55, 2.29, 2.21, 2.73, 2.08, 1.87, 2.33, 1.9, 3.1, 2.95, 2.55, 2.46, 1.86],   # Италия
+	[4.12, 4.89, 4.0, 3.03, 2.11, 2.13, 2.81, 2.27, 2.48, 2.01, 2.01, 1.82, 1.88, 2.03, 2.25],   # Альпы
+	[3.94, 3.26, 2.52, 1.84, 2.06, 2.32, 1.99, 2.56, 2.14, 1.68, 1.51, 1.89, 1.94, 1.85, 1.66],   # Галлия
+	[2.68, 2.55, 2.34, 1.94, 2.07, 1.9, 1.62, 1.64, 1.68, 1.3, 1.42, 1.26, 1.2, 1.09, 1.45],   # Германия
+	[2.73, 2.79, 2.2, 1.82, 1.58, 1.46, 1.33, 1.87, 1.38, 1.33, 1.23, 1.15, 1.03, 1.16, 1.43],   # Британия
+	[2.29, 2.25, 2.02, 1.66, 1.57, 1.57, 1.47, 1.77, 1.1, 1.17, 1.13, 1.32, 1.38, 1.22, 1.06],   # Испания
+	[2.5, 3.38, 2.13, 1.61, 1.48, 1.45, 1.58, 1.07, 1.29, 1.35, 1.13, 1.09, 1.09, 0.96, 1.22],   # Африка
+	[2.15, 2.13, 2.14, 1.53, 1.11, 1.24, 1.12, 1.14, 1.1, 1.13, 1.09, 1.01, 0.96, 0.9, 0.93],   # Египет
+	[1.46, 1.46, 1.33, 0.89, 0.84, 0.88, 0.87, 1.27, 0.78, 0.69, 0.69, 0.67, 0.71, 0.69, 0.72],   # Парфия
+	[1.09, 1.1, 0.71, 0.78, 0.73, 0.7, 0.54, 0.56, 0.64, 0.51, 0.44, 0.42, 0.42, 0.44, 0.49],   # Дакия
+]
+## Поход 2.0 включён (новая игра; выставляет Legion.sync_v2 по army_on)
+static var V2 := false
+static var v2_test := false             # проверки: поход 2.0 и без новой игры (test_battle v2=1)
+
+
+static func regions() -> Array:
+	return REGIONS2 if V2 else REGIONS
+
+
+static func stages() -> int:
+	return STAGES2 if V2 else STAGES
+
+
+## Шаг глубины боя (добыча и рост врагов)
+static func step_k() -> float:
+	return STEP2 if V2 else STAGE_STEP
+
+
+## Особый бой: {} — обычный
+static func fixed_of(r: int, s: int) -> Dictionary:
+	if V2:
+		return FIXED.get(String(FIXED2_FOREST.get(s, "")), {}) if r == 0 else {}
+	return FIXED.get("%d-%d" % [r, s], {})
+
+
+## Уровень зданий-родов войск, на котором «обычный игрок» 2.0 подходит к бою (r, s): уровень Принципии провинции,
+## +1 с 6-го боя, +1 с 11-го, +1 младшему и главному боссу; не выше 12
+static func target2(r: int, s: int) -> int:
+	var P := int(REGIONS2[r]["prin"])
+	return mini(12, P + (1 if s >= 5 else 0) + (1 if s >= 10 else 0) + (1 if s == JUNIOR2 or s == STAGES2 - 1 else 0))
+
+
+## Что ещё есть у «обычного игрока» 2.0 у боя (r, s), кроме уровней: звёзды и ранги воинов, вещи (60% от добротных
+## по глубине похода), Кузница и Склад оружия на уровне target2, Лазарет. → {atk, hp, armor, heal}
+static func exp2(r: int, s: int) -> Dictionary:
+	var x := r + s / float(STAGES2)
+	var T := target2(r, s)
+	var g := 1.0 + 0.25 * x
+	return {"atk": 0.05 + 0.03 * x + 0.072 * g + FORGE * T, "hp": 0.05 + 0.03 * x + 0.12 * g + FORGE * T, "armor": 7.2 * g + ARMORY * T,
+		"heal": INFIRMARY * T}
 ## Сложность и добыча растут как при восьми боях на провинцию (так проверен баланс старой игры)
 const STAGE_STEP := 0.8
 ## Сила врагов: ×STAGE_GROWTH^Dc (Dc — глубина боя внутри круга: 0…63), боссов — ×BOSS_GROWTH^Dc (их числа и так
@@ -322,7 +472,7 @@ const PVP_MIN_LEVEL := 3
 #   картинки (владелец пришлёт: D:/CivCity/assets/incoming/ui_ai/35.png … 41.png, разложим в assets/ui/ai/legion)
 # =====================================================================
 ## Лист → [колонок, строк]. Окно грузит картинку, если файл есть, иначе рисует свою заглушку.
-const ART_SHEETS := {"35": [5, 1], "36": [4, 4], "37": [4, 2], "38": [4, 4], "39": [4, 4], "41": [4, 2]}
+const ART_SHEETS := {"35": [5, 1], "36": [4, 4], "37": [4, 2], "38": [4, 4], "39": [4, 4], "41": [4, 2], "44": [4, 4], "45": [4, 4]}
 const ART_DIR := "res://assets/ui/ai/legion/"
 
 # =====================================================================
@@ -362,6 +512,8 @@ var iid_next := 1
 var shards := [0, 0, 0, 0, 0]  # обломки по редкости (Кузница, этап 3)
 var mats := {}                  # материалы мастерских: iron / wood / leather → количество (дробное — копится по часам)
 var mats_t := 0.0               # когда материалы считались последний раз (Legion.now)
+var food_pts := 0.0             # поход 2.0: провиант-очки
+var food_t := 0.0               # когда провиант считался (0 — ещё ни разу: полный запас)
 var forging := {}           # куётся: {slot, cls, rarity, ilvl, end, total} или {}
 var _rng := RandomNumberGenerator.new()
 
@@ -384,6 +536,7 @@ func _init() -> void:
 func bind(c: Object) -> void:
 	_city = weakref(c) if c != null else null
 	repeat_k = COZY_REPEAT_K if cozy() else 1.0
+	sync_v2()
 
 
 ## Новая игра «Уютного Рима» (City.cozy_v ≥ 1): строители, долгие стройки, повтор боёв дешевле
@@ -419,11 +572,26 @@ func city() -> Object:
 #   Легион 2.0, этап 1: воины-новобранцы (Soldiers) — только новая игра
 # =====================================================================
 
-var army_off := false          # проверки прежнего Легиона в новом городе (test_hero): отряд из родов войск, как в старой игре
+var army_off := false:         # проверки прежнего Легиона в новом городе (test_hero): отряд из родов войск, как в старой игре
+	set(v):
+		army_off = v
+		sync_v2()
 
 
 func army_on() -> bool:
 	return cozy() and not army_off
+
+
+## Поход 2.0 (10 × 15) — в новой игре; прежний (8 × 10) — в старых городах и проверках. Один раз переводит
+## продвижение старого похода новой игры (до этого обновления) на новые провинции
+func sync_v2() -> void:
+	V2 = army_on() or v2_test
+	if V2 and not flags.has("camp2"):
+		flags["camp2"] = true
+		if progress > 0:
+			var r := progress / STAGES
+			var s2 := progress % STAGES
+			progress = (r * STAGES2 + roundi(s2 * 1.5)) if r < 4 else 4 * STAGES2
 
 
 func barracks_lvl() -> int:
@@ -499,6 +667,8 @@ func _add_soldier(d: Dictionary) -> Dictionary:
 ## Таймеры воинов и новобранцы дня. Возвращает тексты для колокольчика
 func army_tick() -> Array:
 	var out := []
+	if V2 != (army_on() or v2_test) or (V2 and not flags.has("camp2")):
+		sync_v2()
 	if not army_on():
 		return out
 	var t := now()
@@ -919,7 +1089,7 @@ func mats_short(need: Dictionary) -> String:
 
 ## Добыча после победы (новая игра): шанс вещи, босс — наверняка и лучше; уровень — по глубине похода
 func _drop(st: Dictionary, first: bool) -> Dictionary:
-	var boss := bool(st.get("boss", false))
+	var boss := bool(st.get("boss", false)) or bool(st.get("junior", false))
 	var p := 1.0 if boss and first else (Gear.DROP_FIRST if first else Gear.DROP_REPEAT)
 	if _rng.randf() > p:
 		return {}
@@ -1084,7 +1254,7 @@ func _lock_why() -> String:
 	if window_open():
 		return ""
 	var c = city()
-	var rank := int(REGIONS[0]["rank"])
+	var rank := int(REGIONS[0]["rank"])         # Легион открывается с этого уровня города (и в походе 2.0)
 	var head := "Легион откроется в истории горожан «%s»" % story_title()
 	if c == null or int(c.level) < rank:
 		return head + " — она придёт, когда город станет «%s»." % Defs.LEVELS[rank]["name"]
@@ -1165,11 +1335,11 @@ func unit_lock_text(type: String) -> String:
 
 
 func bosses() -> int:
-	return progress / STAGES
+	return progress / stages()
 
 
 static func boss_name(n: int) -> String:
-	var R: Dictionary = REGIONS[(n - 1) % REGIONS.size()]
+	var R: Dictionary = regions()[(n - 1) % regions().size()]
 	return ENEMIES[R["boss"]]["name"]
 
 
@@ -1361,11 +1531,15 @@ func stats(type: String, pvp := false) -> Dictionary:
 ## Враг на силе scale (круг и глубина похода)
 static func enemy_stats(key: String, scale: float) -> Dictionary:
 	var E: Dictionary = ENEMIES[key]
-	return {"key": key, "name": E["name"], "level": 0, "hp": roundi(float(E["hp"]) * scale), "atk": roundi(float(E["atk"]) * pow(scale, 0.92)),
+	var out := {"key": key, "name": E["name"], "level": 0, "hp": roundi(float(E["hp"]) * scale), "atk": roundi(float(E["atk"]) * pow(scale, 0.92)),
 		"armor": minf(85.0, float(E["armor"]) + log(scale) * 6.0), "range": float(E["range"]), "min_range": 0.0, "rate": float(E["rate"]),
 		"speed": float(E["speed"]), "shot": String(E.get("shot", "")), "pierce": false, "splash": float(E.get("splash", 0.0)),
 		"cleave": float(E.get("cleave", 0.0)), "charge": bool(E.get("charge", false)), "bites": int(E.get("bites", 0)),
 		"prefer": String(E.get("prefer", "")), "vs": {}, "tags": E["tags"], "boss": bool(E.get("boss", false)), "size": float(E.get("size", 1.0))}
+	for k in ["aura", "abil", "poison", "sunder", "guard", "kite"]:
+		if E.has(k):
+			out[k] = E[k]
+	return out
 
 
 ## «Сила» бойца для сравнения с врагом: живучесть × урон в секунду
@@ -1576,6 +1750,8 @@ func hero_types(sq: Array) -> Array:
 func cap() -> int:
 	if free_mode:
 		return MAX_LEVEL
+	if V2:
+		return mini(12, prin_cap())
 	var cd := cycles_done()
 	return mini(mini(MAX_LEVEL, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)]) + (CYCLE_CAP * cd + CYCLE_ROOM if cd > 0 else 0)), prin_cap())
 
@@ -1645,7 +1821,7 @@ func _set_level(key: String, v: int) -> void:
 
 ## Сколько кругов походов пройдено целиком (побеждён Цербер)
 func cycles_done() -> int:
-	return progress / (REGIONS.size() * STAGES)
+	return progress / (regions().size() * stages())
 
 
 ## С какого уровня города предел поднимется (−1 — рост города его уже не поднимет). Считает как cap():
@@ -1976,19 +2152,23 @@ static func stage_key(cycle: int, r: int, s: int) -> String:
 
 ## Номер боя по порядку: 0, 1, 2… сквозь провинции и круги
 static func stage_index(cycle: int, r: int, s: int) -> int:
-	return (cycle * REGIONS.size() + r) * STAGES + s
+	return (cycle * regions().size() + r) * stages() + s
 
 
 ## Провинция открыта уровнем города (на первом круге; дальше — тоже нужен её уровень)
 func region_rank_ok(r: int) -> bool:
-	return free_mode or city_level() >= int(REGIONS[r]["rank"])
+	if V2:
+		return free_mode or prin_cap() >= int(REGIONS2[r]["prin"])
+	return free_mode or city_level() >= int(regions()[r]["rank"])
 
 
 ## Почему провинция закрыта уровнем города ("" — открыта)
 func region_lock_text(r: int) -> String:
 	if region_rank_ok(r):
 		return ""
-	return "Откроется, когда город станет «%s»" % Defs.LEVELS[int(REGIONS[r]["rank"])]["name"]
+	if V2:
+		return "Откроется с Принципией %d уровня (штаб Легиона)" % int(REGIONS2[r]["prin"])
+	return "Откроется, когда город станет «%s»" % Defs.LEVELS[int(regions()[r]["rank"])]["name"]
 
 
 ## Бой открыт: пройден предыдущий и провинция открыта уровнем города
@@ -2002,13 +2182,13 @@ func stage_done(cycle: int, r: int, s: int) -> bool:
 
 ## Где передний край: {cycle, r, s}
 func frontier() -> Dictionary:
-	var per := REGIONS.size() * STAGES
-	return {"cycle": progress / per, "r": (progress % per) / STAGES, "s": progress % STAGES}
+	var per := regions().size() * stages()
+	return {"cycle": progress / per, "r": (progress % per) / stages(), "s": progress % stages()}
 
 
 ## Провинция пройдена (побеждён её босс на этом круге)
 func region_done(cycle: int, r: int) -> bool:
-	return stage_index(cycle, r, STAGES - 1) < progress
+	return stage_index(cycle, r, stages() - 1) < progress
 
 
 static func roman(n: int) -> String:
@@ -2023,11 +2203,14 @@ static func roman(n: int) -> String:
 
 ## Сила врагов боя: [обычных, босса] — рост по глубине круга, подгонка TUNE, множитель круга
 static func base_scales(cycle: int, r: int, s: int, tuned := true) -> Array:
-	var Dc := (r * STAGES + s) * STAGE_STEP
+	var Dc := (r * stages() + s) * step_k()
 	var k := 1.0
-	if tuned and r < TUNE.size() and s < (TUNE[r] as Array).size():
-		k *= float(TUNE[r][s])
-	if cycle > 0:
+	var tune: Array = TUNE2 if V2 else TUNE
+	if tuned and r < tune.size() and s < (tune[r] as Array).size():
+		k *= float(tune[r][s])
+	if cycle > 0 and V2:
+		k *= level_k(target_level(cycle, r, s)) / level_k(target_level(0, r, s)) * pow(CYCLE_EXTRA, cycle)
+	elif cycle > 0:
 		k *= level_k(target_level(cycle, r, s)) / level_k(target_level(0, r, s)) * pow(CYCLE_EXTRA, cycle - 1)
 		if tuned and r < TUNE_C.size() and s < (TUNE_C[r] as Array).size():
 			k *= float(TUNE_C[r][s])
@@ -2046,10 +2229,12 @@ const FOREST_T := [1, 1, 2, 2, 2, 3, 3, 3, 3, 3]
 
 
 static func target_level(cycle: int, r: int, s: int) -> int:
+	if V2:
+		return target2(r, s) + cycle * CYCLE_CAP
 	if r == 0 and s < FOREST_T.size():
 		return int(FOREST_T[s]) + cycle * CYCLE_CAP
 	var base := r + 1
-	var add := 2 if s == STAGES - 1 else (1 if s >= 4 else 0)
+	var add := 2 if s == stages() - 1 else (1 if s >= 4 else 0)
 	return base + add + cycle * CYCLE_CAP
 
 
@@ -2107,14 +2292,17 @@ const CHEST := [15, 20, 25, 30, 35, 40, 45, 50]
 ## {cycle, r, s, idx, key, D, boss, waves: [[ключ врага, …], …], packs: [номер волны], scale, reward: {money, glory[, rp]},
 ##  title, name, region, fixed, theme (название боя из FIXED или ""), kite, bite, squad ("bow" | "leg" | "any" | "" — FIXED), task [вид, число], tip}
 static func stage(cycle: int, r: int, s: int) -> Dictionary:
-	var R: Dictionary = REGIONS[r]
+	var R: Dictionary = regions()[r]
 	var idx := stage_index(cycle, r, s)
-	var D := idx * STAGE_STEP                       # добыча растёт сквозь круги
-	var sk := s * STAGE_STEP
+	var D := idx * step_k()                         # добыча растёт сквозь круги
+	var sk := s * step_k() * (1.25 if V2 else 1.0)
 	var rng := RandomNumberGenerator.new()
-	rng.seed = (r * STAGES + s) * 7919 + 13         # состав боя одинаков на всех кругах — растёт только сила
-	var boss := s == STAGES - 1
+	rng.seed = (r * stages() + s) * 7919 + 13         # состав боя одинаков на всех кругах — растёт только сила
+	var boss := s == stages() - 1
+	var junior := V2 and s == JUNIOR2
 	var n_waves := 2 if boss else (1 if s < 3 else (2 if s < 7 else 3))
+	if V2:
+		n_waves = 2 if boss or junior else (1 if s < 3 else (2 if s < 10 else 3))
 	var bs := base_scales(cycle, r, s)
 	var scale: float = bs[0]
 	var boss_scale: float = bs[1]
@@ -2125,12 +2313,12 @@ static func stage(cycle: int, r: int, s: int) -> Dictionary:
 		var wave := []
 		for i in n:
 			wave.append(foes[rng.randi() % foes.size()])
-		if boss and w == n_waves - 1:
+		if (boss or junior) and w == n_waves - 1:
 			wave.resize(mini(wave.size(), 2))
-			wave.push_front(R["boss"])
+			wave.push_front(R["boss"] if boss else R["junior"])
 		waves.append(wave)
 	var packs: Array = []
-	var fx: Dictionary = FIXED.get("%d-%d" % [r, s], {})
+	var fx: Dictionary = fixed_of(r, s)
 	if not fx.is_empty():
 		waves = (fx["waves"] as Array).duplicate(true)
 		packs = (fx.get("packs", []) as Array).duplicate()
@@ -2139,13 +2327,24 @@ static func stage(cycle: int, r: int, s: int) -> Dictionary:
 	if boss:
 		reward["money"] = int(reward["money"]) * 3
 		reward["rp"] = roundi(minf(3000.0, 40.0 * pow(1.04, D)))
+	elif junior:
+		reward["money"] = int(reward["money"]) * 2
+		reward["glory"] = int(reward["glory"]) + 1
 	var title: String = R["name"] + ((" " + roman(cycle + 1)) if cycle > 0 else "")
 	return {"cycle": cycle, "r": r, "s": s, "idx": idx, "key": stage_key(cycle, r, s), "D": D, "boss": boss, "waves": waves, "packs": packs,
-		"scale": scale, "boss_scale": boss_scale, "reward": reward, "title": title, "name": (ENEMIES[R["boss"]]["name"] if boss else "Бой %d" % (s + 1)), "region": R["id"],
+		"scale": scale, "boss_scale": boss_scale, "reward": reward, "title": title, "region": R["id"], "junior": junior,
+		"name": ENEMIES[R["boss"]]["name"] if boss else (ENEMIES[R["junior"]]["name"] if junior else "Бой %d" % (s + 1)),
 		"fixed": not fx.is_empty(), "theme": String(fx.get("name", "")), "kite": bool(fx.get("kite", false)), "bite": bool(fx.get("bite", false)),
 		"squad": String(fx.get("squad", ("bow" if bool(fx.get("kite", false)) and not bool(fx.get("bite", false)) else "leg") if not fx.is_empty() else "")),
-		"task": (fx["task"] as Array).duplicate() if fx.has("task") else (["hp", 50] if "%d-%d" % [r, s] in TASK_HP else default_task(waves)),
-		"tip": String(fx.get("tip", ""))}
+		"task": (fx["task"] as Array).duplicate() if fx.has("task") else (["hp", 50] if "%d-%d" % [r, s] in (TASK_HP2 if V2 else TASK_HP) else default_task(waves)),
+		"tip": String(fx.get("tip", "")) if not fx.is_empty() or not V2 else _boss_tip(R, boss, junior)}
+
+
+## Совет на карточке боя с боссом похода 2.0: его приём
+static func _boss_tip(R: Dictionary, boss: bool, junior: bool) -> String:
+	if not boss and not junior:
+		return ""
+	return String(ENEMIES[R["boss"] if boss else R["junior"]].get("tip", ""))
 
 
 ## Задание на третью звезду у боя не из FIXED: «масло накрыло 3+ разом», если в бою есть волна от трёх врагов, иначе
@@ -2161,6 +2360,8 @@ static func default_task(waves: Array) -> Array:
 ## бойцов, волки и псы бросаются на стрелков врозь с берсерками и тенями) — задание тоже «здоровье»: масло больше двоих
 ## не накроет. Мерил test_legion mode=tasks (терпеливый игрок бережёт масло до кучи; он же проверка regress.sh)
 const TASK_HP := ["2-2", "2-3", "3-0", "3-1", "3-2", "4-1", "5-0", "5-1", "7-0"]
+## То же для похода 2.0 (test_legion mode=tasks v2=1)
+const TASK_HP2 := ["2-2", "2-5", "2-8", "3-0", "3-1", "3-2", "3-5", "4-0", "4-1", "6-0", "6-2", "7-2", "7-3", "8-0", "9-0", "9-1"]
 
 
 ## То же, что stage() — имя для окна и боя
@@ -2181,10 +2382,10 @@ func next_stage(st: Dictionary) -> Dictionary:
 	var c := int(st["cycle"])
 	var r := int(st["r"])
 	var s := int(st["s"]) + 1
-	if s >= STAGES:
+	if s >= stages():
 		s = 0
 		r += 1
-		if r >= REGIONS.size():
+		if r >= regions().size():
 			r = 0
 			c += 1
 	return stage_info(c, r, s) if stage_open(c, r, s) else {}
@@ -2201,6 +2402,13 @@ static func foe_stats(st: Dictionary, k: String) -> Dictionary:
 		s["bush"] = [BUSH, BUSH_SHOT]
 	if bool(st.get("bite", false)) and String(s["prefer"]) == "ranged":
 		s["vs"] = {"ranged": BITE}
+	if E.has("abil") and (E["abil"] as Dictionary).has("foes"):
+		var ab: Dictionary = (E["abil"] as Dictionary).duplicate()
+		var af := []
+		for f in ab["foes"]:
+			af.append(enemy_stats(String(f), float(st["scale"])))
+		ab["foes"] = af
+		s["abil"] = ab
 	if E.has("summon"):
 		var sm: Dictionary = E["summon"]
 		var foes := []
@@ -2322,7 +2530,7 @@ func _odds_setups(st: Dictionary, types: Array, sq_ready := []) -> Array:
 	var sq: Array = sq_ready if not sq_ready.is_empty() else []
 	if sq.is_empty():
 		for t in types:
-			if available(String(t)):
+			if UNITS.has(String(t)) and available(String(t)):    # «Лучший состав» воинов может оставить место пустым ("")
 				sq.append(stats(String(t)))
 		sq = hero_types(sq)                      # герой идёт в поход на своём месте — и в оценке шансов
 	var waves := []
@@ -2379,14 +2587,58 @@ static func reward_for(st: Dictionary, first: bool) -> Dictionary:
 	return out
 
 
-## Провиант на поход (денарии)
+## Провиант похода 2.0 — очки, не денарии: запас FOOD2_CAP0 + FOOD2_CAP_PER × ур. Склада оружия, очко за FOOD2_MIN
+## минут (+ хлебный обоз: FOOD2_CITY × уровень города в сутки), бой — FOOD2_BATTLE (docs/LEGION_V2.md 3.6)
+const FOOD2_CAP0 := 60
+const FOOD2_CAP_PER := 5
+const FOOD2_MIN := 6.0
+const FOOD2_CITY := 5.0
+const FOOD2_BATTLE := 6
+
+
+func food_cap() -> int:
+	return FOOD2_CAP0 + FOOD2_CAP_PER * level_of("armory") if count_type("armory") > 0 else FOOD2_CAP0
+
+
+## Провиант-очки сейчас (досчитывает по времени)
+func food_now() -> int:
+	_food_tick()
+	return int(floor(food_pts))
+
+
+func _food_tick() -> void:
+	var t := now()
+	if food_t <= 0.0:
+		food_t = t
+		food_pts = float(food_cap())
+		return
+	var dh := clampf(t - food_t, 0.0, 3.0 * 86400.0) / 3600.0
+	food_t = t
+	var per_h := (60.0 / FOOD2_MIN + FOOD2_CITY * maxi(1, city_level()) / 24.0) * time_k
+	if food_pts < food_cap():
+		food_pts = minf(float(food_cap()), food_pts + per_h * dh)
+
+
+## Минут до следующего очка провианта (0 — запас полон)
+func food_next_min() -> float:
+	if food_now() >= food_cap():
+		return 0.0
+	var per_h := (60.0 / FOOD2_MIN + FOOD2_CITY * maxi(1, city_level()) / 24.0) * time_k
+	return (1.0 - fmod(food_pts, 1.0)) * 60.0 / maxf(0.001, per_h)
+
+
+## Провиант на поход (денарии; в походе 2.0 — очки, денарии не нужны)
 func food_cost(st: Dictionary) -> int:
+	if V2:
+		return 0
 	return roundi(battle_squad().size() * (FOOD["base"] + FOOD["per_d"] * float(st["D"])))
 
 
 ## Можно ли в бой ("" — можно, иначе почему нельзя)
 func can_fight(st: Dictionary) -> String:
 	repeat_k = COZY_REPEAT_K if cozy() else 1.0     # город мог стать «Уютным Римом» после bind (новая игра)
+	if V2 != (army_on() or v2_test):
+		sync_v2()
 	if not window_open():
 		return lock_text()
 	if not region_rank_ok(int(st["r"])):
@@ -2399,6 +2651,8 @@ func can_fight(st: Dictionary) -> String:
 		return "В отряде нет бойцов — постройте Казармы и поставьте легионеров в отряд."
 	if float(food_cost(st)) > city_money():
 		return "Не хватает денариев на провиант: нужно %d." % food_cost(st)
+	if V2 and food_now() < FOOD2_BATTLE:
+		return "Мало провианта: нужно %d, есть %d. Очко — каждые %d мин." % [FOOD2_BATTLE, food_now(), roundi(FOOD2_MIN)]
 	return ""
 
 
@@ -2621,7 +2875,7 @@ static func star_miss(i: int, result: Dictionary, st: Dictionary) -> String:
 ## Звёзды провинции (cycle, r): сколько набрано из 30
 func region_stars(cycle: int, r: int) -> int:
 	var n := 0
-	for s in STAGES:
+	for s in stages():
 		n += star_count(int(stars.get(stage_key(cycle, r, s), 0)))
 	return n
 
@@ -2645,6 +2899,9 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 		c.money -= food
 		if c.has_method("flow"):
 			c.flow("legion", -food)
+	if V2:
+		_food_tick()
+		food_pts = maxf(0.0, food_pts - FOOD2_BATTLE)
 	var first := bool(result.get("win", false)) and int(st["idx"]) == progress
 	var out := result.duplicate()
 	out["first"] = first
@@ -2703,10 +2960,10 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 ## Возвращает {} или {glory, trophy (тип украшения или ""), region}
 func _chest(cycle: int, r: int) -> Dictionary:
 	var ck := "%d-%d" % [cycle, r]
-	if chests.has(ck) or region_stars(cycle, r) < STAGES * 3:
+	if chests.has(ck) or region_stars(cycle, r) < stages() * 3:
 		return {}
 	chests[ck] = true
-	var R: Dictionary = REGIONS[r]
+	var R: Dictionary = regions()[r]
 	var g := int(CHEST[r % CHEST.size()]) * (1 + cycle)
 	glory += g
 	var tr := String(R.get("trophy", ""))
@@ -2716,7 +2973,7 @@ func _chest(cycle: int, r: int) -> Dictionary:
 		tr = ""
 	var c = city()
 	if c != null and c.has_method("_event"):
-		c._event("Все 30 звёзд: %s! Сундук Славы +%d%s" % [R["name"], g,
+		c._event("Все %d звёзд: %s! Сундук Славы +%d%s" % [stages() * 3, R["name"], g,
 			(". Трофей «%s» — в разделе «Украшения»" % Defs.B[tr]["name"]) if tr != "" and Defs.B.has(tr) else ""], "laurels")
 	return {"glory": g, "trophy": tr, "region": String(R["name"])}
 
@@ -3153,7 +3410,7 @@ static func art(kind: String, id: String) -> Dictionary:
 			i = int(UNITS[id]["art"])
 		"enemy":
 			var E: Dictionary = ENEMIES[id]
-			sheet = "37" if bool(E.get("boss", false)) else "36"
+			sheet = String(E.get("sheet", "37" if bool(E.get("boss", false)) else "36"))
 			i = int(E["art"])
 		"perk":
 			sheet = "38"
@@ -3162,7 +3419,7 @@ static func art(kind: String, id: String) -> Dictionary:
 			sheet = "41"
 			i = int(wonder(id)["art"])
 		"map":
-			for R: Dictionary in REGIONS:
+			for R: Dictionary in regions() + (REGIONS if V2 else REGIONS2):
 				if R["id"] == id:
 					return {"file": ART_DIR + String(R["map"]) + ".png", "grid": [1, 1], "i": 0}
 	return {"file": ART_DIR + sheet + ".png", "grid": ART_SHEETS.get(sheet, [1, 1]), "i": i}
@@ -3216,7 +3473,8 @@ func to_dict() -> Dictionary:
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
 		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
-		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "mats": mats, "mats_t": mats_t}
+		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "mats": mats, "mats_t": mats_t,
+		"food_pts": food_pts, "food_t": food_t}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -3309,6 +3567,8 @@ func from_dict(d: Dictionary) -> void:
 			if (md as Dictionary).has(m):
 				mats[m] = maxf(0.0, float(md[m]))
 	mats_t = float(d.get("mats_t", 0.0))
+	food_pts = float(d.get("food_pts", 0.0))
+	food_t = float(d.get("food_t", 0.0))
 	forging = {}
 	var fg = d.get("forging", {})
 	if fg is Dictionary and not (fg as Dictionary).is_empty() and String(fg.get("slot", "")) in Gear.SLOTS:

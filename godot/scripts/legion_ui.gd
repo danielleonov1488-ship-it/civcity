@@ -317,6 +317,8 @@ func _sig() -> String:
 		var st := lg.stage_info(int(sel["c"]), int(sel["r"]), int(sel["s"]))
 		a.append(lg.can_fight(st))
 		a.append(lg.food_cost(st) <= game.city.money)
+		if Legion.V2:
+			a.append(lg.food_now())
 	return str(a)
 
 
@@ -1057,22 +1059,24 @@ func _default_stage(c: int, r: int) -> int:
 	var fr := lg.frontier()
 	if int(fr["cycle"]) == c and int(fr["r"]) == r:
 		return int(fr["s"])
-	return Legion.STAGES - 1 if lg.region_done(c, r) else 0
+	return Legion.stages() - 1 if lg.region_done(c, r) else 0
 
 
 ## Точки площадок провинции r на картинке (MAP_PX): {camp: Vector2 или null, stops: [9 × Vector2], boss: Vector2}
 func _stops(r: int, has_art: bool) -> Dictionary:
-	var key := String(Legion.REGIONS[r]["map"])
+	var key := String(Legion.regions()[r]["map"])
 	var d: Dictionary = {}
 	if has_art:
 		d = _maps_json().get(key, STOPS.get(key, {}))
 	var out := {"camp": null, "stops": [], "boss": Vector2.ZERO}
-	if d.has("stops") and (d["stops"] as Array).size() >= Legion.STAGES - 1 and d.has("boss"):
+	if d.has("stops") and (d["stops"] as Array).size() >= 2 and d.has("boss"):
 		if d.get("camp") != null:
 			out["camp"] = Vector2(float(d["camp"][0]), float(d["camp"][1]))
 		for p: Array in d["stops"]:
 			(out["stops"] as Array).append(Vector2(float(p[0]), float(p[1])))
 		out["boss"] = Vector2(float(d["boss"][0]), float(d["boss"][1]))
+		if (out["stops"] as Array).size() < Legion.stages() - 1:
+			out["stops"] = _resample(out["stops"], out["boss"], Legion.stages() - 1)    # ровно по нарисованной тропе
 		return out
 	# своя карта: тропа PLACE_PATH, у каждой провинции чуть по-своему
 	var rng := RandomNumberGenerator.new()
@@ -1081,8 +1085,27 @@ func _stops(r: int, has_art: bool) -> Dictionary:
 	for p: Array in PLACE_PATH:
 		pts.append(Vector2(float(p[0]) + rng.randf_range(-26, 26), float(p[1]) + rng.randf_range(-20, 20)))
 	out["camp"] = pts[0]
-	out["stops"] = pts.slice(1, Legion.STAGES)
+	out["stops"] = _resample(pts.slice(1, pts.size() - 1), pts[pts.size() - 1], Legion.stages() - 1)
 	out["boss"] = pts[pts.size() - 1]
+	return out
+
+
+## n площадок ровно по тропе stops → boss (первая — в начале тропы, последняя — не доходя до босса)
+static func _resample(stops: Array, boss: Vector2, n: int) -> Array:
+	var path: Array = stops.duplicate()
+	path.append(boss)
+	var lens := [0.0]
+	for i in range(1, path.size()):
+		lens.append(float(lens[i - 1]) + (path[i] as Vector2).distance_to(path[i - 1]))
+	var total: float = lens[lens.size() - 1]
+	var out := []
+	for i in n:
+		var d := total * i / float(n)
+		var j := 1
+		while j < path.size() - 1 and float(lens[j]) < d:
+			j += 1
+		var seg := maxf(0.001, float(lens[j]) - float(lens[j - 1]))
+		out.append((path[j - 1] as Vector2).lerp(path[j], clampf((d - float(lens[j - 1])) / seg, 0.0, 1.0)))
 	return out
 
 
@@ -1103,11 +1126,13 @@ func _maps_json() -> Dictionary:
 
 func _map_view() -> Control:
 	var frame := _bar_panel(0)
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER     # окно шире (вкладка «Воины») — карта не тянется: площадки на тропе
+	frame.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var m := Control.new()
 	m.custom_minimum_size = MAP
 	m.clip_contents = true
 	frame.add_child(m)
-	var R: Dictionary = Legion.REGIONS[view_r]
+	var R: Dictionary = Legion.regions()[view_r]
 	var tex := _art("map", String(R["id"]))
 	var pts := _stops(view_r, tex != null)
 	var k := MAP / MAP_PX
@@ -1154,13 +1179,13 @@ func _map_view() -> Control:
 		camp.tooltip_text = "Стоянка легиона: отсюда отряд выходит в поход"
 		m.add_child(camp)
 	# бои по тропе
-	for s in Legion.STAGES:
-		var boss := s == Legion.STAGES - 1
+	for s in Legion.stages():
+		var boss := s == Legion.stages() - 1
 		var p: Vector2 = (pts["boss"] if boss else (pts["stops"] as Array)[s]) * k
 		var st := {"c": vc, "r": view_r, "s": s}
 		var is_sel: bool = int(sel["s"]) == s
 		var front: bool = int(fr["cycle"]) == vc and int(fr["r"]) == view_r and int(fr["s"]) == s and lg.region_rank_ok(view_r)
-		var b := _stage_btn(vc, view_r, s, boss, front)
+		var b := _stage_btn(vc, view_r, s, boss, front, Legion.V2 and s == Legion.JUNIOR2)
 		var sz: float = b.custom_minimum_size.x
 		if is_sel:
 			var gl := _glow(sz * 1.9)
@@ -1205,10 +1230,10 @@ func _map_view() -> Control:
 		var sc := Stars.new(1, 18.0, 1)
 		sc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		rh.add_child(sc)
-		rh.add_child(_l("%d/%d" % [sn, Legion.STAGES * 3], 17, true, C_GOLD if sn >= Legion.STAGES * 3 else C_INK))
+		rh.add_child(_l("%d/%d" % [sn, Legion.stages() * 3], 17, true, C_GOLD if sn >= Legion.stages() * 3 else C_INK))
 		var trn := String(R.get("trophy", ""))
 		rib.tooltip_text += "
-Звёзды провинции: %d из %d. За все — сундук Славы%s" % [sn, Legion.STAGES * 3,
+Звёзды провинции: %d из %d. За все — сундук Славы%s" % [sn, Legion.stages() * 3,
 			(" и трофей «%s» в город" % String(Defs.B[trn]["name"])) if vc == 0 and trn != "" and Defs.B.has(trn) else ""]
 	rib.add_child(rh)
 	_pin(rib, Vector2(0.5, 0.0), Vector2(0, -8))
@@ -1218,7 +1243,7 @@ func _map_view() -> Control:
 	if not lg.region_rank_ok(view_r):
 		lock = lg.region_lock_text(view_r) + ". Пока растите город — и прокачивайте бойцов в прошлых провинциях."
 	elif not lg.stage_open(vc, view_r, 0):
-		var pr: Dictionary = Legion.REGIONS[maxi(0, view_r - 1)]
+		var pr: Dictionary = Legion.regions()[maxi(0, view_r - 1)]
 		lock = "Сначала пройдите «%s»: победите босса — %s." % [pr["name"], Legion.ENEMIES[pr["boss"]]["name"]]
 	if lock != "":
 		var dim := ColorRect.new()
@@ -1240,16 +1265,16 @@ func _map_view() -> Control:
 	return frame
 
 
-func _stage_btn(c: int, r: int, s: int, boss: bool, front: bool) -> Button:
+func _stage_btn(c: int, r: int, s: int, boss: bool, front: bool, junior := false) -> Button:
 	var open := lg.stage_open(c, r, s)
 	var done := lg.stage_done(c, r, s)
-	var R: Dictionary = Legion.REGIONS[r]
+	var R: Dictionary = Legion.regions()[r]
 	var tip := ""
 	if boss:
 		tip = "Босс: %s" % Legion.ENEMIES[R["boss"]]["name"]
 	else:
 		tip = "Бой %s" % Legion.roman(s + 1)
-		var th := String((Legion.FIXED.get("%d-%d" % [r, s], {}) as Dictionary).get("name", ""))
+		var th := String((Legion.fixed_of(r, s) as Dictionary).get("name", ""))
 		if th != "":
 			tip += " «%s»" % th
 	tip += " — " + ("пройден" if done else ("следующий" if open else "ещё закрыт"))
@@ -1257,6 +1282,10 @@ func _stage_btn(c: int, r: int, s: int, boss: bool, front: bool) -> Button:
 		var sz := 76.0
 		var face := _portrait("enemy", String(R["boss"]), sz, not open)
 		return _pic_btn(face, sz, tip, Callable())
+	if junior:
+		var jz := 58.0
+		var jf := _portrait("enemy", String(R["junior"]), jz, not open)
+		return _pic_btn(jf, jz, "Младший босс: %s — %s" % [Legion.ENEMIES[R["junior"]]["name"], "пройден" if done else ("следующий" if open else "ещё закрыт")], Callable())
 	var sz := 44.0
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(sz, sz)
@@ -1268,7 +1297,7 @@ func _stage_btn(c: int, r: int, s: int, boss: bool, front: bool) -> Button:
 	b.add_theme_stylebox_override("pressed", hud._medal("medal_on", sz))
 	b.add_theme_stylebox_override("hover_pressed", hud._medal("medal_on", sz))
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-	var l := _title(Legion.roman(s + 1), 19 if s < 8 else 16, C_INK if open else Color(C_INK, 0.45))
+	var l := _title(Legion.roman(s + 1), 19 if s < 8 else (16 if s < 12 else 14), C_INK if open else Color(C_INK, 0.45))
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	l.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1282,20 +1311,22 @@ func _region_strip() -> Control:
 	var h := HBoxContainer.new()
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
 	h.add_theme_constant_override("separation", 2)
-	for r in Legion.REGIONS.size():
-		var R: Dictionary = Legion.REGIONS[r]
+	var cw := 98.0 if Legion.regions().size() <= 8 else 88.0     # 10 провинций похода 2.0 — плотнее, окно не шире карты
+	var dx := (cw - 98.0) / 2.0
+	for r in Legion.regions().size():
+		var R: Dictionary = Legion.regions()[r]
 		var rr := r
 		var reached := lg.stage_open(view_c, r, 0) or lg.region_done(view_c, r)
 		var done := lg.region_done(view_c, r)
 		var v := VBoxContainer.new()
-		v.custom_minimum_size = Vector2(98, 0)
+		v.custom_minimum_size = Vector2(cw, 0)
 		v.add_theme_constant_override("separation", 0)
 		var holder := Control.new()
-		holder.custom_minimum_size = Vector2(98, 58)
+		holder.custom_minimum_size = Vector2(cw, 58)
 		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		if r == view_r:
 			var gl := _glow(84)
-			gl.position = Vector2(7, -13)
+			gl.position = Vector2(7 + dx, -13)
 			holder.add_child(gl)
 		var face := _portrait("enemy", String(R["boss"]), 56, not reached)
 		var tip := "%s\n%s" % [R["name"], R["desc"]]
@@ -1304,21 +1335,21 @@ func _region_strip() -> Control:
 		elif done:
 			tip += "\nПройдена: босс побеждён"
 		var b := _pic_btn(face, 56, tip, func(): view_r = rr; sel = {}; _rebuild())
-		b.position = Vector2(21, 1)
+		b.position = Vector2(21 + dx, 1)
 		b.size = Vector2(56, 56)
 		holder.add_child(b)
 		if done:
 			var ck := _tr(hud.ico("check", 64), 22)
-			ck.position = Vector2(64, 36)
+			ck.position = Vector2(64 + dx, 36)
 			ck.size = Vector2(22, 22)
 			holder.add_child(ck)
 		elif not reached:
 			var lk := _tr(hud.ico("lock", 64), 20)
-			lk.position = Vector2(64, 37)
+			lk.position = Vector2(64 + dx, 37)
 			lk.size = Vector2(20, 20)
 			holder.add_child(lk)
 		v.add_child(holder)
-		var nl := _wl(String(R["name"]), 96, 13, C_INK if reached else C_SOFT, true, true)
+		var nl := _wl(String(R["name"]), cw - 2.0, 13, C_INK if reached else C_SOFT, true, true)
 		v.add_child(nl)
 		h.add_child(v)
 	# круг похода (после первого круга — можно смотреть прошлые)
@@ -1337,7 +1368,7 @@ func _stage_card(st: Dictionary) -> Control:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
 	p.add_child(v)
-	var R: Dictionary = Legion.REGIONS[int(st["r"])]
+	var R: Dictionary = Legion.regions()[int(st["r"])]
 	var boss: bool = st["boss"]
 	# заголовок
 	var hh := HBoxContainer.new()
@@ -1361,11 +1392,14 @@ func _stage_card(st: Dictionary) -> Control:
 	if boss:
 		tv.add_child(_l("Босс провинции", 15, true, C_SOFT))
 		tv.add_child(hud._wrap(_title(String(st["name"]), 23), CARD_W - 110))
+	elif bool(st.get("junior", false)):
+		tv.add_child(_l("Младший босс · бой %d из %d" % [int(st["s"]) + 1, Legion.stages()], 15, true, C_SOFT))
+		tv.add_child(hud._wrap(_title(String(st["name"]), 23), CARD_W - 90))
 	elif String(st.get("theme", "")) != "":
 		tv.add_child(hud._wrap(_title(String(st["theme"]), 23), CARD_W - 90))
-		tv.add_child(_l("Бой %d из %d · %s" % [int(st["s"]) + 1, Legion.STAGES, String(st["title"])], 14, true, C_SOFT))
+		tv.add_child(_l("Бой %d из %d · %s" % [int(st["s"]) + 1, Legion.stages(), String(st["title"])], 14, true, C_SOFT))
 	else:
-		tv.add_child(_title("Бой %d из %d" % [int(st["s"]) + 1, Legion.STAGES], 24))
+		tv.add_child(_title("Бой %d из %d" % [int(st["s"]) + 1, Legion.stages()], 24))
 		tv.add_child(_l(String(st["title"]), 15, true, C_SOFT))
 	if st["done"]:
 		var sh := HBoxContainer.new()
@@ -1485,9 +1519,16 @@ func _stage_card(st: Dictionary) -> Control:
 	var fh := HBoxContainer.new()
 	fh.add_theme_constant_override("separation", 5)
 	fh.add_child(_l("Провиант в поход:", 15, true, C_SOFT))
-	fh.add_child(_tr(hud.ico("coins", 64), 22))
-	var food := lg.food_cost(st)
-	fh.add_child(_l(hud.fmt(food), 15, true, C_INK if food <= game.city.money else C_BAD))
+	if Legion.V2:
+		fh.add_child(_tr(hud.ico("bread", 64), 22))
+		var have := lg.food_now()
+		fh.add_child(_l("%d · есть %d из %d" % [Legion.FOOD2_BATTLE, have, lg.food_cap()], 15, true, C_INK if have >= Legion.FOOD2_BATTLE else C_BAD))
+		fh.tooltip_text = "Провиант копится сам: очко каждые %d минут (и хлебный обоз из города). Склад оружия держит больше." % roundi(Legion.FOOD2_MIN)
+		fh.mouse_filter = Control.MOUSE_FILTER_PASS
+	else:
+		fh.add_child(_tr(hud.ico("coins", 64), 22))
+		var food := lg.food_cost(st)
+		fh.add_child(_l(hud.fmt(food), 15, true, C_INK if food <= game.city.money else C_BAD))
 	v.add_child(fh)
 	v.add_child(_hdiv(12))
 	# отряд
