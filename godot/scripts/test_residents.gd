@@ -388,15 +388,23 @@ func _tip_test() -> void:
 		return
 	check(not c.tips.has("people_tip"), "совета о жителях ещё не было")
 	# мышь держим на нём (идёт — ведём за ним), пока советник не скажет
-	for i in 90:
+	var sp_tip: float = game.speed
+	hud.set_speed(0.0)                         # пауза: житель (теперь он меньше) не уходит из-под курсора
+	for i in 400:            # 0,8 с задержки — при быстрой видеокарте это больше 90 кадров
 		var cz: Citizen = who["node"]
 		if cz == null:
 			break
+		if hud.advisor_panel.visible and not c.tips.has("people_tip"):
+			hud.advisor_panel.visible = false      # другой совет (праздник, Легион…) пришёл сам по себе — не он проверяется
+			hud._tip_next = 0
 		game._mouse_pos = cam.unproject_position(cz.global_position + Vector3(0, 0.45 * cz.scale.y / Citizen.SIZE, 0))
 		await frames(1)
 		if c.tips.has("people_tip"):
 			break
-	check(c.tips.has("people_tip") and hud.advisor_panel.visible, "мышь задержалась на прохожем — советник рассказал о карточке жителя")
+	check(c.tips.has("people_tip") and hud.advisor_panel.visible, "мышь задержалась на прохожем — советник рассказал о карточке жителя",
+		["dwell", hud._tag_dwell, "tip_free", hud._tip_free(), "screen_free", hud._screen_free(), "adv", hud.advisor_panel.visible, "tag", hud.person_tag != null and (hud.person_tag.get_parent() as Control).visible,
+		"mode", game.mode, "tut", game.tutorial != null and game.tutorial.active(), "next", hud._tip_next - Time.get_ticks_msec(), "adv_title", hud.adv_title.text])
+	hud.set_speed(sp_tip)
 	hud.advisor_panel.visible = false
 	# под курсором житель: подпись постройки (0,4 с) не показываем — щелчок его; табличка с именем — целиком на экране
 	var tag_ok := false
@@ -798,7 +806,7 @@ func _cat_test() -> void:
 	PersonCard.pet_view(hud, ct)
 	await frames(2)
 	check(ct["state"] == "pet" and (game.sound.played as Dictionary) == snd0 and not (ct["snd"] as AudioStreamPlayer3D).playing 		and is_equal_approx(money, c.money) and hp == int(c.stats.get("happy", 0)),
-		"«Погладить»: кошка мурлычет без звука, городу ничего не прибавилось", [ct["state"], snd0, game.sound.played, money, c.money])
+		"«Погладить»: кошка мурлычет без звука, городу ничего не прибавилось", [ct["state"], snd0, game.sound.played, money, c.money, "счастье", hp, int(c.stats.get("happy", 0)), "мурлычет", (ct["snd"] as AudioStreamPlayer3D).playing])
 	await frames(150)                          # камера долетела
 	var see: bool = not game.view_blocked(cam.global_position, ppl.cat_pos(ct) + Vector3(0, 0.2, 0))
 	check(pet != null and see and game.rig.dist < 13.0, "«Погладить»: камера близко, кошку не заслоняет стена (%.1f м)" % game.rig.dist)

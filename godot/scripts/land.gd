@@ -958,6 +958,20 @@ const APRON_DOOR := 5                   # пятно у двери: радиус
 ## Окантовка вокруг следа постройки cells: кольца от стены (по четырём соседям) и пятно у двери door.
 ## Пишется наибольшее (соседние дома друг друга не стирают); маска покрытий обновится по прямоугольнику.
 ## Клетки построек с бордюром (wear_block) глина обходит: ни на них, ни сквозь них в сад домуса и двор храма
+## Мостовая под большой постройкой (амфитеатр, цирк, форум, театр): весь след — площадь, чтобы между круглой
+## постройкой и улицей вокруг не оставалось клочков травы; снесли — земля снова прежняя (base_kind)
+func pave_under(cells: PackedInt32Array, on: bool) -> void:
+	for k in cells:
+		var kd: int = Kind.PLAZA if on else int(base_kind[k])
+		if on and not (int(kind[k]) in [Kind.GRASS, Kind.DIRT, Kind.SAND, Kind.YARD]):
+			continue
+		if not on and int(kind[k]) != Kind.PLAZA:
+			continue
+		if int(kind[k]) != kd:
+			kind[k] = kd
+			_mark(k % N, k / N, true, true)
+
+
 func wear_stamp(cells: PackedInt32Array, door := Vector2.INF) -> void:
 	if cells.is_empty():
 		return

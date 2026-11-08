@@ -69,6 +69,8 @@ var arm: Node3D                        # рычаг онагра
 var bolt: Node3D                       # болт на ложе баллисты
 var crew: LegionFighter                # расчёт машины
 var weapon: Node3D                     # оружие в правой руке (у копейщика выпад — кодом)
+var offhand: Node3D                    # щит или лук в левой руке
+var head_att: Node3D                   # всё, что на голове (шлем, волосы)
 var heads: Array[Node3D] = []          # головы Цербера (кивают, когда кусает)
 var embers := false
 var dead := false
@@ -224,6 +226,7 @@ func _human(L: Dictionary, size: float, rng: RandomNumberGenerator) -> void:
 	var head := BoneAttachment3D.new()
 	head.bone_name = "Head"
 	skel.add_child(head)
+	head_att = head
 	for h0 in L.get("head", []):
 		var h := String(h0)
 		match h:
@@ -253,7 +256,7 @@ func _human(L: Dictionary, size: float, rng: RandomNumberGenerator) -> void:
 	if L.has("right"):
 		weapon = _hold(String(L["right"]), "right", L)
 	if L.has("left"):
-		_hold(String(L["left"]), "left", L)
+		offhand = _hold(String(L["left"]), "left", L)
 	if L.has("back"):
 		# колчан за спиной, наискось через плечо
 		var q := Artisau.make("Carcaj", 0.5)
@@ -291,6 +294,56 @@ func _human(L: Dictionary, size: float, rng: RandomNumberGenerator) -> void:
 	top = 1.78 * s + 0.1
 	# крупные бьют медленнее
 	_anim_k = 1.0 / sqrt(maxf(1.0, size))
+
+
+## Легион 2.0: вещи воина видно в бою — оружие, щит и шлем светятся каймой цвета своей редкости
+## (добротная — едва, легендарная — золотом), эпический и легендарный доспех — лёгкое сияние по всей фигуре.
+## look: {weapon|offhand|helmet|armor: редкость 0…4}
+const GEAR_GLOW := [0.0, 0.55, 0.85, 1.2, 1.6]
+static var _glow_mats := {}
+
+
+static func _glow_mat(r: int, k := 1.0) -> ShaderMaterial:
+	var key := "%d|%.2f" % [r, k]
+	if _glow_mats.has(key):
+		return _glow_mats[key]
+	var sh := Shader.new()
+	sh.code = """shader_type spatial;
+render_mode blend_add, unshaded, depth_draw_never, cull_back;
+uniform vec3 col;
+uniform float k;
+void fragment() {
+	float f = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.2);
+	float pulse = 0.85 + 0.15 * sin(TIME * 2.4);
+	ALBEDO = col * f * k * pulse;
+}"""
+	var m := ShaderMaterial.new()
+	m.shader = sh
+	var c := Gear.color(r)
+	if r == 4:
+		c = Color(1.0, 0.78, 0.25)
+	m.set_shader_parameter("col", Vector3(c.r, c.g, c.b))
+	m.set_shader_parameter("k", float(GEAR_GLOW[clampi(r, 0, 4)]) * k)
+	_glow_mats[key] = m
+	return m
+
+
+func dress_gear(look: Dictionary) -> void:
+	if kind != "human" or look.is_empty():
+		return
+	var parts := {"weapon": weapon, "offhand": offhand, "helmet": head_att}
+	for sl: String in parts:
+		var n: Node3D = parts[sl]
+		var r := int(look.get(sl, 0))
+		if n == null or r <= 0:
+			continue
+		for gi: GeometryInstance3D in n.find_children("*", "GeometryInstance3D", true, false):
+			gi.material_overlay = _glow_mat(r)
+	var ra := int(look.get("armor", 0))
+	if ra >= 3 and body != null:
+		for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
+			if mi.get_parent() is Skeleton3D:
+				mi.material_overlay = _glow_mat(ra, 0.45)
 
 
 ## Предмет в руке: оружие Synty, лук и колчан Artisau, дубина великана, камни пращника и циклопа

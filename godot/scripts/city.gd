@@ -121,6 +121,8 @@ func is_house(b: Dictionary) -> bool:
 
 const APRON_KINDS := ["house", "shop", "rp", "store", "military"]
 const KERB_TYPES := ["house_patrician", "temple", "pantheon"]
+## Большие постройки, под которыми весь след — мостовая (Land.pave_under): между ними и улицей нет травы
+const PAVE_TYPES := ["colosseum", "circus_fl", "forum", "theatre", "odeon", "thermae", "ludus"]
 const PAVE_SLOPE := 0.5                # дом и лавка на мостовой — только на почти ровном месте (иначе ступени вокруг)
 
 
@@ -133,12 +135,18 @@ func apron_of(b: Dictionary) -> int:
 		return 0
 	if String(b["type"]) in KERB_TYPES:
 		return 2
+	if String(b["type"]) in PAVE_TYPES:
+		return 3
 	return 1 if d["kind"] in APRON_KINDS else 0
 
 
 func _apron_add(b: Dictionary) -> void:
-	if apron_of(b) == 1:
-		land.wear_stamp(b["cells"], door_point(b))
+	match apron_of(b):
+		1:
+			land.wear_stamp(b["cells"], door_point(b))
+		3:
+			land.pave_under(b["cells"], true)
+			land.wear_stamp(b["cells"], door_point(b))   # и утоптанная кайма: щели между круглой стеной и улицей не зелёные
 
 
 ## Все окантовки заново (загрузка сохранения: окантовка не сохраняется — старые города получают её сами).
@@ -158,6 +166,8 @@ func apron_all() -> void:
 func _apron_remove(b: Dictionary) -> void:
 	if apron_of(b) == 0:
 		return
+	if apron_of(b) == 3:
+		land.pave_under(b["cells"], false)
 	land.wear_block.erase(int(b["id"]))
 	_apron_refresh(b)
 
@@ -181,7 +191,7 @@ func _apron_refresh(b: Dictionary) -> void:
 	var area := Rect2i(lo - Vector2i(m, m), hi - lo + Vector2i(2 * m + 1, 2 * m + 1))
 	for id in buildings:
 		var o: Dictionary = buildings[id]
-		if int(o["id"]) == int(b["id"]) or apron_of(o) != 1:
+		if int(o["id"]) == int(b["id"]) or not (apron_of(o) in [1, 3]):
 			continue
 		var oc := land.cell(o["pos"])
 		if area.grow(80).has_point(oc):          # грубо по середине (постройки до ~40 м), точнее — по клеткам
@@ -201,6 +211,8 @@ func unlocked(type: String) -> bool:
 		return legion.bosses() >= int(u.substr(4))
 	if u.begins_with("rank:"):                # здания Легиона (Д10): с уровня города, когда Легион собран
 		return level >= int(u.substr(5)) and legion.window_open()
+	if u.begins_with("army:"):                # Легион 2.0 (мастерские): то же, но только в новой игре
+		return level >= int(u.substr(5)) and legion.window_open() and legion.army_on()
 	if u.begins_with("trophy:"):              # трофей провинции: все 30 звёзд её боёв
 		return legion.has_trophy(u.substr(7))
 	return u == "" or research.has(u) or legion.wonder_unlocks(type)   # чудеса открывает и рейтинг походов
@@ -916,12 +928,16 @@ func compute(same_place := false) -> void:
 			parts.append(["Теснота", dens])
 		if size_p < 0:
 			parts.append(["Большой город", size_p])
+		var tr_sum := 0
+		for e: Array in trait_parts(h, crowd, near, types.size(), mon):   # «Уютный Рим», этап 4: черты семей
+			parts.append(e)
+			tr_sum += int(e[1])
 		var missing := []
 		for n in cd["needs"]:
 			if not h["needs"].has(n):
 				missing.append(n)
 				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + vis_sum + tx + unp + dens + size_p - missing.size() * Defs.MISSING_PENALTY
+		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + vis_sum + tr_sum + tx + unp + dens + size_p - missing.size() * Defs.MISSING_PENALTY
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["set_bonus"] = set_b
@@ -943,6 +959,7 @@ func compute(same_place := false) -> void:
 		sums["fest"] += fb * w
 		sums["story"] = float(sums.get("story", 0.0)) + st_sum * w
 		sums["visit"] = float(sums.get("visit", 0.0)) + vis_sum * w
+		sums["traits"] = float(sums.get("traits", 0.0)) + tr_sum * w
 		sums["tax"] = float(sums.get("tax", 0.0)) + tx * w
 		sums["unpaid"] = float(sums.get("unpaid", 0.0)) + unp * w
 		sums["crowd"] += dens * w
@@ -956,7 +973,7 @@ func compute(same_place := false) -> void:
 	if float(sums["w"]) > 0.0:
 		var wt: float = sums["w"]
 		var rows := [["Основа", "base", true], ["Лавки", "shops", true], ["Украшения", "deco", true], ["Памятники", "mon", false],
-				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Походы в храм, термы, на зрелища", "visit", false], ["Налоги", "tax", false], ["Жалованье не плачено", "unpaid", false], ["Теснота", "crowd", false], ["Большой город", "size", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
+				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Походы в храм, термы, на зрелища", "visit", false], ["Черты семей", "traits", false], ["Налоги", "tax", false], ["Жалованье не плачено", "unpaid", false], ["Теснота", "crowd", false], ["Большой город", "size", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
 		var fv := []
 		var vi := []
 		var acc := 0
@@ -2688,6 +2705,60 @@ func note_visit(home: int, kind: String) -> void:
 	if not visits.has(home):
 		visits[home] = {}
 	visits[home][kind] = clock_h
+
+
+## Черты семей дома (Balance.TRAITS) — каждая черта один раз на дом: [[строка, %], …]. crowd — соседей рядом,
+## near — украшения рядом ([вид, очки]), n_shops — разных лавок у дома, mon — памятники рядом (вид → бонус)
+func trait_parts(h: Dictionary, crowd: int, near: Array, n_shops: int, mon: Dictionary) -> Array:
+	var out := []
+	if cozy_v < 1:
+		return out
+	var tr := {}
+	for f: Dictionary in h.get("families", []):
+		for t in Balance.traits_of(String(f["name"])):
+			tr[t] = true
+	if tr.is_empty():
+		return out
+	var kinds := {}
+	for e: Array in near:
+		kinds[String(e[0])] = true
+	var has_any := func(list: Array) -> bool:
+		for k in list:
+			if kinds.has(k):
+				return true
+		return false
+	var v: Dictionary = visits.get(int(h["id"]), {})
+	var seen := func(k: String) -> bool: return v.has(k) and clock_h - int(v[k]) <= Balance.VISIT_H
+	for t in Balance.TRAIT_ORDER:
+		if not tr.has(t):
+			continue
+		var d: Dictionary = Balance.TRAITS[t]
+		var ok := 0                           # 1 — довольна, −1 — недовольна, 0 — никак
+		match t:
+			"crowd": ok = 1 if crowd >= 8 else 0
+			"quiet": ok = 1 if crowd <= 4 else (-1 if crowd >= 10 else 0)
+			"flowers": ok = 1 if has_any.call(Balance.T_FLOWERS) else -1
+			"dark": ok = 1 if has_any.call(Balance.T_LIGHTS) else -1
+			"pious": ok = 1 if mon.has("temple") or mon.has("pantheon") or seen.call("temple") else -1
+			"bather": ok = 1 if seen.call("bath") else -1
+			"theatre": ok = 1 if seen.call("theatre") or seen.call("arena") or seen.call("circus") else 0
+			"cat": ok = 1 if has_any.call(Balance.T_CATS) or cats.any(func(e): return int(e.get("home", -1)) == int(h["id"])) else 0
+			"allergy": ok = -1 if has_any.call(Balance.T_PETS) else 0
+			"green": ok = 1 if has_any.call(Balance.T_GREEN) else 0
+			"market": ok = 1 if n_shops >= 4 else 0
+		if ok > 0 and d.has("ok"):
+			out.append([d["ok"], Balance.TRAIT_OK])
+		elif ok < 0 and d.has("bad"):
+			out.append([d["bad"], Balance.TRAIT_BAD])
+	return out
+
+
+## Черты семьи словами: «цветовод, боится темноты»
+static func trait_text(fam_name: String) -> String:
+	var out := []
+	for t in Balance.traits_of(fam_name):
+		out.append(String(Balance.TRAITS[t]["name"]))
+	return ", ".join(out)
 
 
 ## Слагаемые счастья дома от походов: [[строка, %], …] (виды по порядку Balance.VISIT_BONUS)

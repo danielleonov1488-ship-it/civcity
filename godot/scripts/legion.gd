@@ -88,13 +88,29 @@ const BUILDING_UNIT := {"barracks": "legionary", "spearcamp": "spearman", "range
 ## У зданий бойцов уровень здания — это уровень рода войск (levels: так его знает и сервер боёв с городами);
 ## у Кузницы, Лазарета и Склада оружия — свой (blevels). Здание ещё не поставлено, а уровень выше первого — он «в запасе»
 ## (старые сохранения: уровни войск и умения перенесены в здания) и заработает, как только здание поставят
-const BUILDING_IDS := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory"]
+const BUILDING_IDS := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia"]
 ## Здания поддержки: max — наивысший уровень (выше — предел уровня города CAP_BY_CITY), cost_k — множитель цены улучшений
 const SUPPORT := {
 	"forge": {"max": 10, "cost_k": 1.2},
 	"infirmary": {"max": 10, "cost_k": 1.0},
 	"armory": {"max": 10, "cost_k": 1.1},
+	"smelter": {"max": 10, "cost_k": 0.8},
+	"sawmill": {"max": 10, "cost_k": 0.8},
+	"tannery": {"max": 10, "cost_k": 0.8},
+	"principia": {"max": 12, "cost_k": 1.6},
 }
+## Принципия (Легион 2.0, только новая игра): потолок уровня остальных зданий Легиона — её уровень (без неё — PRIN_NONE).
+## Её уровень l — с уровня города PRIN_CITY[l]; улучшить — когда PRIN_MAIN не ниже её нынешнего уровня
+const PRIN_CITY := [0, 0, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6, 7]
+const PRIN_NONE := 2
+const PRIN_MAIN := ["barracks", "forge", "infirmary", "armory"]
+## Мастерские (Легион 2.0, этап 3, только новая игра): материал, MAT_RATE · L^1,3 в час при полном штате
+## (без рабочих — четверть), запас MAT_CAP0 + MAT_CAP_PER · L; в начале — MAT_GIFT каждого
+const WORKSHOPS := {"smelter": "iron", "sawmill": "wood", "tannery": "leather"}
+const MAT_RATE := 4.0
+const MAT_CAP0 := 120
+const MAT_CAP_PER := 80
+const MAT_GIFT := 40
 ## Кузница: +FORGE урона и здоровья всем бойцам за уровень (доля); Лазарет: между волнами боя раненые восстанавливают
 ## INFIRMARY здоровья за уровень (доля; бой с городом — одна волна, его это не касается); Склад оружия: +ARMORY брони
 const FORGE := 0.03
@@ -241,6 +257,13 @@ const PERK_MAX := 5
 const MAX_LEVEL := 40
 ## Секунд настоящего времени на улучшение до уровня n: от 5 минут до двух суток (выше 10-го — по двое суток)
 const UPGRADE_TIME := [0, 0, 300, 1800, 3600, 5400, 7200, 14400, 28800, 86400, 172800]
+## «Уютный Рим» / Легион 2.0, этап 0 (docs/LEGION_V2.md 4.2–4.3): в новой игре (City.cozy_v) — дольше стройки, строителей
+## мало (1, с «Посёлка» — 2, с «Города» — 3: всё сразу не улучшить), повтор пройденного боя приносит меньше (не ферма)
+const COZY_TIME_H := [0, 0, 0.25, 1, 2, 4, 8, 12, 18, 26, 36]
+const COZY_TIME_OVER_H := 48.0             # выше 10-го уровня (круги походов) — двое суток на шаг
+const COZY_BUILDERS := [[0, 1], [3, 2], [5, 3]]     # [с уровня города, строителей]
+const COZY_REPEAT_K := 0.35                # повтор пройденного боя: доля награды
+static var repeat_k := 1.0                 # множитель награды за повтор (выставляет bind: в новой игре — COZY_REPEAT_K)
 ## Предел уровня бойцов от уровня города (индекс — Defs.LEVELS): растите город, чтобы растить армию.
 ## На уровне города, где открывается провинция, предел не ниже её самого трудного боя (target_level):
 ## лес (до 3-го) — с «Хутора», холмы (до 4-го) — с «Посёлка»
@@ -328,6 +351,19 @@ var built := {}             # чудеса без постройки в горо
 var triumph_left := 0       # сколько игровых часов ещё идёт триумф
 var glory_acc := 0.0        # дробные Славы от чудес (копятся по часам)
 var flags := {}             # для окна: что уже показано (перелистнуть карту на новую провинцию и т. п.)
+## Легион 2.0, этап 1 (Soldiers): воины-новобранцы — только в новой игре «Уютного Рима» (army_on)
+var soldiers: Array = []    # [{id, name, from, cls, stars, rank, train_end, train_total, wound_end, battles, falls}]
+var recruits: Array = []    # новобранцы сегодня: [{name, from, cls, stars}]
+var recruit_day := -1       # день (по Москве), когда пришли эти новобранцы
+var sid_next := 1
+## Легион 2.0, этап 2 (Gear): вещи — [{id, slot, cls, rarity, ilvl, engine?, on (id воина или 0)}]
+var items: Array = []
+var iid_next := 1
+var shards := [0, 0, 0, 0, 0]  # обломки по редкости (Кузница, этап 3)
+var mats := {}                  # материалы мастерских: iron / wood / leather → количество (дробное — копится по часам)
+var mats_t := 0.0               # когда материалы считались последний раз (Legion.now)
+var forging := {}           # куётся: {slot, cls, rarity, ilvl, end, total} или {}
+var _rng := RandomNumberGenerator.new()
 
 ## Для проверок: ускорение таймеров улучшений (не сохраняется)
 var time_k := 1.0
@@ -342,14 +378,664 @@ var _city: WeakRef = null
 
 func _init() -> void:
 	_ensure()
+	_rng.randomize()
 
 
 func bind(c: Object) -> void:
 	_city = weakref(c) if c != null else null
+	repeat_k = COZY_REPEAT_K if cozy() else 1.0
+
+
+## Новая игра «Уютного Рима» (City.cozy_v ≥ 1): строители, долгие стройки, повтор боёв дешевле
+func cozy() -> bool:
+	var c = city()
+	return c != null and int(c.get("cozy_v")) >= 1
+
+
+## Сколько улучшений может идти сразу ([] — без предела, старые города)
+func builders() -> int:
+	if not cozy():
+		return 99
+	var n := 1
+	for e: Array in COZY_BUILDERS:
+		if city_level() >= int(e[0]):
+			n = int(e[1])
+	return n
+
+
+## С какого уровня города будет ещё строитель (−1 — больше не будет)
+func next_builder_level() -> int:
+	for e: Array in COZY_BUILDERS:
+		if city_level() < int(e[0]):
+			return int(e[0])
+	return -1
 
 
 func city() -> Object:
 	return _city.get_ref() if _city != null else null
+
+
+# =====================================================================
+#   Легион 2.0, этап 1: воины-новобранцы (Soldiers) — только новая игра
+# =====================================================================
+
+func army_on() -> bool:
+	return cozy()
+
+
+func barracks_lvl() -> int:
+	return int(levels.get("legionary", 1))
+
+
+## Мест в Легионе: 4 + уровень Казарм (до 16)
+func roster_cap() -> int:
+	return mini(Soldiers.ROSTER_BASE + barracks_lvl(), Soldiers.ROSTER_MAX)
+
+
+## Сколько воинов тренируется сразу: 1 + ⌊Казармы / 3⌋ (до 5)
+func train_places() -> int:
+	return mini(1 + barracks_lvl() / 3, 5)
+
+
+## Коек в Лазарете: 2 + ⌊уровень / 2⌋ (без Лазарета — 2)
+func beds() -> int:
+	return Soldiers.BEDS_BASE + (int(blevels.get("infirmary", 1)) / 2 if b_built("infirmary") else 0)
+
+
+## Лечение: доля времени (Лазарет — на 6% быстрее за уровень)
+func heal_k() -> float:
+	return maxf(0.35, 1.0 - Soldiers.HEAL_INF_K * int(blevels.get("infirmary", 1))) if b_built("infirmary") else 1.0
+
+
+func soldier(id: int) -> Dictionary:
+	for s: Dictionary in soldiers:
+		if int(s["id"]) == id:
+			return s
+	return {}
+
+
+## Состояние воина: ready — готов к бою, train — тренируется, wound — ранен
+func s_state(s: Dictionary) -> String:
+	if float(s.get("wound_end", 0.0)) > 0.0:
+		return "wound"
+	if float(s.get("train_end", 0.0)) > 0.0:
+		return "train"
+	return "ready"
+
+
+## Секунд до конца тренировки или лечения
+func s_left(s: Dictionary) -> float:
+	var e := float(s.get("wound_end", 0.0)) if s_state(s) == "wound" else float(s.get("train_end", 0.0))
+	return maxf(0.0, e - now())
+
+
+func count_state(st: String) -> int:
+	var n := 0
+	for s: Dictionary in soldiers:
+		if s_state(s) == st:
+			n += 1
+	return n
+
+
+## Класс открыт: построено здание хоть одного его рода (механик — Баллисты или Катапульты)
+func class_open(cls: String) -> bool:
+	for t in Soldiers.CLASSES[cls]["units"]:
+		if available(t):
+			return true
+	return false
+
+
+func _add_soldier(d: Dictionary) -> Dictionary:
+	var s := {"id": sid_next, "name": String(d.get("name", "")), "from": String(d.get("from", "")), "cls": String(d.get("cls", "legionary")),
+		"stars": clampi(int(d.get("stars", 1)), 1, 5), "rank": 0, "train_end": 0.0, "train_total": 0.0, "wound_end": 0.0, "battles": 0, "falls": 0, "gear": {}}
+	sid_next += 1
+	soldiers.append(s)
+	return s
+
+
+## Таймеры воинов и новобранцы дня. Возвращает тексты для колокольчика
+func army_tick() -> Array:
+	var out := []
+	if not army_on():
+		return out
+	var t := now()
+	if soldiers.is_empty() and not flags.has("army0"):
+		flags["army0"] = true                  # первые трое — легионеры, что пришли с городом
+		for st in [2, 1, 1]:
+			_add_soldier({"name": Soldiers.roll_name(_rng), "from": Soldiers.ORIGINS[_rng.randi() % Soldiers.ORIGINS.size()], "cls": "legionary", "stars": st})
+	if not flags.has("prin0"):
+		var top := 0                           # Принципия появилась позже: что уже набрано — остаётся, дальше — с ней
+		for k in UNIT_IDS:
+			top = maxi(top, int(levels.get(k, 1)))
+		for k in SUPPORT:
+			if k != "principia":
+				top = maxi(top, int(blevels.get(k, 1)))
+		flags["prin0"] = top if top > PRIN_NONE else 0
+	if not flags.has("mats0"):
+		flags["mats0"] = true                  # немного материалов с собой — на первые вещи до мастерских
+		for m: String in Gear.MATS:
+			mats[m] = float(mats.get(m, 0.0)) + MAT_GIFT
+		mats_t = t
+	_mats_tick(t)
+	var ch := false
+	for s: Dictionary in soldiers:
+		if float(s.get("wound_end", 0.0)) > 0.0 and t >= float(s["wound_end"]):
+			s["wound_end"] = 0.0
+			out.append("%s поправился и вернулся в строй" % s["name"])
+			ch = true
+		if float(s.get("train_end", 0.0)) > 0.0 and t >= float(s["train_end"]):
+			s["rank"] = mini(int(s["rank"]) + 1, Soldiers.rank_max(s))
+			s["train_end"] = 0.0
+			out.append("%s закончил тренировку: теперь он «%s»" % [s["name"], Soldiers.rank_name(int(s["rank"]))])
+			ch = true
+	var fm := _forge_tick()
+	if fm != "":
+		out.append(fm)
+		ch = true
+	var d := Soldiers.day_of(t)
+	if d != recruit_day:
+		recruit_day = d
+		roll_recruits()
+		ch = true
+	if ch:
+		changed.emit()
+	return out
+
+
+## Новобранцы дня: 3 (Казармы 6 — 4, Казармы 10 — 5); класс — из открытых (легионеры чаще), звёзды — по счастью и уровню города
+func roll_recruits() -> void:
+	recruits = []
+	var open := []
+	for cls in Soldiers.CLASS_IDS:
+		if class_open(cls):
+			open.append(cls)
+			if cls == "legionary":
+				open.append(cls)
+	if open.is_empty():
+		open = ["legionary"]
+	var n := 3 + (1 if barracks_lvl() >= 6 else 0) + (1 if barracks_lvl() >= 10 else 0)
+	var q := recruit_quality()
+	for i in n:
+		recruits.append({"name": Soldiers.roll_name(_rng), "from": Soldiers.ORIGINS[_rng.randi() % Soldiers.ORIGINS.size()],
+			"cls": open[_rng.randi() % open.size()], "stars": Soldiers.roll_stars(_rng, q)})
+
+
+## Насколько хорош город для новобранцев (0…1): счастье и уровень
+func recruit_quality() -> float:
+	var c = city()
+	var happy := int(c.stats.get("happy", 50)) if c != null else 50
+	return Soldiers.quality(happy, city_level())
+
+
+## Когда придут новые новобранцы, секунд
+func recruits_next() -> float:
+	return (recruit_day + 1) * 86400.0 - Soldiers.DAY_SHIFT - now()
+
+
+func recruit_cost(i: int) -> int:
+	return int(Soldiers.RECRUIT_COST[int(recruits[i]["stars"])]) if i >= 0 and i < recruits.size() else 0
+
+
+func can_recruit(i: int) -> String:
+	if not army_on() or i < 0 or i >= recruits.size():
+		return "Этого новобранца уже нет"
+	if soldiers.size() >= roster_cap():
+		return "В Легионе нет мест (%d из %d). Улучшите Казармы — мест станет больше, или отпустите кого-то домой." % [soldiers.size(), roster_cap()]
+	if float(recruit_cost(i)) > city_money():
+		return "Не хватает денариев: нужно %d." % recruit_cost(i)
+	return ""
+
+
+func recruit(i: int) -> bool:
+	if can_recruit(i) != "":
+		return false
+	_pay({"money": recruit_cost(i)})
+	_add_soldier(recruits[i])
+	recruits.remove_at(i)
+	changed.emit()
+	return true
+
+
+## Отпустить воина домой (место освобождается)
+func dismiss(id: int) -> bool:
+	var s := soldier(id)
+	if s.is_empty():
+		return false
+	for slot in (s.get("gear", {}) as Dictionary):
+		var it := item(int(s["gear"][slot]))
+		if not it.is_empty():
+			it["on"] = 0                         # вещи — обратно на Склад
+	soldiers.erase(s)
+	changed.emit()
+	return true
+
+
+func can_train(id: int) -> String:
+	var s := soldier(id)
+	if s.is_empty():
+		return "Нет такого воина"
+	match s_state(s):
+		"wound":
+			return "Ранен — тренироваться сможет, когда поправится"
+		"train":
+			return "Уже тренируется"
+	if int(s["rank"]) >= Soldiers.rank_max(s):
+		return "Высший ранг для %s: больше звёзд — выше потолок" % Soldiers.stars_text(int(s["stars"]))
+	if count_state("train") >= train_places():
+		return "Все места тренировки заняты (%d). Улучшите Казармы — мест станет больше." % train_places()
+	if float(Soldiers.train_cost(int(s["rank"]))) > city_money():
+		return "Не хватает денариев: нужно %d." % Soldiers.train_cost(int(s["rank"]))
+	return ""
+
+
+func train(id: int) -> bool:
+	if can_train(id) != "":
+		return false
+	var s := soldier(id)
+	var r := int(s["rank"])
+	_pay({"money": Soldiers.train_cost(r)})
+	var secs := Soldiers.train_h(r) * 3600.0 / maxf(0.001, time_k)
+	s["train_end"] = now() + secs
+	s["train_total"] = secs
+	changed.emit()
+	return true
+
+
+func train_progress(s: Dictionary) -> float:
+	var tot := float(s.get("train_total", 1.0))
+	return clampf(1.0 - s_left(s) / maxf(1.0, tot), 0.0, 1.0)
+
+
+# ---------- снаряжение (этап 2) ----------
+
+## Мест на Складе (вещи, что не надеты): 20 + 5 × уровень Склада оружия
+func store_cap() -> int:
+	return Gear.STORE_BASE + Gear.STORE_PER * (int(blevels.get("armory", 1)) if b_built("armory") else 0)
+
+
+func store_count() -> int:
+	var n := 0
+	for it: Dictionary in items:
+		if int(it.get("on", 0)) == 0:
+			n += 1
+	return n
+
+
+func item(id: int) -> Dictionary:
+	for it: Dictionary in items:
+		if int(it["id"]) == id:
+			return it
+	return {}
+
+
+## Положить вещь на Склад (полон — {}); возвращает вещь с номером
+func add_item(it: Dictionary) -> Dictionary:
+	if store_count() >= store_cap():
+		return {}
+	var e := it.duplicate()
+	e["id"] = iid_next
+	e["on"] = 0
+	iid_next += 1
+	items.append(e)
+	return e
+
+
+## Что дают надетые вещи воина: {atk, hp, armor}
+func gear_bonus(s: Dictionary) -> Dictionary:
+	var out := {"atk": 0.0, "hp": 0.0, "armor": 0.0}
+	for slot in (s.get("gear", {}) as Dictionary):
+		var it := item(int(s["gear"][slot]))
+		if it.is_empty():
+			continue
+		var st := Gear.stats(it)
+		for k in out:
+			out[k] = float(out[k]) + float(st[k])
+	return out
+
+
+func can_equip(sid: int, iid: int) -> String:
+	var s := soldier(sid)
+	var it := item(iid)
+	if s.is_empty() or it.is_empty():
+		return "Нет такой вещи"
+	if not Gear.fits(it, String(s["cls"])):
+		return "Это для класса «%s»" % Soldiers.class_name_of(String(it["cls"]))
+	return ""
+
+
+## Надеть вещь (снимает прежнюю того же слота на Склад; вещь с другого воина переходит)
+func equip(sid: int, iid: int) -> bool:
+	if can_equip(sid, iid) != "":
+		return false
+	var s := soldier(sid)
+	var it := item(iid)
+	var slot := String(it["slot"])
+	var was := int(it.get("on", 0))
+	if was != 0 and was != sid:
+		var o := soldier(was)
+		if not o.is_empty():
+			(o["gear"] as Dictionary).erase(slot)
+	if not s.has("gear"):
+		s["gear"] = {}
+	var old := item(int((s["gear"] as Dictionary).get(slot, 0)))
+	if not old.is_empty():
+		old["on"] = 0
+	s["gear"][slot] = iid
+	it["on"] = sid
+	changed.emit()
+	return true
+
+
+func unequip(sid: int, slot: String) -> bool:
+	var s := soldier(sid)
+	if s.is_empty() or not (s.get("gear", {}) as Dictionary).has(slot):
+		return false
+	if store_count() >= store_cap():
+		return false
+	var it := item(int(s["gear"][slot]))
+	if not it.is_empty():
+		it["on"] = 0
+	(s["gear"] as Dictionary).erase(slot)
+	changed.emit()
+	return true
+
+
+## Цена вещи у торговца: денарии в казну
+static func item_price(it: Dictionary) -> int:
+	return int(round(6.0 * int(it.get("ilvl", 1)) * pow(1.0 + int(it.get("rarity", 0)), 1.6) / 5.0)) * 5
+
+
+func sell_item(iid: int) -> bool:
+	var it := item(iid)
+	if it.is_empty() or int(it.get("on", 0)) != 0:
+		return false
+	var c = city()
+	if c != null:
+		c.money = minf(float(c.money) + item_price(it), maxf(float(c.money), float(c.money_cap())))
+	items.erase(it)
+	changed.emit()
+	return true
+
+
+# ---------- Кузница (этап 3) ----------
+
+func forge_lvl() -> int:
+	return level_of("forge") if available("forge") else 0
+
+
+## Уровень выкованной вещи: по глубине похода, не выше 5 × уровень Кузницы
+func forge_ilvl() -> int:
+	return clampi(1 + progress / 3, 1, maxi(1, 5 * forge_lvl()))
+
+
+func can_smelt(iid: int) -> String:
+	var it := item(iid)
+	if it.is_empty():
+		return "Нет такой вещи"
+	if int(it.get("on", 0)) != 0:
+		return "Сначала снимите её с воина"
+	if forge_lvl() <= 0:
+		return "Постройте Кузницу"
+	return ""
+
+
+## Разобрать вещь: обломок её редкости
+func smelt(iid: int) -> bool:
+	if can_smelt(iid) != "":
+		return false
+	var it := item(iid)
+	shards[int(it["rarity"])] = int(shards[int(it["rarity"])]) + 1
+	var back := Gear.smelt_mats(it)
+	for m: String in back:
+		mats[m] = float(mats.get(m, 0.0)) + float(back[m])
+	items.erase(it)
+	changed.emit()
+	return true
+
+
+func can_forge(slot: String, cls: String, r: int) -> String:
+	if not army_on():
+		return "Кузница вещей — в новой игре"
+	if forge_lvl() <= 0:
+		return "Постройте Кузницу"
+	if not forging.is_empty():
+		return "Кузница занята: ещё %s" % fmt_duration(forge_left())
+	var F: Dictionary = Gear.FORGE[clampi(r, 0, 4)]
+	if forge_lvl() < int(F["lvl"]):
+		return "Нужна Кузница %d уровня" % int(F["lvl"])
+	if slot in ["weapon", "offhand"] and not class_open(cls):
+		return "Класс «%s» ещё не открыт" % Soldiers.class_name_of(cls)
+	if r > 0 and int(shards[r - 1]) < int(F["shards"]):
+		return "Нужно обломков: %d (%s), есть %d" % [int(F["shards"]), Gear.SHARD[r - 1], int(shards[r - 1])]
+	var ms := mats_short(Gear.forge_mats(slot, r))
+	if ms != "":
+		return ms
+	if float(F["money"]) > city_money():
+		return "Не хватает денариев: нужно %d" % int(F["money"])
+	return ""
+
+
+func forge(slot: String, cls: String, r: int) -> bool:
+	if can_forge(slot, cls, r) != "":
+		return false
+	var F: Dictionary = Gear.FORGE[r]
+	_pay({"money": int(F["money"])})
+	if r > 0:
+		shards[r - 1] = int(shards[r - 1]) - int(F["shards"])
+	var need := Gear.forge_mats(slot, r)
+	for m: String in need:
+		mats[m] = float(mats.get(m, 0.0)) - float(need[m])
+	var secs := float(F["h"]) * 3600.0 / maxf(0.001, time_k)
+	forging = {"slot": slot, "cls": cls if slot in ["weapon", "offhand"] else "", "rarity": r, "ilvl": forge_ilvl(), "end": now() + secs, "total": secs}
+	if slot == "weapon" and cls == "engineer":
+		forging["engine"] = "catapult" if _rng.randf() < 0.5 else "ballista"
+	changed.emit()
+	return true
+
+
+func forge_left() -> float:
+	return maxf(0.0, float(forging.get("end", 0.0)) - now()) if not forging.is_empty() else 0.0
+
+
+## Вещь выкована — на Склад (полон — ждёт в Кузнице); текст для колокольчика или ""
+func _forge_tick() -> String:
+	if forging.is_empty() or now() < float(forging["end"]):
+		return ""
+	var e := forging.duplicate()
+	for k in ["end", "total"]:
+		e.erase(k)
+	var it := add_item(e)
+	if it.is_empty():
+		if not forging.has("wait"):
+			forging["wait"] = true
+			return "Кузница выковала вещь, но Склад полон — она подождёт в Кузнице"
+		return ""
+	forging = {}
+	return "Кузница выковала: %s" % Gear.name_of(it)
+
+
+# ---------- Мастерские и материалы (этап 3) ----------
+
+static func workshop_of(m: String) -> String:
+	for w: String in WORKSHOPS:
+		if String(WORKSHOPS[w]) == m:
+			return w
+	return ""
+
+
+func mat(m: String) -> int:
+	return int(float(mats.get(m, 0.0)))
+
+
+## Доля работы мастерской: штат города (0…1) → 0,25…1 (без дороги — стоит)
+func workshop_k(w: String) -> float:
+	var r := building_rec(w)
+	if r.is_empty():
+		return 0.0
+	if not bool(r.get("road", true)):
+		return 0.0
+	return 0.25 + 0.75 * clampf(float(r.get("staff", 1.0)), 0.0, 1.0)
+
+
+## Материала в час сейчас (0 — мастерской нет)
+func mat_rate(m: String) -> float:
+	var w := workshop_of(m)
+	if w == "" or not army_on() or count_type(w) <= 0:
+		return 0.0
+	return MAT_RATE * pow(float(level_of(w)), 1.3) * workshop_k(w) * time_k
+
+
+func mat_cap(m: String) -> int:
+	var w := workshop_of(m)
+	return MAT_CAP0 + (MAT_CAP_PER * level_of(w) if w != "" and count_type(w) > 0 else 0)
+
+
+func _mats_tick(t: float) -> void:
+	if mats_t <= 0.0:
+		mats_t = t
+		return
+	var dh := clampf(t - mats_t, 0.0, 3.0 * 86400.0) / 3600.0
+	mats_t = t
+	if dh <= 0.0:
+		return
+	for m: String in Gear.MATS:
+		var r := mat_rate(m)
+		var cur := float(mats.get(m, 0.0))
+		if r > 0.0 and cur < mat_cap(m):
+			mats[m] = minf(float(mat_cap(m)), cur + r * dh)
+
+
+## Хватает ли материалов: "" или «не хватает: железо 12 из 30»
+func mats_short(need: Dictionary) -> String:
+	var lack := []
+	for m: String in need:
+		if mat(m) < int(need[m]):
+			lack.append("%s %d из %d" % [String(Gear.MAT_NAME[m]), mat(m), int(need[m])])
+	return ("Не хватает: " + ", ".join(lack)) if not lack.is_empty() else ""
+
+
+## Добыча после победы (новая игра): шанс вещи, босс — наверняка и лучше; уровень — по глубине похода
+func _drop(st: Dictionary, first: bool) -> Dictionary:
+	var boss := bool(st.get("boss", false))
+	var p := 1.0 if boss and first else (Gear.DROP_FIRST if first else Gear.DROP_REPEAT)
+	if _rng.randf() > p:
+		return {}
+	var open := []
+	for cls in Soldiers.CLASS_IDS:
+		if class_open(cls):
+			open.append(cls)
+	var ilvl := 1 + int(st.get("idx", 0)) / 3
+	var it := add_item(Gear.roll(_rng, ilvl, boss, open))
+	if it.is_empty():
+		return {"full": true}
+	return it
+
+
+## Лучший готовый воин класса cls, ещё не занятый (used: id → true)
+func _best_ready(cls: String, used: Dictionary) -> Dictionary:
+	var best := {}
+	for s: Dictionary in soldiers:
+		if String(s["cls"]) == cls and not used.has(int(s["id"])) and s_state(s) == "ready":
+			if best.is_empty() or Soldiers.bonus(s) > Soldiers.bonus(best):
+				best = s
+	if not best.is_empty():
+		used[int(best["id"])] = true
+	return best
+
+
+## Кто пойдёт в бой на места отряда: место → воин ({} — нет готового воина этого рода; место героя — {})
+func slot_soldiers() -> Array:
+	var out := []
+	var used := {}
+	for i in mini(slots(), squad.size()):
+		var t: String = squad[i]
+		if (i == 0 and hero_ready()) or t == "" or not UNITS.has(t):
+			out.append({})
+			continue
+		out.append(_best_ready(String(Soldiers.CLASS_OF[t]), used))
+	return out
+
+
+## Боец-воин: числа его рода (уровень здания) + звёзды и ранг; sid и sname — для ранений и окна
+func soldier_stats(s: Dictionary, type: String) -> Dictionary:
+	var b := Soldiers.bonus(s)
+	var g := gear_bonus(s)
+	var st := unit_stats(type, int(levels.get(type, 1)), bonus("atk") + forge_b() + b + float(g["atk"]), bonus("hp") + forge_b() + b + float(g["hp"]),
+		armory_b() + float(g["armor"]))
+	st["sid"] = int(s["id"])
+	st["sname"] = String(s["name"])
+	# облик в 3D-бою: редкость надетых вещей (оружие, щит, шлем, доспех) — LegionFighter.dress_gear
+	var look := {}
+	for sl in ["weapon", "offhand", "helmet", "armor"]:
+		var it := item(int((s.get("gear", {}) as Dictionary).get(sl, 0)))
+		if not it.is_empty():
+			look[sl] = int(it["rarity"])
+	if not look.is_empty():
+		st["gear_look"] = look
+	return st
+
+
+func _army_squad() -> Array:
+	var out := []
+	var ss := slot_soldiers()
+	for i in ss.size():
+		var s: Dictionary = ss[i]
+		if not s.is_empty() and available(String(squad[i])):
+			out.append(soldier_stats(s, String(squad[i])))
+	return out
+
+
+## «Лучший состав» по воинам: роду без готового воина — замена родом, у кого воины есть, иначе пусто
+func _fit_army(sq: Array) -> Array:
+	var left := {}
+	for s: Dictionary in soldiers:
+		if s_state(s) == "ready":
+			left[s["cls"]] = int(left.get(s["cls"], 0)) + 1
+	var out := []
+	for i in sq.size():
+		var t: String = sq[i]
+		if i == 0 and hero_ready():
+			out.append(t)
+			continue
+		var cls := String(Soldiers.CLASS_OF.get(t, ""))
+		if cls != "" and int(left.get(cls, 0)) > 0:
+			left[cls] = int(left[cls]) - 1
+			out.append(t)
+			continue
+		var alt := ""
+		for u in ["legionary", "spearman", "archer", "ballista", "catapult"]:
+			var c2 := String(Soldiers.CLASS_OF[u])
+			if available(u) and int(left.get(c2, 0)) > 0:
+				alt = u
+				left[c2] = int(left[c2]) - 1
+				break
+		out.append(alt)
+	return out
+
+
+## После боя: каждому — бой в летопись; павшие ранены (лечатся; без койки — вдвое дольше). Имена раненых — в итог боя
+func _army_after(setup: Dictionary, result: Dictionary) -> Array:
+	var names := []
+	var fallen := {}
+	for sid in result.get("fallen", []):
+		fallen[int(sid)] = true
+	var hurt := count_state("wound")
+	for u: Dictionary in setup.get("squad", []):
+		if not u.has("sid"):
+			continue
+		var s := soldier(int(u["sid"]))
+		if s.is_empty():
+			continue
+		s["battles"] = int(s.get("battles", 0)) + 1
+		if fallen.has(int(u["sid"])):
+			s["falls"] = int(s.get("falls", 0)) + 1
+			var m := Soldiers.HEAL_MIN * (int(s["rank"]) + 1) * heal_k()
+			if hurt >= beds():
+				m *= 2.0
+			hurt += 1
+			s["wound_end"] = now() + m * 60.0 / maxf(0.001, time_k)
+			names.append(String(s["name"]))
+	return names
 
 
 func _ensure() -> void:
@@ -558,7 +1244,8 @@ func auto_squad(st := {}) -> Array:
 	if st.is_empty():
 		var fr := frontier()
 		st = stage(int(fr["cycle"]), int(fr["r"]), int(fr["s"]))
-	return counter_squad(st, have, slots())
+	var sq := counter_squad(st, have, slots())
+	return _fit_army(sq) if army_on() else sq
 
 
 ## Состав под бой st из родов have на n мест (так же собирает отряд проверка баланса test_legion.gd)
@@ -689,6 +1376,8 @@ static func power(s: Dictionary) -> int:
 ## Бойцы отряда (только доступные и на открытых местах): "campaign" — походы, "pvp" — тот же отряд в бою с городом,
 ## "defense" — отряд обороны (бои с городами считаются без Кузницы и Склада оружия, пока PVP_MODS выключен)
 func squad_stats(which := "campaign") -> Array:
+	if which == "campaign" and army_on():
+		return _army_squad()
 	var src: Array = squad if which != "defense" or defense.is_empty() else defense
 	var out := []
 	var n := slots()
@@ -799,6 +1488,10 @@ static func snap_hero(e: Dictionary, atk_b: float, hp_b: float) -> Dictionary:
 ## Отряд в поход: на первом месте — герой (вместо бойца этого места), дальше — бойцы остальных мест. Бои с городами и
 ## оборона — pvp_entries: так же, когда сервер знает героя (pvp_hero), иначе все места как были (на первом — его боец)
 func battle_squad() -> Array:
+	if army_on():
+		var a := [hero_stats()] if hero_ready() else []
+		a.append_array(_army_squad())
+		return a
 	if not hero_ready():
 		return squad_stats()
 	var out := [hero_stats()]
@@ -881,7 +1574,38 @@ func cap() -> int:
 	if free_mode:
 		return MAX_LEVEL
 	var cd := cycles_done()
-	return mini(MAX_LEVEL, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)]) + (CYCLE_CAP * cd + CYCLE_ROOM if cd > 0 else 0))
+	return mini(mini(MAX_LEVEL, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)]) + (CYCLE_CAP * cd + CYCLE_ROOM if cd > 0 else 0)), prin_cap())
+
+
+## Уровень Принципии (0 — не построена)
+func prin_lvl() -> int:
+	return level_of("principia") if count_type("principia") > 0 else 0
+
+
+## Потолок остальных зданий от Принципии (старая игра — без потолка)
+func prin_cap() -> int:
+	if not army_on() or free_mode:
+		return 999
+	return maxi(maxi(PRIN_NONE, prin_lvl()), int(flags.get("prin0", 0)))   # prin0 — уровни, набранные до Принципии, не отнимаем
+
+
+## Какой уровень Принципии разрешает город сейчас
+func prin_city_cap() -> int:
+	var l := 1
+	for i in range(1, PRIN_CITY.size()):
+		if city_level() >= int(PRIN_CITY[i]):
+			l = i
+	return l
+
+
+## Чего не хватает, чтобы поднять Принципию: «Сначала до 3 уровня: Кузница, Лазарет» или ""
+func prin_main_text() -> String:
+	var p := level_of("principia")
+	var lack := []
+	for bt: String in PRIN_MAIN:
+		if count_type(bt) <= 0 or b_level(bt) < p:
+			lack.append(String(Defs.B[bt]["name"]))
+	return ("Сначала до %d уровня: %s" % [p, ", ".join(lack)]) if not lack.is_empty() else ""
 
 
 ## Предел уровня для ключа: род войск — cap(); здание поддержки — его наивысший уровень и предел города
@@ -892,7 +1616,9 @@ func cap_of(key: String) -> int:
 	var mx := int(SUPPORT.get(key, {}).get("max", 1))
 	if free_mode:
 		return mx
-	return mini(mx, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)]))
+	if key == "principia":
+		return mini(mx, prin_city_cap())
+	return mini(mini(mx, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)])), prin_cap())
 
 
 ## Наивысший уровень ключа вообще
@@ -954,8 +1680,11 @@ func upgrade_info(type: String) -> Dictionary:
 	var mx := max_of(type)
 	var to := mini(cur + 1, mx)
 	var limit := mini(mx, cap_of(type))
+	var secs := float(UPGRADE_TIME[mini(to, UPGRADE_TIME.size() - 1)])
+	if cozy():
+		secs = 3600.0 * (float(COZY_TIME_H[to]) if to < COZY_TIME_H.size() else COZY_TIME_OVER_H)
 	return {"cur": cur, "to": to, "max": cur >= mx, "blocked": cur + 1 > limit, "limit": limit,
-		"cost": level_cost(type, to), "time": float(UPGRADE_TIME[mini(to, UPGRADE_TIME.size() - 1)]) / maxf(0.001, time_k)}
+		"cost": level_cost(type, to), "time": secs / maxf(0.001, time_k)}
 
 
 ## Можно ли улучшить ("" — можно, иначе почему нельзя)
@@ -966,9 +1695,22 @@ func can_upgrade(type: String) -> String:
 		return unit_lock_text(type)
 	if upg.has(type):
 		return "Уже улучшается"
+	if upg.size() >= builders():
+		var nb := next_builder_level()
+		return "Все строители заняты (%d из %d).%s" % [upg.size(), builders(), (" Ещё строитель — когда город станет «%s»." % Defs.LEVELS[nb]["name"]) if nb >= 0 else ""]
 	var i := upgrade_info(type)
 	if i["max"]:
 		return "Максимальный уровень"
+	if type == "principia":
+		if i["blocked"]:
+			var need := int(PRIN_CITY[mini(int(i["to"]), PRIN_CITY.size() - 1)])
+			return "Принципия %d уровня — когда город станет «%s»" % [int(i["to"]), Defs.LEVELS[need]["name"]]
+		var mt := prin_main_text()
+		if mt != "":
+			return mt
+		return _afford_text(i["cost"])
+	if i["blocked"] and army_on() and int(i["limit"]) >= prin_cap():
+		return "Потолок — уровень Принципии (%d). Улучшите Принципию%s" % [prin_cap(), "" if prin_lvl() > 0 else " — сначала постройте её"]
 	if i["blocked"]:
 		var nl := next_cap_city_level(type)
 		var more := ""
@@ -1047,11 +1789,13 @@ func finish_upgrade(type: String) -> String:
 ## Проверка таймеров по настоящим часам — улучшения идут, даже когда игра закрыта.
 ## Возвращает тексты событий (City кладёт их в колокольчик)
 func tick() -> Array:
+	repeat_k = COZY_REPEAT_K if cozy() else 1.0
 	var out := []
 	var t := now()
 	for type in upg.keys():
 		if t >= float(upg[type]["end"]):
 			out.append(finish_upgrade(type))
+	out.append_array(army_tick())
 	return out
 
 
@@ -1143,6 +1887,12 @@ func b_effect(btype: String, lvl: int) -> Array:
 			return ["+%d%% урона и здоровья всем бойцам в походах" % roundi(FORGE * lvl * 100.0)]
 		"infirmary":
 			return ["Между волнами боя раненые восстанавливают %d%% здоровья" % roundi(INFIRMARY * lvl * 100.0)]
+		"principia":
+			return ["Потолок остальных зданий Легиона — %d уровень" % maxi(PRIN_NONE, lvl)]
+		"smelter", "sawmill", "tannery":
+			var m := String(WORKSHOPS[btype])
+			return ["%s: %d в час (при полном числе работников), запас до %d" % [String(Gear.MAT_NAME[m]).capitalize(),
+				roundi(MAT_RATE * pow(float(lvl), 1.3)), MAT_CAP0 + MAT_CAP_PER * lvl]]
 		"armory":
 			return ["+%d брони всем бойцам в походах" % roundi(ARMORY * lvl), "Герою — %s (+%d брони, +%d%% урона)" % [
 				String(Hero.kit_of(lvl)["n"]).to_lower(), roundi(Hero.KIT_ARMOR * lvl), roundi(Hero.KIT_ATK * lvl * 100.0)]]
@@ -1470,7 +2220,7 @@ static func stage_power(st: Dictionary) -> int:
 ## Без неё — по среднему уровню отряда и рекомендованному (target_level — на нём обычный отряд с умениями побеждает
 ## в 9 боях из 10, без умений нужен уровень выше); отряд не под бой (пока мест три) — как уровень долой
 func odds(st: Dictionary, est := {}) -> Array:
-	if squad_stats().is_empty():
+	if (battle_squad() if army_on() else squad_stats()).is_empty():
 		return ["bad", "В отряде никого"]
 	var sq := battle_squad()                     # средний уровень — тех, кто пойдёт в бой (с героем)
 	if not est.is_empty():
@@ -1619,7 +2369,7 @@ static func recommended_level(st: Dictionary) -> int:
 
 ## Награда с учётом первой победы
 static func reward_for(st: Dictionary, first: bool) -> Dictionary:
-	var k := FIRST_K if first else 1.0
+	var k := FIRST_K if first else repeat_k
 	var out := {}
 	for res in st["reward"]:
 		out[res] = maxi(1, roundi(float(st["reward"][res]) * k))
@@ -1633,13 +2383,16 @@ func food_cost(st: Dictionary) -> int:
 
 ## Можно ли в бой ("" — можно, иначе почему нельзя)
 func can_fight(st: Dictionary) -> String:
+	repeat_k = COZY_REPEAT_K if cozy() else 1.0     # город мог стать «Уютным Римом» после bind (новая игра)
 	if not window_open():
 		return lock_text()
 	if not region_rank_ok(int(st["r"])):
 		return region_lock_text(int(st["r"]))
 	if not stage_open(int(st["cycle"]), int(st["r"]), int(st["s"])):
 		return "Сначала пройдите предыдущие бои"
-	if squad_stats().is_empty():
+	if army_on() and battle_squad().is_empty():
+		return "В отряде нет готовых воинов: раненые лечатся, тренирующиеся заняты. Наберите новобранцев во вкладке «Воины»."
+	if squad_stats().is_empty() and not army_on():
 		return "В отряде нет бойцов — постройте Казармы и поставьте легионеров в отряд."
 	if float(food_cost(st)) > city_money():
 		return "Не хватает денариев на провиант: нужно %d." % food_cost(st)
@@ -1914,6 +2667,8 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 			reward["glory"] = int(reward.get("glory", 0)) + STAR_GLORY
 			out["star_glory"] = STAR_GLORY
 		out["money_lost"] = _give(reward)      # казна полна — сколько денариев не уместилось (окно итога скажет честно)
+		if army_on():
+			out["item"] = _drop(st, first)       # Легион 2.0: вещь в добычу (или {"full": true} — Склад полон)
 		out["reward"] = reward
 		out["chest"] = _chest(int(st["cycle"]), int(st["r"]))
 		wins += 1
@@ -1934,6 +2689,7 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 					var u: Array = out["unlocks"]
 					c._event("Легион победил: %s!%s" % [st["name"], (" Открыто: " + ", ".join(u) + ".") if not u.is_empty() else ""], "legion")
 		out["next"] = next_stage(st)
+	out["wounded"] = _army_after(setup, result) if army_on() else []
 	if c != null:
 		c.changed.emit()
 	changed.emit()
@@ -2456,7 +3212,8 @@ func to_dict() -> Dictionary:
 	return {"v": 3, "levels": levels, "blevels": blevels, "upg": upg, "squad": squad, "defense": defense, "perks": perks, "stars": stars,
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
-		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys()}
+		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
+		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "mats": mats, "mats_t": mats_t}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -2514,6 +3271,60 @@ func from_dict(d: Dictionary) -> void:
 	triumph_left = int(d.get("triumph_left", 0))
 	glory_acc = float(d.get("glory_acc", 0.0))
 	flags = d.get("flags", {})
+	soldiers = []
+	for s in d.get("soldiers", []):
+		if s is Dictionary and Soldiers.CLASSES.has(String(s.get("cls", ""))):
+			var e: Dictionary = (s as Dictionary).duplicate()
+			e["id"] = int(e.get("id", 0))
+			e["stars"] = clampi(int(e.get("stars", 1)), 1, 5)
+			e["rank"] = clampi(int(e.get("rank", 0)), 0, Soldiers.rank_max(e))
+			for k in ["train_end", "train_total", "wound_end"]:
+				e[k] = float(e.get(k, 0.0))
+			soldiers.append(e)
+	recruits = []
+	for s in d.get("recruits", []):
+		if s is Dictionary and Soldiers.CLASSES.has(String(s.get("cls", ""))):
+			recruits.append((s as Dictionary).duplicate())
+	items = []
+	for it in d.get("items", []):
+		if it is Dictionary and String(it.get("slot", "")) in Gear.SLOTS:
+			var e: Dictionary = (it as Dictionary).duplicate()
+			e["id"] = int(e.get("id", 0))
+			e["on"] = int(e.get("on", 0))
+			e["rarity"] = clampi(int(e.get("rarity", 0)), 0, 4)
+			e["ilvl"] = maxi(1, int(e.get("ilvl", 1)))
+			items.append(e)
+	iid_next = int(d.get("iid_next", 1))
+	shards = [0, 0, 0, 0, 0]
+	var sh: Array = d.get("shards", [])
+	for i in mini(5, sh.size()):
+		shards[i] = maxi(0, int(sh[i]))
+	mats = {}
+	var md = d.get("mats", {})
+	if md is Dictionary:
+		for m: String in Gear.MATS:
+			if (md as Dictionary).has(m):
+				mats[m] = maxf(0.0, float(md[m]))
+	mats_t = float(d.get("mats_t", 0.0))
+	forging = {}
+	var fg = d.get("forging", {})
+	if fg is Dictionary and not (fg as Dictionary).is_empty() and String(fg.get("slot", "")) in Gear.SLOTS:
+		forging = (fg as Dictionary).duplicate()
+		forging["rarity"] = clampi(int(forging.get("rarity", 0)), 0, 4)
+		forging["ilvl"] = maxi(1, int(forging.get("ilvl", 1)))
+		forging["end"] = float(forging.get("end", 0.0))
+		forging["total"] = float(forging.get("total", 1.0))
+	for it: Dictionary in items:
+		iid_next = maxi(iid_next, int(it["id"]) + 1)
+	for s: Dictionary in soldiers:
+		var gd := {}
+		for slot in (s.get("gear", {}) as Dictionary):
+			gd[String(slot)] = int(s["gear"][slot])
+		s["gear"] = gd
+	recruit_day = int(d.get("recruit_day", -1))
+	sid_next = int(d.get("sid_next", 1))
+	for s: Dictionary in soldiers:
+		sid_next = maxi(sid_next, int(s["id"]) + 1)
 	_ensure()
 	# умения за уже побеждённых боссов (и масло — с первого дня: старым сохранениям тоже)
 	for p in PERK_IDS:

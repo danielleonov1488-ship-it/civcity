@@ -307,6 +307,12 @@ func _sig() -> String:
 	for w: Dictionary in Legion.WONDERS:
 		a.append(lg.can_build_wonder(String(w["id"])))
 	a.append(lg.can_triumph())
+	if lg.army_on():
+		a.append(lg.soldiers.size())
+		for i in lg.recruits.size():
+			a.append(lg.can_recruit(i))
+		for s: Dictionary in lg.soldiers:
+			a.append(lg.can_train(int(s["id"])))
 	if not sel.is_empty():
 		var st := lg.stage_info(int(sel["c"]), int(sel["r"]), int(sel["s"]))
 		a.append(lg.can_fight(st))
@@ -338,6 +344,10 @@ func _process(dt: float) -> void:
 ## Таймеры: полоски улучшений, заряды атак. Улучшение дошло — завершаем сразу (не ждём игрового часа)
 func _tick_live() -> void:
 	_odds_poll()
+	if lg.army_on():
+		for m in lg.army_tick():
+			if game.city.has_method("_quiet"):
+				game.city._quiet(m, "legion")
 	var done := false
 	for type in lg.upg.keys():
 		if lg.upgrade_left(type) <= 0.0:
@@ -365,6 +375,16 @@ func _tick_live() -> void:
 					var od := lg.odds(e["st"], est)
 					l.text = String(od[1])
 					l.add_theme_color_override("font_color", ODDS_COL.get(String(od[0]), C_INK))
+			"soldier":
+				var s := lg.soldier(int(e["sid"]))
+				if s.is_empty():
+					continue
+				l.text = _soldier_status(s)
+				var sb: ProgressBar = e.get("bar")
+				if sb != null and is_instance_valid(sb):
+					sb.value = lg.train_progress(s)
+			"recruits":
+				l.text = "Новые придут через %s." % Legion.fmt_duration(lg.recruits_next())
 			"pvp":
 				var n := lg.pvp_charges_now()
 				l.text = "Атак в запасе: %d из %d" % [n, int(Legion.PVP["charges"])] + ("" if n >= int(Legion.PVP["charges"]) else " · ещё одна через %s" % Legion.fmt_duration(lg.pvp_next_charge()))
@@ -413,7 +433,7 @@ func _make_window() -> void:
 	var tb := HBoxContainer.new()
 	tb.alignment = BoxContainer.ALIGNMENT_CENTER
 	tb.add_theme_constant_override("separation", 10)
-	for d: Array in [["campaign", "Походы", _ic39("map")], ["troops", "Войска", _ic39("battle")],
+	for d: Array in [["campaign", "Походы", _ic39("map")], ["troops", "Войска", _ic39("battle")], ["soldiers", "Воины", _ic39("barracks")],
 			["pvp", "Против городов", _ic39("attack")], ["wonders", "Чудеса", hud.ico("special", 64)]]:
 		var id: String = d[0]
 		var b := _tab_btn(String(d[1]), d[2])
@@ -490,8 +510,18 @@ func _rebuild() -> void:
 	_fight_btn = null
 	_front_btn = null
 	_upg_btn = null
+	# «Воины» (Легион 2.0, этап 1) — только в новой игре «Уютного Рима»; вкладки чуть уже, чтобы уместились пять
+	var army := lg.army_on()
+	if tabs.has("soldiers"):
+		(tabs["soldiers"] as Button).visible = army
+		for k in tabs:
+			(tabs[k] as Button).custom_minimum_size.x = 200.0 if army else 214.0
+	if tab == "soldiers" and not army:
+		tab = "campaign"
 	var body: Control
 	match tab:
+		"soldiers":
+			body = _build_soldiers()
 		"troops":
 			body = _build_troops()
 		"pvp":
@@ -655,6 +685,57 @@ func _sheet(sheet: String, i: int) -> Texture2D:
 func _ic39(n: String) -> Texture2D:
 	var t := _sheet("39", int(ICON39[n]))
 	return t if t != null else hud.ico(String(ICON39_ALT[n]), 64)
+
+
+func _gear_tex(idx: int, slot := "weapon") -> Texture2D:
+	var t := _sheet("42", idx)
+	return t if t != null else hud.ico(String(GEAR_ICON.get(slot, "swords")), 64)
+
+
+const WS_ICON := {"smelter": 4, "sawmill": 5, "tannery": 6}
+
+
+func _mat_tex(m: String) -> Texture2D:
+	var t := _sheet("43", int(Gear.MAT_ICON.get(m, 0)))
+	return t if t != null else hud.ico("hammer", 64)
+
+
+## Ряд материалов: значок, «40 / 120», «+4/ч» (подсказка — откуда берётся)
+func _mats_row(sz := 26.0) -> HBoxContainer:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 14)
+	for m: String in Gear.MATS:
+		var c := HBoxContainer.new()
+		c.add_theme_constant_override("separation", 3)
+		c.mouse_filter = Control.MOUSE_FILTER_PASS
+		c.add_child(_tr(_mat_tex(m), sz))
+		var rate := lg.mat_rate(m)
+		c.add_child(_l("%d / %d" % [lg.mat(m), lg.mat_cap(m)], 15, true, C_INK))
+		if rate > 0.0:
+			c.add_child(_l("+%s/ч" % str(snappedf(rate, 0.1)).trim_suffix(".0"), 12, false, C_GOOD))
+		var w := Legion.workshop_of(m)
+		c.tooltip_text = "%s — %s. %s" % [String(Gear.MAT_NAME[m]).capitalize(), "делает " + String(Defs.B[w]["name"]),
+			("Сейчас %s в час; чем больше работников и выше уровень — тем быстрее." % str(snappedf(rate, 0.1))) if rate > 0.0 else "Постройте её в военном квартале (раздел «Легион»)."]
+		h.add_child(c)
+	return h
+
+
+## Вещь в рамке её редкости (для списков, Кузницы, добычи)
+func _item_ic(it: Dictionary, sz := 40.0) -> Control:
+	var pc := PanelContainer.new()
+	pc.custom_minimum_size = Vector2(sz, sz)
+	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.set_corner_radius_all(6)
+	sb.set_border_width_all(2)
+	var col := Gear.color(int(it.get("rarity", 0)))
+	sb.bg_color = col.lerp(Color.WHITE, 0.6)
+	sb.border_color = col
+	sb.set_content_margin_all(3)
+	pc.add_theme_stylebox_override("panel", sb)
+	pc.add_child(_tr(_gear_tex(Gear.icon_of(it), String(it.get("slot", ""))), sz - 6))
+	pc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return pc
 
 
 func _ic38(n: String) -> Texture2D:
@@ -872,6 +953,21 @@ func _do(what: String, id: String) -> void:
 			ok = lg.build_wonder(id)
 			if not ok:
 				_say(lg.can_build_wonder(id))
+		"recruit":
+			var why := lg.can_recruit(int(id))
+			ok = lg.recruit(int(id))
+			if not ok:
+				_say(why)
+		"train":
+			ok = lg.train(int(id))
+			if not ok:
+				_say(lg.can_train(int(id)))
+		"sell":
+			ok = lg.sell_item(int(id))
+		"smelt":
+			ok = lg.smelt(int(id))
+			if not ok:
+				_say(lg.can_smelt(int(id)))
 	if ok and game and game.sound:
 		game.sound.ui("coins")
 
@@ -1616,6 +1712,21 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 		if not ch.is_empty():
 			v.add_child(_wl("Все 30 звёзд «%s»! Сундук Славы +%d." % [ch["region"], int(ch["glory"])], 420, 16, C_GOLD, true, true))
 	v.add_child(_wl("Вернулись %d из %d бойцов" % [int(out.get("alive", 0)), int(out.get("total", 0))], 420, 16, C_INK, true, true))
+	var drop: Dictionary = out.get("item", {})
+	if drop.has("full"):
+		v.add_child(_wl("Склад полон — вещь из добычи не уместилась. Продайте лишнее во вкладке «Воины».", 420, 14, C_BAD, false, true))
+	elif not drop.is_empty():
+		var dh := HBoxContainer.new()
+		dh.alignment = BoxContainer.ALIGNMENT_CENTER
+		dh.add_theme_constant_override("separation", 6)
+		dh.add_child(_l("Добыча:", 17, true, C_INK))
+		dh.add_child(_item_ic(drop, 44))
+		dh.add_child(_l("%s · %d ур." % [Gear.name_of(drop), int(drop["ilvl"])], 17, true, Gear.color(int(drop["rarity"]))))
+		v.add_child(dh)
+		v.add_child(_wl(Gear.stats_text(drop), 420, 14, C_SOFT, false, true))
+	var hurt: Array = out.get("wounded", [])
+	if not hurt.is_empty():                  # Легион 2.0: павшие ранены, лечатся (насмерть никто не гибнет)
+		v.add_child(_wl("Ранены: %s — поправятся во вкладке «Воины»" % ", ".join(hurt), 420, 14, C_BAD, false, true))
 	var rw: Dictionary = out.get("reward", {})
 	if not rw.is_empty():
 		var rh := HBoxContainer.new()
@@ -1815,12 +1926,33 @@ func _build_troops() -> Control:
 	var hint := _l("бойцы растут вместе со зданиями: улучшайте их в карточке здания на карте", 14, true, C_SOFT)
 	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hh.add_child(hint)
+	if lg.army_on():
+		# Легион 2.0: Принципия — одна строка справа (потолок зданий), без лишней плитки
+		var sp := Control.new()
+		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hh.add_child(sp)
+		var pl := lg.prin_lvl()
+		var ptxt := ("Принципия · %d ур. — потолок зданий %d" % [pl, lg.prin_cap()]) if pl > 0 else ("Принципии нет — потолок зданий %d" % lg.prin_cap())
+		var pb: Button
+		if pl > 0:
+			pb = _btn(ptxt, 0, 14, _ic39("rating"), "", func(): show_building("principia"))
+			pb.tooltip_text = "Штаб Легиона: щелчок — к нему на карте, улучшение — в его карточке. %s" % lg.can_upgrade("principia")
+		elif game.city.unlocked("principia"):
+			pb = _btn(ptxt + " · Построить", 0, 14, hud.ico("hammer", 64), "", func(): close(); hud.select_build("principia"))
+			pb.tooltip_text = String(Defs.B["principia"]["desc"])
+		else:
+			pb = _btn(ptxt, 0, 14, _ic39("lock"), "", func(): pass)
+			pb.tooltip_text = String(Defs.B["principia"]["desc"])
+		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hh.add_child(pb)
 	v.add_child(hh)
 	var g := GridContainer.new()
 	g.columns = 4
 	g.add_theme_constant_override("h_separation", 10)
 	g.add_theme_constant_override("v_separation", 8)
 	for bt: String in Legion.BUILDING_IDS:
+		if Legion.WORKSHOPS.has(bt) or bt == "principia":
+			continue                          # мастерские Легиона 2.0: их материалы — в шапке «Воинов» (окно не растёт), улучшения — в карточке на карте
 		g.add_child(_building_tile(bt))
 	v.add_child(g)
 	v.add_child(_perks_panel())
@@ -1828,6 +1960,408 @@ func _build_troops() -> Control:
 
 
 const B_ALT := {"forge": "swords", "infirmary": "medic", "armory": "shield"}
+
+
+# =====================================================================
+#   «Воины» (Легион 2.0, этап 1): свои воины, тренировка, раненые; новобранцы дня
+# =====================================================================
+
+const UNIT_OF_CLASS := {"legionary": "legionary", "spearman": "spearman", "archer": "archer", "engineer": "ballista"}
+
+
+func _build_soldiers() -> Control:
+	lg.army_tick()
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.add_theme_constant_override("separation", 6)
+	var hh := HBoxContainer.new()
+	hh.add_theme_constant_override("separation", 10)
+	hh.add_child(_title("Ваши воины: %d из %d" % [lg.soldiers.size(), lg.roster_cap()], 21))
+	var hint := _l("тренируются %d из %d · раненых %d, коек в Лазарете %d" % [lg.count_state("train"), lg.train_places(), lg.count_state("wound"), lg.beds()], 14, true, C_SOFT)
+	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hh.add_child(hint)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hh.add_child(sp)
+	var mr := _mats_row(22)
+	mr.add_theme_constant_override("separation", 10)
+	hh.add_child(mr)
+	var stb := _btn("Склад: %d из %d" % [lg.store_count(), lg.store_cap()], 0, 14, _gear_tex(Gear.ICON_STORE), "", func(): _store())
+	stb.tooltip_text = "Вещи из добычи, что не надеты: посмотреть, продать или разобрать лишнее"
+	hh.add_child(stb)
+	var fgb := _btn("Кузница" + (" · %s" % Legion.fmt_duration(lg.forge_left()) if not lg.forging.is_empty() else ""), 0, 14, _gear_tex(Gear.ICON_FORGE), "", func(): _forge_win())
+	fgb.tooltip_text = "Разобрать ненужные вещи на обломки и выковать из них вещь лучше"
+	hh.add_child(fgb)
+	left.add_child(hh)
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(0, CH - 50)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var g := GridContainer.new()
+	g.columns = 2
+	g.add_theme_constant_override("h_separation", 8)
+	g.add_theme_constant_override("v_separation", 8)
+	var list := lg.soldiers.duplicate()
+	list.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var ca := Soldiers.CLASS_IDS.find(a["cls"])
+		var cb := Soldiers.CLASS_IDS.find(b["cls"])
+		if ca != cb:
+			return ca < cb
+		return Soldiers.bonus(a) > Soldiers.bonus(b))
+	for s: Dictionary in list:
+		g.add_child(_soldier_card(s))
+	if list.is_empty():
+		g.add_child(_wl("Воинов пока нет — возьмите новобранцев справа.", 360, 16, C_INK, true))
+	sc.add_child(g)
+	left.add_child(sc)
+	h.add_child(left)
+	# справа — новобранцы дня
+	var right := _bar_panel(10)
+	right.custom_minimum_size = Vector2(352, 0)
+	right.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 6)
+	right.add_child(rv)
+	rv.add_child(_title("Новобранцы сегодня", 20))
+	rv.add_child(_wl("Пришли в Казармы проситься в Легион. Берите тех, кто нравится, — или ждите завтрашних.", 330, 13, C_SOFT))
+	var nl := _wl("Новые придут через %s." % Legion.fmt_duration(lg.recruits_next()), 330, 13, C_SOFT, true)
+	rv.add_child(nl)
+	_live.append({"kind": "recruits", "label": nl})
+	if lg.recruits.is_empty():
+		rv.add_child(_wl("Сегодня все уже в Легионе.", 330, 15, C_INK, true))
+	for i in lg.recruits.size():
+		rv.add_child(_recruit_row(i))
+	rv.add_child(_hdiv(10))
+	var od := Soldiers.star_odds(lg.recruit_quality())
+	rv.add_child(_wl("Счастливый и большой город привлекает лучших: сейчас шанс на ★★★ и выше — %d%%." % roundi(float(od[2]) + float(od[3]) + float(od[4])), 330, 13, C_SOFT))
+	rv.add_child(_wl("Звёзды и ранг прибавляют воину силы к уровню его рода. Павший в бою ранен и лечится — держите запас.", 330, 13, C_SOFT))
+	h.add_child(right)
+	return h
+
+
+func _soldier_status(s: Dictionary) -> String:
+	match lg.s_state(s):
+		"wound":
+			return "Ранен: поправится через %s" % Legion.fmt_duration(lg.s_left(s))
+		"train":
+			return "Тренируется: ещё %s" % Legion.fmt_duration(lg.s_left(s))
+	return "Готов к бою · боёв: %d" % int(s.get("battles", 0))
+
+
+func _soldier_card(s: Dictionary) -> Control:
+	var p := _bar_panel(6)
+	p.custom_minimum_size = Vector2(380, 0)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	p.add_child(h)
+	var st := lg.s_state(s)
+	var pt := _portrait("unit", String(UNIT_OF_CLASS.get(s["cls"], "legionary")), 58, st == "wound")
+	pt.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(pt)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 0)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(v)
+	var nh := HBoxContainer.new()
+	nh.add_theme_constant_override("separation", 6)
+	nh.add_child(_l(String(s["name"]), 16, true, C_INK))
+	nh.add_child(_l(Soldiers.stars_text(int(s["stars"])), 15, true, C_GOLD))
+	v.add_child(nh)
+	var r := int(s["rank"])
+	v.add_child(_l("%s · %s (%d из %d) · +%d%% силы" % [Soldiers.class_name_of(String(s["cls"])), Soldiers.rank_name(r), r, Soldiers.rank_max(s),
+		roundi(Soldiers.bonus(s) * 100.0)], 13, false, C_SOFT))
+	var stl := _l(_soldier_status(s), 13, true, C_BAD if st == "wound" else (C_GOLD if st == "train" else C_GOOD))
+	v.add_child(stl)
+	var bar: ProgressBar = null
+	if st == "train":
+		bar = _bar(200, lg.train_progress(s))
+		v.add_child(bar)
+	if st != "ready":
+		_live.append({"kind": "soldier", "sid": int(s["id"]), "label": stl, "bar": bar})
+	var gh := HBoxContainer.new()
+	gh.add_theme_constant_override("separation", 4)
+	for slot: String in Gear.SLOTS:
+		gh.add_child(_gear_slot(s, slot))
+	v.add_child(gh)
+	var bv := VBoxContainer.new()
+	bv.add_theme_constant_override("separation", 4)
+	bv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var id := str(int(s["id"]))
+	if st == "ready" and r < Soldiers.rank_max(s):
+		var why := lg.can_train(int(s["id"]))
+		var tb := _btn("Тренировать · %s" % hud.fmt(float(Soldiers.train_cost(r))), 0, 13, hud.ico("coins", 64), why, func(): _do("train", id))
+		tb.tooltip_text = (why + "\n" if why != "" else "") + "Ранг «%s» за %s" % [Soldiers.rank_name(r + 1), Legion.fmt_duration(Soldiers.train_h(r) * 3600.0)]
+		bv.add_child(tb)
+	var db := _btn("Отпустить", 0, 12, null, "", func(): pass)
+	db.tooltip_text = "Отпустить домой — освободится место в Легионе"
+	db.pressed.connect(func():
+		if db.text != "Точно отпустить?":
+			db.text = "Точно отпустить?"
+		else:
+			lg.dismiss(int(id)))
+	bv.add_child(db)
+	h.add_child(bv)
+	return p
+
+
+const GEAR_ICON := {"weapon": "swords", "offhand": "shield", "helmet": "helmet", "armor": "legion", "badge": "laurels"}
+
+
+## Слот вещи воина: цвет — редкость надетой вещи (пусто — бледный); щелчок — выбрать вещь
+func _gear_slot(s: Dictionary, slot: String) -> Control:
+	var sz := 38.0
+	var it := lg.item(int((s.get("gear", {}) as Dictionary).get(slot, 0)))
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(sz, sz)
+	var sb := StyleBoxFlat.new()
+	sb.set_corner_radius_all(6)
+	sb.set_border_width_all(2)
+	if it.is_empty():
+		sb.bg_color = Color(1, 0.97, 0.9, 0.5)
+		sb.border_color = Color(C_SOFT, 0.35)
+	else:
+		var col := Gear.color(int(it["rarity"]))
+		sb.bg_color = col.lerp(Color.WHITE, 0.55)
+		sb.border_color = col
+	b.add_theme_stylebox_override("normal", sb)
+	var sh := sb.duplicate() as StyleBoxFlat
+	sh.bg_color = sb.bg_color.lightened(0.15)
+	b.add_theme_stylebox_override("hover", sh)
+	b.add_theme_stylebox_override("pressed", sh)
+	var idx := Gear.icon_idx(slot, String(s["cls"]), String(s.get("engine", ""))) if it.is_empty() else Gear.icon_of(it)
+	var ic := _tr(_gear_tex(idx, slot), sz - 6, it.is_empty())
+	if it.is_empty():
+		ic.modulate = Color(1, 1, 1, 0.45)
+	ic.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ic.offset_left = 3
+	ic.offset_top = 3
+	ic.offset_right = -3
+	ic.offset_bottom = -3
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(ic)
+	var sn := String(Gear.SLOT_NAME[slot])
+	if slot == "offhand" and String(s["cls"]) == "archer":
+		sn = "колчан"
+	b.tooltip_text = ("%s: пусто — щелчок, чтобы надеть" % sn.capitalize()) if it.is_empty() else \
+		"%s · %d ур.\n%s\nЩелчок — заменить или снять" % [Gear.name_of(it), int(it["ilvl"]), Gear.stats_text(it)]
+	var sid := int(s["id"])
+	b.pressed.connect(func(): _gear_pick(sid, slot))
+	return b
+
+
+## Выбор вещи на слот: надетая сверху (снять), дальше подходящие со Склада — лучшие первыми
+func _gear_pick(sid: int, slot: String) -> void:
+	var s := lg.soldier(sid)
+	if s.is_empty():
+		return
+	var p := _modal(520)
+	var v: VBoxContainer = p.get_child(0)
+	v.add_child(_title("%s: %s" % [String(s["name"]), String(Gear.SLOT_NAME[slot])], 22))
+	var cur := lg.item(int((s.get("gear", {}) as Dictionary).get(slot, 0)))
+	if not cur.is_empty():
+		var ch := HBoxContainer.new()
+		ch.add_theme_constant_override("separation", 10)
+		ch.add_child(_item_ic(cur, 52))
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 0)
+		cv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cv.add_child(_l("Надето: %s · %d ур." % [Gear.name_of(cur), int(cur["ilvl"])], 16, true, Gear.color(int(cur["rarity"]))))
+		cv.add_child(_l(Gear.stats_text(cur), 13, false, C_SOFT))
+		ch.add_child(cv)
+		ch.add_child(_btn("Снять", 0, 14, null, "" if lg.store_count() < lg.store_cap() else "Склад полон", func(): lg.unequip(sid, slot); _close_overlay()))
+		v.add_child(ch)
+		v.add_child(_hdiv(10))
+	var list := []
+	for it: Dictionary in lg.items:
+		if String(it["slot"]) == slot and int(it.get("on", 0)) != sid and Gear.fits(it, String(s["cls"])):
+			list.append(it)
+	list.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return Gear.score(a) > Gear.score(b))
+	if list.is_empty():
+		v.add_child(_wl("Подходящих вещей нет. Вещи приносят победы в походах — боссы наверняка и получше.", 480, 15, C_SOFT))
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(0, mini(list.size(), 6) * 50)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 4)
+	lv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for it: Dictionary in list:
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", -2)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(_item_ic(it, 44))
+		tv.add_child(_l("%s · %d ур." % [Gear.name_of(it), int(it["ilvl"])], 15, true, Gear.color(int(it["rarity"]))))
+		var who := ""
+		if int(it.get("on", 0)) != 0:
+			who = " · сейчас у: %s" % String(lg.soldier(int(it["on"])).get("name", "?"))
+		tv.add_child(_l(Gear.stats_text(it) + who, 13, false, C_SOFT))
+		h.add_child(tv)
+		var iid := int(it["id"])
+		h.add_child(_btn("Надеть", 0, 14, null, "", func(): lg.equip(sid, iid); _close_overlay()))
+		lv.add_child(h)
+	sc.add_child(lv)
+	v.add_child(sc)
+	v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
+	_center_later(p)
+
+
+## Склад: вещи, что не надеты, — продать лишнее (денарии в казну)
+func _store() -> void:
+	var p := _modal(560)
+	var v: VBoxContainer = p.get_child(0)
+	v.add_child(_title("Склад: %d из %d" % [lg.store_count(), lg.store_cap()], 22))
+	v.add_child(_wl("Вещи из добычи, что сейчас никто не носит. Надеть — щелчком по слоту в карточке воина. Лишнее можно продать.", 520, 13, C_SOFT))
+	var list := []
+	for it: Dictionary in lg.items:
+		if int(it.get("on", 0)) == 0:
+			list.append(it)
+	list.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return Gear.score(a) > Gear.score(b))
+	if list.is_empty():
+		v.add_child(_wl("Пока пусто.", 520, 15, C_INK, true))
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(0, mini(list.size(), 7) * 50)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 4)
+	lv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for it: Dictionary in list:
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", -2)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(_item_ic(it, 44))
+		tv.add_child(_l("%s · %d ур." % [Gear.name_of(it), int(it["ilvl"])], 15, true, Gear.color(int(it["rarity"]))))
+		tv.add_child(_l(Gear.stats_text(it), 13, false, C_SOFT))
+		h.add_child(tv)
+		var iid := str(int(it["id"]))
+		if lg.forge_lvl() > 0:
+			var smb := _btn("Разобрать", 0, 14, _gear_tex(Gear.ICON_SHARD), "", func(): _do("smelt", iid); _store())
+			smb.tooltip_text = "В Кузнице: +1 %s" % Gear.SHARD[int(it["rarity"])]
+			h.add_child(smb)
+		h.add_child(_btn("Продать · %s" % hud.fmt(float(Legion.item_price(it))), 0, 14, hud.ico("coins", 64), "", func(): _do("sell", iid); _store()))
+		lv.add_child(h)
+	sc.add_child(lv)
+	v.add_child(sc)
+	v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
+	_center_later(p)
+
+
+var _f_slot := "weapon"
+var _f_cls := "legionary"
+
+
+## Кузница: обломки, что куётся; выбрать слот и класс — и редкость (цена, время)
+func _forge_win() -> void:
+	var p := _modal(600)
+	var v: VBoxContainer = p.get_child(0)
+	v.add_child(_title("Кузница" + (" · %d уровень" % lg.forge_lvl() if lg.forge_lvl() > 0 else ""), 22))
+	if lg.forge_lvl() <= 0:
+		v.add_child(_wl("Постройте Кузницу в военном квартале — здесь будут разбирать лишние вещи на обломки и ковать новые.", 560, 15, C_INK))
+		v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
+		_center_later(p)
+		return
+	var sh := HBoxContainer.new()
+	sh.add_theme_constant_override("separation", 14)
+	sh.add_child(_l("Обломки:", 15, true, C_INK))
+	for r in 5:
+		var shc := HBoxContainer.new()
+		shc.add_theme_constant_override("separation", 2)
+		var sht := _tr(_gear_tex(Gear.ICON_SHARD), 26)
+		sht.modulate = Gear.color(r).lerp(Color.WHITE, 0.35)
+		sht.tooltip_text = String(Gear.SHARD[r])
+		shc.add_child(sht)
+		shc.add_child(_l(str(int(lg.shards[r])), 16, true, Gear.color(r)))
+		sh.add_child(shc)
+	v.add_child(sh)
+	if lg.army_on():
+		var mh := _mats_row()
+		var mrow := HBoxContainer.new()
+		mrow.add_theme_constant_override("separation", 14)
+		mrow.add_child(_l("Материалы:", 15, true, C_INK))
+		mrow.add_child(mh)
+		v.add_child(mrow)
+	v.add_child(_wl("Обломки — из разобранных вещей (Склад → «Разобрать»), материалы — из мастерских (Плавильня, Лесопилка, Дубильня) и тоже от разобранных вещей. Уровень новой вещи: %d (по походу, не выше 5 × уровень Кузницы)." % lg.forge_ilvl(), 560, 13, C_SOFT))
+	if not lg.forging.is_empty():
+		var fh := HBoxContainer.new()
+		fh.add_theme_constant_override("separation", 8)
+		fh.add_child(_item_ic(lg.forging, 40))
+		var fl := _l("Куётся: %s · %d ур. — ещё %s" % [Gear.name_of(lg.forging), int(lg.forging["ilvl"]), Legion.fmt_duration(lg.forge_left())], 15, true, Gear.color(int(lg.forging["rarity"])))
+		fh.add_child(fl)
+		v.add_child(fh)
+	v.add_child(_hdiv(8))
+	# что ковать: слот и (для оружия и щита) класс
+	var srow := HBoxContainer.new()
+	srow.add_theme_constant_override("separation", 6)
+	for slot: String in Gear.SLOTS:
+		var sl := slot
+		var b := _btn(String(Gear.SLOT_NAME[slot]).capitalize(), 0, 14, null, "", func(): _f_slot = sl; _forge_win())
+		if slot == _f_slot:
+			b.add_theme_stylebox_override("normal", hud._box_pill(16, 6, "g_btn_on"))
+		srow.add_child(b)
+	v.add_child(srow)
+	if _f_slot in ["weapon", "offhand"]:
+		var crow := HBoxContainer.new()
+		crow.add_theme_constant_override("separation", 6)
+		for cls: String in Soldiers.CLASS_IDS:
+			var cl := cls
+			var cb := _btn(Soldiers.class_name_of(cls), 0, 14, null, "" if lg.class_open(cls) else "Класс ещё не открыт", func(): _f_cls = cl; _forge_win())
+			if cls == _f_cls:
+				cb.add_theme_stylebox_override("normal", hud._box_pill(16, 6, "g_btn_on"))
+			crow.add_child(cb)
+		v.add_child(crow)
+	for r in 5:
+		var F: Dictionary = Gear.FORGE[r]
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		var probe := {"slot": _f_slot, "cls": _f_cls if _f_slot in ["weapon", "offhand"] else "", "rarity": r, "ilvl": lg.forge_ilvl()}
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", -2)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(_item_ic(probe, 40))
+		tv.add_child(_l(Gear.name_of(probe), 15, true, Gear.color(r)))
+		var need := "%s ден." % hud.fmt(float(F["money"]))
+		need = "%s, %s" % [Gear.mats_text(Gear.forge_mats(_f_slot, r)), need]
+		if r > 0:
+			need = "%d × %s, %s" % [int(F["shards"]), Gear.SHARD[r - 1], need]
+		tv.add_child(_l("%s · %s · %s" % [Gear.stats_text(probe), need, Legion.fmt_duration(float(F["h"]) * 3600.0)], 12, false, C_SOFT))
+		h.add_child(tv)
+		var rr := r
+		var why := lg.can_forge(_f_slot, _f_cls, r)
+		h.add_child(_btn("Ковать", 0, 14, null, why, func(): lg.forge(_f_slot, _f_cls, rr); _forge_win()))
+		v.add_child(h)
+	v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
+	_center_later(p)
+
+
+func _recruit_row(i: int) -> Control:
+	var c: Dictionary = lg.recruits[i]
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	var pt := _portrait("unit", String(UNIT_OF_CLASS.get(c["cls"], "legionary")), 46)
+	pt.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(pt)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 0)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(_l(String(c["name"]), 15, true, C_INK))
+	var sh := HBoxContainer.new()
+	sh.add_theme_constant_override("separation", 6)
+	sh.add_child(_l(Soldiers.class_name_of(String(c["cls"])), 13, false, C_SOFT))
+	sh.add_child(_l(Soldiers.stars_text(int(c["stars"])), 13, true, C_GOLD))
+	v.add_child(sh)
+	v.add_child(_l(String(c.get("from", "")), 12, false, C_SOFT))
+	h.add_child(v)
+	var why := lg.can_recruit(i)
+	var ii := str(i)
+	var b := _btn("Взять · %s" % hud.fmt(float(lg.recruit_cost(i))), 0, 13, hud.ico("coins", 64), why, func(): _do("recruit", ii))
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(b)
+	return h
 
 
 ## Плитка здания Легиона: портрет, уровень (или «в запасе»), что даёт сейчас, идущее улучшение, «На карте» / «Построить»
@@ -1850,9 +2384,13 @@ func _building_tile(bt: String) -> Control:
 		face.custom_minimum_size = Vector2(54, 54)
 		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		face.add_theme_stylebox_override("panel", hud._medal("medal" if built else "medal_lock", 54))
-		var ic := _tr(hud.ico(String(B_ALT.get(bt, "legion")), 64), 32, not built)
+		var wt: Texture2D = _sheet("43", int(WS_ICON[bt])) if WS_ICON.has(bt) else null
+		var ic := _tr(wt if wt != null else hud.ico(String(B_ALT.get(bt, "legion")), 64), 32, not built)
 		ic.position = Vector2(11, 11)
 		ic.size = Vector2(32, 32)
+		if wt != null:
+			ic.position = Vector2(7, 7)
+			ic.size = Vector2(40, 40)
 		face.add_child(ic)
 	top.add_child(face)
 	var tv := VBoxContainer.new()
@@ -1993,8 +2531,16 @@ func _slots_row(which: String, sz: float) -> HBoxContainer:
 		var face: Control
 		var tip := ""
 		if t != "" and Legion.UNITS.has(t):
-			face = _portrait("unit", t, sz, not lg.available(t))
-			tip = "%s, %d уровень%s\nЩелчок — поставить другого" % [Legion.UNITS[t]["name"], int(lg.levels.get(t, 1)), "" if lg.available(t) else "\n" + lg.unit_lock_text(t)]
+			var who := ""
+			var none := false
+			if which == "campaign" and lg.army_on():
+				var ss := lg.slot_soldiers()
+				var sd: Dictionary = ss[i] if i < ss.size() else {}
+				none = sd.is_empty()
+				who = "\nНет готового воина этого рода (раненые лечатся, тренирующиеся заняты) — место пустует" if none else \
+					"\nВ бой пойдёт: %s %s, %s" % [sd["name"], Soldiers.stars_text(int(sd["stars"])), Soldiers.rank_name(int(sd["rank"]))]
+			face = _portrait("unit", t, sz, not lg.available(t) or none)
+			tip = "%s, %d уровень%s%s\nЩелчок — поставить другого" % [Legion.UNITS[t]["name"], int(lg.levels.get(t, 1)), "" if lg.available(t) else "\n" + lg.unit_lock_text(t), who]
 		else:
 			var e := Panel.new()
 			e.add_theme_stylebox_override("panel", hud._medal("medal", sz))

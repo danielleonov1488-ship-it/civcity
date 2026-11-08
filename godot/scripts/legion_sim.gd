@@ -62,6 +62,7 @@ class Unit:
 	var key := ""                  # род войск или враг (Legion.UNITS / Legion.ENEMIES)
 	var name := ""
 	var level := 0
+	var sid := -1                  # воин Легиона 2.0 (Soldiers): кто ранен, если пал
 	var x := 0.0
 	var z := 0.0
 	var hp := 0.0
@@ -224,6 +225,7 @@ func _add(side: String, s: Dictionary, x: float, z: float) -> Unit:
 	u.key = String(s["key"])
 	u.name = String(s.get("name", u.key))
 	u.level = int(s.get("level", 0))
+	u.sid = int(s.get("sid", -1))
 	u.x = x
 	u.z = z
 	u.hp = float(s["hp"])
@@ -793,13 +795,16 @@ func step(dt := DT) -> void:
 func _end(win: bool, alive: int, timeout := false) -> void:
 	var hp := 0.0
 	var mx := 0.0
+	var fallen := []
 	for u in units:
 		if u.side == "ally":
 			mx += u.max_hp
 			if u.alive:
 				hp += u.hp
+			elif u.sid >= 0:
+				fallen.append(u.sid)
 	result = {"win": win, "alive": alive, "total": total, "timeout": timeout, "time": t, "hp_left": hp / maxf(1.0, mx),
-		"inputs": inputs.duplicate(true), "oil_best": oil_best, "perks_used": perks_used, "summons": summons}
+		"inputs": inputs.duplicate(true), "oil_best": oil_best, "perks_used": perks_used, "summons": summons, "fallen": fallen}
 	events.append({"type": "end", "win": win})
 	dispose()
 

@@ -2590,6 +2590,8 @@ func _types_in(cat: String, sub := "") -> Array:
 			continue
 		if cat == "decor" and sub != "" and Defs.decor_sub(type) != sub:
 			continue
+		if String(d.get("unlock", "")).begins_with("army:") and game != null and int(game.city.cozy_v) < 1:
+			continue                          # мастерские Легиона 2.0 — только в новой игре
 		out.append(type)
 	return out
 
@@ -4840,6 +4842,12 @@ func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void
 	if fams.size() == 1:
 		who = "Семья %s · %d из %d мест%s" % [fams[0]["name"], int(b["pop"]), c.house_cap(b), tight]
 	info_box.add_child(_wrap(_label(who, 14, true, C_BAD if tight != "" else C_SOFT), cw))
+	if int(c.cozy_v) >= 1:                       # «Уютный Рим», этап 4: черты семей — что их радует и что мешает
+		for f: Dictionary in fams.slice(0, 3):
+			var tl := _wrap(_label(("%s: %s" % [f["name"], City.trait_text(String(f["name"]))]) if fams.size() > 1 else "Черты: " + City.trait_text(String(f["name"])), 13, false, C_SOFT), cw)
+			tl.mouse_filter = Control.MOUSE_FILTER_PASS
+			tl.tooltip_text = "У каждой семьи свой характер: одно рядом с домом её радует, другое мешает. Что сейчас — в «Подробнее»: строки счастья"
+			info_box.add_child(tl)
 	var tier := int(b["tier"])
 	var fmax := Defs.floors_max(cl, int(b.get("variant", 0)))
 	if tier < fmax and c.has_method("can_buy_floor"):

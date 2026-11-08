@@ -913,12 +913,23 @@ func _lived_houses() -> Array:
 	return city.buildings.values().filter(func(b): return city.is_house(b) and int(b["pop"]) > 0)
 
 
+## «Уютный Рим», этап 4: семья в доме хочет кошку, и кошки у дома ещё нет
+func _wants_cat(b: Dictionary) -> bool:
+	var want := (b.get("families", []) as Array).any(func(f): return Balance.traits_of(String(f["name"])).has("cat"))
+	return want and not city.cats.any(func(e): return int(e.get("home", -1)) == int(b["id"]))
+
+
 ## Новая кошка с именем у случайного дома — и в сохранение
 func _new_cat() -> Dictionary:
 	var houses := _lived_houses()
 	if houses.is_empty():
 		return {}
 	var h: Dictionary = houses[rng.randi() % houses.size()]
+	if int(city.cozy_v) >= 1:
+		# «Уютный Рим», этап 4: кошка охотнее приходит к семье, которая её хочет (и где кошки ещё нет)
+		var want := houses.filter(_wants_cat)
+		if not want.is_empty() and rng.randf() < 0.75:
+			h = want[rng.randi() % want.size()]
 	var used := {}
 	for e: Dictionary in city.cats:
 		used[String(e["nm"])] = true

@@ -147,6 +147,7 @@ func _run() -> void:
 	await shot("pvp")
 	ui._select_tab("wonders")
 	await shot("wonders")
+	await _soldiers(c, lg, ui)
 	# босс Крита
 	ui._select_tab("campaign")
 	ui.sel = {"c": 0, "r": 4, "s": 9}
@@ -707,3 +708,61 @@ class FakeNet extends RefCounted:
 
 	func pvp_report(_setup: Dictionary, _out: Dictionary) -> void:
 		reports += 1
+
+
+## Легион 2.0, этап 1: вкладка «Воины» (только новая игра «Уютного Рима»): свои воины — готов, тренируется, ранен;
+## новобранцы дня с ценой; в старом городе вкладки нет
+func _soldiers(c: City, lg: Legion, ui) -> void:
+	check("«Воины» в старом городе не видно", not (ui.tabs["soldiers"] as Button).visible or c.cozy_v >= 1)
+	var cv := c.cozy_v
+	c.cozy_v = 1
+	lg.army_tick()
+	for i in 3:
+		lg.recruit(0)
+	var a: Dictionary = lg.soldiers[0]
+	lg.train(int(a["id"]))
+	(lg.soldiers[2] as Dictionary)["rank"] = 3
+	(lg.soldiers[3] as Dictionary)["wound_end"] = Legion.now() + 1500.0
+	lg.recruit_day = -1
+	lg.army_tick()
+	# вещи разной редкости: на втором воине — меч, доспех, шлем, знак; на Складе — ещё несколько
+	var s0: Dictionary = lg.soldiers[1]
+	for e in [{"slot": "weapon", "cls": String(s0["cls"]), "rarity": 3, "ilvl": 6}, {"slot": "armor", "cls": "", "rarity": 2, "ilvl": 5},
+			{"slot": "helmet", "cls": "", "rarity": 4, "ilvl": 7}, {"slot": "badge", "cls": "", "rarity": 1, "ilvl": 4}]:
+		lg.equip(int(s0["id"]), int(lg.add_item(e)["id"]))
+	for e in [{"slot": "weapon", "cls": String(s0["cls"]), "rarity": 1, "ilvl": 6}, {"slot": "weapon", "cls": String(s0["cls"]), "rarity": 0, "ilvl": 3},
+			{"slot": "offhand", "cls": String(s0["cls"]), "rarity": 2, "ilvl": 5}, {"slot": "armor", "cls": "", "rarity": 0, "ilvl": 2}]:
+		lg.add_item(e)
+	ui._select_tab("soldiers")
+	await frames(6)
+	var tx := _texts(ui.content)
+	check("«Воины»: видна вкладка, воины и новобранцы", (ui.tabs["soldiers"] as Button).visible and tx.contains("Ваши воины") and tx.contains("Новобранцы сегодня")
+		and tx.contains("Тренируется") and tx.contains("Ранен"))
+	await shot("soldiers")
+	ui._gear_pick(int(s0["id"]), "weapon")
+	await frames(6)
+	check("выбор вещи: надетая и запасные", ui.overlay != null and _texts(ui.overlay).contains("Надето") and _texts(ui.overlay).contains("Добротный"))
+	await shot("soldiers_gear")
+	ui._store()
+	await frames(6)
+	check("Склад: продать", ui.overlay != null and _texts(ui.overlay).contains("Склад:") and _texts(ui.overlay).contains("урона"))
+	await shot("soldiers_store")
+	lg.shards = [6, 3, 1, 0, 0]
+	lg.forging = {"slot": "weapon", "cls": "legionary", "rarity": 2, "ilvl": 6, "end": Legion.now() + 3000.0, "total": 14400.0}
+	ui._forge_win()
+	await frames(6)
+	check("Кузница: обломки, ковка, редкости", ui.overlay != null and _texts(ui.overlay).contains("Обломки") and _texts(ui.overlay).contains("Куётся")
+		and _texts(ui.overlay).contains("Легендарный"))
+	await shot("soldiers_forge")
+	lg.forging = {}
+	ui._close_overlay()
+	# мастерские: плитки на «Войсках» (только новая игра), материалы в шапке «Воинов»
+	check("мастерские есть в новой игре", Legion.BUILDING_IDS.has("smelter") and c.unlocked("smelter") == (c.level >= 2))
+	ui._select_tab("troops")
+	await frames(6)
+	check("«Войска»: мастерских в сетке нет — окно не растёт", not _texts(ui).contains("Плавильня"))
+	await shot("troops_cozy")
+	ui._select_tab("soldiers")
+	await frames(4)
+	c.cozy_v = cv
+	ui._select_tab("campaign")

@@ -792,6 +792,10 @@ func _view(u: LegionSim.Unit) -> Dictionary:
 	else:
 		f = LegionFighter.create(u.key, u.size, _seed + u.id * 7919, u.side == "enemy" and Legion.UNITS.has(u.key))
 		world.add_child(f)
+		if u.side == "ally" and u.sid >= 0:     # Легион 2.0: вещи воина светятся цветом редкости
+			for e: Dictionary in setup.get("squad", []):
+				if e is Dictionary and int(e.get("sid", -1)) == u.sid:
+					f.dress_gear(e.get("gear_look", {}))
 	f.visible = true
 	f.position = Vector3(u.x, _h(u.x, u.z), u.z)
 	f.rotation.y = _face_yaw(u, 1.0 if u.side == "ally" else -1.0, 0.0)
