@@ -4787,6 +4787,9 @@ func _click() -> void:
 		if not pk.is_empty():
 			select_person(pk)
 			return
+	# овца, корова, лошадь, ослик, кошка в корзинке, утка на пруду под курсором — подпрыгнет, обернётся, сердечко
+	if tool == "" and _pet_click(_mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()):
+		return
 	# постройку ловит луч по всей модели — щёлкнуть можно и по крыше на фоне неба (земли под курсором нет)
 	if hover == Vector2.INF and not tool in ["", "settle", "bulldoze", "copy", "move", "floor", "upgrade"]:
 		return
@@ -6011,3 +6014,83 @@ func _demo_town() -> void:
 	for id in city.buildings:
 		_show(city.buildings[id])
 	pave_build = true
+
+
+# ---------- щелчок по животному («Уютный Рим», этап 5: «щелчок по животному — реакция») ----------
+
+const PET_PICK_PX := 34.0                 # радиус щелчка на экране при обычном приближении (дальше — меньше)
+var _pet_busy := {}                       # узел → до какого времени (мс) уже прыгает
+
+
+## Животные на виду: из украшений и построек (vis.pets) и утки с лебедями на прудах
+func _pet_nodes() -> Array:
+	var out := []
+	for id in visuals:
+		for n in (visuals[id] as Dictionary).get("pets", []):
+			if is_instance_valid(n) and (n as Node3D).is_visible_in_tree():
+				out.append(n)
+	for sw: Dictionary in swimmers:
+		if sw.has("n") and is_instance_valid(sw["n"]):
+			out.append(sw["n"])
+	return out
+
+
+func _pet_click(mp: Vector2) -> bool:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return false
+	var best: Node3D = null
+	var bd := INF
+	for n: Node3D in _pet_nodes():
+		var p := n.global_position + Vector3(0, 0.35, 0)
+		if cam.is_position_behind(p):
+			continue
+		var sp := cam.unproject_position(p)
+		var dist_k := clampf(30.0 / maxf(1.0, cam.global_position.distance_to(p)), 0.5, 2.0)
+		var d := sp.distance_to(mp)
+		if d < PET_PICK_PX * dist_k and d < bd:
+			bd = d
+			best = n
+	if best == null:
+		return false
+	_pet_react(best, cam)
+	return true
+
+
+## Реакция: подпрыгнуть, повернуться к камере и обратно, над головой — сердечко
+func _pet_react(n: Node3D, cam: Camera3D) -> void:
+	var now := Time.get_ticks_msec()
+	if int(_pet_busy.get(n, 0)) > now:
+		return
+	_pet_busy[n] = now + 900
+	var y0 := n.position.y
+	var r0 := n.rotation.y
+	var to_cam := cam.global_position - n.global_position
+	var face := atan2(to_cam.x, to_cam.z)
+	var tw := n.create_tween()
+	tw.tween_property(n, "rotation:y", r0 + wrapf(face - r0, -PI, PI) * 0.6, 0.15)
+	tw.parallel().tween_property(n, "position:y", y0 + 0.28, 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(n, "position:y", y0, 0.22).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(0.35)
+	tw.tween_property(n, "rotation:y", r0, 0.4)
+	var heart := Label3D.new()
+	heart.text = "♥"
+	heart.font_size = 96
+	heart.pixel_size = 0.004
+	heart.modulate = Color(0.95, 0.3, 0.38)
+	heart.outline_size = 18
+	heart.outline_modulate = Color(1, 1, 1, 0.9)
+	heart.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	heart.no_depth_test = true
+	add_child(heart)
+	heart.global_position = n.global_position + Vector3(0, 0.9, 0)
+	var th := heart.create_tween()
+	th.tween_property(heart, "global_position:y", heart.global_position.y + 0.8, 1.1)
+	th.parallel().tween_property(heart, "modulate:a", 0.0, 1.1).set_delay(0.3)
+	th.tween_callback(heart.queue_free)
+	if sound != null and String(n.name).to_lower().contains("cat"):
+		var p3 := AudioStreamPlayer3D.new()        # кошка мяукает в ответ
+		p3.bus = "SFX"
+		n.add_child(p3)
+		sound.cat(p3)
+		p3.finished.connect(p3.queue_free)
