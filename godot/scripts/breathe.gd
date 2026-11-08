@@ -139,7 +139,7 @@ func _butterfly_tex() -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
-## Бабочки — объёмные: два крыла на тонком тельце машут вверх-вниз (шейдер), у каждой свой взмах и оттенок.
+## Бабочки — объёмная модель (assets/animals/Butterfly.glb): крылья машут вверх-вниз (шейдер), у каждой свой взмах и расцветка.
 ## Размах ~13 см (жители 0,61 м) — мелкие, как настоящие; летают у земли поодиночке, их немного
 func _butterflies() -> GPUParticles3D:
 	var p := GPUParticles3D.new()
@@ -183,25 +183,69 @@ func _butterflies() -> GPUParticles3D:
 	var mesh := _butterfly_mesh()
 	var sm := ShaderMaterial.new()
 	sm.shader = _butterfly_shader()
-	sm.set_shader_parameter("wing", _wing_tex())
 	mesh.surface_set_material(0, sm)
 	p.draw_pass_1 = mesh
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return p
 
 
-## Сетка бабочки: левое и правое крыло (по x от тельца, −1…1), вдоль z — от головы к хвосту; тельце — узкая полоска
+## Сетка бабочки — модель «Butterfly» (sirkitree, CC BY 3.0, assets/animals/LICENSE.txt): все её части — в одну сетку
+## с цветами вершин (цвета её материалов), повёрнута так, что размах — по x (−1…1), тельце — вдоль z, спина — вверх (y).
+## Нет файла — запасная простая (два крыла)
+static var _bf_mesh: ArrayMesh
+
+
 func _butterfly_mesh() -> ArrayMesh:
+	if _bf_mesh != null:
+		return _bf_mesh
+	var path := "res://assets/animals/Butterfly.glb"
+	if not ResourceLoader.exists(path):
+		return _butterfly_mesh_simple()
+	var root := (load(path) as PackedScene).instantiate() as Node3D
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var span := 0.0
+	var parts := []
+	for mi: MeshInstance3D in root.find_children("*", "MeshInstance3D", true, false):
+		var xf := Citizen._rel(mi, root)
+		for si in mi.mesh.get_surface_count():
+			var mat := mi.get_active_material(si)
+			var col := Color(1, 1, 1)
+			if mat is StandardMaterial3D:
+				col = (mat as StandardMaterial3D).albedo_color
+			parts.append([mi.mesh.surface_get_arrays(si), xf, col])
+			var vs: PackedVector3Array = mi.mesh.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
+			for v in vs:
+				span = maxf(span, absf((xf * v).z))
+	var k := 1.0 / maxf(0.001, span)
+	for e: Array in parts:
+		var arr: Array = e[0]
+		var xf: Transform3D = e[1]
+		var vs: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var ns: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var idx = arr[Mesh.ARRAY_INDEX]
+		var order: Array = range(vs.size()) if idx == null else Array(idx)
+		for vi: int in order:
+			var v := xf * vs[vi]
+			var n := (xf.basis * ns[vi]).normalized() if ns.size() > vi else Vector3.UP
+			st.set_color(e[2])
+			st.set_normal(Vector3(n.z, n.x, -n.y))
+			st.add_vertex(Vector3(v.z, v.x, -v.y) * k)
+	root.free()
+	_bf_mesh = st.commit()
+	return _bf_mesh
+
+
+## Запасная сетка: левое и правое крыло (по x от тельца, −1…1), вдоль z — от головы к хвосту
+func _butterfly_mesh_simple() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for sd: float in [-1.0, 1.0]:
 		var q := [Vector3(0.0, 0, -0.75), Vector3(sd, 0, -0.75), Vector3(sd, 0, 0.75), Vector3(0.0, 0, 0.75)]
-		var uv := [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]
-		for k: int in [0, 1, 2, 0, 2, 3]:
+		for kk: int in [0, 1, 2, 0, 2, 3]:
+			st.set_color(Color("f0a83a"))
 			st.set_normal(Vector3.UP)
-			st.set_uv(uv[k])
-			st.add_vertex(q[k])
-	st.set_normal(Vector3.UP)
+			st.add_vertex(q[kk])
 	return st.commit()
 
 
@@ -210,24 +254,28 @@ func _butterfly_shader() -> Shader:
 	sh.code = """
 shader_type spatial;
 render_mode cull_disabled, diffuse_lambert, specular_disabled;
-uniform sampler2D wing : source_color, filter_linear_mipmap;
-varying float side;
+varying vec3 tint;
 void vertex() {
-	float ph = fract(sin(float(INSTANCE_ID) * 12.9898) * 43758.5453) * 6.2832;
-	float sp = 17.0 + fract(float(INSTANCE_ID) * 0.618) * 6.0;
-	// взмах: крылья то почти сомкнуты над спиной, то раскрыты чуть ниже горизонта
+	float id = float(INSTANCE_ID);
+	float ph = fract(sin(id * 12.9898) * 43758.5453) * 6.2832;
+	float sp = 17.0 + fract(id * 0.618) * 6.0;
+	// взмах: крылья то почти сомкнуты над спиной, то раскрыты чуть ниже горизонта; тельце (|x| мал) почти не движется
 	float a = 0.55 + 0.75 * sin(TIME * sp + ph);
 	float x = VERTEX.x;
-	VERTEX = vec3(x * cos(a), abs(x) * sin(a), VERTEX.z);
+	VERTEX = vec3(x * cos(a), VERTEX.y + abs(x) * sin(a), VERTEX.z);
 	VERTEX *= smoothstep(0.0, 1.0, COLOR.a);
 	VERTEX.y += 0.06 * sin(TIME * sp * 0.5 + ph);
-	side = x;
+	// расцветка: синие части крыльев модели — в цвет этой бабочки (синяя, монарх, лимонная, белянка)
+	int v = int(mod(id, 4.0));
+	vec3 pal = v == 0 ? vec3(0.25, 0.62, 0.95) : (v == 1 ? vec3(0.95, 0.48, 0.1) : (v == 2 ? vec3(1.0, 0.86, 0.25) : vec3(0.96, 0.95, 0.88)));
+	vec3 c = COLOR.rgb;
+	float blue = smoothstep(0.08, 0.25, c.b - max(c.r, c.g * 0.8));
+	float lum = dot(c, vec3(0.3, 0.5, 0.2));
+	tint = mix(c, pal * clamp(lum * 1.6, 0.5, 1.2), blue);
 }
 void fragment() {
-	vec4 t = texture(wing, UV);
-	if (t.a < 0.5) { discard; }
-	ALBEDO = mix(t.rgb, t.rgb * COLOR.rgb * 1.15, t.g > t.b ? 1.0 : 0.0);
-	BACKLIGHT = vec3(0.35);
+	ALBEDO = tint;
+	BACKLIGHT = vec3(0.3);
 	ROUGHNESS = 0.9;
 }
 """
