@@ -1223,6 +1223,7 @@ func soldier_stats(s: Dictionary, type: String) -> Dictionary:
 		st["heal_k"] = 1.0 + float(sb["heal"])
 	for k: String in sb["b4"]:
 		st["set_" + k] = true
+	_apply_talents(st, s)
 	st["sid"] = int(s["id"])
 	st["sname"] = String(s["name"])
 	# облик в 3D-бою: редкость надетых вещей (оружие, щит, шлем, доспех) — LegionFighter.dress_gear
@@ -1234,6 +1235,74 @@ func soldier_stats(s: Dictionary, type: String) -> Dictionary:
 	if not look.is_empty():
 		st["gear_look"] = look
 	return st
+
+
+## Таланты воина (этап 6) — поверх чисел бойца
+func _apply_talents(st: Dictionary, s: Dictionary) -> void:
+	var tl := Soldiers.talents_of(s)
+	if tl.is_empty():
+		return
+	var vs: Dictionary = (st.get("vs", {}) as Dictionary).duplicate()
+	for T: Dictionary in tl:
+		if T.has("atk"):
+			st["atk"] = roundi(float(st["atk"]) * (1.0 + float(T["atk"])))
+		if T.has("hp"):
+			st["hp"] = roundi(float(st["hp"]) * (1.0 + float(T["hp"])))
+		if T.has("armor"):
+			st["armor"] = float(st["armor"]) + float(T["armor"])
+		if T.has("rate"):
+			st["rate"] = float(st["rate"]) * (1.0 - float(T["rate"]))
+		if T.has("range"):
+			st["range"] = float(st["range"]) + float(T["range"])
+		for tag in (T.get("vs", {}) as Dictionary):
+			vs[tag] = float(vs.get(tag, 1.0)) * float(T["vs"][tag])
+		if T.has("set"):
+			st["set_" + String(T["set"])] = true
+	st["vs"] = vs
+
+
+## Выбрать талант: ступень tier (0…4), choice 0 или 1 ("" — можно, иначе почему нет)
+func can_talent(sid: int, tier: int, choice: int) -> String:
+	var s := soldier(sid)
+	if s.is_empty() or tier < 0 or tier >= Soldiers.TALENT_RANKS.size() or choice < 0 or choice > 1:
+		return "Нет такого таланта"
+	if int(s.get("rank", 0)) < int(Soldiers.TALENT_RANKS[tier]):
+		return "Откроется на ранге «%s»" % Soldiers.rank_name(int(Soldiers.TALENT_RANKS[tier]))
+	var tl: Array = s.get("tal", [])
+	if tier < tl.size() and int(tl[tier]) >= 0:
+		return "Уже выбран — сбросить можно за Славу"
+	return ""
+
+
+func set_talent(sid: int, tier: int, choice: int) -> bool:
+	if can_talent(sid, tier, choice) != "":
+		return false
+	var s := soldier(sid)
+	var tl: Array = (s.get("tal", []) as Array).duplicate()
+	while tl.size() < Soldiers.TALENT_RANKS.size():
+		tl.append(-1)
+	tl[tier] = choice
+	s["tal"] = tl
+	changed.emit()
+	return true
+
+
+func can_reset_talents(sid: int) -> String:
+	var s := soldier(sid)
+	if s.is_empty() or Soldiers.talents_of(s).is_empty():
+		return "Талантов ещё нет"
+	if glory < Soldiers.TALENT_RESET:
+		return "Нужно %d Славы" % Soldiers.TALENT_RESET
+	return ""
+
+
+func reset_talents(sid: int) -> bool:
+	if can_reset_talents(sid) != "":
+		return false
+	glory -= Soldiers.TALENT_RESET
+	soldier(sid)["tal"] = []
+	changed.emit()
+	return true
 
 
 func _army_squad() -> Array:

@@ -745,6 +745,20 @@ func _soldiers(c: City, lg: Legion, ui) -> void:
 		and tx.contains("Тренируется") and tx.contains("Ранен"))
 	check("«Воины»: строка набора «Галльский 2/4»", tx.contains("Галльский 2/4"))
 	await shot("soldiers")
+	# этап 6: таланты — у воина 3-го ранга открыт первый; «Рубака» (+8% урона) у легионера или первый вариант у других
+	var s2: Dictionary = lg.soldiers[2]
+	check("таланты: у воина 3-го ранга можно выбрать один", Soldiers.talent_free(s2) == 1 and lg.can_talent(int(s2["id"]), 1, 0) != "")
+	var tt := String(Soldiers.CLASS_IDS[0]) if not Soldiers.TALENTS.has(String(s2["cls"])) else String(s2["cls"])
+	var a0 := float(lg.soldier_stats(s2, String(Soldiers.CLASSES[tt]["units"][0]))["atk"])
+	check("таланты: выбран", lg.set_talent(int(s2["id"]), 0, 1 if tt == "legionary" else 0) and Soldiers.talents_of(s2).size() == 1)
+	if tt == "legionary":
+		var a1 := float(lg.soldier_stats(s2, "legionary")["atk"])
+		check("таланты: «Рубака» прибавил урон (%d → %d)" % [a0, a1], a1 > a0)
+	ui._talents_win(int(s2["id"]))
+	await frames(6)
+	check("окно талантов: пять ступеней", ui.overlay != null and _texts(ui.overlay).contains("Ранг 10") and _texts(ui.overlay).contains("Таланты:"))
+	await shot("soldiers_talents")
+	ui._close_overlay()
 	ui._gear_pick(int(s0["id"]), "weapon")
 	await frames(6)
 	check("выбор вещи: надетая и запасные", ui.overlay != null and _texts(ui.overlay).contains("Надето") and _texts(ui.overlay).contains("Добротный"))
