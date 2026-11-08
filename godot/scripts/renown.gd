@@ -20,6 +20,37 @@ const HAPPY_DIV := 4.0
 const SHOW_TYPES := ["theatre", "odeon", "colosseum", "circus_fl", "arena", "ludus", "thermae", "baths"]
 
 
+## Римские праздники по игровому календарю (год — CAL_YEAR игровых дней): в свой день город сам празднует сутки —
+## наряд улиц и сбор горожан, как на «Играх в честь богов», счастье, известность ×FEST_RENOWN; у каждого праздника —
+## своя добавка (bonus): Луперкалии — повозка с семьями чаще, Флоралии — красота считается вдвое, Виналии — туристы
+## платят больше, Сатурналии — подарок казне
+const CAL_YEAR := 24
+const CAL_FESTS := [
+	{"day": 3, "id": "lupercalia", "name": "Луперкалии", "bonus": "Повозка с новыми семьями приходит чаще."},
+	{"day": 9, "id": "floralia", "name": "Флоралии", "bonus": "Праздник цветов: украшения дают вдвое больше известности."},
+	{"day": 15, "id": "vinalia", "name": "Виналии", "bonus": "Праздник молодого вина: гости гостиниц платят на треть больше."},
+	{"day": 21, "id": "saturnalia", "name": "Сатурналии", "bonus": "Время подарков: казна получает подарок от горожан."},
+]
+const FEST_RENOWN := 1.5
+
+
+## Праздник календаря в день d ({} — обычный день)
+static func cal_fest(d: int) -> Dictionary:
+	for f: Dictionary in CAL_FESTS:
+		if posmod(d, CAL_YEAR) == int(f["day"]):
+			return f
+	return {}
+
+
+## Ближайший праздник после дня d: [праздник, через сколько дней]
+static func next_fest(d: int) -> Array:
+	for k in range(1, CAL_YEAR + 1):
+		var f := cal_fest(d + k)
+		if not f.is_empty():
+			return [f, k]
+	return [{}, 0]
+
+
 static func on(city) -> bool:
 	return city != null and int(city.get("cozy_v")) >= 1
 
@@ -71,10 +102,24 @@ static func hour_parts(city) -> Array:
 			sights += float(Tourism.SIGHTS[base])
 	var happy := maxf(0.0, (float(city.stats.get("happy", 0)) - HAPPY_FROM) / HAPPY_DIV)
 	var out := []
-	for e: Array in [["Туристы", tour], ["Зрелища", show], ["Красота", minf(DECO_MAX, deco / DECO_DIV)], ["Достопримечательности", sights / SIGHT_DIV], ["Счастье горожан", happy]]:
+	var fid := String(city.cal_fest_id) if city.fest_left > 0 else ""
+	var deco_k := 2.0 if fid == "floralia" else 1.0
+	for e: Array in [["Туристы", tour], ["Зрелища", show], ["Красота", minf(DECO_MAX * deco_k, deco * deco_k / DECO_DIV)], ["Достопримечательности", sights / SIGHT_DIV], ["Счастье горожан", happy]]:
 		if float(e[1]) > 0.005:
 			out.append(e)
+	if fid != "":
+		var s := 0.0
+		for e: Array in out:
+			s += float(e[1])
+		out.append(["Праздник: %s" % cal_fest_name(fid), s * (FEST_RENOWN - 1.0)])
 	return out
+
+
+static func cal_fest_name(id: String) -> String:
+	for f: Dictionary in CAL_FESTS:
+		if String(f["id"]) == id:
+			return String(f["name"])
+	return ""
 
 
 static func hour_gain(city) -> float:

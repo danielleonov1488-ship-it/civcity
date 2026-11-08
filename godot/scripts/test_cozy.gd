@@ -550,6 +550,21 @@ func _renown() -> void:
 	var c0 := City.new(Land.new())
 	c0.stats["happy"] = 90
 	_check(Renown.hour_gain(c0) == 0.0 and Renown.title_happy(c0) == 0, "старый город — без известности")
+	# праздник календаря: в свой день город празднует сам, Сатурналии — подарок казне
+	c.day = 21
+	c.fest_left = 0
+	var m0 := c.money
+	c.money = 1000.0
+	c.cal_fest_tick()
+	_check(c.fest_left > 0 and c.cal_fest_id == "saturnalia" and c.money > 1000.0, "Сатурналии начались сами, подарок казне: %d" % int(c.money - 1000.0))
+	var gp := Renown.hour_parts(c)
+	_check(String(gp[-1][0]).begins_with("Праздник"), "в праздник известность растёт быстрее (%s)" % str(gp[-1]))
+	c.cal_fest_tick()
+	_check(c.cal_fest_day == 21, "праздник — раз в свой день")
+	c.money = m0
+	c0.day = 21
+	c0.cal_fest_tick()
+	_check(c0.fest_left == 0, "старый город — праздников календаря нет")
 
 
 func _odeon() -> void:

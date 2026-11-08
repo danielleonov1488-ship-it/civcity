@@ -77,6 +77,8 @@ var econ := 0
 ## «Уютный Рим» (docs/PLAN_COZY.md, этап 1): 0 — прежние правила, 1 — новая игра после переработки: ранги за качество
 ## и меньше жителей (Balance.LEVELS), повозка в большом городе реже, «Большой город» отнимает счастье (Balance)
 var cozy_v := 0
+var cal_fest_id := ""                 # идёт праздник календаря (Renown.CAL_FESTS; "" — нет или игры устроил игрок)
+var cal_fest_day := -1                # в какой день праздник календаря уже начинался
 var renown := 0.0                     # известность города (Renown; новая игра): растёт без конца, за неё — титулы
 var clock_h := 0                       # игровых часов с начала города (сохраняется; для походов этапа 3)
 var visits := {}                       # «Уютный Рим», этап 3: дом → {вид похода: clock_h} (Balance.VISIT_BONUS)
@@ -3091,12 +3093,39 @@ func festival() -> bool:
 	return true
 
 
+## Праздник календаря начинается сам в свой день (новая игра; если игры уже не идут)
+func cal_fest_tick() -> void:
+	if not Renown.on(self) or cal_fest_day == day:
+		return
+	var f := Renown.cal_fest(day)
+	if f.is_empty():
+		return
+	cal_fest_day = day
+	if fest_left > 0:
+		return
+	fest_left = int(Defs.FESTIVAL["hours"])
+	cal_fest_id = String(f["id"])
+	if cal_fest_id == "saturnalia":
+		var gift := roundf(maxf(500.0, float(stats.get("income", 0.0)) * 6.0) / 10.0) * 10.0
+		money = minf(money_cap(), money + gift)
+		flow("reward", gift)
+	_event("Сегодня %s! Город празднует сутки: улицы в гирляндах, счастье всем домам +%d%%, известность растёт быстрее. %s" % [f["name"], int(Defs.FESTIVAL["happy"]), f["bonus"]], "laurels")
+	compute(true)
+	festival_changed.emit(true)
+
+
 ## Час праздника (sim_day): игры идут — на час меньше; кончились — тихая запись в колокольчик
 func _fest_hour() -> void:
 	fest_cd = maxi(0, fest_cd - 1)
 	if fest_left <= 0:
 		return
 	fest_left -= 1
+	if fest_left == 0 and cal_fest_id != "":
+		_quiet("%s окончены — до следующего праздника." % Renown.cal_fest_name(cal_fest_id), "laurels")
+		cal_fest_id = ""
+		compute(true)
+		festival_changed.emit(false)
+		return
 	if fest_left == 0:
 		_quiet("Игры в честь богов окончены. Новые можно устроить через %d ч — в карточке почтовой станции" % fest_cd, "laurels")
 		compute(true)
@@ -3559,7 +3588,7 @@ func save_data() -> Dictionary:
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n, "goals_vis": goals_vis,
-		"econ_v": econ, "cozy_v": cozy_v, "clock_h": clock_h, "renown": renown, "visits": visits, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
+		"econ_v": econ, "cozy_v": cozy_v, "clock_h": clock_h, "renown": renown, "cal_fest_id": cal_fest_id, "cal_fest_day": cal_fest_day, "visits": visits, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
 
@@ -3610,6 +3639,8 @@ func load_data(d: Dictionary) -> void:
 	cozy_v = int(d.get("cozy_v", 0))
 	clock_h = int(d.get("clock_h", 0))
 	renown = float(d.get("renown", 0.0))
+	cal_fest_id = String(d.get("cal_fest_id", ""))
+	cal_fest_day = int(d.get("cal_fest_day", -1))
 	visits = {}
 	var vd: Dictionary = d.get("visits", {})
 	for k in vd:

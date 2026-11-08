@@ -1369,6 +1369,12 @@ func _tip_renown(v: VBoxContainer) -> void:
 		_tip_text(v, "Растёт каждый час (+%s):" % String.num(Renown.hour_gain(c), 1).replace(".", ","), C_INK, 14, true)
 		for e: Array in parts:
 			_tip_row(v, "", String(e[0]), "+" + String.num(float(e[1]), 1).replace(".", ","), C_GOOD)
+	if c.fest_left > 0 and c.cal_fest_id != "":
+		_tip_text(v, "Сегодня — %s: город празднует, известность растёт быстрее." % Renown.cal_fest_name(c.cal_fest_id), C_GOOD, 14, true)
+	else:
+		var nf := Renown.next_fest(c.day)
+		if not (nf[0] as Dictionary).is_empty():
+			_tip_text(v, "Ближайший праздник — %s, через %d %s. %s" % [nf[0]["name"], int(nf[1]), _plural(int(nf[1]), "день", "дня", "дней"), nf[0]["bonus"]], C_INK, 14)
 	_tip_text(v, "Туристы гостиниц, зрелища, украшения, достопримечательности и счастье горожан прибавляют известность — расти можно без конца, даже когда город уже Вечный.", C_SOFT, 13)
 
 
@@ -6194,6 +6200,8 @@ func refresh() -> void:
 	if renown_pill != null:
 		renown_pill.visible = Renown.on(c)
 		lbl_renown.text = "%s · %s" % [Renown.title_of(c.renown), fmt(int(c.renown))]
+		if c.fest_left > 0 and c.cal_fest_id != "":
+			lbl_renown.text += " · " + Renown.cal_fest_name(c.cal_fest_id)
 	lbl_day.text = "День %d" % (c.day + 1)
 	show_city_name()
 	lbl_money.text = "%s / %s" % [fmt(c.money), fmt(c.money_cap())]
