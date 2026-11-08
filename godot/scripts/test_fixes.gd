@@ -341,6 +341,7 @@ func _run() -> void:
 	_unlockable(false)
 	_unlockable(true)
 	_bench_face()
+	_pave_under()
 
 	print("FIX DONE fails=%d" % fails)
 
@@ -468,3 +469,39 @@ func _unlockable(late: bool) -> void:
 	if n0 < 5:
 		bad.append("на Стоянке видов украшений %d < 5" % n0)
 	check(bad.is_empty(), "%s: всё, что просят просьбы, заказы и истории, открыто к своему уровню (видов на Стоянке %d)" % ["новая игра" if late else "живой город", n0], bad)
+
+
+## Большая постройка (амфитеатр): под ней мостовая и утоптанная кайма — между круглой стеной и улицей нет травы;
+## снесли — земля снова трава
+func _pave_under() -> void:
+	var c: City = game.city
+	var L: Land = game.land
+	c.research["colosseum"] = true
+	var b := {}
+	for ring in range(6, 30):
+		for k in 12:
+			var p := Land.START + Vector2(cos(TAU * k / 12.0), sin(TAU * k / 12.0)) * ring * 4.0
+			var chk := c.check_place("colosseum", p, 0.0, 0, 0, -2)
+			if chk["err"] == "" or chk["err"] == "Нужна дорога у входа":
+				b = c.place("colosseum", p, 0.0, 0, 0, true)
+				break
+		if not b.is_empty():
+			break
+	check(not b.is_empty(), "амфитеатр встал")
+	if b.is_empty():
+		return
+	var cells: PackedInt32Array = b["cells"]
+	var plaza := 0
+	for k in cells:
+		plaza += 1 if int(L.kind[k]) == Land.Kind.PLAZA else 0
+	var ring_w := 0
+	for k in cells:
+		for k2: int in [k + 2, k - 2, k + 2 * Land.N, k - 2 * Land.N]:
+			if int(L.occ[k2]) == 0 and int(L.wear[k2]) > 0:
+				ring_w += 1
+	var saved := cells.duplicate()
+	c.remove(b, false, true)
+	var back := 0
+	for k in saved:
+		back += 1 if int(L.kind[k]) == Land.Kind.PLAZA else 0
+	check(plaza > cells.size() * 0.8 and ring_w > 50 and back == 0, "амфитеатр: под ним мостовая (%d из %d клеток), кайма вокруг (%d), снесли — мостовой нет (%d)" % [plaza, cells.size(), ring_w, back])

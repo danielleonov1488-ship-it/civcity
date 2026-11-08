@@ -166,6 +166,20 @@ func _life() -> void:
 	game._set_hour(10.05)
 	ok = await _until(func(): return T["phase"] == "idle" and (T["who"] as Array).is_empty() and not T.has("priest_cp"), 60.0)
 	check(ok, "служба кончилась — все разошлись, жрец ушёл")
+	# школа: утром дети на скамьях, учитель перед ними
+	var sc := _place_venue("school")
+	await frames(10)
+	var S: Dictionary = sp.venues.get(int(sc.get("id", -1)), {})
+	check(not S.is_empty() and (S["lay"]["seats"] as Array).size() >= 8 and (S["lay"] as Dictionary).has("priest"),
+		"школа: мест на скамьях %d, учитель" % (0 if S.is_empty() else (S["lay"]["seats"] as Array).size()))
+	if not S.is_empty():
+		sp.force(int(sc["id"]), "show", 1.0, true)
+		var kids := 0
+		for s: Dictionary in S["who"]:
+			kids += 1 if float((s["cp"] as Dictionary)["s"]) < Crowd.SIZE * 0.9 else 0
+		check((S["who"] as Array).size() >= 8 and kids == (S["who"] as Array).size(), "на уроке — одни дети: %d из %d" % [kids, (S["who"] as Array).size()])
+		sp.force(int(sc["id"]), "")
+		game.city.remove(sc, false)
 	var gone := [int(t["id"]), int(th["id"])]
 	game.city.remove(t, false)
 	game.city.remove(th, false)
