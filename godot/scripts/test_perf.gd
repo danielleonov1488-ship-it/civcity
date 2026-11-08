@@ -576,6 +576,8 @@ func _freeze() -> void:
 	game.hud.visible = false
 	game.rig.cine = true                      # камера стоит, подсветки инструмента и участка под мышью нет
 	_hidden = [game.people, game.actors_root]
+	if game.has_node("Tourism"):
+		_hidden.append(game.get_node("Tourism"))      # гуляющие гости гостиниц (новая игра)
 	for s in game.swimmers:
 		_hidden.append(s["n"])
 	for n in game.find_children("*", "", true, false):

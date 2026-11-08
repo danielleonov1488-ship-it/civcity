@@ -211,6 +211,8 @@ func unlocked(type: String) -> bool:
 		return legion.bosses() >= int(u.substr(4))
 	if u.begins_with("rank:"):                # здания Легиона (Д10): с уровня города, когда Легион собран
 		return level >= int(u.substr(5)) and legion.window_open()
+	if u.begins_with("tour:"):                # гостиница («Уютный Рим», этап 6): с уровня города, только в новой игре
+		return level >= int(u.substr(5)) and cozy_v >= 1
 	if u.begins_with("army:"):                # Легион 2.0 (мастерские): то же, но только в новой игре
 		return level >= int(u.substr(5)) and legion.window_open() and legion.army_on()
 	if u.begins_with("trophy:"):              # трофей провинции: все 30 звёзд её боёв
@@ -1645,7 +1647,7 @@ func sim_day() -> void:
 				rpd += rp_per_hour(b["type"]) * float(b["staff"])
 				upkeep += float(d["cost"]) * Defs.UPKEEP + wage() * hired_of(b)     # писцам и учителям тоже платят
 				wages += wage() * hired_of(b)
-			"shop", "monument", "store", "farm", "military":
+			"shop", "monument", "store", "farm", "military", "inn":
 				upkeep += float(d["cost"]) * Defs.UPKEEP + wage() * hired_of(b)
 				wages += wage() * hired_of(b)
 	if not center().is_empty():
@@ -1659,7 +1661,11 @@ func sim_day() -> void:
 	stats["rp_lost"] = maxf(0.0, rp + rpd - maxf(rp, rp_cap()))
 	# казна в минус не уходит: не хватает на жалованье и содержание — платим, сколько есть, остальное не плачено
 	# (жители обижены — Defs.UNPAID_HAPPY в счастье домов, советник объяснит, что делать; в долг город не живёт)
-	var left := money + income - upkeep
+	var tour := Tourism.hour_income(self)        # гости гостиниц («Уютный Рим», этап 6)
+	if tour > 0.0:
+		flow("tour", tour)
+	stats["tour"] = tour
+	var left := money + income + tour - upkeep
 	var rest_day := int(stories.get("tax_off", 0)) > 0   # Сатурналии, день отдыха: налогов нет по выбору игрока
 	stats["unpaid"] = maxf(0.0, -left)
 	if left < 0.0:

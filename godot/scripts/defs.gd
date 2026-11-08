@@ -42,7 +42,7 @@ const TAX_LVL := 2
 ## (налоги, жалованье, содержание, стройка, игры, земля, Легион, награды, прочее, не уместилось в казну, казна, жители, счастье)
 const HIST_N := 48
 ## unpaid — не плачено из жалованья и содержания (казна пуста, в минус она не уходит)
-const HIST_KEYS := ["tax", "wage", "upkeep", "build", "fest", "land", "legion", "reward", "other", "lost", "money", "pop", "happy", "unpaid"]
+const HIST_KEYS := ["tax", "wage", "upkeep", "build", "fest", "land", "legion", "reward", "other", "lost", "money", "pop", "happy", "unpaid", "tour"]
 ## Этажи покупает игрок инструментом «Этаж» (U) или в карточке дома (как в Town to City): нужен открытый этаж, полный дом и счастье
 const FLOOR_HAPPY := {2: 65, 3: 75}   # счастье дома, с которого можно надстроить этаж
 ## третий этаж у патрициев — только у городского домуса (PAT_TOWN): не дешевле второго
@@ -194,6 +194,9 @@ const B := {
 		"desc": "Печёт хлеб из пшеницы с полей. Нужны склад рядом и пшеничное поле."},
 	"thermopolium": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Термополий", "cost": 580, "bonus": 9, "range": 4, "cap": 4,
 		"jobs": {"artisans": 2}, "store": true, "unlock": "thermopolium", "icon": "meal", "desc": "Римская закусочная: горячая похлёбка из кувшинов в прилавке."},
+	# «Уютный Рим», этап 6: гостиница — гости смотрят достопримечательности рядом и платят (Tourism; только новая игра)
+	"mansio": {"kind": "inn", "cat": "commerce", "sub": "food", "name": "Гостиница", "cost": 2400, "jobs": {"plebs": 2, "artisans": 1},
+		"unlock": "tour:4", "icon": "keys", "desc": "Постоялый двор для путников: комнаты наверху, конюшня и повозка во дворе. Гости гуляют по достопримечательностям рядом и платят городу."},
 	"taberna": {"kind": "shop", "cat": "commerce", "sub": "food", "name": "Таверна", "cost": 1100, "bonus": 11, "range": 5, "cap": 5,
 		"jobs": {"artisans": 3}, "store": true, "unlock": "taberna", "icon": "mug", "desc": "Столы под навесом, вино и жаркое. Любимое место горожан."},
 	# одежда
@@ -906,6 +909,8 @@ static func unlock_text(id: String) -> String:
 		return "победой Легиона над боссом «%s»" % Legion.boss_name(int(id.substr(4)))
 	if id.begins_with("rank:"):
 		return "на уровне «%s» (когда Легион открыт)" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
+	if id.begins_with("tour:"):
+		return "на уровне «%s»" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
 	if id.begins_with("army:"):
 		return "на уровне «%s» (когда Легион открыт)" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
 	if id.begins_with("trophy:"):
@@ -932,7 +937,7 @@ static func unlock_text(id: String) -> String:
 static func unlock_short(id: String) -> String:
 	if id.begins_with("boss"):
 		return "Победа над боссом"
-	if id.begins_with("rank:") or id.begins_with("army:"):
+	if id.begins_with("rank:") or id.begins_with("army:") or id.begins_with("tour:"):
 		return "Уровень «%s»" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
 	if id.begins_with("trophy:"):
 		return "%d звёзд похода" % (Legion.stages() * 3)

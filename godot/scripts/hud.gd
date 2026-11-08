@@ -2590,8 +2590,8 @@ func _types_in(cat: String, sub := "") -> Array:
 			continue
 		if cat == "decor" and sub != "" and Defs.decor_sub(type) != sub:
 			continue
-		if String(d.get("unlock", "")).begins_with("army:") and game != null and int(game.city.cozy_v) < 1:
-			continue                          # мастерские Легиона 2.0 — только в новой игре
+		if (String(d.get("unlock", "")).begins_with("army:") or String(d.get("unlock", "")).begins_with("tour:")) and game != null and int(game.city.cozy_v) < 1:
+			continue                          # мастерские Легиона 2.0 и гостиница — только в новой игре
 		out.append(type)
 	return out
 
@@ -2892,6 +2892,8 @@ func _card_tip(type: String) -> String:
 		"farm", "store":
 			if d.has("jobs"):
 				t += "\n\nРабочие: %s" % _jobs_text(d)
+	if d["kind"] == "inn":
+		t += "\n\nГости приходят смотреть достопримечательности в %d м: храм, форум, арку, акведук, маяк, театр, термы, фонтаны. Чем их больше и чем они краше — тем больше гостей и денег.\nРабочие: %s" % [int(Tourism.TOUR_R), _jobs_text(d)]
 	# этап 5, волна 2: Слава в цене и каждый день, одна на город, у воды, без дороги
 	if d["kind"] == "monument" and d.has("jobs"):
 		t += "\nРабочие: %s" % _jobs_text(d)
@@ -4256,6 +4258,21 @@ func _fill_info_body() -> void:
 					"road": "Нет дороги у входа", "staff": "Не работает: " + st_txt}
 				var wl := _wrap(_label(why.get(b.get("why", "staff"), "Не работает"), 15, true, C_BAD), cw)
 				info_box.add_child(wl)
+		"inn":
+			var ti := Tourism.inn_info(c, b)
+			tv.add_child(_label("Гостей в сутки: %d" % int(ti["guests"]), 14, true, C_SOFT))
+			info_box.add_child(_row("coins", "Доход от гостей", "+%s в час" % String.num(float(ti["per_h"]), 1).replace(".", ","), C_GOOD))
+			info_box.add_child(_row("star", "Достопримечательности рядом", "%d из %d" % [roundi(float(ti["score"])), int(Tourism.TOUR_MAX)]))
+			var names := []
+			for e: Array in (ti["list"] as Array).slice(0, 5):
+				names.append(String(e[0]))
+			var tip := ("Гости ходят смотреть: %s." % ", ".join(names)) if not names.is_empty() else "Рядом нечего смотреть — поставьте в %d м храм, арку, фонтан, театр или акведук: гостей станет больше." % int(Tourism.TOUR_R)
+			if float(ti["decor"]) > 0.0:
+				tip += " Украшения вокруг тоже радуют гостей."
+			info_box.add_child(_wrap(_label(tip, 14, false, C_SOFT), cw))
+			info_box.add_child(_hire_row(b))
+			if not b.get("active", true):
+				info_box.add_child(_wrap(_label("Не работает: " + c.idle_text(b), 15, true, C_BAD), cw))
 		"monument":
 			info_box.add_child(_row("happy", "Счастье всем вокруг", "+%d%%" % int(d["bonus"]), C_GOOD))
 			info_box.add_child(_row("arrow", "Дальность", Defs.WORD[int(d["range"])]))
@@ -5665,10 +5682,10 @@ func day_line() -> String:
 	var c: City = game.city
 	var n := mini(24, c.hist.size())
 	var names := {"tax": "налоги", "wage": "жалованье", "upkeep": "содержание", "build": "стройка", "fest": "игры", "land": "земля",
-		"legion": "Легион", "reward": "награды", "other": "дороги и прочее"}
+		"legion": "Легион", "reward": "награды", "tour": "туристы", "other": "дороги и прочее"}
 	var bits := []
 	var tot := 0
-	for k in ["tax", "wage", "upkeep", "build", "fest", "land", "legion", "reward", "other"]:
+	for k in ["tax", "tour", "wage", "upkeep", "build", "fest", "land", "legion", "reward", "other"]:
 		var s := c.hist_sum(k, n)
 		tot += s
 		if s != 0:

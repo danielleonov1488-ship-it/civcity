@@ -281,6 +281,10 @@ func _ready() -> void:
 	spectacle.name = "Spectacle"
 	add_child(spectacle)
 	spectacle.setup(self, args)
+	var tour := Tourism.new()                 # гости гостиниц гуляют по достопримечательностям («Уютный Рим», этап 6)
+	tour.name = "Tourism"
+	add_child(tour)
+	tour.setup(self)
 	var br := Breathe.new()                   # «город дышит»: бабочки, светлячки, птицы («Уютный Рим», этап 5)
 	br.name = "Breathe"
 	add_child(br)
