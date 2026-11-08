@@ -1186,8 +1186,8 @@ static func _odeon(b: Bp) -> void:
 	var cz := 1.5
 	var s := 0.25
 	var c := Vector3(0, 0.0, cz)
-	_cavea(b, c, s, 1.55)
-	_cavea_arcade(b, c, s, 1.55)
+	_cavea(b, c, s, 1.85)
+	_cavea_arcade(b, c, s, 1.85)
 	_marble(b, Vector3(0, 0, cz - 0.6), Vector3(2.4, 0.04, 1.2))
 	# сцена
 	_marble(b, Vector3(0, 0, 3.45), Vector3(9.0, 0.5, 2.3))
@@ -1221,7 +1221,7 @@ static func _odeon(b: Bp) -> void:
 	_cypress(b, Vector3(5.6, 0, -2.4), 0.48)
 	# мачты на краю трибун и два паруса велария между ними
 	var r := 22.5 * s
-	var rim := 4.58 * s * 1.55
+	var rim := 4.58 * s * 1.85
 	for k in 3:
 		var a := PI + PI / 4 + k * PI / 4
 		var p := Vector3(cos(a) * (r - 0.1), rim - 0.05, cz + sin(a) * (r - 0.1))
