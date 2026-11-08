@@ -27,6 +27,7 @@ var far_near: Array = []              # пейзаж за краем карты 
 var far_forest: Array = []            # дальние леса до горизонта: на «Очень низкой» не рисуются
 var gfx: Gfx                          # графика: выбор по видеокарте, сторож кадров, счётчик FPS (scripts/gfx.gd)
 var photo: PhotoMode                  # режим фото (P): интерфейс спрятан, наклон, время суток, снимок (scripts/photo_mode.gd)
+var weather: Weather                  # дождь (scripts/weather.gd)
 var clouds: Clouds                    # тени облаков по городу (scripts/clouds.gd)
 var land_mat: ShaderMaterial
 var surf_img: Image
@@ -285,6 +286,10 @@ func _ready() -> void:
 	tour.name = "Tourism"
 	add_child(tour)
 	tour.setup(self)
+	weather = Weather.new()                   # дождь и мокрая земля («Уютный Рим», этап 7; новая игра)
+	weather.name = "Weather"
+	add_child(weather)
+	weather.setup(self)
 	var br := Breathe.new()                   # «город дышит»: бабочки, светлячки, птицы («Уютный Рим», этап 5)
 	br.name = "Breathe"
 	add_child(br)
