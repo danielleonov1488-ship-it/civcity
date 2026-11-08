@@ -203,12 +203,14 @@ func _step(dt: float, sdt: float) -> void:
 		g["d"] = float(g["d"]) + sdt * WALK_SPEED
 		var alive := false
 		for i in ppl.size():
-			var c: Citizen = ppl[i]
-			if not is_instance_valid(c):
-				continue
+			var obj = ppl[i]
+			if not is_instance_valid(obj):
+				continue                          # уже дошёл и ушёл в гостиницу
+			var c: Citizen = obj
 			var at := float(g["d"]) - i * 0.9
 			if at >= float(g["len"]):
 				c.queue_free()
+				ppl[i] = null
 				continue
 			alive = true
 			if at < 0.0:
