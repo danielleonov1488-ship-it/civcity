@@ -1003,6 +1003,46 @@ static func _taberna(b: Bp) -> void:
 	_narrow(b)
 
 
+## Гостиница (mansio, «Уютный Рим», этап 6): трёхэтажный дом с балконами и вывеской, справа — навес-конюшня
+## с яслями и сеном, во дворе повозка путников, мешки и сундуки, скамья у входа
+static func _mansio(b: Bp) -> void:
+	var pal := _pal(b)
+	_hold.clear()
+	_paint(b, pal)
+	b.ground_style = "brick"
+	var bw := _back_win(pal)
+	_box(b, -3.75, 1.25, -5.0, -1.25, [
+		{0: [SHOP, "SM_Bld_Wall_Door_Double_01"], 1: ["SM_Bld_Wall_Window_06"], 3: ["SM_Bld_Wall_Window_06"], 2: [bw, DOOR]},
+		{0: ["SM_Bld_Wall_Window_05", "SM_Bld_Wall_Window_05"], 1: ["SM_Bld_Wall_Window_02"], 3: ["SM_Bld_Wall_Window_02"], 2: ["SM_Bld_Wall_Window_02", "SM_Bld_Wall_Window_02"]},
+		{0: ["SM_Bld_Wall_Window_02", "SM_Bld_Wall_Window_02"], 1: ["SM_Bld_Wall_Window_01"], 3: ["SM_Bld_Wall_Window_01"], 2: ["SM_Bld_Wall_Window_01", "SM_Bld_Wall_Window_01"]}],
+		{"cornice": "SM_Bld_Trim_04", "dark": 1.2})
+	_roof_x(b, -3.75, 1.25, -5.0, -1.25, 3 * FL, 2.0, _topper(pal + 2))
+	_chimney(b, Vector3(-3.0, 3 * FL + 0.4, -4.4))
+	b.add("SM_Bld_Balcony_01", Vector3(-1.25, FL, -1.14), 0.0)
+	b.add("SM_Bld_Balcony_01", Vector3(-1.25, 2 * FL, -1.14), 0.0)
+	_put(b, "SM_Prop_Rug_Drape_01", Vector3(-0.8, 2 * FL + 0.95, -0.25), PI, 0.8, _rug(["03_A", "01_B", "02_C"][pal % 3]))
+	b.add("SM_Prop_FlowerPot_Hanging_0%d" % (4 + pal % 3), Vector3(-3.3, FL + 1.0, -1.12), 0.0, 0.6)
+	b.add("SM_Prop_FlowerPot_Hanging_0%d" % (4 + (pal + 2) % 3), Vector3(0.8, FL + 1.0, -1.12), 0.0, 0.6)
+	_ivy(b, -3.75, 1.25, -5.0, -1.25, 3, 1.88, 1.4, pal + 1)
+	_sign(b, Vector3(0.6, 2.8, -1.11), 0.0, "H", ACCENT[pal], 0.7)
+	# конюшня: навес на столбах, ясли с сеном, бочка воды
+	for c: Vector3 in [Vector3(1.6, 0, -4.8), Vector3(3.6, 0, -4.8), Vector3(1.6, 0, -1.6), Vector3(3.6, 0, -1.6)]:
+		_pole(b, c, 2.5)
+	b.add_xf("SM_Bld_Trellis_Roof_02", Transform3D(Basis(Vector3.UP, PI / 2) * Basis.from_scale(Vector3(1.4, 1.0, 1.0)), Vector3(1.4, 2.5, -5.0)))
+	b.add("SM_Prop_Sack_Stack_01", Vector3(3.2, 0, -4.2), 0.4, 0.8)
+	b.add("SM_Prop_Sack_02", Vector3(2.0, 0, -4.3), 1.2, 0.8)
+	b.add("SM_Prop_Jar_Pile_01", Vector3(3.3, 0, -2.2), 0.0, 0.55)
+	# двор: повозка путников, сундуки и мешки у двери, скамья, фонарь
+	_put(b, "SM_Prop_Cart_01", Vector3(2.6, 0, 0.6), PI / 2 + 0.2, 0.85)
+	b.add("SM_Prop_Cart_01_Insert_02", Vector3(2.6, 0, 0.6), PI / 2 + 0.2, 0.85)
+	b.add("SM_Prop_Sack_04", Vector3(-0.2, 0, -0.6), 0.3, 0.8)
+	b.add("SM_Prop_Sack_05", Vector3(0.3, 0, -0.5), 1.1, 0.8)
+	_put_xf(b, "SM_Prop_Seat_Bench_05", Transform3D(Basis.from_scale(Vector3(0.6, SEAT, 0.8)), Vector3(-2.6, 0, -0.5)))
+	_hanging_lamp(b, Vector3(-0.6, 2.7, -0.9), 0.5)
+	b.door = Vector3(-0.5, 0, 1.6)
+	_narrow(b)
+
+
 # ---------- ремёсла и забавы ----------
 
 ## Фуллоника (прачечная): двухэтажный дом с черепичной крышей и пристройка с кровлей-сушилкой (деревянные перила,

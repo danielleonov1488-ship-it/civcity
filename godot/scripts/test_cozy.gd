@@ -27,6 +27,7 @@ func _ready() -> void:
 	_principia()
 	_traits()
 	_odeon()
+	_tourism()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -489,6 +490,41 @@ func _traits() -> void:
 
 
 ## Одеон: на ступенях есть места (ступени круче — зритель садится: таз на ступени, ступни на ступени ниже)
+## «Уютный Рим», этап 6: гостиница — только в новой игре; гости и доход растут с достопримечательностями рядом;
+## доход — в «Финансах» (строка «туристы»)
+func _tourism() -> void:
+	print("== туризм: гостиница и достопримечательности")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 1e6
+	c.level = 4
+	_check(c.unlocked("mansio") and not City.new(Land.new()).unlocked("mansio"), "гостиница — в новой игре с уровня 4, в старом городе её нет")
+	var inn := c.place("mansio", Land.START, 0.0, 0, 0, true)
+	inn["active"] = true
+	inn["staff"] = 1.0
+	var bare := Tourism.inn_info(c, inn)
+	c.place("temple", Land.START + Vector2(24, 0), 0.0, 0, 0, true)
+	c.place("fountain", Land.START + Vector2(0, 20), 0.0, 0, 0, true)
+	c.place("arch", Land.START + Vector2(-22, 6), 0.0, 0, 0, true)
+	inn["active"] = true                      # без дороги постройка не работает — для расчёта считаем, что работает
+	inn["staff"] = 1.0
+	var rich := Tourism.inn_info(c, inn)
+	_check(float(rich["score"]) > float(bare["score"]) and int(rich["guests"]) > int(bare["guests"]) and float(rich["per_h"]) > float(bare["per_h"]),
+		"достопримечательности рядом: звёзды %d → %d, гостей %d → %d, доход %.1f → %.1f в час" % [roundi(float(bare["score"])), roundi(float(rich["score"])),
+		int(bare["guests"]), int(rich["guests"]), float(bare["per_h"]), float(rich["per_h"])])
+	_check((rich["list"] as Array).size() == 3, "гости ходят к храму, фонтану и арке (%s)" % str(rich["list"]))
+	c.compute()
+	inn["active"] = true
+	inn["staff"] = 1.0
+	var upk := float(Defs.B["mansio"]["cost"]) * Defs.UPKEEP + c.wage() * 3
+	_check(Tourism.hour_income(c) > upk * 2.0 and Defs.HIST_KEYS.has("tour"), "доход туристов за час %.1f (содержание с жалованьем %.1f), строка «туристы» в финансах" % [Tourism.hour_income(c), upk])
+	var c0 := City.new(Land.new())
+	var i0 := c0.place("mansio", Land.START, 0.0, 0, 0, true)
+	i0["active"] = true
+	i0["staff"] = 1.0
+	_check(Tourism.hour_income(c0) == 0.0, "старый город — туризма нет")
+
+
 func _odeon() -> void:
 	print("== одеон: места на трибунах")
 	var sp := Spectacle.new()

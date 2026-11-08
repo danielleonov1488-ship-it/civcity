@@ -46,6 +46,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 		"ogorod", "shelter", "catshop", "puppets", "herbalist", "vigiles", "sculptor", "prefect", "nymphaeum": CatExtra.make(b, type)   # этап 5
 		"ludus", "aqua", "venus", "thermae", "pharos", "circus_fl": CatGrand.make(b, type)   # этап 5, волна 2
 		"taberna": CatShops._taberna(b)
+		"mansio": CatShops._mansio(b)
 		"fullonica": CatShops._fullonica(b)
 		"musicians": CatShops._musicians(b)
 		"dice": CatShops._dice(b)
@@ -157,6 +158,8 @@ static func _actors(b: Bp, type: String, tier: int) -> void:
 			b.actor(Vector3(1.25, 0, 1.0), 0.0, "Sitting_Idle", "pleb")
 		"thermopolium":
 			b.actor(Vector3(-1.25, 0, 0.34), 0.0, "Interact", "any")
+		"mansio":
+			b.actor(Vector3(2.6, 0, 1.6), PI, "Interact", "any")
 		"taberna":
 			b.actor(Vector3(-2.0, 0, 2.1), PI, "Interact", "any")
 			b.actor(Vector3(1.8, 0, 0.7), 0.0, "Idle", "any")
