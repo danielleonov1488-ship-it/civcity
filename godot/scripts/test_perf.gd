@@ -580,7 +580,7 @@ func _freeze() -> void:
 		_hidden.append(s["n"])
 	for n in game.find_children("*", "", true, false):
 		# Decal — пятно поисков историй (мерцает); вода — волны по TIME шейдера (Engine.time_scale его не останавливает)
-		if n is GPUParticles3D or n is CPUParticles3D or n is Birds or n is Decal:
+		if n is GPUParticles3D or n is CPUParticles3D or n is Birds or n is RoofBirds or n is Decal:
 			_hidden.append(n)
 		elif n is MeshInstance3D and (n as MeshInstance3D).mesh is PlaneMesh and (n as MeshInstance3D).material_override is ShaderMaterial:
 			_hidden.append(n)

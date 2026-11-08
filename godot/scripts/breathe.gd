@@ -1,7 +1,7 @@
 class_name Breathe
 extends Node3D
 ## «Город дышит» («Уютный Рим», этап 5, docs/PLAN_COZY.md): днём над травой и цветами порхают бабочки, ночью у земли
-## мерцают светлячки, по небу изредка пролетает стайка птиц, утром над водой стелется туман. Всё — частицы вокруг точки, куда смотрит камера
+## мерцают светлячки, по небу изредка пролетает стайка птиц, на коньках крыш сидят голуби и воробьи, утром над водой стелется туман. Всё — частицы вокруг точки, куда смотрит камера
 ## (где игрок, там и жизнь; за краем экрана ничего не считается). На «Очень низкой» выключено, на «Низкой» — вдвое меньше.
 ## Картинки бабочек и птиц рисуются кодом (крылья — два кадра: взмах), без файлов.
 
@@ -18,6 +18,7 @@ var bfly: GPUParticles3D
 var ffly: GPUParticles3D
 var birds: GPUParticles3D
 var mist: GPUParticles3D
+var roof: RoofBirds                      # голуби и воробьи на коньках крыш (scripts/roof_birds.gd)
 var _mist_t := 0.0
 var _mist_at := Vector3.INF               # середина воды рядом с точкой взгляда (INF — воды нет)
 var _bird_t := 20.0
@@ -33,6 +34,9 @@ func setup(g) -> void:
 	for p: GPUParticles3D in [bfly, ffly, birds, mist]:
 		add_child(p)
 		p.emitting = false
+	roof = RoofBirds.new()
+	add_child(roof)
+	roof.setup(g)
 
 
 func _process(dt: float) -> void:
