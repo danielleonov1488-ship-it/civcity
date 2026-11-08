@@ -28,6 +28,7 @@ func _ready() -> void:
 	_traits()
 	_odeon()
 	_tourism()
+	_renown()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -523,6 +524,47 @@ func _tourism() -> void:
 	i0["active"] = true
 	i0["staff"] = 1.0
 	_check(Tourism.hour_income(c0) == 0.0, "старый город — туризма нет")
+
+
+## Бесконечная игра: известность города растёт каждый час, за неё — титулы (+1% счастья за титул); сохраняется
+func _renown() -> void:
+	print("== известность и титулы")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 1e6
+	c.level = 5
+	c.place("temple", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
+	c.place("fountain", Land.START + Vector2(0, 20), 0.0, 0, 0, true)
+	c.place("statue", Land.START + Vector2(-12, 4), 0.0, 0, 0, true)
+	c.stats["happy"] = 80
+	var g := Renown.hour_gain(c)
+	_check(g > 0.0 and not Renown.hour_parts(c).is_empty(), "известность за час +%.1f: %s" % [g, str(Renown.hour_parts(c))])
+	c.renown = 299.6                          # sim_day пересчитает счастье (домов нет) — останутся красота и достопримечательности
+	var r0 := c.renown
+	c.sim_day()
+	_check(c.renown > r0 and Renown.title_of(c.renown) == "Муниципий" and Renown.title_happy(c) == 1, "титул «Муниципий» после 300: %s, +%d%% счастья" % [Renown.title_of(c.renown), Renown.title_happy(c)])
+	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var c2 := City.new(Land.new())
+	c2.load_data(d)
+	_check(absf(c2.renown - c.renown) < 0.01, "известность сохраняется")
+	var c0 := City.new(Land.new())
+	c0.stats["happy"] = 90
+	_check(Renown.hour_gain(c0) == 0.0 and Renown.title_happy(c0) == 0, "старый город — без известности")
+	# праздник календаря: в свой день город празднует сам, Сатурналии — подарок казне
+	c.day = 21
+	c.fest_left = 0
+	var m0 := c.money
+	c.money = 1000.0
+	c.cal_fest_tick()
+	_check(c.fest_left > 0 and c.cal_fest_id == "saturnalia" and c.money > 1000.0, "Сатурналии начались сами, подарок казне: %d" % int(c.money - 1000.0))
+	var gp := Renown.hour_parts(c)
+	_check(String(gp[-1][0]).begins_with("Праздник"), "в праздник известность растёт быстрее (%s)" % str(gp[-1]))
+	c.cal_fest_tick()
+	_check(c.cal_fest_day == 21, "праздник — раз в свой день")
+	c.money = m0
+	c0.day = 21
+	c0.cal_fest_tick()
+	_check(c0.fest_left == 0, "старый город — праздников календаря нет")
 
 
 func _odeon() -> void:

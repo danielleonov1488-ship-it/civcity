@@ -2109,6 +2109,7 @@ func _process(dt: float) -> void:
 				_sim_hour()
 			if nh >= 24.0:
 				city.day += 1
+				city.cal_fest_tick()                # римский праздник календаря — в свой день (новая игра)
 			_set_hour(nh)
 	elif mode == "menu" and clock_hours:
 		_set_hour(hour + dt * 0.5 * 24.0 / DAY_LEN)

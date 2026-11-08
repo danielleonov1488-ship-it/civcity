@@ -153,6 +153,8 @@ var hover_src: Control                    # над чем сейчас мышь
 var hover_level: Control                  # зоны плашки города: уровень, жители, счастье
 var hover_pop: Control
 var hover_happy: Control
+var renown_pill: Control                   # известность и титул города (новая игра) — плашка под плашкой города
+var lbl_renown: Label
 var rank_btn: Button                      # «Перейти на новый уровень» — под табличкой города, когда все условия выполнены
 var full_money: Label                     # «Казна полна — доход пропадает» над казной
 var empty_money: Label                    # «Казна пуста — жалованье не плачено» над казной (казна в минус не уходит)
@@ -822,6 +824,16 @@ func _city_card() -> void:
 	lbl_clock = _label("08:00", 14, true, C_SOFT)
 	t.add_child(lbl_clock)
 	col.add_child(t)
+	# известность и почётный титул (новая игра): маленькая плашка под плашкой города, подсказка — откуда и что дальше
+	var rp := PanelContainer.new()
+	rp.add_theme_stylebox_override("panel", _box_pill(11, 2))
+	rp.size_flags_horizontal = Control.SIZE_SHRINK_END
+	rp.visible = false
+	lbl_renown = _label("", 14, true, C_INK)
+	var rz := _hover_zone(rp, [_icon("laurels", 18), lbl_renown], _tip_renown)
+	rz.set_meta("tip_anchor", rp)
+	v.add_child(rp)
+	renown_pill = rp
 	# перо у часов: пока город сохраняется (автосохранение, F5), оно видно и чуть «пишет», потом тает
 	save_quill = _icon("quill", 20, C_INK)
 	save_quill.pivot_offset = Vector2(10, 10)
@@ -1345,6 +1357,27 @@ func _arrive_rows(v: Control, tip: bool) -> void:
 
 
 ## Счастье города → из чего складывается, по классам, что сделать и что оно даёт
+func _tip_renown(v: VBoxContainer) -> void:
+	var c: City = game.city
+	_tip_head(v, "laurels", "Известность: %s" % fmt(int(c.renown)))
+	_tip_text(v, "Почётный титул города — «%s»: +%d%% счастья всем домам." % [Renown.title_of(c.renown), Renown.title_happy(c)], C_INK, 15, true)
+	var nx := Renown.next_title(c.renown)
+	if not nx.is_empty():
+		_tip_text(v, "Следующий титул — «%s»: ещё %s." % [nx[0], fmt(int(nx[1]) - int(c.renown))], C_SOFT, 14)
+	var parts := Renown.hour_parts(c)
+	if not parts.is_empty():
+		_tip_text(v, "Растёт каждый час (+%s):" % String.num(Renown.hour_gain(c), 1).replace(".", ","), C_INK, 14, true)
+		for e: Array in parts:
+			_tip_row(v, "", String(e[0]), "+" + String.num(float(e[1]), 1).replace(".", ","), C_GOOD)
+	if c.fest_left > 0 and c.cal_fest_id != "":
+		_tip_text(v, "Сегодня — %s: город празднует, известность растёт быстрее." % Renown.cal_fest_name(c.cal_fest_id), C_GOOD, 14, true)
+	else:
+		var nf := Renown.next_fest(c.day)
+		if not (nf[0] as Dictionary).is_empty():
+			_tip_text(v, "Ближайший праздник — %s, через %d %s. %s" % [nf[0]["name"], int(nf[1]), _plural(int(nf[1]), "день", "дня", "дней"), nf[0]["bonus"]], C_INK, 14)
+	_tip_text(v, "Туристы гостиниц, зрелища, украшения, достопримечательности и счастье горожан прибавляют известность — расти можно без конца, даже когда город уже Вечный.", C_SOFT, 13)
+
+
 func _tip_happy(v: VBoxContainer) -> void:
 	var c: City = game.city
 	var hp := int(c.stats["happy"])
@@ -6164,6 +6197,11 @@ func refresh() -> void:
 	lbl_level.text = Defs.LEVELS[c.level]["name"]          # подсказка — мгновенная, _tip_level
 	lbl_pop.text = fmt(c.stats["pop"])
 	lbl_happy.text = "%d%%" % int(c.stats["happy"])
+	if renown_pill != null:
+		renown_pill.visible = Renown.on(c)
+		lbl_renown.text = "%s · %s" % [Renown.title_of(c.renown), fmt(int(c.renown))]
+		if c.fest_left > 0 and c.cal_fest_id != "":
+			lbl_renown.text += " · " + Renown.cal_fest_name(c.cal_fest_id)
 	lbl_day.text = "День %d" % (c.day + 1)
 	show_city_name()
 	lbl_money.text = "%s / %s" % [fmt(c.money), fmt(c.money_cap())]
