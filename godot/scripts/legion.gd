@@ -514,6 +514,7 @@ var mats := {}                  # материалы мастерских: iron 
 var mats_t := 0.0               # когда материалы считались последний раз (Legion.now)
 var food_pts := 0.0             # поход 2.0: провиант-очки
 var food_t := 0.0               # когда провиант считался (0 — ещё ни разу: полный запас)
+var relics := {}            # Легион 2.0, этап 6: реликвии наборов {набор: сколько} (Gear.SETS)
 var forging := {}           # куётся: {slot, cls, rarity, ilvl, end, total} или {}
 var _rng := RandomNumberGenerator.new()
 
@@ -853,6 +854,16 @@ func add_item(it: Dictionary) -> Dictionary:
 	return e
 
 
+## Надетые вещи воина
+func worn(s: Dictionary) -> Array:
+	var out := []
+	for slot in (s.get("gear", {}) as Dictionary):
+		var it := item(int(s["gear"][slot]))
+		if not it.is_empty():
+			out.append(it)
+	return out
+
+
 ## Что дают надетые вещи воина: {atk, hp, armor}
 func gear_bonus(s: Dictionary) -> Dictionary:
 	var out := {"atk": 0.0, "hp": 0.0, "armor": 0.0}
@@ -1006,6 +1017,76 @@ func forge(slot: String, cls: String, r: int) -> bool:
 	return true
 
 
+## Вещь набora: реликвия провинции, эпические обломки (синие), материалы ×2, денарии, 8 ч; Кузница 5+
+func can_forge_set(set_id: String, slot: String, cls: String) -> String:
+	if not army_on():
+		return "Наборы — в новой игре"
+	if forge_lvl() < int(Gear.SET_FORGE["lvl"]):
+		return "Нужна Кузница %d уровня" % int(Gear.SET_FORGE["lvl"])
+	if not forging.is_empty():
+		return "Кузница занята: ещё %s" % fmt_duration(forge_left())
+	if int(relics.get(set_id, 0)) <= 0:
+		return "Нужна реликвия «%s» — её приносят боссы провинции: %s" % [Gear.SETS[set_id]["name"], _set_where(set_id)]
+	if slot in ["weapon", "offhand"] and not class_open(cls):
+		return "Класс «%s» ещё не открыт" % Soldiers.class_name_of(cls)
+	if int(shards[Gear.SET_RARITY - 1]) < int(Gear.SET_FORGE["shards"]):
+		return "Нужно обломков: %d (%s), есть %d" % [int(Gear.SET_FORGE["shards"]), Gear.SHARD[Gear.SET_RARITY - 1], int(shards[Gear.SET_RARITY - 1])]
+	var ms := mats_short(set_mats(slot))
+	if ms != "":
+		return ms
+	if float(Gear.SET_FORGE["money"]) > city_money():
+		return "Не хватает денариев: нужно %d" % int(Gear.SET_FORGE["money"])
+	return ""
+
+
+func set_mats(slot: String) -> Dictionary:
+	var m := Gear.forge_mats(slot, Gear.SET_RARITY)
+	for k: String in m:
+		m[k] = roundi(float(m[k]) * float(Gear.SET_FORGE["mats_k"]))
+	return m
+
+
+## Где берут реликвию набора: «Галлия (Верцингеторикс)»
+func _set_where(set_id: String) -> String:
+	var out := []
+	for R: Dictionary in REGIONS2:
+		if String(R["id"]) in (Gear.SETS[set_id]["region"] as Array):
+			out.append("%s (%s)" % [R["name"], ENEMIES[R["boss"]]["name"]])
+	return ", ".join(out)
+
+
+func forge_set(set_id: String, slot: String, cls: String) -> bool:
+	if can_forge_set(set_id, slot, cls) != "":
+		return false
+	_pay({"money": int(Gear.SET_FORGE["money"])})
+	relics[set_id] = int(relics[set_id]) - 1
+	shards[Gear.SET_RARITY - 1] = int(shards[Gear.SET_RARITY - 1]) - int(Gear.SET_FORGE["shards"])
+	var need := set_mats(slot)
+	for m: String in need:
+		mats[m] = float(mats.get(m, 0.0)) - float(need[m])
+	var secs := float(Gear.SET_FORGE["h"]) * 3600.0 / maxf(0.001, time_k)
+	forging = {"slot": slot, "cls": cls if slot in ["weapon", "offhand"] else "", "rarity": Gear.SET_RARITY, "ilvl": forge_ilvl(), "set": set_id,
+		"end": now() + secs, "total": secs}
+	if slot == "weapon" and cls == "engineer":
+		forging["engine"] = "catapult" if _rng.randf() < 0.5 else "ballista"
+	changed.emit()
+	return true
+
+
+## Реликвия после победы над боссом похода 2.0: главный — 20% (первая победа — наверняка), младший — 8%. Набор или ""
+func _relic(st: Dictionary, first: bool) -> String:
+	if not V2 or not (bool(st.get("boss", false)) or bool(st.get("junior", false))):
+		return ""
+	var k := Gear.set_of_region(String(st.get("region", "")))
+	if k == "":
+		return ""
+	var p := (1.0 if first else Gear.SET_DROP_BOSS) if bool(st.get("boss", false)) else Gear.SET_DROP_JUNIOR
+	if _rng.randf() > p:
+		return ""
+	relics[k] = int(relics.get(k, 0)) + 1
+	return k
+
+
 func forge_left() -> float:
 	return maxf(0.0, float(forging.get("end", 0.0)) - now()) if not forging.is_empty() else 0.0
 
@@ -1133,8 +1214,15 @@ func slot_soldiers() -> Array:
 func soldier_stats(s: Dictionary, type: String) -> Dictionary:
 	var b := Soldiers.bonus(s)
 	var g := gear_bonus(s)
-	var st := unit_stats(type, int(levels.get(type, 1)), bonus("atk") + forge_b() + b + float(g["atk"]), bonus("hp") + forge_b() + b + float(g["hp"]),
-		armory_b() + float(g["armor"]))
+	var sb := Gear.set_bonus(worn(s))
+	var rng_b := float(sb["ranged"]) if float(UNITS[type]["range"]) > 3.0 else 0.0
+	var st := unit_stats(type, int(levels.get(type, 1)), bonus("atk") + forge_b() + b + float(g["atk"]) + float(sb["atk"]) + rng_b,
+		bonus("hp") + forge_b() + b + float(g["hp"]) + float(sb["hp"]), armory_b() + float(g["armor"]) + float(sb["armor"]))
+	# наборы: свойства 4 вещей и лечение — только походы (бои с городами собирают отряд без воинов)
+	if float(sb["heal"]) > 0.0:
+		st["heal_k"] = 1.0 + float(sb["heal"])
+	for k: String in sb["b4"]:
+		st["set_" + k] = true
 	st["sid"] = int(s["id"])
 	st["sname"] = String(s["name"])
 	# облик в 3D-бою: редкость надетых вещей (оружие, щит, шлем, доспех) — LegionFighter.dress_gear
@@ -2929,6 +3017,7 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 		out["money_lost"] = _give(reward)      # казна полна — сколько денариев не уместилось (окно итога скажет честно)
 		if army_on():
 			out["item"] = _drop(st, first)       # Легион 2.0: вещь в добычу (или {"full": true} — Склад полон)
+			out["relic"] = _relic(st, first)     # этап 6: реликвия набора с босса ("" — нет)
 		out["reward"] = reward
 		out["chest"] = _chest(int(st["cycle"]), int(st["r"]))
 		wins += 1
@@ -3473,7 +3562,7 @@ func to_dict() -> Dictionary:
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
 		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
-		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "mats": mats, "mats_t": mats_t,
+		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "relics": relics, "mats": mats, "mats_t": mats_t,
 		"food_pts": food_pts, "food_t": food_t}
 
 
@@ -3567,6 +3656,7 @@ func from_dict(d: Dictionary) -> void:
 			if (md as Dictionary).has(m):
 				mats[m] = maxf(0.0, float(md[m]))
 	mats_t = float(d.get("mats_t", 0.0))
+	relics = (d.get("relics", {}) as Dictionary).duplicate()
 	food_pts = float(d.get("food_pts", 0.0))
 	food_t = float(d.get("food_t", 0.0))
 	forging = {}

@@ -100,6 +100,38 @@ const ICON_SHARD := 12
 const ICON_FORGE := 13
 const ICON_STORE := 14
 const ICON_PILA := 15
+## Наборы (Легион 2.0, этап 6, docs/LEGION_V2.md 3.4): вещь набора — эпическая, куётся из реликвии провинции
+## (боссы похода 2.0). Две вещи одного набора на воине — b2 (доли урона / здоровья, броня, урон издалека, лечение),
+## четыре — свойство b4 (бой: legion_sim.gd). adj — прилагательное (м., ж., ср.), col — цвет каймы набора
+const SETS := {
+	"gallic": {"name": "Галльский", "adj": ["Галльский", "Галльская", "Галльское"], "region": ["gaul"], "col": "3f8a3a",
+		"b2": {"atk": 0.08}, "b4": "stun", "d2": "+8% урона", "d4": "первый удар оглушает врага на 1 с"},
+	"german": {"name": "Германский", "adj": ["Германский", "Германская", "Германское"], "region": ["germania"], "col": "6b4a2e",
+		"b2": {"hp": 0.10}, "b4": "rage", "d2": "+10% здоровья", "d4": "ярость: ниже 30% здоровья +25% урона"},
+	"british": {"name": "Британский", "adj": ["Британский", "Британская", "Британское"], "region": ["britannia"], "col": "2f5fa0",
+		"b2": {"armor": 6.0}, "b4": "reflect", "d2": "+6 брони", "d4": "щит отражает 10% урона назад"},
+	"egyptian": {"name": "Египетский", "adj": ["Египетский", "Египетская", "Египетское"], "region": ["egypt"], "col": "c79a2a",
+		"b2": {"heal": 0.08}, "b4": "drain", "d2": "+8% лечения", "d4": "павший рядом враг лечит воина и соседей"},
+	"parthian": {"name": "Парфянский", "adj": ["Парфянский", "Парфянская", "Парфянское"], "region": ["parthia"], "col": "8a3a6e",
+		"b2": {"ranged": 0.08}, "b4": "kite", "d2": "+8% урона издалека", "d4": "стрелок отходит от мечей и стреляет"},
+	"praetorian": {"name": "Преторианский", "adj": ["Преторианский", "Преторианская", "Преторианское"], "region": ["africa", "dacia"], "col": "a01e1e",
+		"b2": {"atk": 0.05, "hp": 0.05}, "b4": "revive", "d2": "+5% урона и здоровья", "d4": "легион не дрогнет: первый раз пав — встаёт с 30% здоровья"},
+}
+const SET_IDS := ["gallic", "german", "british", "egyptian", "parthian", "praetorian"]
+const SET_RARITY := 3                      # вещь набора — эпическая
+const SET_FORGE := {"shards": 3, "money": 3000, "h": 8.0, "lvl": 5, "mats_k": 2.0}
+const SET_DROP_BOSS := 0.2                 # реликвия с главного босса (первая победа — наверняка)
+const SET_DROP_JUNIOR := 0.08
+
+
+## Набор провинции (по id провинции похода 2.0) или ""
+static func set_of_region(rid: String) -> String:
+	for k: String in SET_IDS:
+		if rid in (SETS[k]["region"] as Array):
+			return k
+	return ""
+
+
 const STORE_BASE := 20                     # мест на Складе: 20 + 5 × уровень Склада оружия
 const STORE_PER := 5
 
@@ -135,6 +167,9 @@ static func name_of(it: Dictionary) -> String:
 	else:
 		var d: Dictionary = NAMES.get(slot, {})
 		e = d.get(cls, d.get("", ["вещь", "f"]))
+	if String(it.get("set", "")) != "" and SETS.has(String(it["set"])):
+		var adj: Array = SETS[String(it["set"])]["adj"]
+		return "%s %s" % [String(adj[1] if String(e[1]) == "f" else (adj[2] if String(e[1]) == "n" else adj[0])), String(e[0])]
 	return "%s %s" % [rarity_word(int(it.get("rarity", 0)), String(e[1])).capitalize(), String(e[0])]
 
 
@@ -160,7 +195,41 @@ static func stats_text(it: Dictionary) -> String:
 		out.append("+%d%% здоровья" % roundi(float(s["hp"]) * 100.0))
 	if float(s["armor"]) > 0.0:
 		out.append("+%d брони" % roundi(float(s["armor"])))
+	if String(it.get("set", "")) != "" and SETS.has(String(it["set"])):
+		out.append("набор «%s»" % String(SETS[String(it["set"])]["name"]))
 	return ", ".join(out)
+
+
+## Что дают наборы на воине: {atk, hp, armor, ranged, heal, b4: [свойства], sets: {набор: вещей}}
+static func set_bonus(worn: Array) -> Dictionary:
+	var cnt := {}
+	for it: Dictionary in worn:
+		var k := String(it.get("set", ""))
+		if k != "" and SETS.has(k):
+			cnt[k] = int(cnt.get(k, 0)) + 1
+	var out := {"atk": 0.0, "hp": 0.0, "armor": 0.0, "ranged": 0.0, "heal": 0.0, "b4": [], "sets": cnt}
+	for k: String in cnt:
+		if int(cnt[k]) >= 2:
+			var b2: Dictionary = SETS[k]["b2"]
+			for st: String in b2:
+				out[st] = float(out[st]) + float(b2[st])
+		if int(cnt[k]) >= 4:
+			(out["b4"] as Array).append(String(SETS[k]["b4"]))
+	return out
+
+
+## «Галльский 2/4: +8% урона» — строки наборов воина
+static func set_lines(cnt: Dictionary) -> Array:
+	var out := []
+	for k: String in SET_IDS:
+		if not cnt.has(k):
+			continue
+		var n := int(cnt[k])
+		var S: Dictionary = SETS[k]
+		var t := "%s %d/4: " % [S["name"], mini(n, 4)]
+		t += (String(S["d2"]) if n >= 2 else "2 вещи — " + String(S["d2"])) + ("; " + String(S["d4"]) if n >= 4 else "; 4 вещи — " + String(S["d4"]))
+		out.append(t)
+	return out
 
 
 ## Подходит ли вещь воину класса cls (оружие и щит — под класс)

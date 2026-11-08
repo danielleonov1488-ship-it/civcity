@@ -734,11 +734,16 @@ func _soldiers(c: City, lg: Legion, ui) -> void:
 	for e in [{"slot": "weapon", "cls": String(s0["cls"]), "rarity": 1, "ilvl": 6}, {"slot": "weapon", "cls": String(s0["cls"]), "rarity": 0, "ilvl": 3},
 			{"slot": "offhand", "cls": String(s0["cls"]), "rarity": 2, "ilvl": 5}, {"slot": "armor", "cls": "", "rarity": 0, "ilvl": 2}]:
 		lg.add_item(e)
+	# этап 6: две вещи Галльского набора на втором воине — строка набора в карточке
+	for e in [{"slot": "offhand", "cls": String(s0["cls"]), "rarity": 3, "ilvl": 6, "set": "gallic"}, {"slot": "helmet", "cls": "", "rarity": 3, "ilvl": 6, "set": "gallic"}]:
+		lg.equip(int(s0["id"]), int(lg.add_item(e)["id"]))
+	lg.relics = {"gallic": 2, "british": 1}
 	ui._select_tab("soldiers")
 	await frames(6)
 	var tx := _texts(ui.content)
 	check("«Воины»: видна вкладка, воины и новобранцы", (ui.tabs["soldiers"] as Button).visible and tx.contains("Ваши воины") and tx.contains("Новобранцы сегодня")
 		and tx.contains("Тренируется") and tx.contains("Ранен"))
+	check("«Воины»: строка набора «Галльский 2/4»", tx.contains("Галльский 2/4"))
 	await shot("soldiers")
 	ui._gear_pick(int(s0["id"]), "weapon")
 	await frames(6)
@@ -754,6 +759,7 @@ func _soldiers(c: City, lg: Legion, ui) -> void:
 	await frames(6)
 	check("Кузница: обломки, ковка, редкости", ui.overlay != null and _texts(ui.overlay).contains("Обломки") and _texts(ui.overlay).contains("Куётся")
 		and _texts(ui.overlay).contains("Легендарный"))
+	check("Кузница: вещи наборов и реликвии", _texts(ui.overlay).contains("Вещи наборов") and _texts(ui.overlay).contains("Галльский · реликвий 2"))
 	await shot("soldiers_forge")
 	lg.forging = {}
 	ui._close_overlay()

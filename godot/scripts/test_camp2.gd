@@ -58,8 +58,63 @@ func _init() -> void:
 				_check(ok, "%s: приём сработал (%s)" % [bk, want[bk]])
 			if not Legion.TUNE2.is_empty():
 				_check(win * 2 >= seeds, "%s: обычный игрок на T побеждает хотя бы в половине боёв (%d из %d)" % [bk, win, seeds])
+	_sets()
 	print("CAMP2 DONE fails=%d" % fails)
 	quit()
+
+
+## Наборы снаряжения (этап 6): прибавки 2 вещей, свойства 4 вещей в бою
+func _sets() -> void:
+	var four := []
+	for sl in ["weapon", "offhand", "helmet", "armor"]:
+		four.append({"slot": sl, "set": "gallic"})
+	var sb := Gear.set_bonus(four + [{"slot": "badge", "set": "praetorian"}])
+	_check(is_equal_approx(float(sb["atk"]), 0.08) and "stun" in sb["b4"], "набор: 4 галльские — +8%% урона и оглушение (%s)" % str(sb))
+	var sb2 := Gear.set_bonus([{"set": "praetorian"}, {"set": "praetorian"}])
+	_check(is_equal_approx(float(sb2["atk"]), 0.05) and is_equal_approx(float(sb2["hp"]), 0.05) and (sb2["b4"] as Array).is_empty(), "набор: 2 преторианские — +5% урона и здоровья")
+	_check(Gear.name_of({"slot": "armor", "set": "gallic", "rarity": 3}) == "Галльская лорика", "имя вещи набора: %s" % Gear.name_of({"slot": "armor", "set": "gallic", "rarity": 3}))
+	_check(Gear.set_of_region("dacia") == "praetorian" and Gear.set_of_region("alps") == "", "реликвии: Дакия — преторианский, Альпы — без набора")
+	# свойства 4 вещей — в бою один легионер против сильного разбойника
+	var foe := Legion.enemy_stats("bandit", 6.0)
+	var ev := {}
+	for k in ["set_revive", "set_reflect", "set_stun", "set_rage"]:
+		var me := Legion.unit_stats("legionary", 3)
+		me[k] = true
+		var sim := LegionSim.new({"kind": "campaign", "squad": [me], "waves": [[foe]], "perks": {}, "seed": 7})
+		var revive := 0
+		var self_hits := 0
+		var stunned := false
+		while sim.result.is_empty():
+			sim.step(LegionSim.DT)
+			for x: Dictionary in sim.take_events():
+				if String(x["type"]) == "revive":
+					revive += 1
+				if String(x["type"]) == "hit" and x["from"] == null and (x["unit"] as LegionSim.Unit).side == "enemy":
+					self_hits += 1
+			for u in sim.units:
+				stunned = stunned or (u.side == "enemy" and u.stun_t > sim.t)
+		ev[k] = [revive, self_hits, stunned]
+	_check(int(ev["set_revive"][0]) == 1, "набор: преторианец встаёт один раз (%s)" % str(ev["set_revive"]))
+	_check(int(ev["set_reflect"][1]) > 0, "набор: британский щит отражает урон (%s)" % str(ev["set_reflect"]))
+	_check(bool(ev["set_stun"][2]), "набор: галльский первый удар оглушает")
+	# парфянский: лучник отходит от мечей
+	var arch := Legion.unit_stats("archer", 3)
+	arch["set_kite"] = true
+	var sim2 := LegionSim.new({"kind": "campaign", "squad": [arch], "waves": [[Legion.enemy_stats("bandit", 4.0)]], "perks": {}, "seed": 3})
+	var x0 := -INF                           # самое дальнее, куда лучник вышел, и куда отошёл после
+	var minx := INF
+	for i in 600:
+		sim2.step(LegionSim.DT)
+		sim2.take_events()
+		for u in sim2.units:
+			if u.side == "ally":
+				if u.x > x0:
+					x0 = u.x
+					minx = u.x
+				minx = minf(minx, u.x)
+		if not sim2.result.is_empty():
+			break
+	_check(minx < x0 - 1.5, "набор: парфянский лучник отходит от мечей (x %.1f → %.1f)" % [x0, minx])
 
 
 func _check(ok: bool, what: String) -> void:

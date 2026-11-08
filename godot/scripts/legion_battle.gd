@@ -940,6 +940,13 @@ func _handle(evs: Array) -> void:
 				_waves_ui()
 			"warn" when String(e.get("kind", "summon")) != "summon":
 				_warn2(e)
+			"revive":
+				var u: LegionSim.Unit = e["unit"]
+				var f: LegionFighter = _view(u)["f"]
+				f.dead = false
+				f.set_motion(false)
+				fx.burst(f.global_position + Vector3(0, 0.8, 0), Color(1.0, 0.85, 0.35, 1.0), 14, 0.7, 1.6, 0.12, 0.8, true, 1.0, 0.2)
+				say("%s поднимается — легион не дрогнет!" % u.name, 1.8)
 			"avalanche", "chariot", "cry", "interrupt", "ward", "storm", "immune":
 				_v2_event(e)
 			"warn":
