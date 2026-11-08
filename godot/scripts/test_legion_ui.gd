@@ -822,4 +822,14 @@ func _camp2(c: City, lg: Legion, ui) -> void:
 	await frames(6)
 	check("поход 2.0: Италия — Спартак", _texts(ui.content).contains("Спартак"))
 	await shot("camp2_italy")
+	# ветеранский поход: после Дакии те же провинции, у врагов особенности
+	lg.progress = 10 * 15 + 3
+	ui.view_c = 1
+	ui.view_r = 0
+	ui.sel = {"c": 1, "r": 0, "s": 3}
+	ui._rebuild()
+	await frames(6)
+	check("ветеранский поход: особенности врагов в карточке", _texts(ui.content).contains("Ветераны:") and _texts(ui.content).contains("ветераны"))
+	await shot("camp2_vet")
+	ui.view_c = 0
 	lg.free_mode = fm

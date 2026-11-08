@@ -1227,7 +1227,7 @@ func _map_view() -> Control:
 	rh.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	rh.add_child(_title("%s. %s" % [Legion.roman(view_r + 1), R["name"]], 22))
 	if vc > 0 or int(fr["cycle"]) > 0:
-		rh.add_child(_l("· поход %s" % Legion.roman(vc + 1), 16, true, C_SOFT))
+		rh.add_child(_l(("· ветераны" if vc > 0 else "· поход") if Legion.V2 else "· поход %s" % Legion.roman(vc + 1), 16, true, C_SOFT))
 	if lg.stage_open(vc, view_r, 0):
 		var sn := lg.region_stars(vc, view_r)
 		var sc := Stars.new(1, 18.0, 1)
@@ -1242,8 +1242,10 @@ func _map_view() -> Control:
 	_pin(rib, Vector2(0.5, 0.0), Vector2(0, -8))
 	m.add_child(rib)
 	# провинция закрыта
-	var lock := ""
-	if not lg.region_rank_ok(view_r):
+	var lock := lg.vet_lock_text(vc, view_r)
+	if lock != "":
+		pass
+	elif not lg.region_rank_ok(view_r):
 		lock = lg.region_lock_text(view_r) + ". Пока растите город — и прокачивайте бойцов в прошлых провинциях."
 	elif not lg.stage_open(vc, view_r, 0):
 		var pr: Dictionary = Legion.regions()[maxi(0, view_r - 1)]
@@ -1358,7 +1360,7 @@ func _region_strip() -> Control:
 	# круг похода (после первого круга — можно смотреть прошлые)
 	if int(fr["cycle"]) > 0:
 		var nc := (view_c + 1) % (int(fr["cycle"]) + 1)
-		var cb := _btn("Поход %s" % Legion.roman(view_c + 1), 0, 15, null, "", func(): view_c = nc; sel = {}; _rebuild())
+		var cb := _btn(("Ветеранский поход" if view_c > 0 else "Первый поход") if Legion.V2 else "Поход %s" % Legion.roman(view_c + 1), 0, 15, null, "", func(): view_c = nc; sel = {}; _rebuild())
 		cb.tooltip_text = "Походы бесконечны: каждый новый круг — враги сильнее, награды больше. Щелчок — другой круг"
 		cb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		h.add_child(cb)
@@ -1443,6 +1445,16 @@ func _stage_card(st: Dictionary) -> Control:
 				_badge(holder, "×%d" % int(groups[k]), Vector2(1, 1), 13)
 			wh.add_child(holder)
 		v.add_child(wh)
+	if bool(st.get("vet", false)):
+		var seen := {}
+		var bits := []
+		for w: Array in st["waves"]:
+			for k in w:
+				if not seen.has(k):
+					seen[k] = true
+					var af := Legion.affix_of(st, String(k))
+					bits.append("%s — %s (%s)" % [String(Legion.ENEMIES[k]["name"]).to_lower(), Legion.AFFIX_NAME[af], Legion.AFFIX_TIP[af]])
+		v.add_child(_wl("Ветераны: " + "; ".join(bits) + ".", CARD_W - 24, 13, C_BAD))
 	var tips := lg.tips(st)
 	if tips != "":
 		v.add_child(_wl(tips, CARD_W - 24, 14, C_SOFT))

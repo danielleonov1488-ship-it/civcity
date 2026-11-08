@@ -59,6 +59,7 @@ func _init() -> void:
 			if not Legion.TUNE2.is_empty():
 				_check(win * 2 >= seeds, "%s: обычный игрок на T побеждает хотя бы в половине боёв (%d из %d)" % [bk, win, seeds])
 	_sets()
+	_vet()
 	print("CAMP2 DONE fails=%d" % fails)
 	quit()
 
@@ -140,7 +141,7 @@ func _fight(st: Dictionary, lvl: int, seed_v: int, ev: Dictionary) -> Dictionary
 	if b >= 5:
 		have.append("catapult")
 	var types := Legion.counter_squad(st, have, slots)
-	var e := Legion.exp2(int(st["r"]), int(st["s"]))
+	var e := Legion.exp2v(int(st["r"]), int(st["s"])) if bool(st.get("vet", false)) else Legion.exp2(int(st["r"]), int(st["s"]))
 	var sq := []
 	for t in types:
 		sq.append(Legion.unit_stats(t, lvl, float(e["atk"]), float(e["hp"]), float(e["armor"])))
@@ -170,3 +171,27 @@ func _fight(st: Dictionary, lvl: int, seed_v: int, ev: Dictionary) -> Dictionary
 				ev["poison"] = int(ev.get("poison", 0)) + 1
 				break
 	return sim.result
+
+
+## Ветеранский поход: бои круга 2 — «ветераны», у каждого вида особенность; сила от конца Дакии; ворота по неделям
+func _vet() -> void:
+	var st := Legion.stage(1, 0, 3)
+	_check(bool(st["vet"]) and String(st["title"]).contains("ветераны"), "ветеранский бой: %s" % st["title"])
+	var k := String(st["waves"][0][0])
+	var af := Legion.affix_of(st, k)
+	_check(af in Legion.VET_AFFIX and Legion.affix_of(Legion.stage(0, 0, 3), k) == "", "особенность «%s» — только у ветеранов" % af)
+	var plain := Legion.enemy_stats(k, float(st["scale"]))
+	var f := Legion.foe_stats(st, k)
+	var changed := float(f["armor"]) != float(plain["armor"]) or float(f["atk"]) != float(plain["atk"]) or f.has("poison") or float(f["speed"]) != float(plain["speed"])
+	_check(changed, "особенность меняет статы врага (%s)" % af)
+	_check(float(st["scale"]) > float(Legion.stage(0, 0, 3)["scale"]) * 2.0, "ветераны Италии сильнее Италии первого похода")
+	var L := Legion.new()
+	L.progress = 10 * 15
+	L.free_mode = false
+	L.flags["vet0"] = Legion.now()
+	_check(L.vet_lock_text(1, 1) != "", "вторая ветеранская провинция — через неделю (%s)" % L.vet_lock_text(1, 1))
+	var ev := {}
+	var win := 0
+	for i in 6:
+		win += 1 if bool(_fight(st, 12, 1000 + i * 7919, ev)["win"]) else 0
+	_check(win >= 4, "«обычный ветеран» выигрывает ветеранский бой (%d из 6)" % win)

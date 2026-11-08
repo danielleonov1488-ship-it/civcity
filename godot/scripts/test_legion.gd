@@ -71,7 +71,9 @@ func _init() -> void:
 		"calibrate":
 			# множитель силы врагов, при котором отряд на уровне target_level побеждает в ≥80% боёв
 			var cyc := int(args.get("cycle", "0"))
-			if Legion.V2:
+			if Legion.V2 and cyc >= 1:
+				Legion.TUNE2_VET = []
+			elif Legion.V2:
 				Legion.TUNE2 = []
 			elif cyc == 0:
 				Legion.TUNE = []
@@ -252,7 +254,7 @@ func _player(st: Dictionary, lvl: int, with_perks: bool) -> Dictionary:
 			with_bow = false
 		types = ["legionary", "archer", "legionary"] if with_bow else ["legionary", "legionary", "legionary"]
 	var sq := []
-	var e := Legion.exp2(int(st["r"]), int(st["s"])) if Legion.V2 else {"atk": 0.0, "hp": 0.0, "armor": 0.0}
+	var e := (Legion.exp2v(int(st["r"]), int(st["s"])) if int(st["cycle"]) > 0 else Legion.exp2(int(st["r"]), int(st["s"]))) if Legion.V2 else {"atk": 0.0, "hp": 0.0, "armor": 0.0}
 	for t in types:
 		sq.append(Legion.unit_stats(t, lvl, float(e["atk"]), float(e["hp"]), float(e["armor"])))
 	if args.get("hero", "0") == "1" and not sq.is_empty():
@@ -269,7 +271,7 @@ func _player(st: Dictionary, lvl: int, with_perks: bool) -> Dictionary:
 ## Доля побед в бою (c, r, s) на уровне lvl, если силу врагов умножить на m (без подгонки TUNE)
 func _rate_m(c: int, r: int, s: int, lvl: int, m: float, seeds: int, perks := true) -> Dictionary:
 	var st := Legion.stage(c, r, s)
-	var bs := Legion.base_scales(c, r, s, c > 0)
+	var bs := Legion.base_scales(c, r, s, c > 0 and not Legion.V2)
 	st["scale"] = float(bs[0]) * m
 	st["boss_scale"] = float(bs[1]) * m
 	return _rate(st, lvl, seeds, perks)
@@ -304,7 +306,7 @@ func _rate(st: Dictionary, lvl: int, seeds: int, with_perks: bool) -> Dictionary
 		var setup := {"kind": "campaign", "squad": pl["squad"], "waves": waves, "perks": pl["perks"], "seed": 1000 + i * 7919,
 			"packs": st.get("packs", [])}
 		if Legion.V2:
-			setup["heal_wave"] = float(Legion.exp2(int(st["r"]), int(st["s"]))["heal"])
+			setup["heal_wave"] = float(Legion.exp2(9 if int(st["cycle"]) > 0 else int(st["r"]), 14 if int(st["cycle"]) > 0 else int(st["s"]))["heal"])
 		var sim := LegionSim.new(setup)
 		var r := sim.run(true)
 		if r["win"]:
