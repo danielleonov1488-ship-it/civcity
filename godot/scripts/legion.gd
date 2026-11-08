@@ -88,7 +88,7 @@ const BUILDING_UNIT := {"barracks": "legionary", "spearcamp": "spearman", "range
 ## У зданий бойцов уровень здания — это уровень рода войск (levels: так его знает и сервер боёв с городами);
 ## у Кузницы, Лазарета и Склада оружия — свой (blevels). Здание ещё не поставлено, а уровень выше первого — он «в запасе»
 ## (старые сохранения: уровни войск и умения перенесены в здания) и заработает, как только здание поставят
-const BUILDING_IDS := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery"]
+const BUILDING_IDS := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia"]
 ## Здания поддержки: max — наивысший уровень (выше — предел уровня города CAP_BY_CITY), cost_k — множитель цены улучшений
 const SUPPORT := {
 	"forge": {"max": 10, "cost_k": 1.2},
@@ -97,7 +97,13 @@ const SUPPORT := {
 	"smelter": {"max": 10, "cost_k": 0.8},
 	"sawmill": {"max": 10, "cost_k": 0.8},
 	"tannery": {"max": 10, "cost_k": 0.8},
+	"principia": {"max": 12, "cost_k": 1.6},
 }
+## Принципия (Легион 2.0, только новая игра): потолок уровня остальных зданий Легиона — её уровень (без неё — PRIN_NONE).
+## Её уровень l — с уровня города PRIN_CITY[l]; улучшить — когда PRIN_MAIN не ниже её нынешнего уровня
+const PRIN_CITY := [0, 0, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6, 7]
+const PRIN_NONE := 2
+const PRIN_MAIN := ["barracks", "forge", "infirmary", "armory"]
 ## Мастерские (Легион 2.0, этап 3, только новая игра): материал, MAT_RATE · L^1,3 в час при полном штате
 ## (без рабочих — четверть), запас MAT_CAP0 + MAT_CAP_PER · L; в начале — MAT_GIFT каждого
 const WORKSHOPS := {"smelter": "iron", "sawmill": "wood", "tannery": "leather"}
@@ -497,6 +503,14 @@ func army_tick() -> Array:
 		flags["army0"] = true                  # первые трое — легионеры, что пришли с городом
 		for st in [2, 1, 1]:
 			_add_soldier({"name": Soldiers.roll_name(_rng), "from": Soldiers.ORIGINS[_rng.randi() % Soldiers.ORIGINS.size()], "cls": "legionary", "stars": st})
+	if not flags.has("prin0"):
+		var top := 0                           # Принципия появилась позже: что уже набрано — остаётся, дальше — с ней
+		for k in UNIT_IDS:
+			top = maxi(top, int(levels.get(k, 1)))
+		for k in SUPPORT:
+			if k != "principia":
+				top = maxi(top, int(blevels.get(k, 1)))
+		flags["prin0"] = top if top > PRIN_NONE else 0
 	if not flags.has("mats0"):
 		flags["mats0"] = true                  # немного материалов с собой — на первые вещи до мастерских
 		for m: String in Gear.MATS:
@@ -1560,7 +1574,38 @@ func cap() -> int:
 	if free_mode:
 		return MAX_LEVEL
 	var cd := cycles_done()
-	return mini(MAX_LEVEL, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)]) + (CYCLE_CAP * cd + CYCLE_ROOM if cd > 0 else 0))
+	return mini(mini(MAX_LEVEL, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)]) + (CYCLE_CAP * cd + CYCLE_ROOM if cd > 0 else 0)), prin_cap())
+
+
+## Уровень Принципии (0 — не построена)
+func prin_lvl() -> int:
+	return level_of("principia") if count_type("principia") > 0 else 0
+
+
+## Потолок остальных зданий от Принципии (старая игра — без потолка)
+func prin_cap() -> int:
+	if not army_on() or free_mode:
+		return 999
+	return maxi(maxi(PRIN_NONE, prin_lvl()), int(flags.get("prin0", 0)))   # prin0 — уровни, набранные до Принципии, не отнимаем
+
+
+## Какой уровень Принципии разрешает город сейчас
+func prin_city_cap() -> int:
+	var l := 1
+	for i in range(1, PRIN_CITY.size()):
+		if city_level() >= int(PRIN_CITY[i]):
+			l = i
+	return l
+
+
+## Чего не хватает, чтобы поднять Принципию: «Сначала до 3 уровня: Кузница, Лазарет» или ""
+func prin_main_text() -> String:
+	var p := level_of("principia")
+	var lack := []
+	for bt: String in PRIN_MAIN:
+		if count_type(bt) <= 0 or b_level(bt) < p:
+			lack.append(String(Defs.B[bt]["name"]))
+	return ("Сначала до %d уровня: %s" % [p, ", ".join(lack)]) if not lack.is_empty() else ""
 
 
 ## Предел уровня для ключа: род войск — cap(); здание поддержки — его наивысший уровень и предел города
@@ -1571,7 +1616,9 @@ func cap_of(key: String) -> int:
 	var mx := int(SUPPORT.get(key, {}).get("max", 1))
 	if free_mode:
 		return mx
-	return mini(mx, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)]))
+	if key == "principia":
+		return mini(mx, prin_city_cap())
+	return mini(mini(mx, int(CAP_BY_CITY[clampi(city_level(), 0, CAP_BY_CITY.size() - 1)])), prin_cap())
 
 
 ## Наивысший уровень ключа вообще
@@ -1654,6 +1701,16 @@ func can_upgrade(type: String) -> String:
 	var i := upgrade_info(type)
 	if i["max"]:
 		return "Максимальный уровень"
+	if type == "principia":
+		if i["blocked"]:
+			var need := int(PRIN_CITY[mini(int(i["to"]), PRIN_CITY.size() - 1)])
+			return "Принципия %d уровня — когда город станет «%s»" % [int(i["to"]), Defs.LEVELS[need]["name"]]
+		var mt := prin_main_text()
+		if mt != "":
+			return mt
+		return _afford_text(i["cost"])
+	if i["blocked"] and army_on() and int(i["limit"]) >= prin_cap():
+		return "Потолок — уровень Принципии (%d). Улучшите Принципию%s" % [prin_cap(), "" if prin_lvl() > 0 else " — сначала постройте её"]
 	if i["blocked"]:
 		var nl := next_cap_city_level(type)
 		var more := ""
@@ -1830,6 +1887,8 @@ func b_effect(btype: String, lvl: int) -> Array:
 			return ["+%d%% урона и здоровья всем бойцам в походах" % roundi(FORGE * lvl * 100.0)]
 		"infirmary":
 			return ["Между волнами боя раненые восстанавливают %d%% здоровья" % roundi(INFIRMARY * lvl * 100.0)]
+		"principia":
+			return ["Потолок остальных зданий Легиона — %d уровень" % maxi(PRIN_NONE, lvl)]
 		"smelter", "sawmill", "tannery":
 			var m := String(WORKSHOPS[btype])
 			return ["%s: %d в час (при полном числе работников), запас до %d" % [String(Gear.MAT_NAME[m]).capitalize(),

@@ -24,6 +24,7 @@ func _ready() -> void:
 	_gear()
 	_forge()
 	_mats()
+	_principia()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -408,3 +409,45 @@ func _mats() -> void:
 	var L2 := Legion.new()
 	L2.from_dict(JSON.parse_string(JSON.stringify(L.to_dict())))
 	_check(L2.mat("iron") == L.mat("iron") and L2.mat("leather") == L.mat("leather") and is_equal_approx(L2.mats_t, L.mats_t), "сохранение: материалы и время на месте")
+
+
+## Легион 2.0: Принципия — потолок зданий (без неё 2), её уровень — от уровня города, поднять — когда 4 главных здания не ниже;
+## уровни, набранные до Принципии, не отнимаются
+func _principia() -> void:
+	print("== Легион: Принципия")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 1e6
+	c.level = 2
+	var L: Legion = c.legion
+	c.research["legion"] = true
+	c.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
+	L.army_tick()
+	L.levels["legionary"] = 2
+	var why := L.can_upgrade("legionary")
+	_check(L.prin_cap() == Legion.PRIN_NONE and why.contains("Принципии") and c.unlocked("principia"), "без Принципии потолок %d: «%s»" % [L.prin_cap(), why])
+	c.place("principia", Land.START + Vector2(-20, 0), 0.0, 0, 0, true)
+	var why2 := L.can_upgrade("principia")
+	_check(L.prin_lvl() == 1 and L.prin_cap() == 2 and why2.begins_with("Сначала до 1 уровня") and why2.contains("Кузница"), "Принципия 1 ур.; поднять — «%s»" % why2)
+	var mains := ["forge", "infirmary", "armory"]
+	for i in mains.size():
+		c.place(mains[i], Land.START + Vector2(0, 20 + 20 * i), 0.0, 0, 0, true)
+	c.level = 7
+	L.blevels["principia"] = 2
+	var why3 := L.can_upgrade("principia")
+	for bt in mains:
+		L.blevels[bt] = 2
+	var why4 := L.can_upgrade("principia")
+	c.level = 1
+	var why5 := L.can_upgrade("principia")
+	_check(why3.begins_with("Сначала до 2 уровня") and why4 == "" and why5.begins_with("Принципия 3 уровня"),
+		"Принципия 2: главные ниже — «%s»; все на 2 — можно; маленький город — «%s»" % [why3, why5])
+	_check(L.cap_of("forge") == mini(2, int(Legion.CAP_BY_CITY[2])) and Legion.new().prin_cap() == 999, "потолок Кузницы = уровень Принципии; в старой игре потолка нет")
+	var c2 := City.new(Land.new())
+	c2.cozy_v = 1
+	c2.level = 6
+	c2.research["legion"] = true
+	c2.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
+	c2.legion.levels["legionary"] = 5
+	c2.legion.army_tick()
+	_check(c2.legion.prin_cap() == 5 and int(c2.legion.upgrade_info("legionary")["limit"]) >= 5, "уровни до Принципии не отнимаются: потолок %d" % c2.legion.prin_cap())

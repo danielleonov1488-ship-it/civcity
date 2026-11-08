@@ -640,7 +640,7 @@ func _d10_api() -> void:
 	city.research["legion"] = true
 	city.money = 60000.0
 	_check(city.unlocked("forge") and not city.unlocked("infirmary") and not city.unlocked("armory") and Defs.unlock_text("rank:3").contains("Посёлок")
-		and Legion.BUILDING_IDS.size() == 11 and not city.unlocked("smelter"), "здания Легиона: Кузница с «Деревни», Лазарет — %s" % Defs.unlock_text("rank:3"))
+		and Legion.BUILDING_IDS.size() == 12 and not city.unlocked("smelter") and not city.unlocked("principia"), "здания Легиона: Кузница с «Деревни», Лазарет — %s" % Defs.unlock_text("rank:3"))
 	city.research.erase("legion")
 	_check(not city.unlocked("forge"), "без Легиона Кузницы нет")
 	city.research["legion"] = true

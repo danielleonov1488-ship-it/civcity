@@ -1926,13 +1926,32 @@ func _build_troops() -> Control:
 	var hint := _l("бойцы растут вместе со зданиями: улучшайте их в карточке здания на карте", 14, true, C_SOFT)
 	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hh.add_child(hint)
+	if lg.army_on():
+		# Легион 2.0: Принципия — одна строка справа (потолок зданий), без лишней плитки
+		var sp := Control.new()
+		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hh.add_child(sp)
+		var pl := lg.prin_lvl()
+		var ptxt := ("Принципия · %d ур. — потолок зданий %d" % [pl, lg.prin_cap()]) if pl > 0 else ("Принципии нет — потолок зданий %d" % lg.prin_cap())
+		var pb: Button
+		if pl > 0:
+			pb = _btn(ptxt, 0, 14, _ic39("rating"), "", func(): show_building("principia"))
+			pb.tooltip_text = "Штаб Легиона: щелчок — к нему на карте, улучшение — в его карточке. %s" % lg.can_upgrade("principia")
+		elif game.city.unlocked("principia"):
+			pb = _btn(ptxt + " · Построить", 0, 14, hud.ico("hammer", 64), "", func(): close(); hud.select_build("principia"))
+			pb.tooltip_text = String(Defs.B["principia"]["desc"])
+		else:
+			pb = _btn(ptxt, 0, 14, _ic39("lock"), "", func(): pass)
+			pb.tooltip_text = String(Defs.B["principia"]["desc"])
+		pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hh.add_child(pb)
 	v.add_child(hh)
 	var g := GridContainer.new()
 	g.columns = 4
 	g.add_theme_constant_override("h_separation", 10)
 	g.add_theme_constant_override("v_separation", 8)
 	for bt: String in Legion.BUILDING_IDS:
-		if Legion.WORKSHOPS.has(bt):
+		if Legion.WORKSHOPS.has(bt) or bt == "principia":
 			continue                          # мастерские Легиона 2.0: их материалы — в шапке «Воинов» (окно не растёт), улучшения — в карточке на карте
 		g.add_child(_building_tile(bt))
 	v.add_child(g)

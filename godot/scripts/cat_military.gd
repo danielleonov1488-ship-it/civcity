@@ -50,6 +50,7 @@ static func make(b: Bp, type: String, tier := 0) -> void:
 		"smelter": _smelter(b)
 		"sawmill": _sawmill(b)
 		"tannery": _tannery(b)
+		"principia": _principia(b)
 	if tier > 0:
 		_grow(b, type, tier)
 
@@ -432,6 +433,8 @@ const GROW := {
 		"eagle": Vector3(3.95, 0, 0.45), "porch": [-1.25, 1.25], "statue": NO, "ridge": Vector3(0, 4.05, -2.6)},
 	"armory": {"poles": [Vector3(-4.0, 0, 3.05), Vector3(4.0, 0, 3.05)], "box": [0.0, -2.6, 3, 2, 1], "fire": [Vector3(-1.1, 0, 3.1), Vector3(1.1, 0, 3.1)],
 		"eagle": Vector3(-2.75, 0, 1.45), "porch": [-1.25, 1.25], "statue": Vector3(2.7, 0, 1.4), "ridge": Vector3(0, 5.0, -2.6)},
+	"principia": {"poles": [Vector3(-4.2, 0, 1.0), Vector3(4.2, 0, 1.0)], "box": [0.0, -2.6, 3, 2, 1], "fire": [Vector3(-3.4, 0, 3.4), Vector3(3.4, 0, 3.4)],
+		"eagle": Vector3(-1.9, 0, 3.6), "porch": [], "statue": Vector3(1.9, 0, 3.6), "ridge": Vector3(0, 5.3, -2.6)},
 	"smelter": {"poles": [Vector3(-4.3, 0, 2.3), Vector3(4.4, 0, 3.4)], "box": [-2.0, -2.6, 2, 2, 1], "fire": [Vector3(-3.7, 0, 0.5), Vector3(-0.3, 0, 0.5)],
 		"eagle": Vector3(2.0, 0, 3.0), "porch": [], "statue": NO, "ridge": Vector3(-2.0, 4.9, -2.6)},
 	"sawmill": {"poles": [Vector3(-0.9, 0, 1.7), Vector3(4.6, 0, 1.7)], "box": [-2.6, -2.8, 1, 2, 1], "fire": [Vector3(-3.7, 0, 0.4), Vector3(-1.5, 0, 0.4)],
@@ -968,3 +971,35 @@ static func _k_vat(k: Kit) -> void:
 	k.cyl(Vector3(0, 0.62, 0), 0.52, 0.02, 12, Color("5a3a1e"))
 	for y: float in [0.15, 0.5]:
 		k.cyl(Vector3(0, y, 0), 0.525 + y * 0.07, 0.05, 12, IRON, -1.0, false)
+
+
+## Принципия: штаб — большой дом под черепицей с портиком, перед ним площадь, шатёр полководца, значки и орёл
+static func _principia(b: Bp) -> void:
+	b.paint(-1, false)
+	b.roof_tex = "Roof_Tile_06"
+	var stone := CatCivic._skin(b, "Building_Large_Brick_01", Color(1.0, 0.95, 0.86))
+	b.remap = stone
+	var cz := -2.6
+	CatCivic._box(b, 0, cz, 3, 2, [
+		{0: ["SM_Bld_Wall_Window_06", "SM_Bld_Wall_Door_Double_Large_01", "SM_Bld_Wall_Window_06"], 1: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06"],
+			2: ["SM_Bld_Wall_01", "SM_Bld_Wall_01", "SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_Window_06", "SM_Bld_Wall_01"]}],
+		{"trim": "SM_Bld_Trim_04", "skin": stone, "plain": [2]})
+	CatCivic._leaf(b, 0, cz, 3, 2, 1, "SM_Bld_Door_01", 0.05)
+	b.remap = stone
+	var ridge := CatCivic._gable2(b, -3.75, 3.75, cz - 2.5, cz + 2.5, FL, 1.7)
+	b.remap = b.floor_remap(1)
+	b.add("SM_Bld_Roof_Topper_01", Vector3(0, ridge - 0.05, cz), 0.0)
+	b.on_wall("SM_Prop_Banner_01_A", 0, cz, 3, 2, 0, 0.45, FL + 0.55, 0.12)
+	b.on_wall("SM_Prop_Banner_01_A", 0, cz, 3, 2, 0, 2.55, FL + 0.55, 0.12)
+	var fz := cz + 2.5
+	b.portico(-1.25, 1.25, fz + 1.35, fz, 0.92, "SM_Bld_Pillar_02")
+	_sand(b, Vector3(0, 0, fz + 2.3), 8.6, 4.4)
+	add_kit(b, "#mil_standard", Vector3(-3.4, 0, fz + 2.4), 0.0, 1.2)
+	add_kit(b, "#mil_standard", Vector3(3.4, 0, fz + 2.4), 0.0, 1.2)
+	b.add("SM_Prop_Pillar_Base_02", Vector3(0, 0, fz + 3.2), 0.0, 0.7)
+	add_kit(b, "#mil_eagle", Vector3(0, 1.05, fz + 3.2), 0.0, 0.6)
+	b.brazier(Vector3(-1.9, 0, fz + 1.5))
+	b.brazier(Vector3(1.9, 0, fz + 1.5))
+	b.actor(Vector3(-2.4, 0, fz + 1.2), 0.0, "Sword_Idle", "soldier")
+	b.actor(Vector3(2.4, 0, fz + 1.2), 0.0, "Sword_Idle", "soldier")
+	b.door = Vector3(0, 0, fz + 4.3)
