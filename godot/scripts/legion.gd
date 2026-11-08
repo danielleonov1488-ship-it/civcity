@@ -553,6 +553,7 @@ var mats := {}                  # материалы мастерских: iron 
 var mats_t := 0.0               # когда материалы считались последний раз (Legion.now)
 var food_pts := 0.0             # поход 2.0: провиант-очки
 var food_t := 0.0               # когда провиант считался (0 — ещё ни разу: полный запас)
+var daily := {}             # задания дня (Daily): {day, tasks: [...], opened: bool, step: ступень лестницы сундуков}
 var relics := {}            # Легион 2.0, этап 6: реликвии наборов {набор: сколько} (Gear.SETS)
 var forging := {}           # куётся: {slot, cls, rarity, ilvl, end, total} или {}
 var _rng := RandomNumberGenerator.new()
@@ -806,6 +807,7 @@ func recruit(i: int) -> bool:
 	_add_soldier(recruits[i])
 	recruits.remove_at(i)
 	changed.emit()
+	daily_note("recruit")                   # задания дня
 	return true
 
 
@@ -851,6 +853,7 @@ func train(id: int) -> bool:
 	s["train_end"] = now() + secs
 	s["train_total"] = secs
 	changed.emit()
+	daily_note("train")                   # задания дня
 	return true
 
 
@@ -946,6 +949,7 @@ func equip(sid: int, iid: int) -> bool:
 	s["gear"][slot] = iid
 	it["on"] = sid
 	changed.emit()
+	daily_note("equip")                   # задания дня
 	return true
 
 
@@ -1013,6 +1017,7 @@ func smelt(iid: int) -> bool:
 		mats[m] = float(mats.get(m, 0.0)) + float(back[m])
 	items.erase(it)
 	changed.emit()
+	daily_note("smelt")                   # задания дня
 	return true
 
 
@@ -1053,6 +1058,7 @@ func forge(slot: String, cls: String, r: int) -> bool:
 	if slot == "weapon" and cls == "engineer":
 		forging["engine"] = "catapult" if _rng.randf() < 0.5 else "ballista"
 	changed.emit()
+	daily_note("forge")                   # задания дня
 	return true
 
 
@@ -1109,6 +1115,7 @@ func forge_set(set_id: String, slot: String, cls: String) -> bool:
 	if slot == "weapon" and cls == "engineer":
 		forging["engine"] = "catapult" if _rng.randf() < 0.5 else "ballista"
 	changed.emit()
+	daily_note("forge")                   # задания дня
 	return true
 
 
@@ -1126,6 +1133,70 @@ func _relic(st: Dictionary, first: bool) -> String:
 		return ""
 	relics[k] = int(relics.get(k, 0)) + 1
 	return k
+
+
+# ---------- задания дня (Daily) ----------
+
+## Задания сегодняшнего дня (новый день — новые, ступень лестницы сохраняется)
+func daily_tasks() -> Array:
+	if not army_on():
+		return []
+	var d := Soldiers.day_of(now())
+	if int(daily.get("day", -1)) != d:
+		var step := int(daily.get("step", 0))
+		daily = {"day": d, "tasks": Daily.roll(self, d), "opened": false, "step": step}
+	return daily["tasks"]
+
+
+## Что-то сделано: продвинуть подходящие задания дня
+func daily_note(kind: String, n := 1) -> void:
+	if not army_on():
+		return
+	for t: Dictionary in daily_tasks():
+		if String(t["kind"]) == kind and int(t["n"]) < int(t["need"]):
+			t["n"] = mini(int(t["need"]), int(t["n"]) + n)
+
+
+func daily_done() -> int:
+	var n := 0
+	for t: Dictionary in daily_tasks():
+		n += 1 if int(t["n"]) >= int(t["need"]) else 0
+	return n
+
+
+## Открыть дневной сундук ("" — можно, иначе почему нет)
+func can_open_daily() -> String:
+	if daily_tasks().is_empty():
+		return "Задания дня — в новой игре"
+	if bool(daily.get("opened", false)):
+		return "Сундук сегодня уже открыт — новые задания завтра"
+	if daily_done() < daily_tasks().size():
+		return "Выполните все задания дня: %d из %d" % [daily_done(), daily_tasks().size()]
+	return ""
+
+
+## Открыть: Слава, материалы, обломки, вещь; лестница — на ступень выше. Возвращает {glory, mats, shard, item, name}
+func open_daily() -> Dictionary:
+	if can_open_daily() != "":
+		return {}
+	var step := int(daily.get("step", 0))
+	var C := Daily.chest(step)
+	glory += float(C["glory"])
+	for m: String in Gear.MATS:
+		mats[m] = minf(float(mat_cap(m)) + float(C["mats"]), float(mats.get(m, 0.0)) + float(C["mats"]))
+	var sh: Array = C["shard"]
+	shards[int(sh[0])] = int(shards[int(sh[0])]) + int(sh[1])
+	var open := []
+	for cls in Soldiers.CLASS_IDS:
+		if class_open(cls):
+			open.append(cls)
+	var it := Gear.roll(_rng, maxi(1, 1 + progress / 3), step >= 3, open)
+	it["rarity"] = maxi(int(it["rarity"]), int(C["rarity_min"]))
+	var got := add_item(it)
+	daily["opened"] = true
+	daily["step"] = (step + 1) % Daily.LADDER.size()
+	changed.emit()
+	return {"glory": int(C["glory"]), "mats": int(C["mats"]), "shard": sh, "item": got, "name": Daily.ladder_name(step)}
 
 
 func forge_left() -> float:
@@ -2131,6 +2202,7 @@ func upgrade(type: String) -> bool:
 	if c != null:
 		c.changed.emit()                            # казна наверху экрана — сразу, а не через игровой час
 	changed.emit()
+	daily_note("upgrade")                   # задания дня
 	return true
 
 
@@ -3136,6 +3208,16 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 		_food_tick()
 		food_pts = maxf(0.0, food_pts - FOOD2_BATTLE)
 	var first := bool(result.get("win", false)) and int(st["idx"]) == progress
+	if bool(result.get("win", false)):
+		daily_note("camp_win")
+		if first:
+			daily_note("camp_first")
+		if bool(st.get("boss", false)) or bool(st.get("junior", false)):
+			daily_note("boss")
+		if star_count(star_mask(result, st)) >= 3:
+			daily_note("three_stars")
+		if int(result.get("oil_best", 0)) >= 4:
+			daily_note("oil4")
 	var out := result.duplicate()
 	out["first"] = first
 	out["reward"] = {}
@@ -3709,7 +3791,7 @@ func to_dict() -> Dictionary:
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
 		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
-		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "relics": relics, "mats": mats, "mats_t": mats_t,
+		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "relics": relics, "daily": daily, "mats": mats, "mats_t": mats_t,
 		"food_pts": food_pts, "food_t": food_t}
 
 
@@ -3804,6 +3886,7 @@ func from_dict(d: Dictionary) -> void:
 				mats[m] = maxf(0.0, float(md[m]))
 	mats_t = float(d.get("mats_t", 0.0))
 	relics = (d.get("relics", {}) as Dictionary).duplicate()
+	daily = (d.get("daily", {}) as Dictionary).duplicate(true)
 	food_pts = float(d.get("food_pts", 0.0))
 	food_t = float(d.get("food_t", 0.0))
 	forging = {}

@@ -29,6 +29,7 @@ func _ready() -> void:
 	_odeon()
 	_tourism()
 	_renown()
+	_daily()
 	print("COZY DONE fails=%d" % fails)
 	get_tree().quit()
 
@@ -569,6 +570,32 @@ func _renown() -> void:
 	var fest_sec := secs.filter(func(x): return String(x["title"]) == "Римские праздники")
 	_check(secs.size() >= 5 and not fest_sec.is_empty() and "Сатурналии" in (fest_sec[0]["have"] as Array),
 		"коллекции: %d разделов, праздники — %s" % [secs.size(), str(fest_sec[0]["have"]) if not fest_sec.is_empty() else "нет"])
+
+
+## Задания дня Легиона: 5 дел, все — сундук; лестница сундуков; раз в день; сохраняется
+func _daily() -> void:
+	print("== задания дня Легиона")
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.money = 1e6
+	var lg := c.legion
+	lg.bind(c)
+	var ts := lg.daily_tasks()
+	_check(ts.size() == 5, "заданий на день: %d (%s)" % [ts.size(), ", ".join(ts.map(func(t): return t["id"]))])
+	_check(lg.can_open_daily() != "", "сундук закрыт, пока задания не сделаны")
+	for t: Dictionary in ts:
+		lg.daily_note(String(t["kind"]), int(t["need"]))
+	_check(lg.daily_done() == 5 and lg.can_open_daily() == "", "все задания сделаны — сундук можно открыть")
+	var g0 := lg.glory
+	var got := lg.open_daily()
+	_check(not got.is_empty() and lg.glory > g0 and int(lg.daily["step"]) == 1, "%s: +%d Славы, ступень лестницы 2" % [got.get("name", "?"), int(got.get("glory", 0))])
+	_check(lg.can_open_daily() != "", "второй раз за день — нельзя")
+	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var c2 := City.new(Land.new())
+	c2.load_data(d)
+	_check(int(c2.legion.daily.get("step", 0)) == 1, "лестница сундуков сохраняется")
+	lg.daily["day"] = int(lg.daily["day"]) - 2
+	_check(lg.daily_tasks().size() == 5 and int(lg.daily["step"]) == 1 and not bool(lg.daily["opened"]), "новый день — новые задания, лестница не сбросилась")
 
 
 func _odeon() -> void:
