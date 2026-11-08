@@ -294,6 +294,10 @@ func _ready() -> void:
 	boats.name = "Boats"
 	add_child(boats)
 	boats.setup(self)
+	var fnt := Fountains.new()                # живая вода в фонтанах (с акведуком — гуще; этап 7)
+	fnt.name = "Fountains"
+	add_child(fnt)
+	fnt.setup(self)
 	var br := Breathe.new()                   # «город дышит»: бабочки, светлячки, птицы («Уютный Рим», этап 5)
 	br.name = "Breathe"
 	add_child(br)
