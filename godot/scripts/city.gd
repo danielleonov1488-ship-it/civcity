@@ -77,6 +77,7 @@ var econ := 0
 ## «Уютный Рим» (docs/PLAN_COZY.md, этап 1): 0 — прежние правила, 1 — новая игра после переработки: ранги за качество
 ## и меньше жителей (Balance.LEVELS), повозка в большом городе реже, «Большой город» отнимает счастье (Balance)
 var cozy_v := 0
+var renown := 0.0                     # известность города (Renown; новая игра): растёт без конца, за неё — титулы
 var clock_h := 0                       # игровых часов с начала города (сохраняется; для походов этапа 3)
 var visits := {}                       # «Уютный Рим», этап 3: дом → {вид похода: clock_h} (Balance.VISIT_BONUS)
 ## Украшения этапа 5 (решение владельца Q17): 0 — живой город (все прежние облики открыты, как были), 1 — новая игра:
@@ -917,6 +918,9 @@ func compute(same_place := false) -> void:
 		var tx := int(Defs.TAX_SET[tax_of(cls)]["happy"])
 		if tx != 0:
 			parts.append(["Налоги: %s" % String(Defs.TAX_SET[tax_of(cls)]["name"]).to_lower(), tx])
+		var ren := Renown.title_happy(self)     # почётный титул города — немного счастья всем (новая игра)
+		if ren != 0:
+			parts.append(["Почёт: «%s»" % Renown.title_of(renown), ren])
 		var unp := -Defs.UNPAID_HAPPY if unpaid_h > 0 else 0   # казна пуста — жалованье не плачено: обида всем домам
 		if unp != 0:
 			parts.append(["Жалованье не плачено", unp])
@@ -939,7 +943,7 @@ func compute(same_place := false) -> void:
 			if not h["needs"].has(n):
 				missing.append(n)
 				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + vis_sum + tr_sum + tx + unp + dens + size_p - missing.size() * Defs.MISSING_PENALTY
+		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + vis_sum + tr_sum + ren + tx + unp + dens + size_p - missing.size() * Defs.MISSING_PENALTY
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["set_bonus"] = set_b
@@ -962,6 +966,7 @@ func compute(same_place := false) -> void:
 		sums["story"] = float(sums.get("story", 0.0)) + st_sum * w
 		sums["visit"] = float(sums.get("visit", 0.0)) + vis_sum * w
 		sums["traits"] = float(sums.get("traits", 0.0)) + tr_sum * w
+		sums["ren"] = float(sums.get("ren", 0.0)) + ren * w
 		sums["tax"] = float(sums.get("tax", 0.0)) + tx * w
 		sums["unpaid"] = float(sums.get("unpaid", 0.0)) + unp * w
 		sums["crowd"] += dens * w
@@ -975,7 +980,7 @@ func compute(same_place := false) -> void:
 	if float(sums["w"]) > 0.0:
 		var wt: float = sums["w"]
 		var rows := [["Основа", "base", true], ["Лавки", "shops", true], ["Украшения", "deco", true], ["Памятники", "mon", false],
-				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Походы в храм, термы, на зрелища", "visit", false], ["Черты семей", "traits", false], ["Налоги", "tax", false], ["Жалованье не плачено", "unpaid", false], ["Теснота", "crowd", false], ["Большой город", "size", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
+				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Походы в храм, термы, на зрелища", "visit", false], ["Черты семей", "traits", false], ["Почёт города", "ren", false], ["Налоги", "tax", false], ["Жалованье не плачено", "unpaid", false], ["Теснота", "crowd", false], ["Большой город", "size", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
 		var fv := []
 		var vi := []
 		var acc := 0
@@ -1661,6 +1666,12 @@ func sim_day() -> void:
 	stats["rp_lost"] = maxf(0.0, rp + rpd - maxf(rp, rp_cap()))
 	# казна в минус не уходит: не хватает на жалованье и содержание — платим, сколько есть, остальное не плачено
 	# (жители обижены — Defs.UNPAID_HAPPY в счастье домов, советник объяснит, что делать; в долг город не живёт)
+	if Renown.on(self):                          # известность города: каждый час; новый титул — в колокольчик
+		var t0 := Renown.title_idx(renown)
+		renown += Renown.hour_gain(self)
+		if Renown.title_idx(renown) > t0:
+			_event("Город получил почётный титул «%s»! Жители гордятся: +1%% счастья всем домам." % Renown.title_of(renown), "laurels")
+			compute()
 	var tour := Tourism.hour_income(self)        # гости гостиниц («Уютный Рим», этап 6)
 	if tour > 0.0:
 		flow("tour", tour)
@@ -3548,7 +3559,7 @@ func save_data() -> Dictionary:
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n, "goals_vis": goals_vis,
-		"econ_v": econ, "cozy_v": cozy_v, "clock_h": clock_h, "visits": visits, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
+		"econ_v": econ, "cozy_v": cozy_v, "clock_h": clock_h, "renown": renown, "visits": visits, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
 
@@ -3598,6 +3609,7 @@ func load_data(d: Dictionary) -> void:
 	econ = int(d.get("econ_v", 0))
 	cozy_v = int(d.get("cozy_v", 0))
 	clock_h = int(d.get("clock_h", 0))
+	renown = float(d.get("renown", 0.0))
 	visits = {}
 	var vd: Dictionary = d.get("visits", {})
 	for k in vd:
