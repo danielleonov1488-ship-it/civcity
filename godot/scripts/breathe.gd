@@ -140,7 +140,7 @@ func _butterfly_tex() -> ImageTexture:
 
 
 ## Бабочки — объёмная модель (assets/animals/Butterfly.glb): крылья машут вверх-вниз (шейдер), у каждой свой взмах и расцветка.
-## Размах ~13 см (жители 0,61 м) — мелкие, как настоящие; летают у земли поодиночке, их немного
+## Размах 6–8 см (жители 0,61 м) — мелкие, как настоящие; летают у земли поодиночке, их немного
 func _butterflies() -> GPUParticles3D:
 	var p := GPUParticles3D.new()
 	p.name = "Butterflies"
@@ -166,8 +166,8 @@ func _butterflies() -> GPUParticles3D:
 	pm.particle_flag_rotate_y = true           # каждая смотрит в свою сторону
 	pm.angle_min = -180.0
 	pm.angle_max = 180.0
-	pm.scale_min = 0.055                       # половина размаха, м (сетка — от −1 до 1)
-	pm.scale_max = 0.07
+	pm.scale_min = 0.03                        # половина размаха, м (сетка — от −1 до 1): размах 6–8 см — еле видны, как настоящие
+	pm.scale_max = 0.04
 	if OS.get_environment("CIVCITY_BF_BIG") == "1":
 		pm.scale_min *= 5.0                    # проверка облика на снимке
 		pm.scale_max *= 5.0
