@@ -10,6 +10,7 @@ uniform sampler2D tile_plaza_c : source_color, filter_linear_mipmap, repeat_enab
 uniform sampler2D tile_plaza_d : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D surf : filter_linear_mipmap, repeat_disable;   // R мостовая, G площадь, B тропа
 uniform float map_size = 256.0;
+uniform float wet = 0.0;                                   // мокрая земля после дождя (Weather): темнее и с бликом
 // этап 5.7–5.8: узор кисти «Земля» и улучшенные дороги (Land.deco). deco_on = false — узора в городе нет: картинка как была
 uniform bool deco_on = false;
 uniform sampler2D surf2 : filter_linear_mipmap, repeat_disable;  // R сочная трава, G луг в цветах, B песок, A утоптанная земля
@@ -265,7 +266,7 @@ void fragment() {
 	} else {
 		c *= 0.92 + 0.12 * r;
 	}
-	ALBEDO = c;
-	ROUGHNESS = rough;
-	SPECULAR = 0.3;
+	ALBEDO = c * (1.0 - 0.28 * wet);
+	ROUGHNESS = mix(rough, 0.32, wet);
+	SPECULAR = mix(0.3, 0.55, wet);
 }

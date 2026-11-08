@@ -11,6 +11,7 @@ uniform float contrast = 1.08;
 uniform float vignette = 0.45;
 uniform vec3 vig_col = vec3(0.52, 0.36, 0.26);
 uniform vec3 tint = vec3(1.0);                         // общий оттенок (ночью — сиреневый) и яркость
+uniform float rain = 0.0;                              // дождь (Weather): мягче цвета, чуть темнее и прохладнее
 uniform float warm_keep = 0.0;                         // ночью: тёплый свет фонарей и жаровен не подсинивать
 
 vec3 rgb2hsv(vec3 c) {
@@ -49,5 +50,7 @@ void fragment() {
 	vec2 d = SCREEN_UV - 0.5;
 	float v = smoothstep(0.32, 0.9, length(d * vec2(1.25, 1.0)));
 	c = mix(c, c * vig_col, v * vignette);
+	float lr = dot(c, vec3(0.2126, 0.7152, 0.0722));
+	c = mix(c, vec3(lr) * vec3(0.93, 0.96, 1.02), rain * 0.32) * (1.0 - 0.16 * rain);
 	COLOR = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
