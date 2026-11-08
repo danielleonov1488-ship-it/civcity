@@ -88,6 +88,8 @@ var tab := "campaign"
 var lbl_glory: Label
 var lbl_money: Label
 var lbl_rating: Label
+var daily_chip: Control                    # «Задания дня 3/5» в шапке (новая игра)
+var lbl_daily: Label
 var view_r := -1                           # какая провинция на карте
 var view_c := -1                           # какой круг похода
 var sel := {}                              # выбранный бой {c, r, s}
@@ -414,6 +416,15 @@ func _make_window() -> void:
 	var m := _chip_val(hud.ico("coins", 64), "0", "Денарии в казне города: на них улучшают бойцов и собирают провиант в поход")
 	lbl_money = m[1]
 	left.add_child(m[0])
+	var dc := _chip_val(_ic38("chest"), "0/5", "Задания дня: 5 дел каждый день, за все — сундук. Сундуки растут по лестнице недели до «Сундука Цезаря»")
+	daily_chip = dc[0]
+	lbl_daily = dc[1]
+	daily_chip.mouse_filter = Control.MOUSE_FILTER_STOP
+	daily_chip.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	daily_chip.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			_daily_win())
+	left.add_child(daily_chip)
 	hdr.add_child(left)
 	var t := hud._label("Легион", 32, false, C_INK, hud.font_title)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -619,6 +630,12 @@ func _update_header() -> void:
 	lbl_glory.text = hud.fmt(floorf(lg.glory))
 	lbl_money.text = hud.fmt(game.city.money)
 	lbl_rating.text = "Рейтинг %s" % hud.fmt(lg.rating)
+	if daily_chip != null:
+		daily_chip.visible = lg.army_on()
+		if lg.army_on():
+			var ready := lg.can_open_daily() == ""
+			lbl_daily.text = "Сундук!" if ready else ("%d/%d" % [lg.daily_done(), lg.daily_tasks().size()] if not bool(lg.daily.get("opened", false)) else "✓")
+			lbl_daily.add_theme_color_override("font_color", C_GOOD if ready else C_INK)
 
 
 ## Окно — посередине и целиком на экране (при крупном интерфейсе — чуть меньше)
@@ -2367,6 +2384,50 @@ var _f_cls := "legionary"
 
 
 ## Кузница: обломки, что куётся; выбрать слот и класс — и редкость (цена, время)
+## Задания дня: пять дел, отметки; все сделаны — «Открыть сундук» (ступень лестницы недели)
+func _daily_win(got := {}) -> void:
+	var p := _modal(520)
+	var v: VBoxContainer = p.get_child(0)
+	v.add_child(_title("Задания дня", 22))
+	var tasks := lg.daily_tasks()
+	for t: Dictionary in tasks:
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		var ok := int(t["n"]) >= int(t["need"])
+		h.add_child(_tr(hud.ico("check" if ok else "scroll", 64), 24))
+		var l := _l(String(t["text"]), 16, true, C_GOOD if ok else C_INK)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(l)
+		h.add_child(_l("%d/%d" % [int(t["n"]), int(t["need"])], 15, true, C_SOFT))
+		v.add_child(h)
+	v.add_child(_hdiv(10))
+	var step := int(lg.daily.get("step", 0))
+	if not got.is_empty():
+		var it: Dictionary = got.get("item", {})
+		var txt := "%s открыт: +%d Славы, +%d каждого материала, %d × %s" % [got["name"], int(got["glory"]), int(got["mats"]), int(got["shard"][1]), Gear.SHARD[int(got["shard"][0])]]
+		if not it.is_empty():
+			txt += ", %s" % Gear.name_of(it)
+		v.add_child(_wl(txt + ".", 480, 15, C_GOOD, true))
+	elif bool(lg.daily.get("opened", false)):
+		v.add_child(_wl("Сегодняшний сундук открыт. Новые задания — завтра; следующий — %s." % Daily.ladder_name(step), 480, 15, C_SOFT))
+	else:
+		var C := Daily.chest(step)
+		v.add_child(_wl("Сегодня — %s: %d Славы, по %d материалов, обломки и вещь не хуже «%s». Пропуск дня лестницу не сбрасывает." % [Daily.ladder_name(step),
+			int(C["glory"]), int(C["mats"]), Gear.RARITY[int(C["rarity_min"])]], 480, 14, C_SOFT))
+	var bh := HBoxContainer.new()
+	bh.alignment = BoxContainer.ALIGNMENT_CENTER
+	bh.add_theme_constant_override("separation", 10)
+	var why := lg.can_open_daily()
+	if got.is_empty() and not bool(lg.daily.get("opened", false)):
+		bh.add_child(_btn("Открыть сундук", 0, 16, _ic38("chest"), why, func():
+			var g := lg.open_daily()
+			_daily_win(g)
+			_update_header()))
+	bh.add_child(_btn("Закрыть", 140, 16, null, "", func(): _close_overlay()))
+	v.add_child(bh)
+	_center_later(p)
+
+
 func _forge_win() -> void:
 	var p := _modal(600)
 	var v: VBoxContainer = p.get_child(0)
