@@ -297,6 +297,27 @@ static var TUNE2: Array = [
 	[1.46, 1.46, 1.33, 0.89, 0.84, 0.88, 0.87, 1.27, 0.78, 0.69, 0.69, 0.67, 0.71, 0.69, 0.72],   # Парфия
 	[1.09, 1.1, 0.71, 0.78, 0.73, 0.7, 0.54, 0.56, 0.64, 0.51, 0.44, 0.42, 0.42, 0.44, 0.49],   # Дакия
 ]
+## Ветеранский поход (поход 2.0, круги со второго; docs/LEGION_V2.md 3.6): те же 150 боёв, враги сильнее и у каждого
+## вида в бою — особенность (VET_AFFIX), добыча лучше; открывается после Дакии, по провинции в неделю (VET_WEEK).
+## Сила — от последнего боя Дакии и дальше чуть растёт (VET_STEP за бой), подгонка TUNE2_VET
+## (test_legion.gd mode=calibrate v2=1 cycle=1: «обычный ветеран» — уровень 12 и exp2v)
+const VET_AFFIX := ["shield", "rage", "venom", "haste"]
+const AFFIX_NAME := {"shield": "в щитах", "rage": "в ярости", "venom": "с ядом", "haste": "быстрые"}
+const AFFIX_TIP := {"shield": "+25 брони", "rage": "+25% урона", "venom": "удар отравляет", "haste": "бегут и бьют быстрее"}
+const VET_WEEK := 7 * 86400
+const VET_STEP := 0.12
+static var TUNE2_VET: Array = [
+	[2.12, 3.26, 2.79, 2.02, 2.15, 1.85, 1.65, 1.87, 1.78, 1.64, 2.25, 1.9, 1.74, 1.73, 1.79],   # Италия
+	[3.18, 4.24, 3.05, 2.21, 1.8, 1.17, 1.8, 1.68, 1.89, 1.11, 0.95, 1.18, 1.11, 1.22, 1.94],   # Альпы
+	[2.62, 2.01, 1.75, 1.24, 1.16, 1.2, 1.24, 1.49, 0.88, 0.83, 0.66, 0.99, 0.99, 0.79, 0.85],   # Галлия
+	[1.31, 1.48, 1.38, 1.23, 0.94, 1.05, 0.86, 0.89, 0.71, 0.74, 0.62, 0.64, 0.57, 0.49, 0.78],   # Германия
+	[1.4, 1.46, 1.03, 1.13, 0.84, 0.78, 0.46, 1.0, 0.75, 0.74, 0.6, 0.45, 0.54, 0.59, 0.86],   # Британия
+	[1.15, 1.03, 1.05, 0.84, 0.76, 0.66, 0.69, 0.78, 0.48, 0.51, 0.42, 0.65, 0.53, 0.49, 0.46],   # Испания
+	[1.13, 1.5, 1.09, 0.94, 0.72, 0.64, 0.7, 0.63, 0.6, 0.6, 0.5, 0.53, 0.54, 0.39, 0.63],   # Африка
+	[0.96, 1.05, 0.98, 0.68, 0.53, 0.56, 0.53, 0.55, 0.55, 0.56, 0.55, 0.48, 0.46, 0.38, 0.53],   # Египет
+	[0.75, 0.73, 0.57, 0.43, 0.44, 0.42, 0.34, 0.57, 0.38, 0.35, 0.33, 0.25, 0.29, 0.34, 0.4],   # Парфия
+	[0.53, 0.6, 0.36, 0.37, 0.4, 0.35, 0.27, 0.28, 0.33, 0.29, 0.26, 0.23, 0.22, 0.26, 0.29],   # Дакия
+]
 ## Поход 2.0 включён (новая игра; выставляет Legion.sync_v2 по army_on)
 static var V2 := false
 static var v2_test := false             # проверки: поход 2.0 и без новой игры (test_battle v2=1)
@@ -331,6 +352,24 @@ static func target2(r: int, s: int) -> int:
 
 ## Что ещё есть у «обычного игрока» 2.0 у боя (r, s), кроме уровней: звёзды и ранги воинов, вещи (60% от добротных
 ## по глубине похода), Кузница и Склад оружия на уровне target2, Лазарет. → {atk, hp, armor, heal}
+## «Обычный ветеран» у боя (r, s) ветеранского похода: всё, что было у конца Дакии, и ещё легендарные вещи и наборы
+## (прибавка растёт к концу ветеранского похода)
+static func exp2v(r: int, s: int) -> Dictionary:
+	var e := exp2(9, STAGES2 - 1)
+	var x := (r * STAGES2 + s) / float(10 * STAGES2)
+	e["atk"] = float(e["atk"]) + 0.15 + 0.45 * x
+	e["hp"] = float(e["hp"]) + 0.15 + 0.45 * x
+	e["armor"] = float(e["armor"]) + 8.0 + 16.0 * x
+	return e
+
+
+## Особенность вида врага k в ветеранском бою st ("" — не ветеранский бой)
+static func affix_of(st: Dictionary, k: String) -> String:
+	if not bool(st.get("vet", false)):
+		return ""
+	return String(VET_AFFIX[absi(hash(String(st["key"]) + ":" + k)) % VET_AFFIX.size()])
+
+
 static func exp2(r: int, s: int) -> Dictionary:
 	var x := r + s / float(STAGES2)
 	var T := target2(r, s)
@@ -1081,6 +1120,8 @@ func _relic(st: Dictionary, first: bool) -> String:
 	if k == "":
 		return ""
 	var p := (1.0 if first else Gear.SET_DROP_BOSS) if bool(st.get("boss", false)) else Gear.SET_DROP_JUNIOR
+	if bool(st.get("vet", false)):
+		p = minf(1.0, p * 1.5)                    # ветераны чаще приносят реликвии
 	if _rng.randf() > p:
 		return ""
 	relics[k] = int(relics.get(k, 0)) + 1
@@ -1179,7 +1220,10 @@ func _drop(st: Dictionary, first: bool) -> Dictionary:
 		if class_open(cls):
 			open.append(cls)
 	var ilvl := 1 + int(st.get("idx", 0)) / 3
-	var it := add_item(Gear.roll(_rng, ilvl, boss, open))
+	var rolled := Gear.roll(_rng, ilvl, boss, open)
+	if bool(st.get("vet", false)):
+		rolled["rarity"] = maxi(int(rolled["rarity"]), Gear.roll_rarity(_rng, boss))   # ветераны: из двух бросков — лучший
+	var it := add_item(rolled)
 	if it.is_empty():
 		return {"full": true}
 	return it
@@ -2330,7 +2374,22 @@ func region_lock_text(r: int) -> String:
 
 ## Бой открыт: пройден предыдущий и провинция открыта уровнем города
 func stage_open(cycle: int, r: int, s: int) -> bool:
-	return stage_index(cycle, r, s) <= progress and region_rank_ok(r)
+	return stage_index(cycle, r, s) <= progress and region_rank_ok(r) and vet_lock_text(cycle, r) == ""
+
+
+## Почему ветеранская провинция закрыта ("" — открыта или это не ветеранский поход)
+func vet_lock_text(cycle: int, r: int) -> String:
+	if not V2 or cycle < 1 or free_mode:
+		return ""
+	if progress < 10 * STAGES2:
+		return "Ветеранский поход откроется, когда падёт Децебал"
+	if prin_cap() < 12:
+		return "Ветеранский поход — с Принципией 12 уровня"
+	var weeks := int(floor((now() - float(flags.get("vet0", now()))) / VET_WEEK))
+	if r > weeks:
+		var left := float(flags.get("vet0", now())) + r * VET_WEEK - now()
+		return "Ветераны «%s» придут через %s — по провинции в неделю" % [REGIONS2[r]["name"], fmt_duration(left)]
+	return ""
 
 
 func stage_done(cycle: int, r: int, s: int) -> bool:
@@ -2366,7 +2425,14 @@ static func base_scales(cycle: int, r: int, s: int, tuned := true) -> Array:
 	if tuned and r < tune.size() and s < (tune[r] as Array).size():
 		k *= float(tune[r][s])
 	if cycle > 0 and V2:
-		k *= level_k(target_level(cycle, r, s)) / level_k(target_level(0, r, s)) * pow(CYCLE_EXTRA, cycle)
+		# ветераны: от силы последнего боя Дакии, дальше по VET_STEP за бой; своя подгонка
+		var Dv := (9 * STAGES2 + STAGES2 - 1) * STEP2 + (r * STAGES2 + s) * VET_STEP
+		var kv := pow(CYCLE_EXTRA, cycle - 1)
+		if tuned and r < TUNE2_VET.size() and s < (TUNE2_VET[r] as Array).size():
+			kv *= float(TUNE2_VET[r][s])
+		elif tuned and TUNE2.size() > 9:
+			kv *= float(TUNE2[9][STAGES2 - 2])           # подгонки ещё нет — как предпоследний бой Дакии
+		return [pow(STAGE_GROWTH, Dv) * kv, pow(BOSS_GROWTH, Dv) * kv]
 	elif cycle > 0:
 		k *= level_k(target_level(cycle, r, s)) / level_k(target_level(0, r, s)) * pow(CYCLE_EXTRA, cycle - 1)
 		if tuned and r < TUNE_C.size() and s < (TUNE_C[r] as Array).size():
@@ -2387,7 +2453,7 @@ const FOREST_T := [1, 1, 2, 2, 2, 3, 3, 3, 3, 3]
 
 static func target_level(cycle: int, r: int, s: int) -> int:
 	if V2:
-		return target2(r, s) + cycle * CYCLE_CAP
+		return target2(r, s) if cycle == 0 else 12
 	if r == 0 and s < FOREST_T.size():
 		return int(FOREST_T[s]) + cycle * CYCLE_CAP
 	var base := r + 1
@@ -2487,9 +2553,9 @@ static func stage(cycle: int, r: int, s: int) -> Dictionary:
 	elif junior:
 		reward["money"] = int(reward["money"]) * 2
 		reward["glory"] = int(reward["glory"]) + 1
-	var title: String = R["name"] + ((" " + roman(cycle + 1)) if cycle > 0 else "")
+	var title: String = R["name"] + ((" · ветераны" if V2 else " " + roman(cycle + 1)) if cycle > 0 else "")
 	return {"cycle": cycle, "r": r, "s": s, "idx": idx, "key": stage_key(cycle, r, s), "D": D, "boss": boss, "waves": waves, "packs": packs,
-		"scale": scale, "boss_scale": boss_scale, "reward": reward, "title": title, "region": R["id"], "junior": junior,
+		"scale": scale, "boss_scale": boss_scale, "reward": reward, "title": title, "region": R["id"], "junior": junior, "vet": V2 and cycle > 0,
 		"name": ENEMIES[R["boss"]]["name"] if boss else (ENEMIES[R["junior"]]["name"] if junior else "Бой %d" % (s + 1)),
 		"fixed": not fx.is_empty(), "theme": String(fx.get("name", "")), "kite": bool(fx.get("kite", false)), "bite": bool(fx.get("bite", false)),
 		"squad": String(fx.get("squad", ("bow" if bool(fx.get("kite", false)) and not bool(fx.get("bite", false)) else "leg") if not fx.is_empty() else "")),
@@ -2554,6 +2620,16 @@ func next_stage(st: Dictionary) -> Dictionary:
 static func foe_stats(st: Dictionary, k: String) -> Dictionary:
 	var E: Dictionary = ENEMIES[k]
 	var s := enemy_stats(k, float(st["boss_scale"]) if bool(E.get("boss", false)) else float(st["scale"]))
+	match affix_of(st, k):
+		"shield":
+			s["armor"] = minf(85.0, float(s["armor"]) + 25.0)
+		"rage":
+			s["atk"] = roundi(float(s["atk"]) * 1.25)
+		"venom":
+			s["poison"] = maxf(float(s.get("poison", 0.0)), 0.15)
+		"haste":
+			s["speed"] = float(s["speed"]) * 1.3
+			s["rate"] = float(s["rate"]) * 0.85
 	if bool(st.get("kite", false)) and String(s["shot"]) != "":
 		s["kite"] = KITE
 		s["bush"] = [BUSH, BUSH_SHOT]
@@ -3095,6 +3171,8 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 		out["rating"] = gain
 		if first:
 			progress += 1
+			if V2 and progress == 10 * STAGES2 and not flags.has("vet0"):
+				flags["vet0"] = now()                 # Децебал пал — часы ветеранского похода пошли
 			if st["boss"]:
 				var n := bosses()
 				for id in PERK_IDS:
