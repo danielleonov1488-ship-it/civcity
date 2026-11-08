@@ -248,15 +248,23 @@ func _wing_tex() -> ImageTexture:
 			var u := (x + 0.5) / W
 			var v := (y + 0.5) / H
 			var col := Color(0, 0, 0, 0)
-			var ef := pow((u - 0.52) / 0.5, 2) + pow((v - 0.33) / 0.3, 2)      # переднее крыло
-			var eh := pow((u - 0.38) / 0.38, 2) + pow((v - 0.7) / 0.24, 2)     # заднее
-			var e := minf(ef, eh)
-			if e < 1.0:
-				col = rim if e > 0.66 else wing
-				if ef < 1.0 and ef > 0.66 and u > 0.7 and int(x + y) % 7 < 2:
-					col = Color("fff4d8")                # светлые точки по кайме
-				if ef < 0.18 and u > 0.6:
-					col = Color("1e140c")                # тёмное пятно на переднем крыле
+			# переднее крыло — вытянутый овал, кончик чуть приподнят; заднее — круглее
+			var ca := cos(-0.26)
+			var sa := sin(-0.26)
+			var fu := (u - 0.5) * ca - (v - 0.3) * sa
+			var fv := (u - 0.5) * sa + (v - 0.3) * ca
+			var ef := pow(fu / 0.52, 2) + pow(fv / 0.2, 2)
+			var eh := pow((u - 0.36) / 0.36, 2) + pow((v - 0.66) / 0.25, 2)
+			if ef < 1.0:
+				col = rim if ef > 0.72 and u > 0.35 else wing.darkened(0.1 * (1.0 - u))
+				for sp: Vector2 in [Vector2(0.84, 0.17), Vector2(0.9, 0.25), Vector2(0.78, 0.25)]:
+					if Vector2(u, v).distance_to(sp) < 0.032:
+						col = Color("fff4d8")            # светлые пятна у кончика
+			elif eh < 1.0:
+				col = rim if eh > 0.75 else wing
+				var dv := Vector2(u, v).distance_to(Vector2(0.42, 0.7))
+				if dv < 0.07:
+					col = Color("2a1a10") if dv > 0.03 else Color("ffe9b0")   # «глазок» на заднем крыле
 			if u < 0.07 and v > 0.18 and v < 0.86:
 				col = Color("24170e")                    # тельце
 			if col.a > 0.0:
