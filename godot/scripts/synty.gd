@@ -145,8 +145,31 @@ static func material(slot: String, remap := {}) -> Material:
 		m.albedo_texture = Gfx.tex(_tex_path("PolygonAncientEmpire_01_A"))
 	if remap.has("tint"):
 		m.albedo_color = remap["tint"]
+	# листва деревьев и кустов (remap["leaf"], ставит make) — материал с временами года (shaders/foliage.gdshader,
+	# scripts/seasons.gd); вечнозелёные (кипарисы, пальмы, оливы) осенью не желтеют и весной не цветут
+	if remap.has("leaf") and m.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED and not m.normal_enabled and m.albedo_texture != null:
+		var fm := ShaderMaterial.new()
+		fm.shader = preload("res://shaders/foliage.gdshader")
+		fm.set_shader_parameter("albedo_tex", m.albedo_texture)
+		fm.set_shader_parameter("albedo", m.albedo_color)
+		fm.set_shader_parameter("season", season_now)
+		fm.set_shader_parameter("evergreen", remap["leaf"] == "ever")
+		season_mats.append(fm)
+		_mats[mkey] = fm
+		return fm
 	_mats[mkey] = m
 	return m
+
+
+## Материалы листвы с временами года и что на них сейчас (Seasons.apply)
+static var season_mats: Array = []
+static var season_now := Vector4.ZERO
+
+
+static func set_season(v: Vector4) -> void:
+	season_now = v
+	for fm: ShaderMaterial in season_mats:
+		fm.set_shader_parameter("season", v)
 
 
 ## Узел с моделью name; материалы назначены, основание — на нуле (если ground)
@@ -157,6 +180,9 @@ static func make(name: String, remap := {}) -> Node3D:
 	_index()
 	if remap.is_empty() and (name.begins_with("SM_Env_Tree") or name.begins_with("SM_Env_Bush") or name.begins_with("SM_Env_Garden")):
 		remap = {"tint": GREEN}
+	if name.begins_with("SM_Env_Tree") and remap.has("tint") and not remap.has("leaf"):
+		remap = remap.duplicate()
+		remap["leaf"] = "ever" if (name.contains("Thin") or name.contains("Palm") or remap.has("ever")) else "dec"
 	if not _paths.has(name):
 		push_warning("Synty: нет модели " + name)
 		return Node3D.new()

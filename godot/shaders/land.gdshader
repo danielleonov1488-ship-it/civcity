@@ -10,6 +10,7 @@ uniform sampler2D tile_plaza_c : source_color, filter_linear_mipmap, repeat_enab
 uniform sampler2D tile_plaza_d : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D surf : filter_linear_mipmap, repeat_disable;   // R мостовая, G площадь, B тропа
 uniform float map_size = 256.0;
+uniform vec4 season = vec4(0.0);                          // времена года (Seasons): x осень, y зима, z весна — трава
 uniform float wet = 0.0;                                   // мокрая земля после дождя (Weather): темнее и с бликом
 // этап 5.7–5.8: узор кисти «Земля» и улучшенные дороги (Land.deco). deco_on = false — узора в городе нет: картинка как была
 uniform bool deco_on = false;
@@ -265,6 +266,15 @@ void fragment() {
 		c = wpos.y > top_y - 0.05 ? c * 0.85 : dirt;
 	} else {
 		c *= 0.92 + 0.12 * r;
+	}
+	if (season != vec4(0.0)) {
+		// трава по временам года: осенью золотится, зимой бледнеет, весной сочнее; мостовые и камни — как были
+		float gr = smoothstep(0.004, 0.03, c.g - max(c.r, c.b));
+		float lg = dot(c, vec3(0.2126, 0.7152, 0.0722));
+		vec3 t = mix(c, vec3(lg * 1.45, lg * 1.08, lg * 0.36), season.x * 0.5);
+		t = mix(t, mix(vec3(lg * 1.05), c, 0.4) * vec3(0.97, 1.0, 1.02), season.y * 0.65);
+		t = mix(t, c * vec3(0.94, 1.08, 0.9), season.z);
+		c = mix(c, t, gr);
 	}
 	ALBEDO = c * (1.0 - 0.28 * wet);
 	ROUGHNESS = mix(rough, 0.32, wet);

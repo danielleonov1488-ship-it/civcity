@@ -254,7 +254,7 @@ static func _bigtree(b: Bp, lk: int) -> void:
 			_bloom(b, Vector3(0.45, 0, 0.3), 0.24)
 			_grass(b, Vector3(-0.4, 0, -0.2), 0.6)
 		1:
-			_add(b, "SM_Env_Tree_04", Vector3.ZERO, _yaw(b), 0.55, {"tint": OLIVE})
+			_add(b, "SM_Env_Tree_04", Vector3.ZERO, _yaw(b), 0.55, {"tint": OLIVE, "ever": true})
 			b.add("SM_Prop_Stone_Border_01", Vector3.ZERO, _yaw(b), 0.5)
 			_flowers(b, Vector3(0, 0.02, 0), 1.2)
 		_:
