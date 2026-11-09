@@ -233,6 +233,9 @@ func _ready() -> void:
 		mode = "demo"
 	elif args.has("new"):
 		mode = "new"
+	# листва с временами года (scripts/seasons.gd) — только в настоящей игре: меню, витрина и проверки с готовым городом
+	# рисуют деревья прежним материалом (на «Очень низкой» он дешевле); seasons=1 — проверки и снимки времён года
+	Synty.season_on = mode in ["play", "new"] or args.get("seasons", "") == "1"
 	shot_path = args.get("shot", "")
 	shot_frame = int(args.get("frames", "200"))
 	_autogo = args.get("autogo", "")

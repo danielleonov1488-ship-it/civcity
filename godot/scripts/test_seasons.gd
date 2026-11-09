@@ -12,7 +12,7 @@ func _ready() -> void:
 		if a.begins_with("out="):
 			out = a.substr(4)
 	DirAccess.make_dir_recursive_absolute(out)
-	Game.boot = {"demo": "1", "noui": "1"}
+	Game.boot = {"demo": "1", "noui": "1", "seasons": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()
