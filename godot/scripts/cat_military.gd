@@ -434,6 +434,8 @@ const GROW := {
 		"eagle": Vector3(3.95, 0, 0.45), "porch": [-1.25, 1.25], "statue": NO, "ridge": Vector3(0, 4.05, -2.6)},
 	"armory": {"poles": [Vector3(-4.0, 0, 3.05), Vector3(4.0, 0, 3.05)], "box": [0.0, -2.6, 3, 2, 1], "fire": [Vector3(-1.1, 0, 3.1), Vector3(1.1, 0, 3.1)],
 		"eagle": Vector3(-2.75, 0, 1.45), "porch": [-1.25, 1.25], "statue": Vector3(2.7, 0, 1.4), "ridge": Vector3(0, 5.0, -2.6)},
+	"mars": {"poles": [Vector3(-2.4, 0, 4.0), Vector3(2.4, 0, 4.0)], "box": [0.0, -2.4, 3, 2, 1], "fire": [Vector3(-3.6, 0, 4.0), Vector3(3.6, 0, 4.0)],
+		"eagle": Vector3(-3.7, 0, 2.0), "porch": [], "statue": Vector3(3.7, 0, 2.0), "ridge": Vector3(0, 5.15, -2.4)},
 	"principia": {"poles": [Vector3(-4.2, 0, 1.0), Vector3(4.2, 0, 1.0)], "box": [0.0, -2.6, 3, 2, 1], "fire": [Vector3(-3.4, 0, 3.4), Vector3(3.4, 0, 3.4)],
 		"eagle": Vector3(-1.9, 0, 3.6), "porch": [], "statue": Vector3(1.9, 0, 3.6), "ridge": Vector3(0, 5.3, -2.6)},
 	"smelter": {"poles": [Vector3(-4.3, 0, 2.3), Vector3(4.4, 0, 3.4)], "box": [-2.0, -2.6, 2, 2, 1], "fire": [Vector3(-3.7, 0, 0.5), Vector3(-0.3, 0, 0.5)],
