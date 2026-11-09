@@ -49,11 +49,20 @@ static func name_of(d: int) -> String:
 
 func setup(g) -> void:
 	game = g
-	for i in EMITTERS:
-		var p := _leaves()
-		add_child(p)
-		p.emitting = false
-		leaves.append(p)
+
+
+## Листопад заводится только осенью и не на «Очень низкой» (частицы не стоят видеокарте ничего остальной год)
+func _ensure_leaves(on: bool) -> void:
+	if on and leaves.is_empty():
+		for i in EMITTERS:
+			var p := _leaves()
+			add_child(p)
+			p.emitting = false
+			leaves.append(p)
+	elif not on and not leaves.is_empty():
+		for p: GPUParticles3D in leaves:
+			p.queue_free()
+		leaves.clear()
 
 
 func _process(dt: float) -> void:
@@ -80,6 +89,9 @@ func _process(dt: float) -> void:
 func _place_leaves() -> void:
 	var q := str(game.settings.get("quality", "high"))
 	var on := now.x > 0.05 and q != "verylow"
+	_ensure_leaves(on or now.x > 0.0 and q != "verylow")
+	if leaves.is_empty():
+		return
 	var trees := []
 	if on:
 		var at: Vector3 = game.rig.target if game.rig else Vector3.ZERO
