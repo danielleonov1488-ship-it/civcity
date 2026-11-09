@@ -28,6 +28,7 @@ var far_forest: Array = []            # дальние леса до гориз�
 var gfx: Gfx                          # графика: выбор по видеокарте, сторож кадров, счётчик FPS (scripts/gfx.gd)
 var photo: PhotoMode                  # режим фото (P): интерфейс спрятан, наклон, время суток, снимок (scripts/photo_mode.gd)
 var weather: Weather                  # дождь (scripts/weather.gd)
+var seasons: Seasons                  # времена года: листва, трава, листопад (scripts/seasons.gd)
 var clouds: Clouds                    # тени облаков по городу (scripts/clouds.gd)
 var land_mat: ShaderMaterial
 var surf_img: Image
@@ -290,6 +291,10 @@ func _ready() -> void:
 	weather.name = "Weather"
 	add_child(weather)
 	weather.setup(self)
+	seasons = Seasons.new()                   # времена года по календарю («Уютный Рим»; новая игра)
+	seasons.name = "Seasons"
+	add_child(seasons)
+	seasons.setup(self)
 	var boats := Boats.new()                  # лодки с гребцами на больших прудах («Уютный Рим», этап 7; новая игра)
 	boats.name = "Boats"
 	add_child(boats)

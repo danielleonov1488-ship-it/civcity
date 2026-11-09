@@ -1375,6 +1375,8 @@ func _tip_renown(v: VBoxContainer) -> void:
 		var nf := Renown.next_fest(c.day)
 		if not (nf[0] as Dictionary).is_empty():
 			_tip_text(v, "Ближайший праздник — %s, через %d %s. %s" % [nf[0]["name"], int(nf[1]), _plural(int(nf[1]), "день", "дня", "дней"), nf[0]["bonus"]], C_INK, 14)
+	var sid := Seasons.id_of(c.day)
+	_tip_text(v, "Сейчас %s. %s" % [Seasons.name_of(c.day), {"winter": "Листва потускнела, хвоя темнее.", "spring": "Сады в цвету.", "summer": "Всё в зелени.", "autumn": "Листва золотая и багряная, листья падают."}[sid]], C_SOFT, 13)
 	_tip_text(v, "Туристы гостиниц, зрелища, украшения, достопримечательности и счастье горожан прибавляют известность — расти можно без конца, даже когда город уже Вечный.", C_SOFT, 13)
 
 
@@ -6203,6 +6205,8 @@ func refresh() -> void:
 		if c.fest_left > 0 and c.cal_fest_id != "":
 			lbl_renown.text += " · " + Renown.cal_fest_name(c.cal_fest_id)
 	lbl_day.text = "День %d" % (c.day + 1)
+	if Renown.on(c):
+		lbl_day.text += " · " + Seasons.name_of(c.day)
 	show_city_name()
 	lbl_money.text = "%s / %s" % [fmt(c.money), fmt(c.money_cap())]
 	lbl_money.tooltip_text = "Денарии в казне / предел казны"
