@@ -163,6 +163,7 @@ static func material(slot: String, remap := {}) -> Material:
 
 ## Материалы листвы с временами года и что на них сейчас (Seasons.apply)
 static var season_mats: Array = []
+static var season_on := false             # листва с временами года (ставит Game: только настоящая игра)
 static var season_now := Vector4.ZERO
 
 
@@ -180,7 +181,7 @@ static func make(name: String, remap := {}) -> Node3D:
 	_index()
 	if remap.is_empty() and (name.begins_with("SM_Env_Tree") or name.begins_with("SM_Env_Bush") or name.begins_with("SM_Env_Garden")):
 		remap = {"tint": GREEN}
-	if name.begins_with("SM_Env_Tree") and remap.has("tint") and not remap.has("leaf"):
+	if season_on and name.begins_with("SM_Env_Tree") and remap.has("tint") and not remap.has("leaf"):
 		remap = remap.duplicate()
 		remap["leaf"] = "ever" if (name.contains("Thin") or name.contains("Palm") or remap.has("ever")) else "dec"
 	if not _paths.has(name):
