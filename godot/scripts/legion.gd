@@ -88,7 +88,7 @@ const BUILDING_UNIT := {"barracks": "legionary", "spearcamp": "spearman", "range
 ## У зданий бойцов уровень здания — это уровень рода войск (levels: так его знает и сервер боёв с городами);
 ## у Кузницы, Лазарета и Склада оружия — свой (blevels). Здание ещё не поставлено, а уровень выше первого — он «в запасе»
 ## (старые сохранения: уровни войск и умения перенесены в здания) и заработает, как только здание поставят
-const BUILDING_IDS := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia"]
+const BUILDING_IDS := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia", "mars"]
 ## Здания поддержки: max — наивысший уровень (выше — предел уровня города CAP_BY_CITY), cost_k — множитель цены улучшений
 const SUPPORT := {
 	"forge": {"max": 10, "cost_k": 1.2},
@@ -98,6 +98,7 @@ const SUPPORT := {
 	"sawmill": {"max": 10, "cost_k": 0.8},
 	"tannery": {"max": 10, "cost_k": 0.8},
 	"principia": {"max": 12, "cost_k": 1.6},
+	"mars": {"max": 5, "cost_k": 1.3},
 }
 ## Принципия (Легион 2.0, только новая игра): потолок уровня остальных зданий Легиона — её уровень (без неё — PRIN_NONE).
 ## Её уровень l — с уровня города PRIN_CITY[l]; улучшить — когда PRIN_MAIN не ниже её нынешнего уровня
@@ -435,9 +436,27 @@ const PERKS := {
 	"bandage": {"name": "Перевязка", "cd": 22.0, "boss": 3, "art": 2, "desc": "Лекари перевязывают раненых: отряд лечится."},
 	"volley": {"name": "Залп", "cd": 18.0, "boss": 4, "art": 3, "desc": "Лучники из тыла бьют по всем врагам разом."},
 	"horn": {"name": "Боевой рог", "cd": 25.0, "boss": 6, "art": 4, "desc": "Отряд бьёт и двигается быстрее."},
+	# поход 2.0 (только новая игра; бои с городами и сервер их не знают): открываются провинциями 5 и 8
+	"eagle": {"name": "Знамя орла", "cd": 30.0, "boss": 5, "art": 5, "v2": true, "desc": "Знаменосец поднимает золотого орла: на пару секунд отряд неуязвим — переждать лавину, колесницы или удар босса."},
+	"fire": {"name": "Огненные стрелы", "cd": 24.0, "boss": 8, "art": 6, "v2": true, "desc": "Лучники бьют горящими стрелами по всем врагам: враги горят несколько секунд, а сожжённых не поднять."},
 }
 const PERK_IDS := ["oil", "testudo", "bandage", "volley", "horn"]
+const PERK_V2 := ["eagle", "fire"]
 const PERK_MAX := 5
+## Поход 2.0: Храм Марса (docs/LEGION_V2.md 3.12) поднимает предел умений — 5 и ещё по уровню за каждый уровень Храма, до 10
+const PERK_MAX2 := 10
+
+
+## Умения этой игры: в походе 2.0 — ещё «Знамя орла» и «Огненные стрелы»
+static func perk_ids() -> Array:
+	return PERK_IDS + PERK_V2 if V2 else PERK_IDS
+
+
+## Предел уровня умений сейчас: в походе 2.0 — 5 + уровень Храма Марса (без Храма — 5)
+func perk_max() -> int:
+	if not V2:
+		return PERK_MAX
+	return mini(PERK_MAX2, PERK_MAX + (level_of("mars") if count_type("mars") > 0 or free_mode else 0))
 
 # =====================================================================
 #   прокачка родов войск
@@ -1490,7 +1509,7 @@ func _ensure() -> void:
 	for k in SUPPORT:
 		if not blevels.has(k):
 			blevels[k] = 1
-	for p in PERK_IDS:
+	for p in perk_ids():
 		if not perks.has(p):
 			perks[p] = 1 if int(PERKS[p]["boss"]) <= 0 else 0      # масло — с первого дня
 
@@ -2341,6 +2360,8 @@ func b_effect(btype: String, lvl: int) -> Array:
 			return ["Между волнами боя раненые восстанавливают %d%% здоровья" % roundi(INFIRMARY * lvl * 100.0)]
 		"principia":
 			return ["Потолок остальных зданий Легиона — %d уровень" % maxi(PRIN_NONE, lvl)]
+		"mars":
+			return ["Умения в бою — до %d уровня (без Храма — до %d)" % [mini(PERK_MAX2, PERK_MAX + lvl), PERK_MAX]]
 		"smelter", "sawmill", "tannery":
 			var m := String(WORKSHOPS[btype])
 			return ["%s: %d в час (при полном числе работников), запас до %d" % [String(Gear.MAT_NAME[m]).capitalize(),
@@ -2390,7 +2411,9 @@ func can_upgrade_perk(id: String) -> String:
 	var lvl := int(perks.get(id, 0))
 	if lvl <= 0:
 		return "Откроется после победы: %s" % boss_name(int(PERKS[id]["boss"]))
-	if lvl >= PERK_MAX:
+	if lvl >= perk_max():
+		if V2 and lvl < PERK_MAX2:
+			return "Выше — с Храмом Марса %d уровня" % (lvl - PERK_MAX + 1)
 		return "Максимум"
 	if glory + 0.001 < perk_cost(id):
 		return "Не хватает Славы"
@@ -2409,7 +2432,7 @@ func upgrade_perk(id: String) -> bool:
 ## Открытые умения: {id: уровень}
 func open_perks() -> Dictionary:
 	var out := {}
-	for p in PERK_IDS:
+	for p in perk_ids():
 		if int(perks.get(p, 0)) > 0:
 			out[p] = int(perks[p])
 	return out
@@ -3014,7 +3037,7 @@ func tips(st: Dictionary) -> String:
 ## barracks — уровень Казарм: место открывается, только если они уже нужного уровня (SLOT_BARRACKS, Д10)
 static func unlocks_at(n: int, barracks := MAX_LEVEL) -> Array:
 	var out := []
-	for id in PERK_IDS:
+	for id in perk_ids():
 		if int(PERKS[id]["boss"]) == n:
 			out.append("умение «%s»" % PERKS[id]["name"])
 	var si := SLOT_BOSSES.find(n)
@@ -3257,7 +3280,7 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 				flags["vet0"] = now()                 # Децебал пал — часы ветеранского похода пошли
 			if st["boss"]:
 				var n := bosses()
-				for id in PERK_IDS:
+				for id in perk_ids():
 					if int(PERKS[id]["boss"]) == n and int(perks.get(id, 0)) == 0:
 						perks[id] = 1
 				out["unlocks"] = unlocks_at(n, _slot_barracks())
@@ -3550,7 +3573,16 @@ func pvp_entries(which := "pvp") -> Array:
 
 ## Снимок отряда для сервера: места (pvp_entries), умения и бонусы чудес, которые знает сервер
 func pvp_snapshot(which := "pvp") -> Dictionary:
-	return {"v": 1, "squad": pvp_entries(which), "perks": open_perks(), "atk_b": pvp_bonus("atk"), "hp_b": pvp_bonus("hp")}
+	return {"v": 1, "squad": pvp_entries(which), "perks": pvp_perks(), "atk_b": pvp_bonus("atk"), "hp_b": pvp_bonus("hp")}
+
+
+## Умения для боёв с городами: только те, что знает сервер (без умений похода 2.0), и не выше PERK_MAX
+func pvp_perks() -> Dictionary:
+	var out := {}
+	for p in PERK_IDS:
+		if int(perks.get(p, 0)) > 0:
+			out[p] = mini(PERK_MAX, int(perks[p]))
+	return out
 
 
 ## Бонус урона или здоровья ("atk" | "hp"), который знает сервер боёв с городами: чудеса (и Кузница — когда PVP_MODS)
@@ -3645,7 +3677,7 @@ static func snapshot_perks(snap: Dictionary) -> Dictionary:
 	var ps = snap.get("perks", {})
 	if ps is Dictionary:
 		for p in ps:
-			if PERKS.has(p):
+			if PERKS.has(p) and not bool(PERKS[p].get("v2", false)):
 				out[p] = clampi(int(ps[p]), 0, PERK_MAX)
 	return out
 
@@ -3818,7 +3850,7 @@ func from_dict(d: Dictionary) -> void:
 	perks = {}
 	for p in d.get("perks", {}):
 		if PERKS.has(p):
-			perks[p] = clampi(int(d["perks"][p]), 0, PERK_MAX)
+			perks[p] = clampi(int(d["perks"][p]), 0, PERK_MAX2)
 	stars = {}
 	var v1 := int(d.get("v", 1)) < 2
 	for k in d.get("stars", {}):
@@ -3910,8 +3942,8 @@ func from_dict(d: Dictionary) -> void:
 		sid_next = maxi(sid_next, int(s["id"]) + 1)
 	_ensure()
 	# умения за уже побеждённых боссов (и масло — с первого дня: старым сохранениям тоже)
-	for p in PERK_IDS:
-		if bosses() >= int(PERKS[p]["boss"]) and int(perks[p]) == 0:
+	for p in perk_ids():
+		if bosses() >= int(PERKS[p]["boss"]) and int(perks.get(p, 0)) == 0:
 			perks[p] = 1
 	# старое сохранение, где уже воевали: обучение и учебный бой позади
 	if progress > 0 and not flags.has("tut"):

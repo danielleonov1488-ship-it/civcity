@@ -51,6 +51,7 @@ static func make(b: Bp, type: String, tier := 0) -> void:
 		"sawmill": _sawmill(b)
 		"tannery": _tannery(b)
 		"principia": _principia(b)
+		"mars": _mars(b)
 	if tier > 0:
 		_grow(b, type, tier)
 
@@ -974,6 +975,36 @@ static func _k_vat(k: Kit) -> void:
 
 
 ## Принципия: штаб — большой дом под черепицей с портиком, перед ним площадь, шатёр полководца, значки и орёл
+## Храм Марса (Легион 2.0): небольшой храм — черепица, четыре колонны портика, статуя воина на постаменте между
+## двумя жаровнями, по бокам знамёна легионов; у портика — жрец
+static func _mars(b: Bp) -> void:
+	b.paint(-1, false)
+	b.roof_tex = "Roof_Tile_06"
+	var stone := CatCivic._skin(b, "Building_Large_Brick_01", Color(1.0, 0.93, 0.84))
+	b.remap = stone
+	var cz := -2.4
+	CatCivic._box(b, 0, cz, 3, 2, [
+		{0: ["SM_Bld_Wall_01", "SM_Bld_Wall_Door_Double_Large_01", "SM_Bld_Wall_01"], 1: ["SM_Bld_Wall_01", "SM_Bld_Wall_01"],
+			2: ["SM_Bld_Wall_01", "SM_Bld_Wall_01", "SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_01", "SM_Bld_Wall_01"]}],
+		{"trim": "SM_Bld_Trim_04", "skin": stone, "plain": [1, 2, 3]})
+	CatCivic._leaf(b, 0, cz, 3, 2, 1, "SM_Bld_Door_01", 0.05)
+	b.remap = stone
+	var ridge := CatCivic._gable2(b, -3.75, 3.75, cz - 2.5, cz + 2.5, FL, 1.6)
+	b.remap = b.floor_remap(1)
+	b.add("SM_Bld_Roof_Topper_01", Vector3(0, ridge - 0.05, cz), 0.0)
+	var fz := cz + 2.5
+	b.portico(-3.75, 3.75, fz + 1.6, fz, 0.92, "SM_Bld_Pillar_02")
+	_sand(b, Vector3(0, 0, fz + 2.9), 8.0, 2.6)
+	b.add("SM_Prop_Pillar_Base_02", Vector3(0, 0, fz + 3.0), 0.0, 0.8)
+	b.add("SM_Prop_Statue_01", Vector3(0, 0.95, fz + 3.0), 0.0, 0.62)          # воин с копьём и щитом — Марс
+	b.brazier(Vector3(-1.4, 0, fz + 2.8))
+	b.brazier(Vector3(1.4, 0, fz + 2.8))
+	add_kit(b, "#mil_standard", Vector3(-3.4, 0, fz + 3.0), 0.0, 1.15)
+	add_kit(b, "#mil_standard", Vector3(3.4, 0, fz + 3.0), 0.0, 1.15)
+	b.actor(Vector3(0.8, 0, fz + 2.0), PI, "Spell_Simple_Idle", "rich")
+	b.door = Vector3(0, 0, fz + 4.4)
+
+
 static func _principia(b: Bp) -> void:
 	b.paint(-1, false)
 	b.roof_tex = "Roof_Tile_06"

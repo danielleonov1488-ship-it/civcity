@@ -354,6 +354,9 @@ const B := {
 		"jobs": {"plebs": 2}, "desc": "Брёвна, козлы и большая пила: пильщики готовят дерево — древки копий, луки, щиты и станки машин."},
 	"tannery": {"kind": "military", "cat": "military", "name": "Дубильня", "cost": 550, "unlock": "army:3", "unique": true, "icon": "boots",
 		"jobs": {"plebs": 2}, "desc": "Чаны с дубильным отваром и рамы с растянутыми шкурами: кожа на ремни, щиты и доспехи."},
+	# Легион 2.0: Храм Марса — умения в бою выше 5 уровня (до 10); только новая игра
+	"mars": {"kind": "military", "cat": "military", "name": "Храм Марса", "cost": 1600, "unlock": "army:3", "unique": true, "icon": "legion",
+		"desc": "Небольшой храм бога войны: жрец, алтарь и знамёна легионов. Каждый уровень Храма поднимает предел умений в бою на один — до 10."},
 	"infirmary": {"kind": "military", "cat": "military", "name": "Лазарет", "cost": 1300, "unlock": "rank:3", "unique": true, "icon": "medic",
 		"desc": "Лекари и койки для раненых: между волнами боя бойцы восстанавливают здоровье — с каждым уровнем больше."},
 	"armory": {"kind": "military", "cat": "military", "name": "Склад оружия", "cost": 2000, "unlock": "rank:4", "unique": true, "icon": "shield",

@@ -33,7 +33,8 @@ const C_GOLD := Color("e8b84a")
 const C_CREAM := Color("fff4dc")
 ## Что за картинка у умения, пока нет листа владельца (значки игры)
 const PERK_ALT := {"oil": "pot", "testudo": "shield", "bandage": "medic", "volley": "arrow", "horn": "music"}
-const PERK_SAY := {"oil": "Кипящее масло!", "testudo": "Черепаха!", "bandage": "Перевязка!", "volley": "Залп!", "horn": "Боевой рог!"}
+const PERK_SAY := {"oil": "Кипящее масло!", "testudo": "Черепаха!", "bandage": "Перевязка!", "volley": "Залп!", "horn": "Боевой рог!",
+	"eagle": "Знамя орла!", "fire": "Огненные стрелы!"}
 ## PvP: на каком поле бьются с отрядом обороны другого города
 const PVP_BIOMES := ["hills", "forest", "labyrinth", "desert"]
 
@@ -557,7 +558,7 @@ func _fill_perks() -> void:
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
 	perk_bar.add_child(h)
 	var ids := []
-	for id in Legion.PERK_IDS:
+	for id in Legion.perk_ids():
 		if sim.perks["ally"].has(id):
 			ids.append(id)
 	if ids.is_empty():
@@ -1169,6 +1170,23 @@ func _perk_fx(e: Dictionary) -> void:
 			cx /= maxf(1.0, allies.size())
 			fx.ring(Vector3(cx, 0.0, 0.0), 5.0, Color(1.0, 0.66, 0.3, 0.9), 0.9, 1.2)
 			_play("horn", -6.0, 1.0)
+		"eagle":
+			# золотое сияние под каждым бойцом, пока отряд неуязвим
+			var dur := float(e.get("dur", 2.0))
+			for u in allies:
+				var at := Vector3(u.x, _h(u.x, u.z), u.z)
+				fx.ring(at, 0.9, Color(1.0, 0.85, 0.3, 0.95), dur, 1.0)
+				fx.burst(at + Vector3(0, 1.0, 0), Color(1.0, 0.86, 0.35, 0.95), 10, 0.9, 1.0, 0.1, 0.8, true, 0.5)
+			_play("horn", -8.0, 1.25)
+		"fire":
+			var pts := []
+			for u in foes:
+				pts.append(Vector3(u.x, _h(u.x, u.z), u.z))
+			fx.volley(pts)
+			for p: Vector3 in pts:
+				fx.burst(p + Vector3(0, 0.6, 0), Color(1.0, 0.45, 0.1, 0.95), 10, 1.2, 0.9, 0.12, 0.6, true, 0.4)
+			for i in 3:
+				_play("whoosh", -12.0, randf_range(0.7, 0.85))
 
 
 func _begin_end() -> void:

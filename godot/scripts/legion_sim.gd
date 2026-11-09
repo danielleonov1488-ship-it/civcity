@@ -62,7 +62,10 @@ const BUSH_LANES := [0.0, -2.35, 2.35, -1.15, 1.15]
 ## каждому врагу; burn — в секунду 4 с), за уровень ×(1 + прибавка); testudo — насколько меньше урон (доля),
 ## bandage — доля здоровья, horn — во сколько раз быстрее бьют и ходят. Мягче, чем в старой игре: умения — сильная
 ## помощь, но без них бой на рекомендованном уровне тоже можно выиграть (проверки — test_legion.gd)
-const PERK_K := {"oil": [3.0, 0.15], "burn": [0.4, 0.15], "volley": [1.2, 0.15], "testudo": [0.35, 0.04], "bandage": [0.18, 0.03], "horn": [1.3, 0.05]}
+const PERK_K := {"oil": [3.0, 0.15], "burn": [0.4, 0.15], "volley": [1.2, 0.15], "testudo": [0.35, 0.04], "bandage": [0.18, 0.03], "horn": [1.3, 0.05],
+	"eagle": [2.0, 0.25], "fire": [0.4, 0.15]}
+## Поход 2.0 (Храм Марса): eagle — секунд неуязвимости отряда (+ секунды за уровень); fire — горение каждого врага в секунду
+## (доля среднего урона, 5 с), за уровень ×(1 + прибавка). Бои с городами этих умений не знают (Legion.pvp_perks)
 
 
 class Unit:
@@ -98,6 +101,7 @@ class Unit:
 	var target: Unit = null
 	var retarget := 0.0
 	var testudo := 0.0             # до какого времени сомкнуты щиты
+	var eagle := 0.0               # до какого времени неуязвим (Знамя орла, поход 2.0)
 	var testudo_k := 0.0           # насколько меньше урон под черепахой
 	var horn := 0.0                # до какого времени трубит рог
 	var horn_k := 1.0
@@ -456,6 +460,8 @@ func _damage(atk: float, vs: Dictionary, from: Unit, tg: Unit, k := 1.0) -> void
 		return
 	var crit := rng.randf() < 0.08
 	var d := atk * _mult(vs, tg) * (0.9 + rng.randf() * 0.2) * k * (1.6 if crit else 1.0)
+	if tg.eagle > t:
+		return                                    # под Знаменем орла
 	if tg.kite_k and from != null:
 		d *= tg.bush if from.shot == "" else tg.bush_shot   # походы: стрелка в кустах мечом не достать, стрелой — да
 	if not tg.guard.is_empty() and _guarded(tg):
@@ -660,6 +666,19 @@ func use_perk(id: String, side := "ally") -> bool:
 				u.horn = t + 8.0
 				u.horn_k = PERK_K["horn"][0] + PERK_K["horn"][1] * (lvl - 1)
 			events.append({"type": "perk", "id": id, "side": side})
+		"eagle":
+			var dur: float = PERK_K["eagle"][0] + PERK_K["eagle"][1] * (lvl - 1)
+			for u in allies:
+				u.eagle = t + dur
+			events.append({"type": "perk", "id": id, "side": side, "dur": dur})
+		"fire":
+			if foes.is_empty():
+				return false
+			for o in foes:
+				var dps: float = a * PERK_K["fire"][0] * (1.0 + PERK_K["fire"][1] * (lvl - 1))
+				o.burn_dps = maxf(o.burn_dps if o.burn > t else 0.0, dps)
+				o.burn = t + 5.0
+			events.append({"type": "perk", "id": id, "side": side})
 		_:
 			return false
 	p["ready"] = float(Legion.PERKS[id]["cd"])
@@ -714,6 +733,10 @@ func _auto_perks(side: String) -> void:
 		venom = maxi(venom, u.poison.size())
 	if ps.has("testudo") and float(ps["testudo"]["ready"]) <= 0.0 and danger:
 		use_perk("testudo", side)
+	if ps.has("eagle") and float(ps["eagle"]["ready"]) <= 0.0 and engaged and (danger or (boss and low < 0.45) or low < 0.25):
+		use_perk("eagle", side)
+	if ps.has("fire") and float(ps["fire"]["ready"]) <= 0.0 and (foes.size() >= 3 or boss):
+		use_perk("fire", side)
 	if ps.has("bandage") and float(ps["bandage"]["ready"]) <= 0.0 and (avg < 0.6 or low < 0.35 or venom >= 3):
 		use_perk("bandage", side)
 	if ps.has("testudo") and float(ps["testudo"]["ready"]) <= 0.0 and engaged and (boss or low < 0.55 or foes.size() >= 4):
@@ -1005,7 +1028,7 @@ func _busy_lane() -> float:
 
 ## Урон без брони и удачи (лавина)
 func _hurt(tg: Unit, dmg: float) -> void:
-	if not tg.alive:
+	if not tg.alive or tg.eagle > t:
 		return
 	var d := maxi(1, roundi(dmg))
 	tg.hp -= d

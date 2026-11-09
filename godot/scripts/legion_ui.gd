@@ -304,7 +304,7 @@ func _sig() -> String:
 	var a: Array = [lg.city_level(), lg.cap()]
 	for t in Legion.UNIT_IDS + Legion.SUPPORT.keys():
 		a.append(lg.can_upgrade(t))
-	for id in Legion.PERK_IDS:
+	for id in Legion.perk_ids():
 		a.append(lg.can_upgrade_perk(id))
 	for w: Dictionary in Legion.WONDERS:
 		a.append(lg.can_build_wonder(String(w["id"])))
@@ -2027,7 +2027,7 @@ func _build_troops() -> Control:
 	g.add_theme_constant_override("h_separation", 10)
 	g.add_theme_constant_override("v_separation", 8)
 	for bt: String in Legion.BUILDING_IDS:
-		if Legion.WORKSHOPS.has(bt) or bt == "principia":
+		if Legion.WORKSHOPS.has(bt) or bt == "principia" or bt == "mars":
 			continue                          # мастерские Легиона 2.0: их материалы — в шапке «Воинов» (окно не растёт), улучшения — в карточке на карте
 		g.add_child(_building_tile(bt))
 	v.add_child(g)
@@ -2036,6 +2036,22 @@ func _build_troops() -> Control:
 
 
 const B_ALT := {"forge": "swords", "infirmary": "medic", "armory": "shield"}
+
+
+## Поход 2.0: кнопка Храма Марса в заголовке умений — построен: к нему на карте; нет: построить (если открыт)
+func _mars_btn() -> Button:
+	var built := lg.count_type("mars") > 0
+	var tl := ("Храм Марса %d ур. — умения до %d" % [lg.level_of("mars"), lg.perk_max()]) if built else "Храм Марса — умения выше %d" % Legion.PERK_MAX
+	var b: Button
+	if built:
+		b = _btn(tl, 0, 13, null, "", func(): show_building("mars"))
+	else:
+		var open: bool = game.city.unlocked("mars")
+		b = _btn(tl + (" · Построить" if open else ""), 0, 13, hud.ico("hammer", 64), "" if open else "Откроется с ростом города",
+			func(): close(); hud.select_build("mars"))
+	b.tooltip_text = String(Defs.B["mars"]["desc"])
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return b
 
 
 # =====================================================================
@@ -2869,7 +2885,9 @@ func _perks_panel() -> Control:
 	v.add_child(hh)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	for id: String in Legion.PERK_IDS:
+	if Legion.V2:
+		hh.add_child(_mars_btn())
+	for id: String in Legion.perk_ids():
 		var P: Dictionary = Legion.PERKS[id]
 		var lvl := int(lg.perks.get(id, 0))
 		var h := HBoxContainer.new()
@@ -2882,9 +2900,9 @@ func _perks_panel() -> Control:
 		tv.add_theme_constant_override("separation", 0)
 		tv.add_child(_l(String(P["name"]), 16, true, C_INK if lvl > 0 else C_SOFT))
 		if lvl > 0:
-			tv.add_child(_l("ур. %d из %d · %d с" % [lvl, Legion.PERK_MAX, int(P["cd"])], 13, true, C_SOFT))
+			tv.add_child(_l("ур. %d из %d · %d с" % [lvl, lg.perk_max(), int(P["cd"])], 13, true, C_SOFT))
 			var why := lg.can_upgrade_perk(id)
-			if lvl >= Legion.PERK_MAX:
+			if lvl >= (Legion.PERK_MAX2 if Legion.V2 else Legion.PERK_MAX):
 				tv.add_child(_l("наивысший", 13, true, C_GOOD))
 			else:
 				var ii := id

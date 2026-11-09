@@ -60,6 +60,7 @@ func _init() -> void:
 				_check(win * 2 >= seeds, "%s: обычный игрок на T побеждает хотя бы в половине боёв (%d из %d)" % [bk, win, seeds])
 	_sets()
 	_vet()
+	_mars()
 	print("CAMP2 DONE fails=%d" % fails)
 	quit()
 
@@ -195,3 +196,53 @@ func _vet() -> void:
 	for i in 6:
 		win += 1 if bool(_fight(st, 12, 1000 + i * 7919, ev)["win"]) else 0
 	_check(win >= 4, "«обычный ветеран» выигрывает ветеранский бой (%d из 6)" % win)
+
+
+## Храм Марса и умения похода 2.0: «Знамя орла» (неуязвимость), «Огненные стрелы» (горение); предел умений 5 + уровень
+## Храма; в боях с городами (снимок для сервера) — только старые умения и не выше 5
+func _mars() -> void:
+	var L := Legion.new()
+	L.free_mode = false
+	_check("eagle" in Legion.perk_ids() and "fire" in Legion.perk_ids(), "в походе 2.0 — ещё два умения")
+	_check(int(Legion.PERKS["eagle"]["boss"]) == 5 and int(Legion.PERKS["fire"]["boss"]) == 8, "умения открывают провинции 5 и 8")
+	_check(L.perk_max() == 5, "без Храма Марса — умения до 5 (%d)" % L.perk_max())
+	L.perks["oil"] = 7
+	L.perks["eagle"] = 3
+	L.perks["volley"] = 2
+	var pp := L.pvp_perks()
+	_check(int(pp.get("oil", 0)) == 5 and not pp.has("eagle") and int(pp.get("volley", 0)) == 2, "снимок для боёв с городами: без новых умений, не выше 5 (%s)" % str(pp))
+	_check(L.can_upgrade_perk("oil").contains("Храм"), "выше 5 — нужен Храм Марса: «%s»" % L.can_upgrade_perk("oil"))
+	_check(Legion.SUPPORT.has("mars") and Defs.B.has("mars") and String(Defs.B["mars"]["unlock"]).begins_with("army:"), "Храм Марса — здание Легиона 2.0 (только новая игра)")
+	_check(L.b_effect("mars", 3)[0].contains("до 8"), "Храм 3 уровня — умения до 8: %s" % L.b_effect("mars", 3)[0])
+	# Знамя орла: пока горит — урона нет
+	var me := Legion.unit_stats("legionary", 3)
+	var foe := Legion.enemy_stats("bandit", 6.0)
+	var sim := LegionSim.new({"kind": "campaign", "squad": [me], "waves": [[foe]], "perks": {"eagle": 1}, "seed": 5})
+	for i in 200:
+		sim.step(LegionSim.DT)
+		sim.take_events()
+	var ally: LegionSim.Unit = sim.alive_of("ally")[0]
+	sim.perks["ally"]["eagle"]["ready"] = 0.0
+	_check(sim.use_perk("eagle"), "«Знамя орла» нажимается")
+	var hp0 := ally.hp
+	for i in 50:                              # 1,7 с < 2 с неуязвимости
+		sim.step(LegionSim.DT)
+		sim.take_events()
+	_check(ally.hp == hp0 and ally.eagle > sim.t, "под Знаменем орла урона нет (%.0f → %.0f)" % [hp0, ally.hp])
+	for i in 150:
+		sim.step(LegionSim.DT)
+		sim.take_events()
+	_check(ally.hp < hp0 or not sim.result.is_empty(), "Знамя опустилось — снова бьют (%.0f → %.0f)" % [hp0, ally.hp])
+	# Огненные стрелы: все враги горят
+	var sim2 := LegionSim.new({"kind": "campaign", "squad": [Legion.unit_stats("archer", 3)], "waves": [[foe, foe, foe]], "perks": {"fire": 1}, "seed": 9})
+	for i in 30:
+		sim2.step(LegionSim.DT)
+		sim2.take_events()
+	sim2.perks["ally"]["fire"]["ready"] = 0.0
+	_check(sim2.use_perk("fire"), "«Огненные стрелы» нажимаются")
+	var burning := 0
+	for u in sim2.alive_of("enemy"):
+		if u.burn > sim2.t and u.burn_dps > 0.0:
+			burning += 1
+	_check(burning == sim2.alive_of("enemy").size() and burning > 0, "горят все враги (%d)" % burning)
+
