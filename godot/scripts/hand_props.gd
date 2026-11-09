@@ -27,6 +27,8 @@ const DEF := {
 	"amphora": {"mesh": "SM_Prop_Jug_03", "hand": "LeftHand", "h": 0.4, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, 0.0, 0.03), "anchor": "top"},
 	"cloth": {"mesh": "SM_Prop_Rug_Folded_01", "hand": "LeftHand", "h": 0.3, "raw": true, "up": Vector3(0, 1, 0), "fwd": Vector3(1, 0, 0), "off": Vector3(0, 0.05, 0.08)},
 	"pot": {"mesh": "SM_Prop_Vase_01", "hand": "LeftHand", "h": 0.3, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.02, 0.03), "anchor": "top"},
+	# носильщики (People._porter): мешок пшеницы на плече
+	"sack": {"mesh": "SM_Prop_Sack_02", "hand": "LeftHand", "h": 0.3, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.02, 0.04), "anchor": "top"},
 	"jar": {"mesh": "SM_Prop_Jar_01", "hand": "LeftHand", "h": 0.2, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.01, 0.04), "anchor": "top"},
 }
 

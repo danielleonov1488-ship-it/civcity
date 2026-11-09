@@ -22,6 +22,7 @@ var visible_count := 0
 var _tick := 0.0
 var _jobs_dirty := true
 var _hour := 8.0
+var porters_out := {}                # id постройки → rid её носильщика в пути (по одному от постройки; _porter)
 
 const MAX_VIS := 150                 # больше людей на улице не рисуем (остальные идут «невидимо»)
 var max_vis := MAX_VIS               # …а на «Низкой» и «Очень низкой» графике — меньше (Gfx.VIS)
@@ -1072,7 +1073,14 @@ func _arrive(r: Dictionary) -> void:
 			r["state"] = "home"
 			_door_in(r, city.buildings.get(r["home"], {}), "home")
 		"work":
+			if int(porters_out.get(int(r["job"]), 0)) == int(r["id"]):
+				porters_out.erase(int(r["job"]))    # носильщик вернулся
 			_enter_work(r)
+		"deliver":
+			r.erase("carry")                     # донёс — обратно на работу налегке
+			var jb: Dictionary = city.buildings.get(r["job"], {})
+			if jb.is_empty() or String(jb["type"]) == "warehouse" or not _walk_via(r, work_door(r), "work"):
+				_go(r, work_door(r), "work")
 		"errand", "play", "stroll":
 			# пришёл к настоящей цели: лавка, скамья, кошка, колодец, площадь — там и займётся делом
 			_begin(r)
@@ -1267,6 +1275,82 @@ func _leave_slot(r: Dictionary) -> void:
 	r["slot"] = -1
 
 
+## Носильщики («Уютный Рим», этап 7): днём работник поля, рощи или виноградника иногда несёт урожай — мешок пшеницы,
+## корзину оливок или винограда — на склад или в лавку, которой это сырьё нужно; работник склада несёт амфору (пекарне —
+## мешок муки) в лавку, что торгует со склада. Донёс — и налегке обратно. Только вид: товары в игре считаются как
+## раньше. От постройки — по одному носильщику за раз. Только в новой игре (City.cozy_v ≥ 1).
+const PORTER_H := 0.6                  # вероятность выхода носильщика за игровой час
+const PORTER_R := 40.0                 # куда носят — не дальше
+
+
+func _porter(r: Dictionary, dh: float) -> void:
+	var b: Dictionary = city.buildings.get(r["job"], {})
+	if b.is_empty():
+		return
+	var t := String(b["type"])
+	if not (t in ["farm", "grove", "vineyard", "warehouse"]):
+		return
+	var inside := int(r["slot"]) < 0               # склад: работник внутри — выйдет из двери
+	if inside and t != "warehouse":
+		return
+	var bid := int(b["id"])
+	if porters_out.has(bid):
+		var pr: Dictionary = by_id.get(int(porters_out[bid]), {})
+		if not pr.is_empty() and pr["state"] == "walk" and int(pr["job"]) == bid:
+			return
+		porters_out.erase(bid)
+	if rng.randf() >= PORTER_H * dh:
+		return
+	var makes := String(Defs.B[t].get("makes", ""))
+	var from: Vector2 = r["p"]
+	var cands := []
+	for o: Dictionary in city.buildings.values():
+		var od: Dictionary = Defs.B.get(String(o["type"]), {})
+		var ok := bool(od.get("store", false)) if t == "warehouse" else (String(o["type"]) == "warehouse" or String(od.get("needs_good", "")) == makes)
+		if ok and int(o["id"]) != bid:
+			var d := from.distance_to(city.door_point(o))
+			if d > 3.0 and d < PORTER_R:
+				cands.append(o)
+	if cands.is_empty():
+		return
+	var o: Dictionary = cands[rng.randi() % cands.size()]
+	var item := "sack" if makes == "wheat" else "basket"
+	if t == "warehouse":
+		item = "sack" if String(Defs.B[String(o["type"])].get("needs_good", "")) == "wheat" else "amphora"
+	var to := city.door_point(o)
+	if inside:
+		if _path(r["p"], to).size() < 2:
+			return
+		r["carry"] = item
+		porters_out[bid] = int(r["id"])
+		_go(r, to, "deliver")
+		return
+	if not _walk_via(r, to, "deliver"):
+		return
+	r["carry"] = item
+	porters_out[bid] = int(r["id"])
+
+
+## Пойти к to, только если путь есть (рядом, не дальше 3,5 м, — свободное место: с края поля, а не из середины сквозь
+## забор). Нет пути — false, никуда не идёт (не «перескакивает», как _go)
+func _walk_via(r: Dictionary, to: Vector2, goal: String) -> bool:
+	var pth := _path(r["p"], to)
+	if pth.size() < 2:
+		return false
+	_leave_slot(r)
+	_release(r)
+	r["yoff"] = 0.0
+	r["yoff_to"] = 0.0
+	r["path"] = pth
+	r["i"] = 1
+	r["goal"] = goal
+	r["state"] = "walk"
+	var c := _node(r)
+	if c:
+		c.play("Walk_Loop")
+	return true
+
+
 func work_door(r: Dictionary) -> Vector2:
 	var b: Dictionary = city.buildings.get(r["job"], {})
 	if b.is_empty():
@@ -1340,6 +1424,8 @@ func _schedule(dh: float) -> void:
 						_errand(r)
 					else:
 						_go(r, city.door_point(hp), "home")
+				elif int(city.cozy_v) >= 1 and h >= 9.0 and h < 15.5:
+					_porter(r, dh)
 			"idle":
 				r["t"] = float(r["t"]) - dh
 				if r["goal"] == "arrived":
