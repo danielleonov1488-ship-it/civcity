@@ -838,3 +838,23 @@ func _camp2(c: City, lg: Legion, ui) -> void:
 	await shot("camp2_vet")
 	ui.view_c = 0
 	lg.free_mode = fm
+	# Храм Марса: умения до 10; «Знамя орла» и «Огненные стрелы» (провинции 5 и 8)
+	lg.perks["eagle"] = 1
+	lg.perks["fire"] = 2
+	var mb: Dictionary = c.place("mars", Vector2(206, 205), 0.0, 0, -1, true)
+	lg.blevels["mars"] = 3
+	ui._select_tab("troops")
+	await frames(6)
+	var mt := _texts(ui.content)
+	check("Храм Марса: умения до 8, новые умения в списке", mt.contains("Знамя орла") and mt.contains("Огненные стрелы") and lg.perk_max() == 8)
+	await shot("troops_mars")
+	ui.close()
+	await frames(4)
+	if not mb.is_empty():
+		var mp := c.door_point(mb)
+		game.rig.set_view(Vector3(mp.x, Land.BASE_Y, mp.y - 1.0), 15.0, 24.0, 15.0)
+		await frames(20)
+		await shot("mars_temple")
+		c.remove(mb, false, true)
+	ui.open("soldiers")
+	await frames(4)
