@@ -535,7 +535,7 @@ func open_journal(tab := "") -> void:
 		tabs.name = "tabs"
 		tabs.alignment = BoxContainer.ALIGNMENT_CENTER
 		tabs.add_theme_constant_override("separation", 8)
-		for t: Array in [["", "Истории горожан", "scroll"], ["chron", "Летопись", "laurels"], ["coll", "Коллекции", "keys"], ["friends", "Друзья", "family"]]:
+		for t: Array in [["", "Истории", "scroll"], ["chron", "Летопись", "laurels"], ["coll", "Коллекции", "keys"], ["friends", "Друзья", "family"], ["union", "Союз", "legion"]]:
 			var b := Button.new()
 			b.text = t[1]
 			b.icon = hud.ico(t[2], 26)
@@ -584,6 +584,9 @@ func fill_journal() -> void:
 		return
 	if journal_tab == "friends":
 		FriendsUi.fill(hud, list)               # друзья и гости из других городов (SocialNet, docs/ONLINE_V2.md)
+		return
+	if journal_tab == "union":
+		UnionUi.fill(hud, list)                 # союз городов: цель недели, участники, фразы (SocialNet, docs/ONLINE_V2.md)
 		return
 	var S: Dictionary = game.city.stories
 	var any := false

@@ -276,7 +276,7 @@ function cleanPassword(p) {
 }
 
 const routes = {
-  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true, social: true, arena: true }),
+  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true, social: true, arena: true, unions: true }),
 
   // новости и ссылки для лаунчера программы для ПК (файл launcher.json рядом с сервером; правится без перезапуска)
   'GET /api/launcher': () => {
@@ -432,9 +432,13 @@ function latestSave(uid) {
   if (!s || !s.size) return null;
   return { id: s.id, load: () => { const f = q.saveById.get(uid, 'rome2', s.id); return f && !isTomb(f) ? dataOf(f) : ''; } };
 }
-const pvp = require('./pvp').install({ db, routes, auth, json, limited, Fail, latestSave });
+// hooks.points(uid, n) — очки союза за бои и друзей (unions.js ставит свою функцию; без союза — ничего)
+const hooks = { points: () => {} };
+const pvp = require('./pvp').install({ db, routes, auth, json, limited, Fail, latestSave, hooks });
 // Друзья и гости (карточки городов, подарки, «в гости») — social.js; название города — общее с боями (pvp_players)
-require('./social').install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer: uid => pvp.player(uid) });
+require('./social').install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer: uid => pvp.player(uid), hooks });
+// Союзы игроков (цель недели, готовые фразы) — unions.js
+require('./unions').install({ db, routes, auth, json, limited, Fail, pvpPlayer: uid => pvp.player(uid), hooks });
 
 function cors(req, res) {
   const o = req.headers.origin;

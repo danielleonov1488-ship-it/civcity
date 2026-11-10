@@ -33,8 +33,12 @@ var unsupported := false                      # старый сервер без
 var last_fail := ""
 var force_on := false                         # проверки: и без настоящей игры
 var visited := {}                             # id города → гости из него побывали у нас (ещё не сообщили)
+var union := {}                               # последний ответ /union/state: me, union, requests, phrases, emblems, goals
+var union_unsupported := false                # старый сервер без союзов
 
 var _state_t := -1.0e9
+var _union_t := -1.0e9
+var _union_prize_busy := false
 var _card_t := -1.0e9
 var _visit_t := -1.0e9
 var _card_hash := ""
@@ -114,7 +118,10 @@ func _check_account() -> void:
 	_state_t = -1.0e9
 	_card_t = -1.0e9
 	_visit_t = -1.0e9
+	_union_t = -1.0e9
+	union = {}
 	unsupported = false
+	union_unsupported = false
 
 
 func _now() -> float:
@@ -133,6 +140,8 @@ func _tick() -> void:
 		await refresh()
 	if not unsupported and now - _visit_t > VISIT_GAP and not visited.is_empty():
 		await _send_visits()
+	if not union_unsupported and now - _union_t > STATE_GAP:
+		await union_refresh()
 	_busy = false
 
 
@@ -339,6 +348,69 @@ func guest_pick(rng: RandomNumberGenerator) -> Dictionary:
 		if r <= 0.0:
 			return gl[i]
 	return gl[gl.size() - 1]
+
+
+# ---------- союз (server/unions.js) ----------
+
+## Состояние союза; награда прошлой недели — сама в город
+func union_refresh(cb := Callable()) -> void:
+	var r := await _call(HTTPClient.METHOD_GET, "/union/state")
+	var code := int(r["status"])
+	if code == 404 and str((r["data"] as Dictionary).get("error", "")) in ["Нет такого адреса", ""]:
+		union_unsupported = true
+	if code == 200:
+		union = r["data"]
+		_union_t = _now()
+		_union_prize()
+		changed.emit()
+	else:
+		_union_t = _now() - STATE_GAP + 60.0
+	if cb.is_valid():
+		cb.call("" if code == 200 else _err(r))
+
+
+## Действие с союзом (create, join, leave, accept, kick, say): ответ — новое состояние; cb(err, data)
+func union_do(what: String, body: Dictionary, cb: Callable) -> void:
+	var r := await _call(HTTPClient.METHOD_POST, "/union/" + what, body)
+	if int(r["status"]) == 200:
+		var d: Dictionary = r["data"]
+		union = d.get("state", d)
+		changed.emit()
+		cb.call("", d)
+	else:
+		cb.call(_err(r), {})
+
+
+func union_list(q: String, cb: Callable) -> void:
+	var r := await _call(HTTPClient.METHOD_GET, "/union/list?q=" + q.uri_encode())
+	cb.call((r["data"] as Dictionary).get("list", []) if int(r["status"]) == 200 else [], "" if int(r["status"]) == 200 else _err(r))
+
+
+func _union_prize() -> void:
+	var pz = (union.get("me", {}) as Dictionary).get("prize")
+	var g = _game()
+	if typeof(pz) != TYPE_DICTIONARY or _union_prize_busy or g == null or g.city == null or not (String(g.mode) in ["play", "new"]):
+		return
+	_union_prize_busy = true
+	var r := await _call(HTTPClient.METHOD_POST, "/union/prize", {})
+	_union_prize_busy = false
+	if int(r["status"]) != 200:
+		return
+	var d: Dictionary = r["data"]
+	if d.has("state"):
+		union = d["state"]
+	var got = d.get("prize")
+	if typeof(got) == TYPE_DICTIONARY:
+		var c = g.city
+		c.money += float(got.get("money", 0))
+		c.flow("reward", float(got.get("money", 0)))
+		c.legion.glory += float(got.get("glory", 0))
+		var txt := "Союз выполнил цель недели (порог %d, %d очков): +%d ден. и +%d Славы" % [int(got.get("tier", 1)), int(got.get("pts", 0)), int(got.get("money", 0)), int(got.get("glory", 0))]
+		c._quiet(txt, "laurels")
+		if g.hud != null:
+			g.hud.notify(txt, "laurels")
+		c.changed.emit()
+	changed.emit()
 
 
 # ---------- запросы ----------

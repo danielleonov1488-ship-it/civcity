@@ -194,7 +194,7 @@ function delta(win, me, opp) {
   return -clamp(PVP.loss_base + tdiv(me - opp, 50), PVP.loss_min, PVP.loss_max);
 }
 
-function install({ db, routes, auth, json, limited, Fail, latestSave }) {
+function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS pvp_players (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -615,7 +615,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
       const lost = -Number(q.defLossDay.get(b.defender, now - 864e5).s || 0);
       dDef = Math.min(0, Math.max(dDef, lost - DEF_DAY_LOSS));
     }
-    return tx(() => {
+    const done = tx(() => {
       const r = q.finish.run(status, now, win ? 1 : 0, res.alive ?? null, res.total ?? null, res.time ?? null, dAtt, dDef, defGlory, res.note || null, b.n);
       if (!Number(r.changes)) return false;              // бой уже закрыли
       if (status !== 'rejected') {
@@ -626,6 +626,9 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
       }
       return true;
     });
+    // очки союза нападающему (unions.js): победа +3, поражение +1
+    if (done && status === 'done' && hooks) hooks.points(b.attacker, win ? 3 : 1);
+    return done;
   }
 
   // Брошенные бои (не доложены вовремя) — поражение нападающего

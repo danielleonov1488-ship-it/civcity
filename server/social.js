@@ -61,7 +61,8 @@ function cleanCard(c) {
   return JSON.stringify(out).length > CARD_MAX ? null : out;
 }
 
-function install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer }) {
+function install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer, hooks }) {
+  const pts = (uid, n) => { if (hooks && n > 0) hooks.points(uid, n); };
   db.exec(`
     CREATE TABLE IF NOT EXISTS social_cards (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -279,6 +280,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer 
       if (r.changes) q.like.run(id);
       return !!r.changes;
     });
+    if (done) pts(a.userId, 1);
     return { ok: true, liked: true, first: done, likes: q.card.get(id).likes };
   };
 
@@ -297,6 +299,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer 
       if (q.giftedPair.get(a.userId, id, d)) throw new Fail(409, 'Этому городу сегодня уже есть подарок от вас');
       q.addGift.run(a.userId, id, from, kind, d, Date.now());
     });
+    pts(a.userId, 2);
     return { ok: true, gifts_left: Math.max(0, GIFT_DAY - q.giftsToday.get(a.userId, d).n) };
   };
 
@@ -335,6 +338,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer 
         if (q.mark.run(d, 'visit', a.userId, id).changes) { q.visit.run(id); n++; left--; }
       }
     });
+    pts(a.userId, n);
     return { ok: true, counted: n };
   };
 
