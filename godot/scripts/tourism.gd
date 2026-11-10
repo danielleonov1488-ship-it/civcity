@@ -177,14 +177,14 @@ func _spawn(b: Dictionary) -> void:
 		sn.mark_visit(int(from["id"]))
 		var lb := Label3D.new()
 		lb.text = "из «%s»" % String(from["name"]) + (" ♥" if bool(from.get("friend", false)) else "")
-		lb.font_size = 40
-		lb.pixel_size = 0.004
+		lb.font_size = 56
+		lb.pixel_size = 0.00028
 		lb.outline_size = 10
 		lb.modulate = Color("fff4dc")
 		lb.outline_modulate = Color(0.18, 0.11, 0.05, 0.85)
 		lb.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		lb.no_depth_test = false
-		lb.fixed_size = false
+		lb.no_depth_test = true
+		lb.fixed_size = true                 # одного размера на экране, как значки над постройками
 		lb.visible = false
 		add_child(lb)
 		grp["label"] = lb
@@ -249,13 +249,13 @@ func _step(dt: float, sdt: float) -> void:
 				c.anim.speed_scale = maxf(0.3, sdt / maxf(dt, 0.0001)) if sdt > 0.0 else 0.0
 		var lb = g.get("label")
 		if lb != null and is_instance_valid(lb):
-			# подпись — над первым гостем в пути, только вблизи (дальше — не загромождать город)
+			# подпись — над первым гостем в пути, только не издалека (дальше — не загромождать город)
 			var lead = null
 			for obj in ppl:
 				if obj != null and is_instance_valid(obj) and (obj as Citizen).visible:
 					lead = obj
 					break
-			var near: bool = lead != null and game.rig != null and game.rig.cam != null and game.rig.cam.global_position.distance_to((lead as Citizen).global_position) < 30.0
+			var near: bool = lead != null and game.rig != null and game.rig.cam != null and game.rig.cam.global_position.distance_to((lead as Citizen).global_position) < 70.0
 			(lb as Label3D).visible = near
 			if lead != null:
 				(lb as Label3D).global_position = (lead as Citizen).global_position + Vector3(0, 1.45, 0)

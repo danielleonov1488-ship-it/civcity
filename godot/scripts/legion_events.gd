@@ -116,6 +116,7 @@ static func make(lg: Legion, what: String) -> Dictionary:
 	var keys: Array
 	var k: float
 	var title: String
+	var sub := ""
 	if what == "raid":
 		var i := clampi(int(e.get("n", 0)), 0, RAIDS_DAY - 1)
 		var rnd := RandomNumberGenerator.new()
@@ -124,16 +125,18 @@ static func make(lg: Legion, what: String) -> Dictionary:
 		for j in 5 + rnd.randi() % 3:
 			keys.append(RAID_FOES[rnd.randi() % RAID_FOES.size()])
 		k = float(RAID_K[i])
-		title = "Набег варваров %d из %d" % [i + 1, RAIDS_DAY]
+		title = "Набег варваров"
+		sub = "%d из %d за сутки" % [i + 1, RAIDS_DAY]
 	else:
 		var f := clampi(int(e.get("floor", 0)), 0, FLOORS - 1)
 		keys = FLOOR_FOES[f]
 		k = float(FLOOR_K[f])
-		title = "Подземелье %d: %s" % [f + 1, FLOOR_NAMES[f]]
+		title = "Подземелье %d" % (f + 1)
+		sub = FLOOR_NAMES[f]
 	var foes := foes_for(keys, my_power(lg) * k)
 	var s := {"kind": "pvp", "opponent": {"name": title, "rating": 0}, "squad": lg.battle_squad(), "waves": [foes], "perks": lg.open_perks(),
 		"enemy_perks": {}, "enemy_auto": true, "enemy_formation": true, "seed": (int(Legion.now() * 1000.0) & 0xffffff) + 1,
-		"event": {"id": what, "title": title, "k": k, "power": my_power(lg)}}
+		"event": {"id": what, "title": title, "sub": sub, "k": k, "power": my_power(lg)}}
 	if lg.hero_ready():
 		var c = lg.city()
 		s["hero_look"] = Hero.battle_look(c, lg.hero_kit_level())
@@ -156,7 +159,7 @@ static func make_trial(lg: Legion, a: Dictionary) -> Dictionary:
 	var s := {"kind": "pvp", "opponent": {"name": String(a.get("name", "Испытание недели")), "rating": 0}, "squad": Legion.snapshot_stats(own),
 		"waves": [Legion.snapshot_stats(enemy)], "perks": Legion.snapshot_perks(own), "enemy_perks": Legion.snapshot_perks(enemy),
 		"enemy_auto": true, "enemy_formation": true, "seed": int(a.get("seed", 1)),
-		"event": {"id": "trial", "title": String(a.get("name", "")), "battle": String(a.get("battle", "")), "tier": int(a.get("tier", 1))}}
+		"event": {"id": "trial", "title": "Испытание недели", "sub": String(a.get("name", "")), "battle": String(a.get("battle", "")), "tier": int(a.get("tier", 1))}}
 	return s
 
 

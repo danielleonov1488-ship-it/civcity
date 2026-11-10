@@ -831,8 +831,9 @@ func _face_yaw(u: LegionSim.Unit, dx: float, dz: float) -> float:
 
 func _title() -> void:
 	if setup.has("event"):
-		title_lbl.text = String((setup["event"] as Dictionary).get("title", ""))
-		sub_lbl.text = "События недели"
+		var evd: Dictionary = setup["event"]
+		title_lbl.text = String(evd.get("title", ""))
+		sub_lbl.text = String(evd.get("sub", "")) + (" · " if String(evd.get("sub", "")) != "" else "") + "События недели"
 	elif pvp:
 		var opp: Dictionary = setup.get("opponent", {})
 		title_lbl.text = "Город «%s»" % String(opp.get("name", "?"))
@@ -1675,7 +1676,8 @@ func _show_result() -> void:
 	v.add_child(head)
 	var where := ""
 	if setup.has("event"):
-		where = String((setup["event"] as Dictionary).get("title", ""))
+		var evw: Dictionary = setup["event"]
+		where = String(evw.get("title", "")) + ((" — " + String(evw["sub"])) if String(evw.get("sub", "")) != "" else "")
 	elif pvp:
 		where = "Бой с городом «%s»" % String((setup.get("opponent", {}) as Dictionary).get("name", "?"))
 	else:

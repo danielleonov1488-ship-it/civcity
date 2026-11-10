@@ -640,7 +640,7 @@ func _rebuild() -> void:
 		if tabs.has("events"):
 			(tabs["events"] as Button).visible = army       # события недели — тоже Легион 2.0
 		for k in tabs:
-			(tabs[k] as Button).custom_minimum_size.x = 168.0 if army else 214.0
+			(tabs[k] as Button).custom_minimum_size.x = 200.0 if army else 214.0
 	if (tab == "soldiers" or tab == "events") and not army:
 		tab = "campaign"
 	var body: Control
