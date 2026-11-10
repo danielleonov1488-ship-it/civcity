@@ -252,6 +252,7 @@ func _ready() -> void:
 	can_save = shot_path == "" and (mode == "play" or mode == "new")
 	MacUpdate.check_at_start(self)            # Mac: вышла ли новая версия (scripts/mac_update.gd), пока грузится город
 	_load_settings()
+	I18n.setup(settings)                      # язык (бета): русский или английский словарь (scripts/i18n.gd)
 	sound = Sound.new()
 	sound.game = self
 	add_child(sound)

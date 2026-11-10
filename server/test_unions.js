@@ -89,6 +89,33 @@ async function call(method, p, body, token) {
     r = await call('POST', '/union/say', { phrase: 99 }, tok.a);
     ok(r.status === 400, 'unknown phrase → 400');
 
+    // свой текст: фильтр, ссылки, повтор; скрыть игрока; жалоба; удалить (глава)
+    r = await call('POST', '/union/say', { text: '  Привет, союзники!   Завтра   атакуем вместе ' }, tok.b);
+    const last = r.data.union.chat[r.data.union.chat.length - 1];
+    ok(r.status === 200 && last.text === 'Привет, союзники! Завтра атакуем вместе' && last.mine && last.n > 0, 'B writes free text (spaces tidied)', last);
+    r = await call('POST', '/union/say', { text: 'Привет, союзники! Завтра атакуем вместе' }, tok.b);
+    ok(r.status === 409, 'same message twice → 409');
+    r = await call('POST', '/union/say', { text: 'ты бля' }, tok.b);
+    ok(r.status === 400 && /нельзя/.test(r.data.error), 'rude text rejected', r.data);
+    r = await call('POST', '/union/say', { text: 'заходите t.me/scam' }, tok.b);
+    ok(r.status === 400 && /Ссылки/.test(r.data.error), 'links rejected');
+    r = await call('POST', '/union/say', { text: 'я'.repeat(201) }, tok.b);
+    ok(r.status === 400, 'too long → 400');
+    r = await call('GET', '/union/state', undefined, tok.a);
+    const bm = r.data.union.chat.find(c => c.text === 'Привет, союзники! Завтра атакуем вместе');
+    ok(bm && bm.from > 0 && !bm.mine, "A sees B's message with its author");
+    r = await call('POST', '/union/mute', { id: bm.from }, tok.a);
+    ok(!r.data.union.chat.some(c => c.from === bm.from) && r.data.mutes.length === 1, "A hides B: B's messages gone for A", r.data.mutes);
+    r = await call('POST', '/union/mute', { id: bm.from, on: false }, tok.a);
+    ok(r.data.union.chat.some(c => c.from === bm.from) && r.data.mutes.length === 0, 'A shows B again');
+    r = await call('POST', '/union/report', { n: bm.n }, tok.a);
+    ok(r.status === 200 && r.data.reported && !r.data.union.chat.some(c => c.n === bm.n), "A reports B's message (and no longer sees B)");
+    r = await call('GET', '/union/state', undefined, tok.b);
+    ok(r.data.union.chat.some(c => c.n === bm.n), 'one report: B still sees the message (hidden for all after 3)');
+    r = await call('POST', '/union/unsay', { n: bm.n }, tok.b);
+    ok(r.status === 200 && !r.data.union.chat.some(c => c.n === bm.n), 'B deletes own message');
+    await call('POST', '/union/mute', { id: bm.from, on: false }, tok.a);
+
     // очки недели от друзей: B дарит A подарок (+2), A ставит «нравится» B (+1)
     r = await call('GET', '/social/find?name=' + encodeURIComponent('Аквилея'), undefined, tok.b);
     id.a = r.data.list[0].id;

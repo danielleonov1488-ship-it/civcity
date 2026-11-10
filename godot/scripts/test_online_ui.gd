@@ -105,9 +105,20 @@ func _run() -> void:
 	var us2 := {}
 	sn.union_do("say", {"phrase": 9}, func(e, _d): us2["e"] = e)
 	await until(func(): return us2.has("e"), 20.0)
+	var us3 := {}
+	sn.union_do("say", {"text": "Аве! Я с вами, завтра помогу с целью недели."}, func(e, _d): us3["e"] = e)
+	await until(func(): return us3.has("e"), 20.0)
+	var us4 := {}
+	sn.union_do("say", {"text": "ты бля"}, func(e, _d): us4["e"] = e)
+	await until(func(): return us4.has("e"), 20.0)
+	check("союз: свой текст ушёл, грубость — нет", String(us3["e"]) == "" and String(us4["e"]).contains("нельзя"), [us3, us4])
 	game.stories.ui.open_journal("union")
 	await frames(20)
 	await shot("02_union")
+	var jsc := game.hud.journal_panel.find_child("scroll", true, false) as ScrollContainer
+	jsc.scroll_vertical = 100000
+	await frames(10)
+	await shot("02b_union_chat")
 	game.hud.journal_panel.visible = false
 	# --- карточка подарка в стройке (раздел украшений, камень) ---
 	game.hud.select_build("statue_3")

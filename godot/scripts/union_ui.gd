@@ -15,6 +15,7 @@ static var _query := ""
 static var _found: Array = []
 static var _msg := ""
 static var _busy := false
+static var _say := ""
 
 
 static func fill(hud, list: VBoxContainer) -> void:
@@ -188,10 +189,51 @@ static func _mine(hud, list: VBoxContainer, sn: SocialNet) -> void:
 	# фразы
 	list.add_child(hud._label("Разговор союза", 16, true, hud.C_INK))
 	var chat: Array = u.get("chat", [])
-	for cm: Dictionary in chat.slice(maxi(0, chat.size() - 8)):
-		list.add_child(FriendsUi._text(hud, "«%s»: %s" % [String(cm["name"]), String(cm["text"])], 14, hud.C_INK))
+	for cm: Dictionary in chat.slice(maxi(0, chat.size() - 10)):
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 4)
+		var l: Label = FriendsUi._text(hud, "«%s»: %s" % [String(cm["name"]), String(cm["text"])], 14, hud.C_INK)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.custom_minimum_size = Vector2(380, 0)
+		r.add_child(l)
+		var mn := int(cm.get("n", 0))
+		var who := int(cm.get("from", 0))
+		var free := int(cm.get("phrase", 0)) < 0
+		if bool(cm.get("mine", false)) or (leader and free):
+			r.add_child(_mini(hud, "close", "Удалить сообщение", func(): _act(hud, "unsay", {"n": mn}, "Сообщение удалено")))
+		elif who > 0 and not bool(cm.get("mine", false)):
+			r.add_child(_mini(hud, "view", "Скрыть этого игрока: его сообщения больше не будут видны вам (вернуть — ниже)", func():
+				_act(hud, "mute", {"id": who}, "«%s» скрыт" % String(cm["name"]))))
+			if free:
+				r.add_child(_mini(hud, "info", "Пожаловаться на сообщение (грубость, обман). После трёх жалоб оно скрывается у всех", func():
+					_act(hud, "report", {"n": mn}, "Жалоба отправлена, спасибо. Этот игрок вам больше не виден")))
+		list.add_child(r)
 	if chat.is_empty():
 		list.add_child(FriendsUi._text(hud, "Пока тихо — скажите что-нибудь."))
+	# свой текст: до chat_len знаков; грубые слова и ссылки сервер не пропустит
+	var wr := HBoxContainer.new()
+	wr.add_theme_constant_override("separation", 8)
+	var e := _edit(hud, _say, "Написать союзу…")
+	e.max_length = int(sn.union.get("chat_len", 200))
+	e.custom_minimum_size = Vector2(420, 40)
+	e.text_changed.connect(func(t): _say = t)
+	var send := func(t: String):
+		if t.strip_edges() == "":
+			return
+		_act(hud, "say", {"text": t}, "", func(): _say = "")
+	e.text_submitted.connect(send)
+	wr.add_child(e)
+	wr.add_child(FriendsUi._btn(hud, "Отправить", "quill", func(): send.call(e.text)))
+	list.add_child(wr)
+	var mutes: Array = sn.union.get("mutes", [])
+	if not mutes.is_empty():
+		var mr := HFlowContainer.new()
+		mr.add_theme_constant_override("h_separation", 6)
+		mr.add_child(hud._label("Скрыты:", 13, true, hud.C_SOFT))
+		for mu: Dictionary in mutes:
+			var mid := int(mu["id"])
+			mr.add_child(FriendsUi._btn(hud, "«%s» — показать" % String(mu["name"]), "", func(): _act(hud, "mute", {"id": mid, "on": false}, "")))
+		list.add_child(mr)
 	var fr := HFlowContainer.new()
 	fr.add_theme_constant_override("h_separation", 6)
 	fr.add_theme_constant_override("v_separation", 6)
@@ -229,7 +271,7 @@ static func _redraw(hud) -> void:
 		g.stories.ui.fill_journal()
 
 
-static func _act(hud, what: String, body: Dictionary, ok_text: String) -> void:
+static func _act(hud, what: String, body: Dictionary, ok_text: String, on_ok := Callable()) -> void:
 	if _busy:
 		return
 	_busy = true
@@ -240,4 +282,18 @@ static func _act(hud, what: String, body: Dictionary, ok_text: String) -> void:
 		_msg = err if err != "" else ok_text
 		if err == "" and what == "create":
 			_name = ""
+		if err == "" and on_ok.is_valid():
+			on_ok.call()
 		_redraw(hud))
+
+
+## Маленькая кнопка-значок у сообщения (скрыть, пожаловаться, удалить)
+static func _mini(hud, icon: String, tip: String, cb: Callable) -> Button:
+	var b := Button.new()
+	b.icon = hud.ico(icon, 18)
+	b.tooltip_text = tip
+	b.flat = true
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(26, 26)
+	b.pressed.connect(cb)
+	return b
