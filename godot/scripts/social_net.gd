@@ -35,6 +35,8 @@ var force_on := false                         # проверки: и без на
 var visited := {}                             # id города → гости из него побывали у нас (ещё не сообщили)
 var union := {}                               # последний ответ /union/state: me, union, requests, phrases, emblems, goals
 var union_unsupported := false                # старый сервер без союзов
+var events := {}                              # последний ответ /events/state: week, rule, tiers, me, top, hall
+var events_unsupported := false
 
 var _state_t := -1.0e9
 var _union_t := -1.0e9
@@ -411,6 +413,76 @@ func _union_prize() -> void:
 			g.hud.notify(txt, "laurels")
 		c.changed.emit()
 	changed.emit()
+
+
+# ---------- события недели: испытание (server/events.js) ----------
+
+func events_refresh(cb := Callable()) -> void:
+	var r := await _call(HTTPClient.METHOD_GET, "/events/state")
+	var code := int(r["status"])
+	if code == 404 and str((r["data"] as Dictionary).get("error", "")) in ["Нет такого адреса", ""]:
+		events_unsupported = true
+	if code == 200:
+		events = r["data"]
+		changed.emit()
+	if cb.is_valid():
+		cb.call("" if code == 200 else _err(r))
+
+
+## В бой испытания: сервер проверит отряд, применит правило недели и даст врага недели; бой — сразу, итог — на сервер
+func trial_start(lg: Legion, tier: int, cb: Callable) -> void:
+	var r := await _call(HTTPClient.METHOD_POST, "/events/trial/attack", {"tier": tier, "snapshot": LegionNet.attack_snapshot(lg)})
+	if int(r["status"]) != 200:
+		cb.call(_err(r))
+		return
+	var a: Dictionary = r["data"]
+	(events.get("me", {}) as Dictionary)["tries_left"] = int(a.get("tries_left", 0))
+	var setup := LegionEvents.make_trial(lg, a)
+	cb.call("")
+	lg.battle_requested.emit(setup)
+	await get_tree().process_frame
+	var b = LegionBattle.current
+	if b != null and is_instance_valid(b) and b.setup == setup:
+		b.finished.connect(func(out: Dictionary): trial_report(lg, setup, out), CONNECT_ONE_SHOT)
+
+
+func trial_report(lg: Legion, setup: Dictionary, out: Dictionary) -> void:
+	var ev: Dictionary = setup.get("event", {})
+	var body := {"battle": String(ev.get("battle", "")), "win": bool(out.get("win", false)), "alive": int(out.get("alive", 0)),
+		"total": int(out.get("total", 0)), "time": float(out.get("time", 0.0)), "hp_left": float(out.get("hp_left", 0.0)),
+		"retreat": bool(out.get("retreat", false)), "inputs": out.get("inputs", [])}
+	var r: Dictionary = {}
+	for i in 3:                                   # связь моргнула — ещё раз (сервер примет итог один раз)
+		r = await _call(HTTPClient.METHOD_POST, "/events/trial/result", body)
+		if int(r["status"]) != 0:
+			break
+		await get_tree().create_timer(3.0).timeout
+	if int(r["status"]) != 200:
+		_note("Испытание: итог не дошёл до сервера (%s)" % _err(r))
+		return
+	var d: Dictionary = r["data"]
+	events = d
+	var txt := ""
+	if bool(d.get("win", false)):
+		txt = "Испытание недели: %d очков" % int(d.get("score", 0))
+		var m: Dictionary = d.get("me", {})
+		if int(m.get("place", 0)) > 0:
+			txt += ", место %d" % int(m["place"])
+		var rw: Dictionary = d.get("reward", {})
+		if not rw.is_empty() and lg != null:
+			lg._give(rw)
+			txt += ". Первая победа на этой сложности: +%d ден. и +%d Славы" % [int(rw.get("money", 0)), int(rw.get("glory", 0))]
+	elif String(d.get("reason", "")) != "":
+		txt = "Испытание: " + String(d["reason"])
+	if txt != "":
+		_note(txt)
+	changed.emit()
+
+
+func _note(text: String) -> void:
+	var g = _game()
+	if g != null and g.hud != null and String(g.mode) != "menu":
+		g.hud.notify(text, "laurels")
 
 
 # ---------- запросы ----------

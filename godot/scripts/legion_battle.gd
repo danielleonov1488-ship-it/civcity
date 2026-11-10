@@ -703,7 +703,7 @@ func _start(s: Dictionary) -> void:
 	retreat_btn.disabled = false
 	cam_x = -6.0
 	_camera(0.0)
-	say(stage.get("title", "Бой") if not pvp else "Бой с городом", 2.2)
+	say(stage.get("title", "Бой") if not pvp else (String((s.get("event", {}) as Dictionary).get("title", "")) if s.has("event") else "Бой с городом"), 2.2)
 	if bool(stage.get("boss", false)):
 		say("Босс: " + String(stage.get("name", "")), 2.6)
 	_play("horn", -6.0)
@@ -717,7 +717,10 @@ func _start(s: Dictionary) -> void:
 func _loading(s: Dictionary) -> void:
 	fade.modulate.a = 1.0
 	var st: Dictionary = s.get("stage", {})
-	if String(s.get("kind", "")) == "pvp":
+	if s.has("event"):
+		fade_map.texture = null
+		fade_lbl.text = "Легион выступает: %s" % String((s["event"] as Dictionary).get("title", ""))
+	elif String(s.get("kind", "")) == "pvp":
 		fade_map.texture = null
 		fade_lbl.text = "Легион выступает: город «%s»" % String((s.get("opponent", {}) as Dictionary).get("name", "?"))
 	else:
@@ -827,7 +830,10 @@ func _face_yaw(u: LegionSim.Unit, dx: float, dz: float) -> float:
 
 
 func _title() -> void:
-	if pvp:
+	if setup.has("event"):
+		title_lbl.text = String((setup["event"] as Dictionary).get("title", ""))
+		sub_lbl.text = "События недели"
+	elif pvp:
 		var opp: Dictionary = setup.get("opponent", {})
 		title_lbl.text = "Город «%s»" % String(opp.get("name", "?"))
 		sub_lbl.text = "Отряд обороны · рейтинг %d" % int(opp.get("rating", 0))
@@ -1195,7 +1201,9 @@ func _begin_end() -> void:
 	tut_freeze = false                       # отступили, пока бой стоял на масле
 	retreat_btn.disabled = true
 	var res := sim.result
-	if pvp:
+	if setup.has("event"):
+		out = LegionEvents.apply(legion, setup, res)   # события недели (docs/ONLINE_V2.md §3): своя награда, не бои с городами
+	elif pvp:
 		out = legion.apply_pvp_result(setup, res)
 	else:
 		out = legion.apply_result(setup, res)
@@ -1666,7 +1674,9 @@ func _show_result() -> void:
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(head)
 	var where := ""
-	if pvp:
+	if setup.has("event"):
+		where = String((setup["event"] as Dictionary).get("title", ""))
+	elif pvp:
 		where = "Бой с городом «%s»" % String((setup.get("opponent", {}) as Dictionary).get("name", "?"))
 	else:
 		where = "%s — %s" % [stage.get("title", ""), stage.get("theme", "") if String(stage.get("theme", "")) != "" else stage.get("name", "")]
@@ -1717,7 +1727,14 @@ func _show_result() -> void:
 		cl.custom_minimum_size = Vector2(480, 0)
 		cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(cl)
-	if pvp:
+	if String(out.get("note", "")) != "":
+		var nl := _label(String(out["note"]), 17, true, Color("6b4a12"))
+		nl.name = "EventNote"
+		nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		nl.custom_minimum_size = Vector2(480, 0)
+		nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(nl)
+	if pvp and not setup.has("event"):
 		var dd := int(out.get("delta", 0))
 		var dl := _label("Рейтинг побед: %s%d" % ["+" if dd >= 0 else "", dd], 19, true, C_GOOD if dd >= 0 else C_BAD)
 		dl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1767,7 +1784,7 @@ func _show_result() -> void:
 		ab.disabled = why2 != ""
 		ab.tooltip_text = why2
 		bh.add_child(ab)
-	bh.add_child(_button("В лагерь" if not pvp else "К соперникам", "legion", _close, 0))
+	bh.add_child(_button("В лагерь" if not pvp or setup.has("event") else "К соперникам", "legion", _close, 0))
 
 
 ## Три условия звёзд под звёздами: добытые — золотые, недобытая — серая и почему («пали 1 из 3»)
