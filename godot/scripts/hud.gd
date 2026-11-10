@@ -740,7 +740,7 @@ func mouse_over_ui() -> bool:
 		# где мышь — по последнему событию мыши (как game.ground_at_mouse): у корневого окна get_mouse_position — курсор ОС
 		var mp: Vector2 = game._mouse_pos
 		var lu := LegionUi.of(self)
-		for p in [info_panel, tool_panel, tasks_panel, tray, overlay_panel, advisor_panel, bar_left, bar_mid, bar_right, city_card, top_panel,
+		for p in [info_panel, tool_panel, tasks_panel, tray, overlay_panel, advisor_panel, bar_left, bar_mid, bar_right, city_card, renown_pill, top_panel,
 				research_panel, finance_panel, stats_panel, events_panel, pause_panel, settings_panel, buy_panel, credits_panel, journal_panel,
 				lu.win if lu != null and lu.visible else null]:
 			# только то, что и так ловит мышь (рамки-контейнеры вроде ряда медальонов щелчок пропускают в мир)
@@ -831,15 +831,17 @@ func _city_card() -> void:
 	lbl_clock = _label("08:00", 14, true, C_SOFT)
 	t.add_child(lbl_clock)
 	col.add_child(t)
-	# известность и почётный титул (новая игра): маленькая плашка под плашкой города, подсказка — откуда и что дальше
+	# известность и почётный титул (новая игра): маленькая плашка справа от плашки города, на линии уровня и жителей
+	# (под плашкой — кнопка уровня и просьбы горожан; в общем столбце она наезжала на край плашки: там нахлёст −13),
+	# подсказка — откуда и что дальше
 	var rp := PanelContainer.new()
 	rp.add_theme_stylebox_override("panel", _box_pill(11, 2))
-	rp.size_flags_horizontal = Control.SIZE_SHRINK_END
 	rp.visible = false
 	lbl_renown = _label("", 14, true, C_INK)
 	var rz := _hover_zone(rp, [_icon("laurels", 18), lbl_renown], _tip_renown)
 	rz.set_meta("tip_anchor", rp)
-	v.add_child(rp)
+	root.add_child(rp)
+	_put(rp, Control.PRESET_TOP_LEFT, Vector2(8 + PLATE.x + 4, 6 + PLATE.y - 13 + 8))
 	renown_pill = rp
 	# перо у часов: пока город сохраняется (автосохранение, F5), оно видно и чуть «пишет», потом тает
 	save_quill = _icon("quill", 20, C_INK)
@@ -6291,7 +6293,7 @@ func refresh() -> void:
 	lbl_pop.text = fmt(c.stats["pop"])
 	lbl_happy.text = "%d%%" % int(c.stats["happy"])
 	if renown_pill != null:
-		renown_pill.visible = Renown.on(c)
+		renown_pill.visible = Renown.on(c) and city_card != null and city_card.visible   # отдельно от плашки — прячется вместе с ней
 		lbl_renown.text = "%s · %s" % [Renown.title_of(c.renown), fmt(int(c.renown))]
 		if c.fest_left > 0 and c.cal_fest_id != "":
 			lbl_renown.text += " · " + Renown.cal_fest_name(c.cal_fest_id)
