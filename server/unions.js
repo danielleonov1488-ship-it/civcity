@@ -8,7 +8,12 @@
      идут сами (hooks.points из боёв и друзей): победа над городом +3, поражение +1, гости из вашего города у других
      +1, «нравится» +1, подарок другу +2. Пороги GOALS; в начале новой недели каждый, кто был в союзе и принёс очки
      прошлой недели, забирает награду по порогу, до которого дошёл союз (POST /api/union/prize, один раз).
-   - Чат — только готовыми фразами (PHRASES), так не нужна проверка текста. Последние CHAT_KEEP сообщений.
+   - Разговор: свой текст (до CHAT_LEN знаков) или готовая фраза (PHRASES). Свой текст проверяет фильтр грубых слов
+     (names.js — тот же, что у названий), ссылки нельзя, не чаще 6 сообщений в минуту, одно и то же подряд — нельзя.
+     Любой может скрыть игрока (POST /api/union/mute — его сообщения больше не видны этому игроку) и пожаловаться на
+     сообщение (POST /api/union/report): после REPORT_HIDE жалоб от разных игроков сообщение скрыто у всех, жалобы
+     лежат в union_reports (посмотреть: node server/reports.js на сервере). Автор и глава могут удалить сообщение
+     (POST /api/union/unsay). Хранятся последние CHAT_KEEP сообщений союза.
    Почты здесь нет: участники видны по названиям городов. */
 
 const names = require('./names');
@@ -22,6 +27,9 @@ const COLORS = 8;
 const PHRASES = ['Аве, друзья!', 'Отличный бой!', 'Поможем с целью недели!', 'Спасибо за подарок!', 'Загляните в мой город!',
   'Иду в атаку!', 'Хорошая неделя, все молодцы!', 'Доброй ночи, Рим!', 'Добавляйтесь в друзья!', 'Слава Риму!'];
 const CHAT_KEEP = 40;
+const CHAT_LEN = 200;
+const REPORT_HIDE = 3;
+const LINK_RE = /(https?:|www\.|t\.me|\.(ru|com|net|org|рф|io|gg|me)\b|@[a-z0-9_]{4,})/i;
 const NAME_RE = /^[\p{L}\p{N} '’\-«»".]+$/u;
 
 const int = v => (Number.isFinite(+v) ? Math.trunc(+v) : 0);
@@ -76,7 +84,30 @@ function install({ db, routes, auth, json, limited, Fail, pvpPlayer, hooks }) {
       created INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS union_chat_u ON union_chat(union_id, n);
+    CREATE TABLE IF NOT EXISTS union_mutes (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      muted_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      PRIMARY KEY (user_id, muted_id)
+    );
+    CREATE TABLE IF NOT EXISTS union_reports (
+      n INTEGER PRIMARY KEY,
+      msg INTEGER NOT NULL,
+      union_id INTEGER,
+      reporter INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      author INTEGER,
+      author_name TEXT,
+      text TEXT,
+      created INTEGER NOT NULL,
+      UNIQUE (msg, reporter)
+    );
   `);
+  // свой текст в разговоре: автор (для «скрыть» и «пожаловаться»), текст (phrase = -1), скрыто ли жалобами
+  {
+    const cols = db.prepare('PRAGMA table_info(union_chat)').all().map(c => c.name);
+    if (!cols.includes('user_id')) db.exec('ALTER TABLE union_chat ADD COLUMN user_id INTEGER');
+    if (!cols.includes('text')) db.exec('ALTER TABLE union_chat ADD COLUMN text TEXT');
+    if (!cols.includes('hidden')) db.exec('ALTER TABLE union_chat ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+  }
 
   const q = {
     union: db.prepare('SELECT * FROM unions WHERE id = ?'),
@@ -107,8 +138,18 @@ function install({ db, routes, auth, json, limited, Fail, pvpPlayer, hooks }) {
     hasRequest: db.prepare('SELECT 1 AS y FROM union_requests WHERE union_id = ? AND user_id = ?'),
     dropRequest: db.prepare('DELETE FROM union_requests WHERE union_id = ? AND user_id = ?'),
     dropRequestsOf: db.prepare('DELETE FROM union_requests WHERE user_id = ?'),
-    say: db.prepare('INSERT INTO union_chat (union_id, name, phrase, created) VALUES (?, ?, ?, ?)'),
-    chat: db.prepare('SELECT n, name, phrase, created FROM union_chat WHERE union_id = ? ORDER BY n DESC LIMIT ?'),
+    say: db.prepare('INSERT INTO union_chat (union_id, name, phrase, created, user_id, text) VALUES (?, ?, ?, ?, ?, ?)'),
+    chat: db.prepare(`SELECT n, name, phrase, created, user_id, text FROM union_chat WHERE union_id = ? AND hidden = 0
+      AND (user_id IS NULL OR user_id NOT IN (SELECT muted_id FROM union_mutes WHERE user_id = ?)) ORDER BY n DESC LIMIT ?`),
+    msg: db.prepare('SELECT * FROM union_chat WHERE n = ?'),
+    lastOf: db.prepare('SELECT text, phrase FROM union_chat WHERE union_id = ? AND user_id = ? ORDER BY n DESC LIMIT 1'),
+    unsay: db.prepare('DELETE FROM union_chat WHERE n = ?'),
+    hide: db.prepare('UPDATE union_chat SET hidden = 1 WHERE n = ?'),
+    mute: db.prepare('INSERT OR IGNORE INTO union_mutes (user_id, muted_id) VALUES (?, ?)'),
+    unmute: db.prepare('DELETE FROM union_mutes WHERE user_id = ? AND muted_id = ?'),
+    mutes: db.prepare(`SELECT m.muted_id AS id, p.name FROM union_mutes m LEFT JOIN pvp_players p ON p.user_id = m.muted_id WHERE m.user_id = ?`),
+    report: db.prepare('INSERT OR IGNORE INTO union_reports (msg, union_id, reporter, author, author_name, text, created) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+    reports: db.prepare('SELECT COUNT(DISTINCT reporter) AS n FROM union_reports WHERE msg = ?'),
     trimChat: db.prepare(`DELETE FROM union_chat WHERE union_id = ? AND n NOT IN (SELECT n FROM union_chat WHERE union_id = ? ORDER BY n DESC LIMIT ${CHAT_KEEP})`),
     nameOf: db.prepare('SELECT name FROM pvp_players WHERE user_id = ?'),
   };
@@ -176,7 +217,8 @@ function install({ db, routes, auth, json, limited, Fail, pvpPlayer, hooks }) {
     if (full) {
       out.list = q.members.all(u.id).map(m => ({ id: m.user_id, name: m.name || '?', leader: !!m.leader, week_pts: m.week >= cur ? m.week_pts : 0,
         rating: m.rating || 0, city_level: m.city_level || 0, me: m.user_id === uid }));
-      out.chat = q.chat.all(u.id, 30).reverse().map(c => ({ name: c.name, text: PHRASES[c.phrase] || '…', phrase: c.phrase, t: Math.floor(c.created / 1000) }));
+      out.chat = q.chat.all(u.id, uid || 0, 30).reverse().map(c => ({ n: c.n, name: c.name, from: c.user_id || 0, mine: c.user_id === uid,
+        text: c.phrase >= 0 ? (PHRASES[c.phrase] || '…') : String(c.text || ''), phrase: c.phrase, t: Math.floor(c.created / 1000) }));
       out.goals = GOALS;
       out.ends_in = Math.max(0, Math.ceil((EPOCH + (cur + 1) * WEEK - now) / 1000));
     }
@@ -186,7 +228,8 @@ function install({ db, routes, auth, json, limited, Fail, pvpPlayer, hooks }) {
   function state(uid) {
     const cur = weekAt(Date.now());
     let m = q.member.get(uid);
-    const out = { me: { name: nameOf(uid), in_union: !!m }, phrases: PHRASES, emblems: EMBLEMS, colors: COLORS, max: MAX_MEMBERS, goals: GOALS };
+    const out = { me: { name: nameOf(uid), in_union: !!m }, phrases: PHRASES, emblems: EMBLEMS, colors: COLORS, max: MAX_MEMBERS, goals: GOALS,
+      chat_len: CHAT_LEN, mutes: q.mutes.all(uid).map(r => ({ id: r.id, name: r.name || '?' })) };
     if (!m) return out;
     let u = q.union.get(m.union_id);
     if (!u) { q.leave.run(uid); out.me.in_union = false; return out; }
@@ -258,7 +301,7 @@ function install({ db, routes, auth, json, limited, Fail, pvpPlayer, hooks }) {
       return Object.assign(state(a.userId), { requested: true });
     }
     tx(() => { q.join.run(a.userId, u.id, 0, Date.now(), weekAt(Date.now())); q.dropRequestsOf.run(a.userId); });
-    q.say.run(u.id, nameOf(a.userId), 0, Date.now());
+    q.say.run(u.id, nameOf(a.userId), 0, Date.now(), a.userId, null);
     return state(a.userId);
   };
 
@@ -305,10 +348,60 @@ function install({ db, routes, auth, json, limited, Fail, pvpPlayer, hooks }) {
     if (limited(`un:say:${a.userId}`, 6, 60e3)) throw new Fail(429, 'Не так часто');
     const b = await json(req);
     const m = mustMember(a.userId);
-    const ph = int(b.phrase);
-    if (ph < 0 || ph >= PHRASES.length) throw new Fail(400, 'Такой фразы нет');
-    q.say.run(m.union_id, nameOf(a.userId), ph, Date.now());
+    if (typeof b.text === 'string') {
+      const t = b.text.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!t) throw new Fail(400, 'Пустое сообщение');
+      if (t.length > CHAT_LEN) throw new Fail(400, `Сообщение — не длиннее ${CHAT_LEN} знаков`);
+      if (LINK_RE.test(t)) throw new Fail(400, 'Ссылки и адреса в разговоре союза нельзя');
+      if (names.rude(t)) throw new Fail(400, 'Так писать нельзя — сообщение не отправлено');
+      const last = q.lastOf.get(m.union_id, a.userId);
+      if (last && last.phrase < 0 && String(last.text) === t) throw new Fail(409, 'Это сообщение уже отправлено');
+      q.say.run(m.union_id, nameOf(a.userId), -1, Date.now(), a.userId, t);
+    } else {
+      const ph = int(b.phrase);
+      if (ph < 0 || ph >= PHRASES.length) throw new Fail(400, 'Такой фразы нет');
+      q.say.run(m.union_id, nameOf(a.userId), ph, Date.now(), a.userId, null);
+    }
     q.trimChat.run(m.union_id, m.union_id);
+    return state(a.userId);
+  };
+
+  // скрыть игрока (его сообщения больше не видны мне) или вернуть
+  routes['POST /api/union/mute'] = async (req) => {
+    const a = auth(req);
+    if (limited(`un:mute:${a.userId}`, 30, 600e3)) throw new Fail(429, 'Слишком часто');
+    const b = await json(req);
+    const who = int(b.id);
+    if (who === a.userId || who <= 0) throw new Fail(400, 'Нельзя');
+    if (b.on === false) q.unmute.run(a.userId, who); else q.mute.run(a.userId, who);
+    return state(a.userId);
+  };
+
+  // пожаловаться на сообщение: REPORT_HIDE жалоб от разных игроков — скрыто у всех
+  routes['POST /api/union/report'] = async (req) => {
+    const a = auth(req);
+    if (limited(`un:report:${a.userId}`, 20, 3600e3)) throw new Fail(429, 'Слишком много жалоб — подождите');
+    const b = await json(req);
+    const m = mustMember(a.userId);
+    const msg = q.msg.get(int(b.n));
+    if (!msg || msg.union_id !== m.union_id || msg.phrase >= 0) throw new Fail(404, 'Такого сообщения нет');
+    if (msg.user_id === a.userId) throw new Fail(400, 'Это ваше сообщение');
+    q.report.run(msg.n, msg.union_id, a.userId, msg.user_id, msg.name, msg.text, Date.now());
+    q.mute.run(a.userId, msg.user_id);                 // пожаловался — больше его не видит
+    if (q.reports.get(msg.n).n >= REPORT_HIDE) q.hide.run(msg.n);
+    return Object.assign(state(a.userId), { reported: true });
+  };
+
+  // удалить сообщение: автор или глава союза
+  routes['POST /api/union/unsay'] = async (req) => {
+    const a = auth(req);
+    if (limited(`un:unsay:${a.userId}`, 30, 600e3)) throw new Fail(429, 'Слишком часто');
+    const b = await json(req);
+    const m = mustMember(a.userId);
+    const msg = q.msg.get(int(b.n));
+    if (!msg || msg.union_id !== m.union_id) throw new Fail(404, 'Такого сообщения нет');
+    if (msg.user_id !== a.userId && !m.leader) throw new Fail(403, 'Удалить может автор или глава союза');
+    q.unsay.run(msg.n);
     return state(a.userId);
   };
 
@@ -326,4 +419,4 @@ function install({ db, routes, auth, json, limited, Fail, pvpPlayer, hooks }) {
   return { points };
 }
 
-module.exports = { install, GOALS, PHRASES, EMBLEMS, MAX_MEMBERS, weekAt, tierOf };
+module.exports = { install, GOALS, PHRASES, EMBLEMS, MAX_MEMBERS, CHAT_LEN, REPORT_HIDE, LINK_RE, weekAt, tierOf };

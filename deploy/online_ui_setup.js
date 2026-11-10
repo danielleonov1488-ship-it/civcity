@@ -36,6 +36,7 @@ async function call(method, p, body, token) {
   await call('POST', '/union/say', { phrase: 0 }, tok.b);
   await call('POST', '/union/join', { id: u.union.id }, tok.c);
   await call('POST', '/union/say', { phrase: 4 }, tok.c);
+  await call('POST', '/union/say', { text: 'Добро пожаловать в стаю! В субботу вместе идём на арену.' }, tok.b);
   fs.writeFileSync(OUT, JSON.stringify({ api: API, a: tok.a, b: tok.b, c: tok.c, union: u.union.id, c_name: 'Капуя' + sx }));
   console.log('ok', OUT);
 })().catch(e => { console.error(e); process.exit(1); });
