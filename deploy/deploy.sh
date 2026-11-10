@@ -347,7 +347,7 @@ if has server; then
   # зависимости сервера (nodemailer) едут вместе с ним: на сервере npm нет, без них служба падала бы по кругу
   [ -f server/node_modules/nodemailer/package.json ] || die "нет server/node_modules — выполните: (cd server && npm ci --omit=dev)"
   tar -czf - -C server --exclude=./data --exclude='*.db' --exclude='*.db-*' --exclude='*.log' \
-    --exclude=./test.js --exclude=./test_pvp.js --exclude=./test_sim.js . | up server.tgz
+    --exclude=./test.js --exclude=./test_pvp.js --exclude=./test_sim.js --exclude='./test_*.js' . | up server.tgz
   up civcity.service < deploy/civcity.service
   up Caddyfile < deploy/Caddyfile
   run <<'EOF'

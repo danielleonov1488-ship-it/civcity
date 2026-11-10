@@ -865,6 +865,8 @@ func show_city_name() -> void:
 	var nm := CityName.PLACEHOLDER
 	if game != null and game.city != null and game.mode in ["play", "new"] and String(game.city.name) != "":
 		nm = String(game.city.name)
+	elif game != null and not game.visiting.is_empty():
+		nm = String(game.visiting.get("name", nm))      # в гостях — название города друга
 	if lbl_city == null or (lbl_city.text == nm and lbl_city.has_meta("fit")):
 		return
 	lbl_city.text = nm
@@ -3024,6 +3026,14 @@ func _update_cards() -> void:
 			b.add_theme_stylebox_override("normal", _card_box("g_card"))
 			img.modulate = Color.WHITE
 			_grey(img)
+		elif c.gift_ready(type):
+			# подарок друга (SocialNet): даром, сколько штук осталось
+			pr.add_child(_icon("mail", 22, C_GOOD))
+			pr.add_child(_label("Подарок ×%d" % (c.gifts[type] as Array).size(), 16, true, C_GOOD))
+			b.tooltip_text = "Подарок из «%s» — ставится даром" % String((c.gifts[type] as Array)[0])
+			b.add_theme_stylebox_override("normal", _card_box("g_card"))
+			img.modulate = Color.WHITE
+			_grey(img, false)
 		elif d.get("trophy", false):
 			# трофей Легиона — бесплатно
 			pr.add_child(_icon("laurels", 22))
@@ -3770,7 +3780,7 @@ func _fill_tool_panel_body() -> void:
 		return
 	if Defs.B.has(t):
 		var d: Dictionary = Defs.B[t]
-		tool_title.text = "%s · %s ден." % [d["name"], fmt(d["cost"])]
+		tool_title.text = "%s · %s" % [d["name"], "подарок, даром" if game.city.gift_ready(t) else fmt(d["cost"]) + " ден."]
 		thumb_rect.visible = true
 		color_box.visible = d["kind"] != "decor" and game.moving.is_empty()
 		color_restyle()
@@ -4377,6 +4387,8 @@ func _fill_info_body() -> void:
 			_legion_rows(b, tv, cw)
 	if not c.is_house(b):                      # у дома вместо описания — что даёт счастье (см. _fill_house)
 		info_box.add_child(_wrap(_label(d["desc"], 14, false, C_SOFT), cw))
+	if String(b.get("gift", "")) != "":         # подарок друга (SocialNet)
+		info_box.add_child(_row("mail", "Подарок", "из «%s»" % String(b["gift"]), C_GOOD))
 	if not d.get("fixed", false):
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 6)
@@ -5321,6 +5333,67 @@ func notify(text: String, icon := "info", seen := false) -> void:
 	elif not seen:
 		bell_count += 1
 		bell_badge.text = str(bell_count)
+
+
+## В гостях у другого игрока (Game.visiting, SocialNet): сверху плашка «Вы в гостях у «…»» — кто, сколько жителей,
+## «Нравится» (раз в сутки), «Домой»; стройки и задач внизу нет — город только посмотреть
+func visit_banner(v: Dictionary) -> void:
+	for n in [bar_left, bar_mid, bar_right, tray, tasks_panel, tool_panel, fam_box]:
+		if n != null:
+			(n as Control).visible = false
+	var p := _panel(null, "panel", 0, 10)
+	p.name = "VisitBanner"
+	_put(p, Control.PRESET_CENTER_TOP, Vector2(0, 92))
+	var v2 := VBoxContainer.new()
+	v2.add_theme_constant_override("separation", 4)
+	p.add_child(v2)
+	var t := _label("Вы в гостях у «%s»" % String(v.get("name", "?")), 24, false, C_INK, font_title)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v2.add_child(t)
+	var c: Dictionary = v.get("card", {}) if typeof(v.get("card")) == TYPE_DICTIONARY else {}
+	var bits := []
+	if not c.is_empty():
+		bits.append("%s, %d жителей" % [String(c.get("rank", "")), int(c.get("pop", 0))])
+		if String(c.get("title", "")) != "":
+			bits.append(String(c["title"]))
+		if String(c.get("hero", "")) != "":
+			bits.append("герой — %s" % String(c["hero"]))
+	bits.append("город только посмотреть: здесь ничего не строится и не сохраняется")
+	var sub_l := _wrap(_label(" · ".join(PackedStringArray(bits)), 14, false, C_SOFT), 520)
+	sub_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v2.add_child(sub_l)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 10)
+	var like := Button.new()
+	like.text = "Нравится (%d)" % int(v.get("likes", 0))
+	like.icon = ico("happy", 22)
+	_small_btn(like)
+	like.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	like.disabled = bool(v.get("liked", false))
+	if like.disabled:
+		like.tooltip_text = "Сегодня вы уже сказали «нравится»"
+	like.pressed.connect(func():
+		like.disabled = true
+		SocialNet.me().like(int(v.get("id", 0)), func(d: Dictionary, err: String):
+			if err != "":
+				notify(err, "info")
+				like.disabled = false
+				return
+			like.text = "Нравится (%d)" % int(d.get("likes", 0))
+			if game.sound:
+				game.sound.ui("coins")))
+	row.add_child(like)
+	var home := Button.new()
+	home.text = "Домой"
+	home.icon = ico("housing", 22)
+	_small_btn(home)
+	home.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	home.pressed.connect(func(): game.restart("play"))
+	row.add_child(home)
+	v2.add_child(row)
+	_snug.call_deferred(p)
+	show_city_name()
 
 
 func _window(title: String, w := 560.0) -> Array:

@@ -276,7 +276,7 @@ function cleanPassword(p) {
 }
 
 const routes = {
-  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true }),
+  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true, social: true }),
 
   // новости и ссылки для лаунчера программы для ПК (файл launcher.json рядом с сервером; правится без перезапуска)
   'GET /api/launcher': () => {
@@ -427,12 +427,14 @@ const routes = {
 };
 
 // Бои с городами (Легион новой игры, /api/pvp/…) — в pvp.js; отряды сверяются с последним городом в облаке (rome2)
-require('./pvp').install({ db, routes, auth, json, limited, Fail,
-  latestSave: uid => {
-    const s = q.lastSaveInfo.get(uid, 'rome2');
-    if (!s || !s.size) return null;
-    return { id: s.id, load: () => { const f = q.saveById.get(uid, 'rome2', s.id); return f && !isTomb(f) ? dataOf(f) : ''; } };
-  } });
+function latestSave(uid) {
+  const s = q.lastSaveInfo.get(uid, 'rome2');
+  if (!s || !s.size) return null;
+  return { id: s.id, load: () => { const f = q.saveById.get(uid, 'rome2', s.id); return f && !isTomb(f) ? dataOf(f) : ''; } };
+}
+const pvp = require('./pvp').install({ db, routes, auth, json, limited, Fail, latestSave });
+// Друзья и гости (карточки городов, подарки, «в гости») — social.js; название города — общее с боями (pvp_players)
+require('./social').install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer: uid => pvp.player(uid) });
 
 function cors(req, res) {
   const o = req.headers.origin;

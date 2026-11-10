@@ -48,6 +48,8 @@ var _actor_speed := 1.0
 
 var mode := "play"                    # menu | play | new | demo
 var promo := false                    # --promo: вместо готового городка — большая витрина Showcase (режим demo)
+var visiting := {}                    # в гостях у другого игрока (SocialNet): {id, name, card, likes, friend, liked} — режим demo,
+                                      # город из облака друга, ничего не строится и не сохраняется; «Домой» — свой город
 var can_save := true
 var speed := 1.0
 var _min_speed := -1.0                # скорость до сворачивания окна (-1 — окно не свёрнуто)
@@ -227,6 +229,11 @@ func _ready() -> void:
 	if not (args.has("menu") or args.has("play") or args.has("new") or args.has("demo") or args.has("promo")):
 		args["menu"] = "1"
 	promo = args.has("promo")
+	if args.has("visit"):
+		var vj = JSON.parse_string(String(args.get("visit_info", "{}")))
+		visiting = vj if typeof(vj) == TYPE_DICTIONARY else {}
+		visiting["path"] = String(args["visit"])
+		args["demo"] = "1"
 	if args.has("menu"):
 		mode = "menu"
 	elif args.has("demo") or promo:
@@ -314,6 +321,8 @@ func _ready() -> void:
 	var loaded := false
 	if mode == "play":
 		loaded = _load()
+	elif not visiting.is_empty():
+		loaded = _load(String(visiting["path"]))   # в гостях: город друга (не сохраняется — режим demo)
 	if not loaded:
 		city.tips["v22_pace"] = true             # новая игра — сразу по новым правилам, объяснять перемены не нужно
 		if mode in ["play", "new"]:
@@ -433,6 +442,8 @@ func _ready() -> void:
 		hud.show_menu(FileAccess.file_exists(save_path()))
 		if not args.has("view"):
 			rig.set_view(Vector3(194, Land.BASE_Y, 158), 22, 30, 70)
+	elif not visiting.is_empty():
+		hud.visit_banner(visiting)            # «Вы в гостях у …»: «Нравится», «Домой»
 	elif mode == "demo" and shot_path == "" and not promo:
 		hud.notify("Готовый город: стройте сколько угодно — он не сохраняется", "info")
 	elif loaded and mode == "play" and shot_path == "" and not city.tips.has("v22_pace"):
@@ -445,6 +456,7 @@ func _ready() -> void:
 	Account.me().attach(self)                 # вход в аккаунт и сверка города с облаком (scripts/account.gd)
 	MacUpdate.attach_game(self)               # Mac: строка «Вышла новая версия» в меню или окно «скачайте новую версию»
 	LegionBattle.attach(self)                 # 3D-бой Легиона: «В бой» в окне «Легион» открывает поле боя (scripts/legion_battle.gd)
+	SocialNet.me()                            # друзья и гости по сети: карточка города, подарки, туристы из других городов (scripts/social_net.gd)
 	LegionNet.me().attach_city()              # бои с городами по сети: отряд обороны на сервер, отчёты о нападениях; имя города с сервера (scripts/legion_net.gd)
 	QaDrive.attach(self)                      # автопроверка собранной игры, только с аргументом --qa=… (scripts/qa_drive.gd)
 	_hero_offer(loaded)                       # экран «Ваш герой»: начало новой игры, старый город — один раз (Д11)
@@ -5896,10 +5908,12 @@ func _hero_hour() -> void:
 		city.hero["kit"] = t
 
 
-func _load() -> bool:
-	if not FileAccess.file_exists(save_path()):
+func _load(path := "") -> bool:
+	if path == "":
+		path = save_path()
+	if not FileAccess.file_exists(path):
 		return false
-	var data = JSON.parse_string(FileAccess.get_file_as_string(save_path()))
+	var data = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if typeof(data) != TYPE_DICTIONARY or int(data.get("version", 1)) < 2:
 		return false
 	land.load_changes(data.get("land", {}))
@@ -5919,6 +5933,23 @@ func restart(m: String) -> void:
 	if _autogo != "" and shot_path != "":
 		boot["shot"] = shot_path
 		boot["frames"] = str(shot_frame)
+	get_tree().reload_current_scene()
+
+
+## В гости к другому игроку: его город (ответ SocialNet.visit) — в файл, свой город сохранить, перезапуск в режиме гостя
+func visit_city(v: Dictionary) -> void:
+	var path := "user://visit_city.json"
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		hud.notify("Не получилось открыть город друга", "info")
+		return
+	f.store_string(String(v.get("data", "")))
+	f.close()
+	if can_save and ready_done:
+		save()
+	var info := {"id": int(v.get("id", 0)), "name": String(v.get("name", "")), "card": v.get("card", {}), "likes": int(v.get("likes", 0)),
+		"friend": bool(v.get("friend", false)), "liked": bool(v.get("liked", false))}
+	boot = {"demo": "1", "visit": path, "visit_info": JSON.stringify(info)}
 	get_tree().reload_current_scene()
 
 

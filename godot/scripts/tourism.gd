@@ -91,7 +91,8 @@ static func hour_income(city) -> float:
 		var b: Dictionary = city.buildings[id]
 		if String(b["type"]) == "mansio":
 			sum += float(inn_info(city, b)["per_h"])
-	return sum
+	# туристы из городов друзей и других игроков (SocialNet, docs/ONLINE_V2.md): +6% за город-друг, +3% за прочий, до +40%
+	return sum * (1.0 + SocialNet.tour_bonus(city))
 
 
 # =====================================================================
@@ -168,7 +169,27 @@ func _spawn(b: Dictionary) -> void:
 		_dress(c, i)
 		c.play("Walk_Loop", 0.0, _rng.randf())
 		people.append(c)
-	groups.append({"n": people, "path": pts, "len": total, "d": 0.0})
+	var grp := {"n": people, "path": pts, "len": total, "d": 0.0}
+	# гости из другого города (друга или просто игрока): подпись над группой, вблизи; городу-источнику — известность
+	var sn := SocialNet.live()
+	var from: Dictionary = sn.guest_pick(_rng) if sn != null else {}
+	if not from.is_empty():
+		sn.mark_visit(int(from["id"]))
+		var lb := Label3D.new()
+		lb.text = "из «%s»" % String(from["name"]) + (" ♥" if bool(from.get("friend", false)) else "")
+		lb.font_size = 40
+		lb.pixel_size = 0.004
+		lb.outline_size = 10
+		lb.modulate = Color("fff4dc")
+		lb.outline_modulate = Color(0.18, 0.11, 0.05, 0.85)
+		lb.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		lb.no_depth_test = false
+		lb.fixed_size = false
+		lb.visible = false
+		add_child(lb)
+		grp["label"] = lb
+		grp["from"] = from
+	groups.append(grp)
 
 
 ## Гость с дороги: широкополая шляпа-петас и дорожная сумка (из коробок и цилиндров — без файлов)
@@ -226,6 +247,20 @@ func _step(dt: float, sdt: float) -> void:
 			c.rotation.y = lerp_angle(c.rotation.y, atan2(dir.x, dir.y), minf(1.0, dt * 6.0))
 			if c.anim != null:
 				c.anim.speed_scale = maxf(0.3, sdt / maxf(dt, 0.0001)) if sdt > 0.0 else 0.0
+		var lb = g.get("label")
+		if lb != null and is_instance_valid(lb):
+			# подпись — над первым гостем в пути, только вблизи (дальше — не загромождать город)
+			var lead = null
+			for obj in ppl:
+				if obj != null and is_instance_valid(obj) and (obj as Citizen).visible:
+					lead = obj
+					break
+			var near: bool = lead != null and game.rig != null and game.rig.cam != null and game.rig.cam.global_position.distance_to((lead as Citizen).global_position) < 30.0
+			(lb as Label3D).visible = near
+			if lead != null:
+				(lb as Label3D).global_position = (lead as Citizen).global_position + Vector3(0, 1.45, 0)
+			if not alive:
+				(lb as Label3D).queue_free()
 		if alive:
 			left.append(g)
 	groups = left

@@ -797,7 +797,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     return { top, me: Object.assign(state(p), { place: listed ? place(p) : 0 }), total: q.total.get().n };
   };
 
-  return { unitStats, power, snapPower, delta, facts, checkSquad };
+  return { unitStats, power, snapPower, delta, facts, checkSquad, player };
 }
 
 module.exports = { install, unitStats, power, snapPower, noHero, heroName, heroLook, delta, MIN_RATIO };
