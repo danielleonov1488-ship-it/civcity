@@ -22,6 +22,10 @@ const AI := "res://assets/ui/ai/"     # рисованный интерфейс 
 ## кружки с тонким кольцом; рисуется кодом (art/ui_pa/gen.py, gen_icons.py). Картинки с тем же именем берутся отсюда вместо AI;
 ## --oldui — прежние бронзовые рамки (сравнить)
 const PA := "res://assets/ui/pa/"
+## Интерфейс «мрамор» (выбор владельца 11.11.2026): те же рамки, кнопки, медальоны белым мрамором с золотом (art/ui_marble/gen.py);
+## картинки с тем же именем берутся отсюда раньше PA. Настройки → «Мраморный интерфейс» (settings.ui_style), --paui — пергамент
+const MB := "res://assets/ui/marble/"
+static var marble := true
 const PA_PAD := 6.0                   # тень вокруг рамок нового интерфейса — за краем панели (expand_margin)
 static var old_ui := OS.get_cmdline_user_args().has("--oldui") or OS.get_cmdline_args().has("--oldui")
 const CARD := Vector2(128, 176)       # карточка постройки в свитке стройки
@@ -171,6 +175,7 @@ var _cursor_px := 0
 
 func _ready() -> void:
 	layer = 10
+	marble = str(game.settings.get("ui_style", "marble")) == "marble" and not OS.get_cmdline_user_args().has("--paui")
 	_fonts()
 	theme_main = _theme()
 	root = Control.new()
@@ -325,6 +330,8 @@ static func pa_has(name: String) -> bool:
 
 ## Путь картинки интерфейса: новая (PA), если есть, иначе прежняя (AI). name — без «.png»
 static func ui_tex(name: String) -> String:
+	if marble and not old_ui and ResourceLoader.exists(MB + name + ".png"):
+		return MB + name + ".png"
 	return (PA if pa_has(name) else AI) + name + ".png"
 
 
@@ -6015,6 +6022,17 @@ func _settings_panel() -> void:
 	fs.add_theme_font_size_override("font_size", 18)
 	fs.toggled.connect(func(x): game.settings["fullscreen"] = x; game.save_settings())
 	v.add_child(fs)
+	var mb := CheckBox.new()
+	mb.text = "Мраморный интерфейс"
+	mb.name = "marble"
+	mb.tooltip_text = "Окна и кнопки — белый мрамор с золотом. Без галочки — прежний пергамент. Меняется сразу (город сохранится и откроется заново)"
+	mb.add_theme_font_size_override("font_size", 18)
+	mb.button_pressed = marble
+	mb.toggled.connect(func(x):
+		game.settings["ui_style"] = "marble" if x else "parchment"
+		game.save_settings()
+		game.restart("menu" if game.mode == "menu" else ("play" if game.mode in ["play", "new"] else String(game.mode))))
+	v.add_child(mb)
 	var au := CheckBox.new()
 	au.text = "Автосохранение"
 	au.name = "auto"
