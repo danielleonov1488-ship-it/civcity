@@ -22,7 +22,7 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
 $pass = $null; $json = $null
 Write-Host ''
 Write-Host 'Записываю на сервер...'
-$b64 | ssh -i $key -o BatchMode=yes -o "UserKnownHostsFile=$kh" root@141.133.188.72 'cd /srv/civcity/server && node setmail.js && systemctl restart civcity && node testmail.js'
+$b64 | & $ssh -i $key -o BatchMode=yes -o "UserKnownHostsFile=$kh" root@141.133.188.72 'cd /srv/civcity/server && node setmail.js && systemctl restart civcity && node testmail.js'
 $ok = $LASTEXITCODE -eq 0
 $b64 = $null
 if ($ok) { Write-Host ''; Write-Host 'Готово! Проверьте ящик — туда пришло проверочное письмо.' -ForegroundColor Green }
