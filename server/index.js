@@ -276,7 +276,7 @@ function cleanPassword(p) {
 }
 
 const routes = {
-  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true, social: true, arena: true, unions: true }),
+  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true, social: true, arena: true, unions: true, events: true }),
 
   // новости и ссылки для лаунчера программы для ПК (файл launcher.json рядом с сервером; правится без перезапуска)
   'GET /api/launcher': () => {
@@ -439,6 +439,8 @@ const pvp = require('./pvp').install({ db, routes, auth, json, limited, Fail, la
 require('./social').install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer: uid => pvp.player(uid), hooks });
 // Союзы игроков (цель недели, готовые фразы) — unions.js
 require('./unions').install({ db, routes, auth, json, limited, Fail, pvpPlayer: uid => pvp.player(uid), hooks });
+// События недели: испытание (бой по правилу недели, таблица очков; победу сервер повторяет сам) — events.js
+require('./events').install({ db, routes, auth, json, limited, Fail, pvpPlayer: uid => pvp.player(uid), checkSquad: pvp.checkSquad, facts: pvp.facts, hooks });
 
 function cors(req, res) {
   const o = req.headers.origin;
