@@ -97,6 +97,61 @@ static func me_rows(ui: LegionUi, box: VBoxContainer, net) -> void:
 		box.add_child(ui._l("Отбито нападений: %d из %d" % [dw, dw + dl], 15, true, C_SOFT))
 
 
+## Арена 2.0 (сервер: me.arena): лига и сезон, сколько до следующей лиги, награда сезона, тройка прошлого сезона
+static func arena_rows(ui: LegionUi, box: VBoxContainer, net) -> void:
+	if net == null or not ("me_state" in net):
+		return
+	var a: Dictionary = (net.me_state as Dictionary).get("arena", {})
+	if a.is_empty():
+		return
+	var lg := int(a.get("league", 0))
+	var leagues: Array = a.get("leagues", [])
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	h.add_child(ui._tr(ui.hud.ico("laurels", 64), 26))
+	var t := ui._l("Лига «%s» · сезон %d, до конца %s" % [String(a.get("league_name", "")), int(a.get("season", 1)), _left(int(a.get("ends_in", 0)))], 15, true, C_GOLD)
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	t.tooltip_text = "Сезон арены — %d дней. В конце — награда по самой высокой лиге, до которой вы дошли за сезон, а рейтинг становится 60%% от прежнего" % int(a.get("len_days", 14))
+	t.mouse_filter = Control.MOUSE_FILTER_PASS
+	h.add_child(t)
+	box.add_child(h)
+	var nx = a.get("next")
+	if typeof(nx) == TYPE_DICTIONARY:
+		var from := int((leagues[lg] as Array)[1]) if lg < leagues.size() else 0
+		var bar := ProgressBar.new()
+		bar.custom_minimum_size = Vector2(360, 6)
+		bar.show_percentage = false
+		bar.min_value = from
+		bar.max_value = maxi(from + 1, int(nx["at"]))
+		bar.value = clampi(int((net.me_state as Dictionary).get("rating", 0)), from, int(nx["at"]))
+		box.add_child(bar)
+		box.add_child(ui._l("До лиги «%s» — рейтинг %d" % [String(nx["name"]), int(nx["at"])], 13, true, C_SOFT))
+	var pk := int(a.get("peak_league", lg))
+	var money: Array = a.get("money", [])
+	var glory: Array = a.get("glory", [])
+	var sa := int(a.get("s_att", 0))
+	var need := int(a.get("min_att", 3))
+	if pk < money.size():
+		var txt := "Награда сезона за лигу «%s»: %s ден. и %d Славы" % [String((leagues[pk] as Array)[0]), ui.hud.fmt(float(money[pk])), int(glory[pk])]
+		if pk >= 4:
+			txt += " и плащ героя"
+		txt += "." if sa >= need else " — нужно ещё %d %s в этом сезоне." % [need - sa, "нападение" if need - sa == 1 else "нападения"]
+		box.add_child(ui._wl(txt, 380, 13, C_SOFT, true))
+	var hall: Array = a.get("hall", [])
+	if not hall.is_empty():
+		var hs := PackedStringArray(hall.map(func(e): return "%d. «%s» (%d)" % [int(e["place"]), String(e["name"]), int(e["rating"])]))
+		box.add_child(ui._wl("Лучшие прошлого сезона: " + ", ".join(hs), 380, 13, C_SOFT, true))
+
+
+static func _left(sec: int) -> String:
+	var d := sec / 86400
+	var hh := (sec % 86400) / 3600
+	if d > 0:
+		return "%d д %d ч" % [d, hh]
+	var mm := (sec % 3600) / 60
+	return "%d ч %d мин" % [hh, mm] if hh > 0 else "%d мин" % maxi(1, mm)
+
+
 ## Окно «Название города» — то же, что по щелчку по табличке города (CityName); после сохранения окно перерисуется
 static func rename(ui: LegionUi) -> void:
 	var net = ui._net()

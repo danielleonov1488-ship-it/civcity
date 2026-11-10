@@ -82,6 +82,8 @@ var cal_fest_day := -1                # в какой день праздник 
 var renown := 0.0                     # известность города (Renown; новая игра): растёт без конца, за неё — титулы
 var clock_h := 0                       # игровых часов с начала города (сохраняется; для походов этапа 3)
 var visits := {}                       # «Уютный Рим», этап 3: дом → {вид похода: clock_h} (Balance.VISIT_BONUS)
+var gifts := {}                        # подарки друзей (SocialNet, docs/ONLINE_V2.md): тип → [названия городов-дарителей];
+                                       # каждый — одна постройка этого типа даром (и без исследования), она помнит дарителя
 ## Украшения этапа 5 (решение владельца Q17): 0 — живой город (все прежние облики открыты, как были), 1 — новая игра:
 ## часть прежних обликов открывается позже, в наборах (Defs.DECOR_LATER)
 var decor_v := 0
@@ -205,6 +207,8 @@ func _apron_refresh(b: Dictionary) -> void:
 
 
 func unlocked(type: String) -> bool:
+	if gift_ready(type):
+		return true                               # подарок друга — ставится, даже если ещё не открыто
 	if Defs.STORY_OPENS.has(type) and research.has(String(Defs.STORY_OPENS[type])):
 		return true                               # открыла история (живую изгородь — «Лабиринт Тесея»)
 	if decor_v >= 1 and Defs.DECOR_LATER.has(type):      # новая игра: этот облик — в наборе этапа 5
@@ -221,6 +225,21 @@ func unlocked(type: String) -> bool:
 	if u.begins_with("trophy:"):              # трофей провинции: все 30 звёзд её боёв
 		return legion.has_trophy(u.substr(7))
 	return u == "" or research.has(u) or legion.wonder_unlocks(type)   # чудеса открывает и рейтинг походов
+
+
+## Есть ли подарок друга этого типа (поставить даром)
+func gift_ready(type: String) -> bool:
+	return gifts.has(type) and not (gifts[type] as Array).is_empty()
+
+
+## Подарок этого типа: взять один (имя города-дарителя), "" — подарков нет
+func gift_take(type: String) -> String:
+	if not gift_ready(type):
+		return ""
+	var nm := String((gifts[type] as Array).pop_front())
+	if (gifts[type] as Array).is_empty():
+		gifts.erase(type)
+	return nm if nm != "" else "друг"
 
 
 ## Чем открывается постройка в этом городе (новая игра — с переездами обликов этапа 5)
@@ -306,7 +325,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	if not unlocked(type):
 		res["err"] = "Откроется %s" % Defs.unlock_text(unlock_id(type))
 		return res
-	if money < float(d["cost"]) and ignore_id == -1:
+	if money < float(d["cost"]) and ignore_id == -1 and not gift_ready(type):
 		res["err"] = "Не хватает денариев"
 		return res
 	if ignore_id == -1 and legion.glory + 0.001 < float(d.get("glory", 0)):
@@ -471,7 +490,12 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		"pop": 0, "families": [], "happy": 50, "up": 0, "down": 0, "staff": 1.0, "active": true, "road": true,
 		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0, "born": next_id, "hz": clock_h}   # born — порядок постройки (перенос его не меняет)
 	next_id += 1
-	if not free:
+	var gft := "" if free else gift_take(type)     # подарок друга: даром, постройка помнит дарителя
+	if gft != "":
+		b["gift"] = gft
+		if not bulk:
+			Chronicle.add(self, "decor" if d["kind"] == "decor" else "built")
+	elif not free:
 		money -= float(d["cost"])
 		flow("build", -float(d["cost"]))
 		legion.glory = maxf(0.0, legion.glory - float(d.get("glory", 0)))   # чудеса Легиона стоят ещё и Славы
@@ -3580,16 +3604,19 @@ func save_data() -> Dictionary:
 	var bl := []
 	for id in buildings:
 		var b: Dictionary = buildings[id]
-		bl.append({"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
+		var e := {"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
 			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": b.get("hire", -1),
-			"born": int(b.get("born", id)), "cells": _cells64(b["cells"])})
+			"born": int(b.get("born", id)), "cells": _cells64(b["cells"])}
+		if b.has("gift"):
+			e["gift"] = String(b["gift"])
+		bl.append(e)
 	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
 		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false)), "m": f.get("m", [])}),
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n, "goals_vis": goals_vis,
-		"econ_v": econ, "cozy_v": cozy_v, "clock_h": clock_h, "renown": renown, "cal_fest_id": cal_fest_id, "cal_fest_day": cal_fest_day, "visits": visits, "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
+		"econ_v": econ, "cozy_v": cozy_v, "clock_h": clock_h, "renown": renown, "cal_fest_id": cal_fest_id, "cal_fest_day": cal_fest_day, "visits": visits, "gifts": gifts.duplicate(true), "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
 
@@ -3642,6 +3669,12 @@ func load_data(d: Dictionary) -> void:
 	renown = float(d.get("renown", 0.0))
 	cal_fest_id = String(d.get("cal_fest_id", ""))
 	cal_fest_day = int(d.get("cal_fest_day", -1))
+	gifts = {}
+	var gd = d.get("gifts", {})
+	if typeof(gd) == TYPE_DICTIONARY:
+		for gt in gd:
+			if Defs.B.has(String(gt)) and typeof(gd[gt]) == TYPE_ARRAY and not (gd[gt] as Array).is_empty():
+				gifts[String(gt)] = (gd[gt] as Array).map(func(x): return String(x))
 	visits = {}
 	var vd: Dictionary = d.get("visits", {})
 	for k in vd:
@@ -3681,6 +3714,8 @@ func load_data(d: Dictionary) -> void:
 				var ce := {"nm": String(e.get("nm", "")), "sx": int(e.get("sx", 1)), "fur": int(e.get("fur", 0)), "home": int(e.get("home", -1)),
 					"sd": int(e.get("sd", 1))}
 				cat_items_load(e, ce)            # вещицы из «Кошачьей лавки» (Д14); старые сохранения — без них
+				if String(e.get("gift", "")) != "":
+					ce["gift"] = String(e["gift"])  # кошка — подарок друга (SocialNet)
 				cats.append(ce)
 	next_id = int(d.get("next_id", 1))
 	buildings = {}
@@ -3697,6 +3732,8 @@ func load_data(d: Dictionary) -> void:
 			b["host"] = int(bd["host"])
 		if int(bd.get("hire", -1)) >= 0:
 			b["hire"] = int(bd["hire"])
+		if String(bd.get("gift", "")) != "":
+			b["gift"] = String(bd["gift"])       # подарок друга: помнит дарителя
 		buildings[b["id"]] = b
 		for k in cells:
 			if land.occ[k] >= 0:               # арка у въезда остаётся занятой, даже если старое сохранение залезло на неё

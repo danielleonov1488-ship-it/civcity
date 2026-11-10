@@ -276,7 +276,7 @@ function cleanPassword(p) {
 }
 
 const routes = {
-  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true }),
+  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true, social: true, arena: true, unions: true, events: true }),
 
   // новости и ссылки для лаунчера программы для ПК (файл launcher.json рядом с сервером; правится без перезапуска)
   'GET /api/launcher': () => {
@@ -427,12 +427,20 @@ const routes = {
 };
 
 // Бои с городами (Легион новой игры, /api/pvp/…) — в pvp.js; отряды сверяются с последним городом в облаке (rome2)
-require('./pvp').install({ db, routes, auth, json, limited, Fail,
-  latestSave: uid => {
-    const s = q.lastSaveInfo.get(uid, 'rome2');
-    if (!s || !s.size) return null;
-    return { id: s.id, load: () => { const f = q.saveById.get(uid, 'rome2', s.id); return f && !isTomb(f) ? dataOf(f) : ''; } };
-  } });
+function latestSave(uid) {
+  const s = q.lastSaveInfo.get(uid, 'rome2');
+  if (!s || !s.size) return null;
+  return { id: s.id, load: () => { const f = q.saveById.get(uid, 'rome2', s.id); return f && !isTomb(f) ? dataOf(f) : ''; } };
+}
+// hooks.points(uid, n) — очки союза за бои и друзей (unions.js ставит свою функцию; без союза — ничего)
+const hooks = { points: () => {} };
+const pvp = require('./pvp').install({ db, routes, auth, json, limited, Fail, latestSave, hooks });
+// Друзья и гости (карточки городов, подарки, «в гости») — social.js; название города — общее с боями (pvp_players)
+require('./social').install({ db, routes, auth, json, limited, Fail, latestSave, pvpPlayer: uid => pvp.player(uid), hooks });
+// Союзы игроков (цель недели, готовые фразы) — unions.js
+require('./unions').install({ db, routes, auth, json, limited, Fail, pvpPlayer: uid => pvp.player(uid), hooks });
+// События недели: испытание (бой по правилу недели, таблица очков; победу сервер повторяет сам) — events.js
+require('./events').install({ db, routes, auth, json, limited, Fail, pvpPlayer: uid => pvp.player(uid), checkSquad: pvp.checkSquad, facts: pvp.facts, hooks });
 
 function cors(req, res) {
   const o = req.headers.origin;

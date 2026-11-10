@@ -405,7 +405,58 @@ func _apply_me(m: Dictionary, extra := 0) -> void:
 			lg.pvp_charge_t = Legion.now() - maxf(0.0, regen - float(m.get("next_in", regen)))
 		if before != [lg.pvp_rating, lg.pvp_wins, lg.pvp_losses, lg.pvp_charges]:
 			lg.changed.emit()
+	var ar: Dictionary = m.get("arena", {}) if typeof(m.get("arena")) == TYPE_DICTIONARY else {}
+	if typeof(ar.get("prize")) == TYPE_DICTIONARY and not _prize_busy:
+		_take_prize.call_deferred()
 	changed.emit()
+
+
+## Награда прошлого сезона арены: забрать с сервера (один раз) и положить в город — денарии, Слава, лучшая лига
+## (плащи арены в гардеробе героя), тройка лучших — венок в летопись
+var _prize_busy := false
+
+
+func _take_prize() -> void:
+	var g = _game()
+	var lg := _lg()
+	if _prize_busy or g == null or lg == null or not (String(g.mode) in ["play", "new"]):
+		return
+	_prize_busy = true
+	var r := await _call(HTTPClient.METHOD_POST, "/pvp/prize", {})
+	_prize_busy = false
+	if int(r["status"]) != 200:
+		return
+	var d: Dictionary = r["data"]
+	var pz = d.get("prize")
+	if typeof(pz) == TYPE_DICTIONARY:
+		apply_prize(g, pz)
+	if d.has("me"):
+		me_state = d["me"]
+		changed.emit()
+
+
+static func apply_prize(g, pz: Dictionary) -> void:
+	var c = g.city
+	var lg: Legion = c.legion
+	var money := float(pz.get("money", 0))
+	var glory := float(pz.get("glory", 0))
+	c.money += money
+	c.flow("reward", money)
+	lg.glory += glory
+	var li := int(pz.get("league", 0))
+	lg.flags["arena"] = maxi(int(lg.flags.get("arena", -1)), li)
+	var place := int(pz.get("place", 0))
+	var txt := "Сезон арены %d: лига «%s» — +%s ден. и +%d Славы" % [int(pz.get("season", 0)), String(pz.get("name", "")), str(int(money)), int(glory)]
+	if place > 0:
+		txt += ". Ваш город — %d-й среди всех: венок сезона!" % place
+		Chronicle.add(c, "arena_wreath")
+	if li >= 4:
+		txt += " Новый плащ героя — в гардеробе."
+	c._quiet(txt, "laurels")
+	if g.hud != null:
+		g.hud.notify(txt, "laurels")
+	lg.changed.emit()
+	c.changed.emit()
 
 
 ## Имя с сервера — название города: в сохранение (city.name) и на табличку. Только в своём городе (не в меню,

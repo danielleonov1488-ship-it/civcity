@@ -447,7 +447,7 @@ func _make_window() -> void:
 	tb.alignment = BoxContainer.ALIGNMENT_CENTER
 	tb.add_theme_constant_override("separation", 10)
 	for d: Array in [["campaign", "Походы", _ic39("map")], ["troops", "Войска", _ic39("battle")], ["soldiers", "Воины", _ic39("barracks")],
-			["pvp", "Против городов", _ic39("attack")], ["wonders", "Чудеса", hud.ico("special", 64)]]:
+			["pvp", "Против городов", _ic39("attack")], ["events", "События", hud.ico("laurels", 64)], ["wonders", "Чудеса", hud.ico("special", 64)]]:
 		var id: String = d[0]
 		var b := _tab_btn(String(d[1]), d[2])
 		b.pressed.connect(func(): _select_tab(id))
@@ -515,6 +515,116 @@ func _select_tab(id: String) -> void:
 	_rebuild()
 
 
+# =====================================================================
+#   «События»: испытание недели (сервер), нашествие варваров / подземелья (без сервера) — LegionEvents
+# =====================================================================
+
+var _ev_busy := false
+
+
+func _build_events() -> Control:
+	var sn := SocialNet.me()
+	if sn.events.is_empty() and not sn.events_unsupported and sn.signed_in() and not _ev_busy:
+		_ev_busy = true
+		sn.events_refresh(func(_e):
+			_ev_busy = false
+			if is_instance_valid(self) and visible and tab == "events":
+				_rebuild())
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	# слева — испытание недели
+	var lp := _bar_panel(10)
+	lp.custom_minimum_size = Vector2(560, 0)
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 6)
+	lp.add_child(lv)
+	lv.add_child(_title("Испытание недели", 24))
+	lv.add_child(_l("До конца недели — %s" % LegionPvpView._left(LegionEvents.ends_in()), 14, true, C_SOFT))
+	var ev: Dictionary = sn.events
+	if not sn.signed_in():
+		lv.add_child(_wl("Войдите в аккаунт — испытание общее для всех игроков, с таблицей лучших.", 520, 15, C_INK))
+	elif sn.events_unsupported:
+		lv.add_child(_wl("Сервер ещё не умеет испытания — загляните позже.", 520, 15, C_INK))
+	elif ev.is_empty():
+		lv.add_child(_wl("Связываемся с сервером…", 520, 15, C_SOFT))
+	else:
+		var rule: Dictionary = ev.get("rule", {})
+		lv.add_child(_l("Правило недели: «%s»" % String(rule.get("name", "")), 17, true, C_GOLD))
+		lv.add_child(_wl(String(rule.get("text", "")), 520, 14, C_INK))
+		var me: Dictionary = ev.get("me", {})
+		var left := int(me.get("tries_left", 0))
+		var mp := LegionEvents.my_power(lg)
+		for t: Dictionary in ev.get("tiers", []):
+			var r := HBoxContainer.new()
+			r.add_theme_constant_override("separation", 8)
+			var tl := _l("%s%s · враг %s силы · награда %s ден. и %d Славы" % ["✓ " if bool(t.get("won", false)) else "", String(t["name"]),
+				hud.fmt(float(t.get("power", 0))), hud.fmt(float(t.get("money", 0))), int(t.get("glory", 0))], 14, true, C_INK if mp >= int(t.get("power", 0)) * 0.7 else C_SOFT)
+			tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			r.add_child(tl)
+			var tier := int(t["n"])
+			var why := "" if left > 0 else "Попытки на сегодня кончились — завтра снова"
+			r.add_child(_btn("В бой", 0, 15, _ic39("attack"), why, func(): _trial(tier)))
+			lv.add_child(r)
+		lv.add_child(_l("Попыток сегодня: %d из %d · лучший счёт: %d%s" % [left, int(me.get("tries", 5)), int(me.get("best", 0)),
+			(" (место %d)" % int(me["place"])) if int(me.get("place", 0)) > 0 else ""], 14, true, C_SOFT))
+		var top: Array = ev.get("top", [])
+		if not top.is_empty():
+			lv.add_child(_l("Лучшие недели", 15, true, C_INK))
+			for e: Dictionary in top.slice(0, 5):
+				lv.add_child(_l("%d. «%s» — %d очков" % [int(e["place"]), String(e["name"]), int(e["score"])], 14, false, C_INK))
+		var hall: Array = ev.get("hall", [])
+		if not hall.is_empty():
+			lv.add_child(_wl("Прошлая неделя: " + ", ".join(PackedStringArray(hall.map(func(e): return "%d. «%s»" % [int(e["place"]), String(e["name"])]))), 520, 13, C_SOFT))
+	h.add_child(lp)
+	# справа — событие города
+	var rp := _bar_panel(10)
+	rp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 6)
+	rp.add_child(rv)
+	var mp2 := LegionEvents.my_power(lg)
+	if LegionEvents.kind() == "invasion":
+		rv.add_child(_title("Нашествие варваров", 24))
+		rv.add_child(_wl("Всю неделю к городу подходят отряды галлов и германцев. Отбейте до %d набегов в сутки: каждый следующий сильнее, за победу — денарии и Слава." % LegionEvents.RAIDS_DAY, 460, 14, C_INK))
+		var e := LegionEvents.rec(lg)
+		rv.add_child(_l("Сегодня отбито набегов: %d из %d · за неделю: %d" % [int(e.get("n", 0)), LegionEvents.RAIDS_DAY, int(e.get("raids", 0))], 15, true, C_SOFT))
+		var i := clampi(int(e.get("n", 0)), 0, LegionEvents.RAIDS_DAY - 1)
+		rv.add_child(_l("Следующий набег: сила варваров ≈ %s (ваш отряд — %s)" % [hud.fmt(mp2 * float(LegionEvents.RAID_K[i])), hud.fmt(mp2)], 14, true, C_INK))
+		rv.add_child(_btn("Отбить набег", 0, 17, _ic39("attack"), LegionEvents.can(lg, "raid"), func(): _city_event("raid")))
+		rv.add_child(_wl("На следующей неделе — подземелья.", 460, 13, C_SOFT))
+	else:
+		rv.add_child(_title("Подземелья", 24))
+		rv.add_child(_wl("Пять подземелий за неделю — по порядку, каждое сильнее. За каждое — денарии, Слава и материалы для Кузницы. В последнем ждёт вождь галлов.", 460, 14, C_INK))
+		var f := LegionEvents.floor_now(lg)
+		for k in LegionEvents.FLOORS:
+			var mark := "✓ " if k < f else ("→ " if k == f else "   ")
+			rv.add_child(_l("%s%d. %s — сила ≈ %s" % [mark, k + 1, LegionEvents.FLOOR_NAMES[k], hud.fmt(mp2 * float(LegionEvents.FLOOR_K[k]))], 15, k == f, C_INK if k >= f else C_SOFT))
+		rv.add_child(_btn("В подземелье" if f < LegionEvents.FLOORS else "Всё пройдено", 0, 17, _ic39("attack"), LegionEvents.can(lg, "floor"), func(): _city_event("floor")))
+		rv.add_child(_wl("На следующей неделе — нашествие варваров.", 460, 13, C_SOFT))
+	h.add_child(rp)
+	return h
+
+
+func _city_event(what: String) -> void:
+	var why := LegionEvents.can(lg, what)
+	if why != "":
+		_say(why)
+		return
+	LegionEvents.start(lg, what)
+
+
+func _trial(tier: int) -> void:
+	if _ev_busy:
+		return
+	_ev_busy = true
+	_say("Сервер готовит испытание…")
+	SocialNet.me().trial_start(lg, tier, func(err: String):
+		_ev_busy = false
+		if err != "":
+			_say(err))
+
+
 func _rebuild() -> void:
 	if content == null or lg == null:
 		return
@@ -527,9 +637,11 @@ func _rebuild() -> void:
 	var army := lg.army_on()
 	if tabs.has("soldiers"):
 		(tabs["soldiers"] as Button).visible = army
+		if tabs.has("events"):
+			(tabs["events"] as Button).visible = army       # события недели — тоже Легион 2.0
 		for k in tabs:
 			(tabs[k] as Button).custom_minimum_size.x = 200.0 if army else 214.0
-	if tab == "soldiers" and not army:
+	if (tab == "soldiers" or tab == "events") and not army:
 		tab = "campaign"
 	var body: Control
 	match tab:
@@ -539,6 +651,8 @@ func _rebuild() -> void:
 			body = _build_troops()
 		"pvp":
 			body = _build_pvp()
+		"events":
+			body = _build_events()
 		"wonders":
 			body = _build_wonders()
 		_:
@@ -2999,6 +3113,7 @@ func _build_pvp() -> Control:
 	rbox.add_child(rh)
 	if _net_ready():
 		LegionPvpView.me_rows(self, rbox, _net())       # название города в боях, отбитые нападения
+		LegionPvpView.arena_rows(self, rbox, _net())    # арена 2.0: лига, сезон, награда сезона
 	rp.add_child(rbox)
 	left.add_child(rp)
 	var ap := _bar_panel(8)

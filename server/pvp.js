@@ -84,6 +84,24 @@ const DEF_GLORY = 1;      // Славы защитнику за отбитый �
 const DEF_LOOT = 0;       // сколько Славы теряет проигравший оборону (0 — ни у кого ничего не отнимают; клиент понимает и минус)
 const DEF_DAY_LOSS = 40;  // больше этого рейтинга за сутки защитник от нападений не теряет
 
+/* Арена 2.0 (docs/ONLINE_V2.md §2): лиги по рейтингу и сезоны. Сезон — ARENA.len (14 дней) от ARENA.epoch (понедельник,
+   2.11.2026, 00:00 UTC). Высшая лига за сезон (peak) — награда в конце сезона (prize: денарии, Слава; Центурионы и Легаты —
+   плащ героя), если в сезоне было хотя бы ARENA.min_att своих нападений; рейтинг потом — ARENA.keep от прежнего.
+   Тройка лучших сезона — в зал славы (pvp_hall), летопись города и «Венок сезона». Сезон переходит сам, при первом
+   запросе после конца сезона (rollSeason), для всех игроков разом. ARENA_EPOCH_MS и ARENA_LEN_MS — для проверок. */
+const ARENA = {
+  epoch: +process.env.ARENA_EPOCH_MS || Date.UTC(2026, 10, 2),
+  len: +process.env.ARENA_LEN_MS || 14 * 864e5,
+  keep: 0.6,
+  min_att: 3,
+  leagues: [['Тироны', 0], ['Гастаты', 100], ['Принципы', 250], ['Триарии', 450], ['Центурионы', 700], ['Легаты', 1000]],
+  money: [400, 1200, 2500, 4500, 7500, 12000],
+  glory: [2, 5, 10, 18, 30, 45],
+  place_glory: [0, 40, 25, 15],          // тройка лучших — ещё Славы
+};
+const leagueOf = r => { let i = 0; ARENA.leagues.forEach(([, f], k) => { if (r >= f) i = k; }); return i; };
+const seasonAt = t => 1 + Math.max(0, Math.floor((t - ARENA.epoch) / ARENA.len));
+
 const BOT_NAMES = ['Капуя', 'Тарент', 'Неаполь', 'Помпеи', 'Остия', 'Кумы', 'Брундизий', 'Анций', 'Вейи', 'Тибур', 'Пренесте',
   'Сиракузы', 'Массилия', 'Аквилея', 'Равенна', 'Медиолан', 'Верона', 'Генуя', 'Аримин', 'Анкона', 'Регий', 'Пестум', 'Сполеций',
   'Арреций', 'Пиза', 'Кремона', 'Плацентия', 'Мутина', 'Бононья', 'Луцерия', 'Беневент', 'Сатрик', 'Ардея', 'Лавиний', 'Альба Фуценская'];
@@ -176,7 +194,7 @@ function delta(win, me, opp) {
   return -clamp(PVP.loss_base + tdiv(me - opp, 50), PVP.loss_min, PVP.loss_max);
 }
 
-function install({ db, routes, auth, json, limited, Fail, latestSave }) {
+function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS pvp_players (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -222,7 +240,20 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     CREATE INDEX IF NOT EXISTS pvp_battles_att ON pvp_battles(attacker, created);
     CREATE INDEX IF NOT EXISTS pvp_battles_def ON pvp_battles(defender, n);
     CREATE INDEX IF NOT EXISTS pvp_battles_open ON pvp_battles(status, created);
+    CREATE TABLE IF NOT EXISTS pvp_meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS pvp_hall (
+      season INTEGER NOT NULL, place INTEGER NOT NULL, user_id INTEGER, name TEXT NOT NULL, rating INTEGER NOT NULL,
+      PRIMARY KEY (season, place)
+    );
   `);
+  // арена 2.0: сезон игрока, высший рейтинг сезона, нападений в сезоне, награда прошлого сезона (ждёт, пока игра заберёт)
+  {
+    const cols = db.prepare('PRAGMA table_info(pvp_players)').all().map(c => c.name);
+    if (!cols.includes('season')) db.exec('ALTER TABLE pvp_players ADD COLUMN season INTEGER NOT NULL DEFAULT 0');
+    if (!cols.includes('peak')) db.exec('ALTER TABLE pvp_players ADD COLUMN peak INTEGER NOT NULL DEFAULT 0');
+    if (!cols.includes('s_att')) db.exec('ALTER TABLE pvp_players ADD COLUMN s_att INTEGER NOT NULL DEFAULT 0');
+    if (!cols.includes('prize')) db.exec('ALTER TABLE pvp_players ADD COLUMN prize TEXT');
+  }
 
   const q = {
     player: db.prepare('SELECT * FROM pvp_players WHERE user_id = ?'),
@@ -254,11 +285,69 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
       AND (rating > ? OR (rating = ? AND (wins > ? OR (wins = ? AND user_id < ?))))`),
     total: db.prepare('SELECT COUNT(*) AS n FROM pvp_players WHERE power > 0 OR wins + losses > 0'),
     defLossDay: db.prepare('SELECT COALESCE(SUM(d_def), 0) AS s FROM pvp_battles WHERE defender = ? AND finished > ? AND d_def < 0'),
+    meta: db.prepare('SELECT v FROM pvp_meta WHERE k = ?'),
+    setMeta: db.prepare('INSERT INTO pvp_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v'),
+    seasonTop: db.prepare(`SELECT user_id, name, rating FROM pvp_players WHERE s_att >= ? ORDER BY rating DESC, wins DESC, user_id ASC LIMIT 3`),
+    addHall: db.prepare('INSERT OR REPLACE INTO pvp_hall (season, place, user_id, name, rating) VALUES (?, ?, ?, ?, ?)'),
+    hall: db.prepare('SELECT place, name, rating FROM pvp_hall WHERE season = ? ORDER BY place'),
+    allPlayers: db.prepare('SELECT user_id, rating, peak, s_att FROM pvp_players'),
+    rollPlayer: db.prepare('UPDATE pvp_players SET rating = ?, peak = ?, s_att = 0, season = ?, prize = ? WHERE user_id = ?'),
+    peakUp: db.prepare('UPDATE pvp_players SET peak = MAX(peak, rating) WHERE user_id = ?'),
+    attCount: db.prepare('UPDATE pvp_players SET s_att = s_att + 1 WHERE user_id = ?'),
+    takePrize: db.prepare('UPDATE pvp_players SET prize = NULL WHERE user_id = ? AND prize IS NOT NULL'),
+    seasonTable: db.prepare(`SELECT user_id, name, rating, city_level, wins, s_att FROM pvp_players
+      WHERE s_att > 0 ORDER BY rating DESC, wins DESC, user_id ASC LIMIT 50`),
   };
 
   function tx(fn) {
     db.exec('BEGIN IMMEDIATE');
     try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { try { db.exec('ROLLBACK'); } catch (e2) { /* */ } throw e; }
+  }
+
+  /* ---------- арена 2.0: сезоны ---------- */
+
+  let seasonCur = 0;            // какой сезон уже переведён (из pvp_meta)
+  function rollSeason() {
+    const cur = seasonAt(Date.now());
+    if (cur === seasonCur) return cur;
+    tx(() => {
+      const m = q.meta.get('season');
+      const last = m ? m.v : 0;
+      if (last && last < cur) {
+        const top = q.seasonTop.all(ARENA.min_att);
+        const place = new Map();
+        top.forEach((r, i) => { q.addHall.run(last, i + 1, r.user_id, r.name, r.rating); place.set(r.user_id, i + 1); });
+        for (const p of q.allPlayers.all()) {
+          let prize = null;
+          if (p.s_att >= ARENA.min_att) {
+            const lg = leagueOf(Math.max(p.peak, p.rating));
+            const pl = place.get(p.user_id) || 0;
+            prize = JSON.stringify({ season: last, league: lg, name: ARENA.leagues[lg][0], money: ARENA.money[lg],
+              glory: ARENA.glory[lg] + (ARENA.place_glory[pl] || 0), place: pl });
+          }
+          const r = Math.round(p.rating * ARENA.keep);
+          q.rollPlayer.run(r, r, cur, prize, p.user_id);
+        }
+      }
+      if (!last || last < cur) q.setMeta.run('season', cur);
+    });
+    seasonCur = cur;
+    return cur;
+  }
+
+  function arenaState(p) {
+    const now = Date.now();
+    const cur = rollSeason();
+    const lg = leagueOf(p.rating), pk = leagueOf(Math.max(p.peak, p.rating));
+    const nx = lg + 1 < ARENA.leagues.length ? { name: ARENA.leagues[lg + 1][0], at: ARENA.leagues[lg + 1][1] } : null;
+    let prize = null;
+    try { prize = p.prize ? JSON.parse(p.prize) : null; } catch (e) { prize = null; }
+    return {
+      season: cur, ends_in: Math.max(0, Math.ceil((ARENA.epoch + cur * ARENA.len - now) / 1000)), len_days: ARENA.len / 864e5,
+      league: lg, league_name: ARENA.leagues[lg][0], next: nx, peak: Math.max(p.peak, p.rating), peak_league: pk,
+      s_att: p.s_att || 0, min_att: ARENA.min_att, leagues: ARENA.leagues, money: ARENA.money, glory: ARENA.glory,
+      prize, hall: q.hall.all(cur - 1),
+    };
   }
 
   /* ---------- игрок ---------- */
@@ -282,6 +371,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
   }
 
   function player(uid) {
+    rollSeason();
     let p = q.player.get(uid);
     // имя могли занять между выбором и записью (INSERT OR IGNORE тогда ничего не пишет) — выбрать другое
     for (let i = 0; !p && i < 5; i++) {
@@ -314,6 +404,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
       charges: p.charges, max_charges: PVP.charges, next_in: p.charges >= PVP.charges ? 0 : Math.max(0, Math.ceil((p.charge_t + PVP.regen - now) / 1000)),
       regen: PVP.regen / 1000, power: p.power, published: !!p.snapshot && p.power > 0,
       shield_in: Math.max(0, Math.ceil((p.shield_until - now) / 1000)),
+      arena: arenaState(p),
     };
   }
 
@@ -524,15 +615,20 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
       const lost = -Number(q.defLossDay.get(b.defender, now - 864e5).s || 0);
       dDef = Math.min(0, Math.max(dDef, lost - DEF_DAY_LOSS));
     }
-    return tx(() => {
+    const done = tx(() => {
       const r = q.finish.run(status, now, win ? 1 : 0, res.alive ?? null, res.total ?? null, res.time ?? null, dAtt, dDef, defGlory, res.note || null, b.n);
       if (!Number(r.changes)) return false;              // бой уже закрыли
       if (status !== 'rejected') {
         q.attResult.run(dAtt, win ? 1 : 0, win ? 0 : 1, b.attacker);
-        if (!b.bot && b.defender) q.defResult.run(dDef, win ? 0 : 1, win ? 1 : 0, win ? now + SHIELD : 0, b.defender);
+        q.attCount.run(b.attacker);                       // арена: нападение в этом сезоне
+        q.peakUp.run(b.attacker);
+        if (!b.bot && b.defender) { q.defResult.run(dDef, win ? 0 : 1, win ? 1 : 0, win ? now + SHIELD : 0, b.defender); q.peakUp.run(b.defender); }
       }
       return true;
     });
+    // очки союза нападающему (unions.js): победа +3, поражение +1
+    if (done && status === 'done' && hooks) hooks.points(b.attacker, win ? 3 : 1);
+    return done;
   }
 
   // Брошенные бои (не доложены вовремя) — поражение нападающего
@@ -786,6 +882,27 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     return Object.assign(outcome(bt), { rating: p.rating, me: state(p) });
   };
 
+  // награда прошлого сезона — один раз (игра кладёт денарии и Славу в город, лигу — в гардероб героя)
+  routes['POST /api/pvp/prize'] = async (req) => {
+    const a = auth(req);
+    if (limited(`pvp:prize:${a.userId}`, 20, 600e3)) throw new Fail(429, 'Слишком часто');
+    const p = player(a.userId);
+    let prize = null;
+    try { prize = p.prize ? JSON.parse(p.prize) : null; } catch (e) { prize = null; }
+    const took = prize && Number(q.takePrize.run(a.userId).changes) > 0;
+    return { prize: took ? prize : null, me: state(q.player.get(a.userId)) };
+  };
+
+  // таблица сезона: кто нападал в этом сезоне, по рейтингу; моё место
+  routes['GET /api/pvp/season'] = (req) => {
+    const a = auth(req);
+    if (limited(`pvp:season:${a.userId}`, 40, 600e3)) throw new Fail(429, 'Слишком часто');
+    const p = player(a.userId);
+    const rows = q.seasonTable.all();
+    const top = rows.map((r, i) => ({ place: i + 1, name: r.name, rating: r.rating, league: leagueOf(r.rating), city_level: r.city_level, me: r.user_id === a.userId }));
+    return { top, me: state(p) };
+  };
+
   // лучшие города по рейтингу побед (50) и моё место
   routes['GET /api/pvp/top'] = (req) => {
     const a = auth(req);
@@ -797,7 +914,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave }) {
     return { top, me: Object.assign(state(p), { place: listed ? place(p) : 0 }), total: q.total.get().n };
   };
 
-  return { unitStats, power, snapPower, delta, facts, checkSquad };
+  return { unitStats, power, snapPower, delta, facts, checkSquad, player };
 }
 
-module.exports = { install, unitStats, power, snapPower, noHero, heroName, heroLook, delta, MIN_RATIO };
+module.exports = { install, unitStats, power, snapPower, noHero, heroName, heroLook, delta, MIN_RATIO, ARENA, leagueOf, seasonAt };
