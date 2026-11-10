@@ -5,6 +5,7 @@ extends Node
 var game
 var out := "D:/CivCity/.work/ui_marble"
 var mode := "demo"
+var lang := ""
 
 
 func _ready() -> void:
@@ -13,6 +14,8 @@ func _ready() -> void:
 			out = a.substr(4)
 		if a.begins_with("mode="):
 			mode = a.substr(5)
+		if a.begins_with("lang="):
+			lang = a.substr(5)
 	DirAccess.make_dir_recursive_absolute(out)
 	Game.boot = {mode: "1", "hour": "11.0"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
@@ -44,8 +47,12 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	await frames(40)
+	if lang != "":
+		I18n.setup({"lang": lang})               # язык на лету: надписи Godot переводит сам (NOTIFICATION_TRANSLATION_CHANGED)
+		mode = mode + "_" + lang
+		await frames(10)
 	var h = game.hud
-	if mode == "menu":
+	if mode.begins_with("menu"):
 		await shot("menu")
 		h._open_settings()
 		await shot("settings")

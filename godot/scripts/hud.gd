@@ -6035,6 +6035,17 @@ func _settings_panel() -> void:
 		game.save_settings()
 		game.restart("menu" if game.mode == "menu" else ("play" if game.mode in ["play", "new"] else String(game.mode))))
 	v.add_child(mb)
+	var lg := CheckBox.new()
+	lg.text = "English (beta)"
+	lg.name = "lang"
+	lg.tooltip_text = "Английский язык — пока переведена часть игры: меню, вход, настройки, постройки. Остальное — по-русски. Меняется сразу (город сохранится и откроется заново)"
+	lg.add_theme_font_size_override("font_size", 18)
+	lg.button_pressed = I18n.lang == "en"
+	lg.toggled.connect(func(x):
+		game.settings["lang"] = "en" if x else "ru"
+		game.save_settings()
+		game.restart("menu" if game.mode == "menu" else ("play" if game.mode in ["play", "new"] else String(game.mode))))
+	v.add_child(lg)
 	var au := CheckBox.new()
 	au.text = "Автосохранение"
 	au.name = "auto"
