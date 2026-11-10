@@ -10,7 +10,7 @@
 #   bash deploy/deploy.sh rollback N      — вернуть на сайт игру сборки N (из пяти последних выложенных)
 # Перед выкладкой: bash tools/build_game.sh (игра → build/game), bash deploy/build_launcher.sh (установщик),
 # bash tools/build_game.sh mac (игра для Mac → build/mac),
-# сайт — в папке site/. По шагам — deploy/RELEASE.md. Ключ — ~/.ssh/civcity_ed25519; CIVCITY_HOST — другой сервер.
+# сайт — в папке site/. По шагам — deploy/RELEASE.md. Ключ — secrets/civcity2_ed25519 (CIVCITY_KEY — другой); CIVCITY_HOST — другой сервер.
 #
 # Что где на сервере:
 #   /srv/civcity/www/              сайт (папка site/): собирается рядом (www.new) и встаёт на место целиком
@@ -34,9 +34,10 @@
 # другие папки игры и сайта (обычно build/game и site).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-HOST=${CIVCITY_HOST:-root@159.194.249.20}
-KEY="$HOME/.ssh/civcity_ed25519"
-SSH=${CIVCITY_SSH:-ssh -i $KEY -o BatchMode=yes $HOST}
+# сервер с 10.11.2026 — FirstVDS, Москва (прежний 159.194.249.20 у Beget погиб после взлома 1–2.11.2026)
+HOST=${CIVCITY_HOST:-root@141.133.188.72}
+KEY=${CIVCITY_KEY:-secrets/civcity2_ed25519}
+SSH=${CIVCITY_SSH:-ssh -i $KEY -o BatchMode=yes -o UserKnownHostsFile=secrets/known_hosts $HOST}
 R=${CIVCITY_REMOTE_ROOT:-/srv/civcity}
 SITE=${CIVCITY_SITE:-https://civcity.ru}
 GAME_DIR=${CIVCITY_GAME_DIR:-build/game}

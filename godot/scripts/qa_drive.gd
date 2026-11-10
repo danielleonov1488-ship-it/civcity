@@ -325,6 +325,14 @@ func _legion_flow() -> void:
 		return
 	var g = _g()
 	print("QA city ", _city_line(g))
+	# старый город без своего героя: сначала экран «Ваш герой» — как игрок, «Позже»
+	await wait_until(func(): return bool(g.hero_offer_done) or find_button(get_tree().root, "Позже") != null, 10.0)
+	var later := find_button(get_tree().root, "Позже")
+	if later != null:
+		await click(later)
+		await wait_until(func(): return bool(g.hero_offer_done), 10.0)
+		await frames(20)
+		check("экран «Ваш герой» закрыт кнопкой «Позже»", bool(g.hero_offer_done))
 	var lg: Legion = g.city.legion
 	var ui := LegionUi.of(g.hud)
 	check("медальон «Легион» виден", ui != null and ui.btn_wrap.visible)
