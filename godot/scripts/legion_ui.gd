@@ -2999,6 +2999,7 @@ func _build_pvp() -> Control:
 	rbox.add_child(rh)
 	if _net_ready():
 		LegionPvpView.me_rows(self, rbox, _net())       # название города в боях, отбитые нападения
+		LegionPvpView.arena_rows(self, rbox, _net())    # арена 2.0: лига, сезон, награда сезона
 	rp.add_child(rbox)
 	left.add_child(rp)
 	var ap := _bar_panel(8)

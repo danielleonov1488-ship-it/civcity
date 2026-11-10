@@ -42,7 +42,9 @@ const ITEMS := {
 		{"v": "b0202e", "n": "Алый плащ центуриона", "need": {"legion": "boss1"}},
 		{"v": "efe9dc", "n": "Белый плащ триумфатора", "need": {"legion": "boss3"}},
 		{"v": "5e2350", "n": "Пурпурный плащ", "need": {"rank": 5}},
-		{"v": "c99a2e", "n": "Золотой плащ", "need": {"rank": 6}}],
+		{"v": "c99a2e", "n": "Золотой плащ", "need": {"rank": 6}},
+		{"v": "7d1820", "n": "Багряный плащ центуриона арены", "need": {"arena": 4}},
+		{"v": "2a1f4a", "n": "Плащ легата арены, ночной пурпур", "need": {"arena": 5}}],
 	"main": [
 		{"v": "a3283a", "n": "Кермес"}, {"v": "b4432f", "n": "Марена"}, {"v": "c49a4a", "n": "Охра"}, {"v": "d9a93e", "n": "Шафран"},
 		{"v": "4d7397", "n": "Вайда"}, {"v": "7fa3be", "n": "Небесный"}, {"v": "6f8a4e", "n": "Мирт"}, {"v": "7a5f45", "n": "Бурая шерсть"},
@@ -67,6 +69,7 @@ const ITEMS := {
 }
 ## Чем гардероб открывается — для подсказок «Откроется: …»
 const LEGION_NEED := {"barracks": "Казармы", "boss1": "первая победа над боссом похода", "boss3": "третья победа над боссом похода"}
+const ARENA_LEAGUES := ["Тироны", "Гастаты", "Принципы", "Триарии", "Центурионы", "Легаты"]   # как ARENA.leagues в server/pvp.js
 
 ## Готовые наборы: название, пол, облик (только то, что есть с начала)
 const PRESETS := [
@@ -266,6 +269,10 @@ static func open(c: City, need: Dictionary) -> bool:
 					"boss3":
 						if lg.bosses() >= 3:
 							return true
+			"arena":
+				# лучшая лига арены за все сезоны (LegionNet.apply_prize)
+				if int(c.legion.flags.get("arena", -1)) >= int(need[k]):
+					return true
 	return false
 
 
@@ -282,6 +289,8 @@ static func need_text(need: Dictionary) -> String:
 				parts.append("«%s» в городе" % String(Defs.B.get(String(need[k]), {"name": need[k]})["name"]))
 			"legion":
 				parts.append(String(LEGION_NEED.get(String(need[k]), need[k])))
+			"arena":
+				parts.append("сезон арены в лиге «%s»" % String(ARENA_LEAGUES[clampi(int(need[k]), 0, ARENA_LEAGUES.size() - 1)]))
 	return "Откроется: " + " или ".join(parts)
 
 

@@ -276,7 +276,7 @@ function cleanPassword(p) {
 }
 
 const routes = {
-  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true, social: true }),
+  'GET /api/health': () => ({ ok: true, games: Object.keys(GAMES), pvp: true, social: true, arena: true }),
 
   // новости и ссылки для лаунчера программы для ПК (файл launcher.json рядом с сервером; правится без перезапуска)
   'GET /api/launcher': () => {
