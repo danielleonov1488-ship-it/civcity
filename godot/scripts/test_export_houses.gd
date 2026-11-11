@@ -5,13 +5,14 @@ extends Node3D
 ##   bash .work/py/gpu_run.sh res://test_export_houses.tscn -- [out=D:/CivCity/.work/house_view/models]
 ##     [glb=D:/CivCity/.work/higgsfield/house/house_tripo.glb] [ratio=0.25 — доля треугольников модели]
 ##     [name=higgsfield_tripo — имя файла модели] [only_hf=1 — только модель, без наших домов]
+##     [types=colosseum,circus_fl — что выгрузить; чего нет в городке — по каталогу] [no_hf=1 — без модели Higgsfield]
 var game
 var out := "D:/CivCity/.work/house_view/models"
 var glb := "D:/CivCity/.work/higgsfield/house/house_tripo.glb"
 var ratio := 0.25
 var hf_name := "higgsfield_tripo"
 var only_hf := false
-const TYPES := ["house_pleb", "house_artisan", "house_patrician"]
+var TYPES := ["house_pleb", "house_artisan", "house_patrician"]
 
 
 func _ready() -> void:
@@ -23,6 +24,8 @@ func _ready() -> void:
 			"ratio": ratio = float(kv[1])
 			"name": hf_name = kv[1]
 			"only_hf": only_hf = kv[1] == "1"
+			"types": TYPES = Array(kv[1].split(","))
+			"no_hf": glb = ""
 	DirAccess.make_dir_recursive_absolute(out)
 	Game.boot = {"demo": "1", "noui": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
@@ -57,7 +60,7 @@ func _export(root: Node3D, path: String) -> void:
 func _house(b: Dictionary) -> Node3D:
 	var root := Node3D.new()
 	add_child(root)
-	var bp: Bp = game.city.blueprint(b)
+	var bp: Bp = game.city.blueprint(b) if b.has("id") else Catalog.make(b["type"], int(b["tier"]), 0, 0)
 	var subst := {"#wall_lamp": "#wall_lamp_dim"}
 	for p in bp.parts:
 		var nm: String = subst.get(p[0], p[0])
@@ -153,8 +156,11 @@ func _run() -> void:
 		if t in TYPES and (not pick.has(t) or int(b.get("tier", 1)) > int(pick[t].get("tier", 1))):
 			pick[t] = b
 	for t in TYPES:
+		if not pick.has(t):
+			pick[t] = {"type": t, "tier": 0 if not String(t).begins_with("house") else 2}   # в городке нет — по каталогу
 		if pick.has(t) and not only_hf:
-			print("HOUSE ", t, " id ", pick[t]["id"], " tier ", pick[t].get("tier", 1), " variant ", pick[t].get("variant", 0))
+			print("HOUSE ", t, " id ", pick[t].get("id", "-"), " tier ", pick[t].get("tier", 1), " variant ", pick[t].get("variant", 0))
 			_export(_house(pick[t]), "%s/%s.glb" % [out, t])
-	_hf()
+	if glb != "":
+		_hf()
 	get_tree().quit()

@@ -22,6 +22,8 @@ func _ready() -> void:
 			"bn": items[1][1] = kv[1]
 			"secs": secs = float(kv[1])
 			"fps": fps = int(kv[1])
+	if String(items[1][0]) == "-":            # b=- — одна модель посередине, крупнее
+		items.resize(1)
 	DirAccess.make_dir_recursive_absolute(out)
 	_stage()
 	_run()
@@ -103,7 +105,7 @@ func _stage() -> void:
 		var m: Node3D = doc.generate_scene(st)
 		var pivot := Node3D.new()
 		add_child(pivot)
-		pivot.position = Vector3(-2.3 if i == 0 else 2.3, 0, 0)
+		pivot.position = Vector3(0 if items.size() == 1 else (-2.3 if i == 0 else 2.3), 0, 0)
 		pivot.add_child(m)
 		var bb := AABB()
 		var first := true
@@ -111,7 +113,7 @@ func _stage() -> void:
 			var b: AABB = m.global_transform.affine_inverse() * (mi as MeshInstance3D).global_transform * (mi as MeshInstance3D).get_aabb()
 			bb = b if first else bb.merge(b)
 			first = false
-		var s := 2.6 / maxf(bb.size.y, maxf(bb.size.x, bb.size.z) * 0.75)
+		var s := (2.6 if items.size() > 1 else 3.4) / maxf(bb.size.y, maxf(bb.size.x, bb.size.z) * (0.75 if items.size() > 1 else 0.62))
 		m.scale = Vector3.ONE * s
 		var c := bb.get_center()
 		m.position = Vector3(-c.x * s, -bb.position.y * s, -c.z * s)
