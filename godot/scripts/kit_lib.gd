@@ -88,6 +88,24 @@ static func _mat(name: String) -> Material:
 		"CivFresco":                     # росписи, рельефы фронтонов, надписи общественных зданий — клетки fresco.png
 			m.albedo_texture = load(TEX + "fresco.png")
 			m.roughness = 0.85
+		"CivMarble":                     # мрамор с прожилками (колонны, карнизы, ступени)
+			m.albedo_texture = load(TEX + "marble_mul.png")
+			m.roughness = 0.5
+		"CivStone":                      # грубый камень (цоколь, углы, пороги)
+			m.albedo_texture = load(TEX + "stone_mul.png")
+			m.roughness = 0.92
+		"CivBanner":                     # торжественные знамёна — клетки banners.png
+			m.albedo_texture = load(TEX + "banners.png")
+			m.roughness = 0.95
+		"CivAshlarT":                    # стены из тёсаного травертина (библиотека)
+			m.albedo_texture = load(TEX + "ashlar_trav.png")
+			m.roughness = 0.85
+		"CivAshlarM":                    # стены из мраморных блоков (академия)
+			m.albedo_texture = load(TEX + "ashlar_marble.png")
+			m.roughness = 0.55
+		"CivBrickW":                     # кирпичная кладка (склад)
+			m.albedo_texture = load(TEX + "brick_wall.png")
+			m.roughness = 0.9
 		"CivSign":                       # расписные вывески — клетки signs.png
 			m.albedo_texture = load(TEX + "signs.png")
 			m.roughness = 0.8
