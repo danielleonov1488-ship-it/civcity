@@ -4,10 +4,13 @@ extends Node3D
 ## чтобы страница открывалась быстро. Не для игры.
 ##   bash .work/py/gpu_run.sh res://test_export_houses.tscn -- [out=D:/CivCity/.work/house_view/models]
 ##     [glb=D:/CivCity/.work/higgsfield/house/house_tripo.glb] [ratio=0.25 — доля треугольников модели]
+##     [name=higgsfield_tripo — имя файла модели] [only_hf=1 — только модель, без наших домов]
 var game
 var out := "D:/CivCity/.work/house_view/models"
 var glb := "D:/CivCity/.work/higgsfield/house/house_tripo.glb"
 var ratio := 0.25
+var hf_name := "higgsfield_tripo"
+var only_hf := false
 const TYPES := ["house_pleb", "house_artisan", "house_patrician"]
 
 
@@ -18,6 +21,8 @@ func _ready() -> void:
 			"out": out = kv[1]
 			"glb": glb = kv[1]
 			"ratio": ratio = float(kv[1])
+			"name": hf_name = kv[1]
+			"only_hf": only_hf = kv[1] == "1"
 	DirAccess.make_dir_recursive_absolute(out)
 	Game.boot = {"demo": "1", "noui": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
@@ -132,7 +137,7 @@ func _hf() -> void:
 	mi.mesh = am
 	root.add_child(mi)
 	print("HF verts ", v.size(), " tris ", ni.size() / 3)
-	_export(root, out + "/higgsfield_tripo.glb")
+	_export(root, "%s/%s.glb" % [out, hf_name])
 
 
 func _run() -> void:
@@ -148,7 +153,7 @@ func _run() -> void:
 		if t in TYPES and (not pick.has(t) or int(b.get("tier", 1)) > int(pick[t].get("tier", 1))):
 			pick[t] = b
 	for t in TYPES:
-		if pick.has(t):
+		if pick.has(t) and not only_hf:
 			print("HOUSE ", t, " id ", pick[t]["id"], " tier ", pick[t].get("tier", 1), " variant ", pick[t].get("variant", 0))
 			_export(_house(pick[t]), "%s/%s.glb" % [out, t])
 	_hf()
