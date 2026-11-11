@@ -3939,7 +3939,10 @@ func _trees_clear() -> void:
 		var p: Vector2 = bd["pos"]
 		if Geometry2D.get_closest_point_to_segment(p, a, b).distance_to(p) > 3.0:
 			continue
-		var top: float = city.blueprint(bd).top_y()
+		var bpd := city.blueprint(bd)
+		var top: float = bpd.top_y()
+		for lp: Vector3 in bpd.lights:
+			top = maxf(top, lp.y + 0.25)       # фонарь на столбе («#lamp_post» в top_y не считается) — до самого фонаря
 		var tree := String(Defs.B[bd["type"]].get("sub", "")) == "trees"
 		if not tree and top < 1.6:
 			continue

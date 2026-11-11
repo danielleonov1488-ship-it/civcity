@@ -2004,26 +2004,43 @@ func _wedding() -> void:
 	# этап 4 (4.8): дерево между камерой шествия и парой прячется на время ролика (после ролика — на месте)
 	var kc: Vector3 = sto.kit.pos
 	var kl: Vector3 = sto.kit.look
-	var tree_p := Vector2(lerpf(kc.x, kl.x, 0.45), lerpf(kc.z, kl.z, 0.45))
-	game._add_nature("SM_Env_Tree_01", Transform3D(Basis.IDENTITY, Vector3(tree_p.x, game.land.height_at(tree_p.x, tree_p.y), tree_p.y)), tree_p)
-	var tit: Dictionary = (game.nature[Vector2i(int(tree_p.x / 2.0), int(tree_p.y / 2.0))] as Array)[-1]
-	var tree_h: Array = tit["h"]
-	var t_scale := func() -> float: return ((tree_h[0][0]["subs"][0]["mm"]) as MultiMesh).get_instance_transform(int(tree_h[0][1])).basis.get_scale().length()
 	# фонарь на луче камеры прячется вместе со своим светом (пятно света без фонаря не висит)
+	# место — такое, где фонарь встал бы и у игрока (check_place): у домов из своего набора след шире, и точка у
+	# самой пары часто задевает стену соседа — тогда фонарь «ставился» на высоту 0 под землю и в луч не попадал.
+	# Чуть в сторону от луча (до 0,5 м: фонарь всё равно заслоняет пару) — если на самом луче места нет
 	var lamp_p := Vector2.INF
+	var ray_n := Vector2(kl.x - kc.x, kl.z - kc.z).normalized().orthogonal()
+	var lamp_why := []
 	for k in range(90, 40, -2):
 		var t := k / 100.0
-		var q := Vector2(lerpf(kc.x, kl.x, t), lerpf(kc.z, kl.z, t))
-		var gy: float = game.land.height_at(q.x, q.y)
+		var q0 := Vector2(lerpf(kc.x, kl.x, t), lerpf(kc.z, kl.z, t))
 		var ry := lerpf(kc.y, kl.y, t)
-		if q.distance_to(Vector2(kl.x, kl.z)) > 1.6 and ry > gy + 0.3 and ry < gy + 2.2 and game.land.occ_at(q) == 0:
-			lamp_p = q
+		for off: float in [0.0, 0.3, -0.3, 0.5, -0.5]:
+			var q := q0 + ray_n * off
+			if q.distance_to(Vector2(kl.x, kl.z)) <= 1.6:
+				continue
+			var ck: Dictionary = c.check_place("lamp_post", q, 0.0, 0, 0, -2)
+			var ly: float = ck["y"]
+			if ck["err"] == "" and ry > ly + 0.3 and ry < ly + 2.2:
+				lamp_p = q
+				break
+			lamp_why.append("%.2f/%+.1f: %s" % [t, off, ck["err"] if ck["err"] != "" else "луч на %.2f м" % (ry - ly)])
+		if lamp_p != Vector2.INF:
 			break
+	if lamp_p == Vector2.INF:
+		print("  фонарю нет места на луче камеры: ", lamp_why)
 	var lamp := {}
 	var lamp_l: Array = []
 	if lamp_p != Vector2.INF:
 		lamp = c.place("lamp_post", lamp_p, 0.0, 0, 0, true)
 		lamp_l = (game.visuals.get(int(lamp["id"]), {}) as Dictionary).get("lights", [])
+	# дерево — после фонаря: новая постройка расчищает природу вокруг следа (+0,5 м), фонарь рядом снёс бы его
+	var tree_p := Vector2(lerpf(kc.x, kl.x, 0.45), lerpf(kc.z, kl.z, 0.45))
+	game._add_nature("SM_Env_Tree_01", Transform3D(Basis.IDENTITY, Vector3(tree_p.x, game.land.height_at(tree_p.x, tree_p.y), tree_p.y)), tree_p)
+	var tit: Dictionary = (game.nature[Vector2i(int(tree_p.x / 2.0), int(tree_p.y / 2.0))] as Array)[-1]
+	var tree_h: Array = tit["h"]
+	var t_scale := func() -> float: return ((tree_h[0][0]["subs"][0]["mm"]) as MultiMesh).get_instance_transform(int(tree_h[0][1])).basis.get_scale().length()
+	if lamp_p != Vector2.INF:
 		sto._trees_clear()                # сразу, пока камера шествия там же (через 0,2 с она уже сдвинется)
 	await frames(30)
 	check(t_scale.call() < 1e-6, "дерево между камерой шествия и парой спрятано на время ролика")
