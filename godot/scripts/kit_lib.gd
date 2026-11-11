@@ -79,6 +79,15 @@ static func _mat(name: String) -> Material:
 		"CivPlaster":
 			m.albedo_texture = load(TEX + "plaster_mul.png")
 			m.roughness = 0.9
+		"CivWood":                       # цвет вершин × волокна дерева (развёртка в метрах)
+			m.albedo_texture = load(TEX + "wood_mul.png")
+			m.roughness = 0.8
+		"CivCloth":                      # цвет вершин × плетение ткани
+			m.albedo_texture = load(TEX + "cloth_mul.png")
+			m.roughness = 0.95
+		"CivSign":                       # расписные вывески — клетки signs.png
+			m.albedo_texture = load(TEX + "signs.png")
+			m.roughness = 0.8
 		"CivEmber":
 			m.emission_enabled = true
 			m.emission = Color("ff8a2e")

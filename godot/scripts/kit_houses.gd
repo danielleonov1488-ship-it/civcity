@@ -7,7 +7,7 @@ extends RefCounted
 ## чтобы не налезала на соседей.
 
 const IDS := {"house_pleb": ["pleb", 5, 3], "house_artisan": ["artisan", 5, 3], "house_patrician": ["patrician", 6, 2]}   # тип → [класс, обликов, этажей]
-const ON := true                                   # выключатель (false — прежние дома из Synty)
+static var ON := true                              # выключатель (false — прежние дома из Synty; test_cards сравнивает)
 
 static var _old := {}
 

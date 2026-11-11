@@ -32,6 +32,12 @@ FLH = 2.1
 PL = 0.24
 T = 0.22
 
+# материалы деталей (номер слота в MB): дерево и ткань — с развёрткой в метрах (картинка-множитель × цвет вершин),
+# вывеска — клетка общей картинки signs.png
+M_KIT, M_PLASTER, M_WOOD, M_CLOTH, M_SIGN = 0, 1, 2, 3, 4
+TS = {M_WOOD: 0.9, M_CLOTH: 0.42}       # сколько метров на одну картинку
+_uvr = random.Random(7)                 # сдвиги развёртки — свой поток (облик домов от этого не меняется)
+
 # ---- текущий дом (configure) ----
 KIND = "pleb"
 V = 0
@@ -95,7 +101,7 @@ class MB:
         self.bm = bmesh.new()
         self.cl = self.bm.loops.layers.float_color.new("Col")
         self.uvl = self.bm.loops.layers.uv.new("UVMap")
-        self.mats = mats if mats is not None else [MAT_KIT, MAT_PLASTER]
+        self.mats = mats if mats is not None else [MAT_KIT, MAT_PLASTER, MAT_WOOD, MAT_CLOTH, MAT_SIGN]
 
     @staticmethod
     def bl(p):
@@ -126,8 +132,13 @@ class MB:
         f.material_index = mat
         return f
 
-    def box(self, ctr, size, c, rot=None, cols=None, skip=()):
+    def box(self, ctr, size, c, rot=None, cols=None, skip=(), mat=0, ts=None):
         hx, hy, hz = size[0] / 2, size[1] / 2, size[2] / 2
+        uvon = mat in TS
+        if uvon:
+            ts = ts or TS[mat]
+            grain = max(range(3), key=lambda i: size[i])       # волокна — вдоль длинной стороны
+            ou, ov = _uvr.random(), _uvr.random()
         R = rot or Matrix.Identity(3)
         C = Vector(ctr)
         pts = {}
@@ -143,14 +154,26 @@ class MB:
             "pz": [(-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)],
             "nz": [(-1, -1, -1), (-1, 1, -1), (1, 1, -1), (1, -1, -1)],
         }
+        AX = {"px": (1, 2), "nx": (1, 2), "top": (0, 2), "bot": (0, 2), "pz": (0, 1), "nz": (0, 1)}
         for k, idx in F.items():
             if k in skip:
                 continue
             cc = (cols or {}).get(k, c)
-            self.face([pts[i] for i in idx], cc, ("from", C))
+            uv = None
+            if uvon:
+                a, b = AX[k]
+                if b == grain:
+                    a, b = b, a
+                uv = [(ou + q[a] * size[a] / 2 / ts, ov + q[b] * size[b] / 2 / ts) for q in idx]
+            self.face([pts[i] for i in idx], cc, ("from", C), uv=uv, mat=mat)
         return pts
 
-    def lathe(self, at, prof, seg, c, cols=None, close_top=False):
+    def lathe(self, at, prof, seg, c, cols=None, close_top=False, mat=0, ts=None):
+        uvon = mat in TS
+        if uvon:
+            ts = ts or TS[mat]
+            circ = 2 * math.pi * max(r for r, _ in prof)
+            ou = _uvr.random()
         rings = []
         for k, (r, y) in enumerate(prof):
             ring = []
@@ -164,10 +187,15 @@ class MB:
                 t = (s + 1) % seg
                 a, b, d, e = rings[k][s], rings[k][t], rings[k + 1][t], rings[k + 1][s]
                 mid = (at[0], at[1] + (prof[k][1] + prof[k + 1][1]) / 2, at[2])
-                self.face([a, b, d, e], cc, ("from", mid))
-        self.face(rings[0][::-1], c, ("dir", (0, -1, 0)))
+                uv = None
+                if uvon:          # волокна — по высоте (клёпки бочки, стенки миски)
+                    c0, c1 = ou + s / seg * circ / ts, ou + (s + 1) / seg * circ / ts
+                    y0, y1 = prof[k][1] / ts, prof[k + 1][1] / ts
+                    uv = [(y0, c0), (y0, c1), (y1, c1), (y1, c0)]
+                self.face([a, b, d, e], cc, ("from", mid), uv=uv, mat=mat)
+        self.face(rings[0][::-1], c, ("dir", (0, -1, 0)), mat=mat)
         if close_top:
-            self.face(rings[-1], cols[-1] if cols else c, ("dir", (0, 1, 0)))
+            self.face(rings[-1], cols[-1] if cols else c, ("dir", (0, 1, 0)), mat=mat)
 
     def empty(self):
         return len(self.bm.faces) == 0
@@ -211,7 +239,7 @@ def make_mat(name, rough=0.85, emit=None):
         bsdf.inputs["Emission Strength"].default_value = 2.0
     # крошечная белая картинка × цвет вершин (Mix Multiply): так glTF пишет и COLOR_0, и текстуру, а импорт Godot
     # с текстурой не выбрасывает цвет вершин (без неё — выбрасывал, а он здесь — весь цвет)
-    if name != "CivPlaster":
+    if name not in ("CivPlaster", "CivWood", "CivCloth", "CivSign"):     # у этих — своя картинка × цвет вершин
         img = nt.nodes.new("ShaderNodeTexImage")
         img.name = "WhiteTex"
         img.image = white_image()
@@ -222,6 +250,29 @@ def make_mat(name, rough=0.85, emit=None):
         nt.links.new(img.outputs["Color"], mix.inputs[6])
         nt.links.new(attr.outputs["Color"], mix.inputs[7])
         nt.links.new(mix.outputs[2], bsdf.inputs["Base Color"])
+    return m
+
+
+def make_tex_mat(name, img_file, rough):
+    """цвет вершин × картинка-множитель (дерево, ткань, вывески); в игре — KitLib с той же картинкой"""
+    m = bpy.data.materials.get(name)
+    if m:
+        return m
+    m = make_mat(name, rough)
+    nt = m.node_tree
+    bsdf = nt.nodes.get("Principled BSDF")
+    vc = [n for n in nt.nodes if n.type == "VERTEX_COLOR"][0]
+    img = nt.nodes.new("ShaderNodeTexImage")
+    path = os.path.join(TEX, img_file)
+    img.image = bpy.data.images.load(path) if os.path.exists(path) else white_image()
+    img.name = "DetailTex"
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    mix.blend_type = "MULTIPLY"
+    mix.inputs["Factor"].default_value = 1.0
+    nt.links.new(vc.outputs["Color"], mix.inputs[6])
+    nt.links.new(img.outputs["Color"], mix.inputs[7])
+    nt.links.new(mix.outputs[2], bsdf.inputs["Base Color"])
     return m
 
 
@@ -472,15 +523,15 @@ def build_shutter(mb, colkey, w, h, side, brace):
     nb = 3
     for k in range(nb):
         x = (k + 0.5) * w / nb
-        mb.box((x * -side, h / 2, 0.0), (w / nb - 0.008, h, 0.045), jj(base_col))
+        mb.box((x * -side, h / 2, 0.0), (w / nb - 0.008, h, 0.045), jj(base_col), mat=M_WOOD)
     for vv in (0.17, 0.83):
-        mb.box((w / 2 * -side, h * vv, 0.03), (w * 0.94, 0.07, 0.022), col(base_col, -0.18))
+        mb.box((w / 2 * -side, h * vv, 0.03), (w * 0.94, 0.07, 0.022), col(base_col, -0.18), mat=M_WOOD)
     if brace:
         p0 = Vector((0.08 * -side, h * 0.22, 0.03))
         p1 = Vector(((w - 0.08) * -side, h * 0.78, 0.03))
         dl = (p1 - p0)
         ang = math.atan2(dl.y, dl.x)
-        mb.box(tuple((p0 + p1) / 2), (dl.length, 0.06, 0.02), col(base_col, -0.2), Matrix.Rotation(ang, 3, "Z"))
+        mb.box(tuple((p0 + p1) / 2), (dl.length, 0.06, 0.02), col(base_col, -0.2), Matrix.Rotation(ang, 3, "Z"), mat=M_WOOD)
     for vv in (0.17, 0.83):
         mb.box((0.02 * -side, h * vv, 0.035), (0.06, 0.03, 0.012), col("#2b2622"))
 
@@ -493,9 +544,9 @@ def build_door(mb, colkey, w, h, side=1):
     nb = 4 if w > 0.45 else 3
     for k in range(nb):
         x = (k + 0.5) * w / nb
-        mb.box((x * side, h / 2, 0.0), (w / nb - 0.008, h, 0.05), jj(base))
+        mb.box((x * side, h / 2, 0.0), (w / nb - 0.008, h, 0.05), jj(base), mat=M_WOOD)
     for vv in (0.15, 0.5, 0.85):
-        mb.box((w / 2 * side, h * vv, 0.032), (w * 0.95, 0.07, 0.02), col(base, -0.2))
+        mb.box((w / 2 * side, h * vv, 0.032), (w * 0.95, 0.07, 0.02), col(base, -0.2), mat=M_WOOD)
     for k in range(nb):
         for vv in (0.15, 0.5, 0.85):
             mb.box(((k + 0.5) * w / nb * side, h * vv, 0.046), (0.018, 0.018, 0.012), col("#3a332c"))
@@ -526,14 +577,14 @@ def window(body, P_, U, N, side, u0, u1, v0, v1, shutters=True, box=False, grill
     for (cu, cv, su, sv) in [(u0 + fr / 2, (v0 + v1) / 2, fr, h), (u1 - fr / 2, (v0 + v1) / 2, fr, h),
                              ((u0 + u1) / 2, v0 + fr / 2, w, fr), ((u0 + u1) / 2, v1 - fr / 2, w, fr),
                              ((u0 + u1) / 2, (v0 + v1) / 2, 0.03, h - 2 * fr)]:
-        body.box(Pw(P_, cu, cv, dep), (su, sv, 0.05), c_w, Rw)
+        body.box(Pw(P_, cu, cv, dep), (su, sv, 0.05), c_w, Rw, mat=M_WOOD)
     if grille:
         for k in range(1, 3):
-            body.box(Pw(P_, (u0 + u1) / 2, v0 + h * k / 3, dep), (w, 0.025, 0.035), c_w, Rw)
+            body.box(Pw(P_, (u0 + u1) / 2, v0 + h * k / 3, dep), (w, 0.025, 0.035), c_w, Rw, mat=M_WOOD)
     body.box(Pw(P_, (u0 + u1) / 2, v0 - 0.045, 0.04), (w + 0.24, 0.09, T * 0.5 + 0.12), J(P["stone"], 0.05), Rw,
              cols={"top": J(P["stone"], 0.03, 0, 0)})
     if not surround:
-        body.box(Pw(P_, (u0 + u1) / 2, v1 + 0.05, 0.015), (w + 0.2, 0.1, 0.1), J(P["wood2"], 0.06), Rw)
+        body.box(Pw(P_, (u0 + u1) / 2, v1 + 0.05, 0.015), (w + 0.2, 0.1, 0.1), J(P["wood2"], 0.06), Rw, mat=M_WOOD)
     if box:
         flower_box(body, P_, Rw, (u0 + u1) / 2, v0 - 0.07, w + 0.1)
         block(side, P_, U, u0 - 0.1, u1 + 0.1, v0 - 0.5, v0)
@@ -553,7 +604,7 @@ def window(body, P_, U, N, side, u0, u1, v0, v1, shutters=True, box=False, grill
 
 def flower_box(mb, P_, Rw, uc, vtop, w):
     c = J(P["wood"], 0.08)
-    mb.box(Pw(P_, uc, vtop - 0.09, 0.13), (w, 0.16, 0.18), c, Rw)
+    mb.box(Pw(P_, uc, vtop - 0.09, 0.13), (w, 0.16, 0.18), c, Rw, mat=M_WOOD)
     mb.box(Pw(P_, uc, vtop - 0.015, 0.13), (w - 0.04, 0.02, 0.14), col("#4a3524"), Rw)
     flowers = ["#d9534f", "#f0c24b", "#e98bb0", "#f4f1e8", "#c0392b"]
     n = int(w / 0.07)
@@ -604,7 +655,7 @@ def door(body, P_, U, N, side, a, b, c, d, colkey, stone=True, arch=False, open_
         body.box(Pw(P_, (a + b) / 2, d + 0.07, 0.02), (b - a + 0.3, 0.14, 0.14), J(P["stone"], 0.06), R,
                  cols={"top": J(P["stone"], 0.1)})
     else:
-        body.box(Pw(P_, (a + b) / 2, d + 0.05, 0.015), (b - a + 0.24, 0.1, 0.1), J(P["wood2"], 0.06), R)
+        body.box(Pw(P_, (a + b) / 2, d + 0.05, 0.015), (b - a + 0.24, 0.1, 0.1), J(P["wood2"], 0.06), R, mat=M_WOOD)
     ang = math.radians(38) if open_a is None else open_a
     mov("door", door_key(colkey, b - a - 0.18, d - c - 0.03), P_(a + 0.09, c, -0.1), U, N, ang)
     block(side, P_, U, a - 0.2, b + 0.2, c, d + 0.3)
@@ -685,7 +736,7 @@ def roof(mb, along_x, x0, x1, z0, z1, y_wall, pitch_deg=27.0, oe=0.34, og=0.18, 
             Nv = dirv.cross(Uv).normalized()
             if Nv.y < 0:
                 Nv = -Nv
-            mb.box(tuple((p0 + p1) / 2), (0.07, 0.09, (p1 - p0).length), J(P["wood"], 0.08), Matrix((Uv, Nv, dirv)).transposed())
+            mb.box(tuple((p0 + p1) / 2), (0.07, 0.09, (p1 - p0).length), J(P["wood"], 0.08), Matrix((Uv, Nv, dirv)).transposed(), mat=M_WOOD)
         for r in range(nrow):
             s0 = r * step
             s1 = min(s0 + L, slope_len + 0.05)
@@ -858,10 +909,10 @@ def amphora(mb, at, h, c):
 
 
 def bench(mb, at, ln, R):
-    mb.box(at, (ln, 0.04, 0.24), J(P["wood"], 0.06), R)
+    mb.box(at, (ln, 0.04, 0.24), J(P["wood"], 0.06), R, mat=M_WOOD)
     for s in (-1, 1):
         o = R @ Vector((s * (ln / 2 - 0.08), -0.13, 0))
-        mb.box((at[0] + o.x, at[1] + o.y, at[2] + o.z), (0.05, 0.24, 0.2), J(P["wood2"], 0.06), R)
+        mb.box((at[0] + o.x, at[1] + o.y, at[2] + o.z), (0.05, 0.24, 0.2), J(P["wood2"], 0.06), R, mat=M_WOOD)
 
 
 def firewood(mb, at, R, n=9):
@@ -895,42 +946,55 @@ def basket(mb, at, r, h):
                   r * 0.35, J(rng.choice(["#c0392b", "#e6b33a", "#7fa040"]), 0.1))
 
 
-def awning(mb, P_, U, N, uc, v, w, depth, cols2, poles=True):
-    nu, nd = 6, 3
+def awning(mb, P_, U, N, uc, v, w, depth, cols2, poles=True, drop=0.45, braces=True, ns=6):
+    """полосатый тканевый навес: провис, ткань чуть вздута между швами, фестоны с кисточками по краю, верёвки к стене"""
     R = RW(U, N)
+    sub, nd = 3, 4
+    nu = ns * sub
+    ts = TS[M_CLOTH]
+    stripe = [col(cols2[k % 2], rng.uniform(-0.03, 0.03)) for k in range(ns)]
+
+    def yd(i, d):
+        t = d / depth
+        return v - d * drop - 0.06 * math.sin(math.pi * i / nu) * t + 0.016 * math.sin(math.pi * (i % sub) / sub) * (0.3 + 0.7 * t)
+
     grid = {}
     for i in range(nu + 1):
         for j in range(nd + 1):
-            u = uc - w / 2 + w * i / nu
-            d = depth * j / nd
-            sag = 0.06 * math.sin(math.pi * i / nu) * (j / nd)
-            grid[(i, j)] = mb.v(Pw(P_, u, v - d * 0.45 - sag, 0.02 + d))
-    for i in range(nu):
-        cc = col(cols2[i % 2], rng.uniform(-0.04, 0.04))
-        for j in range(nd):
-            q = [grid[(i, j)], grid[(i + 1, j)], grid[(i + 1, j + 1)], grid[(i, j + 1)]]
-            mb.face(q, cc, ("dir", (0, 1, 0)))
-            mb.face(q[::-1], col_shift(cc, -0.25), ("dir", (0, -1, 0)))
-    for i in range(nu):
-        u0 = uc - w / 2 + w * i / nu
-        u1 = u0 + w / nu
-        y = v - depth * 0.45
-        a = mb.v(Pw(P_, u0, y - 0.06 * math.sin(math.pi * i / nu), 0.02 + depth))
-        b = mb.v(Pw(P_, u1, y - 0.06 * math.sin(math.pi * (i + 1) / nu), 0.02 + depth))
-        m = mb.v(Pw(P_, (u0 + u1) / 2, y - 0.12 - 0.06 * math.sin(math.pi * (i + 0.5) / nu), 0.02 + depth))
-        mb.face([a, b, m], col(cols2[i % 2], -0.05), ("dir", tuple(N)))
-        mb.face([b, a, m], col(cols2[i % 2], -0.3), ("dir", tuple(-N)))
+            dd = depth * j / nd
+            grid[(i, j)] = Pw(P_, uc - w / 2 + w * i / nu, yd(i, dd), 0.02 + dd)
+    sheet(mb, grid, nu, nd, lambda i, j: stripe[min(ns - 1, i // sub)], (0, 1, 0), lambda i, j: (w * i / nu / ts, depth * j / nd / ts))
+    # фестоны: по краю каждой полосы — полукруглый язык ткани; на стыках — кисточки
+    vg = {}
+    for i in range(nu + 1):
+        top = yd(i, depth)
+        t = (i % sub) / sub if i < nu else 0.0
+        lobe = 0.05 + 0.055 * math.sin(math.pi * t)
+        vg[(i, 0)] = Pw(P_, uc - w / 2 + w * i / nu, top + 0.004, 0.02 + depth + 0.004)
+        vg[(i, 1)] = Pw(P_, uc - w / 2 + w * i / nu, top - lobe, 0.022 + depth + 0.004)
+    sheet(mb, vg, nu, 1, lambda i, j: col_shift(stripe[min(ns - 1, i // sub)], -0.04), tuple(N), lambda i, j: (w * i / nu / ts, j * 0.1 / ts))
+    tc = col(cols2[1], -0.2)
+    for k in range(ns + 1):
+        i = k * sub
+        p = Vector(Pw(P_, uc - w / 2 + w * i / nu, yd(i, depth) - 0.05, 0.024 + depth))
+        ball(mb, tuple(p), 0.011, tc, seg=5, rings=3)
+        spindle(mb, p, p + Vector((0, -0.06, 0)), [(0.006, 0.0), (0.014, 0.6), (0.012, 1.0)], 5, tc)
+    # рейка у стены
+    mb.box(Pw(P_, uc, v + 0.01, 0.03), (w + 0.06, 0.05, 0.05), J(P["wood"], 0.06), R, mat=M_WOOD)
     if poles:
         for s in (-1, 1):
-            top = Pw(P_, uc + s * w / 2, v - depth * 0.45 - 0.02, depth + 0.02)
-            mb.box((top[0], top[1] / 2, top[2]), (0.045, top[1], 0.045), J(P["wood"], 0.05), R)
-    else:
-        for s in (-1, 1):       # подкосы к стене
+            top = Pw(P_, uc + s * w / 2, v - depth * drop - 0.02, depth + 0.02)
+            mb.box((top[0], top[1] / 2, top[2]), (0.045, top[1], 0.045), J(P["wood"], 0.05), R, mat=M_WOOD)
+    elif braces:
+        for s in (-1, 1):       # подкосы к стене и растяжки-верёвки к стене повыше
             p0 = Vector(Pw(P_, uc + s * (w / 2 - 0.05), v - 0.55, 0.02))
-            p1 = Vector(Pw(P_, uc + s * (w / 2 - 0.05), v - depth * 0.45, depth))
+            p1 = Vector(Pw(P_, uc + s * (w / 2 - 0.05), v - depth * drop, depth))
             dl = p1 - p0
             Rr = Matrix((U, dl.normalized().cross(U).normalized(), dl.normalized())).transposed()
-            mb.box(tuple((p0 + p1) / 2), (0.04, 0.04, dl.length), J(P["wood2"], 0.05), Rr)
+            mb.box(tuple((p0 + p1) / 2), (0.04, 0.04, dl.length), J(P["wood2"], 0.05), Rr, mat=M_WOOD)
+            rod(mb, Pw(P_, uc + s * (w / 2 - 0.02), yd(0 if s < 0 else nu, depth) + 0.01, 0.02 + depth),
+                Pw(P_, uc + s * (w / 2 - 0.12), v + 0.32, 0.02), 0.012, col(ROPE))
+            mb.box(Pw(P_, uc + s * (w / 2 - 0.12), v + 0.32, 0.02), (0.03, 0.03, 0.04), col(IRON), R)
 
 
 def canopy(mb, P_, U, N, uc, v, w, depth):
@@ -968,8 +1032,8 @@ def canopy(mb, P_, U, N, uc, v, w, depth):
         p1 = Vector(Pw(P_, uc + s * (w / 2 - 0.08), v - depth * math.tan(a) * 0.9, depth * 0.9))
         dl = p1 - p0
         Rr = Matrix((U, dl.normalized().cross(U).normalized(), dl.normalized())).transposed()
-        mb.box(tuple((p0 + p1) / 2), (0.06, 0.06, dl.length), J(P["wood2"], 0.05), Rr)
-        mb.box(Pw(P_, uc + s * (w / 2 - 0.08), v - depth * math.tan(a) * 0.5, depth * 0.5), (0.07, 0.07, depth), J(P["wood"], 0.05), R)
+        mb.box(tuple((p0 + p1) / 2), (0.06, 0.06, dl.length), J(P["wood2"], 0.05), Rr, mat=M_WOOD)
+        mb.box(Pw(P_, uc + s * (w / 2 - 0.08), v - depth * math.tan(a) * 0.5, depth * 0.5), (0.07, 0.07, depth), J(P["wood"], 0.05), R, mat=M_WOOD)
 
 
 def pergola(mb, P_, U, N, u0, u1, h, depth):
@@ -977,12 +1041,12 @@ def pergola(mb, P_, U, N, u0, u1, h, depth):
     R = RW(U, N)
     for uu in (u0, u1):
         top = Pw(P_, uu, h, depth)
-        mb.box((top[0], h / 2, top[2]), (0.09, h, 0.09), J(P["wood"], 0.06), R)
-    mb.box(Pw(P_, (u0 + u1) / 2, h + 0.04, depth), (u1 - u0 + 0.3, 0.09, 0.09), J(P["wood"], 0.06), R)
+        mb.box((top[0], h / 2, top[2]), (0.09, h, 0.09), J(P["wood"], 0.06), R, mat=M_WOOD)
+    mb.box(Pw(P_, (u0 + u1) / 2, h + 0.04, depth), (u1 - u0 + 0.3, 0.09, 0.09), J(P["wood"], 0.06), R, mat=M_WOOD)
     nb = int((u1 - u0) / 0.32) + 1
     for k in range(nb):
         uu = u0 + (u1 - u0) * k / max(1, nb - 1)
-        mb.box(Pw(P_, uu, h + 0.12, depth / 2), (0.06, 0.07, depth + 0.3), J(P["wood2"], 0.06), R)
+        mb.box(Pw(P_, uu, h + 0.12, depth / 2), (0.06, 0.07, depth + 0.3), J(P["wood2"], 0.06), R, mat=M_WOOD)
     # лоза: густые листья поверху, свисающие плети, грозди
     for k in range(int((u1 - u0) * depth * 70)):
         uu = rng.uniform(u0 - 0.1, u1 + 0.1)
@@ -1023,7 +1087,7 @@ def laundry(mb, P_, U, N, side_len, y):
     rope = p1 - p0
     mb.box(tuple((p0 + p1) / 2), (rope.length, 0.012, 0.012), col("#d8cfbf"), R)
     for s, uu in ((p0, 0.3), (p1, side_len - 0.3)):
-        mb.box(Pw(P_, uu, y, 0.17), (0.03, 0.03, 0.36), J(P["wood"], 0.05), R)
+        mb.box(Pw(P_, uu, y, 0.17), (0.03, 0.03, 0.36), J(P["wood"], 0.05), R, mat=M_WOOD)
     cloths = ["#f4efe2", "#c94f3d", "#4f78a8", "#e8c35a", "#f4efe2"]
     n = 5
     for k in range(n):
@@ -1039,10 +1103,10 @@ def ladder(mb, P_, U, N, u, h):
     lp = P_(u, 0.0, 0.45)
     for s in (-0.17, 0.17):
         o = R @ Vector((s, h / 2, 0))
-        mb.box((lp.x + o.x, o.y, lp.z + o.z), (0.04, h, 0.04), J(P["wood"], 0.06), R)
+        mb.box((lp.x + o.x, o.y, lp.z + o.z), (0.04, h, 0.04), J(P["wood"], 0.06), R, mat=M_WOOD)
     for k in range(int(h / 0.3)):
         o = R @ Vector((0, 0.2 + k * 0.3, 0))
-        mb.box((lp.x + o.x, o.y, lp.z + o.z), (0.34, 0.03, 0.03), J(P["wood"], 0.06), R)
+        mb.box((lp.x + o.x, o.y, lp.z + o.z), (0.34, 0.03, 0.03), J(P["wood"], 0.06), R, mat=M_WOOD)
 
 
 def interior(mb, emb, x0, x1, z0, z1, y, floor_k):
@@ -1059,23 +1123,23 @@ def interior(mb, emb, x0, x1, z0, z1, y, floor_k):
                       col(rng.choice(["#ff7a1a", "#ffb03a", "#e8461c"])))
         mb.lathe((hx, y + 0.36, hz), [(0.12, 0), (0.15, 0.1), (0.12, 0.18)], 8, col("#3d3530"))
         tx, tz = (x0 + x1) / 2 + 0.25, (z0 + z1) / 2 - 0.2
-        mb.box((tx, y + 0.52, tz), (0.8, 0.05, 0.5), J(P["wood"], 0.05))
+        mb.box((tx, y + 0.52, tz), (0.8, 0.05, 0.5), J(P["wood"], 0.05), mat=M_WOOD)
         for sx in (-1, 1):
             for sz in (-1, 1):
-                mb.box((tx + sx * 0.33, y + 0.26, tz + sz * 0.19), (0.05, 0.5, 0.05), J(P["wood2"], 0.05))
+                mb.box((tx + sx * 0.33, y + 0.26, tz + sz * 0.19), (0.05, 0.5, 0.05), J(P["wood2"], 0.05), mat=M_WOOD)
         mb.lathe((tx - 0.15, y + 0.55, tz), [(0.06, 0), (0.1, 0.05), (0.11, 0.06)], 8, col("#b8693f"))
         amphora(mb, (x1 - 0.2, y + 0.04, z0 + 0.25), 0.55, J("#c27a4a", 0.08))
         amphora(mb, (x1 - 0.42, y + 0.04, z0 + 0.22), 0.5, J("#b5703f", 0.08))
-        mb.box((x1 - 0.06, y + 1.05, (z0 + z1) / 2), (0.1, 0.03, 0.9), J(P["wood"], 0.05))
+        mb.box((x1 - 0.06, y + 1.05, (z0 + z1) / 2), (0.1, 0.03, 0.9), J(P["wood"], 0.05), mat=M_WOOD)
         for k in range(3):
             mb.lathe((x1 - 0.07, y + 1.07, (z0 + z1) / 2 - 0.3 + 0.3 * k), [(0.04, 0), (0.06, 0.07), (0.04, 0.12)], 7,
                      J(rng.choice(["#b8693f", "#c9a46e", "#7d8f99"]), 0.08))
     else:
         bx, bz = x0 + 0.5, z0 + 0.6
-        mb.box((bx, y + 0.22, bz), (0.85, 0.3, 1.25), J(P["wood"], 0.05))
+        mb.box((bx, y + 0.22, bz), (0.85, 0.3, 1.25), J(P["wood"], 0.05), mat=M_WOOD)
         mb.box((bx, y + 0.42, bz + 0.1), (0.8, 0.1, 1.0), J("#b0413e", 0.08))
         mb.box((bx, y + 0.43, bz - 0.48), (0.7, 0.1, 0.22), J("#efe6d2", 0.04))
-        mb.box((x1 - 0.35, y + 0.22, z0 + 0.3), (0.55, 0.4, 0.35), J(P["wood"], 0.08), cols={"top": J(P["wood2"], 0.05)})
+        mb.box((x1 - 0.35, y + 0.22, z0 + 0.3), (0.55, 0.4, 0.35), J(P["wood"], 0.08), cols={"top": J(P["wood2"], 0.05)}, mat=M_WOOD)
         amphora(mb, (x1 - 0.25, y + 0.04, z1 - 0.35), 0.45, J("#c27a4a", 0.08))
 
 
@@ -1130,8 +1194,8 @@ def lean_to(body, x0, x1, z_wall, depth, y_top, y_low):
                 Rr = Matrix((Vector((1, 0, 0)), -dl.normalized().cross(Vector((1, 0, 0))).normalized(), dl.normalized())).transposed()
             body.box(tuple((p0 + p1) / 2), (0.1, 0.07, dl.length), J(P["tile"], 0.08, 0.01, 0.08), Rr)
     for xx in (x0 + 0.08, x1 - 0.08):
-        body.box((xx, (y_low - 0.05) / 2, zb + 0.05), (0.09, y_low - 0.05, 0.09), J(P["wood"], 0.06))
-    body.box(((x0 + x1) / 2, y_low - 0.04, zb + 0.05), (x1 - x0, 0.09, 0.1), J(P["wood"], 0.06))
+        body.box((xx, (y_low - 0.05) / 2, zb + 0.05), (0.09, y_low - 0.05, 0.09), J(P["wood"], 0.06), mat=M_WOOD)
+    body.box(((x0 + x1) / 2, y_low - 0.04, zb + 0.05), (x1 - x0, 0.09, 0.1), J(P["wood"], 0.06), mat=M_WOOD)
     # каменный пол двора
     for k in range(int((x1 - x0) / 0.5) + 1):
         for j in range(int(depth / 0.45) + 1):
@@ -1141,70 +1205,103 @@ def lean_to(body, x0, x1, z_wall, depth, y_top, y_low):
 CRAFT_KEYS = {0: "cloth", 1: "pots", 2: "copper", 3: "grain"}
 
 
-def craft_goods(body, emb, P_, U, N, u0, u1, craft, y_top):
-    """товар ремесла на прилавке и под ним; craft: 0 ткач, 1 гончар, 2 медник, 3 зерно или ключ лавки"""
-    R = RW(U, N)
-    span = u1 - u0
-    craft = CRAFT_KEYS.get(craft, craft)
-    if craft in TRADE_GOODS:
-        TRADE_GOODS[craft](body, emb, P_, U, N, u0, u1, y_top)
-        return
-    if craft == "cloth":
-        cols = ["#b5452f", "#3f6fa8", "#e1b84a", "#4f8a5a", "#8a4f9a", "#efe3c8"]
-        for k in range(5):
-            uu = u0 + 0.12 + k * (span - 0.24) / 4
-            c = Vector(Pw(P_, uu, y_top + 0.06, 0.1))
-            body.lathe((c.x, c.y - 0.06, c.z), [(0.055, 0.0), (0.055, 0.32)], 8, J(cols[k % len(cols)], 0.06), close_top=True)
-        for k in range(4):            # полотнища с балки
-            uu = u0 + 0.15 + k * (span - 0.3) / 3
-            body.box(Pw(P_, uu, PL + 1.35, 0.06), (0.22, 0.5, 0.012), J(cols[(k + 2) % len(cols)], 0.06), R)
-    elif craft == "pots":
-        for k in range(4):
-            uu = u0 + 0.12 + k * (span - 0.24) / 3
-            amphora(body, Pw(P_, uu, y_top, 0.08), 0.32 + 0.06 * (k % 2), J(rng.choice(["#c27a4a", "#b5703f", "#d08a55"]), 0.06))
-        for k in range(3):
-            amphora(body, Pw(P_, u0 - 0.25 + k * 0.22 if u0 > 0.6 else u1 + 0.2 + k * 0.22, 0.0, 0.35), 0.5, J("#c27a4a", 0.08))
-        for k in range(3):
-            body.lathe(Pw(P_, u0 + span * 0.5 + (k - 1) * 0.15, y_top + 0.002, 0.18), [(0.05, 0), (0.09, 0.04)], 8, J("#d9a56a", 0.06))
-    elif craft == "copper":
-        for k in range(5):            # медные котлы и сковороды на балке
-            uu = u0 + 0.12 + k * (span - 0.24) / 4
-            c = Vector(Pw(P_, uu, PL + 1.38, 0.08))
-            body.lathe((c.x, c.y - 0.1, c.z), [(0.03, 0), (0.09, 0.05), (0.1, 0.12)], 8, J("#b0703a", 0.1))
-            body.box((c.x, c.y + 0.08, c.z), (0.01, 0.16, 0.01), col("#3a332c"))
-        for k in range(3):
-            body.lathe(Pw(P_, u0 + 0.2 + k * 0.3, y_top, 0.1), [(0.06, 0), (0.1, 0.05), (0.11, 0.1)], 8, J("#8c5a30", 0.1))
-    else:
-        for k in range(4):            # мешки с зерном и корзины
-            uu = u0 + 0.15 + k * (span - 0.3) / 3
-            c = Vector(Pw(P_, uu, y_top, 0.1))
-            body.lathe((c.x, c.y, c.z), [(0.09, 0), (0.12, 0.1), (0.1, 0.2), (0.05, 0.25)], 8, J("#d8c49a", 0.06), close_top=True)
-            leaf_blob(body, (c.x, c.y + 0.24, c.z), 0.06, J("#e3b84a", 0.08))
-        for k in range(2):
-            basket(body, Pw(P_, u1 + 0.25 + k * 0.3 if u1 < W - 0.8 else u0 - 0.3 - k * 0.3, 0.0, 0.35), 0.14, 0.22)
+def craft_goods(body, emb, S, craft):
+    """товар ремесла: на прилавке, на перекладине в проёме, на полке позади и на улице перед лавкой"""
+    key = CRAFT_KEYS.get(craft, craft)
+    TRADE_GOODS.get(key, g_cloth)(body, emb, S)
 
 
 def shopfront(body, emb, P_, U, N, side, u0, u1, craft, top):
-    """лавка на первом этаже: широкий проём под деревянной балкой, каменный прилавок (как в Помпеях),
-    товар ремесла, вывеска на кронштейне"""
+    """лавка на первом этаже: широкий проём под деревянной балкой, каменный прилавок с росписью (как в Помпеях),
+    товар ремесла, расписная вывеска на железном кронштейне"""
     R = RW(U, N)
-    body.box(Pw(P_, (u0 + u1) / 2, top + 0.07, 0.02), (u1 - u0 + 0.26, 0.14, 0.16), J(P["wood"], 0.06), R)
+    key = CRAFT_KEYS.get(craft, craft)
+    sign = DS.get("sign", key)
+    panel = DS.get("panel", sign)
+    body.box(Pw(P_, (u0 + u1) / 2, top + 0.07, 0.02), (u1 - u0 + 0.26, 0.14, 0.16), J(P["wood"], 0.06), R, mat=M_WOOD)
+    for k in range(int((u1 - u0) / 0.3)):            # гвозди-шляпки по балке
+        body.box(Pw(P_, u0 + 0.12 + k * 0.3, top + 0.07, 0.103), (0.018, 0.018, 0.008), col(IRON), R)
     for uu in (u0 + 0.05, u1 - 0.05):
         body.box(Pw(P_, uu, (PL + top) / 2, -0.06), (0.1, top - PL, 0.12), J(P["stone"], 0.06), R)
     cu1 = u0 + (u1 - u0) * 0.72
     ch = 0.72
     body.box(Pw(P_, (u0 + cu1) / 2 + 0.04, PL + ch / 2, 0.02), (cu1 - u0 - 0.08, ch, 0.34), J(P["trim"], 0.04), R,
-             cols={"pz": J("#b5452f", 0.05)})
+             cols={"pz": J("#a83f2c", 0.05)})
     body.box(Pw(P_, (u0 + cu1) / 2 + 0.04, PL + ch + 0.025, 0.04), (cu1 - u0 + 0.0, 0.05, 0.4), J("#e8e2d6", 0.03), R)
-    craft_goods(body, emb, P_, U, N, u0 + 0.08, cu1 - 0.04, craft, PL + ch + 0.05)
-    # вывеска
-    su = u1 + 0.18 if u1 < W - 0.4 else u0 - 0.18
-    body.box(Pw(P_, su, top + 0.28, 0.25), (0.04, 0.04, 0.5), J(P["wood2"], 0.05), R)
-    body.box(Pw(P_, su, top + 0.06, 0.42), (0.03, 0.34, 0.3), J(P["trim"], 0.05), R @ Matrix.Rotation(math.pi / 2, 3, "Y"))
-    sym = SIGN_COL.get(CRAFT_KEYS.get(craft, craft), "#b5452f")
+    body.box(Pw(P_, (u0 + cu1) / 2 + 0.04, PL + 0.03, 0.2), (cu1 - u0 - 0.04, 0.06, 0.04), J(P["stone"], 0.05), R)
+    # роспись на передней стенке прилавка (вывеска лавки) и мраморная крошка по краям
+    cl = cu1 - u0 - 0.08
+    ph = min(0.54, cl / 1.5 * 0.92)
+    pw = ph * 1.5
+    pc = (u0 + cu1) / 2 + 0.04
+    body.box(Pw(P_, pc, PL + 0.1 + ch * 0.47, 0.192), (pw + 0.05, ph + 0.05, 0.006), J("#ece4d2", 0.03), R)
+    sign_board(body, P_, U, N, pc, PL + 0.1 + ch * 0.47, pw, ph, 0.197, panel)
     for sgn in (-1, 1):
-        body.lathe(Pw(P_, su + sgn * 0.017, top + 0.0, 0.42), [(0.0, 0.0), (0.07, 0.04), (0.06, 0.12), (0.02, 0.17)], 6, col(sym))
-    block(side, P_, U, u0 - 0.1, u1 + 0.45, PL, top + 0.6)
+        a, b = (pc + sgn * (pw / 2 + 0.06), pc + sgn * (cl / 2 - 0.03))
+        if abs(b - a) > 0.06:
+            inlay(body, P_, R, min(a, b), max(a, b), PL + 0.14, PL + ch - 0.06, 0.193)
+    S = {"P": P_, "U": U, "N": N, "R": R, "u0": u0 + 0.08, "u1": cu1 - 0.04, "y": PL + ch + 0.05, "top": top,
+         "rail": (u0 + 0.14, u1 - 0.14, top - 0.08, 0.08),
+         "shelf": (u0 + 0.12, cu1 - 0.06, -0.86, [PL + 0.5, PL + 0.9, PL + 1.28]),
+         "out": (u0 + 0.02, cu1 + 0.05, 0.5), "ent": (cu1 + 0.04, u1 - 0.06)}
+    # железная перекладина под балкой: на ней висит товар
+    ru0, ru1, rv, rn = S["rail"]
+    rod(body, Pw(P_, u0 + 0.08, rv, rn), Pw(P_, u1 - 0.08, rv, rn), 0.016, col(IRON))
+    for uu in (u0 + 0.08, u1 - 0.08):
+        rod(body, Pw(P_, uu, rv, rn), Pw(P_, uu, top, -0.02), 0.012, col(IRON))
+    craft_goods(body, emb, S, craft)
+    # вывеска на кронштейне — двусторонняя, у края проёма
+    su = u1 + 0.2 if u1 < W - 0.4 else u0 - 0.2
+    hang_sign(body, P_, U, N, su, top + 0.34, sign)
+    block(side, P_, U, u0 - 0.1, u1 + 0.5, PL, top + 0.6)
+
+
+def sign_uv(key):
+    i = SIGNS.index(key) if key in SIGNS else 0
+    cx, cy = i % 6, i // 6
+    e = 3.0 / 2304
+    return cx / 6 + e, (cx + 1) / 6 - e, 1 - (cy + 1) / 5 + e * 1.8, 1 - cy / 5 - e * 1.8
+
+
+def sign_board(mb, P_, U, N, uc, vc, w, h, n, key):
+    """расписная доска (клетка signs.png) на стене или прилавке, лицом к улице"""
+    u0, u1, v0, v1 = sign_uv(key)
+    q = [P_(uc - w / 2, vc - h / 2, n), P_(uc + w / 2, vc - h / 2, n), P_(uc + w / 2, vc + h / 2, n), P_(uc - w / 2, vc + h / 2, n)]
+    mb.face([mb.v(tuple(p)) for p in q], (1.0, 1.0, 1.0, 1.0), ("dir", tuple(N)), uv=[(u0, v0), (u1, v0), (u1, v1), (u0, v1)], mat=M_SIGN)
+
+
+def hang_sign(mb, P_, U, N, su, v, key, w=0.54, h=0.36, out=0.62):
+    """вывеска поперёк улицы: железный кронштейн с завитком, на двух цепочках — доска, расписанная с обеих сторон"""
+    R = RW(U, N)
+    Y = Vector((0, 1, 0))
+    rod(mb, P_(su, v, 0.0), P_(su, v, out), 0.026, col(IRON))
+    rod(mb, P_(su, v - 0.26, 0.0), P_(su, v, out * 0.62), 0.018, col(IRON))
+    torus(mb, tuple(P_(su, v + 0.035, out * 0.55)), Matrix((N, U, Y)).transposed(), 0.045, 0.007, col(IRON), seg=8, seg2=3)
+    mb.box(Pw(P_, su, v, 0.02), (0.07, 0.1, 0.03), col(IRON), R)
+    c = P_(su, v - 0.1 - h / 2, out * 0.55)
+    for s in (-1, 1):
+        a = P_(su, v - 0.012, out * 0.55 + s * (w / 2 - 0.05))
+        rod(mb, a, a + Vector((0, -0.088, 0)), 0.008, col(IRON))
+    Rb = Matrix((N, Y, U)).transposed()
+    mb.box(tuple(c), (w + 0.05, h + 0.05, 0.03), J("#6b4428", 0.05), Rb, mat=M_WOOD)
+    u0, u1, v0, v1 = sign_uv(key)
+    for sgn in (-1, 1):
+        right = -N * sgn
+        off = U * (0.0165 * sgn)
+        q = [c - right * (w / 2) - Y * (h / 2) + off, c + right * (w / 2) - Y * (h / 2) + off,
+             c + right * (w / 2) + Y * (h / 2) + off, c - right * (w / 2) + Y * (h / 2) + off]
+        mb.face([mb.v(tuple(p)) for p in q], (1.0, 1.0, 1.0, 1.0), ("dir", tuple(U * sgn)), uv=[(u0, v0), (u1, v0), (u1, v1), (u0, v1)], mat=M_SIGN)
+
+
+def inlay(mb, P_, R, a, b, v0, v1, n):
+    """мраморная крошка на прилавке (как в помпейских термополиях)"""
+    for k in range(int((b - a) * (v1 - v0) * 34) + 2):
+        uu = rng.uniform(a + 0.03, b - 0.03)
+        vv = rng.uniform(v0 + 0.03, v1 - 0.03)
+        s = rng.uniform(0.035, 0.065)
+        mb.box(Pw(P_, uu, vv, n), (s, s * rng.uniform(0.6, 1.2), 0.006),
+               J(rng.choice(["#d9cfbf", "#b9a98f", "#7f8f6a", "#8f4a3a", "#c9a55a", "#8a8f99"]), 0.05),
+               R @ Matrix.Rotation(rng.uniform(0, 3.1), 3, "Z"))
 
 
 def yard_props(body, emb, x0, x1, zb, z_wall, craft):
@@ -1215,9 +1312,9 @@ def yard_props(body, emb, x0, x1, zb, z_wall, craft):
         return
     if craft == "loom":     # ткацкий станок и корзины шерсти
         for xx in (-0.45, 0.45):
-            body.box((xx, 0.6, zc), (0.06, 1.2, 0.06), J(P["wood"], 0.05))
-        body.box((0, 1.15, zc), (1.0, 0.06, 0.06), J(P["wood"], 0.05))
-        body.box((0, 0.35, zc), (1.0, 0.06, 0.06), J(P["wood"], 0.05))
+            body.box((xx, 0.6, zc), (0.06, 1.2, 0.06), J(P["wood"], 0.05), mat=M_WOOD)
+        body.box((0, 1.15, zc), (1.0, 0.06, 0.06), J(P["wood"], 0.05), mat=M_WOOD)
+        body.box((0, 0.35, zc), (1.0, 0.06, 0.06), J(P["wood"], 0.05), mat=M_WOOD)
         for k in range(14):
             body.box((-0.42 + k * 0.065, 0.75, zc), (0.012, 0.78, 0.012), J(rng.choice(["#b5452f", "#3f6fa8", "#e1b84a", "#efe3c8"]), 0.05))
         for k in range(2):
@@ -1234,7 +1331,7 @@ def yard_props(body, emb, x0, x1, zb, z_wall, craft):
     elif craft == "anvil":  # наковальня, точило, бочка
         body.box((-0.2, 0.25, zc), (0.22, 0.5, 0.22), J("#6b5039", 0.06))
         body.box((-0.2, 0.55, zc), (0.4, 0.12, 0.16), col("#3a3a3c"))
-        body.lathe((0.6, 0.0, zc), [(0.16, 0.0), (0.18, 0.25), (0.16, 0.5)], 10, J(P["wood"], 0.06), close_top=True)
+        body.lathe((0.6, 0.0, zc), [(0.16, 0.0), (0.18, 0.25), (0.16, 0.5)], 10, J(P["wood"], 0.06), close_top=True, mat=M_WOOD)
         body.lathe((x0 + 0.45, 0.2, zc), [(0.2, 0.0), (0.2, 0.08)], 12, J(P["stone"], 0.05), close_top=True)
     else:                   # ручная мельница и мешки
         body.lathe((0.0, 0.0, zc), [(0.3, 0.0), (0.28, 0.3), (0.12, 0.6), (0.18, 0.85)], 10, J(P["stone"], 0.06), close_top=True)
@@ -1242,151 +1339,1146 @@ def yard_props(body, emb, x0, x1, zb, z_wall, craft):
             body.lathe((x1 - 0.3 - k * 0.3, 0.0, zc), [(0.12, 0), (0.15, 0.15), (0.12, 0.3), (0.06, 0.36)], 8, J("#d8c49a", 0.06), close_top=True)
 
 
-# ---------------- товар и дворы лавок ----------------
-SIGN_COL = {"cloth": "#3f6fa8", "pots": "#c27a4a", "copper": "#b0703a", "grain": "#e3b84a", "meat": "#9a2f28",
-            "bread": "#c98a3c", "shoes": "#5a3a22", "dye": "#8a3f9a", "togas": "#efe3c8", "oil": "#7f8f3a", "lamps": "#c9a14a",
-            "wine": "#6a2848", "perfume": "#d98fb0", "jewel": "#d9b54a", "barber": "#4f78a8", "medic": "#4f8a5a",
-            "thermo": "#b5452f"}
+# ---------------- товар лавок: мелкие формы ----------------
+SIGNS = ["meat", "bread", "shoes", "dye", "togas", "pots", "oil", "lamps", "wine", "perfume", "jewel", "cloth", "barber",
+         "medic", "thermo", "taberna", "fullonica", "mansio", "fruit", "veg", "fish", "fresco", "copper", "grain"]
+IRON = "#3a3633"
+ROPE = "#c9b48a"
+BRONZE = "#b08a3a"
+CLAY = ["#c27a4a", "#b5703f", "#d08a55", "#a8402a"]
 
 
-def g_meat(body, emb, P_, U, N, u0, u1, y):
-    R = RW(U, N)
-    for k in range(5):                 # окорока и колбасы на балке
-        uu = u0 + 0.12 + k * (u1 - u0 - 0.24) / 4
-        c = Vector(Pw(P_, uu, PL + 1.42, 0.06))
-        body.box((c.x, c.y + 0.07, c.z), (0.01, 0.14, 0.01), col("#3a332c"))
-        if k % 2 == 0:
-            body.lathe((c.x, c.y - 0.28, c.z), [(0.02, 0.0), (0.08, 0.06), (0.1, 0.16), (0.05, 0.26)], 7, J("#7a2e22", 0.1))
-        else:
-            for j in range(3):
-                body.lathe((c.x + (j - 1) * 0.04, c.y - 0.3, c.z), [(0.02, 0.0), (0.025, 0.28)], 5, J("#8c3a28", 0.1), close_top=True)
-    body.box(Pw(P_, u0 + 0.25, y + 0.08, 0.12), (0.3, 0.16, 0.26), J("#8a6a4a", 0.06), R)        # колода и тесак
-    body.box(Pw(P_, u0 + 0.25, y + 0.17, 0.12), (0.18, 0.01, 0.06), col("#9aa0a6"), R)
-    for k in range(3):
-        leaf_blob(body, Pw(P_, u0 + 0.6 + k * 0.22, y + 0.05, 0.12), 0.07, J("#b0473a", 0.1))
+def LP(at, R, x, y, z):
+    return tuple(Vector(at) + R @ Vector((x, y, z)))
 
 
-def g_bread(body, emb, P_, U, N, u0, u1, y):
-    for k in range(9):                 # круглые хлеба горкой
-        uu = u0 + 0.12 + (k % 5) * (u1 - u0 - 0.24) / 4
-        body.lathe(Pw(P_, uu, y + (0.07 if k >= 5 else 0.0), 0.1 + (0.0 if k < 5 else 0.05)), [(0.08, 0.0), (0.09, 0.03), (0.06, 0.07), (0.0, 0.08)], 8, J("#b9773a", 0.12))
-    basket(body, Pw(P_, u1 + 0.3 if u1 < W - 0.7 else u0 - 0.3, 0.0, 0.35), 0.16, 0.24)
+def _orient(d):
+    d = Vector(d).normalized()
+    up = Vector((0, 1, 0)) if abs(d.y) < 0.95 else Vector((1, 0, 0))
+    a = up.cross(d).normalized()
+    b = d.cross(a).normalized()
+    return a, b, d
 
 
-def g_shoes(body, emb, P_, U, N, u0, u1, y):
-    R = RW(U, N)
+def _ymat(d):
+    """поворот, у которого ось y смотрит по d (кольца, лежащие поперёк d)"""
+    a, b, dd = _orient(d)
+    return Matrix((a, dd, b)).transposed()
+
+
+def prof_r(prof, t):
+    for k in range(len(prof) - 1):
+        (r0, t0), (r1, t1) = prof[k], prof[k + 1]
+        if t0 <= t <= t1:
+            return r0 + (r1 - r0) * (t - t0) / max(1e-6, t1 - t0)
+    return prof[-1][0]
+
+
+def spindle(mb, a, b, prof, seg, c, cols=None, mat=0, sq=(1.0, 1.0)):
+    """тело вращения вдоль отрезка a→b; prof — [(радиус, доля длины)]; sq — сплющить сечение"""
+    a = Vector(a)
+    b = Vector(b)
+    L = (b - a).length
+    if L < 1e-5:
+        return
+    ea, eb, ed = _orient(b - a)
+    rings = []
+    for (r, t) in prof:
+        if r < 1e-5:
+            v = mb.v(tuple(a + ed * (t * L)))
+            rings.append([v] * seg)
+            continue
+        ring = []
+        for s in range(seg):
+            an = 2 * math.pi * s / seg
+            ring.append(mb.v(tuple(a + ea * (r * sq[0] * math.cos(an)) + eb * (r * sq[1] * math.sin(an)) + ed * (t * L))))
+        rings.append(ring)
+    uvon = mat in TS
+    tsz = TS.get(mat, 1.0)
+    circ = 2 * math.pi * max(r for r, _ in prof)
+    for k in range(len(rings) - 1):
+        cc = cols[min(k, len(cols) - 1)] if cols else c
+        mid = tuple(a + ed * ((prof[k][1] + prof[k + 1][1]) / 2 * L))
+        for s in range(seg):
+            t2 = (s + 1) % seg
+            q = [rings[k][s], rings[k][t2], rings[k + 1][t2], rings[k + 1][s]]
+            uvq = None
+            if uvon:
+                c0, c1 = s / seg * circ / tsz, (s + 1) / seg * circ / tsz
+                y0, y1 = prof[k][1] * L / tsz, prof[k + 1][1] * L / tsz
+                uvq = [(y0, c0), (y0, c1), (y1, c1), (y1, c0)]
+            if q[0] is q[1]:
+                q, uvq = q[1:], (uvq[1:] if uvq else None)
+            elif q[2] is q[3]:
+                q, uvq = q[:3], (uvq[:3] if uvq else None)
+            mb.face(q, cc, ("from", mid), uv=uvq, mat=mat)
+    if prof[0][0] > 1e-5:
+        mb.face(rings[0][::-1], cols[0] if cols else c, ("dir", tuple(-ed)), mat=mat)
+    if prof[-1][0] > 1e-5:
+        mb.face(rings[-1], cols[-1] if cols else c, ("dir", tuple(ed)), mat=mat)
+
+
+def ball(mb, at, r, c, seg=7, rings=4, sq=(1.0, 1.0, 1.0), cols=None, R=None):
+    """шар (сплющенный sq); cols — функция (пояс, долька) → цвет"""
+    R = R or Matrix.Identity(3)
+    C = Vector(at)
+    top = mb.v(tuple(C + R @ Vector((0, r * sq[1], 0))))
+    bot = mb.v(tuple(C + R @ Vector((0, -r * sq[1], 0))))
+    lat = []
+    for i in range(1, rings):
+        th = math.pi * i / rings
+        lat.append([mb.v(tuple(C + R @ Vector((r * sq[0] * math.sin(th) * math.cos(2 * math.pi * s / seg), r * sq[1] * math.cos(th),
+                                                r * sq[2] * math.sin(th) * math.sin(2 * math.pi * s / seg))))) for s in range(seg)])
+    cc = (lambda i, s: cols(i, s)) if cols else (lambda i, s: c)
+    for s in range(seg):
+        t = (s + 1) % seg
+        mb.face([lat[0][s], lat[0][t], top], col_shift(cc(0, s), 0.05), ("from", at))
+        for i in range(len(lat) - 1):
+            mb.face([lat[i][s], lat[i][t], lat[i + 1][t], lat[i + 1][s]], cc(i + 1, s), ("from", at))
+        mb.face([lat[-1][t], lat[-1][s], bot], col_shift(cc(rings - 1, s), -0.1), ("from", at))
+
+
+def disc(mb, at, rx, rz, h, c, R=None, seg=10, top=None):
+    """плоская лепёшка с овальным сечением (стейк, светильник, монета)"""
+    R = R or Matrix.Identity(3)
+    C = Vector(at)
+    lo = [mb.v(tuple(C + R @ Vector((rx * math.cos(2 * math.pi * s / seg), 0, rz * math.sin(2 * math.pi * s / seg))))) for s in range(seg)]
+    hi = [mb.v(tuple(C + R @ Vector((rx * math.cos(2 * math.pi * s / seg), h, rz * math.sin(2 * math.pi * s / seg))))) for s in range(seg)]
+    mid = tuple(C + R @ Vector((0, h / 2, 0)))
+    for s in range(seg):
+        t = (s + 1) % seg
+        mb.face([lo[s], lo[t], hi[t], hi[s]], col_shift(c, -0.08), ("from", mid))
+    mb.face(hi, top or col_shift(c, 0.05), ("dir", tuple(R @ Vector((0, 1, 0)))))
+    mb.face(lo[::-1], col_shift(c, -0.2), ("dir", tuple(R @ Vector((0, -1, 0)))))
+
+
+def torus(mb, at, R, rr, r, c, seg=10, seg2=5):
+    """кольцо в плоскости xz (ось — y поворота R)"""
+    C = Vector(at)
+    rings = []
+    for i in range(seg):
+        a = 2 * math.pi * i / seg
+        cen = Vector((rr * math.cos(a), 0, rr * math.sin(a)))
+        o = Vector((math.cos(a), 0, math.sin(a)))
+        rings.append(([mb.v(tuple(C + R @ (cen + o * (r * math.cos(2 * math.pi * k / seg2)) + Vector((0, r * math.sin(2 * math.pi * k / seg2), 0)))))
+                       for k in range(seg2)], C + R @ cen))
+    for i in range(seg):
+        (ra, ca), (rb, cb) = rings[i], rings[(i + 1) % seg]
+        for k in range(seg2):
+            kk = (k + 1) % seg2
+            mb.face([ra[k], ra[kk], rb[kk], rb[k]], c, ("from", tuple((ca + cb) / 2)))
+
+
+def rod(mb, a, b, t, c, mat=0):
+    a = Vector(a)
+    b = Vector(b)
+    d = b - a
+    if d.length < 1e-5:
+        return
+    ea, eb, ed = _orient(d)
+    mb.box(tuple((a + b) / 2), (t, t, d.length), c, Matrix((ea, eb, ed)).transposed(), mat=mat)
+
+
+def sag_pts(p0, p1, sag, n):
+    p0 = Vector(p0)
+    p1 = Vector(p1)
+    return [p0 + (p1 - p0) * (i / n) + Vector((0, -sag * 4 * (i / n) * (1 - i / n), 0)) for i in range(n + 1)]
+
+
+def sheet(mb, grid, nu, nv, colfn, nrm, uvfn=None, mat=M_CLOTH, back=-0.25, off=0.004):
+    """двусторонний лист ткани по сетке точек grid[(i, j)]; nrm — куда смотрит лицо"""
+    nrm = Vector(nrm)
+    F = {k: mb.v(v) for k, v in grid.items()}
+    B = {k: mb.v(tuple(Vector(v) - nrm * off)) for k, v in grid.items()}
+    for i in range(nu):
+        for j in range(nv):
+            ks = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)]
+            cc = colfn(i, j)
+            uv = [uvfn(*k) for k in ks] if uvfn else None
+            mb.face([F[k] for k in ks], cc, ("dir", tuple(nrm)), uv=uv, mat=mat)
+            mb.face([B[k] for k in ks[::-1]], col_shift(cc, back), ("dir", tuple(-nrm)), uv=uv[::-1] if uv else None, mat=mat)
+
+
+def drape(mb, P_, N, uc, vtop, w, h, n0, c, folds=3, amp=0.025, hem=0.02):
+    """висящее полотно со складками (складки шире книзу, неровный подол)"""
+    nu, nv = max(2, folds * 4), 4
+    ts = TS[M_CLOTH]
+    grid = {}
+    for i in range(nu + 1):
+        for j in range(nv + 1):
+            t = j / nv
+            hm = hem * math.sin(i * 1.7 + uc * 9) if j == nv else 0.0
+            grid[(i, j)] = Pw(P_, uc - w / 2 + w * i / nu, vtop - h * t + hm,
+                              n0 + amp * math.sin(2 * math.pi * folds * i / nu) * (0.3 + 0.7 * t))
+    base = J(c, 0.04)
+    sheet(mb, grid, nu, nv, lambda i, j: col_shift(base, 0.06 * math.cos(2 * math.pi * folds * (i + 0.5) / nu)), N,
+          lambda i, j: (w * i / nu / ts, h * j / nv / ts))
+
+
+def it_hook(mb, hook, ln=0.07):
+    h = Vector(hook)
+    rod(mb, h, h + Vector((0, -ln, 0)), 0.008, col(IRON))
+    return h + Vector((0, -ln, 0))
+
+
+# --- мясо ---
+def it_ham(mb, hook, s=1.0):
+    top = it_hook(mb, hook, 0.05)
+    bone = top + Vector((0, -0.06 * s, 0))
+    spindle(mb, top, bone, [(0.012 * s, 0), (0.014 * s, 0.5), (0.02 * s, 1.0)], 6, J("#efe6d2", 0.04))
+    end = bone + Vector((0.012, -0.36 * s, 0.008))
+    prof = [(0.022 * s, 0.0), (0.05 * s, 0.18), (0.085 * s, 0.45), (0.105 * s, 0.72), (0.09 * s, 0.9), (0.0, 1.0)]
+    base = J("#8f4a30", 0.05)
+    spindle(mb, bone, end, prof, 12, base, sq=(1.0, 0.82), cols=[base, base, base, base, J("#c8806a", 0.04)])
+    for t in (0.3, 0.58):                     # верёвочная обвязка
+        p = bone + (end - bone) * t
+        torus(mb, tuple(p), _ymat(end - bone), prof_r(prof, t) + 0.004, 0.006, col(ROPE), seg=9, seg2=3)
+
+
+def sausage_chain(mb, pts, r, c):
+    for i in range(len(pts) - 1):
+        spindle(mb, pts[i], pts[i + 1], [(r * 0.35, 0), (r, 0.22), (r, 0.78), (r * 0.35, 1.0)], 6, J(c, 0.07))
+
+
+def it_sausages(mb, hook, n=5, r=0.022, c="#8c3a28"):
+    p = it_hook(mb, hook, 0.04)
+    pts = [p]
+    for i in range(n):
+        p = p + Vector((math.sin(i * 1.3) * 0.014, -r * 3.3, math.cos(i * 1.1) * 0.01))
+        pts.append(p)
+    sausage_chain(mb, pts, r, c)
+
+
+def it_chicken(mb, hook):
+    top = it_hook(mb, hook, 0.03)
+    for s in (-1, 1):
+        rod(mb, top, top + Vector((s * 0.025, -0.1, 0)), 0.01, col("#d9a84a"))
+    c = top + Vector((0, -0.2, 0))
+    ball(mb, tuple(c), 0.075, J("#ecc9a8", 0.04), seg=8, rings=5, sq=(0.85, 1.25, 0.8))
+    for s in (-1, 1):
+        ball(mb, tuple(c + Vector((s * 0.06, 0.02, 0))), 0.035, J("#e6bf9c", 0.04), seg=6, rings=3, sq=(0.5, 1.2, 0.8))
+    spindle(mb, c + Vector((0, -0.08, 0)), c + Vector((0, -0.17, 0.01)), [(0.018, 0), (0.012, 0.8), (0.0, 1.0)], 5, J("#e6bf9c", 0.04))
+
+
+def chopping_block(mb, at, r, h):
+    mb.lathe(at, [(r, 0.0), (r * 1.03, h * 0.5), (r, h)], 12, J("#6b5039", 0.06), mat=M_WOOD)
+    for k, rr in enumerate((r * 0.98, r * 0.74, r * 0.5, r * 0.24)):
+        mb.lathe((at[0], at[1] + h + 0.0015 * k, at[2]), [(rr, 0.0), (rr, 0.0015)], 12,
+                 col("#c9a46e" if k % 2 == 0 else "#a8834e", rng.uniform(-0.05, 0.05)), close_top=True)
+
+
+def cleaver(mb, at, R, ang=0.0):
+    Rr = R @ Matrix.Rotation(ang, 3, "Y")
+    mb.box(LP(at, Rr, 0, 0.035, 0), (0.15, 0.1, 0.008), col("#aab1b8"), Rr)
+    mb.box(LP(at, Rr, 0.11, 0.07, 0), (0.1, 0.026, 0.022), J("#5a3a22", 0.05), Rr, mat=M_WOOD)
+
+
+def knife(mb, at, R, ang=0.0):
+    Rr = R @ Matrix.Rotation(ang, 3, "Y")
+    mb.box(LP(at, Rr, 0, 0.004, 0), (0.12, 0.006, 0.022), col("#aab1b8"), Rr)
+    mb.box(LP(at, Rr, 0.1, 0.008, 0), (0.08, 0.016, 0.018), J("#5a3a22", 0.05), Rr, mat=M_WOOD)
+
+
+def board(mb, at, R, w, d, c="#a07a52"):
+    mb.box(LP(at, R, 0, 0.012, 0), (w, 0.024, d), J(c, 0.06), R, mat=M_WOOD)
+
+
+def steak(mb, at, R, s=1.0, ang=0.0):
+    Rr = R @ Matrix.Rotation(ang, 3, "Y")
+    disc(mb, at, 0.085 * s, 0.055 * s, 0.022, J("#efe2cf", 0.03), Rr, seg=10)
+    disc(mb, LP(at, Rr, -0.008 * s, 0.0, 0.0), 0.07 * s, 0.045 * s, 0.026, J("#a62e2a", 0.08), Rr, seg=10)
+
+
+def ribs(mb, at, R):
+    mb.box(LP(at, R, 0, 0.02, 0), (0.26, 0.04, 0.14), J("#a8352c", 0.06), R)
+    mb.box(LP(at, R, 0, 0.03, -0.05), (0.26, 0.022, 0.04), J("#efe2cf", 0.04), R)
     for k in range(6):
-        uu = u0 + 0.12 + k * (u1 - u0 - 0.24) / 5
+        mb.box(LP(at, R, -0.11 + k * 0.044, 0.042, 0.01), (0.016, 0.012, 0.15), J("#efe6d2", 0.03), R)
+
+
+# --- дерево, утварь ---
+def barrel(mb, at, h, r, top_col=None):
+    prof = [(r * 0.86, 0.0), (r, 0.3), (r * 1.04, 0.5), (r, 0.7), (r * 0.86, 1.0)]
+    mb.lathe(at, [(rr, t * h) for rr, t in prof], 12, J("#8a6038", 0.06), mat=M_WOOD, close_top=top_col is None)
+    for t in (0.1, 0.36, 0.64, 0.9):
+        rr = prof_r(prof, t) + 0.005
+        mb.lathe((at[0], at[1] + h * t - 0.013, at[2]), [(rr, 0.0), (rr, 0.026)], 12, col(IRON))
+    if top_col:
+        mb.lathe((at[0], at[1] + h - 0.03, at[2]), [(r * 0.85, 0.0), (r * 0.85, 0.001)], 12, top_col, close_top=True)
+
+
+def bucket(mb, at, r=0.09, h=0.16, water=True):
+    mb.lathe(at, [(r * 0.85, 0.0), (r, h)], 10, J("#8a6038", 0.06), mat=M_WOOD)
+    for t in (0.25, 0.8):
+        rr = r * (0.85 + 0.15 * t) + 0.004
+        mb.lathe((at[0], at[1] + h * t - 0.01, at[2]), [(rr, 0.0), (rr, 0.02)], 10, col(IRON))
+    mb.lathe((at[0], at[1] + h * 0.8, at[2]), [(r * 0.95, 0.0), (r * 0.95, 0.001)], 10, col("#5f8fa0") if water else col("#5a3a22"), close_top=True)
+
+
+def crate(mb, at, R, w, h, d, c="#9a7048"):
+    """ящик из реек с щелями"""
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            mb.box(LP(at, R, sx * (w / 2 - 0.02), h / 2, sz * (d / 2 - 0.02)), (0.04, h, 0.04), J(c, 0.06, 0.01, 0.05), R, mat=M_WOOD)
+    ns = max(2, int(h / 0.075))
+    for k in range(ns):
+        yy = (k + 0.5) * h / ns
+        for sz in (-1, 1):
+            mb.box(LP(at, R, 0, yy, sz * (d / 2 - 0.006)), (w - 0.03, h / ns * 0.68, 0.012), J(c, 0.08, 0.01, 0.06), R, mat=M_WOOD)
+        for sx in (-1, 1):
+            mb.box(LP(at, R, sx * (w / 2 - 0.006), yy, 0), (0.012, h / ns * 0.68, d - 0.03), J(c, 0.08, 0.01, 0.06), R, mat=M_WOOD)
+    mb.box(LP(at, R, 0, 0.012, 0), (w - 0.03, 0.02, d - 0.03), J(c, 0.1), R, mat=M_WOOD)
+
+
+def stool(mb, at, h=0.3):
+    x, y, z = at
+    mb.lathe((x, y + h - 0.03, z), [(0.12, 0.0), (0.12, 0.03)], 10, J("#8a6038", 0.05), close_top=True, mat=M_WOOD)
+    for k in range(3):
+        a = 2 * math.pi * k / 3 + 0.4
+        rod(mb, (x + math.cos(a) * 0.07, y + h - 0.03, z + math.sin(a) * 0.07), (x + math.cos(a) * 0.11, y, z + math.sin(a) * 0.11), 0.025,
+            J("#6b4428", 0.05), mat=M_WOOD)
+
+
+def bench2(mb, at, R, ln=0.8):
+    mb.box(LP(at, R, 0, 0.3, 0), (ln, 0.04, 0.24), J("#7a5232", 0.06), R, mat=M_WOOD)
+    for s in (-1, 1):
+        mb.box(LP(at, R, s * (ln / 2 - 0.08), 0.14, 0), (0.05, 0.28, 0.2), J("#5e3d24", 0.06), R, mat=M_WOOD)
+
+
+def broom(mb, at, R):
+    a = Vector(LP(at, R, 0, 0.12, 0))
+    b = Vector(LP(at, R, 0.12, 0.95, -0.12))
+    rod(mb, a, b, 0.022, J("#8a6038", 0.05), mat=M_WOOD)
+    spindle(mb, a + (a - b).normalized() * 0.18, a + (b - a).normalized() * 0.04, [(0.08, 0.0), (0.05, 0.6), (0.02, 1.0)], 8, J("#d9c27a", 0.08))
+
+
+def shelf_unit(mb, S, fill):
+    su0, su1, sn, lv = S["shelf"]
+    R, P_ = S["R"], S["P"]
+    for uu in (su0, su1):
+        mb.box(Pw(P_, uu, (PL + lv[-1] + 0.04) / 2, sn), (0.04, lv[-1] + 0.04 - PL, 0.26), J("#5e3d24", 0.05), R, mat=M_WOOD)
+    for v in lv:
+        mb.box(Pw(P_, (su0 + su1) / 2, v - 0.015, sn), (su1 - su0 + 0.04, 0.03, 0.26), J("#7a5232", 0.06), R, mat=M_WOOD)
+        fill(v, su0 + 0.07, su1 - 0.07, sn)
+
+
+def row(a, b, k):
+    return [a + (b - a) * (i + 0.5) / k for i in range(k)]
+
+
+def hooks(S, k):
+    ru0, ru1, rv, rn = S["rail"]
+    return [Pw(S["P"], u, rv, rn) for u in row(ru0, ru1, k)]
+
+
+# --- посуда, хлеб ---
+def jug(mb, at, h, c, handle=True):
+    prof = [(h * 0.2, 0.0), (h * 0.3, h * 0.15), (h * 0.34, h * 0.42), (h * 0.24, h * 0.7), (h * 0.12, h * 0.82), (h * 0.13, h * 0.95), (h * 0.17, h)]
+    mb.lathe(at, prof, 10, c, close_top=True)
+    if handle:
+        x, y, z = at
+        rod(mb, (x + h * 0.12, y + h * 0.9, z), (x + h * 0.36, y + h * 0.76, z), h * 0.05, c)
+        rod(mb, (x + h * 0.36, y + h * 0.76, z), (x + h * 0.3, y + h * 0.45, z), h * 0.05, c)
+
+
+def bowl(mb, at, r, c, food=None):
+    mb.lathe(at, [(r * 0.45, 0.0), (r * 0.8, r * 0.22), (r, r * 0.48)], 10, c)
+    mb.lathe((at[0], at[1] + r * 0.38, at[2]), [(r * 0.9, 0.0), (r * 0.9, 0.001)], 10, col(food) if food else col_shift(c, -0.3), close_top=True)
+    if food:
+        ball(mb, (at[0], at[1] + r * 0.4, at[2]), r * 0.7, J(food, 0.06), seg=7, rings=3, sq=(1.0, 0.35, 1.0))
+
+
+def plate_stack(mb, at, r, n, c):
+    for k in range(n):
+        mb.lathe((at[0], at[1] + k * 0.013, at[2]), [(r * 0.7, 0.0), (r, 0.01), (r, 0.013)], 10, J(c, 0.04), close_top=True)
+
+
+def cup(mb, at, r, c):
+    x, y, z = at
+    mb.lathe(at, [(r * 0.35, 0.0), (r * 0.3, r * 0.3), (r * 0.6, r * 0.5), (r, r * 0.95)], 9, c)
+    mb.lathe((x, y + r * 0.8, z), [(r * 0.92, 0.0), (r * 0.92, 0.001)], 9, col_shift(c, -0.35), close_top=True)
+
+
+def amphora_ax(mb, base, top, c):
+    h = (Vector(top) - Vector(base)).length
+    spindle(mb, base, top, [(0.0, 0.0), (h * 0.06, 0.05), (h * 0.2, 0.3), (h * 0.22, 0.5), (h * 0.16, 0.72), (h * 0.07, 0.82),
+                            (h * 0.065, 0.95), (h * 0.085, 1.0)], 9, c)
+
+
+def amphora_rack(mb, P_, U, N, uc, n, k=3, h=0.52):
+    """деревянная стойка, к перекладине прислонены амфоры"""
+    R = RW(U, N)
+    w = k * 0.25 + 0.12
+    for vv in (0.2, 0.42):
+        mb.box(Pw(P_, uc, vv, n - 0.1), (w, 0.04, 0.045), J("#6b4428", 0.05), R, mat=M_WOOD)
+    for s in (-1, 1):
+        mb.box(Pw(P_, uc + s * w / 2, 0.23, n - 0.1), (0.045, 0.46, 0.045), J("#5e3d24", 0.05), R, mat=M_WOOD)
+    for i in range(k):
+        uu = uc - w / 2 + 0.185 + i * 0.25
+        amphora_ax(mb, Pw(P_, uu, 0.02, n + 0.13), Pw(P_, uu + 0.02 * (i - 1), 0.02 + h * 0.96, n - 0.09), col_shift(J(rng.choice(CLAY[:3]), 0.06), -0.12))
+
+
+def bread_round(mb, at, r, c="#b9773a"):
+    """круглый хлеб с восемью насечками (panis quadratus из Помпей)"""
+    h = r * 0.62
+    seg = 16
+    prof = [(r * 0.96, 0.0), (r, h * 0.3), (r * 0.9, h * 0.7), (r * 0.55, h * 0.95), (r * 0.14, h)]
+    x, y, z = at
+    rings = []
+    for (rr, yy) in prof:
+        rings.append([mb.v((x + rr * (0.84 if (s % 2 == 0 and yy > h * 0.25) else 1.0) * math.cos(2 * math.pi * s / seg), y + yy,
+                            z + rr * (0.84 if (s % 2 == 0 and yy > h * 0.25) else 1.0) * math.sin(2 * math.pi * s / seg))) for s in range(seg)])
+    base = J(c, 0.08)
+    cs = [col_shift(base, -0.12), base, col_shift(base, -0.05), col_shift(base, -0.15)]
+    for k in range(len(rings) - 1):
+        for s in range(seg):
+            t = (s + 1) % seg
+            mb.face([rings[k][s], rings[k][t], rings[k + 1][t], rings[k + 1][s]], cs[k], ("from", (x, y + h * 0.3, z)))
+    mb.face(rings[-1], col_shift(base, 0.1), ("dir", (0, 1, 0)))
+    mb.face(rings[0][::-1], col_shift(base, -0.3), ("dir", (0, -1, 0)))
+
+
+def loaf_long(mb, at, R, l=0.22, c="#c08442", ang=0.0):
+    Rr = R @ Matrix.Rotation(ang, 3, "Y")
+    spindle(mb, LP(at, Rr, -l / 2, 0.035, 0), LP(at, Rr, l / 2, 0.035, 0), [(0.015, 0.0), (0.04, 0.15), (0.045, 0.5), (0.04, 0.85), (0.015, 1.0)], 8,
+            J(c, 0.08), sq=(1.0, 0.75))
+
+
+# --- обувь, кожа ---
+def shoe(mb, at, R, c, boot=False, ang=0.0):
+    Rr = R @ Matrix.Rotation(ang, 3, "Y")
+    mb.box(LP(at, Rr, 0, 0.008, 0), (0.06, 0.016, 0.17), col("#3a2a1e"), Rr)
+    spindle(mb, LP(at, Rr, 0, 0.032, -0.078), LP(at, Rr, 0, 0.022, 0.085), [(0.026, 0.0), (0.032, 0.25), (0.029, 0.6), (0.016, 0.92), (0.0, 1.0)], 7,
+            J(c, 0.06), sq=(1.0, 0.8))
+    if boot:
+        mb.lathe(LP(at, Rr, 0, 0.03, -0.055), [(0.03, 0.0), (0.032, 0.11), (0.035, 0.15)], 7, J(c, 0.06))
+        mb.box(LP(at, Rr, 0, 0.12, -0.03), (0.05, 0.01, 0.012), col(ROPE), Rr)
+
+
+def sandal(mb, at, R, c, ang=0.0):
+    Rr = R @ Matrix.Rotation(ang, 3, "Y")
+    mb.box(LP(at, Rr, 0, 0.008, 0), (0.062, 0.016, 0.17), J("#8a5a32", 0.05), Rr)
+    for zz in (-0.05, 0.0, 0.05):
+        mb.box(LP(at, Rr, 0, 0.022, zz), (0.066, 0.014, 0.012), J(c, 0.05), Rr)
+    mb.box(LP(at, Rr, 0, 0.045, -0.078), (0.052, 0.05, 0.01), J(c, 0.05), Rr)
+
+
+def it_sandals(mb, hook, R, c):
+    top = it_hook(mb, hook, 0.05)
+    for s in (-1, 1):
+        Rh = R @ Matrix.Rotation(math.pi / 2, 3, "X") @ Matrix.Rotation(s * 0.15, 3, "Y")
+        sandal(mb, tuple(top + R @ Vector((s * 0.04, -0.09, 0.02))), Rh, c)
+
+
+def it_boots(mb, hook, R, c):
+    top = it_hook(mb, hook, 0.04)
+    for s in (-1, 1):
+        Rh = R @ Matrix.Rotation(math.pi, 3, "X") @ Matrix.Rotation(s * 0.2, 3, "Y")
+        shoe(mb, tuple(top + R @ Vector((s * 0.04, -0.02, 0.0))), Rh, c, boot=True)
+
+
+def hide(mb, P_, N, uc, vtop, w, h, n, c):
+    """распяленная шкура: неровный край с «лапами»"""
+    vc = vtop - h / 2
+    pts = []
+    for k in range(14):
+        a = 2 * math.pi * k / 14
+        jag = 1.0 + (0.2 if k % 7 in (1, 3, 4, 6) else -0.05) + rng.uniform(-0.05, 0.05)
+        pts.append(P_(uc + math.cos(a) * w / 2 * jag, vc + math.sin(a) * h / 2 * jag, n + 0.012 * math.sin(a * 3)))
+    base = J(c, 0.06)
+    for off, dirv, cc in ((0.0, N, base), (-0.004, -N, col_shift(base, -0.25))):
+        ctr = mb.v(tuple(P_(uc, vc, n + 0.015 + off)))
+        ring = [mb.v(tuple(p + N * off)) for p in pts]
+        for k in range(14):
+            mb.face([ring[k], ring[(k + 1) % 14], ctr], cc, ("dir", tuple(dirv)))
+
+
+# --- ткани ---
+def tunic(mb, P_, N, R, uc, vtop, n0, c, stripe=None):
+    mb.box(Pw(P_, uc, vtop + 0.012, n0), (0.46, 0.022, 0.022), J("#6b4428", 0.05), R, mat=M_WOOD)
+    drape(mb, P_, N, uc, vtop, 0.34, 0.5, n0 + 0.012, c, folds=3, amp=0.012)
+    for s in (-1, 1):
+        drape(mb, P_, N, uc + s * 0.22, vtop - 0.005, 0.11, 0.17, n0 + 0.008, c, folds=1, amp=0.008)
+    if stripe:
+        for s in (-1, 1):
+            mb.box(Pw(P_, uc + s * 0.08, vtop - 0.25, n0 + 0.03), (0.032, 0.5, 0.004), col(stripe), R)
+
+
+def bolt(mb, a, b, r, c):
+    a = Vector(a)
+    b = Vector(b)
+    spindle(mb, a, b, [(r, 0.0), (r, 1.0)], 10, J(c, 0.04), mat=M_CLOTH)
+    d = (b - a).normalized()
+    for p, sgn in ((a, -1), (b, 1)):
+        spindle(mb, p - d * 0.002 * sgn, p + d * 0.004 * sgn, [(r * 0.62, 0.0), (r * 0.62, 1.0)], 10, col_shift(J(c, 0.04), -0.18))
+        spindle(mb, p - d * 0.002 * sgn, p + d * 0.008 * sgn, [(r * 0.2, 0.0), (r * 0.2, 1.0)], 6, J("#8a6038", 0.05))
+
+
+def folded_stack(mb, at, R, w, d, n, cols):
+    y = 0.0
+    for k in range(n):
+        hh = rng.uniform(0.03, 0.04)
+        Rr = R @ Matrix.Rotation(rng.uniform(-0.08, 0.08), 3, "Y")
+        mb.box(LP(at, Rr, rng.uniform(-0.01, 0.01), y + hh / 2, 0), (w, hh, d), J(cols[k % len(cols)], 0.04), Rr, mat=M_CLOTH)
+        y += hh
+    return y
+
+
+def skein(mb, hook, N, c):
+    top = it_hook(mb, hook, 0.03)
+    torus(mb, tuple(top + Vector((0, -0.07, 0))), _ymat(N), 0.065, 0.02, J(c, 0.05), seg=10, seg2=5)
+
+
+def wool_balls(mb, at, k, cols):
+    for i in range(k):
+        a = 2 * math.pi * i / k
+        ball(mb, (at[0] + math.cos(a) * 0.05, at[1] + 0.035 + (0.04 if i == k - 1 else 0.0), at[2] + math.sin(a) * 0.05), 0.038,
+             J(cols[i % len(cols)], 0.06), seg=7, rings=4)
+
+
+# --- светильники, стекло, золото ---
+def lucerna(mb, emb, at, R, c, lit=False, s=1.0):
+    disc(mb, at, 0.045 * s, 0.045 * s, 0.022 * s, J(c, 0.06), R, seg=10)
+    spindle(mb, LP(at, R, 0, 0.012 * s, 0.03 * s), LP(at, R, 0, 0.012 * s, 0.078 * s), [(0.017 * s, 0.0), (0.012 * s, 1.0)], 6, J(c, 0.06))
+    mb.box(LP(at, R, 0, 0.026 * s, -0.047 * s), (0.012 * s, 0.03 * s, 0.022 * s), J(c, 0.06), R)
+    mb.lathe(LP(at, R, 0, 0.022 * s, 0), [(0.013 * s, 0), (0.009 * s, 0.003)], 6, col("#3a2a1a"), close_top=True)
+    if lit:
+        leaf_blob(emb, LP(at, R, 0, 0.032 * s, 0.08 * s), 0.013 * s, col("#ffb03a"))
+
+
+def hanging_lamp(mb, emb, hook):
+    h = Vector(hook)
+    c = h + Vector((0, -0.22, 0))
+    for k in range(3):
+        a = 2 * math.pi * k / 3
+        rod(mb, h, c + Vector((math.cos(a) * 0.04, 0.01, math.sin(a) * 0.04)), 0.004, col("#6a5a3a"))
+    mb.lathe(tuple(c + Vector((0, -0.02, 0))), [(0.015, 0), (0.055, 0.02), (0.05, 0.032)], 10, J(BRONZE, 0.06), close_top=True)
+    for k in range(2):
+        a = math.pi * k
+        leaf_blob(emb, tuple(c + Vector((math.cos(a) * 0.06, 0.03, math.sin(a) * 0.06))), 0.014, col("#ffb03a"))
+
+
+def candelabrum(mb, emb, at, h=1.0):
+    x, y, z = at
+    for k in range(3):
+        a = 2 * math.pi * k / 3 + 0.5
+        rod(mb, (x, y + 0.13, z), (x + math.cos(a) * 0.13, y + 0.005, z + math.sin(a) * 0.13), 0.016, col("#9a7a3a"))
+    mb.lathe((x, y + 0.1, z), [(0.02, 0.0), (0.013, 0.08), (0.011, h * 0.8), (0.016, h * 0.84), (0.011, h * 0.88), (0.012, h * 0.9 - 0.1)], 8, J(BRONZE, 0.05))
+    mb.lathe((x, y + h - 0.02, z), [(0.02, 0.0), (0.075, 0.02), (0.075, 0.03)], 10, J(BRONZE, 0.05), close_top=True)
+    lucerna(mb, emb, (x, y + h + 0.01, z), Matrix.Identity(3), "#b08a3a", lit=True, s=0.9)
+
+
+def bottle(mb, at, h, c):
+    prof = [(h * 0.12, 0.0), (h * 0.25, h * 0.15), (h * 0.27, h * 0.35), (h * 0.12, h * 0.55), (h * 0.06, h * 0.62), (h * 0.055, h * 0.92), (h * 0.08, h)]
+    mb.lathe(at, prof, 8, c, close_top=True)
+
+
+GLASS = ["#4fb0c8", "#e8a33a", "#8a6ad0", "#e87aa8", "#5ac87a", "#c84f4f"]
+
+
+def steps(mb, at, R, w, k=3, dz=0.1, dy=0.07):
+    """ступенчатая подставка для мелкого товара; возвращает [(y, z)] полок"""
+    out = []
+    for i in range(k):
+        mb.box(LP(at, R, 0, dy * (i + 0.5), -dz * i), (w, dy * (i + 1), dz), J("#7a5232", 0.06), R, mat=M_WOOD)
+        out.append((dy * (i + 1), -dz * i))
+    return out
+
+
+def necklace(mb, p0, p1, sag, n, gem=None):
+    pts = sag_pts(p0, p1, sag, n)
+    for i, p in enumerate(pts):
+        g = gem and i % 3 == 1
+        ball(mb, tuple(p), 0.011 if g else 0.008, col(gem[i % len(gem)] if g else "#e8c45a"), seg=5, rings=3)
+    ball(mb, tuple(pts[n // 2] + Vector((0, -0.02, 0))), 0.016, col("#c8303a" if not gem else gem[0]), seg=6, rings=3)
+
+
+def tray(mb, at, R, w, d, c="#6a2a3a"):
+    mb.box(LP(at, R, 0, 0.012, 0), (w + 0.03, 0.024, d + 0.03), J("#5e3d24", 0.05), R, mat=M_WOOD)
+    mb.box(LP(at, R, 0, 0.026, 0), (w, 0.006, d), J(c, 0.04), R, mat=M_CLOTH)
+
+
+def scales(mb, at, R, s=1.0):
+    mb.lathe(at, [(0.05 * s, 0.0), (0.045 * s, 0.016 * s)], 10, J("#5e3d24", 0.05), close_top=True, mat=M_WOOD)
+    rod(mb, at, LP(at, R, 0, 0.3 * s, 0), 0.012 * s, col("#6a5a3a"))
+    mb.box(LP(at, R, 0, 0.3 * s, 0), (0.3 * s, 0.01 * s, 0.01 * s), col(BRONZE), R)
+    for sx in (-1, 1):
+        top = Vector(LP(at, R, sx * 0.14 * s, 0.3 * s, 0))
+        pan = Vector(LP(at, R, sx * 0.14 * s, 0.12 * s, 0))
+        for k in range(3):
+            a = 2 * math.pi * k / 3
+            rod(mb, top, pan + Vector((math.cos(a) * 0.04 * s, 0.01, math.sin(a) * 0.04 * s)), 0.003, col("#6a5a3a"))
+        mb.lathe(tuple(pan), [(0.02 * s, 0.0), (0.05 * s, 0.015 * s)], 10, col(BRONZE))
+
+
+def arca(mb, at, R, w=0.34, h=0.22, d=0.22):
+    mb.box(LP(at, R, 0, h / 2, 0), (w, h, d), J("#6b4428", 0.05), R, mat=M_WOOD)
+    for xx in (-w * 0.36, 0.0, w * 0.36):
+        mb.box(LP(at, R, xx, h / 2, 0), (0.024, h + 0.006, d + 0.006), col(IRON), R)
+    mb.box(LP(at, R, 0, h * 0.72, d / 2 + 0.006), (0.05, 0.05, 0.01), col(BRONZE), R)
+
+
+def mortar(mb, at, R, r=0.07, herb="#6a7a3a"):
+    mb.lathe(at, [(r * 0.7, 0.0), (r, r * 0.6), (r * 1.05, r * 0.9)], 10, J("#c9c0b0", 0.04))
+    mb.lathe((at[0], at[1] + r * 0.72, at[2]), [(r * 0.9, 0.0), (r * 0.9, 0.001)], 10, J(herb, 0.08), close_top=True)
+    spindle(mb, LP(at, R, 0.01, r * 0.5, 0), LP(at, R, 0.07, r * 2.4, -0.03), [(0.014, 0.0), (0.012, 0.6), (0.018, 1.0)], 6, J("#bfb6a6", 0.04))
+
+
+def scroll(mb, at, R, l=0.2, r=0.024):
+    a = Vector(LP(at, R, -l / 2, r, 0))
+    b = Vector(LP(at, R, l / 2, r, 0))
+    spindle(mb, a, b, [(r, 0.0), (r, 1.0)], 8, J("#e8dcb8", 0.04))
+    d = (b - a).normalized()
+    for p, sgn in ((a, -1), (b, 1)):
+        spindle(mb, p, p + d * 0.02 * sgn, [(r * 0.35, 0.0), (r * 0.45, 1.0)], 6, J("#5a3a22", 0.05))
+
+
+def jar(mb, at, h, c, lid="#7a5232"):
+    mb.lathe(at, [(h * 0.3, 0.0), (h * 0.38, h * 0.4), (h * 0.3, h * 0.85), (h * 0.26, h * 0.9)], 8, c, close_top=True)
+    mb.lathe((at[0], at[1] + h * 0.88, at[2]), [(h * 0.3, 0.0), (h * 0.3, h * 0.07), (h * 0.08, h * 0.11), (h * 0.06, h * 0.2)], 8, col(lid), close_top=True)
+
+
+# --- растения, овощи, фрукты, рыба ---
+def herb_bundle(mb, hook, c="#5f7f3a", fl=None):
+    top = it_hook(mb, hook, 0.04)
+    for k in range(6):
+        a = 2 * math.pi * k / 6
+        end = top + Vector((math.cos(a) * 0.045, -0.22, math.sin(a) * 0.045))
+        rod(mb, top, end, 0.006, col("#6a7a3a"))
+        leaf_blob(mb, tuple(end + Vector((0, 0.05, 0))), 0.036, J(c, 0.1))
+        leaf_blob(mb, tuple(end + Vector((0, 0.11, 0))), 0.028, J(c, 0.1))
+        if fl:
+            leaf_blob(mb, tuple(end), 0.02, J(fl, 0.08))
+    torus(mb, tuple(top + Vector((0, -0.03, 0))), Matrix.Identity(3), 0.02, 0.006, col(ROPE), seg=8, seg2=3)
+
+
+def garlic_braid(mb, hook, n=6, c="#efe6d2"):
+    top = it_hook(mb, hook, 0.03)
+    rod(mb, top, top + Vector((0, -n * 0.045, 0)), 0.009, col(ROPE))
+    for i in range(n):
+        p = top + Vector(((i % 2 - 0.5) * 0.034, -0.03 - i * 0.045, 0.012 * (i % 3 - 1)))
+        mb.lathe((p.x, p.y - 0.028, p.z), [(0.008, 0.0), (0.028, 0.012), (0.026, 0.032), (0.005, 0.054)], 7, J(c, 0.05), close_top=True)
+
+
+def grapes(mb, top, s=1.0, c="#5a2d5f"):
+    t = Vector(top)
+    rod(mb, t, t + Vector((0, 0.03 * s, 0)), 0.005, col("#6a5a3a"))
+    y = 0.0
+    for ri, k in enumerate((5, 5, 4, 3, 2, 1)):
+        rr = 0.011 * s * k / 1.6 + 0.002
+        for i in range(k):
+            a = 2 * math.pi * i / k + ri * 0.6
+            ball(mb, tuple(t + Vector((math.cos(a) * rr, -y, math.sin(a) * rr))), 0.013 * s, J(c, 0.1), seg=5, rings=3)
+        y += 0.019 * s
+    leaf_blob(mb, tuple(t + Vector((0.02, 0.02, 0))), 0.03 * s, J("#5f8f3a", 0.1))
+
+
+def fruit(mb, at, kind, s=1.0):
+    x, y, z = at
+    if kind == "apple":
+        ball(mb, (x, y + 0.03 * s, z), 0.032 * s, J(rng.choice(["#c0392b", "#d9534f", "#a8c04a", "#e8862e"]), 0.08), seg=7, rings=4, sq=(1, 0.9, 1))
+        mb.box((x, y + 0.062 * s, z), (0.004, 0.016, 0.004), col("#5a3a22"))
+    elif kind == "pear":
+        mb.lathe((x, y, z), [(0.02 * s, 0.0), (0.034 * s, 0.025 * s), (0.027 * s, 0.05 * s), (0.015 * s, 0.075 * s), (0.005 * s, 0.09 * s)], 7,
+                 J("#c8c04a", 0.08), close_top=True)
+    elif kind == "pom":
+        ball(mb, (x, y + 0.038 * s, z), 0.04 * s, J("#b02a2a", 0.08), seg=7, rings=4)
+        mb.lathe((x, y + 0.074 * s, z), [(0.012 * s, 0.0), (0.008 * s, 0.012 * s), (0.012 * s, 0.018 * s)], 6, col("#8a2020"))
+    elif kind == "fig":
+        mb.lathe((x, y, z), [(0.018 * s, 0.0), (0.028 * s, 0.02 * s), (0.018 * s, 0.045 * s), (0.004 * s, 0.058 * s)], 7, J("#5a2d4f", 0.08), close_top=True)
+    elif kind == "melon":
+        ball(mb, (x, y + 0.07 * s, z), 0.08 * s, col("#5f8a3a"), seg=10, rings=5, sq=(1.15, 0.9, 1.0),
+             cols=lambda i, k: col("#5f8a3a" if k % 2 else "#a8c070", -0.03 * i))
+    elif kind == "cabbage":
+        ball(mb, (x, y + 0.06 * s, z), 0.06 * s, J("#a8c870", 0.06), seg=8, rings=4)
+        for k in range(6):
+            a = 2 * math.pi * k / 6
+            ball(mb, (x + math.cos(a) * 0.045 * s, y + 0.05 * s, z + math.sin(a) * 0.045 * s), 0.04 * s, J("#6f9a4a", 0.08), seg=6, rings=3,
+                 sq=(0.7, 1.0, 0.45), R=Matrix.Rotation(-a, 3, "Y"))
+    elif kind == "onion":
+        mb.lathe((x, y, z), [(0.012 * s, 0.0), (0.032 * s, 0.022 * s), (0.026 * s, 0.045 * s), (0.004 * s, 0.07 * s)], 8,
+                 J(rng.choice(["#c08a3a", "#8a3a5a", "#d9b46a"]), 0.06), close_top=True)
+    elif kind == "turnip":
+        ball(mb, (x, y + 0.03 * s, z), 0.03 * s, col("#efe6e0"), seg=7, rings=4, cols=lambda i, k: col("#8a3a6a" if i == 0 else "#efe6e0"))
+        for k in range(3):
+            leaf_blob(mb, (x + (k - 1) * 0.012, y + 0.07 * s, z), 0.02 * s, J("#5f8f3a", 0.1))
+
+
+def carrot(mb, a, b):
+    spindle(mb, a, b, [(0.018, 0.0), (0.016, 0.3), (0.008, 0.8), (0.0, 1.0)], 6, J("#e07a2a", 0.06))
+    d = (Vector(a) - Vector(b)).normalized()
+    for k in range(3):
+        leaf_blob(mb, tuple(Vector(a) + d * (0.03 + k * 0.02) + Vector((0, 0.01 * k, 0))), 0.02, J("#5f9a3a", 0.1))
+
+
+def leek(mb, a, b):
+    spindle(mb, a, b, [(0.016, 0.0), (0.016, 0.55), (0.02, 0.75), (0.008, 1.0)], 6, J("#e8e8c8", 0.04),
+            cols=[col("#f0eedc"), col("#c8d890"), col("#5f8f3a")])
+
+
+def fish(mb, at, R, l=0.26, c="#9aa6b2", ang=0.0):
+    """рыба на боку: тело, хвост, плавник, глаз"""
+    Rr = R @ Matrix.Rotation(ang, 3, "Y")
+    head = Vector(LP(at, Rr, l * 0.45, 0.022, 0))
+    tail = Vector(LP(at, Rr, -l * 0.4, 0.022, 0))
+    belly = col("#d9dfe5")
+    spindle(mb, head, tail, [(0.0, 0.0), (0.03, 0.14), (0.036, 0.4), (0.022, 0.75), (0.007, 1.0)], 8, J(c, 0.05),
+            cols=[col_shift(J(c, 0.04), -0.1), J(c, 0.04), J(c, 0.04), col_shift(belly, -0.1)], sq=(1.0, 0.42))
+    sd = Rr @ Vector((0, 0, 1))
+    tb = Vector(LP(at, Rr, -l * 0.4, 0.024, 0))
+    for cc, off in ((J(c, 0.05), 0.0), (col_shift(J(c, 0.05), -0.2), -0.003)):
+        q = [tb, tb + (tail - head).normalized() * 0.07 + sd * 0.045, tb + (tail - head).normalized() * 0.07 - sd * 0.045]
+        mb.face([mb.v(tuple(p + Vector((0, off, 0)))) for p in q], cc, ("dir", (0, 1 if off == 0 else -1, 0)))
+    mb.box(LP(at, Rr, l * 0.33, 0.034, 0.012), (0.01, 0.006, 0.01), col("#1a1a1a"), Rr)
+
+
+def octopus(mb, at, R):
+    x, y, z = at
+    ball(mb, (x, y + 0.04, z), 0.045, J("#c9605a", 0.05), seg=8, rings=4, sq=(1.0, 0.8, 1.25))
+    for k in range(8):
+        a = 2 * math.pi * k / 8
+        p = Vector((x + math.cos(a) * 0.03, y + 0.015, z + math.sin(a) * 0.03))
+        pts = [p]
+        for j in range(4):
+            b = a + 0.35 * j
+            p = p + Vector((math.cos(b) * 0.035, 0.0, math.sin(b) * 0.035))
+            pts.append(p)
+        for j in range(4):
+            spindle(mb, pts[j], pts[j + 1], [(0.012 * (1 - j / 4.5), 0.0), (0.012 * (1 - (j + 1) / 4.5), 1.0)], 5, J("#c9605a", 0.06))
+
+
+def sack(mb, at, r=0.13, h=0.3, grain="#e3c46a", open_=True):
+    if open_:
+        mb.lathe(at, [(r * 0.85, 0.0), (r, h * 0.3), (r * 0.95, h * 0.72), (r * 1.06, h * 0.86), (r * 1.08, h)], 9, J("#d8c49a", 0.06), mat=M_CLOTH)
+        mb.lathe((at[0], at[1] + h * 0.92, at[2]), [(r * 1.0, 0.0), (r * 1.0, 0.001)], 9, J(grain, 0.05), close_top=True)
+        ball(mb, (at[0], at[1] + h * 0.93, at[2]), r * 0.75, J(grain, 0.06), seg=8, rings=3, sq=(1.0, 0.35, 1.0))
+    else:
+        mb.lathe(at, [(r * 0.85, 0.0), (r, h * 0.3), (r * 0.95, h * 0.72), (r * 0.45, h * 0.9), (r * 0.25, h)], 9, J("#d8c49a", 0.06), mat=M_CLOTH,
+                 close_top=True)
+        torus(mb, (at[0], at[1] + h * 0.9, at[2]), Matrix.Identity(3), r * 0.45, 0.008, col(ROPE), seg=8, seg2=3)
+
+
+def brazier(mb, emb, at):
+    x, y, z = at
+    for k in range(3):
+        a = 2 * math.pi * k / 3
+        rod(mb, (x + math.cos(a) * 0.06, y + 0.3, z + math.sin(a) * 0.06), (x + math.cos(a) * 0.14, y, z + math.sin(a) * 0.14), 0.016, col(IRON))
+    mb.lathe((x, y + 0.28, z), [(0.06, 0.0), (0.15, 0.07), (0.16, 0.09)], 10, col(IRON))
+    for k in range(6):
+        leaf_blob(emb, (x + rng.uniform(-0.08, 0.08), y + 0.36, z + rng.uniform(-0.08, 0.08)), 0.03, col(rng.choice(["#ff7a1a", "#ffb03a", "#e0501a"])))
+    mb.lathe((x, y + 0.37, z), [(0.06, 0.0), (0.09, 0.05), (0.08, 0.1), (0.09, 0.11)], 9, col("#2a2420"), close_top=True)
+
+
+def plant_pot(mb, at, h=0.32):
+    """горшок с кустиком (лавр, розмарин): листва шапкой в два зелёных"""
+    x, y, z = at
+    mb.lathe(at, [(h * 0.22, 0.0), (h * 0.34, h * 0.35), (h * 0.33, h * 0.75), (h * 0.37, h * 0.8), (h * 0.36, h * 0.9)], 10, J("#b8693f", 0.08))
+    mb.lathe((x, y + h * 0.82, z), [(h * 0.33, 0.0), (h * 0.33, 0.001)], 10, col("#4a3524"), close_top=True)
+    for k in range(14):
+        a = 2 * math.pi * k / 7 + (0.4 if k >= 7 else 0.0)
+        rr = h * (0.28 if k < 7 else 0.14)
+        leaf_blob(mb, (x + math.cos(a) * rr, y + h * (1.05 if k < 7 else 1.3) + rng.uniform(-0.03, 0.03), z + math.sin(a) * rr), h * 0.2,
+                  J(rng.choice(["#4f7d33", "#5f8f3a", "#3f6b2a"]), 0.1))
+
+
+# =====================================================================================
+#   ТОВАР ЛАВОК (S — места: прилавок u0..u1 на высоте y, перекладина rail, полка позади, «улица» out, вход ent)
+# =====================================================================================
+def g_meat(b, e, S):
+    P_, R, y, u0, u1 = S["P"], S["R"], S["y"], S["u0"], S["u1"]
+    for i, h in enumerate(hooks(S, 7)):
+        (it_ham(b, h, 1.0 + 0.08 * (i % 2)) if i % 3 == 0 else (it_sausages(b, h, 5) if i % 3 == 1 else it_chicken(b, h)))
+    ru0, ru1, rv, rn = S["rail"]
+    sausage_chain(b, sag_pts(Pw(P_, ru0, rv - 0.02, rn + 0.03), Pw(P_, ru1, rv - 0.02, rn + 0.03), 0.09, 18), 0.02, "#9a4030")
+    chopping_block(b, Pw(P_, u0 + 0.16, y, 0.04), 0.14, 0.13)
+    cleaver(b, Pw(P_, u0 + 0.16, y + 0.135, 0.04), R, 0.5)
+    board(b, Pw(P_, u0 + 0.58, y, 0.06), R, 0.42, 0.26)
+    for k in range(3):
+        steak(b, Pw(P_, u0 + 0.45 + k * 0.13, y + 0.024, 0.04 + (k % 2) * 0.05), R, 1.0, rng.uniform(-0.5, 0.5))
+    knife(b, Pw(P_, u0 + 0.6, y + 0.024, 0.16), R, 0.2)
+    ribs(b, Pw(P_, u1 - 0.22, y, 0.05), R)
+    bowl(b, Pw(P_, u1 - 0.06, y, -0.09), 0.07, J("#c27a4a", 0.05), food="#8c3a28")
+    shelf_unit(b, S, lambda v, a, c, n: [jar(b, Pw(P_, uu, v, n), 0.17, J(rng.choice(["#c27a4a", "#e8e2d6", "#9a6a3a"]), 0.06)) for uu in row(a, c, 5)])
+    ou0, ou1, on = S["out"]
+    barrel(b, Pw(P_, ou0 + 0.25, 0.0, on), 0.42, 0.15, top_col=col("#efece4"))
+    bucket(b, Pw(P_, ou0 + 0.56, 0.0, on + 0.04))
+
+
+def g_bread(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for h in hooks(S, 4):                      # бублики-«буцеллаты» связками
+        top = it_hook(b, h, 0.05)
+        rod(b, top, top + Vector((0, -0.24, 0)), 0.006, col(ROPE))
+        for k in range(3):
+            torus(b, tuple(top + Vector((0, -0.07 - k * 0.075, 0))), _ymat(N), 0.045, 0.018, J("#c08442", 0.08), seg=10, seg2=5)
+    for bu in (u0 + 0.25, u0 + 0.75):          # доски с горками круглых хлебов
+        board(b, Pw(P_, bu, y, 0.04), R, 0.44, 0.3)
+        for k, (du, dn, dy) in enumerate(((-0.12, -0.06, 0), (0.0, -0.07, 0), (0.12, -0.05, 0), (-0.07, 0.07, 0), (0.07, 0.08, 0), (0.0, 0.0, 0.05))):
+            bread_round(b, Pw(P_, bu + du, y + 0.024 + dy, 0.04 + dn), 0.07)
+    basket(b, Pw(P_, u1 - 0.12, y, 0.02), 0.12, 0.12)
+    for k in range(3):
+        loaf_long(b, Pw(P_, u1 - 0.14 + (k - 1) * 0.05, y + 0.1, 0.02), R, 0.18, "#c8904a", 1.2 + k * 0.3)
+    shelf_unit(b, S, lambda v, a, c, n: [bread_round(b, Pw(P_, uu, v, n + (0.05 if i % 2 else -0.04)), 0.07) for i, uu in enumerate(row(a, c, 7))])
+    ou0, ou1, on = S["out"]
+    sack(b, Pw(P_, ou0 + 0.22, 0.0, on), 0.14, 0.34, "#efe8d8")
+    sack(b, Pw(P_, ou0 + 0.5, 0.0, on + 0.06), 0.13, 0.3, "#efe8d8", open_=False)
+    stool(b, Pw(P_, ou1 - 0.2, 0.0, on))
+    basket(b, Pw(P_, ou1 - 0.2, 0.3, on), 0.12, 0.12)
+    for k in range(4):
+        bread_round(b, Pw(P_, ou1 - 0.2 + (k % 2 - 0.5) * 0.08, 0.38 + (k // 2) * 0.04, on + (k // 2 - 0.5) * 0.06), 0.05)
+    eu0, eu1 = S["ent"]                        # лопата пекаря у косяка
+    a = Vector(Pw(P_, eu1 - 0.02, 0.05, 0.06))
+    bb = Vector(Pw(P_, eu1 + 0.02, 1.25, -0.02))
+    rod(b, a, bb, 0.03, J("#8a6038", 0.05), mat=M_WOOD)
+    b.box(tuple(a + (a - bb).normalized() * -0.12 + Vector((0, 0.08, 0))), (0.03, 0.26, 0.2), J("#a07a52", 0.05), RW(S["U"], N), mat=M_WOOD)
+
+
+def g_shoes(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    cols = ["#7a4a2a", "#5a3a22", "#9a6a3a", "#3a2a1e", "#8a3a2a"]
+    hs = hooks(S, 6)
+    for i, h in enumerate(hs):
+        (it_sandals(b, h, R, cols[i % 5]) if i % 2 == 0 else it_boots(b, h, R, cols[(i + 2) % 5]))
+    ru0, ru1, rv, rn = S["rail"]
+    for uu in (ru0 - 0.02, ru1 + 0.02):        # шкуры по краям проёма
+        hide(b, P_, N, uu, rv - 0.03, 0.26, 0.42, 0.11, "#a4744a")
+    for k, uu in enumerate(row(u0, u1 - 0.3, 4)):
         for s_ in (-1, 1):
-            body.box(Pw(P_, uu + s_ * 0.035, y + 0.03, 0.1), (0.05, 0.05, 0.13), J(rng.choice(["#5a3a22", "#7a5232", "#3a2a1e"]), 0.1), R)
-    for k in range(2):                 # кожи на балке
-        uu = u0 + 0.25 + k * (u1 - u0 - 0.5)
-        body.box(Pw(P_, uu, PL + 1.2, 0.05), (0.42, 0.5, 0.01), J("#a4744a", 0.1), R)
-
-
-def g_dye(body, emb, P_, U, N, u0, u1, y):
-    cols = ["#9a2f28", "#2f4f8f", "#d9a02a", "#6a2f8a", "#3f7f4a"]
-    R = RW(U, N)
-    for k in range(5):
-        uu = u0 + 0.12 + k * (u1 - u0 - 0.24) / 4
-        body.lathe(Pw(P_, uu, y, 0.12), [(0.06, 0.0), (0.07, 0.1), (0.05, 0.14)], 8, J(cols[k], 0.06), close_top=True)
-        body.box(Pw(P_, uu, PL + 1.15, 0.05), (0.2, 0.55, 0.01), J(cols[(k + 2) % 5], 0.06), R)
-
-
-def g_togas(body, emb, P_, U, N, u0, u1, y):
-    R = RW(U, N)
-    for k in range(3):                 # тоги и туники на стойках
-        uu = u0 + 0.2 + k * (u1 - u0 - 0.4) / 2
-        body.box(Pw(P_, uu, y + 0.35, 0.14), (0.02, 0.7, 0.02), J(P["wood2"], 0.05), R)
-        body.box(Pw(P_, uu, y + 0.42, 0.14), (0.3, 0.5, 0.06), J(["#f2ece0", "#efe3c8", "#e8e0d0"][k], 0.03), R)
-        if k == 1:
-            body.box(Pw(P_, uu, y + 0.42, 0.18), (0.05, 0.5, 0.01), col("#6a2f8a"), R)       # пурпурная полоса
+            shoe(b, Pw(P_, uu + s_ * 0.036, y, 0.08), R, cols[k % 5], boot=k % 2 == 1, ang=0.1 * s_)
+    b.lathe(Pw(P_, u1 - 0.16, y, 0.02), [(0.03, 0.0), (0.034, 0.05), (0.02, 0.1), (0.012, 0.16)], 7, J("#c9a46e", 0.05), mat=M_WOOD)   # колодка
+    spindle(b, Pw(P_, u1 - 0.3, y + 0.035, -0.08), Pw(P_, u1 - 0.02, y + 0.035, -0.08), [(0.035, 0.0), (0.035, 1.0)], 8, J("#a4744a", 0.06))
+    shelf_unit(b, S, lambda v, a, c, n: [shoe(b, Pw(P_, uu, v, n), R, cols[i % 5], boot=i % 3 == 0) for i, uu in enumerate(row(a, c, 6))])
+    ou0, ou1, on = S["out"]
+    bench2(b, Pw(P_, ou0 + 0.5, 0.0, on), R, 0.8)
     for k in range(3):
-        body.lathe(Pw(P_, u1 - 0.1 - k * 0.12, y, 0.1), [(0.05, 0.0), (0.05, 0.2)], 8, J(["#b5452f", "#3f6fa8", "#e1b84a"][k], 0.05), close_top=True)
+        for s_ in (-1, 1):
+            sandal(b, Pw(P_, ou0 + 0.25 + k * 0.25 + s_ * 0.04, 0.32, on), R, cols[(k + 1) % 5], 0.1 * s_)
 
 
-def g_oil(body, emb, P_, U, N, u0, u1, y):
-    for k in range(3):                 # долии в прилавке и амфоры
-        uu = u0 + 0.18 + k * (u1 - u0 - 0.36) / 2
-        c = Vector(Pw(P_, uu, y - 0.02, 0.06))
-        body.lathe((c.x, c.y, c.z), [(0.11, 0.0), (0.11, 0.02)], 10, col("#3a2a1a"), close_top=True)
-        body.lathe((c.x, c.y, c.z), [(0.13, 0.0), (0.13, 0.03)], 10, J("#c27a4a", 0.06))
-    for k in range(4):
-        amphora(body, Pw(P_, u1 + 0.2 + k * 0.2 if u1 < W - 1.0 else u0 - 0.2 - k * 0.2, 0.0, 0.3), 0.5, J("#b5703f", 0.08))
-    basket(body, Pw(P_, (u0 + u1) / 2, y, 0.16), 0.1, 0.12)
+def g_dye(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    cols = ["#9a2f28", "#2f4f8f", "#d9a02a", "#6a2f8a", "#3f7f4a", "#c8602a"]
+    ru0, ru1, rv, rn = S["rail"]
+    for k, uu in enumerate(row(ru0, ru1, 5)):
+        drape(b, P_, N, uu, rv - 0.01, 0.2, 0.46 - 0.06 * (k % 2), rn + 0.02, cols[k], folds=2, amp=0.018)
+    for k, uu in enumerate(row(u0, u1 - 0.35, 4)):
+        bowl(b, Pw(P_, uu, y, 0.08), 0.075, J("#c9c0b0", 0.04), food=cols[k])
+    folded_stack(b, Pw(P_, u1 - 0.17, y, 0.02), R, 0.24, 0.2, 6, cols)
+    wool_balls(b, Pw(P_, u0 + 0.35, y, -0.1), 5, cols)
+    shelf_unit(b, S, lambda v, a, c, n: [jar(b, Pw(P_, uu, v, n), 0.15, J("#c27a4a", 0.06), lid=cols[i % 6]) for i, uu in enumerate(row(a, c, 5))])
+    ou0, ou1, on = S["out"]
+    b.lathe(Pw(P_, ou0 + 0.35, 0.0, on), [(0.2, 0.0), (0.24, 0.3), (0.25, 0.34)], 12, J("#8a6038", 0.06), mat=M_WOOD)
+    b.lathe(Pw(P_, ou0 + 0.35, 0.27, on), [(0.23, 0.0), (0.23, 0.001)], 12, col("#5a2a7a"), close_top=True)
+    rod(b, Pw(P_, ou0 + 0.3, 0.2, on), Pw(P_, ou0 + 0.5, 0.75, on - 0.1), 0.025, J("#8a6038", 0.05), mat=M_WOOD)
 
 
-def g_lamps(body, emb, P_, U, N, u0, u1, y):
-    for k in range(8):                 # глиняные светильники рядами
-        uu = u0 + 0.1 + (k % 4) * (u1 - u0 - 0.2) / 3
-        c = Vector(Pw(P_, uu, y + (0.0 if k < 4 else 0.0), 0.05 + (0.0 if k < 4 else 0.14)))
-        body.lathe((c.x, c.y, c.z), [(0.04, 0.0), (0.05, 0.02), (0.02, 0.035)], 7, J(rng.choice(["#c27a4a", "#b08a5a", "#9a6a3a"]), 0.08))
-    for k in range(3):                 # бронзовые висячие, с огоньком
-        uu = u0 + 0.2 + k * (u1 - u0 - 0.4) / 2
-        c = Vector(Pw(P_, uu, PL + 1.3, 0.1))
-        body.box((c.x, c.y + 0.12, c.z), (0.008, 0.24, 0.008), col("#3a332c"))
-        body.lathe((c.x, c.y - 0.03, c.z), [(0.02, 0.0), (0.06, 0.03), (0.04, 0.05)], 7, J("#b08a3a", 0.06))
-        leaf_blob(emb, (c.x, c.y + 0.04, c.z + 0.05), 0.018, col("#ffb03a"))
-
-
-def g_wine(body, emb, P_, U, N, u0, u1, y):
-    g_oil(body, emb, P_, U, N, u0, u1, y)
+def g_togas(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    full = DS.get("sign") == "fullonica"
+    cols = ["#f4efe2", "#d8e4ec", "#efe0b8"] if full else ["#f2ece0", "#b5452f", "#3f6fa8", "#d9a02a"]
+    ru0, ru1, rv, rn = S["rail"]
+    for k, uu in enumerate(row(ru0, ru1, 3)):
+        top = Vector(Pw(P_, uu, rv, rn))
+        rod(b, top, top + Vector((0, -0.05, 0)), 0.008, col(IRON))
+        tunic(b, P_, N, R, uu, rv - 0.06, rn + 0.03, cols[k % len(cols)], stripe="#6a2f8a" if (k == 0 and not full) else None)
+    for k in range(3):                         # штуки ткани
+        a = Pw(P_, u0 + 0.02, y + 0.04 + k * 0.075, 0.1 - k * 0.07)
+        bolt(b, a, Pw(P_, u0 + 0.5, y + 0.04 + k * 0.075, 0.1 - k * 0.07), 0.04, cols[(k + 1) % len(cols)])
+    folded_stack(b, Pw(P_, u0 + 0.75, y, 0.04), R, 0.28, 0.22, 6, cols + ["#e8e0d0"])
+    b.box(Pw(P_, u1 - 0.18, y + 0.006, 0.1), (0.12, 0.008, 0.02), col(BRONZE), R @ Matrix.Rotation(0.4, 3, "Y"))     # ножницы
     for k in range(3):
-        leaf_blob(body, Pw(P_, u0 + 0.3 + k * 0.08, y + 0.05, 0.16), 0.04, J("#5a2d5f", 0.1))
+        b.lathe(Pw(P_, u1 - 0.1 - k * 0.07, y, -0.05), [(0.02, 0.0), (0.025, 0.004), (0.022, 0.05), (0.025, 0.054)], 7, J(["#b5452f", "#3f6fa8", "#e1b84a"][k], 0.05), close_top=True)
+    shelf_unit(b, S, lambda v, a, c, n: [folded_stack(b, Pw(P_, uu, v, n), R, 0.2, 0.2, 4, cols) for uu in row(a, c, 3)])
+    ou0, ou1, on = S["out"]
+    if full:                                   # чан, где топчут сукно, и корзина отбелённого
+        b.lathe(Pw(P_, ou0 + 0.3, 0.0, on), [(0.24, 0.0), (0.26, 0.28), (0.28, 0.3)], 12, J(P["stone"], 0.05))
+        b.lathe(Pw(P_, ou0 + 0.3, 0.24, on), [(0.25, 0.0), (0.25, 0.001)], 12, col("#c8d8d0"), close_top=True)
+        drape(b, P_, N, ou0 + 0.3, 0.32, 0.3, 0.1, on + 0.24, "#f4efe2", folds=2, amp=0.02)
+        basket(b, Pw(P_, ou1 - 0.2, 0.0, on), 0.15, 0.2)
+        folded_stack(b, Pw(P_, ou1 - 0.2, 0.18, on), R, 0.2, 0.18, 3, cols)
+    else:                                      # стойка с тогой
+        uu = ou0 + 0.35
+        rod(b, Pw(P_, uu, 0.0, on), Pw(P_, uu, 1.05, on), 0.035, J("#6b4428", 0.05), mat=M_WOOD)
+        b.box(Pw(P_, uu, 1.0, on), (0.42, 0.035, 0.035), J("#6b4428", 0.05), R, mat=M_WOOD)
+        b.lathe(Pw(P_, uu, 0.0, on), [(0.14, 0.0), (0.12, 0.04)], 8, J("#6b4428", 0.05), close_top=True, mat=M_WOOD)
+        drape(b, P_, N, uu, 1.02, 0.44, 0.66, on + 0.03, "#f2ece0", folds=3, amp=0.03)
+        b.box(Pw(P_, uu - 0.12, 0.7, on + 0.065), (0.04, 0.6, 0.004), col("#6a2f8a"), R @ Matrix.Rotation(0.3, 3, "Z"))
 
 
-def g_perfume(body, emb, P_, U, N, u0, u1, y):
-    cols = ["#d98fb0", "#8fb0d9", "#e3c46a", "#9ad98f", "#c08fd9"]
-    for k in range(10):                # флаконы
-        uu = u0 + 0.08 + (k % 5) * (u1 - u0 - 0.16) / 4
-        body.lathe(Pw(P_, uu, y, 0.06 + (k // 5) * 0.12), [(0.025, 0.0), (0.03, 0.05), (0.01, 0.09), (0.015, 0.11)], 6, J(cols[k % 5], 0.05))
-    for k in range(4):
-        leaf_blob(body, Pw(P_, u1 - 0.1, y + 0.1 + k * 0.03, 0.14), 0.035, J(rng.choice(["#e98bb0", "#f4f1e8", "#d9534f"]), 0.06))
+def g_pots(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 5)):        # кувшинчики на ремешках
+        top = it_hook(b, h, 0.06 + 0.04 * (k % 2))
+        jug(b, tuple(top + Vector((0, -0.16, 0))), 0.16, J(CLAY[k % 4], 0.06), handle=False)
+    xs = row(u0, u1, 7)
+    for k, uu in enumerate(xs):
+        c = J(CLAY[k % 4], 0.06)
+        if k % 3 == 0:
+            jug(b, Pw(P_, uu, y, 0.06), 0.22, c)
+        elif k % 3 == 1:
+            plate_stack(b, Pw(P_, uu, y, 0.08), 0.08, 4, CLAY[3])
+            bowl(b, Pw(P_, uu, y + 0.055, 0.08), 0.06, c)
+        else:
+            cup(b, Pw(P_, uu - 0.03, y, 0.1), 0.045, col("#2a2420"))
+            cup(b, Pw(P_, uu + 0.04, y, 0.02), 0.045, c)
+    shelf_unit(b, S, lambda v, a, c, n: [(jug(b, Pw(P_, uu, v, n), 0.18, J(CLAY[i % 4], 0.06)) if i % 2 else bowl(b, Pw(P_, uu, v, n), 0.07, J(CLAY[i % 4], 0.06))) for i, uu in enumerate(row(a, c, 6))])
+    ou0, ou1, on = S["out"]
+    amphora_rack(b, P_, S["U"], N, ou0 + 0.42, on, 3)
+    b.lathe(Pw(P_, ou1 - 0.15, 0.0, on + 0.05), [(0.1, 0.0), (0.18, 0.12), (0.17, 0.26), (0.12, 0.32), (0.14, 0.35)], 10, J(CLAY[0], 0.06), close_top=True)
 
 
-def g_jewel(body, emb, P_, U, N, u0, u1, y):
-    R = RW(U, N)
-    for k in range(3):                 # лотки с золотом и серебром
-        uu = u0 + 0.18 + k * (u1 - u0 - 0.36) / 2
-        body.box(Pw(P_, uu, y + 0.02, 0.14), (0.26, 0.04, 0.2), J("#5a2a3a", 0.05), R)
-        for j in range(5):
-            leaf_blob(body, Pw(P_, uu - 0.08 + j * 0.04, y + 0.05, 0.14 + rng.uniform(-0.05, 0.05)), 0.014, col(rng.choice(["#e8c45a", "#d9d9d9", "#e8c45a", "#5ab0d9"])))
-    body.lathe(Pw(P_, u1 - 0.12, y, 0.1), [(0.05, 0.0), (0.04, 0.12), (0.06, 0.16), (0.0, 0.24)], 8, J("#e8e2d6", 0.02))
+def g_oil(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 5)):
+        top = it_hook(b, h, 0.06)
+        if k % 2 == 0:
+            bottle(b, tuple(top + Vector((0, -0.2, 0))), 0.2, J("#b08a4a", 0.06))
+        else:                                  # ветка оливы с плодами
+            for j in range(5):
+                leaf_blob(b, tuple(top + Vector(((j % 2 - 0.5) * 0.05, -0.04 - j * 0.04, 0.01))), 0.03, J("#6f8a4a", 0.08))
+                ball(b, tuple(top + Vector(((j % 2 - 0.5) * -0.04, -0.05 - j * 0.04, 0.03))), 0.012, J("#3a3a2a", 0.1), seg=5, rings=3)
+    for k, uu in enumerate(row(u0, u1 - 0.4, 3)):   # долии в прилавке
+        c = Vector(Pw(P_, uu, y - 0.02, 0.04))
+        b.lathe((c.x, c.y, c.z), [(0.11, 0.0), (0.11, 0.02)], 10, col("#4a3a1a"), close_top=True)
+        b.lathe((c.x, c.y, c.z), [(0.135, 0.0), (0.135, 0.035)], 10, J("#c27a4a", 0.06))
+    board(b, Pw(P_, u1 - 0.2, y, 0.04), R, 0.34, 0.24)
+    bowl(b, Pw(P_, u1 - 0.28, y + 0.024, 0.04), 0.065, J("#d9c8a8", 0.04), food="#6f7a3a")
+    bowl(b, Pw(P_, u1 - 0.12, y + 0.024, 0.06), 0.06, J("#d9c8a8", 0.04), food="#2a2420")
+    jug(b, Pw(P_, u1 - 0.18, y + 0.024, -0.06), 0.18, J("#b5703f", 0.06))
+    b.lathe(Pw(P_, u0 + 0.05, y, -0.1), [(0.008, 0.0), (0.012, 0.06), (0.06, 0.12)], 8, col(BRONZE))          # воронка
+    shelf_unit(b, S, lambda v, a, c, n: [jug(b, Pw(P_, uu, v, n), 0.2, J(CLAY[i % 3], 0.06)) for i, uu in enumerate(row(a, c, 5))])
+    ou0, ou1, on = S["out"]
+    amphora_rack(b, P_, S["U"], N, ou0 + 0.5, on, 4)
 
 
-def g_barber(body, emb, P_, U, N, u0, u1, y):
-    R = RW(U, N)
-    body.lathe(Pw(P_, u0 + 0.25, y, 0.12), [(0.08, 0.0), (0.14, 0.06), (0.15, 0.08)], 10, J("#c9c2b2", 0.04))   # таз
-    body.box(Pw(P_, u0 + 0.6, y + 0.18, 0.06), (0.16, 0.22, 0.015), J("#d9c890", 0.05), R)                    # зеркало
+def g_lamps(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 5)):
+        if k % 2 == 0:
+            hanging_lamp(b, e, h)
+        else:                                  # связка глиняных светильников
+            top = it_hook(b, h, 0.04)
+            for j in range(3):
+                lucerna(b, e, tuple(top + Vector(((j - 1) * 0.04, -0.12 - j * 0.07, 0.0))), R @ Matrix.Rotation(-1.2, 3, "X"), CLAY[j % 3])
+    st = steps(b, Pw(P_, (u0 + u1) / 2 - 0.1, y, 0.14), R, u1 - u0 - 0.3, 3)
+    for (sy, sz) in st:
+        for k, uu in enumerate(row(u0 + 0.05, u1 - 0.35, 5)):
+            lucerna(b, e, Pw(P_, uu, y + sy, 0.14 + sz), R, CLAY[(k + int(sy * 100)) % 4], lit=(k + int(sy * 100)) % 4 == 0)
+    candelabrum(b, e, Pw(P_, u1 - 0.12, y, 0.0), 0.55)
+    shelf_unit(b, S, lambda v, a, c, n: [lucerna(b, e, Pw(P_, uu, v, n), R, CLAY[i % 4]) for i, uu in enumerate(row(a, c, 8))])
+    ou0, ou1, on = S["out"]
+    candelabrum(b, e, Pw(P_, ou0 + 0.25, 0.0, on), 1.1)
+    candelabrum(b, e, Pw(P_, ou0 + 0.6, 0.0, on + 0.08), 0.85)
+
+
+def g_wine(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 5)):
+        top = it_hook(b, h, 0.05 + 0.04 * (k % 2))
+        grapes(b, tuple(top), 1.3, "#5a2d5f" if k % 3 else "#8fa04a")
+    for k, uu in enumerate(row(u0, u1 - 0.45, 2)):
+        c = Vector(Pw(P_, uu, y - 0.02, 0.04))
+        b.lathe((c.x, c.y, c.z), [(0.11, 0.0), (0.11, 0.02)], 10, col("#3a1a2a"), close_top=True)
+        b.lathe((c.x, c.y, c.z), [(0.135, 0.0), (0.135, 0.035)], 10, J("#c27a4a", 0.06))
+    jug(b, Pw(P_, u1 - 0.36, y, 0.06), 0.22, J("#b5703f", 0.06))
     for k in range(3):
-        body.box(Pw(P_, u1 - 0.2 - k * 0.12, y + 0.02, 0.12), (0.1, 0.04, 0.2), J(["#f2ece0", "#b5452f", "#3f6fa8"][k], 0.04), R)
+        cup(b, Pw(P_, u1 - 0.22 + k * 0.07, y, 0.1 - (k % 2) * 0.08), 0.04, J(["#a8402a", "#2a2420", BRONZE][k], 0.05))
+    board(b, Pw(P_, u1 - 0.12, y, -0.08), R, 0.22, 0.16)
+    grapes(b, Pw(P_, u1 - 0.12, y + 0.11, -0.08), 1.2)
+    shelf_unit(b, S, lambda v, a, c, n: [(amphora(b, Pw(P_, uu, v, n), 0.3, J(CLAY[i % 3], 0.06)) if i % 2 == 0 else jug(b, Pw(P_, uu, v, n), 0.18, J(CLAY[(i + 1) % 4], 0.06))) for i, uu in enumerate(row(a, c, 5))])
+    ou0, ou1, on = S["out"]
+    if not DS.get("tables"):
+        amphora_rack(b, P_, S["U"], N, ou0 + 0.42, on, 3)
+        barrel(b, Pw(P_, ou1 - 0.12, 0.0, on + 0.05), 0.45, 0.16)
 
 
-def g_medic(body, emb, P_, U, N, u0, u1, y):
-    for k in range(6):                 # банки со снадобьями
-        uu = u0 + 0.1 + k * (u1 - u0 - 0.2) / 5
-        body.lathe(Pw(P_, uu, y, 0.1), [(0.04, 0.0), (0.045, 0.08), (0.02, 0.12)], 7, J(rng.choice(["#c27a4a", "#7d8f99", "#e8e2d6"]), 0.06))
-    for k in range(4):                 # пучки трав на балке
-        uu = u0 + 0.15 + k * (u1 - u0 - 0.3) / 3
-        c = Vector(Pw(P_, uu, PL + 1.35, 0.06))
+def g_perfume(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 6)):
+        herb_bundle(b, h, "#7a8f5a" if k % 2 else "#8f8fb0", fl=["#e98bb0", "#9a7ad0", "#f4f1e8", "#d9534f"][k % 4])
+    st = steps(b, Pw(P_, (u0 + u1) / 2 - 0.12, y, 0.14), R, u1 - u0 - 0.34, 3)
+    for j, (sy, sz) in enumerate(st):
+        for k, uu in enumerate(row(u0 + 0.04, u1 - 0.4, 6)):
+            bottle(b, Pw(P_, uu, y + sy, 0.14 + sz), 0.09 + 0.03 * ((k + j) % 3), J(GLASS[(k + 2 * j) % 6], 0.05))
+    mortar(b, Pw(P_, u1 - 0.14, y, 0.06), R, 0.06, "#c87aa0")
+    basket(b, Pw(P_, u1 - 0.12, y, -0.1), 0.09, 0.08)
+    for k in range(6):
+        ball(b, Pw(P_, u1 - 0.12 + rng.uniform(-0.05, 0.05), y + 0.1, -0.1 + rng.uniform(-0.05, 0.05)), 0.02,
+             J(rng.choice(["#e98bb0", "#d9534f", "#f4f1e8"]), 0.06), seg=6, rings=3)
+    shelf_unit(b, S, lambda v, a, c, n: [bottle(b, Pw(P_, uu, v, n), 0.1 + 0.03 * (i % 2), J(GLASS[i % 6], 0.05)) for i, uu in enumerate(row(a, c, 8))])
+    ou0, ou1, on = S["out"]
+    for k in range(2):
+        uu = ou0 + 0.22 + k * 0.4
+        basket(b, Pw(P_, uu, 0.0, on), 0.15, 0.2)
+        for j in range(9):
+            ball(b, Pw(P_, uu + rng.uniform(-0.09, 0.09), 0.2 + rng.uniform(0, 0.05), on + rng.uniform(-0.09, 0.09)), 0.028,
+                 J(["#e98bb0", "#9a7ad0"][k] if j % 3 else "#5f8f3a", 0.08), seg=6, rings=3)
+
+
+def g_jewel(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    ru0, ru1, rv, rn = S["rail"]
+    gems = ["#c8303a", "#2a6ac8", "#3aa86a"]
+    for k, uu in enumerate(row(ru0, ru1, 2)):      # доски с ожерельями на бархате
+        top = Vector(Pw(P_, uu, rv, rn))
+        rod(b, top, top + Vector((0, -0.06, 0)), 0.006, col(IRON))
+        b.box(Pw(P_, uu, rv - 0.24, rn + 0.01), (0.42, 0.34, 0.02), J("#4a2a36", 0.04), R, mat=M_CLOTH)
         for j in range(3):
-            leaf_blob(body, (c.x, c.y - 0.05 - j * 0.06, c.z), 0.04, J("#5f7f3a", 0.1))
+            necklace(b, Pw(P_, uu - 0.15, rv - 0.12 - j * 0.03, rn + 0.025), Pw(P_, uu + 0.15, rv - 0.12 - j * 0.03, rn + 0.025), 0.08 + j * 0.02, 12, gem=gems[j:] + gems[:j])
+    for k, uu in enumerate(row(u0, u1 - 0.4, 3)):
+        tray(b, Pw(P_, uu, y, 0.08), R, 0.24, 0.18)
+        for j in range(7):
+            p = Pw(P_, uu - 0.09 + (j % 4) * 0.06, y + 0.032, 0.03 + (j // 4) * 0.08)
+            if k == 0:
+                disc(b, p, 0.014, 0.014, 0.004, col("#e8c45a"), seg=8)
+            elif k == 1:
+                torus(b, (p[0], p[1] + 0.006, p[2]), Matrix.Identity(3), 0.012, 0.004, col("#e8c45a"), seg=8, seg2=3)
+            else:
+                ball(b, (p[0], p[1] + 0.008, p[2]), 0.011, col(gems[j % 3]), seg=6, rings=3)
+    scales(b, Pw(P_, u1 - 0.3, y, -0.04), R, 0.8)
+    arca(b, Pw(P_, u1 - 0.12, y, 0.02), R, 0.2, 0.14, 0.16)
+    shelf_unit(b, S, lambda v, a, c, n: [(cup(b, Pw(P_, uu, v, n), 0.05, col("#e0b84a" if i % 2 else "#d0d4d8")) if i % 3 else plate_stack(b, Pw(P_, uu, v, n), 0.07, 2, "#d0d4d8")) for i, uu in enumerate(row(a, c, 6))])
+    ou0, ou1, on = S["out"]
+    plant_pot(b, Pw(P_, ou0 + 0.25, 0.0, on - 0.2), 0.34)
 
 
-def g_thermo(body, emb, P_, U, N, u0, u1, y):
-    for k in range(3):                 # миски с едой и долии в прилавке
-        uu = u0 + 0.2 + k * (u1 - u0 - 0.4) / 2
-        c = Vector(Pw(P_, uu, y - 0.02, 0.08))
-        body.lathe((c.x, c.y, c.z), [(0.12, 0.0), (0.12, 0.02)], 10, col("#3a2a1a"), close_top=True)
-        body.lathe((c.x, c.y, c.z), [(0.14, 0.0), (0.14, 0.03)], 10, J("#c27a4a", 0.06))
+def g_cloth(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    cols = ["#b5452f", "#3f6fa8", "#e1b84a", "#4f8a5a", "#8a4f9a", "#efe3c8"]
+    ru0, ru1, rv, rn = S["rail"]
+    for k, uu in enumerate(row(ru0, ru1, 6)):
+        if k % 2 == 0:
+            drape(b, P_, N, uu, rv - 0.01, 0.22, 0.48, rn + 0.02, cols[k], folds=2, amp=0.02)
+        else:
+            skein(b, Pw(P_, uu, rv, rn), N, cols[k])
+    for k in range(3):
+        bolt(b, Pw(P_, u0 + 0.02, y + 0.045 + k * 0.08, 0.1 - k * 0.06), Pw(P_, u0 + 0.52, y + 0.045 + k * 0.08, 0.1 - k * 0.06), 0.045, cols[k + 1])
+    folded_stack(b, Pw(P_, u0 + 0.78, y, 0.04), R, 0.26, 0.22, 5, cols)
+    basket(b, Pw(P_, u1 - 0.15, y, 0.04), 0.11, 0.1)
+    wool_balls(b, Pw(P_, u1 - 0.15, y + 0.06, 0.04), 4, ["#efe3c8", "#b5452f", "#3f6fa8", "#e1b84a"])
+    spindle(b, Pw(P_, u1 - 0.32, y + 0.01, -0.08), Pw(P_, u1 - 0.32, y + 0.25, -0.08), [(0.006, 0.0), (0.03, 0.15), (0.03, 0.55), (0.006, 1.0)], 7, J("#efe3c8", 0.05))
+    shelf_unit(b, S, lambda v, a, c, n: [bolt(b, Pw(P_, uu - 0.08, v + 0.04, n), Pw(P_, uu + 0.08, v + 0.04, n), 0.04, cols[i % 6]) for i, uu in enumerate(row(a, c, 4))])
+    ou0, ou1, on = S["out"]
+    basket(b, Pw(P_, ou0 + 0.25, 0.0, on), 0.16, 0.22)
+    wool_balls(b, Pw(P_, ou0 + 0.25, 0.18, on), 5, ["#efe3c8", "#d8cfbf", "#b5452f"])
+
+
+def g_barber(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    ru0, ru1, rv, rn = S["rail"]
+    for k, uu in enumerate(row(ru0, ru1, 4)):
+        if k == 2:
+            top = Vector(Pw(P_, uu, rv, rn))
+            rod(b, top, top + Vector((0, -0.05, 0)), 0.006, col(IRON))
+            b.box(tuple(top + Vector((0, -0.25, 0))), (0.06, 0.4, 0.006), J("#7a4a2a", 0.05), R)              # ремень для бритвы
+        else:
+            drape(b, P_, N, uu, rv - 0.01, 0.24, 0.34, rn + 0.02, ["#f4efe2", "#efe6d0", "#d8e0e8"][k % 3], folds=2, amp=0.015)
+    b.lathe(Pw(P_, u0 + 0.2, y, 0.04), [(0.08, 0.0), (0.15, 0.06), (0.16, 0.08)], 12, J("#c9c2b2", 0.04))      # таз
+    b.lathe(Pw(P_, u0 + 0.2, y + 0.05, 0.04), [(0.14, 0.0), (0.14, 0.001)], 12, col("#7fb0c0"), close_top=True)
+    mx = u0 + 0.55
+    rod(b, Pw(P_, mx, y, -0.06), Pw(P_, mx, y + 0.18, -0.06), 0.02, col(BRONZE))
+    b.lathe(Pw(P_, mx, y, -0.06), [(0.05, 0.0), (0.04, 0.02)], 8, col(BRONZE), close_top=True)
+    disc(b, Pw(P_, mx, y + 0.28, -0.06), 0.1, 0.1, 0.012, col("#e8d8a0"), R @ Matrix.Rotation(math.pi / 2, 3, "X"), seg=12)   # зеркало
+    b.box(Pw(P_, u0 + 0.85, y + 0.004, 0.06), (0.26, 0.008, 0.18), J("#f4efe2", 0.03), R, mat=M_CLOTH)
+    for k in range(3):
+        b.box(Pw(P_, u0 + 0.77 + k * 0.08, y + 0.012, 0.06), (0.02, 0.006, 0.12), col("#b0b8c0" if k != 1 else BRONZE), R)
+    b.box(Pw(P_, u1 - 0.12, y + 0.025, 0.08), (0.14, 0.05, 0.012), J("#d9c8a0", 0.04), R)                     # гребень
+    for k in range(3):
+        jar(b, Pw(P_, u1 - 0.22 + k * 0.08, y, -0.08), 0.1, J(["#c27a4a", "#e8e2d6", "#7d8f99"][k], 0.05))
+    shelf_unit(b, S, lambda v, a, c, n: [(folded_stack(b, Pw(P_, uu, v, n), R, 0.18, 0.18, 3, ["#f4efe2", "#d8e0e8"]) if i % 2 else jar(b, Pw(P_, uu, v, n), 0.12, J(CLAY[i % 3], 0.05))) for i, uu in enumerate(row(a, c, 5))])
+    ou0, ou1, on = S["out"]
+    bench2(b, Pw(P_, ou0 + 0.48, 0.0, on - 0.04), R, 0.85)
+
+
+def g_medic(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 6)):
+        (garlic_braid(b, h, 5) if k == 3 else herb_bundle(b, h, ["#5f7f3a", "#7a8f5a", "#6a7a4a"][k % 3], fl=["#f0d24a", None, "#b08ad0"][k % 3]))
+    mortar(b, Pw(P_, u0 + 0.14, y, 0.06), R, 0.07)
+    for k, uu in enumerate(row(u0 + 0.28, u1 - 0.5, 4)):
+        jar(b, Pw(P_, uu, y, 0.08), 0.13, J(["#c27a4a", "#7d8f99", "#e8e2d6", "#4f7a6a"][k], 0.05))
+    scroll(b, Pw(P_, u1 - 0.36, y, -0.06), R, 0.22)
+    scroll(b, Pw(P_, u1 - 0.32, y + 0.048, -0.05), R @ Matrix.Rotation(0.3, 3, "Y"), 0.2)
+    arca(b, Pw(P_, u1 - 0.12, y, 0.04), R, 0.2, 0.08, 0.14)                              # ящичек с инструментами
     for k in range(4):
-        body.lathe(Pw(P_, u0 + 0.15 + k * 0.18, y + 0.01, 0.2), [(0.04, 0.0), (0.08, 0.04)], 8, J("#c9a46e", 0.06))
-        leaf_blob(body, Pw(P_, u0 + 0.15 + k * 0.18, y + 0.04, 0.2), 0.035, J(rng.choice(["#b0473a", "#e3b84a", "#7fa040"]), 0.08))
+        b.box(Pw(P_, u1 - 0.18 + k * 0.035, y + 0.084, 0.04), (0.008, 0.006, 0.11), col(BRONZE), R)
+    shelf_unit(b, S, lambda v, a, c, n: [(jar(b, Pw(P_, uu, v, n), 0.13, J(["#c27a4a", "#7d8f99", "#e8e2d6", "#4f7a6a"][i % 4], 0.05)) if i % 3 else scroll(b, Pw(P_, uu, v, n), R, 0.16)) for i, uu in enumerate(row(a, c, 6))])
+    ou0, ou1, on = S["out"]
+    plant_pot(b, Pw(P_, ou0 + 0.22, 0.0, on - 0.1), 0.3)
+    plant_pot(b, Pw(P_, ou0 + 0.55, 0.0, on - 0.05), 0.26)
+
+
+def g_thermo(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 6)):
+        if k % 3 == 0:
+            it_sausages(b, h, 4)
+        elif k % 3 == 1:
+            garlic_braid(b, h, 5)
+        else:                                  # половник
+            top = it_hook(b, h, 0.03)
+            rod(b, top, top + Vector((0, -0.24, 0)), 0.012, col(BRONZE))
+            b.lathe(tuple(top + Vector((0, -0.3, 0))), [(0.02, 0.0), (0.04, 0.03), (0.04, 0.04)], 8, col(BRONZE), close_top=True)
+    foods = ["#7a4a2a", "#6f7a3a", "#c8602a", "#d9b46a"]
+    for k, uu in enumerate(row(u0, u1 - 0.35, 3)):  # долии с едой, в каждой — половник
+        c = Vector(Pw(P_, uu, y - 0.02, 0.04))
+        b.lathe((c.x, c.y, c.z), [(0.115, 0.0), (0.115, 0.022)], 10, col(foods[k]), close_top=True)
+        b.lathe((c.x, c.y, c.z), [(0.14, 0.0), (0.14, 0.035)], 10, J("#c27a4a", 0.06))
+        rod(b, (c.x, c.y + 0.02, c.z), Pw(P_, uu + 0.06, y + 0.2, -0.04), 0.01, col(BRONZE))
+    for k in range(3):
+        bowl(b, Pw(P_, u1 - 0.28 + k * 0.1, y, 0.1), 0.05, J("#c27a4a", 0.05), food=foods[(k + 1) % 4])
+    jug(b, Pw(P_, u1 - 0.12, y, -0.06), 0.2, J("#b5703f", 0.06))
+    bread_round(b, Pw(P_, u1 - 0.3, y, -0.08), 0.06)
+    cup(b, Pw(P_, u1 - 0.2, y, -0.1), 0.04, col("#a8402a"))
+    shelf_unit(b, S, lambda v, a, c, n: [(jug(b, Pw(P_, uu, v, n), 0.16, J(CLAY[i % 4], 0.05)) if i % 2 else plate_stack(b, Pw(P_, uu, v, n), 0.07, 3, CLAY[i % 4])) for i, uu in enumerate(row(a, c, 6))])
+    ou0, ou1, on = S["out"]
+    amphora_rack(b, P_, S["U"], N, ou0 + 0.42, on, 3)
+    brazier(b, e, Pw(P_, ou1 - 0.12, 0.0, on + 0.08))
+
+
+def g_copper(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 6)):
+        top = it_hook(b, h, 0.05)
+        if k % 2 == 0:                         # котёл на дужке
+            c = top + Vector((0, -0.18, 0))
+            b.lathe(tuple(c), [(0.05, 0.0), (0.1, 0.05), (0.11, 0.12), (0.1, 0.14)], 10, J("#b0703a", 0.08))
+            for s in (-1, 1):
+                rod(b, top, c + Vector((s * 0.1, 0.13, 0)), 0.006, col(IRON))
+        else:                                  # сковорода
+            c = top + Vector((0, -0.16, 0))
+            disc(b, tuple(c), 0.09, 0.09, 0.03, J("#b0703a", 0.08), _ymat(Vector(N)), seg=10)
+            rod(b, top, c + Vector((0, 0.05, 0)), 0.014, J("#8c5a30", 0.06))
+    for k, uu in enumerate(row(u0, u1 - 0.3, 3)):
+        b.lathe(Pw(P_, uu, y, 0.06), [(0.07, 0.0), (0.12, 0.05), (0.13, 0.12), (0.12, 0.14)], 10, J("#b8783a", 0.08))
+    b.box(Pw(P_, u1 - 0.15, y + 0.015, 0.06), (0.1, 0.03, 0.04), col(IRON), R)                     # молоток
+    b.box(Pw(P_, u1 - 0.06, y + 0.015, 0.06), (0.16, 0.02, 0.02), J("#8a6038", 0.05), R, mat=M_WOOD)
+    shelf_unit(b, S, lambda v, a, c, n: [b.lathe(Pw(P_, uu, v, n), [(0.05, 0.0), (0.08, 0.04), (0.085, 0.1)], 10, J("#b0703a", 0.08)) for uu in row(a, c, 5)])
+    ou0, ou1, on = S["out"]
+    b.lathe(Pw(P_, ou0 + 0.3, 0.0, on), [(0.12, 0.0), (0.22, 0.1), (0.24, 0.26), (0.22, 0.3)], 12, J("#a8683a", 0.06))
+    for k in range(4):
+        b.box(Pw(P_, ou0 + 0.7, 0.01 + k * 0.012, on - 0.05), (0.3, 0.01, 0.22), J("#c08048", 0.06), R @ Matrix.Rotation(0.1 * k, 3, "Y"))
+
+
+def g_grain(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 4)):
+        garlic_braid(b, h, 5, "#c08a3a" if k % 2 else "#efe6d2")
+    grains = ["#e3c46a", "#d8c89a", "#8a5a3a", "#c87a3a"]
+    for k, uu in enumerate(row(u0, u1 - 0.4, 3)):
+        bowl(b, Pw(P_, uu, y, 0.06), 0.11, J("#8a6038", 0.05), food=grains[k])
+    b.lathe(Pw(P_, u1 - 0.25, y, 0.04), [(0.08, 0.0), (0.09, 0.13)], 10, J("#8a6038", 0.06), mat=M_WOOD)      # модий
+    b.lathe(Pw(P_, u1 - 0.25, y + 0.11, 0.04), [(0.085, 0.0), (0.085, 0.001)], 10, col(grains[0]), close_top=True)
+    scales(b, Pw(P_, u1 - 0.08, y, -0.06), R, 0.7)
+    shelf_unit(b, S, lambda v, a, c, n: [sack(b, Pw(P_, uu, v, n), 0.09, 0.22, grains[i % 4], open_=i % 2 == 0) for i, uu in enumerate(row(a, c, 4))])
+    ou0, ou1, on = S["out"]
+    for k in range(3):
+        sack(b, Pw(P_, ou0 + 0.2 + k * 0.28, 0.0, on), 0.13, 0.32, grains[k], open_=k != 1)
 
 
 TRADE_GOODS = {"meat": g_meat, "bread": g_bread, "shoes": g_shoes, "dye": g_dye, "togas": g_togas, "oil": g_oil,
                "lamps": g_lamps, "wine": g_wine, "perfume": g_perfume, "jewel": g_jewel, "barber": g_barber, "medic": g_medic,
-               "thermo": g_thermo}
+               "thermo": g_thermo, "cloth": g_cloth, "pots": g_pots, "copper": g_copper, "grain": g_grain}
 
 
 def y_oven(body, emb, x0, x1, zb, z_wall, zc):
@@ -1400,7 +2492,7 @@ def y_oven(body, emb, x0, x1, zb, z_wall, zc):
     SMOKE.append([kx, 1.2, zc])
     mx = x1 - 0.55
     body.lathe((mx, 0.0, zc), [(0.3, 0.0), (0.3, 0.25), (0.16, 0.5), (0.26, 0.75), (0.12, 0.95), (0.24, 1.15)], 10, J("#6f6a62", 0.06), close_top=True)
-    body.box((mx, 0.75, zc), (0.9, 0.06, 0.06), J(P["wood"], 0.05))
+    body.box((mx, 0.75, zc), (0.9, 0.06, 0.06), J(P["wood"], 0.05), mat=M_WOOD)
 
 
 def y_vats(body, emb, x0, x1, zb, z_wall, zc):
@@ -1411,7 +2503,7 @@ def y_vats(body, emb, x0, x1, zb, z_wall, zc):
         body.lathe((cx, 0.0, zc), [(0.32, 0.0), (0.32, 0.45), (0.27, 0.45)], 12, J(P["stone"], 0.06))
         body.lathe((cx, 0.38, zc), [(0.27, 0.0), (0.0, 0.0)], 12, col(cols[k]))
     for xx in (x0 + 0.1, x1 - 0.1):
-        body.box((xx, 0.8, zb + 0.15), (0.05, 1.6, 0.05), J(P["wood"], 0.05))
+        body.box((xx, 0.8, zb + 0.15), (0.05, 1.6, 0.05), J(P["wood"], 0.05), mat=M_WOOD)
     body.box(((x0 + x1) / 2, 1.55, zb + 0.15), (x1 - x0 - 0.2, 0.012, 0.012), col("#d8cfbf"))
     for k in range(4):
         body.box((x0 + 0.5 + k * (x1 - x0 - 1.0) / 3, 1.3, zb + 0.15), (0.3, 0.5, 0.012), J(cols[k % 3], 0.05))
@@ -1421,14 +2513,34 @@ def y_stable(body, emb, x0, x1, zb, z_wall, zc):
     """гостиница: конюшенный двор — каменная поилка, ясли с сеном, тюки, колесо телеги"""
     body.box((x0 + 0.7, 0.22, zc), (1.0, 0.44, 0.38), J(P["stone"], 0.06), cols={"top": J(P["stone"], 0.1)})
     body.box((x0 + 0.7, 0.4, zc), (0.9, 0.02, 0.3), col("#5fa6b8"))
-    body.box((x1 - 0.6, 0.45, zc - 0.05), (0.8, 0.1, 0.4), J(P["wood"], 0.06))
+    body.box((x1 - 0.6, 0.45, zc - 0.05), (0.8, 0.1, 0.4), J(P["wood"], 0.06), mat=M_WOOD)
     for sx in (-1, 1):
-        body.box((x1 - 0.6 + sx * 0.36, 0.22, zc - 0.05), (0.06, 0.45, 0.06), J(P["wood2"], 0.05))
+        body.box((x1 - 0.6 + sx * 0.36, 0.22, zc - 0.05), (0.06, 0.45, 0.06), J(P["wood2"], 0.05), mat=M_WOOD)
     for k in range(6):
         leaf_blob(body, (x1 - 0.85 + k * 0.1, 0.55, zc - 0.05 + rng.uniform(-0.08, 0.08)), 0.07, J("#d9c27a", 0.08))
     for k in range(2):
-        body.box(((x0 + x1) / 2 + (k - 0.5) * 0.5, 0.18 + (0.0 if k == 0 else 0.0), zb + 0.35), (0.45, 0.36, 0.32), J("#d9c27a", 0.08))
-    body.lathe(((x0 + x1) / 2 + 0.6, 0.35, zb + 0.15), [(0.33, 0.0), (0.33, 0.06)], 12, J(P["wood"], 0.06), close_top=True)
+        body.box(((x0 + x1) / 2 - 0.85 + k * 0.05, 0.18 + k * 0.36, zc + (k - 0.5) * 0.1), (0.42, 0.34, 0.3), J("#d9c27a", 0.08))
+    cart(body, ((x0 + x1) / 2 + 0.35, 0.0, zc), Matrix.Rotation(math.pi / 2, 3, "Y"))
+
+
+def cart(mb, at, R):
+    """двухколёсная телега: кузов из досок с бортами, колёса со спицами на оси, оглобли упёрты в землю"""
+    for sx in (-1, 1):
+        c = Vector(LP(at, R, sx * 0.4, 0.3, 0.0))
+        torus(mb, tuple(c), R @ Matrix.Rotation(math.pi / 2, 3, "Z"), 0.27, 0.028, J("#6b4428", 0.05), seg=14, seg2=4)
+        for k in range(8):
+            a = 2 * math.pi * k / 8
+            rod(mb, c, c + R @ Vector((0, math.cos(a) * 0.26, math.sin(a) * 0.26)), 0.022, J("#7a5232", 0.05), mat=M_WOOD)
+        spindle(mb, c - R @ Vector((0.06, 0, 0)), c + R @ Vector((0.06, 0, 0)), [(0.05, 0.0), (0.05, 1.0)], 8, J("#5e3d24", 0.05))
+    rod(mb, LP(at, R, -0.46, 0.3, 0.0), LP(at, R, 0.46, 0.3, 0.0), 0.05, J("#5e3d24", 0.05), mat=M_WOOD)
+    mb.box(LP(at, R, 0, 0.4, 0.05), (0.72, 0.05, 1.0), J("#8a6038", 0.06), R, mat=M_WOOD)
+    for sx in (-1, 1):
+        mb.box(LP(at, R, sx * 0.35, 0.52, 0.05), (0.04, 0.2, 1.0), J("#7a5232", 0.06), R, mat=M_WOOD)
+    mb.box(LP(at, R, 0, 0.52, -0.43), (0.72, 0.2, 0.04), J("#7a5232", 0.06), R, mat=M_WOOD)
+    for sx in (-1, 1):
+        rod(mb, LP(at, R, sx * 0.25, 0.4, 0.5), LP(at, R, sx * 0.22, 0.04, 0.95), 0.045, J("#6b4428", 0.05), mat=M_WOOD)
+    for k in range(3):
+        sack(mb, LP(at, R, -0.15 + k * 0.15, 0.43, 0.1 + (k % 2) * 0.15), 0.1, 0.22, open_=False)
 
 
 TRADE_YARDS = {"oven": y_oven, "vats": y_vats, "stable": y_stable}
@@ -1449,10 +2561,10 @@ TRADES = {
     "weaver": {"goods": "cloth", "front": "awning", "awning": ("#efe3c8", "#3f6fa8"), "roof": "x", "floors": 1, "yard": "loom", "shutter": "green", "door": "oak", "pal": 0},
     "barber": {"goods": "barber", "front": "awning", "awning": ("#f4efe2", "#4f78a8"), "roof": "x", "floors": 1, "shutter": "blue", "door": "oak", "pal": 1, "chair": True},
     "medic": {"goods": "medic", "front": "canopy", "roof": "z", "floors": 2, "shutter": "green", "door": "green", "pal": 1, "boxes": True, "corners": "stone"},
-    "thermopolium": {"goods": "thermo", "front": "awning", "awning": ("#efe3c8", "#b5452f"), "roof": "x", "floors": 2, "w": 4.2, "shutter": "red", "door": "oak", "pal": 0, "balcony": True, "wide": True},
-    "taberna": {"goods": "wine", "front": "awning", "awning": ("#efe3c8", "#7a3528"), "roof": "z", "floors": 2, "w": 4.2, "d": 4.2, "shutter": "brown", "door": "dark", "pal": 2, "tables": True, "corners": "stone"},
-    "fullonica": {"goods": "togas", "front": "awning", "awning": ("#f4efe2", "#4f78a8"), "roof": "x", "floors": 2, "w": 4.2, "yard": "vats", "shutter": "blue", "door": "oak", "pal": 1, "balcony": True},
-    "mansio": {"goods": "wine", "front": "canopy", "roof": "z", "floors": 3, "w": 4.8, "d": 4.4, "yard": "stable", "shutter": "green", "door": "dark", "pal": 2, "corners": "stone", "boxes": True},
+    "thermopolium": {"goods": "thermo", "panel": "fresco", "front": "awning", "awning": ("#efe3c8", "#b5452f"), "roof": "x", "floors": 2, "w": 4.2, "shutter": "red", "door": "oak", "pal": 0, "balcony": True, "wide": True},
+    "taberna": {"goods": "wine", "sign": "taberna", "front": "awning", "awning": ("#efe3c8", "#7a3528"), "roof": "z", "floors": 2, "w": 4.2, "d": 4.2, "shutter": "brown", "door": "dark", "pal": 2, "tables": True, "corners": "stone"},
+    "fullonica": {"goods": "togas", "sign": "fullonica", "front": "awning", "awning": ("#f4efe2", "#4f78a8"), "roof": "x", "floors": 2, "w": 4.2, "yard": "vats", "shutter": "blue", "door": "oak", "pal": 1, "balcony": True},
+    "mansio": {"goods": "wine", "sign": "mansio", "front": "canopy", "roof": "z", "floors": 3, "w": 4.8, "d": 4.4, "yard": "stable", "shutter": "green", "door": "dark", "pal": 2, "corners": "stone", "boxes": True},
 }
 
 
@@ -1472,18 +2584,42 @@ def y_tables(body, x0, x1, z1):
     return
     for k, xx in enumerate((x0 + 0.8, x1 - 0.9)):
         zz = z1 + 1.0
-        body.box((xx, 0.48, zz), (0.7, 0.05, 0.5), J(P["wood"], 0.06))
+        body.box((xx, 0.48, zz), (0.7, 0.05, 0.5), J(P["wood"], 0.06), mat=M_WOOD)
         for sx in (-1, 1):
             for sz in (-1, 1):
-                body.box((xx + sx * 0.28, 0.23, zz + sz * 0.18), (0.05, 0.46, 0.05), J(P["wood2"], 0.05))
+                body.box((xx + sx * 0.28, 0.23, zz + sz * 0.18), (0.05, 0.46, 0.05), J(P["wood2"], 0.05), mat=M_WOOD)
         for sz in (-1, 1):
             bench(body, (xx, 0.3, zz + sz * 0.45), 0.8, Matrix.Identity(3))
         body.lathe((xx - 0.12, 0.5, zz), [(0.04, 0.0), (0.06, 0.08), (0.03, 0.12)], 7, J("#c27a4a", 0.06))
         body.lathe((xx + 0.15, 0.5, zz), [(0.05, 0.0), (0.07, 0.03)], 8, J("#b0703a", 0.06))
 
 
+def basket2(mb, at, r, h):
+    """плетёная корзина: пояски плетения в два тона, ободок"""
+    x, y, z = at
+    n = 4
+    prof = [(r * 0.8 + r * 0.2 * k / n, h * k / n) for k in range(n + 1)]
+    mb.lathe(at, prof, 10, J("#b48a4f", 0.06), cols=[J("#b48a4f" if k % 2 else "#9a7040", 0.05) for k in range(n)])
+    torus(mb, (x, y + h, z), Matrix.Identity(3), r * 1.0, 0.012, J("#8a6038", 0.05), seg=10, seg2=4)
+    mb.lathe((x, y + h * 0.75, z), [(r * 0.95, 0.0), (r * 0.95, 0.001)], 10, col("#5a4428"), close_top=True)
+
+
+def heap(mb, at, r, kind, s=1.0):
+    """горка плодов в корзине или ящике (выше к середине)"""
+    x, y, z = at
+    pts = [(0.0, 0.0)]
+    for rr, k in ((r * 0.5, 6), (r * 0.86, 10)):
+        for i in range(k):
+            a = 2 * math.pi * i / k + rr * 7
+            pts.append((math.cos(a) * rr, math.sin(a) * rr))
+    for (dx, dz) in pts:
+        hy = (1 - (dx * dx + dz * dz) / (r * r)) * r * 0.4
+        fruit(mb, (x + dx, y + hy, z + dz), kind, s)
+
+
 def build_stall(kind):
-    """рыночный прилавок: дощатый стол с ножками, четыре шеста, полосатый навес, корзины с товаром, ящики позади"""
+    """рыночный прилавок: дощатый стол со скатертью, шесты, тканевый навес с фестонами, корзины и ящики с товаром,
+    связки на перекладине, вывеска; позади — запас в ящиках и мешках"""
     coll = bpy.context.scene.collection
     body = MB("House")
     emb = MB("Embers", [MAT_EMBER])
@@ -1491,60 +2627,122 @@ def build_stall(kind):
     cols = {"fruit": ("#f4efe2", "#d9534f"), "veg": ("#f4efe2", "#4f8a5a"), "fish": ("#f4efe2", "#3f6fa8")}[kind]
     w, d = 2.3, 1.5
     x0, x1, z0, z1 = -w / 2, w / 2, -d / 2, d / 2
-    # стол
-    body.box((0, 0.82, 0.25), (w - 0.2, 0.05, 0.6), J(P["wood"], 0.06), cols={"top": J(P["wood"], 0.1)})
-    body.box((0, 0.5, 0.52), (w - 0.2, 0.6, 0.04), J(P["wood2"], 0.06))
+    I3 = Matrix.Identity(3)
+    Xv, Zv = Vector((1, 0, 0)), Vector((0, 0, 1))
+    # стол: столешница из досок, ножки, нижняя полка, скатерть спереди
+    for k in range(5):
+        body.box((0, 0.82, 0.25 - 0.24 + k * 0.12), (w - 0.2, 0.05, 0.115), J(P["wood"], 0.08), mat=M_WOOD)
     for sx in (-1, 1):
         for sz in (0.0, 0.5):
-            body.box((sx * (w / 2 - 0.15), 0.4, sz), (0.06, 0.8, 0.06), J(P["wood2"], 0.05))
-    # шесты и навес
+            body.box((sx * (w / 2 - 0.15), 0.4, sz), (0.06, 0.8, 0.06), J(P["wood2"], 0.05), mat=M_WOOD)
+    body.box((0, 0.3, 0.25), (w - 0.3, 0.04, 0.5), J(P["wood2"], 0.06), mat=M_WOOD)
+    Pt = lambda u, v, n: Vector((x0 + u, v, 0.565 + n))
+    drape(body, Pt, Zv, w / 2, 0.85, w - 0.12, 0.42, 0.0, cols[0], folds=7, amp=0.012)
+    # шесты, перекладины, навес
     hb, hf = 2.15, 1.85
     for (xx, zz, hh) in ((x0 + 0.05, z0 + 0.05, hb), (x1 - 0.05, z0 + 0.05, hb), (x0 + 0.05, z1 + 0.15, hf), (x1 - 0.05, z1 + 0.15, hf)):
-        body.box((xx, hh / 2, zz), (0.05, hh, 0.05), J(P["wood"], 0.05))
-    nu, nd = 6, 3
-    grid = {}
-    for i in range(nu + 1):
-        for j in range(nd + 1):
-            u = x0 - 0.05 + (w + 0.1) * i / nu
-            dz = z0 - 0.02 + (d + 0.3) * j / nd
-            sag = 0.05 * math.sin(math.pi * i / nu) * math.sin(math.pi * j / nd)
-            grid[(i, j)] = body.v((u, hb + 0.05 - (hb - hf) * j / nd - sag, dz))
-    for i in range(nu):
-        cc = col(cols[i % 2], rng.uniform(-0.04, 0.04))
-        for j in range(nd):
-            q = [grid[(i, j)], grid[(i + 1, j)], grid[(i + 1, j + 1)], grid[(i, j + 1)]]
-            body.face(q, cc, ("dir", (0, 1, 0)))
-            body.face(q[::-1], col_shift(cc, -0.25), ("dir", (0, -1, 0)))
-    for i in range(nu):                # бахрома
-        u0, u1 = x0 - 0.05 + (w + 0.1) * i / nu, x0 - 0.05 + (w + 0.1) * (i + 1) / nu
-        a, b = body.v((u0, hf + 0.05, z1 + 0.28)), body.v((u1, hf + 0.05, z1 + 0.28))
-        m = body.v(((u0 + u1) / 2, hf - 0.07, z1 + 0.28))
-        body.face([a, b, m], col(cols[i % 2], -0.05), ("dir", (0, 0, 1)))
-        body.face([b, a, m], col(cols[i % 2], -0.3), ("dir", (0, 0, -1)))
-    # товар
-    goods = {"fruit": ["#e8862e", "#d9534f", "#e3c84a", "#5a2d5f", "#9ac04a"], "veg": ["#4f8a3a", "#e8862e", "#7fa040", "#b0473a", "#e8e0c0"],
-             "fish": ["#c9d2da", "#aab4be", "#d9dfe5"]}[kind]
-    for k in range(4):
-        cx = x0 + 0.35 + k * (w - 0.7) / 3
-        if kind == "fish":
-            body.box((cx, 0.87, 0.25), (0.5, 0.05, 0.46), J("#7a5232", 0.06))
-            body.box((cx, 0.9, 0.25), (0.46, 0.01, 0.42), col("#e6eef2"))
-            for j in range(6):
-                body.lathe((cx - 0.19 + j * 0.075, 0.92, 0.25), [(0.0, -0.15), (0.035, -0.08), (0.03, 0.1), (0.0, 0.16)], 5, J(rng.choice(goods), 0.06))
+        body.box((xx, hh / 2, zz), (0.06, hh, 0.06), J(P["wood"], 0.05), mat=M_WOOD)
+    body.box((0, hf - 0.05, z1 + 0.15), (w, 0.05, 0.05), J(P["wood"], 0.05), mat=M_WOOD)
+    body.box((0, hb - 0.05, z0 + 0.05), (w, 0.05, 0.05), J(P["wood"], 0.05), mat=M_WOOD)
+    Pa = lambda u, v, n: Vector((x0 - 0.05 + u, v, z0 - 0.02 + n))
+    awning(body, Pa, Xv, Zv, (w + 0.1) / 2, hb + 0.06, w + 0.1, d + 0.2, cols, poles=False, drop=(hb - hf) / (d + 0.2), braces=False)
+    # вывеска на цепочках у левого края перекладины
+    sx_ = x0 + 0.45
+    yb = hf - 0.3
+    for s in (-1, 1):
+        rod(body, (sx_ + s * 0.2, hf - 0.07, z1 + 0.15), (sx_ + s * 0.2, yb + 0.17, z1 + 0.15), 0.007, col(IRON))
+    body.box((sx_, yb, z1 + 0.15), (0.5, 0.36, 0.025), J("#6b4428", 0.05), mat=M_WOOD)
+    Ps = lambda u, v, n: Vector((u, v, z1 + 0.15 + n))
+    sign_board(body, Ps, Xv, Zv, sx_, yb, 0.45, 0.3, 0.014, kind)
+    Pb = lambda u, v, n: Vector((-u, v, z1 + 0.15 - n))
+    sign_board(body, Pb, -Xv, -Zv, -sx_, yb, 0.45, 0.3, 0.014, kind)
+    # связки на перекладине
+    hx = [0.05, 0.4, 0.75]
+    for k, xx in enumerate(hx):
+        hk = (xx, hf - 0.075, z1 + 0.15)
+        if kind == "fruit":
+            grapes(body, it_hook(body, hk, 0.06 + 0.03 * (k % 2)), 1.4, "#5a2d5f" if k != 1 else "#8fa04a")
+        elif kind == "veg":
+            (garlic_braid(body, hk, 6) if k != 1 else herb_bundle(body, hk, "#5f8f3a"))
         else:
-            basket(body, (cx, 0.845, 0.25), 0.2, 0.13)
-            gc = goods[k % len(goods)]
-            for j in range(11):
-                leaf_blob(body, (cx + rng.uniform(-0.12, 0.12), 0.99 + rng.uniform(0, 0.08), 0.25 + rng.uniform(-0.12, 0.12)), 0.055, J(gc, 0.08))
-    for k in range(3):                 # ящики и мешки позади (у торговца свой закуток — как у прежнего прилавка)
-        body.box((x0 + 0.4 + k * 0.42, 0.18 + (0.36 if k == 1 else 0.0), z0 - 0.3), (0.38, 0.34, 0.3), J(P["wood"], 0.1))
-    for k in range(2):
-        body.lathe((x1 - 0.35 - k * 0.32, 0.0, z0 - 0.35), [(0.13, 0), (0.16, 0.16), (0.13, 0.32), (0.06, 0.38)], 8, J("#d8c49a", 0.06), close_top=True)
-    if kind != "fish":
-        basket(body, (x1 + 0.2, 0.0, 0.5), 0.17, 0.26)
+            top = it_hook(body, hk, 0.04)
+            Rh = Matrix.Rotation(math.pi / 2, 3, "Y") @ Matrix.Rotation(-math.pi / 2, 3, "Z")
+            fish(body, tuple(top + Vector((0, -0.16, 0))), Rh, 0.24, "#a8a080")
+    # товар на столе
+    y = 0.845
+    zc = 0.22
+    if kind == "fish":
+        for k, cx in enumerate((x0 + 0.45, -0.1, x1 - 0.5)):
+            body.box((cx, y + 0.03, zc), (0.62, 0.06, 0.48), J("#7a5232", 0.06), mat=M_WOOD)
+            body.box((cx, y + 0.062, zc), (0.58, 0.012, 0.44), col("#e6f0f2"))
+            for j in range(9):                 # колотый лёд
+                body.box((cx + rng.uniform(-0.26, 0.26), y + 0.07, zc + rng.uniform(-0.19, 0.19)), (0.03, 0.02, 0.03), col("#f4fbfc"),
+                         Matrix.Rotation(rng.uniform(0, 3), 3, "Y"))
+            if k == 1:
+                octopus(body, (cx, y + 0.068, zc), I3)
+                for j in range(3):
+                    fish(body, (cx + (j - 1) * 0.16, y + 0.068, zc + 0.15), I3, 0.18, "#c9605a", math.pi / 2 + 0.2 * j)
+            else:
+                for j in range(5):
+                    fish(body, (cx - 0.2 + j * 0.1, y + 0.068, zc), I3, 0.3 if k == 0 else 0.24, ["#9aa6b2", "#a8b0a0", "#8a96a6"][j % 3],
+                         math.pi / 2 + rng.uniform(-0.15, 0.15))
+        scales(body, (x1 - 0.2, y, zc - 0.22), I3, 0.7)
+        knife(body, (x0 + 0.85, y, zc + 0.27), I3, 0.3)
+        bucket(body, (x1 + 0.22, 0.0, 0.45), 0.12, 0.22)
+        crate(body, (x0 - 0.2, 0.0, 0.4), I3, 0.34, 0.24, 0.3)
+        for j in range(4):
+            body.box((x0 - 0.2 + rng.uniform(-0.1, 0.1), 0.25, 0.4 + rng.uniform(-0.08, 0.08)), (0.04, 0.03, 0.04), col("#f4fbfc"))
     else:
-        amphora(body, (x1 + 0.2, 0.0, 0.4), 0.55, J("#b5703f", 0.08))
+        conts = (["apple", "pear", "pom", "fig"] if kind == "fruit" else ["cabbage", "onion", "turnip", "carrot"])
+        for k, cx in enumerate((x0 + 0.42, x0 + 0.95, x1 - 0.85, x1 - 0.35)):
+            kd = conts[k]
+            if k % 2 == 0:
+                crate(body, (cx, y, zc), I3, 0.42, 0.14, 0.36)
+                if kd == "carrot":
+                    for j in range(14):
+                        a = Vector((cx - 0.15 + (j % 7) * 0.05, y + 0.15 + (j // 7) * 0.03, zc - 0.12 + (j // 7) * 0.1))
+                        carrot(body, a, a + Vector((0.02, 0.0, 0.2)))
+                elif kd == "cabbage":
+                    for j in range(4):
+                        fruit(body, (cx + (j % 2 - 0.5) * 0.19, y + 0.1, zc + (j // 2 - 0.5) * 0.16), "cabbage", 1.2)
+                else:
+                    heap(body, (cx, y + 0.12, zc), 0.17, kd, 1.35)
+            else:
+                basket2(body, (cx, y, zc), 0.19, 0.14)
+                if kd == "carrot":             # морковь веером из корзины
+                    for j in range(12):
+                        a = 2 * math.pi * j / 12
+                        p0 = Vector((cx + math.cos(a) * 0.05, y + 0.16, zc + math.sin(a) * 0.05))
+                        carrot(body, p0, p0 + Vector((math.cos(a) * 0.12, -0.04, math.sin(a) * 0.12)))
+                else:
+                    heap(body, (cx, y + 0.11, zc), 0.16, kd, 1.35)
+        if kind == "fruit":
+            for j in range(2):
+                fruit(body, (0.0 + (j - 0.5) * 0.2, y, zc + 0.24), "melon", 1.0)
+            board(body, (x1 - 0.6, y, zc - 0.22), I3, 0.3, 0.16)
+            grapes(body, (x1 - 0.6, y + 0.12, zc - 0.22), 1.3)
+        else:
+            for j in range(5):                 # пучок лука-порея
+                leek(body, (x0 + 0.2 + j * 0.03, y + 0.03, zc + 0.27), (x0 + 0.62 + j * 0.03, y + 0.05, zc + 0.2))
+        scales(body, (0.0, y, zc - 0.25), I3, 0.7)
+        basket2(body, (x1 + 0.22, 0.0, 0.5), 0.17, 0.22)
+        heap(body, (x1 + 0.22, 0.2, 0.5), 0.15, conts[0], 1.3)
+        basket2(body, (x0 - 0.02, 0.0, 0.62), 0.15, 0.2)
+        heap(body, (x0 - 0.02, 0.18, 0.62), 0.13, conts[2] if kind == "fruit" else "onion", 1.3)
+        crate(body, (x1 + 0.12, 0.0, 0.05), I3, 0.36, 0.26, 0.3)
+        heap(body, (x1 + 0.12, 0.24, 0.05), 0.13, conts[1], 1.3)
+    # дощечка с ценой
+    body.box((x1 - 0.25, y + 0.1, zc + 0.29), (0.2, 0.14, 0.015), col("#2f3330"), Matrix.Rotation(-0.25, 3, "X"))
+    body.box((x1 - 0.25, y + 0.1, zc + 0.298), (0.12, 0.012, 0.002), col("#e8e8e0"), Matrix.Rotation(-0.25, 3, "X"))
+    # позади — запас: ящики и мешки (у торговца свой закуток — как у прежнего прилавка)
+    for k in range(3):
+        crate(body, (x0 + 0.4 + k * 0.42, 0.0 + (0.34 if k == 1 else 0.0), z0 - 0.3), I3, 0.38, 0.32, 0.3)
+    crate(body, (x0 + 0.4 + 0.42, 0.0, z0 - 0.3), I3, 0.38, 0.32, 0.3)
+    for k in range(2):
+        sack(body, (x1 - 0.35 - k * 0.32, 0.0, z0 - 0.35), 0.15, 0.38, open_=False)
     body.obj(coll)
+    if not emb.empty():
+        emb.obj(coll)
     DOOR_PT[0], DOOR_PT[2] = 0.0, z1 + 0.85
     FP.append([x0 - 0.15, z0 - 0.6, w + 0.4, d + 1.05])
     ACTORS.append([0.0, 0.0, z0 + 0.25, 0.0, "Idle", "any"])
@@ -1840,18 +3038,18 @@ def build_house():
         y = PL + f * FLH
         interior(inner, emb, x0 + T, x1 - T, z0 + T, z1 - T, y, f)
         if f > 0:
-            body.box((0, y - 0.07, 0), (W - 2 * T + 0.02, 0.1, D - 2 * T + 0.02), col(P["wood2"], -0.2))
+            body.box((0, y - 0.07, 0), (W - 2 * T + 0.02, 0.1, D - 2 * T + 0.02), col(P["wood2"], -0.2), mat=M_WOOD)
             nb = int(W / 0.5)
             for k in range(nb):
                 bx = x0 + 0.3 + (W - 0.6) * k / max(1, nb - 1)
                 if any(o[0] - 0.08 < bx - x0 < o[1] + 0.08 and o[2] - 0.2 < y < o[3] + 0.2 for o in front_open):
                     continue
-                body.box((bx, y - 0.1, z1 + 0.05), (0.11, 0.11, 0.14), J(P["wood"], 0.1), cols={"pz": J(P["wood2"], 0.1)})
+                body.box((bx, y - 0.1, z1 + 0.05), (0.11, 0.11, 0.14), J(P["wood"], 0.1), cols={"pz": J(P["wood2"], 0.1)}, mat=M_WOOD)
             for name, (O, U, N, Ln) in walls_def.items():
                 Pf = Ps[name][0]
                 ext = T if name in ("left", "right") else 0.0
                 body.box(Pw(Pf, Ln / 2, y + 0.03, 0.025), (Ln + 2 * ext + 0.06, 0.06, 0.05), J(P["trim"], 0.04), RW(U, N))
-    body.box((0, PL - 0.02, 0), (W - 0.02, 0.06, D - 0.02), col(P["wood2"], -0.3))
+    body.box((0, PL - 0.02, 0), (W - 0.02, 0.06, D - 0.02), col(P["wood2"], -0.3), mat=M_WOOD)
     use("g")
     for name, (O, U, N, Ln) in walls_def.items():
         Pf = Ps[name][0]
@@ -1899,11 +3097,11 @@ def build_house():
         if DS.get("chair"):
             # цирюльня: кресло у входа, в нём клиент (второй «при деле»)
             chx = x0 + shop_u[1] - 0.35
-            body.box((chx, PL + 0.25, z1 - 0.45), (0.42, 0.06, 0.4), J(P["wood"], 0.06))
-            body.box((chx, PL + 0.55, z1 - 0.66), (0.42, 0.55, 0.05), J(P["wood"], 0.06))
+            body.box((chx, PL + 0.25, z1 - 0.45), (0.42, 0.06, 0.4), J(P["wood"], 0.06), mat=M_WOOD)
+            body.box((chx, PL + 0.55, z1 - 0.66), (0.42, 0.55, 0.05), J(P["wood"], 0.06), mat=M_WOOD)
             for sx in (-1, 1):
                 for sz in (-1, 1):
-                    body.box((chx + sx * 0.17, PL + 0.12, z1 - 0.45 + sz * 0.16), (0.04, 0.24, 0.04), J(P["wood2"], 0.05))
+                    body.box((chx + sx * 0.17, PL + 0.12, z1 - 0.45 + sz * 0.16), (0.04, 0.24, 0.04), J(P["wood2"], 0.05), mat=M_WOOD)
             ACTORS[-1] = [round(chx + 0.45, 3), 0.0, round(z1 - 0.4, 3), -math.pi / 2, "Interact", "any"]
             ACTORS.append([round(chx, 3), 0.0, round(z1 - 0.42, 3), 0.0, "Sitting_Idle", "pleb"])
     door_mid = (door_u[0] + door_u[1]) / 2
@@ -1926,21 +3124,21 @@ def build_house():
         dep = 0.62
         for k in range(4):
             uu = u0 + 0.06 + (u1 - u0 - 0.12) * k / 3
-            body.box(Pw(Pf, uu, y - 0.06, dep / 2), (0.09, 0.1, dep + 0.1), J(P["wood"], 0.08), R)
+            body.box(Pw(Pf, uu, y - 0.06, dep / 2), (0.09, 0.1, dep + 0.1), J(P["wood"], 0.08), R, mat=M_WOOD)
         nbp = int((u1 - u0) / 0.12)
         for k in range(nbp):
             uu = u0 + (u1 - u0) * (k + 0.5) / nbp
-            body.box(Pw(Pf, uu, y + 0.01, dep / 2), ((u1 - u0) / nbp - 0.008, 0.035, dep), J(P["wood"], 0.12, 0.01, 0.1), R)
+            body.box(Pw(Pf, uu, y + 0.01, dep / 2), ((u1 - u0) / nbp - 0.008, 0.035, dep), J(P["wood"], 0.12, 0.01, 0.1), R, mat=M_WOOD)
         nr = int((u1 - u0) / 0.13)
         for k in range(nr + 1):
             uu = u0 + 0.02 + (u1 - u0 - 0.04) * k / nr
-            body.box(Pw(Pf, uu, y + 0.3, dep - 0.03), (0.03, 0.55, 0.03), J(P["wood2"], 0.06), R)
-        body.box(Pw(Pf, (u0 + u1) / 2, y + 0.58, dep - 0.03), (u1 - u0 + 0.04, 0.05, 0.06), J(P["wood"], 0.06), R)
+            body.box(Pw(Pf, uu, y + 0.3, dep - 0.03), (0.03, 0.55, 0.03), J(P["wood2"], 0.06), R, mat=M_WOOD)
+        body.box(Pw(Pf, (u0 + u1) / 2, y + 0.58, dep - 0.03), (u1 - u0 + 0.04, 0.05, 0.06), J(P["wood"], 0.06), R, mat=M_WOOD)
         for s_ in (-1, 1):
             uu = u0 + 0.02 if s_ < 0 else u1 - 0.02
             for k in range(4):
-                body.box(Pw(Pf, uu, y + 0.3, 0.06 + (dep - 0.12) * k / 3), (0.03, 0.55, 0.03), J(P["wood2"], 0.06), R)
-            body.box(Pw(Pf, uu, y + 0.58, dep / 2), (0.05, 0.05, dep), J(P["wood"], 0.06), R)
+                body.box(Pw(Pf, uu, y + 0.3, 0.06 + (dep - 0.12) * k / 3), (0.03, 0.55, 0.03), J(P["wood2"], 0.06), R, mat=M_WOOD)
+            body.box(Pw(Pf, uu, y + 0.58, dep / 2), (0.05, 0.05, dep), J(P["wood"], 0.06), R, mat=M_WOOD)
         for k in range(2):
             pot(body, Pw(Pf, u0 + 0.2 + k * 0.32, y + 0.03, dep - 0.2), 0.22, J("#b8693f", 0.08))
         for k in range(5):
@@ -2001,7 +3199,7 @@ def build_house():
         amphora(body, Pw(Pf, uu + 0.24, 0.0, 0.2), 0.5, J("#b5703f", 0.08))
     if "broom" in props:
         bp_ = Pw(Pf, door_u[1] + 0.2 if left else door_u[0] - 0.2, 0.0, 0.12)
-        body.box((bp_[0], 0.55, bp_[2]), (0.025, 1.0, 0.025), J(P["wood"], 0.05), Matrix.Rotation(0.12, 3, "Z"))
+        body.box((bp_[0], 0.55, bp_[2]), (0.025, 1.0, 0.025), J(P["wood"], 0.05), Matrix.Rotation(0.12, 3, "Z"), mat=M_WOOD)
         body.lathe((bp_[0] - 0.02, 0.02, bp_[2]), [(0.09, 0), (0.06, 0.18), (0.02, 0.26)], 6, J("#c9a46e", 0.06))
     Pl, Ul, Nl = Ps["left"]
     if "firewood" in props:
@@ -2190,6 +3388,13 @@ def preview(path, y_ridge):
     scn.render.filepath = path
     m2 = bpy.data.materials.get("CivPlaster")
     bpy.ops.render.render(write_still=True)
+    if ARGS.get("close", "0") == "1":
+        # крупный план витрины: лавка, прилавок, вывеска (для проверки мелочей)
+        tgt = Vector((0.0, -D / 2 - 0.2, 1.05)) if KIND != "stall" else Vector((0.0, 0.0, 1.0))
+        cam.location = tgt + Vector((1.5, -3.3, 1.25)) * float(ARGS.get("zoom", "1.0"))
+        cam.rotation_euler = (tgt - cam.location).to_track_quat("-Z", "Y").to_euler()
+        scn.render.filepath = path.replace(".png", "_c.png")
+        bpy.ops.render.render(write_still=True)
 
 
 def plaster_for_export(on):
@@ -2206,7 +3411,7 @@ def plaster_for_export(on):
 
 
 def main():
-    global MAT_KIT, MAT_PLASTER, MAT_EMBER
+    global MAT_KIT, MAT_PLASTER, MAT_EMBER, MAT_WOOD, MAT_CLOTH, MAT_SIGN
     os.makedirs(OUT_DIR, exist_ok=True)
     meta_path = os.path.join(OUT_DIR, "kit.json")
     meta = {"houses": {}, "common": []}
@@ -2217,6 +3422,9 @@ def main():
     MAT_KIT = make_mat("CivKit", 0.85)
     MAT_PLASTER = make_plaster_mat()
     MAT_EMBER = make_mat("CivEmber", 0.5, emit=(1.0, 0.45, 0.1, 1.0))
+    MAT_WOOD = make_tex_mat("CivWood", "wood_mul.png", 0.8)
+    MAT_CLOTH = make_tex_mat("CivCloth", "cloth_mul.png", 0.95)
+    MAT_SIGN = make_tex_mat("CivSign", "signs.png", 0.8)
     jobs = []
     if "pleb" in KINDS:
         for v in range(5):

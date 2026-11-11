@@ -321,11 +321,14 @@ func _new() -> void:
 	check(mk == ready.size() + (c.upgrade_ready(false).size() - ready.size()), "над готовыми домами — стрелки с ценой (%d)" % mk)
 	var ev0 := c.events.size()
 	game.floor_drag = true
-	for id in ready.slice(0, 2):
+	# мазок — по двум другим готовым домам: дом №id3 (ремесленников) проверяется дальше после загрузки (с лавками шире —
+	# 11.11 — он и сам уже годится в домус)
+	var stroke: Array = ready.filter(func(x): return int(x) != id3).slice(0, 2)
+	for id in stroke:
 		game._floor_buy(c.buildings[id])
 	game._floor_end()
 	var last := String(c.events[-1]["text"]) if c.events.size() > ev0 else ""
-	check(ready.size() < 2 or (c.events.size() == ev0 + 1 and last.contains("Перестроили 2 дома")), "мазок: одна строка в колокольчик «%s»" % last)
+	check(stroke.size() < 2 or (c.events.size() == ev0 + 1 and last.contains("Перестроили 2 дома")), "мазок: одна строка в колокольчик «%s»" % last)
 	# «Перестроить» и кисть дорог «Улучшить» — разные инструменты (проверка 26.10: оба звались "upgrade" — щелчок
 	# «Перестроить» вёл мазок по мостовой, а с «Улучшить» в руках курсор показывал перестройку домов)
 	check(not game.is_road_tool("upgrade") and game.is_road_tool("roadup") and game.is_deco_tool("roadup"), "«Перестроить» — не кисть дорог, «Улучшить» — кисть")
