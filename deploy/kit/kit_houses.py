@@ -1138,11 +1138,18 @@ def lean_to(body, x0, x1, z_wall, depth, y_top, y_low):
             body.box((x0 + 0.25 + k * 0.5, 0.015, z_wall - 0.22 - j * 0.45), (0.46, 0.03, 0.41), J(P["stone"], 0.1, 0.01, 0.15), skip=("bot",))
 
 
+CRAFT_KEYS = {0: "cloth", 1: "pots", 2: "copper", 3: "grain"}
+
+
 def craft_goods(body, emb, P_, U, N, u0, u1, craft, y_top):
-    """товар ремесла на прилавке и под ним; craft: 0 ткач, 1 гончар, 2 медник, 3 зерно"""
+    """товар ремесла на прилавке и под ним; craft: 0 ткач, 1 гончар, 2 медник, 3 зерно или ключ лавки"""
     R = RW(U, N)
     span = u1 - u0
-    if craft == 0:
+    craft = CRAFT_KEYS.get(craft, craft)
+    if craft in TRADE_GOODS:
+        TRADE_GOODS[craft](body, emb, P_, U, N, u0, u1, y_top)
+        return
+    if craft == "cloth":
         cols = ["#b5452f", "#3f6fa8", "#e1b84a", "#4f8a5a", "#8a4f9a", "#efe3c8"]
         for k in range(5):
             uu = u0 + 0.12 + k * (span - 0.24) / 4
@@ -1151,7 +1158,7 @@ def craft_goods(body, emb, P_, U, N, u0, u1, craft, y_top):
         for k in range(4):            # полотнища с балки
             uu = u0 + 0.15 + k * (span - 0.3) / 3
             body.box(Pw(P_, uu, PL + 1.35, 0.06), (0.22, 0.5, 0.012), J(cols[(k + 2) % len(cols)], 0.06), R)
-    elif craft == 1:
+    elif craft == "pots":
         for k in range(4):
             uu = u0 + 0.12 + k * (span - 0.24) / 3
             amphora(body, Pw(P_, uu, y_top, 0.08), 0.32 + 0.06 * (k % 2), J(rng.choice(["#c27a4a", "#b5703f", "#d08a55"]), 0.06))
@@ -1159,7 +1166,7 @@ def craft_goods(body, emb, P_, U, N, u0, u1, craft, y_top):
             amphora(body, Pw(P_, u0 - 0.25 + k * 0.22 if u0 > 0.6 else u1 + 0.2 + k * 0.22, 0.0, 0.35), 0.5, J("#c27a4a", 0.08))
         for k in range(3):
             body.lathe(Pw(P_, u0 + span * 0.5 + (k - 1) * 0.15, y_top + 0.002, 0.18), [(0.05, 0), (0.09, 0.04)], 8, J("#d9a56a", 0.06))
-    elif craft == 2:
+    elif craft == "copper":
         for k in range(5):            # медные котлы и сковороды на балке
             uu = u0 + 0.12 + k * (span - 0.24) / 4
             c = Vector(Pw(P_, uu, PL + 1.38, 0.08))
@@ -1194,7 +1201,7 @@ def shopfront(body, emb, P_, U, N, side, u0, u1, craft, top):
     su = u1 + 0.18 if u1 < W - 0.4 else u0 - 0.18
     body.box(Pw(P_, su, top + 0.28, 0.25), (0.04, 0.04, 0.5), J(P["wood2"], 0.05), R)
     body.box(Pw(P_, su, top + 0.06, 0.42), (0.03, 0.34, 0.3), J(P["trim"], 0.05), R @ Matrix.Rotation(math.pi / 2, 3, "Y"))
-    sym = {0: "#3f6fa8", 1: "#c27a4a", 2: "#b0703a", 3: "#e3b84a"}[craft]
+    sym = SIGN_COL.get(CRAFT_KEYS.get(craft, craft), "#b5452f")
     for sgn in (-1, 1):
         body.lathe(Pw(P_, su + sgn * 0.017, top + 0.0, 0.42), [(0.0, 0.0), (0.07, 0.04), (0.06, 0.12), (0.02, 0.17)], 6, col(sym))
     block(side, P_, U, u0 - 0.1, u1 + 0.45, PL, top + 0.6)
@@ -1202,7 +1209,11 @@ def shopfront(body, emb, P_, U, N, side, u0, u1, craft, top):
 
 def yard_props(body, emb, x0, x1, zb, z_wall, craft):
     zc = (zb + z_wall) / 2
-    if craft == 0:          # ткацкий станок и корзины шерсти
+    craft = {0: "loom", 1: "kiln", 2: "anvil", 3: "mill"}.get(craft, craft)
+    if craft in TRADE_YARDS:
+        TRADE_YARDS[craft](body, emb, x0, x1, zb, z_wall, zc)
+        return
+    if craft == "loom":     # ткацкий станок и корзины шерсти
         for xx in (-0.45, 0.45):
             body.box((xx, 0.6, zc), (0.06, 1.2, 0.06), J(P["wood"], 0.05))
         body.box((0, 1.15, zc), (1.0, 0.06, 0.06), J(P["wood"], 0.05))
@@ -1211,7 +1222,7 @@ def yard_props(body, emb, x0, x1, zb, z_wall, craft):
             body.box((-0.42 + k * 0.065, 0.75, zc), (0.012, 0.78, 0.012), J(rng.choice(["#b5452f", "#3f6fa8", "#e1b84a", "#efe3c8"]), 0.05))
         for k in range(2):
             basket(body, (x1 - 0.35 - k * 0.35, 0.0, zc + 0.1), 0.15, 0.24)
-    elif craft == 1:        # печь для обжига (угольки в устье) и вазы
+    elif craft == "kiln":   # печь для обжига (угольки в устье) и вазы
         kx = x0 + 0.65
         body.lathe((kx, 0.0, zc), [(0.42, 0.0), (0.44, 0.4), (0.36, 0.75), (0.2, 0.95), (0.08, 1.02)], 10, J("#b07a52", 0.06), close_top=True)
         body.box((kx, 0.22, zc + 0.36), (0.26, 0.3, 0.14), col("#2a2018"))
@@ -1220,7 +1231,7 @@ def yard_props(body, emb, x0, x1, zb, z_wall, craft):
         SMOKE.append([kx, 1.1, zc])
         for k in range(4):
             amphora(body, (x1 - 0.3 - k * 0.24, 0.0, zc - 0.1 + (k % 2) * 0.2), 0.45, J("#c27a4a", 0.08))
-    elif craft == 2:        # наковальня, точило, бочка
+    elif craft == "anvil":  # наковальня, точило, бочка
         body.box((-0.2, 0.25, zc), (0.22, 0.5, 0.22), J("#6b5039", 0.06))
         body.box((-0.2, 0.55, zc), (0.4, 0.12, 0.16), col("#3a3a3c"))
         body.lathe((0.6, 0.0, zc), [(0.16, 0.0), (0.18, 0.25), (0.16, 0.5)], 10, J(P["wood"], 0.06), close_top=True)
@@ -1229,6 +1240,316 @@ def yard_props(body, emb, x0, x1, zb, z_wall, craft):
         body.lathe((0.0, 0.0, zc), [(0.3, 0.0), (0.28, 0.3), (0.12, 0.6), (0.18, 0.85)], 10, J(P["stone"], 0.06), close_top=True)
         for k in range(3):
             body.lathe((x1 - 0.3 - k * 0.3, 0.0, zc), [(0.12, 0), (0.15, 0.15), (0.12, 0.3), (0.06, 0.36)], 8, J("#d8c49a", 0.06), close_top=True)
+
+
+# ---------------- товар и дворы лавок ----------------
+SIGN_COL = {"cloth": "#3f6fa8", "pots": "#c27a4a", "copper": "#b0703a", "grain": "#e3b84a", "meat": "#9a2f28",
+            "bread": "#c98a3c", "shoes": "#5a3a22", "dye": "#8a3f9a", "togas": "#efe3c8", "oil": "#7f8f3a", "lamps": "#c9a14a",
+            "wine": "#6a2848", "perfume": "#d98fb0", "jewel": "#d9b54a", "barber": "#4f78a8", "medic": "#4f8a5a",
+            "thermo": "#b5452f"}
+
+
+def g_meat(body, emb, P_, U, N, u0, u1, y):
+    R = RW(U, N)
+    for k in range(5):                 # окорока и колбасы на балке
+        uu = u0 + 0.12 + k * (u1 - u0 - 0.24) / 4
+        c = Vector(Pw(P_, uu, PL + 1.42, 0.06))
+        body.box((c.x, c.y + 0.07, c.z), (0.01, 0.14, 0.01), col("#3a332c"))
+        if k % 2 == 0:
+            body.lathe((c.x, c.y - 0.28, c.z), [(0.02, 0.0), (0.08, 0.06), (0.1, 0.16), (0.05, 0.26)], 7, J("#7a2e22", 0.1))
+        else:
+            for j in range(3):
+                body.lathe((c.x + (j - 1) * 0.04, c.y - 0.3, c.z), [(0.02, 0.0), (0.025, 0.28)], 5, J("#8c3a28", 0.1), close_top=True)
+    body.box(Pw(P_, u0 + 0.25, y + 0.08, 0.12), (0.3, 0.16, 0.26), J("#8a6a4a", 0.06), R)        # колода и тесак
+    body.box(Pw(P_, u0 + 0.25, y + 0.17, 0.12), (0.18, 0.01, 0.06), col("#9aa0a6"), R)
+    for k in range(3):
+        leaf_blob(body, Pw(P_, u0 + 0.6 + k * 0.22, y + 0.05, 0.12), 0.07, J("#b0473a", 0.1))
+
+
+def g_bread(body, emb, P_, U, N, u0, u1, y):
+    for k in range(9):                 # круглые хлеба горкой
+        uu = u0 + 0.12 + (k % 5) * (u1 - u0 - 0.24) / 4
+        body.lathe(Pw(P_, uu, y + (0.07 if k >= 5 else 0.0), 0.1 + (0.0 if k < 5 else 0.05)), [(0.08, 0.0), (0.09, 0.03), (0.06, 0.07), (0.0, 0.08)], 8, J("#b9773a", 0.12))
+    basket(body, Pw(P_, u1 + 0.3 if u1 < W - 0.7 else u0 - 0.3, 0.0, 0.35), 0.16, 0.24)
+
+
+def g_shoes(body, emb, P_, U, N, u0, u1, y):
+    R = RW(U, N)
+    for k in range(6):
+        uu = u0 + 0.12 + k * (u1 - u0 - 0.24) / 5
+        for s_ in (-1, 1):
+            body.box(Pw(P_, uu + s_ * 0.035, y + 0.03, 0.1), (0.05, 0.05, 0.13), J(rng.choice(["#5a3a22", "#7a5232", "#3a2a1e"]), 0.1), R)
+    for k in range(2):                 # кожи на балке
+        uu = u0 + 0.25 + k * (u1 - u0 - 0.5)
+        body.box(Pw(P_, uu, PL + 1.2, 0.05), (0.42, 0.5, 0.01), J("#a4744a", 0.1), R)
+
+
+def g_dye(body, emb, P_, U, N, u0, u1, y):
+    cols = ["#9a2f28", "#2f4f8f", "#d9a02a", "#6a2f8a", "#3f7f4a"]
+    R = RW(U, N)
+    for k in range(5):
+        uu = u0 + 0.12 + k * (u1 - u0 - 0.24) / 4
+        body.lathe(Pw(P_, uu, y, 0.12), [(0.06, 0.0), (0.07, 0.1), (0.05, 0.14)], 8, J(cols[k], 0.06), close_top=True)
+        body.box(Pw(P_, uu, PL + 1.15, 0.05), (0.2, 0.55, 0.01), J(cols[(k + 2) % 5], 0.06), R)
+
+
+def g_togas(body, emb, P_, U, N, u0, u1, y):
+    R = RW(U, N)
+    for k in range(3):                 # тоги и туники на стойках
+        uu = u0 + 0.2 + k * (u1 - u0 - 0.4) / 2
+        body.box(Pw(P_, uu, y + 0.35, 0.14), (0.02, 0.7, 0.02), J(P["wood2"], 0.05), R)
+        body.box(Pw(P_, uu, y + 0.42, 0.14), (0.3, 0.5, 0.06), J(["#f2ece0", "#efe3c8", "#e8e0d0"][k], 0.03), R)
+        if k == 1:
+            body.box(Pw(P_, uu, y + 0.42, 0.18), (0.05, 0.5, 0.01), col("#6a2f8a"), R)       # пурпурная полоса
+    for k in range(3):
+        body.lathe(Pw(P_, u1 - 0.1 - k * 0.12, y, 0.1), [(0.05, 0.0), (0.05, 0.2)], 8, J(["#b5452f", "#3f6fa8", "#e1b84a"][k], 0.05), close_top=True)
+
+
+def g_oil(body, emb, P_, U, N, u0, u1, y):
+    for k in range(3):                 # долии в прилавке и амфоры
+        uu = u0 + 0.18 + k * (u1 - u0 - 0.36) / 2
+        c = Vector(Pw(P_, uu, y - 0.02, 0.06))
+        body.lathe((c.x, c.y, c.z), [(0.11, 0.0), (0.11, 0.02)], 10, col("#3a2a1a"), close_top=True)
+        body.lathe((c.x, c.y, c.z), [(0.13, 0.0), (0.13, 0.03)], 10, J("#c27a4a", 0.06))
+    for k in range(4):
+        amphora(body, Pw(P_, u1 + 0.2 + k * 0.2 if u1 < W - 1.0 else u0 - 0.2 - k * 0.2, 0.0, 0.3), 0.5, J("#b5703f", 0.08))
+    basket(body, Pw(P_, (u0 + u1) / 2, y, 0.16), 0.1, 0.12)
+
+
+def g_lamps(body, emb, P_, U, N, u0, u1, y):
+    for k in range(8):                 # глиняные светильники рядами
+        uu = u0 + 0.1 + (k % 4) * (u1 - u0 - 0.2) / 3
+        c = Vector(Pw(P_, uu, y + (0.0 if k < 4 else 0.0), 0.05 + (0.0 if k < 4 else 0.14)))
+        body.lathe((c.x, c.y, c.z), [(0.04, 0.0), (0.05, 0.02), (0.02, 0.035)], 7, J(rng.choice(["#c27a4a", "#b08a5a", "#9a6a3a"]), 0.08))
+    for k in range(3):                 # бронзовые висячие, с огоньком
+        uu = u0 + 0.2 + k * (u1 - u0 - 0.4) / 2
+        c = Vector(Pw(P_, uu, PL + 1.3, 0.1))
+        body.box((c.x, c.y + 0.12, c.z), (0.008, 0.24, 0.008), col("#3a332c"))
+        body.lathe((c.x, c.y - 0.03, c.z), [(0.02, 0.0), (0.06, 0.03), (0.04, 0.05)], 7, J("#b08a3a", 0.06))
+        leaf_blob(emb, (c.x, c.y + 0.04, c.z + 0.05), 0.018, col("#ffb03a"))
+
+
+def g_wine(body, emb, P_, U, N, u0, u1, y):
+    g_oil(body, emb, P_, U, N, u0, u1, y)
+    for k in range(3):
+        leaf_blob(body, Pw(P_, u0 + 0.3 + k * 0.08, y + 0.05, 0.16), 0.04, J("#5a2d5f", 0.1))
+
+
+def g_perfume(body, emb, P_, U, N, u0, u1, y):
+    cols = ["#d98fb0", "#8fb0d9", "#e3c46a", "#9ad98f", "#c08fd9"]
+    for k in range(10):                # флаконы
+        uu = u0 + 0.08 + (k % 5) * (u1 - u0 - 0.16) / 4
+        body.lathe(Pw(P_, uu, y, 0.06 + (k // 5) * 0.12), [(0.025, 0.0), (0.03, 0.05), (0.01, 0.09), (0.015, 0.11)], 6, J(cols[k % 5], 0.05))
+    for k in range(4):
+        leaf_blob(body, Pw(P_, u1 - 0.1, y + 0.1 + k * 0.03, 0.14), 0.035, J(rng.choice(["#e98bb0", "#f4f1e8", "#d9534f"]), 0.06))
+
+
+def g_jewel(body, emb, P_, U, N, u0, u1, y):
+    R = RW(U, N)
+    for k in range(3):                 # лотки с золотом и серебром
+        uu = u0 + 0.18 + k * (u1 - u0 - 0.36) / 2
+        body.box(Pw(P_, uu, y + 0.02, 0.14), (0.26, 0.04, 0.2), J("#5a2a3a", 0.05), R)
+        for j in range(5):
+            leaf_blob(body, Pw(P_, uu - 0.08 + j * 0.04, y + 0.05, 0.14 + rng.uniform(-0.05, 0.05)), 0.014, col(rng.choice(["#e8c45a", "#d9d9d9", "#e8c45a", "#5ab0d9"])))
+    body.lathe(Pw(P_, u1 - 0.12, y, 0.1), [(0.05, 0.0), (0.04, 0.12), (0.06, 0.16), (0.0, 0.24)], 8, J("#e8e2d6", 0.02))
+
+
+def g_barber(body, emb, P_, U, N, u0, u1, y):
+    R = RW(U, N)
+    body.lathe(Pw(P_, u0 + 0.25, y, 0.12), [(0.08, 0.0), (0.14, 0.06), (0.15, 0.08)], 10, J("#c9c2b2", 0.04))   # таз
+    body.box(Pw(P_, u0 + 0.6, y + 0.18, 0.06), (0.16, 0.22, 0.015), J("#d9c890", 0.05), R)                    # зеркало
+    for k in range(3):
+        body.box(Pw(P_, u1 - 0.2 - k * 0.12, y + 0.02, 0.12), (0.1, 0.04, 0.2), J(["#f2ece0", "#b5452f", "#3f6fa8"][k], 0.04), R)
+
+
+def g_medic(body, emb, P_, U, N, u0, u1, y):
+    for k in range(6):                 # банки со снадобьями
+        uu = u0 + 0.1 + k * (u1 - u0 - 0.2) / 5
+        body.lathe(Pw(P_, uu, y, 0.1), [(0.04, 0.0), (0.045, 0.08), (0.02, 0.12)], 7, J(rng.choice(["#c27a4a", "#7d8f99", "#e8e2d6"]), 0.06))
+    for k in range(4):                 # пучки трав на балке
+        uu = u0 + 0.15 + k * (u1 - u0 - 0.3) / 3
+        c = Vector(Pw(P_, uu, PL + 1.35, 0.06))
+        for j in range(3):
+            leaf_blob(body, (c.x, c.y - 0.05 - j * 0.06, c.z), 0.04, J("#5f7f3a", 0.1))
+
+
+def g_thermo(body, emb, P_, U, N, u0, u1, y):
+    for k in range(3):                 # миски с едой и долии в прилавке
+        uu = u0 + 0.2 + k * (u1 - u0 - 0.4) / 2
+        c = Vector(Pw(P_, uu, y - 0.02, 0.08))
+        body.lathe((c.x, c.y, c.z), [(0.12, 0.0), (0.12, 0.02)], 10, col("#3a2a1a"), close_top=True)
+        body.lathe((c.x, c.y, c.z), [(0.14, 0.0), (0.14, 0.03)], 10, J("#c27a4a", 0.06))
+    for k in range(4):
+        body.lathe(Pw(P_, u0 + 0.15 + k * 0.18, y + 0.01, 0.2), [(0.04, 0.0), (0.08, 0.04)], 8, J("#c9a46e", 0.06))
+        leaf_blob(body, Pw(P_, u0 + 0.15 + k * 0.18, y + 0.04, 0.2), 0.035, J(rng.choice(["#b0473a", "#e3b84a", "#7fa040"]), 0.08))
+
+
+TRADE_GOODS = {"meat": g_meat, "bread": g_bread, "shoes": g_shoes, "dye": g_dye, "togas": g_togas, "oil": g_oil,
+               "lamps": g_lamps, "wine": g_wine, "perfume": g_perfume, "jewel": g_jewel, "barber": g_barber, "medic": g_medic,
+               "thermo": g_thermo}
+
+
+def y_oven(body, emb, x0, x1, zb, z_wall, zc):
+    """пекарня: купол хлебной печи с огнём в устье (дым) и жернова-«песочные часы» (как в Помпеях)"""
+    kx = x0 + 0.7
+    body.box((kx, 0.25, zc), (0.95, 0.5, 0.9), J(P["stone"], 0.06), cols={"top": J(P["stone"], 0.1)})
+    body.lathe((kx, 0.5, zc), [(0.42, 0.0), (0.4, 0.2), (0.28, 0.4), (0.1, 0.5)], 10, J("#c08a5a", 0.06), close_top=True)
+    body.box((kx, 0.66, zc + 0.43), (0.3, 0.26, 0.06), col("#2a2018"))
+    for k in range(4):
+        leaf_blob(emb, (kx + rng.uniform(-0.08, 0.08), 0.6, zc + 0.44), 0.04, col(rng.choice(["#ff7a1a", "#ffb03a"])))
+    SMOKE.append([kx, 1.2, zc])
+    mx = x1 - 0.55
+    body.lathe((mx, 0.0, zc), [(0.3, 0.0), (0.3, 0.25), (0.16, 0.5), (0.26, 0.75), (0.12, 0.95), (0.24, 1.15)], 10, J("#6f6a62", 0.06), close_top=True)
+    body.box((mx, 0.75, zc), (0.9, 0.06, 0.06), J(P["wood"], 0.05))
+
+
+def y_vats(body, emb, x0, x1, zb, z_wall, zc):
+    """красильня / прачечная: каменные чаны с краской и полотна на верёвке"""
+    cols = ["#9a2f28", "#2f4f8f", "#d9a02a"]
+    for k in range(3):
+        cx = x0 + 0.55 + k * (x1 - x0 - 1.1) / 2
+        body.lathe((cx, 0.0, zc), [(0.32, 0.0), (0.32, 0.45), (0.27, 0.45)], 12, J(P["stone"], 0.06))
+        body.lathe((cx, 0.38, zc), [(0.27, 0.0), (0.0, 0.0)], 12, col(cols[k]))
+    for xx in (x0 + 0.1, x1 - 0.1):
+        body.box((xx, 0.8, zb + 0.15), (0.05, 1.6, 0.05), J(P["wood"], 0.05))
+    body.box(((x0 + x1) / 2, 1.55, zb + 0.15), (x1 - x0 - 0.2, 0.012, 0.012), col("#d8cfbf"))
+    for k in range(4):
+        body.box((x0 + 0.5 + k * (x1 - x0 - 1.0) / 3, 1.3, zb + 0.15), (0.3, 0.5, 0.012), J(cols[k % 3], 0.05))
+
+
+def y_stable(body, emb, x0, x1, zb, z_wall, zc):
+    """гостиница: конюшенный двор — каменная поилка, ясли с сеном, тюки, колесо телеги"""
+    body.box((x0 + 0.7, 0.22, zc), (1.0, 0.44, 0.38), J(P["stone"], 0.06), cols={"top": J(P["stone"], 0.1)})
+    body.box((x0 + 0.7, 0.4, zc), (0.9, 0.02, 0.3), col("#5fa6b8"))
+    body.box((x1 - 0.6, 0.45, zc - 0.05), (0.8, 0.1, 0.4), J(P["wood"], 0.06))
+    for sx in (-1, 1):
+        body.box((x1 - 0.6 + sx * 0.36, 0.22, zc - 0.05), (0.06, 0.45, 0.06), J(P["wood2"], 0.05))
+    for k in range(6):
+        leaf_blob(body, (x1 - 0.85 + k * 0.1, 0.55, zc - 0.05 + rng.uniform(-0.08, 0.08)), 0.07, J("#d9c27a", 0.08))
+    for k in range(2):
+        body.box(((x0 + x1) / 2 + (k - 0.5) * 0.5, 0.18 + (0.0 if k == 0 else 0.0), zb + 0.35), (0.45, 0.36, 0.32), J("#d9c27a", 0.08))
+    body.lathe(((x0 + x1) / 2 + 0.6, 0.35, zb + 0.15), [(0.33, 0.0), (0.33, 0.06)], 12, J(P["wood"], 0.06), close_top=True)
+
+
+TRADE_YARDS = {"oven": y_oven, "vats": y_vats, "stable": y_stable}
+
+# лавки: облик (навес, крыша, этажи), товар, двор; actor — где стоит лавочник (u вдоль фасада от левого края)
+TRADES = {
+    "butcher": {"goods": "meat", "front": "awning", "awning": ("#efe3c8", "#9a2f28"), "roof": "x", "floors": 1, "shutter": "red", "door": "oak", "pal": 0},
+    "bakery": {"goods": "bread", "front": "canopy", "roof": "z", "floors": 2, "yard": "oven", "shutter": "brown", "door": "oak", "pal": 2, "corners": "stone"},
+    "cobbler": {"goods": "shoes", "front": "awning", "awning": ("#e9d9b8", "#5a3a22"), "roof": "x", "floors": 1, "shutter": "brown", "door": "dark", "pal": 2},
+    "dyer": {"goods": "dye", "front": "awning", "awning": ("#efe3c8", "#6a2f8a"), "roof": "x", "floors": 2, "yard": "vats", "shutter": "teal", "door": "green", "pal": 1, "balcony": True},
+    "tailor": {"goods": "togas", "front": "awning", "awning": ("#f4efe2", "#3f6fa8"), "roof": "z", "floors": 2, "shutter": "blue", "door": "dark", "pal": 1, "boxes": True, "corners": "pilaster"},
+    "potter": {"goods": "pots", "front": "canopy", "roof": "x", "floors": 1, "yard": "kiln", "shutter": "teal", "door": "oak", "pal": 0},
+    "oilshop": {"goods": "oil", "front": "canopy", "roof": "z", "floors": 2, "shutter": "green", "door": "oak", "pal": 0, "corners": "stone"},
+    "lamps": {"goods": "lamps", "front": "awning", "awning": ("#efe3c8", "#c9a14a"), "roof": "x", "floors": 2, "shutter": "ochre", "door": "dark", "pal": 2, "balcony": True},
+    "wineshop": {"goods": "wine", "front": "pergola", "roof": "x", "floors": 2, "shutter": "red", "door": "dark", "pal": 0, "boxes": True},
+    "perfumer": {"goods": "perfume", "front": "awning", "awning": ("#f4efe2", "#d98fb0"), "roof": "z", "floors": 2, "shutter": "teal", "door": "green", "pal": 1, "boxes": True, "corners": "pilaster", "decal": "frieze"},
+    "jeweler": {"goods": "jewel", "front": "awning", "awning": ("#f4efe2", "#5a2a3a"), "roof": "z", "floors": 2, "shutter": "blue", "door": "dark", "pal": 1, "corners": "pilaster"},
+    "weaver": {"goods": "cloth", "front": "awning", "awning": ("#efe3c8", "#3f6fa8"), "roof": "x", "floors": 1, "yard": "loom", "shutter": "green", "door": "oak", "pal": 0},
+    "barber": {"goods": "barber", "front": "awning", "awning": ("#f4efe2", "#4f78a8"), "roof": "x", "floors": 1, "shutter": "blue", "door": "oak", "pal": 1, "chair": True},
+    "medic": {"goods": "medic", "front": "canopy", "roof": "z", "floors": 2, "shutter": "green", "door": "green", "pal": 1, "boxes": True, "corners": "stone"},
+    "thermopolium": {"goods": "thermo", "front": "awning", "awning": ("#efe3c8", "#b5452f"), "roof": "x", "floors": 2, "w": 4.2, "shutter": "red", "door": "oak", "pal": 0, "balcony": True, "wide": True},
+    "taberna": {"goods": "wine", "front": "awning", "awning": ("#efe3c8", "#7a3528"), "roof": "z", "floors": 2, "w": 4.2, "d": 4.2, "shutter": "brown", "door": "dark", "pal": 2, "tables": True, "corners": "stone"},
+    "fullonica": {"goods": "togas", "front": "awning", "awning": ("#f4efe2", "#4f78a8"), "roof": "x", "floors": 2, "w": 4.2, "yard": "vats", "shutter": "blue", "door": "oak", "pal": 1, "balcony": True},
+    "mansio": {"goods": "wine", "front": "canopy", "roof": "z", "floors": 3, "w": 4.8, "d": 4.4, "yard": "stable", "shutter": "green", "door": "dark", "pal": 2, "corners": "stone", "boxes": True},
+}
+
+
+def y_tables(body, x0, x1, z1):
+    """столы и табуреты перед таверной (под перголой) — детали Synty в чертеже (Spectacle сажает на них гостей)"""
+    # столы ближе к середине, табуреты — спереди и сзади стола: по краям остаётся место постоять у жаровни (Spectacle)
+    # длинный стол со скамьями под навесом, у фасада (как в прежней таверне: гостей садится больше)
+    PROPS.append(["SM_Prop_Table_08", 0.0, 0.0, round(z1 + 0.62, 3), 0.0, [0.62, 0.95, 0.75]])
+    for dz in (-0.45, 0.45):
+        PROPS.append(["SM_Prop_Seat_Bench_05", 0.0, 0.0, round(z1 + 0.62 + dz, 3), 0.0, [0.6, 1.0, 0.8]])
+    for k, xx in enumerate((x0 + 1.25, x1 - 1.35)):
+        zz = z1 + 1.75
+        PROPS.append(["SM_Prop_Table_07", round(xx, 3), 0.0, round(zz, 3), 0.0, 1.0])
+        for sgn in (-1, 1):
+            PROPS.append(["SM_Prop_Seat_Chair_01", round(xx + 0.04 * sgn, 3), 0.0, round(zz + sgn * 0.47, 3), 0.0 if sgn < 0 else math.pi, 0.95])
+        PROPS.append(["SM_Prop_Jug_01", round(xx + 0.07, 3), 0.53, round(zz, 3), 0.0, 0.42])
+    return
+    for k, xx in enumerate((x0 + 0.8, x1 - 0.9)):
+        zz = z1 + 1.0
+        body.box((xx, 0.48, zz), (0.7, 0.05, 0.5), J(P["wood"], 0.06))
+        for sx in (-1, 1):
+            for sz in (-1, 1):
+                body.box((xx + sx * 0.28, 0.23, zz + sz * 0.18), (0.05, 0.46, 0.05), J(P["wood2"], 0.05))
+        for sz in (-1, 1):
+            bench(body, (xx, 0.3, zz + sz * 0.45), 0.8, Matrix.Identity(3))
+        body.lathe((xx - 0.12, 0.5, zz), [(0.04, 0.0), (0.06, 0.08), (0.03, 0.12)], 7, J("#c27a4a", 0.06))
+        body.lathe((xx + 0.15, 0.5, zz), [(0.05, 0.0), (0.07, 0.03)], 8, J("#b0703a", 0.06))
+
+
+def build_stall(kind):
+    """рыночный прилавок: дощатый стол с ножками, четыре шеста, полосатый навес, корзины с товаром, ящики позади"""
+    coll = bpy.context.scene.collection
+    body = MB("House")
+    emb = MB("Embers", [MAT_EMBER])
+    use("stall")
+    cols = {"fruit": ("#f4efe2", "#d9534f"), "veg": ("#f4efe2", "#4f8a5a"), "fish": ("#f4efe2", "#3f6fa8")}[kind]
+    w, d = 2.3, 1.5
+    x0, x1, z0, z1 = -w / 2, w / 2, -d / 2, d / 2
+    # стол
+    body.box((0, 0.82, 0.25), (w - 0.2, 0.05, 0.6), J(P["wood"], 0.06), cols={"top": J(P["wood"], 0.1)})
+    body.box((0, 0.5, 0.52), (w - 0.2, 0.6, 0.04), J(P["wood2"], 0.06))
+    for sx in (-1, 1):
+        for sz in (0.0, 0.5):
+            body.box((sx * (w / 2 - 0.15), 0.4, sz), (0.06, 0.8, 0.06), J(P["wood2"], 0.05))
+    # шесты и навес
+    hb, hf = 2.15, 1.85
+    for (xx, zz, hh) in ((x0 + 0.05, z0 + 0.05, hb), (x1 - 0.05, z0 + 0.05, hb), (x0 + 0.05, z1 + 0.15, hf), (x1 - 0.05, z1 + 0.15, hf)):
+        body.box((xx, hh / 2, zz), (0.05, hh, 0.05), J(P["wood"], 0.05))
+    nu, nd = 6, 3
+    grid = {}
+    for i in range(nu + 1):
+        for j in range(nd + 1):
+            u = x0 - 0.05 + (w + 0.1) * i / nu
+            dz = z0 - 0.02 + (d + 0.3) * j / nd
+            sag = 0.05 * math.sin(math.pi * i / nu) * math.sin(math.pi * j / nd)
+            grid[(i, j)] = body.v((u, hb + 0.05 - (hb - hf) * j / nd - sag, dz))
+    for i in range(nu):
+        cc = col(cols[i % 2], rng.uniform(-0.04, 0.04))
+        for j in range(nd):
+            q = [grid[(i, j)], grid[(i + 1, j)], grid[(i + 1, j + 1)], grid[(i, j + 1)]]
+            body.face(q, cc, ("dir", (0, 1, 0)))
+            body.face(q[::-1], col_shift(cc, -0.25), ("dir", (0, -1, 0)))
+    for i in range(nu):                # бахрома
+        u0, u1 = x0 - 0.05 + (w + 0.1) * i / nu, x0 - 0.05 + (w + 0.1) * (i + 1) / nu
+        a, b = body.v((u0, hf + 0.05, z1 + 0.28)), body.v((u1, hf + 0.05, z1 + 0.28))
+        m = body.v(((u0 + u1) / 2, hf - 0.07, z1 + 0.28))
+        body.face([a, b, m], col(cols[i % 2], -0.05), ("dir", (0, 0, 1)))
+        body.face([b, a, m], col(cols[i % 2], -0.3), ("dir", (0, 0, -1)))
+    # товар
+    goods = {"fruit": ["#e8862e", "#d9534f", "#e3c84a", "#5a2d5f", "#9ac04a"], "veg": ["#4f8a3a", "#e8862e", "#7fa040", "#b0473a", "#e8e0c0"],
+             "fish": ["#c9d2da", "#aab4be", "#d9dfe5"]}[kind]
+    for k in range(4):
+        cx = x0 + 0.35 + k * (w - 0.7) / 3
+        if kind == "fish":
+            body.box((cx, 0.87, 0.25), (0.5, 0.05, 0.46), J("#7a5232", 0.06))
+            body.box((cx, 0.9, 0.25), (0.46, 0.01, 0.42), col("#e6eef2"))
+            for j in range(6):
+                body.lathe((cx - 0.19 + j * 0.075, 0.92, 0.25), [(0.0, -0.15), (0.035, -0.08), (0.03, 0.1), (0.0, 0.16)], 5, J(rng.choice(goods), 0.06))
+        else:
+            basket(body, (cx, 0.845, 0.25), 0.2, 0.13)
+            gc = goods[k % len(goods)]
+            for j in range(11):
+                leaf_blob(body, (cx + rng.uniform(-0.12, 0.12), 0.99 + rng.uniform(0, 0.08), 0.25 + rng.uniform(-0.12, 0.12)), 0.055, J(gc, 0.08))
+    for k in range(3):                 # ящики и мешки позади (у торговца свой закуток — как у прежнего прилавка)
+        body.box((x0 + 0.4 + k * 0.42, 0.18 + (0.36 if k == 1 else 0.0), z0 - 0.3), (0.38, 0.34, 0.3), J(P["wood"], 0.1))
+    for k in range(2):
+        body.lathe((x1 - 0.35 - k * 0.32, 0.0, z0 - 0.35), [(0.13, 0), (0.16, 0.16), (0.13, 0.32), (0.06, 0.38)], 8, J("#d8c49a", 0.06), close_top=True)
+    if kind != "fish":
+        basket(body, (x1 + 0.2, 0.0, 0.5), 0.17, 0.26)
+    else:
+        amphora(body, (x1 + 0.2, 0.0, 0.4), 0.55, J("#b5703f", 0.08))
+    body.obj(coll)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, z1 + 0.85
+    FP.append([x0 - 0.15, z0 - 0.6, w + 0.4, d + 1.05])
+    ACTORS.append([0.0, 0.0, z0 + 0.25, 0.0, "Idle", "any"])
+    PERCH.append([0.0, hb + 0.06, 0.0])
+    return hb + 0.1
 
 
 def column(body, at, h, r, c):
@@ -1399,17 +1720,30 @@ PAT = [
     {"portico": "loggia", "roof": "x", "corners": "stone", "shutter": "green", "door": "oak", "dado": "#6a3a2a", "pal": 2},
 ]
 SMOKE = []
+ACTORS = []
+PROPS = []          # детали Synty в чертеже: [имя, x, y, z, поворот, масштаб] (метры; масштаб — как у Synty в игре)
 
 
 def configure(kind, v, floors):
     global KIND, V, FLOORS, W, D, HT, PH, P, DS, MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, DOOR_PT, FP, SMOKE
+    global ACTORS, PROPS
     KIND, V, FLOORS = kind, v, floors
+    PROPS = []
     W = 3.6
     D = 4.3 if kind == "patrician" else 3.9          # глубина — как у прежних домов (след при перестройке тот же)
+    ACTORS = []
+    if kind in ("shop", "stall"):
+        DS = dict(TRADES.get(v, {})) if kind == "shop" else {"pal": 0}
+        W = DS.get("w", 3.6)
+        D = DS.get("d", 3.9)
+        FLOORS = DS.get("floors", 1) if kind == "shop" else 1
+        if DS.get("front") == "canopy":
+            DS["canopy"] = True
     HT = PL + FLOORS * FLH
     use("ph")
     PH = [rng.uniform(0, 6.28) for _ in range(5)]
-    DS = dict({"pleb": PLEB, "artisan": ART, "patrician": PAT}[kind][v])
+    if kind not in ("shop", "stall"):
+        DS = dict({"pleb": PLEB, "artisan": ART, "patrician": PAT}[kind][v])
     P = dict(PALS[DS.get("pal", 0)])
     MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, FP, SMOKE = [], {}, {}, [], [], [], []
     DOOR_PT = [0, 0, D / 2 + 0.3]
@@ -1426,15 +1760,16 @@ def build_house():
     inner = MB("Rooms")
     emb = MB("Embers", [MAT_EMBER])
     use("g")
-    left = (V + (1 if FLOORS else 0)) % 2 == 0          # дверь слева (u 0.55…1.37) или справа
+    left = ((V if isinstance(V, int) else seed_of(V)) + (1 if FLOORS else 0)) % 2 == 0          # дверь слева или справа
     door_u = (0.55, 1.37) if left else (W - 1.37, W - 0.55)
     win_u = (W - 1.25, W - 0.6) if left else (0.6, 1.25)
     door_h = 1.52
     shop_u = None
     wins = []           # (сторона, u0, u1, v0, v1, ставни, ящик, наличник, решётка[, фронтончик])
-    if KIND == "artisan":
+    if KIND in ("artisan", "shop"):
         # лавка — широкий проём, дверь — в другом пролёте
-        shop_u = (0.28, 2.1) if left else (W - 2.1, W - 0.28)
+        sw = W - 1.5
+        shop_u = (0.28, 0.28 + sw) if left else (W - 0.28 - sw, W - 0.28)
         door_u = (W - 1.12, W - 0.36) if left else (0.36, 1.12)
         win_u = shop_u
         front_open = [(door_u[0], door_u[1], PL, PL + door_h), (shop_u[0], shop_u[1], PL, PL + 1.62)]
@@ -1463,7 +1798,11 @@ def build_house():
             bu = (door_u[0] + 0.05, door_u[1] - 0.05)
             front_open.append((bu[0], bu[1], y + 0.02, y + 1.55))
             balcony = (bu, y)
-            wins.append(("front", win_u[0], win_u[1], y + 0.72, y + 1.48, True, False, True, False))
+            wu = win_u
+            if shop_u:                     # над лавкой — обычное окно, а не во всю ширину проёма
+                cu = (shop_u[0] + shop_u[1]) / 2
+                wu = (cu - 0.32, cu + 0.32)
+            wins.append(("front", wu[0], wu[1], y + 0.72, y + 1.48, True, False, True, False))
         else:
             boxes = DS.get("boxes", False) or f == FLOORS - 1
             wins.append(("front", 0.5, 1.12, y + 0.74, y + 1.46, True, boxes, True, False))
@@ -1553,13 +1892,26 @@ def build_house():
         door(body, Pf, U, N, "front", door_u[0], door_u[1], PL, PL + door_h, DS["door"], stone=not DS.get("arch"), arch=DS.get("arch", False))
     if shop_u:
         use("shop")
-        shopfront(body, emb, Pf, U, N, "front", shop_u[0], shop_u[1], DS["craft"], PL + 1.62)
+        shopfront(body, emb, Pf, U, N, "front", shop_u[0], shop_u[1], DS.get("goods", DS.get("craft")), PL + 1.62)
+        # лавочник — за прилавком, лицом к улице
+        cu = shop_u[0] + (shop_u[1] - shop_u[0]) * 0.36
+        ACTORS.append([round(x0 + cu, 3), 0.0, round(z1 - 0.5, 3), 0.0, "Interact", "any"])
+        if DS.get("chair"):
+            # цирюльня: кресло у входа, в нём клиент (второй «при деле»)
+            chx = x0 + shop_u[1] - 0.35
+            body.box((chx, PL + 0.25, z1 - 0.45), (0.42, 0.06, 0.4), J(P["wood"], 0.06))
+            body.box((chx, PL + 0.55, z1 - 0.66), (0.42, 0.55, 0.05), J(P["wood"], 0.06))
+            for sx in (-1, 1):
+                for sz in (-1, 1):
+                    body.box((chx + sx * 0.17, PL + 0.12, z1 - 0.45 + sz * 0.16), (0.04, 0.24, 0.04), J(P["wood2"], 0.05))
+            ACTORS[-1] = [round(chx + 0.45, 3), 0.0, round(z1 - 0.4, 3), -math.pi / 2, "Interact", "any"]
+            ACTORS.append([round(chx, 3), 0.0, round(z1 - 0.42, 3), 0.0, "Sitting_Idle", "pleb"])
     door_mid = (door_u[0] + door_u[1]) / 2
     DOOR_PT[0] = x0 + door_mid
     DOOR_PT[2] = z1 + 0.35
     # фонарик у двери (в игре — «#wall_lamp_dim», ночью еле теплится)
     lu = door_u[1] + 0.22 if left else door_u[0] - 0.22
-    if KIND == "artisan":
+    if KIND in ("artisan", "shop"):
         lu = door_u[0] - 0.2 if left else door_u[1] + 0.2
     elif KIND == "patrician":
         lu = door_u[1] + 0.28
@@ -1599,7 +1951,9 @@ def build_house():
     use("g")
     fr = DS.get("front")
     R = RW(U, N)
-    if KIND == "artisan":
+    if KIND == "shop" and DS.get("front") == "pergola":
+        fr = "pergola"
+    elif KIND in ("artisan", "shop"):
         fr = None
         su = shop_u
         if DS.get("awning"):
@@ -1626,6 +1980,8 @@ def build_house():
         block("front", Pf, U, door_mid - 0.7, door_mid + 0.7, PL + 1.5, PL + 2.0)
     elif fr == "pergola":
         pu0, pu1 = (door_u[0] - 0.35, min(W - 0.15, door_u[1] + 0.9)) if left else (max(0.15, door_u[0] - 0.9), door_u[1] + 0.35)
+        if KIND == "shop":
+            pu0, pu1 = 0.15, W - 0.15        # во весь фасад: под ней прилавок и столы
         pergola(body, Pf, U, N, pu0, pu1, PL + 1.75, 0.95)
         block("front", Pf, U, pu0, pu1, 0.0, PL + 2.0)
     props = DS.get("props", []) if KIND == "pleb" else []
@@ -1696,6 +2052,20 @@ def build_house():
         mb.face([mb.v(x) for x in q], (1, 1, 1, 1), ("dir", tuple(N)), uv=[(0, 0), (urep, 0), (urep, 1), (0, 1)])
         mb.obj(coll)
     fz0, fz1 = z0, z1
+    if KIND == "shop" and DS.get("yard"):
+        use("yard")
+        yd = 1.0
+        lean_to(body, x0 + 0.05, x1 - 0.05, z0, yd, PL + 1.75, PL + 1.35)
+        yard_props(body, emb, x0, x1, z0 - yd, z0, DS["yard"])
+        fz0 = z0 - yd - 0.1
+    if KIND == "shop" and DS.get("tables"):
+        y_tables(body, x0, x1, z1)
+        fz1 = z1 + 2.3
+        DOOR_PT[2] = fz1 + 0.3                 # вход — с улицы к столам (под перголой — уже «внутри»)
+        ACTORS.append([round(x1 - 0.5, 3), 0.0, round(z1 + 2.0, 3), math.pi, "Idle", "any"])
+    if KIND == "shop" and DS.get("front") == "pergola" and not DS.get("tables"):
+        fz1 = z1 + 1.0
+        DOOR_PT[2] = fz1 + 0.3
     if KIND == "artisan":
         use("yard")
         yd = 1.0
@@ -1860,14 +2230,20 @@ def main():
         for v in range(6):
             for fl in ((1, 2) if v < 4 else (1, 2, 3)):
                 jobs.append(("patrician", v, fl))
+    if "shop" in KINDS:
+        for t in TRADES:
+            jobs.append(("shop", t, 0))
+    if "stall" in KINDS:
+        for t in ("fruit", "veg", "fish"):
+            jobs.append(("stall", t, 0))
     all_canon = {}
     for (kind, v, fl) in jobs:
-        hid = "%s_%d_%d" % (kind, v, fl)
+        hid = ("%s_%s" % (kind, v)) if kind in ("shop", "stall") else "%s_%d_%d" % (kind, v, fl)
         if ONLY and hid not in ONLY:
             continue
         clear_scene()
         configure(kind, v, fl)
-        y_ridge = build_house()
+        y_ridge = build_stall(v) if kind == "stall" else build_house()
         plaster_for_export(True)
         kit_for_export(True)
         tris = export_glb(os.path.join(OUT_DIR, hid + ".glb"))
@@ -1882,7 +2258,7 @@ def main():
                                "parts": [o.name for o in bpy.context.scene.objects if o.type == "MESH"],
                                "mov": MOV, "door": [round(x, 3) for x in DOOR_PT], "fp": FP, "faces": faces,
                                "lights": LIGHTS, "perch": [[round(c, 3) for c in p] for p in PERCH],
-                               "smoke": SMOKE}
+                               "smoke": SMOKE, "actors": ACTORS, "props": PROPS}
         all_canon.update(CANON)
         print("KIT", hid, "tris", tris, "mov", len(MOV))
         if PNG:

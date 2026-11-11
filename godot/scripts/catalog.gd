@@ -33,7 +33,11 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	var mil := String(dd0.get("kind", "")) == "military"
 	var b := Bp.new(hash("%s:0:%d:%d" % [type, variant, color]) if mil else hash(key))
 	b.paint(color)
-	match type:
+	# лавки и прилавки из своего набора (KitHouses: "shop_<тип>", "stall_<товар>") — облик и люди при деле из Blender
+	var kit_done := KitHouses.covers(type) and not type.begins_with("house_") and KitHouses.build(b, type, tier, variant, legacy)
+	match "#kit" if kit_done else type:
+		"#kit":
+			pass
 		"house_pleb":
 			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy)):
 				CatHouses._house_pleb(b, tier, variant)
@@ -83,7 +87,8 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		"barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia", "mars": CatMilitary.make(b, type, tier)
 		_: CatDecor._decor(b, type, variant)
 	b.base = Transform3D.IDENTITY
-	_actors(b, type, tier)
+	if not kit_done:
+		_actors(b, type, tier)
 	var dd: Dictionary = Defs.B.get(type, {})
 	_scale(b, DECOR if dd.get("kind", "") == "decor" and not dd.get("wall", false) else ARCH)   # на стенах — в масштабе дома
 	_cache[key] = b

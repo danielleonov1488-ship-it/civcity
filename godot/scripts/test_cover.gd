@@ -102,11 +102,15 @@ func street(a: Vector2, b: Vector2) -> void:
 ## Поставить у дороги в ближайшей к цели годной точке
 func put(type: String, target: Vector2) -> Dictionary:
 	cands.sort_custom(func(p, q): return p.distance_squared_to(target) < q.distance_squared_to(target))
+	var errs := {}
 	for p in cands.slice(0, 300):
 		reset()
 		var pl: Dictionary = game.placement(type, p)
 		if pl["err"] == "" and (Defs.B[type]["kind"] == "decor" or pl["sub"] == "road"):
 			return c.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"])
+		var ek := String(pl["err"]) if pl["err"] != "" else "sub=" + String(pl.get("sub", ""))
+		errs[ek] = int(errs.get(ek, 0)) + 1
+	print("COVER note: не встала ", type, " у ", target, ": ", errs)
 	return {}
 
 

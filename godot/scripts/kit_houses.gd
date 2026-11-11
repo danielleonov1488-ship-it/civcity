@@ -12,11 +12,21 @@ const ON := true                                   # выключатель (fal
 static var _old := {}
 
 
+## Лавки (у каждой — один облик) и прилавки рынка
+const SHOPS := ["butcher", "bakery", "cobbler", "dyer", "tailor", "potter", "oilshop", "lamps", "wineshop", "perfumer",
+	"jeweler", "weaver", "barber", "medic", "thermopolium", "taberna", "fullonica", "mansio"]
+const STALLS := ["stall_fruit", "stall_veg", "stall_fish"]
+
+
 static func covers(type: String) -> bool:
-	return ON and IDS.has(type)
+	return ON and (IDS.has(type) or type in SHOPS or type in STALLS)
 
 
 static func id_for(type: String, tier: int, variant: int) -> String:
+	if type in SHOPS:
+		return "shop_" + type
+	if type in STALLS:
+		return type
 	var e: Array = IDS[type]
 	var v := posmod(variant, int(e[1]))
 	var top := int(e[2])
@@ -45,9 +55,19 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 			off = Vector3(old.position.x - fp.position.x * sx, 0, old.position.y - fp.position.y * sz)
 	var sq := Transform3D(Basis.from_scale(Vector3(sx, 1, sz)), off)       # в метрах (после ARCH)
 	var base := Transform3D(Basis.from_scale(Vector3.ONE * S), Vector3.ZERO) * sq
+	var shop := not type.begins_with("house_")
 	for n: String in h["parts"]:
 		var remap := {"tint": b.tint} if n == "Walls" else {}
-		b.parts.append(["K:%s/%s" % [id, n], base, remap])
+		# у лавки нутро в сумерках светится всегда (как прежние «#lit» лавок); у дома — когда в нём живут (Game._show)
+		var nm := "K:%s/%s" % [id, n] + ("@lit" if shop and n == "Rooms" else "")
+		b.parts.append([nm, base, remap])
+	for pr: Array in h.get("props", []):
+		# детали Synty (столы и стулья таверны — по ним Spectacle сажает гостей); масштаб — как у Synty в чертеже
+		var pp := sq * Vector3(float(pr[1]), float(pr[2]), float(pr[3]))
+		var ps: Vector3 = Vector3(float(pr[5][0]), float(pr[5][1]), float(pr[5][2])) if pr[5] is Array else Vector3.ONE * float(pr[5])
+		b.parts.append([String(pr[0]), Transform3D(Basis(Vector3.UP, float(pr[4])) * Basis.from_scale(ps), pp * S), {}])
+	for a: Array in h.get("actors", []):
+		b.actor(Vector3(float(a[0]), float(a[1]), float(a[2])) * S, float(a[3]), String(a[4]), String(a[5]))
 	b.kit_mov = []
 	b.kit_sq = sq
 	for m: Dictionary in h["mov"]:

@@ -231,20 +231,22 @@ func _town() -> void:
 	c.econ = 0                                # этажи проверяем на прежних правилах счастья (повторы лавок — test_econ)
 	for r in ["stall_veg", "stall_fish", "deco_flowers"]:
 		c.research[r] = true
-	street(Vector2(150, 150), Vector2(214, 150))
-	street(Vector2(150, 180), Vector2(214, 180))
-	street(Vector2(150, 200), Vector2(214, 200))
+	# улицы длиннее прежнего: дома из своего набора шире (шаг ряда 4,3 м) — в ряду столько же домов, сколько было
+	street(Vector2(150, 150), Vector2(230, 150))
+	street(Vector2(150, 180), Vector2(230, 180))
+	street(Vector2(150, 200), Vector2(230, 200))
 	# ряд 1 — южная сторона первой улицы; лавки и фонари — напротив, на северной
-	for x in range(152, 214, 4):
+	for x in range(152, 230, 4):
 		var h := put("house_pleb", Vector2(x, 154))
 		if not h.is_empty():
 			row1.append(int(h["id"]))
-	for e: Array in [["stall_fruit", 156], ["stall_veg", 164], ["stall_fish", 172], ["stall_fruit", 190], ["stall_veg", 198], ["stall_fish", 206]]:
+	for e: Array in [["stall_fruit", 156], ["stall_veg", 164], ["stall_fish", 172], ["stall_fruit", 190], ["stall_veg", 198], ["stall_fish", 206],
+			["stall_fruit", 216], ["stall_veg", 224]]:       # ряд длиннее (дома шире) — и лавок у него на две больше
 		put(e[0], Vector2(e[1], 146))
-	for x in [160.0, 168.0, 181.0, 194.0, 202.0, 211.0]:
+	for x in [160.0, 168.0, 181.0, 194.0, 202.0, 211.0, 220.0, 228.0]:
 		put("lamp_post", Vector2(x, 146))
 	# ряд 2 — южная сторона второй улицы (северная свободна — для лавки с рожицами); третья улица — с двух сторон
-	for x in range(152, 214, 4):
+	for x in range(152, 230, 4):
 		var h := put("house_pleb", Vector2(x, 184))
 		if not h.is_empty():
 			row2.append(int(h["id"]))
@@ -482,10 +484,11 @@ func _floor_stroke() -> void:
 func _floor_broke() -> void:
 	# новые готовые дома: заселяем надстроенные — у них снова полно (а этаж 3 ещё не изучен)
 	var r := ready_row()
-	if not check(r.size() >= 3, "готовых домов ещё %d" % r.size()):
+	# денариев — на все готовые, кроме одного (дома из своего набора шире: готовых к этому месту может остаться и два)
+	if not check(r.size() >= 2, "готовых домов ещё %d" % r.size()):
 		return
 	var price := c.floor_price(c.buildings[r[0]])
-	c.money = price * 2 + 30.0
+	c.money = price * (r.size() - 1) + 30.0
 	var tiers0 := {}
 	for id in r:
 		tiers0[id] = int(c.buildings[id]["tier"])
@@ -511,14 +514,14 @@ func _floor_broke() -> void:
 	for id in r:
 		if int(c.buildings[id]["tier"]) > int(tiers0[id]):
 			got += 1
-	check(got == 2 and c.money >= 0.0 and c.money < float(price), "денариев на два этажа — надстроено %d, в казне %d" % [got, int(c.money)])
+	check(got == r.size() - 1 and c.money >= 0.0 and c.money < float(price), "денариев на %d этажа — надстроено %d, в казне %d" % [r.size() - 1, got, int(c.money)])
 	check(int(game.sound.played.get("coins", 0)) == coins0 + 1, "монетки — один раз")
 	# стрелки остальных — с красной ценой (денариев мало), подсветки у них нет
 	var red := 0
 	for id in r:
 		if int(c.buildings[id]["tier"]) == int(tiers0[id]) and hud.badges.has("fl%d" % id) and hud.badges["fl%d" % id]["warn"] and not cover.want.has(id):
 			red += 1
-	check(red == r.size() - 2, "у недостроенных — красная цена без подсветки: %d" % red)
+	check(red == r.size() - got, "у недостроенных — красная цена без подсветки: %d" % red)
 	c.money = 500000.0
 
 

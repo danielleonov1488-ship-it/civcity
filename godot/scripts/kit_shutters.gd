@@ -41,6 +41,8 @@ func forget(id: int) -> void:
 
 
 func _want(b: Dictionary, h: float) -> float:
+	if not game.city.is_house(b):
+		return 1.0 if h >= 7.0 and h < 20.5 else 0.0        # лавка — открыта днём
 	if int(b.get("pop", 0)) <= 0:
 		return 0.0
 	var r := float(hash(int(b["id"]) * 7 + 3) % 1000) / 1000.0
