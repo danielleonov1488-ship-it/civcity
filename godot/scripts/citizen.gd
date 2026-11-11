@@ -266,10 +266,103 @@ static func _derive(lib: AnimationLibrary) -> void:
 		lib.add_animation("Spar", spar)
 	# несёт покупку: левая рука почти не машет (опущена, как стоя), вещь в ней (HandProps, People.carry)
 	lib.add_animation("Walk_Carry", _graft(lib.get_animation("Walk"), idle, 0.4, ["LeftShoulder", "LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.25))
+	_derive_leisure(lib, idle)
 	# зеркальные: жест другой рукой, кивок в другую сторону
-	for n in ["Idle_Talking", "Interact", "PickUp_Table", "Spell_Simple_Idle", "Sitting_Talking", "Sitting_Idle", "Fixing_Kneeling", "Crouch_Idle", "Listen", "Look_Around"]:
+	for n in ["Idle_Talking", "Interact", "PickUp_Table", "Spell_Simple_Idle", "Sitting_Talking", "Sitting_Idle", "Fixing_Kneeling", "Crouch_Idle", "Listen", "Look_Around",
+			"Point", "Feed", "Wave", "Smell"]:
 		if lib.has_animation(n):
 			lib.add_animation(n + "_M", _mirror(lib.get_animation(n)))
+
+
+## Досуг жителей (владелец 12.11: «чтобы они буквально взаимодействовали с миром, наслаждались природой»): нюхает
+## цветы, любуется (голова вверх), показывает рукой, молится, кормит птиц, умывается у фонтана, хлопает, потягивается,
+## машет знакомому, стоит скрестив руки. Всё — поверх «Idle» (или застывшей позы) поворотами костей, по кругу.
+## Оси скелета (подобраны по картинкам test_anims): плечо — z вперёд (у правой «−», у левой «+»), x «−» — вверх через
+## сторону; поворот плеча по y — кисть согнутой руки ходит внутрь-наружу; локоть сгибается по x «+»; корпус и голова
+## наклоняются вперёд по x «+»
+static func _arm(side: int, fwd: float, out := 0.0) -> Vector3:
+	return Vector3(-out, 0.0, -fwd * side)
+
+
+static func _elbow(b: float) -> Vector3:
+	return Vector3(b, 0.0, 0.0)
+
+
+static func _derive_leisure(lib: AnimationLibrary, idle: Animation) -> void:
+	var L := idle.length
+	# нюхает цветок: наклон вперёд, голова к цветку, правая рука подносит его к лицу; вдох — и чуть назад
+	var sm := func(t: float) -> float: return _curve(fmod(t, 4.0), [[0.0, 0.0], [0.8, 1.0], [2.6, 1.0], [3.4, 0.35], [4.0, 0.0]])
+	lib.add_animation("Smell", _layer(idle, 2, {
+		"Spine": func(t: float) -> Vector3: return Vector3(0.3 * sm.call(t), 0.0, 0.0),
+		"UpperChest": func(t: float) -> Vector3: return Vector3(0.12 * sm.call(t) - 0.06 * _bump(fmod(t, 4.0), 2.2, 3.4), 0.0, 0.0),
+		"Head": func(t: float) -> Vector3: return Vector3(0.28 * sm.call(t), 0.0, 0.0),
+		"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 0.75 * sm.call(t)),
+		"RightLowerArm": func(t: float) -> Vector3: return _elbow(1.95 * sm.call(t))}))
+	# любуется: голова и грудь чуть назад, взгляд вверх (на дерево, колонну, купол), медленно водит головой
+	lib.add_animation("Admire", _layer(idle, 3, {
+		"UpperChest": func(t: float) -> Vector3: return Vector3(-0.1, 0.06 * sin(TAU * t / (L * 3.0)), 0.0),
+		"Neck": func(t: float) -> Vector3: return Vector3(-0.22, 0.0, 0.0),
+		"Head": func(t: float) -> Vector3: return Vector3(-0.38, 0.35 * sin(TAU * t / (L * 3.0)), 0.0)}))
+	# показывает рукой вдаль: правая рука вытянута вперёд и чуть вверх, голова туда же
+	var pt := func(t: float) -> float: return _curve(fmod(t, 5.0), [[0.0, 0.0], [0.6, 1.0], [3.2, 1.0], [4.0, 0.0], [5.0, 0.0]])
+	lib.add_animation("Point", _layer(idle, 2, {
+		"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 1.75 * pt.call(t), 0.2 * pt.call(t)),
+		"RightLowerArm": func(t: float) -> Vector3: return _elbow(0.12 * pt.call(t)),
+		"Head": func(t: float) -> Vector3: return Vector3(-0.15 * pt.call(t), -0.25 * pt.call(t), 0.0)}))
+	# молится перед храмом: голова опущена, руки подняты ладонями вверх (как оранты), лёгкое покачивание
+	lib.add_animation("Pray", _layer(idle, 3, {
+		"Head": func(t: float) -> Vector3: return Vector3(0.3 + 0.04 * sin(TAU * t / (L * 1.5)), 0.0, 0.0),
+		"UpperChest": func(t: float) -> Vector3: return Vector3(0.05, 0.0, 0.0),
+		"LeftUpperArm": func(t: float) -> Vector3: return _arm(-1, 0.55),
+		"LeftLowerArm": func(t: float) -> Vector3: return _elbow(1.25),
+		"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 0.55),
+		"RightLowerArm": func(t: float) -> Vector3: return _elbow(1.25)}))
+	# кормит птиц: чуть наклонён, правая рука снова и снова бросает зерно вперёд-вниз, левая держит мешочек у пояса
+	lib.add_animation("Feed", _layer(idle, 2, {
+		"Spine": func(t: float) -> Vector3: return Vector3(0.15, 0.0, 0.0),
+		"Head": func(t: float) -> Vector3: return Vector3(0.28, 0.0, 0.0),
+		"LeftUpperArm": func(t: float) -> Vector3: return _arm(-1, 0.3, 0.0),
+		"LeftLowerArm": func(t: float) -> Vector3: return _elbow(1.4),
+		"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 0.35 + 0.65 * _bump(fmod(t, 1.6), 0.0, 0.9)),
+		"RightLowerArm": func(t: float) -> Vector3: return _elbow(0.9 - 0.7 * _bump(fmod(t, 1.6), 0.3, 1.0))}))
+	# умывается у фонтана: присел, обе руки зачерпывают и подносят к лицу
+	var wsh := func(t: float) -> float: return _bump(fmod(t, 2.2), 0.2, 1.6)
+	if lib.has_animation("Crouch_Idle"):
+		lib.add_animation("Wash", _frozen(lib.get_animation("Crouch_Idle"), 0.5, 4.4, {
+			"Head": func(t: float) -> Vector3: return Vector3(0.25 - 0.2 * wsh.call(t), 0.0, 0.0),
+			"LeftUpperArm": func(t: float) -> Vector3: return _arm(-1, 0.7 + 0.5 * wsh.call(t)),
+			"LeftLowerArm": func(t: float) -> Vector3: return _elbow(0.4 + 1.3 * wsh.call(t)),
+			"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 0.7 + 0.5 * wsh.call(t)),
+			"RightLowerArm": func(t: float) -> Vector3: return _elbow(0.4 + 1.3 * wsh.call(t))}))
+	# хлопает (уличным музыкантам, мимам): руки перед грудью, ладони сходятся и расходятся
+	lib.add_animation("Clap", _layer(idle, 2, {
+		"LeftUpperArm": func(t: float) -> Vector3: return _arm(-1, 0.8) + Vector3(0.0, -(0.55 + 0.25 * sin(TAU * t * 2.6)), 0.0),
+		"LeftLowerArm": func(t: float) -> Vector3: return _elbow(1.3),
+		"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 0.8) + Vector3(0.0, 0.55 + 0.25 * sin(TAU * t * 2.6), 0.0),
+		"RightLowerArm": func(t: float) -> Vector3: return _elbow(1.3),
+		"Head": func(t: float) -> Vector3: return Vector3(0.0, 0.0, 0.06 * sin(TAU * t * 0.8))}))
+	# потягивается (отдых в тени дерева): руки вверх, грудь назад — и обратно
+	var st := func(t: float) -> float: return _curve(fmod(t, 5.0), [[0.0, 0.0], [1.0, 1.0], [2.4, 1.0], [3.4, 0.0], [5.0, 0.0]])
+	lib.add_animation("Stretch", _layer(idle, 2, {
+		"UpperChest": func(t: float) -> Vector3: return Vector3(-0.2 * st.call(t), 0.0, 0.0),
+		"Head": func(t: float) -> Vector3: return Vector3(-0.25 * st.call(t), 0.0, 0.0),
+		"LeftUpperArm": func(t: float) -> Vector3: return _arm(-1, 0.0, 2.3 * st.call(t)),
+		"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 0.0, 2.3 * st.call(t)),
+		"LeftLowerArm": func(t: float) -> Vector3: return _elbow(0.2 * st.call(t)),
+		"RightLowerArm": func(t: float) -> Vector3: return _elbow(0.2 * st.call(t))}))
+	# машет знакомому: правая рука поднята в сторону, предплечье вверх, кисть качается
+	var wv := func(t: float) -> float: return _curve(fmod(t, 3.0), [[0.0, 0.0], [0.4, 1.0], [2.2, 1.0], [2.7, 0.0], [3.0, 0.0]])
+	lib.add_animation("Wave", _layer(idle, 2, {
+		"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 0.0, 2.1 * wv.call(t)),
+		"RightLowerArm": func(t: float) -> Vector3: return _elbow((0.35 + 0.35 * sin(TAU * t * 2.2)) * wv.call(t)),
+		"Head": func(t: float) -> Vector3: return Vector3(0.0, -0.15 * wv.call(t), 0.0)}))
+	# стоит, скрестив руки (ждёт, смотрит на работу мастера, на игру)
+	lib.add_animation("Arms_Crossed", _layer(idle, 3, {
+		"LeftUpperArm": func(t: float) -> Vector3: return _arm(-1, 0.4) + Vector3(0.0, 0.55, 0.0),
+		"LeftLowerArm": func(t: float) -> Vector3: return _elbow(1.75),
+		"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 0.47) + Vector3(0.0, -0.52, 0.0),
+		"RightLowerArm": func(t: float) -> Vector3: return _elbow(1.66),
+		"Head": func(t: float) -> Vector3: return Vector3(0.0, 0.2 * sin(TAU * t / (L * 3.0)), 0.0)}))
 
 
 static var _plain_mats := {}

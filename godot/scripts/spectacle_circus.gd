@@ -28,7 +28,7 @@ func _init(s, v: Dictionary) -> void:
 	sp = s
 	V = v
 	rng.seed = int(V["id"]) * 17 + 3
-	k = Catalog.ARCH
+	k = Catalog.scale_of(String(V.get("type", "circus_fl")))
 	var h: float = V["lay"]["tris"].surface(0.0, 2.2 * k, 1.0)
 	floor_y = h if h > -INF else 0.02
 

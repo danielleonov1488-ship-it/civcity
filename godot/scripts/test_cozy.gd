@@ -605,4 +605,5 @@ func _odeon() -> void:
 	var n := (sp.layout({"type": "odeon", "tier": 1, "variant": 0, "color": 0})["seats"] as Array).size()
 	var nt := (sp.layout({"type": "theatre", "tier": 1, "variant": 0, "color": 0})["seats"] as Array).size()
 	sp.free()
-	_check(n >= 16 and nt >= 60, "мест в одеоне %d, в театре %d" % [n, nt])
+	# театр меньше прежнего (Catalog.SHRINK, владелец 12.11: «отказаться от супер огромных зданий») — и мест меньше
+	_check(n >= 16 and nt >= 40, "мест в одеоне %d, в театре %d" % [n, nt])

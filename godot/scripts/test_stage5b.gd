@@ -315,7 +315,11 @@ func _new() -> void:
 	Gfx.apply(game)
 	await frames(2)
 	var corin2 := _used("SM_Bld_Pillar_Large_04")
-	check(built.has("venus") and corin1 == corin0 - 8 and corin2 == corin0, "«Низкая»: у храма Венеры 8 коринфских колонн подменяются лёгкими и возвращаются (%d → %d → %d)" % [corin0, corin1, corin2])
+	if KitHouses.covers("venus"):
+		# храм Венеры — свой (владелец 12.11: «уменьшить и детализировать»): колонн Synty в нём нет, облик тот же
+		check(built.has("venus") and corin1 == corin0 and corin2 == corin0, "«Низкая»: храм Венеры — свой, без колонн Synty; смена качества его не ломает (%d → %d → %d)" % [corin0, corin1, corin2])
+	else:
+		check(built.has("venus") and corin1 == corin0 - 8 and corin2 == corin0, "«Низкая»: у храма Венеры 8 коринфских колонн подменяются лёгкими и возвращаются (%d → %d → %d)" % [corin0, corin1, corin2])
 	# --- 5.7: «Улучшить» ---
 	await _upgrade(X0, Z0, houses)
 	await _street_cache(X0, Z0)

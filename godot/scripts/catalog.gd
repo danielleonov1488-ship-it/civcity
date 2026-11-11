@@ -11,6 +11,17 @@ const ARCH := 0.72
 const DECOR := 0.78
 
 static var _cache := {}
+## Огромные постройки из Synty — меньше (владелец 12.11: «отказаться от супер огромных зданий, уменьшить и
+## детализировать»): у амфитеатра, цирка и театра общий масштаб умножается на это (зрелища — по нему же)
+const SHRINK := {"colosseum": 0.8, "circus_fl": 0.75, "theatre": 0.82}      # одеон и так невелик (уменьшенный — на ступенях не сесть)
+
+
+## Масштаб постройки этого типа в городе (единицы чертежа → метры)
+static func scale_of(type: String) -> float:
+	var dd: Dictionary = Defs.B.get(type, {})
+	if dd.get("kind", "") == "decor" and not dd.get("wall", false):
+		return DECOR
+	return ARCH * float(SHRINK.get(type, 1.0))
 
 
 ## legacy — дом из старого сохранения (стоит на прежнем, более узком следе): свой дом ужимается по нему (KitHouses)
@@ -89,8 +100,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	b.base = Transform3D.IDENTITY
 	if not kit_done:
 		_actors(b, type, tier)
-	var dd: Dictionary = Defs.B.get(type, {})
-	_scale(b, DECOR if dd.get("kind", "") == "decor" and not dd.get("wall", false) else ARCH)   # на стенах — в масштабе дома
+	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)
 	_cache[key] = b
 	return b
 

@@ -1490,7 +1490,8 @@ const TALK_D := 0.85 * Citizen.K     # расстояние между собе�
 const RUN := 2.3 * Citizen.K         # дети бегают (м/с)
 const TALK_ANIMS := ["Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Idle_Talking_M", "Idle_Talking", "Interact", "Interact_M", "Spell_Simple_Idle", "Spell_Simple_Idle_M"]
 const LISTEN_ANIMS := ["Listen", "Listen_M", "Listen", "Listen_M", "Idle"]
-const SOLO_ANIMS := ["Idle", "Look_Around", "Look_Around_M", "Idle"]
+const SOLO_ANIMS := ["Idle", "Look_Around", "Look_Around_M", "Idle", "Arms_Crossed"]
+const SNIFF_SHOPS := ["stall_fruit", "stall_veg", "stall_fish", "bakery", "perfumer", "herbalist", "wineshop", "oilshop"]
 const WATCH := ["musicians", "dice", "mimes", "puppets", "ludus"]                 # смотрят представление
 const ENTER := ["odeon", "theatre", "balnea", "baths", "medic", "taberna", "fullonica", "dyer", "thermae"]   # заходят внутрь
 const STAND := ["Idle_Talking", "Interact", "Idle"]                    # продавцы, что стоят и могут повернуться
@@ -1588,6 +1589,7 @@ func _release(r: Dictionary) -> void:
 	r["dest"] = {}
 	r["act"] = ""
 	r["seq"] = []
+	r.erase("read")
 
 
 ## Что делать вне дома — по весам: лавки своего дома, скамья, колодец, фонтанчик, статуя, кошка, площадь. Дети играют.
@@ -1610,6 +1612,18 @@ func _pick_errand(r: Dictionary) -> Dictionary:
 			var t := _decor_target(r, from, e[0], e[1], e[2])
 			if not t.is_empty():
 				opts.append([e[3], t])
+		# досуг (владелец 12.11: «чтобы они буквально взаимодействовали с миром, наслаждались природой»)
+		var fine: bool = hour >= 7.0 and hour < 19.5 and not (game.weather != null and game.weather.raining())
+		for e: Array in LEISURE:
+			if not fine and String(e[1]) in ["smell", "shade", "feed"]:
+				continue
+			var t := _decor_target(r, from, e[0], e[1], e[2])
+			if not t.is_empty():
+				opts.append([e[3], t])
+		if fine:
+			var nt := _nature_target(r, from)
+			if not nt.is_empty():
+				opts.append([1.4, nt])
 		if not cat.is_empty():
 			opts.append([1.0, _cat_target(r, cat)])
 		var pz := _plaza_target(r, from)
@@ -1782,9 +1796,69 @@ func _decor_target(r: Dictionary, from: Vector2, base: String, act: String, maxd
 	cands.sort_custom(func(a, c): return a[0] < c[0])
 	for e in cands.slice(0, 4):
 		var b: Dictionary = e[1]
-		var d := _seat_target(r, b) if act == "sit" else _front_target(r, b, act)
+		var d := _seat_target(r, b) if act == "sit" else (_around_target(r, b, act) if act in AROUND else _front_target(r, b, act))
 		if not d.is_empty():
 			return d
+	return {}
+
+
+## Досуг у украшений и зданий: [вид, дело, дальше не ходят (м), вес]. Нюхают цветы, отдыхают в тени дерева,
+## кормят уток и лебедей с берега, умываются у фонтана, молятся у храма, любуются памятниками
+const LEISURE := [["flowers", "smell", 40.0, 0.8], ["planter", "smell", 40.0, 0.4], ["rosearch", "smell", 45.0, 0.7], ["bush", "smell", 35.0, 0.25],
+	["tree", "shade", 45.0, 0.6], ["cypress", "shade", 45.0, 0.25], ["palm", "shade", 45.0, 0.35], ["pergola", "shade", 45.0, 0.4],
+	["duck", "feed", 55.0, 0.9], ["swan", "feed", 55.0, 0.7], ["sundial", "admire", 50.0, 0.4], ["lion", "admire", 50.0, 0.3],
+	["fountain", "wash", 60.0, 0.9], ["temple", "pray", 70.0, 1.0], ["venus", "pray", 70.0, 0.8], ["pantheon", "pray", 80.0, 0.7],
+	["forum", "admire", 70.0, 0.5], ["pharos", "admire", 90.0, 0.5], ["arch", "admire", 60.0, 0.5], ["colosseum", "admire", 90.0, 0.4]]
+const AROUND := ["smell", "shade", "feed"]          # к этому подходят с любой стороны (не к двери): кругом, где свободно
+
+
+## Подойти к украшению с любой стороны: на ближнее место, куда можно пройти (мостовая, тропа у клумбы, дерева,
+## берега с утками), — не дальше трёх-четырёх метров, лицом к нему
+func _around_target(r: Dictionary, b: Dictionary, act: String) -> Dictionary:
+	var bp := city.blueprint(b)
+	var rad := 0.25
+	for rc: Rect2 in bp.footprint():
+		for c: Vector2 in [rc.position, rc.end, Vector2(rc.position.x, rc.end.y), Vector2(rc.end.x, rc.position.y)]:
+			rad = maxf(rad, c.length())
+	var ctr: Vector2 = b["pos"]
+	var sp: Dictionary = spots.get(b["id"], {})
+	var a0 := rng.randf() * TAU
+	var steps := 9 if act == "feed" else 6
+	for ri in steps:
+		var rr := rad + 0.35 + ri * 0.5
+		for k in 8:
+			if sp.has(k):
+				continue
+			var a := a0 + TAU * k / 8.0
+			var q := ctr + Vector2(cos(a), sin(a)) * rr
+			if not _free(q) or land.hq(land.idx(land.cell(q).x, land.cell(q).y)) < Land.WATER_Y + 0.05:
+				continue
+			return {"act": act, "bid": b["id"], "k": k, "p": q, "face": ctr}
+	return {}
+
+
+## Природа за домами: дикое дерево (отдохнуть в тени, потянуться) или полевые цветы (понюхать) у тропы или улицы
+## (ходят только по мостовой и тропам) — недалеко от дома
+func _nature_target(r: Dictionary, from: Vector2) -> Dictionary:
+	for k in 10:
+		var a := rng.randf() * TAU
+		var q := from + Vector2(cos(a), sin(a)) * rng.randf_range(6.0, 34.0)
+		var kc := Vector2i(int(q.x / 2.0), int(q.y / 2.0))
+		for dz in range(-1, 2):
+			for dx in range(-1, 2):
+				for it: Dictionary in game.nature.get(kc + Vector2i(dx, dz), []):
+					var nm: String = it["name"]
+					var tree := nm.contains("Tree")
+					if not tree and not nm.contains("Flowers") and not nm.contains("Lillies"):
+						continue
+					var ip: Vector2 = it["p"]
+					var b0 := rng.randf() * TAU
+					for ri in 4:
+						var dist := (1.0 if tree else 0.5) + ri * 0.55
+						for j in 6:
+							var s2 := ip + Vector2(cos(b0 + TAU * j / 6.0), sin(b0 + TAU * j / 6.0)) * dist
+							if _free(s2) and land.hq(land.idx(land.cell(s2).x, land.cell(s2).y)) >= Land.WATER_Y + 0.05:
+								return {"act": "shade" if tree else "smell", "p": s2, "face": ip, "wild": true}
 	return {}
 
 
@@ -1864,11 +1938,13 @@ func _front_target(r: Dictionary, b: Dictionary, act: String) -> Dictionary:
 	var sp: Dictionary = spots.get(b["id"], {})
 	var dp := city.door_point(b)
 	var ctr := Vector2(xf.origin.x, xf.origin.z)
-	var offs := [0.0, -0.55, 0.55] if act != "look" else [0.0, -0.8, 0.8, -1.5, 1.5]
+	var wide := act in ["look", "admire"]
+	var offs := [0.0, -0.55, 0.55] if not wide else [0.0, -0.8, 0.8, -1.5, 1.5]
+	var ahead := 0.4 if act == "look" else (1.6 if act == "admire" else (0.5 if act == "pray" else 0.0))
 	for k in offs.size():
 		if sp.has(k):
 			continue
-		var q := _spot_ok(dp + side * float(offs[k]) + (fwd * 0.4 if act == "look" else Vector2.ZERO), fwd)
+		var q := _spot_ok(dp + side * float(offs[k]) + fwd * ahead, fwd)
 		if q == Vector2.INF:
 			continue
 		return {"act": act, "bid": b["id"], "k": k, "p": q, "face": ctr}
@@ -2015,6 +2091,11 @@ func _begin(r: Dictionary) -> void:
 				["PickUp_Table" if rng.randf() < 0.6 else "PickUp_Table_M", 1.66], ["Idle", rng.randf_range(0.5, 1.0)]]
 			if rng.randf() < 0.4:
 				steps.insert(3, [talk, rng.randf_range(1.5, 3.0)])
+			var sty := String((city.buildings.get(int(d.get("bid", -1)), {}) as Dictionary).get("type", ""))
+			if sty in SNIFF_SHOPS and rng.randf() < 0.6:
+				steps.insert(1, ["Smell" if rng.randf() < 0.5 else "Smell_M", 3.9])     # понюхать хлеб, фрукты, духи
+			elif rng.randf() < 0.25:
+				steps.insert(3, ["Point" if rng.randf() < 0.5 else "Point_M", 2.6])      # «а вот это сколько?» — показывает на товар
 			_seq(r, steps)
 		"watch":
 			r["at"] = rng.randf_range(14.0, 30.0)
@@ -2022,13 +2103,49 @@ func _begin(r: Dictionary) -> void:
 		"sit":
 			r["face"] = float(d["yaw"])
 			r["at"] = rng.randf_range(18.0, 45.0)
-			_seq(r, [["Idle", 0.7], ["Sitting_Enter", 1.3], ["SIT", r["at"]], ["Sitting_Exit", 1.03], ["Idle", 0.3]])
+			r["read"] = rng.randf() < (0.5 if _near_type(r["p"], ["library", "academy", "school", "scriptorium"], 30.0) else 0.15)
+			var ss := [["Idle", 0.7], ["Sitting_Enter", 1.3], ["SIT", r["at"]], ["Sitting_Exit", 1.03], ["Idle", 0.3]]
+			if rng.randf() < 0.3:
+				ss.append(["Stretch", 4.9])
+			_seq(r, ss)
 		"well":
 			_seq(r, [["Idle", 0.4], ["Interact" if rng.randf() < 0.5 else "Interact_M", 4.0], ["PickUp_Table", 1.66], ["Idle", 0.6]])
 		"drink":
-			_seq(r, [["Idle", 0.4], ["PickUp_Table", 2.5], ["Idle", 0.6], ["Look_Around", 3.5]])
+			if rng.randf() < 0.4 and Citizen.library().has_animation("Wash"):
+				_wash(r)                       # в жару — умыться у фонтанчика
+			else:
+				_seq(r, [["Idle", 0.4], ["PickUp_Table", 2.5], ["Idle", 0.6], ["Look_Around", 3.5]])
 		"look":
-			_seq(r, [["Idle", 0.6], ["Look_Around" if rng.randf() < 0.5 else "Look_Around_M", 7.5], ["Idle", rng.randf_range(1.0, 3.0)]])
+			if rng.randf() < 0.55:
+				# статуя, колонна: любуется, показывает спутнику рукой
+				_seq(r, [["Idle", 0.6], ["Admire", rng.randf_range(3.0, 5.0)], ["Point" if rng.randf() < 0.5 else "Point_M", 4.6], ["Idle", rng.randf_range(1.0, 2.5)]])
+			else:
+				_seq(r, [["Idle", 0.6], ["Look_Around" if rng.randf() < 0.5 else "Look_Around_M", 7.5], ["Idle", rng.randf_range(1.0, 3.0)]])
+		"smell":
+			var sm := "Smell" if rng.randf() < 0.5 else "Smell_M"
+			var st := [["Idle", 0.5], [sm, 3.9]]
+			if rng.randf() < 0.5:
+				st.append([sm, 3.9])
+			st += [["Admire", rng.randf_range(2.0, 3.5)], ["Idle", 0.6]]
+			_seq(r, st)
+		"shade":
+			var st2 := [["Idle", 0.6], ["Admire", rng.randf_range(4.0, 7.0)], ["Stretch", 4.9], ["Idle", rng.randf_range(2.0, 4.0)]]
+			if rng.randf() < 0.4:
+				st2.insert(2, ["Arms_Crossed", rng.randf_range(4.0, 7.0)])
+			_seq(r, st2)
+		"feed":
+			var fd := "Feed" if rng.randf() < 0.5 else "Feed_M"
+			_seq(r, [["Idle", 0.5], [fd, 1.6 * rng.randi_range(3, 6)], ["Laugh" if rng.randf() < 0.3 else "Idle", 2.5], [fd, 1.6 * rng.randi_range(2, 4)], ["Idle", 0.6]])
+		"wash":
+			_wash(r)
+		"pray":
+			_seq(r, [["Idle", 0.8], ["Pray", rng.randf_range(6.0, 11.0)], ["Idle", rng.randf_range(0.8, 1.6)]])
+		"admire":
+			var pt := "Point" if rng.randf() < 0.5 else "Point_M"
+			var st3 := [["Idle", 0.5], ["Admire", rng.randf_range(3.5, 6.0)], [pt, 4.6], ["Admire", rng.randf_range(2.0, 3.5)], ["Idle", 0.8]]
+			if rng.randf() < 0.35:
+				st3.insert(3, ["Arms_Crossed", rng.randf_range(3.0, 5.0)])
+			_seq(r, st3)
 		"cat":
 			var c: Dictionary = d["cat"]
 			c["state"] = "pet"
@@ -2071,8 +2188,8 @@ func _act_done(r: Dictionary) -> void:
 				_next(r)
 			elif not _join_talk(r):
 				_solo_cycle(r)
-		"look":
-			if rng.randf() < 0.5 and not r.has("hero"):
+		"look", "smell", "shade", "admire", "feed", "wash", "pray":
+			if rng.randf() < (0.5 if r["act"] == "look" else 0.35) and not r.has("hero"):
 				_social(r)
 			else:
 				_next(r)
@@ -2196,17 +2313,35 @@ func _sit_pick(r: Dictionary) -> void:
 	_anim(r, ("Sitting_Idle" if talking else ("Sitting_Talking" if rng.randf() < 0.5 else "Sitting_Talking_M")), 0.4)
 
 
+## Умыться у фонтана: присел, зачерпнул, к лицу — и потянулся
+func _wash(r: Dictionary) -> void:
+	var st := [["Idle", 0.4], ["Wash", 4.4]]
+	if rng.randf() < 0.5:
+		st.append(["Wash", 4.4])
+	st += [["Idle", 0.6], ["Stretch" if rng.randf() < 0.4 else "Look_Around", 4.9]]
+	_seq(r, st)
+
+
+## Рядом есть постройка одного из этих видов (не дальше rad)
+func _near_type(p: Vector2, types: Array, rad: float) -> bool:
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if b["type"] in types and (b["pos"] as Vector2).distance_to(p) < rad:
+			return true
+	return false
+
+
 func _watch_pick(r: Dictionary) -> void:
 	var t: String = (r["dest"] as Dictionary).get("type", "")
 	var opts := ["Idle", "Listen", "Listen_M", "Idle"]
 	if t == "mimes" or t == "puppets":
-		opts += ["Laugh", "Laugh"]
+		opts += ["Laugh", "Laugh", "Clap", "Point"]
 	elif t == "musicians":
-		opts += ["Dance", "Listen"]
+		opts += ["Dance", "Listen", "Clap", "Clap"]
 	elif t == "dice":
-		opts += ["Look_Around", "Laugh"]
+		opts += ["Look_Around", "Laugh", "Arms_Crossed", "Point_M"]
 	elif t == "ludus":
-		opts += ["Look_Around", "Listen", "Dance"]          # лудус: болеют за гладиаторов
+		opts += ["Look_Around", "Listen", "Dance", "Clap", "Arms_Crossed"]          # лудус: болеют за гладиаторов
 	var a: String = opts[rng.randi() % opts.size()]
 	_seq(r, [[a, rng.randf_range(2.5, 5.0) if a != "Laugh" else 2.5]])
 
@@ -2338,7 +2473,11 @@ func _join_talk(r: Dictionary) -> bool:
 			q["act"] = "talk"
 			q["seq"] = []
 			q["st"] = 9999.0
-			_anim(q, "Idle", 0.4)
+			if rng.randf() < 0.6:
+				_anim(q, "Wave" if rng.randf() < 0.5 else "Wave_M", 0.3)     # «Привет!» — машет подходящему
+				q["wave_t"] = 2.7
+			else:
+				_anim(q, "Idle", 0.4)
 			r["conv"] = cv
 			r["act"] = "talk"
 			_go(r, to, "talk", true)
@@ -2412,10 +2551,15 @@ func _conv_step(cv: Dictionary, dt: float) -> void:
 		elif m["state"] == "walk":
 			walkers.append(m)
 	if pres.size() < 2:
-		# ждёт подходящего — смотрит на него
+		# ждёт подходящего — смотрит на него (помахал — опускает руку)
 		for m in pres:
 			if not walkers.is_empty():
 				m["face"] = _yaw_to(m["p"], walkers[0]["p"])
+			if m.has("wave_t"):
+				m["wave_t"] = float(m["wave_t"]) - dt
+				if float(m["wave_t"]) <= 0.0:
+					m.erase("wave_t")
+					_anim(m, "Idle", 0.4)
 		if pres.size() + walkers.size() < 2:
 			_conv_end(cv)
 		return
@@ -2432,6 +2576,7 @@ func _conv_step(cv: Dictionary, dt: float) -> void:
 		cv["sw"] = rng.randf_range(2.5, 5.5)
 		var laugh := rng.randf() < 0.12
 		for m in pres:
+			m.erase("wave_t")
 			if m == spk:
 				_anim(m, TALK_ANIMS[rng.randi() % TALK_ANIMS.size()], 0.35)
 			else:
@@ -2799,6 +2944,9 @@ func props_want(r: Dictionary) -> Array:
 		"walk", "door":
 			if String(r.get("carry", "")) != "":
 				return [r["carry"]]
+		"idle":
+			if r["act"] == "sit" and bool(r.get("read", false)) and _sitting(r):
+				return ["scroll"]
 	return []
 
 

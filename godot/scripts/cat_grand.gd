@@ -461,7 +461,7 @@ static func _circus(b: Bp) -> void:
 	var rows := 4
 	var P := 0.72                        # глубина ряда: ступень 0,36 + скамья 0,36
 	var Df := 0.36
-	var Bh := Crowd.SEAT_DROP / Catalog.ARCH
+	var Bh := Crowd.SEAT_DROP / Catalog.scale_of("circus_fl")
 	var Rr := 0.5                        # ряд выше прежнего
 	var y0 := 0.6                        # первый ряд — над дорожкой, за низкой стенкой
 	var stairs := [-L + 1.2, -L * 0.5, -3.0, 3.0, L * 0.5, L - 1.2]

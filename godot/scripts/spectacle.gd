@@ -155,6 +155,8 @@ func layout(b: Dictionary) -> Dictionary:
 	var tris := Tris.new()
 	tris.build(bp)
 	var lay := {"seats": [], "groups": {}, "tris": tris}
+	# уменьшенная трибуна (Catalog.SHRINK): ступени ниже — зритель сидит на своём месте, ступни чуть ниже кромки ступени
+	_amphi_drop = Crowd.SEAT_DROP * float(Catalog.SHRINK.get(String(b["type"]), 1.0))
 	match String(VENUES[b["type"]]["kind"]):
 		"temple":
 			_temple(lay, bp, tris)
@@ -233,7 +235,7 @@ func _amphi(lay: Dictionary, xf: Transform3D, tris: Tris) -> void:
 				var F := Vector3(c.x - E.x, 0, c.z - E.z).normalized()
 				var pelvis := E - F * PELVIS_IN
 				var root := pelvis + F * People.SIT_BACK
-				var seat_y := _check(tris, pelvis, root, F, top)
+				var seat_y := _check(tris, pelvis, root, F, top, _amphi_drop)
 				if seat_y == -INF:
 					lay["dropped"] = int(lay.get("dropped", 0)) + 1
 					continue
@@ -613,7 +615,10 @@ func _stage(lay: Dictionary, bp: Bp) -> void:
 ## Можно ли сесть (высота сиденья по модели или −INF): под тазом — сиденье (у задуманной высоты top), под ступнями —
 ## ступень ниже ровно на Crowd.SEAT_DROP (ноги на ступени, а не в воздухе и не в камне), над ступнями и перед коленями
 ## ничего не торчит (парапет), над головой — пусто (навесы, статуи, жаровни)
-func _check(tris: Tris, pelvis: Vector3, root: Vector3, F: Vector3, top: float) -> float:
+var _amphi_drop := Crowd.SEAT_DROP
+
+
+func _check(tris: Tris, pelvis: Vector3, root: Vector3, F: Vector3, top: float, drop := Crowd.SEAT_DROP) -> float:
 	var seat := tris.surface(pelvis.x, pelvis.z, top + 0.05)
 	if seat == -INF or absf(seat - top) > 0.06:
 		return -INF
@@ -621,7 +626,7 @@ func _check(tris: Tris, pelvis: Vector3, root: Vector3, F: Vector3, top: float) 
 		return -INF
 	var foot := root + F * 0.03
 	var fl := tris.surface(foot.x, foot.z, seat - 0.05)
-	if fl == -INF or absf(seat - fl - Crowd.SEAT_DROP) > 0.035:
+	if fl == -INF or absf(seat - fl - drop) > 0.035:
 		return -INF
 	if tris.any_in(foot.x, foot.z, fl + 0.05, seat + 0.45):
 		return -INF

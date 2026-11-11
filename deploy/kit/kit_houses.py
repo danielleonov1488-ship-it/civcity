@@ -2988,19 +2988,28 @@ PROPS = []          # детали Synty в чертеже: [имя, x, y, z, п
 #   ОБЩЕСТВЕННЫЕ ЗДАНИЯ (школа, библиотека, академия, склад): корпус — как у домов (стены, окна, ставни, комнаты,
 #   крыша), фасад и двор — свои; росписи и рельефы — клетки fresco.png (Codex), вывески — signs.png
 # =====================================================================================
-FRESCO = ["school", "mosaic", "tymp_lib", "tymp_acad", "ins_lib", "ins_acad", "garden", "birds", "tymp_pref", "ins_pref", "ins_therm", "dolphins"]
-FRESCO_ROWS = 6
+FRESCO = ["school", "mosaic", "tymp_lib", "tymp_acad", "garden", "birds", "tymp_pref", "dolphins", "tymp_jup", "tymp_ven", "tymp_pan", "insA", "insB", "insC"]
+FRESCO_ROWS = 7
+INS = {"ins_lib": ("insA", 0), "ins_acad": ("insA", 1), "ins_pref": ("insA", 2), "ins_therm": ("insB", 0), "ins_jup": ("insB", 1),
+       "ins_ven": ("insB", 2), "ins_pan": ("insC", 0), "ins_forum": ("insC", 1), "ins_ludus": ("insC", 2)}
 MARBLE = "#ece6da"
 GOLD = "#d9b54a"
 
 
 def fresco_uv(key, band=False):
+    row = None
+    if key in INS:
+        key, row = INS[key]
     i = FRESCO.index(key)
     cx, cy = i % 2, i // 2
     e = 3.0 / 1536
     u0, u1 = cx / 2 + e, (cx + 1) / 2 - e
     v0, v1 = 1 - (cy + 1) / FRESCO_ROWS + e, 1 - cy / FRESCO_ROWS - e
-    if band:                                   # надпись — средняя треть картинки
+    if row is not None:                        # надпись — одна из трёх полос клетки (сверху вниз)
+        hh = (v1 - v0) / 3.0
+        v1 = v1 - row * hh - hh * 0.04
+        v0 = v1 - hh * 0.92
+    elif band:
         v0, v1 = v0 + (v1 - v0) * 0.34, v0 + (v1 - v0) * 0.66
     return u0, u1, v0, v1
 
@@ -4100,6 +4109,440 @@ CIVIC.update({
 
 TRADE_GOODS.update({"herbs": g_herbs, "cats": g_cats})
 
+# =====================================================================================
+#   ПАМЯТНИКИ (владелец 12.11: «отказаться от супер огромных зданий, уменьшить и детализировать»): храм Юпитера,
+#   форум, пантеон, храм Венеры и Ромы, маяк — свои, заметно меньше прежних, из тёсаного камня и мрамора
+# =====================================================================================
+def mono_faces(x0, x1, z0, z1, y0, y1):
+    """стены массива — как стены дома (для щелчка, «заслоняет ли», кладки при стройке); украшения на них не вешать"""
+    for side, (n, a, d, u0, L) in {
+            "front": ((0, 0, 1), (1, 0, 0), z1, x0, x1 - x0), "back": ((0, 0, -1), (-1, 0, 0), -z0, -x1, x1 - x0),
+            "left": ((-1, 0, 0), (0, 0, 1), -x0, z0, z1 - z0), "right": ((1, 0, 0), (0, 0, -1), x1, -z1, z1 - z0)}.items():
+        FACES[side] = {"n": list(n), "a": list(a), "d": round(d, 3), "bound": [round(u0, 3), y0, round(L, 3), y1 - y0],
+                       "block": [[round(u0, 3), y0, round(L, 3), y1 - y0]], "open": []}
+
+
+def podium(body, x0, x1, z0, z1, h):
+    """подиум: ядро из грубого камня, мраморный цоколь и карниз"""
+    body.box(((x0 + x1) / 2, h / 2, (z0 + z1) / 2), (x1 - x0, h, z1 - z0), J(P["stone"], 0.03), mat=M_STONE)
+    m = J(MARBLE, 0.02, 0.0, 0.0)
+    body.box(((x0 + x1) / 2, 0.09, (z0 + z1) / 2), (x1 - x0 + 0.12, 0.18, z1 - z0 + 0.12), m, skip=("bot",), mat=M_MARBLE)
+    body.box(((x0 + x1) / 2, h - 0.05, (z0 + z1) / 2), (x1 - x0 + 0.14, 0.1, z1 - z0 + 0.14), m, mat=M_MARBLE)
+
+
+def stairs(body, x0, x1, z_top, h, n=6, d=0.27):
+    """лестница во всю ширину от края подиума вперёд; возвращает передний край"""
+    r = h / n
+    m = MARBLE
+    for i in range(n - 1):
+        top = h - (i + 1) * r
+        body.box(((x0 + x1) / 2, top / 2, z_top + (i + 0.5) * d), (x1 - x0, top, d + 0.01), J(m, 0.03, 0.0, 0.0),
+                 cols={"top": J(m, 0.05, 0.0, 0.0)}, skip=("bot",), mat=M_MARBLE)
+    return z_top + (n - 1) * d
+
+
+def cheek(body, x, z0, z1, h):
+    """щёки лестницы: мраморные блоки по бокам, наверху — место жаровни или статуи"""
+    body.box((x, h / 2, (z0 + z1) / 2), (0.32, h, z1 - z0), J(MARBLE, 0.02, 0.0, 0.0), mat=M_MARBLE)
+    body.box((x, h + 0.03, (z0 + z1) / 2), (0.38, 0.06, z1 - z0 + 0.06), J(MARBLE, 0.04, 0.0, 0.0), mat=M_MARBLE)
+
+
+def cella(body, x0, x1, z0, z1, y0, y1, door_w=1.0, door_h=2.0, back_door=False):
+    """целла храма: стены из мраморных блоков, пилястры, бронзовые двери (приоткрыты), темнота и статуя внутри"""
+    t = 0.2
+    ashm = J("#f6f2ea", 0.02, 0.0, 0.0)
+    h = y1 - y0
+    body.box((x0 + t / 2, y0 + h / 2, (z0 + z1) / 2), (t, h, z1 - z0), ashm, mat=M_ASHM)
+    body.box((x1 - t / 2, y0 + h / 2, (z0 + z1) / 2), (t, h, z1 - z0), ashm, mat=M_ASHM)
+    for (zw, has_door) in ((z1 - t / 2, True), (z0 + t / 2, back_door)):
+        if has_door:
+            for s in (-1, 1):
+                xa, xb = (x0, -door_w / 2) if s < 0 else (door_w / 2, x1)
+                body.box(((xa + xb) / 2, y0 + h / 2, zw), (xb - xa, h, t), ashm, mat=M_ASHM)
+            body.box((0.0, y0 + door_h + (h - door_h) / 2, zw), (door_w, h - door_h, t), ashm, mat=M_ASHM)
+            body.box((0.0, y0 + door_h / 2, zw - 0.12 * (1 if zw > 0 else -1)), (door_w, door_h, 0.02), col("#1e1812"))
+            sgn = 1 if zw > 0 else -1
+            for s in (-1, 1):                  # обрамление и створки
+                body.box((s * (door_w / 2 + 0.06), y0 + door_h / 2, zw + sgn * 0.11), (0.12, door_h + 0.06, 0.04), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+                Rd = Matrix.Rotation(s * sgn * 0.9, 3, "Y")
+                body.box(tuple(Vector((s * door_w / 2, y0 + door_h / 2, zw + sgn * 0.02)) + Rd @ Vector((-s * door_w / 4, 0, sgn * 0.0))),
+                         (door_w / 2, door_h - 0.04, 0.05), J("#8a6a3a", 0.05), Rd, mat=M_WOOD)
+            body.box((0.0, y0 + door_h + 0.06, zw + sgn * 0.11), (door_w + 0.3, 0.12, 0.05), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+        else:
+            body.box((0.0, y0 + h / 2, zw), (x1 - x0, h, t), ashm, mat=M_ASHM)
+    body.box(((x0 + x1) / 2, y0 + 0.01, (z0 + z1) / 2), (x1 - x0 - 0.1, 0.02, z1 - z0 - 0.1), col("#2a2018"))
+    for xs in (x0 - 0.02, x1 + 0.02):          # пилястры по бокам целлы
+        sgn = -1 if xs < 0 else 1
+        n = max(2, int((z1 - z0) / 1.0) + 1)
+        for k in range(n):
+            zz = z0 + 0.15 + (z1 - z0 - 0.3) * k / (n - 1)
+            body.box((xs + sgn * 0.02, y0 + h / 2, zz), (0.05, h - 0.2, 0.22), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+            body.box((xs + sgn * 0.035, y1 - 0.12, zz), (0.08, 0.14, 0.3), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+
+
+def entab(body, x0, x1, z0, z1, y, h=0.42, ins=None, ins_w=None):
+    """антаблемент по периметру: архитрав, фриз (спереди — надпись), сухарики, выносная плита; возвращает верх"""
+    m = MARBLE
+    ah = h * 0.45
+    for (cx, cz, sx, sz) in (((x0 + x1) / 2, z1, x1 - x0, 0.3), ((x0 + x1) / 2, z0, x1 - x0, 0.3), (x0, (z0 + z1) / 2, 0.3, z1 - z0), (x1, (z0 + z1) / 2, 0.3, z1 - z0)):
+        body.box((cx, y + ah / 2, cz), (sx, ah, sz), J(m, 0.02, 0.0, 0.0), mat=M_MARBLE)
+        body.box((cx, y + ah + (h - ah) / 2, cz), (sx, h - ah, sz), J(m, -0.02, 0.0, 0.0), mat=M_MARBLE)
+    nd = int((x1 - x0) / 0.1)
+    for k in range(nd):
+        body.box((x0 + (k + 0.5) * (x1 - x0) / nd, y + h + 0.02, z1 + 0.13), (0.045, 0.05, 0.05), J(m, -0.03, 0.0, 0.0), mat=M_MARBLE)
+    body.box(((x0 + x1) / 2, y + h + 0.075, (z0 + z1) / 2), (x1 - x0 + 0.34, 0.07, z1 - z0 + 0.34), J(m, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    if ins:
+        P_ = lambda u, v, nn: Vector((x0 + u, v, z1 + 0.151 + nn))
+        fresco_quad(body, P_, Vector((0, 0, 1)), (x1 - x0) / 2, y + ah + (h - ah) / 2, ins_w or min(x1 - x0 - 0.4, 3.2), (h - ah) * 0.92, 0.0, ins, band=True)
+    return y + h + 0.11
+
+
+def temple_roof(body, x0, x1, z0, z1, y, pitch, key=None, back_key=None, apex_statue=True):
+    """кровля храма: конёк вдоль Z, фронтоны спереди (с рельефом) и сзади, карнизы по скатам, акротерии"""
+    yr, rise = roof(body, False, x0, x1, z0, z1, y, pitch_deg=pitch, oe=0.16, og=0.16, antefix=True)
+    m = MARBLE
+    for (zf, k, nz) in ((z1, key, 1), (z0, back_key, -1)):
+        tri = [Vector((x0, y, zf)), Vector((x1, y, zf)), Vector(((x0 + x1) / 2, y + rise * 0.95, zf))]
+        body.face([body.v(tuple(q)) for q in tri], J(m, 0.02, 0.0, 0.0), ("dir", (0, 0, nz)), mat=M_MARBLE)
+        if k:
+            a = tri[0] + Vector((0.2, 0.04, 0.012 * nz))
+            b = tri[1] + Vector((-0.2, 0.04, 0.012 * nz))
+            apex = tri[2] + Vector((0, -0.08, 0.012 * nz))
+            u0, u1, v0, v1 = fresco_uv(k)
+            body.face([body.v(tuple(a)), body.v(tuple(b)), body.v(tuple(apex))], (1.0, 1.0, 1.0, 1.0), ("dir", (0, 0, nz)),
+                      uv=[(u0, v0 + (v1 - v0) * 0.1), (u1, v0 + (v1 - v0) * 0.1), ((u0 + u1) / 2, v0 + (v1 - v0) * 0.85)], mat=M_FRESCO)
+        for s in (-1, 1):
+            p0 = Vector(((x0 + x1) / 2, y + rise * 0.95 + 0.04, zf + nz * 0.04))
+            p1 = Vector((x0 - 0.05 if s < 0 else x1 + 0.05, y + 0.02, zf + nz * 0.04))
+            rod(body, p0, p1, 0.1, J(m, 0.03, 0.0, 0.0), mat=M_MARBLE)
+            acroterion(body, (x0 - 0.02 if s < 0 else x1 + 0.02, y + 0.06, zf + nz * 0.04), 1.2)
+        if apex_statue and nz > 0:
+            statue_prop((x0 + x1) / 2, zf + 0.05, 0.0, 0.42, y + rise * 0.95 + 0.04, plinth=False)
+        else:
+            acroterion(body, ((x0 + x1) / 2, y + rise * 0.95 + 0.06, zf + nz * 0.04), 1.5)
+    return yr
+
+
+def build_mono(v):
+    coll = bpy.context.scene.collection
+    body = MB("House")
+    emb = MB("Embers", [MAT_EMBER])
+    use("mono")
+    ridge = MONO_FN[v](body, emb)
+    body.obj(coll)
+    if not emb.empty():
+        emb.obj(coll)
+    return ridge
+
+
+def mon_temple(body, emb):
+    """храм Юпитера: подиум с лестницей, шесть колонн спереди, целла из мрамора, фронтон с Юпитером, надпись IOVI OPTIMO MAXIMO"""
+    h = 0.95
+    x0, x1, z0, z1 = -2.5, 2.5, -3.4, 1.9
+    podium(body, x0, x1, z0, z1, h)
+    zf = stairs(body, x0 + 0.35, x1 - 0.35, z1, h, 6, 0.27)
+    for s in (-1, 1):
+        cheek(body, s * 2.33, z1, z1 + 0.75, h)
+        tripod(body, emb, (s * 2.33, h + 0.06, z1 + 0.38), 0.85)
+    cella(body, -1.85, 1.85, -3.15, 0.1, h, 3.85, 1.0, 2.05)
+    PROPS.append(["SM_Prop_Statue_01", 0.0, round(h + 0.02, 3), -2.4, 0.0, 0.62])
+    xs = [-2.25 + 0.9 * k for k in range(6)]
+    for x in xs:
+        column3(body, (x, h, 1.6), 2.9, 0.12)
+    for s in (-1, 1):
+        for zc in (0.7, -0.2):
+            column3(body, (s * 2.25, h, zc), 2.9, 0.12)
+    for k in range(5):
+        swag(body, (xs[k] + 0.17, h + 2.88, 1.75), (xs[k + 1] - 0.17, h + 2.88, 1.75), 0.24, 0.16, "#9a2f28", (0, 0, 1))
+    for s in (-1, 1):
+        banner(body, lambda u, vv, n: Vector((u, vv, 0.1 + 0.01 + n)), Vector((1, 0, 0)), Vector((0, 0, 1)), "x", s * 1.2, 3.55, 0.48, 1.35, 0.0, 0 if s < 0 else 1)
+    floor_tiles(body, -2.4, 2.4, 0.1, 1.85, h)
+    yt = entab(body, -2.4, 2.4, -3.3, 1.75, h + 2.9, 0.45, ins="ins_jup")
+    ridge = temple_roof(body, -2.45, 2.45, -3.35, 1.8, yt, 20.0, key="tymp_jup")
+    for s in (-1, 1):
+        statue_prop(s * 2.95, zf - 0.4, 0.0, 0.7)
+        tree_prop("SM_Env_Tree_Thin_0%d" % (1 + (s > 0)), s * 2.95, z0 + 0.4, 0.5)
+    laurel(body, (-0.6, h + 2.2, 0.24), (0.6, h + 2.2, 0.24), 0.14, (0, 0, 1))
+    mono_faces(x0, x1, z0, zf, 0.0, yt)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, zf + 0.45
+    FP.append([-3.4, round(z0 - 0.1, 3), 6.8, round(zf + 0.35 - z0 + 0.1, 3)])
+    ACTORS.append([0.0, h, 1.95, 0.0, "Spell_Simple_Idle", "rich"])
+    return ridge
+
+
+def mon_forum(body, emb):
+    """форум: площадь из мрамора, колоннады по бокам, базилика с надписью FORVM, ростры с носами кораблей, колонна
+    со статуей, статуи, жаровни"""
+    x0, x1, z0, z1 = -4.0, 4.0, -4.0, 4.0
+    floor_tiles(body, -2.65, 2.65, -2.2, 3.95, 0.0, 0.8, "#ece4d4", "#c9bfae")
+    for s in (-1, 1):
+        stoa(body, s * 3.95, s, -3.9, 3.9, 1.3, 2.4, fresco=None)
+        for k in range(2):
+            marble_bench(body, (s * 3.25, 0.08, -1.6 + k * 3.2), Matrix.Rotation(math.pi / 2 * s, 3, "Y"), 1.0)
+    # базилика у задней стороны: стена с пилястрами, надпись, двери
+    bw = 0.3
+    body.box((0.0, 1.9, -4.0 + bw / 2), (5.3, 3.8, bw), J("#f6f2ea", 0.02, 0.0, 0.0), mat=M_ASHM)
+    Pb = lambda u, vv, n: Vector((-2.65 + u, vv, -4.0 + bw + n))
+    for uu in (0.25, 1.35, 3.95, 5.05):
+        pilaster(body, Pb, Vector((1, 0, 0)), Vector((0, 0, 1)), "back", uu, 0.0, 3.6)
+    body.box((0.0, 3.55, -3.8), (5.5, 0.12, 0.35), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    fresco_quad(body, Pb, Vector((0, 0, 1)), 2.65, 3.1, 2.6, 0.42, 0.03, "ins_forum", band=True)
+    for uu in (1.9, 3.4):
+        body.box(tuple(Pb(uu - 0.0, 0.95, 0.012)), (0.8, 1.9, 0.02), col("#1e1812"))
+        body.box(tuple(Pb(uu, 1.95, 0.05)), (1.0, 0.12, 0.08), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    banner(body, Pb, Vector((1, 0, 0)), Vector((0, 0, 1)), "back", 0.8, 3.3, 0.48, 1.4, 0.06, 0)
+    banner(body, Pb, Vector((1, 0, 0)), Vector((0, 0, 1)), "back", 4.5, 3.3, 0.48, 1.4, 0.06, 1)
+    body.box((0.0, 3.95, -3.85), (5.6, 0.3, 0.45), J(P["tile"], 0.05))
+    # ростры: помост с носами кораблей; верхняя плита — «#marble» (по ней Spectacle ставит оратора)
+    rz0, rz1, rh = -2.2, -0.9, 1.0
+    body.box((0.0, rh / 2 - 0.04, (rz0 + rz1) / 2), (2.6, rh - 0.08, rz1 - rz0), J(P["stone"], 0.03), mat=M_STONE)
+    PROPS.append(["#marble", 0.0, round(rh - 0.04, 3), round((rz0 + rz1) / 2, 3), 0.0, [round(2.7 / 0.72, 3), round(0.08 / 0.72, 3), round((rz1 - rz0 + 0.06) / 0.72, 3)]])
+    for k in range(3):
+        bx = -0.8 + k * 0.8
+        spindle(body, (bx, 0.55, rz1), (bx, 0.5, rz1 + 0.45), [(0.12, 0.0), (0.1, 0.5), (0.04, 0.9), (0.0, 1.0)], 8, col("#8a6a2a"), sq=(1.0, 0.6))
+        torus(body, (bx, 0.55, rz1 + 0.02), Matrix.Rotation(math.pi / 2, 3, "X"), 0.12, 0.02, col("#a8803a"), seg=10, seg2=3)
+    for s in (-1, 1):                          # боковые лесенки на ростры
+        for k in range(4):
+            body.box((s * (1.45 + k * 0.0), (k + 0.5) * rh / 5, rz0 + 0.2 + k * 0.25), (0.3, (k + 1) * rh / 5, 0.25), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+        tripod(body, emb, (s * 1.75, 0.0, rz1 + 0.4), 0.95)
+    # колонна славы со статуей, статуи у колоннад
+    column3(body, (-1.9, 0.0, 2.4), 2.6, 0.13, seg=12, ionic=False)
+    statue_prop(-1.9, 2.4, 0.4, 0.55, 2.62, plinth=False)
+    statue_prop(1.9, 2.4, -0.4, 0.75)
+    statue_prop(-2.1, 0.6, 0.6, 0.7)
+    statue_prop(2.1, 0.6, -0.6, 0.7)
+    mono_faces(x0, x1, z0, z1, 0.0, 3.8)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, z1 + 0.4
+    FP.append([x0 - 0.05, z0 - 0.05, 8.1, 8.1])
+    ACTORS.append([-1.2, 0.0, 1.0, 0.9, "Idle", "rich"])
+    ACTORS.append([2.0, 0.0, 3.4, 0.0, "Sword_Idle", "soldier"])
+    return 4.2
+
+
+def mon_pantheon(body, emb):
+    """пантеон: ротонда из мраморных блоков под ступенчатым куполом с окулусом, портик в восемь колонн, фронтон с
+    бронзовым орлом, надпись AGRIPPA"""
+    rc, rz = 3.0, -1.4
+    h0 = 0.35
+    body.lathe((0.0, 0.0, rz), [(rc + 0.25, 0.0), (rc + 0.25, h0)], 24, J(P["stone"], 0.03), close_top=True, mat=M_STONE)
+    body.lathe((0.0, h0, rz), [(rc, 0.0), (rc, 3.4)], 28, J("#f4efe6", 0.02, 0.0, 0.0), mat=M_ASHM)
+    for yy in (h0 + 1.6, h0 + 3.3):
+        body.lathe((0.0, yy, rz), [(rc + 0.08, 0.0), (rc + 0.08, 0.14)], 28, J(MARBLE, 0.03, 0.0, 0.0), close_top=True, mat=M_MARBLE)
+    y = h0 + 3.44
+    for k in range(4):                         # ступени у основания купола
+        body.lathe((0.0, y + k * 0.14, rz), [(rc - k * 0.2, 0.0), (rc - k * 0.2, 0.14)], 28, J("#d8d2c6", 0.03), close_top=True, mat=M_STONE)
+    yd = y + 0.56
+    prof = [(rc - 0.75, 0.0), (rc - 0.95, 0.55), (rc - 1.35, 1.1), (rc - 1.95, 1.55), (0.62, 1.82)]
+    body.lathe((0.0, yd, rz), prof, 32, J("#a8b0b4", 0.03), cols=[J("#a8b0b4", 0.03), J("#9ea6aa", 0.03), J("#969ea2", 0.03), J("#8e969a", 0.03)], mat=M_STONE)
+    body.lathe((0.0, yd + 1.82, rz), [(0.62, 0.0), (0.66, 0.06), (0.5, 0.08)], 20, J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    body.lathe((0.0, yd + 1.8, rz), [(0.5, 0.0), (0.5, 0.001)], 20, col("#1a1612"), close_top=True)
+    # переходный объём и портик
+    body.box((0.0, (h0 + 4.0) / 2, 1.05), (4.2, 4.0 - h0, 1.1), J("#f4efe6", 0.02, 0.0, 0.0), mat=M_ASHM)
+    podium(body, -3.1, 3.1, 0.5, 3.6, h0)
+    zf = stairs(body, -2.8, 2.8, 3.6, h0, 3, 0.3)
+    xs = [-2.7 + k * (5.4 / 7) for k in range(8)]
+    for x in xs:
+        column3(body, (x, h0, 3.3), 3.0, 0.13, c=J("#d8b0a0", 0.03, 0.0, 0.0))
+    for s in (-1, 1):
+        for zc in (2.4, 1.6):
+            column3(body, (s * 2.7, h0, zc), 3.0, 0.13, c=J("#d8b0a0", 0.03, 0.0, 0.0))
+    floor_tiles(body, -2.9, 2.9, 0.55, 3.55, h0, 0.5, "#ece4d4", "#b8a07a")
+    for s in (-1, 1):                          # бронзовые двери (приоткрыты), за ними темнота
+        Rd = Matrix.Rotation(s * 0.7, 3, "Y")
+        body.box(tuple(Vector((s * 0.55, h0 + 1.25, 0.52)) + Rd @ Vector((-s * 0.3, 0, 0))), (0.6, 2.5, 0.06), col("#8a6a2a"), Rd)
+    body.box((0.0, h0 + 1.25, 0.49), (1.2, 2.5, 0.02), col("#1e1812"))
+    yt = entab(body, -2.85, 2.85, 1.45, 3.45, h0 + 3.0, 0.45, ins="ins_pan", ins_w=4.6)
+    ridge = temple_roof(body, -2.9, 2.9, 0.5, 3.5, yt, 20.0, key="tymp_pan", apex_statue=False)
+    for s in (-1, 1):
+        tripod(body, emb, (s * 3.0, 0.0, zf + 0.3), 0.95)
+        statue_prop(s * 3.1, rz + 1.0, 0.0, 0.7)
+    mono_faces(-3.2, 3.2, rz - rc - 0.3, zf, 0.0, 4.0)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, zf + 0.5
+    FP.append([-3.6, round(rz - rc - 0.35, 3), 7.2, round(zf + 0.4 - rz + rc + 0.35, 3)])
+    ACTORS.append([1.2, h0, 2.2, 0.4, "Idle", "rich"])
+    return max(ridge, yd + 1.9)
+
+
+def mon_venus(body, emb):
+    """храм Венеры и Ромы: колоннада вокруг (периптер) на ступенчатом основании, целла с дверями с обеих сторон,
+    фронтоны с Венерой и Ромой, надпись VENERI ET ROMAE, розовые гирлянды, розы"""
+    h = 0.45
+    x0, x1, z0, z1 = -2.95, 2.95, -4.3, 4.3
+    for k in range(3):                         # ступени со всех сторон
+        e = 0.3 * (2 - k)
+        body.box((0.0, (k + 1) * h / 3 / 2, 0.0), (x1 - x0 + 2 * e, (k + 1) * h / 3, z1 - z0 + 2 * e), J(MARBLE, 0.03, 0.0, 0.0),
+                 cols={"top": J(MARBLE, 0.05, 0.0, 0.0)}, skip=("bot",), mat=M_MARBLE)
+    floor_tiles(body, x0 + 0.05, x1 - 0.05, z0 + 0.05, z1 - 0.05, h, 0.6, "#efe4dc", "#d0a8a0")
+    cella(body, -1.65, 1.65, -3.1, 3.1, h, 3.15, 1.0, 1.95, back_door=True)
+    PROPS.append(["SM_Prop_Statue_03", 0.0, round(h + 0.02, 3), 2.2, math.pi, 0.62])
+    PROPS.append(["SM_Prop_Statue_05", 0.0, round(h + 0.02, 3), -2.2, 0.0, 0.62])
+    xs = [-2.6 + k * 1.04 for k in range(6)]
+    zs = [-3.95 + k * (7.9 / 7) for k in range(8)]
+    for x in xs:
+        for zc in (zs[0], zs[-1]):
+            column3(body, (x, h, zc), 2.7, 0.1, seg=12)
+    for zc in zs[1:-1]:
+        for x in (xs[0], xs[-1]):
+            column3(body, (x, h, zc), 2.7, 0.1, seg=12)
+    for k in range(5):
+        swag(body, (xs[k] + 0.14, h + 2.68, zs[-1] + 0.15), (xs[k + 1] - 0.14, h + 2.68, zs[-1] + 0.15), 0.22, 0.15, "#c8506a", (0, 0, 1))
+    yt = entab(body, -2.75, 2.75, -4.1, 4.1, h + 2.7, 0.42, ins="ins_ven")
+    ridge = temple_roof(body, -2.8, 2.8, -4.15, 4.15, yt, 18.0, key="tymp_ven", back_key="tymp_ven")
+    for (sx, sz) in ((-1, 1), (1, 1), (-1, -1), (1, -1)):      # розы в мраморных кадках по углам
+        bx, bz = sx * 3.45, sz * 4.4
+        body.box((bx, 0.2, bz), (0.5, 0.4, 0.5), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+        for k in range(10):
+            leaf_blob(body, (bx + rng.uniform(-0.2, 0.2), 0.45 + rng.uniform(0, 0.25), bz + rng.uniform(-0.2, 0.2)), 0.1, J("#4f7d33", 0.1))
+            ball(body, (bx + rng.uniform(-0.2, 0.2), 0.55 + rng.uniform(0, 0.25), bz + rng.uniform(-0.2, 0.2)), 0.04, J(rng.choice(["#e86a8a", "#d9405a", "#f4c0cc"]), 0.06), seg=6, rings=3)
+    for s in (-1, 1):
+        tripod(body, emb, (s * 1.3, 0.0, z1 + 0.85), 0.95)
+    mono_faces(x0 - 0.6, x1 + 0.6, z0 - 0.6, z1 + 0.6, 0.0, yt)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, z1 + 1.2
+    FP.append([-3.8, -4.95, 7.6, 10.2])
+    ACTORS.append([0.0, 0.0, round(z1 + 0.9, 3), math.pi, "Spell_Simple_Idle", "rich"])
+    ACTORS.append([1.4, h, 3.4, math.pi + 0.3, "Idle", "any"])
+    return ridge
+
+
+def mon_pharos(body, emb):
+    """маяк: каменная площадка с лестницей, три яруса (квадратный, восьмигранный, круглый с колоннами), огонь наверху
+    (свет ночью, дым), статуя на кровле — ниже прежнего вдвое"""
+    podium(body, -2.5, 2.5, -2.5, 2.5, 0.55)
+    zf = stairs(body, -1.2, 1.2, 2.5, 0.55, 4, 0.28)
+    ashm = J("#f6f2ea", 0.02, 0.0, 0.0)
+    y = 0.55
+    body.box((0.0, y + 1.8, 0.0), (3.0, 3.6, 3.0), ashm, mat=M_ASHM)
+    for s in (-1, 1):                          # окна-бойницы и дверь
+        for k in range(3):
+            body.box((s * 1.51, y + 0.9 + k * 1.0, 0.0), (0.02, 0.45, 0.18), col("#1e1812"))
+            body.box((0.0, y + 1.4 + k * 0.9, s * 1.51), (0.18, 0.4, 0.02), col("#1e1812"))
+    body.box((0.0, y + 0.9, 1.52), (0.8, 1.8, 0.02), col("#1e1812"))
+    body.box((0.0, y + 1.85, 1.55), (1.0, 0.12, 0.08), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    y += 3.6
+    body.box((0.0, y + 0.06, 0.0), (3.3, 0.12, 3.3), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    for (a, b) in (((-1.6, -1.6), (1.6, -1.6)), ((1.6, -1.6), (1.6, 1.6)), ((1.6, 1.6), (-1.6, 1.6)), ((-1.6, 1.6), (-1.6, -1.6))):
+        rod(body, (a[0], y + 0.45, a[1]), (b[0], y + 0.45, b[1]), 0.05, J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    y += 0.12
+    body.lathe((0.0, y, 0.0), [(1.1, 0.0), (1.0, 2.2)], 8, ashm, mat=M_ASHM)
+    for k in range(8):
+        a = 2 * math.pi * (k + 0.5) / 8
+        body.box((math.cos(a) * 1.04, y + 1.2, math.sin(a) * 1.04), (0.02, 0.4, 0.16), col("#1e1812"), Matrix.Rotation(-a, 3, "Y"))
+    y += 2.2
+    body.lathe((0.0, y, 0.0), [(1.25, 0.0), (1.25, 0.12)], 16, J(MARBLE, 0.03, 0.0, 0.0), close_top=True, mat=M_MARBLE)
+    y += 0.12
+    for k in range(8):
+        a = 2 * math.pi * k / 8
+        column3(body, (math.cos(a) * 0.8, y, math.sin(a) * 0.8), 1.3, 0.06, seg=8, ionic=False)
+    body.lathe((0.0, y, 0.0), [(0.5, 0.0), (0.45, 0.25)], 12, col(BRONZE))
+    for k in range(9):
+        leaf_blob(emb, (rng.uniform(-0.25, 0.25), y + 0.35 + rng.uniform(0, 0.3), rng.uniform(-0.25, 0.25)), 0.12, col(rng.choice(["#ff7a1a", "#ffb03a", "#e0501a", "#ffd25a"])))
+    LIGHTS.append({"lamp": [0.0, round(y + 0.6, 3), 0.0], "kind": "hang"})
+    SMOKE.append([0.0, round(y + 1.0, 3), 0.0])
+    y += 1.3
+    body.lathe((0.0, y, 0.0), [(1.0, 0.0), (1.0, 0.12), (0.7, 0.4), (0.15, 0.6)], 16, J(P["tile"], 0.05))
+    statue_prop(0.0, 0.0, 0.0, 0.5, y + 0.55, plinth=False)
+    for s in (-1, 1):
+        tripod(body, emb, (s * 1.9, 0.55, 1.9), 0.85)
+    mono_faces(-2.5, 2.5, -2.5, zf, 0.0, 4.2)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, zf + 0.4
+    FP.append([-2.6, -2.6, 5.2, round(zf + 0.3 + 2.6, 3)])
+    ACTORS.append([1.6, 0.55, 2.0, -0.4, "Idle", "pleb"])
+    ACTORS.append([-1.7, 0.55, 1.8, 0.5, "Interact", "pleb"])
+    return y + 1.2
+
+
+MONO_FN = {"temple": mon_temple, "forum": mon_forum, "pantheon": mon_pantheon, "venus": mon_venus, "pharos": mon_pharos}
+
+
+# --- большие общественные: термы (купальня в бассейнах — Spectacle) и лудус ---
+def civ_thermae(body, emb, Pf, U, N, R, x0, x1, z0, z1):
+    # большой бассейн-натацио посредине, два малых по бокам, мозаика с дельфинами у входа, колоннады, статуи
+    pool(body, -2.2, 2.2, z1 + 0.7, z1 + 3.1, step_side=1)
+    for s in (-1, 1):
+        xa, xb = sorted((s * 2.9, s * 4.1))
+        pool(body, xa, xb, z1 + 0.7, z1 + 2.2, step_side=1)
+        stoa(body, s * (W / 2 - 0.05), s, z1 + 0.3, z1 + 4.5, 0.6, 2.0, fresco="birds" if s < 0 else "garden")
+        statue_prop(s * 2.6, z1 + 3.55, 0.0, 0.7)
+        tripod(body, emb, (s * 1.0, 0.0, z1 + 3.75), 0.95)
+    fresco_floor(body, 0.0, 0.03, z1 + 3.75, 1.6, 0.9, "dolphins")
+    body.box((0.0, 0.015, z1 + 2.4), (W - 1.4, 0.03, 4.4), J(MARBLE, 0.03, 0.0, 0.0), skip=("bot",), mat=M_MARBLE)
+    lion_spout(body, Pf, U, N, W / 2, PL + 1.1, (0.0, 0.16, z1 + 0.85))
+    framed_fresco(body, Pf, U, N, "front", W / 2, PL + FLH + 1.05, 2.4, 1.0, "dolphins")
+    for uu in (2.4, W - 2.4):
+        banner(body, Pf, U, N, "front", uu, HT - 0.3, 0.44, 1.0, 0.06, 0 if uu < W / 2 else 1)
+    laurel(body, Pf(DS["door_u"][0] - 0.05, PL + 2.03, 0.1), Pf(DS["door_u"][1] + 0.05, PL + 2.03, 0.1), 0.14, tuple(N))
+    fresco_quad(body, lambda u, v, n: Pf(u, v, n), N, W / 2, PL + DS["door_h"] + 0.2, 1.6, 0.26, 0.03, "ins_therm", band=True)
+    ACTORS.append([-1.2, 0.0, round(z1 + 3.9, 3), math.pi, "Idle", "any"])
+    ACTORS.append([2.4, 0.0, round(z1 + 4.0, 3), math.pi - 0.5, "Interact", "any"])
+    DOOR_PT[2] = z1 + 4.9
+    return z0, z1 + 4.6, x0, x1
+
+
+def civ_ludus(body, emb, Pf, U, N, R, x0, x1, z0, z1):
+    """лудус: двор с песчаной ареной за деревянной оградой, столбы-палусы, стойки с оружием и щитами, чучело,
+    трибунка ланисты под навесом; гладиаторы фехтуют, наставник смотрит"""
+    cz = z1 + 2.0
+    body.lathe((0.0, 0.0, cz), [(2.6, 0.0), (2.6, 0.03)], 24, J("#d8c08a", 0.04), close_top=True)
+    for k in range(20):                        # ограда арены
+        a = 2 * math.pi * k / 20
+        if abs(math.cos(a) - 0) < 0.2 and math.sin(a) > 0.9:
+            continue
+        p = (math.cos(a) * 2.7, 0.0, cz + math.sin(a) * 1.75)
+        rod(body, p, (p[0], 0.75, p[2]), 0.06, J(P["wood"], 0.05), mat=M_WOOD)
+        a2 = 2 * math.pi * (k + 1) / 20
+        q = (math.cos(a2) * 2.7, 0.0, cz + math.sin(a2) * 1.75)
+        for yy in (0.35, 0.68):
+            rod(body, (p[0], yy, p[2]), (q[0], yy, q[2]), 0.04, J(P["wood2"], 0.05), mat=M_WOOD)
+    for (px, pz) in ((-1.6, cz - 0.6), (1.6, cz - 0.7)):       # палусы
+        rod(body, (px, 0.0, pz), (px, 1.25, pz), 0.14, J("#7a5a3a", 0.06), mat=M_WOOD)
+    # чучело из соломы на шесте
+    rod(body, (1.5, 0.0, cz + 0.8), (1.5, 1.4, cz + 0.8), 0.05, J(P["wood"], 0.05), mat=M_WOOD)
+    ball(body, (1.5, 1.0, cz + 0.8), 0.22, J("#d9c27a", 0.06), seg=8, rings=4, sq=(0.8, 1.3, 0.6))
+    ball(body, (1.5, 1.45, cz + 0.8), 0.12, J("#d9c27a", 0.06), seg=7, rings=4)
+    rod(body, (1.25, 1.15, cz + 0.8), (1.75, 1.15, cz + 0.8), 0.06, J(P["wood"], 0.05), mat=M_WOOD)
+    # стойки с оружием и щитами у стены
+    for s in (-1, 1):
+        bx = s * (W / 2 - 0.9)
+        body.box((bx, 0.75, z1 + 0.25), (1.2, 0.06, 0.1), J(P["wood"], 0.05), mat=M_WOOD)
+        for k in range(4):
+            rod(body, (bx - 0.45 + k * 0.3, 0.05, z1 + 0.32), (bx - 0.45 + k * 0.3, 1.05, z1 + 0.2), 0.03, J("#8a6038", 0.05), mat=M_WOOD)
+        for k in range(2):
+            disc(body, (bx - 0.3 + k * 0.6, 1.25, z1 + 0.06), 0.22, 0.3, 0.04, J(["#a8302a", "#3f5f9a"][k], 0.04), Matrix.Rotation(math.pi / 2, 3, "X"), seg=12)
+            ball(body, (bx - 0.3 + k * 0.6, 1.25, z1 + 0.12), 0.05, col(BRONZE), seg=6, rings=3)
+    # трибунка ланисты под полосатым навесом
+    tx = -(W / 2 - 0.8)
+    body.box((tx, 0.25, cz + 1.2), (1.0, 0.5, 0.8), J(P["stone"], 0.04), mat=M_STONE)
+    PROPS.append(["SM_Prop_Seat_Chair_03", round(tx, 3), 0.5, round(cz + 1.2, 3), math.pi / 2, 0.7])
+    for (dx, dz) in ((-0.45, -0.35), (0.45, -0.35), (-0.45, 0.35), (0.45, 0.35)):
+        rod(body, (tx + dx, 0.5, cz + 1.2 + dz), (tx + dx, 2.0, cz + 1.2 + dz), 0.04, J(P["wood"], 0.05), mat=M_WOOD)
+    Pa = lambda u, v, n: Vector((tx - 0.55 + u, v, cz + 0.8 + n))
+    awning(body, Pa, Vector((1, 0, 0)), Vector((0, 0, 1)), 0.55, 2.05, 1.1, 0.85, ("#efe3c8", "#9a2f28"), poles=False, drop=0.15, braces=False, ns=4)
+    fresco_quad(body, lambda u, v, n: Pf(u, v, n), N, W / 2, PL + DS["door_h"] + 0.2, 1.8, 0.26, 0.03, "ins_ludus", band=True)
+    banner(body, Pf, U, N, "front", 1.4, HT - 0.3, 0.42, 0.9, 0.06, 0)
+    banner(body, Pf, U, N, "front", W - 1.4, HT - 0.3, 0.42, 0.9, 0.06, 1)
+    tripod(body, emb, (W / 2 - 0.6, 0.0, cz + 1.6), 0.9)
+    ACTORS.append([-0.6, 0.0, round(cz - 0.1, 3), math.pi / 2, "Spar", "pleb"])
+    ACTORS.append([0.6, 0.0, round(cz - 0.1, 3), -math.pi / 2, "Sword_Idle", "pleb"])
+    ACTORS.append([round(tx + 0.3, 3), 0.0, round(cz + 0.5, 3), 0.6, "Spell_Simple_Idle", "any"])
+    DOOR_PT[2] = cz + 2.3
+    return z0, cz + 2.0, x0, x1
+
+
+CIVIC_FRONTS.update({"thermae": civ_thermae, "ludus": civ_ludus})
+CIVIC.update({
+    "thermae": {"w": 9.6, "d": 3.4, "floors": 2, "roof": "flat", "pal": 1, "tint": "#f6f0e6", "shutter": "teal", "door": "bronze", "dado": "#a83f2c", "dado_h": 1.75,
+                "door_u": (4.2, 5.4), "door_h": 1.9, "double": True, "corners": "stone", "sign": "baths", "domes": [(1.6, 0.0, 0.0), (0.8, -3.3, 0.0), (0.8, 3.3, 0.0)],
+                "fwins": [(0, 0.7, 1.3, 0.75, 1.55, False, False, True, True), (0, 8.3, 8.9, 0.75, 1.55, False, False, True, True),
+                          (1, 0.7, 1.3, 0.72, 1.5, False, True, True, True, True), (1, 8.3, 8.9, 0.72, 1.5, False, True, True, True, True)],
+                "niches": [(0, 2.6), (0, 7.0)], "pilasters": [1.75, 7.85]},
+    "ludus": {"w": 7.6, "d": 2.4, "floors": 2, "roof": "x", "pal": 0, "tint": "#e8c8a0", "shutter": "red", "door": "dark", "lower": "brick",
+              "door_u": (3.25, 4.35), "door_h": 1.75, "double": True, "corners": "stone", "sign": "school",
+              "fwins": [(0, 0.6, 1.0, 0.9, 1.4, False, False, False, True), (0, 1.6, 2.0, 0.9, 1.4, False, False, False, True),
+                        (0, 5.6, 6.0, 0.9, 1.4, False, False, False, True), (0, 6.6, 7.0, 0.9, 1.4, False, False, False, True),
+                        (1, 0.7, 1.3, 0.72, 1.45, True, True, True, False), (1, 3.5, 4.1, 0.72, 1.45, True, True, True, False), (1, 6.3, 6.9, 0.72, 1.45, True, True, True, False)]},
+})
+
+
 
 def configure(kind, v, floors):
     global KIND, V, FLOORS, W, D, HT, PH, P, DS, MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, DOOR_PT, FP, SMOKE
@@ -4120,10 +4563,13 @@ def configure(kind, v, floors):
     if kind == "civic":
         DS = dict(CIVIC[v])
         W, D, FLOORS = DS["w"], DS["d"], DS["floors"]
+    if kind == "mono":
+        DS = {"pal": 1, "roof": "x"}
+        W, D, FLOORS = 6.0, 6.0, 1
     HT = PL + FLOORS * FLH
     use("ph")
     PH = [rng.uniform(0, 6.28) for _ in range(5)]
-    if kind not in ("shop", "stall", "civic"):
+    if kind not in ("shop", "stall", "civic", "mono"):
         DS = dict({"pleb": PLEB, "artisan": ART, "patrician": PAT}[kind][v])
     P = dict(PALS[DS.get("pal", 0)])
     MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, FP, SMOKE = [], {}, {}, [], [], [], []
@@ -4673,14 +5119,17 @@ def main():
     if "civic" in KINDS:
         for t in CIVIC:
             jobs.append(("civic", t, 0))
+    if "mono" in KINDS:
+        for t in MONO_FN:
+            jobs.append(("mono", t, 0))
     all_canon = {}
     for (kind, v, fl) in jobs:
-        hid = ("%s_%s" % (kind, v)) if kind in ("shop", "stall") else ("civ_" + v if kind == "civic" else "%s_%d_%d" % (kind, v, fl))
+        hid = ("%s_%s" % (kind, v)) if kind in ("shop", "stall") else ("civ_" + v if kind == "civic" else ("mon_" + v if kind == "mono" else "%s_%d_%d" % (kind, v, fl)))
         if ONLY and hid not in ONLY:
             continue
         clear_scene()
         configure(kind, v, fl)
-        y_ridge = build_stall(v) if kind == "stall" else build_house()
+        y_ridge = build_stall(v) if kind == "stall" else (build_mono(v) if kind == "mono" else build_house())
         plaster_for_export(True)
         kit_for_export(True)
         tris = export_glb(os.path.join(OUT_DIR, hid + ".glb"))

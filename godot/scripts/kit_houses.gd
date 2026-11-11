@@ -17,11 +17,13 @@ const SHOPS := ["butcher", "bakery", "cobbler", "dyer", "tailor", "potter", "oil
 	"jeweler", "weaver", "barber", "medic", "thermopolium", "taberna", "fullonica", "mansio", "scriptorium", "herbalist", "catshop"]
 const STALLS := ["stall_fruit", "stall_veg", "stall_fish"]
 ## Общественные здания (свой облик у каждого: "civ_<тип>"); у школы скамьи и кресло учителя — детали Synty (Spectacle)
-const CIVIC := ["school", "library", "academy", "warehouse", "vigiles", "prefect", "balnea", "baths", "sculptor", "shelter"]
+const CIVIC := ["school", "library", "academy", "warehouse", "vigiles", "prefect", "balnea", "baths", "sculptor", "shelter", "thermae", "ludus"]
+## Памятники — свои, меньше прежних (владелец 12.11: «отказаться от супер огромных зданий»): "mon_<тип>"
+const MONO := ["temple", "forum", "pantheon", "venus", "pharos"]
 
 
 static func covers(type: String) -> bool:
-	return ON and (IDS.has(type) or type in SHOPS or type in STALLS or type in CIVIC)
+	return ON and (IDS.has(type) or type in SHOPS or type in STALLS or type in CIVIC or type in MONO)
 
 
 static func id_for(type: String, tier: int, variant: int) -> String:
@@ -31,6 +33,8 @@ static func id_for(type: String, tier: int, variant: int) -> String:
 		return type
 	if type in CIVIC:
 		return "civ_" + type
+	if type in MONO:
+		return "mon_" + type
 	var e: Array = IDS[type]
 	var v := posmod(variant, int(e[1]))
 	var top := int(e[2])

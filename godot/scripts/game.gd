@@ -2109,7 +2109,7 @@ func _pets2(b: Dictionary, vis: Dictionary) -> void:
 		if e.size() > 5 and int(e[5]) != lk and int(e[5]) >= 0:
 			continue                           # животное только этого облика
 		var at: Vector3 = e[1]
-		var sc := Catalog.DECOR if Defs.B[b["type"]]["kind"] == "decor" else Catalog.ARCH
+		var sc := Catalog.scale_of(b["type"]) if Defs.B[b["type"]]["kind"] != "decor" else Catalog.DECOR
 		var n: Node3D
 		if String(e[0]) == "cat":
 			# седьмое поле: число — окрас (котята Маси), строка — вещица с витрины «Кошачьей лавки»; иначе окрас по номеру постройки
@@ -3934,7 +3934,7 @@ func _row_bounds(bp: Bp) -> Array:
 	var key := bp.get_instance_id()
 	if not _row_cache.has(key):
 		var ob := _bounds(bp)
-		var ofz := bp.front_z()
+		var ofz := bp.row_front()
 		if ofz > -INF:
 			ob[3] = ofz
 		_row_cache[key] = ob

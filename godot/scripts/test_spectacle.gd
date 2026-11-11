@@ -66,7 +66,7 @@ func _run() -> void:
 		return
 	await frames(10)
 	var V: Dictionary = sp.venues.get(int(b["id"]), {})
-	check(not V.is_empty() and (V["lay"]["seats"] as Array).size() > 250, "места на трибунах: %d" % (0 if V.is_empty() else (V["lay"]["seats"] as Array).size()))
+	check(not V.is_empty() and (V["lay"]["seats"] as Array).size() > 200, "места на трибунах (амфитеатр меньше прежнего — Catalog.SHRINK): %d" % (0 if V.is_empty() else (V["lay"]["seats"] as Array).size()))
 	game.speed = 3.0
 	game._set_hour(12.5)
 	var ok := await _until(func(): return V["phase"] == "gather", 20.0)

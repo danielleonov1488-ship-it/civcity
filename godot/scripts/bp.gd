@@ -170,6 +170,17 @@ func front_z() -> float:
 	return f
 
 
+## Край, которым постройка встаёт вплотную к дороге: у своих лавок, общественных зданий и памятников — передний
+## край следа (двор школы, арена лудуса, бассейны терм, ступени храма — на своей земле, а не на мостовой);
+## у жилых домов — лицо фасада, как прежде
+func row_front() -> float:
+	var fz := front_z()
+	if not fp_override.is_empty() and (kit_id.begins_with("civ_") or kit_id.begins_with("mon_") or kit_id.begins_with("shop_")):
+		for r: Rect2 in fp_override:
+			fz = maxf(fz, r.end.y)
+	return fz
+
+
 ## Коробка стен дома из своего набора: [x0, x1, z0, z1] (без двора, сада, портика)
 func kit_bounds() -> Array:
 	var b := [-1.0, 1.0, -1.0, 1.0]

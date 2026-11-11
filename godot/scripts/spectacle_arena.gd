@@ -27,7 +27,7 @@ func _init(s, v: Dictionary) -> void:
 	sp = s
 	V = v
 	rng.seed = int(V["id"]) * 31 + 7
-	k = Catalog.ARCH
+	k = Catalog.scale_of(String(V.get("type", "colosseum")))
 	r_in = ARENA_R * k
 	var tris = V["lay"]["tris"]
 	var h: float = tris.surface(r_in * 0.55, 0.0, 1.0)

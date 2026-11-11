@@ -7663,7 +7663,7 @@ static func pets_of(type: String) -> Array:
 
 ## Поставить животных постройки в узел-призрак g (картинка карточки, лист обликов): как в игре (game._pets2), без движения
 static func add_pets(g: Node3D, type: String) -> void:
-	var sc := Catalog.DECOR if String(Defs.B[type]["kind"]) == "decor" else Catalog.ARCH
+	var sc := Catalog.DECOR if String(Defs.B[type]["kind"]) == "decor" else Catalog.scale_of(type)
 	var k := 0
 	for e: Array in pets_of(type):
 		var n: Node3D
