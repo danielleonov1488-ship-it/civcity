@@ -780,6 +780,7 @@ func _set_hour(h: float) -> void:
 	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
 	if lm:
 		lm.emission_energy_multiplier = lamp * (0.018 if lh > 23.0 or lh < 4.0 else 0.045)
+	KitLib.lit_material().emission_energy_multiplier = lamp * (0.12 if lh > 23.0 or lh < 4.0 else 0.3)
 	var em := (Parts._special_mesh("#ember") as PrimitiveMesh).material as StandardMaterial3D
 	if em:
 		em.emission_energy_multiplier = lamp * 1.6
@@ -1806,6 +1807,8 @@ func _show(b: Dictionary) -> void:
 	var subst := {"#wall_lamp": "#wall_lamp_dim"} if city.is_house(b) else {}
 	if lit:
 		subst["#dark"] = "#lit"
+		if bp.kit_id != "":                    # дом из своего набора: ночью тёплый свет в комнатах
+			subst["K:%s/Rooms" % bp.kit_id] = "K:%s/Rooms@lit" % bp.kit_id
 	if b["type"] in CatGrand.TYPES and Gfx.is_low(str(settings.get("quality", "high"))):
 		subst.merge(CatGrand.LOW)               # на «Низкой» — лёгкие колонны и статуи у больших построек этапа 5
 	var vis := {"h": parts.place(bp, xf, subst), "lights": [], "smoke": [], "actors": []}

@@ -9,6 +9,7 @@ var type := "house_pleb"
 var secs := 14.0
 var shots := false                      # shots=1 — без стройки: поставить и снять с четырёх сторон (проверка облика)
 var dist := 13.0
+var town := false                       # town=1 — ещё и общие виды городка (как смотрится улица)
 
 
 func _ready() -> void:
@@ -20,6 +21,7 @@ func _ready() -> void:
 			"secs": secs = float(kv[1])
 			"shots": shots = kv[1] == "1"
 			"dist": dist = float(kv[1])
+			"town": town = kv[1] == "1"
 	DirAccess.make_dir_recursive_absolute(out)
 	Game.boot = {"demo": "1", "noui": "1", "hour": "10.5"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
@@ -54,6 +56,26 @@ func _run() -> void:
 	if game.rig.attrs:
 		game.rig.attrs.dof_blur_far_enabled = false
 		game.rig.attrs.dof_blur_near_enabled = false
+	if town:
+		var gyc: float = game.land.height_at(192, 154)
+		for k in 4:
+			game.rig.set_view(Vector3(192, gyc, 154) + Vector3(0, 0, 0), 20.0 + 90.0 * k, 38.0, 40.0)
+			await frames(60)
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png("%s/town_%d.png" % [out, k])
+		for k in 3:
+			var c = game.city
+			var hs := []
+			for id in c.buildings:
+				if c.is_house(c.buildings[id]):
+					hs.append(c.buildings[id])
+			if hs.size() > k * 5:
+				var hb: Dictionary = hs[k * 5]
+				var hp: Vector2 = hb["pos"]
+				game.rig.set_view(Vector3(hp.x, game.land.height_at(hp.x, hp.y) + 1.5, hp.y), 180.0 - rad_to_deg(float(hb["yaw"])) + 25.0, 28.0, 14.0)
+				await frames(60)
+				await RenderingServer.frame_post_draw
+				get_viewport().get_texture().get_image().save_png("%s/street_%d.png" % [out, k])
 	var c = game.city
 	# место у дороги рядом с домами: пробуем точки вокруг существующих домов, пока placement() не скажет «можно»
 	for r in Defs.RESEARCH:                 # всё открыто: проверяем облик, а не прогресс

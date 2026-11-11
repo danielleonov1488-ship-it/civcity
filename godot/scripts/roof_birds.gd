@@ -148,6 +148,9 @@ func _spots(b: Dictionary) -> Array:
 	var bp: Bp = game.city.blueprint(b)
 	if _perch.has(id) and int(_perch[id]["n"]) == bp.parts.size():
 		return _perch[id]["spots"]
+	if not bp.perch.is_empty():            # дом из своего набора: насесты по коньку — из Blender
+		_perch[id] = {"n": bp.parts.size(), "spots": bp.perch.duplicate()}
+		return _perch[id]["spots"]
 	var tops := []                         # [верх, центр верха, ось длинной стороны (полудлина)]
 	var top := -INF
 	for p in bp.parts:

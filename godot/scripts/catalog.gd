@@ -13,7 +13,8 @@ const DECOR := 0.78
 static var _cache := {}
 
 
-static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
+## legacy — дом из старого сохранения (стоит на прежнем, более узком следе): свой дом ужимается по нему (KitHouses)
+static func make(type: String, tier := 1, variant := 0, color := 0, legacy := false) -> Bp:
 	var dd0: Dictionary = Defs.B.get(type, {})
 	if dd0.get("kind", "") == "decor":
 		# украшение всегда выглядит как его карточка: облик задаёт тип, а не цвет, место или фасад
@@ -22,6 +23,9 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 		variant = clampi(variant, 0, 1) if dd0.get("seg", false) else 0
 		color = int(dd0.get("color", 0))
 	var key := "%s:%d:%d:%d" % [type, tier, variant, color]
+	legacy = legacy and KitHouses.covers(type)
+	if legacy:
+		key += ":L"
 	if _cache.has(key):
 		return _cache[key]
 	# здание Легиона растёт с уровнем (tier — облик уровня, Legion.vis_tier): случай — как у 1-го уровня, чтобы
@@ -30,7 +34,9 @@ static func make(type: String, tier := 1, variant := 0, color := 0) -> Bp:
 	var b := Bp.new(hash("%s:0:%d:%d" % [type, variant, color]) if mil else hash(key))
 	b.paint(color)
 	match type:
-		"house_pleb": CatHouses._house_pleb(b, tier, variant)
+		"house_pleb":
+			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy)):
+				CatHouses._house_pleb(b, tier, variant)
 		"house_artisan": CatHouses._house_artisan(b, tier, variant)
 		"house_patrician":
 			if variant >= Defs.PAT_TOWN:

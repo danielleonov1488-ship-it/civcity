@@ -14,5 +14,10 @@ func _init() -> void:
 			mn = mn.min(r.position)
 			mx = mx.max(r.end)
 		print("FP ", t, " x ", snappedf(mn.x, 0.01), "..", snappedf(mx.x, 0.01), " z ", snappedf(mn.y, 0.01), "..", snappedf(mx.y, 0.01),
-			" smoke ", bp.smoke, " door ", bp.door, " top ", snappedf(bp.top_y(), 0.01))
+			" smoke ", bp.smoke, " door ", bp.door, " top ", snappedf(bp.top_y(), 0.01), " parts ", bp.parts.size(), " kit ", bp.kit_id,
+			" faces ", bp.kit_faces.size(), " lights ", bp.lights)
+		if Defs.B.get(t, {}).get("kind", "") == "house":
+			var lb := Catalog.make(t, 1, 0, 0, true)
+			var r: Rect2 = lb.footprint()[0]
+			print("   legacy fp ", r, " door ", lb.door, " old ", KitHouses.old_fp(t, 0))
 	quit()

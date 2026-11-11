@@ -83,6 +83,8 @@ static func _tex_path(name: String) -> String:
 
 
 static func has(name: String) -> bool:
+	if name.begins_with("K:"):
+		return KitLib.has(name)
 	_index()
 	return _paths.has(name)
 
@@ -178,6 +180,8 @@ const GREEN := Color(0.9, 0.93, 0.72)
 
 
 static func make(name: String, remap := {}) -> Node3D:
+	if name.begins_with("K:"):
+		return KitLib.make(name, remap)                  # свой набор деталей (дома из Blender)
 	_index()
 	if remap.is_empty() and (name.begins_with("SM_Env_Tree") or name.begins_with("SM_Env_Bush") or name.begins_with("SM_Env_Garden")):
 		remap = {"tint": GREEN}

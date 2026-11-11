@@ -71,6 +71,8 @@ static func _openings(nm: String) -> Array:
 ## Стены чертежа: [{n: наружу, a: вдоль (слева направо, если смотреть на стену), d: плоскость (n·p = d),
 ## mods: [Rect2 (u, y)] модули, block: [Rect2] что закрывать нельзя, bound: Rect2}]
 static func faces(bp: Bp) -> Array:
+	if not bp.kit_faces.is_empty():
+		return bp.kit_faces                              # дом из своего набора: стены и проёмы — из Blender
 	var key := bp.get_instance_id()
 	if _faces.has(key):
 		return _faces[key]

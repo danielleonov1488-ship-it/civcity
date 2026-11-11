@@ -24,6 +24,11 @@ var full_brick := false
 var base := Transform3D.IDENTITY  # общий сдвиг/масштаб (для больших построек)
 var actors := []                # люди при деле: [положение, поворот, движение, кто]
 var free_parts := {}            # номера деталей, что землю не занимают (арки акведука: под ними ходят)
+# дом из своего набора деталей (KitHouses): след, стены для украшений и насесты — готовые, в метрах (после ARCH)
+var kit_id := ""
+var fp_override := []           # [Rect2] — след на земле
+var kit_faces := []             # стены для WallDecor (как WallDecor.faces)
+var perch := []                 # [Vector3] — где сидят птицы (конёк)
 var _top := -1.0
 var _fp := {}                   # след footprint(all) → [сколько деталей было, прямоугольники]
 
@@ -119,6 +124,9 @@ static func model_aabb(name: String) -> AABB:
 		box = CatMilitary.kit_mesh(name).get_aabb()     # детали Легиона из Kit — по их настоящим габаритам
 	elif name.begins_with("#d2_"):
 		box = CatDecor2.kit_mesh(name).get_aabb()       # свои детали украшений этапа 5
+	elif name.begins_with("K:"):
+		var km := KitLib._mesh(name)                     # свой набор деталей (KitLib)
+		box = km.get_aabb() if km else box
 	elif not name.begins_with("#"):
 		var n := Synty.make(name)
 		box = Artisau.aabb(n)
@@ -161,6 +169,8 @@ func front_z() -> float:
 ## all = false — только части здания (SM_Bld_: стены, колонны, ступени) — контур бордюра Kerb идёт по стенам,
 ## а не вокруг кипарисов, перголы и скамей в саду
 func footprint(all := true) -> Array:
+	if not fp_override.is_empty():
+		return fp_override
 	var e: Array = _fp.get(all, [])
 	if e.size() == 2 and int(e[0]) == parts.size():
 		return e[1]                          # след уже считали (облик из Catalog не меняется)
