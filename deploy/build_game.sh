@@ -19,6 +19,8 @@
 #   CivCity.pck          — код, сцены, шейдеры: ~1 МБ, меняется почти в каждом обновлении
 #   CivCity_ui.pck       — рисованный интерфейс, шрифты, звуки (assets/ui, assets/fonts, assets/sfx)
 #   CivCity_models.pck   — модели и текстуры (assets/synty, people, animals, artisau)
+#   CivCity_kit.pck      — свой набор домов, лавок и общественных зданий (assets/kit: Blender, ~150 МБ; меняется
+#                          чаще Synty — отдельно, чтобы его правка не тянула заново все модели, а правка кода — его)
 #   CivCity_music.pck    — музыка (assets/music)
 #   version.json         — {"version": "1.0.0", "build": N}; N растёт на 1 с каждой сборкой
 # Большие наборы пересобираются, только если изменились их исходные файлы (сверка по SHA-1 в build/packs_state.json),
@@ -53,6 +55,7 @@ done
 # «Windows» (иначе она попадёт в CivCity.pck и каждое обновление станет тяжёлым). Новый набор — ещё и в scripts/packs.gd.
 PACKS=(
   "Models:CivCity_models.pck"
+  "Kit:CivCity_kit.pck"
   "Music:CivCity_music.pck"
   "UI:CivCity_ui.pck"
 )
@@ -190,7 +193,7 @@ rm -rf "$STAGE"
 # лишнее из прежних сборок (старые имена наборов, консольная обёртка) — убрать, чтобы не попало на сервер
 for f in "$OUT"/*; do
   case "$(basename "$f")" in
-    CivCity.exe|CivCity.pck|CivCity_models.pck|CivCity_music.pck|CivCity_ui.pck|version.json) ;;
+    CivCity.exe|CivCity.pck|CivCity_models.pck|CivCity_kit.pck|CivCity_music.pck|CivCity_ui.pck|version.json) ;;
     *) echo "   убираю лишнее: $(basename "$f")"; rm -rf "$f" ;;
   esac
 done
@@ -199,7 +202,7 @@ new_exe=$(sha256sum "$OUT/CivCity.exe" | cut -d' ' -f1)
 echo
 echo "Готово: CivCity $VERSION, сборка $BUILD → $OUT"
 total=0
-for f in CivCity.exe CivCity.pck CivCity_ui.pck CivCity_models.pck CivCity_music.pck version.json; do
+for f in CivCity.exe CivCity.pck CivCity_ui.pck CivCity_models.pck CivCity_kit.pck CivCity_music.pck version.json; do
   s=$(stat -c %s "$OUT/$f")
   total=$((total + s))
   printf '  %-20s %9.2f МБ  %s\n' "$f" "$(echo "$s" | awk '{print $1/1048576}')" "$(sha256sum "$OUT/$f" | cut -c1-12)"

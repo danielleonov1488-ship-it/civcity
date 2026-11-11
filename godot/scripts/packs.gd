@@ -5,6 +5,7 @@ extends Node
 ##   CivCity.pck         — код, сцены, шейдеры (Godot открывает его сам, по имени exe)
 ##   CivCity_ui.pck      — рисованный интерфейс, шрифты, звуки
 ##   CivCity_models.pck  — модели и текстуры (Synty, жители, животные, реквизит)
+##   CivCity_kit.pck     — свой набор домов, лавок и общественных зданий (assets/kit, KitLib)
 ##   CivCity_music.pck   — музыка
 ## Состав файлов задаёт tools/build_game.sh (группы PACKS там и список EXTRA здесь — одни и те же).
 ## В редакторе ничего не делает: там все файлы и так на месте.
@@ -16,10 +17,10 @@ extends Node
 ## подключения наборов. В CivCity.pck сборки Windows этих папок нет (из assets/ui там один значок
 ## assets/ui/ai/app_icon.png — поэтому интерфейс узнаём по assets/fonts), и она подключает наборы как прежде.
 
-const EXTRA := ["CivCity_models.pck", "CivCity_music.pck", "CivCity_ui.pck"]
+const EXTRA := ["CivCity_models.pck", "CivCity_kit.pck", "CivCity_music.pck", "CivCity_ui.pck"]
 const MUSIC := "CivCity_music.pck"
 const MUSIC_POLL := 5.0
-const SENTINEL := {"CivCity_models.pck": "res://assets/synty", "CivCity_music.pck": "res://assets/music",
+const SENTINEL := {"CivCity_models.pck": "res://assets/synty", "CivCity_kit.pck": "res://assets/kit", "CivCity_music.pck": "res://assets/music",
 	"CivCity_ui.pck": "res://assets/fonts"}
 
 static var missing: Array[String] = []     # каких файлов не нашли (для окна ошибки и проверок)
