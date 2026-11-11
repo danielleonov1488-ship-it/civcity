@@ -337,6 +337,8 @@ func _new() -> void:
 	var hidden := 0
 	if gl[1] != null:
 		for n: Node3D in (gl[1] as Node3D).get_children():
+			if n is MultiMeshInstance3D:       # кладка из кирпичей
+				continue
 			if n.visible:
 				shown += 1
 			else:

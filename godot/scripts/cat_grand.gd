@@ -327,8 +327,17 @@ static func _thermae(b: Bp) -> void:
 		b.remap = b.floor_remap(1)
 		b.add("SM_Prop_Pergola_01", Vector3(wx, FL + 0.05, cz + 0.6), 0.0, 0.42)
 		b.add("SM_Env_Tree_Palm_0%d" % (1 + b.rng.randi() % 3), Vector3(sd * 9.4, 0, cz - 2.0), b.rng.randf() * TAU, 0.5)
-	b.smoke.append(b.base * Vector3(2.0, hall_h + 2.0, cz - 3.9))
-	CatCivic._chimney(b, Vector3(2.4, hall_h - 0.4, cz - 3.2), 1.0)
+	# топка (praefurnium) у задней стены: печь с огнём в устье, поленья — дым идёт из неё, а не из пустоты над крышей
+	# (труб на крышах нет — владелец 11.11); печь и поленья землю не занимают (след постройки прежний)
+	var fx := 2.0
+	var fz0 := cz - 3.5 - 0.55
+	b.free_parts[b.parts.size()] = true
+	b.add("SM_Prop_Kiln_01", Vector3(fx, 0, fz0), 0.0, 0.9)
+	b.light(Vector3(fx, 0.6, fz0 - 0.8))
+	b.smoke.append(b.base * Vector3(fx, 3.0, fz0))
+	for k in 3:
+		b.free_parts[b.parts.size()] = true
+		b.add("SM_Prop_Beam_01", Vector3(fx - 1.4, 0.06 + k * 0.12, fz0 - 0.1 + k * 0.03), PI / 2 + 0.04 * k, 0.45)
 	# бассейн под открытым небом: вода, бортики, ступени; по бокам — колоннады, статуи по углам
 	var pz0 := cz + hx + 0.4
 	CatCivic._pool(b, -5.0, 5.0, pz0, pz0 + 5.0, true)

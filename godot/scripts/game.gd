@@ -1554,7 +1554,7 @@ func _grow_anim(b: Dictionary) -> void:
 	var tw := create_tween()
 	_grow_live[id] = [tw, g, scaf]
 	if full:
-		var plan := _grow_plan(g)
+		var plan := _grow_plan(g, bp)
 		_grow_step(g, plan, 0.0)
 		tw.tween_method(func(t: float) -> void: _grow_step(g, plan, t), 0.0, 1.0, dur)
 	else:
@@ -1579,16 +1579,35 @@ func _grow_anim(b: Dictionary) -> void:
 		get_tree().create_timer(dur / puffs * k).timeout.connect(func(): _puff(at, Color("e8dcc4")))
 
 
-## Порядок стройки: крупные детали — снизу вверх полосами по 30 см, в полосе — слева направо (кладка рядами,
-## черепица от карниза к коньку); мелочь меньше 80 см (горшки, вывески, фонари, ставенки) — в самом конце.
-## [деталь, доля начала, конечный transform, центр детали (в осях постройки), 0 — не видна / 1 — встаёт / 2 — стоит]
-func _grow_plan(g: Node3D) -> Array:
+## Порядок стройки «по кирпичику» (владелец 11.11): стены сначала кладутся из кирпичей — ряд за рядом, кирпич за
+## кирпичом, все стены этажа разом; перекрытия и балки встают, когда кладка до них дошла; потом черепица от карниза
+## к коньку; затем стены «штукатурят» (кирпич сменяется готовой стеной), в конце — мелочь (горшки, вывески, фонари).
+## Записи: [деталь, доля начала, конечный transform, центр, 0 / 1 / 2 (не видна / встаёт / стоит), низ, ряд, сразу?]
+## и кладка: ["bricks", MultiMeshInstance3D, начало, конец, число кирпичей, запись стены]
+const BRICK_H := 0.105                # высота ряда кладки, м
+const BRICK_L := 0.25                 # длина кирпича
+static var _brick_mesh: BoxMesh
+
+func _grow_plan(g: Node3D, bp: Bp = null) -> Array:
 	var big := []
 	var small := []
-	for n: Node3D in g.get_children():
+	var walls := []
+	var late := []
+	var kids := g.get_children()
+	var top := 0.0
+	for i in kids.size():
+		var n: Node3D = kids[i]
 		var box: AABB = n.transform * (n as MeshInstance3D).mesh.get_aabb() if n is MeshInstance3D else Artisau.aabb(n)
-		var e := [n, 0.0, n.transform, box.get_center(), 0, box.position.y, box.position.x + box.position.z * 0.05]
-		if maxf(box.size.x, maxf(box.size.y, box.size.z)) < 0.8 and box.position.y > 0.05:
+		var e := [n, 0.0, n.transform, box.get_center(), 0, box.position.y, box.position.x + box.position.z * 0.05, false]
+		var nm: String = bp.parts[i][0] if bp != null and i < bp.parts.size() else ""
+		if _brick_wall(nm, box):
+			e.append(box)
+			e.append(nm)
+			walls.append(e)
+			top = maxf(top, box.end.y)
+		elif nm.begins_with("#dark") or nm.begins_with("#lit"):
+			late.append(e)                     # тёмная «комната» внутри — вместе со штукатуркой, иначе серый куб поверх кладки
+		elif maxf(box.size.x, maxf(box.size.y, box.size.z)) < 0.8 and box.position.y > 0.05:
 			small.append(e)
 		else:
 			big.append(e)
@@ -1598,15 +1617,121 @@ func _grow_plan(g: Node3D) -> Array:
 		return ba < bc if ba != bc else float(a[6]) < float(c[6])
 	big.sort_custom(by)
 	small.shuffle()
-	for i in big.size():
-		big[i][1] = 0.05 + 0.74 * i / maxf(1.0, big.size() - 1.0)
+	var out := []
+	if walls.is_empty():
+		for i in big.size():
+			big[i][1] = 0.05 + 0.74 * i / maxf(1.0, big.size() - 1.0)
+	else:
+		# кладка: от 6 до 62 % стройки снизу доверху (все стены этажа поднимаются вместе)
+		var lay0 := 0.06
+		var lay := 0.56
+		for w: Array in walls:
+			var box: AABB = w[8]
+			var mmi := _bricks(box, String(w[9]))
+			g.add_child(mmi)
+			var ts := lay0 + lay * box.position.y / top
+			var te := lay0 + lay * box.end.y / top
+			out.append(["bricks", mmi, ts, te, mmi.multimesh.instance_count, w])
+			# штукатурка: стена «готовая» — 80…86 %, снизу вверх, без отскока
+			w[1] = 0.8 + 0.06 * box.position.y / top
+			w[7] = true
+		var hi := []
+		for e: Array in big:
+			if float(e[5]) < top * 0.93:
+				e[1] = minf(0.62, lay0 + lay * float(e[5]) / top + 0.03)    # перекрытие — когда кладка до него дошла
+			else:
+				hi.append(e)
+		for i in hi.size():
+			hi[i][1] = 0.63 + 0.17 * i / maxf(1.0, hi.size() - 1.0)       # крыша: от карниза к коньку
 	for i in small.size():
-		small[i][1] = 0.8 + 0.13 * i / maxf(1.0, small.size() - 1.0)
-	return big + small
+		small[i][1] = 0.86 + 0.08 * i / maxf(1.0, small.size() - 1.0)
+	for e: Array in late:
+		e[1] = 0.8 if not walls.is_empty() else 0.05
+		e[7] = true
+	return out + walls + big + small + late
+
+
+## Стена, которую кладём из кирпича: стеновая деталь, высокая и тонкая (не перила, не карниз)
+static func _brick_wall(nm: String, box: AABB) -> bool:
+	if not (nm.begins_with("SM_Bld_Wall") or nm.begins_with("K_wall")):
+		return false
+	if nm.contains("Balcony") or nm.contains("Cap") or nm.contains("Trim") or nm.contains("Fence") or nm.contains("Arch"):
+		return false
+	var thin := minf(box.size.x, box.size.z)
+	var long := maxf(box.size.x, box.size.z)
+	return box.size.y > 0.9 and thin < 0.7 and long > 0.7
+
+
+## Кирпичи на месте стены (габарит box в осях постройки): ряды вперевязку, вдоль длинной стороны; на месте окна
+## и двери — проём. Порядок — ряд за рядом, в ряду слева направо (по нему и «кладут»)
+func _bricks(box: AABB, nm: String) -> MultiMeshInstance3D:
+	if _brick_mesh == null:
+		_brick_mesh = BoxMesh.new()
+		_brick_mesh.size = Vector3.ONE
+		var m := StandardMaterial3D.new()
+		m.vertex_color_use_as_albedo = true
+		m.roughness = 0.92
+		_brick_mesh.material = m
+	var along_z := box.size.x < box.size.z
+	var L := box.size.z if along_z else box.size.x
+	var th := clampf(minf(box.size.x, box.size.z), 0.1, 0.32)
+	var H := box.size.y
+	var courses := maxi(1, int(round(H / BRICK_H)))
+	var per := maxi(1, int(round(L / BRICK_L)))
+	var bh := H / courses
+	var bl := L / per
+	var hole := Rect2()
+	if nm.contains("Window"):
+		hole = Rect2(0.3, 0.36, 0.4, 0.4)
+	elif nm.contains("Door"):
+		hole = Rect2(0.28, 0.0, 0.44, 0.74)
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var c := box.get_center()
+	for k in courses:
+		var off := 0.5 if k % 2 == 1 else 0.0
+		var cnt := per + (1 if k % 2 == 1 else 0)
+		for i in cnt:
+			var u0 := maxf(0.0, (i - off) * bl)
+			var u1 := minf(L, (i + 1 - off) * bl)
+			if u1 - u0 < bl * 0.3:
+				continue
+			var uc := (u0 + u1) * 0.5
+			var vc := (k + 0.5) / courses
+			if hole.size.x > 0.0 and hole.has_point(Vector2(uc / L, vc)):
+				continue
+			var y := box.position.y + (k + 0.5) * bh
+			var sz := Vector3(th, bh * 0.9, (u1 - u0) * 0.95) if along_z else Vector3((u1 - u0) * 0.95, bh * 0.9, th)
+			var pos := Vector3(c.x, y, box.position.z + uc) if along_z else Vector3(box.position.x + uc, y, c.z)
+			xfs.append(Transform3D(Basis.from_scale(sz), pos))
+			cols.append(Color.from_hsv(randf_range(0.02, 0.055), randf_range(0.6, 0.76), randf_range(0.4, 0.56)))
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = _brick_mesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	mm.visible_instance_count = 0
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	return mmi
 
 
 func _grow_step(g: Node3D, plan: Array, t: float) -> void:
 	for e: Array in plan:
+		if e[0] is String:                    # кладка: кирпичей — по доле времени; стена оштукатурена — кирпичи прячем
+			var mmi: MultiMeshInstance3D = e[1]
+			var wall: Array = e[5]
+			if int(wall[4]) == 2:
+				if mmi.visible:
+					mmi.visible = false
+				continue
+			var kb := clampf((t - float(e[2])) / maxf(0.001, float(e[3]) - float(e[2])), 0.0, 1.0)
+			mmi.multimesh.visible_instance_count = int(round(kb * int(e[4])))
+			continue
 		if int(e[4]) == 2:
 			continue
 		var n: Node3D = e[0]
@@ -1617,7 +1742,7 @@ func _grow_step(g: Node3D, plan: Array, t: float) -> void:
 			continue
 		n.visible = true
 		var x0: Transform3D = e[2]
-		if k >= 1.0:
+		if k >= 1.0 or bool(e[7]):
 			n.transform = x0
 			e[4] = 2
 			continue
