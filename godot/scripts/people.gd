@@ -2676,6 +2676,8 @@ func _door_step(r: Dictionary, dt: float) -> void:
 
 func _door_done(r: Dictionary, then: String, b: Dictionary) -> void:
 	_hide(r)
+	if not b.is_empty() and game.shutters:
+		game.shutters.knock(int(b["id"]))       # дом из своего набора: дверь распахивается, когда входят
 	r["door"] = {}
 	r.erase("carry")                         # покупку донесли (или зашёл с ней в лавку — дальше без неё)
 	if then == "inside":

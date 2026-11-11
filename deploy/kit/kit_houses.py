@@ -1405,7 +1405,7 @@ def configure(kind, v, floors):
     global KIND, V, FLOORS, W, D, HT, PH, P, DS, MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, DOOR_PT, FP, SMOKE
     KIND, V, FLOORS = kind, v, floors
     W = 3.6
-    D = 4.6 if kind == "patrician" else 4.2
+    D = 4.3 if kind == "patrician" else 3.9          # глубина — как у прежних домов (след при перестройке тот же)
     HT = PL + FLOORS * FLH
     use("ph")
     PH = [rng.uniform(0, 6.28) for _ in range(5)]
@@ -1698,19 +1698,19 @@ def build_house():
     fz0, fz1 = z0, z1
     if KIND == "artisan":
         use("yard")
-        yd = 1.35
+        yd = 1.0
         lean_to(body, x0 + 0.05, x1 - 0.05, z0, yd, PL + 1.75, PL + 1.35)
         yard_props(body, emb, x0, x1, z0 - yd, z0, DS["craft"])
         fz0 = z0 - yd - 0.1
     if KIND == "patrician":
         use("portico")
         pw = 2.1 if DS["portico"] != "temple" else 2.8
-        pd = 1.0
+        pd = 0.9
         portico(body, walls, inner, -pw / 2, pw / 2, z1, pd, DS["portico"], PL + 1.95)
         fz1 = z1 + pd + 0.15
         DOOR_PT[2] = z1 + pd + 0.45
         use("garden")
-        gd = 2.4
+        gd = 1.85
         garden(body, x0 + 0.02, x1 - 0.02, z0 - gd, z0, V)
         fz0 = z0 - gd - 0.1
         # дверь в сад

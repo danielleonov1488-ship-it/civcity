@@ -22,6 +22,8 @@ static func blueprint(bp: Bp, st: int, seed_v: int) -> Bp:
 	var out := Bp.new(seed_v)
 	if st <= 0:
 		return out
+	if not bp.kit_faces.is_empty():
+		return _kit(bp, st, seed_v, out)
 	var walls := []
 	var c := Vector3.ZERO
 	for p in bp.parts:
@@ -66,4 +68,34 @@ static func blueprint(bp: Bp, st: int, seed_v: int) -> Bp:
 		var yaw := atan2(nrm.x, nrm.z)
 		var name := ("SM_Env_Ivy_Flowers_%02d" % (1 + rng.randi() % 13)) if st == 2 and rng.randf() < 0.4 else ("SM_Env_Ivy_%02d" % (1 + rng.randi() % 13))
 		out.add_xf(name, Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * rng.randf_range(0.8, 1.0)), base + Vector3(rng.randf_range(-0.4, 0.4), 0, 0).rotated(Vector3.UP, yaw)))
+	return out
+
+
+## Дом из своего набора: лозы — у земли на глухих участках стен из Blender (между окнами и дверями), сначала бока и зад
+static func _kit(bp: Bp, st: int, seed_v: int, out: Bp) -> Bp:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_v
+	var spots := []                         # [приоритет, точка, поворот]
+	for f: Dictionary in bp.kit_faces:
+		var n: Vector3 = f["n"]
+		var a: Vector3 = f["a"]
+		var d: float = f["d"]
+		var bd: Rect2 = f["bound"]
+		var pri := 0 if String(f.get("side", "")) in ["left", "right", "back"] else 1
+		var u := bd.position.x + 0.45
+		while u < bd.end.x - 0.45:
+			var free := true
+			for r: Rect2 in f.get("block", []):
+				if r.position.y < 1.2 and u > r.position.x - 0.35 and u < r.end.x + 0.35:
+					free = false
+					break
+			if free:
+				spots.append([pri + rng.randf() * 0.5, a * u + n * (d + OUT), atan2(n.x, n.z)])
+			u += 0.6
+	spots.sort_custom(func(x, y): return float(x[0]) < float(y[0]))
+	var want := mini(int(PER_STAGE[st]), spots.size())
+	for i in want:
+		var e: Array = spots[i]
+		var name := ("SM_Env_Ivy_Flowers_%02d" % (1 + rng.randi() % 13)) if st == 2 and rng.randf() < 0.4 else ("SM_Env_Ivy_%02d" % (1 + rng.randi() % 13))
+		out.add_xf(name, Transform3D(Basis(Vector3.UP, float(e[2])).scaled(Vector3.ONE * rng.randf_range(0.75, 0.95)), e[1]))
 	return out

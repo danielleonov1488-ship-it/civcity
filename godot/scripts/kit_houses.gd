@@ -48,8 +48,11 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 	for n: String in h["parts"]:
 		var remap := {"tint": b.tint} if n == "Walls" else {}
 		b.parts.append(["K:%s/%s" % [id, n], base, remap])
+	b.kit_mov = []
+	b.kit_sq = sq
 	for m: Dictionary in h["mov"]:
 		var xl := Transform3D(Basis(_v(m["x"]), _v(m["y"]), _v(m["z"])), _v(m["o"]))
+		b.kit_mov.append([b.parts.size(), _v(m["o"]), _v(m["u"]), _v(m["nrm"]), int(m.get("side", 1)), float(m["open"]), String(m["kind"])])
 		b.parts.append(["K:common/" + String(m["mesh"]), base * xl, {}])
 	for l: Dictionary in h.get("lights", []):
 		var lp := sq * _v(l["lamp"])
@@ -63,6 +66,19 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 	var fr := Rect2(fp.position.x * sx + off.x, fp.position.y * sz + off.z, fp.size.x * sx, fp.size.y * sz)
 	b.fp_override = [fr]
 	b.kit_faces = _faces(h, sx, sz, off)
+	# коробки для щелчка и «заслоняет ли»: стены, крыша над ними, низкий двор/сад, у домуса — портик
+	var kb: Array = b.kit_bounds()
+	var ht := float(h["ht"])
+	var ridge := float(h.get("ridge", ht + 1.0))
+	var x0 := float(kb[0])
+	var x1 := float(kb[1])
+	var z0 := float(kb[2])
+	var z1 := float(kb[3])
+	b.kit_boxes = [AABB(Vector3(x0, 0, z0), Vector3(x1 - x0, ht, z1 - z0)),
+		AABB(Vector3(x0 - 0.2, ht - 0.15, z0 - 0.25), Vector3(x1 - x0 + 0.4, ridge - ht + 0.3, z1 - z0 + 0.5)),
+		AABB(Vector3(fr.position.x, 0, fr.position.y), Vector3(fr.size.x, 1.0, fr.size.y))]
+	if type == "house_patrician" and fr.end.y > z1 + 0.3:
+		b.kit_boxes.append(AABB(Vector3(-1.1 * sx, 0, z1), Vector3(2.2 * sx, 2.5, fr.end.y - z1)))
 	b.perch = []
 	for p: Array in h.get("perch", []):
 		b.perch.append(sq * Vector3(float(p[0]), float(p[1]), float(p[2])))

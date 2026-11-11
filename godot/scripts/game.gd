@@ -37,6 +37,7 @@ var deco_imgs := []                   # маски узора земли и ул
 var deco_texs := []
 var ground_kind := 2                  # кисть «Земля»: какой узор в руках (Defs.GROUND; 0 — обычная трава)
 var visuals := {}                     # id постройки → {h, lights, smoke, actors}
+var shutters: KitShutters             # ставни своих домов по часам (kit_shutters.gd)
 var nature := {}                      # Vector2i(2-метровая клетка) → [{h, p}]
 var plot_signs := {}
 var plot_fill: MeshInstance3D            # подсветка участка под курсором (его можно купить)
@@ -314,6 +315,10 @@ func _ready() -> void:
 	fnt.name = "Fountains"
 	add_child(fnt)
 	fnt.setup(self)
+	shutters = KitShutters.new()              # ставни и двери своих домов — по часам (утром открываются, вечером закрываются)
+	shutters.name = "KitShutters"
+	add_child(shutters)
+	shutters.setup(self)
 	var br := Breathe.new()                   # «город дышит»: бабочки, светлячки, птицы («Уютный Рим», этап 5)
 	br.name = "Breathe"
 	add_child(br)
@@ -1957,6 +1962,8 @@ func _show(b: Dictionary) -> void:
 		for sp in bp.smoke.slice(0, 1):
 			vis["smoke"].append(_smoke(xf * sp))
 	visuals[b["id"]] = vis
+	if shutters and not bp.kit_mov.is_empty():
+		shutters.reset(int(b["id"]))
 	if Defs.base_of(b["type"]) == "sheep":      # овцы бродят по лугу любого облика
 		_sheep(b, vis)
 	elif b["type"] == "catbasket":
@@ -2593,6 +2600,8 @@ func ground_at_mouse() -> Vector2:
 ## Коробки деталей чертежа в осях постройки (по габаритам моделей Synty); вложенные друг в друга отбрасываются.
 ## Считается один раз на чертёж
 static func pick_boxes(bp: Bp) -> Array:
+	if not bp.kit_boxes.is_empty():
+		return bp.kit_boxes                     # дом из своего набора: стены, крыша, двор (а не общая коробка всей модели)
 	var key := bp.get_instance_id()
 	if _bp_boxes.has(key):
 		return _bp_boxes[key]
@@ -3490,7 +3499,7 @@ func _wall_place(type: String, p: Vector2, maxd := 1.8) -> Dictionary:
 		var fz := bp.front_z()
 		if fz == -INF:
 			continue
-		var bb := _bounds(bp)
+		var bb := _bounds(bp) if bp.kit_faces.is_empty() else bp.kit_bounds()   # свой дом: стены, без сада и двора
 		bb[3] = fz
 		var ax := City.axis(b["yaw"])
 		var fw := City.facing(b["yaw"])

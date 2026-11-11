@@ -320,7 +320,8 @@ func house_cap(b: Dictionary) -> int:
 # ---------- стройка ----------
 
 ## Можно ли поставить; возвращает {"err": текст или "", "cells": клетки, "y": высота}
-func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 0, ignore_id := -1, pre := PackedInt32Array()) -> Dictionary:
+## legacy — дом из старого сохранения (KitHouses): след — прежний, узкий (и после перестройки — тоже)
+func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 0, ignore_id := -1, pre := PackedInt32Array(), legacy := false) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	var res := {"err": "", "cells": PackedInt32Array(), "y": 0.0}
 	if not unlocked(type):
@@ -341,7 +342,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	if d.get("wall", false):
 		return res                            # украшение на стене: место выбирает игра (стена дома)
 	var tier := 1 if d["kind"] == "house" else (6 if type == "center" else 0)   # станция занимает место на вырост
-	var bp := Catalog.make(type, tier, variant, color)
+	var bp := Catalog.make(type, tier, variant, color, legacy)
 	var rects: Array = bp.footprint()
 	if d.get("seg", false) and seg_thin:
 		# звено забора занимает узкую полосу посередине: концы свободны — соседнее звено (и угол) встаёт вплотную
@@ -1990,7 +1991,7 @@ func _upgrade_cells(b: Dictionary) -> PackedInt32Array:
 	var e: Array = _upg_cells.get(int(b["id"]), [])
 	if e.size() == 2 and String(e[0]) == key:
 		return e[1]
-	var cells := land.footprint_cells(Catalog.make(nt, 1, nv, col).footprint(), b["pos"], float(b["yaw"]))
+	var cells := land.footprint_cells(Catalog.make(nt, 1, nv, col, not b.has("kw")).footprint(), b["pos"], float(b["yaw"]))
 	_upg_cells[int(b["id"])] = [key, cells]
 	return cells
 
@@ -2004,7 +2005,7 @@ func upgrade_place(b: Dictionary) -> Dictionary:
 	var e: Array = _upg_fit.get(int(b["id"]), [])
 	if e.size() == 2 and String(e[0]) == key:
 		return e[1]
-	var res := check_place(nt, b["pos"], float(b["yaw"]), upgrade_variant(b), int(b.get("color", 0)), int(b["id"]), _upgrade_cells(b))
+	var res := check_place(nt, b["pos"], float(b["yaw"]), upgrade_variant(b), int(b.get("color", 0)), int(b["id"]), _upgrade_cells(b), not b.has("kw"))
 	if String(res["err"]) == "":
 		res["err"] = _upgrade_rules(b, res["cells"])
 	_upg_fit[int(b["id"])] = [key, res]
@@ -2036,8 +2037,8 @@ func _upgrade_rules(h: Dictionary, cells: PackedInt32Array) -> String:
 	if paved * 2 >= mine.size() and hi - lo > PAVE_SLOPE:
 		return "Мостовая за домом слишком наклонная"
 	var col := int(h.get("color", 0))
-	var rects: Array = Catalog.make(upgrade_to(h), 1, upgrade_variant(h), col).footprint()
-	var rects0: Array = Catalog.make(String(h["type"]), 1, int(h.get("variant", 0)), col).footprint()
+	var rects: Array = Catalog.make(upgrade_to(h), 1, upgrade_variant(h), col, not h.has("kw")).footprint()
+	var rects0: Array = Catalog.make(String(h["type"]), 1, int(h.get("variant", 0)), col, not h.has("kw")).footprint()
 	var hp: Vector2 = h["pos"]
 	var ax := axis(float(h["yaw"]))
 	var f := facing(float(h["yaw"]))
@@ -2132,7 +2133,7 @@ func upgrade_room_clearing(b: Dictionary) -> String:
 			if land.occ[k] == int(id):
 				keep[k] = int(id)
 				land.occ[k] = 0
-	var res := check_place(nt, b["pos"], float(b["yaw"]), upgrade_variant(b), int(b.get("color", 0)), int(b["id"]), _upgrade_cells(b))
+	var res := check_place(nt, b["pos"], float(b["yaw"]), upgrade_variant(b), int(b.get("color", 0)), int(b["id"]), _upgrade_cells(b), not b.has("kw"))
 	var err := String(res["err"])
 	if err == "":
 		err = _upgrade_rules(b, res["cells"])
@@ -2297,7 +2298,7 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 	h["tier"] = nf
 	Chronicle.add(self, "upg")
 	h["cells"] = (chk["cells"] as PackedInt32Array).duplicate()     # свой список: запас следов (_upg_cells) не делим
-	h["kw"] = 1                                # след посчитан заново — по новому облику
+	# дом старого сохранения и после перестройки остаётся на узком следе (KitHouses: legacy) — иначе соседи мешали бы
 	var cells: PackedInt32Array = h["cells"]
 	land.flatten_cells(cells, h["y"])          # высота дома прежняя: двор позади подравнивается к ней
 	land.blend_ring(cells, h["y"], 8)

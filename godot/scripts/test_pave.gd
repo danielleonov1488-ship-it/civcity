@@ -354,7 +354,7 @@ func _f5_mouse() -> void:
 	ok("F5 advisor explains free building once", game.hud.advisor_panel.visible and game.hud.adv_title.text == "Строим где хотите" and game.city.tips.has("free_place"))
 	game.hud.advisor_panel.visible = false
 	before = game.city.buildings.duplicate()
-	await click(scr(S1 + Vector2(3.4, 0)))
+	await click(scr(S1 + Vector2(4.3, 0)))            # дома из своего набора шире (3,7 м): сосед — через 4,3 м
 	ids = new_ids(before)
 	if ok("F5 house B built", ids.size() == 1):
 		var B: Dictionary = game.city.buildings[ids[0]]
@@ -440,7 +440,7 @@ func _f8_rules() -> void:
 	reset()
 	game.manual_yaw = true
 	game.tool_yaw = PI / 2
-	var k2: Dictionary = game.placement("house_pleb", dp + Vector2(0, 1.4))
+	var k2: Dictionary = game.placement("house_pleb", dp + Vector2(0, 1.9))     # дом шире — чуть дальше, чтобы не наехать на соседа
 	ok("F8 covering a neighbour's door is refused", k2["err"] == "Так загородится вход соседней постройки", str(k2["err"]))
 	game.city.remove(H, false)
 	var g := probe("fountain", S2 + Vector2(8, 8))

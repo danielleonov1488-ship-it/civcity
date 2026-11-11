@@ -29,6 +29,9 @@ var kit_id := ""
 var fp_override := []           # [Rect2] — след на земле
 var kit_faces := []             # стены для WallDecor (как WallDecor.faces)
 var perch := []                 # [Vector3] — где сидят птицы (конёк)
+var kit_mov := []               # створки: [номер детали, петля, вдоль стены, наружу, сторона, угол раскрытия, вид]
+var kit_sq := Transform3D.IDENTITY   # сжатие дома старого сохранения (метры)
+var kit_boxes := []             # [AABB] — чем дом ловит щелчок и заслоняет взгляд: стены, крыша, двор/сад низко, портик
 var _top := -1.0
 var _fp := {}                   # след footprint(all) → [сколько деталей было, прямоугольники]
 
@@ -154,6 +157,8 @@ func top_y() -> float:
 
 ## Передняя стена постройки (z фасада) — по стенам и дверям; если стен нет — по следу
 func front_z() -> float:
+	if not kit_faces.is_empty():
+		return kit_bounds()[3]                 # дом из своего набора: лицо фасада
 	var f := -INF
 	for p in parts:
 		var nm: String = p[0]
@@ -163,6 +168,23 @@ func front_z() -> float:
 			for i in 8:
 				f = maxf(f, (xf * box.get_endpoint(i)).z)
 	return f
+
+
+## Коробка стен дома из своего набора: [x0, x1, z0, z1] (без двора, сада, портика)
+func kit_bounds() -> Array:
+	var b := [-1.0, 1.0, -1.0, 1.0]
+	for f: Dictionary in kit_faces:
+		var n: Vector3 = f["n"]
+		var d: float = f["d"]
+		if n.z > 0.9:
+			b[3] = d
+		elif n.z < -0.9:
+			b[2] = -d
+		elif n.x > 0.9:
+			b[1] = d
+		elif n.x < -0.9:
+			b[0] = -d
+	return b
 
 
 ## Прямоугольники следа (в осях постройки, XZ): из габаритов настоящих деталей, без крыш, плюща, навесов и мелочи
