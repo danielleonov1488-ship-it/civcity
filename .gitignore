@@ -52,3 +52,7 @@ saves/
 godot/research_tmp/
 roblox/build/
 /backups/
+
+# задания для Cowork: результаты и картинки-образцы не в git (большие), сами задания — в git
+/cowork/out/
+/cowork/refs/
