@@ -2580,7 +2580,19 @@ def y_tables(body, x0, x1, z1):
         PROPS.append(["SM_Prop_Table_07", round(xx, 3), 0.0, round(zz, 3), 0.0, 1.0])
         for sgn in (-1, 1):
             PROPS.append(["SM_Prop_Seat_Chair_01", round(xx + 0.04 * sgn, 3), 0.0, round(zz + sgn * 0.47, 3), 0.0 if sgn < 0 else math.pi, 0.95])
-        PROPS.append(["SM_Prop_Jug_01", round(xx + 0.07, 3), 0.53, round(zz, 3), 0.0, 0.42])
+        # на столешнице (у Synty — 0,552 в единицах чертежа, ×ARCH = 0,397 м): кувшин и две чаши
+        PROPS.append(["SM_Prop_Jug_01", round(xx + 0.07, 3), 0.398, round(zz, 3), 0.0, 0.42])
+        for (dx, dz) in ((-0.14, 0.1), (0.16, -0.1)):
+            PROPS.append(["SM_Prop_Goblet_01", round(xx + dx, 3), 0.398, round(zz + dz, 3), 0.0, 0.5])
+    # на длинном столе (верх 0,7825×0,95×ARCH = 0,535 м): кувшин, чаши, хлеб, миска с оливками
+    ty = 0.536
+    zt = z1 + 0.62
+    jug(body, (-0.34, ty, zt - 0.04), 0.2, J("#b5703f", 0.06))
+    for (dx, dz, c) in ((-0.12, -0.15, "#a8402a"), (0.22, 0.16, "#2a2420"), (0.42, -0.12, "#a8402a")):
+        cup(body, (dx, ty, zt + dz), 0.04, J(c, 0.05))
+    board(body, (0.05, ty, zt + 0.02), Matrix.Identity(3), 0.26, 0.18)
+    bread_round(body, (0.05, ty + 0.024, zt + 0.02), 0.06)
+    bowl(body, (0.38, ty, zt + 0.05), 0.06, J("#d9c8a8", 0.04), food="#6f7a3a")
     return
     for k, xx in enumerate((x0 + 0.8, x1 - 0.9)):
         zz = z1 + 1.0
