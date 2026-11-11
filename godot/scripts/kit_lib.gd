@@ -85,6 +85,9 @@ static func _mat(name: String) -> Material:
 		"CivCloth":                      # цвет вершин × плетение ткани
 			m.albedo_texture = load(TEX + "cloth_mul.png")
 			m.roughness = 0.95
+		"CivFresco":                     # росписи, рельефы фронтонов, надписи общественных зданий — клетки fresco.png
+			m.albedo_texture = load(TEX + "fresco.png")
+			m.roughness = 0.85
 		"CivSign":                       # расписные вывески — клетки signs.png
 			m.albedo_texture = load(TEX + "signs.png")
 			m.roughness = 0.8

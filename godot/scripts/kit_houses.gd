@@ -14,12 +14,14 @@ static var _old := {}
 
 ## Лавки (у каждой — один облик) и прилавки рынка
 const SHOPS := ["butcher", "bakery", "cobbler", "dyer", "tailor", "potter", "oilshop", "lamps", "wineshop", "perfumer",
-	"jeweler", "weaver", "barber", "medic", "thermopolium", "taberna", "fullonica", "mansio"]
+	"jeweler", "weaver", "barber", "medic", "thermopolium", "taberna", "fullonica", "mansio", "scriptorium"]
 const STALLS := ["stall_fruit", "stall_veg", "stall_fish"]
+## Общественные здания (свой облик у каждого: "civ_<тип>"); у школы скамьи и кресло учителя — детали Synty (Spectacle)
+const CIVIC := ["school", "library", "academy", "warehouse"]
 
 
 static func covers(type: String) -> bool:
-	return ON and (IDS.has(type) or type in SHOPS or type in STALLS)
+	return ON and (IDS.has(type) or type in SHOPS or type in STALLS or type in CIVIC)
 
 
 static func id_for(type: String, tier: int, variant: int) -> String:
@@ -27,6 +29,8 @@ static func id_for(type: String, tier: int, variant: int) -> String:
 		return "shop_" + type
 	if type in STALLS:
 		return type
+	if type in CIVIC:
+		return "civ_" + type
 	var e: Array = IDS[type]
 	var v := posmod(variant, int(e[1]))
 	var top := int(e[2])
@@ -57,7 +61,8 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 	var base := Transform3D(Basis.from_scale(Vector3.ONE * S), Vector3.ZERO) * sq
 	var shop := not type.begins_with("house_")
 	for n: String in h["parts"]:
-		var remap := {"tint": b.tint} if n == "Walls" else {}
+		# у общественного здания свой цвет штукатурки (из Blender), у дома — цвет из палитры игры
+		var remap := {"tint": Color(String(h["tint"])) if h.has("tint") else b.tint} if n == "Walls" else {}
 		# у лавки нутро в сумерках светится всегда (как прежние «#lit» лавок); у дома — когда в нём живут (Game._show)
 		var nm := "K:%s/%s" % [id, n] + ("@lit" if shop and n == "Rooms" else "")
 		b.parts.append([nm, base, remap])
@@ -76,6 +81,9 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 		b.parts.append(["K:common/" + String(m["mesh"]), base * xl, {}])
 	for l: Dictionary in h.get("lights", []):
 		var lp := sq * _v(l["lamp"])
+		if String(l.get("kind", "")) == "hang":
+			b.light(lp * S)                  # светильник свой (в модели), здесь — только свет ночью
+			continue
 		# фонарик у двери (как у прежних домов: «#wall_lamp», у жилых ночью еле теплится); он в единицах Bp
 		b.parts.append(["#wall_lamp", Transform3D(Basis.IDENTITY, lp * S), {}])
 		b.light((lp + Vector3(0, -0.14, 0.3)) * S)
