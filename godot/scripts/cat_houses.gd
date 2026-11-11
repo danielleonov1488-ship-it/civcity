@@ -552,11 +552,9 @@ static func _back_put(b: Bp, nm: String, r: PackedFloat32Array, u: float, bs: Ba
 	b.add_xf(nm, Transform3D(bs, Vector3(r[1] - u, 0, r[2] - BACK + gap - mz)))
 
 
-## Печная труба на крыше (беленая, с терракотовой шапкой и тёмным дымоходом, как в Town to City) — из неё дымок;
-## p — низ трубы на скате
-static func _chimney(b: Bp, p: Vector3) -> void:
-	_put(b, "#chimney", p, 0.0, Vector3(1.0, 0.95, 1.0))
-	_smoke(b, p + Vector3(0, 1.22, 0))
+## Печная труба на крыше — убрана (владелец 11.11: «с крыш убрать дымоходы и трубы»), а с ней и дымок над домом
+static func _chimney(_b: Bp, _p: Vector3) -> void:
+	pass
 
 
 static func _smoke(b: Bp, p: Vector3) -> void:

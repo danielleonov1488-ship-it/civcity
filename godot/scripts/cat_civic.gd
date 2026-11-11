@@ -147,10 +147,9 @@ static func _hip(b: Bp, x0: float, x1: float, z0: float, z1: float, top: float, 
 	return top + 0.75 * ky
 
 
-## Печная труба (беленая, с черепичной шапкой) — из неё идёт дым; p — низ трубы (чуть под скатом)
-static func _chimney(b: Bp, p: Vector3, s := 1.0) -> void:
-	b.add("#chimney", p, 0.0, s)
-	b.smoke.append(b.base * (p + Vector3(0, 1.3 * s, 0)))
+## Печная труба — убрана (владелец 11.11: «с крыш убрать дымоходы и трубы»); вызовы оставлены, чтобы вернуть одной строкой
+static func _chimney(_b: Bp, _p: Vector3, _s := 1.0) -> void:
+	pass
 
 
 ## Односкатный навес на столбах: столбы по z_post от x0 до x1, кровля поднимается к стене z_wall.

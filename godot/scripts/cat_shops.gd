@@ -402,12 +402,9 @@ static func _hanging_lamp(b: Bp, p: Vector3, s := 0.6, lit := true) -> void:
 		b.light(p - Vector3(0, 1.1 * s, 0))
 
 
-## Печная труба на крыше: штукатурный столбик в цвет дома под черепичной шапочкой; дымок из неё
-static func _chimney(b: Bp, p: Vector3, smoke := true) -> void:
-	b.add_xf("SM_Bld_Roof_Base_Pillar_01", Transform3D(Basis.from_scale(Vector3(1.6, 1.15, 1.6)), p), true)
-	b.add_xf("SM_Bld_Roof_Base_Peak_01", Transform3D(Basis.from_scale(Vector3(0.24, 0.3, 0.24)), p + Vector3(-0.3, 0.96, 0.3)), true)
-	if smoke:
-		b.smoke.append(b.base * (p + Vector3(0, 1.3, 0)))
+## Печная труба на крыше — убрана (владелец 11.11: «с крыш убрать дымоходы и трубы»); дым у печей во дворе остался
+static func _chimney(_b: Bp, _p: Vector3, _smoke := true) -> void:
+	pass
 
 
 ## Прилавок — низкая стенка в цвет дома (как каменные прилавки Помпей) со столбиками по краям, вдоль x0..x1

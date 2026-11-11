@@ -330,10 +330,20 @@ func _new() -> void:
 		"на лесах нет рабочих, что появлялись и пропадали рывком (отзывы 27.10): столбы, перекладины, лестница (%d)" % ((scaf0 as Node).get_child_count() if scaf0 else -1))
 	var gp: Vector2 = nb.get("pos", Vector2(X0, Z0))
 	game.rig.cine_look(Vector3(gp.x + 6.0, land.height_at(gp.x, gp.y) + 5.0, gp.y + 8.0), Vector3(gp.x, land.height_at(gp.x, gp.y) + 1.5, gp.y))
-	await get_tree().create_timer(1.6).timeout
+	await get_tree().create_timer(4.0).timeout
 	await shot("s4t_build.png")
-	await get_tree().create_timer(2.5).timeout
-	check(int(game._grows) == 0 and game.visuals.has(nb.get("id", -1)), "через 3–4 с — готовый дом, лесов нет")
+	var gl: Array = game._grow_live.get(int(nb.get("id", -1)), [null, null, null])
+	var shown := 0
+	var hidden := 0
+	if gl[1] != null:
+		for n: Node3D in (gl[1] as Node3D).get_children():
+			if n.visible:
+				shown += 1
+			else:
+				hidden += 1
+	check(shown > 0 and hidden > 0, "через 4 с из 12 — дом наполовину: деталей стоит %d, ещё не встало %d" % [shown, hidden])
+	await get_tree().create_timer(8.6).timeout
+	check(int(game._grows) == 0 and game.visuals.has(nb.get("id", -1)), "через 12 с — готовый дом, лесов нет (владелец 11.11: стройка 10–15 с)")
 	# поставили по ошибке и сразу отменили (снесли): леса, призрак и рабочие уходят сразу, дом потом не появляется
 	game.build_anim = true
 	var ub := place("house_pleb", Vector2(X0 - 10.0, Z0 + 3.0), 0.5)

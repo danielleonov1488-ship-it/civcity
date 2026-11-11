@@ -1525,36 +1525,42 @@ func _on_added(b: Dictionary) -> void:
 		_fest_look(true)                       # новый дом у дороги во время игр — шесты переставим, чтобы не торчали из стены
 
 
-## Стройка как в Town to City: здание вырастает из земли за пару секунд, в пыли; потом — настоящее.
-## Этап 4 (4.6): вокруг — леса (столбы, перекладины, лестница), этажи встают по одному (рабочих нет: отзывы игроков 27.10).
-## Не больше GROW_MAX строек с лесами разом (копия, ряд мышью — остальные растут коротко, как раньше); на ×3 — быстрее
-const GROW_MAX := 3
+## Стройка как в Town to City, только дольше и по-настоящему (владелец 11.11: «хотя бы 10–15 секунд»): вокруг леса
+## (столбы, перекладины, лестница), детали встают по одной снизу вверх — цоколь, стены рядами, этажи, балки, черепица
+## от карниза к коньку; в конце — мелочь (горшки, вывески, фонари), свежая «пыльная» окраска сходит, и дом готов.
+## Дом работает с первой секунды, это только картинка. Рабочих нет (отзывы игроков 27.10).
+## Не больше GROW_MAX строек с лесами разом (копия, ряд мышью — остальные растут коротко); на ×2/×3 — быстрее
+const GROW_MAX := 4
+const GROW_T := 12.0                  # с — стройка на ×1
+const GROW_MIN := 4.5                 # с — короче не бывает (×3)
+const GROW_SHORT := 2.5               # с — короткий рост (сверх GROW_MAX, поля)
+const GROW_POP := 0.045               # доля стройки, за которую одна деталь «встаёт» (с лёгким отскоком)
+const GROW_TINT := Color(1.0, 0.95, 0.85, 0.35)
 var _grows := 0
 var _grow_live := {}                  # id стройки → [tween, призрак, леса] — снесли или отменили, пока растёт: убрать сразу
 
 func _grow_anim(b: Dictionary) -> void:
 	var bp := city.blueprint(b)
-	var g := Parts.ghost(bp, "place", Color(1.0, 0.95, 0.85, 0.35))
+	var g := Parts.ghost(bp, "place", GROW_TINT)
 	var xf := city.xf(b)
 	g.transform = xf
-	g.scale = Vector3(1.0, 0.04, 1.0)
 	add_child(g)
 	var id: int = b["id"]
 	var full: bool = _grows < GROW_MAX and city.def(b)["kind"] != "farm"
-	var dur := clampf(3.2 / maxf(1.0, speed), 1.3, 3.2) if full else 1.3
+	var dur := clampf(GROW_T / maxf(1.0, speed), GROW_MIN, GROW_T) if full else GROW_SHORT
 	var scaf: Node3D = _scaffold(bp, xf) if full else null
 	if full:
 		_grows += 1
 	var tw := create_tween()
 	_grow_live[id] = [tw, g, scaf]
 	if full:
-		# этажи — по одному: рывок вверх и короткая пауза
-		for k in 3:
-			tw.tween_property(g, "scale", Vector3(1.0, 0.04 + 1.02 * (k + 1) / 3.0, 1.0), dur * 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-			tw.tween_interval(dur * 0.09)
+		var plan := _grow_plan(g)
+		_grow_step(g, plan, 0.0)
+		tw.tween_method(func(t: float) -> void: _grow_step(g, plan, t), 0.0, 1.0, dur)
 	else:
-		tw.tween_property(g, "scale", Vector3(1.0, 1.06, 1.0), 1.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(g, "scale", Vector3.ONE, 0.18)
+		g.scale = Vector3(1.0, 0.04, 1.0)
+		tw.tween_property(g, "scale", Vector3(1.0, 1.06, 1.0), dur).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tw.tween_property(g, "scale", Vector3.ONE, 0.18)
 	tw.tween_callback(func():
 		if (_grow_live.get(id, [null]) as Array)[0] == tw:
 			_grow_live.erase(id)
@@ -1565,9 +1571,69 @@ func _grow_anim(b: Dictionary) -> void:
 		if city.buildings.has(id):
 			_show(city.buildings[id])
 			_puff(Vector3(b["pos"].x, float(b["y"]) + 0.3, b["pos"].y), Color("efe3c8")))
-	var puffs := 7 if full else 3
+	# пыль — всю стройку, у подножия, по всему следу
+	var bb: Array = _bounds(bp)
+	var puffs := int(dur / 0.8) if full else 3
 	for k in puffs:
-		get_tree().create_timer(dur / puffs * k).timeout.connect(func(): _puff(xf.origin + Vector3(randf_range(-1.5, 1.5), 0.2, randf_range(-1.5, 1.5)), Color("e8dcc4")))
+		var at := xf * Vector3(randf_range(float(bb[0]), float(bb[1])), 0.2, randf_range(float(bb[2]), float(bb[3])))
+		get_tree().create_timer(dur / puffs * k).timeout.connect(func(): _puff(at, Color("e8dcc4")))
+
+
+## Порядок стройки: крупные детали — снизу вверх полосами по 30 см, в полосе — слева направо (кладка рядами,
+## черепица от карниза к коньку); мелочь меньше 80 см (горшки, вывески, фонари, ставенки) — в самом конце.
+## [деталь, доля начала, конечный transform, центр детали (в осях постройки), 0 — не видна / 1 — встаёт / 2 — стоит]
+func _grow_plan(g: Node3D) -> Array:
+	var big := []
+	var small := []
+	for n: Node3D in g.get_children():
+		var box: AABB = n.transform * (n as MeshInstance3D).mesh.get_aabb() if n is MeshInstance3D else Artisau.aabb(n)
+		var e := [n, 0.0, n.transform, box.get_center(), 0, box.position.y, box.position.x + box.position.z * 0.05]
+		if maxf(box.size.x, maxf(box.size.y, box.size.z)) < 0.8 and box.position.y > 0.05:
+			small.append(e)
+		else:
+			big.append(e)
+	var by := func(a: Array, c: Array) -> bool:
+		var ba := floorf(float(a[5]) / 0.3)
+		var bc := floorf(float(c[5]) / 0.3)
+		return ba < bc if ba != bc else float(a[6]) < float(c[6])
+	big.sort_custom(by)
+	small.shuffle()
+	for i in big.size():
+		big[i][1] = 0.05 + 0.74 * i / maxf(1.0, big.size() - 1.0)
+	for i in small.size():
+		small[i][1] = 0.8 + 0.13 * i / maxf(1.0, small.size() - 1.0)
+	return big + small
+
+
+func _grow_step(g: Node3D, plan: Array, t: float) -> void:
+	for e: Array in plan:
+		if int(e[4]) == 2:
+			continue
+		var n: Node3D = e[0]
+		var k := clampf((t - float(e[1])) / GROW_POP, 0.0, 1.0)
+		if k <= 0.0:
+			if n.visible:
+				n.visible = false
+			continue
+		n.visible = true
+		var x0: Transform3D = e[2]
+		if k >= 1.0:
+			n.transform = x0
+			e[4] = 2
+			continue
+		e[4] = 1
+		# отскок: 0 → чуть больше 1 → 1 (ease-out back), и сверху на место — как поставили
+		var c1 := 1.4
+		var q := k - 1.0
+		var s := maxf(0.02, 1.0 + (c1 + 1.0) * q * q * q + c1 * q * q)
+		var c: Vector3 = e[3]
+		n.transform = Transform3D(x0.basis * s, c + (x0.origin - c) * s + Vector3(0, 0.3 * (1.0 - k), 0))
+	# свежая кладка светлее; к концу краска «сходит» — и подменяем настоящим домом без рывка
+	var m = g.get_meta("mat")
+	if m is ShaderMaterial and t > 0.88:
+		var a := GROW_TINT
+		a.a = GROW_TINT.a * clampf((1.0 - t) / 0.12, 0.0, 1.0)
+		(m as ShaderMaterial).set_shader_parameter("tint", a)
 
 
 ## Леса вокруг стройки (в осях постройки): столбы по углам, перекладины, лестница у фасада

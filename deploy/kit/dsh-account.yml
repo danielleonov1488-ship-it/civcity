@@ -1,0 +1,20 @@
+# Для tools/dsh.sh: headless-профиль DeepSeek Harness ходит через аккаунт владельца (как окно Harness),
+# а не через API-ключ. Подключается флагом --patch (профиль на диске C не меняем).
+# В headless эти три модуля выключены по умолчанию — включаем, иначе «Sign in to DeepSeek».
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: deepseek-account
+    model: !!js process.env.DSH_MODEL || 'deepseek-flash'
+    reasoningEffort: high
+- id: deepseek-account
+  name: '@deepseek-ai/dsh-deepseek-account-platform'
+  disabled: false
+  config:
+    desktopPlatform: win32
+- id: credentials
+  name: '@deepseek-ai/dsh-credentials-local'
+  disabled: false
+- id: authorization
+  name: '@deepseek-ai/dsh-authorization'
+  disabled: false

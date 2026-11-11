@@ -9,6 +9,7 @@ var items := [["D:/CivCity/.work/house_view/models/house_artisan.glb", "Наш �
 var secs := 12.0
 var fps := 30
 var pivots: Array[Node3D] = []
+var same := false                       # same=1 — у всех моделей общий масштаб (видно, какая больше)
 
 
 func _ready() -> void:
@@ -22,6 +23,7 @@ func _ready() -> void:
 			"bn": items[1][1] = kv[1]
 			"secs": secs = float(kv[1])
 			"fps": fps = int(kv[1])
+			"same": same = kv[1] == "1"
 	if String(items[1][0]) == "-":            # b=- — одна модель посередине, крупнее
 		items.resize(1)
 	DirAccess.make_dir_recursive_absolute(out)
@@ -95,7 +97,9 @@ func _stage() -> void:
 		l.anchor_top = 0.88
 		l.anchor_bottom = 0.96
 		cl.add_child(l)
-	# модели: каждая — высотой 2.2 м, стоит на земле, ось вращения — середина
+	# модели: каждая — высотой 2.2 м, стоит на земле, ось вращения — середина (same=1 — общий масштаб по большей)
+	var ms: Array = []
+	var smin := INF
 	for i in items.size():
 		var doc := GLTFDocument.new()
 		var st := GLTFState.new()
@@ -103,6 +107,7 @@ func _stage() -> void:
 			print("GLB error ", items[i][0])
 			continue
 		var m: Node3D = doc.generate_scene(st)
+		kit_colors(m)
 		var pivot := Node3D.new()
 		add_child(pivot)
 		pivot.position = Vector3(0 if items.size() == 1 else (-2.3 if i == 0 else 2.3), 0, 0)
@@ -114,11 +119,27 @@ func _stage() -> void:
 			bb = b if first else bb.merge(b)
 			first = false
 		var s := (2.6 if items.size() > 1 else 3.4) / maxf(bb.size.y, maxf(bb.size.x, bb.size.z) * (0.75 if items.size() > 1 else 0.62))
+		smin = minf(smin, s)
+		ms.append([m, bb, s])
+		pivots.append(pivot)
+	for e in ms:
+		var m: Node3D = e[0]
+		var bb: AABB = e[1]
+		var s: float = smin if same else float(e[2])
 		m.scale = Vector3.ONE * s
 		var c := bb.get_center()
 		m.position = Vector3(-c.x * s, -bb.position.y * s, -c.z * s)
-		pivots.append(pivot)
-		print("MODEL ", items[i][0], " aabb ", bb, " scale ", snappedf(s, 0.001))
+		print("MODEL aabb ", bb, " scale ", snappedf(s, 0.001))
+
+
+## glTF из Blender: импорт Godot включает цвет вершин только у материалов с текстурой — включаем всем
+static func kit_colors(root: Node) -> void:
+	for mi: MeshInstance3D in root.find_children("*", "MeshInstance3D", true, false):
+		for s in mi.mesh.get_surface_count():
+			var m := mi.mesh.surface_get_material(s)
+			var cols = mi.mesh.surface_get_arrays(s)[Mesh.ARRAY_COLOR]
+			if m is BaseMaterial3D and cols is PackedColorArray and not (cols as PackedColorArray).is_empty():
+				(m as BaseMaterial3D).vertex_color_use_as_albedo = true
 
 
 func _run() -> void:
