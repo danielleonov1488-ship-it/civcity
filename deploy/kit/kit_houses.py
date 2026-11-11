@@ -422,7 +422,8 @@ def wall(walls, inner, side, frame, x0, x1, y0, y1, openings, stains=(), caps=Fa
     u_base = O.dot(U)
     FACES[side] = {"n": [N.x, N.y, N.z], "a": [U.x, U.y, U.z], "d": O.dot(N),
                    "bound": [u_base + x0, y0, x1 - x0, y1 - y0],
-                   "block": [[u_base + a - 0.12, c - 0.1, b - a + 0.24, d - c + 0.22] for (a, b, c, d) in openings]}
+                   "block": [[u_base + a - 0.12, c - 0.1, b - a + 0.24, d - c + 0.22] for (a, b, c, d) in openings],
+                   "open": [[round(u_base + a, 3), round(c, 3), round(b - a, 3), round(d - c, 3)] for (a, b, c, d) in openings]}
     return P
 
 
@@ -442,7 +443,7 @@ DOOR_COLS = {"oak": "#6b4428", "dark": "#4f3020", "green": "#4a6040", "blue": "#
 def mov(kind, key, hinge, U, N, open_a, side=1):
     """записать створку: ось — на петле; open_a — угол раскрытия (вокруг вертикали)"""
     Rw = RW(U, N)
-    sgn = side if kind == "shutter" else 1
+    sgn = side
     Ro = Matrix.Rotation(open_a * sgn, 3, "Y")
     M3 = Rw @ Ro
     cols3 = [M3.col[0], M3.col[1], M3.col[2]]
@@ -458,9 +459,9 @@ def shutter_key(colkey, w, h, side):
     return k
 
 
-def door_key(colkey, w, h):
-    k = "door_%s_%d_%d" % (colkey, round(w * 100), round(h * 100))
-    CANON[k] = ("door", colkey, w, h, 1, False)
+def door_key(colkey, w, h, side=1):
+    k = "door_%s_%d_%d" % (colkey, round(w * 100), round(h * 100)) + ("" if side > 0 else "_M")
+    CANON[k] = ("door", colkey, w, h, side, False)
     return k
 
 
@@ -484,27 +485,36 @@ def build_shutter(mb, colkey, w, h, side, brace):
         mb.box((0.02 * -side, h * vv, 0.035), (0.06, 0.03, 0.012), col("#2b2622"))
 
 
-def build_door(mb, colkey, w, h):
+def build_door(mb, colkey, w, h, side=1):
+    """створка двери: доски, планки, гвозди, кольцо; side −1 — зеркальная (правая створка парадной двери)"""
     base = DOOR_COLS[colkey]
     r = random.Random(seed_of("door", colkey, w, h))
     jj = lambda hx, v=0.1: col(hx, r.uniform(-v, v), r.uniform(-0.01, 0.01), r.uniform(-0.1, 0.1))
-    nb = 4
+    nb = 4 if w > 0.45 else 3
     for k in range(nb):
         x = (k + 0.5) * w / nb
-        mb.box((x, h / 2, 0.0), (w / nb - 0.008, h, 0.05), jj(base))
+        mb.box((x * side, h / 2, 0.0), (w / nb - 0.008, h, 0.05), jj(base))
     for vv in (0.15, 0.5, 0.85):
-        mb.box((w / 2, h * vv, 0.032), (w * 0.95, 0.07, 0.02), col(base, -0.2))
+        mb.box((w / 2 * side, h * vv, 0.032), (w * 0.95, 0.07, 0.02), col(base, -0.2))
     for k in range(nb):
         for vv in (0.15, 0.5, 0.85):
-            mb.box(((k + 0.5) * w / nb, h * vv, 0.046), (0.018, 0.018, 0.012), col("#3a332c"))
-    mb.box((w * 0.78, h * 0.52, 0.06), (0.05, 0.05, 0.02), col("#8a6a35"))
+            mb.box(((k + 0.5) * w / nb * side, h * vv, 0.046), (0.018, 0.018, 0.012), col("#3a332c"))
+    mb.box((w * 0.78 * side, h * 0.52, 0.06), (0.05, 0.05, 0.02), col("#8a6a35"))
 
 
 # ---------------- детали фасада ----------------
-def window(body, P_, U, N, side, u0, u1, v0, v1, shutters=True, box=False, grille=False, surround=False, open_k=None):
+def window(body, P_, U, N, side, u0, u1, v0, v1, shutters=True, box=False, grille=False, surround=False, open_k=None, hood=False):
     w = u1 - u0
     h = v1 - v0
     Rw = RW(U, N)
+    if hood:
+        # фронтончик над окном: два ската из светлого камня на полочке
+        ct = J(P["trim"], 0.04)
+        body.box(Pw(P_, (u0 + u1) / 2, v1 + 0.16, 0.06), (w + 0.34, 0.06, 0.12), ct, Rw)
+        for sgn in (-1, 1):
+            ang = math.radians(20) * sgn
+            body.box(Pw(P_, (u0 + u1) / 2 + sgn * (w + 0.34) / 4, v1 + 0.24, 0.06), ((w + 0.34) / 2 / math.cos(math.radians(20)) + 0.02, 0.05, 0.12),
+                     ct, Rw @ Matrix.Rotation(-ang, 3, "Z"))
     fr = 0.045
     dep = -0.07
     c_w = J(P["wood"], 0.06)
@@ -1088,6 +1098,250 @@ def corner_stones(body, x0, x1, z0, z1, style):
             body.box((cx - sx * 0.06, (PL + HT) / 2, cz_ - sz * 0.06), (0.18, HT - PL - 0.1, 0.18), J(P["trim"], 0.03))
 
 
+def lean_to(body, x0, x1, z_wall, depth, y_top, y_low):
+    """навес скатом от стены (z_wall) назад на столбах: черепица рядами, балки, столбы"""
+    zb = z_wall - depth
+    a = math.atan2(y_top - y_low, depth)
+    ncol = max(2, int((x1 - x0) / 0.36))
+    nrow = max(2, int(depth / 0.38))
+    for r in range(nrow):
+        for c in range(ncol):
+            u0 = x0 + (x1 - x0) * c / ncol + 0.01
+            u1 = x0 + (x1 - x0) * (c + 1) / ncol - 0.01
+            d0 = depth * r / nrow - 0.02
+            d1 = depth * (r + 1) / nrow + 0.06
+            yy0 = y_top - d0 * math.tan(a)
+            yy1 = y_top - d1 * math.tan(a) + (0.03 if r < nrow - 1 else 0)
+            tc = J(P["tile"], 0.09, 0.01, 0.1)
+            q = [(u0, yy1 + 0.02, z_wall - d1), (u1, yy1 + 0.02, z_wall - d1), (u1, yy0 + 0.02, z_wall - d0), (u0, yy0 + 0.02, z_wall - d0)]
+            vv = [body.v(x) for x in q]
+            body.face(vv, tc, ("dir", (0, 1, 0)))
+            top = [body.v((x[0], x[1] + 0.04, x[2])) for x in q]
+            body.face(top, col_shift(tc, 0.05), ("dir", (0, 1, 0)))
+            body.face([vv[1], vv[0], top[0], top[1]], col_shift(tc, -0.3), ("dir", (0, 0, -1)))
+            body.face(vv[::-1], col_shift(tc, -0.4), ("dir", (0, -1, 0)))
+        for c in range(ncol + 1):
+            uu = x0 + (x1 - x0) * c / ncol
+            p0 = Vector((uu, y_top + 0.07, z_wall + 0.02))
+            p1 = Vector((uu, y_low + 0.05, zb - 0.06))
+            dl = p1 - p0
+            Rr = Matrix((Vector((1, 0, 0)), dl.normalized().cross(Vector((1, 0, 0))).normalized(), dl.normalized())).transposed()
+            if Rr.col[1].y < 0:
+                Rr = Matrix((Vector((1, 0, 0)), -dl.normalized().cross(Vector((1, 0, 0))).normalized(), dl.normalized())).transposed()
+            body.box(tuple((p0 + p1) / 2), (0.1, 0.07, dl.length), J(P["tile"], 0.08, 0.01, 0.08), Rr)
+    for xx in (x0 + 0.08, x1 - 0.08):
+        body.box((xx, (y_low - 0.05) / 2, zb + 0.05), (0.09, y_low - 0.05, 0.09), J(P["wood"], 0.06))
+    body.box(((x0 + x1) / 2, y_low - 0.04, zb + 0.05), (x1 - x0, 0.09, 0.1), J(P["wood"], 0.06))
+    # каменный пол двора
+    for k in range(int((x1 - x0) / 0.5) + 1):
+        for j in range(int(depth / 0.45) + 1):
+            body.box((x0 + 0.25 + k * 0.5, 0.015, z_wall - 0.22 - j * 0.45), (0.46, 0.03, 0.41), J(P["stone"], 0.1, 0.01, 0.15), skip=("bot",))
+
+
+def craft_goods(body, emb, P_, U, N, u0, u1, craft, y_top):
+    """товар ремесла на прилавке и под ним; craft: 0 ткач, 1 гончар, 2 медник, 3 зерно"""
+    R = RW(U, N)
+    span = u1 - u0
+    if craft == 0:
+        cols = ["#b5452f", "#3f6fa8", "#e1b84a", "#4f8a5a", "#8a4f9a", "#efe3c8"]
+        for k in range(5):
+            uu = u0 + 0.12 + k * (span - 0.24) / 4
+            c = Vector(Pw(P_, uu, y_top + 0.06, 0.1))
+            body.lathe((c.x, c.y - 0.06, c.z), [(0.055, 0.0), (0.055, 0.32)], 8, J(cols[k % len(cols)], 0.06), close_top=True)
+        for k in range(4):            # полотнища с балки
+            uu = u0 + 0.15 + k * (span - 0.3) / 3
+            body.box(Pw(P_, uu, PL + 1.35, 0.06), (0.22, 0.5, 0.012), J(cols[(k + 2) % len(cols)], 0.06), R)
+    elif craft == 1:
+        for k in range(4):
+            uu = u0 + 0.12 + k * (span - 0.24) / 3
+            amphora(body, Pw(P_, uu, y_top, 0.08), 0.32 + 0.06 * (k % 2), J(rng.choice(["#c27a4a", "#b5703f", "#d08a55"]), 0.06))
+        for k in range(3):
+            amphora(body, Pw(P_, u0 - 0.25 + k * 0.22 if u0 > 0.6 else u1 + 0.2 + k * 0.22, 0.0, 0.35), 0.5, J("#c27a4a", 0.08))
+        for k in range(3):
+            body.lathe(Pw(P_, u0 + span * 0.5 + (k - 1) * 0.15, y_top + 0.002, 0.18), [(0.05, 0), (0.09, 0.04)], 8, J("#d9a56a", 0.06))
+    elif craft == 2:
+        for k in range(5):            # медные котлы и сковороды на балке
+            uu = u0 + 0.12 + k * (span - 0.24) / 4
+            c = Vector(Pw(P_, uu, PL + 1.38, 0.08))
+            body.lathe((c.x, c.y - 0.1, c.z), [(0.03, 0), (0.09, 0.05), (0.1, 0.12)], 8, J("#b0703a", 0.1))
+            body.box((c.x, c.y + 0.08, c.z), (0.01, 0.16, 0.01), col("#3a332c"))
+        for k in range(3):
+            body.lathe(Pw(P_, u0 + 0.2 + k * 0.3, y_top, 0.1), [(0.06, 0), (0.1, 0.05), (0.11, 0.1)], 8, J("#8c5a30", 0.1))
+    else:
+        for k in range(4):            # мешки с зерном и корзины
+            uu = u0 + 0.15 + k * (span - 0.3) / 3
+            c = Vector(Pw(P_, uu, y_top, 0.1))
+            body.lathe((c.x, c.y, c.z), [(0.09, 0), (0.12, 0.1), (0.1, 0.2), (0.05, 0.25)], 8, J("#d8c49a", 0.06), close_top=True)
+            leaf_blob(body, (c.x, c.y + 0.24, c.z), 0.06, J("#e3b84a", 0.08))
+        for k in range(2):
+            basket(body, Pw(P_, u1 + 0.25 + k * 0.3 if u1 < W - 0.8 else u0 - 0.3 - k * 0.3, 0.0, 0.35), 0.14, 0.22)
+
+
+def shopfront(body, emb, P_, U, N, side, u0, u1, craft, top):
+    """лавка на первом этаже: широкий проём под деревянной балкой, каменный прилавок (как в Помпеях),
+    товар ремесла, вывеска на кронштейне"""
+    R = RW(U, N)
+    body.box(Pw(P_, (u0 + u1) / 2, top + 0.07, 0.02), (u1 - u0 + 0.26, 0.14, 0.16), J(P["wood"], 0.06), R)
+    for uu in (u0 + 0.05, u1 - 0.05):
+        body.box(Pw(P_, uu, (PL + top) / 2, -0.06), (0.1, top - PL, 0.12), J(P["stone"], 0.06), R)
+    cu1 = u0 + (u1 - u0) * 0.72
+    ch = 0.72
+    body.box(Pw(P_, (u0 + cu1) / 2 + 0.04, PL + ch / 2, 0.02), (cu1 - u0 - 0.08, ch, 0.34), J(P["trim"], 0.04), R,
+             cols={"pz": J("#b5452f", 0.05)})
+    body.box(Pw(P_, (u0 + cu1) / 2 + 0.04, PL + ch + 0.025, 0.04), (cu1 - u0 + 0.0, 0.05, 0.4), J("#e8e2d6", 0.03), R)
+    craft_goods(body, emb, P_, U, N, u0 + 0.08, cu1 - 0.04, craft, PL + ch + 0.05)
+    # вывеска
+    su = u1 + 0.18 if u1 < W - 0.4 else u0 - 0.18
+    body.box(Pw(P_, su, top + 0.28, 0.25), (0.04, 0.04, 0.5), J(P["wood2"], 0.05), R)
+    body.box(Pw(P_, su, top + 0.06, 0.42), (0.03, 0.34, 0.3), J(P["trim"], 0.05), R @ Matrix.Rotation(math.pi / 2, 3, "Y"))
+    sym = {0: "#3f6fa8", 1: "#c27a4a", 2: "#b0703a", 3: "#e3b84a"}[craft]
+    for sgn in (-1, 1):
+        body.lathe(Pw(P_, su + sgn * 0.017, top + 0.0, 0.42), [(0.0, 0.0), (0.07, 0.04), (0.06, 0.12), (0.02, 0.17)], 6, col(sym))
+    block(side, P_, U, u0 - 0.1, u1 + 0.45, PL, top + 0.6)
+
+
+def yard_props(body, emb, x0, x1, zb, z_wall, craft):
+    zc = (zb + z_wall) / 2
+    if craft == 0:          # ткацкий станок и корзины шерсти
+        for xx in (-0.45, 0.45):
+            body.box((xx, 0.6, zc), (0.06, 1.2, 0.06), J(P["wood"], 0.05))
+        body.box((0, 1.15, zc), (1.0, 0.06, 0.06), J(P["wood"], 0.05))
+        body.box((0, 0.35, zc), (1.0, 0.06, 0.06), J(P["wood"], 0.05))
+        for k in range(14):
+            body.box((-0.42 + k * 0.065, 0.75, zc), (0.012, 0.78, 0.012), J(rng.choice(["#b5452f", "#3f6fa8", "#e1b84a", "#efe3c8"]), 0.05))
+        for k in range(2):
+            basket(body, (x1 - 0.35 - k * 0.35, 0.0, zc + 0.1), 0.15, 0.24)
+    elif craft == 1:        # печь для обжига (угольки в устье) и вазы
+        kx = x0 + 0.65
+        body.lathe((kx, 0.0, zc), [(0.42, 0.0), (0.44, 0.4), (0.36, 0.75), (0.2, 0.95), (0.08, 1.02)], 10, J("#b07a52", 0.06), close_top=True)
+        body.box((kx, 0.22, zc + 0.36), (0.26, 0.3, 0.14), col("#2a2018"))
+        for k in range(4):
+            leaf_blob(emb, (kx + rng.uniform(-0.08, 0.08), 0.12, zc + 0.38), 0.04, col(rng.choice(["#ff7a1a", "#ffb03a"])))
+        SMOKE.append([kx, 1.1, zc])
+        for k in range(4):
+            amphora(body, (x1 - 0.3 - k * 0.24, 0.0, zc - 0.1 + (k % 2) * 0.2), 0.45, J("#c27a4a", 0.08))
+    elif craft == 2:        # наковальня, точило, бочка
+        body.box((-0.2, 0.25, zc), (0.22, 0.5, 0.22), J("#6b5039", 0.06))
+        body.box((-0.2, 0.55, zc), (0.4, 0.12, 0.16), col("#3a3a3c"))
+        body.lathe((0.6, 0.0, zc), [(0.16, 0.0), (0.18, 0.25), (0.16, 0.5)], 10, J(P["wood"], 0.06), close_top=True)
+        body.lathe((x0 + 0.45, 0.2, zc), [(0.2, 0.0), (0.2, 0.08)], 12, J(P["stone"], 0.05), close_top=True)
+    else:                   # ручная мельница и мешки
+        body.lathe((0.0, 0.0, zc), [(0.3, 0.0), (0.28, 0.3), (0.12, 0.6), (0.18, 0.85)], 10, J(P["stone"], 0.06), close_top=True)
+        for k in range(3):
+            body.lathe((x1 - 0.3 - k * 0.3, 0.0, zc), [(0.12, 0), (0.15, 0.15), (0.12, 0.3), (0.06, 0.36)], 8, J("#d8c49a", 0.06), close_top=True)
+
+
+def column(body, at, h, r, c):
+    """колонна: база, ствол с утолщением, капитель"""
+    x, y, z = at
+    body.lathe((x, y, z), [(r * 1.35, 0.0), (r * 1.35, 0.06), (r * 1.15, 0.1)], 10, c)
+    body.lathe((x, y + 0.1, z), [(r * 1.08, 0.0), (r * 1.1, (h - 0.3) * 0.35), (r * 0.94, h - 0.3)], 10, c)
+    body.lathe((x, y + h - 0.2, z), [(r * 0.95, 0.0), (r * 1.3, 0.12), (r * 1.4, 0.14)], 10, c)
+    body.box((x, y + h - 0.03, z), (r * 3.0, 0.06, r * 3.0), c)
+
+
+def portico(body, walls, inner, x0p, x1p, z_wall, depth, style, top):
+    """портик домуса перед входом: мраморный пол со ступенями, колонны, архитрав, черепичная кровля с фронтоном"""
+    marble = "#ece6da"
+    zf = z_wall + depth
+    for k in range(3):        # ступени
+        body.box(((x0p + x1p) / 2, 0.05 + k * 0.08, zf - k * 0.18 + 0.12), (x1p - x0p + 0.3 - k * 0.1, 0.1, 0.4), J(marble, 0.04, 0.0, 0.0),
+                 cols={"top": J(marble, 0.06, 0.0, 0.0)}, skip=("bot",))
+    body.box(((x0p + x1p) / 2, PL / 2, z_wall + depth / 2), (x1p - x0p + 0.2, PL, depth + 0.05), J(marble, 0.04, 0.0, 0.0), skip=("bot",))
+    if style == "arcade":
+        # каменная арка на пилонах вместо колонн
+        for xx in (x0p + 0.15, x1p - 0.15):
+            body.box((xx, (PL + top) / 2, zf - 0.12), (0.26, top - PL, 0.26), J(P["stone"], 0.05))
+        cu = (x0p + x1p) / 2
+        rr = (x1p - x0p) / 2 - 0.28
+        for k in range(11):
+            ph = math.pi * (k + 0.5) / 11
+            body.box((cu + math.cos(ph) * (rr + 0.08), top - 0.5 + math.sin(ph) * (rr * 0.6 + 0.08), zf - 0.12), (0.12, 0.16, 0.26), J(P["stone"], 0.06),
+                     Matrix.Rotation(ph - math.pi / 2, 3, "Z"))
+        body.box((cu, top + 0.1, zf - 0.12), (x1p - x0p + 0.1, 0.22, 0.3), J(P["stone"], 0.05))
+    else:
+        n = 4 if style == "temple" else 2
+        for k in range(n):
+            xx = x0p + 0.18 + (x1p - x0p - 0.36) * k / (n - 1)
+            column(body, (xx, PL, zf - 0.15), top - PL, 0.085, J(marble, 0.03, 0.0, 0.0))
+        body.box(((x0p + x1p) / 2, top + 0.08, zf - 0.15), (x1p - x0p + 0.12, 0.16, 0.22), J(marble, 0.03, 0.0, 0.0))
+        for xx in (x0p + 0.18, x1p - 0.18):     # архитрав к стене
+            body.box((xx, top + 0.08, z_wall + depth / 2), (0.16, 0.16, depth), J(marble, 0.03, 0.0, 0.0))
+    if style == "loggia":
+        # плоская кровля-терраса с балюстрадой
+        body.box(((x0p + x1p) / 2, top + 0.22, z_wall + depth / 2), (x1p - x0p + 0.14, 0.12, depth + 0.1), J(marble, 0.03, 0.0, 0.0))
+        for k in range(int((x1p - x0p) / 0.16) + 1):
+            xx = x0p + k * 0.16
+            body.lathe((xx, top + 0.28, zf - 0.04), [(0.035, 0), (0.05, 0.12), (0.03, 0.24)], 6, J(marble, 0.03, 0.0, 0.0))
+        body.box(((x0p + x1p) / 2, top + 0.54, zf - 0.04), (x1p - x0p + 0.1, 0.05, 0.1), J(marble, 0.03, 0.0, 0.0))
+        for k in range(2):
+            pot(body, (x0p + 0.3 + k * (x1p - x0p - 0.6), top + 0.28, z_wall + depth * 0.4), 0.24, J("#b8693f", 0.08))
+    elif style != "arcade":
+        yr, rise = roof(body, False, x0p, x1p, z_wall, zf, top + 0.16, pitch_deg=22.0, oe=0.14, og=0.12)
+        # фронтон — треугольник с медальоном
+        tri = [Vector((x0p, top + 0.16, zf + 0.02)), Vector((x1p, top + 0.16, zf + 0.02)), Vector(((x0p + x1p) / 2, top + 0.16 + rise, zf + 0.02))]
+        body.face([body.v(q) for q in tri], J(marble, 0.02, 0.0, 0.0), ("dir", (0, 0, 1)))
+        for k in range(10):
+            a = 2 * math.pi * k / 10
+            body.box(((x0p + x1p) / 2 + 0.12 * math.cos(a), top + 0.16 + rise * 0.4 + 0.12 * math.sin(a), zf + 0.05), (0.06, 0.06, 0.04),
+                     J("#c9a14a", 0.05), Matrix.Rotation(a, 3, "Z"))
+    # фонари по сторонам двери, горшки с лавром
+    for xx in (x0p + 0.18, x1p - 0.18):
+        pot(body, (xx, PL, zf - 0.55), 0.3, J("#b8693f", 0.08))
+
+
+def cypress(body, at, h):
+    x, y, z = at
+    body.box((x, y + 0.15, z), (0.06, 0.3, 0.06), J("#5a4030", 0.05))
+    for k in range(7):
+        t = k / 6
+        r = 0.22 * (1 - t * 0.85) + 0.03
+        leaf_blob(body, (x + rng.uniform(-0.02, 0.02), y + 0.35 + t * (h - 0.4), z + rng.uniform(-0.02, 0.02)), r, J("#2f5a2a", 0.08))
+
+
+def garden(body, x0, x1, zb, z_wall, kind):
+    """сад за домусом: стенка с черепичным гребнем, дорожка, фонтан или бассейн, кипарисы, клумбы, статуя, скамья"""
+    hw = 0.95
+    for (a, b) in (((x0, zb), (x1, zb)), ((x0, zb), (x0, z_wall)), ((x1, zb), (x1, z_wall))):
+        L = math.hypot(b[0] - a[0], b[1] - a[1])
+        cx, cz = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+        R = Matrix.Rotation(math.atan2(b[1] - a[1], b[0] - a[0]) * -1, 3, "Y")
+        body.box((cx, hw / 2, cz), (L + 0.14, hw, 0.14), J("#efe6d6", 0.04, 0.0, 0.0), R)
+        body.box((cx, hw + 0.03, cz), (L + 0.2, 0.06, 0.22), J(P["tile"], 0.06), R)
+    # дорожка
+    for k in range(int((z_wall - zb) / 0.3)):
+        body.box((0.0, 0.02, z_wall - 0.15 - k * 0.3), (0.5, 0.04, 0.26), J(P["stone"], 0.08, 0.0, 0.1), skip=("bot",))
+    zc = (zb + z_wall) / 2
+    if kind % 2 == 0:
+        # круглый фонтан
+        body.lathe((0.0, 0.0, zc), [(0.5, 0.0), (0.5, 0.22), (0.44, 0.22)], 14, J("#e8e2d6", 0.03, 0.0, 0.0))
+        body.lathe((0.0, 0.16, zc), [(0.44, 0.0), (0.0, 0.0)], 14, col("#5fa6b8"))
+        column(body, (0.0, 0.16, zc), 0.45, 0.05, J("#e8e2d6", 0.03, 0.0, 0.0))
+        body.lathe((0.0, 0.62, zc), [(0.04, 0.0), (0.2, 0.06), (0.18, 0.08)], 10, J("#e8e2d6", 0.03, 0.0, 0.0))
+    else:
+        # прямоугольный бассейн
+        body.box((0.0, 0.1, zc), (1.4, 0.2, 0.8), J("#e8e2d6", 0.03, 0.0, 0.0))
+        body.box((0.0, 0.19, zc), (1.3, 0.02, 0.7), col("#5fa6b8"))
+    for sx in (-1, 1):
+        cypress(body, (sx * (W / 2 - 0.35), 0.0, zb + 0.35), 1.7)
+        for k in range(5):     # клумбы
+            leaf_blob(body, (sx * (W / 2 - 0.4), 0.15, z_wall - 0.4 - k * 0.22), 0.12, J("#4f7d33", 0.1))
+            if rng.random() < 0.7:
+                leaf_blob(body, (sx * (W / 2 - 0.4) + rng.uniform(-0.06, 0.06), 0.27, z_wall - 0.4 - k * 0.22), 0.04, J(rng.choice(["#d9534f", "#f4f1e8", "#e98bb0"]), 0.06))
+    # статуя на постаменте
+    sx = -0.9 if kind % 2 == 0 else 0.9
+    body.box((sx, 0.3, zb + 0.5), (0.3, 0.6, 0.3), J("#e8e2d6", 0.03, 0.0, 0.0))
+    body.lathe((sx, 0.6, zb + 0.5), [(0.1, 0.0), (0.12, 0.3), (0.09, 0.55), (0.05, 0.62), (0.08, 0.7), (0.0, 0.8)], 8, J("#f2eee6", 0.02, 0.0, 0.0))
+    bench(body, (-sx, 0.3, zb + 0.45), 0.8, Matrix.Identity(3))
+
+
+def dado(body, P_, U, N, u0, u1, h, colhex):
+    """расписной цоколь стены (помпейский красный) с тёмной полосой поверху"""
+    R = RW(U, N)
+    body.box(Pw(P_, (u0 + u1) / 2, PL + h / 2, 0.006), (u1 - u0, h, 0.006), J(colhex, 0.04, 0.0, 0.0), R)
+    body.box(Pw(P_, (u0 + u1) / 2, PL + h, 0.008), (u1 - u0, 0.04, 0.008), col("#2a2018"), R)
+
+
 # =====================================================================================
 #   ОБЛИКИ
 # =====================================================================================
@@ -1116,22 +1370,54 @@ PLEB = [
 ]
 
 
+ART = [
+    # 0 ткач — лавка тканей, полосатый навес, балкон
+    {"craft": 0, "roof": "x", "corners": "stone", "shutter": "green", "door": "oak", "two_tone": 0.4, "awning": ("#efe3c8", "#3f6fa8"),
+     "balcony": True, "pal": 0},
+    # 1 зерно — мешки и корзины, черепичный козырёк над лавкой
+    {"craft": 3, "roof": "z", "corners": None, "shutter": "ochre", "door": "dark", "two_tone": 0.6, "canopy": True, "boxes": True, "pal": 1},
+    # 2 медник — котлы на балке, кирпичный низ
+    {"craft": 2, "roof": "x", "corners": "stone", "lower": "brick", "shutter": "brown", "door": "oak", "two_tone": 0.0,
+     "awning": ("#e9d9b8", "#7a5232"), "pal": 2},
+    # 3 гончар — амфоры, печь во дворе (дымок), фронтон к улице
+    {"craft": 1, "roof": "z", "corners": "pilaster", "shutter": "teal", "door": "green", "two_tone": 0.5, "awning": ("#f4efe2", "#c94f3d"),
+     "decal": "frieze", "pal": 1},
+    # 4 медник — котлы, пергола с виноградом у двери
+    {"craft": 2, "roof": "x", "corners": None, "shutter": "red", "door": "dark", "two_tone": 0.5, "canopy": True, "ivy": True, "pal": 0},
+]
+PAT = [
+    # 0 «Перистиль»: портик с фронтоном на двух колоннах, красный расписной цоколь, фонтан в саду
+    {"portico": "pediment", "roof": "x", "corners": "pilaster", "shutter": "green", "door": "oak", "dado": "#8e2f24", "pal": 0},
+    # 1 «Лоджия»: портик-терраса с балюстрадой, бассейн в саду
+    {"portico": "loggia", "roof": "x", "corners": "stone", "shutter": "blue", "door": "dark", "dado": "#7a3a2a", "pal": 1},
+    # 2 «Храм»: четыре колонны и фронтон, мраморные пилястры
+    {"portico": "temple", "roof": "z", "corners": "pilaster", "shutter": "teal", "door": "green", "pal": 1},
+    # 3 «Аркада»: каменная арка у входа, кирпичный низ
+    {"portico": "arcade", "roof": "x", "corners": "stone", "shutter": "brown", "door": "oak", "lower": "brick", "pal": 2},
+    # 4–5 городской домус (после перестройки): три этажа, портик с фронтоном / терраса
+    {"portico": "pediment", "roof": "z", "corners": "pilaster", "shutter": "red", "door": "dark", "dado": "#8e2f24", "decal": "frieze", "pal": 0},
+    {"portico": "loggia", "roof": "x", "corners": "stone", "shutter": "green", "door": "oak", "dado": "#6a3a2a", "pal": 2},
+]
+SMOKE = []
+
+
 def configure(kind, v, floors):
-    global KIND, V, FLOORS, W, D, HT, PH, P, DS, MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, DOOR_PT, FP
+    global KIND, V, FLOORS, W, D, HT, PH, P, DS, MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, DOOR_PT, FP, SMOKE
     KIND, V, FLOORS = kind, v, floors
     W = 3.6
-    D = 4.2
+    D = 4.6 if kind == "patrician" else 4.2
     HT = PL + FLOORS * FLH
     use("ph")
     PH = [rng.uniform(0, 6.28) for _ in range(5)]
-    DS = dict(PLEB[v % len(PLEB)]) if kind == "pleb" else {}
+    DS = dict({"pleb": PLEB, "artisan": ART, "patrician": PAT}[kind][v])
     P = dict(PALS[DS.get("pal", 0)])
-    MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, FP = [], {}, {}, [], [], []
+    MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, FP, SMOKE = [], {}, {}, [], [], [], []
     DOOR_PT = [0, 0, D / 2 + 0.3]
 
 
-def build_pleb():
-    """дом плебеев: коробка W×D, этажи 1–3; облик — PLEB[V]"""
+def build_house():
+    """дом: коробка W×D, этажи 1–3; облик — PLEB / ART / PAT [V]. Ремесленник — лавка внизу и двор с навесом позади,
+    патриций — портик перед входом и сад позади"""
     coll = bpy.context.scene.collection
     x0, x1 = -W / 2, W / 2
     z0, z1 = -D / 2, D / 2
@@ -1143,14 +1429,37 @@ def build_pleb():
     left = (V + (1 if FLOORS else 0)) % 2 == 0          # дверь слева (u 0.55…1.37) или справа
     door_u = (0.55, 1.37) if left else (W - 1.37, W - 0.55)
     win_u = (W - 1.25, W - 0.6) if left else (0.6, 1.25)
-    front_open = [(door_u[0], door_u[1], PL, PL + 1.52)]
-    wins = []           # (сторона, u0, u1, v0, v1, ставни, ящик, наличник, решётка)
-    wins.append(("front", win_u[0], win_u[1], PL + 0.78, PL + 1.5, True, DS.get("boxes", False), True, False))
+    door_h = 1.52
+    shop_u = None
+    wins = []           # (сторона, u0, u1, v0, v1, ставни, ящик, наличник, решётка[, фронтончик])
+    if KIND == "artisan":
+        # лавка — широкий проём, дверь — в другом пролёте
+        shop_u = (0.28, 2.1) if left else (W - 2.1, W - 0.28)
+        door_u = (W - 1.12, W - 0.36) if left else (0.36, 1.12)
+        win_u = shop_u
+        front_open = [(door_u[0], door_u[1], PL, PL + door_h), (shop_u[0], shop_u[1], PL, PL + 1.62)]
+    elif KIND == "patrician":
+        # парадная двустворчатая дверь посередине, по сторонам — высокие узкие окна с решёткой (домус глух к улице)
+        door_u = (W / 2 - 0.55, W / 2 + 0.55)
+        door_h = 1.72
+        win_u = (0.35, 0.8)
+        front_open = [(door_u[0], door_u[1], PL, PL + door_h)]
+        wins.append(("front", 0.32, 0.72, PL + 1.15, PL + 1.62, False, False, True, True))
+        wins.append(("front", W - 0.72, W - 0.32, PL + 1.15, PL + 1.62, False, False, True, True))
+    else:
+        front_open = [(door_u[0], door_u[1], PL, PL + door_h)]
+        wins.append(("front", win_u[0], win_u[1], PL + 0.78, PL + 1.5, True, DS.get("boxes", False), True, False))
     balcony = None
     for f in range(1, FLOORS):
         use("f%d" % f)
         y = PL + f * FLH
-        if f == 1 and DS.get("balcony"):
+        if KIND == "patrician":
+            hood = True
+            wins.append(("front", 0.42, 1.06, y + 0.72, y + 1.5, True, f == FLOORS - 1, True, False, True))
+            wins.append(("front", W - 1.06, W - 0.42, y + 0.72, y + 1.5, True, f == FLOORS - 1, True, False, True))
+            if FLOORS == 3 and f == 1:
+                wins.append(("front", W / 2 - 0.25, W / 2 + 0.25, y + 0.8, y + 1.4, False, False, True, True))
+        elif f == 1 and DS.get("balcony"):
             bu = (door_u[0] + 0.05, door_u[1] - 0.05)
             front_open.append((bu[0], bu[1], y + 0.02, y + 1.55))
             balcony = (bu, y)
@@ -1223,18 +1532,37 @@ def build_pleb():
         brick_facing(body, Pr, Ur, Nr, 0.0, D - 2 * T, PL, PL + 0.95, opens["right"])
     # окна и ставни
     for wv in wins:
-        s, a, b, c, d, sh, bx, sur, gr = wv
+        s, a, b, c, d, sh, bx, sur, gr = wv[:9]
         use("w%s%d%d" % (s, int(a * 10), int(c * 10)))
         Pf_, U_, N_ = Ps[s]
-        window(body, Pf_, U_, N_, s, a, b, c, d, shutters=sh, box=bx, grille=gr, surround=sur)
+        window(body, Pf_, U_, N_, s, a, b, c, d, shutters=sh, box=bx, grille=gr, surround=sur, hood=len(wv) > 9 and wv[9])
     # дверь
     use("g")
-    door(body, Pf, U, N, "front", door_u[0], door_u[1], PL, PL + 1.52, DS["door"], stone=not DS.get("arch"), arch=DS.get("arch", False))
+    if KIND == "patrician":
+        # парадная дверь: две створки, каменный наличник с карнизом
+        a, b = door_u
+        R = RW(U, N)
+        for cu in (a + 0.05, b - 0.05):
+            body.box(Pw(Pf, cu, PL + door_h / 2, -0.04), (0.12, door_h, 0.12), J("#ece6da", 0.03, 0.0, 0.0), R)
+        body.box(Pw(Pf, (a + b) / 2, PL + door_h + 0.09, 0.03), (b - a + 0.34, 0.18, 0.16), J("#ece6da", 0.03, 0.0, 0.0), R)
+        lw = (b - a - 0.2) / 2
+        mov("door", door_key(DS["door"], lw, door_h - 0.03, 1), Pf(a + 0.1, PL, -0.1), U, N, math.radians(55), 1)
+        mov("door", door_key(DS["door"], lw, door_h - 0.03, -1), Pf(b - 0.1, PL, -0.1), U, N, math.radians(55), -1)
+        block("front", Pf, U, a - 0.2, b + 0.2, PL, PL + door_h + 0.3)
+    else:
+        door(body, Pf, U, N, "front", door_u[0], door_u[1], PL, PL + door_h, DS["door"], stone=not DS.get("arch"), arch=DS.get("arch", False))
+    if shop_u:
+        use("shop")
+        shopfront(body, emb, Pf, U, N, "front", shop_u[0], shop_u[1], DS["craft"], PL + 1.62)
     door_mid = (door_u[0] + door_u[1]) / 2
     DOOR_PT[0] = x0 + door_mid
     DOOR_PT[2] = z1 + 0.35
     # фонарик у двери (в игре — «#wall_lamp_dim», ночью еле теплится)
     lu = door_u[1] + 0.22 if left else door_u[0] - 0.22
+    if KIND == "artisan":
+        lu = door_u[0] - 0.2 if left else door_u[1] + 0.2
+    elif KIND == "patrician":
+        lu = door_u[1] + 0.28
     LIGHTS.append({"lamp": [x0 + lu, PL + 1.62, z1 + 0.02], "yaw": 0.0})
     block("front", Pf, U, lu - 0.15, lu + 0.15, PL + 1.3, PL + 1.9)
     # балкон
@@ -1271,6 +1599,25 @@ def build_pleb():
     use("g")
     fr = DS.get("front")
     R = RW(U, N)
+    if KIND == "artisan":
+        fr = None
+        su = shop_u
+        if DS.get("awning"):
+            awning(body, Pf, U, N, (su[0] + su[1]) / 2, PL + 1.98, su[1] - su[0] + 0.25, 0.75, DS["awning"], poles=False)
+        elif DS.get("canopy"):
+            canopy(body, Pf, U, N, (su[0] + su[1]) / 2, PL + (2.0 if FLOORS > 1 else 1.86), su[1] - su[0] + 0.2, 0.6)
+        block("front", Pf, U, su[0] - 0.15, su[1] + 0.15, PL + 1.55, PL + 2.1)
+    if KIND == "patrician" and DS.get("dado"):
+        for name in ("front", "left", "right"):
+            Pd, Ud, Nd = Ps[name]
+            Ln = W if name == "front" else D - 2 * T
+            ops = opens[name]
+            cuts = sorted([(o[0], o[1]) for o in ops if o[2] < PL + 0.8])
+            u = 0.0
+            for (ca, cb) in cuts + [(Ln, Ln)]:
+                if ca - u > 0.05:
+                    dado(body, Pd, Ud, Nd, u, ca, 0.78, DS["dado"])
+                u = cb
     if fr == "awning":
         awning(body, Pf, U, N, door_mid, PL + 1.82, 1.3, 0.7, ("#efe3c8", "#b5452f"))
         block("front", Pf, U, door_mid - 0.7, door_mid + 0.7, PL + 1.4, PL + 1.9)
@@ -1281,7 +1628,7 @@ def build_pleb():
         pu0, pu1 = (door_u[0] - 0.35, min(W - 0.15, door_u[1] + 0.9)) if left else (max(0.15, door_u[0] - 0.9), door_u[1] + 0.35)
         pergola(body, Pf, U, N, pu0, pu1, PL + 1.75, 0.95)
         block("front", Pf, U, pu0, pu1, 0.0, PL + 2.0)
-    props = DS.get("props", [])
+    props = DS.get("props", []) if KIND == "pleb" else []
     free_u = (win_u[0] + win_u[1]) / 2
     if "bench" in props:
         bench(body, Pw(Pf, free_u, 0.32, 0.32), 0.9, R)
@@ -1348,11 +1695,31 @@ def build_pleb():
         q = [Pf(uc - w / 2, vc - h / 2, 0.008), Pf(uc + w / 2, vc - h / 2, 0.008), Pf(uc + w / 2, vc + h / 2, 0.008), Pf(uc - w / 2, vc + h / 2, 0.008)]
         mb.face([mb.v(x) for x in q], (1, 1, 1, 1), ("dir", tuple(N)), uv=[(0, 0), (urep, 0), (urep, 1), (0, 1)])
         mb.obj(coll)
+    fz0, fz1 = z0, z1
+    if KIND == "artisan":
+        use("yard")
+        yd = 1.35
+        lean_to(body, x0 + 0.05, x1 - 0.05, z0, yd, PL + 1.75, PL + 1.35)
+        yard_props(body, emb, x0, x1, z0 - yd, z0, DS["craft"])
+        fz0 = z0 - yd - 0.1
+    if KIND == "patrician":
+        use("portico")
+        pw = 2.1 if DS["portico"] != "temple" else 2.8
+        pd = 1.0
+        portico(body, walls, inner, -pw / 2, pw / 2, z1, pd, DS["portico"], PL + 1.95)
+        fz1 = z1 + pd + 0.15
+        DOOR_PT[2] = z1 + pd + 0.45
+        use("garden")
+        gd = 2.4
+        garden(body, x0 + 0.02, x1 - 0.02, z0 - gd, z0, V)
+        fz0 = z0 - gd - 0.1
+        # дверь в сад
+        Pb, Ub, Nb = Ps["back"]
     objs = []
     for mb in (body, walls, inner, emb):
         if not mb.empty():
             objs.append(mb.obj(coll))
-    FP.append([x0 - 0.05, z0 - 0.05, W + 0.1, D + 0.1])
+    FP.append([x0 - 0.05, fz0, W + 0.1, fz1 - fz0 + 0.05])
     return y_ridge
 
 
@@ -1412,7 +1779,7 @@ def preview(path, y_ridge):
     for e in MOV:
         mb = MB("prev_" + e["mesh"])
         kind, ck, w, h, side, brace = CANON[e["mesh"]]
-        (build_shutter(mb, ck, w, h, side, brace) if kind == "shutter" else build_door(mb, ck, w, h))
+        (build_shutter(mb, ck, w, h, side, brace) if kind == "shutter" else build_door(mb, ck, w, h, side))
         ob = mb.obj(scn.collection)
         M3 = Matrix((e["x"], e["y"], e["z"])).transposed()
         G = Matrix(((1, 0, 0), (0, 0, -1), (0, 1, 0)))
@@ -1485,6 +1852,14 @@ def main():
         for v in range(5):
             for fl in (1, 2, 3):
                 jobs.append(("pleb", v, fl))
+    if "artisan" in KINDS:
+        for v in range(5):
+            for fl in (1, 2, 3):
+                jobs.append(("artisan", v, fl))
+    if "patrician" in KINDS:
+        for v in range(6):
+            for fl in ((1, 2) if v < 4 else (1, 2, 3)):
+                jobs.append(("patrician", v, fl))
     all_canon = {}
     for (kind, v, fl) in jobs:
         hid = "%s_%d_%d" % (kind, v, fl)
@@ -1492,7 +1867,7 @@ def main():
             continue
         clear_scene()
         configure(kind, v, fl)
-        y_ridge = build_pleb()
+        y_ridge = build_house()
         plaster_for_export(True)
         kit_for_export(True)
         tris = export_glb(os.path.join(OUT_DIR, hid + ".glb"))
@@ -1506,7 +1881,8 @@ def main():
         meta["houses"][hid] = {"w": W, "d": D, "ht": HT, "ridge": round(y_ridge, 3), "floors": FLOORS, "tris": tris,
                                "parts": [o.name for o in bpy.context.scene.objects if o.type == "MESH"],
                                "mov": MOV, "door": [round(x, 3) for x in DOOR_PT], "fp": FP, "faces": faces,
-                               "lights": LIGHTS, "perch": [[round(c, 3) for c in p] for p in PERCH]}
+                               "lights": LIGHTS, "perch": [[round(c, 3) for c in p] for p in PERCH],
+                               "smoke": SMOKE}
         all_canon.update(CANON)
         print("KIT", hid, "tris", tris, "mov", len(MOV))
         if PNG:
@@ -1526,13 +1902,13 @@ def main():
             if parts[0] == "sh":
                 canon_all[k] = ("shutter", parts[1], int(parts[2]) / 100, int(parts[3]) / 100, -1 if parts[4] == "L" else 1, True)
             else:
-                canon_all[k] = ("door", parts[1], int(parts[2]) / 100, int(parts[3]) / 100, 1, False)
+                canon_all[k] = ("door", parts[1], int(parts[2]) / 100, int(parts[3]) / 100, -1 if k.endswith("_M") else 1, False)
         kind, ck, w, h, side, brace = canon_all[k]
         mb = MB(k)
         if kind == "shutter":
             build_shutter(mb, ck, w, h, side, brace)
         else:
-            build_door(mb, ck, w, h)
+            build_door(mb, ck, w, h, side)
         objs.append(mb.obj(bpy.context.scene.collection))
     kit_for_export(True)
     tris = export_glb(os.path.join(OUT_DIR, "common.glb"), objs)

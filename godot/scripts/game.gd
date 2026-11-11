@@ -1596,11 +1596,31 @@ func _grow_plan(g: Node3D, bp: Bp = null) -> Array:
 	var late := []
 	var kids := g.get_children()
 	var top := 0.0
+	var kit := bp != null and bp.kit_id != ""
+	var kit_pre := "K:%s/" % bp.kit_id if kit else ""
+	var reveal := []                       # дом из своего набора: материалы «по высоте» (кладка, потом крыша)
+	var roof_top := 0.0
+	var kit_wall := []
 	for i in kids.size():
 		var n: Node3D = kids[i]
 		var box: AABB = n.transform * (n as MeshInstance3D).mesh.get_aabb() if n is MeshInstance3D else Artisau.aabb(n)
 		var e := [n, 0.0, n.transform, box.get_center(), 0, box.position.y, box.position.x + box.position.z * 0.05, false]
 		var nm: String = bp.parts[i][0] if bp != null and i < bp.parts.size() else ""
+		if kit and nm.begins_with(kit_pre):
+			var part := nm.substr(kit_pre.length())
+			if part == "House" or part == "Rooms":
+				reveal.append_array(_reveal_mats(n))
+				roof_top = maxf(roof_top, box.end.y)
+				continue
+			elif part == "Walls":
+				kit_wall = e                       # штукатурка — после кладки и крыши, без отскока
+				e[1] = 0.8
+				e[7] = true
+				late.append(e)
+				continue
+			elif part == "Embers":
+				late.append(e)
+				continue
 		if _brick_wall(nm, box):
 			e.append(box)
 			e.append(nm)
@@ -1619,7 +1639,21 @@ func _grow_plan(g: Node3D, bp: Bp = null) -> Array:
 	big.sort_custom(by)
 	small.shuffle()
 	var out := []
-	if walls.is_empty():
+	if kit and not kit_wall.is_empty():
+		# своя модель — стены из Blender (bp.kit_faces): кладка по каждой стене, проёмы окон и дверей — пустые
+		var wtop := 0.0
+		for f: Dictionary in bp.kit_faces:
+			var bd: Rect2 = f["bound"]
+			wtop = maxf(wtop, bd.end.y)
+		for f: Dictionary in bp.kit_faces:
+			var mmi := _bricks_face(f)
+			g.add_child(mmi)
+			var bd: Rect2 = f["bound"]
+			out.append(["bricks", mmi, 0.06 + 0.56 * bd.position.y / wtop, 0.06 + 0.56 * bd.end.y / wtop, mmi.multimesh.instance_count, kit_wall])
+		out.append(["reveal", reveal, wtop, maxf(roof_top, wtop + 0.5)])
+		for i in big.size():                   # створки дверей, роспись — по высоте, вслед за кладкой
+			big[i][1] = minf(0.84, 0.08 + 0.56 * float(big[i][5]) / wtop)
+	elif walls.is_empty():
 		for i in big.size():
 			big[i][1] = 0.05 + 0.74 * i / maxf(1.0, big.size() - 1.0)
 	else:
@@ -1647,9 +1681,91 @@ func _grow_plan(g: Node3D, bp: Bp = null) -> Array:
 	for i in small.size():
 		small[i][1] = 0.86 + 0.08 * i / maxf(1.0, small.size() - 1.0)
 	for e: Array in late:
-		e[1] = 0.8 if not walls.is_empty() else 0.05
+		e[1] = 0.8 if (not walls.is_empty() or kit) else 0.05
 		e[7] = true
 	return out + walls + big + small + late
+
+
+## Дом из своего набора: материалы его деталей — на «показ по высоте» (kit_reveal.gdshader); общий налёт стройки
+## (overlay) с них снят — шейдер сам светлит свежую кладку
+func _reveal_mats(n: Node3D) -> Array:
+	var out := []
+	for mi: MeshInstance3D in n.find_children("*", "MeshInstance3D", true, false):
+		mi.material_overlay = null
+		for s in mi.mesh.get_surface_count():
+			var src := mi.get_surface_override_material(s)
+			if src == null:
+				src = mi.mesh.surface_get_material(s)
+			var sm := ShaderMaterial.new()
+			sm.shader = _reveal_shader()
+			if src is BaseMaterial3D:
+				var bm := src as BaseMaterial3D
+				sm.set_shader_parameter("tint", bm.albedo_color)
+				sm.set_shader_parameter("rough", bm.roughness)
+				if bm.albedo_texture:
+					sm.set_shader_parameter("tex", bm.albedo_texture)
+					sm.set_shader_parameter("use_tex", true)
+			sm.set_shader_parameter("reveal", -1.0)
+			mi.set_surface_override_material(s, sm)
+			out.append(sm)
+	return out
+
+
+static var _rv_shader: Shader
+static func _reveal_shader() -> Shader:
+	if _rv_shader == null:
+		_rv_shader = load("res://shaders/kit_reveal.gdshader")
+	return _rv_shader
+
+
+## Кирпичи по стене дома из своего набора (f — как WallDecor: n, a, d, bound, open)
+func _bricks_face(f: Dictionary) -> MultiMeshInstance3D:
+	if _brick_mesh == null:
+		_bricks(AABB(Vector3.ZERO, Vector3(1, 1, 0.2)), "")       # общая сетка кирпича и материал
+	var n: Vector3 = f["n"]
+	var a: Vector3 = f["a"]
+	var d: float = f["d"]
+	var bd: Rect2 = f["bound"]
+	var opens: Array = f.get("open", [])
+	var th := 0.2
+	var courses := maxi(1, int(round(bd.size.y / BRICK_H)))
+	var per := maxi(1, int(round(bd.size.x / BRICK_L)))
+	var bh := bd.size.y / courses
+	var bl := bd.size.x / per
+	var xfs: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	for k in courses:
+		var off := 0.5 if k % 2 == 1 else 0.0
+		var cnt := per + (1 if k % 2 == 1 else 0)
+		var y := bd.position.y + (k + 0.5) * bh
+		for i in cnt:
+			var u0 := maxf(0.0, (i - off) * bl)
+			var u1 := minf(bd.size.x, (i + 1 - off) * bl)
+			if u1 - u0 < bl * 0.3:
+				continue
+			var u := bd.position.x + (u0 + u1) * 0.5
+			var hole := false
+			for r: Rect2 in opens:
+				if r.has_point(Vector2(u, y)):
+					hole = true
+					break
+			if hole:
+				continue
+			var pos := a * u + n * (d - th * 0.5) + Vector3(0, y, 0)
+			xfs.append(Transform3D(Basis(a * (u1 - u0) * 0.95, Vector3.UP * bh * 0.9, n * th), pos))
+			cols.append(Color.from_hsv(randf_range(0.02, 0.055), randf_range(0.6, 0.76), randf_range(0.4, 0.56)))
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = _brick_mesh
+	mm.instance_count = xfs.size()
+	for i in xfs.size():
+		mm.set_instance_transform(i, xfs[i])
+		mm.set_instance_color(i, cols[i])
+	mm.visible_instance_count = 0
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	return mmi
 
 
 ## Стена, которую кладём из кирпича: стеновая деталь, высокая и тонкая (не перила, не карниз)
@@ -1723,6 +1839,22 @@ func _bricks(box: AABB, nm: String) -> MultiMeshInstance3D:
 
 func _grow_step(g: Node3D, plan: Array, t: float) -> void:
 	for e: Array in plan:
+		if e[0] is String and e[0] == "reveal":
+			# своя модель: видно всё ниже уровня — кладка (6–62 %), потом крыша от карниза к коньку (62–80 %)
+			var wtop: float = e[2]
+			var rtop: float = e[3]
+			var ry := -1.0
+			if t >= 0.8:
+				ry = 1000.0
+			elif t >= 0.62:
+				ry = wtop + (rtop - wtop + 0.1) * (t - 0.62) / 0.18
+			elif t >= 0.06:
+				ry = wtop * (t - 0.06) / 0.56
+			var fr := 1.0 if t < 0.88 else clampf((1.0 - t) / 0.12, 0.0, 1.0)
+			for sm: ShaderMaterial in e[1]:
+				sm.set_shader_parameter("reveal", ry)
+				sm.set_shader_parameter("fresh", fr)
+			continue
 		if e[0] is String:                    # кладка: кирпичей — по доле времени; стена оштукатурена — кирпичи прячем
 			var mmi: MultiMeshInstance3D = e[1]
 			var wall: Array = e[5]

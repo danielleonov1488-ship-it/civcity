@@ -6,7 +6,7 @@ extends RefCounted
 ## Старые дома в сохранениях (legacy: стоят на старом, более узком следе) — та же модель, ужатая по своему следу,
 ## чтобы не налезала на соседей.
 
-const IDS := {"house_pleb": ["pleb", 5, 3]}        # тип → [класс в наборе, обликов, этажей максимум]
+const IDS := {"house_pleb": ["pleb", 5, 3], "house_artisan": ["artisan", 5, 3], "house_patrician": ["patrician", 6, 2]}   # тип → [класс, обликов, этажей]
 const ON := true                                   # выключатель (false — прежние дома из Synty)
 
 static var _old := {}
@@ -18,7 +18,11 @@ static func covers(type: String) -> bool:
 
 static func id_for(type: String, tier: int, variant: int) -> String:
 	var e: Array = IDS[type]
-	return "%s_%d_%d" % [e[0], posmod(variant, int(e[1])), clampi(tier, 1, int(e[2]))]
+	var v := posmod(variant, int(e[1]))
+	var top := int(e[2])
+	if type == "house_patrician" and v >= Defs.PAT_TOWN:
+		top = 3                                  # городской домус (после перестройки) — до трёх этажей
+	return "%s_%d_%d" % [e[0], v, clampi(tier, 1, top)]
 
 
 ## Построить дом в чертёж b. false — такого облика в наборе нет (тогда строится прежний)
@@ -53,6 +57,8 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 		b.parts.append(["#wall_lamp", Transform3D(Basis.IDENTITY, lp * S), {}])
 		b.light((lp + Vector3(0, -0.14, 0.3)) * S)
 	b.door = (sq * _v(h["door"])) * S
+	for sp: Array in h.get("smoke", []):
+		b.smoke.append((sq * _v(sp)) * S)     # печь гончара во дворе
 	b.kit_id = id
 	var fr := Rect2(fp.position.x * sx + off.x, fp.position.y * sz + off.z, fp.size.x * sx, fp.size.y * sz)
 	b.fp_override = [fr]
@@ -99,7 +105,11 @@ static func old_fp(type: String, variant: int) -> Rect2:
 	match type:
 		"house_pleb": CatHouses._house_pleb(ob, 1, variant)
 		"house_artisan": CatHouses._house_artisan(ob, 1, variant)
-		"house_patrician": CatHouses._house_patrician(ob, 1, variant)
+		"house_patrician":
+			if variant >= Defs.PAT_TOWN:
+				CatHouses._house_patrician_town(ob, 1, variant)
+			else:
+				CatHouses._house_patrician(ob, 1, variant)
 	ob.base = Transform3D.IDENTITY
 	Catalog._scale(ob, Catalog.ARCH)
 	var r := Rect2()

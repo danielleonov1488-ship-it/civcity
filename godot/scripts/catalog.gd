@@ -37,9 +37,13 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		"house_pleb":
 			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy)):
 				CatHouses._house_pleb(b, tier, variant)
-		"house_artisan": CatHouses._house_artisan(b, tier, variant)
+		"house_artisan":
+			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy)):
+				CatHouses._house_artisan(b, tier, variant)
 		"house_patrician":
-			if variant >= Defs.PAT_TOWN:
+			if KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy):
+				pass
+			elif variant >= Defs.PAT_TOWN:
 				CatHouses._house_patrician_town(b, tier, variant)     # городской домус — после перестройки (Д12)
 			else:
 				CatHouses._house_patrician(b, tier, variant)
