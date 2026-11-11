@@ -6104,6 +6104,7 @@ const CREDITS := [
 		["Людвиг ван Бетховен — «Патетическая» соната, Адажио", "Musopen · CC0"]]],
 	["Звуки", "sound", [
 		["Kenney — Interface Sounds, RPG Audio, UI Audio", "щелчки, стройка, монеты, звуки боя · CC0 · kenney.nl"],
+		["Higgsfield — нейросеть Mirelo", "звон мечей, залп стрел, удар камня, клич · созданы для CivCity"],
 		["Kerzoven — «Cat Purr & Meow», IgnasD — «Meow»", "кошки · OpenGameArt, CC0"],
 		["Gregor Quendel — «Free Crowd Cheering Sounds»", "шум и ликование трибун · OpenGameArt, CC BY 4.0"],
 		["D4XX — «Single Horse Galopp» (набор congusbongus)", "топот коней в цирке · OpenGameArt, CC0"],

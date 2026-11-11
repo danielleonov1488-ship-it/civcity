@@ -294,6 +294,12 @@ func _quit() -> void:
 	if not fps_log.is_empty():
 		avg /= fps_log.size()
 	print("FPS avg=", snappedf(avg, 0.1), " min=", snappedf(mn, 0.1), " samples=", fps_log.size())
+	# какие звуки боя загрузились (пустое значение — файла нет)
+	var snd := []
+	for k in LegionBattle._streams:
+		snd.append("%s%s" % [k, "" if LegionBattle._streams[k] != null else "=НЕТ"])
+	snd.sort()
+	print("SFX ", ", ".join(snd))
 	if battle != null and is_instance_valid(battle):
 		battle.abort()
 	get_tree().quit()

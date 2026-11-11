@@ -707,6 +707,7 @@ func _start(s: Dictionary) -> void:
 	if bool(stage.get("boss", false)):
 		say("Босс: " + String(stage.get("name", "")), 2.6)
 	_play("horn", -6.0)
+	_play("cry", -15.0)
 	var tw := create_tween()
 	fade.modulate.a = 1.0
 	tw.tween_interval(0.25)
@@ -1155,13 +1156,13 @@ func _perk_fx(e: Dictionary) -> void:
 			at.y = _h(at.x, at.z)
 			fx.cauldron(at - Vector3(0.6 if ours else -0.6, 0, 0))
 			_play("pot", -8.0, 0.8)
+			_play("oil", -10.0)
 		"volley":
 			var pts := []
 			for u in foes:
 				pts.append(Vector3(u.x, _h(u.x, u.z), u.z))
 			fx.volley(pts)
-			for i in 3:
-				_play("whoosh", -12.0, randf_range(0.8, 1.0))
+			_play("volley", -9.0, randf_range(0.95, 1.05))
 		"testudo":
 			for u in allies:
 				fx.burst(Vector3(u.x, 1.0, u.z), Color(1.0, 0.84, 0.4, 0.9), 8, 0.8, 1.2, 0.1, 0.7, true, 0.5)
@@ -1192,8 +1193,8 @@ func _perk_fx(e: Dictionary) -> void:
 			fx.volley(pts)
 			for p: Vector3 in pts:
 				fx.burst(p + Vector3(0, 0.6, 0), Color(1.0, 0.45, 0.1, 0.95), 10, 1.2, 0.9, 0.12, 0.6, true, 0.4)
-			for i in 3:
-				_play("whoosh", -12.0, randf_range(0.7, 0.85))
+			_play("volley", -10.0, randf_range(0.8, 0.9))
+			_play("oil", -16.0, 1.2)
 
 
 func _begin_end() -> void:
@@ -1952,11 +1953,12 @@ func abort() -> void:
 
 # =====================================================================
 #   звук: удары, щиты, падения, скрип машин, рог (рог — синтез)
+#   hf_* — звуки из Higgsfield (Mirelo): звон мечей, залп, удар камня, шипение масла, клич
 # =====================================================================
 
-const SOUNDS := {"clash": ["knifeSlice", "knifeSlice2", "chop"], "thud": ["dropLeather", "chop"], "fall": ["dropLeather"],
+const SOUNDS := {"clash": ["hf_clash1", "hf_clash2", "hf_clash3", "knifeSlice"], "thud": ["dropLeather", "chop"], "fall": ["dropLeather"],
 	"pot": ["metalPot1", "metalPot2", "metalPot3"], "creak": ["creak1", "creak3"], "whoosh": ["cloth1", "drawKnife1", "drawKnife2"],
-	"boom": ["dropLeather"], "win": ["handleCoins"]}
+	"boom": ["hf_boom"], "win": ["handleCoins"], "volley": ["hf_volley"], "oil": ["hf_oil"], "cry": ["hf_cry"]}
 static var _streams := {}
 static var _horn: AudioStreamWAV
 
