@@ -19,7 +19,9 @@ const STALLS := ["stall_fruit", "stall_veg", "stall_fish"]
 ## Общественные здания (свой облик у каждого: "civ_<тип>"); у школы скамьи и кресло учителя — детали Synty (Spectacle)
 const CIVIC := ["school", "library", "academy", "warehouse", "vigiles", "prefect", "balnea", "baths", "sculptor", "shelter", "thermae", "ludus"]
 ## Памятники — свои, меньше прежних (владелец 12.11: «отказаться от супер огромных зданий»): "mon_<тип>"
-const MONO := ["temple", "forum", "pantheon", "venus", "pharos"]
+const MONO := ["temple", "forum", "pantheon", "venus", "pharos",
+	# прогон 4: фонтан, нимфей, арка, огород, уличные артисты (у музыкантов лира и скамья, у игроков стулья — Synty)
+	"fountain", "nymphaeum", "arch", "ogorod", "musicians", "dice", "puppets", "mimes"]
 
 
 static func covers(type: String) -> bool:
@@ -74,7 +76,12 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 		# детали Synty (столы и стулья таверны — по ним Spectacle сажает гостей); масштаб — как у Synty в чертеже
 		var pp := sq * Vector3(float(pr[1]), float(pr[2]), float(pr[3]))
 		var ps: Vector3 = Vector3(float(pr[5][0]), float(pr[5][1]), float(pr[5][2])) if pr[5] is Array else Vector3.ONE * float(pr[5])
-		b.parts.append([String(pr[0]), Transform3D(Basis(Vector3.UP, float(pr[4])) * Basis.from_scale(ps), pp * S), {}])
+		var rb := Basis(Vector3.UP, float(pr[4]))
+		if pr.size() > 6:
+			rb = rb * Basis(Vector3.RIGHT, float(pr[6]))       # наклон (лира, прислонённая к скамье)
+		b.parts.append([String(pr[0]), Transform3D(rb * Basis.from_scale(ps), pp * S), {}])
+	for j: Array in h.get("jets", []):
+		b.jets.append([sq * Vector3(float(j[0]), float(j[1]), float(j[2])) * S, float(j[3]) * S, float(j[4])])
 	for a: Array in h.get("actors", []):
 		b.actor(Vector3(float(a[0]), float(a[1]), float(a[2])) * S, float(a[3]), String(a[4]), String(a[5]))
 	b.kit_mov = []

@@ -92,6 +92,20 @@ func _make(b: Dictionary, key: String) -> Dictionary:
 			var dir := (xf.basis * t.basis * Vector3(0, 0, 1)).normalized()
 			var mouth := xf * (t * Vector3(0, 0.12, 0.12))
 			ems.append(_jet(mouth, dir, 0.9 * (1.2 if _aqua else 1.0), 4.0, 0.4, 24))
+	# свой фонтан (KitHouses): струя вверх из шишки и завеса капель с края каждой чаши
+	for j: Array in bp.jets:
+		var pos: Vector3 = xf * (j[0] as Vector3)
+		if float(j[2]) > 0.0:
+			ems.append(_jet(pos, Vector3.UP, 2.0 * float(j[2]) * (1.25 if _aqua else 1.0), 12.0, 0.6, 30))
+		if float(j[1]) > 0.0:
+			var ring := _jet(pos, Vector3.UP, 0.3, 70.0, 0.5, 40 + int(float(j[1]) * 30.0))
+			var rpm := ring.process_material as ParticleProcessMaterial
+			rpm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_RING
+			rpm.emission_ring_axis = Vector3.UP
+			rpm.emission_ring_radius = float(j[1])
+			rpm.emission_ring_inner_radius = float(j[1]) * 0.94
+			rpm.emission_ring_height = 0.02
+			ems.append(ring)
 	return {"em": ems, "key": key, "aqua": _aqua, "at": xf.origin}
 
 

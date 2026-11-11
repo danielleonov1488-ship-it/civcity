@@ -116,6 +116,9 @@ static func _scale(b: Bp, s: float) -> void:
 		b.smoke[i] = b.smoke[i] * s
 	for a in b.actors:
 		a[0] = (a[0] as Vector3) * s
+	for j in b.jets:
+		j[0] = (j[0] as Vector3) * s
+		j[1] = float(j[1]) * s
 	b.door = b.door * s
 
 

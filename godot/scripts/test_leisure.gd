@@ -88,8 +88,8 @@ func _run() -> void:
 	var X0 := 140.0
 	var Z0 := 120.0
 	game.clear_nature(Vector2(X0 + 30.0, Z0 + 6.0), 40.0)
-	game.clear_nature(Vector2(X0 + 85.0, Z0 + 6.0), 20.0)
-	game.land.paint_line(Vector2(X0 - 6.0, Z0), Vector2(X0 + 100.0, Z0), 1.6, Land.Kind.ROAD, true)
+	game.clear_nature(Vector2(X0 + 92.0, Z0 + 6.0), 26.0)
+	game.land.paint_line(Vector2(X0 - 6.0, Z0), Vector2(X0 + 115.0, Z0), 1.6, Land.Kind.ROAD, true)
 	ppl.refresh(game.land.road_chunks.keys())
 	await frames(4)
 	var B := {}
@@ -110,6 +110,7 @@ func _run() -> void:
 			game.land.paint_line(q + Vector2(6.0, -4.0), q + Vector2(-0.6, 2.5), 1.0, Land.Kind.ROAD, true)
 			ppl.refresh(game.land.road_chunks.keys())
 			path_ok = true
+			await frames(10)
 		var pl: Dictionary = game.placement("duck", q)
 		if pl["err"] == "":
 			B["duck"] = c.place("duck", pl["pos"], pl["yaw"], pl["variant"], pl["color"], true)
@@ -119,8 +120,8 @@ func _run() -> void:
 	for t: String in B:
 		check(not (B[t] as Dictionary).is_empty(), "встало: " + t)
 	# семьи (в новом городе жителей ещё нет): три дома у той же улицы, по четыре человека
-	for k in 3:
-		var h := put(["house_pleb", "house_artisan", "house_patrician"][k], Vector2(X0 + 74.0 + k * 9.0, Z0 + 3.5))
+	for k in 4:
+		var h := put(["house_pleb", "house_artisan", "house_patrician", "house_pleb"][k], Vector2(X0 + 74.0 + k * 9.0, Z0 + 3.5))
 		if not h.is_empty():
 			ppl._make_family("Лейс%d" % k, 5, int(h["id"]), city_door(h))
 	var adults := ppl.residents.filter(func(r): return not r["child"] and not r.has("hero"))
@@ -195,5 +196,57 @@ func _run() -> void:
 		await shot("lei_%s.png" % cs[1])
 		game.rig.set_view(Vector3(p.x, Land.BASE_Y, p.y), cam_yaw + 180.0, 24.0, 4.2)
 		await shot("lei_%s_b.png" % cs[1])
+	await _handover(X0, Z0, adults.slice(i))
 	print("LEI DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
+
+
+## Товар из рук в руки: мясник показывает окорок, пока говорит, покупатель берёт именно его и уносит
+func _handover(X0: float, Z0: float, free: Array) -> void:
+	if free.size() < 2:
+		check(false, "для лавки не хватает жителей", free.size())
+		return
+	var bb := put("butcher", Vector2(X0 + 12.0, Z0 - 3.5))
+	if not check(not bb.is_empty(), "мясная лавка встала"):
+		return
+	await frames(5)
+	var k: Dictionary = free[0]
+	var r: Dictionary = free[1]
+	ppl._release(k)
+	k["job"] = int(bb["id"])
+	k["p"] = c.door_point(bb)
+	ppl._enter_work(k)
+	k["fade"] = 1.0
+	check(k["state"] == "work" and int(k["slot"]) >= 0, "мясник за прилавком", [k["state"], k["slot"]])
+	var d: Dictionary = ppl._counter_target(r, bb)
+	if not check(not d.is_empty(), "место у прилавка"):
+		return
+	ppl._release(r)
+	ppl._claim(r, d)
+	r["p"] = d["p"]
+	r["state"] = "walk"
+	r["goal"] = "errand"
+	var p: Vector2 = d["p"]
+	var kp: Vector2 = k["p"]
+	var mid := p.lerp(kp, 0.5)
+	game.rig.set_view(Vector3(mid.x, Land.BASE_Y + 0.5, mid.y), rad_to_deg(float(bb["yaw"])) + 40.0, 30.0, 4.2)
+	await frames(3)
+	ppl._begin(r)
+	r["fade"] = 1.0
+	if r["node"] != null:
+		(r["node"] as Citizen).set_alpha(1.0)
+	var shown := false
+	var took := false
+	for w in 80:
+		await secs(0.2)
+		if not shown and String(k.get("show", "")) == "ham":
+			shown = true
+			await secs(0.6)
+			await shot("lei_shop_show.png")
+		if String(r.get("carry", "")) == "ham":
+			took = true
+			await secs(0.8)
+			await shot("lei_shop_take.png")
+			break
+	check(shown, "мясник показывает окорок покупателю")
+	check(took and not k.has("show"), "покупатель взял окорок из рук мясника", [r.get("carry", ""), k.get("show", "")])

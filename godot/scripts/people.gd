@@ -2269,10 +2269,20 @@ func _on_step(r: Dictionary, nm: String) -> void:
 					_keeper_react(bid, r, "Listen" if rng.randf() < 0.6 else "Listen_M")
 				"Listen":
 					_keeper_react(bid, r, "Idle_Talking" if rng.randf() < 0.5 else "Idle_Talking_M")
+					# «вот, посмотрите»: продавец берёт товар с прилавка и показывает покупателю
+					var kp := _keeper(bid)
+					var gd := String(HandProps.GOODS.get(String((city.buildings.get(bid, {}) as Dictionary).get("type", "")), ""))
+					if not kp.is_empty() and gd != "" and int(kp.get("serve", 0)) == int(r["id"]):
+						kp["show"] = gd
 				"PickUp_Table", "PickUp_Table_M":
 					_keeper_react(bid, r, "Interact" if rng.randf() < 0.5 else "Interact_M")
-					# взял покупку — понесёт домой (корзина, амфора, свёрток; HandProps.CARRY)
-					var it := String(HandProps.CARRY.get(String((city.buildings.get(bid, {}) as Dictionary).get("type", "")), ""))
+					# из рук в руки: продавец отдаёт то, что показывал, покупатель берёт и несёт домой
+					# (без показанного — корзина, амфора, свёрток; HandProps.CARRY)
+					var bt := String((city.buildings.get(bid, {}) as Dictionary).get("type", ""))
+					var kq := _keeper(bid)
+					var it := String(HandProps.GOODS.get(bt, HandProps.CARRY.get(bt, "")))
+					if not kq.is_empty():
+						kq.erase("show")
 					if it != "":
 						r["carry"] = it
 		"sit":
@@ -2377,6 +2387,7 @@ func _keeper_free(bid: int, cust: Dictionary) -> void:
 	if k.is_empty() or int(k["serve"]) != int(cust["id"]):
 		return
 	k["serve"] = 0
+	k.erase("show")
 	k["face"] = float(k["slot_yaw"])
 	k["wk"] = rng.randf_range(4.0, 9.0)
 	if k["node"] != null:
@@ -2939,6 +2950,8 @@ func _process(dt: float) -> void:
 func props_want(r: Dictionary) -> Array:
 	match r["state"]:
 		"work":
+			if r.has("show"):
+				return [r["show"]]             # продавец показывает товар покупателю
 			if int(r["slot"]) >= 0:
 				return HandProps.work(String((city.buildings.get(r["job"], {}) as Dictionary).get("type", "")), int(r["slot"]))
 		"walk", "door":
@@ -2947,6 +2960,8 @@ func props_want(r: Dictionary) -> Array:
 		"idle":
 			if r["act"] == "sit" and bool(r.get("read", false)) and _sitting(r):
 				return ["scroll"]
+			if r["act"] == "shop" and String(r.get("carry", "")) != "":
+				return [r["carry"]]                # только что взял покупку из рук продавца
 	return []
 
 

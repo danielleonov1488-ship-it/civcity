@@ -1348,7 +1348,8 @@ def yard_props(body, emb, x0, x1, zb, z_wall, craft):
 SIGNS = ["meat", "bread", "shoes", "dye", "togas", "pots", "oil", "lamps", "wine", "perfume", "jewel", "cloth", "barber",
          "medic", "thermo", "taberna", "fullonica", "mansio", "fruit", "veg", "fish", "fresco", "copper", "grain",
          "scriptorium", "school", "library", "academy", "warehouse", "vigiles",
-         "herbalist", "sculptor", "catshop", "shelter", "balnea", "baths", "prefect"]
+         "herbalist", "sculptor", "catshop", "shelter", "balnea", "baths", "prefect",
+         "arch_ins", "relief", "puppets", "mimes", "dice"]
 IRON = "#3a3633"
 ROPE = "#c9b48a"
 BRONZE = "#b08a3a"
@@ -2980,6 +2981,7 @@ PAT = [
     {"portico": "loggia", "roof": "x", "corners": "stone", "shutter": "green", "door": "oak", "dado": "#6a3a2a", "pal": 2},
 ]
 SMOKE = []
+JETS = []            # струи фонтана: [x, y, z, радиус кольца-завесы (0 — нет), скорость струи вверх (0 — нет)] (Fountains)
 ACTORS = []
 PROPS = []          # детали Synty в чертеже: [имя, x, y, z, поворот, масштаб] (метры; масштаб — как у Synty в игре)
 
@@ -4454,6 +4456,557 @@ def mon_pharos(body, emb):
 MONO_FN = {"temple": mon_temple, "forum": mon_forum, "pantheon": mon_pantheon, "venus": mon_venus, "pharos": mon_pharos}
 
 
+# --- прогон 4 (владелец 12.11: «переделай как можно больше моделек»): фонтан, нимфей, арка, огород, уличные артисты ---
+def urn_flowers(body, at, h=0.42):
+    """мраморная ваза-кратер с цветами"""
+    x, y, z = at
+    m = J(MARBLE, 0.03, 0.0, 0.0)
+    body.lathe(at, [(h * 0.18, 0.0), (h * 0.12, h * 0.12), (h * 0.14, h * 0.3), (h * 0.3, h * 0.55), (h * 0.36, h * 0.85), (h * 0.4, h)], 12, m, mat=M_MARBLE)
+    body.lathe((x, y + h * 0.92, z), [(h * 0.36, 0.0), (h * 0.36, 0.001)], 12, col("#4a3524"), close_top=True)
+    for k in range(12):
+        a, rr = rng.uniform(0, 6.28), rng.uniform(0, h * 0.3)
+        leaf_blob(body, (x + math.cos(a) * rr, y + h + rng.uniform(0.0, 0.12), z + math.sin(a) * rr), h * 0.12, J(rng.choice(["#4f7d33", "#5f8f3a", "#3f6b2a"]), 0.1))
+    for k in range(9):
+        a, rr = rng.uniform(0, 6.28), rng.uniform(0, h * 0.32)
+        ball(body, (x + math.cos(a) * rr, y + h + 0.06 + rng.uniform(0, 0.1), z + math.sin(a) * rr), 0.03,
+             J(rng.choice(["#e86a8a", "#f4c0cc", "#f0d050", "#ffffff", "#c84a6a"]), 0.06), seg=6, rings=3)
+
+
+def pedestal(body, at, w, h, c=None):
+    """пьедестал: база, тело, карниз"""
+    x, y, z = at
+    m = c or J(MARBLE, 0.03, 0.0, 0.0)
+    body.box((x, y + 0.05, z), (w + 0.08, 0.1, w + 0.08), J(P["stone"], 0.03), mat=M_STONE)
+    body.box((x, y + h / 2, z), (w, h - 0.1, w), m, mat=M_MARBLE)
+    body.box((x, y + h - 0.03, z), (w + 0.07, 0.06, w + 0.07), J(MARBLE, 0.05, 0.0, 0.0), mat=M_MARBLE)
+
+
+def tri_prism(body, x0, x1, y0, apex, z0, z1, c, mat=M_MARBLE):
+    """треугольный фронтон-призма: перед, зад, два ската"""
+    xm = (x0 + x1) / 2
+    for z, nz in ((z1, 1), (z0, -1)):
+        body.face([body.v((x0, y0, z)), body.v((x1, y0, z)), body.v((xm, apex, z))], c, ("dir", (0, 0, nz)), mat=mat)
+    for (xa, nx) in ((x0, -1), (x1, 1)):
+        body.face([body.v((xa, y0, z0)), body.v((xa, y0, z1)), body.v((xm, apex, z1)), body.v((xm, apex, z0))], col_shift(c, -0.08),
+                  ("dir", (nx * (apex - y0), abs(xa - xm), 0)), mat=mat)
+
+
+def arch_wall(body, cx, r, y0, ytop, z0, z1, c, mat=M_ASHM, voussoir=True):
+    """стенка над пролётом: прямоугольник cx±r от пяты y0 до ytop с полукруглым вырезом снизу; свод — полосой по
+    глубине; по лицу — клинчатые камни и замковый камень"""
+    n = 12
+    arc = [(cx + r * math.cos(math.pi * k / n), y0 + r * math.sin(math.pi * k / n)) for k in range(n + 1)]
+    for z, nz in ((z1, 1), (z0, -1)):
+        for k in range(n):                     # пазухи — вертикальными полосами от дуги до верха (без вогнутых граней)
+            (xa, ya), (xb, yb) = arc[k], arc[k + 1]
+            body.face([body.v((xa, ya, z)), body.v((xb, yb, z)), body.v((xb, ytop, z)), body.v((xa, ytop, z))], c, ("dir", (0, 0, nz)), mat=mat)
+    for k in range(n):
+        (xa, ya), (xb, yb) = arc[k], arc[k + 1]
+        body.face([body.v((xa, ya, z0)), body.v((xb, yb, z0)), body.v((xb, yb, z1)), body.v((xa, ya, z1))], col_shift(c, -0.12),
+                  ("dir", (cx - (xa + xb) / 2, y0 - (ya + yb) / 2, 0)), mat=mat)
+    if voussoir:
+        m = J(MARBLE, 0.03, 0.0, 0.0)
+        for z, nz in ((z1, 1), (z0, -1)):
+            for k in range(9):
+                ph = math.pi * (k + 0.5) / 9
+                body.box((cx + math.cos(ph) * (r + 0.07), y0 + math.sin(ph) * (r + 0.07), z + nz * 0.02), (math.pi * (r + 0.07) / 9 * 0.9, 0.16, 0.05),
+                         col_shift(m, 0.03 if k % 2 else -0.03), Matrix.Rotation(ph - math.pi / 2, 3, "Z"), mat=M_MARBLE)
+            body.box((cx, y0 + r + 0.1, z + nz * 0.04), (0.14, 0.24, 0.09), J(MARBLE, 0.05, 0.0, 0.0), mat=M_MARBLE)
+
+
+def torch_post(body, emb, at, h=1.9):
+    """факел на шесте: древко, железная чаша, пламя (свет ночью)"""
+    x, y, z = at
+    rod(body, (x, y, z), (x, y + h, z), 0.035, J(P["wood"], 0.05), mat=M_WOOD)
+    body.lathe((x, y + h, z), [(0.03, 0.0), (0.08, 0.1), (0.09, 0.13)], 8, col(IRON))
+    for k in range(5):
+        leaf_blob(emb, (x + rng.uniform(-0.04, 0.04), y + h + 0.16 + rng.uniform(0, 0.08), z + rng.uniform(-0.04, 0.04)), 0.04,
+                  col(rng.choice(["#ff7a1a", "#ffb03a", "#e0501a"])))
+    LIGHTS.append({"lamp": [round(x, 3), round(y + h + 0.25, 3), round(z, 3)], "kind": "hang"})
+
+
+def rug(body, cx, cz, w, d, c1, c2, y=0.012):
+    """ковёр: поле, кайма, узор ромбами, бахрома по коротким краям"""
+    body.box((cx, y, cz), (w, 0.012, d), J(c1, 0.03), mat=M_CLOTH)
+    for s in (-1, 1):
+        body.box((cx, y + 0.002, cz + s * (d / 2 - 0.06)), (w - 0.04, 0.012, 0.06), J(c2, 0.03), mat=M_CLOTH)
+        body.box((cx + s * (w / 2 - 0.06), y + 0.002, cz), (0.06, 0.012, d - 0.04), J(c2, 0.03), mat=M_CLOTH)
+        for k in range(int(d / 0.05)):
+            body.box((cx + s * (w / 2 + 0.03), y - 0.003, cz - d / 2 + (k + 0.5) * d / int(d / 0.05)), (0.06, 0.004, 0.012), col("#e8dcc0"))
+    for k in range(3):
+        body.box((cx - w / 3 + k * w / 3, y + 0.003, cz), (0.16, 0.012, 0.16), J(c2, 0.03), Matrix.Rotation(math.pi / 4, 3, "Y"), mat=M_CLOTH)
+
+
+def drum(body, at, r=0.13, h=0.07):
+    """бубен-тимпан: обечайка, кожа, бубенцы"""
+    x, y, z = at
+    R = Matrix.Rotation(1.2, 3, "X")
+    disc(body, at, r, r, h, J("#a0703f", 0.05), R, seg=14, top=col("#e8d8b0"))
+    for k in range(4):
+        a = 2 * math.pi * k / 4
+        ball(body, LP(at, R, math.cos(a) * r, h / 2, math.sin(a) * r), 0.018, col(GOLD), seg=6, rings=3)
+
+
+def ivy(body, x, z, y0, y1, nrm, n=14):
+    """плющ по стене: листва пятнами снизу вверх"""
+    for k in range(n):
+        t = k / max(1, n - 1)
+        leaf_blob(body, (x + rng.uniform(-0.18, 0.18) * (1 - t * 0.5), y0 + (y1 - y0) * t, z + nrm * 0.05), 0.09 + 0.05 * (1 - t),
+                  J(rng.choice(["#3f6b2a", "#4f7d33", "#2f5a2a"]), 0.1))
+
+
+def mon_fountain(body, emb):
+    """фонтан на площади: мостовая шашками с каймой, квадратный бассейн с профилированным мраморным бортиком и филёнками
+    из цветного мрамора, по углам — тумбы с вазами цветов, посередине — двухъярусная чаша на точёной ножке с бронзовой
+    шишкой (струя и завеса капель — Fountains по jets), львиные маски Synty на бортике (из пастей — струи), утка и
+    кувшинки на воде, на дне — мозаика с дельфинами; скамьи, кипарисы, жаровни"""
+    S = 2.55
+    floor_tiles(body, -S, S, -S, S, 0.0, 0.51, "#e8dcc6", "#c49a6c")
+    for (cx, cz, sx, sz) in ((0, -S, 2 * S + 0.12, 0.12), (0, S, 2 * S + 0.12, 0.12), (-S, 0, 0.12, 2 * S), (S, 0, 0.12, 2 * S)):
+        body.box((cx, 0.03, cz), (sx, 0.06, sz), J(P["stone"], 0.03), mat=M_STONE)
+    h, t, hh = 1.7, 0.22, 0.5
+    for s in (-1, 1):
+        for ax in (0, 1):
+            cx, cz = (s * (h - t / 2), 0.0) if ax == 0 else (0.0, s * (h - t / 2))
+            L = 2 * h
+            body.box((cx, hh / 2, cz), (t, hh, L) if ax == 0 else (L, hh, t), J(MARBLE, 0.02, 0.0, 0.0), mat=M_MARBLE)
+            body.box((cx + (s * 0.04 if ax == 0 else 0), 0.045, cz + (s * 0.04 if ax == 1 else 0)), (t + 0.1, 0.09, L + 0.1) if ax == 0 else (L + 0.1, 0.09, t + 0.1),
+                     J(P["stone"], 0.03), mat=M_STONE)
+            body.box((cx, hh + 0.035, cz), (t + 0.14, 0.07, L + 0.14) if ax == 0 else (L + 0.14, 0.07, t + 0.14), J(MARBLE, 0.04, 0.0, 0.0), mat=M_MARBLE)
+            for k in (-1, 1):                  # филёнки из зелёного мрамора-чиполлино в белой раме
+                px, pz = (s * (h + 0.006), k * 0.78) if ax == 0 else (k * 0.78, s * (h + 0.006))
+                body.box((px, 0.27, pz), (0.012, 0.26, 1.1) if ax == 0 else (1.1, 0.26, 0.012), J("#8fa88a", 0.05), mat=M_MARBLE)
+                body.box((px + (s * 0.004 if ax == 0 else 0), 0.27, pz + (s * 0.004 if ax == 1 else 0)), (0.012, 0.32, 1.18) if ax == 0 else (1.18, 0.32, 0.012),
+                         J(MARBLE, 0.04, 0.0, 0.0), mat=M_MARBLE)
+    inner = h - t
+    body.box((0, 0.03, 0), (2 * inner, 0.02, 2 * inner), J("#4f8fa8", 0.04))
+    fresco_floor(body, 0.0, 0.045, 0.0, 2 * inner - 0.08, 2 * inner - 0.08, "dolphins")
+    wy = 0.38
+    PROPS.append(["#water", 0.0, round(wy - 0.05, 3), 0.0, 0.0, [round(2 * inner / 0.72, 3), round(0.1 / 0.72, 3), round(2 * inner / 0.72, 3)]])
+    for (sx, sz) in ((-1, -1), (1, -1), (-1, 1), (1, 1)):     # тумбы с вазами по углам бортика
+        pedestal(body, (sx * h, 0.0, sz * h), 0.4, 0.78)
+        urn_flowers(body, (sx * h, 0.78, sz * h), 0.4)
+    # чаши
+    m2 = J(MARBLE, 0.03, 0.0, 0.0)
+    body.lathe((0, 0.05, 0), [(0.44, 0.0), (0.44, 0.14), (0.36, 0.18), (0.3, 0.32), (0.24, 0.36)], 8, m2, close_top=True, mat=M_MARBLE)
+    spindle(body, (0, 0.36, 0), (0, 0.8, 0), [(0.17, 0.0), (0.1, 0.3), (0.15, 0.55), (0.09, 0.82), (0.2, 1.0)], 12, m2, mat=M_MARBLE)
+    y1 = 0.8
+    body.lathe((0, y1, 0), [(0.12, 0.0), (0.45, 0.08), (0.78, 0.2), (0.88, 0.28), (0.9, 0.32), (0.8, 0.32), (0.75, 0.24)], 20, m2, mat=M_MARBLE)
+    disc(body, (0, y1 + 0.2, 0), 0.77, 0.77, 0.03, col("#8fcfe0"), seg=20, top=col("#a8dcea"))
+    torus(body, (0, y1 + 0.31, 0), Matrix.Identity(3), 0.89, 0.022, J(MARBLE, 0.05, 0.0, 0.0), seg=20, seg2=4)
+    for k in range(12):                        # лепестки-гадруны под чашей
+        a = 2 * math.pi * k / 12
+        ball(body, (math.cos(a) * 0.5, y1 + 0.07, math.sin(a) * 0.5), 0.09, col_shift(m2, -0.04), seg=6, rings=3, sq=(0.5, 0.5, 1.0),
+             R=Matrix.Rotation(-a, 3, "Y"))
+    spindle(body, (0, y1 + 0.22, 0), (0, y1 + 0.78, 0), [(0.1, 0.0), (0.06, 0.25), (0.1, 0.5), (0.05, 0.85), (0.12, 1.0)], 10, m2, mat=M_MARBLE)
+    for k in range(3):                         # дельфины-подпорки вокруг ножки
+        a = 2 * math.pi * k / 3 + 0.5
+        spindle(body, (math.cos(a) * 0.1, y1 + 0.3, math.sin(a) * 0.1), (math.cos(a) * 0.17, y1 + 0.72, math.sin(a) * 0.17),
+                [(0.02, 0.0), (0.05, 0.3), (0.04, 0.7), (0.0, 1.0)], 6, col("#9a7a3a"))
+    y2 = y1 + 0.78
+    body.lathe((0, y2, 0), [(0.07, 0.0), (0.26, 0.06), (0.42, 0.15), (0.46, 0.19), (0.41, 0.19), (0.38, 0.14)], 16, m2, mat=M_MARBLE)
+    disc(body, (0, y2 + 0.12, 0), 0.39, 0.39, 0.02, col("#8fcfe0"), seg=16, top=col("#a8dcea"))
+    body.lathe((0, y2 + 0.12, 0), [(0.05, 0.0), (0.09, 0.08), (0.1, 0.16), (0.08, 0.25), (0.04, 0.32), (0.0, 0.36)], 10, col(BRONZE),
+               cols=[col("#9a7a3a"), col(BRONZE), col("#9a7a3a"), col(BRONZE), col("#c9a14a")])
+    JETS.append([0.0, round(y2 + 0.48, 3), 0.0, 0.0, 1.0])
+    JETS.append([0.0, round(y2 + 0.17, 3), 0.0, 0.43, 0.0])
+    JETS.append([0.0, round(y1 + 0.3, 3), 0.0, 0.87, 0.0])
+    # львиные маски на внутренней стороне бортика (Synty: Fountains пускает из пастей струи)
+    PROPS.append(["SM_Prop_Marble_LionHead_01", 0.0, 0.2, round(-inner + 0.03, 3), 0.0, 0.5])
+    for s in (-1, 1):
+        PROPS.append(["SM_Prop_Marble_LionHead_01", round(s * (inner - 0.03), 3), 0.2, 0.0, round(-s * math.pi / 2, 3), 0.5])
+    PROPS.append(["SM_Env_Lillies_02", -0.95, wy, 1.0, 0.6, 0.45])
+    PROPS.append(["SM_Env_Lillies_01", 1.0, wy, -0.95, 2.0, 0.55])
+    PROPS.append(["SM_Env_Lillies_01", -1.05, wy, -1.0, 4.0, 0.45])
+    PROPS.append(["#duck", 0.95, wy, 0.95, -2.4, 1.0])
+    for s in (-1, 1):
+        marble_bench(body, (s * 2.2, 0.0, 0.0), Matrix.Rotation(-s * math.pi / 2, 3, "Y"), 1.2)
+        cypress(body, (s * 2.2, 0.0, -2.2), 1.9)
+        tripod(body, emb, (s * 2.2, 0.0, 2.2), 0.95)
+    mono_faces(-S, S, -S, S, 0.0, 1.0)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, S + 0.35
+    FP.append([-S - 0.06, -S - 0.06, 2 * S + 0.12, 2 * S + 0.12])
+    return y2 + 0.6
+
+
+def mon_nymphaeum(body, emb):
+    """нимфей: стена из мраморной кладки с тремя нишами и статуями нимф, колонны на пьедесталах, карниз с сухариками,
+    фронтон посередине с медальоном и акротериями; львиные маски (Synty) льют воду в бассейн с мозаикой дельфинов;
+    кувшинки, кипарисы, вазы с цветами на пьедесталах, плющ по краям стены"""
+    x0, x1 = -3.2, 3.2
+    wz, wt, H = -1.45, 0.45, 2.9
+    for (cx, cz, sx, sz) in ((0.0, -1.5, 6.7, 0.9), (0.0, 1.565, 5.42, 0.47), (-3.03, 0.375, 0.64, 2.85), (3.03, 0.375, 0.64, 2.85)):
+        body.box((cx, 0.07, cz), (sx, 0.14, sz), J(P["stone"], 0.03), cols={"top": J("#d8d0c2", 0.03)}, mat=M_STONE)
+    body.box((0, H / 2 + 0.14, wz - wt / 2), (6.4, H, wt), J("#f4efe6", 0.02, 0.0, 0.0), mat=M_ASHM)
+    y0 = 0.14
+    Pf = lambda u, v, n: Vector((x0 + u, v, wz + n))
+    U, N = Vector((1, 0, 0)), Vector((0, 0, 1))
+    body.box((0, y0 + 0.25, wz + 0.04), (6.5, 0.5, 0.08), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)        # цоколь
+    for k, x in enumerate((-1.6, 0.0, 1.6)):
+        big = k == 1
+        niche(body, Pf, U, N, "front", x - x0, y0 + 0.75, 0.8 if big else 0.62, 1.65 if big else 1.4)
+        PROPS.append([["SM_Prop_Statue_03", "SM_Prop_Statue_04", "SM_Prop_Statue_06"][k], round(x, 3), round(y0 + 0.74, 3), round(wz + 0.12, 3), 0.0, 0.58 if big else 0.5])
+        PROPS.append(["SM_Prop_Marble_LionHead_01", round(x, 3), round(y0 + 0.22, 3), round(wz + 0.09, 3), 0.0, 0.5])
+    for x in (-2.45, -0.8, 0.8, 2.45):
+        pedestal(body, (x, y0, wz + 0.26), 0.32, 0.55)
+        column3(body, (x, y0 + 0.55, wz + 0.26), 2.0, 0.1)
+    yt = y0 + 2.55
+    body.box((0, yt + 0.12, wz + 0.15), (6.6, 0.24, 0.6), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    Pe = lambda u, v, n: Vector((x0 - 0.1 + u, v, wz + 0.45 + n))
+    dentils(body, Pe, U, N, 0.0, 6.6, yt + 0.32)
+    body.box((0, yt + 0.5, wz - 0.05), (6.7, 0.1, 0.95), J(MARBLE, 0.04, 0.0, 0.0), mat=M_MARBLE)
+    tri_prism(body, -1.4, 1.4, yt + 0.55, yt + 1.25, wz - 0.4, wz + 0.45, J(MARBLE, 0.03, 0.0, 0.0))
+    clipeus(body, lambda u, v, n: Vector((u, v, wz + 0.45 + n)), N, 0.0, yt + 0.8, 0.18)
+    for x, yy in ((-1.45, yt + 0.55), (1.45, yt + 0.55), (0.0, yt + 1.25)):
+        acroterion(body, (x, yy, wz + 0.1), 1.0)
+    for s in (-1, 1):
+        urn_flowers(body, (s * 2.9, yt + 0.55, wz - 0.05), 0.36)
+        ivy(body, s * 3.15, wz, 0.3, 2.6, 1.0)
+        cypress(body, (s * 3.0, 0.14, wz + 0.45), 2.3)
+        pedestal(body, (s * 3.0, 0.14, 1.35), 0.38, 0.6)
+        urn_flowers(body, (s * 3.0, 0.74, 1.35), 0.4)
+    # бассейн с мозаикой
+    pz0, pz1 = wz + 0.5, wz + 2.7
+    pool(body, -2.55, 2.55, pz0, pz1, step_side=1)
+    fresco_floor(body, 0.0, 0.03, (pz0 + pz1) / 2, 5.0, pz1 - pz0 - 0.1, "dolphins")
+    PROPS.append(["SM_Env_Lillies_01", -1.3, 0.15, round(pz0 + 1.2, 3), 0.4, 0.55])
+    PROPS.append(["SM_Env_Lillies_02", 1.6, 0.15, round(pz0 + 1.6, 3), 2.0, 0.45])
+    PROPS.append(["#duck", 0.6, 0.15, round(pz0 + 0.9, 3), 2.2, 1.0])
+    zf = pz1 + 0.35
+    for s in (-1, 1):
+        tripod(body, emb, (s * 2.0, 0.14, zf - 0.05), 0.9)
+    mono_faces(x0, x1, wz - wt, zf, 0.0, H)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, zf + 0.45
+    FP.append([-3.4, round(wz - wt - 0.1, 3), 6.8, round(zf + 0.2 - (wz - wt - 0.1), 3)])
+    return yt + 1.3
+
+
+def mon_arch(body, emb):
+    """триумфальная арка о трёх пролётах (ниже прежней): пилоны из мраморной кладки, своды с клинчатыми и замковыми
+    камнями, колонны на пьедесталах, карниз с сухариками, аттик с надписью SENATVS POPVLVSQVE ROMANVS и рельефами
+    шествия, медальоны в пазухах, лавровые гирлянды, знамёна, статуи на аттике"""
+    hw, hd = 2.7, 0.75
+    ht = 3.6
+    ashm = J("#f4efe6", 0.02, 0.0, 0.0)
+    body.box((0, 0.08, 0), (2 * hw + 0.5, 0.16, 2 * hd + 0.6), J(P["stone"], 0.03), cols={"top": J("#d8d0c2", 0.03)}, mat=M_STONE)
+    y0 = 0.16
+    for s in (-1, 1):
+        body.box((s * 2.4, y0 + (ht - y0) / 2, 0), (0.6, ht - y0, 2 * hd), ashm, mat=M_ASHM)        # крайние пилоны
+        body.box((s * 1.075, y0 + (ht - y0) / 2, 0), (0.65, ht - y0, 2 * hd), ashm, mat=M_ASHM)     # средние
+        arch_wall(body, s * 1.75, 0.35, y0 + 1.1, ht, -hd, hd, ashm)                                  # боковые пролёты
+    arch_wall(body, 0.0, 0.75, y0 + 1.75, ht, -hd, hd, ashm)
+    for s in (-1, 1):                          # проходы: мостовая
+        body.box((s * 1.75, y0 + 0.005, 0), (0.7, 0.01, 2 * hd), J("#cfc4b2", 0.03), mat=M_STONE)
+    body.box((0, y0 + 0.005, 0), (1.5, 0.01, 2 * hd), J("#cfc4b2", 0.03), mat=M_STONE)
+    for zf, nz in ((hd, 1), (-hd, -1)):
+        for x in (-2.15, -1.4, 1.4, 2.15):      # колонны на пьедесталах перед пилонами
+            pedestal(body, (x, y0, zf + nz * 0.22), 0.36, 0.75)
+            column3(body, (x, y0 + 0.75, zf + nz * 0.22), ht - y0 - 0.75 - 0.05, 0.11, c=J("#e8d8c8", 0.03, 0.0, 0.0))
+        Pz = (lambda u, v, n, zf=zf, nz=nz: Vector((nz * (u - hw), v, zf + nz * n)))
+        Ux = Vector((nz, 0, 0))
+        Nz = Vector((0, 0, nz))
+        for s in (-1, 1):                      # медальоны в пазухах центрального свода
+            clipeus(body, Pz, Nz, hw + s * 0.62 * nz, y0 + 2.6, 0.16)
+            laurel(body, (s * 0.62 - 0.22, y0 + 2.83, zf + nz * 0.05), (s * 0.62 + 0.22, y0 + 2.83, zf + nz * 0.05), 0.1, (0, 0, nz))
+        for s in (-1, 1):                      # рельефы шествия над боковыми пролётами — в мраморной раме
+            body.box(tuple(Pz(hw + s * 1.75 * nz, y0 + 2.35, 0.008)), (0.58, 0.42, 0.016), J(MARBLE, 0.05, 0.0, 0.0), mat=M_MARBLE)
+            sign_board(body, Pz, Ux, Nz, hw + s * 1.75 * nz, y0 + 2.35, 0.5, 0.34, 0.018, "relief")
+        for (xa, xb) in ((-2.04, -1.51), (1.51, 2.04)):
+            swag(body, (xa, ht - 0.12, zf + nz * 0.22), (xb, ht - 0.12, zf + nz * 0.22), 0.12, 0.1, "#9a2f28", (0, 0, nz))
+    yt = ht
+    body.box((0, yt + 0.12, 0), (2 * hw + 0.3, 0.24, 2 * hd + 0.7), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    for zf, nz in ((hd + 0.35, 1), (-hd - 0.35, -1)):
+        Pe = (lambda u, v, n, zf=zf, nz=nz: Vector((nz * (u - hw - 0.15), v, zf + nz * n)))
+        dentils(body, Pe, Vector((nz, 0, 0)), Vector((0, 0, nz)), 0.0, 2 * hw + 0.3, yt + 0.3)
+    body.box((0, yt + 0.42, 0), (2 * hw + 0.45, 0.08, 2 * hd + 0.95), J(MARBLE, 0.04, 0.0, 0.0), mat=M_MARBLE)
+    ya = yt + 0.46
+    body.box((0, ya + 0.45, 0), (2 * hw - 0.2, 0.9, 2 * hd + 0.2), ashm, mat=M_ASHM)                  # аттик
+    body.box((0, ya + 0.94, 0), (2 * hw - 0.05, 0.08, 2 * hd + 0.35), J(MARBLE, 0.04, 0.0, 0.0), mat=M_MARBLE)
+    for zf, nz in ((hd + 0.1, 1), (-hd - 0.1, -1)):
+        Pa = (lambda u, v, n, zf=zf, nz=nz: Vector((nz * u, v, zf + nz * n)))
+        body.box((0, ya + 0.45, zf + nz * 0.01), (2.5, 0.72, 0.02), J(MARBLE, 0.05, 0.0, 0.0), mat=M_MARBLE)
+        sign_board(body, Pa, Vector((nz, 0, 0)), Vector((0, 0, nz)), 0.0, ya + 0.45, 2.3, 0.62, 0.025, "arch_ins")
+        for s in (-1, 1):
+            banner(body, Pa, Vector((nz, 0, 0)), Vector((0, 0, nz)), "x", s * 1.9 * nz, ya + 0.82, 0.42, 0.55, 0.02, 0 if s < 0 else 1)
+    statue_prop(0.0, 0.0, 0.0, 0.62, ya + 0.98, plinth=False)
+    for s in (-1, 1):
+        statue_prop(s * 2.1, 0.0, 0.0, 0.5, ya + 0.98, plinth=False)
+        tripod(body, emb, (s * 2.85, 0.0, hd + 0.55), 0.9)
+    mono_faces(-hw - 0.25, hw + 0.25, -hd - 0.3, hd + 0.3, 0.0, ya + 0.98)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, hd + 0.95
+    FP.append([-hw - 0.3, -hd - 0.35, 2 * hw + 0.6, 2 * hd + 1.05])
+    return ya + 2.2
+
+
+def mon_ogorod(body, emb):
+    """огород: плетень с калиткой, три грядки в дощатых бортиках (капуста, лук, бобы на колышках), зелень и травы,
+    дорожка из плит, навес с инструментом, корзины с урожаем, кувшин и ведро, пугало в соломенной шляпе"""
+    x0, x1, z0, z1 = -1.85, 1.85, -1.65, 1.6
+    body.box((0, 0.01, 0), (x1 - x0, 0.02, z1 - z0), J("#7a6040", 0.06))
+    for (a, b) in (((x0, z0), (x1, z0)), ((x0, z0), (x0, z1)), ((x1, z0), (x1, z1)), ((x0, z1), (-0.45, z1)), ((0.45, z1), (x1, z1))):
+        wattle(body, a[0], a[1], b[0], b[1], 0.7)
+    for k in range(5):                         # дорожка из плит от калитки
+        body.box((rng.uniform(-0.05, 0.05), 0.025, z1 - 0.2 - k * 0.42), (0.42, 0.03, 0.3), J("#b8ae9c", 0.06), Matrix.Rotation(rng.uniform(-0.2, 0.2), 3, "Y"), mat=M_STONE)
+    beds = [(-1.0, -0.95, "cabbage"), (-1.0, 0.0, "onion"), (-1.0, 0.95, "beans")]
+    for (bx, bz, kind) in beds:
+        w, d = 1.35, 0.7
+        for s in (-1, 1):
+            body.box((bx, 0.08, bz + s * d / 2), (w, 0.16, 0.05), J(P["wood"], 0.06), mat=M_WOOD)
+            body.box((bx + s * w / 2, 0.08, bz), (0.05, 0.16, d), J(P["wood"], 0.06), mat=M_WOOD)
+        body.box((bx, 0.12, bz), (w - 0.06, 0.08, d - 0.06), J("#4a3524", 0.06))
+        for k in range(5):
+            x = bx - w / 2 + 0.18 + k * (w - 0.36) / 4
+            if kind == "cabbage":
+                for j in (-1, 1):
+                    fruit(body, (x, 0.16, bz + j * 0.15), "cabbage", 1.5)
+            elif kind == "onion":
+                for j in (-1, 0, 1):
+                    leek(body, (x + j * 0.05, 0.16, bz + j * 0.18), (x + j * 0.05 + rng.uniform(-0.04, 0.04), 0.4, bz + j * 0.18 + rng.uniform(-0.04, 0.04)))
+            else:
+                rod(body, (x, 0.16, bz), (x, 1.15, bz), 0.015, J(P["wood2"], 0.05), mat=M_WOOD)
+                for j in range(6):
+                    leaf_blob(body, (x + rng.uniform(-0.07, 0.07), 0.3 + j * 0.15, bz + rng.uniform(-0.07, 0.07)), 0.07, J("#4f8a3a", 0.1))
+                    if j % 2:
+                        rod(body, (x + 0.03, 0.35 + j * 0.15, bz + 0.03), (x + 0.04, 0.22 + j * 0.15, bz + 0.05), 0.008, col("#6f9a3a"))
+        if kind == "beans":
+            rod(body, (bx - w / 2 + 0.18, 1.1, bz), (bx + w / 2 - 0.18, 1.1, bz), 0.012, J(P["wood2"], 0.05), mat=M_WOOD)
+    for k in range(6):                         # зелень и травы у плетня справа
+        leaf_blob(body, (0.6 + k * 0.17, 0.12, -1.45 + rng.uniform(-0.03, 0.03)), 0.09, J(rng.choice(["#5f8f3a", "#7aa04a", "#4f7d33"]), 0.1))
+    # навес с инструментом
+    for (px, pz, ph) in ((0.75, -1.5, 1.55), (1.7, -1.5, 1.55), (0.75, -0.75, 1.35), (1.7, -0.75, 1.35)):
+        rod(body, (px, 0.0, pz), (px, ph, pz), 0.04, J(P["wood"], 0.05), mat=M_WOOD)
+    for k in range(7):                         # соломенная кровля
+        zz = -1.6 + k * 0.15
+        body.box((1.22, 1.6 - k * 0.04, zz), (1.2, 0.07, 0.17), J("#c8a85a", 0.08), Matrix.Rotation(-0.25, 3, "X"))
+    axe(body, (0.95, 0.0, -1.42), Matrix.Rotation(0.1, 3, "Y"), 0.12)
+    rod(body, (1.15, 0.02, -1.45), (1.2, 1.15, -1.48), 0.018, J(P["wood"], 0.05), mat=M_WOOD)        # лопата
+    body.box((1.15, 0.12, -1.44), (0.16, 0.22, 0.02), col("#8a8f94"))
+    rod(body, (1.4, 0.02, -1.45), (1.38, 1.2, -1.48), 0.018, J(P["wood"], 0.05), mat=M_WOOD)        # грабли
+    body.box((1.38, 1.18, -1.47), (0.3, 0.03, 0.03), J(P["wood2"], 0.05), mat=M_WOOD)
+    sack(body, (1.5, 0.0, -1.1), 0.14, 0.36, grain="#c8b070")
+    basket2(body, (0.95, 0.0, -0.95), 0.17, 0.2)
+    for j in range(4):
+        fruit(body, (0.95 + rng.uniform(-0.07, 0.07), 0.2, -0.95 + rng.uniform(-0.07, 0.07)), "cabbage", 0.9)
+    basket2(body, (1.1, 0.0, 1.15), 0.16, 0.18)
+    for j in range(6):
+        carrot(body, Vector((1.05 + j * 0.02, 0.2, 1.1 + (j % 2) * 0.05)), Vector((1.1 + j * 0.02, 0.22, 1.28 + (j % 2) * 0.05)))
+    jug(body, (-1.6, 0.0, 1.35), 0.3, J("#b8693f", 0.06))
+    bucket(body, (1.55, 0.0, 0.55), 0.1, 0.18)
+    # пугало: крестовина, рубаха, соломенная голова в шляпе
+    sx_, sz_ = 1.2, 0.25
+    rod(body, (sx_, 0.0, sz_), (sx_, 1.45, sz_), 0.03, J(P["wood"], 0.05), mat=M_WOOD)
+    rod(body, (sx_ - 0.4, 1.15, sz_), (sx_ + 0.4, 1.15, sz_), 0.025, J(P["wood"], 0.05), mat=M_WOOD)
+    body.box((sx_, 0.95, sz_), (0.36, 0.45, 0.16), J("#9a5a3a", 0.06), mat=M_CLOTH)
+    body.box((sx_, 1.15, sz_), (0.8, 0.12, 0.1), J("#9a5a3a", 0.06), mat=M_CLOTH)
+    ball(body, (sx_, 1.38, sz_), 0.11, J("#d8c07a", 0.06), seg=8, rings=4)
+    disc(body, (sx_, 1.46, sz_), 0.2, 0.2, 0.025, J("#c8a85a", 0.06), seg=12)
+    body.lathe((sx_, 1.48, sz_), [(0.1, 0.0), (0.08, 0.1), (0.0, 0.12)], 10, J("#c8a85a", 0.06))
+    mono_faces(x0, x1, z0, z1, 0.0, 0.9)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, z1 + 0.45
+    FP.append([x0 - 0.1, z0 - 0.1, x1 - x0 + 0.2, z1 - z0 + 0.2])
+    ACTORS.append([-0.12, 0.0, 0.0, -math.pi / 2, "Fixing_Kneeling", "pleb"])
+    return 1.7
+
+
+def mon_musicians(body, emb):
+    """уличные музыканты: деревянный помост под полосатым навесом на столбах с гирляндой, ковёр для танцовщицы,
+    скамья с лирой (Synty — музыкант берёт её в руки), бубен, двойная флейта и кимвалы на табурете, корзина для
+    монет, кувшин и чаша, цветы в горшках, жаровня, дерево позади"""
+    pal = ["#c0392b", "#3f6fa8", "#7a3f8a", "#4f8a5a"][rng.randrange(4)]
+    body.box((-0.1, 0.012, -0.55), (2.2, 0.024, 1.05), J(P["wood"], 0.06), mat=M_WOOD)                # дощатый настил
+    for k in range(9):
+        body.box((-0.1, 0.026, -1.02 + k * 0.118), (2.18, 0.004, 0.005), col("#5e3d24"))
+    hb, hf = 2.2, 2.0
+    for (px, pz, ph) in ((-1.15, -1.05, hb), (0.95, -1.05, hb), (-1.15, 0.05, hf), (0.95, 0.05, hf)):
+        rod(body, (px, 0.0, pz), (px, ph, pz), 0.045, J(P["wood"], 0.05), mat=M_WOOD)
+    Pa = lambda u, v, n: Vector((-1.2 + u, v, -1.1 + n))
+    awning(body, Pa, Vector((1, 0, 0)), Vector((0, 0, 1)), 1.1, hb + 0.05, 2.2, 1.25, ("#f4efe2", pal), poles=False, drop=(hb - hf) / 1.25, braces=False)
+    laurel(body, (-1.15, hf - 0.08, 0.07), (0.95, hf - 0.08, 0.07), 0.2, (0, 0, 1))
+    rug(body, 0.07, 0.3, 1.1, 0.75, pal, "#e8c86a")
+    PROPS.append(["SM_Prop_Seat_Bench_05", -0.216, 0.0, -0.468, 0.0, [0.75, 1.0, 0.85]])
+    PROPS.append(["SM_Prop_Lyre_01", 0.324, 0.302, -0.54, 0.4, 1.0, -0.25])
+    stool(body, (0.75, 0.025, -0.75), 0.32)
+    drum(body, (0.75, 0.38, -0.75), 0.12, 0.06)
+    for s in (-1, 1):                          # двойная флейта, прислонённая к табурету; кимвалы
+        rod(body, (0.6 + s * 0.02, 0.13, -0.6), (0.68 + s * 0.02, 0.62, -0.68), 0.01, col("#d8c08a"))
+    for k in range(2):
+        disc(body, (-0.95 + k * 0.12, 0.14, -0.8), 0.06, 0.06, 0.01, col(BRONZE), seg=10)
+    basket2(body, (0.0, 0.0, 0.85), 0.14, 0.12)
+    for k in range(6):
+        disc(body, (rng.uniform(-0.08, 0.08), 0.1 + k * 0.004, 0.85 + rng.uniform(-0.08, 0.08)), 0.018, 0.018, 0.004, col(GOLD), seg=8)
+    stool(body, (-0.9, 0.0, 0.1), 0.34)
+    jug(body, (-0.95, 0.34, 0.06), 0.18, J("#b8693f", 0.06))
+    body.lathe((-0.8, 0.34, 0.16), [(0.02, 0.0), (0.02, 0.06), (0.05, 0.1), (0.055, 0.12)], 8, col(BRONZE))
+    plant_pot(body, (0.95, 0.0, -1.2), 0.38)
+    plant_pot(body, (-1.25, 0.0, 0.35), 0.32)
+    tripod(body, emb, (0.85, 0.0, 0.3), 0.8)
+    mono_faces(-1.25, 1.05, -1.15, 0.6, 0.0, 2.2)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, 1.0
+    FP.append([-1.3, -1.25, 2.6, 2.3])
+    ACTORS.append([-0.432, 0.0, -0.432, 0.0, "Sitting_Talking", "pleb"])
+    ACTORS.append([0.432, 0.0, -0.072, 0.0, "Dance", "female"])
+    return hb + 0.2
+
+
+def mon_dice(body, emb):
+    """игра в кости: столик с расчерченной доской для игры, стаканчик и кости, монеты, кубки; полосатый навес на
+    четырёх столбах, вывеска ALEA на перекладине, табуреты и стулья (Synty — на них сидят игроки), амфора, кувшин"""
+    pal = ["#c0392b", "#3f6fa8", "#7a3f8a", "#4f8a5a"][rng.randrange(4)]
+    hb, hf = 2.15, 1.95
+    for (px, pz, ph) in ((-0.95, -0.95, hb), (0.95, -0.95, hb), (-0.95, 0.95, hf), (0.95, 0.95, hf)):
+        rod(body, (px, 0.0, pz), (px, ph, pz), 0.045, J(P["wood"], 0.05), mat=M_WOOD)
+    Pa = lambda u, v, n: Vector((-1.05 + u, v, -1.05 + n))
+    awning(body, Pa, Vector((1, 0, 0)), Vector((0, 0, 1)), 1.05, hb + 0.05, 2.1, 2.15, ("#f4efe2", pal), poles=False, drop=(hb - hf) / 2.15, braces=False)
+    body.box((0.0, hf - 0.04, 0.95), (1.95, 0.05, 0.05), J(P["wood"], 0.05), mat=M_WOOD)
+    for s in (-1, 1):
+        rod(body, (-0.45 + s * 0.2, hf - 0.06, 0.95), (-0.45 + s * 0.2, hf - 0.2, 0.95), 0.006, col(IRON))
+    body.box((-0.45, hf - 0.4, 0.95), (0.5, 0.36, 0.025), J("#6b4428", 0.05), mat=M_WOOD)
+    Ps = lambda u, v, n: Vector((u, v, 0.95 + n))
+    sign_board(body, Ps, Vector((1, 0, 0)), Vector((0, 0, 1)), -0.45, hf - 0.4, 0.45, 0.3, 0.014, "dice")
+    Pb = lambda u, v, n: Vector((-u, v, 0.95 - n))
+    sign_board(body, Pb, Vector((-1, 0, 0)), Vector((0, 0, -1)), 0.45, hf - 0.4, 0.45, 0.3, 0.014, "dice")
+    # столик и игра
+    ty = 0.42
+    body.lathe((0, 0, 0), [(0.18, 0.0), (0.06, 0.05), (0.05, ty - 0.04), (0.1, ty - 0.02)], 8, J(P["wood2"], 0.05), mat=M_WOOD)
+    disc(body, (0, ty - 0.03, 0), 0.42, 0.42, 0.04, J(P["wood"], 0.05), seg=16)
+    body.box((0, ty + 0.012, 0), (0.42, 0.012, 0.3), J("#d8c49a", 0.04))
+    for k in range(4):
+        body.box((-0.15 + k * 0.1, ty + 0.02, 0), (0.006, 0.004, 0.26), col("#5e3d24"))
+    for k in range(3):
+        body.box((0, ty + 0.02, -0.09 + k * 0.09), (0.38, 0.004, 0.006), col("#5e3d24"))
+    body.lathe((0.24, ty + 0.01, 0.12), [(0.04, 0.0), (0.045, 0.1), (0.05, 0.11)], 10, J("#6b4428", 0.05))
+    for k in range(3):
+        body.box((0.18 + k * 0.05, ty + 0.03, 0.2 - k * 0.02), (0.035, 0.035, 0.035), col("#f2ecdc"), Matrix.Rotation(k * 0.7, 3, "Y"))
+    for k in range(7):
+        disc(body, (-0.22 + rng.uniform(-0.05, 0.05), ty + 0.02 + k * 0.004, -0.15 + rng.uniform(-0.04, 0.04)), 0.02, 0.02, 0.004, col(GOLD), seg=8)
+    for k in range(2):
+        body.lathe((-0.2 + k * 0.4, ty + 0.01, 0.2 - k * 0.35), [(0.02, 0.0), (0.012, 0.03), (0.012, 0.06), (0.04, 0.08), (0.045, 0.11)], 8, col(BRONZE))
+    for a in range(4):
+        PROPS.append(["SM_Prop_Seat_Chair_01", round(math.cos(a * math.pi / 2) * 0.684, 3), 0.0, round(math.sin(a * math.pi / 2) * 0.684, 3), round(a * math.pi / 2, 3), 0.92])
+    amphora(body, (1.2, 0.0, 0.7), 0.5, J("#b8693f", 0.06))
+    jug(body, (-1.2, 0.0, 0.65), 0.3, J("#a85a3a", 0.06))
+    crate(body, (-1.15, 0.0, -0.7), Matrix.Rotation(0.3, 3, "Y"), 0.36, 0.28, 0.3)
+    plant_pot(body, (1.2, 0.0, -0.8), 0.34)
+    mono_faces(-1.05, 1.05, -1.05, 1.05, 0.0, 2.1)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, 1.37
+    FP.append([-1.3, -1.2, 2.6, 2.4])
+    ACTORS.append([0.684, 0.0, 0.0, -math.pi / 2, "Sitting_Talking", "pleb"])
+    ACTORS.append([-0.684, 0.0, 0.0, math.pi / 2, "Sitting_Idle", "pleb"])
+    return hb + 0.2
+
+
+def marionette(body, at, c1, c2, helmet=False):
+    """кукла-марионетка: туловище, юбка или туника, голова, руки; нити к ваге наверху"""
+    x, y, z = at
+    body.box((x, y + 0.13, z), (0.1, 0.12, 0.06), J(c1, 0.05), mat=M_CLOTH)
+    body.lathe((x, y, z), [(0.08, 0.0), (0.06, 0.08)], 8, J(c2, 0.05), mat=M_CLOTH)
+    ball(body, (x, y + 0.24, z), 0.045, col("#e0b48a"), seg=8, rings=4)
+    if helmet:
+        body.lathe((x, y + 0.25, z), [(0.05, 0.0), (0.045, 0.04), (0.0, 0.06)], 8, col(BRONZE))
+        disc(body, (x - 0.07, y + 0.13, z + 0.03), 0.05, 0.05, 0.01, col("#b02a2a"), Matrix.Rotation(math.pi / 2, 3, "Z"), seg=10)
+    else:
+        ball(body, (x, y + 0.27, z - 0.02), 0.04, col("#5a3a22"), seg=6, rings=3)
+    for s in (-1, 1):
+        rod(body, (x + s * 0.06, y + 0.18, z), (x + s * 0.09, y + 0.07, z + 0.02), 0.012, col("#e0b48a"))
+    vy = y + 0.55
+    body.box((x, vy, z), (0.18, 0.015, 0.015), J(P["wood"], 0.05), mat=M_WOOD)
+    for (ax, ay) in ((0, 0.28), (-0.09, 0.08), (0.09, 0.08)):
+        rod(body, (x + ax, y + ay, z), (x + ax * 0.9, vy, z), 0.0025, col("#e8e0d0"))
+
+
+def mon_puppets(body, emb):
+    """кукольный театр: дощатая будка, занавес снизу, окно сцены с расписным задником и двумя марионетками (рыцарь и
+    купчиха на нитях), полосатый навес и вывеска FABVLAE, факелы по бокам, скамейки для детей, сундук с куклами"""
+    pal = ["#c0392b", "#3f6fa8", "#7a3f8a", "#4f8a5a"][rng.randrange(4)]
+    x0, x1, zb, zf = -1.2, 1.2, -0.9, -0.1
+    for (px, pz) in ((x0, zb), (x1, zb), (x0, zf), (x1, zf)):
+        rod(body, (px, 0.0, pz), (px, 2.76 if pz < -0.5 else 2.62, pz), 0.05, J(P["wood"], 0.05), mat=M_WOOD)
+    Pf = lambda u, v, n: Vector((x0 + u, v, zf + n))
+    drape(body, Pf, Vector((0, 0, 1)), 1.2, 1.25, 2.4, 1.2, 0.03, pal, folds=6, amp=0.02)
+    drape(body, Pf, Vector((0, 0, 1)), 1.2, 2.6, 2.4, 0.5, 0.03, "#f4efe2", folds=6, amp=0.015)
+    body.box((0.0, 1.25, zf + 0.06), (2.5, 0.06, 0.12), J(P["wood"], 0.05), mat=M_WOOD)                # полочка сцены
+    body.box((0.0, 2.05, zf + 0.05), (2.45, 0.05, 0.08), J(P["wood"], 0.05), mat=M_WOOD)
+    body.box((0.0, 1.65, zb + 0.05), (2.4, 0.8, 0.03), J("#5f8fb0", 0.04), mat=M_CLOTH)                # задник: небо
+    for k in range(5):                         # и холмы с деревцами
+        ball(body, (-0.9 + k * 0.45, 1.32, zb + 0.08), 0.28, J("#6f9a4a", 0.06), seg=8, rings=3, sq=(1.0, 0.5, 0.2))
+    for k in range(3):
+        leaf_blob(body, (-0.7 + k * 0.7, 1.6, zb + 0.1), 0.1, J("#3f6b2a", 0.08))
+    marionette(body, (-0.32, 1.32, zf - 0.12), "#b02a2a", "#7a2a2a", helmet=True)
+    marionette(body, (0.3, 1.32, zf - 0.12), "#3f6fa8", "#d8b0c8")
+    Pa = lambda u, v, n: Vector((-1.3 + u, v, zb - 0.1 + n))
+    awning(body, Pa, Vector((1, 0, 0)), Vector((0, 0, 1)), 1.3, 2.75, 2.6, 1.15, ("#f4efe2", pal), poles=False, drop=0.2, braces=False)
+    body.box((0.0, 2.3, zf + 0.08), (0.62, 0.42, 0.03), J("#6b4428", 0.05), mat=M_WOOD)
+    sign_board(body, lambda u, v, n: Vector((u, v, zf + 0.095 + n)), Vector((1, 0, 0)), Vector((0, 0, 1)), 0.0, 2.3, 0.56, 0.36, 0.002, "puppets")
+    for s in (-1, 1):
+        torch_post(body, emb, (s * 1.5, 0.0, zf + 0.1), 1.9)
+        bench2(body, (s * 0.58, 0.0, 1.3), Matrix.Identity(3), 0.8)
+    rug(body, 0.0, 0.65, 1.3, 0.7, pal, "#e8c86a")
+    crate(body, (1.55, 0.0, -0.6), Matrix.Rotation(0.3, 3, "Y"), 0.42, 0.3, 0.32, c="#8a5a32")
+    marionette(body, (1.5, 0.3, -0.62), "#4f8a5a", "#e8c86a")
+    basket2(body, (-1.55, 0.0, -0.55), 0.16, 0.22)
+    mono_faces(x0, x1, zb, zf, 0.0, 2.6)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, 1.8
+    FP.append([-1.75, -1.1, 3.5, 2.65])
+    ACTORS.append([1.26, 0.0, 0.18, -0.6, "Spell_Simple_Idle", "any"])
+    return 2.9
+
+
+def mon_mimes(body, emb):
+    """помост мимов: дощатая сцена на каменном основании с подзором-фестонами, лесенка сбоку, задник-скена с двумя
+    дверями под занавесками, маски на заднике, вывеска MIMI, гирлянды; факелы на шестах, сундук, амфора и лира на
+    сцене; скамьи для зрителей и жаровни"""
+    pal = ["#c0392b", "#3f6fa8", "#7a3f8a", "#4f8a5a"][rng.randrange(4)]
+    sh = 0.5
+    sx0, sx1, sz0, sz1 = -1.75, 1.75, -1.85, -0.2
+    body.box((0, sh / 2 - 0.03, (sz0 + sz1) / 2), (sx1 - sx0, sh - 0.06, sz1 - sz0), J(P["stone"], 0.04), mat=M_STONE)
+    for k in range(14):                        # настил
+        body.box((sx0 + (k + 0.5) * (sx1 - sx0) / 14, sh - 0.015, (sz0 + sz1) / 2), ((sx1 - sx0) / 14 - 0.01, 0.03, sz1 - sz0 + 0.06),
+                 J(P["wood"], 0.07), mat=M_WOOD)
+    Ps = lambda u, v, n: Vector((sx0 + u, v, sz1 + 0.03 + n))
+    drape(body, Ps, Vector((0, 0, 1)), (sx1 - sx0) / 2, sh - 0.02, sx1 - sx0, sh - 0.06, 0.0, pal, folds=10, amp=0.015)
+    for k in range(4):
+        swag(body, (sx0 + k * 0.875 + 0.05, sh - 0.02, sz1 + 0.05), (sx0 + (k + 1) * 0.875 - 0.05, sh - 0.02, sz1 + 0.05), 0.12, 0.08, "#e8c86a", (0, 0, 1))
+    for k in range(3):                         # лесенка слева
+        body.box((sx0 - 0.25, (k + 1) * sh / 4 - 0.02, -0.55 - k * 0.0), (0.4, (k + 1) * sh / 4, 0.3), J(P["wood2"], 0.06), mat=M_WOOD)
+    rug(body, 0.0, -1.1, 1.6, 0.9, pal, "#e8c86a", y=sh + 0.012)
+    # скена
+    zb = sz0 + 0.1
+    body.box((0, sh + 1.25, zb), (sx1 - sx0, 2.5, 0.1), J("#e8dcc6", 0.03), mat=M_WOOD)
+    for x in (sx0 + 0.05, -0.55, 0.55, sx1 - 0.05):
+        body.box((x, sh + 1.3, zb + 0.08), (0.12, 2.6, 0.1), J("#8a5a32", 0.05), mat=M_WOOD)
+    body.box((0, sh + 2.55, zb + 0.08), (sx1 - sx0 + 0.2, 0.12, 0.16), J("#8a5a32", 0.05), mat=M_WOOD)
+    for x in (-1.15, 1.15):                    # двери под занавесками
+        body.box((x, sh + 0.8, zb + 0.055), (0.62, 1.6, 0.01), col("#2a2018"))
+        Pd = lambda u, v, n, x=x: Vector((x - 0.33 + u, v, zb + 0.07 + n))
+        drape(body, Pd, Vector((0, 0, 1)), 0.33, sh + 1.62, 0.66, 1.55, 0.0, "#e8c86a" if x < 0 else pal, folds=3, amp=0.02)
+    for k, x in enumerate((-0.25, 0.25)):      # маски: комедия и трагедия
+        disc(body, (x, sh + 1.85, zb + 0.08), 0.13, 0.16, 0.03, col("#f2e6c8"), Matrix.Rotation(math.pi / 2, 3, "X"), seg=12)
+        for s in (-1, 1):
+            body.box((x + s * 0.045, sh + 1.9, zb + 0.1), (0.04, 0.025, 0.01), col("#1e1812"))
+        body.box((x, sh + 1.77 + (0.01 if k == 0 else -0.01), zb + 0.1), (0.08, 0.025, 0.01), col("#8a2020"), Matrix.Rotation(0.3 if k == 0 else -0.3, 3, "Z"))
+    body.box((0.0, sh + 2.3, zb + 0.14), (0.62, 0.4, 0.03), J("#6b4428", 0.05), mat=M_WOOD)
+    sign_board(body, lambda u, v, n: Vector((u, v, zb + 0.155 + n)), Vector((1, 0, 0)), Vector((0, 0, 1)), 0.0, sh + 2.3, 0.56, 0.34, 0.002, "mimes")
+    laurel(body, (sx0 + 0.1, sh + 2.45, zb + 0.18), (sx1 - 0.1, sh + 2.45, zb + 0.18), 0.25, (0, 0, 1))
+    for s in (-1, 1):
+        torch_post(body, emb, (s * 2.0, 0.0, zb + 0.1), 2.6)
+        tripod(body, emb, (s * 1.95, 0.0, 0.4), 0.85)
+    crate(body, (-1.25, sh, -1.45), Matrix.Rotation(0.2, 3, "Y"), 0.4, 0.3, 0.3, c="#8a5a32")
+    amphora(body, (1.3, sh, -1.5), 0.45, J("#b8693f", 0.06))
+    PROPS.append(["SM_Prop_Lyre_01", -1.05, round(sh + 0.4, 3), -1.6, -0.3, 1.0, -0.2])
+    for (bx, bz) in ((-0.95, 0.95), (0.95, 0.95), (0.0, 1.75)):
+        bench2(body, (bx, 0.0, bz), Matrix.Identity(3), 1.0)
+    mono_faces(sx0, sx1, sz0, sz1, 0.0, sh + 2.6)
+    DOOR_PT[0], DOOR_PT[2] = 0.0, 2.3
+    FP.append([-2.25, -2.0, 4.5, 4.1])
+    ACTORS.append([-0.576, sh, -1.0, 0.0, "Dance", "any"])
+    ACTORS.append([0.648, sh, -1.15, 0.0, "Spell_Simple_Idle", "any"])
+    return sh + 2.9
+
+
+MONO_FN.update({"fountain": mon_fountain, "nymphaeum": mon_nymphaeum, "arch": mon_arch, "ogorod": mon_ogorod,
+                "musicians": mon_musicians, "dice": mon_dice, "puppets": mon_puppets, "mimes": mon_mimes})
+
+
 # --- большие общественные: термы (купальня в бассейнах — Spectacle) и лудус ---
 def civ_thermae(body, emb, Pf, U, N, R, x0, x1, z0, z1):
     # большой бассейн-натацио посредине, два малых по бокам, мозаика с дельфинами у входа, колоннады, статуи
@@ -4546,9 +5099,10 @@ CIVIC.update({
 
 def configure(kind, v, floors):
     global KIND, V, FLOORS, W, D, HT, PH, P, DS, MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, DOOR_PT, FP, SMOKE
-    global ACTORS, PROPS, PETS_K
+    global ACTORS, PROPS, PETS_K, JETS
     KIND, V, FLOORS = kind, v, floors
     PROPS = []
+    JETS = []
     PETS_K = []
     W = 3.6
     D = 4.3 if kind == "patrician" else 3.9          # глубина — как у прежних домов (след при перестройке тот же)
@@ -5147,6 +5701,8 @@ def main():
                                "smoke": SMOKE, "actors": ACTORS, "props": PROPS}
         if kind == "civic":
             meta["houses"][hid]["tint"] = DS.get("tint", "#f3ebdf")
+        if JETS:
+            meta["houses"][hid]["jets"] = JETS
         if PETS_K:
             meta["houses"][hid]["pets"] = [[e[0], [round(c / 0.72, 3) for c in e[1]]] + e[2:] for e in PETS_K]
         all_canon.update(CANON)

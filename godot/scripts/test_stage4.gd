@@ -314,9 +314,10 @@ func _new() -> void:
 		cust["act"] = "shop"
 		cust["dest"] = {"act": "shop", "bid": bk["id"]}
 		game.people._on_step(cust, "PickUp_Table")
-		check(String(cust.get("carry", "")) == "basket", "купил в пекарне — несёт корзину домой")
+		# из рук в руки (HandProps.GOODS): в пекарне — хлеб, который пекарь показывал
+		check(String(cust.get("carry", "")) == "bread", "купил в пекарне — несёт хлеб домой", cust.get("carry", ""))
 		cust["state"] = "walk"
-		check(game.people.props_want(cust) == ["basket"], "по дороге — корзина в руке")
+		check(game.people.props_want(cust) == ["bread"], "по дороге — хлеб в руке")
 		game.people._door_done(cust, "home", {})
 		check(not cust.has("carry"), "донёс — без корзины")
 	# --- 4.6: леса на стройке ---

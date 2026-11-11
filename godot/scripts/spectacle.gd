@@ -1274,6 +1274,8 @@ func _idle_clip(V: Dictionary, seat := {}) -> String:
 	var x := rng.randf()
 	if show and x < 0.22:
 		return "lean"
+	if V["kind"] == "tavern" and x < 0.45:
+		return "drink" if rng.randf() < 0.5 else "drink_m"          # в таверне пьют вино за столом
 	x = rng.randf()
 	if x < 0.32:
 		return "sit"

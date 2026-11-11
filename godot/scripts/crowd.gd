@@ -23,6 +23,8 @@ const CLIPS := [
 	["cheer", "Sitting_Idle", true, "cheer"],
 	["cheer_m", "Sitting_Idle_M", true, "cheer_l"],
 	["lean", "Sitting_Idle", true, "lean"],
+	["drink", "Sitting_Idle", true, "drink"],     # таверна: подносит чашу ко рту, другая рука на столе
+	["drink_m", "Sitting_Idle_M", true, "drink_l"],
 	["enter", "Sitting_Enter", false, "enter"],
 	["walk", "Walk", true, ""],
 	["stand", "Idle", true, ""],
@@ -33,7 +35,7 @@ const CLIPS := [
 	["pray", "Spell_Simple_Idle", true, ""],
 ]
 ## Длина собранных клипов (с), чтобы движение рук укладывалось в круг целое число раз
-const DERIVED_LEN := {"clap": 3.333, "cheer": 3.333, "cheer_l": 3.333, "lean": 3.333, "drive": 2.5}
+const DERIVED_LEN := {"clap": 3.333, "cheer": 3.333, "cheer_l": 3.333, "lean": 3.333, "drive": 2.5, "drink": 4.2, "drink_l": 4.2}
 
 static var _clip_idx := {}       # имя клипа → номер
 static var _clip_tab := []       # [первая строка, кадров, петля, fps] по номерам
@@ -335,6 +337,12 @@ class _Skel:
 			"lean":
 				_legs(lift, 1.0)
 				_lean(t, L)
+			"drink":
+				_legs(lift, 1.0)
+				_drink(t, L, "Right")
+			"drink_l":
+				_legs(lift, 1.0)
+				_drink(t, L, "Left")
 			"drive":
 				_drive(t, L)
 			"enter":
@@ -470,6 +478,32 @@ class _Skel:
 		_ik(ra, b("RightLowerArm"), b("RightHand"), at - left * sh * 0.22, -left - Vector3.UP)
 
 	## Подался вперёд (смотрит, затаив дыхание): спина наклонена, голова чуть поднята, руки на коленях
+	## Пьёт за столом таверны: рука с чашей лежит на столе, раз за круг поднимается ко рту (голова чуть назад),
+	## другая — на столе
+	func _drink(t: float, L: float, side: String) -> void:
+		var fr := _frame()
+		var fwd: Vector3 = fr[0]
+		var left: Vector3 = fr[2]
+		var sg := 1.0 if side == "Left" else -1.0       # куда от середины — рука с чашей
+		var la := b("LeftUpperArm")
+		var ra := b("RightUpperArm")
+		var sh := glob[la].origin.distance_to(glob[ra].origin)
+		var c := (glob[la].origin + glob[ra].origin) * 0.5
+		var hd := b("Head")
+		var mouth := glob[hd].origin + fwd * sh * 0.42 - Vector3.UP * sh * 0.05 + left * sg * sh * 0.05
+		var u := fmod(t, L) / L
+		var w := smoothstep(0.12, 0.32, u) * (1.0 - smoothstep(0.58, 0.8, u))
+		var cup_rest := c + fwd * sh * 1.05 - Vector3.UP * sh * 0.8 + left * sg * sh * 0.35
+		var other := c + fwd * sh * 1.0 - Vector3.UP * sh * 0.85 - left * sg * sh * 0.4
+		var arm := b(side + "UpperArm")
+		_ik(arm, b(side + "LowerArm"), b(side + "Hand"), cup_rest.lerp(mouth, w), left * sg - Vector3.UP)
+		var os := "Right" if side == "Left" else "Left"
+		_ik(b(os + "UpperArm"), b(os + "LowerArm"), b(os + "Hand"), other, -left * sg - Vector3.UP)
+		var ax := Vector3.UP.cross(fwd).normalized()
+		var g := glob[hd]
+		g.basis = Basis(ax, -0.22 * w) * g.basis
+		set_glob(hd, g)
+
 	func _lean(t: float, L: float) -> void:
 		var fr := _frame()
 		var ax := Vector3.UP.cross(fr[0] as Vector3).normalized()    # поворот вокруг ax на +угол клонит вперёд

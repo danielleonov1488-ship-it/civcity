@@ -28,6 +28,7 @@ var free_parts := {}            # номера деталей, что землю
 var kit_id := ""
 var fp_override := []           # [Rect2] — след на земле
 var kit_faces := []             # стены для WallDecor (как WallDecor.faces)
+var jets := []                  # струи фонтана из своего набора: [точка, радиус завесы капель, скорость вверх] (Fountains)
 var perch := []                 # [Vector3] — где сидят птицы (конёк)
 var kit_mov := []               # створки: [номер детали, петля, вдоль стены, наружу, сторона, угол раскрытия, вид]
 var kit_sq := Transform3D.IDENTITY   # сжатие дома старого сохранения (метры)

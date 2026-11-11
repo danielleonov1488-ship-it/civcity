@@ -30,6 +30,22 @@ const DEF := {
 	# носильщики (People._porter): мешок пшеницы на плече
 	"sack": {"mesh": "SM_Prop_Sack_02", "hand": "LeftHand", "h": 0.3, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.02, 0.04), "anchor": "top"},
 	"jar": {"mesh": "SM_Prop_Jar_01", "hand": "LeftHand", "h": 0.2, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.01, 0.04), "anchor": "top"},
+	# товар из рук в руки (владелец 11.11: «давали друг другу предметы, которые за прилавками»): продавец показывает —
+	# покупатель берёт и несёт домой
+	"ham": {"mesh": "#ham", "hand": "RightHand", "h": 0.34, "raw": true, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.02, 0.06)},
+	"fish": {"mesh": "#fish", "hand": "RightHand", "h": 0.36, "raw": true, "up": Vector3(0, 1, 0), "fwd": Vector3(1, 0, 0), "off": Vector3(0, -0.05, 0.05)},
+	"grapes": {"mesh": "#grapes", "hand": "RightHand", "h": 0.2, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.03, 0.04), "anchor": "top"},
+	"cabbage": {"mesh": "#cabbage", "hand": "RightHand", "h": 0.18, "raw": true, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, 0.0, 0.08)},
+	"sandals": {"mesh": "#sandals", "hand": "RightHand", "h": 0.24, "raw": true, "up": Vector3(0, 1, 0), "fwd": Vector3(1, 0, 0), "off": Vector3(0, -0.02, 0.05)},
+	"necklace": {"mesh": "#necklace", "hand": "RightHand", "h": 0.2, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.01, 0.04), "anchor": "top"},
+	"bowl": {"mesh": "SM_Prop_Bowl_04", "hand": "RightHand", "h": 0.1, "raw": true, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, 0.02, 0.08)},
+}
+
+## Что продавец показывает и отдаёт в руки (People: «вот, держите» — и покупатель уносит именно это)
+const GOODS := {
+	"butcher": "ham", "bakery": "bread", "stall_fish": "fish", "stall_fruit": "grapes", "stall_veg": "cabbage", "cobbler": "sandals",
+	"wineshop": "jug", "oilshop": "amphora", "potter": "pot", "weaver": "cloth", "tailor": "cloth", "dyer": "cloth", "fullonica": "cloth",
+	"perfumer": "jar", "jeweler": "necklace", "medic": "jar", "herbalist": "jar", "lamps": "jar", "thermopolium": "bowl", "ogorod": "cabbage",
 }
 
 ## Кто что держит на работе: тип постройки → [вещи слота 0, слота 1, …] (пусто — без вещей). Слоты — места работников
@@ -205,6 +221,36 @@ static func _kit(nm: String) -> Mesh:
 		"#razor":
 			k.boxc(Vector3(0, 0, 0.0), Vector3(0.12, 0.5, 0.1), Color("6b4a2e"))
 			k.boxc(Vector3(0, 0.45, 0.0), Vector3(0.05, 0.4, 0.3), Color("c9c4b8"))
+		"#ham":                                  # окорок: мясо с жирком, косточка, верёвочка
+			k.blob(Vector3(0, -0.15, 0), Vector3(0.5, 0.75, 0.42), Color("a0463a"), 3, 0.12)
+			k.blob(Vector3(0.06, -0.05, 0.12), Vector3(0.3, 0.45, 0.16), Color("e8d0b0"), 5, 0.1)
+			k.rod(Vector3(0, 0.2, 0), Vector3(0, 0.45, 0), 0.06, 6, Color("efe6d2"))
+			k.rod(Vector3(0, 0.42, 0), Vector3(0, 0.52, 0), 0.025, 4, Color("c9b48a"))
+		"#fish":                                 # рыба за хвост: серебристое тело, хвост, плавник
+			k.blob(Vector3(0, -0.3, 0), Vector3(0.18, 0.62, 0.08), Color("9aa6b2"), 7, 0.08)
+			k.blob(Vector3(0, -0.25, 0.02), Vector3(0.12, 0.4, 0.05), Color("d9dfe5"), 9, 0.06)
+			k.cone(Vector3(0, 0.0, 0), 0.08, 0.12, 4, Color("7f8a96"))
+			k.boxc(Vector3(0, -0.58, 0.03), Vector3(0.025, 0.025, 0.02), Color("1e1812"))
+		"#grapes":                               # гроздь винограда с листком
+			for i in 9:
+				var row := i / 3
+				k.blob(Vector3((i % 3 - 1) * 0.07 * (1.0 - row * 0.25), -0.06 - row * 0.08, (i % 2) * 0.03), Vector3(0.08, 0.08, 0.08), Color("5a2d5f"), i, 0.1)
+			k.blob(Vector3(0.04, 0.02, 0), Vector3(0.16, 0.04, 0.12), Color("5f8f3a"), 11, 0.15)
+			k.rod(Vector3(0, 0.0, 0), Vector3(0, 0.06, 0), 0.01, 4, Color("6b4a2e"))
+		"#cabbage":                              # кочан капусты
+			k.blob(Vector3.ZERO, Vector3(0.3, 0.26, 0.3), Color("7fae55"), 2, 0.12)
+			k.blob(Vector3(0, 0.04, 0), Vector3(0.22, 0.2, 0.22), Color("a8c87a"), 4, 0.1)
+		"#sandals":                              # пара сандалий на ремешке
+			for sx: float in [-0.06, 0.06]:
+				k.boxc(Vector3(sx, -0.1, 0), Vector3(0.09, 0.3, 0.02), Color("8a5a32"))
+				k.boxc(Vector3(sx, -0.05, 0.015), Vector3(0.1, 0.02, 0.012), Color("5e3d24"))
+				k.boxc(Vector3(sx, -0.15, 0.015), Vector3(0.1, 0.02, 0.012), Color("5e3d24"))
+			k.rod(Vector3(-0.06, 0.05, 0), Vector3(0.06, 0.05, 0), 0.01, 4, Color("5e3d24"))
+		"#necklace":                             # бусы: золотые и красные, кулон
+			for i in 14:
+				var a := PI * 1.15 * i / 13.0 - PI * 0.075
+				k.blob(Vector3(cos(a) * 0.09, -sin(a) * 0.14, 0), Vector3(0.025, 0.025, 0.025), Color("d9b54a") if i % 2 == 0 else Color("b02a2a"), i, 0.05)
+			k.blob(Vector3(0, -0.17, 0), Vector3(0.045, 0.06, 0.02), Color("3f6fa8"), 21, 0.05)
 	var am := k.mesh()
 	am.surface_set_material(0, Kit.material(0.6))
 	return am
