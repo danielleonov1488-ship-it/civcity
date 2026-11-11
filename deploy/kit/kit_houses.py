@@ -5007,6 +5007,253 @@ MONO_FN.update({"fountain": mon_fountain, "nymphaeum": mon_nymphaeum, "arch": mo
                 "musicians": mon_musicians, "dice": mon_dice, "puppets": mon_puppets, "mimes": mon_mimes})
 
 
+# --- почтовая станция (центр города), 8 уровней (владелец 12.11: «переделай как можно больше моделек… доводи до идеала») ---
+# Ядро — дом-контора W×D (build_house: стены, окна со ставнями, двери, крыша), по бокам — конюшня и двор/таверна, спереди
+# с 3 уровня — портик. Всё строится вокруг ядра с серединой в 0, а в игре сдвигается на CENTER_OFF по z (kit.json «off»),
+# чтобы фасад стоял, где у прежней станции: перед ней площадь, где ждут семьи и встаёт повозка.
+CENTER_OFF = -2.0
+
+
+def hay_bale(body, at, R, w=0.6, h=0.32, d=0.36):
+    body.box(at, (w, h, d), J("#d8b860", 0.06), R)
+    for k in (-1, 1):
+        body.box(LP(at, R, k * w * 0.28, 0, 0), (0.025, h + 0.01, d + 0.01), col("#9a7a3a"), R)
+    for k in range(5):
+        body.box(LP(at, R, rng.uniform(-w / 2, w / 2), h / 2 + 0.01, rng.uniform(-d / 2, d / 2)), (0.12, 0.012, 0.01), col("#e8cc78"),
+                 R @ Matrix.Rotation(rng.uniform(0, 3), 3, "Y"))
+
+
+def trough(body, at, R, ln=1.1):
+    """каменная поилка с водой"""
+    body.box(LP(at, R, 0, 0.22, 0), (ln, 0.44, 0.42), J(P["stone"], 0.04), R, mat=M_STONE)
+    body.box(LP(at, R, 0, 0.4, 0), (ln - 0.1, 0.03, 0.32), col("#6fa8c0"), R)
+
+
+def milestone(body, at, h=1.15):
+    """верстовой столб (милиарий): цилиндр на плинте, полоса с надписью, шар наверху"""
+    x, y, z = at
+    body.box((x, y + 0.1, z), (0.42, 0.2, 0.42), J(P["stone"], 0.04), mat=M_STONE)
+    body.lathe((x, y + 0.2, z), [(0.17, 0.0), (0.16, h - 0.25), (0.18, h - 0.2), (0.18, h - 0.14)], 14, J("#d8d0c0", 0.03), close_top=True, mat=M_STONE)
+    for k in range(3):
+        body.lathe((x, y + 0.55 + k * 0.1, z), [(0.163, 0.0), (0.163, 0.02)], 14, col("#7a3a2a"))
+    ball(body, (x, y + h + 0.02, z), 0.1, J(MARBLE, 0.03, 0.0, 0.0), seg=8, rings=4)
+
+
+def wood_stable(body, emb, x0, x1, z0, z1, s):
+    """деревянный навес конюшни на столбах: черепица, ясли с сеном, поилка, сбруя на перекладине, мешки"""
+    h = 2.05
+    for (px, pz) in ((x0 + 0.08, z0 + 0.1), (x1 - 0.08, z0 + 0.1), (x0 + 0.08, z1 - 0.1), (x1 - 0.08, z1 - 0.1), (x1 - 0.08, (z0 + z1) / 2)):
+        body.box((px, h / 2, pz), (0.12, h, 0.12), J(P["wood"], 0.05), mat=M_WOOD)
+    body.box((x1 - 0.08, h - 0.05, (z0 + z1) / 2), (0.1, 0.1, z1 - z0), J(P["wood2"], 0.05), mat=M_WOOD)
+    roof(body, False, x0 - 0.05, x1 + 0.1, z0, z1, h, pitch_deg=20.0, oe=0.25, og=0.15, antefix=False)
+    for k in range(3):                         # ясли вдоль стены ядра
+        body.box((x0 + 0.3, 0.5, z0 + 0.6 + k * 1.1), (0.36, 0.08, 0.9), J(P["wood2"], 0.05), mat=M_WOOD)
+        for j in range(4):
+            body.box((x0 + 0.3, 0.62, z0 + 0.25 + k * 1.1 + j * 0.22), (0.04, 0.22, 0.04), J(P["wood"], 0.05), mat=M_WOOD)
+        for j in range(6):
+            body.box((x0 + 0.3 + rng.uniform(-0.1, 0.1), 0.62, z0 + 0.6 + k * 1.1 + rng.uniform(-0.35, 0.35)), (0.14, 0.04, 0.02), col("#e0c070"),
+                     Matrix.Rotation(rng.uniform(0, 3), 3, "Y") @ Matrix.Rotation(rng.uniform(-0.6, 0.6), 3, "Z"))
+    hay_bale(body, (x1 - 0.45, 0.16, z0 + 0.45), Matrix.Rotation(0.2, 3, "Y"))
+    hay_bale(body, (x1 - 0.5, 0.48, z0 + 0.5), Matrix.Rotation(-0.1, 3, "Y"), 0.55, 0.3, 0.34)
+    trough(body, (x1 - 0.35, 0.0, z1 - 0.9), Matrix.Rotation(math.pi / 2, 3, "Y"), 1.0)
+    rod(body, (x0 + 0.1, 1.45, z1 - 0.3), (x1 - 0.1, 1.45, z1 - 0.3), 0.02, J(P["wood"], 0.05), mat=M_WOOD)
+    for k in range(2):                         # хомуты и уздечки на перекладине
+        torus(body, (x0 + 0.5 + k * 0.5, 1.28, z1 - 0.3), Matrix.Rotation(math.pi / 2, 3, "X"), 0.13, 0.03, J("#6b4428", 0.05), seg=10, seg2=4)
+    if s >= 1:
+        for k in range(2):
+            sack(body, (x1 - 0.35 - k * 0.3, 0.0, z0 + 1.25), 0.14, 0.34, open_=False)
+    PERCH.append([round((x0 + x1) / 2, 3), round(h + 0.45, 3), round((z0 + z1) / 2, 3)])
+
+
+def stone_stable(body, emb, x0, x1, z0, z1, s):
+    """каменная конюшня: стены из тёсаного камня, арка ворот (в них — повозка), фронтон, с 6 уровня — сеновал наверху"""
+    h = 2.6 if s < 6 else 3.6
+    ash = J("#e8dcc6", 0.02, 0.0, 0.0)
+    body.box(((x0 + x1) / 2, h / 2, z0 + 0.15), (x1 - x0, h, 0.3), ash, mat=M_ASHM)
+    body.box((x1 - 0.15, h / 2, (z0 + z1) / 2), (0.3, h, z1 - z0), ash, mat=M_ASHM)
+    cx, r = (x0 + x1) / 2, 0.6
+    for xs in ((x0, cx - r), (cx + r, x1)):
+        body.box(((xs[0] + xs[1]) / 2, h / 2, z1 - 0.15), (xs[1] - xs[0], h, 0.3), ash, mat=M_ASHM)
+    arch_wall(body, cx, r, 1.45, h, z1 - 0.3, z1, ash)
+    body.box((cx, 0.005, z1 - 0.6), (2 * r, 0.01, 1.0), J("#bfb4a2", 0.04), mat=M_STONE)
+    yr, rise = roof(body, False, x0 - 0.05, x1 + 0.08, z0, z1, h, pitch_deg=22.0, oe=0.2, og=0.12, antefix=True)
+    tri = [Vector((x0, h, z1 + 0.01)), Vector((x1, h, z1 + 0.01)), Vector(((x0 + x1) / 2, h + rise * 0.95, z1 + 0.01))]
+    body.face([body.v(q) for q in tri], J(MARBLE, 0.03, 0.0, 0.0), ("dir", (0, 0, 1)), mat=M_MARBLE)
+    clipeus(body, lambda u, v, n: Vector((u, v, z1 + 0.01 + n)), Vector((0, 0, 1)), cx, h + rise * 0.4, 0.13)
+    if s >= 6:                                 # сеновал: окошко с сеном
+        body.box((cx, h - 0.55, z1 + 0.005), (0.5, 0.4, 0.02), col("#2a2018"))
+        hay_bale(body, (cx, h - 0.72, z1 - 0.05), Matrix.Identity(3), 0.42, 0.2, 0.2)
+    trough(body, (x1 + 0.3, 0.0, z1 - 0.6), Matrix.Rotation(math.pi / 2, 3, "Y"), 0.9)
+    hay_bale(body, (x0 + 0.4, 0.16, z1 + 0.25), Matrix.Rotation(0.3, 3, "Y"))
+    PERCH.append([round(cx, 3), round(h + rise + 0.05, 3), round((z0 + z1) / 2, 3)])
+    return h + rise
+
+
+def yard(body, emb, x0, x1, z0, z1, s):
+    """двор с плетнём и повозкой; с 2 уровня — увитая виноградом пергола над длинным столом для проезжающих"""
+    if s < 2:
+        for (a, b) in (((x0, z0 + 0.2), (x0, z1 - 0.2)), ((x0, z1 - 0.2), (x0 + 0.6, z1 - 0.2))):
+            wattle(body, a[0], a[1], b[0], b[1], 0.75)
+        cart(body, ((x0 + x1) / 2, 0.0, (z0 + z1) / 2 + 0.2), Matrix.Rotation(-0.1, 3, "Y"))
+        hay_bale(body, (x0 + 0.45, 0.16, z0 + 0.5), Matrix.Rotation(0.4, 3, "Y"))
+        return
+    ph = 2.15
+    for (px, pz) in ((x0 + 0.15, z0 + 0.3), (x1 - 0.12, z0 + 0.3), (x0 + 0.15, z1 - 0.2), (x1 - 0.12, z1 - 0.2)):
+        rod(body, (px, 0.0, pz), (px, ph, pz), 0.05, J(P["wood"], 0.05), mat=M_WOOD)
+    for k in range(7):                         # решётка перголы
+        zz = z0 + 0.3 + k * (z1 - z0 - 0.5) / 6
+        rod(body, (x0 + 0.05, ph, zz), (x1 - 0.02, ph, zz), 0.03, J(P["wood2"], 0.05), mat=M_WOOD)
+    for xx in (x0 + 0.15, x1 - 0.12):
+        rod(body, (xx, ph + 0.04, z0 + 0.2), (xx, ph + 0.04, z1 - 0.1), 0.035, J(P["wood"], 0.05), mat=M_WOOD)
+    for k in range(26):                        # лоза и грозди
+        p = (rng.uniform(x0 + 0.1, x1 - 0.1), ph + 0.08 + rng.uniform(-0.04, 0.06), rng.uniform(z0 + 0.3, z1 - 0.2))
+        leaf_blob(body, p, 0.16, J(rng.choice(["#4f7d33", "#5f8f3a", "#3f6b2a"]), 0.1))
+        if k % 4 == 0:
+            grapes(body, (p[0], p[1] - 0.12, p[2]), 1.0)
+    for (px, pz) in ((x0 + 0.15, z1 - 0.2), (x1 - 0.12, z1 - 0.2)):
+        for k in range(5):
+            leaf_blob(body, (px + rng.uniform(-0.08, 0.08), 0.3 + k * 0.38, pz + rng.uniform(-0.06, 0.06)), 0.1, J("#4f7d33", 0.1))
+    tx, tz = (x0 + x1) / 2, (z0 + z1) / 2
+    body.box((tx, 0.72, tz), (0.7, 0.05, z1 - z0 - 1.0), J(P["wood"], 0.06), mat=M_WOOD)
+    for sz in (-1, 1):
+        for sx in (-1, 1):
+            body.box((tx + sx * 0.28, 0.35, tz + sz * ((z1 - z0 - 1.0) / 2 - 0.1)), (0.06, 0.7, 0.06), J(P["wood2"], 0.05), mat=M_WOOD)
+    for sx in (-1, 1):
+        bench2(body, (tx + sx * 0.6, 0.0, tz), Matrix.Rotation(math.pi / 2, 3, "Y"), z1 - z0 - 1.2)
+    for k in range(3):                         # на столе: кувшин, чаши, хлеб
+        zz = tz - 0.6 + k * 0.6
+        body.lathe((tx + rng.uniform(-0.15, 0.15), 0.745, zz), [(0.025, 0.0), (0.02, 0.05), (0.05, 0.08), (0.055, 0.1)], 8, col(BRONZE))
+    jug(body, (tx, 0.745, tz + 0.15), 0.22, J("#b8693f", 0.06))
+    for k in range(2):
+        ball(body, (tx + 0.12, 0.77, tz - 0.3 + k * 0.6), 0.06, J("#c8904a", 0.06), seg=8, rings=4, sq=(1.0, 0.55, 1.0))
+    amphora(body, (x0 + 0.3, 0.0, z0 + 0.6), 0.55, J("#b8693f", 0.06))
+
+
+def tavern_wing(body, emb, x0, x1, z0, z1, s):
+    """таверна сбоку: оштукатуренный объём с черепичной крышей, окна с цветами, вход под навесом, скамья и фонарь;
+    с 6 уровня — второй этаж с балкончиком"""
+    h = 2.5 if s < 6 else 4.5
+    tint = J("#e8c896", 0.03, 0.0, 0.0)
+    body.box(((x0 + x1) / 2, h / 2, (z0 + z1) / 2), (x1 - x0, h, z1 - z0), tint)
+    body.box(((x0 + x1) / 2, 0.3, (z0 + z1) / 2), (x1 - x0 + 0.04, 0.6, z1 - z0 + 0.04), J("#b85a3a", 0.04))
+    roof(body, False, x0 - 0.05, x1 + 0.05, z0, z1, h, pitch_deg=24.0, oe=0.25, og=0.15, antefix=True)
+    Pl = lambda u, v, n: Vector((x0 - n, v, z1 - u))          # бок к городу (−x)
+    Ul, Nl = Vector((0, 0, -1)), Vector((-1, 0, 0))
+    for k, u in enumerate((0.5, (z1 - z0) - 0.9)):
+        for fl in range(1 if s < 6 else 2):
+            v0 = 1.0 + fl * 2.0
+            body.box(tuple(Pl(u + 0.3, v0 + 0.35, 0.01)), (0.02, 0.7, 0.55), col("#2a2018"), RW(Ul, Nl))
+            for side in (-1, 1):
+                body.box(tuple(Pl(u + 0.3 + side * 0.42, v0 + 0.35, 0.03)), (0.04, 0.72, 0.28), J(SHUTTER_COLS["green"], 0.05), RW(Ul, Nl), mat=M_WOOD)
+            flower_box(body, Pl, RW(Ul, Nl), u + 0.3, v0 - 0.02, 0.6)
+    Pf = lambda u, v, n: Vector((x0 + u, v, z1 + n))
+    body.box(tuple(Pf((x1 - x0) / 2, 0.85, 0.01)), (0.75, 1.7, 0.02), col("#2a2018"))
+    body.box(tuple(Pf((x1 - x0) / 2, 1.78, 0.04)), (0.95, 0.12, 0.08), J(P["stone"], 0.05), mat=M_STONE)
+    awning(body, Pf, Vector((1, 0, 0)), Vector((0, 0, 1)), (x1 - x0) / 2, 2.2, x1 - x0 - 0.1, 0.8, ("#f4efe2", "#a83f2c"), poles=False, drop=0.3, braces=True)
+    hang_sign(body, Pf, Vector((1, 0, 0)), Vector((0, 0, 1)), 0.25, 2.05, "taberna", out=0.45)
+    if s >= 6:                                 # балкончик
+        body.box(tuple(Pf((x1 - x0) / 2, 2.95, 0.3)), (1.1, 0.08, 0.6), J(P["wood"], 0.05), mat=M_WOOD)
+        for k in range(7):
+            body.box(tuple(Pf((x1 - x0) / 2 - 0.5 + k * (1.0 / 6), 3.2, 0.58)), (0.03, 0.45, 0.03), J(P["wood"], 0.05), mat=M_WOOD)
+        body.box(tuple(Pf((x1 - x0) / 2, 3.44, 0.58)), (1.1, 0.04, 0.05), J(P["wood"], 0.05), mat=M_WOOD)
+        body.box(tuple(Pf((x1 - x0) / 2, 3.35, 0.01)), (0.6, 1.1, 0.02), col("#2a2018"))
+    return h
+
+
+def column_terrace(body, emb, x0p, x1p, zw, depth, s):
+    """портик на колоннах с террасой наверху: перила, цветы по углам, ковёр на перилах, лавры"""
+    zf = zw + depth
+    body.box(((x0p + x1p) / 2, 0.12, zw + depth / 2), (x1p - x0p + 0.3, 0.24, depth + 0.05), J(P["stone"], 0.03), mat=M_STONE)
+    floor_tiles(body, x0p - 0.1, x1p + 0.1, zw + 0.05, zf, 0.24, 0.45, "#e0d4bc", "#b07a5a")
+    for k in range(2):
+        body.box(((x0p + x1p) / 2, 0.06 + k * 0.06, zf + 0.1 + k * 0.0), (1.4, 0.12 - k * 0.06, 0.25 - k * 0.0), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    xs = [x0p + 0.15 + (x1p - x0p - 0.3) * k / 3 for k in range(4)]
+    colh = 2.0
+    for x in xs:
+        column3(body, (x, 0.24, zf - 0.15), colh, 0.1, seg=12, ionic=False)
+    yt = 0.24 + colh
+    body.box(((x0p + x1p) / 2, yt + 0.11, zw + depth / 2), (x1p - x0p + 0.2, 0.22, depth + 0.1), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    floor_tiles(body, x0p - 0.05, x1p + 0.05, zw + 0.02, zf + 0.0, yt + 0.22, 0.42, "#e8dcc6", "#b8826a")    # пол террасы
+    Pe = lambda u, v, n: Vector((x0p - 0.1 + u, v, zf - 0.05 + n))
+    dentils(body, Pe, Vector((1, 0, 0)), Vector((0, 0, 1)), 0.0, x1p - x0p + 0.2, yt + 0.25)
+    for k in range(13):                        # балясины перил
+        body.lathe((x0p + k * (x1p - x0p) / 12, yt + 0.25, zf - 0.08), [(0.035, 0.0), (0.05, 0.12), (0.03, 0.3), (0.04, 0.38)], 8, J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    body.box(((x0p + x1p) / 2, yt + 0.66, zf - 0.08), (x1p - x0p + 0.1, 0.06, 0.12), J(MARBLE, 0.04, 0.0, 0.0), mat=M_MARBLE)
+    for s2 in (-1, 1):
+        urn_flowers(body, (s2 * ((x1p - x0p) / 2 - 0.05) + (x0p + x1p) / 2, yt + 0.25, zf - 0.3), 0.36)
+    drape(body, lambda u, v, n: Vector((x0p + 0.5 + u, v, zf - 0.02 + n)), Vector((0, 0, 1)), 0.6, yt + 0.68, 1.2, 0.55, 0.0, "#a83f2c", folds=4)
+    laurel(body, (xs[1] + 0.15, yt - 0.05, zf - 0.02), (xs[2] - 0.15, yt - 0.05, zf - 0.02), 0.15, (0, 0, 1))
+    for k in range(3):
+        swag(body, (xs[k] + 0.14, yt - 0.02, zf - 0.04), (xs[k + 1] - 0.14, yt - 0.02, zf - 0.04), 0.2, 0.14, "#3f6fa8", (0, 0, 1))
+    return zf
+
+
+def build_center_front(s):
+    def front(body, emb, Pf, U, N, R, x0, x1, z0, z1):
+        fx0, fx1 = (-4.4, 4.36) if s < 3 else (-5.0, 4.89)
+        # правое крыло — конюшня
+        if s < 4:
+            wood_stable(body, emb, x1, fx1 - 0.15, z0 + 0.1, z1 + 0.4, s)
+        else:
+            stone_stable(body, emb, x1, fx1 - 0.2, z0 + 0.1, z1 + 0.25, s)
+            cart(body, ((x1 + fx1) / 2 - 0.1, 0.0, z1 - 0.2), Matrix.Rotation(math.pi, 3, "Y"))
+        # левое крыло — двор, потом таверна
+        if s < 4:
+            yard(body, emb, fx0 + 0.15, x0, z0 + 0.1, z1 + 0.3, s)
+        else:
+            tavern_wing(body, emb, fx0 + 0.15, x0, z0 + 0.1, z1 - 0.4, s)
+        zfront = z1
+        if s >= 5:
+            zfront = z1 + 2.2
+            temple_front(body, -2.3, 2.3, z1, 2.2, 0.36, 2.15 if s < 6 else 2.45, 4, key="tymp_pref", ins=None, r=0.11,
+                         swags="#3f6fa8" if s < 7 else "#a83f2c")
+            if s >= 6:
+                for s2 in (-1, 1):
+                    statue_prop(s2 * 2.75, z1 + 1.9, 0.0, 0.6)
+            if s >= 7:
+                banner(body, Pf, U, N, "front", 0.55, HT - 0.3, 0.42, 1.0, 0.06, 0)
+                banner(body, Pf, U, N, "front", W - 0.55, HT - 0.3, 0.42, 1.0, 0.06, 1)
+        elif s >= 3:
+            zfront = column_terrace(body, emb, -2.25, 2.25, z1, 2.05, s)
+        else:
+            for s2 in (-1, 1):                 # скамьи у стены по сторонам двери, амфора и горшок у их концов
+                marble_bench(body, (s2 * 1.65, 0.0, z1 + 0.3), Matrix.Identity(3), 1.0)
+            amphora(body, (-2.35, 0.0, z1 + 0.35), 0.5, J("#b8693f", 0.06))
+            plant_pot(body, (2.35, 0.0, z1 + 0.3), 0.4)
+        if s >= 4:                             # львы у входа (Synty), по краям — для стража место
+            for s2 in (-1, 1):
+                PROPS.append(["SM_Prop_Statue_Lion_01", round(s2 * 1.45, 3), 0.0, round(zfront + 0.55, 3), 0.0, 0.32])
+        # перед станцией — по краям площади: верстовой столб, знамя на шесте, свет
+        milestone(body, (fx0 + 0.45, 0.0, 4.2))
+        rod(body, (fx1 - 0.45, 0.0, 4.15), (fx1 - 0.45, 3.0, 4.15), 0.035, J(P["wood"], 0.05), mat=M_WOOD)
+        Pb = lambda u, v, n: Vector((fx1 - 0.45 - 0.3 + u, v, 4.15 + n))
+        banner(body, Pb, Vector((1, 0, 0)), Vector((0, 0, 1)), "x", 0.3, 2.9, 0.42, 1.0, 0.02, 0)
+        tripod(body, emb, (fx0 + 0.45, 0.0, 3.3), 0.95)
+        tripod(body, emb, (fx1 - 0.45, 0.0, 3.3), 0.95)
+        if s >= 2:
+            plant_pot(body, (fx0 + 0.9, 0.0, 4.25), 0.42)
+        DOOR_PT[2] = 2.79 if s < 3 else 4.99
+        ACTORS.append([round(0.88, 3), 0.0 if s < 3 else (0.24 if s < 5 else 0.36), round(0.88 - CENTER_OFF, 3), 0.4, "Idle", "any"])
+        if s >= 2:
+            ACTORS.append([-2.28, 0.0, round(3.16 - CENTER_OFF, 3), 0.0, "Sword_Idle", "soldier"])
+        return -2.5, 4.55, fx0, fx1
+    return front
+
+
+for _s in range(8):
+    _fl = 1 if _s < 1 else (2 if _s < 6 else 3)
+    _wins = [(0, 0.5, 1.15, 0.8, 1.5, True, _s >= 1, True, False), (0, 4.05, 4.7, 0.8, 1.5, True, _s >= 1, True, False)]
+    for _f in range(1, _fl):
+        _wins += [(_f, 0.5, 1.15, 0.72, 1.48, True, True, True, False, _s >= 5), (_f, 4.05, 4.7, 0.72, 1.48, True, True, True, False, _s >= 5),
+                  (_f, 2.3, 2.9, 0.72 if (_s < 3 or _f > 1) else 0.1, 1.48, True, _f == _fl - 1, True, False, _s >= 5)]
+    CIVIC["center%d" % _s] = {"w": 5.2, "d": 4.5, "floors": _fl, "roof": "x", "pal": 0, "tint": "#e8b878" if _s < 5 else "#f0dcb4",
+                              "shutter": "green" if _s < 5 else "teal", "door": "oak" if _s < 5 else "bronze", "door_u": (2.0, 3.2),
+                              "door_h": 1.75, "double": True, "corners": "stone", "sign": "mansio", "fwins": _wins, "off": CENTER_OFF}
+    if _s >= 3:
+        CIVIC["center%d" % _s]["lower"] = "brick"
+    CIVIC_FRONTS["center%d" % _s] = build_center_front(_s)
+
+
 # --- большие общественные: термы (купальня в бассейнах — Spectacle) и лудус ---
 def civ_thermae(body, emb, Pf, U, N, R, x0, x1, z0, z1):
     # большой бассейн-натацио посредине, два малых по бокам, мозаика с дельфинами у входа, колоннады, статуи
@@ -5701,6 +5948,8 @@ def main():
                                "smoke": SMOKE, "actors": ACTORS, "props": PROPS}
         if kind == "civic":
             meta["houses"][hid]["tint"] = DS.get("tint", "#f3ebdf")
+            if DS.get("off"):
+                meta["houses"][hid]["off"] = [0.0, 0.0, DS["off"]]       # станция: сдвиг ядра в игре
         if JETS:
             meta["houses"][hid]["jets"] = JETS
         if PETS_K:

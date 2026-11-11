@@ -25,7 +25,7 @@ const MONO := ["temple", "forum", "pantheon", "venus", "pharos",
 
 
 static func covers(type: String) -> bool:
-	return ON and (IDS.has(type) or type in SHOPS or type in STALLS or type in CIVIC or type in MONO)
+	return ON and (IDS.has(type) or type in SHOPS or type in STALLS or type in CIVIC or type in MONO or type == "center")
 
 
 static func id_for(type: String, tier: int, variant: int) -> String:
@@ -37,6 +37,8 @@ static func id_for(type: String, tier: int, variant: int) -> String:
 		return "civ_" + type
 	if type in MONO:
 		return "mon_" + type
+	if type == "center":
+		return "civ_center%d" % clampi(tier, 0, 7)     # почтовая станция растёт с уровнем города
 	var e: Array = IDS[type]
 	var v := posmod(variant, int(e[1]))
 	var top := int(e[2])
@@ -63,6 +65,8 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 			sx = old.size.x / fp.size.x
 			sz = old.size.y / fp.size.y
 			off = Vector3(old.position.x - fp.position.x * sx, 0, old.position.y - fp.position.y * sz)
+	if not legacy and h.has("off"):
+		off = _v(h["off"])                   # станция: ядро в Blender — посередине, в игре фасад — где у прежней
 	var sq := Transform3D(Basis.from_scale(Vector3(sx, 1, sz)), off)       # в метрах (после ARCH)
 	var base := Transform3D(Basis.from_scale(Vector3.ONE * S), Vector3.ZERO) * sq
 	var shop := not type.begins_with("house_")
@@ -83,7 +87,7 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 	for j: Array in h.get("jets", []):
 		b.jets.append([sq * Vector3(float(j[0]), float(j[1]), float(j[2])) * S, float(j[3]) * S, float(j[4])])
 	for a: Array in h.get("actors", []):
-		b.actor(Vector3(float(a[0]), float(a[1]), float(a[2])) * S, float(a[3]), String(a[4]), String(a[5]))
+		b.actor((sq * Vector3(float(a[0]), float(a[1]), float(a[2]))) * S, float(a[3]), String(a[4]), String(a[5]))
 	b.kit_mov = []
 	b.kit_sq = sq
 	for m: Dictionary in h["mov"]:
