@@ -196,6 +196,7 @@ func _run() -> void:
 		await shot("lei_%s.png" % cs[1])
 		game.rig.set_view(Vector3(p.x, Land.BASE_Y, p.y), cam_yaw + 180.0, 24.0, 4.2)
 		await shot("lei_%s_b.png" % cs[1])
+	await _view(adults[adults.size() - 1])
 	await _handover(X0, Z0, adults.slice(i))
 	print("LEI DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
@@ -250,3 +251,32 @@ func _handover(X0: float, Z0: float, free: Array) -> void:
 			break
 	check(shown, "мясник показывает окорок покупателю")
 	check(took and not k.has("show"), "покупатель взял окорок из рук мясника", [r.get("carry", ""), k.get("show", "")])
+
+
+## У пруда: житель стоит на тропе у воды и любуется ею
+func _view(r: Dictionary) -> void:
+	var d := {}
+	for k in 20:
+		d = ppl._water_target(r, Vector2(229.0, 150.0))
+		if not d.is_empty():
+			break
+	if not check(not d.is_empty(), "у пруда нашлось место полюбоваться водой"):
+		return
+	var f: Vector2 = d["face"]
+	check(game.land.hq(game.land.idx(game.land.cell(f).x, game.land.cell(f).y)) < Land.WATER_Y, "смотрит на воду")
+	ppl._release(r)
+	ppl._claim(r, d)
+	r["p"] = d["p"]
+	r["state"] = "walk"
+	r["goal"] = "errand"
+	var p: Vector2 = d["p"]
+	game.rig.set_view(Vector3(p.x, Land.BASE_Y, p.y), rad_to_deg(ppl._yaw_to(f, p)) + 200.0, 24.0, 4.5)
+	await frames(3)
+	ppl._begin(r)
+	r["fade"] = 1.0
+	if r["node"] != null:
+		(r["node"] as Citizen).set_alpha(1.0)
+	ppl._anim(r, "Arms_Crossed", 0.0, 0.0)
+	r["st"] = 99.0
+	await secs(1.2)
+	await shot("lei_view.png")

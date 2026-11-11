@@ -50,12 +50,13 @@ func _ready() -> void:
 	var cam := Camera3D.new()
 	cam.fov = 30
 	vp.add_child(cam)
-	for type: String in String(args.get("types", "butcher")).split(","):
+	for spec: String in String(args.get("types", "butcher")).split(","):
+		var type := spec.get_slice(":", 0)       # «center:4» — тип и уровень (станция растёт)
 		if not Defs.B.has(type):
 			print("CARDS unknown ", type)
 			continue
 		var d: Dictionary = Defs.B[type]
-		var tier := 2 if d["kind"] == "house" else 0
+		var tier := int(spec.get_slice(":", 1)) if spec.contains(":") else (2 if d["kind"] == "house" else 0)
 		var gs := {}
 		var boxes := {}
 		for k in ["old", "new"]:
@@ -80,13 +81,13 @@ func _ready() -> void:
 			var box: AABB = boxes[k]
 			var c := Vector3(0, box.size.y * 0.42, (box.position.z + box.end.z) * 0.5)
 			cam.look_at_from_position(c + dir * rad / sin(deg_to_rad(15.0)) * 0.92, c, Vector3.UP)
-			await _shot(vp, "%s/%s_%s_full.png" % [out, type, k])
+			await _shot(vp, "%s/%s_%s_full.png" % [out, spec.replace(":", "_"), k])
 			# крупно: витрина у земли (перед — +z)
 			var front := minf(box.end.z, (boxes["new"] as AABB).end.z) - 0.55
 			var tc := Vector3(0.0, 0.95, front)
 			var cd := Vector3(0.4, 0.34, 1.0).normalized()
 			cam.look_at_from_position(tc + cd * (3.6 if type.begins_with("stall_") else 5.2), tc, Vector3.UP)
-			await _shot(vp, "%s/%s_%s_close.png" % [out, type, k])
+			await _shot(vp, "%s/%s_%s_close.png" % [out, spec.replace(":", "_"), k])
 			g.visible = false
 		for k in gs:
 			gs[k].queue_free()

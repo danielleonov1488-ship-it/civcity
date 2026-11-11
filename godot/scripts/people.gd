@@ -1624,6 +1624,9 @@ func _pick_errand(r: Dictionary) -> Dictionary:
 			var nt := _nature_target(r, from)
 			if not nt.is_empty():
 				opts.append([1.4, nt])
+			var wv := _water_target(r, from)
+			if not wv.is_empty():
+				opts.append([1.2, wv])
 		if not cat.is_empty():
 			opts.append([1.0, _cat_target(r, cat)])
 		var pz := _plaza_target(r, from)
@@ -1859,6 +1862,25 @@ func _nature_target(r: Dictionary, from: Vector2) -> Dictionary:
 							var s2 := ip + Vector2(cos(b0 + TAU * j / 6.0), sin(b0 + TAU * j / 6.0)) * dist
 							if _free(s2) and land.hq(land.idx(land.cell(s2).x, land.cell(s2).y)) >= Land.WATER_Y + 0.05:
 								return {"act": "shade" if tree else "smell", "p": s2, "face": ip, "wild": true}
+	return {}
+
+
+## Берег: постоять у пруда, озера или моря и полюбоваться водой — с тропы или улицы у самой воды
+func _water_target(r: Dictionary, from: Vector2) -> Dictionary:
+	for k in 8:
+		var a := rng.randf() * TAU
+		var q := from + Vector2(cos(a), sin(a)) * rng.randf_range(8.0, 40.0)
+		var qi := land.cell(q)
+		if not land.inside(qi.x, qi.y) or land.hq(land.idx(qi.x, qi.y)) >= Land.WATER_Y + 0.05:
+			continue
+		# вода здесь — ищем ближнюю сушу, куда можно пройти, лицом к воде
+		var b0 := rng.randf() * TAU
+		for ri in 8:
+			for j in 8:
+				var s2 := q + Vector2(cos(b0 + TAU * j / 8.0), sin(b0 + TAU * j / 8.0)) * (0.8 + ri * 0.6)
+				var si := land.cell(s2)
+				if land.inside(si.x, si.y) and _free(s2) and land.hq(land.idx(si.x, si.y)) >= Land.WATER_Y + 0.05:
+					return {"act": "view", "p": s2, "face": q}
 	return {}
 
 
@@ -2140,6 +2162,12 @@ func _begin(r: Dictionary) -> void:
 			_wash(r)
 		"pray":
 			_seq(r, [["Idle", 0.8], ["Pray", rng.randf_range(6.0, 11.0)], ["Idle", rng.randf_range(0.8, 1.6)]])
+		"view":
+			# у воды: любуется, потягивается, показывает спутнику на уток и лодки
+			var vw := [["Idle", 0.6], ["Admire", rng.randf_range(4.0, 7.0)], ["Arms_Crossed", rng.randf_range(4.0, 8.0)]]
+			vw.append(["Point" if rng.randf() < 0.5 else "Point_M", 4.6] if rng.randf() < 0.5 else ["Stretch", 4.9])
+			vw.append(["Idle", rng.randf_range(1.0, 2.5)])
+			_seq(r, vw)
 		"admire":
 			var pt := "Point" if rng.randf() < 0.5 else "Point_M"
 			var st3 := [["Idle", 0.5], ["Admire", rng.randf_range(3.5, 6.0)], [pt, 4.6], ["Admire", rng.randf_range(2.0, 3.5)], ["Idle", 0.8]]
@@ -2188,7 +2216,7 @@ func _act_done(r: Dictionary) -> void:
 				_next(r)
 			elif not _join_talk(r):
 				_solo_cycle(r)
-		"look", "smell", "shade", "admire", "feed", "wash", "pray":
+		"look", "smell", "shade", "admire", "feed", "wash", "pray", "view":
 			if rng.randf() < (0.5 if r["act"] == "look" else 0.35) and not r.has("hero"):
 				_social(r)
 			else:

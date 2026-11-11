@@ -14,6 +14,7 @@ func _ready() -> void:
 				"tag": tag = kv[1]
 				"views": views = Array(kv[1].split(",")).map(func(x): return int(x))
 				"hours": hours = Array(kv[1].split(",")).map(func(x): return float(x))
+				"kit": KitHouses.ON = kv[1] != "0"        # kit=0 — прежние модели Synty (сравнение «было / стало»)
 	Game.boot = {"demo": "1", "noui": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
