@@ -66,6 +66,7 @@ func _ready() -> void:
 			for gi: GeometryInstance3D in g.find_children("*", "GeometryInstance3D", true, false):
 				gi.material_override = null
 				gi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			Hud.add_pets(g, type)              # кошки, ослик, вещицы витрины — как в игре
 			g.visible = false
 			vp.add_child(g)
 			gs[k] = g

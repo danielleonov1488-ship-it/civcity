@@ -14,10 +14,10 @@ static var _old := {}
 
 ## Лавки (у каждой — один облик) и прилавки рынка
 const SHOPS := ["butcher", "bakery", "cobbler", "dyer", "tailor", "potter", "oilshop", "lamps", "wineshop", "perfumer",
-	"jeweler", "weaver", "barber", "medic", "thermopolium", "taberna", "fullonica", "mansio", "scriptorium"]
+	"jeweler", "weaver", "barber", "medic", "thermopolium", "taberna", "fullonica", "mansio", "scriptorium", "herbalist", "catshop"]
 const STALLS := ["stall_fruit", "stall_veg", "stall_fish"]
 ## Общественные здания (свой облик у каждого: "civ_<тип>"); у школы скамьи и кресло учителя — детали Synty (Spectacle)
-const CIVIC := ["school", "library", "academy", "warehouse"]
+const CIVIC := ["school", "library", "academy", "warehouse", "vigiles", "prefect", "balnea", "baths", "sculptor", "shelter"]
 
 
 static func covers(type: String) -> bool:
@@ -111,6 +111,20 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 	for p: Array in h.get("perch", []):
 		b.perch.append(sq * Vector3(float(p[0]), float(p[1]), float(p[2])))
 	return true
+
+
+## Животные и вещицы при здании из своего набора (как CatExtra.PETS: кошки приюта и лавки, ослик, вещицы витрины);
+## пусто — у постройки свой список в CatExtra/CatDecor2
+static func pets(type: String) -> Array:
+	if not covers(type):
+		return []
+	var h := KitLib.house(id_for(type, 0, 0))
+	var out := []
+	for e: Array in h.get("pets", []):
+		var q := e.duplicate()
+		q[1] = _v(e[1])
+		out.append(q)
+	return out
 
 
 static func _v(a: Array) -> Vector3:

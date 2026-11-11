@@ -2100,7 +2100,9 @@ func _donkey(b: Dictionary, vis: Dictionary) -> void:
 ## Животные этапа 5 (CatDecor2.PETS / CatExtra.PETS — что, где, как стоит): корова пасётся, лошадь жуёт у коновязи,
 ## в приюте спят кошки и жуёт ослик. Не в actors_root у кошек — их сон медленнее шага игры
 func _pets2(b: Dictionary, vis: Dictionary) -> void:
-	var list: Array = CatStory.PETS.get(b["type"], CatGrand.PETS.get(b["type"], CatExtra.PETS.get(b["type"], CatDecor2.PETS.get(Defs.base_of(b["type"]), []))))
+	var list: Array = KitHouses.pets(b["type"])          # у своих моделей — свои места животных (kit.json)
+	if list.is_empty():
+		list = CatStory.PETS.get(b["type"], CatGrand.PETS.get(b["type"], CatExtra.PETS.get(b["type"], CatDecor2.PETS.get(Defs.base_of(b["type"]), []))))
 	var lk := int(Defs.B[b["type"]].get("look", 0))
 	var k := 0
 	for e: Array in list:

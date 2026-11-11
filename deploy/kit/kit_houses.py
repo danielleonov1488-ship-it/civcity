@@ -1265,7 +1265,7 @@ def sign_uv(key):
     i = SIGNS.index(key) if key in SIGNS else 0
     cx, cy = i % 6, i // 6
     e = 3.0 / 2304
-    return cx / 6 + e, (cx + 1) / 6 - e, 1 - (cy + 1) / 5 + e * 1.8, 1 - cy / 5 - e * 1.8
+    return cx / 6 + e, (cx + 1) / 6 - e, 1 - (cy + 1) / 7 + e * 1.3, 1 - cy / 7 - e * 1.3
 
 
 def sign_board(mb, P_, U, N, uc, vc, w, h, n, key):
@@ -1347,7 +1347,8 @@ def yard_props(body, emb, x0, x1, zb, z_wall, craft):
 # ---------------- товар лавок: мелкие формы ----------------
 SIGNS = ["meat", "bread", "shoes", "dye", "togas", "pots", "oil", "lamps", "wine", "perfume", "jewel", "cloth", "barber",
          "medic", "thermo", "taberna", "fullonica", "mansio", "fruit", "veg", "fish", "fresco", "copper", "grain",
-         "scriptorium", "school", "library", "academy", "warehouse", "vigiles"]
+         "scriptorium", "school", "library", "academy", "warehouse", "vigiles",
+         "herbalist", "sculptor", "catshop", "shelter", "balnea", "baths", "prefect"]
 IRON = "#3a3633"
 ROPE = "#c9b48a"
 BRONZE = "#b08a3a"
@@ -2610,6 +2611,8 @@ TRADES = {
     "taberna": {"goods": "wine", "sign": "taberna", "front": "awning", "awning": ("#efe3c8", "#7a3528"), "roof": "z", "floors": 2, "w": 4.2, "d": 4.2, "shutter": "brown", "door": "dark", "pal": 2, "tables": True, "corners": "stone"},
     "fullonica": {"goods": "togas", "sign": "fullonica", "front": "awning", "awning": ("#f4efe2", "#4f78a8"), "roof": "x", "floors": 2, "w": 4.2, "yard": "vats", "shutter": "blue", "door": "oak", "pal": 1, "balcony": True},
     "scriptorium": {"goods": "scrolls", "sign": "scriptorium", "front": "awning", "awning": ("#efe3c8", "#9a2f28"), "roof": "z", "floors": 2, "d": 3.0, "shutter": "blue", "door": "dark", "pal": 1, "boxes": True, "scribe": True},
+    "herbalist": {"goods": "herbs", "sign": "herbalist", "front": "awning", "awning": ("#efe3c8", "#4f8a5a"), "roof": "x", "floors": 1, "d": 3.0, "shutter": "green", "door": "green", "pal": 1},
+    "catshop": {"goods": "cats", "sign": "catshop", "front": "awning", "awning": ("#f4efe2", "#e98bb0"), "roof": "z", "floors": 1, "d": 3.0, "shutter": "teal", "door": "red", "pal": 2},
     "mansio": {"goods": "wine", "sign": "mansio", "front": "canopy", "roof": "z", "floors": 3, "w": 4.8, "d": 4.4, "yard": "stable", "shutter": "green", "door": "dark", "pal": 2, "corners": "stone", "boxes": True},
 }
 
@@ -2915,8 +2918,9 @@ def garden(body, x0, x1, zb, z_wall, kind):
 def dado(body, P_, U, N, u0, u1, h, colhex):
     """расписной цоколь стены (помпейский красный) с тёмной полосой поверху"""
     R = RW(U, N)
-    body.box(Pw(P_, (u0 + u1) / 2, PL + h / 2, 0.006), (u1 - u0, h, 0.006), J(colhex, 0.04, 0.0, 0.0), R)
-    body.box(Pw(P_, (u0 + u1) / 2, PL + h, 0.008), (u1 - u0, 0.04, 0.008), col("#2a2018"), R)
+    # перед неровной штукатуркой (у стены вершины гуляют до ±1,3 см — тонкий цоколь иначе «проваливался»)
+    body.box(Pw(P_, (u0 + u1) / 2, PL + h / 2, 0.018), (u1 - u0, h, 0.008), J(colhex, 0.04, 0.0, 0.0), R)
+    body.box(Pw(P_, (u0 + u1) / 2, PL + h, 0.021), (u1 - u0, 0.04, 0.01), col("#2a2018"), R)
 
 
 # =====================================================================================
@@ -2984,8 +2988,8 @@ PROPS = []          # детали Synty в чертеже: [имя, x, y, z, п
 #   ОБЩЕСТВЕННЫЕ ЗДАНИЯ (школа, библиотека, академия, склад): корпус — как у домов (стены, окна, ставни, комнаты,
 #   крыша), фасад и двор — свои; росписи и рельефы — клетки fresco.png (Codex), вывески — signs.png
 # =====================================================================================
-FRESCO = ["school", "mosaic", "tymp_lib", "tymp_acad", "ins_lib", "ins_acad", "garden", "birds"]
-FRESCO_ROWS = 4
+FRESCO = ["school", "mosaic", "tymp_lib", "tymp_acad", "ins_lib", "ins_acad", "garden", "birds", "tymp_pref", "ins_pref", "ins_therm", "dolphins"]
+FRESCO_ROWS = 6
 MARBLE = "#ece6da"
 GOLD = "#d9b54a"
 
@@ -3492,7 +3496,7 @@ def civic_front(body, walls, inner, emb, Pf, U, N, x0, x1, z0, z1):
     opens = [(door_u[0] - 0.1, door_u[1] + 0.1, 0.0, PL + DS.get("door_h", 1.6))]
     if DS.get("socle"):
         socle(body, Pf, U, N, 0.0, W, DS["socle"], opens)
-    if V != "warehouse":                       # зубчатый карниз под свесом крыши
+    if V in ("school", "library", "academy", "prefect", "balnea", "baths"):     # зубчатый карниз под свесом крыши
         dentils(body, Pf, U, N, 0.0, W, HT - 0.22)
     for uc in DS.get("pilasters", []):
         pilaster(body, Pf, U, N, "front", uc, PL, HT - 0.3)
@@ -3649,14 +3653,460 @@ def civic_front(body, walls, inner, emb, Pf, U, N, x0, x1, z0, z1):
         fx0 = x0 - 0.3
         fz1 = z1 + 0.5
         DOOR_PT[2] = z1 + 0.8
+    elif V in CIVIC_FRONTS:
+        fz0, fz1, fx0, fx1 = CIVIC_FRONTS[V](body, emb, Pf, U, N, R, x0, x1, z0, z1)
     return fz0, fz1, fx0, fx1
+
+
+# ---------- общественные здания, прогон 3: вигилы, префект, бани, термы, скульптор, приют; травник и кошачья лавка ----------
+PETS_K = []          # животные и вещицы при здании (как CatExtra.PETS): [кто, [x,y,z] м, поворот, движение, масштаб, облик, вещица]
+
+
+def pet(kind, p, yaw, motion, s=1.0, item=None):
+    e = [kind, [round(p[0], 3), round(p[1], 3), round(p[2], 3)], round(yaw, 3), motion, s, -1]
+    if item is not None:
+        e.append(item)
+    PETS_K.append(e)
+
+
+def flat_roof(body, x0, x1, z0, z1, y, domes=()):
+    """плоская крыша: настил из плитки, парапет с мраморным поручнем, купола (r, x, z) с окошком-фонарём наверху"""
+    body.box(((x0 + x1) / 2, y + 0.06, (z0 + z1) / 2), (x1 - x0 + 0.08, 0.12, z1 - z0 + 0.08), J("#b98a6a", 0.04), mat=M_STONE)
+    m = J(MARBLE, 0.02, 0.0, 0.0)
+    for (xa, xb, za, zb) in ((x0, x1, z1, z1), (x0, x1, z0, z0), (x0, x0, z0, z1), (x1, x1, z0, z1)):
+        L = max(abs(xb - xa), abs(zb - za))
+        along_x = abs(xb - xa) > 0.01
+        cx, cz = (xa + xb) / 2, (za + zb) / 2
+        size = (L + 0.12, 0.36, 0.14) if along_x else (0.14, 0.36, L + 0.12)
+        body.box((cx, y + 0.3, cz), size, J(P["trim"], 0.03))
+        body.box((cx, y + 0.5, cz), (size[0] + 0.04, 0.05, size[2] + 0.04), m, mat=M_MARBLE)
+    top = y + 0.55
+    for (r, dx, dz) in domes:
+        body.lathe((dx, y + 0.12, dz), [(r + 0.12, 0.0), (r + 0.12, 0.22), (r + 0.06, 0.26)], 16, J(P["trim"], 0.03))
+        prof = [(r, 0.0), (r * 0.94, r * 0.35), (r * 0.76, r * 0.66), (r * 0.45, r * 0.88), (r * 0.16, r * 0.98)]
+        body.lathe((dx, y + 0.38, dz), prof, 18, J("#d8cbb8", 0.03), cols=[J("#d8cbb8", 0.03), J("#cfc1ac", 0.03), J("#c8b9a2", 0.03), J("#c0b09a", 0.03)], mat=M_STONE)
+        for k in range(18):                    # рёбра купола
+            a = 2 * math.pi * k / 18
+            for j in range(len(prof) - 1):
+                p0 = Vector((dx + math.cos(a) * prof[j][0], y + 0.38 + prof[j][1], dz + math.sin(a) * prof[j][0]))
+                p1 = Vector((dx + math.cos(a) * prof[j + 1][0], y + 0.38 + prof[j + 1][1], dz + math.sin(a) * prof[j + 1][0]))
+                c = Vector((dx, y + 0.38, dz))
+                if k % 3 == 0:
+                    rod(body, p0 + (p0 - c).normalized() * 0.012, p1 + (p1 - c).normalized() * 0.012, 0.04, m, mat=M_MARBLE)
+        lt = y + 0.38 + r * 0.98
+        body.lathe((dx, lt - 0.02, dz), [(r * 0.18, 0.0), (r * 0.18, 0.12), (r * 0.22, 0.14), (r * 0.08, 0.26), (0.0, 0.32)], 10, J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+        top = max(top, lt + 0.3)
+    return top
+
+
+def pool(body, x0, x1, z0, z1, step_side=1):
+    """бассейн: мраморный бортик, ступени в воду с одного края, вода (#water — в ней Spectacle «купает» жителей)"""
+    m = J(MARBLE, 0.02, 0.0, 0.0)
+    rim = 0.16
+    for (cx, cz, sx, sz) in (((x0 + x1) / 2, z0, x1 - x0 + rim * 2, rim), ((x0 + x1) / 2, z1, x1 - x0 + rim * 2, rim),
+                             (x0, (z0 + z1) / 2, rim, z1 - z0), (x1, (z0 + z1) / 2, rim, z1 - z0)):
+        body.box((cx, 0.12, cz), (sx, 0.24, sz), m, cols={"top": J(MARBLE, 0.05, 0.0, 0.0)}, mat=M_MARBLE)
+    body.box(((x0 + x1) / 2, 0.01, (z0 + z1) / 2), (x1 - x0, 0.02, z1 - z0), J("#4f8fa8", 0.04))      # голубая мозаика дна
+    zs = z1 - rim / 2 if step_side > 0 else z0 + rim / 2
+    for k in range(2):
+        body.box(((x0 + x1) / 2, 0.06 + k * 0.06, zs - step_side * (0.18 + k * 0.16)), (min(1.0, x1 - x0 - 0.3), 0.06, 0.16), m, mat=M_MARBLE)
+    wx, wz, wy = (x0 + x1) / 2, (z0 + z1) / 2, 0.075
+    PROPS.append(["#water", round(wx, 3), round(wy, 3), round(wz, 3), 0.0, [round((x1 - x0 - 0.02) / 0.72, 3), round(0.15 / 0.72, 3), round((z1 - z0 - 0.02) / 0.72, 3)]])
+
+
+def lion_spout(body, P_, U, N, uc, v, water_to):
+    """львиная маска на стене: мраморная плита, бронзовая голова с гривой, из пасти — струя в бассейн"""
+    R = RW(U, N)
+    body.box(Pw(P_, uc, v, 0.02), (0.38, 0.42, 0.04), J(MARBLE, 0.03, 0.0, 0.0), R, mat=M_MARBLE)
+    torus(body, tuple(P_(uc, v, 0.05)), _ymat(N), 0.11, 0.035, col("#9a7a3a"), seg=12, seg2=4)
+    ball(body, tuple(P_(uc, v, 0.07)), 0.09, col(BRONZE), seg=8, rings=4, sq=(1.0, 1.0, 0.7), R=_ymat(N))
+    spindle(body, P_(uc, v - 0.04, 0.12), P_(uc, v - 0.05, 0.2), [(0.02, 0.0), (0.016, 1.0)], 6, col("#8a6a2a"))
+    a = Vector(P_(uc, v - 0.05, 0.2))
+    b = Vector(water_to)
+    mid = (a + b) / 2 + Vector((0, 0.1, 0)) + (b - a).normalized() * 0.0
+    rod(body, a, mid, 0.03, col("#bfe4f0"))
+    rod(body, mid, b, 0.03, col("#bfe4f0"))
+
+
+def fasces(body, at, R):
+    """фасции: пучок прутьев, перехваченный красными ремнями, с топором наверху"""
+    x, y, z = at
+    for k in range(7):
+        a = 2 * math.pi * k / 7
+        o = R @ Vector((math.cos(a) * 0.04, 0, math.sin(a) * 0.04))
+        rod(body, (x + o.x, y, z + o.z), (x + o.x, y + 1.05, z + o.z), 0.028, J("#8a5a32", 0.06), mat=M_WOOD)
+    for t in (0.2, 0.5, 0.8):
+        torus(body, (x, y + 1.05 * t, z), Matrix.Identity(3), 0.07, 0.012, col("#a8302a"), seg=10, seg2=3)
+    body.box(LP(at, R, 0.1, 1.0, 0.0), (0.14, 0.12, 0.012), col("#aab1b8"), R)
+
+
+def wattle(body, xa, za, xb, zb, h=0.85):
+    """плетень: колья и переплетённые прутья"""
+    a, b = Vector((xa, 0, za)), Vector((xb, 0, zb))
+    L = (b - a).length
+    d = (b - a).normalized()
+    n = max(2, int(L / 0.35) + 1)
+    side = Vector((-d.z, 0, d.x))
+    for k in range(n):
+        p = a + d * (L * k / (n - 1))
+        rod(body, p, p + Vector((0, h + 0.08, 0)), 0.04, J("#7a5a3a", 0.08), mat=M_WOOD)
+    for j in range(5):
+        y = 0.15 + j * (h - 0.15) / 4
+        pts = []
+        for k in range(n * 2 - 1):
+            t = k / (n * 2 - 2)
+            pts.append(a + d * (L * t) + Vector((0, y, 0)) + side * (0.025 * (1 if (k + j) % 2 else -1)))
+        for k in range(len(pts) - 1):
+            rod(body, pts[k], pts[k + 1], 0.022, J("#a07a50", 0.08), mat=M_WOOD)
+
+
+def watchtower(body, emb, cx, cz, ph=2.9):
+    """дозорная вышка вигилов: четыре столба, помост с перилами, лестница, черепичная кровля, жаровня (дым, свет)"""
+    for (dx, dz) in ((-0.55, -0.55), (0.55, -0.55), (-0.55, 0.55), (0.55, 0.55)):
+        rod(body, (cx + dx, 0.0, cz + dz), (cx + dx * 0.92, ph + 1.3, cz + dz * 0.92), 0.1, J(P["wood"], 0.05), mat=M_WOOD)
+    for (dx, dz) in ((-0.55, 0.0), (0.55, 0.0)):
+        rod(body, (cx + dx, 0.3, cz - 0.55), (cx + dx, ph - 0.2, cz + 0.55), 0.05, J(P["wood2"], 0.05), mat=M_WOOD)
+    for k in range(9):                         # помост
+        body.box((cx, ph, cz - 0.6 + k * 0.15), (1.3, 0.05, 0.13), J(P["wood"], 0.08), mat=M_WOOD)
+    for s in (-1, 1):                          # перила
+        body.box((cx, ph + 0.55, cz + s * 0.62), (1.3, 0.05, 0.05), J(P["wood2"], 0.05), mat=M_WOOD)
+        body.box((cx + s * 0.62, ph + 0.55, cz), (0.05, 0.05, 1.3), J(P["wood2"], 0.05), mat=M_WOOD)
+        for k in range(5):
+            body.box((cx - 0.5 + k * 0.25, ph + 0.28, cz + s * 0.62), (0.03, 0.5, 0.03), J(P["wood2"], 0.05), mat=M_WOOD)
+    for k in range(int(ph / 0.3)):             # лестница сбоку
+        y = 0.25 + k * 0.3
+        body.box((cx - 0.75, y, cz + 0.2), (0.04, 0.04, 0.45), J(P["wood2"], 0.05), mat=M_WOOD)
+    for s in (-1, 1):
+        rod(body, (cx - 0.75, 0.0, cz + 0.2 + s * 0.22), (cx - 0.72, ph + 0.6, cz + 0.2 + s * 0.22), 0.04, J(P["wood"], 0.05), mat=M_WOOD)
+    roof(body, True, cx - 0.75, cx + 0.75, cz - 0.75, cz + 0.75, ph + 1.3, pitch_deg=30.0, oe=0.12, og=0.1, antefix=False)
+    body.lathe((cx, ph + 0.03, cz), [(0.06, 0.0), (0.18, 0.12), (0.2, 0.18)], 12, col(IRON))
+    for k in range(6):
+        leaf_blob(emb, (cx + rng.uniform(-0.1, 0.1), ph + 0.2, cz + rng.uniform(-0.1, 0.1)), 0.06, col(rng.choice(["#ff7a1a", "#ffb03a", "#e0501a"])))
+    SMOKE.append([round(cx, 3), round(ph + 0.5, 3), round(cz, 3)])
+    LIGHTS.append({"lamp": [round(cx, 3), round(ph + 0.4, 3), round(cz, 3)], "kind": "hang"})
+
+
+def axe(body, at, R, ang=0.0):
+    Rr = R @ Matrix.Rotation(ang, 3, "Z")
+    body.box(LP(at, Rr, 0, 0.35, 0), (0.035, 0.7, 0.035), J("#8a6038", 0.05), Rr, mat=M_WOOD)
+    body.box(LP(at, Rr, 0.06, 0.65, 0), (0.12, 0.1, 0.012), col("#aab1b8"), Rr)
+
+
+def ladder2(body, P_, U, N, u, h, lean=0.22):
+    """приставная лестница у стены"""
+    for s in (-1, 1):
+        rod(body, Pw(P_, u + s * 0.18, 0.0, lean + 0.05), Pw(P_, u + s * 0.18, h, 0.06), 0.045, J(P["wood"], 0.05), mat=M_WOOD)
+    for k in range(int(h / 0.3)):
+        t = (k + 0.5) / int(h / 0.3)
+        body.box(Pw(P_, u, h * t, lean + 0.05 - (lean - 0.01) * t), (0.36, 0.035, 0.035), J(P["wood2"], 0.05), RW(U, N), mat=M_WOOD)
+
+
+def unfinished_statue(x, z, yaw, s, k=1):
+    PROPS.append(["SM_Prop_Statue_Unfinished_0%d" % k, round(x, 3), 0.0, round(z, 3), yaw, s])
+
+
+def scaffold(body, cx, cz, w, d, h):
+    for (dx, dz) in ((-w / 2, -d / 2), (w / 2, -d / 2), (-w / 2, d / 2), (w / 2, d / 2)):
+        rod(body, (cx + dx, 0.0, cz + dz), (cx + dx, h, cz + dz), 0.05, J(P["wood"], 0.06), mat=M_WOOD)
+    for y in (h * 0.5, h - 0.05):
+        for s in (-1, 1):
+            body.box((cx, y, cz + s * d / 2), (w + 0.1, 0.04, 0.04), J(P["wood2"], 0.05), mat=M_WOOD)
+        for k in range(4):
+            body.box((cx - w / 2 + (k + 0.5) * w / 4, y + 0.03, cz), (w / 4 - 0.02, 0.03, d + 0.1), J(P["wood"], 0.08), mat=M_WOOD)
+    rod(body, (cx - w / 2, 0.1, cz + d / 2), (cx + w / 2, h * 0.5, cz + d / 2), 0.035, J(P["wood2"], 0.05), mat=M_WOOD)
+
+
+def marble_block(body, at, size, ang=0.0):
+    body.box((at[0], at[1] + size[1] / 2, at[2]), size, J(MARBLE, 0.04, 0.0, 0.0), Matrix.Rotation(ang, 3, "Y"), mat=M_MARBLE)
+
+
+def crane(body, at, h=2.6):
+    """деревянный подъёмный «журавль»: тренога, блок, верёвка с крюком над глыбой"""
+    x, y, z = at
+    top = Vector((x, y + h, z))
+    for k in range(3):
+        a = 2 * math.pi * k / 3 + 0.4
+        rod(body, (x + math.cos(a) * 0.7, y, z + math.sin(a) * 0.7), top, 0.07, J(P["wood"], 0.05), mat=M_WOOD)
+    torus(body, tuple(top + Vector((0, -0.15, 0))), Matrix.Rotation(math.pi / 2, 3, "X"), 0.08, 0.025, J("#6b4428", 0.05), seg=10, seg2=4)
+    rod(body, top + Vector((0, -0.2, 0)), top + Vector((0, -1.4, 0)), 0.015, col(ROPE))
+    body.box(tuple(top + Vector((0, -1.45, 0))), (0.06, 0.1, 0.02), col(IRON))
+
+
+# --- товар травника и кошачьей лавки ---
+def g_herbs(b, e, S):
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    fl = ["#e98bb0", "#9a7ad0", "#f0d24a", "#f4f1e8", None, "#d9534f"]
+    for k, h in enumerate(hooks(S, 7)):
+        herb_bundle(b, h, ["#5f7f3a", "#7a8f5a", "#6a7a4a", "#8a9a5a"][k % 4], fl=fl[k % len(fl)])
+    mortar(b, Pw(P_, u0 + 0.14, y, 0.06), R, 0.07, "#7a9a4a")
+    for k, uu in enumerate(row(u0 + 0.3, u1 - 0.45, 4)):
+        jar(b, Pw(P_, uu, y, 0.08), 0.13, J(["#c27a4a", "#7d8f99", "#e8e2d6", "#4f7a6a"][k], 0.05), lid=["#7a5232", "#5a3a22", "#9a2f28", "#3f6fa8"][k])
+    basket(b, Pw(P_, u1 - 0.14, y, 0.04), 0.1, 0.08)
+    for k in range(7):
+        ball(b, Pw(P_, u1 - 0.14 + rng.uniform(-0.05, 0.05), y + 0.08, 0.04 + rng.uniform(-0.05, 0.05)), 0.02, J(rng.choice(["#9a7ad0", "#f0d24a", "#e98bb0"]), 0.06), seg=6, rings=3)
+    scales(b, Pw(P_, u1 - 0.36, y, -0.1), R, 0.6)
+    shelf_unit(b, S, lambda v, a, c, n: [jar(b, Pw(P_, uu, v, n), 0.12 + 0.03 * (i % 2), J(["#c27a4a", "#7d8f99", "#e8e2d6", "#4f7a6a"][i % 4], 0.05)) for i, uu in enumerate(row(a, c, 7))])
+    ou0, ou1, on = S["out"]
+    # грядка мяты в деревянном ящике и горшки с травами
+    b.box(Pw(P_, ou0 + 0.45, 0.14, on - 0.05), (0.8, 0.28, 0.32), J(P["wood"], 0.06), R, mat=M_WOOD)
+    b.box(Pw(P_, ou0 + 0.45, 0.27, on - 0.05), (0.74, 0.02, 0.26), col("#4a3524"), R)
+    for k in range(12):
+        leaf_blob(b, Pw(P_, ou0 + 0.12 + k * 0.06, 0.32 + rng.uniform(0, 0.05), on - 0.05 + rng.uniform(-0.08, 0.08)), 0.05, J(rng.choice(["#4f8f3a", "#5f9a4a", "#6a9a3a"]), 0.1))
+    plant_pot(b, Pw(P_, ou1 - 0.15, 0.0, on - 0.05), 0.3)
+
+
+def g_cats(b, e, S):
+    """кошачья лавка: на прилавке подставки со шляпками и кошка, на полках корзинки и подушки, у двери — корзинка-
+    лежанка и миски; на перекладине — клубки и бубенчики; клубок на нитке — под навесом (вещицы и кошки — PETS_K)"""
+    P_, R, N, y, u0, u1 = S["P"], S["R"], S["N"], S["y"], S["u0"], S["u1"]
+    for k, h in enumerate(hooks(S, 6)):
+        top = it_hook(b, h, 0.04 + 0.03 * (k % 2))
+        if k % 2 == 0:
+            ball(b, tuple(top + Vector((0, -0.05, 0))), 0.045, J(["#d9506e", "#3f6fa8", "#e1b84a"][k // 2 % 3], 0.05), seg=7, rings=4)
+        else:
+            torus(b, tuple(top + Vector((0, -0.07, 0))), _ymat(N), 0.05, 0.01, col("#a8302a"), seg=10, seg2=3)
+            ball(b, tuple(top + Vector((0, -0.12, 0.02))), 0.018, col(GOLD), seg=6, rings=3)
+    # подставки для вещиц (вещицы ставит игра) и место кошки на прилавке
+    for k, uu in enumerate((u0 + 0.35, u1 - 0.25)):
+        b.lathe(Pw(P_, uu, y, 0.06), [(0.05, 0.0), (0.03, 0.03), (0.025, 0.1), (0.06, 0.12)], 10, J(MARBLE, 0.03, 0.0, 0.0), close_top=True, mat=M_MARBLE)
+        p = Pw(P_, uu, y + 0.12, 0.06)
+        pet("acc", p, 0.4 - 0.7 * k, ["pileus", "wreath"][k], [1.6, 1.5][k])
+    b.box(Pw(P_, (u0 + u1) / 2 + 0.05, y + 0.012, 0.04), (0.3, 0.024, 0.24), J("#c87aa0", 0.04), R, mat=M_CLOTH)
+    pet("cat", Pw(P_, (u0 + u1) / 2 + 0.05, y + 0.025, 0.04), 0.35, "sit", 1.0, "petasos")
+    shelf_unit(b, S, lambda v, a, c, n: [(basket(b, Pw(P_, uu, v, n), 0.08, 0.07) if i % 2 == 0 else
+                                          ball(b, Pw(P_, uu, v + 0.04, n), 0.07, J(["#e98bb0", "#8fb0d9", "#f0d24a"][i % 3], 0.05), seg=8, rings=4, sq=(1.0, 0.5, 1.0)))
+                                         for i, uu in enumerate(row(a, c, 5))])
+    su0, su1, sn, lv = S["shelf"]
+    pet("cat", Pw(P_, (su0 + su1) / 2, lv[-1] + 0.005, sn), 0.2, "sleep", 0.9, "bandana")
+    pet("acc", Pw(P_, su0 + 0.25, lv[1] + 0.01, sn), 0.3, "cape", 1.3)
+    pet("acc", Pw(P_, su1 - 0.25, lv[2] + 0.01, sn), 0.0, "flower", 1.8)
+    ou0, ou1, on = S["out"]
+    bx = ou0 + 0.3
+    basket2(b, Pw(P_, bx, 0.0, on - 0.05), 0.22, 0.12)
+    b.box(Pw(P_, bx, 0.1, on - 0.05), (0.32, 0.06, 0.32), J("#e98bb0", 0.04), R, mat=M_CLOTH)
+    pet("cat", Pw(P_, bx, 0.13, on - 0.05), 2.2, "sleep", 0.9, "bow")
+    for k, food in enumerate(("#f4f1e8", "#c9605a")):
+        bowl(b, Pw(P_, ou0 + 0.75 + k * 0.18, 0.0, on + 0.05), 0.06, J("#c27a4a", 0.05), food=food)
+    pet("cat", Pw(P_, ou1 - 0.3, 0.0, on + 0.05), 0.1, "pet", 1.0, "collar")
+    plant_pot(b, Pw(P_, ou1 + 0.25, 0.0, on - 0.15), 0.28)
+    pet("toy", Pw(P_, ou1 - 0.3, 1.95, 0.5), 0.0, "", 1.0)          # клубок на нитке — с навеса
+
+
+def civ_vigiles(body, emb, Pf, U, N, R, x0, x1, z0, z1):
+    tx, tz = x1 + 0.95, z1 - 0.65
+    watchtower(body, emb, tx, tz, 2.9)
+    # под вышкой — бочка-водовозка на колёсах
+    cart(body, (tx, 0.0, tz + 0.1), Matrix.Rotation(math.pi / 2, 3, "Y"))
+    barrel(body, (tx, 0.45, tz + 0.15), 0.5, 0.18)
+    # у стены: лестницы, вёдра, стойка с топорами и крюками, бочки с водой
+    ladder2(body, Pf, U, N, 2.25, 2.2)
+    body.box(Pw(Pf, 2.95, PL + 1.35, 0.04), (0.6, 0.5, 0.04), J(P["wood"], 0.05), R, mat=M_WOOD)
+    for k, uu in enumerate((2.75, 2.95, 3.15)):
+        if k == 1:
+            rod(body, Pw(Pf, uu, PL + 0.9, 0.08), Pw(Pf, uu, PL + 1.9, 0.08), 0.03, J("#8a6038", 0.05), mat=M_WOOD)
+            body.box(Pw(Pf, uu + 0.05, PL + 1.88, 0.08), (0.1, 0.03, 0.02), col(IRON), R)
+        else:
+            axe(body, Pf(uu, PL + 1.0, 0.08), R, 0.0)
+    for k in range(4):
+        bucket(body, Pw(Pf, 2.4 + k * 0.28, 0.0, 0.32), 0.09, 0.16)
+    for k in range(2):
+        barrel(body, Pw(Pf, W - 0.3, 0.0, 0.28 + k * 0.42), 0.55, 0.18, top_col=col("#5f8fa0"))
+    rope_coil(body, Pw(Pf, 0.3, 0.0, 0.35))
+    body.box(Pw(Pf, W / 2 + 0.6, PL + 1.92, 0.01), (0.56, 0.4, 0.02), J("#6b4428", 0.05), R, mat=M_WOOD)
+    sign_board(body, Pf, U, N, W / 2 + 0.6, PL + 1.92, 0.5, 0.333, 0.024, "vigiles")
+    ACTORS.append([round(x0 + 1.2, 3), 0.0, round(z1 + 0.55, 3), 0.0, "Idle", "pleb"])
+    ACTORS.append([round(x1 - 0.65, 3), 0.0, round(z1 + 0.75, 3), math.pi + 0.5, "Interact", "pleb"])
+    DOOR_PT[2] = z1 + 0.9
+    return z0, z1 + 0.6, x0, x1 + 1.75
+
+
+def civ_prefect(body, emb, Pf, U, N, R, x0, x1, z0, z1):
+    dep = 1.3
+    temple_front(body, x0 + 1.2, x1 - 1.2, z1, dep, 0.36, 2.05, 4, key="tymp_pref", ins="ins_pref", r=0.1, swags="#9a2f28")
+    for s in (-1, 1):
+        fasces(body, (s * 0.85, 0.36, z1 + 0.25), Matrix.Identity(3))
+        statue_prop(s * 2.3, z1 + 0.8, 0.0, 0.62)
+        tripod(body, emb, (s * 2.05, 0.0, z1 + dep + 0.45), 0.95)
+        tree_prop("SM_Env_Tree_Thin_0%d" % (1 + (s > 0)), s * (W / 2 + 0.35), z0 + 0.6, 0.48)
+    banner(body, Pf, U, N, "front", 1.55, HT - 0.32, 0.4, 0.9, 0.06, 0)
+    banner(body, Pf, U, N, "front", W - 1.55, HT - 0.32, 0.4, 0.9, 0.06, 1)
+    laurel(body, Pf(DS["door_u"][0] - 0.05, PL + 1.98, 0.1), Pf(DS["door_u"][1] + 0.05, PL + 1.98, 0.1), 0.14, tuple(N))
+    ACTORS.append([-0.55, 0.36, round(z1 + 0.8, 3), 0.4, "Idle", "rich"])
+    ACTORS.append([0.6, 0.36, round(z1 + 0.95, 3), -0.6, "Idle", "rich"])
+    block("front", Pf, U, 1.0, W - 1.0, 0.0, HT)
+    DOOR_PT[2] = z1 + dep + 0.9
+    return z0, z1 + dep + 0.65, x0 - 0.6, x1 + 0.6
+
+
+def civ_balnea(body, emb, Pf, U, N, R, x0, x1, z0, z1):
+    px0, px1, pz0, pz1 = x0 + 0.35, x0 + 3.65, z1 + 0.4, z1 + 2.15
+    pool(body, px0, px1, pz0, pz1, step_side=1)
+    lion_spout(body, Pf, U, N, 2.0, PL + 1.0, (x0 + 2.0, 0.16, pz0 + 0.35))
+    framed_fresco(body, Pf, U, N, "front", 2.0, PL + 1.62, 1.1, 0.42, "dolphins")
+    # вход справа: мраморная дорожка, черепичный навес на колонках
+    du0, du1 = DS["door_u"]
+    dx = x0 + (du0 + du1) / 2
+    body.box((dx, 0.025, z1 + 1.0), (1.4, 0.05, 2.0), J(MARBLE, 0.03, 0.0, 0.0), skip=("bot",), mat=M_MARBLE)
+    for s in (-1, 1):
+        column3(body, (dx + s * 0.62, 0.05, z1 + 1.7), 1.95, 0.065, seg=12)
+    canopy(body, Pf, U, N, (du0 + du1) / 2, PL + 1.98, 1.5, 1.6)
+    for k in range(2):
+        folded_stack(body, (px0 + 0.4 + k * 0.4, 0.24, pz1 + 0.0), Matrix.Identity(3), 0.28, 0.14, 3, ["#f4efe2", "#d8e4ec", "#efe0b8"])
+    amphora(body, (x1 - 0.25, 0.0, z1 + 0.35), 0.55, J("#c27a4a", 0.06))
+    basket2(body, (x1 - 0.3, 0.0, z1 + 1.4), 0.16, 0.2)
+    tripod(body, emb, (x0 + 0.1, 0.0, pz1 + 0.35), 0.9)
+    tree_prop("SM_Env_Tree_Palm_01", x1 + 0.35, z0 + 0.5, 0.33)
+    ACTORS.append([round(x0 + 2.0, 3), 0.0, round(pz1 + 0.35, 3), math.pi, "Idle", "any"])
+    DOOR_PT[0] = dx
+    DOOR_PT[2] = z1 + 2.2
+    return z0, pz1 + 0.5, x0, x1 + 0.6
+
+
+def civ_baths(body, emb, Pf, U, N, R, x0, x1, z0, z1):
+    pz0, pz1 = z1 + 0.6, z1 + 3.6              # след — как у прежних терм (10 × 7,2 м)
+    for s in (-1, 1):
+        xa, xb = sorted((s * 0.75, s * 3.45))
+        pool(body, xa, xb, pz0, pz1, step_side=1)
+        # фонтан во главе бассейна: мраморная чаша на ножке, струя
+        fx = (xa + xb) / 2
+        body.lathe((fx, 0.24, pz0 + 0.05), [(0.08, 0.0), (0.06, 0.25), (0.25, 0.32), (0.27, 0.4)], 12, J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+        body.lathe((fx, 0.6, pz0 + 0.05), [(0.24, 0.0), (0.24, 0.001)], 12, col("#7fbfd0"), close_top=True)
+        rod(body, (fx, 0.62, pz0 + 0.05), (fx, 0.95, pz0 + 0.05), 0.03, col("#bfe4f0"))
+        stoa(body, s * (W / 2 - 0.05), s, z1 + 0.3, z1 + 3.9, 1.15, 2.0, fresco="dolphins")
+        marble_bench(body, (s * (W / 2 - 0.55), 0.08, z1 + 2.1), Matrix.Rotation(math.pi / 2 * s, 3, "Y"), 1.0)
+        statue_prop(s * 2.1, pz1 + 0.35, 0.0, 0.7)
+        tripod(body, emb, (s * 1.0, 0.0, pz1 + 0.35), 0.95)
+    body.box((0.0, 0.03, (z1 + pz1 + 0.6) / 2), (1.4, 0.06, pz1 + 0.6 - z1), J(MARBLE, 0.03, 0.0, 0.0), skip=("bot",), mat=M_MARBLE)
+    framed_fresco(body, Pf, U, N, "front", W / 2, PL + FLH + 1.05, 2.2, 0.95, "dolphins")
+    banner(body, Pf, U, N, "front", 3.45, HT - 0.3, 0.42, 0.95, 0.06, 1)
+    banner(body, Pf, U, N, "front", W - 3.45, HT - 0.3, 0.42, 0.95, 0.06, 0)
+    laurel(body, Pf(DS["door_u"][0] - 0.05, PL + 2.03, 0.1), Pf(DS["door_u"][1] + 0.05, PL + 2.03, 0.1), 0.14, tuple(N))
+    P_ = lambda u, v, n: Pf(u, v, n)
+    fresco_quad(body, P_, N, W / 2, PL + DS["door_h"] + 0.2, 1.6, 0.26, 0.03, "ins_therm", band=True)
+    DOOR_PT[2] = pz1 + 0.85
+    return z0, pz1 + 0.6, x0, x1
+
+
+def civ_sculptor(body, emb, Pf, U, N, R, x0, x1, z0, z1):
+    du0, du1 = DS["door_u"]
+    for uu in (du0 + (du1 - du0) / 3, du0 + 2 * (du1 - du0) / 3):     # столбы в широком проёме мастерской
+        column3(body, Pw(Pf, uu, 0.0, -0.05), PL + DS["door_h"] + 0.05, 0.07, seg=10, ionic=False)
+    body.box(Pw(Pf, (du0 + du1) / 2, PL + DS["door_h"] + 0.08, 0.02), (du1 - du0 + 0.2, 0.16, 0.18), J(P["wood"], 0.05), R, mat=M_WOOD)
+    # верстак с инструментами под крышей
+    body.box((x0 + 1.0, 0.55, z1 - 0.6), (1.2, 0.06, 0.5), J(P["wood"], 0.06), mat=M_WOOD)
+    for s in (-1, 1):
+        for t in (-1, 1):
+            body.box((x0 + 1.0 + s * 0.52, 0.27, z1 - 0.6 + t * 0.2), (0.06, 0.54, 0.06), J(P["wood2"], 0.05), mat=M_WOOD)
+    for k in range(4):
+        body.box((x0 + 0.6 + k * 0.22, 0.6, z1 - 0.6 + rng.uniform(-0.1, 0.1)), (0.16, 0.025, 0.03), col("#aab1b8" if k % 2 else "#8a6038"), Matrix.Rotation(rng.uniform(-0.5, 0.5), 3, "Y"))
+    body.box((x0 + 1.45, 0.62, z1 - 0.55), (0.1, 0.08, 0.08), J("#6b4428", 0.05), mat=M_WOOD)
+    # двор: низкая каменная стенка с проходом, глыбы, щебень, статуя в лесах, почти готовая, готовая у входа
+    yz = z1 + 2.7
+    for (xa, za, xb, zb) in ((x0, z1, x0, yz), (x1, z1, x1, yz), (x0, yz, -0.7, yz), (0.7, yz, x1, yz)):
+        L = max(abs(xb - xa), abs(zb - za))
+        along_x = abs(xb - xa) > 0.01
+        size = (L, 0.55, 0.22) if along_x else (0.22, 0.55, L)
+        body.box(((xa + xb) / 2, 0.275, (za + zb) / 2), size, J(P["stone"], 0.05), mat=M_STONE)
+        body.box(((xa + xb) / 2, 0.58, (za + zb) / 2), (size[0] + 0.04, 0.06, size[2] + 0.04), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
+    unfinished_statue(-0.6, z1 + 1.2, 0.2, 0.9, 1)
+    scaffold(body, -0.6, z1 + 1.2, 0.9, 0.7, 2.0)
+    unfinished_statue(1.4, z1 + 1.1, -0.4, 0.95, 2)
+    crane(body, (1.4, 0.0, z1 + 1.1), 2.5)
+    marble_block(body, (x1 - 0.55, 0.0, z1 + 2.1), (0.6, 0.5, 0.45), 0.4)
+    marble_block(body, (x1 - 0.6, 0.5, z1 + 2.1), (0.4, 0.3, 0.35), 0.1)
+    marble_block(body, (x0 + 0.6, 0.0, z1 + 2.2), (0.55, 0.4, 0.4), -0.3)
+    for k in range(9):
+        marble_block(body, (rng.uniform(x0 + 0.5, x1 - 0.5), 0.0, z1 + rng.uniform(0.5, 2.3)), (rng.uniform(0.06, 0.14),) * 3, rng.uniform(0, 3))
+    for k in range(3):                         # штабель плит
+        marble_block(body, (x0 + 0.55, k * 0.13, z1 + 0.65), (0.7, 0.12, 0.45), 0.05 * k)
+    statue_prop(1.05, yz + 0.25, -0.3, 0.7)
+    # вывеска на столбе у входа
+    rod(body, (-0.95, 0.0, yz + 0.15), (-0.95, 1.75, yz + 0.15), 0.06, J(P["wood"], 0.05), mat=M_WOOD)
+    body.box((-0.95, 1.55, yz + 0.15), (0.5, 0.34, 0.025), J("#6b4428", 0.05), mat=M_WOOD)
+    sign_board(body, lambda u, v, n: Vector((u, v, yz + 0.15 + 0.014 + n)), Vector((1, 0, 0)), Vector((0, 0, 1)), -0.95, 1.55, 0.45, 0.3, 0.0, "sculptor")
+    ACTORS.append([-0.6, 0.0, round(z1 + 1.75, 3), math.pi, "Interact", "any"])
+    ACTORS.append([1.0, 0.0, round(z1 + 1.65, 3), math.pi - 0.6, "Interact", "any"])
+    DOOR_PT[2] = yz + 0.5
+    return z0, yz + 0.35, x0, x1
+
+
+def civ_shelter(body, emb, Pf, U, N, R, x0, x1, z0, z1):
+    # загон справа от домика: плетень сзади, сбоку и спереди с проходом у домика
+    ex = x1 + 3.0
+    pz0, pz1 = z0, z1 + 0.2
+    wattle(body, x1 + 0.05, pz0, ex, pz0)
+    wattle(body, ex, pz0, ex, pz1)
+    wattle(body, x1 + 1.0, pz1, ex, pz1)
+    # лавка с корзинками для кошек у заднего плетня
+    bx = x1 + 1.2
+    body.box((bx, 0.33, pz0 + 0.35), (1.3, 0.05, 0.32), J(P["wood"], 0.06), mat=M_WOOD)
+    for s in (-1, 1):
+        body.box((bx + s * 0.55, 0.16, pz0 + 0.35), (0.06, 0.32, 0.28), J(P["wood2"], 0.06), mat=M_WOOD)
+    for k, xx in enumerate((bx - 0.35, bx + 0.35)):
+        basket2(body, (xx, 0.355, pz0 + 0.35), 0.18, 0.1)
+        body.box((xx, 0.44, pz0 + 0.35), (0.26, 0.05, 0.26), J(["#c87aa0", "#8fb0d9"][k], 0.04), mat=M_CLOTH)
+        pet("cat", (xx, 0.47, pz0 + 0.35), [2.4, 0.6][k], "sleep", 1.0)
+    # навес для ослика: столбы, черепица, ясли с сеном; рядом тюки сена и корыто с водой
+    sx, sz = ex - 0.6, (pz0 + pz1) / 2 + 0.1
+    for (dx, dz) in ((-0.5, -0.55), (0.5, -0.55), (-0.5, 0.55), (0.5, 0.55)):
+        rod(body, (sx + dx, 0.0, sz + dz), (sx + dx, 1.5 + (0.15 if dx > 0 else 0.0), sz + dz), 0.07, J(P["wood"], 0.05), mat=M_WOOD)
+    roof(body, False, sx - 0.65, sx + 0.65, sz - 0.7, sz + 0.7, 1.55, pitch_deg=18.0, oe=0.1, og=0.1, antefix=False)
+    body.box((sx + 0.35, 0.5, sz), (0.3, 0.12, 0.9), J(P["wood"], 0.06), mat=M_WOOD)
+    for k in range(5):
+        leaf_blob(body, (sx + 0.35, 0.6, sz - 0.35 + k * 0.17), 0.07, J("#d9c27a", 0.08))
+    pet("donkey", (sx - 0.1, 0.0, sz), math.pi / 2 + 0.2, "Eating", 0.95)
+    for k in range(2):
+        body.box((x1 + 2.2 - k * 0.5, 0.18 + (0.0 if k == 0 else 0.0), pz1 - 0.45), (0.45, 0.36, 0.32), J("#d9c27a", 0.08))
+    body.box((x1 + 1.4, 0.15, pz1 - 0.4), (0.25, 0.3, 0.7), J(P["stone"], 0.05), mat=M_STONE)
+    body.box((x1 + 1.4, 0.29, pz1 - 0.4), (0.18, 0.02, 0.62), col("#5fa6b8"))
+    # миски у порога, мешок корма, вывеска
+    du0, du1 = DS["door_u"]
+    for k in range(2):
+        bowl(body, Pf(du0 - 0.35 - k * 0.2, 0.0, 0.3), 0.06, J("#c27a4a", 0.05), food=["#f4f1e8", "#c9a46e"][k])
+    sack(body, Pw(Pf, 0.25, 0.0, 0.3), 0.12, 0.3, open_=True, grain="#b08a5a")
+    body.box(Pw(Pf, W / 2, HT - 0.3, 0.01), (0.5, 0.36, 0.02), J("#6b4428", 0.05), R, mat=M_WOOD)
+    sign_board(body, Pf, U, N, W / 2, HT - 0.3, 0.45, 0.3, 0.024, "shelter")
+    ACTORS.append([round(x1 + 0.6, 3), 0.0, round(z1 - 0.3, 3), -math.pi / 2 - 0.4, "Interact", "any"])
+    DOOR_PT[2] = z1 + 0.6
+    return z0 - 0.05, z1 + 0.35, x0, ex + 0.1
+
+
+CIVIC_FRONTS = {"vigiles": civ_vigiles, "prefect": civ_prefect, "balnea": civ_balnea, "baths": civ_baths, "sculptor": civ_sculptor, "shelter": civ_shelter}
+
+CIVIC.update({
+    "vigiles": {"w": 3.6, "d": 2.4, "floors": 1, "roof": "x", "pal": 0, "tint": "#d4895e", "shutter": "red", "door": "red", "lower": "brick",
+                "door_u": (0.45, 1.95), "door_h": 1.7, "double": True, "corners": "stone", "sign": "vigiles",
+                "fwins": [(0, 2.55, 3.15, 0.8, 1.45, True, False, True, False)]},
+    "prefect": {"w": 5.6, "d": 3.2, "floors": 2, "roof": "x", "pal": 1, "tint": "#f4efe6", "shutter": "green", "door": "bronze", "dado": "#a83f2c", "dado_h": 0.95,
+                "door_u": (2.25, 3.35), "door_h": 1.8, "double": True, "corners": "stone", "sign": "prefect", "decal": "frieze",
+                "fwins": [(0, 0.55, 1.2, 0.8, 1.55, False, False, True, True), (0, 4.4, 5.05, 0.8, 1.55, False, False, True, True),
+                          (1, 0.5, 1.1, 0.72, 1.5, True, True, True, False, True), (1, 4.5, 5.1, 0.72, 1.5, True, True, True, False, True)]},
+    "balnea": {"w": 6.4, "d": 2.6, "floors": 1, "roof": "flat", "pal": 1, "tint": "#f2eee6", "shutter": "teal", "door": "oak", "dado": "#3f6f9f", "dado_h": 0.7,
+               "door_u": (4.55, 5.55), "door_h": 1.65, "double": True, "corners": "stone", "sign": "balnea", "domes": [(0.7, -0.9, 0.0)],
+               "fwins": [(0, 0.6, 1.15, 1.0, 1.5, False, False, True, True), (0, 2.85, 3.4, 1.0, 1.5, False, False, True, True)]},
+    "baths": {"w": 10.0, "d": 3.0, "floors": 2, "roof": "flat", "pal": 1, "tint": "#f6f0e6", "shutter": "teal", "door": "bronze", "dado": "#a83f2c", "dado_h": 1.75,
+              "door_u": (4.4, 5.6), "door_h": 1.85, "double": True, "corners": "stone", "sign": "baths", "domes": [(1.35, 0.0, 0.0), (0.7, -3.3, 0.0), (0.7, 3.3, 0.0)],
+              "fwins": [(0, 0.7, 1.3, 0.75, 1.55, False, False, True, True), (0, 8.7, 9.3, 0.75, 1.55, False, False, True, True),
+                        (1, 0.7, 1.3, 0.72, 1.5, False, True, True, True, True), (1, 2.3, 2.9, 0.72, 1.5, False, True, True, True, True),
+                        (1, 7.1, 7.7, 0.72, 1.5, False, True, True, True, True), (1, 8.7, 9.3, 0.72, 1.5, False, True, True, True, True)],
+              "niches": [(0, 2.4), (0, 7.6)], "pilasters": [1.75, 8.25]},
+    "sculptor": {"w": 5.4, "d": 2.0, "floors": 1, "roof": "x", "pal": 2, "tint": "#ece4d4", "shutter": "brown", "door": "oak", "nodoor": True,
+                 "door_u": (0.55, 4.85), "door_h": 1.7, "double": False, "corners": "stone", "sign": "sculptor", "fwins": []},
+    "shelter": {"w": 2.6, "d": 2.6, "floors": 1, "roof": "z", "pal": 0, "tint": "#ecdcc4", "shutter": "blue", "door": "blue",
+                "door_u": (0.55, 1.35), "door_h": 1.55, "double": False, "corners": "stone", "sign": "shelter",
+                "fwins": [(0, 1.7, 2.2, 0.8, 1.4, True, True, True, False)]},
+})
+
+
+TRADE_GOODS.update({"herbs": g_herbs, "cats": g_cats})
 
 
 def configure(kind, v, floors):
     global KIND, V, FLOORS, W, D, HT, PH, P, DS, MOV, FACES, EXTRA_BLOCK, LIGHTS, PERCH, DOOR_PT, FP, SMOKE
-    global ACTORS, PROPS
+    global ACTORS, PROPS, PETS_K
     KIND, V, FLOORS = kind, v, floors
     PROPS = []
+    PETS_K = []
     W = 3.6
     D = 4.3 if kind == "patrician" else 3.9          # глубина — как у прежних домов (след при перестройке тот же)
     ACTORS = []
@@ -3820,7 +4270,9 @@ def build_house():
         window(body, Pf_, U_, N_, s, a, b, c, d, shutters=sh, box=bx, grille=gr, surround=sur, hood=len(wv) > 9 and wv[9])
     # дверь
     use("g")
-    if KIND == "patrician" or DS.get("double"):
+    if DS.get("nodoor"):
+        block("front", Pf, U, door_u[0] - 0.2, door_u[1] + 0.2, PL, PL + door_h + 0.3)
+    elif KIND == "patrician" or DS.get("double"):
         # парадная дверь: две створки, каменный наличник с карнизом
         a, b = door_u
         R = RW(U, N)
@@ -3918,11 +4370,11 @@ def build_house():
             Pd, Ud, Nd = Ps[name]
             Ln = W if name == "front" else D - 2 * T
             ops = opens[name]
-            cuts = sorted([(o[0], o[1]) for o in ops if o[2] < PL + 0.8])
+            cuts = sorted([(o[0], o[1]) for o in ops if o[2] < PL + DS.get("dado_h", 0.78)])
             u = 0.0
             for (ca, cb) in cuts + [(Ln, Ln)]:
                 if ca - u > 0.05:
-                    dado(body, Pd, Ud, Nd, u, ca, 0.78, DS["dado"])
+                    dado(body, Pd, Ud, Nd, u, ca, DS.get("dado_h", 0.78), DS["dado"])
                 u = cb
     if fr == "awning":
         awning(body, Pf, U, N, door_mid, PL + 1.82, 1.3, 0.7, ("#efe3c8", "#b5452f"))
@@ -3972,16 +4424,22 @@ def build_house():
     spots = [(W * 0.55, PL + 0.45, 0.2), (0.25, PL + 1.6, 0.16)]
     if FLOORS > 1:
         spots.append((W - 0.3, PL + FLH + 0.5, 0.18))
-    if DS.get("lower") != "brick":
+    if DS.get("lower") != "brick" and KIND != "civic":      # у общественных зданий — роспись и камень, без заплат
         for (u, v, r) in spots:
             if not any(o[0] - 0.3 < u < o[1] + 0.3 and o[2] - 0.3 < v < o[3] + 0.3 for o in front_open):
                 brick_patch(body, Pf, U, N, u, v, r)
         brick_patch(body, Pl, Ul, Nl, (D - 2 * T) * 0.3, PL + 0.6, 0.22)
     # крыша
     use("roof")
-    along_x = DS["roof"] == "x"
-    y_ridge, rise = roof(body, along_x, x0, x1, z0, z1, HT, pitch_deg=27.0 if along_x else 30.0)
-    gable_walls(walls, inner, along_x, x0, x1, z0, z1, HT, rise)
+    along_x = DS["roof"] != "z"
+    if DS["roof"] == "flat":
+        y_ridge = flat_roof(body, x0, x1, z0, z1, HT, DS.get("domes", ()))
+        rise = 0.0
+        for (px, pz) in ((x0, z1), (x1, z1), (x0, z0), (x1, z0), (0.0, z1)):
+            PERCH.append([round(px, 3), round(HT + 0.53, 3), round(pz, 3)])
+    else:
+        y_ridge, rise = roof(body, along_x, x0, x1, z0, z1, HT, pitch_deg=27.0 if along_x else 30.0)
+        gable_walls(walls, inner, along_x, x0, x1, z0, z1, HT, rise)
     if not along_x:
         ring_c = J(P["trim"], 0.03)
         for k in range(10):
@@ -4240,6 +4698,8 @@ def main():
                                "smoke": SMOKE, "actors": ACTORS, "props": PROPS}
         if kind == "civic":
             meta["houses"][hid]["tint"] = DS.get("tint", "#f3ebdf")
+        if PETS_K:
+            meta["houses"][hid]["pets"] = [[e[0], [round(c / 0.72, 3) for c in e[1]]] + e[2:] for e in PETS_K]
         all_canon.update(CANON)
         print("KIT", hid, "tris", tris, "mov", len(MOV))
         if PNG:

@@ -87,10 +87,12 @@ static func _special_mesh(name: String) -> Mesh:
 			m.uv1_triplanar = true
 			m.uv1_scale = Vector3(0.4, 0.4, 0.4)
 		"#water":
-			m.albedo_color = Color(0.32, 0.72, 0.74, 0.85)
-			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			m.roughness = 0.08
-			m.metallic_specular = 0.7
+			# вода бассейнов и фонтанов — живая (рябь, блики, прожилки света: shaders/pool_water.gdshader)
+			var wm := ShaderMaterial.new()
+			wm.shader = load("res://shaders/pool_water.gdshader")
+			bm.material = wm
+			_special[name] = bm
+			return bm
 		"#duck", "#duck_f", "#swan":
 			# утка, уточка, лебедь — бесплатные модели в духе Synty (fauna.gd); нет файла — прежние из Kit
 			var am: Mesh = Fauna.bird_mesh(name.substr(1))
