@@ -51,7 +51,7 @@ func _ready() -> void:
 			for bn: String in acc:
 				var vv: Vector3 = acc[bn]
 				offs[bn] = func(_t: float) -> Vector3: return vv
-			var an := Citizen._layer(lib.get_animation("Idle"), 1, offs)
+			var an := Citizen._layer(lib.get_animation(String(args.get("base", "Idle"))), 1, offs)   # base= — проба поверх другого движения (Sitting_Idle)
 			lib.add_animation("probe%d" % i, an)
 			nm = "probe%d" % i
 		(cs[i] as Citizen).play(nm, 0.0, 0.0)

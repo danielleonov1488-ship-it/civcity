@@ -10,7 +10,10 @@ extends RefCounted
 
 const WALL_W := 2.5            # стена Synty: 2,5 вдоль (x от 0), 3 в высоту, толщина по z
 const FACE := 0.115            # от середины толщины стены до её лица
-const BOXES := ["SM_Prop_FlowerBed_01", "SM_Prop_FlowerBed_02"]
+## Ящики цветов под окнами: свои лёгкие (fbox_mesh — те же цветы Synty в простом ящике: 150 треугольников вместо 330)
+const BOXES := ["#bsign:@fbox1", "#bsign:@fbox2"]
+## Ящиков цветов от прохода на дом — не больше (у фасада свои ставит строитель дома, CatHouses._wbox)
+const BOX_MAX := 10
 ## Окна стен Synty (сняты с картинки стен спереди): подоконник по высоте и окна [середина вдоль стены, ширина]
 const WIN := {"SM_Bld_Wall_Window_01": [0.65, [[1.25, 1.2]]], "SM_Bld_Wall_Window_02": [1.4, [[0.55, 0.42], [1.25, 0.42], [1.95, 0.42]]],
 	"SM_Bld_Wall_Window_03": [1.4, [[1.25, 0.42]]], "SM_Bld_Wall_Window_04": [1.4, [[1.25, 1.75]]], "SM_Bld_Wall_Window_05": [0.65, [[1.25, 1.2]]]}
@@ -37,7 +40,8 @@ const TRADE_SIGN := {"butcher": "meat", "bakery": "bread", "cobbler": "shoes", "
 	"prefect": "prefect", "school": "school", "library": "library", "academy": "academy", "warehouse": "warehouse", "vigiles": "vigiles"}
 ## Товар у входа лавки — вещицы, что жители носят в руках (HandProps): окорока у мясника, сандалии у сапожника, бусы у ювелира
 const TRADE_GOODS := {"butcher": "ham", "cobbler": "sandals", "jeweler": "necklace", "wineshop": "grapes"}
-const HANG := ["SM_Prop_FlowerPot_Hanging_01", "SM_Prop_FlowerPot_Hanging_02", "SM_Prop_FlowerPot_Hanging_03", "SM_Prop_FlowerPot_Hanging_04"]
+## Горшки на верёвках у двери — висят на железном кронштейне (#bsign:@hook): своего крюка у них нет
+const HANG := ["SM_Prop_FlowerPot_Hanging_01", "SM_Prop_FlowerPot_Hanging_02", "SM_Prop_FlowerPot_Hanging_03"]
 ## Корзины, мешки и кувшины у входа лавки (сбоку от двери, проход свободен)
 const STOCK := [["SM_Prop_Basket_Set_01", 0.42], ["SM_Prop_Sack_Stack_01", 0.42], ["SM_Prop_Basket_Set_02", 0.42], ["SM_Prop_Sack_Stack_02", 0.42],
 	["SM_Prop_Jar_Pile_01", 0.5]]
@@ -77,6 +81,7 @@ static func dress(b: Bp, type: String) -> void:
 	var brick_left := [rng.randi_range(1, 3)]
 	var sign_at := []
 	var bracket := false
+	var boxes := [0]
 	for w: Array in walls:
 		var nm: String = w[0]
 		var xf: Transform3D = w[1]
@@ -100,11 +105,19 @@ static func dress(b: Bp, type: String) -> void:
 		var front := out.z > 0.6
 		if nm.contains("Window"):
 			# ящики цветов ровно под окнами (у круглых отдушин — нет)
-			if WIN.has(nm) and rng.randf() < (0.5 if shop else 0.8):
+			# (ящиков Synty по 320–340 треугольников у трёхэтажного дома было до 25 — 8 тыс. треугольников. Теперь ящик свой,
+			# лёгкий (fbox_mesh), сзади и сбоку реже, на дом не больше BOX_MAX — под тремя окошками все три или ни одного,
+			# и не второй ящик под окном, где он уже есть у строителя дома)
+			var bp: float = (0.45 if shop else 0.8) * (1.0 if front else (0.8 if absf(out.x) > 0.6 else 0.65))
+			if WIN.has(nm) and int(boxes[0]) + (WIN[nm][1] as Array).size() <= BOX_MAX and rng.randf() < bp:
 				var wd: Array = WIN[nm]
 				var bx: String = BOXES[rng.randi() % BOXES.size()]
 				for e: Array in wd[1]:
-					_put(b, bx, at.call(float(e[0]), float(wd[0]) - 0.14, 0.12), yaw, Vector3(float(e[1]) * sx / 1.57 * 1.05, 0.4, 0.34))
+					var bpos: Vector3 = at.call(float(e[0]), float(wd[0]) - 0.14, 0.12)
+					if _has_box(b, bpos):
+						continue
+					_put(b, bx, bpos, yaw, Vector3(float(e[1]) * sx / 1.57 * 1.05, 0.4, 0.34))
+					boxes[0] = int(boxes[0]) + 1
 			# под высоким подоконником — отбитая штукатурка
 			if WIN.has(nm) and float(WIN[nm][0]) > 1.0 and rng.randf() < bricky * 0.7:
 				_bricks(b, at.call(rng.randf_range(0.6, 1.9), rng.randf_range(0.45, 0.8), 0.0), yaw, rng, 1.0, brick_left)
@@ -146,8 +159,8 @@ static func dress(b: Bp, type: String) -> void:
 						_put(b, "SM_Prop_Vase_03", p0, rng.randf() * TAU, Vector3.ONE * 0.62)
 						_put(b, CatDecor.BLOOMS[rng.randi() % CatDecor.BLOOMS.size()], p0 + Vector3(0, 0.36, 0), rng.randf() * TAU, Vector3.ONE * 0.22,
 							{"tint": CatDecor.TRUE_COLOR})
-			if rng.randf() < 0.55 and top < 2.3:
-				_put(b, HANG[rng.randi() % HANG.size()], at.call(WALL_W - 0.3 if rng.randf() < 0.5 else 0.3, 2.45, 0.3), yaw, Vector3.ONE * 0.42)
+			if rng.randf() < 0.55 and top < 2.3 and _door_pot(b, _winfo(b, w, mid), rng, d0 * sx, d1 * sx):
+				pass
 			elif d0 > 0.6 and rng.randf() < bricky * 0.6:
 				_bricks(b, at.call(d0 * 0.45 if rng.randf() < 0.5 else (d1 + WALL_W) * 0.5 + 0.05, rng.randf_range(1.05, 1.5), 0.0), yaw, rng, 0.7, brick_left)
 		else:
@@ -504,7 +517,9 @@ static func _boxes(b: Bp) -> Array:
 		_bx_of = b
 		_bx = []
 	for i in range(_bx.size(), b.parts.size()):
-		_bx.append((b.parts[i][1] as Transform3D) * Bp.model_aabb(String(b.parts[i][0])))
+		var nm := String(b.parts[i][0])
+		# (Bp.model_aabb у своих деталей «#» — кубик 1 м: кронштейн занял бы полстены)
+		_bx.append((b.parts[i][1] as Transform3D) * (kit_aabb(nm) if nm.begins_with("#bsign:@") else Bp.model_aabb(nm)))
 	return _bx
 
 
@@ -982,6 +997,14 @@ static func _ident(b: Bp, type: String) -> int:
 	return hash(sig)
 
 
+## Под этим окном уже стоит ящик цветов (строитель дома ставит свои под окнами фасада)
+static func _has_box(b: Bp, p: Vector3) -> bool:
+	for q: Array in b.parts:
+		if (String(q[0]).begins_with("SM_Prop_FlowerBed") or String(q[0]).begins_with("#bsign:@fbox")) 				and (q[1] as Transform3D).origin.distance_to(p) < 0.45:
+			return true
+	return false
+
+
 ## Трава и камешки у подножия стены (u — место вдоль стены)
 static func _tuft(b: Bp, at: Callable, yaw: float, rng: RandomNumberGenerator, u: float) -> void:
 	_put(b, GRASS[rng.randi() % GRASS.size()], at.call(u, 0.0, 0.06), yaw + rng.randf_range(-0.5, 0.5), Vector3.ONE * rng.randf_range(0.28, 0.42))
@@ -1010,6 +1033,9 @@ static func _put_xf(b: Bp, nm: String, xf: Transform3D, remap := {}) -> void:
 static func kit_mesh(name: String) -> Mesh:
 	if name.begins_with("#sign:"):
 		return sign_mesh(name.substr(6))
+	if name.begins_with("#bsign:@"):
+		# свои детали без новой ветки в Parts (имя под «#bsign:»): железный кронштейн для горшка, лёгкий ящик цветов
+		return hook_mesh() if name == "#bsign:@hook" else fbox_mesh(int(name.substr(13)))
 	if name.begins_with("#bsign:"):
 		return bracket_sign_mesh(name.substr(7))
 	if name.begins_with("#bricks_"):
@@ -1096,6 +1122,128 @@ static func bracket_sign_mesh(key: String) -> Mesh:
 	st.commit(am)
 	am.surface_set_material(1, _sign_material())
 	return am
+
+
+## Железный кронштейн для подвесного горшка у двери: накладка на стене, прут от стены (+Z) с подкосом, на конце
+## шарик и крюк вниз. Начало — точка крепления прута на лице стены; горшок висит кольцом верёвок на крюке (HOOK_TIP).
+## Один на весь город — одна сетка (MultiMesh), меньше 0,9 м — без тени
+const HOOK_TIP := Vector3(0, -0.075, 0.36)
+static var _hook: Mesh
+static func hook_mesh() -> Mesh:
+	if _hook != null:
+		return _hook
+	var k := Kit.new()
+	var iron := Color("2b2622")
+	k.boxc(Vector3(0, -0.07, 0.012), Vector3(0.07, 0.21, 0.024), iron, [])         # накладка на стене
+	k.rod(Vector3(0, 0, 0.0), Vector3(0, 0, 0.42), 0.016, 6, iron)                   # прут
+	k.rod(Vector3(0, -0.16, 0.012), Vector3(0, -0.012, 0.27), 0.011, 5, iron)         # подкос
+	k.rod(Vector3(0, 0.0, HOOK_TIP.z), Vector3(0, HOOK_TIP.y - 0.01, HOOK_TIP.z), 0.008, 4, iron)   # крюк
+	k.cyl(Vector3(0, -0.022, 0.42), 0.026, 0.044, 6, iron)                           # шарик на конце
+	var am := k.mesh()
+	am.surface_set_material(0, Kit.material(0.75))
+	_hook = am
+	return am
+
+
+## Лёгкий ящик цветов (v: 1 — терракотовый, 2 — каменный): цветы и листья — те же поверхности, что у ящика Synty
+## SM_Prop_FlowerBed_0<v> (та же картинка листвы, тот же материал), а сам ящик — простое корыто (20 треугольников
+## вместо 200 у Synty: под цветами его почти не видно). Размеры и начало — как у ящика Synty: ставится так же
+const FBOX_COL := [Color("b4643f"), Color("d6d0c3")]
+static var _fbox := {}
+static func fbox_mesh(v: int) -> Mesh:
+	v = clampi(v, 1, 2)
+	if _fbox.has(v):
+		return _fbox[v]
+	var src := Synty.make("SM_Prop_FlowerBed_0%d" % v)
+	var lo := Vector3(INF, INF, INF)
+	var hi := -lo
+	var plants := {}                                # материал → [[сетка, поверхность, к началу модели]]
+	for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
+		var rel := Citizen._rel(mi, src)
+		for si in mi.mesh.get_surface_count():
+			var mat := mi.get_surface_override_material(si)
+			if mat != null and str(mat.get_meta("alb", "")).begins_with("PolygonAncientEmpire"):
+				for q: Vector3 in mi.mesh.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]:
+					lo = lo.min(rel * q)
+					hi = hi.max(rel * q)
+				continue
+			if not plants.has(mat):
+				plants[mat] = []
+			(plants[mat] as Array).append([mi.mesh, si, rel])
+	# корыто: дно уже верха, края с бортиком, сверху земля (её почти не видно за цветами)
+	var k := Kit.new()
+	var col: Color = FBOX_COL[v - 1]
+	var dk := col.darkened(0.18)
+	var e := Vector3(0.06, 0.0, 0.05)
+	var b0 := Vector3(lo.x + e.x, lo.y, lo.z + e.z)
+	var b1 := Vector3(hi.x - e.x, lo.y, hi.z - e.z)
+	var t0 := Vector3(lo.x, hi.y, lo.z)
+	var t1 := Vector3(hi.x, hi.y, hi.z)
+	var c := [Vector3(b0.x, b0.y, b0.z), Vector3(b1.x, b0.y, b0.z), Vector3(b1.x, b0.y, b1.z), Vector3(b0.x, b0.y, b1.z)]
+	var u := [Vector3(t0.x, t0.y, t0.z), Vector3(t1.x, t0.y, t0.z), Vector3(t1.x, t0.y, t1.z), Vector3(t0.x, t0.y, t1.z)]
+	var mid := (lo + hi) * 0.5
+	for i in 4:
+		var j := (i + 1) % 4
+		k.quad_out(c[i], c[j], u[j], u[i], col if i % 2 == 0 else dk, mid)
+	k.quad_out(c[0], c[1], c[2], c[3], dk, mid)
+	var sy := hi.y - 0.06
+	k.quad_out(Vector3(t0.x + 0.05, sy, t0.z + 0.05), Vector3(t1.x - 0.05, sy, t0.z + 0.05), Vector3(t1.x - 0.05, sy, t1.z - 0.05),
+		Vector3(t0.x + 0.05, sy, t1.z - 0.05), Color("4a3424"), mid - Vector3(0, 1, 0))
+	var am := k.mesh()
+	am.surface_set_material(0, Kit.material(0.9))
+	for mat: Material in plants.keys():
+		var st := SurfaceTool.new()
+		for e2: Array in plants[mat]:
+			st.append_from(e2[0], e2[1], e2[2])
+		st.commit(am)
+		am.surface_set_material(am.get_surface_count() - 1, mat)
+	src.free()
+	_fbox[v] = am
+	return am
+
+
+## Габарит своей детали «#bsign:@…» (у Bp.model_aabb для «#» — кубик 1 м)
+static var _kab := {}
+static func kit_aabb(nm: String) -> AABB:
+	if not _kab.has(nm):
+		var m := kit_mesh(nm)
+		_kab[nm] = m.get_aabb() if m else AABB(Vector3(-0.5, 0, -0.5), Vector3.ONE)
+	return _kab[nm]
+
+
+## Горшок на верёвках (HANG) на кронштейне у двери дома: сбоку от проёма, где на высоте горшка стена свободна (фонарь,
+## табличка, горшки строителя дома, плющ мешают — _spans). Нашлось место — true
+static func _door_pot(b: Bp, w: Dictionary, rng: RandomNumberGenerator, d0: float, d1: float) -> bool:
+	if w.is_empty():
+		return false
+	var y := minf(2.5 * float(w["sy"]), _cornice(b, w) - 0.12)
+	var nm: String = HANG[rng.randi() % HANG.size()]
+	var s := 0.42
+	var bs := _wbasis(w, Vector3.ONE * s, rng.randf() * TAU)
+	var pb := Bp.model_aabb(nm)
+	var top := Vector3(pb.get_center().x, pb.end.y, pb.get_center().z)
+	var lh := _wbox(w, nm, bs)
+	var hw: float = ((lh[1] as Vector3).x - (lh[0] as Vector3).x) * 0.5
+	var low := y + HOOK_TIP.y - pb.size.y * s
+	# (стена сжата вдоль фасада: у двери по бокам ~0,55 м — горшок встаёт вплотную к проёму, до края стены)
+	var fr := _free(float(w["len"]), _spans(b, w, low - 0.04, y + 0.05, 0.7), 0.02, 0.03)
+	var cands := [d1 + hw + 0.05, d0 - hw - 0.05]
+	if rng.randf() < 0.5:
+		cands.reverse()
+	for u0: float in cands:
+		for f: Vector2 in fr:
+			# ближе к проёму — насколько позволяет свободное место с этой стороны двери
+			if f.y - f.x < hw * 2.0 or (u0 > d1 and f.y < d1) or (u0 < d0 and f.x > d0):
+				continue
+			var u := clampf(u0, f.x + hw, f.y - hw)
+			if absf(u - u0) < 0.3:
+				var al: Vector3 = w["al"]
+				var hook := _wpt(w, u, y, 0.0)
+				_put_xf(b, "#bsign:@hook", Transform3D(Basis(Vector3.UP, float(w["yaw"])), hook))
+				var tip := hook + Vector3.UP * HOOK_TIP.y + (w["out"] as Vector3) * HOOK_TIP.z + al * 0.0
+				_put_xf(b, nm, Transform3D(bs, tip - bs * top + Vector3.UP * 0.01))
+				return true
+	return false
 
 
 ## Отбитая штукатурка: рваное пятно кирпичной кладки на лице стены (+Z — наружу), середина — начало координат.

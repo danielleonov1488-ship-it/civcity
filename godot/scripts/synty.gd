@@ -205,5 +205,52 @@ static func make(name: String, remap := {}) -> Node3D:
 			else:
 				var src := mi.mesh.surface_get_material(i)
 				slot = src.resource_name if src else ""
-			mi.set_surface_override_material(i, material(slot, remap))
+			var m := material(slot, remap)
+			if m is StandardMaterial3D and (m as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_DISABLED and _two_faced(mi.mesh, i):
+				m = _cull_back(m as StandardMaterial3D)
+			mi.set_surface_override_material(i, m)
 	return n
+
+
+## Листва «с изнанкой» (владелец 12.11: плющ на стенах местами чернеет): у части плетей Synty (Ivy_04–08, Ivy_01,
+## свисающий плющ…) каждый лист — два треугольника, лицом наружу и лицом к стене, и у обоих нормаль наружу (так их
+## делают для движков, где листва односторонняя). У нас листва двусторонняя (CULL_DISABLED): у второго треугольника
+## Godot разворачивает нормаль — он смотрит в стену, тёмный, и спорит с первым на том же месте: чёрные пятна при
+## одних углах солнца, при других нет. У таких поверхностей — свой материал с отсечением изнанки: виден ровно один
+## лист, нормалью наружу. Поверхности, где лист один и нормаль по его лицу (Ivy_Flowers_01–03, лоза, ящики цветов),
+## остаются двусторонними: у них Godot разворачивает нормаль правильно
+static var _faced := {}
+static func _two_faced(mesh: Mesh, s: int) -> bool:
+	var k := "%d|%d" % [mesh.get_instance_id(), s]
+	if _faced.has(k):
+		return _faced[k]
+	var ia := mesh.surface_get_arrays(s)
+	var vs: PackedVector3Array = ia[Mesh.ARRAY_VERTEX]
+	var ns: PackedVector3Array = ia[Mesh.ARRAY_NORMAL]
+	var idx: PackedInt32Array = ia[Mesh.ARRAY_INDEX] if ia[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+	var cnt := 0
+	var bad := 0
+	var n_tri := (idx.size() if idx.size() > 0 else vs.size()) / 3
+	if ns.size() == vs.size():
+		for t in n_tri:
+			var a := idx[t * 3] if idx.size() > 0 else t * 3
+			var b := idx[t * 3 + 1] if idx.size() > 0 else t * 3 + 1
+			var c := idx[t * 3 + 2] if idx.size() > 0 else t * 3 + 2
+			var g := (vs[c] - vs[a]).cross(vs[b] - vs[a])       # лицо в Godot — обход по часовой
+			if g.length_squared() < 1e-14:
+				continue
+			cnt += 1
+			if g.dot(ns[a] + ns[b] + ns[c]) < 0.0:
+				bad += 1
+	var res := cnt > 0 and bad * 100 > cnt * 15
+	_faced[k] = res
+	return res
+
+
+static func _cull_back(m: StandardMaterial3D) -> StandardMaterial3D:
+	var k := "cullback|%d" % m.get_instance_id()
+	if not _mats.has(k):
+		var c := m.duplicate() as StandardMaterial3D
+		c.cull_mode = BaseMaterial3D.CULL_BACK
+		_mats[k] = c                               # в общем списке: «Очень низкая» подменяет картинки и у него
+	return _mats[k]
