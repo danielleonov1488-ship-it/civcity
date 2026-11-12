@@ -264,6 +264,7 @@ func _ready() -> void:
 	land = Land.new()
 	city = City.new(land)
 	parts = Parts.new()
+	parts.tint_split = Parts.split_on           # одинаковые детали разных цветов — один MultiMesh (12.11, скорость)
 	add_child(parts)
 	cover = Cover.new()
 	add_child(cover)

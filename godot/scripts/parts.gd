@@ -5,13 +5,67 @@ extends Node3D
 ## Свободные места переиспользуются, буфер растёт удвоением.
 
 var groups := {}          # ключ → {subs: [{mm, mmi, local}], free: [], used: int, cap: int}
+var alias := {}           # прежний ключ (с цветом оттенка) → группа без оттенка: подсветка (cover.gd) ищет по нему
 static var _special := {}
+
+## Оттенок — у экземпляра (12.11, владелец: «минимум 120 кадров»): одинаковые детали разных цветов (штукатурка
+## каждого дома своего цвета, ставни, черепица) — один MultiMesh, цвет — в цвете экземпляра; у подкрашиваемых
+## поверхностей материал белый и умножается на него (как albedo_color: то же sRGB → линейный). Видов деталей
+## в городе владельца ~в 3,5 раза меньше (1955 → 531) — во столько же меньше вызовов отрисовки. Только у главного
+## пула (у подсветки cover.gd — нет)
+var tint_split := false
+static var split_on := true                # для сравнений «было/стало» (test_perf split=0)
+var _col := Color.WHITE                     # цвет экземпляра для последней группы из _group
+static var _tint_mats := {}
+
+
+## [оттенок, какие картинки подкрашены («*» — все), remap без оттенка] или [] — группа как прежде
+static func _split(name: String, remap: Dictionary) -> Array:
+	if name.begins_with("#") or name.begins_with("K:") or remap.has("leaf"):
+		return []
+	var has_t := remap.has("tint")
+	var tints: Dictionary = remap.get("tints", {})
+	if has_t == (not tints.is_empty()):
+		return []                              # без оттенка — как прежде; оба сразу — тоже (редкость)
+	var col: Color
+	var mark := "*"
+	if has_t:
+		col = remap["tint"]
+	else:
+		var keys := tints.keys()
+		col = tints[keys[0]]
+		for k in keys:
+			if tints[k] != col:
+				return []                      # разным картинкам разные цвета — один цвет экземпляра их не передаст
+		keys.sort()
+		mark = ",".join(keys)
+	var base := remap.duplicate()
+	base.erase("tint")
+	base.erase("tints")
+	return [col, mark, base]
 
 
 func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictionary:
-	var key := name + "|" + str(remap) + ("" if tile.x < 0 else "|%d,%d" % [tile.x, tile.y])
+	var ts := "" if tile.x < 0 else "|%d,%d" % [tile.x, tile.y]
+	var key := name + "|" + str(remap) + ts
+	_col = Color.WHITE
 	if groups.has(key):
 		return groups[key]
+	if alias.has(key):
+		_col = _split(name, remap)[0]
+		return alias[key]
+	var sp := _split(name, remap) if tint_split else []
+	if not sp.is_empty():
+		var tkey := name + "|" + str(sp[2]) + "|tint:" + str(sp[1]) + ts
+		var tg: Dictionary = groups.get(tkey, {})
+		if tg.is_empty() and not groups.has(tkey + "|no"):
+			tg = _tint_group(name, sp, tkey, tile)
+			if tg.is_empty():
+				groups[tkey + "|no"] = {"subs": [], "free": [], "used": 0, "cap": 0, "key": tkey + "|no"}
+		if not tg.is_empty():
+			alias[key] = tg
+			_col = sp[0]
+			return tg
 	var g := {"subs": [], "free": [], "used": 0, "cap": 0, "key": key}
 	if name.begins_with("#"):
 		g["subs"].append(_sub(_special_mesh(name), Transform3D.IDENTITY))
@@ -24,23 +78,81 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 				if m:
 					mesh.surface_set_material(s, m)
 			var sub := _sub(mesh, Citizen._rel(mi, src))
-			# мелочь (трава, цветы, кувшинки, камешки) — без тени и только вблизи: так быстрее
-			if name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") or name.contains("Pebbles") or name.contains("Garden_Plants"):
-				var mmi: MultiMeshInstance3D = sub["mmi"]
-				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-				if tile.x >= 0:
-					mmi.visibility_range_end = 150.0
-					mmi.visibility_range_end_margin = 20.0
-					mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			_small(name, sub, tile)
 			g["subs"].append(sub)
 		src.free()
 	groups[key] = g
 	return g
 
 
-func _sub(mesh: Mesh, local: Transform3D) -> Dictionary:
+## Группа без оттенка: модель с remap без цвета, у подкрашиваемых поверхностей — белый материал «умножить на цвет
+## экземпляра». Модель с цветом в вершинах (умножился бы и он) или не StandardMaterial3D — {} (группа на каждый цвет)
+func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dictionary:
+	var marks := {}
+	for k in str(sp[1]).split(","):
+		marks[k] = true
+	var src := Synty.make(name, sp[2])
+	var subs := []
+	var ok := true
+	for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
+		var mesh := mi.mesh.duplicate() as Mesh
+		for s in mesh.get_surface_count():
+			var m := mi.get_surface_override_material(s)
+			if m == null:
+				continue
+			var hit: bool = sp[1] == "*" or (m.has_meta("alb") and marks.has(str(m.get_meta("alb"))))
+			if hit:
+				if not m is StandardMaterial3D or (mesh is ArrayMesh and (mesh as ArrayMesh).surface_get_format(s) & Mesh.ARRAY_FORMAT_COLOR):
+					ok = false
+					break
+				# «tint» ставит и прозрачность (как Synty.material: albedo_color = tint), «tints» — нет
+				var a: float = (sp[0] as Color).a if sp[1] == "*" else (m as StandardMaterial3D).albedo_color.a
+				m = _tint_mat(m as StandardMaterial3D, a)
+			mesh.surface_set_material(s, m)
+		if not ok:
+			break
+		subs.append([mesh, Citizen._rel(mi, src)])
+	src.free()
+	if not ok:
+		return {}
+	var g := {"subs": [], "free": [], "used": 0, "cap": 0, "key": tkey, "tint": true}
+	for e: Array in subs:
+		var sub := _sub(e[0], e[1], true)
+		_small(name, sub, tile)
+		g["subs"].append(sub)
+	groups[tkey] = g
+	return g
+
+
+## Белая копия материала, умножаемая на цвет экземпляра (одна на все цвета)
+static func _tint_mat(m: StandardMaterial3D, a: float) -> StandardMaterial3D:
+	var k := "%d|%.4f" % [m.get_instance_id(), a]
+	if _tint_mats.has(k):
+		return _tint_mats[k]
+	var t := m.duplicate() as StandardMaterial3D
+	t.albedo_color = Color(1, 1, 1, a)
+	t.vertex_color_use_as_albedo = true
+	t.vertex_color_is_srgb = true
+	_tint_mats[k] = t
+	Synty._mats["tint|" + k] = t                # «Очень низкая» подменяет картинки и у них (Gfx.small_textures)
+	return t
+
+
+## мелочь (трава, цветы, кувшинки, камешки) — без тени и только вблизи: так быстрее
+static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
+	if name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") or name.contains("Pebbles") or name.contains("Garden_Plants"):
+		var mmi: MultiMeshInstance3D = sub["mmi"]
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if tile.x >= 0:
+			mmi.visibility_range_end = 150.0
+			mmi.visibility_range_end_margin = 20.0
+			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+
+
+func _sub(mesh: Mesh, local: Transform3D, colors := false) -> Dictionary:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = colors
 	mm.mesh = mesh
 	mm.instance_count = 0
 	var mmi := MultiMeshInstance3D.new()
@@ -287,10 +399,14 @@ func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 	var handles := []
 	for p in bp.parts:
 		var g := _group(subst.get(p[0], p[0]), p[2])
+		var col := _col
 		var slot := _alloc(g)
 		var t: Transform3D = xf * (p[1] as Transform3D)
+		var tinted := g.has("tint")
 		for sub in g["subs"]:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, t * (sub["local"] as Transform3D))
+			if tinted:
+				(sub["mm"] as MultiMesh).set_instance_color(slot, col)
 		handles.append([g, slot])
 	return handles
 
@@ -298,9 +414,12 @@ func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 ## Одна деталь; tiled — природа: кусками по 48 м, чтобы невидимые куски не рисовались
 func place_one(name: String, xf: Transform3D, remap := {}, tiled := false) -> Array:
 	var g := _group(name, remap, Vector2i(int(xf.origin.x / 48.0), int(xf.origin.z / 48.0)) if tiled else Vector2i(-1, -1))
+	var col := _col
 	var slot := _alloc(g)
 	for sub in g["subs"]:
 		(sub["mm"] as MultiMesh).set_instance_transform(slot, xf * (sub["local"] as Transform3D))
+		if g.has("tint"):
+			(sub["mm"] as MultiMesh).set_instance_color(slot, col)
 	return [[g, slot]]
 
 
