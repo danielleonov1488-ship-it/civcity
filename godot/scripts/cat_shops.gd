@@ -115,9 +115,17 @@ static func _sheet(b: Bp, p: Vector3, w: float, h: float, col: int, yaw := 0.0) 
 	_put_xf(b, "SM_Prop_Banner_Roof_01", Transform3D(bs, p + Vector3(-w / 2.0, 0, 0).rotated(Vector3.UP, yaw)), _cloth(col))
 
 
-## Плющ с цветами на стене коробки (сторона side, модуль i — дробный, высота y)
+## Плющ с цветами на стене коробки (сторона side, модуль i — дробный, высота y). Целиком на стене: у угла плеть
+## сдвигается внутрь (прежде половина широкой плети висела в воздухе за углом и издали чернела), на узкой стене — узкая
 static func _ivy(b: Bp, x0: float, x1: float, z0: float, z1: float, side: int, i: float, y: float, k: int) -> void:
-	_on(b, "SM_Env_Ivy_Flowers_0%d" % (1 + posmod(k, 9)), x0, x1, z0, z1, side, i, y, 0.13)
+	var nm := "SM_Env_Ivy_Flowers_0%d" % [1, 2, 3, 4, 8, 9][posmod(k, 6)]     # без 05–07: их листья в игре чернеют
+	var L := (x1 - x0) if side % 2 == 0 else (z1 - z0)
+	var hw := Bp.model_aabb(nm).size.x * 0.5
+	if 2.0 * hw + 0.1 > L:
+		nm = "SM_Env_Ivy_Flowers_0%d" % [4, 3][posmod(k, 2)]
+		hw = Bp.model_aabb(nm).size.x * 0.5
+	var u := clampf(i * M, hw + 0.05, maxf(hw + 0.05, L - hw - 0.05))
+	_on(b, nm, x0, x1, z0, z1, side, u / M, y, 0.13)
 
 
 ## Цветы в подвесном кашпо под окном (сторона side, модуль i)
