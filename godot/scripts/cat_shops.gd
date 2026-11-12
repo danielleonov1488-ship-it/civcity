@@ -56,7 +56,7 @@ const SX := CatHouses.SX
 const RIGID := ["SM_Bld_Pillar", "SM_Bld_Roof_Topper", "SM_Bld_Ornament", "SM_Bld_Trellis_Pillar", "SM_Env_Ivy_Pillar",
 	"SM_Bld_Roof_Base_Pillar", "SM_Bld_Roof_Base_Peak"]
 const FLEX := ["SM_Bld_", "#dark", "#lit", "SM_Prop_Overhang", "SM_Prop_Banner_Roof", "SM_Prop_Mural", "SM_Prop_FlowerBed",
-	"SM_Prop_Drapery", "SM_Env_Ivy", "SM_Env_Vine", "SM_Prop_Shelf", "SM_Prop_Beam", "SM_Prop_Rug_Drape"]
+	"SM_Prop_Drapery", "SM_Env_Ivy", "SM_Env_Vine", "SM_Prop_Shelf", "SM_Prop_Beam", "SM_Prop_Rug_Drape", "#dress:awning", "#dress:fbox"]
 ## Высота сиденья скамьи Synty в родном масштабе — люди при деле садятся ровно на неё (Catalog.ARCH = Citizen.SIZE)
 const SEAT := 1.0
 ## Детали, которые не сжимаются, хоть и гибкие по имени (краска в круглом чане) — индексы в b.parts
@@ -118,7 +118,7 @@ static func _sheet(b: Bp, p: Vector3, w: float, h: float, col: int, yaw := 0.0) 
 ## Плющ с цветами на стене коробки (сторона side, модуль i — дробный, высота y). Целиком на стене: у угла плеть
 ## сдвигается внутрь (прежде половина широкой плети висела в воздухе за углом и издали чернела), на узкой стене — узкая
 static func _ivy(b: Bp, x0: float, x1: float, z0: float, z1: float, side: int, i: float, y: float, k: int) -> void:
-	var nm := "SM_Env_Ivy_Flowers_0%d" % [1, 2, 3, 4, 8, 9][posmod(k, 6)]     # без 05–07: их листья в игре чернеют
+	var nm := "SM_Env_Ivy_Flowers_0%d" % [1, 2, 3, 4, 5, 6, 7, 8, 9][posmod(k, 9)]   # 05–07 — снова (изнанка листьев отсекается)
 	var L := (x1 - x0) if side % 2 == 0 else (z1 - z0)
 	var hw := Bp.model_aabb(nm).size.x * 0.5
 	if 2.0 * hw + 0.1 > L:
@@ -316,17 +316,53 @@ static func _porch(b: Bp, x0: float, x1: float, zc: float, zw: float, h := 2.4, 
 	return y
 
 
-## Полосатый полотняный навес: полосы шириной ~0,45 м, сзади выше (yb), спереди ниже (yf)
+## Полосатый полотняный навес: полосы шириной ~0,45 м, сзади выше (yb), спереди ниже (yf). Один кусок своего полотна
+## (CatDress.awning_mesh «#dress:awning:<полос>:<цвет>:<цвет>»: провис, подзор с зубцами, ~14 треугольников на полосу
+## вместо 370 у полосы Synty) — у всех лавок навесы одного вида. Землю не занимает (Bp.free_parts: подзор спускается
+## ниже 1,6 м игры, а след считается по габаритам)
 static func _awning(b: Bp, x0: float, x1: float, zb: float, zf: float, yb: float, yf: float, ca: int, cb := WHITE) -> void:
 	var n := maxi(3, int(round((x1 - x0) / 0.45)))
-	var w := (x1 - x0) / n
-	var dz := zf - zb
-	var dy := yb - yf
-	var ln := sqrt(dz * dz + dy * dy)
-	var ang := atan2(dy, dz)
-	for i in n:
-		var bs := Basis(Vector3.RIGHT, ang) * Basis.from_scale(Vector3(w / 2.6, 0.35, ln / 2.6))
-		_put_xf(b, "SM_Prop_Banner_Roof_01", Transform3D(bs, Vector3(x0 + i * w, yb, zb)), _cloth(ca if i % 2 == 0 else cb))
+	b.free_parts[b.parts.size()] = true
+	_put_xf(b, "#dress:awning:%d:%d:%d" % [n, posmod(ca, CLOTH.size()), posmod(cb, CLOTH.size())],
+		Transform3D(Basis.from_scale(Vector3(x1 - x0, yb - yf, zf - zb)), Vector3(x0, yb, zb)))
+
+
+## Товар на верёвках у переднего края навеса (x0…x1 — где висеть, край ската — zf, yf; длина верёвок по очереди):
+## items — [деталь, масштаб, раскраска?]; верёвка от полотна до вещи. Землю не занимает
+static func _hang_row(b: Bp, x0: float, x1: float, zf: float, yf: float, items: Array) -> void:
+	var n := items.size()
+	for k in n:
+		var e: Array = items[k]
+		var x := lerpf(x0, x1, (k + 0.5) / n)
+		var ln: float = [0.16, 0.3, 0.22, 0.36][k % 4]
+		var top := Vector3(x, yf - 0.01, zf - 0.08)
+		b.free_parts[b.parts.size()] = true
+		_put_xf(b, "#dress:cord", Transform3D(Basis.from_scale(Vector3(1, ln, 1)), top))
+		var nm := String(e[0])
+		var s: Vector3 = e[1] if e[1] is Vector3 else Vector3.ONE * float(e[1])
+		var hang := Vector3.ZERO
+		if not nm.begins_with("#"):
+			hang = Vector3(0, Bp.model_aabb(nm).end.y * s.y, 0)       # вещь Synty — за верх (кувшин за горлышко)
+		b.free_parts[b.parts.size()] = true
+		_put_xf(b, nm, Transform3D(Basis(Vector3.UP, k * 1.3 if not nm.begins_with("SM_Prop_Rug") else 0.0) * Basis.from_scale(s),
+			top - Vector3(0, ln, 0) - hang), e[2] if e.size() > 2 else {})
+
+
+## Что висит у края навеса по ремеслу (лёгкие вещи: кувшинчики, гроздья, чеснок, травы, сандалии, ткани) — или ничего
+## (рыба на крюке издали читалась серебряным ножом — у рыбного прилавка ничего не висит)
+static func _hang_goods(type: String, pal: int) -> Array:
+	match type:
+		"potter": return [["SM_Prop_Jug_05", 0.62], ["SM_Prop_Jug_01", 0.38], ["SM_Prop_Jug_05", 0.55]]
+		"wineshop": return [["#hp_grapes", 0.62], ["SM_Prop_Jug_05", 0.62], ["#hp_grapes", 0.55]]
+		"oilshop": return [["SM_Prop_Jug_06", 0.36], ["#dress:garlic", 1.0], ["SM_Prop_Jug_05", 0.6]]
+		"cobbler": return [["#hp_sandals", 1.2], ["#hp_sandals", 1.1], ["#hp_sandals", 1.2]]
+		"fruit": return [["#hp_grapes", 0.62], ["#hp_grapes", 0.55]]
+		"veg": return [["#dress:garlic", 1.0], ["#dress:herbs", 0.8]]
+		"grain": return [["#dress:garlic", 1.0], ["#dress:herbs", 0.8], ["#dress:garlic", 0.9]]
+		"weaver":
+			var c := ["01_B", "03_C", "01_A", "03_B"]
+			return [["SM_Prop_Rug_Drape_01", Vector3(0.36, 0.55, 0.12), _rug(c[pal % 4])], ["SM_Prop_Rug_Drape_01", Vector3(0.32, 0.65, 0.12), _rug(c[(pal + 1) % 4])]]
+	return []
 
 
 ## Круглый столик Synty родом 0,55 м — ниже сиденья табурета; вытягиваем до обеденной высоты TABLE7
@@ -458,6 +494,8 @@ static func _stall(b: Bp, kind: String, v: int) -> void:
 		_pole(b, Vector3(x, 0, -1.15), hb)
 		_pole(b, Vector3(x, 0, 1.1), hf)
 	_awning(b, -1.38, 1.38, -1.3, 1.35, hb + 0.05, hf - 0.05, col, col2)
+	# у края навеса — у передних столбов (покупатель посередине ходит свободно)
+	_hang_row(b, -1.95, 1.95, 1.35, hf - 0.05, _hang_goods(kind, v))
 	# прилавок с товаром лицом к покупателю — корзины крупные, как в Town to City; стол в полную высоту (по пояс торговцу),
 	# поуже, чтобы влез между столбами
 	_put_xf(b, "SM_Prop_Table_08", Transform3D(Basis.from_scale(Vector3(0.85, 1.0, 0.85)), Vector3(0, 0, 0.5)))
@@ -582,6 +620,7 @@ static func _form_awning(b: Bp, type: String, spec: Array, pal: int) -> void:
 		for x: float in [-2.35, -0.45, 1.45]:
 			_pole(b, Vector3(x, 0, 1.58), 2.4)
 		_counter(b, 0.2, 1.25, 1.62)
+		_hang_row(b, 0.2, 1.25, 1.72, 2.4, _hang_goods(type, pal))
 	else:
 		_awning(b, -2.55, 2.55, 0.12, 1.72, 2.8, 2.4, ACCENT[pal])
 		for x: float in [-2.35, 0.0, 2.35]:
@@ -615,6 +654,9 @@ static func _form_porch(b: Bp, type: String, spec: Array, pal: int) -> void:
 	_hanging_lamp(b, Vector3(0.0, 2.55, 0.75), 0.45, false)
 	if type != "weaver":
 		_counter(b, 0.35, 2.15, 1.45)   # лицом чуть впереди столбов: за прилавком место для сапожника (он стоит в z 0,6)
+	if wood:
+		# сандалии на верёвках с балки — между кожами
+		_hang_row(b, 1.1, 1.7, 1.38, 2.35, _hang_goods(type, pal).slice(0, 2))
 	_sign(b, Vector3(-1.25, 2.62 if not wood else 2.45, 1.47), 0.0, spec[1], spec[2], 0.5)
 	_lamp(b, Vector3(-0.35, 2.1, 0.12))
 	b.add("SM_Prop_FlowerPot_Fancy_01", Vector3(-2.15, 0, 0.62), 0.0, 0.6)
@@ -676,6 +718,7 @@ static func _form_terrace(b: Bp, type: String, spec: Array, pal: int) -> void:
 		for x: float in [0.15, 2.35]:
 			_pole(b, Vector3(x, 0, 1.5), 2.4)
 		_counter(b, 0.3, 2.2, 1.56)
+		_hang_row(b, 0.35, 2.15, 1.62, 2.4, _hang_goods(type, pal))
 		_trade_shelf(b, type, 0.0, 0.0, pal)
 		_goods(b, type, Vector3(1.25, 0, 1.36), pal)
 	b.door = Vector3(-1.25, 0, 2.2)
@@ -948,6 +991,8 @@ static func _thermopolium(b: Bp) -> void:
 	b.add("SM_Prop_Seat_Chair_01", Vector3(3.3, 0, 0.4), 0.0, 0.95)
 	b.add("SM_Prop_Jug_0%d" % (1 + pal % 4), Vector3(3.2, TABLE7, 1.0), 0.0, 0.42)
 	b.add("SM_Prop_Bowl_04", Vector3(3.45, TABLE7, 0.92), 0.0, 0.6)
+	b.add("SM_Prop_Goblet_01", Vector3(3.15, TABLE7, 1.2), 0.0, 0.9)
+	b.add("SM_Prop_Goblet_02", Vector3(3.5, TABLE7, 1.15), 0.0, 0.9)
 	b.door = Vector3(-1.0, 0, 2.5)
 	_narrow(b)
 
@@ -990,7 +1035,10 @@ static func _taberna(b: Bp) -> void:
 		_table(b, c)
 		b.add("SM_Prop_Seat_Chair_01", c + Vector3(-0.65 / SX, 0, 0.05), PI / 2, 0.95)
 		b.add("SM_Prop_Seat_Chair_01", c + Vector3(0.65 / SX, 0, -0.05), PI / 2, 0.95)
-		b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 4), c + Vector3(0.1, TABLE7, 0), 0.0, 0.42)
+		b.add("SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 4), c + Vector3(0.14, TABLE7, 0), 0.0, 0.42)
+		# кубок и тарелка у каждого столика (кувшин — с одного края, посуда — с другого: не задевают друг друга)
+		b.add("SM_Prop_Goblet_0%d" % (1 + int(c.x > 0.0)), c + Vector3(-0.16, TABLE7, 0.12), 0.0, 0.9)
+		b.add("SM_Prop_Plate_03", c + Vector3(-0.14, TABLE7, -0.16), 0.0, 0.6)
 	_put_xf(b, "SM_Prop_Table_08", Transform3D(Basis.from_scale(Vector3(0.62, 0.95, 0.75)), Vector3(-0.3, 0, 0.55)))
 	for z: float in [-0.08, 1.18]:
 		_put_xf(b, "SM_Prop_Seat_Bench_05", Transform3D(Basis.from_scale(Vector3(0.6, SEAT, 0.8)), Vector3(-0.3, 0, z)))

@@ -3,7 +3,8 @@ extends Node
 ## улицы, а просто десяток домов»): десять домов и лавок по обе стороны короткой улицы, немного украшений — снимки при
 ## дневном и вечернем свете для сравнения с картинками Synty.
 ##   bash .work/py/gpu_run.sh res://test_street_synty.tscn -- out=D:/CivCity/.work/street_synty/ tag=a
-##   views=street (по умолчанию: четыре вида улицы) | sides (бока и зады домов, крупные планы) | all; hours=11,17.6;
+##   views=street (по умолчанию: пять видов улицы) | sides (бока и зады домов, крупные планы) | all | v4,s2 (по именам);
+##   hours=11,16.5;
 ##   before=1 — без наполнения боков и задов (CatDress.sides_on), для снимков «было»
 var game
 var c: City
@@ -11,7 +12,8 @@ var out := "D:/CivCity/.work/street_synty/"
 var tag := "a"
 var vset := "street"
 var ivytest := false
-var hours := [11.0, 17.6]
+var ivy_names := ["SM_Env_Ivy_Flowers_04", "SM_Env_Ivy_Flowers_05", "SM_Env_Ivy_Flowers_06", "SM_Env_Ivy_Flowers_07"]
+var hours := [11.0, 16.5]
 
 
 func _ready() -> void:
@@ -24,7 +26,11 @@ func _ready() -> void:
 		elif kv[0] == "views":
 			vset = kv[1]
 		elif kv[0] == "ivytest":
-			ivytest = kv[1] == "1"             # проверка: все плети плюща Synty в ряд (какие в игре темнеют)
+			ivytest = kv[1] == "1"             # проверка: плети плюща на стенах лицом на все четыре стороны
+		elif kv[0] == "ivynames":
+			ivy_names = []
+			for t in kv[1].split(","):
+				ivy_names.append(("SM_Env_Ivy_Flowers_%02d" if t.begins_with("f") else "SM_Env_Ivy_%02d") % int(t.substr(1)))
 		elif kv[0] == "before":
 			CatDress.sides_on = kv[1] != "1"       # снимки «было»: без наполнения боков и задов
 		elif kv[0] == "hours":
@@ -109,8 +115,12 @@ func _run() -> void:
 	for k in 3:
 		put(["flowers_2", "lamp_post", "planter"][k], Vector2(X0 + 4.0 + k * 6.0, Z0 + 1.25))
 	await frames(30)
-	var views := [[Vector2(X0 + 8.0, Z0 - 2.0), 20.0, 40.0, 11.0], [Vector2(X0 + 9.0, Z0 + 2.0), 200.0, 40.0, 11.0],
-		[Vector2(X0 + 12.0, Z0), 90.0, 13.0, 9.0], [Vector2(X0 + 6.0, Z0), 270.0, 13.0, 9.0]]
+	# виды улицы ([цель, поворот, наклон, отдаление камеры игрока]): v0 — вся улица наискось с юго-востока (фасады
+	# северного ряда), v1 — с северо-запада (фасады южного) — выше и дальше прежнего, камера не упирается в крыши;
+	# v2–v3 — вдоль улицы с обоих концов; v4 — улица на три четверти с её восточного конца (итог «было/стало» в 16:30)
+	var views := [[Vector2(X0 + 8.0, Z0 - 1.0), 50.0, 46.0, 19.0], [Vector2(X0 + 8.0, Z0 + 1.0), 230.0, 46.0, 19.0],
+		[Vector2(X0 + 13.0, Z0), 90.0, 15.0, 10.5], [Vector2(X0 + 5.0, Z0), 270.0, 15.0, 10.5],
+		[Vector2(X0 + 7.0, Z0 - 1.2), 82.0, 25.0, 12.0]]
 	# бока и зады (камерой ролика: [где камера, куда смотрит], высоты — от земли): задние стены северного ряда
 	# (смотрим с севера) и южного (с юга), торцы рядов, крупные планы задних стен
 	var sides := [[Vector3(X0 + 9.0, 6.0, Z0 - 15.0), Vector3(X0 + 9.0, 1.4, Z0 - 4.5)],
@@ -124,34 +134,42 @@ func _run() -> void:
 		[Vector3(X0 + 4.0, 3.4, Z0 + 13.5), Vector3(X0 + 5.5, 2.0, Z0 + 4.8)],
 		[Vector3(X0 + 12.0, 3.4, Z0 + 13.5), Vector3(X0 + 13.5, 2.0, Z0 + 4.8)]]
 	if ivytest:
-		# плети плюща Synty с цветами лицом на север (как на задних стенах северного ряда): вверху как есть, внизу —
-		# отражённые по толщине (листья те же, нормали наоборот); подписи — номер; два снимка (1–7 и 8–13)
-		for k in 13:
-			var ix: float = X0 + 18.0 + (k % 7) * 3.2
-			var iz: float = Z0 - 2.0 - (k / 7) * 8.0
-			var y0: float = game.land.height_at(ix, iz)
-			var nm := "SM_Env_Ivy_Flowers_%02d" % (k + 1)
-			var ab := Bp.model_aabb(nm)
-			var sc := minf(1.0, 2.6 / maxf(ab.size.x, ab.size.y))
-			for f in 2:
-				var bs := Basis(Vector3.UP, PI) * Basis.from_scale(Vector3(sc, sc, sc * (1.0 if f == 0 else -1.0)))
-				game.parts.place_one(nm, Transform3D(bs, Vector3(ix, y0 + 4.3 - f * 2.8, iz)))
-			var lb := Label3D.new()
-			lb.text = str(k + 1)
-			lb.font_size = 96
-			lb.pixel_size = 0.01
-			lb.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			lb.position = Vector3(ix, y0 + 0.3, iz - 0.3)
-			add_child(lb)
-		sides.append([Vector3(X0 + 27.6, 4.0, Z0 - 13.0), Vector3(X0 + 27.6, 2.8, Z0 - 2.0)])
-		sides.append([Vector3(X0 + 26.0, 4.0, Z0 - 21.0), Vector3(X0 + 26.0, 2.8, Z0 - 10.0)])
+		# плети плюща на четырёх стенах крестом, лицом на юг, север, восток и запад (снимки s10–s13 — каждая сторона
+		# со своей стороны): тёмные ли листья при этом солнце; плети — ivynames (f5 — Ivy_Flowers_05, p5 — Ivy_05)
+		var C := Vector3(X0 + 40.0, 0.0, Z0 - 20.0)
+		game.clear_nature(Vector2(C.x, C.z), 20.0)
+		await frames(4)
+		for d in 4:
+			var yaw: float = [0.0, PI, PI / 2, -PI / 2][d]
+			var fwd := Vector3(sin(yaw), 0, cos(yaw))
+			var al := Vector3(cos(yaw), 0, -sin(yaw))
+			for k in ivy_names.size():
+				var nm: String = ivy_names[k]
+				var p := C + fwd * 6.0 + al * (k - (ivy_names.size() - 1) * 0.5) * 2.7
+				p.y = game.land.height_at(p.x, p.z)
+				var bs := Basis(Vector3.UP, yaw)
+				game.parts.place_one("SM_Bld_Wall_01", Transform3D(bs, p - fwd * 0.115 - al * 1.25))
+				var ab := Bp.model_aabb(nm)
+				var sc := minf(1.0, 2.2 / maxf(ab.size.x, ab.size.y))
+				var y0 := 0.35 - ab.position.y * sc               # низ плети — над землёй (как у стены над цоколем)
+				game.parts.place_one(nm, Transform3D(bs * Basis.from_scale(Vector3.ONE * sc), p + Vector3.UP * y0 + fwd * 0.02))
+				var lb := Label3D.new()
+				lb.text = nm.trim_prefix("SM_Env_Ivy_")
+				lb.font_size = 48
+				lb.pixel_size = 0.01
+				lb.position = p + Vector3.UP * 0.25 + fwd * 0.4
+				lb.rotation.y = yaw
+				add_child(lb)
+			var cp := C + fwd * (8.0 + ivy_names.size() * 2.7)
+			sides.append([cp + Vector3.UP * 2.4, C + fwd * 6.0 + Vector3.UP * 1.5])
 	# снимки: <tag>_v<n>_h<час>.png — виды улицы, <tag>_s<n>_h<час>.png — бока и зады
 	var shots := []
-	if vset != "sides":
-		for i in views.size():
+	var pick := [] if vset in ["street", "sides", "all"] else Array(vset.split(","))
+	for i in views.size():
+		if (pick.is_empty() and vset != "sides") or pick.has("v%d" % i):
 			shots.append(["v%d" % i, views[i]])
-	if vset != "street":
-		for i in sides.size():
+	for i in sides.size():
+		if (pick.is_empty() and vset != "street") or pick.has("s%d" % i):
 			shots.append(["s%d" % i, sides[i]])
 	DirAccess.make_dir_recursive_absolute(out)
 	for h: float in hours:
