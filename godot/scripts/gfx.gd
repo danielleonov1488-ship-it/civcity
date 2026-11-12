@@ -960,16 +960,19 @@ func _watch_step(dt: float) -> void:
 			game._apply_quality()])
 
 
-# ---------- движения жителей по удалённости ----------
+# ---------- движения жителей по размеру на экране ----------
 ## (12.11, владелец: «минимум 120 кадров, и на старых ПК») Скелеты жителей процессор считает каждый кадр — на 150 жителях
-## это 3,5–5,7 мс кадра. Теперь: вблизи камеры — каждый кадр; дальше — не реже ANIM_HZ раз в секунду (при 120 кадрах —
-## раз в 2–5 кадров, при 40 — почти каждый кадр); за краем экрана — 8 раз в секунду. Глазу не заметно: далёкий житель —
-## пара десятков точек. Выбранный житель и герой — всегда каждый кадр. «Низкая» — дальние не чаще чем через кадр,
-## «Очень низкая» — все (как прежде)
-const ANIM_NEAR := 40.0
-const ANIM_MID := 90.0
-const ANIM_HZ := [0.0, 50.0, 25.0, 8.0]          # вблизи / дальше / далеко / за экраном
+## это 3,5–5,7 мс кадра. Теперь — по тому, насколько житель крупный на экране: крупный (от ANIM_BIG точек роста) — каждый
+## кадр; средний — не реже 30 раз в секунду; мелкий (меньше ANIM_SMALL точек — при обычном отдалении почти все) — не реже
+## 15; за краем экрана — 4. Чем больше кадров, тем реже по кадрам (при 120 кадрах мелкие — раз в 8 кадров). Выбранный
+## житель и герой — всегда каждый кадр. Тем же шагом People считает их дела (Citizen.lod_k). «Низкая» — дальние не чаще
+## чем через кадр, «Очень низкая» — все (как прежде)
+const ANIM_BIG := 90.0
+const ANIM_SMALL := 45.0
+const ANIM_HZ := [0.0, 30.0, 15.0, 4.0]          # крупный / средний / мелкий / за экраном
 var _lod_frame := 0
+static var lod_on := true                     # для сравнений «было/стало» (test_perf mode=ab)
+static var tier_n := [0, 0, 0, 0]             # сколько жителей в каждом разряде (последний кадр; для замеров)
 
 
 func _anims(dt: float) -> void:
@@ -981,6 +984,8 @@ func _anims(dt: float) -> void:
 	_lod_frame += 1
 	var cp := cam.global_position
 	var fps := maxf(30.0, Engine.get_frames_per_second())
+	# рост в точках = fpx · рост / расстояние (вертикальный угол камеры)
+	var fpx := get_viewport().get_visible_rect().size.y / (2.0 * tan(deg_to_rad(cam.fov) * 0.5))
 	var focus: Citizen = null
 	var frid: int = game.people.focus_rid
 	var list := []
@@ -993,6 +998,7 @@ func _anims(dt: float) -> void:
 		for a in game.actors_root.get_children():
 			if a is Citizen:
 				list.append(a)
+	tier_n = [0, 0, 0, 0]
 	var i := 0
 	for c: Citizen in list:
 		var ap := c.anim
@@ -1001,16 +1007,19 @@ func _anims(dt: float) -> void:
 		i += 1
 		var pos := c.global_position
 		var tier := 0
-		if c == focus or c.cape_sk != null:
+		var d := pos.distance_to(cp)
+		if c == focus or c.cape_sk != null or not lod_on:
 			tier = 0                               # выбранный житель и герой (у него плащ) — всегда плавно
-		elif not cam.is_position_in_frustum(pos + Vector3(0, 0.9, 0)):
+		elif not cam.is_position_in_frustum(pos + Vector3(0, 0.6, 0)):
 			tier = 3
 		else:
-			var d2 := pos.distance_squared_to(cp)
-			tier = 2 if d2 > ANIM_MID * ANIM_MID else (1 if d2 > ANIM_NEAR * ANIM_NEAR else 0)
+			var px := fpx * 1.4 * c.scale.y / Citizen.SIZE / maxf(0.5, d)
+			tier = 0 if px >= ANIM_BIG else (1 if px >= ANIM_SMALL else 2)
+		tier_n[tier] += 1
 		var k := 1 if tier == 0 else maxi(1, int(fps / float(ANIM_HZ[tier])))
-		if low and (q == "verylow" or tier >= 2):
+		if low and (q == "verylow" or d > HALF_FAR):
 			k = maxi(k, 2)
+		c.lod_k = k if lod_on else 1
 		var manual := ap.callback_mode_process == AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 		if k <= 1:
 			if manual:

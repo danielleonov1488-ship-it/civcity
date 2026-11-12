@@ -134,6 +134,7 @@ func _run(mode: String) -> void:
 		"batch": await _batch()
 		"citizens": await _citizens()
 		"pplprof": await _pplprof()
+		"ab": await _ab()
 		"offer": await _offer()
 		_: await _regress()
 	print("PERF DONE fails=%d" % fails)
@@ -462,6 +463,33 @@ func _citizens() -> void:
 	for k in top.slice(0, 25):
 		t.append("%s×%d" % [k, names[k]])
 	print("CIT части: ", ", ".join(t))
+
+
+## 12.11: честное «было/стало» на занятом компьютере — по очереди без и с новыми правками скорости (Gfx.lod_on),
+## rounds раз, итог — медианы
+func _ab() -> void:
+	await _settle()
+	var view: Array = _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0]
+	for q: String in str(A.get("q", "high,verylow")).split(","):
+		_quality(q)
+		_view(view)
+		var res := {false: {"cpu": [], "proc": [], "gpu": [], "frame": []}, true: {"cpu": [], "proc": [], "gpu": [], "frame": []}}
+		for r in int(A.get("rounds", "4")):
+			for on: bool in ([false, true] if r % 2 == 0 else [true, false]):
+				Gfx.lod_on = on
+				var m := await _measure("ab %s %s r%d" % [q, "new" if on else "old", r])
+				if on and r == 0:
+					print("AB разряды жителей (крупные, средние, мелкие, за экраном): ", Gfx.tier_n)
+				for k: String in res[on]:
+					(res[on][k] as Array).append(float(m[k]))
+		Gfx.lod_on = true
+		for on: bool in [false, true]:
+			var med := {}
+			for k: String in res[on]:
+				var a := PackedFloat32Array(res[on][k])
+				med[k] = _pct(a, 0.5)
+			print("AB %-8s %s: кадр %.2f мс (%.0f к/с), процессор %.2f (скрипты %.2f), видеокарта %.2f" % [q, "стало" if on else "было ", med["frame"],
+				1000.0 / maxf(0.01, med["frame"]), med["cpu"], med["proc"], med["gpu"]])
 
 
 static func _proc_set(list: Array, mode: int) -> void:
