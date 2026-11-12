@@ -116,6 +116,7 @@ static func material(slot: String, remap := {}) -> Material:
 		var albedo: String = _slots[key][0].get_basename()
 		var normal: String = _slots[key][1].get_basename()
 		albedo = remap.get(albedo, albedo)
+		m.set_meta("alb", albedo)                     # какая картинка у поверхности (Parts: оттенок у экземпляра)
 		# подкраска отдельной картинки (штукатурка дома в цвет), остальное — как есть
 		var tints: Dictionary = remap.get("tints", {})
 		if tints.has(albedo):

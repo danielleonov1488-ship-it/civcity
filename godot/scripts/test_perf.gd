@@ -48,6 +48,7 @@ func _ready() -> void:
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		A[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	var mode: String = A.get("mode", "regress")
+	Parts.split_on = A.get("split", "1") != "0"        # 12.11: оттенок у экземпляра (split=0 — как прежде, для сравнения)
 	city_src = str(A.get("city", OWNER))
 	if city_src == "new" or not FileAccess.file_exists(city_src):
 		if city_src != "new":
@@ -130,6 +131,7 @@ func _run(mode: String) -> void:
 		"probe": await _probe()
 		"vram": await _vram()
 		"groups": await _groups()
+		"batch": await _batch()
 		"offer": await _offer()
 		_: await _regress()
 	print("PERF DONE fails=%d" % fails)
@@ -383,10 +385,33 @@ func _probe() -> void:
 		"glow_off": [func(): game.env.glow_enabled = false, func(): game._apply_quality()],
 		"dof_off": [func(): game.rig.attrs.dof_blur_far_enabled = false; game.rig.attrs.dof_blur_near_enabled = false, func(): game._apply_quality()],
 		"clouds_off": [func(): game.clouds.set_enabled(false), func(): game.clouds.set_enabled(true)],
+		# 12.11 (владелец: «минимум 120 кадров»): самые тяжёлые эффекты «Высокой»
+		"sdfgi_off": [func(): game.env.sdfgi_enabled = false, func(): game._apply_quality()],
+		"ssil_off": [func(): game.env.ssil_enabled = false, func(): game._apply_quality()],
+		"shadow_off": [func(): game.sun.shadow_enabled = false, func(): game._apply_quality()],
+		"fsr075": [func(): vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR; vp.scaling_3d_scale = 0.75, func(): game._apply_quality()],
 	}
+	# 12.11: из чего складывается время процессора — выключаем обработку кадра у узлов одного сценария (и их детей)
+	var by_script := {}
+	for n: Node in game.find_children("*", "", true, false):
+		var sc: Script = n.get_script()
+		if sc and n.is_processing() or (sc and n.is_physics_processing()):
+			var nm := sc.resource_path.get_file().get_basename()
+			if not by_script.has(nm):
+				by_script[nm] = []
+			by_script[nm].append(n)
+	for nm: String in by_script:
+		var list: Array = by_script[nm]
+		tests["proc_" + nm] = [func(): _proc_set(list, Node.PROCESS_MODE_DISABLED), func(): _proc_set(list, Node.PROCESS_MODE_INHERIT)]
+	var anims: Array = game.find_children("*", "AnimationMixer", true, false)
+	tests["anims_manual"] = [func(): _anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL),
+		func(): _anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE)]
+	print("PROBE сценариев с обработкой кадра: %d, анимаций %d: %s" % [by_script.size(), anims.size(), ", ".join(by_script.keys())])
 	var only: String = A.get("only", "")
 	for t: String in tests:
 		if only != "" and not (t in only.split("+")):
+			continue
+		if A.has("prefix") and not (t.begins_with(str(A["prefix"])) or t == "anims_manual"):
 			continue
 		(tests[t][0] as Callable).call()
 		var r := await _measure("%s -%s" % [q, t])
@@ -394,6 +419,18 @@ func _probe() -> void:
 		var b2 := await _measure("%s base-after" % q)
 		print("DELTA %-14s gpu %+6.2f ms  cpu %+6.2f  dc %+5d  tris %+.2fM" % [t, float(r["gpu"]) - float(b2["gpu"]), float(r["cpu"]) - float(b2["cpu"]),
 			int(r["vis_d"]) - int(b2["vis_d"]), (float(r["vis_p"]) - float(b2["vis_p"])) / 1.0e6])
+
+
+static func _proc_set(list: Array, mode: int) -> void:
+	for n: Node in list:
+		if is_instance_valid(n):
+			n.process_mode = mode
+
+
+static func _anim_cb(list: Array, mode: int) -> void:
+	for a: AnimationMixer in list:
+		if is_instance_valid(a):
+			a.callback_mode_process = mode
 
 
 ## Для владельца (1.9, 1.10): снимки каждой графики на трёх видах (без жителей, время стоит) и замеры по кругу —
@@ -449,6 +486,116 @@ func _offer() -> void:
 			summary[key]["cpu"], summary[key]["frame"], vr, tx])
 	print("OFFER JSON %s %s" % [tag, JSON.stringify(summary)])
 	Gfx.medium_light = Gfx.MEDIUM_LIGHT
+
+
+## 12.11 (120 кадров): сколько вызовов отрисовки дали бы детали построек, склеенные кусками земли по материалу —
+## разных материалов во всём городе и в куске (TILE м), сколько точек у всех деталей (память под склейку)
+func _batch() -> void:
+	await _settle()
+	var tiles := []
+	for t in str(A.get("tile", "16,32,48,64")).split(","):
+		tiles.append(int(t))
+	var mats := {}
+	var mats_nt := {}
+	var per_tile := {}
+	var per_tile_nt := {}
+	var verts := 0
+	var idx := 0
+	var calls := 0
+	var inst := 0
+	var t0 := Time.get_ticks_msec()
+	var dist := {}
+	var nt_groups := {}
+	var with_col := {}
+	for key: String in game.parts.groups:
+		var g: Dictionary = game.parts.groups[key]
+		var free := {}
+		for f in g["free"]:
+			free[f] = true
+		for sub: Dictionary in g["subs"]:
+			var mm: MultiMesh = sub["mm"]
+			var mesh: Mesh = mm.mesh
+			if mesh == null or mm.instance_count == 0:
+				continue
+			var live := []
+			var buf := mm.buffer                       # одним чтением: по 12 чисел на экземпляр (базис по строкам и сдвиг)
+			for i in mini(int(g["used"]), mm.instance_count):
+				if free.has(i):
+					continue
+				var o := i * 12
+				if absf(buf[o]) + absf(buf[o + 1]) + absf(buf[o + 2]) < 1e-6:
+					continue
+				live.append(Vector3(buf[o + 3], buf[o + 7], buf[o + 11]))
+			if live.is_empty():
+				continue
+			inst += live.size()
+			var vsub := 0
+			for s2 in mesh.get_surface_count():
+				if mesh is ArrayMesh:
+					vsub += (mesh as ArrayMesh).surface_get_array_len(s2)
+			for kk: int in [1, 2, 4, 8, 16, 32, 64]:
+				if live.size() <= kk:
+					dist[kk] = (dist.get(kk, [0, 0, 0]) as Array)
+					dist[kk][0] += mesh.get_surface_count()
+					dist[kk][1] += vsub * live.size()
+					dist[kk][2] += live.size()
+			# без оттенка: тот же меш (ресурс модели) и те же картинки — один MultiMesh с цветом экземпляра
+			var nk := str(sub["mmi"].get_parent()) + "|" + key.get_slice("|", 0) + "|" + str(mesh.get_surface_count())
+			for s3 in mesh.get_surface_count():
+				var m3 := mesh.surface_get_material(s3)
+				if m3 is StandardMaterial3D:
+					var sm3 := m3 as StandardMaterial3D
+					nk += "|%s|%d" % [str(sm3.albedo_texture.resource_path if sm3.albedo_texture else ""), sm3.transparency]
+				else:
+					nk += "|" + str(m3.get_instance_id() if m3 else 0)
+			nt_groups[nk] = true
+			for s4 in mesh.get_surface_count():
+				if mesh is ArrayMesh and (mesh as ArrayMesh).surface_get_format(s4) & Mesh.ARRAY_FORMAT_COLOR:
+					with_col[key.get_slice("|", 0)] = true
+			for s in mesh.get_surface_count():
+				calls += 1
+				var m := mesh.surface_get_material(s)
+				var mk := str(m.get_instance_id()) if m else "none"
+				var nt := mk
+				if m is StandardMaterial3D:
+					var sm := m as StandardMaterial3D
+					nt = "%s|%d|%s" % [str(sm.albedo_texture.resource_path if sm.albedo_texture else ""), sm.transparency, str(sm.normal_enabled)]
+				mats[mk] = true
+				mats_nt[nt] = true
+				var vc := 0
+				var ic := 0
+				if mesh is ArrayMesh:
+					vc = (mesh as ArrayMesh).surface_get_array_len(s)
+					ic = (mesh as ArrayMesh).surface_get_array_index_len(s)
+				verts += vc * live.size()
+				idx += ic * live.size()
+				for o: Vector3 in live:
+					for ts: int in tiles:
+						var tk := Vector3i(floori(o.x / ts), floori(o.z / ts), ts)
+						if not per_tile.has(tk):
+							per_tile[tk] = {}
+							per_tile_nt[tk] = {}
+						per_tile[tk][mk] = true
+						per_tile_nt[tk][nt] = true
+	print("BATCH групп %d, вызовов (все поверхности) %d, экземпляров %d, точек %.2fM, индексов %.2fM (≈%d МБ склейкой), счёт %d мс" % [game.parts.groups.size(),
+		calls, inst, verts / 1.0e6, idx / 1.0e6, int((verts * 36 + idx * 4) / 1048576.0), Time.get_ticks_msec() - t0])
+	for kk: int in [1, 2, 4, 8, 16, 32, 64]:
+		var e: Array = dist.get(kk, [0, 0, 0])
+		print("BATCH групп-поверхностей с ≤%d экз.: вызовов %d, экземпляров %d, точек склейкой %.2fM" % [kk, e[0], e[2], e[1] / 1.0e6])
+	print("BATCH MultiMesh-ов без оттенка (цвет — у экземпляра): %d" % nt_groups.size())
+	print("BATCH моделей с цветом в вершинах: %d: %s" % [with_col.size(), ", ".join(with_col.keys().slice(0, 40))])
+	for ts: int in tiles:
+		var n := 0
+		var sum_t := 0
+		var sum_nt := 0
+		for tk: Vector3i in per_tile:
+			if tk.z != ts:
+				continue
+			n += 1
+			sum_t += (per_tile[tk] as Dictionary).size()
+			sum_nt += (per_tile_nt[tk] as Dictionary).size()
+		print("BATCH материалов %d (без оттенка %d); кусков %d по %d м: вызовов склейкой %d (без оттенка %d), в среднем на кусок %.1f" % [mats.size(), mats_nt.size(),
+			n, ts, sum_t, sum_nt, float(sum_t) / maxf(1, n)])
 
 
 ## 1.6: сколько групп деталей (MultiMesh) и сколько их было бы, если бы оттенок (remap «tints») шёл в данные экземпляра

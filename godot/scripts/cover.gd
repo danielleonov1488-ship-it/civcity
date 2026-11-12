@@ -43,7 +43,7 @@ class Pool extends Parts:
 		var key := name + "|" + str(remap)
 		if groups.has(key):
 			return groups[key]
-		var s: Dictionary = src.groups.get(key, {}) if src != null else {}
+		var s: Dictionary = (src.groups.get(key, src.alias.get(key, {})) as Dictionary) if src != null else {}
 		if s.is_empty():
 			return super._group(name, remap, tile)
 		var g := {"subs": [], "free": [], "used": 0, "cap": 0, "key": key}
@@ -52,7 +52,7 @@ class Pool extends Parts:
 		groups[key] = g
 		return g
 
-	func _sub(mesh: Mesh, local: Transform3D) -> Dictionary:
+	func _sub(mesh: Mesh, local: Transform3D, _colors := false) -> Dictionary:
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.use_custom_data = true

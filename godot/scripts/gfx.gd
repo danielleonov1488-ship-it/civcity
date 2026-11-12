@@ -314,7 +314,9 @@ static func apply(g) -> void:
 		g.clouds.set_enabled(not low)          # тени облаков — только «Высокая» и «Средняя»
 	if g.gfx == null:
 		swap_all()                         # загрузка (узла Gfx ещё нет), снимки — сразу; в игре — по одной за кадр
-	Engine.max_fps = 60 if g.shot_path == "" else 0
+	# предел кадров (владелец 12.11: «минимум 120»): по умолчанию — сколько показывает монитор (вертикальная синхронизация,
+	# у владельца 180 Гц); прежний жёсткий предел 60 не давал больше даже на сильной видеокарте. Снимки — без предела
+	Engine.max_fps = fps_cap(g.settings) if g.shot_path == "" else 0
 
 
 ## «Очень низкая»: картинки 4096² (палитры Synty, мрамор, статуи — по 21 МБ видеопамяти сжатыми Basis, 64 МБ — без
@@ -1095,6 +1097,30 @@ static func settings_block(h, v: VBoxContainer) -> void:
 	fps.add_theme_font_size_override("font_size", 18)
 	fps.toggled.connect(func(x): h.game.settings["show_fps"] = x; h.game.save_settings())
 	v.add_child(fps)
+	# предел кадров: «по монитору» — столько, сколько экран успевает показать
+	var cr := HBoxContainer.new()
+	cr.add_theme_constant_override("separation", 6)
+	cr.alignment = BoxContainer.ALIGNMENT_CENTER
+	cr.add_child(h._label("Кадров в секунду:", 16, false, h.C_SOFT))
+	for c: int in FPS_CAPS:
+		var b := Button.new()
+		b.text = "по монитору" if c == 0 else str(c)
+		b.name = "cap_%d" % c
+		b.add_theme_font_size_override("font_size", 15)
+		b.pressed.connect(func():
+			h.game.settings["fps_cap"] = c
+			h.game.save_settings()
+			Engine.max_fps = c
+			h._open_settings(true))
+		cr.add_child(b)
+	v.add_child(cr)
+
+
+## Предел кадров из настроек: 0 — по монитору (синхронизация), иначе 60 / 120 / 144
+const FPS_CAPS := [0, 144, 120, 60]
+static func fps_cap(st: Dictionary) -> int:
+	var c := int(st.get("fps_cap", 0))
+	return c if c in FPS_CAPS else 0
 
 
 static func settings_refresh(h) -> void:
@@ -1105,3 +1131,7 @@ static func settings_refresh(h) -> void:
 	var fps := h.settings_panel.find_child("show_fps", true, false) as CheckBox
 	if fps:
 		fps.set_pressed_no_signal(bool(h.game.settings.get("show_fps", false)))
+	for c: int in FPS_CAPS:
+		var b: Button = h.settings_panel.find_child("cap_%d" % c, true, false)
+		if b:
+			b.add_theme_stylebox_override("normal", h._box_pill(10, 5, "g_btn_on" if fps_cap(h.game.settings) == c else "g_btn"))
