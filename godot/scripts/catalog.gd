@@ -103,6 +103,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		CatDress.dress(b, type)                # цветы под окнами, плющ, горшки у дверей — как на картинках Synty
 	if not kit_done:
 		_actors(b, type, tier)
+		CatDressCivic.dress(b, type, tier)     # склады, мастерские, поля, бани, храмы — обжитые дворы и бока (без новых деталей в следе)
 	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)
 	_cache[key] = b
 	return b
