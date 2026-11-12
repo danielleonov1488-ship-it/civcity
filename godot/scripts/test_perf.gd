@@ -135,6 +135,7 @@ func _run(mode: String) -> void:
 		"citizens": await _citizens()
 		"pplprof": await _pplprof()
 		"ab": await _ab()
+		"gpuab": await _gpuab()
 		"offer": await _offer()
 		_: await _regress()
 	print("PERF DONE fails=%d" % fails)
@@ -490,6 +491,88 @@ func _ab() -> void:
 				med[k] = _pct(a, 0.5)
 			print("AB %-8s %s: кадр %.2f мс (%.0f к/с), процессор %.2f (скрипты %.2f), видеокарта %.2f" % [q, "стало" if on else "было ", med["frame"],
 				1000.0 / maxf(0.01, med["frame"]), med["cpu"], med["proc"], med["gpu"]])
+
+
+## 12.11: облегчения «Высокой» для владельца — каждое по очереди с исходной (rounds раз, медианы), затем снимки каждого
+## (время стоит, жителей нет) в out. Варианты: base, nosdfgi, nossil, atlas4k, splits2, softmed, msaa2, fsr2 (0,77 со
+## сглаживанием FSR2), lite (всё лёгкое разом, кроме fsr2), lite_fsr2
+##   … -- mode=gpuab q=high rounds=3 out=D:/CivCity/.work/perf120/gpuab [only=base+lite]
+func _gpu_variant(name: String) -> void:
+	game._apply_quality()
+	var vp := get_viewport()
+	var parts := name.split("+")
+	for v: String in parts:
+		match v:
+			"nosdfgi":
+				game.env.sdfgi_enabled = false
+			"nossil":
+				game.env.ssil_enabled = false
+			"atlas4k":
+				RenderingServer.directional_shadow_atlas_set_size(4096, true)
+			"splits2":
+				game.sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+			"softmed":
+				RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM)
+			"msaa2":
+				vp.msaa_3d = Viewport.MSAA_2X
+			"fsr2":
+				vp.msaa_3d = Viewport.MSAA_DISABLED
+				vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR2
+				vp.scaling_3d_scale = 0.77
+
+
+func _gpu_reset() -> void:
+	RenderingServer.directional_shadow_atlas_set_size(8192, true)
+	RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
+	var vp := get_viewport()
+	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+	vp.scaling_3d_scale = 1.0
+	game._apply_quality()
+
+
+func _gpuab() -> void:
+	await _settle()
+	_quality(str(A.get("q", "high")))
+	var view: Array = _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0]
+	_view(view)
+	var names: Array = Array(str(A.get("only", "base,nosdfgi,nossil,atlas4k,splits2,softmed,msaa2,fsr2,nosdfgi+nossil+atlas4k+softmed+msaa2,nosdfgi+nossil+atlas4k+softmed+fsr2")).replace("+", "&").split(","))
+	for i in names.size():
+		names[i] = str(names[i]).replace("&", "+")
+	var res := {}
+	for r in int(A.get("rounds", "3")):
+		var order := names.duplicate()
+		for k in r % order.size():
+			order.push_back(order.pop_front())
+		for nm: String in order:
+			_gpu_reset()
+			_gpu_variant(nm)
+			await frames(30)
+			var m := await _measure("gpuab %s r%d" % [nm, r])
+			if not res.has(nm):
+				res[nm] = {"gpu": [], "frame": [], "cpu": []}
+			for k: String in ["gpu", "frame", "cpu"]:
+				(res[nm][k] as Array).append(float(m[k]))
+	for nm: String in names:
+		var g := _pct(PackedFloat32Array(res[nm]["gpu"]), 0.5)
+		var f := _pct(PackedFloat32Array(res[nm]["frame"]), 0.5)
+		var c := _pct(PackedFloat32Array(res[nm]["cpu"]), 0.5)
+		print("GPUAB %-48s видеокарта %5.2f мс | процессор %5.2f | кадр %5.2f (%.0f к/с)" % [nm, g, c, f, 1000.0 / maxf(0.01, f)])
+	var out: String = A.get("out", "")
+	if out != "":
+		DirAccess.make_dir_recursive_absolute(out)
+		_freeze()
+		for v: Array in _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW):
+			_view(v)
+			game._set_hour(9.0)
+			for nm: String in names:
+				_gpu_reset()
+				_gpu_variant(nm)
+				await frames(SHOT_WAIT)
+				var img: Image = await _snap()
+				img.save_png(out.path_join("%s_%s.png" % [v[0], nm.replace("+", "_")]))
+		_unfreeze()
+		print("GPUAB снимки: ", out)
+	_gpu_reset()
 
 
 static func _proc_set(list: Array, mode: int) -> void:
