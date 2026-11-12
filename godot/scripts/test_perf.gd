@@ -24,7 +24,8 @@ const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## прежний golden_s5 остаётся у линий без этой правки
 ## 12.11 дома, лавки, общественные здания и памятники — из своего набора (Blender), в городе владельца — старые дома,
 ## ужатые по прежнему следу: эталон записан заново (golden_s7); golden_s6 остаётся у линий без своего набора
-const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s7"
+## 12.11 позже: фонтан, нимфей и арка снова Synty, детали Synty в своих зданиях, своя станция — golden_s8 (сборка 52)
+const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s8"
 const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)
