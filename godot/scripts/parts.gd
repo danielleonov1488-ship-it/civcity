@@ -61,6 +61,12 @@ static func _special_mesh(name: String) -> Mesh:
 	if name.begins_with("#kerb"):                  # камни бордюра у домуса и храма (kerb.gd)
 		_special[name] = Kerb.mesh(name)
 		return _special[name]
+	if name.begins_with("#sign:"):                 # расписная вывеска (клетка signs.png) на доме Synty (CatDress)
+		_special[name] = CatDress.sign_mesh(name.substr(6))
+		return _special[name]
+	if name.begins_with("#hp_"):                   # товар у лавки — те же вещицы, что в руках у жителей (HandProps)
+		_special[name] = HandProps._kit("#" + name.substr(4))
+		return _special[name]
 	var bm := BoxMesh.new()
 	var m := StandardMaterial3D.new()
 	match name:

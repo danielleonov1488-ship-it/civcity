@@ -64,6 +64,9 @@ func _run() -> void:
 	c.money = 900000
 	game.hud.visible = false
 	game.speed = 0.0
+	if game.weather:
+		game.weather.left_h = 0.0                  # без дождя на снимках
+		game.weather.force = 0.0
 	var X0 := 140.0
 	var Z0 := 120.0
 	game.clear_nature(Vector2(X0 + 20.0, Z0), 34.0)
@@ -90,7 +93,8 @@ func _run() -> void:
 	for k in 6:
 		put(["flowers_2", "planter", "lamp_post", "flowers", "planter_2", "palm"][k], Vector2(X0 + 3.0 + k * 5.5, Z0 + 1.25))
 	await frames(30)
-	var views := [[Vector2(X0 + 20.0, Z0), 200.0, 34.0, 26.0], [Vector2(X0 + 12.0, Z0), 160.0, 28.0, 15.0], [Vector2(X0 + 28.0, Z0), 25.0, 40.0, 30.0]]
+	var views := [[Vector2(X0 + 12.0, Z0 - 2.0), 20.0, 48.0, 10.0], [Vector2(X0 + 26.0, Z0 - 2.0), 35.0, 42.0, 9.0], [Vector2(X0 + 16.0, Z0 + 2.0), 200.0, 48.0, 10.0],
+		[Vector2(X0 + 18.0, Z0), 95.0, 34.0, 20.0]]
 	DirAccess.make_dir_recursive_absolute(out)
 	for h: float in [11.0, 17.6]:
 		game._set_hour(h)
