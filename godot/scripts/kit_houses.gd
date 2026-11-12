@@ -150,7 +150,7 @@ static func pets(type: String) -> Array:
 
 
 ## Украшение Synty целиком (жаровня с огнём, кипарис, клумба, канделябр, лев…) — как в меню «Украшения»
-## (владелец 12.11: «можно же было использовать старые из Synty, вообще можно всё комбинировать»): детали, свет, дым.
+## (владелец 12.11: «можно же было использовать старые из Synty, вообще можно всё комбинировать»): детали и свет.
 ## pp — место в метрах, k — масштаб к обычному украшению
 static func _decor_group(b: Bp, type: String, pp: Vector3, yaw: float, k: float) -> void:
 	if not Defs.B.has(type):
@@ -164,8 +164,7 @@ static func _decor_group(b: Bp, type: String, pp: Vector3, yaw: float, k: float)
 		b.parts.append([p[0], toB * T * (p[1] as Transform3D), p[2]])
 	for l in d.lights:
 		b.light(S * (T * (l as Vector3)))
-	for sm in d.smoke:
-		b.smoke.append(S * (T * (sm as Vector3)))
+	# дым жаровен у входа — нет: у здания их по две-четыре, а каждый дымок — свой вызов отрисовки (бюджет stage5b_owner)
 
 
 ## Перекраска детали Synty из kit.json: {"tint": [r, g, b]}, {"rm": "MOSAIC"} (CatMonuments), {"skin": "Building_Marble_01"}
