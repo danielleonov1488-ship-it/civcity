@@ -12,7 +12,7 @@ extends RefCounted
 ## дорожку к нему, нишу со статуей и людей при деле (Catalog._actors); на мостовой, подиуме, столе — встаёт на верх.
 ## Землю не занимает (Bp.free_parts): след и правила постановки прежние. Только детали, что и так есть в городе.
 
-const TYPES := ["warehouse", "sculptor", "herbalist", "vigiles", "scriptorium"]
+const TYPES := ["warehouse", "sculptor", "herbalist", "vigiles", "scriptorium", "farm", "grove", "vineyard", "ogorod", "forum"]
 ## Поля и сады за изгородью: за изгородь ничего не выносим
 const FENCED := ["farm", "grove", "vineyard", "ogorod"]
 ## Мягкое (трава, цветы, плющ, вывески, ткань, кирпичная кладка на стенах) — в него можно ставить
