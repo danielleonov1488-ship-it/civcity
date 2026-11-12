@@ -137,8 +137,9 @@ func _medium_light() -> void:
 	Gfx.medium_light = true
 	game.settings["quality"] = "high"
 	game._apply_quality()
-	check(is_equal_approx(game.sun.light_angular_distance, 2.2) and vp.msaa_3d == Viewport.MSAA_4X and game.env.sdfgi_enabled,
-		"облегчённая «Средняя» «Высокую» не трогает (PCSS, MSAA 4x, SDFGI)")
+	check(is_equal_approx(game.sun.light_angular_distance, 2.2) and vp.msaa_3d == Viewport.MSAA_2X and not game.env.sdfgi_enabled
+		and not game.env.ssil_enabled,
+		"«Высокая» (12.11, облегчённая для всех): мягкие тени PCSS, MSAA 2x, без SDFGI и SSIL")
 	game.settings["quality"] = "medium"
 	game._apply_quality()
 	check(is_equal_approx(game.sun.light_angular_distance, 0.0) and vp.msaa_3d == Viewport.MSAA_2X, "после «Высокой» — снова облегчённая «Средняя»")
@@ -348,10 +349,10 @@ func _run() -> void:
 		if m.cast_shadow != int(m.get_meta("cast", m.cast_shadow)):
 			cast_ok = false
 	check(game.sun.shadow_enabled and is_equal_approx(game.sun.light_angular_distance, 2.2) and game.people.max_vis == 150
-		and vp.msaa_3d == Viewport.MSAA_4X and is_equal_approx(vp.scaling_3d_scale, 1.0) and (game.far_forest[0] as Node3D).visible
-		and is_equal_approx(vp.mesh_lod_threshold, 1.0) and cast_ok and game.env.sdfgi_enabled
+		and vp.msaa_3d == Viewport.MSAA_2X and is_equal_approx(vp.scaling_3d_scale, 1.0) and (game.far_forest[0] as Node3D).visible
+		and is_equal_approx(vp.mesh_lod_threshold, 1.0) and cast_ok and not game.env.sdfgi_enabled
 		and (game.chunk_nodes.values()[0] as GeometryInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON,
-		"снова «Высокая»: всё вернулось (тени, PCSS, MSAA, масштаб, леса, тени пейзажа, SDFGI)")
+		"снова «Высокая»: всё вернулось (тени, PCSS, MSAA 2x, масштаб, леса, тени пейзажа; SDFGI с 12.11 нет)")
 	nf = await _swap_wait()
 	at = mat.albedo_texture
 	check(not Gfx.swap_busy() and at is CompressedTexture2D and at.resource_path == path and at.get_width() == 4096 and Gfx._small.is_empty(),

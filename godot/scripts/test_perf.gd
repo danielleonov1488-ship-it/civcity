@@ -25,7 +25,9 @@ const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## 12.11 дома, лавки, общественные здания и памятники — из своего набора (Blender), в городе владельца — старые дома,
 ## ужатые по прежнему следу: эталон записан заново (golden_s7); golden_s6 остаётся у линий без своего набора
 ## 12.11 позже: фонтан, нимфей и арка снова Synty, детали Synty в своих зданиях, своя станция — golden_s8 (сборка 52)
-const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s8"
+## 12.11 «Высокая» облегчена для всех (без SDFGI/SSIL, атлас 4096, MSAA 2x), «Средняя» — атлас 4096 и мягкость низкая:
+## эталон записан заново (golden_p1, ветка perf-120 от сборки 52); golden_s8 остаётся у линий без этой правки
+const GOLDEN := "D:/CivCity/.work/perf_ref/golden_p1"
 const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)
@@ -522,8 +524,7 @@ func _gpu_variant(name: String) -> void:
 
 
 func _gpu_reset() -> void:
-	RenderingServer.directional_shadow_atlas_set_size(8192, true)
-	RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
+	Gfx._sun_low = -1                          # атлас и мягкость теней — заново по уровню (Gfx.apply)
 	var vp := get_viewport()
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
 	vp.scaling_3d_scale = 1.0
