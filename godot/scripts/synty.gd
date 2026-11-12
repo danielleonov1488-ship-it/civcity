@@ -148,6 +148,10 @@ static func material(slot: String, remap := {}) -> Material:
 		m.albedo_texture = Gfx.tex(_tex_path("PolygonAncientEmpire_01_A"))
 	if remap.has("tint"):
 		m.albedo_color = remap["tint"]
+	# свечение (remap["glow"] — цвет, яркость в нём): нутро храма в тёплом свете днём и ночью, пламя жаровен (NewTemple)
+	if remap.has("glow"):
+		m.emission_enabled = true
+		m.emission = remap["glow"]
 	# листва деревьев и кустов (remap["leaf"], ставит make) — материал с временами года (shaders/foliage.gdshader,
 	# scripts/seasons.gd); вечнозелёные (кипарисы, пальмы, оливы) осенью не желтеют и весной не цветут
 	if remap.has("leaf") and m.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED and not m.normal_enabled and m.albedo_texture != null:

@@ -350,7 +350,10 @@ func _temple(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 	var door := bp.door
 	var lo: Vector2 = tris.lo_xz
 	var hi: Vector2 = tris.hi_xz
-	var hw := minf(absf(lo.x), absf(hi.x)) - 0.3
+	var hw_in := minf(absf(lo.x), absf(hi.x)) - 0.3
+	# перед узким храмом (NewTemple, 5 м) горожане встают на мостовой и чуть шире его следа (до 2,5 м в каждую сторону) —
+	# мест почти столько же, сколько у прежнего; сбоку, в глубине следа — не шире храма (там может стоять сосед)
+	var hw := maxf(hw_in, 2.5)
 	# жрец: вверх по середине лестницы — где ступени кончились (подиум), там его место
 	var y := 0.0
 	var found := false
@@ -379,6 +382,9 @@ func _temple(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 	while x <= hw:
 		z = top.z + 0.35
 		while z < door.z + 3.2:
+			if absf(x) > hw_in and z < hi.y + 0.15:
+				z += STAND_GAP
+				continue
 			var h := tris.surface(x, z, top.y + 0.1)
 			if h == -INF and z > top.z + 0.2:
 				h = 0.0                          # перед храмом — мостовая (за чертежом): стоят и там
