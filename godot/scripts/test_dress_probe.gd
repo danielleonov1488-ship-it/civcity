@@ -4,19 +4,50 @@ extends SceneTree
 
 
 func _init() -> void:
+	# norms=, names=, cloth=1, aabb= — только справки (можно несколько сразу), без замера улицы
+	var only := false
 	for a: String in OS.get_cmdline_user_args():
 		if a.begins_with("norms="):
 			# листья «наизнанку»: у скольких треугольников нормаль вершин против лица (по обходу) и куда они смотрят
 			# (+Z модели — от стены наружу, как ставит CatDress)
 			for nm in a.substr(6).split(","):
 				_norms(nm)
-			quit()
-			return
+			only = true
 		if a.begins_with("names="):
 			for nm in a.substr(6).split(","):
 				print("TRI ", nm, " ", _tris(nm))
-			quit()
-			return
+			only = true
+		if a == "cloth=1":
+			# цвета полотен CatShops.CLOTH на навесе Synty (по UV его вершин в атласе): частые цвета — для своих навесов
+			for i in CatShops.CLOTH.size():
+				var n := Synty.make("SM_Prop_Banner_Roof_01", CatShops._cloth(i))
+				var hist := {}
+				for mi: MeshInstance3D in n.find_children("*", "MeshInstance3D", true, false):
+					var mat := mi.get_surface_override_material(0) as StandardMaterial3D
+					var img := Image.load_from_file(ProjectSettings.globalize_path(Synty._tex_path(str(mat.get_meta("alb", "")))))
+					for uv: Vector2 in mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_TEX_UV]:
+						var px := Vector2i(clampi(int(uv.x * img.get_width()), 0, img.get_width() - 1), clampi(int(uv.y * img.get_height()), 0, img.get_height() - 1))
+						var h := img.get_pixelv(px).to_html(false)
+						hist[h] = int(hist.get(h, 0)) + 1
+				n.free()
+				var ks := hist.keys()
+				ks.sort_custom(func(x, y): return int(hist[x]) > int(hist[y]))
+				var s := ""
+				for k in ks.slice(0, 4):
+					s += "%s×%d " % [k, hist[k]]
+				print("CLOTH %d %s: %s" % [i, CatShops.CLOTH[i], s])
+			only = true
+		if a.begins_with("aabb="):
+			# габарит и треугольники моделей (подбор вещей): aabb=SM_Prop_Plinth_*,SM_Prop_Table_01
+			for pat in a.substr(5).split(","):
+				var list: Array = Synty.names(pat.trim_suffix("*")) if pat.ends_with("*") else [pat]
+				for nm: String in list:
+					var bx := Bp.model_aabb(nm)
+					print("AABB %s pos %s size %s tris %d" % [nm, bx.position.snapped(Vector3.ONE * 0.01), bx.size.snapped(Vector3.ONE * 0.01), _tris(nm)])
+			only = true
+	if only:
+		quit()
+		return
 	if OS.get_cmdline_user_args().has("before=1"):
 		CatDress.sides_on = false
 	var heavy := {}
@@ -65,7 +96,7 @@ func _init() -> void:
 		var tbox := 0
 		for i in b.parts.size():
 			var pn := String(b.parts[i][0])
-			if pn.begins_with("SM_Prop_FlowerBed") or pn.begins_with("#bsign:@fbox"):
+			if pn.begins_with("SM_Prop_FlowerBed") or pn.begins_with("#dress:fbox"):
 				nbox += 1
 				tbox += _tris(pn)
 				if OS.get_cmdline_user_args().has("boxes=%d" % list.find(e)):

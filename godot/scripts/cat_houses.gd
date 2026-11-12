@@ -62,7 +62,7 @@ static func R(x0: float, x1: float, z0: float, z1: float) -> PackedFloat32Array:
 const SX := 0.75
 const RIGID := ["SM_Bld_Pillar", "SM_Bld_Roof_Topper", "SM_Bld_Ornament", "SM_Bld_Trellis_Pillar", "SM_Env_Ivy_Pillar"]
 const FLEX := ["SM_Bld_", "#dark", "SM_Prop_Overhang", "SM_Prop_Mural", "SM_Prop_FlowerBed", "SM_Prop_Drapery", "SM_Env_Ivy", "SM_Env_Vine",
-	"#bsign:@fbox"]
+	"#dress:fbox", "#dress:awning"]
 
 
 static func _flex(nm: String) -> bool:
@@ -326,16 +326,15 @@ static func _shutters(b: Bp, r: PackedFloat32Array, side: int, i: int, y: float,
 
 ## Ящик с цветами под окном W1: верх — у подоконника; наверху задняя стенка — вплотную к штукатурке,
 ## внизу ящик стоит на выступе цоколя (так он не входит в след дома на земле)
-## Выше первого этажа — лёгкий ящик (CatDress.fbox_mesh: те же цветы, корыто проще; землю он не занимает, и свой
-## габарит у «#» для следа не нужен), внизу — ящик Synty (по его габариту считается след дома на мостовой)
+## Ящик везде лёгкий (CatDress.fbox_mesh «#dress:fbox<v>»: те же цветы Synty, корыто проще — 150 треугольников
+## вместо 330); его габарит (Bp.model_aabb) — настоящий, как у ящика Synty, поэтому и внизу у фасада след дома на
+## мостовой прежний
 static func _wbox(b: Bp, r: PackedFloat32Array, side: int, i: int, y: float) -> void:
 	var v := 1 + b.rng.randi() % 2
-	var nm := "SM_Prop_FlowerBed_0%d" % v
+	var nm := "#dress:fbox%d" % v
 	if y < 1.0 and side == 0:
 		_front_put(b, nm, r, i * M + 1.25, y + 0.62, 0.6)
 		return
-	if y >= 1.0:
-		nm = "#bsign:@fbox%d" % v
 	var a := _sp(r, side, i * M + 1.25, y + 0.62, 0.15)
 	_put(b, nm, a[0], a[1], Vector3.ONE * 0.6)
 
@@ -465,7 +464,7 @@ static func _medallion(b: Bp, r: PackedFloat32Array, side: int, u: float, y: flo
 
 ## Плющ (с цветами) на стене
 static func _ivy(b: Bp, r: PackedFloat32Array, side: int, u: float, y: float, flowers := true, s := 1.0) -> void:
-	var nm := ("SM_Env_Ivy_Flowers_%02d" if flowers else "SM_Env_Ivy_%02d") % b.pick([1, 2, 3, 4, 5, 8, 9])
+	var nm := ("SM_Env_Ivy_Flowers_%02d" if flowers else "SM_Env_Ivy_%02d") % b.pick([1, 2, 3, 4, 5, 6, 7, 8, 9])
 	_on(b, nm, r, side, u, y, 0.13, s)
 
 
@@ -708,6 +707,35 @@ static func _terrace_dress(b: Bp, rf: PackedFloat32Array, y: float) -> void:
 	else:
 		_put(b, "SM_Prop_Table_07", Vector3(cx + 0.3, ty, rf[2] + 1.2), 0.0, Vector3.ONE * 0.9)
 		_put(b, "SM_Prop_Jug_05", Vector3(cx + 0.3, ty + 0.5, rf[2] + 1.2), 0.0)
+	if b.chance(0.55):
+		_terrace_line(b, rf, ty)
+
+
+## Бельё на верёвке поперёк террасы (инсула, владелец 12.11: «балконы с цветами и бельём»): два шеста у боковых
+## парапетов, верёвка, на ней 2–4 полотна разного цвета и длины — над столиком и скамьёй, перед горшками.
+## Шесты, верёвка и полотна не сжимаются вдоль фасада (_narrow) — длина верёвки и ширина полотен заранее × SX
+static func _terrace_line(b: Bp, rf: PackedFloat32Array, y: float) -> void:
+	var z := rf[2] + 1.55
+	var x0 := rf[0] + 0.3
+	var x1 := rf[1] - 0.3
+	var h := 1.75
+	for x: float in [x0, x1]:
+		_put(b, "SM_Prop_Pole_01", Vector3(x, y, z), 0.0, Vector3(0.8, h / 3.0, 0.8))
+	var bb := Bp.model_aabb("SM_Prop_Beam_01")
+	var sb := Vector3((x1 - x0) * SX / bb.size.x, 0.13, 0.12)
+	_put(b, "SM_Prop_Beam_01", Vector3((x0 + x1) / 2.0, y + h - 0.06, z) - bb.get_center() * sb, 0.0, sb)
+	var dr := Bp.model_aabb("SM_Prop_Rug_Drape_01")
+	var x := x0 + 0.18
+	while true:
+		var wc := b.rng.randf_range(0.42, 0.7)          # ширина полотна в игре (после сжатия)
+		if x + wc / SX > x1 - 0.12:
+			break
+		var hc := b.rng.randf_range(0.55, 0.9)
+		var sc := Vector3(wc / dr.size.x, hc / dr.size.y, 0.12)
+		var top := Vector3(x + wc / SX * 0.5, y + h - 0.04, z)
+		var rm := CatShops._rug(String(CatDress.LINEN[b.rng.randi() % CatDress.LINEN.size()]))
+		_put(b, "SM_Prop_Rug_Drape_01", top - Vector3(dr.get_center().x * sc.x, dr.end.y * sc.y, dr.get_center().z * sc.z), 0.0, sc, rm)
+		x += (wc + b.rng.randf_range(0.05, 0.12)) / SX
 
 
 ## Верхний этаж f в глубине (как в Town to City): на задней половине r — комната (пролёты фасада top),
@@ -1101,9 +1129,17 @@ static func _shop_inside(b: Bp, r: PackedFloat32Array, i: int, kind: int, hang :
 ## aw — ширина навеса (у двух лавок рядом навесы чуть уже, чтобы не сходились на общем простенке);
 ## ban — вывеска с правого (1) или левого (0) края проёма, −1 — наугад; ban_p — вероятность вывески
 static func _shopfront(b: Bp, r: PackedFloat32Array, i: int, kind: int, awning := true, ban := -1, aw := 1.0, ban_p := 0.6) -> void:
-	if awning:
+	if awning and kind == 2:
+		# у кузнеца и медника — черепичный козырёк (полотно у горна не вешают)
 		var a := _sp(r, 0, i * M + 1.25, 2.78, 0.12)
 		_put(b, "SM_Prop_Overhang_01", a[0], a[1], Vector3(aw, 1, 1))
+	elif awning:
+		# полосатый полотняный навес, как у лавок (CatShops._awning), под карнизом; у края — товар ремесла на верёвках
+		var w := M * aw
+		var x0 := r[0] + i * M + 1.25 - w * 0.5
+		var pal := CatShops._pal(b)
+		CatShops._awning(b, x0, x0 + w, r[3] + 0.1, r[3] + 0.95, 2.62, 2.3, CatShops.ACCENT[(pal + kind * 3) % CatShops.ACCENT.size()])
+		CatShops._hang_row(b, x0 + 0.4, x0 + w - 0.4, r[3] + 0.95, 2.3, CatShops._hang_goods(["weaver", "potter", "", "grain"][kind], pal))
 	_shop_inside(b, r, i, mini(kind, 2))
 	var sl := b.chance(0.5) if ban < 0 else ban == 1     # вывеска справа (товар у стены — слева)
 	var su := i * M + (0.45 if sl else 2.05)      # у узкого дома — не за угол
@@ -1120,10 +1156,13 @@ static func _shopfront(b: Bp, r: PackedFloat32Array, i: int, kind: int, awning :
 		0:   # ткач: свёртки ткани, корзины шерсти
 			_put(b, "SM_Prop_Rug_Stack_02", top + Vector3(-0.3, 0, 0), 0.2, Vector3.ONE * 0.6)
 			_put(b, "SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 5), top + Vector3(0.38, 0, 0), b.rng.randf() * TAU, Vector3.ONE * 0.5)
+			# сверху на стопке — сложенный отрез другого цвета
+			_put(b, "SM_Prop_Rug_Folded_01", top + Vector3(-0.3, 0.4 * 0.6, 0.0), 0.15, Vector3.ONE * 0.45, CatShops._rug(["01_B", "03_C", "01_C"][posmod(int(p.x * 10.0), 3)]))
 			_front_put(b, "SM_Prop_Rug_Stack_02", r, su, 0.0, 0.55, 0.3)
 		1:   # гончар: миска и кувшин на прилавке, амфора у стены
 			_put(b, "SM_Prop_Bowl_0%d" % (1 + b.rng.randi() % 3), top + Vector3(-0.3, 0, 0), 0.0, Vector3.ONE * 0.38)
 			_put(b, "SM_Prop_Jug_0%d" % (1 + b.rng.randi() % 4), top + Vector3(0.3, 0, 0.0), b.rng.randf() * TAU, Vector3.ONE * 0.55)
+			_put(b, "SM_Prop_Vase_04", top + Vector3(0.66, 0, 0.0), 0.5, Vector3.ONE * 0.36)
 			_front_put(b, "SM_Prop_Vase_04", r, su, 0.0, 0.6, 0.5)
 		_:   # кузнец/медник: молот и блюдо на прилавке, наковальня у стены
 			_put(b, "SM_Prop_Tool_Hammer_01", top + Vector3(-0.3, 0.02, 0), 0.6, Vector3.ONE * 1.3)
@@ -1415,6 +1454,74 @@ static func _pat_entry(b: Bp, rm: PackedFloat32Array, pd: int, style: String) ->
 	b.door = b.base * Vector3(rm[0] + pd * M + 1.25, 0, rm[3] + PORCH + 0.45)
 
 
+## Убранство портика домуса (владелец 12.11: «детальнее… как на картинках Synty»): перед дверью — мозаичный порог
+## на мраморном полу (три квадрата узора Synty Floor_Tiles, узор — по цвету дома), под балкой портика над проходом —
+## фонарь на цепи; в пролёте окна у средней колонны — mid: "statue" — статуя на мраморном постаменте, "pot" — цветы в
+## вазоне. Проход к двери (пролёт pd) свободен: в нём только плоский порог и фонарь над головой. Без случайности —
+## поток «g» не сдвигается (сад и всё у земли как было)
+static func _portico_dress(b: Bp, rm: PackedFloat32Array, pd: int, mid: String) -> void:
+	var z0 := rm[3]
+	var wi := 1 - pd
+	var xd := _wx(rm, pd, 1.25)
+	# порог: квадраты 0,5 м после сжатия фасада (до сжатия — шире в 1/SX), от стены до середины портика
+	var fy := PH - 0.01 + Bp.model_aabb("SM_Bld_Base_Floor_Combined_01").end.y * 1.25 + 0.008
+	var tiles := "Floor_Tiles_0%d" % [1, 2, 3][posmod(hash(b.tint.to_html()), 3)]
+	var q := 0.5
+	for k in 3:
+		_put(b, "SM_Bld_Base_Floor_01", Vector3(xd + (k - 1.5) * q / SX, fy, z0 + 0.05), 0.0, Vector3(q / SX / M, 1, q / M),
+			{"Stone_01": tiles})
+	# фонарь на цепи — под нижней кромкой того, что над проходом у колонн (фронтон, архитрав, плита лоджии)
+	var cz := z0 + PORCH - 0.32
+	var cy := _ceiling(b, xd, cz, 2.2)
+	if cy < INF:
+		_put(b, "#dress:lantern", Vector3(xd, cy, cz), 0.0, Vector3.ONE * 0.85)
+	# у средней колонны в пролёте окна, между колонной и ящиком цветов, ближе к краю портика — видно с улицы между колонн
+	var xm := _wx(rm, wi, 0.54 if wi == 1 else M - 0.54)
+	var pm := Vector3(xm, PH, z0 + 0.62)
+	match mid:
+		"statue":
+			_put(b, "SM_Prop_Plinth_02", pm, 0.0, Vector3.ONE * 0.72)
+			var st := "SM_Prop_Statue_0%d" % [5, 6, 3][posmod(hash(b.tint.to_html()) / 3, 3)]
+			_put(b, st, pm + Vector3(0, 1.01 * 0.72, 0), (-0.35 if wi == 1 else 0.35), Vector3.ONE * 0.3)   # чуть к двери
+		"pot":
+			_bloom_vase(b, pm, 0.5)
+
+
+## Ваза с цветущим кустом (как у дверей домов, CatDress): p — низ вазы, s — масштаб вазы
+static func _bloom_vase(b: Bp, p: Vector3, s := 0.5) -> void:
+	_put(b, "SM_Prop_Vase_03", p, 0.4, Vector3.ONE * s)
+	var bl: String = CatDecor.BLOOMS[posmod(int(p.x * 13.0 + p.z * 7.0), CatDecor.BLOOMS.size())]
+	_put(b, bl, p + Vector3(0, 0.58 * s, 0), p.x * 3.0, Vector3.ONE * 0.36 * s, {"tint": CatDecor.TRUE_COLOR})
+
+
+## Низ потолка над точкой (x, z) — нижняя кромка самой низкой из крыш, карнизов и плит выше ymin, что накрывают точку
+## (по габаритам деталей); ничего нет — INF
+static func _ceiling(b: Bp, x: float, z: float, ymin: float) -> float:
+	var best := INF
+	for p: Array in b.parts:
+		var nm := String(p[0])
+		if not (nm.begins_with("SM_Bld_Roof") or nm.begins_with("SM_Bld_Trim") or nm.begins_with("SM_Bld_Wall_Tiny")):
+			continue
+		var ab := (p[1] as Transform3D) * Bp.model_aabb(nm)
+		if x < ab.position.x or x > ab.end.x or z < ab.position.z or z > ab.end.z or ab.position.y < ymin:
+			continue
+		best = minf(best, ab.position.y)
+	return best
+
+
+## Мраморная скамья у стены под окном пролёта wi портика (вместо ящика цветов), на ней кувшин; у дальнего конца — ваза
+## с цветами
+static func _portico_bench(b: Bp, rm: PackedFloat32Array, wi: int) -> void:
+	var z0 := rm[3]
+	var xw := _wx(rm, wi, 1.25)
+	var s := 0.75
+	var bz := z0 + 0.135 - Bp.model_aabb("SM_Prop_Bench_01").position.z * s      # спинкой к лицу стены (0,115 от линии)
+	_put(b, "SM_Prop_Bench_01", Vector3(xw, PH, bz), 0.0, Vector3.ONE * s)
+	var e := -1.0 if wi == 1 else 1.0               # ближний к средней колонне конец скамьи
+	_put(b, "SM_Prop_Jug_05", Vector3(xw + e * 0.55, PH + 0.47 * s, bz), 0.6, Vector3.ONE * 0.75)
+	_bloom_vase(b, Vector3(_wx(rm, wi, 2.28 if wi == 1 else 0.22), PH, z0 + 0.3), 0.4)
+
+
 ## Точка на фасаде домуса у земли: пролёт wi, u метров от его левого края (до сжатия)
 static func _wx(rm: PackedFloat32Array, wi: int, u: float) -> float:
 	return rm[0] + wi * M + u
@@ -1469,6 +1576,7 @@ static func _pat_peristyle(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) 
 		"chim": b.pick([-0.45, 0.45])})
 	_wbox(b, rm, 0, wi, 0.0)
 	_pat_entry(b, rm, pd, "ped")
+	_portico_dress(b, rm, pd, "statue")
 	_gold_brazier(b, Vector3(_wcorner(rm, wi, 0.42), PH, rm[3] + 0.38), 0.32)
 	_pat_flank(b, rm, floors, pd)
 	_side_ivy(b, rm, 3 if wi == 0 else 1, 1.5)
@@ -1486,6 +1594,7 @@ static func _pat_loggia(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> 
 		"chim": 0.6 if wi == 0 else -0.6})
 	_wbox(b, rm, 0, wi, 0.0)
 	_pat_entry(b, rm, pd, "flat")
+	_portico_dress(b, rm, pd, "pot")
 	_statue(b, Vector3(_wcorner(rm, wi, 0.45), PH, rm[3] + 0.42), (0.35 if wi == 0 else -0.35), 0.5)
 	_pat_flank(b, rm, floors, pd)
 	_side_ivy(b, rm, 3 if wi == 0 else 1, 1.5)
@@ -1505,6 +1614,7 @@ static func _pat_temple(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> 
 	var shut: String = o["shut"]
 	_wbox(b, rm, 0, wi, 0.0)
 	_pat_entry(b, rm, pd, "ped")
+	_portico_dress(b, rm, pd, "statue")
 	var vx := _wcorner(rm, wi, 0.5)
 	_put(b, "SM_Prop_Pillar_Base_01", Vector3(vx, PH, rm[3] + 0.42), 0.0, Vector3(0.42, 1.0, 0.42))
 	_put(b, "SM_Prop_Vase_0%d" % b.pick([1, 3, 5]), Vector3(vx, PH + 1.0, rm[3] + 0.42), 0.0, Vector3.ONE * 0.5)
@@ -1517,16 +1627,18 @@ static func _pat_temple(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> 
 		_frieze(b, rm, 0, 1, u)
 
 
-## 3 «Аркада»: портик под черепичным навесом на мраморном архитраве, плющ на колонне; внизу окно с фронтончиком
-## и цветами (вещи в углу портика с улицы всё равно закрывает колонна); наверху окна со ставнями и цветами;
+## 3 «Аркада»: портик под черепичным навесом на мраморном архитраве, плющ на колонне; внизу окно с фронтончиком,
+## под ним каменная скамья с кувшином и ваза с цветами (_portico_bench); наверху окна со ставнями и цветами;
 ## вальмовая крыша
 static func _pat_arcade(b: Bp, rm: PackedFloat32Array, floors: int, pd: int) -> void:
 	var wi := 1 - pd
 	var o := _frame(b, rm, floors, {"g": _bays(2, pd, DOUBLE, W5), "u": [W1, W1], "roof": "hip", "rise": RISE_PAT,
 		"chim": 0.6 if wi == 0 else -0.6})
 	var shut: String = o["shut"]
-	_wbox(b, rm, 0, wi, 0.0)
+	b.rng.randi()                             # (ящик цветов внизу — вместо него скамья; поток «g» тот же)
 	_pat_entry(b, rm, pd, "lean")
+	_portico_dress(b, rm, pd, "")
+	_portico_bench(b, rm, wi)
 	var cx: float = PCOL[0] if wi == 0 else PCOL[2]
 	_pillar_ivy(b, Vector3(cx, PH, rm[3] + PORCH - 0.2), rm[3] + PORCH)
 	_pat_flank(b, rm, floors, pd)

@@ -5,15 +5,17 @@ extends RefCounted
 ## ящики цветов под окнами, цветущий плющ, горшки у дверей и на цепях, вывески над дверью и на кронштейне,
 ## кирпичная кладка там, где отбита штукатурка, каменные блоки на углах, трава и камешки у стен, корзины и мешки
 ## у лавок. Ставится после сборки облика по стенам Synty из чертежа (снаружи — от середины дома); землю не
-## занимает (Bp.free_parts) — след и правила постановки прежние. Свои детали (#bricks_*, #quoin_*, #bsign:*)
-## одинаковы во всём городе — каждая рисуется одним MultiMesh (Parts).
+## занимает (Bp.free_parts) — след и правила постановки прежние. Свои детали (#bricks_*, #quoin_*, #sign:*, #bsign:*,
+## #dress:*) одинаковы во всём городе — каждая рисуется одним MultiMesh (Parts).
+## Случайность — от облика здания (_ident: тип, облик, цвет), а не от числа деталей: правка строителя дома не
+## перетасовывает наполнение всего города; у каждой стены — своё зерно (её место), соседние стены друг друга не сдвигают.
 
 const WALL_W := 2.5            # стена Synty: 2,5 вдоль (x от 0), 3 в высоту, толщина по z
 const FACE := 0.115            # от середины толщины стены до её лица
 ## Ящики цветов под окнами: свои лёгкие (fbox_mesh — те же цветы Synty в простом ящике: 150 треугольников вместо 330)
-const BOXES := ["#bsign:@fbox1", "#bsign:@fbox2"]
+const BOXES := ["#dress:fbox1", "#dress:fbox2"]
 ## Ящиков цветов от прохода на дом — не больше (у фасада свои ставит строитель дома, CatHouses._wbox)
-const BOX_MAX := 10
+const BOX_MAX := 12
 ## Окна стен Synty (сняты с картинки стен спереди): подоконник по высоте и окна [середина вдоль стены, ширина]
 const WIN := {"SM_Bld_Wall_Window_01": [0.65, [[1.25, 1.2]]], "SM_Bld_Wall_Window_02": [1.4, [[0.55, 0.42], [1.25, 0.42], [1.95, 0.42]]],
 	"SM_Bld_Wall_Window_03": [1.4, [[1.25, 0.42]]], "SM_Bld_Wall_Window_04": [1.4, [[1.25, 1.75]]], "SM_Bld_Wall_Window_05": [0.65, [[1.25, 1.2]]]}
@@ -23,10 +25,10 @@ const DOOR := {"SM_Bld_Wall_Door_01": [0.7, 1.8, 2.05], "SM_Bld_Wall_Door_02": [
 	"SM_Bld_Wall_Door_Large_01": [0.65, 1.85, 2.6], "SM_Bld_Wall_Door_Large_02": [0.6, 1.9, 2.6], "SM_Bld_Wall_Door_Double_Large_01": [0.3, 2.2, 2.47]}
 ## Каменное обрамление двери выступает из стены дальше её лица
 const DOOR_FRAME := {"SM_Bld_Wall_Door_02": 0.13, "SM_Bld_Wall_Door_03": 0.175}
-## (без 05–07: у этих плетей Synty часть листьев в игре чернеет — нормали смотрят в стену, — как и в Bp.window_pots)
-const IVY := ["SM_Env_Ivy_Flowers_01", "SM_Env_Ivy_Flowers_02", "SM_Env_Ivy_Flowers_03", "SM_Env_Ivy_Flowers_04"]
-const BAD_IVY := {"SM_Env_Ivy_Flowers_05": "SM_Env_Ivy_Flowers_04", "SM_Env_Ivy_Flowers_06": "SM_Env_Ivy_Flowers_04",
-	"SM_Env_Ivy_Flowers_07": "SM_Env_Ivy_Flowers_04", "SM_Env_Ivy_05": "SM_Env_Ivy_04", "SM_Env_Ivy_06": "SM_Env_Ivy_04", "SM_Env_Ivy_07": "SM_Env_Ivy_04"}
+## (05–07 снова в ходу: их листья чернели от изнанки — у листвы «с изнанкой» теперь отсечение задней стороны,
+## Synty._two_faced; проверено на стенах лицом на все четыре стороны в 11:00 и 16:30, test_street_synty ivytest=1)
+const IVY := ["SM_Env_Ivy_Flowers_01", "SM_Env_Ivy_Flowers_02", "SM_Env_Ivy_Flowers_03", "SM_Env_Ivy_Flowers_04",
+	"SM_Env_Ivy_Flowers_05", "SM_Env_Ivy_Flowers_06", "SM_Env_Ivy_Flowers_07"]
 ## Клетки signs.png (как SIGNS в deploy/kit/kit_houses.py): 6 столбцов × 7 рядов
 const SIGNS := ["meat", "bread", "shoes", "dye", "togas", "pots", "oil", "lamps", "wine", "perfume", "jewel", "cloth", "barber", "medic",
 	"thermo", "taberna", "fullonica", "mansio", "fruit", "veg", "fish", "fresco", "copper", "grain", "scriptorium", "school", "library",
@@ -40,7 +42,7 @@ const TRADE_SIGN := {"butcher": "meat", "bakery": "bread", "cobbler": "shoes", "
 	"prefect": "prefect", "school": "school", "library": "library", "academy": "academy", "warehouse": "warehouse", "vigiles": "vigiles"}
 ## Товар у входа лавки — вещицы, что жители носят в руках (HandProps): окорока у мясника, сандалии у сапожника, бусы у ювелира
 const TRADE_GOODS := {"butcher": "ham", "cobbler": "sandals", "jeweler": "necklace", "wineshop": "grapes"}
-## Горшки на верёвках у двери — висят на железном кронштейне (#bsign:@hook): своего крюка у них нет
+## Горшки на верёвках у двери — висят на железном кронштейне (#dress:hook): своего крюка у них нет
 const HANG := ["SM_Prop_FlowerPot_Hanging_01", "SM_Prop_FlowerPot_Hanging_02", "SM_Prop_FlowerPot_Hanging_03"]
 ## Корзины, мешки и кувшины у входа лавки (сбоку от двери, проход свободен)
 const STOCK := [["SM_Prop_Basket_Set_01", 0.42], ["SM_Prop_Sack_Stack_01", 0.42], ["SM_Prop_Basket_Set_02", 0.42], ["SM_Prop_Sack_Stack_02", 0.42],
@@ -72,13 +74,15 @@ static func dress(b: Bp, type: String) -> void:
 	if walls.size() < 2:
 		return
 	var mid := sum / walls.size()
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash([type, b.parts.size(), walls.size(), int(mid.x * 100.0), int(mid.z * 100.0)])
+	# общее у дома (сколько плюща, облупилась ли штукатурка, угловые камни) — из зерна облика; у каждой стены — своё
+	var hr := RandomNumberGenerator.new()
+	hr.seed = hash([ident, "dress"])
 	var shop := not type.begins_with("house_")
-	var ivy_left := 2 if rng.randf() < 0.5 else 1
+	var ivy_left := 2 if hr.randf() < 0.5 else 1
 	# насколько у дома облупилась штукатурка: у половины домов — ничуть, у прочих — пара пятен
-	var bricky := 0.0 if rng.randf() < 0.45 else rng.randf_range(0.25, 0.5)
-	var brick_left := [rng.randi_range(1, 3)]
+	var bricky := 0.0 if hr.randf() < 0.45 else hr.randf_range(0.25, 0.5)
+	var brick_left := [hr.randi_range(1, 3)]
+	var quoins := hr.randf() < 0.6
 	var sign_at := []
 	var bracket := false
 	var boxes := [0]
@@ -86,6 +90,7 @@ static func dress(b: Bp, type: String) -> void:
 		var nm: String = w[0]
 		var xf: Transform3D = w[1]
 		var c: Vector3 = w[2]
+		var rng := _wrng(ident, nm, xf.origin)
 		var along := xf.basis.x.normalized()
 		var n := xf.basis.z.normalized()
 		var sx := xf.basis.x.length()
@@ -106,9 +111,9 @@ static func dress(b: Bp, type: String) -> void:
 		if nm.contains("Window"):
 			# ящики цветов ровно под окнами (у круглых отдушин — нет)
 			# (ящиков Synty по 320–340 треугольников у трёхэтажного дома было до 25 — 8 тыс. треугольников. Теперь ящик свой,
-			# лёгкий (fbox_mesh), сзади и сбоку реже, на дом не больше BOX_MAX — под тремя окошками все три или ни одного,
+			# лёгкий (fbox_mesh), сзади и сбоку чуть реже, на дом не больше BOX_MAX — под тремя окошками все три или ни одного,
 			# и не второй ящик под окном, где он уже есть у строителя дома)
-			var bp: float = (0.45 if shop else 0.8) * (1.0 if front else (0.8 if absf(out.x) > 0.6 else 0.65))
+			var bp: float = (0.45 if shop else 0.85) * (1.0 if front else 0.9)
 			if WIN.has(nm) and int(boxes[0]) + (WIN[nm][1] as Array).size() <= BOX_MAX and rng.randf() < bp:
 				var wd: Array = WIN[nm]
 				var bx: String = BOXES[rng.randi() % BOXES.size()]
@@ -185,9 +190,9 @@ static func dress(b: Bp, type: String) -> void:
 		_put(b, "#sign:" + key, sg[1], sg[2], Vector3(1.22, 1.22, 1.0))
 		if TRADE_GOODS.has(type):
 			for hp: Vector3 in sg[3]:
-				_put(b, "#hp_" + String(TRADE_GOODS[type]), hp, float(sg[2]) + rng.randf_range(-0.3, 0.3), Vector3.ONE * 0.75)
+				_put(b, "#hp_" + String(TRADE_GOODS[type]), hp, float(sg[2]) + hr.randf_range(-0.3, 0.3), Vector3.ONE * 0.75)
 	# каменные блоки на углах дома (через этаж кладка в перевязку), у части домов
-	if rng.randf() < 0.6:
+	if quoins:
 		for xf: Transform3D in ends:
 			var rot := xf.basis.orthonormalized()
 			var floors := maxi(1, int(round(xf.basis.y.length())))
@@ -234,7 +239,8 @@ const JARS_BIG := ["SM_Prop_Vase_02", "SM_Prop_Vase_01", "SM_Prop_Vase_02"]
 const JARS_SMALL := ["SM_Prop_Vase_04", "SM_Prop_Vase_06", "SM_Prop_Vase_04"]
 ## Цветы в подвесных горшках с кронштейном у стены (у 01–03 крюка нет — висели бы в воздухе)
 const HOOK_POTS := ["SM_Prop_FlowerPot_Hanging_04", "SM_Prop_FlowerPot_Hanging_05", "SM_Prop_FlowerPot_Hanging_06"]
-const SIDE_IVY := ["SM_Env_Ivy_Flowers_03", "SM_Env_Ivy_Flowers_04", "SM_Env_Ivy_Flowers_02"]
+const SIDE_IVY := ["SM_Env_Ivy_Flowers_03", "SM_Env_Ivy_Flowers_04", "SM_Env_Ivy_Flowers_02", "SM_Env_Ivy_Flowers_06",
+	"SM_Env_Ivy_Flowers_07"]
 ## Плющ от земли до карниза: широкие плети (цветущие и простые)
 const CLIMB := ["SM_Env_Ivy_Flowers_08", "SM_Env_Ivy_Flowers_01", "SM_Env_Ivy_08", "SM_Env_Ivy_Flowers_02"]
 ## Наполнение боков и задов (выключается для снимков «было»: test_street_synty before=1)
@@ -272,8 +278,7 @@ static func _sides(b: Bp, type: String, walls: Array, mid: Vector3, ident: int) 
 	for wi: Dictionary in infos:
 		if wi["cat"] == "front":
 			continue
-		var rng := RandomNumberGenerator.new()
-		rng.seed = hash([ident, wi["nm"], (wi["o"] as Vector3).snapped(Vector3.ONE * 0.05)])
+		var rng := _wrng(ident, String(wi["nm"]) + "|side", wi["o"])
 		var side: bool = wi["cat"] == "side"
 		if float(wi["y0"]) < 1.0:
 			# за домом ремесленника — двор-мастерская, за домусом — сад: там своя снасть
@@ -288,7 +293,7 @@ static func _sides(b: Bp, type: String, walls: Array, mid: Vector3, ident: int) 
 				_cascade(b, wi, rng)
 
 
-## Плющ, что повесили раньше (строители дома и первый проход): плети 05–07 — на 04 (у них листья чернеют); поверх
+## Плющ, что повесили раньше (строители дома и первый проход): поверх
 ## окна или за угол (половина плети в воздухе) — переносится на ближнее свободное место того же лица стены (можно ниже
 ## подоконника), а если места нет — убирается
 static func _fix_ivy(b: Bp, infos: Array) -> void:
@@ -298,9 +303,6 @@ static func _fix_ivy(b: Bp, infos: Array) -> void:
 		var nm := String(b.parts[i][0])
 		if not (nm.begins_with("SM_Env_Ivy_Flowers_") or nm.begins_with("SM_Env_Ivy_0") or nm.begins_with("SM_Env_Ivy_1")):
 			continue
-		if BAD_IVY.has(nm):
-			nm = BAD_IVY[nm]
-			b.parts[i][0] = nm
 		var xf: Transform3D = b.parts[i][1]
 		var host := {}
 		for w: Dictionary in infos:
@@ -518,8 +520,9 @@ static func _boxes(b: Bp) -> Array:
 		_bx = []
 	for i in range(_bx.size(), b.parts.size()):
 		var nm := String(b.parts[i][0])
-		# (Bp.model_aabb у своих деталей «#» — кубик 1 м: кронштейн занял бы полстены)
-		_bx.append((b.parts[i][1] as Transform3D) * (kit_aabb(nm) if nm.begins_with("#bsign:@") else Bp.model_aabb(nm)))
+		# (у вывесок «#sign:», «#bsign:» Bp.model_aabb — кубик 1 м: вывеска заняла бы полстены; у «#dress:» он настоящий)
+		var own := nm.begins_with("#sign:") or nm.begins_with("#bsign:")
+		_bx.append((b.parts[i][1] as Transform3D) * (kit_aabb(nm) if own else Bp.model_aabb(nm)))
 	return _bx
 
 
@@ -984,23 +987,25 @@ static func _beams(b: Bp, w: Dictionary) -> void:
 			_place(b, w, "SM_Bld_Wall_Beam_Detail_01", _wbasis(w, Vector3(seg / WALL_W, 1.0, 1.0)), (k + 0.5) * seg, y, 0.0)
 
 
-## Облик дома у земли (одинаков у дома любой этажности): зерно случайности боковых и задних стен
+## Зерно случайности прохода — облик здания, а не его детали: свой поток случайности чертежа (Bp.rng). У жилья это
+## поток «g» CatHouses (класс, облик, цвет — без этажности: дом надстроили — у нижних стен всё как было), у лавок —
+## ключ Catalog (тип, этажи, облик, цвет). Строитель дома добавил горшок или ступень — наполнение не перетасовывается
 static func _ident(b: Bp, type: String) -> int:
-	var sig := [type, b.tint.to_html(), b.roof_tex, b.ground_style]
-	for p: Array in b.parts:
-		var nm := String(p[0])
-		var o: Vector3 = (p[1] as Transform3D).origin
-		if o.y < 1.0 and nm.begins_with("SM_") and not nm.begins_with("SM_Bld_Trim") and not nm.begins_with("SM_Bld_Wall_End") \
-				and not nm.begins_with("SM_Bld_Roof"):
-			sig.append(nm)
-			sig.append(o.snapped(Vector3.ONE * 0.1))
-	return hash(sig)
+	return hash([type, b.rng.seed])
+
+
+## Случайность стены: зерно облика и место стены (родные метры, с точностью 5 см) — другие стены её не сдвигают
+static func _wrng(ident: int, nm: String, o: Vector3) -> RandomNumberGenerator:
+	var r := RandomNumberGenerator.new()
+	r.seed = hash([ident, nm, o.snapped(Vector3.ONE * 0.05)])
+	return r
 
 
 ## Под этим окном уже стоит ящик цветов (строитель дома ставит свои под окнами фасада)
 static func _has_box(b: Bp, p: Vector3) -> bool:
 	for q: Array in b.parts:
-		if (String(q[0]).begins_with("SM_Prop_FlowerBed") or String(q[0]).begins_with("#bsign:@fbox")) 				and (q[1] as Transform3D).origin.distance_to(p) < 0.45:
+		if (String(q[0]).begins_with("SM_Prop_FlowerBed") or String(q[0]).begins_with("#dress:fbox")) \
+				and (q[1] as Transform3D).origin.distance_to(p) < 0.45:
 			return true
 	return false
 
@@ -1029,13 +1034,12 @@ static func _put_xf(b: Bp, nm: String, xf: Transform3D, remap := {}) -> void:
 	b.parts.append([nm, xf, remap])
 
 
-## Свои детали (Parts._special_mesh): #sign:<клетка>, #bsign:<клетка>, #bricks_<n>, #quoin_<0|1>
+## Свои детали (Parts._special_mesh): #sign:<клетка>, #bsign:<клетка>, #bricks_<n>, #quoin_<0|1>, #dress:<имя> (dress_mesh)
 static func kit_mesh(name: String) -> Mesh:
 	if name.begins_with("#sign:"):
 		return sign_mesh(name.substr(6))
-	if name.begins_with("#bsign:@"):
-		# свои детали без новой ветки в Parts (имя под «#bsign:»): железный кронштейн для горшка, лёгкий ящик цветов
-		return hook_mesh() if name == "#bsign:@hook" else fbox_mesh(int(name.substr(13)))
+	if name.begins_with("#dress:"):
+		return dress_mesh(name.substr(7))
 	if name.begins_with("#bsign:"):
 		return bracket_sign_mesh(name.substr(7))
 	if name.begins_with("#bricks_"):
@@ -1043,6 +1047,155 @@ static func kit_mesh(name: String) -> Mesh:
 	if name.begins_with("#quoin_"):
 		return quoin_mesh(int(name.substr(7)))
 	return null
+
+
+## Детали наполнения «#dress:<имя>» (габарит — настоящий, Bp.model_aabb): hook — железный кронштейн для горшка,
+## fbox1/fbox2 — лёгкий ящик цветов
+static func dress_mesh(nm: String) -> Mesh:
+	if nm == "hook":
+		return hook_mesh()
+	if nm.begins_with("fbox"):
+		return fbox_mesh(int(nm.substr(4)))
+	if nm == "lantern":
+		return lantern_mesh()
+	if nm == "cord":
+		return cord_mesh()
+	if nm.begins_with("awning:"):
+		var a := nm.split(":")
+		return awning_mesh(int(a[1]), int(a[2]), int(a[3]))
+	if nm == "garlic" or nm == "herbs":
+		return bunch_mesh(nm == "garlic")
+	push_warning("CatDress: нет детали #dress:" + nm)
+	return null
+
+
+## Фонарь на цепи под балкой портика: начало — крюк вверху, цепь вниз, под ней фонарь, как у фонаря на кронштейне
+## (то же стекло Parts: ночью светится вместе с фонарями города; своего света нет). Высота 0,6
+static var _lantern: Mesh
+static func lantern_mesh() -> Mesh:
+	if _lantern != null:
+		return _lantern
+	var k := Kit.new()
+	var glass := Kit.new()
+	var bronze := Color("9a6a2c")
+	var iron := Color("2b2622")
+	k.boxc(Vector3(0, -0.012, 0), Vector3(0.09, 0.024, 0.09), iron, [])           # накладка на балке
+	k.rod(Vector3(0, -0.02, 0), Vector3(0, -0.25, 0), 0.008, 4, iron)             # цепь
+	var ly := -0.45
+	k.cone(Vector3(0, ly + 0.1, 0), 0.13, 0.12, 4, bronze)                         # крышка
+	k.cyl(Vector3(0, ly + 0.21, 0), 0.025, 0.04, 4, bronze)                        # кольцо
+	k.boxc(Vector3(0, ly - 0.12, 0), Vector3(0.2, 0.03, 0.2), bronze, [])          # донце
+	for c: Vector2 in [Vector2(-0.085, -0.085), Vector2(0.085, -0.085), Vector2(-0.085, 0.085), Vector2(0.085, 0.085)]:
+		k.boxc(Vector3(c.x, ly - 0.01, c.y), Vector3(0.025, 0.2, 0.025), bronze, [])
+	glass.boxc(Vector3(0, ly - 0.01, 0), Vector3(0.16, 0.18, 0.16), Color("ffd48a"), [])
+	var m := k.mesh()
+	m.surface_set_material(0, Kit.material(0.6))
+	var g := glass.mesh()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, g.surface_get_arrays(0))
+	m.surface_set_material(1, Parts._glass_material())
+	_lantern = m
+	return m
+
+
+## Верёвка: тонкий шнур от начала вниз на 1 (длина — масштаб по y), на нём висит товар у края навеса
+static var _cord: Mesh
+static func cord_mesh() -> Mesh:
+	if _cord == null:
+		var k := Kit.new()
+		k.rod(Vector3.ZERO, Vector3(0, -1, 0), 0.01, 4, Color("8a7350"))
+		_cord = k.mesh()
+		_cord.surface_set_material(0, Kit.material(0.9))
+	return _cord
+
+
+## Связка на верёвке: чеснок (круглые головки косой, по две на ряд) или пучок сушёных трав (стебли веером вниз,
+## на концах — метёлки цветов); начало — узел вверху, длина ~0,4
+static var _bunch := {}
+static func bunch_mesh(garlic: bool) -> Mesh:
+	if _bunch.has(garlic):
+		return _bunch[garlic]
+	var k := Kit.new()
+	var twine := Color("8a7350")
+	k.rod(Vector3.ZERO, Vector3(0, -0.06, 0), 0.01, 4, twine)
+	if garlic:
+		k.rod(Vector3(0, -0.06, 0), Vector3(0, -0.38, 0), 0.012, 4, Color("b9a77c"))    # коса из сухих стеблей
+		for i in 4:
+			var y := -0.1 - i * 0.08
+			for sx: float in ([-0.035, 0.035] if i < 3 else [0.0]):
+				var c := Color("f1ebdf") if (i + int(sx > 0.0)) % 2 == 0 else Color("e6d9de")
+				# головка: снизу шире, кверху сужается в хвостик — две усечённые призмы
+				k.cyl(Vector3(sx, y - 0.035, 0), 0.016, 0.03, 6, c, 0.042)
+				k.cyl(Vector3(sx, y - 0.005, 0), 0.042, 0.035, 6, c, 0.01)
+	else:
+		var tie := Vector3(0, -0.08, 0)
+		k.cyl(tie - Vector3(0, 0.02, 0), 0.022, 0.04, 5, twine)                    # перевязь
+		for i in 5:
+			var a := TAU * i / 5.0
+			var end := tie + Vector3(cos(a) * 0.05, -0.24 - (i % 2) * 0.04, sin(a) * 0.05)
+			k.rod(tie, end, 0.008, 4, Color("6f7a3e"))                                # стебель
+			k.cone(end - Vector3(0, 0.07, 0), 0.028, 0.08, 4, Color("9a8fb5") if i % 2 == 0 else Color("b5a95e"))
+	var m := k.mesh()
+	m.surface_set_material(0, Kit.material(0.9))
+	_bunch[garlic] = m
+	return m
+
+
+## Полосатый полотняный навес одним куском (полосами Synty — по 370 треугольников на полосу, навес лавки — до 4 тыс.;
+## этот — ~14 на полосу): n полос двух цветов CatShops.CLOTH ca/cb, скат с лёгким провисом, спереди подзор с зубцом
+## у каждой полосы, у края ската — светлый рубец. Обе стороны (снизу навес видят прохожие). Единичный: x 0…1 вдоль
+## фасада, z 0…1 от стены к краю, y 0 у стены … −1 у края ската (масштаб — ширина, вынос, перепад); подзор — ещё
+## AWN_VAL перепада вниз
+const AWN_SAG := 0.14
+const AWN_VAL := 0.45
+static var _awn := {}
+static func awning_mesh(n: int, ca: int, cb: int) -> Mesh:
+	var key := "%d:%d:%d" % [n, ca, cb]
+	if _awn.has(key):
+		return _awn[key]
+	n = clampi(n, 1, 24)
+	var k := Kit.new()
+	var cols := [cloth_color(ca), cloth_color(cb)]
+	var hem := Color(CLOTH_HEM)
+	var zs := [0.0, 0.45, 0.85, 1.0]
+	var y_at := func(z: float) -> float: return -z - AWN_SAG * sin(PI * z)
+	for i in n:
+		var x0 := float(i) / n
+		var x1 := float(i + 1) / n
+		var xm := (x0 + x1) * 0.5
+		var col: Color = cols[i % 2]
+		for j in zs.size() - 1:
+			var za: float = zs[j]
+			var zb: float = zs[j + 1]
+			_two(k, Vector3(x0, y_at.call(za), za), Vector3(x1, y_at.call(za), za), Vector3(x1, y_at.call(zb), zb), Vector3(x0, y_at.call(zb), zb), col)
+		# подзор: полоса вниз от края ската, внизу зубец; по верху — светлый рубец
+		var yt := -1.0
+		var yh := yt - AWN_VAL * 0.18
+		var yl := yt - AWN_VAL * 0.62
+		var yp := yt - AWN_VAL
+		_two(k, Vector3(x0, yt, 1.0), Vector3(x0, yh, 1.0), Vector3(x1, yh, 1.0), Vector3(x1, yt, 1.0), hem)
+		_two(k, Vector3(x0, yh, 1.0), Vector3(x0, yl, 1.0), Vector3(x1, yl, 1.0), Vector3(x1, yh, 1.0), col)
+		k.tri(Vector3(x0, yl, 1.0), Vector3(xm, yp, 1.0), Vector3(x1, yl, 1.0), col)
+		k.tri(Vector3(x0, yl, 1.0), Vector3(x1, yl, 1.0), Vector3(xm, yp, 1.0), col)
+	var m := k.mesh()
+	m.surface_set_material(0, Kit.material(0.95))
+	_awn[key] = m
+	return m
+
+
+## Четырёхугольник с обеих сторон (полотно)
+static func _two(k: Kit, a: Vector3, b: Vector3, c: Vector3, d: Vector3, col: Color) -> void:
+	k.quad(a, b, c, d, col)
+	k.quad(a, d, c, b, col)
+
+
+## Цвет полотна CatShops.CLOTH[i] — главный цвет навеса Synty SM_Prop_Banner_Roof_01 с этой раскраской (снят с атласа:
+## test_dress_probe cloth=1)
+const CLOTH_COL := {0: "8e3a2e", 1: "a9a5a2", 2: "b887b0", 3: "6c8aa9", 4: "668b77", 5: "b06f24", 6: "b09024", 7: "46943b",
+	8: "33669d", 9: "583c9c", 10: "9d3282", 11: "35383b"}
+const CLOTH_HEM := "e9b069"            # рубец по краю навеса Synty
+static func cloth_color(i: int) -> Color:
+	var h: String = CLOTH_COL.get(posmod(i, 12), "c8553d")
+	return Color(h)
 
 
 static func _cell_uv(key: String) -> Rect2:
@@ -1202,7 +1355,7 @@ static func fbox_mesh(v: int) -> Mesh:
 	return am
 
 
-## Габарит своей детали «#bsign:@…» (у Bp.model_aabb для «#» — кубик 1 м)
+## Габарит своей детали по её сетке (у Bp.model_aabb для «#sign:», «#bsign:» — кубик 1 м)
 static var _kab := {}
 static func kit_aabb(nm: String) -> AABB:
 	if not _kab.has(nm):
@@ -1239,7 +1392,7 @@ static func _door_pot(b: Bp, w: Dictionary, rng: RandomNumberGenerator, d0: floa
 			if absf(u - u0) < 0.3:
 				var al: Vector3 = w["al"]
 				var hook := _wpt(w, u, y, 0.0)
-				_put_xf(b, "#bsign:@hook", Transform3D(Basis(Vector3.UP, float(w["yaw"])), hook))
+				_put_xf(b, "#dress:hook", Transform3D(Basis(Vector3.UP, float(w["yaw"])), hook))
 				var tip := hook + Vector3.UP * HOOK_TIP.y + (w["out"] as Vector3) * HOOK_TIP.z + al * 0.0
 				_put_xf(b, nm, Transform3D(bs, tip - bs * top + Vector3.UP * 0.01))
 				return true

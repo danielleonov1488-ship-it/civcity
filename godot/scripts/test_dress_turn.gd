@@ -13,6 +13,10 @@ const LIST := [["house_pleb", 2, 0, 1], ["bakery", 0, 0, 1], ["house_artisan", 3
 	["house_pleb", 2, 3, 5], ["house_artisan", 2, 4, 6], ["house_patrician", 2, 2, 4], ["house_pleb", 1, 1, 0],
 	# и ещё: домусы с перголой и колодцем в саду, дома плебеев «балкон» и «фронтон» в два этажа
 	["house_patrician", 2, 1, 5], ["house_patrician", 1, 3, 2], ["house_pleb", 2, 1, 4], ["house_pleb", 2, 2, 6]]
+## set=extra — прочие лавки с навесами, прилавками и столиками (полосатые навесы одного вида, товар на верёвках)
+const EXTRA := [["stall_fruit", 0, 0, 2], ["stall_veg", 0, 1, 5], ["stall_fish", 0, 2, 3], ["potter", 0, 0, 4], ["cobbler", 0, 0, 6],
+	["oilshop", 0, 0, 7], ["thermopolium", 0, 0, 1], ["barber", 0, 0, 5], ["house_artisan", 2, 1, 3], ["house_artisan", 2, 3, 1]]
+var list: Array = LIST
 
 
 func _ready() -> void:
@@ -23,6 +27,7 @@ func _ready() -> void:
 			"tag": tag = kv[1]
 			"before": CatDress.sides_on = kv[1] != "1"
 			"pool": pool = kv[1] != "0"
+			"set": list = EXTRA if kv[1] == "extra" else LIST
 			"only":
 				for s in kv[1].split(","):
 					only.append(int(s))
@@ -61,10 +66,10 @@ func _run() -> void:
 	var cam := Camera3D.new()
 	cam.fov = 40
 	add_child(cam)
-	for i in LIST.size():
+	for i in list.size():
 		if not only.is_empty() and not only.has(i):
 			continue
-		var e: Array = LIST[i]
+		var e: Array = list[i]
 		var bp := Catalog.make(e[0], e[1], e[2], e[3])
 		var n: Node3D
 		var hs := []
@@ -81,17 +86,26 @@ func _run() -> void:
 				gi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 			add_child(n)
 		var top := bp.top_y()
-		var c := Vector3(0, minf(top * 0.45, 2.2), -0.6)
-		# четыре стороны: спереди-слева, левый бок, зад, правый бок — и крупно бока и зад пониже
+		# середина и размер следа: портик домуса впереди, сад сзади — здание целиком в кадре
+		var lo := Vector2(INF, INF)
+		var hi := -lo
+		for r: Rect2 in bp.footprint():
+			lo = lo.min(r.position)
+			hi = hi.max(r.end)
+		var ext := maxf(hi.x - lo.x, hi.y - lo.y) if lo.x < INF else 4.0
+		var c := Vector3((lo.x + hi.x) * 0.5, minf(top * 0.45, 2.2), (lo.y + hi.y) * 0.5) if lo.x < INF else Vector3(0, minf(top * 0.45, 2.2), -0.6)
+		var fz := hi.y if lo.x < INF else 2.0
+		# четыре стороны: спереди-слева, левый бок, зад, правый бок — и крупно бока и зад пониже; k9 — крупно фасад у земли
+		# (портик, прилавок)
 		var shots := [[35.0, 0.42, 1.0], [-80.0, 0.3, 0.85], [180.0, 0.3, 0.85], [80.0, 0.3, 0.85], [-100.0, 0.1, 0.62], [200.0, 0.1, 0.62],
-			[100.0, 0.1, 0.62], [-30.0, 0.08, 0.6], [25.0, 2.6, 0.75]]
+			[100.0, 0.1, 0.62], [-30.0, 0.08, 0.6], [25.0, 2.6, 0.75], [18.0, 0.16, 0.42]]
 		for k in shots.size():
 			var sh: Array = shots[k]
 			var yaw := deg_to_rad(float(sh[0]))
-			var d := (6.0 + top) * float(sh[2])
+			var d := (2.0 + top + ext * 0.75) * float(sh[2])
 			var dir := Vector3(sin(yaw), float(sh[1]) * 2.0, cos(yaw)).normalized()
 			# (k8 — круто сверху со стороны улицы, через крышу: сад домуса, двор ремесленника — как их видно в игре)
-			var lk := c if k < 4 else (Vector3(c.x, 0.4, -2.4) if k == 8 else Vector3(c.x, 1.25, c.z))
+			var lk := c if k < 4 else (Vector3(c.x, 0.4, -2.4) if k == 8 else (Vector3(c.x, 0.9, fz - 0.6) if k == 9 else Vector3(c.x, 1.25, c.z)))
 			cam.look_at_from_position(lk + dir * d, lk)
 			for f in 4:
 				await get_tree().process_frame

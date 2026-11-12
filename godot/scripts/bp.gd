@@ -129,6 +129,9 @@ static func model_aabb(name: String) -> AABB:
 		box = CatMilitary.kit_mesh(name).get_aabb()     # детали Легиона из Kit — по их настоящим габаритам
 	elif name.begins_with("#d2_"):
 		box = CatDecor2.kit_mesh(name).get_aabb()       # свои детали украшений этапа 5
+	elif name.begins_with("#dress:"):
+		var dm := CatDress.kit_mesh(name)               # детали наполнения домов (ящики цветов, кронштейны) — настоящие
+		box = dm.get_aabb() if dm else box
 	elif name.begins_with("K:"):
 		var km := KitLib._mesh(name)                     # свой набор деталей (KitLib)
 		box = km.get_aabb() if km else box
