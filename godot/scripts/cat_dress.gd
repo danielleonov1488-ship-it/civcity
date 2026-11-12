@@ -245,6 +245,8 @@ const SIDE_IVY := ["SM_Env_Ivy_Flowers_03", "SM_Env_Ivy_Flowers_04", "SM_Env_Ivy
 const CLIMB := ["SM_Env_Ivy_Flowers_08", "SM_Env_Ivy_Flowers_01", "SM_Env_Ivy_08", "SM_Env_Ivy_Flowers_02"]
 ## Наполнение боков и задов (выключается для снимков «было»: test_street_synty before=1)
 static var sides_on := true
+## Выключатель всего прохода (снимки «было»: Synty без наполнения — test_perf plain=1)
+static var ON := true
 ## Шпалера — тёплое дерево (у Synty рейки белые: в тени светились, как пластик)
 const WOOD := Color(0.78, 0.62, 0.45)
 ## Товар на полке у лавок без своего списка (CatShops.SHELVES): кувшины, ваза, корзинка

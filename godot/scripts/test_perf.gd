@@ -50,6 +50,9 @@ func _ready() -> void:
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		A[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	var mode: String = A.get("mode", "regress")
+	# plain=1 — Synty без наполнения (CatDress, CatDressCivic): снимки «было» для сравнения детальных проходов
+	CatDress.ON = A.get("plain", "0") != "1"
+	CatDressCivic.ON = CatDress.ON
 	Parts.split_on = A.get("split", "1") != "0"        # 12.11: оттенок у экземпляра (split=0 — как прежде, для сравнения)
 	city_src = str(A.get("city", OWNER))
 	if city_src == "new" or not FileAccess.file_exists(city_src):
