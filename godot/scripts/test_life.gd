@@ -76,6 +76,38 @@ func put(type: String, at: Vector2) -> Dictionary:
 	return {}
 
 
+## Дом плебеев у точки at с проулками по бокам и сзади; облик и цвет — первые, где у него есть скамья
+func _lone_house(X: float, Z: float) -> Dictionary:
+	for v in 8:
+		for col in 6:
+			if Life._find_seats(Catalog.make("house_pleb", 1, v, col), "house_pleb").is_empty():
+				continue
+			var pl: Dictionary = game.placement("house_pleb", Vector2(X, Z), v, col)
+			if pl["err"] != "":
+				continue
+			var b := c.place("house_pleb", pl["pos"], pl["yaw"], v, col, true)
+			b["pop"] = 3
+			game._show(b)
+			# след в мировых осях → проулки в 0,9 м от стен (по бокам и сзади), от главной улицы
+			var xf := c.xf(b)
+			var lo := Vector2(INF, INF)
+			var hi := -lo
+			for r: Rect2 in c.blueprint(b).footprint():
+				for q: Vector2 in [r.position, r.end, Vector2(r.position.x, r.end.y), Vector2(r.end.x, r.position.y)]:
+					var w := xf * Vector3(q.x, 0, q.y)
+					lo = Vector2(minf(lo.x, w.x), minf(lo.y, w.z))
+					hi = Vector2(maxf(hi.x, w.x), maxf(hi.y, w.z))
+			var zr := Z - 4.0
+			game.land.paint_line(Vector2(lo.x - 0.9, zr), Vector2(lo.x - 0.9, hi.y + 0.9), 0.75, Land.Kind.ROAD, true)
+			game.land.paint_line(Vector2(hi.x + 0.9, zr), Vector2(hi.x + 0.9, hi.y + 0.9), 0.75, Land.Kind.ROAD, true)
+			game.land.paint_line(Vector2(lo.x - 0.9, hi.y + 0.9), Vector2(hi.x + 0.9, hi.y + 0.9), 0.75, Land.Kind.ROAD, true)
+			ppl.refresh(game.land.road_chunks.keys())
+			print("LIFE NOTE отдельный дом: облик %d, цвет %d, скамей %d" % [v, col, life.seats(b).size()])
+			return b
+	print("LIFE NOTE отдельного дома со скамьёй не нашлось")
+	return {}
+
+
 ## Камера у входа постройки b: сбоку под углом (видно, как створка уходит внутрь)
 func door_view(b: Dictionary, side := 30.0, d := 5.0, pitch := 22.0) -> void:
 	var dp := c.door_point(b)
@@ -125,6 +157,11 @@ func _run() -> void:
 			b["pop"] = 3
 			game._show(b)
 		B.append(b)
+	# отдельный дом со скамьёй у боковой или задней стены и проулками вокруг: в тесном ряду скамьи стоят в траве у соседей,
+	# а у дома на углу улиц к ним подходят с мостовой (облик и цвет — первый, где наполнение поставило скамью)
+	var lone := _lone_house(X0 + 96.0, Z0 + 4.0)
+	if not lone.is_empty():
+		B.append(lone)
 	await frames(10)
 	for b: Dictionary in B:
 		var bp := c.blueprint(b)
@@ -352,7 +389,11 @@ func _shutters() -> void:
 		check(is_equal_approx(life.shut_k(int(b["id"])), 1.0), "утром открыты: %s" % b["type"], life.shut_k(int(b["id"])))
 		check(shut_xfs(b) == x0[int(b["id"])], "и встали точно как построены: %s%d" % [b["type"], int(b["tier"])])
 	# далеко от камеры: ставни не трогаются вовсе, пока камера не подъедет
-	var bf: Dictionary = with[with.size() - 1]
+	# дом с наибольшим числом ставен (у дома с одной парой она может по задумке остаться на ночь открытой)
+	var bf: Dictionary = with[0]
+	for b: Dictionary in with:
+		if int(life.info(c.blueprint(b), String(b["type"]))["pairs"]) > int(life.info(c.blueprint(bf), String(bf["type"]))["pairs"]):
+			bf = b
 	var far := (bf["pos"] as Vector2) + Vector2(420.0, 330.0)
 	game.rig.set_view(Vector3(far.x, 2.0, far.y), 0.0, 40.0, 20.0)
 	await frames(3)
@@ -421,14 +462,14 @@ func _seats() -> void:
 	# таверна: за столом с чашей; дом и лавка — на скамье
 	var cases := []
 	cases.append([tv[0], "taberna"])
-	for b: Dictionary in hosts:
-		if b["type"] != "taberna" and cases.size() < 4:
+	for b: Dictionary in hosts:                 # все постройки с мебелью: часть скамей стоит в траве у соседей (не подойти)
+		if b["type"] != "taberna":
 			cases.append([b, String(b["type"])])
 	var i := 0
 	var sat := []
 	var seated := 0
 	for cs: Array in cases:
-		if i >= adults.size():
+		if i >= adults.size() or seated >= 4:
 			break
 		var b: Dictionary = cs[0]
 		var r: Dictionary = adults[i]
@@ -457,7 +498,10 @@ func _seats() -> void:
 		else:
 			await shot("seat_%s.png" % cs[1])
 		sat.append(r)
-	check(seated >= 3 and sat.any(func(x): return bool(x.get("drink", false))), "садятся у разных построек: %d, за столом таверны — с чашей" % seated)
+	# (прилавок лавки — каменная скамья с товаром, CatDress._display — не сиденье: Life._item_on; поэтому у лавок
+	# улицы своих скамей нет, садятся за столом таверны и на скамье у дома)
+	check(seated >= 2 and sat.any(func(x): return bool(x.get("drink", false))) and sat.any(func(x): return not bool(x.get("drink", false))),
+		"садятся у разных построек: %d, за столом таверны — с чашей, у дома — на скамье" % seated)
 	# второй за тем же столом таверны — соседи болтают и пьют
 	if i < adults.size():
 		var r2: Dictionary = adults[i]

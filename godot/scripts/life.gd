@@ -209,6 +209,16 @@ static func _find_seats(bp: Bp, type: String) -> Array:
 		if wb.position.y < 0.6 and wb.end.y > 1.4 and maxf(wb.size.x, wb.size.z) > 0.15:
 			walls.append(Rect2(wb.position.x + 0.04, wb.position.z + 0.04, maxf(0.0, wb.size.x - 0.08), maxf(0.0, wb.size.z - 0.08)))
 	var dp := Vector2(bp.door.x, bp.door.z)
+	# вещи над землёй (кувшин, корзинка, товар ремесла): на скамье с ними не сидят (скамья-полка лавки, CatDress._display;
+	# скамья с кувшином на краю, CatDress «bench»)
+	var items := []
+	for p in bp.parts:
+		var nm: String = p[0]
+		if nm.begins_with("SM_Prop_Seat_") or nm.begins_with("SM_Prop_Table_0") or nm.begins_with("SM_Bld_") or nm.begins_with("SM_Env_"):
+			continue
+		var ib: AABB = (p[1] as Transform3D) * Bp.model_aabb(nm)
+		if ib.position.y > 0.2 and ib.position.y < 1.3 and ib.size.y < 1.2 and maxf(ib.size.x, ib.size.z) < 1.4:
+			items.append(ib)
 	for p in bp.parts:
 		var nm: String = p[0]
 		var bench := nm.begins_with("SM_Prop_Seat_Bench")
@@ -258,9 +268,19 @@ static func _find_seats(bp: Bp, type: String) -> Array:
 		for k in n:
 			var o := (k - (n - 1) / 2.0) * w * (0.3 if n == 3 else 0.44)
 			var m2 := bmid + side * o
+			if _item_on(items, m2, box.position.y + seat_h):
+				continue
 			var ft := m2 + fwd * People.SIT_BACK
 			out.append([ft, atan2(fwd.x, fwd.z), seat_h, m2, two, drink and at_table, _open_from(dp, Vector2(ft.x, ft.z), walls)])
 	return out
+
+
+## На сиденье в точке m (высота верха top) стоит вещь: её низ у верха сиденья, место — под ней (с запасом на бёдра)
+static func _item_on(items: Array, m: Vector3, top: float) -> bool:
+	for ib: AABB in items:
+		if absf(ib.position.y - top) < 0.15 and Rect2(ib.position.x - 0.18, ib.position.z - 0.18, ib.size.x + 0.36, ib.size.z + 0.36).has_point(Vector2(m.x, m.z)):
+			return true
+	return false
 
 
 ## От входа a до места b по прямой (в осях постройки) не мешает ничего высокого и недалеко
