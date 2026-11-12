@@ -132,6 +132,12 @@ static func _pot(b: Bp, p: Vector3, s: float) -> void:
 	_bloom(b, p + Vector3(0, 0.55 * s, 0), 0.32 * s)
 
 
+## Мелочь сверх прежнего облика (подушка на лавке, топор у штабеля): землю не занимает — след украшения прежний
+static func _extra(b: Bp, name: String, xf: Transform3D) -> void:
+	b.free_parts[b.parts.size()] = true
+	b.add_xf(name, xf)
+
+
 static func _basket(b: Bp, p: Vector3, s := 0.6) -> void:
 	b.add("SM_Prop_Basket_03", p, _yaw(b), s)
 
@@ -213,12 +219,20 @@ static func _porch(b: Bp, lk: int) -> void:
 		b.add("SM_Prop_Jug_02", Vector3(1.1, 0, 0.1), _yaw(b), 0.75)
 		_basket(b, Vector3(-1.15, 0, 0.15), 0.65)
 		_pot(b, Vector3(0.75, 0, -0.55), 0.7)
+		# подушка на лавке и скатанный коврик у её ножки — посидеть у порога
+		_extra(b, "SM_Prop_Pillow_01", Transform3D(Basis(Vector3.UP, 0.25) * Basis.from_scale(Vector3.ONE * 0.62), Vector3(0.32, 0.47 + 0.04, -0.12)))
+		_extra(b, "SM_Prop_Rug_Folded_02", Transform3D(Basis(Vector3.UP, 0.1) * Basis.from_scale(Vector3.ONE * 0.5), Vector3(0.25, 0, 0.35)))
 	else:
 		b.add("SM_Prop_Stool_01", Vector3(-0.2, 0, 0), 0.4, 1.0)
 		b.add("SM_Prop_Jug_02", Vector3(-0.2, 0.33, 0.0), 0.0, 0.55)
 		b.add("SM_Prop_Basket_06", Vector3(0.55, 0, 0.1), 0.3, 0.7)
 		b.add("SM_Prop_Basket_Insert_02", Vector3(0.55, 0, 0.1), 0.3, 0.7)
 		_grass(b, Vector3(-0.75, 0, -0.3), 0.45)
+		# горшок с цветами и мешок с шерстью позади табурета
+		_extra(b, "SM_Prop_Vase_03", Transform3D(Basis.from_scale(Vector3.ONE * 0.5), Vector3(-0.15, 0, -0.55)))
+		b.free_parts[b.parts.size()] = true
+		_add(b, BLOOMS[0], Vector3(-0.15, 0.39, -0.55), 0.6, 0.22, {"tint": TRUE_COLOR})
+		_extra(b, "SM_Prop_Sack_03", Transform3D(Basis(Vector3.UP, 0.5) * Basis.from_scale(Vector3.ONE * 0.62), Vector3(0.55, 0, -0.45)))
 	b.door = Vector3(0, 0, 0.8)
 
 
@@ -241,6 +255,11 @@ static func _woodpile(b: Bp, lk: int) -> void:
 				_beam(b, Vector3(-1.0, 0.08 + j * 0.15, -0.3 + i * 0.25), 2.0, 0.0, 1.0)
 		CatDecor._lean(b, "SM_Prop_Ladder_01", Vector3(0.4, 0, 0.32), 0.0, 0.32, 0.7)
 		b.add("SM_Prop_Sack_04", Vector3(-1.3, 0, 0.3), _yaw(b), 0.75)
+		# топор, прислонённый к штабелю (у модели начало посередине), и корзина щепы
+		var ax := Basis(Vector3.UP, 1.4) * Basis(Vector3.RIGHT, -0.28) * Basis.from_scale(Vector3.ONE * 0.62)
+		_extra(b, "SM_Wep_Axe_01", Transform3D(ax, Vector3(-0.55, 0.56 * 0.62 * cos(0.28) + 0.02, 0.42)))
+		_extra(b, "SM_Prop_Basket_06", Transform3D(Basis(Vector3.UP, 0.4) * Basis.from_scale(Vector3.ONE * 0.62), Vector3(1.3, 0, 0.35)))
+		_extra(b, "SM_Prop_Basket_Insert_02", Transform3D(Basis(Vector3.UP, 0.4) * Basis.from_scale(Vector3.ONE * 0.62), Vector3(1.3, 0, 0.35)))
 
 
 # ---------- деревья ----------
@@ -400,6 +419,11 @@ static func _manger(b: Bp, lk: int) -> void:
 		_manger_box(b, Vector3(0, 0, -0.1), 1.6)
 		b.add("SM_Prop_Sack_Stack_01", Vector3(1.35, 0, 0.2), 0.3, 0.45)
 		b.add("SM_Prop_Basket_Backpack_01", Vector3(-1.2, 0, 0.3), 0.5, 0.9)
+		# корыто с водой перед яслями и сноп соломы у края
+		_extra(b, "SM_Prop_Bowl_07", Transform3D(Basis(Vector3.UP, 0.0) * Basis.from_scale(Vector3.ONE * 0.62), Vector3(0.35, 0, 0.55)))
+		b.free_parts[b.parts.size()] = true
+		b.parts.append(["#water", b.base * Transform3D(Basis.from_scale(Vector3(0.4, 0.05, 0.3)), Vector3(0.35, 0.19, 0.55)), {}])
+		_extra(b, "SM_Prop_Straw_Bundle_01", Transform3D(Basis(Vector3.UP, 0.7) * Basis(Vector3.RIGHT, -0.16) * Basis.from_scale(Vector3.ONE * 0.5), Vector3(-0.55, 0.0, 0.55)))
 	else:
 		b.add("SM_Prop_Straw_Stack_01", Vector3(-0.6, 0, -0.35), _yaw(b), 0.4)
 		b.add("SM_Prop_Plough_01", Vector3(0.65, 0, -0.2), 1.3, 0.85)

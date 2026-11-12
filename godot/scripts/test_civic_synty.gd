@@ -19,6 +19,7 @@ var mtier := -1
 var station := false
 var stiers := [0, 1, 2, 3, 4, 5, 6, 7]
 var gap := GAP
+var vsel := []                     # views=0,5 — только эти снимки каждого здания
 ## Северная сторона (фасадом к улице на юг) и южная; между зданиями — промежуток, чтобы видеть бока
 var north := ["warehouse", "sculptor", "herbalist", "school", "farm"]
 var south := ["balnea", "baths", "temple", "forum", "vineyard"]
@@ -60,6 +61,9 @@ func _ready() -> void:
 				north = Array(two[0].split(","))
 				south = Array(two[1].split(",")) if two.size() > 1 else []
 			"gap": gap = float(kv[1])
+			"views":
+				for v in kv[1].split(","):
+					vsel.append(int(v))
 			"mtier": mtier = int(kv[1])
 			"station": station = kv[1] != "0"
 			"stiers":
@@ -188,6 +192,8 @@ func _run() -> void:
 				# большие здания — ещё вблизи уголки у фасада (торговцы, цветы, знамёна у входа)
 				views.append_array([[-35.0, 28.0, 12.0 / rad, -0.5, 0.8], [35.0, 28.0, 12.0 / rad, 0.5, 0.8]])
 			for i in views.size():
+				if not vsel.is_empty() and not vsel.has(i):
+					continue
 				var v: Array = views[i]
 				var tp := ctr + ax * float(v[3]) * rad + f * float(v[4]) * rad
 				var y: float = game.land.height_at(tp.x, tp.y) + 0.6
