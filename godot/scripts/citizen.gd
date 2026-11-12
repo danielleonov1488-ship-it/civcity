@@ -15,6 +15,7 @@ const SIZE := 0.61                   # люди «кукольные», ниже
 const BASE := 0.72
 const K := SIZE / BASE
 var anim: AnimationPlayer
+var lod_acc := 0.0                       # движения по удалённости (Gfx._anims): накопленное время до следующего шага
 var female := false
 var meshes := []
 var _cur := ""

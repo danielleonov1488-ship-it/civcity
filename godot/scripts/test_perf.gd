@@ -489,6 +489,15 @@ func _pplprof() -> void:
 		People.perf = false
 		var n := int(A.get("n", "120"))
 		print("PPL People._process в среднем %.2f мс за кадр (скрипты всего %.2f мс)" % [game.people.perf_us / 1000.0 / n, float(r["proc"])])
+		var parts := []
+		for sec: String in game.people.perf_sec:
+			parts.append("%s %.2f" % [sec, int(game.people.perf_sec[sec]) / 1000.0 / n])
+		game.people.perf_sec = {}
+		var st := {}
+		for rr in game.people.residents:
+			if rr["node"] != null:
+				st[rr["state"]] = int(st.get(rr["state"], 0)) + 1
+		print("PPL части (мс за кадр): ", ", ".join(parts), " | видимые по делам: ", st)
 		var anims: Array = game.people.find_children("*", "AnimationMixer", true, false)
 		_anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL)
 		var r2 := await _measure("pplprof anims_off r%d" % k)

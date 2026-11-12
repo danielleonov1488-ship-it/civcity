@@ -863,7 +863,7 @@ func _process(dt: float) -> void:
 			_fps.text = "%d FPS" % int(round(Engine.get_frames_per_second()))
 	if _dbg and _dbg.visible:
 		_dbg_text.text = report()
-	_anims(real)
+	_anims(dt)                                # время игры (Engine.time_scale), как у анимаций в обычном режиме
 	var city := _in_city()
 	if city:
 		_alive_t += real
@@ -960,46 +960,71 @@ func _watch_step(dt: float) -> void:
 			game._apply_quality()])
 
 
-# ---------- движения жителей через кадр (Низкая — дальние, Очень низкая — все) ----------
+# ---------- движения жителей по удалённости ----------
+## (12.11, владелец: «минимум 120 кадров, и на старых ПК») Скелеты жителей процессор считает каждый кадр — на 150 жителях
+## это 3,5–5,7 мс кадра. Теперь: вблизи камеры — каждый кадр; дальше — не реже ANIM_HZ раз в секунду (при 120 кадрах —
+## раз в 2–5 кадров, при 40 — почти каждый кадр); за краем экрана — 8 раз в секунду. Глазу не заметно: далёкий житель —
+## пара десятков точек. Выбранный житель и герой — всегда каждый кадр. «Низкая» — дальние не чаще чем через кадр,
+## «Очень низкая» — все (как прежде)
+const ANIM_NEAR := 40.0
+const ANIM_MID := 90.0
+const ANIM_HZ := [0.0, 50.0, 25.0, 8.0]          # вблизи / дальше / далеко / за экраном
+var _lod_frame := 0
+
 
 func _anims(dt: float) -> void:
 	var q: String = str(game.settings.get("quality", "high"))
-	var on := is_low(q)
-	if not on and _half == 0:
-		return
-	_half += 1
+	var low := is_low(q)
 	var cam := get_viewport().get_camera_3d()
-	var cp := cam.global_position if cam else Vector3.ZERO
+	if cam == null or game.people == null:
+		return
+	_lod_frame += 1
+	var cp := cam.global_position
+	var fps := maxf(30.0, Engine.get_frames_per_second())
+	var focus: Citizen = null
+	var frid: int = game.people.focus_rid
 	var list := []
-	if game.people:
-		for r in game.people.residents:
-			if r["node"] != null:
-				list.append(r["node"])
+	for r in game.people.residents:
+		if r["node"] != null:
+			list.append(r["node"])
+			if int(r["id"]) == frid:
+				focus = r["node"]
 	if game.actors_root:
 		for a in game.actors_root.get_children():
 			if a is Citizen:
 				list.append(a)
-	var k := 0
+	var i := 0
 	for c: Citizen in list:
 		var ap := c.anim
 		if ap == null:
 			continue
-		var half := on and (q == "verylow" or c.global_position.distance_squared_to(cp) > HALF_FAR * HALF_FAR)
-		if half:
-			if ap.callback_mode_process != AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL:
-				ap.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
-				ap.set_meta("half_dt", 0.0)
-			var acc: float = float(ap.get_meta("half_dt", 0.0)) + dt
-			if (k + _half) % 2 == 0:
-				ap.advance(acc)
-				acc = 0.0
-			ap.set_meta("half_dt", acc)
-		elif ap.callback_mode_process == AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL:
-			ap.advance(float(ap.get_meta("half_dt", 0.0)))
-			ap.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE
-		k += 1
-	if not on:
-		_half = 0
+		i += 1
+		var pos := c.global_position
+		var tier := 0
+		if c == focus or c.cape_sk != null:
+			tier = 0                               # выбранный житель и герой (у него плащ) — всегда плавно
+		elif not cam.is_position_in_frustum(pos + Vector3(0, 0.9, 0)):
+			tier = 3
+		else:
+			var d2 := pos.distance_squared_to(cp)
+			tier = 2 if d2 > ANIM_MID * ANIM_MID else (1 if d2 > ANIM_NEAR * ANIM_NEAR else 0)
+		var k := 1 if tier == 0 else maxi(1, int(fps / float(ANIM_HZ[tier])))
+		if low and (q == "verylow" or tier >= 2):
+			k = maxi(k, 2)
+		var manual := ap.callback_mode_process == AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+		if k <= 1:
+			if manual:
+				ap.advance(c.lod_acc)
+				c.lod_acc = 0.0
+				ap.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE
+			continue
+		if not manual:
+			ap.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+			c.lod_acc = 0.0
+		c.lod_acc += dt
+		if (_lod_frame + i) % k == 0:
+			ap.advance(c.lod_acc)
+			c.lod_acc = 0.0
 
 
 # ---------- F3: подробно для проверяющих ----------
