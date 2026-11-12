@@ -343,7 +343,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 		return res                            # украшение на стене: место выбирает игра (стена дома)
 	var tier := 1 if d["kind"] == "house" else (6 if type == "center" else 0)   # станция занимает место на вырост
 	var bp := Catalog.make(type, tier, variant, color, legacy)
-	var rects: Array = bp.footprint()
+	var rects: Array = bp.occ_footprint()
 	if d.get("seg", false) and seg_thin:
 		# звено забора занимает узкую полосу посередине: концы свободны — соседнее звено (и угол) встаёт вплотную
 		rects = [Rect2(-0.82, -0.14, 1.64, 0.28)]
@@ -1991,7 +1991,7 @@ func _upgrade_cells(b: Dictionary) -> PackedInt32Array:
 	var e: Array = _upg_cells.get(int(b["id"]), [])
 	if e.size() == 2 and String(e[0]) == key:
 		return e[1]
-	var cells := land.footprint_cells(Catalog.make(nt, 1, nv, col, not b.has("kw")).footprint(), b["pos"], float(b["yaw"]))
+	var cells := land.footprint_cells(Catalog.make(nt, 1, nv, col, not b.has("kw")).occ_footprint(), b["pos"], float(b["yaw"]))
 	_upg_cells[int(b["id"])] = [key, cells]
 	return cells
 
@@ -2037,8 +2037,8 @@ func _upgrade_rules(h: Dictionary, cells: PackedInt32Array) -> String:
 	if paved * 2 >= mine.size() and hi - lo > PAVE_SLOPE:
 		return "Мостовая за домом слишком наклонная"
 	var col := int(h.get("color", 0))
-	var rects: Array = Catalog.make(upgrade_to(h), 1, upgrade_variant(h), col, not h.has("kw")).footprint()
-	var rects0: Array = Catalog.make(String(h["type"]), 1, int(h.get("variant", 0)), col, not h.has("kw")).footprint()
+	var rects: Array = Catalog.make(upgrade_to(h), 1, upgrade_variant(h), col, not h.has("kw")).occ_footprint()
+	var rects0: Array = Catalog.make(String(h["type"]), 1, int(h.get("variant", 0)), col, not h.has("kw")).occ_footprint()
 	var hp: Vector2 = h["pos"]
 	var ax := axis(float(h["yaw"]))
 	var f := facing(float(h["yaw"]))

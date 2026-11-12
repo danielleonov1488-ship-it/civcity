@@ -45,18 +45,18 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	var b := Bp.new(hash("%s:0:%d:%d" % [type, variant, color]) if mil else hash(key))
 	b.paint(color)
 	# лавки и прилавки из своего набора (KitHouses: "shop_<тип>", "stall_<товар>") — облик и люди при деле из Blender
-	var kit_done := KitHouses.covers(type) and not type.begins_with("house_") and KitHouses.build(b, type, tier, variant, legacy)
+	var kit_done := KitHouses.covers(type) and not type.begins_with("house_") and KitHouses.build(b, type, tier, variant, legacy, color)
 	match "#kit" if kit_done else type:
 		"#kit":
 			pass
 		"house_pleb":
-			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy)):
+			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy, color)):
 				CatHouses._house_pleb(b, tier, variant)
 		"house_artisan":
-			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy)):
+			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy, color)):
 				CatHouses._house_artisan(b, tier, variant)
 		"house_patrician":
-			if KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy):
+			if KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy, color):
 				pass
 			elif variant >= Defs.PAT_TOWN:
 				CatHouses._house_patrician_town(b, tier, variant)     # городской домус — после перестройки (Д12)

@@ -59,7 +59,10 @@ func _run() -> void:
 		var lb := Catalog.make(t, 1, 1, 0, true)
 		var r: Rect2 = lb.footprint()[0]
 		var o := KitHouses.old_fp(t, 1)
-		check(lb.kit_id != "" and absf(r.size.x - o.size.x) < 0.02 and absf(r.size.y - o.size.y) < 0.02, "%s из старого сохранения — на прежнем следе %s" % [t, o])
+		var lr: Array = lb.occ_footprint()
+		# след (бордюр, щелчок) — общий прямоугольник прежнего; клетки — ровно прежние прямоугольники, не их общий
+		check(lb.kit_id != "" and absf(r.size.x - o.size.x) < 0.02 and absf(r.size.y - o.size.y) < 0.02 and lr.size() > 1 and lr == KitHouses.old_rects(t, 1, 0),
+			"%s из старого сохранения — на прежнем следе %s, клетки — прежние (%d прямоугольников)" % [t, o, lr.size()])
 	# дом с жильцами и ставнями
 	var hb: Dictionary = {}
 	for b: Dictionary in houses:
