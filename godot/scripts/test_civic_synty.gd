@@ -2,7 +2,7 @@ extends Node
 ## Пробная площадка для рабочих и общественных зданий на Synty (владелец 12.11: «склады и подобное пустые, слишком
 ## пустые места… по бокам ничего»; «не делай большие пробные улицы, а просто десяток домов»): десяток зданий по обе
 ## стороны короткой улицы с промежутками (видно бока), у каждого — снимки с нескольких сторон и вблизи.
-##   bash .work/py/gpu_run.sh res://test_civic_synty.tscn -- out=D:/CivCity/.work/civic_synty/ tag=a [only=warehouse,farm] [street=0] [set=2] [dress=0]
+##   bash .work/py/gpu_run.sh res://test_civic_synty.tscn -- out=D:/CivCity/.work/civic_synty/ tag=a [only=warehouse,farm] [street=0] [set=2] [dress=0] [only=street]
 ## set=2 — второй десяток (библиотека, академия, дом префекта, вигилы, скрипторий, лудус, роща, огород, термы, станция)
 
 var game
@@ -112,7 +112,7 @@ func _run() -> void:
 	for h: float in hours:
 		game._set_hour(h)
 		await frames(20)
-		if street and only.is_empty():
+		if street and (only.is_empty() or only.has("street")):      # only=street — только общие виды (и замер отрисовки)
 			var sv := [[Vector2(X0 + 34.0, Z0), 25.0, 42.0, 42.0], [Vector2(X0 + 34.0, Z0), 205.0, 42.0, 42.0]]
 			for i in sv.size():
 				var v: Array = sv[i]
@@ -120,6 +120,9 @@ func _run() -> void:
 				game.rig.set_view(Vector3(p.x, Land.BASE_Y, p.y), float(v[1]), float(v[2]), float(v[3]))
 				await frames(45)
 				get_viewport().get_texture().get_image().save_png(out + "%s_street%d_h%d.png" % [tag, i, int(h)])
+				# сколько стоит отрисовка (сравнить dress=0 и dress=1)
+				print("CSY PERF вид %d: вызовов %d, треугольников %d, объектов %d" % [i, Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+					Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)])
 		for b: Dictionary in placed:
 			var t := String(b["type"])
 			if not only.is_empty() and not only.has(t):

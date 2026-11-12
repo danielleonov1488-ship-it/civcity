@@ -98,6 +98,7 @@ static func _ctx(b: Bp, type: String) -> Dictionary:
 	var walls := []
 	var sum := Vector3.ZERO
 	var keep := []
+	var ivy := []
 	for p: Array in b.parts:
 		var nm: String = p[0]
 		var xf: Transform3D = p[1]
@@ -115,6 +116,8 @@ static func _ctx(b: Bp, type: String) -> Dictionary:
 			# ниша со статуей: перед ней пусто
 			var a := xf * Vector3(1.25, 0, 0.6)
 			keep.append(Rect2(a.x - 1.0, a.z - 1.0, 2.0, 2.0))
+		if nm.contains("Ivy") and not nm.contains("Pillar"):
+			ivy.append(xf.origin)
 		if _soft(nm):
 			continue
 		var bx := _box_of(nm, xf)
@@ -154,7 +157,7 @@ static func _ctx(b: Bp, type: String) -> Dictionary:
 		var side := "front" if out.z > 0.7 else ("back" if out.z < -0.7 else ("left" if out.x < 0.0 else "right"))
 		wl.append({"nm": w[0], "xf": xf, "out": out, "side": side})
 	return {"b": b, "solid": solid, "sup": sup, "lot": lot, "outer": outer, "front": front, "keep": keep, "rng": rng, "n": 0,
-		"type": type, "walls": wl}
+		"type": type, "walls": wl, "ivy": ivy}
 
 
 ## Можно ли поставить кучку с габаритами bx (низ — на земле, если не hang): на участке, не в запретном месте,
@@ -414,6 +417,34 @@ static func _bloom(x: Dictionary, s: float) -> Array:
 	return [_it(String(_one(x, BLOOM)), s * _rf(x, 0.9, 1.08), _rf(x, 0.0, TAU), Vector3.ZERO, {"tint": CatDecor.TRUE_COLOR})]
 
 
+## Цветущий плющ на глухих модулях стен (стороны sides), где плюща ещё нет (CatDress ставит свой) — как на картинках Synty
+static func _ivy(x: Dictionary, sides: Array, max_n := 2, dens := 0.7) -> int:
+	var put := 0
+	var b: Bp = x["b"]
+	for w: Dictionary in x["walls"]:
+		if put >= max_n or not String(w["side"]) in sides or String(w["nm"]) != "SM_Bld_Wall_01" or not _ch(x, dens):
+			continue
+		var xf: Transform3D = w["xf"]
+		var out: Vector3 = w["out"]
+		var c := xf.origin + xf.basis.x * 1.25
+		var near := false
+		for q: Vector3 in x["ivy"]:
+			if Vector2(q.x - c.x, q.z - c.z).length() < 1.8:
+				near = true
+				break
+		if near:
+			continue
+		var u := 0.3 if _ch(x, 0.5) else 0.7
+		var p := xf.origin + xf.basis.x * (2.5 * u) + out * (FACE * xf.basis.z.length() + 0.02) + Vector3.UP * 0.95 * xf.basis.y.length()
+		var nm := "SM_Env_Ivy_Flowers_0%d" % _one(x, [1, 2, 3, 4])
+		b.free_parts[b.parts.size()] = true
+		b.parts.append([nm, Transform3D(Basis(Vector3.UP, atan2(out.x, out.z)) * Basis.from_scale(Vector3(0.9, 1.15, 1.0)), p), {}])
+		(x["ivy"] as Array).append(p)
+		x["n"] = int(x["n"]) + 1
+		put += 1
+	return put
+
+
 ## Черепичный козырёк на кронштейнах над глухим модулем стены (сторона side) — навес над кучками у стены
 static func _awning(x: Dictionary, side: String) -> bool:
 	for w: Dictionary in x["walls"]:
@@ -554,6 +585,7 @@ static func _herbalist(x: Dictionary) -> void:
 	_along(x, ["left", "right"], ["herbs", "vaseS", "sideC", "herbs"], 0.95)
 	_along(x, ["back"], ["herbbed", "herbs", "greens", "herbbed", "vasebloom"], 0.95)
 	_hang(x, ["left", "right", "back"], ["SM_Prop_FlowerPot_Hanging_04", "SM_Prop_FlowerPot_Hanging_05", "SM_Prop_FlowerPot_Hanging_06"], 1.2, 0.7, 0.6)
+	_ivy(x, ["left", "right", "back"], 2)
 
 
 ## Пост вигилов: у стен — вёдра, лестницы, мешки с песком, амфоры с водой
@@ -567,6 +599,7 @@ static func _vigiles(x: Dictionary) -> void:
 static func _scriptorium(x: Dictionary) -> void:
 	_along(x, ["back"], ["scrolls", "amphpile", "vasebloom"], 0.8)
 	_along(x, ["left", "right"], ["scrolls", "sideA", "vaseS"], 0.8)
+	_ivy(x, ["left", "right", "back"], 2)
 
 
 # =====================================================================
@@ -663,6 +696,7 @@ static func _school(x: Dictionary) -> void:
 	_group(x, _item(x, "scrolls"), Vector3(3.15, 0, 2.3), 0.0, Vector3(0, 0, 0.3))
 	_group(x, _item(x, "vasebloom"), Vector3(-3.15, 0, 2.45), 0.0, Vector3(0, 0, 0.3))
 	_hang(x, ["left", "right"], ["SM_Prop_FlowerPot_Hanging_04", "SM_Prop_FlowerPot_Hanging_05", "SM_Prop_FlowerPot_Hanging_06"], 1.2, 0.8, 0.6)
+	_ivy(x, ["left", "right", "back"], 3)
 
 
 ## Библиотека: у боков и сзади — цветы, корзины со свитками; на глухих стенах — кашпо
@@ -670,6 +704,7 @@ static func _library(x: Dictionary) -> void:
 	_along(x, ["left", "right"], ["vaseS", "scrolls", "sideA"], 0.85)
 	_along(x, ["back"], ["bloom", "vasebloom", "bloom"], 0.6)
 	_hang(x, ["left", "right"], ["SM_Prop_FlowerPot_Hanging_04", "SM_Prop_FlowerPot_Hanging_06"], 1.2, 0.7, 0.6)
+	_ivy(x, ["left", "right", "back"], 3)
 
 
 ## Академия: в саду — цветущие кусты у дорожек, корзины со свитками у скамей; у боков зала — вазы с цветами
@@ -686,6 +721,7 @@ static func _balnea(x: Dictionary) -> void:
 	_along(x, ["back"], ["wood", "wood", "amphpile", "jarpile"], 0.9)
 	_awning(x, "back")
 	_along(x, ["left", "right"], ["sideA", "jugs", "sideC"], 0.85)
+	_ivy(x, ["left", "right", "back"], 2)
 	for p: Vector3 in [Vector3(4.4, 0, 1.0), Vector3(-4.4, 0, -0.5)]:
 		_group(x, _item(x, String(_one(x, ["towels", "jugs", "amph2"]))), p, PI / 2 * signf(p.x), Vector3(0, 0, 0.3))
 
@@ -730,6 +766,7 @@ static func _temple(x: Dictionary) -> void:
 static func _prefect(x: Dictionary) -> void:
 	_along(x, ["left", "right"], ["vaseS", "sideA", "sideC"], 0.85)
 	_along(x, ["back"], ["bloom", "amphpile", "vasebloom"], 0.75)
+	_ivy(x, ["left", "right", "back"], 3)
 
 
 ## Лудус: за казармой — дрова и мешки, у боков колоннад — кувшины с водой, снопы соломы для чучел
@@ -742,3 +779,4 @@ static func _ludus(x: Dictionary) -> void:
 static func _thermae(x: Dictionary) -> void:
 	_along(x, ["back"], ["wood", "amphpile", "wood", "jarpile"], 0.85)
 	_along(x, ["left", "right"], ["jugs", "vaseS", "sideA"], 0.8)
+	_ivy(x, ["left", "right", "back"], 2)
