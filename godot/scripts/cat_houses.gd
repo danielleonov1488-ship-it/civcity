@@ -1018,6 +1018,7 @@ static func _pleb_pediment(b: Bp, r0: PackedFloat32Array, floors: int, di: int) 
 	_step(b, r0, 0, di)
 	_win(b, r0, 0, wi, 0, shut)
 	_frieze(b, r0, 0, 0, g)
+	_plaque(b, r0, 0, di * M + 1.25, 2.12)
 	_lamp(b, r0, 0, _outer(di, 2, 0.2), 2.2)
 	_front_jar(b, r0, _outer(di, 2, 0.32), 0.75)
 	_front_pot(b, r0, wi * M + (0.3 if wi == 0 else 2.2), 0.42)
@@ -1673,3 +1674,37 @@ static func _pat_garden(b: Bp, rm: PackedFloat32Array, kind: int, floors := 1) -
 			_put(b, "SM_Prop_Well_01", Vector3(-0.5, 0, -3.2), b.rng.randf() * TAU, Vector3.ONE * 0.45)
 			_jar(b, Vector3(-1.5, 0, -4.55), 0.7)
 			_jar(b, Vector3(-1.05, 0, -4.6), 0.6)
+	_garden_life(b, rm, kind, zb)
+
+
+## Сад домуса живее (владелец 12.11: «детальнее и живее, как на картинках Synty»): настенный фонтанчик с чашей
+## (лев над чашей, Fountain_01) на ограде, горшки с цветами по сторонам, у колодца — скамья у стены.
+## Только слева и у задней стены: справа дорожка от двери в сад к садовнику (1,5; −4,2) свободна
+const GARDEN_FOUNT := "SM_Prop_Fountain_01"
+static func _garden_life(b: Bp, rm: PackedFloat32Array, kind: int, zb: float) -> void:
+	var fin := 0.115 + 0.02                 # от линии ограды до её лица в сад (стена Synty — ±0,115) и зазор
+	# цветущий куст у ограды (Garden_Plants_04 — 530 треугольников, без тени): слева у дома или у задней стены
+	var clump: Vector3 = [Vector3(-2.05, 0, -3.0), Vector3(-2.05, 0, -2.45), Vector3(-2.05, 0, -2.45), Vector3(0.25, 0, zb + 0.4)][kind]
+	_put(b, "SM_Env_Garden_Plants_04", clump, b.rng.randf() * TAU, Vector3.ONE * 0.3)
+	match kind:
+		0:
+			# у ложа под задней стеной — горшки с цветами
+			_pot(b, Vector3(-1.55, 0, zb + 0.95), 0.42)
+			_pot(b, Vector3(0.15, 0, zb + 0.95), 0.42)
+		1:
+			_wall_fountain(b, Vector3(rm[0] + fin, 0, -3.15), PI / 2)
+		2:
+			_wall_fountain(b, Vector3(-1.0, 0, zb + fin), 0.0)
+			_pot(b, Vector3(-1.62, 0, zb + 0.85), 0.4)
+			_pot(b, Vector3(-0.38, 0, zb + 0.85), 0.4)
+		_:
+			_bench(b, Vector3(rm[0] + 0.45, 0, -3.15), PI / 2)
+			_pot(b, Vector3(rm[0] + 0.42, 0, -2.25 + 0.41 * 0.42), 0.42)
+
+
+## Настенный фонтанчик (лев над чашей) спиной к ограде: p — точка на лице ограды у земли, yaw — куда смотрит
+static func _wall_fountain(b: Bp, p: Vector3, yaw: float) -> void:
+	var s := 0.8
+	var box := Bp.model_aabb(GARDEN_FOUNT)
+	var back := -box.position.z * s                    # от начала модели до её задней кромки
+	_put(b, GARDEN_FOUNT, p + Basis(Vector3.UP, yaw) * Vector3(0, 0, back), yaw, Vector3.ONE * s)
