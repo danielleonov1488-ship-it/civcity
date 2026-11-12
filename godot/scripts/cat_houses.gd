@@ -61,7 +61,8 @@ static func R(x0: float, x1: float, z0: float, z1: float) -> PackedFloat32Array:
 ## сдвигается только их середина. Огни, дым и вход — следом
 const SX := 0.75
 const RIGID := ["SM_Bld_Pillar", "SM_Bld_Roof_Topper", "SM_Bld_Ornament", "SM_Bld_Trellis_Pillar", "SM_Env_Ivy_Pillar"]
-const FLEX := ["SM_Bld_", "#dark", "SM_Prop_Overhang", "SM_Prop_Mural", "SM_Prop_FlowerBed", "SM_Prop_Drapery", "SM_Env_Ivy", "SM_Env_Vine"]
+const FLEX := ["SM_Bld_", "#dark", "SM_Prop_Overhang", "SM_Prop_Mural", "SM_Prop_FlowerBed", "SM_Prop_Drapery", "SM_Env_Ivy", "SM_Env_Vine",
+	"#bsign:@fbox"]
 
 
 static func _flex(nm: String) -> bool:
@@ -325,11 +326,16 @@ static func _shutters(b: Bp, r: PackedFloat32Array, side: int, i: int, y: float,
 
 ## Ящик с цветами под окном W1: верх — у подоконника; наверху задняя стенка — вплотную к штукатурке,
 ## внизу ящик стоит на выступе цоколя (так он не входит в след дома на земле)
+## Выше первого этажа — лёгкий ящик (CatDress.fbox_mesh: те же цветы, корыто проще; землю он не занимает, и свой
+## габарит у «#» для следа не нужен), внизу — ящик Synty (по его габариту считается след дома на мостовой)
 static func _wbox(b: Bp, r: PackedFloat32Array, side: int, i: int, y: float) -> void:
-	var nm := "SM_Prop_FlowerBed_0%d" % (1 + b.rng.randi() % 2)
+	var v := 1 + b.rng.randi() % 2
+	var nm := "SM_Prop_FlowerBed_0%d" % v
 	if y < 1.0 and side == 0:
 		_front_put(b, nm, r, i * M + 1.25, y + 0.62, 0.6)
 		return
+	if y >= 1.0:
+		nm = "#bsign:@fbox%d" % v
 	var a := _sp(r, side, i * M + 1.25, y + 0.62, 0.15)
 	_put(b, nm, a[0], a[1], Vector3.ONE * 0.6)
 
