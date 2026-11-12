@@ -13,7 +13,7 @@ const FACE := 0.115            # от середины толщины стены
 ## Ящики цветов под окнами: свои лёгкие (fbox_mesh — те же цветы Synty в простом ящике: 150 треугольников вместо 330)
 const BOXES := ["#bsign:@fbox1", "#bsign:@fbox2"]
 ## Ящиков цветов от прохода на дом — не больше (у фасада свои ставит строитель дома, CatHouses._wbox)
-const BOX_MAX := 10
+const BOX_MAX := 12
 ## Окна стен Synty (сняты с картинки стен спереди): подоконник по высоте и окна [середина вдоль стены, ширина]
 const WIN := {"SM_Bld_Wall_Window_01": [0.65, [[1.25, 1.2]]], "SM_Bld_Wall_Window_02": [1.4, [[0.55, 0.42], [1.25, 0.42], [1.95, 0.42]]],
 	"SM_Bld_Wall_Window_03": [1.4, [[1.25, 0.42]]], "SM_Bld_Wall_Window_04": [1.4, [[1.25, 1.75]]], "SM_Bld_Wall_Window_05": [0.65, [[1.25, 1.2]]]}
@@ -106,9 +106,9 @@ static func dress(b: Bp, type: String) -> void:
 		if nm.contains("Window"):
 			# ящики цветов ровно под окнами (у круглых отдушин — нет)
 			# (ящиков Synty по 320–340 треугольников у трёхэтажного дома было до 25 — 8 тыс. треугольников. Теперь ящик свой,
-			# лёгкий (fbox_mesh), сзади и сбоку реже, на дом не больше BOX_MAX — под тремя окошками все три или ни одного,
+			# лёгкий (fbox_mesh), сзади и сбоку чуть реже, на дом не больше BOX_MAX — под тремя окошками все три или ни одного,
 			# и не второй ящик под окном, где он уже есть у строителя дома)
-			var bp: float = (0.45 if shop else 0.8) * (1.0 if front else (0.8 if absf(out.x) > 0.6 else 0.65))
+			var bp: float = (0.45 if shop else 0.85) * (1.0 if front else 0.9)
 			if WIN.has(nm) and int(boxes[0]) + (WIN[nm][1] as Array).size() <= BOX_MAX and rng.randf() < bp:
 				var wd: Array = WIN[nm]
 				var bx: String = BOXES[rng.randi() % BOXES.size()]
