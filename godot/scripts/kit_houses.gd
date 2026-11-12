@@ -10,6 +10,7 @@ const IDS := {"house_pleb": ["pleb", 5, 3], "house_artisan": ["artisan", 5, 3], 
 static var ON := true                              # выключатель (false — прежние дома из Synty; test_cards сравнивает)
 
 static var _old := {}
+static var _old_rects := {}
 
 
 ## Лавки (у каждой — один облик) и прилавки рынка
@@ -52,7 +53,7 @@ static func id_for(type: String, tier: int, variant: int) -> String:
 
 
 ## Построить дом в чертёж b. false — такого облика в наборе нет (тогда строится прежний)
-static func build(b: Bp, type: String, tier: int, variant: int, legacy := false) -> bool:
+static func build(b: Bp, type: String, tier: int, variant: int, legacy := false, color := 0) -> bool:
 	var id := id_for(type, tier, variant)
 	var h := KitLib.house(id)
 	if h.is_empty():
@@ -63,9 +64,11 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 	var sx := 1.0
 	var sz := 1.0
 	var off := Vector3.ZERO
+	var squeezed := false
 	if legacy:
 		var old := old_fp(type, variant)
 		if old.size.x > 0.1:
+			squeezed = true
 			sx = old.size.x / fp.size.x
 			sz = old.size.y / fp.size.y
 			off = Vector3(old.position.x - fp.position.x * sx, 0, old.position.y - fp.position.y * sz)
@@ -116,6 +119,12 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 	b.kit_id = id
 	var fr := Rect2(fp.position.x * sx + off.x, fp.position.y * sz + off.z, fp.size.x * sx, fp.size.y * sz)
 	b.fp_override = [fr]
+	if squeezed:
+		# клетки на земле у дома старого сохранения — ровно прежние (те же прямоугольники, что у прежнего дома), а не их
+		# общий прямоугольник: у дома ремесленников позади — только столбики и грядки сада, сплошной прямоугольник до них
+		# упирался в соседний ряд, и перестройка плебейского дома в старом городе не помещалась (test_stage6b owner).
+		# Бордюр, щелчок и прочее по следу — по общему прямоугольнику, как у ужатой модели
+		b.occ_rects = old_rects(type, variant, color)
 	b.kit_faces = _faces(h, sx, sz, off)
 	# коробки для щелчка и «заслоняет ли»: стены, крыша над ними, низкий двор/сад, у домуса — портик
 	var kb: Array = b.kit_bounds()
@@ -243,3 +252,26 @@ static func old_fp(type: String, variant: int) -> Rect2:
 		first = false
 	_old[key] = r
 	return r
+
+
+## Прямоугольники следа прежнего дома тех же типа, облика и цвета — ровно как считала прежняя игра (Catalog.make
+## 1-го этажа: то же зерно случая, та же краска — от них садик и столбики позади): клетки перестройки старого дома
+static func old_rects(type: String, variant: int, color := 0) -> Array:
+	var key := "%s:1:%d:%d" % [type, variant, color]
+	if _old_rects.has(key):
+		return _old_rects[key]
+	var ob := Bp.new(hash(key))
+	ob.paint(color)
+	match type:
+		"house_pleb": CatHouses._house_pleb(ob, 1, variant)
+		"house_artisan": CatHouses._house_artisan(ob, 1, variant)
+		"house_patrician":
+			if variant >= Defs.PAT_TOWN:
+				CatHouses._house_patrician_town(ob, 1, variant)
+			else:
+				CatHouses._house_patrician(ob, 1, variant)
+	ob.base = Transform3D.IDENTITY
+	Catalog._scale(ob, Catalog.ARCH)
+	var out: Array = ob.footprint().duplicate()
+	_old_rects[key] = out
+	return out

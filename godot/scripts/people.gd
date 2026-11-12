@@ -150,13 +150,15 @@ func _free(p: Vector2) -> bool:
 	return not grid.is_point_solid(gcell(p))
 
 
-func _near_free(p: Vector2, rmax := 14) -> Vector2:
-	if _free(p):
+## open — ещё и не на клетке постройки (клетка сетки проходима, когда постройка занимает не больше половины её):
+## кто стоял на месте новой постройки, выходит из-под неё целиком
+func _near_free(p: Vector2, rmax := 14, open := false) -> Vector2:
+	if _free(p) and not (open and land.occ_at(p) != 0):
 		return p
 	for r in range(1, rmax):
 		for a in 12:
 			var q := p + Vector2(cos(TAU * a / 12.0), sin(TAU * a / 12.0)) * r * Land.CELL * G * 0.5
-			if _free(q):
+			if _free(q) and not (open and land.occ_at(q) != 0):
 				return q
 	return Vector2.INF
 
@@ -181,10 +183,14 @@ func _path(a: Vector2, b: Vector2) -> PackedVector2Array:
 	return out
 
 
+## Прямой отрезок для сглаживания пути: по свободной сетке ходьбы и мимо клеток построек — клетка сетки (50 см)
+## проходима, когда постройка занимает не больше половины её, и без второго условия путь срезал бы угол дома
+## (край дома шириной 3,7 м приходится как раз на полклетки)
 func _clear(a: Vector2, b: Vector2) -> bool:
 	var n := int(a.distance_to(b) / 0.25) + 1
 	for k in range(1, n):
-		if not _free(a.lerp(b, float(k) / n)):
+		var q := a.lerp(b, float(k) / n)
+		if not _free(q) or land.occ_at(q) != 0:
 			return false
 	return true
 
@@ -3320,7 +3326,7 @@ func _on_building_added(b: Dictionary) -> void:
 		rng = keep
 	for c in cats:
 		if land.occ_at(c["p"]) == id:
-			var q := _near_free(c["p"], 80)
+			var q := _near_free(c["p"], 80, true)
 			if q != Vector2.INF:
 				c["p"] = q
 		if c["state"] == "walk" and _path_hits(c["p"], c["path"], int(c["i"]), id):
@@ -3333,7 +3339,7 @@ func _bump_out(r: Dictionary, id: int) -> void:
 	if r["state"] in ["home", "work", "door"] or r["act"] == "inside":
 		return                          # дома, на работе, в дверях — их не видно на улице
 	if land.occ_at(r["p"]) == id:
-		var q := _near_free(r["p"], 80)          # до ~20 м — выйти и из-под большого храма
+		var q := _near_free(r["p"], 80, true)    # до ~20 м — выйти и из-под большого храма
 		if q != Vector2.INF:
 			r["p"] = q
 			_place(r)
@@ -3342,7 +3348,7 @@ func _bump_out(r: Dictionary, id: int) -> void:
 		if path.size() >= 2 and _path_hits(r["p"], path, int(r["i"]), id):
 			var to: Vector2 = path[path.size() - 1]
 			if land.occ_at(to) == id:            # шёл как раз туда, где теперь стоит постройка, — к ближнему свободному месту
-				to = _near_free(to, 80)
+				to = _near_free(to, 80, true)
 			if to != Vector2.INF:
 				_go(r, to, r["goal"], true)
 
