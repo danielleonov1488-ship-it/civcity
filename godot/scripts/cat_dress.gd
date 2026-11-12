@@ -1067,8 +1067,67 @@ static func dress_mesh(nm: String) -> Mesh:
 		return awning_mesh(int(a[1]), int(a[2]), int(a[3]))
 	if nm == "garlic" or nm == "herbs":
 		return bunch_mesh(nm == "garlic")
+	if nm in ["boat", "oars", "coil", "net"]:
+		return tackle_mesh(nm)
 	push_warning("CatDress: нет детали #dress:" + nm)
 	return null
+
+
+## Лодочные снасти у маяка (в Synty их нет): boat — лодка вверх дном на двух колодах (корпус — как у лодок на прудах,
+## Boats.hull_mesh; длина 2,45 вдоль Z), oars — пара вёсел стоймя (прислонить — наклоном), coil — бухта каната,
+## net — сеть сушится на двух жердях с перекладиной (ячея — тонкие жерди, по низу — поплавки). Низ — у земли, лицом к +Z
+static var _tackle := {}
+static func tackle_mesh(nm: String) -> Mesh:
+	if _tackle.has(nm):
+		return _tackle[nm]
+	var k := Kit.new()
+	var wood := Color("8a6238")
+	var rope := Color("b39a6a")
+	match nm:
+		"boat":
+			for z: float in [-0.7, 0.75]:
+				k.boxc(Vector3(0, 0.07, z), Vector3(0.9, 0.14, 0.22), Color("6e5a44"))
+		"oars":
+			for sx: float in [-0.09, 0.09]:
+				k.boxc(Vector3(sx, 1.05, 0), Vector3(0.045, 1.6, 0.045), wood)                    # вальки
+				k.boxc(Vector3(sx, 0.27, 0.0), Vector3(0.15, 0.54, 0.025), wood.darkened(0.1))    # лопасти внизу
+		"coil":
+			k.cyl(Vector3.ZERO, 0.24, 0.1, 9, rope)
+			k.cyl(Vector3(0, 0.1, 0), 0.2, 0.05, 9, rope.darkened(0.08), 0.15)
+			k.cyl(Vector3(0, 0.148, 0), 0.08, 0.004, 6, Color("4a3b28"))                   # дыра посредине
+			k.rod(Vector3(0.22, 0.12, 0.05), Vector3(0.42, 0.02, 0.2), 0.022, 4, rope)        # конец каната
+		"net":
+			for sx: float in [-0.7, 0.7]:
+				k.rod(Vector3(sx, 0, 0), Vector3(sx, 1.65, 0), 0.035, 4, wood)
+			k.rod(Vector3(-0.78, 1.55, 0), Vector3(0.78, 1.55, 0), 0.03, 4, wood)
+			var net := Color("5d5446")
+			for i in 7:
+				var x := -0.6 + i * 0.2
+				k.rod(Vector3(x, 1.52, 0.0), Vector3(x + 0.03, 0.3 + absf(x) * 0.15, 0.03), 0.013, 3, net)
+			for j in 5:
+				var y := 0.42 + j * 0.25
+				k.rod(Vector3(-0.62, y + 0.05, 0.02), Vector3(0.0, y - 0.06, 0.03), 0.013, 3, net)
+				k.rod(Vector3(0.0, y - 0.06, 0.03), Vector3(0.62, y + 0.05, 0.02), 0.013, 3, net)
+			for i in 4:
+				k.boxc(Vector3(-0.45 + i * 0.3, 0.33 + absf(-0.45 + i * 0.3) * 0.12, 0.04), Vector3(0.07, 0.05, 0.05), Color("c9a25c"))
+	var m := k.mesh()
+	m.surface_set_material(0, Kit.material(0.9))
+	if nm == "boat":
+		# корпус вверх дном на колодах: Boats.hull_mesh, повёрнутый вокруг оси лодки
+		var src := Boats.hull_mesh()
+		var a: Array = src.surface_get_arrays(0)
+		var R := Transform3D(Basis(Vector3(0, 0, 1), PI), Vector3(0, 0.14 + 0.42, 0))
+		var vs: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+		var ns: PackedVector3Array = a[Mesh.ARRAY_NORMAL]
+		for i in vs.size():
+			vs[i] = R * vs[i]
+			ns[i] = R.basis * ns[i]
+		a[Mesh.ARRAY_VERTEX] = vs
+		a[Mesh.ARRAY_NORMAL] = ns
+		m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
+		m.surface_set_material(1, src.surface_get_material(0))
+	_tackle[nm] = m
+	return m
 
 
 ## Фонарь на цепи под балкой портика: начало — крюк вверху, цепь вниз, под ней фонарь, как у фонаря на кронштейне

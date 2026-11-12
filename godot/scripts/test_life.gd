@@ -3,7 +3,10 @@ extends Node
 ## перед жителями и прикрываются за ними, ставни Synty по часам (утром открыты, ночью закрыты), жители сидят на мебели
 ## домов, лавок, таверны. Улица из домов всех классов и лавок, снимки вблизи.
 ##   bash .work/py/gpu_run.sh res://test_life.tscn -- out=D:/CivCity/.work/life/<метка>/ part=all      → «LIFE DONE fails=0»
-## part: doors | shut | seats | alive | all (через запятую); video=1 — кадры входа в дом подряд (out/frames_door/) для ролика
+## part: doors | shut | seats | alive | civic | all (через запятую); video=1 — кадры входа в дом подряд (out/frames_door/)
+## и в храм (out/frames_temple/) для роликов.
+## civic — общественные здания (вторая улица): створки дверей Synty (и врата храма за лестницей) распахиваются перед
+## жителем и встают точно на место, ставни створками (прежде — одной деталью) ночью закрыты, утром открыты
 
 var game
 var c: City
@@ -176,6 +179,8 @@ func _run() -> void:
 		await _seats()
 	if want("alive"):
 		await _alive()
+	if want("civic"):
+		await _civic(X0, Z0 + 40.0)
 	print("LIFE DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -619,3 +624,255 @@ func _alive() -> void:
 	await shot("alive_fountain_kids.png")
 	await secs(1.5)
 	await shot("alive_fountain_kids_b.png")
+
+
+# ---------- общественные здания ----------
+
+## [тип, створка двери обязательна, ставни обязательны]. Створки — где они есть у здания Synty (у храма — бронзовые врата
+## на подиуме за лестницей); где вход — открытая арка или проём, Life ничего не делает
+const CIVIC := [["temple", true, false], ["library", false, true], ["school", true, true], ["baths", false, true], ["warehouse", true, false],
+	["prefect", true, false], ["scriptorium", true, false], ["balnea", true, false], ["vigiles", false, false], ["academy", false, false],
+	["pharos", false, false]]
+
+
+## Границы следа постройки в мировых осях: [minx, maxx, minz, maxz]
+func world_bounds(b: Dictionary) -> Array:
+	var xf := c.xf(b)
+	var r := [INF, -INF, INF, -INF]
+	for rc: Rect2 in c.blueprint(b).footprint():
+		for q: Vector2 in [rc.position, rc.end, Vector2(rc.position.x, rc.end.y), Vector2(rc.end.x, rc.position.y)]:
+			var w := xf * Vector3(q.x, 0, q.y)
+			r[0] = minf(r[0], w.x)
+			r[1] = maxf(r[1], w.x)
+			r[2] = minf(r[2], w.z)
+			r[3] = maxf(r[3], w.z)
+	return r
+
+
+## Камера на вход большого здания: видно и место входа (низ лестницы), и врата
+func gate_view(b: Dictionary, side := 34.0, d := 11.0, pitch := 20.0) -> void:
+	var dp := c.door_point(b)
+	var f := City.facing(float(b["yaw"]))
+	var at := dp - f * 2.2
+	game.rig.set_view(Vector3(at.x, game.land.height_at(at.x, at.y) + 1.2, at.y), rad_to_deg(float(b["yaw"])) + side, pitch, d)
+
+
+## Камера на храм для ролика: видно и низ лестницы (где прихожанин входит), и врата целлы — ближе, чем gate_view
+func temple_view(t: Dictionary) -> void:
+	var dp := c.door_point(t)
+	var e: Array = (life.info(c.blueprint(t), "temple")["doors"] as Array)[0]
+	var hw: Vector3 = c.xf(t) * (e[1] as Vector3)
+	var at := dp.lerp(Vector2(hw.x, hw.z), 0.55)
+	game.rig.set_view(Vector3(at.x, game.land.height_at(at.x, at.y) + 1.0, at.y), rad_to_deg(float(t["yaw"])) + 32.0, 17.0, 7.5)
+
+
+func _civic(X: float, Z: float) -> void:
+	hud.visible = false                         # снимки и ролик — без интерфейса
+	game._set_hour(10.0)
+	game.land.paint_line(Vector2(X - 8.0, Z), Vector2(X + 125.0, Z), 1.6, Land.Kind.ROAD, true)
+	ppl.refresh(game.land.road_chunks.keys())
+	await frames(4)
+	var CB := []
+	var x := X
+	for e: Array in CIVIC:
+		var b := put(e[0], Vector2(x + 4.0, Z + 7.0))
+		if b.is_empty():
+			check(not bool(e[1]) and not bool(e[2]), "встало у второй улицы: " + String(e[0]))
+			x += 8.0
+			continue
+		var wb := world_bounds(b)
+		x = maxf(x, float(wb[1])) + 3.0
+		CB.append([b, e])
+	var st := c.center()
+	if not st.is_empty():
+		CB.append([st, ["center", true, false]])        # почтовая станция новой игры: дверь (ставни — с 1-го уровня станции)
+	await frames(10)
+	var nshut := 0
+	for ce: Array in CB:
+		var b: Dictionary = ce[0]
+		var e: Array = ce[1]
+		var bp := c.blueprint(b)
+		var inf := life.info(bp, String(b["type"]))
+		var one := 0
+		for p: Array in bp.parts:
+			if String(p[0]).begins_with("#shutters"):
+				one += 1
+		print("LIFE CIVIC %s id=%d doors=%s pairs=%d" % [b["type"], int(b["id"]), str((inf["doors"] as Array).map(func(d): return [bp.parts[int(d[0])][0], d[1], d[2]])), int(inf["pairs"])])
+		if bool(e[1]):
+			check(not (inf["doors"] as Array).is_empty(), "створки входа найдены: %s" % b["type"])
+		if bool(e[2]):
+			check(int(inf["pairs"]) >= 1, "ставни створками: %s (%d пар)" % [b["type"], int(inf["pairs"])])
+		check(one == 0, "ставен одной деталью не осталось: %s" % b["type"], one)
+		nshut += int(inf["pairs"])
+	check(CB.filter(func(ce): return not (life.info(c.blueprint(ce[0]), String(ce[0]["type"]))["doors"] as Array).is_empty()).size() >= 4,
+		"створки дверей — у многих общественных зданий")
+	# двери: распахиваются перед жителем, прикрываются и встают точно как были
+	for ce: Array in CB:
+		var b: Dictionary = ce[0]
+		var nm := String(b["type"])
+		if (life.info(c.blueprint(b), nm)["doors"] as Array).is_empty():
+			continue
+		if nm in ["temple", "pharos"]:
+			gate_view(b)
+		else:
+			door_view(b, 30.0, 6.5, 22.0)
+		await frames(4)
+		var x0 := leaf_xfs(b)
+		await shot("civic_door_%s_0.png" % nm)
+		life.door(b, 0.9)
+		check(life._doors.has(int(b["id"])), "дверь пошла (в кадре): " + nm)
+		await secs(0.45)
+		check(life.door_k(int(b["id"])) > 0.95, "распахнута: " + nm, life.door_k(int(b["id"])))
+		check(leaf_xfs(b) != x0, "створка сдвинулась: " + nm)
+		await shot("civic_door_%s_1.png" % nm)
+		await secs(1.4)
+		check(not life._doors.has(int(b["id"])), "прикрылась: " + nm)
+		check(leaf_xfs(b) == x0, "встала точно как была: " + nm)
+	# ставни: днём открыты, ночью закрыты (у каждого окна — в свой час), утром снова открыты и точно на месте
+	var with := CB.map(func(ce): return ce[0]).filter(func(b): return int(life.info(c.blueprint(b), String(b["type"]))["pairs"]) > 0)
+	check(with.size() >= 3, "ставни у общественных зданий: %d зданий, %d пар" % [with.size(), nshut])
+	if with.is_empty():
+		return
+	game._set_hour(12.0)
+	await secs(1.0)
+	var x0s := {}
+	for b: Dictionary in with:
+		x0s[int(b["id"])] = shut_xfs(b)
+		check(is_equal_approx(life.shut_k(int(b["id"])), 1.0), "днём открыты: %s" % b["type"])
+		face_view(b, 22.0, 13.0, 16.0)
+		await frames(5)
+		await shot("civic_shut_%s_0.png" % b["type"])
+	face_view(with[0], 22.0, 13.0, 16.0)
+	await frames(3)
+	game._set_hour(21.2)
+	await secs(0.9)
+	await shot("civic_shut_close_mid.png")
+	await secs(9.5)
+	for b: Dictionary in with:
+		var np: int = life.info(c.blueprint(b), String(b["type"]))["pairs"]
+		for pi in np:
+			check(is_equal_approx(life.shut_k(int(b["id"]), pi), 0.0), "ночью закрыты: %s пара %d" % [b["type"], pi], life.shut_k(int(b["id"]), pi))
+		face_view(b, 22.0, 13.0, 16.0)
+		await secs(0.3)
+		await shot("civic_shut_%s_1.png" % b["type"])
+	game._set_hour(5.5)
+	await secs(1.0)
+	face_view(with[0], 22.0, 13.0, 16.0)
+	await frames(3)
+	game._set_hour(7.7)
+	await secs(1.0)
+	await shot("civic_shut_open_mid.png")
+	await secs(9.5)
+	for b: Dictionary in with:
+		check(is_equal_approx(life.shut_k(int(b["id"])), 1.0), "утром открыты: %s" % b["type"], life.shut_k(int(b["id"])))
+		check(shut_xfs(b) == x0s[int(b["id"])], "и встали точно как построены: %s" % b["type"])
+	# житель идёт в храм: врата распахиваются, он входит, врата закрываются (кадры подряд — для ролика)
+	var tl := CB.filter(func(ce): return ce[0]["type"] == "temple")
+	if tl.is_empty():
+		return
+	var t: Dictionary = tl[0][0]
+	game._set_hour(10.5)
+	ppl._make_family("Храм", 3, int(B[1]["id"]), c.door_point(B[1]))
+	var fam := ppl.residents.filter(func(r): return int(r["home"]) == int(B[1]["id"]) and not r["child"])
+	if not check(not fam.is_empty(), "прихожанин для храма"):
+		return
+	for m: Dictionary in ppl.residents.filter(func(r): return int(r["home"]) == int(B[1]["id"])):
+		m["job"] = int(B[4]["id"])
+		m["done_today"] = true
+	var r: Dictionary = fam[0]
+	ppl._release(r)
+	var dp := c.door_point(t)
+	var f := City.facing(float(t["yaw"]))
+	var ax := City.axis(float(t["yaw"]))
+	r["state"] = "idle"
+	r["act"] = ""
+	r["seq"] = []
+	r["t"] = 999.0
+	r["p"] = dp + f * 5.5 + ax * 2.0
+	var cn: Citizen = ppl._node(r)
+	r["fade"] = 1.0
+	cn.set_alpha(1.0)
+	ppl._place(r)
+	temple_view(t)
+	await frames(10)
+	var w0 := 0.0
+	while life._doors.has(int(t["id"])) and w0 < 8.0:     # врата сейчас открыл кто-то другой (работник) — дождаться
+		await get_tree().process_frame
+		w0 += get_process_delta_time()
+	var x0t := leaf_xfs(t)
+	var d := {"act": "enter", "bid": t["id"], "k": -1, "p": dp}
+	ppl._release(r)
+	ppl._claim(r, d)
+	ppl._go(r, dp, "errand", true)
+	var fdir := out + "frames_temple/"
+	if video:
+		DirAccess.make_dir_recursive_absolute(fdir)
+	var fi := 0
+	var opened := false
+	var went := false
+	var tt := 0.0
+	var snaps := {1.0: "a", 4.0: "b", 5.5: "c", 9.0: "d"}
+	# кадры подряд дорогие (запись картинки — ~0,1 с): игра на это время идёт вчетверо медленнее, ролик — в настоящем темпе
+	if video:
+		Engine.time_scale = 0.25
+	var after := -1.0
+	while tt < 30.0:
+		await get_tree().process_frame
+		tt += get_process_delta_time()
+		opened = opened or life.door_k(int(t["id"])) > 0.95
+		went = went or (r["act"] == "inside" and r["node"] == null)
+		if video:
+			get_viewport().get_texture().get_image().save_jpg(fdir + "f%04d.jpg" % fi, 0.92)
+			fi += 1
+		elif not snaps.is_empty():
+			for s: float in snaps.keys():
+				if tt >= s:
+					await shot("civic_temple_walk_%s.png" % snaps[s])
+					snaps.erase(s)
+		if went and not life._doors.has(int(t["id"])) and after < 0.0:
+			after = tt
+		if after >= 0.0 and tt > after + 1.2:
+			break                                   # вошёл, врата закрылись — ещё миг тишины и конец
+	Engine.time_scale = 1.0
+	if video:
+		print("LIFE NOTE ролик храма: кадров %d за %.2f с игры (%.1f к/с)" % [fi, tt, fi / maxf(tt, 0.01)])
+	check(opened, "прихожанин входит — врата храма распахнулись")
+	check(went, "прихожанин вошёл в храм", [r["state"], r["act"]])
+	# (в храм входят и его работники — дождаться, пока врата закроются совсем)
+	var wt := 0.0
+	while life._doors.has(int(t["id"])) and wt < 8.0:
+		await get_tree().process_frame
+		wt += get_process_delta_time()
+	check(not life._doors.has(int(t["id"])) and leaf_xfs(t) == x0t, "за ним врата закрылись, как были", [life._doors.has(int(t["id"])), leaf_xfs(t) == x0t])
+	# живые мелочи: служитель в пронаосе у алтаря (второе место работника храма), грузчик присел на мешки у склада
+	var wh := CB.filter(func(ce): return ce[0]["type"] == "warehouse")
+	await _workers(t, 2, "храм: служитель у алтаря", "civic_temple_attendant.png")
+	if not wh.is_empty():
+		await _workers(wh[0][0], 1, "склад: грузчик на мешках", "civic_warehouse_porter.png")
+
+
+## Работники на места по чертежу постройки b (People._enter_work): n мест; снимок вблизи последнего места
+func _workers(b: Dictionary, n: int, what: String, png: String) -> void:
+	var bp := c.blueprint(b)
+	if not check(bp.actors.size() >= n, "%s — место работника есть (%d)" % [what, bp.actors.size()]):
+		return
+	var fam := ppl._make_family("Труд%d" % int(b["id"]), 6, int(B[2]["id"]), c.door_point(B[2]))
+	var adults := fam.filter(func(r): return not r["child"])
+	if not check(adults.size() >= n, "%s — взрослых хватает" % what):
+		return
+	for k in n:
+		var r: Dictionary = adults[k]
+		ppl._release(r)
+		r["job"] = int(b["id"])
+		r["p"] = c.door_point(b)
+		ppl._enter_work(r)
+	await frames(10)
+	var a: Array = bp.actors[n - 1]
+	var w: Vector3 = c.xf(b) * (a[0] as Vector3)
+	# место занято работником (нашим или тем, кого город уже нанял сюда раньше)
+	var sl: Array = ppl.slots.get(b["id"], [])
+	check(sl.size() >= n and sl[n - 1] != null and int(sl[n - 1]) != 0, "%s — на месте" % what, sl)
+	var gy: float = game.land.height_at(w.x, w.z) if (a[0] as Vector3).y < 0.05 else w.y
+	game.rig.set_view(Vector3(w.x, gy + 0.6, w.z), rad_to_deg(float(b["yaw"])) + 28.0, 24.0, 4.2)
+	await secs(1.0)
+	await shot(png)
