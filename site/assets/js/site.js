@@ -302,4 +302,19 @@
       note.hidden = false;
     }
   }
+  /* ---------- схема «как растёт город»: проигрывается, когда до неё долистали; кнопка — ещё раз ---------- */
+
+  var grow = $('[data-grow]');
+  if (grow) {
+    var growReplay = $('[data-grow-replay]');
+    var playGrow = function () { grow.classList.remove('play'); void grow.getBoundingClientRect(); grow.classList.add('play'); };
+    if (motionOK && 'IntersectionObserver' in window) {
+      var gio = new IntersectionObserver(function (es) {
+        es.forEach(function (e) { if (e.isIntersecting) { playGrow(); gio.disconnect(); } });
+      }, { threshold: 0.45 });
+      gio.observe(grow);
+    }
+    if (growReplay) growReplay.addEventListener('click', playGrow);
+  }
+
 })();
