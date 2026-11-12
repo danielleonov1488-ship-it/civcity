@@ -68,7 +68,9 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 			return tg
 	var g := {"subs": [], "free": [], "used": 0, "cap": 0, "key": key}
 	if name.begins_with("#"):
-		g["subs"].append(_sub(_special_mesh(name), Transform3D.IDENTITY))
+		var ssub := _sub(_special_mesh(name), Transform3D.IDENTITY)
+		_small(name, ssub, tile)
+		g["subs"].append(ssub)
 	else:
 		var src := Synty.make(name, remap)
 		for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
@@ -138,8 +140,16 @@ static func _tint_mat(m: StandardMaterial3D, a: float) -> StandardMaterial3D:
 	return t
 
 
-## мелочь (трава, цветы, кувшинки, камешки) — без тени и только вблизи: так быстрее
+## мелочь (трава, цветы, кувшинки, камешки) — без тени и только вблизи: так быстрее. 12.11: и любая деталь меньше
+## SMALL_SHADOW по самой длинной стороне (горшки, кувшины, мешки, корзины, таблички) — без тени: на картинке разница
+## в среднем 0,1 из 255, теней на 20% меньше вызовов (город владельца: 2828 → 2248), +5–7% кадров
+const SMALL_SHADOW := 0.9
 static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
+	var mesh: Mesh = (sub["mm"] as MultiMesh).mesh
+	if mesh != null:
+		var sz := mesh.get_aabb().size
+		if maxf(sz.x, maxf(sz.y, sz.z)) < SMALL_SHADOW:
+			(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") or name.contains("Pebbles") or name.contains("Garden_Plants"):
 		var mmi: MultiMeshInstance3D = sub["mmi"]
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

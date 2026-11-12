@@ -262,7 +262,8 @@ static func apply(g) -> void:
 	env.glow_enabled = not low
 	var sun: DirectionalLight3D = g.sun
 	if sun:
-		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if low else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+		# 12.11: «Средняя» — тоже 2 полосы теней (вблизи тени чуть мягче; +15% кадров), «Высокая» — 4
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if low or ml else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 		# 175 м, как и прежняя «Низкая»: при 120 м (по плану) издалека город совсем без теней — плоский
 		sun.directional_shadow_max_distance = 175.0 if low else 190.0
 		sun.light_angular_distance = 0.0 if low or ml else 2.2    # без «мягких» теней PCSS — они самые дорогие

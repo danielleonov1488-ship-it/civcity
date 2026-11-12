@@ -125,9 +125,9 @@ func _medium_light() -> void:
 	game.settings["quality"] = "medium"
 	game._apply_quality()
 	check(is_equal_approx(game.sun.light_angular_distance, 0.0) and vp.msaa_3d == Viewport.MSAA_2X and game.env.ssao_enabled and game.sun.shadow_enabled
-		and not game.env.sdfgi_enabled and game.sun.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+		and not game.env.sdfgi_enabled and game.sun.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 		and is_equal_approx(vp.scaling_3d_scale, 1.0) and is_equal_approx(game.sun.directional_shadow_max_distance, 190.0),
-		"«Средняя»: без PCSS и MSAA 2x, остальное как у прежней «Средней» (4 полосы теней до 190 м, SSAO, без SDFGI, полный размер)",
+		"«Средняя»: без PCSS и MSAA 2x, 2 полосы теней до 190 м (12.11), SSAO, без SDFGI, полный размер",
 		[game.sun.light_angular_distance, vp.msaa_3d, game.env.ssao_enabled, game.env.sdfgi_enabled])
 	Gfx.medium_light = false
 	game._apply_quality()
