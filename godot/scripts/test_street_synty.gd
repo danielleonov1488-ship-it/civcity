@@ -1,6 +1,7 @@
 extends Node
-## Пробная улица на Synty (владелец 12.11: «всё на Synty, пересобрать… покажи пробную улицу»): дома в два-три этажа,
-## лавки, прилавки, украшения — снимки при дневном и вечернем свете для сравнения с картинками Synty.
+## Пробная улица на Synty (владелец 12.11: «всё на Synty, пересобрать… покажи пробную улицу»; «не делай большие пробные
+## улицы, а просто десяток домов»): десять домов и лавок по обе стороны короткой улицы, немного украшений — снимки при
+## дневном и вечернем свете для сравнения с картинками Synty.
 ##   bash .work/py/gpu_run.sh res://test_street_synty.tscn -- out=D:/CivCity/.work/street_synty/ tag=a
 
 var game
@@ -69,32 +70,30 @@ func _run() -> void:
 		game.weather.force = 0.0
 	var X0 := 140.0
 	var Z0 := 120.0
-	game.clear_nature(Vector2(X0 + 20.0, Z0), 34.0)
-	game.land.paint_line(Vector2(X0 - 8.0, Z0), Vector2(X0 + 48.0, Z0), 2.2, Land.Kind.ROAD, true)
+	game.clear_nature(Vector2(X0 + 10.0, Z0), 22.0)
+	game.land.paint_line(Vector2(X0 - 6.0, Z0), Vector2(X0 + 28.0, Z0), 2.2, Land.Kind.ROAD, true)
 	await frames(4)
 	# северная сторона: дома и лавки вплотную, южная — дома, прилавки и маленькая площадь с фонтанчиком
 	# дома вплотную друг к другу, как улица на картинках Synty (каждый следующий — к краю предыдущего, игра сама
 	# ставит его в ряд)
-	var north := [["house_pleb", 2], ["bakery", 0], ["house_artisan", 2], ["house_pleb", 3], ["wineshop", 0], ["house_artisan", 3], ["butcher", 0],
-		["house_pleb", 2], ["house_artisan", 2], ["house_pleb", 3], ["perfumer", 0], ["house_pleb", 2]]
+	var north := [["house_pleb", 2], ["bakery", 0], ["house_artisan", 3], ["wineshop", 0], ["house_pleb", 3], ["butcher", 0]]
 	var x := X0
 	for e: Array in north:
 		var b := put(e[0], Vector2(x, Z0 - 2.6), int(e[1]))
 		x = _right_edge(b, x) + 0.05
-	var south := [["house_artisan", 2], ["house_pleb", 2], ["taberna", 0], ["house_pleb", 3], ["house_artisan", 2], ["house_pleb", 2],
-		["house_patrician", 2], ["house_pleb", 3]]
+	var south := [["house_artisan", 2], ["taberna", 0], ["house_pleb", 3], ["house_patrician", 2]]
 	x = X0 + 1.0
 	for e: Array in south:
 		var b := put(e[0], Vector2(x, Z0 + 2.6), int(e[1]))
 		x = _right_edge(b, x) + 0.05
 	# украшения улицы
-	for k in 9:                                # клумбы, вазоны, кипарисы и фонари вдоль домов
-		put(["planter", "flowers", "lamp_post", "planter_2", "flowers_2", "planter", "lamp_post_2", "flowers", "planter_2"][k], Vector2(X0 + 2.0 + k * 4.4, Z0 - 1.25))
-	for k in 6:
-		put(["flowers_2", "planter", "lamp_post", "flowers", "planter_2", "palm"][k], Vector2(X0 + 3.0 + k * 5.5, Z0 + 1.25))
+	for k in 4:                                # клумбы, вазоны и фонари вдоль домов
+		put(["planter", "lamp_post", "flowers", "planter_2"][k], Vector2(X0 + 2.0 + k * 5.5, Z0 - 1.25))
+	for k in 3:
+		put(["flowers_2", "lamp_post", "planter"][k], Vector2(X0 + 4.0 + k * 6.0, Z0 + 1.25))
 	await frames(30)
-	var views := [[Vector2(X0 + 12.0, Z0 - 2.0), 20.0, 48.0, 10.0], [Vector2(X0 + 26.0, Z0 - 2.0), 35.0, 42.0, 9.0], [Vector2(X0 + 16.0, Z0 + 2.0), 200.0, 48.0, 10.0],
-		[Vector2(X0 + 18.0, Z0), 95.0, 34.0, 20.0], [Vector2(X0 + 18.0, Z0), 90.0, 13.0, 9.0], [Vector2(X0 + 16.0, Z0), 270.0, 13.0, 9.0]]
+	var views := [[Vector2(X0 + 8.0, Z0 - 2.0), 20.0, 40.0, 11.0], [Vector2(X0 + 9.0, Z0 + 2.0), 200.0, 40.0, 11.0],
+		[Vector2(X0 + 12.0, Z0), 90.0, 13.0, 9.0], [Vector2(X0 + 6.0, Z0), 270.0, 13.0, 9.0]]
 	DirAccess.make_dir_recursive_absolute(out)
 	for h: float in [11.0, 17.6]:
 		game._set_hour(h)
