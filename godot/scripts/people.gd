@@ -2903,7 +2903,21 @@ func _door_cancel(r: Dictionary) -> void:
 
 # ---------- кадр ----------
 
+## Замер (test_perf mode=pplprof): сколько микросекунд ушло на сам People._process за кадры замера
+static var perf := false
+var perf_us := 0
+
+
 func _process(dt: float) -> void:
+	if perf:
+		var t0 := Time.get_ticks_usec()
+		_process_body(dt)
+		perf_us += Time.get_ticks_usec() - t0
+	else:
+		_process_body(dt)
+
+
+func _process_body(dt: float) -> void:
 	if city == null or land == null:
 		return
 	dt = minf(dt, 0.05)

@@ -132,6 +132,8 @@ func _run(mode: String) -> void:
 		"vram": await _vram()
 		"groups": await _groups()
 		"batch": await _batch()
+		"citizens": await _citizens()
+		"pplprof": await _pplprof()
 		"offer": await _offer()
 		_: await _regress()
 	print("PERF DONE fails=%d" % fails)
@@ -407,8 +409,14 @@ func _probe() -> void:
 	tests["anims_manual"] = [func(): _anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL),
 		func(): _anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE)]
 	print("PROBE сценариев с обработкой кадра: %d, анимаций %d: %s" % [by_script.size(), anims.size(), ", ".join(by_script.keys())])
+	# по частям обработки жителей (People._process): кошки, повозка, беседы, герой — заменяем пустышкой
+	tests["ppl_nocats"] = [func(): game.people.set_meta("perf_skip", "cats"), func(): game.people.remove_meta("perf_skip")]
 	var only: String = A.get("only", "")
-	for t: String in tests:
+	var rep := int(A.get("rep", "1"))
+	var order := []
+	for k in rep:
+		order.append_array(tests.keys())
+	for t: String in order:
 		if only != "" and not (t in only.split("+")):
 			continue
 		if A.has("prefix") and not (t.begins_with(str(A["prefix"])) or t == "anims_manual"):
@@ -421,6 +429,41 @@ func _probe() -> void:
 			int(r["vis_d"]) - int(b2["vis_d"]), (float(r["vis_p"]) - float(b2["vis_p"])) / 1.0e6])
 
 
+## 12.11: из чего сделан житель — сколько у него мешей со скелетом (каждый — отдельный пересчёт позы на видеокарте
+## каждый кадр), поверхностей и точек
+func _citizens() -> void:
+	await _settle()
+	var n := 0
+	var tot := {"mi": 0, "skin": 0, "surf": 0, "verts": 0, "skel": 0}
+	var names := {}
+	for r in game.people.residents:
+		var c = r["node"]
+		if c == null:
+			continue
+		n += 1
+		tot["skel"] += (c as Node).find_children("*", "Skeleton3D", true, false).size()
+		for mi: MeshInstance3D in (c as Node).find_children("*", "MeshInstance3D", true, false):
+			if not mi.visible:
+				continue
+			tot["mi"] += 1
+			if mi.skin != null or mi.skeleton != NodePath(""):
+				tot["skin"] += 1
+			if mi.mesh:
+				tot["surf"] += mi.mesh.get_surface_count()
+				for s in mi.mesh.get_surface_count():
+					if mi.mesh is ArrayMesh:
+						tot["verts"] += (mi.mesh as ArrayMesh).surface_get_array_len(s)
+			names[String(mi.name)] = int(names.get(String(mi.name), 0)) + 1
+	var top := names.keys()
+	top.sort_custom(func(a, b): return int(names[a]) > int(names[b]))
+	print("CIT видимых жителей %d: мешей %d (со скелетом %d), скелетов %d, поверхностей %d, точек %d — на жителя %.1f мешей, %.0f точек" % [n,
+		tot["mi"], tot["skin"], tot["skel"], tot["surf"], tot["verts"], float(tot["mi"]) / maxf(1, n), float(tot["verts"]) / maxf(1, n)])
+	var t := []
+	for k in top.slice(0, 25):
+		t.append("%s×%d" % [k, names[k]])
+	print("CIT части: ", ", ".join(t))
+
+
 static func _proc_set(list: Array, mode: int) -> void:
 	for n: Node in list:
 		if is_instance_valid(n):
@@ -428,9 +471,30 @@ static func _proc_set(list: Array, mode: int) -> void:
 
 
 static func _anim_cb(list: Array, mode: int) -> void:
-	for a: AnimationMixer in list:
+	for a in list:
 		if is_instance_valid(a):
-			a.callback_mode_process = mode
+			(a as AnimationMixer).callback_mode_process = mode
+
+
+## 12.11: время самого People._process (сценарий) против всего времени кадра на скриптах; затем — анимации жителей
+## на ручном шаге (ни одна не считается) — сколько стоят они
+func _pplprof() -> void:
+	await _settle()
+	_quality(str(A.get("q", "high")))
+	_view(_views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0])
+	for k in 3:
+		People.perf = true
+		game.people.perf_us = 0
+		var r := await _measure("pplprof r%d" % k)
+		People.perf = false
+		var n := int(A.get("n", "120"))
+		print("PPL People._process в среднем %.2f мс за кадр (скрипты всего %.2f мс)" % [game.people.perf_us / 1000.0 / n, float(r["proc"])])
+		var anims: Array = game.people.find_children("*", "AnimationMixer", true, false)
+		_anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL)
+		var r2 := await _measure("pplprof anims_off r%d" % k)
+		_anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE)
+		print("PPL анимаций жителей %d: без них скрипты %.2f мс (разница %.2f), видеокарта %.2f → %.2f" % [anims.size(), float(r2["proc"]),
+			float(r["proc"]) - float(r2["proc"]), float(r["gpu"]), float(r2["gpu"])])
 
 
 ## Для владельца (1.9, 1.10): снимки каждой графики на трёх видах (без жителей, время стоит) и замеры по кругу —
