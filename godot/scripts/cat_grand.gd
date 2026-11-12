@@ -102,7 +102,7 @@ static func _ludus(b: Bp) -> void:
 		b.add("SM_Prop_Seat_Bench_03", Vector3(-1.3, 0, 0.55), 0.0, 0.85)
 		b.add("SM_Prop_Seat_Bench_03", Vector3(1.3, 0, 0.55), 0.0, 0.85)
 		CatMilitary._lean_shield(b, Vector3(0.0, 0, 0.32), 0.0, "SM_Wep_Shield_04", 0.25, 0.75)
-		b.add("SM_Prop_Jug_03", Vector3(2.2, 0, 0.45), 0.0, 0.7)
+		# (кувшин убран: в городе из своих домов — лишний вызов отрисовки ради мелочи, бюджет волны 5б)
 		b.base = keep
 	# арена: песок в каменном бортике, в бортике спереди — проход
 	CatMilitary._sand(b, Vector3(0, 0, -0.6), 9.2, 5.6)
