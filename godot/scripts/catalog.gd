@@ -99,6 +99,8 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		"barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia", "mars": CatMilitary.make(b, type, tier)
 		_: CatDecor._decor(b, type, variant)
 	b.base = Transform3D.IDENTITY
+	if not kit_done and not legacy and (dd0.get("kind", "") in ["house", "shop", "inn"]):
+		CatDress.dress(b, type)                # цветы под окнами, плющ, горшки у дверей — как на картинках Synty
 	if not kit_done:
 		_actors(b, type, tier)
 	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)

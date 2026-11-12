@@ -670,12 +670,14 @@ func _environment() -> void:
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	# свет и цвет «как на картинках Synty» (владелец 12.11: «игра должна выглядеть как скриншоты Synty»): сочнее,
+	# теплее, меньше дымки — проба test_look look=synty
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	env.tonemap_white = 6.0
-	env.tonemap_exposure = 1.1
+	env.tonemap_exposure = 1.15
 	env.ssao_enabled = true
 	env.ssao_radius = 0.8
-	env.ssao_intensity = 2.6
+	env.ssao_intensity = 2.0
 	env.ssao_power = 1.5
 	env.ssao_detail = 0.8
 	env.ssao_light_affect = 0.3
@@ -688,15 +690,18 @@ func _environment() -> void:
 	env.sdfgi_min_cell_size = 0.25
 	env.sdfgi_energy = 0.75
 	env.glow_enabled = true
-	env.glow_intensity = 0.5
-	env.glow_bloom = 0.0
+	env.glow_intensity = 0.8
+	env.glow_bloom = 0.05
 	env.glow_hdr_threshold = 1.0
 	env.fog_enabled = true
 	env.fog_light_color = Color("e9c9a0")
-	env.fog_density = 0.0009
+	env.fog_density = 0.0004
 	env.fog_aerial_perspective = 0.5
 	env.fog_sky_affect = 0.45
-	env.adjustment_enabled = false
+	env.adjustment_enabled = true
+	env.adjustment_saturation = 1.22
+	env.adjustment_contrast = 1.08
+	env.adjustment_brightness = 1.02
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -756,7 +761,7 @@ func _set_hour(h: float) -> void:
 	var sun_c := noon.lerp(golden, gold)
 	sun.light_color = night_c.lerp(sun_c, day)
 	sun.light_energy = lerpf(1.5, lerpf(2.6, 2.9, gold), day)
-	sky_mat.sky_top_color = Color("2e2a5c").lerp(Color("6f95c4").lerp(Color("9a8fc0"), gold * 0.6), day)
+	sky_mat.sky_top_color = Color("2e2a5c").lerp(Color("4f86d0").lerp(Color("9a8fc0"), gold * 0.6), day)
 	sky_mat.sky_horizon_color = Color("665a92").lerp(Color("efd6b4").lerp(Color("f6a870"), gold), day)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color.darkened(0.1)
 	# рассеянный свет: днём слабый и серо-сиреневый — тени глубокие; ночью сиреневый — всё видно, но темнее,
