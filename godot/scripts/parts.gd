@@ -61,8 +61,9 @@ static func _special_mesh(name: String) -> Mesh:
 	if name.begins_with("#kerb"):                  # камни бордюра у домуса и храма (kerb.gd)
 		_special[name] = Kerb.mesh(name)
 		return _special[name]
-	if name.begins_with("#sign:"):                 # расписная вывеска (клетка signs.png) на доме Synty (CatDress)
-		_special[name] = CatDress.sign_mesh(name.substr(6))
+	if name.begins_with("#sign:") or name.begins_with("#bsign:") or name.begins_with("#bricks_") or name.begins_with("#quoin_"):
+		# вывески (над дверью и на кронштейне), кирпич под отбитой штукатуркой, угловые камни домов Synty (CatDress)
+		_special[name] = CatDress.kit_mesh(name)
 		return _special[name]
 	if name.begins_with("#hp_"):                   # товар у лавки — те же вещицы, что в руках у жителей (HandProps)
 		_special[name] = HandProps._kit("#" + name.substr(4))
