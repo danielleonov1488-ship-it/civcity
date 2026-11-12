@@ -13,6 +13,7 @@ func _ready() -> void:
 		if kv[0] == "out":
 			out = kv[1]
 	DirAccess.make_dir_recursive_absolute(out)
+	KitHouses.ON = true                       # проверка своего набора — даже когда игра на Synty (владелец 12.11)
 	Game.boot = {"demo": "1", "noui": "1", "hour": "12"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)

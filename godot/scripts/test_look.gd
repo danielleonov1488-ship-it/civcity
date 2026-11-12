@@ -5,6 +5,7 @@ var game
 var tag := "cur"
 var views := [0, 1, 2]
 var hours := [12.5, 19.5, 0.5]
+var look := ""
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -15,6 +16,7 @@ func _ready() -> void:
 				"views": views = Array(kv[1].split(",")).map(func(x): return int(x))
 				"hours": hours = Array(kv[1].split(",")).map(func(x): return float(x))
 				"kit": KitHouses.ON = kv[1] != "0"        # kit=0 — прежние модели Synty (сравнение «было / стало»)
+				"look": look = kv[1]                       # look=synty — проба света и цвета «как на картинках Synty»
 	Game.boot = {"demo": "1", "noui": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -36,6 +38,21 @@ func _run() -> void:
 		await frames(5)
 	game.hud.visible = false
 	game.speed = 0.0
+	if look == "synty":
+		# сочнее и теплее, как в рекламе Synty: насыщенность и контраст, тёплое солнце, меньше дымки, сильнее свечение огня
+		var e: Environment = game.env
+		e.tonemap_mode = Environment.TONE_MAPPER_AGX
+		e.tonemap_exposure = 1.15
+		e.adjustment_enabled = true
+		e.adjustment_saturation = 1.22
+		e.adjustment_contrast = 1.08
+		e.adjustment_brightness = 1.02
+		e.fog_density = 0.0004
+		e.glow_intensity = 0.8
+		e.glow_bloom = 0.05
+		e.ssao_intensity = 2.0
+		game.sky_mat.sky_top_color = Color("4f86d0")
+		game.sky_mat.sky_horizon_color = Color("f4d6a8")
 	game.clock_hours = false
 	await frames(30)
 	for h in hours:

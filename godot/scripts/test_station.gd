@@ -11,6 +11,7 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("out="):
 			out = a.trim_prefix("out=")
+	KitHouses.ON = true                       # своя станция — даже когда игра на Synty
 	Game.boot = {"new": "1", "hour": "11"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)

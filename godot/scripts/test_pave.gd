@@ -440,7 +440,7 @@ func _f8_rules() -> void:
 	reset()
 	game.manual_yaw = true
 	game.tool_yaw = PI / 2
-	var k2: Dictionary = game.placement("house_pleb", dp + Vector2(0, 1.9))     # дом шире — чуть дальше, чтобы не наехать на соседа
+	var k2: Dictionary = game.placement("house_pleb", dp + Vector2(0, 1.9 if KitHouses.ON else 1.4))     # свой дом шире — чуть дальше, чтобы не наехать на соседа
 	ok("F8 covering a neighbour's door is refused", k2["err"] == "Так загородится вход соседней постройки", str(k2["err"]))
 	game.city.remove(H, false)
 	var g := probe("fountain", S2 + Vector2(8, 8))
