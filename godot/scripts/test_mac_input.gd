@@ -264,7 +264,9 @@ func _run() -> void:
 
 	# ---------- свиток стройки: жестом вбок и вверх-вниз ----------
 	await click(center_of(game.hud.cats["housing"]))
+	# полоса раскрывается за время, а не за кадры: без предела кадров (12.11) 10 кадров — меньше 0,1 с, она ещё растёт
 	await frames(10)
+	await get_tree().create_timer(0.6).timeout
 	var sc: ScrollContainer = game.hud.tray.find_child("scroll", true, false)
 	var hs := sc.get_h_scroll_bar()
 	if hs.max_value - hs.page <= 1.0:
