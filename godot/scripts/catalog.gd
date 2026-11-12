@@ -99,12 +99,16 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		"barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia", "mars": CatMilitary.make(b, type, tier)
 		_: CatDecor._decor(b, type, variant)
 	b.base = Transform3D.IDENTITY
+	var pre := b.parts.duplicate()            # что было до наполнения (детали — те же массивы): метка на время прохода
+	for p: Array in pre:
+		p.append(_PRE)
 	if CatDress.ON and not kit_done and not legacy and (dd0.get("kind", "") in ["house", "shop", "inn", "rp", "store"] or CatDress.TRADE_SIGN.has(type)):
 		CatDress.dress(b, type)                # цветы под окнами, плющ, горшки у дверей — как на картинках Synty
 	if not kit_done:
 		_actors(b, type, tier)
 		CatDressCivic.dress(b, type, tier)     # склады, мастерские, поля, бани, храмы — обжитые дворы и бока (без новых деталей в следе)
 	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)
+	_mark_dress(b, pre)
 	_cache[key] = b
 	return b
 
@@ -124,6 +128,61 @@ static func _scale(b: Bp, s: float) -> void:
 		j[0] = (j[0] as Vector3) * s
 		j[1] = float(j[1]) * s
 	b.door = b.door * s
+
+
+## 12.11 (владелец: «48–60 кадров — мало… минимум 120, даже на старых ПК»): детали наполнения (CatDress, CatDressCivic,
+## CatDressGrand) получают четвёртое поле — с какого облегчения их не рисовать (Parts.drop): 0 — всегда, Parts.GONE_LOW —
+## нет на «Низкой» и «Очень низкой», Parts.GONE_VLOW — нет только на «Очень низкой». Помеченные стоят в своих группах пула
+## (Parts): смена уровня лишь прячет эти группы — чертежи, кэш и ручки деталей прежние, «Высокая» и «Средняя» — те же детали
+## на тех же местах
+const _PRE := -7
+static var split_all := false             # test_perf: всё наполнение — в своих группах (замеры по видам деталей)
+
+
+static func _mark_dress(b: Bp, pre: Array) -> void:
+	for p: Array in b.parts:
+		if p.size() == 3:
+			var g := dress_gone(String(p[0]), p[1])
+			p.append(9 if g == 0 and split_all else g)
+	for p: Array in pre:
+		p.resize(3)
+
+
+## «Низкая» и ниже — нет самого мелкого и самого тяжёлого на свою заметность (замеры test_perf mode=dress, город
+## владельца): трава и камешки у стен (по 170–330 треугольников на 20 см), горы корзин, кувшинов и амфор (1,4–3,8 тыс.),
+## курильницы (1 тыс.), крошечные горшочки, шлемы, кубки, виноград у входа (по 220–800 на 20–30 см)
+const DRESS_LOW := ["SM_Env_Grass_", "SM_Env_Pebbles_", "SM_Prop_Vase_Pile_", "SM_Prop_Jar_Pile_", "SM_Prop_Basket_Set_",
+	"SM_Prop_Senser_", "SM_Prop_Pots_Hanging_", "SM_Prop_Rug_Stack_", "SM_Prop_Vase_04", "SM_Prop_Vase_06", "SM_Prop_Basket_10",
+	"SM_Prop_Goblet_", "SM_Prop_Scroll_Pile_06", "SM_Chr_Attach_Helmet_", "SM_Wep_Shield_03", "#hp_grapes"]
+## «Очень низкая» — ещё и мелочь у стен вообще: амфоры, кувшины, мешки, корзины, снопы, горшки с цветами (и на цепях,
+## с их крюками), травы и цветы в горшках, свитки, миски, товар на крюках, кирпичики под штукатуркой, концы балок.
+## Остаются плющ, шпалеры, ящики цветов под окнами, угловые камни, вывески, навесы, знамёна, ставни, бельё, фонарики.
+## Скамьи, табуреты и столы остаются всегда: на них садятся жители (Life, People — по чертежу)
+const DRESS_VLOW := ["SM_Prop_Vase_", "SM_Prop_Jug_", "SM_Prop_Jar_", "SM_Prop_Basket_", "SM_Prop_Sack_", "SM_Prop_Straw_",
+	"SM_Prop_FlowerPot_", "SM_Env_Garden_Plants_", "SM_Prop_Scroll_", "SM_Prop_Bowl_", "SM_Prop_Rug_Folded_", "SM_Prop_Cart_",
+	"SM_Prop_Marble_Rubble_", "SM_Prop_Statue_Broken_", "#hp_", "#bricks_", "#dress:hook", "#dress:garlic", "#dress:herbs",
+	"#mil_logs", "#mil_planks", "SM_Bld_Wall_Beam_Detail_"]
+static var _casts := {}
+
+
+## С какого облегчения деталь наполнения не рисуется (xf — место в метрах, после _scale): Parts.GONE_LOW, GONE_VLOW;
+## Parts.NOSH_LOW — остаётся, но на «Низкой» без тени (только то, что тень отбрасывает: Parts._small); 0 — как есть
+static func dress_gone(nm: String, _xf: Transform3D) -> int:
+	for k: String in DRESS_LOW:
+		if nm.begins_with(k):
+			return Parts.GONE_LOW
+	for k: String in DRESS_VLOW:
+		if nm.begins_with(k):
+			return Parts.GONE_VLOW
+	if not _casts.has(nm):
+		var bx: AABB
+		if nm.begins_with("#"):
+			var m: Mesh = Parts._special_mesh(nm)
+			bx = m.get_aabb() if m != null else AABB()
+		else:
+			bx = Bp.model_aabb(nm)
+		_casts[nm] = maxf(bx.size.x, maxf(bx.size.y, bx.size.z)) >= Parts.SMALL_SHADOW
+	return Parts.NOSH_LOW if _casts[nm] else 0
 
 
 # ---------- жильё ----------

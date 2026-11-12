@@ -6,6 +6,11 @@ extends Node
 ##   … -- mode=hitch q=low [frames=1200]                                    — рывки кадра (с автосохранением и ходом дня)
 ##   … -- mode=menu q=high,medium                                           — меню с витриной
 ##   … -- mode=menu boot_q=verylow q=verylow                                — меню, запущенное на этом качестве (лёгкий городок)
+##   … -- mode=dress                                                        — из чего наполнение домов (виды деталей, треугольники)
+##   … -- mode=dressab q=low,verylow [only=…] [split=all]                    — наполнение по видам: спрятать/показать по очереди
+## dropoff=1 — облегчение наполнения (Parts.drop) выключено на всех уровнях: снимки и замеры «было» на той же сборке;
+## boot_q=low — город запускается на этом качестве (наполнение делится на группы облегчения только у построек,
+## поставленных на «Низкой»/«Очень низкой»)
 ## Город: по умолчанию копия города владельца (D:/CivCity/.work/owner_save/city.json) — кладётся в свою папку
 ## сохранений запуска (gpu_run.sh даёт каждому запуску свою); city=new — новый городок.
 ## Снимки: час 9, время стоит (Engine.time_scale = 0 — вода и дым не двигаются), жители, звери, дым, птицы и
@@ -54,6 +59,8 @@ func _ready() -> void:
 	CatDress.ON = A.get("plain", "0") != "1"
 	CatDressCivic.ON = CatDress.ON
 	Parts.split_on = A.get("split", "1") != "0"        # 12.11: оттенок у экземпляра (split=0 — как прежде, для сравнения)
+	Catalog.split_all = A.get("split", "") == "all"     # 12.11: всё наполнение — в своих группах (mode=dressab по видам)
+	dropoff = A.get("dropoff", "0") == "1"
 	city_src = str(A.get("city", OWNER))
 	if city_src == "new" or not FileAccess.file_exists(city_src):
 		if city_src != "new":
@@ -67,6 +74,18 @@ func _ready() -> void:
 			f.close()
 		_boot("menu")
 	elif city_src != "":
+		if A.has("boot_q"):
+			# город, запущенный на этом качестве (на «Низкой» наполнение сразу делится на группы: Parts.drop)
+			var sp := GamePaths.save_dir().path_join("settings.json")
+			var st: Dictionary = {}
+			if FileAccess.file_exists(sp):
+				var j = JSON.parse_string(FileAccess.get_file_as_string(sp))
+				if j is Dictionary:
+					st = j
+			st["quality"] = A["boot_q"]
+			var f := FileAccess.open(sp, FileAccess.WRITE)
+			f.store_string(JSON.stringify(st))
+			f.close()
 		var dst := GamePaths.save_dir().path_join("city.json")
 		if city_src.simplify_path().to_lower() != dst.simplify_path().to_lower():
 			DirAccess.copy_absolute(city_src, dst)
@@ -111,8 +130,21 @@ func _quality(q: String) -> void:
 	q = "medium" if q in ["medium_light", "medium_full"] else q
 	game.settings["quality"] = q
 	game._apply_quality()
+	if dropoff:
+		_drop_set(0)
 	Gfx.swap_all()                            # картинки «Очень низкой» — сразу (в игре — по одной за кадр)
 	Engine.max_fps = 0
+
+
+var dropoff := false
+
+
+## Облегчение наполнения (Parts.drop) — вручную: 0 — всё видно, как на «Высокой»
+func _drop_set(d: int) -> void:
+	Parts.drop = d
+	game.parts.apply_drop()
+	if game.cover.pool != null:
+		game.cover.pool.apply_drop()
 
 
 func _run(mode: String) -> void:
@@ -143,6 +175,8 @@ func _run(mode: String) -> void:
 		"gpuab": await _gpuab()
 		"procab": await _procab()
 		"lifeab": await _lifeab()
+		"dress": await _dress_stats()
+		"dressab": await _dressab()
 		"offer": await _offer()
 		_: await _regress()
 	print("PERF DONE fails=%d" % fails)
@@ -1156,6 +1190,167 @@ func _regress() -> void:
 				fail("Высокая: %s = %d, было %d (+10%% предел)" % [k, int(hi[k]), int(REF_HIGH[k])])
 		print("PERF GATES low p10 %.2f/%.1f, verylow p10 %.2f/%.1f, high dc %d/%d shadow dc %d/%d shadow tris %.2fM/%.2fM" % [
 			lo["p10"], GATE_LOW, vl["p10"], GATE_VLOW, hi["vis_d"], REF_HIGH["vis_d"], hi["sh_d"], REF_HIGH["sh_d"], hi["sh_p"] / 1.0e6, REF_HIGH["sh_p"] / 1.0e6])
+
+## 12.11 (владелец: «минимум 120 кадров»): из чего наполнение домов во всём городе (детали чертежей с четвёртым полем,
+## Catalog._mark_dress) — по видам деталей: сколько, треугольников на штуку и всего, размер (самая длинная сторона, м),
+## уровень облегчения (Catalog.dress_gone). Отсечения по экземпляру у пула нет — рисуются все поставленные
+##   … -- mode=dress
+var _tri := {}
+func _tris_of(nm: String) -> int:
+	if _tri.has(nm):
+		return _tri[nm]
+	var meshes := []
+	if nm.begins_with("#"):
+		meshes.append(Parts._special_mesh(nm))
+	else:
+		var src := Synty.make(nm)
+		for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
+			meshes.append(mi.mesh)
+		src.free()
+	var n := 0
+	for m in meshes:
+		if m == null:
+			continue
+		for s in (m as Mesh).get_surface_count():
+			if m is ArrayMesh:
+				var il: int = (m as ArrayMesh).surface_get_array_index_len(s)
+				n += (il if il > 0 else (m as ArrayMesh).surface_get_array_len(s)) / 3
+			else:
+				var arr := (m as Mesh).surface_get_arrays(s)
+				var idx = arr[Mesh.ARRAY_INDEX]
+				n += (idx.size() if idx != null else (arr[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()) / 3
+	_tri[nm] = n
+	return n
+
+
+static func _size_of(nm: String, xf: Transform3D) -> float:
+	var bx: AABB
+	if nm.begins_with("#"):
+		var m: Mesh = Parts._special_mesh(nm)
+		bx = m.get_aabb() if m != null else AABB()
+	else:
+		bx = Bp.model_aabb(nm)
+	var sz := bx.size * xf.basis.get_scale()
+	return maxf(sz.x, maxf(sz.y, sz.z))
+
+
+func _dress_stats() -> void:
+	var by := {}
+	var tot := {"all_n": 0, "all_t": 0, "d_n": 0, "d_t": 0}
+	var lv_t := {}
+	var plain_keys := {}            # группы деталей без метки (что есть и без облегчения)
+	var tag_keys := {}              # группы деталей наполнения с меткой > 0
+	for id in game.visuals:
+		var b: Dictionary = game.city.buildings.get(id, {})
+		if b.is_empty():
+			continue
+		var bp: Bp = game.city.blueprint(b)
+		for p: Array in bp.parts:
+			var nm := String(p[0])
+			var t := _tris_of(nm)
+			tot["all_n"] += 1
+			tot["all_t"] += t
+			var gk := nm + "|" + str(p[2])
+			if p.size() < 4 or int(p[3]) == 0:
+				plain_keys[gk] = true
+			else:
+				tag_keys[gk] = int(p[3])
+			if p.size() < 4:
+				continue
+			tot["d_n"] += 1
+			tot["d_t"] += t
+			var lv := int(p[3])
+			lv_t[lv] = int(lv_t.get(lv, 0)) + t
+			var e: Dictionary = by.get(nm, {"n": 0, "t": t, "sz": 0.0, "lv": {}, "types": {}})
+			e["n"] += 1
+			e["sz"] += _size_of(nm, p[1])
+			e["lv"][lv] = true
+			var ty := String(b["type"])
+			e["types"][ty] = int(e["types"].get(ty, 0)) + 1
+			by[nm] = e
+	var rows := []
+	for nm: String in by:
+		var e: Dictionary = by[nm]
+		rows.append([int(e["n"]) * int(e["t"]), nm, e])
+	rows.sort_custom(func(a, c): return int(a[0]) > int(c[0]))
+	print("DRESS построек %d: деталей всего %d (%.2fM треугольников), из них наполнение %d (%.2fM); по уровням облегчения: %s" % [
+		game.visuals.size(), tot["all_n"], tot["all_t"] / 1.0e6, tot["d_n"], tot["d_t"] / 1.0e6, str(lv_t)])
+	var shared := []
+	for gk: String in tag_keys:
+		if plain_keys.has(gk):
+			shared.append("%s(%d)" % [gk.get_slice("|", 0), tag_keys[gk]])
+	print("DRESS групп с меткой %d; из них лишних на «Высокой» (та же деталь стоит и без метки) %d: %s" % [tag_keys.size(), shared.size(), ", ".join(shared)])
+	var acc := 0
+	for r: Array in rows:
+		var e: Dictionary = r[2]
+		acc += int(r[0])
+		var tys: Array = (e["types"] as Dictionary).keys()
+		tys.sort_custom(func(a, c): return int(e["types"][a]) > int(e["types"][c]))
+		print("DRESS %-36s n %5d x %5d = %7d (%4.1f%%, накоп. %5.1f%%) | размер %.2f м | ур. %s | %s" % [r[1], e["n"], e["t"], r[0],
+			100.0 * int(r[0]) / maxf(1.0, tot["d_t"]), 100.0 * acc / maxf(1.0, tot["d_t"]), float(e["sz"]) / int(e["n"]),
+			str((e["lv"] as Dictionary).keys()), ", ".join(tys.slice(0, 4))])
+
+
+## 12.11: наполнение по видам — группы с метками (Catalog: уровень облегчения; split=all — всё наполнение в своих
+## группах) прячутся по очереди, rounds раз, медианы. only — варианты через запятую: none (всё видно), all (всё
+## наполнение в своих группах спрятано), drop1/drop2 (облегчение «Низкой»/«Очень низкой»: Parts.drop; drop1sh — без
+## снятия теней Parts.NOSH_LOW), иначе — части
+## имён деталей через «+» (спрятать группы наполнения, чьё имя содержит любую из них)
+##   … -- mode=dressab q=low,verylow rounds=3 [view=center] [only=none,all,Grass+Pebbles,#bricks] [split=all]
+func _dressab() -> void:
+	await _settle()
+	var names: Array = Array(str(A.get("only", "none,drop1,drop2,all")).split(","))
+	var views := _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)
+	if A.has("view"):
+		views = views.filter(func(v): return str(A["view"]).split("+").has(v[0]))
+	for q: String in str(A.get("q", "low,verylow")).split(","):
+		_quality(q)
+		for v: Array in views:
+			_view(v)
+			var res := {}
+			for r in int(A.get("rounds", "3")):
+				var order := names.duplicate()
+				for k in r % order.size():
+					order.push_back(order.pop_front())
+				for nm: String in order:
+					_dress_variant(nm)
+					await frames(20)
+					var m := await _measure("dressab %s %s %s r%d" % [q, v[0], nm, r])
+					if not res.has(nm):
+						res[nm] = {"gpu": [], "frame": [], "cpu": [], "vis_p": [], "vis_d": [], "sh_d": []}
+					for k: String in res[nm]:
+						(res[nm][k] as Array).append(float(m[k]))
+			for nm: String in names:
+				var md := {}
+				for k: String in res[nm]:
+					md[k] = _pct(PackedFloat32Array(res[nm][k]), 0.5)
+				print("DRESSAB %-8s %-7s %-34s кадр %5.2f мс (%3.0f к/с) | видеокарта %5.2f | процессор %5.2f | вызовы %4d + тень %4d | треуг. %5.2fM" % [
+					q, v[0], nm, md["frame"], 1000.0 / maxf(0.01, md["frame"]), md["gpu"], md["cpu"], int(md["vis_d"]), int(md["sh_d"]), md["vis_p"] / 1.0e6])
+	game._apply_quality()
+
+
+func _dress_variant(nm: String) -> void:
+	# drop1sh — облегчение «Низкой», но тени наполнения (Parts.NOSH_LOW) как прежде
+	Parts.nosh_on = not nm.ends_with("sh")
+	_drop_set(int(nm.substr(4, 1)) if nm.begins_with("drop") else 0)
+	Parts.nosh_on = true
+	if nm.begins_with("drop"):
+		return
+	var subs := Array(nm.split("+"))
+	for key: String in game.parts.groups:
+		var g: Dictionary = game.parts.groups[key]
+		if not g.has("gone"):
+			continue
+		var hide := nm == "all"
+		if nm != "none" and nm != "all":
+			var gname := key.get_slice("|", 0)
+			for s2: String in subs:
+				if gname.contains(s2):
+					hide = true
+					break
+		for sub in g["subs"]:
+			(sub["mmi"] as Node3D).visible = not hide
+
 
 ## 12.11: «жизнь построек» (Life: двери, ставни по часам, мебель) — по очереди без неё и с ней (Life.on), rounds раз,
 ## итог — медианы; в час, когда ставни как раз закрываются (hour=20.6: дома 20:30–23:30, лавки 19:24–20:48), плюс

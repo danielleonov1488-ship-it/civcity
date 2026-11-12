@@ -18,6 +18,22 @@ static var split_on := true                # для сравнений «был�
 var _col := Color.WHITE                     # цвет экземпляра для последней группы из _group
 static var _tint_mats := {}
 
+## Облегчение (12.11, владелец: «минимум 120 кадров, даже на старых ПК»): у деталей наполнения домов в чертеже есть
+## четвёртое поле — с какого облегчения их не рисовать (Catalog.dress_gone). На «Высокой» и «Средней» (drop 0) оно не
+## читается: группы, вызовы и картинка — ровно прежние. Постройка, поставленная на «Низкой»/«Очень низкой», кладёт такие
+## детали в свои группы (ключ «|g<уровень>»); дальше смена уровня только прячет/показывает группы (вернулись на
+## «Высокую» — всё снова видно, с прежними тенями). Постройки, поставленные на «Высокой», делятся при следующем показе
+## (запуск игры, перестройка);
+## drop — нынешнее облегчение (Gfx.apply: 0 — «Высокая» и «Средняя», 1 — «Низкая», 2 — «Очень низкая»): группа не рисуется,
+## когда drop >= её уровня. Прячется вся группа (MultiMesh) — ни вызова отрисовки, ни треугольника; ручки деталей прежние.
+## NOSH_LOW — деталь видна всегда, но на «Низкой» без тени (плющ, шпалеры, угловые камни наполнения: тени теней не видно)
+const GONE_LOW := 1
+const GONE_VLOW := 2
+const NOSH_LOW := 3
+static var drop := 0
+static var nosh_on := true                  # test_perf: тени NOSH_LOW на «Низкой» как прежде (для сравнения)
+var _gone := 0                              # уровень детали для _group (как _col)
+
 
 ## [оттенок, какие картинки подкрашены («*» — все), remap без оттенка] или [] — группа как прежде
 static func _split(name: String, remap: Dictionary) -> Array:
@@ -46,7 +62,7 @@ static func _split(name: String, remap: Dictionary) -> Array:
 
 
 func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictionary:
-	var ts := "" if tile.x < 0 else "|%d,%d" % [tile.x, tile.y]
+	var ts := ("" if tile.x < 0 else "|%d,%d" % [tile.x, tile.y]) + _gone_key()
 	var key := name + "|" + str(remap) + ts
 	_col = Color.WHITE
 	if groups.has(key):
@@ -84,7 +100,40 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 			g["subs"].append(sub)
 		src.free()
 	groups[key] = g
+	_mark_gone(g)
 	return g
+
+
+func _gone_key() -> String:
+	return "|g%d" % _gone if _gone > 0 else ""
+
+
+## Группа деталей наполнения с уровнем облегчения: помнит его и сразу видна или нет по нынешнему drop
+func _mark_gone(g: Dictionary) -> void:
+	if _gone <= 0:
+		return
+	g["gone"] = _gone
+	for sub in g["subs"]:
+		sub["cast0"] = (sub["mmi"] as GeometryInstance3D).cast_shadow
+	_drop_group(g)
+
+
+func _drop_group(g: Dictionary) -> void:
+	var gn := int(g["gone"])
+	for sub in g["subs"]:
+		var mmi: GeometryInstance3D = sub["mmi"]
+		if gn == NOSH_LOW:
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if drop >= 1 and nosh_on else int(sub["cast0"])
+		else:
+			mmi.visible = drop < gn
+
+
+## Облегчение сменилось (Gfx.apply): группы наполнения — видны или нет, с тенью или без
+func apply_drop() -> void:
+	for k in groups:
+		var g: Dictionary = groups[k]
+		if g.has("gone"):
+			_drop_group(g)
 
 
 ## Группа без оттенка: модель с remap без цвета, у подкрашиваемых поверхностей — белый материал «умножить на цвет
@@ -123,6 +172,7 @@ func _tint_group(name: String, sp: Array, tkey: String, tile: Vector2i) -> Dicti
 		_small(name, sub, tile)
 		g["subs"].append(sub)
 	groups[tkey] = g
+	_mark_gone(g)
 	return g
 
 
@@ -417,7 +467,9 @@ func _alloc(g: Dictionary) -> int:
 func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 	var handles := []
 	for p in bp.parts:
+		_gone = int(p[3]) if p.size() > 3 and drop > 0 else 0
 		var g := _group(subst.get(p[0], p[0]), p[2])
+		_gone = 0
 		var col := _col
 		var slot := _alloc(g)
 		var t: Transform3D = xf * (p[1] as Transform3D)

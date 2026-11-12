@@ -308,6 +308,13 @@ static func apply(g) -> void:
 				for a in (g.visuals[id] as Dictionary).get("actors", []):
 					HandProps.drop(a)
 	small_textures(q == "verylow")
+	# наполнение домов (Catalog.dress_gone): на «Низкой» не рисуется самая мелочь, на «Очень низкой» — ещё и мелкое
+	# в целом; прячутся группы пула, чертежи прежние. «Высокая» и «Средняя» — всё как было
+	Parts.drop = 2 if q == "verylow" else (1 if low else 0)
+	if g.get("parts") != null:
+		g.parts.apply_drop()
+	if g.get("cover") != null and g.cover.pool != null:
+		g.cover.pool.apply_drop()
 	# большие постройки этапа 5 (CatGrand.LOW): на «Низкой» — лёгкие колонны и статуи; уровень поменяли — их облик заново
 	if low != _grand_low:
 		_grand_low = low

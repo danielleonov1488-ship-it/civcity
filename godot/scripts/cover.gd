@@ -40,7 +40,7 @@ class Pool extends Parts:
 	var mat: ShaderMaterial
 
 	func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictionary:
-		var key := name + "|" + str(remap)
+		var key := name + "|" + str(remap) + _gone_key()      # наполнение с уровнем облегчения — свои группы, как у src
 		if groups.has(key):
 			return groups[key]
 		var s: Dictionary = (src.groups.get(key, src.alias.get(key, {})) as Dictionary) if src != null else {}
@@ -50,6 +50,7 @@ class Pool extends Parts:
 		for sub in s["subs"]:
 			g["subs"].append(_sub((sub["mm"] as MultiMesh).mesh, sub["local"]))
 		groups[key] = g
+		_mark_gone(g)
 		return g
 
 	func _sub(mesh: Mesh, local: Transform3D, _colors := false) -> Dictionary:
@@ -72,7 +73,9 @@ class Pool extends Parts:
 		var gs: Array = _bp_groups.get(key, [])
 		if gs.is_empty():
 			for p in bp.parts:
+				_gone = int(p[3]) if p.size() > 3 and drop > 0 else 0
 				gs.append([_group(p[0], p[2]), p[1]])
+				_gone = 0
 			_bp_groups[key] = gs
 		return gs
 
