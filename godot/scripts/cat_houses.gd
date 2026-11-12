@@ -708,6 +708,35 @@ static func _terrace_dress(b: Bp, rf: PackedFloat32Array, y: float) -> void:
 	else:
 		_put(b, "SM_Prop_Table_07", Vector3(cx + 0.3, ty, rf[2] + 1.2), 0.0, Vector3.ONE * 0.9)
 		_put(b, "SM_Prop_Jug_05", Vector3(cx + 0.3, ty + 0.5, rf[2] + 1.2), 0.0)
+	if b.chance(0.55):
+		_terrace_line(b, rf, ty)
+
+
+## Бельё на верёвке поперёк террасы (инсула, владелец 12.11: «балконы с цветами и бельём»): два шеста у боковых
+## парапетов, верёвка, на ней 2–4 полотна разного цвета и длины — над столиком и скамьёй, перед горшками.
+## Шесты, верёвка и полотна не сжимаются вдоль фасада (_narrow) — длина верёвки и ширина полотен заранее × SX
+static func _terrace_line(b: Bp, rf: PackedFloat32Array, y: float) -> void:
+	var z := rf[2] + 1.55
+	var x0 := rf[0] + 0.3
+	var x1 := rf[1] - 0.3
+	var h := 1.75
+	for x: float in [x0, x1]:
+		_put(b, "SM_Prop_Pole_01", Vector3(x, y, z), 0.0, Vector3(0.8, h / 3.0, 0.8))
+	var bb := Bp.model_aabb("SM_Prop_Beam_01")
+	var sb := Vector3((x1 - x0) * SX / bb.size.x, 0.13, 0.12)
+	_put(b, "SM_Prop_Beam_01", Vector3((x0 + x1) / 2.0, y + h - 0.06, z) - bb.get_center() * sb, 0.0, sb)
+	var dr := Bp.model_aabb("SM_Prop_Rug_Drape_01")
+	var x := x0 + 0.18
+	while true:
+		var wc := b.rng.randf_range(0.42, 0.7)          # ширина полотна в игре (после сжатия)
+		if x + wc / SX > x1 - 0.12:
+			break
+		var hc := b.rng.randf_range(0.55, 0.9)
+		var sc := Vector3(wc / dr.size.x, hc / dr.size.y, 0.12)
+		var top := Vector3(x + wc / SX * 0.5, y + h - 0.04, z)
+		var rm := CatShops._rug(String(CatDress.LINEN[b.rng.randi() % CatDress.LINEN.size()]))
+		_put(b, "SM_Prop_Rug_Drape_01", top - Vector3(dr.get_center().x * sc.x, dr.end.y * sc.y, dr.get_center().z * sc.z), 0.0, sc, rm)
+		x += (wc + b.rng.randf_range(0.05, 0.12)) / SX
 
 
 ## Верхний этаж f в глубине (как в Town to City): на задней половине r — комната (пролёты фасада top),
