@@ -140,6 +140,8 @@ func apron_of(b: Dictionary) -> int:
 		return 0
 	if String(b["type"]) in KERB_TYPES:
 		return 2
+	if NewArena.covers(String(b["type"])):
+		return 0                                 # новые амфитеатр и цирк — на своём мощёном основании с бордюром (NewArena): ни глины, ни мостовой под ним
 	if String(b["type"]) in PAVE_TYPES:
 		return 3
 	return 1 if d["kind"] in APRON_KINDS else 0

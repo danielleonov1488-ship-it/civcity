@@ -7656,7 +7656,9 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 static func pets_of(type: String) -> Array:
 	var lk := int((Defs.B.get(type, {}) as Dictionary).get("look", 0))
 	var list: Array = KitHouses.pets(type)
-	if list.is_empty():
+	if NewArena.covers(type):
+		list = NewArena.pets(type)
+	elif list.is_empty():
 		list = CatGrand.PETS.get(type, CatExtra.PETS.get(type, CatDecor2.PETS.get(Defs.base_of(type), [])))
 	return list.filter(func(e: Array): return e.size() <= 5 or int(e[5]) < 0 or int(e[5]) == lk)
 

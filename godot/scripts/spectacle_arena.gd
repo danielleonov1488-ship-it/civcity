@@ -21,6 +21,7 @@ var floor_y := 0.0
 var r_in := 3.0
 var next_pair := 0
 var on := false
+var gates: Array = GATES                 # направления ворот от середины арены (у нового амфитеатра — NewArena.GATES)
 
 
 func _init(s, v: Dictionary) -> void:
@@ -29,6 +30,9 @@ func _init(s, v: Dictionary) -> void:
 	rng.seed = int(V["id"]) * 31 + 7
 	k = Catalog.scale_of(String(V.get("type", "colosseum")))
 	r_in = ARENA_R * k
+	if NewArena.covers(String(V.get("type", ""))):
+		r_in = NewArena.AR * k               # новый маленький амфитеатр: своя арена и свои ворота
+		gates = NewArena.GATES
 	var tris = V["lay"]["tris"]
 	var h: float = tris.surface(r_in * 0.55, 0.0, 1.0)
 	floor_y = h if h > -INF else 0.03
@@ -49,7 +53,7 @@ func free_all() -> void:
 
 
 func _gate_pt(i: int, r: float) -> Vector3:
-	var a: float = GATES[i % 2]
+	var a: float = gates[i % 2]
 	return Vector3(sin(a) * r, floor_y, cos(a) * r)
 
 
@@ -58,7 +62,7 @@ func _spawn(slot: int) -> void:
 	var kinds: Array = PAIRS[next_pair % PAIRS.size()]
 	next_pair += 1
 	var gate := slot % 2
-	var ax := GATES[0] + PI / 2.0 + slot * PI           # середина пары — поперёк оси ворот
+	var ax := float(gates[0]) + PI / 2.0 + slot * PI    # середина пары — поперёк оси ворот
 	var c := Vector3(sin(ax), 0, cos(ax)) * r_in * 0.48
 	c.y = floor_y
 	var u := Vector3(cos(ax), 0, -sin(ax))              # бойцы стоят по касательной

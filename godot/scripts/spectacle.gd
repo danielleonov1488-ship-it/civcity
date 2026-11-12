@@ -169,11 +169,14 @@ func layout(b: Dictionary) -> Dictionary:
 		"tavern":
 			_tavern(lay, bp, tris)
 		_:
-			for p in bp.parts:
-				if p[0] == "SM_Bld_Amphitheatre_01":
-					_amphi(lay, p[1], tris)
-				elif p[0] == "#bench":
-					_bench(lay, p[1], tris)
+			if NewArena.covers(String(b["type"])):
+				NewArena.seats(self, lay, tris, String(b["type"]))     # новые амфитеатр и цирк: места — по их рядам и проходам
+			else:
+				for p in bp.parts:
+					if p[0] == "SM_Bld_Amphitheatre_01":
+						_amphi(lay, p[1], tris)
+					elif p[0] == "#bench":
+						_bench(lay, p[1], tris)
 	if String(VENUES[b["type"]]["kind"]) == "theatre":
 		_stage(lay, bp)
 	lay["ms"] = Time.get_ticks_msec() - t0
@@ -712,11 +715,16 @@ func _on_sfx(kind: String, at: Vector3, vol: float) -> void:
 ## ворота — дерево, открытые — освещённый ход, а не чёрная дыра. Открывает бой (gate_open)
 func _gates(V: Dictionary, bp: Bp) -> void:
 	var walls := []
-	for p in bp.parts:
-		if p[0] == "SM_Bld_Wall_Door_Large_01":
-			var o: Vector3 = (p[1] as Transform3D) * Vector3(1.25, 0, 0)
-			walls.append([Vector2(o.x, o.z).length(), p[1]])
-	walls.sort_custom(func(x, y): return x[0] < y[0])
+	var fresh := NewArena.covers(String(V["type"]))      # новый амфитеатр: рамы ворот — из NewArena, проход за ними открыт небу
+	if fresh:
+		for xf: Transform3D in NewArena.gate_frames():
+			walls.append([0.0, xf])
+	else:
+		for p in bp.parts:
+			if p[0] == "SM_Bld_Wall_Door_Large_01":
+				var o: Vector3 = (p[1] as Transform3D) * Vector3(1.25, 0, 0)
+				walls.append([Vector2(o.x, o.z).length(), p[1]])
+		walls.sort_custom(func(x, y): return x[0] < y[0])
 	V["gates"] = []
 	var root: Node3D = V["root"]
 	for w in walls.slice(0, 2):
@@ -728,6 +736,11 @@ func _gates(V: Dictionary, bp: Bp) -> void:
 			leaves.append(n)
 		var c: Vector3 = xf * Vector3(1.25, 0, 0)
 		var inward := (xf.basis.z).normalized()               # лицом к арене
+		var g := {"xf": xf, "leaves": leaves, "a": 0.0, "to": 0.0, "c": c, "in": inward}
+		V["gates"].append(g)
+		_door_pose(g)
+		if fresh:
+			continue                                          # днём проход светлый и так; лишних источников света нет
 		var lt := OmniLight3D.new()
 		lt.light_color = Color(1.0, 0.72, 0.42)
 		lt.light_energy = 1.6
@@ -738,9 +751,6 @@ func _gates(V: Dictionary, bp: Bp) -> void:
 		var torch := Synty.make("SM_Prop_Torch_01")
 		root.add_child(torch)
 		torch.transform = Transform3D(Basis.looking_at(-inward).scaled(Vector3.ONE * 0.8), c - inward * 1.75 + Vector3(0, 1.25, 0) + (xf.basis.x).normalized() * 0.55)
-		var g := {"xf": xf, "leaves": leaves, "a": 0.0, "to": 0.0, "c": c, "in": inward}
-		V["gates"].append(g)
-		_door_pose(g)
 
 
 func _door_pose(g: Dictionary) -> void:

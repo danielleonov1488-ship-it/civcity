@@ -22,6 +22,8 @@ static func scale_of(type: String) -> float:
 	var dd: Dictionary = Defs.B.get(type, {})
 	if dd.get("kind", "") == "decor" and not dd.get("wall", false):
 		return DECOR
+	if NewArena.covers(type):
+		return ARCH * NewArena.K               # новые амфитеатр и цирк: детали в натуральную величину, само здание маленькое
 	return ARCH * float(SHRINK.get(type, 1.0))
 
 
@@ -47,9 +49,13 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	b.paint(color)
 	# лавки и прилавки из своего набора (KitHouses: "shop_<тип>", "stall_<товар>") — облик и люди при деле из Blender
 	var kit_done := KitHouses.covers(type) and not type.begins_with("house_") and KitHouses.build(b, type, tier, variant, legacy, color)
-	match "#kit" if kit_done else type:
+	# новые амфитеатр и цирк — собраны с нуля (NewArena), без прежнего наполнения CatDressCivic
+	var arena_new := not kit_done and NewArena.covers(type)
+	match "#kit" if kit_done else ("#arena" if arena_new else type):
 		"#kit":
 			pass
+		"#arena":
+			NewArena.make(b, type)
 		"house_pleb":
 			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy, color)):
 				CatHouses._house_pleb(b, tier, variant)
@@ -101,7 +107,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	b.base = Transform3D.IDENTITY
 	if CatDress.ON and not kit_done and not legacy and (dd0.get("kind", "") in ["house", "shop", "inn", "rp", "store"] or CatDress.TRADE_SIGN.has(type)):
 		CatDress.dress(b, type)                # цветы под окнами, плющ, горшки у дверей — как на картинках Synty
-	if not kit_done:
+	if not kit_done and not arena_new:
 		_actors(b, type, tier)
 		CatDressCivic.dress(b, type, tier)     # склады, мастерские, поля, бани, храмы — обжитые дворы и бока (без новых деталей в следе)
 	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)
