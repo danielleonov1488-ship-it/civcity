@@ -779,11 +779,18 @@ func _d10_api() -> void:
 		for r: Rect2 in b0.footprint():
 			rects.append(r.grow(0.3))           # клетки участка — по прямоугольникам следа (с запасом на клетку)
 		var n0 := b0.parts.size()
+		# что было на 1-м уровне (деталь и место): наполнение у стен (CatDressGrand) — на всех уровнях одно, оно встаёт в
+		# конец списка деталей и номером не отличить от прибавки уровня
+		var had := {}
+		for pp: Array in b0.parts:
+			had[[pp[0], (pp[1] as Transform3D).origin.snapped(Vector3.ONE * 0.05)]] = true
 		for tier in range(1, Legion.VIS_MAX + 1):
 			var bt := Catalog.make(t, tier, 0, 0)
 			if bt.parts.size() <= n0:
 				out.append("%s:%d ничего не прибавилось" % [t, tier])
-			for i in range(n0, bt.parts.size()):
+			for i in range(bt.parts.size()):
+				if had.has([bt.parts[i][0], (bt.parts[i][1] as Transform3D).origin.snapped(Vector3.ONE * 0.05)]):
+					continue
 				var o: Vector3 = (bt.parts[i][1] as Transform3D).origin
 				if o.y < 1.6 and not rects.any(func(r: Rect2) -> bool: return r.has_point(Vector2(o.x, o.z))):   # на крыше — землю не занимает
 					out.append("%s:%d %s (%.1f, %.1f)" % [t, tier, bt.parts[i][0], o.x, o.z])
