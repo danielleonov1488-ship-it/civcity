@@ -7,6 +7,7 @@ extends Node
 ## set=mil / mil2 — здания Легиона (mtier=0…5 — облик уровня, Legion.vis_tier); set=grand — амфитеатр, цирк, театр, одеон;
 ## set=mon — памятники (пантеон, маяк, храм Венеры, арка, фонтан, нимфей, акведук); set=dec / dec2 — украшения;
 ## station=1 — только почтовая станция на всех уровнях города (stiers=0,3,5,7)
+## life2=0 — как до «жизни построек 2» (ставни одной деталью, маяк, нимфей и акведук без наполнения)
 
 var game
 var c: City
@@ -37,6 +38,7 @@ func _ready() -> void:
 			"only": only = Array(kv[1].split(","))
 			"street": street = kv[1] != "0"
 			"dress": CatDressCivic.ON = kv[1] != "0"
+			"life2": CatDressCivic.LIFE2 = kv[1] != "0"     # снимки «было» до «жизни построек 2» (ставни одной деталью…)
 			"set":
 				match kv[1]:
 					"2":
@@ -161,6 +163,12 @@ func _run() -> void:
 	for h: float in hours:
 		game._set_hour(h)
 		await frames(20)
+		if hours.size() > 1:
+			# ставни (Life) ходят по часам вразнобой, до ~7 с — дождаться, пока все встанут (снимки «вечером ставни закрыты»)
+			var w := 0.0
+			while w < 7.5:
+				await get_tree().process_frame
+				w += get_process_delta_time()
 		if street and (only.is_empty() or only.has("street")):      # only=street — только общие виды (и замер отрисовки)
 			var sd := 42.0 if gap <= GAP else 70.0
 			var sv := [[Vector2(X0 + 34.0, Z0), 25.0, 42.0, sd], [Vector2(X0 + 34.0, Z0), 205.0, 42.0, sd]]

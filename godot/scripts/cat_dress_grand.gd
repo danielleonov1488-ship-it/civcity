@@ -15,7 +15,7 @@ extends RefCounted
 
 const MIL := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill",
 	"tannery", "principia", "mars"]
-const GRAND := ["center", "colosseum", "circus_fl", "theatre", "odeon", "pantheon", "venus", "arch", "fountain"]
+const GRAND := ["center", "colosseum", "circus_fl", "theatre", "odeon", "pantheon", "venus", "arch", "fountain", "pharos", "nymphaeum", "aqua"]
 ## Выключатель для проверок «было/стало» (вместе с CatDressCivic.ON)
 static var ON := true
 
@@ -395,6 +395,9 @@ static func _grand(x: Dictionary, type: String, tier: int) -> void:
 		"venus": _venus(x)
 		"arch": _arch(x)
 		"fountain": _fountain(x)
+		"pharos": _pharos(x)
+		"nymphaeum": _nymphaeum(x)
+		"aqua": _aqua(x)
 
 
 ## Столик торговца у входа: стол, на нём кувшины, миски, корзины; под ним корзина (CatDressCivic._market_table),
@@ -504,6 +507,64 @@ static func _fountain(x: Dictionary) -> void:
 	var lot: Rect2 = x["lot"]
 	for sd: float in [-1.0, 1.0]:
 		_g(x, "vasebloom", Vector3(sd * (lot.size.x * 0.5 - 0.35), 0, lot.position.y + 0.4), 0.0, Vector3(0, 0, 0.25))
+
+
+## Маяк (владелец 12.11: «пересобирай всё в более детальное»): на площадке у башни — лодочные снасти (лодка вверх
+## дном на колодах, вёсла у стены, бухты каната, сеть сушится на жердях), амфоры и вазы с цветами за башней,
+## на глухих стенах башни — кашпо и цветущий плющ. Лестница, проход к двери и люди при деле свободны
+static func _pharos(x: Dictionary) -> void:
+	if not CatDressCivic.LIFE2:
+		return
+	var C := CatDressCivic
+	# слева: лодка вверх дном вдоль башни, бухта каната у кормы, вёсла прислонены к башне
+	C._group(x, [_it("#dress:boat", 1.0)], Vector3(-3.55, 0, -0.2), 0.0, Vector3(0, 0, 0.3))
+	C._group(x, [_it("#dress:coil", 1.5, C._rf(x, 0.0, TAU))], Vector3(-3.45, 0, 1.75), 0.0, Vector3(0, 0, 0.25))
+	C._group(x, [_lean("#dress:oars", 1.0, 0.17, Vector3(0, 0, 0.36))], Vector3(-2.62, 0, -1.9), -PI / 2, Vector3(0, 0, 0.3))
+	# справа: сеть на жердях вдоль башни, бухта каната, амфоры
+	C._group(x, [_it("#dress:net", 1.0)], Vector3(3.6, 0, -0.4), PI / 2, Vector3(0, 0, 0.3))
+	C._group(x, [_it("#dress:coil", 1.35, C._rf(x, 0.0, TAU))], Vector3(3.4, 0, 1.6), 0.0, Vector3(0, 0, 0.25))
+	_g(x, "amph2", Vector3(3.65, 0, -2.25), PI / 2, Vector3(0, 0, 0.25))
+	# за башней: вазы с цветами и амфоры
+	for e: Array in [[Vector3(-1.7, 0, -3.65), "vasebloom"], [Vector3(0.0, 0, -3.7), "amph3"], [Vector3(1.7, 0, -3.65), "vasebloom"]]:
+		_g(x, String(e[1]), e[0], 0.0, Vector3(0.3, 0, 0))
+	C._hang(x, ["left", "right", "back"], ["SM_Prop_FlowerPot_Hanging_04", "SM_Prop_FlowerPot_Hanging_05", "SM_Prop_FlowerPot_Hanging_06"], 1.25, 0.8, 0.6, 0.13, 3)
+	C._ivy(x, ["back", "left", "right"], 2, 0.8)
+
+
+## Нимфей: по бокам бассейна — вазы с цветущими кустами, за стеной с нишами — цветы и вазы, с её верха на зады свисает
+## цветущий плющ. Перед бассейном пусто: там умываются и любуются (People: досуг у фонтанов)
+static func _nymphaeum(x: Dictionary) -> void:
+	if not CatDressCivic.LIFE2:
+		return
+	var C := CatDressCivic
+	var wz := -1.6
+	for sd: float in [-1.0, 1.0]:
+		_g(x, "vasebloom", Vector3(sd * 4.3, 0, 0.15), 0.0, Vector3(0, 0, 0.25))
+	for e: Array in [[-3.2, "bloom"], [-1.6, "pot"], [0.0, "vasebloom"], [1.6, "pot"], [3.2, "bloom"]]:
+		var items: Array = C._bloom(x, 0.5) if e[1] == "bloom" else _mi(x, String(e[1]))
+		C._group(x, items, Vector3(float(e[0]), 0, wz - 1.2), 0.0, Vector3(0.25, 0, 0))     # вплотную к краю мраморного основания
+	# плющ с верха стены — на её задней стороне (лицом назад), у средней и крайних ниш
+	# (на верх стены — без проверки места: под плющом сама стена; верх малой стенки над нишами — 3,62)
+	for xx: float in [-2.9, 1.3]:
+		_force(x, [_it("SM_Env_Ivy_Draped_Flowers_0%d" % C._one(x, [1, 3]), 0.85, PI, Vector3(xx, 3.6, wz - 0.1))])
+
+
+## Акведук: у подножий опор — кусты и камни, вплотную к опоре и не шире её (под арками ходят и проводят улицы: проёмы
+## свободны), у средней опоры — только с задней стороны (спереди — проход к нему), у крайних полуопор — по разные
+## стороны (соседний кусок встаёт вплотную — его полуопора с другой стороны). Ставится без проверки места: короб арки
+## Synty занимает весь пролёт целиком, вместе с проёмом, — по нему не понять, где свободно; места рассчитаны по опорам
+static func _aqua(x: Dictionary) -> void:
+	if not CatDressCivic.LIFE2:
+		return
+	var C := CatDressCivic
+	var f := CatGrand.AQ_T                  # лицо опоры
+	var h := CatGrand.AQ_HALF - CatGrand.AQ_PIER * 0.25     # середина крайней полуопоры
+	_force(x, [_it("SM_Env_Garden_Plants_02", 0.55, 0.0, Vector3(-0.05, 0, -f - 0.55), {}), _it("SM_Prop_Marble_Rubble_07", 0.6, 0.0, Vector3(0.22, 0, -f - 0.25)),
+		_it("SM_Env_Grass_01", 0.45, C._rf(x, 0.0, TAU), Vector3(-0.35, 0, -f - 0.15))])
+	_force(x, [_it("SM_Env_Garden_Plants_05", 0.42, 0.0, Vector3(-h, 0, f + 0.45), {}), _it("SM_Env_Grass_01", 0.42, C._rf(x, 0.0, TAU), Vector3(-h + 0.12, 0, f + 0.12))])
+	_force(x, [_it("SM_Prop_Marble_Rubble_07", 0.55, 0.0, Vector3(-h, 0, -f - 0.22)), _it("SM_Env_Grass_01", 0.4, C._rf(x, 0.0, TAU), Vector3(-h - 0.1, 0, -f - 0.35))])
+	_force(x, [_it("SM_Env_Garden_Plants_05", 0.42, PI, Vector3(h, 0, -f - 0.45), {}), _it("SM_Env_Grass_01", 0.42, C._rf(x, 0.0, TAU), Vector3(h - 0.12, 0, -f - 0.12))])
+	_force(x, [_it("SM_Prop_Marble_Rubble_03", 0.58, 0.0, Vector3(h, 0, f + 0.24)), _it("SM_Env_Grass_01", 0.4, C._rf(x, 0.0, TAU), Vector3(h + 0.05, 0, f + 0.4))])
 
 
 # =====================================================================

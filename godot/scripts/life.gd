@@ -6,6 +6,9 @@ extends Node
 ##    через ~0,8 с после него (People._door_in, People._go);
 ##  - ставни: утром открываются, вечером закрываются — у каждого окна в свой час и вразнобой, плавно; пустой дом
 ##    стоит со ставнями закрытыми, часть окон на ночь остаётся открытой (в них теплится огонёк);
+##  - общественные здания (12.11, «жизнь построек 2»): створки дверей Synty у школы, склада, скриптория, бань, станции,
+##    мастерских Легиона… и бронзовые врата храмов и маяка на подиуме за лестницей (_find_doors: «deep»); ставни
+##    библиотеки, школы, терм, дома префекта, станции — створками (CatDressCivic._shutter_pair), по часам, как у лавок;
 ##  - мебель: скамьи у стен, табуреты и стулья у столов домов, лавок, таверн — места, где жители присаживаются
 ##    (People._furn_target); за столом таверны и термополия — с чашей;
 ##  - цветы у дома: утром и под вечер жилец выходит полить ящик под окном или горшки у двери (People «water»).
@@ -60,10 +63,20 @@ func info(bp: Bp, type := "") -> Dictionary:
 
 ## Створки входной двери: детали «SM_Bld_Door_…» первого этажа, ближние к месту входа (bp.door) и лицом к нему.
 ## Двустворчатая — обе створки (каждая на своей наружной петле); одна — петля у начала координат детали (так в Synty).
+## Нет такой у самого входа — врата большого здания за лестницей и портиком (храмы Юпитера и Венеры, пантеон, маяк):
+## на подиуме (до DEEP_Y над землёй) и дальше (до DEEP_D), но вход — прямо перед ними (не сбоку, DEEP_SIDE).
 ## Возвращает [[номер детали, петля (в осях постройки), знак поворота]]
+const DEEP_Y := 1.3
+const DEEP_D := 7.5
+const DEEP_SIDE := 2.2
 static func _find_doors(bp: Bp) -> Array:
 	if bp.kit_id != "":
 		return []                          # дом из своего набора — у него свои створки (KitShutters)
+	var res := _doors_at(bp, false)
+	return res if not res.is_empty() else _doors_at(bp, true)
+
+
+static func _doors_at(bp: Bp, deep: bool) -> Array:
 	var dp := bp.door
 	var cand := []
 	for i in bp.parts.size():
@@ -73,12 +86,15 @@ static func _find_doors(bp: Bp) -> Array:
 			continue
 		var xf: Transform3D = p[1]
 		var box: AABB = xf * Bp.model_aabb(nm)
-		if box.position.y > 0.3:
+		if box.position.y > (DEEP_Y if deep else 0.3):
 			continue                       # верхние этажи, балконы
 		var c := box.get_center()
 		var out := Vector3(xf.basis.z.x, 0, xf.basis.z.z).normalized()
 		var to := Vector3(dp.x - c.x, 0, dp.z - c.z)
-		if to.length() > 3.2 or to.dot(out) < 0.05:
+		if deep:
+			if to.length() > DEEP_D or to.dot(out) < to.length() * 0.6 or (to - out * to.dot(out)).length() > DEEP_SIDE:
+				continue                   # вход не прямо перед вратами
+		elif to.length() > 3.2 or to.dot(out) < 0.05:
 			continue                       # не та дверь (сбоку, сзади) или вход не перед ней
 		cand.append([to.length(), i, box, out, xf.origin])
 	if cand.is_empty():

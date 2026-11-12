@@ -39,6 +39,9 @@ const CAP2 := 40
 const BLOOM := ["SM_Env_Garden_Plants_03", "SM_Env_Garden_Plants_04", "SM_Env_Garden_Plants_06"]
 ## Выключатель (проверки «было/стало»: test_civic_synty dress=0)
 static var ON := true
+## Выключатель прохода «жизнь построек 2» (ставни створками, маяк, нимфей, акведук, вход городского домуса, грузчик
+## на мешках, служитель у алтаря, полотенца у бань) — для снимков «было/стало» (test_civic_synty / test_dress_turn life2=0)
+static var LIFE2 := true
 static var dbg := false        # печатать, почему кучка не встала (отладка: .work/civic_synty/dbg2.gd)
 
 
@@ -144,6 +147,8 @@ static func _ctx(b: Bp, type: String) -> Dictionary:
 			if nm.contains(wd):
 				wsolid.append(_box_of(nm, xf))
 				break
+		if LIFE2 and nm == "SM_Bld_Wall_01" and String((p[2] as Dictionary).get("Stucco_White_01", "")) == "Wood_02":
+			wsolid.append(_box_of(nm, xf))         # створка ставен (CatDress._shutters) — вторых ставен на это окно не вешать
 		if _soft(nm):
 			continue
 		var bx := _box_of(nm, xf)
@@ -606,6 +611,8 @@ static func _hang(x: Dictionary, sides: Array, names: Array, y: float, dens := 0
 ## Склад: вдоль боков и задней стены — открытый склад (мешки горкой, амфоры, корзины, поленница, доски),
 ## у фасада — товар у входа; у погрузочного двора справа — ещё мешки и корзины
 static func _warehouse(x: Dictionary) -> void:
+	if LIFE2:
+		_porter_seat(x)
 	_along(x, ["back"], ["store", "amphpile", "wood", "jarpile", "goods", "timber"], 1.0)
 	_awning(x, "back")
 	_along(x, ["left"], ["sideA", "sideB", "sideC"], 0.95)
@@ -614,6 +621,28 @@ static func _warehouse(x: Dictionary) -> void:
 	# погрузочный двор: мешки и корзины у повозки
 	for p: Vector3 in [Vector3(4.6, 0, 0.35), Vector3(5.0, 0, -3.0), Vector3(4.2, 0, -4.3)]:
 		_group(x, _item(x, String(_one(x, ["sack2", "bgoods", "basket", "amph2"]))), p, _rf(x, -0.4, 0.4), Vector3(0, 0, 0.25))
+
+
+## Грузчик присел на мешки у ворот склада (живая мелочь, владелец 12.11: «чтобы всё взаимодействовало с жителями»):
+## стопка мешков у стены и место работника «сидит» на ней — первый работник склада отдыхает тут, пока его не пошлют с
+## грузом (People._porter: встаёт и несёт). Место — ближе 1,5 м игры к входу: второй работник, придя к нему, заходит
+## в дверь (People._enter_work), а не тает у мешков
+static func _porter_seat(x: Dictionary) -> void:
+	var b: Bp = x["b"]
+	var sb := Bp.model_aabb("SM_Prop_Sack_Stack_01")
+	# низкая стопка (верх — чуть ниже табурета) поперёк фасада: от обрамлений ворот до края участка (полоса 0,66)
+	var s := minf(0.38 / maxf(sb.size.y, 0.01), 0.66 / maxf(sb.size.x, 0.01))
+	var items := [_it("SM_Prop_Sack_Stack_01", s, PI / 2)]
+	var lb := _items_box(items, Transform3D.IDENTITY)
+	# (обрамления ворот выступают до 0,3 от линии стены — мешки перед ними; работник — как у писца на табурете:
+	# место — середина сиденья, лицом к улице). У правых ворот, иначе у левых: между товаром у ворот и дорожкой к двери
+	var zb := 0.6 + 0.31
+	for xs: float in [1.21, -1.21]:
+		if _group(x, items, Vector3(xs - lb.get_center().x, 0, zb - lb.position.z), 0.0):
+			var q := Vector3(xs, 0, zb + lb.size.z * 0.5 + 0.05)
+			b.actor(q, 0.0, "Sitting_Idle", "pleb")
+			(x["keep"] as Array).append(Rect2(q.x - 0.35, q.z - 0.2, 0.7, 0.7))
+			return
 
 
 ## Мастерская скульптора: во дворе — ещё глыбы, обломки и щебень, штабель мрамора у задней стенки, второй верстак
@@ -766,6 +795,8 @@ static func _academy(x: Dictionary) -> void:
 
 ## Бани квартала: за баней — дрова для печи и амфоры масла; у боков — корзины с полотенцами, кувшины
 static func _balnea(x: Dictionary) -> void:
+	if LIFE2:
+		_towel_line(x)
 	_along(x, ["back"], ["wood", "wood", "amphpile", "jarpile"], 0.9)
 	_awning(x, "back")
 	_along(x, ["left", "right"], ["sideA", "jugs", "sideC"], 0.85)
@@ -777,12 +808,26 @@ static func _balnea(x: Dictionary) -> void:
 ## Термы: за залом — поленницы для печей и амфоры; между бассейнами и колоннадами — корзины с полотенцами,
 ## кувшины, цветущие кусты; у колоннад снаружи — амфоры. Перед бассейнами пусто: там купальщики идут к воде (Spectacle)
 static func _baths(x: Dictionary) -> void:
+	if LIFE2:
+		_towel_line(x)
 	_along(x, ["back"], ["wood", "amphpile", "wood", "jarpile", "store"], 0.9)
 	for sd: float in [-1.0, 1.0]:
 		for z: float in [-1.3, 0.5, 2.2]:
 			_group(x, _item(x, String(_one(x, ["towels", "jugs", "vasebloom", "towels"]))), Vector3(sd * 4.35, 0, z), -sd * PI / 2, Vector3(0, 0, 0.3))
 		_group(x, _item(x, "vasebloom"), Vector3(sd * 5.6, 0, 3.45), 0.0, Vector3(0.3 * sd, 0, 0))
 	_along(x, ["left", "right"], ["sideA", "jugs", "sideC"], 0.8)
+
+
+## Полотенца сушатся на верёвке у бока или за баней (два шеста, верёвка, полотна — CatDecor «#laundry»): вдоль боковой
+## стены, иначе — у задней
+static func _towel_line(x: Dictionary) -> void:
+	var lot: Rect2 = x["lot"]
+	var it := ["#laundry", Transform3D(Basis.from_scale(Vector3(0.62, 0.72, 0.62)), Vector3(0, 0, -1.02 * 0.62)), {}]
+	for e: Array in [[Vector3(lot.end.x + 0.2, 0, lot.get_center().y - 0.6), PI / 2], [Vector3(lot.position.x - 0.2, 0, lot.get_center().y - 0.6), -PI / 2],
+			[Vector3(lot.get_center().x + 1.2, 0, lot.position.y - 0.45), PI], [Vector3(lot.get_center().x - 1.6, 0, lot.position.y - 0.45), PI]]:
+		var yaw: float = e[1]
+		if _group(x, [it], e[0], yaw, Vector3(cos(yaw), 0, -sin(yaw)) * 0.3):
+			return
 
 
 ## Храм: на подиуме у алтаря — корзины с дарами (фрукты, виноград), вазы с цветами, курильницы; у лестницы —
@@ -809,6 +854,10 @@ static func _temple(x: Dictionary) -> void:
 			_group(x, _bloom(x, 0.68), Vector3(sd * 4.98, 0, z), 0.0, Vector3(0, 0, 0.3))
 	for xx: float in [-3.0, -1.0, 1.0, 3.0]:
 		_group(x, _bloom(x, 0.72), Vector3(xx, 0, -5.6), 0.0, Vector3(0.3, 0, 0))
+	if LIFE2:
+		# служитель в пронаосе за алтарём поправляет огонь, лицом к лестнице (второе место работника; первое — жрец
+		# перед лестницей; по бокам алтаря — корзины с дарами)
+		(x["b"] as Bp).actor(Vector3(0.0, 0.945, 1.95), 0.0, "Interact", "pleb")
 
 
 ## Дом префекта: у боков и сзади — цветы в вазах, кусты, амфоры
@@ -935,9 +984,14 @@ static func _wallart(x: Dictionary, kit: Dictionary) -> void:
 			if not nm in SHUT_WIN or shut_n >= 8:
 				continue
 			var sx := (w["xf"] as Transform3D).basis.x.length()
+			var sy := (w["xf"] as Transform3D).basis.y.length()
 			var sill := float((CatDress.WIN[nm] as Array)[0])
-			if _face(x, w, [[shut, Transform3D(Basis.from_scale(Vector3(1.05, 1.25, 1.0)), Vector3.ZERO), {}]], 1.25 * sx, sill + 0.72, 0.005):
+			if not LIFE2:
+				if _face(x, w, [[shut, Transform3D(Basis.from_scale(Vector3(1.05, 1.25, 1.0)), Vector3.ZERO), {}]], 1.25 * sx, sill + 0.72, 0.005):
+					shut_n += 1
+			elif _face(x, w, _shutter_pair(shut, sx, sy), 1.25 * sx, (sill + 0.05) * sy, 0.005):
 				shut_n += 1
+				x["n2"] = int(x["n2"]) - 1             # пара створок — за одну деталь, как прежние ставни (прочему на стенах место то же)
 	for w: Dictionary in x["walls"]:
 		if not String(w["side"]) in sides:
 			continue
@@ -968,6 +1022,19 @@ static func _wallart(x: Dictionary, kit: Dictionary) -> void:
 				if key == "lamp":
 					lamps += 1
 				break
+
+
+## Ставни окна W1/W5 — две отдельные дощатые створки, как у домов (CatHouses._shutters: стенка Synty с текстурой досок
+## Wood_02, краска SHUTTERS): каждая на своей петле у края окна, поэтому Life закрывает их на ночь и открывает утром.
+## Раньше — одной деталью «#shutters_*» (обе створки в одной сетке, не двигались). Начало кучки — середина окна у низа
+## створок, +Z — от стены; окно шириной 1,2 (в родных метрах стены, sx — растяжка стены вдоль, sy — по высоте)
+const SHUT_TINT := {"#shutters_green": 0, "#shutters_blue": 2, "#shutters_brown": 5}
+static func _shutter_pair(shut: String, sx := 1.0, sy := 1.0) -> Array:
+	var col: Color = CatHouses.SHUTTERS[int(SHUT_TINT.get(shut, 0))]
+	var rm := {"Stucco_White_01": "Wood_02", "Stucco_Orange_01": "Wood_02", "tints": {"Wood_02": col}}
+	var w := 0.475 * sx
+	var s := Basis.from_scale(Vector3(w / CatDress.WALL_W, 1.35 * sy / 3.0, 0.3))
+	return [["SM_Bld_Wall_01", Transform3D(s, Vector3(-0.6 * sx - w, 0, 0)), rm], ["SM_Bld_Wall_01", Transform3D(s, Vector3(0.6 * sx, 0, 0)), rm]]
 
 
 ## Одна деталь на глухой модуль: true — встала

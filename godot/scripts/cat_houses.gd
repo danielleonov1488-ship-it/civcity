@@ -1684,6 +1684,57 @@ static func _town_entry(b: Bp, r0: PackedFloat32Array, pd: int, floors: int) -> 
 			_front_pot(b, r0, u, 0.5)
 
 
+## Вход городского домуса — маленький портик, как у домусов с портиком (_portico_dress; владелец 12.11: «детальнее…
+## как на картинках Synty»): на пилястрах у двери — мраморный архитрав с медальоном, над ним черепичный навес, под
+## навесом два фонарика на цепях у краёв проёма (над проходом ничего не висит), на ступени — мозаичный коврик узором Synty Floor_Tiles по
+## цвету дома. След дома прежний: коврик на ступени и фонарики землю не занимают (Bp.free_parts), остальное — на стене
+## над дверью; проход к двери свободен. Без случайности — потоки «g», «f1», «f2» не сдвигаются
+static func _town_porch(b: Bp, r0: PackedFloat32Array, pd: int) -> void:
+	if not CatDressCivic.LIFE2:
+		return
+	var x0 := r0[0] + pd * M
+	var xc := x0 + M * 0.5
+	var z0 := r0[3]
+	var top := 2.7                                 # верх пилястр (_town_entry), их ось — в 0,16 от линии стены
+	# архитрав — между верхами пилястр (низом не ниже 2,35: дверь — до 2,13), над ним навес: ящик цветов окна второго
+	# этажа над дверью висит с 3,3
+	# брус архитрава: мраморная плита (Base_Floor_Combined, 20 треугольников) от лица стены до передней кромки пилястр,
+	# на её лице — карниз Trim_02
+	var hl := 0.32
+	var lb := Bp.model_aabb("SM_Bld_Base_Floor_Combined_01")
+	var lk := Vector3((M + 0.12) / lb.size.x, hl / maxf(lb.size.y, 0.01), 0.22 / lb.size.z)
+	_put(b, "SM_Bld_Base_Floor_Combined_01", Vector3(x0 - 0.06 - lb.position.x * lk.x, top - lb.end.y * lk.y, z0 + 0.115 - lb.position.z * lk.z), 0.0, lk,
+		MARBLE_FLOOR)
+	var tb := Bp.model_aabb("SM_Bld_Trim_02")
+	var tk := Vector3((M + 0.12) / tb.size.x, hl / maxf(tb.size.y, 0.01), 1.0)
+	var tz := z0 + 0.335 - tb.position.z
+	_put(b, "SM_Bld_Trim_02", Vector3(x0 - 0.06 - tb.position.x * tk.x, top - hl - tb.position.y * tk.y, tz), 0.0, tk)
+	# медальон на лице архитрава (круглый, не сужается вместе с фасадом)
+	var ob := Bp.model_aabb("SM_Bld_Ornament_04")
+	var os := (hl * 0.92) / maxf(ob.size.y, 0.01)
+	_put(b, "SM_Bld_Ornament_04", Vector3(xc - ob.get_center().x * os, top - hl * 0.5 - ob.get_center().y * os, tz + tb.end.z + 0.01 - ob.position.z * os), 0.0, Vector3.ONE * os)
+	# черепичный навес на архитраве (сужается вместе с фасадом — FLEX)
+	var vb := Bp.model_aabb("SM_Prop_Overhang_02")
+	var vk := (M - 0.1) / vb.size.x                   # не шире пролёта: у двери в угловом пролёте не выходит за угол
+	_put(b, "SM_Prop_Overhang_02", Vector3(xc - vb.get_center().x * vk, top - vb.position.y, z0 + 0.12 - vb.position.z), 0.0, Vector3(vk, 1.0, 1.0))
+	# два фонарика на цепях — у краёв проёма, над пилястрами: над серединой прохода ничего не висит
+	for u: float in [0.3, M - 0.3]:
+		b.free_parts[b.parts.size()] = true        # висит у края проёма — землю не занимает
+		_put(b, "#dress:lantern", Vector3(x0 + u, top - hl, z0 + 0.28), 0.0, Vector3.ONE * 0.55)
+	# мозаичный коврик на ступени (ступень — Floor_Trim_01 в 0,07 от стены, глубиной 0,6 своей)
+	var sb := Bp.model_aabb("SM_Bld_Floor_Trim_01")
+	var fb := Bp.model_aabb("SM_Bld_Base_Floor_01")
+	var q := 0.42
+	var fk := Vector3(q / SX / fb.size.x, 0.02 / maxf(fb.size.y, 0.01), q / fb.size.z)
+	var y := sb.end.y + 0.004 - fb.position.y * fk.y
+	var zc := z0 + 0.07 + (sb.position.z + sb.size.z * 0.5) * 0.6
+	var tiles := "Floor_Tiles_0%d" % [1, 2, 3][posmod(hash(b.tint.to_html()), 3)]
+	for k in 3:
+		var cx := xc + (k - 1) * q / SX
+		b.free_parts[b.parts.size()] = true
+		_put(b, "SM_Bld_Base_Floor_01", Vector3(cx - fb.get_center().x * fk.x, y, zc - fb.get_center().z * fk.z), 0.0, fk, {"Stone_01": tiles})
+
+
 ## 0 «Городской домус с лоджией»: внизу парадная дверь и окно с фронтончиком и цветами; наверху каменный балкон
 ## с драпировкой над окном и окно с фронтончиком; вальмовая крыша; у трёхэтажного — терраса с перголой и статуей
 static func _town_loggia(b: Bp, r0: PackedFloat32Array, floors: int, pd: int) -> void:
@@ -1692,6 +1743,7 @@ static func _town_loggia(b: Bp, r0: PackedFloat32Array, floors: int, pd: int) ->
 		"roof": "hip", "troof": "hip", "rise": RISE_PAT, "chim": 0.6 if wi == 0 else -0.6, "dress": false})
 	_wbox(b, r0, 0, wi, 0.0)
 	_town_entry(b, r0, pd, floors)
+	_town_porch(b, r0, pd)
 	_side_ivy(b, r0, 3 if wi == 0 else 1, 1.5)
 	if floors >= 2:
 		_use(b, "f1")
@@ -1717,6 +1769,7 @@ static func _town_temple(b: Bp, r0: PackedFloat32Array, floors: int, pd: int) ->
 	var shut: String = o["shut"]
 	_wbox(b, r0, 0, wi, 0.0)
 	_town_entry(b, r0, pd, floors)
+	_town_porch(b, r0, pd)
 	_side_ivy(b, r0, b.pick([1, 3]), 1.6)
 	if floors >= 2:
 		_use(b, "f1")

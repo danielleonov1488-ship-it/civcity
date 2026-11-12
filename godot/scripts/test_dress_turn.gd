@@ -16,6 +16,10 @@ const LIST := [["house_pleb", 2, 0, 1], ["bakery", 0, 0, 1], ["house_artisan", 3
 ## set=extra — прочие лавки с навесами, прилавками и столиками (полосатые навесы одного вида, товар на верёвках)
 const EXTRA := [["stall_fruit", 0, 0, 2], ["stall_veg", 0, 1, 5], ["stall_fish", 0, 2, 3], ["potter", 0, 0, 4], ["cobbler", 0, 0, 6],
 	["oilshop", 0, 0, 7], ["thermopolium", 0, 0, 1], ["barber", 0, 0, 5], ["house_artisan", 2, 1, 3], ["house_artisan", 2, 3, 1]]
+## set=life2 — «жизнь построек 2»: городской домус (оба облика, 1–3 этажа), маяк, нимфей, кусок акведука; life2=0 —
+## снимки «было» (CatDressCivic.LIFE2); в журнал — след каждого здания (TURN FP …): «было» и «стало» должны совпасть
+const LIFE2 := [["house_patrician", 1, 4, 2], ["house_patrician", 2, 4, 5], ["house_patrician", 3, 5, 3], ["house_patrician", 2, 5, 7],
+	["pharos", 1, 0, 0], ["nymphaeum", 1, 0, 0], ["aqua", 1, 0, 0]]
 var list: Array = LIST
 
 
@@ -27,7 +31,8 @@ func _ready() -> void:
 			"tag": tag = kv[1]
 			"before": CatDress.sides_on = kv[1] != "1"
 			"pool": pool = kv[1] != "0"
-			"set": list = EXTRA if kv[1] == "extra" else LIST
+			"set": list = EXTRA if kv[1] == "extra" else (LIFE2 if kv[1] == "life2" else LIST)
+			"life2": CatDressCivic.LIFE2 = kv[1] != "0"
 			"only":
 				for s in kv[1].split(","):
 					only.append(int(s))
@@ -86,6 +91,7 @@ func _run() -> void:
 				gi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 			add_child(n)
 		var top := bp.top_y()
+		print("TURN FP %d %s t%d v%d: %s, деталей %d" % [i, e[0], e[1], e[2], str(bp.footprint()), bp.parts.size()])
 		# середина и размер следа: портик домуса впереди, сад сзади — здание целиком в кадре
 		var lo := Vector2(INF, INF)
 		var hi := -lo
