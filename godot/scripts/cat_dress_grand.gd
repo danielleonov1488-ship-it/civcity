@@ -475,7 +475,7 @@ static func _pantheon(x: Dictionary) -> void:
 
 ## Цирк: у передней аркады — торговцы (подушки для зрителей, хлеб), вазы с цветами, амфоры; дорожку и трибуны не трогаем
 static func _circus(x: Dictionary) -> void:
-	var z := 8.62
+	var z := 8.8                         # на мостовой перед цоколем аркады (не на его краю)
 	for e: Array in [[-17.0, "cushions"], [-10.0, "bread"], [-5.2, "vasebloom"], [5.2, "vasebloom"], [10.0, "cushions"], [17.0, "bread"]]:
 		var k := String(e[1])
 		var items := _mi(x, k) if k == "vasebloom" else _stall(x, k)
