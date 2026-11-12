@@ -25,7 +25,9 @@ const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## 12.11 дома, лавки, общественные здания и памятники — из своего набора (Blender), в городе владельца — старые дома,
 ## ужатые по прежнему следу: эталон записан заново (golden_s7); golden_s6 остаётся у линий без своего набора
 ## 12.11 позже: фонтан, нимфей и арка снова Synty, детали Synty в своих зданиях, своя станция — golden_s8 (сборка 52)
-const GOLDEN := "D:/CivCity/.work/perf_ref/golden_s8"
+## 12.11 «Высокая» облегчена для всех (без SDFGI/SSIL, атлас 4096, MSAA 2x), «Средняя» — атлас 4096 и мягкость низкая:
+## эталон записан заново (golden_p1, ветка perf-120 от сборки 52); golden_s8 остаётся у линий без этой правки
+const GOLDEN := "D:/CivCity/.work/perf_ref/golden_p2"          # 12.11 позже: мелочь без тени, «Средняя» — 2 полосы теней
 const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)
@@ -136,6 +138,7 @@ func _run(mode: String) -> void:
 		"pplprof": await _pplprof()
 		"ab": await _ab()
 		"gpuab": await _gpuab()
+		"procab": await _procab()
 		"offer": await _offer()
 		_: await _regress()
 	print("PERF DONE fails=%d" % fails)
@@ -519,11 +522,36 @@ func _gpu_variant(name: String) -> void:
 				vp.msaa_3d = Viewport.MSAA_DISABLED
 				vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR2
 				vp.scaling_3d_scale = 0.77
+			"smallnoshadow":
+				_small_shadows(false)
+
+
+## Мелкие детали построек (самая длинная сторона модели меньше SMALL_SH) — без тени (для сравнения)
+const SMALL_SH := 0.9
+var _small_cast := {}
+func _small_shadows(on: bool) -> void:
+	var n := 0
+	for key: String in game.parts.groups:
+		for sub: Dictionary in game.parts.groups[key]["subs"]:
+			var mmi: MultiMeshInstance3D = sub["mmi"]
+			var mm: MultiMesh = sub["mm"]
+			if mm.mesh == null:
+				continue
+			var sz := mm.mesh.get_aabb().size
+			if maxf(sz.x, maxf(sz.y, sz.z)) >= SMALL_SH:
+				continue
+			if not _small_cast.has(mmi):
+				_small_cast[mmi] = mmi.cast_shadow
+			mmi.cast_shadow = int(_small_cast[mmi]) if on else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			n += 1
+	if not on:
+		print("GPUAB мелких деталей без тени: ", n)
 
 
 func _gpu_reset() -> void:
-	RenderingServer.directional_shadow_atlas_set_size(8192, true)
-	RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
+	if not _small_cast.is_empty():
+		_small_shadows(true)
+	Gfx._sun_low = -1                          # атлас и мягкость теней — заново по уровню (Gfx.apply)
 	var vp := get_viewport()
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
 	vp.scaling_3d_scale = 1.0
@@ -573,6 +601,47 @@ func _gpuab() -> void:
 		_unfreeze()
 		print("GPUAB снимки: ", out)
 	_gpu_reset()
+
+
+## 12.11: сколько процессора берёт каждый сценарий с обработкой кадра — по очереди выключен/включён (rounds раз, медианы)
+##   … -- mode=procab q=high rounds=4 [only=birds+camera_rig+…]
+func _procab() -> void:
+	await _settle()
+	_quality(str(A.get("q", "high")))
+	_view(_views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0])
+	var by_script := {}
+	for n: Node in game.find_children("*", "", true, false):
+		var sc: Script = n.get_script()
+		if sc and (n.is_processing() or n.is_physics_processing()):
+			var nm := sc.resource_path.get_file().get_basename()
+			if not by_script.has(nm):
+				by_script[nm] = []
+			by_script[nm].append(n)
+	var names: Array = by_script.keys() if not A.has("only") else Array(str(A["only"]).split("+"))
+	var res := {}
+	for r in int(A.get("rounds", "4")):
+		for nm: String in names:
+			if not by_script.has(nm):
+				continue
+			for off: bool in ([true, false] if r % 2 == 0 else [false, true]):
+				_proc_set(by_script[nm], Node.PROCESS_MODE_DISABLED if off else Node.PROCESS_MODE_INHERIT)
+				await frames(10)
+				var m := await _measure("procab %s %s r%d" % [nm, "off" if off else "on", r])
+				var key := "%s|%s" % [nm, off]
+				if not res.has(key):
+					res[key] = []
+				(res[key] as Array).append(float(m["proc"]))
+			_proc_set(by_script[nm], Node.PROCESS_MODE_INHERIT)
+	var rows := []
+	for nm: String in names:
+		if not res.has("%s|true" % nm):
+			continue
+		var on := _pct(PackedFloat32Array(res["%s|false" % nm]), 0.5)
+		var off := _pct(PackedFloat32Array(res["%s|true" % nm]), 0.5)
+		rows.append([on - off, nm, on, off])
+	rows.sort_custom(func(a, b): return float(a[0]) > float(b[0]))
+	for e: Array in rows:
+		print("PROCAB %-14s %+5.2f мс (со сценарием %.2f, без %.2f)" % [e[1], e[0], e[2], e[3]])
 
 
 static func _proc_set(list: Array, mode: int) -> void:

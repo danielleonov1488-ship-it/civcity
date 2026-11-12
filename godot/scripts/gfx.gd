@@ -243,8 +243,10 @@ static func is_low(q: String) -> bool:
 
 # ---------- уровни ----------
 
-## Применить уровень из game.settings["quality"]. Высокая и Средняя — прежние значения (как в project.godot и
-## game._environment), каждая «облегчённая» вещь возвращается ровно к ним
+## Применить уровень из game.settings["quality"].
+## 12.11 (владелец: «чтобы у всех игра была играбельной… теперь это высокая»): «Высокая» — облегчённая: без SDFGI и SSIL,
+## атлас теней 4096 с мягкостью средней, MSAA 2x (мягкие тени PCSS остались); на городе владельца 44 → 87 кадров при
+## почти той же картинке (сравнение — .work/perf120/gpuab). «Средняя» — она же без PCSS и с мягкостью низкой
 static func apply(g) -> void:
 	var q: String = str(g.settings.get("quality", "high"))
 	if not NAMES.has(q):
@@ -254,27 +256,30 @@ static func apply(g) -> void:
 		return
 	var low := is_low(q)
 	var ml := q == "medium" and medium_light
-	env.sdfgi_enabled = q == "high"
-	env.ssil_enabled = q == "high"
+	env.sdfgi_enabled = false
+	env.ssil_enabled = false
 	env.ssao_enabled = not low
 	env.glow_enabled = not low
 	var sun: DirectionalLight3D = g.sun
 	if sun:
-		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if low else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+		# 12.11: «Средняя» — тоже 2 полосы теней (вблизи тени чуть мягче; +15% кадров), «Высокая» — 4
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if low or ml else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 		# 175 м, как и прежняя «Низкая»: при 120 м (по плану) издалека город совсем без теней — плоский
 		sun.directional_shadow_max_distance = 175.0 if low else 190.0
 		sun.light_angular_distance = 0.0 if low or ml else 2.2    # без «мягких» теней PCSS — они самые дорогие
 		sun.shadow_enabled = q != "verylow"
-	# атлас теней солнца и его фильтр — общие настройки отрисовки (project.godot: 8192, мягкие высокие)
-	var sl := 1 if low else 0
+	# атлас теней солнца и его фильтр — общие настройки отрисовки (project.godot: 8192, мягкие высокие): «Высокая» — 4096 и
+	# средняя мягкость, «Средняя» и ниже — 4096 и низкая; прежняя «Средняя» (переключатель medium_light выключен) — как было
+	var full := q == "medium" and not ml
+	var sl := 2 if full else (0 if q == "high" else 1)
 	if sl != _sun_low:
-		if sl == 1 or _sun_low == 1:
-			RenderingServer.directional_shadow_atlas_set_size(4096 if low else 8192, true)
-			RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_LOW if low else RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
+		RenderingServer.directional_shadow_atlas_set_size(8192 if full else 4096, true)
+		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH if full else
+			(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if q == "high" else RenderingServer.SHADOW_QUALITY_SOFT_LOW))
 		_sun_low = sl
 	var vp: Viewport = g.get_viewport()
 	if vp:
-		vp.msaa_3d = Viewport.MSAA_DISABLED if low else (Viewport.MSAA_2X if ml else Viewport.MSAA_4X)
+		vp.msaa_3d = Viewport.MSAA_DISABLED if low else (Viewport.MSAA_4X if full else Viewport.MSAA_2X)
 		# «Очень низкая»: дальние модели (деревья, жители, детали построек) упрощаются раньше (по умолчанию — 1 точка экрана)
 		vp.mesh_lod_threshold = 4.0 if q == "verylow" else 1.0
 		# слабые видеокарты: картинка считается меньше и аккуратно растягивается (FSR); снимки (--shot) — в полном размере
