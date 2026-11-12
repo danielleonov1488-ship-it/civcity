@@ -290,6 +290,33 @@ static func _elbow(b: float) -> Vector3:
 	return Vector3(b, 0.0, 0.0)
 
 
+## Пьёт сидя (Sit_Drink): кадры «Smell» — чаша у груди и у рта (подобрано по test_anims)
+const DRINK_ARM := [0.32, 1.5]
+
+
+## Кости bones движения a ходят между кадрами t0 и t1 донора по кривой w(t) (0 — t0, 1 — t1)
+static func _arm_between(a: Animation, donor: Animation, t0: float, t1: float, bones: Array, w: Callable) -> void:
+	var node := "%GeneralSkeleton"
+	if a.get_track_count() > 0:
+		node = String(a.track_get_path(0)).get_slice(":", 0)
+	for bone: String in bones:
+		var path := NodePath(node + ":" + bone)
+		var di := donor.find_track(path, Animation.TYPE_ROTATION_3D)
+		if di < 0:
+			continue
+		var q0 := donor.rotation_track_interpolate(di, t0)
+		var q1 := donor.rotation_track_interpolate(di, t1)
+		var ti := a.find_track(path, Animation.TYPE_ROTATION_3D)
+		if ti >= 0:
+			a.remove_track(ti)
+		ti = a.add_track(Animation.TYPE_ROTATION_3D)
+		a.track_set_path(ti, path)
+		var n := int(a.length * 24.0)
+		for k in n + 1:
+			var tt := a.length * k / n
+			a.rotation_track_insert_key(ti, tt, q0.slerp(q1, float(w.call(tt))))
+
+
 static func _derive_leisure(lib: AnimationLibrary, idle: Animation) -> void:
 	var L := idle.length
 	# нюхает цветок: наклон вперёд, голова к цветку, правая рука подносит его к лицу; вдох — и чуть назад
@@ -358,6 +385,17 @@ static func _derive_leisure(lib: AnimationLibrary, idle: Animation) -> void:
 		"RightUpperArm": func(t: float) -> Vector3: return _arm(1, 0.0, 2.1 * wv.call(t)),
 		"RightLowerArm": func(t: float) -> Vector3: return _elbow((0.35 + 0.35 * sin(TAU * t * 2.2)) * wv.call(t)),
 		"Head": func(t: float) -> Vector3: return Vector3(0.0, -0.15 * wv.call(t), 0.0)}))
+	# пьёт за столом таверны, термополия (People._sit_pick, Life): сидит, правая рука с чашей у груди, раз за круг
+	# подносит её ко рту, голова чуть назад (чаша — HandProps «cup»)
+	# Рука — из «Smell» (кости руки — относительно груди, а грудь сидящего прямая): у груди — его начало, у рта — середина
+	if lib.has_animation("Sitting_Idle"):
+		var si := lib.get_animation("Sitting_Idle")
+		var reps := maxi(1, roundi(4.2 / maxf(0.1, si.length)))
+		var Ld := si.length * reps
+		var sip := func(t: float) -> float: return _curve(t / Ld, [[0.0, 0.0], [0.22, 0.0], [0.4, 1.0], [0.6, 1.0], [0.8, 0.0], [1.0, 0.0]])
+		var dr := _layer(si, reps, {"Head": func(t: float) -> Vector3: return Vector3(-0.14 * sip.call(t), 0.0, 0.0)})
+		_arm_between(dr, lib.get_animation("Smell"), DRINK_ARM[0], DRINK_ARM[1], ["RightShoulder", "RightUpperArm", "RightLowerArm", "RightHand"], sip)
+		lib.add_animation("Sit_Drink", dr)
 	# стоит, скрестив руки (ждёт, смотрит на работу мастера, на игру)
 	lib.add_animation("Arms_Crossed", _layer(idle, 3, {
 		"LeftUpperArm": func(t: float) -> Vector3: return _arm(-1, 0.4) + Vector3(0.0, 0.55, 0.0),

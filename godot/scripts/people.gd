@@ -1057,6 +1057,13 @@ func _go(r: Dictionary, to: Vector2, goal: String, keep := false) -> void:
 		r["p"] = (r["p"] as Vector2) - City.facing(door_b["yaw"]) * 0.4
 		r["yaw"] = float(door_b["yaw"])
 	r["path"] = _path(r["p"], to)
+	var via = (r["dest"] as Dictionary).get("via", null) if goal == "errand" else null
+	if via != null:
+		# к месту во дворике постройки — через её вход, а не напрямик сквозь стену (Life: мебель)
+		var pv := _path(r["p"], via)
+		if pv.size() >= 2:
+			pv.append(to)
+			r["path"] = pv
 	r["i"] = 1
 	r["goal"] = goal
 	if r["path"].size() < 2:
@@ -1071,6 +1078,8 @@ func _go(r: Dictionary, to: Vector2, goal: String, keep := false) -> void:
 		if from_in or not had:
 			r["fade"] = 0.0
 			c.set_alpha(0.0)
+		if from_in and not door_b.is_empty() and game.life:
+			game.life.door(door_b, 1.4)          # выходит — дверь перед ним открывается (Life)
 
 
 func _arrive(r: Dictionary) -> void:
@@ -1596,6 +1605,7 @@ func _release(r: Dictionary) -> void:
 	r["act"] = ""
 	r["seq"] = []
 	r.erase("read")
+	r.erase("drink")
 
 
 ## Что делать вне дома — по весам: лавки своего дома, скамья, колодец, фонтанчик, статуя, кошка, площадь. Дети играют.
@@ -1626,6 +1636,10 @@ func _pick_errand(r: Dictionary) -> Dictionary:
 			var t := _decor_target(r, from, e[0], e[1], e[2])
 			if not t.is_empty():
 				opts.append([e[3], t])
+		if hour >= 7.0 and hour < 21.0 and not (game.weather != null and game.weather.raining()):
+			var fs := _furn_target(r, from)       # скамья у дома, табурет у стола лавки или таверны (Life)
+			if not fs.is_empty():
+				opts.append([2.4, fs])
 		if fine:
 			var nt := _nature_target(r, from)
 			if not nt.is_empty():
@@ -1922,6 +1936,77 @@ func _bench_seats(b: Dictionary) -> Array:
 	return out
 
 
+## Мебель у домов, лавок, таверн (Life.seats): скамья у стены, табурет или скамья у стола — присесть, отдохнуть,
+## поболтать с соседом; у стола таверны и термополия — с чашей (Sit_Drink). Номера мест — FURN_K + номер сиденья
+## (у прилавка и у зрителей той же постройки свои номера, с нуля)
+const FURN_K := 100
+
+
+func _furn_target(r: Dictionary, from: Vector2, maxd := 32.0) -> Dictionary:
+	if game.life == null:
+		return {}
+	var hosts: Array = game.life.seat_hosts(from, maxd)
+	var n := hosts.size()
+	if n == 0:
+		return {}
+	var k0 := rng.randi() % n
+	for j in mini(n, 4):
+		var d := _furn_seat(r, hosts[(k0 + j) % n])
+		if not d.is_empty():
+			return d
+	return {}
+
+
+## Свободное сиденье мебели постройки b, к которому можно подойти (рядом проходимая клетка, по пути нет чужих стен)
+func _furn_seat(r: Dictionary, b: Dictionary) -> Dictionary:
+	var seats: Array = game.life.seats(b)
+	var n := seats.size()
+	if n == 0:
+		return {}
+	var sp: Dictionary = spots.get(b["id"], {})
+	var xf := city.xf(b)
+	var id := int(b["id"])
+	var k0 := rng.randi() % n
+	for j in n:
+		var k := (k0 + j) % n
+		if sp.has(FURN_K + k):
+			continue
+		var s: Array = seats[k]
+		var w: Vector3 = xf * (s[0] as Vector3)
+		var yaw := float(b["yaw"]) + float(s[1])
+		var mw: Vector3 = xf * (s[3] as Vector3)
+		var f := Vector2(w.x - mw.x, w.z - mw.z).normalized()
+		if f != Vector2.ZERO and not _front_free(Vector2(mw.x, mw.z), f, id):
+			if bool(s[4]) and _front_free(Vector2(mw.x, mw.z), -f, id):
+				w = mw - (w - mw)
+				yaw += PI
+			else:
+				continue
+		var p := Vector2(w.x, w.z)
+		var d := {"act": "sit", "bid": b["id"], "k": FURN_K + k, "p": p, "yaw": yaw, "seat": float(s[2]), "drink": bool(s[5])}
+		if bool(s[6]):
+			# дворик, портик: через вход — от него до места стен нет (Life._open_from)
+			var dp := city.door_point(b)
+			if _near_free(dp, 6) != Vector2.INF:
+				d["via"] = dp
+				return d
+		# скамья у стены снаружи: шаг-другой с мостовой по траве, мимо любых построек
+		var q := _near_free(p, 9)
+		if q == Vector2.INF or q.distance_to(p) > 2.2:
+			continue
+		var ok := true
+		var m := int(q.distance_to(p) / 0.12) + 1
+		for i in range(1, m + 1):
+			var x := q.lerp(p, float(i) / m)
+			var o := land.occ_at(x)
+			if o != 0 and not (o == id and x.distance_to(p) < 0.45):
+				ok = false
+				break
+		if ok:
+			return d
+	return {}
+
+
 func _seat_target(r: Dictionary, b: Dictionary) -> Dictionary:
 	var seats := _bench_seats(b)
 	var sp: Dictionary = spots.get(b["id"], {})
@@ -2131,7 +2216,8 @@ func _begin(r: Dictionary) -> void:
 		"sit":
 			r["face"] = float(d["yaw"])
 			r["at"] = rng.randf_range(18.0, 45.0)
-			r["read"] = rng.randf() < (0.5 if _near_type(r["p"], ["library", "academy", "school", "scriptorium"], 30.0) else 0.15)
+			r["drink"] = bool(d.get("drink", false))     # за столом таверны — с чашей
+			r["read"] = not r["drink"] and rng.randf() < (0.5 if _near_type(r["p"], ["library", "academy", "school", "scriptorium"], 30.0) else 0.15)
 			var ss := [["Idle", 0.7], ["Sitting_Enter", 1.3], ["SIT", r["at"]], ["Sitting_Exit", 1.03], ["Idle", 0.3]]
 			if rng.randf() < 0.3:
 				ss.append(["Stretch", 4.9])
@@ -2345,9 +2431,17 @@ func _sit_pick(r: Dictionary) -> void:
 			nb = o
 			break
 	var base := float(d.get("yaw", r["face"]))
+	var drink: bool = bool(r.get("drink", false)) and Citizen.library().has_animation("Sit_Drink")
 	if nb.is_empty():
 		r["face"] = base
+		if drink and rng.randf() < 0.75:
+			_anim(r, "Sit_Drink", 0.4)            # отпивает из чаши (таверна, термополий)
+			return
 		_anim(r, ["Sitting_Idle", "Sitting_Idle_M"][rng.randi() % 2], 0.4)
+		return
+	if drink and rng.randf() < 0.4:
+		r["face"] = base
+		_anim(r, "Sit_Drink", 0.4)                # за столом с соседом: то поговорят, то отопьют
 		return
 	# поворот к соседу — чуть, не сходя с места
 	var side := City.axis(base)
@@ -2842,6 +2936,8 @@ func _door_in(r: Dictionary, b: Dictionary, then: String) -> void:
 	r["door"] = {"t": 0.0, "then": then, "from": r["p"], "dir": -fwd, "bid": b["id"]}
 	r["face"] = atan2(-fwd.x, -fwd.y)
 	c.play("Idle", 0.2)
+	if game.life:
+		game.life.door(b, 1.8)               # створка распахивается внутрь и прикрывается через 0,8 с после него (Life)
 
 
 func _door_step(r: Dictionary, dt: float) -> void:
@@ -3047,6 +3143,8 @@ func props_want(r: Dictionary) -> Array:
 		"idle":
 			if r["act"] == "sit" and bool(r.get("read", false)) and _sitting(r):
 				return ["scroll"]
+			if r["act"] == "sit" and bool(r.get("drink", false)) and _sitting(r):
+				return ["cup"]                     # за столом таверны — чаша в руке (Sit_Drink подносит её ко рту)
 			if r["act"] == "shop" and String(r.get("carry", "")) != "":
 				return [r["carry"]]                # только что взял покупку из рук продавца
 	return []

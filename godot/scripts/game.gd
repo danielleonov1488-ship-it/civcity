@@ -38,6 +38,7 @@ var deco_texs := []
 var ground_kind := 2                  # кисть «Земля»: какой узор в руках (Defs.GROUND; 0 — обычная трава)
 var visuals := {}                     # id постройки → {h, lights, smoke, actors}
 var shutters: KitShutters             # ставни своих домов по часам (kit_shutters.gd)
+var life: Life                        # постройки отвечают жителям: двери, ставни Synty, мебель (life.gd)
 var nature := {}                      # Vector2i(2-метровая клетка) → [{h, p}]
 var plot_signs := {}
 var plot_fill: MeshInstance3D            # подсветка участка под курсором (его можно купить)
@@ -320,6 +321,10 @@ func _ready() -> void:
 	shutters.name = "KitShutters"
 	add_child(shutters)
 	shutters.setup(self)
+	life = Life.new()                         # двери распахиваются перед жителями, ставни живут по часам, на скамьях сидят
+	life.name = "Life"
+	add_child(life)
+	life.setup(self)
 	var br := Breathe.new()                   # «город дышит»: бабочки, светлячки, птицы («Уютный Рим», этап 5)
 	br.name = "Breathe"
 	add_child(br)
@@ -1970,6 +1975,8 @@ func _show(b: Dictionary) -> void:
 	visuals[b["id"]] = vis
 	if shutters and not bp.kit_mov.is_empty():
 		shutters.reset(int(b["id"]))
+	if life:
+		life.shown(b)                          # двери, ставни, сиденья этой постройки
 	if Defs.base_of(b["type"]) == "sheep":      # овцы бродят по лугу любого облика
 		_sheep(b, vis)
 	elif b["type"] == "catbasket":
@@ -1990,6 +1997,8 @@ func _hide(b: Dictionary) -> void:
 	var vis: Dictionary = visuals.get(b["id"], {})
 	if vis.is_empty():
 		return
+	if life:
+		life.hidden(b)                         # до того, как места деталей освободятся
 	parts.remove(vis["h"])
 	for l in vis["lights"]:
 		night_lights.erase(l)

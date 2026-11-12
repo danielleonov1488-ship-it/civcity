@@ -139,6 +139,7 @@ func _run(mode: String) -> void:
 		"ab": await _ab()
 		"gpuab": await _gpuab()
 		"procab": await _procab()
+		"lifeab": await _lifeab()
 		"offer": await _offer()
 		_: await _regress()
 	print("PERF DONE fails=%d" % fails)
@@ -1152,3 +1153,41 @@ func _regress() -> void:
 				fail("Высокая: %s = %d, было %d (+10%% предел)" % [k, int(hi[k]), int(REF_HIGH[k])])
 		print("PERF GATES low p10 %.2f/%.1f, verylow p10 %.2f/%.1f, high dc %d/%d shadow dc %d/%d shadow tris %.2fM/%.2fM" % [
 			lo["p10"], GATE_LOW, vl["p10"], GATE_VLOW, hi["vis_d"], REF_HIGH["vis_d"], hi["sh_d"], REF_HIGH["sh_d"], hi["sh_p"] / 1.0e6, REF_HIGH["sh_p"] / 1.0e6])
+
+## 12.11: «жизнь построек» (Life: двери, ставни по часам, мебель) — по очереди без неё и с ней (Life.on), rounds раз,
+## итог — медианы; в час, когда ставни как раз закрываются (hour=20.6: дома 20:30–23:30, лавки 19:24–20:48), плюс
+## прямой замер Life._process (мкс за кадр) и сколько створок двигалось
+##   … -- mode=lifeab q=high,low rounds=3 [hour=20.6]
+func _lifeab() -> void:
+	await _settle()
+	var view: Array = _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0]
+	var life: Life = game.life
+	var hr := float(A.get("hour", "20.6"))
+	for q: String in str(A.get("q", "high,low")).split(","):
+		_quality(q)
+		_view(view)
+		var res := {false: {"cpu": [], "proc": [], "gpu": [], "frame": []}, true: {"cpu": [], "proc": [], "gpu": [], "frame": []}}
+		var lus := []
+		for r in int(A.get("rounds", "3")):
+			for on: bool in ([false, true] if r % 2 == 0 else [true, false]):
+				Life.on = on
+				game._set_hour(hr + 0.4 * r)
+				Life.perf = on
+				life.perf_us = 0
+				life.perf_n = 0
+				var m := await _measure("lifeab %s %s r%d" % [q, "on" if on else "off", r])
+				if on:
+					lus.append(float(life.perf_us) / maxf(1.0, life.perf_n))
+					print("LIFEAB %s r%d: Life._process %.1f мкс/кадр (%d кадров), дверей сейчас %d, построек со ставнями %d" % [q, r, lus[lus.size() - 1],
+						life.perf_n, life._doors.size(), life._shut.size()])
+				for k: String in res[on]:
+					(res[on][k] as Array).append(float(m[k]))
+		Life.on = true
+		Life.perf = false
+		for on: bool in [false, true]:
+			var med := {}
+			for k: String in res[on]:
+				med[k] = _pct(PackedFloat32Array(res[on][k]), 0.5)
+			print("LIFEAB %-8s %s: кадр %.2f мс (%.0f к/с), процессор %.2f (скрипты %.2f), видеокарта %.2f" % [q, "с Life " if on else "без Life", med["frame"],
+				1000.0 / maxf(0.01, med["frame"]), med["cpu"], med["proc"], med["gpu"]])
+		print("LIFEAB %-8s Life._process: медиана %.1f мкс/кадр" % [q, _pct(PackedFloat32Array(lus), 0.5)])

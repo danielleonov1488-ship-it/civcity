@@ -39,6 +39,8 @@ const DEF := {
 	"sandals": {"mesh": "#sandals", "hand": "RightHand", "h": 0.24, "raw": true, "up": Vector3(0, 1, 0), "fwd": Vector3(1, 0, 0), "off": Vector3(0, -0.02, 0.05)},
 	"necklace": {"mesh": "#necklace", "hand": "RightHand", "h": 0.2, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, -0.01, 0.04), "anchor": "top"},
 	"bowl": {"mesh": "SM_Prop_Bowl_04", "hand": "RightHand", "h": 0.1, "raw": true, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, 0.02, 0.08)},
+	# чаша вина за столом таверны (People: сидит и отпивает, Citizen «Sit_Drink»)
+	"cup": {"mesh": "SM_Prop_Goblet_02", "hand": "RightHand", "h": 0.14, "up": Vector3(0, 1, 0), "fwd": Vector3(0, 0, 1), "off": Vector3(0, 0.03, 0.05)},
 }
 
 ## Что продавец показывает и отдаёт в руки (People: «вот, держите» — и покупатель уносит именно это)
