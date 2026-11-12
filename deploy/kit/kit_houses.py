@@ -3278,7 +3278,7 @@ def socle(mb, P_, U, N, u0, u1, h, openings):
     mb.box(Pw(P_, (u0 + u1) / 2, h + 0.02, 0.04), (u1 - u0, 0.05, 0.08), J(P["stone"], 0.04), R, mat=M_STONE)
 
 
-def temple_front(body, x0p, x1p, z_wall, depth, y0, colh, n, key=None, ins=None, r=0.1, pitch=22.0, steps=3, swags=None):
+def temple_front(body, x0p, x1p, z_wall, depth, y0, colh, n, key=None, ins=None, r=0.1, pitch=22.0, steps=3, swags=None, synty_cols=False):
     """портик с фронтоном: подиум со ступенями и полом шашками, колонны с каннелюрами, архитрав (с надписью),
     фронтон с рельефом и акротериями, черепичная кровля; swags — цвет тканевых гирлянд между колоннами"""
     zf = z_wall + depth
@@ -3293,7 +3293,10 @@ def temple_front(body, x0p, x1p, z_wall, depth, y0, colh, n, key=None, ins=None,
     for k in range(n):
         xx = x0p + 0.2 + (x1p - x0p - 0.4) * k / (n - 1)
         cx.append(xx)
-        column3(body, (xx, y0, zf - 0.18), colh, r, face=(1.0, 0.0, 0.0))
+        if synty_cols:                        # колонна Synty (каннелюры, капитель) — как у прежней станции
+            synty("SM_Bld_Pillar_04", xx, y0, zf - 0.18, 0.0, [0.66, round(colh / 2.16, 3), 0.66])
+        else:
+            column3(body, (xx, y0, zf - 0.18), colh, r, face=(1.0, 0.0, 0.0))
     top = y0 + colh
     ah = 0.3
     body.box(((x0p + x1p) / 2, top + ah / 2, zf - 0.18), (x1p - x0p + 0.2, ah, 0.3), J(m, 0.02, 0.0, 0.0), mat=M_MARBLE)
@@ -5228,7 +5231,7 @@ def column_terrace(body, emb, x0p, x1p, zw, depth, s):
     xs = [x0p + 0.15 + (x1p - x0p - 0.3) * k / 3 for k in range(4)]
     colh = 2.0
     for x in xs:
-        column3(body, (x, 0.24, zf - 0.15), colh, 0.1, seg=12, ionic=False)
+        synty("SM_Bld_Pillar_04", x, 0.24, zf - 0.15, 0.0, [0.62, round(colh / 2.16, 3), 0.62])
     yt = 0.24 + colh
     body.box(((x0p + x1p) / 2, yt + 0.11, zw + depth / 2), (x1p - x0p + 0.2, 0.22, depth + 0.1), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
     floor_tiles(body, x0p - 0.05, x1p + 0.05, zw + 0.02, zf + 0.0, yt + 0.22, 0.42, "#e8dcc6", "#b8826a")    # пол террасы
@@ -5263,7 +5266,7 @@ def build_center_front(s):
         if s >= 5:
             zfront = z1 + 2.2
             temple_front(body, -2.3, 2.3, z1, 2.2, 0.36, 2.15 if s < 6 else 2.45, 4, key="tymp_pref", ins=None, r=0.11,
-                         swags="#3f6fa8" if s < 7 else "#a83f2c")
+                         swags="#3f6fa8" if s < 7 else "#a83f2c", synty_cols=True)
             if s >= 6:
                 for s2 in (-1, 1):
                     statue_prop(s2 * 2.75, z1 + 1.9, 0.0, 0.6)
