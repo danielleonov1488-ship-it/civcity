@@ -1617,6 +1617,9 @@ func _pick_errand(r: Dictionary) -> Dictionary:
 	var cat := _cat_free(r["p"], 24.0)
 	if r["child"]:
 		opts.append([6.0, {"act": "play", "p": _near_road(city.door_point(h) if not h.is_empty() else r["p"], 7.0)}])
+		var fp := _fountain_play(from)           # дети сбегаются играть к фонтану (там их найдут другие — догонялки)
+		if not fp.is_empty():
+			opts.append([3.5, fp])
 		if not cat.is_empty():
 			opts.append([2.5, _cat_target(r, cat)])
 	else:
@@ -1640,6 +1643,10 @@ func _pick_errand(r: Dictionary) -> Dictionary:
 			var fs := _furn_target(r, from)       # скамья у дома, табурет у стола лавки или таверны (Life)
 			if not fs.is_empty():
 				opts.append([2.4, fs])
+			if not h.is_empty() and (hour < 10.5 or (hour >= 17.0 and hour < 19.5)):
+				var wt := _water_flowers(r, h)        # утром и под вечер — полить цветы у своего дома (Life)
+				if not wt.is_empty():
+					opts.append([1.6, wt])
 		if fine:
 			var nt := _nature_target(r, from)
 			if not nt.is_empty():
@@ -2007,6 +2014,54 @@ func _furn_seat(r: Dictionary, b: Dictionary) -> Dictionary:
 	return {}
 
 
+## Полить цветы у своего дома: ящик под окном или горшок у двери (Life.water) — встать перед ними с кувшином.
+## Места — WATER_K + номер (двое из семьи один ящик не поливают)
+const WATER_K := 200
+
+
+func _water_flowers(r: Dictionary, h: Dictionary) -> Dictionary:
+	if game.life == null:
+		return {}
+	var list: Array = game.life.water(h)
+	if list.is_empty():
+		return {}
+	var sp: Dictionary = spots.get(h["id"], {})
+	var xf := city.xf(h)
+	var k := rng.randi() % list.size()
+	if sp.has(WATER_K + k):
+		return {}
+	var w: Vector3 = xf * (list[k][0] as Vector3)
+	var f: Vector3 = xf * (list[k][1] as Vector3)
+	var p := Vector2(w.x, w.z)
+	var q := _near_free(p, 5)
+	if q == Vector2.INF or q.distance_to(p) > 1.0:
+		return {}
+	return {"act": "water", "bid": h["id"], "k": WATER_K + k, "p": p, "face": Vector2(f.x, f.z)}
+
+
+## Дети сбегаются к фонтану поиграть: свободное место у фонтана недалеко от дома
+func _fountain_play(from: Vector2) -> Dictionary:
+	var cands := []
+	for id in city.buildings:
+		var b: Dictionary = city.buildings[id]
+		if Defs.base_of(b["type"]) in ["fountain", "smallfountain"] and (b["pos"] as Vector2).distance_to(from) < 45.0:
+			cands.append(b)
+	if cands.is_empty():
+		return {}
+	var b: Dictionary = cands[rng.randi() % cands.size()]
+	var ctr: Vector2 = b["pos"]
+	var rad := 1.0
+	for rc: Rect2 in city.blueprint(b).footprint():
+		for c: Vector2 in [rc.position, rc.end]:
+			rad = maxf(rad, c.length())
+	for k in 40:
+		var a := rng.randf() * TAU
+		var q := ctr + Vector2(cos(a), sin(a)) * (rad + rng.randf_range(0.6, 4.0))
+		if _free(q):
+			return {"act": "play", "p": q}
+	return {}
+
+
 func _seat_target(r: Dictionary, b: Dictionary) -> Dictionary:
 	var seats := _bench_seats(b)
 	var sp: Dictionary = spots.get(b["id"], {})
@@ -2254,6 +2309,11 @@ func _begin(r: Dictionary) -> void:
 			_wash(r)
 		"pray":
 			_seq(r, [["Idle", 0.8], ["Pray", rng.randf_range(6.0, 11.0)], ["Idle", rng.randf_range(0.8, 1.6)]])
+		"water":
+			# поливает цветы у своего дома: наклонился, правой рукой с кувшином брызгает на цветы (движение «Feed»),
+			# потом нюхает их и любуется
+			_seq(r, [["Idle", 0.5], ["Feed", 1.6 * rng.randi_range(3, 5)], ["Idle", 0.4], ["Smell" if rng.randf() < 0.5 else "Smell_M", 3.9],
+				["Admire", rng.randf_range(1.5, 2.5)], ["Idle", 0.5]])
 		"view":
 			# у воды: любуется, потягивается, показывает спутнику на уток и лодки
 			var vw := [["Idle", 0.6], ["Admire", rng.randf_range(4.0, 7.0)], ["Arms_Crossed", rng.randf_range(4.0, 8.0)]]
@@ -3145,6 +3205,8 @@ func props_want(r: Dictionary) -> Array:
 				return ["scroll"]
 			if r["act"] == "sit" and bool(r.get("drink", false)) and _sitting(r):
 				return ["cup"]                     # за столом таверны — чаша в руке (Sit_Drink подносит её ко рту)
+			if r["act"] == "water":
+				return ["jug"]                     # поливает цветы из кувшина
 			if r["act"] == "shop" and String(r.get("carry", "")) != "":
 				return [r["carry"]]                # только что взял покупку из рук продавца
 	return []

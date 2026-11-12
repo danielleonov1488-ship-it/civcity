@@ -3,7 +3,7 @@ extends Node
 ## перед жителями и прикрываются за ними, ставни Synty по часам (утром открыты, ночью закрыты), жители сидят на мебели
 ## домов, лавок, таверны. Улица из домов всех классов и лавок, снимки вблизи.
 ##   bash .work/py/gpu_run.sh res://test_life.tscn -- out=D:/CivCity/.work/life/<метка>/ part=all      → «LIFE DONE fails=0»
-## part: doors | shut | seats | all (через запятую); video=1 — кадры входа в дом подряд (out/frames_door/) для ролика
+## part: doors | shut | seats | alive | all (через запятую); video=1 — кадры входа в дом подряд (out/frames_door/) для ролика
 
 var game
 var c: City
@@ -137,6 +137,8 @@ func _run() -> void:
 		await _shutters()
 	if want("seats"):
 		await _seats()
+	if want("alive"):
+		await _alive()
 	print("LIFE DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -489,3 +491,87 @@ func _seats() -> void:
 	game._set_hour(19.0)
 	check(not life.seat_hosts(tv[0]["pos"], 5.0).has(tv[0]), "вечером мебель таверны жителям не предлагают")
 	game._set_hour(12.0)
+
+
+# ---------- живые мелочи: полив цветов, дети у фонтана ----------
+
+## Житель уже на месте d — дело начинается (как в test_leisure)
+func begin_at(r: Dictionary, d: Dictionary) -> void:
+	ppl._release(r)
+	ppl._claim(r, d)
+	r["p"] = d["p"]
+	r["state"] = "walk"
+	r["goal"] = "errand"
+	r["path"] = PackedVector2Array()
+	ppl._begin(r)
+	r["fade"] = 1.0
+	if r["node"] != null:
+		(r["node"] as Citizen).set_alpha(1.0)
+
+
+func _alive() -> void:
+	game._set_hour(8.5)
+	# полив: у дома плебеев — ящик под окном и горшки у двери
+	var h: Dictionary = B[0]
+	var wl := life.water(h)
+	check(not wl.is_empty(), "у дома есть цветы для полива: %d" % wl.size())
+	ppl._make_family("Полив", 3, int(h["id"]), c.door_point(h))
+	var fam := ppl.residents.filter(func(r): return int(r["home"]) == int(h["id"]) and not r["child"])
+	for m: Dictionary in ppl.residents.filter(func(r): return int(r["home"]) == int(h["id"])):
+		m["job"] = int(B[4]["id"])
+		m["done_today"] = true
+	var d := {}
+	for k in 20:
+		d = ppl._water_flowers(fam[0], h)
+		if not d.is_empty():
+			break
+	if check(not d.is_empty(), "житель находит, где полить цветы"):
+		var r: Dictionary = fam[0]
+		var p: Vector2 = d["p"]
+		game.rig.set_view(Vector3(p.x, game.land.height_at(p.x, p.y) + 0.5, p.y), rad_to_deg(float(h["yaw"])) + 40.0, 26.0, 3.8)
+		await frames(3)
+		begin_at(r, d)
+		await secs(1.6)
+		check(r["act"] == "water", "поливает", r["act"])
+		await secs(0.6)
+		check(ppl.props_want(r) == ["jug"], "с кувшином в руке", ppl.props_want(r))
+		var fy := ppl._yaw_to(r["p"], d["face"])
+		check(absf(angle_difference(float(r["yaw"]), fy)) < 0.3, "лицом к цветам", [r["yaw"], fy])
+		await secs(0.4)
+		await shot("alive_water.png")
+		var p2: Vector2 = d["p"]
+		game.rig.set_view(Vector3(p2.x, game.land.height_at(p2.x, p2.y) + 0.5, p2.y), rad_to_deg(float(h["yaw"])) - 60.0, 22.0, 3.4)
+		await secs(0.5)
+		await shot("alive_water_b.png")
+		ppl._release(r)
+		r["state"] = "idle"
+		r["act"] = ""
+	# дети у фонтана: фонтанчик на улице, дети прибегают и играют вокруг
+	var X0: float = (B[0]["pos"] as Vector2).x
+	var Z0: float = (B[0]["pos"] as Vector2).y
+	var fb := put("smallfountain", Vector2(X0 + 30.0, Z0 - 6.5))     # у самой улицы, напротив домов
+	if not check(not fb.is_empty(), "фонтанчик встал"):
+		return
+	await frames(5)
+	ppl._make_family("Фонтан", 5, int(B[3]["id"]), c.door_point(B[3]))
+	var kids := ppl.residents.filter(func(r): return r["child"])
+	if not check(kids.size() >= 2, "дети есть: %d" % kids.size()):
+		return
+	var found := 0
+	for k in 10:
+		if not ppl._fountain_play(fb["pos"]).is_empty():
+			found += 1
+	check(found >= 8, "у фонтана находится место поиграть (%d из 10)" % found)
+	for kd: Dictionary in kids.slice(0, 3):
+		var dd := ppl._fountain_play(fb["pos"])
+		if dd.is_empty():
+			continue
+		begin_at(kd, dd)
+	var fp: Vector2 = fb["pos"]
+	game.rig.set_view(Vector3(fp.x, game.land.height_at(fp.x, fp.y) + 0.3, fp.y), 30.0, 32.0, 7.0)
+	await secs(2.5)
+	var playing := kids.slice(0, 3).filter(func(kd): return kd["act"] == "play" and (kd["p"] as Vector2).distance_to(fp) < 7.0)
+	check(playing.size() >= 2, "дети играют у фонтана: %d" % playing.size())
+	await shot("alive_fountain_kids.png")
+	await secs(1.5)
+	await shot("alive_fountain_kids_b.png")

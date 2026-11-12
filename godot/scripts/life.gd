@@ -7,7 +7,8 @@ extends Node
 ##  - ставни: утром открываются, вечером закрываются — у каждого окна в свой час и вразнобой, плавно; пустой дом
 ##    стоит со ставнями закрытыми, часть окон на ночь остаётся открытой (в них теплится огонёк);
 ##  - мебель: скамьи у стен, табуреты и стулья у столов домов, лавок, таверн — места, где жители присаживаются
-##    (People._furn_target); за столом таверны и термополия — с чашей.
+##    (People._furn_target); за столом таверны и термополия — с чашей;
+##  - цветы у дома: утром и под вечер жилец выходит полить ящик под окном или горшки у двери (People «water»).
 ## Всё — детали Parts (один MultiMesh на все одинаковые детали города): меняется только место экземпляра
 ## (MultiMesh.set_instance_transform), прежнее запоминается и возвращается в точности. Двери и ставни шевелятся только
 ## у построек в кадре и недалеко от камеры; дальние ставни догоняют часы, когда к ним подъедет камера (без движения,
@@ -31,7 +32,7 @@ const SEAT_TAVERN_H := [9.0, 17.5]
 const DRINK := ["taberna", "thermopolium", "mansio", "dice", "wineshop"]
 
 var game
-var _info := {}                       # Bp → {doors, shut, pairs, seats}: по чертежу, считается один раз
+var _info := {}                       # Bp → {doors, shut, pairs, seats, water}: по чертежу, считается один раз
 var _doors := {}                      # id → {k, hold, subs: [[MultiMesh, место, исходное, петля в мире, знак]]}
 var _shut := {}                       # id → {k, goal, wait: [по парам], h: [ручки створок], t0: [[…]], move}
 var _shut_ids := []                   # постройки со ставнями (проверка по кругу)
@@ -51,7 +52,7 @@ func setup(g) -> void:
 func info(bp: Bp, type := "") -> Dictionary:
 	if _info.has(bp):
 		return _info[bp]
-	var inf := {"doors": _find_doors(bp), "shut": [], "pairs": 0, "seats": _find_seats(bp, type)}
+	var inf := {"doors": _find_doors(bp), "shut": [], "pairs": 0, "seats": _find_seats(bp, type), "water": _find_water(bp)}
 	_find_shutters(bp, inf)
 	_info[bp] = inf
 	return inf
@@ -273,6 +274,37 @@ static func _open_from(a: Vector2, b: Vector2, walls: Array) -> bool:
 			if r.has_point(q):
 				return false
 	return true
+
+
+## Цветы у дома, которые поливают жильцы (People «water»): ящики под окнами первого этажа и горшки на мостовой перед
+## фасадом. [[где стоять, на что смотреть]] в осях постройки — в полуметре перед цветами, лицом к ним
+static func _find_water(bp: Bp) -> Array:
+	var out := []
+	if bp.kit_id != "":
+		return out
+	for p in bp.parts:
+		var nm: String = p[0]
+		var bed := nm.begins_with("SM_Prop_FlowerBed_0")
+		var pot := nm.begins_with("SM_Prop_FlowerPot_Fancy") or nm.begins_with("SM_Prop_FlowerPot_0")
+		if not bed and not pot:
+			continue
+		var xf: Transform3D = p[1]
+		var box: AABB = xf * Bp.model_aabb(nm)
+		if box.position.y > 0.9:
+			continue                       # выше первого этажа — не дотянуться
+		var c := box.get_center()
+		var f := Vector3(xf.basis.z.x, 0, xf.basis.z.z).normalized() if bed else Vector3(c.x, 0, c.z).normalized()
+		if f.z < 0.5:
+			continue                       # только перед фасадом (к улице)
+		var stand := Vector3(c.x, 0, c.z) + f * (0.32 + (box.size.z * 0.5 if bed else 0.1))
+		out.append([stand, Vector3(c.x, 0, c.z)])
+		if out.size() >= 3:
+			break
+	return out
+
+
+func water(b: Dictionary) -> Array:
+	return info(game.city.blueprint(b), String(b["type"]))["water"] if on else []
 
 
 # ---------- постройку показали или убрали (Game._show / Game._hide) ----------
