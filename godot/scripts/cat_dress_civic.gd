@@ -43,7 +43,12 @@ static var dbg := false        # печатать, почему кучка не 
 
 
 static func dress(b: Bp, type: String, _tier := 0) -> void:
-	if not ON or not type in TYPES:
+	if not ON:
+		return
+	if CatDressGrand.handles(type):
+		CatDressGrand.dress(b, type, _tier)       # Легион, почтовая станция, памятники и большие здания (cat_dress_grand.gd)
+		return
+	if not type in TYPES:
 		return
 	var x := _ctx(b, type)
 	_walls_and_roofs(x, type)        # второй проход: стены и крыши (раньше кучек — кучки обходят шпалеры)
@@ -197,6 +202,12 @@ static func _fits(x: Dictionary, bx: AABB, hang := false, hang_out := Vector3.ZE
 	for k: Rect2 in x["keep"]:
 		if k.intersects(r2):
 			return _no("вход/люди", bx)
+	if x.has("cover") and not _covered(x["cover"], r2):
+		# круглые и неровные здания: крупное — только там, где земля занята следом; невысокое и тонкое (корзины,
+		# столик торговца, знамя на шесте) — ещё и в уголках рамки участка и в полосе у фасада (cover_low)
+		var low := bx.size.y <= LOW or (bx.size.x <= 1.0 and bx.size.z <= 1.0)
+		if not (low and x.has("cover_low") and _covered(x["cover_low"], r2)):
+			return _no("вне занятой земли", bx)
 	var lift := 0.0
 	if not hang:
 		var inner := r2.grow(-0.06).abs() if r2.size.x > 0.13 and r2.size.y > 0.13 else r2
@@ -212,6 +223,22 @@ static func _fits(x: Dictionary, bx: AABB, hang := false, hang_out := Vector3.ZE
 		if s.intersects(sh):
 			return _no("задевает %s" % [s], bx)
 	return lift
+
+
+## Лежит ли прямоугольник целиком на следе rects (углы и середины сторон — в каком-нибудь прямоугольнике следа):
+## там земля занята постройкой — ни соседний дом, ни ждущие на площади, ни прохожие туда не встанут
+static func _covered(rects: Array, r: Rect2) -> bool:
+	var c := r.get_center()
+	for q: Vector2 in [r.position, r.end, Vector2(r.position.x, r.end.y), Vector2(r.end.x, r.position.y), c,
+			Vector2(c.x, r.position.y), Vector2(c.x, r.end.y), Vector2(r.position.x, c.y), Vector2(r.end.x, c.y)]:
+		var ok := false
+		for f: Rect2 in rects:
+			if f.grow(0.03).has_point(q):
+				ok = true
+				break
+		if not ok:
+			return false
+	return true
 
 
 static func _no(why: String, bx: AABB) -> float:
@@ -454,11 +481,12 @@ static func _ivy(x: Dictionary, sides: Array, max_n := 2, dens := 0.7) -> int:
 				break
 		if near:
 			continue
-		var u := 0.3 if _ch(x, 0.5) else 0.7
+		# плеть — в пределах своего глухого модуля (шире — наползала на окна и двери соседних)
+		var u := 0.46 if _ch(x, 0.5) else 0.54
 		var p := xf.origin + xf.basis.x * (2.5 * u) + out * (FACE * xf.basis.z.length() + 0.02) + Vector3.UP * 0.95 * xf.basis.y.length()
 		var nm := "SM_Env_Ivy_Flowers_0%d" % _one(x, [1, 2, 3, 4])
 		b.free_parts[b.parts.size()] = true
-		b.parts.append([nm, Transform3D(Basis(Vector3.UP, atan2(out.x, out.z)) * Basis.from_scale(Vector3(0.9, 1.15, 1.0)), p), {}])
+		b.parts.append([nm, Transform3D(Basis(Vector3.UP, atan2(out.x, out.z)) * Basis.from_scale(Vector3(0.74, 1.15, 1.0)), p), {}])
 		(x["ivy"] as Array).append(p)
 		x["n"] = int(x["n"]) + 1
 		put += 1
@@ -527,7 +555,7 @@ static func _along(x: Dictionary, sides: Array, pal: Array, dens := 0.6, max_n :
 			var key := String(_one(x, pal))
 			if key == last and pal.size() > 1:
 				key = String(_one(x, pal))       # не две одинаковые кучки подряд
-			var items := _item(x, key)
+			var items := CatDressGrand._mi(x, key) if x.has("mi") else _item(x, key)      # кучки Легиона — CatDressGrand
 			if items.is_empty():
 				continue
 			# габариты кучки в её осях: +Z — от стены, X — вдоль стены
@@ -772,7 +800,8 @@ static func _temple(x: Dictionary) -> void:
 	# знамёна на шестах у лестницы
 	var bl := String(_one(x, ["A", "C"]))
 	for sd: float in [-1.0, 1.0]:
-		_group(x, [_it("SM_Prop_Pole_02", 0.95), _it("SM_Prop_Banner_03_" + bl, 0.62, 0.0, Vector3(0, 2.75, 0.1))], Vector3(sd * 4.75, 0, 6.75), 0.0, Vector3(0, 0, 0.25))
+		# (владелец: знамёна у храма маловаты — шест выше, полотнище крупнее)
+		_group(x, [_it("SM_Prop_Pole_02", 1.3), _it("SM_Prop_Banner_03_" + bl, 1.0, 0.0, Vector3(0, 3.75, 0.1))], Vector3(sd * 4.75, 0, 6.5), 0.0, Vector3(0, 0, -0.2))
 		_group(x, _item(x, "vasebloom"), Vector3(sd * 4.8, 0, 5.75), 0.0, Vector3(0, 0, 0.2))
 	# цветущие кусты вдоль подиума и за храмом
 	for sd: float in [-1.0, 1.0]:
@@ -979,6 +1008,30 @@ static func _wall_item(x: Dictionary, w: Dictionary, key: String, f: int) -> boo
 			return _face(x, w, [_it("SM_Prop_Banner_Drape_02", 1.0)], side_u, 2.3, 0.0)
 		"banner":                                    # знамя под карнизом
 			return _face(x, w, [_it("SM_Prop_Banner_0%d_%s" % [int(_one(x, [1, 2])), String(_one(x, ["A", "B", "E"]))], 0.82)], c, Bp.FL - 0.42, 0.0)
+		"shield":                                    # щит на стене: скутум или круглый (Легион)
+			var sn := String(_one(x, ["SM_Wep_Shield_04", "SM_Wep_Shield_01", "SM_Wep_Shield_03", "SM_Wep_Shield_04"]))
+			var ss := 0.72 if sn == "SM_Wep_Shield_04" else 0.62
+			return _face(x, w, [[sn, Transform3D(Basis.from_scale(Vector3.ONE * ss), Vector3.ZERO), {}]], side_u, 1.55 if f == 0 else 1.5, 0.0)
+		"shields":                                   # два круглых щита рядом
+			var items := []
+			for k in 2:
+				var sn := "SM_Wep_Shield_0%d" % [1, 3][k]
+				items.append([sn, Transform3D(Basis.from_scale(Vector3.ONE * 0.58), Vector3((k - 0.5) * 0.62, 0, 0)), {}])
+			return _face(x, w, items, c, 1.6 if f == 0 else 1.5, 0.0)
+		"trophy":                                    # трофей: скутум на двух скрещённых копьях
+			var items := []
+			for sd: float in [-1.0, 1.0]:
+				items.append(["SM_Wep_Spear_02", Transform3D(Basis(Vector3(0, 0, 1), sd * 0.6) * Basis.from_scale(Vector3.ONE * 0.8), Vector3(0, 0, 0.05)), {}])
+			items.append(["SM_Wep_Shield_04", Transform3D(Basis.from_scale(Vector3.ONE * 0.72), Vector3(0, 0, 0.15)), {}])
+			return _face(x, w, items, c, 1.75 if f == 0 else 1.6, 0.0)
+		"helms":                                     # полка на кронштейнах: шлемы в ряд
+			var items := [["SM_Prop_Beam_01", Transform3D(Basis.from_scale(Vector3(0.6, 1.3, 1.5)), Vector3(-0.75, 0, 0.17)), {}]]
+			for sxk: float in [-0.55, 0.55]:
+				items.append(["SM_Prop_Bracket_01", Transform3D(Basis.from_scale(Vector3(2.0, 1.6, 1.6)), Vector3(sxk, -0.13, 0.0)), {}])
+			var hb := Bp.model_aabb("SM_Chr_Attach_Helmet_01")
+			for k in 3:
+				items.append(_it("SM_Chr_Attach_Helmet_01", 0.95, _rf(x, -0.3, 0.3) + PI, Vector3(-0.45 + k * 0.45, 0.1 - hb.position.y * 0.95, 0.19)))
+			return _face(x, w, items, c, 1.55, 0.0)
 		"band":                                      # полоса росписи под карнизом
 			return _face(x, w, [["SM_Prop_Mural_0%d" % _one(x, [3, 4]), Transform3D(Basis.from_scale(Vector3(0.96, 0.9, 1.0)), Vector3.ZERO), {}]], c, Bp.FL - 0.75, 0.0)
 	return false
@@ -1082,12 +1135,12 @@ static func _temple_walls(x: Dictionary) -> void:
 	var spots := []
 	for sd: float in [-1.0, 1.0]:
 		for i: int in [0, 2]:
-			spots.append([Vector3(sd * hx, pod + 3.55 * k, k * (-8.5 - (i + 0.5) * 2.5) + 5.6), sd * PI / 2])
+			spots.append([Vector3(sd * hx, pod + 4.6 * k, k * (-8.5 - (i + 0.5) * 2.5) + 5.6), sd * PI / 2])
 	for i: int in [1, 3]:
-		spots.append([Vector3(-6.25 * k + (i + 0.5) * 2.5 * k, pod + 3.55 * k, k * -16.0 + 5.6 - 0.115 * k - 0.02), PI])
+		spots.append([Vector3(-6.25 * k + (i + 0.5) * 2.5 * k, pod + 4.6 * k, k * -16.0 + 5.6 - 0.115 * k - 0.02), PI])
 	for e: Array in spots:
 		if int(x["n2"]) >= CAP2:
 			break
 		b.free_parts[b.parts.size()] = true
-		b.parts.append(["SM_Prop_Banner_01_" + letter, Transform3D(Basis(Vector3.UP, float(e[1])) * Basis.from_scale(Vector3.ONE * 1.15 * k), e[0]), {}])
+		b.parts.append(["SM_Prop_Banner_01_" + letter, Transform3D(Basis(Vector3.UP, float(e[1])) * Basis.from_scale(Vector3.ONE * 1.55 * k), e[0]), {}])
 		x["n2"] = int(x["n2"]) + 1

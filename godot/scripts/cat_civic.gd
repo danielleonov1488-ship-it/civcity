@@ -481,7 +481,7 @@ static func _center(b: Bp, stage: int) -> void:
 			var wr := _gable2(b, -6.25, -3.75, -5.0, 0.0, wtop, 1.6, true)
 			b.remap = b.floor_remap(1)
 			b.add("SM_Bld_Roof_Topper_02", Vector3(-5.0, wr - 0.04, -0.12), 0.0)
-			b.on_wall("SM_Env_Ivy_Flowers_0%d" % (1 + b.rng.randi() % 5), -5.0, cz, 1, 2, 3, 1.5, 1.8, 0.13)
+			b.rng.randi()          # (плющ здесь ложился поверх окон бока крыла — убран; случай прежний)
 	# повозка: у двора, потом — в воротах конюшни
 	var cp := Vector3(5.05, 0, 0.75) if wing else Vector3(-5.0, 0, 0.9)
 	var cy := PI if wing else (0.0 if s >= 2 else -0.1)   # ровно: в воротах конюшни и между столбами перголы
