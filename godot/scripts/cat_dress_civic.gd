@@ -29,6 +29,12 @@ const FRONT_M := 0.95          # полоса у фасада (как горшк
 const LOW := 1.4               # за рамкой следа — только невысокое
 const CAP := 56                # деталей на здание (бюджет отрисовки)
 const FACE := 0.115            # от середины стены Synty до её лица
+## Что висит на стенах (на это второй проход не вешает): плющ, знамёна, кашпо, вывески, фонари, росписи, карнизы…
+const WALL_DECOR := ["Ivy", "Banner", "FlowerPot_Hanging", "Pots_Hanging", "#wall_lamp", "Symbol", "Mural", "#sign", "#bsign", "#bricks",
+	"Overhang", "FlowerBed", "#window_box", "Torch", "Rug_Drape", "Drapery", "Ornament", "Trim_0", "Balcony", "#quoin", "Trellis_0",
+	"#shutters", "Beam_Detail", "SM_Prop_Beam", "SM_Bld_Door_0", "Statue", "Shield", "Lion"]
+## Второй проход (стены и крыши): не больше стольких деталей на здание
+const CAP2 := 40
 ## Цветущие кусты (как CatDecor.BLOOMS) — своим цветом, без зелёной подкраски
 const BLOOM := ["SM_Env_Garden_Plants_03", "SM_Env_Garden_Plants_04", "SM_Env_Garden_Plants_06"]
 ## Выключатель (проверки «было/стало»: test_civic_synty dress=0)
@@ -40,6 +46,7 @@ static func dress(b: Bp, type: String, _tier := 0) -> void:
 	if not ON or not type in TYPES:
 		return
 	var x := _ctx(b, type)
+	_walls_and_roofs(x, type)        # второй проход: стены и крыши (раньше кучек — кучки обходят шпалеры)
 	match type:
 		"warehouse": _warehouse(x)
 		"sculptor": _sculptor(x)
@@ -72,6 +79,12 @@ static func _box_of(nm: String, xf: Transform3D, core := true) -> AABB:
 	var bx: AABB
 	if nm in ["#dark", "#marble", "#water", "#lit", "#sand"]:
 		bx = AABB(Vector3(-0.5, -0.5, -0.5), Vector3.ONE)
+	elif nm in ["#wall_lamp", "#laundry", "#window_box"] or nm.begins_with("#shutters"):
+		bx = Parts._special_mesh(nm).get_aabb()     # свои мелочи (фонарь, ставни, бельё) — по настоящим габаритам
+	elif nm.begins_with("#quoin_") or nm.begins_with("#bricks_") or nm.begins_with("#sign:") or nm.begins_with("#bsign:"):
+		bx = CatDress.kit_mesh(nm).get_aabb()       # угловые камни, кладка, вывески CatDress
+	elif nm.begins_with("#hp_"):
+		bx = AABB(Vector3(-0.15, -0.3, -0.05), Vector3(0.3, 0.35, 0.2))   # товар на крюке у лавки
 	else:
 		bx = Bp.model_aabb(nm)
 		if nm.begins_with("SM_Env_Tree") or nm.begins_with("SM_Env_Bush"):
@@ -99,6 +112,8 @@ static func _ctx(b: Bp, type: String) -> Dictionary:
 	var sum := Vector3.ZERO
 	var keep := []
 	var ivy := []
+	var wsolid := []              # что уже висит на стенах (плющ, знамёна, кашпо, вывески, карнизы) — на это не вешаем
+	var ground := 0
 	for p: Array in b.parts:
 		var nm: String = p[0]
 		var xf: Transform3D = p[1]
@@ -108,23 +123,29 @@ static func _ctx(b: Bp, type: String) -> Dictionary:
 				break
 		if nm.begins_with("SM_Bld_Wall_") and not (nm.contains("Tiny") or nm.contains("Balcony") or nm.contains("Trim") or nm.contains("Pillar")
 				or nm.contains("End") or nm.contains("Beam") or nm.begins_with("SM_Bld_Wall_Large")) \
-				and xf.origin.y < 0.6 and xf.basis.y.length() > 0.9 and xf.basis.x.length() > 0.6:
+				and xf.basis.y.length() > 0.9 and xf.basis.x.length() > 0.6:
 			var c := xf * Bp.model_aabb(nm).get_center()
 			walls.append([nm, xf, c])
-			sum += c
+			if xf.origin.y < 0.6:
+				sum += c
+				ground += 1
 		if nm.begins_with("SM_Bld_Wall_Alcove"):
 			# ниша со статуей: перед ней пусто
 			var a := xf * Vector3(1.25, 0, 0.6)
 			keep.append(Rect2(a.x - 1.0, a.z - 1.0, 2.0, 2.0))
 		if nm.contains("Ivy") and not nm.contains("Pillar"):
 			ivy.append(xf.origin)
+		for wd: String in WALL_DECOR:
+			if nm.contains(wd):
+				wsolid.append(_box_of(nm, xf))
+				break
 		if _soft(nm):
 			continue
 		var bx := _box_of(nm, xf)
 		if bx.position.y > 2.6:
 			continue                              # висит высоко: внизу не мешает
 		solid.append(bx)
-	var mid := sum / maxf(1.0, walls.size())
+	var mid := sum / maxf(1.0, ground)
 	# участок — рамка следа (до наполнения)
 	var lot := Rect2()
 	var first := true
@@ -155,9 +176,9 @@ static func _ctx(b: Bp, type: String) -> Dictionary:
 			continue
 		out = out.normalized()
 		var side := "front" if out.z > 0.7 else ("back" if out.z < -0.7 else ("left" if out.x < 0.0 else "right"))
-		wl.append({"nm": w[0], "xf": xf, "out": out, "side": side})
+		wl.append({"nm": w[0], "xf": xf, "out": out, "side": side, "f": int(round(xf.origin.y / Bp.FL))})
 	return {"b": b, "solid": solid, "sup": sup, "lot": lot, "outer": outer, "front": front, "keep": keep, "rng": rng, "n": 0,
-		"type": type, "walls": wl, "ivy": ivy}
+		"type": type, "walls": wl, "ivy": ivy, "wsolid": wsolid, "n2": 0}
 
 
 ## Можно ли поставить кучку с габаритами bx (низ — на земле, если не hang): на участке, не в запретном месте,
@@ -421,7 +442,7 @@ static func _ivy(x: Dictionary, sides: Array, max_n := 2, dens := 0.7) -> int:
 	var put := 0
 	var b: Bp = x["b"]
 	for w: Dictionary in x["walls"]:
-		if put >= max_n or not String(w["side"]) in sides or String(w["nm"]) != "SM_Bld_Wall_01" or not _ch(x, dens):
+		if put >= max_n or not String(w["side"]) in sides or String(w["nm"]) != "SM_Bld_Wall_01" or int(w["f"]) != 0 or not _ch(x, dens):
 			continue
 		var xf: Transform3D = w["xf"]
 		var out: Vector3 = w["out"]
@@ -447,7 +468,7 @@ static func _ivy(x: Dictionary, sides: Array, max_n := 2, dens := 0.7) -> int:
 ## Черепичный козырёк на кронштейнах над глухим модулем стены (сторона side) — навес над кучками у стены
 static func _awning(x: Dictionary, side: String) -> bool:
 	for w: Dictionary in x["walls"]:
-		if String(w["side"]) != side or String(w["nm"]) != "SM_Bld_Wall_01" or not _ch(x, 0.7):
+		if String(w["side"]) != side or String(w["nm"]) != "SM_Bld_Wall_01" or int(w["f"]) != 0 or not _ch(x, 0.7):
 			continue
 		var xf: Transform3D = w["xf"]
 		var out: Vector3 = w["out"]
@@ -467,7 +488,7 @@ static func _along(x: Dictionary, sides: Array, pal: Array, dens := 0.6, max_n :
 	var put := 0
 	var last := ""
 	for w: Dictionary in x["walls"]:
-		if not String(w["side"]) in sides:
+		if not String(w["side"]) in sides or int(w["f"]) != 0:
 			continue
 		var nm: String = w["nm"]
 		var xf: Transform3D = w["xf"]
@@ -537,7 +558,7 @@ static func _along(x: Dictionary, sides: Array, pal: Array, dens := 0.6, max_n :
 static func _hang(x: Dictionary, sides: Array, names: Array, y: float, dens := 0.5, s := 0.6, out_d := 0.13, max_n := 4) -> int:
 	var put := 0
 	for w: Dictionary in x["walls"]:
-		if put >= max_n or not String(w["side"]) in sides or String(w["nm"]) != "SM_Bld_Wall_01" or not _ch(x, dens):
+		if put >= max_n or not String(w["side"]) in sides or String(w["nm"]) != "SM_Bld_Wall_01" or int(w["f"]) != 0 or not _ch(x, dens):
 			continue
 		var xf: Transform3D = w["xf"]
 		var out: Vector3 = w["out"]
@@ -779,3 +800,293 @@ static func _thermae(x: Dictionary) -> void:
 	_along(x, ["back"], ["wood", "amphpile", "wood", "jarpile"], 0.85)
 	_along(x, ["left", "right"], ["jugs", "vaseS", "sideA"], 0.8)
 	_ivy(x, ["left", "right", "back"], 2)
+
+
+
+# =====================================================================
+#   второй проход: стены и крыши (владелец: «пустые бока и стены»; координатор 12.11: на каждой длинной стене 3–5
+#   заметных деталей, видных с обычного отдаления; крыши — самое заметное с высоты камеры)
+# =====================================================================
+
+## Что вешать на стены: тип → {beams — торцы балок под верхним карнизом, shut — ставни на большие окна,
+## g — на глухой модуль первого этажа, u — на глухой модуль верхних этажей, sides — какие стены}
+const WALL_KIT := {
+	"warehouse": {"beams": true, "g": ["shelf", "hooks", "lamp", "shelf"], "u": ["hooks", "drape"], "sides": ["left", "right", "back"]},
+	"vigiles": {"beams": true, "g": ["hooks", "lamp", "shelf"], "u": [], "sides": ["left", "right", "back"]},
+	"sculptor": {"beams": true, "g": ["plaque", "shelf"], "u": [], "sides": ["back", "left", "right"]},
+	"herbalist": {"beams": true, "g": ["trellis", "herbs", "lamp", "pot"], "u": [], "sides": ["left", "right", "back"]},
+	"scriptorium": {"beams": false, "shut": "#shutters_blue", "g": ["trellis", "scrolls", "pot", "lamp"], "u": ["pots", "band"], "sides": ["left", "right", "back"]},
+	"farm": {"beams": true, "g": ["hooks", "shelf"], "u": [], "sides": ["left", "right", "back", "front"]},
+	"school": {"shut": "#shutters_green", "g": ["trellis", "fresco", "lamp", "pot"], "u": ["band", "banner", "pots"], "sides": ["left", "right", "back"]},
+	"library": {"shut": "#shutters_brown", "g": ["trellis", "plaque", "lamp"], "u": ["banner", "band"], "sides": ["left", "right", "back"]},
+	"academy": {"g": ["trellis", "plaque", "lamp"], "u": ["banner", "band"], "sides": ["left", "right", "back"]},
+	"prefect": {"shut": "#shutters_green", "g": ["trellis", "plaque", "lamp"], "u": ["banner", "band"], "sides": ["left", "right", "back"]},
+	"balnea": {"g": ["trellis", "lamp", "pot", "fresco"], "u": [], "sides": ["left", "right", "back"]},
+	"baths": {"shut": "#shutters_blue", "g": ["trellis", "plaque", "lamp", "fresco"], "u": ["banner", "band"], "sides": ["left", "right", "back"]},
+	"thermae": {"g": ["trellis", "plaque", "lamp"], "u": ["banner", "band"], "sides": ["left", "right", "back"]},
+	"ludus": {"g": ["lamp", "hooks"], "u": ["banner"], "sides": ["left", "right", "back"]},
+}
+const SHUT_WIN := ["SM_Bld_Wall_Window_01", "SM_Bld_Wall_Window_05"]
+## Здания со вторым проходом
+const PASS2 := ["warehouse", "vigiles", "sculptor", "herbalist", "scriptorium", "farm", "grove", "vineyard", "ogorod", "forum"]
+
+
+static func _walls_and_roofs(x: Dictionary, type: String) -> void:
+	if not type in PASS2:
+		return
+	if WALL_KIT.has(type):
+		_wallart(x, WALL_KIT[type])
+	_roofs(x)
+	match type:
+		"balnea", "baths": _flat_roof(x, type)
+		"temple": _temple_walls(x)
+
+
+## Деталь (кучка items, +Z — от стены) на лице модуля стены w: середина — в u метрах вдоль стены от её начала,
+## высота y от низа модуля, вынос d от лица. Не залезает на то, что уже висит на стене, и на твёрдое рядом
+static func _face(x: Dictionary, w: Dictionary, items: Array, u: float, y: float, d := 0.0) -> bool:
+	if items.is_empty() or int(x["n2"]) + items.size() > CAP2:
+		return false
+	var xf: Transform3D = w["xf"]
+	var out: Vector3 = w["out"]
+	var yaw := atan2(out.x, out.z)
+	var ax := Basis(Vector3.UP, yaw) * Vector3.RIGHT
+	var lb := _items_box(items, Transform3D.IDENTITY)
+	var p := xf.origin + xf.basis.x.normalized() * u + out * (FACE * xf.basis.z.length() + d - lb.position.z) - ax * lb.get_center().x + Vector3.UP * y
+	var g := Transform3D(Basis(Vector3.UP, yaw), p)
+	var bx := _items_box(items, g)
+	var r2 := Rect2(bx.position.x, bx.position.z, bx.size.x, bx.size.z)
+	if not (x["outer"] as Rect2).grow(0.02 + HANG_M).encloses(r2):
+		return _no("стена: за участком", bx) >= 0.0
+	var sh := AABB(bx.position + Vector3(0.03, 0.03, 0.03), (bx.size - Vector3(0.06, 0.06, 0.06)).max(Vector3.ONE * 0.01))
+	for s: AABB in x["wsolid"]:
+		if s.intersects(sh):
+			return _no("стена: занято %s" % [s], bx) >= 0.0
+	# твёрдое (колонны, кучки у стены, соседние стены) — кроме самой стены: проверяем то, что выступает от лица
+	var cut := Vector3(absf(out.x), 0, absf(out.z)) * 0.08
+	var sh2 := AABB(sh.position + Vector3(maxf(out.x, 0.0), 0, maxf(out.z, 0.0)) * 0.08, (sh.size - cut).max(Vector3.ONE * 0.01))
+	for s: AABB in x["solid"]:
+		if s.intersects(sh2):
+			return _no("стена: задевает %s" % [s], bx) >= 0.0
+	var b: Bp = x["b"]
+	for it: Array in items:
+		b.free_parts[b.parts.size()] = true
+		b.parts.append([String(it[0]), g * (it[1] as Transform3D), it[2] if it.size() > 2 else {}])
+	(x["wsolid"] as Array).append(bx)
+	if bx.position.y < 2.6:
+		(x["solid"] as Array).append(bx)       # кучки у стены (первый проход) обходят шпалеры и полки
+	x["n2"] = int(x["n2"]) + items.size()
+	return true
+
+
+## Высота проёма двери модуля (0 — не дверь)
+static func _door_top(nm: String) -> float:
+	if not nm.contains("Door"):
+		return 0.0
+	return float((CatDress.DOOR.get(nm, [0.6, 1.9, 2.6]) as Array)[2])
+
+
+## Стены по набору kit: торцы балок под верхним карнизом, ставни на больших окнах, на глухих модулях — шпалеры
+## с плющом, полки с товаром, крюки, фонари, таблички, росписи (внизу), знамёна и полосы росписи (наверху)
+static func _wallart(x: Dictionary, kit: Dictionary) -> void:
+	var sides: Array = kit.get("sides", ["left", "right", "back"])
+	var top := 0
+	for w: Dictionary in x["walls"]:
+		top = maxi(top, int(w["f"]))
+	var g_last := ""
+	var u_last := ""
+	var lamps := 0
+	var shut: String = kit.get("shut", "")
+	var shut_n := 0
+	# сначала ставни (на всех сторонах) — потом всё прочее (чтобы прочее обходило ставни)
+	if shut != "":
+		for w: Dictionary in x["walls"]:
+			var nm: String = w["nm"]
+			if not nm in SHUT_WIN or shut_n >= 8:
+				continue
+			var sx := (w["xf"] as Transform3D).basis.x.length()
+			var sill := float((CatDress.WIN[nm] as Array)[0])
+			if _face(x, w, [[shut, Transform3D(Basis.from_scale(Vector3(1.05, 1.25, 1.0)), Vector3.ZERO), {}]], 1.25 * sx, sill + 0.72, 0.005):
+				shut_n += 1
+	for w: Dictionary in x["walls"]:
+		if not String(w["side"]) in sides:
+			continue
+		var nm: String = w["nm"]
+		var xf: Transform3D = w["xf"]
+		var sx := xf.basis.x.length()
+		var f := int(w["f"])
+		var dt := _door_top(nm)
+		# торцы балок под верхним карнизом (деревянные дома и мастерские)
+		if kit.get("beams", false) and f == top and (dt == 0.0 or dt < 2.3) and not nm.contains("Alcove"):
+			_face(x, w, [_it("SM_Bld_Wall_Beam_Detail_01", 1.0)], 1.25 * sx, Bp.FL - 0.33 - 0.31, 0.0)
+		if nm != "SM_Bld_Wall_01":
+			continue
+		var pal: Array = kit.get("g", []) if f == 0 else kit.get("u", [])
+		if pal.is_empty():
+			continue
+		for t in 3:
+			var key := String(_one(x, pal))
+			if key == (g_last if f == 0 else u_last) and pal.size() > 1:
+				continue
+			if key == "lamp" and lamps >= 2:
+				continue
+			if _wall_item(x, w, key, f):
+				if f == 0:
+					g_last = key
+				else:
+					u_last = key
+				if key == "lamp":
+					lamps += 1
+				break
+
+
+## Одна деталь на глухой модуль: true — встала
+static func _wall_item(x: Dictionary, w: Dictionary, key: String, f: int) -> bool:
+	var sx := (w["xf"] as Transform3D).basis.x.length()
+	var c := 1.25 * sx
+	var side_u := c + (0.62 if _ch(x, 0.5) else -0.62) * sx
+	match key:
+		"trellis":                                   # шпалера с цветущим плющом во всю высоту этажа
+			var items := [["SM_Bld_Trellis_01", Transform3D(Basis.from_scale(Vector3(0.78, 0.72, 1.0)), Vector3(0.975, 0, 0.06)), {}],
+				_it("SM_Env_Ivy_Flowers_0%d" % _one(x, [1, 2]), 0.82, 0.0, Vector3(0.0, 1.2, 0.14))]
+			return _face(x, w, items, c, 0.18, 0.0)
+		"shelf", "herbs", "scrolls":                 # полка на кронштейнах, на ней товар
+			var items := [["SM_Prop_Beam_01", Transform3D(Basis.from_scale(Vector3(0.6, 1.3, 1.5)), Vector3(-0.75, 0, 0.17)), {}]]
+			for sxk: float in [-0.55, 0.55]:
+				items.append(["SM_Prop_Bracket_01", Transform3D(Basis.from_scale(Vector3(2.0, 1.6, 1.6)), Vector3(sxk, -0.13, 0.0)), {}])
+			var goods: Array = {"shelf": ["SM_Prop_Jug_03", "SM_Prop_Vase_02", "SM_Prop_Basket_06"], "herbs": ["SM_Prop_Vase_06", "SM_Prop_Jug_03", "SM_Prop_Vase_06"],
+				"scrolls": ["SM_Prop_Scroll_Pile_02", "SM_Prop_Vase_02", "SM_Prop_Scroll_Pile_02"]}[key]
+			for k in 3:
+				var gn: String = goods[k]
+				var gs := 0.42 if gn.contains("Vase") or gn.contains("Jug") else 0.5
+				items.append(_it(gn, gs, _rf(x, -0.4, 0.4), Vector3(-0.45 + k * 0.45, 0.1, 0.17)))
+				if key == "herbs" and gn == "SM_Prop_Vase_06":
+					items.append(_it("SM_Env_Garden_Plants_02", 0.16, _rf(x, 0.0, TAU), Vector3(-0.45 + k * 0.45, 0.36, 0.17), {}))
+			return _face(x, w, items, c, 1.55, 0.0)
+		"hooks":                                     # крюки: связки кувшинов и горшков на цепях
+			var items := [_it("SM_Prop_Pots_Hanging_01", 1.0, 0.0, Vector3(-0.32, 0, 0.0)), _it("SM_Prop_Pots_Hanging_02", 0.9, 0.0, Vector3(0.32, 0, 0.0))]
+			return _face(x, w, items, side_u, 2.4, 0.0)
+		"lamp":                                      # фонарь на кронштейне
+			return _face(x, w, [_it("#wall_lamp", 0.95)], side_u, 2.25, 0.0)
+		"pot", "pots":                               # кашпо с цветами
+			return _face(x, w, [_it("SM_Prop_FlowerPot_Hanging_0%d" % _one(x, [4, 6]), 0.55)], side_u, 1.25 if f == 0 else 1.15, 0.0)
+		"plaque":                                    # табличка-рельеф
+			return _face(x, w, [_it("SM_Prop_Symbol_%02d" % _one(x, [5, 9, 12]), 0.7)], c, 1.45 if f == 0 else 1.3, 0.0)
+		"fresco":                                    # роспись на стене
+			return _face(x, w, [_it("SM_Prop_Mural_0%d" % _one(x, [1, 2]), 0.62)], c, 1.45, 0.0)
+		"drape":                                     # флажок на кронштейне
+			return _face(x, w, [_it("SM_Prop_Banner_Drape_02", 1.0)], side_u, 2.3, 0.0)
+		"banner":                                    # знамя под карнизом
+			return _face(x, w, [_it("SM_Prop_Banner_0%d_%s" % [int(_one(x, [1, 2])), String(_one(x, ["A", "B", "E"]))], 0.82)], c, Bp.FL - 0.42, 0.0)
+		"band":                                      # полоса росписи под карнизом
+			return _face(x, w, [["SM_Prop_Mural_0%d" % _one(x, [3, 4]), Transform3D(Basis.from_scale(Vector3(0.96, 0.9, 1.0)), Vector3.ZERO), {}]], c, Bp.FL - 0.75, 0.0)
+	return false
+
+
+## Крыши: черепичные навершия на концах конька (где их нет) и пара сдвинутых черепиц на скате
+static func _roofs(x: Dictionary) -> void:
+	var b: Bp = x["b"]
+	var ends := []
+	var slopes := []
+	var marks := []
+	for p: Array in b.parts:
+		var nm: String = p[0]
+		if nm == "SM_Bld_Roof_Base_Straight_Side_01":
+			ends.append(_box_of(nm, p[1]))
+		elif nm == "SM_Bld_Roof_Base_Straight_01":
+			slopes.append(p[1])
+		elif nm.contains("Topper") or nm.contains("Statue") or nm.contains("Ornament") or nm.contains("Eagle"):
+			marks.append((p[1] as Transform3D).origin)
+	# пары половинок фронтона — конец конька: середина их общей рамки, верх
+	var used := {}
+	for i in ends.size():
+		if used.has(i):
+			continue
+		var bx: AABB = ends[i]
+		for j in range(i + 1, ends.size()):
+			if not used.has(j) and (ends[j] as AABB).grow(0.05).intersects(bx):
+				bx = bx.merge(ends[j])
+				used[j] = true
+		var tip := Vector3(bx.get_center().x, bx.end.y - 0.02, bx.get_center().z)
+		var free := true
+		for q: Vector3 in marks:
+			if q.distance_to(tip) < 1.0:
+				free = false
+				break
+		if free and int(x["n2"]) < CAP2:
+			b.free_parts[b.parts.size()] = true
+			b.parts.append(["SM_Bld_Roof_Topper_0%d" % (2 if (x["type"] as String) in ["warehouse", "vigiles", "farm", "sculptor"] else 5),
+				Transform3D(Basis.IDENTITY, tip), {}])
+			marks.append(tip)
+			x["n2"] = int(x["n2"]) + 1
+	# сдвинутые черепицы на одном-двух скатах (та же рамка, что у ската, — ложатся на черепицу)
+	for k in mini(2, slopes.size()):
+		if int(x["n2"]) >= CAP2 or not _ch(x, 0.7):
+			continue
+		var xf: Transform3D = slopes[(x["rng"] as RandomNumberGenerator).randi() % slopes.size()]
+		b.free_parts[b.parts.size()] = true
+		b.parts.append(["SM_Bld_Roof_Detail_0%d" % (1 + k % 2), xf * Transform3D(Basis.IDENTITY, Vector3(0, 0.015, 0)), {}])
+		x["n2"] = int(x["n2"]) + 1
+
+
+## Плоские крыши бань и терм: горшки с цветами и амфоры у парапета, на верёвке сохнут полотенца
+static func _flat_roof(x: Dictionary, type: String) -> void:
+	var b: Bp = x["b"]
+	var spots := []
+	match type:
+		"balnea":
+			spots = [[Vector3(-3.3, Bp.FL, -1.75), "pot"], [Vector3(3.3, Bp.FL, -3.3), "pot"], [Vector3(-3.35, Bp.FL, -3.3), "amph"],
+				[Vector3(1.8, Bp.FL, -3.25), "laundry"]]
+		"baths":
+			# купола-перголы стоят в x 0 и ±3,75 — между ними
+			spots = [[Vector3(5.6, 2 * Bp.FL, -5.0), "pot"], [Vector3(-2.05, 2 * Bp.FL, -5.0), "pot"], [Vector3(2.05, 2 * Bp.FL, -4.15), "laundry"],
+				[Vector3(-5.5, 2 * Bp.FL, -5.0), "amph"]]
+	for e: Array in spots:
+		var p: Vector3 = e[0]
+		var items: Array = []
+		match String(e[1]):
+			"pot": items = [_it("SM_Prop_FlowerPot_Fancy_01", 0.55, _rf(x, 0.0, TAU), Vector3(0, 0.57 * 0.55, 0))]
+			"amph": items = [_it("SM_Prop_Vase_02", 0.75, 0.0, Vector3(-0.2, 0, 0)), _it("SM_Prop_Jar_01", 0.62, 0.0, Vector3(0.2, 0, 0))]
+			"laundry": items = [["#laundry", Transform3D(Basis.from_scale(Vector3(0.62, 0.72, 0.62)), Vector3(0, 0, -0.63)), {}]]
+		if int(x["n2"]) + items.size() > CAP2:
+			break
+		var g := Transform3D(Basis.IDENTITY, p)
+		var bx := _items_box(items, g)
+		var ok := true
+		var sb := AABB(bx.position + Vector3.ONE * 0.04, (bx.size - Vector3.ONE * 0.08).max(Vector3.ONE * 0.01))
+		for s: AABB in x["wsolid"]:
+			if s.intersects(sb):
+				ok = false
+				break
+		for q: Array in b.parts:
+			var qn := String(q[0])
+			if ok and (qn.contains("Pergola") or qn.contains("Vase") or qn.contains("FlowerPot")) and (q[1] as Transform3D).origin.distance_to(p) < 0.9:
+				ok = false
+		if not ok:
+			continue
+		for it: Array in items:
+			b.free_parts[b.parts.size()] = true
+			b.parts.append([String(it[0]), g * (it[1] as Transform3D), it[2] if it.size() > 2 else {}])
+		(x["wsolid"] as Array).append(bx)
+		x["n2"] = int(x["n2"]) + items.size()
+
+
+## Храм: красные знамёна между полуколоннами на боковых и задней стенах целлы (стены на подиуме, в масштабе храма)
+static func _temple_walls(x: Dictionary) -> void:
+	var b: Bp = x["b"]
+	var k := 0.62
+	var pod := 1.5 * k
+	var hx := 6.25 * k + 0.115 * k + 0.02
+	var letter := String(_one(x, ["A", "B"]))
+	var spots := []
+	for sd: float in [-1.0, 1.0]:
+		for i: int in [0, 2]:
+			spots.append([Vector3(sd * hx, pod + 3.55 * k, k * (-8.5 - (i + 0.5) * 2.5) + 5.6), sd * PI / 2])
+	for i: int in [1, 3]:
+		spots.append([Vector3(-6.25 * k + (i + 0.5) * 2.5 * k, pod + 3.55 * k, k * -16.0 + 5.6 - 0.115 * k - 0.02), PI])
+	for e: Array in spots:
+		if int(x["n2"]) >= CAP2:
+			break
+		b.free_parts[b.parts.size()] = true
+		b.parts.append(["SM_Prop_Banner_01_" + letter, Transform3D(Basis(Vector3.UP, float(e[1])) * Basis.from_scale(Vector3.ONE * 1.15 * k), e[0]), {}])
+		x["n2"] = int(x["n2"]) + 1

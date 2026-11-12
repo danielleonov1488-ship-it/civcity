@@ -607,10 +607,24 @@ static func _warehouse(b: Bp) -> void:
 	var cz := -1.9
 	_box(b, 0, cz, 3, 2, [
 		{0: ["SM_Bld_Wall_Door_Large_01", "SM_Bld_Wall_Door_Double_Large_01", "SM_Bld_Wall_Door_Large_01"], 1: ["SM_Bld_Wall_Window_06", "SM_Bld_Wall_01"],
-			2: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06", "SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06"]},
-		{0: ["SM_Bld_Wall_Window_04", "SM_Bld_Wall_Door_04", "SM_Bld_Wall_Window_04"], 1: ["SM_Bld_Wall_Window_04", "SM_Bld_Wall_Window_04"],
-			2: ["SM_Bld_Wall_Window_04", "SM_Bld_Wall_01", "SM_Bld_Wall_Window_04"], 3: ["SM_Bld_Wall_Window_04", "SM_Bld_Wall_Window_04"]}], {"trim": "SM_Bld_Trim_04", "skin": brick})
+			2: ["SM_Bld_Wall_01", "SM_Bld_Wall_Door_Large_01", "SM_Bld_Wall_01"], 3: ["SM_Bld_Wall_01", "SM_Bld_Wall_Window_06"]},
+		{0: ["SM_Bld_Wall_Window_04", "SM_Bld_Wall_Door_04", "SM_Bld_Wall_Window_04"], 1: ["SM_Bld_Wall_Door_04", "SM_Bld_Wall_Window_04"],
+			2: ["SM_Bld_Wall_Window_04", "SM_Bld_Wall_01", "SM_Bld_Wall_Window_04"], 3: ["SM_Bld_Wall_Window_04", "SM_Bld_Wall_Door_04"]}], {"trim": "SM_Bld_Trim_04", "skin": brick})
 	_leaf(b, 0, cz, 3, 2, 1, "SM_Bld_Door_01", 0.05)
+	# сзади — погрузочные ворота под черепичным навесом; по бокам наверху — двери чердака с балкой-лебёдкой, на верёвке мешок
+	# (владелец 12.11: «пустые бока и стены»)
+	b.on_wall("SM_Prop_Overhang_01", 0, cz, 3, 2, 2, 1.5, 2.85, 0.14)
+	for sd: int in [1, 3]:
+		var i := 0 if sd == 1 else 1
+		var a := b.wall_at(0, cz, 3, 2, sd, i + 0.3, FL, -0.02)
+		b.add("SM_Bld_Door_01", a[0], a[1])
+		var m := b.wall_at(0, cz, 3, 2, sd, i + 0.5, 0.0, 0.0)
+		var o := Vector3(1.0 if sd == 1 else -1.0, 0, 0)
+		var w0: Vector3 = (m[0] as Vector3) - o * 0.25
+		b.add_xf("SM_Prop_Beam_01", Transform3D(Basis(Vector3.UP, 0.0 if sd == 1 else PI).scaled_local(Vector3(0.3, 1.3, 1.3)), w0 + Vector3(0, FL + 2.72, 0)))
+		var tip := w0 + o * 0.7
+		b.add_xf("SM_Prop_Pole_01", Transform3D(Basis.from_scale(Vector3(0.22, 0.36, 0.22)), tip + Vector3(0, FL + 1.62, 0)))
+		b.add("SM_Prop_Sack_04", tip + Vector3(0, FL + 1.22, 0), PI / 2, 0.8)
 	b.remap = brick
 	var ridge := _gable2(b, -3.75, 3.75, cz - 2.5, cz + 2.5, 2 * FL, 1.4)
 	b.add("SM_Bld_Roof_Detail_02", Vector3(1.2, 2 * FL + 0.42, cz + 1.0), 0.0, 0.85, true)
