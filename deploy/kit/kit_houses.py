@@ -3175,7 +3175,28 @@ def clipeus(mb, P_, N, uc, vc, r=0.22):
     ball(mb, tuple(c + N * 0.04), r * 0.28, col("#d9b54a"), seg=8, rings=4, sq=(1.0, 0.5, 1.0), R=Rn)
 
 
+def synty(name, x, y, z, yaw=0.0, s=1.0, tilt=None, rm=None):
+    """деталь Synty в своём здании (метры; масштаб — как у Synty в чертеже); rm — перекраска: {"skin": …}, {"rm": "MOSAIC"}, {"tint": [r, g, b]}"""
+    e = [name, round(x, 3), round(y, 3), round(z, 3), round(yaw, 3), s if isinstance(s, list) else round(s, 3)]
+    if tilt is not None or rm is not None:
+        e.append(tilt)
+    if rm is not None:
+        e.append(rm)
+    PROPS.append(e)
+
+
+def decor(kind, x, y, z, yaw=0.0, k=1.0):
+    """украшение Synty целиком, как в меню «Украшения» (жаровня с огнём и светом, кипарис, клумба, вазон, лев) — KitHouses._decor_group"""
+    PROPS.append(["@" + kind, round(x, 3), round(y, 3), round(z, 3), round(yaw, 3), round(k, 3)])
+
+
 def tripod(mb, emb, at, h=1.0):
+    """огонь у входа — жаровня Synty на тумбе или огненная чаша на мраморной колонне (украшения игры: свет и дым — свои)"""
+    x, y, z = at
+    decor("candelabrum_2" if h >= 0.95 else "brazier", x, y, z, 0.0, 1.0)
+
+
+def tripod_old(mb, emb, at, h=1.0):
     """бронзовая жаровня на треноге — стоит на земле; огонь в чаше (свет ночью — LIGHTS kind=hang)"""
     x, y, z = at
     for k in range(3):
@@ -3200,14 +3221,31 @@ def acroterion(mb, at, s=1.0):
              R=Matrix.Rotation(-a, 3, "Z"))
 
 
-def floor_tiles(mb, x0, x1, z0, z1, y, s=0.4, c1="#ece6da", c2="#bf8f72"):
-    """мраморный пол шашками (opus sectile)"""
+def floor_tiles(mb, x0, x1, z0, z1, y, s=0.4, c1="#ece6da", c2="#bf8f72", border=True, medallion=True):
+    """мраморный пол (opus sectile): кайма из красного мрамора со светлой полоской, внутри — шашки в два тона с зелёными
+    вставками через три, посредине — мозаичный медальон (клетка fresco «mosaic»)"""
+    bw = 0.16 if border and min(x1 - x0, z1 - z0) > 1.0 else 0.0
+    if bw:
+        for (cx, cz, sx, sz) in (((x0 + x1) / 2, z0 + bw / 2, x1 - x0, bw), ((x0 + x1) / 2, z1 - bw / 2, x1 - x0, bw),
+                                 (x0 + bw / 2, (z0 + z1) / 2, bw, z1 - z0 - 2 * bw), (x1 - bw / 2, (z0 + z1) / 2, bw, z1 - z0 - 2 * bw)):
+            mb.box((cx, y + 0.007, cz), (sx, 0.014, sz), J("#8a3a2c", 0.04, 0.0, 0.0), mat=M_MARBLE, skip=("bot",))
+        f = 0.03
+        for (cx, cz, sx, sz) in (((x0 + x1) / 2, z0 + bw + f / 2, x1 - x0 - 2 * bw, f), ((x0 + x1) / 2, z1 - bw - f / 2, x1 - x0 - 2 * bw, f),
+                                 (x0 + bw + f / 2, (z0 + z1) / 2, f, z1 - z0 - 2 * bw), (x1 - bw - f / 2, (z0 + z1) / 2, f, z1 - z0 - 2 * bw)):
+            mb.box((cx, y + 0.008, cz), (sx, 0.016, sz), J("#f4ecdc", 0.03, 0.0, 0.0), mat=M_MARBLE, skip=("bot",))
+        x0, x1, z0, z1 = x0 + bw + f, x1 - bw - f, z0 + bw + f, z1 - bw - f
     nx, nz = max(1, int(round((x1 - x0) / s))), max(1, int(round((z1 - z0) / s)))
     for i in range(nx):
         for j in range(nz):
             cc = c1 if (i + j) % 2 == 0 else c2
+            if i % 3 == 1 and j % 3 == 1:
+                cc = "#8fa88a"
             mb.box((x0 + (i + 0.5) * (x1 - x0) / nx, y + 0.006, z0 + (j + 0.5) * (z1 - z0) / nz), ((x1 - x0) / nx - 0.012, 0.012, (z1 - z0) / nz - 0.012),
                    J(cc, 0.04, 0.0, 0.0), mat=M_MARBLE, skip=("bot",))
+    if medallion and min(x1 - x0, z1 - z0) > 1.3:
+        m = min(x1 - x0, z1 - z0) * 0.55
+        fresco_floor(mb, (x0 + x1) / 2, y + 0.016, (z0 + z1) / 2, m, m, "mosaic")
+
 
 
 def balustrade(mb, xa, xb, z, h=0.85):
@@ -3532,8 +3570,8 @@ def civic_front(body, walls, inner, emb, Pf, U, N, x0, x1, z0, z1):
         capsa(body, (-1.0, 0.06, z1 + 2.0))
         abacus(body, (1.15, 0.06, z1 + 1.95), Matrix.Rotation(math.pi + 0.3, 3, "Y"))
         sundial(body, (x0 + 0.5, 0.06, z1 + 1.7))
-        plant_pot(body, (x1 - 0.45, 0.06, z1 + 1.8), 0.32)
-        plant_pot(body, (x1 - 0.45, 0.06, z1 + 0.5), 0.26)
+        decor("planter", x1 - 0.45, 0.06, z1 + 1.8, rng.uniform(0, 6.28), 0.65)
+        decor("planter", x1 - 0.45, 0.06, z1 + 0.5, rng.uniform(0, 6.28), 0.53)
         # светильники — на цепях с поперечных балок перголы (низ балки — ph + 0,085)
         for uu in pergola_hooks(0.18, W - 0.18, (1.2, W - 1.2)):
             hanging_lamp(body, emb, Pw(Pf, uu, ph + 0.085, dep * 0.6))
@@ -3574,7 +3612,7 @@ def civic_front(body, walls, inner, emb, Pf, U, N, x0, x1, z0, z1):
             scroll(body, (s * (W / 2 - 1.3), 0.37, z1 + 0.35), Matrix.Rotation(0.4 * s, 3, "Y"), 0.2)
             tree_prop("SM_Env_Tree_Thin_0%d" % (1 + (s > 0)), s * (W / 2 + 0.45), z1 + 0.5, 0.45)
             tripod(body, emb, (s * 2.4, 0.0, z1 + dep + 0.35), 0.95)
-            plant_pot(body, (s * (W / 2 - 2.05), 0.36, z1 + dep - 0.25), 0.34)
+            decor("planter", s * (W / 2 - 2.05), 0.36, z1 + dep - 0.25, rng.uniform(0, 6.28), 0.69)
         block("front", Pf, U, 2.0, W - 2.0, 0.0, HT)
         fz1 = z1 + dep + 0.6
         fx0, fx1 = x0 - 0.7, x1 + 0.7
@@ -4390,12 +4428,8 @@ def mon_venus(body, emb):
         swag(body, (xs[k] + 0.14, h + 2.68, zs[-1] + 0.15), (xs[k + 1] - 0.14, h + 2.68, zs[-1] + 0.15), 0.22, 0.15, "#c8506a", (0, 0, 1))
     yt = entab(body, -2.75, 2.75, -4.1, 4.1, h + 2.7, 0.42, ins="ins_ven")
     ridge = temple_roof(body, -2.8, 2.8, -4.15, 4.15, yt, 18.0, key="tymp_ven", back_key="tymp_ven")
-    for (sx, sz) in ((-1, 1), (1, 1), (-1, -1), (1, -1)):      # розы в мраморных кадках по углам
-        bx, bz = sx * 3.45, sz * 4.4
-        body.box((bx, 0.2, bz), (0.5, 0.4, 0.5), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
-        for k in range(10):
-            leaf_blob(body, (bx + rng.uniform(-0.2, 0.2), 0.45 + rng.uniform(0, 0.25), bz + rng.uniform(-0.2, 0.2)), 0.1, J("#4f7d33", 0.1))
-            ball(body, (bx + rng.uniform(-0.2, 0.2), 0.55 + rng.uniform(0, 0.25), bz + rng.uniform(-0.2, 0.2)), 0.04, J(rng.choice(["#e86a8a", "#d9405a", "#f4c0cc"]), 0.06), seg=6, rings=3)
+    for (sx, sz) in ((-1, 1), (1, 1), (-1, -1), (1, -1)):      # розы в вазонах Synty по углам
+        decor("planter", sx * 3.45, 0.0, sz * 4.4, rng.uniform(0, 6.28), 0.95)
     for s in (-1, 1):
         tripod(body, emb, (s * 1.3, 0.0, z1 + 0.85), 0.95)
     mono_faces(x0 - 0.6, x1 + 0.6, z0 - 0.6, z1 + 0.6, 0.0, yt)
@@ -4458,18 +4492,11 @@ MONO_FN = {"temple": mon_temple, "forum": mon_forum, "pantheon": mon_pantheon, "
 
 # --- прогон 4 (владелец 12.11: «переделай как можно больше моделек»): фонтан, нимфей, арка, огород, уличные артисты ---
 def urn_flowers(body, at, h=0.42):
-    """мраморная ваза-кратер с цветами"""
+    """ваза Synty с кустиком цветов"""
     x, y, z = at
-    m = J(MARBLE, 0.03, 0.0, 0.0)
-    body.lathe(at, [(h * 0.18, 0.0), (h * 0.12, h * 0.12), (h * 0.14, h * 0.3), (h * 0.3, h * 0.55), (h * 0.36, h * 0.85), (h * 0.4, h)], 12, m, mat=M_MARBLE)
-    body.lathe((x, y + h * 0.92, z), [(h * 0.36, 0.0), (h * 0.36, 0.001)], 12, col("#4a3524"), close_top=True)
-    for k in range(12):
-        a, rr = rng.uniform(0, 6.28), rng.uniform(0, h * 0.3)
-        leaf_blob(body, (x + math.cos(a) * rr, y + h + rng.uniform(0.0, 0.12), z + math.sin(a) * rr), h * 0.12, J(rng.choice(["#4f7d33", "#5f8f3a", "#3f6b2a"]), 0.1))
-    for k in range(9):
-        a, rr = rng.uniform(0, 6.28), rng.uniform(0, h * 0.32)
-        ball(body, (x + math.cos(a) * rr, y + h + 0.06 + rng.uniform(0, 0.1), z + math.sin(a) * rr), 0.03,
-             J(rng.choice(["#e86a8a", "#f4c0cc", "#f0d050", "#ffffff", "#c84a6a"]), 0.06), seg=6, rings=3)
+    synty("SM_Prop_Vase_03", x, y, z, rng.uniform(0, 6.28), round(h / 0.648, 3))
+    synty("SM_Env_Garden_Plants_0%d" % rng.choice([3, 4, 7]), x, y + h * 0.92, z, rng.uniform(0, 6.28), round(h * 0.42, 3), None, {"tint": [1.0, 1.05, 0.95]})
+
 
 
 def pedestal(body, at, w, h, c=None):
@@ -4515,7 +4542,12 @@ def arch_wall(body, cx, r, y0, ytop, z0, z1, c, mat=M_ASHM, voussoir=True):
 
 
 def torch_post(body, emb, at, h=1.9):
-    """факел на шесте: древко, железная чаша, пламя (свет ночью)"""
+    """огонь на высокой подставке — канделябр Synty (украшение игры: свет свой)"""
+    x, y, z = at
+    decor("candelabrum", x, y, z, 0.0, round(min(1.3, h / 2.0), 2))
+
+
+def torch_post_old(body, emb, at, h=1.9):
     x, y, z = at
     rod(body, (x, y, z), (x, y + h, z), 0.035, J(P["wood"], 0.05), mat=M_WOOD)
     body.lathe((x, y + h, z), [(0.03, 0.0), (0.08, 0.1), (0.09, 0.13)], 8, col(IRON))
@@ -4583,9 +4615,8 @@ def mon_fountain(body, emb):
     fresco_floor(body, 0.0, 0.045, 0.0, 2 * inner - 0.08, 2 * inner - 0.08, "dolphins")
     wy = 0.38
     PROPS.append(["#water", 0.0, round(wy - 0.05, 3), 0.0, 0.0, [round(2 * inner / 0.72, 3), round(0.1 / 0.72, 3), round(2 * inner / 0.72, 3)]])
-    for (sx, sz) in ((-1, -1), (1, -1), (-1, 1), (1, 1)):     # тумбы с вазами по углам бортика
-        pedestal(body, (sx * h, 0.0, sz * h), 0.4, 0.78)
-        urn_flowers(body, (sx * h, 0.78, sz * h), 0.4)
+    for (sx, sz) in ((-1, -1), (1, -1), (-1, 1), (1, 1)):     # вазоны Synty на тумбах по углам бортика
+        decor("planter", sx * h, 0.0, sz * h, rng.uniform(0, 6.28), 0.95)
     # чаши
     m2 = J(MARBLE, 0.03, 0.0, 0.0)
     body.lathe((0, 0.05, 0), [(0.44, 0.0), (0.44, 0.14), (0.36, 0.18), (0.3, 0.32), (0.24, 0.36)], 8, m2, close_top=True, mat=M_MARBLE)
@@ -4620,8 +4651,8 @@ def mon_fountain(body, emb):
     PROPS.append(["SM_Env_Lillies_01", -1.05, wy, -1.0, 4.0, 0.45])
     PROPS.append(["#duck", 0.95, wy, 0.95, -2.4, 1.0])
     for s in (-1, 1):
-        marble_bench(body, (s * 2.2, 0.0, 0.0), Matrix.Rotation(-s * math.pi / 2, 3, "Y"), 1.2)
-        cypress(body, (s * 2.2, 0.0, -2.2), 1.9)
+        synty("SM_Prop_Seat_Bench_03", s * 2.2, 0.0, 0.0, -s * math.pi / 2, 0.8)
+        decor("cypress", s * 2.2, 0.0, -2.2, rng.uniform(0, 6.28), 0.79)
         tripod(body, emb, (s * 2.2, 0.0, 2.2), 0.95)
     mono_faces(-S, S, -S, S, 0.0, 1.0)
     DOOR_PT[0], DOOR_PT[2] = 0.0, S + 0.35
@@ -4630,55 +4661,58 @@ def mon_fountain(body, emb):
 
 
 def mon_nymphaeum(body, emb):
-    """нимфей: стена из мраморной кладки с тремя нишами и статуями нимф, колонны на пьедесталах, карниз с сухариками,
-    фронтон посередине с медальоном и акротериями; львиные маски (Synty) льют воду в бассейн с мозаикой дельфинов;
-    кувшинки, кипарисы, вазы с цветами на пьедесталах, плющ по краям стены"""
+    """нимфей: три мраморные ниши Synty с нимфами, колонны Synty с цветущим плющом, сверху — мраморный карниз с
+    сухариками, фронтон с медальоном и орнаментом; львиные маски льют воду в бассейн с мозаикой дельфинов; кипарисы,
+    вазоны и жаровни — украшения Synty"""
     x0, x1 = -3.2, 3.2
-    wz, wt, H = -1.45, 0.45, 2.9
+    wz, H = -1.45, 2.45
+    marble = {"skin": "Building_Marble_01"}
     for (cx, cz, sx, sz) in ((0.0, -1.5, 6.7, 0.9), (0.0, 1.565, 5.42, 0.47), (-3.03, 0.375, 0.64, 2.85), (3.03, 0.375, 0.64, 2.85)):
         body.box((cx, 0.07, cz), (sx, 0.14, sz), J(P["stone"], 0.03), cols={"top": J("#d8d0c2", 0.03)}, mat=M_STONE)
-    body.box((0, H / 2 + 0.14, wz - wt / 2), (6.4, H, wt), J("#f4efe6", 0.02, 0.0, 0.0), mat=M_ASHM)
     y0 = 0.14
-    Pf = lambda u, v, n: Vector((x0 + u, v, wz + n))
+    body.box((0, y0 + 1.2, wz - 0.62), (6.6, 2.4, 0.5), J("#f4efe6", 0.02, 0.0, 0.0), mat=M_ASHM)               # массив позади ниш
+    for k in range(3):                         # ниши Synty в белом мраморе, над ними — узкий карниз
+        xk = -2.7 + k * 1.8
+        synty("SM_Bld_Wall_Alcove_01", xk, y0, wz, 0.0, 1.0, None, marble)
+        synty("SM_Bld_Wall_Tiny_01", xk, y0 + 2.16, wz, 0.0, 1.0, None, marble)
+        synty(["SM_Prop_Statue_03", "SM_Prop_Statue_04", "SM_Prop_Statue_06"][k], xk + 0.9, y0 + 0.36, wz - 0.18, 0.0, 0.62)
+        synty("SM_Prop_Marble_LionHead_01", xk + 0.9, y0 + 0.3, wz + 0.42, 0.0, 0.5)
+    for k in range(4):                         # колонны Synty, крайние — в цветущем плюще
+        xk = -2.7 + k * 1.8
+        synty("SM_Bld_Pillar_02", xk, y0, wz + 0.32, 0.0, 0.78)
+        if k in (0, 3):
+            synty("SM_Env_Ivy_Pillar_Flowers_0%d" % (1 + rng.randrange(3)), xk, y0, wz + 0.32, rng.uniform(0, 6.28), 0.8)
+    yt = y0 + H
+    body.box((0, yt + 0.12, wz + 0.05), (6.6, 0.24, 0.8), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
     U, N = Vector((1, 0, 0)), Vector((0, 0, 1))
-    body.box((0, y0 + 0.25, wz + 0.04), (6.5, 0.5, 0.08), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)        # цоколь
-    for k, x in enumerate((-1.6, 0.0, 1.6)):
-        big = k == 1
-        niche(body, Pf, U, N, "front", x - x0, y0 + 0.75, 0.8 if big else 0.62, 1.65 if big else 1.4)
-        PROPS.append([["SM_Prop_Statue_03", "SM_Prop_Statue_04", "SM_Prop_Statue_06"][k], round(x, 3), round(y0 + 0.74, 3), round(wz + 0.12, 3), 0.0, 0.58 if big else 0.5])
-        PROPS.append(["SM_Prop_Marble_LionHead_01", round(x, 3), round(y0 + 0.22, 3), round(wz + 0.09, 3), 0.0, 0.5])
-    for x in (-2.45, -0.8, 0.8, 2.45):
-        pedestal(body, (x, y0, wz + 0.26), 0.32, 0.55)
-        column3(body, (x, y0 + 0.55, wz + 0.26), 2.0, 0.1)
-    yt = y0 + 2.55
-    body.box((0, yt + 0.12, wz + 0.15), (6.6, 0.24, 0.6), J(MARBLE, 0.03, 0.0, 0.0), mat=M_MARBLE)
     Pe = lambda u, v, n: Vector((x0 - 0.1 + u, v, wz + 0.45 + n))
     dentils(body, Pe, U, N, 0.0, 6.6, yt + 0.32)
-    body.box((0, yt + 0.5, wz - 0.05), (6.7, 0.1, 0.95), J(MARBLE, 0.04, 0.0, 0.0), mat=M_MARBLE)
-    tri_prism(body, -1.4, 1.4, yt + 0.55, yt + 1.25, wz - 0.4, wz + 0.45, J(MARBLE, 0.03, 0.0, 0.0))
-    clipeus(body, lambda u, v, n: Vector((u, v, wz + 0.45 + n)), N, 0.0, yt + 0.8, 0.18)
-    for x, yy in ((-1.45, yt + 0.55), (1.45, yt + 0.55), (0.0, yt + 1.25)):
+    body.box((0, yt + 0.5, wz - 0.1), (6.7, 0.1, 1.15), J(MARBLE, 0.04, 0.0, 0.0), mat=M_MARBLE)
+    tri_prism(body, -1.4, 1.4, yt + 0.55, yt + 1.2, wz - 0.4, wz + 0.45, J(MARBLE, 0.03, 0.0, 0.0))
+    synty("SM_Bld_Ornament_04", 0.0, yt + 0.62, wz + 0.47, 0.0, 0.75, None, {"rm": "CAP_MARBLE"})
+    for x, yy in ((-1.45, yt + 0.55), (1.45, yt + 0.55), (0.0, yt + 1.2)):
         acroterion(body, (x, yy, wz + 0.1), 1.0)
-    for s in (-1, 1):
-        urn_flowers(body, (s * 2.9, yt + 0.55, wz - 0.05), 0.36)
-        ivy(body, s * 3.15, wz, 0.3, 2.6, 1.0)
-        cypress(body, (s * 3.0, 0.14, wz + 0.45), 2.3)
-        pedestal(body, (s * 3.0, 0.14, 1.35), 0.38, 0.6)
-        urn_flowers(body, (s * 3.0, 0.74, 1.35), 0.4)
-    # бассейн с мозаикой
+    for sd in (-1, 1):
+        urn_flowers(body, (sd * 2.95, yt + 0.55, wz - 0.1), 0.4)
+        synty("SM_Env_Ivy_Draped_Flowers_02", sd * 3.05, yt + 0.4, wz + 0.42, 0.0, 0.7)
+        decor("cypress", sd * 3.0, 0.14, wz + 0.25, rng.uniform(0, 6.28), 0.95)
+        decor("planter", sd * 3.0, 0.14, 1.35, rng.uniform(0, 6.28), 0.9)
     pz0, pz1 = wz + 0.5, wz + 2.7
     pool(body, -2.55, 2.55, pz0, pz1, step_side=1)
     fresco_floor(body, 0.0, 0.03, (pz0 + pz1) / 2, 5.0, pz1 - pz0 - 0.1, "dolphins")
-    PROPS.append(["SM_Env_Lillies_01", -1.3, 0.15, round(pz0 + 1.2, 3), 0.4, 0.55])
-    PROPS.append(["SM_Env_Lillies_02", 1.6, 0.15, round(pz0 + 1.6, 3), 2.0, 0.45])
-    PROPS.append(["#duck", 0.6, 0.15, round(pz0 + 0.9, 3), 2.2, 1.0])
+    for k in range(3):                         # струи из пастей в бассейн
+        rod(body, (-1.8 + k * 1.8, y0 + 0.28, wz + 0.5), (-1.8 + k * 1.8, 0.12, wz + 0.68), 0.025, col("#bfe4f0"))
+    synty("SM_Env_Lillies_01", -1.3, 0.15, round(pz0 + 1.2, 3), 0.4, 0.55)
+    synty("SM_Env_Lillies_02", 1.6, 0.15, round(pz0 + 1.6, 3), 2.0, 0.45)
+    synty("#duck", 0.6, 0.15, round(pz0 + 0.9, 3), 2.2, 1.0)
     zf = pz1 + 0.35
-    for s in (-1, 1):
-        tripod(body, emb, (s * 2.0, 0.14, zf - 0.05), 0.9)
-    mono_faces(x0, x1, wz - wt, zf, 0.0, H)
+    for sd in (-1, 1):
+        tripod(body, emb, (sd * 2.0, 0.14, zf - 0.05), 0.9)
+    mono_faces(x0, x1, wz - 0.9, zf, 0.0, yt)
     DOOR_PT[0], DOOR_PT[2] = 0.0, zf + 0.45
-    FP.append([-3.4, round(wz - wt - 0.1, 3), 6.8, round(zf + 0.2 - (wz - wt - 0.1), 3)])
+    FP.append([-3.4, round(wz - 0.95, 3), 6.8, round(zf + 0.2 - (wz - 0.95), 3)])
     return yt + 1.3
+
 
 
 def mon_arch(body, emb):
@@ -4739,61 +4773,78 @@ def mon_arch(body, emb):
 
 
 def mon_ogorod(body, emb):
-    """огород: плетень с калиткой, три грядки в дощатых бортиках (капуста, лук, бобы на колышках), зелень и травы,
-    дорожка из плит, навес с инструментом, корзины с урожаем, кувшин и ведро, пугало в соломенной шляпе"""
+    """огород: жердяная изгородь Synty с калиткой, три высокие грядки в дощатых бортиках с рыхлой землёй и бороздами —
+    капуста, зелень и бобы на колышках (растения Synty), дорожка из плит, навес с инструментом, мешки, корзины с урожаем,
+    скамья, кувшин и ведро, пугало"""
     x0, x1, z0, z1 = -1.85, 1.85, -1.65, 1.6
-    body.box((0, 0.01, 0), (x1 - x0, 0.02, z1 - z0), J("#7a6040", 0.06))
-    for (a, b) in (((x0, z0), (x1, z0)), ((x0, z0), (x0, z1)), ((x1, z0), (x1, z1)), ((x0, z1), (-0.45, z1)), ((0.45, z1), (x1, z1))):
-        wattle(body, a[0], a[1], b[0], b[1], 0.7)
-    for k in range(5):                         # дорожка из плит от калитки
-        body.box((rng.uniform(-0.05, 0.05), 0.025, z1 - 0.2 - k * 0.42), (0.42, 0.03, 0.3), J("#b8ae9c", 0.06), Matrix.Rotation(rng.uniform(-0.2, 0.2), 3, "Y"), mat=M_STONE)
-    beds = [(-1.0, -0.95, "cabbage"), (-1.0, 0.0, "onion"), (-1.0, 0.95, "beans")]
-    for (bx, bz, kind) in beds:
-        w, d = 1.35, 0.7
-        for s in (-1, 1):
-            body.box((bx, 0.08, bz + s * d / 2), (w, 0.16, 0.05), J(P["wood"], 0.06), mat=M_WOOD)
-            body.box((bx + s * w / 2, 0.08, bz), (0.05, 0.16, d), J(P["wood"], 0.06), mat=M_WOOD)
-        body.box((bx, 0.12, bz), (w - 0.06, 0.08, d - 0.06), J("#4a3524", 0.06))
-        for k in range(5):
-            x = bx - w / 2 + 0.18 + k * (w - 0.36) / 4
-            if kind == "cabbage":
-                for j in (-1, 1):
-                    fruit(body, (x, 0.16, bz + j * 0.15), "cabbage", 1.5)
-            elif kind == "onion":
-                for j in (-1, 0, 1):
-                    leek(body, (x + j * 0.05, 0.16, bz + j * 0.18), (x + j * 0.05 + rng.uniform(-0.04, 0.04), 0.4, bz + j * 0.18 + rng.uniform(-0.04, 0.04)))
+    body.box((0, 0.01, 0), (x1 - x0, 0.02, z1 - z0), J("#7a6040", 0.06), mat=M_STONE)
+    fs = 0.62
+    L = 2.58 * fs * 0.72
+    def fence_run(xa, za, xb, zb, gate_at=None):
+        d = Vector((xb - xa, 0, zb - za))
+        ln = d.length
+        d.normalize()
+        yaw = math.atan2(-d.z, d.x)
+        n = max(1, int(math.ceil(ln / L - 0.05)))
+        for k in range(n):
+            t = min(k * L, ln - L)
+            px, pz = xa + d.x * t, za + d.z * t
+            if gate_at is not None and k == gate_at:
+                synty("SM_Env_Fence_Wood_Gate_01", px, 0.0, pz, yaw, fs)
             else:
-                rod(body, (x, 0.16, bz), (x, 1.15, bz), 0.015, J(P["wood2"], 0.05), mat=M_WOOD)
-                for j in range(6):
-                    leaf_blob(body, (x + rng.uniform(-0.07, 0.07), 0.3 + j * 0.15, bz + rng.uniform(-0.07, 0.07)), 0.07, J("#4f8a3a", 0.1))
-                    if j % 2:
-                        rod(body, (x + 0.03, 0.35 + j * 0.15, bz + 0.03), (x + 0.04, 0.22 + j * 0.15, bz + 0.05), 0.008, col("#6f9a3a"))
+                synty("SM_Env_Fence_Wood_0%d" % (1 + (k % 3)), px, 0.0, pz, yaw, fs)
+    fence_run(x0, z0, x1, z0)
+    fence_run(x0, z1, x0, z0)
+    fence_run(x1, z0, x1, z1)
+    fence_run(x0, z1, x1, z1, gate_at=1)
+    for k in range(5):                         # дорожка из плит от калитки
+        body.box((rng.uniform(-0.05, 0.05), 0.025, z1 - 0.25 - k * 0.42), (0.42, 0.03, 0.3), J("#b8ae9c", 0.06), Matrix.Rotation(rng.uniform(-0.2, 0.2), 3, "Y"), mat=M_STONE)
+    beds = [(-1.0, -0.95, "cabbage"), (-1.0, 0.0, "greens"), (-1.0, 0.95, "beans")]
+    for (bx, bz, kind) in beds:
+        w, d, hb = 1.4, 0.72, 0.22
+        for sd in (-1, 1):                     # бортики из досок с колышками по углам
+            body.box((bx, hb / 2, bz + sd * d / 2), (w, hb, 0.05), J(P["wood"], 0.06), mat=M_WOOD)
+            body.box((bx + sd * w / 2, hb / 2, bz), (0.05, hb, d), J(P["wood"], 0.06), mat=M_WOOD)
+            for sz in (-1, 1):
+                body.box((bx + sd * w / 2, hb / 2 + 0.03, bz + sz * d / 2), (0.07, hb + 0.06, 0.07), J(P["wood2"], 0.05), mat=M_WOOD)
+        body.box((bx, hb - 0.03, bz), (w - 0.06, 0.06, d - 0.06), J("#4a3524", 0.05), mat=M_STONE)        # рыхлая земля
+        for r in range(3):                     # борозды
+            body.box((bx, hb + 0.005, bz - d / 3 + r * d / 3), (w - 0.12, 0.02, 0.06), J("#5a412c", 0.05), mat=M_STONE)
+        n = 5
+        for k in range(n):
+            x = bx - w / 2 + 0.16 + k * (w - 0.32) / (n - 1)
+            for r in (-1, 0, 1) if kind != "beans" else (0,):
+                zz = bz + r * d / 3
+                if kind == "cabbage":
+                    synty("SM_Env_Crop_Single_02", x + rng.uniform(-0.03, 0.03), hb - 0.02, zz, rng.uniform(0, 6.28), 0.24, None, {"tint": [0.85, 1.05, 0.72]})
+                else:
+                    synty("SM_Env_Crop_Single_01" if (k + r) % 2 else "SM_Env_Garden_Plants_03", x + rng.uniform(-0.03, 0.03), hb - 0.02, zz,
+                          rng.uniform(0, 6.28), 0.3 if (k + r) % 2 else 0.12, None, {"tint": [0.95, 1.08, 0.8]})
+            if kind == "beans":
+                rod(body, (x, hb, bz), (x, 1.15, bz), 0.015, J(P["wood2"], 0.05), mat=M_WOOD)
+                synty("SM_Env_Ivy_Pillar_0%d" % (1 + (k % 3)), x, hb, bz, rng.uniform(0, 6.28), [0.28, 0.36, 0.28])
         if kind == "beans":
-            rod(body, (bx - w / 2 + 0.18, 1.1, bz), (bx + w / 2 - 0.18, 1.1, bz), 0.012, J(P["wood2"], 0.05), mat=M_WOOD)
-    for k in range(6):                         # зелень и травы у плетня справа
-        leaf_blob(body, (0.6 + k * 0.17, 0.12, -1.45 + rng.uniform(-0.03, 0.03)), 0.09, J(rng.choice(["#5f8f3a", "#7aa04a", "#4f7d33"]), 0.1))
+            rod(body, (bx - w / 2 + 0.16, 1.12, bz), (bx + w / 2 - 0.16, 1.12, bz), 0.012, J(P["wood2"], 0.05), mat=M_WOOD)
+    for k in range(4):                         # зелень у изгороди справа
+        synty("SM_Env_Garden_Plants_0%d" % (3 + k % 3), 0.65 + k * 0.28, 0.02, -1.45, rng.uniform(0, 6.28), 0.14)
     # навес с инструментом
     for (px, pz, ph) in ((0.75, -1.5, 1.55), (1.7, -1.5, 1.55), (0.75, -0.75, 1.35), (1.7, -0.75, 1.35)):
         rod(body, (px, 0.0, pz), (px, ph, pz), 0.04, J(P["wood"], 0.05), mat=M_WOOD)
-    for k in range(7):                         # соломенная кровля
+    for k in range(7):
         zz = -1.6 + k * 0.15
         body.box((1.22, 1.6 - k * 0.04, zz), (1.2, 0.07, 0.17), J("#c8a85a", 0.08), Matrix.Rotation(-0.25, 3, "X"))
-    axe(body, (0.95, 0.0, -1.42), Matrix.Rotation(0.1, 3, "Y"), 0.12)
-    rod(body, (1.15, 0.02, -1.45), (1.2, 1.15, -1.48), 0.018, J(P["wood"], 0.05), mat=M_WOOD)        # лопата
-    body.box((1.15, 0.12, -1.44), (0.16, 0.22, 0.02), col("#8a8f94"))
-    rod(body, (1.4, 0.02, -1.45), (1.38, 1.2, -1.48), 0.018, J(P["wood"], 0.05), mat=M_WOOD)        # грабли
-    body.box((1.38, 1.18, -1.47), (0.3, 0.03, 0.03), J(P["wood2"], 0.05), mat=M_WOOD)
-    sack(body, (1.5, 0.0, -1.1), 0.14, 0.36, grain="#c8b070")
-    basket2(body, (0.95, 0.0, -0.95), 0.17, 0.2)
-    for j in range(4):
-        fruit(body, (0.95 + rng.uniform(-0.07, 0.07), 0.2, -0.95 + rng.uniform(-0.07, 0.07)), "cabbage", 0.9)
-    basket2(body, (1.1, 0.0, 1.15), 0.16, 0.18)
-    for j in range(6):
-        carrot(body, Vector((1.05 + j * 0.02, 0.2, 1.1 + (j % 2) * 0.05)), Vector((1.1 + j * 0.02, 0.22, 1.28 + (j % 2) * 0.05)))
-    jug(body, (-1.6, 0.0, 1.35), 0.3, J("#b8693f", 0.06))
-    bucket(body, (1.55, 0.0, 0.55), 0.1, 0.18)
+    synty("SM_Prop_Scythe_01", 1.0, 0.72, -1.42, 0.2, 0.75, -0.15)
+    synty("SM_Prop_Basket_Backpack_01", 1.45, 0.0, -1.3, 0.4, 0.65)
+    synty("SM_Prop_Sack_03", 1.55, 0.0, -0.95, 0.5, 0.55)
+    synty("SM_Prop_Sack_03", 1.3, 0.0, -1.05, 1.7, 0.5)
+    synty("SM_Prop_Sack_01", 0.95, 0.0, -1.0, 2.6, 0.5)
+    synty("SM_Prop_Basket_Set_04", 1.15, 0.0, 1.05, 0.3, 0.42)
+    synty("SM_Prop_Basket_Set_04_Insert_01", 1.15, 0.0, 1.05, 0.3, 0.42)
+    synty("SM_Prop_Seat_Bench_05", 0.95, 0.0, 0.45, math.pi / 2, [0.42, 0.9, 0.7])
+    synty("SM_Prop_Jug_03", -1.6, 0.0, 1.35, 0.0, 0.8)
+    bucket(body, (1.55, 0.0, 1.35), 0.1, 0.18)
     # пугало: крестовина, рубаха, соломенная голова в шляпе
-    sx_, sz_ = 1.2, 0.25
+    sx_, sz_ = 1.45, -0.2
     rod(body, (sx_, 0.0, sz_), (sx_, 1.45, sz_), 0.03, J(P["wood"], 0.05), mat=M_WOOD)
     rod(body, (sx_ - 0.4, 1.15, sz_), (sx_ + 0.4, 1.15, sz_), 0.025, J(P["wood"], 0.05), mat=M_WOOD)
     body.box((sx_, 0.95, sz_), (0.36, 0.45, 0.16), J("#9a5a3a", 0.06), mat=M_CLOTH)
@@ -4806,6 +4857,7 @@ def mon_ogorod(body, emb):
     FP.append([x0 - 0.1, z0 - 0.1, x1 - x0 + 0.2, z1 - z0 + 0.2])
     ACTORS.append([-0.12, 0.0, 0.0, -math.pi / 2, "Fixing_Kneeling", "pleb"])
     return 1.7
+
 
 
 def mon_musicians(body, emb):
@@ -4821,7 +4873,7 @@ def mon_musicians(body, emb):
         rod(body, (px, 0.0, pz), (px, ph, pz), 0.045, J(P["wood"], 0.05), mat=M_WOOD)
     Pa = lambda u, v, n: Vector((-1.2 + u, v, -1.1 + n))
     awning(body, Pa, Vector((1, 0, 0)), Vector((0, 0, 1)), 1.1, hb + 0.05, 2.2, 1.25, ("#f4efe2", pal), poles=False, drop=(hb - hf) / 1.25, braces=False)
-    laurel(body, (-1.15, hf - 0.08, 0.07), (0.95, hf - 0.08, 0.07), 0.2, (0, 0, 1))
+    swag(body, (-1.15, hf - 0.06, 0.07), (0.95, hf - 0.06, 0.07), 0.18, 0.12, pal, (0, 0, 1))
     rug(body, 0.07, 0.3, 1.1, 0.75, pal, "#e8c86a")
     PROPS.append(["SM_Prop_Seat_Bench_05", -0.216, 0.0, -0.468, 0.0, [0.75, 1.0, 0.85]])
     PROPS.append(["SM_Prop_Lyre_01", 0.324, 0.302, -0.54, 0.4, 1.0, -0.25])
@@ -4831,14 +4883,16 @@ def mon_musicians(body, emb):
         rod(body, (0.6 + s * 0.02, 0.13, -0.6), (0.68 + s * 0.02, 0.62, -0.68), 0.01, col("#d8c08a"))
     for k in range(2):
         disc(body, (-0.95 + k * 0.12, 0.14, -0.8), 0.06, 0.06, 0.01, col(BRONZE), seg=10)
-    basket2(body, (0.0, 0.0, 0.85), 0.14, 0.12)
+    synty("SM_Prop_Basket_0%d" % (1 + rng.randrange(4)), 0.0, 0.0, 0.85, 0.0, 0.36)
+    synty("SM_Prop_Goblet_01", -0.78, 0.36, 0.16, 0.0, 0.58)
+    synty("SM_Prop_Senser_02", 0.83, 0.0, -0.05, 0.0, 0.85)
     for k in range(6):
         disc(body, (rng.uniform(-0.08, 0.08), 0.1 + k * 0.004, 0.85 + rng.uniform(-0.08, 0.08)), 0.018, 0.018, 0.004, col(GOLD), seg=8)
     stool(body, (-0.9, 0.0, 0.1), 0.34)
     jug(body, (-0.95, 0.34, 0.06), 0.18, J("#b8693f", 0.06))
     body.lathe((-0.8, 0.34, 0.16), [(0.02, 0.0), (0.02, 0.06), (0.05, 0.1), (0.055, 0.12)], 8, col(BRONZE))
-    plant_pot(body, (0.95, 0.0, -1.2), 0.38)
-    plant_pot(body, (-1.25, 0.0, 0.35), 0.32)
+    decor("planter", 0.95, 0.0, -1.2, rng.uniform(0, 6.28), 0.77)
+    decor("planter", -1.25, 0.0, 0.35, rng.uniform(0, 6.28), 0.65)
     tripod(body, emb, (0.85, 0.0, 0.3), 0.8)
     mono_faces(-1.25, 1.05, -1.15, 0.6, 0.0, 2.2)
     DOOR_PT[0], DOOR_PT[2] = 0.0, 1.0
@@ -4883,10 +4937,12 @@ def mon_dice(body, emb):
         body.lathe((-0.2 + k * 0.4, ty + 0.01, 0.2 - k * 0.35), [(0.02, 0.0), (0.012, 0.03), (0.012, 0.06), (0.04, 0.08), (0.045, 0.11)], 8, col(BRONZE))
     for a in range(4):
         PROPS.append(["SM_Prop_Seat_Chair_01", round(math.cos(a * math.pi / 2) * 0.684, 3), 0.0, round(math.sin(a * math.pi / 2) * 0.684, 3), round(a * math.pi / 2, 3), 0.92])
-    amphora(body, (1.2, 0.0, 0.7), 0.5, J("#b8693f", 0.06))
-    jug(body, (-1.2, 0.0, 0.65), 0.3, J("#a85a3a", 0.06))
+    synty("SM_Prop_Vase_04", 1.2, 0.0, 0.7, 0.4, 0.45)
+    synty("SM_Prop_Jug_02", -1.2, 0.0, 0.65, 0.0, 0.42)
+    synty("SM_Prop_Plate_03", -0.12, ty + 0.0, -0.12, 0.0, 0.45)
+    synty("SM_Prop_Bowl_04", 0.05, ty + 0.0, -0.22, 0.0, 0.32)
     crate(body, (-1.15, 0.0, -0.7), Matrix.Rotation(0.3, 3, "Y"), 0.36, 0.28, 0.3)
-    plant_pot(body, (1.2, 0.0, -0.8), 0.34)
+    decor("planter", 1.2, 0.0, -0.8, rng.uniform(0, 6.28), 0.69)
     mono_faces(-1.05, 1.05, -1.05, 1.05, 0.0, 2.1)
     DOOR_PT[0], DOOR_PT[2] = 0.0, 1.37
     FP.append([-1.3, -1.2, 2.6, 2.4])
@@ -4943,7 +4999,7 @@ def mon_puppets(body, emb):
     rug(body, 0.0, 0.65, 1.3, 0.7, pal, "#e8c86a")
     crate(body, (1.55, 0.0, -0.6), Matrix.Rotation(0.3, 3, "Y"), 0.42, 0.3, 0.32, c="#8a5a32")
     marionette(body, (1.5, 0.3, -0.62), "#4f8a5a", "#e8c86a")
-    basket2(body, (-1.55, 0.0, -0.55), 0.16, 0.22)
+    synty("SM_Prop_Basket_10", -1.55, 0.0, -0.55, 0.3, 0.45)
     mono_faces(x0, x1, zb, zf, 0.0, 2.6)
     DOOR_PT[0], DOOR_PT[2] = 0.0, 1.8
     FP.append([-1.75, -1.1, 3.5, 2.65])
@@ -4986,7 +5042,11 @@ def mon_mimes(body, emb):
         body.box((x, sh + 1.77 + (0.01 if k == 0 else -0.01), zb + 0.1), (0.08, 0.025, 0.01), col("#8a2020"), Matrix.Rotation(0.3 if k == 0 else -0.3, 3, "Z"))
     body.box((0.0, sh + 2.3, zb + 0.14), (0.62, 0.4, 0.03), J("#6b4428", 0.05), mat=M_WOOD)
     sign_board(body, lambda u, v, n: Vector((u, v, zb + 0.155 + n)), Vector((1, 0, 0)), Vector((0, 0, 1)), 0.0, sh + 2.3, 0.56, 0.34, 0.002, "mimes")
-    laurel(body, (sx0 + 0.1, sh + 2.45, zb + 0.18), (sx1 - 0.1, sh + 2.45, zb + 0.18), 0.25, (0, 0, 1))
+    for k in range(2):
+        swag(body, (sx0 + 0.1 + k * 1.75, sh + 2.45, zb + 0.18), (sx0 + 1.75 + k * 1.75, sh + 2.45, zb + 0.18), 0.2, 0.13, "#e8c86a", (0, 0, 1))
+    for k in range(2):
+        synty("SM_Prop_Drapery_0%d" % (1 + k), -0.9 + k * 1.8, sh + 0.02, -0.3, 0.0, 0.72)
+    synty("SM_Prop_Basket_10", -1.45, sh, -1.65, 0.3, 0.45)
     for s in (-1, 1):
         torch_post(body, emb, (s * 2.0, 0.0, zb + 0.1), 2.6)
         tripod(body, emb, (s * 1.95, 0.0, 0.4), 0.85)
@@ -5053,15 +5113,15 @@ def wood_stable(body, emb, x0, x1, z0, z1, s):
         for j in range(6):
             body.box((x0 + 0.3 + rng.uniform(-0.1, 0.1), 0.62, z0 + 0.6 + k * 1.1 + rng.uniform(-0.35, 0.35)), (0.14, 0.04, 0.02), col("#e0c070"),
                      Matrix.Rotation(rng.uniform(0, 3), 3, "Y") @ Matrix.Rotation(rng.uniform(-0.6, 0.6), 3, "Z"))
-    hay_bale(body, (x1 - 0.45, 0.16, z0 + 0.45), Matrix.Rotation(0.2, 3, "Y"))
-    hay_bale(body, (x1 - 0.5, 0.48, z0 + 0.5), Matrix.Rotation(-0.1, 3, "Y"), 0.55, 0.3, 0.34)
+    synty("SM_Prop_Straw_Stack_02", x1 - 0.55, 0.0, z0 + 0.6, 0.3, 0.42)
+    synty("SM_Prop_Straw_Bundle_01", x1 - 0.3, 0.0, z0 + 1.35, 1.1, 0.5)
+    synty("SM_Prop_FlowerPot_Hanging_02", x1 - 0.08, 1.95, z1 - 0.1, 0.0, 0.42)
     trough(body, (x1 - 0.35, 0.0, z1 - 0.9), Matrix.Rotation(math.pi / 2, 3, "Y"), 1.0)
     rod(body, (x0 + 0.1, 1.45, z1 - 0.3), (x1 - 0.1, 1.45, z1 - 0.3), 0.02, J(P["wood"], 0.05), mat=M_WOOD)
     for k in range(2):                         # хомуты и уздечки на перекладине
         torus(body, (x0 + 0.5 + k * 0.5, 1.28, z1 - 0.3), Matrix.Rotation(math.pi / 2, 3, "X"), 0.13, 0.03, J("#6b4428", 0.05), seg=10, seg2=4)
     if s >= 1:
-        for k in range(2):
-            sack(body, (x1 - 0.35 - k * 0.3, 0.0, z0 + 1.25), 0.14, 0.34, open_=False)
+        synty("SM_Prop_Sack_Stack_01", x1 - 0.45, 0.0, z0 + 2.1, 1.6, 0.42)
     PERCH.append([round((x0 + x1) / 2, 3), round(h + 0.45, 3), round((z0 + z1) / 2, 3)])
 
 
@@ -5105,14 +5165,12 @@ def yard(body, emb, x0, x1, z0, z1, s):
         rod(body, (x0 + 0.05, ph, zz), (x1 - 0.02, ph, zz), 0.03, J(P["wood2"], 0.05), mat=M_WOOD)
     for xx in (x0 + 0.15, x1 - 0.12):
         rod(body, (xx, ph + 0.04, z0 + 0.2), (xx, ph + 0.04, z1 - 0.1), 0.035, J(P["wood"], 0.05), mat=M_WOOD)
-    for k in range(26):                        # лоза и грозди
-        p = (rng.uniform(x0 + 0.1, x1 - 0.1), ph + 0.08 + rng.uniform(-0.04, 0.06), rng.uniform(z0 + 0.3, z1 - 0.2))
-        leaf_blob(body, p, 0.16, J(rng.choice(["#4f7d33", "#5f8f3a", "#3f6b2a"]), 0.1))
-        if k % 4 == 0:
-            grapes(body, (p[0], p[1] - 0.12, p[2]), 1.0)
+    nv = max(2, int((z1 - z0) / 1.3))
+    for k in range(nv):                        # виноградные лозы Synty лежат на решётке, по столбам вьётся плющ
+        zz = z0 + 0.4 + (z1 - z0 - 0.8) * (k + 0.5) / nv
+        synty("SM_Env_Vine_0%d" % (1 + k % 2), (x0 + x1) / 2, ph + 0.04, zz, math.pi / 2, [0.6, 0.6, 0.62], -math.pi / 2)
     for (px, pz) in ((x0 + 0.15, z1 - 0.2), (x1 - 0.12, z1 - 0.2)):
-        for k in range(5):
-            leaf_blob(body, (px + rng.uniform(-0.08, 0.08), 0.3 + k * 0.38, pz + rng.uniform(-0.06, 0.06)), 0.1, J("#4f7d33", 0.1))
+        synty("SM_Env_Ivy_Pillar_0%d" % (1 + rng.randrange(4)), px, 0.0, pz, rng.uniform(0, 6.28), [0.3, 0.7, 0.3])
     tx, tz = (x0 + x1) / 2, (z0 + z1) / 2
     body.box((tx, 0.72, tz), (0.7, 0.05, z1 - z0 - 1.0), J(P["wood"], 0.06), mat=M_WOOD)
     for sz in (-1, 1):
@@ -5182,7 +5240,6 @@ def column_terrace(body, emb, x0p, x1p, zw, depth, s):
     for s2 in (-1, 1):
         urn_flowers(body, (s2 * ((x1p - x0p) / 2 - 0.05) + (x0p + x1p) / 2, yt + 0.25, zf - 0.3), 0.36)
     drape(body, lambda u, v, n: Vector((x0p + 0.5 + u, v, zf - 0.02 + n)), Vector((0, 0, 1)), 0.6, yt + 0.68, 1.2, 0.55, 0.0, "#a83f2c", folds=4)
-    laurel(body, (xs[1] + 0.15, yt - 0.05, zf - 0.02), (xs[2] - 0.15, yt - 0.05, zf - 0.02), 0.15, (0, 0, 1))
     for k in range(3):
         swag(body, (xs[k] + 0.14, yt - 0.02, zf - 0.04), (xs[k + 1] - 0.14, yt - 0.02, zf - 0.04), 0.2, 0.14, "#3f6fa8", (0, 0, 1))
     return zf
@@ -5216,13 +5273,27 @@ def build_center_front(s):
         elif s >= 3:
             zfront = column_terrace(body, emb, -2.25, 2.25, z1, 2.05, s)
         else:
-            for s2 in (-1, 1):                 # скамьи у стены по сторонам двери, амфора и горшок у их концов
-                marble_bench(body, (s2 * 1.65, 0.0, z1 + 0.3), Matrix.Identity(3), 1.0)
-            amphora(body, (-2.35, 0.0, z1 + 0.35), 0.5, J("#b8693f", 0.06))
-            plant_pot(body, (2.35, 0.0, z1 + 0.3), 0.4)
-        if s >= 4:                             # львы у входа (Synty), по краям — для стража место
+            for s2 in (-1, 1):                 # скамьи Synty у стены по сторонам двери, амфора и горшок у их концов
+                synty("SM_Prop_Seat_Bench_01", s2 * 1.65, 0.0, z1 + 0.32, 0.0, 0.75)
+            synty("SM_Prop_Vase_01", -2.35, 0.0, z1 + 0.35, 0.4, 0.65)
+            synty("SM_Prop_Vase_03", -2.1, 0.0, z1 + 0.5, 1.4, 0.45)
+            decor("planter", 2.35, 0.0, z1 + 0.3, rng.uniform(0, 6.28), 0.81)
+        if s >= 4:                             # львы на тумбах сбоку от лестницы (не на ступенях)
             for s2 in (-1, 1):
-                PROPS.append(["SM_Prop_Statue_Lion_01", round(s2 * 1.45, 3), 0.0, round(zfront + 0.55, 3), 0.0, 0.32])
+                lx = s2 * (2.95 if s >= 5 else 1.3)
+                pedestal(body, (lx, 0.0, zfront + 0.25), 0.62, 0.32)
+                synty("SM_Prop_Statue_Lion_01", lx, 0.32, zfront + 0.3, 0.0, 0.3)
+        # у двери — фонари на кронштейнах, над дверью — орнамент; у стен — амфоры, горшки на цепях, цветущий плющ
+        for s2 in (-1, 1):
+            LIGHTS.append({"lamp": [round(s2 * 0.88, 3), round(PL + 1.95, 3), round(z1 + 0.04, 3)]})
+            synty("SM_Env_Ivy_Draped_Flowers_02", s2 * (W / 2 - 0.12), HT - 0.15, z1 + 0.08, 0.0, 0.7)
+        if s < 5:
+            synty("SM_Bld_Ornament_04", 0.0, PL + 2.15, z1 + 0.05, 0.0, 0.55, None, {"rm": "CAP_MARBLE"})
+        for s2 in (-1, 1):                     # горшки с цветами на цепях у двери, на железных кронштейнах
+            rod(body, (s2 * 1.4, PL + 1.75, z1 + 0.01), (s2 * 1.4, PL + 1.75, z1 + 0.24), 0.012, col(IRON))
+            synty("SM_Prop_FlowerPot_Hanging_0%d" % (1 + rng.randrange(6)), s2 * 1.4, PL + 1.74, z1 + 0.24, 0.0, 0.34)
+        if s < 3:                              # у порога — мозаичный коврик
+            fresco_floor(body, 0.0, 0.014, z1 + 0.62, 1.5, 0.62, "mosaic")
         # перед станцией — по краям площади: верстовой столб, знамя на шесте, свет
         milestone(body, (fx0 + 0.45, 0.0, 4.2))
         rod(body, (fx1 - 0.45, 0.0, 4.15), (fx1 - 0.45, 3.0, 4.15), 0.035, J(P["wood"], 0.05), mat=M_WOOD)
@@ -5231,7 +5302,7 @@ def build_center_front(s):
         tripod(body, emb, (fx0 + 0.45, 0.0, 3.3), 0.95)
         tripod(body, emb, (fx1 - 0.45, 0.0, 3.3), 0.95)
         if s >= 2:
-            plant_pot(body, (fx0 + 0.9, 0.0, 4.25), 0.42)
+            decor("planter", fx0 + 0.9, 0.0, 4.25, rng.uniform(0, 6.28), 0.85)
         DOOR_PT[2] = 2.79 if s < 3 else 4.99
         ACTORS.append([round(0.88, 3), 0.0 if s < 3 else (0.24 if s < 5 else 0.36), round(0.88 - CENTER_OFF, 3), 0.4, "Idle", "any"])
         if s >= 2:
@@ -5242,7 +5313,7 @@ def build_center_front(s):
 
 for _s in range(8):
     _fl = 1 if _s < 1 else (2 if _s < 6 else 3)
-    _wins = [(0, 0.5, 1.15, 0.8, 1.5, True, _s >= 1, True, False), (0, 4.05, 4.7, 0.8, 1.5, True, _s >= 1, True, False)]
+    _wins = [(0, 0.5, 1.15, 0.8, 1.5, True, _s >= 1, True, True), (0, 4.05, 4.7, 0.8, 1.5, True, _s >= 1, True, True)]
     for _f in range(1, _fl):
         _wins += [(_f, 0.5, 1.15, 0.72, 1.48, True, True, True, False, _s >= 5), (_f, 4.05, 4.7, 0.72, 1.48, True, True, True, False, _s >= 5),
                   (_f, 2.3, 2.9, 0.72 if (_s < 3 or _f > 1) else 0.1, 1.48, True, _f == _fl - 1, True, False, _s >= 5)]

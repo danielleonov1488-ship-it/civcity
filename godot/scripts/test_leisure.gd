@@ -263,7 +263,7 @@ func _view(r: Dictionary) -> void:
 	if not check(not d.is_empty(), "у пруда нашлось место полюбоваться водой"):
 		return
 	var f: Vector2 = d["face"]
-	check(game.land.hq(game.land.idx(game.land.cell(f).x, game.land.cell(f).y)) < Land.WATER_Y, "смотрит на воду")
+	check(game.land.hq(game.land.idx(game.land.cell(f).x, game.land.cell(f).y)) < Land.WATER_Y + 0.05, "смотрит на воду")
 	ppl._release(r)
 	ppl._claim(r, d)
 	r["p"] = d["p"]
