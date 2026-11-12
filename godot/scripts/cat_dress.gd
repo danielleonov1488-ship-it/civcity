@@ -233,7 +233,7 @@ const GOODS := [["SM_Prop_Jug_03", 0.4], ["SM_Prop_Vase_04", 0.45], ["SM_Prop_Ba
 ## Бельё и покрывала на верёвке: ковёр-«на перилах» Synty (76 треугольников), сплющенный в полотно; цвета — части
 ## атласа ковров (сливочные с узором, синий, рыжий)
 const LINEN := ["03_A", "03_B", "03_C", "01_B", "03_A", "01_A"]
-## Сколько чего уже у этого дома (бельё — одна верёвка, полочки — две)
+## Сколько чего уже у этого дома (бельё — до двух верёвок, у лавок и домусов одна; полочки — до двух)
 static var _cnt := {}
 
 
@@ -625,7 +625,11 @@ static func _ground(b: Bp, w: Dictionary, rng: RandomNumberGenerator, ctx: Strin
 	var used := {}
 	# сбоку у дома почти всегда что-то в рост — плющ от земли или шпалера (видно издали), потом мелочь у земли
 	var tall_p: float = {"house_side": 0.85, "house_back": 0.3, "shop_side": 0.4}.get(ctx, 0.0)
+	# (плющ дешёвый — 30–250 треугольников: на длинной стене иногда вторая плеть)
+	var tall_n := 0
 	if rng.randf() < tall_p:
+		tall_n = 2 if len > 3.5 and rng.randf() < 0.45 else 1
+	for tt in tall_n:
 		for kind: String in (["vine", "trellis"] if rng.randf() < 0.55 else ["trellis", "vine"]):
 			var nk: Array = NOOKS[kind]
 			var u := _slot(_free(len, _spans(b, w, 0.0, float(nk[1]), maxd + 0.3), 0.2, 0.08, w), float(nk[0]), rng)
@@ -769,19 +773,19 @@ static func _banner(b: Bp, w: Dictionary, rng: RandomNumberGenerator, type: Stri
 		_place(b, w, nm, bs, u, top, 0.0, 1.0)
 
 
-## Выше первого этажа: ставни, бельё на верёвке (одна на дом) или полочка с горшками, цветы на кронштейне
+## Выше первого этажа: ставни, бельё на верёвке, полочка с горшками, цветы на кронштейне
 static func _upper(b: Bp, w: Dictionary, rng: RandomNumberGenerator, shop: bool, rich := false) -> void:
 	var done := false
 	if String(w["nm"]) == "SM_Bld_Wall_Window_01" and rng.randf() < 0.75:
 		_shutters(b, w)
-	if int(_cnt.get("laundry", 0)) < 1 and rng.randf() < (0.35 if shop or rich else 0.8):
+	if int(_cnt.get("laundry", 0)) < (1 if shop or rich else 2) and rng.randf() < (0.35 if shop or rich else 0.8):
 		done = _laundry(b, w, rng)
 		if done:
-			_cnt["laundry"] = 1
-	if not done and int(_cnt.get("ledge", 0)) < 2 and rng.randf() < 0.5:
+			_cnt["laundry"] = int(_cnt.get("laundry", 0)) + 1
+	if int(_cnt.get("ledge", 0)) < 2 and rng.randf() < (0.35 if done else 0.7):
 		if _ledge(b, w, rng):
 			_cnt["ledge"] = int(_cnt.get("ledge", 0)) + 1
-	if rng.randf() < 0.4:
+	if rng.randf() < 0.5:
 		_hooks(b, w, rng)
 
 
