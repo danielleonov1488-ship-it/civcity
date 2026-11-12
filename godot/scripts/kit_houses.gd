@@ -17,9 +17,11 @@ const SHOPS := ["butcher", "bakery", "cobbler", "dyer", "tailor", "potter", "oil
 	"jeweler", "weaver", "barber", "medic", "thermopolium", "taberna", "fullonica", "mansio", "scriptorium", "herbalist", "catshop"]
 const STALLS := ["stall_fruit", "stall_veg", "stall_fish"]
 ## Общественные здания (свой облик у каждого: "civ_<тип>"); у школы скамьи и кресло учителя — детали Synty (Spectacle)
-const CIVIC := ["school", "library", "academy", "warehouse", "vigiles", "prefect", "balnea", "baths", "sculptor", "shelter", "thermae", "ludus"]
+const CIVIC := ["school", "library", "academy", "warehouse", "vigiles", "prefect", "balnea", "baths", "sculptor", "shelter"]
 ## Памятники — свои, меньше прежних (владелец 12.11: «отказаться от супер огромных зданий»): "mon_<тип>"
-const MONO := ["temple", "forum", "pantheon", "venus", "pharos",
+## Храм, форум, пантеон, храм Венеры, маяк, большие термы и лудус — снова Synty, но меньше (Catalog.SHRINK): свои вышли
+## беднее (владелец 12.11: «новые большие здания выглядят ужасно… комбинируй наборы»); их модели остаются в наборе
+const MONO := [
 	# прогон 4: фонтан, нимфей, арка, огород, уличные артисты (у музыкантов лира и скамья, у игроков стулья — Synty)
 	"fountain", "nymphaeum", "arch", "ogorod", "musicians", "dice", "puppets", "mimes"]
 
@@ -79,11 +81,15 @@ static func build(b: Bp, type: String, tier: int, variant: int, legacy := false)
 	for pr: Array in h.get("props", []):
 		# детали Synty (столы и стулья таверны — по ним Spectacle сажает гостей); масштаб — как у Synty в чертеже
 		var pp := sq * Vector3(float(pr[1]), float(pr[2]), float(pr[3]))
+		if String(pr[0]).begins_with("@"):
+			_decor_group(b, String(pr[0]).substr(1), pp, float(pr[4]), float(pr[5]))
+			continue
 		var ps: Vector3 = Vector3(float(pr[5][0]), float(pr[5][1]), float(pr[5][2])) if pr[5] is Array else Vector3.ONE * float(pr[5])
 		var rb := Basis(Vector3.UP, float(pr[4]))
-		if pr.size() > 6:
+		if pr.size() > 6 and pr[6] != null:
 			rb = rb * Basis(Vector3.RIGHT, float(pr[6]))       # наклон (лира, прислонённая к скамье)
-		b.parts.append([String(pr[0]), Transform3D(rb * Basis.from_scale(ps), pp * S), {}])
+		var rm := _remap(b, pr[7]) if pr.size() > 7 and pr[7] is Dictionary else {}
+		b.parts.append([String(pr[0]), Transform3D(rb * Basis.from_scale(ps), pp * S), rm])
 	for j: Array in h.get("jets", []):
 		b.jets.append([sq * Vector3(float(j[0]), float(j[1]), float(j[2])) * S, float(j[3]) * S, float(j[4])])
 	for a: Array in h.get("actors", []):
@@ -140,6 +146,50 @@ static func pets(type: String) -> Array:
 		q[1] = _v(e[1])
 		out.append(q)
 	return out
+
+
+## Украшение Synty целиком (жаровня с огнём, кипарис, клумба, канделябр, лев…) — как в меню «Украшения»
+## (владелец 12.11: «можно же было использовать старые из Synty, вообще можно всё комбинировать»): детали, свет, дым.
+## pp — место в метрах, k — масштаб к обычному украшению
+static func _decor_group(b: Bp, type: String, pp: Vector3, yaw: float, k: float) -> void:
+	if not Defs.B.has(type):
+		push_warning("KitHouses: нет украшения " + type)
+		return
+	var d := Catalog.make(type, 0, 0, int(Defs.B[type].get("color", 0)))
+	var S := 1.0 / Catalog.ARCH
+	var T := Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * k), pp)
+	var toB := Transform3D(Basis.from_scale(Vector3.ONE * S), Vector3.ZERO)
+	for p in d.parts:
+		b.parts.append([p[0], toB * T * (p[1] as Transform3D), p[2]])
+	for l in d.lights:
+		b.light(S * (T * (l as Vector3)))
+	for sm in d.smoke:
+		b.smoke.append(S * (T * (sm as Vector3)))
+
+
+## Перекраска детали Synty из kit.json: {"tint": [r, g, b]}, {"rm": "MOSAIC"} (CatMonuments), {"skin": "Building_Marble_01"}
+static func _remap(b: Bp, r: Dictionary) -> Dictionary:
+	if r.has("tint"):
+		var c: Array = r["tint"]
+		return {"tint": Color(float(c[0]), float(c[1]), float(c[2]))}
+	if r.has("skin"):
+		return CatCivic._skin(b, String(r["skin"]))
+	if r.has("rm"):
+		match String(r["rm"]):
+			"MOSAIC": return CatMonuments.MOSAIC
+			"PAVING": return CatMonuments.PAVING
+			"SAND": return CatMonuments.SAND
+			"STONE_WALL": return CatMonuments.STONE_WALL
+			"RED_WALL": return CatMonuments.RED_WALL
+			"TRAV_BLOCKS": return CatMonuments.TRAV_BLOCKS
+			"STONE_ARCH": return CatMonuments.STONE_ARCH
+			"MARBLE_WALL": return CatMonuments.MARBLE_WALL
+			"MARBLE_BLOCKS": return CatMonuments.MARBLE_BLOCKS
+			"WARM_PAVING": return CatMonuments.WARM_PAVING
+			"PORCH": return CatMonuments.PORCH
+			"CAP_MARBLE": return CatMonuments.CAP_MARBLE
+			"SWAG_RED": return CatMonuments.SWAG_RED
+	return {}
 
 
 static func _v(a: Array) -> Vector3:
