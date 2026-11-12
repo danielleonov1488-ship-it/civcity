@@ -282,8 +282,8 @@ static func _item(x: Dictionary, key: String) -> Array:
 		# ---- кучки-«уголки» для задней стены и дворов: разной высоты, не больше метра вглубь ----
 		"store":                                   # мешки горой, сверху мешок, рядом корзина и амфора
 			return [_it("SM_Prop_Sack_Stack_01", 0.85, _rf(x, -0.08, 0.08)),
-				_it("SM_Prop_Sack_0%d" % _one(x, [3, 5]), 0.8, _rf(x, -0.5, 0.5), Vector3(_rf(x, -0.2, 0.3), 0.6, 0.0)),
-				_it("SM_Prop_Basket_0%d" % _one(x, [6, 7, 8]), 0.8, _rf(x, 0.0, TAU), Vector3(1.0, 0, 0.04)),
+				_it("SM_Prop_Sack_05", 0.8, _rf(x, -0.5, 0.5), Vector3(_rf(x, -0.2, 0.3), 0.6, 0.0)),
+				_it("SM_Prop_Basket_0%d" % _one(x, [6, 7]), 0.8, _rf(x, 0.0, TAU), Vector3(1.0, 0, 0.04)),
 				_it("SM_Prop_Vase_02", 0.85, _rf(x, 0.0, TAU), Vector3(-0.92, 0, 0.0))]
 		"amphpile":                                # штабель амфор и амфоры с кувшином рядом
 			return [_it("SM_Prop_Vase_Pile_04", 0.43, 0.0),
@@ -295,36 +295,35 @@ static func _item(x: Dictionary, key: String) -> Array:
 				_it("SM_Prop_Sack_04", 0.82, _rf(x, -0.3, 0.3), Vector3(-0.68, 0, 0.05))]
 		"wood":                                    # поленница, сноп, корзина
 			return [_it("#mil_logs", 0.78), _it("SM_Prop_Straw_Bundle_01", 0.6, _rf(x, 0.0, TAU), Vector3(1.05, 0, 0.0)),
-				_it("SM_Prop_Basket_0%d" % _one(x, [1, 4]), 0.75, _rf(x, 0.0, TAU), Vector3(-1.0, 0, 0.05))]
+				_it("SM_Prop_Basket_01", 0.75, _rf(x, 0.0, TAU), Vector3(-1.0, 0, 0.05))]
 		"goods":                                   # корзины с товаром, мешки стопкой
 			return [_it("SM_Prop_Basket_Set_06", 0.8), _it("SM_Prop_Basket_Set_06_Insert_01", 0.8),
 				_it("SM_Prop_Sack_Stack_02", 0.68, _rf(x, -0.1, 0.1), Vector3(1.05, 0, 0.0))]
 		"timber":                                  # доски, бревно, лестница к стене
-			return [_it("#mil_planks", 0.72), _it("#mil_logs", 0.55, 0.0, Vector3(0.0, 0.26, 0.0)),
-				_it("SM_Prop_Sack_04", 0.8, 0.3, Vector3(1.05, 0, 0.0))]
+			return [_it("#mil_planks", 0.62), _it("#mil_logs", 0.55, 0.0, Vector3(1.25, 0, 0.0))]
 		"herbbed":                                 # грядка трав у стены: три кустика и кувшин
 			return [_it("SM_Env_Garden_Plants_02", 0.3, _rf(x, 0.0, TAU), Vector3(-0.5, 0, 0), {}),
 				_it("SM_Env_Garden_Plants_05", 0.28, _rf(x, 0.0, TAU), Vector3(0.0, 0, 0.02), {}),
-				_it("SM_Env_Garden_Plants_07", 0.26, _rf(x, 0.0, TAU), Vector3(0.5, 0, 0), {}),
-				_it("SM_Prop_Jug_05", 1.1, 0.0, Vector3(0.85, 0, 0.05))]
+				_it("SM_Env_Garden_Plants_02", 0.26, _rf(x, 0.0, TAU), Vector3(0.5, 0, 0), {}),
+				_it("SM_Prop_Jug_03", 0.6, 0.0, Vector3(0.85, 0, 0.05))]
 		# ---- для боков: не глубже 0,38 (за боковой стеной мало места), разной высоты ----
 		"sideA":
 			return [_it("SM_Prop_Vase_02", 0.8, 0.0), _it("SM_Prop_Jar_01", 0.62, 0.0, Vector3(0.4, 0, 0.0)),
-				_it("SM_Prop_Jug_0%d" % _one(x, [2, 3]), 0.7, PI, Vector3(0.76, 0, 0.0))]
+				_it("SM_Prop_Jug_03", 0.7, PI, Vector3(0.76, 0, 0.0))]
 		"sideB":
 			return [_it("SM_Prop_Sack_04", 0.8, 0.0), _it("SM_Prop_Sack_04", 0.74, PI + 0.2, Vector3(0.05, 0.36, 0.0)),
 				_it("SM_Prop_Vase_05", 0.62, 0.0, Vector3(0.48, 0, 0.0))]
 		"sideC":
 			return [_it("SM_Prop_Basket_07", 0.7, 0.0), _it("SM_Prop_Vase_02", 0.78, 0.0, Vector3(0.42, 0, 0.0)),
-				_it("SM_Prop_Basket_12", 0.75, 0.0, Vector3(0.0, Bp.model_aabb("SM_Prop_Basket_07").end.y * 0.7 - 0.02, 0.0))]
+				_it("SM_Prop_Basket_06", 0.62, 0.4, Vector3(0.0, Bp.model_aabb("SM_Prop_Basket_07").end.y * 0.7 - 0.02, 0.0))]
 		"sacks":                                   # стопка мешков и сверху ещё мешок
 			return [_it("SM_Prop_Sack_Stack_0%d" % (1 + int(_ch(x, 0.4))), 0.7, _rf(x, -0.1, 0.1)),
-				_it("SM_Prop_Sack_0%d" % _one(x, [3, 4, 5]), 0.65, _rf(x, -0.5, 0.5), Vector3(_rf(x, -0.25, 0.25), 0.5, 0.0))]
+				_it("SM_Prop_Sack_0%d" % _one(x, [4, 5]), 0.65, _rf(x, -0.5, 0.5), Vector3(_rf(x, -0.25, 0.25), 0.5, 0.0))]
 		"sack2":                                   # два мешка, прислонены друг к другу
-			return [_it("SM_Prop_Sack_0%d" % _one(x, [3, 5]), 0.75, _rf(x, -0.3, 0.3), Vector3(-0.25, 0, 0)),
+			return [_it("SM_Prop_Sack_05", 0.75, _rf(x, -0.3, 0.3), Vector3(-0.25, 0, 0)),
 				_it("SM_Prop_Sack_04", 0.75, _rf(x, -0.3, 0.3), Vector3(0.25, 0, 0.02))]
 		"sack1":
-			return [_it("SM_Prop_Sack_0%d" % _one(x, [3, 4, 5]), 0.75, _rf(x, -0.4, 0.4))]
+			return [_it("SM_Prop_Sack_0%d" % _one(x, [4, 5]), 0.75, _rf(x, -0.4, 0.4))]
 		"sackS":                                   # тонкое — для боков (за боковой стеной мало места)
 			return [_it("SM_Prop_Sack_04", 0.72, 0.0, Vector3(-0.2, 0, 0)), _it("SM_Prop_Sack_04", 0.68, PI, Vector3(0.22, 0, 0.0))]
 		"amphS":                                   # амфоры для боков: круглые, ровно
@@ -336,12 +335,12 @@ static func _item(x: Dictionary, key: String) -> Array:
 		"vaseS":                                   # ваза с цветами для боков
 			return [_it("SM_Prop_Vase_03", 0.52, 0.0), _it(String(_one(x, BLOOM)), 0.18, _rf(x, 0.0, TAU), Vector3(0, 0.3, 0), {"tint": CatDecor.TRUE_COLOR})]
 		"basketS":
-			return [_it("SM_Prop_Basket_0%d" % _one(x, [6, 7, 12]), 0.7, 0.0)]
+			return [_it("SM_Prop_Basket_0%d" % _one(x, [6, 7]), 0.7, 0.0)]
 		"amph2", "amph3":                          # амфоры рядком
 			var n := 2 if key == "amph2" else 3
 			var out := []
 			for k in n:
-				out.append(_it(String(_one(x, ["SM_Prop_Vase_01", "SM_Prop_Vase_02", "SM_Prop_Vase_05", "SM_Prop_Jar_01"])), 0.7 * _rf(x, 0.92, 1.05),
+				out.append(_it(String(_one(x, ["SM_Prop_Vase_05", "SM_Prop_Vase_02", "SM_Prop_Vase_05", "SM_Prop_Jar_01"])), 0.7 * _rf(x, 0.92, 1.05),
 					_rf(x, 0.0, TAU), Vector3((k - (n - 1) * 0.5) * 0.4, 0, _rf(x, -0.04, 0.04))))
 			return out
 		"jars":
@@ -356,7 +355,7 @@ static func _item(x: Dictionary, key: String) -> Array:
 		"bset":
 			return [_it("SM_Prop_Basket_Set_01", 0.5), _it("SM_Prop_Basket_Set_01_Insert_01", 0.5)]
 		"basket":
-			return [_it("SM_Prop_Basket_0%d" % _one(x, [1, 2, 4, 6, 7, 8]), 0.7, _rf(x, 0.0, TAU))]
+			return [_it("SM_Prop_Basket_0%d" % _one(x, [1, 6, 7]), 0.7, _rf(x, 0.0, TAU))]
 		"logs":                                    # поленница
 			return [_it("#mil_logs", 0.62)]
 		"planks":
@@ -380,7 +379,7 @@ static func _item(x: Dictionary, key: String) -> Array:
 			for k in 2:
 				var px := (k - 0.5) * 0.42
 				out.append(_it("SM_Prop_Vase_06", 0.55, _rf(x, 0.0, TAU), Vector3(px, 0, 0)))
-				out.append(_it("SM_Env_Garden_Plants_0%d" % _one(x, [2, 5, 7]), 0.2, _rf(x, 0.0, TAU), Vector3(px, 0.32, 0), {}))
+				out.append(_it("SM_Env_Garden_Plants_0%d" % _one(x, [2, 5]), 0.2, _rf(x, 0.0, TAU), Vector3(px, 0.32, 0), {}))
 			return out
 		"greens", "grapes", "olives", "apples", "grain":     # корзина с урожаем
 			var kind := {"grapes": "plums", "grain": "grain"}.get(key, key) as String
@@ -389,24 +388,24 @@ static func _item(x: Dictionary, key: String) -> Array:
 		"jugs":
 			var out := []
 			for k in 3:
-				out.append(_it("SM_Prop_Jug_0%d" % _one(x, [1, 2, 3, 4]), 0.72, float(_one(x, [0.0, PI])) + _rf(x, -0.25, 0.25), Vector3((k - 1) * 0.3, 0, 0)))
+				out.append(_it("SM_Prop_Jug_03", 0.72 * _rf(x, 0.85, 1.05), float(_one(x, [0.0, PI])) + _rf(x, -0.25, 0.25), Vector3((k - 1) * 0.3, 0, 0)))
 			return out
 		"towels":                                  # корзины со сложенными полотенцами
 			return [_it("SM_Prop_Basket_Set_04", 0.62, _rf(x, -0.2, 0.2)), _it("SM_Prop_Basket_Set_04_Insert_01", 0.62, 0.0)]
 		"rugs":
-			return [_it("SM_Prop_Rug_Stack_0%d" % _one(x, [1, 2]), 0.6, _rf(x, -0.3, 0.3))]
+			return [_it("SM_Prop_Rug_Stack_01", 0.6, _rf(x, -0.3, 0.3))]
 		"marble":                                  # глыба мрамора
-			return [_it("SM_Prop_Marble_Block_0%d" % _one(x, [2, 3]), 0.62, _rf(x, -0.3, 0.3))]
+			return [_it("SM_Prop_Marble_Block_03", 0.62, _rf(x, -0.3, 0.3))]
 		"rubble":
-			return [_it("SM_Prop_Marble_Rubble_0%d" % _one(x, [3, 5, 7]), 0.75, _rf(x, 0.0, TAU))]
+			return [_it("SM_Prop_Marble_Rubble_0%d" % _one(x, [4, 7]), 0.75, _rf(x, 0.0, TAU))]
 		"broken":                                  # обломки статуй (брак скульптора)
-			return [_it("SM_Prop_Statue_Broken_0%d" % _one(x, [2, 3, 5, 8]), 0.75, _rf(x, 0.0, TAU))]
+			return [_it("SM_Prop_Statue_Broken_0%d" % _one(x, [3, 8]), 0.75, _rf(x, 0.0, TAU))]
 		"scrolls":                                 # корзина со свитками
-			var bn := "SM_Prop_Basket_0%d" % _one(x, [1, 4, 6])
+			var bn := "SM_Prop_Basket_0%d" % _one(x, [1, 6])
 			var h := Bp.model_aabb(bn).end.y * 0.62
-			return [_it(bn, 0.62), _it("SM_Prop_Scroll_Pile_0%d" % _one(x, [2, 4, 6]), 0.55, _rf(x, -0.4, 0.4), Vector3(0, h - 0.06, 0))]
+			return [_it(bn, 0.62), _it("SM_Prop_Scroll_Pile_0%d" % _one(x, [2, 6]), 0.55, _rf(x, -0.4, 0.4), Vector3(0, h - 0.06, 0))]
 		"senser":                                  # курильница с благовониями
-			return [_it("SM_Prop_Senser_0%d" % _one(x, [2, 4]), 1.1, _rf(x, 0.0, TAU))]
+			return [_it("SM_Prop_Senser_04", 1.1, _rf(x, 0.0, TAU))]
 		"trough":                                  # корыто с водой
 			return [_it("SM_Prop_Bowl_07", 0.95, PI / 2), ["#water", Transform3D(Basis.from_scale(Vector3(0.7, 0.14, 0.86)), Vector3(0, 0.12 + 0.07, 0)), {}]]
 	return []
@@ -617,7 +616,7 @@ static func _farm(x: Dictionary) -> void:
 	# пугало в пшенице (сзади, напротив хижины)
 	_group(x, _from(func(t: Bp) -> void: CatExtra._scarecrow(t, Vector3.ZERO)), Vector3(-3.3 * m, 0, -3.5), 0.3, Vector3(0.4 * m, 0, 0))
 	# повозка с сеном у изгороди напротив хижины
-	_group(x, [_it("SM_Prop_Cart_01", 0.72), _it("SM_Prop_Cart_01_Insert_01", 0.72)], Vector3(-4.0 * m, 0, 0.9), PI + 0.08 * m, Vector3(0, 0, 0.3))
+	_group(x, [_it("SM_Prop_Cart_01", 0.72), _it("SM_Prop_Cart_01_Insert_03", 0.72)], Vector3(-4.0 * m, 0, 0.9), PI + 0.08 * m, Vector3(0, 0, 0.3))
 	# корыто с водой у колодца, копны и снопы
 	_group(x, _item(x, "trough"), Vector3(2.6 * m, 0, 3.6), 0.0, Vector3(0.3 * m, 0, 0))
 	for p: Vector3 in [Vector3(-4.3 * m, 0, 2.6), Vector3(-1.3 * m, 0, 4.3), Vector3(4.2 * m, 0, -1.9)]:
@@ -644,8 +643,8 @@ static func _vineyard(x: Dictionary) -> void:
 		_group(x, _item(x, String(_one(x, ["grapes", "grapes", "basket"]))), p, _rf(x, 0.0, TAU), Vector3(0.3, 0, 0))
 	_group(x, [_it("SM_Prop_Cart_01", 0.7), _it("SM_Prop_Cart_01_Insert_03", 0.7)], Vector3(4.0, 0, 1.4), 0.06, Vector3(0, 0, 0.3))
 	# стол для пробы: кувшин и кубки, два табурета
-	var tb := [_it("SM_Prop_Table_04", 0.8), _it("SM_Prop_Jug_0%d" % _one(x, [1, 2, 4]), 0.6, 0.4, Vector3(-0.15, 0.62, 0.05)),
-		_it("SM_Prop_Goblet_01", 0.8, 0.0, Vector3(0.18, 0.62, -0.12)), _it("SM_Prop_Goblet_02", 0.8, 0.0, Vector3(0.15, 0.62, 0.18)),
+	var tb := [_it("SM_Prop_Table_04", 0.8), _it("SM_Prop_Jug_03", 0.5, 0.4, Vector3(-0.15, 0.62, 0.05)),
+		_it("SM_Prop_Goblet_01", 0.8, 0.0, Vector3(0.18, 0.62, -0.12)), _it("SM_Prop_Goblet_01", 0.8, 0.5, Vector3(0.15, 0.62, 0.18)),
 		_it("SM_Prop_Seat_Stool_02", 0.9, 0.0, Vector3(-0.72, 0, 0)), _it("SM_Prop_Seat_Stool_02", 0.9, 0.3, Vector3(0.72, 0, 0))]
 	_group(x, tb, Vector3(-0.9, 0, 1.35), 0.0, Vector3(0.4, 0, 0))
 	_group(x, _item(x, "amph3"), Vector3(1.0, 0, 4.4), 0.0, Vector3(0.3, 0, 0))
@@ -680,7 +679,7 @@ static func _market_table(x: Dictionary) -> Array:
 	for k in 3:
 		var nm := String(_one(x, tops)) % (1 + (x["rng"] as RandomNumberGenerator).randi() % 4)
 		out.append(_it(nm, 0.5, _rf(x, 0.0, TAU), Vector3(-0.42 + k * 0.42, 0.62, _rf(x, -0.1, 0.1))))
-	out.append(_it("SM_Prop_Basket_0%d" % _one(x, [1, 4, 6]), 0.55, _rf(x, 0.0, TAU), Vector3(0.35, 0, 0.55)))
+	out.append(_it("SM_Prop_Basket_0%d" % _one(x, [1, 6]), 0.55, _rf(x, 0.0, TAU), Vector3(0.35, 0, 0.55)))
 	return out
 
 
@@ -750,7 +749,7 @@ static func _temple(x: Dictionary) -> void:
 	for p: Vector3 in [Vector3(-3.1, 0, 4.25), Vector3(3.1, 0, 4.25), Vector3(-3.1, 0, 2.65), Vector3(3.1, 0, 2.65)]:
 		_group(x, _item(x, String(_one(x, ["senser", "apples", "senser"]))), p, 0.0, Vector3(0, 0, 0.2))
 	# знамёна на шестах у лестницы
-	var bl := String(_one(x, ["A", "C", "E"]))
+	var bl := String(_one(x, ["A", "C"]))
 	for sd: float in [-1.0, 1.0]:
 		_group(x, [_it("SM_Prop_Pole_02", 0.95), _it("SM_Prop_Banner_03_" + bl, 0.62, 0.0, Vector3(0, 2.75, 0.1))], Vector3(sd * 4.75, 0, 6.75), 0.0, Vector3(0, 0, 0.25))
 		_group(x, _item(x, "vasebloom"), Vector3(sd * 4.8, 0, 5.75), 0.0, Vector3(0, 0, 0.2))
