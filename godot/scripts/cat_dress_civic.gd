@@ -828,7 +828,8 @@ const WALL_KIT := {
 }
 const SHUT_WIN := ["SM_Bld_Wall_Window_01", "SM_Bld_Wall_Window_05"]
 ## Здания со вторым проходом
-const PASS2 := ["warehouse", "vigiles", "sculptor", "herbalist", "scriptorium", "farm", "grove", "vineyard", "ogorod", "forum"]
+const PASS2 := ["warehouse", "vigiles", "sculptor", "herbalist", "scriptorium", "farm", "grove", "vineyard", "ogorod", "forum",
+	"school", "library", "academy", "prefect", "balnea", "baths", "thermae", "ludus", "temple"]
 
 
 static func _walls_and_roofs(x: Dictionary, type: String) -> void:
