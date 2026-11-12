@@ -17,9 +17,10 @@ const SHOPS := ["butcher", "bakery", "cobbler", "dyer", "tailor", "potter", "oil
 	"jeweler", "weaver", "barber", "medic", "thermopolium", "taberna", "fullonica", "mansio", "scriptorium", "herbalist", "catshop"]
 const STALLS := ["stall_fruit", "stall_veg", "stall_fish"]
 ## Общественные здания (свой облик у каждого: "civ_<тип>"); у школы скамьи и кресло учителя — детали Synty (Spectacle)
-const CIVIC := ["school", "library", "academy", "warehouse", "vigiles", "prefect", "balnea", "baths", "sculptor", "shelter"]
+## Большие термы — свои: Synty-термы в городе из своих домов дают +10 новых вызовов отрисовки (бюджет волны 5б, stage5b_owner)
+const CIVIC := ["school", "library", "academy", "warehouse", "vigiles", "prefect", "balnea", "baths", "sculptor", "shelter", "thermae"]
 ## Памятники — свои, меньше прежних (владелец 12.11: «отказаться от супер огромных зданий»): "mon_<тип>"
-## Храм, форум, пантеон, храм Венеры, маяк, большие термы и лудус — снова Synty, но меньше (Catalog.SHRINK): свои вышли
+## Храм, форум, пантеон, храм Венеры, маяк и лудус — снова Synty, но меньше (Catalog.SHRINK): свои вышли
 ## беднее (владелец 12.11: «новые большие здания выглядят ужасно… комбинируй наборы»); их модели остаются в наборе
 const MONO := [
 	# прогон 4: фонтан, нимфей, арка, огород, уличные артисты (у музыкантов лира и скамья, у игроков стулья — Synty)
