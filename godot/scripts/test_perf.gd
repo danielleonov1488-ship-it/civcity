@@ -385,6 +385,11 @@ func _probe() -> void:
 		"glow_off": [func(): game.env.glow_enabled = false, func(): game._apply_quality()],
 		"dof_off": [func(): game.rig.attrs.dof_blur_far_enabled = false; game.rig.attrs.dof_blur_near_enabled = false, func(): game._apply_quality()],
 		"clouds_off": [func(): game.clouds.set_enabled(false), func(): game.clouds.set_enabled(true)],
+		# 12.11 (владелец: «минимум 120 кадров»): самые тяжёлые эффекты «Высокой»
+		"sdfgi_off": [func(): game.env.sdfgi_enabled = false, func(): game._apply_quality()],
+		"ssil_off": [func(): game.env.ssil_enabled = false, func(): game._apply_quality()],
+		"shadow_off": [func(): game.sun.shadow_enabled = false, func(): game._apply_quality()],
+		"fsr075": [func(): vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR; vp.scaling_3d_scale = 0.75, func(): game._apply_quality()],
 	}
 	# 12.11: из чего складывается время процессора — выключаем обработку кадра у узлов одного сценария (и их детей)
 	var by_script := {}
