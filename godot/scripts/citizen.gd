@@ -15,6 +15,8 @@ const SIZE := 0.61                   # люди «кукольные», ниже
 const BASE := 0.72
 const K := SIZE / BASE
 var anim: AnimationPlayer
+var lod_acc := 0.0                       # движения по удалённости (Gfx._anims): накопленное время до следующего шага
+var lod_k := 1                           # …и раз во сколько кадров его считать (1 — каждый кадр); им же пользуется People
 var female := false
 var meshes := []
 var _cur := ""

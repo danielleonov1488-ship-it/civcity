@@ -132,6 +132,10 @@ func _run(mode: String) -> void:
 		"vram": await _vram()
 		"groups": await _groups()
 		"batch": await _batch()
+		"citizens": await _citizens()
+		"pplprof": await _pplprof()
+		"ab": await _ab()
+		"gpuab": await _gpuab()
 		"offer": await _offer()
 		_: await _regress()
 	print("PERF DONE fails=%d" % fails)
@@ -407,8 +411,14 @@ func _probe() -> void:
 	tests["anims_manual"] = [func(): _anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL),
 		func(): _anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE)]
 	print("PROBE сценариев с обработкой кадра: %d, анимаций %d: %s" % [by_script.size(), anims.size(), ", ".join(by_script.keys())])
+	# по частям обработки жителей (People._process): кошки, повозка, беседы, герой — заменяем пустышкой
+	tests["ppl_nocats"] = [func(): game.people.set_meta("perf_skip", "cats"), func(): game.people.remove_meta("perf_skip")]
 	var only: String = A.get("only", "")
-	for t: String in tests:
+	var rep := int(A.get("rep", "1"))
+	var order := []
+	for k in rep:
+		order.append_array(tests.keys())
+	for t: String in order:
 		if only != "" and not (t in only.split("+")):
 			continue
 		if A.has("prefix") and not (t.begins_with(str(A["prefix"])) or t == "anims_manual"):
@@ -421,6 +431,150 @@ func _probe() -> void:
 			int(r["vis_d"]) - int(b2["vis_d"]), (float(r["vis_p"]) - float(b2["vis_p"])) / 1.0e6])
 
 
+## 12.11: из чего сделан житель — сколько у него мешей со скелетом (каждый — отдельный пересчёт позы на видеокарте
+## каждый кадр), поверхностей и точек
+func _citizens() -> void:
+	await _settle()
+	var n := 0
+	var tot := {"mi": 0, "skin": 0, "surf": 0, "verts": 0, "skel": 0}
+	var names := {}
+	for r in game.people.residents:
+		var c = r["node"]
+		if c == null:
+			continue
+		n += 1
+		tot["skel"] += (c as Node).find_children("*", "Skeleton3D", true, false).size()
+		for mi: MeshInstance3D in (c as Node).find_children("*", "MeshInstance3D", true, false):
+			if not mi.visible:
+				continue
+			tot["mi"] += 1
+			if mi.skin != null or mi.skeleton != NodePath(""):
+				tot["skin"] += 1
+			if mi.mesh:
+				tot["surf"] += mi.mesh.get_surface_count()
+				for s in mi.mesh.get_surface_count():
+					if mi.mesh is ArrayMesh:
+						tot["verts"] += (mi.mesh as ArrayMesh).surface_get_array_len(s)
+			names[String(mi.name)] = int(names.get(String(mi.name), 0)) + 1
+	var top := names.keys()
+	top.sort_custom(func(a, b): return int(names[a]) > int(names[b]))
+	print("CIT видимых жителей %d: мешей %d (со скелетом %d), скелетов %d, поверхностей %d, точек %d — на жителя %.1f мешей, %.0f точек" % [n,
+		tot["mi"], tot["skin"], tot["skel"], tot["surf"], tot["verts"], float(tot["mi"]) / maxf(1, n), float(tot["verts"]) / maxf(1, n)])
+	var t := []
+	for k in top.slice(0, 25):
+		t.append("%s×%d" % [k, names[k]])
+	print("CIT части: ", ", ".join(t))
+
+
+## 12.11: честное «было/стало» на занятом компьютере — по очереди без и с новыми правками скорости (Gfx.lod_on),
+## rounds раз, итог — медианы
+func _ab() -> void:
+	await _settle()
+	var view: Array = _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0]
+	for q: String in str(A.get("q", "high,verylow")).split(","):
+		_quality(q)
+		_view(view)
+		var res := {false: {"cpu": [], "proc": [], "gpu": [], "frame": []}, true: {"cpu": [], "proc": [], "gpu": [], "frame": []}}
+		for r in int(A.get("rounds", "4")):
+			for on: bool in ([false, true] if r % 2 == 0 else [true, false]):
+				Gfx.lod_on = on
+				var m := await _measure("ab %s %s r%d" % [q, "new" if on else "old", r])
+				if on and r == 0:
+					print("AB разряды жителей (крупные, средние, мелкие, за экраном): ", Gfx.tier_n)
+				for k: String in res[on]:
+					(res[on][k] as Array).append(float(m[k]))
+		Gfx.lod_on = true
+		for on: bool in [false, true]:
+			var med := {}
+			for k: String in res[on]:
+				var a := PackedFloat32Array(res[on][k])
+				med[k] = _pct(a, 0.5)
+			print("AB %-8s %s: кадр %.2f мс (%.0f к/с), процессор %.2f (скрипты %.2f), видеокарта %.2f" % [q, "стало" if on else "было ", med["frame"],
+				1000.0 / maxf(0.01, med["frame"]), med["cpu"], med["proc"], med["gpu"]])
+
+
+## 12.11: облегчения «Высокой» для владельца — каждое по очереди с исходной (rounds раз, медианы), затем снимки каждого
+## (время стоит, жителей нет) в out. Варианты: base, nosdfgi, nossil, atlas4k, splits2, softmed, msaa2, fsr2 (0,77 со
+## сглаживанием FSR2), lite (всё лёгкое разом, кроме fsr2), lite_fsr2
+##   … -- mode=gpuab q=high rounds=3 out=D:/CivCity/.work/perf120/gpuab [only=base+lite]
+func _gpu_variant(name: String) -> void:
+	game._apply_quality()
+	var vp := get_viewport()
+	var parts := name.split("+")
+	for v: String in parts:
+		match v:
+			"nosdfgi":
+				game.env.sdfgi_enabled = false
+			"nossil":
+				game.env.ssil_enabled = false
+			"atlas4k":
+				RenderingServer.directional_shadow_atlas_set_size(4096, true)
+			"splits2":
+				game.sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+			"softmed":
+				RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM)
+			"msaa2":
+				vp.msaa_3d = Viewport.MSAA_2X
+			"fsr2":
+				vp.msaa_3d = Viewport.MSAA_DISABLED
+				vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR2
+				vp.scaling_3d_scale = 0.77
+
+
+func _gpu_reset() -> void:
+	RenderingServer.directional_shadow_atlas_set_size(8192, true)
+	RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
+	var vp := get_viewport()
+	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+	vp.scaling_3d_scale = 1.0
+	game._apply_quality()
+
+
+func _gpuab() -> void:
+	await _settle()
+	_quality(str(A.get("q", "high")))
+	var view: Array = _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0]
+	_view(view)
+	var names: Array = Array(str(A.get("only", "base,nosdfgi,nossil,atlas4k,splits2,softmed,msaa2,fsr2,nosdfgi+nossil+atlas4k+softmed+msaa2,nosdfgi+nossil+atlas4k+softmed+fsr2")).replace("+", "&").split(","))
+	for i in names.size():
+		names[i] = str(names[i]).replace("&", "+")
+	var res := {}
+	for r in int(A.get("rounds", "3")):
+		var order := names.duplicate()
+		for k in r % order.size():
+			order.push_back(order.pop_front())
+		for nm: String in order:
+			_gpu_reset()
+			_gpu_variant(nm)
+			await frames(30)
+			var m := await _measure("gpuab %s r%d" % [nm, r])
+			if not res.has(nm):
+				res[nm] = {"gpu": [], "frame": [], "cpu": []}
+			for k: String in ["gpu", "frame", "cpu"]:
+				(res[nm][k] as Array).append(float(m[k]))
+	for nm: String in names:
+		var g := _pct(PackedFloat32Array(res[nm]["gpu"]), 0.5)
+		var f := _pct(PackedFloat32Array(res[nm]["frame"]), 0.5)
+		var c := _pct(PackedFloat32Array(res[nm]["cpu"]), 0.5)
+		print("GPUAB %-48s видеокарта %5.2f мс | процессор %5.2f | кадр %5.2f (%.0f к/с)" % [nm, g, c, f, 1000.0 / maxf(0.01, f)])
+	var out: String = A.get("out", "")
+	if out != "":
+		DirAccess.make_dir_recursive_absolute(out)
+		_freeze()
+		for v: Array in _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW):
+			_view(v)
+			game._set_hour(9.0)
+			for nm: String in names:
+				_gpu_reset()
+				_gpu_variant(nm)
+				await frames(SHOT_WAIT)
+				var img: Image = await _snap()
+				img.save_png(out.path_join("%s_%s.png" % [v[0], nm.replace("+", "_")]))
+		_unfreeze()
+		print("GPUAB снимки: ", out)
+	_gpu_reset()
+
+
 static func _proc_set(list: Array, mode: int) -> void:
 	for n: Node in list:
 		if is_instance_valid(n):
@@ -428,9 +582,39 @@ static func _proc_set(list: Array, mode: int) -> void:
 
 
 static func _anim_cb(list: Array, mode: int) -> void:
-	for a: AnimationMixer in list:
+	for a in list:
 		if is_instance_valid(a):
-			a.callback_mode_process = mode
+			(a as AnimationMixer).callback_mode_process = mode
+
+
+## 12.11: время самого People._process (сценарий) против всего времени кадра на скриптах; затем — анимации жителей
+## на ручном шаге (ни одна не считается) — сколько стоят они
+func _pplprof() -> void:
+	await _settle()
+	_quality(str(A.get("q", "high")))
+	_view(_views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0])
+	for k in 3:
+		People.perf = true
+		game.people.perf_us = 0
+		var r := await _measure("pplprof r%d" % k)
+		People.perf = false
+		var n := int(A.get("n", "120"))
+		print("PPL People._process в среднем %.2f мс за кадр (скрипты всего %.2f мс)" % [game.people.perf_us / 1000.0 / n, float(r["proc"])])
+		var parts := []
+		for sec: String in game.people.perf_sec:
+			parts.append("%s %.2f" % [sec, int(game.people.perf_sec[sec]) / 1000.0 / n])
+		game.people.perf_sec = {}
+		var st := {}
+		for rr in game.people.residents:
+			if rr["node"] != null:
+				st[rr["state"]] = int(st.get(rr["state"], 0)) + 1
+		print("PPL части (мс за кадр): ", ", ".join(parts), " | видимые по делам: ", st)
+		var anims: Array = game.people.find_children("*", "AnimationMixer", true, false)
+		_anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL)
+		var r2 := await _measure("pplprof anims_off r%d" % k)
+		_anim_cb(anims, AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE)
+		print("PPL анимаций жителей %d: без них скрипты %.2f мс (разница %.2f), видеокарта %.2f → %.2f" % [anims.size(), float(r2["proc"]),
+			float(r["proc"]) - float(r2["proc"]), float(r["gpu"]), float(r2["gpu"])])
 
 
 ## Для владельца (1.9, 1.10): снимки каждой графики на трёх видах (без жителей, время стоит) и замеры по кругу —

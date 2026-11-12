@@ -2903,11 +2903,35 @@ func _door_cancel(r: Dictionary) -> void:
 
 # ---------- кадр ----------
 
+## Замер (test_perf mode=pplprof): сколько микросекунд ушло на сам People._process за кадры замера
+static var perf := false
+var perf_us := 0
+var _lod_frame := 0
+var perf_sec := {}                   # части People._process: микросекунды за замер
+
+
+func _pf(name: String, t: int) -> int:
+	var now := Time.get_ticks_usec()
+	perf_sec[name] = int(perf_sec.get(name, 0)) + now - t
+	return now
+
+
 func _process(dt: float) -> void:
+	if perf:
+		var t0 := Time.get_ticks_usec()
+		_process_body(dt)
+		perf_us += Time.get_ticks_usec() - t0
+	else:
+		_process_body(dt)
+
+
+func _process_body(dt: float) -> void:
 	if city == null or land == null:
 		return
 	dt = minf(dt, 0.05)
 	var speed: float = game.speed
+	var pf := perf
+	var tm := Time.get_ticks_usec() if pf else 0
 	_tick += dt
 	if _tick >= 0.25:
 		var dh: float = _tick * speed * 24.0 / Game.DAY_LEN
@@ -2916,10 +2940,14 @@ func _process(dt: float) -> void:
 			_assign_jobs()
 		if speed > 0.0:
 			_schedule(dh)
+	if pf:
+		tm = _pf("sched", tm)
 	_prop_t -= dt
 	if _prop_t <= 0.0:
 		_prop_t = 0.3
 		_props_tick()
+	if pf:
+		tm = _pf("props", tm)
 	if speed <= 0.0:
 		for r in (residents if hero_r.is_empty() else residents + [hero_r]):
 			if r["node"] != null:
@@ -2940,12 +2968,27 @@ func _process(dt: float) -> void:
 	_far_ph = (_far_ph + 1) % far_n
 	var fdt := _far_acc[_far_ph]
 	_far_acc[_far_ph] = 0.0
+	_lod_frame += 1
+	var k_walk := maxi(1, int(Engine.get_frames_per_second() / 30.0))     # идущих — не реже 30 раз в секунду: шаг плавный
 	for r in residents.duplicate():
 		var rdt := sdt
-		if r["node"] == null:
+		var cn: Citizen = r["node"]
+		if cn == null:
 			if int(r["id"]) % far_n != _far_ph:
 				continue                       # невидимого — в его очередь, за всё накопленное время
 			rdt = fdt
+		elif cn.lod_k > 1:
+			# мелкий на экране житель (12.11, скорость): дела — раз в lod_k кадров за всё накопленное время, как его
+			# движения (Gfx._anims: не реже 15–30 раз в секунду) — глазу не видно, процессору в разы легче
+			var kk := mini(cn.lod_k, k_walk) if r["state"] == "walk" else cn.lod_k
+			r["lod_dt"] = float(r.get("lod_dt", 0.0)) + sdt
+			if (_lod_frame + int(r["id"])) % kk != 0:
+				continue
+			rdt = float(r["lod_dt"])
+			r["lod_dt"] = 0.0
+		elif r.has("lod_dt"):
+			rdt += float(r["lod_dt"])
+			r.erase("lod_dt")
 		match r["state"]:
 			"walk":
 				_step(r, rdt)
@@ -2961,23 +3004,33 @@ func _process(dt: float) -> void:
 			"work":
 				if r["node"] != null:
 					(r["node"] as Citizen).anim.speed_scale = speed
-					_work_step(r, sdt)
+					_work_step(r, rdt)
 			_:
 				if r["node"] != null:
 					(r["node"] as Citizen).anim.speed_scale = speed
 		if r["node"] != null and float(r["fade"]) < 1.0 and r["state"] != "walk" and r["state"] != "door":
-			r["fade"] = minf(1.0, float(r["fade"]) + sdt / 0.6)
+			r["fade"] = minf(1.0, float(r["fade"]) + rdt / 0.6)
 			(r["node"] as Citizen).set_alpha(float(r["fade"]))
+	if pf:
+		tm = _pf("residents", tm)
 	if not hero_r.is_empty():
 		_hero_tick(dt, sdt)
 	for cv in convs.duplicate():
 		_conv_step(cv, sdt)
+	if pf:
+		tm = _pf("hero+convs", tm)
 	_vis_t -= dt
 	if _vis_t <= 0.0:
 		_vis_t = 0.5
 		_vis_tick()
+	if pf:
+		tm = _pf("vis", tm)
 	_cart_step(dt * speed)
+	if pf:
+		tm = _pf("cart", tm)
 	_cats_step(dt * speed)
+	if pf:
+		tm = _pf("cats", tm)
 
 
 ## Что у жителя должно быть в руках сейчас: на работе — вещи места (лира, свиток, серп…), по дороге — покупка
