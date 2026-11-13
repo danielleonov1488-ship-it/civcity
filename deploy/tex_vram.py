@@ -28,7 +28,7 @@ import re
 import sys
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot')
-DIRS = ['assets/synty/Textures']
+DIRS = ['assets/synty/Textures', 'assets/synty_meadow/Textures']   # 13.11: и набор Meadow Forest
 
 # compress/mode: 0 — без потерь (как было), 2 — VRAM Compressed, 4 — Basis Universal
 MODES = {

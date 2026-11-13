@@ -308,6 +308,8 @@ static func apply(g) -> void:
 				for a in (g.visuals[id] as Dictionary).get("actors", []):
 					HandProps.drop(a)
 	small_textures(q == "verylow")
+	if g.has_method("meadow_quality"):
+		g.meadow_quality(low)                  # природа Meadow Forest: мелочь лугов — «Средняя» и «Высокая», деревья набора на «Низкой» — прежние
 	# большие постройки этапа 5 (CatGrand.LOW): на «Низкой» — лёгкие колонны и статуи; уровень поменяли — их облик заново
 	if low != _grand_low:
 		_grand_low = low

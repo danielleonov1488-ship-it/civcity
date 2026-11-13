@@ -21,7 +21,7 @@ static var _tint_mats := {}
 
 ## [оттенок, какие картинки подкрашены («*» — все), remap без оттенка] или [] — группа как прежде
 static func _split(name: String, remap: Dictionary) -> Array:
-	if name.begins_with("#") or name.begins_with("K:") or remap.has("leaf"):
+	if name.begins_with("#") or name.begins_with("K:") or name.begins_with("M:") or remap.has("leaf"):
 		return []
 	var has_t := remap.has("tint")
 	var tints: Dictionary = remap.get("tints", {})
@@ -150,13 +150,46 @@ static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
 		var sz := mesh.get_aabb().size
 		if maxf(sz.x, maxf(sz.y, sz.z)) < SMALL_SHADOW:
 			(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	if name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") or name.contains("Pebbles") or name.contains("Garden_Plants"):
+	if name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") or name.contains("Pebbles") or name.contains("Garden_Plants") or Meadow.small(name):
 		var mmi: MultiMeshInstance3D = sub["mmi"]
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if tile.x >= 0:
 			mmi.visibility_range_end = 150.0
 			mmi.visibility_range_end_margin = 20.0
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			_far_fade(mesh)
+	elif Meadow.field(name):
+		(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # поля набора Meadow — без тени
+
+
+## 13.11: мелочь природы гаснет с расстоянием сама (каждая травинка — по своему расстоянию), а не кусками 48 м разом
+## на границе visibility_range: иначе на лугах видны прямоугольники «с травой / без травы». Материалы Synty — копия
+## с растворением по точкам (дизеринг) от FADE_FROM до FADE_TO м; листва набора Meadow — свой шейдер (параметр fade)
+## (дальность куска — 150 м до его середины; куски 48 м — до края ~34 м: к FADE_TO + 34 травинки уже погасли сами,
+## кусок не обрезает видимую траву прямоугольником)
+const FADE_FROM := 85.0
+const FADE_TO := 115.0
+static var _fade_mats := {}
+static func _far_fade(mesh: Mesh) -> void:
+	if mesh == null:
+		return
+	for s in mesh.get_surface_count():
+		var m := mesh.surface_get_material(s)
+		if m is ShaderMaterial:
+			if (m as ShaderMaterial).get_shader_parameter("fade") != null:
+				(m as ShaderMaterial).set_shader_parameter("fade", Vector2(FADE_FROM, FADE_TO))
+			continue
+		if not m is BaseMaterial3D:
+			continue
+		var k := m.get_instance_id()
+		if not _fade_mats.has(k):
+			var f := m.duplicate() as BaseMaterial3D
+			f.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_DITHER
+			f.distance_fade_max_distance = FADE_FROM          # больше min — растворяется вдаль: видно до FADE_FROM, нет к FADE_TO
+			f.distance_fade_min_distance = FADE_TO
+			_fade_mats[k] = f
+			Synty._mats["fade|%d" % k] = f              # «Очень низкая» подменяет картинки и у неё (Gfx.small_textures)
+		mesh.surface_set_material(s, _fade_mats[k])
 
 
 func _sub(mesh: Mesh, local: Transform3D, colors := false) -> Dictionary:

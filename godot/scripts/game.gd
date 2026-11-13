@@ -263,6 +263,7 @@ func _ready() -> void:
 	_loading_show()
 	await _step("Земля и холмы", 0.05)
 	land = Land.new()
+	MeadowNature.prepare(land)                # ложбины ручьёв считаются в фоне, пока грузится город
 	city = City.new(land)
 	parts = Parts.new()
 	parts.tint_split = Parts.split_on           # одинаковые детали разных цветов — один MultiMesh (12.11, скорость)
@@ -281,6 +282,7 @@ func _ready() -> void:
 	land_mat.set_shader_parameter("tile_plaza_b", tex.call("Floor_Tiles_05"))
 	land_mat.set_shader_parameter("tile_plaza_c", tex.call("Floor_Tiles_01"))
 	land_mat.set_shader_parameter("tile_plaza_d", tex.call("Floor_Tiles_02"))
+	MeadowNature.ground(self)                 # трава, мостовая, тропы и берега из набора Meadow Forest (13.11)
 	await _step("Вода, дорога и даль", 0.15)
 	_water()
 	_horizon()
@@ -355,9 +357,13 @@ func _ready() -> void:
 			_demo_town()
 	city.seg_thin = true                      # готовый город построен: дальше звенья заборов — узкой полосой (тянут мышью)
 	await _step("Леса и луга", 0.35)
+	if not loaded:
+		land.meadow_new = true                # новая карта лугов: мельницы и водяное колесо на окраинах (13.11)
+	MeadowNature.streams(self)                # ручьи — только где свободно (старые города) или все (новая игра): scripts/streams.gd
 	_nature()
 	_nature_arches()
 	_ponds_life()
+	MeadowNature.life(self)                   # у ручьёв, мосты, луга в цветах, поля с оградами, мельницы (scripts/meadow_nature.gd)
 	_cliff_rocks()
 	surf_img = land.make_surface()
 	surf_img.generate_mipmaps()
@@ -1318,19 +1324,40 @@ func _nature() -> void:
 		elif r < 0.137:
 			name = "SM_Env_Rock_Cliff_02"
 			s = rng.randf_range(0.12, 0.25)
+		elif r < 0.162 and ds > -10.0:
+			# луга богаче (13.11, Meadow Forest): кочки травы, полевые цветы, у опушек кустики — «Средняя» и «Высокая»
+			var ex := MeadowNature.extra(rng, forest)
+			if ex.is_empty():
+				continue
+			name = ex[0]
+			s = ex[1]
 		else:
 			continue
+		var rm := {}
+		if not name.begins_with("M:"):
+			var mp := MeadowNature.pick(rng, name, s)    # часть рощ и лугов — деревья, кусты, цветы и камни Meadow Forest
+			name = mp[0]
+			s = mp[1]
+			rm = mp[2]
 		var xf := Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(x, y - (0.1 if name.contains("Rock") else 0.0), z))
-		_add_nature(name, xf, p)
+		_add_nature(name, xf, p, rm)
 
 
-func _add_nature(name: String, xf: Transform3D, p: Vector2) -> void:
+func _add_nature(name: String, xf: Transform3D, p: Vector2, rm := {}) -> void:
 	var key := Vector2i(int(p.x / 2.0), int(p.y / 2.0))
 	if not nature.has(key):
 		nature[key] = []
 	var tinted := name.begins_with("SM_Env_Tree") or name.begins_with("SM_Env_Garden") or name.begins_with("SM_Env_Bush")
-	var remap := {"tint": Synty.GREEN} if tinted else {}
-	nature[key].append({"h": parts.place_one(name, xf, remap, true), "p": p, "name": name, "xf": xf, "remap": remap})
+	var remap: Dictionary = rm if not rm.is_empty() else ({"tint": Synty.GREEN} if tinted else {})
+	var h := parts.place_one(name, xf, remap, true)
+	if name.begins_with("M:"):
+		MeadowNature.apply_group(h[0][0])      # мелочь лугов и деревья набора — по нынешнему уровню графики
+	nature[key].append({"h": h, "p": p, "name": name, "xf": xf, "remap": remap})
+
+
+## Уровень графики поменялся (Gfx.apply): природа Meadow Forest — по нему (scripts/meadow_nature.gd)
+func meadow_quality(is_low: bool) -> void:
+	MeadowNature.quality(self, is_low)
 
 
 ## Дерево, куст или камень под курсором (их можно снести и перенести, как в Town to City)
@@ -1341,10 +1368,10 @@ func nature_at(p: Vector2) -> Dictionary:
 		for kx in range(int(p.x / 2.0) - 1, int(p.x / 2.0) + 2):
 			for it in nature.get(Vector2i(kx, kz), []):
 				var nm: String = it["name"]
-				if nm.contains("Grass") or nm.contains("Flowers") or nm.contains("Lillies"):
+				if nm.contains("Grass") or nm.contains("Flowers") or nm.contains("Lillies") or Meadow.small(nm) or nm.contains("Wildflowers_Patch"):
 					continue
 				var d := (it["p"] as Vector2).distance_to(p)
-				var r := 1.6 if nm.contains("Tree") else 1.0
+				var r := 1.6 if nm.contains("Tree") else (2.6 if nm.contains("Windmill") or nm.contains("WaterWheel") else 1.0)
 				if d < r and d < bd:
 					bd = d
 					best = it
@@ -1371,11 +1398,13 @@ func _ponds_life() -> void:
 			var y := land.height_at(q.x, q.y)
 			if y > Land.WATER_Y + 0.6:
 				continue
-			_add_nature("SM_Env_Grass_0%d" % (1 + rng.randi() % 3), Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(1.0, 1.6)), Vector3(q.x, maxf(y, Land.WATER_Y - 0.1), q.y)), q)
+			var reed := ("M:SM_Env_Grass_Tall_Clump_0%d" % (1 + rng.randi() % 5)) if MeadowNature.on() and not MeadowNature.gen_low and rng.randf() < 0.6 else ("SM_Env_Grass_0%d" % (1 + rng.randi() % 3))
+			_add_nature(reed, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(1.0, 1.6) * (0.5 if reed.begins_with("M:") else 1.0)), Vector3(q.x, maxf(y, Land.WATER_Y - 0.1), q.y)), q)
 		for k in int(r * 0.8):
 			var a := rng.randf() * TAU
 			var q := c + Vector2(cos(a), sin(a)) * r * rng.randf_range(0.2, 0.6)
-			_add_nature("SM_Env_Lillies_0%d" % (1 + rng.randi() % 3), Transform3D(Basis(Vector3.UP, rng.randf() * TAU), Vector3(q.x, Land.WATER_Y + 0.01, q.y)), q)
+			var lil := ("M:SM_Env_Lillies_0%d" % (1 + rng.randi() % 3)) if MeadowNature.on() else ("SM_Env_Lillies_0%d" % (1 + rng.randi() % 3))
+			_add_nature(lil, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * (rng.randf_range(0.4, 0.7) if lil.begins_with("M:") else 1.0)), Vector3(q.x, Land.WATER_Y + 0.01, q.y)), q)
 		for k in 2 + int(r / 6.0):
 			var swan := rng.randf() < 0.35
 			var mi := MeshInstance3D.new()
@@ -2395,6 +2424,7 @@ func _plot_hover(p: Vector2i) -> void:
 
 
 func _update_plot_signs() -> void:
+	MeadowNature.plots_tex(self)              # трава своей и чужой земли — плавной границей (13.11)
 	if hud == null:
 		return
 	for k in plot_signs:
@@ -2781,7 +2811,7 @@ func set_tool(t: String) -> void:
 	if not moving.is_empty() and t != String(moving["type"]):
 		_cancel_move()
 	if t != "move_nature" and not moving_nature.is_empty():
-		_add_nature(moving_nature["name"], moving_nature["xf"], moving_nature["p"])
+		_add_nature(moving_nature["name"], moving_nature["xf"], moving_nature["p"], moving_nature.get("remap", {}))
 		moving_nature = {}
 	tool = t
 	if is_road_tool(t):
@@ -5252,7 +5282,7 @@ func _click() -> void:
 			if land.occ_at(hover) == 0 and not land.is_water(hover) and not land.is_road(hover):
 				var basis: Basis = (moving_nature["xf"] as Transform3D).basis.rotated(Vector3.UP, tool_yaw)
 				var xf := Transform3D(basis, Vector3(hover.x, land.height_at(hover.x, hover.y), hover.y))
-				_add_nature(moving_nature["name"], xf, hover)
+				_add_nature(moving_nature["name"], xf, hover, moving_nature.get("remap", {}))
 				moving_nature = {}
 				sound.ui("place")
 				set_tool("move")

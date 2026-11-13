@@ -542,6 +542,9 @@ const B := {
 	"horse_2": {"kind": "decor", "cat": "decor", "sub": "animals", "base": "horse", "look": 1, "name": "Лошадь под навесом", "cost": 80, "deco": 5, "unlock": "deco_farmyard", "menu": false, "desc": "Лошадь под дощатым навесом, у стены — сено и седло."},
 	"manger": {"kind": "decor", "cat": "decor", "sub": "yard", "name": "Ясли с сеном", "cost": 20, "deco": 2, "unlock": "deco_farmyard", "menu": false, "desc": "Деревянные ясли с сеном, мешки с овсом."},
 	"manger_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "manger", "look": 1, "name": "Плуг и мешки", "cost": 20, "deco": 2, "unlock": "deco_farmyard", "menu": false, "desc": "Плуг, серп и мешки с зерном у копны."},
+	# 13.11: мельница из набора Meadow Forest (для красоты в полях; scripts/cat_meadow.gd)
+	"windmill": {"kind": "decor", "cat": "decor", "sub": "yard", "name": "Ветряная мельница", "cost": 160, "deco": 5, "unlock": "deco_farmyard", "menu": false, "desc": "Деревянная мельница на сваях: крылья неспешно крутятся на ветру, у подножия мешки с мукой."},
+	"windmill_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "windmill", "look": 1, "name": "Мельница с парусами", "cost": 170, "deco": 5, "unlock": "deco_farmyard", "menu": false, "desc": "Мельница с крыльями-парусами из холста, у подножия мешки и камни."},
 	# «Ремесленный двор» (Посёлок)
 	"forge_corner": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Наковальня и точило", "cost": 40, "deco": 3, "unlock": "deco_craft", "menu": false, "desc": "Наковальня, точильный круг и молот — уголок кузнеца."},
 	"forge_corner_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "forge_corner", "look": 1, "name": "Горн кузнеца", "cost": 60, "deco": 4, "light": true, "unlock": "deco_craft", "menu": false, "desc": "Каменный горн с огнём и наковальня рядом. Ночью светится."},

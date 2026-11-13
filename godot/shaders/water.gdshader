@@ -32,7 +32,10 @@ void fragment() {
 	vec3 col = mix(shallow, deep, sqrt(t));
 	// пена: полоса у берега, рваная и бегущая
 	float n = vnoise(wpos.xz * 3.0 + vec2(TIME * 0.3, TIME * 0.2)) * 0.6 + vnoise(wpos.xz * 9.0 - TIME * 0.4) * 0.4;
-	float foam = (1.0 - smoothstep(0.0, 0.28, depth)) * smoothstep(0.35, 0.6, n + (1.0 - smoothstep(0.0, 0.12, depth)) * 0.5);
+	// 13.11: полоса пены уже (было 0,28 м глубины): у мелких заводей и ручьёв дно не белеет пятнами
+	float foam = (1.0 - smoothstep(0.0, 0.16, depth)) * smoothstep(0.38, 0.62, n + (1.0 - smoothstep(0.0, 0.07, depth)) * 0.5);
+	// пена — только у самой кромки, где глубина быстро растёт; на широкой мели (дно почти у воды) белых пятен нет
+	foam *= clamp(fwidth(depth) * 60.0, 0.0, 1.0);
 	ALBEDO = mix(col, vec3(0.97, 0.98, 0.96), foam);
 	ALPHA = clamp(0.45 + t * 0.5 + foam, 0.0, 0.96);
 	// рябь: нормаль чуть колышется
