@@ -50,6 +50,15 @@ static func old_lot(b: Dictionary) -> bool:
 	return SINCE.has(t) and int(b.get("sz", 0)) < int(SINCE[t])
 
 
+## Тип по линейке стал больше прежнего следа (храм): постройку старого сохранения стоит пробовать вырастить на месте
+## (City.ladder_grow); те, что стали меньше (амфитеатр, цирк, большие термы), не растут
+static func grows(t: String) -> bool:
+	if not TARGET.has(t) or not OLD_LOT.has(t):
+		return false
+	var o: Vector2 = OLD_LOT[t]
+	return float(TARGET[t]) > o.x * o.y
+
+
 ## Площадь следа постройки сейчас (м²): прямоугольник вокруг её деталей, как у пробы размеров
 static func area(type: String) -> float:
 	var b := Catalog.make(type, 1, 0, 0)

@@ -71,8 +71,10 @@ func _owner() -> void:
 		print("TFIT NOTE нет города владельца — пропуск")
 		return
 	var d: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(OWNER))
+	# 1) земля города не загружена (участки не куплены) — расти некуда: храм остаётся на прежних клетках («старое место»)
+	print("TFIT owner: без земли города — расти некуда")
 	var c := City.new(Land.new())
-	c.load_data(d)
+	c.load_data(d.duplicate(true))
 	var t := {}
 	for id in c.buildings:
 		var b: Dictionary = c.buildings[id]
@@ -129,6 +131,100 @@ func _owner() -> void:
 	var a_new := _area(c2.blueprint(n2))
 	print("TFIT owner: после загрузки — храм владельца %.1f м², новый %.1f м²" % [a_old, a_new])
 	check(a_new > a_old + 30.0, "новый храм заметно больше храма на старом месте")
+	_owner_grow(d, int(t["id"]), t["cells"])
+
+
+## 2) как в игре: земля из сохранения, потом город — храм старого сохранения сам встаёт в полный размер, если рядом
+## есть место (City.ladder_grow): не на дороге, не на соседях, до чужих построек не ближе метра, у входа — площадь
+func _owner_grow(d: Dictionary, tid: int, old_cells: PackedInt32Array) -> void:
+	print("TFIT owner: как в игре — земля и город из сохранения")
+	var t0: Dictionary = {}
+	for bd: Dictionary in d["buildings"]:
+		if int(bd["id"]) == tid:
+			t0 = bd
+	var c := City.new(Land.new())
+	c.land.load_changes(d.get("land", {}))
+	var ms := Time.get_ticks_msec()
+	c.load_data(d.duplicate(true))
+	print("TFIT owner: загрузка с ростом — %d мс" % (Time.get_ticks_msec() - ms))
+	var t: Dictionary = c.buildings.get(tid, {})
+	if not check(not t.is_empty(), "храм владельца на месте после загрузки"):
+		return
+	if not t.has("sz"):
+		_grow_why(c, t)
+	var full := Catalog.make("temple", int(t["tier"]), int(t.get("variant", 0)), int(t.get("color", 0)))
+	check(int(t.get("sz", 0)) == SizeLadder.REV and not SizeLadder.old_lot(t), "храм вырос: ревизия линейки записана (sz=%s)" % str(t.get("sz", "—")))
+	check(c.blueprint(t) == full, "его облик — полный храм")
+	var yaw := float(t["yaw"])
+	var dp: Vector2 = (t["pos"] as Vector2) - Vector2(float(t0["x"]), float(t0["z"]))
+	print("TFIT owner: сдвиг %.2f м — вбок %.2f, вперёд %.2f; клеток %d (было %d)" % [dp.length(), dp.dot(City.axis(yaw)), dp.dot(City.facing(yaw)),
+		(t["cells"] as PackedInt32Array).size(), old_cells.size()])
+	check(dp.length() <= City.GROW_SHIFT + 0.01, "сдвиг не больше %.0f м" % City.GROW_SHIFT, dp.length())
+	var mine := {}
+	for k in old_cells:
+		mine[k] = true
+	var road := 0
+	var foreign := 0
+	for k in (t["cells"] as PackedInt32Array):
+		if c.land.occ[k] != tid:
+			foreign += 1
+		if not mine.has(k) and c.land.kind[k] == Land.Kind.ROAD:
+			road += 1
+	check(foreign == 0, "все клетки храма — его (ни одной чужой)", foreign)
+	check(road == 0, "на дорогу не встал", road)
+	check(bool(t.get("road", false)), "у входа — площадь или дорога (жители доходят)")
+	# зазор до чужих построек (кроме украшений) и до одеона с библиотекой — по клеткам
+	var cells: PackedInt32Array = t["cells"]
+	var best := INF
+	var near := {}
+	for id in c.buildings:
+		var o: Dictionary = c.buildings[id]
+		if int(id) == tid or String(c.def(o)["kind"]) == "decor":
+			continue
+		var oc := c.land.cell_center(int((o["pos"] as Vector2).x / Land.CELL), int((o["pos"] as Vector2).y / Land.CELL))
+		if oc.distance_to(t["pos"]) > 30.0:
+			continue
+		var m := INF
+		for k in (o["cells"] as PackedInt32Array):
+			var q := c.land.cell_center(k % Land.N, k / Land.N)
+			if q.distance_to(t["pos"]) > 14.0:
+				continue
+			for k2 in cells:
+				m = minf(m, q.distance_to(c.land.cell_center(k2 % Land.N, k2 / Land.N)))
+		if m < INF:
+			near[String(o["type"]) + "#" + str(id)] = snappedf(m, 0.01)
+		best = minf(best, m)
+	print("TFIT owner: до соседей (между серединами клеток, м): %s" % str(near))
+	check(best >= City.GROW_GAP - 0.01, "до любой соседней постройки не меньше %.0f м (%.2f)" % [City.GROW_GAP, best])
+	# украшения с пути отодвинуты, а не убраны: все постройки на месте, сдвинуты только мелкие украшения и недалеко
+	check(c.buildings.size() == (d["buildings"] as Array).size(), "ни одна постройка не пропала (%d)" % c.buildings.size())
+	var moved := []
+	var bad := 0
+	for bd: Dictionary in d["buildings"]:
+		var o: Dictionary = c.buildings.get(int(bd["id"]), {})
+		if o.is_empty() or int(bd["id"]) == tid:
+			continue
+		var dd := (o["pos"] as Vector2).distance_to(Vector2(float(bd["x"]), float(bd["z"])))
+		if dd < 0.001:
+			continue
+		var mine_o := 0
+		for k in (o["cells"] as PackedInt32Array):
+			mine_o += 1 if c.land.occ[k] == int(o["id"]) else 0
+		moved.append("%s#%d %.2f м (клеток своих %d/%d)" % [o["type"], int(o["id"]), dd, mine_o, (o["cells"] as PackedInt32Array).size()])
+		if String(c.def(o)["kind"]) != "decor" or dd > City.GROW_NUDGE + 0.01 or mine_o != (o["cells"] as PackedInt32Array).size():
+			bad += 1
+	print("TFIT owner: отодвинуты украшения: %s" % str(moved))
+	check(bad == 0, "сдвинуты только мелкие украшения, не дальше %.0f м, на свои свободные клетки" % City.GROW_NUDGE, moved)
+	# сохранение → загрузка: вырос один раз и таким остаётся (на том же месте, полный)
+	var d2: Dictionary = c.save_data()
+	d2["land"] = c.land.save_changes()
+	d2 = JSON.parse_string(JSON.stringify(d2))
+	var c2 := City.new(Land.new())
+	c2.land.load_changes(d2["land"])
+	c2.load_data(d2)
+	var t2: Dictionary = c2.buildings.get(tid, {})
+	check(not t2.is_empty() and int(t2.get("sz", 0)) == SizeLadder.REV and (t2["pos"] as Vector2).distance_to(t["pos"]) < 0.001
+		and t2["cells"] == t["cells"] and c2.blueprint(t2) == full, "после сохранения и загрузки — тот же полный храм на том же месте")
 
 
 func _area(bp: Bp) -> float:
@@ -164,3 +260,35 @@ static func _tris(nm: String) -> int:
 		n.free()
 	_tc[nm] = t
 	return t
+
+
+## Почему не вырос: по каждому сдвигу — что помешало (ошибка check_place или проверка City._grow_ok), сводка и ближние
+func _grow_why(c: City, t: Dictionary) -> void:
+	var yaw := float(t["yaw"])
+	var f := City.facing(yaw)
+	var ax := City.axis(yaw)
+	var mine := {}
+	for k in (t["cells"] as PackedInt32Array):
+		mine[k] = true
+	var why := {}
+	var shown := 0
+	var n := int(round(City.GROW_SHIFT / City.GROW_STEP))
+	for i in range(-n, n + 1):
+		for j in range(-n, n + 1):
+			var sh := Vector2(i, j) * City.GROW_STEP
+			if sh.length() > City.GROW_SHIFT + 0.001:
+				continue
+			var pos: Vector2 = (t["pos"] as Vector2) + ax * sh.x + f * sh.y
+			var chk := c.check_place("temple", pos, yaw, int(t.get("variant", 0)), int(t.get("color", 0)), int(t["id"]))
+			var e := String(chk["err"])
+			if e == "":
+				e = "зазор/дорога/перепад" if not c._grow_ok(t, chk["cells"], mine) else "годится"
+			if e == "Место занято":
+				var who := {}
+				for k in (chk["cells"] as PackedInt32Array):
+					var o: int = c.land.occ[k]
+					if o != 0 and o != int(t["id"]):
+						who[String(c.buildings.get(o, {}).get("type", str(o)))] = true
+				e += " " + str(who.keys())
+			why[e] = int(why.get(e, 0)) + 1
+	print("TFIT why: %s" % str(why))

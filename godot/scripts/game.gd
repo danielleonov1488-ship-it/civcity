@@ -5343,6 +5343,11 @@ func start_move(b: Dictionary) -> bool:
 	moving = {"id": b["id"], "type": b["type"], "tier": b["tier"], "variant": b["variant"], "color": b["color"], "pop": b["pop"],
 		"families": b["families"], "pos": b["pos"], "yaw": b["yaw"], "decor": _hosted(b), "hire": b.get("hire", -1),
 		"born": int(b.get("born", b["id"]))}     # порядок постройки едет с ней: перенесённая школа не станет «лишней»
+	# постройка на прежнем следе — из старого сохранения (SizeLadder: её тип с тех пор больше; дом без «kw» — узкий):
+	# отмена переноса вернёт её как была — те же клетки, без новой ревизии, — а не в полном размере поверх соседей
+	var legacy := city.is_house(b) and not b.has("kw")
+	if SizeLadder.old_lot(b) or legacy:
+		moving["back"] = {"cells": (b["cells"] as PackedInt32Array).duplicate(), "sz": int(b.get("sz", 0)), "legacy": legacy}
 	if _pops_for(b["type"]):
 		moving["happy0"] = city.happy_map()   # счастье домов до переноса: на новом месте — рожицы над теми, у кого поменялось
 	city.moving_id = int(b["id"])
@@ -5467,7 +5472,15 @@ func _build_here() -> void:
 func _cancel_move() -> void:
 	var m := moving
 	moving = {}
-	var b := city.place(m["type"], m["pos"], m["yaw"], int(m["variant"]), int(m["color"]), true)
+	var back: Dictionary = m.get("back", {})
+	var b: Dictionary
+	if back.is_empty():
+		b = city.place(m["type"], m["pos"], m["yaw"], int(m["variant"]), int(m["color"]), true)
+	else:
+		# прежний след старого сохранения: ровно на свои клетки, ревизия линейки — какая была (облик «старого места»)
+		b = city.place(m["type"], m["pos"], m["yaw"], int(m["variant"]), int(m["color"]), true, back["cells"], int(back["sz"]))
+		if bool(back["legacy"]):
+			b.erase("kw")                         # дом остаётся узким, как был (KitHouses: облик по прежнему следу)
 	b["born"] = int(m.get("born", b["born"]))
 	if not Legion.is_building(String(m["type"])):
 		b["tier"] = int(m["tier"])            # здание Легиона — в облике своего уровня (city.place)

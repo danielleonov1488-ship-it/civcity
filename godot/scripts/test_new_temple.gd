@@ -4,6 +4,7 @@ extends Node
 ## врата открыты; город владельца (city=…): храм из старого сохранения на своём месте и новый полный — на свободном.
 ##   bash .work/py/gpu_run.sh res://test_new_temple.tscn -- out=D:/CivCity/.work/rebuild/temple/<папка>/ [newtemple=0] [fit=1]
 ##        [hours=11,18.5] [houses=1] [people=1] [service=1] [views=0,1,4] [city=D:/CivCity/.work/owner_save/city.json]
+##        [checks=1 — перенос храма старого сохранения: отмена возвращает его как был, новый спот — полный → «NT CHECKS fails=N»]
 ## Снимки: <out>/<метка>_v<вид>_h<час>.png, метка — new, fit или old. Склейка листов — .work/rebuild/temple/py.
 
 var game
@@ -15,6 +16,8 @@ var people := false
 var service := false
 var fit := false
 var city_src := ""
+var checks := false
+var fails := 0
 var vsel := []
 var tagn := "new"
 
@@ -37,6 +40,7 @@ func _ready() -> void:
 			"service": service = kv[1] != "0"
 			"fit": fit = kv[1] != "0"
 			"city": city_src = kv[1]
+			"checks": checks = kv[1] != "0"
 			"views":
 				for v in kv[1].split(","):
 					vsel.append(int(v))
@@ -122,6 +126,9 @@ func _run() -> void:
 		game.weather.force = 0.0
 	if city_src != "":
 		await _owner_city()
+		return
+	if checks:
+		await _move_checks()
 		return
 	if game.people and not service:
 		game.people.visible = false               # своих жителей ставим сами (масштаб), прохожие не мешают кадру (зрители службы — с ними)
@@ -261,5 +268,106 @@ func _owner_city() -> void:
 		var tb := bounds(b)
 		var ctr := Vector2((float(tb[0]) + float(tb[1])) * 0.5, (float(tb[2]) + float(tb[3])) * 0.5)
 		await _shots(b, c.blueprint(b), ctr, [[28.0, 34.0, 24.0, 0], [-30.0, 48.0, 40.0, 0]], String(e[1]))
+	print("NT DONE")
+	get_tree().quit()
+
+
+func check(ok: bool, what: String, got = null) -> bool:
+	print(("NT PASS " if ok else "NT FAIL ") + what + ("" if got == null or ok else "  → " + str(got)))
+	if not ok:
+		fails += 1
+	return ok
+
+
+func _temple_rec() -> Dictionary:
+	for id in c.buildings:
+		if c.buildings[id]["type"] == "temple":
+			return c.buildings[id]
+	return {}
+
+
+## Перенос храма из старого сохранения (на клетках «старого места», без ревизии линейки): отмена переноса возвращает его
+## ровно как был — те же клетки, без «sz», облик «старого места», сосед вплотную не задет; перенос на новое свободное
+## место — полный храм (ревизия линейки записана)
+func _move_checks() -> void:
+	var X0 := 150.0
+	var Z0 := 124.0
+	game.clear_nature(Vector2(X0 + 10.0, Z0), 45.0)
+	game.land.paint_line(Vector2(X0 - 30.0, Z0), Vector2(X0 + 60.0, Z0), 2.2, Land.Kind.ROAD, true)
+	await frames(4)
+	var t := put("temple", Vector2(X0, Z0 - 7.0))
+	if not check(not t.is_empty(), "храм встал"):
+		_end_checks()
+		return
+	var pos: Vector2 = t["pos"]
+	var yaw := float(t["yaw"])
+	var v := int(t.get("variant", 0))
+	var col := int(t.get("color", 0))
+	# как из старого сохранения: на клетках прежнего следа, без ревизии линейки
+	var fitbp := Catalog.make("temple", int(t["tier"]), v, col, false, true)
+	var fcells := c.land.footprint_cells(fitbp.occ_footprint(), pos, yaw)
+	c.remove(t, false)
+	var o := c.place("temple", pos, yaw, v, col, true, fcells, 0)
+	check(not o.has("sz") and SizeLadder.old_lot(o) and o["cells"] == fcells and c.blueprint(o) == fitbp,
+		"храм «из старого сохранения»: без sz, на клетках прежнего следа (%d), облик старого места" % fcells.size())
+	# сосед вплотную к прежнему следу — там, куда встал бы полный храм
+	var ax := City.axis(yaw)
+	var fw := City.facing(yaw)
+	var hp := pos + ax * (3.1 + 1.55) + fw * (-1.0)
+	var h := c.place("house_pleb", hp, yaw, 0, 1, true)
+	var mine := {}
+	for k in fcells:
+		mine[k] = true
+	var touch := 0
+	for k in (h["cells"] as PackedInt32Array):
+		touch += 1 if mine.has(k) else 0
+	var full_cells := c.land.footprint_cells(Catalog.make("temple", int(t["tier"]), v, col).occ_footprint(), pos, yaw)
+	var fullset := {}
+	for k in full_cells:
+		fullset[k] = true
+	var inside := 0
+	for k in (h["cells"] as PackedInt32Array):
+		inside += 1 if fullset.has(k) else 0
+	check(touch == 0 and inside > 0, "дом вплотную: на клетки храма не залез (%d), но стоит там, где был бы полный храм (%d клеток)" % [touch, inside])
+	await frames(10)
+	# поднять и отменить перенос
+	check(game.start_move(o), "храм подняли (перенос)")
+	await frames(5)
+	game._cancel_move()
+	await frames(5)
+	var t2 := _temple_rec()
+	check(not t2.is_empty() and not t2.has("sz") and SizeLadder.old_lot(t2), "отмена переноса: храм снова «из старого сохранения» (sz нет)", t2.get("sz", "—"))
+	check(not t2.is_empty() and t2["cells"] == fcells and (t2["pos"] as Vector2).distance_to(pos) < 0.001, "те же клетки и то же место")
+	check(not t2.is_empty() and c.blueprint(t2) == fitbp, "облик — старого места (не полный поверх соседа)")
+	var hurt := 0
+	for k in (h["cells"] as PackedInt32Array):
+		hurt += 0 if c.land.occ[k] == int(h["id"]) else 1
+	var own := 0
+	for k in fcells:
+		own += 1 if c.land.occ[k] == int(t2.get("id", -1)) else 0
+	check(hurt == 0, "клетки соседа — по-прежнему его", hurt)
+	check(own == fcells.size(), "клетки храма заняты храмом (%d из %d)" % [own, fcells.size()])
+	# перенос на новое свободное место — полный храм
+	check(game.start_move(t2), "храм подняли снова")
+	await frames(5)
+	var moved := false
+	for k in 200:
+		var p := Vector2(X0 + 32.0, Z0 - 7.0) + Vector2(cos(k * 2.4), sin(k * 2.4)) * (k * 0.2)
+		var pl: Dictionary = game.placement("temple", p)
+		if pl["err"] == "":
+			game.hover = p
+			game._build_here()
+			moved = game.moving.is_empty()
+			break
+	if not moved and not game.moving.is_empty():
+		game._cancel_move()
+	var t3 := _temple_rec()
+	check(moved and not t3.is_empty() and int(t3.get("sz", 0)) == SizeLadder.REV and c.blueprint(t3) == Catalog.make("temple", int(t3["tier"]), v, col),
+		"перенос на новое место — полный храм (sz=%s)" % str(t3.get("sz", "—")))
+	_end_checks()
+
+
+func _end_checks() -> void:
+	print("NT CHECKS fails=%d" % fails)
 	print("NT DONE")
 	get_tree().quit()
