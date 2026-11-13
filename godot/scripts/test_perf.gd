@@ -56,6 +56,8 @@ func _ready() -> void:
 	# newtemple=0 — прежний храм Юпитера (CatMonuments._temple), 1 — новый (NewTemple); без него — как в игре
 	if A.has("newtemple"):
 		NewTemple.ON = A["newtemple"] != "0"
+	if A.get("ladder", "0") == "1":
+		SizeLadder.apply()                             # проба линейки размеров: прежние сборки в будущем размере
 	Parts.split_on = A.get("split", "1") != "0"        # 12.11: оттенок у экземпляра (split=0 — как прежде, для сравнения)
 	city_src = str(A.get("city", OWNER))
 	if city_src == "new" or not FileAccess.file_exists(city_src):
