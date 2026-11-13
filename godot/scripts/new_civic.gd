@@ -55,6 +55,16 @@ const RED_SOFT := {"Stucco_White_01": "Stucco_Red_01", "tints": {"Stucco_Red_01"
 const TERRA := {"tints": {"Stucco_White_01": Color(0.93, 0.52, 0.4)}}
 ## Пол зала в тёплом свете (круглая мозаика) — один на библиотеку и термы
 const HALL_FLOOR := {"Stone_01": "Floor_Tiles_Circle_01", "glow": WARM * 0.8}
+## Тёплый травертин (кремово-охристый) — стены и аркады театра, одеона, терм: оттенок у экземпляра, одна группа пула
+const WARM_STONE := {"tints": {"Building_Large_Brick_01": Color(1.0, 0.88, 0.7)}}
+## Тёплая кремовая штукатурка (оттенок белой — общая группа с домами)
+const CREAM := {"tints": {"Stucco_White_01": Color(1.0, 0.9, 0.74)}}
+## Ниша в тёплом свете за глухой аркой и в окне — та же раскраска, что облицовка залов (_lining, охра)
+const OCHRE_GLOW := {"Stucco_White_01": "Stucco_Orange_01", "glow": WARM}
+## Расписной фриз (красное с мрамором, как у храма Юпитера)
+const FRIEZE := {"Stucco_Blue_01": "Building_Marble_03"}
+## Пилястры из белого мрамора
+const PIL := {"Building_Large_Brick_01": "Building_Marble_01"}
 ## Тёсаный камень тёплого травертина (как бордюр основания) — и на мелких деталях со штукатуркой
 const STONE := {"Stucco_White_01": "Building_Large_Brick_01", "tints": {"Building_Large_Brick_01": Color(1.0, 0.93, 0.8)}}
 const SAND := {"tints": {"Stucco_White_01": Color(1.0, 0.86, 0.66)}}
@@ -275,17 +285,27 @@ static func _bush(b: Bp, p: Vector3, s := 0.4) -> void:
 
 
 ## Нутро зала: облицовка стен изнутри (низ — помпейский красный, выше — охра), всё светится тёплым светом само
-static func _lining(b: Bp, x0: float, x1: float, z0: float, z1: float, y: float, h: float, skip_front := []) -> void:
+static func _lining(b: Bp, x0: float, x1: float, z0: float, z1: float, y: float, h: float, skip_front := [], skip_side := []) -> void:
 	var red := {"Stucco_White_01": "Stucco_Red_01", "glow": WARM * 0.9}
-	var ochre := {"Stucco_White_01": "Stucco_Orange_01", "glow": WARM}
+	var ochre := OCHRE_GLOW
 	var lin := 0.02 / 0.22
 	var lo := minf(0.95, h * 0.35)
 	for band: Array in [[0.0, lo, red], [lo, h - lo, ochre]]:
 		var y0 := y + float(band[0])
 		var hh := float(band[1]) / 3.01
 		var rm: Dictionary = band[2]
-		_run(b, "SM_Bld_Wall_01", Vector3(x1 - 0.012, y0, z0), Vector3(0, 0, 1), z1 - z0, 2.5, hh, lin, rm, 1.8)
-		_run(b, "SM_Bld_Wall_01", Vector3(x0 + 0.012, y0, z1), Vector3(0, 0, -1), z1 - z0, 2.5, hh, lin, rm, 1.8)
+		# боковые стены — кусками между окнами (skip_side: [[z0, z1], …] — окна видно насквозь в зал)
+		var zs := [z0]
+		for gap: Array in skip_side:
+			zs.append(float(gap[0]))
+			zs.append(float(gap[1]))
+		zs.append(z1)
+		for i in range(0, zs.size(), 2):
+			var a: float = zs[i]
+			var c: float = zs[i + 1]
+			if c - a > 0.05:
+				_run(b, "SM_Bld_Wall_01", Vector3(x1 - 0.012, y0, a), Vector3(0, 0, 1), c - a, 2.5, hh, lin, rm, 1.8)
+				_run(b, "SM_Bld_Wall_01", Vector3(x0 + 0.012, y0, c), Vector3(0, 0, -1), c - a, 2.5, hh, lin, rm, 1.8)
 		_run(b, "SM_Bld_Wall_01", Vector3(x0, y0, z0 + 0.012), Vector3(1, 0, 0), x1 - x0, 2.5, hh, lin, rm, 1.8)
 		# передняя стена изнутри — кусками между проёмами (skip_front: [[x0, x1], …] — не облицовывать)
 		var xs := [x0]
@@ -524,6 +544,68 @@ static func _velarium(b: Bp, c: Vector3, rp: float, y: float, angs: Array, depth
 		b.parts.append(["SM_Prop_Banner_Roof_02", b.base * Transform3D(bas, p1), SAFFRON if i == (angs.size() - 1) / 2 else CLOTH])
 
 
+## Аркада трибун по полукругу (театр, одеон): девять арок из тёплого травертина, средняя — вход (сквозной проход
+## к орхестре). В глухих арках — ниша в тёплом свете (свечение материала), в части — статуи на постаментах, в части —
+## красные знамёна; на стыках — пилястры высотой ph; над арками — карниз
+static func _arcade(b: Bp, d: Dictionary, ah: float, ph: float) -> void:
+	var c: Vector3 = d["c"]
+	var RO: float = d["RO"]
+	var RW: float = d["RW"]
+	var rm := (RW + RO) * 0.5
+	var w := 2.0 * RO * sin(deg_to_rad(10.0)) + 0.02
+	var sx := w / 2.5
+	var sy := ah / 3.01
+	for i in 9:
+		var ang := deg_to_rad(-80.0 + 20.0 * i)
+		_on_arc(b, "SM_Bld_Wall_Door_Double_01", c, ang, rm, Y0, w, 2.5, sy, (RO - RW) / 0.47, WARM_STONE)
+		_on_arc(b, "SM_Bld_Wall_Large_Cap_01", c, ang, RO - 0.15, Y0 + ah - 0.02, w + 0.06, 5.02, 0.55, 0.5)
+		if i == 4:
+			continue
+		# проём арки Synty — 2,0 × 1,97 родных: за ним ниша в тёплом свете
+		_on_arc(b, "SM_Bld_Wall_01", c, ang, RW + 0.03, Y0, 2.0 * sx + 0.06, 2.5, (1.97 * sy + 0.05) / 3.01, 0.2, OCHRE_GLOW)
+		var at := c + _dir(ang) * (RO - 0.16)
+		if i % 2 == 1:
+			_p(b, "SM_Prop_Plinth_03", at + Vector3(0, Y0, 0), ang, Vector3.ONE * 0.5)
+			_p(b, "SM_Prop_Statue_0%d" % [3, 5, 6, 7][(i / 2) % 4], at + Vector3(0, Y0 + 0.07, 0), ang, Vector3.ONE * 0.5)
+		else:
+			_p(b, "SM_Prop_Banner_01_%s" % ["B", "D"][(i / 2) % 2], c + _dir(ang) * (RO + 0.02) + Vector3(0, Y0 + ah - 0.12, 0), ang, Vector3.ONE * 0.55)
+	for j in 10:
+		var ang := deg_to_rad(-90.0 + 20.0 * j)
+		_p(b, "SM_Bld_Wall_Large_Pillar_01", c + _dir(ang) * (RO - 0.08) + Vector3(0, Y0, 0), ang, Vector3(0.24, ph / 4.55, 0.24), WARM_STONE)
+
+
+## Задний фасад сцены (лицом к −Z, лицо — на zf, от x0 до x1): внизу высотой hl — глухие арки с нишей в тёплом свете,
+## между ними (niches) ниши со статуями; пилястры; карниз; выше — стена, расписной фриз под венчающим карнизом
+## (низ на ytop − 0,34), золотые медальоны между пилястрами
+static func _back_facade(b: Bp, x0: float, x1: float, zf: float, hl: float, ytop: float, niches := true) -> void:
+	var n := maxi(3, int(round((x1 - x0) / 1.9)))
+	if n % 2 == 0:
+		n += 1
+	var mw := (x1 - x0) / n
+	var sx := mw / 2.5
+	var sy := hl / 3.01
+	var sz := 1.0 if niches else 0.5
+	for i in n:
+		var xr := x1 - i * mw
+		var xc := xr - mw * 0.5
+		var arch := i % 2 == 1 or not niches
+		var nm := "SM_Bld_Wall_Door_Double_01" if arch else "SM_Bld_Wall_Alcove_01"
+		_p(b, nm, Vector3(xr, Y0, zf + float(FACE[nm]) * sz), PI, Vector3(sx, sy, sz), WARM_STONE if arch else MARBLE)
+		if arch:
+			_p(b, "SM_Bld_Wall_01", Vector3(xc + sx + 0.03, Y0, zf + 0.3 * sz), PI, Vector3((2.0 * sx + 0.06) / 2.5, (1.97 * sy + 0.05) / 3.01, 0.2), OCHRE_GLOW)
+		else:
+			_p(b, "SM_Prop_Plinth_03", Vector3(xc, Y0 + 0.02, zf + 0.25), PI, Vector3.ONE * 0.45)
+			_p(b, "SM_Prop_Statue_0%d" % [3, 5, 6, 7][(i / 2) % 4], Vector3(xc, Y0 + 0.09, zf + 0.25), PI, Vector3.ONE * minf(0.5, hl * 0.22))
+	for i in n + 1:
+		_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(x1 - i * mw, Y0, zf - 0.04), 0.0, Vector3(0.2, (ytop - Y0) / 4.55, 0.14), WARM_STONE)
+	_ledge(b, x0 - 0.05, x1 + 0.05, zf - 0.28, zf + 0.06, Y0 + hl, 0.2)
+	_run(b, "SM_Bld_Trim_Large_Single_02", Vector3(x1, ytop - 0.17, zf), Vector3(-1, 0, 0), x1 - x0, 2.5, 0.34, 0.6, FRIEZE, 2.4)
+	var yu := (Y0 + hl + 0.2 + ytop - 0.34) * 0.5
+	if ytop - 0.34 - (Y0 + hl + 0.2) > 0.6:
+		for i in n:
+			_p(b, "SM_Bld_Ornament_02", Vector3(x1 - (i + 0.5) * mw, yu, zf - 0.03), PI, Vector3.ONE * 0.36)
+
+
 # =====================================================================
 #   театр
 # =====================================================================
@@ -566,24 +648,11 @@ static func _theatre(b: Bp, d: Dictionary) -> void:
 	# карниз, парапет над верхним обходом. В глухих арках — статуи и красные знамёна (за ними камень обхода, не темнота)
 	var wy := _walk_y(d)
 	var ah := wy + 0.05 - Y0
-	var rm := (RW + RO) * 0.5
+	_arcade(b, d, ah, ah + 0.66)
 	for i in 9:
 		var ang := deg_to_rad(-80.0 + 20.0 * i)
 		var w := 2.0 * RO * sin(deg_to_rad(10.0)) + 0.02
-		_on_arc(b, "SM_Bld_Wall_Door_Double_01", c, ang, rm, Y0, w, 2.5, ah / 3.01, (RO - RW) / 0.47)
-		_on_arc(b, "SM_Bld_Wall_Large_Cap_01", c, ang, RO - 0.15, Y0 + ah - 0.02, w + 0.06, 5.02, 0.55, 0.5)
 		_on_arc(b, "SM_Bld_Wall_Tiny_01", c, ang, RO - 0.2, Y0 + ah + 0.18, w, 2.5, 0.95, 1.3, STONE)
-		if i == 4:
-			continue
-		var at := c + _dir(ang) * (RO - 0.16)
-		if i % 2 == 1:
-			_p(b, "SM_Prop_Plinth_03", at + Vector3(0, Y0, 0), ang, Vector3.ONE * 0.5)
-			_p(b, "SM_Prop_Statue_0%d" % [3, 5, 6, 7][(i / 2) % 4], at + Vector3(0, Y0 + 0.07, 0), ang, Vector3.ONE * 0.5)
-		else:
-			_p(b, "SM_Prop_Banner_01_%s" % ["B", "D", "B", "D", "B", "D", "B", "D", "B"][i], c + _dir(ang) * (RO + 0.02) + Vector3(0, Y0 + ah - 0.12, 0), ang, Vector3.ONE * 0.55)
-	for j in 10:
-		var ang := deg_to_rad(-90.0 + 20.0 * j)
-		_p(b, "SM_Bld_Wall_Large_Pillar_01", c + _dir(ang) * (RO - 0.08) + Vector3(0, Y0, 0), ang, Vector3(0.24, ah / 4.55, 0.24))
 	# веларий: четыре шеста на парапете, три полотнища к середине (средний — шафрановый)
 	_velarium(b, c, RO - 0.2, Y0 + ah + 0.47, [-72.0, -24.0, 24.0, 72.0], 1.75)
 	_theatre_stage(b, d)
@@ -631,13 +700,13 @@ static func _theatre_stage(b: Bp, d: Dictionary) -> void:
 		var xb := sd * RO
 		var vh := y2 - Y0 + 0.3
 		if sd > 0:
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zp), Vector3(1, 0, 0), xb - xa, 5.0, vh / 4.51, 0.3, {}, 1.0)
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zs), Vector3(0, 0, 1), zp - zs, 5.0, vh / 4.51, 0.3, {}, 1.3)
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(xb, Y0 - 0.3, zp), Vector3(0, 0, -1), zp - zb, 5.0, vh / 4.51, 0.3, {}, 1.3)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zp), Vector3(1, 0, 0), xb - xa, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.0)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zs), Vector3(0, 0, 1), zp - zs, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.3)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(xb, Y0 - 0.3, zp), Vector3(0, 0, -1), zp - zb, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.3)
 		else:
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(xb, Y0 - 0.3, zp), Vector3(1, 0, 0), xa - xb, 5.0, vh / 4.51, 0.3, {}, 1.0)
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zp), Vector3(0, 0, -1), zp - zs, 5.0, vh / 4.51, 0.3, {}, 1.3)
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(xb, Y0 - 0.3, zb), Vector3(0, 0, 1), zp - zb, 5.0, vh / 4.51, 0.3, {}, 1.3)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(xb, Y0 - 0.3, zp), Vector3(1, 0, 0), xa - xb, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.0)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zp), Vector3(0, 0, -1), zp - zs, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.3)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(xb, Y0 - 0.3, zb), Vector3(0, 0, 1), zp - zb, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.3)
 		var vc := Vector3((xa + xb) * 0.5, Y0 + vh - 0.3, (zs + zp) * 0.5)
 		_p(b, "SM_Bld_Wall_Large_Pillar_Cap_01", vc, 0.0, Vector3((RO - SX + 0.1) / 1.28, 0.4, (zp - zs + 0.1) / 1.24))
 		_bowl(b, vc + Vector3(0, 0.17, 0.15), 0.4)
@@ -682,28 +751,36 @@ static func _theatre_stage(b: Bp, d: Dictionary) -> void:
 	for i: int in [1, 3]:
 		_p(b, "SM_Prop_Banner_04_%s" % ["A", "C"][i / 2], Vector3(-SX + i * mw, ytop - 0.05, zs + 0.34), 0.0, Vector3.ONE * 0.36)
 	# сзади и с боков (над версурами) — тёсаный камень до карниза; пилястры по заду; кровля
-	_run(b, "SM_Bld_Wall_Large_01", Vector3(RO, Y0 - 0.3, zb), Vector3(-1, 0, 0), 2.0 * RO, 5.0, (ytop + 0.3 - Y0 + 0.3) / 4.51, 0.3, {}, 2.4)
+	# зад: внизу — арки с нишами в тёплом свете и ниши со статуями, выше — стена с фризом и медальонами
+	var hl := 2.3
+	_run(b, "SM_Bld_Wall_Large_01", Vector3(RO, Y0 + hl, zb), Vector3(-1, 0, 0), 2.0 * RO, 5.0, (ytop + 0.3 - Y0 - hl) / 4.51, 0.3, WARM_STONE, 2.4)
+	_run(b, "SM_Bld_Wall_Large_01", Vector3(RO, Y0 - 0.3, zb), Vector3(-1, 0, 0), 2.0 * RO, 5.0, 0.3 / 4.51, 0.3, WARM_STONE, 2.4)
+	_back_facade(b, -RO, RO, zb - 0.1, hl, ytop + 0.3)
 	for sd: float in [-1.0, 1.0]:
 		var x := sd * SX
 		if sd > 0:
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(RO, y2, zs), Vector3(0, 0, -1), zs - zb, 5.0, (ytop + 0.3 - y2) / 4.51, 0.3, {}, 1.4)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(RO, y2, zs), Vector3(0, 0, -1), zs - zb, 5.0, (ytop + 0.3 - y2) / 4.51, 0.3, WARM_STONE, 1.4)
 		else:
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(-RO, y2, zb), Vector3(0, 0, 1), zs - zb, 5.0, (ytop + 0.3 - y2) / 4.51, 0.3, {}, 1.4)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(-RO, y2, zb), Vector3(0, 0, 1), zs - zb, 5.0, (ytop + 0.3 - y2) / 4.51, 0.3, WARM_STONE, 1.4)
 		# над версурами — стенка от скены до края (закрывает торец верхнего яруса)
-		_run(b, "SM_Bld_Wall_Large_01", Vector3(x if sd > 0 else -RO, y2, zs + 0.06), Vector3(1, 0, 0), RO - SX, 5.0, (ytop + 0.3 - y2) / 4.51, 0.2, {}, 1.0)
-	for i in 5:
-		var x := lerpf(-RO + 0.25, RO - 0.25, i / 4.0)
-		_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(x, Y0, zb - 0.13), 0.0, Vector3(0.32, (ytop - Y0) / 4.55, 0.2))
+		_run(b, "SM_Bld_Wall_Large_01", Vector3(x if sd > 0 else -RO, y2, zs + 0.06), Vector3(1, 0, 0), RO - SX, 5.0, (ytop + 0.3 - y2) / 4.51, 0.2, WARM_STONE, 1.0)
+	# бока: пилястры, карниз на высоте версур, расписной фриз под венчающим карнизом, медальоны, знамёна
 	for sd: float in [-1.0, 1.0]:
-		for z: float in [zb + 0.25, (zb + zs) * 0.5, zs - 0.05]:
-			_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(sd * (RO + 0.07), Y0, z), 0.0, Vector3(0.2, (ytop - Y0) / 4.55, 0.32))
-		_p(b, "SM_Prop_Banner_03_C", Vector3(sd * (RO + 0.13), ytop - 0.15, (zb + zs) * 0.5 + 0.35), sd * PI / 2, Vector3(0.55, 0.7, 0.6))
+		for z: float in [zb + 0.12, (zb + zs) * 0.5, zs - 0.05, (zs + zp) * 0.5 + 0.1, zp - 0.06]:
+			_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(sd * (RO + 0.07), Y0, z), 0.0, Vector3(0.2, ((ytop if z < zs else y2) - Y0) / 4.55, 0.3), WARM_STONE)
+		var xs := sd * (RO + 0.1)
+		if sd > 0:
+			_run(b, "SM_Bld_Trim_Large_Single_02", Vector3(xs, ytop + 0.13, zs), Vector3(0, 0, -1), zs - zb, 2.5, 0.34, 0.6, FRIEZE, 1.5)
+			_run(b, "SM_Bld_Wall_Large_Cap_01", Vector3(xs - 0.1, y2 - 0.04, zp), Vector3(0, 0, -1), zp - zb, 5.02, 0.45, 0.4, {}, 1.5)
+		else:
+			_run(b, "SM_Bld_Trim_Large_Single_02", Vector3(xs, ytop + 0.13, zb), Vector3(0, 0, 1), zs - zb, 2.5, 0.34, 0.6, FRIEZE, 1.5)
+			_run(b, "SM_Bld_Wall_Large_Cap_01", Vector3(xs + 0.1, y2 - 0.04, zb), Vector3(0, 0, 1), zp - zb, 5.02, 0.45, 0.4, {}, 1.5)
+		_p(b, "SM_Bld_Ornament_02", Vector3(xs + sd * 0.02, (y2 + ytop) * 0.5, (zb + zs) * 0.5), sd * PI / 2, Vector3.ONE * 0.4)
+		_p(b, "SM_Prop_Banner_03_C", Vector3(sd * (RO + 0.13), y2 - 0.25, (zs + zp) * 0.5), sd * PI / 2, Vector3(0.5, 0.62, 0.6))
 	_ledge(b, -RO - 0.06, RO + 0.06, zb - 0.2, zs + 0.1, ytop + 0.28, 0.12)
 	var ridge := _gable_x(b, -RO - 0.1, RO + 0.1, zb - 0.22, zs + 0.18, ytop + 0.38, {"Stone_01": "Stucco_Red_01"})
 	for sd: float in [-1.0, 1.0]:
 		_p(b, "SM_Prop_Statue_04", Vector3(sd * (RO - 0.3), ridge - 0.12, (zb + zs) * 0.5), 0.0, Vector3.ONE * 0.24, GOLD_STATUE)
-	_p(b, "SM_Prop_Banner_03_A", Vector3(-1.4, ytop - 0.1, zb - 0.32), PI, Vector3(0.55, 0.7, 0.6))
-	_p(b, "SM_Prop_Banner_03_A", Vector3(1.4, ytop - 0.1, zb - 0.32), PI, Vector3(0.55, 0.7, 0.6))
 	# на сцене: ковёр, лира на подставке, кресло
 	_p(b, "SM_Prop_Rug_02", Vector3(0.4, Ys + 0.005, (zs + zp) * 0.5), PI / 2, Vector3(0.42, 1.0, 0.42))
 	_p(b, "SM_Prop_Plinth_02", Vector3(SX * 0.62, Ys, zs + 0.75), 0.0, Vector3(0.6, 0.62, 0.6))
@@ -721,118 +798,72 @@ static func _odeon_dims(fit: Vector2) -> Dictionary:
 	var x1: float = fr[1]
 	var z0: float = fr[2]
 	var z1: float = fr[3]
-	var EX := x1 - 0.2                       # наружная грань боковых стен
-	var WT := 0.25
-	var RI := EX - WT                        # внутренняя грань
-	var FZ := z1 - 0.6                       # наружная грань передней стены (впереди — портик)
-	var zc := FZ - WT - RI
+	var RO := x1 - 0.3                       # наружная грань аркады
+	var zc := z1 - 0.7 - RO                  # середина орхестры (впереди — портик)
 	var AR := 1.3
+	var RW := RO - 0.35                      # внутренняя грань аркады — край обхода (на обходе — колонны галереи)
+	var N := mini(5, int(floor((RW - 0.45 - DB - (AR + DS)) / (DS + DB))) + 1)
 	var H0 := Y0 + 0.26
-	var N := mini(5, int(floor((RI - 0.8 - DB - (AR + DS)) / (DS + DB))) + 1)    # ряды кончаются до линии колонн галереи
 	var zp := zc - 0.12
 	var zs := zp - 1.0
 	var HS := 0.45
-	return {"x0": fr[0], "x1": x1, "z0": z0, "z1": z1, "full": fr[4], "EX": EX, "WT": WT, "RI": RI, "FZ": FZ, "c": Vector3(0, 0, zc),
-		"AR": AR, "RW": RI, "RW_OVER": 0.2, "N": N, "H0": H0, "aisles": [50.0], "zp": zp, "zs": zs, "zb": z0 + 0.2, "HS": HS, "Ys": Y0 + HS,
-		"SX": RI - 0.5, "zd": z1 + 0.35, "z_gate": FZ + 0.1}
+	return {"x0": fr[0], "x1": x1, "z0": z0, "z1": z1, "full": fr[4], "RO": RO, "EX": RO, "c": Vector3(0, 0, zc), "AR": AR, "RW": RW,
+		"N": N, "H0": H0, "aisles": [50.0], "zp": zp, "zs": zs, "zb": z0 + 0.2, "HS": HS, "Ys": Y0 + HS, "SX": RO - 0.5,
+		"zd": z1 + 0.35, "z_gate": z1 - 0.15}
 
 
+## Одеон: полукруг рядов (сверху видно), вокруг — аркада из тёплого травертина с нишами в тёплом свете, статуями и
+## знамёнами; над ней — кремовая стенка с расписным фризом, а над обходом — галерея: колонны и черепичный навес
+## кольцом (рядов не закрывает); вход — открытая средняя арка с портиком и фронтоном; сзади — сцена под черепицей
 static func _odeon(b: Bp, d: Dictionary) -> void:
 	var c: Vector3 = d["c"]
-	var EX: float = d["EX"]
-	var WT: float = d["WT"]
-	var RI: float = d["RI"]
-	var FZ: float = d["FZ"]
-	var zs: float = d["zs"]
-	var zp: float = d["zp"]
+	var RO: float = d["RO"]
+	var RW: float = d["RW"]
 	var z1: float = d["z1"]
+	var x1: float = d["x1"]
 	_base(b, d["x0"], d["x1"], d["z0"], d["z1"])
 	_cavea(b, d)
 	var wy := _walk_y(d)
-	var yb := Y0 - 0.02
-	# терраса за последним рядом до стен (по углам прямоугольника — сплошной камень на высоте обхода)
-	var r_end := _row_front(d, int(d["N"]) - 1) + DB
-	var fz_in := FZ - WT
-	for sd: float in [-1.0, 1.0]:
-		# передняя полоса (у прохода — разрыв)
-		_box(b, "#bench", Vector3(sd * (CW + RI) * 0.5, (yb + wy) * 0.5, (c.z + r_end + fz_in) * 0.5 + 0.06), Vector3(RI - CW, wy - yb, fz_in - c.z - r_end + 0.12))
-		# боковые полосы
-		_box(b, "#bench", Vector3(sd * (r_end + RI) * 0.5, (yb + wy) * 0.5, c.z + (fz_in - c.z) * 0.5), Vector3(RI - r_end, wy - yb, fz_in - c.z))
-		# углы
-		var cx := r_end * 0.72
-		_box(b, "#bench", Vector3(sd * (cx + RI) * 0.5, (yb + wy) * 0.5, c.z + (cx + fz_in - c.z) * 0.5), Vector3(RI - cx, wy - yb, fz_in - c.z - cx))
-	# стены: низ — тёсаный камень (до террасы), верх — белая штукатурка с окнами (за ними светлая терраса, небо);
-	# спереди посредине — дверной проём с бронзовыми створками (Life), перед ним — портик с фронтоном
-	var WH := 2.8                            # верх стен зала
-	var up := WH + 0.05 - wy
-	for sd: float in [-1.0, 1.0]:
-		var x := sd * EX
-		var a := Vector3(x, Y0 - 0.3, zs) if sd < 0 else Vector3(x, Y0 - 0.3, FZ)
-		var dr := Vector3(0, 0, 1) if sd < 0 else Vector3(0, 0, -1)
-		_run(b, "SM_Bld_Wall_Large_01", a - Vector3(sd * WT * 0.5, 0, 0), dr, FZ - zs, 5.0, (wy + 0.3 - Y0 + 0.06) / 4.51, WT / 0.68, {}, 2.4)
-		var n := maxi(2, int(round((FZ - zs) / 1.5)))
-		var mw := (FZ - zs) / n
-		for i in n:
-			var z := (zs + i * mw) if sd < 0 else (FZ - i * mw)
-			var nm := "SM_Bld_Wall_Window_05" if i % 2 == 1 else "SM_Bld_Wall_01"
-			_p(b, nm, Vector3(x - sd * float(FACE[nm]) * 0.5, wy, z), PI / 2 * sd, Vector3(mw / 2.5, up / 3.01, 0.5), WHITE)
-	var dw := 2.2
-	for sd: float in [-1.0, 1.0]:
-		var xa := sd * dw * 0.5
-		var xb := sd * EX
-		var lo := minf(xa, xb)
-		var hi := maxf(xa, xb)
-		_run(b, "SM_Bld_Wall_Large_01", Vector3(lo, Y0 - 0.3, FZ - 0.34 * WT / 0.68), Vector3(1, 0, 0), hi - lo, 5.0, (wy + 0.3 - Y0 + 0.06) / 4.51, WT / 0.68, {}, 2.4)
-		var n := maxi(1, int(round((hi - lo) / 1.6)))
-		var mw := (hi - lo) / n
-		for i in n:
-			var nm := "SM_Bld_Wall_Window_05" if (i + (0 if sd < 0 else 1)) % 2 == 1 else "SM_Bld_Wall_01"
-			_p(b, nm, Vector3(lo + i * mw, wy, FZ - float(FACE[nm]) * 0.5), 0.0, Vector3(mw / 2.5, up / 3.01, 0.5), WHITE)
-	# дверной проём на всю высоту стены, створки
-	var sxd := dw / 2.5
-	var syd := (WH + 0.05 - Y0) / 3.01
-	_p(b, "SM_Bld_Wall_Door_Large_01", Vector3(-dw * 0.5, Y0, FZ - 0.3 * 0.45), 0.0, Vector3(sxd, syd, 0.45), WHITE)
-	var lw := 1.2 * sxd * 0.5
-	var ls := Vector3(lw / 0.56, 2.45 * syd / 2.47, 0.8)
-	_p(b, "SM_Bld_Door_Large_Half_03", Vector3(-dw * 0.5 + 0.65 * sxd, Y0, FZ - 0.05), 0.0, ls)
-	_p(b, "SM_Bld_Door_Large_Half_03", Vector3(-dw * 0.5 + 0.65 * sxd + lw, Y0, FZ - 0.05), 0.0, ls)
-	# карниз по верху стен
-	_ring(b, "SM_Bld_Wall_Large_Cap_01", -EX - 0.05, EX + 0.05, zs, FZ + 0.05, WH, 5.02, 0.45, 0.4, {}, [0, 1, 3], 2.4)
-	# портик: две колонны, антаблемент, фронтон с золотым медальоном
-	var pz := z1 - 0.3
-	for sd: float in [-1.0, 1.0]:
-		_p(b, "SM_Bld_Pillar_02", Vector3(sd * 0.95, Y0, pz), 0.0, Vector3(0.62, 0.78, 0.62))
-	_ledge(b, -1.25, 1.25, FZ, pz + 0.3, Y0 + 2.34, 0.24)
-	var pr := _gable_z(b, -1.3, 1.3, FZ - 0.05, pz + 0.36, Y0 + 2.62, TYMPANUM, true, false)
-	_p(b, "SM_Bld_Ornament_02", Vector3(0, Y0 + 2.62 + (pr - Y0 - 2.62) * 0.4, pz + 0.3), 0.0, Vector3.ONE * 0.3)
-	_p(b, "SM_Prop_Statue_04", Vector3(0, pr - 0.08, pz + 0.26), 0.0, Vector3.ONE * 0.22, GOLD_STATUE)
-	# галерея по трём сторонам: колонны у края террасы, навес из черепицы к стенам (над рядами — открыто)
-	var gi := RI - 0.75                      # линия колонн галереи (от стены внутрь)
-	var gy := WH + 0.2                      # верх колонн (навес выше стен — скат к стенам)
-	for sd: float in [-1.0, 1.0]:
-		var n := 3
-		for i in n:
-			var z := lerpf(c.z + 0.5, fz_in - 0.75, float(i) / (n - 1))
-			_p(b, "SM_Bld_Pillar_06", Vector3(sd * gi, wy, z), 0.0, Vector3(0.5, (gy - wy) / 3.0, 0.5))
-	for i in 4:
-		var x := lerpf(-gi, gi, float(i) / 3.0)
-		if absf(x) < 0.6:
-			continue
-		_p(b, "SM_Bld_Pillar_06", Vector3(x, wy, fz_in - 0.75), 0.0, Vector3(0.5, (gy - wy) / 3.0, 0.5))
-	var kr := (EX + 0.12 - gi + 0.12) / 7.5
-	# навесы: по бокам — от портика до скены, спереди — между боковыми
-	_p(b, "SM_Bld_Roof_Straight_Thin_Large_01", Vector3(EX + 0.12, WH - 0.06, FZ + 0.12), PI / 2, Vector3((FZ + 0.12 - zs) / 7.5, kr, kr))
-	_p(b, "SM_Bld_Roof_Straight_Thin_Large_01", Vector3(-EX - 0.12, WH - 0.06, zs), -PI / 2, Vector3((FZ + 0.12 - zs) / 7.5, kr, kr))
-	_p(b, "SM_Bld_Roof_Straight_Thin_Large_01", Vector3(-(gi - 0.12), WH - 0.06, FZ + 0.12), 0.0, Vector3(2.0 * (gi - 0.12) / 7.5, kr, kr))
+	var ah := wy + 0.05 - Y0
+	var eh := wy + 1.12                      # верх наружной стены — низ навеса
+	_arcade(b, d, ah, eh - Y0)
+	var w := 2.0 * RO * sin(deg_to_rad(10.0)) + 0.02
+	var rc := RW - 0.4                       # колонны галереи — по краю обхода
+	var top_in := eh + 0.28
+	var k := (RO + 0.14 - (rc - 0.12)) / 7.5
+	var wo := 2.0 * (RO + 0.14) * sin(deg_to_rad(10.0)) + 0.05
+	var yband := Y0 + ah + 0.16
+	for i in 9:
+		var ang := deg_to_rad(-80.0 + 20.0 * i)
+		_on_arc(b, "SM_Bld_Wall_01", c, ang, RO - 0.12, yband, w, 2.5, (eh - 0.32 - yband) / 3.01, 1.0, CREAM)
+		_on_arc(b, "SM_Bld_Trim_Large_Single_02", c, ang, RO - 0.02, eh - 0.17, w, 2.5, 0.34, 0.6, FRIEZE)
+		var bs := Basis(Vector3.UP, ang)
+		var t := bs * Vector3.RIGHT
+		b.parts.append(["SM_Bld_Roof_Straight_Thin_Large_01", b.base * Transform3D(bs * Basis.from_scale(Vector3(wo / 7.5, k, k)), c + _dir(ang) * (RO + 0.14) + Vector3(0, eh - 0.04, 0) - t * wo * 0.5), {}])
+	for j in 10:
+		var ang := deg_to_rad(-90.0 + 20.0 * j)
+		_p(b, "SM_Bld_Pillar_06", c + _dir(ang) * rc + Vector3(0, wy, 0), 0.0, Vector3(0.45, (top_in - wy) / 3.0, 0.45))
 	_odeon_stage(b, d)
-	# у портика — цветники и кипарисы, у углов — кусты
-	var x1: float = d["x1"]
+	# портик у средней арки: две колонны, антаблемент, фронтон с золотым медальоном и статуей
+	var fz := c.z + RO
+	var pz := fz + 0.42
 	for sd: float in [-1.0, 1.0]:
-		_p(b, "SM_Prop_FlowerBed_01", Vector3(sd * 2.2, Y0 + 0.17, z1 - 0.45), 0.0, Vector3.ONE * 0.48)
-		_cypress(b, Vector3(sd * (x1 - 0.32), Y0, z1 - 0.35), 0.38)
-		_p(b, "SM_Prop_FlowerPot_Fancy_01", Vector3(sd * 1.45, Y0 + 0.57 * 0.42, z1 - 0.42), b.rng.randf() * TAU, Vector3.ONE * 0.42)
-	b.light(Vector3(0, 1.8, z1 - 0.2))
-	b.actor(Vector3(-0.85, Y0, z1 - 0.15), 0.25, "Idle", "pleb")
+		_p(b, "SM_Bld_Pillar_02", Vector3(sd * 0.9, Y0, pz), 0.0, Vector3(0.6, 0.72, 0.6))
+	_ledge(b, -1.2, 1.2, fz - 0.15, pz + 0.3, Y0 + 2.16, 0.22)
+	var pr := _gable_z(b, -1.25, 1.25, fz - 0.2, pz + 0.36, Y0 + 2.4, TYMPANUM, true, false)
+	_p(b, "SM_Bld_Ornament_02", Vector3(0, Y0 + 2.4 + (pr - Y0 - 2.4) * 0.4, pz + 0.31), 0.0, Vector3.ONE * 0.3)
+	_p(b, "SM_Prop_Statue_04", Vector3(0, pr - 0.08, pz + 0.26), 0.0, Vector3.ONE * 0.22, GOLD_STATUE)
+	# углы основания: кипарисы, цветники, статуи на постаментах, кусты
+	for sd: float in [-1.0, 1.0]:
+		_cypress(b, Vector3(sd * (x1 - 0.35), Y0, z1 - 0.38), 0.38)
+		_p(b, "SM_Prop_FlowerBed_01", Vector3(sd * 2.1, Y0 + 0.17, z1 - 0.45), 0.0, Vector3.ONE * 0.46)
+		var q := Vector3(sd * (x1 - 0.75), Y0, c.z + RO * 0.78)
+		_p(b, "SM_Prop_Plinth_04", q, 0.0, Vector3(0.5, 0.45, 0.5))
+		_p(b, "SM_Prop_Statue_0%d" % (5 if sd < 0 else 6), q + Vector3(0, 0.31, 0), -sd * 0.6, Vector3.ONE * 0.46)
+		_bush(b, Vector3(sd * (x1 - 0.45), Y0, c.z + RO * 0.45), 0.32)
+		_bush(b, Vector3(sd * (x1 - 1.3), Y0, z1 - 0.95), 0.3)
+	b.light(Vector3(0, 1.8, pz + 0.2))
+	b.actor(Vector3(-0.55, Y0, pz + 0.15), 0.25, "Idle", "pleb")
 	b.door = Vector3(0, 0, float(d["zd"]))
 
 
@@ -860,20 +891,21 @@ static func _odeon_stage(b: Bp, d: Dictionary) -> void:
 		var vh := ytop - Y0 + 0.3
 		var lo := minf(xa, xb)
 		var hi := maxf(xa, xb)
-		_run(b, "SM_Bld_Wall_Large_01", Vector3(lo, Y0 - 0.3, zp), Vector3(1, 0, 0), hi - lo, 5.0, vh / 4.51, 0.3, {}, 1.0)
+		_run(b, "SM_Bld_Wall_Large_01", Vector3(lo, Y0 - 0.3, zp), Vector3(1, 0, 0), hi - lo, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.0)
 		if sd > 0:
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zs), Vector3(0, 0, 1), zp - zs, 5.0, vh / 4.51, 0.3, {}, 1.0)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zs), Vector3(0, 0, 1), zp - zs, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.0)
 		else:
-			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zp), Vector3(0, 0, -1), zp - zs, 5.0, vh / 4.51, 0.3, {}, 1.0)
-		_run(b, "SM_Bld_Wall_Large_01", Vector3(xb, Y0 - 0.3, zp if sd > 0 else zb), Vector3(0, 0, -1) if sd > 0 else Vector3(0, 0, 1), zp - zb, 5.0, vh / 4.51, 0.3, {}, 1.5)
+			_run(b, "SM_Bld_Wall_Large_01", Vector3(xa, Y0 - 0.3, zp), Vector3(0, 0, -1), zp - zs, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.0)
+		_run(b, "SM_Bld_Wall_Large_01", Vector3(xb, Y0 - 0.3, zp if sd > 0 else zb), Vector3(0, 0, -1) if sd > 0 else Vector3(0, 0, 1), zp - zb, 5.0, vh / 4.51, 0.3, WARM_STONE, 1.5)
 		_p(b, "SM_Prop_Plinth_02", Vector3((xa + xb) * 0.5, Y0 + vh - 0.3, (zs + zp) * 0.5), 0.0, Vector3(0.7, 0.3, 0.7))
 		_p(b, "SM_Prop_Statue_0%d" % (5 if sd < 0 else 7), Vector3((xa + xb) * 0.5, Y0 + vh, (zs + zp) * 0.5), 0.0, Vector3.ONE * 0.36)
 	var mw := 2.0 * SX / 3.0
 	_facade(b, ["SM_Bld_Wall_Alcove_01", "SM_Bld_Wall_Door_Large_01", "SM_Bld_Wall_Alcove_01"], -SX, zs, Ys, mw, S1, MARBLE)
 	var kx := mw / 2.5
 	var sy1 := S1 / 3.01
-	# закрытые бронзовые двери посредине (Life их не трогает: вход — у портика)
-	_p(b, "SM_Bld_Door_Large_01", Vector3(-SX + mw + 0.69 * kx, Ys, zs - 0.3 * 1.0 + 0.0), 0.0, Vector3(kx, sy1, 0.8))
+	# посредине — занавесь из красной ткани (не створки: Life не распахнёт их в пустое нутро сцены)
+	for h: float in [0.0, 0.5]:
+		_p(b, "SM_Prop_Banner_03_A", Vector3(-SX + mw + (0.65 + 0.3 + h * 1.2) * kx, Ys + 2.58 * sy1, zs - 0.15), 0.0, Vector3(0.69 * kx, 1.07 * sy1, 0.5))
 	for i: int in [0, 2]:
 		_p(b, "SM_Prop_Statue_0%d" % [6, 3][i / 2], Vector3(-SX + (i + 0.5) * mw, Ys + 0.16, zs - 0.22), 0.0, Vector3.ONE * 0.5)
 	var cols := [-SX + 0.22, -SX + mw, SX - mw, SX - 0.22]
@@ -884,22 +916,25 @@ static func _odeon_stage(b: Bp, d: Dictionary) -> void:
 	_garland(b, float(cols[0]), float(cols[1]), Ys + S1 - 0.04, zs + 0.6)
 	_garland(b, float(cols[2]), float(cols[3]), Ys + S1 - 0.04, zs + 0.6)
 	# зад и аттик, кровля
-	_run(b, "SM_Bld_Wall_Large_01", Vector3(EX, Y0 - 0.3, zb), Vector3(-1, 0, 0), 2.0 * EX, 5.0, (ytop + 0.3 - Y0 + 0.3) / 4.51, 0.3, {}, 2.4)
-	_run(b, "SM_Bld_Wall_Large_01", Vector3(-SX, Ys + S1, zs + 0.05), Vector3(1, 0, 0), 2.0 * SX, 5.0, (ytop + 0.3 - Ys - S1) / 4.51, 0.2, {}, 2.4)
+	# зад: арки с нишами в тёплом свете, пилястры, карниз, фриз (одеон развёрнут к улице и задом — у части городов)
+	var hl := 1.95
+	_run(b, "SM_Bld_Wall_Large_01", Vector3(EX, Y0 + hl, zb), Vector3(-1, 0, 0), 2.0 * EX, 5.0, (ytop + 0.3 - Y0 - hl) / 4.51, 0.3, WARM_STONE, 2.4)
+	_run(b, "SM_Bld_Wall_Large_01", Vector3(EX, Y0 - 0.3, zb), Vector3(-1, 0, 0), 2.0 * EX, 5.0, 0.3 / 4.51, 0.3, WARM_STONE, 2.4)
+	_back_facade(b, -EX, EX, zb - 0.1, hl, ytop + 0.3, false)
+	_run(b, "SM_Bld_Wall_Large_01", Vector3(-SX, Ys + S1, zs + 0.05), Vector3(1, 0, 0), 2.0 * SX, 5.0, (ytop + 0.3 - Ys - S1) / 4.51, 0.2, WARM_STONE, 2.4)
 	var ridge := _gable_x(b, -EX - 0.1, EX + 0.1, zb - 0.22, zs + 0.3, ytop + 0.3, {"Stone_01": "Stucco_Red_01"})
 	_p(b, "SM_Prop_Statue_04", Vector3(0, ridge - 0.1, (zb + zs) * 0.5 + 0.05), 0.0, Vector3.ONE * 0.24, GOLD_STATUE)
-	# пилястры по заду и бокам (тёсаный камень не «гладкой коробкой»), знамёна сзади
-	for i in 5:
-		_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(lerpf(-EX + 0.2, EX - 0.2, i / 4.0), Y0, zb - 0.1), 0.0, Vector3(0.3, (ytop - Y0) / 4.55, 0.18))
-	var FZ: float = d["FZ"]
-	var n := maxi(2, int(round((FZ - zb) / 1.7)))
+	# бока: пилястры, расписной фриз, медальон, знамя
 	for sd: float in [-1.0, 1.0]:
-		for i in n + 1:
-			var z := lerpf(zb + 0.15, FZ - 0.12, float(i) / n)
-			var h := (ytop if z < zs else 2.8) - Y0
-			_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(sd * (EX + 0.06), Y0, z), 0.0, Vector3(0.2, h / 4.55, 0.3))
-	for x: float in [-1.6, 1.6]:
-		_p(b, "SM_Prop_Banner_03_C", Vector3(x, ytop - 0.1, zb - 0.32), PI, Vector3(0.5, 0.62, 0.6))
+		for z: float in [zb + 0.12, (zb + zp) * 0.5, zp - 0.06]:
+			_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(sd * (EX + 0.06), Y0, z), 0.0, Vector3(0.2, (ytop - Y0) / 4.55, 0.3), WARM_STONE)
+		var xs := sd * (EX + 0.1)
+		if sd > 0:
+			_run(b, "SM_Bld_Trim_Large_Single_02", Vector3(xs, ytop + 0.13, zp), Vector3(0, 0, -1), zp - zb, 2.5, 0.34, 0.6, FRIEZE, 1.5)
+		else:
+			_run(b, "SM_Bld_Trim_Large_Single_02", Vector3(xs, ytop + 0.13, zb), Vector3(0, 0, 1), zp - zb, 2.5, 0.34, 0.6, FRIEZE, 1.5)
+		_p(b, "SM_Bld_Ornament_02", Vector3(xs + sd * 0.02, Y0 + 1.5, (zb + zp) * 0.5 - 0.3), sd * PI / 2, Vector3.ONE * 0.36)
+		_p(b, "SM_Prop_Banner_03_C", Vector3(sd * (EX + 0.13), ytop - 0.1, (zb + zp) * 0.5 + 0.3), sd * PI / 2, Vector3(0.45, 0.6, 0.6))
 	# на сцене: лира, кресло, жаровни; ночью — огонёк над сценой
 	_p(b, "SM_Prop_Plinth_02", Vector3(1.1, Ys, zs + 0.6), 0.0, Vector3(0.55, 0.62, 0.55))
 	_p(b, "SM_Prop_Lyre_01", Vector3(1.1, Ys + 0.64, zs + 0.6), 0.0, Vector3.ONE * 0.48)
@@ -959,15 +994,18 @@ static func _library(b: Bp, d: Dictionary) -> void:
 	_facade(b, ["SM_Bld_Wall_Alcove_01", "SM_Bld_Wall_Window_05", "SM_Bld_Wall_Alcove_01"], -HX, HZ1, y2, mw, H2, MARBLE)
 	# между ярусами снаружи — пояс (мраморная плита по всему периметру)
 	var depth := HZ1 - HZ0
-	var nside := maxi(2, int(round(depth / 2.0)))
+	var nside := maxi(2, int(round(depth / 1.6)))
 	var sm := depth / nside
 	for sd: float in [-1.0, 1.0]:
 		var x := sd * HX
 		for i in nside:
 			var z := (HZ0 + i * sm) if sd < 0 else (HZ1 - i * sm)
 			var yw := PI / 2 * sd
-			# низ — глухие стены (изнутри у них полки), верх — окна со ставнями
-			_p(b, "SM_Bld_Wall_01", Vector3(x - sd * 0.11, YP, z), yw, Vector3(sm / 2.5, sy1, 1.0), SAND)
+			# низ — окна в тёплый зал (под ними ящики с цветами), пояс, верх — окна со ставнями
+			_p(b, "SM_Bld_Wall_Window_05", Vector3(x - sd * 0.28, YP, z), yw, Vector3(sm / 2.5, sy1, 1.0), SAND)
+			var wc := z - 1.25 * sm / 2.5 if sd > 0 else z + 1.25 * sm / 2.5
+			var kb := minf(0.9, 1.25 * sm / 2.5)
+			_p(b, "#window_box", Vector3(x, YP + 0.62 * sy1, wc), yw, Vector3(kb, kb, 0.5))
 			_p(b, "SM_Bld_Wall_01", Vector3(x - sd * 0.11, YP + H1, z), yw, Vector3(sm / 2.5, E1 / 3.01, 1.0), MARBLE)
 			_p(b, "SM_Bld_Wall_Window_05", Vector3(x - sd * 0.28, y2, z), yw, Vector3(sm / 2.5, H2 / 3.01, 1.0), SAND)
 			_shutters(b, x, z, sm, sd, y2, H2)
@@ -975,12 +1013,24 @@ static func _library(b: Bp, d: Dictionary) -> void:
 	var bm := 2.0 * HX / nb
 	for i in nb:
 		var x := HX - i * bm
-		_p(b, "SM_Bld_Wall_01", Vector3(x, YP, HZ0 + 0.11), PI, Vector3(bm / 2.5, sy1, 1.0), SAND)
+		# зад: внизу — ниши со статуями мудрецов (неглубокие: за ними полки), пояс, вверху — окна со ставнями
+		_p(b, "SM_Bld_Wall_Alcove_01", Vector3(x, YP, HZ0 + 0.38 * 0.5), PI, Vector3(bm / 2.5, sy1, 0.5), MARBLE)
+		_p(b, "SM_Prop_Statue_0%d" % [7, 5, 3][i], Vector3(x - bm * 0.5, YP + 0.16, HZ0 + 0.12), PI, Vector3.ONE * 0.48)
 		_p(b, "SM_Bld_Wall_01", Vector3(x, YP + H1, HZ0 + 0.11), PI, Vector3(bm / 2.5, E1 / 3.01, 1.0), MARBLE)
 		_p(b, "SM_Bld_Wall_Window_05", Vector3(x, y2, HZ0 + 0.28), PI, Vector3(bm / 2.5, H2 / 3.01, 1.0), SAND)
 		_shutters_back(b, x, HZ0, bm, y2, H2)
+	# расписной фриз под карнизом по бокам и сзади, плющ у задних углов, цветы в кадках по углам зала
+	var fy := ytop - 0.17
+	_run(b, "SM_Bld_Trim_Large_Single_02", Vector3(HX, fy, HZ1), Vector3(0, 0, -1), depth, 2.5, 0.34, 0.6, FRIEZE, 1.6)
+	_run(b, "SM_Bld_Trim_Large_Single_02", Vector3(-HX, fy, HZ0), Vector3(0, 0, 1), depth, 2.5, 0.34, 0.6, FRIEZE, 1.6)
+	_run(b, "SM_Bld_Trim_Large_Single_02", Vector3(HX, fy, HZ0), Vector3(-1, 0, 0), 2.0 * HX, 2.5, 0.34, 0.6, FRIEZE, 1.6)
+	for sd: float in [-1.0, 1.0]:
+		_p(b, "SM_Env_Ivy_Flowers_0%d" % (1 if sd < 0 else 3), Vector3(sd * (HX + 0.03), YP + 1.3, HZ0 + 0.55), sd * PI / 2, Vector3.ONE * 0.62)
+		_p(b, "SM_Env_Ivy_Flowers_0%d" % (2 if sd < 0 else 4), Vector3(sd * (HX - 0.6), YP + 1.1, HZ0 - 0.03), PI, Vector3.ONE * 0.55)
+		for zz: float in [HZ0 + 0.05, HZ1 - 0.05]:
+			_p(b, "SM_Prop_FlowerPot_Fancy_01", Vector3(sd * (HX + 0.08), Y0 + 0.57 * 0.24, zz), b.rng.randf() * TAU, Vector3.ONE * 0.24)   # кадка у угла — в следе и при любом повороте
 	# пилястры из белого мрамора по углам и между окнами (бока и зад), мраморный пояс между ярусами — не «гладкая коробка»
-	var pil := {"Building_Large_Brick_01": "Building_Marble_01"}
+	var pil := PIL
 	for sd: float in [-1.0, 1.0]:
 		for i in nside + 1:
 			var z := HZ0 + i * sm
@@ -1030,8 +1080,8 @@ static func _library(b: Bp, d: Dictionary) -> void:
 			_p(b, "SM_Prop_Seat_Bench_03", Vector3(sd * 2.1, Y0, z1 - 0.32), 0.0, Vector3.ONE * 0.5)
 			_cypress(b, Vector3(sd * (x1 - 0.28), Y0, z1 - 0.3), 0.36)
 		else:
-			_p(b, "SM_Prop_FlowerPot_Fancy_01", Vector3(sd * (x1 - 0.2), Y0 + 0.57 * 0.32, SZ - 0.2), b.rng.randf() * TAU, Vector3.ONE * 0.32)
-		_bush(b, Vector3(sd * (x1 - 0.2), Y0, (HZ0 + HZ1) * 0.5), 0.3)
+			_p(b, "SM_Prop_FlowerPot_Fancy_01", Vector3(sd * (x1 - 0.3), Y0 + 0.57 * 0.3, SZ - 0.2), b.rng.randf() * TAU, Vector3.ONE * 0.3)
+		_bush(b, Vector3(sd * (x1 - 0.34), Y0, (HZ0 + HZ1) * 0.5), 0.26)       # куст — внутри следа (у старого места бок — 0,35 м)
 	b.door = Vector3(0, 0, z1 + 0.35)
 
 
@@ -1077,7 +1127,16 @@ static func _library_hall(b: Bp, d: Dictionary) -> void:
 	var kx := mw / 2.5
 	var door := [-0.6 * kx * 1.0 - 0.02, 0.6 * kx + 0.02]
 	var win := [[-HX + (1.25 - 0.62) * kx, -HX + (1.25 + 0.62) * kx], door, [HX - (1.25 + 0.62) * kx, HX - (1.25 - 0.62) * kx]]
-	_lining(b, -ix, ix, iz0, iz1, YP, h, win)
+	var depth := HZ1 - HZ0
+	var nside := maxi(2, int(round(depth / 1.6)))
+	var sm := depth / nside
+	var side := []
+	for i in nside:
+		var zc := HZ0 + (i + 0.5) * sm
+		var hw := 0.6 * sm / 2.5 + 0.02
+		if zc - hw > iz0 and zc + hw < iz1:
+			side.append([zc - hw, zc + hw])
+	_lining(b, -ix, ix, iz0, iz1, YP, h, win, side)
 	_floor(b, HALL_FLOOR, -ix, iz0, ix, iz1, YP + 0.006, 1.9)
 	_ceiling(b, -ix, iz0, ix, iz1, YP + h - 0.04)
 	# полки со свитками: по задней стене — две по бокам от Минервы, по боковым — по одной
@@ -1086,19 +1145,11 @@ static func _library_hall(b: Bp, d: Dictionary) -> void:
 	var sh := 0.78
 	for sd: float in [-1.0, 1.0]:
 		var x0 := sd * 0.7 if sd > 0 else -0.7 - sw
-		_p(b, "SM_Bld_Shelf_Scroll_01", Vector3(x0, YP, iz0 - 0.11 * 0.6 + 0.012), 0.0, Vector3(sw / 2.5, sh, 0.6), shelf)
-		_p(b, "SM_Bld_Shelf_Scroll_01_Insert_0%d" % (1 if sd < 0 else 2), Vector3(x0, YP, iz0 - 0.11 * 0.6 + 0.012), 0.0, Vector3(sw / 2.5, sh, 0.6), shelf)
-	var dz := iz1 - iz0
-	var swz := minf(2.3, dz - 0.6)
-	for sd: float in [-1.0, 1.0]:
-		var zc := iz0 + 0.3
-		var p := Vector3(sd * (ix - 0.012), YP, zc if sd > 0 else zc + swz)
-		var yw := -PI / 2 * sd
-		_p(b, "SM_Bld_Shelf_Scroll_01", p + Basis(Vector3.UP, yw) * Vector3(0, 0, -0.11 * 0.6), yw, Vector3(swz / 2.5, sh, 0.6), shelf)
-		_p(b, "SM_Bld_Shelf_Scroll_01_Insert_0%d" % (2 if sd < 0 else 1), p + Basis(Vector3.UP, yw) * Vector3(0, 0, -0.11 * 0.6), yw, Vector3(swz / 2.5, sh, 0.6), shelf)
+		_p(b, "SM_Bld_Shelf_Scroll_01", Vector3(x0, YP, iz0 + 0.23), 0.0, Vector3(sw / 2.5, sh, 0.6), shelf)
+		_p(b, "SM_Bld_Shelf_Scroll_01_Insert_0%d" % (1 if sd < 0 else 2), Vector3(x0, YP, iz0 + 0.23), 0.0, Vector3(sw / 2.5, sh, 0.6), shelf)
 	# Минерва на постаменте между полками
-	_p(b, "SM_Prop_Plinth_04", Vector3(0, YP, iz0 + 0.42), 0.0, Vector3(0.62, 0.6, 0.62), {"glow": WARM * 0.5})
-	_p(b, "SM_Prop_Statue_07", Vector3(0, YP + 0.41, iz0 + 0.42), 0.0, Vector3.ONE * 0.72, {"tints": {"Statue_01": GOLD}, "glow": WARM * 0.8})
+	_p(b, "SM_Prop_Plinth_04", Vector3(0, YP, iz0 + 0.6), 0.0, Vector3(0.62, 0.6, 0.62), {"glow": WARM * 0.5})
+	_p(b, "SM_Prop_Statue_07", Vector3(0, YP + 0.41, iz0 + 0.6), 0.0, Vector3.ONE * 0.72, {"tints": {"Statue_01": GOLD}, "glow": WARM * 0.8})
 	# столы со свитками и стулья
 	var tz := (iz0 + iz1) * 0.5 + 0.15
 	for sd: float in [-1.0, 1.0]:
@@ -1137,7 +1188,7 @@ static func _thermae_dims(fit: Vector2) -> Dictionary:
 	var BZ1 := dz - 0.5                       # передняя грань (к палестре)
 	var FZ := z1 - 0.28                       # передняя стенка палестры (лицо)
 	var s := 0.8                              # бортики бассейнов (Synty Bath_Edge) — в 0,8 натуры: модуль 2 м
-	var pools := [[-3.0, 3.0, dz + 0.75, dz + 2.75, "out"], [-2.0, 2.0, BZ0 + 0.85, BZ0 + 2.85, "in"]]
+	var pools := [[-3.0, 3.0, dz + 0.75, dz + 2.75, "out"], [-2.0, 2.0, BZ0 + 1.0, BZ0 + 3.0, "in"]]
 	return {"x1": x1, "z0": z0, "z1": z1, "dz": dz, "pave": pave, "full": fit == Vector2.ZERO, "BZ0": BZ0, "BZ1": BZ1, "FZ": FZ,
 		"CX": 2.4, "HC": 3.0, "WX": 5.7, "HW": 2.3, "s": s, "pools": pools, "wy": Y0 + 0.1, "zd": float(pave[3]) + 0.35}
 
@@ -1179,16 +1230,22 @@ static func _thermae_block(b: Bp, d: Dictionary) -> void:
 	# кальдарий: фасад — большая арка во всю ширину, бока и зад — кирпич
 	var aw := 2.0 * CX
 	_p(b, "SM_Bld_Wall_Door_Double_Large_01", Vector3(-CX, Y0, BZ1 - 0.22 * 0.6), 0.0, Vector3(aw / 2.5, HC / 3.01, 0.6), brick)
-	_run(b, "SM_Bld_Wall_Large_01", Vector3(CX, Y0 - 0.3, BZ0), Vector3(-1, 0, 0), aw, 5.0, (HC + 0.3) / 4.51, 0.35, brick, 2.4)
+	# зад кальдария: две высокие арки — за ними тёплый зал (облицовка в свете), пилястры по краям и посредине
+	for i in 2:
+		_p(b, "SM_Bld_Wall_Door_Double_01", Vector3(CX - i * CX, Y0, BZ0 + 0.12), PI, Vector3(CX / 2.5, HC / 3.01, 0.5), WARM_STONE)
+		_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(CX - i * CX, Y0, BZ0 - 0.03), 0.0, Vector3(0.22, HC / 4.55, 0.16), PIL)
+	_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(-CX, Y0, BZ0 - 0.03), 0.0, Vector3(0.22, HC / 4.55, 0.16), PIL)
+	for sd: float in [-1.0, 1.0]:
+		_run(b, "SM_Bld_Wall_Large_01", Vector3(sd * CX, Y0 - 0.3, BZ1 if sd > 0 else BZ0), Vector3(0, 0, -1) if sd > 0 else Vector3(0, 0, 1), BZ1 - BZ0, 5.0, (HC + 0.3) / 4.51, 0.3, WARM_STONE, 2.4)
 	_ring(b, "SM_Bld_Wall_Large_Cap_01", -CX - 0.06, CX + 0.06, BZ0 - 0.06, BZ1 + 0.06, Y0 + HC - 0.02, 5.02, 0.6, 0.45, {}, [0, 1, 2, 3], 2.4)
 	_floor(b, PAVING, -CX, BZ0, CX, BZ1, Y0 + HC + 0.1, 2.4)
 	# нутро кальдария: облицовка, мозаика, потолок — в тёплом свете; горячий бассейн, статуя, светильники
 	var ix := CX - 0.18
-	_lining(b, -ix, ix, BZ0 + 0.18, BZ1 - 0.16, Y0, HC - 0.06, [[-CX + 0.15, CX - 0.15]])
+	_lining(b, -ix, ix, BZ0 + 0.3, BZ1 - 0.16, Y0, HC - 0.06, [[-CX + 0.15, CX - 0.15]])
 	_floor(b, HALL_FLOOR, -ix, BZ0 + 0.18, ix, BZ1 - 0.1, Y0 + 0.006, 1.7)
 	_ceiling(b, -ix, BZ0 + 0.18, ix, BZ1 - 0.1, Y0 + HC - 0.1)
-	_p(b, "SM_Prop_Plinth_04", Vector3(0, Y0, BZ0 + 0.42), 0.0, Vector3(0.55, 0.5, 0.55), {"glow": WARM * 0.5})
-	_p(b, "SM_Prop_Statue_06", Vector3(0, Y0 + 0.34, BZ0 + 0.42), 0.0, Vector3.ONE * 0.62)
+	_p(b, "SM_Prop_Plinth_04", Vector3(0, Y0, BZ0 + 0.56), 0.0, Vector3(0.55, 0.5, 0.55), {"glow": WARM * 0.5})
+	_p(b, "SM_Prop_Statue_06", Vector3(0, Y0 + 0.34, BZ0 + 0.56), 0.0, Vector3.ONE * 0.62)
 	for sd: float in [-1.0, 1.0]:
 		_p(b, "SM_Prop_Senser_01", Vector3(sd * (ix - 0.3), Y0, BZ1 - 0.45), 0.0, Vector3.ONE * 0.55, {"glow": WARM * 0.6})
 	b.light(Vector3(0, 1.6, BZ1 - 0.9))
@@ -1216,8 +1273,16 @@ static func _thermae_block(b: Bp, d: Dictionary) -> void:
 		var red := TERRA
 		# фасад крыла: окно, окно (за ними — тёплые комнаты), низ красный
 		_facade(b, ["SM_Bld_Wall_Window_05", "SM_Bld_Wall_Window_05"], lo, wz1, Y0, w * 0.5, HW, red)
-		_p(b, "SM_Bld_Wall_01", Vector3(xb, Y0, wz1 if sd > 0 else wz0), PI / 2 if sd > 0 else -PI / 2, Vector3((wz1 - wz0) / 2.5, HW / 3.01, 1.0), red)
-		_p(b, "SM_Bld_Wall_01", Vector3(hi, Y0, wz0 + 0.11), PI, Vector3(w / 2.5, HW / 3.01, 1.0), red)
+		# наружный бок и зад крыла — окна в тёплые комнаты, пилястры по углам и между окнами
+		var sl := (wz1 - wz0) * 0.5
+		for i in 2:
+			var zz := (wz1 - i * sl) if sd > 0 else (wz0 + i * sl)
+			_p(b, "SM_Bld_Wall_Window_05", Vector3(xb + sd * (0.11 - 0.28 * 0.6), Y0, zz), PI / 2 * sd, Vector3(sl / 2.5, HW / 3.01, 0.6), red)
+			_p(b, "SM_Bld_Wall_Window_05", Vector3(hi - i * w * 0.5, Y0, wz0 + 0.28 * 0.6), PI, Vector3(w * 0.5 / 2.5, HW / 3.01, 0.6), red)
+		for zz: float in [wz0 + 0.04, (wz0 + wz1) * 0.5, wz1 - 0.04]:
+			_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(xb + sd * 0.13, Y0, zz), 0.0, Vector3(0.16, HW / 4.55, 0.2), PIL)
+		for xx: float in [lo + 0.04, (lo + hi) * 0.5, hi - 0.04]:
+			_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(xx, Y0, wz0 - 0.03), 0.0, Vector3(0.2, HW / 4.55, 0.16), PIL)
 		_ring(b, "SM_Bld_Wall_Large_Cap_01", lo - 0.04, hi + 0.04, wz0 - 0.06, wz1 + 0.06, Y0 + HW - 0.02, 5.02, 0.45, 0.4, {}, [0, 1, 2, 3], 2.0)
 		_floor(b, PAVING, lo, wz0, hi, wz1, Y0 + HW + 0.1, 2.0)
 		_lining(b, lo + 0.15, hi - 0.15, wz0 + 0.15, wz1 - 0.12, Y0, HW - 0.05, [[lo + 0.2, hi - 0.2]])
@@ -1266,7 +1331,22 @@ static func _palaestra(b: Bp, d: Dictionary) -> void:
 		for i in 4:
 			_p(b, "SM_Bld_Pillar_02", Vector3(sd * cx, Y0, lerpf(z_a, z_b, i / 3.0)), 0.0, Vector3(0.62, 0.75, 0.62))
 		var wx := sd * (x1 - 0.15)
-		_run(b, "SM_Bld_Wall_01", Vector3(wx, Y0, z_a - 0.2) if sd < 0 else Vector3(wx, Y0, z_b + 0.2), Vector3(0, 0, 1) if sd < 0 else Vector3(0, 0, -1), z_b - z_a + 0.4, 2.5, 2.6 / 3.01, 1.0, TERRA, 1.6)
+		# наружная стена колоннады: ниша со статуей — окно — ниша со статуей, пилястры между ними
+		var L := z_b - z_a + 0.4
+		var cm := L / 3.0
+		var xf := sd * (x1 - 0.04)
+		for i in 3:
+			var zz := (z_b + 0.2 - i * cm) if sd > 0 else (z_a - 0.2 + i * cm)
+			var nm := "SM_Bld_Wall_Window_05" if i == 1 else "SM_Bld_Wall_Alcove_01"
+			var szk := 0.6 if i == 1 else 0.5
+			_p(b, nm, Vector3(xf - sd * float(FACE[nm]) * szk, Y0, zz), PI / 2 * sd, Vector3(cm / 2.5, 2.6 / 3.01, szk), TERRA if i == 1 else MARBLE)
+			if i != 1:
+				var zc := zz - cm * 0.5 if sd > 0 else zz + cm * 0.5
+				_p(b, "SM_Prop_Statue_0%d" % ([6, 7][i / 2] if sd > 0 else [3, 5][i / 2]), Vector3(xf - sd * 0.12, Y0 + 0.14, zc), PI / 2 * sd, Vector3.ONE * 0.5)
+		for i in 4:
+			var zz := lerpf(z_a - 0.2, z_b + 0.2, i / 3.0)
+			_p(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(xf + sd * 0.02, Y0, clampf(zz, z_a - 0.12, z_b + 0.12)), 0.0, Vector3(0.16, 2.6 / 4.55, 0.2), PIL)
+		_run(b, "SM_Bld_Wall_Large_Cap_01", Vector3(xf - sd * 0.12, Y0 + 2.58, z_b + 0.2) if sd > 0 else Vector3(xf - sd * 0.12, Y0 + 2.58, z_a - 0.2), Vector3(0, 0, -1) if sd > 0 else Vector3(0, 0, 1), L, 5.02, 0.4, 0.4, {}, 2.2)
 		var kr := (x1 + 0.1 - cx + 0.25) / 7.5
 		var eave := Y0 + 2.25
 		if sd > 0:

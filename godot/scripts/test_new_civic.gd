@@ -230,10 +230,10 @@ func _checks(b: Dictionary, inf: Dictionary) -> void:
 		"library":
 			check(not (li["doors"] as Array).is_empty(), "библиотека: бронзовые створки входа найдены (Life)")
 			check(int(li["pairs"]) >= 1, "библиотека: ставни створками (%d пар)" % int(li["pairs"]))
-		"odeon", "thermae":
+		"thermae":
 			check(not (li["doors"] as Array).is_empty(), "%s: створки входа найдены (Life)" % t)
-		"theatre":
-			check((li["doors"] as Array).is_empty(), "театр: дверей Synty нет (вход — открытая арка, в скене — занавеси)")
+		"theatre", "odeon":
+			check((li["doors"] as Array).is_empty(), "%s: дверей Synty у входа нет (вход — открытая арка с проходом к орхестре)" % t)
 	if game.spectacle and Spectacle.is_venue(t):
 		var lay: Dictionary = game.spectacle.layout(b)
 		var seats: Array = lay["seats"]
