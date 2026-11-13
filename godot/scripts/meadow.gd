@@ -32,9 +32,16 @@ const LOD := {
 }
 
 ## Оттенки (sRGB, множатся на картинку): листва набора светлее и желтее нашей палитры — к уютной зелени города
-const LEAF_TINT := Color(0.78, 0.86, 0.66)
+const LEAF_TINT := Color(1, 1, 1)
 const GRASS_TINT := Color(0.86, 0.9, 0.74)
 const TRUNK_TINT := Color(0.92, 0.9, 0.86)
+## Листва деревьев и кустов — к одному среднему цвету (линейному): солнечная жёлто-зелёная, как у олив и кипарисов
+## Ancient Empire в нашем свете (владелец и ревью 13.11: луговые деревья читались почти чёрными пятнами). Средние цвета
+## картинок (по непрозрачным точкам, линейные) — посчитаны заранее (.work/nature)
+const LEAF_TARGET := Vector3(0.2, 0.27, 0.06)
+const LEAF_AVG := {"leafPatch_01": Vector3(0.2594, 0.3554, 0.1465), "leafPatch_04": Vector3(0.0474, 0.0683, 0.0091),
+	"Branches_01": Vector3(0.0614, 0.0434, 0.0229), "Branches_02": Vector3(0.3096, 0.2911, 0.28)}
+const BRANCH_TARGET := Vector3(0.16, 0.12, 0.08)
 
 
 static func _index() -> void:
@@ -102,17 +109,22 @@ static func _lod_of(name: String) -> int:
 static func small(name: String) -> bool:
 	if not name.begins_with(PREFIX):
 		return false
-	for k in ["Grass", "Flowers", "flowers", "Lillies", "Sunflower", "Rapeseed", "CropField", "Ground_Cover", "Rock_Small"]:
+	for k in ["Grass", "Flowers", "flowers", "Lillies", "Ground_Cover", "Rock_Small"]:
 		if name.contains(k):
 			return true
 	return false
+
+
+## Поля (жёлтое поле, подсолнухи): без тени, но видны и издалека — поле не обрывается кусками на границе дальности
+static func field(name: String) -> bool:
+	return name.begins_with(PREFIX) and (name.contains("Sunflower") or name.contains("CropField") or name.contains("Rapeseed"))
 
 
 ## Богатая мелочь лугов — только на «Средней» и «Высокой» (Gfx.apply прячет её на «Низкой» и «Очень низкой»)
 static func rich(name: String) -> bool:
 	if name.contains("Lillies") or name.contains("Rock_Small"):
 		return false                              # кувшинки (одна карточка) и камешки лёгкие — на всех уровнях
-	return small(name) or name.contains("Stonewall") or name.contains("StoneWall") or name.contains("StonePile") or name.contains("Rock_Pile")
+	return small(name) or field(name) or name.contains("Stonewall") or name.contains("StoneWall") or name.contains("StonePile") or name.contains("Rock_Pile")
 
 
 static func _tex_path(n: String) -> String:
@@ -156,10 +168,16 @@ static func material(e: Dictionary, remap := {}) -> Material:
 		fm.set_shader_parameter("leaf_tex", _t(lt))
 		fm.set_shader_parameter("leaf_only", tt == lt and not atlas_leaf)
 		fm.set_shader_parameter("leaf_cut", not atlas_leaf)
-		var tint: Color = remap.get("tint", GRASS_TINT if grassy else LEAF_TINT)
+		var tint: Color = remap.get("tint", GRASS_TINT if grassy and not slot.begins_with("Branches") else LEAF_TINT)
 		fm.set_shader_parameter("tint", tint)
+		if LEAF_AVG.has(lt):
+			var avg: Vector3 = LEAF_AVG[lt]
+			var tg: Vector3 = BRANCH_TARGET if lt.begins_with("Branches") else LEAF_TARGET
+			fm.set_shader_parameter("leaf_gain", Vector3(tg.x / avg.x, tg.y / avg.y, tg.z / avg.z))
+		if grassy and not slot.begins_with("Branches") and not slot.begins_with("CropField"):
+			fm.set_shader_parameter("fade", Vector2(Parts.FADE_FROM, Parts.FADE_TO))
 		fm.set_shader_parameter("trunk_tint", TRUNK_TINT if not tt.begins_with("Birch") else Color(0.95, 0.94, 0.92))
-		fm.set_shader_parameter("up_normal", 0.7 if grassy else 0.45)
+		fm.set_shader_parameter("up_normal", 0.7 if grassy else 0.6)
 		fm.set_shader_parameter("sway", 0.05 if grassy else 0.035)
 		fm.set_shader_parameter("season", Synty.season_now)
 		fm.set_shader_parameter("evergreen", grassy)
@@ -229,7 +247,7 @@ static func make(name: String, remap := {}) -> Node3D:
 		for i in mi.mesh.get_surface_count():
 			var e: Dictionary = list[i] if i < list.size() else (list[0] if not list.is_empty() else {})
 			mi.set_surface_override_material(i, _spin(mi.mesh, 0.45 if base.begins_with("SM_Bld") else -0.7) if spin else material(e, remap))
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if small(name) else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if small(name) or field(name) else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	return n
 
 

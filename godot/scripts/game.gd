@@ -2422,6 +2422,7 @@ func _plot_hover(p: Vector2i) -> void:
 
 
 func _update_plot_signs() -> void:
+	MeadowNature.plots_tex(self)              # трава своей и чужой земли — плавной границей (13.11)
 	if hud == null:
 		return
 	for k in plot_signs:

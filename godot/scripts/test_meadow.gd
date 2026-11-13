@@ -48,7 +48,10 @@ func _run() -> void:
 	# новая игра начинается зимой (Seasons — по игровому календарю): снимки — летом, если не сказано иначе
 	if game.seasons and A.get("month", "6") != "-1":
 		game.seasons.force_m = float(A.get("month", "6"))
-		await frames(10)
+	if game.weather:
+		game.weather.force = float(A.get("rain", "0"))       # снимки — без дождя (новая игра: дождь по случаю)
+		game.weather.left_h = 0.0
+	await frames(10)
 	match str(A.get("mode", "lineup")):
 		"lineup": await _lineup()
 		"check": await _check()
@@ -67,6 +70,8 @@ func _hide_ui() -> void:
 	game.hud.visible = false
 	game.rig.cine = true
 	game.people.visible = false
+	for n in game.find_children("*", "Decal", true, false):
+		(n as Decal).visible = false          # тени облаков плывут — на снимках сверки их нет (как в test_perf)
 
 
 func _snap(path: String) -> void:
@@ -89,11 +94,11 @@ func _lineup() -> void:
 		["M:SM_Env_Tree_Meadow_01", "M:SM_Env_Tree_Meadow_02", "M:SM_Env_Tree_Birch_01", "M:SM_Env_Tree_Birch_02", "M:SM_Env_Tree_Birch_03",
 			"M:SM_Env_Tree_Fruit_01", "M:SM_Env_Tree_Fruit_02", "M:SM_Env_Tree_Fruit_03", "SM_Env_Tree_01", "SM_Env_Tree_Large_01"],
 		["M:SM_Env_Bush_01", "M:SM_Env_Bush_02", "M:SM_Env_Bush_03", "M:SM_Env_Rock_01", "M:SM_Env_Rock_03", "M:SM_Env_Rock_Pile_02",
-			"M:SM_Prop_StonePile_01", "M:SM_Prop_Stonewall_Long_01", "M:SM_Bld_Windmill_01", "M:SM_Prop_WaterWheel_01"],
+			"M:SM_Env_Rock_Small_Pile_02", "M:SM_Prop_Stonewall_Long_01", "M:SM_Bld_Windmill_01", "M:SM_Prop_WaterWheel_01"],
 		["M:SM_Env_Wildflowers_01", "M:SM_Env_Wildflowers_02", "M:SM_Env_Wildflowers_03", "M:SM_Env_Wildflowers_01@1", "M:SM_Env_Flowers_Flat_01",
 			"M:SM_Env_Flowers_Flat_02", "M:SM_Env_Grass_Tall_Clump_01", "M:SM_Env_Grass_Med_Clump_01", "M:SM_Env_Ground_Cover_01", "M:SM_Env_Grass_Bush_01"],
-		["M:SM_Env_Sunflower_01", "M:SM_Env_Rapeseed_Clump_01", "M:SM_Env_CropField_Clump_01", "M:SM_Env_Lillies_01", "FX:butterfly",
-			"SM_Env_Flowers_01", "SM_Env_Grass_01", "SM_Env_Tree_Bush_01", "SM_Env_Rock_Cliff_02", "M:SM_Env_Wildflowers_Patch_01"],
+		["M:SM_Env_Sunflower_01", "M:SM_Env_CropField_Clump_01", "M:SM_Env_CropField_Clump_02", "M:SM_Env_Lillies_01", "M:SM_Env_Rock_Round_01",
+			"SM_Env_Flowers_01", "SM_Env_Grass_01", "SM_Env_Tree_Bush_01", "SM_Env_Rock_Cliff_02", "M:SM_Env_Rock_Small_Pile_01"],
 	]
 	var sc := {"M:SM_Env_Tree_Meadow_01": 0.42, "M:SM_Env_Tree_Meadow_02": 0.72, "M:SM_Env_Tree_Birch_01": 0.6, "M:SM_Env_Tree_Birch_02": 0.65,
 		"M:SM_Env_Tree_Birch_03": 0.9, "M:SM_Env_Tree_Fruit_01": 0.85, "M:SM_Env_Tree_Fruit_02": 0.9, "M:SM_Env_Tree_Fruit_03": 1.1,

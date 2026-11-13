@@ -17,6 +17,8 @@ uniform float sway = 0.035;
 uniform vec4 season = vec4(0.0);
 uniform bool evergreen = false;
 uniform bool bloom_ok = false;        // фруктовые деревья весной в цвету
+uniform vec3 leaf_gain = vec3(1.0);   // картинки листвы набора разной яркости (у луговых деревьев почти чёрная) — к одной
+uniform vec2 fade = vec2(0.0);        // мелочь лугов: от fade.x до fade.y м от камеры каждая травинка уменьшается до нуля
 
 varying float leaf;
 varying float th;
@@ -25,6 +27,10 @@ varying vec3 wp;
 void vertex() {
 	leaf = leaf_only ? 1.0 : step(0.5, COLOR.b);
 	vec3 o = MODEL_MATRIX[3].xyz;
+	if (fade.y > 0.0) {
+		// гаснет каждая травинка по своему расстоянию — без прямоугольников кусков на границе дальности
+		VERTEX *= 1.0 - smoothstep(fade.x, fade.y, distance(o, CAMERA_POSITION_WORLD));
+	}
 	th = fract(sin(dot(floor(o.xz * 3.0), vec2(12.9898, 78.233))) * 43758.5453);
 	float w = COLOR.g;
 	if (w > 0.001 && sway > 0.0) {
@@ -50,7 +56,7 @@ void fragment() {
 	float a = 1.0;
 	if (leaf > 0.5) {
 		vec4 t = texture(leaf_tex, UV);
-		c = t.rgb * tint.rgb * (0.92 + 0.16 * th);
+		c = t.rgb * leaf_gain * tint.rgb * (0.92 + 0.16 * th);
 		if (leaf_cut) a = t.a;
 	} else {
 		c = texture(albedo_tex, UV).rgb * trunk_tint.rgb;
@@ -72,6 +78,9 @@ void fragment() {
 		c = t;
 	}
 	ALBEDO = c;
+	if (leaf > 0.5) {
+		BACKLIGHT = c * 0.45;                 // свет сквозь листву: теневая сторона кроны не чернеет
+	}
 	ALPHA = a;
 	ALPHA_SCISSOR_THRESHOLD = 0.4;
 	ROUGHNESS = 0.9;

@@ -72,13 +72,14 @@ static func pick(rng: RandomNumberGenerator, name: String, s: float) -> Array:
 				return ["M:SM_Env_Grass_Med_Clump_0%d" % (1 + rng.randi() % 3), rng.randf_range(0.8, 1.2), {}]
 			return ["M:SM_Env_Grass_Tall_Clump_0%d" % (1 + rng.randi() % 5), rng.randf_range(0.6, 0.95), {}]
 	elif name.begins_with("SM_Env_Rock_Cliff"):
-		if m < 0.75:
+		# камни набора — больше круглых и груд мелких; угловатые (сверху похожи на ящики) — реже и меньше
+		if m < 0.6:
 			var t2 := rng.randf()
-			if t2 < 0.55:
-				return ["M:SM_Env_Rock_0%d" % (1 + rng.randi() % 6), rng.randf_range(0.18, 0.42), {}]
+			if t2 < 0.4:
+				return ["M:SM_Env_Rock_Round_01", rng.randf_range(0.14, 0.3), {}]
 			if t2 < 0.8:
-				return ["M:SM_Env_Rock_Small_Pile_0%d" % (1 + rng.randi() % 2), rng.randf_range(0.8, 1.3), {}]
-			return ["M:SM_Env_Rock_Round_01", rng.randf_range(0.2, 0.4), {}]
+				return ["M:SM_Env_Rock_Small_Pile_0%d" % (1 + rng.randi() % 2), rng.randf_range(0.8, 1.2), {}]
+			return ["M:SM_Env_Rock_0%d" % [1, 2, 5][rng.randi() % 3], rng.randf_range(0.12, 0.22), {}]
 	return [name, s, {}]
 
 
@@ -116,7 +117,64 @@ static func ground(g) -> void:
 	m.set_shader_parameter("earth_tex", t.call("Dirt_Texture_01"))
 	m.set_shader_parameter("tile_road", t.call("Cobblestone_Texture_01"))
 	m.set_shader_parameter("road_scale", 3.2)
+	m.set_shader_parameter("road_tint", Vector3(1.12, 1.03, 0.88))
+	m.set_shader_parameter("noise_tex", noise_tex())
 	m.set_shader_parameter("meadow_on", true)
+
+
+## Плавный шум для пятен травы (shaders/land.gdshader noise_tex): 4 бесшовных симплекс-шума (разные семена) в каналах
+## RGBA, 256², с мипмапами; один раз за запуск (~десятки мс)
+static var _noise: ImageTexture = null
+static func noise_tex() -> ImageTexture:
+	if _noise != null:
+		return _noise
+	var S := 256
+	var chans := []
+	for i in 4:
+		var fn := FastNoiseLite.new()
+		fn.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		fn.seed = 501 + i * 17
+		fn.frequency = 0.012
+		fn.fractal_octaves = 3
+		chans.append(fn.get_seamless_image(S, S, false, false, 0.1, true).get_data())
+	var c0: PackedByteArray = chans[0]       # Packed* внутри Array копируются при каждом обращении — берём один раз
+	var c1: PackedByteArray = chans[1]
+	var c2: PackedByteArray = chans[2]
+	var c3: PackedByteArray = chans[3]
+	var data := PackedByteArray()
+	data.resize(S * S * 4)
+	for k in S * S:
+		data[k * 4] = c0[k]
+		data[k * 4 + 1] = c1[k]
+		data[k * 4 + 2] = c2[k]
+		data[k * 4 + 3] = c3[k]
+	var img := Image.create_from_data(S, S, false, Image.FORMAT_RGBA8, data)
+	img.generate_mipmaps()
+	_noise = ImageTexture.create_from_image(img)
+	return _noise
+
+
+## Своя и чужая земля для травы (shaders/land.gdshader own_tex): точка на участок, белое — чужая; при загрузке
+## и после покупки участка (game._update_plot_signs)
+static var _own_img: Image = null
+static var _own_tex: ImageTexture = null
+static func plots_tex(g) -> void:
+	if not on() or g.land_mat == null or g.land == null:
+		return
+	var n := Land.PLOTS                       # точка на участок: с плавной выборкой граница — мягкий переход через участок, без углов
+	if _own_img == null or _own_img.get_width() != n:
+		_own_img = Image.create(n, n, false, Image.FORMAT_L8)
+		_own_tex = null
+	for j in n:
+		for i in n:
+			var own: bool = g.land.owned.has(Vector2i(i, j))
+			_own_img.set_pixel(i, j, Color(0, 0, 0) if own else Color(1, 1, 1))
+	if _own_tex == null:
+		_own_tex = ImageTexture.create_from_image(_own_img)
+	else:
+		_own_tex.update(_own_img)
+	g.land_mat.set_shader_parameter("own_tex", _own_tex)
+	g.land_mat.set_shader_parameter("own_on", true)
 
 
 ## Ложбины ручьёв по исходной карте — в фоне, пока грузится город (≈0,5–1 с счёта не задерживают загрузку). Читает
@@ -188,7 +246,8 @@ static func _stream_banks(g) -> void:
 			if t < 0.04 and rng.randf() < 0.5:
 				var q0 := p + Vector2(rng.randf_range(-2.0, 2.0), rng.randf_range(-2.0, 2.0))
 				if _free_spot(g, q0) and not land.is_water(q0):
-					_add(g, "M:SM_Env_Rock_0%d" % (1 + rng.randi() % 6), q0, rng.randf_range(0.15, 0.3), rng, -0.08)
+					var rr := rng.randf() < 0.6
+					_add(g, "M:SM_Env_Rock_Round_01" if rr else "M:SM_Env_Rock_Small_Pile_01", q0, rng.randf_range(0.18, 0.3) if rr else 1.0, rng, -0.08)
 			for side: float in [-1.0, 1.0]:
 				if rng.randf() < 0.3:
 					var q := p + nor * side * (w + rng.randf_range(0.0, 0.6))
@@ -200,13 +259,13 @@ static func _stream_banks(g) -> void:
 					var q2 := p + nor * side * (w + rng.randf_range(1.2, 4.5))
 					if _free_spot(g, q2) and not land.is_water(q2) and not gen_low:
 						_add(g, "M:SM_Env_Wildflowers_0%d" % (1 + rng.randi() % 3), q2, rng.randf_range(0.8, 1.2), rng)
-			if rng.randf() < 0.14:
+			if rng.randf() < 0.09:
 				var q3 := p + nor * rng.randf_range(-1.3, 1.3) * w
 				if _free_spot(g, q3):
 					var yr := land.height_at(q3.x, q3.y)
 					var small := rng.randf() < 0.65
-					var rn := "M:SM_Env_Rock_Small_01" if small else "M:SM_Env_Rock_0%d" % (1 + rng.randi() % 6)
-					var rs := rng.randf_range(0.8, 1.6) if small else rng.randf_range(0.12, 0.22)    # камешки ~0,3–0,5 м, валуны ~0,3–0,6 м
+					var rn := "M:SM_Env_Rock_Small_01" if small else "M:SM_Env_Rock_Round_01"
+					var rs := rng.randf_range(0.8, 1.6) if small else rng.randf_range(0.12, 0.22)    # камешки ~0,3–0,5 м, валуны ~0,3–0,5 м
 					g._add_nature(rn, Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rs), Vector3(q3.x, yr - 0.06, q3.y)), q3)
 			if w > 1.1 and t > 0.15 and rng.randf() < 0.1:
 				var q4 := p + nor * rng.randf_range(-0.4, 0.4) * w
@@ -291,8 +350,9 @@ static func _waterwheel(g, id: int) -> void:
 	g._add_nature("M:SM_Prop_WaterWheel_01", Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * 0.62), Vector3(q.x, y - 0.25, q.y)), q)
 
 
-## Мост там, где ручей проходит под большой дорогой: дорога остаётся насыпью, по бокам — каменные стенки с аркой
-## над водой, поверху — парапеты. Мост не сносится (как арка въезда)
+## Мост там, где ручей проходит под большой дорогой: дорога остаётся насыпью, по бокам — римская кладка из деталей
+## Ancient Empire в тёплом травертине: над водой — арка с пилястрами по сторонам, дальше — сплошная стенка, у концов —
+## пилястры, по краю дороги — парапет с карнизом, на уровне дороги — тяга. Мост не сносится (как арка въезда)
 static func _bridges(g) -> void:
 	var land: Land = g.land
 	for br: Dictionary in land.bridges:
@@ -302,37 +362,46 @@ static func _bridges(g) -> void:
 		var y: float = br["y"]
 		var w: float = br["w"]
 		var hw := Land.ROAD_R
-		var depth := y - (Land.WATER_Y - 0.1)
+		var depth := y - (Land.WATER_Y - 0.25)         # от дороги до дна у арки
 		var half := clampf(w + Streams.SHORE + (y - Land.WATER_Y - 0.25) / Streams.SLOPE, 3.0, 8.5)
+		var ws := clampf(w * 2.0 + 1.0, 2.6, 4.2)       # пролёт арки
 		var bp := Bp.new(91)
 		var yaw := atan2(rd.x, rd.y)                    # местная +Z — вдоль дороги, +X — вниз по ручью
 		var xf := Transform3D(Basis(Vector3.UP, yaw), Vector3(c.x, y, c.y))
-		var stone := CatGrand.TRAV
-		var ws := w * 2.0 + 0.6                         # пролёт арки
+		# тёплый травертин: камень стен и кладка пилястр — в тон арке въезда и терракотовому городу
+		var stone := {"Stucco_White_01": "Stone_01", "tints": {"Stone_01": Color(1.06, 0.94, 0.78), "Building_Large_Brick_01": Color(1.0, 0.9, 0.76)}}
+		var blocks := {"Building_Large_Brick_01": "Building_Large_Brick_01", "tints": {"Building_Large_Brick_01": Color(1.02, 0.9, 0.74)}}
 		for side: float in [-1.0, 1.0]:
-			var x := side * (hw + 0.12)
-			# стенка с аркой над водой: арка — кусок стены с двойной дверью Synty (как у акведука), по краям — сплошная
-			var sc := Basis.from_scale(Vector3(ws / Bp.M, depth / 3.01, 0.6))
-			var face_yaw := 0.0 if side > 0.0 else PI
-			bp.parts.append(["SM_Bld_Wall_Door_Double_01", Transform3D(Basis(Vector3.UP, face_yaw + PI * 0.5) * sc,
-				Vector3(x, -depth, side * ws * 0.5)), stone])
+			var x := side * (hw + 0.05)
+			# стенка над насыпью: посередине — арка над водой, по сторонам — сплошная кладка
+			_side_piece(bp, "SM_Bld_Wall_Door_Double_01", side, x, -depth, -ws * 0.5, ws * 0.5, depth, 1.0, 2.5, 3.01, stone)
 			for e: float in [-1.0, 1.0]:
-				var l := half - ws * 0.5
-				if l < 0.2:
-					continue
-				var zc := e * (ws * 0.5 + l * 0.5)
-				CatMonuments._box(bp, "#marble", Vector3(x, -depth * 0.5, zc), Vector3(0.5, depth, l))
-			# парапет и столбики по краю
-			CatMonuments._box(bp, "#marble", Vector3(side * (hw + 0.18), 0.28, 0.0), Vector3(0.32, 0.56, half * 2.0))
-			CatMonuments._box(bp, "#marble", Vector3(side * (hw + 0.18), 0.6, 0.0), Vector3(0.42, 0.1, half * 2.0 + 0.1))
-			for e2: float in [-1.0, 1.0]:
-				CatMonuments._box(bp, "#marble", Vector3(side * (hw + 0.18), 0.4, e2 * half), Vector3(0.5, 0.8, 0.5))
+				var z0 := ws * 0.5 if e > 0.0 else -half
+				var z1 := half if e > 0.0 else -ws * 0.5
+				if z1 - z0 > 0.2:
+					_side_piece(bp, "SM_Bld_Wall_01", side, x, -depth, z0, z1, depth, 1.0, 2.5, 3.01, stone)
+			# тяга на уровне дороги и парапет с карнизом
+			_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.05, -0.12, -half - 0.2, half + 0.2, 0.22, 0.9, 5.02, 1.0, stone)
+			_side_piece(bp, "SM_Bld_Wall_01", side, x, 0.0, -half - 0.2, half + 0.2, 0.62, 0.8, 2.5, 3.01, stone)
+			_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.02, 0.62, -half - 0.3, half + 0.3, 0.18, 0.7, 5.02, 1.0, stone)
+			# пилястры: по сторонам арки (от дна) и у концов моста (до верха парапета)
+			for zp: float in [-ws * 0.5, ws * 0.5, -half, half]:
+				var hp := depth + 0.62 + 0.15
+				var pb := Basis(Vector3(0, 0, -side), Vector3.UP, Vector3(side, 0, 0)) * Basis.from_scale(Vector3(0.5 / 0.92, hp / 4.55, 0.42 / 0.92))
+				bp.parts.append(["SM_Bld_Wall_Large_Pillar_01", Transform3D(pb, Vector3(x + side * 0.12, -depth, zp)), blocks])
 		g.parts.place(bp, xf)
-		# под аркой — вода дальше (короткая полоса воды в насыпь) и тёплый камень свода, а не чёрная дыра
+		# под аркой — вода дальше (короткая полоса воды в насыпь), чтобы в проёме блестела вода, а не земля
 		var under := Bp.new(92)
 		for side2: float in [-1.0, 1.0]:
-			CatMonuments._box(under, "#water", Vector3(side2 * (hw - 0.2), Land.WATER_Y - y + 0.02, 0.0), Vector3(0.9, 0.04, ws - 0.2))
+			CatMonuments._box(under, "#water", Vector3(side2 * (hw - 0.3), Land.WATER_Y - y + 0.02, 0.0), Vector3(1.0, 0.04, ws - 0.3))
 		g.parts.place(under, xf)
+
+
+## Деталь стены Synty вдоль дороги на боку моста: длина по дороге — от z0 до z1, высота h от y0, толщина — tk.
+## Стены Synty — вдоль своей +X (длина lx), высота ly, наружу — +Z: поворачиваем так, чтобы наружу смотрела сторона моста
+static func _side_piece(bp: Bp, name: String, side: float, x: float, y0: float, z0: float, z1: float, h: float, tk: float, lx: float, ly: float, rm: Dictionary) -> void:
+	var b := Basis(Vector3(0, 0, -side), Vector3.UP, Vector3(side, 0, 0)) * Basis.from_scale(Vector3((z1 - z0) / lx, h / ly, tk))
+	bp.parts.append([name, Transform3D(b, Vector3(x, y0, z1 if side > 0.0 else z0)), rm])
 
 
 ## Луга в цветах: куртины полевых цветов и плоских цветочков (по 6–14 в круге 3–5 м) там, где нет рощ, вдали от города
