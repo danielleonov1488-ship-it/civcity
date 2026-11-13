@@ -77,9 +77,8 @@ static func apply() -> void:
 	var f := {}
 	for t: String in TARGET:
 		if SINCE.has(t):
-## тип → ревизия, с которой он в новом размере (заполняется, когда новая сборка типа готова):
-## храм Юпитера (NewTemple, 90 м²), амфитеатр и цирк (NewArena, чудеса города, 125 и 150 м²) — с ревизии 1
-const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1}
+			print("LADDER %-10s уже в новом размере (SINCE)" % t)
+			continue                          # пересобран в новом размере — не подгонять
 		var a := area(t)
 		if a > 0.1:
 			f[t] = sqrt(float(TARGET[t]) / a)
