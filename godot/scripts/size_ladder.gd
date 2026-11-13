@@ -10,8 +10,10 @@ const HOUSE := 11.2
 
 ## Будущая площадь следа, м² (кого нет в списке — размер прежний)
 const TARGET := {
+	# малые, 1–2 дома (NewSmall: пост вигилов и скрипторий — по ≈ 16 м²)
+	"vigiles": 16.0, "scriptorium": 16.0,
 	# средние, 3–4 дома
-	"prefect": 36.0, "mansio": 36.0, "warehouse": 36.0, "balnea": 36.0,
+	"prefect": 36.0, "mansio": 36.0, "warehouse": 36.0, "balnea": 36.0, "school": 38.0,
 	# большие, 5–7 домов
 	"library": 62.0,
 	# главные, 8–10 домов
@@ -27,15 +29,18 @@ const REV := 1
 ## тип → ревизия, с которой он в новом размере (заполняется, когда новая сборка типа готова):
 ## храм Юпитера (NewTemple, 90 м²), амфитеатр и цирк (NewArena, чудеса города, 125 и 150 м²),
 ## театр, одеон, библиотека, большие термы (NewCivic), пантеон (NewGrand, 100 м², растёт, где есть место) — с ревизии 1;
-## в старых городах — на прежних клетках. Академия, форум, храм Венеры (NewGrand) — в прежних следах (OLD_LOT не нужен)
+## в старых городах — на прежних клетках. Академия, форум, храм Венеры (NewGrand) — в прежних следах (OLD_LOT не нужен);
+## пост вигилов, малые бани, склад, скрипторий (NewSmall) — с ревизии 1, растут, где есть место; школа (NewSmall) —
+## в прежнем следе
 const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1, "theatre": 1, "odeon": 1, "library": 1, "thermae": 1,
-	"pantheon": 1, "academy": 1, "forum": 1, "venus": 1}
+	"pantheon": 1, "academy": 1, "forum": 1, "venus": 1, "vigiles": 1, "school": 1, "balnea": 1, "warehouse": 1, "scriptorium": 1}
 
 ## Прежний след (м, ширина × глубина при yaw 0) — проба размеров 12.11, до линейки
 const OLD_LOT := {
 	"temple": Vector2(6.3, 7.6), "colosseum": Vector2(15.2, 15.7), "circus_fl": Vector2(28.6, 8.9), "thermae": Vector2(14.6, 10.5),
 	"library": Vector2(8.3, 5.9), "pantheon": Vector2(7.2, 9.9), "prefect": Vector2(5.6, 5.1), "mansio": Vector2(4.9, 5.6),
 	"warehouse": Vector2(6.8, 4.5), "balnea": Vector2(6.7, 4.6), "theatre": Vector2(10.3, 7.65), "odeon": Vector2(9.3, 7.15),
+	"vigiles": Vector2(5.3, 2.3), "scriptorium": Vector2(3.8, 3.6),
 }
 
 ## Ступень каждого типа — для подписей на снимках

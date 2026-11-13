@@ -62,6 +62,10 @@ func _ready() -> void:
 	# newcivic=0 — прежние театр, одеон, библиотека и большие термы (CatCivic, CatGrand), 1 — новые (NewCivic); без него — как в игре
 	if A.has("newcivic"):
 		NewCivic.ON = {} if A["newcivic"] == "0" else {"theatre": true, "odeon": true, "library": true, "thermae": true}
+	# newsmall=0 — прежние пост вигилов, школа, малые бани, склад, скрипторий (CatExtra, CatCivic), 1 — новые (NewSmall)
+	if A.has("newsmall"):
+		for t: String in NewSmall.TYPES:
+			NewSmall.ON[t] = A["newsmall"] != "0"
 	city_src = str(A.get("city", OWNER))
 	if city_src == "new" or not FileAccess.file_exists(city_src):
 		if city_src != "new":
