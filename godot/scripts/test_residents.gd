@@ -803,6 +803,7 @@ func _cat_test() -> void:
 		if (b as Button).text == "Погладить":
 			pet = b
 	ct["meow_t"] = 999.0                       # мяуканье по часам (звук мира, можно) не путает проверку
+	(ct["snd"] as AudioStreamPlayer3D).stop()  # мяуканье, начатое до проверки (по часам), — тоже звук мира, не от «Погладить»
 	ppl.pet_now(ct)                            # то же, что кнопка «Погладить» (у кнопки — свой щелчок интерфейса)
 	PersonCard.pet_view(hud, ct)
 	await frames(2)
