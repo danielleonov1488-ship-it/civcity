@@ -16,7 +16,8 @@ extends RefCounted
 ## лучами по треугольникам (Spectacle._check): таз на скамье, ступни на ступени ниже, над головой пусто.
 ##
 ## Старое сохранение (Catalog.fit — прежний, больший след): здание то же и стоит посередине, а весь прежний след
-## занимает мощёная площадь с бордюром, кипарисами и цветами — травы внутри прежних клеток нет.
+## занимает мощёная площадь с бордюром — живая: лавки с навесами, фонтан, скамьи, статуи, кипарисы и вазоны;
+## травы внутри прежних клеток нет, проход ко входу свободен.
 
 ## Выключатель «новые / прежние»; CIVCITY_NEWARENA=0 — прежние во всей игре (сверка проверок)
 static var ON := OS.get_environment("CIVCITY_NEWARENA") != "0"
@@ -28,6 +29,16 @@ const S := 0.72
 ## Прежний след (м, при yaw 0): прямоугольник прежней сборки (измерен test_arena_probe) — его клетки занимает постройка
 ## старого сохранения. Нет в списке — прямоугольник Catalog.fit посередине
 const OLD_RECT := {"colosseum": Rect2(-7.607, -7.607, 15.214, 15.713), "circus_fl": Rect2(-13.48, -4.4425, 28.567, 8.885)}
+## Тёплый камень амфитеатра (координатор 13.11: «барабан читается серо-белым ведром»): кремовый травертин вместо
+## серо-белого — тёсаный камень арок и ниш, карнизы, стены галереи и стенка обхода; золотые архивольты (палитра Synty
+## у арок) не трогаем. Аттик — охра, по нему красный расписной фриз
+const WARM_STONE := {"tints": {"Building_Large_Brick_01": Color(1.0, 0.87, 0.7)}}
+## арки нижнего яруса: и тёсаный камень, и столбы с архивольтами (палитра) — тёплые; золото на кремовом остаётся золотом
+const WARM_ARCH := {"tints": {"Building_Large_Brick_01": Color(1.0, 0.87, 0.7), "PolygonAncientEmpire_01_A": Color(1.0, 0.9, 0.75)}}
+const WARM_CAP := {"tints": {"PolygonAncientEmpire_01_A": Color(1.0, 0.9, 0.76)}}
+const ATTIC_OCHRE := {"tints": {"PolygonAncientEmpire_01_A": Color(1.0, 0.78, 0.52)}}
+const WARM_STUCCO := {"tints": {"Stucco_White_01": Color(1.0, 0.89, 0.74)}}
+const WARM_TRAV := {"Stucco_White_01": "Stone_01", "tints": {"Stone_01": Color(1.0, 0.88, 0.72)}}
 
 
 static func covers(type: String) -> bool:
@@ -99,36 +110,89 @@ static func _old_rect(type: String, fit: Vector2) -> Rect2:
 
 
 ## Площадь на прежнем следе (старое сохранение): мощение по всему прямоугольнику чуть ниже основания здания, бордюр по
-## краю; в свободных углах — кипарисы, цветники, скамьи и статуи на постаментах (не пустая плитка)
-## round_r > 0 — здание круглое (радиус по углам): в углах площади по диагонали — ещё статуя на постаменте и цветник
-static func _forecourt(b: Bp, r: Rect2, keep: Rect2, round_r := 0.0) -> void:
+## краю, в углах — кипарисы и цветущие кусты; живое наполнение — у каждого здания своё (_plaza_arena, _plaza_circus).
+## Проходы ко входу (спереди посредине) свободны
+static func _forecourt(b: Bp, r: Rect2) -> void:
 	_plinth(b, r.position.x, r.end.x, r.position.y, r.end.y, 0.012)
 	_kerb(b, r.position.x, r.end.x, r.position.y, r.end.y)
-	# углы площади вне здания (keep — его прямоугольник): по кипарису, цветнику и скамье; вдоль длинных полос — цветы
 	var i := 0
 	for cx: float in [-1.0, 1.0]:
 		for cz: float in [-1.0, 1.0]:
-			var ex := r.end.x if cx > 0.0 else r.position.x
-			var ez := r.end.y if cz > 0.0 else r.position.y
-			var kx := keep.end.x if cx > 0.0 else keep.position.x
-			var kz := keep.end.y if cz > 0.0 else keep.position.y
-			var room := Vector2(absf(ex - kx), absf(ez - kz))
-			var q := Vector3(ex - cx * 0.75, 0, ez - cz * 0.75)
+			var q := Vector3((r.end.x if cx > 0.0 else r.position.x) - cx * 0.75, 0, (r.end.y if cz > 0.0 else r.position.y) - cz * 0.75)
 			b.add("SM_Env_Tree_Thin_0%d" % (1 + i % 2), q, b.rng.randf() * TAU, 0.42)
 			b.add("SM_Env_Garden_Plants_0%d" % (3 if i % 2 == 0 else 6), q + Vector3(-cx * 0.75, 0, 0), b.rng.randf() * TAU, 0.42)
-			if room.x > 2.6 or room.y > 2.6:
-				# просторный угол: статуя на постаменте и скамья к ней лицом
-				var s := q + Vector3(-cx * minf(room.x, 4.0) * 0.45, 0, -cz * minf(room.y, 4.0) * 0.45)
-				b.add("SM_Prop_Plinth_04", s, 0.0, 0.5)
-				b.add("SM_Prop_Statue_0%d" % [3, 5, 6, 3][i], s + Vector3(0, 0.34, 0), atan2(-cx, -cz) + PI, 0.5)
-				b.add("SM_Prop_FlowerBed_0%d" % (1 + i % 2), s + Vector3(cx * 0.9, 0.2, 0), 0.0, 0.5)
-			if round_r > 0.0:
-				var dg := Vector3(cx, 0, cz).normalized() * (round_r + 1.7)
-				if absf(dg.x) < absf(ex) - 0.9 and absf(dg.z) < absf(ez) - 0.9:
-					b.add("SM_Prop_Plinth_04", dg, 0.0, 0.5)
-					b.add("SM_Prop_Statue_0%d" % [6, 3, 5, 6][i], dg + Vector3(0, 0.34, 0), atan2(cx, cz), 0.5)
-					b.add("SM_Prop_FlowerBed_0%d" % (2 - i % 2), dg + Vector3(cx * 0.2, 0.2, cz * 0.75), PI / 2.0, 0.42)
 			i += 1
+
+
+## Лавка с навесом (прилавок Synty, как на рынке: CatShops._stall) в точке p, лицом (покупатели) по направлению yaw
+static func _stall_at(b: Bp, kind: String, v: int, p: Vector3, yaw: float) -> void:
+	var keep := b.base
+	b.base = keep * Transform3D(Basis(Vector3.UP, yaw), p)
+	CatShops._stall(b, kind, v)
+	b.base = keep
+
+
+static func _fountain(b: Bp, p: Vector3, s: float) -> void:
+	b.add("SM_Prop_Fountain_04", p, 0.0, s)
+	b.add("SM_Prop_Fountain_04_Insert_01", p, 0.0, s)
+
+
+static func _planter(b: Bp, p: Vector3) -> void:
+	b.add("SM_Prop_FlowerPot_Fancy_01", p + Vector3(0, 0.565 * 0.5, 0), b.rng.randf() * TAU, 0.5)
+
+
+static func _bench(b: Bp, p: Vector3, yaw: float) -> void:
+	b.add("SM_Prop_Bench_01", p, yaw, 0.85)
+
+
+## Площадь вокруг амфитеатра на прежнем следе: спереди по бокам от прохода — две лавки с навесами лицом к улице,
+## у входа — фонари; сзади слева — фонтан со скамьями, сзади справа — третья лавка, сзади посредине — статуя со
+## скамьями; вокруг здания — кипарисы и вазоны с цветами
+static func _plaza_arena(b: Bp, r: Rect2) -> void:
+	_stall_at(b, "fruit", 0, Vector3(-7.75, 0, 8.35), 0.0)
+	_stall_at(b, "veg", 1, Vector3(7.75, 0, 8.35), 0.0)
+	_stall_at(b, "fish", 2, Vector3(7.7, 0, -7.7), PI / 2.0)
+	_fountain(b, Vector3(-7.7, 0, -7.7), 0.8)
+	_bench(b, Vector3(-5.4, 0, -9.65), 0.0)
+	_bench(b, Vector3(-9.65, 0, -5.4), PI / 2.0)
+	b.add("SM_Prop_Plinth_04", Vector3(0, 0, -9.65), 0.0, 0.5)
+	b.add("SM_Prop_Statue_06", Vector3(0, 0.34, -9.65), PI, 0.5)
+	for sd: float in [-1.0, 1.0]:
+		_bench(b, Vector3(sd * 1.25, 0, -9.75), 0.0)
+		b.add("#lamp_post", Vector3(sd * 2.6, 0, r.end.y - 0.55), 0.0)
+	for a: float in [75.0, 105.0, 165.0, 195.0, 255.0, 285.0]:
+		b.add("SM_Env_Tree_Thin_0%d" % (1 + int(a) % 2), _dir(deg_to_rad(a)) * 9.62, b.rng.randf() * TAU, 0.4)
+	for a: float in [60.0, 90.0, 120.0, 240.0, 270.0, 300.0]:
+		_planter(b, _dir(deg_to_rad(a)) * 9.62)
+
+
+## Площади у концов цирка на прежнем следе: на востоке — фонтан, две лавки лицом к нему и скамьи; на западе, у
+## стартовых ворот — две лавки лицом к улице и статуя с цветниками; вдоль длинных сторон — вазоны и кипарисы,
+## у входа — фонари (сам проход к порталу свободен)
+static func _plaza_circus(b: Bp, r: Rect2) -> void:
+	var xe := (C_HX + r.end.x) * 0.5
+	_fountain(b, Vector3(xe, 0, 0), 0.8)
+	_stall_at(b, "fruit", 0, Vector3(xe, 0, 4.05), PI)
+	_stall_at(b, "veg", 1, Vector3(xe, 0, -4.05), 0.0)
+	for sd: float in [-1.0, 1.0]:
+		_bench(b, Vector3(r.end.x - 0.7, 0, sd * 1.5), PI / 2.0)
+	var xw := (-C_HX + r.position.x) * 0.5
+	_stall_at(b, "fish", 2, Vector3(xw, 0, 3.15), -PI / 2.0)
+	_stall_at(b, "fruit", 3, Vector3(xw, 0, -3.15), -PI / 2.0)
+	b.add("SM_Prop_Plinth_04", Vector3(xw - 0.3, 0, 0), 0.0, 0.5)
+	b.add("SM_Prop_Statue_05", Vector3(xw - 0.3, 0.34, 0), -PI / 2.0, 0.5)
+	for sd: float in [-1.0, 1.0]:
+		b.add("SM_Prop_FlowerBed_0%d" % (1 if sd > 0.0 else 2), Vector3(xw - 0.3, 0.2, sd * 0.95), PI / 2.0, 0.42)
+		b.add("#lamp_post", Vector3(sd * 2.7, 0, r.end.y - 0.5), 0.0)
+	var zf := (C_HZ + r.end.y) * 0.5
+	var zb := (-C_HZ + r.position.y) * 0.5
+	for x: float in [4.2, 7.2, 10.2, 13.2]:
+		for sd: float in [-1.0, 1.0]:
+			_planter(b, Vector3(sd * x, 0, zf))
+			if int(x) % 2 == 0:
+				b.add("SM_Env_Tree_Thin_0%d" % (1 if sd > 0.0 else 2), Vector3(sd * x, 0, zb), b.rng.randf() * TAU, 0.38)
+			else:
+				_planter(b, Vector3(sd * x, 0, zb))
 
 
 # =====================================================================
@@ -171,6 +235,8 @@ const PIECES := [[-15.0, 15.0, "seat", "main"], [15.0, 27.0, "aisle", ""], [27.0
 ## Ворота гладиаторов (ArenaShow): направления от середины
 const GATES := [PI / 2.0, 3.0 * PI / 2.0]
 const GATE_HALF := 0.56                     # полпроёма ворот (две створки Synty по 0,56)
+## Веларий: пролёты без навеса (номер пролёта; 0 — над главным входом): просвет спереди (три) и сзади (один)
+const VELA_GAPS := [19, 0, 1, 10]
 ## Ниши второго яруса со статуями (номер пролёта; 0 — над главным входом, по часовой стрелке сверху), остальные — знамёна
 const NICHE_STATUES := {1: 5, 19: 6, 3: 3, 17: 5, 10: 6, 7: 3, 13: 5}
 
@@ -196,7 +262,8 @@ static func _colosseum(b: Bp, fit: Vector2) -> void:
 	var corner := PA / cos(PI / 20.0)
 	if fit != Vector2.ZERO:
 		var r := _old_rect("colosseum", fit)
-		_forecourt(b, r, Rect2(-corner, -corner, 2.0 * corner, 2.0 * corner), corner)
+		_forecourt(b, r)
+		_plaza_arena(b, r)
 		b.door = Vector3(0, 0, r.end.y + 0.6)
 	else:
 		b.door = Vector3(0, 0, PA + 0.6)
@@ -249,7 +316,7 @@ static func _colosseum(b: Bp, fit: Vector2) -> void:
 			# внутренняя стена галереи: белая штукатурка лицом к аркам (у ходов — проём: ход выходит в галерею)
 			if not tun:
 				var am := (a0 + a1) * 0.5
-				_ring(b, "SM_Bld_Wall_01", am, CI - 0.1125, 0.0, 2.0 * CI * tan((a1 - a0) * 0.5) + 0.03, SLAB_Y / T1)
+				_ring(b, "SM_Bld_Wall_01", am, CI - 0.1125, 0.0, 2.0 * CI * tan((a1 - a0) * 0.5) + 0.03, SLAB_Y / T1, 1.0, WARM_STUCCO)
 			seg += 1
 	# подиум арены: внизу белый мрамор, сверху мрамор с меандром (у главного хода и ворот гладиаторов — проёмы с рамами)
 	var side := 2.0 * AR * tan(PI / 12.0)
@@ -271,18 +338,20 @@ static func _colosseum(b: Bp, fit: Vector2) -> void:
 			b.add_xf("SM_Prop_Torch_01", Transform3D(Basis(Vector3.UP, face).scaled(Vector3.ONE * 1.3), _dir(t) * (AR + 1.6) + Vector3(0, 1.75, 0)))
 	# верхний обход: стенка до карниза второго яруса (закрывает задние стенки ниш), травертин; на ней знамёна
 	for i in 20:
-		_ring(b, "SM_Bld_Wall_01", _bay(i), WALK_OUT - 0.1125, walk_y() - 0.02, 2.0 * WALK_OUT * T9 + 0.03, (Y2 + T1 + 0.06 - walk_y()) / T1, 1.0, CatMonuments.STONE_WALL, true)
+		_ring(b, "SM_Bld_Wall_01", _bay(i), WALK_OUT - 0.1125, walk_y() - 0.02, 2.0 * WALK_OUT * T9 + 0.03, (Y2 + T1 + 0.06 - walk_y()) / T1, 1.0, WARM_TRAV, true)
 		if i % 3 == 1:
 			b.add("SM_Prop_Banner_01_%s" % ["D", "B", "F", "H", "B", "D", "F"][i / 3], _dir(_bay(i)) * (WALK_OUT - 0.26) + Vector3(0, Y2 + T1 - 0.05, 0), _bay(i) + PI, 0.62)
 	# аркада: два яруса по двадцать пролётов, карнизы, аттик с меандром
 	var rc := (RO - 0.36) / cos(PI / 20.0)                 # угол аттика
 	for i in 20:
 		var ang := _bay(i)
-		_ring(b, "SM_Bld_Wall_Door_Double_01", ang, R_WALL, 0.0, 2.5)
-		_ring(b, "SM_Bld_Wall_Large_Cap_01", ang, R_WALL, T1, 2.53, 1.0, 0.8, {}, false, 5.0)
-		_ring(b, "SM_Bld_Wall_Alcove_01", ang, R_WALL, Y2, 2.5)
-		_ring(b, "SM_Bld_Wall_Large_Cap_01", ang, R_WALL, Y2 + T1, 2.53, 1.0, 0.8, {}, false, 5.0)
-		_ring(b, "SM_Bld_Bath_Edge_01", ang, RO - 0.36, ATTIC_Y + 1.29 * 0.4, 2.0 * (RO - 0.36) * T9 + 0.03, 0.4, 0.6)
+		_ring(b, "SM_Bld_Wall_Door_Double_01", ang, R_WALL, 0.0, 2.5, 1.0, 1.0, WARM_ARCH)
+		_ring(b, "SM_Bld_Wall_Large_Cap_01", ang, R_WALL, T1, 2.53, 1.0, 0.8, WARM_CAP, false, 5.0)
+		_ring(b, "SM_Bld_Wall_Alcove_01", ang, R_WALL, Y2, 2.5, 1.0, 1.0, WARM_STONE)
+		_ring(b, "SM_Bld_Wall_Large_Cap_01", ang, R_WALL, Y2 + T1, 2.53, 1.0, 0.8, WARM_CAP, false, 5.0)
+		_ring(b, "SM_Bld_Bath_Edge_01", ang, RO - 0.36, ATTIC_Y + 1.29 * 0.4, 2.0 * (RO - 0.36) * T9 + 0.03, 0.4, 0.6, ATTIC_OCHRE)
+		# красный расписной фриз по лицу аттика (виден и сбоку, и сверху — цвет над светлым камнем)
+		_ring(b, "SM_Bld_Trim_Large_Single_02", ang, RO - 0.22, ATTIC_Y + 0.3, 2.0 * (RO - 0.22) * T9 + 0.03, 0.58, 0.6, CatMonuments.FRIEZE_RED)
 		# в нише второго яруса: статуя на постаменте или знамя
 		var p := _dir(ang) * (R_WALL - 0.18) + Vector3(0, Y2 + 0.3, 0)
 		if i == 0:
@@ -302,19 +371,23 @@ static func _colosseum(b: Bp, fit: Vector2) -> void:
 			b.add("SM_Prop_Mural_0%d" % (1 + (i / 2) % 3), _dir(ang) * (CI + 0.02) + Vector3(0, 1.15, 0), ang, 0.62)
 		else:
 			b.add_xf("SM_Prop_Torch_01", Transform3D(Basis(Vector3.UP, ang).scaled(Vector3.ONE * 1.4), _dir(ang) * (CI + 0.08) + Vector3(0, 1.75, 0)))
-	# над аттиком — шесты велария; полотнища (терракота и шафран) — над задней половиной, спереди открыто
+	# над аттиком — веларий: двадцать шестов по кругу и почти сплошной венец полосатых навесов (терракота и шафран
+	# через один) с уклоном к арене; спереди над главным входом (три пролёта) и сзади (один) — просветы: арену и бой
+	# видно с обычной камеры. Навесы высоко над верхним рядом (≈ 2 м над головами) — сидящих не задевают
 	var top := ATTIC_Y + 0.6
-	for k in 10:
-		var ang := (k + 0.5) * TAU / 10.0
-		CatShops._pole(b, _dir(ang) * rc + Vector3(0, top - 0.05, 0), 1.9)
-		var am := ang + TAU / 20.0
-		if k >= 2 and k <= 6:
-			# полотнище — от шеста к шесту (хорда через 36°), к середине с уклоном
-			var chord := 2.0 * rc * sin(TAU / 20.0)
-			var by := Basis(Vector3.UP, am + PI)
-			_put(b, "SM_Prop_Banner_Roof_02", Transform3D(by * Basis(Vector3.RIGHT, 0.26) * Basis.from_scale(Vector3(chord / 5.1, 1.0, 0.85)), _dir(am) * rc * cos(TAU / 20.0) + Vector3(0, top + 1.8, 0) - by * Vector3(chord * 0.5, 0, 0)), CatMonuments.VELA_SAFFRON if k % 2 == 1 else {})
-		else:
-			b.add("SM_Prop_Banner_05", _dir(ang) * (rc + 0.12) + Vector3(0, top + 1.75, 0), ang, 0.8)
+	var chord := 2.0 * rc * sin(TAU / 40.0) + 0.04
+	for j in 20:
+		var mast := (j + 0.5) * TAU / 20.0
+		CatShops._pole(b, _dir(mast) * rc + Vector3(0, top - 0.05, 0), 1.9)
+		if VELA_GAPS.has(j):
+			continue
+		var am := j * TAU / 20.0
+		var by := Basis(Vector3.UP, am + PI)
+		_put(b, "SM_Prop_Banner_Roof_02", Transform3D(by * Basis(Vector3.RIGHT, 0.3) * Basis.from_scale(Vector3(chord / 5.1, 1.0, 0.75)), _dir(am) * rc * cos(TAU / 40.0) + Vector3(0, top + 1.75, 0) - by * Vector3(chord * 0.5, 0, 0)), CatMonuments.VELA_SAFFRON if j % 2 == 1 else {})
+	# флажки на шестах у просветов
+	for j: int in [1, 18, 9, 10]:
+		var mast := (j + 0.5) * TAU / 20.0
+		b.add("SM_Prop_Banner_05", _dir(mast) * (rc + 0.12) + Vector3(0, top + 1.75, 0), mast, 0.8)
 	b.add("SM_Prop_Statue_04", Vector3(0, top - 0.02, RO - 0.36), 0.0, 0.62)
 	# главный вход: у края основания — две колонны с чашами огня (по ним — фасад: основание встаёт вплотную к дороге),
 	# знамёна по бокам арки, цветы; один источник света на всё здание
@@ -410,7 +483,8 @@ static func c_walk_y() -> float:
 static func _circus(b: Bp, fit: Vector2) -> void:
 	if fit != Vector2.ZERO:
 		var r := _old_rect("circus_fl", fit)
-		_forecourt(b, r, Rect2(-C_HX, -C_HZ, 2.0 * C_HX, 2.0 * C_HZ))
+		_forecourt(b, r)
+		_plaza_circus(b, r)
 		b.door = Vector3(0, 0, r.end.y + 0.6)
 	else:
 		b.door = Vector3(0, 0, C_HZ + 0.6)
