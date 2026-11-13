@@ -164,7 +164,7 @@ func _life() -> void:
 	check(bad == 0, "все на службе — лицом к жрецу (не так: %d)" % bad)
 	game._set_hour(9.75)
 	ok = await _until(func(): return B["phase"] == "gather" or B["phase"] == "show", 20.0)
-	ok = ok and await _until(func(): return (B["who"] as Array).size() > 4, 40.0)
+	ok = ok and await _until(func(): return (B["who"] as Array).size() > 4, 60.0)   # новые бани (18 мест): купальщики сходятся дольше
 	check(ok, "термы открылись — купаются: %d" % (B["who"] as Array).size())
 	game._set_hour(10.05)
 	ok = await _until(func(): return T["phase"] == "idle" and (T["who"] as Array).is_empty() and not T.has("priest_cp"), 60.0)
