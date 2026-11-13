@@ -1983,7 +1983,8 @@ func _show(b: Dictionary) -> void:
 		_catbed(b, vis)
 	elif b["type"] == "donkeypost":
 		_donkey(b, vis)
-	elif CatDecor2.PETS.has(Defs.base_of(b["type"])) or CatExtra.PETS.has(b["type"]) or CatStory.PETS.has(b["type"]) or CatGrand.PETS.has(b["type"]):
+	elif CatDecor2.PETS.has(Defs.base_of(b["type"])) or CatExtra.PETS.has(b["type"]) or CatStory.PETS.has(b["type"]) or CatGrand.PETS.has(b["type"]) \
+			or not NewCivic2.pets(b).is_empty():
 		_pets2(b, vis)                         # этап 5: корова и лошадь у украшений, кошки и ослик в приюте; котята Маси; гладиаторы лудуса
 	_sync_actors(b)
 	if spectacle and Spectacle.is_venue(b["type"]):
@@ -2118,6 +2119,8 @@ func _pets2(b: Dictionary, vis: Dictionary) -> void:
 	var list: Array = KitHouses.pets(b["type"])          # у своих моделей — свои места животных (kit.json)
 	if NewArena.covers(b["type"]):
 		list = NewArena.pets(b["type"])                   # новые амфитеатр и цирк — свои (прежних коней у ворот нет)
+	elif NewCivic2.covers(b["type"]):
+		list = NewCivic2.pets(b)                          # новые станция и гостиница — лошади у своих конюшен
 	elif list.is_empty():
 		list = CatStory.PETS.get(b["type"], CatGrand.PETS.get(b["type"], CatExtra.PETS.get(b["type"], CatDecor2.PETS.get(Defs.base_of(b["type"]), []))))
 	var lk := int(Defs.B[b["type"]].get("look", 0))

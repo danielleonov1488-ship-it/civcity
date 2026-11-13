@@ -46,7 +46,8 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	var key := "%s:%d:%d:%d" % [type, tier, variant, color]
 	var own := type == "temple" and NewTemple.ON       # новый храм (NewTemple): собран с нуля, без прежнего наполнения
 	var grand := NewGrand.covers(type)                # новые пантеон, академия, форум, храм Венеры (NewGrand) — тоже с нуля
-	own = own or grand
+	var civ2 := NewCivic2.covers(type)                # новые почтовая станция, бани, гостиница, дом префекта (NewCivic2) — тоже с нуля
+	own = own or grand or civ2
 	if own:
 		key += ":N"
 	legacy = legacy and KitHouses.covers(type)
@@ -70,9 +71,11 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	var kit_done := KitHouses.covers(type) and not type.begins_with("house_") and KitHouses.build(b, type, tier, variant, legacy, color)
 	# новые амфитеатр и цирк — собраны с нуля (NewArena), без прежнего наполнения CatDressCivic
 	var arena_new := not kit_done and NewArena.covers(type)
-	match "#kit" if kit_done else ("#arena" if arena_new else ("#grand" if grand else type)):
+	match "#kit" if kit_done else ("#arena" if arena_new else ("#grand" if grand else ("#civ2" if civ2 else type))):
 		"#kit":
 			pass
+		"#civ2":
+			NewCivic2.build(b, type, tier)
 		"#arena":
 			NewArena.make(b, type)
 		"#grand":

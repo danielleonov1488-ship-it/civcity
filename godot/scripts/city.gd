@@ -142,6 +142,8 @@ func apron_of(b: Dictionary) -> int:
 		return 0                                 # новые театр, одеон, библиотека, термы — на своём мощёном основании с бордюром (NewCivic)
 	if NewGrand.covers(String(b["type"])):
 		return 0                                 # новые пантеон, академия, форум, храм Венеры — на своём мощёном основании с бордюром (NewGrand)
+	if NewCivic2.covers(String(b["type"])):
+		return 0                                 # новые станция, бани, гостиница, дом префекта — на своём мощёном основании с бордюром (NewCivic2)
 	if String(b["type"]) in KERB_TYPES:
 		return 2
 	if NewArena.covers(String(b["type"])):
