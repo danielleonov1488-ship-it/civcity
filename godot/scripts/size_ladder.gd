@@ -24,14 +24,15 @@ const TARGET := {
 ## с ревизией, с которой он новый; постройка с меньшей ревизией (или без неё — старое сохранение) стоит на прежних
 ## клетках, и её облик собирается под прежний след (OLD_LOT, Catalog.fit).
 const REV := 1
-## тип → ревизия, с которой он в новом размере (заполняется, когда новая сборка типа готова)
-const SINCE := {}
+## тип → ревизия, с которой он в новом размере (заполняется, когда новая сборка типа готова):
+## театр, одеон, библиотека, большие термы (NewCivic) — с ревизии 1; в старых городах — на прежних клетках
+const SINCE := {"theatre": 1, "odeon": 1, "library": 1, "thermae": 1}
 
 ## Прежний след (м, ширина × глубина при yaw 0) — проба размеров 12.11, до линейки
 const OLD_LOT := {
 	"temple": Vector2(6.3, 7.6), "colosseum": Vector2(15.2, 15.7), "circus_fl": Vector2(28.6, 8.9), "thermae": Vector2(14.6, 10.5),
 	"library": Vector2(8.3, 5.9), "pantheon": Vector2(7.2, 9.9), "prefect": Vector2(5.6, 5.1), "mansio": Vector2(4.9, 5.6),
-	"warehouse": Vector2(6.8, 4.5), "balnea": Vector2(6.7, 4.6),
+	"warehouse": Vector2(6.8, 4.5), "balnea": Vector2(6.7, 4.6), "theatre": Vector2(10.3, 7.65), "odeon": Vector2(9.3, 7.15),
 }
 
 ## Ступень каждого типа — для подписей на снимках
@@ -66,6 +67,8 @@ static func apply() -> void:
 	Catalog._cache.clear()
 	var f := {}
 	for t: String in TARGET:
+		if SINCE.has(t):
+			continue                           # тип уже собран в новом размере (храм) — подгонять нечего
 		var a := area(t)
 		if a > 0.1:
 			f[t] = sqrt(float(TARGET[t]) / a)

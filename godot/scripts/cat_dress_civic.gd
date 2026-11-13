@@ -46,8 +46,8 @@ static var dbg := false        # печатать, почему кучка не 
 
 
 static func dress(b: Bp, type: String, _tier := 0) -> void:
-	if not ON:
-		return
+	if not ON or NewCivic.covers(type):
+		return                               # новые театр, одеон, библиотека, термы (NewCivic) — со своим убранством
 	if CatDressGrand.handles(type):
 		CatDressGrand.dress(b, type, _tier)       # Легион, почтовая станция, памятники и большие здания (cat_dress_grand.gd)
 		return

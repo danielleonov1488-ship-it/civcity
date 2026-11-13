@@ -148,6 +148,8 @@ func venue_hide(b: Dictionary) -> void:
 ## Места постройки (по её чертежу; один раз на тип и вариант)
 func layout(b: Dictionary) -> Dictionary:
 	var key := "%s|%d|%d" % [b["type"], int(b.get("variant", 0)), int(b.get("color", 0))]
+	if SizeLadder.old_lot(b):
+		key += "|O"                          # постройка на прежнем следе (SizeLadder): свой чертёж — свои места
 	if _layouts.has(key):
 		return _layouts[key]
 	var t0 := Time.get_ticks_msec()
@@ -157,7 +159,10 @@ func layout(b: Dictionary) -> Dictionary:
 	var lay := {"seats": [], "groups": {}, "tris": tris}
 	# уменьшенная трибуна (Catalog.SHRINK): ступени ниже — зритель сидит на своём месте, ступни чуть ниже кромки ступени
 	_amphi_drop = Crowd.SEAT_DROP * float(Catalog.SHRINK.get(String(b["type"]), 1.0))
-	match String(VENUES[b["type"]]["kind"]):
+	# новые театр, одеон и большие термы (NewCivic) — места по их рядам и бассейнам, актёр на их сцене
+	match "#own" if NewCivic.covers(String(b["type"])) else String(VENUES[b["type"]]["kind"]):
+		"#own":
+			NewCivic.seats(self, lay, b, tris)
 		"temple":
 			_temple(lay, bp, tris)
 		"bath":
@@ -867,6 +872,7 @@ func _step(dt: float) -> void:
 				_leave_step(V, sdt)
 		_people_step(V, sdt)
 		_doors_step(V, sdt)
+		_door_life(V)
 		if V.has("priest_cp"):
 			V["priest_t"] = float(V.get("priest_t", 4.0)) - sdt
 			if float(V["priest_t"]) <= 0.0:
@@ -1207,6 +1213,19 @@ func _people_step(V: Dictionary, sdt: float) -> void:
 					cr.play(s["cp"], "walk")
 	for s: Dictionary in gone:
 		_drop(V, s)
+
+
+## Новые одеон и термы (NewCivic): зрители и купальщики проходят входные двери — Life держит створки распахнутыми,
+## пока кто-нибудь идёт у входа (первые отрезки пути — с улицы через проём), потом они сами прикрываются
+func _door_life(V: Dictionary) -> void:
+	if game.life == null or not NewCivic.covers(String(V["type"])):
+		return
+	for s: Dictionary in V["who"]:
+		var near_in: bool = s["st"] == "walk" and int(s["i"]) <= 2
+		var near_out: bool = s["st"] == "out" and int(s["i"]) >= (s["path"] as PackedVector3Array).size() - 4
+		if near_in or near_out:
+			game.life.door(V["b"], 0.9)
+			return
 
 
 ## Встать и уйти: путь к месту — в обратную сторону
