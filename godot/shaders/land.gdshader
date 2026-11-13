@@ -33,7 +33,8 @@ uniform float far_road_half = 2.25;
 // 13.11 (Synty Meadow Forest): трава — плавными пятнами в тонах палитры с узором травы, клевера, цветов и мха из набора
 // (вместо резких клеток 25 см), тропа — утоптанная земля с камешками, кромка у дорог и окантовка у домов — гравий,
 // берег — земля, стенки уступов в 12,5 см — травяные (не тёмные полосы). meadow_on = false (набора нет) — как было.
-// rich = false («Низкая», «Очень низкая») — одна картинка травы вместо пяти
+// rich = false («Низкая», «Очень низкая») — одна картинка травы вместо пяти, тропы, кромки, дворики, берега и уступы —
+// прежние (без картинок набора): земля на низких не дороже, чем была
 uniform bool meadow_on = false;
 uniform bool rich = true;
 uniform float road_scale = 2.5;
@@ -217,7 +218,7 @@ void fragment() {
 			float w_road = smoothstep(0.44, 0.54, m.r + wob * 0.06);
 			float w_plaza = smoothstep(0.44, 0.54, m.g + wob * 0.04);
 			float edge = smoothstep(0.18, 0.42, max(m.r, m.g)) * (1.0 - max(w_road, w_plaza));
-			if (meadow_on) {
+			if (meadow_on && rich) {
 				// кромка у мостовой — гравий с травой (набор Meadow), а не тёмная полоса
 				vec3 gv = texture(gravel_tex, wpos.xz / 2.2).rgb * vec3(0.92, 0.88, 0.8);
 				c = mix(c, mix(gv, c, step(0.7, h31(cube + 29.0)) * 0.6), edge * 0.55);
@@ -232,7 +233,7 @@ void fragment() {
 				float w_ap = smoothstep(0.18, 0.58, ap + (n2 - 0.5) * 0.45 + wob * 0.25);
 				vec3 soil = vec3(0.27, 0.155, 0.075) * (0.82 + 0.3 * n2);                 // глина: тёплая, темнее троп
 				soil = mix(soil, vec3(0.33, 0.21, 0.11), smoothstep(0.6, 0.98, ap) * 0.4);   // у стены — суше
-				if (meadow_on) {
+				if (meadow_on && rich) {
 					// у домов — светлая утоптанная земля с гравием (набор Meadow): дом стоит на дворике, а не на голой глине
 					vec3 gv2 = texture(gravel_tex, wpos.xz / 2.0).rgb * vec3(0.95, 0.9, 0.82);
 					vec3 pt = texture(path_tex, wpos.xz / 3.0).rgb * vec3(1.1, 0.98, 0.82);
@@ -252,7 +253,7 @@ void fragment() {
 				vec3 p = vec3(0.56, 0.39, 0.19) * (0.86 + 0.22 * n);
 				if (h31(cube + 5.0) > 0.93) p *= 0.8;
 				p *= 0.94 + 0.08 * r;
-				if (meadow_on) {
+				if (meadow_on && rich) {
 					// тропа — утоптанная земля с камешками и трещинами (набор Meadow), тёплая, по краю — мелкий гравий
 					p = texture(path_tex, wpos.xz / 3.2).rgb * vec3(1.3, 1.08, 0.78) * (0.92 + 0.14 * n);
 					vec3 gp = texture(gravel_tex, wpos.xz / 2.0).rgb * vec3(1.0, 0.93, 0.82);
@@ -354,9 +355,12 @@ void fragment() {
 		vec3 dirt = vec3(0.34, 0.25, 0.14) * (0.9 + 0.2 * r);
 		if (meadow_on) {
 			// уступ в одну ступеньку (12,5 см) — весь травяной, чуть темнее верха: склон читается ровными горизонталями,
-			// а не тёмными лесенками; выше — земля из набора (по стенке, а не сверху)
-			vec2 wuv = (an.x > an.z ? wpos.zy : wpos.xy) / 2.0;
-			vec3 et = texture(earth_tex, wuv).rgb * vec3(1.05, 0.92, 0.78);
+			// а не тёмными лесенками; выше — земля из набора (по стенке, а не сверху; на низких — прежняя земля без картинки)
+			vec3 et = dirt * vec3(1.25, 1.2, 1.15);
+			if (rich) {
+				vec2 wuv = (an.x > an.z ? wpos.zy : wpos.xy) / 2.0;
+				et = texture(earth_tex, wuv).rgb * vec3(1.05, 0.92, 0.78);
+			}
 			c = top_y < 1.31 ? et * 0.85 : (top_y - wpos.y < 0.14 ? c * 0.93 : mix(et, c * 0.7, 0.25));   // у воды — берег, не трава
 			if (top_y - wpos.y < 0.14) {
 				NORMAL = (VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz;   // ступенька светится как луг: без тёмной штриховки склонов
@@ -368,12 +372,17 @@ void fragment() {
 		c *= 0.92 + 0.12 * r;
 	}
 	if (meadow_on && top && k == 3.0) {
-		// берег прудов и ручьёв: земля и мелкий гравий набора, у воды мокрее; кверху — в траву (без резкой границы)
-		vec3 sd = texture(earth_tex, wpos.xz / 2.4).rgb * vec3(1.18, 1.06, 0.86);
-		vec3 gw = texture(gravel_tex, wpos.xz / 1.8).rgb * vec3(0.95, 0.92, 0.86);
-		sd = mix(sd, gw, smoothstep(0.55, 0.8, vn(wpos.xz * 0.6)) * 0.6);
+		// берег прудов и ручьёв: земля и мелкий гравий набора, у воды мокрее; кверху — в траву (без резкой границы);
+		// на низких — те же тона без картинок
+		vec3 sd = vec3(0.36, 0.27, 0.17) * (0.88 + 0.24 * vn(wpos.xz * 0.6));
+		vec3 gr2 = pal1 * 0.92;
+		if (rich) {
+			sd = texture(earth_tex, wpos.xz / 2.4).rgb * vec3(1.18, 1.06, 0.86);
+			vec3 gw = texture(gravel_tex, wpos.xz / 1.8).rgb * vec3(0.95, 0.92, 0.86);
+			sd = mix(sd, gw, smoothstep(0.55, 0.8, vn(wpos.xz * 0.6)) * 0.6);
+			gr2 = meadow_grass(wpos, 0.0, r) * 0.92;
+		}
 		sd *= mix(0.72, 1.0, smoothstep(1.02, 1.14, wpos.y));
-		vec3 gr2 = meadow_grass(wpos, 0.0, r) * 0.92;
 		c = mix(sd, gr2, smoothstep(1.16, 1.3, wpos.y) * 0.7) * (0.95 + 0.1 * r);
 		rough = 0.9;
 	}
