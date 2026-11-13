@@ -211,7 +211,10 @@ func _owner_grow(d: Dictionary, tid: int, old_cells: PackedInt32Array) -> void:
 		for k in (o["cells"] as PackedInt32Array):
 			mine_o += 1 if c.land.occ[k] == int(o["id"]) else 0
 		moved.append("%s#%d %.2f м (клеток своих %d/%d)" % [o["type"], int(o["id"]), dd, mine_o, (o["cells"] as PackedInt32Array).size()])
-		if String(c.def(o)["kind"]) != "decor" or dd > City.GROW_NUDGE + 0.01 or mine_o != (o["cells"] as PackedInt32Array).size():
+		# другие типы, что по линейке тоже растут (NewSmall: вигилы, бани, склад, скрипторий), сами встают в полный размер
+		# со сдвигом до GROW_SHIFT — это их рост, а не «отодвинули с пути храма»
+		var grew := SizeLadder.grows(String(o["type"])) and int(o.get("sz", 0)) >= int(SizeLadder.SINCE.get(String(o["type"]), 99)) 			and dd <= City.GROW_SHIFT + 0.01 and mine_o == (o["cells"] as PackedInt32Array).size()
+		if not grew and (String(c.def(o)["kind"]) != "decor" or dd > City.GROW_NUDGE + 0.01 or mine_o != (o["cells"] as PackedInt32Array).size()):
 			bad += 1
 	print("TFIT owner: отодвинуты украшения: %s" % str(moved))
 	check(bad == 0, "сдвинуты только мелкие украшения, не дальше %.0f м, на свои свободные клетки" % City.GROW_NUDGE, moved)

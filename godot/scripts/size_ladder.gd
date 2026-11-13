@@ -10,8 +10,10 @@ const HOUSE := 11.2
 
 ## Будущая площадь следа, м² (кого нет в списке — размер прежний)
 const TARGET := {
+	# малые, 1–2 дома (NewSmall: пост вигилов и скрипторий — по ≈ 16 м²)
+	"vigiles": 16.0, "scriptorium": 16.0,
 	# средние, 3–4 дома
-	"prefect": 36.0, "mansio": 36.0, "warehouse": 36.0, "balnea": 36.0,
+	"prefect": 36.0, "mansio": 36.0, "warehouse": 36.0, "balnea": 36.0, "school": 38.0,
 	# большие, 5–7 домов
 	"library": 62.0, "center": 62.0, "baths": 68.0,
 	# главные, 8–10 домов
@@ -31,8 +33,11 @@ const REV := 1
 ## Почтовая станция, бани, гостиница, дом префекта (NewCivic2) — с ревизии 1: гостиница и дом префекта (36 м², было 27
 ## и 28) в старых городах — под прежние клетки и растут, где есть место; бани (68 м², было 73) — посреди прежнего следа;
 ## станция (62 м²) — внутри прежнего следа на вырост (OLD_LOT не нужен)
+## пост вигилов, малые бани, склад, скрипторий (NewSmall) — с ревизии 1, растут, где есть место; школа (NewSmall) —
+## в прежнем следе
 const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1, "theatre": 1, "odeon": 1, "library": 1, "thermae": 1,
-	"pantheon": 1, "academy": 1, "forum": 1, "venus": 1, "center": 1, "baths": 1, "mansio": 1, "prefect": 1}
+	"pantheon": 1, "academy": 1, "forum": 1, "venus": 1, "center": 1, "baths": 1, "mansio": 1, "prefect": 1,
+	"vigiles": 1, "school": 1, "balnea": 1, "warehouse": 1, "scriptorium": 1}
 
 ## Прежний след (м, ширина × глубина при yaw 0) — проба размеров 12.11, до линейки
 const OLD_LOT := {
@@ -40,6 +45,7 @@ const OLD_LOT := {
 	"library": Vector2(8.3, 5.9), "pantheon": Vector2(7.2, 9.9), "prefect": Vector2(5.6, 5.1), "mansio": Vector2(4.9, 5.6),
 	"warehouse": Vector2(6.8, 4.5), "balnea": Vector2(6.7, 4.6), "theatre": Vector2(10.3, 7.65), "odeon": Vector2(9.3, 7.15),
 	"baths": Vector2(10.14, 7.16),
+	"vigiles": Vector2(5.3, 2.3), "scriptorium": Vector2(3.8, 3.6),
 }
 
 ## Ступень каждого типа — для подписей на снимках
