@@ -251,7 +251,8 @@ func unlock_id(type: String) -> String:
 
 func blueprint(b: Dictionary) -> Bp:
 	# дом без "kw" — из старого сохранения: стоит на прежнем следе, новый облик ужимается по нему (KitHouses)
-	return Catalog.make(b["type"], int(b["tier"]), int(b.get("variant", 0)), int(b.get("color", 0)), not b.has("kw"))
+	# постройка из старого сохранения, чей тип потом поменял размер (SizeLadder), — новый облик на её прежних клетках
+	return Catalog.make(b["type"], int(b["tier"]), int(b.get("variant", 0)), int(b.get("color", 0)), not b.has("kw"), SizeLadder.old_lot(b))
 
 
 func xf(b: Dictionary) -> Transform3D:
@@ -496,6 +497,7 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	next_id += 1
 	if d["kind"] == "house":
 		b["kw"] = 1                           # след нового дома (KitHouses): шире прежнего
+	b["sz"] = SizeLadder.REV                  # размер по линейке на момент постройки (старые сохранения — без него)
 	var gft := "" if free else gift_take(type)     # подарок друга: даром, постройка помнит дарителя
 	if gft != "":
 		b["gift"] = gft
@@ -3618,6 +3620,8 @@ func save_data() -> Dictionary:
 			e["gift"] = String(b["gift"])
 		if b.has("kw"):
 			e["kw"] = 1
+		if b.has("sz"):
+			e["sz"] = int(b["sz"])
 		bl.append(e)
 	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
 		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false)), "m": f.get("m", [])}),
@@ -3739,6 +3743,8 @@ func load_data(d: Dictionary) -> void:
 			"born": int(bd.get("born", bd["id"]))}         # старые сохранения: порядок постройки — по номеру
 		if int(bd.get("kw", 0)) == 1:
 			b["kw"] = 1
+		if int(bd.get("sz", 0)) > 0:
+			b["sz"] = int(bd["sz"])
 		if int(bd.get("host", -1)) >= 0:
 			b["host"] = int(bd["host"])
 		if int(bd.get("hire", -1)) >= 0:

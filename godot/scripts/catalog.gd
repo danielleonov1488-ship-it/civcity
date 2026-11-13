@@ -15,6 +15,12 @@ static var _cache := {}
 ## детализировать»): у амфитеатра, цирка, театра и памятников Synty общий масштаб умножается на это (зрелища — по нему же)
 const SHRINK := {"colosseum": 0.8, "circus_fl": 0.75, "theatre": 0.82,      # одеон и так невелик (уменьшенный — на ступенях не сесть)
 	"temple": 0.85, "venus": 0.7, "pantheon": 0.65, "forum": 0.8, "pharos": 0.65, "ludus": 0.8}
+## Проба линейки размеров (SizeLadder.apply): прежние сборки, подогнанные под будущий размер — только для снимков
+static var LADDER := {}
+## След, в который должна уложиться сборка (м, ширина × глубина при yaw 0), пока строится чертёж «старого места»
+## (SizeLadder.old_lot): постройка из старого сохранения стоит на прежних клетках — новый облик собирается под них.
+## Vector2.ZERO — обычная сборка в размере линейки.
+static var fit := Vector2.ZERO
 
 
 ## Масштаб постройки этого типа в городе (единицы чертежа → метры)
@@ -24,11 +30,12 @@ static func scale_of(type: String) -> float:
 		return DECOR
 	if NewArena.covers(type):
 		return ARCH * NewArena.K               # новые амфитеатр и цирк: детали в натуральную величину, само здание маленькое
-	return ARCH * float(SHRINK.get(type, 1.0))
+	return ARCH * float(SHRINK.get(type, 1.0)) * float(LADDER.get(type, 1.0))
 
 
 ## legacy — дом из старого сохранения (стоит на прежнем, более узком следе): свой дом ужимается по нему (KitHouses)
-static func make(type: String, tier := 1, variant := 0, color := 0, legacy := false) -> Bp:
+## old_lot — постройка из старого сохранения, тип которой с тех пор поменял размер (SizeLadder): облик на прежнем следе
+static func make(type: String, tier := 1, variant := 0, color := 0, legacy := false, old_lot := false) -> Bp:
 	var dd0: Dictionary = Defs.B.get(type, {})
 	if dd0.get("kind", "") == "decor":
 		# украшение всегда выглядит как его карточка: облик задаёт тип, а не цвет, место или фасад
@@ -40,8 +47,12 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	legacy = legacy and KitHouses.covers(type)
 	if legacy:
 		key += ":L"
+	old_lot = old_lot and SizeLadder.SINCE.has(type)
+	if old_lot:
+		key += ":O"
 	if _cache.has(key):
 		return _cache[key]
+	fit = SizeLadder.OLD_LOT.get(type, Vector2.ZERO) if old_lot else Vector2.ZERO
 	# здание Легиона растёт с уровнем (tier — облик уровня, Legion.vis_tier): случай — как у 1-го уровня, чтобы
 	# знамёна и плющ не менялись от уровня к уровню, а только прибавлялось новое
 	var mil := String(dd0.get("kind", "")) == "military"
@@ -111,6 +122,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		_actors(b, type, tier)
 		CatDressCivic.dress(b, type, tier)     # склады, мастерские, поля, бани, храмы — обжитые дворы и бока (без новых деталей в следе)
 	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)
+	fit = Vector2.ZERO
 	_cache[key] = b
 	return b
 
