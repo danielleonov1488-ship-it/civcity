@@ -1,17 +1,20 @@
 extends Node
-## Пробный новый храм Юпитера (NewTemple): снимки для владельца — «было/стало» (newtemple=0 — прежний храм),
-## храм рядом с домами плебеев и жителями (масштаб), утренняя служба (люди на ступенях), врата открыты.
-##   bash .work/py/gpu_run.sh res://test_new_temple.tscn -- out=D:/CivCity/.work/pilot/temple/<папка>/ [newtemple=0] [hours=11,18.5]
-##        [houses=1] [people=1] [service=1] [views=0,1,4]
-## Снимки: <out>/<метка>_v<вид>_h<час>.png, метка — new или old. Склейка листов — .work/pilot/temple/py.
+## Храм Юпитера (NewTemple): снимки для владельца — «было/стало» (newtemple=0 — прежний храм), храм на прежних клетках
+## старого сохранения (fit=1), храм рядом с домами плебеев и жителями (масштаб), утренняя служба (люди на ступенях),
+## врата открыты; город владельца (city=…): храм из старого сохранения на своём месте и новый полный — на свободном.
+##   bash .work/py/gpu_run.sh res://test_new_temple.tscn -- out=D:/CivCity/.work/rebuild/temple/<папка>/ [newtemple=0] [fit=1]
+##        [hours=11,18.5] [houses=1] [people=1] [service=1] [views=0,1,4] [city=D:/CivCity/.work/owner_save/city.json]
+## Снимки: <out>/<метка>_v<вид>_h<час>.png, метка — new, fit или old. Склейка листов — .work/rebuild/temple/py.
 
 var game
 var c: City
-var out := "D:/CivCity/.work/pilot/temple/t/"
+var out := "D:/CivCity/.work/rebuild/temple/t/"
 var hours := [11.0, 18.5]
 var houses := false
 var people := false
 var service := false
+var fit := false
+var city_src := ""
 var vsel := []
 var tagn := "new"
 
@@ -32,11 +35,19 @@ func _ready() -> void:
 			"houses": houses = kv[1] != "0"
 			"people": people = kv[1] != "0"
 			"service": service = kv[1] != "0"
+			"fit": fit = kv[1] != "0"
+			"city": city_src = kv[1]
 			"views":
 				for v in kv[1].split(","):
 					vsel.append(int(v))
-	tagn = "new" if NewTemple.ON else "old"
-	Game.boot = {"new": "1", "hour": "11"}
+	tagn = ("fit" if fit else "new") if NewTemple.ON else "old"
+	if city_src != "":
+		# копия города владельца — в папку сохранений этого запуска (gpu_run: своя на каждый запуск), не в настоящую
+		var dst := GamePaths.save_dir().path_join("city.json")
+		DirAccess.copy_absolute(city_src, dst)
+		Game.boot = {"play": "1", "hour": "11"}
+	else:
+		Game.boot = {"new": "1", "hour": "11"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()
@@ -54,9 +65,9 @@ func secs(t: float) -> void:
 		w += get_process_delta_time()
 
 
-func put(type: String, at: Vector2, v := -1, col := -1) -> Dictionary:
-	for k in 60:
-		var p := at + Vector2(cos(k * 2.4), sin(k * 2.4)) * (k * 0.25)
+func put(type: String, at: Vector2, v := -1, col := -1, tries := 60, stepr := 0.25) -> Dictionary:
+	for k in tries:
+		var p := at + Vector2(cos(k * 2.4), sin(k * 2.4)) * (k * stepr)
 		var pl: Dictionary = game.placement(type, p, v, col) if v >= 0 else game.placement(type, p)
 		if pl["err"] == "":
 			var b := c.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"], true)
@@ -87,11 +98,19 @@ func _citizen(rng: RandomNumberGenerator, p: Vector2, yaw: float, rich := false,
 	cn.play("Idle_Loop", 0.0, rng.randf())
 
 
+func info(t: Dictionary, what: String) -> void:
+	var tb := bounds(t)
+	var bp := c.blueprint(t)
+	print("NT TEMPLE %s %s id=%d pos=%s yaw=%.2f sz=%s foot=%.2f×%.2f top=%.2f door=%s parts=%d lights=%d" % [tagn, what, int(t["id"]), t["pos"],
+		float(t["yaw"]), str(t.get("sz", "—")), float(tb[1]) - float(tb[0]), float(tb[3]) - float(tb[2]), bp.top_y(), bp.door, bp.parts.size(), bp.lights.size()])
+
+
 func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	await frames(10)
 	c = game.city
+	game.can_save = false
 	for r in Defs.RESEARCH:
 		c.research[r["id"]] = true
 	c.level = 7
@@ -101,20 +120,26 @@ func _run() -> void:
 	if game.weather:
 		game.weather.left_h = 0.0
 		game.weather.force = 0.0
+	if city_src != "":
+		await _owner_city()
+		return
 	if game.people and not service:
 		game.people.visible = false               # своих жителей ставим сами (масштаб), прохожие не мешают кадру (зрители службы — с ними)
 	var X0 := 150.0
 	var Z0 := 124.0
-	game.clear_nature(Vector2(X0, Z0), 34.0)
-	game.land.paint_line(Vector2(X0 - 26.0, Z0), Vector2(X0 + 26.0, Z0), 2.2, Land.Kind.ROAD, true)
+	game.clear_nature(Vector2(X0, Z0), 38.0)
+	game.land.paint_line(Vector2(X0 - 30.0, Z0), Vector2(X0 + 30.0, Z0), 2.2, Land.Kind.ROAD, true)
 	await frames(4)
-	var t := put("temple", Vector2(X0, Z0 - 6.0))
+	var t := put("temple", Vector2(X0, Z0 - 7.0))
 	if t.is_empty():
 		get_tree().quit()
 		return
+	if fit:
+		t.erase("sz")                            # как из старого сохранения: облик — под прежние клетки (SizeLadder.old_lot)
+		game._show(t)
+	info(t, "")
 	var tb := bounds(t)
 	var bp := c.blueprint(t)
-	print("NT TEMPLE %s pos=%s yaw=%.2f foot=%.2f×%.2f top=%.2f door=%s parts=%d" % [tagn, t["pos"], float(t["yaw"]), float(tb[1]) - float(tb[0]), float(tb[3]) - float(tb[2]), bp.top_y(), bp.door, bp.parts.size()])
 	if houses:
 		# дома плебеев в ряд с храмом: два слева, два справа (с промежутком, как ставит игрок)
 		var hx := [float(tb[0]) - 2.6, float(tb[0]) - 6.3, float(tb[1]) + 2.6, float(tb[1]) + 6.3]
@@ -137,14 +162,37 @@ func _run() -> void:
 	await frames(30)
 	DirAccess.make_dir_recursive_absolute(out)
 	var ctr := Vector2((float(tb[0]) + float(tb[1])) * 0.5, (float(tb[2]) + float(tb[3])) * 0.5)
+	# одна даль для «было» и «стало» — разница в размере видна сразу; вход — по глубине храма
+	var kd := maxf(1.0, (float(tb[3]) - float(tb[2])) / 7.6)
+	# [поворот от фасада, наклон, даль, цель: 0 — середина, 1 — врата]
+	var views := [[28.0, 30.0, 21.0, 0], [90.0, 26.0, 20.0, 0], [200.0, 32.0, 21.0, 0], [-90.0, 26.0, 20.0, 0],
+		[0.0, 10.0, 5.2 * kd, 1], [-35.0, 50.0, 28.0, 0], [30.0, 16.0, 6.0 * kd, 1]]
+	if houses:
+		views = [[8.0, 30.0, 30.0, 0], [35.0, 22.0, 19.0, 0], [-25.0, 40.0, 34.0, 0]]
+	if service:
+		views = [[18.0, 24.0, 17.0, 0], [-22.0, 38.0, 26.0, 0], [8.0, 12.0, 9.0, 1]]
+	await _shots(t, bp, ctr, views)
+	if service and game.spectacle:
+		var V: Dictionary = game.spectacle.venues.get(int(t["id"]), {})
+		if not V.is_empty():
+			var seats: Array = V["lay"]["seats"]
+			var on_steps := 0
+			var lo := INF
+			for s: Dictionary in seats:
+				var y := (s["root"] as Vector3).y
+				on_steps += 1 if y > 0.15 else 0
+				lo = minf(lo, y)
+			print("NT SERVICE мест %d (на ступенях %d), стоят %d, жрец %s %s" % [seats.size(), on_steps, (V["who"] as Array).size(),
+				str((V["lay"] as Dictionary).has("priest")), str((V["lay"] as Dictionary).get("priest", {}).get("root", "—"))])
+	print("NT DONE")
+	get_tree().quit()
+
+
+func _shots(t: Dictionary, bp: Bp, ctr: Vector2, views: Array, tag := "") -> void:
 	var f2 := City.facing(float(t["yaw"]))
 	var fyd := rad_to_deg(atan2(f2.x, f2.y))
 	var dp2 := c.door_point(t)
-	# [поворот от фасада, наклон, даль, цель: 0 — середина, 1 — врата]
-	var views := [[28.0, 30.0, 15.0, 0], [90.0, 28.0, 14.0, 0], [200.0, 34.0, 15.0, 0], [-90.0, 28.0, 14.0, 0],
-		[0.0, 10.0, 5.2, 1], [-35.0, 45.0, 20.0, 0], [30.0, 16.0, 6.0, 1]]
-	if houses:
-		views = [[8.0, 30.0, 22.0, 0], [35.0, 22.0, 14.0, 0], [-25.0, 40.0, 26.0, 0]]
+	var tg := tagn if tag == "" else tag
 	for h: float in hours:
 		game._set_hour(h)
 		await frames(20)
@@ -156,7 +204,7 @@ func _run() -> void:
 				continue
 			var v: Array = views[i]
 			var tp := ctr
-			var ty: float = game.land.height_at(ctr.x, ctr.y) + 1.4
+			var ty: float = game.land.height_at(ctr.x, ctr.y) + 1.6
 			if int(v[3]) == 1:
 				# вход: врата распахнуты (Life), видно освещённую целлу
 				var e: Array = (game.life.info(bp, "temple")["doors"] as Array)
@@ -166,7 +214,7 @@ func _run() -> void:
 						hm += le[1] as Vector3
 					var hw: Vector3 = c.xf(t) * (hm / e.size())
 					tp = dp2.lerp(Vector2(hw.x, hw.z), 0.8)
-				ty = float(t["y"]) + 1.1
+				ty = float(t["y"]) + 1.3
 			game.rig.set_view(Vector3(tp.x, ty, tp.y), fyd + float(v[0]), float(v[1]), float(v[2]))
 			await frames(3)
 			if int(v[3]) == 1:
@@ -176,11 +224,42 @@ func _run() -> void:
 				game.speed = 0.0
 			await secs(0.8)
 			await frames(30)
-			get_viewport().get_texture().get_image().save_png(out + "%s_v%d_h%s.png" % [tagn, i, str(h).replace(".", "_")])
-			print("NT shot %s v%d h%s: вызовов %d, треугольников %d" % [tagn, i, h, Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)])
-	if service and game.spectacle:
-		var V: Dictionary = game.spectacle.venues.get(int(t["id"]), {})
-		if not V.is_empty():
-			print("NT SERVICE мест %d, стоят %d, жрец %s" % [(V["lay"]["seats"] as Array).size(), (V["who"] as Array).size(), str((V["lay"] as Dictionary).has("priest"))])
+			get_viewport().get_texture().get_image().save_png(out + "%s_v%d_h%s.png" % [tg, i, str(h).replace(".", "_")])
+			print("NT shot %s v%d h%s: вызовов %d, треугольников %d" % [tg, i, h, Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)])
+
+
+## Город владельца: храм из старого сохранения — на прежнем месте (сборка «старого места»), новый — полный, на свободном
+func _owner_city() -> void:
+	var t := {}
+	for id in c.buildings:
+		if c.buildings[id]["type"] == "temple":
+			t = c.buildings[id]
+	DirAccess.make_dir_recursive_absolute(out)
+	if not t.is_empty():
+		info(t, "владельца")
+	# свободное место для нового храма: по спирали от площади храма — первое, куда игра даёт поставить
+	var nt := {}
+	var from := Vector2(172.4, 148.7) if t.is_empty() else (t["pos"] as Vector2)
+	for k in 900:
+		var p := from + Vector2(cos(k * 2.4), sin(k * 2.4)) * (6.0 + k * 0.12)
+		var pl: Dictionary = game.placement("temple", p)
+		if pl["err"] == "":
+			nt = c.place("temple", pl["pos"], pl["yaw"], pl["variant"], pl["color"], true)
+			game._show(nt)
+			break
+	if nt.is_empty():
+		print("NT NOTE новый храм в городе владельца не встал")
+		print("NT DONE")
+		get_tree().quit()
+		return
+	info(nt, "новый в городе")
+	await frames(40)
+	for e: Array in [[t, "cityold"], [nt, "citynew"]]:
+		var b: Dictionary = e[0]
+		if b.is_empty():
+			continue
+		var tb := bounds(b)
+		var ctr := Vector2((float(tb[0]) + float(tb[1])) * 0.5, (float(tb[2]) + float(tb[3])) * 0.5)
+		await _shots(b, c.blueprint(b), ctr, [[28.0, 34.0, 24.0, 0], [-30.0, 48.0, 40.0, 0]], String(e[1]))
 	print("NT DONE")
 	get_tree().quit()
