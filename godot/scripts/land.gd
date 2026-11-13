@@ -76,6 +76,14 @@ var _dc_vals := {}
 ## Клетки под арками акведука (этап 5.6): клетка → id постройки. Землю они не занимают (под арками ходят и проводят
 ## улицы), но другая постройка и деревья сквозь арки не встают. Не сохраняется — City.place / remove / load_data
 var under := {}
+## Ручьи (13.11, scripts/streams.gd): какие проложены (номера Streams.LIST) — пишется в сохранение; streams_saved — что
+## пришло из сохранения (null — сохранение старше ручьёв: тогда кладутся только те, где всё свободно); bridges — мосты
+## там, где ручей проходит под дорогой исходной карты (не сохраняются — считаются заново)
+var streams: Array = []
+var streams_saved = null
+var bridges: Array = []
+## Новая карта лугов (13.11): мельницы и поля на дальних окраинах — только у городов, начатых после этой правки
+var meadow_new := false
 
 var n1 := FastNoiseLite.new()
 var n2 := FastNoiseLite.new()
@@ -1274,7 +1282,9 @@ func save_changes() -> Dictionary:
 	var plots := []
 	for p in owned:
 		plots.append([p.x, p.y])
-	var out := {"cells": _enc[0], "kinds": _enc[1], "hs": _enc[2], "plots": plots}
+	var out := {"cells": _enc[0], "kinds": _enc[1], "hs": _enc[2], "plots": plots, "streams": streams.duplicate()}
+	if meadow_new:
+		out["nv"] = 1
 	if not deco_cells.is_empty():
 		var de := _deco_save()               # узор земли и улучшенные дороги (этап 5.7–5.8) — только если он есть
 		out["deco"] = de[0]
@@ -1379,3 +1389,5 @@ func load_changes(d: Dictionary) -> void:
 	owned.clear()
 	for p in d.get("plots", []):
 		owned[Vector2i(int(p[0]), int(p[1]))] = true
+	streams_saved = d.get("streams", null)            # ручьи (13.11): в старых сохранениях их нет — null
+	meadow_new = int(d.get("nv", 0)) >= 1

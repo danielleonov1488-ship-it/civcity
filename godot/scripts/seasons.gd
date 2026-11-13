@@ -101,7 +101,7 @@ func _place_leaves() -> void:
 			for kz in range(c0.y, c1.y + 1):
 				for it: Dictionary in game.nature.get(Vector2i(kx, kz), []):
 					var nm := String(it["name"])
-					if not nm.begins_with("SM_Env_Tree") or nm.contains("Bush"):
+					if not nm.trim_prefix("M:").begins_with("SM_Env_Tree") or nm.contains("Bush"):   # и деревья Meadow Forest
 						continue
 					var xf: Transform3D = it["xf"]
 					var d := Vector2(xf.origin.x - at.x, xf.origin.z - at.z).length()

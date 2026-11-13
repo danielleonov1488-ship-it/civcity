@@ -46,6 +46,8 @@ godot/mac_build.txt
 
 # Synty POLYGON (куплено владельцем): исходные модели нельзя выкладывать — только локально, в собранную игру попадают
 godot/assets/synty/
+# Synty POLYGON Meadow Forest (куплено владельцем 13.11): тоже только локально — копия assets/incoming/synty/meadow (без лишнего)
+godot/assets/synty_meadow/
 
 # сохранения игры (Godot)
 saves/

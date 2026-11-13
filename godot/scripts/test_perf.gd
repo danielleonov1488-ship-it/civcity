@@ -993,15 +993,17 @@ func _freeze() -> void:
 		# Decal — пятно поисков историй (мерцает); вода — волны по TIME шейдера (Engine.time_scale его не останавливает)
 		if n is GPUParticles3D or n is CPUParticles3D or n is Birds or n is RoofBirds or n is Decal:
 			_hidden.append(n)
-		elif n is MeshInstance3D and (n as MeshInstance3D).mesh is PlaneMesh and (n as MeshInstance3D).material_override is ShaderMaterial:
-			_hidden.append(n)
+		elif n is MeshInstance3D and (n as MeshInstance3D).mesh is PlaneMesh and (n as MeshInstance3D).material_override is ShaderMaterial and A.get("water", "0") != "1":
+			_hidden.append(n)                     # water=1 — вода видна (снимки ручьёв и прудов; рябь по TIME — не для эталона)
 	for n: Node3D in _hidden:
 		n.visible = false
 	Engine.time_scale = 0.0
+	MeadowNature.freeze(true)                 # листва, мельницы и течение ручьёв качаются по TIME шейдера — замирают
 
 
 func _unfreeze() -> void:
 	Engine.time_scale = 1.0
+	MeadowNature.freeze(false)
 	for n in _hidden:
 		if is_instance_valid(n):
 			(n as Node3D).visible = true
@@ -1023,7 +1025,7 @@ func _shots(qs: Array, views: Array, tag: String) -> Dictionary:
 		_quality(q)
 		for v: Array in views:
 			_view(v)
-			game._set_hour(9.0)
+			game._set_hour(float(A.get("hour", "9")))       # hour= — снимки в другой час (природа, вода: 13.11)
 			await frames(SHOT_WAIT)
 			var img: Image = await _snap()
 			if A.has("stab"):                          # проверка: кадр через 120 кадров — тот же?

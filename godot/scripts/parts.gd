@@ -21,7 +21,7 @@ static var _tint_mats := {}
 
 ## [оттенок, какие картинки подкрашены («*» — все), remap без оттенка] или [] — группа как прежде
 static func _split(name: String, remap: Dictionary) -> Array:
-	if name.begins_with("#") or name.begins_with("K:") or remap.has("leaf"):
+	if name.begins_with("#") or name.begins_with("K:") or name.begins_with("M:") or remap.has("leaf"):
 		return []
 	var has_t := remap.has("tint")
 	var tints: Dictionary = remap.get("tints", {})
@@ -150,7 +150,7 @@ static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
 		var sz := mesh.get_aabb().size
 		if maxf(sz.x, maxf(sz.y, sz.z)) < SMALL_SHADOW:
 			(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	if name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") or name.contains("Pebbles") or name.contains("Garden_Plants"):
+	if name.contains("Grass") or name.contains("Flowers") or name.contains("Lillies") or name.contains("Pebbles") or name.contains("Garden_Plants") or Meadow.small(name):
 		var mmi: MultiMeshInstance3D = sub["mmi"]
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if tile.x >= 0:
