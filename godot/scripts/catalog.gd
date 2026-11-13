@@ -43,6 +43,8 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		color = int(dd0.get("color", 0))
 	var key := "%s:%d:%d:%d" % [type, tier, variant, color]
 	var own := type == "temple" and NewTemple.ON       # новый храм (NewTemple): собран с нуля, без прежнего наполнения
+	var grand := NewGrand.covers(type)                # новые пантеон, академия, форум, храм Венеры (NewGrand) — тоже с нуля
+	own = own or grand
 	if own:
 		key += ":N"
 	legacy = legacy and KitHouses.covers(type)
@@ -61,9 +63,11 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	b.paint(color)
 	# лавки и прилавки из своего набора (KitHouses: "shop_<тип>", "stall_<товар>") — облик и люди при деле из Blender
 	var kit_done := KitHouses.covers(type) and not type.begins_with("house_") and KitHouses.build(b, type, tier, variant, legacy, color)
-	match "#kit" if kit_done else type:
+	match "#kit" if kit_done else ("#grand" if grand else type):
 		"#kit":
 			pass
+		"#grand":
+			NewGrand.build(b, type)
 		"house_pleb":
 			if not (KitHouses.covers(type) and KitHouses.build(b, type, tier, variant, legacy, color)):
 				CatHouses._house_pleb(b, tier, variant)
@@ -117,7 +121,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		"barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia", "mars": CatMilitary.make(b, type, tier)
 		_: CatDecor._decor(b, type, variant)
 	b.base = Transform3D.IDENTITY
-	if CatDress.ON and not kit_done and not legacy and (dd0.get("kind", "") in ["house", "shop", "inn", "rp", "store"] or CatDress.TRADE_SIGN.has(type)):
+	if CatDress.ON and not kit_done and not legacy and not own and (dd0.get("kind", "") in ["house", "shop", "inn", "rp", "store"] or CatDress.TRADE_SIGN.has(type)):
 		CatDress.dress(b, type)                # цветы под окнами, плющ, горшки у дверей — как на картинках Synty
 	if not kit_done and not own:
 		_actors(b, type, tier)
