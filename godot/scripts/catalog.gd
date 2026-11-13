@@ -44,6 +44,9 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		variant = clampi(variant, 0, 1) if dd0.get("seg", false) else 0
 		color = int(dd0.get("color", 0))
 	var key := "%s:%d:%d:%d" % [type, tier, variant, color]
+	var own := type == "temple" and NewTemple.ON       # новый храм (NewTemple): собран с нуля, без прежнего наполнения
+	if own:
+		key += ":N"
 	legacy = legacy and KitHouses.covers(type)
 	if legacy:
 		key += ":L"
@@ -107,7 +110,11 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		"library": CatCivic._library(b)
 		"academy": CatCivic._academy(b)
 		"fountain": CatMonuments._fountain(b)
-		"temple": CatMonuments._temple(b)
+		"temple":
+			if own:
+				NewTemple.build(b)
+			else:
+				CatMonuments._temple(b)
 		"forum": CatMonuments._forum(b)
 		"arch": CatMonuments._arch(b)
 		"colosseum": CatMonuments._colosseum(b)
@@ -118,7 +125,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	b.base = Transform3D.IDENTITY
 	if CatDress.ON and not kit_done and not legacy and (dd0.get("kind", "") in ["house", "shop", "inn", "rp", "store"] or CatDress.TRADE_SIGN.has(type)):
 		CatDress.dress(b, type)                # цветы под окнами, плющ, горшки у дверей — как на картинках Synty
-	if not kit_done and not arena_new:
+	if not kit_done and not arena_new and not own:
 		_actors(b, type, tier)
 		CatDressCivic.dress(b, type, tier)     # склады, мастерские, поля, бани, храмы — обжитые дворы и бока (без новых деталей в следе)
 	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)

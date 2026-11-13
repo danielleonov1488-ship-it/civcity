@@ -2,12 +2,14 @@ extends Node
 ## Линейка размеров (SizeLadder): постройки рядами по ступеням, в каждом ряду первым — дом плебеев (мерка) и жители.
 ## Прежние сборки подогнаны под будущую площадь следа (ladder=1) — снимки владельцу на утверждение размеров.
 ##   bash .work/py/gpu_run.sh res://test_ladder.tscn -- out=D:/CivCity/.work/ladder/<папка>/ [ladder=0]
+##        [rows=house_pleb,library,temple;house_pleb,theatre — свои ряды: типы через запятую, ряды через «;»]
 ## Снимки: <out>/row<N>.png, <out>/all.png; подписи — строки «LAD LABEL row x y тип площадь» (склейка — .work/ladder/mk_ladder.py)
 
 var game
 var c: City
 var out := "D:/CivCity/.work/ladder/t/"
 var ladder := true
+var rows: Array = []
 
 const ROWS := [
 	["house_pleb", "house_artisan", "vigiles", "prefect", "mansio", "school", "balnea", "warehouse"],
@@ -29,6 +31,11 @@ func _ready() -> void:
 		match kv[0]:
 			"out": out = kv[1]
 			"ladder": ladder = kv[1] != "0"
+			"rows":
+				for r in kv[1].split(";"):
+					rows.append(Array(r.split(",")))
+	if rows.is_empty():
+		rows = ROWS.duplicate()
 	if ladder:
 		SizeLadder.apply()
 	Game.boot = {"new": "1", "hour": "11"}
@@ -88,12 +95,12 @@ func _run() -> void:
 	rng.seed = 11
 	var placed := []          # [ряд, тип, Rect2 в мире, площадь]
 	var widths := []
-	for ri in ROWS.size():
+	for ri in rows.size():
 		var zr: float = Z0 + DZ * ri
 		game.land.paint_line(Vector2(X0 - 6.0, zr), Vector2(X0 + 96.0, zr), 2.0, Land.Kind.ROAD, true)
 		var cur := X0
 		var ci := 0
-		for t: String in ROWS[ri]:
+		for t: String in rows[ri]:
 			var col := (ci * 3 + ri) % 6
 			ci += 1
 			var r := lot(t, col)
@@ -121,7 +128,7 @@ func _run() -> void:
 	game._set_hour(11.0)
 	await frames(20)
 	var cam := get_viewport().get_camera_3d()
-	for ri in ROWS.size():
+	for ri in rows.size():
 		var zr: float = Z0 + DZ * ri
 		var w: float = widths[ri]
 		var ctr := Vector3(X0 + 31.0, game.land.height_at(X0 + w * 0.5, zr) + 1.5, zr - 5.0)

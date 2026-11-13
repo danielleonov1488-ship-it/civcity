@@ -39,6 +39,7 @@ const VENUES := {
 const SHOWS := ["arena", "circus", "theatre"]
 const BATH_DEPTH := 0.7                 # купальщик в бассейне: ступни на столько ниже воды (видны голова, плечи и грудь)
 const STAND_GAP := 0.62                  # между стоящими (храм, бассейн), м
+const TEMPLE_MAX := 64                   # мест на утренней службе у храма — не больше (у прежнего храма их 46–51)
 ## Профиль ступеней Synty «SM_Bld_Amphitheatre_01» (в осях детали, до масштаба; снят с модели): ряды —
 ## [радиус переднего края сиденья, высота сиденья]; проход — посредине сектора; верхний обход
 const AMPHI_ROWS := [[8.02, 0.96], [9.32, 1.41], [10.66, 1.86], [11.97, 2.31], [13.30, 2.76], [14.61, 3.21], [15.92, 3.66], [17.26, 4.11]]
@@ -349,13 +350,46 @@ func _open(tris: Tris, p: Vector3, up: float, r := 0.22) -> bool:
 	return true
 
 
+## Стоять можно и на ступенях: над самой точкой открыто до up, а рядом (на r в четыре стороны) ступени выше ног — до
+## колена — не в счёт (у лестницы храма ступень 9 см при проступи 16 см), стены, колонны и статуи — в счёт
+func _stand_open(tris: Tris, p: Vector3, up: float, r := 0.22) -> bool:
+	if tris.any_in(p.x, p.z, p.y + 0.06, p.y + up):
+		return false
+	for o: Vector2 in [Vector2(r, 0), Vector2(-r, 0), Vector2(0, r), Vector2(0, -r)]:
+		if tris.any_in(p.x + o.x, p.z + o.y, p.y + 0.3, p.y + up):
+			return false
+	return true
+
+
+## Место не занято человеком при деле (жрец, служитель у алтаря): они стоят по чертежу, а не в Tris
+func _free_of_actors(bp: Bp, x: float, z: float) -> bool:
+	for a: Array in bp.actors:
+		var p: Vector3 = a[0]
+		if Vector2(p.x - x, p.z - z).length() < 0.55:
+			return false
+	return true
+
+
+## По пути можно пройти: от колен до головы (над поверхностью под ногами) нет ни алтаря, ни статуи, ни стены
+## (ступени ниже колен — по ним шагают)
+func _path_clear(tris: Tris, path: PackedVector3Array, r := 0.15) -> bool:
+	for q: Vector3 in path:
+		for o: Vector2 in [Vector2.ZERO, Vector2(r, 0), Vector2(-r, 0), Vector2(0, r), Vector2(0, -r)]:
+			if tris.any_in(q.x + o.x, q.z + o.y, q.y + 0.3, q.y + 1.5):
+				return false
+	return true
+
+
 ## Храм: утренняя служба — горожане стоят на ступенях и перед ними лицом к храму (к −Z), жрец наверху лестницы
 ## поднимает руки к ним. Места — где под ногами ступень или мостовая, а над головой открыто (не под портиком)
 func _temple(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 	var door := bp.door
 	var lo: Vector2 = tris.lo_xz
 	var hi: Vector2 = tris.hi_xz
-	var hw := minf(absf(lo.x), absf(hi.x)) - 0.3
+	var hw_in := minf(absf(lo.x), absf(hi.x)) - 0.3
+	# перед узким храмом (NewTemple, 5 м) горожане встают на мостовой и чуть шире его следа (до 2,5 м в каждую сторону) —
+	# мест почти столько же, сколько у прежнего; сбоку, в глубине следа — не шире храма (там может стоять сосед)
+	var hw := maxf(hw_in, 2.5)
 	# жрец: вверх по середине лестницы — где ступени кончились (подиум), там его место
 	var y := 0.0
 	var found := false
@@ -376,27 +410,42 @@ func _temple(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 		else:
 			flat += 0.1
 		y = maxf(y, h)
-		if flat > 0.45:
-			break
+		if flat > 0.45 and y > 0.3:
+			break                                # наверху лестницы (ровный двор перед ней — ещё не верх: у большого храма он в метр)
 		z -= 0.1
 	var list := []
 	var x := -hw
 	while x <= hw:
 		z = top.z + 0.35
 		while z < door.z + 3.2:
+			if absf(x) > hw_in and z < hi.y + 0.15:
+				z += STAND_GAP
+				continue
 			var h := tris.surface(x, z, top.y + 0.1)
 			if h == -INF and z > top.z + 0.2:
 				h = 0.0                          # перед храмом — мостовая (за чертежом): стоят и там
 			var jx := x + rng.randf_range(-0.13, 0.13)          # не строем: чуть вразброс
 			var jz := z + rng.randf_range(-0.1, 0.1)
-			if h > -INF and absf(x) > 0.55 and _open(tris, Vector3(jx, h, jz), 1.9) and rng.randf() < 0.88:
+			if h > -INF and absf(x) > 0.55 and _stand_open(tris, Vector3(jx, h, jz), 1.9) and rng.randf() < 0.88 and _free_of_actors(bp, jx, jz):
 				var root := Vector3(jx, h, jz)
-				var path := _ground_path(tris, Vector3(door.x + clampf(jx, -1.5, 1.5), 0.0, door.z + 3.6), root)
-				var yaw := atan2(top.x - jx, top.z - jz) + rng.randf_range(-0.2, 0.2)     # лицом к жрецу
-				list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": -h * 10.0 + absf(x) * 0.1 + z * 0.3, "pose": "stand"})
+				# путь: с улицы — к своей «дорожке» перед храмом, по ней прямо к месту (вверх по ступеням); места,
+				# к которым так не пройти (за алтарём, львом, щекой лестницы, в цветнике), пропускаем
+				var a := Vector3(door.x + clampf(jx, -1.5, 1.5), 0.0, door.z + 3.6)
+				var path := PackedVector3Array()
+				if jz < door.z + 0.25:
+					var m := Vector3(jx, 0.0, door.z + 0.25)
+					path = _ground_path(tris, a, m)
+					path.append_array(_ground_path(tris, path[path.size() - 1], root).slice(1))
+				else:
+					path = _ground_path(tris, a, root)
+				if _path_clear(tris, path):
+					var yaw := atan2(top.x - jx, top.z - jz) + rng.randf_range(-0.2, 0.2)     # лицом к жрецу
+					list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": -h * 10.0 + absf(x) * 0.1 + z * 0.3, "pose": "stand"})
 			z += STAND_GAP
 		x += STAND_GAP
 	list.sort_custom(func(a, b): return a["far"] < b["far"])     # сначала выше по лестнице и ближе к середине
+	if list.size() > TEMPLE_MAX:
+		list.resize(TEMPLE_MAX)              # большой храм (NewTemple, 90 м²): служба — не толпа на полплощади
 	var ids := []
 	for s in list:
 		ids.append((lay["seats"] as Array).size())

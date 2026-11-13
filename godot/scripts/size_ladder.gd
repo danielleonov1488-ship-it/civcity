@@ -24,9 +24,9 @@ const TARGET := {
 ## с ревизией, с которой он новый; постройка с меньшей ревизией (или без неё — старое сохранение) стоит на прежних
 ## клетках, и её облик собирается под прежний след (OLD_LOT, Catalog.fit).
 const REV := 1
-## тип → ревизия, с которой он в новом размере (заполняется, когда новая сборка типа готова).
-## Амфитеатр и цирк — новые сборки NewArena (чудеса города, 125 и 150 м²)
-const SINCE := {"colosseum": 1, "circus_fl": 1}
+## тип → ревизия, с которой он в новом размере (заполняется, когда новая сборка типа готова):
+## храм Юпитера (NewTemple, 90 м²), амфитеатр и цирк (NewArena, чудеса города, 125 и 150 м²) — с ревизии 1
+const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1}
 
 ## Прежний след (м, ширина × глубина при yaw 0) — проба размеров 12.11, до линейки
 const OLD_LOT := {
@@ -50,6 +50,15 @@ static func old_lot(b: Dictionary) -> bool:
 	return SINCE.has(t) and int(b.get("sz", 0)) < int(SINCE[t])
 
 
+## Тип по линейке стал больше прежнего следа (храм): постройку старого сохранения стоит пробовать вырастить на месте
+## (City.ladder_grow); те, что стали меньше (амфитеатр, цирк, большие термы), не растут
+static func grows(t: String) -> bool:
+	if not TARGET.has(t) or not OLD_LOT.has(t):
+		return false
+	var o: Vector2 = OLD_LOT[t]
+	return float(TARGET[t]) > o.x * o.y
+
+
 ## Площадь следа постройки сейчас (м²): прямоугольник вокруг её деталей, как у пробы размеров
 static func area(type: String) -> float:
 	var b := Catalog.make(type, 1, 0, 0)
@@ -68,8 +77,9 @@ static func apply() -> void:
 	var f := {}
 	for t: String in TARGET:
 		if SINCE.has(t):
-			print("LADDER %-10s уже в новом размере (SINCE)" % t)
-			continue                          # пересобран в новом размере — не подгонять
+## тип → ревизия, с которой он в новом размере (заполняется, когда новая сборка типа готова):
+## храм Юпитера (NewTemple, 90 м²), амфитеатр и цирк (NewArena, чудеса города, 125 и 150 м²) — с ревизии 1
+const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1}
 		var a := area(t)
 		if a > 0.1:
 			f[t] = sqrt(float(TARGET[t]) / a)

@@ -483,12 +483,14 @@ static func _grid_near(g: Dictionary, p: Vector2, r: float) -> Array:
 
 
 ## Поставить постройку (деньги списываются); возвращает запись. free — даром и без проверок (готовый город)
-func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false) -> Dictionary:
+## pre — клетки уже известны (возврат переноса: постройка встаёт ровно на прежние); sz — ревизия линейки размеров:
+## −1 — нынешняя (SizeLadder.REV), 0 — без неё (как из старого сохранения: облик «старого места»)
+func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false, pre := PackedInt32Array(), sz := -1) -> Dictionary:
 	place_gen += 1
 	var d: Dictionary = Defs.B[type]
 	if color < 0:
 		color = pick_color(pos)
-	var chk := check_place(type, pos, yaw, variant, color, -2 if free else -1)
+	var chk := check_place(type, pos, yaw, variant, color, -2 if free else -1, pre)
 	# здание Легиона встаёт сразу в облике своего уровня (уровень «в запасе» — после переноса старого сохранения)
 	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else (Legion.vis_tier(legion.b_level(type)) if Legion.is_building(type) else 0)),
 		"pos": pos, "yaw": yaw, "variant": variant, "color": color, "y": float(chk["y"]), "cells": chk["cells"],
@@ -497,7 +499,8 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	next_id += 1
 	if d["kind"] == "house":
 		b["kw"] = 1                           # след нового дома (KitHouses): шире прежнего
-	b["sz"] = SizeLadder.REV                  # размер по линейке на момент постройки (старые сохранения — без него)
+	if sz != 0:
+		b["sz"] = SizeLadder.REV if sz < 0 else sz      # размер по линейке на момент постройки (старые сохранения — без него)
 	var gft := "" if free else gift_take(type)     # подарок друга: даром, постройка помнит дарителя
 	if gft != "":
 		b["gift"] = gft
@@ -3607,6 +3610,264 @@ static func cat_items_load(e: Dictionary, out: Dictionary) -> void:
 		out["wr"] = wr if it.has(wr) else ""
 
 
+# ---------- линейка размеров: постройки старых сохранений растут, где есть место ----------
+
+## Постройка из старого сохранения, чей тип с тех пор стал больше (SizeLadder.old_lot), один раз после загрузки пробует
+## встать в полном размере: тот же поворот, сдвиг до GROW_SHIFT м вдоль фасада и вбок (сначала — ближние места);
+## новые клетки — своя земля, свободные (мостовая площади, трава, утоптанная земля; не дорога и не вода), до чужих
+## построек не ближе GROW_GAP м, перепад высот не больше GROW_SLOPE, у входа — дорога или площадь (check_place).
+## Мелкие украшения на пути (статуи, светильники, скамьи — не забор) не мешают: их отодвигают на ближнее свободное
+## место за новым следом (до GROW_NUDGE м), ничего не убирая; не нашлось места хоть одному — этот сдвиг не годится.
+## Встала — переезжает на новые клетки и дальше полная (sz: так и сохранится); нет — облик «старого места» (Catalog.fit).
+## Типы, что по линейке стали меньше (амфитеатр, цирк, большие термы), не растут
+const GROW_SHIFT := 2.0
+const GROW_STEP := 0.25
+const GROW_GAP := 1.0
+const GROW_SLOPE := 0.5
+const GROW_NUDGE := 3.0                 # м: насколько можно отодвинуть украшение
+const GROW_NUDGE_CELLS := 64            # клеток: украшение крупнее (пергола, беседка) не двигаем — оно мешает
+const GROW_NUDGE_MAX := 6               # украшений на одну постройку
+
+
+func ladder_grow() -> void:
+	var ids := buildings.keys()
+	ids.sort()
+	for id in ids:
+		var b: Dictionary = buildings[id]
+		if b.has("host") or not SizeLadder.old_lot(b) or not SizeLadder.grows(String(b["type"])):
+			continue
+		var spot := _grow_spot(b)
+		if spot.is_empty():
+			print("LADDER GROW %d %s fit (места нет — облик старого места)" % [int(id), b["type"]])
+			continue
+		var s: Vector2 = spot["shift"]
+		var moved := _grow_move(b, spot)
+		print("LADDER GROW %d %s shift=%.2f м (вбок %.2f, вперёд %.2f) ok — в полном размере, клеток %d%s" % [int(id), b["type"], s.length(), s.x, s.y,
+			(b["cells"] as PackedInt32Array).size(), "" if moved.is_empty() else "; украшения отодвинуты: " + ", ".join(moved)])
+
+
+## Место для полного размера рядом с прежним: {pos, cells, y, shift (вбок, вперёд), nudges [[id, место]]} или {}
+func _grow_spot(b: Dictionary) -> Dictionary:
+	var t := String(b["type"])
+	var id := int(b["id"])
+	var yaw := float(b["yaw"])
+	var v := int(b.get("variant", 0))
+	var col := int(b.get("color", 0))
+	var tier := 1 if def(b)["kind"] == "house" else (6 if t == "center" else 0)     # как в check_place
+	var bpf := Catalog.make(t, tier, v, col)
+	var rects: Array = bpf.occ_footprint()
+	var f := City.facing(yaw)
+	var ax := City.axis(yaw)
+	var n := int(round(GROW_SHIFT / GROW_STEP))
+	var shifts := []
+	for i in range(-n, n + 1):
+		for j in range(-n, n + 1):
+			var sh := Vector2(i, j) * GROW_STEP
+			if sh.length() <= GROW_SHIFT + 0.001:
+				shifts.append(sh)
+	# сначала — ближние; при равном сдвиге — вперёд, к улице или площади перед входом
+	shifts.sort_custom(func(a: Vector2, c: Vector2): return a.length_squared() < c.length_squared() - 0.0001 or (absf(a.length_squared() - c.length_squared()) <= 0.0001 and a.y > c.y))
+	var mine := {}
+	for k in (b["cells"] as PackedInt32Array):
+		mine[k] = true
+	for sh: Vector2 in shifts:
+		var pos: Vector2 = (b["pos"] as Vector2) + ax * sh.x + f * sh.y
+		var cells := land.footprint_cells(rects, pos, yaw)
+		if cells.is_empty():
+			continue
+		# кто на новых клетках: чужая постройка (или неподвижное) — нельзя; мелкое украшение — отодвинем
+		var lift := {}
+		var bad := false
+		for k in cells:
+			var o: int = land.occ[k]
+			if o == 0 or o == id:
+				continue
+			if o > 0 and _nudgeable(o):
+				lift[o] = true
+			else:
+				bad = true
+				break
+		if bad or lift.size() > GROW_NUDGE_MAX:
+			continue
+		# проба: украшения подняты, место проверяем как обычную постройку; потом ищем места украшениям — и всё назад
+		var saved := {}
+		for o: int in lift:
+			for k in (buildings[o]["cells"] as PackedInt32Array):
+				if land.occ[k] == o:
+					_occ_set(saved, k, 0)
+		var chk := check_place(t, pos, yaw, v, col, id, cells)
+		var ok := String(chk["err"]) == "" and _grow_ok(b, cells, mine)
+		var nudges := []
+		if ok and not lift.is_empty():
+			for k in (b["cells"] as PackedInt32Array):
+				if land.occ[k] == id:
+					_occ_set(saved, k, 0)
+			var tset := {}
+			for k in cells:
+				tset[k] = true
+				if land.occ[k] >= 0:
+					_occ_set(saved, k, id)
+			var tc: Vector2 = pos
+			var order := lift.keys()
+			order.sort()
+			for o: int in order:
+				var ns := _nudge_spot(buildings[o], tc, tset)
+				if ns.is_empty():
+					ok = false
+					break
+				nudges.append([o, ns])
+				for k in (ns["cells"] as PackedInt32Array):
+					_occ_set(saved, k, o)        # следующему украшению — уже занято
+			# украшения на новых местах не закрыли вход: у двери по-прежнему площадь или дорога
+			var dp3: Vector3 = Transform3D(Basis(Vector3.UP, yaw), Vector3(pos.x, 0, pos.y)) * bpf.door
+			if ok and not _road_near(Vector2(dp3.x, dp3.z), 1.7, cells):
+				ok = false
+		for k in saved:
+			land.occ[k] = int(saved[k])
+		if ok:
+			return {"pos": pos, "cells": cells, "y": float(chk["y"]), "shift": sh, "nudges": nudges}
+	return {}
+
+
+## Занятость клетки на время пробы: прежнее значение запомнить один раз (saved), поставить новое
+func _occ_set(saved: Dictionary, k: int, v: int) -> void:
+	if not saved.has(k):
+		saved[k] = land.occ[k]
+	land.occ[k] = v
+
+
+## Украшение, которое можно отодвинуть с пути растущей постройки: мелкое, на земле, не звено забора
+func _nudgeable(o: int) -> bool:
+	if not buildings.has(o):
+		return false
+	var ob: Dictionary = buildings[o]
+	var d := def(ob)
+	return d["kind"] == "decor" and not d.get("seg", false) and not d.get("wall", false) and not ob.has("host") \
+		and (ob["cells"] as PackedInt32Array).size() <= GROW_NUDGE_CELLS
+
+
+## Ближнее свободное место для украшения за новым следом (не ближе клетки к нему): сначала ближние, при равных — наружу
+func _nudge_spot(o: Dictionary, tc: Vector2, tset: Dictionary) -> Dictionary:
+	var p0: Vector2 = o["pos"]
+	var out := (p0 - tc).normalized()
+	var n := int(round(GROW_NUDGE / GROW_STEP))
+	var cands := []
+	for i in range(-n, n + 1):
+		for j in range(-n, n + 1):
+			var sh := Vector2(i, j) * GROW_STEP
+			if sh.length() > 0.001 and sh.length() <= GROW_NUDGE + 0.001:
+				cands.append(sh)
+	cands.sort_custom(func(a: Vector2, c: Vector2): return a.length_squared() < c.length_squared() - 0.0001 or (absf(a.length_squared() - c.length_squared()) <= 0.0001 and a.dot(out) > c.dot(out)))
+	for sh: Vector2 in cands:
+		var p := p0 + sh
+		var chk := check_place(String(o["type"]), p, float(o["yaw"]), int(o.get("variant", 0)), int(o.get("color", 0)), int(o["id"]))
+		if String(chk["err"]) != "":
+			continue
+		var near := false
+		for k in (chk["cells"] as PackedInt32Array):
+			var ci := k % Land.N
+			var cj := k / Land.N
+			for dj in range(-1, 2):
+				for di in range(-1, 2):
+					if tset.has((cj + dj) * Land.N + ci + di):
+						near = true
+			if near:
+				break
+		if not near:
+			return {"pos": p, "cells": chk["cells"], "d": sh.length()}
+	return {}
+
+
+## Новые клетки годятся: не дорога и не вода (свои прежние — можно), ровно, чужие постройки — не ближе GROW_GAP
+## (украшения — лишь не накрывать: это проверил check_place)
+func _grow_ok(b: Dictionary, cells: PackedInt32Array, mine: Dictionary) -> bool:
+	var id := int(b["id"])
+	var lo := INF
+	var hi := -INF
+	var c0 := Vector2i(Land.N, Land.N)
+	var c1 := Vector2i(-1, -1)
+	var mark := {}
+	for k in cells:
+		mark[k] = true
+		var y := land.hq(k)
+		lo = minf(lo, y)
+		hi = maxf(hi, y)
+		c0 = c0.min(Vector2i(k % Land.N, k / Land.N))
+		c1 = c1.max(Vector2i(k % Land.N, k / Land.N))
+		if not mine.has(k) and land.kind[k] == Land.Kind.ROAD:
+			return false
+		if y < Land.WATER_Y + 0.05:
+			return false
+	if hi - lo > GROW_SLOPE:
+		return false
+	var r := int(ceil(GROW_GAP / Land.CELL))
+	for j in range(maxi(0, c0.y - r), mini(Land.N - 1, c1.y + r) + 1):
+		for i in range(maxi(0, c0.x - r), mini(Land.N - 1, c1.x + r) + 1):
+			var o: int = land.occ[j * Land.N + i]
+			if o == 0 or o == id:
+				continue
+			if o > 0 and buildings.has(o) and def(buildings[o])["kind"] == "decor":
+				continue
+			# чужая постройка (или неподвижное — арка у въезда): нет ли новой клетки ближе r
+			for dj in range(-r, r + 1):
+				for di in range(-r, r + 1):
+					var ii := i + di
+					var jj := j + dj
+					if ii >= 0 and jj >= 0 and ii < Land.N and jj < Land.N and di * di + dj * dj <= r * r and mark.has(jj * Land.N + ii):
+						return false
+	return true
+
+
+## Переезд на полный след: прежние клетки свободны, новые — заняты, земля выровнена и сглажена кругом (как у place),
+## ревизия линейки — нынешняя (дальше облик полный и так сохраняется); украшения с пути — на свои новые места.
+## Окантовку кладёт apron_all после загрузки. Возвращает подписи отодвинутых украшений (для журнала)
+func _grow_move(b: Dictionary, spot: Dictionary) -> Array:
+	var id := int(b["id"])
+	var nudges: Array = spot.get("nudges", [])
+	for e: Array in nudges:
+		var o: Dictionary = buildings[int(e[0])]
+		for k in (o["cells"] as PackedInt32Array):
+			if land.occ[k] == int(o["id"]):
+				land.occ[k] = 0
+	for k in (b["cells"] as PackedInt32Array):
+		if land.occ[k] == id:
+			land.occ[k] = 0
+	for k in (b.get("under", PackedInt32Array()) as PackedInt32Array):
+		if int(land.under.get(k, 0)) == id:
+			land.under.erase(k)
+	var cells: PackedInt32Array = spot["cells"]
+	b["pos"] = spot["pos"]
+	b["y"] = float(spot["y"])
+	b["cells"] = cells.duplicate()
+	b["sz"] = SizeLadder.REV
+	land.flatten_cells(cells, b["y"])
+	land.blend_ring(cells, b["y"], 8)
+	for k in cells:
+		if land.occ[k] >= 0:
+			land.occ[k] = id
+	_under_add(b)
+	var out := []
+	for e: Array in nudges:
+		var o: Dictionary = buildings[int(e[0])]
+		var ns: Dictionary = e[1]
+		var oc: PackedInt32Array = ns["cells"]
+		# высота — по земле после выравнивания под постройкой (кольцо сглаживания могло задеть место украшения)
+		var lo := INF
+		var hi := -INF
+		for k in oc:
+			lo = minf(lo, land.hq(k))
+			hi = maxf(hi, land.hq(k))
+		o["pos"] = ns["pos"]
+		o["y"] = roundf((lo + hi) * 0.5 / Land.STEP) * Land.STEP
+		o["cells"] = oc.duplicate()
+		land.flatten_cells(oc, o["y"])
+		for k in oc:
+			if land.occ[k] >= 0:
+				land.occ[k] = int(o["id"])
+		out.append("%s#%d %.2f м" % [o["type"], int(o["id"]), float(ns["d"])])
+	land.walk_ver += 1
+	return out
+
 # ---------- сохранение ----------
 
 func save_data() -> Dictionary:
@@ -3758,6 +4019,7 @@ func load_data(d: Dictionary) -> void:
 		_under_add(b)                          # полоса под арками акведука — заново (не сохраняется)
 		next_id = maxi(next_id, int(b["id"]) + 1)
 	legion.sync_tiers()                          # облик зданий Легиона — по их уровням (старые сохранения: уровни войск)
+	ladder_grow()                                # линейка размеров: храм старого сохранения — в полный размер, если есть место
 	apron_all()
 	compute()
 	# летопись: старое сохранение без неё — счётчики из того, что стоит, заслуженные венки разом (одна строка)

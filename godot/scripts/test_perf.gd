@@ -53,6 +53,9 @@ func _ready() -> void:
 	# plain=1 — Synty без наполнения (CatDress, CatDressCivic): снимки «было» для сравнения детальных проходов
 	CatDress.ON = A.get("plain", "0") != "1"
 	CatDressCivic.ON = CatDress.ON
+	# newtemple=0 — прежний храм Юпитера (CatMonuments._temple), 1 — новый (NewTemple); без него — как в игре
+	if A.has("newtemple"):
+		NewTemple.ON = A["newtemple"] != "0"
 	if A.get("ladder", "0") == "1":
 		SizeLadder.apply()                             # проба линейки размеров: прежние сборки в будущем размере
 	Parts.split_on = A.get("split", "1") != "0"        # 12.11: оттенок у экземпляра (split=0 — как прежде, для сравнения)
@@ -1023,7 +1026,7 @@ func _shots(qs: Array, views: Array, tag: String) -> Dictionary:
 		_quality(q)
 		for v: Array in views:
 			_view(v)
-			game._set_hour(9.0)
+			game._set_hour(float(A.get("hour", "9")))       # снимки — в 9 утра (эталон); hour= — свой час
 			await frames(SHOT_WAIT)
 			var img: Image = await _snap()
 			if A.has("stab"):                          # проверка: кадр через 120 кадров — тот же?
