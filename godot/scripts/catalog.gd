@@ -53,6 +53,9 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	old_lot = old_lot and SizeLadder.SINCE.has(type)
 	if old_lot:
 		key += ":O"
+	var civ := NewCivic.covers(type)             # новые театр, одеон, библиотека, большие термы (NewCivic): собраны с нуля
+	if civ:
+		key += ":C"
 	if _cache.has(key):
 		return _cache[key]
 	fit = SizeLadder.OLD_LOT.get(type, Vector2.ZERO) if old_lot else Vector2.ZERO
@@ -83,6 +86,11 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 				CatHouses._house_patrician_town(b, tier, variant)     # городской домус — после перестройки (Д12)
 			else:
 				CatHouses._house_patrician(b, tier, variant)
+		"theatre", "odeon", "library", "thermae":
+			if civ:
+				NewCivic.build(b, type)        # новые сборки: без прежнего наполнения (CatDress, CatDressCivic) и прежних людей при деле
+			else:
+				NewCivic.old(b, type)          # прежние сборки (CatCivic, CatGrand) — снимки «было»
 		"stall_fruit": CatShops._stall(b, "fruit", variant)
 		"stall_veg": CatShops._stall(b, "veg", variant)
 		"stall_fish": CatShops._stall(b, "fish", variant)
@@ -191,6 +199,8 @@ static func canopy_remap(i: int) -> Dictionary:
 
 ## Люди при деле: видны, пока постройка работает
 static func _actors(b: Bp, type: String, tier: int) -> void:
+	if NewCivic.covers(type):
+		return                                  # у новых сборок (NewCivic) люди при деле — свои
 	match type:
 		"farm":
 			b.actor(Vector3(-2.3, 0, -1.2), b.rng.randf() * TAU, "Fixing_Kneeling", "pleb")

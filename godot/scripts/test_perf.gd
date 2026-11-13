@@ -59,6 +59,9 @@ func _ready() -> void:
 	if A.get("ladder", "0") == "1":
 		SizeLadder.apply()                             # проба линейки размеров: прежние сборки в будущем размере
 	Parts.split_on = A.get("split", "1") != "0"        # 12.11: оттенок у экземпляра (split=0 — как прежде, для сравнения)
+	# newcivic=0 — прежние театр, одеон, библиотека и большие термы (CatCivic, CatGrand), 1 — новые (NewCivic); без него — как в игре
+	if A.has("newcivic"):
+		NewCivic.ON = {} if A["newcivic"] == "0" else {"theatre": true, "odeon": true, "library": true, "thermae": true}
 	city_src = str(A.get("city", OWNER))
 	if city_src == "new" or not FileAccess.file_exists(city_src):
 		if city_src != "new":

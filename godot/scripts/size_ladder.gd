@@ -25,14 +25,15 @@ const TARGET := {
 ## клетках, и её облик собирается под прежний след (OLD_LOT, Catalog.fit).
 const REV := 1
 ## тип → ревизия, с которой он в новом размере (заполняется, когда новая сборка типа готова):
-## храм Юпитера (NewTemple, 90 м²), амфитеатр и цирк (NewArena, чудеса города, 125 и 150 м²) — с ревизии 1
-const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1}
+## храм Юпитера (NewTemple, 90 м²), амфитеатр и цирк (NewArena, чудеса города, 125 и 150 м²),
+## театр, одеон, библиотека, большие термы (NewCivic) — с ревизии 1; в старых городах — на прежних клетках
+const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1, "theatre": 1, "odeon": 1, "library": 1, "thermae": 1}
 
 ## Прежний след (м, ширина × глубина при yaw 0) — проба размеров 12.11, до линейки
 const OLD_LOT := {
 	"temple": Vector2(6.3, 7.6), "colosseum": Vector2(15.2, 15.7), "circus_fl": Vector2(28.6, 8.9), "thermae": Vector2(14.6, 10.5),
 	"library": Vector2(8.3, 5.9), "pantheon": Vector2(7.2, 9.9), "prefect": Vector2(5.6, 5.1), "mansio": Vector2(4.9, 5.6),
-	"warehouse": Vector2(6.8, 4.5), "balnea": Vector2(6.7, 4.6),
+	"warehouse": Vector2(6.8, 4.5), "balnea": Vector2(6.7, 4.6), "theatre": Vector2(10.3, 7.65), "odeon": Vector2(9.3, 7.15),
 }
 
 ## Ступень каждого типа — для подписей на снимках

@@ -53,6 +53,8 @@ const BRICK_VARIANTS := 6
 
 
 static func dress(b: Bp, type: String) -> void:
+	if NewCivic.covers(type):
+		return                                         # новая библиотека (NewCivic) — со своим убранством
 	var ident := _ident(b, type)                   # до первых деталей прохода: облик дома у земли
 	var walls := []
 	var ends := []

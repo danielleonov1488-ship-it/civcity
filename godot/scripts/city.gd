@@ -138,6 +138,8 @@ func apron_of(b: Dictionary) -> int:
 	var d := def(b)
 	if d.get("water", false):
 		return 0
+	if NewCivic.covers(String(b["type"])):
+		return 0                                 # новые театр, одеон, библиотека, термы — на своём мощёном основании с бордюром (NewCivic)
 	if String(b["type"]) in KERB_TYPES:
 		return 2
 	if NewArena.covers(String(b["type"])):
