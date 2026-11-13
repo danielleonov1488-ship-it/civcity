@@ -161,9 +161,13 @@ func layout(b: Dictionary) -> Dictionary:
 	# уменьшенная трибуна (Catalog.SHRINK): ступени ниже — зритель сидит на своём месте, ступни чуть ниже кромки ступени
 	_amphi_drop = Crowd.SEAT_DROP * float(Catalog.SHRINK.get(String(b["type"]), 1.0))
 	# новые театр, одеон и большие термы (NewCivic) — места по их рядам и бассейнам, актёр на их сцене
-	match "#own" if NewCivic.covers(String(b["type"])) else String(VENUES[b["type"]]["kind"]):
+	# новые бани (NewCivic2) — купальщики в их бассейне, путь — через вход и двор
+	var own := "#own" if NewCivic.covers(String(b["type"])) else ("#own2" if NewCivic2.covers(String(b["type"])) else "")
+	match own if own != "" else String(VENUES[b["type"]]["kind"]):
 		"#own":
 			NewCivic.seats(self, lay, b, tris)
+		"#own2":
+			NewCivic2.seats(self, lay, b, tris)
 		"temple":
 			_temple(lay, bp, tris)
 		"bath":

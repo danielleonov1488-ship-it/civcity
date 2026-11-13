@@ -286,6 +286,11 @@ func _fade_test() -> void:
 		if not r.is_empty():
 			break
 		await frames(10)
+	if r.is_empty():
+		# в маленьком городе прохожих далеко от цели может и не оказаться (многие на досуге: у станции, у построек) —
+		# один взрослый с улицы идёт гулять в дальний конец города
+		r = _send_far_walker()
+		await frames(3)
 	if not check(not r.is_empty(), "прохожий в пути (для проявления)"):
 		return
 	ppl._hide(r)                                 # ушёл с улицы: идёт невидимо, без узла
@@ -296,6 +301,34 @@ func _fade_test() -> void:
 	ppl.max_vis = keep
 	check(r["node"] != null and float(r["fade"]) <= 4.0 / 30.0 / 0.6 + 0.001,
 		"прохожий получил узел в свою очередь — проявляется по кадру (%.2f), а не сразу" % float(r["fade"]), r["node"] != null)
+
+
+## Взрослый, что стоит на улице, идёт гулять к дому в дальнем конце города (не ближе 14 м): прохожий далеко от цели
+func _send_far_walker() -> Dictionary:
+	for x: Dictionary in ppl.residents:
+		if x["state"] != "idle" or bool(x.get("child", false)) or x["node"] == null or int(x["id"]) == ppl.focus_rid:
+			continue
+		var best := Vector2.INF
+		var bd := 0.0
+		for id in c.buildings:
+			var b: Dictionary = c.buildings[id]
+			if not c.is_house(b):
+				continue
+			var dp := c.door_point(b)
+			if dp.distance_to(x["p"]) > bd:
+				bd = dp.distance_to(x["p"])
+				best = dp
+		if bd < 14.0:
+			continue
+		var pick := {"act": "stroll", "p": ppl._near_road(best, 6.0)}
+		ppl._release(x)
+		ppl._claim(x, pick)
+		ppl._go(x, pick["p"], "errand", true)
+		var pth: PackedVector2Array = x.get("path", PackedVector2Array())
+		if x["state"] == "walk" and pth.size() > 1 and (x["p"] as Vector2).distance_to(pth[pth.size() - 1]) > 8.0:
+			print("RES NOTE прохожих далеко от цели не было — житель %d идёт гулять за %.0f м" % [int(x["id"]), bd])
+			return x
+	return {}
 
 
 ## Щелчок по 20 случайным жителям на 34 м: ≥ 95 % — карточка именно его
