@@ -8,6 +8,8 @@ extends Node
 ##   mode=show   — представление в обоих: зрители сидят, на арене бьются, в цирке скачут (снимки)
 ##   mode=video  — кадры ролика (bash .work/py/gpu_run.sh --fixed-fps 30 …): video=colosseum|circus_fl dur=7
 ##   new=0 — прежние здания (NewArena.ON = false)
+##   old=1 — новые здания на месте прежних, как в старом сохранении (постройка без «sz»: облик на прежнем следе,
+##           Catalog.fit — мощёная площадь по всему прежнему следу); улица — у края прежнего следа
 var game
 var c: City
 var out := "D:/CivCity/.work/pilot/arena/shots/"
@@ -18,7 +20,10 @@ var only := []
 var cam := []
 var video := "colosseum"
 var vdur := 7.0
+var vk := 1.0                           # даль камеры ролика (× к прежней)
+var vwarm := 240                        # кадров разгона до записи
 var placed := {}                        # тип → постройка
+var old_lot := false
 var houses := []
 const X0 := 136.0
 const Z0 := 124.0
@@ -34,9 +39,12 @@ func _ready() -> void:
 			"tag": tag = kv[1]
 			"mode": mode = kv[1]
 			"new": NewArena.ON = kv[1] != "0"
+			"old": old_lot = kv[1] != "0"
 			"only": only = Array(kv[1].split(","))
 			"video": video = kv[1]
 			"dur": vdur = float(kv[1])
+			"vk": vk = float(kv[1])
+			"warm": vwarm = int(kv[1])
 			"cam":
 				for v in kv[1].split(","):
 					cam.append(float(v))
@@ -68,6 +76,8 @@ func put(type: String, at: Vector2) -> Dictionary:
 		var pl: Dictionary = game.placement(type, p)
 		if pl["err"] == "":
 			var b := c.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"], true)
+			if old_lot:
+				b.erase("sz")                 # как постройка старого сохранения: стоит на прежнем следе
 			game._show(b)
 			return b
 		err = pl["err"]
@@ -122,7 +132,12 @@ func _run() -> void:
 		var x0 := 0.0
 		for r: Rect2 in bp0.footprint():
 			x0 = minf(x0, r.position.x)
-		var b := put(t, Vector2(x - x0 + 0.5, Z0 - 2.2 - bp0.row_front() - 0.3))
+		var front := bp0.row_front()
+		if old_lot and NewArena.OLD_RECT.has(t):
+			var orr: Rect2 = NewArena.OLD_RECT[t]
+			front = orr.end.y                 # прежний след — до улицы
+			x0 = minf(x0, orr.position.x)
+		var b := put(t, Vector2(x - x0 + 0.5, Z0 - 2.2 - front - 0.3))
 		if b.is_empty():
 			continue
 		placed[t] = b
@@ -161,8 +176,8 @@ func _citizens() -> void:
 		p.play("Idle_Loop", 0.0, rng.randf())
 
 
-func _view(t: Vector2, yaw: float, pitch: float, d: float) -> void:
-	game.rig.set_view(Vector3(t.x, game.land.height_at(t.x, t.y) + 0.6, t.y), yaw, pitch, d)
+func _view(t: Vector2, yaw: float, pitch: float, d: float, lift := 0.6) -> void:
+	game.rig.set_view(Vector3(t.x, game.land.height_at(t.x, t.y) + lift, t.y), yaw, pitch, d)
 
 
 func _scale() -> void:
@@ -211,10 +226,12 @@ func _sheet() -> void:
 			# [поворот от фасада, наклон, даль, сдвиг цели к фасаду (м)]
 			var views := [[-40.0, 34.0, dd, 0.0], [40.0, 34.0, dd, 0.0], [180.0, 36.0, dd, 0.0], [-90.0, 30.0, dd, 0.0], [90.0, 30.0, dd, 0.0],
 				[-14.0, 14.0, maxf(7.0, rad * 1.1), (wb[3] - wb[2]) * 0.5 - 0.5], [0.0, 62.0, dd * 1.1, 0.0]]
+			# высокое здание (новый амфитеатр 6,5 м) — цель камеры выше земли, чтобы верх и навесы были в кадре
+			var lift := maxf(0.6, c.blueprint(b).top_y() * 0.3)
 			for i in views.size():
 				var v: Array = views[i]
 				var tp := ctr + f * float(v[3])
-				_view(tp, fy + float(v[0]), float(v[1]), float(v[2]))
+				_view(tp, fy + float(v[0]), float(v[1]), float(v[2]), lift if i < 5 else 0.6)
 				await frames(35)
 				await snap("%s_%s_v%d_h%d.png" % [tag, t, i, int(h * 10)])
 
@@ -239,7 +256,7 @@ func _show() -> void:
 		var rad := maxf(wb[1] - wb[0], wb[3] - wb[2]) * 0.5
 		var f := City.facing(float(b["yaw"]))
 		var fy := rad_to_deg(atan2(f.x, f.y))
-		var views := [[-30.0, 48.0, maxf(12.0, rad * 2.6)], [150.0, 40.0, maxf(10.0, rad * 2.0)], [20.0, 30.0, maxf(7.0, rad * 1.4)], [0.0, 70.0, maxf(12.0, rad * 2.4)]]
+		var views := [[-30.0, 48.0, maxf(12.0, rad * 2.6)], [150.0, 44.0, maxf(10.0, rad * 2.0)], [20.0, 52.0, maxf(8.0, rad * 1.45)], [0.0, 70.0, maxf(12.0, rad * 2.4)]]
 		for i in views.size():
 			var v: Array = views[i]
 			_view(ctr, fy + float(v[0]), float(v[1]), float(v[2]))
@@ -267,7 +284,7 @@ func _video() -> void:
 	var fy := rad_to_deg(atan2(f.x, f.y))
 	# разгон: бойцы вышли, колесницы набрали ход
 	var warm := 0
-	while warm < 240:
+	while warm < vwarm:
 		await get_tree().process_frame
 		warm += 1
 	var dir := out + "frames_%s/" % video
@@ -278,7 +295,7 @@ func _video() -> void:
 		var yaw := fy - 35.0 + 50.0 * k
 		var d := lerpf(rad * 3.0, rad * 2.6, k) if video == "colosseum" else lerpf(rad * 1.5, rad * 1.25, k)
 		var pitch := lerpf(58.0, 50.0, k) if video == "colosseum" else lerpf(40.0, 32.0, k)
-		_view(ctr, yaw, pitch, maxf(6.5, d))
+		_view(ctr, yaw, pitch, maxf(6.5, d * vk))
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(dir + "f%04d.png" % i)
 		await get_tree().process_frame

@@ -284,6 +284,7 @@ func _human(L: Dictionary, size: float, rng: RandomNumberGenerator) -> void:
 		head.add_child(eye)
 	# в руках
 	var shield := L.has("left") and String(L["left"]).begins_with("SM_Wep_Shield")
+	shielded = shield
 	if L.has("right"):
 		weapon = _hold(String(L["right"]), "right", L)
 	if L.has("left"):
@@ -965,6 +966,133 @@ func die() -> void:
 	if crew:
 		crew.die()
 	_set_overlay(null)
+
+
+# =====================================================================
+#   игры в амфитеатре (ArenaShow): бой гладиаторов — Universal Animation Library 2
+# =====================================================================
+
+## Quaternius Universal Animation Library 2 (CC0, тот же скелет, что у UAL1: BoneMap при импорте). Бою Легиона эти
+## движения не нужны — у его бойцов прежние; гладиаторы получают их своей библиотекой «u2» (arena_moves)
+const UAL2 := "res://assets/people/UAL2_Standard.glb"
+## Движения арены: мечом — простые удары с возвратом в стойку (A, B), удар с разворотом (C), серия из трёх, тяжёлая
+## серия, выпад; щитом — рывок с ударом и толчок; блок мечом; отброшен ударом; щит пробит; удар кулаком
+const ARENA_CLIPS := ["Idle_Shield", "Idle_Shield_Break", "Sword_Regular_A", "Sword_Regular_A_Rec", "Sword_Regular_B",
+	"Sword_Regular_B_Rec", "Sword_Regular_C", "Sword_Regular_Combo", "Sword_Heavy_Combo", "Sword_Dash", "Sword_Block", "Shield_Dash",
+	"Shield_OneShot", "Hit_Knockback", "Melee_Hook", "Melee_Hook_Rec"]
+static var _arena_lib: AnimationLibrary
+static var _strikes := {}
+var shielded := false                  # в левой руке щит (у щитоносца удары мечом — с щитом у груди, «G_»)
+
+
+## Библиотека движений арены (один раз на игру): движения UAL2 из ARENA_CLIPS; у ударов мечом, блока и отброса —
+## ещё вариант «G_» с левой рукой в стойке Sword_Idle (щит перед собой, как в бою Легиона и как его держит хват _grip)
+static func arena_library() -> AnimationLibrary:
+	if _arena_lib != null:
+		return _arena_lib
+	_arena_lib = AnimationLibrary.new()
+	var sc := load(UAL2) as PackedScene
+	if sc == null:
+		return _arena_lib
+	var src := sc.instantiate()
+	var ap: AnimationPlayer = src.find_children("*", "AnimationPlayer", true, false)[0]
+	var sword_idle := library().get_animation("Sword_Idle")
+	for n in ap.get_animation_list():
+		var short := String(n).get_slice("/", String(n).get_slice_count("/") - 1)
+		if not short in ARENA_CLIPS:
+			continue
+		var a := ap.get_animation(n).duplicate(true) as Animation
+		a.loop_mode = Animation.LOOP_LINEAR if short == "Idle_Shield" else Animation.LOOP_NONE
+		_arena_lib.add_animation(short, a)
+		if short.begins_with("Sword_") or short.begins_with("Hit_") or short.begins_with("Melee_"):
+			var g := _with_pose(a, sword_idle, LEFT_ARM, 0.0, false)
+			g.loop_mode = a.loop_mode
+			_arena_lib.add_animation("G_" + short, g)
+	src.free()
+	return _arena_lib
+
+
+## Гладиатор: добавить бойцу движения арены (библиотека «u2»)
+func arena_moves() -> void:
+	if anim == null or anim.has_animation_library("u2"):
+		return
+	anim.add_animation_library("u2", arena_library())
+
+
+## Имя движения арены у этого бойца («u2/G_…» у щитоносца, если есть такой вариант); "" — нет такого
+func _u2(n: String) -> String:
+	if anim == null:
+		return ""
+	if shielded and anim.has_animation("u2/G_" + n):
+		return "u2/G_" + n
+	return "u2/" + n if anim.has_animation("u2/" + n) else ""
+
+
+func has_move(n: String) -> bool:
+	return _u2(n) != ""
+
+
+## Сыграть движение арены n, следом rec (возврат в стойку). Пока оно идёт, стойка и шаг его не перебивают;
+## cut > 0 — только начало движения (вздрогнул от удара — и снова в стойку, а не падает навзничь).
+## Возвращает длину (с) — всего и до конца n: [всего, n]
+func arena_move(n: String, rec := "", blend := 0.08, cut := 0.0) -> Array:
+	var nm := _u2(n)
+	if nm == "" or dead:
+		return [0.0, 0.0]
+	_state = ""
+	anim.play(nm, blend)
+	_speed()
+	var k := maxf(0.1, anim.speed_scale)
+	var main := anim.get_animation(nm).length / k
+	var total := main
+	var nr := _u2(rec) if rec != "" else ""
+	if nr != "":
+		anim.queue(nr)
+		total += anim.get_animation(nr).length / k
+	_atk = total if cut <= 0.0 else minf(total, cut)
+	_atk_len = _atk
+	return [total, main]
+
+
+## Держать текущее движение t секунд (не возвращаться в стойку): упавший гладиатор лежит, пока не встанет на колено
+func hold(t: float) -> void:
+	_atk = t
+	_atk_len = t
+
+
+## Когда в движении n удар доходит до цели (доли его длины): пики скорости кисти — правой, у ударов щитом левой.
+## Считается по дорожкам движения один раз на движение
+func strikes(n: String) -> Array:
+	var nm := _u2(n)
+	if _strikes.has(nm):
+		return _strikes[nm]
+	var out := []
+	if nm != "" and skel != null:
+		var a := anim.get_animation(nm)
+		var hand := "LeftHand" if n.begins_with("Shield") else "RightHand"
+		var dt := 1.0 / 30.0
+		var sp := PackedFloat32Array()
+		var prev := _pose(skel, a, 0.0, hand).origin
+		var t := dt
+		while t <= a.length + 0.001:
+			var q := _pose(skel, a, t, hand).origin
+			sp.append(q.distance_to(prev) / dt)
+			prev = q
+			t += dt
+		var mx := 0.0
+		for v in sp:
+			mx = maxf(mx, v)
+		var last := -1.0
+		for i in range(1, sp.size() - 1):
+			if sp[i] >= sp[i - 1] and sp[i] >= sp[i + 1] and sp[i] > mx * 0.5:
+				var tt := (i + 0.5) * dt
+				if last < 0.0 or tt - last > 0.32:
+					out.append(clampf(tt / a.length, 0.05, 0.95))
+					last = tt
+	if out.is_empty():
+		out = [0.5]
+	_strikes[nm] = out
+	return out
 
 
 ## После победы: живые радуются

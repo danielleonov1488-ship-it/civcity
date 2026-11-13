@@ -500,6 +500,18 @@ func _pave_under() -> void:
 			if int(L.occ[k2]) == 0 and int(L.wear[k2]) > 0:
 				ring_w += 1
 	var saved := cells.duplicate()
+	if NewArena.covers("colosseum"):
+		# новый амфитеатр (NewArena, владелец 13.11: «под зданием обычная земля», «рваный край»): своё мощёное основание
+		# с бордюром в чертеже — мостовой и утоптанной каймы по клеткам под ним и вокруг нет
+		var bp := c.blueprint(b)
+		var pav := 0
+		var kerb := 0
+		for pt in bp.parts:
+			pav += 1 if pt[0] == "SM_Bld_Base_Floor_01" and pt[2] == CatMonuments.PAVING else 0
+			kerb += 1 if pt[0] == "SM_Bld_Ground_Edge_01" else 0
+		c.remove(b, false, true)
+		check(pav >= 20 and kerb >= 20 and plaza == 0 and ring_w < 25, "новый амфитеатр: своё основание (плит %d, камней бордюра %d), под клетками мостовой нет (%d), каймы нет (%d)" % [pav, kerb, plaza, ring_w])
+		return
 	c.remove(b, false, true)
 	var back := 0
 	for k in saved:

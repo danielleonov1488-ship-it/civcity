@@ -66,8 +66,8 @@ func _run() -> void:
 		return
 	await frames(10)
 	var V: Dictionary = sp.venues.get(int(b["id"]), {})
-	# новый маленький амфитеатр (NewArena, как четыре дома) — мест заметно меньше прежних двухсот
-	var need := 40 if NewArena.covers("colosseum") else 200
+	# новый амфитеатр-чудо (NewArena, Ø 12,6 м, как одиннадцать домов) — пять рядов, около 140 мест (прежний — больше двухсот)
+	var need := 100 if NewArena.covers("colosseum") else 200
 	check(not V.is_empty() and (V["lay"]["seats"] as Array).size() > need, "места на трибунах (больше %d): %d" % [need, 0 if V.is_empty() else (V["lay"]["seats"] as Array).size()])
 	game.speed = 3.0
 	game._set_hour(12.5)
@@ -75,7 +75,7 @@ func _run() -> void:
 	check(ok, "по расписанию начался сбор")
 	ok = await _until(func(): return _show_people() > 0, 20.0)
 	check(ok, "горожане идут на представление: %d" % _show_people())
-	var fill_n := mini(40, int((V["lay"]["seats"] as Array).size() * 0.6))     # у маленького амфитеатра всего ~50 мест
+	var fill_n := mini(40, int((V["lay"]["seats"] as Array).size() * 0.6))     # не больше 60% мест (если мест мало)
 	ok = await _until(func(): return (V["who"] as Array).size() > fill_n, 30.0)
 	check(ok, "трибуны заполняются: %d" % (V["who"] as Array).size())
 	var rid_on := (V["who"] as Array).filter(func(s): return int(s["rid"]) > 0).size()

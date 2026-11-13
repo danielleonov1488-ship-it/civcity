@@ -148,6 +148,8 @@ func venue_hide(b: Dictionary) -> void:
 ## Места постройки (по её чертежу; один раз на тип и вариант)
 func layout(b: Dictionary) -> Dictionary:
 	var key := "%s|%d|%d" % [b["type"], int(b.get("variant", 0)), int(b.get("color", 0))]
+	if SizeLadder.old_lot(b):
+		key += "|O"                              # постройка старого сохранения на прежнем следе — свой чертёж (Catalog.fit)
 	if _layouts.has(key):
 		return _layouts[key]
 	var t0 := Time.get_ticks_msec()
