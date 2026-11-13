@@ -15,6 +15,8 @@ static var _cache := {}
 ## детализировать»): у амфитеатра, цирка, театра и памятников Synty общий масштаб умножается на это (зрелища — по нему же)
 const SHRINK := {"colosseum": 0.8, "circus_fl": 0.75, "theatre": 0.82,      # одеон и так невелик (уменьшенный — на ступенях не сесть)
 	"temple": 0.85, "venus": 0.7, "pantheon": 0.65, "forum": 0.8, "pharos": 0.65, "ludus": 0.8}
+## Проба линейки размеров (SizeLadder.apply): прежние сборки, подогнанные под будущий размер — только для снимков
+static var LADDER := {}
 
 
 ## Масштаб постройки этого типа в городе (единицы чертежа → метры)
@@ -22,7 +24,7 @@ static func scale_of(type: String) -> float:
 	var dd: Dictionary = Defs.B.get(type, {})
 	if dd.get("kind", "") == "decor" and not dd.get("wall", false):
 		return DECOR
-	return ARCH * float(SHRINK.get(type, 1.0))
+	return ARCH * float(SHRINK.get(type, 1.0)) * float(LADDER.get(type, 1.0))
 
 
 ## legacy — дом из старого сохранения (стоит на прежнем, более узком следе): свой дом ужимается по нему (KitHouses)
