@@ -319,7 +319,12 @@ func _new() -> void:
 		# храм Венеры — свой (владелец 12.11: «уменьшить и детализировать»): колонн Synty в нём нет, облик тот же
 		check(built.has("venus") and corin1 == corin0 and corin2 == corin0, "«Низкая»: храм Венеры — свой, без колонн Synty; смена качества его не ломает (%d → %d → %d)" % [corin0, corin1, corin2])
 	else:
-		check(built.has("venus") and corin1 == corin0 - 8 and corin2 == corin0, "«Низкая»: у храма Венеры 8 коринфских колонн подменяются лёгкими и возвращаются (%d → %d → %d)" % [corin0, corin1, corin2])
+		# сколько коринфских колонн у храма Венеры — по его чертежу (прежний — 8, новый NewGrand — 6 спереди)
+		var nc := 0
+		if built.has("venus"):
+			for p: Array in c.blueprint(built["venus"]).parts:
+				nc += 1 if String(p[0]) == "SM_Bld_Pillar_Large_04" else 0
+		check(built.has("venus") and nc > 0 and corin1 == corin0 - nc and corin2 == corin0, "«Низкая»: у храма Венеры %d коринфских колонн подменяются лёгкими и возвращаются (%d → %d → %d)" % [nc, corin0, corin1, corin2])
 	# --- 5.7: «Улучшить» ---
 	await _upgrade(X0, Z0, houses)
 	await _street_cache(X0, Z0)
