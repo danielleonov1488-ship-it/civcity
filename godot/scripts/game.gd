@@ -6,7 +6,10 @@ extends Node3D
 ## и встаёт фасадом к дороге), жители живут своей жизнью.
 ## Запуск: без параметров — меню; -- --new | --play | --demo; снимок: --shot=путь.png --view=x,z,yaw,pitch,dist --hour=8
 
-static var boot := {}                 # с чем перезапуститься: {"menu"|"play"|"new"|"demo": "1"}
+static var boot := {}
+## Песочница для проверки владельцем («Тест CivCity.bat», --sandbox): всё изучено, высший уровень города, деньги не
+## кончаются, без обучения. Держится до выхода из игры (меню → новая игра — тоже песочница)
+static var sandbox := false                 # с чем перезапуститься: {"menu"|"play"|"new"|"demo": "1"}
 const DAY_LEN := 600.0                # сутки — 10 минут при обычной скорости (час — 25 секунд), как в Town to City
 const LAND_LAYER := 2                 # слой видимости земли: Decal историй горожан ложится только на неё
 const HOUSE_LIGHT := 0.12             # ночной свет жилых домов (фонарик у двери, жаровня) — доля от фонаря-украшения
@@ -226,6 +229,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
+	if args.has("sandbox"):
+		sandbox = true
 	if not boot.is_empty():
 		args = boot.duplicate()
 	boot = {}
@@ -439,7 +444,9 @@ func _ready() -> void:
 	city.family_came.connect(func(f): hud.on_arrival(f))
 	city.arrive_advice.connect(func(t): hud.on_arrive_block(t))
 	city.festival_changed.connect(_fest_look)
-	if mode == "new" and not loaded and not settings.get("tut_done", false) and shot_path == "":
+	if sandbox and mode in ["play", "new"]:
+		_sandbox_apply()
+	if mode == "new" and not loaded and not settings.get("tut_done", false) and shot_path == "" and not sandbox:
 		Tutorial.start_new(city)
 	tutorial = Tutorial.new()
 	add_child(tutorial)
@@ -2521,11 +2528,24 @@ func _ivy_tick(dt: float) -> void:
 				return                            # понемногу — кадр не дёргается
 
 
+## Песочница: всё изучено, высший уровень города, денег и Славы с запасом
+func _sandbox_apply() -> void:
+	for r in Defs.RESEARCH:
+		city.research[r["id"]] = true
+	city.level = Defs.LEVELS.size() - 1
+	city.money = 9999999.0
+	city.rp = maxf(city.rp, 999999.0)
+	if city.legion:
+		city.legion.glory = maxf(city.legion.glory, 999999.0)
+
+
 func _process(dt: float) -> void:
 	if ready_done:
 		_ivy_tick(dt)
 	if not ready_done:
 		return
+	if sandbox and mode in ["play", "new"] and city.money < 5000000.0:
+		city.money = 9999999.0                # песочница: деньги не кончаются
 	frame += 1
 	# тяжёлое — по одному за кадр (3.3: после мазка кадры не дольше ~40 мс): пересчёт города, окно, люди у построек;
 	# в такой кадр сетка земли не перестраивается (маска покрытий — всегда)
