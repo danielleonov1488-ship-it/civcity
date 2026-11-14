@@ -17,6 +17,7 @@ var variety := false
 var tier := 3
 var vsel := []
 var vars_sel := []
+var close := false                   # close=1 — вблизи спереди и сзади под 45° сверху (лист проверки)
 var empty := false                   # каждый второй дом — пустой (ночью у него темно, как у прежних)
 var nput := 0
 var tagn := "new"
@@ -42,6 +43,7 @@ func _ready() -> void:
 					hours.append(float(h))
 			"fit": fit = kv[1] != "0"
 			"empty": empty = kv[1] != "0"
+			"close": close = kv[1] != "0"
 			"grow": grow = kv[1] != "0"
 			"variety": variety = kv[1] != "0"
 			"tier": tier = int(kv[1])
@@ -189,6 +191,8 @@ func _one(t: Dictionary) -> void:
 	var Ds := 9.5 if String(t["type"]) == "house_patrician" else 9.0          # сбоку — ближе соседа (через 13 м)
 	# [поворот от фасада, наклон, даль, цель: 0 — середина, 1 — вход]
 	var views := [[28.0, 30.0, D, 0], [90.0, 26.0, Ds, 0], [200.0, 32.0, D, 0], [-90.0, 26.0, Ds, 0], [12.0, 16.0, D * 0.3, 1], [-25.0, 62.0, D * 1.25, 0]]
+	if close:
+		views = [[35.0, 45.0, D * 0.8, 0], [215.0, 45.0, D * 0.8, 0]]
 	await _shots(t, ctr, views, "%s_v%d_%s" % [t["type"], int(t["variant"]), tagn])
 
 

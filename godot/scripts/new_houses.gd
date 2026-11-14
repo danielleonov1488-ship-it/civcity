@@ -711,7 +711,8 @@ static func _shrink(r: Array, d: float) -> Array:
 ## игрок вешает фонари, факелы, цветы и знамёна, test_stage3), roof1 (крыша одноэтажного, если другая), rroof (крыша комнаты
 ## уступа: hip | gx | gz | lean | flat), rail (парапет террасы: par — штукатурка, bal — балюстрада, wood — деревянные
 ## перила), td (терраса: pergola | parasol | wash | garden), bal (у двери B: wood | fabric | gallery), brick, medal,
-## di (пролёт двери фасада), si (сторона башенки и каморки), stair (лестница с террасы на плоскую крышу комнаты).
+## di (пролёт двери фасада), si (сторона башенки и каморки). Лестниц снаружи нет (владелец 14.11: «рандомные лестницы
+## непонятные» — лестница с террасы упиралась в парапет крыши-садика): на крышу ходят изнутри.
 ## Возвращает верх полных этажей
 static func _body(b: Bp, r: Array, fl: int, x: Dictionary, sp: Dictionary) -> float:
 	var mass: String = sp.get("mass", "full")
@@ -765,7 +766,7 @@ static func _body(b: Bp, r: Array, fl: int, x: Dictionary, sp: Dictionary) -> fl
 			rm = [x0, x1, z0, z0 + RD]
 			main = [x0, x1, z0 + RD, z1]
 			ter = [[main, [0, 1, 3]]]
-			mods = {0: _pair(di, "B", "W" if sp.get("stair", false) else "K"), 1: "V" if v % 2 == 0 else "K", 2: _back(v, f), 3: "K" if v % 2 == 0 else "A"}
+			mods = {0: _pair(di, "B", "K"), 1: "V" if v % 2 == 0 else "K", 2: _back(v, f), 3: "K" if v % 2 == 0 else "A"}
 		"side":
 			rm = [x0, 0.0, z0, z1] if si == 0 else [0.0, x1, z0, z1]
 			main = [0.0, x1, z0, z1] if si == 0 else [x0, 0.0, z0, z1]
@@ -801,8 +802,6 @@ static func _body(b: Bp, r: Array, fl: int, x: Dictionary, sp: Dictionary) -> fl
 	if rk2 == "flat":
 		_terraces(b, [[rm, [0, 1, 2, 3]]], y + h + 0.04, x, "par")
 		_tdress(b, rm, y + h + 0.04, x, "garden")
-		if sp.get("stair", false):
-			_stair(b, rm, y, h, di)
 	else:
 		_roof_kind(b, _shrink(rm, 0.06), y + h + 0.05, rk2, x, low, false)
 	return top
@@ -892,18 +891,6 @@ static func _tdress(b: Bp, tr: Array, y: float, x: Dictionary, kind: String) -> 
 const WOODEN := {"Stucco_White_01": "Wood_02", "Stucco_Orange_01": "Wood_02"}
 static func _post(b: Bp, p: Vector3, h: float) -> void:
 	_p(b, "SM_Bld_Wall_End_01", p + Vector3(0.025, 0, -0.025), 0.0, Vector3(0.45, h / 3.01, 0.45), WOODEN)
-
-
-## Каменная лестница с террасы на плоскую крышу комнаты rm — вдоль её передней стены, над пролётом без двери
-static func _stair(b: Bp, rm: Array, y: float, h: float, di: int) -> void:
-	var zf := float(rm[3])
-	var L := 1.15
-	var sy := (h + 0.1) / 1.59
-	if di == 1:
-		# дверь справа — лестница слева, поднимается вправо (к середине)
-		_p(b, "SM_Bld_Stairs_01", Vector3(float(rm[0]) + 0.1, y, zf), -PI / 2, Vector3(0.5 / 2.5, sy, L / 2.5))
-	else:
-		_p(b, "SM_Bld_Stairs_01", Vector3(float(rm[1]) - 0.1, y, zf + 0.5), PI / 2, Vector3(0.5 / 2.5, sy, L / 2.5))
 
 
 ## Убранство этажа f: ящики цветов под окнами фасада, балконы у дверей B, на гладких модулях боков — плющ, кашпо
@@ -1058,7 +1045,7 @@ const CRAFT := [0, 3, 2, 1, 2]           # ремесло облика: 0 тка
 ## в каменной арке, наверху жильё; за домом двор под черепичным навесом со снастью ремесла. Верх: 0 — башенка над
 ## половиной фасада и терраса под навесом; 1 — галерея на балках, верхний этаж в глубине, терраса с бельём; 2 — фронтон
 ## (у трёхэтажного верхний этаж в глубине); 3 — каморка в углу и терраса с перголой; 4 — верхний этаж в глубине
-## с плоской крышей-садиком и лестницей на неё с террасы с бельём
+## с плоской крышей-садиком, впереди терраса с бельём
 static func _artisan(b: Bp, fl: int, v: int, x: Dictionary) -> Vector3:
 	var r := [-X1, X1, -Z1, Z1]
 	var di := (int(x["c"]) + v + 1) % 2
@@ -1071,7 +1058,7 @@ static func _artisan(b: Bp, fl: int, v: int, x: Dictionary) -> Vector3:
 		1: sp = {"g": g, "u": [_pair(di, "B", "H"), "KK"], "mass": "back", "min": 3, "roof": "gx", "rroof": "gx", "rail": "par", "td": "parasol", "bal": "gallery"}
 		2: sp = {"g": g, "u": ["QQ", "QP"], "mass": "back", "min": 3, "roof": "gz", "rroof": "gz", "rail": "bal", "td": "pergola", "brick": true, "medal": true, "cor": "SM_Bld_Trim_03"}
 		3: sp = {"g": g, "u": [_pair(si, "S", "R"), "CK"], "mass": "corner", "min": 3, "roof": "flat", "rroof": "lean", "rail": "par", "td": "pergola"}
-		_: sp = {"g": g, "u": ["KA", "KC"], "mass": "back", "min": 3, "roof": "hip", "rroof": "flat", "rail": "wood", "td": "wash", "stair": true}
+		_: sp = {"g": g, "u": ["KA", "KC"], "mass": "back", "min": 3, "roof": "hip", "rroof": "flat", "rail": "wood", "td": "wash"}
 	sp["di"] = di
 	sp["si"] = (int(x["c"]) / 2 + v) % 2
 	_body(b, r, fl, x, sp)
