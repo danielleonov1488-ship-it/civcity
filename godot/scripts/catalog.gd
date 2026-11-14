@@ -14,7 +14,7 @@ static var _cache := {}
 ## Огромные постройки из Synty — меньше (владелец 12.11: «отказаться от супер огромных зданий, уменьшить и
 ## детализировать»): у амфитеатра, цирка, театра и памятников Synty общий масштаб умножается на это (зрелища — по нему же)
 const SHRINK := {"colosseum": 0.8, "circus_fl": 0.75, "theatre": 0.82,      # одеон и так невелик (уменьшенный — на ступенях не сесть)
-	"temple": 0.85, "venus": 0.7, "pantheon": 0.65, "forum": 0.8, "pharos": 0.65, "ludus": 0.8}
+	"temple": 0.85, "venus": 0.8, "pantheon": 0.65, "forum": 0.8, "pharos": 0.65, "ludus": 0.8}
 ## Проба линейки размеров (SizeLadder.apply): прежние сборки, подогнанные под будущий размер — только для снимков
 static var LADDER := {}
 ## След, в который должна уложиться сборка (м, ширина × глубина при yaw 0), пока строится чертёж «старого места»
@@ -115,6 +115,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 	if not kit_done:
 		_actors(b, type, tier)
 		CatDressCivic.dress(b, type, tier)     # склады, мастерские, поля, бани, храмы — обжитые дворы и бока (без новых деталей в следе)
+	Interiors.apply(b, String(dd0.get("kind", "")))   # нутро: комнаты вместо чёрных коробок, заднники за проёмами (interiors.gd)
 	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)
 	fit = Vector2.ZERO
 	_cache[key] = b

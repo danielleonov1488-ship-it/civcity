@@ -817,6 +817,7 @@ func _set_hour(h: float) -> void:
 	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
 	if lm:
 		lm.emission_energy_multiplier = lamp * (0.018 if lh > 23.0 or lh < 4.0 else 0.045)
+	Interiors.set_light(lamp, lh > 23.0 or lh < 4.0)          # комнаты за окнами и дверями (interiors.gd)
 	KitLib.lit_material().emission_energy_multiplier = lamp * (0.12 if lh > 23.0 or lh < 4.0 else 0.3)
 	var em := (Parts._special_mesh("#ember") as PrimitiveMesh).material as StandardMaterial3D
 	if em:
@@ -1713,7 +1714,7 @@ func _grow_plan(g: Node3D, bp: Bp = null) -> Array:
 			e.append(nm)
 			walls.append(e)
 			top = maxf(top, box.end.y)
-		elif nm.begins_with("#dark") or nm.begins_with("#lit"):
+		elif nm.begins_with("#dark") or nm.begins_with("#lit") or nm.begins_with("#room") or nm.begins_with("#plate"):
 			late.append(e)                     # тёмная «комната» внутри — вместе со штукатуркой, иначе серый куб поверх кладки
 		elif maxf(box.size.x, maxf(box.size.y, box.size.z)) < 0.8 and box.position.y > 0.05:
 			small.append(e)
@@ -2026,6 +2027,8 @@ func _show(b: Dictionary) -> void:
 	var subst := {"#wall_lamp": "#wall_lamp_dim"} if city.is_house(b) else {}
 	if lit:
 		subst["#dark"] = "#lit"
+		subst["#room"] = "#room_lit"           # в доме с жильцами ночью тёплый свет в комнатах и окнах
+		subst["#plate"] = "#plate_lit"
 		if bp.kit_id != "":                    # дом из своего набора: ночью тёплый свет в комнатах
 			subst["K:%s/Rooms" % bp.kit_id] = "K:%s/Rooms@lit" % bp.kit_id
 	if b["type"] in CatGrand.TYPES and Gfx.is_low(str(settings.get("quality", "high"))):
