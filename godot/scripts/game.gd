@@ -2150,6 +2150,8 @@ func _pets2(b: Dictionary, vis: Dictionary) -> void:
 		list = NewArena.pets(b["type"])                   # новые амфитеатр и цирк — свои (прежних коней у ворот нет)
 	elif NewCivic2.covers(b["type"]):
 		list = NewCivic2.pets(b)                          # новые станция и гостиница — лошади у своих конюшен
+	elif NewShops2.covers(b["type"]):
+		list = NewShops2.pets(b["type"])                  # новые приют и кошачья лавка — кошки, ослик и вещицы на своих местах
 	elif list.is_empty():
 		list = CatStory.PETS.get(b["type"], CatGrand.PETS.get(b["type"], CatExtra.PETS.get(b["type"], CatDecor2.PETS.get(Defs.base_of(b["type"]), []))))
 	var lk := int(Defs.B[b["type"]].get("look", 0))
