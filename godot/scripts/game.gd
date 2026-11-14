@@ -3976,8 +3976,8 @@ func _snap_row(pos: Vector2, yaw: float, bb: Array, ignore := -1, nested := fals
 		var od: Dictionary = city.def(o)
 		if od["kind"] == "decor" or od.get("fixed", false) or od["kind"] == "farm":
 			continue
-		if absf(angle_difference(float(o["yaw"]), yaw)) > deg_to_rad(12):
-			continue
+		if absf(angle_difference(float(o["yaw"]), yaw)) > deg_to_rad(20):
+			continue                          # до 20°: у края площади направление дороги по клеткам гуляет до ~17°
 		if absf(angle_difference(float(o["yaw"]), yaw)) > 0.001:
 			if nested:
 				continue                      # второй раз не поворачиваем (два соседа с разным поворотом — не зациклиться)
