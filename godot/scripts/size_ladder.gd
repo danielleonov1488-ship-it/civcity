@@ -35,9 +35,12 @@ const REV := 1
 ## станция (62 м²) — внутри прежнего следа на вырост (OLD_LOT не нужен)
 ## пост вигилов, малые бани, склад, скрипторий (NewSmall) — с ревизии 1, растут, где есть место; школа (NewSmall) —
 ## в прежнем следе
+## тринадцать зданий Легиона (NewMilitary, «средние», 3–4 дома) — с ревизии 1, в прежних следах (OLD_LOT не нужен)
 const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1, "theatre": 1, "odeon": 1, "library": 1, "thermae": 1,
 	"pantheon": 1, "academy": 1, "forum": 1, "venus": 1, "center": 1, "baths": 1, "mansio": 1, "prefect": 1,
-	"vigiles": 1, "school": 1, "balnea": 1, "warehouse": 1, "scriptorium": 1}
+	"vigiles": 1, "school": 1, "balnea": 1, "warehouse": 1, "scriptorium": 1,
+	"barracks": 1, "range": 1, "spearcamp": 1, "ballistae": 1, "catapults": 1, "forge": 1, "infirmary": 1, "armory": 1,
+	"smelter": 1, "sawmill": 1, "tannery": 1, "principia": 1, "mars": 1}
 
 ## Прежний след (м, ширина × глубина при yaw 0) — проба размеров 12.11, до линейки
 const OLD_LOT := {
@@ -54,6 +57,9 @@ const TIER := {
 	"warehouse": "средние", "balnea": "средние", "library": "большие", "center": "большие", "odeon": "большие",
 	"forum": "большие", "theatre": "большие", "baths": "большие", "venus": "большие", "temple": "главные",
 	"academy": "главные", "pantheon": "главные", "thermae": "главные", "colosseum": "чудеса", "circus_fl": "чудеса",
+	"barracks": "средние", "range": "средние", "spearcamp": "средние", "ballistae": "средние", "catapults": "средние",
+	"forge": "средние", "infirmary": "средние", "armory": "средние", "smelter": "средние", "sawmill": "средние",
+	"tannery": "средние", "principia": "средние", "mars": "средние",
 }
 
 

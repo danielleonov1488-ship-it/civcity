@@ -65,6 +65,12 @@ const WORK := {
 	# этап 5, волна 2: гладиаторы лудуса, жрец храма, служитель терм, стартёр цирка
 	"ludus": [["sword", "shield"], ["sword", "shield"], []], "venus": [["censer"], []], "thermae": [["jug"], [], ["cloth"]],
 	"pharos": [["basket"], []], "circus_fl": [[], ["jug"]],
+	# здания Легиона (NewMilitary): легионеры у чучел — с мечом и щитом, часовые — с копьём, мастера — с молотом,
+	# жрец Марса — с курильницей (места — по порядку людей при деле в сборке)
+	"barracks": [["sword", "shield"], ["sword", "shield"], ["spear", "shield"]], "range": [[], [], ["spear", "shield"]],
+	"spearcamp": [[], ["spear", "shield"], ["spear", "shield"]], "ballistae": [["hammer"], ["hammer"]], "catapults": [[], ["hammer"]],
+	"forge": [["hammer"], []], "infirmary": [[], ["jar"]], "armory": [["sword", "shield"], []], "smelter": [[], ["hammer"]],
+	"principia": [["spear", "shield"], ["spear", "shield"], ["scroll"]], "mars": [["censer"]],
 }
 ## Свои движения слотов (вместо записанных в чертеже) — только пока вещь в руках: музыкант с лирой играет на ней,
 ## без лиры (далеко, «Низкая») — сидит как в чертеже, а лира лежит на скамье (People._slot_clip)

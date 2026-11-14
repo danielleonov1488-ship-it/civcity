@@ -529,6 +529,11 @@ static func kit_mesh(name: String) -> Mesh:
 		"#mil_saw": _k_saw(k)
 		"#mil_hides": _k_hides(k)
 		"#mil_vat": _k_vat(k)
+		"#mil_palisade": _k_palisade(k)
+		"#mil_tent2": _k_tent2(k)
+		"#mil_trophy": _k_trophy(k)
+		"#mil_crane": _k_crane(k)
+		"#mil_coal": _k_coal(k)
 		_: k.boxc(Vector3(0, 0.5, 0), Vector3.ONE, Color.MAGENTA)
 	var m := k.mesh()
 	if m.get_surface_count() > 0:
@@ -1036,3 +1041,108 @@ static func _principia(b: Bp) -> void:
 	b.actor(Vector3(-2.4, 0, fz + 1.2), 0.0, "Sword_Idle", "soldier")
 	b.actor(Vector3(2.4, 0, fz + 1.2), 0.0, "Sword_Idle", "soldier")
 	b.door = Vector3(0, 0, fz + 4.3)
+
+
+# =====================================================================
+#   детали новых зданий Легиона (NewMilitary) — в метрах города (ставятся без масштаба Catalog.ARCH)
+# =====================================================================
+
+## Частокол: звено 1 м вдоль +X (от 0 до 1), брёвна с заострёнными верхушками на двух поперечинах с внутренней стороны;
+## высота ~1,4 м (люди города ~1,1 м)
+static func _k_palisade(k: Kit) -> void:
+	var n := 6
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	for i in n:
+		var x := (i + 0.5) / n
+		var h := 1.28 + rng.randf_range(-0.06, 0.08)
+		var r := 0.072 + rng.randf_range(-0.008, 0.008)
+		var c := Color("6f5034").lerp(Color("57402b"), 0.5 * (i % 2))
+		if i % 3 == 2:
+			c = c.lerp(Color("8a6a48"), 0.35)
+		k.cyl(Vector3(x, 0, 0), r, h, 7, c)
+		k.cone(Vector3(x, h, 0), r, 0.17, 7, c.darkened(0.12))
+	for y: float in [0.32, 0.98]:
+		k.rod(Vector3(0.0, y, -0.1), Vector3(1.0, y, -0.1), 0.035, 5, WOOD_D)
+
+
+## Палатка контубернии: кожаная, двускатная, полы спереди откинуты треугольником (за ним NewMilitary ставит тёплую
+## светящуюся стенку — внутри горит лампа, не тёмная дыра); конёк на шестах, растяжки, колышки. 1,5 × 1,9 × 1,2 м
+static func _k_tent2(k: Kit) -> void:
+	var hw := 0.75
+	var hl := 0.95
+	var wall := 0.24
+	var top := 1.2
+	var inside := Vector3(0, 0.5, 0)
+	for sx: float in [-1.0, 1.0]:
+		k.quad_out(Vector3(sx * hw, wall, -hl), Vector3(sx * hw, wall, hl), Vector3(0, top, hl), Vector3(0, top, -hl), LEATHER if sx < 0 else LEATHER_D, inside)
+		k.quad_out(Vector3(sx * hw, 0, -hl), Vector3(sx * hw, 0, hl), Vector3(sx * hw, wall, hl), Vector3(sx * hw, wall, -hl), LEATHER_D, inside)
+		for j in 3:
+			var z := -hl + (j + 1) * hl * 2.0 / 4.0
+			k.quad_out(Vector3(sx * (hw + 0.004), wall, z - 0.02), Vector3(sx * (hw + 0.004), wall, z + 0.02), Vector3(0, top + 0.004, z + 0.02), Vector3(0, top + 0.004, z - 0.02), LEATHER_D.darkened(0.15), inside)
+		# откинутые полы спереди: от угла к коньку, край — скатка
+		k.tri_out(Vector3(sx * hw, 0, hl), Vector3(sx * 0.2, 0, hl + 0.01), Vector3(0, top, hl), LEATHER, Vector3(sx * 0.4, 0.4, 0.0))
+		k.tri_out(Vector3(sx * hw, 0, hl), Vector3(0, top, hl), Vector3(sx * hw, wall, hl), LEATHER, Vector3(sx * 0.4, 0.3, 0.0))
+		k.rod(Vector3(sx * 0.2, 0.02, hl + 0.03), Vector3(sx * 0.02, top - 0.08, hl + 0.03), 0.035, 5, LEATHER_D)
+	k.tri_out(Vector3(-hw, wall, -hl), Vector3(hw, wall, -hl), Vector3(0, top, -hl), LEATHER_D, inside)
+	k.quad_out(Vector3(-hw, 0, -hl), Vector3(hw, 0, -hl), Vector3(hw, wall, -hl), Vector3(-hw, wall, -hl), LEATHER_D, inside)
+	k.rod(Vector3(0, top + 0.02, -hl - 0.08), Vector3(0, top + 0.02, hl + 0.08), 0.03, 5, WOOD)
+	k.rod(Vector3(0, 0, hl + 0.05), Vector3(0, top + 0.1, hl + 0.05), 0.025, 5, WOOD)
+	k.rod(Vector3(0, 0, -hl - 0.05), Vector3(0, top + 0.1, -hl - 0.05), 0.025, 5, WOOD)
+	for sz: float in [-1.0, 1.0]:
+		k.rod(Vector3(0, top + 0.08, sz * (hl + 0.05)), Vector3(0, 0.04, sz * (hl + 0.5)), 0.007, 3, ROPE)
+		k.boxc(Vector3(0, 0.05, sz * (hl + 0.52)), Vector3(0.04, 0.1, 0.04), WOOD_D)
+	for sx: float in [-1.0, 1.0]:
+		for sz: float in [-0.55, 0.55]:
+			k.rod(Vector3(sx * hw, wall, sz), Vector3(sx * (hw + 0.35), 0.03, sz), 0.006, 3, ROPE)
+
+
+## Трофей (тропей): столб с перекладиной, на нём красная туника, бронзовый панцирь и шлем с гребнем, круглый щит,
+## два копья накрест; высота ~1,75 м
+static func _k_trophy(k: Kit) -> void:
+	k.boxc(Vector3(0, 0.06, 0), Vector3(0.5, 0.12, 0.5), STONE.darkened(0.05))
+	k.rod(Vector3(0, 0.1, 0), Vector3(0, 1.45, 0), 0.04, 6, WOOD_D)
+	k.rod(Vector3(-0.42, 1.12, 0), Vector3(0.42, 1.12, 0), 0.03, 5, WOOD_D)
+	for sx: float in [-1.0, 1.0]:
+		k.rod(Vector3(sx * 0.55, 0.1, 0.12), Vector3(-sx * 0.3, 1.72, 0.1), 0.016, 4, WOOD_L)
+		k.xf = Transform3D(Basis(Vector3.BACK, sx * -0.5), Vector3(-sx * 0.32, 1.72, 0.1))
+		k.cone(Vector3(0, 0, 0), 0.03, 0.14, 4, IRON.lightened(0.2))
+		k.xf = Transform3D.IDENTITY
+	k.cyl(Vector3(0, 0.62, 0), 0.24, 0.22, 8, RED_D, 0.2)
+	k.cyl(Vector3(0, 0.8, 0), 0.2, 0.38, 8, BRONZE, 0.23)
+	k.boxc(Vector3(0, 1.0, 0.0), Vector3(0.5, 0.08, 0.26), BRONZE.darkened(0.1))
+	k.blob(Vector3(0, 1.3, 0), Vector3(0.13, 0.14, 0.13), BRONZE, 5, 0.06)
+	k.boxc(Vector3(0, 1.46, -0.01), Vector3(0.04, 0.12, 0.26), RED)
+	k.xf = Transform3D(Basis(Vector3.RIGHT, PI / 2), Vector3(0.0, 0.86, 0.2))
+	k.cyl(Vector3(0, 0, 0), 0.24, 0.04, 12, RED)
+	k.cyl(Vector3(0, 0.035, 0), 0.07, 0.03, 8, GOLD)
+	k.xf = Transform3D.IDENTITY
+
+
+## Подъёмник мастерской машин: две А-образные ноги, верхний брус 2,6 м (вдоль X) на высоте 2,3 м, блок, канат,
+## на нём висит брус ложа; ворот у ноги
+static func _k_crane(k: Kit) -> void:
+	var y := 2.3
+	for sx: float in [-1.15, 1.15]:
+		k.rod(Vector3(sx, 0, -0.45), Vector3(sx, y, 0), 0.05, 6, WOOD)
+		k.rod(Vector3(sx, 0, 0.45), Vector3(sx, y, 0), 0.05, 6, WOOD)
+		k.rod(Vector3(sx, 0.7, -0.33), Vector3(sx, 0.7, 0.33), 0.03, 5, WOOD_D)
+	k.rod(Vector3(-1.3, y + 0.04, 0), Vector3(1.3, y + 0.04, 0), 0.07, 6, WOOD_D)
+	k.cyl(Vector3(0.2, y - 0.2, 0), 0.08, 0.14, 8, IRON)
+	k.rod(Vector3(0.2, y - 0.08, 0), Vector3(0.2, 1.25, 0), 0.01, 3, ROPE)
+	k.rod(Vector3(0.2, y - 0.08, 0), Vector3(1.1, 0.75, 0.3), 0.01, 3, ROPE)
+	k.boxc(Vector3(0.2, 1.15, 0), Vector3(1.3, 0.14, 0.16), WOOD_L)
+	k.rod(Vector3(0.2, 1.25, 0), Vector3(-0.35, 1.22, 0), 0.008, 3, ROPE)
+	k.rod(Vector3(0.2, 1.25, 0), Vector3(0.75, 1.22, 0), 0.008, 3, ROPE)
+	k.rod(Vector3(1.15, 0.75, 0.25), Vector3(1.15, 0.75, 0.6), 0.06, 8, WOOD)
+	for j in 4:
+		var a := j * PI / 2.0
+		k.rod(Vector3(1.15, 0.75, 0.62), Vector3(1.15, 0.75 + cos(a) * 0.22, 0.62 + sin(a) * 0.05), 0.015, 4, WOOD_D)
+
+
+## Куча угля: чёрные комья, ~0,8 м
+static func _k_coal(k: Kit) -> void:
+	var pts := [Vector3(0, 0.12, 0), Vector3(0.22, 0.1, 0.06), Vector3(-0.2, 0.1, 0.08), Vector3(0.04, 0.1, 0.22), Vector3(0.0, 0.1, -0.2), Vector3(0.06, 0.26, 0.02)]
+	for i in pts.size():
+		var r := 0.11 + (i % 3) * 0.015
+		k.blob(pts[i], Vector3(r, r * 0.8, r), Color("2a2624").lerp(Color("4a3a30"), 0.3 * (i % 2)), 90 + i, 0.25)
