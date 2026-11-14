@@ -282,6 +282,9 @@ func _ready() -> void:
 	land_mat.set_shader_parameter("tile_plaza_b", tex.call("Floor_Tiles_05"))
 	land_mat.set_shader_parameter("tile_plaza_c", tex.call("Floor_Tiles_01"))
 	land_mat.set_shader_parameter("tile_plaza_d", tex.call("Floor_Tiles_02"))
+	# тротуар у домов, лавок и мастерских (Land.wear, 14.11): плиты травертина, как у оснований новых зданий
+	land_mat.set_shader_parameter("tile_apron", tex.call("Floor_Tiles_06"))
+	land_mat.set_shader_parameter("apron_pave", NewHouses.APRON)
 	MeadowNature.ground(self)                 # трава, мостовая, тропы и берега из набора Meadow Forest (13.11)
 	await _step("Вода, дорога и даль", 0.15)
 	_water()
@@ -803,6 +806,7 @@ func _set_hour(h: float) -> void:
 	if lm:
 		lm.emission_energy_multiplier = lamp * (0.018 if lh > 23.0 or lh < 4.0 else 0.045)
 	KitLib.lit_material().emission_energy_multiplier = lamp * (0.12 if lh > 23.0 or lh < 4.0 else 0.3)
+	NewHouses.light_rooms(day, lamp, lh)       # комнаты новых домов: днём мягкий тёплый свет внутри, ночью — как «#lit»
 	var em := (Parts._special_mesh("#ember") as PrimitiveMesh).material as StandardMaterial3D
 	if em:
 		em.emission_energy_multiplier = lamp * 1.6
@@ -1671,7 +1675,7 @@ func _grow_plan(g: Node3D, bp: Bp = null) -> Array:
 			e.append(nm)
 			walls.append(e)
 			top = maxf(top, box.end.y)
-		elif nm.begins_with("#dark") or nm.begins_with("#lit"):
+		elif nm.begins_with("#dark") or nm.begins_with("#lit") or nm.begins_with("#room"):
 			late.append(e)                     # тёмная «комната» внутри — вместе со штукатуркой, иначе серый куб поверх кладки
 		elif maxf(box.size.x, maxf(box.size.y, box.size.z)) < 0.8 and box.position.y > 0.05:
 			small.append(e)
@@ -1984,6 +1988,7 @@ func _show(b: Dictionary) -> void:
 	var subst := {"#wall_lamp": "#wall_lamp_dim"} if city.is_house(b) else {}
 	if lit:
 		subst["#dark"] = "#lit"
+		NewHouses.lit_subst(subst)            # комнаты новых домов: ночью теплятся только у жилых (как «#lit»)
 		if bp.kit_id != "":                    # дом из своего набора: ночью тёплый свет в комнатах
 			subst["K:%s/Rooms" % bp.kit_id] = "K:%s/Rooms@lit" % bp.kit_id
 	if b["type"] in CatGrand.TYPES and Gfx.is_low(str(settings.get("quality", "high"))):
