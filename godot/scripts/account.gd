@@ -87,7 +87,7 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
-	nologin = args.has("nologin") or OS.get_environment("CIVCITY_NOLOGIN") == "1"
+	nologin = args.has("nologin") or args.has("sandbox") or OS.get_environment("CIVCITY_NOLOGIN") == "1"   # песочница — без входа
 	test = str(args.get("cloudtest", ""))
 	test_shot = str(args.get("cloudshot", ""))
 	force_on = test != ""
