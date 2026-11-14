@@ -423,7 +423,7 @@ func task_row(box: Control) -> void:
 ## Строка заказа старосты (под строкой истории): та же раскладка, но не золотая — это не история, а просьба;
 ## заказ ждёт, пока за него возьмутся, — маленькая золотая точка у медальона
 func order_row(box: Control) -> void:
-	_row(box, st.orders.row_info(), false, st.orders.part_click)
+	pass                                      # заказы старосты убраны из игры (StoryOrders.ENABLED = false)
 
 
 func _row(box: Control, info: Dictionary, gold: bool, on_part: Callable) -> void:

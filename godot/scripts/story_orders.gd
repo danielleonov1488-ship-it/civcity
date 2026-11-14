@@ -210,8 +210,15 @@ func next_order() -> Dictionary:
 	return best
 
 
+## Заказы старосты ОТКЛЮЧЕНЫ (решение владельца 14.11: «убрать из игры совсем»): не рождаются, строки и наград нет.
+## Данные и «o_…»-облики остаются, чтобы старые сохранения грузились, а уже полученные украшения не пропали
+const ENABLED := false
+
+
 ## Пора ли заказам: после обучения, с «Хутора», когда строка просьб уже видна
 func allowed() -> bool:
+	if not ENABLED:
+		return false
 	var c := city()
 	if c == null or not st.allowed() or c.level < 1 or int(c.tips.get("tut", -1)) >= 0 or st.hud.ui_level() < 3:
 		return false
@@ -465,7 +472,7 @@ func show() -> void:
 ## Для подписи у курсора и ✓ над тем, что в счёт (Stories.zone_goals): место взятого заказа или {}.
 ## «=bench» остаётся точным (только мраморная скамья); none — чего не надо (у курсора: «… — не в счёт»)
 func zone() -> Dictionary:
-	if not taken():
+	if not allowed() or not taken():
 		return {}
 	var o := cur()
 	var p := anchor_pos(o)
@@ -480,7 +487,7 @@ func zone() -> Dictionary:
 
 ## Идёт «Показать» (мягкое пятно у места заказа)
 func showing() -> bool:
-	return Time.get_ticks_msec() < _show_until
+	return allowed() and Time.get_ticks_msec() < _show_until
 
 
 ## Пятно у места заказа: [x, z, радиус, яркость, край] — пока в руках то, что идёт в счёт (край), или после «Показать»
@@ -494,6 +501,8 @@ func area(edge: bool) -> Array:
 
 ## Советник один раз: что такое заказы старосты (когда появился первый)
 func _advise_once() -> void:
+	if not ENABLED:
+		return
 	var c := city()
 	if c.tips.has("orders_tip") or not st.hud._tip_free() or st.kit != null:
 		return

@@ -1398,8 +1398,8 @@ func _owner() -> void:
 	var nx := String(S["offer"].get("id", ""))
 	print("owner: следующая история — ", nx, " ", S["offer"].get("fam", ""))
 	check(nx in ["crowded", "wedding", ""], "дальше — «Тесно» или свадьба (%s)" % nx)
-	# заказы старосты: у владельца появились сами (строка ждёт), денег за них нет
-	check(not sto.orders.row_info().is_empty() and bool(sto.orders.row_info().get("waiting", false)), "в городе владельца ждёт заказ старосты: «%s»" % sto.orders.row_info().get("text", ""))
+	# заказов старосты в игре больше нет (убраны по отзыву 14.11): в городе владельца строки заказа нет
+	check(sto.orders.row_info().is_empty(), "в городе владельца заказа старосты нет")
 
 
 ## Город владельца: «Течь в водопроводе» — лужи, мастер у трубы, фонтаны у домов (у владельца их, верно, хватает)
@@ -2790,21 +2790,11 @@ func _donkey() -> void:
 	var parts: Array = info.get("parts", [])
 	check(parts.size() == 1 and String(parts[0]["text"]) == "Мясная лавка или пекарня у дома (в 30 м): нет", "строка: «%s»" % (parts[0]["text"] if not parts.is_empty() else ""))
 	check(String(sto.pointer_do().get("type", "")) == "butcher", "стрелка — к мясной лавке")
-	# у истории своё место (лавка у дома), а взят заказ старосты: с фонарём в руках у курсора — «в счёт заказа»,
-	# светится место заказа, следов лапок к нему нет
-	var ord: StoryOrders = sto.orders
-	var oc0: Dictionary = (S["orders"] as Dictionary).duplicate(true)
-	S["orders"]["cur"] = "o_lamps"
-	S["orders"]["taken"] = false
-	ord.take()
-	var oan: Vector2 = ord.anchor_pos(ord.cur())
+	# заказов старосты больше нет: и с фонарём в руках у курсора нет «в счёт заказа», следов лапок к месту заказа тоже
 	game.set_tool("lamp_post")
-	var zl: Array = sto.zone_note("lamp_post", oan + Vector2(6, 0))
-	sto._marks(true)
-	check(not zl.is_empty() and String(zl[0]) == "В счёт заказа ✓" and sto._glow != null and sto._glow_edge and is_equal_approx(sto._glow_r, 25.0) and sto._paws.is_empty(),
-		"шаг «лавка», заказ взят: у курсора «%s», светится место заказа (r=%.0f), следов лапок нет (%d)" % [zl, sto._glow_r, sto._paws.size()])
+	var zl: Array = sto.zone_note("lamp_post", c.center()["pos"] + Vector2(6, 0))
+	check(zl.is_empty() or String(zl[0]) != "В счёт заказа ✓", "шаг «лавка»: у курсора с фонарём нет «в счёт заказа» (%s)" % [zl])
 	game.set_tool("")
-	S["orders"] = oc0
 	sto._marks(true)
 	# мясная лавка у дома, склада нет — «нет склада рядом», стрелка — к складу
 	var hp: Vector2 = c.buildings[int(A["home"])]["pos"]
@@ -2897,17 +2887,11 @@ func _crowded() -> void:
 	game.set_tool("flowers")
 	var zn: Array = sto.zone_note("flowers", (h["pos"] as Vector2) + Vector2(5, 0))
 	check(not zn.is_empty() and String(zn[0]) == "В счёт красоты дома ✓", "у курсора: «%s»" % [zn])
-	# у истории своя цель (красота дома — любое украшение), а взят заказ старосты: фонарь у станции — «в счёт заказа»
-	var oc0: Dictionary = (S["orders"] as Dictionary).duplicate(true)
-	S["orders"]["cur"] = "o_lamps"
-	S["orders"]["taken"] = false
-	sto.orders.take()
-	var oan: Vector2 = sto.orders.anchor_pos(sto.orders.cur())
-	var zo: Array = sto.zone_note("lamp_post", oan + Vector2(6, 0))
+	# заказов старосты больше нет: фонарь у станции — не «в счёт заказа»
+	var zo: Array = sto.zone_note("lamp_post", c.center()["pos"] + Vector2(6, 0))
 	var zh: Array = sto.zone_note("flowers", (h["pos"] as Vector2) + Vector2(5, 0))
-	check(not zo.is_empty() and String(zo[0]) == "В счёт заказа ✓" and not zh.is_empty() and String(zh[0]) == "В счёт красоты дома ✓",
-		"история и заказ разом: фонарь у станции — «%s», клумба у дома — «%s»" % [zo, zh])
-	S["orders"] = oc0
+	check((zo.is_empty() or String(zo[0]) != "В счёт заказа ✓") and not zh.is_empty() and String(zh[0]) == "В счёт красоты дома ✓",
+		"фонарь у станции — «%s» (не заказ), клумба у дома — «%s»" % [zo, zh])
 	game.set_tool("")
 	for i in 6:
 		deco(["flowers", "tree", "bush", "planter", "flowers_2", "tree_2"][i], (h["pos"] as Vector2) + Vector2(cos(i * 1.05), sin(i * 1.05)) * 6.0)
@@ -2968,174 +2952,40 @@ func _crowded() -> void:
 		await shot("story_balcony.png")
 
 
-# ---------- «Заказы старосты»: строка по желанию, в счёт — поставленное после «Взяться», награда без денег ----------
+# ---------- «Заказы старосты» УБРАНЫ из игры (отзыв владельца 14.11): проверяем, что их нет, а старые сохранения грузятся ----------
+# (прежние проверки — строка по желанию, «Взяться», «Другой заказ», награды, повторы — убраны вместе с заказами)
 
 func _orders() -> void:
-	print("== заказы старосты")
-	var S := c.stories
+	print("== заказов старосты в игре больше нет")
 	fresh7(4000, ["cat", "leak", "square", "donkey", "crowded", "wedding"])
-	S = c.stories
+	var S := c.stories
 	var ord: StoryOrders = sto.orders
-	c.level = 0
-	S["orders"] = {}                       # fresh() уже тикнул на «Посёлке» — заказы с нуля
-	sto.tick()
-	check(ord.row_info().is_empty(), "на «Стоянке» заказов нет")
-	if c.count_type("scriptorium") == 0:
-		put("scriptorium", c.center()["pos"] + Vector2(-14, 10))   # место заказа «Все три дерева у скриптория»
+	check(not StoryOrders.ENABLED and not ord.allowed(), "заказы отключены (StoryOrders.ENABLED = false)")
 	c.level = 1
 	c.tips.erase("orders_tip")
-	# первый заказ приходит, когда советник занят (совет «Город стал Хутором!» после ролика ранга): объяснение — потом
-	hud.advisor("Проба", "Советник занят другим.")
-	sto.tick()
-	var info: Dictionary = ord.row_info()
-	check(String(S["orders"].get("cur", "")) == "o_lamps" and bool(info.get("waiting", false)) and String((info["buttons"] as Array)[0][0]) == "Взяться",
-		"«Хутор»: заказ «%s» ждёт, кнопка «Взяться»" % info.get("text", ""))
-	check(not c.tips.has("orders_tip"), "советник был занят — объяснение заказов ждёт")
+	S["orders"] = {}
 	hud.advisor_panel.visible = false
-	print("  советник свободен=", hud._tip_free(), " ролик=", sto.kit != null)
-	sto.tick()
-	check(c.tips.has("orders_tip") and hud.adv_title.text == "Заказы старосты", "советник освободился — один раз объяснил заказы («%s»)" % hud.adv_title.text)
-	hud.advisor_panel.visible = false
+	for i in 4:
+		sto.tick()
+	check(ord.row_info().is_empty() and String(S["orders"].get("cur", "")) == "", "на «Хуторе» заказ не рождается: строки нет")
+	check(not c.tips.has("orders_tip") and not (hud.advisor_panel.visible and hud.adv_title.text == "Заказы старосты"), "совета про заказы нет")
 	hud.refresh()
 	await frames(3)
-	# свиток просьб пересобирается при каждом обновлении города: кнопки строк — по нажатию, щелчок по «Взяться» не
-	# пропадает, если свиток пересобрали между нажатием и отпусканием (проверка 26.10)
-	var tbs: Array = hud.tasks_box.find_children("*", "BaseButton", true, false)
-	check(not tbs.is_empty() and tbs.all(func(x): return (x as BaseButton).action_mode == BaseButton.ACTION_MODE_BUTTON_PRESS),
-		"кнопки свитка просьб («Взяться»…) срабатывают по нажатию (%d)" % tbs.size())
-	check(hud.tasks_box.find_child("order_row", true, false) != null, "строка заказа — в «Просьбах горожан»")
-	# сам не открывается: 30 игровых часов — камера на месте, окон нет, заказ не взят
-	var pose0: Array = game.rig.pose()
-	for i in 30:
-		c._story_hour()
-		sto.tick()
-	await frames(3)
-	var pose1: Array = game.rig.pose()
-	check((pose1[0] as Vector3).distance_to(pose0[0]) < 0.3 and not ord.taken() and not hud.info_panel.visible and not hud.research_panel.visible and not hud.advisor_panel.visible
-		and String(S["orders"].get("cur", "")) == "o_lamps", "30 ч без щелчка — камера не двигалась, окон нет, заказ ждёт (камера %.2f, взят %s, карточка %s, исследования %s, советник «%s» %s, заказ %s)" 		% [(pose1[0] as Vector3).distance_to(pose0[0]), ord.taken(), hud.info_panel.visible, hud.research_panel.visible, hud.adv_title.text, hud.advisor_panel.visible, S["orders"].get("cur", "")])
-	# свёрнутый свиток — золотая точка
-	game.settings["tasks_folded"] = true
-	hud._fill_tasks()
-	check(hud.tasks_box.find_child("story_dot", true, false) != null, "свиток свёрнут — на нём золотая точка (заказ ждёт)")
-	game.settings["tasks_folded"] = false
-	hud._fill_tasks()
-	# «Взяться»: в счёт — поставленное после; у курсора — в счёт ли
-	var anchor: Vector2 = ord.anchor_pos(ord.cur())
-	deco("lamp_post", anchor + Vector2(8, 8))
-	ord.take()
-	var parts: Array = ord.row_info().get("parts", [])
-	check(ord.taken() and parts.size() == 2 and String(parts[0]["text"]) == "Фонари на столбах 0/3", "взялись: «%s» (фонарь до «Взяться» не в счёт)" % (parts[0]["text"] if parts.size() > 0 else ""))
-	game.set_tool("lamp_post")
-	var zn: Array = sto.zone_note("lamp_post", anchor + Vector2(6, 0))
-	var zf: Array = sto.zone_note("lamp_post", anchor + Vector2(40, 0))
-	check(not zn.is_empty() and String(zn[0]) == "В счёт заказа ✓" and not zf.is_empty() and String(zf[0]) == "Далеко от станции — не в счёт", "у курсора: «%s» / «%s»" % [zn, zf])
-	sto._marks(true)
-	check(sto._glow != null and sto._glow_edge, "с фонарём в руках — край места заказа светится")
-	game.set_tool("")
-	# щелчок по строке — фонарь в руках и камера к месту
-	ord.part_click(parts[0])
-	check(game.tool == "lamp_post", "щелчок по строке заказа — фонарь в руках")
-	game.set_tool("")
-	await frames(10)
-	await shot("story_order_taken.png")
-	var m0 := c.money
-	for i in 3:
-		deco("lamp_post", anchor + Vector2(cos(i * 2.0 + 0.4), sin(i * 2.0 + 0.4)) * 9.0)
-	for i in 2:
-		deco("bench", anchor + Vector2(cos(i * 2.5 + 1.2), sin(i * 2.5 + 1.2)) * 11.0)
-	c.compute()
-	var m1 := c.money
-	c.rp = minf(c.rp, c.rp_cap() - 100.0)
-	var rp0 := c.rp
-	var gl0: int = c.legion.glory
-	sto.tick()
-	check(String(S["orders"].get("cur", "")) == "" and int(S["orders"]["n"].get("o_lamps", 0)) == 1, "заказ выполнен")
-	check(is_equal_approx(c.money, m1) and c.rp >= rp0 + 14.0 and c.legion.glory == gl0 + 1, "награда: +%d очков, +%d Славы, денег — 0 (стройка стоила %d)" % [int(c.rp - rp0), c.legion.glory - gl0, int(m0 - m1)])
-	check(String(c.events[-1]["text"]).begins_with("Заказ старосты выполнен"), "в колокольчике: «%s»" % c.events[-1]["text"])
-	# следующий — через час
-	sto.tick()
-	check(String(S["orders"].get("cur", "")) == "", "сразу следующего нет")
-	S["h"] = int(S["h"]) + StoryOrders.GAP_H
-	sto.tick()
-	check(String(S["orders"].get("cur", "")) == "o_trees", "через час — следующий: «%s»" % ord.cur().get("title", ""))
-	# «Другой заказ» — следующий сразу, этот — потом
-	ord.skip()
-	sto.tick()
-	check(String(S["orders"].get("cur", "")) == "o_well", "«Другой заказ» — «%s»" % ord.cur().get("title", ""))
-	# первый раз за этот заказ — редкий облик
-	ord.take()
-	deco("well", anchor + Vector2(-9, 6))
-	for i in 4:
-		deco("flowers", anchor + Vector2(-6 + i * 1.6, -9))
-	c.compute()
-	sto.tick()
-	check(c.research.has("o_well") and c.unlocked("lamp_post_4") and String(c.events[-1]["text"]).contains("Фонарь с двумя кашпо"), "награда — редкое украшение «Фонарь с двумя кашпо»")
-	# второй круг — вдвое больше и вдвое щедрее, без облика
-	S["orders"]["n"] = {"o_lamps": 1, "o_trees": 1, "o_well": 1}
-	S["orders"]["skip"] = {}
-	S["orders"]["done_h"] = {}             # с прошлого раза прошло больше двух суток
-	S["orders"]["cur"] = ""
-	S["h"] = int(S["h"]) + 2
-	sto.tick()
-	var cu := ord.cur()
-	var need: Array = ord.need_of(cu)
-	var rw := ord.reward_of(cu)
-	check(String(cu.get("id", "")) == "o_lamps" and int(need[0][1]) == 6 and int(rw["rp"]) == 30 and int(rw["glory"]) == 2 and not rw.has("unlock"),
-		"второй круг: «%s» — фонарей %d, +%d очков, +%d Славы" % [ord.row_info().get("text", ""), int(need[0][1]), int(rw["rp"]), int(rw["glory"])])
-	# повтор не ферма: сделанный заказ снова — не раньше чем через двое суток, на втором круге следующий — через 6 ч
-	ord.complete()
-	var h1 := int(S["h"])
-	check(int(S["orders"]["done_h"].get("o_lamps", -1)) == h1 and int(S["orders"].get("gap", 0)) == StoryOrders.REPEAT_GAP_H,
-		"повтор сделан: следующий заказ — через %d ч" % int(S["orders"].get("gap", 0)))
-	S["h"] = h1 + StoryOrders.GAP_H
-	sto.tick()
-	check(String(S["orders"].get("cur", "")) == "", "через час после повтора — заказа ещё нет")
-	S["h"] = h1 + StoryOrders.REPEAT_GAP_H
-	sto.tick()
-	check(String(S["orders"].get("cur", "")) == "o_trees", "через 6 ч — другой заказ: «%s» (сделанный только что — не он)" % ord.cur().get("title", ""))
-	S["h"] = h1 + StoryOrders.REPEAT_GAP_H + 10
-	ord.complete()                         # повтор делали 10 ч, как обычно, — следующий через час
-	check(int(S["orders"].get("gap", 0)) == StoryOrders.GAP_H, "повтор строили 10 ч — следующий через %d ч" % int(S["orders"].get("gap", 0)))
-	S["orders"]["cur"] = ""
-	S["orders"]["done_h"] = {"o_lamps": h1, "o_trees": h1, "o_well": h1}
-	check(ord.next_order().is_empty(), "все заказы «Хутора» сделаны только что — нового нет")
-	S["h"] = h1 + StoryOrders.REPEAT_H
-	check(not ord.next_order().is_empty(), "через двое суток — заказы снова есть («%s»)" % ord.next_order().get("title", ""))
-	# заменить деревянные скамьи мраморными: пока стоит деревянная — не выполнено
-	c.level = 3
-	S["orders"]["cur"] = "o_benches"
-	S["orders"]["taken"] = false
-	deco("bench_2", anchor + Vector2(10, -6))
-	ord.take()
-	for i in 3:
-		deco("bench", anchor + Vector2(-10 + i * 3.0, 10))
-	c.compute()
-	check(not ord.done() and ord.extra(ord.cur()) >= 1, "деревянная скамья ещё стоит — не выполнено")
-	# у курсора: мраморная — в счёт, деревянная — «не в счёт» (она мешает), полукруглая — ни к чему
-	var zb: Array = sto.zone_note("bench", anchor + Vector2(6, 0))
-	var zw: Array = sto.zone_note("bench_2", anchor + Vector2(6, 0))
-	var zs: Array = sto.zone_note("bench_3", anchor + Vector2(6, 0))
-	check(not zb.is_empty() and String(zb[0]) == "В счёт заказа ✓" and not zw.is_empty() and not bool(zw[1]) and String(zw[0]) == "Деревянная скамья — не в счёт"
-		and (zs.is_empty() or not bool(zs[1])), "скамьи у курсора: мраморная «%s», деревянная «%s», полукруглая %s" % [zb, zw, zs])
-	sto._flash_clear()
-	var wb := deco("bench_2", anchor + Vector2(12, 4))
-	sto.flash_counted(wb)
-	var zoks := 0
-	for k in hud.badges:
-		if String(k).begins_with("zok"):
-			zoks += 1
-	check(zoks == 0, "поставили деревянную — ✓ не мигают (%d)" % zoks)
-	sto._flash_clear()
-	if not wb.is_empty():
-		c.remove(wb)
-	parts = ord.row_info().get("parts", [])
-	check(String(parts[-1]["text"]).contains("снесите"), "строка: «%s»" % parts[-1]["text"])
-	S["orders"]["cur"] = ""
-	S["orders"]["taken"] = false
+	check(hud.tasks_box.find_child("order_row", true, false) == null, "в «Просьбах горожан» строки заказа нет")
+	# старый город, где заказ уже был взят: он молчит — ни строки, ни места, ни «в счёт заказа»
+	S["orders"] = {"cur": "o_lamps", "taken": true, "id0": 0, "since": 0, "last_h": 0, "gap": 1, "n": {}, "skip": {}, "done_h": {}}
+	check(ord.row_info().is_empty() and ord.zone().is_empty() and not ord.showing(), "старый взятый заказ молчит: строки и места нет")
+	check(sto.zone_note("lamp_post", c.center()["pos"] + Vector2(6, 0)).is_empty() or String(sto.zone_note("lamp_post", c.center()["pos"] + Vector2(6, 0))[0]) != "В счёт заказа ✓",
+		"у курсора с фонарём — не «в счёт заказа»")
+	S["orders"] = {}
 	# старое сохранение без заказов грузится
 	var old := {"h": 5, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": []}
 	var ld := City.stories_load(old)
-	check(typeof(ld.get("orders")) == TYPE_DICTIONARY and (ld["orders"] as Dictionary).is_empty(), "старое сохранение: заказов нет — появятся сами")
+	check(typeof(ld.get("orders")) == TYPE_DICTIONARY and (ld["orders"] as Dictionary).is_empty(), "старое сохранение: грузится, заказов нет")
+	# сохранение с заказом (прежняя версия) тоже грузится
+	var old2 := {"h": 5, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {"cur": "o_lamps", "n": {"o_lamps": 2}}}
+	var ld2 := City.stories_load(old2)
+	check(typeof(ld2.get("orders")) == TYPE_DICTIONARY, "сохранение с прежним заказом: грузится")
 
 
 # ---------- этап 7b: «Ярмарка в нундины», «Роща поэта», «Пожар у горшечников» ----------
