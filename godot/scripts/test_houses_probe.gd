@@ -72,6 +72,16 @@ func _lot(tn: String, bp: Bp) -> Array:
 	print("LOT %-26s x %.2f..%.2f z %.2f..%.2f (%.2fx%.2f=%.1f) occ z %.2f..%.2f front %.2f top %.2f door %s parts %d kinds %d tris %d lights %d actors %d doors %d pairs %d seats %d water %d smoke %d" % [
 		tn, r.position.x, r.end.x, r.position.y, r.end.y, r.size.x, r.size.y, r.get_area(), o.position.y, o.end.y, bp.front_z(), bp.top_y(), bp.door.snapped(Vector3.ONE * 0.01),
 		bp.parts.size(), kinds.size(), tris, bp.lights.size(), bp.actors.size(), doors.size(), int(inf["pairs"]), seats.size(), water.size(), bp.smoke.size()])
+	if OS.get_cmdline_user_args().has("tris=1") and tn.contains(":f3:"):
+		var per := {}
+		for p: Array in bp.parts:
+			per[String(p[0])] = int(per.get(String(p[0]), 0)) + _tris(String(p[0]))
+		var ks := per.keys()
+		ks.sort_custom(func(a1, b1): return int(per[a1]) > int(per[b1]))
+		var line := []
+		for k2 in ks.slice(0, 14):
+			line.append("%s=%d" % [String(k2).trim_prefix("SM_"), int(per[k2])])
+		print("   TRIS ", " ".join(line))
 	if OS.get_cmdline_user_args().has("why=1"):
 		var lim: Rect2 = LIM.get(tn.split(":")[0], Rect2())
 		if tn.split(":")[0] == "house_patrician" and int(tn.split(":")[1].substr(1)) >= Defs.PAT_TOWN:

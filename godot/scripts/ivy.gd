@@ -31,8 +31,8 @@ static func blueprint(bp: Bp, st: int, seed_v: int) -> Bp:
 		if not nm.begins_with("SM_Bld_Wall") or nm.contains("Door") or nm.contains("Window") or nm.contains("Balcony") or nm.contains("Trim"):
 			continue
 		var rm: Dictionary = p[2]
-		if rm.has("glow") or String(rm.get("Stucco_White_01", "")) == "Wood_02":
-			continue                        # облицовка тёплой комнаты внутри (NewHouses) и дощатые ставни — не стены дома
+		if rm.has("glow") or rm.has("hole") or String(rm.get("Stucco_White_01", "")) == "Wood_02":
+			continue                        # облицовка комнаты, куски стен у окон-проёмов (NewHouses) и ставни — не глухие стены
 		var ab := Bp.model_aabb(nm)
 		var xf: Transform3D = p[1]
 		var ctr := xf * ab.get_center()
