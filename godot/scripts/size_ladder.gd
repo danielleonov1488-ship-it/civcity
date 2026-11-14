@@ -14,8 +14,8 @@ const TARGET := {
 	"vigiles": 16.0, "scriptorium": 16.0,
 	# средние, 3–4 дома
 	"prefect": 36.0, "mansio": 36.0, "warehouse": 36.0, "balnea": 36.0, "school": 38.0,
-	# большие, 5–7 домов
-	"library": 62.0, "center": 62.0, "baths": 68.0,
+	# большие, 5–7 домов (лудус — NewShops2, ≈ 51 м², было 39)
+	"library": 62.0, "center": 62.0, "baths": 68.0, "ludus": 51.0,
 	# главные, 8–10 домов
 	"temple": 90.0, "pantheon": 100.0, "thermae": 112.0,
 	# чудеса города, 10–14 домов
@@ -35,9 +35,14 @@ const REV := 1
 ## станция (62 м²) — внутри прежнего следа на вырост (OLD_LOT не нужен)
 ## пост вигилов, малые бани, склад, скрипторий (NewSmall) — с ревизии 1, растут, где есть место; школа (NewSmall) —
 ## в прежнем следе
+## прилавки, уличные зрелища, огород, приют, кошачья лавка, травник, скульптор (NewShops2) — с ревизии 1, в прежних следах
+## (OLD_LOT не нужен); лудус (NewShops2, 51 м², было 39) — с ревизии 1: в старых городах — под прежние клетки, растёт,
+## где есть место
 const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1, "theatre": 1, "odeon": 1, "library": 1, "thermae": 1,
 	"pantheon": 1, "academy": 1, "forum": 1, "venus": 1, "center": 1, "baths": 1, "mansio": 1, "prefect": 1,
-	"vigiles": 1, "school": 1, "balnea": 1, "warehouse": 1, "scriptorium": 1}
+	"vigiles": 1, "school": 1, "balnea": 1, "warehouse": 1, "scriptorium": 1,
+	"stall_fruit": 1, "stall_veg": 1, "stall_fish": 1, "musicians": 1, "dice": 1, "mimes": 1, "puppets": 1, "ogorod": 1, "shelter": 1,
+	"catshop": 1, "herbalist": 1, "sculptor": 1, "ludus": 1}
 
 ## Прежний след (м, ширина × глубина при yaw 0) — проба размеров 12.11, до линейки
 const OLD_LOT := {
@@ -46,6 +51,7 @@ const OLD_LOT := {
 	"warehouse": Vector2(6.8, 4.5), "balnea": Vector2(6.7, 4.6), "theatre": Vector2(10.3, 7.65), "odeon": Vector2(9.3, 7.15),
 	"baths": Vector2(10.14, 7.16),
 	"vigiles": Vector2(5.3, 2.3), "scriptorium": Vector2(3.8, 3.6),
+	"ludus": Vector2(7.9, 5.0),
 }
 
 ## Ступень каждого типа — для подписей на снимках
@@ -54,6 +60,9 @@ const TIER := {
 	"warehouse": "средние", "balnea": "средние", "library": "большие", "center": "большие", "odeon": "большие",
 	"forum": "большие", "theatre": "большие", "baths": "большие", "venus": "большие", "temple": "главные",
 	"academy": "главные", "pantheon": "главные", "thermae": "главные", "colosseum": "чудеса", "circus_fl": "чудеса",
+	"stall_fruit": "малые", "stall_veg": "малые", "stall_fish": "малые", "musicians": "малые", "dice": "малые", "puppets": "малые",
+	"mimes": "малые", "ogorod": "малые", "herbalist": "малые", "catshop": "малые", "shelter": "малые", "sculptor": "малые",
+	"ludus": "большие",
 }
 
 

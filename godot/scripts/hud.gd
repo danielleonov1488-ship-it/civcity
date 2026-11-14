@@ -7658,6 +7658,8 @@ static func pets_of(type: String) -> Array:
 	var list: Array = KitHouses.pets(type)
 	if NewArena.covers(type):
 		list = NewArena.pets(type)
+	elif NewShops2.covers(type):
+		list = NewShops2.pets(type)                    # новые приют и кошачья лавка (NewShops2)
 	elif list.is_empty():
 		list = CatGrand.PETS.get(type, CatExtra.PETS.get(type, CatDecor2.PETS.get(Defs.base_of(type), [])))
 	return list.filter(func(e: Array): return e.size() <= 5 or int(e[5]) < 0 or int(e[5]) == lk)
