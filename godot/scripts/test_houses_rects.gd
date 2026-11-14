@@ -8,8 +8,8 @@ func _initialize() -> void:
 		for k: String in NewHouses.TYPES:
 			NewHouses.ON[k] = newv
 		Catalog._cache.clear()
-		for t: String in ["house_pleb", "house_artisan"]:
-			for v in 5:
+		for t: String in ["house_pleb", "house_artisan", "house_patrician"]:
+			for v in (4 if t == "house_patrician" else 5):
 				var bp := Catalog.make(t, 1, v, 0)
 				var rs := []
 				for r: Rect2 in bp.occ_footprint():

@@ -485,7 +485,8 @@ func _rules() -> void:
 	if d < zb - za + 0.35:
 		var tgt: Vector2 = (h1["pos"] as Vector2) + ax * lx + f * (zb - d)
 		var sp := tgt - ax * sbp.door.x - f * sbp.door.z
-		var shop := c.place("bakery", sp, float(h1["yaw"]), 0, -1, true)
+		# цвет — тот же, что у замеренного чертежа (sbp): у новых лавок (NewShops) дверь слева или справа по цвету
+		var shop := c.place("bakery", sp, float(h1["yaw"]), 0, 0, true)
 		var r1 := c.upgrade_room(h1)
 		check(not shop.is_empty() and r1.contains("вход соседней"), "вход лавки в %.2f м за домом — не помещается: «%s»" % [d, r1])
 		if not shop.is_empty():

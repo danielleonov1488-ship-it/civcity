@@ -412,7 +412,9 @@ func _apron_kerb() -> void:
 			sm += land.wear[k]
 		return sm
 	var w_dm_first := land.wear.duplicate()
-	check(reach.size() > 20 and wsum.call() == 0, "дома вплотную к домусу (кольцо дошло бы до %d его клеток): на домусе и в саду (%d клеток) глины нет (%d)" % [reach.size(), inner.size(), wsum.call()])
+	# кольцо дошло бы до клеток домуса: у нового домуса (NewHouses) стены тоньше и лицо стены на 9 см глубже прежнего,
+	# в кольцо попадает меньше его клеток (9 у каждого дома вместо 28) — достаточно, что попадает у обоих домов
+	check(reach.size() > 10 and wsum.call() == 0, "дома вплотную к домусу (кольцо дошло бы до %d его клеток): на домусе и в саду (%d клеток) глины нет (%d)" % [reach.size(), inner.size(), wsum.call()])
 	var near := 0
 	for h: Dictionary in hs:
 		for k in (h["cells"] as PackedInt32Array):

@@ -57,6 +57,12 @@ static func is_wall(nm: String, xf: Transform3D) -> bool:
 	return box.size.x * xf.basis.x.length() >= 0.9 and box.size.y * xf.basis.y.length() >= 1.4
 
 
+## Кусок штукатурки вокруг окна-проёма нового дома (NewHouses._hole: стена Synty с пометкой «hole»): это стена, на неё
+## можно вешать украшения (сам проём между кусками — не стена, на него украшение не встанет)
+static func _hole_slab(p: Array) -> bool:
+	return String(p[0]) == "SM_Bld_Wall_01" and (p[2] as Dictionary).has("hole")
+
+
 ## Проёмы модуля: замеренные; окно или дверь без замера — середина модуля целиком
 static func _openings(nm: String) -> Array:
 	if OPEN.has(nm):
@@ -81,7 +87,7 @@ static func faces(bp: Bp) -> Array:
 	for p in bp.parts:
 		var nm: String = p[0]
 		var xf: Transform3D = p[1]
-		if is_wall(nm, xf):
+		if is_wall(nm, xf) or _hole_slab(p):
 			var box := Bp.model_aabb(nm)
 			var sx := xf.basis.x.length()
 			var sy := xf.basis.y.length()

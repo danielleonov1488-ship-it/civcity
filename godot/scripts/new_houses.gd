@@ -707,7 +707,8 @@ static func _shrink(r: Array, d: float) -> Array:
 ## Дом из этажей: sp — облик: g (фасад первого этажа), u (фасады выше, по f − 1), mass (верх: full — все этажи во всю
 ## коробку; back — верхний этаж в глубине, впереди терраса; side — верхний этаж башенкой над половиной фасада, рядом
 ## терраса; corner — каморка в заднем углу, вокруг терраса), min (с какой этажности уступ, по умолчанию 2), roof (крыша
-## без уступа: hip | gx | gz | flat — крыша-терраса), roof1 (крыша одноэтажного, если другая), rroof (крыша комнаты
+## без уступа: hip | gx | gz | flat — крыша-терраса; уступ — у трёхэтажных: у двухэтажного фасад в два этажа, на нём
+## игрок вешает фонари, факелы, цветы и знамёна, test_stage3), roof1 (крыша одноэтажного, если другая), rroof (крыша комнаты
 ## уступа: hip | gx | gz | lean | flat), rail (парапет террасы: par — штукатурка, bal — балюстрада, wood — деревянные
 ## перила), td (терраса: pergola | parasol | wash | garden), bal (у двери B: wood | fabric | gallery), brick, medal,
 ## di (пролёт двери фасада), si (сторона башенки и каморки), stair (лестница с террасы на плоскую крышу комнаты).
@@ -925,8 +926,13 @@ static func _dress_floor(b: Bp, r: Array, f: int, y: float, h: float, res: Dicti
 				_:
 					_balcony(b, r, float(e[1]), float(e[2]), y, x)
 	var k := 0
+	var kept := false
 	for e: Array in res["W"]:
 		if int(e[0]) == 0:
+			continue
+		if not kept:
+			# первый гладкий модуль боков на этаже — без плюща, кашпо и белья: место для настенных украшений игрока
+			kept = true
 			continue
 		match posmod(k + f + v, 4):
 			0, 1:
@@ -992,11 +998,11 @@ static func _pleb(b: Bp, fl: int, v: int, x: Dictionary) -> Vector3:
 	var si := (int(x["c"]) / 2 + v) % 2
 	var sp: Dictionary
 	match v:
-		0: sp = {"g": _pair(di, "D", "K"), "u": ["KC", "CK"], "mass": "back", "roof": "hip", "rroof": "hip", "rail": "par", "td": "pergola"}
+		0: sp = {"g": _pair(di, "D", "K"), "u": ["KC", "CK"], "mass": "back", "min": 3, "roof": "hip", "rroof": "hip", "rail": "par", "td": "pergola"}
 		1: sp = {"g": _pair(di, "D", "V"), "u": [_pair(di, "B", "K"), "AK"], "mass": "side", "min": 3, "roof": "gx", "rroof": "gz", "rail": "wood", "td": "wash", "bal": "wood"}
-		2: sp = {"g": _pair(di, "D", "Q"), "u": ["QQ", "PQ"], "mass": "back", "min": 3, "roof": "gz", "rroof": "gz", "rail": "bal", "td": "pergola", "brick": true, "medal": true, "cor": "SM_Bld_Trim_03"}
-		3: sp = {"g": _pair(di, "D", "K"), "u": [_pair(di, "S", "R"), "KC"], "mass": "corner", "roof": "flat", "rroof": "lean", "rail": "par", "td": "parasol"}
-		_: sp = {"g": _pair(di, "D", "N"), "u": ["KK", "AK"], "mass": "side", "roof": "hip", "rroof": "hip", "rail": "bal", "td": "garden"}
+		2: sp = {"g": _pair(di, "D", "Q"), "u": [_pair(di, "C", "Q"), "PQ"], "mass": "back", "min": 3, "roof": "gz", "rroof": "gz", "rail": "bal", "td": "pergola", "brick": true, "medal": true, "cor": "SM_Bld_Trim_03"}
+		3: sp = {"g": _pair(di, "D", "K"), "u": [_pair(di, "S", "R"), "KC"], "mass": "corner", "min": 3, "roof": "flat", "rroof": "lean", "rail": "par", "td": "parasol"}
+		_: sp = {"g": _pair(di, "D", "N"), "u": [_pair(di, "C", "K"), "AK"], "mass": "side", "min": 3, "roof": "hip", "rroof": "hip", "rail": "bal", "td": "garden"}
 	sp["di"] = di
 	sp["si"] = si
 	_body(b, r, fl, x, sp)
@@ -1061,11 +1067,11 @@ static func _artisan(b: Bp, fl: int, v: int, x: Dictionary) -> Vector3:
 	var g := _pair(di, "E", "O")
 	var sp: Dictionary
 	match v:
-		0: sp = {"g": g, "u": [_pair(di, "B", "K"), "KC"], "mass": "side", "roof": "hip", "rroof": "gz", "rail": "wood", "td": "parasol", "bal": "fabric"}
-		1: sp = {"g": g, "u": [_pair(di, "B", "H"), "KK"], "mass": "back", "roof": "gx", "rroof": "gx", "rail": "par", "td": "parasol", "bal": "gallery"}
+		0: sp = {"g": g, "u": [_pair(di, "B", "K"), "KC"], "mass": "side", "min": 3, "roof": "hip", "rroof": "gz", "rail": "wood", "td": "parasol", "bal": "fabric"}
+		1: sp = {"g": g, "u": [_pair(di, "B", "H"), "KK"], "mass": "back", "min": 3, "roof": "gx", "rroof": "gx", "rail": "par", "td": "parasol", "bal": "gallery"}
 		2: sp = {"g": g, "u": ["QQ", "QP"], "mass": "back", "min": 3, "roof": "gz", "rroof": "gz", "rail": "bal", "td": "pergola", "brick": true, "medal": true, "cor": "SM_Bld_Trim_03"}
-		3: sp = {"g": g, "u": [_pair(si, "S", "R"), "CK"], "mass": "corner", "roof": "flat", "rroof": "lean", "rail": "par", "td": "pergola"}
-		_: sp = {"g": g, "u": ["KA", "KC"], "mass": "back", "roof": "hip", "rroof": "flat", "rail": "wood", "td": "wash", "stair": true}
+		3: sp = {"g": g, "u": [_pair(si, "S", "R"), "CK"], "mass": "corner", "min": 3, "roof": "flat", "rroof": "lean", "rail": "par", "td": "pergola"}
+		_: sp = {"g": g, "u": ["KA", "KC"], "mass": "back", "min": 3, "roof": "hip", "rroof": "flat", "rail": "wood", "td": "wash", "stair": true}
 	sp["di"] = di
 	sp["si"] = (int(x["c"]) / 2 + v) % 2
 	_body(b, r, fl, x, sp)
