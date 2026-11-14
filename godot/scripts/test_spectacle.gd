@@ -162,7 +162,9 @@ func _life() -> void:
 		if f.dot(to_p) < 0.85:
 			bad += 1
 	check(bad == 0, "все на службе — лицом к жрецу (не так: %d)" % bad)
-	game._set_hour(9.75)
+	# бани собираются 9:00–9:48: час — в начале сбора (в 9:45 новые бани на 18 мест успевали набрать лишь одного
+	# купальщика по часам и тех, кого позвали из домов, — ровно 5, порог «больше 4» мигал)
+	game._set_hour(9.2)
 	ok = await _until(func(): return B["phase"] == "gather" or B["phase"] == "show", 20.0)
 	ok = ok and await _until(func(): return (B["who"] as Array).size() > 4, 60.0)   # новые бани (18 мест): купальщики сходятся дольше
 	check(ok, "термы открылись — купаются: %d" % (B["who"] as Array).size())
