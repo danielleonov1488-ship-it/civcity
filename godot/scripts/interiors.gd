@@ -254,6 +254,7 @@ static func apply(b: Bp, kind: String) -> void:
 	if kind == "decor":
 		return
 	_drop_balcony_rugs(b)
+	_clear_signs(b)
 	var n0 := b.parts.size()
 	var rooms := []            # обратные преобразования комнат — проверка «за проёмом уже есть комната»
 	var plates := []
@@ -274,7 +275,7 @@ static func apply(b: Bp, kind: String) -> void:
 			for k in range(1, nfl):                    # перекрытия многоэтажной коробки
 				var yl := -0.5 + (k * FL - 0.05) / sy
 				b.parts.append(["#plate_lit" if lit else "#plate", xf * Transform3D(Basis.from_scale(Vector3(1.0, 0.12 / sy, 1.0)), Vector3(0, yl, 0)), {}])
-		elif (minf(sx, sz) <= 0.12 and sy >= 0.25 and maxf(sx, sz) >= 0.25) or (sy >= 0.3 and minf(sx, minf(sy, sz)) > 0.12 and maxf(sx, sz) >= 1.2):
+		elif (minf(sx, sz) <= 0.06 and sy >= 0.25 and maxf(sx, sz) >= 0.25) or (sy >= 0.3 and minf(sx, minf(sy, sz)) > 0.12 and maxf(sx, sz) >= 1.2):
 			# вертикальная пластина за решёткой окна или низкая тёмная коробка (передок помоста, прилавок): тёплая стена
 			p[0] = "#plate_lit" if lit else "#plate"
 			plates.append(xf.affine_inverse())
@@ -342,3 +343,46 @@ static func _drop_balcony_rugs(b: Bp) -> void:
 			if y >= FL - 0.1 and absf(fposmod(y, FL) - 1.0) < 0.35:
 				b.parts.remove_at(i)
 		i -= 1
+
+
+## Вывески над дверью («#sign:…») — на поверхности стены, чуть впереди неё, а не в стене или карнизе (владелец 14.11:
+## «вывеска врезана в стену»): спинка вывески выдвигается вперёд до самой выступающей детали здания под ней
+static func _clear_signs(b: Bp) -> void:
+	var boxes := []
+	for p in b.parts:
+		var nm: String = p[0]
+		if nm.begins_with("SM_Bld_Wall") or nm.begins_with("SM_Bld_Trim") or nm.begins_with("SM_Bld_Door") or nm.begins_with("SM_Bld_Pillar") or nm.begins_with("SM_Bld_Floor_Trim"):
+			boxes.append((p[1] as Transform3D) * Bp.model_aabb(nm))
+	for p in b.parts:
+		var nm: String = p[0]
+		if not nm.begins_with("#sign:"):
+			continue
+		var m := CatDress.kit_mesh(nm)
+		if m == null:
+			continue
+		var xf: Transform3D = p[1]
+		var f := xf.basis.z.normalized()
+		if absf(f.y) > 0.3:
+			continue
+		var sb: AABB = xf * m.get_aabb()
+		var back := INF
+		for i in 8:
+			back = minf(back, f.dot(xf * m.get_aabb().get_endpoint(i)))
+		var need := back
+		for bx: AABB in boxes:
+			# совпадает ли по ширине и высоте (вдоль стены и вверх): ось вдоль f — глубина
+			var ax := 0 if absf(f.x) > absf(f.z) else 2
+			var lat := 2 if ax == 0 else 0
+			var ov_l := minf(sb.end[lat], bx.end[lat]) - maxf(sb.position[lat], bx.position[lat])
+			var ov_y := minf(sb.end.y, bx.end.y) - maxf(sb.position.y, bx.position.y)
+			if ov_l <= 0.02 or ov_y <= 0.02:
+				continue
+			var fr := -INF
+			for i in 8:
+				fr = maxf(fr, f.dot(bx.get_endpoint(i)))
+			if fr - back < 0.5:
+				need = maxf(need, fr)
+		var push := clampf(need + 0.03 - back, 0.0, 0.4)
+		if push > 0.001:
+			xf.origin += f * push
+			p[1] = xf

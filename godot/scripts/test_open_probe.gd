@@ -1,13 +1,20 @@
 extends SceneTree
-## Нутро чертежа: какие «#dark/#lit/#room/#plate» стоят у типа (аргументы после «--»: типы через запятую)
+## Отладка чертежа: «-- aabb имена» — габариты моделей; «-- parts тип подстрока» — детали чертежа типа, чьё имя содержит подстроку, с их габаритами
 func _init() -> void:
 	var ua := OS.get_cmdline_user_args()
-	var types: PackedStringArray = ua[0].split(",") if ua.size() > 0 else PackedStringArray(["taberna"])
-	for t in types:
-		var bp: Bp = Catalog.make(t, 1, 0, 0)
+	if ua.size() > 1 and ua[0] == "parts":
+		var bp: Bp = Catalog.make(ua[1], 1, 0, 0)
 		for p in bp.parts:
 			var nm: String = p[0]
-			if nm.begins_with("#dark") or nm.begins_with("#lit") or nm.begins_with("#room") or nm.begins_with("#plate"):
-				var xf: Transform3D = p[1]
-				print("PART ", t, " ", nm, " size ", snapped(Vector3(xf.basis.x.length(), xf.basis.y.length(), xf.basis.z.length()), Vector3(0.01, 0.01, 0.01)), " at ", snapped(xf.origin, Vector3(0.01, 0.01, 0.01)))
+			if ua.size() > 2 and not nm.contains(ua[2]):
+				continue
+			var xf: Transform3D = p[1]
+			var bb: AABB = xf * Bp.model_aabb(nm)
+			print("PART ", nm, " x ", snapped(bb.position.x, 0.01), "..", snapped(bb.end.x, 0.01), " y ", snapped(bb.position.y, 0.01), "..", snapped(bb.end.y, 0.01), " z ", snapped(bb.position.z, 0.01), "..", snapped(bb.end.z, 0.01))
+		quit()
+		return
+	var names: PackedStringArray = ua[0].split(",") if ua.size() > 0 else PackedStringArray()
+	for n in names:
+		var b := Bp.model_aabb(n)
+		print("AABB ", n, " pos ", snapped(b.position, Vector3(0.01, 0.01, 0.01)), " size ", snapped(b.size, Vector3(0.01, 0.01, 0.01)))
 	quit()

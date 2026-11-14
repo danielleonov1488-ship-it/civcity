@@ -479,9 +479,11 @@ func fence(x0: float, z0: float, x1: float, z1: float, gate_front := true) -> vo
 
 func brazier(p: Vector3, big := false) -> void:
 	if big:
-		add("SM_Prop_Brazier_01", p, 0.0, 0.75)
-		add("SM_Prop_Brazier_01_Insert_01", p, 0.0, 0.75)
-		light(p + Vector3(0, 1.5, 0))
+		# большая жаровня: вставка Brazier_01_Insert_01 даёт яркий изогнутый «язык» (владелец 14.11, театр) — берём
+		# обычную чашу Brazier_03 с её огнём, покрупнее
+		add("SM_Prop_Brazier_03", p, 0.0, 1.35)
+		add("SM_Prop_Brazier_03_Insert_01", p, 0.0, 1.35)
+		light(p + Vector3(0, 1.3, 0))
 	else:
 		add("SM_Prop_Brazier_03", p, 0.0)
 		add("SM_Prop_Brazier_03_Insert_01", p, 0.0)

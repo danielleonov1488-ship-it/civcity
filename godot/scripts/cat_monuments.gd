@@ -231,7 +231,8 @@ static func _fountain(b: Bp) -> void:
 	_box(b, "#water", Vector3(0, 0.25, 0), Vector3(2.0 * h - 0.3, 0.26, 2.0 * h - 0.3))
 	for c: Vector3 in [Vector3(-h, 0, -h), Vector3(h, 0, -h), Vector3(-h, 0, h), Vector3(h, 0, h)]:
 		b.add("SM_Prop_Pillar_Base_01", c, 0.0, 0.9)
-		_pot(b, c + Vector3(0, 0.9, 0), 0.5)
+		# на столбиках — амфоры (стоят на камне); кашпо с плющом «висело в воздухе» (владелец 14.11)
+		b.add("SM_Prop_Vase_0%d" % [2, 3, 5, 2][int(c.x > 0.0) * 2 + int(c.z > 0.0)], c + Vector3(0, 0.9, 0), b.rng.randf() * TAU, 0.8)
 	b.add("SM_Prop_Fountain_04", Vector3(0, 0.05, 0), PI / 8, 0.72)
 	b.add("SM_Prop_Fountain_04_Insert_01", Vector3(0, 0.05, 0), PI / 8, 0.72)
 	_statue(b, Vector3(0, 0.05 + 1.81 * 0.72 - 0.05, 0), 0.0, 0.42, 5)
@@ -421,12 +422,13 @@ static func _forum(b: Bp) -> void:
 			var p := Vector3(sd * hx, 0, z - sd * 1.25)
 			b.add(nm, p, -sd * PI / 2, 1.0, true)
 			b.add("SM_Bld_Wall_Tiny_01", p + Vector3(0, 2.9, 0), -sd * PI / 2, 1.0, true)
+			# снаружи — настоящая стена Synty лицом наружу (изнанка модулей — плоские оранжевые щиты с зелёными полосами)
+			if true:
+				_put(b, "SM_Bld_Wall_01", Transform3D(Basis(Vector3.UP, sd * PI / 2) * Basis.from_scale(Vector3(1, 1.07, 1)), Vector3(sd * (hx + 0.23), 0, z + sd * 1.25)), b.remap.duplicate())
 			if nm == "SM_Bld_Wall_Door_04":
 				b.add("SM_Bld_Door_0%d" % (1 + b.rng.randi() % 5), Vector3(sd * (hx - 0.02), 0, z - sd * 0.45), -sd * PI / 2)
 			elif nm == "SM_Bld_Wall_Door_Large_01":
-				# лавка: тёмное нутро закрыто снаружи стеной в цвет здания
-				_box(b, "#dark", Vector3(sd * (hx + 0.36), 1.5, z), Vector3(0.12, 3.0, 2.4))
-				_put(b, "SM_Bld_Wall_01", Transform3D(Basis(Vector3.UP, sd * PI / 2) * Basis.from_scale(Vector3(1, 1.07, 1)), Vector3(sd * (hx + 0.5), 0, z + sd * 1.25)), b.remap.duplicate())
+				# лавка: снаружи её закрывает та же стена (см. выше), внутри — комната (Interiors)
 				b.add("SM_Prop_Vase_0%d" % (1 + b.rng.randi() % 6), Vector3(sd * (hx - 0.8), 0, z - 0.5), 0.0, 0.8)
 				b.add("SM_Prop_Vase_0%d" % (1 + b.rng.randi() % 6), Vector3(sd * (hx - 0.75), 0, z + 0.55), 0.0, 0.7)
 				b.add("SM_Prop_Sack_0%d" % (1 + b.rng.randi() % 5), Vector3(sd * (hx - 1.1), 0, z + 0.05), b.rng.randf() * TAU, 0.8)

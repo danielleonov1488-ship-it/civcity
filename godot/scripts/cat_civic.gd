@@ -154,7 +154,7 @@ static func _chimney(_b: Bp, _p: Vector3, _s := 1.0) -> void:
 
 ## Односкатный навес на столбах: столбы по z_post от x0 до x1, кровля поднимается к стене z_wall.
 ## post = "" — без столбов (козырёк на стене); beam — брус над столбами (деревянный навес)
-static func _shed(b: Bp, x0: float, x1: float, z_post: float, z_wall: float, h: float, post: String, ky := 0.8, beam := true, ps := 0.8) -> void:
+static func _shed(b: Bp, x0: float, x1: float, z_post: float, z_wall: float, h: float, post: String, ky := 0.8, beam := true, ps := 0.8, back_posts := false) -> void:
 	var n := maxi(1, int(round((x1 - x0) / M)))
 	var seg := (x1 - x0) / n
 	var dir := signf(z_wall - z_post)
@@ -163,6 +163,8 @@ static func _shed(b: Bp, x0: float, x1: float, z_post: float, z_wall: float, h: 
 	if post != "":
 		for i in n + 1:
 			b.add(post, Vector3(x0 + i * seg, 0, z_post), 0.0, ps)
+			if back_posts:                           # у навеса без стены — столбы и сзади (не «крыша на двух ножках»)
+				b.add(post, Vector3(x0 + i * seg, 0, z_wall - dir * 0.15), 0.0, ps)
 	for i in n:
 		var x := x0 + i * seg if dir < 0 else x1 - i * seg
 		var p := Vector3(x, h, z_post - dir * 0.35)
@@ -360,8 +362,8 @@ static func _center(b: Bp, stage: int) -> void:
 	# вальмовая крыша с навершиями и трубой
 	var ridge2 := _hip(b, -3.75, 3.75, -5.0, 0.0, top, 1.5)
 	_chimney(b, Vector3(2.2, top + 0.38, -3.6))
-	b.add("SM_Bld_Roof_Topper_0%d" % (3 if s < 5 else 5), Vector3(-1.25, ridge2, cz), 0.0)
-	b.add("SM_Bld_Roof_Topper_0%d" % (3 if s < 5 else 5), Vector3(1.25, ridge2, cz), 0.0)
+	pass          # навершия «замочки» на коньке станции убраны (владелец 14.11): конёк — просто черепица
+	pass          # навершия «замочки» на коньке станции убраны (владелец 14.11): конёк — просто черепица
 	b.add("SM_Bld_Roof_Detail_01", Vector3(-1.4, top + 0.42, -1.2), 0.0, 0.7, true)
 	# окна, цветы, вывеска, фонарь у двери
 	for i: int in [0, 2]:
@@ -413,7 +415,7 @@ static func _center(b: Bp, stage: int) -> void:
 		b.remap = brick
 		var sr := _gable2(b, 3.75, 6.25, -5.0, 0.0, sfl * FL, 1.6, true)
 		b.remap = b.floor_remap(1)
-		b.add("SM_Bld_Roof_Topper_02", Vector3(5.0, sr - 0.04, -0.12), 0.0)
+		pass          # навершия «замочки» на коньке станции убраны (владелец 14.11): конёк — просто черепица
 		b.add("SM_Prop_Bowl_07", Vector3(2.93 / CENTER_SX, 0, 0.6), PI / 2, 1.0)
 		_water(b, Vector3(2.93 / CENTER_SX, 0.12, 0.6), Vector3(0.75, 0.16, 0.9))
 		b.add("SM_Prop_Straw_Bundle_01", Vector3(6.5, 0, -1.2), 0.5)
@@ -480,7 +482,7 @@ static func _center(b: Bp, stage: int) -> void:
 			b.remap = white
 			var wr := _gable2(b, -6.25, -3.75, -5.0, 0.0, wtop, 1.6, true)
 			b.remap = b.floor_remap(1)
-			b.add("SM_Bld_Roof_Topper_02", Vector3(-5.0, wr - 0.04, -0.12), 0.0)
+			pass          # навершия «замочки» на коньке станции убраны (владелец 14.11): конёк — просто черепица
 			b.rng.randi()          # (плющ здесь ложился поверх окон бока крыла — убран; случай прежний)
 	# повозка: у двора, потом — в воротах конюшни
 	var cp := Vector3(5.05, 0, 0.75) if wing else Vector3(-5.0, 0, 0.9)
@@ -521,8 +523,8 @@ static func _center(b: Bp, stage: int) -> void:
 		if s >= 6:
 			b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(0, pr - 0.05, 2.85), 0.0, 0.75)
 		if s == 6:
-			b.add("SM_Bld_Roof_Topper_05", Vector3(-4.1, 4.0, 2.75), 0.0)
-			b.add("SM_Bld_Roof_Topper_05", Vector3(4.1, 4.0, 2.75), 0.0)
+			pass          # навершия «замочки» на коньке станции убраны (владелец 14.11): конёк — просто черепица
+			pass          # навершия «замочки» на коньке станции убраны (владелец 14.11): конёк — просто черепица
 		elif s >= 7:
 			b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(-4.1, 4.0, 2.85), 0.0, 0.45)
 			b.add("SM_Prop_Statue_0%d" % (1 + b.rng.randi() % 7), Vector3(4.1, 4.0, 2.85), 0.0, 0.45)
@@ -689,7 +691,7 @@ static func _scriptorium(b: Bp) -> void:
 	b.add("SM_Prop_Scroll_01", Vector3(1.45, 0.76, 1.05), 1.2, 0.9)
 	b.add("SM_Prop_Seat_Stool_01", Vector3(1.2, 0, 1.7), 0.0, 0.95)
 	b.add("SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 5), Vector3(2.2, 0, 1.25), 0.0, 0.7)
-	b.add("SM_Prop_Scroll_Pile_02", Vector3(2.2, 0.48, 1.25), 0.0, 0.8)
+	b.add("SM_Prop_Scroll_Pile_02", Vector3(2.2, 0.3, 1.25), 0.0, 0.8)     # на корзине (корзина ~0,33 м), а не в воздухе
 	# красный тканевый навес на двух тонких столбиках
 	b.add_xf("SM_Prop_Banner_Roof_01", Transform3D(Basis(Vector3.RIGHT, 0.16).scaled(Vector3(1, 1, 0.92)), Vector3(0.05, 2.66, 0.16)))
 	for x: float in [0.15, 2.45]:
@@ -985,7 +987,7 @@ static func _grove(b: Bp) -> void:
 	b.add("SM_Prop_Basket_Set_04_Insert_01", Vector3(-0.8, 0, 1.85), 0.5, 0.75)
 	b.add("SM_Prop_Basket_0%d" % (1 + b.rng.randi() % 5), Vector3(-2.5, 0, 1.9), 0.0, 0.75)
 	# маслодавильня: жёрнов в каменной чаше под навесом на столбах
-	_shed(b, 2.2, 4.7, 4.4, 2.1, 2.3, "SM_Bld_Trellis_Pillar_01", 0.9)
+	_shed(b, 2.2, 4.7, 4.4, 2.1, 2.3, "SM_Bld_Trellis_Pillar_01", 0.9, true, 0.8, true)
 	b.add("SM_Prop_Bowl_01", Vector3(3.45, 0, 3.2), 0.0, 1.2)
 	b.add("SM_Prop_Grinding_Wheel_01", Vector3(3.45, 0.3, 3.2), 0.6, 0.85)
 	b.add("SM_Prop_Vase_Pile_02", Vector3(-1.6, 0, 3.75), PI / 2, 0.75)

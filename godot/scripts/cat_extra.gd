@@ -14,7 +14,7 @@ const PETS := {
 	"shelter": [["cat", Vector3(1.1, 0.5, -3.25), 2.4, "sleep", 1.0, -1], ["cat", Vector3(2.1, 0.5, -3.25), 0.6, "sleep", 1.0, -1],
 		["donkey", Vector3(2.7, 0, -1.9), PI / 2 + 0.2, "Eating", 0.95, -1]],
 	"catshop": [["cat", Vector3(1.55, 0.97, 1.5), 0.35, "sit", 1.0, -1, "petasos"], ["cat", Vector3(-2.1, 0.14, 1.0), 2.2, "sleep", 0.9, -1, "bow"],
-		["cat", Vector3(-0.45, 0.0, 1.05), 0.1, "pet", 1.0, -1, "collar"], ["cat", Vector3(1.0, 1.62, -0.55), 0.2, "sleep", 0.9, -1, "bandana"],
+		["cat", Vector3(0.0, 0.0, 1.05), 0.1, "pet", 1.0, -1, "collar"], ["cat", Vector3(1.75, 1.27, -0.6), 0.2, "sleep", 0.9, -1, "bandana"],
 		["toy", Vector3(-0.45, 2.42, 1.42), 0.0, "", 1.0, -1], ["acc", Vector3(0.75, 1.05, 1.42), 0.4, "pileus", 1.6, -1],
 		["acc", Vector3(2.0, 1.02, 1.4), -0.3, "wreath", 1.5, -1], ["acc", Vector3(-0.15, 1.0, -0.55), 0.3, "cape", 1.3, -1],
 		["acc", Vector3(-0.85, 1.48, -0.55), 0.0, "flower", 1.8, -1]],
@@ -166,7 +166,7 @@ static func _catshop(b: Bp) -> void:
 	for j in 4:
 		var sl: Vector2 = CatShops.SHELF_SLOTS[j]
 		b.add(["SM_Prop_Basket_06", "SM_Prop_Pillow_05", "SM_Prop_Basket_12", "SM_Prop_Pillow_06"][j], c + Vector3(sl.x, sl.y, 0.0), j * 0.7, [0.45, 0.42, 0.5, 0.45][j])
-	b.add("SM_Prop_Pillow_06", Vector3(1.0, 1.58, -0.55), 0.3, 0.55)
+	# кошка спит на подушке верхней доски полки (раньше — выше доски, «в воздухе»)
 	# у двери: корзинка-лежанка с подушкой (в ней спит кошка), миски с молоком и рыбкой
 	b.add("SM_Prop_Basket_11", Vector3(-2.15, 0, 0.95), 0.3, 0.8)
 	b.add("SM_Prop_Pillow_06", Vector3(-2.15, 0.06, 0.95), 0.5, 0.65)
