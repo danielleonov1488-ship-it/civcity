@@ -39,13 +39,16 @@ const REV := 1
 ## прилавки, уличные зрелища, огород, приют, кошачья лавка, травник, скульптор (NewShops2) — с ревизии 1, в прежних следах
 ## (OLD_LOT не нужен); лудус (NewShops2, 51 м², было 39) — с ревизии 1: в старых городах — под прежние клетки, растёт,
 ## где есть место
+## лавки, термополий, таверна, фуллоника (NewShops) — с ревизии 1, в прежних следах (OLD_LOT не нужен: 1–2 дома, как были)
 const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1, "theatre": 1, "odeon": 1, "library": 1, "thermae": 1,
 	"pantheon": 1, "academy": 1, "forum": 1, "venus": 1, "center": 1, "baths": 1, "mansio": 1, "prefect": 1,
 	"vigiles": 1, "school": 1, "balnea": 1, "warehouse": 1, "scriptorium": 1,
 	"barracks": 1, "range": 1, "spearcamp": 1, "ballistae": 1, "catapults": 1, "forge": 1, "infirmary": 1, "armory": 1,
 	"smelter": 1, "sawmill": 1, "tannery": 1, "principia": 1, "mars": 1,
 	"stall_fruit": 1, "stall_veg": 1, "stall_fish": 1, "musicians": 1, "dice": 1, "mimes": 1, "puppets": 1, "ogorod": 1, "shelter": 1,
-	"catshop": 1, "herbalist": 1, "sculptor": 1, "ludus": 1}
+	"catshop": 1, "herbalist": 1, "sculptor": 1, "ludus": 1,
+	"butcher": 1, "bakery": 1, "cobbler": 1, "dyer": 1, "tailor": 1, "potter": 1, "oilshop": 1, "lamps": 1, "wineshop": 1,
+	"perfumer": 1, "jeweler": 1, "weaver": 1, "barber": 1, "medic": 1, "thermopolium": 1, "taberna": 1, "fullonica": 1}
 
 ## Прежний след (м, ширина × глубина при yaw 0) — проба размеров 12.11, до линейки
 const OLD_LOT := {

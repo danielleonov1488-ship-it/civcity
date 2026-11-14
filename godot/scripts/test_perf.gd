@@ -83,6 +83,10 @@ func _ready() -> void:
 		for t: String in NewHouses.TYPES:
 			NewHouses.ON[t] = A["newhouses"] != "0"
 		NewHouses.APRON = A["newhouses"] != "0"
+	# newshops=0 — прежние лавки, термополий, таверна, фуллоника (CatShops), 1 — новые (NewShops)
+	if A.has("newshops"):
+		for t: String in NewShops.TYPES:
+			NewShops.ON[t] = A["newshops"] != "0"
 	city_src = str(A.get("city", OWNER))
 	if city_src == "new" or not FileAccess.file_exists(city_src):
 		if city_src != "new":
