@@ -577,7 +577,9 @@ func _d10_fixes(c: City, lg: Legion, ui: LegionUi) -> void:
 	rc.pending = {}
 	check("ролик ранга ждёт: совета о Кузнице нет и он не потрачен", not during and not spent)
 	c.changed.emit()
-	check("ролик позади — «%s»" % hud.adv_title.text, hud.advisor_panel.visible and hud.adv_title.text == "Новое здание Легиона: Кузница" and lg.flags.has("new_forge"))
+	# «Новое здание Легиона…» всплывашкой убрано (отзыв 14.11): ролик позади — окна нет, флаг «сказано» ставится молча
+	check("ролик позади — совет о Кузнице окном не всплывает, флаг поставлен (окно «%s» %s)" % [hud.adv_title.text, str(hud.advisor_panel.visible)],
+		not (hud.advisor_panel.visible and hud.adv_title.text.begins_with("Новое здание Легиона")) and lg.flags.has("new_forge"))
 	await shot("d10_tip_forge")
 	hud.advisor_panel.visible = false
 	# перенос: улучшение Казарм кончилось «в руках» — отмена переноса

@@ -478,10 +478,10 @@ func _ready() -> void:
 	elif loaded and mode == "play" and shot_path == "" and not city.tips.has("v22_pace"):
 		city.tips["v22_pace"] = true
 		hud.advisor("В городе новые правила", hud.pace_note())
-	elif not loaded and shot_path == "" and not tutorial.active():
+	elif not loaded and shot_path == "" and not tutorial.active() and not sandbox:
 		hud.advisor("Аве! Я Марк, твой советник.", "По большой дороге через арку к почтовой станции приезжают повозки с переселенцами. Проложи дорогу кистью (слева внизу) и поставь вдоль неё дома — они сами встанут фасадом к дороге. Рядом поставь лавки: каждая кормит и радует дома в своей дальности.\n\n" +
 			("Камера: щипок на трекпаде — масштаб, два пальца — двигать, Option + два пальца — вращать (или WASD, Q/E)." if OS.has_feature("macos")
-			else "Камера: колёсико — масштаб, зажатое колёсико — вращать, правая кнопка — двигать (или WASD, Q/E)."))
+			else "Камера: колёсико — масштаб, зажатое колёсико — вращать, правая кнопка — двигать (или WASD, Q/E)."), Callable(), true, true)
 	Account.me().attach(self)                 # вход в аккаунт и сверка города с облаком (scripts/account.gd)
 	MacUpdate.attach_game(self)               # Mac: строка «Вышла новая версия» в меню или окно «скачайте новую версию»
 	LegionBattle.attach(self)                 # 3D-бой Легиона: «В бой» в окне «Легион» открывает поле боя (scripts/legion_battle.gd)

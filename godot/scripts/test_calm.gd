@@ -320,21 +320,14 @@ func _pace() -> void:
 	check(sto.gap_now() == mini(StoryDefs.GAP_H, int(StoryDefs.story("bandits").get("gap_h", 99))), "после «Маси» — своя пауза «Разбойников» (%d ч)" % sto.gap_now())
 	S["h"] = int(S["h"]) + maxi(sto.gap_now(), Stories.OFFER_GAP_H)
 	check(sto.time_ok(), "«Разбойники у арки» — когда пауза прошла (на «Хуторе»)")
-	# «Другой заказ» — следующий сразу, по щелчку, даже когда история вот-вот (и не в один час с ней)
-	(S["orders"] as Dictionary)["cur"] = "o_lamps"
-	sto.pace_mark()
+	# заказов старосты в игре больше нет (убраны по отзыву 14.11): «Другой заказ» и их темп не проверяем;
+	# история — по-прежнему не в тот же час, что и новый ранг/новое
 	var lh0 := int(S["last_h"])
 	S["last_h"] = int(S["h"]) - sto.gap_now() + 1      # история — через час
 	check(sto.story_soon(int(S["h"])), "история вот-вот придёт")
-	od.skip()
-	var cur_o := String((S["orders"] as Dictionary).get("cur", ""))
-	if cur_o != "":
-		check((S["offer"] as Dictionary).is_empty() and not (S["orders"] as Dictionary).has("now"), "«Другой заказ» — следующий сразу, по щелчку: «%s»" % od.cur().get("title", ""))
-	else:
-		check(not (S["orders"] as Dictionary).has("now"), "«Другой заказ»: заменить нечем — следующий придёт в спокойном темпе (флаг снят)")
 	sto._tried = ""
 	sto.tick()
-	check((S["offer"] as Dictionary).is_empty(), "история — не в один час с заказом (заказ «%s»)" % cur_o)
+	check((S["offer"] as Dictionary).is_empty() and String((S["orders"] as Dictionary).get("cur", "")) == "", "история — не раньше срока, заказы не рождаются")
 	S["last_h"] = lh0
 	S["orders"] = {}
 	# просьбы — по одной

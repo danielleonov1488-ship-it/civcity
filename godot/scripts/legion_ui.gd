@@ -702,7 +702,14 @@ func tut_pointer() -> Array:
 		"barracks":
 			if visible:
 				return [tut_act, ""]
-			if game.tool == "barracks":
+			if game.tool == "barracks" or Game.sandbox or lg.flags.has("arrow_done"):
+				return [null, ""]
+			# стрелка «Казармы» — один раз и недолго, когда они только открылись (отзыв 14.11: назойливо)
+			var now := Time.get_ticks_msec()
+			if hud._bar_arrow_t0 == 0:
+				hud._bar_arrow_t0 = now
+			elif now - hud._bar_arrow_t0 > 10000:
+				lg.flags["arrow_done"] = true
 				return [null, ""]
 			return [hud._card_or_cat("military", "barracks"), "Казармы"]
 		"medal":

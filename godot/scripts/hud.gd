@@ -123,6 +123,8 @@ var adv_title: Label
 var adv_text: Label
 var adv_skip: Button                        # «Пропустить обучение» у совета-шага (advisor(…, skip))
 var adv_ok: Button                          # «Понятно» (у вопроса Gfx — «Не надо»)
+var adv_face: TextureRect                   # портрет советника (в угловой карточке — поменьше)
+var _bar_arrow_t0 := 0                      # когда впервые показали стрелку «Казармы» (она показывается один раз, ~10 с)
 var adv_never: Button                       # «Больше не показывать» — выключает всплывающие советы (настройка advisor_off)
 var _adv_skip_cb := Callable()
 var notes_box: VBoxContainer
@@ -2250,7 +2252,7 @@ func cursor_error(text: String, hint := false) -> void:
 func _caption_refresh() -> void:
 	if cover_box == null:
 		cover_box = VBoxContainer.new()
-		cover_box.add_theme_constant_override("separation", -2)
+		cover_box.add_theme_constant_override("separation", 3)
 		cover_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		for col in [Color("b4ffae"), Color("a9d4ff"), Color("ffe3a3"), Color("fff4dc"), Color("ffab96")]:
 			var l := _label("", 19, true, col)
@@ -2311,6 +2313,17 @@ func _place_caption() -> void:
 		p.y = mp.y - 14.0 - sz.y
 	p.x = clampf(p.x, 6.0, maxf(6.0, root.size.x - sz.x - 6.0))
 	p.y = clampf(p.y, 6.0, maxf(6.0, root.size.y - sz.y - 6.0))
+	# подписи не ложатся на окно выбранной постройки и карточки справа: уходят левее них, а нет места — выше
+	for pn: Control in [tool_panel, info_panel, overlay_panel]:
+		if pn == null or not pn.visible:
+			continue
+		var r := Rect2(pn.global_position, pn.size).grow(6.0)
+		if Rect2(p, sz).intersects(r):
+			var left := r.position.x - sz.x
+			if left >= 6.0:
+				p.x = left
+			else:
+				p.y = maxf(6.0, r.position.y - sz.y)
 	cover_box.position = p.round()
 
 
@@ -5338,6 +5351,7 @@ func _advisor() -> void:
 	advisor_panel.add_child(h)
 	# советник Марк — портрет в лавровой раме
 	var face := _pic("advisor.png", Vector2(100, 100))
+	adv_face = face
 	face.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	h.add_child(face)
 	var v := VBoxContainer.new()
@@ -5388,7 +5402,7 @@ func _advisor() -> void:
 const QUIET_TIPS := ["Игры в честь богов", "Этаж — без карточки дома", "Перестроить дом", "Обновка для кошки", "Казна полна", "Полки полны",
 	"На этаж пока не хватает", "Налоги по классам", "Разнообразие радует больше", "Наборы украшений", "Улучшенные улицы", "Главные украшения",
 	"Как назовём город?", "Летопись города", "Кому работать", "Семье негде жить", "Зрелища", "Здания Легиона", "Герой в боях с городами",
-	"Заборы тянут мышью", "Украшения на стенах", "В городе новые правила"]
+	"Заборы тянут мышью", "Украшения на стенах", "В городе новые правила", "Кому достанется лавка"]
 
 
 ## Тихие советы работают в настоящей игре (главная сцена main.tscn); автопроверки запускают игру внутри своей сцены и
@@ -5399,7 +5413,7 @@ var quiet_tips := -1
 func _quiet_on() -> bool:
 	if quiet_tips < 0:
 		var cs := get_tree().current_scene
-		quiet_tips = 1 if (cs != null and cs.scene_file_path == "res://main.tscn") else 0
+		quiet_tips = 1 if ((cs != null and cs.scene_file_path == "res://main.tscn") or OS.get_cmdline_user_args().has("--quiet")) else 0
 	return quiet_tips == 1
 
 
@@ -5410,12 +5424,13 @@ func advisor_on() -> bool:
 
 ## Совет: заголовок и текст; skip — совет начинает обучение: рядом с «Понятно» кнопка «Пропустить обучение».
 ## force — игрок сам попросил (щёлкнул по просьбе): показываем всегда
-func advisor(title: String, text: String, skip := Callable(), force := false) -> void:
+func advisor(title: String, text: String, skip := Callable(), force := false, corner := false) -> void:
 	var tut: bool = game != null and game.tutorial != null and game.tutorial.active()
 	if not force and not tut and not skip.is_valid() and game != null and game.city != null and game.mode != "demo":
 		if _quiet_on() and (not advisor_on() or title in QUIET_TIPS or title.ends_with("— ваш герой")):
 			_advisor_quiet(title, text)
 			return
+	_advisor_layout(corner)
 	adv_title.text = title
 	adv_text.text = text
 	adv_skip.text = "Пропустить обучение"     # другое действие (Gfx: «Включить «Низкую»») ставит свою надпись после
@@ -5423,14 +5438,34 @@ func advisor(title: String, text: String, skip := Callable(), force := false) ->
 	adv_ok.text = "Понятно"
 	_adv_skip_cb = skip
 	adv_skip.visible = skip.is_valid()
-	adv_never.visible = not skip.is_valid() and not tut and not force      # «Больше не показывать» — у обычных советов
+	adv_never.visible = not skip.is_valid() and not tut and not force and not corner      # «Больше не показывать» — у обычных советов
 	advisor_panel.visible = true
+
+
+## Совет окном посередине сверху или маленькой карточкой в правом верхнем углу (приветствие: не загораживает игру)
+func _advisor_layout(corner: bool) -> void:
+	if corner:
+		_put(advisor_panel, Control.PRESET_TOP_RIGHT, Vector2(-10, TOP_BTN + 16))
+		advisor_panel.custom_minimum_size = Vector2(380, 0)
+		adv_text.custom_minimum_size = Vector2(250, 0)
+		adv_text.add_theme_font_size_override("font_size", 15)
+		adv_title.add_theme_font_size_override("font_size", 19)
+		adv_face.custom_minimum_size = Vector2(56, 56)
+	else:
+		_put(advisor_panel, Control.PRESET_CENTER_TOP, Vector2(0, ADV_Y))
+		advisor_panel.custom_minimum_size = Vector2(640, 0)
+		adv_text.custom_minimum_size = Vector2(440, 0)
+		adv_text.add_theme_font_size_override("font_size", 17)
+		adv_title.add_theme_font_size_override("font_size", 23)
+		adv_face.custom_minimum_size = Vector2(100, 100)
+	advisor_panel.reset_size()
 
 
 ## Совет без окна: одна строка в колокольчике («Заголовок. Первая фраза»)
 func _advisor_quiet(title: String, text: String) -> void:
 	var c: City = game.city
-	var first := text.split("\n")[0]
+	var first := I18n.t(text).split("\n")[0]       # переводим весь совет и берём первую фразу: так она точно есть в словаре
+	title = I18n.t(title)
 	var dot := first.find(". ")
 	if dot > 0:
 		first = first.substr(0, dot + 1)

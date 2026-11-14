@@ -270,6 +270,8 @@ class Dict extends Translation:
 					break
 				var g := m.get_string(gi)
 				var tg := lookup(g) if has_ru(g) else ""
+				if tg == "" and has_ru(g):
+					tg = lookup(g + ".").trim_suffix(".")          # хвост фразы, у которого шаблон забрал точку
 				out += tg if tg != "" else g
 			if not ok:
 				continue
