@@ -35,9 +35,12 @@ const REV := 1
 ## станция (62 м²) — внутри прежнего следа на вырост (OLD_LOT не нужен)
 ## пост вигилов, малые бани, склад, скрипторий (NewSmall) — с ревизии 1, растут, где есть место; школа (NewSmall) —
 ## в прежнем следе
+## лавки, термополий, таверна, фуллоника (NewShops) — с ревизии 1, в прежних следах (OLD_LOT не нужен: 1–2 дома, как были)
 const SINCE := {"temple": 1, "colosseum": 1, "circus_fl": 1, "theatre": 1, "odeon": 1, "library": 1, "thermae": 1,
 	"pantheon": 1, "academy": 1, "forum": 1, "venus": 1, "center": 1, "baths": 1, "mansio": 1, "prefect": 1,
-	"vigiles": 1, "school": 1, "balnea": 1, "warehouse": 1, "scriptorium": 1}
+	"vigiles": 1, "school": 1, "balnea": 1, "warehouse": 1, "scriptorium": 1,
+	"butcher": 1, "bakery": 1, "cobbler": 1, "dyer": 1, "tailor": 1, "potter": 1, "oilshop": 1, "lamps": 1, "wineshop": 1,
+	"perfumer": 1, "jeweler": 1, "weaver": 1, "barber": 1, "medic": 1, "thermopolium": 1, "taberna": 1, "fullonica": 1}
 
 ## Прежний след (м, ширина × глубина при yaw 0) — проба размеров 12.11, до линейки
 const OLD_LOT := {
