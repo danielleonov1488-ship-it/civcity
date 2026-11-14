@@ -761,11 +761,20 @@ static func pet_view(hud: Hud, ct: Dictionary) -> void:
 	var pt: float = rig._pitch_t
 	var t := Vector3(p.x, maxf(1.0, p.y), p.z)
 	var look := p + Vector3(0, 0.2, 0)
-	for y: float in yaws:
-		var cpos := t + Vector3(sin(y) * cos(pt), sin(pt), cos(y) * cos(pt)) * d
-		if not hud.game.view_blocked(cpos, look):
-			rig._yaw_t = y
-			return
+	# высокие дома вокруг (уступы, башенки — новые дома 14.11) могут заслонить кошку со всех сторон при этом наклоне:
+	# тогда круче сверху и ближе — сначала прежний наклон и даль, потом выше, потом ещё выше и ближе
+	for pd: Array in [[pt, d], [maxf(pt, deg_to_rad(58.0)), d], [maxf(pt, deg_to_rad(72.0)), d * 0.75]]:
+		var pp: float = pd[0]
+		var dd: float = pd[1]
+		for y: float in yaws:
+			var cpos := t + Vector3(sin(y) * cos(pp), sin(pp), cos(y) * cos(pp)) * dd
+			if not hud.game.view_blocked(cpos, look):
+				rig._yaw_t = y
+				if pp != pt:
+					rig._pitch_t = pp
+				if dd != d:
+					rig._dist_t = rig._dist_t * 0.75
+				return
 	rig._yaw_t = float(yaws[0])
 
 
