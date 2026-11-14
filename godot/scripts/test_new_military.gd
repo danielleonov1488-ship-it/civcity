@@ -86,6 +86,32 @@ func put(t: String, x: float, zr: float, north: bool, tr := -1) -> Dictionary:
 	return b
 
 
+## Сухо ли под участком здания t (без воды в запасе 2,5 м), если поставить его фасадом к улице zr у x
+func dry(t: String, x: float, zr: float, north: bool) -> bool:
+	var lot: Array = NewMilitary.LOT[t] if NewMilitary.LOT.has(t) else [-3.0, 3.0, -3.5, 2.5]
+	var w := float(lot[1]) - float(lot[0])
+	var d := float(lot[3]) - float(lot[2])
+	var z0 := zr - 1.25 - d if north else zr + 1.25
+	var m := 2.5
+	var xx := x - w * 0.5 - m
+	while xx <= x + w * 0.5 + m:
+		var zz := z0 - m
+		while zz <= z0 + d + m:
+			if game.land.is_water(Vector2(xx, zz)):
+				return false
+			zz += 0.5
+		xx += 0.5
+	return true
+
+
+## Ближайшее к x сухое место вдоль улицы (вправо от x, не дальше 40 м)
+func dry_x(t: String, x: float, zr: float, north: bool) -> float:
+	for k in 81:
+		if dry(t, x + k * 0.5, zr, north):
+			return x + k * 0.5
+	return x
+
+
 func bounds(b: Dictionary) -> Array:
 	var xf := c.xf(b)
 	var r := [INF, -INF, INF, -INF]
@@ -159,8 +185,13 @@ func _singles(X0: float, Z0: float) -> void:
 		game.land.paint_line(Vector2(X0 - 40.0, Z0 + k * 36.0), Vector2(X0 + 110.0, Z0 + k * 36.0), 2.2, Land.Kind.ROAD, true)
 	await frames(4)
 	var placed := []
+	var xs := [X0 - 30.0, X0 - 30.0]
 	for i in types.size():
-		var t := put(String(types[i]), X0 - 30.0 + (i % 7) * 22.0, Z0 + (i / 7) * 36.0, true, tier)      # восточнее пруда
+		var row := i / 7
+		var zr := Z0 + row * 36.0
+		var x := dry_x(String(types[i]), float(xs[row]), zr, true)        # мимо прудов
+		xs[row] = x + 22.0
+		var t := put(String(types[i]), x, zr, true, tier)
 		if fit and not t.is_empty():
 			t.erase("sz")                        # как из старого сохранения: SizeLadder.old_lot (облик — тот же: след прежний)
 			game._show(t)
@@ -218,19 +249,26 @@ func _shots(t: Dictionary, ctr: Vector2, views: Array, tg: String) -> void:
 
 ## Лист роста: у каждого типа три копии рядом (уровни облика tiers), два вида; по четыре типа на сторону улицы
 func _tiers(X0: float, Z0: float) -> void:
-	for z: float in [Z0, Z0 + 36.0]:
-		game.land.paint_line(Vector2(X0 - 40.0, z), Vector2(X0 + 110.0, z), 2.2, Land.Kind.ROAD, true)
+	# три улицы, группы только по северной стороне (ряды не смотрят друг на друга), каждая — на сухом месте
+	var rows := [Z0, Z0 + 36.0, Z0 + 72.0]
+	for z: float in rows:
+		game.land.paint_line(Vector2(X0 - 40.0, z), Vector2(X0 + 115.0, z), 2.2, Land.Kind.ROAD, true)
 	await frames(4)
 	var groups := []
+	var ptr := [X0 - 30.0, X0 - 30.0, X0 - 30.0]
 	for i in types.size():
 		var t := String(types[i])
 		var list := []
-		var side := i / 4                        # 0 — к северу от первой улицы, 1 — к югу от неё, 2 — к северу от второй, 3 — к югу
-		var zr := Z0 + (side / 2) * 36.0
-		var north := side % 2 == 0
-		var bx := X0 - 25.0 + (i % 4) * 30.0 + (0.0 if north else 16.4)      # восточнее пруда
+		var row := i % 3
+		var zr: float = rows[row]
+		var bx: float = ptr[row]
+		for k in 80:
+			if dry(t, bx, zr, true) and dry(t, bx + 8.2, zr, true) and dry(t, bx + 16.4, zr, true):
+				break
+			bx += 0.5
+		ptr[row] = bx + 16.4 + 11.0
 		for k in tiers.size():
-			var b := put(t, bx + k * 8.2 * (1.0 if north else -1.0), zr, north, int(tiers[k]))
+			var b := put(t, bx + k * 8.2, zr, true, int(tiers[k]))
 			if not b.is_empty():
 				info(b, "лист роста")
 				list.append(b)
@@ -262,6 +300,18 @@ func _tiers(X0: float, Z0: float) -> void:
 
 ## Военный квартал: все 13 вплотную вдоль двух улиц (по обе стороны первой и второй), облик camp (0, 5 или mix)
 func _camp(X0: float, Z0: float) -> void:
+	# весь квартал — на сухом месте: сдвиг вдоль улиц, пока под всеми участками нет воды
+	for k in 40:
+		var ok := true
+		for e: Array in [["principia", X0 - 12.0, Z0, true], ["mars", X0 + 12.0, Z0, true], ["range", X0 - 8.0, Z0, false], ["forge", X0 + 8.0, Z0, false],
+				["infirmary", X0 - 8.0, Z0 + 18.0, true], ["catapults", X0 + 8.0, Z0 + 18.0, true], ["smelter", X0 - 8.0, Z0 + 18.0, false], ["tannery", X0 + 8.0, Z0 + 18.0, false]]:
+			if not dry(String(e[0]), float(e[1]), float(e[2]), bool(e[3])):
+				ok = false
+				break
+		if ok:
+			break
+		X0 += 2.0
+	print("NM camp X0=%.1f" % X0)
 	var zr := [Z0, Z0 + 18.0]
 	for z: float in zr:
 		game.land.paint_line(Vector2(X0 - 22.0, z), Vector2(X0 + 22.0, z), 2.2, Land.Kind.ROAD, true)
