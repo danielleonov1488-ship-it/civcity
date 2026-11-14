@@ -57,6 +57,13 @@ uniform vec3 lock_c = vec3(0.552, 0.497, 0.314);   // Land.LOCK (линейны�
 uniform sampler2D own_tex : filter_linear, repeat_disable;
 uniform bool own_on = false;
 uniform vec3 road_tint = vec3(1.0);   // мостовая из набора — теплее (травертин), в тон терракотовому городу
+// 14.11 (владелец: «рыжая глина вокруг домов»): окантовка у домов, лавок, мастерских и зданий Легиона (Land.wear) —
+// аккуратный тротуар из каменных плит (те же плиты травертина, что у оснований новых зданий) с ровным краем и бордюром,
+// без рваной кромки и кустиков; apron_pave = false — прежняя утоптанная глина (снимки «было», CIVCITY_NEWAPRON=0)
+uniform bool apron_pave = true;
+uniform sampler2D tile_apron : source_color, filter_linear_mipmap, repeat_enable;
+uniform float apron_scale = 1.7;
+uniform vec3 apron_tint = vec3(1.0, 0.9, 0.76);
 
 varying vec3 wpos;
 varying vec3 wnrm;
@@ -236,10 +243,21 @@ void fragment() {
 			} else {
 				c *= 1.0 - 0.18 * edge;                   // притоптанная кромка у мостовой
 			}
-			// окантовка у домов и лавок (Land.wear → surf.a: 1 — трава): утоптанная глина с камешками,
-			// край неровный, кое-где уцелели кустики травы
-			float ap = (1.0 - m.a) * (1.0 - max(w_road, w_plaza));
-			if (ap > 0.02) {
+			// окантовка у домов и лавок (Land.wear → surf.a: 1 — трава)
+			float apm = 1.0 - m.a;
+			float ap = apm * (1.0 - max(w_road, w_plaza));
+			if (ap > 0.02 && apron_pave) {
+				// тротуар: плиты травертина вдоль стен и у двери, край ровный (по размытой маске, без шума), по краю — бордюр
+				// из камня потемнее; где сходятся соседние дома — сплошной тротуар; дорога и площадь ложатся поверх
+				float w_ap = smoothstep(0.46, 0.53, apm);
+				float kb = smoothstep(0.46, 0.51, apm) * (1.0 - smoothstep(0.58, 0.65, apm));
+				vec3 sl = texture(tile_apron, wpos.xz / apron_scale).rgb * apron_tint;
+				sl *= 0.93 + 0.12 * vn(wpos.xz * 0.45);
+				vec3 pv = mix(sl, sl * vec3(0.7, 0.66, 0.6), kb);
+				c = mix(c, pv, w_ap);
+				rough = mix(rough, 0.85, w_ap);
+			} else if (ap > 0.02) {
+				// прежняя окантовка: утоптанная глина с камешками, край неровный, кое-где уцелели кустики травы
 				float n2 = vn(wpos.xz * 1.7) * 0.6 + vn(wpos.xz * 6.0) * 0.4;
 				float w_ap = smoothstep(0.18, 0.58, ap + (n2 - 0.5) * 0.45 + wob * 0.25);
 				vec3 soil = vec3(0.27, 0.155, 0.075) * (0.82 + 0.3 * n2);                 // глина: тёплая, темнее троп
