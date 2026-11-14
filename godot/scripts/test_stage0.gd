@@ -842,7 +842,9 @@ func _fold() -> void:
 		return
 	fb.pressed.emit()
 	await frames(15)
-	check(hud.tasks_folded() and texts(hud.tasks_box).contains("Просьбы · 3"), "свёрнут: «%s»" % texts(hud.tasks_box))
+	# свёрнутый свиток — маленький значок-медальон со счётчиком просьб (раньше — полоска «Просьбы · 3»)
+	check(hud.tasks_folded() and hud.tasks_box.find_child("unfold", true, false) != null and hud.tasks_box.find_child("count", true, false) != null and texts(hud.tasks_box).contains("3"),
+		"свёрнут: значок со счётчиком «%s»" % texts(hud.tasks_box))
 	var f = JSON.parse_string(FileAccess.get_file_as_string(game.settings_path()))
 	check(typeof(f) == TYPE_DICTIONARY and bool(f.get("tasks_folded", false)), "свёрнутость — в файле настроек")
 	check(DisplayServer.window_get_size() == ws0, "окно не трогали (настройки не применялись заново)")
@@ -890,7 +892,7 @@ func _fold() -> void:
 	var ub: Button = null
 	for b in hud.tasks_box.find_children("unfold", "Button", true, false):
 		ub = b
-	check(ub != null, "полоска — кнопка «развернуть»")
+	check(ub != null, "значок — кнопка «развернуть»")
 	if ub:
 		ub.pressed.emit()
 		await frames(5)

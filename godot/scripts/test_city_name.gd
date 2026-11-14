@@ -190,7 +190,7 @@ func _run() -> void:
 	await frames(20)
 	var hud: Hud = game.hud
 	var c: City = game.city
-	var plate: TextureRect = hud.name_plate
+	var plate: Control = hud.name_plate        # название в верхней полосе (раньше — табличка-картинка)
 	check("пока сервер не ответил — «Новый Рим»", c.name == "" and hud.lbl_city.text == CityName.PLACEHOLDER, [c.name, hud.lbl_city.text])
 	check("подпись ролика без имени — «ваш город»", game.tutorial.intro_line(0) == "Первые переселенцы прибыли в ваш город!", game.tutorial.intro_line(0))
 

@@ -23,9 +23,30 @@ class Dict extends Translation:
 	var cache := {}
 	var _ph := RegEx.create_from_string("%%|%[-+#0]*\\d*(?:\\.\\d+)?[dsfxXo]|\\{[a-z_0-9]+\\}")      # %d, %s, %.1f, %% и {имя} (подстановки историй)
 	var _cyr := RegEx.create_from_string("[А-Яа-яЁё]")
+	var _num := RegEx.create_from_string("^(\\d[\\d,.]*) (.+)$")
 
-	func fill(d: Dictionary) -> void:
-		exact = d
+	func fill(d0: Dictionary) -> void:
+		# многострочный ключ — ещё и по строкам: карточки собирают текст из таких кусков («Счастье домам: +%d%%», «Дальность: %s»…)
+		var d := d0.duplicate()
+		for k: String in d0:
+			var lk := k.lstrip("\n")           # «\nПривязка к дороге (R): » — склейка без перевода строки впереди
+			if lk != k and lk != "" and not d.has(lk):
+				d[lk] = String(d0[k]).lstrip("\n")
+		for k: String in d0:
+			if k.contains("\n"):
+				var kl := k.split("\n")
+				var vl := String(d0[k]).split("\n")
+				if kl.size() == vl.size():
+					for i in kl.size():
+						var a := kl[i].strip_edges()
+						if a != "" and has_ru(a) and not d.has(a):
+							d[a] = vl[i].strip_edges()
+		exact = d.duplicate()
+		# ключи с пробелами и переносами по краям («…дальности.\n\n» перед склейкой с другим абзацем) — ещё и без них
+		for k: String in d:
+			var sk := k.strip_edges()
+			if sk != k and sk != "" and not exact.has(sk):
+				exact[sk] = String(d[k]).strip_edges()
 		for k: String in d:
 			if k.length() >= 3 and not k.contains("%"):
 				var lc := k.substr(k.length() - 1)
@@ -38,7 +59,21 @@ class Dict extends Translation:
 			if parts[1] == 0 or (parts[0] as Array).all(func(x): return String(x).strip_edges() == ""):
 				continue                  # без подстановок — обычная фраза; одни подстановки («%s») — не образец, подошёл бы любой строке
 			var lit0: String = parts[0][0]
-			var item := {"src": k, "parts": parts[0], "n": parts[1], "toks": parts[2], "re": null}
+			# слишком «рыхлые» образцы («%s в %s») хватали бы любое предложение с «в» и коверкали его: берём только такие,
+			# где постоянного текста достаточно (с числами — любые: число узнаётся по виду)
+			var lit_len := 0
+			for x in parts[0]:
+				lit_len += String(x).strip_edges().length()
+			var numeric := true
+			for tk in parts[2]:
+				if not (String(tk).begins_with("%") and "dfxXo".contains(String(tk).substr(String(tk).length() - 1))):
+					numeric = false
+			var anchored: bool = String(parts[0][0]).strip_edges() != "" or String(parts[0][(parts[0] as Array).size() - 1]).strip_edges() != ""
+			if not numeric and lit_len < (3 if anchored else 10):
+				continue
+			if numeric and lit_len < 1:
+				continue
+			var item := {"src": k, "parts": parts[0], "n": parts[1], "toks": parts[2], "re": null, "lit": lit_len}
 			if lit0.length() >= 3:
 				var key := lit0.substr(0, 3)
 				if not buckets.has(key):
@@ -46,6 +81,9 @@ class Dict extends Translation:
 				(buckets[key] as Array).append(item)
 			else:
 				generic.append(item)
+		for bk in buckets:
+			(buckets[bk] as Array).sort_custom(func(a, b): return int(a["lit"]) > int(b["lit"]))      # сначала самые точные образцы
+		generic.sort_custom(func(a, b): return int(a["lit"]) > int(b["lit"]))
 		prefixes.sort_custom(func(a, b): return a.length() > b.length())
 		suffixes.sort_custom(func(a, b): return a.length() > b.length())
 
@@ -93,17 +131,6 @@ class Dict extends Translation:
 		var t := _template(s)
 		if t != "":
 			return t
-		# склейка «Видеокарта: » + имя, текст + « (по видеокарте)»: переводим известную часть, остальное — как есть
-		for k: String in prefixes:
-			if s.length() > k.length() and s.begins_with(k):
-				var rest := s.substr(k.length())
-				var rr := lookup(rest) if has_ru(rest) else ""
-				return String(exact[k]) + (rr if rr != "" else rest)
-		for k: String in suffixes:
-			if s.length() > k.length() and s.ends_with(k):
-				var head := s.substr(0, s.length() - k.length())
-				var hr := lookup(head) if has_ru(head) else ""
-				return (hr if hr != "" else head) + String(exact[k])
 		if s.contains("\n"):
 			var lines := s.split("\n")
 			var out: PackedStringArray = []
@@ -114,6 +141,43 @@ class Dict extends Translation:
 					any = true
 				out.append(r if r != "" else ln)
 			return "\n".join(out) if any else ""
+		# склейка «Видеокарта: » + имя, текст + « (по видеокарте)»: переводим известную часть, остальное — как есть
+		for k: String in prefixes:
+			if s.length() > k.length() and s.begins_with(k):
+				var rest := s.substr(k.length())
+				if not has_ru(rest):
+					return String(exact[k]) + rest             # «Видеокарта: » + «NVIDIA GeForce»
+				var rr := lookup(rest)
+				if rr != "":
+					return String(exact[k]) + rr
+		for k: String in suffixes:
+			if s.length() > k.length() and s.ends_with(k):
+				var head := s.substr(0, s.length() - k.length())
+				if not has_ru(head):
+					return head + String(exact[k])
+				var hr := lookup(head)
+				if hr != "":
+					return hr + String(exact[k])
+		# ЗАГЛАВНЫМИ («ДОМУС ПАТРИЦИЕВ» в карточке): переводим обычным регистром и поднимаем результат
+		if s == s.to_upper() and s.length() > 2:
+			var sl := s.substr(0, 1) + s.substr(1).to_lower()
+			var rl := lookup(sl)
+			if rl == "":
+				rl = lookup(" ".join(Array(s.to_lower().split(" ")).map(func(w): return String(w).capitalize() if String(w).length() > 2 else String(w))))      # «Цирк Фламиния», «Храм Венеры и Ромы»
+			if rl != "":
+				return rl.to_upper()
+		# «Поселение · 0», «День 1 · зима»: части через « · » переводим по отдельности
+		if s.contains(" · "):
+			var segs := s.split(" · ")
+			var outs: PackedStringArray = []
+			var anys := false
+			for sg in segs:
+				var rs := lookup(sg) if has_ru(sg) else ""
+				if rs != "":
+					anys = true
+				outs.append(rs if rs != "" else sg)
+			if anys:
+				return " · ".join(outs)
 		if s.length() > 50 and s.contains(". "):
 			var ps := s.split(". ")
 			var out2: PackedStringArray = []
@@ -130,6 +194,30 @@ class Dict extends Translation:
 					any2 = true
 				out2.append(r2 if r2 != "" else piece + tail)
 			return " ".join(out2).replace(". .", ".") if any2 else ""
+		# список через запятую: «2 плебеи, 1 ремесленники» — по частям
+		if s.contains(", "):
+			var ls := s.split(", ")
+			var outl: PackedStringArray = []
+			var anyl := false
+			for pc in ls:
+				var rl2 := lookup(pc) if has_ru(pc) else ""
+				if rl2 != "":
+					anyl = true
+				outl.append(rl2 if rl2 != "" else pc)
+			if anyl:
+				return ", ".join(outl)
+		# «3 плебеи»: число и слово
+		var nm := _num.search(s)
+		if nm != null:
+			var wr := lookup(nm.get_string(2))
+			if wr != "":
+				return nm.get_string(1) + " " + wr
+		# слово с маленькой буквы («плебеи», «ремесленники»): ищем с большой и опускаем
+		var c0 := s.substr(0, 1)
+		if c0 != c0.to_upper() and s.length() > 2:
+			var rc := lookup(c0.to_upper() + s.substr(1))
+			if rc != "":
+				return rc.substr(0, 1).to_lower() + rc.substr(1)
 		return ""
 
 	func _template(s: String) -> String:
@@ -144,8 +232,9 @@ class Dict extends Translation:
 				for i in parts.size():
 					pat += _esc(parts[i])
 					if i < parts.size() - 1:
-						pat += "(.+?)"
-				it["re"] = RegEx.create_from_string("(?s)" + pat + "$")
+						var tk := String((it["toks"] as Array)[i])
+						pat += "(-?[\\d\\s\u00a0\u202f,.]+?)" if (tk.begins_with("%") and "dfxXo".contains(tk.substr(tk.length() - 1))) else "(.+?)"
+				it["re"] = RegEx.create_from_string(("(?s)" if String(it["src"]).contains("\n") else "") + pat + "$")      # «.» через строки — только у многострочных образцов
 			var m: RegExMatch = (it["re"] as RegEx).search(s)
 			if m == null:
 				continue

@@ -153,6 +153,7 @@ func _arrow_after() -> void:
 			c.goals_done.append(g["id"])
 		if g["id"] == "hamlet":
 			break
+	game.settings["tasks_folded"] = false      # свиток просьб по умолчанию свёрнут в значок (отзыв 14.11); проверка щёлкает по строке — разворачиваем
 	hud.refresh()
 	await frames(5)
 	hud._update_pointer()

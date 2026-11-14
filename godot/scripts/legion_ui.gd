@@ -234,13 +234,10 @@ func _d10_tips() -> void:
 				lg.flags["new_" + bt] = true    # об уже открытых сказано здесь — отдельных советов не будет
 		hud.advisor("Здания Легиона", txt)
 		return
+	# «Новое здание Легиона…» всплывашкой больше нет (отзыв 14.11): хватает значка «НОВОЕ» на карточке — флаг ставим молча
 	for bt: String in Legion.SUPPORT:
-		if c.unlocked(bt) and not lg.b_built(bt) and not lg.flags.has("new_" + bt):
+		if c.unlocked(bt) and not lg.flags.has("new_" + bt):
 			lg.flags["new_" + bt] = true
-			var r := lg.b_reserve(bt)
-			hud.advisor("Новое здание Легиона: %s" % Defs.B[bt]["name"], "%s%s\n\nПоставьте его — раздел «Легион» на нижней полосе, лучше всего в военном квартале у арки. Улучшения — в карточке здания." % [
-				Defs.B[bt]["desc"], (" Уровень «в запасе»: %d — здание сразу будет таким." % r) if r > 0 else ""])
-			return
 	# герой и в боях с городами (сервер боёв его знает) — сказать один раз, когда бои с городами открыты
 	if lg.pvp_hero() and lg.pvp_open() and not lg.flags.has("tip_hero_pvp"):
 		lg.flags["tip_hero_pvp"] = true

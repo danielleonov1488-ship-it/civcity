@@ -5242,6 +5242,9 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_P:
 				if photo != null and not cmd_key(k):
 					photo.toggle()                    # режим фото
+			KEY_H:
+				if not cmd_key(k) and mode != "menu":
+					hud.toggle_clean()                # «чистый экран»: интерфейс прячется, ещё раз H — возвращается
 			KEY_G:
 				if Defs.B.has(tool) and Defs.B[tool].get("gate", false):
 					fence_gate = not fence_gate           # забор: калитка посередине

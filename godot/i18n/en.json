@@ -2203,6 +2203,8 @@
 "Открывает дома ремесленников. Им нужны еда, одежда и развлечения.": "Unlocks artisan houses. They need food, clothes and entertainment.",
 "Открывает домусы патрициев. Им нужно всё: еда, одежда, развлечения, услуги и товары.": "Unlocks patrician domus houses. They need everything: food, clothes, entertainment, services and goods.",
 "Открывает инструмент «Этаж» (справа внизу, клавиша U): второй этаж можно купить дому, когда он полон, а счастье в нём не ниже 65%. Туда въедет ещё одна семья.": "Unlocks the “Floor” tool (bottom right, U key): a house can buy a second floor when it is full and its happiness is at least 65%. Another family will move in.",
+"Открывает украшения: %s.": "Unlocks decorations: %s.",
+"Открывает: %s — %s": "Unlocks: %s — %s",
 "Открылись исследования: %s и ещё %d.": "Research unlocked: %s and %d more.",
 "Открылись исследования: %s.": "Research unlocked: %s.",
 "Открыто": "Unlocked",

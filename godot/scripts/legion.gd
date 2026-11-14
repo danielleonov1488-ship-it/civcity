@@ -1546,25 +1546,25 @@ func _lock_why() -> String:
 		return ""
 	var c = city()
 	var rank := int(REGIONS[0]["rank"])         # Легион открывается с этого уровня города (и в походе 2.0)
-	var head := "Легион откроется в истории горожан «%s»" % story_title()
+	var head := I18n.t("Легион откроется в истории горожан «%s»") % I18n.t(story_title())       # части переводим по отдельности: склейка целиком в словаре не найдётся
 	if c == null or int(c.level) < rank:
-		return head + " — она придёт, когда город станет «%s»." % Defs.LEVELS[rank]["name"]
+		return head + I18n.t(" — она придёт, когда город станет «%s».") % I18n.t(String(Defs.LEVELS[rank]["name"]))
 	# город уже дорос: говорим, чего история ждёт на самом деле (старый город без Легиона — тоже сюда)
 	var s: Dictionary = c.stories
 	var off: Dictionary = s.get("offer", {})
 	if String(off.get("id", "")) == STORY:
-		return head + " — она уже ждёт вас: над домом переселенца свиток с просьбой, щёлкните его."
+		return head + I18n.t(" — она уже ждёт вас: над домом переселенца свиток с просьбой, щёлкните его.")
 	if (s.get("later", {}) as Dictionary).has(STORY):
-		return head + " — вы её отложили, она скоро вернётся."
+		return head + I18n.t(" — вы её отложили, она скоро вернётся.")
 	# истории идут по одной: сначала та, что идёт (или ждёт ответа)
 	var act: Dictionary = s.get("active", {})
 	var busy: Dictionary = act if not act.is_empty() else off
 	if not busy.is_empty():
-		return head + " — она придёт после истории «%s»." % StoryDefs.title_of(StoryDefs.story(String(busy.get("id", ""))), busy)
+		return head + I18n.t(" — она придёт после истории «%s».") % I18n.t(StoryDefs.title_of(StoryDefs.story(String(busy.get("id", ""))), busy))
 	var af := String(StoryDefs.story(STORY).get("after", ""))
 	if af != "" and int(c.level) < 2 and not (s.get("done", {}) as Dictionary).has(af):
-		return head + " — она придёт после истории «%s»." % String(StoryDefs.story(af).get("title", af))
-	return head + " — она скоро придёт: горожане попросят о защите."
+		return head + I18n.t(" — она придёт после истории «%s».") % I18n.t(String(StoryDefs.story(af).get("title", af)))
+	return head + I18n.t(" — она скоро придёт: горожане попросят о защите.")
 
 
 ## История, которая открывает Легион (Д9), и её название

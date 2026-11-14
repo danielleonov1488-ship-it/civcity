@@ -376,6 +376,7 @@ func _chron_new() -> void:
 		"старое сохранение: %d венков разом, одна строка «%s»" % [Chronicle.count(c3), last.get("text", "")])
 	check(Chronicle.value(c3, "built") >= 6 and Chronicle.value(c3, "people") >= 4, "счётчики старого города — из построек (%d зданий, %d горожан)" % [Chronicle.value(c3, "built"), Chronicle.value(c3, "people")])
 	# журнал: вкладка «Летопись»
+	game.settings["tasks_folded"] = false      # свиток просьб по умолчанию свёрнут в значок (отзыв 14.11); книжка журнала — в развёрнутом
 	hud.refresh()
 	await frames(3)
 	var book := false
