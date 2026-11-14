@@ -375,7 +375,7 @@ func _f5_mouse() -> void:
 		var bbC: Array = game._row_bounds(game.city.blueprint(C))
 		var relc: Vector2 = (C["pos"] as Vector2) - (A["pos"] as Vector2)
 		var gapc := float(bbA2[0]) - (relc.dot(City.axis(float(A["yaw"]))) + float(bbC[1]))
-		ok("F5 stall in the same row", yaw_is(float(C["yaw"]), float(A["yaw"]), 0.02) and absf(gapc - Game.ROW_GAP) <= 0.06, "gap=%.2f" % gapc)
+		ok("F5 stall in the same row", yaw_is(float(C["yaw"]), float(A["yaw"]), 0.02) and absf(gapc - Game.ROW_GAP) <= 0.06, "gap=%.2f yaw C %.3f A %.3f front %.2f" % [gapc, float(C["yaw"]), float(A["yaw"]), relc.dot(City.facing(float(A["yaw"]))) + float(bbC[3]) - float(bbA2[3])])
 	await frames(100)
 	shot("pave2_row.png")
 	game.set_tool("house_pleb")

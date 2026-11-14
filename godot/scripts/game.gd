@@ -3015,12 +3015,16 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 				if dd <= reach:
 					pos = p - f * dd - f * (float(bb[3]) + 0.02)
 					pos = _snap_row(pos, yaw, bb, int(moving.get("id", -1)))
+					if row_yaw != INF:
+						yaw = row_yaw
 			else:
 				while dd <= reach and not land.is_road(p + f * dd):
 					dd += 0.2
 				if dd <= reach:
 					pos = p + f * dd - f * (float(bb[3]) + 0.02)
 					pos = _snap_row(pos, yaw, bb, int(moving.get("id", -1)))
+					if row_yaw != INF:
+						yaw = row_yaw
 		elif road_snap:
 			# как в Town to City: фасадом (дверью) к ближайшей дороге; курсор на самой дороге — дом встаёт
 			# на ближнюю обочину (раньше в этом случае он смотрел вдоль дороги — боком — и садился на мостовую)
@@ -3045,6 +3049,8 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 				var f := City.facing(yaw)
 				pos = (e["p"] as Vector2) - f * (float(bb[3]) + 0.02)
 				pos = _snap_row(pos, yaw, bb, int(moving.get("id", -1)))
+				if row_yaw != INF:
+					yaw = row_yaw
 	if type == "aqua" and moving.is_empty() and not locked:
 		var sn := _aqua_snap(p)
 		if not sn.is_empty():
@@ -3205,9 +3211,11 @@ func _free_place(p: Vector2, bb: Array, mid: int, locked: bool, door_r := 0.0) -
 				if best < INF:
 					last_glued = true
 					var pg := probe + f * best - f * (float(bb[3]) + 0.02)
-					return {"pos": _snap_row(pg, ry, bb, mid), "yaw": ry, "sub": "road", "ry": ry}
+					var pgs := _snap_row(pg, ry, bb, mid)
+					return {"pos": pgs, "yaw": ry if row_yaw == INF else row_yaw, "sub": "road", "ry": ry}
 			var ps := c - City.axis(yaw) * mx - City.facing(yaw) * mz
-			return {"pos": _snap_row(ps, yaw, bb, mid), "yaw": yaw, "sub": "square", "ry": ry}
+			var pss := _snap_row(ps, yaw, bb, mid)
+			return {"pos": pss, "yaw": yaw if row_yaw == INF else row_yaw, "sub": "square", "ry": ry}
 	last_snap_n = Vector2.ZERO
 	last_snap_p = Vector2.INF
 	last_glued = false
@@ -3215,6 +3223,8 @@ func _free_place(p: Vector2, bb: Array, mid: int, locked: bool, door_r := 0.0) -
 	var pc := c - City.axis(y0) * mx - City.facing(y0) * mz
 	if snap:
 		pc = _snap_row(pc, y0, bb, mid)       # рядом дом с тем же поворотом — встать с ним в ряд
+		if row_yaw != INF:
+			y0 = row_yaw
 	return {"pos": pc, "yaw": y0, "sub": "free"}
 
 
@@ -3949,7 +3959,12 @@ func _road_axis(q: Vector2, r := 2.5) -> Vector2:
 const ROW_GAP := 0.6                  # промежуток между соседними домами в ряду, м
 
 
-func _snap_row(pos: Vector2, yaw: float, bb: Array, ignore := -1) -> Vector2:
+## Поворот соседа, к которому встала постройка в ряд (_snap_row), или INF — ни к кому не встала
+var row_yaw := INF
+
+
+func _snap_row(pos: Vector2, yaw: float, bb: Array, ignore := -1, nested := false) -> Vector2:
+	row_yaw = INF
 	var ax := City.axis(yaw)
 	var f := City.facing(yaw)
 	for id in city.buildings:
@@ -3962,6 +3977,15 @@ func _snap_row(pos: Vector2, yaw: float, bb: Array, ignore := -1) -> Vector2:
 		if od["kind"] == "decor" or od.get("fixed", false) or od["kind"] == "farm":
 			continue
 		if absf(angle_difference(float(o["yaw"]), yaw)) > deg_to_rad(12):
+			continue
+		if absf(angle_difference(float(o["yaw"]), yaw)) > 0.001:
+			if nested:
+				continue                      # второй раз не поворачиваем (два соседа с разным поворотом — не зациклиться)
+			# сосед повёрнут чуть иначе (направление дороги по лесенке клеток дрожит на несколько градусов):
+			# в ряд — ровно с его поворотом, иначе ряд выходит косым и фасады не на одной линии
+			var p2 := _snap_row(pos, float(o["yaw"]), bb, ignore, true)
+			if row_yaw != INF:
+				return p2
 			continue
 		var ob := _row_bounds(city.blueprint(o))
 		var rel: Vector2 = pos - (o["pos"] as Vector2)
@@ -3977,8 +4001,10 @@ func _snap_row(pos: Vector2, yaw: float, bb: Array, ignore := -1) -> Vector2:
 		var shift := front_o - front_me
 		# как в Town to City: дома в ряд по одной линии фасадов, но с промежутком — туда можно поставить украшения
 		if gap_r > -0.3 and gap_r < 1.9:
+			row_yaw = yaw
 			return pos - ax * (gap_r - ROW_GAP) + f * shift
 		if gap_l > -0.3 and gap_l < 1.9:
+			row_yaw = yaw
 			return pos + ax * (gap_l - ROW_GAP) + f * shift
 	return pos
 
