@@ -23,6 +23,7 @@ var env: Environment
 var sky_mat: ProceduralSkyMaterial
 var grade: ShaderMaterial              # цветокоррекция кадра (тёплые света, прохладные тени)
 var chunk_nodes := {}
+var grass: GrassCarpet = null           # трава-ковёр у камеры (14.11, scripts/grass_carpet.gd)
 var far_near: Array = []              # пейзаж за краем карты вблизи (рощи и кусты с тенью): на «Низкой» без тени
 var far_forest: Array = []            # дальние леса до горизонта: на «Очень низкой» не рисуются
 var gfx: Gfx                          # графика: выбор по видеокарте, сторож кадров, счётчик FPS (scripts/gfx.gd)
@@ -387,6 +388,9 @@ func _ready() -> void:
 		built += 1
 		if built % 16 == 0:
 			await _step("Рисуем землю", 0.4 + 0.45 * built / total)
+	grass = GrassCarpet.new()                 # трава-ковёр вокруг камеры (14.11): куски строятся понемногу каждый кадр
+	add_child(grass)
+	grass.setup(self)
 	await _step("Жители", 0.9)
 	_hero_check()                             # свой герой (Д11): в своей игре он есть всегда (старый город — случайный, пока игрок не создаст)
 	people.setup(land, city, self)
@@ -621,6 +625,8 @@ func _load_settings() -> void:
 		if typeof(d) == TYPE_DICTIONARY:
 			for k in d:
 				settings[k] = d[k]
+	if str(settings.get("look", "")) == "fresh":
+		look_fresh = true                     # свежий вид (проба 14.11, _fresh_look)
 	# уже играет? (файл настроек пишет и лаунчер — до первой игры; город есть — точно играет)
 	var had := Gfx.installed(settings, d, FileAccess.file_exists(save_path()))
 	if shot_path == "":
@@ -796,6 +802,8 @@ func _set_hour(h: float) -> void:
 		grade.set_shader_parameter("sat", lerpf(0.95, lerpf(1.04, 0.93, gold), day))
 		grade.set_shader_parameter("warm_keep", 1.0 - smoothstep(0.15, 0.7, day))
 		grade.set_shader_parameter("contrast", lerpf(1.06, 1.14, day))
+	if look_fresh:
+		_fresh_look(day, gold)
 	# окна и фонари: разгораются в сумерках. Окна домов и лавок — еле тёплый огонёк, как от спички
 	# (улицу освещают фонари и жаровни, а не дома); к полуночи и он почти гаснет
 	var lamp := 1.0 - smoothstep(0.15, 0.7, day)
@@ -934,7 +942,7 @@ func _horizon() -> void:
 			var gz := (far_hy[jb * nx + i] - far_hy[ja * nx + i]) / (far_zs[jb] - far_zs[ja])
 			# у края — нормаль вверх, как у ступенек земли на карте (склон видно по горизонталям); вдали — настоящая
 			var dd := Vector2(maxf(maxf(-x, x - S), 0.0), maxf(maxf(-z, z - S), 0.0)).length()
-			norms[k] = Vector3.UP.lerp(Vector3(-gx, 1.0, -gz).normalized(), smoothstep(40.0, 220.0, dd)).normalized()
+			norms[k] = Vector3(-gx, 1.0, -gz).normalized() if Land.smooth_on else Vector3.UP.lerp(Vector3(-gx, 1.0, -gz).normalized(), smoothstep(40.0, 220.0, dd)).normalized()   # 14.11: земля плавная — и пейзаж за краем
 			var tone := clampf(0.5 + fz.get_noise_2d(x, z) * 0.9, 0.0, 1.0)
 			cols[k] = g0.lerp(g3, tone).srgb_to_linear()
 			uvs[k] = Vector2(8.0, y)
@@ -1348,16 +1356,41 @@ func _add_nature(name: String, xf: Transform3D, p: Vector2, rm := {}) -> void:
 	if not nature.has(key):
 		nature[key] = []
 	var tinted := name.begins_with("SM_Env_Tree") or name.begins_with("SM_Env_Garden") or name.begins_with("SM_Env_Bush")
-	var remap: Dictionary = rm if not rm.is_empty() else ({"tint": Synty.GREEN} if tinted else {})
+	var remap: Dictionary = rm if not rm.is_empty() else ({"tint": NATURE_GREEN if MeadowNature.v2 else Synty.GREEN} if tinted else {})
 	var h := parts.place_one(name, xf, remap, true)
 	if name.begins_with("M:"):
 		MeadowNature.apply_group(h[0][0])      # мелочь лугов и деревья набора — по нынешнему уровню графики
 	nature[key].append({"h": h, "p": p, "name": name, "xf": xf, "remap": remap})
 
 
+## Свежий вид (14.11, проба для владельца — «как на картинке Synty»; переключатель, по умолчанию выключен): зелень
+## не уводится в оливу, светлое не желтеет, небо синее, лёгкая светлая дымка вдали. Цвета построек — те же (меняется
+## только цветокоррекция кадра и небо). CIVCITY_LOOK=fresh или settings["look"] = "fresh"
+static var look_fresh := OS.get_environment("CIVCITY_LOOK") == "fresh"
+
+
+func _fresh_look(day: float, gold: float) -> void:
+	sky_mat.sky_top_color = Color("2e2a5c").lerp(Color("3d7fd8").lerp(Color("8f8fc8"), gold * 0.5), day)
+	sky_mat.sky_horizon_color = Color("665a92").lerp(Color("d9e6ee").lerp(Color("f4c08a"), gold * 0.8), day)
+	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color.darkened(0.1)
+	env.fog_light_color = Color("585088").lerp(Color("e6e4d8").lerp(Color("f2c590"), gold * 0.7), day)
+	env.fog_density = lerpf(0.0004, 0.00055, day)
+	if grade:
+		grade.set_shader_parameter("green_shift", lerpf(0.15, 0.12, day))
+		grade.set_shader_parameter("gain", Vector3(0.88, 0.86, 1.18).lerp(Vector3(1.03, 1.0, 0.94).lerp(Vector3(1.07, 0.97, 0.86), gold), day))
+		grade.set_shader_parameter("shadow_tint", Vector3(0.93, 0.88, 1.05).lerp(Vector3(0.9, 0.92, 1.0), day))
+		grade.set_shader_parameter("sat", lerpf(0.95, 1.1, day))
+
+
+## Природа 2 (14.11): прежние деревья Synty в рощах — свежее и зеленее (меньше охры), украшения города — как были
+const NATURE_GREEN := Color(0.84, 1.0, 0.66)
+
+
 ## Уровень графики поменялся (Gfx.apply): природа Meadow Forest — по нему (scripts/meadow_nature.gd)
 func meadow_quality(is_low: bool) -> void:
 	MeadowNature.quality(self, is_low)
+	if grass != null:
+		grass.set_quality(str(settings.get("quality", "high")))
 
 
 ## Дерево, куст или камень под курсором (их можно снести и перенести, как в Town to City)
@@ -1484,7 +1517,9 @@ func _build_chunk(ch: Vector2i) -> void:
 		mi.layers = 1 | LAND_LAYER          # на землю (и только на неё) ложатся пятно поисков и следы историй (Decal)
 		add_child(mi)
 		chunk_nodes[ch] = mi
-	mi.mesh = land.chunk_mesh(ch.x, ch.y)
+	mi.mesh = land.smooth_mesh(ch.x, ch.y) if Land.smooth_on else land.chunk_mesh(ch.x, ch.y)   # 14.11: плавная земля
+	if grass != null:
+		grass.invalidate_chunk(ch)            # трава-ковёр на этом куске — заново (постройка, дорога, ручей)
 
 
 ## Маски узора земли и улучшенных дорог (этап 5.7–5.8) и плитки к ним. Пока узора в городе нет — их нет совсем,

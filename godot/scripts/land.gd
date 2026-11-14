@@ -1272,6 +1272,124 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 	return m
 
 
+# ---------- плавная земля (14.11) ----------
+
+## Владелец 14.11: «земля выглядит хуже, чем раньше… хочу, чтобы выглядело как в паке Synty». Ступеньки по 12,5 см
+## (hq) рисовались полосами и горизонталями, у прудов — кольцами. Теперь видимая земля — плавная: сетка узлов через
+## RS клеток (0,5 м), высота узла — средняя «как есть» (h, без ступенек) у четырёх клеток вокруг угла; нормали —
+## по соседним узлам. Высоты игры (hq, height_at), занятость, дороги и участки — те же: постройки стоят на
+## выровненных клетках (h = их пол), дороги сглажены кистью, природа — на surface_y. smooth_on = false — как было
+const RS := 2
+static var smooth_on := OS.get_environment("CIVCITY_NATURE2") != "0"
+
+
+## Высота узла плавной сетки (vi, vj) — в метрах: угол клеток (vi·RS, vj·RS)
+func node_y(vi: int, vj: int) -> float:
+	var i1 := clampi(vi * RS, 0, N - 1)
+	var j1 := clampi(vj * RS, 0, N - 1)
+	var i0 := clampi(vi * RS - 1, 0, N - 1)
+	var j0 := clampi(vj * RS - 1, 0, N - 1)
+	return (h[j0 * N + i0] + h[j0 * N + i1] + h[j1 * N + i0] + h[j1 * N + i1]) * 0.25
+
+
+## Высота видимой (плавной) земли в точке — ровно по треугольникам сетки (диагональ 00–11, как chunk_mesh)
+func surface_y(x: float, z: float) -> float:
+	if not smooth_on:
+		return height_at(x, z)
+	var step := CELL * RS
+	var u := clampf(x / step, 0.0, float(N / RS) - 0.001)
+	var v := clampf(z / step, 0.0, float(N / RS) - 0.001)
+	var vi := int(u)
+	var vj := int(v)
+	var fu := u - vi
+	var fv := v - vj
+	var a := node_y(vi, vj)
+	var c := node_y(vi + 1, vj + 1)
+	if fu >= fv:
+		var d := node_y(vi + 1, vj)
+		return a + (d - a) * fu + (c - d) * fv
+	var b2 := node_y(vi, vj + 1)
+	return a + (c - b2) * fu + (b2 - a) * fv
+
+
+## Плавная сетка куска (ci, cj): узлы через RS клеток. UV.x = 0 (вид клетки — по маске покрытий в шейдере),
+## UV.y — высота; UV2.x — доля пашни у узла (поля ферм, борозды), цвет — оттенок клетки (как у chunk_mesh)
+func smooth_mesh(ci: int, cj: int) -> ArrayMesh:
+	var Q := CH / RS                          # узлов-промежутков в куске
+	var W := Q + 1
+	var vi0 := ci * Q
+	var vj0 := cj * Q
+	var step := CELL * RS
+	var plot_cells := int(PLOT / CELL)
+	# высоты узлов с рамкой в один узел (для нормалей)
+	var WB := W + 2
+	var hy := PackedFloat32Array()
+	hy.resize(WB * WB)
+	for j in WB:
+		for i in WB:
+			hy[j * WB + i] = node_y(vi0 + i - 1, vj0 + j - 1)
+	var v := PackedVector3Array()
+	var nr := PackedVector3Array()
+	var col := PackedColorArray()
+	var uv := PackedVector2Array()
+	var uv2 := PackedVector2Array()
+	v.resize(W * W)
+	nr.resize(W * W)
+	col.resize(W * W)
+	uv.resize(W * W)
+	uv2.resize(W * W)
+	var inv := 1.0 / (2.0 * step)
+	for j in W:
+		for i in W:
+			var n := j * W + i
+			var b := (j + 1) * WB + (i + 1)
+			var y := hy[b]
+			var gi := vi0 + i
+			var gj := vj0 + j
+			v[n] = Vector3(gi * step, y, gj * step)
+			nr[n] = Vector3(-(hy[b + 1] - hy[b - 1]) * inv, 1.0, -(hy[b + WB] - hy[b - WB]) * inv).normalized()
+			var ci1 := clampi(gi * RS, 0, N - 1)
+			var cj1 := clampi(gj * RS, 0, N - 1)
+			var ci0 := clampi(gi * RS - 1, 0, N - 1)
+			var cj0 := clampi(gj * RS - 1, 0, N - 1)
+			var k := cj1 * N + ci1
+			var c := top_color(show_kind(k, hq(k)), k, hq(k))
+			if not owned.has(Vector2i(ci1 / plot_cells, cj1 / plot_cells)):
+				c = c.lerp(LOCK, 0.18)
+			col[n] = c.srgb_to_linear()
+			uv[n] = Vector2(0.0, y)
+			var f := 0
+			for kk: int in [cj0 * N + ci0, cj0 * N + ci1, cj1 * N + ci0, k]:
+				if kind[kk] == Kind.FIELD:
+					f += 1
+			uv2[n] = Vector2(f * 0.25, 1.0)
+	var ix := PackedInt32Array()
+	ix.resize(Q * Q * 6)
+	var t := 0
+	for j in Q:
+		for i in Q:
+			var a := j * W + i
+			# как у chunk_mesh: (00, 11, 01) и (00, 10, 11) — диагональ 00–11
+			ix[t] = a
+			ix[t + 1] = a + W + 1
+			ix[t + 2] = a + W
+			ix[t + 3] = a
+			ix[t + 4] = a + 1
+			ix[t + 5] = a + W + 1
+			t += 6
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = v
+	arr[Mesh.ARRAY_NORMAL] = nr
+	arr[Mesh.ARRAY_COLOR] = col
+	arr[Mesh.ARRAY_TEX_UV] = uv
+	arr[Mesh.ARRAY_TEX_UV2] = uv2
+	arr[Mesh.ARRAY_INDEX] = ix
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return m
+
+
 # ---------- сохранение ----------
 
 func save_changes() -> Dictionary:

@@ -39,11 +39,14 @@ void fragment() {
 	ALBEDO = mix(col, vec3(0.97, 0.98, 0.96), foam);
 	ALPHA = clamp(0.45 + t * 0.5 + foam, 0.0, 0.96);
 	// рябь: нормаль чуть колышется
+	// 14.11: рябь — два слоя шума под углом друг к другу (у одного слоя по сетке в отражении видны квадраты)
 	float e = 0.05;
+	mat2 ra = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
 	vec2 p = wpos.xz * 1.6 + TIME * 0.25;
-	float hx = vnoise(p + vec2(e, 0)) - vnoise(p - vec2(e, 0));
-	float hz = vnoise(p + vec2(0, e)) - vnoise(p - vec2(0, e));
-	vec3 nw = normalize(vec3(-hx * 0.8, 1.0, -hz * 0.8));
+	vec2 p2 = ra * wpos.xz * 2.3 - TIME * 0.19;
+	float hx = vnoise(p + vec2(e, 0)) - vnoise(p - vec2(e, 0)) + (vnoise(p2 + ra * vec2(e, 0)) - vnoise(p2 - ra * vec2(e, 0))) * 0.7;
+	float hz = vnoise(p + vec2(0, e)) - vnoise(p - vec2(0, e)) + (vnoise(p2 + ra * vec2(0, e)) - vnoise(p2 - ra * vec2(0, e))) * 0.7;
+	vec3 nw = normalize(vec3(-hx * 0.5, 1.0, -hz * 0.5));
 	NORMAL = normalize((VIEW_MATRIX * vec4(nw, 0.0)).xyz);
 	ROUGHNESS = 0.14;
 	SPECULAR = 0.55;

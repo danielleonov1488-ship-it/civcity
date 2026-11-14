@@ -28,6 +28,10 @@ static var low := false                     # сейчас «Низкая» ил
 ## картинка и та же скорость, что до набора. Уровень сменили в игре на высокий — природа набора вырастет со следующей
 ## загрузки; сменили на низкий — деревья набора подменяются прежними, мелочь прячется (quality)
 static var gen_low := false
+## Природа 2 (14.11, владелец: «природа у нас отстой… как в паке Synty»): плавная земля (Land.smooth_on), трава-ковёр
+## (GrassCarpet), в рощах и на лугах — в основном деревья и кусты набора, листва и трава сочнее. CIVCITY_NATURE2=0 —
+## как было (сравнения «было/стало» в одной сборке)
+static var v2 := OS.get_environment("CIVCITY_NATURE2") != "0"
 static var _standin := {}
 
 
@@ -44,6 +48,19 @@ static func pick(rng: RandomNumberGenerator, name: String, s: float) -> Array:
 	if not on() or gen_low:
 		return [name, s, {}]
 	var m := rng.randf()
+	if v2 and (name.begins_with("SM_Env_Tree_0") or name.begins_with("SM_Env_Tree_Large")):
+		# природа 2: почти все рощи — деревья набора (раскидистые луговые, берёзы, фруктовые), прежние оливы — для
+		# римского вида (примерно каждое пятое); кипарисы (Thin) — как были
+		if m < 0.36:
+			var nmv := "M:SM_Env_Tree_Meadow_0%d" % (1 + rng.randi() % 2)
+			return [nmv, _tree_xf(nmv, rng.randf_range(4.8, 7.2) if name.contains("Large") else rng.randf_range(4.4, 6.4), rng), {}]
+		if m < 0.58:
+			var nmb := "M:SM_Env_Tree_Birch_0%d" % (1 + rng.randi() % 3)
+			return [nmb, _tree_xf(nmb, rng.randf_range(4.8, 6.8) if not nmb.ends_with("3") else rng.randf_range(3.6, 4.6), rng), {}]
+		if m < 0.8:
+			var nmf := "M:SM_Env_Tree_Fruit_0%d" % (1 + rng.randi() % 3)
+			return [nmf, _tree_xf(nmf, rng.randf_range(3.6, 4.8), rng), {"bloom": 1}]
+		return [name, s, {}]
 	if name.begins_with("SM_Env_Tree_0"):
 		if m < 0.2:
 			var nm := "M:SM_Env_Tree_Meadow_0%d" % (1 + rng.randi() % 2)
@@ -55,7 +72,7 @@ static func pick(rng: RandomNumberGenerator, name: String, s: float) -> Array:
 			var nm3 := "M:SM_Env_Tree_Fruit_0%d" % (1 + rng.randi() % 3)
 			return [nm3, _tree_xf(nm3, rng.randf_range(3.6, 4.8), rng), {"bloom": 1}]
 	elif name.begins_with("SM_Env_Bush_Cluster") or name.begins_with("SM_Env_Tree_Bush"):
-		if m < 0.5:
+		if m < (0.82 if v2 else 0.5):
 			var nb := "M:SM_Env_Bush_0%d" % (1 + rng.randi() % 3)
 			return [nb, _tree_xf(nb, rng.randf_range(1.3, 2.2), rng), {}]
 	elif name.begins_with("SM_Env_Flowers"):
@@ -120,6 +137,12 @@ static func ground(g) -> void:
 	m.set_shader_parameter("road_tint", Vector3(1.12, 1.03, 0.88))
 	m.set_shader_parameter("noise_tex", noise_tex())
 	m.set_shader_parameter("meadow_on", true)
+	if v2:
+		# природа 2: земля под травой — сочная жёлто-зелёная (в тон траве-ковру: вдали, где ковра нет, — тот же цвет)
+		m.set_shader_parameter("pal0", Vector3(0.12, 0.2, 0.028))
+		m.set_shader_parameter("pal1", Vector3(0.16, 0.25, 0.034))
+		m.set_shader_parameter("pal2", Vector3(0.2, 0.3, 0.042))
+		m.set_shader_parameter("pal3", Vector3(0.26, 0.34, 0.05))
 
 
 ## Плавный шум для пятен травы (shaders/land.gdshader noise_tex): 4 бесшовных симплекс-шума (разные семена) в каналах
@@ -617,9 +640,11 @@ static func freeze(on_: bool) -> void:
 			if not sm.has_meta("sway0"):
 				sm.set_meta("sway0", sm.get_shader_parameter("sway"))
 				sm.set_meta("speed0", sm.get_shader_parameter("speed"))
-			if sm.get_meta("sway0") != null:
+			if sm.get_meta("sway0", null) != null:
 				sm.set_shader_parameter("sway", 0.0 if on_ else sm.get_meta("sway0"))
-			if sm.get_meta("speed0") != null:
+			if sm.get_meta("speed0", null) != null:
 				sm.set_shader_parameter("speed", 0.0 if on_ else sm.get_meta("speed0"))
+	for gm: ShaderMaterial in GrassCarpet.mats:
+		gm.set_shader_parameter("sway", 0.0 if on_ else 0.07)
 	if is_instance_valid(flow_node):
 		flow_node.visible = not on_ and not low

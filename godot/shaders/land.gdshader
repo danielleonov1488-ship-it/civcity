@@ -62,12 +62,14 @@ varying vec3 wpos;
 varying vec3 wnrm;
 varying float kind;
 varying float top_y;
+varying vec2 sm2;                       // плавная земля (Land.smooth_mesh): x — доля пашни у узла, y = 1 — плавная сетка
 
 void vertex() {
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	wnrm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	kind = UV.x;
 	top_y = UV.y;
+	sm2 = UV2;
 }
 
 float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -142,8 +144,9 @@ void fragment() {
 		k = 0.0;
 	}
 	vec3 an = abs(wnrm);
-	bool top = an.y > 0.5;
-	vec3 cube = floor(wpos * 8.0 - wnrm * 0.5);
+	bool smooth_g = sm2.y > 0.5;
+	bool top = an.y > 0.5 || smooth_g;      // у плавной земли стенок нет: крутой склон — камень (ниже)
+	vec3 cube = smooth_g ? floor(vec3(wpos.x * 8.0, 0.0, wpos.z * 8.0)) : floor(wpos * 8.0 - wnrm * 0.5);
 	float r = h31(cube);
 	float rough = 0.95;
 	bool mg = meadow_on && (k == 0.0 || k == 1.0 || k == 4.0 || k == 5.0);
@@ -184,6 +187,24 @@ void fragment() {
 			if (fl > 0.9985) c = fl > 0.9995 ? vec3(0.9, 0.86, 0.74) : vec3(0.8, 0.4, 0.46);
 		} else {
 			c *= 0.92 + 0.12 * r;
+		}
+		if (smooth_g) {
+			// крутой склон плавной земли (обрыв, край выровненной площадки): камень слоями и земля
+			float steep = 1.0 - smoothstep(0.62, 0.84, wnrm.y);
+			if (steep > 0.01) {
+				float band = 0.5 + 0.5 * sin(wpos.y * 3.1 + sin(wpos.y * 1.3 + wpos.x * 0.05) * 1.5);
+				vec3 rk = vec3(0.42, 0.36, 0.3) * mix(1.0, 0.78, band) * (0.9 + 0.2 * vn(wpos.xz * 1.7));
+				if (rich && meadow_on) {
+					rk = mix(texture(earth_tex, wpos.xz / 2.0).rgb * vec3(1.02, 0.92, 0.8), rk, 0.45);
+				}
+				c = mix(c, rk, steep);
+			}
+			// пашня под фермами (Kind.FIELD — доля у узлов): борозды
+			if (sm2.x > 0.01) {
+				float rows = 0.5 + 0.5 * sin(wpos.x * 6.2832 / 0.75);
+				vec3 fc = vec3(0.325, 0.195, 0.076) * (0.8 + 0.3 * rows) * (0.94 + 0.08 * r);
+				c = mix(c, fc, smoothstep(0.15, 0.6, sm2.x));
+			}
 		}
 		if (k == 0.0 || k == 1.0 || k == 4.0 || k == 5.0 || k == 6.0) {
 			// покрытия по маске с плавной выборкой — края скруглены, а не ступеньками по клеткам
@@ -348,7 +369,7 @@ void fragment() {
 				c = mix(c, vec3(0.85, 0.22, 0.16), wp * 0.55);
 			}
 		}
-		if (far) {
+		if (far && !meadow_on) {
 			// горизонтали там, где на карте уступы по 12,5 см (высота (n + ½)·0,125): тонкие тёмные линии,
 			// вдали, где они сливаются, — гаснут
 			float line = (1.0 - smoothstep(0.0, fw * 1.4, fract(fv))) * (1.0 - smoothstep(0.3, 0.8, fw));
@@ -382,7 +403,12 @@ void fragment() {
 	} else {
 		c *= 0.92 + 0.12 * r;
 	}
-	if (meadow_on && top && k == 3.0) {
+	bool bank = k == 3.0;
+	if (smooth_g && wpos.y < 1.32) {
+		vec4 mb = textureLod(surf, wpos.xz / map_size, 0.7);
+		bank = max(mb.r, mb.g) < 0.3;          // у воды — берег (дороги и площади у воды — как есть)
+	}
+	if (meadow_on && top && bank) {
 		// берег прудов и ручьёв: земля и мелкий гравий набора, у воды мокрее; кверху — в траву (без резкой границы);
 		// на низких — те же тона без картинок
 		vec3 sd = vec3(0.36, 0.27, 0.17) * (0.88 + 0.24 * vn(wpos.xz * 0.6));

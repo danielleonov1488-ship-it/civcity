@@ -75,6 +75,9 @@ func _hide_ui() -> void:
 
 
 func _snap(path: String) -> void:
+	await frames(3)
+	if game.get("grass") != null and game.grass != null:
+		game.grass.fill_now()                 # трава-ковёр вокруг нового места камеры — сразу (в игре — понемногу)
 	await frames(int(A.get("wait", "120")))
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()

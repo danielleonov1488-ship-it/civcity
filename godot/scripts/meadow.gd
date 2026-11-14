@@ -39,6 +39,7 @@ const TRUNK_TINT := Color(0.92, 0.9, 0.86)
 ## Ancient Empire в нашем свете (владелец и ревью 13.11: луговые деревья читались почти чёрными пятнами). Средние цвета
 ## картинок (по непрозрачным точкам, линейные) — посчитаны заранее (.work/nature)
 const LEAF_TARGET := Vector3(0.2, 0.27, 0.06)
+const LEAF_TARGET_V2 := Vector3(0.24, 0.4, 0.045)    # природа 2: сочная солнечная листва, как на картинке набора
 const LEAF_AVG := {"leafPatch_01": Vector3(0.2594, 0.3554, 0.1465), "leafPatch_04": Vector3(0.0474, 0.0683, 0.0091),
 	"Branches_01": Vector3(0.0614, 0.0434, 0.0229), "Branches_02": Vector3(0.3096, 0.2911, 0.28)}
 const BRANCH_TARGET := Vector3(0.16, 0.12, 0.08)
@@ -172,7 +173,7 @@ static func material(e: Dictionary, remap := {}) -> Material:
 		fm.set_shader_parameter("tint", tint)
 		if LEAF_AVG.has(lt):
 			var avg: Vector3 = LEAF_AVG[lt]
-			var tg: Vector3 = BRANCH_TARGET if lt.begins_with("Branches") else LEAF_TARGET
+			var tg: Vector3 = BRANCH_TARGET if lt.begins_with("Branches") else (LEAF_TARGET_V2 if MeadowNature.v2 else LEAF_TARGET)
 			fm.set_shader_parameter("leaf_gain", Vector3(tg.x / avg.x, tg.y / avg.y, tg.z / avg.z))
 		if grassy and not slot.begins_with("Branches") and not slot.begins_with("CropField"):
 			fm.set_shader_parameter("fade", Vector2(Parts.FADE_FROM, Parts.FADE_TO))
