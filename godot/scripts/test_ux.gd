@@ -935,7 +935,7 @@ func _bars_scale() -> void:
 	var r: Rect2 = hud.bar_right.get_global_rect()
 	var tp: Rect2 = hud.top_panel.get_global_rect()
 	var cb: Rect2 = hud.class_box.get_global_rect()
-	var ub = hud.bar_left.find_child("upgrade_box", true, false)
+	var ub = hud.road_panel.find_child("upgrade_box", true, false)
 	check(get_window().content_scale_factor > 1.1 and hud.full_rp.visible and hud.full_money.visible, "крупный интерфейс (%.2f), «Полки полны» и «Казна полна» видно" % get_window().content_scale_factor)
 	check(ub != null and (ub as Control).visible and not m.intersects(r) and m.position.x > l.end.x, "нижние полосы (с «Улучшить» и «Легионом») не наезжают: дороги %s, разделы %s, инструменты %s" % [l, m, r])
 	check(tp.position.x > cb.end.x and tp.end.x <= hud.root.size.x + 1.0, "медальоны сверху справа (с облачком) не наезжают на фишки классов: %s / %s" % [tp, cb])

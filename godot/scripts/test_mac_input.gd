@@ -314,6 +314,9 @@ func _run() -> void:
 
 	# ---------- Ctrl+Z / Ctrl+Y как прежде; Win+Z на Windows — не отмена ----------
 	await view(Vector3(192, 2, 138), 15, 58, 40)
+	if not game.hud.road_btns["road"].is_visible_in_tree():
+		await click(center_of(game.hud.road_groups["roads"]))
+		await frames(3)
 	await click(center_of(game.hud.road_btns["road"]))
 	await drag(scr(Vector2(186, 128)), scr(Vector2(186, 150)))
 	var probe := Vector2(186, 140)
