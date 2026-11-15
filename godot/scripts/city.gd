@@ -3177,7 +3177,7 @@ func _fest_hour() -> void:
 		festival_changed.emit(false)
 		return
 	if fest_left == 0:
-		_quiet("Игры окончены. Новые — через %d ч." % fest_cd, "laurels")
+		_quiet("Игры в честь богов окончены. Новые — через %d ч." % fest_cd, "laurels")
 		compute(true)
 		festival_changed.emit(false)
 

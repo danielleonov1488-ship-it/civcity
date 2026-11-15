@@ -5722,7 +5722,7 @@ func _smoke_hour(a: Dictionary, hours: int) -> void:
 		(S()["bonus"] as Array).append({"id": String(a.get("id", "")), "line": "Копоть после пожара", "pct": SOOT, "home": int(c[3]), "left": SOOT_H})
 	if n > 0:
 		fl["soot"] = n
-		city._quiet("Огонь погас сам, но %d %s в копоти: их жителям сутки невесело (%d%%). Дома целы." \
+		city._quiet("Огонь погас сам, но на %d %s копоть: жителям сутки невесело (%d%%). Дома целы." \
 			% [n, Hud._plural(n, "крыше", "крышах", "крышах"), SOOT], String(_story(a).get("icon", "scroll")))
 		city.compute()
 	_clicks_key = "-"
