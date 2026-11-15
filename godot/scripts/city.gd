@@ -537,6 +537,7 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 
 ## Полоса под арками постройки (акведук) — в Land.under: b.under — её клетки (не сохраняется, при загрузке — заново)
 func _under_add(b: Dictionary) -> void:
+	_bare_add(b)
 	var ur := CatGrand.under_rects(String(b["type"]))
 	if ur.is_empty():
 		return
@@ -545,6 +546,17 @@ func _under_add(b: Dictionary) -> void:
 	for k in uc:
 		if not land.under.has(k):
 			land.under[k] = int(b["id"])
+
+
+## Клетки внутри постройки (Land.bare): прямоугольник вокруг её следа — трава-ковёр там не растёт (владелец 15.11)
+func _bare_add(b: Dictionary) -> void:
+	if land.bare.size() != Land.N * Land.N:
+		land.bare.resize(Land.N * Land.N)
+	var hc := land.hull_cells(b["cells"], b["pos"], float(b["yaw"]))
+	b["bare"] = hc
+	for k in hc:
+		if land.bare[k] < 255:
+			land.bare[k] += 1
 
 
 ## Цвет новой постройки: не такой, как у соседей
@@ -579,6 +591,9 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 	for k in (b.get("under", PackedInt32Array()) as PackedInt32Array):
 		if int(land.under.get(k, 0)) == int(b["id"]):
 			land.under.erase(k)
+	for k in (b.get("bare", PackedInt32Array()) as PackedInt32Array):
+		if k < land.bare.size() and land.bare[k] > 0:
+			land.bare[k] -= 1
 	buildings.erase(b["id"])
 	_apron_remove(b)
 	# украшения на стенах снесённого дома падают вместе с ним

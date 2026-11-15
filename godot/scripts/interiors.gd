@@ -49,7 +49,7 @@ static func material(lit: bool) -> StandardMaterial3D:
 
 ## Яркость комнат: lamp — 0 днём, 1 ночью (как у окон «#lit» в Game._sky); deep — глубокая ночь
 static func set_light(lamp: float, deep: bool) -> void:
-	material(false).albedo_color = Color(1, 1, 1).lerp(Color(0.06, 0.055, 0.05), lamp)
+	material(false).albedo_color = Color(1, 1, 1).lerp(Color(0.17, 0.13, 0.095), lamp)    # 15.11: ночью приглушённо, не чёрная дыра
 	material(true).albedo_color = Color(1, 1, 1).lerp(Color(0.2, 0.135, 0.075) if deep else Color(0.34, 0.23, 0.12), lamp)
 
 
@@ -283,6 +283,8 @@ static func apply(b: Bp, kind: String) -> void:
 			for k in range(1, nfl):                    # перекрытия многоэтажной коробки
 				var yl := -0.5 + (k * FL - 0.05) / sy
 				b.parts.append(["#plate_lit" if lit else "#plate", xf * Transform3D(Basis.from_scale(Vector3(1.0, 0.12 / sy, 1.0)), Vector3(0, yl, 0)), {}])
+		elif sy <= 0.12 and minf(sx, sz) >= 0.6:
+			p[0] = "#plate_lit" if lit else "#plate"     # плоская тёмная коробка — пол открытой лавки (таверна): тёплый пол
 		elif (minf(sx, sz) <= 0.06 and sy >= 0.25 and maxf(sx, sz) >= 0.25) or (sy >= 0.3 and minf(sx, minf(sy, sz)) > 0.12 and maxf(sx, sz) >= 1.2):
 			# вертикальная пластина за решёткой окна или низкая тёмная коробка (передок помоста, прилавок): тёплая стена
 			p[0] = "#plate_lit" if lit else "#plate"
@@ -311,8 +313,8 @@ static func apply(b: Bp, kind: String) -> void:
 	for i in n0:
 		var p: Array = b.parts[i]
 		var nm: String = p[0]
-		if not nm.begins_with("SM_Bld_"):
-			continue
+		if not nm.begins_with("SM_Bld_") or b.free_parts.has(i):
+			continue                               # арки, под которыми ходят (акведук), — сквозные: за ними улица, не комната
 		var hs := holes(nm)
 		if hs.is_empty():
 			continue

@@ -1556,7 +1556,8 @@ func clear_nature(c: Vector2, r: float, cells := PackedInt32Array()) -> void:
 
 ## Клетки, где под постройкой нет деревьев: её след, а у акведука — ещё полоса под арками с запасом на кроны
 ## (арки землю не занимают — Land.under). Природа не сохраняется: после загрузки убирается снова (_ready)
-func _nature_cells(type: String, cells: PackedInt32Array, pos: Vector2, yaw: float) -> PackedInt32Array:
+func _nature_cells(type: String, cells0: PackedInt32Array, pos: Vector2, yaw: float) -> PackedInt32Array:
+	var cells := land.hull_cells(cells0, pos, yaw)     # 15.11: и внутри постройки (двор, комнаты) — без деревьев
 	var ur := CatGrand.under_rects(type)
 	if ur.is_empty():
 		return cells
@@ -2160,6 +2161,16 @@ func _grow_cancel(id: int) -> void:
 
 func _on_removed(b: Dictionary) -> void:
 	_grow_cancel(int(b["id"]))
+	if grass != null:
+		var hc: PackedInt32Array = b.get("bare", PackedInt32Array())
+		if not hc.is_empty():                  # трава-ковёр на месте снесённой постройки — заново
+			var lo := Vector2(INF, INF)
+			var hi := Vector2(-INF, -INF)
+			for k in hc:
+				var q := land.cell_center(k % Land.N, k / Land.N)
+				lo = lo.min(q)
+				hi = hi.max(q)
+			grass.invalidate_rect(lo, hi)
 	_hide(b)
 	_puff(Vector3(b["pos"].x, b["y"], b["pos"].y))
 	if selected.get("id", -1) == b["id"]:

@@ -286,6 +286,8 @@ func _rows(job: Dictionary, nrows: int) -> void:
 				continue
 			if not land.under.is_empty() and land.under.has(kk):
 				continue
+			if kk < land.bare.size() and land.bare[kk] != 0:
+				continue                          # внутри постройки (двор, комнаты за проёмами) — без травы
 			var y := land.surface_y(x, z)
 			if y < Land.WATER_Y + 0.04:
 				continue

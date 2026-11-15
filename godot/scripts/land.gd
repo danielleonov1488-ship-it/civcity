@@ -83,6 +83,9 @@ var _dc_vals := {}
 ## Клетки под арками акведука (этап 5.6): клетка → id постройки. Землю они не занимают (под арками ходят и проводят
 ## улицы), но другая постройка и деревья сквозь арки не встают. Не сохраняется — City.place / remove / load_data
 var under := {}
+## Клетки внутри построек (15.11, владелец: «внутри построек трава»): прямоугольник вокруг следа каждой постройки —
+## двор, комнаты за проёмами — трава-ковёр там не растёт. Число построек на клетке; не сохраняется — City._bare_add / remove
+var bare := PackedByteArray()
 ## Ручьи (13.11, scripts/streams.gd): какие проложены (номера Streams.LIST) — пишется в сохранение; streams_saved — что
 ## пришло из сохранения (null — сохранение старше ручьёв: тогда кладутся только те, где всё свободно); bridges — мосты
 ## там, где ручей проходит под дорогой исходной карты (не сохраняются — считаются заново)
@@ -276,6 +279,8 @@ func generate() -> void:
 	_dc_cells.clear()
 	_dc_vals.clear()
 	under.clear()
+	bare.resize(N * N)
+	bare.fill(0)
 	var tn := FastNoiseLite.new()
 	tn.seed = 5
 	tn.frequency = 0.035
@@ -914,6 +919,22 @@ func footprint_cells(rects: Array, pos: Vector2, yaw: float, pad := 0.0) -> Pack
 						seen[k] = true
 						out.append(k)
 	return out
+
+
+## Клетки прямоугольника, что охватывает след постройки в её осях (двор, комнаты за проёмами, дворик между флигелями)
+func hull_cells(cells: PackedInt32Array, pos: Vector2, yaw: float) -> PackedInt32Array:
+	if cells.is_empty():
+		return cells
+	var ax := Vector2(cos(yaw), -sin(yaw))
+	var fw := Vector2(sin(yaw), cos(yaw))
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for k in cells:
+		var d := cell_center(k % N, k / N) - pos
+		var l := Vector2(d.dot(ax), d.dot(fw))
+		lo = lo.min(l)
+		hi = hi.max(l)
+	return footprint_cells([Rect2(lo, hi - lo)], pos, yaw, 0.02)
 
 
 func set_occ(cells: PackedInt32Array, id: int) -> void:
