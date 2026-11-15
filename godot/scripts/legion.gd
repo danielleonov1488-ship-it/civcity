@@ -3480,7 +3480,7 @@ func triumph() -> bool:
 	var c = city()
 	if c != null:
 		if c.has_method("_event"):
-			c._event("Триумф! Город празднует %d дня: счастье всех домов +%d%%" % [int(TRIUMPH["hours"]) / 24, TRIUMPH["happy"]], "laurels")
+			c._event("Триумф! Город празднует %d дня: счастье домов +%d%%." % [int(TRIUMPH["hours"]) / 24, TRIUMPH["happy"]], "laurels")
 		c.compute()
 		c.changed.emit()
 	changed.emit()

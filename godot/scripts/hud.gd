@@ -6374,7 +6374,7 @@ func _save_now() -> void:
 		game.save()
 		notify("Город сохранён", "save")
 	else:
-		notify("Готовый город не сохраняется — начните свой в главном меню", "info")
+		notify("Готовый город не сохраняется — начните свой в меню.", "info")
 	pause_panel.visible = false
 
 

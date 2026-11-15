@@ -261,7 +261,7 @@ static func apply_gift(g, kind: String, from: String, nm: String) -> void:
 			rec["gift"] = from
 			c._quiet("Подарок из «%s»: кошка %s пришла в город" % [from, String(rec["nm"])], "cat")
 		else:
-			c._quiet("Подарок из «%s»: кошка придёт, когда в городе будут жители" % from, "cat")
+			c._quiet("Подарок из «%s»: кошка придёт, когда появятся жители." % from, "cat")
 			c.gifts["@cat"] = (c.gifts.get("@cat", []) as Array) + [from]
 		return
 	if not GIFT_BUILD.has(kind):
@@ -273,7 +273,7 @@ static func apply_gift(g, kind: String, from: String, nm: String) -> void:
 		list.append(from)
 	c.gifts[t] = list
 	var dn := String((Defs.B.get(t, {}) as Dictionary).get("name", nm))
-	c._quiet("Подарок из «%s»: %s — %s даром — найдите в стройке, он отмечен «Подарок»" % [from, dn.to_lower(), "%d шт." % n if n > 1 else "одна"], "mail")
+	c._quiet("Подарок из «%s»: %s — %s даром. Найдите в стройке." % [from, dn.to_lower(), "%d шт." % n if n > 1 else "одна"], "mail")
 	c.changed.emit()
 
 

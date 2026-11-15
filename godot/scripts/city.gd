@@ -1720,7 +1720,7 @@ func sim_day() -> void:
 		var t0 := Renown.title_idx(renown)
 		renown += Renown.hour_gain(self)
 		if Renown.title_idx(renown) > t0:
-			_event("Город получил почётный титул «%s»! Жители гордятся: +1%% счастья всем домам." % Renown.title_of(renown), "laurels")
+			_event("Город получил титул «%s»! Жители гордятся: +1%% счастья." % Renown.title_of(renown), "laurels")
 			compute()
 	var tour := Tourism.hour_income(self)        # гости гостиниц («Уютный Рим», этап 6)
 	if tour > 0.0:
@@ -1734,7 +1734,7 @@ func sim_day() -> void:
 		if rest_day:
 			# в день отдыха недоплату прощают: казна на нуле, но без обиды и без «поднимите налоги»
 			if money > 0.0:
-				_quiet("Сатурналии: в день отдыха налогов нет — казна опустела. Жители не в обиде, праздник же! Налоги вернутся, когда день отдыха кончится.", "coins")
+				_quiet("Сатурналии: налогов нет, казна пуста. Праздник же! Налоги вернутся после отдыха.", "coins")
 			if unpaid_h > 0:
 				unpaid_h -= 1
 		else:
@@ -1742,7 +1742,7 @@ func sim_day() -> void:
 			var was := unpaid_h
 			unpaid_h = Defs.UNPAID_H
 			if was <= 0:
-				_quiet("Казна пуста — жалованье работникам и содержание построек оплачены не полностью. Жители недовольны: счастье всех домов −%d%% — и ещё %d ч после того, как казна снова сможет платить." % [Defs.UNPAID_HAPPY, Defs.UNPAID_H - 1], "coins")
+				_quiet("Казна пуста, жалованье не выплачено. Счастье домов −%d%% ещё %d ч." % [Defs.UNPAID_HAPPY, Defs.UNPAID_H - 1], "coins")
 	elif unpaid_h > 0:
 		unpaid_h -= 1
 	money = minf(money_cap(), left)
@@ -2432,7 +2432,7 @@ func _arrive_gate(why: String) -> void:
 		arrive_block_h += 1
 	else:
 		if arrive_block_told:              # «снова едут» — только в ответ на «не едут»
-			_event("Счастье города %d%% — повозка снова везёт новые семьи" % int(stats["happy"]), "family")
+			_event("Счастье города %d%% — повозка снова везёт семьи." % int(stats["happy"]), "family")
 		arrive_block_told = false
 		arrive_block_h = 0
 
@@ -2759,7 +2759,7 @@ func _update_level() -> void:
 	stats["rank_ready"] = ok
 	if ok and int(tips.get("rank_said", -1)) != level + 1:
 		tips["rank_said"] = level + 1
-		_quiet("Город готов стать «%s» — нажмите «Перейти на новый уровень» под табличкой города" % Defs.LEVELS[level + 1]["name"], "level")
+		_quiet("Город готов стать «%s» — нажмите «Перейти на новый уровень»." % Defs.LEVELS[level + 1]["name"], "level")
 
 
 func next_level() -> Dictionary:
@@ -3159,7 +3159,7 @@ func cal_fest_tick() -> void:
 		var gift := roundf(maxf(500.0, float(stats.get("income", 0.0)) * 6.0) / 10.0) * 10.0
 		money = minf(money_cap(), money + gift)
 		flow("reward", gift)
-	_event("Сегодня %s! Город празднует сутки: улицы в гирляндах, счастье всем домам +%d%%, известность растёт быстрее. %s" % [f["name"], int(Defs.FESTIVAL["happy"]), f["bonus"]], "laurels")
+	_event("Сегодня %s! Город празднует сутки: счастье домов +%d%%, известность растёт. %s" % [f["name"], int(Defs.FESTIVAL["happy"]), f["bonus"]], "laurels")
 	compute(true)
 	festival_changed.emit(true)
 
@@ -3177,7 +3177,7 @@ func _fest_hour() -> void:
 		festival_changed.emit(false)
 		return
 	if fest_left == 0:
-		_quiet("Игры в честь богов окончены. Новые можно устроить через %d ч — в карточке почтовой станции" % fest_cd, "laurels")
+		_quiet("Игры окончены. Новые — через %d ч." % fest_cd, "laurels")
 		compute(true)
 		festival_changed.emit(false)
 
@@ -3340,7 +3340,7 @@ func _drop_roads2() -> void:
 	research.erase("roads2")
 	rp += ROADS2_RP
 	events.append({"day": day, "icon": "research",
-		"text": "Исследование «Площади из плитки» убрано: площадь из плитки и так открыта с самого начала. Потраченные %d очков исследований вернулись." % ROADS2_RP})
+		"text": "Исследование «Площади из плитки» убрано — она открыта с начала. Вернулось %d очков." % ROADS2_RP})
 	if events.size() > 60:
 		events.pop_front()
 	unread += 1
