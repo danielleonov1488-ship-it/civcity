@@ -151,7 +151,20 @@ var buy_panel: PanelContainer
 var buy_plot := Vector2i(-1, -1)
 var menu_root: Control
 var world_icons := {}                 # id постройки → значок беды
-var badge_layer: Control              # значки над постройками: всегда одного размера на экране (как в Town to City)
+var badge_layer: Control              # спокойные значки; дальние чуть меньше
+const MapBadge = preload("res://scripts/map_badge.gd")
+const FamilyPreference = preload("res://scripts/family_preference.gd")
+var _badges_dirty := true
+var _badge_pick_dirty := true
+var _badge_tool := "__unset__"
+var _badge_camera: Camera3D
+var _badge_transform := Transform3D.IDENTITY
+var _badge_projection := Projection()
+var _badge_viewport := Rect2()
+var _badge_target := Vector3.INF
+var _badge_zoom := -1.0
+var _badge_show := false
+var _family_badge_next_ms := 0
 var badges := {}                      # ключ → {pos, icon, n}
 var paused_speed := 1.0
 var hidden_ui := false
@@ -3894,6 +3907,8 @@ func _card_or_cat(cat: String, type: String) -> Control:
 
 func _process(_dt: float) -> void:
 	_fit_tray()
+	if game and game.ready_done:
+		_family_badges()
 	_place_badges()
 	_place_pops()
 	_place_notes()
@@ -7861,66 +7876,39 @@ func _badge_layer() -> void:
 	move_child(badge_layer, 0)                # окна интерфейса рисуются поверх значков
 
 
-## Значок над точкой мира, размер на экране постоянный (как в Town to City): рисованный пузырь —
-## нет работников, склада, сырья, дороги, ждут жилья, сюда можно заселить; или плашка с монетой и ценой участка.
-## Значок можно нажать: cb — что сделать; без cb — по ключу (_badge_click): семья — выбрать ей дом,
-## беда над постройкой — её карточка, ключи над домом — заселить, цена участка — купить
-## style: "" — как выше; "mark" — маленький бронзовый медальон со значком (такие же лавки, лавки в «Обзоре»);
-## "plain" — только рисованный значок (✗ в «Обзоре»). Значок "face_good|mid|bad" с текстом — рожица и цифра
+## Общий спокойный значок. style и ключи сохранены для вызывающих и тестов.
 func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "", cb: Callable = Callable(), style := "") -> void:
 	if badges.has(key):
 		var old: Dictionary = badges[key]
-		old["pos"] = pos
+		if old["pos"] != pos:
+			old["pos"] = pos
+			_badges_dirty = true
 		if cb.is_valid():
 			old["cb"] = cb
 		else:
 			cb = old.get("cb", Callable())
-		if old["icon"] == icon and old["warn"] == warn and old.get("text", "") == text:
+		if old["icon"] == icon and old["warn"] == warn and old.get("text", "") == text and old.get("style", "") == style:
 			return
+		(old["n"] as Control).hide()
 		(old["n"] as Node).queue_free()
-	var p: Control
-	var anc := Vector2(0.5, 0.5)
-	if style == "mark":
-		var pm := PanelContainer.new()
-		pm.add_theme_stylebox_override("panel", _medal("medal", 38))
-		pm.custom_minimum_size = Vector2(38, 38)
-		var ic := _icon(icon, 24)
-		ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		pm.add_child(ic)
-		if warn:
-			pm.modulate = Color(1.0, 0.62, 0.55)          # не работает — значок краснеет
-		p = pm
-	elif style == "plain":
-		p = _face(icon, 26) if icon.begins_with("face_") else _icon(icon, 26)
-	elif text == "" and ResourceLoader.exists(AI + "badge_%s.png" % icon):
-		p = _pic("badge_%s.png" % icon, Vector2(56, 56))
-		anc = Vector2(0.22, 0.96)                 # хвостик пузыря смотрит на постройку
-	else:
-		var pc := PanelContainer.new()
-		pc.add_theme_stylebox_override("panel", _box_pill(12, 5))
-		pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		if text == "":
-			pc.add_child(_icon(icon, 30, C_BAD if warn else C_INK))
-		else:
-			var h := HBoxContainer.new()
-			h.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			h.add_theme_constant_override("separation", 4)
-			var dr := _drawn(icon, 22)             # рожица «Обзора», стрелка «Этажа» — нарисованы кодом
-			h.add_child(dr if dr else _icon(icon, 26, C_GOLD))
-			# красная цена — денариев не хватает (стрелка «Этажа»)
-			h.add_child(_label(text, 15 if icon.begins_with("face_") else 17, true, C_BAD if warn else C_INK))
-			pc.add_child(h)
-		p = pc
+	var p := MapBadge.new()
+	p.setup(icon, warn, text, font_bold)
 	p.visible = false
-	for ch in p.find_children("*", "Control", true, false):
-		(ch as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE      # ловит мышь, когда можно нажать (_place_badges)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	p.gui_input.connect(_badge_input.bind(key))
 	badge_layer.add_child(p)
-	p.reset_size()
-	badges[key] = {"pos": pos, "icon": icon, "warn": warn, "text": text, "n": p, "anc": anc, "ph": float(hash(key) % 628) / 100.0, "cb": cb}
+	badges[key] = {"pos": pos, "icon": icon, "warn": warn, "text": text, "style": style, "n": p,
+		"anc": Vector2(0.5, 0.5), "ph": 0.0, "cb": cb}
+	_badges_dirty = true
+	_badge_pick_dirty = true
+
+
+## Совпадение с той же чертой, что видна рядом с семьёй.
+func set_badge_match(key: String, home: Dictionary, family: Dictionary) -> void:
+	if badges.has(key):
+		var p: MapBadge = badges[key]["n"]
+		p.set_match(FamilyPreference.matches(game.city, home, family))
 
 
 ## Значок ловит только левую кнопку (нажатие — действие, отпускание тоже не уходит в мир);
@@ -7962,17 +7950,31 @@ func _badge_click(key: String) -> void:
 			open_info(b)
 
 
-## Над каждой семьёй, что ждёт жилья на площади, — значок семьи (нажать — выбрать ей дом)
+## Четыре обновления в секунду; в остальные кадры — только проверка часов.
 func _family_badges() -> void:
+	var now := Time.get_ticks_msec()
+	if now < _family_badge_next_ms:
+		return
+	_family_badge_next_ms = now + 250
 	var want := {}
 	var c: City = game.city
-	if c != null and game.people != null and game.mode != "demo" and game.mode != "menu" and game.people.has_method("waiting_family_pos"):
-		for f in c.arrivals:
+	if c != null and game.people != null and game.mode != "demo" and game.mode != "menu":
+		for f: Dictionary in c.arrivals:
 			var at: Vector3 = game.people.waiting_family_pos(String(f["name"]))
-			if at.is_finite():
-				var key := "fam_" + String(f["name"])
-				want[key] = true
-				set_badge(key, at + Vector3(0, 1.7, 0), "family")
+			if not at.is_finite():
+				continue
+			var key := "fam_" + String(f["name"])
+			want[key] = true
+			set_badge(key, at + Vector3(0, 1.7, 0), "family")
+			var p: MapBadge = badges[key]["n"]
+			var tr_id := FamilyPreference.main(f)
+			var pref: Array = FamilyPreference.LOOK.get(tr_id, ["housing", "свободный дом"])
+			var old_size := p.size
+			p.family(String(f["cls"]), String(pref[0]))
+			if old_size != p.size:
+				_badges_dirty = true
+			var cls: String = Defs.CLASSES[f["cls"]]["name"]
+			p.tooltip_text = "Семья %s · %d чел. · %s · хотят: %s" % [f["name"], int(f["n"]), cls.to_lower(), pref[1]]
 	for k in badges.keys():
 		if String(k).begins_with("fam_") and not want.has(k):
 			clear_badge(k)
@@ -7989,7 +7991,7 @@ func badge_at(mp: Vector2, prefix: String, skip_warn := false) -> String:
 	for k in badges:
 		if String(k).begins_with(prefix) and not (skip_warn and bool(badges[k]["warn"])):
 			var n: Control = badges[k]["n"]
-			if n.visible and n.get_index() > best_i and n.get_global_rect().grow(3.0).has_point(mp):
+			if n.is_visible_in_tree() and n.get_index() > best_i and n.get_global_rect().grow(3.0).has_point(mp):
 				best_i = n.get_index()
 				best = String(k)
 	return best
@@ -7997,40 +7999,60 @@ func badge_at(mp: Vector2, prefix: String, skip_warn := false) -> String:
 
 func clear_badge(key: String) -> void:
 	if badges.has(key):
+		(badges[key]["n"] as Control).hide()
 		(badges[key]["n"] as Node).queue_free()
 		badges.erase(key)
+		_badges_dirty = true
 
 
 func _place_badges() -> void:
-	if game and game.ready_done:
-		_family_badges()
 	if badges.is_empty():
 		return
-	var cam := get_viewport().get_camera_3d()
+	var viewport := get_viewport()
+	var cam := viewport.get_camera_3d()
 	if cam == null:
 		return
-	var vr := get_viewport().get_visible_rect()
+	var vr := viewport.get_visible_rect()
 	var show: bool = root.visible and game.mode != "menu"
-	var t := Time.get_ticks_msec() / 1000.0
 	var tl: String = game.tool
+	var transform := cam.get_camera_transform()
+	var projection := cam.get_camera_projection()
+	var target: Vector3 = game.rig.target
+	var zoom: float = game.rig.dist
+	var place: bool = _badges_dirty or cam != _badge_camera or transform != _badge_transform or projection != _badge_projection or vr != _badge_viewport or show != _badge_show or target != _badge_target or zoom != _badge_zoom
+	var pick: bool = _badge_pick_dirty or tl != _badge_tool
+	if not place and not pick:
+		return
+	_badge_camera = cam
+	_badge_transform = transform
+	_badge_projection = projection
+	_badge_viewport = vr
+	_badge_show = show
+	_badge_target = target
+	_badge_zoom = zoom
+	_badge_tool = tl
+	_badges_dirty = false
+	_badge_pick_dirty = false
 	for k in badges:
 		var b: Dictionary = badges[k]
 		var p: Control = b["n"]
+		if pick:
+			var can: bool = tl == "" or (tl == "settle" and (String(k).begins_with("settle") or String(k).begins_with("fam_")))
+			# PASS сохраняет перетаскивание правой/средней кнопкой.
+			p.mouse_filter = Control.MOUSE_FILTER_PASS if can else Control.MOUSE_FILTER_IGNORE
+		if not place:
+			continue
 		var w: Vector3 = b["pos"]
-		# нажать значок можно без инструмента; при заселении — ключи над домами и значки семей
-		# (с кистью или стройкой значки мышь не ловят — не мешают вести дорогу и ставить дома)
-		var can: bool = tl == "" or (tl == "settle" and (String(k).begins_with("settle") or String(k).begins_with("fam_")))
-		# PASS, а не STOP: левую кнопку забирает _badge_input, а правая/средняя (тянуть и вращать карту) идут в мир
-		var mf := Control.MOUSE_FILTER_PASS if can else Control.MOUSE_FILTER_IGNORE
-		if p.mouse_filter != mf:
-			p.mouse_filter = mf
-		if not show or cam.is_position_behind(w):
+		var far: bool = zoom >= 90.0 and Vector2(w.x, w.z).distance_squared_to(Vector2(target.x, target.z)) > 180.0 * 180.0
+		if not show or cam.is_position_behind(w) or (far and not bool(b["warn"])):
 			p.visible = false
 			continue
+		var depth := clampf((cam.global_position.distance_to(w) - 35.0) / 180.0, 0.0, 1.0)
+		p.scale = Vector2.ONE * lerpf(1.0, 0.8, depth)
+		p.modulate.a = lerpf(1.0, 0.76, depth)
 		var pt := cam.unproject_position(w)
 		var anc: Vector2 = b.get("anc", Vector2(0.5, 0.5))
-		var bob := sin(t * 2.2 + float(b.get("ph", 0.0))) * 2.5 if anc.y > 0.9 else 0.0   # пузыри чуть покачиваются
-		p.position = (pt - p.size * anc + Vector2(0, bob)).round()
+		p.position = (pt - p.size * p.scale * anc).round()
 		p.visible = vr.grow(30).has_point(pt)
 
 

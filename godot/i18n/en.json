@@ -4865,5 +4865,18 @@
   "Откройте Лагерь (кнопка «Легион» наверху) и призовите первого воина.": "Open the Camp (the \"Legion\" button at the top) and call up your first warrior.",
   "Призывайте жителей в Легион — кнопка «Легион» наверху.": "Call residents up to the Legion: the \"Legion\" button at the top.",
   "Лагерь открыт: призывайте жителей в Легион — кнопка «Легион» наверху": "Camp is open: call residents up to the Legion, the \"Legion\" button at the top",
-  "Лагерь Легиона — кнопка «Легион» наверху": "Legion camp: the \"Legion\" button at the top"
+  "Лагерь Легиона — кнопка «Легион» наверху": "Legion camp: the \"Legion\" button at the top",
+  "Семья %s · %d чел. · %s · хотят: %s": "Family %s · %d people · %s · want: %s",
+  "много соседей": "many neighbors",
+  "тихую улицу": "a quiet street",
+  "цветы рядом": "flowers nearby",
+  "свет рядом": "lights nearby",
+  "храм рядом": "a temple nearby",
+  "ходить в термы": "to visit the baths",
+  "ходить на зрелища": "to attend shows",
+  "кошку рядом": "a cat nearby",
+  "рядом зелень": "greenery nearby",
+  "разные лавки рядом": "a variety of shops nearby",
+  "жить без животных": "a home without animals",
+  "свободный дом": "an available home"
 }

@@ -4867,6 +4867,7 @@ func _settle_marks_show() -> void:
 		settle_marks.append(o)
 		# ключи над домом: здесь есть место
 		hud.set_badge("settle%d" % b["id"], Vector3(b["pos"].x, float(b["y"]) + city.blueprint(b).top_y() + 1.2, b["pos"].y), "keys")
+		hud.set_badge_match("settle%d" % b["id"], b, settle_fam)
 		settle_keys.append("settle%d" % b["id"])
 
 
