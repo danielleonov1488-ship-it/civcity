@@ -3383,6 +3383,7 @@ func progress_of(pp: Array) -> int:
 		"count": return _count(func(b): return b["type"] == arg or Defs.base_of(b["type"]) == arg)   # любой облик украшения
 		"kind": return _count(func(b): return def(b)["kind"] == arg)
 		"pop": return int(stats["pop"])
+		"soldiers": return legion.soldiers.size() if legion != null else 0     # Легион 3.0: воины в лагере (история «Разбойники»)
 		"happy": return int(stats["happy"]) if int(stats["pop"]) >= 10 else 0
 		"cls": return int(stats["residents"].get(arg, 0))
 		"floors": return _count(func(b): return is_house(b) and int(b["tier"]) >= int(arg))

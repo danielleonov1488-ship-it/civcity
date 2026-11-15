@@ -159,7 +159,7 @@ const SQUAD_V3 := 5                       # мест в отряде; 0–2 — 
 const SQUAD_V3_FRONT := 3
 const CAMP_POP := 50                      # жителей, с которых открывается лагерь
 const RESIDENT_FLOOR := 30                # меньше жителей в городе не станет: призыв не берёт последнего
-const CAMP_OPEN_TEXT := "Лагерь открыт — кнопка «Лагерь» наверху"
+const CAMP_OPEN_TEXT := "Лагерь открыт: призывайте жителей в Легион — кнопка «Лагерь» наверху"
 const RATION_BASE := 2.0                  # паёк в игровой день; пекарня с работниками — ещё RATION_BAKERY
 const RATION_BAKERY := 3.0
 const RATION_CAP0 := 20
@@ -3108,6 +3108,8 @@ func can_fight(st: Dictionary) -> String:
 		return region_lock_text(int(st["r"]))
 	if not stage_open(int(st["cycle"]), int(st["r"]), int(st["s"])):
 		return "Сначала пройдите предыдущие бои"
+	if V3 and battle_squad().is_empty():
+		return "В отряде нет готовых воинов. Лагерь → «Отряд»: поставьте воина на место (раненые лечатся)."
 	if army_on() and battle_squad().is_empty():
 		return "В отряде нет готовых воинов: раненые лечатся, тренирующиеся заняты. Наберите новобранцев во вкладке «Воины»."
 	if squad_stats().is_empty() and not army_on():

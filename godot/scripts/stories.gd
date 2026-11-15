@@ -962,6 +962,9 @@ func _enter_step(i: int) -> void:
 				city._quiet("Открыто: «%s» — для истории «%s»." % [rd.get("name", r), StoryDefs.title_of(_story(a), a)], "research")
 		if String(r) == "legion":
 			city.legion.flags["advised"] = true   # что такое Легион и как его строить, скажет совет шага (с военным кварталом), не окно Легиона
+	if bool(st.get("camp", false)) and city.legion.v3():
+		city.legion.flags["camp_open"] = true     # Легион 3.0: шаг «призовите воина» — лагерь открыт, шаг не застрянет
+		city.legion.changed.emit()
 	if bool(st.get("quarter", false)):
 		quarter()                        # военный квартал у арки — один раз на город (Legion.flags.quarter)
 	if not (st.get("grant", []) as Array).is_empty():
@@ -1780,6 +1783,8 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			var need := int(g[2])
 			out.append({"text": "%s %d/%d" % [String(st.get("label", "Сделано")), mini(n, need), need], "ok": n >= need,
 				"do": {} if n >= need else hud.need_do(g[1], String(st.get("tool", "")), need)})
+			if String((g[1] as Array)[0]) == "soldiers" and n < need and city.legion.can_recruit_resident() != "":
+				out.append({"text": city.legion.can_recruit_resident(), "ok": false, "do": {}})     # почему нельзя призвать — прямо в строке
 		"around":
 			for base in (g[2] as Dictionary):
 				var n := _count_near(String(base), hp, float(g[1]), -1)
@@ -1874,8 +1879,11 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 		"legion_win":
 			var pr := progress(a, g)
 			var rn := String((Legion.regions()[int(g[1])] as Dictionary).get("name", "")) if int(g[1]) < Legion.regions().size() else ""
+			var v3 := city.legion.v3()
+			if v3 and not bool(pr["ok"]) and city.legion.squad_v3().is_empty():
+				out.append({"text": "Воин в отряде: нет", "ok": false, "do": {"kind": "legion", "tip": "Лагерь", "say": "«Лагерь» сверху → «Отряд»: поставьте воина на место"}})
 			out.append({"text": "Победы в «%s» %s" % [rn, pr["txt"]], "ok": bool(pr["ok"]),
-				"do": {} if bool(pr["ok"]) else {"kind": "legion", "tip": "Легион", "say": "Медальон «Легион» сверху справа → «Походы»"}})
+				"do": {} if bool(pr["ok"]) else ({"kind": "legion", "tip": "Лагерь", "say": "«Лагерь» сверху → «Поход»"} if v3 else {"kind": "legion", "tip": "Легион", "say": "Медальон «Легион» сверху справа → «Походы»"})})
 		"give":
 			var pr := progress(a, g)
 			var fl: Dictionary = a.get("flags", {})
@@ -2153,6 +2161,10 @@ func press(what: String, val := "") -> void:
 			flags["pay_skip"] = true               # сбор по желанию — без него праздник скромнее
 		"choice":
 			_choose(a, val)
+		"camp":
+			if city.legion.v3():
+				CampUI.attach(hud).open()         # Легион 3.0: «Лагерь» из строки истории
+			return
 		"battle":
 			# бой Легиона прямо из истории (учебный бой леса с маслом): 3D-бой откроется по сигналу legion.battle_requested
 			var lg = city.legion
@@ -2904,11 +2916,15 @@ func row_info() -> Dictionary:
 		"legion_win":
 			if st.has("battle") and not bool(progress(a, g)["ok"]):
 				info["buttons"] = [["В бой!", press.bind("battle", "")]]
+				if city.legion.v3():
+					info["buttons"].append(["Лагерь", press.bind("camp", "")])
 		"give":
 			info["buttons"] = [["Показать", show_area]]
 		"p":
 			if bool(st.get("quarter", false)) or st.has("place"):
 				info["buttons"] = [["Показать", show_area]]
+			elif bool(st.get("camp", false)):
+				info["buttons"] = [["Открыть Лагерь", press.bind("camp", "")]]
 		"", "around", "wait":
 			if kind != "":
 				var pr := progress(a, g)

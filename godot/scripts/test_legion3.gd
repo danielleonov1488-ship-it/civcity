@@ -102,7 +102,7 @@ func _unlock() -> void:
 	_check(CAMP_TXT in m1 and not (CAMP_TXT in m2), "сообщение «%s» — один раз" % CAMP_TXT)
 
 
-const CAMP_TXT := "Лагерь открыт — кнопка «Лагерь» наверху"
+const CAMP_TXT := "Лагерь открыт: призывайте жителей в Легион — кнопка «Лагерь» наверху"
 
 
 func _recruit() -> void:
