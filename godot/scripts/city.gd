@@ -403,7 +403,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 		res["err"] = "Ставится у самой воды — у пруда или озера"
 		return res
 	res["y"] = roundf((lo + hi) * 0.5 / Land.STEP) * Land.STEP
-	if d["kind"] != "decor" and d["kind"] != "farm" and type != "center" and not d.get("noroad", false):
+	if not road_optional and d["kind"] != "decor" and d["kind"] != "farm" and type != "center" and not d.get("noroad", false):
 		var dp3: Vector3 = Transform3D(Basis(Vector3.UP, yaw), Vector3(pos.x, 0, pos.y)) * bp.door
 		if not _road_near(Vector2(dp3.x, dp3.z), 1.7, cells):
 			res["err"] = "Нужна дорога у входа"
@@ -426,6 +426,9 @@ func _near_water(cells: PackedInt32Array, r: float) -> bool:
 	return false
 
 
+## Свободная стройка (Game.FREE_BUILD): у входа дорога при постановке не нужна — без неё постройка просто не работает
+## (b["road"] == false, b["why"] == "road"). Ставит Game (только пока строит игрок, не готовый город меню)
+static var road_optional := false
 static var _rn_off := {}       # полуширина квадрата в клетках → смещения клеток квадрата, ближние первыми
 
 

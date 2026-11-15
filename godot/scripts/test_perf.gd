@@ -50,6 +50,8 @@ func _ready() -> void:
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		A[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	var mode: String = A.get("mode", "regress")
+	if A.get("freebuild", "1") == "0":
+		Game.FREE_BUILD = false                        # свободная стройка выключена — как CIVCITY_FREEBUILD=0 (для сравнения замеров)
 	# plain=1 — Synty без наполнения (CatDress, CatDressCivic): снимки «было» для сравнения детальных проходов
 	CatDress.ON = A.get("plain", "0") != "1"
 	CatDressCivic.ON = CatDress.ON
