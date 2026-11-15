@@ -280,6 +280,20 @@ static func _find_seats(bp: Bp, type: String) -> Array:
 			# скамья у стола — лицом к столу (с той стороны, где стол)
 			fwd = fwd if fwd.dot(near_t - bmid) > 0.0 else -fwd
 			two = false
+		elif not two:
+			# скамья у стены (владелец 14.11: «сидят лицом к стене»): впереди в 0,8 м стена, а сзади свободно — садятся
+			# лицом от стены
+			var fp := Vector2(bmid.x, bmid.z) + Vector2(fwd.x, fwd.z) * 0.8
+			var bp2 := Vector2(bmid.x, bmid.z) - Vector2(fwd.x, fwd.z) * 0.8
+			var f_blocked := false
+			var b_blocked := false
+			for wr: Rect2 in walls:
+				if wr.has_point(fp):
+					f_blocked = true
+				if wr.has_point(bp2):
+					b_blocked = true
+			if f_blocked and not b_blocked:
+				fwd = -fwd
 		var n := 3 if w > 1.55 else (2 if w > 0.75 else 1)
 		for k in n:
 			var o := (k - (n - 1) / 2.0) * w * (0.3 if n == 3 else 0.44)

@@ -150,7 +150,7 @@ func _apron_add(b: Dictionary) -> void:
 		1:
 			land.wear_stamp(b["cells"], door_point(b))
 		3:
-			land.pave_under(b["cells"], true)
+			land.pave_under(b["cells"], true, Land.Kind.SAND if String(b["type"]) == "circus_fl" else Land.Kind.PLAZA)
 			land.wear_stamp(b["cells"], door_point(b))   # и утоптанная кайма: щели между круглой стеной и улицей не зелёные
 
 
@@ -172,7 +172,7 @@ func _apron_remove(b: Dictionary) -> void:
 	if apron_of(b) == 0:
 		return
 	if apron_of(b) == 3:
-		land.pave_under(b["cells"], false)
+		land.pave_under(b["cells"], false, Land.Kind.SAND if String(b["type"]) == "circus_fl" else Land.Kind.PLAZA)
 	land.wear_block.erase(int(b["id"]))
 	_apron_refresh(b)
 

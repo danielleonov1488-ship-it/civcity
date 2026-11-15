@@ -70,6 +70,8 @@ func _group(name: String, remap: Dictionary, tile := Vector2i(-1, -1)) -> Dictio
 	if name.begins_with("#"):
 		var ssub := _sub(_special_mesh(name), Transform3D.IDENTITY)
 		_small(name, ssub, tile)
+		if name.begins_with("#room") or name.begins_with("#plate"):
+			(ssub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # нутро тени не бросает
 		g["subs"].append(ssub)
 	else:
 		var src := Synty.make(name, remap)
@@ -221,6 +223,9 @@ static func _special_mesh(name: String) -> Mesh:
 		# вывески (над дверью и на кронштейне), кирпич под отбитой штукатуркой, угловые камни домов Synty, детали
 		# наполнения «#dress:» — кронштейн для горшка, лёгкий ящик цветов… (CatDress)
 		_special[name] = CatDress.kit_mesh(name)
+		return _special[name]
+	if name.begins_with("#room") or name.begins_with("#plate"):    # нутро построек и перекрытия (interiors.gd)
+		_special[name] = Interiors.mesh(name)
 		return _special[name]
 	if name.begins_with("#hp_"):                   # товар у лавки — те же вещицы, что в руках у жителей (HandProps)
 		_special[name] = HandProps._kit("#" + name.substr(4))

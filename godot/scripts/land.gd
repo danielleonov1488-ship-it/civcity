@@ -968,12 +968,13 @@ const APRON_DOOR := 5                   # пятно у двери: радиус
 ## Клетки построек с бордюром (wear_block) глина обходит: ни на них, ни сквозь них в сад домуса и двор храма
 ## Мостовая под большой постройкой (амфитеатр, цирк, форум, театр): весь след — площадь, чтобы между круглой
 ## постройкой и улицей вокруг не оставалось клочков травы; снесли — земля снова прежняя (base_kind)
-func pave_under(cells: PackedInt32Array, on: bool) -> void:
+## to — чем покрыть (по умолчанию площадь; под ареной цирка — песок: владелец 14.11 — «под цирком стала площадь»)
+func pave_under(cells: PackedInt32Array, on: bool, to := Kind.PLAZA) -> void:
 	for k in cells:
-		var kd: int = Kind.PLAZA if on else int(base_kind[k])
+		var kd: int = to if on else int(base_kind[k])
 		if on and not (int(kind[k]) in [Kind.GRASS, Kind.DIRT, Kind.SAND, Kind.YARD]):
 			continue
-		if not on and int(kind[k]) != Kind.PLAZA:
+		if not on and int(kind[k]) != to:
 			continue
 		if int(kind[k]) != kd:
 			kind[k] = kd

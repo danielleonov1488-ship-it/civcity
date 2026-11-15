@@ -461,6 +461,14 @@ func _forum(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 	var door := bp.door
 	var hw := minf(absf(tris.lo_xz.x), absf(tris.hi_xz.x)) - 0.6
 	var list := []
+	# огонь: жаровни и факелы — слушатели в нём не стоят (владелец 14.11: «люди стоят прямо в огне»)
+	var fires := []
+	for p in bp.parts:
+		var fnm := String(p[0])
+		if fnm.contains("Brazier") or fnm.contains("Torch") or fnm.contains("Senser") or fnm == "#ember":
+			var fo: Vector3 = (p[1] as Transform3D).origin
+			fires.append(Vector2(fo.x, fo.z))
+	var gap := STAND_GAP * 1.3                 # и народу поменьше
 	var x := -hw
 	while x <= hw:
 		var z := front + 0.9
@@ -468,13 +476,18 @@ func _forum(lay: Dictionary, bp: Bp, tris: Tris) -> void:
 			var jx := x + rng.randf_range(-0.14, 0.14)
 			var jz := z + rng.randf_range(-0.12, 0.12)
 			var h := tris.surface(jx, jz, 0.6)
-			if h > -INF and _open(tris, Vector3(jx, h, jz), 1.9) and rng.randf() < 0.85:
+			var in_fire := false
+			for fp: Vector2 in fires:
+				if fp.distance_to(Vector2(jx, jz)) < 1.3:
+					in_fire = true
+					break
+			if h > -INF and not in_fire and _open(tris, Vector3(jx, h, jz), 1.9) and rng.randf() < 0.7:
 				var root := Vector3(jx, h, jz)
 				var path := _ground_path(tris, Vector3(door.x + clampf(jx, -1.5, 1.5), 0.0, door.z + 0.6), root)
 				var yaw := atan2(spk.x - jx, spk.z - jz) + rng.randf_range(-0.25, 0.25)
 				list.append({"root": root, "yaw": yaw, "row": 0, "path": path, "far": jz + absf(jx) * 0.3, "pose": "stand"})
-			z += STAND_GAP
-		x += STAND_GAP
+			z += gap
+		x += gap
 	list.sort_custom(func(a, b): return a["far"] < b["far"])     # сначала ближе к рострам
 	var ids := []
 	for s in list:

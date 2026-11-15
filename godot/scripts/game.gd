@@ -817,6 +817,7 @@ func _set_hour(h: float) -> void:
 	var lm := (Parts._special_mesh("#lit") as PrimitiveMesh).material as StandardMaterial3D
 	if lm:
 		lm.emission_energy_multiplier = lamp * (0.018 if lh > 23.0 or lh < 4.0 else 0.045)
+	Interiors.set_light(lamp, lh > 23.0 or lh < 4.0)          # комнаты за окнами и дверями (interiors.gd)
 	KitLib.lit_material().emission_energy_multiplier = lamp * (0.12 if lh > 23.0 or lh < 4.0 else 0.3)
 	var em := (Parts._special_mesh("#ember") as PrimitiveMesh).material as StandardMaterial3D
 	if em:
@@ -1713,7 +1714,7 @@ func _grow_plan(g: Node3D, bp: Bp = null) -> Array:
 			e.append(nm)
 			walls.append(e)
 			top = maxf(top, box.end.y)
-		elif nm.begins_with("#dark") or nm.begins_with("#lit"):
+		elif nm.begins_with("#dark") or nm.begins_with("#lit") or nm.begins_with("#room") or nm.begins_with("#plate"):
 			late.append(e)                     # тёмная «комната» внутри — вместе со штукатуркой, иначе серый куб поверх кладки
 		elif maxf(box.size.x, maxf(box.size.y, box.size.z)) < 0.8 and box.position.y > 0.05:
 			small.append(e)
@@ -2026,10 +2027,15 @@ func _show(b: Dictionary) -> void:
 	var subst := {"#wall_lamp": "#wall_lamp_dim"} if city.is_house(b) else {}
 	if lit:
 		subst["#dark"] = "#lit"
+		subst["#room"] = "#room_lit"           # в доме с жильцами ночью тёплый свет в комнатах и окнах
+		subst["#plate"] = "#plate_lit"
 		if bp.kit_id != "":                    # дом из своего набора: ночью тёплый свет в комнатах
 			subst["K:%s/Rooms" % bp.kit_id] = "K:%s/Rooms@lit" % bp.kit_id
 	if b["type"] in CatGrand.TYPES and Gfx.is_low(str(settings.get("quality", "high"))):
 		subst.merge(CatGrand.LOW)               # на «Низкой» — лёгкие колонны и статуи у больших построек этапа 5
+	if Gfx.is_low(str(settings.get("quality", "high"))):
+		for rk in ["#room", "#room_lit"]:                 # комнаты за окнами на «Низкой» — по одному четырёхугольнику на грань
+			subst[rk] = String(subst.get(rk, rk)).replace("#room", "#room1")
 	var vis := {"h": parts.place(bp, xf, subst), "lights": [], "smoke": [], "actors": []}
 	if city.apron_of(b) == 2:                  # домус, храм: каменный бордюр вокруг (у домов и лавок — глина, Land.wear)
 		(vis["h"] as Array).append_array(parts.place(Kerb.blueprint(bp), xf))
@@ -3038,6 +3044,7 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	# игрок: свободная постановка, как в Town to City — куда навёл и как повернул; вплотную к дороге — фасадом к ней.
 	# Готовый город меню (витрина, старый городок) раскладывается по прежним правилам — он не меняется
 	var free: bool = pave_build and not (d["kind"] in ["decor", "farm", "center"])
+	_free_rot = type == "fountain" and manual_yaw       # пока игрок не крутил — прилипает к дороге, как все
 	if free:
 		var door_r := 0.0 if d.get("noroad", false) else Vector2(bp.door.x, bp.door.z).distance_to(Vector2((float(bb[0]) + float(bb[1])) * 0.5, (float(bb[2]) + float(bb[3])) * 0.5))
 		var r := _free_place(p, bb, mid, locked, door_r)
@@ -3186,6 +3193,9 @@ func _rot_keep() -> void:
 ##      "lock" — крутят зажатой мышью: на месте, у дороги — четвертями
 ## door_r — вход от середины следа: дорогу ищем так далеко, чтобы постройка, которой хватает мостовой у входа, всегда
 ## стояла ровно по дороге (косо — только там, где ей всё равно нельзя: дороги у входа нет)
+var _free_rot := false                    # у этой постройки поворот свободный (фонтан): без привязки к дороге и соседям
+
+
 func _free_place(p: Vector2, bb: Array, mid: int, locked: bool, door_r := 0.0) -> Dictionary:
 	if locked:
 		if place_lock.has("ry"):
@@ -3197,8 +3207,9 @@ func _free_place(p: Vector2, bb: Array, mid: int, locked: bool, door_r := 0.0) -
 	var mz := (float(bb[2]) + float(bb[3])) * 0.5
 	var c := p + rot_off if manual_yaw else p    # середина постройки: повернутая Z/X крутится вокруг неё, не прыгает
 	var near_prev := last_snap_n != Vector2.ZERO and last_snap_p.distance_to(p) < 2.0
-	# выключенная привязка (R) — совсем свободно: ни к краю, ни ровно по дороге
-	if snap:
+	# выключенная привязка (R) — совсем свободно: ни к краю, ни ровно по дороге; фонтан (круглый, симметричный) — всегда
+	# свободно, как повернул игрок (владелец 14.11: «не вертится свободно»)
+	if snap and not _free_rot:
 		var probe := c
 		if near_prev and last_glued and land.is_road(c):
 			# курсор заехал на дорогу у самого края (до 1 м) — постройка остаётся прилипшей, а не прыгает на мостовую
@@ -3256,7 +3267,7 @@ func _free_place(p: Vector2, bb: Array, mid: int, locked: bool, door_r := 0.0) -
 	last_glued = false
 	var y0 := _free_yaw()
 	var pc := c - City.axis(y0) * mx - City.facing(y0) * mz
-	if snap:
+	if snap and not _free_rot:
 		pc = _snap_row(pc, y0, bb, mid)       # рядом дом с тем же поворотом — встать с ним в ряд
 	return {"pos": pc, "yaw": y0, "sub": "free"}
 

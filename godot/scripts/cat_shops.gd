@@ -1064,19 +1064,21 @@ static func _mansio(b: Bp) -> void:
 	_paint(b, pal)
 	b.ground_style = "brick"
 	var bw := _back_win(pal)
-	_box(b, -3.75, 1.25, -5.0, -1.25, [
+	# глубина дома — ровно один модуль 2,5 м (была 3,75: стены боков брались по два модуля и торчали на метр перед
+	# фасадом — «лишняя стена», владелец 14.11); двор с навесом остался прежним
+	_box(b, -3.75, 1.25, -3.75, -1.25, [
 		{0: [SHOP, "SM_Bld_Wall_Door_Double_01"], 1: ["SM_Bld_Wall_Window_06"], 3: ["SM_Bld_Wall_Window_06"], 2: [bw, DOOR]},
 		{0: ["SM_Bld_Wall_Window_05", "SM_Bld_Wall_Window_05"], 1: ["SM_Bld_Wall_Window_02"], 3: ["SM_Bld_Wall_Window_02"], 2: ["SM_Bld_Wall_Window_02", "SM_Bld_Wall_Window_02"]},
 		{0: ["SM_Bld_Wall_Window_02", "SM_Bld_Wall_Window_02"], 1: ["SM_Bld_Wall_Window_01"], 3: ["SM_Bld_Wall_Window_01"], 2: ["SM_Bld_Wall_Window_01", "SM_Bld_Wall_Window_01"]}],
 		{"cornice": "SM_Bld_Trim_04", "dark": 1.2})
-	_roof_x(b, -3.75, 1.25, -5.0, -1.25, 3 * FL, 2.0, _topper(pal + 2))
-	_chimney(b, Vector3(-3.0, 3 * FL + 0.4, -4.4))
+	_roof_x(b, -3.75, 1.25, -3.75, -1.25, 3 * FL, 2.8, _topper(pal + 2))
+	_chimney(b, Vector3(-3.0, 3 * FL + 0.4, -3.2))
 	b.add("SM_Bld_Balcony_01", Vector3(-1.25, FL, -1.14), 0.0)
 	b.add("SM_Bld_Balcony_01", Vector3(-1.25, 2 * FL, -1.14), 0.0)
 	_put(b, "SM_Prop_Rug_Drape_01", Vector3(-0.8, 2 * FL + 0.95, -0.25), PI, 0.8, _rug(["03_A", "01_B", "02_C"][pal % 3]))
 	b.add("SM_Prop_FlowerPot_Hanging_0%d" % (4 + pal % 3), Vector3(-3.3, FL + 1.0, -1.12), 0.0, 0.6)
 	b.add("SM_Prop_FlowerPot_Hanging_0%d" % (4 + (pal + 2) % 3), Vector3(0.8, FL + 1.0, -1.12), 0.0, 0.6)
-	_ivy(b, -3.75, 1.25, -5.0, -1.25, 3, 1.88, 1.4, pal + 1)
+	_ivy(b, -3.75, 1.25, -3.75, -1.25, 3, 1.88, 1.4, pal + 1)
 	_sign(b, Vector3(0.6, 2.8, -1.11), 0.0, "H", ACCENT[pal], 0.7)
 	# конюшня: навес на столбах, ясли с сеном, бочка воды
 	for c: Vector3 in [Vector3(1.6, 0, -4.8), Vector3(3.6, 0, -4.8), Vector3(1.6, 0, -1.6), Vector3(3.6, 0, -1.6)]:
