@@ -4762,5 +4762,7 @@
 "Украшения у дома — до +12% счастья.": "Decorations by a home give up to +12% happiness.",
 "Щёлкните по значку дома в карточке — сменится цвет.": "Click the house icon in its card to change the colour.",
 "«Этаж» (U): ведите вдоль улицы — этаж получат все дома.": "«Floor» (U): drag along a street and every house gets a floor.",
-"«Перестроить» (Shift+U): дом станет богаче.": "«Rebuild» (Shift+U): the house becomes richer."
+"«Перестроить» (Shift+U): дом станет богаче.": "«Rebuild» (Shift+U): the house becomes richer.",
+"Сатурналии: в день отдыха налогов нет. Праздник же! Налоги вернутся после отдыха.": "Saturnalia: no taxes, the treasury is empty. It's a holiday! Taxes return after the rest day.",
+"Летопись города: за прошлые дни город уже заслужил %d %s — они в журнале.": "City chronicle: the city has earned %d %s — they're in the journal."
 }

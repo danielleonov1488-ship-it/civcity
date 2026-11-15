@@ -168,7 +168,7 @@ static func migrate(c: City) -> void:
 			n += 1
 	if n > 0:
 		c.events.append({"day": c.day, "icon": "laurels",
-			"text": "Летопись города: город уже заслужил %d %s — они в журнале." % [n, City.plural(n, "лавровый венок", "лавровых венка", "лавровых венков")]})
+			"text": "Летопись города: за прошлые дни город уже заслужил %d %s — они в журнале." % [n, City.plural(n, "лавровый венок", "лавровых венка", "лавровых венков")]})
 		if c.events.size() > 60:
 			c.events.pop_front()
 		c.unread += 1
