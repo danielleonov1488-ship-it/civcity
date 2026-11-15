@@ -53,6 +53,10 @@ var swimmers := []                    # утки и лебеди на пруда
 var _actor_speed := 1.0
 
 var mode := "play"                    # menu | play | new | demo
+## Меню без живого города (владелец 15.11: «в меню не нагружать демо-игрой — чтоб было больше FPS»): фон — картинка
+## MENU_STILL, 3D в меню выключено. Снимки меню с городом (--view=…, --live3d) — как раньше
+const MENU_STILL := "res://assets/ui/menu_bg.jpg"
+var menu_still := false
 var promo := false                    # --promo: вместо готового городка — большая витрина Showcase (режим demo)
 var visiting := {}                    # в гостях у другого игрока (SocialNet): {id, name, card, likes, friend, liked} — режим demo,
                                       # город из облака друга, ничего не строится и не сохраняется; «Домой» — свой город
@@ -257,6 +261,8 @@ func _ready() -> void:
 	if not (args.has("menu") or args.has("play") or args.has("new") or args.has("demo") or args.has("promo")):
 		args["menu"] = "1"
 	promo = args.has("promo")
+	menu_still = args.has("menu") and not promo and not args.has("view") and not args.has("live3d") and ResourceLoader.exists(MENU_STILL)
+	get_viewport().disable_3d = false          # после меню (сцена перезапускается в том же окне) — 3D снова включено
 	if args.has("visit"):
 		var vj = JSON.parse_string(String(args.get("visit_info", "{}")))
 		visiting = vj if typeof(vj) == TYPE_DICTIONARY else {}
@@ -377,7 +383,9 @@ func _ready() -> void:
 			land.own_start()                     # своя земля новой игры — 2×3 участка, остальное покупается (меню и витрина — как были)
 		city.place("center", Land.CENTER, PI / 2, 0, 0, true)
 		# фон меню — тоже витрина (на «Низкой» и «Очень низкой» — прежний городок: он легче для видеокарты)
-		if promo or (mode == "menu" and not Gfx.is_low(str(settings.get("quality", "high")))):
+		if menu_still:
+			pass                                 # фон меню — картинка: городок за ним не нужен
+		elif promo or (mode == "menu" and not Gfx.is_low(str(settings.get("quality", "high")))):
 			Showcase.build(self, args)
 		elif mode == "demo" or mode == "menu":
 			_demo_town()
@@ -490,6 +498,9 @@ func _ready() -> void:
 		hud.visible = false
 	if mode == "menu":
 		hud.show_menu(FileAccess.file_exists(save_path()))
+		if menu_still:
+			hud.menu_backdrop(load(MENU_STILL))
+			get_viewport().disable_3d = true    # в меню видеокарта рисует только картинку и кнопки
 		if not args.has("view"):
 			rig.set_view(Vector3(194, Land.BASE_Y, 158), 22, 30, 70)
 	elif not visiting.is_empty():

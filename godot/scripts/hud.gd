@@ -7760,6 +7760,25 @@ func hero_note() -> String:
 
 # ---------- стартовое меню ----------
 
+## Фон меню — неподвижная картинка вместо живого города (Game.menu_still): еле заметно наплывает и отплывает
+func menu_backdrop(tex: Texture2D) -> void:
+	if menu_root == null or tex == null:
+		return
+	var tr := TextureRect.new()
+	tr.name = "menu_bg"
+	tr.texture = tex
+	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	menu_root.add_child(tr)
+	menu_root.move_child(tr, 0)
+	tr.resized.connect(func(): tr.pivot_offset = tr.size * 0.5)
+	var tw := tr.create_tween().set_loops()
+	tw.tween_property(tr, "scale", Vector2(1.06, 1.06), 45.0).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(tr, "scale", Vector2.ONE, 45.0).set_trans(Tween.TRANS_SINE)
+
+
 func show_menu(has_save: bool) -> void:
 	root.visible = false
 	menu_root = Control.new()
