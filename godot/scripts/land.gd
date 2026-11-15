@@ -89,6 +89,11 @@ var under := {}
 var streams: Array = []
 var streams_saved = null
 var bridges: Array = []
+## Видимая земля под мостом реки (15.11): у дороги над рекой клетки остаются насыпью для ходьбы (высота h — дорога), а
+## рисуется под мостом дно реки — чтобы под арками текла вода. Клетка → высота дна; не сохраняется (Streams.apply)
+var vis_h := {}
+var vis_lo := Vector2i(1 << 30, 1 << 30)       # рамка клеток vis_h: узлы вне неё не проверяются (быстро)
+var vis_hi := Vector2i(-1, -1)
 ## Новая карта лугов (13.11): мельницы и поля на дальних окраинах — только у городов, начатых после этой правки
 var meadow_new := false
 
@@ -331,7 +336,7 @@ func far_height(x: float, z: float) -> float:
 			var ry := lerpf(y0, far, smoothstep(60.0, 420.0, -z))
 			var w := 1.0 - smoothstep(ROAD_R + 1.5, ROAD_R + 4.0 + 50.0 * smoothstep(0.0, 400.0, -z), rd)
 			y = lerpf(y, ry, w)
-	return y
+	return Streams.far_carve(y, x, z)         # 15.11: долина реки (если она проложена в этом городе)
 
 
 ## Клетка поменялась. mesh — поменялся видимый уступ (12,5 см): сетку куска перестроить; mask — поменялось
@@ -1213,6 +1218,8 @@ func chunk_mesh(ci: int, cj: int) -> ArrayMesh:
 			var gi := clampi(i0 + i - 1, 0, N - 1)
 			var gj := clampi(j0 + j - 1, 0, N - 1)
 			var yy := hq(idx(gi, gj))
+			if not vis_h.is_empty() and vis_h.has(idx(gi, gj)):
+				yy = roundf(vis_h[idx(gi, gj)] / STEP) * STEP
 			if i0 + i - 1 < 0 or j0 + j - 1 < 0 or i0 + i - 1 >= N or j0 + j - 1 >= N:
 				# за краем — пейзаж до горизонта той же высоты (far_height): низкая стенка вниз закрывает щёлку в пару см
 				yy -= 0.3
@@ -1313,7 +1320,22 @@ func node_y(vi: int, vj: int) -> float:
 	var j1 := clampi(vj * RS, 0, N - 1)
 	var i0 := clampi(vi * RS - 1, 0, N - 1)
 	var j0 := clampi(vj * RS - 1, 0, N - 1)
+	if i1 >= vis_lo.x and i0 <= vis_hi.x and j1 >= vis_lo.y and j0 <= vis_hi.y:
+		return (_vh(j0 * N + i0) + _vh(j0 * N + i1) + _vh(j1 * N + i0) + _vh(j1 * N + i1)) * 0.25
 	return (h[j0 * N + i0] + h[j0 * N + i1] + h[j1 * N + i0] + h[j1 * N + i1]) * 0.25
+
+
+## Высота клетки для рисования: под мостом реки — дно (vis_h), иначе h
+func _vh(k: int) -> float:
+	return vis_h[k] if vis_h.has(k) else h[k]
+
+
+func set_vis(k: int, y: float) -> void:
+	vis_h[k] = y
+	var i := k % N
+	var j := k / N
+	vis_lo = Vector2i(mini(vis_lo.x, i), mini(vis_lo.y, j))
+	vis_hi = Vector2i(maxi(vis_hi.x, i), maxi(vis_hi.y, j))
 
 
 ## Что кисть траву сказала про точку: 0 — само, 1 — посажено, 2 — убрано

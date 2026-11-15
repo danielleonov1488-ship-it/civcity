@@ -165,7 +165,37 @@ func _check() -> void:
 				wet_road += 1
 	ok("нет воды ручьёв под постройками", wet_under == 0, str(wet_under))
 	ok("нет воды ручьёв на дорогах", wet_road == 0, str(wet_road))
-	ok("мосты на большой дороге", land.streams.has(6) == not land.bridges.is_empty(), str(land.bridges.size()))
+	var river := 0
+	for rid: int in Streams.RIVER_IDS:
+		if land.streams.has(rid):
+			river = rid
+	ok("река проложена (город или новая карта)", river != 0, str(land.streams))
+	ok("у реки нет северного ручья (6)", river == 0 or not land.streams.has(6), str(land.streams))
+	var br_river := 0
+	for b: Dictionary in land.bridges:
+		if b.get("river", false):
+			br_river += 1
+	ok("мост через реку на большой дороге", (river == 7) == (br_river == 1) and (river != 7 or not land.vis_h.is_empty()), "мостов реки %d, дно под мостом %d клеток" % [br_river, land.vis_h.size()])
+	ok("за краем карты — долина реки", river == 0 or Streams.far_on(), str(Streams._far_id))
+	# вода реки не на земле игрока и не на дорогах (кроме дна под мостом — там дорога насыпью, ходить можно)
+	var in_owned := 0
+	var road_wet := 0
+	if river != 0:
+		for k: int in (Streams.cells(land, river)["cells"] as Dictionary):
+			if land.is_owned(land.cell_center(k % Land.N, k / Land.N)):
+				in_owned += 1
+	for k in range(0, Land.N * 400):
+		if Land.walk_kind(land.kind[k]) and land.hq(k) < Land.WATER_Y + 0.05:
+			road_wet += 1
+	ok("река не на земле игрока", in_owned == 0, str(in_owned))
+	ok("ни одна клетка дороги не под водой", road_wet == 0, str(road_wet))
+	# дорога через мост непрерывна: вдоль всей большой дороги нет клеток дороги с водой по высоте
+	var gap := 0
+	for zi in range(1, 64):
+		var pz := land.height_at(Land.ROAD_X, float(zi))
+		if pz < Land.WATER_Y + 0.5:
+			gap += 1
+	ok("большая дорога выше воды на всём пути до арки", gap == 0, str(gap))
 	var sv: Dictionary = land.save_changes()
 	ok("сохранение помнит ручьи", sv.has("streams") and (sv["streams"] as Array).size() == land.streams.size(), str(sv.get("streams")))
 	# земля не разрезана: от станции до каждого участка своей земли можно дойти по суше (поиск по сетке 1 м)
