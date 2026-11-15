@@ -81,7 +81,7 @@ const UNITS := {
 	"priest": {"name": "Жрец", "many": "Жрецы", "gen": "жрецов", "building": "barracks", "v3": true,
 		"role": "Лечит самого раненого соратника, сам бьёт слабо. Держится во втором ряду.", "strong": "затяжные бои",
 		"hp": 170, "atk": 10, "armor": 12, "range": 6.0, "rate": 1.4, "speed": 1.4, "shot": "sling", "vs": {},
-		"heal": 0.12, "heal_every": 4.0, "tags": ["human", "ranged", "support"], "cost_k": 1.0, "art": 2},
+		"heal": 3.0, "heal_every": 3.0, "tags": ["human", "ranged", "support"], "cost_k": 1.0, "art": 2},
 	"cavalry": {"name": "Всадник", "many": "Всадники", "gen": "всадников", "building": "barracks", "v3": true,
 		"role": "Быстрый конник: обходит строй и бьёт по второму ряду врага.", "strong": "стрелков",
 		"hp": 240, "atk": 24, "armor": 22, "range": 1.2, "rate": 1.0, "speed": 2.6, "vs": {"ranged": 1.3}, "backline": true,
