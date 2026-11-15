@@ -122,6 +122,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		_actors(b, type, tier)
 		CatDressCivic.dress(b, type, tier)     # склады, мастерские, поля, бани, храмы — обжитые дворы и бока (без новых деталей в следе)
 	Interiors.apply(b, String(dd0.get("kind", "")))   # нутро: комнаты вместо чёрных коробок, заднники за проёмами (interiors.gd)
+	Doors.apply(b, String(dd0.get("kind", "")))       # створки в проёмах: две в двустворчатом, приоткрыты (doors.gd)
 	_scale(b, scale_of(type))                 # украшения на стенах — в масштабе дома; огромные — меньше (SHRINK)
 	fit = Vector2.ZERO
 	_cache[key] = b
