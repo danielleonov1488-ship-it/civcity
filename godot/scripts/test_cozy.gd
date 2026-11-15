@@ -34,7 +34,7 @@ func _ready() -> void:
 	get_tree().quit()
 
 
-## Таблица рангов: жителей всё больше, «Вечный город» — 800; постройки в условиях открыты к этому рангу
+## Таблица рангов: жителей всё больше, «Вечный город» — 500; постройки в условиях открыты к этому рангу
 func _table() -> void:
 	print("== таблица рангов")
 	var pops := []
@@ -44,7 +44,7 @@ func _table() -> void:
 		if i > 1 and int(Balance.LEVELS[i]["pop"]) <= int(Balance.LEVELS[i - 1]["pop"]):
 			ok_up = false
 	_check(Balance.LEVELS.size() == Defs.LEVELS.size(), "рангов столько же, сколько в Defs.LEVELS (%d)" % Defs.LEVELS.size())
-	_check(ok_up and pops == [15, 40, 90, 170, 300, 500, 800], "жители рангов: %s" % [pops])
+	_check(ok_up and pops == [15, 40, 80, 140, 230, 350, 500], "жители рангов: %s" % [pops])
 	var late := []
 	for i in range(1, Balance.LEVELS.size()):
 		for n: Dictionary in Balance.LEVELS[i]["need"]:
@@ -66,8 +66,8 @@ func _ranks() -> void:
 	var cn: Array = c.rank_needs(1)
 	_check(old_pop == int(Defs.LEVELS[1]["pop"]) and int(cn[0]["need"]) == 15 and int(cn[1]["need"]) == 55, "«Хутор»: было %d жителей, стало %d, счастье %d%%" % [old_pop, int(cn[0]["need"]), int(cn[1]["need"])])
 	var last: Dictionary = c.lv(7)
-	_check(String(last["name"]) == "Вечный город" and int(last["pop"]) == 800 and int(last["money"]) == int(Defs.LEVELS[7]["money"]),
-		"«Вечный город»: 800 жителей, казна из Defs (%d)" % int(last["money"]))
+	_check(String(last["name"]) == "Вечный город" and int(last["pop"]) == 500 and int(last["money"]) == int(Defs.LEVELS[7]["money"]),
+		"«Вечный город»: 500 жителей, казна из Defs (%d)" % int(last["money"]))
 	_check(c.next_level()["pop"] == 15 and c.rank_text(1).contains("15"), "следующий уровень и подсказка — по новым числам: «%s»" % c.rank_text(1))
 	var tier: Dictionary = c.rank_needs(1)[2]
 	c.research["stall_veg"] = true
@@ -75,11 +75,11 @@ func _ranks() -> void:
 		"условие «%s»: %d%% → %d%% после исследования" % [tier["text"], int(tier["have"]), c.progress_of(["tier", 0])])
 
 
-## «Большой город»: −1% за каждые 60 жителей сверх 120, не больше −8%; в счастье дома — строка
+## «Большой город»: −1% за каждые 50 жителей сверх 100, не больше −8%; в счастье дома — строка
 func _size() -> void:
 	print("== большой город")
 	var v := [Balance.size_penalty(100), Balance.size_penalty(180), Balance.size_penalty(300), Balance.size_penalty(800)]
-	_check(v == [0, -1, -3, -8], "штраф при 100/180/300/800 жителях: %s" % [v])
+	_check(v == [0, -1, -4, -8], "штраф при 100/180/300/800 жителях: %s" % [v])
 	for cz in [0, 1]:
 		var c := City.new(Land.new())
 		c.cozy_v = cz
@@ -96,7 +96,7 @@ func _size() -> void:
 			if String(p[0]) == "Большой город":
 				city_line = int(p[1])
 		if cz == 1:
-			_check(line == -3 and city_line == -3, "300 жителей: в доме «Большой город» %d%%, в счастье города %d%%" % [line, city_line])
+			_check(line == -4 and city_line == -4, "300 жителей: в доме «Большой город» %d%%, в счастье города %d%%" % [line, city_line])
 		else:
 			_check(line == 0 and city_line == 0, "старый город — без «Большого города»")
 
@@ -106,13 +106,13 @@ func _arrive() -> void:
 	print("== повозка")
 	var c := City.new(Land.new())
 	c.stats["pop"] = 400
-	c.level = 5                                # следующему рангу («Большой город») нужно 500
+	c.level = 5                                # следующему рангу («Большой город») нужно 350
 	var e0 := c.arrive_every()
 	c.cozy_v = 1
 	var e1 := c.arrive_every()
 	c.stats["pop"] = 1000
 	var e2 := c.arrive_every()
-	_check(is_equal_approx(e1, e0 * (1.0 + 400.0 / Balance.ARRIVE_SLOW_POP)) and is_equal_approx(e2, e0 * Balance.ARRIVE_SLOW_MAX * Balance.AHEAD_SLOW),
+	_check(is_equal_approx(e1, e0 * (1.0 + 400.0 / Balance.ARRIVE_SLOW_POP) * Balance.AHEAD_SLOW) and is_equal_approx(e2, e0 * Balance.ARRIVE_SLOW_MAX * Balance.AHEAD_SLOW),
 		"промежуток: прежний %.2f ч, при 400 жителях %.2f, при 1000 (больше, чем нужно рангу) %.2f" % [e0, e1, e2])
 
 

@@ -137,11 +137,11 @@ func _run() -> void:
 	# ---------- 0.3 охват с «Большим охватом» — как в расчёте (кругов больше нет: подсветка домов, cover.gd) ----------
 	c.research["stall_veg"] = true
 	c.research["reach1"] = true
-	var want := Defs.range_m(Defs.B["stall_veg"]) * 1.33
-	var far := c.place("house_pleb", Vector2(176 + Defs.range_m(Defs.B["stall_veg"]) * 1.2, 150), PI * 0.5, 0, -1, true)
+	var want := Defs.range_m(Defs.B["stall_veg"]) * (1.2 if c.cozy_v >= 1 else 1.33)
+	var far := c.place("house_pleb", Vector2(176 + Defs.range_m(Defs.B["stall_veg"]) * 1.15, 150), PI * 0.5, 0, -1, true)
 	var sets := Cover.place_sets(c, "stall_veg", Vector2(176, 150))
 	check(is_equal_approx(c.shop_range(Defs.B["stall_veg"]), want) and not far.is_empty() and (sets["green"] as Array).has(int(far["id"])),
-		"охват лавки с едой — на треть дальше (%.1f м): дом на 1,2 дальности подсвечен" % want, sets)
+		"охват лавки с едой — по правилам города (%.1f м): дом на 1,15 дальности подсвечен" % want, sets)
 	check(game.get("range_ring") == null and not hud.has_method("_toggle_reach"), "кругов охвата больше нет")
 	if not far.is_empty():
 		c.remove(far, false)

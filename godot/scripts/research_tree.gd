@@ -120,8 +120,8 @@ func rebuild(auto_scroll := false) -> void:
 func building_ids(id: String) -> Array[String]:
 	var out: Array[String] = []
 	for type: String in Defs.B:
-		if hud.game.city.unlock_id(type) == id:
-			out.append(type)
+		if hud.game.city.unlock_id(type) == id and Defs.B[type].get("research_list", true):
+			out.append(type)                     # мельницы — только украшения, в исследованиях их нет (FIX1)
 	return out
 
 

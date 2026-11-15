@@ -67,6 +67,7 @@ func setup(l: Land, c: City, g) -> void:
 	city.building_added.connect(_on_building_added)
 	city.changed.connect(func(): _jobs_dirty = true)
 	city.family_left.connect(_on_family_left)
+	city.family_refused.connect(_on_family_refused)
 	city.resident_taken.connect(_on_resident_taken)
 	city.resident_returned.connect(_on_resident_returned)
 	city.family_assigned.connect(_on_assigned)
@@ -534,6 +535,8 @@ func pick(mp: Vector2) -> Dictionary:
 		var a := cam.unproject_position(feet)
 		var b := cam.unproject_position(head)
 		var tol := maxf(PICK_MIN_PX, PICK_K * a.distance_to(b))
+		if int(r["home"]) == -1 and not city.arrival(String(r["fam"])).is_empty():
+			tol = maxf(2.0, a.distance_to(b) * 0.22)
 		var q := Geometry2D.get_closest_point_to_segment(mp, a, b)
 		if q.distance_to(mp) > tol:
 			continue
@@ -544,7 +547,7 @@ func pick(mp: Vector2) -> Dictionary:
 		var ab := a.distance_to(b)
 		var wp := feet.lerp(head, clampf(a.distance_to(q) / ab, 0.0, 1.0) if ab > 0.01 else 0.5)
 		var wl := _wall(mp)
-		if cp.distance_to(wp) > float(wl[0]) + OCC_M and int(wl[1]) != at_bid(r):
+		if cp.distance_to(wp) > float(wl[0]) + OCC_M and (int(r["home"]) == -1 or int(wl[1]) != at_bid(r)):
 			continue
 		bd = d
 		best = {"r": r}
@@ -1121,7 +1124,6 @@ func _arrive(r: Dictionary) -> void:
 			if not h.is_empty() and not pf.is_empty() and int(pf["home"]) == int(r["home"]):
 				var fam := _fam_members(nm, r["home"])
 				var n := int(pf["n"])
-				h["coming"] = maxi(0, int(h.get("coming", 0)) - n)
 				var took := city.settled(r["home"], n, nm)
 				_float_text(city.door_point(h), "+ семья %s" % nm)
 				# кому не хватило места — уходят ждать на площадь
@@ -3634,6 +3636,15 @@ func _on_building_removed(b: Dictionary) -> void:
 	_jobs_dirty = true
 
 
+func _on_family_refused(name: String) -> void:
+	for r: Dictionary in residents.duplicate():
+		if String(r["fam"]) == name and int(r["home"]) == -1:
+			_remove(r)
+	for f: Dictionary in waiting_fams.duplicate():
+		if String(f["name"]) == name:
+			waiting_fams.erase(f)
+
+
 func _on_family_left(home: int, name: String) -> void:
 	var tun := Land.TUNNEL + Vector2(0, 1.0)
 	for r in residents.duplicate():
@@ -3660,13 +3671,26 @@ func _on_resident_taken(home: int, name: String, m: Dictionary) -> void:
 			return
 
 
-## Легион 3.0: бывший воин вернулся — ждёт жилья на площади, как семья из повозки
+## Вернувшийся житель идёт к своей семье; если дома нет — ждёт с ней на площади.
 func _on_resident_returned(f: Dictionary) -> void:
-	var fam := _make_family(f["name"], int(f["n"]), -1, Land.CENTER, f["cls"], f)
+	var home := int(f.get("home", -1))
+	var h: Dictionary = city.buildings.get(home, {})
+	var at: Vector2 = city.door_point(h) if not h.is_empty() else Land.CENTER
+	var fam := _make_family(f["name"], int(f["n"]), home, at, f["cls"], f)
+	if home >= 0:
+		if bool(f.get("on_way", false)):
+			for r: Dictionary in fam:
+				r["p"] = _plaza_point()
+				_go(r, city.door_point(h), "settle")
+		return
 	for r in fam:
 		r["p"] = _plaza_point()
 		r["goal"] = "plaza"
 		_arrive(r)
+	for wf: Dictionary in waiting_fams:
+		if String(wf["name"]) == String(f["name"]):
+			(wf["members"] as Array).append_array(fam.map(func(x): return x["id"]))
+			return
 	waiting_fams.append({"name": f["name"], "members": fam.map(func(x): return x["id"])})
 
 
@@ -3941,7 +3965,7 @@ func _cart_step(dt: float) -> void:
 			c["t"] = float(c["t"]) - dt
 			if float(c["t"]) > 0.0 or city.center().is_empty():
 				return
-			if city.incoming <= 0:
+			if city.arrivals_paused or city.incoming <= 0:
 				return
 			var to := _plaza_point()
 			# повозка выезжает из-за горизонта: по большой дороге за краем карты, через арку — к станции
@@ -3955,7 +3979,7 @@ func _cart_step(dt: float) -> void:
 			# семьи собираются разом, и каждой держится место в доме — никто не приезжает «в никуда»
 			c["load"] = city.make_load(city.incoming)
 			city.incoming = (c["load"] as Array).size()   # влезло меньше — везёт меньше
-			if city.incoming <= 0:
+			if city.arrivals_paused or city.incoming <= 0:
 				return
 			c["state"] = "in"
 			c["s"] = 0.0

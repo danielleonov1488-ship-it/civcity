@@ -2,7 +2,7 @@ class_name RoofBirds
 extends Node3D
 ## Птицы на крышах («Уютный Рим», этап 5 «город дышит», docs/PLAN_COZY.md): днём на коньках крыш у точки взгляда
 ## сидят голуби и воробьи — поклёвывают, крутят головой; время от времени один вспархивает и улетает, другой садится.
-## Места — верх самых высоких деталей крыши по её чертежу (габариты деталей), один раз на постройку.
+## Места — пересечение луча с сеткой кровли; без найденной поверхности птицы не садятся.
 ## Все сидящие — одна MultiMesh (дёшево); летящий — отдельный маленький узел на пару секунд.
 ## На «Очень низкой» выключено, на «Низкой» — вдвое меньше. Ночью птиц нет.
 
@@ -26,6 +26,7 @@ var game
 var mm: MultiMeshInstance3D
 var birds: Array = []                    # [{id, p: Vector3 (мир), yaw, col, t (фаза), peck}]
 var flying: Array = []                   # [{n: Node3D, a, b, t, land: {} или null}]
+var _faces := {}                         # треугольники модели, без раскраски
 var _perch := {}                         # id постройки → {n: число деталей, spots: [Vector3 в осях постройки]}
 var _refresh := 0.0
 var _hop := 4.0
@@ -91,7 +92,14 @@ func clear() -> void:
 func _fill(at: Vector3, cap: int) -> void:
 	var keep := []
 	for bd: Dictionary in birds:
-		if Vector2(bd["p"].x - at.x, bd["p"].z - at.z).length() < NEAR + 6.0 and game.city.buildings.has(int(bd["id"])):
+		var home: Dictionary = game.city.buildings.get(int(bd["id"]), {})
+		if home.is_empty():
+			continue
+		var spots := _spots(home)
+		if spots.is_empty():
+			continue
+		bd["p"] = game.city.xf(home) * (spots[0] as Vector3)
+		if Vector2(bd["p"].x - at.x, bd["p"].z - at.z).length() < NEAR + 6.0:
 			keep.append(bd)
 	birds = keep
 	if birds.size() >= cap:
@@ -105,6 +113,9 @@ func _fill(at: Vector3, cap: int) -> void:
 		var have := 0
 		for bd: Dictionary in birds:
 			have += 1 if int(bd["id"]) == id else 0
+		for flight: Dictionary in flying:
+			if flight["land"] != null and int(flight["land"]["id"]) == id:
+				have += 1
 		if have >= PER_ROOF:
 			continue
 		if not _perch.has(id):
@@ -147,52 +158,102 @@ func _roofs_near(at: Vector3) -> Array:
 	return bs
 
 
-## Места на крыше: верх самых высоких деталей чертежа (конёк — вдоль длинной стороны детали, верх трубы) по их
-## габаритам (Bp.model_aabb, без треугольников — дёшево), в осях постройки
+## Луч вниз по настоящим треугольникам кровли. Габариты дают только точки поиска.
 func _spots(b: Dictionary) -> Array:
 	var id := int(b["id"])
 	var bp: Bp = game.city.blueprint(b)
-	if _perch.has(id) and int(_perch[id]["n"]) == bp.parts.size():
+	var signature := hash([bp.parts, bp.perch])
+	if _perch.has(id) and int(_perch[id]["signature"]) == signature:
 		return _perch[id]["spots"]
-	if not bp.perch.is_empty():            # дом из своего набора: насесты по коньку — из Blender
-		_perch[id] = {"n": bp.parts.size(), "spots": bp.perch.duplicate()}
-		return _perch[id]["spots"]
-	var tops := []                         # [верх, центр верха, ось длинной стороны (полудлина)]
-	var top := -INF
-	for p in bp.parts:
-		var nm := String(p[0])
-		if nm.begins_with("#") or not nm.begins_with("SM_"):
+	var faces := PackedVector3Array()
+	var candidates: Array = bp.perch.duplicate()
+	for part: Array in bp.parts:
+		var nm := String(part[0])
+		if not _roof_part(nm):
 			continue
-		var skip := false
-		for w: String in SKIP_PARTS:
-			if nm.contains(w):
-				skip = true
-		if skip or not nm.contains("Roof"):
-			continue                       # сидят только на кровле: навершия, плющ и стены — нет
-		var ab := Bp.model_aabb(nm)
-		if ab.size == Vector3.ZERO:
+		var local := _model_faces(nm)
+		if local.is_empty():
 			continue
-		var xf: Transform3D = p[1]
-		var c := xf * (ab.position + ab.size * Vector3(0.5, 1.0, 0.5))
-		var ax := xf.basis * Vector3(ab.size.x * 0.5, 0, 0)
-		var az := xf.basis * Vector3(0, 0, ab.size.z * 0.5)
-		var hy := c.y
-		for corner in 8:
-			var q := xf * (ab.position + ab.size * Vector3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1))
-			hy = maxf(hy, q.y)
-		tops.append([hy, Vector3(c.x, hy, c.z), ax if ax.length() > az.length() else az])
-		top = maxf(top, hy)
+		var xf: Transform3D = part[1]
+		var top := -INF
+		var ridge: Array[Vector3] = []
+		for v: Vector3 in local:
+			var q: Vector3 = xf * v
+			faces.append(q)
+			top = maxf(top, q.y)
+		# Середина верхнего ребра — устойчивее случайной точки на скате.
+		for v: Vector3 in local:
+			var q: Vector3 = xf * v
+			if q.y >= top - 0.025 and not ridge.has(q):
+				ridge.append(q)
+		if not ridge.is_empty() and not nm.begins_with("K:"):
+			var center := Vector3.ZERO
+			for q: Vector3 in ridge:
+				center += q
+			center /= float(ridge.size())
+			candidates.append(center)
 	var spots := []
-	if top > 2.0:
-		for e: Array in tops:
-			if float(e[0]) < top - 0.2:
-				continue
-			var c: Vector3 = e[1]
-			var ax: Vector3 = e[2]
-			if spots.size() < 6:
-				spots.append(c)            # только середина верха кровли: у вальмовой крыши конёк короче габаритов — по краям птица висела бы на скате
-	_perch[id] = {"n": bp.parts.size(), "spots": spots}
+	for candidate: Vector3 in candidates:
+		var hit := _surface_at(faces, candidate)
+		if hit.is_finite() and hit.y > 1.0:
+			var separate := true
+			for old: Vector3 in spots:
+				if old.distance_to(hit) < 0.35:
+					separate = false
+			if separate:
+				spots.append(hit)
+	spots.sort_custom(func(x: Vector3, y: Vector3): return x.y > y.y)
+	if spots.size() > 6:
+		spots.resize(6)
+	_perch[id] = {"signature": signature, "spots": spots}
 	return spots
+
+
+static func _roof_part(nm: String) -> bool:
+	if nm.begins_with("K:") and nm.ends_with("/House"):
+		return true
+	if nm.begins_with("#") or not nm.to_lower().contains("roof"):
+		return false
+	for word: String in SKIP_PARTS:
+		if nm.to_lower().contains(word.to_lower()):
+			return false
+	return true
+
+
+## Те же локальные преобразования сеток, что использует Parts при отрисовке.
+func _model_faces(nm: String) -> PackedVector3Array:
+	if _faces.has(nm):
+		return _faces[nm]
+	var out := PackedVector3Array()
+	var src := Synty.make(nm)
+	for mi: MeshInstance3D in src.find_children("*", "MeshInstance3D", true, false):
+		if mi.mesh == null:
+			continue
+		var xf: Transform3D = Citizen._rel(mi, src)
+		for v: Vector3 in mi.mesh.get_faces():
+			out.append(xf * v)
+	src.free()
+	_faces[nm] = out
+	return out
+
+
+static func _surface_at(faces: PackedVector3Array, point: Vector3) -> Vector3:
+	var top := -INF
+	for v: Vector3 in faces:
+		top = maxf(top, v.y)
+	if not is_finite(top):
+		return Vector3.INF
+	var from := Vector3(point.x, top + 1.0, point.z)
+	var best := Vector3.INF
+	for i in range(0, faces.size() - 2, 3):
+		var normal := (faces[i + 1] - faces[i]).cross(faces[i + 2] - faces[i])
+		# Вертикальная кромка не годится для посадки; порядок вершин у наборов разный.
+		if normal.length_squared() < 0.0000001 or absf(normal.normalized().y) < 0.25:
+			continue
+		var hit: Variant = Geometry3D.ray_intersects_triangle(from, Vector3.DOWN, faces[i], faces[i + 1], faces[i + 2])
+		if hit != null and (not best.is_finite() or (hit as Vector3).y > best.y):
+			best = hit
+	return best
 
 
 func _take_off(bd: Dictionary) -> void:
@@ -216,7 +277,13 @@ func _land_one(at: Vector3) -> void:
 	var b: Dictionary = near[_rng.randi() % mini(near.size(), 6)]
 	if not _perch.has(int(b["id"])):
 		return
-	var spots: Array = _perch[int(b["id"])]["spots"]
+	var spots: Array = _spots(b)
+	for bird: Dictionary in birds:
+		if int(bird["id"]) == int(b["id"]):
+			return
+	for flight: Dictionary in flying:
+		if flight["land"] != null and int(flight["land"]["id"]) == int(b["id"]):
+			return
 	if spots.is_empty():
 		return
 	var xf: Transform3D = game.city.xf(b)
@@ -250,7 +317,15 @@ func _tick_flying(dt: float) -> void:
 			(w as Node3D).rotation.z = flap * 0.9 * (1.0 if w.name == "WL" else -1.0)
 		if k >= 1.0:
 			if f["land"] != null:
-				birds.append(f["land"])
+				var landing: Dictionary = f["land"]
+				var home: Dictionary = game.city.buildings.get(int(landing["id"]), {})
+				if not home.is_empty():
+					for spot: Vector3 in _spots(home):
+						var world_spot: Vector3 = game.city.xf(home) * spot
+						if world_spot.distance_to(landing["p"]) < 0.03:
+							landing["p"] = world_spot
+							birds.append(landing)
+							break
 			n.queue_free()
 			continue
 		left.append(f)

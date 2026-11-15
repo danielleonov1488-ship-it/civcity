@@ -4904,8 +4904,7 @@ func _settle_hover(_p: Vector2) -> void:
 		if city.def(b)["cls"] != cls:
 			hud.tool_status("Этот дом для другого класса — им нужен «%s»" % Defs.B[Defs.CLASSES[cls]["house"]]["name"])
 		else:
-			var free := city.house_cap(b) - int(b["pop"]) - int(b.get("coming", 0))
-			hud.tool_status("Тесно: свободно мест %d, а их %d" % [maxi(0, free), int(settle_fam["n"])])
+			hud.tool_status("Все этажи заняты — семье нужен свободный этаж")
 
 
 ## Дом под курсором для заселения: луч по всей модели; украшение на стене — значит, его дом
@@ -4932,18 +4931,7 @@ func settle_auto() -> void:
 		return
 	var c := city.center()
 	var from: Vector2 = c["pos"] if not c.is_empty() else Land.CENTER
-	# сначала — дома, где после этой семьи не останется «лишнего» места, в которое не влезет никто
-	# (у плебеев семьи от двух: одно свободное место так и пустовало бы, а этаж не надстроить)
-	var fmin := int(Defs.FAMILY_SIZE[String(settle_fam["cls"])][0])
-	var waste := func(h: Dictionary) -> int:
-		var left := city.house_cap(h) - int(h["pop"]) - int(h.get("coming", 0)) - int(settle_fam["n"])
-		return 1 if left > 0 and left < fmin else 0
-	homes.sort_custom(func(a, b):
-		var wa: int = waste.call(a)
-		var wb: int = waste.call(b)
-		if wa != wb:
-			return wa < wb
-		return (a["pos"] as Vector2).distance_to(from) < (b["pos"] as Vector2).distance_to(from))
+	homes.sort_custom(func(a, b): return (a["pos"] as Vector2).distance_to(from) < (b["pos"] as Vector2).distance_to(from))
 	_settle_into(homes[0])
 
 
@@ -5396,7 +5384,12 @@ func _click() -> void:
 	if tool == "" and people != null:
 		var pk: Dictionary = people.pick(_mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position())
 		if not pk.is_empty():
-			select_person(pk)
+			var resident: Dictionary = pk.get("r", {})
+			var family_name := String(resident.get("fam", ""))
+			if int(resident.get("home", 0)) == -1 and not city.arrival(family_name).is_empty():
+				start_settle(family_name)
+			else:
+				select_person(pk)
 			return
 	# овца, корова, лошадь, ослик, кошка в корзинке, утка на пруду под курсором — подпрыгнет, обернётся, сердечко
 	if tool == "" and _pet_click(_mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()):
@@ -5514,9 +5507,7 @@ func _click() -> void:
 		if city.can_buy(plot) and plot_signs.has(plot) and not land.is_owned(hover):
 			hud.ask_buy(plot)
 			return
-	if not b.is_empty() and city.def(b)["kind"] == "center" and not city.arrivals.is_empty():
-		start_settle(city.arrivals[0]["name"])
-	elif not b.is_empty():
+	if not b.is_empty():
 		select_building(b)
 		hud.open_info(b)
 	else:
@@ -6624,7 +6615,9 @@ func _demo_town() -> void:
 					if tier >= 0 and city.is_house(b):
 						b["tier"] = tier
 						b["pop"] = city.house_cap(b)
-						b["families"] = [{"name": Defs.FAMILIES[randi() % Defs.FAMILIES.size()], "n": b["pop"]}]
+						b["families"] = []
+						for floor_i in city.house_floors(b):
+							(b["families"] as Array).append({"name": "%s %d" % [Defs.FAMILIES[randi() % Defs.FAMILIES.size()], floor_i + 1], "n": 4})
 						_show(b)
 					return b
 		return {}
@@ -6675,7 +6668,9 @@ func _demo_town() -> void:
 				var b := city.place(type, pl["pos"], pl["yaw"], v, -1, true)
 				b["tier"] = tier
 				b["pop"] = city.house_cap(b)
-				b["families"] = [{"name": Defs.FAMILIES[randi() % Defs.FAMILIES.size()], "n": b["pop"]}]
+				b["families"] = []
+				for floor_i in city.house_floors(b):
+					(b["families"] as Array).append({"name": "%s %d" % [Defs.FAMILIES[randi() % Defs.FAMILIES.size()], floor_i + 1], "n": 4})
 				_show(b)
 	# красота: кипарисы вдоль главной улицы, скамьи и жаровни у фонтана, статуи у храма, цветы
 	for k in 8:

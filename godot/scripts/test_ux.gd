@@ -548,7 +548,7 @@ func _floor_why() -> void:
 	# надстроенный (в доме снова место) — «сначала заселите»
 	var up := -1
 	for id in row1:
-		if int(c.buildings[id]["tier"]) == 2 and int(c.buildings[id]["pop"]) < c.house_cap(c.buildings[id]):
+		if int(c.buildings[id]["tier"]) == 2 and c.house_free_floors(c.buildings[id]) > 0:
 			up = id
 			break
 	if up >= 0:
@@ -609,7 +609,7 @@ func _floor_mixed() -> void:
 		var h: Dictionary = c.buildings[id]
 		if int(h["tier"]) == 2:
 			dear = id
-			c.settled(id, c.house_cap(h) - int(h["pop"]), "Дорогой %d" % id)
+			c.settled(id, 4, "Дорогой %d" % id)
 			if int(h["happy"]) < int(Defs.FLOOR_HAPPY[3]):
 				h["happy"] = int(Defs.FLOOR_HAPPY[3]) + 5        # для пробы: счастье на третий этаж
 			break

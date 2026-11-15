@@ -1972,7 +1972,7 @@ func happy_gaps(h: Dictionary) -> Array:
 	var cl := String(city.def(h)["cls"])
 	var cd: Dictionary = Defs.CLASSES[cl]
 	for n in h.get("missing", []):
-		out.append({"text": "лавки «%s» рядом" % String(Defs.NEEDS[n]["name"]).to_lower(), "gain": Defs.MISSING_PENALTY + 5, "do": hud._do_shop(String(n))})
+		out.append({"text": "лавки «%s» рядом" % String(Defs.NEEDS[n]["name"]).to_lower(), "gain": city.missing_penalty() + 5, "do": hud._do_shop(String(n))})
 	var deco_room := int(cd.get("deco_max", 12)) - int(h.get("deco_bonus", 0))
 	if deco_room > 0:
 		var t := _first_open("flowers|planter|bush|tree")
@@ -2058,7 +2058,7 @@ static func count_near(cty: City, base: String, p: Vector2, r: float, after: int
 	return n
 
 
-## Новый дом вида base в r м от p, построенный после after, где свободно хотя бы room мест (ближний), или -1;
+## Новый дом вида base в r м от p, построенный после after, где свободен этаж для семьи, если room > 0 (ближний), или -1;
 ## skip — эти дома не в счёт
 func _new_near(base: String, p: Vector2, r: float, after: int, room: int, skip := []) -> int:
 	var best := -1
@@ -2070,7 +2070,7 @@ func _new_near(base: String, p: Vector2, r: float, after: int, room: int, skip :
 		var d := (b["pos"] as Vector2).distance_to(p)
 		if d > r or d >= bd:
 			continue
-		if room > 0 and (not city.is_house(b) or city.house_cap(b) - int(b["pop"]) - int(b.get("coming", 0)) < room):
+		if room > 0 and (not city.is_house(b) or city.house_free_floors(b) <= 0):
 			continue
 		bd = d
 		best = int(id)
@@ -2531,7 +2531,7 @@ func flash_counted(b: Dictionary) -> void:
 				# дом молодым: только новые дома (не семьи и не жениха) со свободными местами — как в _new_near
 				if int(o.get("born", id)) < int(z["after"]) or int(id) in z["skip"]:
 					continue
-				if int(z["room"]) > 0 and (not city.is_house(o) or city.house_cap(o) - int(o["pop"]) - int(o.get("coming", 0)) < int(z["room"])):
+				if int(z["room"]) > 0 and (not city.is_house(o) or city.house_free_floors(o) <= 0):
 					continue
 			seen[int(id)] = true
 			var top: float = city.blueprint(o).top_y() + 0.6
@@ -2909,7 +2909,7 @@ func row_info() -> Dictionary:
 		"built_after":
 			var pr := progress(a, g)
 			if bool(pr.get("full", false)):
-				text += " Новый дом уже заняли — нужен такой, где свободно хотя бы %d места." % int(g[3])
+				text += " Новый дом уже заняли — нужен свободный этаж для семьи."
 			info["buttons"] = [["Показать", show_area]]
 		"click":
 			var pr := progress(a, g)
