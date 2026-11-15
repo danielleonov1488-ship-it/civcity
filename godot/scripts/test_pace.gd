@@ -149,7 +149,7 @@ func fill(houses: Array, pop: int) -> void:
 		while c.house_free_floors(h) > 0 and now < pop:
 			var n := clampi(pop - now, 2, 4)
 			k += 1
-			var took := c.settled(int(h["id"]), n, "Проба %d-%d" % [int(h["id"]), k])
+			var took: int = c.settled(int(h["id"]), n, "Проба %d-%d" % [int(h["id"]), k])
 			if took == 0:
 				break
 			now += took
