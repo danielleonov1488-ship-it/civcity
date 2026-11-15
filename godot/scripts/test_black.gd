@@ -18,6 +18,7 @@ var tier := 1
 var W := 640
 var H := 360
 const SIDES := ["front", "right", "back", "left"]
+var pitch := 35.0          # наклон камеры (pitch=8 — почти в лоб: видно, что за проёмами)
 var results := []          # [тип, пикселей всего, [по сторонам]]
 
 
@@ -36,6 +37,7 @@ func _ready() -> void:
 			"side": sidesel = kv[1]
 			"variant": variant = int(kv[1])
 			"tier": tier = int(kv[1])
+			"pitch": pitch = float(kv[1])
 	Game.boot = {"new": "1", "hour": str(int(hour))}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -115,7 +117,7 @@ func _run() -> void:
 			if sidesel != "" and SIDES[k] != sidesel:
 				per.append(0)
 				continue
-			game.rig.set_view(ctr, rad_to_deg(float(b["yaw"])) + 90.0 * k, 35.0, dist)
+			game.rig.set_view(ctr, rad_to_deg(float(b["yaw"])) + 90.0 * k, pitch, dist)
 			await frames(5)
 			var img := get_viewport().get_texture().get_image()
 			var px := _analyze(img, "%s%s_%s" % [out, t, SIDES[k]])

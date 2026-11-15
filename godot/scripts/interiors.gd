@@ -24,6 +24,21 @@ const FLOOR := Color(0.56, 0.40, 0.27)
 const CEIL := Color(0.58, 0.45, 0.33)
 
 static var _holes := {}                 # модель → [Rect2(x, y, w, h), …] в осях модели
+## Картинки нутра (15.11, владелец: «во всех зданиях пустые комнаты — заставить, хотя бы для вида», картинки рисовал
+## Codex): задняя стена комнаты — картинка по типу постройки (печь в пекарне, столы и амфоры в таверне…), остальное —
+## как было. Картинку выбирает Game._show подменой «#room» → «#room~<картинка>»: чертёж не меняется. Один материал
+## на картинку — комнаты одной картинки рисуются одной MultiMesh (по вызову отрисовки на картинку на весь город)
+const IMAGES := {
+	"taberna": "tavern", "thermopolium": "tavern", "mansio": "tavern", "wineshop": "tavern",
+	"bakery": "bakery",
+	"warehouse": "warehouse", "armory": "warehouse",
+	"house_pleb": "home", "house_artisan": "home", "house_patrician": "home",
+	"potter": "shop", "lamps": "shop", "perfumer": "shop", "jeweler": "shop", "catshop": "shop", "oilshop": "shop",
+	"weaver": "shop", "cobbler": "shop", "dyer": "shop", "tailor": "shop", "herbalist": "shop",
+}
+static var _shader: Shader
+static var _tex_mats := {}              # "картинка|lit" → ShaderMaterial
+static var _tint := [Color(1, 1, 1), Color(1, 1, 1)]     # яркость комнат: [без жильцов, с жильцами]
 static var _meshes := {}
 static var _mat_dim: StandardMaterial3D
 static var _mat_lit: StandardMaterial3D
@@ -47,25 +62,55 @@ static func material(lit: bool) -> StandardMaterial3D:
 	return _mat_lit if lit else _mat_dim
 
 
+## Картинка комнаты для типа постройки ("" — простая комната): только если файл картинки есть в игре
+static func image_for(type: String) -> String:
+	var img: String = IMAGES.get(type, "")
+	if img != "" and not ResourceLoader.exists("res://assets/rooms/%s.jpg" % img):
+		return ""
+	return img
+
+
+## Материал комнаты с картинкой на задней стене (шейдер — один на все картинки): картинка 3 × 3 м, пол у нижнего края
+static func tex_material(img: String, lit: bool) -> ShaderMaterial:
+	var key := "%s|%s" % [img, lit]
+	if _tex_mats.has(key):
+		return _tex_mats[key]
+	if _shader == null:
+		_shader = Shader.new()
+		_shader.code = "shader_type spatial;\nrender_mode unshaded, cull_back;\n// Комната с картинкой на задней стене (interiors.gd): задняя стена (нормаль смотрит к проёму, +Z) — картинка\n// IMG_M x IMG_M м, пол у нижнего края, по ширине — от середины, дальше зеркально; выше IMG_M — повтор (этажи).\n// Остальные грани — тёплый цвет из вершин, как у простых комнат. Светится сама; яркость — tint (Interiors.set_light)\nuniform sampler2D img : source_color, filter_linear_mipmap, repeat_disable;\nuniform vec4 tint : source_color = vec4(1.0);\nvarying float back;\nvarying vec2 wuv;\nvec3 lin(vec3 c) {\n\treturn mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, step(c, vec3(0.04045)));\n}\nvoid vertex() {\n\tback = step(0.5, NORMAL.z);\n\tfloat sx = length(MODEL_MATRIX[0].xyz);\n\tfloat sy = length(MODEL_MATRIX[1].xyz);\n\twuv = vec2(VERTEX.x * sx / 3.0, (VERTEX.y + 0.5) * sy / 3.0);\n}\nvoid fragment() {\n\tvec3 c = lin(COLOR.rgb);\n\tfloat t = mod(wuv.x + 0.5, 2.0);\n\tvec2 uv = vec2(t <= 1.0 ? t : 2.0 - t, 1.0 - fract(wuv.y));\n\tvec3 pic = texture(img, uv).rgb * lin(vec3(COLOR.r / 0.80));\n\tALBEDO = mix(c, pic, back) * tint.rgb;\n}\n"
+	var m := ShaderMaterial.new()
+	m.shader = _shader
+	m.set_shader_parameter("img", load("res://assets/rooms/%s.jpg" % img))
+	m.set_shader_parameter("tint", _tint[1 if lit else 0])
+	_tex_mats[key] = m
+	return m
+
+
 ## Яркость комнат: lamp — 0 днём, 1 ночью (как у окон «#lit» в Game._sky); deep — глубокая ночь
 static func set_light(lamp: float, deep: bool) -> void:
-	material(false).albedo_color = Color(1, 1, 1).lerp(Color(0.17, 0.13, 0.095), lamp)    # 15.11: ночью приглушённо, не чёрная дыра
-	material(true).albedo_color = Color(1, 1, 1).lerp(Color(0.2, 0.135, 0.075) if deep else Color(0.34, 0.23, 0.12), lamp)
+	_tint[0] = Color(1, 1, 1).lerp(Color(0.17, 0.13, 0.095), lamp)    # 15.11: ночью приглушённо, не чёрная дыра
+	_tint[1] = Color(1, 1, 1).lerp(Color(0.2, 0.135, 0.075) if deep else Color(0.34, 0.23, 0.12), lamp)
+	material(false).albedo_color = _tint[0]
+	material(true).albedo_color = _tint[1]
+	for key: String in _tex_mats:
+		(_tex_mats[key] as ShaderMaterial).set_shader_parameter("tint", _tint[1 if key.ends_with("true") else 0])
 
 
 ## Меш «#room», «#room_lit» (внутрь), «#plate», «#plate_lit» (наружу): единичная коробка вокруг начала координат
 static func mesh(name: String) -> Mesh:
 	if _meshes.has(name):
 		return _meshes[name]
-	var lit := name.ends_with("_lit")
-	var inward := name.begins_with("#room")
+	var img := name.get_slice("~", 1) if name.contains("~") else ""     # «#room~tavern» — с картинкой на задней стене
+	var base := name.get_slice("~", 0)
+	var lit := base.ends_with("_lit")
+	var inward := base.begins_with("#room")
 	var st := {"v": [], "n": [], "c": []}
 	var us := [0.0, 0.15, 0.85, 1.0]
 	var vs := [0.0, 0.35, 1.0]
-	if name.begins_with("#room1"):                  # лёгкая: по одному четырёхугольнику на грань (Низкая и Очень низкая)
+	if base.begins_with("#room1"):                  # лёгкая: по одному четырёхугольнику на грань (Низкая и Очень низкая)
 		us = [0.0, 1.0]
 		vs = [0.0, 1.0]
-	elif name.begins_with("#plate"):
+	elif base.begins_with("#plate"):
 		us = [0.0, 1.0]
 		vs = [0.0, 1.0]
 	var h := 0.5
@@ -87,7 +132,7 @@ static func mesh(name: String) -> Mesh:
 	arr[Mesh.ARRAY_NORMAL] = PackedVector3Array(st["n"])
 	arr[Mesh.ARRAY_COLOR] = PackedColorArray(st["c"])
 	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	am.surface_set_material(0, material(lit))
+	am.surface_set_material(0, tex_material(img, lit) if img != "" else material(lit))
 	_meshes[name] = am
 	return am
 

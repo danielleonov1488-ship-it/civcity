@@ -2090,6 +2090,10 @@ func _show(b: Dictionary) -> void:
 		subst["#plate"] = "#plate_lit"
 		if bp.kit_id != "":                    # дом из своего набора: ночью тёплый свет в комнатах
 			subst["K:%s/Rooms" % bp.kit_id] = "K:%s/Rooms@lit" % bp.kit_id
+	var rimg := Interiors.image_for(String(b["type"]))
+	if rimg != "":                             # комнаты с картинкой на задней стене (печь, столы, полки — interiors.gd)
+		for rk in ["#room", "#room_lit"]:
+			subst[rk] = String(subst.get(rk, rk)) + "~" + rimg
 	if b["type"] in CatGrand.TYPES and Gfx.is_low(str(settings.get("quality", "high"))):
 		subst.merge(CatGrand.LOW)               # на «Низкой» — лёгкие колонны и статуи у больших построек этапа 5
 	if Gfx.is_low(str(settings.get("quality", "high"))):
