@@ -14,6 +14,8 @@ static var _special := {}
 ## в городе владельца ~в 3,5 раза меньше (1955 → 531) — во столько же меньше вызовов отрисовки. Только у главного
 ## пула (у подсветки cover.gd — нет)
 var tint_split := false
+static var batch_on := true                # test_perf batch=0 — исходный MultiMesh
+var _batch = null                          # только главный пул города
 static var split_on := true                # для сравнений «было/стало» (test_perf split=0)
 var _col := Color.WHITE                     # цвет экземпляра для последней группы из _group
 static var _tint_mats := {}
@@ -499,6 +501,8 @@ func place(bp: Bp, xf: Transform3D, subst := {}) -> Array:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, t * (sub["local"] as Transform3D))
 			if tinted:
 				(sub["mm"] as MultiMesh).set_instance_color(slot, col)
+		if _batch != null:
+			_batch.track(g, slot, t, col)
 		handles.append([g, slot])
 	return handles
 
@@ -512,6 +516,8 @@ func place_one(name: String, xf: Transform3D, remap := {}, tiled := false) -> Ar
 		(sub["mm"] as MultiMesh).set_instance_transform(slot, xf * (sub["local"] as Transform3D))
 		if g.has("tint"):
 			(sub["mm"] as MultiMesh).set_instance_color(slot, col)
+	if _batch != null:
+		_batch.track(g, slot, xf, col)
 	return [[g, slot]]
 
 
@@ -522,6 +528,12 @@ func hide_handles(handles: Array) -> Array:
 	for h in handles:
 		var g: Dictionary = h[0]
 		var slot: int = h[1]
+		if _batch != null:
+			var r: Dictionary = _batch.record(g, slot)
+			if not r.is_empty():
+				saved.append([g, slot, r["gen"], r["xf"], r["hidden"]])
+				_batch.set_hidden(g, slot, true, r["xf"])
+				continue
 		for sub in g["subs"]:
 			var mm: MultiMesh = sub["mm"]
 			if slot < mm.instance_count:
@@ -532,6 +544,10 @@ func hide_handles(handles: Array) -> Array:
 
 ## Деталь ручки h ([группа, место]) сейчас спрятана (нулевой масштаб)
 func is_hidden(h: Array) -> bool:
+	if _batch != null:
+		var r: Dictionary = _batch.record(h[0], h[1])
+		if not r.is_empty():
+			return r["hidden"]
 	var sub: Dictionary = (h[0] as Dictionary)["subs"][0]
 	var mm: MultiMesh = sub["mm"]
 	return int(h[1]) >= mm.instance_count or mm.get_instance_transform(int(h[1])).basis.get_scale().length() < 1e-6
@@ -540,6 +556,11 @@ func is_hidden(h: Array) -> bool:
 ## Вернуть спрятанное hide_handles (место, которое за это время заняли другим, не трогаем)
 func restore(saved: Array) -> void:
 	for e: Array in saved:
+		if e.size() == 5:
+			var r: Dictionary = _batch.record(e[0], e[1]) if _batch != null else {}
+			if not r.is_empty() and int(r["gen"]) == int(e[2]):
+				_batch.set_hidden(e[0], e[1], e[4], e[3])
+			continue
 		var mm: MultiMesh = e[0]
 		var slot: int = e[1]
 		if slot < mm.instance_count and mm.get_instance_transform(slot).basis.get_scale().length() < 1e-6:
@@ -551,6 +572,8 @@ func remove(handles: Array) -> void:
 	for h in handles:
 		var g: Dictionary = h[0]
 		var slot: int = h[1]
+		if _batch != null:
+			_batch.remove_slot(g, slot)
 		for sub in g["subs"]:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, zero)
 		(g["free"] as Array).append(slot)
@@ -562,6 +585,8 @@ func set_hidden(handles: Array, hidden: bool, xf := Transform3D.IDENTITY) -> voi
 	for h in handles:
 		var g: Dictionary = h[0]
 		var slot: int = h[1]
+		if _batch != null and _batch.set_hidden(g, slot, hidden, xf):
+			continue
 		for sub in g["subs"]:
 			(sub["mm"] as MultiMesh).set_instance_transform(slot, zero if hidden else xf * (sub["local"] as Transform3D))
 
@@ -630,3 +655,24 @@ static func ghost_color(g: Node3D, col: Color) -> void:
 	var m: ShaderMaterial = g.get_meta("mat")
 	if m and m.shader == _tint_shader:
 		m.set_shader_parameter("tint", col)
+
+
+## Явное включение только из Game: Cover.Pool и отдельные витрины остаются прежними.
+func enable_batches() -> void:
+	if batch_on and _batch == null:
+		_batch = preload("res://scripts/parts_batch.gd").new(self)
+
+
+func build_batches() -> void:
+	if _batch != null:
+		_batch.build_all()
+
+
+func batch_quality_changed() -> void:
+	if _batch != null:
+		_batch.quality_changed()
+
+
+func _process(_dt: float) -> void:
+	if _batch != null:
+		_batch.process()

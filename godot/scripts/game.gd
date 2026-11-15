@@ -298,6 +298,7 @@ func _ready() -> void:
 	MeadowNature.prepare(land)                # ложбины ручьёв считаются в фоне, пока грузится город
 	city = City.new(land)
 	parts = Parts.new()
+	parts.enable_batches()
 	parts.tint_split = Parts.split_on           # одинаковые детали разных цветов — один MultiMesh (12.11, скорость)
 	add_child(parts)
 	cover = Cover.new()
@@ -494,6 +495,7 @@ func _ready() -> void:
 	_set_hour(hour)
 	hud.refresh()
 	_sync_all_actors()
+	parts.build_batches()                     # весь город уже размещён: первая склейка один раз
 	ready_done = true
 	_loading_hide()
 	if args.has("noui"):

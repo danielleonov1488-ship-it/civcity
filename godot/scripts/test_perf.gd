@@ -58,6 +58,7 @@ func _ready() -> void:
 	if A.get("ladder", "0") == "1":
 		SizeLadder.apply()                             # проба линейки размеров: прежние сборки в будущем размере
 	Parts.split_on = A.get("split", "1") != "0"        # 12.11: оттенок у экземпляра (split=0 — как прежде, для сравнения)
+	Parts.batch_on = A.get("batch", "1") != "0"
 	city_src = str(A.get("city", OWNER))
 	if city_src == "new" or not FileAccess.file_exists(city_src):
 		if city_src != "new":
@@ -143,6 +144,7 @@ func _run(mode: String) -> void:
 		"vram": await _vram()
 		"groups": await _groups()
 		"batch": await _batch()
+		"batch_check": await _batch_check()
 		"citizens": await _citizens()
 		"pplprof": await _pplprof()
 		"ab": await _ab()
@@ -628,6 +630,7 @@ func _small_shadows(on: bool) -> void:
 			n += 1
 	if not on:
 		print("GPUAB мелких деталей без тени: ", n)
+	game.parts.batch_quality_changed()
 
 
 func _gpu_reset() -> void:
@@ -857,7 +860,12 @@ func _batch() -> void:
 			for i in mini(int(g["used"]), mm.instance_count):
 				if free.has(i):
 					continue
-				var o := i * 12
+				var r: Dictionary = game.parts._batch.record(g, i) if game.parts._batch != null else {}
+				if not r.is_empty():
+					if not r["hidden"]:
+						live.append(((r["xf"] as Transform3D) * (sub["local"] as Transform3D)).origin)
+					continue
+				var o := i * (12 + (4 if mm.use_colors else 0) + (4 if mm.use_custom_data else 0))
 				if absf(buf[o]) + absf(buf[o + 1]) + absf(buf[o + 2]) < 1e-6:
 					continue
 				live.append(Vector3(buf[o + 3], buf[o + 7], buf[o + 11]))
@@ -931,6 +939,195 @@ func _batch() -> void:
 			sum_nt += (per_tile_nt[tk] as Dictionary).size()
 		print("BATCH материалов %d (без оттенка %d); кусков %d по %d м: вызовов склейкой %d (без оттенка %d), в среднем на кусок %.1f" % [mats.size(), mats_nt.size(),
 			n, ts, sum_t, sum_nt, float(sum_t) / maxf(1, n)])
+
+
+## PERF1: удаление и возврат пяти зданий в копии города, затем края алгоритма на маленьком пуле.
+func _batch_check() -> void:
+	await _settle()
+	if city_src == "" or not Parts.batch_on or game.parts._batch == null:
+		_batch_assert(false, "нужны город владельца и batch=1")
+		print("BATCH_CHECK DONE fails=%d" % fails)
+		return
+	_freeze()
+	_quality("high")
+	await frames(30)
+	var dc := RenderingServer.viewport_get_render_info(vp, RenderingServer.VIEWPORT_RENDER_INFO_TYPE_VISIBLE, RenderingServer.VIEWPORT_RENDER_INFO_DRAW_CALLS_IN_FRAME)
+	print("BATCH_CHECK draw_calls=%d stats=%s" % [dc, game.parts._batch.stats()])
+	_batch_audit_city("before")
+	_batch_assert(game.cover.pool._batch == null, "пул подсветки не объединяется")
+	var chosen: Array = []
+	var c: City = game.city
+	# Без жильцов и навесных украшений: удаление не затронет другие здания или семьи.
+	for id in c.buildings:
+		var b: Dictionary = c.buildings[id]
+		if c.def(b)["kind"] != "decor" or c.def(b).get("fixed", false) or int(b.get("host", -1)) >= 0:
+			continue
+		var has_children := false
+		for other: Dictionary in c.buildings.values():
+			if int(other.get("host", -1)) == int(id):
+				has_children = true
+		var hs: Array = game.visuals.get(id, {}).get("h", [])
+		var has_batch := false
+		for h: Array in hs:
+			var r: Dictionary = game.parts._batch.record(h[0], h[1])
+			if not r.is_empty() and r["merged"]:
+				has_batch = true
+		if has_batch and not has_children:
+			chosen.append({"b": b.duplicate(true), "h": hs.duplicate()})
+		if chosen.size() == 5:
+			break
+	_batch_assert(chosen.size() == 5, "найдены пять зданий с объединёнными деталями")
+	var before: int = game.parts.count()
+	var buildings_before := 0
+	for vis: Dictionary in game.visuals.values():
+		buildings_before += (vis.get("h", []) as Array).size()
+	var removed := 0
+	for e: Dictionary in chosen:
+		removed += (e["h"] as Array).size()
+		c.remove(c.buildings[e["b"]["id"]], false, true)
+	await frames(30)
+	_batch_assert(game.parts.count() == before - removed, "после сноса осталось ожидаемое число деталей")
+	for e: Dictionary in chosen:
+		_batch_assert(not game.visuals.has(e["b"]["id"]), "снесённое здание убрано из visuals")
+		for h: Array in e["h"]:
+			_batch_assert(game.parts._batch.record(h[0], h[1]).is_empty(), "снесённый слот не оставил геометрию")
+	_batch_audit_city("removed")
+	for e: Dictionary in chosen:
+		var b: Dictionary = e["b"]
+		var placed: Dictionary = c.place(b["type"], b["pos"], b["yaw"], int(b["variant"]), int(b["color"]), true)
+		# Сохранить прежний облик, включая размер старого сохранения; id и служебные клетки — новые.
+		for field: String in ["tier", "sz", "kw", "born", "y"]:
+			if b.has(field):
+				placed[field] = b[field]
+			else:
+				placed.erase(field)
+		game._grow_cancel(int(placed["id"]))
+		game._show(placed)
+	await frames(30)
+	var buildings_after := 0
+	for vis: Dictionary in game.visuals.values():
+		buildings_after += (vis.get("h", []) as Array).size()
+	_batch_assert(buildings_after == buildings_before, "пять зданий вернули исходное число деталей построек")
+	_batch_audit_city("replaced")
+	# Качество проходит через подмену текстур и обратно.
+	for q: String in ["verylow", "high"]:
+		_quality(q)
+		await frames(30)
+		_batch_audit_city(q)
+	await _batch_edges()
+	_unfreeze()
+	print("BATCH_CHECK DONE fails=%d" % fails)
+
+
+func _batch_assert(ok: bool, reason: String) -> void:
+	if not ok:
+		fails += 1
+		print("BATCH_CHECK FAIL ", reason)
+
+
+func _batch_audit_city(tag: String) -> void:
+	for error: String in game.parts._batch.audit():
+		_batch_assert(false, tag + ": " + error)
+	var expected := 0
+	var claimed: Dictionary = {}
+	for id in game.city.buildings:
+		_batch_assert(game.visuals.has(id), "%s: здание %s имеет visuals" % [tag, id])
+		for h: Array in game.visuals.get(id, {}).get("h", []):
+			var g: Dictionary = h[0]
+			var slot: int = h[1]
+			var key := "%s:%d" % [g["key"], slot]
+			_batch_assert(not claimed.has(key) and not (g["free"] as Array).has(slot), tag + ": живая уникальная ручка " + key)
+			claimed[key] = true
+			var r: Dictionary = game.parts._batch.record(g, slot)
+			if not r.is_empty() and r["merged"]:
+				expected += 1
+	# Природа и общие украшения тоже входят в пул, но не в visuals зданий.
+	var actual := 0
+	for td: Dictionary in game.parts._batch.tiles.values():
+		for m: Array in td["members"]:
+			if claimed.has("%s:%d" % [m[0], m[1]]):
+				actual += 1
+	_batch_assert(actual == expected, "%s: детали зданий в пакетах %d, ожидается %d" % [tag, actual, expected])
+	_batch_assert(int(game.parts._batch.stats()["bytes"]) <= 150 * 1048576, tag + ": память до 150 МБ")
+	print("BATCH_CHECK %s building_instances=%d stats=%s" % [tag, actual, game.parts._batch.stats()])
+
+
+## Настоящий Parts.place_one: 3 → 4 → 3, hide/restore, повторное место, перенос между участками.
+func _batch_edges() -> void:
+	var p := Parts.new()
+	p.enable_batches()
+	add_child(p)
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.vertex_color_is_srgb = true
+	var mesh := ArrayMesh.new()
+	var source := BoxMesh.new().get_mesh_arrays()
+	var source_color := Color(0.6, 0.8, 1.0, 1.0)
+	var vertex_colors := PackedColorArray()
+	vertex_colors.resize((source[Mesh.ARRAY_VERTEX] as PackedVector3Array).size())
+	vertex_colors.fill(source_color)
+	source[Mesh.ARRAY_COLOR] = vertex_colors
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, source)
+	mesh.surface_set_material(0, mat)
+	var g := {"key": "batch_fixture|{}", "subs": [p._sub(mesh, Transform3D.IDENTITY, true)], "free": [], "used": 0, "cap": 0, "tint": true}
+	p.groups[g["key"]] = g
+	var tint := Color(0.4, 0.7, 0.9, 1.0)
+	var remap := {"tint": tint}
+	p.alias["batch_fixture|" + str(remap)] = g
+	var hs: Array = []
+	for i in 3:
+		var basis := Basis(Vector3.UP, 0.45).scaled(Vector3(1.2, 0.9, 1.1)) if i == 2 else Basis.IDENTITY
+		hs.append(p.place_one("batch_fixture", Transform3D(basis, Vector3(2 + i * 2, 0, 2)), remap))
+	p.build_batches()
+	_batch_assert(int(p._batch.stats()["instances"]) == 3, "три экземпляра объединены")
+	_batch_assert(not (g["subs"][0]["mmi"] as MultiMeshInstance3D).visible, "полностью объединённый MultiMesh выключен")
+	var node: MeshInstance3D = p._batch.tiles[Vector2i.ZERO]["nodes"][0]
+	var arr := node.mesh.surface_get_arrays(0)
+	var baked: Color = (arr[Mesh.ARRAY_COLOR] as PackedColorArray)[0]
+	var expected_color := source_color * tint
+	_batch_assert(absf(baked.r - expected_color.r) <= 2.0 / 255.0 and absf(baked.g - expected_color.g) <= 2.0 / 255.0 and absf(baked.b - expected_color.b) <= 2.0 / 255.0, "оттенок умножен на цвет вершин")
+	var source_points: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	var baked_points: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	for i in hs.size():
+		var r: Dictionary = p._batch.record(g, hs[i][0][1])
+		for j in source_points.size():
+			_batch_assert(baked_points[i * source_points.size() + j].distance_to((r["xf"] as Transform3D) * source_points[j]) < 0.001, "позиция вершины после поворота/масштаба")
+	var fourth := p.place_one("batch_fixture", Transform3D(Basis.IDENTITY, Vector3(8, 0, 2)), remap)
+	await frames(3)
+	_batch_assert(int(p._batch.stats()["instances"]) == 0, "четыре экземпляра вернулись в MultiMesh")
+	p.remove(fourth)
+	await frames(3)
+	_batch_assert(int(p._batch.stats()["instances"]) == 3, "после удаления снова три")
+	var saved := p.hide_handles(hs[0])
+	await frames(3)
+	_batch_assert(p.is_hidden(hs[0][0]) and int(p._batch.stats()["instances"]) == 2, "hide убрал геометрию")
+	p.restore(saved)
+	await frames(3)
+	_batch_assert(not p.is_hidden(hs[0][0]) and int(p._batch.stats()["instances"]) == 3, "restore вернул геометрию")
+	saved = p.hide_handles(hs[0])
+	p.remove(hs[0])
+	hs[0] = p.place_one("batch_fixture", Transform3D(Basis.IDENTITY, Vector3(10, 0, 2)), remap)
+	p.set_hidden(hs[0], true)
+	p.restore(saved)
+	await frames(3)
+	_batch_assert(p.is_hidden(hs[0][0]), "старый restore не затронул новое поколение слота")
+	p.set_hidden(hs[0], false, Transform3D(Basis.IDENTITY, Vector3(70, 0, 2)))
+	await frames(3)
+	_batch_assert(int(p._batch.stats()["instances"]) == 3 and p._batch.tiles.size() == 2, "перенос обновил оба участка")
+	(g["subs"][0]["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	p.batch_quality_changed()
+	await frames(3)
+	for td: Dictionary in p._batch.tiles.values():
+		for mi: MeshInstance3D in td["nodes"]:
+			_batch_assert(mi.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF and mi.mesh.surface_get_material(0) == mat, "тени обновились, материал общий")
+	for error: String in p._batch.audit():
+		_batch_assert(false, "fixture: " + error)
+	for h: Array in hs:
+		p.remove(h)
+	await frames(3)
+	_batch_assert(p._batch.tiles.is_empty() and int(p._batch.stats()["instances"]) == 0, "последняя деталь удаляет геометрию участка")
+	p.queue_free()
+	await frames(1)
 
 
 ## 1.6: сколько групп деталей (MultiMesh) и сколько их было бы, если бы оттенок (remap «tints») шёл в данные экземпляра
@@ -1046,8 +1243,10 @@ static func _is_nature(k: String) -> bool:
 func _grp_vis(pred: Callable, v: bool) -> void:
 	for key in game.parts.groups:
 		if pred.call(str(key)):
+			game.parts.groups[key]["batch_visible"] = v
 			for sub in game.parts.groups[key]["subs"]:
 				(sub["mmi"] as Node3D).visible = v
+	game.parts.batch_quality_changed()
 
 
 # ---------- снимки ----------
@@ -1172,7 +1371,8 @@ func _compare_golden(shots: Dictionary, ref: String) -> void:
 			continue
 		var r := _same(shots[k], Image.load_from_file(p))
 		print("PERF golden %-14s %s" % [k, r["info"]])
-		if not r["same"]:
+		var ok: bool = float(r["mean"]) < 1.0 if A.get("batch_compare", "0") == "1" else bool(r["same"])
+		if not ok:
 			fail("снимок %s не совпал с эталоном (%s) — графика «%s» изменилась" % [k, r["info"], k.split("/")[0]])
 
 
