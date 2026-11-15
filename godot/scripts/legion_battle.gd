@@ -795,7 +795,9 @@ func _view(u: LegionSim.Unit) -> Dictionary:
 		f = LegionFighter.create_hero(lk, u.size * 1.08, _seed + u.id * 7919)
 		world.add_child(f)
 	else:
-		f = LegionFighter.create(u.key, u.size, _seed + u.id * 7919, u.side == "enemy" and Legion.UNITS.has(u.key))
+		# Легион 3.0: жрец (heal) — свой облик, не враг «Жрец» с пращой; у всадника — конь
+		var lk := "legionPriest" if u.heal_pow > 0.0 else u.key
+		f = LegionFighter.create(lk, u.size, _seed + u.id * 7919, u.side == "enemy" and (Legion.UNITS.has(u.key) or lk != u.key or u.key == "cavalry"))
 		world.add_child(f)
 		if u.side == "ally" and u.sid >= 0:     # Легион 2.0: вещи воина светятся цветом редкости
 			for e: Dictionary in setup.get("squad", []):
@@ -1060,6 +1062,18 @@ func _handle(evs: Array) -> void:
 					fx.add(f.global_position + Vector3(randf_range(-0.3, 0.3), randf_range(0.3, 1.2), randf_range(-0.3, 0.3)),
 						Vector3(0, 1.1, 0), Color(0.55, 1.0, 0.5, 0.9), 0.14, 1.0, -0.4, 0.2, true)
 				bars.float_text(_screen(f.global_position + Vector3(0, f.top + 0.3, 0)), "+%d" % int(e["amount"]), "heal")
+				# Легион 3.0: лечит жрец — он воздевает руку, кольца у него и у раненого, искры летят от жреца к раненому
+				var src: LegionSim.Unit = e.get("from")
+				if src != null and src.alive:
+					var pf: LegionFighter = _view(src)["f"]
+					pf.cast()
+					fx.ring(pf.position, 1.1, Color(1.0, 0.9, 0.5, 0.9), 0.7, 0.8)
+					fx.ring(f.position, 0.9, Color(0.55, 1.0, 0.5, 0.9), 0.7, 0.8)
+					for i in 7:
+						var k := float(i) / 6.0
+						var p0 := pf.global_position + Vector3(0, pf.top * 0.8, 0)
+						var p1 := f.global_position + Vector3(0, f.top * 0.5, 0)
+						fx.add(p0.lerp(p1, k), Vector3(0, 0.5, 0), Color(1.0, 0.95, 0.6, 0.9), 0.13, 0.7 + k * 0.5, -0.2, 0.1, true)
 			"end":
 				pass
 

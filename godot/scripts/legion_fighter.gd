@@ -65,6 +65,11 @@ const LOOKS := {
 	"hannibal": {"model": "SK_Chr_Leader_Male_01", "var": "02_C", "head": ["SM_Chr_Hair_Beard_02", "SM_Chr_Attach_Helmet_02"], "right": "SM_Wep_Sword_01", "left": "SM_Wep_Shield_02", "style": "sword"},
 	"pharaoh": {"model": "SK_Chr_Upperclass_Male_01", "var": "04_C", "head": ["SM_Chr_Attach_Crown_Leaf_02"], "right": "SM_Wep_Spear_02", "style": "spear", "tint": Color(1.0, 0.93, 0.75)},
 	"surena": {"model": "SK_Chr_Captain_Male_01", "var": "02_B", "head": ["SM_Chr_Attach_Helmet_01", "SM_Chr_Hair_Beard_03"], "left": "#bow", "back": "#quiver", "style": "bow"},
+	# Легион 3.0: свои классы. Жрец — светлая одежда и посох; всадник — легионер в седле (style ride: конь Quaternius)
+	"legionPriest": {"model": "SK_Chr_Politician_Male_01", "var": "01_A", "head": ["SM_Chr_Hair_Male_01", "SM_Chr_Attach_Crown_Leaf_01"], "right": "#staff",
+		"style": "staff", "tint": Color(1.0, 0.97, 0.88)},
+	"cavalry": {"model": "SK_Chr_Solider_Male_01", "var": "01", "head": ["SM_Chr_Attach_Helmet_08"], "right": "SM_Wep_Spear_03", "left": "SM_Wep_Shield_02",
+		"style": "ride"},
 	"decebalus": {"model": "SK_Chr_Leader_Male_01", "var": "04_A", "head": ["SM_Chr_Hair_Male_06", "SM_Chr_Hair_Beard_04", "SM_Chr_Attach_Crown_Leaf_01"], "right": "SM_Wep_Sword_03", "style": "axe"},
 }
 ## Звери: файл Quaternius, длина тела (м), раскраска поверхностей (по порядку: основной, светлый, глаза, нос …)
@@ -103,6 +108,8 @@ var weapon: Node3D                     # оружие в правой руке (
 var offhand: Node3D                    # щит или лук в левой руке
 var head_att: Node3D                   # всё, что на голове (шлем, волосы)
 var heads: Array[Node3D] = []          # головы Цербера (кивают, когда кусает)
+var mount: AnimationPlayer             # всадник (Легион 3.0): движения коня под ним
+var _saddle := Vector3.ZERO            # где сидит всадник (в осях бойца)
 var embers := false
 var dead := false
 var speed_k := 1.0                     # скорость боя (×1…×3): движения быстрее
@@ -154,6 +161,8 @@ static func create(k: String, size := 1.0, seed_v := 1, rival := false) -> Legio
 			L = L.duplicate()
 			L["var"] = "02"
 		f._human(L, size, rng)
+		if String(L.get("style", "")) == "ride":
+			f._mount_horse(size)
 	elif BEASTS.has(k):
 		f._beast(BEASTS[k], size)
 	elif STATUES.has(k):
@@ -319,6 +328,12 @@ func _human(L: Dictionary, size: float, rng: RandomNumberGenerator) -> void:
 			clip = {"idle": "Idle", "walk": "Walk", "run": "Jog_Fwd", "attack": "Throw", "hit": "Hit_Chest", "death": "Death01", "cheer": "Cheer"}
 		"club":
 			clip = {"idle": "Sword_Idle", "walk": "Walk", "run": "Walk", "attack": "Sword_Attack", "hit": "Hit_Chest", "death": "Death01", "cheer": "Cheer"}
+		"staff":
+			# жрец: посох в правой руке, лечение — вытянутая левая (как у лучника при выстреле)
+			clip = {"idle": "Idle", "walk": "Walk", "run": "Jog_Fwd", "attack": "Throw", "cast": "Bow_Shoot", "hit": "Hit_Chest", "death": "Death01", "cheer": "Cheer"}
+		"ride":
+			# всадник сидит в седле («Driving») при любом движении: ход и удар показывают конь и наклон корпуса (код)
+			clip = {"idle": "Driving", "walk": "Driving", "run": "Driving", "attack": "Driving", "hit": "Driving", "death": "Death01", "cheer": "Driving"}
 	anim.speed_scale = rng.randf_range(0.94, 1.06)
 	var s := HUMAN * size * float(L.get("k", 1.0))
 	body.scale = Vector3.ONE * s
@@ -385,7 +400,7 @@ func _hold(what: String, hand: String, L: Dictionary) -> Node3D:
 			n = Artisau.make("Bow", 1.05)
 		"#club":
 			n = Artisau.make("Mazo_Grande", 1.5)
-		"#stone", "#boulder":
+		"#stone", "#boulder", "#staff":
 			var mi := MeshInstance3D.new()
 			mi.mesh = _kit_mesh(what)
 			n = mi
@@ -397,7 +412,7 @@ func _hold(what: String, hand: String, L: Dictionary) -> Node3D:
 	var holder := Node3D.new()
 	ba.add_child(holder)
 	holder.add_child(n)
-	holder.transform = _grip(String(L["model"]), what, hand)
+	holder.transform = _grip(String(L["model"]), what, hand, String(L.get("style", "")) == "ride")
 	if what == "#bow" or what == "#club":
 		# у моделей Artisau основание на нуле — хват посередине (лук) или у конца рукояти (дубина)
 		n.position.y -= 0.52 if what == "#bow" else 0.1
@@ -408,13 +423,27 @@ func _hold(what: String, hand: String, L: Dictionary) -> Node3D:
 
 ## Хват: как предмет лежит в кисти. Для оружия с понятной стойкой — по позе движения (кисть в осях персонажа
 ## считается из дорожек анимации), чтобы в стойке клинок смотрел вверх, копьё — вперёд, щит — лицом к врагу
-func _grip(model: String, what: String, hand: String) -> Transform3D:
-	var key2 := model + "|" + what + "|" + hand
+func _grip(model: String, what: String, hand: String, ride := false) -> Transform3D:
+	var key2 := model + "|" + what + "|" + hand + ("|ride" if ride else "")
 	if _grips.has(key2):
 		return _grips[key2]
 	var xf := Transform3D(Basis(Vector3.RIGHT, -PI / 2), Vector3(0, 0.075, 0))
 	var sk := skel
-	if what.begins_with("SM_Wep_Shield"):
+	if ride:
+		# всадник: кисти в позе «Driving» (поводья); копьё смотрит вперёд-вверх, щит — наружу и вперёд
+		if what.begins_with("SM_Wep_Spear"):
+			var g := _pose(sk, library().get_animation("Driving"), 0.0, "RightHand")
+			var dir := Vector3(-0.1, 0.5, 1.0).normalized()
+			xf = g.affine_inverse() * Transform3D(_basis(dir, Vector3(1, 0, 0)).scaled(Vector3.ONE * 0.78), g.origin + dir * 0.3)
+		else:
+			var g := _pose(sk, library().get_animation("Driving"), 0.0, "LeftHand")
+			var want := _basis(Vector3(0.0, 1.0, 0.1), Vector3(0.7, 0.0, 1.0))
+			xf = g.affine_inverse() * Transform3D(want, g.origin + Vector3(0.05, 0.0, 0.1))
+	elif what == "#staff":
+		# посох стоймя у правой кисти: кисть — в нижней трети
+		var g := _pose(sk, library().get_animation("Idle"), 0.0, "RightHand")
+		xf = g.affine_inverse() * Transform3D(_basis(Vector3(0.0, 1.0, 0.05), Vector3(0, 0, 1)), g.origin + Vector3(0.0, -0.02, 0.04))
+	elif what.begins_with("SM_Wep_Shield"):
 		# щит перед собой, чуть развёрнут наружу, на уровне кисти; лицом (+Z щита) — вперёд
 		var g := _pose(sk, library().get_animation("Sword_Idle"), 0.0, "LeftHand")
 		var want := _basis(Vector3(0.0, 1.0, 0.1), Vector3(0.35, 0.0, 1.0))
@@ -581,6 +610,38 @@ func _beast(B: Dictionary, size: float) -> void:
 	_anim_k = 1.0 / sqrt(maxf(1.0, size))
 	if bool(B.get("cart", false)):
 		_cart(aabb.size.z * k, size)
+
+
+## Конь под всадником (Легион 3.0): модель Quaternius, длина как у коня жителей, но в масштабе боя; всадник — в седле
+func _mount_horse(size: float) -> void:
+	var h := _scene(ANIMALS + "Horse_b.glb").instantiate() as Node3D
+	add_child(h)
+	var box := Artisau.aabb(h)
+	var k := 1.9 * HUMAN * 1.08 * size / maxf(0.01, maxf(box.size.x, box.size.z))
+	h.scale = Vector3.ONE * k
+	var mid := (box.position + box.size * 0.5) * k
+	_saddle = Vector3(mid.x, 0.82 * HUMAN * size * 1.08, mid.z + 0.25 * HUMAN * size)
+	body.position = _saddle
+	var aps := h.find_children("*", "AnimationPlayer", true, false)
+	if not aps.is_empty():
+		mount = aps[0]
+		for a in ["Idle", "Walk", "Gallop", "Idle_2"]:
+			var an := _find(mount, [a])
+			if an != "":
+				mount.get_animation(an).loop_mode = Animation.LOOP_LINEAR
+	top += _saddle.y
+	_mount_play("idle", 0.0)
+
+
+const MOUNT_CLIP := {"idle": "Idle", "walk": "Walk", "run": "Gallop", "attack": "Attack_Headbutt", "hit": "Idle_HitReact_Left", "death": "Death", "cheer": "Idle_2"}
+
+
+func _mount_play(state: String, blend := 0.2) -> void:
+	if mount == null:
+		return
+	var n := _find(mount, [String(MOUNT_CLIP.get(state, "Idle"))])
+	if n != "":
+		mount.play(n, blend)
 
 
 ## Колесница за конём (поход Легиона 2.0): пол, борта и два колеса из коробок — в осях бойца (смотрит вдоль +Z)
@@ -782,7 +843,7 @@ static func library() -> AnimationLibrary:
 		return _lib
 	var base := Citizen.library()
 	_lib = AnimationLibrary.new()
-	for n in ["Idle", "Walk", "Jog_Fwd", "Sprint", "Sword_Idle", "Sword_Attack", "Punch_Jab", "Punch_Cross", "Hit_Chest", "Hit_Head",
+	for n in ["Idle", "Walk", "Jog_Fwd", "Sprint", "Driving", "Sword_Idle", "Sword_Attack", "Punch_Jab", "Punch_Cross", "Hit_Chest", "Hit_Head",
 			"Death01", "Spell_Simple_Idle", "Spell_Simple_Shoot", "Pistol_Idle", "Pistol_Shoot", "Jump", "Dance", "Interact", "Fixing_Kneeling",
 			"Crouch_Idle", "Idle_Talking"]:
 		if base.has_animation(n):
@@ -863,6 +924,10 @@ func _play(state: String, blend := 0.2, from := 0.0) -> void:
 	if state == _state and anim.current_animation == n and state != "attack" and state != "hit":
 		return
 	_state = state
+	if mount != null:
+		_mount_play(state, blend)
+		if anim.current_animation == n and anim.is_playing():
+			return                            # всадник сидит: своё движение не перезапускаем
 	anim.play(n, blend)
 	if from > 0.0:
 		anim.seek(from, true)
@@ -880,6 +945,8 @@ func _speed() -> void:
 		anim.speed_scale = s
 		for ap in _followers:
 			ap.speed_scale = s
+		if mount != null:
+			mount.speed_scale = s * (1.0 if _state != "attack" else 1.3)
 	if crew:
 		crew.speed_k = speed_k
 		crew._speed()
@@ -920,6 +987,14 @@ func attack() -> void:
 		if bolt:
 			bolt.visible = false
 		return
+	if mount != null:
+		# всадник: бросок вперёд (наклон корпуса — в tick) и выпад коня
+		_state = ""
+		_play("attack", 0.08)
+		_speed()
+		_atk = 0.6
+		_atk_len = 0.6
+		return
 	var n: String = clip.get("attack", "")
 	if anim == null or n == "" or not anim.has_animation(n):
 		return
@@ -932,6 +1007,21 @@ func attack() -> void:
 	_play("attack", 0.08, from)
 	_speed()
 	_atk = (a.length - from) / maxf(0.1, anim.speed_scale)
+	_atk_len = _atk
+
+
+## Жрец творит лечение: вытянутая рука (если у бойца нет такого движения — обычный взмах)
+func cast() -> void:
+	if dead:
+		return
+	var n: String = clip.get("cast", "")
+	if anim == null or n == "" or not anim.has_animation(n):
+		attack()
+		return
+	_state = ""
+	_play("cast", 0.08)
+	_speed()
+	_atk = anim.get_animation(n).length / maxf(0.1, anim.speed_scale)
 	_atk_len = _atk
 
 
@@ -997,6 +1087,8 @@ func tick(dt: float) -> void:
 			set_motion(_moving)
 			if bolt:
 				bolt.visible = true
+	if mount != null:
+		_tick_rider()
 	if kind == "statue":
 		_tick_statue(dt)
 	elif kind == "machine":
@@ -1012,6 +1104,19 @@ func tick(dt: float) -> void:
 					g.transparency = k
 			if k >= 1.0:
 				visible = false
+
+
+## Всадник: при ударе корпус бросается вперёд; павший сползает с седла вбок на землю
+func _tick_rider() -> void:
+	if dead:
+		var k := clampf(_dead_t / 0.45, 0.0, 1.0)
+		body.position = _saddle + Vector3(0.45 * k, -_saddle.y * k, -0.2 * k)
+		return
+	var swing := 0.0
+	if _atk > 0.0 and _state == "attack":
+		swing = sin(clampf(1.0 - _atk / maxf(0.01, _atk_len), 0.0, 1.0) * PI)
+	body.rotation.x = swing * 0.28
+	body.position = _saddle + Vector3(0.0, -swing * 0.04, swing * 0.16)
 
 
 ## Статуя-чудовище: качается на ходу, бросается вперёд при ударе, падает набок
@@ -1150,6 +1255,11 @@ static func _kit_mesh(name: String) -> Mesh:
 			k.cone(Vector3.ZERO, 0.055, 0.18, 5, CatMilitary.BRONZE)
 			k.xf = Transform3D.IDENTITY
 			k.boxc(Vector3(0, 0, -0.5), Vector3(0.012, 0.13, 0.16), CatMilitary.RED)
+		"#staff":
+			# посох жреца: древко, золотой завиток и шар (начало — у кисти)
+			k.rod(Vector3(0, -0.55, 0), Vector3(0, 1.1, 0), 0.02, 6, CatMilitary.WOOD_D)
+			k.cyl(Vector3(0, 1.06, 0), 0.04, 0.05, 8, CatMilitary.BRONZE)
+			k.blob(Vector3(0, 1.17, 0), Vector3(0.065, 0.065, 0.065), Color("e8c35a"), 4, 0.08)
 		"#rock":
 			k.blob(Vector3.ZERO, Vector3(0.2, 0.18, 0.2), Color("958f84"), 6, 0.2)
 		"#rock_big":
