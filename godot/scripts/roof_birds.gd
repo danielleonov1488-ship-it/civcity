@@ -8,8 +8,14 @@ extends Node3D
 
 const HOURS := [6.0, 19.5]
 const NEAR := 34.0                       # постройки ближе этого к точке взгляда, м
-const MAX_BIRDS := 16
-const PER_ROOF := 3
+## 15.11 (отзыв владельца: «птицы на крышах — баг, летают сквозь дома»): птиц втрое меньше, на крыше — одна; сидят только
+## на коньках кровли (не на навершиях и деталях), а взлетают и садятся сверху — сперва вверх выше всех крыш вокруг, потом
+## в сторону, садятся отвесно на конёк
+const MAX_BIRDS := 6
+const PER_ROOF := 1
+const CLEAR := 3.0                       # м над самой высокой крышей рядом — высота полёта
+const CLEAR_R := 26.0                    # м — какие постройки считать «рядом» с местом посадки
+const SKIP_PARTS := ["Topper", "Trellis", "Detail", "Trim", "End_Cap", "Pillar", "Corner_Cap", "Edge"]
 const REFRESH := 2.5                     # с — как часто пересматривать, какие крыши рядом
 const HOP := [6.0, 14.0]                 # с — между взлётами и посадками
 const FLY_T := 2.6                       # с — полёт
@@ -106,7 +112,7 @@ func _fill(at: Vector3, cap: int) -> void:
 				continue                          # места крыш — понемногу за раз (кадр не дёргается)
 			built += 1
 		var spots := _spots(b)
-		if spots.is_empty() or _rng.randf() < 0.35:
+		if spots.is_empty() or _rng.randf() < 0.6:
 			continue
 		var xf: Transform3D = game.city.xf(b)
 		for i in mini(_rng.randi_range(1, PER_ROOF) - have, spots.size()):
@@ -157,6 +163,12 @@ func _spots(b: Dictionary) -> Array:
 		var nm := String(p[0])
 		if nm.begins_with("#") or not nm.begins_with("SM_"):
 			continue
+		var skip := false
+		for w: String in SKIP_PARTS:
+			if nm.contains(w):
+				skip = true
+		if skip or not nm.contains("Roof"):
+			continue                       # сидят только на кровле: навершия, плющ и стены — нет
 		var ab := Bp.model_aabb(nm)
 		if ab.size == Vector3.ZERO:
 			continue
@@ -177,9 +189,8 @@ func _spots(b: Dictionary) -> Array:
 				continue
 			var c: Vector3 = e[1]
 			var ax: Vector3 = e[2]
-			for f: float in [-0.6, 0.0, 0.6]:
-				if spots.size() < 9 and (ax.length() > 0.5 or f == 0.0):
-					spots.append(c + ax * f)
+			if spots.size() < 6:
+				spots.append(c)            # только середина верха кровли: у вальмовой крыши конёк короче габаритов — по краям птица висела бы на скате
 	_perch[id] = {"n": bp.parts.size(), "spots": spots}
 	return spots
 
@@ -189,7 +200,9 @@ func _take_off(bd: Dictionary) -> void:
 	add_child(n)
 	var a: Vector3 = bd["p"]
 	var dir := Vector3(sin(float(bd["yaw"])), 0, cos(float(bd["yaw"]))).rotated(Vector3.UP, _rng.randf_range(-0.6, 0.6))
-	flying.append({"n": n, "a": a, "b": a + dir * 14.0 + Vector3(0, 7.0, 0), "t": 0.0, "land": null, "up": true})
+	var fy := _fly_y(a)
+	# вверх отвесно выше всех крыш рядом, потом в сторону и ещё выше — сквозь дома не пролетает
+	flying.append({"n": n, "pts": [a, Vector3(a.x, fy, a.z), a + dir * 22.0 + Vector3(0, fy - a.y + 4.0, 0)], "t": 0.0, "land": null, "up": true})
 
 
 ## Прилететь и сесть на свободное место крыши рядом
@@ -211,8 +224,11 @@ func _land_one(at: Vector3) -> void:
 	var n := _flyer(bd["col"])
 	add_child(n)
 	var a := _rng.randf() * TAU
-	var from: Vector3 = bd["p"] + Vector3(cos(a), 0, sin(a)) * 14.0 + Vector3(0, 7.0, 0)
-	flying.append({"n": n, "a": from, "b": bd["p"], "t": 0.0, "land": bd, "up": false})
+	var tp: Vector3 = bd["p"]
+	var fy := _fly_y(tp)
+	# прилетает на высоте выше всех крыш, садится на конёк отвесно сверху
+	var from: Vector3 = tp + Vector3(cos(a), 0, sin(a)) * 20.0 + Vector3(0, fy - tp.y + 3.0, 0)
+	flying.append({"n": n, "pts": [from, Vector3(tp.x, fy, tp.z), tp], "t": 0.0, "land": bd, "up": false})
 
 
 func _tick_flying(dt: float) -> void:
@@ -221,16 +237,14 @@ func _tick_flying(dt: float) -> void:
 		var n: Node3D = f["n"]
 		if not is_instance_valid(n):
 			continue
-		f["t"] = float(f["t"]) + dt / FLY_T
+		f["t"] = float(f["t"]) + dt / (FLY_T * 1.5)
 		var k := clampf(float(f["t"]), 0.0, 1.0)
-		var a: Vector3 = f["a"]
-		var b: Vector3 = f["b"]
-		# взлёт — сначала круто вверх, посадка — плавно вниз в конце
-		var e := k * k if bool(f["up"]) else 1.0 - (1.0 - k) * (1.0 - k)
-		var p := a.lerp(b, e) + Vector3(0, sin(k * PI) * 1.2, 0)
-		var dir := b - a
+		var pts: Array = f["pts"]
+		var p := _along(pts, k)
+		var dir := _along(pts, minf(k + 0.03, 1.0)) - _along(pts, maxf(k - 0.03, 0.0))
 		n.global_position = p
-		n.rotation.y = atan2(dir.x, dir.z)
+		if Vector2(dir.x, dir.z).length() > 0.02:
+			n.rotation.y = atan2(dir.x, dir.z)
 		var flap := sin(float(f["t"]) * FLY_T * 26.0)
 		for w in [n.get_node("WL"), n.get_node("WR")]:
 			(w as Node3D).rotation.z = flap * 0.9 * (1.0 if w.name == "WL" else -1.0)
@@ -241,6 +255,32 @@ func _tick_flying(dt: float) -> void:
 			continue
 		left.append(f)
 	flying = left
+
+
+## Высота полёта над местом p: выше самой высокой постройки в CLEAR_R на CLEAR м (и не ниже 4 м над местом сидения)
+func _fly_y(p: Vector3) -> float:
+	var top := p.y + 4.0
+	for id in game.city.buildings:
+		var b: Dictionary = game.city.buildings[id]
+		var o: Vector3 = game.city.xf(b).origin
+		if Vector2(o.x - p.x, o.z - p.z).length() > CLEAR_R:
+			continue
+		top = maxf(top, o.y + game.city.blueprint(b).top_y() + 1.0)
+	return top + CLEAR
+
+
+## Точка на ломаной pts по доле пути k (по длине)
+static func _along(pts: Array, k: float) -> Vector3:
+	var total := 0.0
+	for i in range(1, pts.size()):
+		total += (pts[i] as Vector3).distance_to(pts[i - 1])
+	var want := total * clampf(k, 0.0, 1.0)
+	for i in range(1, pts.size()):
+		var seg := (pts[i] as Vector3).distance_to(pts[i - 1])
+		if want <= seg or i == pts.size() - 1:
+			return (pts[i - 1] as Vector3).lerp(pts[i], clampf(want / maxf(seg, 0.001), 0.0, 1.0))
+		want -= seg
+	return pts[pts.size() - 1]
 
 
 ## Сидящие: лёгкое покачивание, время от времени клюёт (наклон) и крутит головой (поворот)

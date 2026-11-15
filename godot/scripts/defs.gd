@@ -543,8 +543,18 @@ const B := {
 	"manger": {"kind": "decor", "cat": "decor", "sub": "yard", "name": "Ясли с сеном", "cost": 20, "deco": 2, "unlock": "deco_farmyard", "menu": false, "desc": "Деревянные ясли с сеном, мешки с овсом."},
 	"manger_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "manger", "look": 1, "name": "Плуг и мешки", "cost": 20, "deco": 2, "unlock": "deco_farmyard", "menu": false, "desc": "Плуг, серп и мешки с зерном у копны."},
 	# 13.11: мельница из набора Meadow Forest (для красоты в полях; scripts/cat_meadow.gd)
-	"windmill": {"kind": "decor", "cat": "decor", "sub": "yard", "name": "Ветряная мельница", "cost": 160, "deco": 5, "unlock": "deco_farmyard", "menu": false, "desc": "Деревянная мельница на сваях: крылья неспешно крутятся на ветру, у подножия мешки с мукой."},
-	"windmill_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "windmill", "look": 1, "name": "Мельница с парусами", "cost": 170, "deco": 5, "unlock": "deco_farmyard", "menu": false, "desc": "Мельница с крыльями-парусами из холста, у подножия мешки и камни."},
+	"windmill": {"kind": "decor", "menu": false, "cat": "decor", "sub": "yard", "also": "farming", "name": "Ветряная мельница", "cost": 160, "deco": 5, "unlock": "farm", "desc": "Деревянная мельница на сваях: крылья неспешно крутятся на ветру, у подножия мешки с мукой."},
+	"windmill_2": {"kind": "decor", "menu": false, "cat": "decor", "sub": "yard", "also": "farming", "base": "windmill", "look": 1, "name": "Мельница с парусами", "cost": 170, "deco": 5, "unlock": "farm", "desc": "Мельница с крыльями-парусами из холста, у подножия мешки и камни."},
+	# «Природа» (15.11, cat_nature.gd): каждый щелчок — случайная модель из всех наборов; variants — сколько моделей (CatNature.count_of)
+	"nat_tree": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "tree", "variants": 17, "name": "Дерево", "cost": 10, "deco": 3, "unlock": "deco_trees", "desc": "Дерево на выбор из всех наборов: берёза, луговое, фруктовое, олива, кипарис. Каждый щелчок — другое."},
+	"nat_bush": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "bush", "variants": 18, "name": "Куст", "cost": 5, "deco": 2, "unlock": "deco_trees", "desc": "Куст или садовое растение на выбор. Каждый щелчок — другой."},
+	"nat_palm": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "palm", "variants": 3, "name": "Пальма", "cost": 15, "deco": 3, "unlock": "deco_trees", "desc": "Южная пальма, каждый раз другая."},
+	"nat_flowers": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "flowers", "fcolors": true, "variants": 6, "name": "Цветы", "cost": 6, "deco": 3, "unlock": "deco_flowers", "desc": "Куртина полевых цветов. Цвет выбирается в панели справа."},
+	"nat_rock": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "rock", "variants": 7, "name": "Камень", "cost": 4, "deco": 1, "unlock": "deco_trees", "desc": "Валун из набора лугов, каждый раз другой."},
+	"nat_stones": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "stones", "variants": 8, "name": "Груда камней", "cost": 6, "deco": 1, "unlock": "deco_trees", "desc": "Груда или стопка камней."},
+	"nat_wall": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "wall", "variants": 5, "name": "Каменная стенка", "cost": 8, "deco": 2, "unlock": "deco_trees", "desc": "Низкая каменная стенка с лугов: длинная, средняя или короткая."},
+	"nat_sunflowers": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "sunflowers", "variants": 3, "name": "Подсолнухи", "cost": 8, "deco": 3, "unlock": "deco_flowers", "desc": "Куртина подсолнухов."},
+	"nat_lilies": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "lilies", "variants": 3, "name": "Кувшинки", "cost": 6, "deco": 2, "unlock": "animals", "water": true, "desc": "Кувшинки плавают на пруду."},
 	# «Ремесленный двор» (Посёлок)
 	"forge_corner": {"kind": "decor", "cat": "decor", "sub": "market", "name": "Наковальня и точило", "cost": 40, "deco": 3, "unlock": "deco_craft", "menu": false, "desc": "Наковальня, точильный круг и молот — уголок кузнеца."},
 	"forge_corner_2": {"kind": "decor", "cat": "decor", "sub": "market", "base": "forge_corner", "look": 1, "name": "Горн кузнеца", "cost": 60, "deco": 4, "light": true, "unlock": "deco_craft", "menu": false, "desc": "Каменный горн с огнём и наковальня рядом. Ночью светится."},
@@ -626,7 +636,7 @@ const B := {
 ## Разделы меню стройки (снизу посередине) и вкладки коммерции
 ## Вкладки раздела «Украшения» (как вкладки потребностей у лавок)
 ## (этап 5: «Вода», «На стены», «Рынок и ремесло», «Главные» — новые; прежние облики переезжают туда через DECOR_TAB)
-const DECOR_SUBS := [["plants", "Цветы и сад", "daisy"], ["trees", "Деревья", "pine"], ["water", "Вода", "fountain"], ["light", "Свет", "lamp"],
+const DECOR_SUBS := [["plants", "Цветы и сад", "daisy"], ["trees", "Деревья", "pine"], ["nature", "Природа", "tree"], ["water", "Вода", "fountain"], ["light", "Свет", "lamp"],
 	["street", "Улица", "bench"], ["wall", "На стены", "brick"], ["yard", "Двор и хозяйство", "fence"], ["market", "Рынок и ремесло", "cart"],
 	["stone", "Статуи и камень", "mona"], ["animals", "Животные", "swan"], ["premium", "Главные", "laurels"]]
 ## Прежние облики в новых вкладках (поле sub в B не трогаем — так проще слияние)
@@ -634,7 +644,7 @@ const DECOR_TAB := {"wall_flowers": "wall", "wall_flowers_2": "wall", "wall_flow
 	"wall_lamp": "wall", "wall_lamp_2": "wall", "wall_banner": "wall", "wall_banner_2": "wall", "wall_banner_3": "wall", "balcony": "wall",
 	"well": "water", "well_2": "water", "well_3": "water", "smallfountain": "water", "smallfountain_2": "water", "smallfountain_3": "water",
 	"nymphfountain": "water", "amphorae": "market", "amphorae_2": "market", "amphorae_3": "market", "goods": "market", "goods_2": "market",
-	"goods_3": "market", "cart": "market", "cart_2": "market"}
+	"goods_3": "market", "cart": "market", "cart_2": "market", "windmill": "nature", "windmill_2": "nature"}
 ## Новая игра (решение владельца Q17): часть прежних обликов открывается позже — в наборах этапа 5. Живые города
 ## (City.decor_v = 0) открывают их, как раньше. Просьбы, истории и заказы просят виды, у которых облик остаётся раньше
 ## (проверка — test_fixes: «всё, что просят, открыто к тому уровню, где просят»)

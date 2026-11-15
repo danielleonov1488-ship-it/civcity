@@ -1129,6 +1129,25 @@ static func settings_block(h, v: VBoxContainer) -> void:
 			h._open_settings(true))
 		q.add_child(b)
 	v.add_child(q)
+	# «Трава и цветы» (15.11): как далеко видна трава и мелочь природы
+	var gr := HBoxContainer.new()
+	gr.add_theme_constant_override("separation", 6)
+	gr.alignment = BoxContainer.ALIGNMENT_CENTER
+	var gl: Label = h._label("Трава и цветы:", 16, false, h.C_SOFT)
+	gl.tooltip_text = "Как далеко от камеры видны трава и цветы. «Не скрывать» тяжелее для слабых компьютеров"
+	gr.add_child(gl)
+	for key: String in ["near", "far", "all", "off"]:
+		var gb := Button.new()
+		gb.text = GrassCarpet.RANGE_NAMES[key]
+		gb.name = "grass_" + key
+		gb.add_theme_font_size_override("font_size", 15)
+		gb.pressed.connect(func():
+			h.game.settings["grass_range"] = key
+			h.game.save_settings()
+			h.game.apply_grass_range()
+			h._open_settings(true))
+		gr.add_child(gb)
+	v.add_child(gr)
 	var gpu: Label = h._wrap(h._label("Видеокарта: " + adapter(), 15, false, h.C_SOFT), 470)
 	gpu.name = "gpu_name"
 	v.add_child(gpu)
@@ -1169,6 +1188,11 @@ static func settings_refresh(h) -> void:
 		var b: Button = h.settings_panel.find_child("q_" + key, true, false)
 		if b:
 			b.add_theme_stylebox_override("normal", h._box_pill(12, 6, "g_btn_on" if h.game.settings["quality"] == key else "g_btn"))
+	var gk := GrassCarpet.range_key(h.game.settings, str(h.game.settings.get("quality", "high")))
+	for key: String in ["near", "far", "all", "off"]:
+		var gb: Button = h.settings_panel.find_child("grass_" + key, true, false)
+		if gb:
+			gb.add_theme_stylebox_override("normal", h._box_pill(12, 6, "g_btn_on" if gk == key else "g_btn"))
 	var fps := h.settings_panel.find_child("show_fps", true, false) as CheckBox
 	if fps:
 		fps.set_pressed_no_signal(bool(h.game.settings.get("show_fps", false)))

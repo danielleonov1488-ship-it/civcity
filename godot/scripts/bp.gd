@@ -115,7 +115,7 @@ func gable_z(cx: float, cz: float, wm: int, dm: int, top: float, toppers := true
 # ---------- след постройки на земле ----------
 
 const NONSOLID := ["Roof", "Trim", "Ivy", "Vine", "Banner", "Hanging", "Rug", "Drapery", "Overhang", "Trellis_Roof", "_Balcony_0",
-	"SM_Bld_Balcony", "Grass", "SM_Env_Flowers", "Lillies", "Torch", "Mural", "Symbol", "SM_Bld_Door_0", "Topper", "Wall_Tiny", "Ornament",
+	"SM_Bld_Balcony", "Grass", "SM_Env_Flowers", "Lillies", "CropField", "Wildflowers", "Flowers_Flat", "Torch", "Mural", "Symbol", "SM_Bld_Door_0", "Topper", "Wall_Tiny", "Ornament",
 	"Pillar_Trim", "Beam_Detail", "Cart_01_Insert", "Brazier_0", "Plate", "Bowl", "Jug", "Goblet", "Scroll_0", "Tool_"]
 
 static var _aabbs := {}
@@ -236,7 +236,8 @@ func footprint(all := true) -> Array:
 			continue
 		var xf: Transform3D = p[1]
 		var box := model_aabb(nm)
-		if nm.begins_with("SM_Env_Tree") or nm.begins_with("SM_Env_Bush") or nm.begins_with("SM_Env_Garden"):
+		var nb := nm.trim_prefix("M:")
+		if nb.begins_with("SM_Env_Tree") or nb.begins_with("SM_Env_Bush") or nb.begins_with("SM_Env_Garden"):
 			# у деревьев — только ствол и низ кроны
 			var c := box.get_center()
 			box = AABB(Vector3(c.x - box.size.x * 0.15, box.position.y, c.z - box.size.z * 0.15), Vector3(box.size.x * 0.3, box.size.y, box.size.z * 0.3))

@@ -176,13 +176,15 @@ static func material(e: Dictionary, remap := {}) -> Material:
 			var tg: Vector3 = BRANCH_TARGET if lt.begins_with("Branches") else (LEAF_TARGET_V2 if MeadowNature.v2 else LEAF_TARGET)
 			fm.set_shader_parameter("leaf_gain", Vector3(tg.x / avg.x, tg.y / avg.y, tg.z / avg.z))
 		if grassy and not slot.begins_with("Branches") and not slot.begins_with("CropField"):
-			fm.set_shader_parameter("fade", Vector2(Parts.FADE_FROM, Parts.FADE_TO))
+			fm.set_shader_parameter("fade", Vector2(Parts.FADE_FROM, Parts.FADE_TO) * Parts.grass_k)
 		fm.set_shader_parameter("trunk_tint", TRUNK_TINT if not tt.begins_with("Birch") else Color(0.95, 0.94, 0.92))
 		fm.set_shader_parameter("up_normal", 0.7 if grassy else 0.6)
 		fm.set_shader_parameter("sway", 0.05 if grassy else 0.035)
 		fm.set_shader_parameter("season", Synty.season_now)
 		fm.set_shader_parameter("evergreen", grassy)
 		fm.set_shader_parameter("bloom_ok", remap.has("bloom"))
+		if remap.has("fmode"):
+			fm.set_shader_parameter("fmode", float(remap["fmode"]))        # цвет цветов (CatNature, shaders/meadow_foliage.gdshader)
 		Synty.season_mats.append(fm)
 		m = fm
 	else:

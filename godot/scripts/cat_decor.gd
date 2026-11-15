@@ -24,8 +24,11 @@ const LILY := Color(0.72, 0.93, 0.62)
 const HEDGE := Color(0.62, 0.86, 0.5)      # подстриженная изгородь — сочная зелень, а не жёлтый куст
 
 
-static func _decor(b: Bp, type: String, variant := 0) -> void:
+static func _decor(b: Bp, type: String, variant := 0, color := 0) -> void:
 	b.door = Vector3(0, 0, 1.0)
+	if (Defs.B.get(type, {}) as Dictionary).has("nat"):
+		CatNature.make(b, type, variant, color)       # «Природа»: случайные модели из всех наборов (15.11)
+		return
 	var lk := int((Defs.B.get(type, {}) as Dictionary).get("look", 0))
 	match Defs.base_of(type):
 		"flowers": _flowers(b, lk)

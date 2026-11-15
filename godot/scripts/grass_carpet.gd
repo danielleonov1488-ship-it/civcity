@@ -8,6 +8,10 @@ extends Node3D
 ## Куски строятся понемногу каждый кадр (не дольше BUDGET_MS), кусок с поменявшейся землёй — заново.
 ## Уровни графики: «Высокая» — далеко и густо, «Средняя» — ближе и реже, «Низкая» — только у самой камеры (в обычном
 ## виде города её нет), «Очень низкая» — нет. Ничего не сохраняется: ковёр — только картинка.
+## 15.11 (отзыв владельца: «травы слишком много»): трава — кочками с полянами между ними (два шума: большие пятна и
+## кочки), цветов втрое меньше и в основном белые и розовые (shaders/grass_carpet.gdshader, fmode). Дальность — по
+## настройке «Трава и цветы» (Близко / Далеко / Не скрывать / Выключить). Кисти «Трава» и «Убрать траву» красят маску
+## Land.grass_mask: где посажено — густая трава и цветы, где убрано — пусто (маска сохраняется в городе).
 
 const TILE := 32.0
 const BUDGET_MS := 3.0
@@ -17,6 +21,19 @@ const Q := {
 	"low": {"r": 30.0, "sp": 0.78},
 	"verylow": {"r": 0.0, "sp": 1.0},
 }
+## «Трава и цветы» в настройках: во сколько раз дальше (или ближе) прежней дальности уровня графики. По умолчанию — «Далеко»
+## на «Высокой» и «Близко» (как было) на остальных: «Низкая» и «Очень низкая» тяжелее не становятся, пока игрок сам не
+## выберет «Не скрывать»
+const RANGE := {"near": 1.0, "far": 1.7, "all": 3.2, "off": 0.0}
+const RANGE_NAMES := {"near": "Близко", "far": "Далеко", "all": "Не скрывать", "off": "Выключить"}
+const VERYLOW_ALL_R := 26.0             # «Очень низкая» с «Не скрывать»: ковёр только у самой камеры
+
+static func range_key(st: Dictionary, q: String) -> String:
+	var k := str(st.get("grass_range", ""))
+	if RANGE.has(k):
+		return k
+	return "far" if q == "high" else "near"
+
 ## Цвет травы (линейный): у корня и на кончиках — сочная жёлто-зелёная, как на картинке набора
 const ROOT := Color(0.085, 0.2, 0.025)
 const TIP := Color(0.5, 0.66, 0.12)
@@ -32,7 +49,9 @@ var _mat_g: ShaderMaterial
 var _mat_f: ShaderMaterial
 var _mesh_g: Mesh
 var _mesh_f: Mesh
-var _fn := FastNoiseLite.new()  # пятна густоты и полянки цветов
+var _fn := FastNoiseLite.new()  # большие пятна густоты (поляны и заросли)
+var _fc := FastNoiseLite.new()  # кочки травы внутри зарослей
+var _ff := FastNoiseLite.new()  # цветочные поляны
 var _on := true
 static var mats: Array = []     # материалы ковра (снимки сверки: MeadowNature.freeze — без качания)
 
@@ -44,6 +63,12 @@ func setup(g) -> void:
 	_fn.seed = 1414
 	_fn.frequency = 0.035
 	_fn.fractal_octaves = 2
+	_fc.seed = 2727
+	_fc.frequency = 0.21
+	_fc.fractal_octaves = 2
+	_ff.seed = 3939
+	_ff.frequency = 0.05
+	_ff.fractal_octaves = 2
 	if not Meadow.has("M:SM_Env_Grass_Med_Clump_01") or not MeadowNature.v2:
 		_on = false
 		return
@@ -94,7 +119,13 @@ func _flower_array() -> Texture2DArray:
 func set_quality(q: String) -> void:
 	var p: Dictionary = Q.get(q, Q["high"])
 	var sp := float(p["sp"])
-	radius = float(p["r"]) if _on else 0.0
+	var rk := range_key(game.settings, q) if game != null else "near"
+	var base := float(p["r"])
+	if q == "verylow" and rk == "all":
+		base = VERYLOW_ALL_R
+	radius = base * float(RANGE[rk]) if _on else 0.0
+	if rk == "all" and radius > 0.0 and q != "verylow":
+		radius = maxf(radius, 150.0)
 	if not is_equal_approx(sp, spacing):
 		spacing = sp
 		for k in tiles:
@@ -103,12 +134,24 @@ func set_quality(q: String) -> void:
 		if m:
 			m.set_shader_parameter("fade", Vector2(radius * 0.62, radius))
 	visible = radius > 0.0
+	if radius <= 0.0:
+		for k in tiles.keys():
+			_drop(k)
 
 
 func invalidate_chunk(ch: Vector2i) -> void:
 	var k := Vector2i(int(ch.x * Land.CH * Land.CELL / TILE), int(ch.y * Land.CH * Land.CELL / TILE))
 	if tiles.has(k) or (not _job.is_empty() and _job["key"] == k):
 		dirty[k] = true
+
+
+## Кистью «Трава» / «Убрать траву» поменяли маску в прямоугольнике — куски под ним строятся заново
+func invalidate_rect(a: Vector2, b: Vector2) -> void:
+	for j in range(int(minf(a.y, b.y) / TILE), int(maxf(a.y, b.y) / TILE) + 1):
+		for i in range(int(minf(a.x, b.x) / TILE), int(maxf(a.x, b.x) / TILE) + 1):
+			var k := Vector2i(i, j)
+			if tiles.has(k) or (not _job.is_empty() and _job["key"] == k):
+				dirty[k] = true
 
 
 func _invalidate_cells(cells: PackedInt32Array) -> void:
@@ -246,13 +289,22 @@ func _rows(job: Dictionary, nrows: int) -> void:
 			var y := land.surface_y(x, z)
 			if y < Land.WATER_Y + 0.04:
 				continue
+			var gm := land.gm_at(x, z)
+			if gm == 2:
+				continue                          # «Убрать траву» — здесь пусто
 			var nz := _fn.get_noise_2d(x, z)
-			# пятна густоты: кое-где трава реже (земля видна), у воды — гуще и выше
 			var wet := y < Land.WATER_Y + 0.35
-			var keep := 0.62 + 0.38 * nz
-			if rng.randf() > keep and not wet:
-				continue
-			var flower := not wet and (nz > 0.32 and rng.randf() < 0.3 or rng.randf() < 0.02)
+			# цветы: редкие одиночные и цветочные поляны (там, где посадил игрок, — чаще)
+			var pf := 0.006 + (0.07 if _ff.get_noise_2d(x, z) > 0.3 else 0.0)
+			var flower := not wet and rng.randf() < (maxf(pf, 0.035) if gm == 1 else pf)
+			if not flower:
+				# трава кочками: большие пятна (поляны без травы) × кочки внутри; у воды — гуще и выше (камыш)
+				var keep := 0.9
+				if gm != 1:
+					var dens := clampf((nz + 0.1) * 2.2, 0.0, 1.0)
+					keep = dens * (0.1 + 0.9 * smoothstep(-0.1, 0.45, _fc.get_noise_2d(x, z))) * 0.8
+				if rng.randf() > keep and not wet:
+					continue
 			var s := rng.randf_range(0.75, 1.2)
 			var sy := s * (rng.randf_range(1.5, 2.1) if wet else rng.randf_range(0.8, 1.15))
 			var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, sy, s))

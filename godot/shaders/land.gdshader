@@ -107,9 +107,11 @@ vec3 meadow_grass(vec3 wp, float lk, float r) {
 		c = mix(c, pal * vec3(0.84, 0.9, 0.95) * mix(1.0, lum3(tb) / 0.098, 0.75), wb * 0.7);
 		float wc = smoothstep(0.56, 0.8, nz.b * 0.55 + nz2.a * 0.45) * 0.8;
 		c = mix(c, pal * mix(1.0, lum3(tc) / 0.158, 0.55) * vec3(0.95, 1.06, 0.9), wc);
-		float wf = smoothstep(0.6, 0.82, nz.a * 0.65 + nz2.r * 0.35);
+		// 15.11: цветы на земле — меньше, бело-розовые, а не оранжевые (владелец: «меньше оранжевых и красных»)
+		float wf = smoothstep(0.66, 0.86, nz.a * 0.65 + nz2.r * 0.35) * 0.8;
 		float fm = smoothstep(0.08, 0.25, tf.r - tf.g * 0.75);
-		c = mix(c, mix(pal * mix(1.0, lum3(tf) / 0.17, 0.6), tf * vec3(1.0, 0.86, 0.6), fm), wf);
+		vec3 fcol = mix(vec3(0.95, 0.93, 0.86), vec3(0.95, 0.72, 0.8), step(0.5, fract(floor(wp.x * 0.37) * 0.618 + floor(wp.z * 0.37) * 0.331)));
+		c = mix(c, mix(pal * mix(1.0, lum3(tf) / 0.17, 0.6), fcol * (0.45 + 1.1 * lum3(tf)), fm), wf);
 		// мох — пятнами по шуму (не по высоте: высота у земли ступеньками по 12,5 см — по ней мох ложился бы полосами
 		// и прямоугольниками по уступам)
 		float wm = smoothstep(0.56, 0.8, (1.0 - nz.g) * 0.55 + nz2.r * 0.45) * 0.55;

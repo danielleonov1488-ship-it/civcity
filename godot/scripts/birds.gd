@@ -4,6 +4,9 @@ extends Node3D
 
 var birds := []
 var center := Vector3(38, 0, 44)
+var game = null                           # игра: по её постройкам птицы держат высоту (15.11 — не пролетают сквозь дома)
+var _tops := {}                           # клетка 8 м → высота самой высокой постройки в ней
+var _tops_t := 0.0
 
 
 func _ready() -> void:
@@ -44,13 +47,46 @@ func _ready() -> void:
 			"cx": center.x + (flock - 1) * 9.0, "cz": center.z - flock * 4.0})
 
 
+## Высоты построек по клеткам 8 м — раз в несколько секунд
+func _refresh_tops() -> void:
+	_tops.clear()
+	if game == null or game.city == null:
+		return
+	for id in game.city.buildings:
+		var b: Dictionary = game.city.buildings[id]
+		var o: Vector3 = game.city.xf(b).origin
+		var h: float = o.y + game.city.blueprint(b).top_y()
+		var k := Vector2i(int(floor(o.x / 8.0)), int(floor(o.z / 8.0)))
+		_tops[k] = maxf(float(_tops.get(k, 0.0)), h)
+
+
+## Высота, ниже которой над точкой летать нельзя: самая высокая постройка в соседних клетках + запас
+func _clear_y(x: float, z: float) -> float:
+	var kx := int(floor(x / 8.0))
+	var kz := int(floor(z / 8.0))
+	var top := 0.0
+	for j in range(kz - 1, kz + 2):
+		for i in range(kx - 1, kx + 2):
+			top = maxf(top, float(_tops.get(Vector2i(i, j), 0.0)))
+	return top + 2.5 if top > 0.0 else 0.0
+
+
 func _process(dt: float) -> void:
 	var t := AnimClock.now()
+	_tops_t -= dt
+	if _tops_t <= 0.0:
+		_tops_t = 3.0
+		_refresh_tops()
 	for b in birds:
 		b["ph"] += b["sp"] * dt
 		var a: float = b["ph"]
 		var r: float = b["rad"] + sin(a * 1.7) * 1.5
-		var p := Vector3(b["cx"] + cos(a) * r, b["y"] + sin(a * 2.3) * 0.8, b["cz"] + sin(a) * r)
+		var px: float = b["cx"] + cos(a) * r
+		var pz: float = b["cz"] + sin(a) * r
+		# высота плавно поднимается над крышами внизу (и опускается обратно над пустым местом)
+		var wy: float = maxf(float(b["y"]), _clear_y(px, pz))
+		b["yc"] = lerpf(float(b.get("yc", wy)), wy, 1.0 - exp(-dt * 1.5))
+		var p := Vector3(px, float(b["yc"]) + sin(a * 2.3) * 0.8, pz)
 		var dir := Vector3(-sin(a), 0, cos(a)) * signf(b["sp"])
 		var n: Node3D = b["n"]
 		n.position = p

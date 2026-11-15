@@ -381,13 +381,15 @@ static func _bridges(g) -> void:
 	for br: Dictionary in land.bridges:
 		var c: Vector2 = br["pos"]
 		var sd: Vector2 = br["dir"]                    # куда течёт ручей
-		var rd := Vector2(-sd.y, sd.x)                 # вдоль дороги
+		# вдоль дороги — по самой дороге (15.11: ручей часто идёт под дорогой наискось, мост «поперёк ручья» стоял криво)
+		var rd := _road_dir(land, c, Vector2(-sd.y, sd.x))
+		var sin_t := maxf(absf(rd.x * sd.y - rd.y * sd.x), 0.45)     # синус угла между дорогой и ручьём
 		var y: float = br["y"]
 		var w: float = br["w"]
 		var hw := Land.ROAD_R
 		var depth := y - (Land.WATER_Y - 0.25)         # от дороги до дна у арки
-		var half := clampf(w + Streams.SHORE + (y - Land.WATER_Y - 0.25) / Streams.SLOPE, 3.0, 8.5)
-		var ws := clampf(w * 2.0 + 1.0, 2.6, 4.2)       # пролёт арки
+		var half := clampf((w + Streams.SHORE + (y - Land.WATER_Y - 0.25) / Streams.SLOPE) / sin_t, 3.0, 10.0)
+		var ws := clampf((w * 2.0 + 1.0) / sin_t, 2.6, 6.0)       # пролёт арки — вдоль дороги, с запасом на наклон ручья
 		var bp := Bp.new(91)
 		var yaw := atan2(rd.x, rd.y)                    # местная +Z — вдоль дороги, +X — вниз по ручью
 		var xf := Transform3D(Basis(Vector3.UP, yaw), Vector3(c.x, y, c.y))
@@ -418,6 +420,35 @@ static func _bridges(g) -> void:
 		for side2: float in [-1.0, 1.0]:
 			CatMonuments._box(under, "#water", Vector3(side2 * (hw - 0.3), Land.WATER_Y - y + 0.02, 0.0), Vector3(1.0, 0.04, ws - 0.3))
 		g.parts.place(under, xf)
+
+
+## Направление дороги у моста (единичный вектор): главная ось клеток мостовой, троп и площадей вокруг точки c (радиус 7 м);
+## нет дороги вокруг — dflt
+static func _road_dir(land: Land, c: Vector2, dflt: Vector2) -> Vector2:
+	var sxx := 0.0
+	var sxy := 0.0
+	var syy := 0.0
+	var n := 0
+	var N := Land.N
+	var ci := int(c.x / Land.CELL)
+	var cj := int(c.y / Land.CELL)
+	var rr := int(7.0 / Land.CELL)
+	for dj in range(-rr, rr + 1, 2):
+		for di in range(-rr, rr + 1, 2):
+			var i := ci + di
+			var j := cj + dj
+			if i < 0 or j < 0 or i >= N or j >= N or di * di + dj * dj > rr * rr:
+				continue
+			if not Land.walk_kind(land.kind[j * N + i]):
+				continue
+			sxx += float(di * di)
+			sxy += float(di * dj)
+			syy += float(dj * dj)
+			n += 1
+	if n < 30:
+		return dflt
+	var th := 0.5 * atan2(2.0 * sxy, sxx - syy)
+	return Vector2(cos(th), sin(th))
 
 
 ## Деталь стены Synty вдоль дороги на боку моста: длина по дороге — от z0 до z1, высота h от y0, толщина — tk.

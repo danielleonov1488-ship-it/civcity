@@ -14,6 +14,7 @@ uniform vec3 tip_col : source_color = vec3(0.62, 0.78, 0.22);
 uniform float tex_avg = 0.16;          // средняя яркость картинки травы (линейная) — узор вокруг 1
 uniform vec2 fade = vec2(60.0, 90.0);
 uniform float sway = 0.07;
+uniform float fmode = -1.0;              // цвет цветов (flower_recolor): -1 — свой набор «больше белых и розовых»
 uniform vec4 season = vec4(0.0);
 
 varying float vh;
@@ -37,6 +38,46 @@ void vertex() {
 	NORMAL = normalize(mix(NORMAL, vec3(0.0, 1.0, 0.0), 0.8));
 }
 
+// Цвет цветка (15.11, владелец: больше белых и розовых, меньше оранжевых и красных; свой цвет цветов в «Природе»):
+// fmode < 0 — как в наборе, но тёплые цветки (красные, оранжевые) чаще становятся белыми и розовыми, по случаю r;
+// 0…5 — один цвет: белый, розовый, красный, жёлтый, сиреневый, синий; ≥ 100 — как в картинке набора (пёстрые)
+vec3 f_hsv(vec3 c) {
+	vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+	vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+	vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+	float d = q.x - min(q.w, q.y);
+	return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + 1.0e-10)), d / (q.x + 1.0e-10), q.x);
+}
+
+vec3 f_swatch(int k) {
+	if (k == 0) return vec3(1.0, 1.0, 0.97);
+	if (k == 1) return vec3(0.93, 0.48, 0.68);
+	if (k == 2) return vec3(0.78, 0.09, 0.09);
+	if (k == 3) return vec3(1.0, 0.82, 0.16);
+	if (k == 4) return vec3(0.52, 0.27, 0.78);
+	return vec3(0.2, 0.38, 0.9);
+}
+
+vec3 flower_recolor(vec3 c, float fm, float r) {
+	if (fm >= 99.0) return c;
+	vec3 h = f_hsv(c);
+	float green = step(0.17, h.x) * step(h.x, 0.47);
+	float bloom = smoothstep(0.08, 0.22, h.y) * (1.0 - green) * smoothstep(0.1, 0.3, h.z);   // лепесток: цветной, не зелёный (стебли и листья — нет)
+	bool blue = h.x > 0.5 && h.x < 0.75;
+	bool pink = h.x > 0.88 && h.x < 0.97;
+	int k = int(fm + 0.5);
+	if (fm < 0.0) {
+		if (blue) return c;
+		if (pink) {
+			k = r < 0.45 ? 0 : 1;                        // розовые — наполовину белыми
+		} else {
+			k = r < 0.4 ? 0 : (r < 0.78 ? 1 : (r < 0.9 ? 3 : 5));       // красные и оранжевые: белые, розовые, чуть жёлтых и синих
+		}
+	}
+	vec3 t = f_swatch(k) * clamp(0.5 + 0.7 * h.z, k == 0 ? 0.95 : 0.62, 1.1);
+	return mix(c, t, bloom);
+}
+
 float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
 void fragment() {
@@ -44,7 +85,7 @@ void fragment() {
 	vec3 c;
 	if (flowers) {
 		t = texture(tex_arr, vec3(UV, floor(ic.b * 2.999)));
-		c = t.rgb;
+		c = flower_recolor(t.rgb, fmode, ic.r);
 		// стебли и листья цветов — в тон траве
 		float leaf = smoothstep(-0.02, 0.06, t.g - max(t.r, t.b));
 		vec3 g = mix(root_col, tip_col, vh * 0.8) * (lum(t.rgb) / 0.16);
