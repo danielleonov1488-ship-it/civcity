@@ -1091,7 +1091,7 @@ func _tick_active(play_now := false) -> void:
 			return
 		elif not a.has("homeless"):
 			a["homeless"] = int(s["h"])
-			city._quiet("История «%s» ждёт: дом семьи %s снесли. Когда семья заселится в новый дом, история продолжится." \
+			city._quiet("История «%s» ждёт: дом семьи %s снесли. Заселите семью — и история продолжится." \
 				% [StoryDefs.title_of(_story(a), a), StoryDefs.fam_gen(String(a.get("fam", "")))], "scroll")
 			hud.refresh()
 	if a.get("ready", false) or a.has("homeless"):
@@ -1132,7 +1132,7 @@ func _couple(a: Dictionary) -> void:
 		return
 	a["couple"] = nm
 	game.people._make_family(nm, 2, hid, city.door_point(h))
-	city._quiet("Юлия и Марк поселились в новом доме — теперь это семья %s. Свадьбу сыграют вечером: посмотрите шествие!" \
+	city._quiet("Юлия и Марк поселились в новом доме — теперь это семья %s. Вечером — свадьба!" \
 		% StoryDefs.fam_gen(nm), "ring")
 
 
@@ -5722,7 +5722,7 @@ func _smoke_hour(a: Dictionary, hours: int) -> void:
 		(S()["bonus"] as Array).append({"id": String(a.get("id", "")), "line": "Копоть после пожара", "pct": SOOT, "home": int(c[3]), "left": SOOT_H})
 	if n > 0:
 		fl["soot"] = n
-		city._quiet("Вёдра не поспели: огонь погас сам, но на %d %s копоть — их жителям сутки невесело (%d%%). Дома целы." \
+		city._quiet("Огонь погас сам, но %d %s в копоти: их жителям сутки невесело (%d%%). Дома целы." \
 			% [n, Hud._plural(n, "крыше", "крышах", "крышах"), SOOT], String(_story(a).get("icon", "scroll")))
 		city.compute()
 	_clicks_key = "-"

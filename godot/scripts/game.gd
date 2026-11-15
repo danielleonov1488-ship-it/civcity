@@ -506,7 +506,7 @@ func _ready() -> void:
 	elif not visiting.is_empty():
 		hud.visit_banner(visiting)            # «Вы в гостях у …»: «Нравится», «Домой»
 	elif mode == "demo" and shot_path == "" and not promo:
-		hud.notify("Готовый город: стройте сколько угодно — он не сохраняется", "info")
+		hud.notify("Готовый город: стройте сколько угодно — он не сохранится.", "info")
 	elif loaded and mode == "play" and shot_path == "" and not city.tips.has("v22_pace"):
 		city.tips["v22_pace"] = true
 		hud.advisor("В городе новые правила", hud.pace_note())
@@ -5500,7 +5500,7 @@ func _click() -> void:
 				return
 			if not b.is_empty():
 				if city.def(b).get("fixed", false):
-					hud.notify("Почтовая станция не сносится — с неё начинается город", "info")
+					hud.notify("Станцию снести нельзя.", "info")
 				else:
 					var h0 := city.happy_map() if _pops_for(b["type"]) else {}
 					city.remove(b)
@@ -5585,7 +5585,7 @@ func start_move(b: Dictionary) -> bool:
 	next_variant = int(moving["variant"])
 	tool_yaw = float(moving["yaw"])
 	if hud:
-		hud.notify("Перенос: поставьте постройку на новое место (правая кнопка — вернуть обратно)", "move")
+		hud.notify("Перенос. ПКМ — отмена.", "move")
 	return true
 
 
