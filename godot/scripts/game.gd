@@ -2588,6 +2588,7 @@ func _sandbox_apply() -> void:
 	city.rp = maxf(city.rp, 999999.0)
 	if city.legion:
 		city.legion.glory = maxf(city.legion.glory, 999999.0)
+		city.legion.flags["camp_open"] = true     # песочница: лагерь Легиона открыт сразу (призыв — когда в городе будут жители)
 
 
 func _process(dt: float) -> void:
