@@ -165,7 +165,7 @@ func _check() -> void:
 				spin += 1
 	nd.free()
 	ok("у мельницы крутятся крылья", spin >= 1, str(spin))
-	ok("мельница и в «Хозяйстве», и в «Природе»", game.hud._types_in("farming").has("windmill") and game.hud._types_in("decor", "nature").has("windmill"))
+	ok("мельница только в украшениях двора", not game.hud._types_in("farming").has("windmill") and game.hud._types_in("decor", "yard").has("windmill") and not bool(Defs.B["windmill"].get("research_list", true)))
 	# 4. кисть травы: маска, сохранение, старые сохранения без маски
 	var land: Land = game.land
 	var rc := land.gm_paint(Vector2(200, 200), 3.0, 2)

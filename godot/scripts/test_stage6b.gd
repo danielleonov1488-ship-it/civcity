@@ -262,11 +262,11 @@ func _new() -> void:
 	check(JSON.stringify(h3["families"]) == fam0 and int(h3["color"]) == col0, "семьи и цвет фасада — прежние")
 	check(absf(m0 - c.money - 1200.0) < 0.5, "списано 1200 ден.", m0 - c.money)
 	check(_raw(h3) == promise, "счастье после перестройки — как обещал прогноз (%d)" % promise, _raw(h3))
-	check(int(h3["pop"]) == 12 and c.house_cap(h3) == 9, "12 жильцов на 9 мест — тесновато, никто не выселен", [h3["pop"], c.house_cap(h3)])
+	check(int(h3["pop"]) == 12 and c.house_cap(h3) == 12 and c.house_free_floors(h3) == 0, "3 семьи занимают 3 этажа, никто не выселен", [h3["pop"], c.house_cap(h3)])
 	check(c.settled(id3, 2, "Новые") == 0, "в тесный дом новая семья не въезжает")
 	c.upgrades_done([id3], 1200)
 	var tl := String(c.events[-1]["text"])
-	check(tl.contains("тесновато") and not tl.contains("надстройте"), "тесный дом уже в 3 этажа — без совета надстроить: «%s»" % tl)
+	check(not tl.contains("тесновато") and not tl.contains("надстройте"), "3 семьи на 3 этажах — без предупреждения о тесноте: «%s»" % tl)
 	check(c.progress_of(["count", "house_artisan"]) == art0 + 1, "условие «дома ремесленников» считает перестроенный дом")
 	var occ_ok := true
 	for k in (h3["cells"] as PackedInt32Array):

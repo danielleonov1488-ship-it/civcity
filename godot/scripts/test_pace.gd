@@ -146,11 +146,13 @@ func fill(houses: Array, pop: int) -> void:
 		now += int(h["pop"])
 	var k := 0
 	for h in houses:
-		var n := mini(c.house_cap(h) - int(h["pop"]), pop - now)
-		if n > 0:
+		while c.house_free_floors(h) > 0 and now < pop:
+			var n := clampi(pop - now, 2, 4)
 			k += 1
-			c.settled(int(h["id"]), n, "Проба %d-%d" % [int(h["id"]), k])
-			now += n
+			var took := c.settled(int(h["id"]), n, "Проба %d-%d" % [int(h["id"]), k])
+			if took == 0:
+				break
+			now += took
 	c.compute()
 
 
@@ -305,7 +307,7 @@ func _checks_1a(houses: Array) -> void:
 	check(c.incoming == 1, "no room, nobody waiting: one family comes to look for a home (incoming %d)" % c.incoming)
 	var ld: Array = c.make_load(c.incoming)
 	check(ld.size() == 1 and bool(ld[0].get("seek", false)), "the cart load is one family «ищет жильё»: %s" % [ld])
-	ld[0]["n"] = 2                             # семья из двоих: в пустой дом на 4 места после неё войдёт ещё одна
+	ld[0]["n"] = 2                             # семья из двоих занимает целый этаж
 	c.family_arrived(ld[0])
 	check(c.arrivals.size() == 1 and c.incoming == 0, "it waits on the square")
 	check(c.arrive_wait().contains("ищет жильё"), "station text: «%s»" % c.arrive_wait())
@@ -317,18 +319,18 @@ func _checks_1a(houses: Array) -> void:
 	c.money = 3000.0
 	var nh := put("house_pleb", Vector2(165, 164), cands)
 	check(not nh.is_empty(), "new empty house")
-	check(c.free_fit() == 1, "one empty pleb house (4 places = 2 families) minus the waiting family: free_fit %d" % c.free_fit())
+	check(c.free_fit() == 0, "one floor reserved by the waiting family: free_fit %d" % c.free_fit())
 	c.arrive_t = 10.0
 	c.stats["happy"] = 65
 	c._tick_arrivals()
-	check(c.incoming == 1, "room for one more family: the cart brings one (incoming %d)" % c.incoming)
-	# повозка собирает семьи разом и держит место каждой: в 4 места после ждущей семьи из двоих — ровно одна из двоих
+	check(c.incoming == 0, "the waiting family reserves the only floor (incoming %d)" % c.incoming)
+	# Ждущая семья занимает единственный свободный этаж.
 	ld = c.make_load(2)
-	check(ld.size() == 1 and int(ld[0]["n"]) == 2 and not c.homes_for(ld[0]).is_empty(), "load with a family waiting: %s" % [ld])
+	check(ld.is_empty(), "no free floor with a family waiting: %s" % [ld])
 	c.arrivals = []
 	c.incoming = 0
-	check(c.free_fit() == 2, "empty house, nobody waiting: room for 2 families (free_fit %d)" % c.free_fit())
-	# первая семья из 3–4 человек — вторая уже не войдёт, и повозка везёт одну
+	check(c.free_fit() == 1, "empty one-floor house: room for 1 family (free_fit %d)" % c.free_fit())
+	# Любая семья занимает этаж целиком: каждый рейс везёт только одну.
 	var over_n := 0
 	var same := 0
 	var two := 0
@@ -343,7 +345,7 @@ func _checks_1a(houses: Array) -> void:
 			two += 1
 			if ld[0]["name"] == ld[1]["name"]:
 				same += 1
-	check(over_n == 0 and same == 0 and two > 0, "40 loads for 4 places: all fit (%d over the room, %d same names, %d of 2 families)" % [over_n, same, two])
+	check(over_n == 0 and same == 0 and two == 0, "40 loads for 4 places: all fit (%d over the room, %d same names, %d of 2 families)" % [over_n, same, two])
 	c.stats["happy"] = 72
 	var m72: float = c.arrive_mult()[0]
 	c.stats["happy"] = 85
@@ -934,9 +936,6 @@ func _bot_step() -> void:
 	for w in walks.duplicate():
 		if t >= float(w[0]):
 			walks.erase(w)
-			var b: Dictionary = c.buildings.get(w[1], {})
-			if not b.is_empty():
-				b["coming"] = maxi(0, int(b.get("coming", 0)) - int(w[2]))
 			c.settled(int(w[1]), int(w[2]), String(w[3]))
 	_settle()
 	rk["max_wait"] = maxi(int(rk["max_wait"]), c.arrivals.size())

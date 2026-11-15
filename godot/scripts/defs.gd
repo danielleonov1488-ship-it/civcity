@@ -88,9 +88,9 @@ const PLOT_GROW := 1.3
 const CLASSES := {
 	"plebs": {"name": "Плебеи", "one": "Плебеи", "icon": "person", "house": "house_pleb", "tax": 1.2, "per_floor": 4, "work": 0.5,
 		"needs": ["food"], "base": 44, "deco_max": 12},
-	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 2.2, "per_floor": 3, "work": 0.5,
+	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 2.2, "per_floor": 4, "work": 0.5,
 		"needs": ["food", "clothes", "fun"], "base": 41, "deco_max": 14},
-	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 4.5, "per_floor": 3, "work": 0.35,
+	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 4.5, "per_floor": 4, "work": 0.35,
 		"needs": ["food", "clothes", "fun", "services", "goods"], "base": 38, "deco_max": 16},
 }
 const CLASS_ORDER := ["plebs", "artisans", "patricians"]
@@ -100,7 +100,7 @@ const ARRIVAL_MAX := [2, 2, 2, 2, 3, 3, 3, 3]   # сколько семей мо
 ## семей в повозке — не больше (по уровню города): с Городка повозка больше — иначе большой город не растёт
 ## быстрее одного рейса туда-обратно (бот темпа, test_pace)
 const FAMILIES_PER_CART := [2, 2, 2, 2, 3, 3, 3, 3]
-const FAMILY_SIZE := {"plebs": [2, 4], "artisans": [2, 3], "patricians": [1, 3]}
+const FAMILY_SIZE := {"plebs": [2, 4], "artisans": [2, 4], "patricians": [2, 4]}
 
 ## Виды потребностей (как вкладки коммерции в Town to City)
 const NEEDS := {
@@ -543,8 +543,8 @@ const B := {
 	"manger": {"kind": "decor", "cat": "decor", "sub": "yard", "name": "Ясли с сеном", "cost": 20, "deco": 2, "unlock": "deco_farmyard", "menu": false, "desc": "Деревянные ясли с сеном, мешки с овсом."},
 	"manger_2": {"kind": "decor", "cat": "decor", "sub": "yard", "base": "manger", "look": 1, "name": "Плуг и мешки", "cost": 20, "deco": 2, "unlock": "deco_farmyard", "menu": false, "desc": "Плуг, серп и мешки с зерном у копны."},
 	# 13.11: мельница из набора Meadow Forest (для красоты в полях; scripts/cat_meadow.gd)
-	"windmill": {"kind": "decor", "menu": false, "cat": "decor", "sub": "yard", "also": "farming", "name": "Ветряная мельница", "cost": 160, "deco": 5, "unlock": "farm", "desc": "Деревянная мельница на сваях: крылья неспешно крутятся на ветру, у подножия мешки с мукой."},
-	"windmill_2": {"kind": "decor", "menu": false, "cat": "decor", "sub": "yard", "also": "farming", "base": "windmill", "look": 1, "name": "Мельница с парусами", "cost": 170, "deco": 5, "unlock": "farm", "desc": "Мельница с крыльями-парусами из холста, у подножия мешки и камни."},
+	"windmill": {"kind": "decor", "menu": false, "cat": "decor", "sub": "yard", "research_list": false, "name": "Ветряная мельница", "cost": 160, "deco": 5, "unlock": "farm", "desc": "Деревянная мельница на сваях: крылья неспешно крутятся на ветру, у подножия мешки с мукой."},
+	"windmill_2": {"kind": "decor", "menu": false, "cat": "decor", "sub": "yard", "research_list": false, "base": "windmill", "look": 1, "name": "Мельница с парусами", "cost": 170, "deco": 5, "unlock": "farm", "desc": "Мельница с крыльями-парусами из холста, у подножия мешки и камни."},
 	# «Природа» (15.11, cat_nature.gd): каждый щелчок — случайная модель из всех наборов; variants — сколько моделей (CatNature.count_of)
 	"nat_tree": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "tree", "variants": 17, "name": "Дерево", "cost": 10, "deco": 3, "unlock": "deco_trees", "desc": "Дерево на выбор из всех наборов: берёза, луговое, фруктовое, олива, кипарис. Каждый щелчок — другое."},
 	"nat_bush": {"kind": "decor", "menu": false, "cat": "decor", "sub": "nature", "nat": "bush", "variants": 18, "name": "Куст", "cost": 5, "deco": 2, "unlock": "deco_trees", "desc": "Куст или садовое растение на выбор. Каждый щелчок — другой."},
@@ -644,7 +644,7 @@ const DECOR_TAB := {"wall_flowers": "wall", "wall_flowers_2": "wall", "wall_flow
 	"wall_lamp": "wall", "wall_lamp_2": "wall", "wall_banner": "wall", "wall_banner_2": "wall", "wall_banner_3": "wall", "balcony": "wall",
 	"well": "water", "well_2": "water", "well_3": "water", "smallfountain": "water", "smallfountain_2": "water", "smallfountain_3": "water",
 	"nymphfountain": "water", "amphorae": "market", "amphorae_2": "market", "amphorae_3": "market", "goods": "market", "goods_2": "market",
-	"goods_3": "market", "cart": "market", "cart_2": "market", "windmill": "nature", "windmill_2": "nature"}
+	"goods_3": "market", "cart": "market", "cart_2": "market"}
 ## Новая игра (решение владельца Q17): часть прежних обликов открывается позже — в наборах этапа 5. Живые города
 ## (City.decor_v = 0) открывают их, как раньше. Просьбы, истории и заказы просят виды, у которых облик остаётся раньше
 ## (проверка — test_fixes: «всё, что просят, открыто к тому уровню, где просят»)
