@@ -2827,15 +2827,56 @@ func resident_pick() -> Dictionary:
 
 ## Взять жителя в лагерь: {name, job (вид постройки или "" — был безработным), cls, fam, m} или {}. В доме меньше на одного
 ## (запись члена семьи уходит из семьи), People убирает его с улиц (resident_taken); новые семьи заселятся как обычно
-func take_resident() -> Dictionary:
-	var pk := resident_pick()
+## Взрослые жители: постоянный ключ — дом, семья и зерно облика.
+func resident_choices() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var fallback := resident_pick()
+	var ids: Array = buildings.keys()
+	ids.sort()
+	for id in ids:
+		var b: Dictionary = buildings[id]
+		if not is_house(b):
+			continue
+		var cls := String(def(b)["cls"])
+		for f: Dictionary in b.get("families", []):
+			var fname := String(f["name"])
+			var ms := Residents.fit(f, hash([fname, int(id)]), cls)
+			for m: Dictionary in ms:
+				if int(m.get("age", 0)) < 1:
+					continue
+				var job := ""
+				var workplace: Dictionary = buildings.get(int(m.get("job", -1)), {})
+				if not workplace.is_empty():
+					var d := def(workplace)
+					if food_short() and (String(d.get("kind", "")) == "farm" or String(d.get("sub", "")) == "food"):
+						continue
+					job = String(workplace["type"])
+				elif int((stats.get("free", {}) as Dictionary).get(cls, 0)) <= 0:
+					if String(fallback.get("cls", "")) != cls:
+						continue
+					job = String(fallback.get("job", ""))
+				out.append({"home": int(id), "fam": fname, "sd": int(m["sd"]), "cls": cls, "job": job,
+					"name": Residents.full_name(m, fname), "age": int(m["age"]), "sx": int(m["sx"]),
+					"key": "%d/%s/%d" % [int(id), fname, int(m["sd"])]})
+	return out
+
+
+func _resident_choice(pick: Dictionary) -> Dictionary:
+	for candidate: Dictionary in resident_choices():
+		if String(candidate["key"]) == String(pick.get("key", "")):
+			return candidate
+	return {}
+
+
+func take_resident(pick: Dictionary = {}) -> Dictionary:
+	var pk := resident_pick() if pick.is_empty() else _resident_choice(pick)
 	if pk.is_empty():
 		return {}
 	var b: Dictionary = buildings[int(pk["home"])]
 	var fams: Array = b["families"]
 	var fam: Dictionary = {}
 	for f: Dictionary in fams:
-		if int(f.get("n", 0)) > 0 and (fam.is_empty() or int(f["n"]) > int(fam["n"])):
+		if int(f.get("n", 0)) > 0 and (String(f["name"]) == String(pk["fam"]) if pk.has("fam") else (fam.is_empty() or int(f["n"]) > int(fam["n"]))):
 			fam = f
 	if fam.is_empty():
 		return {}
@@ -2853,6 +2894,14 @@ func take_resident() -> Dictionary:
 				break
 	if idx < 0:
 		return {}
+	if pk.has("sd"):
+		idx = -1
+		for i in ms.size():
+			if int(ms[i].get("sd", -1)) == int(pk["sd"]):
+				idx = i
+				break
+		if idx < 0:
+			return {}
 	var m: Dictionary = ms[idx]
 	ms.remove_at(idx)
 	fam["n"] = int(fam["n"]) - 1

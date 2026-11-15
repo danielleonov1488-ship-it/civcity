@@ -55,6 +55,7 @@ func _run() -> void:
 	var city: City = game.city
 	city.cozy_v = 1
 	city.legion_v = 3
+	city.hero = {}  # В этом старом тесте проверяются обычные рекруты.
 	city.money = 1000000
 	for i in 15:
 		var h := city.place("house_pleb", Land.START + Vector2(8.0 * (i % 8), 8.0 * (i / 8)), 0.0, 0, 0, true)
@@ -92,7 +93,10 @@ func _run() -> void:
 	camp.show_building("barracks")
 	if not await shot("2_barracks_card"):
 		return
-	camp.recruit()
+	camp.open_recruit_picker()
+	if not check(legion.soldiers.size() == 4 and is_instance_valid(camp.modal), "picker does not recruit yet"):
+		return
+	camp._recruit_pick(legion.recruit_candidates()[0])
 	if not check(legion.soldiers.size() == 5 and is_instance_valid(camp.modal), "recruit result"):
 		return
 	if not await shot("3_recruit"):
