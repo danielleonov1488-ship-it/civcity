@@ -781,6 +781,9 @@ func _set_hour(h: float) -> void:
 	var sun_c := noon.lerp(golden, gold)
 	sun.light_color = night_c.lerp(sun_c, day)
 	sun.light_energy = lerpf(1.5, lerpf(2.6, 2.9, gold), day)
+	# 16.11 (владелец: «ночью тени сломаны»): тени луны мягкие и полупрозрачные — без чёрных полос через площадь;
+	# в сумерках луна сменяет солнце, и резкие тени не мечутся по фасадам
+	sun.shadow_opacity = lerpf(0.45, 1.0, smoothstep(0.1, 0.6, day))
 	# 15.11: цветокоррекция кадра больше не «медовая» (владелец: зелень свежая, небо чисто-синее): небо — синее до горизонта,
 	# золото только на закате и рассвете
 	sky_mat.sky_top_color = Color("2e2a5c").lerp(Color("3d7fd8").lerp(Color("8f8fc8"), gold * 0.5), day)

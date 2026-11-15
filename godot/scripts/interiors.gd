@@ -88,7 +88,8 @@ static func tex_material(img: String, lit: bool) -> ShaderMaterial:
 		return _tex_mats[key]
 	if _shader == null:
 		_shader = Shader.new()
-		_shader.code = "shader_type spatial;\nrender_mode unshaded, cull_back;\n// Комната с картинкой на задней стене (interiors.gd): задняя стена (нормаль смотрит к проёму, +Z) — картинка\n// IMG_M x IMG_M м, пол у нижнего края, по ширине — от середины, дальше зеркально; выше IMG_M — повтор (этажи).\n// Остальные грани — тёплый цвет из вершин, как у простых комнат. Светится сама; яркость — tint (Interiors.set_light)\nuniform sampler2D img : source_color, filter_linear_mipmap, repeat_disable;\nuniform vec4 tint : source_color = vec4(1.0);\nvarying float back;\nvarying vec2 wuv;\nvec3 lin(vec3 c) {\n\treturn mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, step(c, vec3(0.04045)));\n}\nvoid vertex() {\n\tback = step(0.5, NORMAL.z);\n\tfloat sx = length(MODEL_MATRIX[0].xyz);\n\tfloat sy = length(MODEL_MATRIX[1].xyz);\n\twuv = vec2(VERTEX.x * sx / 3.0, (VERTEX.y + 0.5) * sy / 3.0);\n}\nvoid fragment() {\n\tvec3 c = lin(COLOR.rgb);\n\tfloat t = mod(wuv.x + 0.5, 2.0);\n\tvec2 uv = vec2(t <= 1.0 ? t : 2.0 - t, 1.0 - fract(wuv.y));\n\tvec3 pic = texture(img, uv).rgb * lin(vec3(COLOR.r / 0.80));\n\tALBEDO = mix(c, pic, back) * tint.rgb;\n}\n"
+		_shader.code = "shader_type spatial;\nrender_mode unshaded, cull_back;\n// Комната с картинкой на стенах (interiors.gd; 16.11 — на всех четырёх, проём бывает с любой стороны коробки) — картинка\n// IMG_M x IMG_M м, пол у нижнего края, по ширине — от середины, дальше зеркально; выше IMG_M — зеркальный повтор (этажи, без шва).\n// Остальные грани — тёплый цвет из вершин, как у простых комнат. Светится сама; яркость — tint (Interiors.set_light)\nuniform sampler2D img : source_color, filter_linear_mipmap, repeat_disable;\nuniform vec4 tint : source_color = vec4(1.0);\nvarying float back;\nvarying vec2 wuv;\nvec3 lin(vec3 c) {\n\treturn mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, step(c, vec3(0.04045)));\n}\nvoid vertex() {\n\tback = 1.0 - step(0.5, abs(NORMAL.y));\n\tfloat sx = length(MODEL_MATRIX[0].xyz);\n\tfloat sy = length(MODEL_MATRIX[1].xyz);\n\tfloat sz = length(MODEL_MATRIX[2].xyz);\n\tfloat along = abs(NORMAL.z) > 0.5 ? VERTEX.x * sx : VERTEX.z * sz;\n\twuv = vec2(along / 3.0, (VERTEX.y + 0.5) * sy / 3.0);\n}\nvoid fragment() {\n\tvec3 c = lin(COLOR.rgb);\n\tfloat t = mod(wuv.x + 0.5, 2.0);\n\tfloat tv = mod(wuv.y, 2.0);
+	vec2 uv = vec2(t <= 1.0 ? t : 2.0 - t, 1.0 - (tv <= 1.0 ? tv : 2.0 - tv));\n\tvec3 pic = texture(img, uv).rgb * lin(vec3(COLOR.r / 0.80));\n\tALBEDO = mix(c, pic, back) * tint.rgb;\n}\n"
 	var m := ShaderMaterial.new()
 	m.shader = _shader
 	m.set_shader_parameter("img", load("res://assets/rooms/%s.jpg" % img))
@@ -99,8 +100,10 @@ static func tex_material(img: String, lit: bool) -> ShaderMaterial:
 
 ## Яркость комнат: lamp — 0 днём, 1 ночью (как у окон «#lit» в Game._sky); deep — глубокая ночь
 static func set_light(lamp: float, deep: bool) -> void:
-	_tint[0] = Color(1, 1, 1).lerp(Color(0.17, 0.13, 0.095), lamp)    # 15.11: ночью приглушённо, не чёрная дыра
-	_tint[1] = Color(1, 1, 1).lerp(Color(0.2, 0.135, 0.075) if deep else Color(0.34, 0.23, 0.12), lamp)
+	# 16.11 (владелец: «ночью здания чёрные»): ночью комнаты за проёмами — тёплый свет лампы внутри, как в Town to City,
+	# а не тёмная дыра; к глубокой ночи (после 23) свет мягче, но не гаснет
+	_tint[0] = Color(1, 1, 1).lerp(Color(0.36, 0.27, 0.19) if deep else Color(0.5, 0.37, 0.25), lamp)
+	_tint[1] = Color(1, 1, 1).lerp(Color(0.62, 0.43, 0.25) if deep else Color(0.95, 0.68, 0.4), lamp)
 	material(false).albedo_color = _tint[0]
 	material(true).albedo_color = _tint[1]
 	for key: String in _tex_mats:
