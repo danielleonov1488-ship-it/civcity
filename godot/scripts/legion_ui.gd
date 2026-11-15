@@ -98,6 +98,7 @@ var toast: PanelContainer
 var _live := []                            # что обновлять каждые 0,2 с: таймеры улучшений, заряды атак
 var _live_t := 0.0
 var _dirty := false
+var camp_window := ""                      # окно поверх лагеря, без старых вкладок
 var _city_t := 0.0
 var _tex := {}
 var _glow_tex: Texture2D
@@ -191,6 +192,9 @@ func _update_button() -> void:
 		hud._grey(btn.get_node("ic"), not on)
 	if on:
 		hud._set_on(btn, not bool(lg.flags.get("seen", false)) or visible)
+		if lg.v3():
+			btn.tooltip_text = "Лагерь"
+			return
 		# обучение, шаг 1: один раз советник рассказывает, с чего начать (стрелка — на Казармы). Только когда окно
 		# исследований закрыто и советник свободен: Esc, правая кнопка и щелчок по карте закрывают окно вместе
 		# с советником — совет погас бы, не показавшись (окно закрыли — hud зовёт эту проверку через кадр)
@@ -248,6 +252,9 @@ func _d10_tips() -> void:
 
 
 func toggle() -> void:
+	if lg != null and lg.v3():
+		CampUI.attach(hud).toggle()
+		return
 	if visible:
 		close()
 	else:
@@ -257,13 +264,19 @@ func toggle() -> void:
 func open(tab_id := "") -> void:
 	if lg == null:
 		return
+	if lg.v3() and tab_id == "":
+		CampUI.attach(hud).open()
+		return
 	if not lg.window_open():
 		hud.notify(lg.lock_text(), "lock")         # серый медальон: только строка почему (пустого окна нет)
 		return
 	hud._close_windows()
 	hud._close_tray()
 	hud._hide_info()
+	camp_window = ""
+	win.show()
 	visible = true
+	move_to_front()
 	lg.flags["seen"] = true
 	if tab_id == "" and lg.tut_step() == "fight":
 		tab_id = "campaign"                  # обучение: первый бой — на карте похода
@@ -284,6 +297,8 @@ func open(tab_id := "") -> void:
 
 func close() -> void:
 	visible = false
+	camp_window = ""
+	win.show()
 	_close_overlay()
 	_update_button()
 	hud._update_pointer()
@@ -293,6 +308,8 @@ func _on_city() -> void:
 	_update_button()
 	if visible:
 		_update_header()
+		if camp_window in ["forge", "mars"]:
+			_dirty = true
 		_city_t = 0.6                       # денарии поменялись — проверим чуть позже, хватает ли теперь на что-то
 
 
@@ -326,6 +343,17 @@ var _last_sig := ""
 
 func _process(dt: float) -> void:
 	if not visible:
+		return
+	if camp_window != "":
+		if overlay == null or not is_instance_valid(overlay):
+			close()
+			return
+		_live_t -= dt
+		if _live_t <= 0.0:
+			_live_t = 0.5
+			_tick_live()
+		if _dirty and camp_window in ["mars", "forge", "store"] and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			open_camp_window(camp_window)
 		return
 	if _city_t > 0.0:
 		_city_t -= dt
@@ -362,6 +390,9 @@ func _tick_live() -> void:
 		if l == null or not is_instance_valid(l):
 			continue
 		match String(e["kind"]):
+			"forge":
+				if not lg.forging.is_empty():
+					l.text = "Куётся: %s · %d ур. — ещё %s" % [Gear.name_of(lg.forging), int(lg.forging["ilvl"]), Legion.fmt_duration(lg.forge_left())]
 			"upg":
 				var t: String = e["type"]
 				if lg.upg.has(t):
@@ -632,12 +663,19 @@ func _rebuild() -> void:
 	_upg_btn = null
 	# «Воины» (Легион 2.0, этап 1) — только в новой игре «Уютного Рима»; вкладки чуть уже, чтобы уместились пять
 	var army := lg.army_on()
+	if not lg.v3():
+		for k in tabs:
+			(tabs[k] as Button).show()
 	if tabs.has("soldiers"):
 		(tabs["soldiers"] as Button).visible = army
 		if tabs.has("events"):
 			(tabs["events"] as Button).visible = army       # события недели — тоже Легион 2.0
 		for k in tabs:
 			(tabs[k] as Button).custom_minimum_size.x = 200.0 if army else 214.0
+	if lg.v3():
+		for k in tabs:
+			(tabs[k] as Button).visible = k == "campaign"
+		tab = "campaign"
 	if (tab == "soldiers" or tab == "events") and not army:
 		tab = "campaign"
 	var body: Control
@@ -677,7 +715,7 @@ const TUT_TEXT := {
 
 ## Идёт обучение Легиону (только в настоящей игре: не в меню и не в показе)
 func tut_active() -> bool:
-	return lg != null and game != null and game.mode in ["play", "new"] and lg.tut_step() != ""
+	return lg != null and game != null and game.mode in ["play", "new"] and lg.tut_step() != "" and not lg.v3()
 
 
 ## Полоса обучения в окне: «Шаг 3 из 4 · …» и «Пропустить обучение»
@@ -2026,11 +2064,55 @@ func _modal(w: float) -> PanelContainer:
 	return p
 
 
+## Те же Кузница, Склад и сундук поверх рисованного лагеря.
+func open_camp_window(kind: String, sid := 0) -> void:
+	if not lg.v3() or not lg.window_open():
+		return
+	if kind in ["forge", "store", "mars"] and not lg.camp_built(kind):
+		return
+	camp_window = kind
+	_dirty = false
+	_live.clear()
+	visible = true
+	win.hide()
+	move_to_front()
+	match kind:
+		"forge":
+			_forge_win()
+		"store":
+			_store()
+		"daily":
+			_daily_win()
+		"mars":
+			var p := _modal(640)
+			var v: VBoxContainer = p.get_child(0)
+			var sc := ScrollContainer.new()
+			sc.custom_minimum_size = Vector2(600, 240)
+			sc.add_child(_perks_panel())
+			v.add_child(sc)
+			v.add_child(_btn("Закрыть", 160, 16, null, "", _close_overlay))
+			_center_later(p)
+		"soldier":
+			var s := lg.soldier(sid)
+			if s.is_empty():
+				close()
+				return
+			var p := _modal(680)
+			var v: VBoxContainer = p.get_child(0)
+			v.add_child(_soldier_card(s))
+			v.add_child(_btn("Закрыть", 160, 16, null, "", _close_overlay))
+			_center_later(p)
+		_:
+			close()
+
+
 func _center_later(p: Control) -> void:
 	await get_tree().process_frame
 	if is_instance_valid(p):
 		p.reset_size()
-		p.position = ((size - p.size) / 2.0).floor()
+		var k := minf(1.0, minf((size.x - 24) / maxf(1, p.size.x), (size.y - 24) / maxf(1, p.size.y))) if camp_window != "" else 1.0
+		p.scale = Vector2.ONE * k
+		p.position = ((size - p.size * k) / 2.0).floor()
 
 
 func _close_overlay() -> void:
@@ -2292,14 +2374,14 @@ func _soldier_card(s: Dictionary) -> Control:
 		_live.append({"kind": "soldier", "sid": int(s["id"]), "label": stl, "bar": bar})
 	var gh := HBoxContainer.new()
 	gh.add_theme_constant_override("separation", 4)
-	for slot: String in Gear.SLOTS:
+	for slot: String in (Gear.SLOTS_V3 if lg.v3() else Gear.SLOTS):
 		gh.add_child(_gear_slot(s, slot))
 	v.add_child(gh)
 	for ln in Gear.set_lines(Gear.set_bonus(lg.worn(s))["sets"]):
 		v.add_child(_wl(String(ln), 300, 12, C_GOLD, true))
 	var tls := Soldiers.talents_of(s)
 	var tfree := Soldiers.talent_free(s)
-	if not tls.is_empty() or tfree > 0:
+	if lg.talents_open() and (not tls.is_empty() or tfree > 0):
 		var tn := []
 		for T: Dictionary in tls:
 			tn.append(String(T["name"]))
@@ -2312,7 +2394,7 @@ func _soldier_card(s: Dictionary) -> Control:
 	bv.add_theme_constant_override("separation", 4)
 	bv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var id := str(int(s["id"]))
-	if st == "ready" and r < Soldiers.rank_max(s):
+	if not lg.v3() and st == "ready" and r < Soldiers.rank_max(s):
 		var why := lg.can_train(int(s["id"]))
 		var tb := _btn("Тренировать · %s" % hud.fmt(float(Soldiers.train_cost(r))), 0, 13, hud.ico("coins", 64), why, func(): _do("train", id))
 		tb.tooltip_text = (why + "\n" if why != "" else "") + "Ранг «%s» за %s" % [Soldiers.rank_name(r + 1), Legion.fmt_duration(Soldiers.train_h(r) * 3600.0)]
@@ -2323,7 +2405,9 @@ func _soldier_card(s: Dictionary) -> Control:
 		if db.text != "Точно отпустить?":
 			db.text = "Точно отпустить?"
 		else:
-			lg.dismiss(int(id)))
+			lg.dismiss(int(id))
+			if camp_window != "":
+				_close_overlay())
 	bv.add_child(db)
 	h.add_child(bv)
 	return p
@@ -2438,7 +2522,7 @@ func _gear_pick(sid: int, slot: String) -> void:
 		v.add_child(_hdiv(10))
 	var list := []
 	for it: Dictionary in lg.items:
-		if String(it["slot"]) == slot and int(it.get("on", 0)) != sid and Gear.fits(it, String(s["cls"])):
+		if String(it["slot"]) == slot and int(it.get("on", 0)) != sid and lg.can_equip(sid, int(it["id"])) == "":
 			list.append(it)
 	list.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return Gear.score(a) > Gear.score(b))
 	if list.is_empty():
@@ -2597,13 +2681,15 @@ func _forge_win() -> void:
 		fh.add_theme_constant_override("separation", 8)
 		fh.add_child(_item_ic(lg.forging, 40))
 		var fl := _l("Куётся: %s · %d ур. — ещё %s" % [Gear.name_of(lg.forging), int(lg.forging["ilvl"]), Legion.fmt_duration(lg.forge_left())], 15, true, Gear.color(int(lg.forging["rarity"])))
+		if camp_window == "forge":
+			_live.append({"kind": "forge", "label": fl})
 		fh.add_child(fl)
 		v.add_child(fh)
 	v.add_child(_hdiv(8))
 	# что ковать: слот и (для оружия и щита) класс
 	var srow := HBoxContainer.new()
 	srow.add_theme_constant_override("separation", 6)
-	for slot: String in Gear.SLOTS:
+	for slot: String in (Gear.SLOTS_V3 if lg.v3() else Gear.SLOTS):
 		var sl := slot
 		var b := _btn(String(Gear.SLOT_NAME[slot]).capitalize(), 0, 14, null, "", func(): _f_slot = sl; _forge_win())
 		if slot == _f_slot:
@@ -2613,7 +2699,7 @@ func _forge_win() -> void:
 	if _f_slot in ["weapon", "offhand"]:
 		var crow := HBoxContainer.new()
 		crow.add_theme_constant_override("separation", 6)
-		for cls: String in Soldiers.CLASS_IDS:
+		for cls: String in (Soldiers.V3_CLASS_IDS if lg.v3() else Soldiers.CLASS_IDS):
 			var cl := cls
 			var cb := _btn(Soldiers.class_name_of(cls), 0, 14, null, "" if lg.class_open(cls) else "Класс ещё не открыт", func(): _f_cls = cl; _forge_win())
 			if cls == _f_cls:
@@ -2640,7 +2726,7 @@ func _forge_win() -> void:
 		var why := lg.can_forge(_f_slot, _f_cls, r)
 		h.add_child(_btn("Ковать", 0, 14, null, why, func(): lg.forge(_f_slot, _f_cls, rr); _forge_win()))
 		v.add_child(h)
-	if lg.army_on():
+	if lg.army_on() and (not lg.v3() or lg.forge_lvl() >= 5):
 		_forge_sets(v)
 	v.add_child(_btn("Закрыть", 160, 16, null, "", func(): _close_overlay()))
 	_center_later(p)
@@ -2998,12 +3084,18 @@ func _perks_panel() -> Control:
 	hh.add_theme_constant_override("separation", 10)
 	hh.add_child(_title("Умения в бою", 21))
 	var hint := _l("кнопки внизу экрана боя: жмите, когда готовы. Открываются победами над боссами, сильнее — за Славу", 14, true, C_SOFT)
+	if lg.v3():
+		hud._wrap(hint, 340)
 	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hh.add_child(hint)
 	v.add_child(hh)
-	var row := HBoxContainer.new()
+	var row: Container = GridContainer.new() if lg.v3() else HBoxContainer.new()
+	if row is GridContainer:
+		(row as GridContainer).columns = 2
+		row.add_theme_constant_override("h_separation", 12)
+		row.add_theme_constant_override("v_separation", 12)
 	row.add_theme_constant_override("separation", 8)
-	if Legion.V2:
+	if Legion.V2 and not lg.v3():
 		hh.add_child(_mars_btn())
 	for id: String in Legion.perk_ids():
 		var P: Dictionary = Legion.PERKS[id]

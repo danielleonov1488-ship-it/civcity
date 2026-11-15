@@ -4120,7 +4120,7 @@ func recruit_resident() -> Dictionary:
 	flags["camp_open"] = true                   # лагерь раз открылся — открыт, даже если жителей станет меньше 50
 	var m: Dictionary = r["m"]
 	var q := recruit_quality()
-	var s := _add_soldier({"name": String(r["name"]), "from": "%s, был %s" % [String(r["name"]), _was_text(String(r["job"]), int(m.get("sx", 0)) == 1)],
+	var s := _add_soldier({"name": String(r["name"]), "from": "%s, %s %s" % [String(r["name"]), "была" if int(m.get("sx", 0)) == 1 else "был", _was_text(String(r["job"]), int(m.get("sx", 0)) == 1)],
 		"cls": "legionary", "stars": Soldiers.roll_stars(_rng, q)})
 	s["res"] = {"fam": String(r["fam"]), "cls": String(r["cls"]), "m": m}
 	_v3_reclass(s)

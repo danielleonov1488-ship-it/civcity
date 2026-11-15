@@ -223,6 +223,7 @@ func _ready() -> void:
 	_pointer()
 	_hover_tip_panel()
 	LegionUi.attach(self)                      # окно «Легион» и его медальон сверху справа (scripts/legion_ui.gd)
+	CampUI.attach(self)                        # отдельный лагерь новой игры
 	_hero_button()                             # медальон «Герой» (Д11): лицо своего героя, щелчок — к нему
 	if game != null and game.city != null:
 		game.city.rp_reward.connect(_fly_rp)      # просьба дала очки — «+25» летит к счётчику свитков (без звука и всплывашки)
@@ -749,6 +750,9 @@ func fmt(v: float) -> String:
 
 
 func mouse_over_ui() -> bool:
+	var camp_ui := CampUI.of(self)
+	if camp_ui != null and camp_ui.visible:
+		return true
 	if menu_root and menu_root.visible:
 		return true
 	var h := root.get_viewport().gui_get_hovered_control()
@@ -962,6 +966,9 @@ func open_city_name() -> void:
 
 ## Никаких окон на экране (для советов «к слову»: про название города)
 func _screen_free() -> bool:
+	var camp_ui := CampUI.of(self)
+	if camp_ui != null and camp_ui.visible:
+		return false
 	for x in [info_panel, events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel, tray, journal_panel]:
 		if x and x.visible:
 			return false
@@ -1740,6 +1747,7 @@ func _toggle(p: Control) -> void:
 
 
 func _close_windows() -> void:
+	CampUI.close_for(self)
 	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel, journal_panel]:
 		if x:
 			x.visible = false
@@ -5464,6 +5472,8 @@ func _defc(name: String, dflt: Variant) -> Variant:
 
 ## Закрыть окна; true — было что закрывать
 func close_panels() -> bool:
+	if CampUI.close_for(self):
+		return true
 	if CityName.close(self):
 		return true                              # окно «Название города» — поверх всего: закрывается первым, одно
 	var any := info_panel.visible or advisor_panel.visible or buy_panel.visible
