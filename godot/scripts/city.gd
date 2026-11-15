@@ -54,6 +54,8 @@ var settled_total := 0                # сколько семей заселен
 var moving_id := -1                   # постройку переносят — жильцы не уходят из неё
 var tips := {}                        # какие советы и шаги обучения уже показаны
 signal rehomed(old, new)              # перенесённый дом получил новый номер
+signal resident_taken(home, name, m)  # Легион 3.0: житель (запись члена семьи m) ушёл в лагерь — People убирает его с улиц
+signal resident_returned(f)           # Легион 3.0: бывший воин вернулся и ждёт жилья на площади (семья f из одного человека)
 var waiting: int:
 	get:
 		return arrivals.size()
@@ -77,6 +79,12 @@ var econ := 0
 ## «Уютный Рим» (docs/PLAN_COZY.md, этап 1): 0 — прежние правила, 1 — новая игра после переработки: ранги за качество
 ## и меньше жителей (Balance.LEVELS), повозка в большом городе реже, «Большой город» отнимает счастье (Balance)
 var cozy_v := 0
+## Легион 3.0 (docs/LEGION_V3.md): 0 — прежний Легион, 3 — новая игра: лагерь отдельным экраном, воины из жителей
+var legion_v := 0:
+	set(v):
+		legion_v = v
+		if legion != null:
+			legion.sync_v2()
 var cal_fest_id := ""                 # идёт праздник календаря (Renown.CAL_FESTS; "" — нет или игры устроил игрок)
 var cal_fest_day := -1                # в какой день праздник календаря уже начинался
 var renown := 0.0                     # известность города (Renown; новая игра): растёт без конца, за неё — титулы
@@ -207,6 +215,8 @@ func _apron_refresh(b: Dictionary) -> void:
 
 
 func unlocked(type: String) -> bool:
+	if legion_v >= 3 and cozy_v >= 1 and type in Legion.V3_HIDDEN:
+		return false                              # Легион 3.0: военные здания — в лагере, на карте города их нет
 	if gift_ready(type):
 		return true                               # подарок друга — ставится, даже если ещё не открыто
 	if Defs.STORY_OPENS.has(type) and research.has(String(Defs.STORY_OPENS[type])):
@@ -2752,6 +2762,135 @@ func settled(id: int, n: int, name := "") -> int:
 	return n
 
 
+# ---------- Легион 3.0: воины из жителей ----------
+
+## Не хватает еды: хоть в одном доме нет лавки с едой
+func food_short() -> bool:
+	for id in buildings:
+		var b: Dictionary = buildings[id]
+		if is_house(b) and int(b["pop"]) > 0 and "food" in (b.get("missing", []) as Array):
+			return true
+	return false
+
+
+## Кого возьмёт лагерь: {cls, job, home} или {}. Сначала безработные (stats.free), иначе — из профессии, где больше всего
+## работников (не из полей, пекарен и лавок с едой, пока еды не хватает). Дом — самый людный этого класса
+func resident_pick() -> Dictionary:
+	var cls := ""
+	var job := ""
+	var best := 0
+	for c in Defs.CLASS_ORDER:
+		var sp := int((stats.get("free", {}) as Dictionary).get(c, 0))
+		if sp > best:
+			best = sp
+			cls = c
+	if cls == "":
+		var short := food_short()
+		var cnt := {}
+		var cl_of := {}
+		for id in buildings:
+			var b: Dictionary = buildings[id]
+			var d := def(b)
+			if not d.has("jobs") or is_house(b) or b.get("over", false) or not b.get("road", true):
+				continue
+			if short and (String(d.get("kind", "")) == "farm" or String(d.get("sub", "")) == "food"):
+				continue
+			var n := hired_of(b)
+			if n <= 0:
+				continue
+			var t := String(b["type"])
+			cnt[t] = int(cnt.get(t, 0)) + n
+			cl_of[t] = String((d["jobs"] as Dictionary).keys()[0])
+		var keys: Array = cnt.keys()
+		keys.sort()
+		best = 0
+		for t: String in keys:
+			if int(cnt[t]) > best:
+				best = int(cnt[t])
+				job = t
+				cls = String(cl_of[t])
+	if cls == "":
+		return {}
+	var home := -1
+	var hp := 0
+	var ids: Array = buildings.keys()
+	ids.sort()
+	for id in ids:
+		var b: Dictionary = buildings[id]
+		if is_house(b) and String(def(b)["cls"]) == cls and int(b["pop"]) > hp and not (b["families"] as Array).is_empty():
+			hp = int(b["pop"])
+			home = int(id)
+	if home < 0:
+		return {}
+	return {"cls": cls, "job": job, "home": home}
+
+
+## Взять жителя в лагерь: {name, job (вид постройки или "" — был безработным), cls, fam, m} или {}. В доме меньше на одного
+## (запись члена семьи уходит из семьи), People убирает его с улиц (resident_taken); новые семьи заселятся как обычно
+func take_resident() -> Dictionary:
+	var pk := resident_pick()
+	if pk.is_empty():
+		return {}
+	var b: Dictionary = buildings[int(pk["home"])]
+	var fams: Array = b["families"]
+	var fam: Dictionary = {}
+	for f: Dictionary in fams:
+		if int(f.get("n", 0)) > 0 and (fam.is_empty() or int(f["n"]) > int(fam["n"])):
+			fam = f
+	if fam.is_empty():
+		return {}
+	var ms := Residents.fit(fam, hash([String(fam["name"]), int(b["id"])]), String(pk["cls"]))
+	var idx := -1
+	for i in range(ms.size() - 1, -1, -1):          # взрослый, лучше не глава семьи
+		if int((ms[i] as Dictionary).get("age", 1)) == 1 and (i > 0 or idx < 0):
+			idx = i
+			if i > 0:
+				break
+	if idx < 0:
+		for i in ms.size():
+			if int((ms[i] as Dictionary).get("age", 1)) >= 1:
+				idx = i
+				break
+	if idx < 0:
+		return {}
+	var m: Dictionary = ms[idx]
+	ms.remove_at(idx)
+	fam["n"] = int(fam["n"]) - 1
+	b["pop"] = maxi(0, int(b["pop"]) - 1)
+	var fname := String(fam["name"])
+	if int(fam["n"]) <= 0:
+		fams.erase(fam)
+		b.erase("_fam_" + fname)
+	var out := {"name": Residents.full_name(m, fname), "job": String(pk["job"]), "cls": String(pk["cls"]), "fam": fname, "m": m}
+	m.erase("job")
+	resident_taken.emit(int(b["id"]), fname, m)
+	compute(true)
+	house_changed.emit(b, false)
+	changed.emit()
+	return out
+
+
+## Воин вернулся домой: бывший житель (res — то, что вернул take_resident) ждёт на площади, как приехавшая семья,
+## игрок выбирает ему дом. Имя семьи не должно совпасть с ждущей — тогда добавляем номер
+func return_resident(res: Dictionary) -> bool:
+	if res.is_empty():
+		return false
+	var nm := String(res.get("fam", "Семья"))
+	var k := 1
+	while not arrival(nm).is_empty() or _lives_here(nm) or pending.has(nm):
+		k += 1
+		nm = "%s %d" % [String(res.get("fam", "Семья")), k]
+	var m: Dictionary = (res.get("m", {}) as Dictionary).duplicate(true)
+	Residents.norm(m)
+	var f := {"name": nm, "n": 1, "cls": String(res.get("cls", "plebs")), "back": true, "m": [m]}
+	family_arrived(f, false)
+	var a := arrival(nm)
+	if a.is_empty():
+		return false
+	resident_returned.emit(a)
+	return true
+
+
 ## Раз в час: город сам уровень не поднимает — только отмечает, что готов (кнопка «Перейти на новый уровень»),
 ## и один раз на каждый уровень пишет об этом в колокольчик
 func _update_level() -> void:
@@ -3645,7 +3784,7 @@ func save_data() -> Dictionary:
 		"incoming": incoming,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n, "goals_vis": goals_vis,
-		"econ_v": econ, "cozy_v": cozy_v, "clock_h": clock_h, "renown": renown, "cal_fest_id": cal_fest_id, "cal_fest_day": cal_fest_day, "visits": visits, "gifts": gifts.duplicate(true), "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
+		"econ_v": econ, "cozy_v": cozy_v, "legion_v": legion_v, "clock_h": clock_h, "renown": renown, "cal_fest_id": cal_fest_id, "cal_fest_day": cal_fest_day, "visits": visits, "gifts": gifts.duplicate(true), "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
 
@@ -3694,6 +3833,7 @@ func load_data(d: Dictionary) -> void:
 	# старые сохранения — без econ_v: счастье по прежним правилам (лавки и украшения без «повторов»), пока владелец не скажет «да»
 	econ = int(d.get("econ_v", 0))
 	cozy_v = int(d.get("cozy_v", 0))
+	legion_v = int(d.get("legion_v", 0))
 	clock_h = int(d.get("clock_h", 0))
 	renown = float(d.get("renown", 0.0))
 	cal_fest_id = String(d.get("cal_fest_id", ""))

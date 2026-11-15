@@ -67,6 +67,8 @@ func setup(l: Land, c: City, g) -> void:
 	city.building_added.connect(_on_building_added)
 	city.changed.connect(func(): _jobs_dirty = true)
 	city.family_left.connect(_on_family_left)
+	city.resident_taken.connect(_on_resident_taken)
+	city.resident_returned.connect(_on_resident_returned)
 	city.family_assigned.connect(_on_assigned)
 	city.rehomed.connect(_on_rehomed)
 	_old_couples()
@@ -3647,6 +3649,25 @@ func _on_family_left(home: int, name: String) -> void:
 				var lp: PackedVector2Array = r["path"]
 				lp.append(Vector2(Land.ROAD_X + rng.randf_range(-1.2, 1.2), -CART_FAR))
 				r["path"] = lp
+
+
+## Легион 3.0: житель ушёл в лагерь — его (запись m) убираем с улиц, место работы освободится
+func _on_resident_taken(home: int, name: String, m: Dictionary) -> void:
+	for r in residents.duplicate():
+		if r["fam"] == name and r["home"] == home and (is_same(r.get("m"), m) or String((r.get("m", {}) as Dictionary).get("pn", "")) == String(m.get("pn", "")) and int(r.get("m", {}).get("sd", 0)) == int(m.get("sd", 0))):
+			_remove(r)
+			_jobs_dirty = true
+			return
+
+
+## Легион 3.0: бывший воин вернулся — ждёт жилья на площади, как семья из повозки
+func _on_resident_returned(f: Dictionary) -> void:
+	var fam := _make_family(f["name"], int(f["n"]), -1, Land.CENTER, f["cls"], f)
+	for r in fam:
+		r["p"] = _plaza_point()
+		r["goal"] = "plaza"
+		_arrive(r)
+	waiting_fams.append({"name": f["name"], "members": fam.map(func(x): return x["id"])})
 
 
 func _plaza_point() -> Vector2:

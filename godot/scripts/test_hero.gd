@@ -34,7 +34,7 @@ func _ready() -> void:
 		mode = "shot" if mode == "shot" else ""
 		if FileAccess.file_exists(GamePaths.save_dir().path_join("city.json")):
 			DirAccess.remove_absolute(GamePaths.save_dir().path_join("city.json"))
-		_boot({"new": "1", "hour": "10"})
+		_boot({"new": "1", "hour": "10", "legion": "0"})   # прежний Легион 2.0 (герой на первом месте отряда); Легион 3.0 — test_legion3
 	_run()
 
 

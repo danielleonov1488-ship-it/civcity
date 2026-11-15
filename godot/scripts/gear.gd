@@ -6,6 +6,10 @@ class_name Gear
 ## Оружие и щит — под класс воина, шлем, доспех и знак носит любой.
 
 const SLOTS := ["weapon", "offhand", "helmet", "armor", "badge"]
+## Легион 3.0 (docs/LEGION_V3.md): 4 слота (знак скрыт); оружие решает класс воина — меч, лук, посох, копьё
+const SLOTS_V3 := ["weapon", "offhand", "helmet", "armor"]
+const KIND_CLS := {"sword": "legionary", "bow": "archer", "staff": "priest", "spear": "cavalry"}
+const CLS_KIND := {"legionary": "sword", "archer": "bow", "priest": "staff", "cavalry": "spear"}
 const SLOT_NAME := {"weapon": "оружие", "offhand": "щит", "helmet": "шлем", "armor": "доспех", "badge": "знак"}
 const RARITY := ["обычная", "добротная", "редкая", "эпическая", "легендарная"]
 const RARITY_M := ["обычный", "добротный", "редкий", "эпический", "легендарный"]
@@ -23,9 +27,11 @@ const BASE := {
 const LVL_K := 0.05                        # +5% к числам вещи за уровень
 ## Имена вещей: [род, мужской/женский/средний] — для «эпический гладий», «редкая лорика»
 const NAMES := {
-	"weapon": {"legionary": ["гладий", "m"], "spearman": ["копьё", "n"], "archer": ["лук", "m"], "engineer": ["станок баллисты", "m"]},
+	"weapon": {"legionary": ["гладий", "m"], "spearman": ["копьё", "n"], "archer": ["лук", "m"], "engineer": ["станок баллисты", "m"],
+		"priest": ["посох", "m"], "cavalry": ["копьё", "n"]},
 	"weapon_alt": {"engineer": ["катапульта", "f"]},
-	"offhand": {"legionary": ["скутум", "m"], "spearman": ["щит", "m"], "archer": ["колчан", "m"], "engineer": ["ящик снарядов", "m"]},
+	"offhand": {"legionary": ["скутум", "m"], "spearman": ["щит", "m"], "archer": ["колчан", "m"], "engineer": ["ящик снарядов", "m"],
+		"priest": ["оберег", "m"], "cavalry": ["щит", "m"]},
 	"helmet": {"": ["шлем", "m"]},
 	"armor": {"": ["лорика", "f"]},
 	"badge": {"": ["фалера", "f"]},
@@ -91,8 +97,8 @@ static func mats_text(d: Dictionary) -> String:
 const SHARD := ["серый обломок", "зелёный обломок", "синий обломок", "фиолетовый обломок", "золотой обломок"]
 ## Значки вещей: лист 42.png 4×4 (Codex) — у каждой вещи свой рисунок по слоту и классу
 const ICON := {
-	"weapon": {"legionary": 0, "spearman": 1, "archer": 2, "engineer": 3},
-	"offhand": {"legionary": 5, "spearman": 6, "archer": 7, "engineer": 8},
+	"weapon": {"legionary": 0, "spearman": 1, "archer": 2, "engineer": 3, "priest": 3, "cavalry": 1},
+	"offhand": {"legionary": 5, "spearman": 6, "archer": 7, "engineer": 8, "priest": 8, "cavalry": 6},
 	"helmet": {"": 9}, "armor": {"": 10}, "badge": {"": 11},
 }
 const ICON_CATAPULT := 4
@@ -238,6 +244,14 @@ static func fits(it: Dictionary, cls: String) -> bool:
 	return not (slot in ["weapon", "offhand"]) or String(it.get("cls", "")) == cls
 
 
+## Легион 3.0: класс, который даёт оружие (spearman и engineer из старых вещей — как копьё и меч)
+static func weapon_class(it: Dictionary) -> String:
+	var c := String(it.get("cls", "legionary"))
+	if c == "spearman":
+		return "cavalry"
+	return c if CLS_KIND.has(c) else "legionary"
+
+
 static func roll_rarity(rng: RandomNumberGenerator, boss: bool) -> int:
 	var w: Array = DROP_W_BOSS if boss else DROP_W
 	var x := rng.randf() * 100.0
@@ -249,8 +263,8 @@ static func roll_rarity(rng: RandomNumberGenerator, boss: bool) -> int:
 
 
 ## Новая вещь: слот и класс случайно (оружие и щит — под один из классов cls_list), уровень ilvl
-static func roll(rng: RandomNumberGenerator, ilvl: int, boss: bool, cls_list: Array) -> Dictionary:
-	var slot: String = SLOTS[rng.randi() % SLOTS.size()]
+static func roll(rng: RandomNumberGenerator, ilvl: int, boss: bool, cls_list: Array, slots := SLOTS) -> Dictionary:
+	var slot: String = slots[rng.randi() % slots.size()]
 	var cls := ""
 	if slot in ["weapon", "offhand"]:
 		cls = String(cls_list[rng.randi() % cls_list.size()]) if not cls_list.is_empty() else "legionary"

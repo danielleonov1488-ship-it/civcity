@@ -13,9 +13,14 @@ const CLASSES := {
 	"spearman": {"name": "копейщик", "units": ["spearman"], "home": "spearcamp"},
 	"archer": {"name": "лучник", "units": ["archer"], "home": "range"},
 	"engineer": {"name": "механик", "units": ["ballista", "catapult"], "home": "ballistae"},
+	# Легион 3.0: класс воина решает оружие (меч, лук, посох, копьё)
+	"priest": {"name": "жрец", "units": ["priest"], "home": "barracks"},
+	"cavalry": {"name": "всадник", "units": ["cavalry"], "home": "barracks"},
 }
 const CLASS_IDS := ["legionary", "spearman", "archer", "engineer"]
-const CLASS_OF := {"legionary": "legionary", "spearman": "spearman", "archer": "archer", "ballista": "engineer", "catapult": "engineer"}
+const V3_CLASS_IDS := ["legionary", "archer", "priest", "cavalry"]
+const CLASS_OF := {"legionary": "legionary", "spearman": "spearman", "archer": "archer", "ballista": "engineer", "catapult": "engineer",
+	"priest": "priest", "cavalry": "cavalry"}
 
 ## Звёзды кандидата: обычный город и лучший (счастливый и большой) — между ними плавно
 const STAR_P := [50.0, 30.0, 14.0, 5.0, 1.0]
