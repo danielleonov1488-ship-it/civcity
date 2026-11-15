@@ -70,7 +70,7 @@ func _ready() -> void:
 		_old_cat_save()
 	if mode in ["owner7b", "owner7c"]:
 		_owner_copy()
-	Game.boot = {"play": "1"} if mode in ["owner", "owner_old", "owner7b", "owner7c"] else {"new": "1", "legion": "0"}   # истории — с прежним Легионом (3.0 — test_legion3)
+	Game.boot = {"play": "1"} if mode in ["owner", "owner_old", "owner7b", "owner7c"] else ({"new": "1"} if mode == "legion3" else {"new": "1", "legion": "0"})   # истории — с прежним Легионом (mode=legion3 — Легион 3.0, город по правилам новой игры)
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()
@@ -305,6 +305,11 @@ func _run() -> void:
 		print("STORY DONE fails=", fails)
 		get_tree().quit()
 		return
+	if mode == "legion3":
+		await _legion3()
+		print("STORY DONE fails=", fails)
+		get_tree().quit()
+		return
 	await _new_game_no_legion()
 	if game.tutorial.active():
 		game.tutorial.step = Tutorial.STEPS.size()
@@ -408,6 +413,221 @@ func _run() -> void:
 	StoryDefs.extra = []
 	print("STORY DONE fails=", fails)
 	get_tree().quit()
+
+
+# ---------- Легион 3.0 (mode=legion3): «Разбойники у арки» без Казарм ----------
+
+func _legion3() -> void:
+	print("== Легион 3.0: «Разбойники у арки» — Лагерь вместо Казарм")
+	var lg: Legion = c.legion
+	check(Legion.V3 and lg.v3() and c.legion_v == 3, "новая игра по правилам Легиона 3.0")
+	if game.tutorial.active():
+		game.tutorial.step = Tutorial.STEPS.size()
+		game.tutorial.card.visible = false
+	c.tips["tut"] = -1
+	c.tips["ui"] = 3
+	hud.apply_reveal(3)
+	hud.advisor_panel.visible = false
+	for t in ["rank_tip", "fest_tip", "floor_tool", "full_money", "full_rp", "name_tip", "v22_pace", "orders_tip", "tax_tip", "dim_tip", "floor_money", "people_tip", "set_tip"]:
+		c.tips[t] = true
+	game._set_hour(10.5)
+	hud.set_speed(0.0)
+	c.money = 50000.0
+	for r in ["q_garden", "q_market", "deco_trees", "deco_flowers", "deco_south"]:
+		c.research[r] = true
+	street(Vector2(170, 110), Vector2(170, 178))
+	street(Vector2(170, 144), Vector2(206, 144))
+	kid_home = put("house_pleb", Vector2(172, 124))
+	settle(kid_home, kid_fam, true)
+	for i in 6:
+		var h := put("house_pleb", Vector2(176 + i * 4, 150))
+		if not h.is_empty():
+			settle(h, "Проба %d" % i)
+	c.compute()
+	await frames(10)
+	check(not kid_home.is_empty() and int(c.stats["pop"]) >= 20 and int(c.stats["pop"]) < 50, "городок: %d жителей (меньше 50)" % int(c.stats["pop"]))
+	# в самой истории нет ни Казарм, ни квартала, ни «открытия» старого Легиона
+	var sd := StoryDefs.story("bandits")
+	var dump := JSON.stringify(sd)
+	check(String(sd["steps"][1]["id"]) == "camp" and int(sd["pop"]) >= 50 and not dump.contains("barracks") and not dump.contains("quarter") and not dump.contains("grant"),
+		"в истории V3: шаг «camp», старт с %d жителей, ни Казарм, ни квартала, ни grant" % int(sd["pop"]))
+	# нет 50 жителей — нет истории и нет лагеря
+	var S := c.stories
+	fresh7(4300, ["cat"])
+	S = c.stories
+	var gh := int(sd["gap_h"])
+	S["h"] = maxi(int(S["h"]), int(S["last_h"]) + StoryDefs.GAP_H)
+	S["last_h"] = int(S["h"]) - gh
+	sto._tried = ""
+	sto.tick()
+	check(String(S["offer"].get("id", "")) != "bandits" and not lg.window_open(), "до 50 жителей историю не предлагают, лагерь закрыт (%s)" % S["offer"].get("id", ""))
+	# нижняя полоса: раздела «Легион» пока нет, в нём нет военных зданий
+	hud.refresh()
+	var mtab := hud.cats["military"].get_parent() as Control
+	check(not mtab.visible, "раздел «Легион» на нижней полосе скрыт (мастерских ещё нет)")
+	var inside: Array = hud._types_in("military")
+	check(not inside.has("barracks") and not inside.has("forge") and not inside.has("mars") and inside.has("smelter") and inside.has("sawmill") and inside.has("tannery"),
+		"в разделе только мастерские города: %s" % [inside])
+	# 50 жителей: лагерь открыт, одно сообщение, карточка советника, кнопка «Лагерь»
+	var more := 0
+	while int(c.stats["pop"]) < 54 and more < 30:
+		var hh := put("house_pleb", Vector2(172, 118 + more * 2))
+		if not hh.is_empty():
+			settle(hh, "Добавка %d" % more)
+		more += 1
+		c.compute()
+	check(int(c.stats["pop"]) >= 50, "жителей %d (≥ 50)" % int(c.stats["pop"]))
+	var camp_ui := CampUI.of(hud)
+	hud.advisor_panel.visible = false
+	lg.army_tick()
+	c.changed.emit()
+	await frames(6)
+	check(lg.window_open() and camp_ui != null and camp_ui.top_button.visible, "лагерь открыт, кнопка «Лагерь» наверху видна")
+	check(lg.flags.has("camp_told") and hud.advisor_panel.visible and hud.adv_title.text == "Лагерь открыт" and hud.adv_text.text.contains("кнопка «Лагерь» наверху"),
+		"карточка советника: «%s» — «%s»" % [hud.adv_title.text, hud.adv_text.text])
+	hud.advisor_panel.visible = false
+	c.changed.emit()
+	await frames(6)
+	check(not hud.advisor_panel.visible, "карточка — один раз (второй раз не лезет)")
+	# вкладка «Легион» в V3: мастерские открыты с ранга 2; первая карточка — про Лагерь
+	c.level = 2
+	hud.refresh()
+	var mtab2 := hud.cats["military"].get_parent() as Control
+	check(mtab2.visible, "раздел «Легион»: с мастерскими виден")
+	hud._toggle_cat("military")
+	await frames(4)
+	var first := hud.tray_grid.get_child(0) as Button
+	var lbl_txt := ""
+	for l in first.find_children("*", "Label", true, false):
+		lbl_txt += (l as Label).text
+	var types_shown := []
+	for b in hud.tray_grid.get_children():
+		if b.has_meta("type"):
+			types_shown.append(String(b.get_meta("type")))
+	check(first.name == "camp_hint" and lbl_txt.contains("кнопка «Лагерь» наверху") and (types_shown == ["smelter", "sawmill"] or types_shown == ["smelter", "sawmill", "tannery"]),
+		"первая карточка — про Лагерь («%s»), дальше мастерские %s" % [lbl_txt, types_shown])
+	first.pressed.emit()
+	await frames(3)
+	var lu := LegionUi.of(hud)
+	check(camp_ui.visible and not lu.visible, "щелчок по карточке открывает Лагерь, не старое окно")
+	camp_ui.close()
+	hud._toggle_cat("military")
+	# карточка мастерской и медальон не открывают старое окно
+	var sm := put("smelter", Vector2(176, 160))
+	if sm.is_empty():
+		sm = c.place("smelter", Vector2(176, 170), 0.0)
+	check(not sm.is_empty(), "мастерская (плавильня) ставится в городе")
+	if not sm.is_empty():
+		hud.open_info(sm)
+		await frames(3)
+		var btns := []
+		for b in hud.info_box.find_children("*", "Button", true, false):
+			btns.append((b as Button).text)
+		check(btns.has("Лагерь Легиона") and not btns.has("Отряд и походы — окно «Легион»"), "в карточке мастерской — «Лагерь Легиона», не старое окно (%s)" % [btns])
+		for b in hud.info_box.find_children("*", "Button", true, false):
+			if (b as Button).text == "Лагерь Легиона":
+				(b as Button).pressed.emit()
+		await frames(3)
+		check(camp_ui.visible and not lu.visible, "кнопка карточки открыла Лагерь")
+		camp_ui.close()
+		hud.close_panels()
+	lu.toggle()
+	await frames(3)
+	check(camp_ui.visible and not lu.visible, "медальон Легиона (если его нажали) ведёт в Лагерь")
+	camp_ui.close()
+	# пекарня: пайки
+	c.research["bakery"] = true
+	var bk := put("bakery", Vector2(176, 134))
+	if bk.is_empty():
+		bk = c.place("bakery", Vector2(190, 160), 0.0)
+	check(not bk.is_empty(), "пекарня ставится")
+	if not bk.is_empty():
+		hud.open_info(bk)
+		await frames(3)
+		var tx := ""
+		for l in hud.info_box.find_children("*", "Label", true, false):
+			tx += (l as Label).text + "|"
+		check(tx.contains("Пайки Легиону") and tx.contains("+3 в день"), "карточка пекарни: «Пайки Легиону: +3 в день»")
+		hud.close_panels()
+	# старый Легион не навязывается: обучение выключено, Казармы строить нельзя
+	check(not lu.tut_active() and not c.unlocked("barracks") and not c.unlocked("forge"), "обучение старому Легиону выключено, Казармы и Кузница на карте недоступны")
+	# предложение истории
+	S["last_h"] = int(S["h"]) - gh
+	sto._tried = ""
+	sto.tick()
+	var o: Dictionary = S["offer"]
+	check(String(o.get("id", "")) == "bandits", "с 50 жителями после «Маси» — «Разбойники у арки» (%s)" % o.get("id", ""))
+	if o.is_empty():
+		return
+	hud.advisor_panel.visible = false
+	sto.open_offer()
+	var said: bool = await wait_beat("say", 8.0)
+	await frames(50)
+	sto.ui.finish_typing()
+	await frames(8)
+	check(said and (sto.cine.get("props", []) as Array).size() >= 1, "ролик у арки: телега поставлена")
+	await play_through(25.0, "", "", "choice", "story_legion3_choice.png")
+	await wait_kit(false, 4.0)
+	await frames(4)
+	var A: Dictionary = S["active"]
+	check(String(A.get("id", "")) == "bandits" and int(A.get("step", -1)) == 1 and String(sto._step(A).get("id", "")) == "camp", "история идёт: шаг «Лагерь»")
+	check(not c.research.has("legion") and lg.quarter().is_empty() and not lg.flags.has("quarter") and sto._goal_area(A).is_empty(), "военный квартал не предлагается, «Легион» не открывался за историю")
+	var info: Dictionary = sto.row_info()
+	var btn_txt := []
+	for b in info.get("buttons", []):
+		btn_txt.append(String(b[0]))
+	check(String(info.get("text", "")).contains("Откройте Лагерь (кнопка «Лагерь» наверху) и призовите первого воина") and btn_txt == ["Открыть Лагерь"], "строка истории: «%s», кнопки %s" % [info.get("text", ""), btn_txt])
+	check(String(sto.pointer_do().get("kind", "")) == "legion", "стрелка истории — на «Лагерь»")
+	await frames(3)
+	hud._update_pointer()
+	check(hud.pointer_target != null and hud.pointer_target == camp_ui.top_button, "стрелка стоит на кнопке «Лагерь» (не на медальоне и не на Казармах)")
+	var all_txt := ""
+	for pt in sto.goal_parts(A, sto._step(A)["goal"], sto._step(A)):
+		all_txt += String(pt["text"]) + "|"
+	check(not all_txt.to_lower().contains("казарм") and not String(info.get("text", "")).contains("Казарм"), "строки шага не просят Казарм (%s)" % all_txt)
+	# первого воина призываем через API
+	var sol := lg.recruit_resident()
+	check(not sol.is_empty() and lg.soldiers.size() == 1, "призван первый воин: %s" % [sol.get("from", "")])
+	sto.tick()
+	check(bool(A.get("ready", false)) and int(A["step"]) == 2, "воин есть — ролик «Первый воин!» ждёт «Посмотреть»")
+	sto.play_ready()
+	await play_through(25.0)
+	await wait_kit(false, 4.0)
+	await frames(4)
+	check(sto._goal_kind(A) == "legion_win" and String(sto._step(A).get("id", "")) == "fight", "шаг «учебный бой»")
+	# без воина в отряде бой не начать — и строка подсказывает, что делать
+	var got := []
+	var cons: Array = lg.battle_requested.get_connections()
+	for cn: Dictionary in cons:
+		lg.battle_requested.disconnect(cn["callable"])
+	var catch := func(st: Dictionary) -> void: got.append(st)
+	lg.battle_requested.connect(catch)
+	var parts_txt := ""
+	for pt in sto.goal_parts(A, sto._step(A)["goal"], sto._step(A)):
+		parts_txt += String(pt["text"]) + "|"
+	sto.press("battle")
+	check(got.is_empty() and parts_txt.contains("Воин в отряде: нет"), "отряд пуст — боя нет, в строке: «%s»" % parts_txt)
+	check(lg.set_place(0, int(sol["id"])), "воин поставлен в отряд (место 0)")
+	sto.press("battle")
+	lg.battle_requested.disconnect(catch)
+	for cn: Dictionary in cons:
+		lg.battle_requested.connect(cn["callable"])
+	check(got.size() == 1 and int(got[0]["stage"]["idx"]) == 0 and (got[0]["squad"] as Array).size() == 1, "«В бой!» — первый бой кампании (0-0-0) с отрядом V3: один воин")
+	if got.size() == 1:
+		lg.apply_result(got[0], {"win": true, "alive": 1, "total": 1, "timeout": false, "time": 40.0})
+		check(lg.progress == 1, "учебный бой выигран")
+	sto.tick()
+	check(bool(A.get("ready", false)), "бой выигран — последний ролик ждёт")
+	var gl0 := lg.glory
+	sto.play_ready()
+	await play_through(30.0, "reward", "story_legion3_final.png")
+	await wait_kit(false, 4.0)
+	check((S["done"] as Dictionary).has("bandits") and (S["active"] as Dictionary).is_empty() and c.unlocked("legionpost") and lg.glory >= gl0 + 4.9, "история пройдена: «Сторожевой пост», Слава")
+	var bar := 0
+	for id in c.buildings:
+		if String(c.buildings[id]["type"]) in Legion.V3_HIDDEN:
+			bar += 1
+	check(bar == 0 and lg.quarter().is_empty() and not lg.flags.has("quarter"), "ни одной военной постройки на карте, квартала нет")
 
 
 # ---------- отзывы игроков 27.10: в роликах не кивают без конца ----------

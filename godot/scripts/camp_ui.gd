@@ -131,6 +131,25 @@ func _update_entry() -> void:
 		hud._fit_top.call_deferred()
 	if visible and not on:
 		close()
+	if on and not lg.flags.has("camp_told"):
+		_camp_moment.call_deferred()
+
+
+## Лагерь открылся (50 жителей): один раз — спокойная карточка советника, стрелка и кивок кнопки «Лагерь».
+## Занят советник или идёт ролик — подождём следующего обновления
+func _camp_moment() -> void:
+	if lg.flags.has("camp_told") or top_button == null or not top_button.visible or visible:
+		return
+	var rig = hud.game.get("rig")
+	if hud.advisor_panel.visible or hud.game.tool != "" or (rig != null and rig.cine) or not hud.game.stories.cine.is_empty():
+		return
+	lg.flags["camp_told"] = true
+	hud.advisor("Лагерь открыт", "Призывайте жителей в Легион — кнопка «Лагерь» наверху.", Callable(), false, true)   # маленькая карточка в углу, не мешает
+	hud.show_pointer({"kind": "legion", "tip": "Лагерь"})
+	var tw := top_button.create_tween()
+	for i in 3:
+		tw.tween_property(top_button, "modulate", Color(1.7, 1.45, 0.8), 0.35)
+		tw.tween_property(top_button, "modulate", Color.WHITE, 0.35)
 
 
 func toggle() -> void:

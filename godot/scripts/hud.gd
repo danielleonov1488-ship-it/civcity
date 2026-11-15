@@ -2890,6 +2890,8 @@ func _types_in(cat: String, sub := "") -> Array:
 			continue                          # в другом разделе — только главный облик
 		if (String(d.get("unlock", "")).begins_with("army:") or String(d.get("unlock", "")).begins_with("tour:")) and game != null and int(game.city.cozy_v) < 1:
 			continue                          # мастерские Легиона 2.0 и гостиница — только в новой игре
+		if cat == "military" and game != null and game.city != null and game.city.legion.v3() and type in Legion.V3_HIDDEN:
+			continue                          # Легион 3.0: здания лагеря — в лагере, в разделе остаются мастерские города
 		out.append(type)
 	return out
 
@@ -3073,6 +3075,9 @@ func _fill_cards() -> void:
 		em.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		em.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		tray_grid.add_child(em)
+	var camp_hint: bool = open_cat == "military" and game.city.legion.v3()
+	if camp_hint:
+		tray_grid.add_child(_camp_hint_card())
 	for type in list:
 		var d: Dictionary = Defs.B[type]
 		var b := Button.new()
@@ -3134,9 +3139,10 @@ func _fill_cards() -> void:
 		_new_pill(b, "card")
 		b.mouse_entered.connect(func(): _card_hovered(b, tp))
 		tray_grid.add_child(b)
-	var w := minf(1180.0, maxf(list.size() * (CARD.x + 10.0) - 10.0, 560.0 if open_cat == "decor" else 0.0))
+	var ncards := list.size() + (1 if camp_hint else 0)
+	var w := minf(1180.0, maxf(ncards * (CARD.x + 10.0) - 10.0, 560.0 if open_cat == "decor" else 0.0))
 	_tray_w = w
-	_tray_h = CARD.y + (20.0 if list.size() * (CARD.x + 10.0) - 10.0 > 1180.0 else 2.0)
+	_tray_h = CARD.y + (20.0 if ncards * (CARD.x + 10.0) - 10.0 > 1180.0 else 2.0)
 	_snug(tray)
 	# полоса прокрутки (если карточек больше, чем влезает) — ниже лавров карточек
 	(tray.find_child("scroll", true, false) as Control).custom_minimum_size = Vector2(w, _tray_h)
@@ -3146,6 +3152,62 @@ func _fill_cards() -> void:
 	_update_cards()
 	update_new_marks()
 	_update_pointer()
+
+
+## Легион 3.0: раздел «Легион» на нижней полосе — только мастерские города; пока их нельзя строить, раздела не видно
+func _sync_military_tab() -> void:
+	var tab := cats.get("military") as Control
+	if tab == null or tab.get_parent() == null:
+		return
+	var c: City = game.city
+	var on := true
+	if c.legion.v3():
+		on = false
+		for t in ["smelter", "sawmill", "tannery"]:
+			if c.unlocked(t):
+				on = true
+	var box := tab.get_parent() as Control
+	if box.visible != on:
+		box.visible = on
+		if not on and open_cat == "military" and tray.visible:
+			_toggle_cat("military")
+		_fit_bottom.call_deferred()
+
+
+## Легион 3.0: первая карточка раздела «Легион» — где теперь Лагерь (щелчок открывает его)
+func _camp_hint_card() -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = CARD
+	b.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	b.focus_mode = Control.FOCUS_NONE
+	b.name = "camp_hint"
+	for st: Array in [["normal", "g_card"], ["hover", "g_card_hover"], ["pressed", "g_card_hover"], ["hover_pressed", "g_card_hover"]]:
+		b.add_theme_stylebox_override(st[0], _card_box(st[1]))
+	b.tooltip_text = "Воины призываются из жителей в Лагере. Здесь — мастерские города: они дают Лагерю железо, дерево и кожу."
+	var v := VBoxContainer.new()
+	v.set_anchors_preset(Control.PRESET_FULL_RECT)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.offset_top = 8
+	v.offset_left = 11
+	v.offset_right = -11
+	v.offset_bottom = -30
+	b.add_child(v)
+	var img := TextureRect.new()
+	img.custom_minimum_size = Vector2(104, 60)
+	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	img.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	img.texture = ico("tent", 64)
+	v.add_child(img)
+	var l := _label("Лагерь Легиона — кнопка «Лагерь» наверху", 13, true, C_INK)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(104, 60)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(l)
+	b.pressed.connect(func():
+		CampUI.attach(self).open())
+	return b
 
 
 ## Рамка карточки постройки (картинка 128×181, снизу лавровая розетка); у подсвеченной свечение за краем
@@ -3562,6 +3624,8 @@ func need_do(p: Array, tool := "", n := 0) -> Dictionary:
 			return w
 		"research":
 			return {"kind": "research_any", "tip": "Исследования", "say": "Свиток вверху справа — меню исследований"}
+		"soldiers":
+			return {"kind": "legion", "tip": "Лагерь", "say": "«Лагерь» сверху → «Казарма» → «Призвать»"}
 		"tier":
 			# «Уютный Рим»: изучить больше исследований ряда arg (очки копят скриптории, школы и почта)
 			return {"kind": "research_any", "tip": "Исследования",
@@ -3709,6 +3773,9 @@ func _do_target(w: Dictionary, shown := false) -> Control:
 		"rank":
 			return rank_btn
 		"legion":
+			if game.city.legion.v3():              # Легион 3.0: стрелка на «Лагерь» наверху, не на старый медальон
+				var cu := CampUI.of(self)
+				return null if cu == null or cu.visible or not cu.top_button.visible else cu.top_button
 			var lu := LegionUi.of(self)
 			return null if lu == null or lu.visible else lu.btn
 	return null
@@ -3739,9 +3806,14 @@ func _do_click(w: Dictionary) -> void:
 			if not game.city.arrivals.is_empty():
 				game.start_settle(game.city.arrivals[0]["name"])
 		"legion":
-			var lu := LegionUi.of(self)
-			if lu != null and not lu.visible:
-				lu.open("campaign")
+			if game.city.legion.v3():
+				var cu := CampUI.of(self)
+				if cu != null and not cu.visible:
+					cu.open()
+			else:
+				var lu := LegionUi.of(self)
+				if lu != null and not lu.visible:
+					lu.open("campaign")
 	show_pointer(w)                           # и стрелка на несколько секунд — куда дальше (карточка исследования, семья…)
 	_update_pointer()
 
@@ -4698,6 +4770,8 @@ func _fill_info_body() -> void:
 			_cover_rows(b, "Радует домов")
 		"military":
 			_legion_rows(b, tv, cw)
+	if String(b["type"]) == "bakery" and c.legion.v3():
+		info_box.add_child(_row("legion", "Пайки Легиону", "+%d в день" % int(Legion.RATION_BAKERY), C_GOOD))   # Легион 3.0: хлеб кормит лагерь
 	if not c.is_house(b):                      # у дома вместо описания — что даёт счастье (см. _fill_house)
 		info_box.add_child(_wrap(_label(d["desc"], 14, false, C_SOFT), cw))
 	if String(b.get("gift", "")) != "":         # подарок друга (SocialNet)
@@ -4843,10 +4917,13 @@ func _legion_rows(b: Dictionary, tv: VBoxContainer, cw: float) -> void:
 		if why != "":
 			info_box.add_child(_wrap(_label(why, 14, true, C_BAD), cw))
 	var lb := Button.new()
-	lb.text = "Отряд и походы — окно «Легион»"
+	lb.text = "Лагерь Легиона" if lg.v3() else "Отряд и походы — окно «Легион»"
 	lb.icon = ico("legion", 32)
 	lb.focus_mode = Control.FOCUS_NONE
 	lb.pressed.connect(func():
+		if lg.v3():
+			CampUI.attach(self).open()           # Легион 3.0: отряд и походы — в лагере
+			return
 		var lu := LegionUi.of(self)
 		if lu != null:
 			lu.open("troops"))
@@ -6796,6 +6873,7 @@ func refresh() -> void:
 	if ub:
 		ub.visible = c.research.has(Defs.ROAD_UP_RES)    # кисть «Улучшить» — после «Базальтовой мостовой» (этап 5.7)
 	update_new_marks()
+	_sync_military_tab()
 	_fit_bottom()                             # «Полки полны» — правая полоса шире
 	_fill_classes()
 	_fit_top()

@@ -181,6 +181,7 @@ func _run() -> void:
 	game.tutorial.card.visible = false
 	c.tips["tut"] = -1
 	c.tips["ui"] = 3
+	c.legion.flags["camp_told"] = true       # Легион 3.0: карточка «Лагерь открыт» не лезет в проверки этажей (город на 272 жителя)
 	c.tips["cover_tip"] = true
 	hud.apply_reveal(3)
 	await frames(5)
