@@ -14,7 +14,7 @@ const DEAD := "https://127.0.0.1:9/api"
 
 
 func _ready() -> void:
-	Game.boot = {"new": "1", "hour": "10.5"}
+	Game.boot = {"new": "1", "hour": "10.5", "legion": "0"}     # бои с городами и их ошибки — прежний Легион (3.0 — test_legion3)
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()

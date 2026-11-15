@@ -70,7 +70,7 @@ func _ready() -> void:
 		_old_cat_save()
 	if mode in ["owner7b", "owner7c"]:
 		_owner_copy()
-	Game.boot = {"play": "1"} if mode in ["owner", "owner_old", "owner7b", "owner7c"] else {"new": "1"}
+	Game.boot = {"play": "1"} if mode in ["owner", "owner_old", "owner7b", "owner7c"] else {"new": "1", "legion": "0"}   # истории — с прежним Легионом (3.0 — test_legion3)
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()

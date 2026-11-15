@@ -34,7 +34,7 @@ func shot(name: String) -> void:
 
 func _ready() -> void:
 	shots = "shots=1" in OS.get_cmdline_user_args()
-	Game.boot = {"new": "1"}
+	Game.boot = {"new": "1", "legion": "0"}         # прежний Легион: предел легионеров по городу (3.0 — test_legion3)
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()

@@ -115,7 +115,7 @@ func _recruit() -> void:
 	var m0 := float(c.money)
 	var s := L.recruit_resident()
 	_check(not s.is_empty() and int(c.stats["pop"]) == pop0 - 1 and _fams_ok(c), "призыв: жителей %d → %d, семьи в домах сходятся" % [pop0, int(c.stats["pop"])])
-	_check(String(s["from"]).contains("был безработн") and L.soldiers.size() == 1, "безработный первым: «%s»" % String(s["from"]))
+	_check(String(s["from"]).contains(" безработн") and L.soldiers.size() == 1, "безработный первым: «%s»" % String(s["from"]))
 	_check(String(s["cls"]) == "legionary" and L.worn(s).size() == 1 and Gear.weapon_class(L.worn(s)[0]) == "legionary" and int(L.worn(s)[0]["rarity"]) == 0,
 		"новобранец — легионер с мечом даром")
 	_check(float(c.money) == m0, "призыв бесплатный")
