@@ -919,21 +919,19 @@ static func _farm(b: Bp) -> void:
 	b.remap = b.floor_remap(1)
 	b.fence(-4.9, -4.9, 4.9, 4.9)
 	var m := 1.0 if b.rng.randf() < 0.5 else -1.0
-	# пшеница — сзади, напротив хижины
-	var gold := {"tint": Color(1.32, 1.08, 0.46)}
+	# настоящая пшеница набора Meadow Forest (15.11, владелец: «поле с настоящей пшеницей»): ряды колосьев по всему полю,
+	# сзади — густо, напротив хижины; между рядами — тропки, где работают жнецы
+	var wheat := func(q: Vector3, k: float) -> void:
+		b.parts.append(["M:SM_Env_CropField_Clump_0%d" % (1 + b.rng.randi() % 2),
+			b.base * Transform3D(Basis(Vector3.UP, b.rng.randf() * TAU).scaled(Vector3(k, k * b.rng.randf_range(0.9, 1.1), k)), q), {}])
 	for j in 3:
 		for i in 5:
-			var q := Vector3(m * (-4.0 + i * 1.3 + (0.35 if j % 2 else 0.0)), 0, -4.35 + j * 0.95)
-			b.parts.append(["SM_Env_Grass_0%d" % (2 + (i + j) % 2), b.base * Transform3D(Basis(Vector3.UP, b.rng.randf() * TAU).scaled(Vector3(0.75, 1.05, 0.75)), q), gold])
-	# грядки поперёк поля (вдоль X), шаг 0,93 — работники как раз между рядами
-	var green := {"tint": Color(0.8, 1.0, 0.6)}
-	var lens := [9.61, 8.75, 9.17]
-	var mins := [-0.49, -0.23, -0.52]
+			wheat.call(Vector3(m * (-4.0 + i * 1.3 + (0.35 if j % 2 else 0.0)), 0, -4.35 + j * 0.95), 0.95)
+	# ряды поперёк поля (вдоль X), шаг 0,93 — работники как раз между рядами
 	for i in 5:
-		var k := 1 + i % 2               # отдельные кусты (первый ряд Synty — сплошная гряда-изгородь)
-		var sl: float = 6.0 / (lens[k] as float)
 		var z := -1.67 + i * 0.933
-		b.parts.append(["SM_Env_Crop_Rows_0%d" % (1 + k), b.base * Transform3D(Basis(Vector3.UP, PI / 2).scaled_local(Vector3(0.72, 0.62, sl)), Vector3(-3.0 - (mins[k] as float) * sl, 0, z)), green])
+		for ci in 7:
+			wheat.call(Vector3(-3.6 + ci * 1.2 + (0.3 if i % 2 else 0.0), 0, z), 0.9)
 	# хижина работников (1×1 модуль) с козырьком и сеном
 	var hx := 3.35 * m
 	var hz := -3.35

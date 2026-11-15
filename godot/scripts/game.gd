@@ -96,6 +96,7 @@ var tool := ""                        # "" | тип постройки | road | 
 var tool_yaw := 0.0
 var tool_variant := -1                # -1 — случайный фасад
 var next_variant := 0
+var flower_color := 6                 # цвет цветов из «Природы» (CatNature.FLOWER_COLORS; 6 — пёстрые)
 var snap := true                      # привязать к пути
 var ghost: Node3D
 var ghost_key := ""
@@ -295,6 +296,7 @@ func _ready() -> void:
 	_gate()
 	var birds := Birds.new()
 	birds.center = Vector3(Land.START.x, 0, Land.START.y)
+	birds.game = self
 	add_child(birds)
 	city.building_added.connect(_on_added)
 	city.building_removed.connect(_on_removed)
@@ -632,6 +634,7 @@ func _load_settings() -> void:
 		if typeof(d) == TYPE_DICTIONARY:
 			for k in d:
 				settings[k] = d[k]
+	apply_grass_range(false)
 	if str(settings.get("look", "")) == "fresh":
 		look_fresh = true                     # свежий вид (проба 14.11, _fresh_look)
 	# уже играет? (файл настроек пишет и лаунчер — до первой игры; город есть — точно играет)
@@ -779,34 +782,36 @@ func _set_hour(h: float) -> void:
 	var dir := moon_dir.lerp(sun_dir, smoothstep(0.0, 0.25, day)).normalized()
 	var c := Vector3(Land.START.x, 0, Land.START.y)
 	sun.look_at_from_position(c + dir * 200.0, c, Vector3.UP)
-	var noon := Color("ffe8c8")
+	var noon := Color("fff1de")
 	var golden := Color("ffb070")
 	# луна — мягкая сиренево-лавандовая, не ледяная синяя (ночь уютная, а не холодная)
 	var night_c := Color("a3a6dc")
 	var sun_c := noon.lerp(golden, gold)
 	sun.light_color = night_c.lerp(sun_c, day)
 	sun.light_energy = lerpf(1.5, lerpf(2.6, 2.9, gold), day)
-	sky_mat.sky_top_color = Color("2e2a5c").lerp(Color("4f86d0").lerp(Color("9a8fc0"), gold * 0.6), day)
-	sky_mat.sky_horizon_color = Color("665a92").lerp(Color("efd6b4").lerp(Color("f6a870"), gold), day)
+	# 15.11: цветокоррекция кадра больше не «медовая» (владелец: зелень свежая, небо чисто-синее): небо — синее до горизонта,
+	# золото только на закате и рассвете
+	sky_mat.sky_top_color = Color("2e2a5c").lerp(Color("3d7fd8").lerp(Color("8f8fc8"), gold * 0.5), day)
+	sky_mat.sky_horizon_color = Color("665a92").lerp(Color("d9e6ee").lerp(Color("f4c08a"), gold * 0.8), day)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color.darkened(0.1)
 	# рассеянный свет: днём слабый и серо-сиреневый — тени глубокие; ночью сиреневый — всё видно, но темнее,
 	# чтобы фонари, жаровни и огни арки лежали на мостовой тёплыми пятнами
 	env.ambient_light_energy = lerpf(1.25, lerpf(0.5, 0.66, gold), day)
 	env.ambient_light_color = Color("8a90c8").lerp(Color("c4b8c8"), day)
 	env.ambient_light_sky_contribution = lerpf(0.35, 0.3, day)
-	env.fog_light_color = Color("585088").lerp(Color("e9d2b0").lerp(Color("f2b07a"), gold * 0.8), day)
+	env.fog_light_color = Color("585088").lerp(Color("e6e4d8").lerp(Color("f2c590"), gold * 0.7), day)
 	(_puff_quad().material as StandardMaterial3D).albedo_color = Color(0.55, 0.55, 0.7).lerp(Color(1, 1, 1).lerp(Color(1.0, 0.85, 0.7), gold * 0.6), day)
 	if grade:
-		var g_day := Vector3(1.07, 0.97, 0.84)
-		var g_gold := Vector3(1.08, 0.95, 0.82)
+		var g_day := Vector3(1.02, 1.0, 0.97)
+		var g_gold := Vector3(1.07, 0.97, 0.86)
 		# ночь: сиреневая, но не ледяная — синеву притушили, а тёплый свет фонарей шейдер не подсинивает (warm_keep)
 		var g_night := Vector3(0.88, 0.86, 1.18)
 		var gain := g_night.lerp(g_day.lerp(g_gold, gold), day)
 		grade.set_shader_parameter("gain", gain)
-		grade.set_shader_parameter("shadow_tint", Vector3(0.93, 0.88, 1.05).lerp(Vector3(0.86, 0.84, 0.95).lerp(Vector3(0.84, 0.8, 0.92), gold), day))
-		grade.set_shader_parameter("green_shift", lerpf(0.15, 0.6, day))
+		grade.set_shader_parameter("shadow_tint", Vector3(0.93, 0.88, 1.05).lerp(Vector3(0.93, 0.94, 1.0).lerp(Vector3(0.88, 0.85, 0.94), gold), day))
+		grade.set_shader_parameter("green_shift", lerpf(0.15, 0.0, day))
 		grade.set_shader_parameter("tint", Vector3(1.02, 1.07, 1.34).lerp(Vector3.ONE, day))
-		grade.set_shader_parameter("sat", lerpf(0.95, lerpf(1.04, 0.93, gold), day))
+		grade.set_shader_parameter("sat", lerpf(0.95, lerpf(1.08, 1.0, gold), day))
 		grade.set_shader_parameter("warm_keep", 1.0 - smoothstep(0.15, 0.7, day))
 		grade.set_shader_parameter("contrast", lerpf(1.06, 1.14, day))
 	if look_fresh:
@@ -1364,6 +1369,8 @@ func _add_nature(name: String, xf: Transform3D, p: Vector2, rm := {}) -> void:
 		nature[key] = []
 	var tinted := name.begins_with("SM_Env_Tree") or name.begins_with("SM_Env_Garden") or name.begins_with("SM_Env_Bush")
 	var remap: Dictionary = rm if not rm.is_empty() else ({"tint": NATURE_GREEN if MeadowNature.v2 else Synty.GREEN} if tinted else {})
+	if remap.is_empty() and name.begins_with("M:") and name.contains("flowers"):
+		remap = {"fmode": -1.0}               # полевые цветы лугов: больше белых и розовых, меньше красных и оранжевых (15.11)
 	var h := parts.place_one(name, xf, remap, true)
 	if name.begins_with("M:"):
 		MeadowNature.apply_group(h[0][0])      # мелочь лугов и деревья набора — по нынешнему уровню графики
@@ -1395,9 +1402,20 @@ const NATURE_GREEN := Color(0.84, 1.0, 0.66)
 
 ## Уровень графики поменялся (Gfx.apply): природа Meadow Forest — по нему (scripts/meadow_nature.gd)
 func meadow_quality(is_low: bool) -> void:
+	apply_grass_range(false)
 	MeadowNature.quality(self, is_low)
 	if grass != null:
 		grass.set_quality(str(settings.get("quality", "high")))
+
+
+## «Трава и цветы» (Настройки): дальность ковра травы и мелочи природы (Близко / Далеко / Не скрывать / Выключить);
+## не заданное — «Далеко» на «Высокой», «Близко» (как было) на остальных
+func apply_grass_range(update_carpet := true) -> void:
+	var q := str(settings.get("quality", "high"))
+	var rk := GrassCarpet.range_key(settings, q)
+	Parts.set_grass_range({"near": 1.0, "far": 1.7, "all": 10.0, "off": 1.0}[rk], rk == "off")
+	if update_carpet and grass != null:
+		grass.set_quality(q)
 
 
 ## Дерево, куст или камень под курсором (их можно снести и перенести, как в Town to City)
@@ -2869,7 +2887,7 @@ func set_tool(t: String) -> void:
 	tool = t
 	if is_road_tool(t):
 		# «Прямая линия» помнится отдельно у дорог и у ластика (и после перезапуска — в настройках)
-		brush_line = bool(settings.get("line_erase" if t == "erase" else "line_road", false))
+		brush_line = bool(settings.get("line_erase" if t == "erase" else "line_road", false)) and not is_grass_tool(t)
 	place_lock = {}
 	pressing = false
 	rot_drag = false
@@ -2919,7 +2937,12 @@ func set_tool(t: String) -> void:
 
 
 func is_road_tool(t: String) -> bool:
-	return t in ["road", "plaza", "path", "erase", "roadup", "ground"]
+	return t in ["road", "plaza", "path", "erase", "roadup", "ground", "grass", "ungrass"]
+
+
+## Кисти травы (15.11): «Трава» сажает густую траву с цветами, «Убрать траву» стирает её; бесплатно, маска — Land.grass_mask
+func is_grass_tool(t: String) -> bool:
+	return t == "grass" or t == "ungrass"
 
 
 ## Кисть узора, а не дороги: «Улучшить» (этап 5.7) и «Земля» (5.8) — красят слой Land.deco, клетки берут brush_cells
@@ -2930,7 +2953,7 @@ func is_deco_tool(t: String) -> bool:
 ## Цвет кольца кисти по инструменту: мостовая — кремовая, тропа — песочная, площадь — светлый камень, ластик — красный,
 ## «Улучшить» — золотистый, «Земля» — зелёный
 const BRUSH_COL := {"road": Color(1.0, 0.97, 0.88), "path": Color(0.95, 0.8, 0.55), "plaza": Color(0.86, 0.88, 0.92), "erase": Color(1.0, 0.32, 0.26),
-	"roadup": Color(1.0, 0.86, 0.45), "ground": Color(0.6, 0.95, 0.5)}
+	"roadup": Color(1.0, 0.86, 0.45), "ground": Color(0.6, 0.95, 0.5), "grass": Color(0.55, 0.95, 0.4), "ungrass": Color(0.95, 0.6, 0.3)}
 var brush_disc: MeshInstance3D            # чуть заметный круг внутри кольца (цвет инструмента)
 
 
@@ -3006,7 +3029,13 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	var d: Dictionary = Defs.B[type]
 	if d.get("wall", false):
 		return _wall_place(type, p)
-	if d["kind"] == "decor" and not d.get("seg", false):
+	if d.has("nat"):
+		# «Природа» (15.11): модель — случайная на каждую постановку (next_variant), у цветов — выбранный в панели цвет
+		if variant < 0:
+			variant = int(moving.get("variant", 0)) if not moving.is_empty() else next_variant
+		if color < 0 and d.get("fcolors", false):
+			color = int(moving.get("color", 6)) if not moving.is_empty() else flower_color
+	elif d["kind"] == "decor" and not d.get("seg", false):
 		variant = 0                       # облик украшения задаёт его тип (карточка), а не фасад
 	elif d.get("seg", false) and variant < 0:
 		variant = int(moving.get("variant", 0)) if not moving.is_empty() else 0    # звено забора; 1 — калитка
@@ -5634,6 +5663,8 @@ func _release() -> void:
 		for c in stroke:
 			cells.append(land.idx(c[0].x, c[0].y))
 		land.smooth_cells(cells)
+	if not stroke.is_empty() and tool in ["road", "plaza", "path"]:
+		_pave_beneath(stroke, int(ROAD_KIND[tool]))
 	if hud:
 		if brush_line and tool != "erase":
 			hud.stroke_live(stroke_cost, tool, _paint_broke)   # сколько списано на самом деле
@@ -5660,6 +5691,31 @@ func _release() -> void:
 		if hud:
 			hud.refresh_undo()
 	stroke = []
+
+
+## Дорога проложена вплотную к постройкам: под их следом (и под украшениями у порога) — то же покрытие, без клочков травы
+## и глины под стенами (15.11). Поля и вода не трогаем
+func _pave_beneath(ch: Array, kd: int) -> void:
+	var ids := {}
+	for c in ch:
+		var ci: Vector2i = c[0]
+		for dj in range(-2, 3):
+			for di in range(-2, 3):
+				if land.inside(ci.x + di, ci.y + dj):
+					var o: int = land.occ[land.idx(ci.x + di, ci.y + dj)]
+					if o != 0:
+						ids[o] = true
+	var n := 0
+	for id in ids:
+		if not city.buildings.has(id):
+			continue
+		var b: Dictionary = city.buildings[id]
+		var d: Dictionary = city.def(b)
+		if d["kind"] == "farm" or d.get("water", false) or b.has("host"):
+			continue
+		n += land.pave_beneath(b["cells"], kd)
+	if n > 0:
+		land.walk_ver += 1
 
 
 ## Кадр после мазка: цели (сколько дорог), пересчёт города; окно города — ещё кадром позже
@@ -5712,6 +5768,9 @@ func _paint_to(p: Vector2) -> void:
 
 
 func _paint_at(q: Vector2) -> void:
+	if is_grass_tool(tool):
+		_grass_at(q)
+		return
 	if tool == "erase":
 		_erase_at(q)
 		return
@@ -5740,6 +5799,35 @@ func _paint_at(q: Vector2) -> void:
 	stroke_cost += cost
 	stroke.append_array(ch)
 	clear_nature(q, brush_r + 0.3)
+
+
+## Мазок кисти травы: маска Land.grass_mask, куски ковра под ним — заново; «Убрать траву» уносит и мелкую траву и цветы
+## природы (кочки лугов), деревья, кусты и камни остаются
+func _grass_at(q: Vector2) -> void:
+	var rc := land.gm_paint(q, maxf(brush_r, 0.5), 1 if tool == "grass" else 2)
+	if rc.is_empty():
+		return
+	if grass != null:
+		grass.invalidate_rect(rc[0], rc[1])
+	if tool == "ungrass":
+		clear_nature_small(q, maxf(brush_r, 0.5))
+
+
+## Мелочь природы (трава, цветы лугов) в круге — снести; деревья, кусты, камни и поля не трогать
+func clear_nature_small(c: Vector2, r: float) -> void:
+	for kz in range(int((c.y - r) / 2.0) - 1, int((c.y + r) / 2.0) + 2):
+		for kx in range(int((c.x - r) / 2.0) - 1, int((c.x + r) / 2.0) + 2):
+			var key := Vector2i(kx, kz)
+			if not nature.has(key):
+				continue
+			var keep := []
+			for it in nature[key]:
+				var nm: String = it["name"]
+				if (nm.contains("Grass") or nm.contains("Flowers") or nm.contains("Wildflowers")) and (it["p"] as Vector2).distance_to(c) <= r:
+					parts.remove(it["h"])
+				else:
+					keep.append(it)
+			nature[key] = keep
 
 
 const ROAD_KIND := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": Land.Kind.DIRT, "erase": Land.Kind.GRASS}

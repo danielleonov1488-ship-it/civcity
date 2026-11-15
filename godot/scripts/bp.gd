@@ -236,7 +236,8 @@ func footprint(all := true) -> Array:
 			continue
 		var xf: Transform3D = p[1]
 		var box := model_aabb(nm)
-		if nm.begins_with("SM_Env_Tree") or nm.begins_with("SM_Env_Bush") or nm.begins_with("SM_Env_Garden"):
+		var nb := nm.trim_prefix("M:")
+		if nb.begins_with("SM_Env_Tree") or nb.begins_with("SM_Env_Bush") or nb.begins_with("SM_Env_Garden"):
 			# у деревьев — только ствол и низ кроны
 			var c := box.get_center()
 			box = AABB(Vector3(c.x - box.size.x * 0.15, box.position.y, c.z - box.size.z * 0.15), Vector3(box.size.x * 0.3, box.size.y, box.size.z * 0.3))

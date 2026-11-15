@@ -39,8 +39,14 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		# украшение всегда выглядит как его карточка: облик задаёт тип, а не цвет, место или фасад
 		# (у звена забора variant 1 — калитка)
 		tier = 0
+		var v_in := variant
+		var c_in := color
 		variant = clampi(variant, 0, 1) if dd0.get("seg", false) else 0
 		color = int(dd0.get("color", 0))
+		if dd0.has("nat"):
+			# «Природа» (cat_nature.gd): variant — какая модель из списка, color у цветов — какой цвет
+			variant = posmod(v_in, maxi(1, CatNature.count_of(String(dd0["nat"]))))
+			color = CatNature.flower_color(c_in) if dd0.get("fcolors", false) else 0
 	var key := "%s:%d:%d:%d" % [type, tier, variant, color]
 	legacy = legacy and KitHouses.covers(type)
 	if legacy:
@@ -108,7 +114,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		"pantheon": CatMonuments._pantheon(b)
 		"center": CatCivic._center(b, tier)
 		"barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia", "mars": CatMilitary.make(b, type, tier)
-		_: CatDecor._decor(b, type, variant)
+		_: CatDecor._decor(b, type, variant, color)
 	b.base = Transform3D.IDENTITY
 	if CatDress.ON and not kit_done and not legacy and (dd0.get("kind", "") in ["house", "shop", "inn", "rp", "store"] or CatDress.TRADE_SIGN.has(type)):
 		CatDress.dress(b, type)                # цветы под окнами, плющ, горшки у дверей — как на картинках Synty

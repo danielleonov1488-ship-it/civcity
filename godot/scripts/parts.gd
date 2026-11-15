@@ -154,9 +154,10 @@ static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
 		var mmi: MultiMeshInstance3D = sub["mmi"]
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if tile.x >= 0:
-			mmi.visibility_range_end = 150.0
 			mmi.visibility_range_end_margin = 20.0
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			_small_mmis.append(mmi)
+			_apply_range(mmi)
 			_far_fade(mesh)
 	elif Meadow.field(name):
 		(sub["mmi"] as MultiMeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # поля набора Meadow — без тени
@@ -170,6 +171,40 @@ static func _small(name: String, sub: Dictionary, tile: Vector2i) -> void:
 const FADE_FROM := 85.0
 const FADE_TO := 115.0
 static var _fade_mats := {}
+## Настройка «Трава и цветы» (15.11): во сколько раз дальше (или ближе) прежнего видна мелочь природы; off — спрятана
+## совсем. 1.0 — как было (дальность куска 150 м, травинки гаснут с 85 до 115 м); от 3.0 — куски не отсекаются по дальности
+static var grass_k := 1.0
+static var grass_off := false
+static var _small_mmis: Array = []
+
+
+static func _apply_range(mmi: MultiMeshInstance3D) -> void:
+	if grass_off:
+		mmi.visibility_range_end = 0.5
+	elif grass_k >= 3.0:
+		mmi.visibility_range_end = 0.0
+	else:
+		mmi.visibility_range_end = 150.0 * grass_k
+
+
+## Дальность мелочи поменяли в настройках: куски, травинки и «Очень низкая» (картинки) — все сразу
+static func set_grass_range(k: float, off: bool) -> void:
+	grass_k = k
+	grass_off = off
+	var keep: Array = []
+	for m in _small_mmis:
+		if is_instance_valid(m):
+			_apply_range(m)
+			keep.append(m)
+	_small_mmis = keep
+	var fv := Vector2(FADE_FROM, FADE_TO) * k
+	for m in Meadow._mats.values():
+		if m is ShaderMaterial and (m as ShaderMaterial).get_shader_parameter("fade") is Vector2 and (m as ShaderMaterial).get_shader_parameter("fade") != Vector2.ZERO:
+			(m as ShaderMaterial).set_shader_parameter("fade", fv)
+	for m in _fade_mats.values():
+		(m as BaseMaterial3D).distance_fade_max_distance = FADE_FROM * k
+		(m as BaseMaterial3D).distance_fade_min_distance = FADE_TO * k
+
 static func _far_fade(mesh: Mesh) -> void:
 	if mesh == null:
 		return
@@ -177,7 +212,7 @@ static func _far_fade(mesh: Mesh) -> void:
 		var m := mesh.surface_get_material(s)
 		if m is ShaderMaterial:
 			if (m as ShaderMaterial).get_shader_parameter("fade") != null:
-				(m as ShaderMaterial).set_shader_parameter("fade", Vector2(FADE_FROM, FADE_TO))
+				(m as ShaderMaterial).set_shader_parameter("fade", Vector2(FADE_FROM, FADE_TO) * grass_k)
 			continue
 		if not m is BaseMaterial3D:
 			continue
@@ -185,8 +220,8 @@ static func _far_fade(mesh: Mesh) -> void:
 		if not _fade_mats.has(k):
 			var f := m.duplicate() as BaseMaterial3D
 			f.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_DITHER
-			f.distance_fade_max_distance = FADE_FROM          # больше min — растворяется вдаль: видно до FADE_FROM, нет к FADE_TO
-			f.distance_fade_min_distance = FADE_TO
+			f.distance_fade_max_distance = FADE_FROM * grass_k          # больше min — растворяется вдаль: видно до FADE_FROM, нет к FADE_TO
+			f.distance_fade_min_distance = FADE_TO * grass_k
 			_fade_mats[k] = f
 			Synty._mats["fade|%d" % k] = f              # «Очень низкая» подменяет картинки и у неё (Gfx.small_textures)
 		mesh.surface_set_material(s, _fade_mats[k])

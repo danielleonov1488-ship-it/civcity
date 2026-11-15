@@ -60,6 +60,13 @@ var wear_block := {}                 # id построек с бордюром (
 ## бит UP — улучшенная мостовая (каменные плиты) или площадь (травертин с мозаикой)
 const UP := 8
 const GMASK := 7
+## 15.11: маска травы — кисти «Трава» и «Убрать траву» (GrassCarpet): клетка 1 м, 0 — как само растёт, 1 — посажено
+## (густо, с цветами), 2 — убрано. Сохраняется сжатой строкой (gmask); в старых сохранениях её нет
+const GM_N := 384
+var grass_mask := PackedByteArray()
+var gm_count := 0                    # сколько клеток с кистью (0 — в сохранение ничего не пишем)
+var _gm_enc := ""                    # сохранение маски: пересчитывается только после правки
+var _gm_dirty := true
 var deco := PackedByteArray()
 var deco_cells := {}                 # клетка → true, где узор есть (сохранение без перебора всей карты)
 var deco_chunks := {}                # куски, где узор был (маска узора собирается только по ним)
@@ -980,6 +987,22 @@ func pave_under(cells: PackedInt32Array, on: bool) -> void:
 			_mark(k % N, k / N, true, true)
 
 
+## Покрытие под постройкой, возле которой проложили дорогу (15.11, отзыв владельца: «под первым зданием — дыры голой земли»):
+## кисть обходит клетки под домами и украшениями, и вокруг стен и мелочи у порога оставались клочки травы и глины.
+## Клетки следа — тем же покрытием (трава, земля, песок, двор), высота не меняется; снесли постройку — мостовая остаётся
+func pave_beneath(cells: PackedInt32Array, kd: int) -> int:
+	var n := 0
+	for k in cells:
+		var kk := int(kind[k])
+		if kk == kd or not (kk in [Kind.GRASS, Kind.DIRT, Kind.SAND, Kind.YARD]) or hq(k) < WATER_Y + 0.05:
+			continue
+		kind[k] = kd
+		_mark(k % N, k / N, false, true)
+		road_chunks[Vector2i((k % N) / CH, (k / N) / CH)] = true
+		n += 1
+	return n
+
+
 func wear_stamp(cells: PackedInt32Array, door := Vector2.INF) -> void:
 	if cells.is_empty():
 		return
@@ -1292,6 +1315,70 @@ func node_y(vi: int, vj: int) -> float:
 	return (h[j0 * N + i0] + h[j0 * N + i1] + h[j1 * N + i0] + h[j1 * N + i1]) * 0.25
 
 
+## Что кисть траву сказала про точку: 0 — само, 1 — посажено, 2 — убрано
+func gm_at(x: float, z: float) -> int:
+	if gm_count == 0:
+		return 0
+	var i := int(x)
+	var j := int(z)
+	if i < 0 or j < 0 or i >= GM_N or j >= GM_N:
+		return 0
+	return grass_mask[j * GM_N + i]
+
+
+## Мазок кисти травы: круг радиуса r (м) в точке c, v: 1 — посадить, 2 — убрать, 0 — стереть метку. Возвращает
+## прямоугольник правки [от, до] (м) или пустой массив, если ничего не изменилось
+func gm_paint(c: Vector2, r: float, v: int) -> Array:
+	if grass_mask.is_empty():
+		grass_mask.resize(GM_N * GM_N)
+		grass_mask.fill(0)
+	var any := false
+	for j in range(maxi(0, int(floor(c.y - r))), mini(GM_N, int(ceil(c.y + r)) + 1)):
+		for i in range(maxi(0, int(floor(c.x - r))), mini(GM_N, int(ceil(c.x + r)) + 1)):
+			if Vector2(i + 0.5, j + 0.5).distance_to(c) > r:
+				continue
+			var k := j * GM_N + i
+			var o := grass_mask[k]
+			if o == v:
+				continue
+			if o == 0:
+				gm_count += 1
+			elif v == 0:
+				gm_count -= 1
+			grass_mask[k] = v
+			any = true
+	if not any:
+		return []
+	_gm_dirty = true
+	return [Vector2(c.x - r - 1.0, c.y - r - 1.0), Vector2(c.x + r + 1.0, c.y + r + 1.0)]
+
+
+func gm_save() -> Dictionary:
+	if gm_count <= 0:
+		return {}
+	if _gm_dirty:
+		_gm_enc = Marshalls.raw_to_base64(grass_mask.compress(FileAccess.COMPRESSION_ZSTD))
+		_gm_dirty = false
+	return {"gmask": _gm_enc, "gmask_n": GM_N}
+
+
+func gm_load(d: Dictionary) -> void:
+	var enc := String(d.get("gmask", ""))
+	var n := int(d.get("gmask_n", 0))
+	if enc == "" or n != GM_N:
+		return
+	var raw := Marshalls.base64_to_raw(enc)
+	var m := raw.decompress(GM_N * GM_N, FileAccess.COMPRESSION_ZSTD)
+	if m.size() != GM_N * GM_N:
+		return
+	grass_mask = m
+	gm_count = 0
+	for b in m:
+		if b != 0:
+			gm_count += 1
+	_gm_dirty = true
+
+
 ## Высота видимой (плавной) земли в точке — ровно по треугольникам сетки (диагональ 00–11, как chunk_mesh)
 func surface_y(x: float, z: float) -> float:
 	if not smooth_on:
@@ -1407,6 +1494,7 @@ func save_changes() -> Dictionary:
 		var de := _deco_save()               # узор земли и улучшенные дороги (этап 5.7–5.8) — только если он есть
 		out["deco"] = de[0]
 		out["deco_v"] = de[1]
+	out.merge(gm_save())
 	return out
 
 
@@ -1507,5 +1595,6 @@ func load_changes(d: Dictionary) -> void:
 	owned.clear()
 	for p in d.get("plots", []):
 		owned[Vector2i(int(p[0]), int(p[1]))] = true
+	gm_load(d)                                        # маска травы (15.11): в старых сохранениях её нет — как само растёт
 	streams_saved = d.get("streams", null)            # ручьи (13.11): в старых сохранениях их нет — null
 	meadow_new = int(d.get("nv", 0)) >= 1
