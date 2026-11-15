@@ -624,8 +624,13 @@ func _cursor_feedback() -> void:
 	var far := Vector2(198, 168)                 # трава, до дорог далеко
 	move(scr(far))
 	await frames(4)
-	check(game.place_info.get("err", "") != "" and hud._err == hud.tool_err.text.substr(0, hud.tool_err.text.find(" (") if hud.tool_err.text.find(" (") > 0 else 999),
-		"ошибка у курсора тем же кадром: «%s» / «%s»" % [hud._err, hud.tool_err.text])
+	if Game.FREE_BUILD:
+		# свободная стройка: без дороги — не ошибка, а пометка у курсора «Без дороги не заработает» (место годное)
+		check(game.place_info.get("err", "x") == "" and bool(game.place_info.get("noroad", false)) and hud._err == "" and hud._note == "Без дороги не заработает",
+			"без дороги у курсора тем же кадром — пометка, не ошибка: «%s» / «%s»" % [hud._note, hud._err])
+	else:
+		check(game.place_info.get("err", "") != "" and hud._err == hud.tool_err.text.substr(0, hud.tool_err.text.find(" (") if hud.tool_err.text.find(" (") > 0 else 999),
+			"ошибка у курсора тем же кадром: «%s» / «%s»" % [hud._err, hud.tool_err.text])
 	await shot("s3_cursor_err.png")
 	# стрелка у входа: мостовая в 1,5 м — зелёная, в 2,0 м — красная
 	var pl: Dictionary = game.placement("house_pleb", far)

@@ -182,7 +182,25 @@ const ROT_DRAG_PX := 14.0             # с какого сдвига мыши в
 var last_snap_p := Vector2.INF        # где был курсор, когда фасад последний раз нашёл дорогу
 # постановка, как в Town to City: куда навёл и как повернул (на траве, площади, мостовой); вплотную к дороге — фасадом
 # к ней, ровно у края. У входа нужна мостовая
-var pave_build := true                 # false — пока раскладывается готовый город меню (витрина, старый городок): там прежние правила
+## Свободная стройка: любое здание — где угодно на своей земле (не вода, не занято, не круто), дорога у входа не нужна при
+## постановке: без неё здание не работает (значок «нет дороги», подсветка, подсказка в карточке). Поворот свободный
+## (Z/X по 15°, Shift — по 5°, зажатая мышь), привязка к дороге (R) — по желанию. CIVCITY_FREEBUILD=0 — прежние правила
+static var FREE_BUILD := OS.get_environment("CIVCITY_FREEBUILD") != "0"
+var pave_build := true:                # false — пока раскладывается готовый город меню (витрина, старый городок): там прежние правила
+	set(v):
+		pave_build = v
+		City.road_optional = FREE_BUILD and v
+
+
+## Включить/выключить свободную стройку на лету (проверки, замеры)
+func set_free_build(on: bool) -> void:
+	FREE_BUILD = on
+	City.road_optional = on and pave_build
+
+
+## Нужна ли этому типу дорога у входа (иначе не работает)
+func _needs_road(d: Dictionary) -> bool:
+	return not (d["kind"] in ["decor", "farm", "center"]) and not d.get("noroad", false)
 var yaw_set := false                   # игрок уже поворачивал постройку (Z/X, зажатая мышь) — дальше держим его поворот
 var free_yaw := 0.0                    # …вот этот (отдельно от tool_yaw: перенос деревьев и домов его не сбивает)
 var rot_off := Vector2.ZERO            # Z/X: середина постройки относительно курсора — поворачивается на месте, не прыгает
@@ -226,6 +244,7 @@ const SAVE_NAME := "city.json"
 
 
 func _ready() -> void:
+	City.road_optional = FREE_BUILD and pave_build
 	var args := {}
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
@@ -3148,6 +3167,13 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 			err = "По большой дороге ездят повозки — здесь не строят"
 	var res := {"pos": pos, "yaw": yaw, "err": err, "cells": chk["cells"], "y": chk["y"], "variant": variant, "color": color, "tier": tier,
 		"mode": "free" if free else "", "sub": sub}
+	if err == "" and City.road_optional and _needs_road(d):
+		# свободная стройка: место годное, но у входа нет мостовой — построить можно, работать не будет («Без дороги не заработает»)
+		var own := {}
+		for k in (chk["cells"] as PackedInt32Array):
+			own[k] = true
+		var dpt := pos + City.axis(yaw) * bp.door.x + City.facing(yaw) * bp.door.z
+		res["noroad"] = not _road_free_near(dpt, 1.7, own)
 	if ry != null:
 		res["ry"] = ry
 	return res
@@ -3227,7 +3253,7 @@ var _free_rot := false                    # у этой постройки по�
 
 func _free_place(p: Vector2, bb: Array, mid: int, locked: bool, door_r := 0.0) -> Dictionary:
 	if locked:
-		if place_lock.has("ry"):
+		if place_lock.has("ry") and not City.road_optional:
 			return {"pos": p, "yaw": _square_yaw(float(place_lock["ry"]), tool_yaw), "sub": "lock", "ry": float(place_lock["ry"])}
 		return {"pos": p, "yaw": tool_yaw, "sub": "lock"}
 	var hd := (float(bb[3]) - float(bb[2])) * 0.5
@@ -3238,7 +3264,7 @@ func _free_place(p: Vector2, bb: Array, mid: int, locked: bool, door_r := 0.0) -
 	var near_prev := last_snap_n != Vector2.ZERO and last_snap_p.distance_to(p) < 2.0
 	# выключенная привязка (R) — совсем свободно: ни к краю, ни ровно по дороге; фонтан (круглый, симметричный) — всегда
 	# свободно, как повернул игрок (владелец 14.11: «не вертится свободно»)
-	if snap and not _free_rot:
+	if snap and not _free_rot and not (City.road_optional and manual_yaw):    # свободная стройка: повернул сам — его угол, без дороги
 		var probe := c
 		if near_prev and last_glued and land.is_road(c):
 			# курсор заехал на дорогу у самого края (до 1 м) — постройка остаётся прилипшей, а не прыгает на мостовую
@@ -3579,7 +3605,7 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 	var bp := Catalog.make(type, tier, variant, color)
 	var ax := City.axis(yaw)
 	var f := City.facing(yaw)
-	if not d.get("noroad", false) and not _road_free_near(pos + ax * bp.door.x + f * bp.door.z, 1.7, own):
+	if not City.road_optional and not d.get("noroad", false) and not _road_free_near(pos + ax * bp.door.x + f * bp.door.z, 1.7, own):
 		return "Нужна дорога у входа"
 	var rects: Array = bp.footprint()
 	if rects.is_empty():
@@ -4688,6 +4714,9 @@ func _tool_note(over_ui: bool) -> void:
 		_hover_id = -1
 	if is_road_tool(tool) and brush_line and hover != Vector2.INF and not over_ui:
 		txt = "Прямая" if line_from == Vector2.INF else "Прямая · отпустите в конце"
+	elif Defs.B.has(tool) and hover != Vector2.INF and not over_ui and String(place_info.get("_t", "")) == tool and bool(place_info.get("noroad", false)):
+		txt = "Без дороги не заработает"
+		col = Color("ffc59a")
 	elif Defs.B.has(tool) and stories != null and hover != Vector2.INF and not over_ui and String(place_info.get("_t", "")) == tool:
 		var zn: Array = stories.zone_note(tool, place_info.get("pos", Vector2.INF))
 		if not zn.is_empty():
@@ -4784,6 +4813,34 @@ func _clear_settle_marks() -> void:
 	for k in settle_keys:
 		hud.clear_badge(k)
 	settle_keys = []
+
+
+## Постройки без дороги у входа (свободная стройка): лёгкая красноватая подсветка на всём здании — не работает, пока нет мостовой
+var noroad_marks := {}                # id → [узел, pos, yaw]
+
+
+func _update_noroad_marks() -> void:
+	var want := {}
+	if City.road_optional:
+		for id in city.buildings:
+			var b: Dictionary = city.buildings[id]
+			if b.has("host") or bool(b.get("road", true)) or b.get("over", false) or not _needs_road(city.def(b)):
+				continue
+			want[id] = true
+	for id in noroad_marks.keys():
+		var e: Array = noroad_marks[id]
+		var b: Dictionary = city.buildings.get(id, {})
+		if not want.has(id) or b.is_empty() or (b["pos"] as Vector2) != (e[1] as Vector2) or float(b["yaw"]) != float(e[2]):
+			(e[0] as Node).queue_free()
+			noroad_marks.erase(id)
+	for id in want:
+		if noroad_marks.has(id):
+			continue
+		var b: Dictionary = city.buildings[id]
+		var g := Parts.ghost(city.blueprint(b), "shell", Color(1.0, 0.3, 0.22, 0.17))
+		g.transform = city.xf(b)
+		add_child(g)
+		noroad_marks[id] = [g, b["pos"], float(b["yaw"])]
 
 
 ## Все дома, куда семья может въехать, мягко светятся
@@ -5206,7 +5263,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			if place_lock.is_empty():
 				var pl0 := press_pl if press_pl.has("pos") else placement(tool, press_hover)
 				place_lock = {"p": pl0["pos"]}
-				if pl0.has("ry"):
+				if pl0.has("ry") and not City.road_optional:     # свободная стройка: крутится плавно, не четвертями
 					place_lock["ry"] = float(pl0["ry"])    # у дороги крутится четвертями — ровно по ней
 				rot_yaw0 = float(pl0["yaw"])
 			else:
@@ -5242,7 +5299,7 @@ func _unhandled_input(e: InputEvent) -> void:
 					_undo()
 				else:
 					_rot_keep()
-					tool_yaw = _yaw_now() - _rot_step()
+					tool_yaw = _rot_to(-1.0)
 					manual_yaw = true
 					yaw_set = true
 					free_yaw = tool_yaw
@@ -5251,7 +5308,7 @@ func _unhandled_input(e: InputEvent) -> void:
 					_redo()
 			KEY_X:
 				_rot_keep()
-				tool_yaw = _yaw_now() + _rot_step()
+				tool_yaw = _rot_to(1.0)
 				manual_yaw = true
 				yaw_set = true
 				free_yaw = tool_yaw
@@ -5519,14 +5576,24 @@ func _moved(b: Dictionary, m := {}) -> void:
 
 ## Поворот призрака сейчас (если он стоит у дороги — повёрнут к ней)
 func _yaw_now() -> float:
-	if place_info.has("yaw") and (not manual_yaw or place_info.has("ry")):
+	if place_info.has("yaw") and (not manual_yaw or (place_info.has("ry") and not City.road_optional)):
 		return float(place_info["yaw"])       # у дороги — показанный (ровный) поворот: Z/X крутят от него
 	return tool_yaw
 
 
 ## Шаг Z/X: у дороги — четверть оборота (постройка остаётся ровно по дороге), без дороги — 15°
 func _rot_step() -> float:
+	if City.road_optional:
+		return deg_to_rad(5.0 if Input.is_key_pressed(KEY_SHIFT) else 15.0)    # свободно: 15°, с Shift — 5°
 	return PI / 2 if place_info.has("ry") else deg_to_rad(15)
+
+
+## Новый поворот после Z/X (sign −1 / +1): при свободной стройке — на сетке 5° (ровные числа после дороги)
+func _rot_to(sign: float) -> float:
+	var y := _yaw_now() + sign * _rot_step()
+	if City.road_optional:
+		y = snappedf(y, deg_to_rad(5.0))
+	return y
 
 
 ## Поставить постройку там, где призрак (после щелчка без поворота)
@@ -5624,7 +5691,7 @@ func _release() -> void:
 					_build_here()
 				place_lock = {}
 			else:
-				if place_lock.has("ry"):
+				if place_lock.has("ry") and not City.road_optional:
 					tool_yaw = _square_yaw(float(place_lock["ry"]), tool_yaw)   # у дороги — та четверть, что была видна
 				place_lock = {}                   # повернули — дальше постройка едет за мышкой, щелчок — построить
 				manual_yaw = true

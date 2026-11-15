@@ -4472,6 +4472,8 @@ func _fill_info_body() -> void:
 	hdr.add_child(close)
 	info_box.add_child(hdr)
 	info_box.add_child(_divider(18))
+	if not bool(b.get("road", true)) and not b.get("over", false) and d["kind"] != "decor":
+		info_box.add_child(_wrap(_label("Нет дороги — постройте дорогу ко входу", 15, true, C_BAD), cw))
 	match d["kind"]:
 		"house":
 			_fill_house(b, d, tv, cw)
@@ -4487,7 +4489,7 @@ func _fill_info_body() -> void:
 			if String(b["type"]) == "catshop":
 				info_box.add_child(_divider(10))
 				_catshop_rows(b, cw)
-			if not b.get("active", true):
+			if not b.get("active", true) and String(b.get("why", "")) != "road":
 				var st_txt := c.idle_text(b)            # нет работников: почему именно (никто не живёт, не тот класс, мало мест)
 				var why := {"store": "Нет склада рядом — нечем торговать", "good": "Нет сырья: %s" % {"wheat": "постройте пшеничное поле", "olives": "посадите оливковую рощу", "grapes": "посадите виноградник"}.get(d.get("needs_good", ""), ""),
 					"road": "Нет дороги у входа", "staff": "Не работает: " + st_txt}
@@ -4506,7 +4508,7 @@ func _fill_info_body() -> void:
 				tip += " Украшения вокруг тоже радуют гостей."
 			info_box.add_child(_wrap(_label(tip, 14, false, C_SOFT), cw))
 			info_box.add_child(_hire_row(b))
-			if not b.get("active", true):
+			if not b.get("active", true) and bool(b.get("road", true)):
 				info_box.add_child(_wrap(_label("Не работает: " + c.idle_text(b), 15, true, C_BAD), cw))
 		"monument":
 			info_box.add_child(_row("happy", "Счастье всем вокруг", "+%d%%" % int(d["bonus"]), C_GOOD))
@@ -6688,6 +6690,7 @@ func refresh() -> void:
 	if stats_panel.visible:
 		_fill_stats()
 	_update_world_icons()
+	game._update_noroad_marks()
 	_update_pointer()
 	if hover_src:
 		_fill_hover()                       # числа в открытой подсказке живые
@@ -7424,7 +7427,9 @@ func _update_world_icons() -> void:
 			continue                 # сверх предела уровня: работников ей не нужно, всё сказано в карточке — без значка
 		var icon := ""
 		var warn := true
-		if d["kind"] == "shop" and not b.get("active", true):
+		if not bool(b.get("road", true)):
+			icon = "road"            # свободная стройка: любое здание без дороги у входа не работает
+		elif d["kind"] == "shop" and not b.get("active", true):
 			icon = {"store": "warehouse", "good": "wheat", "road": "road"}.get(b.get("why", ""), "hammer")
 		elif d["kind"] in ["rp", "farm", "store", "monument"] and d.has("jobs") and (float(b.get("fill", 1.0)) < 0.99 or c.hired_of(b) == 0):
 			icon = "hammer"
