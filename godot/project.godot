@@ -10,9 +10,9 @@ config/description="Римский город: уютная стройка ка�
 run/main_scene="res://main.tscn"
 config/version="1.0.0"
 config/features=PackedStringArray("4.7", "Forward Plus")
-config/icon="res://assets/ui/ai/app_icon.png"
-boot_splash/bg_color=Color(0.169, 0.114, 0.071, 1)
-boot_splash/image="res://assets/ui/ai/app_icon.png"
+config/icon="res://assets/ui/ai/app_icon_min.png"
+boot_splash/bg_color=Color(0.965, 0.925, 0.863, 1)
+boot_splash/image="res://assets/ui/ai/logo_min.png"
 boot_splash/stretch_mode=0
 ; собранная игра (не редактор): свои данные Godot (журналы, кэш шейдеров) — в %APPDATA%/CivCity Game
 config/use_custom_user_dir.template=true

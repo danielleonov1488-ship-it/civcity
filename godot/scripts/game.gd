@@ -540,103 +540,62 @@ func _loading_show() -> void:
 	loading = CanvasLayer.new()
 	loading.layer = 50
 	add_child(loading)
+	# 15.11 (владелец: «загрузочные экраны и логотипы — минималистичнее»): светлый фон, логотип посередине, тонкая полоса
+	# и короткий совет — без рисованных картинок
 	var fill := ColorRect.new()
-	fill.color = Color("2b1d12")
+	fill.color = Color("f6ecdc")
 	fill.set_anchors_preset(Control.PRESET_FULL_RECT)
 	loading.add_child(fill)
-	# рисованная картинка владельца (на весь экран, без полей) — каждый раз одна из трёх: городок на закате,
-	# вечер с фонарями, легион выходит в поход
-	var bg := TextureRect.new()
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	bg.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	var pics := ["res://assets/ui/ai/loading.jpg", "res://assets/ui/ai/loading_33.jpg", "res://assets/ui/ai/loading_34.jpg"].filter(
-		func(p: String) -> bool: return ResourceLoader.exists(p))
-	if pics.is_empty():
-		pics = ["res://assets/ui/loading.png"]
-	var pic: String = pics[randi() % pics.size()]
-	if ResourceLoader.exists(pic):
-		bg.texture = load(pic)
-	loading.add_child(bg)
-	# мягкое затемнение снизу — чтобы подпись и полоса читались на картинке
-	var g := Gradient.new()
-	g.set_color(0, Color(0.12, 0.07, 0.03, 0.0))
-	g.set_color(1, Color(0.12, 0.07, 0.03, 0.78))
-	var gt := GradientTexture2D.new()
-	gt.gradient = g
-	gt.width = 4
-	gt.height = 256
-	gt.fill_from = Vector2(0, 0)
-	gt.fill_to = Vector2(0, 1)
-	var shade := TextureRect.new()
-	shade.texture = gt
-	shade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	shade.stretch_mode = TextureRect.STRETCH_SCALE
-	shade.anchor_left = 0.0
-	shade.anchor_right = 1.0
-	shade.anchor_top = 0.62
-	shade.anchor_bottom = 1.0
-	loading.add_child(shade)
-	# логотип сверху посередине
 	var logo := TextureRect.new()
-	logo.texture = load("res://assets/ui/ai/logo.png")
+	logo.texture = load("res://assets/ui/ai/logo_min.png")
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	logo.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	logo.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	logo.offset_left = -250
-	logo.offset_right = 250
-	logo.offset_top = 22
-	logo.offset_bottom = 268
-	logo.visible = not pic.ends_with("loading_34.jpg")    # там вверху посередине орёл легиона — логотип закрыл бы его
+	logo.set_anchors_preset(Control.PRESET_CENTER)
+	logo.offset_left = -260
+	logo.offset_right = 260
+	logo.offset_top = -230
+	logo.offset_bottom = 70
 	loading.add_child(logo)
 	var box := VBoxContainer.new()
 	box.name = "box"
-	box.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	box.position = Vector2(-280, -128)
-	box.custom_minimum_size = Vector2(560, 0)
-	box.add_theme_constant_override("separation", 8)
+	box.set_anchors_preset(Control.PRESET_CENTER)
+	box.position = Vector2(-210, 110)
+	box.custom_minimum_size = Vector2(420, 0)
+	box.add_theme_constant_override("separation", 10)
 	loading.add_child(box)
 	var l := Label.new()
 	l.name = "label"
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.add_theme_font_override("font", load("res://assets/fonts/Philosopher-Bold.ttf"))
-	l.add_theme_font_size_override("font_size", 26)
-	l.add_theme_color_override("font_color", Color("fff3dc"))
-	l.add_theme_color_override("font_outline_color", Color("3a2412"))
-	l.add_theme_constant_override("outline_size", 8)
+	l.add_theme_font_override("font", load("res://assets/fonts/AlegreyaSans-Medium.ttf"))
+	l.add_theme_font_size_override("font_size", 20)
+	l.add_theme_color_override("font_color", Color("8a6f58"))
 	box.add_child(l)
-	# полоса загрузки: пергаментный жёлоб в бронзовой кайме, золотое заполнение (как ползунки в настройках)
+	# полоса загрузки: тонкая, терракота на бежевом
 	var bar := ProgressBar.new()
 	bar.name = "bar"
 	bar.show_percentage = false
-	bar.custom_minimum_size = Vector2(560, 16)
-	var mk := func(tex: String) -> StyleBoxTexture:
-		var st := StyleBoxTexture.new()
-		st.texture = load("res://assets/ui/ai/%s.png" % tex)
-		st.texture_margin_left = 8
-		st.texture_margin_right = 8
-		st.content_margin_left = 8
-		st.content_margin_right = 8
+	bar.custom_minimum_size = Vector2(420, 4)
+	var flat := func(c: Color) -> StyleBoxFlat:
+		var st := StyleBoxFlat.new()
+		st.bg_color = c
+		st.set_corner_radius_all(2)
 		return st
-	bar.add_theme_stylebox_override("background", mk.call("g_slider"))
-	bar.add_theme_stylebox_override("fill", mk.call("g_slider_fill"))
+	bar.add_theme_stylebox_override("background", flat.call(Color("e6d6bf")))
+	bar.add_theme_stylebox_override("fill", flat.call(Color("b8482c")))
 	box.add_child(bar)
 	var tip := Label.new()
-	tip.text = ["Совет: лавки обслуживают только ближайшие дома — ставьте разные лавки среди домов.",
-		"Совет: правая кнопка мыши отменяет выбранный инструмент.",
-		"Совет: украшения рядом с домом дают до +12% счастья (у богатых — больше).",
-		"Совет: щёлкните по значку дома в карточке, чтобы сменить его цвет.",
-		"Совет: «Этаж» (U) — ведите мышью с зажатой кнопкой вдоль улицы, и этаж получат все готовые дома.",
-		"Совет: «Перестроить» (Shift+U) — дом плебеев станет домом ремесленников, а тот — городским домусом."][randi() % 6]
+	tip.text = ["Лавки кормят только ближайшие дома.",
+		"Правая кнопка мыши снимает инструмент.",
+		"Украшения у дома — до +12% счастья.",
+		"Щёлкните по значку дома в карточке — сменится цвет.",
+		"«Этаж» (U): ведите вдоль улицы — этаж получат все дома.",
+		"«Перестроить» (Shift+U): дом станет богаче."][randi() % 6]
 	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip.add_theme_font_override("font", load("res://assets/fonts/AlegreyaSans-Medium.ttf"))
-	tip.add_theme_font_size_override("font_size", 18)
-	tip.add_theme_color_override("font_color", Color("f6e8cc"))
-	tip.add_theme_color_override("font_outline_color", Color("3a2412"))
-	tip.add_theme_constant_override("outline_size", 6)
+	tip.add_theme_font_size_override("font_size", 17)
+	tip.add_theme_color_override("font_color", Color("a08a74"))
 	box.add_child(tip)
 
 

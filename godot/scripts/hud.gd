@@ -6538,7 +6538,7 @@ func _credits_panel() -> void:
 	col.add_theme_constant_override("separation", 4)
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(col)
-	col.add_child(_pic("logo.png", Vector2(600, 150)))
+	col.add_child(_pic("logo_min.png", Vector2(600, 150)))
 	var tag := _label("Уютный римский город", 20, false, C_SOFT, font_title)
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(tag)
@@ -7906,7 +7906,7 @@ func show_menu(has_save: bool) -> void:
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_put(col, Control.PRESET_TOP_LEFT, Vector2(70, 34))
 	menu_root.add_child(col)
-	var logo := _pic("logo.png", Vector2(470, 231))
+	var logo := _pic("logo_min.png", Vector2(470, 231))
 	col.add_child(logo)
 	var p := PanelContainer.new()
 	p.add_theme_stylebox_override("panel", _box_scroll_v(18))
@@ -7947,6 +7947,7 @@ func show_menu(has_save: bool) -> void:
 	foot.add_theme_color_override("font_outline_color", Color("3a2412"))
 	foot.add_theme_constant_override("outline_size", 6)
 	_put(foot, Control.PRESET_BOTTOM_LEFT, Vector2(80, -36))
+	foot.visible = not bool(game.get("menu_still"))      # за меню картинка, а не город — двигать камеру нечем
 	menu_root.add_child(foot)
 	_hook_buttons(menu_root)
 

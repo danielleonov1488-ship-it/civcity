@@ -269,7 +269,7 @@ func _block() -> void:
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cc.add_child(col)
 	if h != null:
-		var logo: TextureRect = h._pic("logo.png", Vector2(470, 231))
+		var logo: TextureRect = h._pic("logo_min.png", Vector2(470, 231))
 		logo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		col.add_child(logo)
 	var p := PanelContainer.new()

@@ -4756,5 +4756,11 @@
 "Счастье города %d%% — повозка снова везёт семьи.": "City happiness %d%% — the wagon is bringing families again.",
 "Станцию снести нельзя.": "The post station can't be demolished.",
 "Игры в честь богов окончены. Новые — через %d ч.": "The games are over. New ones in %d h.",
-"Огонь погас сам, но на %d %s копоть: жителям сутки невесело (%d%%). Дома целы.": "The fire went out, but %d %s are sooty: their residents will be unhappy for a day (%d%%). Homes intact."
+"Огонь погас сам, но на %d %s копоть: жителям сутки невесело (%d%%). Дома целы.": "The fire went out, but %d %s are sooty: their residents will be unhappy for a day (%d%%). Homes intact.",
+"Лавки кормят только ближайшие дома.": "Shops only serve the nearest homes.",
+"Правая кнопка мыши снимает инструмент.": "Right click drops the current tool.",
+"Украшения у дома — до +12% счастья.": "Decorations by a home give up to +12% happiness.",
+"Щёлкните по значку дома в карточке — сменится цвет.": "Click the house icon in its card to change the colour.",
+"«Этаж» (U): ведите вдоль улицы — этаж получат все дома.": "«Floor» (U): drag along a street and every house gets a floor.",
+"«Перестроить» (Shift+U): дом станет богаче.": "«Rebuild» (Shift+U): the house becomes richer."
 }
