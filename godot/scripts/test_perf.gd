@@ -136,6 +136,7 @@ func _run(mode: String) -> void:
 		"shots": await _shots_mode()
 		"hitch": await _hitch()
 		"hitchprof": await _hitchprof()
+		"groups": await _groups_stat()
 		"menu": await _menu()
 		"prof": await _prof()
 		"probe": await _probe()
@@ -330,6 +331,34 @@ func _hitchprof() -> void:
 			await run.call("BASE")
 	await run.call("BASE")
 	print("HPROF DONE")
+
+
+## 16.11: из чего вызовы отрисовки построек — сколько групп пула с 1, 2–3, 4–9, 10+ экземплярами (и сколько в них поверхностей)
+func _groups_stat() -> void:
+	await _settle()
+	var bins := {"1": [0, 0, 0], "2-3": [0, 0, 0], "4-9": [0, 0, 0], "10-49": [0, 0, 0], "50+": [0, 0, 0]}
+	var tiled := [0, 0]
+	for k: String in game.parts.groups:
+		var g: Dictionary = game.parts.groups[k]
+		var used := int(g["used"]) - (g["free"] as Array).size()
+		if used <= 0:
+			continue
+		var surf := 0
+		for sub in g["subs"]:
+			var mm: MultiMesh = sub["mm"]
+			if mm.mesh:
+				surf += mm.mesh.get_surface_count()
+		var b := "1" if used == 1 else ("2-3" if used <= 3 else ("4-9" if used <= 9 else ("10-49" if used <= 49 else "50+")))
+		bins[b][0] += 1
+		bins[b][1] += used
+		bins[b][2] += surf
+		if k.contains("|") and k.get_slice("|", k.get_slice_count("|") - 1).contains(","):
+			tiled[0] += 1
+			tiled[1] += surf
+	for b in bins:
+		print("GROUPS used=%-6s groups=%5d instances=%6d surfaces(draws)=%5d" % [b, bins[b][0], bins[b][1], bins[b][2]])
+	print("GROUPS tiled(nature) groups=%d surfaces=%d" % tiled)
+	print("GROUPS DONE")
 
 
 ## Что сколько стоит на главном потоке (мс, лучшее из 3): ход дня и его части, сохранение по частям
