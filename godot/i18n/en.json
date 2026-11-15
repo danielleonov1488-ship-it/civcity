@@ -4815,5 +4815,7 @@
 "Лагерь откроется, когда в городе будет %d жителей (сейчас %d).": "The camp unlocks at %d residents (currently %d).",
 "Отряд": "Squad",
 "Отпустить домой — снова станет жителем": "Send home — becomes a resident again",
-"была": "was"
+"была": "was",
+"Сатурналии: в день отдыха налогов нет. Праздник же! Налоги вернутся после отдыха.": "Saturnalia: no taxes, the treasury is empty. It's a holiday! Taxes return after the rest day.",
+"Летопись города: за прошлые дни город уже заслужил %d %s — они в журнале.": "City chronicle: the city has earned %d %s — they're in the journal."
 }
