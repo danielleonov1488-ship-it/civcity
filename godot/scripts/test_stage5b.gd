@@ -942,7 +942,7 @@ func _owner() -> void:
 	check(street == 0, "«ухоженной улицы» нет ни у одного дома")
 	var newr := W2.filter(func(t): return c.research.has(String(Defs.B[t]["unlock"])))
 	check(newr.is_empty() and not c.research.has(Defs.ROAD_UP_RES), "новые исследования не изучены сами (их изучает игрок)")
-	var ub = game.hud.bar_left.find_child("upgrade_box", true, false)
+	var ub = game.hud.road_panel.find_child("upgrade_box", true, false)
 	check(ub != null and not ub.visible, "кисти «Улучшить» до исследования не видно")
 	var gb = game.hud.road_btns.get("ground")
 	check(gb != null and (gb as Control).is_visible_in_tree(), "кнопка «Земля» — слева внизу")

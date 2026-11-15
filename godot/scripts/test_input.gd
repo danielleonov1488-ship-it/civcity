@@ -81,6 +81,9 @@ func _run() -> void:
 	game.hud.advisor_panel.visible = false
 	game.rig.set_view(Vector3(192, 2, 138), 15, 58, 40)
 	await frames(20)
+	if not game.hud.road_btns["road"].is_visible_in_tree():
+		await click(center_of(game.hud.road_groups["roads"]))
+		await frames(3)
 	await click(center_of(game.hud.road_btns["road"]))
 	print("after road button tool=", game.tool)
 	await drag(scr(Vector2(192, 128)), scr(Vector2(192, 150)))

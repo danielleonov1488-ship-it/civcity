@@ -108,6 +108,9 @@ var tool_err: Label
 var variant_box: HBoxContainer
 var road_panel: PanelContainer
 var road_btns := {}
+var road_groups := {}                  # три кнопки групп в нижней полосе
+var _last_road_tool := "road"
+var _last_grass_tool := "grass"
 var tool_btns := {}
 var info_panel: PanelContainer
 var house_more := false                 # карточка дома подробная (две колонки) или короткая (по умолчанию)
@@ -610,6 +613,10 @@ func _bare(name: String, tip: String, size := 34, cb: Callable = Callable()) -> 
 
 
 func _set_on(b: Button, on: bool) -> void:
+	if b.has_meta("swatch"):
+		b.add_theme_stylebox_override("normal", _box_pill(5, 5, "g_btn_on" if on else "g_btn"))
+		b.add_theme_stylebox_override("hover", _box_pill(5, 5, "g_btn_on" if on else "g_btn_hover"))
+		return
 	var s: float = b.custom_minimum_size.x
 	if b.has_meta("bare"):
 		var mo := _medal("medal_on", s)
@@ -752,7 +759,7 @@ func mouse_over_ui() -> bool:
 		# где мышь — по последнему событию мыши (как game.ground_at_mouse): у корневого окна get_mouse_position — курсор ОС
 		var mp: Vector2 = game._mouse_pos
 		var lu := LegionUi.of(self)
-		for p in [info_panel, tool_panel, tasks_panel, tray, overlay_panel, advisor_panel, bar_left, bar_mid, bar_right, city_card, renown_pill, top_panel,
+		for p in [info_panel, tool_panel, tasks_panel, tray, road_panel, overlay_panel, advisor_panel, bar_left, bar_mid, bar_right, city_card, renown_pill, top_panel,
 				research_panel, finance_panel, stats_panel, events_panel, pause_panel, settings_panel, buy_panel, credits_panel, journal_panel,
 				lu.win if lu != null and lu.visible else null]:
 			# только то, что и так ловит мышь (рамки-контейнеры вроде ряда медальонов щелчок пропускают в мир)
@@ -2380,75 +2387,123 @@ func _photo() -> void:
 # ---------- снизу ----------
 
 func _bottom_left() -> void:
-	var p := _panel(null, "bar", 0, 1)
-	_put(p, Control.PRESET_BOTTOM_LEFT, Vector2(10, -6))
-	bar_left = p
+	bar_left = _panel(null, "bar", 0, 1)
+	_put(bar_left, Control.PRESET_BOTTOM_LEFT, Vector2(10, -6))
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
-	p.add_child(h)
-	for t: Array in [["road", "road", "Мостовая", "Мостовая: каменная улица. Ведите с зажатой кнопкой; R — поверх других дорог"], ["path", "path", "Тропа", "Тропа: утоптанная дорожка — почти даром"],
-			["plaza", "plaza", "Площадь", "Площадь из узорной плитки"], ["erase", "eraser", "Ластик", "Ластик: стереть дорогу или узор земли"],
-			["roadup", "hammer", "Улучшить", "Улучшить дорогу: тропа станет мостовой, мостовая — каменными плитами, площадь — травертином"],
-			["ground", "flower", "Земля", "Земля: трава, цветы, песок, глина и гравий — узор для красоты"],
-			["grass", "daisy", "Трава", "Трава: посадить густую траву и цветы кистью — где захотите"],
-			["ungrass", "eraser", "Убрать траву", "Убрать траву: стереть траву и цветы кистью — оставить голую землю или поляну"]]:
-		var tn: String = t[0]
-		var v := _round_lbl(t[1], t[2], t[3], 42, func(): game.set_tool("" if game.tool == tn else tn))
-		h.add_child(v)
-		road_btns[tn] = v.get_meta("btn")
-		if tn == "roadup":
-			v.name = "upgrade_box"
-			v.visible = false                     # «Улучшить» — когда изучена «Базальтовая мостовая» (этап 5.7)
-	# настройки кисти над кнопками
+	bar_left.add_child(h)
+	for t: Array in [["roads", "road", "Дороги"], ["ground", "flower", "Земля"], ["grass", "daisy", "Трава"]]:
+		var group: String = t[0]
+		var b := _round(t[1], t[2], 52, func(): _toggle_road_group(group))
+		h.add_child(b)
+		road_groups[group] = b
+		if group == "ground":
+			road_btns["ground"] = b
+	# Общая панель хранит прежние имена настроек; содержимое зависит от выбранной группы.
 	road_panel = _panel(null, "bar", 0, 6)
+	road_panel.custom_minimum_size = Vector2(420, 170)
 	_put(road_panel, Control.PRESET_BOTTOM_LEFT, Vector2(10, -BAR_H - 10))
 	road_panel.visible = false
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 8)
+	vb.add_theme_constant_override("separation", 4)
 	road_panel.add_child(vb)
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", 12)
+	vb.add_child(body)
+	var swatches := GridContainer.new()
+	swatches.name = "road_swatches"
+	swatches.columns = 2
+	swatches.add_theme_constant_override("h_separation", 6)
+	swatches.add_theme_constant_override("v_separation", 6)
+	swatches.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	body.add_child(swatches)
+	for t: Array in [["road", "road", "Мостовая: каменная улица"], ["path", "path", "Тропа: утоптанная дорожка — почти даром"],
+			["plaza", "plaza", "Площадь из узорной плитки"],
+			["roadup", "hammer", "Улучшить дорогу: тропа станет мостовой, мостовая — каменными плитами, площадь — травертином"]]:
+		var tn: String = t[0]
+		var b := _road_swatch(tn, t[1], t[2])
+		if tn == "roadup":
+			# Пустое место остаётся в сетке, даже пока исследование не открыло кнопку.
+			var cell := VBoxContainer.new()
+			cell.custom_minimum_size = Vector2(56, 56)
+			swatches.add_child(cell)
+			b.name = "upgrade_box"
+			b.visible = game.city.research.has(Defs.ROAD_UP_RES)
+			cell.add_child(b)
+		else:
+			swatches.add_child(b)
+	var grass := HBoxContainer.new()
+	grass.name = "grass_swatches"
+	grass.add_theme_constant_override("separation", 6)
+	grass.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	grass.visible = false
+	grass.add_child(_road_swatch("grass", "daisy", "Посадить: густая трава и цветы"))
+	grass.add_child(_road_swatch("ungrass", "eraser", "Убрать: стереть траву и цветы"))
+	body.add_child(grass)
+	var settings := VBoxContainer.new()
+	settings.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	settings.add_theme_constant_override("separation", 4)
+	body.add_child(settings)
 	var r1 := HBoxContainer.new()
 	r1.add_theme_constant_override("separation", 8)
-	r1.add_child(_label("Размер кисти", 17, true))
 	var sl := HSlider.new()
 	sl.min_value = 0.5
 	sl.max_value = 4.0
 	sl.step = 0.25
 	sl.custom_minimum_size = Vector2(160, 26)
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.tooltip_text = "Размер кисти ([ / ])"
 	sl.value = game.brush_r
 	sl.value_changed.connect(func(x): game.brush_r = x; refresh_tools())
 	sl.name = "size"
 	r1.add_child(sl)
-	var sv := _label("", 17, true)            # число на ползунке: какой размер кисти сейчас
+	var sv := _label("", 17, true)
 	sv.name = "size_val"
 	sv.custom_minimum_size = Vector2(34, 0)
 	r1.add_child(sv)
-	vb.add_child(r1)
-	var price := _label("", 16, false, C_SOFT)   # сколько стоит метр дороги при этой кисти
-	price.name = "price"
-	vb.add_child(price)
+	settings.add_child(r1)
 	var r2 := HBoxContainer.new()
+	r2.name = "brush_options"
 	r2.add_theme_constant_override("separation", 4)
-	for t: Array in [["linefree", "Рисовать свободно"], ["linestraight", "Прямая линия: от точки до точки"], ["brushround", "Круглая кисть"], ["brushsquare", "Квадратная кисть"], ["undo", "Отменить (Ctrl+Z)"], ["redo", "Вернуть (Ctrl+Y)"]]:
+	for t: Array in [["linefree", "Рисовать свободно"], ["linestraight", "Прямая линия: от точки до точки"], ["brushround", "Круглая кисть"], ["brushsquare", "Квадратная кисть"]]:
 		var nm: String = t[0]
-		var b := _round(nm, t[1], 46, func(): _road_opt(nm))
+		var b := _round(nm, t[1], 36, func(): _road_opt(nm))
 		r2.add_child(b)
 		road_btns[nm] = b
-	vb.add_child(r2)
-	var lt := _label("", 15, false, C_SOFT)        # «Прямая линия: …» — что будет при этом способе
-	lt.name = "line_tip"
-	lt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lt.custom_minimum_size = Vector2(300, 0)
-	lt.visible = false
-	vb.add_child(lt)
+	settings.add_child(r2)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 4)
+	var eraser := _round("eraser", "Ластик: стереть дорогу или узор земли", 32, func(): game.set_tool("erase"))
+	road_btns["erase"] = eraser
+	actions.add_child(eraser)
+	for nm: String in ["undo", "redo"]:
+		var b := _round(nm, "Отменить (Ctrl+Z)" if nm == "undo" else "Вернуть (Ctrl+Y)", 32, func(): _road_opt(nm))
+		actions.add_child(b)
+		road_btns[nm] = b
 	var over := CheckBox.new()
-	over.text = "Рисовать поверх других дорог (R)"
+	over.text = "Поверх (R)"
+	over.tooltip_text = "Рисовать поверх других дорог (R)"
 	over.button_pressed = true
-	over.add_theme_font_size_override("font_size", 16)
+	over.add_theme_font_size_override("font_size", 14)
 	over.toggled.connect(func(x): game.brush_over = x)
 	over.name = "over"
 	road_btns["over"] = over
-	vb.add_child(over)
-	# кисть «Земля» (этап 5.8): какой узор — кружки цвета узора с подписью
+	actions.add_child(over)
+	settings.add_child(actions)
+	var price := _label("", 14, false, C_SOFT)
+	price.name = "price"
+	price.mouse_filter = Control.MOUSE_FILTER_PASS
+	price.clip_text = true
+	price.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	settings.add_child(price)
+	var lt := _label("", 13, false, C_SOFT)
+	lt.name = "line_tip"
+	lt.mouse_filter = Control.MOUSE_FILTER_PASS
+	lt.clip_text = true
+	lt.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	lt.visible = false
+	settings.add_child(lt)
+	# Кисть «Земля»: прежний выбор узора и общие настройки кисти.
 	var gr := HBoxContainer.new()
 	gr.name = "ground_row"
 	gr.add_theme_constant_override("separation", 6)
@@ -2470,6 +2525,45 @@ func _bottom_left() -> void:
 		gb.name = "g%d" % gi
 		gr.add_child(gb)
 	vb.add_child(gr)
+
+
+## Квадратный образец использует те же рисованные рамки и иконки, что остальные кнопки.
+func _road_swatch(t: String, icon_name: String, tip: String) -> Button:
+	var b := _round(icon_name, tip, 56, func(): game.set_tool(t))
+	b.set_meta("swatch", true)
+	for st: Array in [["normal", "g_btn"], ["hover", "g_btn_hover"], ["pressed", "g_btn_on"], ["hover_pressed", "g_btn_on"]]:
+		b.add_theme_stylebox_override(st[0], _box_pill(5, 5, st[1]))
+	road_btns[t] = b
+	return b
+
+
+## Повторное нажатие закрывает панель и снимает кисть; при открытии возвращаем последний инструмент группы.
+func _toggle_road_group(group: String) -> void:
+	if road_panel.visible and _road_group(String(game.tool)) == group:
+		game.set_tool("")
+		return
+	var t := "ground"
+	if group == "roads":
+		t = _last_road_tool
+		if t == "roadup" and not game.city.research.has(Defs.ROAD_UP_RES):
+			t = "road"
+	elif group == "grass":
+		t = _last_grass_tool
+	game.set_tool(t)
+
+
+func _road_group(t: String) -> String:
+	if t == "ground":
+		return "ground"
+	if t in ["grass", "ungrass"]:
+		return "grass"
+	return "roads" if t in ["road", "path", "plaza", "erase", "roadup"] else ""
+
+
+## Стрелка обучения и просьб: сначала открыть группу, затем выбрать мостовую.
+func road_target() -> Control:
+	var b := road_btns.get("road") as Control
+	return b if b != null and b.is_visible_in_tree() else (road_groups.get("roads") as Control)
 
 
 ## Кружки кисти «Земля» (Defs.GROUND): обычная трава, сочная, луг, песок, глина, гравий
@@ -2507,11 +2601,18 @@ func _refresh_brush() -> void:
 		var lt := road_panel.find_child("line_tip", true, false) as Label
 		if lt:
 			# что сейчас будет: прямая ложится при отпускании, свободная — сразу под кистью
-			lt.text = ("Прямая линия: нажмите в начале и отпустите в конце — дорога ляжет при отпускании. «Рисовать свободно» — сразу под кистью." if game.tool != "erase" else "Прямая линия: стирает от точки нажатия до точки отпускания.") if game.brush_line else ""
+			lt.text = ("Дорога ляжет при отпускании" if game.tool != "erase" else "Ластик сотрёт при отпускании") if game.brush_line else ""
+			lt.tooltip_text = "Прямая линия: нажмите в начале и отпустите в конце. Рисовать свободно — сразу под кистью."
 			lt.visible = not lt.text.is_empty()
 		(road_panel.find_child("size", true, false) as HSlider).set_value_no_signal(game.brush_r)
 		(road_panel.find_child("size_val", true, false) as Label).text = ("%.2f" % game.brush_r).trim_suffix("0").replace(".", ",")
 		var t: String = game.tool
+		var group := _road_group(t)
+		(road_panel.find_child("road_swatches", true, false) as Control).visible = group == "roads"
+		(road_panel.find_child("grass_swatches", true, false) as Control).visible = group == "grass"
+		(road_panel.find_child("brush_options", true, false) as Control).visible = group != "grass"
+		(road_btns["erase"] as Button).visible = group != "grass"
+		road_panel.custom_minimum_size = Vector2(420, 100 if group == "grass" else 170)
 		var pl := road_panel.find_child("price", true, false) as Label
 		var strip := 2.0 * float(game.brush_r) / Land.CELL / Land.CELL     # клеток в метре полосы
 		if Defs.ROAD_COST.has(t):
@@ -2525,6 +2626,7 @@ func _refresh_brush() -> void:
 			pl.text = "Бесплатно"
 		else:
 			pl.text = "Стирать дорогу — бесплатно" if t == "erase" else ""
+		pl.tooltip_text = pl.text
 		pl.visible = pl.text != ""
 		(road_btns["over"] as CheckBox).visible = not game.is_deco_tool(t) and not game.is_grass_tool(t)
 		var gr := road_panel.find_child("ground_row", true, false) as HBoxContainer
@@ -2533,6 +2635,7 @@ func _refresh_brush() -> void:
 			var on := gb.name == "g%d" % game.ground_kind
 			(gb.get_theme_stylebox("normal") as StyleBoxFlat).border_color = C_GOLD if on else Color("6b4a2a")
 			(gb.get_theme_stylebox("normal") as StyleBoxFlat).set_border_width_all(5 if on else 3)
+		_snug(road_panel)
 
 
 func _bottom_center() -> void:
@@ -2593,8 +2696,8 @@ func _bottom_center() -> void:
 	sc.add_child(tray_grid)
 
 
-## Окно выбранной постройки (справа) не закрывает свиток стройки (отзыв 14.11: последняя карточка пряталась под ним):
-## пока оно открыто, свиток уже и сдвинут влево — до окна; лишние карточки листаются вбок
+## Свиток стройки помещается между панелью кисти слева и окном инструмента справа.
+## Пока они открыты, свиток уже; лишние карточки листаются вбок
 func _fit_tray() -> void:
 	if tray == null or not tray.visible or _tray_w <= 0.0:
 		return
@@ -2605,16 +2708,19 @@ func _fit_tray() -> void:
 	var w := _tray_w
 	var dx := 0.0
 	var frame: float = tray.get_theme_stylebox("panel").get_minimum_size().x       # рамка свитка по бокам
+	var left_min := 10.0
+	var right_edge := vw - 10.0
+	if road_panel != null and road_panel.visible:
+		left_min += maxf(road_panel.size.x, road_panel.get_combined_minimum_size().x) + 12.0
 	if tool_panel != null and tool_panel.visible:
 		var tw := maxf(tool_panel.size.x, tool_panel.get_combined_minimum_size().x)
-		var right_edge := vw - 10.0 - tw - 12.0                       # свиток кончается левее окна
-		var full := w + frame
-		var left_min := 10.0
+		right_edge -= tw + 12.0
+	if left_min > 10.0 or right_edge < vw - 10.0:
 		var avail := right_edge - left_min
-		if full > avail:
-			w = maxf(160.0, avail - frame)
-			full = w + frame
-		dx = (right_edge - full * 0.5) - vw * 0.5                     # середина свитка — левее середины экрана
+		w = minf(w, maxf(160.0, avail - frame))
+		var full := w + frame
+		var center := clampf(vw * 0.5, left_min + full * 0.5, right_edge - full * 0.5)
+		dx = center - vw * 0.5
 	var key := "%d|%d|%d" % [int(w), int(dx), int(vw)]
 	if key == _tray_key:
 		return
@@ -3587,7 +3693,7 @@ func _do_target(w: Dictionary, shown := false) -> Control:
 				return null
 			return _ov_btns.get(layer) if overlay != "" else top_btns.get("view")
 		"road":
-			return null if game.tool == "road" and not shown else road_btns.get("road")
+			return null if game.tool == "road" and not shown else road_target()
 		"fam":
 			if game.tool != "settle" and fam_box.visible and fam_box.get_child_count() > 0:
 				for x in fam_box.get_child(0).find_children("*", "Button", true, false):
@@ -3861,7 +3967,14 @@ func on_tool(t: String) -> void:
 			_set_on(road_btns[k], k == t)
 	for k in tool_btns:
 		_set_on(tool_btns[k], k == t or (k == "move" and t == "move_nature"))
-	road_panel.visible = game.is_road_tool(t)
+	var group := _road_group(t)
+	if group == "roads":
+		_last_road_tool = t
+	elif group == "grass":
+		_last_grass_tool = t
+	for k in road_groups:
+		_set_on(road_groups[k], k == group)
+	road_panel.visible = group != ""
 	if road_panel.visible:
 		_refresh_brush()
 	tool_err.text = ""
@@ -5631,7 +5744,7 @@ func _toast(text: String, icon: String) -> void:
 ## В гостях у другого игрока (Game.visiting, SocialNet): сверху плашка «Вы в гостях у «…»» — кто, сколько жителей,
 ## «Нравится» (раз в сутки), «Домой»; стройки и задач внизу нет — город только посмотреть
 func visit_banner(v: Dictionary) -> void:
-	for n in [bar_left, bar_mid, bar_right, tray, tasks_panel, tool_panel, fam_box]:
+	for n in [bar_left, bar_mid, bar_right, road_panel, tray, tasks_panel, tool_panel, fam_box]:
 		if n != null:
 			(n as Control).visible = false
 	var p := _panel(null, "panel", 0, 10)
@@ -6669,7 +6782,7 @@ func refresh() -> void:
 	_update_rank_ui()
 	_update_floor_btn()
 	_update_upg_btn()
-	var ub := bar_left.find_child("upgrade_box", true, false) if bar_left else null
+	var ub := road_panel.find_child("upgrade_box", true, false) if road_panel else null
 	if ub:
 		ub.visible = c.research.has(Defs.ROAD_UP_RES)    # кисть «Улучшить» — после «Базальтовой мостовой» (этап 5.7)
 	update_new_marks()
