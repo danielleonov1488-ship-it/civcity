@@ -363,9 +363,10 @@ func _line() -> void:
 	c.money = 50000.0
 	var kind2: PackedByteArray = land.kind.duplicate()
 	var m2: float = c.money
-	await drag(scr(Vector2(186, 188)), scr(Vector2(204, 188)), 12, false)
+	# правее прежнего (194 вместо 186): начало было под новой панелью дорог (15.11) — нажатие доставалось ей
+	await drag(scr(Vector2(194, 188)), scr(Vector2(212, 188)), 12, false)
 	await key(KEY_ESCAPE)
-	btn(scr(Vector2(204, 188)), MOUSE_BUTTON_LEFT, false)
+	btn(scr(Vector2(212, 188)), MOUSE_BUTTON_LEFT, false)
 	await frames(3)
 	check(land.kind == kind2 and is_equal_approx(c.money, m2) and game._prev_mode == 0 and game.tool == "road", "Esc посреди прямой: ничего не легло, показ погас")
 	hud._road_opt("linefree")
