@@ -115,7 +115,7 @@ func gable_z(cx: float, cz: float, wm: int, dm: int, top: float, toppers := true
 # ---------- след постройки на земле ----------
 
 const NONSOLID := ["Roof", "Trim", "Ivy", "Vine", "Banner", "Hanging", "Rug", "Drapery", "Overhang", "Trellis_Roof", "_Balcony_0",
-	"SM_Bld_Balcony", "Grass", "SM_Env_Flowers", "Lillies", "Torch", "Mural", "Symbol", "SM_Bld_Door_0", "Topper", "Wall_Tiny", "Ornament",
+	"SM_Bld_Balcony", "Grass", "SM_Env_Flowers", "Lillies", "CropField", "Wildflowers", "Flowers_Flat", "Torch", "Mural", "Symbol", "SM_Bld_Door_0", "Topper", "Wall_Tiny", "Ornament",
 	"Pillar_Trim", "Beam_Detail", "Cart_01_Insert", "Brazier_0", "Plate", "Bowl", "Jug", "Goblet", "Scroll_0", "Tool_"]
 
 static var _aabbs := {}

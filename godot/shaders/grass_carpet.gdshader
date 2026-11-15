@@ -50,7 +50,7 @@ vec3 f_hsv(vec3 c) {
 }
 
 vec3 f_swatch(int k) {
-	if (k == 0) return vec3(0.96, 0.95, 0.9);
+	if (k == 0) return vec3(1.0, 1.0, 0.97);
 	if (k == 1) return vec3(0.93, 0.48, 0.68);
 	if (k == 2) return vec3(0.78, 0.09, 0.09);
 	if (k == 3) return vec3(1.0, 0.82, 0.16);
@@ -74,7 +74,7 @@ vec3 flower_recolor(vec3 c, float fm, float r) {
 			k = r < 0.4 ? 0 : (r < 0.78 ? 1 : (r < 0.9 ? 3 : 5));       // красные и оранжевые: белые, розовые, чуть жёлтых и синих
 		}
 	}
-	vec3 t = f_swatch(k) * clamp(0.5 + 0.7 * h.z, 0.62, 1.1);
+	vec3 t = f_swatch(k) * clamp(0.5 + 0.7 * h.z, k == 0 ? 0.95 : 0.62, 1.1);
 	return mix(c, t, bloom);
 }
 

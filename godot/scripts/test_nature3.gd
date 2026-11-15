@@ -330,7 +330,10 @@ func _birds() -> void:
 		game.weather.force = 0.0
 		game.weather.left_h = 0.0
 	game.city.buildings.size()
-	var rb: RoofBirds = game.find_child("RoofBirds", true, false) as RoofBirds
+	var rb: RoofBirds = null
+	for n in game.find_children("*", "Node3D", true, false):
+		if n is RoofBirds:
+			rb = n
 	ok("есть птицы на крышах", rb != null)
 	var v := str(A.get("view", "domus:262.8:171.2:-120:40:18")).split(":")
 	_view(float(v[1]), float(v[2]), float(v[3]), float(v[4]), float(v[5]))

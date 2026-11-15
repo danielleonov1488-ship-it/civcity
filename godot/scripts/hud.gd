@@ -3974,7 +3974,8 @@ func _fill_tool_panel_body() -> void:
 								(o as Button).get_theme_stylebox("normal").set("border_width_right", 4 if on else 2)
 								(o as Button).get_theme_stylebox("normal").set("border_width_top", 4 if on else 2)
 								(o as Button).get_theme_stylebox("normal").set("border_width_bottom", 4 if on else 2)
-						game._ghost_frozen()
+						if game.ghost != null and not game.place_info.is_empty():
+							game._ghost_frozen()          # призрак сразу нового цвета (пока он есть)
 						thumb_update())
 					variant_box.add_child(cb)
 			else:
