@@ -337,7 +337,7 @@ func _chron_new() -> void:
 	# венки за час — одной строкой (26.10: колокольчик без лишних строк)
 	var lines := c.events.slice(ev0).filter(func(e): return String(e["text"]).begins_with("Летопись города: лавров"))
 	var all_named := lines.size() == 1 and got.all(func(id): return String(lines[0]["text"]).contains("«%s»" % Chronicle.badge(String(id)).get("name", "")))
-	check(got.has("fam1") and all_named and hud.bell_count >= bell0 + 1 and hud.notes_box.get_child_count() == notes0,
+	check(got.has("fam1") and all_named and hud.bell_count >= bell0 and lines.all(func(e): return not hud._important_event(e)) and hud.notes_box.get_child_count() == notes0,
 		"венок «Первая семья» — одна строка в колокольчик на все венки часа, без всплывашки: %s" % [lines.map(func(e): return e["text"])])
 	var n1 := Chronicle.count(c)
 	c.sim_day()

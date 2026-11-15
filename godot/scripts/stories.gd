@@ -6080,7 +6080,7 @@ func _census_seen(a: Dictionary) -> void:
 func open_people(q: String, filt := "") -> void:
 	if hud.stats_panel == null:
 		return
-	if not hud.stats_panel.visible:
+	if not hud.overview_panel.visible or hud.overview_tab != "people":
 		hud._top_action("stats")
 	hud.stats_tab = "people"
 	hud.people_filter = filt

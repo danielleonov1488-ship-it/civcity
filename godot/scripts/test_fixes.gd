@@ -335,8 +335,8 @@ func _run() -> void:
 	await frames(10)
 	var gc: City = game.city
 	var ev_ok: bool = gc.events.any(func(e): return String(e.get("text", "")).contains("Площади из плитки"))
-	check(not gc.research.has("roads2") and is_equal_approx(gc.rp, 10.0 + City.ROADS2_RP) and ev_ok and game.hud.bell_count >= 1 and gc.unread == 0,
-		"загрузили город с «Площадями из плитки»: очки вернулись, запись в колокольчике, на нём число", [gc.rp, game.hud.bell_count])
+	check(not gc.research.has("roads2") and is_equal_approx(gc.rp, 10.0 + City.ROADS2_RP) and ev_ok and not game.hud._overview_events().any(func(e): return String(e.get("text", "")).contains("Площади из плитки")) and gc.unread == 0,
+		"загрузили город с «Площадями из плитки»: очки вернулись, запись в полном журнале, без уведомления в обзоре", [gc.rp, game.hud.bell_count])
 	DirAccess.remove_absolute(dir + "/city.json")
 	_unlockable(false)
 	_unlockable(true)

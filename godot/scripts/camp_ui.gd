@@ -97,9 +97,8 @@ func setup(h: Hud) -> void:
 	add_child(bg)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_build_screen()
-	top_button = _button("Лагерь", func(): toggle(), "tent")
-	hud.top_panel.add_child(top_button)
-	hud.top_panel.move_child(top_button, 0)
+	# Одна точка входа: существующий медальон Легиона.
+	top_button = lu.btn
 	lg.changed.connect(_update_entry)
 	hud.game.city.changed.connect(_update_entry)
 	resized.connect(_layout)
@@ -126,9 +125,6 @@ func _update_entry() -> void:
 	if top_button == null:
 		return
 	var on: bool = lg.v3() and lg.window_open() and hud.game.mode in ["play", "new"]
-	if top_button.visible != on:
-		top_button.visible = on
-		hud._fit_top.call_deferred()
 	if visible and not on:
 		close()
 	if on and not lg.flags.has("camp_told"):
@@ -138,13 +134,13 @@ func _update_entry() -> void:
 ## Лагерь открылся (50 жителей): один раз — спокойная карточка советника, стрелка и кивок кнопки «Лагерь».
 ## Занят советник или идёт ролик — подождём следующего обновления
 func _camp_moment() -> void:
-	if lg.flags.has("camp_told") or top_button == null or not top_button.visible or visible:
+	if lg.flags.has("camp_told") or top_button == null or not lg.window_open() or not top_button.is_visible_in_tree() or visible:
 		return
 	var rig = hud.game.get("rig")
 	if hud.advisor_panel.visible or hud.game.tool != "" or (rig != null and rig.cine) or not hud.game.stories.cine.is_empty():
 		return
 	lg.flags["camp_told"] = true
-	hud.advisor("Лагерь открыт", "Призывайте жителей в Легион — кнопка «Лагерь» наверху.", Callable(), false, true)   # маленькая карточка в углу, не мешает
+	hud.advisor("Лагерь открыт", "Призывайте жителей в Легион — кнопка «Легион» наверху.", Callable(), false, true)   # маленькая карточка в углу, не мешает
 	hud.show_pointer({"kind": "legion", "tip": "Лагерь"})
 	var tw := top_button.create_tween()
 	for i in 3:

@@ -568,7 +568,7 @@ func _wardrobe_unlock_test() -> void:
 	c.level = 3
 	game._hero_hour()
 	var lines := c.events.slice(n0).filter(func(e): return String(e["text"]).begins_with("В гардеробе героя"))
-	check(lines.size() == 1 and hud.bell_count > b0 and String(lines[0]["text"]).contains("Шафрановый плащ") and String(lines[0]["text"]).contains("и ещё"),
+	check(lines.size() == 1 and hud.bell_count == b0 and String(lines[0]["text"]).contains("Шафрановый плащ") and String(lines[0]["text"]).contains("и ещё"),
 		"«Посёлок»: семь вещей — одна строчка в колокольчике («Шафрановый плащ, … и ещё 4»)", lines)
 	var n1 := c.events.size()
 	game._hero_hour()

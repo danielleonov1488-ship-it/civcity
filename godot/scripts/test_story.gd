@@ -482,8 +482,8 @@ func _legion3() -> void:
 	lg.army_tick()
 	c.changed.emit()
 	await frames(6)
-	check(lg.window_open() and camp_ui != null and camp_ui.top_button.visible, "лагерь открыт, кнопка «Лагерь» наверху видна")
-	check(lg.flags.has("camp_told") and hud.advisor_panel.visible and hud.adv_title.text == "Лагерь открыт" and hud.adv_text.text.contains("кнопка «Лагерь» наверху"),
+	check(lg.window_open() and camp_ui != null and camp_ui.top_button.visible, "лагерь открыт, кнопка «Легион» наверху видна")
+	check(lg.flags.has("camp_told") and hud.advisor_panel.visible and hud.adv_title.text == "Лагерь открыт" and hud.adv_text.text.contains("кнопка «Легион» наверху"),
 		"карточка советника: «%s» — «%s»" % [hud.adv_title.text, hud.adv_text.text])
 	hud.advisor_panel.visible = false
 	c.changed.emit()
@@ -504,7 +504,7 @@ func _legion3() -> void:
 	for b in hud.tray_grid.get_children():
 		if b.has_meta("type"):
 			types_shown.append(String(b.get_meta("type")))
-	check(first.name == "camp_hint" and lbl_txt.contains("кнопка «Лагерь» наверху") and (types_shown == ["smelter", "sawmill"] or types_shown == ["smelter", "sawmill", "tannery"]),
+	check(first.name == "camp_hint" and lbl_txt.contains("кнопка «Легион» наверху") and (types_shown == ["smelter", "sawmill"] or types_shown == ["smelter", "sawmill", "tannery"]),
 		"первая карточка — про Лагерь («%s»), дальше мастерские %s" % [lbl_txt, types_shown])
 	first.pressed.emit()
 	await frames(3)
@@ -576,7 +576,7 @@ func _legion3() -> void:
 	var btn_txt := []
 	for b in info.get("buttons", []):
 		btn_txt.append(String(b[0]))
-	check(String(info.get("text", "")).contains("Откройте Лагерь (кнопка «Лагерь» наверху) и призовите первого воина") and btn_txt == ["Открыть Лагерь"], "строка истории: «%s», кнопки %s" % [info.get("text", ""), btn_txt])
+	check(String(info.get("text", "")).contains("Откройте Лагерь (кнопка «Легион» наверху) и призовите первого воина") and btn_txt == ["Открыть Лагерь"], "строка истории: «%s», кнопки %s" % [info.get("text", ""), btn_txt])
 	check(String(sto.pointer_do().get("kind", "")) == "legion", "стрелка истории — на «Лагерь»")
 	await frames(3)
 	hud._update_pointer()
@@ -728,7 +728,7 @@ func _timing() -> void:
 	check(String(S["offer"].get("id", "")) == "cat", "ранг «Хутор» — предложение «Где Мася?» (%s)" % S["offer"])
 	check(int(S["offer"].get("home", -1)) == int(kid_home["id"]) and String(S["offer"].get("fam", "")) == kid_fam and String(S["offer"].get("kid", "")) == "Мария"
 		and bool(S["offer"].get("female", false)) and not bool(S["offer"].get("child", true)), "просит Мария из семьи Корнелиев (девушка, не ребёнок): %s" % S["offer"])
-	check(hud.bell_count == bell0 + 1 and hud.notes_box.get_child_count() == notes0, "событие — в колокольчике, всплывашки нет")
+	check(hud.bell_count == bell0 and hud.notes_box.get_child_count() == notes0, "обычное предложение — в полном журнале, без числа и всплывашки")
 	# промежуток после истории: GAP_H
 	S["last_h"] = 10
 	S["h"] = 25

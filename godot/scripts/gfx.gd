@@ -1108,7 +1108,9 @@ func report() -> String:
 # ---------- настройки: строка «Графика», FPS, видеокарта ----------
 
 ## В окне настроек (hud._settings_panel): четыре кнопки уровня, «Показывать FPS», название видеокарты
-static func settings_block(h, v: VBoxContainer) -> void:
+static func settings_block(h, v: VBoxContainer, more: VBoxContainer = null) -> void:
+	if more == null:
+		more = v
 	var r := HBoxContainer.new()
 	r.add_theme_constant_override("separation", 8)
 	r.add_child(h._icon("photo", 26, h.C_SOFT))
@@ -1147,16 +1149,16 @@ static func settings_block(h, v: VBoxContainer) -> void:
 			h.game.apply_grass_range()
 			h._open_settings(true))
 		gr.add_child(gb)
-	v.add_child(gr)
+	more.add_child(gr)
 	var gpu: Label = h._wrap(h._label("Видеокарта: " + adapter(), 15, false, h.C_SOFT), 470)
 	gpu.name = "gpu_name"
-	v.add_child(gpu)
+	more.add_child(gpu)
 	var fps := CheckBox.new()
 	fps.text = "Показывать FPS"
 	fps.name = "show_fps"
 	fps.add_theme_font_size_override("font_size", 18)
 	fps.toggled.connect(func(x): h.game.settings["show_fps"] = x; h.game.save_settings())
-	v.add_child(fps)
+	more.add_child(fps)
 	# предел кадров: «по монитору» — столько, сколько экран успевает показать
 	var cr := HBoxContainer.new()
 	cr.add_theme_constant_override("separation", 6)
@@ -1173,7 +1175,7 @@ static func settings_block(h, v: VBoxContainer) -> void:
 			Engine.max_fps = c
 			h._open_settings(true))
 		cr.add_child(b)
-	v.add_child(cr)
+	more.add_child(cr)
 
 
 ## Предел кадров из настроек: 0 — по монитору (синхронизация), иначе 60 / 120 / 144

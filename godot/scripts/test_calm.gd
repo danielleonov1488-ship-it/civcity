@@ -154,7 +154,7 @@ func _treasury() -> void:
 	await shot("unpaid_advisor")
 	hud.advisor_panel.visible = false
 	hud._fill_finance()
-	hud._toggle(hud.finance_panel)
+	hud._top_action("finance")
 	await frames(2)
 	await shot("unpaid_finance")
 	var ft := _texts(hud.finance_panel)
@@ -397,7 +397,7 @@ func _bell() -> void:
 	var ok_r := rid != "" and c.do_research(rid)
 	var since := c.events.slice(n0)
 	var learned := since.filter(func(e): return String(e["text"]).begins_with("Изучено:"))
-	var others := since.size() - learned.size()          # просьбы, что засчитались от исследования, — их число на значке есть
+	var others := since.filter(func(e): return not String(e["text"]).begins_with("Изучено:") and hud._important_event(e)).size()          # просьбы, что засчитались от исследования, — их число на значке есть
 	check(ok_r and learned.size() == 1 and hud.bell_count == b0 + others, "изучил сам — строка «%s», число на значке не выросло от неё (%d → %d, других строк %d)" % [
 		String(learned[0]["text"]).left(60) if not learned.is_empty() else "", b0, hud.bell_count, others])
 	# венки летописи за час — одной строкой
@@ -408,8 +408,8 @@ func _bell() -> void:
 		return ("Летопись города: лавровый венок " if bb.size() == 1 else "Летопись города: лавровые венки ") + "; ".join(PackedStringArray(bb))
 	c._quiet_m("chron", "laurels", {"b": ["«Первый» — проба"]}, fmt)
 	c._quiet_m("chron", "laurels", {"b": ["«Второй» — проба"]}, fmt)
-	check(c.events.size() == n0 + 1 and String(c.events[-1]["text"]).contains("«Первый»") and String(c.events[-1]["text"]).contains("«Второй»") and hud.bell_count == b0 + 1,
-		"два венка за час — одна строка, +1 на значке: «%s»" % String(c.events[-1]["text"]))
+	check(c.events.size() == n0 + 1 and String(c.events[-1]["text"]).contains("«Первый»") and String(c.events[-1]["text"]).contains("«Второй»") and hud.bell_count == b0,
+		"два венка за час — одна строка без числа на значке: «%s»" % String(c.events[-1]["text"]))
 	c.hour_n += 1
 	c._quiet_m("chron", "laurels", {"b": ["«Третий» — проба"]}, fmt)
 	check(c.events.size() == n0 + 2, "в другой час — своя строка")

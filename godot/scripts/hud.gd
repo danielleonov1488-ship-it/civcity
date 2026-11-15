@@ -3,7 +3,7 @@ extends CanvasLayer
 ## Интерфейс в римском духе — рисованный набор владельца (assets/ui/ai): резные рамки с меандром, свитки
 ## с валиками, бронзовые медальоны с цветными иконками, табличка с орлом и лентой названия города. Устроен как в Town to City:
 ## сверху слева — город, жители, счастье, время; рядом — три класса жителей; под ними — задания со стрелкой-подсказкой.
-## Сверху справа — события, исследования, финансы, жители, «Обзор» (счастье домов, потребности), фото, меню.
+## Сверху справа — Легион, герой, исследования, обзор города, фото, меню.
 ## Снизу: слева — дороги, посередине — разделы стройки (свиток разворачивается с карточками), справа — инструменты, деньги, очки.
 
 var game
@@ -131,6 +131,12 @@ var _bar_arrow_t0 := 0                      # когда впервые пока
 var adv_never: Button                       # «Больше не показывать» — выключает всплывающие советы (настройка advisor_off)
 var _adv_skip_cb := Callable()
 var notes_box: VBoxContainer
+var overview_panel: PanelContainer
+var overview_tab := "city"
+var overview_pages: Dictionary = {}
+var overview_buttons: Dictionary = {}
+var overview_scroll: ScrollContainer
+var settings_scroll: ScrollContainer
 var events_panel: PanelContainer
 var research_panel: PanelContainer
 var research_box: VBoxContainer
@@ -154,7 +160,7 @@ var bell_badge: Label
 var floor_badge: Label                    # на кнопке «Этаж»: сколько домов готовы к этажу
 var upg_badge: Label                      # на кнопке «Перестроить»: сколько домов готовы к перестройке
 const FLOOR_TIP := "Этаж (U): щёлкните по дому со стрелкой или ведите с зажатой кнопкой вдоль улицы — этаж получат все готовые дома под курсором"
-const EMPTY_TIP := "Казна пуста: жалованья работникам и содержания построек за час больше, чем пришло налогов. Город в долг не живёт — недоплаченное просто не плачено, а жители обижены: счастье всех домов ниже — и ещё пару часов после того, как казна снова сможет платить. Подробно — в «Финансах»."
+const EMPTY_TIP := "Казна пуста: жалованья работникам и содержания построек за час больше, чем пришло налогов. Город в долг не живёт — недоплаченное просто не плачено, а жители обижены: счастье всех домов ниже — и ещё пару часов после того, как казна снова сможет платить. Подробно — «Обзор города» → «Деньги»."
 const UPG_TIP := "Перестроить (Shift+U): дом плебеев — в дом ремесленников, дом ремесленников — в городской домус. Щёлкните по дому с двойной стрелкой или ведите вдоль улицы"
 ## Двойная стрелка «Перестроить» — цвета класса, которым станет дом
 const UPC_COL := {"upc_a": Color("e0904a"), "upc_p": Color("a77ee0")}
@@ -1657,20 +1663,20 @@ func _top_right() -> void:
 	cloud_off.holder.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	cloud_off.holder.visible = false
 	h.add_child(cloud_off.holder)
-	var bell := _round("bell", "События города", TOP_BTN, func(): _toggle(events_panel); _fill_events())
-	h.add_child(_shadowed(bell))
-	top_btns["bell"] = bell
-	bell_badge = _label("", 15, true, C_CREAM)
-	bell_badge.add_theme_color_override("font_outline_color", C_BAD)
-	bell_badge.add_theme_constant_override("outline_size", 9)
-	bell_badge.position = Vector2(TOP_BTN - 13, -4)
-	bell.add_child(bell_badge)
-	for t: Array in [["research", "research", "Исследования"], ["finance", "finance", "Финансы"], ["stats", "stats", "Жители и работники"],
-			["view", "view", "Обзор: счастье каждого дома и где чего не хватает"], ["photo", "photo", "Режим фото (P): интерфейс прячется, камера — к самой земле, время суток, размытие, снимок"], ["menu", "menu", "Меню игры"]]:
+	for t: Array in [["research", "research", "Исследования"], ["overview", "stats", "Обзор города"],
+			["photo", "photo", "Режим фото (P): интерфейс прячется, камера — к самой земле, время суток, размытие, снимок"], ["menu", "menu", "Меню игры"]]:
 		var id: String = t[0]
 		var b := _round(t[1], t[2], TOP_BTN, func(): _top_action(id))
 		h.add_child(_shadowed(b))
 		top_btns[id] = b
+	# Старые имена нужны указателям и проверкам.
+	for id: String in ["finance", "stats", "bell", "view"]:
+		top_btns[id] = top_btns["overview"]
+	bell_badge = _label("", 15, true, C_CREAM)
+	bell_badge.add_theme_color_override("font_outline_color", C_BAD)
+	bell_badge.add_theme_constant_override("outline_size", 9)
+	bell_badge.position = Vector2(TOP_BTN - 13, -4)
+	top_btns["overview"].add_child(bell_badge)
 	_new_pill(top_btns["research"], "bottom")         # «НОВОЕ» — открылись исследования, которых игрок ещё не видел
 
 
@@ -1722,12 +1728,14 @@ func _top_action(id: String) -> void:
 			_toggle(research_panel)
 			_fill_research()
 			_update_pointer()                     # стрелка просьбы — с кнопки на карточку нужного исследования
+		"overview":
+			_open_overview("city")
 		"finance":
-			_toggle(finance_panel)
-			refresh()
+			_open_overview("money")
 		"stats":
-			_toggle(stats_panel)
-			refresh()
+			_open_overview("people")
+		"bell":
+			_open_overview("events")
 		"view":
 			set_overlay("" if overlay != "" else overlay_last)
 		"photo":
@@ -2348,7 +2356,7 @@ func cover_tip(by_player := false) -> void:
 	if c.tips.has("cover_tip") or not _tip_free(not by_player):
 		return
 	c.tips["cover_tip"] = true
-	advisor("Кому достанется лавка", "Кругов охвата больше нет — смотрите на цвет домов. Пока ставите лавку, зелёные дома получат её впервые, а синие уже снабжает такая же лавка: вторая такая же им ничего не прибавит. У курсора написано, сколько новых домов, а значки над крышами показывают, где такие лавки уже стоят. С памятниками и украшениями так же: зелёным домам станет лучше.\n\nКнопка «Обзор» вверху справа (глаз) покажет счастье каждого дома или одну потребность — где еда, одежда и прочее есть, а где нет.")
+	advisor("Кому достанется лавка", "Кругов охвата больше нет — смотрите на цвет домов. Пока ставите лавку, зелёные дома получат её впервые, а синие уже снабжает такая же лавка: вторая такая же им ничего не прибавит. У курсора написано, сколько новых домов, а значки над крышами показывают, где такие лавки уже стоят. С памятниками и украшениями так же: зелёным домам станет лучше.\n\nОткройте «Обзор города» → «Город» → «Счастье на карте»: там видно счастье домов и наличие нужных лавок.")
 
 
 ## Кнопка «Фото» — режим фото (scripts/photo_mode.gd): интерфейс прячется, наклон, время суток, размытие, снимок
@@ -3199,7 +3207,7 @@ func _camp_hint_card() -> Button:
 	img.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	img.texture = ico("tent", 64)
 	v.add_child(img)
-	var l := _label("Лагерь Легиона — кнопка «Лагерь» наверху", 13, true, C_INK)
+	var l := _label("Лагерь Легиона — кнопка «Легион» наверху", 13, true, C_INK)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.custom_minimum_size = Vector2(104, 60)
@@ -5715,10 +5723,10 @@ func _advisor_quiet(title: String, text: String) -> void:
 	var dot := first.find(". ")
 	if dot > 0:
 		first = first.substr(0, dot + 1)
-	c.events.append({"day": c.day, "text": "%s. %s" % [title, first], "icon": "info", "hn": c.hour_n})
+	c.events.append({"day": c.day, "text": "%s. %s" % [title, first], "icon": "info", "hn": c.hour_n, "advisor": true, "full_text": title + ". " + I18n.t(text)})
 	if c.events.size() > 60:
 		c.events.pop_front()
-	bell(title, "info", false)
+	bell(title, "info", false, true)
 
 
 func _notes() -> void:
@@ -5914,36 +5922,215 @@ func _window(title: String, w := 560.0) -> Array:
 
 
 func _events_panel() -> void:
-	var w := _window("События", 540)
-	events_panel = w[0]
-	var sc := ScrollContainer.new()
-	sc.custom_minimum_size = Vector2(500, 440)
-	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	(w[1] as VBoxContainer).add_child(sc)
+	var w := _window("Обзор города", 720)
+	overview_panel = w[0]
+	overview_panel.name = "CityOverview"
+	# Один внешний контейнер: старые ссылки по-прежнему закрывают всё окно.
+	events_panel = overview_panel
+	finance_panel = overview_panel
+	stats_panel = overview_panel
+	var tabs := HBoxContainer.new()
+	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
+	tabs.add_theme_constant_override("separation", 8)
+	(w[1] as VBoxContainer).add_child(tabs)
+	overview_scroll = ScrollContainer.new()
+	overview_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	(w[1] as VBoxContainer).add_child(overview_scroll)
+	var pages := VBoxContainer.new()
+	pages.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	overview_scroll.add_child(pages)
+	for t: Array in [["city", "Город"], ["money", "Деньги"], ["people", "Жители"], ["events", "События"]]:
+		var id: String = t[0]
+		var b := Button.new()
+		b.name = "overview_tab_" + id
+		b.text = t[1]
+		b.toggle_mode = true
+		b.focus_mode = Control.FOCUS_NONE
+		b.add_theme_stylebox_override("pressed", _box_pill(16, 6, "g_btn_on"))
+		b.add_theme_stylebox_override("hover_pressed", _box_pill(16, 6, "g_btn_on"))
+		b.pressed.connect(func(): _select_overview(id))
+		tabs.add_child(b)
+		overview_buttons[id] = b
+		var page := VBoxContainer.new()
+		page.name = "overview_" + id
+		page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		page.add_theme_constant_override("separation", 10)
+		page.visible = id == "city"
+		pages.add_child(page)
+		overview_pages[id] = page
 	var list := VBoxContainer.new()
 	list.name = "list"
-	list.add_theme_constant_override("separation", 6)
-	sc.add_child(list)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 8)
+	overview_pages["events"].add_child(list)
+	root.resized.connect(_fit_overview_settings)
+	_fit_overview_settings.call_deferred()
+
+
+func _fit_overview_settings() -> void:
+	# Высота в логических точках, с запасом для заголовка и вкладок.
+	var room := root.size.y
+	if overview_scroll != null:
+		overview_scroll.custom_minimum_size = Vector2(660, clampf(room - 190.0, 180.0, 480.0))
+		_snug(overview_panel)
+	if settings_scroll != null:
+		settings_scroll.custom_minimum_size = Vector2(490, clampf(room - 150.0, 180.0, 480.0))
+		_snug(settings_panel)
+
+
+func _open_overview(tab := "city") -> void:
+	var was := overview_panel.visible and overview_tab == tab
+	_close_windows()
+	if was:
+		return
+	overview_panel.visible = true
+	_close_tray()
+	_hide_info()
+	_select_overview(tab)
+
+
+func _select_overview(tab: String) -> void:
+	if not overview_pages.has(tab):
+		return
+	overview_tab = tab
+	for id: String in overview_pages:
+		(overview_pages[id] as Control).visible = id == tab
+		(overview_buttons[id] as Button).set_pressed_no_signal(id == tab)
+	overview_scroll.scroll_vertical = 0
+	_refresh_overview()
+	_fit_overview_settings()
+
+
+func _refresh_overview() -> void:
+	match overview_tab:
+		"city": _fill_overview_city()
+		"money": _fill_finance()
+		"people": _fill_stats()
+		"events": _fill_events()
+
+
+func _fill_overview_city() -> void:
+	var v: VBoxContainer = overview_pages["city"]
+	_clear(v)
+	var c: City = game.city
+	var families := 0
+	for home: Dictionary in c.buildings.values():
+		if c.is_house(home):
+			families += (home.get("families", []) as Array).size()
+	v.add_child(_row("family", "Жители / семьи", "%d / %d" % [int(c.stats.get("pop", 0)), families]))
+	v.add_child(_row("housing", "Семьи ждут дом", str(c.arrivals.size())))
+	var workers := 0
+	var jobs := 0
+	var free := 0
+	for cl: String in Defs.CLASS_ORDER:
+		workers += int(c.stats.get("filled", {}).get(cl, 0))
+		jobs += int(c.stats.get("jobs", {}).get(cl, 0))
+		free += int(c.stats.get("free", {}).get(cl, 0))
+	v.add_child(_row("hammer", "Работники / рабочие места", "%d / %d" % [workers, jobs]))
+	v.add_child(_row("person", "Без работы", str(free)))
+	var happy := int(c.stats.get("happy", 0))
+	v.add_child(_row("happy", "Счастье", "%d%%" % happy, C_GOOD if happy >= 60 else C_BAD))
+	var losses: Array = []
+	for part: Array in c.stats.get("happy_parts", []):
+		if int(part[1]) < 0 and String(part[0]) != "Больше 100% не бывает":
+			losses.append(part)
+	losses.sort_custom(func(a: Array, b: Array) -> bool: return int(a[1]) < int(b[1]))
+	for part: Array in losses.slice(0, 3):
+		v.add_child(_row("face_bad", String(part[0]), "%d%%" % int(part[1]), C_BAD))
+	if losses.is_empty():
+		var tips: Array = c.stats.get("happy_tips", [])
+		for tip in tips.slice(0, 3):
+			v.add_child(_wrap(_label(String(tip), 15, false, C_SOFT), 620))
+	var net := (float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0))) * 24.0
+	v.add_child(_row("coins", "Доход минус расходы за сутки", ("+" if net >= 0 else "−") + fmt(absf(net)), C_GOOD if net >= 0 else C_BAD))
+	var map := Button.new()
+	map.name = "overview_happiness_map"
+	map.text = "Счастье на карте"
+	map.icon = ico("view", 26)
+	map.pressed.connect(func():
+		overview_panel.visible = false
+		set_overlay("" if overlay != "" else "happy"))
+	v.add_child(map)
+	v.add_child(_divider())
+	v.add_child(_row("level", "Уровень города", String(Defs.LEVELS[c.level]["name"])))
+	var nx := c.next_level()
+	if nx.is_empty():
+		v.add_child(_label("Это высший уровень — ваш город стал Вечным!", 16, true, C_GOOD))
+	else:
+		v.add_child(_label("Следующий уровень — «%s»" % nx["name"], 18, true))
+		for need: Dictionary in c.rank_needs():
+			var value := ("%d%% / %d%%" % [int(need["have"]), int(need["need"])]) if need["pct"] else ("%s / %s" % [fmt(need["have"]), fmt(need["need"])])
+			v.add_child(_row("check" if need["ok"] else String(need["icon"]), String(need["text"]), value, C_GOOD if need["ok"] else C_BAD))
+
+
+## Фильтруем только показ; полный журнал City.events не меняется.
+func _important_event(e: Dictionary) -> bool:
+	if bool(e.get("advisor", false)):
+		return true
+	var icon := String(e.get("icon", ""))
+	var text := String(e.get("text", "")).to_lower()
+	if icon == "level":
+		return true
+	if icon in ["fire", "sick", "disaster"] or text.begins_with("огонь погас") or (icon == "brazier" and text.contains("пожар")):
+		return true
+	if text.begins_with("просьба выполнена") or text.begins_with("заказ выполнен"):
+		return true
+	if text.begins_with("семья ") and text.contains("уехала"):
+		return true
+	if text.begins_with("игры в честь богов!") or text.begins_with("триумф!") or (text.begins_with("сегодня ") and text.contains("празднует")):
+		return true
+	if text.begins_with("открыто украшение") or text.begins_with("открыты украшения"):
+		return true
+	if icon == "research" and (text.begins_with("изучено:") or text.begins_with("открыто:") or text.begins_with("открылась")):
+		return true
+	if icon == "legion" and ["побед", "поражен", "отступ", "проиграл", "бой заверш", "поход заверш", "отбили", "нападали"].any(func(word: String) -> bool: return text.contains(word)):
+		return true
+	return ["пожар", "заболели", "эпидемия", "наводнение", "землетрясение"].any(func(word: String) -> bool: return text.begins_with(word))
+
+
+func _overview_events() -> Array:
+	var result: Array = []
+	var events: Array = game.city.events
+	for i in range(events.size() - 1, -1, -1):
+		if _important_event(events[i]):
+			result.append(events[i])
+			if result.size() == 30:
+				break
+	return result
+
+
+func _event_line(text: String) -> String:
+	var line := text.replace("\n", " ").strip_edges()
+	if line.length() <= 70:
+		return line
+	for i in line.length():
+		if line[i] in [".", "!", "?"] and (i == line.length() - 1 or line[i + 1] == " "):
+			line = line.left(i + 1)
+			break
+	return line
 
 
 func _fill_events() -> void:
-	bell_count = 0
-	bell_badge.text = ""
+	if overview_panel.visible and overview_tab == "events":
+		bell_count = 0
+		bell_badge.text = ""
 	var list: VBoxContainer = events_panel.find_child("list", true, false)
-	for ch in list.get_children():
-		ch.queue_free()
-	var ev: Array = game.city.events.duplicate()
-	ev.reverse()
+	_clear(list)
+	var ev := _overview_events()
 	if ev.is_empty():
 		list.add_child(_label("Пока ничего не случилось.", 17, false, C_SOFT))
-	for e in ev:
+	for e: Dictionary in ev:
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 8)
-		h.add_child(_icon(e["icon"], 24, C_SOFT))
-		h.add_child(_label("День %d" % (int(e["day"]) + 1), 15, true, C_SOFT))
-		var l := _label(e["text"], 16)
-		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		l.custom_minimum_size = Vector2(370, 0)
+		h.add_child(_icon(String(e.get("icon", "info")), 24, C_SOFT))
+		h.add_child(_label("День %d" % (int(e.get("day", 0)) + 1), 15, true, C_SOFT))
+		var full := I18n.t(String(e.get("full_text", e["text"])))
+		var l := _label(_event_line(I18n.t(String(e["text"]))), 16)
+		l.tooltip_text = full
+		l.mouse_filter = Control.MOUSE_FILTER_PASS
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		l.custom_minimum_size = Vector2(450, 0)
 		h.add_child(l)
 		list.add_child(h)
 
@@ -6111,16 +6298,14 @@ func _fill_research() -> void:
 # ---------- финансы, статистика ----------
 
 func _finance_panel() -> void:
-	var w := _window("Финансы", 480)
-	finance_panel = w[0]
+	var page: VBoxContainer = overview_pages["money"]
 	var v := VBoxContainer.new()
-	v.name = "body"
-	(w[1] as VBoxContainer).add_child(v)
+	v.name = "finance_body"
+	page.add_child(v)
 
 
 func _stats_panel() -> void:
-	var w := _window("Жители и работники", 540)
-	stats_panel = w[0]
+	var page: VBoxContainer = overview_pages["people"]
 	# две вкладки: «Обзор» (классы, работники) и «Горожане» — найти жителя по имени или семье (этап 6.9)
 	var tabs := HBoxContainer.new()
 	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -6141,10 +6326,10 @@ func _stats_panel() -> void:
 			stats_tab = id
 			_fill_stats())
 		tabs.add_child(b)
-	(w[1] as VBoxContainer).add_child(tabs)
+	page.add_child(tabs)
 	var v := VBoxContainer.new()
-	v.name = "body"
-	(w[1] as VBoxContainer).add_child(v)
+	v.name = "stats_body"
+	page.add_child(v)
 	# «Горожане»: строка поиска и фильтры живут, пока окно открыто (часовое обновление их не пересобирает)
 	var pv := VBoxContainer.new()
 	pv.name = "people"
@@ -6175,16 +6360,12 @@ func _stats_panel() -> void:
 			_fill_people())
 		fl.add_child(fb)
 	pv.add_child(fl)
-	var sc := ScrollContainer.new()
-	sc.custom_minimum_size = Vector2(500, 420)
-	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	var list := VBoxContainer.new()
 	list.name = "plist"
 	list.add_theme_constant_override("separation", 4)
 	list.custom_minimum_size = Vector2(480, 0)
-	sc.add_child(list)
-	pv.add_child(sc)
-	(w[1] as VBoxContainer).add_child(pv)
+	pv.add_child(list)
+	page.add_child(pv)
 
 
 var stats_tab := ""                    # "" — обзор, "people" — «Горожане»
@@ -6237,7 +6418,7 @@ func _fill_people() -> void:
 
 
 func _fill_finance() -> void:
-	var v: VBoxContainer = finance_panel.find_child("body", true, false)
+	var v: VBoxContainer = finance_panel.find_child("finance_body", true, false)
 	for ch in v.get_children():
 		ch.queue_free()
 	var c: City = game.city
@@ -6403,7 +6584,7 @@ class Spark extends Control:
 
 
 func _fill_stats() -> void:
-	var v: VBoxContainer = stats_panel.find_child("body", true, false)
+	var v: VBoxContainer = stats_panel.find_child("stats_body", true, false)
 	for ch in v.get_children():
 		ch.queue_free()
 	var pv: Control = stats_panel.find_child("people", true, false)
@@ -6472,11 +6653,19 @@ func _quit() -> void:
 
 
 func _settings_panel() -> void:
-	var w := _window("Настройки", 520)
+	var w := _window("Настройки", 550)
 	settings_panel = w[0]
-	var v: VBoxContainer = w[1]
+	settings_scroll = ScrollContainer.new()
+	settings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	(w[1] as VBoxContainer).add_child(settings_scroll)
+	var v := VBoxContainer.new()
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.add_theme_constant_override("separation", 12)
-	var mk_slider := func(text: String, icon: String, key: String, lo: float, hi: float, step: float) -> HSlider:
+	settings_scroll.add_child(v)
+	var more := VBoxContainer.new()
+	more.name = "settings_more_body"
+	more.add_theme_constant_override("separation", 12)
+	var mk_slider := func(parent: VBoxContainer, text: String, icon: String, key: String, lo: float, hi: float, step: float) -> HSlider:
 		var r := HBoxContainer.new()
 		r.add_theme_constant_override("separation", 8)
 		r.add_child(_icon(icon, 26, C_SOFT))
@@ -6495,30 +6684,19 @@ func _settings_panel() -> void:
 				game.sound.apply_volumes())
 		sl.drag_ended.connect(func(_c): game.save_settings())
 		r.add_child(sl)
-		v.add_child(r)
+		parent.add_child(r)
 		return sl
-	mk_slider.call("Музыка", "music", "music", 0.0, 1.0, 0.05)
-	mk_slider.call("Звуки", "sound", "sfx", 0.0, 1.0, 0.05)
-	var us: HSlider = mk_slider.call("Размер интерфейса", "view", "ui_scale", 0.8, 1.4, 0.05)
+	mk_slider.call(v, "Музыка", "music", "music", 0.0, 1.0, 0.05)
+	mk_slider.call(v, "Звуки", "sound", "sfx", 0.0, 1.0, 0.05)
+	var us: HSlider = mk_slider.call(more, "Размер интерфейса", "view", "ui_scale", 0.8, 1.4, 0.05)
 	us.tooltip_text = "Размер кнопок и надписей — до самого крупного, что помещается в это окно (иначе полосы внизу наехали бы друг на друга)"
-	Gfx.settings_block(self, v)               # «Графика» (4 уровня), «Показывать FPS», видеокарта — scripts/gfx.gd
+	Gfx.settings_block(self, v, more)               # «Графика» (4 уровня), «Показывать FPS», видеокарта — scripts/gfx.gd
 	var fs := CheckBox.new()
 	fs.text = "Полный экран"
 	fs.name = "fs"
 	fs.add_theme_font_size_override("font_size", 18)
 	fs.toggled.connect(func(x): game.settings["fullscreen"] = x; game.save_settings())
 	v.add_child(fs)
-	var mb := CheckBox.new()
-	mb.text = "Мраморный интерфейс"
-	mb.name = "marble"
-	mb.tooltip_text = "Окна и кнопки — белый мрамор с золотом. Без галочки — прежний пергамент. Меняется сразу (город сохранится и откроется заново)"
-	mb.add_theme_font_size_override("font_size", 18)
-	mb.button_pressed = marble
-	mb.toggled.connect(func(x):
-		game.settings["ui_style"] = "marble" if x else "parchment"
-		game.save_settings()
-		game.restart("menu" if game.mode == "menu" else ("play" if game.mode in ["play", "new"] else String(game.mode))))
-	v.add_child(mb)
 	# язык: две понятные кнопки «RU | EN» (то же — в главном меню); выбранная подсвечена
 	var lr := HBoxContainer.new()
 	lr.add_theme_constant_override("separation", 8)
@@ -6531,21 +6709,40 @@ func _settings_panel() -> void:
 	var av := CheckBox.new()
 	av.text = "Подсказки советника"
 	av.name = "adv"
-	av.tooltip_text = "Советы всплывают окном только при первой встрече. Выключите — они будут тихо ложиться в колокольчик"
+	av.tooltip_text = "Выключите подсказки — советы останутся в «Обзоре города», на вкладке «События»."
 	av.add_theme_font_size_override("font_size", 18)
 	av.button_pressed = advisor_on()
 	av.toggled.connect(func(x):
 		game.settings["advisor_off"] = not x
 		game.save_settings())
 	v.add_child(av)
+	var details := Button.new()
+	details.name = "settings_more"
+	details.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	details.pressed.connect(func():
+		game.settings["settings_more"] = not bool(game.settings.get("settings_more", false))
+		game.save_settings()
+		_settings_more_refresh())
+	v.add_child(details)
+	v.add_child(more)
+	_settings_more_refresh()
 	var au := CheckBox.new()
 	au.text = "Автосохранение"
 	au.name = "auto"
 	au.add_theme_font_size_override("font_size", 18)
 	au.toggled.connect(func(x): game.settings["autosave"] = x; game.save_settings())
-	v.add_child(au)
+	more.add_child(au)
 	# аккаунт (почта, облако, «Выйти») и «Уничтожить город…» с тремя подтверждениями — scripts/account_ui.gd
-	AccountUi.settings_block(self, v)
+	AccountUi.settings_block(self, more)
+
+
+func _settings_more_refresh() -> void:
+	var on := bool(game.settings.get("settings_more", false))
+	var more := settings_panel.find_child("settings_more_body", true, false) as Control
+	var button := settings_panel.find_child("settings_more", true, false) as Button
+	more.visible = on
+	button.text = "Подробнее ▾" if on else "Подробнее ▸"
+	_fit_overview_settings.call_deferred()
 
 
 # ---------- титры ----------
@@ -6745,6 +6942,7 @@ func _set_lang(l: String) -> void:
 
 
 func _open_settings(stay := false) -> void:
+	_settings_more_refresh()
 	var adv := settings_panel.find_child("adv", true, false) as CheckBox
 	if adv != null:
 		adv.set_pressed_no_signal(advisor_on())
@@ -6886,10 +7084,8 @@ func refresh() -> void:
 		_fill_info()
 	if research_panel.visible:
 		_research_head()
-	if finance_panel.visible:
-		_fill_finance()
-	if stats_panel.visible:
-		_fill_stats()
+	if overview_panel.visible:
+		_refresh_overview()
 	_update_world_icons()
 	game._update_noroad_marks()
 	_update_pointer()
@@ -7177,7 +7373,7 @@ func _once_tips() -> void:
 	# налоги по классам открылись (с «Деревни») — один раз
 	if c.tax_open() and not c.tips.has("tax_tip") and int(c.stats.get("pop", 0)) > 0:
 		c.tips["tax_tip"] = true
-		advisor("Налоги по классам", "Теперь налоги можно настроить для каждого класса — в «Финансах» (монеты вверху справа). Мягкие: налог ×0,8, зато дома этого класса на 5% счастливее. Высокие: налог ×1,3, но счастье −8%. Счастье выше 100% — запас: дом с запасом платит высокий налог, ничуть не грустнея.\n\nОкно предупредит, если высокие налоги опустят счастье города ниже, чем нужно для следующего уровня.")
+		advisor("Налоги по классам", "Теперь налоги можно настроить для каждого класса — в «Обзоре города» → «Деньги». Мягкие: налог ×0,8, зато дома этого класса на 5% счастливее. Высокие: налог ×1,3, но счастье −8%. Счастье выше 100% — запас: дом с запасом платит высокий налог, ничуть не грустнея.\n\nОкно предупредит, если высокие налоги опустят счастье города ниже, чем нужно для следующего уровня.")
 		return
 	# новая игра: повтор лавки того же вида и одинаковые украшения рядом дают меньше — один раз, когда это впервые случилось
 	if c.econ >= 1 and bool(c.stats.get("dim_any", false)) and not c.tips.has("dim_tip"):
@@ -7213,7 +7409,7 @@ func _once_tips() -> void:
 		for id in c.chron["b"]:
 			first = String(Chronicle.badge(String(id)).get("name", ""))
 		var got := ("Город заслужил лавровый венок «%s»!" % first) if nb == 1 else ("Город заслужил уже %d %s!" % [nb, _plural(nb, "лавровый венок", "лавровых венка", "лавровых венков")])
-		advisor("Летопись города", got + " Венки даются за вехи: сто горожан, первую победу Легиона, полсотни украшений, сто дней городу… О каждом — одна строка в колокольчике.\n\nВсе венки и счётчики города — в журнале: свиток «Просьбы горожан» → книжка → вкладка «Летопись».")
+		advisor("Летопись города", got + " Венки даются за вехи: сто горожан, первую победу Легиона, полсотни украшений, сто дней городу… Все награды сохранены в летописи.\n\nВсе венки и счётчики города — в журнале: свиток «Просьбы горожан» → книжка → вкладка «Летопись».")
 		return
 	# 6.12: работников меньше, чем мест, — один раз про «−» в карточке менее нужной постройки (как в Town to City)
 	if not c.tips.has("hire_tip") and int(c.stats.get("pop", 0)) >= 30 and _hire_short() != "":
@@ -7225,8 +7421,8 @@ func _once_tips() -> void:
 ## Советник один раз (tips.unpaid_tip), когда казна впервые не смогла заплатить жалованье: что случилось и как поправить
 func unpaid_note() -> String:
 	var c: City = game.city
-	var tax := "поднимите налоги в «Финансах» (монеты вверху справа)" if c.tax_open() else "стройте дома и заселяйте семьи — налоги платят жители"
-	return "Жалованья работникам и содержания построек за час набралось больше, чем есть в казне. В долг город не живёт: казна встала на нуле, недоплаченное не плачено — и жители обижены: счастье всех домов −%d%% — и ещё %d ч после того, как казна снова сможет платить.\n\nКак поправить: %s; ставьте лавки и памятники, которые радуют дома, — счастливые платят больше; в карточках построек, где работники нужны меньше, нажмите «−» у «Работников» — меньше жалованья. Что съедает казну — видно в «Финансах»." % [Defs.UNPAID_HAPPY, Defs.UNPAID_H - 1, tax]
+	var tax := "поднимите налоги в «Обзоре города» → «Деньги»" if c.tax_open() else "стройте дома и заселяйте семьи — налоги платят жители"
+	return "Жалованья работникам и содержания построек за час набралось больше, чем есть в казне. В долг город не живёт: казна встала на нуле, недоплаченное не плачено — и жители обижены: счастье всех домов −%d%% — и ещё %d ч после того, как казна снова сможет платить.\n\nКак поправить: %s; ставьте лавки и памятники, которые радуют дома, — счастливые платят больше; в карточках построек, где работники нужны меньше, нажмите «−» у «Работников» — меньше жалованья. Расходы видны в «Обзоре города» → «Деньги»." % [Defs.UNPAID_HAPPY, Defs.UNPAID_H - 1, tax]
 
 
 ## Советник один раз (tips.fest_tip), когда открылись игры в честь богов: что дают, сколько стоят, где кнопка
@@ -7264,8 +7460,10 @@ func pace_note() -> String:
 
 ## Событие только в колокольчик: число на значке, без всплывашки
 ## seen — игрок и так это видел (сам сделал; строка слилась с прежней за этот час): число на значке не растёт
-func bell(_text: String, _icon := "info", seen := false) -> void:
-	if events_panel.visible:
+func bell(_text: String, _icon := "info", seen := false, advisor_tip := false) -> void:
+	if not _important_event({"text": _text, "icon": _icon, "advisor": advisor_tip}):
+		return
+	if overview_panel.visible and overview_tab == "events":
 		_fill_events()
 		return
 	if seen:

@@ -270,8 +270,7 @@ func _untr_run() -> void:
 			"stats_panel":
 				hud._top_action("stats")
 			"events_panel":
-				hud._fill_events()
-				hud._toggle(panel)
+				hud._top_action("bell")
 			"pause_panel":
 				hud._top_action("menu")
 			"settings_panel":

@@ -169,7 +169,7 @@ func setup(h: Hud) -> void:
 
 
 func _make_button() -> void:
-	btn = hud._round("legion", "Легион: походы, войска и чудеса света", 48, func(): toggle())
+	btn = hud._round("legion", "Легион", 48, func(): toggle())
 	btn_wrap = hud._shadowed(btn)
 	hud.top_panel.add_child(btn_wrap)
 	hud.top_panel.move_child(btn_wrap, 0)
@@ -184,7 +184,7 @@ func _update_button() -> void:
 	var on: bool = lg != null and lg.window_open() and game != null and game.mode != "menu"
 	var own: bool = lg != null and game != null and game.mode in ["play", "new"]
 	btn_wrap.visible = on or own
-	var tip := "Легион: походы, войска и чудеса света" if on or lg == null else lg.lock_text(true)
+	var tip := "Легион" if on or lg == null else lg.lock_text(true)
 	if btn.tooltip_text != tip:
 		btn.tooltip_text = tip
 	if bool(btn.get_meta("grey", false)) != (not on):
@@ -193,7 +193,7 @@ func _update_button() -> void:
 	if on:
 		hud._set_on(btn, not bool(lg.flags.get("seen", false)) or visible)
 		if lg.v3():
-			btn.tooltip_text = "Лагерь"
+			btn.tooltip_text = "Легион"
 			return
 		# обучение, шаг 1: один раз советник рассказывает, с чего начать (стрелка — на Казармы). Только когда окно
 		# исследований закрыто и советник свободен: Esc, правая кнопка и щелчок по карте закрывают окно вместе

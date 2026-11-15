@@ -457,8 +457,9 @@ func _ready() -> void:
 	city.event_seen.connect(func(t, i): hud.notify(t, i, true))
 	city.chron_on = mode in ["play", "new"]   # «Летопись города»: венки — только в своём городе
 	if city.unread > 0 and mode in ["play", "new"]:
-		hud.bell_count += city.unread         # записано при загрузке (например, возврат очков) — только число на колокольчике
-		hud.bell_badge.text = str(hud.bell_count)
+		# При загрузке считаем только важные строки, как в обзоре города.
+		for e: Dictionary in city.events.slice(maxi(0, city.events.size() - city.unread)):
+			hud.bell(String(e.get("text", "")), String(e.get("icon", "info")))
 	city.unread = 0
 	city.changed.connect(func():
 		if _hud_later:
