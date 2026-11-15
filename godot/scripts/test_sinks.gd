@@ -380,6 +380,13 @@ func _festival() -> void:
 ## Сколько повозок выедет за n часов при таком счастье (места нет — каждая везёт одну семью «ищет жильё»;
 ## увезённых сразу снимаем, чтобы повозка не ждала)
 func _carts(n: int, happy: int) -> int:
+	# Здесь проверяем частоту, поэтому работа доступна. Сам запрет проверяет test_bal1.
+	var saved_jobs: Dictionary = c.stats["jobs"].duplicate(true)
+	var saved_filled: Dictionary = c.stats["filled"].duplicate(true)
+	var saved_free: Dictionary = c.stats["free"].duplicate(true)
+	c.stats["jobs"] = {"plebs": 1}
+	c.stats["filled"] = {}
+	c.stats["free"] = {}
 	c.arrivals = []
 	c.pending = {}
 	c.incoming = 0
@@ -391,6 +398,9 @@ func _carts(n: int, happy: int) -> int:
 		if c.incoming > 0:
 			k += 1
 			c.incoming = 0
+	c.stats["jobs"] = saved_jobs
+	c.stats["filled"] = saved_filled
+	c.stats["free"] = saved_free
 	return k
 
 

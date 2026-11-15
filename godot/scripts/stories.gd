@@ -1959,7 +1959,7 @@ func happy_gaps(h: Dictionary) -> Array:
 	var cl := String(city.def(h)["cls"])
 	var cd: Dictionary = Defs.CLASSES[cl]
 	for n in h.get("missing", []):
-		out.append({"text": "лавки «%s» рядом" % String(Defs.NEEDS[n]["name"]).to_lower(), "gain": Defs.MISSING_PENALTY + 5, "do": hud._do_shop(String(n))})
+		out.append({"text": "лавки «%s» рядом" % String(Defs.NEEDS[n]["name"]).to_lower(), "gain": city.missing_penalty() + 5, "do": hud._do_shop(String(n))})
 	var deco_room := int(cd.get("deco_max", 12)) - int(h.get("deco_bonus", 0))
 	if deco_room > 0:
 		var t := _first_open("flowers|planter|bush|tree")

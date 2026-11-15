@@ -28,7 +28,7 @@ const DENSITY_RADIUS := 9.0           # теснота: слишком мног�
 const DENSITY_FREE := 12              # столько соседей в радиусе — ещё не тесно (улица с узкими домами по обе стороны)
 const DENSITY_STEP := 2               # −2% за каждого лишнего соседа
 const DENSITY_MAX := 16               # теснота отнимает не больше
-const MISSING_PENALTY := 10           # −10% за каждый вид нужной лавки, которой нет рядом
+const MISSING_PENALTY := 8            # −8% за каждый вид нужной лавки, которой нет рядом
 ## Новая игра (City.econ, решение владельца Q3/Q4 — только в новых городах): внутри одного вида лавок (еда, одежда…)
 ## первая даёт бонус целиком, вторая — вполовину, третья и дальше — четверть; одинаковые украшения рядом (один вид,
 ## любой облик) — 100% / 60% / 30%: выгоднее разнообразие, чем десять одинаковых светильников
@@ -60,14 +60,15 @@ const PAT_TOWN := 4
 const PAT_TOWN_N := 2
 ## Приезд семей: первые ARRIVE_FREE семей едут всегда, дальше — только пока счастье города не ниже ARRIVE_HAPPY.
 ## И всегда — только в свободные дома (City.free_fit): нет места — едет одна семья «ищет жильё»
-const ARRIVE_HAPPY := 60
+const ARRIVE_HAPPY := 60              # старые города
+const ARRIVE_HAPPY_LVL := [45, 50, 55, 60, 60, 60, 60, 60]
 const ARRIVE_FREE := 7
 ## Счастливый город зовёт чаще: [счастье от, множитель промежутка между повозками]; не чаще, чем ARRIVE_MULT_MIN
 const ARRIVE_FAST := [[80, 0.65], [70, 0.8]]
 const ARRIVE_MULT_MIN := 0.5
 ## Жалованье работнику в час (по уровню города) и содержание постройки в час — доля её цены
 const WAGE := [0.3, 0.35, 0.45, 0.6, 0.75, 0.9, 1.05, 1.2]
-const UPKEEP := 0.005
+const UPKEEP := 0.006
 ## Казна в минус не уходит (решение владельца 26.10): жалованья и содержания за час больше, чем есть, — казна встаёт
 ## на 0, остаток не платится, а жители обижены: счастье всех домов −UNPAID_HAPPY% этот час и ещё UNPAID_H − 1 после
 const UNPAID_HAPPY := 8
@@ -87,11 +88,11 @@ const PLOT_GROW := 1.3
 ## base — счастье дома без лавок и украшений; deco_max — сколько могут дать украшения (см. City.compute)
 const CLASSES := {
 	"plebs": {"name": "Плебеи", "one": "Плебеи", "icon": "person", "house": "house_pleb", "tax": 1.2, "per_floor": 4, "work": 0.5,
-		"needs": ["food"], "base": 44, "deco_max": 12},
+		"needs": ["food"], "base": 40, "deco_max": 12},
 	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 2.2, "per_floor": 4, "work": 0.5,
-		"needs": ["food", "clothes", "fun"], "base": 41, "deco_max": 14},
+		"needs": ["food", "clothes", "fun"], "base": 37, "deco_max": 14},
 	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 4.5, "per_floor": 4, "work": 0.35,
-		"needs": ["food", "clothes", "fun", "services", "goods"], "base": 38, "deco_max": 16},
+		"needs": ["food", "clothes", "fun", "services", "goods"], "base": 34, "deco_max": 16},
 }
 const CLASS_ORDER := ["plebs", "artisans", "patricians"]
 ## повозка с новыми семьями — раз в столько игровых часов (по уровню города); счастье города ускоряет (ARRIVE_FAST)
@@ -682,7 +683,7 @@ const RESEARCH := [
 	{"id": "stall_veg", "lvl": 0, "name": "Овощная лавка", "cost": 20, "icon": "veg"},
 	{"id": "stall_fish", "lvl": 0, "name": "Рыбная лавка", "cost": 30, "icon": "fish"},
 	{"id": "reach1", "lvl": 0, "name": "Больший охват", "cost": 80, "icon": "arrow", "after": "stall_veg",
-		"desc": "Лавки с едой обслуживают дома на треть дальше."},
+		"desc": "Лавки с едой обслуживают дома дальше."},
 	{"id": "farm", "lvl": 0, "name": "Пшеничное поле", "cost": 50, "icon": "wheat"},
 	{"id": "deco_flowers", "lvl": 0, "name": "Цветы и вазоны", "cost": 15, "icon": "daisy"},
 	{"id": "deco_trees", "lvl": 0, "name": "Деревья и кусты", "cost": 15, "icon": "tree"},

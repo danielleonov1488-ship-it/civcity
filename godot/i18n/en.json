@@ -4862,5 +4862,12 @@
 	"Отказать": "Refuse",
 	"Семья уедет. Новую привезут позже.": "This family will leave. Another will arrive later.",
 	" Где семей больше, чем этажей, — тесновато, но никто не уехал": " Where there are more families than floors, it is crowded, but nobody left",
-	" Новый дом уже заняли — нужен свободный этаж для семьи.": " The new home is occupied — the family needs a free floor."
+	" Новый дом уже заняли — нужен свободный этаж для семьи.": " The new home is occupied — the family needs a free floor.",
+	"Повозка ждёт: в городе нет свободной работы": "The cart is waiting: there are no available jobs in town",
+	"Постройте нужную лавку или добавьте рабочие места кнопкой «+» в карточке постройки.": "Build a needed shop or add jobs with the + button on a building card.",
+	"Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. До 15 жителей работа не ограничивает приезд, дальше нужны рабочие места или мало безработных.": "Move families into vacant homes. The first %d families have no happiness requirement; after that, at least %d%% is needed. Jobs do not limit arrivals below 15 residents; after that, jobs or low unemployment are needed.",
+	"Лавки с едой обслуживают дома дальше.": "Food shops serve homes farther away.",
+	"Повозка снова везёт семьи.": "The cart is bringing families again.",
+	"Дома: %s%% цены в час (половина ставки). Это входит в содержание построек.": "Homes: %s%% of their cost per hour (half rate). This is included in building upkeep.",
+	"Новая лавка «%s»: +%d%% домам, которым она нужна": "New shop “%s”: +%d%% to homes that need it"
 }

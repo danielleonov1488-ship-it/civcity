@@ -781,7 +781,24 @@ func set_hire(b: Dictionary, n: int) -> void:
 
 # ---------- расчёт: обслуживание, счастье ----------
 
-## same_place — постройки и земля те же (час игры, заселение, налоги, наём, игры): проверки места перестройки — из запаса
+## Числа новых правил; старые сохранения сохраняют прежние значения.
+func base_happy(cls: String) -> int:
+	return int(Defs.CLASSES[cls]["base"]) if cozy_v >= 1 else int({"plebs": 44, "artisans": 41, "patricians": 38}[cls])
+
+
+func missing_penalty() -> int:
+	return Defs.MISSING_PENALTY if cozy_v >= 1 else 10
+
+
+func upkeep_rate() -> float:
+	return Defs.UPKEEP if cozy_v >= 1 else 0.005
+
+
+func shop_needed(h: Dictionary, d: Dictionary) -> bool:
+	return cozy_v < 1 or d.get("sub", "") in Defs.CLASSES[def(h)["cls"]]["needs"]
+
+
+## same_place — постройки и земля те же: проверки места перестройки — из запаса.
 func compute(same_place := false) -> void:
 	if not same_place:
 		place_gen += 1
@@ -908,15 +925,8 @@ func compute(same_place := false) -> void:
 		s["serves"] = serves           # какие дома обслуживает (для подсветки охвата)
 		s["cap"] = cap                 # сколько домов может обслужить сейчас (с нынешними работниками)
 		s["near_n"] = near.size()      # сколько домов в её дальности
-	# Счастье дома — сумма слагаемых, как в Town to City (их список — b["happy_parts"], для карточки дома):
-	#   основа класса: плебеи 44, ремесленники 41, патриции 38 (Defs.CLASSES base)
-	#   + бонус каждой РАЗНОЙ лавки, что обслуживает дом (две фруктовые лавки — один бонус), любые виды
-	#   + украшения в радиусе DECOR_RADIUS: +1% за каждые 2 очка украшения, не больше deco_max класса (12/14/16)
-	#   + памятники в своей дальности (каждый вид памятника — один раз)
-	#   − теснота: −2% за каждого соседа сверх DENSITY_FREE в радиусе DENSITY_RADIUS (не больше −16%)
-	#   − 10% за каждый нужный классу вид лавки (еда, одежда…), которой нет рядом
-	# Для плебеев: только фруктовая лавка — 49%, с парой фонарей — 52–55%; приезд новых семей (60%) —
-	# две лавки еды и украшения; 65% (второй этаж) — три разные лавки и украшения; 75% (третий) — ещё мясо, хлеб, фонтан.
+	# Счастье дома: основа, нужные классу лавки, украшения и памятники минус нехватка и теснота.
+	# Старые города сохраняют прежние бонусы; карточка показывает те же happy_parts.
 	var happy_sum := 0.0
 	var pop := 0
 	var dim_any := false                       # где-то повтор лавки или украшения дал меньше (совет «Разнообразие» — один раз)
@@ -935,13 +945,13 @@ func compute(same_place := false) -> void:
 		var cls: String = def(h)["cls"]
 		var cd: Dictionary = Defs.CLASSES[cls]
 		var parts := []
-		var base := int(cd.get("base", 40))
+		var base := base_happy(cls)
 		parts.append(["Основа", base])
 		var shop_sum := 0
 		var types: Array = (h["score"] as Dictionary).keys()
 		types.sort_custom(func(a, b): return _shop_rank(a) < _shop_rank(b))
 		# новая игра (econ): внутри одного вида лавок первая — целиком, вторая — вполовину, дальше — четверть (shop_parts)
-		for e2: Array in shop_parts(types, h["score"], econ):
+		for e2: Array in shop_parts(types, h["score"], econ, cls if cozy_v >= 1 else ""):
 			parts.append([e2[0], e2[1]])
 			shop_sum += int(e2[1])
 			dim_any = dim_any or bool(e2[2])
@@ -1022,8 +1032,8 @@ func compute(same_place := false) -> void:
 		for n in cd["needs"]:
 			if not h["needs"].has(n):
 				missing.append(n)
-				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -Defs.MISSING_PENALTY])
-		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + vis_sum + tr_sum + ren + tx + unp + dens + size_p - missing.size() * Defs.MISSING_PENALTY
+				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -missing_penalty()])
+		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + vis_sum + tr_sum + ren + tx + unp + dens + size_p - missing.size() * missing_penalty()
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
 		h["set_bonus"] = set_b
@@ -1051,7 +1061,7 @@ func compute(same_place := false) -> void:
 		sums["unpaid"] = float(sums.get("unpaid", 0.0)) + unp * w
 		sums["crowd"] += dens * w
 		sums["size"] = float(sums.get("size", 0.0)) + size_p * w
-		sums["miss"] += -missing.size() * Defs.MISSING_PENALTY * w
+		sums["miss"] += -missing.size() * missing_penalty() * w
 		sums["clip"] = float(sums.get("clip", 0.0)) + (clampf(hp, 0.0, 100.0) - hp) * w   # счастье дома — от 0 до 100%
 	# счастье города — среднее по жителям, округлённое; его слагаемые округляем так, чтобы в сумме вышло
 	# ровно оно (заголовок подсказки «Счастье города: N%» и строки под ним всегда сходятся)
@@ -1124,10 +1134,12 @@ const SUB_WITH := {"food": "с едой", "clothes": "с одеждой", "fun":
 ## Слагаемые счастья от лавок дома: types — разные лавки по порядку (_shop_rank), score — тип → бонус. econ ≥ 1 (новая
 ## игра): внутри одного вида первая — целиком, вторая — вполовину, дальше — четверть (Defs.SHOP_REPEAT).
 ## [[строка, %, меньше ли из-за повтора], …]
-static func shop_parts(types: Array, score: Dictionary, econ_v: int) -> Array:
+static func shop_parts(types: Array, score: Dictionary, econ_v: int, cls := "") -> Array:
 	var out := []
 	var nth := {}
 	for t in types:
+		if cls != "" and Defs.B[t].get("sub", "") not in Defs.CLASSES[cls]["needs"]:
+			continue
 		var v := int(score[t])
 		var nm := String(Defs.B[t]["name"])
 		var dim := false
@@ -1303,7 +1315,7 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 				open = true
 				break
 		var nm: String = Defs.NEEDS[n]["name"]
-		var g_need := Defs.MISSING_PENALTY * w / tot + 4.0
+		var g_need := missing_penalty() * w / tot + 4.0
 		# лавка этого вида уже стоит рядом, но не работает или не успевает ко всем — сказать почему
 		# (а не «поставьте ещё одну»: при нехватке работников новая лавка сделает только хуже)
 		var iss := _need_shop_issue(n, houses, ws)
@@ -1321,11 +1333,11 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 			elif hired_of(sb) < job_max(sb):
 				cands.append([g_need, "«%s» не успевает ко всем домам рядом — наймите работника кнопкой «+» в карточке постройки" % sn])
 			else:
-				cands.append([g_need, "«%s» не успевает ко всем домам рядом — поставьте ещё одну лавку «%s» (+%d%%)" % [sn, nm, Defs.MISSING_PENALTY]])
+				cands.append([g_need, "«%s» не успевает ко всем домам рядом — поставьте ещё одну лавку «%s» (+%d%%)" % [sn, nm, missing_penalty()]])
 		elif open:
-			cands.append([g_need, "У %d %s нет рядом лавки «%s» — поставьте её поближе (+%d%%)" % [cnt, plural(cnt, "дома", "домов", "домов"), nm, Defs.MISSING_PENALTY]])
+			cands.append([g_need, "У %d %s нет рядом лавки «%s» — поставьте её поближе (+%d%%)" % [cnt, plural(cnt, "дома", "домов", "домов"), nm, missing_penalty()]])
 		else:
-			cands.append([Defs.MISSING_PENALTY * w / tot + 2.0, "Изучите лавку вида «%s» — её не хватает %d %s" % [nm, cnt, plural(cnt, "дому", "домам", "домам")]])
+			cands.append([missing_penalty() * w / tot + 2.0, "Изучите лавку вида «%s» — её не хватает %d %s" % [nm, cnt, plural(cnt, "дому", "домам", "домам")]])
 	# новая лавка, которой у домов ещё нет (разнообразие); в новой игре — сколько она правда прибавит с повторами
 	var subs := {}
 	if econ >= 1:
@@ -1347,14 +1359,14 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 		var w := 0.0
 		var gs := 0.0                           # прибавка, взвешенная по жителям
 		for h in houses:
-			if not (h["score"] as Dictionary).has(t):
+			if shop_needed(h, d) and not (h["score"] as Dictionary).has(t):
 				var hw := float(ws[h["id"]])
 				w += hw
 				gs += (float(_shop_gain(subs[h["id"]], t, int(d["bonus"]))) if econ >= 1 else float(d["bonus"])) * hw
 		var g := gs / tot
 		if g > float(best[0]):
 			var pct := int(d["bonus"]) if econ < 1 or w <= 0.0 else int(roundf(gs / w))
-			best = [g, "Новая лавка у домов: «%s» — +%d%% каждому дому рядом" % [d["name"], pct]]
+			best = [g, "Новая лавка «%s»: +%d%% домам, которым она нужна" % [d["name"], pct]]
 	if float(best[0]) >= 1.0:
 		cands.append(best)
 	# исследование новой лавки (если готовые уже стоят)
@@ -1370,6 +1382,8 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 					# новая игра: средняя настоящая прибавка домам, где живут (у кого уже есть лавка того же вида — меньше)
 					var sg := 0.0
 					for h in houses:
+						if not shop_needed(h, d):
+							continue
 						sg += float(_shop_gain(subs[h["id"]], t, int(d["bonus"]))) * float(ws[h["id"]])
 					avg = sg / tot
 				var g := avg * 0.4 - float(r["cost"]) * 0.001
@@ -1425,7 +1439,7 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 			var near := []
 			for h in houses:
 				var dd := (h["pos"] as Vector2).distance_to(s["pos"])
-				if dd <= r and float(ws[h["id"]]) > 0.0 and int((h["score"] as Dictionary).get(s["type"], 0)) < int(d["bonus"]):
+				if shop_needed(h, d) and dd <= r and float(ws[h["id"]]) > 0.0 and int((h["score"] as Dictionary).get(s["type"], 0)) < int(d["bonus"]):
 					near.append([dd, h])
 			near.sort_custom(func(a, b): return a[0] < b[0])
 			var g := 0.0
@@ -1462,7 +1476,7 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 func shop_range(d: Dictionary) -> float:
 	var r := Defs.range_m(d)
 	if d.get("sub", "") == "food" and research.has("reach1"):
-		r *= 1.33
+		r *= 1.2 if cozy_v >= 1 else 1.33
 	return r
 
 
@@ -1725,15 +1739,17 @@ func sim_day() -> void:
 		match d["kind"]:
 			"house":
 				income += int(b["pop"]) * house_tax(b) * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
+				if cozy_v >= 1:
+					upkeep += float(d["cost"]) * upkeep_rate() * 0.5
 				_grow_house(b)
 			"rp":
 				if b.get("over", false):
 					continue                              # сверх предела уровня: стоит, не работает, не стоит денег
 				rpd += rp_per_hour(b["type"]) * float(b["staff"])
-				upkeep += float(d["cost"]) * Defs.UPKEEP + wage() * hired_of(b)     # писцам и учителям тоже платят
+				upkeep += float(d["cost"]) * upkeep_rate() + wage() * hired_of(b)     # писцам и учителям тоже платят
 				wages += wage() * hired_of(b)
 			"shop", "monument", "store", "farm", "military", "inn":
-				upkeep += float(d["cost"]) * Defs.UPKEEP + wage() * hired_of(b)
+				upkeep += float(d["cost"]) * upkeep_rate() + wage() * hired_of(b)
 				wages += wage() * hired_of(b)
 	if not center().is_empty():
 		rpd += float(Defs.LEVELS[level].get("rp_h", 0.0)) * rp_mult()   # почта привозит на станцию свитки
@@ -1962,7 +1978,7 @@ func upgrade_happy(b: Dictionary) -> int:
 	var nt := upgrade_to(b)
 	if nt == "":
 		return 0
-	var c0: Dictionary = Defs.CLASSES[String(def(b)["cls"])]
+	var cl0 := String(def(b)["cls"])
 	var cl1 := String(Defs.B[nt]["cls"])
 	var c1: Dictionary = Defs.CLASSES[cl1]
 	var raw := 0
@@ -1976,8 +1992,17 @@ func upgrade_happy(b: Dictionary) -> int:
 		if not (b.get("needs", {}) as Dictionary).has(n):
 			miss1 += 1
 	var miss0 := (b.get("missing", []) as Array).size()
-	return raw - int(c0.get("base", 40)) + int(c1.get("base", 40)) - int(b.get("deco_bonus", 0)) + deco1 - tx0 + tx1 \
-		+ (miss0 - miss1) * Defs.MISSING_PENALTY
+	var shop_delta := 0
+	if cozy_v >= 1:
+		var score: Dictionary = b.get("score", {})
+		var types: Array = score.keys()
+		types.sort_custom(func(a, z): return _shop_rank(a) < _shop_rank(z))
+		for part: Array in shop_parts(types, score, econ, cl1):
+			shop_delta += int(part[1])
+		for part: Array in shop_parts(types, score, econ, cl0):
+			shop_delta -= int(part[1])
+	return raw - base_happy(cl0) + base_happy(cl1) - int(b.get("deco_bonus", 0)) + deco1 - tx0 + tx1 \
+		+ (miss0 - miss1) * missing_penalty() + shop_delta
 
 
 ## Счастье после перестройки, если украшений ids не станет («Сносить мешающие украшения»): их очки, наборы и «главные»
@@ -2428,15 +2453,45 @@ func _arrive_free() -> bool:
 	return families_came() < Defs.ARRIVE_FREE or (level == 0 and int(stats.get("pop", 0)) < int(lv(1)["pop"]))
 
 
-## Почему повозка не везёт новые семьи ("" — везёт): первые Defs.ARRIVE_FREE семей едут всегда,
-## дальше — только пока счастье города не ниже Defs.ARRIVE_HAPPY (как поезд в Town to City)
+## До первого ранга не запираем старт работой. Затем резервируем до двух работников на семью.
+## Учитываем и тех, кто едет, ждёт или идёт к дому: ожидание не создаёт лишние рейсы.
+func arrive_work_slots() -> int:
+	if cozy_v < 1:
+		return 999
+	var pop := int(stats.get("pop", 0))
+	var waiting := incoming + arrivals.size() + pending.size()
+	if level == 0 and pop < int(lv(1)["pop"]):
+		return maxi(0, int(ceil(float(int(lv(1)["pop"]) - pop) / 2.0)) - waiting)
+	var free_jobs := 0
+	var unemployed := 0
+	for cl in Defs.CLASS_ORDER:
+		free_jobs += maxi(0, int(stats.get("jobs", {}).get(cl, 0)) - int(stats.get("filled", {}).get(cl, 0)))
+		unemployed += int(stats.get("free", {}).get(cl, 0))
+	var buffer := 4 + int(floor(pop * 0.05))
+	var room := maxi(free_jobs, buffer - unemployed) - waiting * 2
+	return maxi(0, int(ceil(float(room) / 2.0)))
+
+
+func arrive_happy() -> int:
+	return int(Defs.ARRIVE_HAPPY_LVL[clampi(level, 0, 7)]) if cozy_v >= 1 else Defs.ARRIVE_HAPPY
+
+
+func pop_hint() -> String:
+	if cozy_v < 1:
+		return Defs.POP_HINT
+	return "Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. До 15 жителей работа не ограничивает приезд, дальше нужны рабочие места или мало безработных." % [Defs.ARRIVE_FREE, arrive_happy()]
+
+
+## Почему повозка ждёт: пауза, работа или счастье.
 func arrivals_blocked() -> String:
 	if arrivals_paused:
 		return "Пауза: новые семьи не едут"
+	if arrive_work_slots() <= 0:
+		return "Повозка ждёт: в городе нет свободной работы"
 	if _arrive_free() or int(stats.get("pop", 0)) <= 0:
 		return ""
-	if int(stats.get("happy", 0)) < Defs.ARRIVE_HAPPY:
-		return "Новые семьи приедут, когда счастье города будет не ниже %d%% (сейчас %d%%)" % [Defs.ARRIVE_HAPPY, int(stats["happy"])]
+	if int(stats.get("happy", 0)) < arrive_happy():
+		return "Новые семьи приедут, когда счастье города будет не ниже %d%% (сейчас %d%%)" % [arrive_happy(), int(stats["happy"])]
 	return ""
 
 
@@ -2450,7 +2505,9 @@ func _arrive_gate(why: String) -> void:
 			var ht: Array = stats.get("happy_tips", [])
 			if not ht.is_empty():
 				tip = " Совет: " + String(ht[0]) + "."
-			var msg := "Новые семьи не едут: в город переселяются, только если счастье не ниже %d%%, а сейчас %d%%.%s" % [Defs.ARRIVE_HAPPY, int(stats["happy"]), tip]
+			var msg := "Новые семьи не едут: в город переселяются, только если счастье не ниже %d%%, а сейчас %d%%.%s" % [arrive_happy(), int(stats["happy"]), tip]
+			if arrive_work_slots() <= 0:
+				msg = why + ". " + "Постройте нужную лавку или добавьте рабочие места кнопкой «+» в карточке постройки."
 			if not tips.has("arrive_block") and not arrive_advice.get_connections().is_empty():
 				# в первый раз объясняет советник (окно с текстом), а не всплывашка; в колокольчик — как обычно
 				tips["arrive_block"] = true
@@ -2463,7 +2520,7 @@ func _arrive_gate(why: String) -> void:
 		arrive_block_h += 1
 	else:
 		if arrive_block_told:              # «снова едут» — только в ответ на «не едут»
-			_event("Счастье города %d%% — повозка снова везёт семьи." % int(stats["happy"]), "family")
+			_event("Повозка снова везёт семьи.", "family")
 		arrive_block_told = false
 		arrive_block_h = 0
 
@@ -2595,8 +2652,9 @@ func _tick_arrivals() -> void:
 		arrive_t = over if over > 0.0 and over < 1.0 else 0.0
 		var n := mini(room, int(Defs.FAMILIES_PER_CART[clampi(level, 0, Defs.FAMILIES_PER_CART.size() - 1)]))
 		n = mini(n, fit if fit > 0 else 1)        # мест нет — одна семья «ищет жильё»
-		if int(stats["happy"]) < Defs.ARRIVE_HAPPY and int(stats["pop"]) > 0 and not _arrive_free():
+		if int(stats["happy"]) < arrive_happy() and int(stats["pop"]) > 0 and not _arrive_free():
 			n = mini(n, maxi(0, Defs.ARRIVE_FREE - families_came()))   # без счастья — только первые ARRIVE_FREE семей
+		n = mini(n, arrive_work_slots())
 		incoming += maxi(0, n)
 
 

@@ -355,7 +355,7 @@ static func wish(c: City, r: Dictionary) -> Array:
 	if h.is_empty():
 		var ht := String(Defs.CLASSES[cls].get("house", "house_pleb"))
 		return ["свой дом — поставьте «%s» у дороги и заселите семью" % String(Defs.B.get(ht, {"name": "Дом"})["name"]), true]
-	var pen := Defs.MISSING_PENALTY
+	var pen := c.missing_penalty()
 	for n: String in h.get("missing", []):
 		var shop := _shop_for(c, n)
 		if shop != "":

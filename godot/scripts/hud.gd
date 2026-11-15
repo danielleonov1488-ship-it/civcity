@@ -1099,10 +1099,13 @@ func on_arrive_block(text: String) -> void:
 func _arrive_advice() -> void:
 	var c: City = game.city
 	c.tips.erase("arrive_wait")
+	if c.arrive_work_slots() <= 0:
+		advisor("Новые семьи не едут", c.arrivals_blocked() + ". " + "Постройте нужную лавку или добавьте рабочие места кнопкой «+» в карточке постройки.")
+		return
 	var ht: Array = c.stats.get("happy_tips", [])
 	var tip := ("\n\nСовет: " + String(ht[0]) + ".") if not ht.is_empty() else ""
 	var nf := int(_defc("ARRIVE_FREE", 3))
-	advisor("Новые семьи не едут", ("Первые %d %s приезжают всегда, а дальше в город переселяются, только если счастье города не ниже %d%%. Сейчас — %d%%, и повозка ждёт на дороге.\n\nНаведите мышь на счастье вверху — там видно, из чего оно складывается и что его поднимет. Как только счастье поднимется, повозка сразу поедет." % [nf, _plural(nf, "семья", "семьи", "семей"), int(_defc("ARRIVE_HAPPY", 60)), int(c.stats.get("happy", 0))]) + tip)
+	advisor("Новые семьи не едут", ("Первые %d %s приезжают всегда, а дальше в город переселяются, только если счастье города не ниже %d%%. Сейчас — %d%%, и повозка ждёт на дороге.\n\nНаведите мышь на счастье вверху — там видно, из чего оно складывается и что его поднимет. Как только счастье поднимется, повозка сразу поедет." % [nf, _plural(nf, "семья", "семьи", "семей"), game.city.arrive_happy(), int(c.stats.get("happy", 0))]) + tip)
 
 
 ## Советы о приезжих: первая семья; семья, которой негде жить
@@ -1456,6 +1459,9 @@ func _arrive_rows(v: Control, tip: bool) -> void:
 		if float(am[0]) < 1.0:
 			v.add_child(_wrap(_label("Чаще обычного: %s." % am[1], 14, true, C_GOOD), 330))
 		v.add_child(_row("housing", "Место в домах", fit_txt, C_GOOD if fit > 0 else C_BAD))
+		var block := c.arrivals_blocked()
+		if block != "":
+			v.add_child(_wrap(_label(block, 14, true, C_BAD), 330))
 
 
 ## Счастье города → из чего складывается, по классам, что сделать и что оно даёт
@@ -1511,7 +1517,7 @@ func _tip_happy(v: VBoxContainer) -> void:
 		_tip_text(v, "• Лавки нужных видов рядом с домами, украшения между домами и памятники поднимают счастье; теснота и нехватка лавок — опускают.", C_INK, 14)
 	for t in tips:
 		_tip_text(v, "• " + String(t), C_INK, 14)
-	_tip_text(v, "Счастливые жители платят больше налогов, а новые семьи едут, пока счастье города не ниже %d%%. Щёлкните по дому — карточка покажет, чего не хватает именно ему." % int(_defc("ARRIVE_HAPPY", 60)), C_SOFT, 14)
+	_tip_text(v, "Счастливые жители платят больше налогов, а новые семьи едут, пока счастье города не ниже %d%%. Щёлкните по дому — карточка покажет, чего не хватает именно ему." % game.city.arrive_happy(), C_SOFT, 14)
 
 
 ## Фишка класса → жители, счастье, нужды (у скольких домов нет нужной лавки), работа
@@ -1850,6 +1856,9 @@ func fill_overlay() -> void:
 	for m in _ov_btns:
 		_set_on(_ov_btns[m], m == overlay)
 	_clear(_ov_legend)
+	var block: String = game.city.arrivals_blocked()
+	if block != "":
+		_ov_legend.add_child(_wrap(_label(block, 14, true, C_BAD), 340))
 	var s: Dictionary = game.cover.sets
 	var n: Array = s.get("n", [0, 0, 0])
 	if overlay == "happy":
@@ -1880,7 +1889,7 @@ func fill_overlay() -> void:
 			if (Defs.CLASSES[cl]["needs"] as Array).has(overlay):
 				who.append(OV_DATIVE.get(cl, cl))
 		_ov_row(_swatch(Cover.GREEN), OV_HAS[overlay][0], n[0])
-		_ov_row(_swatch(Cover.RED), "%s: −%d%% счастья" % [OV_HAS[overlay][1], Defs.MISSING_PENALTY], n[2])
+		_ov_row(_swatch(Cover.RED), "%s: −%d%% счастья" % [OV_HAS[overlay][1], game.city.missing_penalty()], n[2])
 		var r := HBoxContainer.new()
 		r.add_theme_constant_override("separation", 8)
 		r.add_child(_icon(nd["icon"], 24))
@@ -5152,7 +5161,7 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 		_fill_house_short(b, d, cw, hp)
 		return
 	# что даёт счастье — одной строкой
-	var why_happy := "Счастливые жители платят больше налогов, а новые семьи едут, пока счастье города не ниже %d%%" % int(_defc("ARRIVE_HAPPY", 60))
+	var why_happy := "Счастливые жители платят больше налогов, а новые семьи едут, пока счастье города не ниже %d%%" % game.city.arrive_happy()
 	if tier < fmax:
 		why_happy += "; при счастье дома от %d%% можно надстроить этаж" % _floor_need(b)
 	info_box.add_child(_wrap(_label(why_happy + ".", 14, false, C_SOFT), cw))
@@ -5385,7 +5394,7 @@ func _more_btn(to_more: bool) -> Button:
 ## Нужды класса в карточке дома: значок с галочкой или крестиком, лавка, что закрывает нужду, или почему её нет
 func _need_rows(b: Dictionary, cls: Dictionary, left: VBoxContainer, lw: float) -> void:
 	var c: City = game.city
-	var pen := int(_defc("MISSING_PENALTY", 10))
+	var pen := c.missing_penalty()
 	for n in Defs.NEED_ORDER:
 		var need: Dictionary = Defs.NEEDS[n]
 		var shops := []
@@ -5393,7 +5402,7 @@ func _need_rows(b: Dictionary, cls: Dictionary, left: VBoxContainer, lw: float) 
 			if Defs.B[t].get("sub", "") == n:
 				shops.append(t)
 		var required: bool = n in cls["needs"]
-		if shops.is_empty() and not required:
+		if not required and (c.cozy_v >= 1 or shops.is_empty()):
 			continue
 		var ok := not shops.is_empty()
 		var r := HBoxContainer.new()
@@ -5551,8 +5560,10 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 
 ## Слагаемые счастья дома по старым полям (если City.compute их ещё не считает)
 func _happy_parts_old(b: Dictionary, cl: String) -> Array:
-	var out := [["Основа", int(Defs.CLASSES[cl].get("base", 40))]]
+	var out := [["Основа", game.city.base_happy(cl)]]
 	for t in b.get("score", {}):
+		if not game.city.shop_needed(b, Defs.B[t]):
+			continue
 		out.append([Defs.B[t]["name"], int(b["score"][t])])
 	if int(b.get("deco_bonus", 0)) != 0:
 		out.append(["Украшения", int(b["deco_bonus"])])
@@ -5561,7 +5572,7 @@ func _happy_parts_old(b: Dictionary, cl: String) -> Array:
 	if float(b.get("density", 0.0)) < 0.0:
 		out.append(["Теснота", int(b["density"])])
 	for n in b.get("missing", []):
-		out.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -10])
+		out.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -game.city.missing_penalty()])
 	return out
 
 
@@ -6312,7 +6323,9 @@ func _fill_finance() -> void:
 	var tx := []
 	for cl in ["plebs", "artisans", "patricians"]:
 		tx.append(String.num(float(Defs.CLASSES[cl]["tax"]), 1).replace(".", ","))
-	var hint := _label("Налог платит каждый житель: плебей — %s, ремесленник — %s, патриций — %s денария в час; счастливые платят больше. Содержание: каждая постройка (кроме домов и украшений) стоит в час %s%% своей цены, а каждый работник — %s ден. жалованья; жалованье растёт с уровнем города. Казна не вмещает больше предела — поднимайте уровень города и изучайте хранилища." % [tx[0], tx[1], tx[2], String.num(Defs.UPKEEP * 100.0, 1).replace(".", ","), String.num(c.wage(), 2).replace(".", ",")], 14, false, C_SOFT)
+	var hint := _label("Налог платит каждый житель: плебей — %s, ремесленник — %s, патриций — %s денария в час; счастливые платят больше. Содержание: каждая постройка (кроме домов и украшений) стоит в час %s%% своей цены, а каждый работник — %s ден. жалованья; жалованье растёт с уровнем города. Казна не вмещает больше предела — поднимайте уровень города и изучайте хранилища." % [tx[0], tx[1], tx[2], String.num(c.upkeep_rate() * 100.0, 1).replace(".", ","), String.num(c.wage(), 2).replace(".", ",")], 14, false, C_SOFT)
+	if c.cozy_v >= 1:
+		hint.text += "\n" + "Дома: %s%% цены в час (половина ставки). Это входит в содержание построек." % String.num(c.upkeep_rate() * 50.0, 1).replace(".", ",")
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.custom_minimum_size = Vector2(400, 0)
 	v.add_child(hint)
@@ -7562,11 +7575,13 @@ func _fill_tasks_body(goals: Array) -> void:
 		b.add_theme_stylebox_override("hover_pressed", hov)
 		var who: Array = Defs.WHO.get(g.get("who", "advisor"), Defs.WHO["advisor"])
 		var hint_txt := String(g.get("hint", ""))
+		if hint_txt == Defs.POP_HINT:
+			hint_txt = c.pop_hint()
 		# «Соберите N жителей», а повозка стоит из-за счастья — сразу сказать почему и что делать
 		var block := String(c.stats.get("arrive_block", ""))
 		if String((g["p"] as Array)[0]) == "pop" and block != "":
 			var ht: Array = c.stats.get("happy_tips", [])
-			hint_txt = block + "." + ((" Совет: " + String(ht[0]) + ".") if not ht.is_empty() else "") + ("\n" + hint_txt if hint_txt != "" else "")
+			hint_txt = block + "." + ((" Совет: " + String(ht[0]) + ".") if not ht.is_empty() and c.arrive_work_slots() > 0 else "") + ("\n" + hint_txt if hint_txt != "" else "")
 		var rank_lv := int((g["p"] as Array)[1]) if String((g["p"] as Array)[0]) == "rank" else -1
 		if rank_lv > 0:
 			# «Станьте хутором»: условия уровня — из данных (Defs.LEVELS), чтобы не расходились с кнопкой
