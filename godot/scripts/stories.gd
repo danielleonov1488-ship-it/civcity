@@ -1789,7 +1789,7 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			for base in (g[2] as Dictionary):
 				var n := _count_near(String(base), hp, float(g[1]), -1)
 				var need := int(g[2][base])
-				var t := _first_open(String(base))
+				var t := _goal_build_type(String(base))
 				var nm := String(PART_WORDS.get(String(base), Defs.B.get(String(base).split("|")[0], {}).get("name", base)))
 				out.append({"text": "%s %d/%d" % [nm, mini(n, need), need], "ok": n >= need,
 					"do": {} if n >= need or t == "" else hud._do_type(t)})
@@ -1827,16 +1827,17 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			var h: Dictionary = city.buildings.get(int(a.get("home", -1)), {})
 			var gap := [] if bool(pr["ok"]) or h.is_empty() else happy_gaps(h)
 			var tail := (" — не хватает: " + String(gap[0]["text"])) if not gap.is_empty() else ""
-			out.append({"text": "Счастье дома %s%s" % [pr["txt"], tail], "ok": bool(pr["ok"]), "do": {} if gap.is_empty() else gap[0]["do"]})
+			var action: Dictionary = gap[0]["do"] if not gap.is_empty() else ({} if h.is_empty() or bool(pr["ok"]) else {"kind": "look", "id": int(h["id"])})
+			out.append({"text": "Счастье дома %s%s" % [pr["txt"], tail], "ok": bool(pr["ok"]), "do": action})
 		"beauty":
 			var pr := progress(a, g)
-			out.append({"text": "Очков красоты рядом с домом: %s" % pr["txt"], "ok": int(pr.get("tier", 0)) >= 1, "do": {} if int(pr.get("tier", 0)) >= 1 else hud._do_type(_first_open("flowers|planter|tree"))})
+			out.append({"text": "Очков красоты рядом с домом: %s" % pr["txt"], "ok": int(pr.get("tier", 0)) >= 1, "do": {} if int(pr.get("tier", 0)) >= 1 else hud._do_type(_goal_build_type("flowers|planter|tree"))})
 		"fest":
 			var pr := progress(a, g)
 			# щелчок — карточка почтовой станции: там кнопка игр
 			var ctr := city.center()
 			out.append({"text": "Игры в честь богов %s" % pr["txt"], "ok": bool(pr["ok"]),
-				"do": {} if bool(pr["ok"]) or ctr.is_empty() else {"kind": "look", "id": int(ctr["id"]), "say": "Игры устраивают в карточке почтовой станции"}})
+				"do": {} if bool(pr["ok"]) or ctr.is_empty() else {"kind": "look", "id": int(ctr["id"]), "action": "festival", "say": "Игры устраивают в карточке почтовой станции"}})
 		"route":
 			if _route_of(a).size() < 2:
 				# мостовую от арки до двери стёрли (или не дотянули): «0/0» ничего не скажет — говорим, что сделать
@@ -1862,7 +1863,7 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			for base in (g[2] as Dictionary):
 				var n := along_count(a, String(base), float(g[1]))
 				var need := int(g[2][base])
-				var t := _first_open(String(base))
+				var t := _goal_build_type(String(base))
 				var nm := String(PART_WORDS.get(String(base), Defs.B.get(String(base).split("|")[0], {}).get("name", base)))
 				out.append({"text": "%s %d/%d" % [nm, mini(n, need), need], "ok": n >= need, "do": {} if n >= need or t == "" else hud._do_type(t)})
 		"plaza":
@@ -1881,13 +1882,13 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			var rn := String((Legion.regions()[int(g[1])] as Dictionary).get("name", "")) if int(g[1]) < Legion.regions().size() else ""
 			var v3 := city.legion.v3()
 			if v3 and not bool(pr["ok"]) and city.legion.squad_v3().is_empty():
-				out.append({"text": "Воин в отряде: нет", "ok": false, "do": {"kind": "legion", "tip": "Лагерь", "say": "«Лагерь» сверху → «Отряд»: поставьте воина на место"}})
+				out.append({"text": "Воин в отряде: нет", "ok": false, "do": {"kind": "legion", "action": "squad", "tip": "", "say": "«Лагерь» сверху → «Отряд»: поставьте воина на место"}})
 			out.append({"text": "Победы в «%s» %s" % [rn, pr["txt"]], "ok": bool(pr["ok"]),
 				"do": {} if bool(pr["ok"]) else ({"kind": "legion", "tip": "Лагерь", "say": "«Лагерь» сверху → «Поход»"} if v3 else {"kind": "legion", "tip": "Легион", "say": "Медальон «Легион» сверху справа → «Походы»"})})
 		"give":
 			var pr := progress(a, g)
 			var fl: Dictionary = a.get("flags", {})
-			out.append({"text": "Котята в новых семьях %s" % pr["txt"], "ok": bool(pr["ok"]), "do": {}})
+			out.append({"text": "Котята в новых семьях %s" % pr["txt"], "ok": bool(pr["ok"]), "do": {} if bool(pr["ok"]) else {"kind": "gift", "say": "Нажмите на кошку над домом — семья возьмёт котёнка"}})
 			var gv: Array = fl.get("given", [])
 			var kn: Array = fl.get("kittens", [])
 			for i in gv.size():
@@ -1901,12 +1902,12 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			var who := String(cz.get("name", ""))
 			if String(cz.get("job", "")) != "":
 				who += ", " + String(cz["job"])
-			out.append({"text": "Житель по имени: %s" % who, "ok": bool(fl.get("c_person", false)),
-				"do": {"kind": "people", "q": String(cz.get("pn", "")), "f": "", "say": "«Горожане»: поиск по имени — щёлкните по найденному"}})
-			out.append({"text": "Самая счастливая семья — карточка её дома", "ok": bool(fl.get("c_best", false)),
-				"do": {"kind": "view", "layer": "happy", "tip": "Обзор", "say": "«Обзор» → «Счастье»: щёлкните по дому с самым большим процентом"}})
-			out.append({"text": "Ребёнок — будущий ученик (карточка жителя)", "ok": bool(fl.get("c_child", false)),
-				"do": {"kind": "people", "q": "", "f": "kids", "say": "«Горожане» → «Дети»: щёлкните по любому"}})
+			out.append({"text": "Житель по имени: %s — нажмите строку" % who, "ok": bool(fl.get("c_person", false)),
+				"do": {"kind": "people", "q": String(cz.get("name", "")), "f": "", "say": "Нажмите на строку — откроются «Горожане»"}})
+			out.append({"text": "Самая счастливая семья — нажмите строку", "ok": bool(fl.get("c_best", false)),
+				"do": {"kind": "people", "q": "", "f": "happy", "say": "Нажмите на строку — откроются «Горожане»"}})
+			out.append({"text": "Ребёнок — нажмите строку", "ok": bool(fl.get("c_child", false)),
+				"do": {"kind": "people", "q": "", "f": "kids", "say": "Нажмите на строку — откроются «Горожане»"}})
 		"built_after":
 			var pr := progress(a, g)
 			out.append({"text": "Новый %s в %d м" % [String(Defs.B.get(String(g[1]), {}).get("name", "дом")).to_lower(), int(g[2])], "ok": bool(pr["ok"]),
@@ -1930,7 +1931,7 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			else:
 				var nb: Dictionary = nz[0]
 				out.append({"text": "Шумно: %s в %d м" % [String(city.def(nb)["name"]).to_lower(), int(round((nb["pos"] as Vector2).distance_to(hp)))], "ok": false,
-					"do": {"kind": "look", "id": int(nb["id"]), "say": "Показать шумную мастерскую: её можно перенести подальше (кнопка в её карточке)"}})
+					"do": {"kind": "look", "id": int(nb["id"]), "action": "move", "say": "Показать шумную мастерскую: её можно перенести подальше (кнопка в её карточке)"}})
 		"view":
 			var pr := progress(a, g)
 			var lt := "Счастье" if String(g[1]) == "happy" else String(Defs.NEEDS.get(String(g[1]), {}).get("name", g[1]))
@@ -1949,6 +1950,18 @@ func _first_open(key: String) -> String:
 		for t in Defs.looks_of(k):
 			if city.unlocked(t):
 				return t
+	return ""
+
+
+## Закрытое украшение тоже ведёт к делу — сначала к его исследованию.
+func _goal_build_type(key: String) -> String:
+	var opened := _first_open(key)
+	if opened != "":
+		return opened
+	for base: String in key.split("|"):
+		for type: String in Defs.looks_of(base):
+			if Defs.B.has(type):
+				return type
 	return ""
 
 
@@ -2563,7 +2576,7 @@ const PART_WORDS := {"bench": "Скамьи", "tree|cypress|palm|bush": "Дер�
 	"lamp_post|candelabrum|brazier|bigbrazier|wall_lamp": "Огни на площади"}
 ## Цели, у которых в золотой строке — строки с ✓ (у прежних историй своя строка текста)
 const PART_KINDS := ["p", "works", "floor", "happy_home", "beauty", "fest", "legion_win", "all", "variety", "quiet", "view", "give", "census",
-	"route", "along", "plaza", "maze"]
+	"route", "along", "plaza", "maze", "around", "built_after"]
 ## Сословие в родительном падеже (награда «домам патрициев»)
 const CLS_GEN := {"plebs": "плебеев", "artisans": "ремесленников", "patricians": "патрициев"}
 ## «Разные лавки …» какого вида (родительный падеж)
@@ -2761,7 +2774,7 @@ func show_area() -> void:
 		var ar: Array = a.get("area1" if hours >= int(g.get("shrink_h", 3)) else "area0", [])
 		if not ar.is_empty():
 			c = Vector2(float(ar[0]), float(ar[1]))
-	game.rig.look_at_point(Vector3(c.x, game.land.height_at(c.x, c.y), c.y))    # и перестаёт следовать за жителем
+	hud.guide_world({"pos": Vector3(c.x, game.land.height_at(c.x, c.y) + 2.0, c.y)})
 
 
 ## Советник один раз: как устроен скверик — пороги по скамьям и «Готово»
@@ -2949,19 +2962,24 @@ func part_click(p: Dictionary) -> void:
 		# шумная мастерская у рощи: камера к ней, её карточка (там — «Перенести»)
 		var b: Dictionary = city.buildings.get(int(w.get("id", -1)), {})
 		if not b.is_empty():
-			game.rig.look_at_point(Vector3(b["pos"].x, float(b["y"]), b["pos"].y))
+			hud.guide_world({"building": int(b["id"])})
 			game.select_building(b)
-			hud.open_info(b)                     # карточка с «Перенести», как обещает подсказка строки
+			hud.open_info(b)
+			hud.show_pointer({"kind": "info", "action": String(w.get("action", "")), "tip": ""})
 		return
 	if String(w.get("kind", "")) == "people":
 		open_people(String(w.get("q", "")), String(w.get("f", "")))   # перепись: «Горожане» с поиском
 		return
-	if String(w.get("kind", "")) == "plaza":
-		if game.tool != "plaza":
-			game.set_tool("plaza")               # площадь у дома хозяина (сенатор): кисть «Площадь»
+	if String(w.get("kind", "")) == "gift":
+		show_area()
+		_gift_marks(true)
 		return
+
 	if not w.is_empty():
 		hud._do_click(w)
+		var a: Dictionary = S()["active"]
+		if not a.is_empty() and String(w.get("kind", "")) in ["build", "floor", "road", "plaza", "upgrade"]:
+			show_area()
 
 
 ## Строка скверика: что уже есть, какой порог сейчас и что нужно до следующего
@@ -6084,6 +6102,12 @@ func open_people(q: String, filt := "") -> void:
 		hud._top_action("stats")
 	hud.stats_tab = "people"
 	hud.people_filter = filt
+	hud.people_guidance = {"filter": filt}
+	var a: Dictionary = S()["active"]
+	if not a.is_empty() and _goal_kind(a) == "census" and q != "":
+		var cz: Dictionary = a.get("census", {})
+		hud.people_guidance["fam"] = String(cz.get("fam", ""))
+		hud.people_guidance["pn"] = String(cz.get("pn", ""))
 	var le: LineEdit = hud.stats_panel.find_child("q", true, false)
 	if le != null:
 		le.text = q

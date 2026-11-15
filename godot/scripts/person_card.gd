@@ -1328,7 +1328,18 @@ static func search(ppl: People, q: String, f: String, info: Dictionary = {}) -> 
 			if not (nm.contains(q) or String(r["fam"]).to_lower().contains(q) or StoryDefs.fam_gen(String(r["fam"])).to_lower().contains(q)):
 				continue
 		total += 1
-		if out.size() < LIST_MAX:
-			out.append(r)
+		out.append(r)
+	if f == "happy":
+		out = out.filter(func(r: Dictionary): return c.buildings.has(int(r["home"])) and int(r["home"]) > 0)
+		out.sort_custom(func(a: Dictionary, b: Dictionary): return clampi(int(c.buildings[int(a["home"])].get("happy", 0)), 0, 100) > clampi(int(c.buildings[int(b["home"])].get("happy", 0)), 0, 100))
+		var families := {}
+		var rows := []
+		for r: Dictionary in out:
+			var key := "%s:%s" % [r["home"], r["fam"]]
+			if not families.has(key):
+				families[key] = true
+				rows.append(r)
+		out = rows
+		total = out.size()
 	info["total"] = total
-	return out
+	return out.slice(0, LIST_MAX)

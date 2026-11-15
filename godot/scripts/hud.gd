@@ -139,6 +139,7 @@ var overview_scroll: ScrollContainer
 var settings_scroll: ScrollContainer
 var events_panel: PanelContainer
 var research_panel: PanelContainer
+var research_tree
 var research_box: VBoxContainer
 var lbl_research_rp: Label
 var lbl_research_rate: Label              # «+11 в час» у очков в окне исследований (этап 2.2)
@@ -3459,6 +3460,15 @@ func _update_pointer() -> void:
 	pointer_target = null
 	if game == null or game.city == null or game.mode == "demo" or game.mode == "menu":
 		return
+	# щёлкнули по строке (просьба, условие уровня, цель истории) — стрелка PTR_SHOW_MS к тому, что нужно сделать
+	if not _ptr_shown.is_empty():
+		if Time.get_ticks_msec() < int(_ptr_shown["until"]):
+			pointer_target = _do_target(_ptr_shown["do"], true)
+			pointer_text.text = String((_ptr_shown["do"] as Dictionary).get("tip", ""))
+			if pointer_target != null:
+				return
+		else:
+			_ptr_shown = {}
 	if game.tutorial and game.tutorial.active():
 		var pt: Array = game.tutorial.pointer()
 		pointer_target = pt[0]
@@ -3484,15 +3494,6 @@ func _update_pointer() -> void:
 			return
 	if ui_level() < 3:
 		return
-	# щёлкнули по строке (просьба, условие уровня, цель истории) — стрелка PTR_SHOW_MS к тому, что нужно сделать
-	if not _ptr_shown.is_empty():
-		if Time.get_ticks_msec() < int(_ptr_shown["until"]):
-			pointer_target = _do_target(_ptr_shown["do"], true)
-			pointer_text.text = String((_ptr_shown["do"] as Dictionary).get("tip", ""))
-			if pointer_target != null:
-				return
-		else:
-			_ptr_shown = {}
 	# Сама стрелка (отзывы игроков 27.10: путала — «Обзор» вместо домов, дома при хватающем жилье) — только в начале:
 	# обучение, первые просьбы до «Хутора» включительно и шаги историй, что явно показывают, куда идти (point:
 	# «Легион», «Этаж»). Дальше — по щелчку строки (show_pointer)
@@ -3517,7 +3518,7 @@ func _update_pointer() -> void:
 	pointer_text.text = String(rt["tip"])
 
 
-const PTR_SHOW_MS := 6000              # стрелка по щелчку строки — столько мс, потом гаснет
+const PTR_SHOW_MS := 12000              # стрелка по щелчку строки — столько мс, потом гаснет
 var _ptr_shown := {}                   # {"do": need_do, "until": мс} — стрелка по щелчку
 var _ptr_tick := 0.0
 
@@ -3540,6 +3541,20 @@ func show_pointer(w: Dictionary) -> void:
 		return
 	_ptr_shown = {"do": w, "until": Time.get_ticks_msec() + PTR_SHOW_MS}
 	_update_pointer()
+	_ensure_pointer_visible.call_deferred()
+
+
+func _ensure_pointer_visible() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var target: Control = pointer_target
+	if not is_instance_valid(target) or not target.is_visible_in_tree():
+		return
+	var ancestor: Node = target.get_parent()
+	while ancestor != null:
+		if ancestor is ScrollContainer:
+			(ancestor as ScrollContainer).ensure_control_visible(target)
+		ancestor = ancestor.get_parent()
 
 
 # ---------- что сделать по условию: просьбы, их части и строки уровня (стрелка, подпись, щелчок) ----------
@@ -3646,7 +3661,7 @@ func need_do(p: Array, tool := "", n := 0) -> Dictionary:
 		"research":
 			return {"kind": "research_any", "tip": "Исследования", "say": "Свиток вверху справа — меню исследований"}
 		"soldiers":
-			return {"kind": "legion", "tip": "Лагерь", "say": "«Лагерь» сверху → «Казарма» → «Призвать»"}
+			return {"kind": "legion", "action": "recruit", "tip": "", "say": "«Лагерь» сверху → «Казарма» → «Призвать»"}
 		"tier":
 			# «Уютный Рим»: изучить больше исследований ряда arg (очки копят скриптории, школы и почта)
 			return {"kind": "research_any", "tip": "Исследования",
@@ -3764,6 +3779,22 @@ func _shops_of(sub: String) -> int:
 ## постройка уже в руках (инструмент выбран, слой открыт) — всё равно показать, где её карточка (кнопка), чтобы запомнить
 func _do_target(w: Dictionary, shown := false) -> Control:
 	match String(w.get("kind", "")):
+		"study":
+			return research_tree.study if research_panel.visible else null
+		"people":
+			return people_target if is_instance_valid(people_target) and people_target.is_visible_in_tree() else null
+		"info":
+			if not info_panel.visible:
+				return null
+			var action := String(w.get("action", ""))
+			for button: Button in info_box.find_children("*", "Button", true, false):
+				if not button.is_queued_for_deletion() and button.is_visible_in_tree() and String(button.get_meta("quest_action", "")) == action and action != "":
+					return button
+			return info_panel
+		"plaza":
+			return road_btns.get("plaza", road_target())
+		"locked":
+			return _card_or_cat(String(Defs.B.get(String(w.get("type", "")), {}).get("cat", "")), String(w.get("type", "")))
 		"build":
 			var type := String(w["type"])
 			var cat := String(Defs.B[type].get("cat", ""))
@@ -3796,9 +3827,40 @@ func _do_target(w: Dictionary, shown := false) -> Control:
 		"legion":
 			if game.city.legion.v3():              # Легион 3.0: стрелка на «Лагерь» наверху, не на старый медальон
 				var cu := CampUI.of(self)
-				return null if cu == null or cu.visible or not cu.top_button.visible else cu.top_button
+				if cu == null:
+					return null
+				if cu.visible:
+					var action := String(w.get("action", ""))
+					if action == "recruit" or (action == "squad" and cu.lg.soldiers.is_empty()):
+						return cu.recruit_button if cu.card.visible and cu.selected == "barracks" else cu.hotspots.get("barracks")
+					if action == "squad":
+						if is_instance_valid(cu.squad_body) and cu.squad_body.is_visible_in_tree():
+							for b: Button in cu.squad_body.find_children("*", "Button", true, false):
+								if b.disabled or b.is_queued_for_deletion():
+									continue
+								if cu.selected_place >= 0 and b.has_meta("quest_soldier"):
+									return b
+								if cu.selected_place < 0 and b.has_meta("quest_slot") and int(cu.lg.squad3[int(b.get_meta("quest_slot"))]) <= 0:
+									return b
+						return cu.bottom.get_child(0) as Control
+					var campaign := LegionUi.of(self)
+					if campaign != null and campaign.visible:
+						if is_instance_valid(campaign._fight_btn) and campaign._fight_btn.is_visible_in_tree():
+							return campaign._fight_btn
+						if is_instance_valid(campaign._front_btn) and campaign._front_btn.is_visible_in_tree():
+							return campaign._front_btn
+					return cu.gate
+				return cu.top_button if cu.top_button.visible else null
 			var lu := LegionUi.of(self)
-			return null if lu == null or lu.visible else lu.btn
+			if lu == null:
+				return null
+			if lu.visible:
+				if is_instance_valid(lu._fight_btn) and lu._fight_btn.is_visible_in_tree():
+					return lu._fight_btn
+				if is_instance_valid(lu._front_btn) and lu._front_btn.is_visible_in_tree():
+					return lu._front_btn
+				return lu.tabs.get("troops" if String(w.get("action", "")) == "recruit" else "campaign")
+			return lu.btn
 	return null
 
 
@@ -3808,6 +3870,15 @@ func _do_click(w: Dictionary) -> void:
 	match String(w.get("kind", "")):
 		"build":
 			select_build(String(w["type"]))
+			_scroll_build_card(String(w["type"]))
+		"locked":
+			select_build(String(w.get("type", "")))
+			_scroll_build_card(String(w.get("type", "")))
+		"cap", "rank":
+			_open_overview("city")
+		"plaza":
+			if game.tool != "plaza":
+				game.set_tool("plaza")
 		"research", "research_any":
 			if not research_panel.visible:
 				_top_action("research")
@@ -3829,41 +3900,56 @@ func _do_click(w: Dictionary) -> void:
 		"legion":
 			if game.city.legion.v3():
 				var cu := CampUI.of(self)
-				if cu != null and not cu.visible:
-					cu.open()
+				if cu != null:
+					if not cu.visible:
+						cu.open()
+					if String(w.get("action", "")) == "recruit":
+						cu.show_building("barracks")
+					elif String(w.get("action", "")) == "squad":
+						if cu.lg.soldiers.is_empty():
+							cu.show_building("barracks")
+						else:
+							cu.show_squad()
 			else:
 				var lu := LegionUi.of(self)
-				if lu != null and not lu.visible:
-					lu.open("campaign")
+				if lu != null:
+					lu.open("troops" if String(w.get("action", "")) == "recruit" else "campaign")
 	show_pointer(w)                           # и стрелка на несколько секунд — куда дальше (карточка исследования, семья…)
+	_update_pointer()
+
+
+func _scroll_build_card(type: String) -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var card := _card_or_cat(open_cat, type)
+	if card == null or not card.has_meta("type"):
+		return
+	var parent: Node = card.get_parent()
+	while parent != null and not parent is ScrollContainer:
+		parent = parent.get_parent()
+	if parent is ScrollContainer:
+		(parent as ScrollContainer).ensure_control_visible(card)
 	_update_pointer()
 
 
 ## Карточка исследования rid в открытом окне (или null)
 func _research_card(rid: String) -> Control:
-	if rid == "" or research_box == null:
+	if research_tree == null:
 		return null
-	for sec in research_box.get_children():
-		if sec.is_queued_for_deletion():
-			continue                              # окно только что пересобрали: старые ряды ещё не удалены
-		for b in sec.find_children("*", "Button", true, false):
-			if String(b.get_meta("rid", "")) == rid:
-				return b
-	return null
-
-
-## Окно исследований прокрутить к карточке rid (окно собирается в этом кадре — ждём раскладку)
-func _scroll_research(rid: String) -> void:
 	if rid == "":
+		rid = String(research_tree._first)
+	return research_tree.cards.get(rid)
+
+
+## Открыть описание и прокрутить дерево к нужному исследованию.
+func _scroll_research(rid: String) -> void:
+	if research_tree == null:
 		return
+	if rid == "":
+		rid = String(research_tree._first)
+	research_tree.reveal(rid)
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var b := _research_card(rid)
-	if b == null:
-		return
-	var sc := research_box.get_parent() as ScrollContainer
-	if sc:
-		sc.ensure_control_visible(b)
 	_update_pointer()
 
 
@@ -3909,6 +3995,7 @@ func _process(_dt: float) -> void:
 	_fit_tray()
 	if game and game.ready_done:
 		_family_badges()
+	_quest_world_tick()
 	_place_badges()
 	_place_pops()
 	_place_notes()
@@ -4809,6 +4896,7 @@ func _fill_info_body() -> void:
 		h.add_child(bd)
 		if not d.get("wall", false):              # украшение на стене не переносится (только снести и повесить заново)
 			var bm := Button.new()
+			bm.set_meta("quest_action", "move")
 			bm.text = "Перенести"
 			bm.icon = ico("move", 32)
 			# переносим именно эту постройку (не ту, что под курсором за карточкой)
@@ -5045,6 +5133,7 @@ func _fest_rows(v: Control) -> void:
 	v.add_child(_row("laurels", "Игры в честь богов", st, C_GOOD if why == "" else (C_BAD if why.begins_with("Не хватает") else C_SOFT)))
 	var fb := Button.new()
 	fb.name = "fest_btn"
+	fb.set_meta("quest_action", "festival")
 	fb.text = "Устроить игры — %s ден." % fmt(c.fest_price())
 	fb.icon = ico("laurels", 32)
 	fb.focus_mode = Control.FOCUS_NONE
@@ -6153,32 +6242,14 @@ func _fill_events() -> void:
 # ---------- исследования ----------
 
 func _research_panel() -> void:
-	var w := _window("Исследования", 800)
+	var w := _window("Исследования", 1100)
 	research_panel = w[0]
-	var hdr: HBoxContainer = w[2]
-	# очки — справа у «закрыть»; слева такой же по ширине противовес, чтобы заголовок стоял ровно над разделителем
-	var rp := HBoxContainer.new()
-	rp.add_child(_icon("research", 28, C_SOFT))
-	lbl_research_rp = _label("0", 22, true)
-	rp.add_child(lbl_research_rp)
-	lbl_research_rate = _label("", 15, true, C_GOOD)
-	lbl_research_rate.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	rp.add_child(lbl_research_rate)
-	rp.add_theme_constant_override("separation", 4)
-	rp.alignment = BoxContainer.ALIGNMENT_END
-	rp.custom_minimum_size = Vector2(250, 0)
-	hdr.add_child(rp)
-	hdr.move_child(rp, hdr.get_child_count() - 2)
-	(hdr.get_child(0) as Control).custom_minimum_size = Vector2(250 + 36 + 4, 0)
-	var sc := ScrollContainer.new()
-	sc.custom_minimum_size = Vector2(760, 520)
-
-	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	(w[1] as VBoxContainer).add_child(sc)
-	research_box = VBoxContainer.new()
-	research_box.add_theme_constant_override("separation", 10)
-	research_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sc.add_child(research_box)
+	research_panel.name = "ResearchWindow"
+	research_tree = preload("res://scripts/research_tree.gd").new()
+	research_tree.setup(self, w[1])
+	research_panel.visibility_changed.connect(func():
+		if research_panel.visible:
+			research_tree.open_scroll = true)
 	# окно закрыли — всё, что в нём было новым, игрок видел: «НОВОЕ» с исследований снимается
 	research_panel.visibility_changed.connect(func():
 		if not research_panel.visible and game and game.city and game.mode in ["new", "play"]:
@@ -6197,117 +6268,9 @@ func _research_panel() -> void:
 func _fill_research() -> void:
 	if not research_panel.visible:
 		return
-	var c: City = game.city
 	_research_head()
-	for ch in research_box.get_children():
-		ch.queue_free()
-	for lvl in Defs.LEVELS.size():
-		var sec := PanelContainer.new()
-		sec.add_theme_stylebox_override("panel", _box_pill(18, 4, "g_btn_on" if lvl > c.level else "g_btn"))
-		var sh := HBoxContainer.new()
-		sh.alignment = BoxContainer.ALIGNMENT_CENTER
-		sh.add_theme_constant_override("separation", 6)
-		sh.add_child(_icon("level", 28, C_SOFT))
-		sh.add_child(_label(Defs.LEVELS[lvl]["name"], 22, false, C_INK, font_title))
-		if lvl > c.level:
-			sh.add_child(_icon("lock", 20, C_SOFT))
-			sh.add_child(_label("— откроется, когда город станет таким", 14, true, C_SOFT))
-		sec.add_child(sh)
-		research_box.add_child(sec)
-		var grid := HFlowContainer.new()
-		grid.add_theme_constant_override("h_separation", 10)
-		grid.add_theme_constant_override("v_separation", 10)
-		grid.alignment = FlowContainer.ALIGNMENT_CENTER
-		research_box.add_child(grid)
-		for r in Defs.RESEARCH:
-			if int(r["lvl"]) != lvl:
-				continue
-			var id: String = r["id"]
-			var done := c.research.has(id)
-			var why := c.can_research(id)
-			var cell := VBoxContainer.new()
-			cell.custom_minimum_size = Vector2(120, 0)
-			cell.add_theme_constant_override("separation", 2)
-			var b := _round(r["icon"], "", 60)
-			b.set_meta("rid", id)                 # стрелка просьбы находит карточку нужного исследования
-			var tip: String = r["name"].to_upper()
-			if r.has("desc"):
-				tip += "\n" + r["desc"]
-			var dnames := []
-			for type in Defs.B:
-				if c.unlock_id(type) != id:
-					continue
-				if Defs.B[type]["cat"] == "decor":
-					dnames.append(String(Defs.B[type]["name"]))
-				else:
-					tip += "\n" + I18n.t("Открывает: %s — %s") % [I18n.t(String(Defs.B[type]["name"])), I18n.t(String(Defs.B[type]["desc"]))]
-			if not dnames.is_empty():
-				tip += "\n" + I18n.t("Открывает украшения: %s.") % ", ".join(dnames.map(func(n): return I18n.t(String(n))))
-				if c.econ >= 1 and id in Defs.DECOR_SETS:
-					tip += "\nНабор: три разных вида из него рядом с домом — ещё +%d%% счастья." % Defs.SET_BONUS
-			if r.has("after"):
-				tip += "\nПосле: «%s»" % Defs.research(r["after"])["name"]
-			var story: bool = Defs.story_of(r) != ""   # «Легион» (и в новой игре «Пост вигилов») открывает история горожан, не очки
-			var eta: String = "" if done or story else rp_eta(float(r["cost"]))
-			if story:
-				tip += "\n\n" + ("Открыто" if done else why)
-			else:
-				tip += "\n\n" + ("Изучено" if done else ("Стоимость: %d очков" % r["cost"]) + ("" if why == "" else "\n" + why)
-					+ ("" if eta == "" else "\nХватит через %s (+%s в час)" % [eta, fmt_rate(float(c.stats.get("rp_day", 0.0)))]))
-			b.tooltip_text = tip
-			# светится то, что можно изучить прямо сейчас; изученное — обычный медальон (ниже галочка);
-			# не хватает очков — обычный; закрыто уровнем или порядком (или его открывает история) — серый
-			var locked: bool = story or int(r["lvl"]) > c.level or (r.has("after") and not c.research.has(r["after"]))
-			if not done and why == "":
-				_set_on(b, true)
-			elif locked and not done:
-				b.add_theme_stylebox_override("normal", _medal("medal_lock", 60))
-				_grey(b.get_node("ic"))
-			b.pressed.connect(func():
-				if game.city.do_research(id):
-					_fill_research()
-					if tray.visible:
-						_fill_cards()
-				else:
-					notify(game.city.can_research(id), "lock"))
-			if game.mode in ["new", "play"] and c.is_new_r(id):
-				# «НОВОЕ» — открылось новым рангом или изученным раньше; навели мышь — посмотрели
-				var pm := _new_pill(b, "corner")
-				pm.visible = true
-				b.mouse_entered.connect(func():
-					if game.city.mark_seen_r(id):
-						pm.visible = false
-						update_new_marks())
-			var bc := CenterContainer.new()
-			bc.add_child(b)
-			cell.add_child(bc)
-			var nl := _label(r["name"], 14, true)
-			nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			nl.custom_minimum_size = Vector2(118, 0)
-			cell.add_child(nl)
-			if done:
-				var ok := HBoxContainer.new()
-				ok.alignment = BoxContainer.ALIGNMENT_CENTER
-				ok.add_child(_icon("check", 22, C_GOOD))
-				cell.add_child(ok)
-			elif story:
-				var sl := _label("история горожан", 13, true, C_SOFT)
-				sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-				cell.add_child(sl)
-			else:
-				var cost := HBoxContainer.new()
-				cost.alignment = BoxContainer.ALIGNMENT_CENTER
-				cost.add_child(_icon("research", 20, C_SOFT))
-				cost.add_child(_label(str(r["cost"]), 15, true, C_INK if c.rp >= float(r["cost"]) else C_BAD))
-				cell.add_child(cost)
-				# не хватает очков — через сколько хватит по нынешней прибавке (только то, что уже можно изучать)
-				if eta != "" and not locked:
-					var el := _label(eta, 13, true, C_SOFT)
-					el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-					cell.add_child(el)
-			grid.add_child(cell)
-
+	research_tree.rebuild(bool(research_tree.open_scroll))
+	research_tree.open_scroll = false
 
 
 # ---------- финансы, статистика ----------
@@ -6356,11 +6319,13 @@ func _stats_panel() -> void:
 	q.clear_button_enabled = true
 	q.custom_minimum_size = Vector2(500, 40)
 	q.add_theme_font_size_override("font_size", 18)
-	q.text_changed.connect(func(_t): _fill_people())
+	q.text_changed.connect(func(_t):
+		people_guidance = {}
+		_fill_people())
 	pv.add_child(q)
 	var fl := HBoxContainer.new()
 	fl.add_theme_constant_override("separation", 6)
-	for f: Array in [["", "Все"], ["nojob", "Без работы"], ["sad", "Несчастные"], ["kids", "Дети"]]:
+	for f: Array in [["", "Все"], ["nojob", "Без работы"], ["sad", "Несчастные"], ["kids", "Дети"], ["happy", "По счастью"]]:
 		var fb := Button.new()
 		fb.text = f[1]
 		fb.toggle_mode = true
@@ -6372,6 +6337,7 @@ func _stats_panel() -> void:
 		var fid: String = f[0]
 		fb.pressed.connect(func():
 			people_filter = fid
+			people_guidance = {}
 			_fill_people())
 		fl.add_child(fb)
 	pv.add_child(fl)
@@ -6385,6 +6351,10 @@ func _stats_panel() -> void:
 
 var stats_tab := ""                    # "" — обзор, "people" — «Горожане»
 var people_filter := ""
+var people_guidance: Dictionary = {}
+var people_target: Control
+var _quest_world: Dictionary = {}
+var _quest_world_until := 0
 
 
 ## «Горожане»: найденные жители строками (имя, кто, работа, счастье дома); щелчок — карточка и камера за ним
@@ -6395,12 +6365,15 @@ func _fill_people() -> void:
 		return
 	for b in pv.find_children("f_*", "Button", true, false):
 		(b as Button).set_pressed_no_signal(String(b.name) == "f_" + (people_filter if people_filter != "" else "all"))
+	people_target = null
 	_clear(list)
 	var q: LineEdit = pv.find_child("q", true, false)
 	var c: City = game.city
 	var ppl: People = game.people
 	var info := {}
 	var found := PersonCard.search(ppl, q.text if q else "", people_filter, info)
+	if not people_guidance.is_empty() and String(people_guidance.get("fam", "")) != "":
+		found = found.filter(func(r: Dictionary): return String(r.get("fam", "")) == String(people_guidance["fam"]) and String(r.get("pn", "")) == String(people_guidance.get("pn", "")))
 	if found.is_empty():
 		list.add_child(_label("Никого не нашли" if (q and q.text != "") or people_filter != "" else "В городе пока никто не живёт", 16, false, C_SOFT))
 		return
@@ -6422,14 +6395,82 @@ func _fill_people() -> void:
 		if not h.is_empty():
 			var hp := int(h["happy"])
 			row.add_child(_label("%d%%" % mini(hp, 100), 16, true, C_GOOD if hp >= 60 else (C_GOLD if hp >= 40 else C_BAD)))
-		list.add_child(_clickable(row, "Карточка жителя, камера пойдёт за ним", func():
+		var family_mode := people_filter == "happy"
+		var click_row := _clickable(row, "Карточка дома семьи" if family_mode else "Карточка жителя, камера пойдёт за ним", func():
 			stats_panel.visible = false
-			game.select_person({"r": r})
-			PersonCard.follow(self, {"r": r})))
+			people_guidance = {}
+			_ptr_shown = {}
+			if family_mode and not h.is_empty():
+				game.select_building(h)
+				guide_world({"building": int(h["id"])})
+			else:
+				game.select_person({"r": r})
+				guide_world({"resident": r})
+				PersonCard.follow(self, {"r": r})
+			if game.stories != null:
+				game.stories.tick()
+			_update_pointer())
+		list.add_child(click_row)
+		click_row.set_meta("resident", r)
+		if not people_guidance.is_empty() and people_target == null:
+			var button := click_row.get_child(click_row.get_child_count() - 1) as Button
+			var rim := StyleBoxFlat.new()
+			rim.bg_color = Color(1.0, 0.83, 0.35, 0.14)
+			rim.border_color = C_GOLD
+			rim.set_border_width_all(2)
+			rim.set_corner_radius_all(6)
+			button.add_theme_stylebox_override("normal", rim)
+			button.name = "QuestResident"
+			people_target = button
+	if people_target != null:
+		_focus_people.call_deferred()
+
 	if int(info.get("total", 0)) > found.size():
 		var more := _label("Показаны %d из %d — уточните имя или семью" % [found.size(), int(info["total"])], 14, false, C_SOFT)
 		more.name = "more"
 		list.add_child(more)
+
+
+## После раскладки строки прокручиваем обе оси и включаем общую стрелку.
+func _focus_people() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if is_instance_valid(people_target) and people_target.is_visible_in_tree():
+		overview_scroll.ensure_control_visible(people_target)
+		show_pointer({"kind": "people", "tip": ""})
+
+
+## Тот же значок над миром, что у историй. Для жителя следует за его положением.
+func guide_world(target: Dictionary) -> void:
+	_quest_world = target
+	_quest_world_until = Time.get_ticks_msec() + PTR_SHOW_MS
+	_quest_world_tick(true)
+
+
+func _quest_world_tick(move_camera := false) -> void:
+	if _quest_world.is_empty():
+		return
+	if Time.get_ticks_msec() >= _quest_world_until:
+		clear_badge("quest_target")
+		_quest_world = {}
+		return
+	var pos := Vector3.ZERO
+	if _quest_world.has("resident"):
+		var r: Dictionary = _quest_world["resident"]
+		var p: Vector2 = r.get("p", Vector2.ZERO)
+		pos = Vector3(p.x, game.land.height_at(p.x, p.y) + 2.0, p.y)
+	elif _quest_world.has("building"):
+		var b: Dictionary = game.city.buildings.get(int(_quest_world["building"]), {})
+		if b.is_empty():
+			clear_badge("quest_target")
+			_quest_world = {}
+			return
+		pos = Vector3(b["pos"].x, float(b["y"]) + game.city.blueprint(b).top_y() + 1.4, b["pos"].y)
+	else:
+		pos = _quest_world.get("pos", Vector3.ZERO)
+	set_badge("quest_target", pos, "arrow_down", false, "", Callable(), "mark")
+	if move_camera:
+		game.rig.look_at_point(pos - Vector3(0, 1.4, 0))
 
 
 func _fill_finance() -> void:
@@ -7099,6 +7140,7 @@ func refresh() -> void:
 		_fill_info()
 	if research_panel.visible:
 		_research_head()
+		research_tree.refresh()
 	if overview_panel.visible:
 		_refresh_overview()
 	_update_world_icons()
@@ -7113,7 +7155,7 @@ func _research_head() -> void:
 	var c: City = game.city
 	lbl_research_rp.text = ("%s (сверх полок)" % fmt(c.rp)) if c.rp > c.rp_cap() + 0.5 else "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]
 	var ph := float(c.stats.get("rp_day", 0.0))
-	lbl_research_rate.text = ("+%s в час" % fmt_rate(ph)) if ph > 0.0 else ""
+	lbl_research_rate.text = "+%s в час" % fmt_rate(ph)
 	lbl_research_rp.get_parent().set("tooltip_text", rp_tip())
 
 

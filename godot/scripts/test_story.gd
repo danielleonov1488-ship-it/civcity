@@ -4087,7 +4087,7 @@ func _census() -> void:
 	sto.part_click(part_of("Житель по имени"))
 	await frames(6)
 	var le: LineEdit = hud.stats_panel.find_child("q", true, false) if hud.stats_panel != null else null
-	check(hud.stats_panel != null and hud.stats_panel.visible and hud.stats_tab == "people" and le != null and le.text == String(cz.get("pn", "?")),
+	check(hud.stats_panel != null and hud.stats_panel.visible and hud.stats_tab == "people" and le != null and le.text == String(cz.get("name", "?")),
 		"щелчок по строке — «Горожане», в поиске — «%s»" % (le.text if le != null else ""))
 	await frames(10)
 	await shot7("story_census_people.png")
@@ -4100,9 +4100,9 @@ func _census() -> void:
 	await frames(10)
 	await shot7("story_census_card.png")
 	hud.close_panels()
-	# самая счастливая семья: «Обзор → Счастье» и карточка её дома (не самого счастливого — не в счёт)
+	# Самая счастливая семья: список по счастью и карточка её дома; менее счастливый дом не в счёт.
 	sto.part_click(part_of("Самая счастливая"))
-	check(hud.overlay == "happy", "щелчок — «Обзор → Счастье»")
+	check(hud.stats_panel.visible and hud.stats_tab == "people" and hud.people_filter == "happy", "щелчок — «Горожане», семьи по счастью")
 	var best := {}
 	var worst := {}
 	for id in c.buildings:

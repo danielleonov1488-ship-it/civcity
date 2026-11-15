@@ -619,6 +619,7 @@ func _build_squad() -> void:
 				label = String(soldier["name"]) + "\n" + Soldiers.stars_text(int(soldier["stars"]))
 			var icon := "lock" if locked else (String(CLASS_ICON.get(_class(soldier), "swords")) if not soldier.is_empty() else "shield")
 			var b := _button(label, func(): _pick_place(i), icon)
+			b.set_meta("quest_slot", i)
 			b.custom_minimum_size = Vector2(188, 72)
 			b.add_theme_font_size_override("font_size", 13)
 			b.clip_text = true
@@ -640,6 +641,7 @@ func _build_squad() -> void:
 	for s: Dictionary in lg.soldiers:
 		var sid := int(s["id"])
 		var b := _button(_soldier_title(s), func(): _assign(sid), String(CLASS_ICON.get(_class(s), "swords")))
+		b.set_meta("quest_soldier", sid)
 		b.disabled = selected_place < 0
 		b.tooltip_text = "Сначала выберите пустое место." if selected_place < 0 else lu._soldier_status(s)
 		roster.add_child(b)
