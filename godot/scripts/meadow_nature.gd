@@ -220,11 +220,13 @@ static func streams(g) -> void:
 		_task = -1
 	var list := Streams.choose(g.land, g.land.streams_saved)
 	Streams.apply(g.land, list)
+	Streams.set_far(g.land.streams)           # река — за край карты, в долину пейзажа до горизонта (Game._horizon)
 	print("Streams: ", list, " за ", Time.get_ticks_msec() - t0, " мс")
 
 
 ## Всё, что встаёт после рощ и лугов: жизнь у ручьёв, мосты, поля с оградами, мельницы, луга в цветах
 static func life(g) -> void:
+	_water_life(g)
 	if not on():
 		_bridges(g)
 		return
@@ -234,6 +236,52 @@ static func life(g) -> void:
 	if not gen_low:
 		_patches(g)
 		_fields(g)
+
+
+## Жизнь на воде реки (15.11): на озере — лодка с рыбаком (только в «уютных» городах, как на прудах), утки и лебедь
+## кружат; на реке — утки в широких спокойных местах (кружат на месте, как на прудах)
+static func _water_life(g) -> void:
+	var land: Land = g.land
+	for id: int in Streams.RIVER_IDS:
+		if not land.streams.has(id):
+			continue
+		var p := Streams.plan(id)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = SEED + 500 + id
+		var pl: Vector3 = p["pool"]
+		var bn: Node = g.get_node_or_null("Boats")
+		if pl.z > 0.0:
+			var c := Vector2(pl.x, pl.y)
+			if bn != null and bn.has_method("add_lake"):
+				bn.add_lake(pl)
+			for k in 4:
+				var nm := "#swan" if k == 0 else ("#duck" if k % 2 == 0 else "#duck_f")
+				_swimmer(g, nm, c, pl.z * rng.randf_range(0.3, 0.55), rng)
+		# утки на реке: кружки по 1,8 м в воде, не у моста и не в озере
+		var bridge_at := Vector2(-1000, -1000)
+		for br: Dictionary in land.bridges:
+			bridge_at = br["pos"]
+		var placed := 0
+		for s: Dictionary in Streams.samples(id, 22.0):
+			var q: Vector2 = s["p"]
+			if placed >= 7 or q.distance_to(bridge_at) < 16.0 or (pl.z > 0.0 and q.distance_to(Vector2(pl.x, pl.y)) < pl.z + 4.0):
+				continue
+			var good := true
+			for a in 8:
+				if not land.is_water(q + Vector2.from_angle(a * TAU / 8.0) * 2.0):
+					good = false
+			if not good or rng.randf() < 0.3:
+				continue
+			placed += 1
+			for k in 2:
+				_swimmer(g, "#duck" if k == 0 else "#duck_f", q, 1.4, rng)
+
+
+static func _swimmer(g, nm: String, c: Vector2, r: float, rng: RandomNumberGenerator) -> void:
+	var mi := MeshInstance3D.new()
+	mi.mesh = Parts._special_mesh(nm)
+	g.add_child(mi)
+	g.swimmers.append({"n": mi, "c": c, "r": r, "a": rng.randf() * TAU, "w": rng.randf_range(0.05, 0.12) * (1.0 if rng.randf() < 0.5 else -1.0), "ph": rng.randf() * TAU})
 
 
 static func _near_road(g, p: Vector2, r: float) -> bool:
@@ -306,6 +354,69 @@ static func _stream_banks(g) -> void:
 		# водяное колесо у южного ручья (римляне ставили водяные мельницы) — на новых картах
 		if id == 2 and land.meadow_new:
 			_waterwheel(g, id)
+		if Streams.def_of(id).get("river", false):
+			_river_life(g, id, rng)
+
+
+## Жизнь у реки (15.11): камыш густыми куртинами по обоим берегам, валуны в воде и у воды, галька грудами на отмелях,
+## кувшинки у берегов, у озера — кольцо камыша, кувшинки, камни и коряга-бревно на мели. «Низкая»: без мелочи набора
+static func _river_life(g, id: int, rng: RandomNumberGenerator) -> void:
+	var land: Land = g.land
+	for s: Dictionary in Streams.samples(id, 1.6):
+		var p: Vector2 = s["p"]
+		var w: float = s["w"]
+		var dir: Vector2 = s["dir"]
+		var nor := Vector2(-dir.y, dir.x)
+		for side: float in [-1.0, 1.0]:
+			if not gen_low and rng.randf() < 0.3:
+				var q := p + nor * side * (w + rng.randf_range(-0.1, 1.1))
+				if _free_spot(g, q):
+					var y := land.height_at(q.x, q.y)
+					var cnt := 1 + rng.randi() % 2
+					for c in cnt:
+						var qq := q + Vector2(rng.randf_range(-0.5, 0.5), rng.randf_range(-0.5, 0.5))
+						g._add_nature("M:SM_Env_Grass_Tall_Clump_0%d" % (1 + rng.randi() % 5), Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.5, 0.9)),
+							Vector3(qq.x, maxf(land.height_at(qq.x, qq.y), Land.WATER_Y - 0.12), qq.y)), qq)
+			var sh: float = s["sh"]
+			if rng.randf() < (0.16 if sh > 1.6 else 0.05):   # галька грудами на песчаных отмелях
+				var qp := p + nor * side * (w + rng.randf_range(0.2, maxf(sh, 0.8)))
+				if _free_spot(g, qp):
+					_add(g, "M:SM_Env_Rock_Small_Pile_0%d" % (1 + rng.randi() % 2), qp, rng.randf_range(0.9, 1.4), rng, -0.05)
+			if rng.randf() < 0.05:                         # валун у самой воды
+				var qb := p + nor * side * (w + rng.randf_range(-0.6, 1.0))
+				if _free_spot(g, qb):
+					var rn := "M:SM_Env_Rock_0%d" % [1, 2, 5][rng.randi() % 3]
+					_add(g, rn, qb, rng.randf_range(0.14, 0.26), rng, -0.1)
+			if w > 1.5 and rng.randf() < 0.06:             # кувшинки у берегов (и в широких местах)
+				var ql := p + nor * side * w * rng.randf_range(0.45, 0.85)
+				if land.is_water(ql):
+					g._add_nature("M:SM_Env_Lillies_0%d" % (1 + rng.randi() % 3), Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.35, 0.6)),
+						Vector3(ql.x, Land.WATER_Y + 0.012, ql.y)), ql)
+		if rng.randf() < 0.05:                              # камень посреди реки
+			var qm := p + nor * rng.randf_range(-0.5, 0.5) * w
+			if land.is_water(qm):
+				g._add_nature("M:SM_Env_Rock_0%d" % [1, 2, 5][rng.randi() % 3], Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.1, 0.17)),
+					Vector3(qm.x, Land.WATER_Y - 0.05, qm.y)), qm)
+	# озеро: камыш кольцом по берегу, кувшинки, камни
+	var pl: Vector3 = Streams.plan(id)["pool"]
+	if pl.z > 0.0:
+		var c := Vector2(pl.x, pl.y)
+		for k in int(pl.z * 6.0):
+			var a := rng.randf() * TAU
+			var q := c + Vector2(cos(a), sin(a)) * pl.z * rng.randf_range(0.82, 1.22)
+			var y := land.height_at(q.x, q.y)
+			if y > Land.WATER_Y + 0.7 or not _free_spot(g, q):
+				continue
+			if not gen_low and rng.randf() < 0.75:
+				g._add_nature("M:SM_Env_Grass_Tall_Clump_0%d" % (1 + rng.randi() % 5), Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.6, 1.0)),
+					Vector3(q.x, maxf(y, Land.WATER_Y - 0.1), q.y)), q)
+			elif rng.randf() < 0.5:
+				_add(g, "M:SM_Env_Rock_Small_Pile_0%d" % (1 + rng.randi() % 2), q, rng.randf_range(0.9, 1.4), rng, -0.05)
+		for k in int(pl.z * 0.6):
+			var a2 := rng.randf() * TAU
+			var q2 := c + Vector2(cos(a2), sin(a2)) * pl.z * rng.randf_range(0.5, 0.9)
+			if land.is_water(q2):
+				_add(g, "M:SM_Env_Rock_0%d" % [1, 2, 5][rng.randi() % 3], q2, rng.randf_range(0.12, 0.2), rng, -0.12)
 
 
 ## Течение: полоса над водой каждого ручья (светлые струйки бегут вниз по течению). Одна сетка на все ручьи, без теней;
@@ -313,22 +424,32 @@ static func _stream_banks(g) -> void:
 static var flow_node: MeshInstance3D = null
 static func _flow(g) -> void:
 	var land: Land = g.land
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var any := false
+	var sts := [SurfaceTool.new(), SurfaceTool.new()]           # 0 — ручьи, 1 — река (шире и быстрее)
+	for st: SurfaceTool in sts:
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var any := [false, false]
 	for id: int in land.streams:
 		var p := Streams.plan(id)
 		var pts: PackedVector2Array = p["pts"]
 		var wid: PackedFloat32Array = p["w"]
+		var rv := 1 if bool(p["river"]) else 0
+		var st: SurfaceTool = sts[rv]
+		var pl: Vector3 = p["pool"]
 		var acc := 0.0
 		for i in range(1, pts.size()):
 			var a := pts[i - 1]
 			var b := pts[i]
+			var l := a.distance_to(b)
+			if rv == 1 and (b.x < -2.0 or b.y < -2.0 or b.x > Land.SIZE + 2.0 or a.x > Land.SIZE + 2.0 or a.y < -2.0):
+				acc += l
+				continue                             # за краем карты воду рисует полоса реки (Streams.far_ribbon_mesh)
+			if rv == 1 and pl.z > 0.0 and a.distance_to(Vector2(pl.x, pl.y)) < pl.z * 0.9:
+				acc += l
+				continue                             # в озере течения нет
 			var da := (pts[mini(i, pts.size() - 1)] - pts[maxi(i - 2, 0)]).normalized()
 			var db := (pts[mini(i + 1, pts.size() - 1)] - pts[i - 1]).normalized()
 			var na := Vector2(-da.y, da.x) * wid[i - 1] * 0.9
 			var nb := Vector2(-db.y, db.x) * wid[i] * 0.9
-			var l := a.distance_to(b)
 			var y := Land.WATER_Y + 0.02
 			var v := [Vector3(a.x - na.x, y, a.y - na.y), Vector3(a.x + na.x, y, a.y + na.y), Vector3(b.x + nb.x, y, b.y + nb.y), Vector3(b.x - nb.x, y, b.y - nb.y)]
 			var uv := [Vector2(0, acc), Vector2(1, acc), Vector2(1, acc + l), Vector2(0, acc + l)]
@@ -337,14 +458,26 @@ static func _flow(g) -> void:
 				st.set_normal(Vector3.UP)
 				st.add_vertex(v[k])
 			acc += l
-			any = true
-	if not any:
+			any[rv] = true
+	if not any[0] and not any[1]:
 		return
 	var mi := MeshInstance3D.new()
-	mi.mesh = st.commit()
-	var m := ShaderMaterial.new()
-	m.shader = preload("res://shaders/stream_flow.gdshader")
-	mi.material_override = m
+	var am := ArrayMesh.new()
+	var mats := []
+	for rv2 in 2:
+		if not any[rv2]:
+			continue
+		(sts[rv2] as SurfaceTool).commit(am)
+		var m := ShaderMaterial.new()
+		m.shader = preload("res://shaders/stream_flow.gdshader")
+		if rv2 == 1:
+			m.set_shader_parameter("speed", 0.95)
+			m.set_shader_parameter("across_scale", 0.45)
+			m.set_shader_parameter("strength", 0.42)
+		mats.append(m)
+	mi.mesh = am
+	for si in mats.size():
+		mi.set_surface_override_material(si, mats[si])
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.visible = not low
 	g.add_child(mi)
@@ -379,6 +512,9 @@ static func _waterwheel(g, id: int) -> void:
 static func _bridges(g) -> void:
 	var land: Land = g.land
 	for br: Dictionary in land.bridges:
+		if br.get("river", false):
+			_river_bridge(g, br)
+			continue
 		var c: Vector2 = br["pos"]
 		var sd: Vector2 = br["dir"]                    # куда течёт ручей
 		# вдоль дороги — по самой дороге (15.11: ручей часто идёт под дорогой наискось, мост «поперёк ручья» стоял криво)
@@ -420,6 +556,86 @@ static func _bridges(g) -> void:
 		for side2: float in [-1.0, 1.0]:
 			CatMonuments._box(under, "#water", Vector3(side2 * (hw - 0.3), Land.WATER_Y - y + 0.02, 0.0), Vector3(1.0, 0.04, ws - 0.3))
 		g.parts.place(under, xf)
+
+
+## Римский мост через реку (15.11): несколько арок подряд вдоль дороги, под ними течёт вода. Дорога для ходьбы остаётся
+## насыпью (клетки не меняются), а видимая земля под мостом — дно реки (Land.vis_h); мост — плита с арками по обоим
+## бокам из деталей Ancient Empire (стена с аркой, пилястры, тяга, парапет с карнизом) в тёплом травертине. Мост стоит
+## ровно вдоль дороги, наклон дороги по холму повторяет. Не сносится (как арка въезда)
+static func _river_bridge(g, br: Dictionary) -> void:
+	var land: Land = g.land
+	var c: Vector2 = br["pos"]
+	var sd: Vector2 = br["dir"]
+	var rd := _road_dir(land, c, Vector2(-sd.y, sd.x))
+	# пролёт: по клеткам дороги над рекой — от t0 до t1 вдоль дороги (метры от середины c)
+	var t0 := INF
+	var t1 := -INF
+	for k: int in br["cells"]:
+		var t := (land.cell_center(k % Land.N, k / Land.N) - c).dot(rd)
+		t0 = minf(t0, t)
+		t1 = maxf(t1, t)
+	var tc := (t0 + t1) * 0.5
+	var span := (t1 - t0) + 1.0
+	var n := maxi(3, int(ceil(span / 3.5)))
+	var aw := clampf(span / n, 2.9, 4.4)
+	var T := n * aw
+	var ctr := c + rd * tc
+	# высота и наклон дороги: прямая по высотам дороги на длину моста с запасом
+	var sx := 0.0
+	var sy := 0.0
+	var sxx := 0.0
+	var sxy := 0.0
+	var m := 0
+	for tt in range(-int(T * 0.5) - 6, int(T * 0.5) + 7):
+		var q := ctr + rd * float(tt)
+		var yy := land.height_at(q.x, q.y)
+		sx += float(tt)
+		sy += yy
+		sxx += float(tt * tt)
+		sxy += float(tt) * yy
+		m += 1
+	var slope := (float(m) * sxy - sx * sy) / maxf(float(m) * sxx - sx * sx, 1e-4)
+	var y0 := (sy - slope * sx) / float(m)
+	var hw := Land.ROAD_R
+	var depth := y0 - (Land.WATER_Y - 0.25)
+	var half := T * 0.5 + clampf(depth / 0.6, 2.5, 7.0)
+	var bp := Bp.new(93)
+	var yaw := atan2(rd.x, rd.y)                        # местная +Z — вдоль дороги
+	var xf := Transform3D(Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, -atan(slope)), Vector3(ctr.x, y0, ctr.y))
+	var stone := {"Stucco_White_01": "Stone_01", "tints": {"Stone_01": Color(1.06, 0.94, 0.78), "Building_Large_Brick_01": Color(1.0, 0.9, 0.76)}}
+	var blocks := {"Building_Large_Brick_01": "Building_Large_Brick_01", "tints": {"Building_Large_Brick_01": Color(1.02, 0.9, 0.74)}}
+	# толща моста под дорогой (потолок арок), мощёная проезжая часть сверху
+	CatMonuments._box(bp, "#marble", Vector3(0, -0.4, 0), Vector3(hw * 2.0 + 0.12, 0.8, T + 0.1))
+	CatMonuments._put(bp, "SM_Bld_Base_Floor_01", Transform3D(Basis.from_scale(Vector3((hw * 2.0 + 0.1) / 2.5, 1, (T + 0.6) / 2.5)), Vector3(-hw - 0.05, 0.03, -T * 0.5 - 0.3)), {"Stone_01": "Floor_Tiles_04"})
+	for side: float in [-1.0, 1.0]:
+		var x := side * (hw + 0.05)
+		# стенка над насыпью: арки подряд над водой, по краям — сплошная кладка до конца моста
+		for i in n:
+			var z0 := -T * 0.5 + i * aw
+			var d_i := depth + slope * (z0 + aw * 0.5)
+			_side_piece(bp, "SM_Bld_Wall_Door_Double_01", side, x, -d_i, z0, z0 + aw, d_i, 1.0, 2.5, 3.01, stone)
+		for e: float in [-1.0, 1.0]:
+			var za := T * 0.5 if e > 0.0 else -half
+			var zb := half if e > 0.0 else -T * 0.5
+			var d_e := depth + slope * (za + zb) * 0.5
+			if zb - za > 0.2:
+				_side_piece(bp, "SM_Bld_Wall_01", side, x, -d_e, za, zb, d_e, 1.0, 2.5, 3.01, stone)
+		# тяга на уровне дороги и парапет с карнизом
+		_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.05, -0.12, -half - 0.2, half + 0.2, 0.22, 0.9, 5.02, 1.0, stone)
+		_side_piece(bp, "SM_Bld_Wall_01", side, x, 0.0, -half - 0.2, half + 0.2, 0.62, 0.8, 2.5, 3.01, stone)
+		_side_piece(bp, "SM_Bld_Wall_Large_Cap_01", side, x + side * 0.02, 0.62, -half - 0.3, half + 0.3, 0.18, 0.7, 5.02, 1.0, stone)
+		# пилястры: между арками (от воды) и у концов моста
+		var zs := []
+		for i in range(0, n + 1):
+			zs.append(-T * 0.5 + i * aw)
+		zs.append(-half)
+		zs.append(half)
+		for zp: float in zs:
+			var d_p := depth + slope * zp
+			var hp := d_p + 0.62 + 0.15
+			var pb := Basis(Vector3(0, 0, -side), Vector3.UP, Vector3(side, 0, 0)) * Basis.from_scale(Vector3(0.5 / 0.92, hp / 4.55, 0.42 / 0.92))
+			bp.parts.append(["SM_Bld_Wall_Large_Pillar_01", Transform3D(pb, Vector3(x + side * 0.12, -d_p, zp)), blocks])
+	g.parts.place(bp, xf)
 
 
 ## Направление дороги у моста (единичный вектор): главная ось клеток мостовой, троп и площадей вокруг точки c (радиус 7 м);

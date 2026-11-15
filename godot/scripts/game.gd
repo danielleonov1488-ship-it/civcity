@@ -311,7 +311,6 @@ func _ready() -> void:
 	MeadowNature.ground(self)                 # трава, мостовая, тропы и берега из набора Meadow Forest (13.11)
 	await _step("Вода, дорога и даль", 0.15)
 	_water()
-	_horizon()
 	_gate()
 	var birds := Birds.new()
 	birds.center = Vector3(Land.START.x, 0, Land.START.y)
@@ -387,6 +386,7 @@ func _ready() -> void:
 	if not loaded:
 		land.meadow_new = true                # новая карта лугов: мельницы и водяное колесо на окраинах (13.11)
 	MeadowNature.streams(self)                # ручьи — только где свободно (старые города) или все (новая игра): scripts/streams.gd
+	_horizon()                                # пейзаж до горизонта — после ручьёв: река приходит из-за горизонта (Streams.far_carve)
 	_nature()
 	_nature_arches()
 	_ponds_life()
@@ -932,8 +932,15 @@ func _horizon() -> void:
 		return PackedFloat32Array(arr)
 	# 32 м вдали, 8 м до 192 м от края, 4 м до 64 м (вдоль всего края — чтобы край пейзажа повторял край карты)
 	var rings := [[-192.0, S + 192.0, 8.0], [-64.0, S + 64.0, 4.0]]
-	far_xs = lines.call(rings + [[Land.ROAD_X - 24.0, Land.ROAD_X + 24.0, 1.0]])
-	far_zs = lines.call(rings + [[-128.0, 0.0, 2.0]])
+	var rfine := Streams.far_fine()            # вдоль реки за краем карты линии сетки частые (2 м): долина и вода ложатся точно
+	var fx: Array = [[Land.ROAD_X - 24.0, Land.ROAD_X + 24.0, 1.0]]
+	var fzz: Array = [[-128.0, 0.0, 2.0]]
+	for r: Array in rfine["x"]:
+		fx.append([r[0], r[1], 2.0])
+	for r: Array in rfine["z"]:
+		fzz.append([r[0], r[1], 2.0])
+	far_xs = lines.call(rings + fx)
+	far_zs = lines.call(rings + fzz)
 	var nx := far_xs.size()
 	var nz := far_zs.size()
 	far_hy.resize(nx * nz)
@@ -1026,6 +1033,16 @@ func _horizon() -> void:
 	mi.material_override = land_mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+	if Streams.far_on():
+		# вода реки за краем карты: полосы того же вида, что вода прудов и моря (shaders/water.gdshader)
+		var rb := MeshInstance3D.new()
+		rb.name = "RiverFar"
+		rb.mesh = Streams.far_ribbon_mesh()
+		var rm := ShaderMaterial.new()
+		rm.shader = load("res://shaders/water.gdshader")
+		rb.material_override = rm
+		rb.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(rb)
 	_far_nature()
 	# дальние леса: деревья пятнами (без теней — далеко)
 	var rng := RandomNumberGenerator.new()
@@ -1040,6 +1057,8 @@ func _horizon() -> void:
 			continue                          # ближе — рощи как на карте (_far_nature)
 		if p.y < 0.0 and absf(p.x - Land.ROAD_X) < Land.ROAD_R + 6.0 + d * 0.02:
 			continue                          # на большой дороге деревья не растут
+		if Streams.far_bank_dist(p.x, p.y) < 6.0:
+			continue                          # и в воде реки
 		if fz.get_noise_2d(p.x, p.y) < 0.05 and rng.randf() < 0.85:
 			continue
 		var nm := ("SM_Env_Tree_0%d" % (1 + rng.randi() % 4)) if rng.randf() < 0.7 else ("SM_Env_Tree_Thin_0%d" % (1 + rng.randi() % 2))
@@ -1071,6 +1090,8 @@ func _far_nature() -> void:
 			continue
 		if z < 0.0 and absf(x - Land.ROAD_X) < 7.0:
 			continue                          # у большой дороги — чисто
+		if Streams.far_bank_dist(x, z) < 5.0:
+			continue                          # в воде реки и на её берегу за краем карты деревья не растут
 		var forest := fn.get_noise_2d(x, z)
 		var name := ""
 		var s := 1.0

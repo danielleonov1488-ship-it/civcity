@@ -22,65 +22,76 @@ func setup(g) -> void:
 		var c3: Vector3 = pd[0]
 		if c3.z < MIN_R:
 			continue
-		var n := Node3D.new()
-		n.name = "Boat"
-		add_child(n)
-		var hull := MeshInstance3D.new()
-		hull.mesh = hull_mesh()
-		n.add_child(hull)
-		# вёсла лежат вдоль бортов на банках (не гребут)
-		for sd: float in [-1.0, 1.0]:
-			var oar := MeshInstance3D.new()
-			var bm := BoxMesh.new()
-			bm.size = Vector3(0.05, 0.035, 1.5)
-			oar.mesh = bm
-			oar.position = Vector3(sd * 0.36, 0.34, -0.1)
-			oar.material_override = _wood(Color("8a6238"))
-			n.add_child(oar)
-		var rower := Citizen.create(rng, rng.randf() < 0.3)
-		rower.scale = Vector3.ONE * Citizen.SIZE
-		rower.position = Vector3(0, 0.12, 0.1)
-		rower.rotation.y = 0.0                   # лицом к носу — смотрит на поплавок
-		n.add_child(rower)
-		rower.play("Sitting_Idle", 0.0, rng.randf())
-		# удочка: от рук вперёд и вверх, леска с поплавком — в воду
-		var rod_base := Vector3(0.12, 0.62, 0.3)
-		var rod_dir := Vector3(0.22, 0.5, 0.84).normalized()
-		var rod := Node3D.new()
-		rod.position = rod_base
-		rod.transform.basis = Basis.looking_at(rod_dir, Vector3.UP)
-		n.add_child(rod)
-		var rm := MeshInstance3D.new()
-		var cm := CylinderMesh.new()
-		cm.top_radius = 0.008
-		cm.bottom_radius = 0.016
-		cm.height = 2.1
-		rm.mesh = cm
-		rm.rotation.x = PI / 2
-		rm.position = Vector3(0, 0, 1.05)
-		rm.material_override = _wood(Color("6b4a2a"))
-		rod.add_child(rm)
-		var tip := rod_base + rod_dir * 2.1
-		var drop := tip.y - 0.02
-		var line := MeshInstance3D.new()
-		var lm := CylinderMesh.new()
-		lm.top_radius = 0.002
-		lm.bottom_radius = 0.002
-		lm.height = drop
-		line.mesh = lm
-		line.position = Vector3(tip.x, tip.y - drop * 0.5, tip.z)
-		line.material_override = _wood(Color("e8e4d8"))
-		n.add_child(line)
-		var bob := MeshInstance3D.new()
-		var sm := SphereMesh.new()
-		sm.radius = 0.035
-		sm.height = 0.07
-		bob.mesh = sm
-		bob.position = Vector3(tip.x, 0.02, tip.z)
-		bob.material_override = _wood(Color("d94030"))
-		n.add_child(bob)
-		boats.append({"n": n, "rod": rod, "bob": bob, "c": Vector2(c3.x, c3.y), "r": c3.z * rng.randf_range(0.45, 0.6), "a": rng.randf() * TAU,
-			"w": SPEED * (1.0 if rng.randf() < 0.5 else -1.0), "ph": rng.randf() * TAU})
+		_make(c3, rng)
+
+
+## Лодка с рыбаком на озере реки (15.11: озеро кладётся после ручьёв — Streams; MeadowNature._water_life)
+func add_lake(c3: Vector3) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 78
+	_make(c3, rng)
+
+
+func _make(c3: Vector3, rng: RandomNumberGenerator) -> void:
+	var n := Node3D.new()
+	n.name = "Boat"
+	add_child(n)
+	var hull := MeshInstance3D.new()
+	hull.mesh = hull_mesh()
+	n.add_child(hull)
+	# вёсла лежат вдоль бортов на банках (не гребут)
+	for sd: float in [-1.0, 1.0]:
+		var oar := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.05, 0.035, 1.5)
+		oar.mesh = bm
+		oar.position = Vector3(sd * 0.36, 0.34, -0.1)
+		oar.material_override = _wood(Color("8a6238"))
+		n.add_child(oar)
+	var rower := Citizen.create(rng, rng.randf() < 0.3)
+	rower.scale = Vector3.ONE * Citizen.SIZE
+	rower.position = Vector3(0, 0.12, 0.1)
+	rower.rotation.y = 0.0                   # лицом к носу — смотрит на поплавок
+	n.add_child(rower)
+	rower.play("Sitting_Idle", 0.0, rng.randf())
+	# удочка: от рук вперёд и вверх, леска с поплавком — в воду
+	var rod_base := Vector3(0.12, 0.62, 0.3)
+	var rod_dir := Vector3(0.22, 0.5, 0.84).normalized()
+	var rod := Node3D.new()
+	rod.position = rod_base
+	rod.transform.basis = Basis.looking_at(rod_dir, Vector3.UP)
+	n.add_child(rod)
+	var rm := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.008
+	cm.bottom_radius = 0.016
+	cm.height = 2.1
+	rm.mesh = cm
+	rm.rotation.x = PI / 2
+	rm.position = Vector3(0, 0, 1.05)
+	rm.material_override = _wood(Color("6b4a2a"))
+	rod.add_child(rm)
+	var tip := rod_base + rod_dir * 2.1
+	var drop := tip.y - 0.02
+	var line := MeshInstance3D.new()
+	var lm := CylinderMesh.new()
+	lm.top_radius = 0.002
+	lm.bottom_radius = 0.002
+	lm.height = drop
+	line.mesh = lm
+	line.position = Vector3(tip.x, tip.y - drop * 0.5, tip.z)
+	line.material_override = _wood(Color("e8e4d8"))
+	n.add_child(line)
+	var bob := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.035
+	sm.height = 0.07
+	bob.mesh = sm
+	bob.position = Vector3(tip.x, 0.02, tip.z)
+	bob.material_override = _wood(Color("d94030"))
+	n.add_child(bob)
+	boats.append({"n": n, "rod": rod, "bob": bob, "c": Vector2(c3.x, c3.y), "r": c3.z * rng.randf_range(0.45, 0.6), "a": rng.randf() * TAU,
+		"w": SPEED * (1.0 if rng.randf() < 0.5 else -1.0), "ph": rng.randf() * TAU})
 
 
 func _process(dt: float) -> void:
