@@ -42,8 +42,8 @@ func _run() -> void:
 	var X0 := 140.0
 	var Z0 := 120.0
 	game.clear_nature(Vector2(X0, Z0), 40.0)
+	var h0 := snappedf(game.land.height_at(X0, Z0), Land.STEP)
 	var cells: PackedInt32Array = game.land.footprint_cells([Rect2(-30, -30, 60, 60)], Vector2(X0, Z0), 0.0)
-	game.land.flatten_cells(cells, snappedf(game.land.height_at(X0, Z0), Land.STEP))
 	if game.grass:
 		game.grass.visible = false
 	await frames(4)
@@ -60,6 +60,7 @@ func _run() -> void:
 			if not b.is_empty():
 				game._hide(b)
 				c.remove(b, false, true)
+			game.land.flatten_cells(cells, h0)             # землю ровняем заново для каждой постройки (после сноса прежней она «проседает»)
 			b = c.place(type, Vector2(X0, Z0), 0.0, 0, 0, true)
 			if c.is_house(b):
 				b["pop"] = c.house_cap(b)                  # живут — ставни ночью закрываются

@@ -15,6 +15,7 @@ extends RefCounted
 const FL := 3.0
 const DEPTH := 1.7                      # глубина заднника за проёмом (до масштаба Catalog.ARCH)
 const SIDE := 0.15                      # на сколько комната шире проёма с каждой стороны
+const PROPS := false                    # стеллаж и горшки в заднике: на «Низкой» +0,8 мс видеокарты (замер 15.11) — выключены
 const MIN_HOLE := 0.28                  # проём меньше — не считается (щели, отдушины)
 
 const WALL := Color(0.80, 0.60, 0.42)
@@ -60,6 +61,12 @@ static func mesh(name: String) -> Mesh:
 	var st := {"v": [], "n": [], "c": []}
 	var us := [0.0, 0.15, 0.85, 1.0]
 	var vs := [0.0, 0.35, 1.0]
+	if name.begins_with("#room1"):                  # лёгкая: по одному четырёхугольнику на грань (Низкая и Очень низкая)
+		us = [0.0, 1.0]
+		vs = [0.0, 1.0]
+	elif name.begins_with("#plate"):
+		us = [0.0, 1.0]
+		vs = [0.0, 1.0]
 	var h := 0.5
 	var sgn := -1.0 if inward else 1.0           # нормаль грани: наружу у «#plate», внутрь у «#room»
 	# боковые стены: u вдоль грани, v вверх
@@ -279,6 +286,19 @@ static func apply(b: Bp, kind: String) -> void:
 			# вертикальная пластина за решёткой окна или низкая тёмная коробка (передок помоста, прилавок): тёплая стена
 			p[0] = "#plate_lit" if lit else "#plate"
 			plates.append(xf.affine_inverse())
+	# стены здания — «за проёмом должна быть стена»: иначе модуль смотрит внутрь двора (боковые портики форума,
+	# академии), и заднник торчал бы наружу плоским ящиком
+	var walls := []
+	var cen := Vector3.ZERO
+	for i in n0:
+		var wn: String = b.parts[i][0]
+		if wn.begins_with("SM_Bld_Wall") or wn.begins_with("SM_Bld_Base_Wall") or wn == "#room" or wn == "#room_lit":
+			var wbox: AABB = (b.parts[i][1] as Transform3D) * (Bp.model_aabb(wn) if not wn.begins_with("#") else AABB(Vector3(-0.5, -0.5, -0.5), Vector3.ONE))
+			walls.append(wbox)
+			cen += wbox.get_center()
+	if not walls.is_empty():
+		cen /= float(walls.size())
+	cen.y = 0.0
 	# заднники за проёмами без комнаты
 	var seq := 0
 	for i in n0:
@@ -297,13 +317,20 @@ static func apply(b: Bp, kind: String) -> void:
 			var cym := r.position.y + r.size.y * 0.5
 			if _covered(xf * Vector3(cxm, cym, zin - 0.4), rooms, 0.05) or _covered(xf * Vector3(cxm, cym, zin - 0.04), plates, 0.45):
 				continue
+			# «за проёмом» — в сторону середины здания: модуль смотрит во двор (боковые портики форума, академии) —
+			# его «за» ушло бы наружу плоским ящиком
+			var pw: Vector3 = xf * Vector3(cxm, 0.0, 0.0)
+			var behind := (xf.basis * Vector3(0, 0, -1)).normalized()
+			if behind.dot((cen - pw).normalized()) < -0.2 and (cen - pw).length() > 1.5:
+				continue
 			var w := r.size.x + 2.0 * SIDE
 			var hh := box.size.y - 0.1
 			var d := DEPTH + 0.013 * float(seq % 5)
 			seq += 1
 			var lt := Transform3D(Basis.from_scale(Vector3(w, hh, d)), Vector3(cxm, 0.03 + hh * 0.5, zin - d * 0.5 + 0.02))
+			b.free_parts[b.parts.size()] = true             # заднник земли не занимает (след — по стенам, не по нутру)
 			b.parts.append(["#room", xf * lt, {}])
-			if r.size.x >= 1.0 and r.position.y < 0.12 and r.size.y >= 1.8:
+			if PROPS and r.size.x >= 1.0 and r.position.y < 0.12 and r.size.y >= 1.8:
 				_props(b, xf, cxm, r, zin - d + 0.04, seq)
 
 
@@ -323,10 +350,12 @@ static func _props(b: Bp, xf: Transform3D, cx: float, r: Rect2, z_back: float, s
 	if Synty.has(shelf):
 		var sb := Bp.model_aabb(shelf)
 		var s := 0.9
+		b.free_parts[b.parts.size()] = true
 		b.parts.append([shelf, xf * Transform3D(Basis.from_scale(Vector3.ONE * s), Vector3(cx - sb.get_center().x * s, 0.03, z_back - sb.position.z * s)), {}])
 	var jar := "SM_Prop_Vase_Pile_0%d" % (1 + seq % 6)
 	if Synty.has(jar):
 		var side := -1.0 if seq % 2 == 0 else 1.0
+		b.free_parts[b.parts.size()] = true
 		b.parts.append([jar, xf * Transform3D(Basis(Vector3.UP, 0.4 * seq).scaled(Vector3.ONE * 0.7), Vector3(cx + side * (r.size.x * 0.5 - 0.3), 0.03, z_back + 0.45)), {}])
 
 

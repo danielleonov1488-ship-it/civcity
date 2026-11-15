@@ -2033,6 +2033,9 @@ func _show(b: Dictionary) -> void:
 			subst["K:%s/Rooms" % bp.kit_id] = "K:%s/Rooms@lit" % bp.kit_id
 	if b["type"] in CatGrand.TYPES and Gfx.is_low(str(settings.get("quality", "high"))):
 		subst.merge(CatGrand.LOW)               # на «Низкой» — лёгкие колонны и статуи у больших построек этапа 5
+	if Gfx.is_low(str(settings.get("quality", "high"))):
+		for rk in ["#room", "#room_lit"]:                 # комнаты за окнами на «Низкой» — по одному четырёхугольнику на грань
+			subst[rk] = String(subst.get(rk, rk)).replace("#room", "#room1")
 	var vis := {"h": parts.place(bp, xf, subst), "lights": [], "smoke": [], "actors": []}
 	if city.apron_of(b) == 2:                  # домус, храм: каменный бордюр вокруг (у домов и лавок — глина, Land.wear)
 		(vis["h"] as Array).append_array(parts.place(Kerb.blueprint(bp), xf))
@@ -3041,7 +3044,7 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	# игрок: свободная постановка, как в Town to City — куда навёл и как повернул; вплотную к дороге — фасадом к ней.
 	# Готовый город меню (витрина, старый городок) раскладывается по прежним правилам — он не меняется
 	var free: bool = pave_build and not (d["kind"] in ["decor", "farm", "center"])
-	_free_rot = type == "fountain"
+	_free_rot = type == "fountain" and manual_yaw       # пока игрок не крутил — прилипает к дороге, как все
 	if free:
 		var door_r := 0.0 if d.get("noroad", false) else Vector2(bp.door.x, bp.door.z).distance_to(Vector2((float(bb[0]) + float(bb[1])) * 0.5, (float(bb[2]) + float(bb[3])) * 0.5))
 		var r := _free_place(p, bb, mid, locked, door_r)
