@@ -30,7 +30,7 @@ extends RefCounted
 ##   boom {x, z, r}                  — камень разорвался
 ##   charge {unit, target}           — разбег (Минотавр)
 ##   perk {id, side, x?, z?, n?}     — сработало умение (у масла — точка и сколько врагов накрыло)
-##   heal {unit, amount}             — лечение (Перевязка)
+##   heal {unit, amount, from?}      — лечение (Перевязка; Легион 3.0 — from: жрец, который лечит)
 ##   warn {kind: "summon", unit}     — босс вот-вот созовёт подмогу (за summon.warn секунд; только походы)
 ##   summon {unit, units}            — подмога созвана: units вбегают справа тесной кучей
 ##   end {win}                       — бой окончен (итог — sim.result)
@@ -58,6 +58,10 @@ const LANES := [0.0, -1.1, 1.1, -2.1, 2.1, -0.55, 0.55]
 const ENEMY_LANES := [0.0, -1.2, 1.2, -2.2, 2.2, -0.6, 0.6]
 ## походы: стрелки «в кустах» (статы kite) выходят врассыпную по краям поля — одним котлом масла их не накрыть
 const BUSH_LANES := [0.0, -2.35, 2.35, -1.15, 1.15]
+## Легион 3.0: жрец лечит раз в HEAL_EVERY секунд; ряды (row): глубина переднего и заднего, шаг между бойцами одного ряда
+const HEAL_EVERY := 3.0
+const ROW_X := [4.6, 6.0]
+const ROW_STEP := 1.1
 ## Сила умений: [на 1 уровне, прибавка за уровень]. oil/volley/burn — доля среднего урона отряда (oil, volley — по
 ## каждому врагу; burn — в секунду 4 с), за уровень ×(1 + прибавка); testudo — насколько меньше урон (доля),
 ## bandage — доля здоровья, horn — во сколько раз быстрее бьют и ходят. Мягче, чем в старой игре: умения — сильная
@@ -155,6 +159,11 @@ class Unit:
 	var revived := false
 	var heal_k := 1.0              # лечение по воину (Египетский набор)
 	var enter_dir := -1.0          # откуда входит: −1 — справа (как все), 1 — слева, с тыла (засада)
+	# Легион 3.0 (только если в статах есть ключи row / heal / backline; у прежних бойцов пусто)
+	var row := -1                  # ряд, выбранный игроком: 0 — передний, 1 — задний (−1 — не задан)
+	var heal_pow := 0.0            # жрец: лечит раненого союзника на heal × ATK
+	var heal_t := 0.0              # секунд до следующего лечения
+	var backline := false          # всадник: сперва бьёт задний ряд и стрелков врага
 
 	func ranged() -> bool:
 		return range_m > 3.0
@@ -247,6 +256,11 @@ static func _avg(list: Array) -> float:
 
 ## Строй: ближний бой впереди, стрелки за ними, машины в тылу (у врагов в боях с городами — зеркально)
 func _place_formation(list: Array, side: String) -> void:
+	# Легион 3.0: у кого-то задан ряд (row) — строй по рядам, иначе как раньше
+	for s0: Dictionary in list:
+		if s0.has("row"):
+			_place_rows(list, side)
+			return
 	var order := list.duplicate()
 	order.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var ka := (1 if float(a["range"]) > 3.0 else 0) * 2 + (1 if float(a["speed"]) == 0.0 else 0)
@@ -262,6 +276,27 @@ func _place_formation(list: Array, side: String) -> void:
 		u.home_z = u.z
 		u.has_home = true
 		u.wave = -1 if side == "ally" else 0
+
+
+## Легион 3.0: два ряда — передний на глубине ближнего боя, задний на глубине стрелков; бойцы ряда стоят ровно поперёк поля.
+## Кто без row (смешанный отряд) — по роли: стрелок в задний, остальные в передний
+func _place_rows(list: Array, side: String) -> void:
+	var sgn := -1.0 if side == "ally" else 1.0
+	var rows: Array = [[], []]
+	for s: Dictionary in list:
+		var r := int(s["row"]) if s.has("row") else (1 if float(s["range"]) > 3.0 else 0)
+		rows[1 if r >= 1 else 0].append(s)
+	for r in 2:
+		var arr: Array = rows[r]
+		var step := minf(ROW_STEP, 4.8 / maxf(1.0, arr.size() - 1.0))
+		for i in arr.size():
+			var z := (i - (arr.size() - 1) * 0.5) * step
+			var u := _add(side, arr[i], sgn * float(ROW_X[r]), z)
+			u.row = r
+			u.home_x = u.x
+			u.home_z = u.z
+			u.has_home = true
+			u.wave = -1 if side == "ally" else 0
 
 
 func _add(side: String, s: Dictionary, x: float, z: float) -> Unit:
@@ -307,6 +342,9 @@ func _add(side: String, s: Dictionary, x: float, z: float) -> Unit:
 	u.set_drain = bool(s.get("set_drain", false))
 	u.set_revive = bool(s.get("set_revive", false))
 	u.heal_k = float(s.get("heal_k", 1.0))
+	u.heal_pow = float(s.get("heal", 0.0))
+	u.heal_t = 2.0 if u.heal_pow > 0.0 else 0.0   # первое лечение — через 2 с (без случайных чисел)
+	u.backline = bool(s.get("backline", false))
 	if bool(s.get("set_kite", false)) and u.range_m > 3.0:
 		u.kite = 4.0                               # Парфянский набор: стрелок отходит от мечей
 	if s.has("abil") or s.has("aura") or s.has("poison") or s.has("sunder") or s.has("guard"):
@@ -416,6 +454,14 @@ func _pick_target(u: Unit) -> Unit:
 				r.append(o)
 		if not r.is_empty():
 			pool = r
+	if u.backline:
+		# Легион 3.0: всадник скачет мимо переднего ряда — сперва задний ряд и стрелки, потом ближайший
+		var bl: Array[Unit] = []
+		for o in pool:
+			if o.row == 1 or o.ranged():
+				bl.append(o)
+		if not bl.is_empty():
+			pool = bl
 	if u.pierce:
 		var big: Array[Unit] = []
 		for o in foes:
@@ -835,6 +881,8 @@ func step(dt := DT) -> void:
 						if h > 0:
 							o.hp += h
 							events.append({"type": "heal", "unit": o, "amount": h})
+		if u.heal_pow > 0.0:
+			_priest_heal(u, dt)
 		if not u.abil.is_empty():
 			u.abil_t -= dt
 			if not u.abil_warned and u.abil_t <= float(u.abil.get("warn", 0.0)):
@@ -967,6 +1015,29 @@ func step(dt := DT) -> void:
 			return
 	if t > TIME_LIMIT:
 		_end(false, allies, true)
+
+
+## Легион 3.0: жрец раз в HEAL_EVERY секунд лечит самого раненого союзника в своей дальности на heal × ATK.
+## Некого лечить — проверяет снова через полсекунды (а пока бьёт слабо, как и все)
+func _priest_heal(u: Unit, dt: float) -> void:
+	u.heal_t -= dt
+	if u.heal_t > 0.0:
+		return
+	var w: Unit = null
+	var lo := 1.0
+	for o in units:
+		if o.alive and o.side == u.side and o.hp < o.max_hp and dist(u, o) <= u.range_m and o.hp_frac() < lo:
+			lo = o.hp_frac()
+			w = o
+	if w == null:
+		u.heal_t = 0.5
+		return
+	u.heal_t = HEAL_EVERY
+	u.timer = maxf(u.timer, 0.6)                 # пока творит лечение, не бьёт
+	var h := mini(roundi(u.heal_pow * u.atk * u.heal_k), ceili(w.max_hp - w.hp))
+	if h > 0:
+		w.hp += h
+		events.append({"type": "heal", "unit": w, "amount": h, "from": u})
 
 
 # =====================================================================
