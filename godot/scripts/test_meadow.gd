@@ -218,6 +218,19 @@ func _check() -> void:
 	var l3 := Land.new()
 	var all := Streams.choose(l3, null)
 	print("MEADOW choose на чистой карте: ", all, " за ", Time.get_ticks_msec() - t0, " мс (с картой)")
+	# путь реки занят постройкой (клетка на длинном пути) — ляжет короткий путь, земля игрока не тронута
+	var l4 := Land.new()
+	var c7 := Streams.cells(l4, 7)["cells"] as Dictionary
+	var blocked := -1
+	for k: int in c7:
+		if (k % Land.N) * Land.CELL > 215.0:              # дальше короткого пути (он кончается озером у x ~ 160)
+			blocked = k
+			break
+	if blocked >= 0:
+		l4.occ[blocked] = 1
+		var alt := Streams.choose(l4, null)
+		ok("путь реки занят — ляжет короткий (8)", alt.has(8) and not alt.has(7), str(alt))
+		l4.occ[blocked] = 0
 
 
 func _cut_check() -> int:

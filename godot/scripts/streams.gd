@@ -41,8 +41,8 @@ const LIST := [
 	{"id": 7, "river": true, "w": 3.6, "noise": 2.2, "bed": 0.85, "pts": RIVER_FAR + [Vector2(131, 8), Vector2(138, 18), Vector2(150, 26), Vector2(164, 31),
 		Vector2(178, 36), Vector2(192, 40), Vector2(206, 41), Vector2(220, 38), Vector2(236, 33), Vector2(252, 34), Vector2(268, 39), Vector2(284, 38),
 		Vector2(300, 34), Vector2(320, 30), Vector2(340, 25), Vector2(362, 24), Vector2(384, 27)] + RIVER_OUT, "pool": Vector3(300.0, 32.0, 19.0)},
-	{"id": 8, "river": true, "w": 3.4, "noise": 2.0, "bed": 0.85, "pts": RIVER_FAR + [Vector2(131, 8), Vector2(137, 20), Vector2(145, 32), Vector2(152, 42)],
-		"pool": Vector3(152.0, 44.0, 13.0)},
+	{"id": 8, "river": true, "w": 3.4, "noise": 2.0, "bed": 0.85, "pts": RIVER_FAR + [Vector2(131, 8), Vector2(136, 16), Vector2(142, 24), Vector2(148, 30)],
+		"pool": Vector3(150.0, 32.0, 12.0)},
 ]
 const FAR_BED := 0.95      # глубина реки за краем карты
 const BED := 0.45          # глубина посередине ручья (под уровнем воды)
