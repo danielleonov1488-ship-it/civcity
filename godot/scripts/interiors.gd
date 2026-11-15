@@ -34,7 +34,18 @@ const IMAGES := {
 	"warehouse": "warehouse", "armory": "warehouse",
 	"house_pleb": "home", "house_artisan": "home", "house_patrician": "home",
 	"potter": "shop", "lamps": "shop", "perfumer": "shop", "jeweler": "shop", "catshop": "shop", "oilshop": "shop",
-	"weaver": "shop", "cobbler": "shop", "dyer": "shop", "tailor": "shop", "herbalist": "shop",
+	"weaver": "textile", "cobbler": "textile", "dyer": "textile", "tailor": "textile", "fullonica": "textile",
+	"herbalist": "infirmary", "medic": "infirmary", "infirmary": "infirmary", "barber": "shop",
+	"butcher": "butcher", "stall_fruit": "produce", "stall_veg": "produce", "stall_fish": "produce", "ogorod": "produce",
+	"temple": "temple", "venus": "temple", "pantheon": "temple", "mars": "temple",
+	"school": "study", "library": "study", "scriptorium": "study", "academy": "study",
+	"balnea": "baths", "baths": "baths", "thermae": "baths",
+	"forge": "forge", "smelter": "forge", "ballistae": "forge", "catapults": "forge",
+	"barracks": "barracks", "spearcamp": "barracks", "range": "barracks", "ludus": "barracks",
+	"sawmill": "workshop", "tannery": "workshop", "sculptor": "workshop",
+	"center": "office", "prefect": "office", "vigiles": "office", "forum": "office", "principia": "office",
+	"theatre": "theatre", "odeon": "theatre", "puppets": "theatre", "mimes": "theatre", "musicians": "theatre",
+	"shelter": "shelter",
 }
 static var _shader: Shader
 static var _tex_mats := {}              # "картинка|lit" → ShaderMaterial
