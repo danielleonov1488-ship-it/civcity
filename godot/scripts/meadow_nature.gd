@@ -884,12 +884,18 @@ static func freeze(on_: bool) -> void:
 		var m = Meadow._mats[k]
 		if m is ShaderMaterial:
 			var sm := m as ShaderMaterial
-			if not sm.has_meta("sway0"):
-				sm.set_meta("sway0", sm.get_shader_parameter("sway"))
-				sm.set_meta("speed0", sm.get_shader_parameter("speed"))
-			if sm.get_meta("sway0", null) != null:
+			# (get_meta с умолчанием null ругается в журнал, если ключа нет — проверяем has_meta)
+			if not sm.has_meta("frz0"):
+				sm.set_meta("frz0", true)
+				var sw0 = sm.get_shader_parameter("sway")
+				var sp0 = sm.get_shader_parameter("speed")
+				if sw0 != null:
+					sm.set_meta("sway0", sw0)
+				if sp0 != null:
+					sm.set_meta("speed0", sp0)
+			if sm.has_meta("sway0"):
 				sm.set_shader_parameter("sway", 0.0 if on_ else sm.get_meta("sway0"))
-			if sm.get_meta("speed0", null) != null:
+			if sm.has_meta("speed0"):
 				sm.set_shader_parameter("speed", 0.0 if on_ else sm.get_meta("speed0"))
 	for gm: ShaderMaterial in GrassCarpet.mats:
 		gm.set_shader_parameter("sway", 0.0 if on_ else 0.07)

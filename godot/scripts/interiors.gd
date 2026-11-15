@@ -14,6 +14,7 @@ extends RefCounted
 
 const FL := 3.0
 const DEPTH := 1.7                      # глубина заднника за проёмом (до масштаба Catalog.ARCH)
+const SHALLOW := 0.6                    # заднник в аркаде трибун (одеон, театр): за аркой — верхний обход, глубже — ступени
 const SIDE := 0.15                      # на сколько комната шире проёма с каждой стороны
 const PROPS := false                    # стеллаж и горшки в заднике: на «Низкой» +0,8 мс видеокарты (замер 15.11) — выключены
 const MIN_HOLE := 0.28                  # проём меньше — не считается (щели, отдушины)
@@ -299,6 +300,12 @@ static func apply(b: Bp, kind: String) -> void:
 	if not walls.is_empty():
 		cen /= float(walls.size())
 	cen.y = 0.0
+	# трибуны (амфитеатр): за аркой аркады сразу ступени — заднник там мелкий, иначе торчит из рядов и занимает места
+	var stands := []
+	for i in n0:
+		var an: String = b.parts[i][0]
+		if an.begins_with("SM_Bld_Amphitheatre"):
+			stands.append((b.parts[i][1] as Transform3D) * Bp.model_aabb(an))
 	# заднники за проёмами без комнаты
 	var seq := 0
 	for i in n0:
@@ -326,6 +333,11 @@ static func apply(b: Bp, kind: String) -> void:
 			var w := r.size.x + 2.0 * SIDE
 			var hh := box.size.y - 0.1
 			var d := DEPTH + 0.013 * float(seq % 5)
+			var deep_pt: Vector3 = xf * Vector3(cxm, cym, zin - DEPTH * 0.5)
+			for st: AABB in stands:
+				if st.has_point(deep_pt):
+					d = SHALLOW + 0.013 * float(seq % 5)
+					break
 			seq += 1
 			var lt := Transform3D(Basis.from_scale(Vector3(w, hh, d)), Vector3(cxm, 0.03 + hh * 0.5, zin - d * 0.5 + 0.02))
 			b.free_parts[b.parts.size()] = true             # заднник земли не занимает (след — по стенам, не по нутру)
