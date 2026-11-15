@@ -135,6 +135,7 @@ func _run(mode: String) -> void:
 		"measure": await _measure_all()
 		"shots": await _shots_mode()
 		"hitch": await _hitch()
+		"hitchprof": await _hitchprof()
 		"menu": await _menu()
 		"prof": await _prof()
 		"probe": await _probe()
@@ -290,6 +291,47 @@ func _hitch() -> void:
 		float(game.get("sim_ms")) if game.get("sim_ms") != null else -1.0, float(game.get("save_ms")) if game.get("save_ms") != null else -1.0])
 
 
+## 15.11 (владелец: «подлагивает»): чьи скрипты дают рывки — по очереди выключаем обработку кадра у узлов одного сценария
+## на frames кадров и считаем кадры дольше 25 мс; между ними — база
+func _hitchprof() -> void:
+	await _settle()
+	var q: String = A.get("q", "low")
+	_quality(q)
+	_view(_views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)[0])
+	game.hud.set_speed(1.0)
+	await frames(120)
+	var n := int(A.get("frames", "600"))
+	var by_script := {}
+	for nd: Node in game.find_children("*", "", true, false):
+		var sc: Script = nd.get_script()
+		if sc and (nd.is_processing() or nd.is_physics_processing()):
+			var nm := sc.resource_path.get_file().get_basename()
+			if not by_script.has(nm):
+				by_script[nm] = []
+			by_script[nm].append(nd)
+	var run := func(tag: String) -> void:
+		var t_prev := Time.get_ticks_usec()
+		var dts := PackedFloat32Array()
+		for i in n:
+			await get_tree().process_frame
+			var tn := Time.get_ticks_usec()
+			dts.append((tn - t_prev) / 1000.0)
+			t_prev = tn
+		var over := Array(dts).filter(func(v): return v > 25.0).size()
+		print("HPROF %-16s p50=%.1f p95=%.1f p99=%.1f max=%.1f >25ms=%d" % [tag, _pct(dts, 0.5), _pct(dts, 0.95), _pct(dts, 0.99), _pct(dts, 1.0), over])
+	await run.call("BASE")
+	var k := 0
+	for nm: String in by_script:
+		_proc_set(by_script[nm], Node.PROCESS_MODE_DISABLED)
+		await run.call("-" + nm)
+		_proc_set(by_script[nm], Node.PROCESS_MODE_INHERIT)
+		k += 1
+		if k % 6 == 0:
+			await run.call("BASE")
+	await run.call("BASE")
+	print("HPROF DONE")
+
+
 ## Что сколько стоит на главном потоке (мс, лучшее из 3): ход дня и его части, сохранение по частям
 func _prof() -> void:
 	await _settle()
@@ -405,6 +447,9 @@ func _probe() -> void:
 		"ssil_off": [func(): game.env.ssil_enabled = false, func(): game._apply_quality()],
 		"shadow_off": [func(): game.sun.shadow_enabled = false, func(): game._apply_quality()],
 		"fsr075": [func(): vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR; vp.scaling_3d_scale = 0.75, func(): game._apply_quality()],
+		# 15.11 (владелец: «из-за значков над домами подлагивает»): весь интерфейс и только значки над постройками
+		"hud_hidden": [func(): game.hud.root.visible = false, func(): game.hud.root.visible = true],
+		"badges_hidden": [func(): game.hud.badge_layer.visible = false, func(): game.hud.badge_layer.visible = true],
 	}
 	# 12.11: из чего складывается время процессора — выключаем обработку кадра у узлов одного сценария (и их детей)
 	var by_script := {}

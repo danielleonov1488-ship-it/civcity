@@ -99,8 +99,10 @@ static func tex_material(img: String, lit: bool) -> ShaderMaterial:
 
 ## Яркость комнат: lamp — 0 днём, 1 ночью (как у окон «#lit» в Game._sky); deep — глубокая ночь
 static func set_light(lamp: float, deep: bool) -> void:
-	_tint[0] = Color(1, 1, 1).lerp(Color(0.17, 0.13, 0.095), lamp)    # 15.11: ночью приглушённо, не чёрная дыра
-	_tint[1] = Color(1, 1, 1).lerp(Color(0.2, 0.135, 0.075) if deep else Color(0.34, 0.23, 0.12), lamp)
+	# 16.11 (владелец: «ночью здания чёрные»): ночью комнаты за проёмами — тёплый свет лампы внутри, как в Town to City,
+	# а не тёмная дыра; к глубокой ночи (после 23) свет мягче, но не гаснет
+	_tint[0] = Color(1, 1, 1).lerp(Color(0.36, 0.27, 0.19) if deep else Color(0.5, 0.37, 0.25), lamp)
+	_tint[1] = Color(1, 1, 1).lerp(Color(0.62, 0.43, 0.25) if deep else Color(0.95, 0.68, 0.4), lamp)
 	material(false).albedo_color = _tint[0]
 	material(true).albedo_color = _tint[1]
 	for key: String in _tex_mats:
