@@ -18,6 +18,13 @@ var slots := {}                      # id постройки → [rid или 0 �
 var rng := RandomNumberGenerator.new()
 var cart := {}
 var cats := []
+static var anim_batch := true          # PERF3; test_perf pvat=0 возвращает прежний путь
+var _shown: Array[Dictionary] = []
+var _shown_frame: Array[Dictionary] = []
+var _shown_dirty := true
+var _sim_time := 0.0
+var _buckets: Array = []
+var _buckets_dirty := true
 var visible_count := 0
 var _tick := 0.0
 var _jobs_dirty := true
@@ -240,13 +247,14 @@ func _make_family(name: String, n: int, home: int, at: Vector2, cls := "", fam :
 			# что делает на месте (лавка, скамья, кошка, разговор…), куда шёл, с кем говорит, череда движений
 			"act": "", "dest": {}, "conv": {}, "seq": [], "si": 0, "st": 0.0, "at": 0.0, "face": 0.0, "yoff": 0.0, "yoff_to": 0.0,
 			"fade": 1.0, "outs": 0, "serve": 0, "pal": 0, "door": {},
-			"m": m, "pn": String(m["pn"])}          # запись члена семьи (сохраняется) и имя
+			"sim_at": _sim_time, "m": m, "pn": String(m["pn"])}          # запись члена семьи (сохраняется) и имя
 		# работа из сохранения — если та постройка ещё стоит и берёт работников (лишних отпустит _assign_jobs)
 		var jb := int(m.get("job", -1))
 		if jb >= 0 and home > 0 and not child and city.buildings.has(jb) and city.def(city.buildings[jb]).has("jobs"):
 			r["job"] = jb
 		next_rid += 1
 		residents.append(r)
+		_buckets_dirty = true
 		by_id[r["id"]] = r
 		out.append(r)
 	return out
@@ -326,6 +334,9 @@ func _node(r: Dictionary) -> Citizen:
 		_outline(c, true)
 	c.anim.speed_scale = maxf(0.01, game.speed)
 	r["node"] = c
+	if not r.has("hero"):
+		_shown.append(r)
+		_shown_dirty = true
 	visible_count += 1
 	_place(r)
 	return c
@@ -335,6 +346,8 @@ func _hide(r: Dictionary) -> void:
 	if r["node"] != null:
 		(r["node"] as Node).queue_free()
 		r["node"] = null
+		_shown.erase(r)
+		_shown_dirty = true
 		visible_count -= 1
 
 
@@ -1191,6 +1204,7 @@ func _remove(r: Dictionary) -> void:
 	_release(r)
 	_hide(r)
 	residents.erase(r)
+	_buckets_dirty = true
 	by_id.erase(r["id"])
 
 
@@ -2831,16 +2845,33 @@ func _conv_slot(cv: Dictionary, from: Vector2) -> Vector2:
 
 ## Разговор: говорят по очереди; говорящий жестикулирует, слушатели смотрят на него и кивают, иногда смеются
 func _conv_step(cv: Dictionary, dt: float) -> void:
-	var pres := []
-	var walkers := []
+	if not cv.has("_pres"):
+		cv["_pres"] = []
+		cv["_walkers"] = []
+	var pres: Array = cv["_pres"]
+	var walkers: Array = cv["_walkers"]
+	var np := 0
+	var nw := 0
 	for id in cv["m"]:
 		var m: Dictionary = by_id.get(int(id), {})
 		if m.is_empty():
 			continue
 		if m["state"] == "idle" and m["act"] == "talk":
-			pres.append(m)
+			if np == pres.size():
+				pres.append(m)
+			else:
+				pres[np] = m
+			np += 1
 		elif m["state"] == "walk":
-			walkers.append(m)
+			if nw == walkers.size():
+				walkers.append(m)
+			else:
+				walkers[nw] = m
+			nw += 1
+	if np != pres.size():
+		pres.resize(np)
+	if nw != walkers.size():
+		walkers.resize(nw)
 	if pres.size() < 2:
 		# ждёт подходящего — смотрит на него (помахал — опускает руку)
 		for m in pres:
@@ -2886,6 +2917,9 @@ func _conv_step(cv: Dictionary, dt: float) -> void:
 
 func _conv_end(cv: Dictionary) -> void:
 	convs.erase(cv)
+	if cv.has("_pres"):
+		(cv["_pres"] as Array).clear()
+		(cv["_walkers"] as Array).clear()
 	for id in cv["m"]:
 		var m: Dictionary = by_id.get(int(id), {})
 		if m.is_empty() or m["conv"] != cv:
@@ -3197,9 +3231,10 @@ func _process_body(dt: float) -> void:
 	if pf:
 		tm = _pf("props", tm)
 	if speed <= 0.0:
-		for r in (residents if hero_r.is_empty() else residents + [hero_r]):
-			if r["node"] != null:
-				(r["node"] as Citizen).anim.speed_scale = 0.0
+		for r: Dictionary in _shown:
+			(r["node"] as Citizen).anim.speed_scale = 0.0
+		if not hero_r.is_empty() and hero_r["node"] != null:
+			(hero_r["node"] as Citizen).anim.speed_scale = 0.0
 		for c in cats:
 			c["walk"] = 0.0
 			if c.has("anim"):
@@ -3218,52 +3253,40 @@ func _process_body(dt: float) -> void:
 	_far_acc[_far_ph] = 0.0
 	_lod_frame += 1
 	var k_walk := maxi(1, int(Engine.get_frames_per_second() / 30.0))     # идущих — не реже 30 раз в секунду: шаг плавный
-	for r in residents.duplicate():
-		var rdt := sdt
-		var cn: Citizen = r["node"]
-		if cn == null:
-			if int(r["id"]) % far_n != _far_ph:
-				continue                       # невидимого — в его очередь, за всё накопленное время
-			rdt = fdt
-		elif cn.lod_k > 1:
-			# мелкий на экране житель (12.11, скорость): дела — раз в lod_k кадров за всё накопленное время, как его
-			# движения (Gfx._anims: не реже 15–30 раз в секунду) — глазу не видно, процессору в разы легче
-			var kk := mini(cn.lod_k, k_walk) if r["state"] == "walk" else cn.lod_k
-			r["lod_dt"] = float(r.get("lod_dt", 0.0)) + sdt
-			if (_lod_frame + int(r["id"])) % kk != 0:
-				continue
-			rdt = float(r["lod_dt"])
-			r["lod_dt"] = 0.0
-		elif r.has("lod_dt"):
-			rdt += float(r["lod_dt"])
-			r.erase("lod_dt")
-		match r["state"]:
-			"walk":
-				_step(r, rdt)
-			"idle":
-				if r["node"] != null:
-					(r["node"] as Citizen).anim.speed_scale = speed
-				if r["act"] != "":
-					_act_step(r, rdt)
-			"door":
-				if r["node"] != null:
-					(r["node"] as Citizen).anim.speed_scale = speed
-				_door_step(r, rdt)
-			"work":
-				if r["node"] != null:
-					(r["node"] as Citizen).anim.speed_scale = speed
-					_work_step(r, rdt)
-			_:
-				if r["node"] != null:
-					(r["node"] as Citizen).anim.speed_scale = speed
-		if r["node"] != null and float(r["fade"]) < 1.0 and r["state"] != "walk" and r["state"] != "door":
-			r["fade"] = minf(1.0, float(r["fade"]) + rdt / 0.6)
-			(r["node"] as Citizen).set_alpha(float(r["fade"]))
+	_sim_time += sdt
+	if anim_batch:
+		_residents_batch(speed, k_walk)
+	else:
+		for r in residents.duplicate():
+			var rdt := sdt
+			var cn: Citizen = r["node"]
+			if cn == null:
+				if int(r["id"]) % far_n != _far_ph:
+					continue                       # невидимого — в его очередь, за всё накопленное время
+				rdt = fdt
+			elif cn.lod_k > 1:
+				# мелкий на экране житель (12.11, скорость): дела — раз в lod_k кадров за всё накопленное время, как его
+				# движения (Gfx._anims: не реже 15–30 раз в секунду) — глазу не видно, процессору в разы легче
+				var kk := mini(cn.lod_k, k_walk) if r["state"] == "walk" else cn.lod_k
+				r["lod_dt"] = float(r.get("lod_dt", 0.0)) + sdt
+				if (_lod_frame + int(r["id"])) % kk != 0:
+					continue
+				rdt = float(r["lod_dt"])
+				r["lod_dt"] = 0.0
+			elif r.has("lod_dt"):
+				rdt += float(r["lod_dt"])
+				r.erase("lod_dt")
+			r["sim_at"] = _sim_time
+			_resident_step(r, rdt, speed)
 	if pf:
 		tm = _pf("residents", tm)
 	if not hero_r.is_empty():
 		_hero_tick(dt, sdt)
-	for cv in convs.duplicate():
+	# _conv_step убирает только текущую беседу: обратный обход без копии массива.
+	var ci := convs.size() - 1
+	while ci >= 0:
+		var cv: Dictionary = convs[ci]
+		ci -= 1
 		_conv_step(cv, sdt)
 	if pf:
 		tm = _pf("hero+convs", tm)
@@ -3279,6 +3302,62 @@ func _process_body(dt: float) -> void:
 	_cats_step(dt * speed)
 	if pf:
 		tm = _pf("cats", tm)
+
+
+## Видимые — своим шагом LOD, остальные — одной из восьми очередей.
+## Снимки списков обновляются только при появлении/уходе; действия могут менять состав во время обхода.
+func _residents_batch(speed: float, k_walk: int) -> void:
+	if _buckets_dirty or _buckets.size() != far_n:
+		_buckets = []
+		for k in far_n:
+			_buckets.append([])
+		for r: Dictionary in residents:
+			(_buckets[int(r["id"]) % far_n] as Array).append(r)
+		_buckets_dirty = false
+	if _shown_dirty:
+		_shown_frame = _shown.duplicate()
+		_shown_dirty = false
+	for r: Dictionary in _shown_frame:
+		var c: Citizen = r["node"]
+		if c == null or not by_id.has(r["id"]):
+			continue
+		var k := mini(c.lod_k, k_walk) if r["state"] == "walk" else c.lod_k
+		if (_lod_frame + c.batch_slot) % maxi(1, k) != 0:
+			continue
+		var rdt := _sim_time - float(r["sim_at"])
+		r["sim_at"] = _sim_time
+		_resident_step(r, rdt, speed)
+	for r: Dictionary in _buckets[_far_ph]:
+		if r["node"] != null or not by_id.has(r["id"]) or float(r["sim_at"]) >= _sim_time:
+			continue
+		var rdt := _sim_time - float(r["sim_at"])
+		r["sim_at"] = _sim_time
+		_resident_step(r, rdt, speed)
+
+
+func _resident_step(r: Dictionary, rdt: float, speed: float) -> void:
+	match r["state"]:
+		"walk":
+			_step(r, rdt)
+		"idle":
+			if r["node"] != null:
+				(r["node"] as Citizen).anim.speed_scale = speed
+			if r["act"] != "":
+				_act_step(r, rdt)
+		"door":
+			if r["node"] != null:
+				(r["node"] as Citizen).anim.speed_scale = speed
+			_door_step(r, rdt)
+		"work":
+			if r["node"] != null:
+				(r["node"] as Citizen).anim.speed_scale = speed
+				_work_step(r, rdt)
+		_:
+			if r["node"] != null:
+				(r["node"] as Citizen).anim.speed_scale = speed
+	if r["node"] != null and float(r["fade"]) < 1.0 and r["state"] != "walk" and r["state"] != "door":
+		r["fade"] = minf(1.0, float(r["fade"]) + rdt / 0.6)
+		(r["node"] as Citizen).set_alpha(float(r["fade"]))
 
 
 ## Что у жителя должно быть в руках сейчас: на работе — вещи места (лира, свиток, серп…), по дороге — покупка

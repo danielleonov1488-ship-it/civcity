@@ -17,6 +17,13 @@ const K := SIZE / BASE
 var anim: AnimationPlayer
 var lod_acc := 0.0                       # движения по удалённости (Gfx._anims): накопленное время до следующего шага
 var lod_k := 1                           # …и раз во сколько кадров его считать (1 — каждый кадр); им же пользуется People
+# Ручной шаг хранит игровое время, уже с учётом speed_scale.
+var batch_acc := 0.0
+var batch_on := false
+var batch_hidden := false
+var batch_dirty := false
+var batch_slot := 0
+var batch_steps := 0                  # счётчик для test_perf3
 var female := false
 var meshes := []
 var _cur := ""
@@ -869,12 +876,63 @@ static func kid_face(c: Node) -> void:
 			sk.set_bone_pose_scale(hb, Vector3.ONE * KID_HEAD)
 
 
+## Считаем кости только в свою очередь; вне кадра меняется лишь время.
+func batch_step(dt: float, k: int, frame: int, hidden: bool) -> void:
+	if not batch_on:
+		# Обычный проигрыватель уже сделал шаг до Gfx (priority=100).
+		if anim.callback_mode_process != AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL:
+			dt = 0.0
+		# Остаток прежнего LOD ещё в обычных секундах.
+		if lod_acc > 0.0:
+			anim.advance(lod_acc)
+		lod_acc = 0.0
+		batch_on = true
+		anim.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+	var returned := batch_hidden and not hidden
+	batch_hidden = hidden
+	batch_acc += dt * anim.speed_scale
+	if hidden:
+		return                            # нет записи позы — Skeleton3D не помечается на обновление
+	if returned or k == 1 or (frame + batch_slot) % k == 0:
+		batch_flush(returned or batch_dirty)
+
+
+## Накопленное время не зависит от смены скорости и паузы.
+func batch_flush(force := false) -> void:
+	if is_zero_approx(batch_acc) and not force:
+		return
+	var sp := anim.speed_scale
+	anim.speed_scale = 1.0
+	anim.advance(batch_acc)
+	anim.speed_scale = sp
+	batch_acc = 0.0
+	batch_dirty = false
+	batch_steps += 1
+
+
+func batch_release() -> void:
+	if not batch_on:
+		return
+	batch_flush(batch_dirty)
+	batch_on = false
+	batch_hidden = false
+	lod_acc = 0.0
+	lod_k = 1
+	anim.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE
+
+
 ## phase ≥ 0 — начать с этой доли движения (чтобы соседи не двигались в такт)
 func play(name: String, blend := 0.25, phase := -1.0) -> void:
 	if carry_walk and (name == "Walk_Loop" or name == "Walk"):
 		name = "Walk_Carry"                  # несёт покупку — левая рука с вещью почти не машет
 	if name == _cur:
 		return
+	if batch_on:
+		if batch_hidden:
+			batch_acc = 0.0                # прошедшее время относится к прежнему клипу
+			batch_dirty = true
+		else:
+			batch_flush()
 	_cur = name
 	var short := name.trim_suffix("_Loop")
 	if not anim.has_animation(short):
@@ -882,7 +940,7 @@ func play(name: String, blend := 0.25, phase := -1.0) -> void:
 	if anim.has_animation(short):
 		anim.play(short, blend)
 		if phase >= 0.0:
-			anim.seek(fposmod(phase, 1.0) * anim.get_animation(short).length, true)
+			anim.seek(fposmod(phase, 1.0) * anim.get_animation(short).length, not batch_hidden)
 
 
 var carry_walk := false
