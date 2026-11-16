@@ -425,10 +425,9 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 		c.changed.emit()
 		await frames(6)
 	# шаг 1: советник с «Пропустить обучение», стрелка на раздел «Легион» нижней полосы
-	check("обучение, шаг 1 — Казармы", lg.tut_step() == "barracks" and ui.tut_active())
-	check("советник шага 1 с «Пропустить обучение»", hud.advisor_panel.visible and hud.adv_skip.visible and hud.adv_title.text == StoryDefs.ADV_LEGION
-		and hud.adv_text.text.contains("Готового Легиона нет"))
-	check("стрелка на раздел «Легион»", hud.pointer_target == hud.cats["military"])
+	check("обучение не просит городские Казармы", lg.tut_step() == "" and not ui.tut_active())
+	check("нет совета о строительстве Казарм", not hud.advisor_panel.visible or hud.adv_title.text != StoryDefs.ADV_LEGION)
+	check("нет стрелки на скрытый раздел «Легион»", hud.pointer_target != hud.cats["military"] and not (hud.cats["military"].get_parent() as Control).visible)
 	await shot("tut1_barracks")
 	hud.advisor_panel.visible = false
 	# Д10: военный квартал и вне истории — здание Легиона в руках: «В военном квартале ✓» / «Можно и здесь» (совет, не правило)

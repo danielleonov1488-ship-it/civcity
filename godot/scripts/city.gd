@@ -81,6 +81,8 @@ var econ := 0
 ## «Уютный Рим» (docs/PLAN_COZY.md, этап 1): 0 — прежние правила, 1 — новая игра после переработки: ранги за качество
 ## и меньше жителей (Balance.LEVELS), повозка в большом городе реже, «Большой город» отнимает счастье (Balance)
 var cozy_v := 0
+var wants_v := 0                     # 1 — новые семьи с желанием и плавное счастье; старые файлы — 0
+var want_nature: Callable             # природные деревья и цветы из Game
 ## Только старые тестовые фикстуры; в сохранение не пишется.
 var auto_hire := false
 var worker_position: Callable
@@ -221,8 +223,13 @@ func _apron_refresh(b: Dictionary) -> void:
 					break
 
 
+func city_buildable(type: String) -> bool:
+	var d: Dictionary = Defs.B[type]
+	return d.get("kind", "") != "military" and d.get("cat", "") != "military"
+
+
 func unlocked(type: String) -> bool:
-	if legion_v >= 3 and cozy_v >= 1 and type in Legion.V3_HIDDEN:
+	if legion_v >= 3 and cozy_v >= 1 and not city_buildable(type):
 		return false                              # Легион 3.0: военные здания — в лагере, на карте города их нет
 	if gift_ready(type):
 		return true                               # подарок друга — ставится, даже если ещё не открыто
@@ -360,6 +367,9 @@ func house_room_text(b: Dictionary) -> String:
 func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 0, ignore_id := -1, pre := PackedInt32Array(), legacy := false) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	var res := {"err": "", "cells": PackedInt32Array(), "y": 0.0}
+	if ignore_id == -1 and not city_buildable(type):
+		res["err"] = "Военные постройки — только в форте"
+		return res
 	if not unlocked(type):
 		res["err"] = "Откроется %s" % Defs.unlock_text(unlock_id(type))
 		return res
@@ -520,6 +530,8 @@ static func _grid_near(g: Dictionary, p: Vector2, r: float) -> Array:
 
 ## Поставить постройку (деньги списываются); возвращает запись. free — даром и без проверок (готовый город)
 func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false) -> Dictionary:
+	if not free and not city_buildable(type):
+		return {}
 	place_gen += 1
 	var d: Dictionary = Defs.B[type]
 	if color < 0:
@@ -647,7 +659,7 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 		if int(pending[nm]["home"]) == int(b["id"]) and int(b["id"]) != moving_id:
 			var f: Dictionary = pending[nm]
 			pending.erase(nm)
-			arrivals.append({"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false)), "m": f.get("m", [])})
+			arrivals.append(waiting_save(f))
 	if quiet:
 		building_removed.emit(b)
 		return
@@ -937,6 +949,8 @@ func set_hire(b: Dictionary, n: int) -> void:
 
 ## Числа новых правил; старые сохранения сохраняют прежние значения.
 func base_happy(cls: String) -> int:
+	if wants_v >= 1 and cls == "plebs" and level < 2:
+		return 55                           # первые дома с лавкой еды — около 60%
 	return int(Defs.CLASSES[cls]["base"]) if cozy_v >= 1 else int({"plebs": 44, "artisans": 41, "patricians": 38}[cls])
 
 
@@ -953,7 +967,8 @@ func shop_needed(h: Dictionary, d: Dictionary) -> bool:
 
 
 ## same_place — постройки и земля те же: проверки места перестройки — из запаса.
-func compute(same_place := false) -> void:
+## instant_homes — этаж или перестройка: этим домам сразу показываем новый результат.
+func compute(same_place := false, instant_homes: Array = []) -> void:
 	if not same_place:
 		place_gen += 1
 	var roster: Array = _staff_roster() if manual_hiring() else []
@@ -1073,6 +1088,8 @@ func compute(same_place := false) -> void:
 		h["monuments"] = 0.0
 	var hgrid := _grid(houses)
 	var dgrid := _grid(decor)
+	var want_buildings: Array = buildings.values()
+	var want_grid := _grid(want_buildings) if wants_v >= 1 else {}
 	for s in shops:
 		var d := def(s)
 		var r := shop_range(d)
@@ -1210,7 +1227,11 @@ func compute(same_place := false) -> void:
 		if size_p < 0:
 			parts.append(["Большой город", size_p])
 		var tr_sum := 0
-		for e: Array in trait_parts(h, crowd, near, types.size(), mon):   # «Уютный Рим», этап 4: черты семей
+		var want_near := []
+		if wants_v >= 1:
+			for wi: int in _grid_near(want_grid, h["pos"], 25.0):
+				want_near.append(want_buildings[wi])
+		for e: Array in trait_parts(h, crowd, near, types.size(), mon, want_near):   # «Уютный Рим», этап 4: черты семей
 			parts.append(e)
 			tr_sum += int(e[1])
 		var missing := []
@@ -1228,8 +1249,17 @@ func compute(same_place := false) -> void:
 		h["density"] = dens
 		h["missing"] = missing
 		h["happy_parts"] = parts
-		h["happy"] = clampi(hp, 0, 200)
-		happy_sum += clampf(hp, 0.0, 100.0) * int(h["pop"])
+		h["happy_target"] = clampi(hp, 0, 200)
+		if wants_v < 1 or int(h["pop"]) <= 0 or int(h["id"]) in instant_homes:
+			h["happy"] = h["happy_target"]
+			if float(h["happy"]) >= 45.0:
+				h["unhappy_h"] = 0
+			if float(h["happy"]) >= 25.0:
+				h["down"] = 0
+		var adjustment := int(h["happy"]) - int(h["happy_target"])
+		if adjustment != 0:
+			parts.append(["Привыкают к переменам", adjustment])
+		happy_sum += clampf(float(h["happy"]), 0.0, 100.0) * int(h["pop"])
 		pop += int(h["pop"])
 		var w := float(int(h["pop"]))
 		sums["w"] += w
@@ -1240,6 +1270,7 @@ func compute(same_place := false) -> void:
 		sums["fest"] += fb * w
 		sums["story"] = float(sums.get("story", 0.0)) + st_sum * w
 		sums["visit"] = float(sums.get("visit", 0.0)) + vis_sum * w
+		sums["smooth"] = float(sums.get("smooth", 0.0)) + adjustment * w
 		sums["traits"] = float(sums.get("traits", 0.0)) + tr_sum * w
 		sums["ren"] = float(sums.get("ren", 0.0)) + ren * w
 		sums["tax"] = float(sums.get("tax", 0.0)) + tx * w
@@ -1247,7 +1278,7 @@ func compute(same_place := false) -> void:
 		sums["crowd"] += dens * w
 		sums["size"] = float(sums.get("size", 0.0)) + size_p * w
 		sums["miss"] += -missing.size() * missing_penalty() * w
-		sums["clip"] = float(sums.get("clip", 0.0)) + (clampf(hp, 0.0, 100.0) - hp) * w   # счастье дома — от 0 до 100%
+		sums["clip"] = float(sums.get("clip", 0.0)) + (clampf(float(h["happy"]), 0.0, 100.0) - hp - adjustment) * w   # счастье дома — от 0 до 100%
 	# счастье города — среднее по жителям, округлённое; его слагаемые округляем так, чтобы в сумме вышло
 	# ровно оно (заголовок подсказки «Счастье города: N%» и строки под ним всегда сходятся)
 	var city_happy := roundi(happy_sum / pop) if pop > 0 else 0
@@ -1255,7 +1286,7 @@ func compute(same_place := false) -> void:
 	if float(sums["w"]) > 0.0:
 		var wt: float = sums["w"]
 		var rows := [["Основа", "base", true], ["Лавки", "shops", true], ["Украшения", "deco", true], ["Памятники", "mon", false],
-				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Походы в храм, термы, на зрелища", "visit", false], ["Черты семей", "traits", false], ["Почёт города", "ren", false], ["Налоги", "tax", false], ["Жалованье не плачено", "unpaid", false], ["Теснота", "crowd", false], ["Большой город", "size", false], ["Нет нужных лавок", "miss", false], ["", "clip", false]]
+				["Праздник: игры в честь богов", "fest", false], ["Истории горожан", "story", false], ["Походы в храм, термы, на зрелища", "visit", false], ["Желания семей" if wants_v >= 1 else "Черты семей", "traits", false], ["Почёт города", "ren", false], ["Налоги", "tax", false], ["Жалованье не плачено", "unpaid", false], ["Теснота", "crowd", false], ["Большой город", "size", false], ["Нет нужных лавок", "miss", false], ["Привыкают к переменам", "smooth", false], ["", "clip", false]]
 		var fv := []
 		var vi := []
 		var acc := 0
@@ -1926,6 +1957,9 @@ func hist_series(key: String, n := 48) -> Array:
 ## Раз в игровой час: налоги, очки исследований, рост домов, переселенцы, уровень города
 func sim_day() -> void:
 	compute(true)
+	_happiness_hour()
+	if wants_v >= 1:
+		compute(true)
 	var income := 0.0
 	var upkeep := 0.0
 	var wages := 0.0
@@ -2023,6 +2057,41 @@ func sim_day() -> void:
 	changed.emit()
 
 
+## Награда: прибавка сразу к цели и показанному счастью, без промотки естественных перемен.
+func bump_happiness(b: Dictionary, delta: float) -> void:
+	if not is_house(b) or is_zero_approx(delta):
+		return
+	b["happy_target"] = clampf(float(b.get("happy_target", b["happy"])) + delta, 0.0, 200.0)
+	b["happy"] = clampf(float(b["happy"]) + delta, 0.0, 200.0)
+	if float(b["happy"]) >= 45.0:
+		b["unhappy_h"] = 0
+	if float(b["happy"]) >= 25.0:
+		b["down"] = 0
+
+
+## Только игровой час сглаживает естественные перемены; compute() время не продвигает.
+func _happiness_hour() -> void:
+	if wants_v < 1:
+		return
+	for b: Dictionary in buildings.values():
+		if not is_house(b) or int(b["pop"]) <= 0:
+			continue
+		b["happy"] = move_toward(float(b["happy"]), float(b.get("happy_target", b["happy"])), 5.0)
+		b["unhappy_h"] = int(b.get("unhappy_h", 0)) + 1 if float(b["happy"]) < 45.0 else 0
+
+
+func family_in_grace(f: Dictionary) -> bool:
+	return wants_v >= 1 and clock_h < int(f.get("grace_until", -1))
+
+
+func house_in_grace(b: Dictionary) -> bool:
+	return (b.get("families", []) as Array).any(func(f: Dictionary) -> bool: return family_in_grace(f))
+
+
+func unhappy_badge(b: Dictionary) -> bool:
+	return int(b.get("pop", 0)) > 0 and not house_in_grace(b) and float(b["happy"]) < 45.0 and int(b.get("unhappy_h", 0)) >= 3
+
+
 ## Час жизни дома. Сам дом больше не растёт: этаж покупает игрок (buy_floor), а несчастные семьи уезжают
 func _grow_house(b: Dictionary) -> void:
 	# несчастные уезжают
@@ -2032,7 +2101,15 @@ func _grow_house(b: Dictionary) -> void:
 			b["down"] = 0
 			var fams: Array = b["families"]
 			if not fams.is_empty():
-				var f: Dictionary = fams.pop_back()
+				var leave := -1
+				for i in range(fams.size() - 1, -1, -1):
+					if not family_in_grace(fams[i]):
+						leave = i
+						break
+				if leave < 0:
+					return
+				var f: Dictionary = fams[leave]
+				fams.remove_at(leave)
 				b["pop"] = maxi(0, int(b["pop"]) - int(f["n"]))
 				b.erase("_fam_" + str(f["name"]))
 				_event("Семья %s уехала: им плохо живётся" % f["name"], "person")
@@ -2113,7 +2190,7 @@ func buy_floor(b: Dictionary, quiet := false) -> bool:
 	flow("build", -float(floor_price(h)))
 	h["tier"] = int(h["tier"]) + 1
 	Chronicle.add(self, "floors")
-	compute()
+	compute(false, [int(h["id"])])
 	house_changed.emit(h, true)
 	if not quiet:
 		# надстроил сам игрок (карточка дома): всплывашка — да, число на колокольчике — нет
@@ -2183,7 +2260,8 @@ func upgrade_happy(b: Dictionary) -> int:
 	var c1: Dictionary = Defs.CLASSES[cl1]
 	var raw := 0
 	for p: Array in b.get("happy_parts", []):
-		raw += int(p[1])
+		if String(p[0]) != "Привыкают к переменам":
+			raw += int(p[1])
 	var deco1 := mini(int(c1.get("deco_max", 12)), int(floor(float(b.get("deco", 0.0)) * Defs.DECO_RATE)))
 	var tx0 := int(Defs.TAX_SET[tax_of(String(def(b)["cls"]))]["happy"])
 	var tx1 := int(Defs.TAX_SET[tax_of(cl1)]["happy"])
@@ -2583,7 +2661,7 @@ func upgrade_house(b: Dictionary, quiet := false) -> bool:
 	if apron_of(h) == 2:
 		land.wear_block[int(h["id"])] = true
 		_apron_refresh(h)
-	compute()
+	compute(false, [int(h["id"])])
 	h["_upg"] = true                           # game: леса и рабочие, жители — в новом классе
 	h["_old_cells"] = old                      # game → People: сетка ходьбы и под прежним обликом
 	house_changed.emit(h, true)
@@ -2703,10 +2781,23 @@ func _arrive_gate(why: String) -> void:
 
 
 ## Свободные этажи по классам, за вычетом ждущих и уже направленных к дому семей.
+func arrival_class_open(cls: String) -> bool:
+	var type := String(Defs.CLASSES[cls]["house"])
+	if not unlocked(type):
+		return false
+	if wants_v >= 1:
+		var rid := String(Defs.B[type].get("unlock", ""))
+		if rid != "" and (not research.has(rid) or level < int(Defs.research(rid).get("lvl", 0))):
+			return false
+		if cls == "patricians" and int(stats.get("pop", 0)) < 40:
+			return false
+	return true
+
+
 func fit_by_class() -> Dictionary:
 	var out := {}
 	for cl in Defs.CLASS_ORDER:
-		if unlocked(Defs.CLASSES[cl]["house"]):
+		if arrival_class_open(String(cl)):
 			out[cl] = 0
 	var free := _free_rooms()
 	for id in free:
@@ -2721,7 +2812,7 @@ func _free_rooms() -> Dictionary:
 	var free := {}
 	for id in buildings:
 		var b: Dictionary = buildings[id]
-		if is_house(b) and unlocked(Defs.CLASSES[def(b)["cls"]]["house"]):
+		if is_house(b) and arrival_class_open(String(def(b)["cls"])):
 			free[id] = house_free_floors(b)
 	var wait := arrivals.duplicate()
 	wait.sort_custom(func(x, y): return int(x["n"]) > int(y["n"]))      # большие семьи — первыми
@@ -2911,7 +3002,10 @@ func new_family(cls: String) -> Dictionary:
 	if name == "":
 		name = "%s %d" % [Defs.FAMILIES[rng.randi() % Defs.FAMILIES.size()], rng.randi() % 1000]
 	var roll := rng.randf()
-	return {"name": name, "n": 2 if roll < 0.25 else (3 if roll < 0.70 else 4), "cls": cls}
+	var f := {"name": name, "n": 2 if roll < 0.25 else (3 if roll < 0.70 else 4), "cls": cls}
+	if wants_v >= 1:
+		f["want"] = FamilyWant.random_id(rng)
+	return f
 
 
 ## Семья сошла с повозки (или осталась без дома) и ждёт на площади
@@ -2930,6 +3024,7 @@ func family_arrived(f: Dictionary, from_cart := true) -> void:
 		if a["name"] == f["name"]:
 			return
 	var af := {"name": f["name"], "n": int(f["n"]), "cls": f["cls"], "back": back}
+	copy_family_state(f, af)
 	if typeof(f.get("m")) == TYPE_ARRAY and not (f["m"] as Array).is_empty():
 		af["m"] = f["m"]                     # члены семьи с именами (Residents) — те же, что сошли с повозки
 	arrivals.append(af)
@@ -2996,6 +3091,7 @@ func assign(name: String, home: int) -> bool:
 	var b: Dictionary = buildings[home]
 	b["coming"] = int(b.get("coming", 0)) + int(f["n"])
 	pending[name] = {"name": name, "n": f["n"], "cls": f["cls"], "home": home, "back": bool(f.get("back", false)), "m": f.get("m", [])}
+	copy_family_state(f, pending[name])
 	family_assigned.emit(name, home)
 	arrivals_changed.emit()
 	changed.emit()
@@ -3020,7 +3116,15 @@ func settled(id: int, n: int, name := "") -> int:
 	if not back:
 		settled_total += 1                 # семья, что уже жила в городе и переезжает снова, — не новая
 		Chronicle.add(self, "people", n)
+	var was_empty := int(b["pop"]) <= 0
+	var fresh := not back or bool(known.get("new_family", false))
 	var fam := {"name": name, "n": n}
+	copy_family_state(known, fam)
+	if wants_v >= 1:
+		if not fam.has("want") and not back:
+			fam["want"] = FamilyWant.random_id(rng)
+		if not fam.has("grace_until") and not back:
+			fam["grace_until"] = clock_h + 24
 	if pm.size() >= n:
 		fam["m"] = pm.slice(0, n)          # члены семьи с именами (Residents); кто вошёл — уточнит People при входе
 	if manual_hiring():
@@ -3030,6 +3134,11 @@ func settled(id: int, n: int, name := "") -> int:
 	(b["families"] as Array).append(fam)
 	b["pop"] = int(b["pop"]) + n
 	compute(true)
+	if wants_v >= 1 and was_empty and fresh:
+		b["happy"] = maxi(60, int(b["happy_target"]))
+		b["unhappy_h"] = 0
+		b["down"] = 0
+		compute(true)
 	_check_goals()
 	house_changed.emit(b, false)
 	changed.emit()
@@ -3185,6 +3294,7 @@ func take_resident(pick: Dictionary = {}) -> Dictionary:
 		fams.erase(fam)
 		b.erase("_fam_" + fname)
 	var out := {"name": Residents.full_name(m, fname), "job": String(pk["job"]), "cls": String(pk["cls"]), "fam": fname, "m": m}
+	copy_family_state(fam, out)
 	m.erase("job")
 	resident_taken.emit(int(b["id"]), fname, m)
 	compute(true)
@@ -3219,6 +3329,7 @@ func return_resident(res: Dictionary) -> bool:
 			if not target.is_empty():
 				break
 	var returned := {"name": nm, "n": 1, "cls": cls, "back": true, "m": [m], "home": home, "joining": not target.is_empty(), "on_way": on_way}
+	copy_family_state(res, returned)
 	if not target.is_empty():
 		var members := Residents.fit(target, hash([nm, home]), cls)
 		members.append(m)
@@ -3265,12 +3376,15 @@ func note_visit(home: int, kind: String) -> void:
 
 ## Черты семей дома (Balance.TRAITS) — каждая черта один раз на дом: [[строка, %], …]. crowd — соседей рядом,
 ## near — украшения рядом ([вид, очки]), n_shops — разных лавок у дома, mon — памятники рядом (вид → бонус)
-func trait_parts(h: Dictionary, crowd: int, near: Array, n_shops: int, mon: Dictionary) -> Array:
+func trait_parts(h: Dictionary, crowd: int, near: Array, n_shops: int, mon: Dictionary, want_near: Array = []) -> Array:
 	var out := []
 	if cozy_v < 1:
 		return out
 	var tr := {}
 	for f: Dictionary in h.get("families", []):
+		if f.has("want"):
+			out.append_array(FamilyWant.parts(self, h, f, want_near))
+			continue
 		for t in Balance.traits_of(String(f["name"])):
 			tr[t] = true
 	if tr.is_empty():
@@ -3965,24 +4079,44 @@ func _story_hour() -> void:
 		stories["tax_off"] = int(stories["tax_off"]) - 1     # день отдыха: часы без налогов тают
 
 
+## Общий путь наград и явных фикстур: бонус записан, его прибавка видна сразу.
+func add_story_bonus(b: Dictionary) -> void:
+	if b.has("at"):
+		b["_live"] = Stories.square_live_pct(self, b)
+	(stories["bonus"] as Array).append(b)
+	if wants_v >= 1:
+		for h: Dictionary in buildings.values():
+			if is_house(h):
+				bump_happiness(h, float(_story_bonus_value(h, b)))
+
+
+## Одни условия для строки счастья и мгновенной прибавки награды.
+func _story_bonus_value(h: Dictionary, b: Dictionary) -> int:
+	if b.has("fam"):                       # семье: переехала — бонус с ней
+		var found := false
+		for f: Dictionary in h.get("families", []):
+			if String(f["name"]) == String(b["fam"]):
+				found = true
+		if not found:
+			return 0
+	elif b.has("home"):
+		if int(b["home"]) != int(h["id"]):
+			return 0
+	elif b.has("cls"):
+		if String(def(h).get("cls", "")) != String(b["cls"]):
+			return 0
+	elif b.has("x"):
+		if (h["pos"] as Vector2).distance_to(Vector2(float(b["x"]), float(b["z"]))) > float(b.get("r", 0.0)):
+			return 0
+	return int(b.get("_live", b.get("pct", 0))) if b.has("at") else int(b.get("pct", 0))
+
+
 ## Слагаемые счастья дома h от историй: [[строка, %], …] (семье, дому, соседям в радиусе, всем)
 func story_parts(h: Dictionary) -> Array:
 	var out := []
 	for b: Dictionary in stories["bonus"]:
-		var ok := true
-		if b.has("fam"):                       # семье: переехала — бонус с ней
-			ok = false
-			for f: Dictionary in h.get("families", []):
-				if String(f["name"]) == String(b["fam"]):
-					ok = true
-		elif b.has("home"):
-			ok = int(b["home"]) == int(h["id"])
-		elif b.has("cls"):
-			ok = String(def(h).get("cls", "")) == String(b["cls"])   # всем домам сословия (лабиринт — патрициям)
-		elif b.has("x"):
-			ok = (h["pos"] as Vector2).distance_to(Vector2(float(b["x"]), float(b["z"]))) <= float(b.get("r", 0.0))
-		var pct := int(b.get("_live", b.get("pct", 0))) if b.has("at") else int(b.get("pct", 0))
-		if not ok or pct == 0:
+		var pct := _story_bonus_value(h, b)
+		if pct == 0:
 			continue                           # меньше нуля — тоже строка: копоть после пожара (этап 7b)
 		var line := String(b.get("line", "История горожан"))
 		var left := int(b.get("left", -1))
@@ -4114,6 +4248,19 @@ static func cat_items_load(e: Dictionary, out: Dictionary) -> void:
 
 # ---------- сохранение ----------
 
+## Желание и срок защиты переживают дорогу, снос дома и сохранение.
+static func copy_family_state(source: Dictionary, target: Dictionary) -> void:
+	for key: String in ["want", "grace_until"]:
+		if source.has(key):
+			target[key] = source[key]
+
+
+static func waiting_save(f: Dictionary) -> Dictionary:
+	var out := {"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false)), "m": f.get("m", [])}
+	copy_family_state(f, out)
+	return out
+
+
 func save_data() -> Dictionary:
 	if manual_hiring():
 		_staff_roster()  # штат — по сохранённым назначениям жителей
@@ -4123,6 +4270,10 @@ func save_data() -> Dictionary:
 		var e := {"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
 			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": hired_of(b) if manual_hiring() else b.get("hire", -1),
 			"born": int(b.get("born", id)), "cells": _cells64(b["cells"])}
+		if wants_v >= 1 and is_house(b):
+			e["happy"] = b["happy"]
+			e["unhappy_h"] = int(b.get("unhappy_h", 0))
+			e["down"] = int(b.get("down", 0))
 		if b.has("gift"):
 			e["gift"] = String(b["gift"])
 		if b.has("kw"):
@@ -4131,12 +4282,12 @@ func save_data() -> Dictionary:
 			e["sz"] = int(b["sz"])
 		bl.append(e)
 	return {"money": money, "rp": rp, "day": day, "level": level, "research": research.keys(), "buildings": bl, "next_id": next_id,
-		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return {"name": f["name"], "n": f["n"], "cls": f["cls"], "back": bool(f.get("back", false)), "m": f.get("m", [])}),
+		"goals": goals_done, "arrivals": arrivals + pending.values().map(func(f): return waiting_save(f)),
 		# семьи в повозке (и те, за кем она едет) — числом: после загрузки повозка привезёт их заново
 		"incoming": incoming, "arrivals_paused": arrivals_paused,
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n, "goals_vis": goals_vis,
-		"econ_v": econ, "cozy_v": cozy_v, "legion_v": legion_v, "clock_h": clock_h, "renown": renown, "cal_fest_id": cal_fest_id, "cal_fest_day": cal_fest_day, "visits": visits, "gifts": gifts.duplicate(true), "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
+		"wants_v": wants_v, "econ_v": econ, "cozy_v": cozy_v, "legion_v": legion_v, "clock_h": clock_h, "renown": renown, "cal_fest_id": cal_fest_id, "cal_fest_day": cal_fest_day, "visits": visits, "gifts": gifts.duplicate(true), "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
 
@@ -4164,6 +4315,7 @@ func load_data(d: Dictionary) -> void:
 	arrivals = []
 	for f in d.get("arrivals", []):
 		var af := {"name": f["name"], "n": int(f["n"]), "cls": f.get("cls", "plebs"), "back": bool(f.get("back", false)) or int(f["n"]) < 2 or int(f["n"]) > 4}
+		copy_family_state(f, af)
 		if typeof(f.get("m")) == TYPE_ARRAY and not (f["m"] as Array).is_empty():
 			af["m"] = f["m"]
 			Residents.fit(af, hash([String(af["name"]), -1]))    # члены семьи из сохранения (числа — целыми)
@@ -4186,6 +4338,7 @@ func load_data(d: Dictionary) -> void:
 	# старые сохранения — без econ_v: счастье по прежним правилам (лавки и украшения без «повторов»), пока владелец не скажет «да»
 	econ = int(d.get("econ_v", 0))
 	cozy_v = int(d.get("cozy_v", 0))
+	wants_v = int(d.get("wants_v", 0))
 	legion_v = int(d.get("legion_v", 0))
 	clock_h = int(d.get("clock_h", 0))
 	renown = float(d.get("renown", 0.0))
@@ -4250,6 +4403,10 @@ func load_data(d: Dictionary) -> void:
 			"cells": cells, "pop": int(bd["pop"]), "families": bd.get("families", []), "happy": 50, "up": 0, "down": 0, "staff": 1.0,
 			"active": true, "road": true, "needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0,
 			"born": int(bd.get("born", bd["id"]))}         # старые сохранения: порядок постройки — по номеру
+		if wants_v >= 1:
+			b["happy"] = clampf(float(bd.get("happy", 50)), 0.0, 200.0)
+			b["unhappy_h"] = maxi(0, int(bd.get("unhappy_h", 0)))
+			b["down"] = maxi(0, int(bd.get("down", 0)))
 		if int(bd.get("kw", 0)) == 1:
 			b["kw"] = 1
 		if int(bd.get("sz", 0)) > 0:

@@ -475,7 +475,7 @@ func _api() -> void:
 	_check(city.unlocked("barracks") and not city.unlocked("range"), "Казармы — исследованием «Легион», Стрельбище — «Стрельбищем»")
 	_check(not city.unlocked("spearcamp") and Defs.unlock_text("boss1").contains("Атаман"), "Лагерь копейщиков закрыт до первого босса: " + Defs.unlock_text("boss1"))
 	# обучение: шаги выводятся из состояния игры
-	_check(L.tut_step() == "barracks", "обучение, шаг 1 — Казармы: «%s»" % L.tut_step())
+	_check(L.tut_step() == "", "обучение не просит строить Казармы в городе: «%s»" % L.tut_step())
 	var p := Land.CENTER + Vector2(14, 12)
 	city.place("barracks", p, 0.0, 0, -1, true)
 	_check(L.tut_step() == "medal", "шаг 2 — медальон: «%s»" % L.tut_step())
@@ -483,7 +483,7 @@ func _api() -> void:
 	_check(L.tut_step() == "fight", "шаг 3 — учебный бой: «%s»" % L.tut_step())
 	_check(L.available("legionary") and not L.available("archer"), "легионеры доступны с Казармами, лучники — нет: " + L.unit_lock_text("archer"))
 	var chk := city.check_place("barracks", p + Vector2(30, 0), 0.0)
-	_check(String(chk["err"]) == "Такая постройка в городе уже есть", "вторые Казармы нельзя: " + String(chk["err"]))
+	_check(String(chk["err"]) == "Военные постройки — только в форте", "новые городские Казармы нельзя: " + String(chk["err"]))
 	# лес, три места — загадка на выбор отряда: «Лучший состав» под бой — с лучником против пращников, три легионера
 	# против волков и шайки (учебный бой — на трёх легионерах); «не тот» отряд — честное предупреждение в шансах и совет
 	_check(L.squad_hint(L.stage_info(0, 0, 1)).contains("Стрельбище"), "без Стрельбища: «%s»" % L.squad_hint(L.stage_info(0, 0, 1)))

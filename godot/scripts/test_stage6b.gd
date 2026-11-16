@@ -271,6 +271,8 @@ func _new() -> void:
 	check(JSON.stringify(h3["families"]) == fam0 and int(h3["color"]) == col0, "семьи и цвет фасада — прежние")
 	check(absf(m0 - c.money - 1200.0) < 0.5, "списано 1200 ден.", m0 - c.money)
 	check(_raw(h3) == promise, "счастье после перестройки — как обещал прогноз (%d)" % promise, _raw(h3))
+	check(int(h3["happy"]) == promise and int(h3.get("happy_target", -1)) == promise,
+		"перестройка сразу меняет и показанное счастье, и цель", [h3["happy"], h3.get("happy_target")])
 	check(int(h3["pop"]) == 12 and c.house_cap(h3) == 12 and c.house_free_floors(h3) == 0, "3 семьи занимают 3 этажа, никто не выселен", [h3["pop"], c.house_cap(h3)])
 	check(c.settled(id3, 2, "Новые") == 0, "в тесный дом новая семья не въезжает")
 	c.upgrades_done([id3], 1200)

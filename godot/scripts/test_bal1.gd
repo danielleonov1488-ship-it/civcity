@@ -205,6 +205,7 @@ func _run_ui() -> void:
 		_finish()
 		return
 	var c: City = game.city
+	c.wants_v = 0  # прежняя фикстура; CITY5a — test_city5a
 	var hud: Hud = game.hud
 	c.cozy_v = 1
 	c.money = 1000000.0

@@ -297,6 +297,7 @@ func _ready() -> void:
 	land = Land.new()
 	MeadowNature.prepare(land)                # ложбины ручьёв считаются в фоне, пока грузится город
 	city = City.new(land)
+	city.want_nature = _want_nature_near
 	parts = Parts.new()
 	parts.tint_split = Parts.split_on           # одинаковые детали разных цветов — один MultiMesh (12.11, скорость)
 	add_child(parts)
@@ -373,6 +374,7 @@ func _ready() -> void:
 		city.tips["v22_pace"] = true             # новая игра — сразу по новым правилам, объяснять перемены не нужно
 		if mode in ["play", "new"]:
 			city.econ = 1                        # и экономика v2: повторы лавок и украшений дают меньше (City.econ)
+			city.wants_v = 1                     # CITY5a: желания, плавное счастье и защита новосёлов
 			city.cozy_v = 1                      # и «Уютный Рим»: ранги за качество, медленный рост (Balance)
 			city.decor_v = 1                     # и украшения этапа 5: часть прежних обликов — в наборах позже (Q17)
 			if args.get("legion", "3") != "0":   # legion=0 — проверки прежнего Легиона в новой игре (test_hero)
@@ -1451,6 +1453,18 @@ func nature_at(p: Vector2) -> Dictionary:
 					bd = d
 					best = it
 	return best
+
+
+func _want_nature_near(pos: Vector2, radius: float, id: String) -> bool:
+	for z in range(floori((pos.y - radius) / 2.0), floori((pos.y + radius) / 2.0) + 1):
+		for x in range(floori((pos.x - radius) / 2.0), floori((pos.x + radius) / 2.0) + 1):
+			for it: Dictionary in nature.get(Vector2i(x, z), []):
+				if pos.distance_to(it["p"]) > radius:
+					continue
+				var nm := String(it["name"]).to_lower()
+				if (id == "trees" and (nm.contains("tree") or nm.contains("pine"))) or (id == "flowers" and nm.contains("flower")):
+					return true
+	return false
 
 
 func remove_nature(it: Dictionary) -> void:
@@ -5648,6 +5662,9 @@ func _build_here() -> void:
 				b["tier"] = int(moving["tier"])   # здание Легиона: облик — по нынешнему уровню (city.place уже посчитал; улучшение могло кончиться в руках)
 			b["pop"] = int(moving["pop"])
 			b["families"] = moving["families"]
+			for key: String in ["happy", "unhappy_h", "down"]:
+				if moving.has(key):
+					b[key] = moving[key]
 			var h0: Dictionary = moving.get("happy0", {})
 			_moved(b)
 			moving = {}

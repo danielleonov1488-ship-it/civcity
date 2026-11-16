@@ -401,11 +401,11 @@ func _hidden() -> void:
 		if c.unlocked(t) or String(c.check_place(t, Land.START + Vector2(0, 60), 0.0)["err"]) == "":
 			bad.append(t)
 	_check(bad.is_empty() and Legion.V3_HIDDEN.size() == 10, "десять военных зданий закрыты: %s" % [bad])
-	_check(c.unlocked("sawmill") and c.unlocked("smelter") and c.unlocked("tannery"), "мастерские остались в городе")
+	_check(not c.unlocked("sawmill") and not c.unlocked("smelter") and not c.unlocked("tannery"), "мастерские доступны только в форте")
 	var c0 := _town(1, 0)
 	c0.research["legion"] = true
 	c0.level = 3
-	_check(c0.unlocked("barracks") and c0.unlocked("forge"), "старый город: казармы и кузница открыты")
+	_check(c0.unlocked("barracks") and c0.unlocked("forge") and not c0.city_buildable("barracks") and not c0.city_buildable("forge"), "старый город: здания и исследования сохранены, новая стройка закрыта")
 
 
 func _save() -> void:

@@ -1,5 +1,5 @@
 extends RefCounted
-## Черты уже участвуют в счастье. Все положительные черты дают одинаковые +3%.
+## Новые семьи показывают одно желание; черты сохранены для прежних семей.
 
 const LOOK := {
 	"crowd": ["family", "много соседей"],
@@ -16,7 +16,13 @@ const LOOK := {
 }
 
 
+static func look(f: Dictionary) -> Array:
+	return FamilyWant.LOOK.get(String(f["want"]), ["housing", "свободный дом"]) if f.has("want") else LOOK.get(main(f), ["housing", "свободный дом"])
+
+
 static func main(f: Dictionary) -> String:
+	if f.has("want"):
+		return String(f["want"])
 	var traits: Array = Balance.traits_of(String(f.get("name", "")))
 	for t: String in traits:
 		if Balance.TRAITS[t].has("ok"):
@@ -27,6 +33,8 @@ static func main(f: Dictionary) -> String:
 static func effects(city: City, h: Dictionary, f: Dictionary) -> Array:
 	if city.cozy_v < 1 or h.is_empty() or f.is_empty():
 		return []
+	if f.has("want"):
+		return FamilyWant.parts(city, h, f)
 	var tr_id := main(f)
 	if tr_id == "":
 		return []
@@ -47,6 +55,8 @@ static func effects(city: City, h: Dictionary, f: Dictionary) -> Array:
 
 
 static func matches(city: City, h: Dictionary, f: Dictionary) -> bool:
+	if f.has("want"):
+		return FamilyWant.matches(city, h, String(f["want"]))
 	var tr_id := main(f)
 	if tr_id == "" or city.cozy_v < 1 or h.is_empty() or f.is_empty():
 		return false
@@ -60,6 +70,9 @@ static func matches(city: City, h: Dictionary, f: Dictionary) -> bool:
 
 
 static func tooltip(city: City, h: Dictionary, f: Dictionary) -> String:
+	if f.has("want"):
+		var id := String(f["want"])
+		return "Хотят: %s\n%s\n%s" % [look(f)[1], FamilyWant.HELP.get(id, ""), "Выполнено: +5% к счастью дома" if matches(city, h, f) else "Пока не выполнено: без штрафа"]
 	var lines := []
 	var parts := effects(city, h, f)
 	for tr_id: String in Balance.traits_of(String(f.get("name", ""))):

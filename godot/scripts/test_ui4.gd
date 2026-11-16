@@ -87,6 +87,7 @@ func _run() -> void:
 	get_window().size = Vector2i(1440, 900)
 	hud = game.hud
 	city = game.city
+	city.wants_v = 0  # прежняя фикстура; CITY5a — test_city5a
 	city.cozy_v = 1
 	city.auto_hire = false
 	city.level = 5
@@ -234,12 +235,14 @@ func _check_badges(isolated: Dictionary, no_workers: Dictionary, ready: Dictiona
 	for entry: Dictionary in hud.badges.values():
 		var badge: Badge = entry["n"]
 		counts[badge.kind] = int(counts.get(badge.kind, 0)) + 1
-	for kind: String in ["family_waiting", "house_problem", "floor_ready", "no_road", "no_workers"]:
+	for kind: String in ["family_waiting", "house_problem", "no_road", "no_workers"]:
 		check(int(counts.get(kind, 0)) > 0, "badge count " + kind)
 		print("UI4 BADGES ", kind, "=", int(counts.get(kind, 0)))
-	for pair: Array in [[isolated, "road"], [no_workers, "no_workers"], [ready, "up"], [bare, "house_problem"]]:
+	for pair: Array in [[isolated, "road"], [no_workers, "no_workers"], [bare, "house_problem"]]:
 		var key := "b%d" % int(pair[0]["id"])
 		check(hud.badges.has(key) and hud.badges[key]["icon"] == pair[1], "correct badge " + String(pair[1]))
+	check(not hud.badges.has("b%d" % int(ready["id"])) and not hud.badges.values().any(func(e: Dictionary) -> bool: return e["icon"] == "up"), "ready house has no permanent floor arrow")
+	check(hud.floor_badge.text == str(city.floor_ready(false).size()), "floor readiness remains on button")
 	var family_key := "fam_" + String(waiting["name"])
 	check(hud.badges.has(family_key), "waiting family badge")
 	if hud.badges.has(family_key):

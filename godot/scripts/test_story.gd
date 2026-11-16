@@ -470,8 +470,7 @@ func _legion3() -> void:
 	var mtab := hud.cats["military"].get_parent() as Control
 	check(not mtab.visible, "раздел «Легион» на нижней полосе скрыт (мастерских ещё нет)")
 	var inside: Array = hud._types_in("military")
-	check(not inside.has("barracks") and not inside.has("forge") and not inside.has("mars") and inside.has("smelter") and inside.has("sawmill") and inside.has("tannery"),
-		"в разделе только мастерские города: %s" % [inside])
+	check(inside.is_empty(), "военных построек в городском каталоге нет: %s" % [inside])
 	# 50 жителей: лагерь открыт, одно сообщение, карточка советника, кнопка «Лагерь»
 	var more := 0
 	while int(c.stats["pop"]) < 54 and more < 30:
@@ -497,30 +496,13 @@ func _legion3() -> void:
 	c.level = 2
 	hud.refresh()
 	var mtab2 := hud.cats["military"].get_parent() as Control
-	check(mtab2.visible, "раздел «Легион»: с мастерскими виден")
-	hud._toggle_cat("military")
-	await frames(4)
-	var first := hud.tray_grid.get_child(0) as Button
-	var lbl_txt := ""
-	for l in first.find_children("*", "Label", true, false):
-		lbl_txt += (l as Label).text
-	var types_shown := []
-	for b in hud.tray_grid.get_children():
-		if b.has_meta("type"):
-			types_shown.append(String(b.get_meta("type")))
-	check(first.name == "camp_hint" and lbl_txt.contains("кнопка «Легион» наверху") and (types_shown == ["smelter", "sawmill"] or types_shown == ["smelter", "sawmill", "tannery"]),
-		"первая карточка — про Лагерь («%s»), дальше мастерские %s" % [lbl_txt, types_shown])
-	first.pressed.emit()
-	await frames(3)
+	check(not mtab2.visible and hud._types_in("military").is_empty(), "даже с открытым лагерем городской вкладки Легиона нет")
 	var lu := LegionUi.of(hud)
-	check(camp_ui.visible and not lu.visible, "щелчок по карточке открывает Лагерь, не старое окно")
-	camp_ui.close()
-	hud._toggle_cat("military")
 	# карточка мастерской и медальон не открывают старое окно
 	var sm := put("smelter", Vector2(176, 160))
 	if sm.is_empty():
-		sm = c.place("smelter", Vector2(176, 170), 0.0)
-	check(not sm.is_empty(), "мастерская (плавильня) ставится в городе")
+		sm = c.place("smelter", Vector2(176, 170), 0.0, 0, 0, true)
+	check(not sm.is_empty(), "плавильня старого сохранения доступна для осмотра")
 	if not sm.is_empty():
 		hud.open_info(sm)
 		await frames(3)
@@ -934,6 +916,7 @@ func _search_and_find() -> void:
 	check((S["done"] as Dictionary).is_empty(), "ещё не нашли")
 	var rp0 := c.rp
 	var happy0 := int(kid_home["happy"])
+	var target0 := int(kid_home.get("happy_target", happy0))
 	game._mouse_pos = cp + Vector2(20, 8)
 	game._click()                        # щелчок по миру без инструмента (game._click → stories.try_click)
 	check((S["done"] as Dictionary).has("cat"), "щелчок в 22 точках — кошка найдена")
@@ -949,6 +932,7 @@ func _search_and_find() -> void:
 			line = "%s %+d" % [e[0], e[1]]
 	check(line.contains("+8") and line.contains("ещё 3"), "строка счастья дома: «%s»" % line)
 	check(int(kid_home["happy"]) == happy0 + 8 or int(kid_home["happy"]) >= 100, "счастье дома +8 (%d → %d)" % [happy0, int(kid_home["happy"])])
+	check(int(kid_home.get("happy_target", -1)) == mini(200, target0 + 8), "награда сразу прибавляет +8 и к цели счастья")
 	var crow := false
 	for e: Array in c.stats["happy_parts"]:
 		if String(e[0]) == "Истории горожан" and int(e[1]) > 0:
@@ -2274,6 +2258,10 @@ func _wedding() -> void:
 	# место — такое, где фонарь встал бы и у игрока (check_place): у домов из своего набора след шире, и точка у
 	# самой пары часто задевает стену соседа — тогда фонарь «ставился» на высоту 0 под землю и в луч не попадал.
 	# Чуть в сторону от луча (до 0,5 м: фонарь всё равно заслоняет пару) — если на самом луче места нет
+	var lamp_bp := c.blueprint({"type": "lamp_post", "tier": 1, "variant": 0, "color": 0})
+	var lamp_top := lamp_bp.top_y()
+	for lp: Vector3 in lamp_bp.lights:
+		lamp_top = maxf(lamp_top, lp.y + 0.25)
 	var lamp_p := Vector2.INF
 	var ray_n := Vector2(kl.x - kc.x, kl.z - kc.z).normalized().orthogonal()
 	var lamp_why := []
@@ -2287,7 +2275,7 @@ func _wedding() -> void:
 				continue
 			var ck: Dictionary = c.check_place("lamp_post", q, 0.0, 0, 0, -2)
 			var ly: float = ck["y"]
-			if ck["err"] == "" and ry > ly + 0.3 and ry < ly + 2.2:
+			if ck["err"] == "" and ry > ly + 0.3 and ry < ly + lamp_top:
 				lamp_p = q
 				break
 			lamp_why.append("%.2f/%+.1f: %s" % [t, off, ck["err"] if ck["err"] != "" else "луч на %.2f м" % (ry - ly)])
@@ -2295,6 +2283,7 @@ func _wedding() -> void:
 			break
 	if lamp_p == Vector2.INF:
 		print("  фонарю нет места на луче камеры: ", lamp_why)
+	check(lamp_p != Vector2.INF, "фонарю есть свободное место на луче камеры")
 	var lamp := {}
 	var lamp_l: Array = []
 	if lamp_p != Vector2.INF:
@@ -2735,13 +2724,14 @@ func _bandits() -> void:
 	c.money = 5000.0
 	var bar := {}
 	for yaw: float in [0.0, PI / 2.0, PI, -PI / 2.0]:
-		if String(c.check_place("barracks", qc, yaw)["err"]) == "":
-			bar = c.place("barracks", qc, yaw)
+		if String(c.check_place("barracks", qc, yaw, 0, 0, -3)["err"]) == "":
+			check(not c.city_buildable("barracks"), "новые Казармы в городе недоступны")
+			bar = c.place("barracks", qc, yaw, 0, 0, true)
 			game._show(bar)
 			break
 	check(not bar.is_empty() and float(Defs.B["barracks"]["cost"]) <= 600.0, "Казармы встают в середине квартала (%s), стоят %d ден." % [bar.get("pos"), int(Defs.B["barracks"]["cost"])])
 	if bar.is_empty():
-		bar = put("barracks", qc)
+		bar = c.place("barracks", qc, 0.0, 0, 0, true)
 	await look_at_pt(qc, 30.0)
 	await frames(20)
 	await shot("story_bandits_barracks.png")
@@ -3170,7 +3160,7 @@ func _crowded() -> void:
 	c.compute()
 	if int(c.buildings[int(h["id"])]["happy"]) < 75:
 		# не хватило — праздник у дома (как награда истории): проверке нужно 75%
-		(S["bonus"] as Array).append({"id": "t_happy", "line": "Проба", "pct": 75 - int(c.buildings[int(h["id"])]["happy"]) + 2, "home": int(h["id"]), "left": 200})
+		c.add_story_bonus({"id": "t_happy", "line": "Проба", "pct": 75 - int(c.buildings[int(h["id"])]["happy"]) + 2, "home": int(h["id"]), "left": 200})
 		c.compute()
 	sto.tick()
 	parts = sto.row_info().get("parts", [])

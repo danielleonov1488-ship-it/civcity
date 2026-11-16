@@ -172,6 +172,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.wants_v = 0  # прежняя фикстура; CITY5a — test_city5a
 	c.auto_hire = true  # прежняя фикстура
 	cover = game.cover
 	hud = game.hud
@@ -307,7 +308,7 @@ func _floor_tool() -> void:
 	hud.refresh()
 	var fb: Button = hud.tool_btns["floor"]
 	check((fb.get_node("ic") as CanvasItem).material == null, "после исследования кнопка цветная")
-	check(c.is_new("@floor") and pill_on(fb) and not hud.floor_badge.visible, "на кнопке «НОВОЕ» (число готовых — под ним спрятано)")
+	check(c.is_new("@floor") and not pill_on(fb) and hud.floor_badge.visible and hud.floor_badge.text == str(ready.size()), "число готовых видно до первого использования инструмента")
 	await shot("ux_floor_btn_new.png")
 	# советник один раз; пока открыто окно исследований (только что изучили) — ждёт, пока его закроют
 	c.tips.erase("floor_tool")
@@ -700,7 +701,7 @@ func _floor_mixed() -> void:
 
 ## Две стрелки друг на друге: под мышью — верхняя (её и видно); красные в мазке не в счёт
 func _badge_top() -> void:
-	game.set_tool("")
+	game.set_tool("floor")
 	var w := Vector3(182, game.land.height_at(182, 160) + 3.0, 160)
 	hud.set_badge("flt1", w, "up", false, "111")
 	hud.set_badge("flt2", w + Vector3(0.4, 0, 0), "up", true, "222")
@@ -712,6 +713,7 @@ func _badge_top() -> void:
 	check(hud.badge_at(p, "flt", true) == "flt1", "красная не в счёт — та, что под ней")
 	hud.clear_badge("flt1")
 	hud.clear_badge("flt2")
+	game.set_tool("")
 
 
 # ---------- выйти: Esc, правая кнопка, U ----------

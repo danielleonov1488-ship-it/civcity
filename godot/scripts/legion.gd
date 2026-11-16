@@ -3357,7 +3357,7 @@ func tut_step() -> String:
 	if free_mode or String(flags.get("tut", "")) == "done" or not window_open():
 		return ""
 	if count_type("barracks") == 0:
-		return "barracks"
+		return ""                               # строить Казармы в городе больше не просим
 	if not flags.has("seen"):
 		return "medal"
 	if progress == 0 and not flags.has("tut_fought"):
@@ -4766,6 +4766,7 @@ func recruit_resident(pick: Dictionary = {}) -> Dictionary:
 	var s := _add_soldier({"name": String(r["name"]), "from": "%s, %s %s" % [String(r["name"]), "была" if int(m.get("sx", 0)) == 1 else "был", _was_text(String(r["job"]), int(m.get("sx", 0)) == 1)],
 		"cls": "legionary", "stars": quality})
 	s["res"] = {"fam": String(r["fam"]), "cls": String(r["cls"]), "m": m}
+	City.copy_family_state(r, s["res"])
 	_v3_reclass(s)
 	changed.emit()
 	daily_note("recruit")
