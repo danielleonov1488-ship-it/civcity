@@ -88,11 +88,11 @@ const PLOT_GROW := 1.3
 ## base — счастье дома без лавок и украшений; deco_max — сколько могут дать украшения (см. City.compute)
 const CLASSES := {
 	"plebs": {"name": "Плебеи", "one": "Плебеи", "icon": "person", "house": "house_pleb", "tax": 1.2, "per_floor": 4, "work": 0.5,
-		"needs": ["food"], "base": 40, "deco_max": 12},
+		"needs": ["food"], "base": 44, "deco_max": 12},
 	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 2.2, "per_floor": 4, "work": 0.5,
-		"needs": ["food", "clothes", "fun"], "base": 37, "deco_max": 14},
+		"needs": ["food", "clothes", "fun"], "base": 40, "deco_max": 14},
 	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 4.5, "per_floor": 4, "work": 0.35,
-		"needs": ["food", "clothes", "fun", "services", "goods"], "base": 34, "deco_max": 16},
+		"needs": ["food", "clothes", "fun", "services", "goods"], "base": 36, "deco_max": 16},
 }
 const CLASS_ORDER := ["plebs", "artisans", "patricians"]
 ## повозка с новыми семьями — раз в столько игровых часов (по уровню города); счастье города ускоряет (ARRIVE_FAST)

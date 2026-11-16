@@ -70,7 +70,7 @@ func _model() -> void:
 	check(City.shop_parts(shops, scores, 1, "artisans").size() == 2, "artisans count clothes and fun only")
 	check(City.shop_parts(shops, scores, 1, "patricians").size() == 3, "patricians count all three categories")
 	check(City.shop_parts(shops, scores, 1).size() == 3, "legacy shop calculation stays unfiltered")
-	check(c.base_happy("plebs") == 40 and c.base_happy("artisans") == 37 and c.base_happy("patricians") == 34, "new base happiness")
+	check(c.base_happy("plebs") == 44 and c.base_happy("artisans") == 40 and c.base_happy("patricians") == 36, "new base happiness")
 	check(c.missing_penalty() == 8 and c.arrive_happy() == 45, "rank zero threshold 45, missing penalty 8")
 	# Перестройка начинает учитывать нужные новому классу лавки, не теряет их бонусы.
 	c.research["artisans"] = true
