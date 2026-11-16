@@ -4540,6 +4540,62 @@ func fort_upgrade(plot_id: int) -> bool:
 	return true
 
 
+## Слиток снимает десять минут ожидания; обычная цена улучшения сохраняется.
+const FORT_INSTANT_SECONDS := 600.0
+
+
+func fort_instant_info(plot_id: int) -> Dictionary:
+	var p := fort_plot(plot_id)
+	if not v3() or p.is_empty() or p["b"] == "":
+		return {"price": 0, "why": "Нет такого здания"}
+	var timer: Dictionary = p["up"]
+	if p["b"] == "hq" and timer.is_empty():
+		timer = fort.get("up", {})
+	var seconds := maxf(0, float(timer.get("end", 0)) - now())
+	var why := ""
+	if timer.is_empty():
+		why = fort_can_upgrade(plot_id)
+		seconds = float(fort_info(plot_id)["next_time"])
+	var price := maxi(1, ceili(seconds / FORT_INSTANT_SECONDS))
+	if why == "" and ingots < price:
+		why = "Не хватает слитков"
+	return {"price": price, "why": why, "stamp": str([p["b"], p["lv"], timer.get("end", 0), timer.get("to", -1)])}
+
+
+func fort_instant(plot_id: int, quote: Dictionary = {}) -> bool:
+	var before := fort_plot(plot_id)
+	if before.is_empty():
+		return false
+	if not quote.is_empty() and quote.get("stamp", "") != fort_instant_info(plot_id).get("stamp", ""):
+		return false
+	var timer_before: Dictionary = before["up"]
+	if before["b"] == "hq" and timer_before.is_empty():
+		timer_before = fort.get("up", {})
+	var finished := not timer_before.is_empty() and float(timer_before.get("end", 0)) <= now()
+	fort_finish()
+	# Уже истёкший таймер не должен покупать следующий уровень.
+	if finished:
+		return false
+	var info := fort_instant_info(plot_id)
+	if String(info["why"]) != "":
+		return false
+	var p := fort_plot(plot_id)
+	var timer: Dictionary = p["up"]
+	if p["b"] == "hq" and timer.is_empty():
+		timer = fort.get("up", {})
+	if timer.is_empty():
+		if not fort_upgrade(plot_id):
+			return false
+		timer = p["up"]
+	if timer.is_empty():
+		return false
+	ingots -= int(info["price"])
+	timer["end"] = now()
+	fort_finish()
+	changed.emit()
+	return true
+
+
 func fort_info(plot_id: int) -> Dictionary:
 	var p := fort_plot(plot_id)
 	if p.is_empty() or p["b"] == "":

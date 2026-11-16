@@ -14,7 +14,7 @@ const CLOSE_ZOOM := 4.0 / 0.6
 const ROOM_ART := {"hq": "praetorium", "barracks": "barracks", "kitchen": "kitchen",
 	"store": "granary", "forge": "forge", "arsenal": "armory", "infirmary": "infirmary",
 	"mars": "shrine", "smelter": "smelter", "sawmill": "carpentry", "tannery": "tannery",
-	"treasury": "treasury", "drill": "barracks", "stable": "barracks", "tower": "armory"}
+	"treasury": "treasury", "drill": "drill", "stable": "stable", "tower": "tower"}
 const GRIDS := [Vector2i(3, 2), Vector2i(3, 3), Vector2i(4, 3), Vector2i(4, 4), Vector2i(5, 4), Vector2i(5, 5)]
 const WORK := {"forge": "Interact", "kitchen": "PickUp_Table", "mars": "Pray",
 	"sawmill": "Interact", "smelter": "Interact", "tannery": "Fixing_Kneeling",

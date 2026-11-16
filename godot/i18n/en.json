@@ -5279,5 +5279,16 @@
   "Назад": "Back",
   "Все вещи": "All items",
   "Было → стало: %d → %d": "Before → after: %d → %d",
-  "Подходящих вещей на складе нет.": "No matching items in storage."
+  "Подходящих вещей на складе нет.": "No matching items in storage.",
+  "Предыдущий житель": "Previous resident",
+  "Следующий житель": "Next resident",
+  "Новобранец": "Newcomer",
+  "Завершить сразу": "Finish instantly",
+  "Не хватает слитков": "Not enough ingots",
+  "1 слиток за 10 минут; цена улучшения оплачивается отдельно": "1 ingot per 10 minutes; the upgrade cost is paid separately",
+  "Добавить": "Add",
+  "Сменить": "Switch",
+  "Сведения": "Information",
+  "Звёзды провинции: %d из %d. За все — сундук Славы%s": "Province stars: %d of %d. Collect all for a Glory chest%s",
+  "Нужен Штаб ур. %d": "Requires Headquarters level %d"
 }

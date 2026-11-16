@@ -326,7 +326,7 @@ func _screens() -> void:
 	weapon_button.pressed.emit()
 	var change := lg.equip_power(int(s["id"]), int(better["id"]))
 	var equip_button := camp.modal_panel.find_child("FortEquip_%d" % int(better["id"]), true, false) as Button
-	if not check(equip_button != null and equip_button.text.contains(I18n.t("Сила: %d → %d") % [int(change[0]), int(change[1])]) and int(change[1]) > int(change[0]), "visible equip power comparison"):
+	if not check(equip_button != null and equip_button.tooltip_text.contains(I18n.t("Сила: %d → %d") % [int(change[0]), int(change[1])]) and int(change[1]) > int(change[0]), "visible equip power comparison"):
 		_finish()
 		return
 	equip_button.pressed.emit()
