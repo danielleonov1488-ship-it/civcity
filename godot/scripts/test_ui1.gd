@@ -95,12 +95,14 @@ func _run() -> void:
 		return
 	city.arrivals.append({"name": "Корнелии", "n": 4, "cls": "plebs"})
 	city.compute()
+	if not check(city.hire(workplace, city.job_max(workplace)) > 0, "explicitly hired farm workers"):
+		return
 	city.legion.army_tick()
 	city.changed.emit()
 	hud.advisor_panel.visible = false
 	hud._close_windows()
 	await frames(20)
-	if not check(int(city.stats["pop"]) >= 60 and int(city.stats["jobs"].get("plebs", 0)) > 0, "populated city and jobs"):
+	if not check(int(city.stats["pop"]) >= 60 and int(city.stats["jobs"].get("plebs", 0)) > 0 and city.hired_of(workplace) == city.job_max(workplace), "populated city and jobs"):
 		return
 	var camp := CampUI.of(hud)
 	if not check(camp != null and camp.top_button == hud.top_btns["legion"], "single Legion entry"):

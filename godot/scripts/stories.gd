@@ -1881,8 +1881,9 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			var pr := progress(a, g)
 			var rn := String((Legion.regions()[int(g[1])] as Dictionary).get("name", "")) if int(g[1]) < Legion.regions().size() else ""
 			var v3 := city.legion.v3()
-			if v3 and not bool(pr["ok"]) and city.legion.squad_v3().is_empty():
-				out.append({"text": "Воин в отряде: нет", "ok": false, "do": {"kind": "legion", "action": "squad", "tip": "", "say": "«Лагерь» сверху → «Отряд»: поставьте воина на место"}})
+			if v3 and not bool(pr["ok"]) and not _story_squad_ready(st):
+				var who := "Новобранец в отряде: нет" if bool(st.get("recruit_in_squad", false)) else "Воин в отряде: нет"
+				out.append({"text": who, "ok": false, "do": {"kind": "legion", "action": "squad", "tip": "", "say": "«Лагерь» сверху → «Отряд»: поставьте воина на место"}})
 			out.append({"text": "Победы в «%s» %s" % [rn, pr["txt"]], "ok": bool(pr["ok"]),
 				"do": {} if bool(pr["ok"]) else ({"kind": "legion", "tip": "Лагерь", "say": "«Лагерь» сверху → «Поход»"} if v3 else {"kind": "legion", "tip": "Легион", "say": "Медальон «Легион» сверху справа → «Походы»"})})
 		"give":
@@ -2143,6 +2144,20 @@ func square_center(a: Dictionary, r: float) -> Vector2:
 	return sum / n if n > 0 else hp
 
 
+## В учебном бою нужен новобранец рядом с героем.
+func _story_squad_ready(st: Dictionary) -> bool:
+	var lg: Legion = city.legion
+	if not lg.v3():
+		return true
+	var squad: Array = lg.squad_v3()
+	if not bool(st.get("recruit_in_squad", false)):
+		return not squad.is_empty()
+	for unit: Dictionary in squad:
+		if not bool(lg.soldier(int(unit.get("sid", 0))).get("hero", false)):
+			return true
+	return false
+
+
 ## «Готово» (score), «Заплатить» (pay), выбор (choice) — из золотой строки
 func press(what: String, val := "") -> void:
 	var a: Dictionary = S()["active"]
@@ -2181,6 +2196,10 @@ func press(what: String, val := "") -> void:
 		"battle":
 			# бой Легиона прямо из истории (учебный бой леса с маслом): 3D-бой откроется по сигналу legion.battle_requested
 			var lg = city.legion
+			if bool(_step(a).get("recruit_in_squad", false)) and not _story_squad_ready(_step(a)):
+				CampUI.attach(hud).open()
+				CampUI.of(hud).show_squad()
+				return
 			var bt: Array = _step(a).get("battle", [0, 0, 0])
 			var st: Dictionary = lg.stage_info(int(bt[0]), int(bt[1]), int(bt[2]))
 			var why: String = lg.can_fight(st)

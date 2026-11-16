@@ -277,17 +277,23 @@ func _new() -> void:
 ## улице — получил узел и проявляется по кадру, а не выскакивает сразу видимым (x4, слабый ноутбук: dt ≈ 1 с)
 func _fade_test() -> void:
 	var r := {}
-	for k in 60:                                 # прохожий в пути, далеко от цели (в маленьком городе узлы есть у всех)
-		for x: Dictionary in ppl.residents:
-			var pth: PackedVector2Array = x.get("path", PackedVector2Array())
-			if x["state"] == "walk" and int(x["id"]) != ppl.focus_rid and pth.size() > 1 and int(x["i"]) < pth.size() \
-					and (x["p"] as Vector2).distance_to(pth[pth.size() - 1]) > 8.0:
-				r = x
-				break
-		if not r.is_empty():
+	# После загрузки все могут быть дома: прогулку задаём, не ждём случайного расписания.
+	for x: Dictionary in ppl.residents:
+		if int(x["home"]) > 0 and int(x["id"]) != ppl.focus_rid:
+			r = x
 			break
-		await frames(10)
-	if not check(not r.is_empty(), "прохожий в пути (для проявления)"):
+	if not check(not r.is_empty(), "житель для проверки проявления"):
+		return
+	if r["state"] == "door":
+		ppl._door_cancel(r)
+	ppl._hide(r)
+	r["state"] = "idle"
+	r["act"] = ""
+	var o := Land.CENTER + Vector2(0, 14)
+	r["p"] = o + Vector2(-24, 0)
+	ppl._go(r, o + Vector2(24, 0), "home")
+	var path: PackedVector2Array = r["path"]
+	if not check(r["state"] == "walk" and path.size() > 1 and (r["p"] as Vector2).distance_to(path[path.size() - 1]) > 8.0, "прохожий в пути (для проявления)"):
 		return
 	ppl._hide(r)                                 # ушёл с улицы: идёт невидимо, без узла
 	var keep: int = ppl.max_vis

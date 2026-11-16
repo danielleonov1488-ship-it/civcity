@@ -4785,7 +4785,8 @@ func _manual_hire_advice() -> bool:
 	var c: City = game.city
 	if not c.manual_hiring() or not c.tips.has("manual_hire_pending") or c.tips.has("manual_hire_tip"):
 		return false
-	if not game.ready_done or not advisor_on() or not _tip_free():
+	# Стройку и поворот призрака не перекрываем новым окном.
+	if not game.ready_done or game.tool != "" or not advisor_on() or not _tip_free():
 		return false
 	var b: Dictionary = c.buildings.get(int(c.tips["manual_hire_pending"]), {})
 	if b.is_empty() or c.hired_of(b) > 0:

@@ -589,9 +589,27 @@ func _legion3() -> void:
 	for pt in sto.goal_parts(A, sto._step(A)["goal"], sto._step(A)):
 		all_txt += String(pt["text"]) + "|"
 	check(not all_txt.to_lower().contains("казарм") and not String(info.get("text", "")).contains("Казарм"), "строки шага не просят Казарм (%s)" % all_txt)
-	# первого воина призываем через API
-	var sol := lg.recruit_resident()
-	check(not sol.is_empty() and lg.soldiers.size() == 1, "призван первый воин: %s" % [sol.get("from", "")])
+	# Герой уже в лагере, но шаг ждёт призыва горожанина через окно форта.
+	sto.tick()
+	check(c.progress_of(["soldiers"]) == 0 and int(A["step"]) == 1 and not bool(A.get("ready", false)), "герой не заменяет первого новобранца")
+	var before_ids: Array = lg.soldiers.map(func(s: Dictionary) -> int: return int(s["id"]))
+	sto.press("camp")
+	camp_ui.open_recruit_picker()
+	var recruit_button: Button = null
+	for node in camp_ui.modal.find_children("*", "Button", true, false):
+		var button := node as Button
+		if button.text == "Призвать" and not button.disabled:
+			recruit_button = button
+			break
+	if check(recruit_button != null, "форт предлагает горожан для призыва"):
+		recruit_button.pressed.emit()
+	var sol: Dictionary = {}
+	for soldier: Dictionary in lg.soldiers:
+		if not before_ids.has(int(soldier["id"])):
+			sol = soldier
+	if not check(not sol.is_empty() and lg.soldiers.size() == before_ids.size() + 1 and not bool(sol.get("hero", false)), "призван первый воин: %s" % [sol.get("from", "")]):
+		return
+	camp_ui.close()
 	sto.tick()
 	check(bool(A.get("ready", false)) and int(A["step"]) == 2, "воин есть — ролик «Первый воин!» ждёт «Посмотреть»")
 	sto.play_ready()
@@ -599,7 +617,7 @@ func _legion3() -> void:
 	await wait_kit(false, 4.0)
 	await frames(4)
 	check(sto._goal_kind(A) == "legion_win" and String(sto._step(A).get("id", "")) == "fight", "шаг «учебный бой»")
-	# без воина в отряде бой не начать — и строка подсказывает, что делать
+	# Герой держит место 0; учебный бой ждёт и готового новобранца.
 	var got := []
 	var cons: Array = lg.battle_requested.get_connections()
 	for cn: Dictionary in cons:
@@ -610,15 +628,32 @@ func _legion3() -> void:
 	for pt in sto.goal_parts(A, sto._step(A)["goal"], sto._step(A)):
 		parts_txt += String(pt["text"]) + "|"
 	sto.press("battle")
-	check(got.is_empty() and parts_txt.contains("Воин в отряде: нет"), "отряд пуст — боя нет, в строке: «%s»" % parts_txt)
-	check(lg.set_place(0, int(sol["id"])), "воин поставлен в отряд (место 0)")
+	check(got.is_empty() and parts_txt.contains("Новобранец в отряде: нет"), "без новобранца боя нет, в строке: «%s»" % parts_txt)
+	check(bool(lg.soldier(int(lg.squad3[0])).get("hero", false)) and not lg.set_place(0, int(sol["id"])), "место 0 остаётся у героя")
+	camp_ui.show_squad()
+	var slot := -1
+	for i in range(1, lg.slots()):
+		if int(lg.squad3[i]) == 0:
+			slot = i
+			break
+	if slot >= 0:
+		for node in camp_ui.squad_body.find_children("*", "Button", true, false):
+			if int(node.get_meta("quest_slot", -1)) == slot:
+				(node as Button).pressed.emit()
+				break
+		for node in camp_ui.squad_body.find_children("*", "Button", true, false):
+			if int(node.get_meta("quest_soldier", -1)) == int(sol["id"]):
+				(node as Button).pressed.emit()
+				break
+	check(slot > 0 and int(lg.squad3[slot]) == int(sol["id"]), "новобранец поставлен через форт на свободное место %d" % slot)
+	camp_ui.close()
 	sto.press("battle")
 	lg.battle_requested.disconnect(catch)
 	for cn: Dictionary in cons:
 		lg.battle_requested.connect(cn["callable"])
-	check(got.size() == 1 and int(got[0]["stage"]["idx"]) == 0 and (got[0]["squad"] as Array).size() == 1, "«В бой!» — первый бой кампании (0-0-0) с отрядом V3: один воин")
+	check(got.size() == 1 and int(got[0]["stage"]["idx"]) == 0 and (got[0]["squad"] as Array).size() == 2, "«В бой!» — первый бой кампании (0-0-0): герой и новобранец")
 	if got.size() == 1:
-		lg.apply_result(got[0], {"win": true, "alive": 1, "total": 1, "timeout": false, "time": 40.0})
+		lg.apply_result(got[0], {"win": true, "alive": 2, "total": 2, "timeout": false, "time": 40.0})
 		check(lg.progress == 1, "учебный бой выигран")
 	sto.tick()
 	check(bool(A.get("ready", false)), "бой выигран — последний ролик ждёт")

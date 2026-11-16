@@ -265,6 +265,10 @@ func advice(c: City, hud: Hud) -> void:
 	hud._once_tips()
 	check(not hud.advisor_panel.visible and not c.tips.has("manual_hire_tip"), "hire advice respects advisor gap")
 	hud._tip_next = 0
+	game.set_tool("house_pleb")
+	hud._once_tips()
+	check(not hud.advisor_panel.visible and c.tips.has("manual_hire_pending") and not c.tips.has("manual_hire_tip"), "hire advice waits while building")
+	game.set_tool("")
 	hud._once_tips()
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Работа в новом здании" and c.tips.has("manual_hire_tip"), "hire advice uses next free slot")
 	await shot("5_hire_advisor.png")
