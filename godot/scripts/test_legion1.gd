@@ -63,11 +63,11 @@ func _run() -> void:
 	var legion: Legion = city.legion
 	legion.army_tick()
 	legion.glory = 10000
-	legion.camp["hq"] = 3
-	legion.camp["barracks"] = 3
-	legion.camp["forge"] = 2
-	legion.camp["store"] = 2
-	legion.camp["mars"] = 1
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "hq", 3)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "barracks", 3)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "forge", 2)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "store", 2)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "mars", 1)
 	legion.rations = 8
 	legion.ingots = 3
 	legion.pending_resources = {"iron": legion.mat_cap("iron"), "wood": 34.0, "leather": 18.0, "rations": 6.0}

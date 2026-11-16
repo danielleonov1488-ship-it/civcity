@@ -1,0 +1,301 @@
+{
+  "generator": "fort_kit.py",
+  "blender": "4.5.16 LTS",
+  "units": "metres",
+  "origin": "ground centre of design footprint",
+  "godot_axes": "X right, Y up, +Z front; camp interior -Z",
+  "licensed_textures": "Synty Wood_01/02 embedded in GLB; keep assets private",
+  "pieces": [
+    {
+      "file": "palisade_seg.glb",
+      "meshes": 1,
+      "triangles": 412,
+      "materials": [
+        "wood_log",
+        "wood_plank"
+      ],
+      "bounds_blender": [
+        [
+          -1.0,
+          -0.2084873616695404,
+          0.0
+        ],
+        [
+          1.0,
+          0.3100000023841858,
+          3.900832414627075
+        ]
+      ],
+      "details": {
+        "seed": 1729,
+        "log_heights": [
+          3.8978234260696603,
+          3.5464790247439013,
+          3.700340643785187,
+          3.4753055312629244,
+          3.8202875835577554,
+          3.7973968725053884,
+          3.7384814480630504,
+          3.6680025881097498
+        ],
+        "lean_degrees": [
+          1.5392803861192585,
+          -0.16912203521556934,
+          -1.2699235419033146,
+          -0.5476268269471003,
+          -1.1693946738117464,
+          -1.3758831963012415,
+          -0.00109598023443791,
+          -0.5184481621943413
+        ],
+        "module_width": 2.0,
+        "inner_side": "+Y in Blender / -Z in Godot"
+      }
+    },
+    {
+      "file": "palisade_seg_b.glb",
+      "meshes": 1,
+      "triangles": 412,
+      "materials": [
+        "wood_log",
+        "wood_plank"
+      ],
+      "bounds_blender": [
+        [
+          -1.0,
+          -0.23207880556583405,
+          0.0
+        ],
+        [
+          1.0,
+          0.3100000023841858,
+          3.8548076152801514
+        ]
+      ],
+      "details": {
+        "seed": 2718,
+        "log_heights": [
+          3.4303299353112293,
+          3.4255728328592188,
+          3.4992413391621806,
+          3.3020046867139534,
+          3.469718204996031,
+          3.3826264405557436,
+          3.8509452257557903,
+          3.3566076213269658
+        ],
+        "lean_degrees": [
+          -0.7412294963375667,
+          -1.976000191733175,
+          0.6291131148230642,
+          1.0372262742161418,
+          -1.2886444946055913,
+          -1.4530890236788285,
+          0.9914204110369234,
+          1.0089585783653643
+        ],
+        "module_width": 2.0,
+        "inner_side": "+Y in Blender / -Z in Godot"
+      }
+    },
+    {
+      "file": "tower.glb",
+      "meshes": 1,
+      "triangles": 8072,
+      "materials": [
+        "wood_log",
+        "wood_plank"
+      ],
+      "bounds_blender": [
+        [
+          -1.4950000047683716,
+          -1.5,
+          0.0
+        ],
+        [
+          1.4950000047683716,
+          1.5,
+          9.100000381469727
+        ]
+      ],
+      "details": {
+        "platform_heights": [
+          4.1,
+          7.85
+        ],
+        "ladder_hatches": true
+      }
+    },
+    {
+      "file": "gate.glb",
+      "meshes": 1,
+      "triangles": 1428,
+      "materials": [
+        "wood_log",
+        "wood_plank"
+      ],
+      "bounds_blender": [
+        [
+          -2.7100000381469727,
+          -0.25999999046325684,
+          0.0
+        ],
+        [
+          2.7100000381469727,
+          2.0820653438568115,
+          4.570000171661377
+        ]
+      ],
+      "details": {
+        "clear_opening": 4.5,
+        "leaf_angle_degrees": 70,
+        "inward": "+Y"
+      }
+    },
+    {
+      "file": "bridge.glb",
+      "meshes": 1,
+      "triangles": 2624,
+      "materials": [
+        "wood_log",
+        "wood_plank"
+      ],
+      "bounds_blender": [
+        [
+          -1.75,
+          -3.0,
+          0.0
+        ],
+        [
+          1.75,
+          3.0,
+          1.4299999475479126
+        ]
+      ],
+      "details": {
+        "deck_top": 0.485,
+        "size": [
+          3.5,
+          6.0
+        ]
+      }
+    },
+    {
+      "file": "tent_small.glb",
+      "meshes": 1,
+      "triangles": 513,
+      "materials": [
+        "canvas",
+        "red",
+        "rope"
+      ],
+      "bounds_blender": [
+        [
+          -1.994652509689331,
+          -2.3389711380004883,
+          0.0
+        ],
+        [
+          2.0296525955200195,
+          2.3389711380004883,
+          2.2055816650390625
+        ]
+      ],
+      "details": {
+        "canvas_size": [
+          2.6,
+          3.2,
+          2.2
+        ],
+        "poles": 2,
+        "front": "-Y in Blender / +Z in Godot",
+        "pole_material": "rope brown; no fourth material"
+      }
+    },
+    {
+      "file": "tent_long.glb",
+      "meshes": 1,
+      "triangles": 661,
+      "materials": [
+        "canvas",
+        "red",
+        "rope"
+      ],
+      "bounds_blender": [
+        [
+          -2.444652557373047,
+          -4.73897123336792,
+          0.0
+        ],
+        [
+          2.4796524047851562,
+          4.73897123336792,
+          2.605581521987915
+        ]
+      ],
+      "details": {
+        "canvas_size": [
+          3.5,
+          8.0,
+          2.6
+        ],
+        "poles": 3,
+        "front": "-Y in Blender / +Z in Godot",
+        "pole_material": "rope brown; no fourth material"
+      }
+    },
+    {
+      "file": "tent_command.glb",
+      "meshes": 1,
+      "triangles": 720,
+      "materials": [
+        "canvas",
+        "red",
+        "rope"
+      ],
+      "bounds_blender": [
+        [
+          -3.744652509689331,
+          -3.1889710426330566,
+          0.0
+        ],
+        [
+          3.7796525955200195,
+          3.1889710426330566,
+          3.8855814933776855
+        ]
+      ],
+      "details": {
+        "canvas_size": [
+          6,
+          5,
+          3.8
+        ],
+        "ridge_length": 1.6,
+        "front": "-Y"
+      }
+    },
+    {
+      "file": "stakes_row.glb",
+      "meshes": 1,
+      "triangles": 528,
+      "materials": [
+        "wood_log",
+        "wood_plank"
+      ],
+      "bounds_blender": [
+        [
+          -1.4600000381469727,
+          -0.15000000596046448,
+          0.0
+        ],
+        [
+          1.4600000381469727,
+          0.21784253418445587,
+          0.951786458492279
+        ]
+      ],
+      "details": {}
+    }
+  ]
+}

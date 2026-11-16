@@ -89,11 +89,11 @@ func _run() -> void:
 	if not check(city.stats["pop"] >= 60 and legion.v3(), "V3 and population"):
 		return
 	# Стартовые уровни — фикстура; изменения проходят через обычные таймеры.
-	legion.camp["hq"] = 3
-	legion.camp["barracks"] = 2
-	legion.camp["forge"] = 1
-	legion.camp["store"] = 1
-	legion.camp["mars"] = 1
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "hq", 3)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "barracks", 2)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "forge", 1)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "store", 1)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "mars", 1)
 	if not _finish_upgrade(legion, "barracks") or not _finish_upgrade(legion, "forge"):
 		return
 	var recruits: Array[int] = []
@@ -128,7 +128,7 @@ func _run() -> void:
 		return
 	if not check(camp.diorama.sub.own_world_3d and camp.diorama.figures.size() <= 16, "own world / figure cap"):
 		return
-	for slot: String in Camp3D.PLOTS:
+	for slot: String in camp.diorama.plots:
 		if not check(camp.diorama._pick(camp.diorama.project(slot)) == slot, "footprint picking: " + slot):
 			return
 	if not _inside_plaques() or not await shot("1_camp3d.png"):
@@ -151,12 +151,12 @@ func _run() -> void:
 	for entry: Dictionary in camp.diorama.figures:
 		if int(entry["id"]) == sid:
 			var pos: Vector3 = (entry["node"] as Node3D).position
-			walker_found = pos.distance_to(Camp3D.GATE) > 0.2 and pos.distance_to(entry["home"]) > 0.2
+			walker_found = pos.distance_to(camp.diorama.gate) > 0.2 and pos.distance_to(entry["home"]) > 0.2
 	if not check(walker_found, "recruit between gate and barracks"):
 		return
 	if not await shot("3_recruit_walkin.png"):
 		return
-	if not check(camp.diorama.scaffolds.has("store") and camp.diorama.figures.size() <= 16, "scaffold and figure cap"):
+	if not check(camp.diorama.scaffolds.has(camp.diorama._key("store")) and camp.diorama.figures.size() <= 16, "scaffold and figure cap"):
 		return
 	camp.diorama.focus_plot("store")
 	if not await shot("4_upgrade_scaffold.png"):
@@ -169,15 +169,17 @@ func _run() -> void:
 	await frames(2)
 	if not check(old.get_ref() == null and camp.find_children("Camp3D*", "", true, false).is_empty(), "no Camp3D processing after close"):
 		return
-	var saved_camp := legion.camp.duplicate(true)
+	var saved_fort := legion.fort.duplicate(true)
 	var saved_upg := legion.upg.duplicate(true)
 	var saved_soldiers := legion.soldiers.duplicate(true)
 	var saved_squad := legion.squad3.duplicate()
 	legion.soldiers = legion.soldiers.filter(func(soldier: Dictionary): return bool(soldier.get("hero", false)))
 	for i in range(1, legion.squad3.size()):
 		legion.set_place(i, 0)
-	legion.camp = Legion.CAMP_START.duplicate(true)
+	legion.fort = {}
+	legion.camp = {}
 	legion.upg.clear()
+	legion._camp_init()
 	legion.flags.erase("camp3d_guide")
 	legion.rations = legion.ration_cap()
 	legion.pending_resources["rations"] = 0.0
@@ -195,8 +197,9 @@ func _run() -> void:
 		return
 	camp.close()
 	await frames(2)
-	legion.camp = saved_camp
+	legion.fort = saved_fort
 	legion.upg = saved_upg
+	legion._fort_sync_camp()
 	legion.soldiers = saved_soldiers
 	legion.squad3 = saved_squad
 	camp.open()
@@ -206,18 +209,16 @@ func _run() -> void:
 	if not await shot("6_card_over_3d.png"):
 		return
 	camp._hide_card()
-	var candidates := legion.recruit_candidates()
-	if not check(not candidates.is_empty(), "guide recruit available"):
+	camp.show_build_menu()
+	if not check(int(legion.flags["camp3d_guide"]) == 2, "guide advances on build menu"):
 		return
-	camp._recruit_pick(candidates[0])
-	camp._close_modal()
-	if not check(int(legion.flags["camp3d_guide"]) == 2, "guide advances on recruitment"):
-		return
-	camp.show_squad()
-	camp._pick_place(3)
-	camp._assign(int(legion.soldiers[-1]["id"]))
-	camp._close_modal()
-	if not check(int(legion.flags["camp3d_guide"]) == 3, "guide advances on placement"):
+	# Завершаем прежнюю стройку: у форта один строитель.
+	for plot: Dictionary in legion.fort["plots"]:
+		if not (plot["up"] as Dictionary).is_empty():
+			plot["up"]["end"] = Legion.now() - 1
+	legion.fort_finish()
+	camp._choose_build("kitchen")
+	if not check(int(legion.flags["camp3d_guide"]) == 3, "guide advances on kitchen"):
 		return
 	camp._campaign()
 	if not check(int(legion.flags["camp3d_guide"]) == 4, "guide completes at campaign"):

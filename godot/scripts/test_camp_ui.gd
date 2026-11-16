@@ -77,8 +77,8 @@ func _run() -> void:
 		if i < 3 and not check(legion.set_place(i, int(s["id"])), "place %d" % i):
 			return
 	# Уровни — только фикстура; таймер запускает обычное действие модели.
-	legion.camp["hq"] = 2
-	legion.camp["forge"] = 1
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "hq", 2)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "forge", 1)
 	if not check(legion.camp_upgrade("forge"), legion.camp_can_upgrade("forge")):
 		return
 	city.changed.emit()

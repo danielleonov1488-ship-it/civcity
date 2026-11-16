@@ -1,31 +1,28 @@
 class_name Camp3D
 extends SubViewportContainer
-## Отдельный мир лагеря. Перед павильонами нет стен и крыши.
+## Растущий форт: стабильные участки, общий пул деталей, отдельный мир.
 
 signal building_pressed(slot: String)
 signal view_changed
 
 const SCENERY := preload("res://scripts/camp_scenery.gd")
-const PLOTS := {
-	"hq": Vector3(0, 0, -15), "mars": Vector3(22, 0, -15),
-	"barracks": Vector3(-21, 0, -1), "forge": Vector3(21, 0, 0),
-	"drill": Vector3(-18, 0, 14), "store": Vector3(18, 0, 14),
-}
-const CITY_TYPES := {"hq": "principia", "barracks": "barracks", "forge": "forge", "mars": "mars", "store": "armory"}
-const LEVEL_PROPS := {
-	"hq": {2: ["#mil_standard"], 3: ["#mil_eagle", "SM_Prop_Table_04"], 5: ["wing"]},
-	"barracks": {2: ["#mil_standard"], 3: ["SM_Prop_Weapon_Rack_02", "SM_Prop_Seat_Kline_02"], 5: ["wing"]},
-	"forge": {2: ["#mil_standard"], 3: ["#mil_ingots", "SM_Prop_Grinding_Wheel_01"], 5: ["wing"]},
-	"drill": {2: ["#mil_standard"], 3: ["#mil_target", "#mil_quiver"], 5: ["wing"]},
-	"mars": {2: ["#mil_standard"], 3: ["SM_Prop_Jar_01", "#mil_eagle"], 5: ["wing"]},
-	"store": {2: ["#mil_standard"], 3: ["#mil_logs", "#mil_hides"], 5: ["wing"]},
-}
 const MAX_FIGURES := 16
 const DEFAULT_ZOOM := 48.0
 const MIN_ZOOM := 18.0
 const MAX_ZOOM := 72.0
-const GATE := Vector3(0, 0, 24)
 const WALK_TIME := 9.0
+var plots: Dictionary = {}
+var bounds := Rect2(-16, -20, 32, 52)
+var gate := Vector3.ZERO
+var overview := Vector3.ZERO
+var default_zoom := DEFAULT_ZOOM
+var max_zoom := MAX_ZOOM
+var scenery: Node3D
+var structures: Node3D
+var props: Parts
+var kit_batches: Dictionary = {}
+var corner_towers: Array[Vector3] = []
+var _expansion := -1
 
 var lg: Legion
 var city_game: Node
@@ -78,7 +75,6 @@ func setup(legion: Legion, game: Node) -> bool:
 	world.position = SCENERY.ORIGIN
 	sub.add_child(world)
 	_light()
-	_ground()
 	camera = Camera3D.new()
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.keep_aspect = Camera3D.KEEP_HEIGHT
@@ -86,7 +82,6 @@ func setup(legion: Legion, game: Node) -> bool:
 	world.add_child(camera)
 	camera.current = true
 	active = true
-	_update_camera()
 	sync()
 	resized.connect(_update_camera)
 	mouse_exited.connect(func(): highlight(""))
@@ -112,16 +107,20 @@ func _box(parent: Node3D, pos: Vector3, dims: Vector3, color: Color) -> MeshInst
 
 
 func _prop(parent: Node3D, model: String, pos: Vector3, scale_v := 1.0, yaw := 0.0) -> Node3D:
+	if not model.begins_with("#mil_") and not Synty.has(model):
+		return null
+	# Реквизит всей крепости в одном пуле; предметы в руках остаются у костей.
+	if is_instance_valid(props) and structures.is_ancestor_of(parent):
+		var xf := Transform3D(Basis(Vector3.UP, yaw).scaled_local(Vector3.ONE * scale_v), pos)
+		props.place_one(model, props.global_transform.affine_inverse() * parent.global_transform * xf)
+		return null
 	var node: Node3D
 	if model.begins_with("#mil_"):
 		var mi := MeshInstance3D.new()
 		mi.mesh = CatMilitary.kit_mesh(model)
 		node = mi
-	elif Synty.has(model):
-		node = Synty.make(model)
 	else:
-		return null
-	node.name = model.trim_prefix("#")
+		node = Synty.make(model)
 	parent.add_child(node)
 	node.position = pos
 	node.scale = Vector3.ONE * scale_v
@@ -130,87 +129,132 @@ func _prop(parent: Node3D, model: String, pos: Vector3, scale_v := 1.0, yaw := 0
 
 
 func _ground() -> void:
-	SCENERY.terrain(world, city_game, PLOTS)
-	SCENERY.surroundings(world, PLOTS)
+	if is_instance_valid(scenery):
+		scenery.free()
+	scenery = Node3D.new()
+	scenery.name = "FortLandscape"
+	world.add_child(scenery)
+	SCENERY.terrain(scenery, city_game, plots, bounds)
+	SCENERY.surroundings(scenery, plots, bounds)
+	SCENERY.river(scenery, bounds)
 
 
 func _crate(parent: Node3D, pos: Vector3) -> void:
-	# Доски и обручи в одной сетке.
-	var kit := Kit.new()
-	for i in 6:
-		kit.boxc(Vector3(-0.55 + i * 0.22, 0, 0), Vector3(0.21, 1.2, 1.1), Color("9b7047").lightened(0.035 * (i % 3)))
-	for x: float in [-0.45, 0.45]:
-		for z: float in [-0.57, 0.57]:
-			kit.boxc(Vector3(x, 0, z), Vector3(0.11, 1.25, 0.08), Color("634a35"))
-	var node := MeshInstance3D.new()
-	node.mesh = kit.mesh()
-	node.material_override = Kit.material(0.9)
-	node.position = pos
-	parent.add_child(node)
+	if structures.is_ancestor_of(parent):
+		if not kit_batches.has("crate"):
+			kit_batches["crate"] = []
+		kit_batches["crate"].append(structures.global_transform.affine_inverse() * parent.global_transform * Transform3D(Basis.IDENTITY, pos))
+	else:
+		var node := MeshInstance3D.new()
+		node.mesh = SCENERY.kit_meshes("crate")[0]["mesh"]
+		node.position = pos
+		parent.add_child(node)
 
 
 func sync() -> void:
 	if not active:
 		return
-	var sig := str([lg.camp, lg.upg.keys()])
+	lg._fort_init()
+	var state: Array = [lg.fort.get("exp", 0), not (lg.fort.get("up", {}) as Dictionary).is_empty()]
+	for plot: Dictionary in lg.fort.get("plots", []):
+		state.append([plot["id"], plot["b"], plot["lv"], plot["up"]])
+	var sig := str(state)
 	if sig != _building_sig:
 		_building_sig = sig
-		for node: Node3D in buildings.values():
-			node.free()
+		var expanded := _expansion != int(lg.fort.get("exp", 0))
+		_expansion = int(lg.fort.get("exp", 0))
+		_layout_fort()
+		if is_instance_valid(structures):
+			structures.free()
+		structures = Node3D.new()
+		structures.name = "FortStructures"
+		world.add_child(structures)
+		props = Parts.new()
+		props.name = "FortProps"
+		props.tint_split = Parts.split_on
+		structures.add_child(props)
 		buildings.clear()
 		highlights.clear()
 		scaffolds.clear()
-		for slot: String in PLOTS:
-			_build_plot(slot)
+		kit_batches.clear()
+		if expanded:
+			_ground()
+		_walls()
+		for plot: Dictionary in lg.fort["plots"]:
+			_build_plot(plot)
+		SCENERY.flush_kit(structures, kit_batches)
 		_people_sig = ""
-	var roster := []
+		if expanded:
+			focus = overview
+			zoom = _fit_zoom()
+		_update_camera()
+	var roster: Array = []
 	for soldier: Dictionary in lg.soldiers:
 		roster.append([soldier["id"], soldier.get("gear", {}), soldier.get("hero", false)])
 	var people_sig := str([roster, lg.items, lg.hero_level(), Hero.look(lg.city())])
 	if people_sig != _people_sig:
 		_people_sig = people_sig
 		_people()
+	if bool(lg.flags.get("march_in", false)):
+		_march_in()
 
 
-func _build_plot(slot: String) -> void:
+func _build_plot(plot: Dictionary) -> void:
+	var key := "plot_%d" % int(plot["id"])
+	var type := String(plot["b"])
+	var level := int(plot["lv"])
 	var root := Node3D.new()
-	root.name = "Plot_" + slot
-	root.position = PLOTS[slot]
-	world.add_child(root)
-	buildings[slot] = root
-	var base := _box(root, Vector3(0, 0.04, 0), Vector3(13, 0.08, 10), Color("c9b68c"))
-	(base.mesh as PrimitiveMesh).material = SCENERY.floor_material(slot)
-	highlights[slot] = base
-	if not lg.camp_built(slot):
-		base.visible = false
-		for x in range(-6, 7, 2):
-			for z: float in [-5.0, 5.0]:
-				_box(root, Vector3(x, 0.08, z), Vector3(1, 0.1, 0.18), Color("f3df9e"))
-		for z in range(-4, 5, 2):
-			for x: float in [-6.0, 6.0]:
-				_box(root, Vector3(x, 0.08, z), Vector3(0.18, 0.1, 1), Color("f3df9e"))
-	else:
-		if slot != "drill":
-			_pavilion(root, slot)
-		_interior(root, slot)
-		for level: int in LEVEL_PROPS[slot]:
-			if lg.camp_level(slot) < level:
-				continue
-			var props: Array = LEVEL_PROPS[slot][level]
-			for i in props.size():
-				var model := String(props[i])
-				if model == "wing":
-					_prop(root, "#mil_tent", Vector3(-7.5, 0.1, -1.5), 1.4)
-					_crate(root, Vector3(-7.5, 0.7, 2))
-				else:
-					_prop(root, model, Vector3(-5.3 + i * 2.4, 0.1, 3.8), 1.0)
-	if lg.upg.has("camp_" + slot):
-		_scaffold(root, slot)
+	root.name = "Plot_%d" % int(plot["id"])
+	root.position = plots[key]
+	structures.add_child(root)
+	buildings[key] = root
+	root.set_meta("plot_id", int(plot["id"]))
+	root.set_meta("stage", "empty" if type == "" else ("tent" if level <= 2 else ("timber" if level <= 5 else "stone")))
+	var base := _box(root, Vector3(0, 0.035, 0), Vector3(9, 0.07, 9), Color("c9b68c"))
+	base.name = "Foundation"
+	(base.mesh as PrimitiveMesh).material = SCENERY.floor_material(type)
+	highlights[key] = base
+	SCENERY.foundation(root, type == "", props)
+	if type != "":
+		if level <= 2:
+			_tents(root, type)
+		elif type != "drill":
+			var shell := Node3D.new()
+			shell.name = "Pavilion"
+			root.add_child(shell)
+			shell.scale = Vector3(0.62, 0.85, 0.8)
+			SCENERY.pavilion(shell, type, level <= 5, props)
+			root.set_meta("cutaway", true)
+			root.set_meta("city_piece_count", shell.get_meta("city_piece_count", 0))
+		var interior := Node3D.new()
+		interior.name = "Interior"
+		root.add_child(interior)
+		interior.scale = Vector3.ONE * 0.65
+		interior.position.z = 1.3 if level <= 2 else 0.0
+		_interior(interior, type)
+		# Каждый уровень добавляет припасы, после первого — знамёна.
+		for i in mini(level, 8):
+			_prop(root, "SM_Prop_Sack_01" if i % 2 == 0 else "SM_Prop_Jar_01", Vector3(-3.8 + (i % 4) * 0.7, 0.1, -3.5 + (i / 4) * 0.9), 0.6)
+		if level >= 2:
+			_prop(root, "#mil_standard", Vector3(3.6, 0.1, 2.6), 0.85)
+		if level >= 5:
+			_prop(root, "#mil_standard", Vector3(-3.6, 0.1, 2.6), 0.85)
+		if level >= 7:
+			_prop(root, "#mil_eagle", Vector3(0, 0.1, -3.7), 0.8)
+	if not (plot["up"] as Dictionary).is_empty():
+		_scaffold(root, key)
 
 
-func _pavilion(root: Node3D, slot: String) -> void:
-	root.set_meta("city_type", CITY_TYPES[slot])
-	SCENERY.pavilion(root, slot)
+func _tents(root: Node3D, type: String) -> void:
+	if type == "barracks":
+		for x: float in [-2.1, 2.1]:
+			_kit("tent_small", root.position + Vector3(x, 0.08, -1.3), 0, Vector3.ONE * 0.82)
+	elif type in ["kitchen", "store", "arsenal", "infirmary"]:
+		_kit("tent_long", root.position + Vector3(0, 0.08, -1.8), PI / 2, Vector3.ONE * 0.8)
+	elif type == "hq":
+		_kit("tent_command", root.position + Vector3(0, 0.08, -0.6))
+	elif type != "drill":
+		_kit("tent_small", root.position + Vector3(0, 0.08, -1.8))
 
 
 func _interior(root: Node3D, slot: String) -> void:
@@ -292,10 +336,39 @@ func _interior(root: Node3D, slot: String) -> void:
 			_prop(root, "SM_Prop_Weapon_Rack_01", Vector3(-5, 0.1, 3), 1.0)
 			_prop(root, "SM_Prop_Weapon_Rack_01_Insert_01", Vector3(-5, 0.1, 3), 1.0)
 
+		"kitchen":
+			SCENERY.cauldron(root)
+			_prop(root, "SM_Prop_Table_04", Vector3(-3.6, 0.1, 0), 1.0)
+			_prop(root, "SM_Prop_Jar_01", Vector3(3.2, 0.1, 1), 1.2)
+		"smelter":
+			_prop(root, "SM_Prop_Forge_01", Vector3(1.5, 0.1, -0.5), 1.3)
+			_prop(root, "#mil_ingots", Vector3(-2, 0.1, 2), 1.3)
+		"sawmill":
+			_prop(root, "#mil_logs", Vector3(-2, 0.1, 0), 1.5)
+			_prop(root, "SM_Prop_Table_04", Vector3(2.3, 0.1, 1), 1.2)
+		"tannery":
+			_prop(root, "#mil_hides", Vector3(-1.5, 0.1, 0), 1.6)
+			_prop(root, "SM_Prop_Jar_01", Vector3(3, 0.1, 1.5), 1.2)
+		"infirmary":
+			for x: float in [-2, 2]:
+				_prop(root, "SM_Prop_Seat_Kline_02", Vector3(x, 0.1, 0))
+		"arsenal":
+			for x: float in [-2.5, 2.5]:
+				_prop(root, "SM_Prop_Weapon_Rack_02", Vector3(x, 0.1, 0))
+		"treasury":
+			_crate(root, Vector3(-2, 0.7, 0))
+			_prop(root, "#mil_ingots", Vector3(1.5, 0.1, 1.5), 1.2)
+		"stable":
+			_prop(root, "SM_Prop_Sack_Stack_01", Vector3(-3, 0.1, 1), 1.5)
+			_prop(root, "#mil_logs", Vector3(2, 0.1, 1), 1.2)
+		"tower":
+			_prop(root, "#mil_standard", Vector3(0, 0.1, 0), 1.6)
+
 
 func _scaffold(root: Node3D, slot: String) -> void:
 	var scaffold := Node3D.new()
 	scaffold.name = "Scaffolding"
+	scaffold.scale = Vector3(0.66, 0.8, 0.8)
 	root.add_child(scaffold)
 	scaffolds[slot] = scaffold
 	for x: float in [-6.5, 6.5]:
@@ -316,6 +389,9 @@ func _manual_animations(node: Node) -> Array:
 
 
 func _register(node: Node3D, pos: Vector3, role: String, sid := 0) -> void:
+	if figures.size() >= MAX_FIGURES:
+		node.free()
+		return
 	world.add_child(node)
 	node.position = pos
 	var players := _manual_animations(node)
@@ -367,7 +443,7 @@ func _people() -> void:
 			if hero_added:
 				continue
 			var hero := _fighter(soldier)
-			_register(hero, Vector3(PLOTS["hq"]) + Vector3(0, 0.1, 2.3), "hero", int(soldier["id"]))
+			_register(hero, _position("hq") + Vector3(0, 0.1, 2.3), "hero", int(soldier["id"]))
 			hero.rotation.y = PI
 			hero_added = true
 		elif arrivals.has(int(soldier["id"])):
@@ -376,7 +452,7 @@ func _people() -> void:
 			regular.append(soldier)
 	for i in mini(6, regular.size()):
 		var soldier: Dictionary = regular[i]
-		var home := Vector3(PLOTS["barracks"]) + Vector3(-4 + (i % 3) * 4, 0.1, 1.5 + (i / 3) * 1.9)
+		var home := _position("barracks") + Vector3(-2.5 + (i % 3) * 2.5, 0.1, 2.0 + (i / 3) * 1.3)
 		var f := _fighter(soldier)
 		_register(f, home, "soldier", int(soldier["id"]))
 		f.rotation.y = -0.4 if i % 2 == 0 else 0.4
@@ -387,16 +463,23 @@ func _people() -> void:
 	if lg.camp_built("drill"):
 		for i in 3:
 			var f := LegionFighter.create("legionary" if i != 1 else "spearman", 1.3, 80 + i)
-			_register(f, Vector3(PLOTS["drill"]) + Vector3(-3.5 + i * 3.5, 0.1, 1.0), "drill")
+			_register(f, _position("drill") + Vector3(-2.3 + i * 2.3, 0.1, 1.0), "drill")
 			f.rotation.y = PI
 	if lg.camp_built("forge"):
-		_civilian(Vector3(PLOTS["forge"]) + Vector3(-1, 0.1, 1.4), "smith", "Interact")
+		_civilian(_position("forge") + Vector3(-1, 0.1, 1.4), "smith", "Interact")
 	if lg.camp_built("mars"):
-		_civilian(Vector3(PLOTS["mars"]) + Vector3(0, 0.1, 3), "priest", "Pray")
+		_civilian(_position("mars") + Vector3(0, 0.1, 3), "priest", "Pray")
 	if lg.camp_built("store"):
-		_civilian(Vector3(PLOTS["store"]) + Vector3(0, 0.1, 1), "carrier", "Walk_Loop")
+		_civilian(_position("store") + Vector3(0, 0.1, 1), "carrier", "Walk_Loop")
+	if lg.camp_built("kitchen"):
+		_civilian(_position("kitchen") + Vector3(0, 0.1, 2.8), "cook", "Interact")
 	for slot: String in scaffolds:
-		_civilian(Vector3(PLOTS[slot]) + Vector3(6, 0.1, 3.5), "builder", "Interact")
+		var scaffold: Node3D = scaffolds[slot]
+		_civilian(world.to_local(scaffold.global_position) + Vector3(3.8, 0.1, 2.8), "builder", "Interact")
+	for entry: Dictionary in figures:
+		var sid := int(entry["id"])
+		if arrivals.has(sid):
+			(entry["node"] as Node3D).position = _arrival_position(entry["home"], float(arrivals[sid]) / WALK_TIME)
 
 
 func recruit_walk(sid: int) -> void:
@@ -404,7 +487,7 @@ func recruit_walk(sid: int) -> void:
 	_people()
 	for entry: Dictionary in figures:
 		if int(entry["id"]) == sid:
-			(entry["node"] as Node3D).position = GATE
+			(entry["node"] as Node3D).position = _arrival_position(entry["home"], 0.0)
 
 
 func _process(dt: float) -> void:
@@ -424,12 +507,12 @@ func _process(dt: float) -> void:
 		var sid := int(entry["id"])
 		var phase := float(entry["phase"])
 		if arrivals.has(sid):
-			var t := clampf(float(arrivals[sid]) / WALK_TIME, 0, 1)
+			var t := minf(float(arrivals[sid]) / WALK_TIME, 1)
 			var home: Vector3 = entry["home"]
-			node.position = GATE.lerp(home, t)
-			var direction := home - GATE
+			node.position = _arrival_position(home, t)
+			var direction := _arrival_position(home, minf(t + 0.01, 1.0)) - node.position
 			node.rotation.y = atan2(direction.x, direction.z)
-			(node as LegionFighter).set_motion(t < 1.0, direction.length() / WALK_TIME)
+			(node as LegionFighter).set_motion(t < 1.0, maxf(1.0, gate.distance_to(home) / WALK_TIME))
 			if t >= 1.0:
 				arrivals.erase(sid)
 		elif role == "carrier":
@@ -453,15 +536,14 @@ func _process(dt: float) -> void:
 
 
 func project(slot: String, height := 0.0) -> Vector2:
-	var point: Vector3 = GATE if slot == "gate" else Vector3(PLOTS.get(slot, Vector3.ZERO))
-	return camera.unproject_position(world.to_global(point + Vector3(0, height, 0))) * size / Vector2(sub.size)
+	return camera.unproject_position(world.to_global(_position(slot) + Vector3(0, height, 0))) * size / Vector2(sub.size)
 
 
 func footprint(slot: String) -> Rect2:
-	var center: Vector3 = PLOTS[slot]
+	var center := _position(slot)
 	var rect := Rect2(camera.unproject_position(world.to_global(center)), Vector2.ZERO)
-	for x: float in [-6.5, 6.5]:
-		for z: float in [-5.0, 5.0]:
+	for x: float in [-4.5, 4.5]:
+		for z: float in [-4.5, 4.5]:
 			rect = rect.expand(camera.unproject_position(world.to_global(center + Vector3(x, 0, z))))
 	return Rect2(rect.position * size / Vector2(sub.size), rect.size * size / Vector2(sub.size))
 
@@ -470,10 +552,10 @@ func highlight(slot: String) -> void:
 	for key: String in highlights:
 		var mesh: MeshInstance3D = highlights[key]
 		var mat := mesh.mesh.surface_get_material(0) as StandardMaterial3D
-		mat.emission_enabled = key == slot
+		mat.emission_enabled = slot != "" and key == _key(slot)
 		mat.emission = Color("d1a34a")
 		mat.emission_energy_multiplier = 0.32
-		mesh.visible = lg.camp_built(key) or key == slot
+		mesh.visible = true
 
 
 func _pick(pos: Vector2) -> String:
@@ -483,9 +565,11 @@ func _pick(pos: Vector2) -> String:
 	if absf(ray.y) < 0.001:
 		return ""
 	var point := world.to_local(origin + ray * ((world.global_position.y - origin.y) / ray.y))
-	for slot: String in PLOTS:
-		var offset := point - Vector3(PLOTS[slot])
-		if absf(offset.x) <= 6.5 and absf(offset.z) <= 5:
+	if absf(point.x) < 2.75 and absf(point.z - gate.z) < 3.0:
+		return "gate"
+	for slot: String in plots:
+		var offset := point - _position(slot)
+		if absf(offset.x) <= 4.5 and absf(offset.z) <= 4.5:
 			return slot
 	return ""
 
@@ -496,7 +580,7 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
-			zoom = clampf(zoom * (0.90 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.11), MIN_ZOOM, MAX_ZOOM)
+			zoom = clampf(zoom * (0.90 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.11), MIN_ZOOM, max_zoom)
 			_update_camera()
 		elif mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE]:
 			_dragging = mb.pressed
@@ -513,8 +597,8 @@ func _gui_input(event: InputEvent) -> void:
 			_drag_distance += motion.relative.length()
 			focus.x -= motion.relative.x * zoom / maxf(1, size.y)
 			focus.z -= motion.relative.y * zoom / maxf(1, size.y) * 1.4
-			focus.x = clampf(focus.x, -22, 22)
-			focus.z = clampf(focus.z, -16, 16)
+			focus.x = clampf(focus.x, bounds.position.x, bounds.end.x)
+			focus.z = clampf(focus.z, bounds.position.y, bounds.end.y)
 			_update_camera()
 		else:
 			_dragging = false
@@ -523,21 +607,26 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func focus_plot(slot: String, close_view := true) -> void:
-	focus = Vector3(PLOTS.get(slot, Vector3.ZERO)) if close_view else Vector3.ZERO
-	zoom = MIN_ZOOM if close_view else DEFAULT_ZOOM
+	focus = _position(slot) if close_view else overview
+	zoom = MIN_ZOOM if close_view else _fit_zoom()
 	_update_camera()
 
 
 func _update_camera() -> void:
 	if camera == null:
 		return
-	zoom = clampf(zoom, MIN_ZOOM, MAX_ZOOM)
-	focus.x = clampf(focus.x, -22, 22)
-	focus.z = clampf(focus.z, -16, 16)
-	# На сверхшироком окне сохраняем безопасную ширину кадра над землёй.
-	var aspect := size.x / maxf(1, size.y)
-	camera.size = minf(zoom, 190.0 / maxf(1, aspect))
-	camera.position = focus + Vector3(8, 66, 60)
+	var was_overview := is_equal_approx(zoom, default_zoom)
+	default_zoom = _fit_zoom()
+	if was_overview:
+		zoom = default_zoom
+	max_zoom = default_zoom * 1.5
+	zoom = clampf(zoom, MIN_ZOOM, max_zoom)
+	focus.x = clampf(focus.x, bounds.position.x, bounds.end.x)
+	focus.z = clampf(focus.z, bounds.position.y, bounds.end.y)
+	camera.size = zoom
+	var distance := maxf(90.0, zoom * 1.4)
+	camera.far = maxf(320.0, distance * 4.0)
+	camera.position = focus + Vector3(0.08, 0.74, 0.67).normalized() * distance
 	camera.look_at(world.to_global(focus), Vector3.UP)
 	view_changed.emit()
 
@@ -549,3 +638,175 @@ func shutdown() -> void:
 	if sub != null:
 		sub.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	hide()
+
+
+## Порядок не зависит от числа открытых участков: расширение не двигает здания.
+static func grid_positions(count: int) -> Array[Vector3]:
+	var result: Array[Vector3] = []
+	var cells: Array[Vector2i] = [Vector2i(0, 0), Vector2i(0, 1), Vector2i(0, 2)]
+	var columns := 1
+	var rows := 3
+	while cells.size() * 2 < count:
+		if columns * 2 < rows:
+			for row in rows:
+				cells.append(Vector2i(columns, row))
+			columns += 1
+		else:
+			for column in columns:
+				cells.append(Vector2i(column, rows))
+			rows += 1
+	for cell: Vector2i in cells:
+		for side: float in [-1, 1]:
+			if result.size() < count:
+				result.append(Vector3(side * (8 + cell.x * 12), 0, cell.y * 12))
+	return result
+
+
+func _layout_fort() -> void:
+	plots.clear()
+	var count := maxi(int(Legion.fort_exp_info(_expansion)["plots"]), (lg.fort["plots"] as Array).size() - 1)
+	var positions := grid_positions(count)
+	var extent := Rect2(-8, -20, 16, 16)
+	for p: Vector3 in positions:
+		extent = extent.expand(Vector2(p.x - 8, p.z - 8)).expand(Vector2(p.x + 8, p.z + 8))
+	bounds = extent
+	var index := 0
+	for plot: Dictionary in lg.fort["plots"]:
+		var id := int(plot["id"])
+		plots["plot_%d" % id] = Vector3(0, 0, -12) if id == 0 else positions[index]
+		if id != 0:
+			index += 1
+	gate = Vector3(0, 0.1, bounds.end.y)
+	overview = Vector3(0, 0, bounds.get_center().y)
+
+
+func _key(slot: String) -> String:
+	if plots.has(slot) or slot == "gate":
+		return slot
+	var plot := lg.fort_slot_plot(slot)
+	return "plot_%d" % int(plot.get("id", 0))
+
+
+func _position(slot: String) -> Vector3:
+	return gate if slot == "gate" else Vector3(plots.get(_key(slot), Vector3.ZERO))
+
+
+func _fit_zoom() -> float:
+	var aspect := maxf(0.4, size.x / maxf(1, size.y))
+	return maxf((bounds.size.x + 20) / aspect, (bounds.size.y + 20) * 0.75 + 12) * 1.12
+
+
+func _kit(piece: String, pos: Vector3, yaw := 0.0, scale_v := Vector3.ONE) -> void:
+	if not kit_batches.has(piece):
+		kit_batches[piece] = []
+	kit_batches[piece].append(Transform3D(Basis(Vector3.UP, yaw).scaled_local(scale_v), pos))
+
+
+func _wall_run(a: Vector3, b: Vector3, yaw: float, rng: RandomNumberGenerator) -> void:
+	var length := a.distance_to(b)
+	var n := ceili(length / 2.0)
+	for i in n:
+		var p := a.lerp(b, (i + 0.5) / n)
+		p.y = 1.2 + rng.randf_range(-0.04, 0.04)
+		_kit("palisade_seg" if i % 2 == 0 else "palisade_seg_b", p,
+			yaw + deg_to_rad(rng.randf_range(-2, 2)), Vector3(length / n / 2.0 + 0.025, 1, 1))
+
+
+func _walls() -> void:
+	corner_towers.clear()
+	var left := bounds.position.x
+	var right := bounds.end.x
+	var back := bounds.position.y
+	var front := bounds.end.y
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7311
+	_wall_run(Vector3(left, 0, back), Vector3(right, 0, back), PI, rng)
+	_wall_run(Vector3(left, 0, front), Vector3(-2.7, 0, front), 0, rng)
+	_wall_run(Vector3(2.7, 0, front), Vector3(right, 0, front), 0, rng)
+	_wall_run(Vector3(left, 0, back), Vector3(left, 0, front), -PI / 2, rng)
+	_wall_run(Vector3(right, 0, back), Vector3(right, 0, front), PI / 2, rng)
+	for x: float in [left, right]:
+		for z: float in [back, front]:
+			var p := Vector3(x, 1.2, z)
+			corner_towers.append(p)
+			_kit("tower", p)
+	# Малый форт — четыре башни; затем дополнительные через ~30 м.
+	if _expansion > 0:
+		for x: float in [left, right]:
+			var depth_sections := ceili(bounds.size.y / 30.0)
+			for i in range(1, depth_sections):
+				_kit("tower", Vector3(x, 1.2, lerpf(back, front, float(i) / depth_sections)))
+		var width_sections := ceili(bounds.size.x / 30.0)
+		for i in range(1, width_sections):
+			var x := lerpf(left, right, float(i) / width_sections)
+			_kit("tower", Vector3(x, 1.2, back))
+			if absf(x) > 5.0:
+				_kit("tower", Vector3(x, 1.2, front))
+	_kit("gate", gate - Vector3(0, 0.1, 0))
+	_kit("bridge", gate + Vector3(0, -0.485, 3))
+	for z: float in [back - 4.4, front + 4.4]:
+		for i in int(bounds.size.x / 4):
+			var x := left + 2 + i * 4
+			if z > 0 and absf(x) < 4:
+				continue
+			if i % 4 != 3:
+				_kit("stakes_row", Vector3(x, 0, z), PI if z < 0 else 0)
+	for x: float in [left - 4.4, right + 4.4]:
+		for i in int(bounds.size.y / 4):
+			if i % 4 != 3:
+				_kit("stakes_row", Vector3(x, 0, back + 2 + i * 4), PI / 2)
+	if not (lg.fort.get("up", {}) as Dictionary).is_empty():
+		var work := Node3D.new()
+		work.name = "WallWorks"
+		work.position = Vector3(right - 4, 0, front - 6)
+		structures.add_child(work)
+		_scaffold(work, "gate")
+	_sentries()
+
+
+func _sentries() -> void:
+	var guards := Node3D.new()
+	guards.name = "TowerSentries"
+	structures.add_child(guards)
+	for i in corner_towers.size():
+		for side: float in [-1, 1]:
+			var soldier := LegionFighter.create("spearman", 1.0, 910 + i * 2 + int(side > 0))
+			guards.add_child(soldier)
+			soldier.position = corner_towers[i] + Vector3(side * 0.65, 7.85, 0)
+			soldier.rotation.y = PI if i % 2 == 0 else 0.0
+			soldier.set_motion(false)
+			for player: AnimationPlayer in _manual_animations(soldier):
+				player.advance(0.25 + i * 0.13)
+			# Замороженная поза: часовые не расходуют лимит анимированных фигур.
+			soldier.process_mode = Node.PROCESS_MODE_DISABLED
+
+
+func _march_in() -> void:
+	lg.flags.erase("march_in")
+	var index := 0
+	for value: Variant in lg.squad3:
+		var sid := int(value)
+		if sid != 0 and not lg.soldier(sid).is_empty():
+			arrivals[sid] = -index * 0.8
+			index += 1
+	_people()
+	for entry: Dictionary in figures:
+		if arrivals.has(int(entry["id"])):
+			(entry["node"] as Node3D).position = _arrival_position(entry["home"], float(arrivals[int(entry["id"])]) / WALK_TIME)
+
+
+func _arrival_position(home: Vector3, t: float) -> Vector3:
+	# Мост, главная дорога, поперечная дорожка, вход на участок.
+	var start := gate + Vector3(0, 0, 6)
+	var row_path := roundf(home.z / 12.0) * 12.0 + 6.0
+	var turn := Vector3(0, 0.1, row_path)
+	var entrance := Vector3(home.x, 0.1, row_path)
+	var first := start.distance_to(turn)
+	var second := turn.distance_to(entrance)
+	var third := entrance.distance_to(home)
+	var distance := t * (first + second + third)
+	if distance <= first:
+		return start.lerp(turn, distance / maxf(0.01, first))
+	if distance <= first + second:
+		return turn.lerp(entrance, (distance - first) / maxf(0.01, second))
+	return entrance.lerp(home, (distance - first - second) / maxf(0.01, third))

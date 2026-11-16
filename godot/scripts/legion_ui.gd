@@ -2084,7 +2084,8 @@ func open_camp_window(kind: String, sid := 0) -> void:
 	if not lg.v3() or not lg.window_open():
 		return
 	if kind in ["forge", "store", "mars"] and not lg.camp_built(kind):
-		return
+		if kind != "store" or lg.fort_level_sum("arsenal") <= 0:
+			return
 	camp_window = kind
 	_dirty = false
 	_live.clear()
