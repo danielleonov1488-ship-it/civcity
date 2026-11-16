@@ -2467,7 +2467,7 @@ func arrive_work_slots() -> int:
 	for cl in Defs.CLASS_ORDER:
 		free_jobs += maxi(0, int(stats.get("jobs", {}).get(cl, 0)) - int(stats.get("filled", {}).get(cl, 0)))
 		unemployed += int(stats.get("free", {}).get(cl, 0))
-	var buffer := 8 + int(floor(pop * 0.1))
+	var buffer := 10 + int(floor(pop * 0.2))           # 16.11: мягко — держит только явный перебор безработных (бот застревал у «Города»)
 	var room := maxi(free_jobs, buffer - unemployed) - waiting * 2
 	return maxi(0, int(ceil(float(room) / 2.0)))
 

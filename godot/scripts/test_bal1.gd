@@ -115,7 +115,7 @@ func _arrivals() -> void:
 	c.incoming = 0
 	c.stats["jobs"] = {}
 	c.stats["filled"] = {}
-	c.stats["free"] = {"plebs": 11} # население 40: предел 8 + 4 = 12, запас — один работник
+	c.stats["free"] = {"plebs": 17} # население 40: предел 10 + 8 = 18, запас — один работник
 	check(c.arrive_work_slots() == 1, "one remaining unemployment slot allows one family")
 	c.incoming = 1
 	check(c.arrive_work_slots() == 0, "incoming family reserves work budget")
