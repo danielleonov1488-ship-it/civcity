@@ -1638,7 +1638,7 @@ func _cursor_world() -> String:
 		return {"bulldoze": "demolish", "move": "move", "copy": "hand"}[t]
 	if t == "erase":
 		return "demolish"
-	if t in ["road", "path", "plaza"]:
+	if t in ["road", "path", "plaza", "cobble", "footpath"]:
 		return "road"
 	if t == "move_nature":
 		var p: Vector2 = game.hover
@@ -2457,6 +2457,7 @@ func _bottom_left() -> void:
 	swatches.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	body.add_child(swatches)
 	for t: Array in [["road", "road", "Мостовая: каменная улица"], ["path", "path", "Тропа: утоптанная дорожка — почти даром"],
+			["cobble", "road", "Булыжник: тёплая каменная улица"], ["footpath", "path", "Плиточная дорожка: камни среди травы — почти даром"],
 			["plaza", "plaza", "Площадь из узорной плитки"],
 			["roadup", "hammer", "Улучшить дорогу: тропа станет мостовой, мостовая — каменными плитами, площадь — травертином"]]:
 		var tn: String = t[0]
@@ -2570,6 +2571,12 @@ func _bottom_left() -> void:
 func _road_swatch(t: String, icon_name: String, tip: String) -> Button:
 	var b := _round(icon_name, tip, 56, func(): game.set_tool(t))
 	b.set_meta("swatch", true)
+	if t in ["cobble", "footpath"]:
+		# Свой образец вместо одинаковых значков дороги и тропы.
+		var texture_name := "Cobblestone_Texture_01" if t == "cobble" else "Footpath_Tiles_Texture_01"
+		var face := b.get_node("ic") as TextureRect
+		face.texture = load("res://assets/synty_meadow/Textures/Terrain/" + texture_name + ".png")
+		face.modulate = Color(0.91, 0.85, 0.73)
 	for st: Array in [["normal", "g_btn"], ["hover", "g_btn_hover"], ["pressed", "g_btn_on"], ["hover_pressed", "g_btn_on"]]:
 		b.add_theme_stylebox_override(st[0], _box_pill(5, 5, st[1]))
 	road_btns[t] = b
@@ -2596,7 +2603,7 @@ func _road_group(t: String) -> String:
 		return "ground"
 	if t in ["grass", "ungrass"]:
 		return "grass"
-	return "roads" if t in ["road", "path", "plaza", "erase", "roadup"] else ""
+	return "roads" if t in ["road", "path", "plaza", "cobble", "footpath", "erase", "roadup"] else ""
 
 
 ## Стрелка обучения и просьб: сначала открыть группу, затем выбрать мостовую.
@@ -4164,7 +4171,7 @@ func _tool_panel() -> void:
 
 func on_tool(t: String) -> void:
 	for k in road_btns:
-		if road_btns[k] is Button and k in ["road", "path", "plaza", "erase", "roadup", "ground", "grass", "ungrass"]:
+		if road_btns[k] is Button and k in ["road", "path", "plaza", "cobble", "footpath", "erase", "roadup", "ground", "grass", "ungrass"]:
 			_set_on(road_btns[k], k == t)
 	for k in tool_btns:
 		_set_on(tool_btns[k], k == t or (k == "move" and t == "move_nature"))
@@ -4322,10 +4329,11 @@ func _fill_tool_panel_body() -> void:
 			keys += "\nПривязка к дороге (R): " + ("вкл" if game.snap else "выкл")
 		tool_keys.text = keys
 	else:
-		var names := {"road": "Мостовая", "path": "Тропа", "plaza": "Площадь", "erase": "Ластик", "bulldoze": "Снос", "copy": "Копировать", "move": "Перенести", "move_nature": "Перенести",
+		var names := {"cobble": "Булыжник", "footpath": "Плиточная дорожка", "road": "Мостовая", "path": "Тропа", "plaza": "Площадь", "erase": "Ластик", "bulldoze": "Снос", "copy": "Копировать", "move": "Перенести", "move_nature": "Перенести",
 			"roadup": "Улучшить дорогу", "ground": "Земля", "grass": "Трава", "ungrass": "Убрать траву"}
 		tool_title.text = names.get(t, t)
-		var keys := {"road": "Каменная улица. Ведите с зажатой левой кнопкой. [ ] — размер, Ctrl+Z — отменить, Esc посреди мазка — отменить его.",
+		var keys := {"cobble": "Каменная улица с мягкими краями. Стоит как мостовая.",
+			"footpath": "Камни среди травы. Стоит как тропа.", "road": "Каменная улица. Ведите с зажатой левой кнопкой. [ ] — размер, Ctrl+Z — отменить, Esc посреди мазка — отменить его.",
 			"path": "Утоптанная тропа — самая дешёвая дорога: ею удобно тянуть длинные улицы к окраинам.", "plaza": "Плитка для площадей у рынков и храмов — самая дорогая.", "erase": "Наведите на дорогу — что уберётся, видно красным. Ведите с зажатой кнопкой: дорога уберётся, когда отпустите (Esc посреди — передумать). Звенья заборов под ластиком тоже уберутся.",
 			"bulldoze": "Наведите на постройку, дерево или камень — подсветится красным. Щелчок — снести.", "copy": "Щёлкните по постройке — возьмёте такую же: тот же облик, цвет фасада и поворот. Без инструмента — наведите на постройку и нажмите F.",
 			"move": "Щёлкните по постройке, дереву или камню и поставьте на новое место.", "move_nature": "Поставьте на новое место. Z/X — повернуть.",

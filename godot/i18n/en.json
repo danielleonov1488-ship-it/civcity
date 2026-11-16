@@ -5075,5 +5075,11 @@
 "Призовите воина": "Recruit a soldier",
 "Поставьте его в строй": "Assign them to the squad",
 "В поход!": "To the campaign!",
-"Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. До «Деревни» работа не ограничивает приезд, дальше нужны рабочие места или мало безработных.": "Move families into vacant homes. The first %d families have no happiness requirement; after that, at least %d%% is needed. Until the Village rank jobs do not limit arrivals; after that, jobs or low unemployment are needed."
+"Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. До «Деревни» работа не ограничивает приезд, дальше нужны рабочие места или мало безработных.": "Move families into vacant homes. The first %d families have no happiness requirement; after that, at least %d%% is needed. Until the Village rank jobs do not limit arrivals; after that, jobs or low unemployment are needed.",
+"Булыжник": "Cobblestone",
+"Плиточная дорожка": "Stepping-stone path",
+"Булыжник: тёплая каменная улица": "Cobblestone: a warm stone street",
+"Плиточная дорожка: камни среди травы — почти даром": "Stepping-stone path: stones among grass — almost free",
+"Каменная улица с мягкими краями. Стоит как мостовая.": "A stone street with soft edges. Costs the same as a paved road.",
+"Камни среди травы. Стоит как тропа.": "Stones among grass. Costs the same as a dirt path."
 }

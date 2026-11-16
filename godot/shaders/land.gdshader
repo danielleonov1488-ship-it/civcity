@@ -3,6 +3,8 @@
 shader_type spatial;
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 
+uniform sampler2D tile_cobble : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D tile_footpath : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D tile_road : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D tile_plaza_a : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D tile_plaza_b : source_color, filter_linear_mipmap, repeat_enable;
@@ -15,7 +17,7 @@ uniform float wet = 0.0;                                   // мокрая зе�
 // этап 5.7–5.8: узор кисти «Земля» и улучшенные дороги (Land.deco). deco_on = false — узора в городе нет: картинка как была
 uniform bool deco_on = false;
 uniform sampler2D surf2 : filter_linear_mipmap, repeat_disable;  // R сочная трава, G луг в цветах, B песок, A утоптанная земля
-uniform sampler2D surf3 : filter_linear_mipmap, repeat_disable;  // R гравий, G улучшенная дорога (плиты, травертин)
+uniform sampler2D surf3 : filter_linear_mipmap, repeat_disable;  // R гравий, G улучшение, B булыжник, A плиточная дорожка
 uniform sampler2D tile_slab : source_color, filter_linear_mipmap, repeat_enable;     // большие плиты (мостовая из камня, травертин)
 uniform sampler2D tile_mosaic : source_color, filter_linear_mipmap, repeat_enable;   // мозаика на улучшенной площади
 // показ мазка до отпускания кнопки (game.gd): R — где ляжет дорога (или что уберёт ластик), G — куда денег не хватит.
@@ -81,6 +83,41 @@ float vn(vec2 p) {
 }
 
 float lum3(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+// Два непрерывных смещённых узора: без границ клеток и повторяющихся рядов камней.
+// Только новые покрытия. rich=false: одна выборка, без крупной вариации.
+vec3 worn_stone(sampler2D tex, vec2 p, bool garden, float cover, vec3 ground) {
+	vec2 uv = p / (garden ? 3.1 : 2.7);
+	vec3 raw = texture(tex, uv).rgb;
+	float macro = 0.5;
+	float patch_n = 0.5;
+	if (rich) {
+		patch_n = vn(p * 0.27 + vec2(12.7, 4.3));
+		if (prev_mode != 1 || (prev_kind != 16 && prev_kind != 17)) {
+			vec3 alt = texture(tex, vec2(-uv.y, uv.x) + vec2(0.37, 0.61)).rgb;
+			// Светлые камни сохраняют читаемые швы при смешивании.
+			float blend = smoothstep(0.23, 0.77, patch_n + (lum3(alt) - lum3(raw)) * 0.65);
+			raw = mix(raw, alt, blend);
+		}
+		macro = vn(p / 12.0) * 0.65 + vn(p / 20.0 + vec2(8.1, 19.7)) * 0.35;
+	}
+	float light = lum3(raw);
+	float gap = 1.0 - smoothstep(0.12, 0.29, light);
+	float green = smoothstep(0.015, 0.065, raw.g - raw.b) * (1.0 - smoothstep(0.02, 0.08, raw.r - raw.g));
+	// Песочный тон и приглушённый контраст; большие пятна теплее и холоднее.
+	vec3 stone = mix(vec3(light), raw, 0.68 + macro * 0.12);
+	stone = mix(vec3(0.27, 0.225, 0.16), stone * vec3(1.09, 1.0, 0.84), 0.72);
+	stone *= (0.92 + macro * 0.16) * vec3(1.0 + (macro - 0.5) * 0.06, 1.0, 1.0 - (macro - 0.5) * 0.05);
+	vec3 soil = vec3(0.23, 0.163, 0.095);
+	vec3 moss = mix(ground, vec3(0.12, 0.17, 0.05), 0.65);
+	float middle = smoothstep(0.55, 0.95, cover);
+	float corner = (1.0 - middle) * smoothstep(0.48, 0.8, patch_n);
+	float wear = garden ? 0.09 : (0.10 + 0.12 * middle + 0.13 * corner);
+	stone = mix(stone, soil, wear * (0.45 + gap * 0.55));
+	stone *= 1.0 - gap * 0.10;
+	float moss_w = garden ? max(green * 0.65, gap * (0.18 + 0.18 * (1.0 - middle))) : gap * (0.06 * middle + 0.18 * corner);
+	return mix(stone, moss, moss_w);
+}
 
 // Пятна травы — по картинке плавного шума (MeadowNature.ground: симплекс FastNoiseLite, бесшовная, 4 канала): у шума
 // по сетке (vn) края пятен после порога идут прямыми вдоль сетки — на лугу это читалось прямоугольниками
@@ -248,6 +285,12 @@ void fragment() {
 					rough = mix(rough, 1.0, gw * (g2.b + g2.a + g3.r) / gs);
 				}
 			}
+			float new_cover = g3.b + g3.a;
+			if (new_cover > 0.0) {
+				// Класс ходьбы прежний, его плитку заменяет новый материал.
+				m.r = max(0.0, m.r - g3.b);
+				m.b = max(0.0, m.b - g3.a);
+			}
 			float w_path = smoothstep(0.28, 0.6, m.b + wob * 0.35);
 			float w_road = smoothstep(0.44, 0.54, m.r + wob * 0.06);
 			float w_plaza = smoothstep(0.44, 0.54, m.g + wob * 0.04);
@@ -337,6 +380,27 @@ void fragment() {
 				c = mix(c, t, w_plaza);
 				rough = mix(rough, 0.8, w_plaza);
 			}
+			if (new_cover > 0.0) {
+				// Маска 0,5 м с mip 0,7: мягкая кромка около 1–1,5 м.
+				float edge_noise = rich ? vn(wpos.xz * 0.83 + vec2(4.9, 7.3)) - 0.5 : 0.0;
+				float cover = clamp(new_cover, 0.0, 1.0);
+				float worn = cover + edge_noise * 0.30 * (1.0 - cover);
+				float weight = smoothstep(0.04, 0.96, worn);
+				bool garden = g3.a > g3.b;
+				vec3 stone;
+				if (garden) {
+					stone = worn_stone(tile_footpath, wpos.xz, true, cover, base);
+				} else {
+					stone = worn_stone(tile_cobble, wpos.xz, false, cover, base);
+					// Редкие камни снаружи кромки, без мелкой ряби.
+					float loose = smoothstep(0.64, 0.82, vn(wpos.xz * 3.0));
+					weight = max(weight, loose * smoothstep(0.02, 0.22, cover) * (1.0 - smoothstep(0.22, 0.5, cover)) * 0.38);
+				}
+				vec3 bed = mix(c, vec3(0.23, 0.163, 0.095), garden ? 0.12 : 0.28);
+				c = mix(c, bed, smoothstep(0.01, 0.45, cover) * (1.0 - weight));
+				c = mix(c, stone, weight);
+				rough = mix(rough, 0.94, weight);
+			}
 		}
 		if (prev_mode > 0 && !far && k != 2.0 && k != 7.0) {
 			float wob = vn(wpos.xz * 2.3) - 0.5;
@@ -350,6 +414,12 @@ void fragment() {
 					t = texture(tile_plaza_a, wpos.xz / 2.5).rgb;
 				} else if (prev_kind == 9) {
 					t = texture(tile_slab, wpos.xz / 1.8).rgb * vec3(0.5, 0.52, 0.57);   // «Улучшить»
+				} else if (prev_kind == 16) {
+					t = base;
+					if (wp + wr > 0.0) t = worn_stone(tile_cobble, wpos.xz, false, 1.0, base);
+				} else if (prev_kind == 17) {
+					t = base;
+					if (wp + wr > 0.0) t = worn_stone(tile_footpath, wpos.xz, true, 1.0, base);
 				} else if (prev_kind >= 10) {
 					// «Земля»: цвет выбранного узора (10 — обычная трава)
 					int g = prev_kind - 10;

@@ -60,6 +60,15 @@ var wear_block := {}                 # id построек с бордюром (
 ## бит UP — улучшенная мостовая (каменные плиты) или площадь (травертин с мозаикой)
 const UP := 8
 const GMASK := 7
+## Варианты дороги: в kind остаётся класс ходьбы, в deco — материал. Старые номера не меняются.
+const COBBLE := 16
+const FOOTPATH := 32
+const ROAD_STYLE := COBBLE | FOOTPATH
+const ROAD_COBBLE := 16
+const ROAD_FOOTPATH := 17
+var road_style_n := 0
+
+
 ## 15.11: маска травы — кисти «Трава» и «Убрать траву» (GrassCarpet): клетка 1 м, 0 — как само растёт, 1 — посажено
 ## (густо, с цветами), 2 — убрано. Сохраняется сжатой строкой (gmask); в старых сохранениях её нет
 const GM_N := 384
@@ -175,8 +184,28 @@ func is_rock(k: int) -> bool:
 	return false
 
 
+static func road_base(kd: int) -> int:
+	return Kind.ROAD if kd == ROAD_COBBLE else (Kind.DIRT if kd == ROAD_FOOTPATH else kd)
+
+
+static func road_style(kd: int) -> int:
+	return COBBLE if kd == ROAD_COBBLE else (FOOTPATH if kd == ROAD_FOOTPATH else 0)
+
+
+static func painted_kind(kd: int, dv: int) -> int:
+	if kd == Kind.ROAD and (dv & COBBLE) != 0:
+		return ROAD_COBBLE
+	if kd == Kind.DIRT and (dv & FOOTPATH) != 0:
+		return ROAD_FOOTPATH
+	return kd
+
+
+func road_kind(k: int) -> int:
+	return painted_kind(kind[k], deco[k])
+
+
 static func walk_kind(kd: int) -> bool:
-	return kd == Kind.ROAD or kd == Kind.PLAZA or kd == Kind.DIRT
+	return kd == Kind.ROAD or kd == Kind.PLAZA or kd == Kind.DIRT or kd == ROAD_COBBLE or kd == ROAD_FOOTPATH
 
 
 ## Дорога (мостовая, площадь, тропа) без построек
@@ -274,6 +303,7 @@ func generate() -> void:
 	deco_chunks.clear()
 	up_n = 0
 	ground_n = 0
+	road_style_n = 0
 	_deco_enc = []
 	_dc_dirty.clear()
 	_dc_cells.clear()
@@ -390,6 +420,7 @@ func _mark(i: int, j: int, mesh := true, mask := true) -> void:
 ## Без seen — как раньше: дорога сглаживается сразу
 func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := true, square := false, over := true, seen = null) -> Array:
 	var out := []
+	var base := road_base(kd)
 	var c := cell(p)
 	var rc := int(ceil(r / CELL))
 	var y0 := height_at(p.x, p.y)
@@ -418,7 +449,7 @@ func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := tr
 			var k := idx(i, j)
 			if defer and seen.has(k):
 				continue
-			var kk := kind[k]
+			var kk := road_kind(k)
 			var y := hq(k)
 			if y < WATER_Y + 0.05 or occ[k] != 0:
 				continue
@@ -430,12 +461,12 @@ func paint_circle(p: Vector2, r: float, kd: int, flat := false, only_owned := tr
 				continue
 			if flat and absf(y - y0) > 1.2:
 				continue                         # обрыв кисть не срезает
-			out.append([Vector2i(i, j), kk, h[k], deco[k]])
+			out.append([Vector2i(i, j), kind[k], h[k], deco[k]])
 			if defer:
 				seen[k] = true
-			if kk != kd and deco[k] != 0:
-				set_deco(k, 0)                   # новое покрытие — без прежнего узора и улучшения
-			kind[k] = kd
+			if kk != kd:
+				set_deco(k, road_style(kd))                   # новое покрытие — без прежнего узора и улучшения
+			kind[k] = base
 			var mesh := false
 			if flat and walk_kind(kd) and not defer:
 				# дорога ложится по земле: только сглаживаем мелкие ступеньки вдоль неё, не поднимая над травой
@@ -577,7 +608,7 @@ func line_cells(a: Vector2, b: Vector2, r: float, kd: int, square := false, over
 			if not is_owned(q):
 				continue
 			var k := j * N + i
-			var kk := kind[k]
+			var kk := road_kind(k)
 			var y := hq(k)
 			if y < WATER_Y + 0.05 or occ[k] != 0:
 				continue
@@ -639,12 +670,12 @@ func apply_cells(cells: PackedInt32Array, kd: int) -> Array:
 	for k in cells:
 		var i := k % N
 		var j := k / N
-		var kk := kind[k]
-		out.append([Vector2i(i, j), kk, h[k], deco[k]])
-		if deco[k] != 0 and (kk != kd or kd == Kind.GRASS):
-			set_deco(k, 0)
+		var kk := road_kind(k)
+		out.append([Vector2i(i, j), kind[k], h[k], deco[k]])
+		if kk != kd or kd == Kind.GRASS:
+			set_deco(k, road_style(kd))
 		if kk != kd:
-			kind[k] = kd
+			kind[k] = road_base(kd)
 			_mark(i, j, false, true)
 		if walk_kind(kd):
 			road_chunks[Vector2i(i / CH, j / CH)] = true
@@ -714,6 +745,10 @@ func set_deco(k: int, v: int) -> void:
 		ground_n -= 1
 	if (v & GMASK) != 0:
 		ground_n += 1
+	if (o & ROAD_STYLE) != 0:
+		road_style_n -= 1
+	if (v & ROAD_STYLE) != 0:
+		road_style_n += 1
 	deco[k] = v
 	if v == 0:
 		deco_cells.erase(k)
@@ -792,16 +827,17 @@ func brush_apply(cells: PackedInt32Array, gk: int) -> Array:
 		if gk >= 0:
 			set_deco(k, (deco[k] & ~GMASK) | gk)
 		elif kind[k] == Kind.DIRT:
+			set_deco(k, deco[k] & ~ROAD_STYLE)
 			kind[k] = Kind.ROAD
 			_mark(i, j, false, true)
 			road_chunks[Vector2i(i / CH, j / CH)] = true
 		else:
-			set_deco(k, deco[k] | UP)
+			set_deco(k, (deco[k] & ~ROAD_STYLE) | UP)
 	return out
 
 
 ## Маски узора для шейдера (по 2×2 клетки): [0] — RGBA доли кисти «Земля» (сочная трава, луг, песок, утоптанная земля),
-## [1] — R гравий, G улучшенная дорога. Собираются только по кускам, где узор был
+## [1] — R гравий, G улучшенная дорога, B булыжник, A плиточная дорожка. Собираются только по кускам, где узор был
 func make_deco_masks() -> Array:
 	var a := Image.create(N / SM, N / SM, false, Image.FORMAT_RGBA8)
 	var b := Image.create(N / SM, N / SM, false, Image.FORMAT_RGBA8)
@@ -851,6 +887,10 @@ func _deco_px(a: Image, b: Image, i: int, j: int) -> void:
 			5: e.r += 0.25
 		if (v & UP) != 0 and (kd == Kind.ROAD or kd == Kind.PLAZA):
 			e.g += 0.25
+		if kd == Kind.ROAD and (v & COBBLE) != 0:
+			e.b += 0.25
+		if kd == Kind.DIRT and (v & FOOTPATH) != 0:
+			e.a += 0.25
 	a.set_pixel(i, j, c)
 	b.set_pixel(i, j, e)
 
@@ -952,6 +992,8 @@ func flatten_cells(cells: PackedInt32Array, y: float, kd := -1) -> void:
 			var kch := kd >= 0 and kind[k] != kd
 			h[k] = y
 			if kd >= 0:
+				if kind[k] != kd and (deco[k] & ROAD_STYLE) != 0:
+					set_deco(k, deco[k] & ~ROAD_STYLE)
 				kind[k] = kd
 			_mark(k % N, k / N, step, kch)
 
@@ -1010,6 +1052,8 @@ func pave_under(cells: PackedInt32Array, on: bool, to := Kind.PLAZA) -> void:
 		if not on and int(kind[k]) != to:
 			continue
 		if int(kind[k]) != kd:
+			if (deco[k] & ROAD_STYLE) != 0:
+				set_deco(k, deco[k] & ~ROAD_STYLE)
 			kind[k] = kd
 			_mark(k % N, k / N, true, true)
 
@@ -1021,9 +1065,11 @@ func pave_beneath(cells: PackedInt32Array, kd: int) -> int:
 	var n := 0
 	for k in cells:
 		var kk := int(kind[k])
-		if kk == kd or not (kk in [Kind.GRASS, Kind.DIRT, Kind.SAND, Kind.YARD]) or hq(k) < WATER_Y + 0.05:
+		if road_kind(k) == kd or not (kk in [Kind.GRASS, Kind.DIRT, Kind.SAND, Kind.YARD]) or hq(k) < WATER_Y + 0.05:
 			continue
-		kind[k] = kd
+		kind[k] = road_base(kd)
+		if road_style(kd) != 0 or (deco[k] & ROAD_STYLE) != 0:
+			set_deco(k, road_style(kd))
 		_mark(k % N, k / N, false, true)
 		road_chunks[Vector2i((k % N) / CH, (k / N) / CH)] = true
 		n += 1
@@ -1635,7 +1681,7 @@ func load_changes(d: Dictionary) -> void:
 	var dv := Marshalls.base64_to_raw(d.get("deco_v", ""))
 	for n in mini(dc.size(), dv.size()):
 		if dc[n] >= 0 and dc[n] < N * N:
-			set_deco(dc[n], dv[n] & (UP | GMASK))
+			set_deco(dc[n], dv[n] & (UP | GMASK | ROAD_STYLE))
 	owned.clear()
 	for p in d.get("plots", []):
 		owned[Vector2i(int(p[0]), int(p[1]))] = true

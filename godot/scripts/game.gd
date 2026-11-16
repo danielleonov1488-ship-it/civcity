@@ -1576,7 +1576,7 @@ func _deco_masks() -> void:
 	land_mat.set_shader_parameter("surf2", deco_texs[0])
 	land_mat.set_shader_parameter("surf3", deco_texs[1])
 	_deco_tiles()
-	land_mat.set_shader_parameter("deco_on", land.up_n + land.ground_n > 0)
+	land_mat.set_shader_parameter("deco_on", land.up_n + land.ground_n + land.road_style_n > 0)
 
 
 ## Плитки улучшенных дорог для шейдера земли — один раз, когда понадобились (маски узора или показ прямой «Улучшить»
@@ -1586,6 +1586,8 @@ func _deco_tiles() -> void:
 	if _deco_tiles_on:
 		return
 	_deco_tiles_on = true
+	land_mat.set_shader_parameter("tile_cobble", load("res://assets/synty_meadow/Textures/Terrain/Cobblestone_Texture_01.png"))
+	land_mat.set_shader_parameter("tile_footpath", load("res://assets/synty_meadow/Textures/Terrain/Footpath_Tiles_Texture_01.png"))
 	Synty._index()
 	land_mat.set_shader_parameter("tile_slab", load(Synty._tex_path("Floor_Tiles_06")))
 	land_mat.set_shader_parameter("tile_mosaic", load(Synty._tex_path("Floor_Tiles_Circle_01")))
@@ -1606,7 +1608,7 @@ func _rebuild_land(limit := 6, busy := false) -> void:
 		for i in 2:
 			(deco_imgs[i] as Image).generate_mipmaps()
 			(deco_texs[i] as ImageTexture).update(deco_imgs[i])
-		land_mat.set_shader_parameter("deco_on", land.up_n + land.ground_n > 0)
+		land_mat.set_shader_parameter("deco_on", land.up_n + land.ground_n + land.road_style_n > 0)
 	if not stroke_on and not land.dirty_soft.is_empty():
 		for ch in land.dirty_soft:
 			land.dirty[ch] = true
@@ -2975,7 +2977,7 @@ func set_tool(t: String) -> void:
 
 
 func is_road_tool(t: String) -> bool:
-	return t in ["road", "plaza", "path", "erase", "roadup", "ground", "grass", "ungrass"]
+	return t in ["road", "plaza", "path", "cobble", "footpath", "erase", "roadup", "ground", "grass", "ungrass"]
 
 
 ## Кисти травы (15.11): «Трава» сажает густую траву с цветами, «Убрать траву» стирает её; бесплатно, маска — Land.grass_mask
@@ -2990,7 +2992,7 @@ func is_deco_tool(t: String) -> bool:
 
 ## Цвет кольца кисти по инструменту: мостовая — кремовая, тропа — песочная, площадь — светлый камень, ластик — красный,
 ## «Улучшить» — золотистый, «Земля» — зелёный
-const BRUSH_COL := {"road": Color(1.0, 0.97, 0.88), "path": Color(0.95, 0.8, 0.55), "plaza": Color(0.86, 0.88, 0.92), "erase": Color(1.0, 0.32, 0.26),
+const BRUSH_COL := {"cobble": Color(0.86, 0.78, 0.64), "footpath": Color(0.8, 0.85, 0.55), "road": Color(1.0, 0.97, 0.88), "path": Color(0.95, 0.8, 0.55), "plaza": Color(0.86, 0.88, 0.92), "erase": Color(1.0, 0.32, 0.26),
 	"roadup": Color(1.0, 0.86, 0.45), "ground": Color(0.6, 0.95, 0.5), "grass": Color(0.55, 0.95, 0.4), "ungrass": Color(0.95, 0.6, 0.3)}
 var brush_disc: MeshInstance3D            # чуть заметный круг внутри кольца (цвет инструмента)
 
@@ -5746,7 +5748,7 @@ func _release() -> void:
 		for c in stroke:
 			cells.append(land.idx(c[0].x, c[0].y))
 		land.smooth_cells(cells)
-	if not stroke.is_empty() and tool in ["road", "plaza", "path"]:
+	if not stroke.is_empty() and tool in ["road", "plaza", "path", "cobble", "footpath"]:
 		_pave_beneath(stroke, int(ROAD_KIND[tool]))
 	if hud:
 		if brush_line and tool != "erase":
@@ -5860,14 +5862,13 @@ func _paint_at(q: Vector2) -> void:
 	if is_deco_tool(tool):
 		_brush_at(q)
 		return
-	var kinds := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": Land.Kind.DIRT}
-	var kd: int = kinds[tool]
+	var kd: int = ROAD_KIND[tool]
 	var ch := land.paint_circle(q, brush_r, kd, true, true, brush_square, brush_over, _stroke_seen)
 	if ch.is_empty():
 		return
 	var fresh := 0
 	for c in ch:
-		if int(c[1]) != kd:
+		if Land.painted_kind(int(c[1]), int(c[3])) != kd:
 			fresh += 1            # где покрытие уже было, кисть только подравнивает высоту — это бесплатно
 	var cost := fresh * float(Defs.ROAD_COST[tool])
 	if cost > city.money:
@@ -5913,7 +5914,7 @@ func clear_nature_small(c: Vector2, r: float) -> void:
 			nature[key] = keep
 
 
-const ROAD_KIND := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": Land.Kind.DIRT, "erase": Land.Kind.GRASS}
+const ROAD_KIND := {"road": Land.Kind.ROAD, "plaza": Land.Kind.PLAZA, "path": Land.Kind.DIRT, "cobble": Land.ROAD_COBBLE, "footpath": Land.ROAD_FOOTPATH, "erase": Land.Kind.GRASS}
 
 
 ## Кисть «Улучшить» / «Земля»: какой узор кладёт (−1 — улучшение дороги; для «Земли» — ground_kind)
@@ -6041,6 +6042,8 @@ func _line_update(force := false) -> void:
 		_prev_put(bplan["cells"], bplan["fresh"], int(bplan["upto"]), 1, 9 if tool == "roadup" else 10 + ground_kind)
 		return
 	var kd: int = ROAD_KIND[tool]
+	if Land.road_style(kd) != 0:
+		_deco_tiles()
 	var lc := land.line_cells(line_from, hover, brush_r, kd, brush_square, brush_over)
 	var plan := {"cells": lc["cells"], "fresh": lc["fresh"], "t": lc["t"], "kd": kd, "len": line_from.distance_to(hover),
 		"upto": (lc["cells"] as PackedInt32Array).size(), "cost": 0.0}
