@@ -6525,7 +6525,9 @@ func _research_panel() -> void:
 	research_tree.setup(self, w[1])
 	research_panel.visibility_changed.connect(func():
 		if research_panel.visible:
-			research_tree.open_scroll = true)
+			research_tree.open_scroll = true
+		else:
+			research_tree.close_detail())
 	# окно закрыли — всё, что в нём было новым, игрок видел: «НОВОЕ» с исследований снимается
 	research_panel.visibility_changed.connect(func():
 		if not research_panel.visible and game and game.city and game.mode in ["new", "play"]:
@@ -6545,7 +6547,10 @@ func _fill_research() -> void:
 	if not research_panel.visible:
 		return
 	_research_head()
-	research_tree.rebuild(bool(research_tree.open_scroll))
+	research_tree.refresh()
+	if research_tree.open_scroll:
+		research_tree.close_detail()
+		research_tree.focus_rank(game.city.level)
 	research_tree.open_scroll = false
 
 

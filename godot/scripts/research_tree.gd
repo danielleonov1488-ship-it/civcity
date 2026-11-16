@@ -1,28 +1,45 @@
-extends Control
-## Дерево исследований: карточки в столбцах рангов, связи рисуются под ними.
+extends VBoxContainer
+## Исследования по рангам: крупные картинки без рамок и линий.
 
-const CARD := Vector2(170, 76)
-const STEP := Vector2(222, 94)
+const CARD := Vector2(158, 206)
+const GAP := 20.0
+const BADGE_GOOD := Color("487333")
+const BADGE_BAD := Color("a53d32")
 var hud
 var scroll: ScrollContainer
 var detail: VBoxContainer
 var only_available: CheckBox
 var cards: Dictionary = {}
+var sections: Dictionary = {}
 var selected := ""
 var study: Button
+var popup: PanelContainer
+var open_scroll := false
 var _state := ""
 var _first := ""
-var open_scroll := false
+var _built := false
+var _buildings: Dictionary = {}
+var _done_material: ShaderMaterial
+var _badge_good: StyleBoxFlat
+var _badge_bad: StyleBoxFlat
+var _empty: Label
+var _popup_title: Label
+var _popup_picture: TextureRect
+var _popup_cost: Label
+var _popup_reason: Label
+var _detail_scroll: ScrollContainer
+var _focus_serial := 0
 
 
 func setup(owner_hud, parent: VBoxContainer) -> void:
 	hud = owner_hud
 	var tools := HBoxContainer.new()
+	tools.name = "ResearchTools"
 	tools.add_theme_constant_override("separation", 12)
-	tools.add_child(hud._icon("research", 26, Hud.C_SOFT))
-	hud.lbl_research_rp = hud._label("0", 22, true)
+	tools.add_child(hud._icon("research", 30, Hud.C_SOFT))
+	hud.lbl_research_rp = hud._label("0", 24, true)
 	tools.add_child(hud.lbl_research_rp)
-	hud.lbl_research_rate = hud._label("", 16, true, Hud.C_GOOD)
+	hud.lbl_research_rate = hud._label("", 17, true, Hud.C_GOOD)
 	tools.add_child(hud.lbl_research_rate)
 	var space := Control.new()
 	space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -30,98 +47,184 @@ func setup(owner_hud, parent: VBoxContainer) -> void:
 	only_available = CheckBox.new()
 	only_available.name = "OnlyAvailable"
 	only_available.text = "Только доступные"
-	only_available.toggled.connect(func(_on: bool): rebuild(true))
+	only_available.add_theme_font_size_override("font_size", 17)
+	only_available.toggled.connect(func(_on: bool):
+		close_detail()
+		rebuild(true))
 	tools.add_child(only_available)
 	parent.add_child(tools)
-	var body := HBoxContainer.new()
-	body.add_theme_constant_override("separation", 18)
-	parent.add_child(body)
 	scroll = ScrollContainer.new()
 	scroll.name = "ResearchScroll"
-	scroll.custom_minimum_size = Vector2(764, 484)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.follow_focus = true
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	body.add_child(scroll)
+	parent.add_child(scroll)
 	hud.research_box = VBoxContainer.new()
+	hud.research_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(hud.research_box)
 	hud.research_box.add_child(self)
+	name = "ResearchRanks"
+	size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_theme_constant_override("separation", 24)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var side := ScrollContainer.new()
-	side.name = "ResearchDetailScroll"
-	side.custom_minimum_size = Vector2(264, 484)
-	side.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	body.add_child(side)
-	detail = VBoxContainer.new()
-	detail.name = "ResearchDetails"
-	detail.custom_minimum_size.x = 246
-	detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	detail.add_theme_constant_override("separation", 10)
-	side.add_child(detail)
-	set_process(false)
+	resized.connect(_layout_sections)
+	scroll.get_v_scroll_bar().value_changed.connect(func(_value: float): _place_popup())
+	_make_popup()
+	hud.root.resized.connect(fit_window)
+	fit_window()
+
+
+func fit_window() -> void:
+	hud.research_panel.custom_minimum_size.x = minf(1040, maxf(780, hud.root.size.x - 48))
+	scroll.custom_minimum_size = Vector2(720, clampf(hud.root.size.y - 220, 260, 510))
+	_detail_scroll.custom_minimum_size.y = clampf(hud.root.size.y - 510, 100, 160)
+	hud._snug(hud.research_panel)
+	_place_popup.call_deferred()
 
 
 func state_key() -> String:
 	var c: City = hud.game.city
-	return str([c.level, int(c.rp), c.research, only_available.button_pressed])
+	return str([c.level, int(c.rp), c.econ, c.research, c.tips.get("seen_r", {}), only_available.button_pressed])
 
 
 func refresh() -> void:
-	if _state != state_key():
+	if not _built or _state != state_key():
 		rebuild()
 	else:
 		# Миниатюры стройки могут догрузиться после открытия окна.
 		for id: String in cards:
-			var img: TextureRect = cards[id].get_node("Picture")
-			img.texture = picture(Defs.research(id))
+			_update_picture(cards[id].get_node("Picture"), Defs.research(id))
+		if popup.visible:
+			_update_picture(_popup_picture, Defs.research(selected))
+			_update_detail_state()
 
 
 func rebuild(auto_scroll := false) -> void:
+	# Имя оставлено для подсказок и прежних тестов. Узлы создаём только один раз.
+	if not _built:
+		_build()
 	_state = state_key()
-	hud._clear(self)
-	cards.clear()
 	_first = ""
-	var c: City = hud.game.city
-	var height := 480.0
+	for r: Dictionary in Defs.RESEARCH:
+		var id := String(r["id"])
+		if _first == "" and hud.game.city.can_research(id) == "":
+			_first = id
+		_update_card(cards[id], r)
+	_layout_sections()
+	if popup.visible:
+		if not (cards[selected] as Control).visible:
+			close_detail()
+		else:
+			_update_detail_state()
+	if auto_scroll:
+		focus_rank(hud.game.city.level)
+
+
+func _build() -> void:
+	var shader := Shader.new()
+	shader.code = "shader_type canvas_item;\nvoid fragment() {\n vec4 c = texture(TEXTURE, UV) * COLOR;\n float g = dot(c.rgb, vec3(0.3, 0.59, 0.11));\n COLOR = vec4(mix(c.rgb, vec3(g), 0.38), c.a * 0.88);\n}\n"
+	_done_material = ShaderMaterial.new()
+	_done_material.shader = shader
+	_badge_good = _badge_style(BADGE_GOOD)
+	_badge_bad = _badge_style(BADGE_BAD)
 	for tier in Defs.LEVELS.size():
-		var head := HBoxContainer.new()
-		head.position = Vector2(28 + tier * STEP.x, 10)
-		head.size = Vector2(CARD.x, 38)
-		head.add_child(hud._icon("lock" if tier > c.level else "level", 22, Hud.C_SOFT))
-		head.add_child(hud._label(Defs.LEVELS[tier]["name"], 19, false, Hud.C_SOFT if tier > c.level else Hud.C_INK, hud.font_title))
-		add_child(head)
-		var row := 0
+		var section := Control.new()
+		section.name = "Rank_%d" % tier
+		section.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(section)
+		sections[tier] = section
+		var ribbon := PanelContainer.new()
+		ribbon.name = "Ribbon"
+		ribbon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ribbon.add_theme_stylebox_override("panel", hud._box_scroll_h(0))
+		section.add_child(ribbon)
+		var heading := HBoxContainer.new()
+		heading.alignment = BoxContainer.ALIGNMENT_CENTER
+		heading.add_theme_constant_override("separation", 12)
+		heading.add_child(hud._icon("housing", 30, Hud.C_SOFT))
+		heading.add_child(hud._label(String(Defs.LEVELS[tier]["name"]), 28, false, Hud.C_INK, hud.font_title))
+		ribbon.add_child(heading)
+		var grid := GridContainer.new()
+		grid.name = "Items"
+		grid.add_theme_constant_override("h_separation", int(GAP))
+		grid.add_theme_constant_override("v_separation", int(GAP))
+		section.add_child(grid)
 		for r: Dictionary in Defs.RESEARCH:
 			if int(r["lvl"]) != tier:
 				continue
 			var id := String(r["id"])
-			var why := c.can_research(id)
-			if only_available.button_pressed and why != "":
-				continue
-			if _first == "" and why == "":
-				_first = id
-			var b := make_card(r)
-			b.position = Vector2(28 + tier * STEP.x, 66 + row * STEP.y)
-			add_child(b)
-			cards[id] = b
-			row += 1
-		height = maxf(height, 80 + row * STEP.y)
-	custom_minimum_size = Vector2(Defs.LEVELS.size() * STEP.x + 28, height)
-	if cards.is_empty():
-		var empty: Label = hud._label("Пока нет доступных исследований", 20, true, Hud.C_SOFT)
-		empty.position = Vector2(28, 80)
-		add_child(empty)
-	if selected == "":
-		selected = _first if _first != "" else String(Defs.RESEARCH[0]["id"])
-	show_detail(selected)
-	queue_redraw()
-	if auto_scroll:
-		focus_card(_first if _first != "" else selected)
+			var item := make_card(r)
+			grid.add_child(item)
+			cards[id] = item
+		var wash := ColorRect.new()
+		wash.name = "RankLockOverlay"
+		wash.color = Color(1.0, 0.97, 0.91, 0.40)
+		wash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		section.add_child(wash)
+		var notice := HBoxContainer.new()
+		notice.name = "RankLockNotice"
+		notice.alignment = BoxContainer.ALIGNMENT_CENTER
+		notice.add_theme_constant_override("separation", 8)
+		notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		notice.add_child(hud._icon("lock", 20, Hud.C_SOFT))
+		notice.add_child(hud._label(I18n.t("Откроется на уровне «%s»") % I18n.t(String(Defs.LEVELS[tier]["name"])), 16, true, Hud.C_SOFT))
+		section.add_child(notice)
+	_empty = hud._label("Пока нет доступных исследований", 20, true, Hud.C_SOFT)
+	_empty.name = "ResearchEmpty"
+	_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_empty.custom_minimum_size.y = 100
+	add_child(_empty)
+	_built = true
+
+
+func _layout_sections() -> void:
+	if not _built:
+		return
+	var width := maxf(720, size.x)
+	var columns := 5 if width >= CARD.x * 5 + GAP * 4 + 32 else 4
+	var grid_width := CARD.x * columns + GAP * (columns - 1)
+	var any_visible := false
+	for tier: int in sections:
+		var section: Control = sections[tier]
+		var grid := section.get_node("Items") as GridContainer
+		var count := 0
+		for child: Control in grid.get_children():
+			if child.visible:
+				count += 1
+		section.visible = count > 0
+		if count == 0:
+			continue
+		any_visible = true
+		var locked: bool = tier > hud.game.city.level
+		var top := 110.0 if locked else 78.0
+		var rows := ceili(float(count) / columns)
+		var height := top + rows * CARD.y + maxi(0, rows - 1) * GAP + 12
+		section.custom_minimum_size = Vector2(0, height)
+		var ribbon := section.get_node("Ribbon") as PanelContainer
+		ribbon.position = Vector2((width - minf(560, width - 48)) * 0.5, 6)
+		ribbon.size = Vector2(minf(560, width - 48), 54)
+		grid.columns = columns
+		grid.position = Vector2((width - grid_width) * 0.5, top)
+		grid.size = Vector2(grid_width, 0)
+		var wash := section.get_node("RankLockOverlay") as ColorRect
+		wash.size = Vector2(width, height)
+		wash.visible = locked
+		var notice := section.get_node("RankLockNotice") as HBoxContainer
+		notice.position = Vector2(12, 66)
+		notice.size = Vector2(width - 24, 30)
+		notice.visible = locked
+	_empty.visible = not any_visible
+	_place_popup.call_deferred()
 
 
 func building_ids(id: String) -> Array[String]:
+	if _buildings.has(id):
+		return _buildings[id]
 	var out: Array[String] = []
 	for type: String in Defs.B:
 		if hud.game.city.unlock_id(type) == id and Defs.B[type].get("research_list", true):
-			out.append(type)                     # мельницы — только украшения, в исследованиях их нет (FIX1)
+			out.append(type)  # Мельницы-украшения в исследованиях не показываем.
+	_buildings[id] = out
 	return out
 
 
@@ -132,78 +235,151 @@ func picture(r: Dictionary) -> Texture2D:
 	return hud.ico(String(r["icon"]), 128)
 
 
-func rim(col: Color, glow := false) -> StyleBoxFlat:
+func _update_picture(img: TextureRect, r: Dictionary) -> void:
+	img.texture = picture(r)
+	var alpha := img.modulate.a
+	var building_picture := false
+	for type: String in building_ids(String(r["id"])):
+		if hud.icons.get(type) != null:
+			building_picture = true
+			break
+	img.modulate = Color.WHITE if building_picture or hud.painted(String(r["icon"])) else Hud.C_SOFT
+	img.modulate.a = alpha
+
+
+func _badge_style(col: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color("fff9ec")
-	sb.border_color = col
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(10)
-	if glow:
-		sb.shadow_color = Color(col, 0.24)
-		sb.shadow_size = 7
+	sb.bg_color = col
+	sb.set_corner_radius_all(12)
+	sb.content_margin_left = 10
+	sb.content_margin_right = 10
+	sb.content_margin_top = 3
+	sb.content_margin_bottom = 3
 	return sb
 
 
 func make_card(r: Dictionary) -> Button:
-	var c: City = hud.game.city
 	var id := String(r["id"])
-	var done := c.research.has(id)
-	var available := c.can_research(id) == ""
-	var locked: bool = not done and (Defs.story_of(r) != "" or int(r["lvl"]) > c.level or (r.has("after") and not c.research.has(r["after"])))
-	var col := Hud.C_GOOD if done else (Hud.C_GOLD if available else Color("ae9e89"))
 	var b := Button.new()
 	b.name = "Research_" + id
 	b.set_meta("rid", id)
-	b.set_meta("state", "done" if done else ("available" if available else ("locked" if locked else "points")))
-	b.size = CARD
 	b.custom_minimum_size = CARD
-	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_stylebox_override("normal", rim(col, available))
-	b.add_theme_stylebox_override("hover", rim(Hud.C_GOLD, true))
-	b.add_theme_stylebox_override("pressed", rim(Hud.C_GOLD))
-	b.tooltip_text = tooltip(r)
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	b.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+	var hover := StyleBoxFlat.new()
+	hover.bg_color = Color(0.78, 0.61, 0.31, 0.09)
+	hover.set_corner_radius_all(12)
+	b.add_theme_stylebox_override("hover", hover)
+	b.add_theme_stylebox_override("pressed", hover)
+	var focus := StyleBoxFlat.new()
+	focus.bg_color = Color.TRANSPARENT
+	focus.border_color = Hud.C_GOLD
+	focus.set_border_width_all(2)
+	focus.set_corner_radius_all(12)
+	b.add_theme_stylebox_override("focus", focus)
 	var img := TextureRect.new()
 	img.name = "Picture"
-	img.position = Vector2(5, 14)
-	img.size = Vector2(48, 48)
+	img.position = Vector2(15, 10)
+	img.size = Vector2(128, 106)
 	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	img.texture = picture(r)
-	img.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(img)
-	var label: Label = hud._label(String(r["name"]), 14, true, Hud.C_SOFT if locked else Hud.C_INK)
-	label.position = Vector2(57, 6)
-	label.size = Vector2(106, 42)
+	var label: Label = hud._label(String(r["name"]), 16, true)
+	label.name = "ItemName"
+	label.position = Vector2(3, 120)
+	label.size = Vector2(CARD.x - 6, 44)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	label.max_lines_visible = 2
 	b.add_child(label)
+	var badge := PanelContainer.new()
+	badge.name = "CostBadge"
+	badge.position = Vector2(32, 172)
+	badge.size = Vector2(94, 28)
+	b.add_child(badge)
 	var cost := HBoxContainer.new()
-	cost.position = Vector2(57, 50)
-	cost.add_child(hud._icon("check" if done else "research", 18, Hud.C_GOOD if done else Hud.C_SOFT))
-	cost.add_child(hud._label("Изучено" if done else str(r["cost"]), 14, true, Hud.C_GOOD if done else (Hud.C_BAD if not locked and c.rp < float(r["cost"]) else Hud.C_SOFT)))
-	b.add_child(cost)
+	cost.alignment = BoxContainer.ALIGNMENT_CENTER
+	cost.add_theme_constant_override("separation", 5)
+	var coin: TextureRect = hud._icon("research", 19)
+	coin.name = "Icon"
+	cost.add_child(coin)
+	var price: Label = hud._label("", 15, true, Color.WHITE)
+	price.name = "Cost"
+	cost.add_child(price)
+	badge.add_child(cost)
+	var tick: TextureRect = hud._icon("check", 30)
+	tick.name = "DoneTick"
+	tick.position = Vector2(116, 83)
+	b.add_child(tick)
+	var lock: TextureRect = hud._icon("lock", 24)
+	lock.name = "ParentLock"
+	lock.position = Vector2(119, 88)
+	b.add_child(lock)
+	var mark := HBoxContainer.new()
+	mark.name = "new_mark"
+	mark.position = Vector2(77, 0)
+	mark.add_theme_constant_override("separation", 3)
+	mark.add_child(hud._icon("research_sparkles", 16, Hud.C_GOLD))
+	mark.add_child(hud._label("НОВОЕ", 11, true, Hud.C_SOFT))
+	b.add_child(mark)
 	for child: Control in b.find_children("*", "Control", true, false):
 		child.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if locked:
-		hud._grey(img)
-		b.self_modulate = Color(0.86, 0.86, 0.86)
 	b.pressed.connect(func():
+		_mark_seen(id)
 		show_detail(id)
 		hud.show_pointer({"kind": "study", "tip": ""}))
-	if hud.game.mode in ["new", "play"] and c.is_new_r(id):
-		var pill: Control = hud._new_pill(b, "corner")
-		pill.visible = true
-		b.mouse_entered.connect(func():
-			if c.mark_seen_r(id):
-				pill.visible = false
-				hud.update_new_marks())
+	b.mouse_entered.connect(func(): _mark_seen(id))
 	return b
+
+
+func _mark_seen(id: String) -> void:
+	var c: City = hud.game.city
+	if hud.game.mode in ["new", "play"] and c.mark_seen_r(id):
+		(cards[id].get_node("new_mark") as Control).hide()
+		hud.update_new_marks()
+
+
+func _update_card(b: Button, r: Dictionary) -> void:
+	var c: City = hud.game.city
+	var id := String(r["id"])
+	var done := c.research.has(id)
+	var why := c.can_research(id)
+	var available := why == ""
+	var parent_locked: bool = r.has("after") and not c.research.has(r["after"])
+	var locked: bool = not done and (Defs.story_of(r) != "" or int(r["lvl"]) > c.level or parent_locked)
+	b.set_meta("state", "done" if done else ("available" if available else ("locked" if locked else "points")))
+	b.visible = not only_available.button_pressed or available
+	b.tooltip_text = tooltip(r)
+	var img := b.get_node("Picture") as TextureRect
+	_update_picture(img, r)
+	img.material = _done_material if done else null
+	img.modulate.a = 0.6 if locked else 1.0
+	(b.get_node("ItemName") as Label).add_theme_color_override("font_color", Hud.C_SOFT if locked else Hud.C_INK)
+	var badge := b.get_node("CostBadge") as PanelContainer
+	badge.add_theme_stylebox_override("panel", _badge_good if done or c.rp >= float(r["cost"]) else _badge_bad)
+	var cost := badge.get_child(0) as HBoxContainer
+	var coin := cost.get_node("Icon") as TextureRect
+	coin.texture = hud.ico("check" if done else "research", 38)
+	coin.modulate = Color.WHITE
+	(cost.get_node("Cost") as Label).text = I18n.t("Изучено") if done else str(r["cost"])
+	badge.reset_size()
+	badge.position.x = (CARD.x - badge.size.x) * 0.5
+	var tick := b.get_node("DoneTick") as TextureRect
+	tick.visible = done
+	tick.modulate = Hud.C_GOOD
+	var lock := b.get_node("ParentLock") as TextureRect
+	lock.visible = not done and locked
+	lock.modulate = Hud.C_SOFT
+	(b.get_node("new_mark") as Control).visible = hud.game.mode in ["new", "play"] and c.is_new_r(id)
 
 
 func tooltip(r: Dictionary) -> String:
 	var id := String(r["id"])
 	var text := I18n.t(String(r["name"]))
+	if r.has("after") and not hud.game.city.research.has(r["after"]):
+		text += "\n" + I18n.t("Сначала: %s") % I18n.t(String(Defs.research(r["after"])["name"]))
 	if r.has("desc"):
 		text += "\n" + I18n.t(String(r["desc"]))
 	var decor: Array[String] = []
@@ -217,60 +393,95 @@ func tooltip(r: Dictionary) -> String:
 		text += "\n" + I18n.t("Открывает украшения: %s.") % ", ".join(decor)
 		if hud.game.city.econ >= 1 and id in Defs.DECOR_SETS:
 			text += "\n" + I18n.t("Набор: три разных вида из него рядом с домом — ещё +%d%% счастья.") % Defs.SET_BONUS
-	return text + "\n" + I18n.t(String(hud.game.city.can_research(id)))
+	var why: String = hud.game.city.can_research(id)
+	return text + ("\n" + I18n.t(why) if why != "" else "")
 
 
-func paragraph(text: String, color := Hud.C_INK) -> void:
-	var l: Label = hud._label(text, 16, false, color)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size.x = 238
-	detail.add_child(l)
-
-
-func show_detail(id: String) -> void:
-	var r := Defs.research(id)
-	if r.is_empty():
-		return
-	selected = id
-	hud._clear(detail)
-	var img := TextureRect.new()
-	img.custom_minimum_size = Vector2(238, 126)
-	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	img.texture = picture(r)
-	detail.add_child(img)
-	var title: Label = hud._label(String(r["name"]), 23, false, Hud.C_INK, hud.font_title)
-	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	title.custom_minimum_size.x = 238
-	detail.add_child(title)
-	var c: City = hud.game.city
-	var why := c.can_research(id)
-	detail.add_child(hud._row("research", "Стоимость", str(r["cost"]), Hud.C_BAD if c.rp < float(r["cost"]) else Hud.C_INK))
+func _make_popup() -> void:
+	popup = PanelContainer.new()
+	popup.name = "ResearchItemPopup"
+	popup.custom_minimum_size.x = 326
+	popup.add_theme_stylebox_override("panel", hud._box_panel(8))
+	hud.root.add_child(popup)
+	popup.hide()
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 8)
+	popup.add_child(body)
+	var header := HBoxContainer.new()
+	_popup_title = hud._label("", 23, false, Hud.C_INK, hud.font_title)
+	_popup_title.custom_minimum_size.x = 230
+	_popup_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_popup_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_popup_title.max_lines_visible = 2
+	_popup_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	header.add_child(_popup_title)
+	header.add_child(hud._bare("close", "Закрыть", 30, close_detail))
+	body.add_child(header)
+	_popup_picture = TextureRect.new()
+	_popup_picture.name = "Picture"
+	_popup_picture.custom_minimum_size = Vector2(280, 106)
+	_popup_picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_popup_picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	body.add_child(_popup_picture)
+	_detail_scroll = ScrollContainer.new()
+	_detail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body.add_child(_detail_scroll)
+	detail = VBoxContainer.new()
+	detail.name = "ResearchDetails"
+	detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	detail.add_theme_constant_override("separation", 8)
+	_detail_scroll.add_child(detail)
+	var cost := HBoxContainer.new()
+	cost.alignment = BoxContainer.ALIGNMENT_CENTER
+	cost.add_child(hud._icon("research", 23, Hud.C_SOFT))
+	_popup_cost = hud._label("", 18, true)
+	cost.add_child(_popup_cost)
+	body.add_child(cost)
+	_popup_reason = hud._label("", 15, false, Hud.C_SOFT)
+	_popup_reason.name = "StudyReason"
+	_popup_reason.custom_minimum_size.x = 280
+	_popup_reason.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_popup_reason.max_lines_visible = 4
+	_popup_reason.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	body.add_child(_popup_reason)
 	study = Button.new()
 	study.name = "StudyResearch"
-	study.text = "Изучено" if c.research.has(id) else "Изучить"
-	study.disabled = why != ""
-	study.custom_minimum_size.y = 38
-	study.tooltip_text = why
+	study.custom_minimum_size.y = 40
 	study.pressed.connect(func():
-		if c.do_research(id):
+		var c: City = hud.game.city
+		if c.do_research(selected):
 			hud._fill_research()
 			if hud.tray.visible:
 				hud._fill_cards()
 		else:
 			refresh())
-	detail.add_child(study)
-	if why != "":
-		paragraph(why, Hud.C_GOOD if c.research.has(id) else Hud.C_SOFT)
-	if r.has("after"):
-		paragraph(I18n.t("После: «%s»") % I18n.t(String(Defs.research(r["after"])["name"])), Hud.C_SOFT)
+	body.add_child(study)
+
+
+func paragraph(text: String, color := Hud.C_INK) -> void:
+	var l: Label = hud._label(text, 15, false, color)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size.x = 264
+	detail.add_child(l)
+
+
+func show_detail(id: String) -> void:
+	var r := Defs.research(id)
+	if r.is_empty() or not cards.has(id):
+		return
+	selected = id
+	hud._clear(detail)
+	_detail_scroll.scroll_vertical = 0
 	if r.has("desc"):
 		paragraph(String(r["desc"]))
+	var c: City = hud.game.city
 	if c.econ >= 1 and id in Defs.DECOR_SETS:
 		paragraph(I18n.t("Набор: три разных вида из него рядом с домом — ещё +%d%% счастья.") % Defs.SET_BONUS, Hud.C_GOOD)
 	for type: String in building_ids(id):
 		var d: Dictionary = Defs.B[type]
 		paragraph(I18n.t("Открывает постройку: %s") % I18n.t(String(d["name"])))
+		if d.has("desc"):
+			paragraph(String(d["desc"]))
 		if d.has("bonus"):
 			var category := String(Defs.NEEDS.get(String(d.get("sub", "")), {}).get("name", ""))
 			paragraph(I18n.t("+%d%% счастья домам рядом") % int(d["bonus"]) + (" · " + I18n.t(category) if category != "" else ""), Hud.C_GOOD)
@@ -278,56 +489,114 @@ func show_detail(id: String) -> void:
 			paragraph(I18n.t("+%s очков исследований в час") % Hud.fmt_rate(float(d["rp"])), Hud.C_GOOD)
 		elif d.has("deco"):
 			paragraph(I18n.t("Красота: +%d") % int(d["deco"]), Hud.C_GOOD)
-		if d.has("desc") and not r.has("desc"):
-			paragraph(String(d["desc"]))
+		if Defs.CAT_SHORT.has(String(d.get("cat", ""))):
+			paragraph(I18n.t("Раздел: %s") % I18n.t(String(Defs.CAT_SHORT[d["cat"]])), Hud.C_SOFT)
 		paragraph(I18n.t("Постройка: %s ден.") % hud.fmt(d.get("cost", 0)), Hud.C_SOFT)
 		if d.has("jobs"):
 			var jobs: Array[String] = []
 			for cls: String in d["jobs"]:
 				jobs.append("%d %s" % [int(d["jobs"][cls]), I18n.t(String(Defs.CLASSES[cls]["name"]))])
 			paragraph(I18n.t("Рабочие: %s") % ", ".join(jobs), Hud.C_SOFT)
-	var eta: String = hud.rp_eta(float(r["cost"])) if not c.research.has(id) else ""
+	if r.has("after"):
+		paragraph(I18n.t("Сначала: %s") % I18n.t(String(Defs.research(r["after"])["name"])), Hud.C_SOFT)
+	_popup_title.text = String(r["name"])
+	popup.move_to_front()
+	popup.show()
+	_update_detail_state()
+	popup.reset_size()
+	_place_popup()
+	_place_popup.call_deferred()
+
+
+func _update_detail_state() -> void:
+	if selected == "":
+		return
+	var r := Defs.research(selected)
+	var c: City = hud.game.city
+	var done := c.research.has(selected)
+	var why := c.can_research(selected)
+	_update_picture(_popup_picture, r)
+	_popup_picture.material = _done_material if done else null
+	_popup_cost.text = I18n.t("Стоимость: %s") % str(r["cost"])
+	_popup_cost.add_theme_color_override("font_color", BADGE_BAD if c.rp < float(r["cost"]) and not done else Hud.C_GOOD)
+	study.text = "Изучено" if done else "Изучить"
+	study.disabled = why != ""
+	study.tooltip_text = why
+	var eta: String = hud.rp_eta(float(r["cost"])) if not done else ""
+	_popup_reason.text = I18n.t(why)
+	_popup_reason.tooltip_text = why
 	if eta != "":
-		paragraph(I18n.t("Хватит через %s") % eta, Hud.C_SOFT)
+		_popup_reason.text += ("\n" if why != "" else "") + I18n.t("Хватит через %s") % eta
+	_popup_reason.visible = _popup_reason.text != ""
+	_place_popup.call_deferred()
 
 
-func focus_card(id: String) -> void:
+func _place_popup() -> void:
+	if popup == null or not popup.visible or not cards.has(selected):
+		return
+	var card := cards[selected] as Control
+	if not hud.research_panel.visible or not card.is_visible_in_tree() or not scroll.get_global_rect().intersects(card.get_global_rect()):
+		close_detail()
+		return
+	var rect := card.get_global_rect()
+	var at := Vector2(rect.end.x + 12, rect.position.y - 16)
+	if at.x + popup.size.x > hud.root.size.x - 12:
+		at.x = rect.position.x - popup.size.x - 12
+	at.x = clampf(at.x, 12, maxf(12, hud.root.size.x - popup.size.x - 12))
+	at.y = clampf(at.y, 12, maxf(12, hud.root.size.y - popup.size.y - 12))
+	popup.position = at.round()
+
+
+func close_detail() -> void:
+	if popup != null:
+		popup.hide()
+
+
+func focus_rank(tier: int) -> void:
+	_focus_serial += 1
+	var serial := _focus_serial
 	await get_tree().process_frame
 	await get_tree().process_frame
-	if is_instance_valid(scroll) and cards.has(id) and is_instance_valid(cards[id]):
+	if serial != _focus_serial or not hud.research_panel.visible or not sections.has(tier):
+		return
+	var target := sections[tier] as Control
+	if only_available.button_pressed and not target.visible:
+		for r: Dictionary in Defs.RESEARCH:
+			if (cards[String(r["id"])] as Control).visible:
+				target = sections[int(r["lvl"])]
+				break
+	if target.visible:
+		scroll.scroll_vertical = roundi(target.position.y)
+
+
+func focus_card(id: String) -> bool:
+	_focus_serial += 1
+	var serial := _focus_serial
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if serial == _focus_serial and hud.research_panel.visible and cards.has(id):
 		scroll.ensure_control_visible(cards[id])
+		return true
+	return false
 
 
 func reveal(id: String) -> void:
-	if only_available.button_pressed and not cards.has(id):
+	if not cards.has(id):
+		return
+	if only_available.button_pressed and not (cards[id] as Control).visible:
 		only_available.set_pressed_no_signal(false)
 		rebuild()
-	show_detail(id)
-	focus_card(id)
+	close_detail()
+	if await focus_card(id):
+		show_detail(id)
 
 
-func _draw() -> void:
-	if hud == null:
+func _input(event: InputEvent) -> void:
+	if not popup.visible:
 		return
-	for r: Dictionary in Defs.RESEARCH:
-		var id := String(r["id"])
-		var parent := String(r.get("after", ""))
-		if not cards.has(id) or not cards.has(parent):
-			continue
-		var a: Control = cards[parent]
-		var b: Control = cards[id]
-		var col := Hud.C_GOOD if hud.game.city.research.has(parent) else Color("9c7753")
-		var points := PackedVector2Array()
-		if is_equal_approx(a.position.x, b.position.x):
-			var p := a.position + Vector2(0, CARD.y * 0.5)
-			var q := b.position + Vector2(0, CARD.y * 0.5)
-			points = PackedVector2Array([p, p - Vector2(14, 0), Vector2(q.x - 14, q.y), q])
-		else:
-			var p := a.position + Vector2(CARD.x, CARD.y * 0.5)
-			var q := b.position + Vector2(0, CARD.y * 0.5)
-			var bend := maxf(24, (q.x - p.x) * 0.5)
-			for i in 25:
-				points.append(p.bezier_interpolate(p + Vector2(bend, 0), q - Vector2(bend, 0), q, float(i) / 24.0))
-		draw_polyline(points, col, 3.0, true)
-		var end := points[points.size() - 1]
-		draw_colored_polygon(PackedVector2Array([end, end + Vector2(-6, -4), end + Vector2(-6, 4)]), col)
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		close_detail()
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if not popup.get_global_rect().has_point(popup.get_global_mouse_position()):
+			close_detail()

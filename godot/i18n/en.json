@@ -5187,5 +5187,9 @@
   "Храм или алтарь рядом": "Temple or shrine nearby",
   "Храма или алтаря рядом нет": "No temple or shrine nearby",
   "Нет рядом (−%d%%) — поставьте «%s»": "None nearby (−%d%%) — build “%s”",
-  "с уровня «%s»": "from rank «%s»"
+  "с уровня «%s»": "from rank «%s»",
+  "Откроется на уровне «%s»": "Unlocks at rank “%s”",
+  "Сначала: %s": "First: %s",
+  "Раздел: %s": "Category: %s",
+  "Стоимость: %s": "Cost: %s"
 }

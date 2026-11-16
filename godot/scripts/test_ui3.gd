@@ -111,7 +111,7 @@ func _run() -> void:
 		return
 	(tree.only_available as CheckBox).set_pressed(true)
 	for id: String in tree.cards:
-		if not check(city.can_research(id) == "", "available filter " + id):
+		if not check((tree.cards[id] as Control).visible == (city.can_research(id) == ""), "available filter " + id):
 			return
 	# Цель просьбы скрыта фильтром: раскрываем её вместе с причиной запрета.
 	hud._scroll_research("cobbler")
