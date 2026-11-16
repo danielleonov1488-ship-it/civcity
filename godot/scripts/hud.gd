@@ -7171,12 +7171,12 @@ func _once_tips() -> void:
 	var c: City = game.city
 	if not _tip_free():
 		return
-	if c.tips.has("arrive_wait") and String(c.stats.get("arrive_block", "")) != "":
-		_arrive_advice()                      # «Новые семьи не едут» ждал, пока закроют другой совет; повозка уже едет — подождёт, пока встанет снова
-		return
 	if c.unpaid_h > 0 and not c.tips.has("unpaid_tip"):
 		c.tips["unpaid_tip"] = true
 		advisor("Казна пуста", unpaid_note())   # казна в минус не уходит: один раз — что случилось и как поправить
+		return
+	if c.tips.has("arrive_wait") and String(c.stats.get("arrive_block", "")) != "":
+		_arrive_advice()                      # «Новые семьи не едут» ждал, пока закроют другой совет; повозка уже едет — подождёт, пока встанет снова
 		return
 	if rank_btn.visible and not c.tips.has("rank_tip"):
 		c.tips["rank_tip"] = true

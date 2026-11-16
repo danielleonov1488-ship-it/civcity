@@ -1690,7 +1690,7 @@ func _summary() -> void:
 		line += " %s %.1f;" % [Defs.LEVELS[L]["name"], m]
 		elapsed += m
 		if L < B_TARGET.size():
-			var ok := elapsed >= B_RANK_MIN[L] and elapsed <= B_RANK_MAX[L]
+			var ok: bool = elapsed >= B_RANK_MIN[L] and elapsed <= B_RANK_MAX[L]
 			acc.append("%s %.0f min [%.0f–%.0f] %s" % [Defs.LEVELS[L + 1]["name"], elapsed, B_RANK_MIN[L], B_RANK_MAX[L], "ok" if ok else "MISS"])
 	print(line)
 	print("PACE BOT cumulative rank windows: %s" % ", ".join(acc))
