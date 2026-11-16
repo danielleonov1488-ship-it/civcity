@@ -4,6 +4,10 @@ extends Control
 
 const Ring = preload("res://scripts/fort_ui_ring.gd")
 const USE_3D := true
+const USE_CUTAWAY := true
+var use_cutaway := USE_CUTAWAY # Старые сценарии могут явно выбрать прежнюю диораму.
+var cutaway_markers: Control
+var _worker_target := -1
 const FORT_ICON := {"hq": "castle", "barracks": "legion", "kitchen": "bread",
 	"smelter": "anvil", "sawmill": "wood", "tannery": "clothes", "store": "amphora",
 	"forge": "hammer", "drill": "swords", "infirmary": "medic", "mars": "laurels",
@@ -115,6 +119,7 @@ var selected := ""
 var card_level: Label
 var upgrade_button: Button
 var upgrade_reason: Label
+var main_action_reason: Label
 var upgrade_timer: Label
 var upgrade_bar: ProgressBar
 var recruit_button: Button
@@ -356,7 +361,12 @@ func _resource_bar(resource: String) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 9)
 	panel.add_child(row)
-	row.add_child(hud._icon(String(TOP_ICONS[resource]), 40))
+	var res_icon := TextureRect.new()
+	res_icon.texture = load(FortCutaway.ART + "icons/res_" + ("denarii" if resource == "money" else resource) + ".png")
+	res_icon.custom_minimum_size = Vector2(40, 40)
+	res_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	res_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	row.add_child(res_icon)
 	var body := VBoxContainer.new()
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 1)
@@ -454,10 +464,12 @@ func _layout() -> void:
 	gate.hide()
 	if is_instance_valid(card):
 		card.scale = Vector2.ONE * k
-		card.size = Vector2(760, 300)
-		card.position = Vector2((size.x - 760 * k) * 0.5, size.y - 316 * k + _sheet_offset)
+		card.size = Vector2(760, 376)
+		card.position = Vector2((size.x - 760 * k) * 0.5, size.y - 392 * k + _sheet_offset)
 	_fit_modal()
 	_layout_guide()
+	if diorama is FortCutaway:
+		_layout_cutaway_markers(k)
 
 
 func _process(dt: float) -> void:
@@ -560,6 +572,8 @@ func show_plot(plot_id: int) -> void:
 	_hide_card()
 	selected_plot = plot_id
 	selected = String(plot["b"])
+	if diorama is FortCutaway:
+		diorama.focus_plot("plot_%d" % plot_id)
 	card_backdrop = Control.new()
 	add_child(card_backdrop)
 	card_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -622,7 +636,7 @@ func _build_card() -> void:
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 16)
 	card_body.add_child(head)
-	head.add_child(hud._icon(String(FORT_ICON[selected]), 88))
+	head.add_child(_room_icon(selected, 88))
 	var details := VBoxContainer.new()
 	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	details.add_theme_constant_override("separation", 6)
@@ -640,6 +654,7 @@ func _build_card() -> void:
 	var next := _wrap(I18n.t("ур. %d: %s") % [int(info["lv"]) + 1, String(info["gives_next"])], 14)
 	next.add_theme_color_override("font_color", Color("326443"))
 	details.add_child(next)
+	_worker_card(card_body)
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 22)
 	card_body.add_child(actions)
@@ -651,6 +666,8 @@ func _build_card() -> void:
 	main_action.custom_minimum_size = Vector2(290, 52)
 	main_action.add_theme_stylebox_override("normal", hud._box_pill(16, 8, "g_btn_on"))
 	primary.add_child(main_action)
+	main_action_reason = _wrap("", 13)
+	primary.add_child(main_action_reason)
 	if selected == "barracks":
 		recruit_button = main_action
 	if selected == "hq":
@@ -726,14 +743,16 @@ func _refresh_card() -> void:
 				title = I18n.t("Расширить форт")
 				reason = lg.fort_can_expand()
 			_: title = I18n.t("Отряд")
-	if int(plot["lv"]) == 0:
+	if selected != "hq" and lg.fort_worker(selected_plot).is_empty() and not running:
+		title = I18n.t("Назначить")
+		reason = ""
+	if int(plot["lv"]) == 0 or running:
 		reason = I18n.t("Здание строится.")
 	main_action.text = title
 	main_action.disabled = reason != ""
 	main_action.tooltip_text = I18n.t(reason)
-	if reason != "" and not running:
-		upgrade_reason.text = I18n.t(reason)
-		upgrade_reason.show()
+	main_action_reason.text = I18n.t(reason) if not running else ""
+	main_action_reason.visible = main_action_reason.text != ""
 	_refresh_costs(card_body)
 
 
@@ -794,6 +813,7 @@ func recruit() -> void:
 
 
 func open_recruit_picker() -> void:
+	_worker_target = -1
 	recruit_page = 0
 	show_recruit_picker()
 
@@ -801,7 +821,9 @@ func open_recruit_picker() -> void:
 func show_recruit_picker() -> void:
 	if hud.game.people != null:
 		hud.game.people.sync_members()
+	var target := _worker_target
 	var v := _new_modal(570)
+	_worker_target = target
 	v.add_child(_text("Кого призвать?", 24, true))
 	var candidates := lg.recruit_candidates(4, recruit_page)
 	for candidate: Dictionary in candidates:
@@ -826,10 +848,18 @@ func show_recruit_picker() -> void:
 
 
 func _recruit_pick(pick: Dictionary) -> void:
+	var target := _worker_target
 	var soldier := lg.recruit_resident(pick)
 	if soldier.is_empty():
 		hud.notify(lg.can_recruit_resident() if lg.can_recruit_resident() != "" else "Житель уже недоступен. Выберите другого.", "lock")
 		show_recruit_picker()
+		_refresh()
+		return
+	if target >= 0:
+		if not lg.fort_assign(target, int(soldier["id"])):
+			hud.notify(I18n.t("Не удалось назначить работника. Выберите его снова."), "lock")
+		_close_modal()
+		show_plot(target)
 		_refresh()
 		return
 	if is_instance_valid(diorama):
@@ -890,6 +920,7 @@ func _fit_modal() -> void:
 
 
 func _close_modal() -> void:
+	_worker_target = -1
 	_popup_resource = ""
 	_healing.clear()
 	stock_labels.clear()
@@ -1180,7 +1211,7 @@ func _start_diorama() -> void:
 		get_viewport().disable_3d = true
 	if not USE_3D or not lg.v3() or is_instance_valid(diorama):
 		return
-	var scene := Camp3D.new()
+	var scene: Camp3D = FortCutaway.new() if use_cutaway else Camp3D.new()
 	add_child(scene)
 	move_child(scene, 1)
 	if not scene.setup(lg, hud.game):
@@ -1189,12 +1220,26 @@ func _start_diorama() -> void:
 		background.show()
 		return
 	diorama = scene
+	if diorama is FortCutaway:
+		cutaway_markers = Control.new()
+		cutaway_markers.name = "CutawayMarkers"
+		cutaway_markers.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(cutaway_markers)
+		move_child(cutaway_markers, 2)
+		_plots_sig = ""
 	diorama.building_pressed.connect(show_building)
 	diorama.view_changed.connect(_layout)
 	background.hide()
 
 
 func _stop_diorama() -> void:
+	if is_instance_valid(cutaway_markers):
+		for entry: Dictionary in plot_markers.values():
+			counters.erase(entry["button"])
+		cutaway_markers.queue_free()
+		cutaway_markers = null
+		plot_markers.clear()
+		_plots_sig = ""
 	if is_instance_valid(diorama):
 		diorama.shutdown()
 		diorama.queue_free()
@@ -1365,7 +1410,7 @@ func _jump_to_type(type: String) -> void:
 
 
 func show_build_menu(plot_id := -1) -> void:
-	build_plot_id = plot_id
+	build_plot_id = plot_id if plot_id >= 0 else lg.fort_empty_plot()
 	_guide_advance(1)
 	var v := _new_modal(minf(1020, maxf(700, size.x - 100)))
 	modal_panel.name = "FortBuildMenu"
@@ -1399,7 +1444,7 @@ func show_build_menu(plot_id := -1) -> void:
 		var body := VBoxContainer.new()
 		body.add_theme_constant_override("separation", 7)
 		panel.add_child(body)
-		var picture := hud._icon(String(FORT_ICON[type]), 64)
+		var picture := _room_icon(type, 64)
 		picture.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		body.add_child(picture)
 		var title_label := _text(I18n.t(String(spec["name"])), 18, true)
@@ -1409,6 +1454,7 @@ func show_build_menu(plot_id := -1) -> void:
 		gives.custom_minimum_size = Vector2(196, 38)
 		body.add_child(gives)
 		body.add_child(_cost_icons(Legion.fort_cost(type, 1)))
+		body.add_child(_text(duration_text(Legion.camp_time_h(1) * float(spec["time_k"]) * 3600.0 / maxf(0.001, lg.time_k)), 13))
 		var count := _text("", 14, true)
 		body.add_child(count)
 		var button := _button("Строить", func(): _choose_build(type), "hammer")
@@ -1437,14 +1483,14 @@ func _focus_build_card() -> void:
 func _refresh_build_menu() -> void:
 	if _build_sig != _plot_signature():
 		var previous := build_scroll.scroll_horizontal
-		show_build_menu()
+		show_build_menu(build_plot_id)
 		build_scroll.set_deferred("scroll_horizontal", previous)
 		return
 	for type: String in build_cards:
 		var entry: Dictionary = build_cards[type]
 		var cap := lg.fort_max(type)
 		var count := lg.fort_count(type)
-		var why := lg.fort_can_build(type, lg.fort_empty_plot())
+		var why := lg.fort_can_build(type, build_plot_id if build_plot_id >= 0 else lg.fort_empty_plot())
 		(entry["count"] as Label).text = "%d / %d" % [count, cap]
 		var button: Button = entry["button"]
 		button.text = I18n.t("Строить")
@@ -1483,6 +1529,9 @@ func _choose_build(type: String) -> void:
 func _main_action() -> void:
 	var plot := lg.fort_plot(selected_plot)
 	if plot.is_empty():
+		return
+	if selected != "hq" and lg.fort_worker(selected_plot).is_empty():
+		show_worker_picker()
 		return
 	if not Legion.fort_production(selected, int(plot["lv"])).is_empty():
 		_collect_plot(selected_plot, main_action.global_position)
@@ -1570,7 +1619,7 @@ func _refresh_support() -> void:
 func _plot_signature() -> String:
 	var data := []
 	for plot: Dictionary in lg.fort.get("plots", []):
-		data.append([plot["id"], plot["b"], plot["lv"], (plot["up"] as Dictionary).is_empty()])
+		data.append([plot["id"], plot["b"], plot["lv"], (plot["up"] as Dictionary).is_empty(), plot.get("worker", 0)])
 	return str([data, (lg.fort.get("up", {}) as Dictionary).is_empty()])
 
 
@@ -1612,6 +1661,9 @@ func _marker(plot_id: int, type: String) -> Dictionary:
 
 
 func _sync_markers() -> void:
+	if diorama is FortCutaway:
+		_sync_cutaway_markers()
+		return
 	var sig := _plot_signature()
 	if sig != _plots_sig:
 		_plots_sig = sig
@@ -1654,6 +1706,12 @@ func _refresh_marker(marker: Dictionary) -> void:
 	if plot.is_empty():
 		return
 	var type := String(plot["b"])
+	if type == "":
+		(marker["title"] as Control).hide()
+		(marker["collect"] as Control).hide()
+		(marker["state"] as Control).hide()
+		(marker["timer"] as Control).hide()
+		return
 	var level := int(plot["lv"])
 	(marker["title"] as Label).text = str(level)
 	var button: Button = marker["button"]
@@ -1686,8 +1744,11 @@ func _refresh_marker(marker: Dictionary) -> void:
 				idle = false
 	var alert: Label = marker["state"]
 	alert.text = "!"
-	alert.visible = idle and timer.is_empty()
-	if alert.visible:
+	var needs_worker := type != "hq" and level > 0 and lg.fort_worker(int(plot["id"])).is_empty()
+	alert.visible = (idle or needs_worker) and timer.is_empty()
+	if needs_worker:
+		button.tooltip_text += "\n" + I18n.t("Нет работника. Назначьте человека в карточке.")
+	if alert.visible and not needs_worker:
 		button.tooltip_text += "\n" + I18n.t("Можно тренировать воина." if type == "drill" else "Производство заполнено. Соберите ресурсы.")
 
 
@@ -1708,3 +1769,125 @@ func _collect_plot(plot_id: int, origin := Vector2.INF) -> void:
 		_guide_advance(0)
 	_fly_resource(resource, amount, origin)
 	_refresh()
+
+
+func _room_icon(type: String, pixels: float) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.texture = FortCutaway.room_icon(type)
+	icon.custom_minimum_size = Vector2.ONE * pixels
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return icon
+
+
+func _worker_card(parent: VBoxContainer) -> void:
+	var worker: Dictionary = lg.fort_worker(selected_plot)
+	if selected == "hq":
+		for person: Dictionary in lg.soldiers:
+			if bool(person.get("hero", false)):
+				worker = person
+				break
+	var row := HBoxContainer.new()
+	row.name = "FortWorker"
+	row.add_theme_constant_override("separation", 12)
+	parent.add_child(row)
+	if not worker.is_empty():
+		row.add_child(lu._portrait("unit", Legion.unit_of_class(String(worker.get("cls", "legionary"))), 46))
+	var name_label := _text(String(worker.get("name", I18n.t("Нет работника"))), 17, true)
+	name_label.name = "FortWorkerName"
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(name_label)
+	if selected != "hq" and not worker.is_empty():
+		row.add_child(_button("Сменить работника", show_worker_picker))
+		row.add_child(_button("Освободить", func(): lg.fort_assign(selected_plot, 0); _refresh()))
+
+
+func show_worker_picker() -> void:
+	var target := selected_plot
+	var v := _new_modal(540)
+	modal_panel.name = "FortWorkerPicker"
+	v.add_child(_text("Кто будет работать?", 24, true))
+	var choices: Array[Dictionary] = lg.fort_worker_choices()
+	if choices.is_empty():
+		v.add_child(_wrap("Свободных людей нет. Призовите жителя или освободите воина из отряда."))
+	for person: Dictionary in choices:
+		var row := HBoxContainer.new()
+		v.add_child(row)
+		row.add_child(lu._portrait("unit", Legion.unit_of_class(String(person["cls"])), 46))
+		var sid := int(person["id"])
+		var button := _button(String(person["name"]), func():
+			if lg.fort_assign(target, sid):
+				_close_modal()
+				show_plot(target)
+				_refresh())
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(button)
+	var recruit_worker := _button("Призвать из города", func():
+		recruit_page = 0
+		_worker_target = target
+		show_recruit_picker(), "legion")
+	recruit_worker.disabled = lg.can_recruit_resident() != ""
+	recruit_worker.tooltip_text = I18n.t(lg.can_recruit_resident())
+	v.add_child(recruit_worker)
+	v.add_child(_button("Закрыть", _close_modal))
+	_fit_modal.call_deferred()
+
+
+func _sync_cutaway_markers() -> void:
+	if not is_instance_valid(cutaway_markers):
+		return
+	for entry: Dictionary in plaques.values():
+		(entry["panel"] as Control).hide()
+	extra_plots.hide()
+	var signature := _plot_signature()
+	if signature != _plots_sig:
+		_plots_sig = signature
+		for entry: Dictionary in plot_markers.values():
+			counters.erase(entry["button"])
+		_clear(cutaway_markers)
+		plot_markers.clear()
+		for p: Dictionary in lg.fort["plots"]:
+			var id := int(p["id"])
+			var type := String(p["b"])
+			var marker := _marker(id, type if type != "" else "hq")
+			cutaway_markers.add_child(marker["panel"])
+			var button: Button = marker["button"]
+			button.name = "RoomButton_%d" % id
+			if type == "":
+				(button.get_node("ic") as Control).hide()
+				button.text = "+"
+				button.add_theme_font_size_override("font_size", 36)
+				button.tooltip_text = I18n.t("Построить комнату")
+			else:
+				(button.get_node("ic") as TextureRect).texture = FortCutaway.room_icon(type)
+			button.mouse_entered.connect(func():
+				if is_instance_valid(diorama):
+					diorama.highlight("plot_%d" % id))
+			button.mouse_exited.connect(func():
+				if is_instance_valid(diorama):
+					diorama.highlight(""))
+			plot_markers[id] = marker
+	for marker: Dictionary in plot_markers.values():
+		_refresh_marker(marker)
+
+
+func _layout_cutaway_markers(k: float) -> void:
+	extra_plots.hide()
+	for marker: Dictionary in plaques.values():
+		(marker["panel"] as Control).hide()
+	for id: int in plot_markers:
+		var marker: Dictionary = plot_markers[id]
+		var panel: Control = marker["panel"]
+		var empty := String(lg.fort_plot(id)["b"]) == ""
+		var center: Vector2 = diorama.project(id, 0.0 if empty else 1.0)
+		panel.scale = Vector2.ONE * k * 0.85
+		panel.position = center - Vector2(34, 86 if empty else 58) * panel.scale
+		panel.visible = diorama.footprint("plot_%d" % id).intersects(Rect2(Vector2(0, 100), size - Vector2(0, 160)))
+	# Городские буферы отделены от комнат: компактный ряд у нижней панели.
+	var index := 0
+	for resource: String in bubbles:
+		var box: Control = bubbles[resource]["box"]
+		box.position = Vector2(170 + index * 54, size.y - 62)
+		index += 1

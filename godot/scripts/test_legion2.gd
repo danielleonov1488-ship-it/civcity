@@ -120,6 +120,7 @@ func _run() -> void:
 	camp = CampUI.of(game.hud)
 	if not check(camp != null, "camp attached"):
 		return
+	camp.use_cutaway = false
 	camp.open()
 	await frames(10)
 	if not check(is_instance_valid(camp.diorama), "Camp3D created (no painting fallback)"):

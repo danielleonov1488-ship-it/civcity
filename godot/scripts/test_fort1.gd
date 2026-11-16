@@ -30,11 +30,19 @@ func finish_build(l: Legion, id: int) -> void:
 		return
 	Legion.clock = float(u["end"])
 	l.tick()
+	assign_worker(l, id)
+
+
+func assign_worker(l: Legion, id: int) -> void:
+	if l.fort_worker(id).is_empty():
+		var person := l._add_soldier({"name": "Работник", "cls": "legionary", "stars": 1})
+		check(l.fort_assign(id, int(person["id"])), "assign worker")
 
 
 func _ready() -> void:
 	var saved_clock := Legion.clock
 	Legion.clock = 1000000.0
+	_plot_order()
 	_build_produce()
 	_expand_effects()
 	_producers()
@@ -46,11 +54,32 @@ func _ready() -> void:
 	get_tree().quit(1 if fails > 0 else 0)
 
 
+func _plot_order() -> void:
+	var c := town()
+	var l: Legion = c.legion
+	var free_ids: Array[int] = []
+	for p: Dictionary in l.fort["plots"]:
+		if int(p["id"]) > 0 and p["b"] == "":
+			free_ids.append(int(p["id"]))
+	free_ids.sort()
+	check(free_ids.size() >= 2, "plot order fixture has two free rooms")
+	if free_ids.size() < 2:
+		return
+	(l.fort["plots"] as Array).reverse()
+	check(l.fort_empty_plot() == free_ids[0], "first cutaway room ignores save array order")
+	check(l.fort_build("kitchen", free_ids[0]), "build first free room in reversed save")
+	check(l.fort_empty_plot() == free_ids[1], "next free room skips room under construction")
+	check(l.fort_plot(0)["b"] == "hq", "auto-pick preserves HQ")
+	for id: int in free_ids:
+		l.fort_plot(id)["b"] = "tower"
+	check(l.fort_empty_plot() == -1, "full reversed fort has no free room")
+
+
 func _build_produce() -> void:
 	var c := town()
 	var l: Legion = c.legion
-	check(l.fort["exp"] == 0 and l.fort["plots"].size() == 7 and l.fort_count("hq") == 1
-		and l.fort_plot(0)["b"] == "hq" and l.camp_level("hq") == 1, "start: HQ 0 plus six plots")
+	check(l.fort["exp"] == 0 and l.fort["plots"].size() == 5 and l.fort_count("hq") == 1
+		and l.fort_plot(0)["b"] == "hq" and l.camp_level("hq") == 1, "start: HQ 0 plus four plots")
 	check(l.fort_max("kitchen") == 1 and l.fort_empty_plot() > 0, "one kitchen allowed")
 	var id := l.fort_empty_plot()
 	c.money = 0.0
@@ -88,22 +117,26 @@ func _build_produce() -> void:
 	check(l.fort_collect(id) == 0 and l.fort_plot(id)["pend"] == 10.0, "full storage loses nothing")
 	Legion.clock += 1800.0
 	l.fort_finish()
-	check(is_equal_approx(float(l.fort_plot(id)["pend"]), 10.5), "production restarts without banking full hours")
+	check(is_equal_approx(float(l.fort_plot(id)["pend"]), 10.0), "full shared storage stops growth")
+	l.rations = 0.0
+	Legion.clock += 1800.0
+	l.fort_finish()
+	check(is_equal_approx(float(l.fort_plot(id)["pend"]), 10.5), "production restarts after spending")
 	FIXTURE.set_level(l, "hq", 3)
 	var second := l.fort_empty_plot()
 	check(l.fort_max("kitchen") == 2 and l.fort_build("kitchen", second), "second kitchen at HQ 3")
 	end = float(l.fort_plot(second)["up"]["end"])
 	Legion.clock = end + 7200.0
 	l.fort_finish()
-	check(l.fort_plot(second)["lv"] == 1 and is_equal_approx(float(l.fort_plot(second)["pend"]), 2.0), "offline build produces only after completion")
+	check(l.fort_plot(second)["lv"] == 1 and is_zero_approx(float(l.fort_plot(second)["pend"])), "offline build waits for a worker")
+	assign_worker(l, second)
 	l.fort_plot(id)["pend"] = 0.0
 	l.fort_plot(id)["t"] = Legion.now()
 	check(l.fort_upgrade(id), "upgrade kitchen")
 	end = float(l.fort_plot(id)["up"]["end"])
-	var duration := float(l.fort_plot(id)["up"]["total"])
 	Legion.clock = end + 3600.0
 	l.fort_finish()
-	check(l.fort_plot(id)["lv"] == 2 and is_equal_approx(float(l.fort_plot(id)["pend"]), duration / 3600.0 + 2.0), "upgrade splits old and new production rates")
+	check(l.fort_plot(id)["lv"] == 2 and is_equal_approx(float(l.fort_plot(id)["pend"]), 2.0), "upgrading room pauses production")
 	var info := l.fort_info(id)
 	check(info.has_all(["type", "lv", "next_cost", "next_time", "gives", "gives_next", "producing"])
 		and info["gives"] != info["gives_next"], "building information describes next effect")
@@ -122,13 +155,13 @@ func _expand_effects() -> void:
 	l.mats["wood"] = wood
 	check(l.fort_expand() and l.mat("wood") == wood - 20 and c.money == money - 1000, "expansion pays coins and materials")
 	check(not l.speed_up("fort_invalid") and l.timer3("fort_expand") == l.fort["up"], "expansion timer key and invalid key")
-	check(l.fort["plots"].size() == 7 and l.camp_busy() and not l.fort_build("kitchen", l.fort_empty_plot()), "expansion waits and uses builder")
+	check(l.fort["plots"].size() == 5 and l.camp_busy() and not l.fort_build("kitchen", l.fort_empty_plot()), "expansion waits and uses builder")
 	Legion.clock = float(l.fort["up"]["end"]) - 1.0
 	l.fort_finish()
-	check(l.fort["plots"].size() == 7, "no early plots")
+	check(l.fort["plots"].size() == 5, "no early plots")
 	Legion.clock += 1.0
 	l.tick()
-	check(l.fort["exp"] == 1 and l.fort["plots"].size() == 11 and not l.camp_busy(), "expansion adds four plots")
+	check(l.fort["exp"] == 1 and l.fort["plots"].size() == 8 and not l.camp_busy(), "expansion adds three plots")
 	for i in ids.size():
 		check(int(l.fort["plots"][i]["id"]) == int(ids[i]), "stable plot order %d" % i)
 	var roster := l.roster_cap()
@@ -151,7 +184,7 @@ func _expand_effects() -> void:
 	check(l.forge_lvl() == 3 and l.perk_max() == 7, "forge and Mars effects use buildings")
 	for e in range(6, 10):
 		var expansion := Legion.fort_exp_info(e)
-		check(expansion["hq"] == 12 + (e - 5) * 3 and expansion["plots"] == 32 + (e - 5) * 6
+		check(expansion["hq"] == 12 + (e - 5) * 3 and expansion["plots"] == 23 + (e - 5) * 6
 			and float(expansion["time_h"]) > float(Legion.fort_exp_info(e - 1)["time_h"]), "endless expansion %d" % e)
 	FIXTURE.set_level(l, "hq", 20)
 	check(l.fort_upgrade(0), "HQ can grow beyond old maximum")
@@ -161,18 +194,21 @@ func _expand_effects() -> void:
 	var expanded: Dictionary = l.fort.duplicate(true)
 	expanded["exp"] = 5
 	l._fort_load(expanded)
-	check(l.fort["plots"].size() == 33 and l.fort_expand(), "start first expansion beyond table")
+	check(l.fort["plots"].size() == 24 and l.fort_expand(), "start first expansion beyond table")
 	var expand_end := float(l.fort["up"]["end"])
 	check(l.speed_up("fort_expand") and float(l.fort["up"]["end"]) == expand_end - 1800.0, "expansion can be accelerated")
 	Legion.clock = float(l.fort["up"]["end"])
 	l.fort_finish()
-	check(l.fort["exp"] == 6 and l.fort["plots"].size() == 39, "endless expansion adds six plots")
+	check(l.fort["exp"] == 6 and l.fort["plots"].size() == 30, "endless expansion adds six plots")
 
 
 func _producers() -> void:
 	var c := town()
 	var l: Legion = c.legion
 	FIXTURE.set_level(l, "hq", 3)
+	check(l.fort_expand(), "producer fixture expands")
+	Legion.clock = float(l.fort["up"]["end"])
+	l.fort_finish()
 	for type: String in ["smelter", "sawmill", "tannery", "treasury"]:
 		var id := l.fort_empty_plot()
 		check(l.fort_build(type, id), "build " + type)
@@ -235,15 +271,32 @@ func _migrate_save() -> void:
 	check(l.speed_up("camp_forge") and float(l.fort_slot_plot("forge")["up"]["end"]) == float(l.upg["camp_forge"]["end"]), "old speed-up aliases fort timer")
 	finish_build(l, int(l.fort_slot_plot("forge")["id"]))
 	check(l.camp_level("forge") == 4 and not l.upg.has("camp_forge"), "migrated timer finishes")
+	l.fort_slot_plot("kitchen")["pend"] = 2.5
 	check(l.fort_expand(), "expansion before save")
+	var before_fort: Dictionary = l.fort.duplicate(true)
+	var before_pending: Dictionary = l.pending_resources.duplicate(true)
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var copy := City.new(Land.new())
 	copy.load_data(saved)
-	check(copy.legion.fort == l.fort and copy.legion.camp_level("forge") == 4
+	check(copy.legion.fort == before_fort and copy.legion.camp_level("forge") == 4
 		and copy.legion.camp_busy(), "city save/load keeps fort, pending and expansion timer")
+	check(copy.legion.pending_resources == before_pending and copy.legion.rations == l.rations
+		and copy.legion.mats == l.mats and copy.legion.ingots == l.ingots, "city save/load keeps shared stock and city buffers")
+	for p: Dictionary in before_fort["plots"]:
+		var restored: Dictionary = copy.legion.fort_plot(int(p["id"]))
+		var worker: Dictionary = l.fort_worker(int(p["id"]))
+		var restored_worker: Dictionary = copy.legion.fort_worker(int(p["id"]))
+		check(int(restored["worker"]) == int(p["worker"])
+			and restored_worker.get("id") == worker.get("id") and restored_worker.get("name") == worker.get("name")
+			and restored_worker.get("stars") == worker.get("stars"), "city save/load keeps worker %d" % int(p["id"]))
+		check(restored["pend"] == p["pend"] and restored["t"] == p["t"] and restored["up"] == p["up"], "city save/load keeps production and timer %d" % int(p["id"]))
+	check(copy.legion.fort["up"] == before_fort["up"] and copy.legion.fort["exp"] == before_fort["exp"]
+		and copy.legion.fort["next_id"] == before_fort["next_id"], "city save/load keeps expansion state")
+	var legacy_worker: Dictionary = copy.legion.fort_worker(int(l.fort_slot_plot("kitchen")["id"]))
+	check(typeof(legacy_worker.get("id")) == TYPE_INT and typeof(legacy_worker.get("stars")) == TYPE_INT, "legacy worker numbers restored as integers")
 	Legion.clock = float(copy.legion.fort["up"]["end"]) + 3600.0
 	copy.legion.tick()
-	check(copy.legion.fort["plots"].size() == 11 and copy.legion.fort_slot_plot("kitchen")["pend"] > 0.0, "offline expansion and production after load")
+	check(copy.legion.fort["plots"].size() == 8 and copy.legion.fort_slot_plot("kitchen")["pend"] == 2.5, "offline expansion, full storage pauses kitchen")
 	var plot := copy.legion.fort_empty_plot()
 	check(copy.legion.fort_build("kitchen", plot), "build before save")
 	var again := town()
@@ -266,7 +319,7 @@ func _defaults_v2() -> void:
 	var c := town()
 	var l: Legion = c.legion
 	l.from_dict({})
-	check(l.fort_count("hq") == 1 and l.camp_level("hq") == 1 and l.fort["plots"].size() == 7, "empty save has safe defaults")
+	check(l.fort_count("hq") == 1 and l.camp_level("hq") == 1 and l.fort["plots"].size() == 5, "empty save has safe defaults")
 	l.from_dict({"fort": {"plots": [null, {}, {"id": 0, "lv": -2}, {"id": 0, "b": "invalid"}], "exp": -1}})
 	var seen := {}
 	var unique := true
