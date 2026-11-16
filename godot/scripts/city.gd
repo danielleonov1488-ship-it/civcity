@@ -949,7 +949,7 @@ func upkeep_rate() -> float:
 
 
 func shop_needed(h: Dictionary, d: Dictionary) -> bool:
-	return cozy_v < 1 or d.get("sub", "") in Defs.CLASSES[def(h)["cls"]]["needs"]
+	return cozy_v < 1 or d.get("sub", "") in Defs.needs_for(String(def(h)["cls"]), level)
 
 
 ## same_place — постройки и земля те же: проверки места перестройки — из запаса.
@@ -966,6 +966,7 @@ func compute(same_place := false) -> void:
 	var shops := []
 	var monuments := []
 	var decor := []
+	var shrines := []
 	var prem := []                          # «главные» украшения (этап 5.3): радуют, как маленький памятник
 	var stores := []
 	var oc := over_cap()                    # сверх предела уровня — не работают и не берут работников
@@ -978,6 +979,8 @@ func compute(same_place := false) -> void:
 				residents[d["cls"]] += int(b["pop"])
 			"decor":
 				decor.append(b)
+				if HouseNeeds.category(d) == "faith":
+					shrines.append(b)
 				if d.has("mon"):
 					prem.append(b)
 				continue
@@ -1066,6 +1069,7 @@ func compute(same_place := false) -> void:
 	for h in houses:
 		h["score"] = {}            # тип лавки → бонус
 		h["needs"] = {}            # вид потребности → true
+		HouseNeeds.reset(h)
 		h["monuments"] = 0.0
 	var hgrid := _grid(houses)
 	var dgrid := _grid(decor)
@@ -1093,6 +1097,7 @@ func compute(same_place := false) -> void:
 			if int(sc.get(s["type"], 0)) < int(d["bonus"]):
 				sc[s["type"]] = int(d["bonus"])
 			h["needs"][d["sub"]] = true
+			HouseNeeds.add(h, s, d, int(d["bonus"]))
 			served += 1
 		s["served"] = served
 		s["serves"] = serves           # какие дома обслуживает (для подсветки охвата)
@@ -1152,10 +1157,17 @@ func compute(same_place := false) -> void:
 			var md := def(m)
 			if (h["pos"] as Vector2).distance_to(m["pos"]) <= Defs.range_m(md):
 				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), roundi(float(md["bonus"]) * (float(m.get("staff", 1.0)) if manual_hiring() else 1.0)))
+				HouseNeeds.add(h, m, md, roundi(float(md["bonus"]) * (float(m.get("staff", 1.0)) if manual_hiring() else 1.0)))
 		for m in prem:                  # «главные» украшения — каждый вид один раз, сверх предела украшений
 			var pd := def(m)
 			if (h["pos"] as Vector2).distance_to(m["pos"]) <= Defs.range_m(pd):
 				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), int(pd["mon"]))
+		# Малые алтари закрывают веру, сохраняя очки украшения.
+		for o: Dictionary in shrines:
+			var od := def(o)
+			if HouseNeeds.category(od) == "faith" and (h["pos"] as Vector2).distance_to(o["pos"]) <= Defs.range_m(od):
+				HouseNeeds.add(h, o, od, 0)
+		HouseNeeds.finish(h, econ)
 		var mon_sum := 0
 		for t in mon:
 			parts.append([Defs.B[t]["name"], int(mon[t])])
@@ -1202,10 +1214,10 @@ func compute(same_place := false) -> void:
 			parts.append(e)
 			tr_sum += int(e[1])
 		var missing := []
-		for n in cd["needs"]:
+		for n in Defs.needs_for(cls, level):
 			if not h["needs"].has(n):
 				missing.append(n)
-				parts.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -missing_penalty()])
+				parts.append([("Нет рядом: вера" if n == "faith" else "Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower()), -missing_penalty()])
 		var hp := base + shop_sum + deco_b + set_b + sb + mon_sum + fb + st_sum + vis_sum + tr_sum + ren + tx + unp + dens + size_p - missing.size() * missing_penalty()
 		h["deco"] = deco
 		h["deco_bonus"] = deco_b
@@ -1294,6 +1306,7 @@ func compute(same_place := false) -> void:
 				hs0 += hv
 				n0 += 1
 		per_class[c] = roundi(hs / n) if n > 0 else (roundi(hs0 / n0) if n0 > 0 else 0)
+	stats["needs"] = HouseNeeds.averages(houses, level)
 	stats["class_happy"] = per_class
 	stats["happy_tips"] = _happy_tips(houses, stores)
 	stats["arrive_block"] = arrivals_blocked()
@@ -1481,6 +1494,9 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 				w += float(ws[h["id"]])
 				cnt += 1
 		if cnt == 0:
+			continue
+		if n == "faith":
+			cands.append([missing_penalty() * w / tot + 4.0, "Поставьте храм или алтарь рядом с домами: жителям нужна вера"])
 			continue
 		var open := false
 		for t in Defs.B:
@@ -2172,7 +2188,7 @@ func upgrade_happy(b: Dictionary) -> int:
 	var tx0 := int(Defs.TAX_SET[tax_of(String(def(b)["cls"]))]["happy"])
 	var tx1 := int(Defs.TAX_SET[tax_of(cl1)]["happy"])
 	var miss1 := 0
-	for n in c1["needs"]:
+	for n in Defs.needs_for(cl1, level):
 		if not (b.get("needs", {}) as Dictionary).has(n):
 			miss1 += 1
 	var miss0 := (b.get("missing", []) as Array).size()
@@ -2230,7 +2246,7 @@ func upgrade_missing(b: Dictionary) -> Array:
 	var nt := upgrade_to(b)
 	if nt == "":
 		return out
-	for n in Defs.CLASSES[String(Defs.B[nt]["cls"])]["needs"]:
+	for n in Defs.needs_for(String(Defs.B[nt]["cls"]), level):
 		if not (b.get("needs", {}) as Dictionary).has(n):
 			out.append(String(Defs.NEEDS[n]["name"]).to_lower())
 	return out
@@ -3279,7 +3295,7 @@ func trait_parts(h: Dictionary, crowd: int, near: Array, n_shops: int, mon: Dict
 			"quiet": ok = 1 if crowd <= 4 else (-1 if crowd >= 10 else 0)
 			"flowers": ok = 1 if has_any.call(Balance.T_FLOWERS) else -1
 			"dark": ok = 1 if has_any.call(Balance.T_LIGHTS) else -1
-			"pious": ok = 1 if mon.has("temple") or mon.has("pantheon") or seen.call("temple") else -1
+			"pious": ok = 1 if bool(h.get("needs", {}).get("faith", false)) or mon.has("temple") or mon.has("pantheon") or mon.has("venus") or seen.call("temple") else -1
 			"bather": ok = 1 if seen.call("bath") else -1
 			"theatre": ok = 1 if seen.call("theatre") or seen.call("arena") or seen.call("circus") else 0
 			"cat": ok = 1 if has_any.call(Balance.T_CATS) or cats.any(func(e): return int(e.get("home", -1)) == int(h["id"])) else 0

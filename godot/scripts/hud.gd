@@ -165,6 +165,7 @@ var _badge_viewport := Rect2()
 var _badge_target := Vector3.INF
 var _badge_zoom := -1.0
 var _badge_show := false
+var _badge_overlay := "__unset__"
 var _family_badge_next_ms := 0
 var badges := {}                      # ключ → {pos, icon, n}
 var paused_speed := 1.0
@@ -1551,7 +1552,7 @@ func _tip_class(v: VBoxContainer, cl: String) -> void:
 		if c.is_house(b) and c.def(b)["cls"] == cl:
 			houses.append(b)
 	_tip_text(v, "Нужно рядом с домом «%s»:" % Defs.B[cd["house"]]["name"], C_INK, 14, true)
-	for nd in cd["needs"]:
+	for nd in Defs.needs_for(cl, c.level):
 		var miss := 0
 		for b in houses:
 			if nd in b.get("missing", []):
@@ -1560,6 +1561,9 @@ func _tip_class(v: VBoxContainer, cl: String) -> void:
 		if houses.is_empty():
 			txt = "—"
 		_tip_row(v, Defs.NEEDS[nd]["icon"], Defs.NEEDS[nd]["name"], txt, C_GOOD if miss == 0 else C_BAD, -1 if houses.is_empty() else (1 if miss == 0 else 0))
+	for nd: String in cd["needs"]:
+		if nd not in Defs.needs_for(cl, c.level):
+			_tip_row(v, Defs.NEEDS[nd]["icon"], Defs.NEEDS[nd]["name"], _need_later(cl, nd), C_SOFT, -1)
 	var jobs := int(c.stats["jobs"].get(cl, 0))
 	var workers := int(c.stats["workers"].get(cl, 0))
 	var free := int(c.stats["free"].get(cl, 0))
@@ -1815,7 +1819,7 @@ var _ov_legend: VBoxContainer
 const OV_DATIVE := {"plebs": "плебеям", "artisans": "ремесленникам", "patricians": "патрициям"}
 const OV_HAS := {"food": ["Еда есть рядом", "Еды рядом нет"], "clothes": ["Одежда есть рядом", "Одежды рядом нет"],
 	"fun": ["Развлечения есть рядом", "Развлечений рядом нет"], "services": ["Услуги есть рядом", "Услуг рядом нет"],
-	"goods": ["Товары есть рядом", "Товаров рядом нет"]}
+	"goods": ["Товары есть рядом", "Товаров рядом нет"], "faith": ["Храм или алтарь рядом", "Храма или алтаря рядом нет"]}
 
 
 func _overlay_panel() -> void:
@@ -1840,7 +1844,7 @@ func _overlay_panel() -> void:
 		var icon: String = String({"happy": "happy", "water": "water", "classes": "toga"}.get(m, "")) if m in ["happy", "water", "classes"] else String(Defs.NEEDS[m]["icon"])
 		var tip: String = "Счастье каждого дома" if m == "happy" else ("Вода: у каких домов фонтан рядом, а у каких нет" if m == "water" \
 			else ("Классы: какие дома можно перестроить в следующий класс и что мешает остальным" if m == "classes" else "%s: где есть, а где нет" % Defs.NEEDS[m]["name"]))
-		var b := _round(icon, tip, 46, func(): set_overlay(mm))
+		var b := _round(icon, tip, 36, func(): set_overlay(mm))
 		row.add_child(b)
 		_ov_btns[m] = b
 	v.add_child(row)
@@ -1905,14 +1909,15 @@ func fill_overlay() -> void:
 		_ov_title.text = nd["name"]
 		var who := []
 		for cl in Defs.CLASS_ORDER:
-			if (Defs.CLASSES[cl]["needs"] as Array).has(overlay):
+			if Defs.needs_for(cl, int(game.city.level) if game and game.city else 0).has(overlay):
 				who.append(OV_DATIVE.get(cl, cl))
-		_ov_row(_swatch(Cover.GREEN), OV_HAS[overlay][0], n[0])
-		_ov_row(_swatch(Cover.RED), "%s: −%d%% счастья" % [OV_HAS[overlay][1], game.city.missing_penalty()], n[2])
+		_ov_row(_swatch(Cover.GREEN), "Покрытие 67–100%", n[0])
+		_ov_row(_swatch(Cover.GOLD), "Покрытие 34–66%", n[1])
+		_ov_row(_swatch(Cover.RED), "Покрытие 0–33%", n[2])
 		var r := HBoxContainer.new()
 		r.add_theme_constant_override("separation", 8)
 		r.add_child(_icon(nd["icon"], 24))
-		r.add_child(_wrap(_label("Значки над крышами — где стоят такие лавки", 15, false, C_INK), 300))
+		r.add_child(_wrap(_label("Значки над крышами — где стоят нужные здания", 15, false, C_INK), 300))
 		_ov_legend.add_child(r)
 		_ov_legend.add_child(_wrap(_label("Нужно: %s. Пустые дома не подсвечены." % ", ".join(who), 14, false, C_SOFT), 340))
 	_snug(overlay_panel)
@@ -2714,6 +2719,8 @@ func _bottom_center() -> void:
 	top.add_child(tray_tabs)
 	v.add_child(top)
 	for n in Defs.NEED_ORDER:
+		if n == "faith":
+			continue
 		var nn: String = n
 		var b := _round(Defs.NEEDS[n]["icon"], Defs.NEEDS[n]["name"], 40, func(): open_sub = nn; _fill_cards())
 		b.set_meta("sub", nn)
@@ -3278,7 +3285,7 @@ func _card_tip(type: String) -> String:
 			t += "\n\nОчки исследований: +%s в час\nРабочие: %s" % [String.num(rph, 1), _jobs_text(d)]
 		"house":
 			var c: Dictionary = Defs.CLASSES[d["cls"]]
-			t += "\n\nЖители: %s, одна семья на этаж\nНужно им: %s" % [c["name"].to_lower(), ", ".join(c["needs"].map(func(n): return Defs.NEEDS[n]["name"].to_lower()))]
+			t += "\n\nЖители: %s, одна семья на этаж\nНужно им: %s" % [c["name"].to_lower(), ", ".join(Defs.needs_for(String(d["cls"]), game.city.level).map(func(n): return Defs.NEEDS[n]["name"].to_lower()))]
 		"decor":
 			t += "\n\nОчки украшения: %d" % int(d.get("deco", 1))
 			if d.has("mon"):
@@ -4884,7 +4891,7 @@ func _fill_info_body() -> void:
 	var c: City = game.city
 	var d := c.def(b)
 	# у дома карточка шире: слева — нужды и жильцы, справа — из чего складывается счастье
-	var cw := (500.0 if house_more else 320.0) if c.is_house(b) else 330.0
+	var cw := (560.0 if house_more else 360.0) if c.is_house(b) else 330.0
 	info_box.custom_minimum_size = Vector2(cw, 0)
 	info_panel.custom_minimum_size = Vector2(cw + 40.0, 0)
 	var hdr := HBoxContainer.new()
@@ -5362,8 +5369,7 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	# счастье крупно и налог с дома
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 8)
-	var hi := _icon("happy", 36)
-	_grey(hi, hp < 40)
+	var hi := _face("face_good" if hp >= 60 else ("face_mid" if hp >= 40 else "face_bad"), 44)
 	top.add_child(hi)
 	# выше 100% — «запас» (этап 2.5): налог и так по полной, а запас съедают высокие налоги и повторы лавок
 	var hl := _label(("Счастье 100%% · запас +%d" % (hp - 100)) if hp > 100 else "Счастье %d%%" % hp, 25 if house_more else 21, true, hcol)
@@ -5383,8 +5389,10 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	ch.add_child(_icon("income", 22))
 	ch.add_child(_label("+%s ден. в час" % fmt(inc), 16, true, C_GOOD))
 	chip.add_child(ch)
-	top.add_child(chip)
+	chip.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	info_box.add_child(top)
+	info_box.add_child(_need_strip(b.get("need_coverage", {}), Defs.needs_for(cl, c.level), cw, cl))
+	info_box.add_child(chip)
 	if not house_more:
 		_fill_house_short(b, d, cw, hp)
 		return
@@ -5399,7 +5407,7 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	# две колонки
 	var cols := HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 14)
-	var lw := 250.0
+	var lw := 280.0
 	var rw := cw - lw - 14.0
 	var left := VBoxContainer.new()
 	left.add_theme_constant_override("separation", 5)
@@ -5414,40 +5422,7 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	var dat := {"plebs": "Плебеям", "artisans": "Ремесленникам", "patricians": "Патрициям"}
 	left.add_child(_label("%s нужно" % dat.get(cl, cls["name"]), 16, true, C_SOFT))
 	_need_rows(b, cls, left, lw)
-	# слева: жильцы
-	var tight := " — тесновато" if (b["families"] as Array).size() > c.house_floors(b) else ""      # после перестройки мест меньше (Q9: никого не выселяем)
-	left.add_child(_label("Семьи · %d из %d этажей%s" % [(b["families"] as Array).size(), c.house_floors(b), tight], 16, true, C_BAD if tight != "" else C_SOFT))
-	left.add_child(_label(c.house_room_text(b), 14, true, C_SOFT))
-	var fams: Array = b.get("families", [])
-	if fams.is_empty():
-		left.add_child(_wrap(_label("Пока пусто: семья приедет на повозке — заселите её значком слева вверху", 13, false, C_SOFT), lw))
-	# больше четырёх семей (домус патрициев) — первые три строками, остальные одной строкой
-	var shown_f := fams if fams.size() <= 4 else fams.slice(0, 3)
-	for f in shown_f:
-		var fr := HBoxContainer.new()
-		fr.add_theme_constant_override("separation", 6)
-		fr.add_child(_cls_pic(cl, 26))
-		var fl := _label("Семья %s" % f["name"], 15, true)
-		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		fl.clip_text = true
-		fr.add_child(fl)
-		fr.add_child(_label("%d чел." % int(f["n"]), 15, true, C_SOFT))
-		left.add_child(fr)
-		# кто в семье (этап 6.2): «Гай — пекарь», «Луций, сын»; щелчок — карточка этого жителя
-		var chips := PersonCard.family_chips(self, b, f, lw)
-		if chips:
-			left.add_child(chips)
-	if fams.size() > shown_f.size():
-		var rest := fams.slice(shown_f.size())
-		var ppl := 0
-		var names := []
-		for f in rest:
-			ppl += int(f["n"])
-			names.append("%s (%d)" % [f["name"], int(f["n"])])
-		var more := _label("и ещё %d %s · %d чел." % [rest.size(), _plural(rest.size(), "семья", "семьи", "семей"), ppl], 14, true, C_SOFT)
-		more.mouse_filter = Control.MOUSE_FILTER_PASS
-		more.tooltip_text = "Семьи: " + ", ".join(names)
-		left.add_child(more)
+	_family_rows(b, left, lw, true)
 	# справа: из чего складывается счастье
 	right.add_child(_label("Из чего счастье", 16, true, C_SOFT))
 	var parts: Array = b.get("happy_parts", [])
@@ -5566,19 +5541,9 @@ func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void
 	needs.add_theme_constant_override("separation", 3)
 	info_box.add_child(needs)
 	_need_rows(b, cls, needs, cw)
-	var tight := " — тесновато" if (b["families"] as Array).size() > c.house_floors(b) else ""
-	var fams: Array = b.get("families", [])
-	var who := "Семьи · %d из %d этажей%s" % [(b["families"] as Array).size(), c.house_floors(b), tight]
-	if fams.size() == 1:
-		who = "Семья %s · %d чел.%s" % [fams[0]["name"], int(b["pop"]), tight]
-	info_box.add_child(_wrap(_label(who, 14, true, C_BAD if tight != "" else C_SOFT), cw))
-	info_box.add_child(_label(c.house_room_text(b), 14, true, C_SOFT))
-	if int(c.cozy_v) >= 1:                       # «Уютный Рим», этап 4: черты семей — что их радует и что мешает
-		for f: Dictionary in fams.slice(0, 3):
-			var tl := _wrap(_label(("%s: %s" % [f["name"], City.trait_text(String(f["name"]))]) if fams.size() > 1 else "Черты: " + City.trait_text(String(f["name"])), 13, false, C_SOFT), cw)
-			tl.mouse_filter = Control.MOUSE_FILTER_PASS
-			tl.tooltip_text = "У каждой семьи свой характер: одно рядом с домом её радует, другое мешает. Что сейчас — в «Подробнее»: строки счастья"
-			info_box.add_child(tl)
+	_family_rows(b, info_box, cw, false)
+	if c.upgrade_to(b) != "" and c.research.has("artisans"):
+		_upgrade_rows(b, cw)
 	var tier := int(b["tier"])
 	var fmax := Defs.floors_max(cl, int(b.get("variant", 0)))
 	if tier < fmax and c.has_method("can_buy_floor"):
@@ -5619,75 +5584,202 @@ func _more_btn(to_more: bool) -> Button:
 	return mb
 
 
-## Нужды класса в карточке дома: значок с галочкой или крестиком, лавка, что закрывает нужду, или почему её нет
+## Цвет и число видны вместе: состояние можно прочесть и без цвета.
+func _need_color(pct: int) -> Color:
+	return C_BAD if pct < 34 else (Color("93620f") if pct < 67 else C_GOOD)
+
+
+func _need_strip(coverage: Dictionary, required: Array, width: float, cl := "") -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.name = "NeedStrip"
+	row.add_theme_constant_override("separation", 4)
+	for n: String in Defs.NEED_ORDER:
+		var needed := n in required
+		var pct := HouseNeeds.percent(coverage.get(n, 0))
+		var col := _need_color(pct) if needed else Color("8a8174")
+		var v := VBoxContainer.new()
+		v.name = "need_" + n
+		v.custom_minimum_size.x = clampf((width - 20.0) / 6.0, 1.0, 256.0) if is_finite(width) else 1.0
+		v.add_theme_constant_override("separation", 1)
+		v.mouse_filter = Control.MOUSE_FILTER_PASS
+		v.tooltip_text = ("%s: покрытие %d%%" % [Defs.NEEDS[n]["name"], pct]) if needed else _need_later(cl, n)
+		v.set_meta("coverage", pct)
+		v.set_meta("state", HouseNeeds.state(pct) if needed else "disabled")
+		var ic := _icon(Defs.NEEDS[n]["icon"], 30)
+		ic.texture = MapBadge.ink_texture(Defs.NEEDS[n]["icon"])
+		ic.modulate = col
+		v.add_child(ic)
+		var title := _label(Defs.NEEDS[n]["name"], 11, true, col)
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(title)
+		var value := _label("%d%%" % pct if needed else "—", 14, true, col)
+		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(value)
+		var bar := ProgressBar.new()
+		bar.custom_minimum_size = Vector2(0, 4)
+		bar.show_percentage = false
+		bar.value = pct if needed else 0
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var bg := StyleBoxFlat.new()
+		bg.bg_color = Color("e1d8c6")
+		bg.set_corner_radius_all(2)
+		var fill := bg.duplicate() as StyleBoxFlat
+		fill.bg_color = col
+		bar.add_theme_stylebox_override("background", bg)
+		bar.add_theme_stylebox_override("fill", fill)
+		v.add_child(bar)
+		row.add_child(v)
+	return row
+
+
+## Все семьи, включая большие домусы; головы ведут к прежним карточкам жителей.
+func _family_rows(b: Dictionary, box: VBoxContainer, width: float, details: bool) -> void:
+	var c: City = game.city
+	var families: Array = b.get("families", [])
+	box.add_child(_divider(8))
+	box.add_child(_label("Семьи · %d из %d этажей%s" % [families.size(), c.house_floors(b), " — тесновато" if families.size() > c.house_floors(b) else ""], 15, true, C_SOFT))
+	box.add_child(_label(c.house_room_text(b), 14, true, C_SOFT))
+	if families.is_empty():
+		box.add_child(_wrap(_label("Пока пусто: семья приедет на повозке — заселите её значком слева вверху", 13, false, C_SOFT), width))
+	for i in families.size():
+		var f: Dictionary = families[i]
+		var family := VBoxContainer.new()
+		family.name = "family_%d" % i
+		family.add_theme_constant_override("separation", 2)
+		var title := HBoxContainer.new()
+		var name_label := _label("Семья %s" % f["name"], 15, true)
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_label.clip_text = true
+		name_label.mouse_filter = Control.MOUSE_FILTER_PASS
+		name_label.tooltip_text = name_label.text
+		title.add_child(name_label)
+		var pref: Array = FamilyPreference.LOOK.get(FamilyPreference.main(f), ["housing", "свободный дом"])
+		var preference := _icon(String(pref[0]), 27)
+		preference.name = "Preference"
+		preference.texture = MapBadge.ink_texture(String(pref[0]))
+		preference.modulate = C_GOOD if FamilyPreference.matches(c, b, f) else C_SOFT
+		preference.mouse_filter = Control.MOUSE_FILTER_PASS
+		preference.tooltip_text = FamilyPreference.tooltip(c, b, f)
+		title.add_child(preference)
+		family.add_child(title)
+		var heads := HFlowContainer.new()
+		heads.name = "Members"
+		heads.add_theme_constant_override("h_separation", 3)
+		var members: Array = f.get("m", [])
+		if members.is_empty():
+			members = Residents.gen(String(f["name"]), int(f["n"]), String(c.def(b)["cls"]), int(b["id"]))
+		for m: Dictionary in members:
+			var child := int(m.get("age", 1)) == 0
+			var head := Button.new()
+			head.flat = true
+			head.custom_minimum_size = Vector2(29, 30)
+			head.icon = MapBadge.ink_texture("head_child" if child else "head_adult")
+			head.expand_icon = true
+			head.add_theme_constant_override("icon_max_width", 18 if child else 23)
+			head.add_theme_color_override("icon_normal_color", C_GOLD if child else C_SOFT)
+			head.tooltip_text = "%s · %s" % [m.get("pn", "?"), Residents.role(m, members)]
+			head.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			var live: Dictionary = {}
+			if game.people != null:
+				for resident: Dictionary in game.people.residents:
+					if int(resident["home"]) == int(b["id"]) and resident.get("m", {}) == m:
+						live = resident
+						break
+			if not live.is_empty():
+				head.pressed.connect(func(): game.select_person({"r": live}))
+			heads.add_child(head)
+		family.add_child(heads)
+		if details:
+			var chips := PersonCard.family_chips(self, b, f, width)
+			if chips:
+				family.add_child(chips)
+		box.add_child(family)
+
+
+## Источники нужного классу вида: картинка и действующий бонус к счастью.
 func _need_rows(b: Dictionary, cls: Dictionary, left: VBoxContainer, lw: float) -> void:
 	var c: City = game.city
-	var pen := c.missing_penalty()
-	for n in Defs.NEED_ORDER:
-		var need: Dictionary = Defs.NEEDS[n]
-		var shops := []
-		for t in b.get("score", {}):
-			if Defs.B[t].get("sub", "") == n:
-				shops.append(t)
-		var required: bool = n in cls["needs"]
-		if not required and (c.cozy_v >= 1 or shops.is_empty()):
+	var cl := String(c.def(b)["cls"])
+	for n: String in Defs.NEED_ORDER:
+		if n not in cls["needs"]:
 			continue
-		var ok := not shops.is_empty()
-		var r := HBoxContainer.new()
-		r.add_theme_constant_override("separation", 6)
-		var ib := Control.new()
-		ib.custom_minimum_size = Vector2(32, 32)
-		ib.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		ib.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-		var ni := _icon(need["icon"], 30)
-		_grey(ni, not ok)                       # нет лавки рядом — серая
-		ib.add_child(ni)
-		var mk := _icon("check" if ok else "close", 17)
-		mk.position = Vector2(18, 17)
-		ib.add_child(mk)
-		r.add_child(ib)
-		var nv := VBoxContainer.new()
-		nv.add_theme_constant_override("separation", -2)
-		nv.add_child(_label(need["name"] + ("" if required else " · не обязательно"), 15, true, C_INK if ok else C_BAD))
-		var sub := ""
-		if ok:
-			var names := []
-			for t in shops:
-				names.append(Defs.B[t]["name"])
-			sub = ", ".join(names)
+		var needed := n in Defs.needs_for(cl, c.level)
+		var pct := HouseNeeds.percent(b.get("need_coverage", {}).get(n, 0))
+		var col := _need_color(pct) if needed else C_SOFT
+		var category := VBoxContainer.new()
+		category.name = "sources_" + n
+		category.add_theme_constant_override("separation", 3)
+		var heading := HBoxContainer.new()
+		var ic := _icon(Defs.NEEDS[n]["icon"], 22)
+		ic.texture = MapBadge.ink_texture(Defs.NEEDS[n]["icon"])
+		ic.modulate = col
+		heading.add_child(ic)
+		heading.add_child(_label(Defs.NEEDS[n]["name"], 14, true, col))
+		category.add_child(heading)
+		if not needed:
+			category.add_child(_wrap(_label(_need_later(cl, n), 13, false, C_SOFT), lw))
+			left.add_child(category)
+			continue
+		var sources: Array = b.get("need_sources", {}).get(n, [])
+		if sources.is_empty():
+			category.add_child(_wrap(_label(_need_hint(b, n), 13, false, C_BAD), lw))
 		else:
-			var can := []                        # какие открытые лавки закрыли бы нужду
-			for t in Defs.B:
-				if Defs.B[t]["kind"] == "shop" and Defs.B[t].get("sub", "") == n and c.unlocked(t):
-					can.append("«%s»" % Defs.B[t]["name"])
-			# лавка этого вида рядом уже стоит, но не работает или не успевает ко всем — сказать почему
-			# (а не «поставьте ещё одну»)
-			var near_s := {}
-			for sid in c.buildings:
-				var s: Dictionary = c.buildings[sid]
-				var sd := c.def(s)
-				if sd["kind"] != "shop" or sd.get("sub", "") != n or (s["pos"] as Vector2).distance_to(b["pos"]) > c.shop_range(sd):
-					continue
-				if not s.get("active", true):
-					near_s = s                       # неработающая важнее переполненной
-					break
-				if near_s.is_empty() and int(s.get("served", 0)) >= int(s.get("cap", 0)):
-					near_s = s
-			r.mouse_filter = Control.MOUSE_FILTER_PASS
-			if not near_s.is_empty() and not near_s.get("active", true):
-				sub = "«%s» рядом не работает: %s" % [c.def(near_s)["name"], c.idle_text(near_s)]
-			elif not near_s.is_empty():
-				sub = "«%s» рядом не успевает ко всем (−%d%%)" % [c.def(near_s)["name"], pen]
-				r.tooltip_text = "Лавка обслуживает столько домов, сколько позволяют её работники. Наймите ей работников или поставьте рядом ещё одну лавку этого вида"
-			elif not can.is_empty():
-				sub = "Нет рядом (−%d%%) — поставьте %s" % [pen, can[0]]
-				if can.size() > 1:
-					r.tooltip_text = "Эту нужду закроет любая из лавок: %s" % ", ".join(can)
-			else:
-				sub = "Нет рядом (−%d%%) — лавку откроют исследования" % pen
-		nv.add_child(_wrap(_label(sub, 13, false, C_SOFT if ok else C_BAD), lw - 38.0))
-		r.add_child(nv)
-		left.add_child(r)
+			var pictures := HFlowContainer.new()
+			pictures.add_theme_constant_override("h_separation", 6)
+			for source: Dictionary in sources:
+				var type := String(source["type"])
+				var v := VBoxContainer.new()
+				v.custom_minimum_size.x = 56
+				v.add_theme_constant_override("separation", 0)
+				var image := TextureRect.new()
+				image.custom_minimum_size = Vector2(56, 35)
+				image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				image.texture = icons.get(type, ico(String(Defs.B[type].get("icon", "faith" if n == "faith" else "housing")), 64))
+				v.add_child(image)
+				var bonus := _label("+%d%%" % int(source["bonus"]), 14, true, C_GOOD if int(source["bonus"]) > 0 else C_SOFT)
+				bonus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				v.add_child(bonus)
+				var sid := int(source["id"])
+				var tile := _clickable(v, "%s · покрытие %d%% · счастье +%d%%" % [Defs.B[type]["name"], int(source["coverage"]), int(source["bonus"])], func():
+					var provider: Dictionary = c.buildings.get(sid, {})
+					if not provider.is_empty():
+						game.select_building(provider)
+						open_info(provider))
+				pictures.add_child(tile)
+			category.add_child(pictures)
+		left.add_child(category)
+
+
+func _need_later(cl: String, n: String) -> String:
+	if cl == "":
+		for candidate: String in Defs.CLASS_ORDER:
+			if n in Defs.CLASSES[candidate]["needs"] and game.city.level < Defs.need_rank(candidate, n):
+				return "с уровня «%s»" % Defs.LEVELS[Defs.need_rank(candidate, n)]["name"]
+	if cl != "" and n in Defs.CLASSES[cl]["needs"]:
+		var rank := Defs.need_rank(cl, n)
+		if game.city.level < rank:
+			return "с уровня «%s»" % Defs.LEVELS[rank]["name"]
+	return "Не нужно этому классу"
+
+
+func _need_hint(b: Dictionary, n: String) -> String:
+	var c: City = game.city
+	for source: Dictionary in c.buildings.values():
+		var d := c.def(source)
+		if HouseNeeds.category(d) != n:
+			continue
+		var reach := c.shop_range(d) if d["kind"] == "shop" else Defs.range_m(d)
+		if (source["pos"] as Vector2).distance_to(b["pos"]) <= reach:
+			if not bool(source.get("active", true)):
+				return "«%s» рядом не работает: %s" % [d["name"], c.idle_text(source)]
+			return "«%s» рядом не успевает ко всем (−%d%%)" % [d["name"], c.missing_penalty()]
+	if n == "faith":
+		return "Нет рядом: храм или алтарь (−%d%%)" % c.missing_penalty()
+	for type: String in Defs.B:
+		if Defs.B[type]["kind"] == "shop" and HouseNeeds.category(Defs.B[type]) == n and c.unlocked(type):
+			return "Нет рядом (−%d%%) — поставьте «%s»" % [c.missing_penalty(), Defs.B[type]["name"]]
+	return "Нет рядом (−%d%%) — лавку откроют исследования" % c.missing_penalty()
 
 
 ## Карточка дома: «Перестроить» (Д12) — во что, галочки условий (класс изучен, нужды нового класса, счастье после
@@ -5706,7 +5798,7 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 	rows.append([res_ok, "Изучен «%s»" % Defs.research(String(nd.get("unlock", "")))["name"]])
 	var miss := c.upgrade_missing(b)
 	var needs := []
-	for n in Defs.CLASSES[cl1]["needs"]:
+	for n in Defs.needs_for(cl1, c.level):
 		needs.append(String(Defs.NEEDS[n]["name"]).to_lower())
 	rows.append([miss.is_empty(), ("Рядом есть всё для класса: " + ", ".join(needs)) if miss.is_empty() else "Не хватает: " + ", ".join(miss)])
 	var need := int(Defs.UPGRADE_HAPPY.get(cl1, 65))
@@ -5800,7 +5892,7 @@ func _happy_parts_old(b: Dictionary, cl: String) -> Array:
 	if float(b.get("density", 0.0)) < 0.0:
 		out.append(["Теснота", int(b["density"])])
 	for n in b.get("missing", []):
-		out.append(["Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower(), -game.city.missing_penalty()])
+		out.append([("Нет рядом: вера" if n == "faith" else "Нет лавки: " + String(Defs.NEEDS[n]["name"]).to_lower()), -game.city.missing_penalty()])
 	return out
 
 
@@ -6290,6 +6382,16 @@ func _fill_overview_city() -> void:
 			families += (home.get("families", []) as Array).size()
 	v.add_child(_row("family", "Жители / семьи", "%d / %d" % [int(c.stats.get("pop", 0)), families]))
 	v.add_child(_row("housing", "Семьи ждут дом", str(c.arrivals.size())))
+	v.add_child(_label("Потребности жителей", 18, true))
+	var coverage := {}
+	var required := []
+	for n: String in Defs.NEED_ORDER:
+		var need: Dictionary = c.stats.get("needs", {}).get(n, {})
+		coverage[n] = int(need.get("coverage", 0))
+		if int(need.get("houses", 0)) > 0:
+			required.append(n)
+	v.add_child(_need_strip(coverage, required, 620))
+	v.add_child(_wrap(_label("Среднее по жителям, которым нужна эта потребность", 13, false, C_SOFT), 620))
 	var workers := 0
 	var jobs := 0
 	var free := 0
@@ -8069,36 +8171,47 @@ func _update_world_icons() -> void:
 	for id in c.buildings:
 		var b: Dictionary = c.buildings[id]
 		var d := c.def(b)
-		if b.get("over", false):
-			continue                 # сверх предела уровня: работников ей не нужно, всё сказано в карточке — без значка
+		if b.get("over", false) or d["kind"] == "decor":
+			continue
 		var icon := ""
 		var warn := true
-		if c.manual_hiring() and c.job_max(b) > 0 and c.hired_of(b) == 0:
-			icon = "hammer"
-		elif not bool(b.get("road", true)):
-			icon = "road"            # свободная стройка: любое здание без дороги у входа не работает
-		elif c.job_max(b) > 0 and float(b.get("staff", 0.0)) <= 0.0:
-			icon = "hammer"
-		elif d["kind"] == "shop" and not b.get("active", true):
-			icon = {"store": "warehouse", "good": "wheat", "road": "road"}.get(b.get("why", ""), "hammer")
-		elif d["kind"] in ["rp", "farm", "store", "monument"] and d.has("jobs") and not c.manual_hiring() and (float(b.get("fill", 1.0)) < 0.99 or c.hired_of(b) == 0):
-			icon = "hammer"
-		elif d["kind"] == "center" and (c.waiting > 0 or c.arrivals_paused):
+		var price := ""
+		var tip := ""
+		if not bool(b.get("road", true)):
+			icon = "road"
+			tip = "Нет дороги — постройте дорогу ко входу"
+		elif c.job_max(b) > 0 and (c.hired_of(b) == 0 or float(b.get("staff", 0.0)) <= 0.0):
+			icon = "no_workers"
+			tip = "Нет работников — откройте здание и нажмите «+»"
+		elif c.is_house(b):
+			var red := []
+			for n: String in Defs.needs_for(String(d["cls"]), c.level):
+				if int(b.get("need_coverage", {}).get(n, 0)) < 34:
+					red.append(Defs.NEEDS[n]["name"])
+			if not red.is_empty() and int(b["pop"]) + int(b.get("coming", 0)) > 0:
+				icon = "house_problem"
+				tip = "Жителям не хватает: %s" % ", ".join(red)
+			elif c.can_buy_floor(b) == "":
+				icon = "up"
+				warn = false
+				price = fmt(c.floor_price(b))
+				tip = "Ещё один этаж — место для 1 семьи"
+		elif d["kind"] == "center" and c.arrivals_paused:
 			icon = "family"
 			warn = false
+			tip = "Пауза: новые семьи не едут"
 		if icon != "":
-			var text := "нет работников" if icon == "hammer" and c.job_max(b) > 0 and c.hired_of(b) == 0 else ("Ⅱ" if d["kind"] == "center" and c.arrivals_paused else "")
-			want[id] = [icon, warn, text]
+			want[id] = [icon, warn, price, tip]
 	for id in world_icons.keys():
-		if not want.has(id) or world_icons[id] != want[id]:
+		if not want.has(id):
 			clear_badge("b%d" % id)
 			world_icons.erase(id)
 	for id in want:
-		if world_icons.has(id):
-			continue
 		var b: Dictionary = c.buildings[id]
 		var top: float = c.blueprint(b).top_y() + 1.2
-		set_badge("b%d" % id, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), want[id][0], want[id][1], want[id][2])
+		var key := "b%d" % id
+		set_badge(key, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), want[id][0], want[id][1], want[id][2])
+		(badges[key]["n"] as Control).tooltip_text = want[id][3]
 		world_icons[id] = want[id]
 
 
@@ -8244,16 +8357,20 @@ func _place_badges() -> void:
 		return
 	var viewport := get_viewport()
 	var cam := viewport.get_camera_3d()
-	if cam == null:
-		return
 	var vr := viewport.get_visible_rect()
-	var show: bool = root.visible and game.mode != "menu"
+	# Не передаём на GPU ни плохую камеру, ни координаты у плоскости проекции.
+	if not _badge_camera_safe(cam, vr):
+		for entry: Dictionary in badges.values():
+			(entry["n"] as Control).hide()
+		_badges_dirty = true
+		return
+	var show: bool = root.visible and game.mode != "menu" and badge_layer.modulate.a > 0.001
 	var tl: String = game.tool
 	var transform := cam.get_camera_transform()
 	var projection := cam.get_camera_projection()
 	var target: Vector3 = game.rig.target
 	var zoom: float = game.rig.dist
-	var place: bool = _badges_dirty or cam != _badge_camera or transform != _badge_transform or projection != _badge_projection or vr != _badge_viewport or show != _badge_show or target != _badge_target or zoom != _badge_zoom
+	var place: bool = _badges_dirty or cam != _badge_camera or transform != _badge_transform or projection != _badge_projection or vr != _badge_viewport or show != _badge_show or target != _badge_target or zoom != _badge_zoom or tl != _badge_tool or overlay != _badge_overlay
 	var pick: bool = _badge_pick_dirty or tl != _badge_tool
 	if not place and not pick:
 		return
@@ -8265,6 +8382,7 @@ func _place_badges() -> void:
 	_badge_target = target
 	_badge_zoom = zoom
 	_badge_tool = tl
+	_badge_overlay = overlay
 	_badges_dirty = false
 	_badge_pick_dirty = false
 	for k in badges:
@@ -8276,18 +8394,64 @@ func _place_badges() -> void:
 			p.mouse_filter = Control.MOUSE_FILTER_PASS if can else Control.MOUSE_FILTER_IGNORE
 		if not place:
 			continue
+		if String(k).begins_with("b") and b["icon"] == "up" and (tl != "" or overlay != ""):
+			p.visible = false
+			continue
 		var w: Vector3 = b["pos"]
+		if not w.is_finite() or not target.is_finite() or not is_finite(zoom):
+			p.hide()
+			continue
 		var far: bool = zoom >= 90.0 and Vector2(w.x, w.z).distance_squared_to(Vector2(target.x, target.z)) > 180.0 * 180.0
 		if not show or cam.is_position_behind(w) or (far and not bool(b["warn"])):
 			p.visible = false
 			continue
-		var depth := clampf((cam.global_position.distance_to(w) - 35.0) / 180.0, 0.0, 1.0)
-		p.scale = Vector2.ONE * lerpf(1.0, 0.8, depth)
-		p.modulate.a = lerpf(1.0, 0.76, depth)
-		var pt := cam.unproject_position(w)
 		var anc: Vector2 = b.get("anc", Vector2(0.5, 0.5))
-		p.position = (pt - p.size * p.scale * anc).round()
-		p.visible = vr.grow(30).has_point(pt)
+		# Цена краснеет без изменения размера и прозрачности прежней стрелки.
+		var price_arrow: bool = b["icon"] == "up" or String(b["icon"]).begins_with("upc")
+		var layout := _badge_layout(cam, w, p.size, anc, vr, bool(b["warn"]) and not price_arrow)
+		if layout.is_empty():
+			p.hide()
+			continue
+		p.scale = layout["scale"]
+		p.position = layout["pos"]
+		p.modulate.a = layout["alpha"]
+		p.show()
+
+
+static func _badge_camera_safe(cam: Camera3D, vr: Rect2) -> bool:
+	if cam == null or not vr.position.is_finite() or not vr.size.is_finite() or absf(vr.position.x) > 16384.0 or absf(vr.position.y) > 16384.0 or vr.size.x <= 0.0 or vr.size.y <= 0.0 or vr.size.x > 16384.0 or vr.size.y > 16384.0:
+		return false
+	var xf := cam.get_camera_transform()
+	var determinant := xf.basis.determinant()
+	if not xf.is_finite() or not is_finite(determinant) or absf(determinant) < 0.000001 or not is_finite(cam.near) or not is_finite(cam.far) or cam.near <= 0.0 or cam.far <= cam.near:
+		return false
+	var proj := cam.get_camera_projection()
+	return proj.x.is_finite() and proj.y.is_finite() and proj.z.is_finite() and proj.w.is_finite()
+
+
+## Сначала проверяем всё; только готовый безопасный результат назначаем Control.
+static func _badge_layout(cam: Camera3D, world: Vector3, extent: Vector2, anchor: Vector2, vr: Rect2, warning: bool) -> Dictionary:
+	if not _badge_camera_safe(cam, vr) or not world.is_finite() or not extent.is_finite() or not anchor.is_finite():
+		return {}
+	if extent.x <= 0.0 or extent.y <= 0.0 or extent.x > 512.0 or extent.y > 512.0:
+		return {}
+	var local := cam.get_camera_transform().affine_inverse() * world
+	if not local.is_finite() or local.z >= -maxf(0.05, cam.near) or -local.z > cam.far:
+		return {}
+	var distance := cam.global_position.distance_to(world)
+	if not is_finite(distance):
+		return {}
+	var depth := clampf((distance - 35.0) / 180.0, 0.0, 1.0)
+	var factor := clampf(lerpf(1.0, 0.85 if warning else 0.8, depth), 0.5, 1.5)
+	if not is_finite(depth) or not is_finite(factor):
+		return {}
+	var point := cam.unproject_position(world)
+	if not point.is_finite() or not vr.grow(30.0).has_point(point):
+		return {}
+	var at := (point - extent * factor * anchor.clamp(Vector2.ZERO, Vector2.ONE)).round()
+	if not at.is_finite() or not vr.grow(800.0).has_point(at):
+		return {}
+	return {"pos": at, "scale": Vector2.ONE * factor, "alpha": 1.0 if warning else clampf(lerpf(1.0, 0.76, depth), 0.0, 1.0)}
 
 
 # ---------- свой герой (Д11): медальон «Герой» ----------

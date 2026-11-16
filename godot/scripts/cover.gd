@@ -386,8 +386,8 @@ static func overview_sets(c: City, mode: String) -> Dictionary:
 	for id in c.buildings:
 		var b: Dictionary = c.buildings[id]
 		var d := c.def(b)
-		if d["kind"] == "shop":
-			if d.get("sub", "") == mode:
+		if HouseNeeds.category(d) == mode or d["kind"] == "shop":
+			if HouseNeeds.category(d) == mode:
 				shops.append(id)
 			continue
 		if d["kind"] != "house" or int(b["pop"]) + int(b.get("coming", 0)) <= 0:
@@ -409,14 +409,13 @@ static func overview_sets(c: City, mode: String) -> Dictionary:
 			tint[id] = [GREEN, GOLD, RED][k]
 			faces[id] = hp
 			n[k] += 1
-		elif (Defs.CLASSES[d["cls"]]["needs"] as Array).has(mode):
-			if (b.get("needs", {}) as Dictionary).has(mode):
-				tint[id] = GREEN
-				n[0] += 1
-			else:
-				tint[id] = RED
+		elif Defs.needs_for(String(d["cls"]), c.level).has(mode):
+			var pct := int(b.get("need_coverage", {}).get(mode, 0))
+			var k := 0 if pct >= 67 else (1 if pct >= 34 else 2)
+			tint[id] = [GREEN, GOLD, RED][k]
+			n[k] += 1
+			if k == 2:
 				miss.append(id)
-				n[2] += 1
 	return {"tint": tint, "faces": faces, "miss": miss, "shops": shops, "n": n}
 
 
@@ -457,7 +456,7 @@ static func class_sets(c: City) -> Dictionary:
 			why[id] = ["time", err]
 		elif not miss.is_empty():
 			var need := ""
-			for nd in Defs.CLASSES[String(Defs.B[nt]["cls"])]["needs"]:
+			for nd in Defs.needs_for(String(Defs.B[nt]["cls"]), c.level):
 				if not (h.get("needs", {}) as Dictionary).has(nd):
 					need = String(nd)
 					break
@@ -809,7 +808,7 @@ func _overview(mode: String) -> void:
 				mk["ov%d" % id] = [id, ic, c.money < float(pr), game.hud.fmt(pr) if game.hud else str(pr), ""]
 	else:
 		for id in sets["miss"]:
-			mk["ov%d" % id] = [id, "close", true, "", "plain"]
+			mk["ov%d" % id] = [id, "house_problem", true, "", "plain"]
 		for id in sets["shops"]:
 			var s: Dictionary = c.buildings[id]
 			mk["ovs%d" % id] = [id, String(c.def(s).get("icon", "info")), not bool(s.get("active", true)), "", "mark"]
@@ -905,7 +904,10 @@ func _marks(mk: Dictionary) -> void:
 			continue
 		var b: Dictionary = c.buildings[id]
 		# над бедой постройки (нет работников, склада…) свой пузырь — наш значок выше него
-		var top: float = c.blueprint(b).top_y() + (3.0 if hud.world_icons.has(id) else 1.2)
+		var world_icon: Array = hud.world_icons.get(id, [])
+		# Обычная стрелка скрыта при инструменте и в «Обзоре»: место под неё не оставляем.
+		var separate: bool = not world_icon.is_empty() and not (world_icon[0] == "up" and (game.tool != "" or hud.overlay != ""))
+		var top: float = c.blueprint(b).top_y() + (3.0 if separate else 1.2)
 		var cb := func(): _open(id)               # щёлкнуть значок (без стройки в руках) — карточка этой постройки
 		hud.set_badge(k, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), e[1], e[2], e[3] if e.size() > 3 else "", cb, e[4] if e.size() > 4 else "")
 		marks[k] = true

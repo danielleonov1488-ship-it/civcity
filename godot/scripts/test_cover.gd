@@ -607,6 +607,8 @@ func _overview() -> void:
 	var dec := []
 	for x in [160.0, 164.0, 168.0]:
 		dec.append(c.place("statue", Vector2(x, 161), 0.0, 0, -1, true))
+	# UI4: у украшенной части квартала есть и вера.
+	dec.append(c.place("lararium", Vector2(162, 164), 0.0, 0, -1, true))
 	c.compute()
 	hud._top_action("view")
 	await frames(3)
@@ -649,24 +651,25 @@ func _overview() -> void:
 	await _overview_card(lived)
 	game.rig.set_view(Vector3(186, 2, 161), 0, 58, 100)
 	await frames(4)
-	# одна потребность: еда
+	# Одна потребность: три состояния покрытия еды.
 	hud.set_overlay("food")
 	await frames(3)
 	var miss := []
 	var fed := 0
 	for id in lived:
-		if (c.buildings[id]["needs"] as Dictionary).has("food"):
+		var coverage := int(c.buildings[id].get("need_coverage", {}).get("food", 0))
+		var tint: Color = Cover.GREEN if coverage >= 67 else (Cover.GOLD if coverage >= 34 else Cover.RED)
+		ok = ok and cover.want.get(id) == tint
+		if coverage >= 34:
 			fed += 1
-			ok = ok and cover.want.get(id) == Cover.GREEN
 		else:
 			miss.append(id)
-			ok = ok and cover.want.get(id) == Cover.RED
-	check(ok and fed > 0 and miss.size() > 0, "еда: сытые зелёные (%d), без еды красные (%d)" % [fed, miss.size()])
+	check(ok and fed > 0 and miss.size() > 0, "еда: цвета совпадают с покрытием 34 / 67")
 	var xs := 0
 	for id in miss:
-		if hud.badges.has("ov%d" % id) and hud.badges["ov%d" % id]["icon"] == "close":
+		if hud.badges.has("ov%d" % id) and hud.badges["ov%d" % id]["icon"] == "house_problem":
 			xs += 1
-	check(xs == miss.size(), "над домами без еды — ✗ (%d)" % xs)
+	check(xs == miss.size(), "над домами с красной нуждой — булавки (%d)" % xs)
 	check(hud.badges.has("ovs%d" % int(s1["id"])) and hud.badges.has("ovs%d" % int(s2["id"])), "над лавками с едой — их значки")
 	check(not hud.badges.has("ov%d" % int(lived[0])) or miss.has(lived[0]), "у сытых домов значка нет")
 	await frames(20)

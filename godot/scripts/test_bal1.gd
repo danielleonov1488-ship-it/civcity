@@ -65,6 +65,12 @@ func _model() -> void:
 		check((h["score"] as Dictionary).has(type), "working nearby shop counted in coverage: " + type)
 		for part: Array in h["happy_parts"]:
 			check(not String(part[0]).begins_with(String(Defs.B[type]["name"])), "plebs card excludes " + type)
+	check(not (h["missing"] as Array).has("faith"), "faith is not required at rank zero")
+	c.level = 2
+	c.compute()
+	check((h["missing"] as Array).has("faith"), "unrelated shops do not cover faith from rank two")
+	c.level = 0
+	c.compute()
 	check((h["missing"] as Array).has("food"), "non-food shops do not feed plebs")
 	check(City.shop_parts(shops, scores, 1, "plebs").is_empty(), "plebs get no clothes, fun or goods bonus")
 	check(City.shop_parts(shops, scores, 1, "artisans").size() == 2, "artisans count clothes and fun only")

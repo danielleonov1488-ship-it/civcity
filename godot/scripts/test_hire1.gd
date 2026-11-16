@@ -137,7 +137,7 @@ func _run() -> void:
 	hud._update_world_icons()
 	check(not hud.world_icons.has(shop["id"]), "partial shop has no permanent badge")
 	game._hover_building(shop)
-	check(hud.badges.has("work_partial"), "partial badge appears on hover")
+	check(not hud.badges.has("work_partial"), "partial staff stays in card, no extra map badge")
 	game._clear_highlight()
 	check(not hud.badges.has("work_partial"), "partial badge clears off hover")
 	await shot("2_card_partial.png")
@@ -160,7 +160,7 @@ func _run() -> void:
 	hud.close_panels()
 	hud._update_world_icons()
 	var badge: Dictionary = hud.badges.get("b%d" % shop["id"], {})
-	check(badge.get("text", "") == "нет работников" and bool(badge.get("warn", false)), "red no-worker badge")
+	check(badge.get("icon", "") == "no_workers" and bool(badge.get("warn", false)) and (badge["n"] as Control).tooltip_text.contains("Нет работников"), "red no-worker badge")
 	await shot("4_badge_noworkers.png")
 	# Новая семья заселяется, но не занимает ни одного пустого места.
 	var arrival_home := place(c, "house_pleb", at + Vector2(25, 15))

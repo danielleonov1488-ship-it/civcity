@@ -338,7 +338,8 @@ func _floor_tool() -> void:
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Этаж — без карточки дома", "окно закрыли щелчком мимо — советник на экране: «%s»" % hud.adv_title.text)
 	c.tips.erase("floor_tool")
 	hud.advisor_panel.visible = false
-	game.rig.set_view(Vector3(182, 2, 160), 0, 52, 62)
+	# Весь ряд в кадре: скрытый безопасной проекцией значок не имеет экранной точки.
+	game.rig.set_view(Vector3(190, 2, 160), 0, 52, 76)
 	await frames(10)
 	game.set_tool("floor")
 	await frames(3)
@@ -399,6 +400,20 @@ func ready_row() -> Array:
 	return r
 
 
+## Точки мазка берём только у видимых стрелок, не из скрытого Control в начале окна.
+func floor_path(ids: Array) -> Array:
+	var pts := []
+	for id in ids:
+		var k := "fl%d" % int(id)
+		if not check(hud.badges.has(k) and (hud.badges[k]["n"] as Control).is_visible_in_tree(), "стрелка дома %d видна для мазка" % int(id)):
+			return []
+		var node: Control = hud.badges[k]["n"]
+		if not check(get_viewport().get_visible_rect().has_point(node.get_global_rect().get_center()), "точка стрелки дома %d внутри экрана" % int(id)):
+			return []
+		pts.append(badge_scr(k))
+	return pts
+
+
 func _floor_stroke() -> void:
 	var r := ready_row()
 	if not check(r.size() >= 10, "готовых домов в ряду: %d" % r.size()):
@@ -427,9 +442,9 @@ func _floor_stroke() -> void:
 	check(c.events.size() > ev0 and String(last["text"]).begins_with("Дому семьи Проба %d надстроили 2-й этаж за %d ден." % [one, p0]) and hud.bell_count == bell0, "итог — в колокольчик (без числа на значке): «%s»" % last["text"])
 	# мазок вдоль улицы по стрелкам: этаж — каждому готовому дому под курсором, монетки — один раз
 	var seg: Array = r.slice(1, 6)
-	var pts := []
-	for id in seg:
-		pts.append(badge_scr("fl%d" % id))
+	var pts := floor_path(seg)
+	if pts.is_empty():
+		return
 	var cost := 0
 	for id in seg:
 		cost += c.floor_price(c.buildings[id])
@@ -504,9 +519,9 @@ func _floor_broke() -> void:
 	var tiers0 := {}
 	for id in r:
 		tiers0[id] = int(c.buildings[id]["tier"])
-	var pts := []
-	for id in r:
-		pts.append(badge_scr("fl%d" % id))
+	var pts := floor_path(r)
+	if pts.is_empty():
+		return
 	var coins0 := int(game.sound.played.get("coins", 0))
 	move(pts[0])
 	await frames(2)
@@ -518,7 +533,7 @@ func _floor_broke() -> void:
 			move(pts[i - 1].lerp(pts[i], float(s) / n))
 			await frames(1)
 	await frames(2)
-	check(game.floor_broke and String(cover.cap[2]).begins_with("Не хватает денариев"), "денарии кончились — у курсора «%s»" % cover.cap[2])
+	check(game.floor_broke and cover.cap[2] == "Не хватает денариев: этаж стоит %s ден." % hud.fmt(price), "денарии кончились — у курсора «%s»" % cover.cap[2])
 	await shot("ux_floor_broke.png")
 	btn(pts[-1], MOUSE_BUTTON_LEFT, false)
 	await frames(3)
@@ -642,7 +657,7 @@ func _floor_mixed() -> void:
 	var p_cheap := c.floor_price(c.buildings[low])
 	c.money = float(p_cheap) + 100.0                  # на дешёвый хватает, на дорогой — нет
 	check(p_dear > int(c.money) and p_cheap <= int(c.money), "этаж дорогому — %d ден., дешёвому — %d, в казне %d" % [p_dear, p_cheap, int(c.money)])
-	game.rig.set_view(Vector3(182, 2, 160), 0, 52, 62)
+	game.rig.set_view(Vector3(190, 2, 160), 0, 52, 76)
 	await frames(10)
 	game.set_tool("floor")
 	await frames(6)
@@ -652,8 +667,13 @@ func _floor_mixed() -> void:
 		tiers0[id] = int(c.buildings[id]["tier"])
 	check(hud.badges.has("fl%d" % dear) and hud.badges["fl%d" % dear]["warn"] and hud.badges.has("fl%d" % low) and not hud.badges["fl%d" % low]["warn"], "над дорогим — красная цена, над дешёвым — обычная")
 	# нажали на красную стрелку дорогого — он пропущен, мазок не кончился
-	var a := badge_scr("fl%d" % dear)
-	var b := badge_scr("fl%d" % low)
+	var pts := floor_path([dear, low])
+	if pts.is_empty():
+		game.set_tool("")
+		c.research.erase("floor3")
+		return
+	var a: Vector2 = pts[0]
+	var b: Vector2 = pts[1]
 	move(a)
 	await frames(3)
 	btn(a, MOUSE_BUTTON_LEFT, true)
@@ -671,6 +691,7 @@ func _floor_mixed() -> void:
 		if int(c.buildings[id]["tier"]) > int(tiers0[id]):
 			got.append(id)
 	check(got.size() == 1 and not got.has(dear) and cheap.has(got[0]) and is_equal_approx(c.money, 100.0), "дорогой пропущен, дешёвый на пути получил этаж: %s, в казне %d" % [got, int(c.money)])
+	await shot("ux_floor_mixed.png")
 	game.set_tool("")
 	c.research.erase("floor3")
 	c.money = 500000.0
@@ -825,7 +846,7 @@ func _new_marks() -> void:
 	check(ev == "Изучено: Деревья и кусты — карточки в «Украшения · Цветы и сад, Деревья, Природа»", "событие: «%s»" % ev)
 	c.research.erase("musicians")
 	c.do_research("musicians")
-	check(last_event("Изучено:") == "Изучено: Уличные музыканты — карточка в «Лавки · Развлечения»", "событие: «%s»" % last_event("Изучено:"))
+	check(last_event("Изучено:") == "Изучено: Уличные музыканты — карточка в «Лавки · Зрелища»", "событие: «%s»" % last_event("Изучено:"))
 	# свиток «Лавки · Еда»: карточки овощной и рыбной — с пометкой, вкладка «Развлечения» — с точкой
 	hud._toggle_cat("commerce")
 	hud.open_sub = "food"

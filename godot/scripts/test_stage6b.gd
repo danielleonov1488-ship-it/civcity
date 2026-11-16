@@ -186,6 +186,10 @@ func _new() -> void:
 	for k in 10:
 		place("lamp_post", Vector2(X0 + 1.0 + k * 3.6, Z0 - 8.5), Vector2(0.3, -0.3), 8)
 		place("flowers", Vector2(X0 + 2.5 + k * 3.6, Z0 - 9.5), Vector2(0.3, -0.3), 8)
+	# UI4: вера нужна всем классам, алтари стоят через дорогу и не мешают перестройке.
+	for x in [5.0, 25.0]:
+		var shrine := place("altar", Vector2(X0 + x, Z0 + 18.0), Vector2(0.3, 0), 8)
+		check(not shrine.is_empty(), "алтарь для нужды вера")
 	# После BAL1 услуги и утварь ремесленникам счастья не дают. Добавляем сад за дворами.
 	for x in [8.0, 16.0]:
 		var statue := place("statue", Vector2(X0 + x, Z0 - 12.0), Vector2(0.3, 0), 8)

@@ -116,7 +116,7 @@ func _run() -> void:
 	if not check(hud.badges.has(problem_key) and hud.badges[problem_key]["icon"] == "road" and bool(hud.badges[problem_key]["warn"]), "shop without road has warning"):
 		return
 	var family_badge: Badge = hud.badges[fam_key]["n"]
-	if not check(family_badge.preference_texture != null and family_badge.ring == Badge.CLASS_RING["plebs"] and family_badge.get_child_count() == 0 and family_badge.tooltip_text.contains("рядом зелень"), "family preference, ring, tooltip and single Control"):
+	if not check(family_badge.preference_texture != null and family_badge.ring == Badge.CLASS_RING["plebs"] and family_badge.get_child_count() == 0 and family_badge.tooltip_text.contains("рядом зелень"), "family wish in tooltip, class ring and single Control"):
 		return
 	if not check(family_badge.visible and (hud.badges[problem_key]["n"] as Control).visible, "city shot contains family and problem"):
 		return
@@ -235,7 +235,7 @@ func _cache_and_input() -> bool:
 	hud.set_badge("far_problem", far, "road", true)
 	hud._place_badges()
 	var warning: Control = hud.badges["far_problem"]["n"]
-	if not check(not (hud.badges["far_normal"]["n"] as Control).visible and warning.visible and is_equal_approx(warning.scale.x, 0.8) and warning.modulate.a < 1.0, "distant culling preserves smaller faded problems"):
+	if not check(not (hud.badges["far_normal"]["n"] as Control).visible and warning.visible and is_equal_approx(warning.scale.x, 0.85) and is_equal_approx(warning.modulate.a, 1.0), "distant culling preserves clear problems at 85%"):
 		return false
 	hud.clear_badge("probe")
 	return check(not hud.badges.has("probe") and not node.visible, "removed badge immediately stops picking")

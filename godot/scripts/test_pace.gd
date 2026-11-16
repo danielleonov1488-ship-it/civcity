@@ -878,7 +878,10 @@ func _try_pool(type: String, target: Vector2, pool: Array, tries: int) -> Dictio
 		var pl: Dictionary = game.placement(type, p)
 		var err: String = pl["err"]
 		if err == "" and (d["kind"] == "decor" or pl["sub"] == "road"):
-			return c.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"])
+			var built: Dictionary = c.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"])
+			if not built.is_empty() and c.job_max(built) > 0:
+				_bhire()
+			return built
 		# бот ничего не сносит: что мешает здесь сейчас (занято, круто, вода, вход соседа), мешает и потом;
 		# временное — только деньги, исследование, предел уровня и некупленная земля
 		if not (err.begins_with("Не хватает") or err.begins_with("Откроется") or err.contains("не больше") or err.contains("пока не строят") \
@@ -988,6 +991,7 @@ func _home_key(b: Dictionary) -> int:
 # ---------- бот: решения раз в час ----------
 
 func _bplay() -> void:
+	_bhire()
 	_bresearch()
 	if _houses().is_empty():
 		return
@@ -1026,7 +1030,42 @@ func _bplay() -> void:
 	_blegion(save)
 	_spend("legion", m0)
 	_bland_rich(save)
+	_bhire()
 	c.compute()
+
+
+## Игрок нажимает «+» после стройки и приезда взрослых. Еда и нужды домов — первыми.
+func _bhire() -> void:
+	if not c.manual_hiring():
+		return
+	var workplaces: Array = []
+	for b: Dictionary in c.buildings.values():
+		if c.job_max(b) > c.hired_of(b) and not b.get("over", false):
+			workplaces.append(b)
+	workplaces.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var pa := _hire_priority(a)
+		var pb := _hire_priority(b)
+		return int(a["id"]) < int(b["id"]) if pa == pb else pa < pb)
+	for b: Dictionary in workplaces:
+		# City.hire выбирает только свободных взрослых подходящего класса.
+		if c.can_hire(b):
+			c.hire(b, maxi(0, int(c.job_max(b)) - int(c.hired_of(b))))
+
+
+func _hire_priority(b: Dictionary) -> int:
+	var d: Dictionary = c.def(b)
+	var need := HouseNeeds.category(d)
+	if need == "food":
+		return 0
+	if need != "":
+		for h: Dictionary in _houses():
+			if need in h.get("missing", []) and (h["pos"] as Vector2).distance_to(b["pos"]) <= (float(c.shop_range(d)) if d["kind"] == "shop" else Defs.range_m(d)):
+				return 1
+	if d["kind"] in ["store", "farm", "workshop"]:
+		return 2
+	if d["kind"] == "rp":
+		return 3
+	return 4 if d["kind"] != "military" else 5
 
 
 ## Счёт трат по видам: [деньги, побочные траты] до дела; после — разница без мостовых и участков (их считают сами)
@@ -1302,6 +1341,9 @@ func _bshops(save: float) -> void:
 		var miss := hs.filter(func(h): return n in h.get("missing", []))
 		if miss.is_empty():
 			continue
+		if n == "faith":
+			_bfaith(miss, save)
+			continue
 		for tp in _shop_order(n):
 			if not _can_staff(tp) or c.money - float(Defs.B[tp]["cost"]) < save * 0.5:
 				continue
@@ -1362,6 +1404,28 @@ func _store_at(p: Vector2) -> bool:
 	for id in c.buildings:
 		var b: Dictionary = c.buildings[id]
 		if b["type"] == "warehouse" and (b["pos"] as Vector2).distance_to(p) <= r:
+			return true
+	return false
+
+
+## Храм или маленький алтарь — такая же потребность, хотя это не лавка.
+func _bfaith(hs: Array, save: float) -> bool:
+	var providers := []
+	for type: String in Defs.B:
+		if HouseNeeds.category(Defs.B[type]) == "faith" and c.unlocked(type) and _can_staff(type):
+			providers.append(type)
+	providers.sort_custom(func(a: String, b: String) -> bool: return int(Defs.B[a]["cost"]) < int(Defs.B[b]["cost"]))
+	for type: String in providers:
+		if c.money - float(Defs.B[type]["cost"]) < save * 0.5:
+			continue
+		var at: Vector2 = hs[0]["pos"]
+		if Defs.B[type]["kind"] == "decor":
+			var points: Array = []
+			for offset: Vector2 in [Vector2(0, 4), Vector2(4, 0), Vector2(0, -4), Vector2(-4, 0), Vector2(4, 4), Vector2(-4, -4)]:
+				points.append(at + offset)
+			if not _try_pool(type, at, points, points.size()).is_empty():
+				return true
+		elif not _bput(type, at, true).is_empty():
 			return true
 	return false
 

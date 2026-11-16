@@ -88,12 +88,25 @@ const PLOT_GROW := 1.3
 ## base — счастье дома без лавок и украшений; deco_max — сколько могут дать украшения (см. City.compute)
 const CLASSES := {
 	"plebs": {"name": "Плебеи", "one": "Плебеи", "icon": "person", "house": "house_pleb", "tax": 1.2, "per_floor": 4, "work": 0.5,
-		"needs": ["food"], "base": 44, "deco_max": 12},
+		"needs": ["food", "faith"], "need_min_rank": {"faith": 2}, "base": 44, "deco_max": 12},
 	"artisans": {"name": "Ремесленники", "one": "Ремесленники", "icon": "hammer", "house": "house_artisan", "tax": 2.2, "per_floor": 4, "work": 0.5,
-		"needs": ["food", "clothes", "fun"], "base": 40, "deco_max": 14},
+		"needs": ["food", "faith", "clothes", "fun"], "need_min_rank": {"faith": 2}, "base": 40, "deco_max": 14},
 	"patricians": {"name": "Патриции", "one": "Патриции", "icon": "toga", "house": "house_patrician", "tax": 4.5, "per_floor": 4, "work": 0.35,
-		"needs": ["food", "clothes", "fun", "services", "goods"], "base": 38, "deco_max": 16},
+		"needs": ["food", "faith", "clothes", "fun", "goods", "services"], "base": 38, "deco_max": 16},
 }
+## Нужды открываются по рангу; патрициям нужны все шесть сразу.
+static func needs_for(cls: String, rank: int) -> Array:
+	var out := []
+	for n: String in CLASSES[cls]["needs"]:
+		if rank >= need_rank(cls, n):
+			out.append(n)
+	return out
+
+
+static func need_rank(cls: String, need: String) -> int:
+	return int(CLASSES[cls].get("need_min_rank", {}).get(need, 0))
+
+
 const CLASS_ORDER := ["plebs", "artisans", "patricians"]
 ## повозка с новыми семьями — раз в столько игровых часов (по уровню города); счастье города ускоряет (ARRIVE_FAST)
 const ARRIVE_EVERY := [2.0, 2.5, 2.6, 2.4, 2.25, 2.1, 1.95, 1.8]
@@ -107,11 +120,12 @@ const FAMILY_SIZE := {"plebs": [2, 4], "artisans": [2, 4], "patricians": [2, 4]}
 const NEEDS := {
 	"food": {"name": "Еда", "icon": "food"},
 	"clothes": {"name": "Одежда", "icon": "clothes"},
-	"fun": {"name": "Развлечения", "icon": "fun"},
-	"services": {"name": "Услуги", "icon": "services"},
-	"goods": {"name": "Товары", "icon": "goods"},
+	"fun": {"name": "Зрелища", "icon": "fun"},
+	"services": {"name": "Службы", "icon": "services"},
+	"goods": {"name": "Утварь", "icon": "goods"},
+	"faith": {"name": "Вера", "icon": "faith"},
 }
-const NEED_ORDER := ["food", "clothes", "fun", "services", "goods"]
+const NEED_ORDER := ["food", "clothes", "goods", "fun", "services", "faith"]
 
 ## Римские семьи (родовые имена) — у каждой семьи в доме своё имя
 const FAMILIES := ["Юлии", "Корнелии", "Клавдии", "Валерии", "Фабии", "Эмилии", "Ливии", "Туллии", "Флавии", "Антонии", "Юнии",
@@ -176,7 +190,7 @@ const B := {
 	"house_pleb": {"kind": "house", "cat": "housing", "cls": "plebs", "name": "Дом плебеев", "cost": 100, "variants": 5,
 		"desc": "Скромный дом для простых римлян. Когда дом полон и жители счастливы, инструментом «Этаж» (справа внизу, клавиша U) можно надстроить этаж — для новой семьи."},
 	"house_artisan": {"kind": "house", "cat": "housing", "cls": "artisans", "name": "Дом ремесленников", "cost": 350, "variants": 5, "unlock": "artisans",
-		"desc": "Дом с мастерской внизу. Ремесленникам нужны еда, одежда и развлечения. Такой дом можно и не строить заново: дом плебеев перестраивают в дом ремесленников инструментом «Перестроить» (справа внизу, Shift+U)."},
+		"desc": "Дом с мастерской внизу. Ремесленникам нужны еда, вера, одежда и зрелища. Такой дом можно и не строить заново: дом плебеев перестраивают в дом ремесленников инструментом «Перестроить» (справа внизу, Shift+U)."},
 	"house_patrician": {"kind": "house", "cat": "housing", "cls": "patricians", "name": "Домус патрициев", "cost": 1000, "variants": 4, "unlock": "patricians",
 		"desc": "Богатый дом с портиком и садом. Патриции платят много, но хотят всего и лучшего. Дом ремесленников можно перестроить в городской домус инструментом «Перестроить» (Shift+U) — до трёх этажей."},
 
@@ -301,7 +315,7 @@ const B := {
 		"icon": "bridge", "desc": "Кусок акведука: два яруса арок, поверху течёт вода. Ставьте куски друг за другом — новый встанет следом за прежним; под арками можно провести улицу. Дома рядом радуются чистой воде."},
 	"vigiles": {"kind": "monument", "cat": "special", "name": "Пост вигилов", "cost": 650, "bonus": 4, "range": 3, "jobs": {"plebs": 2}, "unlock": "vigiles",
 		"icon": "shield", "desc": "Вигилы — пожарные и ночная стража Рима: бочки с водой, вёдра, лестницы и дозор до рассвета. Дома вокруг спят спокойно."},
-	"temple": {"kind": "monument", "cat": "special", "name": "Храм Юпитера", "cost": 2500, "bonus": 10, "range": 4, "jobs": {"plebs": 2}, "unlock": "temple",
+	"temple": {"kind": "monument", "need": "faith", "cat": "special", "name": "Храм Юпитера", "cost": 2500, "bonus": 10, "range": 4, "jobs": {"plebs": 2}, "unlock": "temple",
 		"icon": "level", "desc": "Храм на подиуме с колоннадой. Значительно повышает счастье жителей поблизости."},
 	"prefect": {"kind": "monument", "cat": "special", "name": "Дом префекта", "cost": 3200, "bonus": 7, "range": 4, "jobs": {"patricians": 2}, "unlock": "prefect",
 		"icon": "scroll", "desc": "Префект следит за порядком, рынками и водой. Кварталу рядом с его домом живётся спокойнее."},
@@ -310,7 +324,7 @@ const B := {
 	"forum": {"kind": "monument", "cat": "special", "name": "Форум", "cost": 8000, "bonus": 12, "range": 5, "unlock": "forum",
 		"icon": "caesar", "desc": "Сердце города: колоннада, статуи и трибуна."},
 	# этап 5, волна 2: большие постройки веб-версии (план 5.6). shore — ставится у воды; glory — сверх денариев Слава
-	"venus": {"kind": "monument", "cat": "special", "name": "Храм Венеры и Ромы", "cost": 9000, "glory": 25, "bonus": 14, "range": 5, "jobs": {"plebs": 2, "artisans": 1},
+	"venus": {"kind": "monument", "need": "faith", "cat": "special", "name": "Храм Венеры и Ромы", "cost": 9000, "glory": 25, "bonus": 14, "range": 5, "jobs": {"plebs": 2, "artisans": 1},
 		"unlock": "venus", "unique": true, "icon": "level",
 		"desc": "Самый большой храм Рима: колоннада со всех сторон, золочёная крыша, у ступеней — статуи Венеры и Ромы. Радует весь большой квартал."},
 	"pharos": {"kind": "monument", "cat": "special", "name": "Маяк", "cost": 15000, "glory": 40, "bonus": 12, "range": 5, "jobs": {"plebs": 2},
@@ -324,7 +338,7 @@ const B := {
 		"icon": "castle", "desc": "Арка в честь побед — гордость жителей. Чудо Легиона: +5% урона всем бойцам."},
 	"colosseum": {"kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 30000, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum", "glory": 50,
 		"icon": "swords", "desc": "Гладиаторы и звери. Весь город ходит смотреть. Чудо Легиона: +10% здоровья бойцам и Слава каждый день."},
-	"pantheon": {"kind": "monument", "cat": "special", "name": "Пантеон", "cost": 60000, "bonus": 20, "range": 5, "unlock": "pantheon", "glory": 80,
+	"pantheon": {"kind": "monument", "need": "faith", "cat": "special", "name": "Пантеон", "cost": 60000, "bonus": 20, "range": 5, "unlock": "pantheon", "glory": 80,
 		"icon": "level", "desc": "Храм всех богов с огромным куполом. Чудо Легиона: +10% урона бойцам и Слава каждый день."},
 	"center": {"kind": "center", "cat": "", "name": "Почтовая станция", "cost": 0, "fixed": true,
 		"desc": "Сюда по большой дороге приезжают повозки с переселенцами и товарами."},
@@ -483,7 +497,7 @@ const B := {
 		"desc": "Большая корзина с подушкой: в ней дремлет чёрная Мася, рядом возятся трое котят, миска молока. Награда за историю горожан «Мася и котята»."},
 	"censortable": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Стол цензора", "cost": 45, "deco": 4, "unlock": "s_census", "story": true,
 		"desc": "Стол со свитками и табличками переписи, табурет, полка со свитками и знамя с золотым орлом. Награда за историю горожан «Перепись»."},
-	"lararium": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Ларарий", "cost": 60, "deco": 5, "light": true, "unlock": "s_letter", "story": true,
+	"lararium": {"kind": "decor", "need": "faith", "range": 2, "cat": "decor", "sub": "stone", "name": "Ларарий", "cost": 60, "deco": 5, "light": true, "unlock": "s_letter", "story": true,
 		"desc": "Домашний алтарь: мраморная ниша под фронтоном, в ней — фигурки Ларов, перед нишей — курильница с огоньком и цветы. Ночью горит огонёк. Награда за историю горожан «Письмо сыну в Легион»."},
 	# этап 7b, четвёртая партия: сенатор, лабиринт, школа гладиаторов, Сатурналии
 	"curulechair": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Курульное кресло", "cost": 180, "deco": 8, "unlock": "s_senator", "story": true,
@@ -585,8 +599,8 @@ const B := {
 	# «Статуи и руины» (Городок, после «Мастерской скульптора»; в новой игре сюда же — львы и две статуи)
 	"ruins": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Обломок колонны", "cost": 150, "deco": 7, "unlock": "deco_sculpt", "menu": false, "desc": "Старая колонна с отбитой верхушкой, вокруг — мраморные обломки и плющ."},
 	"ruins_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "ruins", "look": 1, "name": "Упавшая статуя", "cost": 150, "deco": 7, "unlock": "deco_sculpt", "menu": false, "desc": "Мраморная статуя, разбитая на куски, в траве и цветах."},
-	"altar": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Алтарь с огнём", "cost": 180, "deco": 7, "light": true, "unlock": "deco_sculpt", "menu": false, "desc": "Мраморный алтарь, на нём горит огонь. Ночью светит."},
-	"altar_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "altar", "look": 1, "name": "Алтарь с дарами", "cost": 180, "deco": 7, "unlock": "deco_sculpt", "menu": false, "desc": "Алтарь с чашами, фруктами и курильницей."},
+	"altar": {"kind": "decor", "need": "faith", "range": 2, "cat": "decor", "sub": "stone", "name": "Алтарь с огнём", "cost": 180, "deco": 7, "light": true, "unlock": "deco_sculpt", "menu": false, "desc": "Мраморный алтарь, на нём горит огонь. Ночью светит."},
+	"altar_2": {"kind": "decor", "need": "faith", "range": 2, "cat": "decor", "sub": "stone", "base": "altar", "look": 1, "name": "Алтарь с дарами", "cost": 180, "deco": 7, "unlock": "deco_sculpt", "menu": false, "desc": "Алтарь с чашами, фруктами и курильницей."},
 	"bigvase": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Ваза на постаменте", "cost": 140, "deco": 6, "unlock": "deco_sculpt", "menu": false, "desc": "Большая мраморная ваза на постаменте."},
 	"bigvase_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "bigvase", "look": 1, "name": "Пара амфор у ступени", "cost": 150, "deco": 6, "unlock": "deco_sculpt", "menu": false, "desc": "Две высокие расписные амфоры на мраморной ступени."},
 	"unfinished": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Статуя в работе", "cost": 160, "deco": 7, "unlock": "deco_sculpt", "menu": false, "desc": "Недоделанная статуя в лесах, рядом — резцы и глыба мрамора."},

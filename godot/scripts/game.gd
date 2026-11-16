@@ -4806,12 +4806,9 @@ func _hover_building(b: Dictionary) -> void:
 		hud.tool_status("Снести: %s (вернётся %s ден.)" % [city.def(b)["name"], hud.fmt(float(city.def(b)["cost"]) * Defs.REFUND)])
 
 
-func _work_hover(b: Dictionary) -> void:
-	if not hud:
-		return
-	if not b.is_empty() and tool == "" and city.manual_hiring() and city.hired_of(b) > 0 and city.hired_of(b) < city.job_max(b):
-		hud.set_badge("work_partial", Vector3(b["pos"].x, float(b["y"]) + city.blueprint(b).top_y() + 1.2, b["pos"].y), "work_half", false, "%d/%d" % [city.hired_of(b), city.job_max(b)])
-	else:
+func _work_hover(_b: Dictionary) -> void:
+	# Частичный найм виден в карточке; над картой только понятные проблемы.
+	if hud:
 		hud.clear_badge("work_partial")
 
 
@@ -5009,6 +5006,8 @@ func _floor_hover(over_ui: bool) -> void:
 		else:
 			_floor_sweep()
 	var b := {} if over_ui else _floor_pick()     # подпись — про стрелку под курсором, даже красную
+	if floor_drag and not over_ui:
+		_floor_check_broke(b)
 	if not b.is_empty() and not city.is_house(b):
 		b = {}
 	if over_ui:
@@ -5120,7 +5119,9 @@ func _floor_buy(b: Dictionary) -> void:
 		var pr: Dictionary = cover.sets.get("price", {}) if cover.state == ("upgrade" if _up_tool() else "floor") else {}
 		for id in pr:
 			if not floor_done.has(int(id)):
-				cheap = minf(cheap, float(pr[id]))
+				var home: Dictionary = city.buildings.get(int(id), {})
+				if not home.is_empty() and _fl_why(home, false) == "":
+					cheap = minf(cheap, float(pr[id]) - float(_upg_refund(home) if _up_tool() else 0))
 		floor_broke = city.money < cheap
 		return
 	var ok: bool = (city.upgrade_clearing(b, true) if upg_decor else city.upgrade_house(b, true)) if _up_tool() else city.buy_floor(b, true)
@@ -5131,6 +5132,14 @@ func _floor_buy(b: Dictionary) -> void:
 		floor_up = _up_tool()
 		if floor_done.size() == 1:
 			sound.ui("coins")                 # монетки — один раз на мазок, а не на каждый дом
+
+
+## Красная стрелка не мешает мазку по дешёвым домам, но всё равно объясняет нехватку денег.
+func _floor_check_broke(b: Dictionary) -> void:
+	if b.is_empty() or not city.is_house(b) or floor_done.has(int(b["id"])) or _fl_why(b, false) != "":
+		return
+	if city.money + float(_upg_refund(b) if _up_tool() else 0) < float(_fl_price(b)):
+		_floor_buy(b)
 
 
 ## Мазок окончен (кнопку отпустили, сменили инструмент): итог — одной строкой в колокольчик
