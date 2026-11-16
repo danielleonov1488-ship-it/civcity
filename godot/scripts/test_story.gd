@@ -601,13 +601,16 @@ func _legion3() -> void:
 		if button.text == "Призвать" and not button.disabled:
 			recruit_button = button
 			break
-	if check(recruit_button != null, "форт предлагает горожан для призыва"):
+	check(recruit_button != null, "форт предлагает горожан для призыва")
+	if recruit_button != null:
 		recruit_button.pressed.emit()
 	var sol: Dictionary = {}
 	for soldier: Dictionary in lg.soldiers:
 		if not before_ids.has(int(soldier["id"])):
 			sol = soldier
-	if not check(not sol.is_empty() and lg.soldiers.size() == before_ids.size() + 1 and not bool(sol.get("hero", false)), "призван первый воин: %s" % [sol.get("from", "")]):
+	var sol_ok: bool = not sol.is_empty() and lg.soldiers.size() == before_ids.size() + 1 and not bool(sol.get("hero", false))
+	check(sol_ok, "призван первый воин: %s" % [sol.get("from", "")])
+	if not sol_ok:
 		return
 	camp_ui.close()
 	sto.tick()
