@@ -200,7 +200,7 @@ func _floor_roster() -> void:
 	_check(n == 5 and L2.soldiers.size() == 5 and L2.roster_cap() == 5 and L2.can_recruit_resident().contains("нет мест"),
 		"казарма 1: воинов %d из %d, шестого не взяли («%s»)" % [L2.soldiers.size(), L2.roster_cap(), L2.can_recruit_resident()])
 	var soldiers_only := L2.soldiers.size()
-	L2.camp["barracks"] = 3
+	preload("res://scripts/test_fort_fixture.gd").set_level(L2, "barracks", 3)
 	_check(L2.roster_cap() == 7 and L2.can_recruit_resident() == "" and soldiers_only == 5, "казарма 3: мест %d" % L2.roster_cap())
 
 
@@ -276,9 +276,9 @@ func _squad() -> void:
 	for i in 5:
 		open1.append(L.set_place(i, ids[i]))
 	_check(L.slots() == 3 and open1 == [true, true, true, false, false], "казарма 1: открыты 3 места %s" % [open1])
-	L.camp["barracks"] = 3
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 3)
 	_check(L.slots() == 4 and L.set_place(3, ids[3]) and not L.set_place(4, ids[4]), "казарма 3: 4 места")
-	L.camp["barracks"] = 5
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 5)
 	_check(L.slots() == 5 and L.set_place(4, ids[4]), "казарма 5: 5 мест")
 	var sq := L.squad_v3()
 	var rows := []
@@ -332,26 +332,26 @@ func _camp() -> void:
 	L.upg["camp_forge"]["end"] = Legion.now() - 1.0
 	L.tick()
 	_check(L.camp_level("forge") == 1 and L.forge_lvl() == 1 and L.available("forge"), "кузница построена: уровень %d" % L.camp_level("forge"))
-	L.camp["barracks"] = 3
-	L.camp["drill"] = 6
-	_check(L.barracks_lvl() == 3 and L.roster_cap() == 7 and L.slots() == 4 and L.train_places() == 3, "казарма 3: мест в отряде %d, воинов до %d; плац 6: тренировок %d" % [L.slots(), L.roster_cap(), L.train_places()])
-	L.camp["store"] = 2
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 3)
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "drill", 6)
+	_check(L.barracks_lvl() == 3 and L.roster_cap() == 7 and L.slots() == 4 and L.train_places() == 1, "казарма 3: мест в отряде %d, воинов до %d; плац 6: тренировок %d" % [L.slots(), L.roster_cap(), L.train_places()])
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "store", 2)
 	_check(L.store_cap() == Gear.STORE_BASE + 2 * Gear.STORE_PER and L.ration_cap() == 30, "склад 2: мест %d, пайков до %d" % [L.store_cap(), L.ration_cap()])
-	L.camp["mars"] = 2
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "mars", 2)
 	_check(L.perk_max() == 7, "Марс 2: умения до %d" % L.perk_max())
-	L.camp["hq"] = 12
-	L.camp["barracks"] = 12
-	_check(L.camp_can_upgrade("hq").contains("Максимальный") and L.camp_can_upgrade("barracks").contains("Максимальный"), "предел уровня")
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "hq", 12)
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 12)
+	_check(not L.camp_can_upgrade("hq").contains("Максимальный") and L.camp_can_upgrade("barracks").contains("Выше Штаба"), "форт растёт дальше 12 уровня, остальные здания ограничены Штабом")
 	# таланты и умения
 	var c2 := _town(13)
 	var L2: Legion = c2.legion
 	L2.army_tick()
 	var s := L2.recruit_resident()
 	_check(L2.can_talent(int(s["id"]), 0, 0).contains("Штабом 6") and not L2.talents_open(), "таланты скрыты до Штаба 6: «%s»" % L2.can_talent(int(s["id"]), 0, 0))
-	L2.camp["hq"] = 6
+	preload("res://scripts/test_fort_fixture.gd").set_level(L2, "hq", 6)
 	_check(L2.talents_open() and not L2.can_talent(int(s["id"]), 0, 0).contains("Штабом"), "Штаб 6: таланты открыты")
 	_check(L2.open_perks().is_empty() and L2.can_upgrade_perk("oil").contains("Марса") and not L2.perks_open(), "умения скрыты, пока нет Храма Марса")
-	L2.camp["mars"] = 1
+	preload("res://scripts/test_fort_fixture.gd").set_level(L2, "mars", 1)
 	_check(L2.perks_open() and L2.open_perks().has("oil"), "Храм Марса построен: умения открыты")
 
 
@@ -415,8 +415,8 @@ func _save() -> void:
 	var s2 := L.recruit_resident()
 	var stf := L.add_item({"slot": "weapon", "cls": "priest", "rarity": 2, "ilvl": 2})
 	L.equip(int(s2["id"]), int(stf["id"]))
-	L.camp["forge"] = 2
-	L.camp["barracks"] = 3
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "forge", 2)
+	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 3)
 	L.set_place(0, int(s["id"]))
 	L.set_place(3, int(s2["id"]))
 	L.rations = 7.5
@@ -576,7 +576,8 @@ func _speed3() -> void:
 	L.army_tick()
 	var old_clock := Legion.clock
 	Legion.clock = 300000.0
-	L.upg["camp_hq"] = {"to": 2, "end": Legion.clock + 86400.0, "total": 86400.0}
+	L.fort_plot(0)["up"] = {"to": 2, "end": Legion.clock + 86400.0, "total": 86400.0}
+	L._fort_sync_camp()
 	L.hero_training = {"to": 2, "end": Legion.clock + 86400.0, "total": 86400.0}
 	var money := c.money
 	for i in 4:

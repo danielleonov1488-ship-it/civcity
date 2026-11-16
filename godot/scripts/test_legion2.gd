@@ -89,11 +89,11 @@ func _run() -> void:
 	if not check(city.stats["pop"] >= 60 and legion.v3(), "V3 and population"):
 		return
 	# Стартовые уровни — фикстура; изменения проходят через обычные таймеры.
-	legion.camp["hq"] = 3
-	legion.camp["barracks"] = 2
-	legion.camp["forge"] = 1
-	legion.camp["store"] = 1
-	legion.camp["mars"] = 1
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "hq", 3)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "barracks", 2)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "forge", 1)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "store", 1)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "mars", 1)
 	if not _finish_upgrade(legion, "barracks") or not _finish_upgrade(legion, "forge"):
 		return
 	var recruits: Array[int] = []
@@ -169,15 +169,17 @@ func _run() -> void:
 	await frames(2)
 	if not check(old.get_ref() == null and camp.find_children("Camp3D*", "", true, false).is_empty(), "no Camp3D processing after close"):
 		return
-	var saved_camp := legion.camp.duplicate(true)
+	var saved_fort := legion.fort.duplicate(true)
 	var saved_upg := legion.upg.duplicate(true)
 	var saved_soldiers := legion.soldiers.duplicate(true)
 	var saved_squad := legion.squad3.duplicate()
 	legion.soldiers = legion.soldiers.filter(func(soldier: Dictionary): return bool(soldier.get("hero", false)))
 	for i in range(1, legion.squad3.size()):
 		legion.set_place(i, 0)
-	legion.camp = Legion.CAMP_START.duplicate(true)
+	legion.fort = {}
+	legion.camp = {}
 	legion.upg.clear()
+	legion._camp_init()
 	legion.flags.erase("camp3d_guide")
 	legion.rations = legion.ration_cap()
 	legion.pending_resources["rations"] = 0.0
@@ -195,8 +197,9 @@ func _run() -> void:
 		return
 	camp.close()
 	await frames(2)
-	legion.camp = saved_camp
+	legion.fort = saved_fort
 	legion.upg = saved_upg
+	legion._fort_sync_camp()
 	legion.soldiers = saved_soldiers
 	legion.squad3 = saved_squad
 	camp.open()

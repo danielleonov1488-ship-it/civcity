@@ -99,11 +99,11 @@ func _run() -> void:
 	if not check(city.stats["pop"] >= 60 and legion.v3(), "V3 and population"):
 		return
 	# Стартовые уровни — фикстура; изменения проходят через обычные таймеры.
-	legion.camp["hq"] = 3
-	legion.camp["barracks"] = 2
-	legion.camp["forge"] = 1
-	legion.camp["store"] = 1
-	legion.camp["mars"] = 1
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "hq", 3)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "barracks", 2)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "forge", 1)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "store", 1)
+	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "mars", 1)
 	if not _finish_upgrade(legion, "barracks") or not _finish_upgrade(legion, "forge"):
 		return
 	var recruits: Array[int] = []
