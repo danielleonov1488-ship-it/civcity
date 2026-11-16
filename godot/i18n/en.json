@@ -5201,5 +5201,9 @@
 "Построить комнату": "Build a room",
 "Не удалось назначить работника. Выберите его снова.": "Could not assign the worker. Please choose again.",
 "Лагерь → «Отряд»: поставьте новобранца на свободное место рядом с героем. Затем нажмите «В бой!».": "Camp → Squad: put the recruit in a free place beside the hero. Then press “To battle!”.",
-"Новобранец в отряде: нет": "Recruit in squad: no"
+"Новобранец в отряде: нет": "Recruit in squad: no",
+"Откроется на уровне «%s»": "Unlocks at rank “%s”",
+"Сначала: %s": "First: %s",
+"Раздел: %s": "Category: %s",
+"Стоимость: %s": "Cost: %s"
 }
