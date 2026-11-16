@@ -28,7 +28,7 @@ const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## 12.11 «Высокая» облегчена для всех (без SDFGI/SSIL, атлас 4096, MSAA 2x), «Средняя» — атлас 4096 и мягкость низкая:
 ## эталон записан заново (golden_p1, ветка perf-120 от сборки 52); golden_s8 остаётся у линий без этой правки
 const GOLDEN := "D:/CivCity/.work/perf_ref/golden_p2"          # 12.11 позже: мелочь без тени, «Средняя» — 2 полосы теней
-const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22"
+const VIEWS_OWNER := "center:210:145:15:42:60,far:210:150:15:50:130,close:205:140:30:35:22,whole:192:160:15:55:240"
 const VIEWS_NEW := "default:192:124:15:42:60,far:192:140:15:50:130"
 const SHOT_WAIT := 240               # кадров на вид перед снимком (SDFGI и тени успевают сойтись)
 ## Пороги этапа 1 (RTX 3060, город владельца, вид по умолчанию): «Низкая» и «Очень низкая» — время видеокарты, мс.
@@ -50,6 +50,7 @@ func _ready() -> void:
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		A[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	var mode: String = A.get("mode", "regress")
+	People.anim_batch = A.get("pvat", "1") != "0"    # PERF3, вариант B: ручная скелетная анимация
 	if A.get("freebuild", "1") == "0":
 		Game.FREE_BUILD = false                        # свободная стройка выключена — как CIVCITY_FREEBUILD=0 (для сравнения замеров)
 	# plain=1 — Synty без наполнения (CatDress, CatDressCivic): снимки «было» для сравнения детальных проходов
@@ -178,6 +179,12 @@ func _measure(tag: String) -> Dictionary:
 		get_tree().process_frame.connect(_on_frame)
 		RenderingServer.frame_pre_draw.connect(_on_pre_draw)
 	await frames(int(A.get("warm", "60")))
+	var old_pperf := People.perf
+	var old_gperf := Gfx.perf
+	People.perf = true
+	Gfx.perf = true
+	var ppl_start: int = game.people.perf_us
+	var anim_start: int = game.gfx.anim_us
 	var n := int(A.get("n", "120"))
 	var gpu := PackedFloat32Array()
 	var ft := PackedFloat32Array()
@@ -193,6 +200,10 @@ func _measure(tag: String) -> Dictionary:
 		gpu.append(RenderingServer.viewport_get_measured_render_time_gpu(vp))
 		rc.append(RenderingServer.viewport_get_measured_render_time_cpu(vp))
 	_rec = false
+	People.perf = old_pperf
+	Gfx.perf = old_gperf
+	var ppl_ms: float = (game.people.perf_us - ppl_start) / (1000.0 * n)
+	var anim_ms: float = (game.gfx.anim_us - anim_start) / (1000.0 * n)
 	var RS := RenderingServer
 	var r := {
 		"gpu": _pct(gpu, 0.5), "p10": _pct(gpu, 0.1),
@@ -206,6 +217,9 @@ func _measure(tag: String) -> Dictionary:
 		"tex": int(Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / 1048576.0),
 		"people": game.people.visible_count}
 	r["cpu"] = r["proc"] + r["phys"] + r["rcpu"]
+	r["ppl"] = ppl_ms
+	r["anims"] = anim_ms
+	print("PERF3 pvat=%d %s | People %.3f ms Gfx._anims %.3f ms | tiers %s" % [int(People.anim_batch), tag, ppl_ms, anim_ms, str(Gfx.tier_n)])
 	print("PERF %-22s gpu %5.2f (p10 %5.2f) | cpu %5.2f (proc %5.2f rcpu %5.2f) | frame %5.2f p95 %5.2f p99 %5.2f max %5.1f fps %5.1f | dc %4d + shadow %4d | tris %5.2fM + shadow %5.2fM | vram %d MB (tex %d) | people %d" % [
 		tag, r["gpu"], r["p10"], r["cpu"], r["proc"], r["rcpu"], r["frame"], r["p95"], r["p99"], r["max"], 1000.0 / maxf(0.01, r["frame"]),
 		r["vis_d"], r["sh_d"], r["vis_p"] / 1.0e6, r["sh_p"] / 1.0e6, r["vram"], r["tex"], r["people"]])
@@ -1025,13 +1039,23 @@ func _grp_vis(pred: Callable, v: bool) -> void:
 
 ## Всё, что двигается само (жители, звери, дым, птицы, утки, вода), и интерфейс — прочь; время стоит
 var _hidden: Array = []
+var _frozen_anims: Array = []
+var _people_frozen := false
 
 
-func _freeze() -> void:
+func _freeze(citizens := false) -> void:
 	game.hud.set_speed(0.0)
 	game.hud.visible = false
 	game.rig.cine = true                      # камера стоит, подсветки инструмента и участка под мышью нет
-	_hidden = [game.people, game.actors_root]
+	_hidden = [] if citizens else [game.people, game.actors_root]
+	if citizens:
+		_people_frozen = game.people.is_processing()
+		game.people.set_process(false)
+		for c: Citizen in game.gfx._anim_list:
+			c.batch_flush(c.batch_dirty)
+		for ap: AnimationPlayer in game.find_children("*", "AnimationPlayer", true, false):
+			_frozen_anims.append([ap, ap.speed_scale])
+			ap.speed_scale = 0.0
 	if game.has_node("Tourism"):
 		_hidden.append(game.get_node("Tourism"))      # гуляющие гости гостиниц (новая игра)
 	for s in game.swimmers:
@@ -1049,6 +1073,13 @@ func _freeze() -> void:
 
 
 func _unfreeze() -> void:
+	for rec: Array in _frozen_anims:
+		if is_instance_valid(rec[0]):
+			(rec[0] as AnimationPlayer).speed_scale = float(rec[1])
+	_frozen_anims.clear()
+	if _people_frozen:
+		game.people.set_process(true)
+		_people_frozen = false
 	Engine.time_scale = 1.0
 	MeadowNature.freeze(false)
 	for n in _hidden:
@@ -1148,6 +1179,9 @@ func _compare_golden(shots: Dictionary, ref: String) -> void:
 
 
 func _shots_mode() -> void:
+	if A.has("pvat"):
+		await _pvat_shots()
+		return
 	await _settle()
 	_freeze()
 	var views := _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW)
@@ -1245,3 +1279,40 @@ func _lifeab() -> void:
 			print("LIFEAB %-8s %s: кадр %.2f мс (%.0f к/с), процессор %.2f (скрипты %.2f), видеокарта %.2f" % [q, "с Life " if on else "без Life", med["frame"],
 				1000.0 / maxf(0.01, med["frame"]), med["cpu"], med["proc"], med["gpu"]])
 		print("LIFEAB %-8s Life._process: медиана %.1f мкс/кадр" % [q, _pct(PackedFloat32Array(lus), 0.5)])
+
+
+## PERF3: те же жители в обеих версиях, без течения времени и случайной смены дел.
+## Обычный mode=shots скрывает людей; pvat=0/1 проверяет их вместе с городом.
+func _pvat_shots() -> void:
+	await _settle()
+	_freeze(true)
+	var requested := People.anim_batch
+	var shots := {}
+	var out: String = A.get("out", "D:/CivCity/.work/stage5/perf3/shots")
+	for q: String in str(A.get("q", "high")).split(","):
+		_quality(q)
+		for v: Array in _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW):
+			_view(v)
+			game._set_hour(float(A.get("hour", "9")))
+			var pair := {}
+			for on: bool in [false, true]:
+				People.anim_batch = on
+				await frames(SHOT_WAIT)
+				var img: Image = await _snap()
+				pair[on] = img
+				var dir := out.path_join("pvat%d" % int(on))
+				DirAccess.make_dir_recursive_absolute(dir)
+				var path := dir.path_join("%s_%s.png" % [q, v[0]])
+				if img.save_png(path) != OK:
+					fail("PERF3 save " + path)
+				print("PERF3 SHOT ", path)
+			var diff := _same(pair[false], pair[true])
+			print("PERF3 diff %s/%s mean=%.4f limit=1.5" % [q, v[0], diff["mean"]])
+			if float(diff["mean"]) >= 1.5:
+				fail("PERF3 visible citizens differ: %s/%s" % [q, v[0]])
+			shots["%s/%s" % [q, v[0]]] = pair[requested]
+	People.anim_batch = requested
+	_save_set(shots, out)
+	if A.has("ref") and not A.has("rec"):
+		_compare_golden(shots, str(A["ref"]))
+	_unfreeze()

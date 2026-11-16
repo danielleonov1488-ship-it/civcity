@@ -790,6 +790,11 @@ static func _readback(t: Texture2D) -> Texture2D:
 func _ready() -> void:
 	_vp = get_viewport().get_viewport_rid()
 	process_priority = 100
+	for root: Node in [game.people, game.actors_root]:
+		root.child_entered_tree.connect(_anim_add)
+		root.child_exiting_tree.connect(_anim_remove)
+		for child: Node in root.get_children():
+			_anim_add(child)
 	_fps_box = CanvasLayer.new()
 	_fps_box.layer = 12
 	add_child(_fps_box)
@@ -870,7 +875,12 @@ func _process(dt: float) -> void:
 			_fps.text = "%d FPS" % int(round(Engine.get_frames_per_second()))
 	if _dbg and _dbg.visible:
 		_dbg_text.text = report()
-	_anims(dt)                                # время игры (Engine.time_scale), как у анимаций в обычном режиме
+	if perf:
+		var t0 := Time.get_ticks_usec()
+		_anims(dt)
+		anim_us += Time.get_ticks_usec() - t0
+	else:
+		_anims(dt)                            # время игры, как у обычных проигрывателей
 	var city := _in_city()
 	if city:
 		_alive_t += real
@@ -968,18 +978,37 @@ func _watch_step(dt: float) -> void:
 
 
 # ---------- движения жителей по размеру на экране ----------
-## (12.11, владелец: «минимум 120 кадров, и на старых ПК») Скелеты жителей процессор считает каждый кадр — на 150 жителях
-## это 3,5–5,7 мс кадра. Теперь — по тому, насколько житель крупный на экране: крупный (от ANIM_BIG точек роста) — каждый
-## кадр; средний — не реже 30 раз в секунду; мелкий (меньше ANIM_SMALL точек — при обычном отдалении почти все) — не реже
-## 15; за краем экрана — 4. Чем больше кадров, тем реже по кадрам (при 120 кадрах мелкие — раз в 8 кадров). Выбранный
-## житель и герой — всегда каждый кадр. Тем же шагом People считает их дела (Citizen.lod_k). «Низкая» — дальние не чаще
-## чем через кадр, «Очень низкая» — все (как прежде)
+## Крупные (90 px), выбранный житель и герой — каждый кадр; средние — через кадр;
+## мелкие — раз в 4 кадра, меньше 22,5 px — раз в 8. Вне кадра позы не считаются.
+## Прежние частоты ANIM_HZ оставлены для pvat=0; People использует тот же lod_k.
 const ANIM_BIG := 90.0
 const ANIM_SMALL := 45.0
+const ANIM_TINY := 22.5
 const ANIM_HZ := [0.0, 30.0, 15.0, 4.0]          # крупный / средний / мелкий / за экраном
 var _lod_frame := 0
 static var lod_on := true                     # для сравнений «было/стало» (test_perf mode=ab)
+var _anim_list: Array[Citizen] = []
+var _anim_serial := 0
+static var perf := false
+var anim_us := 0
 static var tier_n := [0, 0, 0, 0]             # сколько жителей в каждом разряде (последний кадр; для замеров)
+
+
+## Список меняется с узлами, а не собирается из всего населения каждый кадр.
+func _anim_add(n: Node) -> void:
+	if n is Citizen:
+		var c := n as Citizen
+		c.batch_slot = _anim_serial
+		_anim_serial += 1
+		_anim_list.append(c)
+
+
+func _anim_remove(n: Node) -> void:
+	if n is Citizen:
+		var c := n as Citizen
+		_anim_list.erase(c)
+		if not c.is_queued_for_deletion():
+			c.batch_release()              # при переносе в другую сцену вернётся обычный проигрыватель
 
 
 func _anims(dt: float) -> void:
@@ -994,18 +1023,20 @@ func _anims(dt: float) -> void:
 	# рост в точках = fpx · рост / расстояние (вертикальный угол камеры)
 	var fpx := get_viewport().get_visible_rect().size.y / (2.0 * tan(deg_to_rad(cam.fov) * 0.5))
 	var focus: Citizen = null
-	var frid: int = game.people.focus_rid
-	var list := []
-	for r in game.people.residents:
-		if r["node"] != null:
-			list.append(r["node"])
-			if int(r["id"]) == frid:
-				focus = r["node"]
-	if game.actors_root:
-		for a in game.actors_root.get_children():
+	if game.people.by_id.has(game.people.focus_rid):
+		focus = game.people.by_id[game.people.focus_rid]["node"]
+	for t in 4:
+		tier_n[t] = 0
+	var list: Array[Citizen] = _anim_list
+	if not People.anim_batch:
+		# Полный прежний обход — для честного замера pvat=0.
+		list = []
+		for r: Dictionary in game.people.residents:
+			if r["node"] != null:
+				list.append(r["node"])
+		for a: Node in game.actors_root.get_children():
 			if a is Citizen:
 				list.append(a)
-	tier_n = [0, 0, 0, 0]
 	var i := 0
 	for c: Citizen in list:
 		var ap := c.anim
@@ -1014,18 +1045,28 @@ func _anims(dt: float) -> void:
 		i += 1
 		var pos := c.global_position
 		var tier := 0
+		var px := INF
 		var d := pos.distance_to(cp)
 		if c == focus or c.cape_sk != null or not lod_on:
 			tier = 0                               # выбранный житель и герой (у него плащ) — всегда плавно
 		elif not cam.is_position_in_frustum(pos + Vector3(0, 0.6, 0)):
 			tier = 3
 		else:
-			var px := fpx * 1.4 * c.scale.y / Citizen.SIZE / maxf(0.5, d)
+			px = fpx * 1.4 * c.scale.y / Citizen.SIZE / maxf(0.5, d)
 			tier = 0 if px >= ANIM_BIG else (1 if px >= ANIM_SMALL else 2)
 		tier_n[tier] += 1
 		var k := 1 if tier == 0 else maxi(1, int(fps / float(ANIM_HZ[tier])))
 		if low and (q == "verylow" or d > HALF_FAR):
 			k = maxi(k, 2)
+		if People.anim_batch:
+			# Нижняя частота зависит от размера, даже если весь кадр пока медленный.
+			if lod_on and tier > 0:
+				var batch_k := 2 if tier == 1 else (4 if px >= ANIM_TINY else 8)
+				k = maxi(k, batch_k)
+			c.lod_k = k if lod_on else 1
+			c.batch_step(dt, c.lod_k, _lod_frame, tier == 3 or not c.is_visible_in_tree())
+			continue
+		c.batch_release()
 		c.lod_k = k if lod_on else 1
 		var manual := ap.callback_mode_process == AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 		if k <= 1:
