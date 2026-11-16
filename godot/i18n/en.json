@@ -5143,5 +5143,19 @@
 "Собрать %d": "Collect %d",
 "Строить": "Build",
 "Тренировать": "Train",
-"ур. %d: %s": "Lv. %d: %s"
+"ур. %d: %s": "Lv. %d: %s",
+  "Требуются горожане": "Citizens needed",
+  "Нет свободных горожан нужного класса": "No free citizens of the required class",
+  "Свободные горожане: нанимайте их в здания кнопкой «+»": "Free citizens: hire them in buildings with the + button",
+  "Свободные горожане": "Free citizens",
+  "Пустые рабочие места": "Empty worker slots",
+  "Откройте здание и наймите работников кнопкой «+»": "Open the building and hire workers with the + button",
+  "Работа в новом здании": "Work in a new building",
+  "Здание построено, но в нём никто не работает. Нажмите на него и добавьте работников кнопкой «+».": "The building is ready, but nobody works there. Click it and add workers with the + button.",
+  "нет работников — наймите кнопкой «+»": "no workers — hire with the + button",
+  "Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. Работников нанимайте кнопкой «+» в карточке здания.": "Move families into empty homes. The first %d families require no happiness; after that at least %d%% is needed. Hire workers with the + button in the building card.",
+  "Откройте фруктовую лавку и нажмите «+» в блоке «Работа». Каждый работник занимает одно место. Кнопка «−» освобождает его.": "Open the fruit stall and press + in the Work section. Each worker takes one slot. The − button frees them.",
+  "Новые лавки и дома открываются исследованиями. Поставьте скрипторий в разделе «Хозяйство», затем наймите писца кнопкой «+» в его карточке.": "Research unlocks new shops and homes. Build a scriptorium from the Economy section, then hire a scribe with the + button in its card.",
+  "Семьи приезжают, пока городу хватает счастья. Нужный уровень счастья виден у повозки. Стройте дома заранее и заселяйте приезжих. Новый уровень — по кнопке.": "Families arrive while the city is happy enough. The cart shows the happiness required. Build homes in advance and settle newcomers. Use the button to advance to the next level.",
+  "Свободны %d — наймите их кнопкой «+» в карточке здания.": "%d are free — hire them with the + button in a building card."
 }

@@ -68,6 +68,7 @@ func _run() -> void:
 		await frames(5)
 	await frames(20)
 	var c: City = game.city
+	c.auto_hire = true  # legacy fixture
 	var lg: Legion = c.legion
 	var ui := LegionUi.of(game.hud)
 	# окно проверяется без настоящего 3D-боя (game.gd подключает LegionBattle): «3D-бой» ниже — подделка

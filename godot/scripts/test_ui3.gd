@@ -58,6 +58,7 @@ func _run() -> void:
 	game.settings["tasks_folded"] = false
 	game.settings["advisor_off"] = true
 	city = game.city
+	city.auto_hire = true  # прежняя фикстура
 	hud = game.hud
 	stories = game.stories
 	stories.force = true

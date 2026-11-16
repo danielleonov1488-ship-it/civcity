@@ -81,6 +81,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.auto_hire = true  # прежняя фикстура
 	land = game.land
 	hud = game.hud
 	hud.house_more = true                 # карточка дома — подробная (проверки её строк); короткую смотрит test_ux
@@ -362,6 +363,7 @@ func _chron_new() -> void:
 	# сохранение и загрузка
 	var d = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(Land.new())
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	check(Chronicle.count(c2) == Chronicle.count(c) and Chronicle.value(c2, "built") == Chronicle.value(c, "built") and Chronicle.value(c2, "people") == Chronicle.value(c, "people"),
 		"летопись сохраняется: %d венков, построено %d" % [Chronicle.count(c2), Chronicle.value(c2, "built")])
@@ -370,6 +372,7 @@ func _chron_new() -> void:
 	(d3 as Dictionary).erase("chron")
 	var n_ev: int = (d3["events"] as Array).size()
 	var c3 := City.new(Land.new())
+	c3.auto_hire = true  # прежняя фикстура
 	c3.load_data(d3)
 	var last: Dictionary = c3.events[-1] if not c3.events.is_empty() else {}
 	check(Chronicle.count(c3) >= 1 and c3.unread == 1 and c3.events.size() == mini(60, n_ev + 1) and String(last.get("text", "")).contains("уже заслужил"),
@@ -419,12 +422,13 @@ func _hire_new() -> void:
 	c.set_hire(shop, 1)
 	var d = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(Land.new())
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	check(c2.hired_of(c2.buildings[int(shop["id"])]) == 1, "сохранение помнит найм")
 	hud.open_info(shop)
 	await frames(4)
 	var txt := _labels(hud.info_panel)
-	check(txt.contains("Работники") and txt.contains("1 / %d" % mx), "в карточке пекарни — «Работники 1 / %d»" % mx)
+	check(txt.contains("Работа") and txt.contains("1 / %d" % mx), "в карточке пекарни — «Работники 1 / %d»" % mx)
 	await shot("pol_hire_card.png")
 	hud.close_panels()
 	c.set_hire(shop, mx)

@@ -57,6 +57,7 @@ func _reboot() -> void:
 
 func _bind() -> void:
 	c = game.city
+	c.auto_hire = true  # прежняя фикстура
 	ppl = game.people
 	hud = game.hud
 

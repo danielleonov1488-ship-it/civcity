@@ -215,6 +215,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.auto_hire = true  # прежняя фикстура
 	hud = game.hud
 	land = game.land
 	get_tree().process_frame.connect(_on_frame)

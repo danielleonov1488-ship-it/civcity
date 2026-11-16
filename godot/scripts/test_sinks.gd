@@ -77,6 +77,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.auto_hire = true  # прежняя фикстура
 	game.can_save = false
 	game.speed = 0.0
 	game.tutorial.step = Tutorial.STEPS.size()
@@ -130,6 +131,7 @@ func _land() -> void:
 	var ld: Dictionary = L.save_changes()
 	check(int(d.get("plots_bought", -1)) == 1 and (ld["plots"] as Array).size() == 7, "saved: plots_bought 1, 7 plots")
 	var c2 := City.new(L)
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	check(c2.plots_bought == 1 and c2.plot_price() == 8000, "loaded: plots_bought %d" % c2.plots_bought)
 	var old := d.duplicate(true)
@@ -143,11 +145,13 @@ func _land() -> void:
 	plots.append([5, 3])
 	L.load_changes({"plots": plots})
 	var c3 := City.new(L)
+	c3.auto_hire = true  # прежняя фикстура
 	c3.load_data(old)
 	check(L.owned.size() == 18 and c3.plots_bought == 2 and c3.plot_price() == 10000, "old save with 18 plots: 2 bought, next 10000 (%d)" % c3.plot_price())
 	plots.resize(16)
 	L.load_changes({"plots": plots})
 	var c4 := City.new(L)
+	c4.auto_hire = true  # прежняя фикстура
 	c4.load_data(old)
 	check(L.owned.size() == 16 and c4.plots_bought == 0 and c4.plot_price() == 6000, "old save with 4×4 keeps all its land, next plot 6000")
 	L.owned = keep
@@ -350,6 +354,7 @@ func _festival() -> void:
 	# сохранение посреди игр
 	var d: Dictionary = c.save_data()
 	var c2 := City.new(game.land)
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(JSON.parse_string(JSON.stringify(d)))
 	check(c2.fest_left == 24 and c2.fest_cd == 48, "saved mid-games: %d h left, %d h to next" % [c2.fest_left, c2.fest_cd])
 	var old := d.duplicate(true)

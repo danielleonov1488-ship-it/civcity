@@ -60,6 +60,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.auto_hire = true  # прежняя фикстура
 	land = game.land
 	game.can_save = false
 	if mode == "owner":

@@ -74,6 +74,7 @@ func _run() -> void:
 		await frames(5)
 	await frames(30)
 	var c: City = game.city
+	c.auto_hire = true  # legacy fixture
 	c.cozy_v = 1
 	c.level = maxi(c.level, 4)
 	var inn := _place_inn()

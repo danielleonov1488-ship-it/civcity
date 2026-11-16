@@ -39,6 +39,7 @@ func _ready() -> void:
 ## Новый город Легиона 3.0: n_fam домов плебеев по семье из четырёх (безработные: построек с работой нет)
 func _town(n_fam: int, v := 3) -> City:
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.legion_v = v
 	c.money = 1e6
@@ -94,6 +95,7 @@ func _gate() -> void:
 	L.army_tick()
 	_check(c.legion_v == 3 and L.v3() and Legion.V3 and Legion.V2, "новая игра: legion_v=%d, V3=%s, V2=%s" % [c.legion_v, Legion.V3, Legion.V2])
 	var c0 := City.new(Land.new())
+	c0.auto_hire = true  # прежняя фикстура
 	c0.cozy_v = 1
 	c0.research["legion"] = true
 	c0.legion.army_tick()
@@ -424,6 +426,7 @@ func _save() -> void:
 	L.camp_upgrade("hq")
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(Land.new())
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	var L2: Legion = c2.legion
 	L2.army_tick()
@@ -460,6 +463,7 @@ func _choice3() -> void:
 	_check(sorted and next.size() == 4 and first[0]["key"] != next[0]["key"], "лучшие первыми, следующая страница другая")
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var copy := City.new(Land.new())
+	copy.auto_hire = true  # прежняя фикстура
 	copy.load_data(saved)
 	_check(copy.legion.recruit_candidates() == first, "кандидаты и звёзды переживают сохранение")
 	var pick: Dictionary = first[2].duplicate()
@@ -516,6 +520,7 @@ func _hero3() -> void:
 	_check(L.train_hero(), "герой может вырасти выше максимума обычных воинов")
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var copy := City.new(Land.new())
+	copy.auto_hire = true  # прежняя фикстура
 	copy.load_data(saved)
 	copy.legion.army_tick()
 	_check(copy.legion.hero_level() == Legion.HERO_MAX3 - 1 and not copy.legion.hero_training.is_empty()
@@ -565,6 +570,7 @@ func _collection3() -> void:
 	L.pending_resources["iron"] = 180.0
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var copy := City.new(Land.new())
+	copy.auto_hire = true  # прежняя фикстура
 	copy.load_data(saved)
 	_check(float(copy.legion.pending_resources["iron"]) == 180.0, "загрузка до мастерских не обрезает накопитель")
 	Legion.clock = old_clock
@@ -587,6 +593,7 @@ func _speed3() -> void:
 	_check(float(L.upg["camp_hq"]["end"]) == Legion.clock + 82800.0 and float(L.hero_training["end"]) == Legion.clock + 82800.0, "каждый клик убрал 30 мин")
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var copy := City.new(Land.new())
+	copy.auto_hire = true  # прежняя фикстура
 	copy.load_data(saved)
 	_check(copy.legion.speed_remaining() == 0.0, "загрузка не сбрасывает суточный предел")
 	c.day += 1
@@ -620,6 +627,7 @@ func _chests3() -> void:
 	L.ingots = 7
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var copy := City.new(Land.new())
+	copy.auto_hire = true  # прежняя фикстура
 	copy.load_data(saved)
 	_check(copy.legion.ingots == 7 and copy.legion.chest_queue == L.chest_queue, "слитки и ожидающие сундуки сохраняются")
 	_check(copy.legion.open_chest("wooden") == L.open_chest("wooden"), "JSON сохраняет следующий бросок RNG без потери 64 бит")

@@ -1814,7 +1814,7 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 					"store": dw = hud._do_type("warehouse")
 					"good": dw = hud._do_type(String({"wheat": "farm", "olives": "grove", "grapes": "vineyard"}.get(String(city.def(b).get("needs_good", "")), "farm")))
 					"road": dw = {"kind": "road", "tip": "Мостовая", "say": "Лавке нужна дорога к двери"}
-					"staff": dw = hud.need_do(["pop"])
+					"staff": dw = hud.hire_do(b) if city.manual_hiring() else hud.need_do(["pop"])
 				out.append({"text": "%s: %s" % [nm, line], "ok": why == "", "do": dw})
 		"floor":
 			var h: Dictionary = city.buildings.get(int(a.get("home", -1)), {})

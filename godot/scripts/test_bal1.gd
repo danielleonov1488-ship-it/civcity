@@ -1,7 +1,6 @@
 extends Node3D
 ## BAL1: модель баланса и карточки. Запускает Claude; сохранения игрока не пишем.
 
-const WAIT_WORK := "Повозка ждёт: в городе нет свободной работы"
 var out := "D:/CivCity/.work/stage2/bal1/shots/"
 var game
 var fails := 0
@@ -60,6 +59,7 @@ func _model() -> void:
 		var shop := c.place(shops[i], Land.START + Vector2(-8 + i * 8, -10), 0.0, 0, 0, true)
 		if check(not shop.is_empty(), "shop fixture %s" % shops[i]):
 			_road(c, shop)
+			c.hire(shop, c.job_max(shop))
 	c.compute()
 	for type: String in shops:
 		check((h["score"] as Dictionary).has(type), "working nearby shop counted in coverage: " + type)
@@ -99,38 +99,20 @@ func _arrivals() -> void:
 	c.place("center", Land.START + Vector2(-20, -20), 0.0, 0, 0, true)
 	var empty := c.place("house_pleb", Land.START + Vector2(-16, 0), 0.0, 0, 0, true)
 	check(not empty.is_empty(), "empty arrival home")
-	c.level = 2                              # с «Деревни» приезд держит работа (до неё — нет)
+	c.level = 2
 	c.settled_total = 10
 	c.compute()
 	c.stats["happy"] = 90
 	c.arrive_t = 99.0
 	c._tick_arrivals()
-	check(c.incoming == 0 and c.arrivals_blocked() == WAIT_WORK, "many unemployed stop new families despite happiness and housing")
-	c.stats["jobs"] = {"plebs": 21}
-	c.stats["filled"] = {"plebs": 20}
-	c.stats["free"] = {"plebs": 0}
-	c.arrive_t = 99.0
-	c._tick_arrivals()
-	check(c.incoming > 0, "available work allows a family")
-	c.incoming = 0
-	c.stats["jobs"] = {}
-	c.stats["filled"] = {}
-	c.stats["free"] = {"plebs": 17} # население 40: предел 10 + 8 = 18, запас — один работник
-	check(c.arrive_work_slots() == 1, "one remaining unemployment slot allows one family")
-	c.incoming = 1
-	check(c.arrive_work_slots() == 0, "incoming family reserves work budget")
-	c.incoming = 0
-	c.arrivals = [{"name": "Ждут", "n": 2, "cls": "plebs"}]
-	check(c.arrive_work_slots() == 0, "waiting family reserves work budget")
-	c.arrivals = []
-	c.pending = {"Идут": {"home": empty["id"], "n": 2, "cls": "plebs"}}
-	check(c.arrive_work_slots() == 0, "walking family reserves work budget")
-	c.pending = {}
+	check(c.incoming > 0 and c.arrivals_blocked() == "", "unemployment never blocks a happy city")
+	c.stats["free"] = {"plebs": 1000}
+	check(c.arrivals_blocked() == "", "many free adults do not block arrivals")
 	c.level = 0
 	c.stats["pop"] = 14
 	c.stats["free"] = {"plebs": 7}
 	c.stats["happy"] = 20
-	check(c.arrive_work_slots() > 0 and c.arrivals_blocked() == "", "starter cannot be trapped before 15 residents")
+	check(c.arrivals_blocked() == "", "starter cannot be trapped before 15 residents")
 	c.stats["pop"] = 20
 	c.stats["free"] = {"plebs": 0}
 	c.stats["happy"] = 44
@@ -233,12 +215,12 @@ func _run_ui() -> void:
 	c.compute()
 	game.rig.set_view(Vector3(station["pos"].x, station["y"], station["pos"].y), 20, 38, 30)
 	hud.open_info(station)
-	check(texts(hud.info_box).contains(WAIT_WORK), "station explains work wait")
+	check(not texts(hud.info_box).contains("нет свободной работы"), "station has no work gate")
 	await shot("1_station_work.png")
 	hud.close_panels()
 	hud.set_overlay("happy")
 	hud.fill_overlay()
-	check(texts(hud._ov_legend).contains(WAIT_WORK), "overview explains work wait")
+	check(not texts(hud._ov_legend).contains("нет свободной работы"), "overview has no work gate")
 	await shot("2_overview_work.png")
 	hud.set_overlay("")
 	c.sim_day()
@@ -259,6 +241,7 @@ func _run_ui() -> void:
 			var shop := c.place(shops[i], (house["pos"] as Vector2) + Vector2(-8 + i * 8, -10), 0.0, 0, 0, true)
 			if check(not shop.is_empty(), "UI shop"):
 				_road(c, shop)
+			c.hire(shop, c.job_max(shop))
 		c.compute()
 		hud.house_more = true
 		hud.open_info(house)

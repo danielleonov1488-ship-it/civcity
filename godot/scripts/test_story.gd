@@ -279,6 +279,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.auto_hire = true  # прежняя фикстура
 	hud = game.hud
 	sto = game.stories
 	game.can_save = false                # тест не пишет сохранение
@@ -1271,6 +1272,7 @@ func _save_mid_step() -> void:
 	var spot: Array = S["active"]["spot"]
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(game.land)
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	var A2: Dictionary = c2.stories["active"]
 	check(String(A2.get("id", "")) == "cat" and int(A2.get("step", -1)) == 1 and int(c2.stories["h"]) == int(S["h"]), "после загрузки: та же история, тот же шаг, те же часы")
@@ -1293,6 +1295,7 @@ func _save_mid_step() -> void:
 	# старое сохранение без историй
 	d.erase("stories")
 	var c3 := City.new(game.land)
+	c3.auto_hire = true  # прежняя фикстура
 	c3.load_data(d)
 	check(int(c3.stories["h"]) == 0 and (c3.stories["active"] as Dictionary).is_empty() and (c3.stories["done"] as Dictionary).is_empty(), "старое сохранение: историй нет, часы с нуля")
 	# нашли, а ролик встречи ждёт (игра на паузе, ждёт ролик ранга) — сохранили, загрузили: кошка на месте, ролик снимает её
@@ -1853,6 +1856,7 @@ func _square() -> void:
 	# сохранение посреди шага
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(game.land)
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	check(String(c2.stories["active"].get("id", "")) == "square" and int(c2.stories["active"].get("step", -1)) == 1, "после загрузки — тот же шаг скверика")
 	# ещё скамьи: серебро, потом семь — всё ещё серебро без часов, с часами — золото
@@ -2154,6 +2158,7 @@ func _wedding() -> void:
 	# сохранение посреди шага
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(game.land)
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	var A2: Dictionary = c2.stories["active"]
 	check(String(A2.get("id", "")) == "wedding" and int(A2.get("step", -1)) == 2 and String(A2["flags"].get("choice", "")) == "garden" and A2.has("roles"),

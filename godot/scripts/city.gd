@@ -81,6 +81,11 @@ var econ := 0
 ## «Уютный Рим» (docs/PLAN_COZY.md, этап 1): 0 — прежние правила, 1 — новая игра после переработки: ранги за качество
 ## и меньше жителей (Balance.LEVELS), повозка в большом городе реже, «Большой город» отнимает счастье (Balance)
 var cozy_v := 0
+## Только старые тестовые фикстуры; в сохранение не пишется.
+var auto_hire := false
+var worker_position: Callable
+
+
 ## Легион 3.0 (docs/LEGION_V3.md): 0 — прежний Легион, 3 — новая игра: лагерь отдельным экраном, воины из жителей
 var legion_v := 0:
 	set(v):
@@ -525,6 +530,8 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		"pos": pos, "yaw": yaw, "variant": variant, "color": color, "y": float(chk["y"]), "cells": chk["cells"],
 		"pop": 0, "families": [], "happy": 50, "up": 0, "down": 0, "staff": 1.0, "active": true, "road": true,
 		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0, "born": next_id, "hz": clock_h}   # born — порядок постройки (перенос его не меняет)
+	if manual_hiring() and d.has("jobs"):
+		b["hire"] = 0
 	next_id += 1
 	if d["kind"] == "house":
 		b["kw"] = 1                           # след нового дома (KitHouses): шире прежнего
@@ -624,6 +631,11 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 	for k in (b.get("bare", PackedInt32Array()) as PackedInt32Array):
 		if k < land.bare.size() and land.bare[k] > 0:
 			land.bare[k] -= 1
+	if manual_hiring() and int(b["id"]) != moving_id:
+		for w: Dictionary in workforce():
+			if int(w["m"].get("job", -1)) == int(b["id"]) or int(w["home"]) == int(b["id"]):
+				w["m"].erase("job")
+				w["m"].erase("job_class")
 	buildings.erase(b["id"])
 	_apron_remove(b)
 	# украшения на стенах снесённого дома падают вместе с ним
@@ -654,6 +666,10 @@ func rehome(old: int, new: int) -> void:
 		if int(pending[nm]["home"]) == old:
 			pending[nm]["home"] = new
 			b["coming"] = int(b.get("coming", 0)) + int(pending[nm]["n"])
+	if manual_hiring():
+		for w: Dictionary in workforce():
+			if int(w["m"].get("job", -1)) == old:
+				w["m"]["job"] = new
 	_story_rehome(old, new)
 	rehomed.emit(old, new)
 
@@ -666,6 +682,135 @@ func recolor(b: Dictionary) -> void:
 
 
 # ---------- работники (как в Town to City: сколько нанять — решает игрок) ----------
+
+func manual_hiring() -> bool:
+	return cozy_v >= 1 and not auto_hire
+
+
+## Записи взрослых — одни и те же для экономики, улиц и сохранения.
+func workforce() -> Array:
+	var out: Array = []
+	for home: Dictionary in buildings.values():
+		if not is_house(home):
+			continue
+		var cls: String = def(home)["cls"]
+		for family: Dictionary in home.get("families", []):
+			for member: Dictionary in Residents.fit(family, hash([family["name"], home["id"]]), cls):
+				if int(member.get("age", 0)) > 0:
+					out.append({"m": member, "cls": cls, "home": home["id"], "pos": home["pos"], "family": family["name"]})
+	return out
+
+
+const WORK_CLASSES := {"plebs": ["plebs", "artisans", "patricians"], "artisans": ["artisans", "patricians"], "patricians": ["patricians"]}
+
+
+## Проверяем уже выбранных людей; пустые места сами не заполняются.
+func _staff_roster() -> Array:
+	var roster := workforce()
+	for b: Dictionary in buildings.values():
+		b["hire_classes"] = {}
+		b["staff_count"] = 0
+	for worker: Dictionary in roster:
+		var m: Dictionary = worker["m"]
+		var id := int(m.get("job", -1))
+		worker["employed"] = false
+		if id == moving_id and id >= 0:
+			worker["employed"] = true
+			continue
+		var b: Dictionary = buildings.get(id, {})
+		var slot := String(m.get("job_class", ""))
+		if not b.is_empty():
+			var allowed: Dictionary = def(b).get("jobs", {})
+			if slot == "":
+				for cl: String in Defs.CLASS_ORDER:
+					if allowed.has(cl) and worker["cls"] in WORK_CLASSES[cl] and int(b["hire_classes"].get(cl, 0)) < int(allowed[cl]):
+						slot = cl
+						break
+			if allowed.has(slot) and worker["cls"] in WORK_CLASSES[slot] and int(b["hire_classes"].get(slot, 0)) < int(allowed[slot]) and int(b["staff_count"]) < int(b.get("hire", 0)):
+				b["hire_classes"][slot] = int(b["hire_classes"].get(slot, 0)) + 1
+				b["staff_count"] += 1
+				m["job_class"] = slot
+				worker["employed"] = true
+				continue
+		# compute вызывается и для предварительного просмотра перестройки. Назначения здесь не стираем.
+	return roster
+
+
+func staff_members(b: Dictionary) -> Array:
+	return _staff_roster().filter(func(w: Dictionary) -> bool: return bool(w.get("employed", false)) and int(w["m"].get("job", -1)) == int(b["id"]))
+
+
+func empty_jobs(cls: String) -> int:
+	var n := 0
+	for b: Dictionary in buildings.values():
+		if not b.get("over", false):
+			n += maxi(0, int(def(b).get("jobs", {}).get(cls, 0)) - int(jobs_of(b).get(cls, 0)))
+	return n
+
+
+func _hire_candidate(b: Dictionary) -> Dictionary:
+	if b.is_empty() or not buildings.has(int(b["id"])) or hired_of(b) >= job_max(b) or b.get("over", false):
+		return {}
+	var roster := _staff_roster()
+	var slots: Dictionary = def(b).get("jobs", {})
+	var hired := jobs_of(b)
+	for slot: String in Defs.CLASS_ORDER:
+		if int(hired.get(slot, 0)) >= int(slots.get(slot, 0)):
+			continue
+		for cls: String in WORK_CLASSES[slot]:
+			var best: Dictionary = {}
+			var distance := INF
+			for w: Dictionary in roster:
+				if w["cls"] != cls or bool(w.get("employed", false)):
+					continue
+				var pos: Vector2 = worker_position.call(w["m"], w["pos"]) if worker_position.is_valid() else w["pos"]
+				var d := pos.distance_squared_to(b["pos"])
+				if d < distance:
+					distance = d
+					best = w
+			if not best.is_empty():
+				best["slot"] = slot
+				return best
+	return {}
+
+
+func can_hire(b: Dictionary) -> bool:
+	return not _hire_candidate(b).is_empty() if manual_hiring() else hired_of(b) < job_max(b)
+
+
+func hire(b: Dictionary, n := 1) -> int:
+	var before := hired_of(b)
+	if not manual_hiring():
+		set_hire(b, before + maxi(0, n))
+		return hired_of(b) - before
+	for i in maxi(0, n):
+		var w := _hire_candidate(b)
+		if w.is_empty():
+			break
+		w["m"]["job"] = int(b["id"])
+		w["m"]["job_class"] = w["slot"]
+		b["hire"] = hired_of(b) + 1
+		_staff_roster()
+	compute(true)
+	changed.emit()
+	return hired_of(b) - before
+
+
+func fire(b: Dictionary, n := 1) -> int:
+	var before := hired_of(b)
+	if not manual_hiring():
+		set_hire(b, before - maxi(0, n))
+		return before - hired_of(b)
+	var members := staff_members(b)
+	members.reverse()
+	for w: Dictionary in members.slice(0, maxi(0, n)):
+		w["m"].erase("job")
+		w["m"].erase("job_class")
+	b["hire"] = maxi(0, before - mini(maxi(0, n), members.size()))
+	compute(true)
+	changed.emit()
+	return before - hired_of(b)
+
 
 ## Денариев в час за каждого нанятого работника — растёт с уровнем города (Defs.WAGE)
 func wage() -> float:
@@ -752,6 +897,8 @@ func jobs_of(b: Dictionary) -> Dictionary:
 	var d := def(b)
 	if not d.has("jobs"):
 		return {}
+	if manual_hiring():
+		return (b.get("hire_classes", {}) as Dictionary).duplicate()
 	var h := int(b.get("hire", -1))
 	if h < 0 or h >= job_max(b):
 		return (d["jobs"] as Dictionary).duplicate()
@@ -774,6 +921,13 @@ func hired_of(b: Dictionary) -> int:
 
 
 func set_hire(b: Dictionary, n: int) -> void:
+	if manual_hiring():
+		var delta := n - hired_of(b)
+		if delta > 0:
+			hire(b, delta)
+		elif delta < 0:
+			fire(b, -delta)
+		return
 	b["hire"] = clampi(n, 0, job_max(b))
 	compute(true)
 	changed.emit()
@@ -802,6 +956,7 @@ func shop_needed(h: Dictionary, d: Dictionary) -> bool:
 func compute(same_place := false) -> void:
 	if not same_place:
 		place_gen += 1
+	var roster: Array = _staff_roster() if manual_hiring() else []
 	var houses := []
 	var residents := {}
 	var jobs := {}
@@ -844,9 +999,20 @@ func compute(same_place := false) -> void:
 		if take > 0:
 			filled[pair[1]] += take
 			spare[pair[0]] -= take
+	if manual_hiring():
+		for c: String in Defs.CLASS_ORDER:
+			workers[c] = 0
+			filled[c] = 0
+			spare[c] = 0
+		for w: Dictionary in roster:
+			workers[w["cls"]] += 1
+			if bool(w.get("employed", false)):
+				filled[w["cls"]] += 1
+			else:
+				spare[w["cls"]] += 1
 	var ratio := {}
 	for c in Defs.CLASS_ORDER:
-		ratio[c] = float(filled[c]) / jobs[c] if jobs[c] > 0 else 1.0
+		ratio[c] = 1.0 if manual_hiring() else (float(filled[c]) / jobs[c] if jobs[c] > 0 else 1.0)
 	goods = {}
 	for id in buildings:
 		var b: Dictionary = buildings[id]
@@ -864,20 +1030,23 @@ func compute(same_place := false) -> void:
 			b["fill"] = st if b["road"] else 0.0               # хватает ли жителей на нанятые места
 			st *= float(hired) / float(maxi(1, job_max(b)))     # наняли меньше — работает слабее
 		b["staff"] = st if b["road"] else 0.0
-		b["active"] = b["road"] and (not d.has("jobs") or float(b["staff"]) >= 0.25)
+		b["active"] = b["road"] and (not d.has("jobs") or (float(b["staff"]) > 0.0 if manual_hiring() else float(b["staff"]) >= 0.25))
 		b["over"] = oc.has(int(id))
 		if b["over"]:
 			b["fill"] = 0.0
 			b["staff"] = 0.0
 			b["active"] = false
 		if d["kind"] == "farm" and b["active"]:
-			goods[d["makes"]] = true
+			goods[d["makes"]] = float(goods.get(d["makes"], 0.0)) + float(b["staff"]) if manual_hiring() else true
 		elif d["kind"] == "store" and b["active"]:
 			stores.append(b)
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		var d := def(b)
 		if d["kind"] == "shop":
+			b["served"] = 0
+			b["serves"] = []
+			b["cap"] = 0
 			b["why"] = "" if b["active"] else ("road" if not b["road"] else "staff")
 			if b["active"] and d.get("store", false) and not _store_near(b, stores):
 				b["active"] = false
@@ -886,6 +1055,10 @@ func compute(same_place := false) -> void:
 				b["active"] = false
 				b["why"] = "good"
 			if b["active"]:
+				if manual_hiring() and d.get("store", false):
+					b["staff"] *= _store_supply(b, stores)
+				if manual_hiring() and d.has("needs_good"):
+					b["staff"] *= minf(1.0, float(goods.get(d["needs_good"], 0.0)))
 				shops.append(b)
 		elif d["kind"] == "monument" and b["active"]:
 			monuments.append(b)
@@ -978,7 +1151,7 @@ func compute(same_place := false) -> void:
 		for m in monuments:
 			var md := def(m)
 			if (h["pos"] as Vector2).distance_to(m["pos"]) <= Defs.range_m(md):
-				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), int(md["bonus"]))
+				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), roundi(float(md["bonus"]) * (float(m.get("staff", 1.0)) if manual_hiring() else 1.0)))
 		for m in prem:                  # «главные» украшения — каждый вид один раз, сверх предела украшений
 			var pd := def(m)
 			if (h["pos"] as Vector2).distance_to(m["pos"]) <= Defs.range_m(pd):
@@ -1553,6 +1726,8 @@ func idle_text(b: Dictionary) -> String:
 					return "нет сырья — нужно «%s»" % Defs.B[t]["name"]
 			return "нет сырья"
 		"staff":
+			if manual_hiring():
+				return "нет работников — наймите кнопкой «+»"
 			if int(stats.get("pop", 0)) <= 0:
 				return "заработает, когда заселятся жители"
 			if not _staffable(d):
@@ -1589,6 +1764,15 @@ func store_for(s: Dictionary) -> Dictionary:
 	if not best.is_empty():
 		return best
 	return idle if not idle.is_empty() else any
+
+
+func _store_supply(shop: Dictionary, stores: Array) -> float:
+	var radius := float(Defs.RANGE[4]) * (2.0 if research.has("store1") else 1.0)
+	var supply := 0.0
+	for store: Dictionary in stores:
+		if (store["pos"] as Vector2).distance_to(shop["pos"]) <= radius:
+			supply += float(store.get("staff", 0.0))
+	return minf(1.0, supply)
 
 
 func _store_near(s: Dictionary, stores: Array) -> bool:
@@ -1735,7 +1919,7 @@ func sim_day() -> void:
 		var b: Dictionary = buildings[id]
 		var d := def(b)
 		if d.has("glory_day") and bool(b.get("active", false)):
-			gday += float(d["glory_day"])
+			gday += float(d["glory_day"]) * (float(b.get("staff", 1.0)) if manual_hiring() else 1.0)
 		match d["kind"]:
 			"house":
 				income += int(b["pop"]) * house_tax(b) * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
@@ -2453,25 +2637,6 @@ func _arrive_free() -> bool:
 	return families_came() < Defs.ARRIVE_FREE or (level == 0 and int(stats.get("pop", 0)) < int(lv(1)["pop"]))
 
 
-## До первого ранга не запираем старт работой. Затем резервируем до двух работников на семью.
-## Учитываем и тех, кто едет, ждёт или идёт к дому: ожидание не создаёт лишние рейсы.
-func arrive_work_slots() -> int:
-	if cozy_v < 1:
-		return 999
-	var pop := int(stats.get("pop", 0))
-	var waiting := incoming + arrivals.size() + pending.size()
-	if level < 2:
-		return 999                         # 16.11 (бот темпа): на «Стоянке» и «Хуторе» работа приезд не держит — иначе город застревал
-	var free_jobs := 0
-	var unemployed := 0
-	for cl in Defs.CLASS_ORDER:
-		free_jobs += maxi(0, int(stats.get("jobs", {}).get(cl, 0)) - int(stats.get("filled", {}).get(cl, 0)))
-		unemployed += int(stats.get("free", {}).get(cl, 0))
-	var buffer := 10 + int(floor(pop * 0.2))           # 16.11: мягко — держит только явный перебор безработных (бот застревал у «Города»)
-	var room := maxi(free_jobs, buffer - unemployed) - waiting * 2
-	return maxi(0, int(ceil(float(room) / 2.0)))
-
-
 func arrive_happy() -> int:
 	return int(Defs.ARRIVE_HAPPY_LVL[clampi(level, 0, 7)]) if cozy_v >= 1 else Defs.ARRIVE_HAPPY
 
@@ -2479,15 +2644,13 @@ func arrive_happy() -> int:
 func pop_hint() -> String:
 	if cozy_v < 1:
 		return Defs.POP_HINT
-	return "Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. До «Деревни» работа не ограничивает приезд, дальше нужны рабочие места или мало безработных." % [Defs.ARRIVE_FREE, arrive_happy()]
+	return "Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. Работников нанимайте кнопкой «+» в карточке здания." % [Defs.ARRIVE_FREE, arrive_happy()]
 
 
-## Почему повозка ждёт: пауза, работа или счастье.
+## Почему повозка ждёт: пауза или счастье.
 func arrivals_blocked() -> String:
 	if arrivals_paused:
 		return "Пауза: новые семьи не едут"
-	if arrive_work_slots() <= 0:
-		return "Повозка ждёт: в городе нет свободной работы"
 	if _arrive_free() or int(stats.get("pop", 0)) <= 0:
 		return ""
 	if int(stats.get("happy", 0)) < arrive_happy():
@@ -2506,8 +2669,6 @@ func _arrive_gate(why: String) -> void:
 			if not ht.is_empty():
 				tip = " Совет: " + String(ht[0]) + "."
 			var msg := "Новые семьи не едут: в город переселяются, только если счастье не ниже %d%%, а сейчас %d%%.%s" % [arrive_happy(), int(stats["happy"]), tip]
-			if arrive_work_slots() <= 0:
-				msg = why + ". " + "Постройте нужную лавку или добавьте рабочие места кнопкой «+» в карточке постройки."
 			if not tips.has("arrive_block") and not arrive_advice.get_connections().is_empty():
 				# в первый раз объясняет советник (окно с текстом), а не всплывашка; в колокольчик — как обычно
 				tips["arrive_block"] = true
@@ -2654,7 +2815,6 @@ func _tick_arrivals() -> void:
 		n = mini(n, fit if fit > 0 else 1)        # мест нет — одна семья «ищет жильё»
 		if int(stats["happy"]) < arrive_happy() and int(stats["pop"]) > 0 and not _arrive_free():
 			n = mini(n, maxi(0, Defs.ARRIVE_FREE - families_came()))   # без счастья — только первые ARRIVE_FREE семей
-		n = mini(n, arrive_work_slots())
 		incoming += maxi(0, n)
 
 
@@ -2847,6 +3007,10 @@ func settled(id: int, n: int, name := "") -> int:
 	var fam := {"name": name, "n": n}
 	if pm.size() >= n:
 		fam["m"] = pm.slice(0, n)          # члены семьи с именами (Residents); кто вошёл — уточнит People при входе
+	if manual_hiring():
+		for m: Dictionary in fam.get("m", []):
+			m.erase("job")
+			m.erase("job_class")
 	(b["families"] as Array).append(fam)
 	b["pop"] = int(b["pop"]) + n
 	compute(true)
@@ -3935,11 +4099,13 @@ static func cat_items_load(e: Dictionary, out: Dictionary) -> void:
 # ---------- сохранение ----------
 
 func save_data() -> Dictionary:
+	if manual_hiring():
+		_staff_roster()  # штат — по сохранённым назначениям жителей
 	var bl := []
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		var e := {"id": id, "type": b["type"], "tier": b["tier"], "x": b["pos"].x, "z": b["pos"].y, "yaw": b["yaw"], "variant": b["variant"],
-			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": b.get("hire", -1),
+			"color": b["color"], "y": b["y"], "pop": b["pop"], "families": b["families"], "host": b.get("host", -1), "hire": hired_of(b) if manual_hiring() else b.get("hire", -1),
 			"born": int(b.get("born", id)), "cells": _cells64(b["cells"])}
 		if b.has("gift"):
 			e["gift"] = String(b["gift"])
@@ -4076,6 +4242,9 @@ func load_data(d: Dictionary) -> void:
 			b["host"] = int(bd["host"])
 		if int(bd.get("hire", -1)) >= 0:
 			b["hire"] = int(bd["hire"])
+		elif manual_hiring():
+			# Раньше −1 означало весь штат. Вернутся только люди с записью job.
+			b["hire"] = job_max(b)
 		if String(bd.get("gift", "")) != "":
 			b["gift"] = String(bd["gift"])       # подарок друга: помнит дарителя
 		buildings[b["id"]] = b

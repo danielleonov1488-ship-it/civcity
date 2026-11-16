@@ -61,6 +61,7 @@ func _table() -> void:
 func _ranks() -> void:
 	print("== ранги в городе")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	var old_pop := int(c.rank_needs(1)[0]["need"])
 	c.cozy_v = 1
 	var cn: Array = c.rank_needs(1)
@@ -82,6 +83,7 @@ func _size() -> void:
 	_check(v == [0, -1, -4, -8], "штраф при 100/180/300/800 жителях: %s" % [v])
 	for cz in [0, 1]:
 		var c := City.new(Land.new())
+		c.auto_hire = true  # прежняя фикстура
 		c.cozy_v = cz
 		c.money = 1e6
 		var h := c.place("house_pleb", Land.START, 0.0, 0, 0, true)
@@ -105,6 +107,7 @@ func _size() -> void:
 func _arrive() -> void:
 	print("== повозка")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.stats["pop"] = 400
 	c.level = 5                                # следующему рангу («Большой город») нужно 350
 	var e0 := c.arrive_every()
@@ -120,12 +123,15 @@ func _arrive() -> void:
 func _save() -> void:
 	print("== сохранение")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(Land.new())
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	d.erase("cozy_v")
 	var c3 := City.new(Land.new())
+	c3.auto_hire = true  # прежняя фикстура
 	c3.load_data(d)
 	_check(c2.cozy_v == 1 and c3.cozy_v == 0, "cozy_v после загрузки: %d; старое сохранение: %d" % [c2.cozy_v, c3.cozy_v])
 
@@ -134,6 +140,7 @@ func _save() -> void:
 func _visits() -> void:
 	print("== походы")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 1e6
 	var h := c.place("house_pleb", Land.START, 0.0, 0, 0, true)
@@ -157,9 +164,11 @@ func _visits() -> void:
 		left = left or String(p[0]) == "Ходили в термы"
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(Land.new())
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	_check(not left and c2.clock_h == c.clock_h and (c2.visits.get(int(h["id"]), {}) as Dictionary).has("bath"), "через %d ч бонус прошёл; походы и часы сохраняются" % (Balance.VISIT_H + 1))
 	var c0 := City.new(Land.new())
+	c0.auto_hire = true  # прежняя фикстура
 	var h0 := c0.place("house_pleb", Land.START, 0.0, 0, 0, true)
 	c0.note_visit(int(h0["id"]), "bath")
 	_check(c0.visits.is_empty(), "старый город — походы не считаются")
@@ -169,6 +178,7 @@ func _visits() -> void:
 func _legion() -> void:
 	print("== Легион: строители и время")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 1e7
 	var L: Legion = c.legion
@@ -187,6 +197,7 @@ func _legion() -> void:
 	var st := {"reward": {"money": 100}}
 	var rep: int = int(Legion.reward_for(st, false)["money"])
 	var c0 := City.new(Land.new())
+	c0.auto_hire = true  # прежняя фикстура
 	c0.legion.tick()
 	var rep0: int = int(Legion.reward_for(st, false)["money"])
 	c.legion.tick()
@@ -197,6 +208,7 @@ func _legion() -> void:
 func _army() -> void:
 	print("== Легион: воины-новобранцы")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 1e6
 	var L: Legion = c.legion
@@ -204,6 +216,7 @@ func _army() -> void:
 	c.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
 	L.army_tick()
 	var c0 := City.new(Land.new())
+	c0.auto_hire = true  # прежняя фикстура
 	c0.legion.army_tick()
 	_check(L.soldiers.size() == 3 and L.recruits.size() == 3 and c0.legion.soldiers.is_empty() and not c0.legion.army_on(),
 		"с городом пришли %d воина, новобранцев %d; в старом городе воинов %d" % [L.soldiers.size(), L.recruits.size(), c0.legion.soldiers.size()])
@@ -268,6 +281,7 @@ func _army() -> void:
 func _gear() -> void:
 	print("== Легион: снаряжение")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 1e5
 	var L: Legion = c.legion
@@ -325,6 +339,7 @@ func _gear() -> void:
 func _forge() -> void:
 	print("== Легион: Кузница")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 5000.0
 	var L: Legion = c.legion
@@ -368,6 +383,7 @@ func _forge() -> void:
 func _mats() -> void:
 	print("== Легион: мастерские и материалы")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 5000.0
 	c.level = 3
@@ -421,6 +437,7 @@ func _mats() -> void:
 func _principia() -> void:
 	print("== Легион: Принципия")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 1e6
 	c.level = 2
@@ -449,6 +466,7 @@ func _principia() -> void:
 		"Принципия 2: главные ниже — «%s»; все на 2 — можно; маленький город — «%s»" % [why3, why5])
 	_check(L.cap_of("forge") == mini(2, int(Legion.CAP_BY_CITY[2])) and Legion.new().prin_cap() == 999, "потолок Кузницы = уровень Принципии; в старой игре потолка нет")
 	var c2 := City.new(Land.new())
+	c2.auto_hire = true  # прежняя фикстура
 	c2.cozy_v = 1
 	c2.level = 6
 	c2.research["legion"] = true
@@ -472,6 +490,7 @@ func _traits() -> void:
 			with_fl = nm
 	_check(all_ok and same and with_fl != "", "черты: у каждой семьи 1–2, всегда те же, без противоречий (цветоводы — %s)" % with_fl)
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 1e6
 	var h := c.place("house_pleb", Land.START, 0.0, 0, 0, true)
@@ -497,6 +516,7 @@ func _traits() -> void:
 func _tourism() -> void:
 	print("== туризм: гостиница и достопримечательности")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 1e6
 	c.level = 4
@@ -521,6 +541,7 @@ func _tourism() -> void:
 	var upk := float(Defs.B["mansio"]["cost"]) * Defs.UPKEEP + c.wage() * 3
 	_check(Tourism.hour_income(c) > upk * 2.0 and Defs.HIST_KEYS.has("tour"), "доход туристов за час %.1f (содержание с жалованьем %.1f), строка «туристы» в финансах" % [Tourism.hour_income(c), upk])
 	var c0 := City.new(Land.new())
+	c0.auto_hire = true  # прежняя фикстура
 	var i0 := c0.place("mansio", Land.START, 0.0, 0, 0, true)
 	i0["active"] = true
 	i0["staff"] = 1.0
@@ -531,6 +552,7 @@ func _tourism() -> void:
 func _renown() -> void:
 	print("== известность и титулы")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 1e6
 	c.level = 5
@@ -546,9 +568,11 @@ func _renown() -> void:
 	_check(c.renown > r0 and Renown.title_of(c.renown) == "Муниципий" and Renown.title_happy(c) == 1, "титул «Муниципий» после 300: %s, +%d%% счастья" % [Renown.title_of(c.renown), Renown.title_happy(c)])
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(Land.new())
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	_check(absf(c2.renown - c.renown) < 0.01, "известность сохраняется")
 	var c0 := City.new(Land.new())
+	c0.auto_hire = true  # прежняя фикстура
 	c0.stats["happy"] = 90
 	_check(Renown.hour_gain(c0) == 0.0 and Renown.title_happy(c0) == 0, "старый город — без известности")
 	# праздник календаря: в свой день город празднует сам, Сатурналии — подарок казне
@@ -576,6 +600,7 @@ func _renown() -> void:
 func _daily() -> void:
 	print("== задания дня Легиона")
 	var c := City.new(Land.new())
+	c.auto_hire = true  # прежняя фикстура
 	c.cozy_v = 1
 	c.money = 1e6
 	var lg := c.legion
@@ -592,6 +617,7 @@ func _daily() -> void:
 	_check(lg.can_open_daily() != "", "второй раз за день — нельзя")
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(Land.new())
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	_check(int(c2.legion.daily.get("step", 0)) == 1, "лестница сундуков сохраняется")
 	lg.daily["day"] = int(lg.daily["day"]) - 2

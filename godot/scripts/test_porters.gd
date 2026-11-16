@@ -60,6 +60,7 @@ func _run() -> void:
 		if r["goal"] == "deliver":
 			any = true
 	check(not any, "в старом городе носильщиков нет")
+	game.city.auto_hire = true  # прежняя фикстура
 	game.city.cozy_v = 1
 	var por := {}
 	for r: Dictionary in workers:

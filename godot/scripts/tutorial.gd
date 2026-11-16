@@ -39,14 +39,14 @@ const STEPS := [
 		"text": "Семья получила дом! Щёлкните по нему — карточка покажет жителей и их счастье."},
 	{"id": "food", "title": "Еда", "icon": "food",
 		"text": "Жителям нужна еда: откройте «Лавки» и поставьте фруктовую лавку рядом с домами."},
-	{"id": "workers", "title": "Работники", "icon": "hammer", "next": true,
-		"text": "В лавке работают жители соседних домов. Кнопки «+» и «−» в карточке лавки нанимают и увольняют работников."},
+	{"id": "workers", "title": "Работники", "icon": "hammer",
+		"text": "Откройте фруктовую лавку и нажмите «+» в блоке «Работа». Каждый работник занимает одно место. Кнопка «−» освобождает его."},
 	{"id": "script", "title": "Знания", "icon": "quill",
-		"text": "Новые лавки и дома открываются исследованиями. Очки даёт скрипторий — откройте «Хозяйство» и поставьте его."},
+		"text": "Новые лавки и дома открываются исследованиями. Поставьте скрипторий в разделе «Хозяйство», затем наймите писца кнопкой «+» в его карточке."},
 	{"id": "research", "title": "Исследования", "icon": "research",
 		"text": "Нажмите на свиток вверху справа и изучите что-нибудь — например, цветы."},
 	{"id": "done", "title": "Город в ваших руках", "icon": "laurels", "next": true,
-		"text": "Семьи приезжают по двое, пока счастье от 60%. Стройте дома заранее и заселяйте приезжих. Новый уровень — по кнопке."},
+		"text": "Семьи приезжают, пока городу хватает счастья. Нужный уровень счастья виден у повозки. Стройте дома заранее и заселяйте приезжих. Новый уровень — по кнопке."},
 ]
 
 ## Уровень интерфейса после шага: 0 — только стройка, 1 — плашка города и классы, 2 — кнопки сверху, 3 — всё
@@ -243,13 +243,15 @@ func _check(id: String) -> bool:
 		"cart":
 			return not c.arrivals.is_empty()
 		"settle":
-			return not c.pending.is_empty() or c.settled_total > 0
+			return c.settled_total > 0  # дошли до дома: теперь взрослые доступны для найма
 		"house":
 			return hud.info_panel.visible and not hud.info_b.is_empty() and c.is_house(hud.info_b)
 		"food":
 			return c._count(func(b): return b["type"] == "stall_fruit") >= 1
+		"workers":
+			return c._count(func(b): return b["type"] == "stall_fruit" and c.hired_of(b) > 0) >= 1
 		"script":
-			return c._count(func(b): return b["type"] == "scriptorium") >= 1
+			return c._count(func(b): return b["type"] == "scriptorium" and c.hired_of(b) > 0) >= 1
 		"research":
 			return c.research.size() > _rp0
 	return false
@@ -257,6 +259,13 @@ func _check(id: String) -> bool:
 
 ## Куда показывает стрелка на этом шаге
 func pointer() -> Array:
+	if cur_id() in ["workers", "script"]:
+		var type := "stall_fruit" if cur_id() == "workers" else "scriptorium"
+		for b: Dictionary in game.city.buildings.values():
+			if b["type"] == type and game.city.hired_of(b) == 0:
+				if not hud.info_panel.visible or int(hud.info_b.get("id", -1)) != int(b["id"]):
+					hud.open_info(b)
+				return [hud._do_target(hud.hire_do(b)), "Нанять работника"]
 	match cur_id():
 		"road":
 			var target: Control = hud.road_target()

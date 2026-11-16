@@ -48,6 +48,7 @@ func _run() -> void:
 		await frames(5)
 	await frames(30)
 	var sp: Spectacle = game.spectacle
+	game.city.auto_hire = true  # прежняя фикстура
 	game.city.cozy_v = 1                       # вечер в таверне — в новой игре («Уютный Рим»)
 	var c: City = game.city
 	for r in Defs.RESEARCH:

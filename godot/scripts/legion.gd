@@ -1406,6 +1406,8 @@ func workshop_k(w: String) -> float:
 		return 0.0
 	if not bool(r.get("road", true)):
 		return 0.0
+	if city() != null and city().manual_hiring():
+		return clampf(float(r.get("staff", 0.0)), 0.0, 1.0)
 	return 0.25 + 0.75 * clampf(float(r.get("staff", 1.0)), 0.0, 1.0)
 
 
@@ -4715,15 +4717,15 @@ func ration_cap() -> int:
 
 
 ## Пекарни с работниками (город кормит лагерь)
-func bakeries_working() -> int:
+func bakeries_working() -> float:
 	var c = city()
 	if c == null:
 		return 0
-	var n := 0
+	var n := 0.0
 	for id in c.buildings:
 		var b: Dictionary = c.buildings[id]
 		if String(b["type"]) == "bakery" and not b.get("over", false) and b.get("road", true) and c.hired_of(b) > 0:
-			n += 1
+			n += (float(b.get("staff", 0.0)) if b.get("active", false) else 0.0) if c.manual_hiring() else 1.0
 	return n
 
 

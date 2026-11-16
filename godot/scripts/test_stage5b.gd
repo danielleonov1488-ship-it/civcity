@@ -62,6 +62,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.auto_hire = true  # прежняя фикстура
 	land = game.land
 	game.can_save = false
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)

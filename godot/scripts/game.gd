@@ -1639,6 +1639,8 @@ func _rebuild_land(limit := 6, busy := false) -> void:
 var build_anim := false               # постройка поставлена игроком — показать, как она растёт
 
 func _on_added(b: Dictionary) -> void:
+	if hud and ready_done and mode in ["new", "play"] and not city.bulk:
+		hud.on_workplace_built(b)
 	if build_anim and city.def(b)["kind"] != "decor":
 		_grow_anim(b)
 	else:
@@ -4649,7 +4651,7 @@ func hover_text(b: Dictionary) -> String:
 		"shop", "rp", "farm", "store":
 			var mx := city.job_max(b)
 			if mx > 0:
-				var w := roundi(float(b.get("staff", 1.0)) * city.hired_of(b))
+				var w := city.hired_of(b) if city.manual_hiring() else roundi(float(b.get("staff", 1.0)) * city.job_max(b))
 				return "%s · %d/%d %s" % [nm, w, mx, _plural(mx, "работник", "работника", "работников")]
 	return nm
 
@@ -4787,8 +4789,10 @@ func _move_nature_ghost() -> void:
 func _hover_building(b: Dictionary) -> void:
 	var key := "" if b.is_empty() else "%d:%s" % [b["id"], tool]
 	if key == highlight_key:
+		_work_hover(b)
 		return
 	_clear_highlight()
+	_work_hover(b)
 	highlight_key = key
 	if b.is_empty() or (tool != "" and city.def(b).get("fixed", false) and tool != "copy"):
 		return
@@ -4802,7 +4806,18 @@ func _hover_building(b: Dictionary) -> void:
 		hud.tool_status("Снести: %s (вернётся %s ден.)" % [city.def(b)["name"], hud.fmt(float(city.def(b)["cost"]) * Defs.REFUND)])
 
 
+func _work_hover(b: Dictionary) -> void:
+	if not hud:
+		return
+	if not b.is_empty() and tool == "" and city.manual_hiring() and city.hired_of(b) > 0 and city.hired_of(b) < city.job_max(b):
+		hud.set_badge("work_partial", Vector3(b["pos"].x, float(b["y"]) + city.blueprint(b).top_y() + 1.2, b["pos"].y), "work_half", false, "%d/%d" % [city.hired_of(b), city.job_max(b)])
+	else:
+		hud.clear_badge("work_partial")
+
+
 func _clear_highlight() -> void:
+	if hud:
+		hud.clear_badge("work_partial")
 	if highlight:
 		highlight.queue_free()
 		highlight = null

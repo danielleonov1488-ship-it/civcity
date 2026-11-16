@@ -39,6 +39,9 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	var c: City = game.city
+	game.can_save = false
+	game.settings["autosave"] = false
+	game.settings["advisor_off"] = true
 	Tutorial.start_new(c)
 	game.tutorial._enter(0)
 	game.hud.advisor_panel.visible = false
@@ -111,9 +114,14 @@ func _run() -> void:
 	await wait_step("workers")
 	await frames(10)
 	await shot("t8_workers.png")
-	game.tutorial.next_btn.emit_signal("pressed")
+	for b: Dictionary in c.buildings.values():
+		if b["type"] == "stall_fruit":
+			c.hire(b)
 	await wait_step("script")
 	put("scriptorium", dp + Vector2(-5, 24))
+	for b: Dictionary in c.buildings.values():
+		if b["type"] == "scriptorium":
+			c.hire(b)
 	await wait_step("research")
 	await frames(10)
 	await shot("t9_research.png")

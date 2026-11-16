@@ -52,6 +52,7 @@ const WALK := 1.15 * Citizen.K       # м/с при обычной скорос�
 func setup(l: Land, c: City, g) -> void:
 	land = l
 	city = c
+	city.worker_position = _worker_position
 	game = g
 	rng.seed = 21
 	grid.region = Rect2i(0, 0, GN, GN)
@@ -66,6 +67,8 @@ func setup(l: Land, c: City, g) -> void:
 	city.building_removed.connect(_on_building_removed)
 	city.building_added.connect(_on_building_added)
 	city.changed.connect(func():
+		if city.manual_hiring():
+			_assign_jobs()
 		_jobs_dirty = true
 		_by_base_dirty = true)
 	city.family_left.connect(_on_family_left)
@@ -299,6 +302,9 @@ func _family_rec(name: String, home: int) -> Dictionary:
 
 ## Перед сохранением: кто где работает — в записи членов семей (после загрузки работа та же)
 func sync_members() -> void:
+	if city.manual_hiring():
+		_assign_jobs()
+		return
 	for r in residents:
 		var m: Dictionary = r.get("m", {})
 		if m.is_empty():
@@ -1191,8 +1197,30 @@ func _remove(r: Dictionary) -> void:
 # ---------- работа ----------
 
 ## Раздать работу: на каждое рабочее место — ближайший взрослый житель нужного класса (или выше)
+func _worker_position(member: Dictionary, fallback: Vector2) -> Vector2:
+	for r: Dictionary in residents:
+		if is_same(r.get("m"), member) and int(r["home"]) > 0:
+			return r["p"]
+	return fallback
+
+
 func _assign_jobs() -> void:
 	_jobs_dirty = false
+	if city.manual_hiring():
+		# Только сохранить выбор игрока. Приезд, рождение и стройка никого не нанимают.
+		var kept := {}
+		for r: Dictionary in residents:
+			var job := int(r.get("m", {}).get("job", -1))
+			var b: Dictionary = city.buildings.get(job, {})
+			var slot := String(r.get("m", {}).get("job_class", ""))
+			if r["child"] or int(r["home"]) <= 0 or b.is_empty() or not (r["cls"] in City.WORK_CLASSES.get(slot, [])) or int(kept.get(job, 0)) >= city.hired_of(b):
+				job = -1
+			if int(r["job"]) != job:
+				_quit_job(r)
+				r["job"] = job
+			if job >= 0:
+				kept[job] = int(kept.get(job, 0)) + 1
+		return
 	var need := []
 	for id in city.buildings:
 		var b: Dictionary = city.buildings[id]

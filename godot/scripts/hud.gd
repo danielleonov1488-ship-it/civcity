@@ -1119,9 +1119,6 @@ func on_arrive_block(text: String) -> void:
 func _arrive_advice() -> void:
 	var c: City = game.city
 	c.tips.erase("arrive_wait")
-	if c.arrive_work_slots() <= 0:
-		advisor("Новые семьи не едут", c.arrivals_blocked() + ". " + "Постройте нужную лавку или добавьте рабочие места кнопкой «+» в карточке постройки.")
-		return
 	var ht: Array = c.stats.get("happy_tips", [])
 	var tip := ("\n\nСовет: " + String(ht[0]) + ".") if not ht.is_empty() else ""
 	var nf := int(_defc("ARRIVE_FREE", 3))
@@ -1571,7 +1568,7 @@ func _tip_class(v: VBoxContainer, cl: String) -> void:
 	if jobs > workers:
 		_tip_text(v, "Работников не хватает — постройки работают слабее. Заселите больше семей. Лишнее место можно убрать (−) там, где оно меньше всего нужно, например у скриптория: лавка, у которой забрали всех работников, закрывается.", C_BAD, 14)
 	elif free > 0:
-		_tip_text(v, "Свободны %d — могут работать в новых постройках." % free, C_SOFT, 14)
+		_tip_text(v, "Свободны %d — наймите их кнопкой «+» в карточке здания." % free, C_SOFT, 14)
 	_tip_text(v, "Налог: %s ден. в час с жителя — больше, когда жители счастливы." % String.num(float(cd["tax"]), 1).replace(".", ","), C_SOFT, 14)
 
 
@@ -3490,6 +3487,12 @@ func _update_pointer() -> void:
 		pointer_target = pt[0]
 		pointer_text.text = pt[1]
 		return
+	# Игрок открыл пустое рабочее здание — подскажем первый найм только в этой карточке.
+	if game.tool == "" and game.city.manual_hiring() and info_panel.visible and not info_b.is_empty() and game.city.job_max(info_b) > 0 and game.city.hired_of(info_b) == 0:
+		pointer_target = _do_target(hire_do(info_b))
+		if pointer_target != null:
+			pointer_text.text = "Нанять работника"
+			return
 	# город впервые готов к новому уровню — стрелка на кнопку, пока её не нажмут
 	if rank_btn and rank_btn.visible and not game.city.tips.has("rank_pressed") and game.tool == "":
 		pointer_target = rank_btn
@@ -3630,6 +3633,10 @@ func need_do(p: Array, tool := "", n := 0) -> Dictionary:
 				return upc
 			return _do_type(tool if tool != "" else String(Defs.CLASSES[String(arg)]["house"]))
 		"store":
+			if c.manual_hiring():
+				for b: Dictionary in c.buildings.values():
+					if b["type"] in ["warehouse", "butcher"] and c.hired_of(b) == 0:
+						return hire_do(b)
 			for t in ["warehouse", "butcher"]:
 				if c.count_type(t) == 0:
 					return _do_type(t)
@@ -3765,6 +3772,11 @@ func _do_research(rid: String, say: String) -> Dictionary:
 ## Разные лавки (sub — этого вида, null — любые): открытую, которой ещё нет, — взять; нет такой — открыть ближайшую
 func _do_shop(sub) -> Dictionary:
 	var c: City = game.city
+	if c.manual_hiring():
+		for b: Dictionary in c.buildings.values():
+			var d := c.def(b)
+			if d["kind"] == "shop" and (sub == null or String(d.get("sub", "")) == String(sub)) and c.hired_of(b) < c.job_max(b) and not b.get("over", false):
+				return hire_do(b)
 	var locked := ""
 	var lk := 99
 	for t in Defs.B:
@@ -3795,6 +3807,12 @@ func _shops_of(sub: String) -> int:
 ## постройка уже в руках (инструмент выбран, слой открыт) — всё равно показать, где её карточка (кнопка), чтобы запомнить
 func _do_target(w: Dictionary, shown := false) -> Control:
 	match String(w.get("kind", "")):
+		"hire":
+			if not info_panel.visible or int(info_b.get("id", -1)) != int(w.get("id", -2)):
+				return null
+			if game.city.hired_of(info_b) > 0:
+				return null
+			return info_box.find_child("hire_plus", true, false) as Control
 		"study":
 			return research_tree.study if research_panel.visible else null
 		"people":
@@ -3884,6 +3902,12 @@ func _do_target(w: Dictionary, shown := false) -> Control:
 ## «Этаж», «Обзор» со слоем, семью на площади
 func _do_click(w: Dictionary) -> void:
 	match String(w.get("kind", "")):
+		"hire":
+			var b: Dictionary = game.city.buildings.get(int(w.get("id", -1)), {})
+			if not b.is_empty():
+				var p: Vector2 = b["pos"]
+				game.rig.set_view(Vector3(p.x, float(b["y"]), p.y), 15, 40, 28)
+				open_info(b)
 		"build":
 			select_build(String(w["type"]))
 			_scroll_build_card(String(w["type"]))
@@ -4665,41 +4689,126 @@ var _tag_dwell := 0.0
 
 
 
-## Строка «Работники: 2 / 3  [−] [+]» — нанять или уволить
-func _hire_row(b: Dictionary) -> HBoxContainer:
+## Работа: каждый силуэт — одно место; заполненные места показывают класс жителя.
+func _hire_row(b: Dictionary) -> VBoxContainer:
 	var c: City = game.city
 	var mx := c.job_max(b)
 	var h := c.hired_of(b)
-	# как в Town to City: «−  1 / 3  +», а сколько от полной силы работает — мельче справа
-	var row := _row("hammer", "Работники", "", C_INK)
-	var val: Label = row.get_child(row.get_child_count() - 1)
-	row.remove_child(val)
-	val.queue_free()
-	var col := C_GOOD if float(b.get("fill", 1.0)) >= 0.99 and h > 0 else C_BAD
-	row.tooltip_text = "Сколько работников нанять (как в Town to City). Меньше — места отдадутся другим постройкам, постройка работает слабее; больше — обслуживает больше домов, но каждый работник стоит %s ден. в час (жалованье растёт с уровнем города). Сейчас работает на %d%%" % [String.num(c.wage(), 2).replace(".", ","), int(float(b.get("staff", 1.0)) * 100.0)]
+	var block := VBoxContainer.new()
+	block.name = "work_block"
+	block.add_theme_constant_override("separation", 7)
+	block.add_child(_divider(10))
+	var title := _label("Работа", 20, true)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	block.add_child(title)
+	var slots := GridContainer.new()
+	slots.name = "worker_slots"
+	slots.columns = mini(7, mx)
+	slots.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	slots.add_theme_constant_override("h_separation", 5)
+	block.add_child(slots)
+	var members := c.staff_members(b) if c.manual_hiring() else []
+	var index := 0
+	for cls: String in Defs.CLASS_ORDER:
+		for k in int(c.def(b).get("jobs", {}).get(cls, 0)):
+			var occupied := false
+			var worker_cls := cls
+			var tip := String(Defs.CLASSES[cls]["name"])
+			if c.manual_hiring():
+				var same: Array = members.filter(func(w: Dictionary) -> bool: return String(w["m"].get("job_class", "")) == cls)
+				occupied = k < same.size()
+				if occupied:
+					worker_cls = String(same[k]["cls"])
+					tip = Residents.full_name(same[k]["m"], same[k]["family"])
+			else:
+				occupied = index < roundi(h * float(b.get("fill", 1.0)))
+			var slot := PanelContainer.new()
+			slot.name = "worker_slot_%d" % index
+			slot.custom_minimum_size = Vector2(40, 40)
+			slot.add_theme_stylebox_override("panel", _box_pill(4, 4, "g_btn_on" if occupied else "g_btn"))
+			slot.tooltip_text = tip
+			slot.add_child(_cls_pic(worker_cls, 32) if occupied else _icon("person", 32, C_SOFT))
+			slots.add_child(slot)
+			index += 1
+	if h == 0:
+		var empty := _wrap(_label("Требуются горожане", 15, true, C_BAD), 320)
+		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		block.add_child(empty)
+	var can_add := c.can_hire(b)
+	if h < mx and not can_add and not b.get("over", false):
+		var none := _wrap(_label("Нет свободных горожан нужного класса", 14, false, C_SOFT), 320)
+		none.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		block.add_child(none)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 10)
 	var minus := Button.new()
+	minus.name = "hire_minus"
 	minus.text = "−"
 	_small(minus)
-	minus.focus_mode = Control.FOCUS_NONE
 	minus.disabled = h <= 0
 	minus.tooltip_text = "Уволить работника"
-	minus.pressed.connect(func(): game.happy_action(func(): c.set_hire(b, h - 1), b["pos"]); _fill_info())
+	minus.pressed.connect(func(): game.happy_action(func(): c.fire(b), b["pos"]); _fill_info())
 	var plus := Button.new()
+	plus.name = "hire_plus"
+	plus.set_meta("quest_action", "hire")
 	plus.text = "+"
 	_small(plus)
-	plus.focus_mode = Control.FOCUS_NONE
-	plus.disabled = h >= mx
-	plus.tooltip_text = "Нанять работника"
-	plus.pressed.connect(func(): game.happy_action(func(): c.set_hire(b, h + 1), b["pos"]); _fill_info())
-	var n := _label("%d / %d" % [h, mx], 18, true, col)
-	n.custom_minimum_size = Vector2(52, 0)
-	n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	n.name = "hire_n"
+	plus.disabled = not can_add
+	plus.tooltip_text = "Нанять работника" if can_add or h >= mx else "Нет свободных горожан нужного класса"
+	plus.pressed.connect(func(): game.happy_action(func(): c.hire(b), b["pos"]); _fill_info())
+	var count := _label("%d / %d" % [h, mx], 18, true, C_GOOD if h > 0 else C_SOFT)
+	count.name = "hire_n"
 	row.add_child(minus)
-	row.add_child(n)
+	row.add_child(count)
 	row.add_child(plus)
-	row.add_child(_label("%d%%" % int(float(b.get("staff", 1.0)) * 100.0), 14, true, C_SOFT))
-	return row
+	row.add_child(_label("%d%%" % roundi(float(b.get("staff", 0.0)) * 100.0), 14, true, C_SOFT))
+	block.add_child(row)
+	return block
+
+
+## Первый найм объясняем один раз, когда освободится советник.
+func on_workplace_built(b: Dictionary) -> void:
+	var c: City = game.city
+	if c.manual_hiring() and c.job_max(b) > 0 and not c.tips.has("manual_hire_tip"):
+		c.tips["manual_hire_pending"] = int(b["id"])
+
+
+func _manual_hire_advice() -> bool:
+	var c: City = game.city
+	if not c.manual_hiring() or not c.tips.has("manual_hire_pending") or c.tips.has("manual_hire_tip"):
+		return false
+	if not game.ready_done or not advisor_on() or not _tip_free():
+		return false
+	var b: Dictionary = c.buildings.get(int(c.tips["manual_hire_pending"]), {})
+	if b.is_empty() or c.hired_of(b) > 0:
+		c.tips.erase("manual_hire_pending")
+		return false
+	c.tips["manual_hire_tip"] = true
+	c.tips.erase("manual_hire_pending")
+	advisor("Работа в новом здании", "Здание построено, но в нём никто не работает. Нажмите на него и добавьте работников кнопкой «+».")
+	return true
+
+
+func hire_do(b: Dictionary) -> Dictionary:
+	return {"kind": "hire", "id": int(b["id"]), "tip": "Нанять работника", "say": "Откройте здание и наймите работников кнопкой «+»"}
+
+
+var _work_cycle := {}
+
+
+func _cycle_work(cls: String) -> void:
+	var c: City = game.city
+	var places: Array = []
+	for b: Dictionary in c.buildings.values():
+		if not b.get("over", false) and int(c.def(b).get("jobs", {}).get(cls, 0)) > int(c.jobs_of(b).get(cls, 0)):
+			places.append(b)
+	if places.is_empty():
+		_open_overview("city")
+		return
+	var index := (int(_work_cycle.get(cls, -1)) + 1) % places.size()
+	_work_cycle[cls] = index
+	_do_click(hire_do(places[index]))
 
 
 ## Маленькая круглая кнопка-медальон со знаком (−, +, номер фасада)
@@ -4809,7 +4918,6 @@ func _fill_info_body() -> void:
 			_cover_rows(b, "")
 			if d.get("store", false):
 				_store_row(b)
-			info_box.add_child(_hire_row(b))
 			if String(b["type"]) == "catshop":
 				info_box.add_child(_divider(10))
 				_catshop_rows(b, cw)
@@ -4831,7 +4939,6 @@ func _fill_info_body() -> void:
 			if float(ti["decor"]) > 0.0:
 				tip += " Украшения вокруг тоже радуют гостей."
 			info_box.add_child(_wrap(_label(tip, 14, false, C_SOFT), cw))
-			info_box.add_child(_hire_row(b))
 			if not b.get("active", true) and bool(b.get("road", true)):
 				info_box.add_child(_wrap(_label("Не работает: " + c.idle_text(b), 15, true, C_BAD), cw))
 		"monument":
@@ -4849,15 +4956,11 @@ func _fill_info_body() -> void:
 					nl += 1
 				var more := (" Больше заработает на уровне «%s»." % Defs.LEVELS[nl]["name"]) if nl < Defs.LEVELS.size() and nl < mx.size() else ""
 				info_box.add_child(_wrap(_label("На уровне «%s» работают %d (первые построенные).%s Сносить не нужно: пока постройка не работает, она ничего не стоит." % [Defs.LEVELS[c.level]["name"], c.build_max(b["type"]), more], 14, false, C_SOFT), cw))
-			else:
-				info_box.add_child(_hire_row(b))
 		"farm":
 			info_box.add_child(_row("wheat", "Даёт", {"wheat": "пшеницу", "olives": "оливки", "grapes": "виноград"}[d["makes"]], C_GOOD))
-			info_box.add_child(_hire_row(b))
 		"store":
 			info_box.add_child(_row("arrow", "Разносит товары", Defs.WORD[4]))
 			_cover_rows(b, "Снабжает лавок")
-			info_box.add_child(_hire_row(b))
 		"center":
 			_post_arrivals(info_box)
 			tv.add_child(_label("Уровень города: %s" % Defs.LEVELS[c.level]["name"], 14, true, C_SOFT))
@@ -4902,8 +5005,11 @@ func _fill_info_body() -> void:
 			_cover_rows(b, "Радует домов")
 		"military":
 			_legion_rows(b, tv, cw)
+	if c.job_max(b) > 0:
+		info_box.add_child(_hire_row(b))
 	if String(b["type"]) == "bakery" and c.legion.v3():
-		info_box.add_child(_row("legion", "Пайки Легиону", "+%d в день" % int(Legion.RATION_BAKERY), C_GOOD))   # Легион 3.0: хлеб кормит лагерь
+		var ration_k: float = (float(b.get("staff", 0.0)) if b.get("active", false) else 0.0) if c.manual_hiring() else 1.0
+		info_box.add_child(_row("legion", "Пайки Легиону", "+%d в день" % int(round(Legion.RATION_BAKERY * ration_k)), C_GOOD))   # Легион 3.0: хлеб кормит лагерь
 	if not c.is_house(b):                      # у дома вместо описания — что даёт счастье (см. _fill_house)
 		info_box.add_child(_wrap(_label(d["desc"], 14, false, C_SOFT), cw))
 	if String(b.get("gift", "")) != "":         # подарок друга (SocialNet)
@@ -6189,10 +6295,17 @@ func _fill_overview_city() -> void:
 	var free := 0
 	for cl: String in Defs.CLASS_ORDER:
 		workers += int(c.stats.get("filled", {}).get(cl, 0))
-		jobs += int(c.stats.get("jobs", {}).get(cl, 0))
+
 		free += int(c.stats.get("free", {}).get(cl, 0))
+	for b: Dictionary in c.buildings.values():
+		if not b.get("over", false):
+			jobs += c.job_max(b)
 	v.add_child(_row("hammer", "Работники / рабочие места", "%d / %d" % [workers, jobs]))
 	v.add_child(_row("person", "Без работы", str(free)))
+	for cl: String in Defs.CLASS_ORDER:
+		v.add_child(_label(String(Defs.CLASSES[cl]["name"]), 16, true))
+		v.add_child(_row("person", "Свободные горожане", str(int(c.stats.get("free", {}).get(cl, 0))), C_GOOD))
+		v.add_child(_row("hammer", "Пустые рабочие места", str(c.empty_jobs(cl))))
 	var happy := int(c.stats.get("happy", 0))
 	v.add_child(_row("happy", "Счастье", "%d%%" % happy, C_GOOD if happy >= 60 else C_BAD))
 	var losses: Array = []
@@ -7438,6 +7551,8 @@ func _once_tips() -> void:
 		c.tips["unpaid_tip"] = true
 		advisor("Казна пуста", unpaid_note())   # казна в минус не уходит: один раз — что случилось и как поправить
 		return
+	if _manual_hire_advice():
+		return
 	if c.tips.has("arrive_wait") and String(c.stats.get("arrive_block", "")) != "":
 		_arrive_advice()                      # «Новые семьи не едут» ждал, пока закроют другой совет; повозка уже едет — подождёт, пока встанет снова
 		return
@@ -7532,7 +7647,7 @@ func _once_tips() -> void:
 		advisor("Летопись города", got + " Венки даются за вехи: сто горожан, первую победу Легиона, полсотни украшений, сто дней городу… Все награды сохранены в летописи.\n\nВсе венки и счётчики города — в журнале: свиток «Просьбы горожан» → книжка → вкладка «Летопись».")
 		return
 	# 6.12: работников меньше, чем мест, — один раз про «−» в карточке менее нужной постройки (как в Town to City)
-	if not c.tips.has("hire_tip") and int(c.stats.get("pop", 0)) >= 30 and _hire_short() != "":
+	if not c.manual_hiring() and not c.tips.has("hire_tip") and int(c.stats.get("pop", 0)) >= 30 and _hire_short() != "":
 		c.tips["hire_tip"] = true
 		advisor("Кому работать", "%s на все рабочие места не хватает — каждая постройка их класса работает слабее. Сколько нанять, решаете вы, как в Town to City: в карточке постройки, что нужна меньше, нажмите «−» у строки «Работники» — освободившиеся люди пойдут туда, где нужнее. «+» вернёт их. А больше жителей — больше работников." % _hire_short())
 		return
@@ -7629,7 +7744,17 @@ func _fill_classes() -> void:
 		var n := _label(fmt(nres), 16, true, col)
 		n.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		h.add_child(n)
-		if short > 0:
+		var free := int(c.stats.get("free", {}).get(cl, 0))
+		var available := Button.new()
+		available.name = "free_" + cl
+		available.text = "+%d" % free if free > 0 else "0"
+		available.flat = true
+		available.add_theme_font_size_override("font_size", 14)
+		available.add_theme_color_override("font_color", C_GOOD if free > 0 else C_SOFT)
+		available.tooltip_text = "Свободные горожане: нанимайте их в здания кнопкой «+»"
+		available.pressed.connect(_cycle_work.bind(cl))
+		h.add_child(available)
+		if short > 0 and not c.manual_hiring():
 			var w := _label("−%d" % short, 13, true, C_BAD)       # работников не хватает
 			w.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			h.add_child(w)
@@ -7846,7 +7971,7 @@ func _fill_tasks_body(goals: Array) -> void:
 		var block := String(c.stats.get("arrive_block", ""))
 		if String((g["p"] as Array)[0]) == "pop" and block != "":
 			var ht: Array = c.stats.get("happy_tips", [])
-			hint_txt = block + "." + ((" Совет: " + String(ht[0]) + ".") if not ht.is_empty() and c.arrive_work_slots() > 0 else "") + ("\n" + hint_txt if hint_txt != "" else "")
+			hint_txt = block + "." + ((" Совет: " + String(ht[0]) + ".") if not ht.is_empty() else "") + ("\n" + hint_txt if hint_txt != "" else "")
 		var rank_lv := int((g["p"] as Array)[1]) if String((g["p"] as Array)[0]) == "rank" else -1
 		if rank_lv > 0:
 			# «Станьте хутором»: условия уровня — из данных (Defs.LEVELS), чтобы не расходились с кнопкой
@@ -7948,17 +8073,22 @@ func _update_world_icons() -> void:
 			continue                 # сверх предела уровня: работников ей не нужно, всё сказано в карточке — без значка
 		var icon := ""
 		var warn := true
-		if not bool(b.get("road", true)):
+		if c.manual_hiring() and c.job_max(b) > 0 and c.hired_of(b) == 0:
+			icon = "hammer"
+		elif not bool(b.get("road", true)):
 			icon = "road"            # свободная стройка: любое здание без дороги у входа не работает
+		elif c.job_max(b) > 0 and float(b.get("staff", 0.0)) <= 0.0:
+			icon = "hammer"
 		elif d["kind"] == "shop" and not b.get("active", true):
 			icon = {"store": "warehouse", "good": "wheat", "road": "road"}.get(b.get("why", ""), "hammer")
-		elif d["kind"] in ["rp", "farm", "store", "monument"] and d.has("jobs") and (float(b.get("fill", 1.0)) < 0.99 or c.hired_of(b) == 0):
+		elif d["kind"] in ["rp", "farm", "store", "monument"] and d.has("jobs") and not c.manual_hiring() and (float(b.get("fill", 1.0)) < 0.99 or c.hired_of(b) == 0):
 			icon = "hammer"
 		elif d["kind"] == "center" and (c.waiting > 0 or c.arrivals_paused):
 			icon = "family"
 			warn = false
 		if icon != "":
-			want[id] = [icon, warn, "Ⅱ" if d["kind"] == "center" and c.arrivals_paused else ""]
+			var text := "нет работников" if icon == "hammer" and c.job_max(b) > 0 and c.hired_of(b) == 0 else ("Ⅱ" if d["kind"] == "center" and c.arrivals_paused else "")
+			want[id] = [icon, warn, text]
 	for id in world_icons.keys():
 		if not want.has(id) or world_icons[id] != want[id]:
 			clear_badge("b%d" % id)

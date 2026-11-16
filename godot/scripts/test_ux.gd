@@ -172,6 +172,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.auto_hire = true  # прежняя фикстура
 	cover = game.cover
 	hud = game.hud
 	hud.house_more = true                 # карточка дома — подробная (проверки её строк); короткую — ниже
@@ -895,6 +896,7 @@ func _new_save() -> void:
 	check(c.is_new("statue") or c.new_count("decor") > 0, "каменные украшения — новые")
 	var data = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(game.land)
+	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(data)
 	var same := true
 	for t in Defs.B:
@@ -906,6 +908,7 @@ func _new_save() -> void:
 	(old["tips"] as Dictionary).erase("seen")
 	(old["tips"] as Dictionary).erase("seen_r")
 	var c3 := City.new(game.land)
+	c3.auto_hire = true  # прежняя фикстура
 	c3.load_data(old)
 	var any := 0
 	for cat: Array in Defs.CATS:
@@ -985,7 +988,6 @@ func _arrive_wait() -> void:
 	c.stats["jobs"] = {"plebs": 1000}
 	c.stats["filled"] = {"plebs": 0}
 	c.stats["free"] = {"plebs": 0}
-	check(c.arrive_work_slots() > 0, "совет о счастье: есть свободная работа")
 	hud.advisor("Другой совет", "Совет, который игрок ещё читает")
 	hud.on_arrive_block("Новые семьи не едут")
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Другой совет" and c.tips.has("arrive_wait"), "«Новые семьи не едут» не перебил открытый совет — ждёт («%s»)" % hud.adv_title.text)

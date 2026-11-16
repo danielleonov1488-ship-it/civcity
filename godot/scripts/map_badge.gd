@@ -42,7 +42,7 @@ func setup(key: String, warning: bool, text: String, face_font: Font) -> void:
 		label.text = text
 		label.add_theme_font_override("font", face_font)
 		label.add_theme_font_size_override("font_size", 15)
-		label.add_theme_color_override("font_color", INK)
+		label.add_theme_color_override("font_color", BAD if warning else INK)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(label)
 		label.position = Vector2(30, 0)
@@ -51,7 +51,7 @@ func setup(key: String, warning: bool, text: String, face_font: Font) -> void:
 		size.x = 39 + label.size.x
 		pill = StyleBoxFlat.new()
 		pill.bg_color = CREAM
-		pill.border_color = RIM
+		pill.border_color = BAD if warning else RIM
 		pill.set_border_width_all(1)
 		pill.set_corner_radius_all(15)
 		pill.shadow_color = Color(0.19, 0.12, 0.07, 0.16)
@@ -104,6 +104,9 @@ func _draw() -> void:
 		draw_polyline(PackedVector2Array([Vector2(9, 14), Vector2(15, 8), Vector2(21, 14)]), INK, 2, true)
 		if icon.begins_with("upc"):
 			draw_polyline(PackedVector2Array([Vector2(9, 19), Vector2(15, 13), Vector2(21, 19)]), INK, 2, true)
+	elif icon == "work_half":
+		draw_arc(Vector2(15, 15), 7, -PI * 0.5, PI * 1.5, 32, RIM, 2, true)
+		draw_arc(Vector2(15, 15), 7, -PI * 0.5, PI * 0.5, 16, GOOD, 5, true)
 	elif texture != null:
 		draw_texture_rect(texture, Rect2(6, 6, 18, 18), false, INK)
 	if preference_texture != null:

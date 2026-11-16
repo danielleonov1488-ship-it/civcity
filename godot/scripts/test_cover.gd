@@ -172,6 +172,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.auto_hire = true  # прежняя фикстура
 	cover = game.cover
 	hud = game.hud
 	game.can_save = false
