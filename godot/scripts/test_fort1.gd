@@ -42,6 +42,7 @@ func assign_worker(l: Legion, id: int) -> void:
 func _ready() -> void:
 	var saved_clock := Legion.clock
 	Legion.clock = 1000000.0
+	_plot_order()
 	_build_produce()
 	_expand_effects()
 	_producers()
@@ -51,6 +52,27 @@ func _ready() -> void:
 	Legion.clock = saved_clock
 	print("FORT1 DONE fails=%d" % fails)
 	get_tree().quit(1 if fails > 0 else 0)
+
+
+func _plot_order() -> void:
+	var c := town()
+	var l: Legion = c.legion
+	var free_ids: Array[int] = []
+	for p: Dictionary in l.fort["plots"]:
+		if int(p["id"]) > 0 and p["b"] == "":
+			free_ids.append(int(p["id"]))
+	free_ids.sort()
+	check(free_ids.size() >= 2, "plot order fixture has two free rooms")
+	if free_ids.size() < 2:
+		return
+	(l.fort["plots"] as Array).reverse()
+	check(l.fort_empty_plot() == free_ids[0], "first cutaway room ignores save array order")
+	check(l.fort_build("kitchen", free_ids[0]), "build first free room in reversed save")
+	check(l.fort_empty_plot() == free_ids[1], "next free room skips room under construction")
+	check(l.fort_plot(0)["b"] == "hq", "auto-pick preserves HQ")
+	for id: int in free_ids:
+		l.fort_plot(id)["b"] = "tower"
+	check(l.fort_empty_plot() == -1, "full reversed fort has no free room")
 
 
 func _build_produce() -> void:

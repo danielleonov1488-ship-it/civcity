@@ -102,6 +102,12 @@ func _run() -> void:
 	lg.fort_finish()
 	if not check(int(lg.fort["exp"]) == 1 and (lg.fort["plots"] as Array).size() == int(Legion.fort_exp_info(1)["plots"]) + 1, "fixture uses expansion grid size"):
 		return
+	var free_plots := 0
+	for plot: Dictionary in lg.fort["plots"]:
+		if int(plot["id"]) > 0 and plot["b"] == "":
+			free_plots += 1
+	if not check(free_plots >= 5, "fixture has room for two kitchens, smelter, sawmill and tower"):
+		return
 	lg.rations = 2.0
 	lg.flags["camp_told"] = true
 	lg.flags["camp3d_guide"] = 4
@@ -181,10 +187,29 @@ func _run() -> void:
 	if not check(camp.main_action.disabled, "full storage disables collection"):
 		return
 	# Кнопка стройки вызывает fort_build, новый участок получает таймер и ускорение.
+	var free_ids: Array[int] = []
+	for plot: Dictionary in lg.fort["plots"]:
+		if int(plot["id"]) > 0 and plot["b"] == "":
+			free_ids.append(int(plot["id"]))
+	free_ids.sort()
+	if not check(not free_ids.is_empty(), "fixture has a free cutaway room before auto-build"):
+		return
+	var empty := free_ids[0]
+	# Порядок массива сохранения не меняет порядок комнат разреза.
+	(lg.fort["plots"] as Array).reverse()
 	camp.show_build_menu()
-	var empty := lg.fort_empty_plot()
+	if not check(camp.selected_plot == -1 and camp.build_plot_id == empty and lg.fort_empty_plot() == empty, "build menu targets first free cutaway room without selection"):
+		return
+	# строитель один: прежняя стройка (вторая кухня) должна закончиться, иначе «Строитель занят»
+	var clk: float = Legion.clock
+	Legion.clock = Legion.now() + 1.0e7
+	lg.fort_finish()
+	Legion.clock = clk
+	game.city.money = maxf(game.city.money, 1000000.0)   # казна на стройку лесопилки (прежние шаги её потратили)
 	camp._choose_build("sawmill")
 	if not check(camp.selected_plot == empty and lg.fort_plot(empty)["b"] == "sawmill" and camp.card_ring.visible, "build menu auto-picks free plot"):
+		return
+	if not await shot("6_auto_build.png"):
 		return
 	if not check(lg.speed_info("fort_%d" % empty)["allowed"], "plot speed-up available"):
 		return
@@ -194,6 +219,9 @@ func _run() -> void:
 		return
 	if not check(build("tower") >= 0, "fill last expansion plot"):
 		return
+	while lg.fort_empty_plot() >= 0:
+		if not check(build("tower") >= 0, "fill remaining expansion plot"):
+			return
 	# При полном форте меню ведёт к расширению, без попытки занять чужой участок.
 	if not check(lg.fort_empty_plot() == -1, "fixture filled all plots"):
 		return

@@ -4219,10 +4219,13 @@ func fort_slot_plot(type: String) -> Dictionary:
 
 func fort_empty_plot() -> int:
 	_fort_init()
+	var empty := -1
+	# Разрез ставит комнаты по ID, независимо от порядка в сохранении.
 	for p: Dictionary in fort.get("plots", []):
-		if int(p["id"]) != 0 and p["b"] == "":
-			return int(p["id"])
-	return -1
+		var id := int(p["id"])
+		if id > 0 and p["b"] == "" and (empty < 0 or id < empty):
+			empty = id
+	return empty
 
 
 func _fort_sync_camp() -> void:

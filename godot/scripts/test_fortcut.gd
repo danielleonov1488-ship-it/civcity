@@ -28,6 +28,14 @@ func frames(count: int) -> void:
 		await get_tree().process_frame
 
 
+func active_player(entry: Dictionary) -> AnimationPlayer:
+	# В модели есть и служебные проигрыватели без выбранного движения.
+	for player: AnimationPlayer in entry["players"]:
+		if player.is_playing() and player.current_animation != "":
+			return player
+	return null
+
+
 func check(ok: bool, reason: String) -> bool:
 	if not ok:
 		fails += 1
@@ -229,18 +237,22 @@ func _run() -> void:
 	var smith := false
 	for entry: Dictionary in view.figures:
 		if int(entry["plot"]) == forge and entry["role"] == "forge":
-			smith = not (entry["players"] as Array).is_empty()
+			smith = is_instance_valid(active_player(entry))
 	check(smith, "smith working in forge")
 	check(absf(view.zoom - FortCutaway.CLOSE_ZOOM) < 0.05, "room occupies sixty percent of viewport height")
 	await shot("3_zoom_forge.png")
 	var paused := false
 	for entry: Dictionary in view.figures:
-		if (entry["node"] as Node3D).visible or (entry["players"] as Array).is_empty():
+		if (entry["node"] as Node3D).visible:
 			continue
-		var player: AnimationPlayer = entry["players"][0]
+		var player := active_player(entry)
+		if not is_instance_valid(player):
+			continue
+		check(player.callback_mode_process == AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL, "room animation advances manually")
+		var animation := player.current_animation
 		var before := player.current_animation_position
 		await frames(6)
-		check(is_equal_approx(before, player.current_animation_position), "off-screen room animation pauses")
+		check(player.current_animation == animation and is_equal_approx(before, player.current_animation_position), "off-screen room animation pauses")
 		paused = true
 		break
 	check(paused, "zoom leaves rooms off screen")
@@ -252,7 +264,9 @@ func _run() -> void:
 	check(is_instance_valid(camp.modal_panel) and camp.modal_panel.name == "FortWorkerPicker", "assignment picker")
 	camp._close_modal()
 	camp.show_plot(int(lg.fort_slot_plot("barracks")["id"]))
-	check(camp.upgrade_button.disabled and camp.upgrade_reason.text.contains(I18n.t("Строитель занят: %s").get_slice("%s", 0)), "builder busy on card")
+	var busy_text := I18n.t("Строитель занят: %s") % I18n.t(String(Legion.FORT_B["tannery"]["name"]))
+	check(camp.upgrade_button.disabled and camp.upgrade_reason.is_visible_in_tree() and camp.upgrade_reason.text == busy_text, "builder busy on card")
+	check(camp.main_action.disabled and camp.main_action_reason.is_visible_in_tree() and camp.main_action_reason.text == I18n.t(lg.can_recruit_resident()), "recruit refusal stays separate from builder")
 	check(is_instance_valid(camp.card_body.get_node_or_null("FortWorker/FortWorkerName")), "worker face and name on card")
 	await shot("5_builder_busy.png")
 	print("FORTCUT DRAWCALLS %d" % peak_draws)

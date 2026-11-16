@@ -119,6 +119,7 @@ var selected := ""
 var card_level: Label
 var upgrade_button: Button
 var upgrade_reason: Label
+var main_action_reason: Label
 var upgrade_timer: Label
 var upgrade_bar: ProgressBar
 var recruit_button: Button
@@ -665,6 +666,8 @@ func _build_card() -> void:
 	main_action.custom_minimum_size = Vector2(290, 52)
 	main_action.add_theme_stylebox_override("normal", hud._box_pill(16, 8, "g_btn_on"))
 	primary.add_child(main_action)
+	main_action_reason = _wrap("", 13)
+	primary.add_child(main_action_reason)
 	if selected == "barracks":
 		recruit_button = main_action
 	if selected == "hq":
@@ -748,9 +751,8 @@ func _refresh_card() -> void:
 	main_action.text = title
 	main_action.disabled = reason != ""
 	main_action.tooltip_text = I18n.t(reason)
-	if reason != "" and not running:
-		upgrade_reason.text = I18n.t(reason)
-		upgrade_reason.show()
+	main_action_reason.text = I18n.t(reason) if not running else ""
+	main_action_reason.visible = main_action_reason.text != ""
 	_refresh_costs(card_body)
 
 
@@ -1408,7 +1410,7 @@ func _jump_to_type(type: String) -> void:
 
 
 func show_build_menu(plot_id := -1) -> void:
-	build_plot_id = plot_id
+	build_plot_id = plot_id if plot_id >= 0 else lg.fort_empty_plot()
 	_guide_advance(1)
 	var v := _new_modal(minf(1020, maxf(700, size.x - 100)))
 	modal_panel.name = "FortBuildMenu"
