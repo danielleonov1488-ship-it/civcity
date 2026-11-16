@@ -829,6 +829,7 @@ func army_tick() -> Array:
 	var t := now()
 	if V3:
 		_camp_init()
+		_craft_migrate()
 		out.append_array(fort_finish())
 		_hero_tick3()
 		flags["army0"] = true                  # Легион 3.0: ни трёх стартовых воинов, ни новобранцев дня — первого призовёт игрок
@@ -1040,6 +1041,8 @@ func add_item(it: Dictionary) -> Dictionary:
 	if store_count() >= store_cap():
 		return {}
 	var e := it.duplicate()
+	if v3():
+		e["tier"] = Gear.tier_of(e)
 	e["id"] = iid_next
 	e["on"] = 0
 	iid_next += 1
@@ -1070,7 +1073,7 @@ func gear_bonus(s: Dictionary) -> Dictionary:
 		var it := item(int(s["gear"][slot]))
 		if it.is_empty():
 			continue
-		var st := Gear.stats(it)
+		var st := Gear.tier_stats(it) if v else Gear.stats(it)
 		for k in out:
 			out[k] = float(out[k]) + float(st[k])
 	return out
@@ -1190,6 +1193,10 @@ func smelt(iid: int) -> bool:
 
 
 func can_forge(slot: String, cls: String, r: int) -> String:
+	if v3():
+		var kind := Gear.craft_kind(slot, cls)
+		var plot_id := int(fort_slot_plot(Gear.craft_room(kind)).get("id", -1))
+		return can_craft(plot_id, kind, maxi(1, craft_tier_max(plot_id)))
 	if not army_on():
 		return "Кузница вещей — в новой игре"
 	if forge_lvl() <= 0:
@@ -1214,6 +1221,10 @@ func can_forge(slot: String, cls: String, r: int) -> String:
 
 
 func forge(slot: String, cls: String, r: int) -> bool:
+	if v3():
+		var kind := Gear.craft_kind(slot, cls)
+		var plot_id := int(fort_slot_plot(Gear.craft_room(kind)).get("id", -1))
+		return craft_start(plot_id, kind, maxi(1, craft_tier_max(plot_id)))
 	if can_forge(slot, cls, r) != "":
 		return false
 	var F: Dictionary = Gear.FORGE[r]
@@ -1234,6 +1245,12 @@ func forge(slot: String, cls: String, r: int) -> bool:
 
 ## Вещь набora: реликвия провинции, эпические обломки (синие), материалы ×2, денарии, 8 ч; Кузница 5+
 func can_forge_set(set_id: String, slot: String, cls: String) -> String:
+	if v3():
+		var kind := Gear.craft_kind(slot, cls)
+		var plot_id := int(fort_slot_plot(Gear.craft_room(kind)).get("id", -1))
+		var why := can_craft(plot_id, kind, Gear.tier_of({"ilvl": forge_ilvl()}))
+		if why != "":
+			return why
 	if not army_on():
 		return "Наборы — в новой игре"
 	if forge_lvl() < int(Gear.SET_FORGE["lvl"]):
@@ -1284,6 +1301,8 @@ func forge_set(set_id: String, slot: String, cls: String) -> bool:
 		"end": now() + secs, "total": secs}
 	if slot == "weapon" and cls == "engineer":
 		forging["engine"] = "catapult" if _rng.randf() < 0.5 else "ballista"
+	if v3():
+		_craft_migrate()
 	changed.emit()
 	daily_note("forge")                   # задания дня
 	return true
@@ -1375,6 +1394,8 @@ func forge_left() -> float:
 
 ## Вещь выкована — на Склад (полон — ждёт в Кузнице); текст для колокольчика или ""
 func _forge_tick() -> String:
+	if v3():
+		return "" # Старый заказ переносится в комнату и ждёт сбора.
 	if forging.is_empty() or now() < float(forging["end"]):
 		return ""
 	var e := forging.duplicate()
@@ -1465,6 +1486,8 @@ func _drop(st: Dictionary, first: bool) -> Dictionary:
 			open.append(cls)
 	var ilvl := 1 + int(st.get("idx", 0)) / 3
 	var rolled := Gear.roll(_rng, ilvl, boss, open, Gear.SLOTS_V3 if V3 else Gear.SLOTS)
+	if v3():
+		rolled["tier"] = clampi(int(st.get("r", 0)) + 1, 1, Gear.TIERS)
 	if bool(st.get("vet", false)):
 		rolled["rarity"] = maxi(int(rolled["rarity"]), Gear.roll_rarity(_rng, boss))   # ветераны: из двух бросков — лучший
 	var it := add_item(rolled)
@@ -1517,6 +1540,9 @@ func soldier_stats(s: Dictionary, type: String) -> Dictionary:
 	var rng_b := float(sb["ranged"]) if float(UNITS[type]["range"]) > 3.0 else 0.0
 	var st := unit_stats(type, level_of(type), bonus("atk") + forge_b() + b + float(g["atk"]) + float(sb["atk"]) + rng_b,
 		bonus("hp") + forge_b() + b + float(g["hp"]) + float(sb["hp"]), armory_b() + float(g["armor"]) + float(sb["armor"]))
+	if v3():
+		st = gear_unit_stats(type, level_of(type), bonus("atk") + b + float(g["atk"]) + float(sb["atk"]) + rng_b,
+			bonus("hp") + b + float(g["hp"]) + float(sb["hp"]), float(g["armor"]) + float(sb["armor"]))
 	# наборы: свойства 4 вещей и лечение — только походы (бои с городами собирают отряд без воинов)
 	if float(sb["heal"]) > 0.0:
 		st["heal_k"] = 1.0 + float(sb["heal"])
@@ -1993,6 +2019,13 @@ static func unit_stats(type: String, lvl: int, atk_b := 0.0, hp_b := 0.0, armor_
 	for k in ["heal", "heal_every", "backline"]:             # Легион 3.0: жрец лечит, всадник идёт в тыл врага
 		if U.has(k):
 			out[k] = U[k]
+	return out
+
+
+## V3: уровень даёт немного опыта; сила приходит от вещей.
+static func gear_unit_stats(type: String, lvl: int, atk_b := 0.0, hp_b := 0.0, armor_b := 0.0) -> Dictionary:
+	var out := unit_stats(type, 1, atk_b + 0.04 * (lvl - 1), hp_b + 0.04 * (lvl - 1), armor_b + (lvl - 1))
+	out["level"] = lvl
 	return out
 
 
@@ -2717,6 +2750,8 @@ static func base_scales(cycle: int, r: int, s: int, tuned := true) -> Array:
 	var tune: Array = TUNE2 if V2 else TUNE
 	if tuned and r < tune.size() and s < (tune[r] as Array).size():
 		k *= float(tune[r][s])
+	if V3 and cycle == 0 and r == 0 and s < 3:
+		k *= 0.8 # Первые бои проходимы со стартовым оружием, до полного комплекта.
 	if cycle > 0 and V2:
 		# ветераны: от силы последнего боя Дакии, дальше по VET_STEP за бой; своя подгонка
 		var Dv := (9 * STAGES2 + STAGES2 - 1) * STEP2 + (r * STAGES2 + s) * VET_STEP
@@ -2848,6 +2883,7 @@ static func stage(cycle: int, r: int, s: int) -> Dictionary:
 		reward["glory"] = int(reward["glory"]) + 1
 	var title: String = R["name"] + ((" · ветераны" if V2 else " " + roman(cycle + 1)) if cycle > 0 else "")
 	return {"cycle": cycle, "r": r, "s": s, "idx": idx, "key": stage_key(cycle, r, s), "D": D, "boss": boss, "waves": waves, "packs": packs,
+		"recommended_tier": clampi(r + 1, 1, Gear.TIERS) if V3 else 0,
 		"scale": scale, "boss_scale": boss_scale, "reward": reward, "title": title, "region": R["id"], "junior": junior, "vet": V2 and cycle > 0,
 		"name": ENEMIES[R["boss"]]["name"] if boss else (ENEMIES[R["junior"]]["name"] if junior else "Бой %d" % (s + 1)),
 		"fixed": not fx.is_empty(), "theme": String(fx.get("name", "")), "kite": bool(fx.get("kite", false)), "bite": bool(fx.get("bite", false)),
@@ -3771,6 +3807,14 @@ func defense_snapshot() -> Dictionary:
 ## Места отряда для боя с городом (снимок для сервера): which "pvp" — отряд нападения (отряд походов), "defense" — отряд
 ## обороны ([] — как отряд походов). Герой (pvp_hero) — на первом месте вместо бойца этого места, как в походах
 func pvp_entries(which := "pvp") -> Array:
+	if v3():
+		var entries := []
+		for stats3: Dictionary in squad_v3():
+			if stats3["key"] == "hero":
+				entries.append(hero_entry())
+			else:
+				entries.append({"type": stats3["key"], "level": stats3["level"], "gear_v": 1, "stats3": gear_snapshot_stats(stats3)})
+		return entries
 	var sq := []
 	var hero := pvp_hero()
 	if hero:
@@ -3882,7 +3926,41 @@ static func snapshot_stats(snap: Dictionary) -> Array:
 			if i == 0:
 				out.append(snap_hero(e, ab, hb))
 		elif UNITS.has(t):
-			out.append(unit_stats(t, clampi(int(e.get("level", 1)), 1, MAX_LEVEL), ab, hb))
+			var st := unit_stats(t, clampi(int(e.get("level", 1)), 1, MAX_LEVEL), ab, hb)
+			if int(e.get("gear_v", 0)) == 1 and e.get("stats3", null) is Dictionary:
+				st.merge(gear_snapshot_stats(e["stats3"]), true)
+			out.append(st)
+	return out
+
+
+## В снимок попадают только разрешённые боевые числа, без инвентаря и таймеров.
+static func gear_snapshot_stats(raw: Dictionary) -> Dictionary:
+	var out := {}
+	for k: String in ["hp", "atk", "armor", "rate", "range", "speed", "heal", "heal_every", "heal_k", "row", "place"]:
+		var value = raw.get(k)
+		if (value is int or value is float) and is_finite(float(value)):
+			out[k] = clampf(float(value), 0.05 if k == "rate" else 0.0, 1000000.0)
+	for k: String in ["hp", "atk", "row", "place"]:
+		if out.has(k):
+			out[k] = int(out[k])
+	for k: String in ["stun", "rage", "reflect", "drain", "kite", "revive"]:
+		if raw.get("set_" + k, false) is bool and bool(raw.get("set_" + k, false)):
+			out["set_" + k] = true
+	if raw.get("vs", null) is Dictionary:
+		var vs := {}
+		for key: String in raw["vs"]:
+			var value = raw["vs"][key]
+			if (value is int or value is float) and is_finite(float(value)):
+				vs[key] = clampf(float(value), 0.0, 10.0)
+		out["vs"] = vs
+	if raw.get("tags", null) is Array:
+		out["tags"] = (raw["tags"] as Array).filter(func(x: Variant): return x is String)
+	if raw.get("gear_look", null) is Dictionary:
+		var look := {}
+		for slot: String in Gear.SLOTS_V3:
+			if raw["gear_look"].has(slot):
+				look[slot] = clampi(int(raw["gear_look"][slot]), 0, 4)
+		out["gear_look"] = look
 	return out
 
 
@@ -4160,6 +4238,7 @@ func fort_assign(plot_id: int, sid: int) -> bool:
 	p["worker"] = sid
 	p.erase("legacy_worker")
 	p["t"] = now()
+	_craft_deadlines(p, now())
 	_fort_changed()
 	return true
 
@@ -4303,6 +4382,7 @@ func _fort_start(p: Dictionary, type: String, to: int) -> void:
 	var secs := camp_time_h(to) * float(FORT_B[type]["time_k"]) * 3600.0 / maxf(0.001, time_k)
 	p["b"] = type
 	p["up"] = {"to": to, "end": now() + secs, "total": secs}
+	_craft_deadlines(p, now())
 	_fort_changed()
 	daily_note("upgrade")
 
@@ -4390,6 +4470,7 @@ func _fort_accrue(p: Dictionary, until: float) -> void:
 	var since := float(p.get("t", until))
 	if until <= since:
 		return
+	_craft_accrue(p, until - since, until)
 	var prod := fort_production(String(p["b"]), int(p["lv"]))
 	# Время простоя не накапливается: ни без человека, ни при полном складе.
 	if not prod.is_empty() and (p["up"] as Dictionary).is_empty() and not fort_worker(int(p["id"])).is_empty():
@@ -4505,6 +4586,7 @@ func _fort_load(raw: Variant) -> void:
 		fort["plots"].append({"id": id, "b": type, "lv": lv, "up": u,
 			"pend": maxf(0.0, float(entry.get("pend", 0.0))), "t": maxf(0.0, float(entry.get("t", now())))})
 		var loaded: Dictionary = fort["plots"][-1]
+		_craft_load(loaded, entry.get("craft", []))
 		if entry.has("worker"):
 			loaded["worker"] = int(entry["worker"])
 			if entry.get("legacy_worker", null) is Dictionary:
@@ -4738,7 +4820,7 @@ func _v3_reclass(s: Dictionary) -> void:
 	var gd: Dictionary = s["gear"]
 	var w := item(int(gd.get("weapon", 0)))
 	if w.is_empty():
-		var it := {"id": iid_next, "slot": "weapon", "cls": "legionary", "rarity": 0, "ilvl": 1, "on": int(s["id"]), "free": true}
+		var it := {"id": iid_next, "slot": "weapon", "cls": "legionary", "rarity": 0, "ilvl": 1, "tier": 1, "on": int(s["id"]), "free": true}
 		iid_next += 1
 		items.append(it)
 		gd["weapon"] = int(it["id"])
@@ -4793,6 +4875,7 @@ func set_place(i: int, sid: int) -> bool:
 		if workplace >= 0:
 			_fort_accrue(fort_plot(workplace), now())
 			fort_plot(workplace)["worker"] = 0
+			_craft_deadlines(fort_plot(workplace), now())
 		for k in squad3.size():
 			if int(squad3[k]) == sid:
 				squad3[k] = 0
@@ -4958,6 +5041,8 @@ func from_dict(d: Dictionary) -> void:
 			e["on"] = int(e.get("on", 0))
 			e["rarity"] = clampi(int(e.get("rarity", 0)), 0, 4)
 			e["ilvl"] = maxi(1, int(e.get("ilvl", 1)))
+			if v3():
+				e["tier"] = Gear.tier_of(e)
 			items.append(e)
 	iid_next = int(d.get("iid_next", 1))
 	shards = [0, 0, 0, 0, 0]
@@ -5029,6 +5114,7 @@ func from_dict(d: Dictionary) -> void:
 			squad3[i] = 0
 	if v3():
 		_camp_init()
+		_craft_migrate()
 		_v3_sync_squad()
 	# умения за уже побеждённых боссов (и масло — с первого дня: старым сохранениям тоже)
 	for p in perk_ids():
@@ -5197,6 +5283,168 @@ func forge_time(base_hours: float) -> float:
 	return base_hours * (1.0 + 0.12 * maxi(0, forge_ilvl() - 1) if v3() else 1.0) * 3600.0 / maxf(0.001, time_k)
 
 
+# ---------- V3: очередь каждой кузницы и оружейной ----------
+
+func craft_queue(plot_id: int) -> Array:
+	var p := fort_plot(plot_id) if v3() else {}
+	if p.is_empty() or not p["b"] in ["forge", "arsenal"]:
+		return []
+	if not p.has("craft"):
+		p["craft"] = []
+	return p["craft"]
+
+
+func craft_capacity(plot_id: int) -> int:
+	var p := fort_plot(plot_id) if v3() else {}
+	return clampi(1 + int(p.get("lv", 0)) / 4, 1, 3) if not p.is_empty() and p["b"] in ["forge", "arsenal"] and int(p["lv"]) > 0 else 0
+
+
+func craft_tier_max(plot_id: int) -> int:
+	var p := fort_plot(plot_id) if v3() else {}
+	return clampi(floori(int(p.get("lv", 0)) / 1.2), 0, Gear.TIERS) if craft_capacity(plot_id) > 0 else 0
+
+
+func craft_working(plot_id: int) -> bool:
+	var p := fort_plot(plot_id) if v3() else {}
+	return not p.is_empty() and int(p["lv"]) > 0 and (p["up"] as Dictionary).is_empty() and not fort_worker(plot_id).is_empty()
+
+
+func can_craft(plot_id: int, kind: String, tier: int) -> String:
+	if not v3() or not Gear.CRAFT_TYPES.has(kind):
+		return "Нет такого рецепта"
+	var p := fort_plot(plot_id)
+	if p.is_empty() or p["b"] != Gear.craft_room(kind) or int(p["lv"]) <= 0:
+		return "Выберите нужную мастерскую"
+	if tier < 1 or tier > Gear.TIERS or tier > craft_tier_max(plot_id):
+		return I18n.t("Для тира %d нужен уровень комнаты %d") % [clampi(tier, 1, Gear.TIERS), Gear.tier_room_level(tier)]
+	if not craft_working(plot_id):
+		return "Назначьте работника и завершите улучшение комнаты"
+	if craft_queue(plot_id).size() >= craft_capacity(plot_id):
+		return "Очередь заполнена. Соберите готовые вещи."
+	return mats_short(Gear.craft_mats(kind, tier))
+
+
+func craft_start(plot_id: int, kind: String, tier: int) -> bool:
+	fort_finish()
+	if can_craft(plot_id, kind, tier) != "":
+		return false
+	var need := Gear.craft_mats(kind, tier)
+	for m: String in need:
+		mats[m] = float(mats.get(m, 0.0)) - int(need[m])
+	var secs := float(Gear.TIER_TIME[tier - 1]) / maxf(0.001, time_k)
+	craft_queue(plot_id).append({"kind": kind, "tier": tier, "left": secs, "total": secs, "end": 0.0})
+	_craft_deadlines(fort_plot(plot_id), now())
+	daily_note("forge")
+	changed.emit()
+	return true
+
+
+## Готовые вещи занимают место, но не мешают следующему заказу работать.
+func _craft_accrue(p: Dictionary, elapsed: float, until: float) -> void:
+	if not p.has("craft"):
+		return
+	var budget := elapsed if craft_working(int(p["id"])) else 0.0
+	for job: Dictionary in p["craft"]:
+		var left := maxf(0.0, float(job["left"]))
+		var used := minf(budget, left)
+		job["left"] = maxf(0.0, left - used)
+		budget -= used
+	_craft_deadlines(p, until)
+
+
+func _craft_deadlines(p: Dictionary, at: float) -> void:
+	var sum := 0.0
+	var working := craft_working(int(p["id"]))
+	for job: Dictionary in p.get("craft", []):
+		sum += float(job["left"])
+		job["end"] = at + sum if working and float(job["left"]) > 0.0 else 0.0
+
+
+func craft_ready(plot_id: int) -> int:
+	var n := 0
+	for job: Dictionary in craft_queue(plot_id):
+		if float(job["left"]) <= 0.0:
+			n += 1
+	return n
+
+
+func craft_collect(plot_id: int) -> Dictionary:
+	fort_finish()
+	if store_count() >= store_cap():
+		return {} # Полный склад не тратит заказ и случайный бросок.
+	var queue := craft_queue(plot_id)
+	for i in queue.size():
+		var job: Dictionary = queue[i]
+		if float(job["left"]) > 0.0:
+			continue
+		var it: Dictionary = (job["legacy"] as Dictionary).duplicate(true) if job.has("legacy") else Gear.craft_item(String(job["kind"]), int(job["tier"]), Gear.roll_craft_rarity(_rng))
+		var got := add_item(it)
+		if got.is_empty():
+			return {}
+		queue.remove_at(i)
+		changed.emit()
+		return got
+	return {}
+
+
+func _craft_load(p: Dictionary, raw: Variant) -> void:
+	if not p["b"] in ["forge", "arsenal"] or not raw is Array:
+		return
+	p["craft"] = []
+	for entry in raw:
+		if not entry is Dictionary:
+			continue
+		var kind := String(entry.get("kind", ""))
+		if not Gear.CRAFT_TYPES.has(kind):
+			continue
+		var tier := clampi(int(entry.get("tier", 1)), 1, Gear.TIERS)
+		var total := maxf(1.0, float(entry.get("total", Gear.TIER_TIME[tier - 1])))
+		var job := {"kind": kind, "tier": tier, "total": total, "left": clampf(float(entry.get("left", total)), 0.0, total), "end": 0.0}
+		if entry.get("legacy", null) is Dictionary and String(entry["legacy"].get("slot", "")) in Gear.SLOTS:
+			job["legacy"] = entry["legacy"].duplicate(true)
+		(p["craft"] as Array).append(job)
+
+
+## Уже оплаченный старый заказ сохраняет редкость, набор и остаток времени.
+func _craft_migrate() -> void:
+	if forging.is_empty():
+		return
+	var kind := String(Gear.CLS_KIND.get(Gear.weapon_class(forging), "sword")) if forging.get("slot", "") == "weapon" else String(forging.get("slot", "helmet"))
+	if not Gear.CRAFT_TYPES.has(kind):
+		kind = "helmet"
+	var p := fort_slot_plot(Gear.craft_room(kind))
+	if p.is_empty():
+		p = fort_slot_plot("forge")
+	if p.is_empty() or int(p["lv"]) <= 0:
+		return
+	_fort_accrue(p, now())
+	var it := forging.duplicate(true)
+	for key: String in ["end", "total", "wait"]:
+		it.erase(key)
+	it["tier"] = Gear.tier_of(it)
+	var left := maxf(0.0, float(forging.get("end", now())) - now())
+	craft_queue(int(p["id"])).append({"kind": kind, "tier": int(it["tier"]), "left": left,
+		"total": maxf(left, float(forging.get("total", 1.0))), "end": 0.0, "legacy": it})
+	# Остаток посчитан на сейчас; прошлое время этой комнаты уже не тратим второй раз.
+	p["t"] = now()
+	forging = {}
+	_craft_deadlines(p, now())
+
+
+## Сравнение без переодевания живого воина и без сигналов/случайных чисел.
+func equip_power(sid: int, iid: int) -> Array:
+	var s := soldier(sid)
+	var it := item(iid)
+	if s.is_empty() or it.is_empty():
+		return [0, 0]
+	var before := power(soldier_stats(s, unit_of_class(String(s["cls"]))))
+	var probe := s.duplicate(true)
+	probe["gear"][String(it["slot"])] = iid
+	if v3() and it["slot"] == "weapon":
+		probe["cls"] = Gear.weapon_class(it)
+	return [before, power(soldier_stats(probe, unit_of_class(String(probe["cls"]))))]
+
+
 func speed_remaining() -> float:
 	var c = city()
 	var today := int(c.day) if c != null else 0
@@ -5207,6 +5455,18 @@ func speed_remaining() -> float:
 
 
 func timer3(key: String) -> Dictionary:
+	if v3() and key.begins_with("craft_"):
+		var parts := key.split("_")
+		if parts.size() != 3 or not parts[1].is_valid_int() or not parts[2].is_valid_int():
+			return {}
+		var plot_id := int(parts[1])
+		if not craft_working(plot_id):
+			return {}
+		var queue := craft_queue(plot_id)
+		for i in queue.size():
+			if float(queue[i]["left"]) > 0.0:
+				return queue[i] if i == int(parts[2]) else {}
+		return {}
 	if v3() and key == "fort_expand":
 		_fort_init()
 		return fort["up"]
@@ -5223,6 +5483,8 @@ func timer3(key: String) -> Dictionary:
 
 
 func speed_info(key: String) -> Dictionary:
+	if key.begins_with("craft_"):
+		fort_finish()
 	var timer := timer3(key)
 	var end_key := "train_end" if key.begins_with("train_") else "end"
 	var left := maxf(0.0, float(timer.get(end_key, 0.0)) - now())
@@ -5241,6 +5503,9 @@ func speed_up(key: String) -> bool:
 	var timer := timer3(key)
 	var end_key := "train_end" if key.begins_with("train_") else "end"
 	timer[end_key] = maxf(now(), float(timer[end_key]) - float(info["seconds"]))
+	if key.begins_with("craft_"):
+		timer["left"] = maxf(0.0, float(timer["left"]) - float(info["seconds"]))
+		_craft_deadlines(fort_plot(int(key.split("_")[1])), now())
 	speed_used += float(info["seconds"])
 	tick()
 	changed.emit()
@@ -5263,7 +5528,8 @@ func open_chest(kind: String) -> Dictionary:
 	var rarity := 0 if roll <= 70 else (2 if roll <= 92 else (3 if roll <= 99 else 4))
 	var slot := String(Gear.SLOTS_V3[_rng.randi_range(0, Gear.SLOTS_V3.size() - 1)])
 	var cls := String(["legionary", "archer", "priest", "cavalry"][_rng.randi_range(0, 3)])
-	var gear := add_item({"slot": slot, "cls": cls if slot == "weapon" else "", "rarity": rarity, "ilvl": maxi(1, camp_level("hq"))})
+	var gear := add_item({"slot": slot, "cls": cls if slot == "weapon" else "", "rarity": rarity, "ilvl": maxi(1, camp_level("hq")),
+		"tier": clampi(1 + progress / STAGES2, 1, Gear.TIERS)})
 	if gear.is_empty():
 		return {}
 	var reward := {"money": _rng.randi_range(30, 60) * tier, "rations": _rng.randi_range(1, 3) * tier,

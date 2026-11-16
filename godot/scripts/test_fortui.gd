@@ -263,7 +263,10 @@ func _run() -> void:
 		return
 	camp.show_plot(arsenal)
 	camp.main_action.pressed.emit()
-	if not check(camp.lu.camp_window == "store" and camp.lu.visible, "arsenal opens equipment without warehouse"):
+	if not check(camp.lu.camp_window == "craft" and camp.lu.visible and camp.lu._craft_plot == arsenal, "arsenal opens its craft queue without warehouse"):
+		return
+	camp.lu.open_camp_window("store")
+	if not check(camp.lu.camp_window == "store" and camp.lu.visible, "craft panel opens shared gear storage"):
 		return
 	camp.lu.close()
 	# Цепочка теперь: сбор → стройка → кухня → поход; старые окна её не продвигают.
