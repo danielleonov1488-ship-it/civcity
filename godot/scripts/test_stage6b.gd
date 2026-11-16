@@ -185,6 +185,10 @@ func _new() -> void:
 	for k in 10:
 		place("lamp_post", Vector2(X0 + 1.0 + k * 3.6, Z0 - 8.5), Vector2(0.3, -0.3), 8)
 		place("flowers", Vector2(X0 + 2.5 + k * 3.6, Z0 - 9.5), Vector2(0.3, -0.3), 8)
+	# После BAL1 услуги и утварь ремесленникам счастья не дают. Добавляем сад за дворами.
+	for x in [8.0, 16.0]:
+		var statue := place("statue", Vector2(X0 + x, Z0 - 12.0), Vector2(0.3, 0), 8)
+		check(not statue.is_empty(), "статуя для счастья после перестройки: x=%d" % int(x))
 	c.compute()
 	var cs: Dictionary = {}
 	for s in shops:

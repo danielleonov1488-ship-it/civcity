@@ -72,6 +72,21 @@ func _fams_ok(c: City) -> bool:
 	return true
 
 
+## Считаем именно вернувшегося жителя в прежней семье, включая его сохранённый облик.
+func _returned_member(c: City, res: Dictionary) -> int:
+	var found := 0
+	var wanted: Dictionary = res["m"]
+	for h: Dictionary in c.buildings.values():
+		for f: Dictionary in h.get("families", []):
+			if String(f["name"]) != String(res["fam"]):
+				continue
+			for m: Dictionary in f.get("m", []):
+				if int(m.get("sd", -1)) == int(wanted["sd"]) and int(m["sx"]) == int(wanted["sx"]) \
+					and int(m["age"]) == int(wanted["age"]) and String(m["pn"]) == String(wanted["pn"]):
+					found += 1
+	return found
+
+
 func _gate() -> void:
 	print("== ворота V3")
 	var c := _town(2)
@@ -125,11 +140,15 @@ func _recruit() -> void:
 	_check(String(s["cls"]) == "legionary" and L.worn(s).size() == 1 and Gear.weapon_class(L.worn(s)[0]) == "legionary" and int(L.worn(s)[0]["rarity"]) == 0,
 		"новобранец — легионер с мечом даром")
 	_check(float(c.money) == m0, "призыв бесплатный")
-	# уволить — житель возвращается (ждёт жилья на площади)
+	# Уволенный возвращается в прежнюю семью, отдельную семью на площади не создаёт.
 	var sid := int(s["id"])
 	var a0 := c.arrivals.size()
-	_check(L.dismiss(sid) and L.soldiers.is_empty() and c.arrivals.size() == a0 + 1 and int(c.arrivals[-1]["n"]) == 1,
-		"уволили: воинов %d, на площади ждёт %s" % [L.soldiers.size(), String(c.arrivals[-1]["name"]) if not c.arrivals.is_empty() else "никто"])
+	var res: Dictionary = s["res"].duplicate(true)
+	_check(_returned_member(c, res) == 0, "призванного жителя больше нет в семье")
+	var dismissed := L.dismiss(sid)
+	_check(dismissed and L.soldiers.is_empty() and c.arrivals.size() == a0 and int(c.stats["pop"]) == pop0
+		and _returned_member(c, res) == 1 and _fams_ok(c),
+		"уволили: воинов %d, жителей снова %d; тот же житель в прежней семье, очередь не выросла" % [L.soldiers.size(), int(c.stats["pop"])])
 	_check(not L.items.any(func(it): return bool(it.get("free", false))), "меч даром не остался на складе")
 
 
@@ -415,8 +434,14 @@ func _save() -> void:
 	_check(L2.squad3 == [int(s["id"]), 0, 0, int(s2["id"]), 0] and L2.slots() == 4 and absf(L2.rations - 7.5) < 0.01, "отряд %s, пайки %.1f" % [L2.squad3, L2.rations])
 	var sq := L2.squad_v3()
 	_check(sq.size() == 2 and int(sq[0]["row"]) == 0 and int(sq[1]["row"]) == 1 and String(sq[1]["key"]) == "priest", "в бою: первый ряд и жрец во втором")
+	var pop0 := int(c2.stats["pop"])
+	var a0 := c2.arrivals.size()
+	var res: Dictionary = L2.soldier(int(s2["id"]))["res"].duplicate(true)
+	_check(_returned_member(c2, res) == 0, "после загрузки призванного жителя ещё нет в семье")
 	var ok := L2.dismiss(int(s2["id"]))
-	_check(ok and c2.arrivals.size() == 1, "после загрузки увольнение возвращает горожанина")
+	_check(ok and c2.arrivals.size() == a0 and int(c2.stats["pop"]) == pop0 + 1 and _returned_member(c2, res) == 1
+		and L2.soldier(int(s2["id"])).is_empty() and L2.soldiers.size() == 1 and _fams_ok(c2),
+		"после загрузки увольнение возвращает того же горожанина в прежнюю семью без новой очереди")
 
 
 func _choice3() -> void:

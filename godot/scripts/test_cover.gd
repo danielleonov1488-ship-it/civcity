@@ -236,7 +236,9 @@ func _tip() -> void:
 	await frames(2)
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Кому достанется лавка" and c.tips.has("cover_tip"),
 		"советник объясняет подсветку и «Обзор»: «%s»" % hud.adv_title.text)
-	check(hud.adv_text.text.contains("зелёные") and hud.adv_text.text.contains("синие") and hud.adv_text.text.contains("«Обзор»"), "в совете — зелёные, синие и «Обзор»")
+	check(hud.adv_text.text.contains("зелёные") and hud.adv_text.text.contains("синие")
+		and hud.adv_text.text.contains("«Обзор города» → «Город» → «Счастье на карте»"),
+		"в совете — зелёные, синие и путь к счастью на карте")
 	hud.advisor_panel.visible = false
 	game.set_tool("")
 	game.set_tool("stall_fruit")

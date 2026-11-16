@@ -156,8 +156,11 @@ func deco(type: String, at: Vector2) -> Dictionary:
 
 ## Семья в дом (как после загрузки): жители; kid — третья взрослая дочь (Мария из «Где Мася?»)
 func settle(h: Dictionary, nm: String, kid := false) -> void:
-	var n := c.house_cap(h)
-	c.settled(int(h["id"]), n, nm)
+	var n := mini(4, c.house_cap(h))
+	var got := c.settled(int(h["id"]), n, nm)
+	check(got == n, "семья %s заселилась целиком (%d)" % [nm, n])
+	if got != n:
+		return
 	var fam: Array = game.people._make_family(nm, n, int(h["id"]), c.door_point(h))
 	if kid and fam.size() >= 3:
 		fam[2]["child"] = false
@@ -3070,6 +3073,9 @@ func _crowded() -> void:
 		return
 	h["tier"] = 2
 	settle(h, "Валерии")
+	settle(h, "Фабии")
+	check((h["families"] as Array).size() == 2 and c.house_free_floors(h) == 0 and int(h["pop"]) == 8,
+		"два этажа заняты двумя семьями по четыре человека")
 	game._show(h)
 	c.compute()
 	fresh7(3800, ["cat", "leak", "square", "donkey"])
@@ -3077,10 +3083,13 @@ func _crowded() -> void:
 	sto._tried = ""
 	sto.tick()
 	var o: Dictionary = S["offer"]
-	check(String(o.get("id", "")) == "crowded" and int(o.get("home", -1)) == int(h["id"]), "Посёлок, третий этаж изучен — «Тесно у Валериев» у дома в 2 этажа (%s, %s)" % [o.get("id"), o.get("fam")])
+	check(String(o.get("id", "")) == "crowded" and int(o.get("home", -1)) == int(h["id"])
+		and String(o.get("fam", "")) in ["Валерии", "Фабии"],
+		"Посёлок, третий этаж изучен — просьба жильцов полного двухэтажного дома (%s, %s)" % [o.get("id"), o.get("fam")])
 	if String(o.get("id", "")) != "crowded":
 		return
-	check(String(sto.row_info().get("title", "")) == "Тесно у Валериев", "название с семьёй: «%s»" % sto.row_info().get("title"))
+	var title := "Тесно у Валериев" if String(o.get("fam", "")) == "Валерии" else "Тесно у Фабиев"
+	check(String(sto.row_info().get("title", "")) == title, "название с семьёй: «%s»" % sto.row_info().get("title"))
 	sto.accept()
 	var A: Dictionary = S["active"]
 	sto.tick()

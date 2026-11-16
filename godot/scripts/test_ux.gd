@@ -246,6 +246,16 @@ func _town() -> void:
 		put(e[0], Vector2(e[1], 146))
 	for x in [160.0, 168.0, 181.0, 194.0, 202.0, 211.0, 220.0, 228.0]:
 		put("lamp_post", Vector2(x, 146))
+	# Всей цепочке мазков нужны хотя бы 10 готовых домов. Клумбы радуют только первый ряд.
+	var flowers := 0
+	for z in [160.0, 164.0]:
+		for x in range(152, 230, 4):
+			reset()
+			var pl: Dictionary = game.placement("flowers", Vector2(x, z))
+			if pl["err"] == "":
+				var flower := c.place("flowers", pl["pos"], pl["yaw"], pl["variant"], pl["color"])
+				flowers += int(not flower.is_empty())
+	check(flowers >= 24, "клумбы у первого ряда: %d" % flowers)
 	# ряд 2 — южная сторона второй улицы (северная свободна — для лавки с рожицами); третья улица — с двух сторон
 	for x in range(152, 230, 4):
 		var h := put("house_pleb", Vector2(x, 184))
@@ -289,7 +299,7 @@ func _floor_tool() -> void:
 	var ev := last_event("Изучено:")
 	check(ev == "Изучено: Второй жилой этаж — инструмент «Этаж» справа внизу (клавиша U)", "событие говорит, где искать: «%s»" % ev)
 	var ready: Array = c.floor_ready()
-	check(ready.size() >= 8, "готовы к этажу: %d домов" % ready.size())
+	check(ready.size() >= 10, "готовы к этажу: %d домов (на всю цепочку мазков нужно 10)" % ready.size())
 	for id in ready:
 		if not row1.has(id):
 			check(false, "готов дом не из ряда 1: %d" % id)
@@ -390,7 +400,7 @@ func ready_row() -> Array:
 
 func _floor_stroke() -> void:
 	var r := ready_row()
-	if not check(r.size() >= 8, "готовых домов в ряду: %d" % r.size()):
+	if not check(r.size() >= 10, "готовых домов в ряду: %d" % r.size()):
 		return
 	# щелчок по стрелке над одним домом
 	var one: int = r[0]
@@ -473,7 +483,7 @@ func _floor_stroke() -> void:
 	check(not game.floor_drag and game.floor_done.is_empty(), "мазок окончен")
 	# ведём по самим домам (луч по модели), а не по стрелкам
 	var r2 := ready_row()
-	if r2.size() >= 2:
+	if check(r2.size() >= 2, "остались дома для мазка по стенам: %d" % r2.size()):
 		var hp := [house_scr(r2[0]), house_scr(r2[1])]
 		var t0a := int(c.buildings[r2[0]]["tier"])
 		await drag(hp)
@@ -483,7 +493,7 @@ func _floor_stroke() -> void:
 # ---------- денарии кончились посреди мазка ----------
 
 func _floor_broke() -> void:
-	# новые готовые дома: заселяем надстроенные — у них снова полно (а этаж 3 ещё не изучен)
+	# После щелчка и двух мазков остаются как минимум два одноэтажных дома.
 	var r := ready_row()
 	# денариев — на все готовые, кроме одного (дома из своего набора шире: готовых к этому месту может остаться и два)
 	if not check(r.size() >= 2, "готовых домов ещё %d" % r.size()):
@@ -971,6 +981,11 @@ func _bars_scale() -> void:
 func _arrive_wait() -> void:
 	var st0: Dictionary = c.stats.duplicate()
 	var w0 := c.tips.has("arrive_wait")
+	# Проверяем очередь совета о счастье: свободной работы хватает и на ожидающие семьи.
+	c.stats["jobs"] = {"plebs": 1000}
+	c.stats["filled"] = {"plebs": 0}
+	c.stats["free"] = {"plebs": 0}
+	check(c.arrive_work_slots() > 0, "совет о счастье: есть свободная работа")
 	hud.advisor("Другой совет", "Совет, который игрок ещё читает")
 	hud.on_arrive_block("Новые семьи не едут")
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Другой совет" and c.tips.has("arrive_wait"), "«Новые семьи не едут» не перебил открытый совет — ждёт («%s»)" % hud.adv_title.text)
@@ -980,8 +995,9 @@ func _arrive_wait() -> void:
 	hud.refresh()
 	check(not (hud.advisor_panel.visible and hud.adv_title.text == "Новые семьи не едут") and c.tips.has("arrive_wait"), "повозка едет — совет ждёт дальше")
 	hud.advisor_panel.visible = false
-	c.stats["arrive_block"] = "Новые семьи приедут, когда счастье города будет не ниже 60% (сейчас 41%)"
 	c.stats["happy"] = 41
+	c.stats["arrive_block"] = c.arrivals_blocked()
+	check(String(c.stats["arrive_block"]).contains("%d%%" % c.arrive_happy()), "приезд остановило счастье текущего уровня")
 	hud.refresh()
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Новые семьи не едут" and hud.adv_text.text.contains("Сейчас — 41%") and not c.tips.has("arrive_wait"),
 		"советник свободен — «Новые семьи не едут» с нынешним счастьем («%s»)" % hud.adv_title.text)
