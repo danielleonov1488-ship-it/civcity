@@ -209,18 +209,16 @@ func _run() -> void:
 	if not await shot("6_card_over_3d.png"):
 		return
 	camp._hide_card()
-	var candidates := legion.recruit_candidates()
-	if not check(not candidates.is_empty(), "guide recruit available"):
+	camp.show_build_menu()
+	if not check(int(legion.flags["camp3d_guide"]) == 2, "guide advances on build menu"):
 		return
-	camp._recruit_pick(candidates[0])
-	camp._close_modal()
-	if not check(int(legion.flags["camp3d_guide"]) == 2, "guide advances on recruitment"):
-		return
-	camp.show_squad()
-	camp._pick_place(3)
-	camp._assign(int(legion.soldiers[-1]["id"]))
-	camp._close_modal()
-	if not check(int(legion.flags["camp3d_guide"]) == 3, "guide advances on placement"):
+	# Завершаем прежнюю стройку: у форта один строитель.
+	for plot: Dictionary in legion.fort["plots"]:
+		if not (plot["up"] as Dictionary).is_empty():
+			plot["up"]["end"] = Legion.now() - 1
+	legion.fort_finish()
+	camp._choose_build("kitchen")
+	if not check(int(legion.flags["camp3d_guide"]) == 3, "guide advances on kitchen"):
 		return
 	camp._campaign()
 	if not check(int(legion.flags["camp3d_guide"]) == 4, "guide completes at campaign"):
