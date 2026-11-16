@@ -1,6 +1,16 @@
 class_name CampUI
 extends Control
-## Лагерь V3: точки следуют картинке, окна — размеру экрана.
+## Лагерь V3: плашки следуют зданиям, окна — размеру экрана.
+
+const USE_3D := true
+var diorama: Camp3D
+var background: TextureRect
+var guide: PanelContainer
+var guide_text: Label
+var _guide_target: Control
+var _collection_fx: Array[Dictionary] = []
+var _city_render_owned := false
+var _previous_disable_3d := false
 
 const IMAGE_SIZE := Vector2(1920, 1080)
 const CENTRES := {
@@ -44,6 +54,7 @@ var hero_train_button: Button
 var hero_bar: ProgressBar
 var hero_card_level := -1
 var recruit_page := 0
+var recruit_result := false
 const RESOURCE_NAME := {"iron": "Железо", "wood": "Дерево", "leather": "Кожа", "rations": "Пайки"}
 const RESOURCE_ICON := {"iron": "hammer", "wood": "wood", "leather": "shield", "rations": "bread"}
 const RESOURCE_TIP := {
@@ -110,6 +121,7 @@ func setup(h: Hud) -> void:
 	h.root.add_child(self)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var bg := TextureRect.new()
+	background = bg
 	bg.texture = load("res://assets/ui/camp_bg.jpg") as Texture2D
 	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
@@ -125,6 +137,8 @@ func setup(h: Hud) -> void:
 	resized.connect(_layout)
 	_update_entry()
 	_layout.call_deferred()
+	set_process(false)
+	set_process_input(false)
 
 
 func _button(text: String, action: Callable, icon := "") -> Button:
@@ -192,6 +206,10 @@ func open() -> void:
 	lg.army_tick()
 	visible = true
 	move_to_front()
+	_start_diorama()
+	_prepare_guide()
+	set_process(true)
+	set_process_input(true)
 	_refresh()
 	_layout()
 	hud._update_pointer()
@@ -202,6 +220,15 @@ func close() -> void:
 		lu.close(false)
 	_close_modal()
 	_hide_card()
+	_stop_diorama()
+	for entry: Dictionary in _collection_fx:
+		(entry["tween"] as Tween).kill()
+		if is_instance_valid(entry["label"]):
+			(entry["label"] as Label).queue_free()
+	_collection_fx.clear()
+	guide.hide()
+	set_process(false)
+	set_process_input(false)
 	hide()
 	hud._update_pointer()
 
@@ -267,6 +294,12 @@ func _build_screen() -> void:
 				p.accept_event())
 		p.mouse_entered.connect(func(): hit.add_theme_stylebox_override("normal", hover))
 		p.mouse_exited.connect(func(): hit.add_theme_stylebox_override("normal", normal))
+		p.mouse_entered.connect(func():
+			if is_instance_valid(diorama):
+				diorama.highlight(slot))
+		p.mouse_exited.connect(func():
+			if is_instance_valid(diorama):
+				diorama.highlight(""))
 	gate = _button("Поход", _campaign, "scroll")
 	add_child(gate)
 	chips = HBoxContainer.new()
@@ -300,6 +333,12 @@ func _build_screen() -> void:
 	bottom.add_child(arena)
 	for b: Button in bottom.get_children():
 		b.custom_minimum_size = Vector2(180, 48)
+	guide = hud._panel(self, "bar", 0, 10)
+	guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	guide_text = _text("", 18, true)
+	guide_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	guide.add_child(guide_text)
+	guide.hide()
 
 
 func _chip(icon: String, resource := "") -> Label:
@@ -326,6 +365,16 @@ func _layout() -> void:
 		p.reset_size()
 		p.scale = Vector2.ONE * ui_scale
 		p.position = image_rect.position + image_rect.size * Vector2(PLAQUES[slot]) - p.size * ui_scale * 0.5
+		if is_instance_valid(diorama):
+			hit.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			hit.visible = false
+			var footprint := diorama.footprint(slot)
+			hit.position = footprint.position
+			hit.size = footprint.size
+			p.position = _screen_anchor(diorama.project(slot, 6.0), p.size * ui_scale)
+		else:
+			hit.visible = true
+			hit.mouse_filter = Control.MOUSE_FILTER_STOP
 	_layout_bubbles(ui_scale)
 	chips.reset_size()
 	var ck := minf(ui_scale, (size.x - 110.0) / maxf(1.0, chips.size.x))
@@ -338,6 +387,8 @@ func _layout() -> void:
 	gate.reset_size()
 	gate.scale = Vector2.ONE * ui_scale
 	gate.position = image_rect.position + image_rect.size * Vector2(0.49, 0.89) - gate.size * ui_scale * 0.5
+	if is_instance_valid(diorama):
+		gate.position = _screen_anchor(diorama.project("gate", 1.5), gate.size * ui_scale)
 	# Ворота и нижняя полоса не перекрывают друг друга.
 	gate.visible = gate.position.y + gate.size.y * ui_scale < bottom.position.y - 4
 	if is_instance_valid(card):
@@ -345,6 +396,7 @@ func _layout() -> void:
 		card.size = Vector2(420, maxf(220, (size.y - 155) / ui_scale))
 		card.position = Vector2(size.x - 16 - 420 * ui_scale, 74)
 	_fit_modal()
+	_layout_guide()
 
 
 func _process(dt: float) -> void:
@@ -355,6 +407,9 @@ func _process(dt: float) -> void:
 		var full := float(lg.pending_resources.get(resource, 0.0)) >= lg.resource_cap(resource) - 0.001
 		var pulse := 1.0 + 0.12 * sin(Time.get_ticks_msec() * 0.005) if full else 1.0
 		bubble.modulate = Color(pulse, pulse, 1.0)
+	if is_instance_valid(_guide_target) and guide.visible:
+		var glow := 1.12 + 0.10 * sin(Time.get_ticks_msec() * 0.004)
+		_guide_target.modulate = Color(glow, glow, 1.0)
 	_elapsed += dt
 	if _elapsed < 0.5:
 		return
@@ -378,6 +433,8 @@ func _roster_signature() -> String:
 
 
 func _refresh() -> void:
+	if is_instance_valid(diorama):
+		diorama.sync()
 	ration_label.text = I18n.t("Пайки %d / %d") % [lg.rations_now(), lg.ration_cap()]
 	glory_label.text = I18n.t("Слава %d") % int(lg.glory)
 	for resource: String in resource_chips:
@@ -407,6 +464,7 @@ func _refresh() -> void:
 		title.add_theme_color_override("font_color", LegionUi.C_SOFT if not lg.camp_built(slot) else LegionUi.C_INK)
 		if not lg.camp_built(slot) and not running:
 			state.text = "🔒 " + state.text
+			(p["title"] as Label).text = I18n.t("Построить: %s") % I18n.t(String(Legion.CAMP_NAME[slot]))
 	var sig := _roster_signature()
 	if selected != "":
 		if sig != _card_sig:
@@ -642,8 +700,16 @@ func _recruit_pick(pick: Dictionary) -> void:
 		show_recruit_picker()
 		_refresh()
 		return
+	_guide_advance(1)
+	if is_instance_valid(diorama):
+		diorama.sync()
+		diorama.recruit_walk(int(soldier["id"]))
 	_refresh()
 	var v := _new_modal(500)
+	recruit_result = is_instance_valid(diorama)
+	if recruit_result:
+		var shade := modal.get_child(0) as ColorRect
+		shade.color = Color(0.10, 0.06, 0.03, 0.12)
 	v.add_child(_wrap(I18n.t("%s → новобранец %s") % [String(soldier.get("from", soldier["name"])), Soldiers.stars_text(int(soldier["stars"]))], 22))
 	v.add_child(_wrap("В руках меч — Легионер. Дай лук — станет Лучником.", 17))
 	v.add_child(_button("В отряд", show_squad, "shield"))
@@ -678,6 +744,9 @@ func _fit_modal() -> void:
 	var k := minf(1.0, minf((size.x - 24) / maxf(1, dims.x), (size.y - 24) / maxf(1, dims.y)))
 	modal_panel.scale = Vector2.ONE * k
 	modal_panel.position = (size - dims * k) * 0.5
+	if recruit_result:
+		# Карточка справа оставляет путь от ворот к казарме на виду.
+		modal_panel.position = Vector2(maxf(12, size.x - dims.x * k - 16), maxf(76, size.y - dims.y * k - 82))
 
 
 func _close_modal() -> void:
@@ -685,6 +754,7 @@ func _close_modal() -> void:
 		modal.hide()
 		modal.queue_free()
 	modal = null
+	recruit_result = false
 	hero_status = null
 	hero_bar = null
 	hero_train_button = null
@@ -761,11 +831,14 @@ func _pick_place(index: int) -> void:
 
 func _assign(sid: int) -> void:
 	if selected_place >= 0 and lg.set_place(selected_place, sid):
+		if not bool(lg.soldier(sid).get("hero", false)):
+			_guide_advance(2)
 		selected_place = -1
 		_build_squad()
 
 
 func _campaign() -> void:
+	_guide_advance(3)
 	lu.open("campaign")
 
 
@@ -816,6 +889,9 @@ func _layout_bubbles(k: float) -> void:
 		var anchor := Vector2(0.50, 0.32) if resource == "rations" else Vector2(0.75, 0.76)
 		var shift := 0.0 if resource == "rations" else float(["iron", "wood", "leather"].find(resource) - 1) * 106.0 * k
 		box.position = image_rect.position + image_rect.size * anchor - box.size * k * 0.5 + Vector2(shift, 0)
+		if is_instance_valid(diorama):
+			var slot := "hq" if resource == "rations" else "store"
+			box.position = _screen_anchor(diorama.project(slot, 1.5) + Vector2(shift, 38 * k), box.size * k)
 
 
 func _refresh_bubbles() -> void:
@@ -836,6 +912,8 @@ func _collect(resource: String) -> void:
 	var amount := lg.collect_resource(resource)
 	if amount <= 0:
 		return
+	if resource == "rations":
+		_guide_advance(0)
 	var fly := _text("+%d" % amount, 25, true)
 	fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(fly)
@@ -843,6 +921,8 @@ func _collect(resource: String) -> void:
 	var target: Label = resource_chips[resource]
 	fly.global_position = source.global_position
 	var tween := create_tween().set_parallel(true)
+	_collection_fx = _collection_fx.filter(func(entry: Dictionary): return is_instance_valid(entry["label"]))
+	_collection_fx.append({"tween": tween, "label": fly})
 	tween.tween_property(fly, "global_position", target.global_position, 0.65).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
 	tween.tween_property(fly, "modulate:a", 0.0, 0.25).set_delay(0.45)
 	tween.chain().tween_callback(fly.queue_free)
@@ -933,3 +1013,109 @@ func _show_soldier(sid: int) -> void:
 		show_hero()
 	else:
 		_aux("soldier", sid)
+
+
+func _start_diorama() -> void:
+	if not _city_render_owned:
+		_previous_disable_3d = get_viewport().disable_3d
+		_city_render_owned = true
+		get_viewport().disable_3d = true
+	if not USE_3D or not lg.v3() or is_instance_valid(diorama):
+		return
+	var scene := Camp3D.new()
+	add_child(scene)
+	move_child(scene, 1)
+	if not scene.setup(lg):
+		scene.shutdown()
+		scene.queue_free()
+		background.show()
+		return
+	diorama = scene
+	diorama.building_pressed.connect(show_building)
+	diorama.view_changed.connect(_layout)
+	background.hide()
+
+
+func _stop_diorama() -> void:
+	if is_instance_valid(diorama):
+		diorama.shutdown()
+		diorama.queue_free()
+		diorama = null
+	if _city_render_owned:
+		get_viewport().disable_3d = _previous_disable_3d
+		_city_render_owned = false
+	if is_instance_valid(background):
+		background.show()
+
+
+func _exit_tree() -> void:
+	_stop_diorama()
+
+
+func _screen_anchor(center: Vector2, dims: Vector2) -> Vector2:
+	return Vector2(clampf(center.x - dims.x * 0.5, 8, maxf(8, size.x - dims.x - 8)),
+		clampf(center.y - dims.y * 0.5, 76, maxf(76, size.y - dims.y - 82)))
+
+
+func _prepare_guide() -> void:
+	if lg.flags.has("camp3d_guide"):
+		return
+	lg.flags["camp3d_guide"] = 0
+	# Переложить часть стартового запаса в пузырь: первый сбор без ожидания.
+	# Сумма запасов сохраняется, подарка сверх лимита нет.
+	var pending := float(lg.pending_resources.get("rations", 0.0))
+	var cap := float(lg.ration_cap())
+	if lg.rations >= cap and pending >= cap:
+		# В старом сохранении оба запаса уже полны: незачем учить сбору.
+		lg.flags["camp3d_guide"] = 1
+		return
+	if pending < 1.0 or lg.rations >= lg.ration_cap():
+		var sample := minf(3.0, minf(floorf(lg.rations), maxf(0.0, cap - pending)))
+		lg.rations -= sample
+		lg.pending_resources["rations"] = pending + sample
+	if float(lg.pending_resources.get("rations", 0.0)) < 1.0:
+		lg.flags["camp3d_guide"] = 1
+
+
+func _guide_advance(expected: int) -> void:
+	if int(lg.flags.get("camp3d_guide", 0)) == expected:
+		lg.flags["camp3d_guide"] = expected + 1
+		lg.changed.emit()
+		_layout_guide()
+
+
+func _layout_guide() -> void:
+	if guide == null:
+		return
+	if is_instance_valid(_guide_target):
+		_guide_target.modulate = Color.WHITE
+	_guide_target = null
+	var step := int(lg.flags.get("camp3d_guide", 4))
+	guide.visible = visible and step < 4 and not is_instance_valid(modal) and not is_instance_valid(card) and lu.camp_window == ""
+	if not guide.visible:
+		return
+	var target: Control
+	var tip := ""
+	match step:
+		0:
+			target = bubbles["rations"]["button"]
+			tip = "Соберите пайки"
+		1:
+			target = plaques["barracks"]["panel"]
+			tip = "Призовите воина"
+		2:
+			target = bottom.get_child(0) as Control
+			tip = "Поставьте его в строй"
+		3:
+			target = gate if gate.visible else bottom.get_child(1) as Control
+			tip = "В поход!"
+	if target == null:
+		return
+	_guide_target = target
+	guide_text.text = I18n.t(tip) + " ↓"
+	guide.reset_size()
+	var k := minf(1.0, size.y / 720.0)
+	guide.scale = Vector2.ONE * k
+	var rect := target.get_global_rect()
+	guide.position = _screen_anchor(rect.position - global_position + Vector2(rect.size.x * 0.5, -28 * k), guide.size * k)
+	guide.move_to_front()
