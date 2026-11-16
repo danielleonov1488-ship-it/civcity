@@ -26,8 +26,14 @@ func _ready() -> void:
 	_rations()
 	_hidden()
 	_save()
+	_choice3()
+	_hero3()
+	_collection3()
+	_speed3()
+	_chests3()
+	_chest_award3()
 	print("L3 DONE fails=%d" % fails)
-	get_tree().quit()
+	get_tree().quit(1 if fails > 0 else 0)
 
 
 ## Новый город Легиона 3.0: n_fam домов плебеев по семье из четырёх (безработные: построек с работой нет)
@@ -339,16 +345,16 @@ func _rations() -> void:
 	L.rations = 0.0
 	for i in 24:
 		L.on_hour()
-	_check(L.rations_now() == 2 and L.rations_per_day() == 2.0, "сутки без пекарни: +%d" % L.rations_now())
+	_check(L.rations_now() == 0 and L.collect_resource("rations") == 2 and L.rations_now() == 2 and L.rations_per_day() == 2.0, "сутки без пекарни: +%d" % L.rations_now())
 	_work(c, "bakery", Vector2(0, 40))
 	L.rations = 0.0
 	for i in 24:
 		L.on_hour()
-	_check(L.bakeries_working() == 1 and L.rations_now() == 5 and L.rations_per_day() == 5.0, "сутки с пекарней: +%d (в день %.0f)" % [L.rations_now(), L.rations_per_day()])
-	L.rations = 19.9
+	_check(L.bakeries_working() == 1 and L.collect_resource("rations") == 5 and L.rations_now() == 5 and L.rations_per_day() == 5.0, "сутки с пекарней: +%d (в день %.0f)" % [L.rations_now(), L.rations_per_day()])
+	L.rations = 19.0
 	for i in 24:
 		L.on_hour()
-	_check(L.rations_now() == 20, "запас не больше предела: %d" % L.rations_now())
+	_check(L.collect_resource("rations") == 1 and L.rations_now() == 20, "запас не больше предела: %d" % L.rations_now())
 	var st := Legion.stage(0, 0, 0)
 	_check(L.ration_cost(st) == 2 and L.ration_cost({"boss": true}) == 4 and L.ration_cost({"junior": true}) == 4, "бой стоит 2, босс — 4")
 	L.rations = 1.0
@@ -411,3 +417,210 @@ func _save() -> void:
 	_check(sq.size() == 2 and int(sq[0]["row"]) == 0 and int(sq[1]["row"]) == 1 and String(sq[1]["key"]) == "priest", "в бою: первый ряд и жрец во втором")
 	var ok := L2.dismiss(int(s2["id"]))
 	_check(ok and c2.arrivals.size() == 1, "после загрузки увольнение возвращает горожанина")
+
+
+func _choice3() -> void:
+	var c := _town(14)
+	var L: Legion = c.legion
+	L.army_tick()
+	var first := L.recruit_candidates()
+	var again := L.recruit_candidates()
+	_check(first.size() == 4 and first == again, "кандидаты стабильны, четыре карточки")
+	if first.size() != 4:
+		return
+	var sorted := true
+	for i in range(1, first.size()):
+		sorted = sorted and int(first[i - 1]["stars"]) >= int(first[i]["stars"])
+	var next := L.recruit_candidates(4, 1)
+	_check(sorted and next.size() == 4 and first[0]["key"] != next[0]["key"], "лучшие первыми, следующая страница другая")
+	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var copy := City.new(Land.new())
+	copy.load_data(saved)
+	_check(copy.legion.recruit_candidates() == first, "кандидаты и звёзды переживают сохранение")
+	var pick: Dictionary = first[2].duplicate()
+	var expected_stars := int(pick["stars"])
+	pick["stars"] = 99
+	var population := int(c.stats["pop"])
+	var soldier := L.recruit_resident(pick)
+	_check(not soldier.is_empty() and soldier["name"] == pick["name"] and int(soldier["res"]["m"]["sd"]) == int(pick["sd"])
+		and int(soldier["stars"]) == expected_stars and int(c.stats["pop"]) == population - 1, "выбрали именно этого жителя; звёзды считает модель")
+	_check(L.recruit_resident(pick).is_empty() and int(c.stats["pop"]) == population - 1 and _fams_ok(c), "повторный выбор устаревшей карточки никого не забирает")
+	_check(L.candidate_stars({"sd": 123, "job": "sawmill", "cls": "artisans", "age": 2}) >= L.candidate_stars({"sd": 123, "age": 1}), "опыт и ремесло повышают качество")
+	# Реальная работа жителя; пищевые работники при нехватке еды исключены.
+	_work(c, "bakery", Vector2(0, 40))
+	var bakery := L.building_rec("bakery")
+	var p: Dictionary = L.recruit_candidates()[0]
+	var house: Dictionary = c.buildings[int(p["home"])]
+	for family: Dictionary in house["families"]:
+		for member: Dictionary in family.get("m", []):
+			if int(member["sd"]) == int(p["sd"]):
+				member["job"] = int(bakery["id"])
+	var choices := c.resident_choices()
+	_check(not c.food_short() or not choices.any(func(x: Dictionary): return x["key"] == p["key"]), "пекаря при нехватке еды не призывают")
+
+
+func _hero3() -> void:
+	var c := _town(14)
+	var L: Legion = c.legion
+	L.army_tick()
+	var recruit := L.recruit_resident()
+	L.set_place(0, int(recruit["id"]))
+	c.hero = Hero.make("Гай Валерий", 0, Hero.PRESETS[0]["look"], true, 777)
+	var population := int(c.stats["pop"])
+	L.army_tick()
+	L.army_tick()
+	var hero: Dictionary = L.soldiers[0]
+	var sid := int(hero["id"])
+	_check(bool(hero.get("hero", false)) and L.soldiers.size() == 2 and int(L.squad3[0]) == sid and int(L.squad3[1]) == int(recruit["id"])
+		and int(c.stats["pop"]) == population, "герой первый, прежний воин переехал, жителей не убыло")
+	_check(not L.dismiss(sid) and not L.set_place(0, 0) and not L.set_place(2, sid), "героя нельзя уволить или убрать с первого места")
+	var setup := L.make_battle(Legion.stage(0, 0, 0), 19)
+	_check(setup.has("hero_look") and setup["squad"][0]["key"] == "hero" and setup["squad"][0]["place"] == 0, "герой в бою со своим обликом")
+	L.glory = 10000
+	var money := c.money
+	var glory := L.glory
+	_check(L.train_hero() and c.money < money and L.glory < glory and L.squad_v3().size() == 1, "тренировка стоит денег и Славы; герой занят")
+	var old_clock := Legion.clock
+	Legion.clock = float(L.hero_training["end"]) + 1.0
+	L.tick()
+	_check(L.hero_level() == 2 and L.hero_training.is_empty() and L.squad_v3().size() == 2, "герой вернулся на новом уровне")
+	_check(Legion.hero_time_h(8) > Legion.hero_time_h(7) and Legion.hero_time_h(30) > Legion.hero_time_h(20), "таймер героя растёт и за таблицей")
+	L.hero_lv3 = Legion.HERO_MAX3 - 1
+	c.money = maxf(c.money, 1000000.0)              # тренировка у предела дорогая — казна полна
+	L.glory = maxf(L.glory, 100000.0)
+	_check(L.train_hero(), "герой может вырасти выше максимума обычных воинов")
+	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var copy := City.new(Land.new())
+	copy.load_data(saved)
+	copy.legion.army_tick()
+	_check(copy.legion.hero_level() == Legion.HERO_MAX3 - 1 and not copy.legion.hero_training.is_empty()
+		and bool(copy.legion.soldiers[0].get("hero", false)) and not copy.legion.dismiss(sid), "герой и его тренировка сохраняются")
+	var entry := L.hero_entry()
+	_check(int(entry.get("hero_v", 0)) == 3 and int(Legion.snap_hero(entry, 0.0, 0.0)["level"]) == L.hero_level(), "снимок V3 не обрезает уровень героя")
+	Legion.clock = float(L.hero_training["end"]) + 1.0
+	L.tick()
+	_check(L.hero_level() == Legion.HERO_MAX3 and not L.train_hero(), "предел героя соблюдается")
+	Legion.clock = old_clock
+
+
+func _collection3() -> void:
+	var c := _town(14)
+	var L: Legion = c.legion
+	L.army_tick()
+	_work(c, "smelter", Vector2(0, 40))
+	_work(c, "sawmill", Vector2(12, 40))
+	_work(c, "tannery", Vector2(24, 40))
+	var old_clock := Legion.clock
+	Legion.clock = 200000.0
+	L.mats_t = Legion.clock - 3600.0
+	var before := L.mat("iron")
+	L._mats_tick(Legion.clock)
+	var pend := 0.0
+	for r: String in L.pending_resources:
+		pend += float(L.pending_resources[r])
+	# какая мастерская встала в тесном городке — та и копит (место у плавильни бывает занято домами)
+	_check(pend > 0.0 and L.mat("iron") == before, "мастерская копит до сбора, не в запас")
+	for resource: String in Gear.MATS:
+		var cap := L.resource_cap(resource)
+		L.pending_resources[resource] = float(cap)
+		L.mats[resource] = 0.0
+		L.mats_t = Legion.clock - 72.0 * 3600.0
+		L._mats_tick(Legion.clock)
+		_check(float(L.pending_resources[resource]) == cap and L.collect_resource(resource) == cap and L.mat(resource) == cap,
+			"полный накопитель стоит; сбор до предела: " + resource)
+		L.pending_resources[resource] = 10.0
+		_check(L.collect_resource(resource) == 0 and float(L.pending_resources[resource]) == 10.0, "полный запас сохраняет несобранное: " + resource)
+		L.mats[resource] = cap - 3
+		_check(L.collect_resource(resource) == 3 and L.mat(resource) == cap and float(L.pending_resources[resource]) == 7.0, "частичный сбор не теряет остаток: " + resource)
+	L.rations = 0.0
+	for i in 1000:
+		L._rations_hour()
+	_check(float(L.pending_resources["rations"]) == L.ration_cap() and L.rations_now() == 0
+		and L.collect_resource("rations") == L.ration_cap(), "пайки тоже копятся до предела и собираются вручную")
+	L.pending_resources["iron"] = 180.0
+	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var copy := City.new(Land.new())
+	copy.load_data(saved)
+	_check(float(copy.legion.pending_resources["iron"]) == 180.0, "загрузка до мастерских не обрезает накопитель")
+	Legion.clock = old_clock
+
+
+func _speed3() -> void:
+	var c := _town(14)
+	var L: Legion = c.legion
+	L.army_tick()
+	var old_clock := Legion.clock
+	Legion.clock = 300000.0
+	L.upg["camp_hq"] = {"to": 2, "end": Legion.clock + 86400.0, "total": 86400.0}
+	L.hero_training = {"to": 2, "end": Legion.clock + 86400.0, "total": 86400.0}
+	var money := c.money
+	for i in 4:
+		_check(L.speed_up("camp_hq" if i % 2 == 0 else "hero"), "ускорение %d" % (i + 1))
+	var paid := c.money
+	_check(paid < money and L.speed_remaining() == 0.0 and not L.speed_up("hero") and c.money == paid, "общий предел 2 ч, пятая попытка бесплатна и отклонена")
+	_check(float(L.upg["camp_hq"]["end"]) == Legion.clock + 82800.0 and float(L.hero_training["end"]) == Legion.clock + 82800.0, "каждый клик убрал 30 мин")
+	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var copy := City.new(Land.new())
+	copy.load_data(saved)
+	_check(copy.legion.speed_remaining() == 0.0, "загрузка не сбрасывает суточный предел")
+	c.day += 1
+	_check(L.speed_remaining() == 7200.0 and L.speed_up("camp_hq"), "следующий игровой день возвращает лимит")
+	c.money = 0.0
+	_check(not L.speed_up("hero"), "без казны не ускорить")
+	Legion.clock = old_clock
+
+
+func _chests3() -> void:
+	var c := _town(14)
+	var other := _town(14)
+	var L: Legion = c.legion
+	var M: Legion = other.legion
+	L.army_tick()
+	M.army_tick()
+	c.money = 0.0
+	other.money = 0.0
+	L._rng.seed = 91827
+	M._rng.seed = 91827
+	L.queue_chest("gold")
+	M.queue_chest("gold")
+	var a := L.open_chest("gold")
+	var b := M.open_chest("gold")
+	_check(a == b and not a.is_empty(), "фиксированное зерно даёт одинаковую добычу")
+	_check(Gear.SLOTS_V3.has(String(a["item"]["slot"])) and int(a["item"]["rarity"]) in [0, 2, 3, 4]
+		and int(a["rations"]) > 0 and int(a["iron"]) > 0 and int(a["money"]) > 0, "сундук содержит допустимую вещь и ресурсы")
+	for i in 4:
+		_check(L.queue_chest("wooden"), "место для сундука %d" % i)
+	_check(not L.queue_chest("gold") and L.chest_queue.size() == 4 and L.open_chest("bronze").is_empty(), "максимум 4, чужой вид не открыть")
+	L.ingots = 7
+	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
+	var copy := City.new(Land.new())
+	copy.load_data(saved)
+	_check(copy.legion.ingots == 7 and copy.legion.chest_queue == L.chest_queue, "слитки и ожидающие сундуки сохраняются")
+	_check(copy.legion.open_chest("wooden") == L.open_chest("wooden"), "JSON сохраняет следующий бросок RNG без потери 64 бит")
+	while L.store_count() < L.store_cap():
+		L.add_item({"slot": "armor", "rarity": 0, "ilvl": 1, "cls": ""})
+	var rng_state := L._rng.state
+	var count := L.chest_queue.size()
+	_check(L.open_chest("wooden").is_empty() and L.chest_queue.size() == count and L._rng.state == rng_state, "полный склад не расходует сундук и RNG")
+	var old := _town(2, 0)
+	old.legion.army_tick()
+	var old_save := old.legion.to_dict()
+	_check(not old_save.has("ingots") and not old_save.has("hero_lv3") and not old.legion.queue_chest("gold")
+		and old.legion.collect_resource("iron") == 0 and not old.legion.speed_up("camp_hq"), "V2 не получает новые ключи и действия")
+	var empty := _town(14)
+	empty.legion.from_dict({})
+	_check(empty.legion.ingots == 0 and empty.legion.hero_level() == 1 and empty.legion.chest_queue.is_empty(), "старое V3 сохранение получает безопасные значения")
+
+
+func _chest_award3() -> void:
+	var c := _town(14)
+	var L: Legion = c.legion
+	L.army_tick()
+	var soldier := L.recruit_resident()
+	L.set_place(0, int(soldier["id"]))
+	var setup := L.make_battle(Legion.stage(0, 0, 0), 17)
+	var money := c.money
+	var out := L.apply_result(setup, {"win": true, "alive": 1, "total": 1, "fallen": [], "time": 10.0,
+		"hp_left": 1.0, "inputs": [], "perks_used": {}, "summons": 0})
+	_check(L.chest_queue.size() == 1 and out.has("camp_chest") and out["camp_chest"] != "full", "первая победа гарантирует сундук")
+	_check(c.money >= money, "награда не срезает уже накопленную казну выше предела")

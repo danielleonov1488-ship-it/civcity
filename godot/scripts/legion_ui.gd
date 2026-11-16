@@ -144,7 +144,7 @@ static func close_for(h) -> bool:
 	var u := of(h)
 	if u == null or not u.visible:
 		return false
-	u.close()
+	u.close(false)
 	return true
 
 
@@ -295,13 +295,16 @@ func open(tab_id := "") -> void:
 	hud._update_pointer()
 
 
-func close() -> void:
+func close(return_camp := true) -> void:
+	var back := return_camp and visible and lg != null and lg.v3()
 	visible = false
 	camp_window = ""
 	win.show()
 	_close_overlay()
 	_update_button()
 	hud._update_pointer()
+	if back:
+		CampUI.attach(hud).open()
 
 
 func _on_city() -> void:
@@ -372,6 +375,8 @@ func _process(dt: float) -> void:
 
 ## Таймеры: полоски улучшений, заряды атак. Улучшение дошло — завершаем сразу (не ждём игрового часа)
 func _tick_live() -> void:
+	if lg.v3():
+		CampUI.attach(hud)._refresh_speeds()
 	_odds_poll()
 	if lg.army_on():
 		for m in lg.army_tick():
@@ -1223,6 +1228,10 @@ func _build_campaign() -> Control:
 	h.add_theme_constant_override("separation", 12)
 	var left := VBoxContainer.new()
 	left.add_theme_constant_override("separation", 6)
+	if lg.v3():
+		var back := _btn("← В лагерь", 160, 17, null, "", func(): close())
+		back.name = "CampaignBack"
+		left.add_child(back)
 	left.add_child(_map_view())
 	left.add_child(_region_strip())
 	h.add_child(left)
@@ -1879,7 +1888,7 @@ func _fight(st: Dictionary) -> void:
 	lg.flags["tut_fought"] = true                # обучение: шаг «первый бой» позади (дальше — «Войска»)
 	if _has_battle_scene():
 		_pending = {}
-		close()
+		close(false)
 		lg.start_battle(st)
 		return
 	var setup := lg.make_battle(st)
@@ -1940,6 +1949,10 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 		var ch: Dictionary = out.get("chest", {})
 		if not ch.is_empty():
 			v.add_child(_wl("Все %d звёзд «%s»! Сундук Славы +%d." % [Legion.stages() * 3, ch["region"], int(ch["glory"])], 420, 16, C_GOLD, true, true))
+	if lg.v3() and out.has("camp_chest"):
+		var kind := String(out["camp_chest"])
+		var text := "Сундуки заполнены (4/4). Откройте их в лагере." if kind == "full" else I18n.t("В лагере ждёт: %s") % I18n.t(String(Legion.CHEST_NAMES.get(kind, "")))
+		v.add_child(_wl(text, 420, 16, C_GOLD, true, true))
 	v.add_child(_wl("Вернулись %d из %d бойцов" % [int(out.get("alive", 0)), int(out.get("total", 0))], 420, 16, C_INK, true, true))
 	var drop: Dictionary = out.get("item", {})
 	if drop.has("full"):
@@ -2059,6 +2072,8 @@ func _modal(w: float) -> PanelContainer:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
 	p.add_child(v)
+	if lg.v3() and camp_window != "":
+		v.add_child(_btn("← Лагерь", 160, 16, null, "", func(): close()))
 	_pin(p, Vector2(0.5, 0.5))
 	overlay.add_child(p)
 	return p
@@ -2410,6 +2425,8 @@ func _soldier_card(s: Dictionary) -> Control:
 				_close_overlay())
 	bv.add_child(db)
 	h.add_child(bv)
+	if lg.v3():
+		CampUI.attach(hud)._add_speed(v, "train_%d" % int(s["id"]))
 	return p
 
 
@@ -2685,6 +2702,8 @@ func _forge_win() -> void:
 			_live.append({"kind": "forge", "label": fl})
 		fh.add_child(fl)
 		v.add_child(fh)
+		if lg.v3():
+			CampUI.attach(hud)._add_speed(v, "forge")
 	v.add_child(_hdiv(8))
 	# что ковать: слот и (для оружия и щита) класс
 	var srow := HBoxContainer.new()
@@ -2720,7 +2739,7 @@ func _forge_win() -> void:
 		need = "%s, %s" % [Gear.mats_text(Gear.forge_mats(_f_slot, r)), need]
 		if r > 0:
 			need = "%d × %s, %s" % [int(F["shards"]), Gear.SHARD[r - 1], need]
-		tv.add_child(_l("%s · %s · %s" % [Gear.stats_text(probe), need, Legion.fmt_duration(float(F["h"]) * 3600.0)], 12, false, C_SOFT))
+		tv.add_child(_l("%s · %s · %s" % [Gear.stats_text(probe), need, Legion.fmt_duration(lg.forge_time(float(F["h"])) if lg.v3() else float(F["h"]) * 3600.0)], 12, false, C_SOFT))
 		h.add_child(tv)
 		var rr := r
 		var why := lg.can_forge(_f_slot, _f_cls, r)
@@ -2759,7 +2778,7 @@ func _forge_sets(v: VBoxContainer) -> void:
 		h.add_child(tv)
 		h.tooltip_text = "%s\n2 вещи: %s\n4 вещи: %s\nКовка: реликвия, %d × %s, %s, %s ден., %s" % [Gear.name_of(probe), S["d2"], S["d4"],
 			int(Gear.SET_FORGE["shards"]), Gear.SHARD[Gear.SET_RARITY - 1], Gear.mats_text(lg.set_mats(_f_slot)), hud.fmt(float(Gear.SET_FORGE["money"])),
-			Legion.fmt_duration(float(Gear.SET_FORGE["h"]) * 3600.0)]
+			Legion.fmt_duration(lg.forge_time(float(Gear.SET_FORGE["h"])) if lg.v3() else float(Gear.SET_FORGE["h"]) * 3600.0)]
 		h.mouse_filter = Control.MOUSE_FILTER_PASS
 		var kk := k
 		var why := lg.can_forge_set(k, _f_slot, _f_cls)
@@ -3894,3 +3913,20 @@ class MapPaint extends Control:
 			if (q * k).distance_squared_to(p) < d * d * 2.2:
 				return true
 		return false
+
+
+func _input(event: InputEvent) -> void:
+	if not visible or lg == null or not lg.v3():
+		return
+	if event is InputEventMouseButton:
+		var mouse := event as InputEventMouseButton
+		if mouse.pressed and mouse.button_index == MOUSE_BUTTON_RIGHT:
+			close()
+			get_viewport().set_input_as_handled()
+		return
+	if not event is InputEventKey:
+		return
+	var key := event as InputEventKey
+	if key.pressed and not key.echo and key.keycode == KEY_ESCAPE:
+		close()
+		get_viewport().set_input_as_handled()
