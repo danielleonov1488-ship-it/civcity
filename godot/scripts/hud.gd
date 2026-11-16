@@ -2238,8 +2238,8 @@ func update_new_marks() -> void:
 	for b in tray_dtabs.get_children():
 		_show_new(b, int(n.get("decor|" + String(b.get_meta("sub")), 0)) > 0)
 	_show_new(top_btns["research"], play and c.new_research() > 0)
-	_show_new(tool_btns["floor"], play and c.is_new("@floor"))
-	floor_badge.visible = not (play and c.is_new("@floor"))      # число готовых домов — когда «НОВОЕ» снято (они на одном месте)
+	_show_new(tool_btns["floor"], play and c.is_new("@floor") and c.floor_ready(false).is_empty())
+	floor_badge.visible = true      # число готовых домов видно и до первого использования
 	_show_new(tool_btns["upgrade"], play and c.research.has("artisans") and c.is_new("@upgrade"))
 	upg_badge.visible = not (play and c.research.has("artisans") and c.is_new("@upgrade"))
 	for b in tray_grid.get_children():
@@ -2838,8 +2838,8 @@ func _bottom_right() -> void:
 	ar.position = Vector2(23, 20)
 	ar.size = Vector2(15, 17)
 	fb.add_child(ar)
-	floor_badge = _label("", 15, true, C_CREAM)
-	floor_badge.add_theme_color_override("font_outline_color", C_GOOD)
+	floor_badge = _label("", 15, true, C_GOOD)
+	floor_badge.add_theme_color_override("font_outline_color", C_INK)
 	floor_badge.add_theme_constant_override("outline_size", 9)
 	floor_badge.position = Vector2(29, -4)
 	fb.add_child(floor_badge)
@@ -2932,8 +2932,8 @@ func _types_in(cat: String, sub := "") -> Array:
 			continue                          # в другом разделе — только главный облик
 		if (String(d.get("unlock", "")).begins_with("army:") or String(d.get("unlock", "")).begins_with("tour:")) and game != null and int(game.city.cozy_v) < 1:
 			continue                          # мастерские Легиона 2.0 и гостиница — только в новой игре
-		if cat == "military" and game != null and game.city != null and game.city.legion.v3() and type in Legion.V3_HIDDEN:
-			continue                          # Легион 3.0: здания лагеря — в лагере, в разделе остаются мастерские города
+		if d.get("kind", "") == "military" or d.get("cat", "") == "military":
+			continue                          # военные постройки доступны только внутри форта
 		out.append(type)
 	return out
 
@@ -3117,7 +3117,7 @@ func _fill_cards() -> void:
 		em.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		em.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		tray_grid.add_child(em)
-	var camp_hint: bool = open_cat == "military" and game.city.legion.v3()
+	var camp_hint := false
 	if camp_hint:
 		tray_grid.add_child(_camp_hint_card())
 	for type in list:
@@ -3196,18 +3196,12 @@ func _fill_cards() -> void:
 	_update_pointer()
 
 
-## Легион 3.0: раздел «Легион» на нижней полосе — только мастерские города; пока их нельзя строить, раздела не видно
+## Военные постройки — в форте, раздел на городской полосе всегда скрыт.
 func _sync_military_tab() -> void:
 	var tab := cats.get("military") as Control
 	if tab == null or tab.get_parent() == null:
 		return
-	var c: City = game.city
-	var on := true
-	if c.legion.v3():
-		on = false
-		for t in ["smelter", "sawmill", "tannery"]:
-			if c.unlocked(t):
-				on = true
+	var on := false
 	var box := tab.get_parent() as Control
 	if box.visible != on:
 		box.visible = on
@@ -5654,7 +5648,7 @@ func _family_rows(b: Dictionary, box: VBoxContainer, width: float, details: bool
 		name_label.mouse_filter = Control.MOUSE_FILTER_PASS
 		name_label.tooltip_text = name_label.text
 		title.add_child(name_label)
-		var pref: Array = FamilyPreference.LOOK.get(FamilyPreference.main(f), ["housing", "свободный дом"])
+		var pref: Array = FamilyPreference.look(f)
 		var preference := _icon(String(pref[0]), 27)
 		preference.name = "Preference"
 		preference.texture = MapBadge.ink_texture(String(pref[0]))
@@ -8194,14 +8188,10 @@ func _update_world_icons() -> void:
 			for n: String in Defs.needs_for(String(d["cls"]), c.level):
 				if int(b.get("need_coverage", {}).get(n, 0)) < 34:
 					red.append(Defs.NEEDS[n]["name"])
-			if not red.is_empty() and int(b["pop"]) + int(b.get("coming", 0)) > 0:
+			if (c.unhappy_badge(b) if c.wants_v >= 1 else not red.is_empty() and int(b["pop"]) + int(b.get("coming", 0)) > 0):
 				icon = "house_problem"
-				tip = "Жителям не хватает: %s" % ", ".join(red)
-			elif c.can_buy_floor(b) == "":
-				icon = "up"
-				warn = false
-				price = fmt(c.floor_price(b))
-				tip = "Ещё один этаж — место для 1 семьи"
+				tip = "Жителям грустно уже 3 часа" if red.is_empty() else "Жителям не хватает: %s" % ", ".join(red)
+
 		elif d["kind"] == "center" and c.arrivals_paused:
 			icon = "family"
 			warn = false
@@ -8320,8 +8310,7 @@ func _family_badges() -> void:
 			want[key] = true
 			set_badge(key, at + Vector3(0, 1.7, 0), "family")
 			var p: MapBadge = badges[key]["n"]
-			var tr_id := FamilyPreference.main(f)
-			var pref: Array = FamilyPreference.LOOK.get(tr_id, ["housing", "свободный дом"])
+			var pref: Array = FamilyPreference.look(f)
 			var old_size := p.size
 			p.family(String(f["cls"]), String(pref[0]))
 			if old_size != p.size:
@@ -8400,7 +8389,7 @@ func _place_badges() -> void:
 			p.mouse_filter = Control.MOUSE_FILTER_PASS if can else Control.MOUSE_FILTER_IGNORE
 		if not place:
 			continue
-		if String(k).begins_with("b") and b["icon"] == "up" and (tl != "" or overlay != ""):
+		if b["icon"] == "up" and tl != "floor":
 			p.visible = false
 			continue
 		var w: Vector3 = b["pos"]

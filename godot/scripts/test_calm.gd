@@ -86,6 +86,7 @@ func _run() -> void:
 	while not game.ready_done:
 		await frames(5)
 	c = game.city
+	c.wants_v = 0  # прежняя фикстура; CITY5a — test_city5a
 	hud = game.hud
 	sto = game.stories
 	game.can_save = false

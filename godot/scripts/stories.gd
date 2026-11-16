@@ -1130,6 +1130,10 @@ func _couple(a: Dictionary) -> void:
 	# молодые — те самые жених и невеста из роликов: имена и облик — в записи членов семьи (сохраняются, этап 6.1)
 	var ms := couple_members(nm, 2, String(city.def(h)["cls"]), hid, a.get("roles", {}))
 	city.pending[nm] = {"name": nm, "n": 2, "cls": String(city.def(h)["cls"]), "home": hid, "back": true, "m": ms}
+	if city.wants_v >= 1:
+		city.pending[nm]["new_family"] = true
+		city.pending[nm]["want"] = FamilyWant.random_id(city.rng)
+		city.pending[nm]["grace_until"] = city.clock_h + 24
 	if city.settled(hid, 2, nm) <= 0:
 		city.pending.erase(nm)
 		return
@@ -1392,7 +1396,7 @@ func _give(r: Dictionary, sd: Dictionary, a: Dictionary, full: bool) -> String:
 			b["fam"] = fam               # бонус — семье: переедут — он с ними
 		else:
 			b["home"] = int(a.get("home", -1))
-		(s["bonus"] as Array).append(b)
+		city.add_story_bonus(b)
 		out.append("дому %s +%d%% счастья на %s" % [StoryDefs.fam_gen(fam), int(hh[0]), _hours(int(hh[1]))])
 	if r.has("happy_area"):
 		var ha: Array = r["happy_area"]
@@ -1401,22 +1405,22 @@ func _give(r: Dictionary, sd: Dictionary, a: Dictionary, full: bool) -> String:
 			hp = _job_b(a)["pos"]            # у работы героя (гончарная после пожара), а не у его дома
 		if ha.size() > 3 and String(ha[3]) == "where":
 			hp = _where_pos(a)               # у Лудуса, где он правда встал
-		(s["bonus"] as Array).append({"id": id, "line": line, "pct": int(ha[0]), "x": hp.x, "z": hp.y, "r": float(ha[1]), "left": int(ha[2])})
+		city.add_story_bonus({"id": id, "line": line, "pct": int(ha[0]), "x": hp.x, "z": hp.y, "r": float(ha[1]), "left": int(ha[2])})
 		out.append("домам в %d м +%d%% счастья на %s" % [int(ha[1]), int(ha[0]), _hours(int(ha[2]))])
 	if r.has("happy_all"):
 		var hl: Array = r["happy_all"]
-		(s["bonus"] as Array).append({"id": id, "line": line, "pct": int(hl[0]), "left": int(hl[1])})
+		city.add_story_bonus({"id": id, "line": line, "pct": int(hl[0]), "left": int(hl[1])})
 		out.append("всем домам +%d%% счастья на %s" % [int(hl[0]), _hours(int(hl[1]))])
 	if r.has("happy_cls"):
 		# всем домам сословия (лабиринт — патрициям), City.story_parts
 		var hc: Array = r["happy_cls"]
-		(s["bonus"] as Array).append({"id": id, "line": line, "pct": int(hc[1]), "cls": String(hc[0]), "left": int(hc[2])})
+		city.add_story_bonus({"id": id, "line": line, "pct": int(hc[1]), "cls": String(hc[0]), "left": int(hc[2])})
 		out.append("домам %s +%d%% счастья на %s" % [String(CLS_GEN.get(String(hc[0]), hc[0])), int(hc[1]), _hours(int(hc[2]))])
 	if r.has("noise"):
 		# шум рядом (Лудус в центре): меньше нуля — своя строка в счастье соседей
 		var nz: Array = r["noise"]
 		var np := _where_pos(a) if nz.size() > 3 and String(nz[3]) == "where" else _home_pos(a)
-		(s["bonus"] as Array).append({"id": id, "line": String(nz[4]) if nz.size() > 4 else line, "pct": int(nz[0]), "x": np.x, "z": np.y,
+		city.add_story_bonus({"id": id, "line": String(nz[4]) if nz.size() > 4 else line, "pct": int(nz[0]), "x": np.x, "z": np.y,
 			"r": float(nz[1]), "left": int(nz[2])})
 		out.append("соседям в %d м шумно (%d%% на %s)" % [int(nz[1]), int(nz[0]), _hours(int(nz[2]))])
 	if r.has("monument"):
@@ -1434,7 +1438,7 @@ func _give(r: Dictionary, sd: Dictionary, a: Dictionary, full: bool) -> String:
 				hp = Vector2(float(sq[0]), float(sq[1]))
 		bn["x"] = hp.x
 		bn["z"] = hp.y
-		(s["bonus"] as Array).append(bn)
+		city.add_story_bonus(bn)
 		out.append("домам в %d м +%d%% счастья %s" % [int(mo[1]), int(pct), "— пока стоит скверик" if bn.has("at") else "навсегда"])
 	if r.has("rp") and full:
 		var was := city.rp
@@ -5772,7 +5776,7 @@ func _smoke_hour(a: Dictionary, hours: int) -> void:
 			continue
 		c[2] = 3
 		n += 1
-		(S()["bonus"] as Array).append({"id": String(a.get("id", "")), "line": "Копоть после пожара", "pct": SOOT, "home": int(c[3]), "left": SOOT_H})
+		city.add_story_bonus({"id": String(a.get("id", "")), "line": "Копоть после пожара", "pct": SOOT, "home": int(c[3]), "left": SOOT_H})
 	if n > 0:
 		fl["soot"] = n
 		city._quiet("Огонь погас сам, но на %d %s копоть: жителям сутки невесело (%d%%). Дома целы." \

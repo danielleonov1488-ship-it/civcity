@@ -1036,7 +1036,7 @@ const BANDITS_V3 := {"id": "bandits", "title": "Разбойники у арки
 			"goal": ["p", ["soldiers"], 1],
 			"advice": ["Лагерь открыт", "Лагерь Легиона открывается с 50 жителей — наш уже ждёт. Кнопка «Лагерь» наверху открывает его: в Казарме нажмите «Призвать», и один житель станет новобранцем (безработные идут первыми).
 
-Казармы, кузницы и склады на карте города не строят — всё это в Лагере. А в городе остаются мастерские: они дают Лагерю железо, дерево и кожу, а пекарни кормят его пайками."]},
+Казармы, кузницы и склады на карте города не строят — всё это в Лагере. Мастерские железа, дерева и кожи тоже находятся в форте."]},
 		{"id": "ready", "cine": [
 			["fly", "gate", "wide"],
 			["actor", "settler", "gate"],
@@ -1075,7 +1075,17 @@ static func all() -> Array:
 	if Legion.V3:
 		if _v3_all.is_empty():
 			for sd: Dictionary in STORIES:
-				_v3_all.append(BANDITS_V3 if String(sd["id"]) == "bandits" else sd)
+				if String(sd["id"]) == "bandits":
+					_v3_all.append(BANDITS_V3)
+				elif String(sd["id"]) == "letter":
+					var letter := sd.duplicate(true)
+					letter["needs"] = ["s_bandits"]
+					letter["need_p"] = []
+					letter["lesson"] = "Походы Легиона: письмо, победа и весть домой"
+					letter["steps"][1]["advice"] = ["Походы Легиона", "Подготовьте отряд в форте и выиграйте бой в первой провинции. Письмо дойдёт до сына."]
+					_v3_all.append(letter)
+				else:
+					_v3_all.append(sd)
 		return _v3_all + extra
 	return STORIES + extra
 

@@ -74,6 +74,7 @@ func _run() -> void:
 	if "bot" in OS.get_cmdline_user_args():
 		await _bot()
 	else:
+		c.wants_v = 0                          # прежние проверки; бот остаётся на CITY5a
 		c.cozy_v = 0                             # проверки — на прежних числах темпа; «Уютный Рим» — test_cozy и бот
 		await _checks()
 	get_tree().quit()
@@ -978,14 +979,15 @@ func _settle() -> void:
 				homes = c.homes_for(f)
 		if homes.is_empty():
 			continue
-		homes.sort_custom(func(x, y): return _home_key(x) > _home_key(y))
+		homes.sort_custom(func(x, y): return _home_key(x, f) > _home_key(y, f))
 		var hb: Dictionary = homes[0]
 		if c.assign(f["name"], hb["id"]):
 			walks.append([t + WALK_H, hb["id"], int(f["n"]), String(f["name"])])
 
 
-func _home_key(b: Dictionary) -> int:
-	return (1000 if int(b["pop"]) + int(b.get("coming", 0)) > 0 else 0) + int(b["happy"])
+func _home_key(b: Dictionary, f: Dictionary = {}) -> int:
+	var match_bonus := 100 if f.has("want") and FamilyWant.matches(c, b, String(f["want"])) else 0
+	return (1000 if int(b["pop"]) + int(b.get("coming", 0)) > 0 else 0) + match_bonus + int(b["happy"])
 
 
 # ---------- бот: решения раз в час ----------
@@ -1366,7 +1368,7 @@ func _bshops(save: float) -> void:
 			continue
 		# Уютный Рим: только нужные классу лавки; разные лавки еды тоже помогают. Старый бот — по-прежнему.
 		var sub := String(Defs.B[tp].get("sub", ""))
-		var un := hs.filter(func(h): return int(h["pop"]) > 0 and int(h["happy"]) < 80 and not (h["score"] as Dictionary).has(tp) and (c.shop_needed(h, Defs.B[tp]) if c.cozy_v >= 1 else (c.econ < 1 or not (h.get("needs", {}) as Dictionary).has(sub))))
+		var un := hs.filter(func(h): return int(h["pop"]) > 0 and int(h.get("happy_target", h["happy"])) < 80 and not (h["score"] as Dictionary).has(tp) and (c.shop_needed(h, Defs.B[tp]) if c.cozy_v >= 1 else (c.econ < 1 or not (h.get("needs", {}) as Dictionary).has(sub))))
 		if un.size() < 6:
 			continue
 		if _bshop(tp, un):
@@ -1500,7 +1502,7 @@ func _bstory() -> void:
 				d9 = {"state": "cat", "t": t}              # «Где Мася?» — первой
 		"cat":
 			# «Разбойники» — вскоре после «Маси» (своя пауза gap_h, владелец: Легион почти со старта)
-			if t >= float(d9["t"]) + STORY_H + float(StoryDefs.story("bandits").get("gap_h", StoryDefs.GAP_H)):
+			if t >= float(d9["t"]) + STORY_H + float(StoryDefs.story("bandits").get("gap_h", StoryDefs.GAP_H)) and (not c.legion.v3() or int(c.stats["pop"]) >= 50):
 				d9 = {"state": "build", "t": t}
 				c.research["legion"] = true
 				c.legion.flags["advised"] = true
@@ -1522,6 +1524,21 @@ func _bstory() -> void:
 func _bstory_build() -> void:
 	if String(d9["state"]) != "build":
 		return
+	if c.legion.v3():
+		var lg: Legion = c.legion
+		lg.army_tick()
+		if not lg.window_open():
+			return
+		var recruit := lg.recruit_resident()
+		if recruit.is_empty():
+			return
+		for slot in lg.slots():
+			if int(lg.squad3[slot]) == 0 and lg.set_place(slot, int(recruit["id"])):
+				d9 = {"state": "fight", "t": t}
+				_d9_lvl = c.level
+				print("ECOND9 t=%.1f lvl=%d resident recruited in fort; no city barracks" % [t, c.level])
+				return
+		return
 	var cost := float(Defs.B["barracks"]["cost"])
 	if c.money < cost or (c.money - cost < _bsave() * 0.5 and t < float(d9["t"]) + 6.0):
 		return
@@ -1537,6 +1554,8 @@ func _bstory_build() -> void:
 ## только из лишних денег (LEG_SAVE, LEG_KEEP). Таймеры идут сами (Legion.clock), бот только платит
 func _blegion(save: float) -> void:
 	var lg: Legion = c.legion
+	if lg.v3():
+		return                                # городской бот не строит военный квартал
 	if not lg.window_open() or String(d9["state"]) in ["wait", "cat", "build"]:
 		return
 	var keep := maxf(save * LEG_SAVE, c.money_cap() * leg_keep)

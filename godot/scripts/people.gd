@@ -958,7 +958,7 @@ func _lived_houses() -> Array:
 
 ## «Уютный Рим», этап 4: семья в доме хочет кошку, и кошки у дома ещё нет
 func _wants_cat(b: Dictionary) -> bool:
-	var want := (b.get("families", []) as Array).any(func(f): return Balance.traits_of(String(f["name"])).has("cat"))
+	var want := (b.get("families", []) as Array).any(func(f): return not f.has("want") and Balance.traits_of(String(f["name"])).has("cat"))
 	return want and not city.cats.any(func(e): return int(e.get("home", -1)) == int(b["id"]))
 
 
@@ -3792,7 +3792,12 @@ func _on_building_removed(b: Dictionary) -> void:
 			var ids: Array = rs.map(func(x): return x["id"])
 			waiting_fams.append({"name": f, "members": ids})
 			# «back»: семья уже жила в городе — в счёт приехавших (первые три семьи, просьба «Заселите три семьи») второй раз не идёт
-			city.family_arrived({"name": f, "n": ids.size(), "cls": city.def(b)["cls"], "back": true, "m": _recs(rs)}, false)
+			var returning := {"name": f, "n": ids.size(), "cls": city.def(b)["cls"], "back": true, "m": _recs(rs)}
+			for old: Dictionary in b.get("families", []):
+				if old["name"] == f:
+					City.copy_family_state(old, returning)
+					break
+			city.family_arrived(returning, false)
 		# кошки снесённого дома переходят к ближнему дому (этап 6.4)
 		for ct in cats:
 			if int(ct.get("home", -1)) == int(b["id"]):
