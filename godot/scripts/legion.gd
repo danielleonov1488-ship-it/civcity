@@ -3433,6 +3433,8 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 		food_pts = maxf(0.0, food_pts - FOOD2_BATTLE)
 	var first := bool(result.get("win", false)) and int(st["idx"]) == progress
 	if bool(result.get("win", false)):
+		if v3():
+			flags["march_in"] = true
 		daily_note("camp_win")
 		if first:
 			daily_note("camp_first")

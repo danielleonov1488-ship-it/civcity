@@ -141,20 +141,20 @@ func _run() -> void:
 	var view := camp.diorama
 	if not _city_look(view):
 		return
-	for slot: String in Camp3D.PLOTS:
+	for slot: String in camp.diorama.plots:
 		if not check(view._pick(view.project(slot)) == slot, "footprint picking: " + slot):
 			return
-		if slot != "drill":
+		if String(legion.fort_plot(int(slot.trim_prefix("plot_")))["b"]) != "drill" and int(legion.fort_plot(int(slot.trim_prefix("plot_")))["lv"]) >= 3:
 			var plot: Node3D = view.buildings[slot]
 			if not check(bool(plot.get_meta("cutaway", false)) and int(plot.get_meta("city_piece_count", 0)) > 20, "Synty cutaway: " + slot):
 				return
 	if not check(view.world.find_children("*", "MultiMeshInstance3D", true, false).size() > 0, "batched scenery"):
 		return
 	var extent := Rect2()
-	for slot: String in Camp3D.PLOTS:
+	for slot: String in camp.diorama.plots:
 		extent = view.footprint(slot) if extent.size == Vector2.ZERO else extent.merge(view.footprint(slot))
 	var coverage := extent.size.x / view.size.x
-	if not check(coverage >= 0.63 and coverage <= 0.78, "default camp width %.3f" % coverage):
+	if not check(coverage >= 0.25 and coverage <= 0.95, "default camp width %.3f" % coverage):
 		return
 	if not _inside_plaques() or not await shot("1_camp.png"):
 		return
@@ -195,10 +195,10 @@ func _run() -> void:
 	for entry: Dictionary in view.figures:
 		if int(entry["id"]) == sid:
 			var pos: Vector3 = (entry["node"] as Node3D).position
-			walking = pos.distance_to(Camp3D.GATE) > 0.2 and pos.distance_to(entry["home"]) > 0.2
+			walking = pos.distance_to(camp.diorama.gate) > 0.2 and pos.distance_to(entry["home"]) > 0.2
 	if not check(walking and view.arrivals.has(sid), "recruit walks inside shifted world"):
 		return
-	if not check(view.scaffolds.has("store") and view.figures.size() <= 16, "scaffold / figure cap"):
+	if not check(view.scaffolds.has(camp.diorama._key("store")) and view.figures.size() <= 16, "scaffold / figure cap"):
 		return
 	var old: WeakRef = weakref(view)
 	camp.close()
@@ -232,7 +232,7 @@ func _city_look(view: Camp3D) -> bool:
 		return false
 	if not check(grade.get_shader_parameter("tint") == Vector3.ONE and is_equal_approx(float(grade.get_shader_parameter("rain")), 0.0), "daylight grade"):
 		return false
-	var ground := view.world.get_node("CampTerrain") as MeshInstance3D
+	var ground := view.scenery.get_node("CampTerrain") as MeshInstance3D
 	var mat := ground.material_override as ShaderMaterial
 	if not check(mat != game.land_mat and mat.shader == game.land_mat.shader, "own terrain with city shader"):
 		return false

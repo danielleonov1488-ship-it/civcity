@@ -33,6 +33,7 @@ var upgrade_cost: Control
 var build_cards := {}
 var build_scroll: ScrollContainer
 var build_focus := ""
+var build_plot_id := -1
 var _build_sig := ""
 var _card_tween: Tween
 var _sheet_offset := 0.0
@@ -537,6 +538,12 @@ func _refresh() -> void:
 
 func show_building(slot: String) -> void:
 	# Совместимость с Camp3D и прежними проверками; карточка хранит только ID участка.
+	if slot.begins_with("plot_"):
+		show_plot(int(slot.trim_prefix("plot_")))
+		return
+	if slot == "gate":
+		show_plot(0)
+		return
 	var plot := lg.fort_slot_plot(slot)
 	if plot.is_empty():
 		plot = lg.fort_slot_plot("hq")
@@ -547,7 +554,7 @@ func show_building(slot: String) -> void:
 func show_plot(plot_id: int) -> void:
 	var plot := lg.fort_plot(plot_id)
 	if plot.is_empty() or String(plot["b"]) == "":
-		show_build_menu()
+		show_build_menu(plot_id if not plot.is_empty() else -1)
 		return
 	_close_modal()
 	_hide_card()
@@ -1354,10 +1361,11 @@ func _jump_to_type(type: String) -> void:
 	else:
 		show_plot(int(plot["id"]))
 		if is_instance_valid(diorama):
-			diorama.focus_plot(type if Legion.CAMP_SLOTS.has(type) else "hq")
+			diorama.focus_plot("plot_%d" % int(plot["id"]))
 
 
-func show_build_menu() -> void:
+func show_build_menu(plot_id := -1) -> void:
+	build_plot_id = plot_id
 	_guide_advance(1)
 	var v := _new_modal(minf(1020, maxf(700, size.x - 100)))
 	modal_panel.name = "FortBuildMenu"
@@ -1460,14 +1468,14 @@ func _choose_build(type: String) -> void:
 		_guide_advance(2)
 		_jump_to_type(type)
 		return
-	# До новой 3D-сцены первый свободный участок выбирается автоматически.
-	var id := lg.fort_empty_plot()
+	var id := build_plot_id if build_plot_id >= 0 else lg.fort_empty_plot()
 	if not lg.fort_build(type, id):
 		hud.notify(I18n.t(lg.fort_can_build(type, id)), "lock")
 		_refresh_build_menu()
 		return
 	if type == "kitchen":
 		_guide_advance(2)
+	build_plot_id = -1
 	show_plot(id)
 	_refresh()
 
@@ -1621,6 +1629,7 @@ func _sync_markers() -> void:
 				plot = lg.fort_slot_plot("hq")
 			var id := int(plot.get("id", 0))
 			var marker: Dictionary = plaques[slot]
+			(marker["panel"] as Control).visible = not shown.has(id)
 			(marker["panel"] as Control).set_meta("plot", id)
 			(marker["button"].get_node("ic") as TextureRect).texture = hud.ico(String(FORT_ICON[String(plot["b"])]), 64)
 			if not shown.has(id):

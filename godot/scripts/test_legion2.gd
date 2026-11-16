@@ -128,7 +128,7 @@ func _run() -> void:
 		return
 	if not check(camp.diorama.sub.own_world_3d and camp.diorama.figures.size() <= 16, "own world / figure cap"):
 		return
-	for slot: String in Camp3D.PLOTS:
+	for slot: String in camp.diorama.plots:
 		if not check(camp.diorama._pick(camp.diorama.project(slot)) == slot, "footprint picking: " + slot):
 			return
 	if not _inside_plaques() or not await shot("1_camp3d.png"):
@@ -151,12 +151,12 @@ func _run() -> void:
 	for entry: Dictionary in camp.diorama.figures:
 		if int(entry["id"]) == sid:
 			var pos: Vector3 = (entry["node"] as Node3D).position
-			walker_found = pos.distance_to(Camp3D.GATE) > 0.2 and pos.distance_to(entry["home"]) > 0.2
+			walker_found = pos.distance_to(camp.diorama.gate) > 0.2 and pos.distance_to(entry["home"]) > 0.2
 	if not check(walker_found, "recruit between gate and barracks"):
 		return
 	if not await shot("3_recruit_walkin.png"):
 		return
-	if not check(camp.diorama.scaffolds.has("store") and camp.diorama.figures.size() <= 16, "scaffold and figure cap"):
+	if not check(camp.diorama.scaffolds.has(camp.diorama._key("store")) and camp.diorama.figures.size() <= 16, "scaffold and figure cap"):
 		return
 	camp.diorama.focus_plot("store")
 	if not await shot("4_upgrade_scaffold.png"):
