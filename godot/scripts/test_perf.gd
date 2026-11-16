@@ -13,6 +13,9 @@ extends Node
 ## Постройки в городе поменяли намеренно — эталон перезаписать: … -- mode=shots rec=1 (на сборке без правок скорости
 ## вида Средней/Высокой это то же самое, что сейчас).
 
+## PERF4: mode=procprof q=high p4=0|1 [n=240 rounds=3] — прямое время каждого _process, мкс/кадр.
+## p4=0|1 действует во всех режимах, независимо от PERF3 pvat=0|1.
+const ProcessProbe := preload("res://scripts/perf_process_probe.gd")
 const OWNER := "D:/CivCity/.work/owner_save/city.json"
 ## Этап 4 (окантовка у домов, бордюры, новые утки) намеренно поменял картинку города — эталон записан заново в свою папку
 ## (… -- mode=shots rec=1 на сборке этапа 4): прежний «golden» остаётся у линии, где этапа 4 ещё нет.
@@ -51,6 +54,7 @@ func _ready() -> void:
 		A[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	var mode: String = A.get("mode", "regress")
 	People.anim_batch = A.get("pvat", "1") != "0"    # PERF3, вариант B: ручная скелетная анимация
+	Gfx.proc_fast = A.get("p4", "1") != "0"
 	if A.get("freebuild", "1") == "0":
 		Game.FREE_BUILD = false                        # свободная стройка выключена — как CIVCITY_FREEBUILD=0 (для сравнения замеров)
 	# plain=1 — Synty без наполнения (CatDress, CatDressCivic): снимки «было» для сравнения детальных проходов
@@ -124,6 +128,7 @@ func _run(mode: String) -> void:
 	while not game.ready_done:
 		await frames(5)
 	print("PERF ready: город готов через %.1f с после запуска" % (Time.get_ticks_msec() / 1000.0))
+	print("PERF4 mode=%s p4=%d pvat=%d" % [mode, int(Gfx.proc_fast), int(People.anim_batch)])
 	game.can_save = mode == "hitch"           # копия города — только в своей папке запуска; пишем лишь в замере рывков
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	vp = get_viewport().get_viewport_rid()
@@ -148,6 +153,7 @@ func _run(mode: String) -> void:
 		"ab": await _ab()
 		"gpuab": await _gpuab()
 		"procab": await _procab()
+		"procprof": await _procprof()
 		"lifeab": await _lifeab()
 		"offer": await _offer()
 		_: await _regress()
@@ -220,6 +226,7 @@ func _measure(tag: String) -> Dictionary:
 	r["ppl"] = ppl_ms
 	r["anims"] = anim_ms
 	print("PERF3 pvat=%d %s | People %.3f ms Gfx._anims %.3f ms | tiers %s" % [int(People.anim_batch), tag, ppl_ms, anim_ms, str(Gfx.tier_n)])
+	print("PERF4 p4=%d %s" % [int(Gfx.proc_fast), tag])
 	print("PERF %-22s gpu %5.2f (p10 %5.2f) | cpu %5.2f (proc %5.2f rcpu %5.2f) | frame %5.2f p95 %5.2f p99 %5.2f max %5.1f fps %5.1f | dc %4d + shadow %4d | tris %5.2fM + shadow %5.2fM | vram %d MB (tex %d) | people %d" % [
 		tag, r["gpu"], r["p10"], r["cpu"], r["proc"], r["rcpu"], r["frame"], r["p95"], r["p99"], r["max"], 1000.0 / maxf(0.01, r["frame"]),
 		r["vis_d"], r["sh_d"], r["vis_p"] / 1.0e6, r["sh_p"] / 1.0e6, r["vram"], r["tex"], r["people"]])
@@ -709,6 +716,171 @@ func _procab() -> void:
 	rows.sort_custom(func(a, b): return float(a[0]) > float(b[0]))
 	for e: Array in rows:
 		print("PROCAB %-14s %+5.2f мс (со сценарием %.2f, без %.2f)" % [e[1], e[0], e[2], e[3]])
+
+
+var _procprof_on := false
+var _procprof_nodes: Array[Node] = []
+var _procprof_seen := {}
+var _procprof_totals := {}                  # script → [микросекунды, вызовы]
+var _procprof_candidates: Array[Node] = []
+var _procprof_known := {}
+
+
+func _procprof_added(n: Node) -> void:
+	# node_added приходит до _ready: флаг обработки к этому моменту ещё может поменяться.
+	if n.get_script() != ProcessProbe:
+		_procprof_consider.call_deferred(n)
+
+
+func _procprof_consider(n: Node) -> void:
+	if not _procprof_on or not is_instance_valid(n) or not n.is_inside_tree() or n.is_queued_for_deletion():
+		return
+	if n != game and not game.is_ancestor_of(n):
+		return
+	if n.get_script() == null or n.get_script() == ProcessProbe or not n.has_method("_process"):
+		return
+	if not _procprof_known.has(n.get_instance_id()):
+		_procprof_known[n.get_instance_id()] = true
+		_procprof_candidates.append(n)
+	_procprof_wrap(n)
+
+
+## До обычных callbacks: подхватить включённую обработку уже существующего узла.
+func _procprof_poll() -> void:
+	for nd: Node in _procprof_candidates:
+		if is_instance_valid(nd) and nd.is_processing():
+			_procprof_wrap(nd)
+	for probe: Node in _procprof_nodes:
+		if not is_instance_valid(probe):
+			continue
+		var nd: Node = probe.get("target")
+		if is_instance_valid(nd) and nd.is_processing():
+			nd.set_process(false)
+			probe.set("enabled", true)
+			probe.set_process(true)
+
+
+func _procprof_wrap(n: Node) -> void:
+	if not _procprof_on or not is_instance_valid(n) or n.is_queued_for_deletion() or not n.is_inside_tree():
+		return
+	if n != game and not game.is_ancestor_of(n):
+		return
+	var sc: Script = n.get_script()
+	if sc == null or sc == ProcessProbe or not n.is_processing() or not n.has_method("_process") or _procprof_seen.has(n.get_instance_id()):
+		return
+	var key := sc.resource_path.trim_prefix("res://scripts/")
+	if not _procprof_totals.has(key):
+		_procprof_totals[key] = [0, 0]
+	var probe := ProcessProbe.new()
+	probe.setup(n, _procprof_totals[key])
+	_procprof_seen[n.get_instance_id()] = true
+	# Выключаем только свой callback: process_mode не трогаем, физика и дети идут как обычно.
+	n.set_process(false)
+	n.add_child(probe)
+	n.move_child(probe, 0)                     # то же место в порядке дерева, до прежних детей
+	_procprof_nodes.append(probe)
+
+
+func _procprof_stop() -> void:
+	_procprof_on = false
+	get_tree().node_added.disconnect(_procprof_added)
+	get_tree().process_frame.disconnect(_procprof_poll)
+	for probe: Node in _procprof_nodes:
+		if not is_instance_valid(probe):
+			continue
+		var n: Node = probe.get("target")
+		if is_instance_valid(n):
+			n.set_process(bool(probe.get("enabled")))
+		probe.set_process(false)
+		probe.queue_free()
+	_procprof_nodes.clear()
+	_procprof_seen.clear()
+	_procprof_totals.clear()
+	_procprof_candidates.clear()
+	_procprof_known.clear()
+
+
+func _procprof_noop(_dt: float) -> void:
+	pass
+
+
+## Один probe на узел: обычные priority/порядок дерева и dt, по одному вызову за кадр.
+## Медиана средних за rounds, p95/max по кадрам; редкая работа не теряется в медиане нулей.
+func _procprof() -> void:
+	await _settle()
+	var n := maxi(1, int(A.get("n", "240")))
+	var rounds := maxi(1, int(A.get("rounds", "3")))
+	var noop := Callable(self, "_procprof_noop")
+	var overhead := 0
+	for i in 10000:
+		var t0 := Time.get_ticks_usec()
+		noop.call(0.0)
+		overhead += Time.get_ticks_usec() - t0
+	print("PROCPROF timer+Callable floor %.3f us/call (raw times, no subtraction); physics/native AnimationMixer excluded" % (overhead / 10000.0))
+	for q: String in str(A.get("q", "high")).split(","):
+		_quality(q)
+		for v: Array in _views(VIEWS_OWNER if city_src != "" else VIEWS_NEW):
+			_view(v)
+			game._set_hour(float(A.get("hour", "9")))
+			_procprof_on = true
+			get_tree().node_added.connect(_procprof_added)
+			var nodes: Array[Node] = [game]
+			nodes.append_array(game.find_children("*", "", true, false))
+			for nd: Node in nodes:
+				_procprof_consider(nd)
+			get_tree().process_frame.connect(_procprof_poll)
+			await frames(int(A.get("warm", "60")))
+			await RenderingServer.frame_post_draw
+			var samples := {}
+			var means := {}
+			var calls := {}
+			var frame_count := 0
+			for r in rounds:
+				var previous := {}
+				var starts := {}
+				var game_frame: int = game.frame
+				for key: String in _procprof_totals:
+					var total: Array = _procprof_totals[key]
+					previous[key] = int(total[0])
+					starts[key] = [int(total[0]), int(total[1])]
+				for f in n:
+					await RenderingServer.frame_post_draw
+					for key: String in _procprof_totals:
+						var total: Array = _procprof_totals[key]
+						if not samples.has(key):
+							var zeros := []
+							zeros.resize(frame_count)
+							zeros.fill(0.0)
+							samples[key] = zeros
+						(samples[key] as Array).append(float(int(total[0]) - int(previous.get(key, 0))))
+						previous[key] = int(total[0])
+					frame_count += 1
+				if int(game.frame) - game_frame != n:
+					fail("procprof: game._process count %d, expected %d" % [int(game.frame) - game_frame, n])
+				for key: String in _procprof_totals:
+					var total: Array = _procprof_totals[key]
+					var start: Array = starts.get(key, [0, 0])
+					if not means.has(key):
+						means[key] = []
+						for earlier in r:
+							(means[key] as Array).append(0.0)
+						calls[key] = 0
+					(means[key] as Array).append(float(int(total[0]) - int(start[0])) / n)
+					calls[key] = int(calls[key]) + int(total[1]) - int(start[1])
+			var rows := []
+			for key: String in means:
+				rows.append([_pct(PackedFloat32Array(means[key]), 0.5), key])
+			rows.sort_custom(func(a, b): return float(a[0]) > float(b[0]))
+			print("PROCPROF q=%s view=%s p4=%d frames=%d rounds=%d | script -> us per frame (median of round means), p95, max, calls/frame" % [q, v[0], int(Gfx.proc_fast), frame_count, rounds])
+			var sum_us := 0.0
+			for row: Array in rows:
+				var key: String = row[1]
+				var times := PackedFloat32Array(samples[key])
+				print("PROCPROF %-26s -> %9.2f us/frame | p95 %9.2f max %9.2f | calls/frame %.2f" % [key, row[0], _pct(times, 0.95), _pct(times, 1.0), float(calls[key]) / frame_count])
+				sum_us += float(row[0])
+			print("PROCPROF TOTAL %.2f us/frame" % sum_us)
+			_procprof_stop()
+	print("PROCPROF DONE")
 
 
 static func _proc_set(list: Array, mode: int) -> void:

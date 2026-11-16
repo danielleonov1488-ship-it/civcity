@@ -29,6 +29,7 @@ const HALF_FAR := 60.0                 # «Низкая»: жители даль
 ## Вернуть прежнюю «Среднюю» — здесь false (одно место)
 const MEDIUM_LIGHT := true
 static var medium_light := MEDIUM_LIGHT   # проверки (test_perf mode=offer) переключают на ходу
+static var proc_fast := true             # PERF4; test_perf p4=0 возвращает весь прежний путь
 
 static var _sun_low := -1              # тени солнца облегчены (атлас 4096, мягкость низкая): общие для всей отрисовки
 static var _tex_small := false         # «Очень низкая»: большие картинки материалов — копиями вдвое меньше
@@ -1011,6 +1012,15 @@ func _anim_remove(n: Node) -> void:
 			c.batch_release()              # при переносе в другую сцену вернётся обычный проигрыватель
 
 
+var _proc_camera: Camera3D
+var _proc_transform := Transform3D.IDENTITY
+var _proc_projection := Projection()
+var _proc_rect := Rect2()
+var _proc_focus: Citizen
+var _proc_lod := true
+var _proc_view := 0
+
+
 func _anims(dt: float) -> void:
 	var q: String = str(game.settings.get("quality", "high"))
 	var low := is_low(q)
@@ -1025,6 +1035,20 @@ func _anims(dt: float) -> void:
 	var focus: Citizen = null
 	if game.people.by_id.has(game.people.focus_rid):
 		focus = game.people.by_id[game.people.focus_rid]["node"]
+	if proc_fast:
+		var xf := cam.get_camera_transform()
+		var projection := cam.get_camera_projection()
+		var rect := get_viewport().get_visible_rect()
+		if cam != _proc_camera or xf != _proc_transform or projection != _proc_projection or rect != _proc_rect or focus != _proc_focus or lod_on != _proc_lod:
+			_proc_view += 1
+			_proc_camera = cam
+			_proc_transform = xf
+			_proc_projection = projection
+			_proc_rect = rect
+			_proc_focus = focus
+			_proc_lod = lod_on
+	else:
+		_proc_view += 1                    # после A/B прежний кеш не подходит
 	for t in 4:
 		tier_n[t] = 0
 	var list: Array[Citizen] = _anim_list
@@ -1046,14 +1070,35 @@ func _anims(dt: float) -> void:
 		var pos := c.global_position
 		var tier := 0
 		var px := INF
-		var d := pos.distance_to(cp)
-		if c == focus or c.cape_sk != null or not lod_on:
-			tier = 0                               # выбранный житель и герой (у него плащ) — всегда плавно
-		elif not cam.is_position_in_frustum(pos + Vector3(0, 0.6, 0)):
-			tier = 3
+		var d: float
+		var sy := c.scale.y
+		var full := c == focus or c.cape_sk != null or not lod_on
+		var stable := proc_fast and c.proc_pos == pos
+		if proc_fast:
+			c.proc_pos = pos
+			if not stable:
+				c.proc_view = -1
+		if stable and c.proc_camera == cam and c.proc_view == _proc_view and c.proc_scale == sy and c.proc_full == full:
+			d = c.proc_distance
+			px = c.proc_px
+			tier = c.proc_tier
 		else:
-			px = fpx * 1.4 * c.scale.y / Citizen.SIZE / maxf(0.5, d)
-			tier = 0 if px >= ANIM_BIG else (1 if px >= ANIM_SMALL else 2)
+			d = pos.distance_to(cp)
+			if full:
+				tier = 0                           # выбранный житель и герой — всегда плавно
+			elif not cam.is_position_in_frustum(pos + Vector3(0, 0.6, 0)):
+				tier = 3
+			else:
+				px = fpx * 1.4 * sy / Citizen.SIZE / maxf(0.5, d)
+				tier = 0 if px >= ANIM_BIG else (1 if px >= ANIM_SMALL else 2)
+			if stable:
+				c.proc_camera = cam
+				c.proc_view = _proc_view
+				c.proc_scale = sy
+				c.proc_distance = d
+				c.proc_px = px
+				c.proc_tier = tier
+				c.proc_full = full
 		tier_n[tier] += 1
 		var k := 1 if tier == 0 else maxi(1, int(fps / float(ANIM_HZ[tier])))
 		if low and (q == "verylow" or d > HALF_FAR):
@@ -1064,7 +1109,10 @@ func _anims(dt: float) -> void:
 				var batch_k := 2 if tier == 1 else (4 if px >= ANIM_TINY else 8)
 				k = maxi(k, batch_k)
 			c.lod_k = k if lod_on else 1
-			c.batch_step(dt, c.lod_k, _lod_frame, tier == 3 or not c.is_visible_in_tree())
+			var hidden := tier == 3 or not c.is_visible_in_tree()
+			# Пауза: поза уже применена, времени и смены видимости нет — костям нечего делать.
+			if not (proc_fast and c.batch_on and ap.speed_scale == 0.0 and c.batch_acc == 0.0 and not c.batch_dirty and hidden == c.batch_hidden):
+				c.batch_step(dt, c.lod_k, _lod_frame, hidden)
 			continue
 		c.batch_release()
 		c.lod_k = k if lod_on else 1

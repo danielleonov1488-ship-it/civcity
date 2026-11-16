@@ -84,6 +84,8 @@ var open_cat := ""
 var _tray_w := 0.0                    # на сколько широк свиток стройки без поправки на окно инструмента
 var _tray_h := 0.0
 var _tray_key := ""
+var _tray_dims := Vector3i(-1, -1, -1)
+var _tray_scroll: Control
 var open_sub := "food"
 var open_dsub := "plants"             # вкладка украшений
 var tray_dtabs: HBoxContainer
@@ -205,6 +207,12 @@ var _tip_next := 0
 var full_rp: Label                        # «Полки полны — очки пропадают»
 var _cursor_key := ""                     # какой рисованный курсор стоит на обычной стрелке (по инструменту, см. _cursor_world)
 var _cursor_px := 0
+var _pointer_dirty := true
+var _pointer_poll := 0.0
+var _pointer_elapsed := 0.0
+var _pointer_mouse := Vector2.INF
+var _pointer_tool := ""
+var _clock_slot := -1
 
 
 func _ready() -> void:
@@ -1589,6 +1597,36 @@ var _cursor_hand := ""
 
 ## Какой курсор нужен сейчас. Над окнами — стрелка, над кнопками и значками — «рука», над недоступной кнопкой — серая;
 ## над городом — по инструменту и по тому, что под мышью (_cursor_world). Зажата левая кнопка — стрелка и рука светятся
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion or event is InputEventMouseButton:
+		_pointer_dirty = true
+
+
+## Мышь и кнопки — сразу; изменения под неподвижной мышью — не реже 10 раз в секунду.
+func _pointer_tick(dt: float) -> void:
+	if not Gfx.proc_fast:
+		_cursor_tick()
+		_hover_tick()
+		_person_tag_tick(dt)
+		return
+	_pointer_poll -= dt
+	_pointer_elapsed += dt
+	var mp := get_viewport().get_mouse_position()
+	var tool: String = game.tool if game else ""
+	var held := _hover_hold > 0
+	if _pointer_dirty or mp != _pointer_mouse or tool != _pointer_tool or _pointer_poll <= 0.0:
+		_pointer_dirty = false
+		_pointer_mouse = mp
+		_pointer_tool = tool
+		_pointer_poll = 0.1
+		_cursor_tick()
+		_hover_tick()
+		_person_tag_tick(_pointer_elapsed)
+		_pointer_elapsed = 0.0
+	elif held:
+		_hover_tick()                         # три кадра раскладки остаются тремя кадрами
+
+
 func _cursor_tick() -> void:
 	var px := Cursors.size_for(get_viewport())
 	var down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
@@ -2751,9 +2789,10 @@ func _bottom_center() -> void:
 func _fit_tray() -> void:
 	if tray == null or not tray.visible or _tray_w <= 0.0:
 		return
-	var sc := tray.find_child("scroll", true, false) as Control
+	var sc: Control = _tray_scroll if Gfx.proc_fast and is_instance_valid(_tray_scroll) and tray.is_ancestor_of(_tray_scroll) else tray.find_child("scroll", true, false) as Control
 	if sc == null:
 		return
+	_tray_scroll = sc
 	var vw := root.size.x
 	var w := _tray_w
 	var dx := 0.0
@@ -2771,7 +2810,11 @@ func _fit_tray() -> void:
 		var full := w + frame
 		var center := clampf(vw * 0.5, left_min + full * 0.5, right_edge - full * 0.5)
 		dx = center - vw * 0.5
-	var key := "%d|%d|%d" % [int(w), int(dx), int(vw)]
+	var dims := Vector3i(int(w), int(dx), int(vw))
+	if Gfx.proc_fast and _tray_key != "" and dims == _tray_dims:
+		return
+	_tray_dims = dims
+	var key := "%d|%d|%d" % [dims.x, dims.y, dims.z]
 	if key == _tray_key:
 		return
 	_tray_key = key
@@ -4047,9 +4090,7 @@ func _process(_dt: float) -> void:
 	_place_pops()
 	_place_notes()
 	_place_overlay()
-	_cursor_tick()
-	_hover_tick()
-	_person_tag_tick(_dt)
+	_pointer_tick(_dt)
 	if not info_p.is_empty() and info_panel and info_panel.visible:
 		PersonCard.tick(self, info_p, _dt)     # портрет следит за головой, «Сейчас» — дважды в секунду
 	if tool_panel and tool_panel.visible and Engine.get_process_frames() % 30 == 0:
@@ -4074,7 +4115,10 @@ func _process(_dt: float) -> void:
 	if game and lbl_clock:
 		var h := int(game.hour)
 		var m := int((game.hour - h) * 60.0) / 10 * 10
-		lbl_clock.text = "%02d:%02d" % [h, m]
+		var slot := h * 6 + m / 10
+		if not Gfx.proc_fast or slot != _clock_slot or lbl_clock.text == "":
+			_clock_slot = slot
+			lbl_clock.text = "%02d:%02d" % [h, m]
 	if not _ptr_shown.is_empty():
 		# стрелка по щелчку строки: следует за тем, что открылось (раздел → вкладка → карточка), и гаснет через PTR_SHOW_MS
 		_ptr_tick -= _dt

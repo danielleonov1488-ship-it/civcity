@@ -24,6 +24,15 @@ var batch_hidden := false
 var batch_dirty := false
 var batch_slot := 0
 var batch_steps := 0                  # счётчик для test_perf3
+# PERF4: кеш расчёта LOD при прежней камере и позиции.
+var proc_camera: Camera3D
+var proc_view := -1
+var proc_pos := Vector3.INF
+var proc_scale := 0.0
+var proc_distance := 0.0
+var proc_px := INF
+var proc_tier := 0
+var proc_full := false
 var female := false
 var meshes := []
 var _cur := ""

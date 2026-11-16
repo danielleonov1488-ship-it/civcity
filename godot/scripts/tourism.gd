@@ -103,11 +103,35 @@ var game
 var groups: Array = []                     # [{n: [Citizen], path, len, d}]
 var _next := {}                            # id гостиницы → с до выхода следующей группы
 var _rng := RandomNumberGenerator.new()
+var _inns: Array[Dictionary] = []
+var _inns_dirty := true
+var _inns_size := -1
 
 
 func setup(g) -> void:
 	game = g
 	_rng.randomize()
+	game.city.building_added.connect(_inn_changed)
+	game.city.building_removed.connect(_inn_changed)
+	game.city.changed.connect(_inn_changed)
+
+
+func _inn_changed(_building: Dictionary = {}) -> void:
+	_inns_dirty = true
+
+
+## Состав гостиниц — по изменению города; штат читается из живой записи каждый кадр.
+func _inn_list() -> Array:
+	var buildings: Dictionary = game.city.buildings
+	if _inns_dirty or _inns_size != buildings.size():
+		_inns = []
+		for id in buildings:
+			var b: Dictionary = buildings[id]
+			if String(b["type"]) == "mansio":
+				_inns.append(b)
+		_inns_size = buildings.size()
+		_inns_dirty = false
+	return _inns
 
 
 func _process(dt: float) -> void:
@@ -117,15 +141,26 @@ func _process(dt: float) -> void:
 	var h: float = game.hour
 	var on: bool = cozy(game.city) and h >= WALK_H[0] and h < WALK_H[1] and str(game.settings.get("quality", "high")) != "verylow"
 	if on and spd > 0.0:
-		for id in game.city.buildings:
-			var b: Dictionary = game.city.buildings[id]
-			if String(b["type"]) != "mansio" or not bool(b.get("active", false)):
-				continue
-			var k := int(b["id"])
-			_next[k] = float(_next.get(k, _rng.randf_range(2.0, 8.0))) - dt * spd
-			if float(_next[k]) <= 0.0 and groups.size() < 6:
-				_next[k] = _rng.randf_range(WALK_GAP[0], WALK_GAP[1])
-				_spawn(b)
+		if Gfx.proc_fast:
+			for b: Dictionary in _inn_list():
+				if not bool(b.get("active", false)):
+					continue
+				var k := int(b["id"])
+				# Включая вызов randf в get: порядок случайных чисел остаётся прежним.
+				_next[k] = float(_next.get(k, _rng.randf_range(2.0, 8.0))) - dt * spd
+				if float(_next[k]) <= 0.0 and groups.size() < 6:
+					_next[k] = _rng.randf_range(WALK_GAP[0], WALK_GAP[1])
+					_spawn(b)
+		else:
+			for id in game.city.buildings:
+				var b: Dictionary = game.city.buildings[id]
+				if String(b["type"]) != "mansio" or not bool(b.get("active", false)):
+					continue
+				var k := int(b["id"])
+				_next[k] = float(_next.get(k, _rng.randf_range(2.0, 8.0))) - dt * spd
+				if float(_next[k]) <= 0.0 and groups.size() < 6:
+					_next[k] = _rng.randf_range(WALK_GAP[0], WALK_GAP[1])
+					_spawn(b)
 	_step(dt, dt * spd)
 
 

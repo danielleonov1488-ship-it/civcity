@@ -25,6 +25,10 @@ var _shown_dirty := true
 var _sim_time := 0.0
 var _buckets: Array = []
 var _buckets_dirty := true
+var _roster_dirty := true
+var _roster_frame: Array = []
+var _props_dirty := true
+var _props_frame: Array = []
 var visible_count := 0
 var _tick := 0.0
 var _jobs_dirty := true
@@ -255,6 +259,8 @@ func _make_family(name: String, n: int, home: int, at: Vector2, cls := "", fam :
 		next_rid += 1
 		residents.append(r)
 		_buckets_dirty = true
+		_roster_dirty = true
+		_props_dirty = true
 		by_id[r["id"]] = r
 		out.append(r)
 	return out
@@ -337,6 +343,7 @@ func _node(r: Dictionary) -> Citizen:
 	if not r.has("hero"):
 		_shown.append(r)
 		_shown_dirty = true
+		_props_dirty = true
 	visible_count += 1
 	_place(r)
 	return c
@@ -348,6 +355,7 @@ func _hide(r: Dictionary) -> void:
 		r["node"] = null
 		_shown.erase(r)
 		_shown_dirty = true
+		_props_dirty = true
 		visible_count -= 1
 
 
@@ -1205,6 +1213,8 @@ func _remove(r: Dictionary) -> void:
 	_hide(r)
 	residents.erase(r)
 	_buckets_dirty = true
+	_roster_dirty = true
+	_props_dirty = true
 	by_id.erase(r["id"])
 
 
@@ -1495,7 +1505,7 @@ func _schedule(dh: float) -> void:
 	var h: float = game.hour
 	var night := h >= 21.5 or h < 5.0
 	_sched_left = SCHED_GO
-	for r in residents.duplicate():
+	for r in _roster_snapshot():
 		match r["state"]:
 			"home":
 				if int(r["home"]) <= 0:
@@ -3185,6 +3195,29 @@ func _door_cancel(r: Dictionary) -> void:
 
 # ---------- кадр ----------
 
+## Состав меняется редко; снимок сохраняет порядок и безопасен при уходе во время обхода.
+func _roster_snapshot() -> Array:
+	if not Gfx.proc_fast:
+		return residents.duplicate()
+	if _roster_dirty:
+		_roster_frame = residents.duplicate()
+		_roster_dirty = false
+	return _roster_frame
+
+
+## Вещи нужны только жителям с узлом; порядок тот же, что у полного населения.
+func _props_snapshot() -> Array:
+	if not Gfx.proc_fast:
+		return residents
+	if _props_dirty:
+		_props_frame = []
+		for r: Dictionary in residents:
+			if r["node"] != null:
+				_props_frame.append(r)
+		_props_dirty = false
+	return _props_frame
+
+
 ## Замер (test_perf mode=pplprof): сколько микросекунд ушло на сам People._process за кадры замера
 static var perf := false
 var perf_us := 0
@@ -3394,7 +3427,7 @@ func _props_tick() -> void:
 		at = cam.global_position if rig.cine else rig.target
 	var cands := []
 	var lyres := {}
-	for r in residents:
+	for r in _props_snapshot():
 		var c: Citizen = r["node"]
 		if c == null:
 			continue
