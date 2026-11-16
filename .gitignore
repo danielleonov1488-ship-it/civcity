@@ -58,3 +58,7 @@ roblox/build/
 # задания для Cowork: результаты и картинки-образцы не в git (большие), сами задания — в git
 /cowork/out/
 /cowork/refs/
+
+# форт: первые GLB с картинками Synty внутри — не коммитим (v2/ — без картинок)
+godot/assets/fort/*.glb
+godot/assets/fort/fort_manifest.json
