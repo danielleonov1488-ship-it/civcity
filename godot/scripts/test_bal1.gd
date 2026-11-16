@@ -99,7 +99,7 @@ func _arrivals() -> void:
 	c.place("center", Land.START + Vector2(-20, -20), 0.0, 0, 0, true)
 	var empty := c.place("house_pleb", Land.START + Vector2(-16, 0), 0.0, 0, 0, true)
 	check(not empty.is_empty(), "empty arrival home")
-	c.level = 1
+	c.level = 2                              # с «Деревни» приезд держит работа (до неё — нет)
 	c.settled_total = 10
 	c.compute()
 	c.stats["happy"] = 90

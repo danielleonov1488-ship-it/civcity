@@ -4869,5 +4869,6 @@
 	"Лавки с едой обслуживают дома дальше.": "Food shops serve homes farther away.",
 	"Повозка снова везёт семьи.": "The cart is bringing families again.",
 	"Дома: %s%% цены в час (половина ставки). Это входит в содержание построек.": "Homes: %s%% of their cost per hour (half rate). This is included in building upkeep.",
-	"Новая лавка «%s»: +%d%% домам, которым она нужна": "New shop “%s”: +%d%% to homes that need it"
+	"Новая лавка «%s»: +%d%% домам, которым она нужна": "New shop “%s”: +%d%% to homes that need it",
+"Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. До «Деревни» работа не ограничивает приезд, дальше нужны рабочие места или мало безработных.": "Move families into vacant homes. The first %d families have no happiness requirement; after that, at least %d%% is needed. Until the Village rank jobs do not limit arrivals; after that, jobs or low unemployment are needed."
 }
