@@ -11,3 +11,24 @@ static func set_level(legion: Legion, type: String, level: int) -> void:
 	p["b"] = type
 	p["lv"] = level
 	legion._fort_sync_camp()
+
+
+static func gate(legion: Legion, count := 3) -> void:
+	legion._fort_init()
+	if not legion.fort.has("newcomers"):
+		legion.fort["newcomers"] = []
+	while (legion.fort["newcomers"] as Array).size() < mini(3, count):
+		(legion.fort["newcomers"] as Array).append(legion._fort_newcomer())
+
+
+static func recruit(legion: Legion, fighter := true) -> Dictionary:
+	gate(legion, 1)
+	var person := legion.recruit_resident()
+	if fighter and not person.is_empty():
+		house_fighter(legion, int(person["id"]))
+	return person
+
+
+static func house_fighter(legion: Legion, sid: int) -> bool:
+	var barracks := legion.fort_slot_plot("barracks")
+	return not barracks.is_empty() and legion.fort_assign(int(barracks["id"]), sid)

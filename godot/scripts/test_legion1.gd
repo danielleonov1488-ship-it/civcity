@@ -1,12 +1,17 @@
 extends Node3D
 ## Снимки LEGION1. Запуск только у владельца тестов, без пользовательских сохранений.
 
+const Fixture = preload("res://scripts/test_fort_fixture.gd")
 var out := "D:/CivCity/.work/stage2/legion1/shots/"
 var game
 var camp: CampUI
 
 
 func _ready() -> void:
+	for arg in OS.get_cmdline_user_args():
+		var pair := arg.split("=", true, 1)
+		if pair.size() == 2 and pair[0] == "out":
+			out = pair[1].trim_suffix("/") + "/"
 	Game.boot = {"new": "1"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -71,10 +76,13 @@ func _run() -> void:
 	legion.rations = 8
 	legion.ingots = 3
 	legion.pending_resources = {"iron": legion.mat_cap("iron"), "wood": 34.0, "leather": 18.0, "rations": 6.0}
+	var population := int(city.stats["pop"])
 	for i in 2:
-		var soldier := legion.recruit_resident()
+		var soldier := Fixture.recruit(legion)
 		if not check(not soldier.is_empty() and legion.set_place(i + 1, int(soldier["id"])), "recruit and assign"):
 			return
+	if not check(int(city.stats["pop"]) == population, "gate recruitment keeps city population"):
+		return
 	city.changed.emit()
 	camp = CampUI.of(game.hud)
 	if not check(camp != null, "camp attached"):
@@ -88,9 +96,10 @@ func _run() -> void:
 	camp._collect("iron")
 	if not check(legion.mat("iron") > amount, "bubble collected"):
 		return
+	Fixture.gate(legion)
 	camp.open_recruit_picker()
 	var roster := legion.soldiers.size()
-	if not check(is_instance_valid(camp.modal) and legion.recruit_candidates().size() == 4, "four candidates"):
+	if not check(is_instance_valid(camp.modal) and legion.recruit_candidates().size() == 3, "three gate candidates"):
 		return
 	if not await shot("2_recruit_pick.png"):
 		return
