@@ -738,7 +738,7 @@ func _refresh_card() -> void:
 			"mars": title = I18n.t("Таланты")
 			"store": title = I18n.t("Запасы")
 			"infirmary": title = I18n.t("Лечить")
-			"arsenal": title = I18n.t("Снаряжение")
+			"arsenal": title = I18n.t("Изготовить")
 			"hq":
 				title = I18n.t("Расширить форт")
 				reason = lg.fort_can_expand()
@@ -1538,9 +1538,13 @@ func _main_action() -> void:
 		return
 	match selected:
 		"barracks": open_recruit_picker()
-		"forge", "mars": _aux(selected)
+		"forge", "arsenal":
+			var plot_id := selected_plot
+			_close_modal()
+			_hide_card()
+			lu.open_craft(plot_id)
+		"mars": _aux(selected)
 		"store": show_stocks()
-		"arsenal": _aux("store")
 		"drill": _show_support("drill")
 		"infirmary": _show_support("infirmary")
 		"hq":
@@ -1726,7 +1730,23 @@ func _refresh_marker(marker: Dictionary) -> void:
 		button.tooltip_text += " · " + clock_text(left)
 	var prod := Legion.fort_production(type, level)
 	var collect: Button = marker["collect"]
-	collect.visible = not prod.is_empty() and float(plot["pend"]) >= 0.9999
+	if type in ["forge", "arsenal"]:
+		collect.visible = lg.craft_ready(int(plot["id"])) > 0
+		(collect.get_node("ic") as TextureRect).texture = hud.ico("swords" if type == "forge" else "shield", 48)
+		collect.tooltip_text = I18n.t("Собрать снаряжение: %d") % lg.craft_ready(int(plot["id"]))
+		collect.disabled = lg.store_count() >= lg.store_cap()
+		if collect.disabled:
+			collect.tooltip_text += "\n" + I18n.t("Склад полон. Продайте или наденьте лишние вещи.")
+		marker["ring"].set("value", 1.0)
+		if timer.is_empty():
+			for job: Dictionary in lg.craft_queue(int(plot["id"])):
+				if float(job["left"]) > 0.0:
+					(marker["timer"] as Control).visible = true
+					marker["timer"].set("value", 1.0 - float(job["left"]) / maxf(1.0, float(job["total"])))
+					button.tooltip_text += " · " + clock_text(float(job["left"]))
+					break
+	else:
+		collect.visible = not prod.is_empty() and float(plot["pend"]) >= 0.9999
 	var idle := false
 	if not prod.is_empty():
 		var resource := String(prod["resource"])
@@ -1755,6 +1775,11 @@ func _refresh_marker(marker: Dictionary) -> void:
 func _collect_plot(plot_id: int, origin := Vector2.INF) -> void:
 	var plot := lg.fort_plot(plot_id)
 	if plot.is_empty():
+		return
+	if String(plot["b"]) in ["forge", "arsenal"]:
+		var got := lg.craft_collect(plot_id)
+		if not got.is_empty():
+			_refresh()
 		return
 	var prod := Legion.fort_production(String(plot["b"]), int(plot["lv"]))
 	if prod.is_empty():

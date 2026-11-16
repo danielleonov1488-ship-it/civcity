@@ -355,7 +355,7 @@ func _process(dt: float) -> void:
 		if _live_t <= 0.0:
 			_live_t = 0.5
 			_tick_live()
-		if _dirty and camp_window in ["mars", "forge", "store"] and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		if _dirty and camp_window in ["mars", "forge", "store", "craft"] and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			open_camp_window(camp_window)
 		return
 	if _city_t > 0.0:
@@ -395,6 +395,8 @@ func _tick_live() -> void:
 		if l == null or not is_instance_valid(l):
 			continue
 		match String(e["kind"]):
+			"craft":
+				_refresh_craft_row(e)
 			"forge":
 				if not lg.forging.is_empty():
 					l.text = "Куётся: %s · %d ур. — ещё %s" % [Gear.name_of(lg.forging), int(lg.forging["ilvl"]), Legion.fmt_duration(lg.forge_left())]
@@ -1675,7 +1677,7 @@ func _stage_card(st: Dictionary) -> Control:
 	var lh := HBoxContainer.new()
 	lh.add_theme_constant_override("separation", 6)
 	lh.add_child(_tr(_ic39("upgrade"), 26))
-	lh.add_child(_l("Нужен уровень бойцов: %d" % rec, 16, true))
+	lh.add_child(_l(I18n.t("Рекомендуемый тир: %d") % int(st.get("recommended_tier", 1)) if lg.v3() else "Нужен уровень бойцов: %d" % rec, 16, true))
 	v.add_child(lh)
 	var est := _odds_est(st)
 	var od := lg.odds(st, est)
@@ -2083,9 +2085,8 @@ func _modal(w: float) -> PanelContainer:
 func open_camp_window(kind: String, sid := 0) -> void:
 	if not lg.v3() or not lg.window_open():
 		return
-	if kind in ["forge", "store", "mars"] and not lg.camp_built(kind):
-		if kind != "store" or lg.fort_level_sum("arsenal") <= 0:
-			return
+	if kind in ["forge", "mars"] and not lg.camp_built(kind):
+		return
 	camp_window = kind
 	_dirty = false
 	_live.clear()
@@ -2093,6 +2094,8 @@ func open_camp_window(kind: String, sid := 0) -> void:
 	win.hide()
 	move_to_front()
 	match kind:
+		"craft":
+			_craft_win()
 		"forge":
 			_forge_win()
 		"store":
@@ -2467,11 +2470,22 @@ func _gear_slot(s: Dictionary, slot: String) -> Control:
 	ic.offset_bottom = -3
 	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(ic)
+	if lg.v3() and not it.is_empty():
+		var badge := _l(str(Gear.tier_of(it)), 12, true, C_INK)
+		badge.name = "TierBadge"
+		badge.position = Vector2(sz - 18, sz - 18)
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var plate := StyleBoxFlat.new()
+		plate.bg_color = C_CREAM
+		plate.content_margin_left = 3
+		plate.content_margin_right = 3
+		badge.add_theme_stylebox_override("normal", plate)
+		b.add_child(badge)
 	var sn := String(Gear.SLOT_NAME[slot])
 	if slot == "offhand" and String(s["cls"]) == "archer":
 		sn = "колчан"
 	b.tooltip_text = ("%s: пусто — щелчок, чтобы надеть" % sn.capitalize()) if it.is_empty() else \
-		"%s · %d ур.\n%s\nЩелчок — заменить или снять" % [Gear.name_of(it), int(it["ilvl"]), Gear.stats_text(it)]
+		"%s · %s\n%s\nЩелчок — заменить или снять" % [Gear.name_of(it), _gear_grade(it), Gear.stats_text(it)]
 	var sid := int(s["id"])
 	b.pressed.connect(func(): _gear_pick(sid, slot))
 	return b
@@ -2532,7 +2546,7 @@ func _gear_pick(sid: int, slot: String) -> void:
 		var cv := VBoxContainer.new()
 		cv.add_theme_constant_override("separation", 0)
 		cv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cv.add_child(_l("Надето: %s · %d ур." % [Gear.name_of(cur), int(cur["ilvl"])], 16, true, Gear.color(int(cur["rarity"]))))
+		cv.add_child(_l(I18n.t("Надето: %s · %s") % [Gear.name_of(cur), _gear_grade(cur)], 16, true, Gear.color(int(cur["rarity"]))))
 		cv.add_child(_l(Gear.stats_text(cur), 13, false, C_SOFT))
 		ch.add_child(cv)
 		ch.add_child(_btn("Снять", 0, 14, null, "" if lg.store_count() < lg.store_cap() else "Склад полон", func(): lg.unequip(sid, slot); _close_overlay()))
@@ -2558,14 +2572,19 @@ func _gear_pick(sid: int, slot: String) -> void:
 		tv.add_theme_constant_override("separation", -2)
 		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		h.add_child(_item_ic(it, 44))
-		tv.add_child(_l("%s · %d ур." % [Gear.name_of(it), int(it["ilvl"])], 15, true, Gear.color(int(it["rarity"]))))
+		tv.add_child(_l("%s · %s" % [Gear.name_of(it), _gear_grade(it)], 15, true, Gear.color(int(it["rarity"]))))
 		var who := ""
 		if int(it.get("on", 0)) != 0:
 			who = " · сейчас у: %s" % String(lg.soldier(int(it["on"])).get("name", "?"))
 		tv.add_child(_l(Gear.stats_text(it) + who, 13, false, C_SOFT))
 		h.add_child(tv)
+		if lg.v3():
+			var change := lg.equip_power(sid, int(it["id"]))
+			var delta := _l(I18n.t("Сила: %d → %d") % [change[0], change[1]], 14, true, C_GOOD if int(change[1]) >= int(change[0]) else C_BAD)
+			delta.name = "EquipPowerChange"
+			tv.add_child(delta)
 		var iid := int(it["id"])
-		h.add_child(_btn("Надеть", 0, 14, null, "", func(): lg.equip(sid, iid); _close_overlay()))
+		h.add_child(_btn("Надеть", 0, 14, null, "", func(): _equip_from_store(sid, iid)))
 		lv.add_child(h)
 	sc.add_child(lv)
 	v.add_child(sc)
@@ -2599,7 +2618,7 @@ func _store() -> void:
 		tv.add_theme_constant_override("separation", -2)
 		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		h.add_child(_item_ic(it, 44))
-		tv.add_child(_l("%s · %d ур." % [Gear.name_of(it), int(it["ilvl"])], 15, true, Gear.color(int(it["rarity"]))))
+		tv.add_child(_l("%s · %s" % [Gear.name_of(it), _gear_grade(it)], 15, true, Gear.color(int(it["rarity"]))))
 		tv.add_child(_l(Gear.stats_text(it), 13, false, C_SOFT))
 		h.add_child(tv)
 		var iid := str(int(it["id"]))
@@ -2665,6 +2684,10 @@ func _daily_win(got := {}) -> void:
 
 
 func _forge_win() -> void:
+	if lg.v3():
+		_craft_plot = int(lg.fort_slot_plot("forge").get("id", -1))
+		_craft_win()
+		return
 	var p := _modal(600)
 	var v: VBoxContainer = p.get_child(0)
 	v.add_child(_title("Кузница" + (" · %d уровень" % lg.forge_lvl() if lg.forge_lvl() > 0 else ""), 22))
@@ -3931,3 +3954,35 @@ func _input(event: InputEvent) -> void:
 	if key.pressed and not key.echo and key.keycode == KEY_ESCAPE:
 		close()
 		get_viewport().set_input_as_handled()
+
+
+# ---------- V3: мастерская выбранной комнаты ----------
+var _craft_plot := -1
+var _craft_kind := "sword"
+var _craft_tier := 1
+
+
+func _gear_grade(it: Dictionary) -> String:
+	return I18n.t("тир %d") % Gear.tier_of(it) if lg.v3() else "%d ур." % int(it.get("ilvl", 1))
+
+
+func open_craft(plot_id: int) -> void:
+	_craft_plot = plot_id
+	open_camp_window("craft")
+
+
+func _craft_win() -> void:
+	preload("res://scripts/gear_craft_ui.gd").build(self)
+
+
+func _refresh_craft_row(entry: Dictionary) -> void:
+	preload("res://scripts/gear_craft_ui.gd").refresh(self, entry)
+
+
+func _equip_from_store(sid: int, iid: int) -> void:
+	if not lg.equip(sid, iid):
+		return
+	if lg.v3() and camp_window == "soldier":
+		open_camp_window("soldier", sid)
+	else:
+		_close_overlay()

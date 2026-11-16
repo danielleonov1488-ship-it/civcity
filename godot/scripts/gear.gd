@@ -65,6 +65,70 @@ const MAT_OF := {
 const FORGE_MAT := [20, 60, 160, 400, 900]
 const SMELT_K := 0.3
 
+## V3: тир даёт основной прирост, редкость — небольшой бонус.
+const TIERS := 10
+const TIER_RARITY_K := [1.0, 1.1, 1.2, 1.3, 1.4]
+const TIER_TIME := [300, 1800, 3600, 7200, 14400, 28800, 43200, 86400, 129600, 172800]
+const CRAFT_ODDS := [62, 26, 9, 2, 1]
+const TIER_BASE := {
+	"weapon": {"atk": 0.55},
+	"offhand": {"hp": 0.12, "armor": 8.0},
+	"helmet": {"hp": 0.18, "armor": 3.0},
+	"armor": {"hp": 0.25, "armor": 9.0},
+}
+const CRAFT_TYPES := {"sword": "Меч", "bow": "Лук", "staff": "Посох", "spear": "Копьё",
+	"helmet": "Шлем", "armor": "Доспех", "offhand": "Щит"}
+
+
+static func tier_of(it: Dictionary) -> int:
+	# Старые ilvl 1–5 → тир 1, 6–10 → тир 2, и так до десятого.
+	return clampi(int(it.get("tier", 1 + (maxi(1, int(it.get("ilvl", 1))) - 1) / 5)), 1, TIERS)
+
+
+static func tier_room_level(tier: int) -> int:
+	return ceili(clampi(tier, 1, TIERS) * 1.2)
+
+
+static func tier_stats(it: Dictionary) -> Dictionary:
+	var b: Dictionary = TIER_BASE.get(String(it.get("slot", "")), {})
+	var k := (1.0 + 0.8 * (tier_of(it) - 1)) * float(TIER_RARITY_K[clampi(int(it.get("rarity", 0)), 0, 4)])
+	return {"atk": float(b.get("atk", 0.0)) * k, "hp": float(b.get("hp", 0.0)) * k, "armor": float(b.get("armor", 0.0)) * k}
+
+
+static func craft_slot(kind: String) -> String:
+	return "weapon" if KIND_CLS.has(kind) else kind
+
+
+static func craft_kind(slot: String, cls: String) -> String:
+	return String(CLS_KIND.get(cls, "sword")) if slot == "weapon" else slot
+
+
+static func craft_room(kind: String) -> String:
+	return "forge" if KIND_CLS.has(kind) else "arsenal"
+
+
+static func craft_mats(kind: String, tier: int) -> Dictionary:
+	var out := {}
+	var slot := craft_slot(kind)
+	var n := 20.0 * pow(1.55, clampi(tier, 1, TIERS) - 1)
+	for m: String in MAT_OF.get(slot, {}):
+		out[m] = maxi(5, roundi(n * float(MAT_OF[slot][m]) / 5.0) * 5)
+	return out
+
+
+static func craft_item(kind: String, tier: int, rarity := 0) -> Dictionary:
+	var t := clampi(tier, 1, TIERS)
+	return {"slot": craft_slot(kind), "cls": String(KIND_CLS.get(kind, "")), "tier": t, "ilvl": 1 + (t - 1) * 5, "rarity": clampi(rarity, 0, 4)}
+
+
+static func roll_craft_rarity(rng: RandomNumberGenerator) -> int:
+	var n := rng.randi_range(1, 100)
+	for r in CRAFT_ODDS.size():
+		n -= int(CRAFT_ODDS[r])
+		if n <= 0:
+			return r
+	return 0
+
 
 ## Сколько материалов на ковку вещи слота slot редкости r: {iron: 30, wood: 20}
 static func forge_mats(slot: String, r: int) -> Dictionary:
@@ -79,7 +143,7 @@ static func forge_mats(slot: String, r: int) -> Dictionary:
 ## Что вернёт разобранная вещь
 static func smelt_mats(it: Dictionary) -> Dictionary:
 	var out := {}
-	var fm := forge_mats(String(it.get("slot", "")), int(it.get("rarity", 0)))
+	var fm := craft_mats(craft_kind(String(it.get("slot", "")), String(it.get("cls", ""))), tier_of(it)) if it.has("tier") else forge_mats(String(it.get("slot", "")), int(it.get("rarity", 0)))
 	for m: String in fm:
 		out[m] = maxi(1, roundi(float(fm[m]) * SMELT_K))
 	return out
@@ -153,6 +217,8 @@ static func color(r: int) -> Color:
 
 ## Числа вещи: {atk, hp, armor}
 static func stats(it: Dictionary) -> Dictionary:
+	if it.has("tier"):
+		return tier_stats(it)
 	var b: Dictionary = BASE.get(String(it.get("slot", "")), {})
 	var k := (1.0 + LVL_K * (int(it.get("ilvl", 1)) - 1)) * float(RARITY_K[clampi(int(it.get("rarity", 0)), 0, 4)])
 	return {"atk": float(b.get("atk", 0.0)) * k, "hp": float(b.get("hp", 0.0)) * k, "armor": float(b.get("armor", 0.0)) * k}
