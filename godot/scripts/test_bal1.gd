@@ -220,7 +220,7 @@ func _run_ui() -> void:
 	var hud: Hud = game.hud
 	c.cozy_v = 1
 	c.money = 1000000.0
-	c.level = 1
+	c.level = 2
 	c.settled_total = 12
 	var station := c.center()
 	if station.is_empty():
