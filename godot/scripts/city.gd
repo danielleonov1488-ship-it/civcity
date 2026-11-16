@@ -2460,14 +2460,14 @@ func arrive_work_slots() -> int:
 		return 999
 	var pop := int(stats.get("pop", 0))
 	var waiting := incoming + arrivals.size() + pending.size()
-	if level == 0 and pop < int(lv(1)["pop"]):
-		return maxi(0, int(ceil(float(int(lv(1)["pop"]) - pop) / 2.0)) - waiting)
+	if level < 2:
+		return 999                         # 16.11 (бот темпа): на «Стоянке» и «Хуторе» работа приезд не держит — иначе город застревал
 	var free_jobs := 0
 	var unemployed := 0
 	for cl in Defs.CLASS_ORDER:
 		free_jobs += maxi(0, int(stats.get("jobs", {}).get(cl, 0)) - int(stats.get("filled", {}).get(cl, 0)))
 		unemployed += int(stats.get("free", {}).get(cl, 0))
-	var buffer := 4 + int(floor(pop * 0.05))
+	var buffer := 10 + int(floor(pop * 0.2))           # 16.11: мягко — держит только явный перебор безработных (бот застревал у «Города»)
 	var room := maxi(free_jobs, buffer - unemployed) - waiting * 2
 	return maxi(0, int(ceil(float(room) / 2.0)))
 
@@ -2479,7 +2479,7 @@ func arrive_happy() -> int:
 func pop_hint() -> String:
 	if cozy_v < 1:
 		return Defs.POP_HINT
-	return "Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. До 15 жителей работа не ограничивает приезд, дальше нужны рабочие места или мало безработных." % [Defs.ARRIVE_FREE, arrive_happy()]
+	return "Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. До «Деревни» работа не ограничивает приезд, дальше нужны рабочие места или мало безработных." % [Defs.ARRIVE_FREE, arrive_happy()]
 
 
 ## Почему повозка ждёт: пауза, работа или счастье.

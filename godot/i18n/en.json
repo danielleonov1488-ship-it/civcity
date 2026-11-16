@@ -5074,5 +5074,6 @@
 "Соберите пайки": "Collect provisions",
 "Призовите воина": "Recruit a soldier",
 "Поставьте его в строй": "Assign them to the squad",
-"В поход!": "To the campaign!"
+"В поход!": "To the campaign!",
+"Заселяйте семьи в свободные дома. Первые %d семей не требуют счастья; затем нужно от %d%%. До «Деревни» работа не ограничивает приезд, дальше нужны рабочие места или мало безработных.": "Move families into vacant homes. The first %d families have no happiness requirement; after that, at least %d%% is needed. Until the Village rank jobs do not limit arrivals; after that, jobs or low unemployment are needed."
 }

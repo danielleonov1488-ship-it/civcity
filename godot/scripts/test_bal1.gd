@@ -70,7 +70,7 @@ func _model() -> void:
 	check(City.shop_parts(shops, scores, 1, "artisans").size() == 2, "artisans count clothes and fun only")
 	check(City.shop_parts(shops, scores, 1, "patricians").size() == 3, "patricians count all three categories")
 	check(City.shop_parts(shops, scores, 1).size() == 3, "legacy shop calculation stays unfiltered")
-	check(c.base_happy("plebs") == 40 and c.base_happy("artisans") == 37 and c.base_happy("patricians") == 34, "new base happiness")
+	check(c.base_happy("plebs") == 44 and c.base_happy("artisans") == 40 and c.base_happy("patricians") == 38, "new base happiness")
 	check(c.missing_penalty() == 8 and c.arrive_happy() == 45, "rank zero threshold 45, missing penalty 8")
 	# Перестройка начинает учитывать нужные новому классу лавки, не теряет их бонусы.
 	c.research["artisans"] = true
@@ -99,7 +99,7 @@ func _arrivals() -> void:
 	c.place("center", Land.START + Vector2(-20, -20), 0.0, 0, 0, true)
 	var empty := c.place("house_pleb", Land.START + Vector2(-16, 0), 0.0, 0, 0, true)
 	check(not empty.is_empty(), "empty arrival home")
-	c.level = 1
+	c.level = 2                              # с «Деревни» приезд держит работа (до неё — нет)
 	c.settled_total = 10
 	c.compute()
 	c.stats["happy"] = 90
@@ -115,7 +115,7 @@ func _arrivals() -> void:
 	c.incoming = 0
 	c.stats["jobs"] = {}
 	c.stats["filled"] = {}
-	c.stats["free"] = {"plebs": 5} # население 40: предел 6, запас — один работник
+	c.stats["free"] = {"plebs": 17} # население 40: предел 10 + 8 = 18, запас — один работник
 	check(c.arrive_work_slots() == 1, "one remaining unemployment slot allows one family")
 	c.incoming = 1
 	check(c.arrive_work_slots() == 0, "incoming family reserves work budget")
@@ -220,7 +220,7 @@ func _run_ui() -> void:
 	var hud: Hud = game.hud
 	c.cozy_v = 1
 	c.money = 1000000.0
-	c.level = 1
+	c.level = 2
 	c.settled_total = 12
 	var station := c.center()
 	if station.is_empty():

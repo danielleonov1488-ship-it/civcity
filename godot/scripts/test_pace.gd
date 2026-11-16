@@ -1264,6 +1264,12 @@ func _house_class() -> String:
 
 ## Жильё впрок: место хотя бы для двух семей должно быть всегда (иначе повозка встанет)
 func _bhouses() -> void:
+	# условие ранга «N домов класса»: игрок ставит такой дом прямо (не ждёт, пока его даст перестройка)
+	for e: Dictionary in _needs_left():
+		var p: Array = e["p"]
+		if String(p[0]) == "count" and p[1] in ["house_artisan", "house_patrician"] and c.unlocked(p[1]) and c.money >= float(Defs.B[p[1]]["cost"]) + _bsave() * 0.5:
+			if not _bput(p[1], B_HOME, false).is_empty():
+				return
 	for k in 3:
 		if c.free_fit() >= 2:
 			return
@@ -1690,7 +1696,7 @@ func _summary() -> void:
 		line += " %s %.1f;" % [Defs.LEVELS[L]["name"], m]
 		elapsed += m
 		if L < B_TARGET.size():
-			var ok := elapsed >= B_RANK_MIN[L] and elapsed <= B_RANK_MAX[L]
+			var ok: bool = elapsed >= B_RANK_MIN[L] and elapsed <= B_RANK_MAX[L]
 			acc.append("%s %.0f min [%.0f–%.0f] %s" % [Defs.LEVELS[L + 1]["name"], elapsed, B_RANK_MIN[L], B_RANK_MAX[L], "ok" if ok else "MISS"])
 	print(line)
 	print("PACE BOT cumulative rank windows: %s" % ", ".join(acc))
