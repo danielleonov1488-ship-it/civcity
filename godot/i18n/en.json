@@ -5143,5 +5143,17 @@
 "Собрать %d": "Collect %d",
 "Строить": "Build",
 "Тренировать": "Train",
-"ур. %d: %s": "Lv. %d: %s"
+"ур. %d: %s": "Lv. %d: %s",
+	"Строитель занят: %s": "Builder busy: %s",
+	"Строитель занят: расширяет форт": "Builder busy: expanding the fort",
+	"Нет работника": "No worker",
+	"Назначить": "Assign",
+	"Нет работника. Назначьте человека в карточке.": "No worker. Assign someone in the room card.",
+	"Сменить работника": "Change worker",
+	"Освободить": "Unassign",
+	"Кто будет работать?": "Who will work here?",
+	"Свободных людей нет. Призовите жителя или освободите воина из отряда.": "No one is free. Recruit a citizen or remove a soldier from the squad.",
+	"Призвать из города": "Recruit from the city",
+	"Построить комнату": "Build a room",
+	"Не удалось назначить работника. Выберите его снова.": "Could not assign the worker. Please choose again."
 }

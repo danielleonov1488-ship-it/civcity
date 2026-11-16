@@ -51,7 +51,7 @@ func shot(file: String, save := true) -> void:
 
 
 func fixture(expansion: int) -> void:
-	# Штаб отдельно от 6/14/26 мест. Есть пустые участки и повторные казармы.
+	# Размеры берём из модели; проверяем сохранённую объёмную диораму.
 	legion.fort = {"exp": expansion, "plots": [], "next_id": 0, "up": {}}
 	legion._fort_add_plot("hq", 1 if expansion == 0 else (4 if expansion == 2 else 7))
 	var types: Array[String] = ["barracks", "kitchen", "forge", "drill", "store", "mars", "barracks", "smelter", "sawmill", "tannery", "infirmary", "arsenal", "stable", "treasury", "tower"]
@@ -62,7 +62,7 @@ func fixture(expansion: int) -> void:
 			type = ""
 			level = 0
 		legion._fort_add_plot(type, level)
-	var upgrade := legion.fort_plot(5)
+	var upgrade := legion.fort_slot_plot("forge")
 	upgrade["up"] = {"to": int(upgrade["lv"]) + 1, "start": Legion.now(), "end": Legion.now() + 3600, "total": 3600.0}
 	legion._fort_sync_camp()
 	legion.flags["camp3d_guide"] = 4
@@ -147,6 +147,7 @@ func _run() -> void:
 	if not check(camp != null, "camp attached"):
 		get_tree().quit(1)
 		return
+	camp.use_cutaway = false
 	camp.open()
 	await frames(10)
 	if not check(is_instance_valid(camp.diorama), "3D fort loaded"):

@@ -53,6 +53,10 @@ func build(type: String) -> int:
 	plot["up"]["end"] = Legion.now() - 10800.0
 	plot["t"] = Legion.now() - 11100.0
 	lg.fort_finish()
+	var worker := lg._add_soldier({"name": "Работник", "cls": "legionary", "stars": 1})
+	check(lg.fort_assign(id, int(worker["id"])), "assign fixture worker")
+	plot["t"] = Legion.now() - 10800.0
+	lg.fort_finish()
 	return id
 
 
@@ -90,7 +94,14 @@ func _run() -> void:
 	lg._camp_init()
 	Fixture.set_level(lg, "hq", 3)
 	lg.glory = 10000
-	lg.mats = {"iron": 20.0, "wood": 25.0, "leather": 10.0}
+	lg.mats = {"iron": 100.0, "wood": 100.0, "leather": 10.0}
+	# Участки получаем расширением: размер совпадает с сеткой разреза.
+	if not check(lg.fort_expand(), "fixture expands: " + lg.fort_can_expand()):
+		return
+	lg.fort["up"]["end"] = Legion.now() - 1.0
+	lg.fort_finish()
+	if not check(int(lg.fort["exp"]) == 1 and (lg.fort["plots"] as Array).size() == int(Legion.fort_exp_info(1)["plots"]) + 1, "fixture uses expansion grid size"):
+		return
 	lg.rations = 2.0
 	lg.flags["camp_told"] = true
 	lg.flags["camp3d_guide"] = 4
@@ -181,6 +192,8 @@ func _run() -> void:
 	camp._refresh()
 	if not check((lg.fort_plot(empty)["up"] as Dictionary).is_empty(), "speed-up completes short build"):
 		return
+	if not check(build("tower") >= 0, "fill last expansion plot"):
+		return
 	# При полном форте меню ведёт к расширению, без попытки занять чужой участок.
 	if not check(lg.fort_empty_plot() == -1, "fixture filled all plots"):
 		return
@@ -188,8 +201,17 @@ func _run() -> void:
 	if not check((camp.build_cards["tower"]["button"] as Button).disabled, "full fort blocks build"):
 		return
 	camp.show_building("hq")
+	var expansion: Dictionary = Legion.fort_exp_info(int(lg.fort["exp"]) + 1)
+	if not check(lg.camp_level("hq") < int(expansion["hq"]) and lg.fort_can_expand().contains("Штаб") and camp.main_action.disabled, "next expansion gated by HQ"):
+		return
+	Fixture.set_level(lg, "hq", int(expansion["hq"]))
+	camp._refresh()
+	if not check(lg.fort_can_expand() == "" and not camp.main_action.disabled, "HQ expansion allowed: " + lg.fort_can_expand()):
+		return
 	camp.main_action.pressed.emit()
-	if not check(not (lg.fort["up"] as Dictionary).is_empty() and camp.card_ring.visible, "HQ starts expansion"):
+	if not check(not (lg.fort["up"] as Dictionary).is_empty(), "HQ starts expansion: " + lg.fort_can_expand()):
+		return
+	if not check(camp.card_ring.visible, "HQ expansion timer visible"):
 		return
 	lg.fort["up"]["end"] = Legion.now() - 1
 	lg.fort_finish()

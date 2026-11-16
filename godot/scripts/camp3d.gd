@@ -535,8 +535,8 @@ func _process(dt: float) -> void:
 			arrivals.erase(sid)
 
 
-func project(slot: String, height := 0.0) -> Vector2:
-	return camera.unproject_position(world.to_global(_position(slot) + Vector3(0, height, 0))) * size / Vector2(sub.size)
+func project(slot: Variant, height := 0.0) -> Vector2:
+	return camera.unproject_position(world.to_global(_position(String(slot)) + Vector3(0, height, 0))) * size / Vector2(sub.size)
 
 
 func footprint(slot: String) -> Rect2:

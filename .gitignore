@@ -62,3 +62,4 @@ roblox/build/
 # форт: первые GLB с картинками Synty внутри — не коммитим (v2/ — без картинок)
 godot/assets/fort/*.glb
 godot/assets/fort/fort_manifest.json
+godot/assets/fort/*.png
