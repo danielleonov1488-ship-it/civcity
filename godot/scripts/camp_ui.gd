@@ -1025,7 +1025,7 @@ func _start_diorama() -> void:
 	var scene := Camp3D.new()
 	add_child(scene)
 	move_child(scene, 1)
-	if not scene.setup(lg):
+	if not scene.setup(lg, hud.game):
 		scene.shutdown()
 		scene.queue_free()
 		background.show()

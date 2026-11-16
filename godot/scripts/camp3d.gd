@@ -5,6 +5,7 @@ extends SubViewportContainer
 signal building_pressed(slot: String)
 signal view_changed
 
+const SCENERY := preload("res://scripts/camp_scenery.gd")
 const PLOTS := {
 	"hq": Vector3(0, 0, -15), "mars": Vector3(22, 0, -15),
 	"barracks": Vector3(-21, 0, -1), "forge": Vector3(21, 0, 0),
@@ -20,13 +21,14 @@ const LEVEL_PROPS := {
 	"store": {2: ["#mil_standard"], 3: ["#mil_logs", "#mil_hides"], 5: ["wing"]},
 }
 const MAX_FIGURES := 16
-const DEFAULT_ZOOM := 66.0
-const MIN_ZOOM := 27.0
-const MAX_ZOOM := 78.0
+const DEFAULT_ZOOM := 48.0
+const MIN_ZOOM := 18.0
+const MAX_ZOOM := 72.0
 const GATE := Vector3(0, 0, 24)
 const WALK_TIME := 9.0
 
 var lg: Legion
+var city_game: Node
 var sub: SubViewport
 var world: Node3D
 var camera: Camera3D
@@ -46,8 +48,9 @@ var _dragging := false
 var _drag_distance := 0.0
 
 
-func setup(legion: Legion) -> bool:
+func setup(legion: Legion, game: Node) -> bool:
 	lg = legion
+	city_game = game
 	name = "Camp3D"
 	stretch = true
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -66,16 +69,20 @@ func setup(legion: Legion) -> bool:
 	sub.size = Vector2i(maxi(1, int(size.x)), maxi(1, int(size.y)))
 	sub.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	sub.msaa_3d = get_viewport().msaa_3d
+	sub.screen_space_aa = get_viewport().screen_space_aa
+	sub.use_taa = get_viewport().use_taa
 	sub.gui_disable_input = true
 	add_child(sub)
 	world = Node3D.new()
+	world.name = "CampScene"
+	world.position = SCENERY.ORIGIN
 	sub.add_child(world)
 	_light()
 	_ground()
 	camera = Camera3D.new()
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.keep_aspect = Camera3D.KEEP_HEIGHT
-	camera.far = 250.0
+	camera.far = 320.0
 	world.add_child(camera)
 	camera.current = true
 	active = true
@@ -87,31 +94,7 @@ func setup(legion: Legion) -> bool:
 
 
 func _light() -> void:
-	var env := Environment.new()
-	var sky_material := ProceduralSkyMaterial.new()
-	sky_material.sky_top_color = Color("87b8ce")
-	sky_material.sky_horizon_color = Color("e8dbb9")
-	sky_material.ground_horizon_color = Color("c8c497")
-	sky_material.ground_bottom_color = Color("65734d")
-	var sky := Sky.new()
-	sky.sky_material = sky_material
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("d5e4ef")
-	env.ambient_light_energy = 0.65
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	var we := WorldEnvironment.new()
-	we.environment = env
-	world.add_child(we)
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-48, -32, 0)
-	sun.light_color = Color("ffe1ae")
-	sun.light_energy = 1.4
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 130.0
-	sun.light_angular_distance = 1.8
-	world.add_child(sun)
+	SCENERY.lighting(world, sub, city_game)
 
 
 func _box(parent: Node3D, pos: Vector3, dims: Vector3, color: Color) -> MeshInstance3D:
@@ -147,44 +130,23 @@ func _prop(parent: Node3D, model: String, pos: Vector3, scale_v := 1.0, yaw := 0
 
 
 func _ground() -> void:
-	var ground := _box(world, Vector3(0, -0.4, 0), Vector3(70, 0.8, 50), Color("7d9757"))
-	var shader := Shader.new()
-	shader.code = "shader_type spatial; varying vec3 p; void vertex(){p=VERTEX;} void fragment(){float v=sin(p.x*0.48)*sin(p.z*0.35)*0.025+sin(p.x*3.1+p.z*2.7)*0.012; ALBEDO=vec3(0.39,0.49,0.24)+v; ROUGHNESS=1.0;}"
-	var grass := ShaderMaterial.new()
-	grass.shader = shader
-	ground.material_override = grass
-	_box(world, Vector3(0, 0.025, 3), Vector3(5.5, 0.05, 43), Color("b6a17a"))
-	for z: float in [-15.0, 0.0, 14.0]:
-		_box(world, Vector3(0, 0.03, z), Vector3(49, 0.06, 3), Color("b6a17a"))
-	# Частокол собран в одну сетку, без сотен отдельных узлов.
-	var fence := Kit.new()
-	for x in range(-34, 35):
-		for z: float in [-24.0, 24.0]:
-			if z > 0 and absi(x) < 5:
-				continue
-			fence.boxc(Vector3(x, 1.15, z), Vector3(0.72, 2.3, 0.65), Color("866443"))
-	for z in range(-23, 24):
-		for x: float in [-34.0, 34.0]:
-			fence.boxc(Vector3(x, 1.15, z), Vector3(0.65, 2.3, 0.72), Color("866443"))
-	var wall := MeshInstance3D.new()
-	wall.mesh = fence.mesh()
-	wall.material_override = Kit.material(0.9)
-	world.add_child(wall)
-	for x: float in [-4.5, 4.5]:
-		_box(world, Vector3(x, 2.4, 24), Vector3(0.9, 4.8, 0.9), Color("65452e"))
-		_prop(world, "#mil_standard", Vector3(x, 4.8, 24), 0.9)
-	_box(world, Vector3(0, 4.7, 24), Vector3(10, 0.6, 1), Color("65452e"))
-	for pos: Vector3 in [Vector3(-26, 0, -17), Vector3(-17, 0, -18), Vector3(-28, 0, 18)]:
-		_prop(world, "#mil_tent", pos, 1.5)
-		_crate(world, pos + Vector3(3, 0.6, 1))
-	for x: float in [-31.0, 30.0]:
-		_prop(world, "SM_Env_Tree_Thin_01", Vector3(x, 0, -19), 1.3)
+	SCENERY.terrain(world, city_game, PLOTS)
+	SCENERY.surroundings(world, PLOTS)
 
 
 func _crate(parent: Node3D, pos: Vector3) -> void:
-	_box(parent, pos, Vector3(1.3, 1.2, 1.1), Color("a5784a"))
+	# Доски и обручи в одной сетке.
+	var kit := Kit.new()
+	for i in 6:
+		kit.boxc(Vector3(-0.55 + i * 0.22, 0, 0), Vector3(0.21, 1.2, 1.1), Color("9b7047").lightened(0.035 * (i % 3)))
 	for x: float in [-0.45, 0.45]:
-		_box(parent, pos + Vector3(x, 0, 0.56), Vector3(0.13, 1.2, 0.08), Color("d1a36b"))
+		for z: float in [-0.57, 0.57]:
+			kit.boxc(Vector3(x, 0, z), Vector3(0.11, 1.25, 0.08), Color("634a35"))
+	var node := MeshInstance3D.new()
+	node.mesh = kit.mesh()
+	node.material_override = Kit.material(0.9)
+	node.position = pos
+	parent.add_child(node)
 
 
 func sync() -> void:
@@ -217,6 +179,7 @@ func _build_plot(slot: String) -> void:
 	world.add_child(root)
 	buildings[slot] = root
 	var base := _box(root, Vector3(0, 0.04, 0), Vector3(13, 0.08, 10), Color("c9b68c"))
+	(base.mesh as PrimitiveMesh).material = SCENERY.floor_material(slot)
 	highlights[slot] = base
 	if not lg.camp_built(slot):
 		base.visible = false
@@ -246,17 +209,8 @@ func _build_plot(slot: String) -> void:
 
 
 func _pavilion(root: Node3D, slot: String) -> void:
-	# Упрощённый разрез военных зданий: задняя стена и узкая полоса кровли.
 	root.set_meta("city_type", CITY_TYPES[slot])
-	_box(root, Vector3(0, 1.7, -4.2), Vector3(12, 3.4, 0.45), Color("e2cda9"))
-	_box(root, Vector3(0, 0.5, -3.92), Vector3(12, 0.6, 0.12), Color("a84f3b"))
-	for x: float in [-5.6, 5.6]:
-		_prop(root, "SM_Bld_Pillar_02", Vector3(x, 0.1, -3.2), 1.2)
-		_box(root, Vector3(x, 0.7, 0), Vector3(0.45, 1.4, 6), Color("d9c19c"))
-	var roof := _box(root, Vector3(0, 3.7, -3.6), Vector3(12.8, 0.35, 1.7), Color("ab5139"))
-	roof.rotation.x = -0.17
-	for x in range(-6, 7):
-		_box(root, Vector3(x, 3.91, -3.6), Vector3(0.09, 0.12, 1.7), Color("cc7650"))
+	SCENERY.pavilion(root, slot)
 
 
 func _interior(root: Node3D, slot: String) -> void:
@@ -271,18 +225,26 @@ func _interior(root: Node3D, slot: String) -> void:
 			_prop(root, "#mil_standard", Vector3(-4, 0.1, -2), 1.25)
 			_prop(root, "#mil_standard", Vector3(4, 0.1, -2), 1.25)
 		"barracks":
+			var kit := Kit.new()
 			for x: float in [-4.1, 0.0, 4.1]:
 				for y: float in [0.48, 1.85]:
-					_box(root, Vector3(x, y, -2), Vector3(2.5, 0.2, 2.1), Color("775636"))
-					_box(root, Vector3(x, y + 0.17, -2), Vector3(2.3, 0.18, 1.9), Color("cebc88"))
-					_box(root, Vector3(x - 0.8, y + 0.3, -2), Vector3(0.5, 0.15, 1.4), Color("eee0bb"))
+					kit.boxc(Vector3(x, y, -0.9), Vector3(2.5, 0.2, 2.1), Color("775636"))
+					kit.boxc(Vector3(x, y + 0.17, -0.9), Vector3(2.3, 0.18, 1.9), Color("b89b77"))
+					kit.boxc(Vector3(x - 0.8, y + 0.3, -0.9), Vector3(0.5, 0.15, 1.4), Color("eee0bb"))
+					kit.boxc(Vector3(x + 0.5, y + 0.28, -0.9), Vector3(0.7, 0.04, 1.9), Color("9e4436"))
 				for dx: float in [-1.3, 1.3]:
-					_box(root, Vector3(x + dx, 1.2, -2.8), Vector3(0.12, 2.4, 0.12), Color("775636"))
+					for z: float in [-1.8, 0]:
+						kit.boxc(Vector3(x + dx, 1.2, z), Vector3(0.12, 2.4, 0.12), Color("775636"))
+			var bunks := MeshInstance3D.new()
+			bunks.name = "Bunks"
+			bunks.mesh = kit.mesh()
+			bunks.material_override = Kit.material(0.9)
+			root.add_child(bunks)
 		"forge":
-			_prop(root, "SM_Prop_Forge_01", Vector3(3.4, 0.1, -2), 1.4, -PI / 2)
+			_prop(root, "SM_Prop_Forge_01", Vector3(3.4, 0.1, -0.7), 1.4, -PI / 2)
 			_prop(root, "SM_Prop_Anvil_01", Vector3(-1, 0.1, 0), 1.3)
 			_prop(root, "#mil_ingots", Vector3(-4, 0.1, -2), 1.6)
-			var ember := _box(root, Vector3(3.1, 0.8, -1.7), Vector3(0.8, 0.2, 0.7), Color("f48838"))
+			var ember := _box(root, Vector3(3.1, 0.8, -0.4), Vector3(0.8, 0.2, 0.7), Color("f48838"))
 			var mat := ember.mesh.surface_get_material(0) as StandardMaterial3D
 			mat.emission_enabled = true
 			mat.emission = Color("ff6b22")
@@ -292,19 +254,39 @@ func _interior(root: Node3D, slot: String) -> void:
 			fire.light_color = Color("ff9c40")
 			fire.light_energy = 1.8
 			fire.omni_range = 6
+			fire.shadow_enabled = false
 			root.add_child(fire)
 		"mars":
-			_box(root, Vector3(0, 0.65, -2), Vector3(3, 1.3, 2), Color("c9ba9b"))
-			_prop(root, "SM_Prop_Statue_01", Vector3(0, 1.3, -2), 1.1)
+			_box(root, Vector3(0, 0.65, -0.9), Vector3(3, 1.3, 2), Color("c9ba9b"))
+			_prop(root, "SM_Prop_Statue_01", Vector3(0, 1.3, -0.9), 1.1)
 			_box(root, Vector3(0, 0.6, 1), Vector3(2.7, 1.2, 1.3), Color("e6d8b7"))
 			_prop(root, "SM_Prop_Jar_01", Vector3(3, 0.1, -1), 1.3)
+			_prop(root, "SM_Prop_Brazier_03", Vector3(0, 1.2, 1), 0.65)
+			_prop(root, "SM_Prop_Brazier_03_Insert_01", Vector3(0, 1.2, 1), 0.65)
+			var embers := _box(root, Vector3(0, 1.8, 1), Vector3(0.4, 0.12, 0.4), Color("ff9c40"))
+			var glow := embers.mesh.surface_get_material(0) as StandardMaterial3D
+			glow.emission_enabled = true
+			glow.emission = Color("ff7926")
+			glow.emission_energy_multiplier = 2.0
+			var altar_light := OmniLight3D.new()
+			altar_light.name = "AltarFire"
+			altar_light.position = Vector3(0, 2.1, 1)
+			altar_light.light_color = Color("ffac58")
+			altar_light.light_energy = 0.7
+			altar_light.omni_range = 4
+			altar_light.shadow_enabled = false
+			root.add_child(altar_light)
 		"store":
-			for i in 5:
-				_crate(root, Vector3(-4 + i * 1.6, 0.7, -2))
+			for i in 4:
+				_crate(root, Vector3(-3.8 + i * 1.6, 0.7, -0.8))
+			_crate(root, Vector3(-2.2, 1.9, -0.8))
 			for i in 3:
 				_prop(root, "SM_Prop_Jar_01", Vector3(2 + i, 0.1, 1.5), 1.1)
-			_prop(root, "SM_Prop_Sack_Stack_01", Vector3(-4, 0.1, 1), 1.3)
+			_prop(root, "SM_Prop_Sack_Stack_01", Vector3(-4, 0.1, 2.4), 1.1)
 		"drill":
+			var stand := _box(root, Vector3(4.6, 0.3, -2), Vector3(2.6, 0.6, 2.4), Color("98714d"))
+			stand.name = "CommanderStand"
+			_prop(root, "#mil_standard", Vector3(5.2, 0.6, -2.7), 0.9)
 			for x: float in [-3.5, 0.0, 3.5]:
 				_prop(root, "#mil_dummy", Vector3(x, 0.1, -1), 1.25)
 			_prop(root, "SM_Prop_Weapon_Rack_01", Vector3(-5, 0.1, 3), 1.0)
@@ -394,7 +376,7 @@ func _people() -> void:
 			regular.append(soldier)
 	for i in mini(6, regular.size()):
 		var soldier: Dictionary = regular[i]
-		var home := Vector3(PLOTS["barracks"]) + Vector3(-4 + (i % 3) * 4, 0.1, 0.3 + (i / 3) * 2.5)
+		var home := Vector3(PLOTS["barracks"]) + Vector3(-4 + (i % 3) * 4, 0.1, 1.5 + (i / 3) * 1.9)
 		var f := _fighter(soldier)
 		_register(f, home, "soldier", int(soldier["id"]))
 		f.rotation.y = -0.4 if i % 2 == 0 else 0.4
@@ -472,15 +454,15 @@ func _process(dt: float) -> void:
 
 func project(slot: String, height := 0.0) -> Vector2:
 	var point: Vector3 = GATE if slot == "gate" else Vector3(PLOTS.get(slot, Vector3.ZERO))
-	return camera.unproject_position(point + Vector3(0, height, 0)) * size / Vector2(sub.size)
+	return camera.unproject_position(world.to_global(point + Vector3(0, height, 0))) * size / Vector2(sub.size)
 
 
 func footprint(slot: String) -> Rect2:
 	var center: Vector3 = PLOTS[slot]
-	var rect := Rect2(camera.unproject_position(center), Vector2.ZERO)
+	var rect := Rect2(camera.unproject_position(world.to_global(center)), Vector2.ZERO)
 	for x: float in [-6.5, 6.5]:
 		for z: float in [-5.0, 5.0]:
-			rect = rect.expand(camera.unproject_position(center + Vector3(x, 0, z)))
+			rect = rect.expand(camera.unproject_position(world.to_global(center + Vector3(x, 0, z))))
 	return Rect2(rect.position * size / Vector2(sub.size), rect.size * size / Vector2(sub.size))
 
 
@@ -500,7 +482,7 @@ func _pick(pos: Vector2) -> String:
 	var ray := camera.project_ray_normal(pixel)
 	if absf(ray.y) < 0.001:
 		return ""
-	var point := origin + ray * (-origin.y / ray.y)
+	var point := world.to_local(origin + ray * ((world.global_position.y - origin.y) / ray.y))
 	for slot: String in PLOTS:
 		var offset := point - Vector3(PLOTS[slot])
 		if absf(offset.x) <= 6.5 and absf(offset.z) <= 5:
@@ -549,9 +531,14 @@ func focus_plot(slot: String, close_view := true) -> void:
 func _update_camera() -> void:
 	if camera == null:
 		return
-	camera.size = zoom
+	zoom = clampf(zoom, MIN_ZOOM, MAX_ZOOM)
+	focus.x = clampf(focus.x, -22, 22)
+	focus.z = clampf(focus.z, -16, 16)
+	# На сверхшироком окне сохраняем безопасную ширину кадра над землёй.
+	var aspect := size.x / maxf(1, size.y)
+	camera.size = minf(zoom, 190.0 / maxf(1, aspect))
 	camera.position = focus + Vector3(8, 66, 60)
-	camera.look_at(focus, Vector3.UP)
+	camera.look_at(world.to_global(focus), Vector3.UP)
 	view_changed.emit()
 
 

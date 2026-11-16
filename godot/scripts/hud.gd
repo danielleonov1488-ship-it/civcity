@@ -3926,7 +3926,9 @@ func _process(_dt: float) -> void:
 			_update_pointer()
 	if pointer:
 		var t: Control = pointer_target
-		var show := t != null and is_instance_valid(t) and t.is_visible_in_tree() and root.visible
+		var cu := CampUI.of(self)
+		# лагерь Легиона закрывает город целиком: стрелка к кнопкам города (например, «Мостовая») над ним не видна
+		var show := t != null and is_instance_valid(t) and t.is_visible_in_tree() and root.visible and (cu == null or not cu.visible or cu.is_ancestor_of(t))
 		pointer.visible = show
 		pointer_text.visible = show
 		if show:
