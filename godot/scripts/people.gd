@@ -65,7 +65,9 @@ func setup(l: Land, c: City, g) -> void:
 	_make_cart()
 	city.building_removed.connect(_on_building_removed)
 	city.building_added.connect(_on_building_added)
-	city.changed.connect(func(): _jobs_dirty = true)
+	city.changed.connect(func():
+		_jobs_dirty = true
+		_by_base_dirty = true)
 	city.family_left.connect(_on_family_left)
 	city.family_refused.connect(_on_family_refused)
 	city.resident_taken.connect(_on_resident_taken)
@@ -177,11 +179,21 @@ func _path(a: Vector2, b: Vector2) -> PackedVector2Array:
 	var out := PackedVector2Array([a, fa])
 	var i := 0
 	while i < raw.size() - 1:
-		var j := mini(raw.size() - 1, i + 30)
-		while j > i + 1 and not _clear(out[out.size() - 1], raw[j]):
-			j -= 1
-		out.append(raw[j])
-		i = j
+		# 16.11 (скорость): дальняя видимая точка — делением пополам, а не шагом по одной (было до 30 проверок
+		# прямой по 60 точек на каждый отрезок пути — в час пик рывки по 20 мс); путь почти тот же
+		var lo := i + 1
+		var hi := mini(raw.size() - 1, i + 30)
+		if _clear(out[out.size() - 1], raw[hi]):
+			lo = hi
+		else:
+			while hi - lo > 1:
+				var mid := (lo + hi) / 2
+				if _clear(out[out.size() - 1], raw[mid]):
+					lo = mid
+				else:
+					hi = mid
+		out.append(raw[lo])
+		i = lo
 	out.append(b)
 	return out
 
@@ -1201,6 +1213,13 @@ func _assign_jobs() -> void:
 			else:
 				keep[r["job"]] = int(keep.get(r["job"], 0)) + 1
 	var order := {"plebs": ["plebs", "artisans", "patricians"], "artisans": ["artisans", "patricians"], "patricians": ["patricians"]}
+	# 16.11 (скорость): свободные взрослые по классам — один раз, а не перебор всех жителей на каждое пустое место
+	# (в большом городе с нехваткой рабочих — сотни тысяч проверок разом, рывок до 30 мс); выбор тот же: ближайший,
+	# при равенстве — первый по порядку жителей
+	var cand := {"plebs": [], "artisans": [], "patricians": []}
+	for r in residents:
+		if r["job"] < 0 and not r["child"] and int(r["home"]) > 0 and cand.has(r["cls"]):
+			(cand[r["cls"]] as Array).append(r)
 	var count := {}
 	for nd in need:
 		var bid: int = nd[0]
@@ -1209,19 +1228,23 @@ func _assign_jobs() -> void:
 			continue
 		var bp: Vector2 = city.buildings[bid]["pos"]
 		var best := {}
+		var best_i := -1
+		var best_l: Array = []
 		var bd := INF
 		for cl in order[nd[1]]:
-			for r in residents:
-				if r["job"] >= 0 or r["child"] or int(r["home"]) <= 0 or r["cls"] != cl:
-					continue
-				var dd := (r["p"] as Vector2).distance_squared_to(bp)
+			var lst: Array = cand[cl]
+			for i in lst.size():
+				var dd := (lst[i]["p"] as Vector2).distance_squared_to(bp)
 				if dd < bd:
 					bd = dd
-					best = r
+					best = lst[i]
+					best_i = i
+					best_l = lst
 			if not best.is_empty():
 				break
 		if best.is_empty():
 			continue
+		best_l.remove_at(best_i)
 		best["job"] = bid
 		keep[bid] = int(keep.get(bid, 0)) + 1
 
@@ -1412,9 +1435,24 @@ func _hours_to(a: Vector2, b: Vector2) -> float:
 
 
 ## Раз в четверть секунды: кому куда идти по часам
+## 16.11 (владелец: «подлагивает»): в час пик (8:00 — все на работу, 17:00 — домой) десятки жителей разом искали путь
+## (A* по сетке 50 см) в одном кадре — рывок до 25 мс. Теперь за проход расписания (раз в 0,25 с) уходит не больше
+## SCHED_GO жителей; остальные — в следующий проход (время ухода у всех и так разное — на глаз не заметно)
+const SCHED_GO := 4
+var _sched_left := 0
+
+
+func _sched_ok() -> bool:
+	if _sched_left <= 0:
+		return false
+	_sched_left -= 1
+	return true
+
+
 func _schedule(dh: float) -> void:
 	var h: float = game.hour
 	var night := h >= 21.5 or h < 5.0
+	_sched_left = SCHED_GO
 	for r in residents.duplicate():
 		match r["state"]:
 			"home":
@@ -1425,18 +1463,18 @@ func _schedule(dh: float) -> void:
 					if b.is_empty():
 						continue
 					var dep := 8.0 - _hours_to(r["p"], work_door(r)) + float(r["dep"])
-					if h >= dep and h < 16.5 and not r["done_today"]:
+					if h >= dep and h < 16.5 and not r["done_today"] and _sched_ok():
 						r["done_today"] = true
 						_go(r, work_door(r), "work")
 				elif not night and h >= 8.5 and h < 19.5:
 					var chance := 0.02 if r["child"] else 0.025
-					if rng.randf() < chance * dh * 4.0 * 10.0:
+					if rng.randf() < chance * dh * 4.0 * 10.0 and _sched_ok():
 						r["outs"] = 0
 						_errand(r)
 			"work":
 				if h >= 17.0 + float(r["ret"]) or h < 6.0:
 					var hp: Dictionary = city.buildings.get(r["home"], {})
-					if hp.is_empty():
+					if hp.is_empty() or not _sched_ok():
 						continue
 					if rng.randf() < 0.3 and h < 19.0:
 						r["outs"] = 1
@@ -1452,14 +1490,14 @@ func _schedule(dh: float) -> void:
 						var hb: Dictionary = city.buildings.get(r["home"], {})
 						if hb.is_empty():
 							r["home"] = -1
-						else:
+						elif _sched_ok():
 							_go(r, city.door_point(hb), "settle")
 					continue
 				if r["act"] != "" and not night:
 					continue                     # занят делом (лавка, скамья, разговор) — сам решит, когда уйти
 				if float(r["t"]) <= 0.0 or night:
 					var hp: Dictionary = city.buildings.get(r["home"], {})
-					if hp.is_empty():
+					if hp.is_empty() or not _sched_ok():
 						continue
 					_go(r, city.door_point(hp), "home")
 	# новый день — снова можно на работу
@@ -1818,11 +1856,33 @@ func _watch_target(r: Dictionary, b: Dictionary) -> Dictionary:
 
 
 ## Места у украшения: скамья — сиденья, колодец и фонтанчик — подойти спереди, статуя — посмотреть
+## 16.11 (скорость): постройки по виду (base) — один раз на изменение города, а не перебор всего города на каждый
+## из ~25 видов досуга в каждом поручении (было до 10 мс на одно поручение — рывки в часы прогулок)
+var _by_base := {}
+var _by_base_n := -1
+var _by_base_dirty := true
+
+
+func _base_list(base: String) -> Array:
+	if _by_base_n != city.buildings.size() or _by_base_dirty:
+		_by_base_dirty = false
+		_by_base_n = city.buildings.size()
+		_by_base = {}
+		for id in city.buildings:
+			var b: Dictionary = city.buildings[id]
+			if b.has("host"):
+				continue
+			var k := Defs.base_of(b["type"])
+			if not _by_base.has(k):
+				_by_base[k] = []
+			(_by_base[k] as Array).append(b)
+	return _by_base.get(base, [])
+
+
 func _decor_target(r: Dictionary, from: Vector2, base: String, act: String, maxd: float) -> Dictionary:
 	var cands := []
-	for id in city.buildings:
-		var b: Dictionary = city.buildings[id]
-		if b.has("host") or Defs.base_of(b["type"]) != base:
+	for b: Dictionary in _base_list(base):
+		if not city.buildings.has(b["id"]):
 			continue
 		var dd := (b["pos"] as Vector2).distance_to(from)
 		if dd <= maxd:
