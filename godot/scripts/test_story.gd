@@ -487,7 +487,8 @@ func _legion3() -> void:
 	c.changed.emit()
 	await frames(6)
 	check(lg.window_open() and camp_ui != null and camp_ui.top_button.visible, "лагерь открыт, кнопка «Легион» наверху видна")
-	check(lg.flags.has("camp_told") and hud.advisor_panel.visible and hud.adv_title.text == "Лагерь открыт" and hud.adv_text.text.contains("кнопка «Легион» наверху"),
+	check(lg.flags.has("camp_told") and hud.advisor_panel.visible and hud.adv_title.text == "Лагерь открыт"
+		and hud.adv_text.text == "Новобранцы ждут у ворот форта. Примите их и назначьте в комнаты.",
 		"карточка советника: «%s» — «%s»" % [hud.adv_title.text, hud.adv_text.text])
 	hud.advisor_panel.visible = false
 	c.changed.emit()
@@ -593,15 +594,16 @@ func _legion3() -> void:
 	sto.tick()
 	check(c.progress_of(["soldiers"]) == 0 and int(A["step"]) == 1 and not bool(A.get("ready", false)), "герой не заменяет первого новобранца")
 	var before_ids: Array = lg.soldiers.map(func(s: Dictionary) -> int: return int(s["id"]))
+	preload("res://scripts/test_fort_fixture.gd").gate(lg)
 	sto.press("camp")
 	camp_ui.open_recruit_picker()
 	var recruit_button: Button = null
 	for node in camp_ui.modal.find_children("*", "Button", true, false):
 		var button := node as Button
-		if button.text == "Призвать" and not button.disabled:
+		if button.text == I18n.t("Принять") and not button.disabled:
 			recruit_button = button
 			break
-	check(recruit_button != null, "форт предлагает горожан для призыва")
+	check(recruit_button != null, "форт предлагает новобранцев у ворот")
 	if recruit_button != null:
 		recruit_button.pressed.emit()
 	var sol: Dictionary = {}
@@ -633,6 +635,7 @@ func _legion3() -> void:
 	sto.press("battle")
 	check(got.is_empty() and parts_txt.contains("Новобранец в отряде: нет"), "без новобранца боя нет, в строке: «%s»" % parts_txt)
 	check(bool(lg.soldier(int(lg.squad3[0])).get("hero", false)) and not lg.set_place(0, int(sol["id"])), "место 0 остаётся у героя")
+	check(preload("res://scripts/test_fort_fixture.gd").house_fighter(lg, int(sol["id"])), "новобранец живёт в казарме")
 	camp_ui.show_squad()
 	var slot := -1
 	for i in range(1, lg.slots()):

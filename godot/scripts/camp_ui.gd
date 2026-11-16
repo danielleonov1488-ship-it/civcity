@@ -3,11 +3,19 @@ extends Control
 ## Форт V3: действия привязаны к участкам, павильоны — временный адаптер.
 
 const Ring = preload("res://scripts/fort_ui_ring.gd")
+const PersonPreview = preload("res://scripts/fort_person_preview.gd")
 const USE_3D := true
 const USE_CUTAWAY := true
 var use_cutaway := USE_CUTAWAY # Старые сценарии могут явно выбрать прежнюю диораму.
 var cutaway_markers: Control
 var _worker_target := -1
+var population_button: Button
+var expand_floor: Button
+var expand_section: Button
+var dweller_sid := 0
+var dweller_slot := ""
+var dweller_change := ""
+const STAR_TIP := "Звёзды — талант: больше звёзд — сильнее рост характеристик"
 const FORT_ICON := {"hq": "castle", "barracks": "legion", "kitchen": "bread",
 	"smelter": "anvil", "sawmill": "wood", "tannery": "clothes", "store": "amphora",
 	"forge": "hammer", "drill": "swords", "infirmary": "medic", "mars": "laurels",
@@ -16,7 +24,7 @@ const TOP_NAMES := {"money": "Денарии", "rations": "Пайки", "glory":
 const TOP_ICONS := {"money": "coins", "rations": "bread", "glory": "laurels", "ingots": "coins"}
 const TOP_TIPS := {
 	"money": "Денарии поступают в казну города от налогов.",
-	"rations": "Пайки готовят полевые кухни и городские пекарни. Собирайте их для походов.",
+	"rations": "Пайки — еда для походов. Готовит кухня",
 	"glory": "Слава — награда за победы и задания дня.",
 	"ingots": "Слитки копятся в Сокровищнице. Ещё их можно найти в сундуках.",
 }
@@ -50,6 +58,7 @@ var diorama: Camp3D
 var background: TextureRect
 var guide: PanelContainer
 var guide_text: Label
+var guide_pointer: Label
 var _guide_target: Control
 var _collection_fx: Array[Dictionary] = []
 var _city_render_owned := false
@@ -68,7 +77,7 @@ const PLAQUES := {
 }
 const EFFECTS := {
 	"hq": "Уровень лагеря: остальные здания не выше Штаба.",
-	"barracks": "Призыв жителей. Места в отряде: 3 → 4 → 5 на уровнях 1, 3, 5.",
+	"barracks": "Казарма — дом бойцов. Бойцы отсюда идут в отряд",
 	"forge": "Оружие и доспехи. Наборы — с уровня 5.",
 	"drill": "Тренировка повышает ранг и силу воинов.",
 	"mars": "Умения в бою. Их потолок — уровень храма.",
@@ -218,7 +227,7 @@ func _camp_moment() -> void:
 	if hud.advisor_panel.visible or hud.game.tool != "" or (rig != null and rig.cine) or not hud.game.stories.cine.is_empty():
 		return
 	lg.flags["camp_told"] = true
-	hud.advisor("Лагерь открыт", "Призывайте жителей в Легион — кнопка «Легион» наверху.", Callable(), false, true)   # маленькая карточка в углу, не мешает
+	hud.advisor("Лагерь открыт", "Новобранцы ждут у ворот форта. Примите их и назначьте в комнаты.", Callable(), false, true)
 	hud.show_pointer({"kind": "legion", "tip": "Лагерь"})
 	var tw := top_button.create_tween()
 	for i in 3:
@@ -267,6 +276,7 @@ func close() -> void:
 			(entry["label"] as Label).queue_free()
 	_collection_fx.clear()
 	guide.hide()
+	guide_pointer.hide()
 	set_process(false)
 	set_process_input(false)
 	hide()
@@ -337,6 +347,15 @@ func _build_screen() -> void:
 	bottom = HBoxContainer.new()
 	add_child(bottom)
 	bottom.add_child(_button("Отряд", show_squad, "shield"))
+	population_button = _button("", show_people, "housing")
+	population_button.name = "FortPopulation"
+	add_child(population_button)
+	expand_floor = _button("+ этаж", func(): show_expansion("floor"), "hammer")
+	expand_floor.name = "FortPlusFloor"
+	add_child(expand_floor)
+	expand_section = _button("+ секция", func(): show_expansion("section"), "hammer")
+	expand_section.name = "FortPlusSection"
+	add_child(expand_section)
 	gate = _button("Поход", _campaign, "scroll")
 	add_child(gate)
 	extra_plots = ScrollContainer.new()
@@ -350,8 +369,14 @@ func _build_screen() -> void:
 	guide = hud._panel(self, "bar", 0, 10)
 	guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	guide_text = _text("", 18, true)
+	guide_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	guide_text.custom_minimum_size.x = 420
 	guide.add_child(guide_text)
 	guide.hide()
+	guide_pointer = _text("↓", 30, true)
+	guide_pointer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(guide_pointer)
+	guide_pointer.hide()
 
 
 func _resource_bar(resource: String) -> void:
@@ -450,6 +475,9 @@ func _layout() -> void:
 	chips.scale = Vector2.ONE * ck
 	chips.position = Vector2((size.x - chips.size.x * ck) * 0.5, 12)
 	exit_button.position = Vector2(size.x - 54, 12)
+	population_button.reset_size()
+	population_button.scale = Vector2.ONE * k
+	population_button.position = Vector2(size.x - population_button.size.x * k - 70, 96 * k)
 	left_column.reset_size()
 	left_column.scale = Vector2.ONE * k
 	left_column.position = Vector2(16, 116 * k)
@@ -470,6 +498,11 @@ func _layout() -> void:
 	_layout_guide()
 	if diorama is FortCutaway:
 		_layout_cutaway_markers(k)
+		for button: Button in [expand_floor, expand_section]:
+			button.reset_size()
+			button.scale = Vector2.ONE * k
+			var point: Vector2 = (diorama as FortCutaway).expansion_project("floor" if button == expand_floor else "section")
+			button.position = Vector2(clampf(point.x - button.size.x * k * 0.5, 140 * k, maxf(140 * k, size.x - button.size.x * k - 12)), clampf(point.y - button.size.y * k * 0.5, 146 * k, maxf(146 * k, size.y - 170 * k)))
 
 
 func _process(dt: float) -> void:
@@ -483,6 +516,11 @@ func _process(dt: float) -> void:
 	if is_instance_valid(_guide_target) and guide.visible:
 		var glow := 1.12 + 0.10 * sin(Time.get_ticks_msec() * 0.004)
 		_guide_target.modulate = Color(glow, glow, 1.0)
+	for marker: Dictionary in plot_markers.values():
+		var collect: Button = marker["collect"]
+		var full: bool = bool(collect.get_meta("fort_full", false))
+		collect.pivot_offset = collect.size * 0.5
+		collect.scale = Vector2.ONE * (1.18 + 0.08 * sin(Time.get_ticks_msec() * 0.005) if full else 1.0)
 	_elapsed += dt
 	if _elapsed < 0.5:
 		return
@@ -508,6 +546,14 @@ func _roster_signature() -> String:
 func _refresh() -> void:
 	if is_instance_valid(diorama):
 		diorama.sync()
+	population_button.text = "%d / %d" % [lg.fort_population(), lg.roster_cap()]
+	population_button.tooltip_text = I18n.t("Жители форта · у ворот: %d") % lg.fort_newcomers().size()
+	var full_fort := lg.fort_empty_plot() < 0
+	expand_floor.visible = full_fort and diorama is FortCutaway
+	expand_section.visible = expand_floor.visible
+	var expand_tip := lg.fort_can_expand()
+	expand_floor.tooltip_text = I18n.t(expand_tip) if expand_tip != "" else I18n.t("Расширить форт")
+	expand_section.tooltip_text = expand_floor.tooltip_text
 	(resource_chips["money"] as Label).text = hud.fmt(lg.city_money())
 	ration_label.text = "%d / %d" % [lg.rations_now(), lg.ration_cap()]
 	glory_label.text = hud.fmt(lg.glory)
@@ -651,6 +697,8 @@ func _build_card() -> void:
 	level_panel.add_child(card_level)
 	title.add_child(_button("×", _hide_card))
 	details.add_child(_wrap(I18n.t("Даёт: %s") % String(info["gives"]), 16))
+	if selected == "barracks":
+		details.add_child(_wrap(I18n.t("Казарма — дом бойцов. Бойцы отсюда идут в отряд"), 15))
 	var next := _wrap(I18n.t("ур. %d: %s") % [int(info["lv"]) + 1, String(info["gives_next"])], 14)
 	next.add_theme_color_override("font_color", Color("326443"))
 	details.add_child(next)
@@ -671,7 +719,7 @@ func _build_card() -> void:
 	if selected == "barracks":
 		recruit_button = main_action
 	if selected == "hq":
-		var expansion := Legion.fort_exp_info(int(lg.fort["exp"]) + 1)
+		var expansion := lg.fort_expansion_info()
 		primary.add_child(_cost_icons(expansion["cost"]))
 		primary.add_child(_text(I18n.t("%d участков · %s") % [int(expansion["plots"]), duration_text(float(expansion["time_h"]) * 3600.0 / maxf(0.001, lg.time_k))], 13))
 	var upgrade := VBoxContainer.new()
@@ -731,8 +779,7 @@ func _refresh_card() -> void:
 	else:
 		match selected:
 			"barracks":
-				title = I18n.t("Призвать")
-				reason = lg.can_recruit_resident()
+				title = I18n.t("Отряд")
 			"forge": title = I18n.t("Ковать")
 			"drill": title = I18n.t("Тренировать")
 			"mars": title = I18n.t("Таланты")
@@ -803,7 +850,7 @@ func _roster(parent: VBoxContainer, training: bool) -> void:
 			_training.append({"id": sid, "status": status, "bar": bar, "button": train_button})
 			_add_speed(v, "train_%d" % sid)
 		else:
-			var home := hud._round("housing", "Отпустить домой — снова станет жителем", 40, func(): lg.dismiss(sid); _refresh())
+			var home := hud._round("housing", I18n.t("Отпустить из форта"), 40, func(): lg.dismiss(sid); _refresh())
 			row.add_child(home)
 
 
@@ -819,13 +866,9 @@ func open_recruit_picker() -> void:
 
 
 func show_recruit_picker() -> void:
-	if hud.game.people != null:
-		hud.game.people.sync_members()
-	var target := _worker_target
 	var v := _new_modal(570)
-	_worker_target = target
-	v.add_child(_text("Кого призвать?", 24, true))
-	var candidates := lg.recruit_candidates(4, recruit_page)
+	v.add_child(_text(I18n.t("У ворот форта"), 24, true))
+	var candidates := lg.fort_newcomers()
 	for candidate: Dictionary in candidates:
 		var p := hud._panel(v, "bar", 0, 10)
 		var row := HBoxContainer.new()
@@ -834,48 +877,35 @@ func show_recruit_picker() -> void:
 		details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(details)
 		details.add_child(_text(String(candidate["name"]), 18, true))
-		details.add_child(_text(I18n.t(String(candidate["former"])), 14))
-		details.add_child(_text("★".repeat(int(candidate["stars"])) + "☆".repeat(5 - int(candidate["stars"])), 18, true))
-		var choose := _button("Призвать", func(): _recruit_pick(candidate), "legion")
+		details.add_child(_text(Soldiers.class_name_of(String(candidate.get("class_hint", "legionary"))), 14))
+		var stars_label := _text(Soldiers.stars_text(int(candidate["stars"])), 18, true)
+		stars_label.mouse_filter = Control.MOUSE_FILTER_PASS
+		stars_label.tooltip_text = I18n.t(STAR_TIP)
+		details.add_child(stars_label)
+		var choose := _button("Принять", func(): _recruit_pick(candidate), "legion")
 		choose.disabled = lg.can_recruit_resident() != ""
 		choose.tooltip_text = lg.can_recruit_resident()
 		row.add_child(choose)
+		row.add_child(_button("Отпустить", func(): lg.fort_release(int(candidate["id"])); show_recruit_picker(); _refresh()))
 	if candidates.is_empty():
 		v.add_child(_wrap(lg.can_recruit_resident()))
-	v.add_child(_button("Других", func(): recruit_page += 1; show_recruit_picker()))
 	v.add_child(_button("← Лагерь", _close_modal))
 	_fit_modal.call_deferred()
 
 
 func _recruit_pick(pick: Dictionary) -> void:
-	var target := _worker_target
 	var soldier := lg.recruit_resident(pick)
 	if soldier.is_empty():
-		hud.notify(lg.can_recruit_resident() if lg.can_recruit_resident() != "" else "Житель уже недоступен. Выберите другого.", "lock")
+		hud.notify(lg.can_recruit_resident() if lg.can_recruit_resident() != "" else I18n.t("Новобранец уже ушёл."), "lock")
 		show_recruit_picker()
-		_refresh()
-		return
-	if target >= 0:
-		if not lg.fort_assign(target, int(soldier["id"])):
-			hud.notify(I18n.t("Не удалось назначить работника. Выберите его снова."), "lock")
-		_close_modal()
-		show_plot(target)
 		_refresh()
 		return
 	if is_instance_valid(diorama):
 		diorama.sync()
 		diorama.recruit_walk(int(soldier["id"]))
 	_refresh()
-	var v := _new_modal(500)
-	recruit_result = is_instance_valid(diorama)
-	if recruit_result:
-		var shade := modal.get_child(0) as ColorRect
-		shade.color = Color(0.10, 0.06, 0.03, 0.12)
-	v.add_child(_wrap(I18n.t("%s → новобранец %s") % [String(soldier.get("from", soldier["name"])), Soldiers.stars_text(int(soldier["stars"]))], 22))
-	v.add_child(_wrap("В руках меч — Легионер. Дай лук — станет Лучником.", 17))
-	v.add_child(_button("В отряд", show_squad, "shield"))
-	v.add_child(_button("Закрыть", _close_modal))
-	_fit_modal.call_deferred()
+	_close_modal()
+	show_dweller(int(soldier["id"]))
 
 
 func _new_modal(width: float) -> VBoxContainer:
@@ -920,6 +950,7 @@ func _fit_modal() -> void:
 
 
 func _close_modal() -> void:
+	dweller_sid = 0
 	_worker_target = -1
 	_popup_resource = ""
 	_healing.clear()
@@ -990,6 +1021,8 @@ func _build_squad() -> void:
 	if lg.soldiers.is_empty():
 		roster.add_child(_wrap("Пока нет воинов. Призовите жителя в Казарме."))
 	for s: Dictionary in lg.soldiers:
+		if not lg.fort_is_fighter(int(s["id"])):
+			continue
 		var sid := int(s["id"])
 		var soldier_row := HBoxContainer.new()
 		roster.add_child(soldier_row)
@@ -1201,7 +1234,7 @@ func _show_soldier(sid: int) -> void:
 	if bool(lg.soldier(sid).get("hero", false)):
 		show_hero()
 	else:
-		_aux("soldier", sid)
+		show_dweller(sid)
 
 
 func _start_diorama() -> void:
@@ -1221,6 +1254,12 @@ func _start_diorama() -> void:
 		return
 	diorama = scene
 	if diorama is FortCutaway:
+		(diorama as FortCutaway).person_pressed.connect(func(sid: int, newcomer: bool):
+			if newcomer:
+				show_newcomer(sid)
+			else:
+				_show_soldier(sid))
+		(diorama as FortCutaway).person_moved.connect(func(_sid: int, _id: int): _refresh())
 		cutaway_markers = Control.new()
 		cutaway_markers.name = "CutawayMarkers"
 		cutaway_markers.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1264,6 +1303,9 @@ func _prepare_guide() -> void:
 	if lg.flags.has("camp3d_guide"):
 		return
 	lg.flags["camp3d_guide"] = 0
+	if lg.fort_count("kitchen") == 0:
+		lg.flags["camp3d_guide"] = 1
+		return
 	# Переложить часть стартового запаса в пузырь: первый сбор без ожидания.
 	# Сумма запасов сохраняется, подарка сверх лимита нет.
 	var pending := float(lg.pending_resources.get("rations", 0.0))
@@ -1290,6 +1332,7 @@ func _guide_advance(expected: int) -> void:
 func _layout_guide() -> void:
 	if guide == null:
 		return
+	guide_pointer.hide()
 	if is_instance_valid(_guide_target):
 		_guide_target.modulate = Color.WHITE
 	_guide_target = null
@@ -1303,13 +1346,23 @@ func _layout_guide() -> void:
 	var tip := ""
 	match step:
 		0:
-			target = bubbles["rations"]["button"]
+			target = null
 			for id: int in plot_markers:
 				var plot := lg.fort_plot(id)
-				if plot["b"] == "kitchen" and float(plot["pend"]) >= 1.0:
+				if plot["b"] != "kitchen" or not (plot["up"] as Dictionary).is_empty():
+					continue
+				if float(plot["pend"]) < 1.0 and not lg.fort_worker(id).is_empty():
+					var sample := minf(3.0, float(lg.pending_resources.get("rations", 0.0)))
+					plot["pend"] = float(plot["pend"]) + sample
+					lg.pending_resources["rations"] = float(lg.pending_resources.get("rations", 0.0)) - sample
+				if float(plot["pend"]) >= 1.0:
 					target = plot_markers[id]["collect"]
+					target.show()
+					tip = "Нажмите на хлеб над кухней — соберите пайки"
 					break
-			tip = "Соберите пайки"
+				if lg.fort_worker(id).is_empty():
+					target = plot_markers[id]["button"]
+					tip = "Назначьте жителя на кухню"
 		1:
 			target = build_button
 			tip = "Откройте стройку"
@@ -1323,12 +1376,15 @@ func _layout_guide() -> void:
 		guide.hide()
 		return
 	_guide_target = target
-	guide_text.text = I18n.t(tip) + " ↓"
+	guide_text.text = I18n.t(tip)
 	guide.reset_size()
 	var k := minf(1.0, size.y / 720.0)
 	guide.scale = Vector2.ONE * k
 	var rect := target.get_global_rect()
 	guide.position = _screen_anchor(rect.position - global_position + Vector2(rect.size.x * 0.5, -28 * k), guide.size * k)
+	guide_pointer.position = rect.position - global_position + Vector2(rect.size.x * 0.5 - 10, -34)
+	guide_pointer.show()
+	guide_pointer.move_to_front()
 	guide.move_to_front()
 
 
@@ -1511,7 +1567,7 @@ func _refresh_build_menu() -> void:
 
 func _choose_build(type: String) -> void:
 	if type == "kitchen" and lg.fort_count(type) > 0 and int(lg.flags.get("camp3d_guide", 4)) == 2:
-		_guide_advance(2)
+		lg.flags["camp3d_guide"] = 0
 		_jump_to_type(type)
 		return
 	var id := build_plot_id if build_plot_id >= 0 else lg.fort_empty_plot()
@@ -1520,7 +1576,7 @@ func _choose_build(type: String) -> void:
 		_refresh_build_menu()
 		return
 	if type == "kitchen":
-		_guide_advance(2)
+		lg.flags["camp3d_guide"] = 0
 	build_plot_id = -1
 	show_plot(id)
 	_refresh()
@@ -1537,7 +1593,7 @@ func _main_action() -> void:
 		_collect_plot(selected_plot, main_action.global_position)
 		return
 	match selected:
-		"barracks": open_recruit_picker()
+		"barracks": show_squad()
 		"forge", "arsenal":
 			var plot_id := selected_plot
 			_close_modal()
@@ -1652,9 +1708,9 @@ func _marker(plot_id: int, type: String) -> Dictionary:
 	button.add_child(level)
 	level.position = Vector2(38, 38)
 	var alert := _badge(button)
-	var collect := hud._round("bread", "", 48, func(): _collect_plot(int(panel.get_meta("plot"))))
+	var collect := hud._round("bread", "", 64, func(): _collect_plot(int(panel.get_meta("plot"))))
 	panel.add_child(collect)
-	collect.position = Vector2(10, 4)
+	collect.position = Vector2(2, -10)
 	var ring := Ring.new()
 	collect.add_child(ring)
 	ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1762,6 +1818,7 @@ func _refresh_marker(marker: Dictionary) -> void:
 		for soldier: Dictionary in lg.soldiers:
 			if lg.s_state(soldier) == "train" and int(soldier.get("train_plot", -1)) == int(plot["id"]):
 				idle = false
+	collect.set_meta("fort_full", idle and not prod.is_empty())
 	var alert: Label = marker["state"]
 	alert.text = "!"
 	var needs_worker := type != "hq" and level > 0 and lg.fort_worker(int(plot["id"])).is_empty()
@@ -1791,7 +1848,8 @@ func _collect_plot(plot_id: int, origin := Vector2.INF) -> void:
 		return
 	var resource := String(prod["resource"])
 	if resource == "rations":
-		_guide_advance(0)
+		if int(lg.flags.get("camp3d_guide", 4)) == 0:
+			lg.flags["camp3d_guide"] = 3
 	_fly_resource(resource, amount, origin)
 	_refresh()
 
@@ -1807,26 +1865,24 @@ func _room_icon(type: String, pixels: float) -> TextureRect:
 
 
 func _worker_card(parent: VBoxContainer) -> void:
-	var worker: Dictionary = lg.fort_worker(selected_plot)
 	if selected == "hq":
-		for person: Dictionary in lg.soldiers:
-			if bool(person.get("hero", false)):
-				worker = person
-				break
+		return
 	var row := HBoxContainer.new()
 	row.name = "FortWorker"
 	row.add_theme_constant_override("separation", 12)
 	parent.add_child(row)
-	if not worker.is_empty():
-		row.add_child(lu._portrait("unit", Legion.unit_of_class(String(worker.get("cls", "legionary"))), 46))
-	var name_label := _text(String(worker.get("name", I18n.t("Нет работника"))), 17, true)
+	var name_label := _text(I18n.t("Жители: %d / %d") % [lg.fort_occupants(selected_plot).size(), lg.fort_room_slots(selected_plot)], 17, true)
 	name_label.name = "FortWorkerName"
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(name_label)
-	if selected != "hq" and not worker.is_empty():
-		row.add_child(_button("Сменить работника", show_worker_picker))
-		row.add_child(_button("Освободить", func(): lg.fort_assign(selected_plot, 0); _refresh()))
+	row.add_child(_button("Назначить", show_worker_picker))
+	var people := HFlowContainer.new()
+	people.add_theme_constant_override("h_separation", 8)
+	parent.add_child(people)
+	for person: Dictionary in lg.fort_occupants(selected_plot):
+		var sid := int(person["id"])
+		people.add_child(_button(String(person["name"]), func(): show_dweller(sid)))
 
 
 func show_worker_picker() -> void:
@@ -1836,10 +1892,17 @@ func show_worker_picker() -> void:
 	v.add_child(_text("Кто будет работать?", 24, true))
 	var choices: Array[Dictionary] = lg.fort_worker_choices()
 	if choices.is_empty():
-		v.add_child(_wrap("Свободных людей нет. Призовите жителя или освободите воина из отряда."))
+		v.add_child(_wrap(I18n.t("Во дворе никого. Примите новобранца у ворот или переместите жителя из комнаты.")))
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(480, 250)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	var body := VBoxContainer.new()
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(body)
 	for person: Dictionary in choices:
 		var row := HBoxContainer.new()
-		v.add_child(row)
+		body.add_child(row)
 		row.add_child(lu._portrait("unit", Legion.unit_of_class(String(person["cls"])), 46))
 		var sid := int(person["id"])
 		var button := _button(String(person["name"]), func():
@@ -1849,12 +1912,7 @@ func show_worker_picker() -> void:
 				_refresh())
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(button)
-	var recruit_worker := _button("Призвать из города", func():
-		recruit_page = 0
-		_worker_target = target
-		show_recruit_picker(), "legion")
-	recruit_worker.disabled = lg.can_recruit_resident() != ""
-	recruit_worker.tooltip_text = I18n.t(lg.can_recruit_resident())
+	var recruit_worker := _button("У ворот форта", open_recruit_picker, "legion")
 	v.add_child(recruit_worker)
 	v.add_child(_button("Закрыть", _close_modal))
 	_fit_modal.call_deferred()
@@ -1879,6 +1937,7 @@ func _sync_cutaway_markers() -> void:
 			var marker := _marker(id, type if type != "" else "hq")
 			cutaway_markers.add_child(marker["panel"])
 			var button: Button = marker["button"]
+			button.set_meta("fort_room_hit", true)
 			button.name = "RoomButton_%d" % id
 			if type == "":
 				(button.get_node("ic") as Control).hide()
@@ -1916,3 +1975,251 @@ func _layout_cutaway_markers(k: float) -> void:
 		var box: Control = bubbles[resource]["box"]
 		box.position = Vector2(170 + index * 54, size.y - 62)
 		index += 1
+
+
+func show_newcomer(sid: int) -> void:
+	for person: Dictionary in lg.fort_newcomers():
+		if int(person["id"]) != sid:
+			continue
+		var v := _new_modal(440)
+		modal_panel.name = "FortNewcomerCard"
+		var title := _text(I18n.t("Новобранец · %s") % Soldiers.stars_text(int(person["stars"])), 24, true)
+		title.mouse_filter = Control.MOUSE_FILTER_PASS
+		title.tooltip_text = I18n.t(STAR_TIP)
+		v.add_child(title)
+		var preview := PersonPreview.new()
+		v.add_child(preview)
+		preview.setup(person)
+		v.add_child(_text(String(person["name"]), 21, true))
+		v.add_child(_text(Soldiers.class_name_of(String(person.get("class_hint", "legionary"))), 16))
+		var accept := _button("Принять", func(): _recruit_pick({"id": sid}), "housing")
+		accept.name = "FortAccept"
+		accept.disabled = lg.can_recruit_resident() != ""
+		accept.tooltip_text = I18n.t(lg.can_recruit_resident())
+		v.add_child(accept)
+		if accept.disabled:
+			v.add_child(_wrap(I18n.t(lg.can_recruit_resident())))
+		v.add_child(_button("Отпустить", func(): lg.fort_release(sid); _close_modal(); _refresh()))
+		v.add_child(_button("Закрыть", _close_modal))
+		_fit_modal.call_deferred()
+		return
+
+
+func show_people() -> void:
+	var v := _new_modal(540)
+	v.add_child(_text(I18n.t("Жители форта"), 24, true))
+	v.add_child(_button(I18n.t("У ворот: %d") % lg.fort_newcomers().size(), open_recruit_picker, "housing"))
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(480, 330)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	var body := VBoxContainer.new()
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(body)
+	for person: Dictionary in lg.soldiers:
+		var sid := int(person["id"])
+		body.add_child(_button(_soldier_title(person), func(): _show_soldier(sid)))
+	v.add_child(_button("Закрыть", _close_modal))
+	_fit_modal.call_deferred()
+
+
+func show_dweller(sid: int, slot := "", change := "") -> void:
+	var person := lg.soldier(sid)
+	if person.is_empty():
+		_close_modal()
+		return
+	var v := _new_modal(930)
+	dweller_sid = sid
+	dweller_slot = slot
+	dweller_change = change
+	modal_panel.name = "FortDwellerCard"
+	var head := HBoxContainer.new()
+	v.add_child(head)
+	head.add_child(_button("←", func(): _dweller_next(sid, -1)))
+	var title := _text(String(person["name"]), 25, true)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	head.add_child(_button("→", func(): _dweller_next(sid, 1)))
+	head.add_child(_button("×", _close_modal))
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 24)
+	v.add_child(columns)
+	var left := VBoxContainer.new()
+	left.custom_minimum_size.x = 250
+	columns.add_child(left)
+	var portrait := PersonPreview.new()
+	left.add_child(portrait)
+	portrait.setup(person)
+	var stars_label := _text(Soldiers.stars_text(int(person["stars"])), 24, true)
+	stars_label.name = "FortTalentStars"
+	stars_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	stars_label.tooltip_text = I18n.t(STAR_TIP)
+	left.add_child(stars_label)
+	left.add_child(_text(Soldiers.class_name_of(String(person["cls"])), 18, true))
+	var stats := lg.soldier_stats(person, Legion.unit_of_class(String(person["cls"])))
+	var stat_grid := GridContainer.new()
+	stat_grid.columns = 2
+	stat_grid.add_theme_constant_override("h_separation", 10)
+	left.add_child(stat_grid)
+	for entry: Array in [["medic", "Здоровье", roundi(float(stats["hp"]))], ["swords", "Атака", roundi(float(stats["atk"]))], ["shield", "Защита", roundi(float(stats["armor"]))], ["laurels", "Сила", Legion.power(stats)]]:
+		stat_grid.add_child(hud._icon(String(entry[0]), 24))
+		stat_grid.add_child(_text(I18n.t(String(entry[1])) + ": " + str(entry[2]), 17, true))
+	var plot := lg.fort_plot(lg.fort_worker_plot(sid))
+	var work := I18n.t(String(Legion.FORT_B[String(plot["b"])]["name"])) if not plot.is_empty() else I18n.t("Двор")
+	left.add_child(_wrap(I18n.t("Работа: %s") % work, 16))
+	var move := _button("Переместить", func(): _move_dweller(sid), "housing")
+	move.name = "FortMoveDweller"
+	move.disabled = lg.s_state(person) != "ready"
+	move.tooltip_text = I18n.t("Перетащите человека в комнату. Зелёная — можно, красная — нельзя.")
+	left.add_child(move)
+	var right := VBoxContainer.new()
+	right.custom_minimum_size.x = 570
+	columns.add_child(right)
+	var slots := GridContainer.new()
+	slots.name = "FortGearSlots"
+	slots.columns = 2
+	slots.add_theme_constant_override("h_separation", 10)
+	slots.add_theme_constant_override("v_separation", 8)
+	right.add_child(slots)
+	for gear_slot: String in ["weapon", "helmet", "armor", "offhand"]:
+		var row := HBoxContainer.new()
+		slots.add_child(row)
+		var it := lg.item(int(person.get("gear", {}).get(gear_slot, 0)))
+		if not it.is_empty():
+			row.add_child(_dweller_item_icon(it, 42))
+		var button := _button(I18n.t(String(Gear.SLOT_NAME[gear_slot])).capitalize() + "\n" + (Gear.name_of(it) if not it.is_empty() else I18n.t("Пусто")), func(): show_dweller(sid, gear_slot))
+		button.name = "FortGear_" + gear_slot
+		button.custom_minimum_size = Vector2(195, 60)
+		button.add_theme_font_size_override("font_size", 13)
+		button.clip_text = true
+		button.tooltip_text = Gear.name_of(it) + "\n" + Gear.stats_text(it) if not it.is_empty() else I18n.t("Выберите вещь на складе")
+		row.add_child(button)
+		if slot == gear_slot:
+			button.add_theme_stylebox_override("normal", hud._box_pill(12, 6, "g_btn_on"))
+	var inventory_head := HBoxContainer.new()
+	right.add_child(inventory_head)
+	var inventory_title := _text(I18n.t("На складе"), 20, true)
+	inventory_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inventory_head.add_child(inventory_title)
+	inventory_head.add_child(_button("Где взять?", func():
+		var hint := _new_modal(560)
+		hint.add_child(_wrap(I18n.t("Кузница и оружейная куют вещи; сундуки за победы дают вещи"), 19))
+		hint.add_child(_button("Назад", func(): show_dweller(sid, slot)))
+		_fit_modal.call_deferred()))
+	if slot != "":
+		var filter_row := HBoxContainer.new()
+		right.add_child(filter_row)
+		filter_row.add_child(_button("Все вещи", func(): show_dweller(sid)))
+		var remove := _button("Снять", func():
+			if lg.unequip(sid, slot):
+				show_dweller(sid, slot)
+				_refresh())
+		remove.disabled = not (person["gear"] as Dictionary).has(slot) or lg.store_count() >= lg.store_cap()
+		remove.tooltip_text = I18n.t("Склад полон. Продайте или наденьте лишние вещи.") if lg.store_count() >= lg.store_cap() else I18n.t("Снять")
+		filter_row.add_child(remove)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(560, 255)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right.add_child(scroll)
+	var inventory := GridContainer.new()
+	inventory.name = "FortInventoryGrid"
+	inventory.columns = 3
+	inventory.add_theme_constant_override("h_separation", 8)
+	inventory.add_theme_constant_override("v_separation", 8)
+	scroll.add_child(inventory)
+	for it: Dictionary in lg.items:
+		if int(it.get("on", 0)) != 0 or String(it["slot"]) not in Gear.SLOTS_V3 or (slot != "" and it["slot"] != slot):
+			continue
+		var iid := int(it["id"])
+		var delta := lg.equip_power(sid, iid)
+		var cell := VBoxContainer.new()
+		inventory.add_child(cell)
+		cell.add_child(_dweller_item_icon(it, 48))
+		var button := _button(Gear.name_of(it) + "\n" + I18n.t("Сила: %d → %d") % [int(delta[0]), int(delta[1])], func(): _equip_dweller(sid, iid))
+		button.name = "FortEquip_%d" % iid
+		button.custom_minimum_size = Vector2(174, 60)
+		button.add_theme_font_size_override("font_size", 12)
+		button.clip_text = true
+		button.tooltip_text = Gear.name_of(it) + "\n" + Gear.stats_text(it) + "\n" + I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])]
+		cell.add_child(button)
+	if inventory.get_child_count() == 0:
+		inventory.add_child(_wrap(I18n.t("Подходящих вещей на складе нет."), 16))
+	if change != "":
+		var feedback := _text(change, 18, true)
+		feedback.name = "FortEquipChange"
+		right.add_child(feedback)
+	_fit_modal.call_deferred()
+
+
+func _dweller_item_icon(it: Dictionary, pixels: float) -> Control:
+	var frame := Control.new()
+	frame.custom_minimum_size = Vector2(pixels, pixels)
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	frame.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var icon := lu._item_ic(it, pixels)
+	frame.add_child(icon)
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var badge := _text(str(Gear.tier_of(it)), 12, true)
+	badge.name = "TierBadge"
+	badge.position = Vector2(pixels - 18, pixels - 18)
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var plate := StyleBoxFlat.new()
+	plate.bg_color = LegionUi.C_CREAM
+	plate.content_margin_left = 3
+	plate.content_margin_right = 3
+	badge.add_theme_stylebox_override("normal", plate)
+	frame.add_child(badge)
+	return frame
+
+
+func _equip_dweller(sid: int, iid: int) -> void:
+	var delta := lg.equip_power(sid, iid)
+	if lg.equip(sid, iid):
+		show_dweller(sid, "", I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])])
+		_refresh()
+
+
+func _dweller_next(sid: int, direction: int) -> void:
+	var ids: Array[int] = []
+	for person: Dictionary in lg.soldiers:
+		if not bool(person.get("hero", false)):
+			ids.append(int(person["id"]))
+	if not ids.is_empty():
+		show_dweller(ids[posmod(ids.find(sid) + direction, ids.size())])
+
+
+func _move_dweller(sid: int) -> void:
+	_close_modal()
+	_hide_card()
+	if diorama is FortCutaway:
+		(diorama as FortCutaway).begin_person_move(sid, false, Vector2.INF, true)
+	else:
+		var v := _new_modal(540)
+		for plot: Dictionary in lg.fort["plots"]:
+			var id := int(plot["id"])
+			if lg.fort_can_assign(id, sid) == "":
+				v.add_child(_button(I18n.t(String(Legion.FORT_B[String(plot["b"])]["name"])), func(): lg.fort_assign(id, sid); _close_modal(); _refresh()))
+		v.add_child(_button("Закрыть", _close_modal))
+		_fit_modal.call_deferred()
+
+
+func show_expansion(axis: String) -> void:
+	var v := _new_modal(460)
+	v.add_child(_text(I18n.t("+ этаж" if axis == "floor" else "+ секция"), 25, true))
+	var info := lg.fort_expansion_info(axis)
+	v.add_child(_cost_icons(info["cost"]))
+	v.add_child(_text(duration_text(float(info["time_h"]) * 3600.0 / maxf(0.001, lg.time_k)), 19, true))
+	var why := lg.fort_can_expand()
+	if why != "":
+		v.add_child(_wrap(I18n.t(why)))
+	var build := _button("Строить", func():
+		if lg.fort_expand(axis):
+			_close_modal()
+			_refresh()
+		else:
+			show_expansion(axis), "hammer")
+	build.disabled = why != ""
+	v.add_child(build)
+	v.add_child(_button("Закрыть", _close_modal))
+	_fit_modal.call_deferred()

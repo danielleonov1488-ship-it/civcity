@@ -269,19 +269,21 @@ func _run() -> void:
 	if not check(camp.lu.camp_window == "store" and camp.lu.visible, "craft panel opens shared gear storage"):
 		return
 	camp.lu.close()
-	# Цепочка теперь: сбор → стройка → кухня → поход; старые окна её не продвигают.
-	lg.flags["camp3d_guide"] = 0
-	lg.rations = 0
-	lg.fort_plot(kitchen)["t"] = Legion.now() - 7200
-	lg.fort_finish()
-	camp._collect_plot(kitchen)
-	if not check(int(lg.flags["camp3d_guide"]) == 1, "guide collect"):
-		return
+	# Новый порядок: стройка → кухня → назначение и сбор → поход.
+	lg.flags["camp3d_guide"] = 1
 	camp.show_build_menu()
 	if not check(int(lg.flags["camp3d_guide"]) == 2, "guide build menu"):
 		return
+	var guide_kitchen := int(lg.fort_slot_plot("kitchen")["id"])
 	camp._choose_build("kitchen")
-	if not check(int(lg.flags["camp3d_guide"]) == 3, "guide kitchen"):
+	if not check(int(lg.flags["camp3d_guide"]) == 0 and camp.selected_plot == guide_kitchen, "guide kitchen waits for collect"):
+		return
+	lg.rations = 0
+	lg.fort_plot(guide_kitchen)["t"] = Legion.now() - 7200
+	lg.fort_finish()
+	var before_collect := lg.rations
+	camp._collect_plot(guide_kitchen)
+	if not check(int(lg.flags["camp3d_guide"]) == 3 and lg.rations > before_collect, "guide collect"):
 		return
 	camp._campaign()
 	if not check(int(lg.flags["camp3d_guide"]) == 4, "guide campaign"):

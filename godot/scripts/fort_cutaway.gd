@@ -1,5 +1,11 @@
 class_name FortCutaway
 extends Camp3D
+
+signal person_pressed(sid: int, newcomer: bool)
+signal person_moved(sid: int, plot_id: int)
+signal move_finished
+
+const PersonPreview = preload("res://scripts/fort_person_preview.gd")
 ## Рисованный разрез: комнаты в XY, живые люди перед живописью.
 
 const ART := "res://assets/fort/cutaway/"
@@ -28,6 +34,14 @@ var _rim_material: ShaderMaterial
 var _shadow_material: StandardMaterial3D
 var _has_figures := false
 var _hover := ""
+var drag_sid := 0
+var drag_newcomer := false
+var drag_ghost: Node3D
+var drag_target := -1
+var _person_down := 0
+var _down_newcomer := false
+var _down_pos := Vector2.ZERO
+var _click_move := false
 
 
 static func room_art(type: String) -> String:
@@ -139,11 +153,11 @@ func sync() -> void:
 	lg._fort_init()
 	var entries: Array = (lg.fort.get("plots", []) as Array).duplicate()
 	entries.sort_custom(func(a: Dictionary, b: Dictionary): return int(a["id"]) < int(b["id"]))
-	var layout_data: Array = [lg.fort.get("exp", 0)]
-	var people_data: Array = []
+	var layout_data: Array = [lg.fort.get("exp", 0), lg.fort.get("grid", [])]
+	var people_data: Array = [lg.fort_newcomers()]
 	for p: Dictionary in entries:
 		layout_data.append([p["id"], p["b"], p["lv"], (p["up"] as Dictionary).is_empty()])
-		people_data.append([p["id"], p.get("worker", 0), lg.fort_worker(int(p["id"])).is_empty()])
+		people_data.append([p["id"], p.get("workers", []), lg.fort_worker(int(p["id"])).is_empty()])
 	for person: Dictionary in lg.soldiers:
 		people_data.append([person["id"], lg.s_state(person), person.get("gear", {})])
 	var sig := str(layout_data)
@@ -173,7 +187,7 @@ func _build_cutaway(entries: Array) -> void:
 	room_stages.clear()
 	highlights.clear()
 	scaffolds.clear()
-	grid = GRIDS[mini(_expansion, GRIDS.size() - 1)]
+	grid = lg.fort_grid()
 	# Старые сохранения не обрезаем, даже если участков в них больше.
 	while grid.x * grid.y - 1 < entries.size():
 		grid.y += 1
@@ -280,10 +294,13 @@ func _add_person(node: Node3D, id: int, sid: int, role: String, x_offset: float)
 	if figures.size() >= MAX_FIGURES:
 		node.free()
 		return
-	var rect: Rect2 = room_rects[id]
 	world.add_child(node)
 	node.set_process(false)
-	node.position = Vector3(rect.get_center().x + x_offset, rect.position.y + CELL.y * 0.12, 1.1)
+	if room_rects.has(id):
+		var rect: Rect2 = room_rects[id]
+		node.position = Vector3(rect.get_center().x + x_offset, rect.position.y + CELL.y * 0.12, 1.1)
+	else:
+		node.position = gate + Vector3(x_offset - 1.4, 0, 2.0) if id == -2 else Vector3(grid.x * CELL.x * 0.5 + 1.2 + fmod(x_offset, 4.05), 0.45 + floorf(x_offset / 4.05) * 1.6, 2.0)
 	node.rotation.y = -0.35 if role in ["guard", "hero", "barracks"] else -0.8
 	var players: Array = _manual_animations(node)
 	for ap: AnimationPlayer in players:
@@ -309,19 +326,15 @@ func _room_worker(p: Dictionary, worker: Dictionary, building: bool) -> void:
 	if not building and type in ["barracks", "tower", "arsenal", "stable", "drill"]:
 		_add_person(_fighter(worker), int(p["id"]), sid, "guard", -0.6)
 		return
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 409 + absi(sid) + int(p["id"]) * 13
-	var female := int(worker.get("res", {}).get("m", {}).get("sx", 0)) == 1
-	var model := "SK_Chr_Politician_Male_01" if type == "mars" else "SK_Chr_Worker_Female_01" if female else "SK_Chr_Worker_Male_01"
-	if not ResourceLoader.exists(Citizen.DIR + model + ".fbx"):
+	if not ResourceLoader.exists(Citizen.DIR + Citizen.PLEBS[0] + ".fbx"):
 		return
-	var citizen: Citizen = Citizen.create(rng, female, false, false, model, "pleb")
+	var citizen := PersonPreview.civilian(worker if not worker.is_empty() else {"id": int(p["id"]) + 409})
 	citizen.scale *= 1.6
 	var role := "builder" if building else type
 	var animation := "Interact" if building else String(WORK.get(type, "Idle"))
 	if not citizen.anim.has_animation(animation):
 		animation = "Idle"
-	citizen.play(animation, 0.0, rng.randf())
+	citizen.play(animation, 0.0, 0.0)
 	_add_person(citizen, int(p["id"]), sid, role, -0.7 if type == "forge" else 0.4)
 	if building or type in ["forge", "sawmill", "kitchen"]:
 		var skeletons := citizen.find_children("*", "Skeleton3D", true, false)
@@ -340,6 +353,26 @@ func _people() -> void:
 	figures.clear()
 	if not _has_figures:
 		return
+	var gate_index := 0
+	for person: Dictionary in lg.fort_newcomers():
+		var node := PersonPreview.civilian(person)
+		node.scale *= 1.6
+		_add_person(node, -2, int(person["id"]), "newcomer", gate_index * 1.35)
+		var marker := Label3D.new()
+		marker.text = "!"
+		marker.font_size = 80
+		marker.pixel_size = 0.01
+		marker.modulate = Color("ffd77a")
+		marker.outline_modulate = Color("49351e")
+		marker.position.y = 2.3
+		node.add_child(marker)
+		gate_index += 1
+	var yard_index := 0
+	for person: Dictionary in lg.fort_worker_choices():
+		var node := PersonPreview.civilian(person)
+		node.scale *= 1.6
+		_add_person(node, -1, int(person["id"]), "courtyard", yard_index * 1.35)
+		yard_index += 1
 	var hero := {}
 	for person: Dictionary in lg.soldiers:
 		if bool(person.get("hero", false)):
@@ -347,29 +380,20 @@ func _people() -> void:
 			break
 	if not hero.is_empty() and room_rects.has(0):
 		_add_person(_fighter(hero), 0, int(hero["id"]), "hero", -1.5)
-	# Строитель и рабочие важнее дополнительных воинов у кроватей.
+	# В комнатах показаны их настоящие жители.
 	for p: Dictionary in lg.fort["plots"]:
 		if not (p["up"] as Dictionary).is_empty():
 			_room_worker(p, {}, true)
 		elif int(p["id"]) != 0 and int(p["lv"]) > 0:
-			var worker: Dictionary = lg.fort_worker(int(p["id"]))
-			if not worker.is_empty():
-				_room_worker(p, worker, false)
-	var visible_soldiers := 0
-	var shown := {}
-	for p: Dictionary in lg.fort["plots"]:
-		if p["b"] != "barracks" or int(p["lv"]) <= 0 or not (p["up"] as Dictionary).is_empty():
-			continue
-		var room_soldiers := 0 if lg.fort_worker(int(p["id"])).is_empty() else 1
-		for person: Dictionary in lg.soldiers:
-			if room_soldiers >= 3 or visible_soldiers >= 3 or figures.size() >= MAX_FIGURES:
-				break
-			if bool(person.get("hero", false)) or shown.has(int(person["id"])) or lg.fort_worker_plot(int(person["id"])) >= 0 or lg.s_state(person) != "ready":
-				continue
-			_add_person(_fighter(person), int(p["id"]), int(person["id"]), "barracks", -1.8 + visible_soldiers * 1.6)
-			visible_soldiers += 1
-			room_soldiers += 1
-			shown[int(person["id"])] = true
+			var index := 0
+			for person: Dictionary in lg.fort_occupants(int(p["id"])):
+				var before := figures.size()
+				_room_worker(p, person, false)
+				if figures.size() > before:
+					var entry: Dictionary = figures[-1]
+					(entry["node"] as Node3D).position.x += -1.0 + index * 1.25
+					entry["home"] = (entry["node"] as Node3D).position
+				index += 1
 
 
 func recruit_walk(_sid: int) -> void:
@@ -393,7 +417,7 @@ func _process(dt: float) -> void:
 	_accum = 0.0
 	for entry: Dictionary in figures:
 		var node: Node3D = entry["node"]
-		var on_screen := footprint("plot_%d" % int(entry["plot"])).intersects(Rect2(Vector2.ZERO, size))
+		var on_screen := Rect2(Vector2(-50, -100), size + Vector2(100, 200)).has_point(person_project(int(entry["id"]), entry["role"] == "newcomer")) if int(entry["plot"]) < 0 else footprint("plot_%d" % int(entry["plot"])).intersects(Rect2(Vector2.ZERO, size))
 		node.visible = on_screen
 		if not on_screen:
 			continue
@@ -459,6 +483,14 @@ func _gui_input(event: InputEvent) -> void:
 	if not active:
 		return
 	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			var person := pick_person(event.position)
+			if not person.is_empty():
+				_person_down = int(person["id"])
+				_down_newcomer = person["role"] == "newcomer"
+				_down_pos = event.position
+				accept_event()
+				return
 		if event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 			var before := _plane_point(event.position)
 			_target_zoom = clampf(_target_zoom * (0.86 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 0.86), CLOSE_ZOOM, default_zoom)
@@ -481,6 +513,8 @@ func _gui_input(event: InputEvent) -> void:
 						building_pressed.emit(key)
 			accept_event()
 	elif event is InputEventMouseMotion:
+		if _person_down != 0 or drag_sid != 0:
+			return
 		if _dragging:
 			_drag_distance += event.relative.length()
 			var units := zoom / maxf(1, size.y)
@@ -488,6 +522,146 @@ func _gui_input(event: InputEvent) -> void:
 			_clamp_target()
 		else:
 			highlight(_pick(event.position))
+
+
+func person_project(sid: int, newcomer := false) -> Vector2:
+	for entry: Dictionary in figures:
+		if int(entry["id"]) == sid and (entry["role"] == "newcomer") == newcomer:
+			var node: Node3D = entry["node"]
+			return camera.unproject_position(node.global_position + Vector3(0, 1.0, 0)) * size / Vector2(sub.size)
+	return Vector2(-10000, -10000)
+
+
+func pick_person(pos: Vector2) -> Dictionary:
+	var best := {}
+	var distance := INF
+	for entry: Dictionary in figures:
+		if int(entry["id"]) == 0:
+			continue
+		var center := person_project(int(entry["id"]), entry["role"] == "newcomer")
+		var pixels := maxf(14.0, size.y / maxf(1, zoom) * 0.65)
+		var rect := Rect2(center - Vector2(pixels, pixels * 1.2), Vector2(pixels * 2, pixels * 2.6))
+		if rect.has_point(pos) and center.distance_to(pos) < distance:
+			best = entry
+			distance = center.distance_to(pos)
+	return best
+
+
+func _input(event: InputEvent) -> void:
+	if not active or (_person_down == 0 and drag_sid == 0):
+		return
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		cancel_person_move()
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseMotion:
+		var pos: Vector2 = get_global_transform_with_canvas().affine_inverse() * event.position
+		if drag_sid == 0 and pos.distance_to(_down_pos) >= 7.0:
+			begin_person_move(_person_down, _down_newcomer, pos)
+		if drag_sid != 0:
+			update_person_move(pos)
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+			cancel_person_move()
+			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_LEFT and (not event.pressed or _click_move):
+			var sid := _person_down
+			var newcomer := _down_newcomer
+			if drag_sid != 0:
+				# Клик по панели поверх разреза не считается броском в комнату.
+				var hovered := get_viewport().gui_get_hovered_control()
+				var over_room := hovered == self or (hovered != null and hovered.has_meta("fort_room_hit"))
+				var pos: Vector2 = get_global_transform_with_canvas().affine_inverse() * event.position
+				finish_person_move(pos if over_room else Vector2(-10000, -10000))
+			else:
+				_person_down = 0
+				person_pressed.emit(sid, newcomer)
+			get_viewport().set_input_as_handled()
+
+
+func begin_person_move(sid: int, newcomer := false, pos := Vector2.INF, click_move := false) -> void:
+	cancel_person_move()
+	var person := lg.soldier(sid)
+	if newcomer:
+		for candidate: Dictionary in lg.fort_newcomers():
+			if int(candidate["id"]) == sid:
+				person = candidate
+	if person.is_empty() or bool(person.get("hero", false)) or (not newcomer and lg.s_state(person) != "ready"):
+		return
+	drag_sid = sid
+	drag_newcomer = newcomer
+	_click_move = click_move
+	drag_ghost = PersonPreview.civilian(person) if newcomer or not lg.fort_is_fighter(sid) else _fighter(person)
+	if drag_ghost is Citizen:
+		drag_ghost.scale *= 1.6
+	world.add_child(drag_ghost)
+	drag_ghost.name = "FortDragGhost"
+	drag_ghost.rotation.y = -0.35
+	for mesh: MeshInstance3D in drag_ghost.find_children("*", "MeshInstance3D", true, false):
+		mesh.transparency = 0.25
+	update_person_move(get_local_mouse_position() if pos == Vector2.INF else pos)
+
+
+func _drop_valid(id: int) -> bool:
+	if drag_newcomer:
+		var p := lg.fort_plot(id)
+		if lg.fort_room_slots(id) <= 0 or not (p["up"] as Dictionary).is_empty() or lg.can_recruit_resident() != "":
+			return false
+		var occupants := lg.fort_occupants(id)
+		return occupants.size() < lg.fort_room_slots(id) or lg.s_state(occupants[0]) == "ready"
+	return lg.fort_can_assign(id, drag_sid) == ""
+
+
+func update_person_move(pos: Vector2) -> void:
+	if drag_sid == 0 or not is_instance_valid(drag_ghost):
+		return
+	var point := world.to_local(_plane_point(pos))
+	drag_ghost.position = Vector3(point.x, point.y - 1, 4.0)
+	var key := _pick(pos)
+	drag_target = int(key.trim_prefix("plot_")) if key != "" else -1
+	for slot: String in highlights:
+		var id := int(slot.trim_prefix("plot_"))
+		var rim: MeshInstance3D = highlights[slot]
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = Color(0.18, 0.72, 0.32, 0.42 if id == drag_target else 0.14) if _drop_valid(id) else Color(0.78, 0.18, 0.12, 0.42 if id == drag_target else 0.14)
+		rim.material_override = mat
+		rim.visible = true
+
+
+func finish_person_move(pos: Vector2) -> bool:
+	if drag_sid == 0:
+		return false
+	update_person_move(pos)
+	var sid := drag_sid
+	var id := drag_target
+	var ok := id >= 0 and _drop_valid(id) and lg.fort_drop(id, sid, drag_newcomer)
+	cancel_person_move()
+	if ok:
+		sync()
+		person_moved.emit(sid, id)
+	return ok
+
+
+func cancel_person_move() -> void:
+	if is_instance_valid(drag_ghost):
+		drag_ghost.queue_free()
+	drag_ghost = null
+	drag_sid = 0
+	drag_target = -1
+	_person_down = 0
+	_click_move = false
+	for slot: String in highlights:
+		var rim: MeshInstance3D = highlights[slot]
+		rim.material_override = null
+		rim.hide()
+	move_finished.emit()
+
+
+func expansion_project(axis: String) -> Vector2:
+	var point := Vector3(0, grid.y * CELL.y + grid.x * CELL.x / 7.0 + 1.4, 3.0) if axis == "floor" else Vector3(grid.x * CELL.x * 0.5 + 2.2, grid.y * CELL.y * 0.65, 3.0)
+	return camera.unproject_position(world.to_global(point)) * size / Vector2(sub.size)
 
 
 func _plane_point(pos: Vector2) -> Vector3:
