@@ -257,7 +257,7 @@ func _sinks() -> void:
 			pp = p
 			break
 	check(pp.x > -99 and not c.buy_plot(pp) and c.money == 1.0, "участок земли за 1 ден. — нет")
-	check(c.legion._afford_text({"money": 100}) == "Не хватает денариев" and c.legion.can_build_wonder("circus") != "", "Легион: улучшение и чудо — «Не хватает денариев»")
+	check(c.legion._afford_text({"money": 100}) == "Не хватает денариев" and not c.legion.has_method("can_build_wonder"), "Легион: улучшение требует денарии, покупки чудес убраны")
 	# провиант после боя: пока шёл бой, казна опустела — платим, сколько есть, не в минус
 	var st: Dictionary = c.legion.stage_info(0, 0, 0)
 	var su: Dictionary = c.legion.make_battle(st, 7)
@@ -318,9 +318,9 @@ func _pace() -> void:
 	sto.pace_mark()
 	check(not sto.time_ok(), "в час нового заказа — история не приходит")
 	# «Разбойники у арки» — своей паузой после «Маси»
-	check(sto.gap_now() == mini(StoryDefs.GAP_H, int(StoryDefs.story("bandits").get("gap_h", 99))), "после «Маси» — своя пауза «Разбойников» (%d ч)" % sto.gap_now())
+	check(sto.gap_now() == StoryDefs.GAP_H, "после «Маси» — обычная городская пауза (%d ч)" % sto.gap_now())
 	S["h"] = int(S["h"]) + maxi(sto.gap_now(), Stories.OFFER_GAP_H)
-	check(sto.time_ok(), "«Разбойники у арки» — когда пауза прошла (на «Хуторе»)")
+	check(sto.time_ok(), "городские истории — когда пауза прошла")
 	# заказов старосты в игре больше нет (убраны по отзыву 14.11): «Другой заказ» и их темп не проверяем;
 	# история — по-прежнему не в тот же час, что и новый ранг/новое
 	var lh0 := int(S["last_h"])

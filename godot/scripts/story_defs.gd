@@ -191,7 +191,7 @@ const STORIES := [
 	# с переселенцами — житель просит защиты; история открывает «Легион» (без очков), советник предлагает военный квартал
 	# у арки, Казармы, учебный бой с маслом в лесу (Legion r0 s0) — и дорога снова спокойна. Учит Легиону
 	# gap_h — своя пауза после «Маси» (владелец: Легион почти со старта — на «Хуторе», а не в «Деревне»)
-	{"id": "bandits", "title": "Разбойники у арки", "icon": "legion", "lvl": 1, "pop": 20, "after": "cat", "skip_if": "legion", "gap_h": 3,
+	{"id": "bandits", "disabled": true, "title": "Разбойники у арки", "icon": "legion", "lvl": 1, "pop": 20, "after": "cat", "skip_if": "legion", "gap_h": 3,
 		"lesson": "Легион строите вы сами: Казармы в военном квартале, отряд и бой, где нужна ваша команда",
 		"cast": {"settler": {"cls": "plebs", "female": false}},
 		"who": "{father} {nomen}", "role": "переселенец из семьи {fam_gen}",
@@ -810,7 +810,7 @@ const STORIES := [
 	# бой Легиона; гонец скачет к её двери с письмом (такт ride); ларарий у дома — мать молится за сына. Учит походам
 	# pop 850 — чуть позже начала ранга (каденция: на «Большом городе» истории не подряд, без промежутков дольше 25 минут;
 	# 26.10: «Разбойники у арки» — через 3 ч после «Маси», цепочка историй идёт раньше — письмо тоже чуть раньше)
-	{"id": "letter", "title": "Письмо сыну в Легион", "icon": "mail", "lvl": 6, "pop": 850, "needs": ["legion"], "need_p": [[["count", "barracks"], 1]],
+	{"id": "letter", "disabled": true, "title": "Письмо сыну в Легион", "icon": "mail", "lvl": 6, "pop": 850, "needs": ["legion"], "need_p": [[["count", "barracks"], 1]],
 		"lesson": "Походы Легиона: бои приносят Славу и вести, здания Легиона на карте делают отряд сильнее",
 		"cast": {"mother": {"cls": "plebs|artisans|patricians", "member": "woman"}},
 		"extras": {"courier": {"female": false}},
@@ -1009,7 +1009,7 @@ const STORIES := [
 
 ## «Разбойники у арки» для Легиона 3.0 (новая игра, docs/LEGION_V3.md): Казарм на карте нет — Лагерь открывается с 50 жителей,
 ## воина призывают из жителей, ставят в отряд и ведут в учебный бой. Старт — с 50 жителей, чтобы лагерь уже был открыт
-const BANDITS_V3 := {"id": "bandits", "title": "Разбойники у арки", "icon": "legion", "lvl": 1, "pop": 50, "after": "cat", "gap_h": 3,
+const BANDITS_V3 := {"id": "bandits", "disabled": true, "title": "Разбойники у арки", "icon": "legion", "lvl": 1, "pop": 50, "after": "cat", "gap_h": 3,
 	"lesson": "Легион живёт в Лагере: призвать воина из жителей, поставить в отряд и выиграть бой, где нужна ваша команда",
 	"cast": {"settler": {"cls": "plebs", "female": false}},
 	"who": "{father} {nomen}", "role": "переселенец из семьи {fam_gen}",
@@ -1084,6 +1084,33 @@ static func all() -> Array:
 					_v3_all.append(sd)
 		return _v3_all + extra
 	return STORIES + extra
+
+
+## Военные истории храним для старых сохранений и журнала.
+static func city_enabled(sd: Dictionary) -> bool:
+	return not sd.is_empty() and not bool(sd.get("disabled", false))
+
+
+static func suspend_disabled(state: Dictionary) -> void:
+	if not state.has("suspended"):
+		state["suspended"] = {}
+	for key: String in ["active", "offer"]:
+		var rec: Dictionary = state.get(key, {})
+		var sd := story(String(rec.get("id", "")))
+		if not rec.is_empty() and bool(sd.get("disabled", false)):
+			var id := String(rec["id"])
+			if not state["suspended"].has(id):
+				state["suspended"][id] = {}
+			state["suspended"][id][key] = rec.duplicate(true)
+			state[key] = {}
+
+	var later: Dictionary = state.get("later", {})
+	for key in later.keys():
+		if bool(story(String(key)).get("disabled", false)):
+			if not state["suspended"].has(key):
+				state["suspended"][key] = {}
+			state["suspended"][key]["later"] = later[key]
+			later.erase(key)
 
 
 static func story(id: String) -> Dictionary:

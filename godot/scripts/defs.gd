@@ -356,28 +356,40 @@ const B := {
 		"icon": "fountain", "desc": "Святилище нимф: стена с нишами и статуями, вода льётся из львиных пастей в длинный бассейн. Радует весь квартал."},
 	"forum": {"kind": "monument", "cat": "special", "name": "Форум", "cost": 8000, "bonus": 12, "range": 5, "unlock": "forum",
 		"icon": "caesar", "desc": "Сердце города: колоннада, статуи и трибуна."},
-	# этап 5, волна 2: большие постройки веб-версии (план 5.6). shore — ставится у воды; glory — сверх денариев Слава
-	"venus": {"kind": "monument", "need": "faith", "cat": "special", "name": "Храм Венеры и Ромы", "cost": 9000, "glory": 25, "bonus": 14, "range": 5, "jobs": {"plebs": 2, "artisans": 1},
+	# этап 5, волна 2: большие постройки веб-версии (план 5.6). shore — ставится у воды; город платит только денарии
+	"venus": {"kind": "monument", "need": "faith", "cat": "special", "name": "Храм Венеры и Ромы", "cost": 10250, "bonus": 14, "range": 5, "jobs": {"plebs": 2, "artisans": 1},
 		"unlock": "venus", "unique": true, "icon": "level",
 		"desc": "Самый большой храм Рима: колоннада со всех сторон, золочёная крыша, у ступеней — статуи Венеры и Ромы. Радует весь большой квартал."},
-	"pharos": {"kind": "monument", "cat": "special", "name": "Маяк", "cost": 15000, "glory": 40, "bonus": 12, "range": 5, "jobs": {"plebs": 2},
+	"pharos": {"kind": "monument", "cat": "special", "name": "Маяк", "cost": 17000, "bonus": 12, "range": 5, "jobs": {"plebs": 2},
 		"unlock": "pharos", "unique": true, "shore": true, "glory_day": 0.5, "icon": "brazier",
 		"desc": "Маяк, как на Фаросе: три яруса, наверху горит огонь — ночью его видно издалека. Ставится у воды. Каждый день приносит Славу."},
-	"circus_fl": {"kind": "monument", "cat": "special", "name": "Цирк Фламиния", "cost": 40000, "glory": 60, "bonus": 16, "range": 5, "jobs": {"plebs": 4, "artisans": 2},
+	"circus_fl": {"kind": "monument", "cat": "special", "name": "Цирк Фламиния", "cost": 43000, "bonus": 16, "range": 5, "jobs": {"plebs": 4, "artisans": 2},
 		"unlock": "circus_fl", "unique": true, "glory_day": 0.5, "icon": "horse",
 		"desc": "Римский цирк — это не клоуны, а скачки колесниц! Длинная дорожка вокруг «спины» с обелиском, трибуны и стартовые ворота. Радует весь город и каждый день приносит Славу."},
-	# чудеса Легиона (Legion.WONDERS): открываются исследованием или рейтингом походов, сверх денариев стоят Славы (glory)
-	"arch": {"kind": "monument", "cat": "special", "name": "Триумфальная арка", "cost": 6000, "bonus": 10, "range": 4, "unlock": "arch", "glory": 25,
-		"icon": "castle", "desc": "Арка в честь побед — гордость жителей. Чудо Легиона: +5% урона всем бойцам."},
-	"colosseum": {"kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 30000, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum", "glory": 50,
-		"icon": "swords", "desc": "Гладиаторы и звери. Весь город ходит смотреть. Чудо Легиона: +10% здоровья бойцам и Слава каждый день."},
-	"pantheon": {"kind": "monument", "need": "faith", "cat": "special", "name": "Пантеон", "cost": 60000, "bonus": 20, "range": 5, "unlock": "pantheon", "glory": 80,
-		"icon": "level", "desc": "Храм всех богов с огромным куполом. Чудо Легиона: +10% урона бойцам и Слава каждый день."},
+	# Городские памятники открываются исследованиями и стоят денарии.
+	"arch": {"sub": "wonders", "kind": "monument", "cat": "special", "name": "Триумфальная арка", "cost": 7250, "bonus": 10, "range": 4, "unlock": "arch",
+		"icon": "castle", "desc": "Арка в честь побед — гордость жителей. Радует дома вокруг."},
+	"colosseum": {"sub": "wonders", "kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 32500, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum", "glory_day": 0.5,
+		"icon": "swords", "desc": "Гладиаторы и звери. Весь город ходит смотреть. Радует дома вокруг."},
+	"pantheon": {"sub": "wonders", "kind": "monument", "need": "faith", "cat": "special", "name": "Пантеон", "cost": 64000, "bonus": 20, "range": 5, "unlock": "pantheon", "glory_day": 0.5,
+		"icon": "level", "desc": "Храм всех богов с огромным куполом. Радует дома вокруг."},
+	"trajan": {"kind": "monument", "cat": "special", "sub": "wonders", "name": "Колонна Траяна", "cost": 40000,
+		"bonus": 16, "range": 5, "unlock": "trajan", "unique": true, "glory_day": 1.0, "icon": "laurels",
+		"desc": "Высокая мраморная колонна со статуей на ступенчатой площади. Радует дома вокруг и приносит Славу каждый день."},
+	# Место в городском каталоге; откроем, когда будут готовы модели.
+	"circus": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Большой цирк", "cost": 20000,
+		"bonus": 16, "range": 5, "unique": true, "glory_day": 0.5, "icon": "horse", "desc": "Чудо города. Модель ещё готовится."},
+	"aqueduct": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Акведук Клавдия", "cost": 30000,
+		"bonus": 14, "range": 5, "unique": true, "icon": "bridge", "desc": "Чудо города. Модель ещё готовится."},
+	"caracalla": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Термы Каракаллы", "cost": 60000,
+		"bonus": 20, "range": 5, "unique": true, "icon": "bath", "desc": "Чудо города. Модель ещё готовится."},
+	"jupiter": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Храм Юпитера Капитолийского", "cost": 90000,
+		"bonus": 20, "range": 5, "unique": true, "glory_day": 1.0, "icon": "level", "desc": "Чудо города. Модель ещё готовится."},
 	"center": {"kind": "center", "cat": "", "name": "Почтовая станция", "cost": 0, "fixed": true,
 		"desc": "Сюда по большой дороге приезжают повозки с переселенцами и товарами."},
 
 	# Легион (Д10, как в Hustle Castle): здания Легиона стоят на карте и растут уровнями — улучшение в карточке здания
-	# (Legion: уровень, что даёт, «Улучшить — N ден., M Славы, время»); отряд, походы и чудеса — в окне «Легион».
+	# (Legion: уровень, что даёт, «Улучшить — N ден., M Славы, время»); отряд и походы — в окне «Легион».
 	# unique — одна на город; unlock "bossN" — открывается победой над N-м боссом походов (Legion.boss_name),
 	# "rank:N" — с уровня города N (когда Легион собран). Казармы — с «Хутора», историей «Разбойники у арки» (Д9):
 	# 400 вместо прежних 1500 — встают на первые деньги, не отнимая школу и дома ремесленников (бот темпа)
@@ -385,31 +397,31 @@ const B := {
 		"desc": "Дом легионеров — щит и меч, держат строй. Улучшайте Казармы в их карточке: легионеры сильнее, мест в отряде больше. Лучше всего — в военном квартале у арки."},
 	"range": {"kind": "military", "cat": "military", "name": "Стрельбище", "cost": 800, "unlock": "archery", "unique": true, "icon": "arrow",
 		"desc": "Мишени и навес для стрелков: открывает лучников. Улучшайте Стрельбище в его карточке — лучники станут сильнее."},
-	"spearcamp": {"kind": "military", "cat": "military", "name": "Лагерь копейщиков", "cost": 1800, "unlock": "boss1", "unique": true, "icon": "tent",
+	"spearcamp": {"kind": "military", "cat": "military", "name": "Лагерь копейщиков", "cost": 1800, "unlock": "city:2", "unique": true, "icon": "tent",
 		"desc": "Палатки и чучела для учёбы: открывает копейщиков в тяжёлой броне — грозу зверей и великанов. Улучшения — в карточке лагеря."},
-	"ballistae": {"kind": "military", "cat": "military", "name": "Мастерская баллист", "cost": 2800, "unlock": "boss3", "unique": true, "icon": "anvil",
+	"ballistae": {"kind": "military", "cat": "military", "name": "Мастерская баллист", "cost": 2800, "unlock": "city:4", "unique": true, "icon": "anvil",
 		"desc": "Мастера собирают баллисты: болт пробивает строй врагов насквозь. Улучшения — в карточке мастерской."},
-	"catapults": {"kind": "military", "cat": "military", "name": "Мастерская катапульт", "cost": 3400, "unlock": "boss5", "unique": true, "icon": "saw",
+	"catapults": {"kind": "military", "cat": "military", "name": "Мастерская катапульт", "cost": 3400, "unlock": "city:5", "unique": true, "icon": "saw",
 		"desc": "Здесь строят онагры: камень накрывает толпу врагов. Улучшения — в карточке мастерской."},
-	"forge": {"kind": "military", "cat": "military", "name": "Кузница", "cost": 900, "unlock": "rank:2", "unique": true, "icon": "swords",
+	"forge": {"kind": "military", "cat": "military", "name": "Кузница", "cost": 900, "unlock": "city:2", "unique": true, "icon": "swords",
 		"desc": "Кузнецы куют мечи и доспехи для Легиона: каждый уровень — +3% урона и здоровья всем бойцам в походах."},
 	# Легион 2.0: Принципия — штаб; её уровень — потолок остальных зданий Легиона (только новая игра)
-	"principia": {"kind": "military", "cat": "military", "name": "Принципия", "cost": 700, "unlock": "army:1", "unique": true, "icon": "legion",
+	"principia": {"kind": "military", "cat": "military", "name": "Принципия", "cost": 700, "unlock": "city:1", "unique": true, "icon": "legion",
 		"desc": "Штаб Легиона: шатёр полководца, знамёна и золотой орёл. Уровень Принципии — потолок для всех остальных зданий Легиона. Чтобы её поднять, нужен город побольше, а Казармы, Кузница, Лазарет и Склад оружия — не ниже её уровня."},
 	# Легион 2.0, этап 3: мастерские дают материалы для Кузницы в настоящем времени; без рабочих — вчетверо медленнее.
 	# Только в новой игре («army:N» — с уровня города N, когда Легион собран)
-	"smelter": {"kind": "military", "cat": "military", "name": "Плавильня", "cost": 600, "unlock": "army:2", "unique": true, "icon": "anvil",
+	"smelter": {"kind": "military", "cat": "military", "name": "Плавильня", "cost": 600, "unlock": "city:2", "unique": true, "icon": "anvil",
 		"jobs": {"plebs": 2}, "desc": "Печь, мехи и руда: плавильщики льют железо для Кузницы. Чем выше уровень — тем больше железа в час и больше места под запас."},
-	"sawmill": {"kind": "military", "cat": "military", "name": "Лесопилка", "cost": 500, "unlock": "army:2", "unique": true, "icon": "saw",
+	"sawmill": {"kind": "military", "cat": "military", "name": "Лесопилка", "cost": 500, "unlock": "city:2", "unique": true, "icon": "saw",
 		"jobs": {"plebs": 2}, "desc": "Брёвна, козлы и большая пила: пильщики готовят дерево — древки копий, луки, щиты и станки машин."},
-	"tannery": {"kind": "military", "cat": "military", "name": "Дубильня", "cost": 550, "unlock": "army:3", "unique": true, "icon": "boots",
+	"tannery": {"kind": "military", "cat": "military", "name": "Дубильня", "cost": 550, "unlock": "city:3", "unique": true, "icon": "boots",
 		"jobs": {"plebs": 2}, "desc": "Чаны с дубильным отваром и рамы с растянутыми шкурами: кожа на ремни, щиты и доспехи."},
 	# Легион 2.0: Храм Марса — умения в бою выше 5 уровня (до 10); только новая игра
-	"mars": {"kind": "military", "cat": "military", "name": "Храм Марса", "cost": 1600, "unlock": "army:3", "unique": true, "icon": "legion",
+	"mars": {"kind": "military", "cat": "military", "name": "Храм Марса", "cost": 1600, "unlock": "city:3", "unique": true, "icon": "legion",
 		"desc": "Небольшой храм бога войны: жрец, алтарь и знамёна легионов. Каждый уровень Храма поднимает предел умений в бою на один — до 10."},
-	"infirmary": {"kind": "military", "cat": "military", "name": "Лазарет", "cost": 1300, "unlock": "rank:3", "unique": true, "icon": "medic",
+	"infirmary": {"kind": "military", "cat": "military", "name": "Лазарет", "cost": 1300, "unlock": "city:3", "unique": true, "icon": "medic",
 		"desc": "Лекари и койки для раненых: между волнами боя бойцы восстанавливают здоровье — с каждым уровнем больше."},
-	"armory": {"kind": "military", "cat": "military", "name": "Склад оружия", "cost": 2000, "unlock": "rank:4", "unique": true, "icon": "shield",
+	"armory": {"kind": "military", "cat": "military", "name": "Склад оружия", "cost": 2000, "unlock": "city:4", "unique": true, "icon": "shield",
 		"desc": "Щиты, шлемы и доспехи про запас: каждый уровень — +2 брони всем бойцам в походах. И снаряжение героя: меч и щит получше, больше брони и урона."},
 
 	# украшения: очки украшения домам вокруг. Каждый облик — своя карточка: что выбрал, то и встанет
@@ -494,9 +506,9 @@ const B := {
 	"smallfountain_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "smallfountain", "look": 1, "name": "Фонтан с резной стенкой", "cost": 70, "deco": 5, "unlock": "fountain", "desc": "Каменная чаша с водой у резной стенки."},
 	"pergola": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Пергола", "cost": 200, "deco": 8, "unlock": "deco_stone", "desc": "Увитая виноградом пергола с ложем и столиком — как в садах Помпей."},
 	"pergola_2": {"kind": "decor", "cat": "decor", "sub": "stone", "base": "pergola", "look": 1, "name": "Беседка-толос", "cost": 200, "deco": 8, "unlock": "deco_stone", "desc": "Круглая беседка под черепичным куполом, внутри скамья, колонны в розах."},
-	# трофеи Легиона: все 30 звёзд провинции (Legion.regions() trophy) — бесплатно, одна на город
-	"trophy_cart": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Телега атамана", "cost": 0, "deco": 10, "unlock": "trophy:forest", "unique": true, "trophy": true,
-		"desc": "Трофей Легиона за все 30 звёзд «Леса разбойников»: телега атамана со щитами, копьями и знаменем шайки."},
+	# Телега — городское украшение; военные трофеи остаются в Легионе.
+	"trophy_cart": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Телега атамана", "cost": 350, "deco": 10, "unlock": "deco_stone", "unique": true, "trophy": true,
+		"desc": "Телега со щитами, копьями и знаменем. Открывается исследованием «Каменные украшения»."},
 	# животные
 	"sheep": {"kind": "decor", "cat": "decor", "sub": "animals", "name": "Овцы в загоне", "cost": 30, "deco": 3, "unlock": "animals", "desc": "Пара овечек в загоне с плетнём и корытцем."},
 	"sheep_2": {"kind": "decor", "cat": "decor", "sub": "animals", "base": "sheep", "look": 1, "name": "Овцы на лугу", "cost": 30, "deco": 3, "unlock": "animals", "desc": "Пара овечек пасётся на лугу, в углу копёшка."},
@@ -515,8 +527,8 @@ const B := {
 		"desc": "Коновязь с поилкой и охапкой сена, у неё жуёт серый ослик. Награда за историю «Ослик возчика»."},
 	"balcony": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Балкон с бельём", "cost": 40, "deco": 4, "wall": true, "unlock": "s_crowded", "story": true,
 		"desc": "Деревянный балкон на втором этаже: на верёвке сохнет бельё, на перилах — ковёр, в углу — цветы. Вешается на дом в 2–3 этажа. Награда за историю горожан «Тесно в доме»."},
-	"legionpost": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Сторожевой пост", "cost": 60, "deco": 5, "light": true, "unlock": "s_bandits", "story": true,
-		"desc": "Знамя легиона с золотым навершием, стойка с копьями, щит и жаровня — дозор у дороги, чтобы разбойникам неповадно было. Ночью горит огонь. Награда за историю горожан «Разбойники у арки»."},
+	"legionpost": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Сторожевой пост", "cost": 60, "deco": 5, "light": true, "unlock": "legionpost",
+		"desc": "Знамя легиона с золотым навершием, стойка с копьями, щит и жаровня — дозор у дороги, чтобы разбойникам неповадно было. Ночью горит огонь. Открывается исследованием «Сторожевой пост»."},
 	# этап 7b: ярмарка, роща поэта, пожар у горшечников
 	"firebarrel": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Бочка с вёдрами", "cost": 35, "deco": 4, "unlock": "s_fire", "story": true,
 		"desc": "Бочка с водой под навесом, на перекладине — вёдра, у столба — лестница и багор, как у вигилов. Вода под рукой — соседям спокойнее. Награда за историю горожан «Пожар у горшечников»."},
@@ -530,8 +542,8 @@ const B := {
 		"desc": "Большая корзина с подушкой: в ней дремлет чёрная Мася, рядом возятся трое котят, миска молока. Награда за историю горожан «Мася и котята»."},
 	"censortable": {"kind": "decor", "cat": "decor", "sub": "street", "name": "Стол цензора", "cost": 45, "deco": 4, "unlock": "s_census", "story": true,
 		"desc": "Стол со свитками и табличками переписи, табурет, полка со свитками и знамя с золотым орлом. Награда за историю горожан «Перепись»."},
-	"lararium": {"kind": "decor", "need": "faith", "range": 2, "cat": "decor", "sub": "stone", "name": "Ларарий", "cost": 60, "deco": 5, "light": true, "unlock": "s_letter", "story": true,
-		"desc": "Домашний алтарь: мраморная ниша под фронтоном, в ней — фигурки Ларов, перед нишей — курильница с огоньком и цветы. Ночью горит огонёк. Награда за историю горожан «Письмо сыну в Легион»."},
+	"lararium": {"kind": "decor", "need": "faith", "range": 2, "cat": "decor", "sub": "stone", "name": "Ларарий", "cost": 60, "deco": 5, "light": true, "unlock": "lararium",
+		"desc": "Домашний алтарь: мраморная ниша под фронтоном, в ней — фигурки Ларов, перед нишей — курильница с огоньком и цветы. Ночью горит огонёк. Открывается исследованием «Ларарий»."},
 	# этап 7b, четвёртая партия: сенатор, лабиринт, школа гладиаторов, Сатурналии
 	"curulechair": {"kind": "decor", "cat": "decor", "sub": "stone", "name": "Курульное кресло", "cost": 180, "deco": 8, "unlock": "s_senator", "story": true,
 		"desc": "Кресло из слоновой кости на мраморном помосте — на таком сидят в курии. По бокам — ликторские фасции, позади — пурпурный полог. Награда за историю горожан «Сенатор проездом»."},
@@ -738,6 +750,7 @@ const RESEARCH := [
 
 	{"id": "floor2", "lvl": 1, "name": "Второй жилой этаж", "cost": 60, "icon": "housing",
 		"desc": "Открывает инструмент «Этаж» (справа внизу, клавиша U): второй этаж можно купить дому, когда он полон, а счастье в нём не ниже 65%. Туда въедет ещё одна семья."},
+	{"id": "legionpost", "lvl": 1, "name": "Сторожевой пост", "cost": 60, "icon": "shield"},
 	{"id": "weaver", "lvl": 1, "name": "Ткацкая лавка", "cost": 50, "icon": "wool"},
 	{"id": "warehouse", "lvl": 1, "name": "Склад", "cost": 60, "icon": "warehouse"},
 	{"id": "butcher", "lvl": 1, "name": "Мясная лавка", "cost": 80, "icon": "meat", "after": "warehouse"},
@@ -745,12 +758,13 @@ const RESEARCH := [
 	{"id": "animals", "lvl": 1, "name": "Животные: утки, лебеди, овцы", "cost": 40, "icon": "swan"},
 	{"id": "scribes1", "lvl": 1, "name": "Ученики писцов", "cost": 40, "icon": "quill",
 		"desc": "За писцами садятся ученики: каждый скрипторий даёт 3 очка исследований в час вместо 2."},
-	# Легион — с «Хутора», но не за очки: его открывает история «Разбойники у арки» (решение владельца Д9)
-	{"id": "legion", "lvl": 1, "name": "Легион", "cost": 0, "icon": "legion", "story": "bandits",
+	# Прежний Легион: исследование для совместимости старых городов; форт открывается сам.
+	{"id": "legion", "lvl": 1, "name": "Легион", "cost": 80, "icon": "legion",
 		"desc": "Легион — стража города, которую вы строите сами: Казармы, потом Стрельбище, Кузница и другие здания, каждое растёт уровнями. Отряд ходит походами против разбойников, зверей и чудовищ, бьётся с другими городами, добывает Славу и денарии."},
 
 	{"id": "artisans", "lvl": 2, "name": "Класс ремесленников", "cost": 180, "icon": "hammer",
 		"desc": "Открывает дома ремесленников. Им нужны еда, одежда и развлечения."},
+	{"id": "lararium", "lvl": 2, "name": "Ларарий", "cost": 120, "icon": "level"},
 	{"id": "cobbler", "lvl": 2, "name": "Сапожник", "cost": 120, "icon": "boots", "after": "weaver"},
 	{"id": "bakery", "lvl": 2, "name": "Пекарня", "cost": 130, "icon": "bread", "after": "warehouse"},
 	{"id": "dice", "lvl": 2, "name": "Игра в кости", "cost": 180, "icon": "dice"},
@@ -795,6 +809,8 @@ const RESEARCH := [
 	{"id": "jeweler", "lvl": 5, "name": "Ювелир", "cost": 1930, "icon": "ring"},
 	{"id": "forum", "lvl": 5, "name": "Форум", "cost": 2310, "icon": "caesar"},
 	{"id": "taxes1", "lvl": 5, "name": "Налоги для богатых", "cost": 1740, "icon": "coins", "desc": "Патриции платят на четверть больше."},
+
+	{"id": "trajan", "lvl": 5, "name": "Колонна Траяна", "cost": 2400, "icon": "laurels"},
 
 	{"id": "theatre", "lvl": 6, "name": "Театр", "cost": 4830, "icon": "fun", "after": "odeon"},
 	{"id": "arch", "lvl": 6, "name": "Триумфальная арка", "cost": 4190, "icon": "castle"},
@@ -975,7 +991,7 @@ static func unlock_text(id: String) -> String:
 		return "победой Легиона над боссом «%s»" % Legion.boss_name(int(id.substr(4)))
 	if id.begins_with("rank:"):
 		return "на уровне «%s» (когда Легион открыт)" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
-	if id.begins_with("tour:"):
+	if id.begins_with("city:") or id.begins_with("tour:"):
 		return "на уровне «%s»" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
 	if id.begins_with("army:"):
 		return "на уровне «%s» (когда Легион открыт)" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
@@ -1003,7 +1019,7 @@ static func unlock_text(id: String) -> String:
 static func unlock_short(id: String) -> String:
 	if id.begins_with("boss"):
 		return "Победа над боссом"
-	if id.begins_with("rank:") or id.begins_with("army:") or id.begins_with("tour:"):
+	if id.begins_with("rank:") or id.begins_with("army:") or id.begins_with("tour:") or id.begins_with("city:"):
 		return "Уровень «%s»" % LEVELS[clampi(int(id.substr(5)), 0, LEVELS.size() - 1)]["name"]
 	if id.begins_with("trophy:"):
 		return "%d звёзд похода" % (Legion.stages() * 3)

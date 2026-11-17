@@ -70,7 +70,7 @@ var unread := 0                       # события, записанные п�
 var road_cells := 0                   # сколько клеток дорог проложил игрок
 var rng := RandomNumberGenerator.new()
 var bulk := false                     # place() без пересчёта (витрина Showcase ставит сотни построек, compute — в конце)
-var legion := Legion.new()            # армия: походы, Слава, чудеса (legion.gd); сохраняется под ключом "legion"
+var legion := Legion.new()            # армия: походы и Слава (legion.gd); сохраняется под ключом "legion"
 var fest_left := 0                    # сколько игровых часов ещё идут игры в честь богов (Defs.FESTIVAL)
 var fest_cd := 0                      # через сколько часов можно устроить новые игры
 var unpaid_h := 0                     # жалованье не плачено (казна пуста): столько часов ещё держится обида (Defs.UNPAID_H)
@@ -102,6 +102,8 @@ var cal_fest_day := -1                # в какой день праздник 
 var renown := 0.0                     # известность города (Renown; новая игра): растёт без конца, за неё — титулы
 var clock_h := 0                       # игровых часов с начала города (сохраняется; для походов этапа 3)
 var visits := {}                       # «Уютный Рим», этап 3: дом → {вид похода: clock_h} (Balance.VISIT_BONUS)
+var wonders_v := 1                     # городские чудеса: разовый перенос старых покупок
+var wonder_credits := {}               # тип → бесплатные постановки, включая ещё скрытые модели
 var gifts := {}                        # подарки друзей (SocialNet, docs/ONLINE_V2.md): тип → [названия городов-дарителей];
                                        # каждый — одна постройка этого типа даром (и без исследования), она помнит дарителя
 ## Украшения этапа 5 (решение владельца Q17): 0 — живой город (все прежние облики открыты, как были), 1 — новая игра:
@@ -147,7 +149,7 @@ func is_house(b: Dictionary) -> bool:
 const APRON_KINDS := ["house", "shop", "rp", "store", "military"]
 const KERB_TYPES := ["house_patrician", "temple", "pantheon"]
 ## Большие постройки, под которыми весь след — мостовая (Land.pave_under): между ними и улицей нет травы
-const PAVE_TYPES := ["colosseum", "circus_fl", "forum", "theatre", "odeon", "thermae", "ludus"]
+const PAVE_TYPES := ["colosseum", "circus_fl", "forum", "theatre", "odeon", "thermae", "ludus", "trajan"]
 const PAVE_SLOPE := 0.5                # дом и лавка на мостовой — только на почти ровном месте (иначе ступени вокруг)
 
 
@@ -228,12 +230,18 @@ func _apron_refresh(b: Dictionary) -> void:
 
 func city_buildable(type: String) -> bool:
 	var d: Dictionary = Defs.B[type]
-	return d.get("kind", "") != "military" and d.get("cat", "") != "military"
+	return not bool(d.get("hidden", false)) and d.get("kind", "") != "military" and d.get("cat", "") != "military"
 
 
 func unlocked(type: String) -> bool:
+	if bool(Defs.B[type].get("hidden", false)):
+		return false
+	if wonder_credit_ready(type):
+		return true
 	if legion_v >= 3 and cozy_v >= 1 and not city_buildable(type):
 		return false                              # Легион 3.0: военные здания — в лагере, на карте города их нет
+	if (type == "legionpost" and research.has("s_bandits")) or (type == "lararium" and research.has("s_letter")):
+		return true                               # Прежние городские награды сохраняются.
 	if gift_ready(type):
 		return true                               # подарок друга — ставится, даже если ещё не открыто
 	if Defs.STORY_OPENS.has(type) and research.has(String(Defs.STORY_OPENS[type])):
@@ -241,17 +249,36 @@ func unlocked(type: String) -> bool:
 	if decor_v >= 1 and Defs.DECOR_LATER.has(type):      # новая игра: этот облик — в наборе этапа 5
 		return research.has(String(Defs.DECOR_LATER[type]))
 	var u: String = Defs.B[type].get("unlock", "")
-	if u.begins_with("boss"):                 # военные постройки: победа Легиона над N-м боссом
-		return legion.bosses() >= int(u.substr(4))
-	if u.begins_with("rank:"):                # здания Легиона (Д10): с уровня города, когда Легион собран
-		return level >= int(u.substr(5)) and legion.window_open()
-	if u.begins_with("tour:"):                # гостиница («Уютный Рим», этап 6): с уровня города, только в новой игре
+	if u.begins_with("city:"):
+		return level >= int(u.substr(5))
+	if u.begins_with("tour:"):
 		return level >= int(u.substr(5)) and cozy_v >= 1
-	if u.begins_with("army:"):                # Легион 2.0 (мастерские): то же, но только в новой игре
-		return level >= int(u.substr(5)) and legion.window_open() and legion.army_on()
-	if u.begins_with("trophy:"):              # трофей провинции: все 30 звёзд её боёв
-		return legion.has_trophy(u.substr(7))
-	return u == "" or research.has(u) or legion.wonder_unlocks(type)   # чудеса открывает и рейтинг походов
+	return u == "" or research.has(u)
+
+
+## Прежняя покупка Легиона: право поставить модель один раз, даже до исследования.
+func wonder_credit_ready(type: String) -> bool:
+	return int(wonder_credits.get(type, 0)) > 0 and not bool(Defs.B[type].get("hidden", false))
+
+
+## После загрузки зданий: четыре будущие модели сохраняют право на постановку.
+func _migrate_wonders(d: Dictionary) -> void:
+	wonder_credits = {}
+	for type: String in d.get("wonder_credits", {}):
+		if Defs.B.has(type) and Defs.B[type].get("sub", "") == "wonders" and int(d["wonder_credits"][type]) > 0:
+			wonder_credits[type] = 1
+	if int(d.get("wonders_v", 0)) < 1:
+		var old: Dictionary = d.get("legion", {})
+		var bought: Array = old.get("built", [])
+		for type: String in ["circus", "aqueduct", "trajan", "caracalla", "jupiter"]:
+			if bought.has(type) and count_type(type) == 0:
+				wonder_credits[type] = 1
+	wonders_v = 1
+
+
+## Сколько вернётся при сносе: за бесплатное старое чудо денарии не выдаём.
+func refund_price(b: Dictionary) -> float:
+	return 0.0 if bool(b.get("wonder_credit", false)) else float(def(b)["cost"]) * Defs.REFUND
 
 
 ## Есть ли подарок друга этого типа (поставить даром)
@@ -371,6 +398,9 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 	var d: Dictionary = Defs.B[type]
 	var res := {"err": "", "cells": PackedInt32Array(), "y": 0.0}
 	if ignore_id == -1 and not city_buildable(type):
+		if bool(d.get("hidden", false)):
+			res["err"] = "Чудо пока недоступно"
+			return res
 		res["err"] = "Военные постройки — только в форте"
 		return res
 	if not unlocked(type):
@@ -378,9 +408,6 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 		return res
 	if money < build_price(type) and ignore_id == -1 and not gift_ready(type):
 		res["err"] = "Не хватает денариев"
-		return res
-	if ignore_id == -1 and legion.glory + 0.001 < float(d.get("glory", 0)):
-		res["err"] = "Не хватает Славы: нужно %d (Слава — за победы Легиона)" % int(d["glory"])
 		return res
 	if ignore_id == -1 and d.get("unique", false) and _count(func(o): return o["type"] == type) > 0:
 		res["err"] = "Такая постройка в городе уже есть"
@@ -533,6 +560,8 @@ static func _grid_near(g: Dictionary, p: Vector2, r: float) -> Array:
 
 ## Поставить постройку (деньги списываются); возвращает запись. free — даром и без проверок (готовый город)
 func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, free := false) -> Dictionary:
+	if bool(Defs.B[type].get("hidden", false)):
+		return {}
 	if not free and not city_buildable(type):
 		return {}
 	place_gen += 1
@@ -540,8 +569,9 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 	if color < 0:
 		color = pick_color(pos)
 	var chk := check_place(type, pos, yaw, variant, color, -2 if free else -1)
-	# здание Легиона встаёт сразу в облике своего уровня (уровень «в запасе» — после переноса старого сохранения)
-	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else (Legion.vis_tier(legion.b_level(type)) if Legion.is_building(type) else 0)),
+	if not free and d.get("sub", "") == "wonders" and chk["err"] != "":
+		return {}
+	var b := {"id": next_id, "type": type, "tier": 1 if d["kind"] == "house" else (level if type == "center" else 0),
 		"pos": pos, "yaw": yaw, "variant": variant, "color": color, "y": float(chk["y"]), "cells": chk["cells"],
 		"pop": 0, "families": [], "happy": 50, "up": 0, "down": 0, "staff": 1.0, "active": true, "road": true,
 		"needs": {}, "served": 0, "score": {}, "missing": [], "coming": 0, "born": next_id, "hz": clock_h}   # born — порядок постройки (перенос его не меняет)
@@ -556,10 +586,17 @@ func place(type: String, pos: Vector2, yaw: float, variant := 0, color := -1, fr
 		b["gift"] = gft
 		if not bulk:
 			Chronicle.add(self, "decor" if d["kind"] == "decor" else "built")
+	elif not free and wonder_credit_ready(type):
+		wonder_credits.erase(type)
+		b["wonder_credit"] = true
+		var u: String = d.get("unlock", "")
+		if u != "":
+			research[u] = true                 # поставленное чудо можно переносить и после траты права
+		if not bulk:
+			Chronicle.add(self, "built")
 	elif not free:
 		money -= build_price(type)
 		flow("build", -build_price(type))
-		legion.glory = maxf(0.0, legion.glory - float(d.get("glory", 0)))   # чудеса Легиона стоят ещё и Славы
 		if not bulk:
 			Chronicle.add(self, "decor" if d["kind"] == "decor" else "built")   # летопись: построено игроком
 	var cells: PackedInt32Array = b["cells"]
@@ -634,8 +671,8 @@ func remove(b: Dictionary, refund := true, quiet := false) -> void:
 		return
 	place_gen += 1
 	if refund:
-		money += float(def(b)["cost"]) * Defs.REFUND
-		flow("build", float(def(b)["cost"]) * Defs.REFUND)
+		money += refund_price(b)
+		flow("build", refund_price(b))
 	for k in (b["cells"] as PackedInt32Array):
 		if land.occ[k] == int(b["id"]):        # чужое (арку у въезда, соседа) не освобождаем
 			land.occ[k] = 0
@@ -1201,10 +1238,6 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 		for t in mon:
 			parts.append([Defs.B[t]["name"], int(mon[t])])
 			mon_sum += int(mon[t])
-		var lg := legion.city_happy()          # чудеса Легиона без постройки и триумф — всем домам
-		if lg > 0:
-			parts.append(["Легион: чудеса и триумф", lg])
-			mon_sum += lg
 		if fb > 0:
 			parts.append(["Праздник: игры в честь богов", fb])
 		var st_sum := 0                         # истории горожан: награды к счастью (дому, соседям, всем)
@@ -1981,7 +2014,7 @@ func sim_day() -> void:
 	var upkeep := 0.0
 	var wages := 0.0
 	var rpd := 0.0
-	var gday := 0.0                               # Слава в день от лудуса, маяка, цирка (этап 5, glory_day)
+	var gday := 0.0                               # Слава в день от городских памятников (glory_day)
 	for id in buildings.keys():
 		var b: Dictionary = buildings[id]
 		var d := def(b)
@@ -2062,12 +2095,12 @@ func sim_day() -> void:
 	stats["wages"] = wages
 	stats["rp_day"] = rpd
 	if gday > 0.0:
-		legion.glory_acc += gday / 24.0          # копится, как у чудес Легиона: набралась целая Слава — в казну Славы
-		if legion.glory_acc >= 1.0:
-			var gw := floorf(legion.glory_acc)
+		legion.glory_acc += gday / 24.0          # копится: набралась целая Слава — в казну Славы
+		if legion.glory_acc >= 1.0 - 0.000001:
+			var gw := floorf(legion.glory_acc + 0.000001)
 			legion.glory += gw
-			legion.glory_acc -= gw
-	for ev: Array in legion.on_hour():           # Легион: таймеры улучшений (настоящие часы), Слава чудес, триумф
+			legion.glory_acc = maxf(0.0, legion.glory_acc - gw)
+	for ev: Array in legion.on_hour():           # Легион: таймеры улучшений (настоящие часы), триумф
 		if ev.size() > 2 and bool(ev[2]):
 			_quiet(ev[0], ev[1])                 # здание Легиона выросло — только в колокольчик
 		else:
@@ -3570,10 +3603,17 @@ func rank_up(force := false) -> bool:
 
 # ---------- исследования ----------
 
+## Прежние военные исследования не занимают городскую ветку новой игры.
+func research_visible(id: String) -> bool:
+	return not (cozy_v >= 1 and legion_v >= 3 and id in ["legion", "archery"])
+
+
 func can_research(id: String) -> String:
 	var r := Defs.research(id)
 	if r.is_empty() or research.has(id):
 		return "Уже изучено"
+	if not research_visible(id):
+		return "Военные постройки — только в форте"
 	if Defs.story_of(r) != "":
 		return "Откроется %s" % Defs.unlock_text(id)
 	if int(r["lvl"]) > level:
@@ -3635,6 +3675,8 @@ func research_where(id: String) -> String:
 ## Вкладка меню стройки, где карточка: «Товары» у лавок, «Цветы» у украшений; у остальных — ""
 static func sub_name(type: String) -> String:
 	var d: Dictionary = Defs.B[type]
+	if d.get("cat", "") == "special" and d.get("sub", "") == "wonders":
+		return "Чудеса"
 	if d.get("cat", "") == "commerce" and Defs.NEEDS.has(d.get("sub", "")):
 		return String(Defs.NEEDS[d["sub"]]["name"])
 	if d.get("cat", "") == "decor":
@@ -3669,7 +3711,7 @@ func mark_seen(type: String) -> bool:
 ## Исследование можно изучать (уровень есть, нужное раньше изучено), но ещё не изучено
 func research_open(id: String) -> bool:
 	var r := Defs.research(id)
-	return not r.is_empty() and Defs.story_of(r) == "" and not research.has(id) and int(r["lvl"]) <= level and (not r.has("after") or research.has(r["after"]))
+	return research_visible(id) and not r.is_empty() and Defs.story_of(r) == "" and not research.has(id) and int(r["lvl"]) <= level and (not r.has("after") or research.has(r["after"]))
 
 
 func is_new_r(id: String) -> bool:
@@ -3888,7 +3930,6 @@ func progress_of(pp: Array) -> int:
 		"count": return _count(func(b): return b["type"] == arg or Defs.base_of(b["type"]) == arg)   # любой облик украшения
 		"kind": return _count(func(b): return def(b)["kind"] == arg)
 		"pop": return int(stats["pop"])
-		"soldiers": return legion.soldiers.filter(func(s: Dictionary) -> bool: return not bool(s.get("hero", false))).size() if legion != null else 0     # Легион 3.0: воины в лагере (история «Разбойники»)
 		"happy": return int(stats["happy"]) if int(stats["pop"]) >= 10 else 0
 		"cls": return int(stats["residents"].get(arg, 0))
 		"floors": return _count(func(b): return is_house(b) and int(b["tier"]) >= int(arg))
@@ -3898,7 +3939,7 @@ func progress_of(pp: Array) -> int:
 			var all := 0
 			var done := 0
 			for r: Dictionary in Defs.RESEARCH:
-				if int(r["lvl"]) == int(arg) and not r.has("story"):
+				if int(r["lvl"]) == int(arg) and research_visible(String(r["id"])) and not r.has("story"):
 					all += 1
 					done += 1 if research.has(r["id"]) else 0
 			return int(floor(100.0 * done / all)) if all > 0 else 100
@@ -4062,7 +4103,7 @@ static func _who(names: Array) -> String:
 static func stories_new() -> Dictionary:
 	# granted — исследование → история, чей шаг его открыл («legion» → «bandits»): прерванную такую историю предложат снова
 	# pace — спокойный темп (26.10): {h: час последнего нового (история, заказ, новый ранг), req: час последней новой просьбы}
-	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {}, "granted": {}, "pace": {}}
+	return {"v": 1, "h": 0, "last_h": -1, "done": {}, "active": {}, "offer": {}, "later": {}, "bonus": [], "pets": [], "orders": {}, "granted": {}, "pace": {}, "suspended": {}}
 
 
 ## Из сохранения: чего нет — по умолчанию (старые сохранения — без историй: ничего не идёт, часы с нуля)
@@ -4073,7 +4114,7 @@ static func stories_load(d: Variant) -> Dictionary:
 	var dd: Dictionary = d
 	s["h"] = int(dd.get("h", 0))
 	s["last_h"] = int(dd.get("last_h", -1))
-	for k in ["done", "active", "offer", "later", "orders", "granted", "pace"]:
+	for k in ["done", "active", "offer", "later", "orders", "granted", "pace", "suspended"]:
 		if typeof(dd.get(k)) == TYPE_DICTIONARY:
 			s[k] = dd[k]
 	for k in ["bonus", "pets"]:
@@ -4100,6 +4141,7 @@ static func stories_load(d: Variant) -> Dictionary:
 			for r in (steps[i] as Dictionary).get("grant", []):
 				if not (s["granted"] as Dictionary).has(String(r)):
 					s["granted"][String(r)] = String(a0["id"])
+	StoryDefs.suspend_disabled(s)          # Старые шаги Легиона не держат городскую цепочку.
 	StoryDefs.migrate(s)                    # «Где Мурка?» → «Где Мася?» (Д15): новые имена, чёрная кошка
 	return s
 
@@ -4317,6 +4359,8 @@ func save_data() -> Dictionary:
 			e["happy"] = b["happy"]
 			e["unhappy_h"] = int(b.get("unhappy_h", 0))
 			e["down"] = int(b.get("down", 0))
+		if b.get("wonder_credit", false):
+			e["wonder_credit"] = true
 		if b.has("gift"):
 			e["gift"] = String(b["gift"])
 		if b.has("kw"):
@@ -4331,6 +4375,7 @@ func save_data() -> Dictionary:
 		"arrive_t": arrive_t, "settled_total": settled_total, "tips": tips, "events": events, "road_cells": road_cells,
 		"fest_left": fest_left, "fest_cd": fest_cd, "plots_bought": plots_bought, "name": name, "unpaid_h": unpaid_h, "unpaid_n": unpaid_n, "goals_vis": goals_vis,
 		"wants_v": wants_v, "econ_v": econ, "cozy_v": cozy_v, "legion_v": legion_v, "clock_h": clock_h, "renown": renown, "cal_fest_id": cal_fest_id, "cal_fest_day": cal_fest_day, "visits": visits, "gifts": gifts.duplicate(true), "decor_v": decor_v, "story_v": story_v, "taxes": taxes, "hist": hist,
+		"wonders_v": wonders_v, "wonder_credits": wonder_credits.duplicate(),
 		"stories": stories.duplicate(true), "legion": legion.to_dict(), "cats": cats.duplicate(true), "hero": hero.duplicate(true), "chron": chron.duplicate(true)}
 
 
@@ -4452,6 +4497,8 @@ func load_data(d: Dictionary) -> void:
 			b["happy"] = clampf(float(bd.get("happy", 50)), 0.0, 200.0)
 			b["unhappy_h"] = maxi(0, int(bd.get("unhappy_h", 0)))
 			b["down"] = maxi(0, int(bd.get("down", 0)))
+		if bool(bd.get("wonder_credit", false)):
+			b["wonder_credit"] = true
 		if int(bd.get("kw", 0)) == 1:
 			b["kw"] = 1
 		if int(bd.get("sz", 0)) > 0:
@@ -4474,7 +4521,7 @@ func load_data(d: Dictionary) -> void:
 				land.occ[k] = b["id"]
 		_under_add(b)                          # полоса под арками акведука — заново (не сохраняется)
 		next_id = maxi(next_id, int(b["id"]) + 1)
-	legion.sync_tiers()                          # облик зданий Легиона — по их уровням (старые сохранения: уровни войск)
+	_migrate_wonders(d)
 	apron_all()
 	compute()
 	# летопись: старое сохранение без неё — счётчики из того, что стоит, заслуженные венки разом (одна строка)
@@ -4497,7 +4544,7 @@ func edict_add(key: String) -> float:
 
 
 func build_price(type: String) -> float:
-	return float(Defs.B[type]["cost"]) * edict_mul("build_cost")
+	return 0.0 if wonder_credit_ready(type) else float(Defs.B[type]["cost"]) * edict_mul("build_cost")
 
 
 func need_range(d: Dictionary) -> float:

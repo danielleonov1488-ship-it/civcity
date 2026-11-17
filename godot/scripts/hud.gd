@@ -81,6 +81,8 @@ var bar_mid: PanelContainer
 var bar_right: PanelContainer
 var tray: PanelContainer
 var tray_grid: HBoxContainer
+var tray_stabs: HBoxContainer
+var open_ssub := "monuments"
 var tray_tabs: HBoxContainer
 var tray_title: Label
 var open_cat := ""
@@ -2271,6 +2273,9 @@ func update_new_marks() -> void:
 		_show_new(cats[cid], int(n.get(cid, 0)) > 0)
 	for b in tray_tabs.get_children():
 		_show_new(b, int(n.get("commerce|" + String(b.get_meta("sub")), 0)) > 0)
+	for b in tray_stabs.get_children():
+		var key := "special|wonders" if b.get_meta("sub") == "wonders" else "special|"
+		_show_new(b, int(n.get(key, 0)) > 0)
 	for b in tray_dtabs.get_children():
 		_show_new(b, int(n.get("decor|" + String(b.get_meta("sub")), 0)) > 0)
 	_show_new(top_btns["research"], play and c.new_research() > 0)
@@ -2762,6 +2767,16 @@ func _bottom_center() -> void:
 		b.set_meta("sub", nn)
 		tray_tabs.add_child(b)
 		_new_pill(b, "dot")
+	tray_stabs = HBoxContainer.new()
+	tray_stabs.name = "monument_groups"
+	tray_stabs.add_theme_constant_override("separation", 6)
+	top.add_child(tray_stabs)
+	for group: Array in [["monuments", "Памятники"], ["wonders", "Чудеса"]]:
+		var sub: String = group[0]
+		var b := _tchip(String(group[1]), String(group[1]), func(): open_ssub = sub; _fill_cards())
+		b.set_meta("sub", sub)
+		tray_stabs.add_child(b)
+		_new_pill(b, "dot")
 	tray_dtabs = HBoxContainer.new()
 	tray_dtabs.add_theme_constant_override("separation", 4)
 	top.add_child(tray_dtabs)
@@ -2958,6 +2973,11 @@ func _types_in(cat: String, sub := "") -> Array:
 	var out := []
 	for type in Defs.B:
 		var d: Dictionary = Defs.B[type]
+		if bool(d.get("hidden", false)):
+			continue
+		if cat == "special" and sub in ["monuments", "wonders"]:
+			if (d.get("sub", "") == "wonders") != (sub == "wonders"):
+				continue
 		if d["cat"] != cat and d.get("also", "") != cat:
 			continue                          # also — дополнительный раздел для постройки
 		if cat == "commerce" and d.get("sub", "") != sub:
@@ -3122,6 +3142,9 @@ func _fill_cards() -> void:
 	for ch in tray_grid.get_children():
 		tray_grid.remove_child(ch)
 		ch.queue_free()
+	tray_stabs.visible = open_cat == "special"
+	for b in tray_stabs.get_children():
+		(b as Button).set_pressed_no_signal(b.get_meta("sub") == open_ssub)
 	tray_tabs.visible = open_cat == "commerce"
 	for b in tray_tabs.get_children():
 		_set_on(b, b.get_meta("sub") == open_sub)
@@ -3134,6 +3157,8 @@ func _fill_cards() -> void:
 	var names := {"housing": "Жильё", "commerce": "Лавки и мастерские", "farming": "Хозяйство и науки", "decor": "Украшения", "special": "Памятники",
 		"military": "Военные постройки Легиона"}
 	tray_title.text = names.get(open_cat, "")
+	if open_cat == "special" and open_ssub == "wonders":
+		tray_title.text += " · Чудеса"
 	if open_cat == "commerce":
 		tray_title.text += " · " + Defs.NEEDS[open_sub]["name"]
 	if open_cat == "decor":
@@ -3145,7 +3170,7 @@ func _fill_cards() -> void:
 				for ds: Array in Defs.DECOR_SUBS:
 					if ds[0] == open_dsub:
 						tray_title.text += " · " + String(ds[1])
-	var list := _decor_list() if open_cat == "decor" else _types_in(open_cat, open_sub)
+	var list := _decor_list() if open_cat == "decor" else _types_in(open_cat, open_ssub if open_cat == "special" else open_sub)
 	if list.is_empty() and open_cat == "decor":
 		var em := _label({"fav": "Здесь будут украшения со звёздочкой ★ — правая кнопка мыши по карточке.",
 			"recent": "Здесь будут украшения, что вы ставили последними.", "search": "Ничего не нашлось — попробуйте другое слово."}.get(decor_mode, "Здесь пока пусто."), 16, true, C_SOFT)
@@ -3333,8 +3358,6 @@ func _card_tip(type: String) -> String:
 	# этап 5, волна 2: Слава в цене и каждый день, одна на город, у воды, без дороги
 	if d["kind"] == "monument" and d.has("jobs"):
 		t += "\nРабочие: %s" % _jobs_text(d)
-	if d.has("glory"):
-		t += "\nСтоит ещё %d Славы (Слава — за победы Легиона)" % int(d["glory"])
 	if d.has("glory_day"):
 		t += "\nПриносит Славу: +%s в день" % String.num(float(d["glory_day"]), 1).replace(".", ",")
 	if d.get("unique", false) and d["kind"] != "military":
@@ -3382,7 +3405,7 @@ func _update_cards() -> void:
 			continue
 		var type: String = b.get_meta("type")
 		var d: Dictionary = Defs.B[type]
-		if c.build_max(type) >= 0:
+		if c.build_max(type) >= 0 or d.get("sub", "") == "wonders":
 			var tip := _card_tip(type)       # «В городе: N из M» меняется с каждой постройкой и рангом
 			if b.tooltip_text != tip:
 				b.tooltip_text = tip
@@ -3425,6 +3448,13 @@ func _update_cards() -> void:
 			b.add_theme_stylebox_override("normal", _card_box("g_card"))
 			img.modulate = Color.WHITE
 			_grey(img)
+		elif c.wonder_credit_ready(type):
+			pr.add_child(_icon("laurels", 22, C_GOOD))
+			pr.add_child(_label("Даром", 16, true, C_GOOD))
+			b.tooltip_text = _card_tip(type) + "\nПрежняя покупка: одна постановка даром"
+			b.add_theme_stylebox_override("normal", _card_box("g_card"))
+			img.modulate = Color.WHITE
+			_grey(img, false)
 		elif c.gift_ready(type):
 			# подарок друга (SocialNet): даром, сколько штук осталось
 			pr.add_child(_icon("mail", 22, C_GOOD))
@@ -3455,6 +3485,14 @@ func select_build(type: String, from_tray := false) -> void:
 	if decor_search and decor_search.has_focus():
 		decor_search.release_focus()          # взяли украшение — клавиши снова у карты (WASD, Z/X, пробел)
 	var cat: String = Defs.B[type]["cat"]
+	if bool(Defs.B[type].get("hidden", false)):
+		return
+	if cat == "special":
+		var sub := "wonders" if Defs.B[type].get("sub", "") == "wonders" else "monuments"
+		if open_ssub != sub:
+			open_ssub = sub
+			if tray.visible and open_cat == cat:
+				_fill_cards()
 	if cat == "commerce":
 		open_sub = Defs.B[type]["sub"]
 	if cat == "decor" and not from_tray:
@@ -3855,43 +3893,7 @@ func _do_target(w: Dictionary, shown := false) -> Control:
 					return x
 		"rank":
 			return rank_btn
-		"legion":
-			if game.city.legion.v3():              # Легион 3.0: стрелка на «Лагерь» наверху, не на старый медальон
-				var cu := CampUI.of(self)
-				if cu == null:
-					return null
-				if cu.visible:
-					var action := String(w.get("action", ""))
-					if action == "recruit" or (action == "squad" and cu.lg.soldiers.is_empty()):
-						return cu.recruit_button if cu.card.visible and cu.selected == "barracks" else cu.hotspots.get("barracks")
-					if action == "squad":
-						if is_instance_valid(cu.squad_body) and cu.squad_body.is_visible_in_tree():
-							for b: Button in cu.squad_body.find_children("*", "Button", true, false):
-								if b.disabled or b.is_queued_for_deletion():
-									continue
-								if cu.selected_place >= 0 and b.has_meta("quest_soldier"):
-									return b
-								if cu.selected_place < 0 and b.has_meta("quest_slot") and int(cu.lg.squad3[int(b.get_meta("quest_slot"))]) <= 0:
-									return b
-						return cu.bottom.get_child(0) as Control
-					var campaign := LegionUi.of(self)
-					if campaign != null and campaign.visible:
-						if is_instance_valid(campaign._fight_btn) and campaign._fight_btn.is_visible_in_tree():
-							return campaign._fight_btn
-						if is_instance_valid(campaign._front_btn) and campaign._front_btn.is_visible_in_tree():
-							return campaign._front_btn
-					return cu.gate
-				return cu.top_button if cu.top_button.visible else null
-			var lu := LegionUi.of(self)
-			if lu == null:
-				return null
-			if lu.visible:
-				if is_instance_valid(lu._fight_btn) and lu._fight_btn.is_visible_in_tree():
-					return lu._fight_btn
-				if is_instance_valid(lu._front_btn) and lu._front_btn.is_visible_in_tree():
-					return lu._front_btn
-				return lu.tabs.get("troops" if String(w.get("action", "")) == "recruit" else "campaign")
-			return lu.btn
+
 	return null
 
 
@@ -3936,23 +3938,7 @@ func _do_click(w: Dictionary) -> void:
 		"fam":
 			if not game.city.arrivals.is_empty():
 				game.start_settle(game.city.arrivals[0]["name"])
-		"legion":
-			if game.city.legion.v3():
-				var cu := CampUI.of(self)
-				if cu != null:
-					if not cu.visible:
-						cu.open()
-					if String(w.get("action", "")) == "recruit":
-						cu.show_building("barracks")
-					elif String(w.get("action", "")) == "squad":
-						if cu.lg.soldiers.is_empty():
-							cu.show_building("barracks")
-						else:
-							cu.show_squad()
-			else:
-				var lu := LegionUi.of(self)
-				if lu != null:
-					lu.open("troops" if String(w.get("action", "")) == "recruit" else "campaign")
+
 	show_pointer(w)                           # и стрелка на несколько секунд — куда дальше (карточка исследования, семья…)
 	_update_pointer()
 
@@ -4020,9 +4006,11 @@ func _card_or_cat(cat: String, type: String) -> Control:
 			if b.get_meta("type", "") == type:
 				return b
 		# карточка на другой вкладке — показать на вкладку
-		var tabs: HBoxContainer = tray_dtabs if cat == "decor" else (tray_tabs if cat == "commerce" else null)
+		var tabs: HBoxContainer = tray_dtabs if cat == "decor" else (tray_tabs if cat == "commerce" else (tray_stabs if cat == "special" else null))
 		# у украшений — вкладка меню (с переездами этапа 5: колодец — в «Воде», телега — в «Рынке»)
 		var want := Defs.decor_sub(type) if cat == "decor" else String(Defs.B[type].get("sub", ""))
+		if cat == "special" and want != "wonders":
+			want = "monuments"
 		if tabs:
 			for t in tabs.get_children():
 				if String(t.get_meta("sub", "")) == want:
@@ -4477,8 +4465,6 @@ func refresh_undo() -> void:
 			undo_btn.tooltip_text = "Отменить постройку можно 30 секунд, пока в ней никто не живёт"
 		else:
 			undo_btn.tooltip_text = "Отменить: %s, вернётся %s ден." % [u["name"], fmt(float(u["cost"]))]
-			if float(u.get("glory", 0.0)) > 0.0:
-				undo_btn.tooltip_text += " и %d Славы" % roundi(float(u["glory"]))     # памятник Легиона
 		_grey(undo_btn.get_node("ic") as CanvasItem, u.is_empty())
 	for nm in ["undo", "redo"]:
 		if road_btns.has(nm):
@@ -5236,91 +5222,12 @@ func _catshop_rows(b: Dictionary, cw: float) -> void:
 
 ## Карточка здания Легиона (Д10): уровень, что даёт сейчас и на следующем уровне, «Улучшить — N ден., M Славы, время»,
 ## полоска идущего улучшения (идёт и когда игра закрыта); «Окно «Легион»» — отряд, походы и умения
-func _legion_rows(b: Dictionary, tv: VBoxContainer, cw: float) -> void:
-	var c: City = game.city
-	var lg: Legion = c.legion
-	var bt := String(b["type"])
-	var key := Legion.bkey(bt)
-	var info := lg.upgrade_info(key)
-	var lvl := int(info["cur"])
-	tv.add_child(_label("Здание Легиона · %d уровень" % lvl, 14, true, C_SOFT))
-	info_box.add_child(_row("level", "Уровень", "%d из %d" % [lvl, int(info["limit"])]))
-	info_box.add_child(_label("Сейчас даёт:", 15, true, C_SOFT))
-	for s in lg.b_effect(bt, lvl):
-		info_box.add_child(_wrap(_label("• " + String(s), 15, true, C_GOOD), cw))
-	if lg.upg.has(key):
-		var u: Dictionary = lg.upg[key]
-		var tl := _label("Улучшается до %d уровня: %s" % [int(u["to"]), Legion.fmt_duration(lg.upgrade_left(key))], 16, true)
-		info_box.add_child(tl)
-		var bar := ProgressBar.new()
-		bar.show_percentage = false
-		bar.min_value = 0.0
-		bar.max_value = 1.0
-		bar.step = 0.001
-		bar.value = lg.upgrade_progress(key)
-		bar.custom_minimum_size = Vector2(cw, 18)
-		bar.add_theme_stylebox_override("background", _ai_box("g_slider", [8, 0, 8, 0], [0, 0, 0, 0]))
-		bar.add_theme_stylebox_override("fill", _ai_box("g_slider_fill", [8, 0, 8, 0], [0, 0, 0, 0]))
-		info_box.add_child(bar)
-		info_box.add_child(_wrap(_label("Улучшение идёт, даже когда игра закрыта. Новый уровень — с облачком над зданием.", 13, false, C_SOFT), cw))
-		_lg_live = {"key": key, "bar": bar, "label": tl}
-	elif bool(info["max"]):
-		info_box.add_child(_wrap(_label("Наивысший уровень!", 16, true, C_GOOD), cw))
-	elif bool(info["blocked"]):
-		info_box.add_child(_wrap(_label(lg.can_upgrade(key), 14, true, C_SOFT), cw))
-	else:
-		info_box.add_child(_label("На %d уровне:" % int(info["to"]), 15, true, C_SOFT))
-		for s in lg.b_effect(bt, int(info["to"])):
-			info_box.add_child(_wrap(_label("• " + String(s), 15, false, C_INK), cw))
-		var why := lg.can_upgrade(key)
-		var ub := Button.new()
-		ub.text = lg.b_upgrade_text(bt)
-		ub.icon = ico("level", 32)
-		ub.focus_mode = Control.FOCUS_NONE
-		ub.add_theme_font_override("font", font_bold)
-		ub.disabled = why != ""
-		ub.tooltip_text = why if why != "" else "Денарии — сразу, новый уровень — через %s (идёт и когда игра закрыта)" % Legion.fmt_duration(float(info["time"]))
-		ub.pressed.connect(func():
-			if lg.upgrade(key) and game.sound:
-				game.sound.ui("coins")
-			_fill_info()
-			_update_pointer())
-		info_box.add_child(ub)
-		lg_upg_btn = ub
-		if why != "":
-			info_box.add_child(_wrap(_label(why, 14, true, C_BAD), cw))
-	var lb := Button.new()
-	lb.text = "Лагерь Легиона" if lg.v3() else "Отряд и походы — окно «Легион»"
-	lb.icon = ico("legion", 32)
-	lb.focus_mode = Control.FOCUS_NONE
-	lb.pressed.connect(func():
-		if lg.v3():
-			CampUI.attach(self).open()           # Легион 3.0: отряд и походы — в лагере
-			return
-		var lu := LegionUi.of(self)
-		if lu != null:
-			lu.open("troops"))
-	info_box.add_child(lb)
+func _legion_rows(_b: Dictionary, _tv: VBoxContainer, cw: float) -> void:
+	info_box.add_child(_wrap(_label("Военные постройки — только в форте", 14, false, C_SOFT), cw))
 
 
-## Идёт улучшение здания в открытой карточке: полоска и минуты; дошло — завершаем сразу (облачко над зданием)
 func _lg_tick() -> void:
-	var lg: Legion = game.city.legion
-	var key := String(_lg_live.get("key", ""))
-	if not lg.upg.has(key):
-		_fill_info()
-		return
-	if lg.upgrade_left(key) <= 0.0:
-		for m in lg.tick():
-			game.city._quiet(m, "legion")          # колокольчик; карточку перерисует house_changed → house_event
-		_fill_info()
-		return
-	var l: Label = _lg_live.get("label")
-	if l != null and is_instance_valid(l):
-		l.text = "Улучшается до %d уровня: %s" % [int(lg.upg[key]["to"]), Legion.fmt_duration(lg.upgrade_left(key))]
-	var bar: ProgressBar = _lg_live.get("bar")
-	if bar != null and is_instance_valid(bar):
-		bar.value = lg.upgrade_progress(key)
+	_lg_live.clear()
 
 
 ## Лавке нужен склад (3.9): «Товар со склада · 40 м» или «Нет склада рядом — товар не идёт» и «Показать склад»
@@ -5880,7 +5787,7 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 			var o: Dictionary = c.buildings[id]
 			if not nms.has(String(c.def(o)["name"])):
 				nms.append(String(c.def(o)["name"]))
-			back += float(c.def(o)["cost"]) * Defs.REFUND
+			back += c.refund_price(o)
 		var db := Button.new()
 		db.focus_mode = Control.FOCUS_NONE
 		db.text = "Снести мешающее: %s (вернётся %s ден.)" % [", ".join(nms.map(func(x): return "«%s»" % x)), fmt(int(back))]
@@ -8778,11 +8685,10 @@ func find_hero() -> void:
 func hero_note() -> String:
 	var c: City = game.city
 	var f := Hero.female(c)
-	var t := "%s живёт в городе: гуляет по улицам, заглядывает в лавки, на площади и к зданиям Легиона, а ночует в Казармах (пока их нет — на почтовой станции). %s отличишь издали: лавровый венок и плащ.\n\nНайти героя — медальон с %s лицом сверху справа. Щёлкните по %s на улице — откроется карточка героя: «Следовать», «Гардероб» (новые плащи, цвета и венки открывают рост города, Легион и истории) и «Изменить» — имя и облик." % [
+	var t := "%s живёт в городе: гуляет по улицам, заглядывает в лавки и на площади, а ночует в городе. %s отличишь издали: лавровый венок и плащ. Найти героя — медальон с %s лицом сверху справа. Щёлкните по %s на улице: «Следовать», «Гардероб» и «Изменить». Новые вещи открывают рост города и истории." % [
 		"Ваша римлянка" if f else "Ваш римлянин", "Её" if f else "Его", "её" if f else "его", "ней" if f else "нему"]
 	if not bool(c.hero.get("made", false)):
 		t += " Своего героя можно создать там же — «Изменить»."
-	t += "\n\nКогда соберёте Легион, герой первым пойдёт в бой — на своём месте в отряде, со снаряжением со Склада оружия."
 	return t
 
 
@@ -8991,6 +8897,8 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		if type == "center":
 			continue
 		var d: Dictionary = Defs.B[type]
+		if bool(d.get("hidden", false)):
+			continue
 		var tier := 2 if d["kind"] == "house" else 0
 		col = (col + 3) % Defs.PALETTE.size()
 		# у украшений облик задаёт тип (Catalog.make сам берёт их постоянный цвет) — картинка как поставленное

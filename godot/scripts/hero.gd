@@ -39,12 +39,12 @@ const ITEMS := {
 		{"v": "26211f", "n": "Чёрный плащ — в честь кошки", "need": {"story": "cat"}},
 		{"v": "3f7f86", "n": "Плащ цвета моря", "need": {"story": "leak"}},
 		{"v": "d9a93e", "n": "Шафрановый плащ", "need": {"rank": 3}},
-		{"v": "b0202e", "n": "Алый плащ центуриона", "need": {"legion": "boss1"}},
-		{"v": "efe9dc", "n": "Белый плащ триумфатора", "need": {"legion": "boss3"}},
+		{"v": "b0202e", "n": "Алый плащ центуриона", "need": {"rank": 2}},
+		{"v": "efe9dc", "n": "Белый плащ триумфатора", "need": {"rank": 4}},
 		{"v": "5e2350", "n": "Пурпурный плащ", "need": {"rank": 5}},
 		{"v": "c99a2e", "n": "Золотой плащ", "need": {"rank": 6}},
-		{"v": "7d1820", "n": "Багряный плащ центуриона арены", "need": {"arena": 4}},
-		{"v": "2a1f4a", "n": "Плащ легата арены, ночной пурпур", "need": {"arena": 5}}],
+		{"v": "7d1820", "n": "Багряный плащ центуриона арены", "need": {"rank": 6}},
+		{"v": "2a1f4a", "n": "Плащ легата арены, ночной пурпур", "need": {"rank": 7}}],
 	"main": [
 		{"v": "a3283a", "n": "Кермес"}, {"v": "b4432f", "n": "Марена"}, {"v": "c49a4a", "n": "Охра"}, {"v": "d9a93e", "n": "Шафран"},
 		{"v": "4d7397", "n": "Вайда"}, {"v": "7fa3be", "n": "Небесный"}, {"v": "6f8a4e", "n": "Мирт"}, {"v": "7a5f45", "n": "Бурая шерсть"},
@@ -58,9 +58,9 @@ const ITEMS := {
 		{"v": "6e2a5a", "n": "Пурпурная тога триумфатора", "need": {"rank": 6}}],
 	"trim": [
 		{"v": "c49a4a", "n": "Охра"}, {"v": "a9503a", "n": "Марена"}, {"v": "5f7c96", "n": "Вайда"}, {"v": "7a5f45", "n": "Бурая"}, {"v": "d8ccb0", "n": "Светлая"},
-		{"v": "d4a548", "n": "Золотая кайма", "need": {"rank": 4, "shop": "tailor"}}, {"v": "a82c3c", "n": "Кермесовая кайма", "need": {"legion": "boss1"}},
+		{"v": "d4a548", "n": "Золотая кайма", "need": {"rank": 4, "shop": "tailor"}}, {"v": "a82c3c", "n": "Кермесовая кайма", "need": {"rank": 2}},
 		{"v": "6e2a5a", "n": "Пурпурная кайма", "need": {"rank": 5}}],
-	"crown": [{"v": 1, "n": "Лавровый венок"}, {"v": 2, "n": "Венок победителя", "need": {"story": "bandits", "legion": "boss1"}}],
+	"crown": [{"v": 1, "n": "Лавровый венок"}, {"v": 2, "n": "Венок победителя", "need": {"rank": 2}}],
 	"hc": [{"v": "A", "n": "Каштановые"}, {"v": "B", "n": "Тёмные"}, {"v": "C", "n": "Светлые"}, {"v": "S", "n": "Седина мудреца", "need": {"rank": 4}}],
 	"mdl": [
 		{"v": "SK_Chr_Upperclass_Male_01", "n": "Тога"}, {"v": "SK_Chr_Worker_Male_01", "n": "Туника"}, {"v": "SK_Chr_Farmer_Male_01", "n": "Туника с подолом"},
@@ -257,22 +257,7 @@ static func open(c: City, need: Dictionary) -> bool:
 				for id in c.buildings:
 					if String(c.buildings[id]["type"]) == String(need[k]):
 						return true
-			"legion":
-				var lg: Legion = c.legion
-				match String(need[k]):
-					"barracks":
-						if lg.count_type("barracks") > 0:
-							return true
-					"boss1":
-						if lg.bosses() >= 1:
-							return true
-					"boss3":
-						if lg.bosses() >= 3:
-							return true
-			"arena":
-				# лучшая лига арены за все сезоны (LegionNet.apply_prize)
-				if int(c.legion.flags.get("arena", -1)) >= int(need[k]):
-					return true
+
 	return false
 
 

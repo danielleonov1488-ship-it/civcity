@@ -95,7 +95,7 @@ func fit_window() -> void:
 
 func state_key() -> String:
 	var c: City = hud.game.city
-	return str([c.level, int(c.rp), c.econ, c.research, c.tips.get("seen_r", {}), only_available.button_pressed, current_rank])
+	return str([c.level, int(c.rp), c.econ, c.cozy_v, c.legion_v, c.research, c.tips.get("seen_r", {}), only_available.button_pressed, current_rank])
 
 
 func refresh() -> void:
@@ -415,7 +415,7 @@ func _update_card(b: Button, r: Dictionary) -> void:
 	var parent_locked: bool = r.has("after") and not c.research.has(r["after"])
 	var locked: bool = not done and (Defs.story_of(r) != "" or int(r["lvl"]) > c.level or parent_locked)
 	b.set_meta("state", "done" if done else ("available" if available else ("locked" if locked else "points")))
-	b.visible = not only_available.button_pressed or available
+	b.visible = c.research_visible(id) and (not only_available.button_pressed or available)
 	b.tooltip_text = tooltip(r)
 	var img := b.get_node("Picture") as TextureRect
 	_update_picture(img, r)

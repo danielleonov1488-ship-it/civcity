@@ -7,7 +7,6 @@ extends Control
 ##   «Войска»   — отряд (места по порядку, выбор бойца), 8 зданий Легиона (Д10): уровень (или «в запасе»), что дают,
 ##                идущее улучшение; «На карте» — к зданию и его карточке (улучшения — там); умения в бою (за Славу);
 ##   «Против городов» — рейтинг побед, заряды атак, отряд обороны, соперники с сервера (или «скоро»), летопись боёв;
-##   «Чудеса»   — 8 чудес: картинка, бонус, нужный рейтинг, цена в денариях и Славе, «Поставить в городе» / «Возвести»;
 ##                Триумф за Славу.
 ## Медальон «Легион» сверху справа появляется, когда изучен «Легион». Правила и числа — Legion (legion.gd), бой — LegionSim.
 ## Подключение в hud.gd: LegionUi.attach(self) в _ready; LegionUi.close_for(self) в _close_windows и close_panels.
@@ -196,27 +195,12 @@ func _update_button() -> void:
 		if lg.v3():
 			btn.tooltip_text = "Легион"
 			return
-		# Первый совет один раз ведёт к кнопке «Легион», откуда открывается форт. Только когда окно
-		# исследований закрыто и советник свободен: Esc, правая кнопка и щелчок по карте закрывают окно вместе
-		# с советником — совет погас бы, не показавшись (окно закрыли — hud зовёт эту проверку через кадр)
-		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"] and lg.tut_step() == "barracks" \
-				and not hud.tutorial_busy() and hud._tip_free() and not hud.research_panel.visible and _cine_free():
-			lg.flags["advised"] = true
-			# Легион открыт, а готового нет — его строят (решение владельца Д13): не «Легион собран!», пока нет Казарм
-			hud.advisor(StoryDefs.ADV_LEGION, "Готового Легиона нет — его строите вы сами. Откройте «Легион» сверху справа. Казармы и другие военные здания строятся только внутри форта; Казармы дают легионеров. Потом — Стрельбище для лучников, Кузница, Лазарет и Склад оружия; каждое здание растёт уровнями — «Улучшить» в его карточке.\n\nПоходы, бои с другими городами и чудеса света — в медальоне «Легион» сверху справа. Отряд дерётся сам; ваше — состав и умения в нужный миг.",
-				func(): lg.tut_skip())
-		# советы о зданиях (Д10) — как разовые советы города: игра загружена, советник свободен, не идёт обучение города
-		# и ролики (ранг: город вырос — сначала ролик и «Город стал…», потом этот совет — при следующем обновлении города)
-		elif game.ready_done and hud._tip_free() and not visible and not hud.research_panel.visible and hud._screen_free() and _cine_free():
-			_d10_tips()
+
 
 
 ## Старые советы Легиона имеют приоритет перед магистратурами.
 func advice_pending() -> bool:
-	if lg == null or lg.v3() or not lg.window_open():
-		return false
-	return (not lg.flags.has("advised") and not lg.flags.has("seen") and lg.tut_step() == "barracks") \
-		or lg.flags.has("d10_new") or (lg.pvp_hero() and lg.pvp_open() and not lg.flags.has("tip_hero_pvp"))
+	return false  # Военное обучение не занимает советника города.
 
 
 ## Не идёт и не ждёт ролик «Новый ранг» и ролик истории горожан
@@ -231,33 +215,7 @@ func _cine_free() -> bool:
 ## Советник о зданиях Легиона (Д10) — по разу: старое сохранение (уровни войск стали уровнями зданий, что ждёт «в запасе»);
 ## открылось новое здание (Кузница — с «Деревни», Лазарет — с «Посёлка», Склад оружия — с «Городка»)
 func _d10_tips() -> void:
-	var c: City = game.city
-	if lg.flags.has("d10_new"):
-		lg.flags.erase("d10_new")
-		var res := []
-		for bt: String in Legion.BUILDING_IDS:
-			if lg.b_reserve(bt) > 0 and c.unlocked(bt):
-				res.append("%s — %d уровень" % [Defs.B[bt]["name"], lg.b_reserve(bt)])
-		var txt := "Здания Легиона теперь растут прямо в городе: щёлкните Казармы на карте — в карточке видно их уровень, что они дают, и кнопка «Улучшить». С каждым уровнем здание меняется: знамёна, пристройки, статуи. Ваши уровни войск перенесены в здания."
-		if not res.is_empty():
-			txt += "\n\nЕщё не построены, но уровень ждёт «в запасе»: %s. Поставьте их (раздел «Легион» на нижней полосе) — и они сразу будут этого уровня." % ", ".join(res)
-		txt += "\n\nНовые здания — Кузница, Лазарет и Склад оружия — открываются с ростом города. Лучшее место для них — военный квартал у арки."
-		for bt: String in Legion.SUPPORT:
-			if c.unlocked(bt):
-				lg.flags["new_" + bt] = true    # об уже открытых сказано здесь — отдельных советов не будет
-		hud.advisor("Здания Легиона", txt)
-		return
-	# «Новое здание Легиона…» всплывашкой больше нет (отзыв 14.11): хватает значка «НОВОЕ» на карточке — флаг ставим молча
-	for bt: String in Legion.SUPPORT:
-		if c.unlocked(bt) and not lg.flags.has("new_" + bt):
-			lg.flags["new_" + bt] = true
-	# герой и в боях с городами (сервер боёв его знает) — сказать один раз, когда бои с городами открыты
-	if lg.pvp_hero() and lg.pvp_open() and not lg.flags.has("tip_hero_pvp"):
-		lg.flags["tip_hero_pvp"] = true
-		lg.hero_pvp_check()
-		var pf := "первой" if Hero.female(c) else "первым"
-		var mv := " Боец, который раньше стоял на этом месте в боях с городами, перешёл на другое место отряда." if str(lg.flags.get("hero_pvp_fix", "")) == "moved" else ""
-		hud.advisor("Герой в боях с городами", "%s теперь сражается и в боях с другими городами: идёт %s в отряде нападения и стоит %s в отряде обороны — как в походах.%s Уровень героя растёт с Казармами и городом, снаряжение — со Складом оружия.\n\nУ соперников тоже бывают свои герои — их видно по имени над головой." % [Hero.name_of(c), pf, pf, mv])
+	pass  # Старые городские военные советы отключены.
 
 
 func toggle() -> void:
@@ -332,8 +290,6 @@ func _sig() -> String:
 		a.append(lg.can_upgrade(t))
 	for id in Legion.perk_ids():
 		a.append(lg.can_upgrade_perk(id))
-	for w: Dictionary in Legion.WONDERS:
-		a.append(lg.can_build_wonder(String(w["id"])))
 	a.append(lg.can_triumph())
 	if lg.army_on():
 		a.append(lg.soldiers.size())
@@ -454,7 +410,7 @@ func _make_window() -> void:
 	var left := HBoxContainer.new()
 	left.custom_minimum_size = Vector2(360, 0)
 	left.add_theme_constant_override("separation", 8)
-	var g := _chip_val(_ic39("glory"), "0", "Слава: даётся за победы. Тратится на умения, высокие уровни бойцов, чудеса света и Триумф")
+	var g := _chip_val(_ic39("glory"), "0", "Слава: даётся за победы. Тратится на умения, высокие уровни бойцов и Триумф")
 	lbl_glory = g[1]
 	left.add_child(g[0])
 	var m := _chip_val(hud.ico("coins", 64), "0", "Денарии в казне города: на них улучшают бойцов и собирают провиант в поход")
@@ -478,7 +434,7 @@ func _make_window() -> void:
 	right.custom_minimum_size = Vector2(360, 0)
 	right.alignment = BoxContainer.ALIGNMENT_END
 	right.add_theme_constant_override("separation", 8)
-	var r := _chip_val(_ic39("rating"), "0", "Рейтинг походов: растёт с каждой новой победой и не тратится. Открывает чудеса света")
+	var r := _chip_val(_ic39("rating"), "0", "Рейтинг походов: растёт с каждой новой победой и не тратится")
 	lbl_rating = r[1]
 	right.add_child(r[0])
 	var close_b := Kit.close_button()
@@ -492,7 +448,7 @@ func _make_window() -> void:
 	tb.alignment = BoxContainer.ALIGNMENT_CENTER
 	tb.add_theme_constant_override("separation", 10)
 	for d: Array in [["campaign", "Походы", _ic39("map")], ["troops", "Войска", _ic39("battle")], ["soldiers", "Воины", _ic39("barracks")],
-			["pvp", "Против городов", _ic39("attack")], ["events", "События", hud.ico("laurels", 64)], ["wonders", "Чудеса", hud.ico("special", 64)]]:
+			["pvp", "Против городов", _ic39("attack")], ["events", "События", hud.ico("laurels", 64)]]:
 		var id: String = d[0]
 		var b := _tab_btn(String(d[1]), d[2])
 		b.pressed.connect(func(): _select_tab(id))
@@ -548,10 +504,10 @@ func _tab_btn(text: String, icon: Texture2D) -> Button:
 
 
 func _select_tab(id: String) -> void:
-	tab = id
+	tab = id if tabs.has(id) else "campaign"
 	for k in tabs:
 		var b: Button = tabs[k]
-		var on: bool = k == id
+		var on: bool = k == tab
 		b.add_theme_stylebox_override("normal", Kit.box("panels/tab_on" if on else "panels/tab_off", 28, 8))
 		b.add_theme_stylebox_override("hover", Kit.box("panels/tab_on", 28, 8))
 	if id == "pvp" and _pvp_state != "loading":
@@ -705,8 +661,6 @@ func _rebuild() -> void:
 			body = _build_pvp()
 		"events":
 			body = _build_events()
-		"wonders":
-			body = _build_wonders()
 		_:
 			body = _build_campaign()
 	body.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -724,7 +678,7 @@ func _rebuild() -> void:
 
 const TUT_TEXT := {
 	"barracks": "Откройте «Легион»: Казармы и другие военные здания строятся внутри форта.",
-	"medal": "Откройте медальон «Легион» сверху справа: походы, войска и чудеса.",
+	"medal": "Откройте медальон «Легион» сверху справа: походы и войска.",
 	"fight": "Первый бой — учебный. Отряд дерётся сам, но в нужный миг нужна ваша команда.",
 	"troops": "Бойцы растут вместе с Казармами — по часам, даже когда игра закрыта. Казармы в форте → «Улучшить».",
 }
@@ -952,11 +906,6 @@ func _perk_tex(id: String) -> Texture2D:
 	return t if t != null else hud.ico(String(PERK_ALT.get(id, "swords")), 64)
 
 
-func _wonder_tex(id: String) -> Texture2D:
-	var t := _art("wonder", id)
-	return t if t != null else hud.ico("special", 128)
-
-
 ## Есть ли у портрета своя бронзовая рамка (картинки владельца) — тогда без медальона
 func _framed(kind: String, id: String) -> bool:
 	return _art(kind, id) != null
@@ -985,7 +934,7 @@ func _portrait(kind: String, id: String, sz: float, grey := false) -> Control:
 		"perk":
 			tex = _perk_tex(id)
 		_:
-			tex = _wonder_tex(id)
+			tex = hud.ico("special", 128)
 	if _framed(kind, id) or kind == "perk":
 		return _tr(tex, sz, grey)
 	var p := Panel.new()
@@ -1132,10 +1081,6 @@ func _do(what: String, id: String) -> void:
 			ok = lg.triumph()
 			if not ok:
 				_say(lg.can_triumph())
-		"wonder":
-			ok = lg.build_wonder(id)
-			if not ok:
-				_say(lg.can_build_wonder(id))
 		"recruit":
 			var why := lg.can_recruit(int(id))
 			ok = lg.recruit(int(id))
@@ -2214,6 +2159,7 @@ func _set_slot(which: String, i: int, t: String) -> void:
 
 func _build_troops() -> Control:
 	var v := VBoxContainer.new()
+	v.add_child(_triumph_card())
 	v.add_theme_constant_override("separation", 8)
 	v.add_child(_squad_panel("campaign"))
 	# здания Легиона на карте (Д10): уровень, что дают, идущее улучшение; «На карте» — к зданию и его карточке
@@ -3342,7 +3288,7 @@ func _opponents() -> Control:
 		tv.add_theme_constant_override("separation", 6)
 		tv.add_child(_title("Бои с городами — скоро", 26))
 		tv.add_child(_wl("Здесь ваш легион сможет нападать на отряды обороны других игроков сайта. Отряд дерётся сам, как в походе. Победа поднимает рейтинг побед и приносит денарии и Славу — ни у кого ничего не отнимается.", 540, 16, C_INK))
-		tv.add_child(_wl("Уже сейчас соберите отряд обороны слева: его увидят те, кто нападёт на ваш город. Рейтинг побед открывает старшие чудеса света.", 540, 15, C_SOFT))
+		tv.add_child(_wl("Соберите отряд обороны слева: его увидят те, кто нападёт на ваш город.", 540, 15, C_SOFT))
 		var n = _net()
 		if n != null and n.has_method("signed_in") and not bool(n.signed_in()):
 			tv.add_child(_wl("Чтобы сражаться с другими городами, войдите в аккаунт (Меню → Настройки).", 540, 15, C_BAD, true))
@@ -3523,21 +3469,8 @@ func _ago(t: float) -> String:
 	return Legion.fmt_duration(s) + " назад"
 
 
-# =====================================================================
-#   «Чудеса»
-# =====================================================================
-
-func _build_wonders() -> Control:
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 8)
-	var top := HBoxContainer.new()
-	top.add_theme_constant_override("separation", 10)
-	top.add_child(_chip_val(_ic39("map"), "Рейтинг походов: %s" % hud.fmt(lg.rating), "Растёт с новыми победами в походах. Открывает Арку, Амфитеатр и Пантеон", 17)[0])
-	top.add_child(_chip_val(_ic39("attack"), "Рейтинг побед: %s" % hud.fmt(lg.pvp_rating), "Растёт с победами над другими городами. Открывает старшие чудеса", 17)[0])
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top.add_child(sp)
-	# Триумф
+## Праздник форта остаётся во вкладке войск.
+func _triumph_card() -> Control:
 	var tri: PanelContainer = hud._chip(false, 10)
 	var th := HBoxContainer.new()
 	th.add_theme_constant_override("separation", 8)
@@ -3547,9 +3480,9 @@ func _build_wonders() -> Control:
 	tv.add_child(_l("Триумф", 17, true))
 	if lg.triumph_left > 0:
 		var days := ceili(lg.triumph_left / 24.0)
-		tv.add_child(_l("город празднует ещё %d %s: счастье +%d%%" % [days, Hud._plural(days, "день", "дня", "дней"), int(Legion.TRIUMPH["happy"])], 13, true, C_GOOD))
+		tv.add_child(_l("форт празднует ещё %d %s" % [days, Hud._plural(days, "день", "дня", "дней")], 13, true, C_GOOD))
 	else:
-		tv.add_child(_l("праздник на %d дня: счастье всех домов +%d%%" % [int(Legion.TRIUMPH["hours"]) / 24, int(Legion.TRIUMPH["happy"])], 13, true, C_SOFT))
+		tv.add_child(_l("праздник Легиона на %d дня" % (int(Legion.TRIUMPH["hours"]) / 24), 13, true, C_SOFT))
 	th.add_child(tv)
 	if lg.triumph_left <= 0:
 		var why := lg.can_triumph()
@@ -3558,95 +3491,7 @@ func _build_wonders() -> Control:
 		tb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		th.add_child(tb)
 	tri.add_child(th)
-	top.add_child(tri)
-	v.add_child(top)
-	var g := GridContainer.new()
-	g.columns = 4
-	g.add_theme_constant_override("h_separation", 10)
-	g.add_theme_constant_override("v_separation", 10)
-	for w: Dictionary in Legion.WONDERS:
-		g.add_child(_wonder_card(w))
-	v.add_child(g)
-	return v
-
-
-func _wonder_card(w: Dictionary) -> Control:
-	var id: String = w["id"]
-	var state := lg.wonder_state(id)
-	var p := _bar_panel(4)
-	p.custom_minimum_size = Vector2(277, 0)
-	p.tooltip_text = "%s\n%s" % [Legion.wonder_name(w), w["bonus"]]
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 1)
-	p.add_child(v)
-	var ph := Control.new()
-	ph.custom_minimum_size = Vector2(250, 118)
-	ph.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	ph.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var pic := _tr(_wonder_tex(id), 118, state == "locked")
-	pic.set_anchors_preset(Control.PRESET_FULL_RECT)
-	ph.add_child(pic)
-	if state == "built":
-		var ck := _tr(hud.ico("check", 64), 32)
-		ck.position = Vector2(176, 82)
-		ck.size = Vector2(32, 32)
-		ph.add_child(ck)
-	elif state == "locked":
-		var lk := _tr(hud.ico("lock", 64), 28)
-		lk.position = Vector2(178, 86)
-		lk.size = Vector2(28, 28)
-		ph.add_child(lk)
-	v.add_child(ph)
-	var nm := _wl(Legion.wonder_name(w), 266, 17, C_INK, false, true)
-	nm.add_theme_font_override("font", hud.font_title)
-	v.add_child(nm)
-	var bonus := _wl(String(w["bonus"]), 266, 13, C_SOFT, true, true)
-	bonus.custom_minimum_size.y = 34
-	v.add_child(bonus)
-	var fill := Control.new()
-	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	v.add_child(fill)
-	var pvp := bool(w.get("pvp", false))
-	var need := int(w["rating"])
-	var have := lg.wonder_rating_now(w)
-	var cost := lg.wonder_cost(id)
-	if state == "built":
-		var bl := _l("Построено — бонус действует", 15, true, C_GOOD)
-		bl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		v.add_child(bl)
-		return p
-	if state == "locked":
-		# закрыто рейтингом: сколько ещё набрать и сколько будет стоить
-		var rl := _l("Рейтинг %s: %s из %s" % ["побед" if pvp else "походов", hud.fmt(have), hud.fmt(need)], 13, true, C_INK)
-		rl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		rl.tooltip_text = "Чудо откроется, когда рейтинг %s дойдёт до %s" % ["побед над городами" if pvp else "походов", hud.fmt(need)]
-		rl.mouse_filter = Control.MOUSE_FILTER_PASS
-		v.add_child(rl)
-		var bar := _bar(220, clampf(float(have) / maxf(1.0, need), 0.0, 1.0))
-		bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		v.add_child(bar)
-		var ch := HBoxContainer.new()
-		ch.alignment = BoxContainer.ALIGNMENT_CENTER
-		ch.add_theme_constant_override("separation", 4)
-		ch.add_child(_l("цена:", 13, true, C_SOFT))
-		ch.add_child(_cost_row(cost, 14))
-		v.add_child(ch)
-		return p
-	var cr := _cost_row(cost, 15)
-	cr.alignment = BoxContainer.ALIGNMENT_CENTER
-	v.add_child(cr)
-	var why := lg.can_build_wonder(id)
-	var b: Button
-	if w.has("building"):
-		var bt: String = w["building"]
-		b = _btn("Поставить в городе", 230, 16, hud.ico("hammer", 64), why, func(): close(); hud.select_build(bt))
-		if why == "":
-			b.tooltip_text = "Окно закроется — выберите место в городе. Слава спишется, когда поставите"
-	else:
-		b = _btn("Возвести", 230, 16, hud.ico("hammer", 64), why, func(): _do("wonder", id))
-	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	v.add_child(b)
-	return p
+	return tri
 
 
 # =====================================================================

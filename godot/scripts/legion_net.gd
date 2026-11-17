@@ -440,18 +440,13 @@ static func apply_prize(g, pz: Dictionary) -> void:
 	var lg: Legion = c.legion
 	var money := float(pz.get("money", 0))
 	var glory := float(pz.get("glory", 0))
-	c.money += money
-	c.flow("reward", money)
-	lg.glory += glory
+	lg._give({"money": money, "glory": glory})
 	var li := int(pz.get("league", 0))
 	lg.flags["arena"] = maxi(int(lg.flags.get("arena", -1)), li)
 	var place := int(pz.get("place", 0))
 	var txt := "Сезон арены %d: лига «%s» — +%s ден. и +%d Славы" % [int(pz.get("season", 0)), String(pz.get("name", "")), str(int(money)), int(glory)]
 	if place > 0:
 		txt += ". Ваш город — %d-й среди всех: венок сезона!" % place
-		Chronicle.add(c, "arena_wreath")
-	if li >= 4:
-		txt += " Новый плащ героя — в гардеробе."
 	c._quiet(txt, "laurels")
 	if g.hud != null:
 		g.hud.notify(txt, "laurels")

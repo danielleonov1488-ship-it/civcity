@@ -15,7 +15,7 @@ extends RefCounted
 
 const MIL := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill",
 	"tannery", "principia", "mars"]
-const GRAND := ["center", "colosseum", "circus_fl", "theatre", "odeon", "pantheon", "venus", "arch", "fountain", "pharos", "nymphaeum", "aqua"]
+const GRAND := ["center", "colosseum", "circus_fl", "theatre", "odeon", "pantheon", "venus", "arch", "fountain", "pharos", "nymphaeum", "aqua", "trajan"]
 ## Выключатель для проверок «было/стало» (вместе с CatDressCivic.ON)
 static var ON := true
 
@@ -25,6 +25,8 @@ static func handles(type: String) -> bool:
 
 
 static func dress(b: Bp, type: String, tier := 0) -> void:
+	if type == "trajan":
+		return                                 # вся новая сборка уже сделана в Catalog.make
 	var x := CatDressCivic._ctx(b, type)
 	if type in MIL:
 		(x["rng"] as RandomNumberGenerator).seed = hash(["mil", type])      # одно и то же на всех уровнях здания
@@ -500,6 +502,45 @@ static func _arch(x: Dictionary) -> void:
 	var lot: Rect2 = x["lot"]
 	for sd: float in [-1.0, 1.0]:
 		CatDressCivic._group(x, CatDressCivic._bloom(x, 0.45), Vector3(sd * (lot.size.x * 0.5 - 0.3), 0, lot.get_center().y), 0.0, Vector3(0, 0, 0.3))
+
+
+## Колонна Траяна: вся сборка из Synty, площадь ровно 6 × 6 м после Catalog.ARCH.
+## Растягиваем детали по их настоящим габаритам: ступени соприкасаются, у статуи родные пропорции.
+static func _trajan_piece(b: Bp, nm: String, p: Vector3, size: Vector3, rm := {}, yaw := 0.0) -> float:
+	var box := Bp.model_aabb(nm)
+	var sy := size.y / maxf(0.001, box.size.y)
+	var scale := Vector3(size.x / maxf(0.001, box.size.x), sy, size.z / maxf(0.001, box.size.z)) if size.x > 0.0 else Vector3.ONE * sy
+	var basis := Basis(Vector3.UP, yaw) * Basis.from_scale(scale)
+	var center := Vector3(box.get_center().x, box.position.y, box.get_center().z)
+	b.parts.append([nm, b.base * Transform3D(basis, p - basis * center), rm])
+	return p.y + size.y
+
+
+static func _trajan(x: Dictionary) -> void:
+	var b: Bp = x["b"]
+	var marble := {"Stone_01": "Building_Marble_02", "Stucco_Blue_01": "Building_Marble_02"}
+	var tile := 6.0 / Catalog.ARCH / 3.0
+	# Невысокая мощёная площадь, три широкие ступени и квадратный пьедестал.
+	for ix in 3:
+		for iz in 3:
+			_trajan_piece(b, "SM_Bld_Base_Floor_01", Vector3((ix - 1) * tile, -0.04, (iz - 1) * tile), Vector3(tile, 0.14, tile), marble)
+	var top := 0.10
+	for width: float in [5.4, 4.8, 4.2]:
+		top = _trajan_piece(b, "SM_Bld_Base_Floor_01", Vector3(0, top, 0), Vector3(width, 0.22, width), marble)
+	top = _trajan_piece(b, "SM_Bld_Base_Pillar_03", Vector3(0, top, 0), Vector3(2.0, 1.35, 2.0), marble)
+	# Три мраморных барабана с рельефом и тонкими поясами между ними.
+	for i in 3:
+		top = _trajan_piece(b, "SM_Bld_Pillar_Monument_01" if i != 1 else "SM_Bld_Pillar_Monument_02",
+			Vector3(0, top - 0.03, 0), Vector3(1.45, 4.6, 1.45), marble, i * PI / 2.0)
+		top = _trajan_piece(b, "SM_Bld_Pillar_Monument_Trim_01", Vector3(0, top - 0.03, 0), Vector3(1.65, 0.22, 1.65), marble)
+	if Synty.has("SM_Prop_Statue_02"):
+		_trajan_piece(b, "SM_Prop_Statue_02", Vector3(0, top, 0), Vector3(0, 2.2, 0))
+	# Две жаровни у передних углов, две скамьи сзади. Вход посредине свободен.
+	for side: float in [-1.0, 1.0]:
+		b.brazier(Vector3(side * 3.25, 0.10, 3.25))
+		var bench := _stand("SM_Prop_Seat_Bench_03", 0.75, PI, Vector3(side * 2.5, 0.10, -3.3))
+		b.parts.append([bench[0], b.base * (bench[1] as Transform3D), {}])
+	b.door = Vector3(0, 0.10, 4.15)
 
 
 ## Фонтан: вазы с цветами у задних углов чаши

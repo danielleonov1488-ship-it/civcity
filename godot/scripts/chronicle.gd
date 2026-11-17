@@ -13,7 +13,7 @@ const ROWS := [
 	["people", "Горожан поселилось", "family"], ["fams", "Семей приехало", "housing"], ["peak", "Больше всего жителей разом", "person"],
 	["built", "Построено зданий", "hammer"], ["decor", "Поставлено украшений", "flower"], ["floors", "Надстроено этажей", "brick"],
 	["upg", "Перестроено домов", "housing"], ["paved", "Вымощено улиц, м²", "road"], ["research", "Изучено", "research"],
-	["stories", "Пройдено историй горожан", "scroll"], ["wins", "Побед Легиона", "swords"], ["fests", "Игр в честь богов", "laurels"],
+	["stories", "Пройдено историй горожан", "scroll"], ["fests", "Игр в честь богов", "laurels"],
 	["plots", "Куплено участков", "keys"], ["cats", "Кошек в городе", "cat"], ["days", "Дней городу", "time"],
 ]
 
@@ -38,8 +38,8 @@ const BADGES := [
 	{"id": "res40", "name": "Мудрость веков", "text": "изучено 40 исследований", "k": "research", "n": 40},
 	{"id": "story1", "name": "Добрый градоначальник", "text": "пройдена первая история горожан", "k": "stories", "n": 1},
 	{"id": "story6", "name": "Летописец", "text": "пройдено шесть историй горожан", "k": "stories", "n": 6},
-	{"id": "win1", "name": "Первая победа", "text": "Легион выиграл первый бой", "k": "wins", "n": 1},
-	{"id": "win10", "name": "Триумфатор", "text": "Легион выиграл десять боёв", "k": "wins", "n": 10},
+	{"id": "win1", "disabled": true, "name": "Первая победа", "text": "Легион выиграл первый бой", "k": "wins", "n": 1},
+	{"id": "win10", "disabled": true, "name": "Триумфатор", "text": "Легион выиграл десять боёв", "k": "wins", "n": 10},
 	{"id": "fest1", "name": "Хлеба и зрелищ", "text": "устроены первые игры в честь богов", "k": "fests", "n": 1},
 	{"id": "fest5", "name": "Любимец богов", "text": "пять раз устроены игры в честь богов", "k": "fests", "n": 5},
 	{"id": "plot1", "name": "Землевладелец", "text": "куплен первый участок земли", "k": "plots", "n": 1},
@@ -104,7 +104,7 @@ static func value(c: City, k: String) -> int:
 		"stories":
 			return (c.stories.get("done", {}) as Dictionary).size()
 		"wins":
-			return c.legion.wins + c.legion.pvp_wins
+			return 0  # Военные победы остаются в Легионе.
 		"plots":
 			return c.plots_bought
 		"happy":
@@ -125,7 +125,7 @@ static func check(c: City) -> Array:
 	var got: Dictionary = c.chron["b"]
 	var out := []
 	for b: Dictionary in BADGES:
-		if got.has(b["id"]) or value(c, String(b["k"])) < int(b["n"]):
+		if bool(b.get("disabled", false)) or got.has(b["id"]) or value(c, String(b["k"])) < int(b["n"]):
 			continue
 		got[b["id"]] = c.day
 		out.append(b["id"])
@@ -163,7 +163,7 @@ static func migrate(c: City) -> void:
 	cc["peak"] = int(c.stats.get("pop", 0))
 	var n := 0
 	for b: Dictionary in BADGES:
-		if value(c, String(b["k"])) >= int(b["n"]):
+		if not bool(b.get("disabled", false)) and value(c, String(b["k"])) >= int(b["n"]):
 			c.chron["b"][b["id"]] = c.day
 			n += 1
 	if n > 0:
@@ -190,7 +190,7 @@ static func fill(hud, list: VBoxContainer) -> void:
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 8)
 	head.add_child(hud._icon("laurels", 30, hud.C_GOLD))
-	head.add_child(hud._label("Лавровые венки: %d из %d" % [count(c), BADGES.size()], 20, false, hud.C_INK, hud.font_title))
+	head.add_child(hud._label("Лавровые венки: %d из %d" % [count(c), BADGES.filter(func(b): return not bool(b.get("disabled", false)) or (c.chron.get("b", {}) as Dictionary).has(b["id"])).size()], 20, false, hud.C_INK, hud.font_title))
 	list.add_child(head)
 	var grid := GridContainer.new()
 	grid.columns = 2
@@ -216,7 +216,7 @@ static func fill(hud, list: VBoxContainer) -> void:
 	# заслуженные — сначала (самые новые сверху), потом остальные по порядку
 	var order: Array = BADGES.filter(func(b): return got.has(b["id"]))
 	order.sort_custom(func(a, b): return int(got[a["id"]]) > int(got[b["id"]]))
-	order.append_array(BADGES.filter(func(b): return not got.has(b["id"])))
+	order.append_array(BADGES.filter(func(b): return not bool(b.get("disabled", false)) and not got.has(b["id"])))
 	for b: Dictionary in order:
 		bg.add_child(_badge_row(hud, c, b, got))
 	list.add_child(bg)

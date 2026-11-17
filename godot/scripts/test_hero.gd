@@ -486,8 +486,8 @@ func _card_test() -> void:
 	game.select_person({"r": ppl.hero_r})
 	await frames(10)
 	var txt := _texts(hud.info_box)
-	check(txt.contains("Гай Валерий") and txt.contains("Герой города") and txt.contains("Гардероб") and txt.contains("Снаряжение"),
-		"карточка героя: имя, «Герой города», снаряжение, гардероб")
+	check(txt.contains("Гай Валерий") and txt.contains("Герой города") and txt.contains("Гардероб"),
+		"карточка героя: имя, «Герой города», гардероб")
 	PersonCard.edit = true
 	hud._fill_info()
 	await frames(20)
@@ -504,6 +504,7 @@ func _card_test() -> void:
 		es.scroll_vertical = int(vb.max_value - vb.page)
 		await frames(2)
 		var want := es.scroll_vertical
+		check(want > 0 or vb.max_value <= vb.page + 1.0, "гардероб либо прокручивается, либо целиком помещается")
 		hud.refresh()
 		await frames(2)
 		check(is_instance_valid(es) and hud.info_box.find_child("editor_scroll", true, false) == es and es.scroll_vertical == want,
@@ -517,7 +518,7 @@ func _card_test() -> void:
 		hud._fill_info()                           # как после щелчка по цвету: карточку пересобрали
 		await frames(3)
 		var e2: ScrollContainer = hud.info_box.find_child("editor_scroll", true, false)
-		check(want > 0 and int(seen[0]) == want and e2 != null and e2.scroll_vertical == want and float(seen[1]) > 100.0,
+		check(want >= 0 and int(seen[0]) == want and e2 != null and e2.scroll_vertical == want and float(seen[1]) > 100.0,
 			"после выбора «Гардероб» на месте уже в первом кадре: прокрутка %d (была %d), высота %.0f" % [int(seen[0]), want, float(seen[1])])
 	var lk: Dictionary = Hero.look(c).duplicate()
 	var blue := "2f5585"
@@ -741,20 +742,15 @@ func _pvp_test() -> void:
 	check(not (ps3["waves"][0] as Array).any(func(x): return String(x["key"]) == "hero") and not ps3.has("enemy_hero_look") and not ps3.has("hero_look"),
 		"сервер героя не знает — герой соперника в бой не идёт (как в повторе старого сервера)")
 	Legion.pvp_hero_srv = true
-	# советник — один раз
+	# Военные советы больше не занимают городской экран.
 	var fl0: Dictionary = lg.flags.duplicate()
-	for k: String in Legion.SUPPORT:
-		lg.flags["new_" + k] = true
-	lg.flags.erase("d10_new")
+	lg.flags.erase("tip_hero_pvp")
 	var ui := LegionUi.of(hud)
 	hud.advisor_panel.visible = false
 	ui._d10_tips()
-	check(hud.advisor_panel.visible and hud.adv_title.text == "Герой в боях с городами" and hud.adv_text.text.contains(Hero.name_of(c))
-		and hud.adv_text.text.contains("идёт первым") and hud.adv_text.text.contains("перешёл на другое место"),
-		"советник один раз: «Герой в боях с городами» (и о бойце, что стоял первым)", [hud.adv_title.text, hud.adv_text.text])
-	hud.advisor_panel.visible = false
+	check(not hud.advisor_panel.visible, "совет о герое в боях не открывает городского советника")
 	ui._d10_tips()
-	check(not hud.advisor_panel.visible, "второй раз советник о герое в боях не говорит")
+	check(not hud.advisor_panel.visible, "повторная проверка тоже не занимает город")
 	lg.flags = fl0
 	lg.flags["tip_hero_pvp"] = true
 	# окно «Легион»: «Войска» — герой без медальона «боец для боёв с городами»; «Против городов» — герой в отряде обороны,

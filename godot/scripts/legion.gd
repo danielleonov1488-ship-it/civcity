@@ -8,7 +8,7 @@ extends RefCounted
 ##   «Войска» — отряд, уровни зданий Легиона (кнопка «На карте» — к зданию и его карточке), умения;
 ##   «Против городов» — нападение на отряды обороны других игроков (их сохранённый отряд), рейтинг побед,
 ##               заряды атак, лёгкая добыча (ни у кого не отнимается);
-##   «Чудеса» — чудеса света: первые три открывает рейтинг походов, старшие — рейтинг побед над городами.
+##   Чудеса света строятся в городе, данные картинок сохранены ниже.
 ## Бой считает LegionSim (без графики); 3D-бой (legion_battle.gd) только рисует его и жмёт умения.
 ##
 ## Здесь — данные (таблицы бойцов, врагов, провинций, умений, чудес), правила и состояние игрока.
@@ -30,8 +30,7 @@ extends RefCounted
 ##             flags["turn_page"] — перелистнуть карту на новую провинцию (окно сбрасывает)
 ##   бой:      setup = make_battle(st[, seed]) → LegionSim.new(setup) (крутит 3D-бой шагом LegionSim.DT) →
 ##             out = apply_result(setup, sim.result) {win, stars, first, reward, rating, boss_beaten, unlocks, next}
-##   чудеса:   WONDERS, wonder_state(id) built|open|locked, wonder_cost(id), can_build_wonder(id), build_wonder(id)
-##             (чудеса-постройки ставит игрок: game.set_tool(w.building), Слава спишется в City.place)
+##   чудеса:   WONDERS, wonder(id), wonder_name(w) — городской каталог и картинки
 ##   город:    glory, rating, triumph()/can_triumph(), city_happy()
 ##   города:   pvp_rating, pvp_charges_now(), pvp_next_charge(), pvp_can_attack(), defense_snapshot() / pvp_snapshot() (на сервер;
 ##             герой — на первом месте, когда pvp_hero()),
@@ -129,7 +128,7 @@ const ARMORY := 2.0
 ## Места в отряде: каждое новое (после боссов SLOT_BOSSES) — ещё и с Казармами этого уровня (копия в server/pvp.js)
 const SLOT_BARRACKS := [2, 3, 5, 7]
 ## Кузница и Склад оружия в боях с городами: только когда сервер (server/legion_sim.js, server/pvp.js) повторяет бой
-## с ними и владелец сказал «да» выкладке. Пока false: в снимках отряда и в бою с городом — только уровни бойцов и чудеса
+## с ними и владелец сказал «да» выкладке. Пока false: в снимках отряда и в бою с городом — только уровни бойцов
 const PVP_MODS := false
 # =====================================================================
 #   Легион 3.0 (docs/LEGION_V3.md): лагерь отдельным экраном, воины из жителей, класс — по оружию (только новая игра)
@@ -537,28 +536,17 @@ const TRIUMPH := {"glory": 15, "hours": 72, "happy": 5}
 # =====================================================================
 #   чудеса света
 # =====================================================================
-## Первые три открывает рейтинг походов (rating), старшие — рейтинг побед над городами (pvp: true).
-## building — постройка в городе (Defs.B, ставится как обычная, сверх денариев стоит glory Славы);
-## без building — чудо «строится» прямо в окне за Славу и денарии (money) и действует на весь город.
-## army — бонус бойцам (доля), happy — счастье всех домов (%), glory_day — Славы в игровой день.
-## art — картинка: лист 41 (4×2), номер.
+## Каталог городских чудес: id и картинки нужны городу и старым сохранениям.
+## Постройки, цены и эффекты — в Defs.B. Рейтинг и армия с чудесами не связаны.
 const WONDERS := [
-	{"id": "arch", "building": "arch", "rating": 30, "glory": 25, "army": {"atk": 0.05}, "glory_day": 0.0, "art": 0,
-		"bonus": "+5% урона всем бойцам. Красота и счастье вокруг арки."},
-	{"id": "colosseum", "building": "colosseum", "rating": 120, "glory": 50, "army": {"hp": 0.10}, "glory_day": 0.5, "art": 1,
-		"bonus": "+10% здоровья бойцам, Слава каждый день. Счастье большого квартала."},
-	{"id": "pantheon", "building": "pantheon", "rating": 250, "glory": 80, "army": {"atk": 0.10}, "glory_day": 0.5, "art": 2,
-		"bonus": "+10% урона бойцам, Слава каждый день. Счастье большого квартала."},
-	{"id": "circus", "name": "Большой цирк", "pvp": true, "rating": 200, "glory": 120, "money": 20000, "happy": 4, "glory_day": 0.5, "art": 3,
-		"bonus": "Скачки колесниц: +4% счастья всему городу и Слава каждый день."},
-	{"id": "aqueduct", "name": "Акведук Клавдия", "pvp": true, "rating": 450, "glory": 160, "money": 30000, "happy": 4, "art": 4,
-		"bonus": "Чистая вода всему городу: +4% счастья всем домам."},
-	{"id": "trajan", "name": "Колонна Траяна", "pvp": true, "rating": 800, "glory": 220, "money": 40000, "army": {"atk": 0.15, "hp": 0.15}, "art": 5,
-		"bonus": "+15% урона и здоровья всей армии."},
-	{"id": "caracalla", "name": "Термы Каракаллы", "pvp": true, "rating": 1200, "glory": 300, "money": 60000, "happy": 6, "art": 6,
-		"bonus": "Термы для всего города: +6% счастья всем домам."},
-	{"id": "jupiter", "name": "Храм Юпитера Капитолийского", "pvp": true, "rating": 1800, "glory": 400, "money": 90000, "happy": 4, "glory_day": 1.0,
-		"army": {"atk": 0.05, "hp": 0.05}, "art": 7, "bonus": "Величайший храм Рима: +4% счастья, +5% силы армии и Слава каждый день."},
+	{"id": "arch", "building": "arch", "art": 0},
+	{"id": "colosseum", "building": "colosseum", "art": 1},
+	{"id": "pantheon", "building": "pantheon", "art": 2},
+	{"id": "circus", "building": "circus", "art": 3},
+	{"id": "aqueduct", "building": "aqueduct", "art": 4},
+	{"id": "trajan", "building": "trajan", "art": 5},
+	{"id": "caracalla", "building": "caracalla", "art": 6},
+	{"id": "jupiter", "building": "jupiter", "art": 7},
 ]
 
 # =====================================================================
@@ -593,16 +581,16 @@ var trophies := {}          # id провинции → трофей (украш
 var progress := 0           # сколько боёв первого прохода пройдено подряд (сквозь круги)
 var wins := 0
 var rating := 0             # рейтинг походов (не тратится)
-var glory := 0.0            # Слава (тратится: умения, чудеса, триумф, высокие уровни бойцов)
+var glory := 0.0            # Слава (тратится: умения, триумф, высокие уровни бойцов)
 var pvp_rating := 0         # рейтинг побед над городами
 var pvp_charges: int = PVP["charges"]
 var pvp_charge_t := 0.0     # unix-время, с которого копится следующий заряд
 var pvp_wins := 0
 var pvp_losses := 0
 var pvp_log: Array = []     # последние бои с городами: [{t, name, win, delta, money}]
-var built := {}             # чудеса без постройки в городе, которые уже возведены: id → true
+var built := {}             # архив старых покупок чудес: id → true (для переноса в город)
 var triumph_left := 0       # сколько игровых часов ещё идёт триумф
-var glory_acc := 0.0        # дробные Славы от чудес (копятся по часам)
+var glory_acc := 0.0        # дробная Слава от городских памятников (копится по часам)
 var flags := {}             # для окна: что уже показано (перелистнуть карту на новую провинцию и т. п.)
 ## Легион 2.0, этап 1 (Soldiers): воины-новобранцы — только в новой игре «Уютного Рима» (army_on)
 var soldiers: Array = []    # [{id, name, from, cls, stars, rank, train_end, train_total, wound_end, battles, falls}]
@@ -1145,7 +1133,7 @@ func sell_item(iid: int) -> bool:
 		return false
 	var c = city()
 	if c != null:
-		c.money = minf(float(c.money) + item_price(it), maxf(float(c.money), float(c.money_cap())))
+		c.magis_treasury += item_price(it)       # Выручка остаётся в казне Легиона.
 	items.erase(it)
 	changed.emit()
 	return true
@@ -1536,11 +1524,11 @@ func soldier_stats(s: Dictionary, type: String) -> Dictionary:
 	var g := gear_bonus(s)
 	var sb := Gear.set_bonus(worn(s))
 	var rng_b := float(sb["ranged"]) if float(UNITS[type]["range"]) > 3.0 else 0.0
-	var st := unit_stats(type, level_of(type), bonus("atk") + forge_b() + b + float(g["atk"]) + float(sb["atk"]) + rng_b,
-		bonus("hp") + forge_b() + b + float(g["hp"]) + float(sb["hp"]), armory_b() + float(g["armor"]) + float(sb["armor"]))
+	var st := unit_stats(type, level_of(type), forge_b() + b + float(g["atk"]) + float(sb["atk"]) + rng_b,
+		forge_b() + b + float(g["hp"]) + float(sb["hp"]), armory_b() + float(g["armor"]) + float(sb["armor"]))
 	if v3():
-		st = gear_unit_stats(type, level_of(type), bonus("atk") + b + float(g["atk"]) + float(sb["atk"]) + rng_b,
-			bonus("hp") + b + float(g["hp"]) + float(sb["hp"]), float(g["armor"]) + float(sb["armor"]))
+		st = gear_unit_stats(type, level_of(type), b + float(g["atk"]) + float(sb["atk"]) + rng_b,
+			b + float(g["hp"]) + float(sb["hp"]), float(g["armor"]) + float(sb["armor"]))
 	# наборы: свойства 4 вещей и лечение — только походы (бои с городами собирают отряд без воинов)
 	if float(sb["heal"]) > 0.0:
 		st["heal_k"] = 1.0 + float(sb["heal"])
@@ -1729,7 +1717,7 @@ func window_open() -> bool:
 
 ## Что такое Легион — в подсказке серого медальона (решение владельца Д13: готового Легиона ни у кого нет, его строят).
 ## Две строки: подсказка Godot не переносит слова — одна длинная строка обрезалась бы краем экрана при крупном интерфейсе
-const LOCK_ABOUT := "Легион — стража города: походы, бои с другими городами, Слава и чудеса света.\nГотового Легиона нет: Казармы, Стрельбище, Кузницу и другие его здания вы построите и улучшите сами."
+const LOCK_ABOUT := "Легион — стража города: походы, бои с другими городами и Слава.\nГотового Легиона нет: Казармы, Стрельбище, Кузницу и другие его здания вы построите и улучшите сами."
 
 
 ## Почему окно ещё закрыто ("" — открыто); about — и что такое Легион (подсказка медальона)
@@ -1743,27 +1731,7 @@ func _lock_why() -> String:
 		return ""
 	if v3():
 		return I18n.t("Лагерь откроется, когда в городе будет %d жителей (сейчас %d).") % [CAMP_POP, city_pop()]
-	var c = city()
-	var rank := int(REGIONS[0]["rank"])         # Легион открывается с этого уровня города (и в походе 2.0)
-	var head := I18n.t("Легион откроется в истории горожан «%s»") % I18n.t(story_title())       # части переводим по отдельности: склейка целиком в словаре не найдётся
-	if c == null or int(c.level) < rank:
-		return head + I18n.t(" — она придёт, когда город станет «%s».") % I18n.t(String(Defs.LEVELS[rank]["name"]))
-	# город уже дорос: говорим, чего история ждёт на самом деле (старый город без Легиона — тоже сюда)
-	var s: Dictionary = c.stories
-	var off: Dictionary = s.get("offer", {})
-	if String(off.get("id", "")) == STORY:
-		return head + I18n.t(" — она уже ждёт вас: над домом переселенца свиток с просьбой, щёлкните его.")
-	if (s.get("later", {}) as Dictionary).has(STORY):
-		return head + I18n.t(" — вы её отложили, она скоро вернётся.")
-	# истории идут по одной: сначала та, что идёт (или ждёт ответа)
-	var act: Dictionary = s.get("active", {})
-	var busy: Dictionary = act if not act.is_empty() else off
-	if not busy.is_empty():
-		return head + I18n.t(" — она придёт после истории «%s».") % I18n.t(StoryDefs.title_of(StoryDefs.story(String(busy.get("id", ""))), busy))
-	var af := String(StoryDefs.story(STORY).get("after", ""))
-	if af != "" and int(c.level) < 2 and not (s.get("done", {}) as Dictionary).has(af):
-		return head + I18n.t(" — она придёт после истории «%s».") % I18n.t(String(StoryDefs.story(af).get("title", af)))
-	return head + I18n.t(" — она скоро придёт: горожане попросят о защите.")
+	return I18n.t("Легион откроется исследованием «Легион» на уровне «Хутор».")
 
 
 ## История, которая открывает Легион (Д9), и её название
@@ -1981,30 +1949,10 @@ func squad_off(st: Dictionary) -> bool:
 
 
 # =====================================================================
-#   бонусы чудес
-# =====================================================================
-
-## Чудо возведено: постройка стоит в городе (или куплено в окне)
-func wonder_built(w: Dictionary) -> bool:
-	if w.has("building"):
-		return count_type(String(w["building"])) > 0
-	return built.has(w["id"])
-
-
-## Бонус чудес армии: "atk" или "hp" (доля)
-func bonus(key: String) -> float:
-	var v := 0.0
-	for w: Dictionary in WONDERS:
-		if w.has("army") and (w["army"] as Dictionary).has(key) and wonder_built(w):
-			v += float(w["army"][key])
-	return v
-
-
-# =====================================================================
 #   боевые числа
 # =====================================================================
 
-## Боец рода type на уровне lvl с бонусами чудес и Кузницы (atk_b, hp_b — доли) и Склада оружия (armor_b — броня).
+## Боец рода type на уровне lvl с бонусами снаряжения и Кузницы (atk_b, hp_b — доли) и Склада оружия (armor_b — броня).
 ## То же для чужих отрядов в боях с городами (там armor_b нет: сервер его не знает)
 static func unit_stats(type: String, lvl: int, atk_b := 0.0, hp_b := 0.0, armor_b := 0.0) -> Dictionary:
 	var U: Dictionary = UNITS[type]
@@ -2031,7 +1979,7 @@ static func gear_unit_stats(type: String, lvl: int, atk_b := 0.0, hp_b := 0.0, a
 ## (без них, пока PVP_MODS выключен)
 func stats(type: String, pvp := false) -> Dictionary:
 	var mods := not pvp or PVP_MODS
-	return unit_stats(type, int(levels.get(type, 1)), bonus("atk") + (forge_b() if mods else 0.0), bonus("hp") + (forge_b() if mods else 0.0),
+	return unit_stats(type, int(levels.get(type, 1)), (forge_b() if mods else 0.0), (forge_b() if mods else 0.0),
 		armory_b() if mods else 0.0)
 
 
@@ -2127,7 +2075,7 @@ func hero_kit_level() -> int:
 	return level_of("armory") if available("armory") and not free_mode else 0
 
 
-## Боец-герой на уровне lvl при уровне города city_lvl и Складе оружия armory_lvl (бонусы чудес и Кузницы — atk_b, hp_b;
+## Боец-герой на уровне lvl при уровне города city_lvl и Складе оружия armory_lvl (бонусы снаряжения и Кузницы — atk_b, hp_b;
 ## общая броня Склада — armor_b)
 static func hero_unit_stats(lvl: int, city_lvl: int, armory_lvl: int, atk_b := 0.0, hp_b := 0.0, armor_b := 0.0) -> Dictionary:
 	var ck := HERO_CITY * maxi(0, city_lvl - 1)
@@ -2139,9 +2087,9 @@ static func hero_unit_stats(lvl: int, city_lvl: int, armory_lvl: int, atk_b := 0
 		"tags": HERO["tags"], "size": 1.0, "boss": false}
 
 
-## Наш герой в походе: с чудесами, Кузницей и Складом оружия; имя — его
+## Наш герой в походе: с Кузницей и Складом оружия; имя — его
 func hero_stats() -> Dictionary:
-	var s := hero_unit_stats(hero_level(), city_level(), hero_kit_level(), bonus("atk") + forge_b(), bonus("hp") + forge_b(), armory_b())
+	var s := hero_unit_stats(hero_level(), city_level(), hero_kit_level(), forge_b(), forge_b(), armory_b())
 	s["name"] = Hero.name_of(city())
 	return s
 
@@ -2161,7 +2109,7 @@ func hero_entry() -> Dictionary:
 	return entry
 
 
-## Боец-герой из снимка отряда (бой с городом): числа — из уровней снимка и бонусов чудес снимка, без брони Склада
+## Боец-герой из снимка отряда (бой с городом): числа — из уровней и общих прибавок снимка, без брони Склада
 ## (сервер считает так же: server/legion_sim.js heroStats); имя — из снимка (его прислал сервер из сохранения героя)
 static func snap_hero(e: Dictionary, atk_b: float, hp_b: float) -> Dictionary:
 	var s := hero_unit_stats(clampi(int(e.get("level", 1)), 1, HERO_MAX3 if int(e.get("hero_v", 0)) == 3 else MAX_LEVEL), clampi(int(e.get("city", 0)), 0, HERO_CITY_MAX),
@@ -2550,21 +2498,8 @@ func building_rec(btype: String) -> Dictionary:
 
 
 ## Облик зданий Легиона по их уровням (после загрузки и улучшения); show — перерисовать изменившиеся (с облачком)
-func sync_tiers(show := false) -> void:
-	var c = city()
-	if c == null:
-		return
-	for id in c.buildings:
-		var b: Dictionary = c.buildings[id]
-		if not is_building(String(b["type"])):
-			continue
-		var t := vis_tier(b_level(String(b["type"])))
-		if int(b["tier"]) != t:
-			b["tier"] = t
-			if "place_gen" in c:
-				c.place_gen += 1               # облик другой (и вход): проверки места перестройки — заново
-			if show and c.has_signal("house_changed"):
-				c.house_changed.emit(b, true)
+func sync_tiers(_show := false) -> void:
+	pass  # Старые городские постройки сохраняют свой облик.
 
 
 ## Кузница, Склад оружия, Лазарет — пока стоят в городе (уровень «в запасе» не действует)
@@ -2601,7 +2536,7 @@ func b_effect(btype: String, lvl: int) -> Array:
 	var u := bkey(btype)
 	if not UNITS.has(u):
 		return []
-	var s := unit_stats(u, lvl, bonus("atk") + forge_b(), bonus("hp") + forge_b(), armory_b())   # как в походе (stats) и на плитке «Войска»
+	var s := unit_stats(u, lvl, forge_b(), forge_b(), armory_b())   # как в походе (stats) и на плитке «Войска»
 	var out := ["%s %d уровня: здоровье %d, урон %d, броня %d" % [UNITS[u]["many"], lvl, int(s["hp"]), int(s["atk"]), roundi(float(s["armor"]))]]
 	if btype == "barracks":
 		# места, открытые до зданий Легиона (slots0), — не меньше: следующий уровень не обещает уже имеющееся место
@@ -3079,10 +3014,10 @@ func odds_job(st: Dictionary) -> Dictionary:
 	return {"key": odds_key(st), "cur": _odds_setups(st, [], battle_squad()), "best": [] if same else _odds_setups(st, best), "best_types": best}
 
 
-## Ключ оценки шансов: бой, отряд, уровни, умения, бонусы чудес (одинаковый ключ — та же оценка)
+## Ключ оценки шансов: бой, отряд, уровни, умения, снаряжение (одинаковый ключ — та же оценка)
 func odds_key(st: Dictionary) -> String:
 	var cur := campaign_keys()
-	var key := [st["key"], cur, open_perks(), bonus("atk"), bonus("hp"), auto_squad(st), forge_b(), armory_b(), heal_b(),
+	var key := [st["key"], cur, open_perks(), auto_squad(st), forge_b(), armory_b(), heal_b(),
 		hero_ready(), hero_kit_level(), city_level()]
 	for t in UNIT_IDS:
 		key.append(int(levels.get(t, 1)))
@@ -3565,30 +3500,24 @@ func _chest(cycle: int, r: int) -> Dictionary:
 	var c = city()
 	if c != null and c.has_method("_event"):
 		c._event("Все %d звёзд: %s! Сундук Славы +%d%s" % [stages() * 3, R["name"], g,
-			(". Трофей «%s» — в разделе «Украшения»" % Defs.B[tr]["name"]) if tr != "" and Defs.B.has(tr) else ""], "laurels")
+			(". Трофей Легиона: «%s»" % Defs.B[tr]["name"]) if tr != "" and Defs.B.has(tr) else ""], "laurels")
 	return {"glory": g, "trophy": tr, "region": String(R["name"])}
 
 
-## Выдать награду; вернёт, сколько денариев не уместилось в казну (полна — предел остаётся, но говорим честно)
+## Военная добыча остаётся у Легиона; казна и исследования города не меняются.
 func _give(reward: Dictionary) -> int:
 	var c = city()
-	var lost := 0
 	for k in reward:
-		var v := float(reward[k])
+		var value := maxf(0.0, float(reward[k]))
 		match k:
 			"glory":
-				glory += v
+				glory += value
 			"money":
 				if c != null:
-					lost = maxi(0, roundi(v - maxf(0.0, c.money_cap() - c.money)))
-					var m0: float = c.money
-					c.money = maxf(c.money, minf(c.money_cap(), c.money + v)) if v3() else minf(c.money_cap(), c.money + v)
-					if c.has_method("flow"):
-						c.flow("legion", c.money - m0)
+					c.magis_treasury += value  # Только расходы Легиона; бюджет города не растёт.
 			"rp":
-				if c != null:
-					c.rp = maxf(c.rp, minf(c.rp_cap(), c.rp + v))   # сверх полок (возврат очков) не срезаем — как в sim_day
-	return lost
+				flags["research_loot"] = float(flags.get("research_loot", 0.0)) + value
+	return 0
 
 
 # =====================================================================
@@ -3608,84 +3537,16 @@ static func wonder_name(w: Dictionary) -> String:
 	return String(w["name"])
 
 
-## Рейтинг, которым открывается чудо (походов или побед над городами)
-func wonder_rating_now(w: Dictionary) -> int:
-	return pvp_rating if bool(w.get("pvp", false)) else rating
-
-
-## "built" — возведено; "open" — можно строить; "locked" — не хватает рейтинга
-func wonder_state(id: String) -> String:
-	var w := wonder(id)
-	if w.is_empty():
-		return "locked"
-	if wonder_built(w):
-		return "built"
-	return "open" if wonder_rating_now(w) >= int(w["rating"]) else "locked"
-
-
-## Цена чуда: {money, glory}
-func wonder_cost(id: String) -> Dictionary:
-	var w := wonder(id)
-	if w.has("building"):
-		return {"money": int(Defs.B[w["building"]]["cost"]), "glory": int(w["glory"])}
-	return {"money": int(w.get("money", 0)), "glory": int(w["glory"])}
-
-
-## Постройку-чудо можно ставить в городе: открыта рейтингом (City.unlocked спрашивает сюда)
-func wonder_unlocks(type: String) -> bool:
-	for w: Dictionary in WONDERS:
-		if String(w.get("building", "")) == type and rating >= int(w["rating"]):
-			return true
-	return false
-
-
-## Можно ли возвести чудо ("" — можно). Для чудес-построек — ставит игрок (game.set_tool(building)),
-## Слава спишется при постановке (City.place)
-func can_build_wonder(id: String) -> String:
-	var w := wonder(id)
-	if w.is_empty():
-		return "Нет такого чуда"
-	var st := wonder_state(id)
-	if st == "built":
-		return "Уже построено"
-	if st == "locked":
-		return "Нужен рейтинг %s %d" % ["побед над городами" if bool(w.get("pvp", false)) else "походов", int(w["rating"])]
-	return _afford_text(wonder_cost(id))
-
-
-## Возвести чудо без постройки (кнопка в окне). Чудеса-постройки ставятся в городе — тут false
-func build_wonder(id: String) -> bool:
-	var w := wonder(id)
-	if w.has("building") or can_build_wonder(id) != "":
-		return false
-	_pay(wonder_cost(id))
-	built[id] = true
-	var c = city()
-	if c != null:
-		if c.has_method("_event"):
-			c._event("Возведено чудо света: %s! %s" % [wonder_name(w), w["bonus"]], "laurels")
-		c.compute()
-		c.changed.emit()
-	changed.emit()
-	return true
-
-
 # =====================================================================
 #   город: счастье, Слава по часам, триумф
 # =====================================================================
 
-## Сколько процентов счастья всем домам дают чудеса-без-постройки и триумф (City.compute)
+## Прежний интерфейс: город больше не получает военного счастья.
 func city_happy() -> int:
-	var h := 0
-	for w: Dictionary in WONDERS:
-		if not w.has("building") and built.has(w["id"]):
-			h += int(w.get("happy", 0))
-	if triumph_left > 0:
-		h += int(TRIUMPH["happy"])
-	return h
+	return 0  # Совместимость: Легион больше не даёт счастье городу.
 
 
-## Раз в игровой час (City.sim_day): таймеры улучшений, Слава от чудес, триумф. Возвращает события [[текст, значок, тихо?]]
+## Раз в игровой час (City.sim_day): таймеры улучшений, триумф. Возвращает события [[текст, значок, тихо?]]
 ## (улучшение здания — только в колокольчик: на карте здание и так меняет облик с облачком)
 func on_hour() -> Array:
 	var out := []
@@ -3694,23 +3555,10 @@ func on_hour() -> Array:
 	if V3:
 		_rations_hour()
 		fort_arrival_hour()
-	var gd := 0.0
-	for w: Dictionary in WONDERS:
-		if float(w.get("glory_day", 0.0)) > 0.0 and wonder_built(w):
-			gd += float(w["glory_day"])
-	if gd > 0.0:
-		glory_acc += gd / 24.0
-		if glory_acc >= 1.0:
-			var g := floorf(glory_acc)
-			glory += g
-			glory_acc -= g
 	if triumph_left > 0:
 		triumph_left -= 1
 		if triumph_left == 0:
-			out.append(["Триумф окончен: город возвращается к будням", "laurels"])
-			var c = city()
-			if c != null:
-				c.compute()
+			out.append(["Триумф Легиона окончен", "laurels"])
 	return out
 
 
@@ -3724,7 +3572,7 @@ func can_triumph() -> String:
 	return ""
 
 
-## Триумф: за Славу весь город празднует — счастье всех домов выше
+## Триумф: праздник Легиона за Славу, без городского бонуса.
 func triumph() -> bool:
 	if can_triumph() != "":
 		return false
@@ -3733,8 +3581,7 @@ func triumph() -> bool:
 	var c = city()
 	if c != null:
 		if c.has_method("_event"):
-			c._event("Триумф! Город празднует %d дня: счастье домов +%d%%." % [int(TRIUMPH["hours"]) / 24, TRIUMPH["happy"]], "laurels")
-		c.compute()
+			c._event("Триумф Легиона: %d дня праздника в форте." % (int(TRIUMPH["hours"]) / 24), "laurels")
 		c.changed.emit()
 	changed.emit()
 	return true
@@ -3832,7 +3679,7 @@ func pvp_entries(which := "pvp") -> Array:
 	return sq
 
 
-## Снимок отряда для сервера: места (pvp_entries), умения и бонусы чудес, которые знает сервер
+## Снимок отряда для сервера: места (pvp_entries), умения и общие прибавки, которые знает сервер
 func pvp_snapshot(which := "pvp") -> Dictionary:
 	return {"v": 1, "squad": pvp_entries(which), "perks": pvp_perks(), "atk_b": pvp_bonus("atk"), "hp_b": pvp_bonus("hp")}
 
@@ -3846,9 +3693,9 @@ func pvp_perks() -> Dictionary:
 	return out
 
 
-## Бонус урона или здоровья ("atk" | "hp"), который знает сервер боёв с городами: чудеса (и Кузница — когда PVP_MODS)
-func pvp_bonus(key: String) -> float:
-	return bonus(key) + (forge_b() if PVP_MODS else 0.0)
+## Бонус урона или здоровья ("atk" | "hp"), который знает сервер боёв с городами: только Кузница, когда PVP_MODS
+func pvp_bonus(_key: String) -> float:
+	return forge_b() if PVP_MODS else 0.0
 
 
 ## Сила снимка соперника (для подбора и окна; герой — тоже)
@@ -5261,7 +5108,7 @@ func to_dict() -> Dictionary:
 	var data := {"v": 3, "levels": levels, "blevels": blevels, "upg": upg, "squad": squad, "defense": defense, "perks": perks, "stars": stars,
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
-		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
+		"city_decoupled": true, "triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
 		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "relics": relics, "daily": daily, "mats": mats, "mats_t": mats_t,
 		"food_pts": food_pts, "food_t": food_t, "camp": camp, "squad3": squad3, "rations": rations, "rations_t": rations_t}
 	if v3():
@@ -5324,6 +5171,7 @@ func from_dict(d: Dictionary) -> void:
 	built = {}
 	for k in d.get("built", []):
 		built[String(k)] = true
+
 	triumph_left = int(d.get("triumph_left", 0))
 	glory_acc = float(d.get("glory_acc", 0.0))
 	flags = d.get("flags", {})

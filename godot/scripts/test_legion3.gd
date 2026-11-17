@@ -597,4 +597,4 @@ func _chest_award3() -> void:
 	var out := L.apply_result(setup, {"win": true, "alive": 1, "total": 1, "fallen": [], "time": 10.0,
 		"hp_left": 1.0, "inputs": [], "perks_used": {}, "summons": 0})
 	_check(L.chest_queue.size() == 1 and out.has("camp_chest") and out["camp_chest"] != "full", "первая победа гарантирует сундук")
-	_check(c.money >= money, "награда не срезает уже накопленную казну выше предела")
+	_check(c.money == money and c.magis_treasury > 0.0, "добыча идёт в казну Легиона, бюджет города не меняется")

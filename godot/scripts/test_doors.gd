@@ -7,7 +7,7 @@ func _init() -> void:
 	var tot := {}
 	for t in Defs.B.keys():
 		var kind := String(Defs.B[t].get("kind", ""))
-		if kind == "decor":
+		if kind == "decor" or bool(Defs.B[t].get("hidden", false)):
 			continue
 		for tier in [1, 3]:
 			Catalog.make(t, tier)
