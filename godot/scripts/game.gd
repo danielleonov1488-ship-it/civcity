@@ -3749,7 +3749,7 @@ func _wall_place(type: String, p: Vector2, maxd := 1.8) -> Dictionary:
 		var ws := _wall_solve(type, host, at + nb * Vector3(r.get_center().x, r.get_center().y, 0.0), -(nb.z))
 		if not ws.is_empty():
 			return _balcony_ok(type, ws)
-	if city.money < float(Defs.B[type]["cost"]):
+	if city.money < city.build_price(type):
 		best["err"] = "Не хватает денариев"
 	return _balcony_ok(type, best)
 
@@ -4507,7 +4507,7 @@ func fence_plan_of(type: String, a: Vector2, b: Vector2, gate: bool) -> Array:
 	var gi := n / 2 if gate and d.get("gate", false) else -1
 	var out := []
 	var cost := 0.0
-	var price := float(d["cost"])
+	var price := city.build_price(type)
 	for i in n:
 		var c := start + dir * pitch * (i + 0.5)
 		var v := 1 if i == gi else 0
@@ -4546,7 +4546,7 @@ func _fence_update() -> void:
 	for s: Dictionary in fence_plan:
 		if s["err"] == "":
 			ok += 1
-			cost += float(Defs.B[tool]["cost"])
+			cost += city.build_price(tool)
 		elif err == "":
 			err = s["err"]
 	if fence_drag and hud:
@@ -4624,11 +4624,11 @@ func _fence_commit() -> void:
 	var snap := _undo_snap()               # до звеньев и до проверки просьб ниже
 	city.bulk = true
 	for s: Dictionary in fence_plan:
-		if s["err"] != "" or city.money < float(d["cost"]):
+		if s["err"] != "" or city.money < city.build_price(tool):
 			continue
 		var b := city.place(tool, s["pos"], float(s["yaw"]), int(s["variant"]), int(d.get("color", 0)))
 		ids.append(b["id"])
-		cost += float(d["cost"])
+		cost += city.build_price(tool)
 	city.bulk = false
 	if ids.is_empty():
 		sound.ui("error")
@@ -5682,7 +5682,7 @@ func _build_here() -> void:
 				b["host"] = pl["host"]
 				b["y"] = pl["y"]
 				_show(b)
-			_push_place([b["id"]], float(Defs.B[tool]["cost"]), String(Defs.B[tool]["name"]), snap, float(Defs.B[tool].get("glory", 0)))
+			_push_place([b["id"]], city.build_price(tool), String(Defs.B[tool]["name"]), snap, float(Defs.B[tool].get("glory", 0)))
 			if hud and Defs.B[tool]["kind"] == "decor":
 				hud.note_recent(tool)              # «Недавние» в меню украшений
 			_rot_hint_count()

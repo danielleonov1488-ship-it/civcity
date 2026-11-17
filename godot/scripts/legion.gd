@@ -1794,7 +1794,7 @@ func city_level() -> int:
 
 func city_money() -> float:
 	var c = city()
-	return float(c.money) if c != null else 1e12
+	return float(c.money) + c.magis_treasury if c != null else 1e12
 
 
 ## Сколько таких построек в городе
@@ -2433,9 +2433,13 @@ func _afford_text(cost: Dictionary) -> String:
 func _pay(cost: Dictionary) -> void:
 	var c = city()
 	if c != null:
-		c.money = maxf(0.0, float(c.money) - float(cost.get("money", 0)))   # платят только с хватающей казной (_afford_text)
+		var price := float(cost.get("money", 0))
+		var held := minf(c.magis_treasury, price)
+		c.magis_treasury -= held
+		price -= held
+		c.money = maxf(0.0, float(c.money) - price)   # платят только с хватающей казной (_afford_text)
 		if c.has_method("flow"):
-			c.flow("legion", -float(cost.get("money", 0)))   # история денег за сутки (этап 2.4)
+			c.flow("legion", -price)   # история денег за сутки (этап 2.4)
 	glory -= float(cost.get("glory", 0))
 
 
@@ -3216,8 +3220,8 @@ func can_fight(st: Dictionary) -> String:
 		return "В отряде нет бойцов — постройте Казармы и поставьте легионеров в отряд."
 	if float(food_cost(st)) > city_money():
 		return "Не хватает денариев на провиант: нужно %d." % food_cost(st)
-	if V3 and rations_now() < ration_cost(st):
-		return "Нет пайков: нужно %d, есть %d. Паёк даёт город — пекарни с работниками хлебом кормят лагерь." % [ration_cost(st), rations_now()]
+	if V3 and rations + 0.0001 < ration_cost(st):
+		return "Нет пайков: нужно %.1f, есть %.1f. Паёк даёт город — пекарни с работниками хлебом кормят лагерь." % [ration_cost(st), rations]
 	if V2 and not V3 and food_now() < FOOD2_BATTLE:
 		return "Мало провианта: нужно %d, есть %d. Очко — каждые %d мин." % [FOOD2_BATTLE, food_now(), roundi(FOOD2_MIN)]
 	return ""
@@ -4744,6 +4748,9 @@ func can_recruit_resident() -> String:
 		return lock_text()
 	if soldiers.size() >= roster_cap():
 		return "В лагере нет мест (%d из %d). Улучшите Казарму или отпустите кого-то домой." % [soldiers.size(), roster_cap()]
+	var gate_city = city()
+	if gate_city != null and not gate_city.magis_gate_queue.is_empty():
+		return ""
 	if city_pop() <= RESIDENT_FLOOR:
 		return "В городе слишком мало жителей: меньше %d не станет." % RESIDENT_FLOOR
 	var c = city()
@@ -4754,6 +4761,12 @@ func can_recruit_resident() -> String:
 
 ## Призвать жителя: новобранец-легионер (меч даром); {} — нельзя. from: «Луций Юлий, был пекарем»
 func recruit_resident(pick: Dictionary = {}) -> Dictionary:
+	if bool(pick.get("gate", false)):
+		return _recruit_gate(pick)
+	if pick.is_empty() and city() != null and not city().magis_gate_queue.is_empty():
+		return _recruit_gate(city().magis_gate_queue[0])
+	if not pick.is_empty() and city_pop() <= RESIDENT_FLOOR:
+		return {}
 	if can_recruit_resident() != "":
 		return {}
 	var c = city()
@@ -4939,8 +4952,8 @@ func rations_now() -> int:
 
 
 ## Сколько пайков стоит бой: 2, босс — 4
-func ration_cost(st: Dictionary) -> int:
-	return RATION_BOSS if bool(st.get("boss", false)) or bool(st.get("junior", false)) else RATION_BATTLE
+func ration_cost(st: Dictionary) -> float:
+	return (RATION_BOSS if bool(st.get("boss", false)) or bool(st.get("junior", false)) else RATION_BATTLE) * city_edict_mul("legion_rations")
 
 
 # =====================================================================
@@ -5178,6 +5191,8 @@ func recruit_candidates(n := 4, page := 0) -> Array[Dictionary]:
 		candidate["former"] = ("была" if int(candidate["sx"]) == 1 else "был") + " " + _was_text(String(candidate["job"]), int(candidate["sx"]) == 1)
 	all.sort_custom(func(a: Dictionary, b: Dictionary):
 		return String(a["key"]) < String(b["key"]) if int(a["stars"]) == int(b["stars"]) else int(a["stars"]) > int(b["stars"]))
+	for pick: Dictionary in city().magis_gate_queue:
+		all.append(pick.duplicate(true))
 	if all.is_empty():
 		return out
 	var start := posmod(page, ceili(float(all.size()) / n)) * n
@@ -5547,3 +5562,30 @@ func open_chest(kind: String) -> Dictionary:
 	ingots += int(reward["ingots"])
 	changed.emit()
 	return reward
+
+
+func city_edict_mul(key: String) -> float:
+	var c = city()
+	return c.edict_mul(key) if c != null else 1.0
+
+
+## Добровольцы — по игровым часам после первого военного эдикта.
+func gate_interval() -> float:
+	return 24.0 / city_edict_mul("legion_gate")
+
+
+func _recruit_gate(pick: Dictionary) -> Dictionary:
+	var c = city()
+	if c == null or not v3() or not window_open() or soldiers.size() >= roster_cap():
+		return {}
+	for i in c.magis_gate_queue.size():
+		var rec: Dictionary = c.magis_gate_queue[i]
+		if rec["key"] != pick.get("key", ""):
+			continue
+		c.magis_gate_queue.remove_at(i)
+		var s := _add_soldier({"name": rec["name"], "from": I18n.t("Доброволец у ворот"), "cls": "legionary", "stars": int(rec["stars"])})
+		_v3_reclass(s)
+		changed.emit()
+		daily_note("recruit")
+		return s
+	return {}

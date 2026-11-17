@@ -217,13 +217,13 @@ static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 				why = "good"
 			if at and why == "":
 				# как в City.compute: ближайшие дома в дальности, сначала жилые, сколько потянет при полном найме
-				for id in _nearest(c, pos, c.shop_range(d), int(Defs.CAPACITY[int(d["cap"])])):
+				for id in _nearest(c, pos, c.shop_range(d), ceili(float(Defs.CAPACITY[int(d["cap"])]) * c.edict_mul("work_output"))):
 					if (c.buildings[id].get("score", {}) as Dictionary).has(type):
 						dup += 1
 					else:
 						green.append(id)
 		"monument":
-			var r := Defs.range_m(d)
+			var r := c.need_range(d)
 			for id in c.buildings:
 				var h: Dictionary = c.buildings[id]
 				if not c.is_house(h):
@@ -240,7 +240,7 @@ static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 			if at:
 				var pts := float(d.get("deco", 1))
 				var decs := _decor_near(c, pos) if c.econ >= 1 else []
-				var pr := Defs.range_m(d) if d.has("mon") else 0.0     # «главное» радует, как памятник, в своей дальности
+				var pr := c.need_range(d) if d.has("mon") else 0.0     # «главное» радует, как памятник, в своей дальности
 				for id in c.buildings:
 					var h: Dictionary = c.buildings[id]
 					if not c.is_house(h):
@@ -297,7 +297,7 @@ static func selected_sets(c: City, b: Dictionary) -> Dictionary:
 					for hid in s.get("serves", []):
 						other[int(hid)] = true
 		"monument":
-			var r := Defs.range_m(d)
+			var r := c.need_range(d)
 			var mons := []
 			for id in c.buildings:
 				var m: Dictionary = c.buildings[id]
@@ -319,7 +319,7 @@ static func selected_sets(c: City, b: Dictionary) -> Dictionary:
 			var pts := float(d.get("deco", 1))
 			var half := 0
 			var decs := _decor_near(c, b["pos"]) if c.econ >= 1 else []
-			var pr := Defs.range_m(d) if d.has("mon") else 0.0
+			var pr := c.need_range(d) if d.has("mon") else 0.0
 			var mons := []                   # другие такие же «главные»: их дома порадуются и без этого
 			if pr > 0.0:
 				for id in c.buildings:

@@ -75,6 +75,7 @@ static func inn_info(city, b: Dictionary) -> Dictionary:
 	var s := sights(city, b)
 	var staff := float(b.get("staff", 0.0)) if bool(b.get("active", false)) else 0.0
 	var g := TOUR_CAP * staff * minf(1.6, TOUR_BASE + float(s["score"]) / TOUR_DIV)
+	g *= city.edict_mul("tourists")
 	var happy := float(city.stats.get("happy", 50))
 	s["guests"] = roundi(g)
 	var vin := 1.33 if int(city.fest_left) > 0 and String(city.get("cal_fest_id")) == "vinalia" else 1.0   # Виналии
