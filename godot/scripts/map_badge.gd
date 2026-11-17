@@ -10,7 +10,7 @@ const CLASS_RING := {"plebs": Color("71855b"), "artisans": Color("648494"), "pat
 const BADGES := "res://assets/ui/badges3/"
 const ALIASES := {"keys": "home_room", "house_problem": "sad", "road": "no_road", "up": "floor_up", "floor": "floor_up",
 	"face_good": "family", "face_mid": "family", "face_bad": "sad", "happy": "sad", "scroll": "request",
-	"check": "collect", "hammer": "building", "coins": "collect", "arrow_down": "request"}
+	"check": "match", "hammer": "building", "coins": "collect", "arrow_down": "request"}
 const WANTS := {"trees": "trees", "tree": "trees", "green": "trees", "water": "water", "flowers": "flowers", "flower": "flowers",
 	"quiet": "quiet", "sleep": "quiet", "market": "market", "commerce": "market", "temple": "temple", "faith": "temple",
 	"laurels": "temple", "pious": "temple", "plaza": "square", "road": "square", "square": "square"}

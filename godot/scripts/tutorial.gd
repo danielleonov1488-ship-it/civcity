@@ -20,6 +20,7 @@ var _t := 0.0
 var _wait := 0.0
 var _place_key := ""
 var _place_pos := Vector2.INF
+var _opening := false
 
 const OLD_IDS := ["move", "turn", "road", "houses", "cart", "settle", "house", "food", "workers", "script", "research", "done"]
 const STEPS := [
@@ -73,6 +74,20 @@ static func start_new(c: City) -> void:
 	c.tips["tut"] = 0
 	c.tips["tut_id"] = "move"
 	c.tips["ui"] = 0
+
+
+## После создания героя первая семья приезжает до первых построек.
+func welcome() -> void:
+	if not active() or cur_id() != "move" or game.city.tips.has("intro"):
+		return
+	_opening = true
+	card.hide()
+	camera_keys.hide()
+	game.city.incoming = maxi(1, int(game.city.incoming))
+	var cart: Dictionary = game.people.cart
+	if cart.get("state", "") == "wait":
+		cart["t"] = 0.0
+	hud._update_pointer()
 
 
 func active() -> bool:
@@ -325,6 +340,8 @@ func _process(dt: float) -> void:
 		return
 	if not active() or game == null or not game.ready_done:
 		return
+	if _opening or HeroScreen.is_open(game):
+		return
 	layout()
 	if _wait > 0.0:
 		_wait -= dt
@@ -403,6 +420,8 @@ func _build_target(type: String) -> Control:
 
 
 func pointer() -> Array:
+	if _opening or not cine.is_empty() or HeroScreen.is_open(game):
+		return [null, ""]
 	var c: City = game.city
 	var id := cur_id()
 	if id in ["workers", "script"]:
@@ -476,7 +495,7 @@ var cine := {}                       # идёт ролик: фаза, время
 var cine_ui: CanvasLayer
 
 
-## Ролик — для первой повозки новой игры. В автотестах (игра — не главная сцена) — только на шаге обучения «Едут!»
+## После героя — вступление перед камерой; без окна героя — на шаге «Едут!».
 func intro_wanted() -> bool:
 	if game == null or hud == null or not cine.is_empty() or not game.ready_done:
 		return false
@@ -485,7 +504,7 @@ func intro_wanted() -> bool:
 		return false                     # (интерфейс спрятан для снимка — игрок занят, ролик не нужен)
 	if c.settled_total > 0 or not c.arrivals.is_empty() or not c.pending.is_empty():
 		return false
-	return cur_id() == "cart" if active() else game == get_tree().current_scene
+	return (_opening or cur_id() == "cart") if active() else game == get_tree().current_scene
 
 
 ## Повозка тронулась — начинаем: затемнение, и сразу общий план у арки
@@ -626,6 +645,8 @@ func _cine_say(i: int) -> void:
 
 ## Подпись ролика: имя города — то же, что на табличке (с сервера); пока его нет — «ваш город»
 func intro_line(i: int) -> String:
+	if _opening and i == 1:
+		return "Начнём с улицы и домов для семей."
 	var nm := String(game.city.name) if i == 0 and game != null and game.city != null else ""
 	return "Первые переселенцы прибыли в город «%s»!" % nm if nm != "" else String(INTRO_SAY[i])
 
@@ -771,6 +792,9 @@ func _cine_end() -> void:
 	if cart.get("state", "") == "in":
 		cart["mult"] = 1.0
 	cine = {}
+	if _opening:
+		_opening = false
+		_enter(step_index("move"))   # движение камеры в ролике не засчитываем игроку
 	if float(game._min_speed) >= 0.0:
 		# окно свёрнуто — скорость игрока отдаём тому, кто вернёт её при разворачивании
 		if is_equal_approx(float(game._min_speed), 1.0) and s0 > 1.0:

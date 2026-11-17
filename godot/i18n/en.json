@@ -5503,5 +5503,11 @@
 "Легион — стража города: походы, бои с другими городами и Слава.\nГотового Легиона нет: Казармы, Стрельбище, Кузницу и другие его здания вы построите и улучшите сами.": "The Legion guards the city: campaigns, battles with other cities and Glory.\nThere is no ready-made Legion: you build and upgrade its Barracks, Archery Range, Forge and other buildings yourself.",
 "Рейтинг побед над городами: растёт с победами, падает с поражениями.": "City battle rating: rises with victories and falls with defeats.",
 "Памятники · Чудеса": "Monuments · Wonders",
-"Даром": "Free"
+"Даром": "Free",
+	"Чего не хватает": "What is missing",
+	"Снижает счастье": "Lowers happiness",
+	"%s — поставьте рядом": "%s — place nearby",
+	"Откройте лавку в исследованиях": "Unlock a shop in Research",
+	"Ожидаемый доход за час при нынешних жильцах и работниках. Прошедшие часы — в «Финансах»": "Expected hourly income with current residents and workers. Past hours are in Finances",
+	"Начнём с улицы и домов для семей.": "Let us start with a street and homes for the families."
 }

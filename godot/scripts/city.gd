@@ -723,7 +723,12 @@ func rehome(old: int, new: int) -> void:
 			if int(w["m"].get("job", -1)) == old:
 				w["m"]["job"] = new
 	_story_rehome(old, new)
+	if moving_id == old:
+		moving_id = -1
+	# Сначала восстановим штат, затем улицы и значки увидят готовый перенос.
+	compute(true)
 	rehomed.emit(old, new)
+	changed.emit()
 
 
 ## Сменить цвет дома (щелчок по значку в карточке)
@@ -1880,6 +1885,29 @@ func _store_near(s: Dictionary, stores: Array) -> bool:
 
 
 # ---------- час ----------
+
+## Прогноз по нынешним жильцам и найму, без промотки часа и записи в историю.
+func projected_net() -> float:
+	var income := 0.0
+	var upkeep := 0.0
+	for b: Dictionary in buildings.values():
+		var d := def(b)
+		match String(d["kind"]):
+			"house":
+				income += int(b["pop"]) * house_tax(b) * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
+				if cozy_v >= 1:
+					upkeep += float(d["cost"]) * upkeep_rate() * 0.5
+			"rp":
+				if not bool(b.get("over", false)):
+					upkeep += float(d["cost"]) * upkeep_rate() + wage() * hired_of(b)
+			"shop", "monument", "store", "farm", "military", "inn":
+				upkeep += float(d["cost"]) * upkeep_rate() + wage() * hired_of(b)
+	income += float(Magis.commerce(self, income)["delta"])
+	if int(stories.get("tax_off", 0)) > 0:
+		income = 0.0
+	var gross := income + Tourism.hour_income(self)
+	return gross * (1.0 - clampf(edict_add("legion_denarii"), 0.0, 1.0)) - upkeep
+
 
 ## Налог с жителя дома в час (до поправки на счастье): по классу, патриции — с «taxes1» на четверть больше
 func house_tax(b: Dictionary) -> float:

@@ -481,7 +481,7 @@ func _ready() -> void:
 	city.festival_changed.connect(_fest_look)
 	if sandbox and mode in ["play", "new"]:
 		_sandbox_apply()
-	if mode == "new" and not loaded and not settings.get("tut_done", false) and shot_path == "" and not sandbox:
+	if mode == "new" and not loaded and shot_path == "" and not sandbox:
 		Tutorial.start_new(city)
 	tutorial = Tutorial.new()
 	add_child(tutorial)
@@ -5585,7 +5585,10 @@ func start_move(b: Dictionary) -> bool:
 		return false
 	moving = {"id": b["id"], "type": b["type"], "tier": b["tier"], "variant": b["variant"], "color": b["color"], "pop": b["pop"],
 		"families": b["families"], "pos": b["pos"], "yaw": b["yaw"], "decor": _hosted(b), "hire": b.get("hire", -1),
-		"born": int(b.get("born", b["id"]))}     # порядок постройки едет с ней: перенесённая школа не станет «лишней»
+		"born": int(b.get("born", b["id"]))}     # порядок постройки едет с ней
+	for key: String in ["happy", "happy_target", "unhappy_h", "down"]:
+		if b.has(key):
+			moving[key] = b[key]
 	if _pops_for(b["type"]):
 		moving["happy0"] = city.happy_map()   # счастье домов до переноса: на новом месте — рожицы над теми, у кого поменялось
 	city.moving_id = int(b["id"])
@@ -5622,7 +5625,6 @@ func _moved(b: Dictionary, m := {}) -> void:
 		b["wonder_credit"] = true
 	if int(m.get("hire", -1)) >= 0:
 		b["hire"] = int(m["hire"])
-	city.moving_id = -1
 	city.rehome(old, int(b["id"]))
 	var ax := City.axis(b["yaw"])
 	var fw := City.facing(b["yaw"])
@@ -5730,6 +5732,9 @@ func _cancel_move() -> void:
 	b["tier"] = int(m["tier"])
 	b["pop"] = int(m["pop"])
 	b["families"] = m["families"]
+	for key: String in ["happy", "happy_target", "unhappy_h", "down"]:
+		if m.has(key):
+			b[key] = m[key]
 	_moved(b, m)
 	_show(b)
 	city.compute()
@@ -6549,7 +6554,10 @@ func _hero_offer(loaded: bool) -> void:
 	if scr == null:
 		hero_offer_done = true
 	else:
-		scr.closed.connect(func(_s): hero_offer_done = true)
+		scr.closed.connect(func(_s):
+			hero_offer_done = true
+			if not loaded and tutorial != null:
+				tutorial.welcome())
 
 
 var hero_offer_done := false              # экран «Ваш герой» в начале позади (или не нужен): советник о герое — после него

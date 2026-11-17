@@ -3570,7 +3570,7 @@ func _update_pointer() -> void:
 	# Стрелка — только в обучении и по щелчку строки просьбы / условия уровня (show_pointer, PTR_SHOW_MS).
 	return
 
-const PTR_SHOW_MS := 12000              # стрелка по щелчку строки — столько мс, потом гаснет
+const PTR_SHOW_MS := 6000              # стрелка по щелчку строки — столько мс, потом гаснет
 var _ptr_shown := {}                   # {"do": need_do, "until": мс} — стрелка по щелчку
 var _ptr_tick := 0.0
 
@@ -4019,6 +4019,9 @@ func _card_or_cat(cat: String, type: String) -> Control:
 
 
 func _process(_dt: float) -> void:
+	if not _ptr_shown.is_empty() and Time.get_ticks_msec() >= int(_ptr_shown["until"]):
+		_ptr_shown = {}
+		_update_pointer()
 	if game and game.ready_done:
 		_flush_guidance()
 		if tutorial_busy():
@@ -4940,8 +4943,9 @@ func _clickable(row: Control, tip: String, cb: Callable) -> Control:
 	var e := StyleBoxEmpty.new()
 	for st in ["normal", "pressed", "focus", "disabled"]:
 		b.add_theme_stylebox_override(st, e)
-	var hov := _box_pill(8, 2, "g_btn_hover")
-	hov.modulate_color = Color(1, 1, 1, 0.45)
+	var hov := StyleBoxFlat.new()
+	hov.bg_color = Color(CityStyle.OLIVE, 0.10)
+	hov.set_corner_radius_all(6)
 	b.add_theme_stylebox_override("hover", hov)
 	b.add_theme_stylebox_override("hover_pressed", hov)
 	b.tooltip_text = tip
@@ -5488,6 +5492,7 @@ func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void
 	needs.add_theme_constant_override("separation", 3)
 	info_box.add_child(needs)
 	_need_rows(b, cls, needs, cw)
+	_house_shortfalls(b, cw, hp)
 	_family_rows(b, info_box, cw, house_more)          # «Подробнее» — ещё и члены семьи по именам
 	if c.upgrade_to(b) != "" and c.research.has("artisans"):
 		_upgrade_rows(b, cw)
@@ -5666,6 +5671,8 @@ func _need_rows(b: Dictionary, cls: Dictionary, left: VBoxContainer, lw: float) 
 		if n not in cls["needs"]:
 			continue
 		var needed := n in Defs.needs_for(cl, c.level)
+		if not needed or (b.get("need_sources", {}).get(n, []) as Array).is_empty():
+			continue
 		var category := VBoxContainer.new()
 		category.name = "sources_" + n
 		category.modulate.a = 1.0 if needed else 0.35
@@ -5708,6 +5715,111 @@ func _need_rows(b: Dictionary, cls: Dictionary, left: VBoxContainer, lw: float) 
 						game.select_building(provider)
 						open_info(provider)))
 		left.add_child(category)
+
+
+## Ближайший существующий вид; если вокруг пусто — доступный и недорогой.
+func _need_building(b: Dictionary, need: String) -> String:
+	var c: City = game.city
+	var nearest := ""
+	var distance := INF
+	for source: Dictionary in c.buildings.values():
+		var d := c.def(source)
+		if HouseNeeds.category(d) != need or not c.unlocked(String(source["type"])):
+			continue
+		var ds: float = (source["pos"] as Vector2).distance_squared_to(b["pos"])
+		if ds < distance:
+			distance = ds
+			nearest = String(source["type"])
+	if nearest != "":
+		return nearest
+	var cheapest := INF
+	var available := false
+	for type: String in Defs.B:
+		var d: Dictionary = Defs.B[type]
+		if HouseNeeds.category(d) != need or bool(d.get("hidden", false)):
+			continue
+		var open := c.unlocked(type)
+		if (open and not available) or (open == available and float(d["cost"]) < cheapest):
+			available = open
+			cheapest = float(d["cost"])
+			nearest = type
+	return nearest
+
+
+func _loss_icon(label: String) -> String:
+	if label.begins_with("Нет лавки:"):
+		for n: String in Defs.NEED_ORDER:
+			if label.ends_with(String(Defs.NEEDS[n]["name"]).to_lower()):
+				return String(Defs.NEEDS[n]["icon"])
+	if label == "Нет рядом: вера":
+		return "faith"
+	if label.begins_with("Налоги") or label == "Жалованье не плачено":
+		return "coins"
+	if label == "Теснота":
+		return "housing"
+	if label == "Большой город":
+		return "person"
+	return "happy"
+
+
+## Короткие действия видны сразу, подробный расчёт остаётся под «Подробнее».
+func _house_shortfalls(b: Dictionary, width: float, hp: int) -> void:
+	var c: City = game.city
+	var missing := VBoxContainer.new()
+	missing.name = "HouseMissing"
+	missing.add_theme_constant_override("separation", 5)
+	for need: String in Defs.needs_for(String(c.def(b)["cls"]), c.level):
+		var coverage := int(b.get("need_coverage", {}).get(need, 0))
+		if coverage >= 100:
+			continue
+		var row := HBoxContainer.new()
+		row.name = "Missing_" + need
+		row.add_theme_constant_override("separation", 5)
+		row.add_child(_card_icon(String(Defs.NEEDS[need]["icon"]), 26))
+		var body := VBoxContainer.new()
+		body.add_theme_constant_override("separation", 1)
+		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		body.add_child(_label(I18n.t(String(Defs.NEEDS[need]["name"])) + " · %d%%" % coverage, 12, true, CARD_ACCENT))
+		var type := _need_building(b, need)
+		var action := HBoxContainer.new()
+		action.add_theme_constant_override("separation", 4)
+		var caption := "Откройте лавку в исследованиях"
+		if type != "":
+			var picture := _card_icon(String(Defs.B[type].get("icon", "housing")), 26)
+			picture.name = "SuggestedBuilding"
+			picture.set_meta("building_type", type)
+			action.add_child(picture)
+			caption = I18n.t("%s — поставьте рядом") % I18n.t(String(Defs.B[type]["name"]))
+		var instruction := _wrap(_label(caption, 12, false, CARD_ACCENT), maxf(1.0, width - 61.0))
+		instruction.name = "MissingAction"
+		action.add_child(instruction)
+		body.add_child(action)
+		row.add_child(body)
+		if type != "":
+			var kind := "build" if c.unlocked(type) else "locked"
+			missing.add_child(_clickable(row, _need_hint(b, need), func(): _do_click({"kind": kind, "type": type})))
+		else:
+			missing.add_child(row)
+	if missing.get_child_count() > 0:
+		missing.add_child(_label("Чего не хватает", 14, true, CARD_ACCENT))
+		missing.move_child(missing.get_child(missing.get_child_count() - 1), 0)
+		info_box.add_child(missing)
+	else:
+		missing.queue_free()
+	if hp >= 60 and int(b.get("happy_target", hp)) >= 60:
+		return
+	var losses: Array = (b.get("happy_parts", []) as Array).filter(func(part: Array) -> bool:
+		return int(part[1]) < 0 and String(part[0]) != "Больше 100% не бывает")
+	losses.sort_custom(func(a: Array, other: Array) -> bool: return int(a[1]) < int(other[1]))
+	if losses.is_empty():
+		return
+	var worst := VBoxContainer.new()
+	worst.name = "HouseLosses"
+	worst.add_theme_constant_override("separation", 3)
+	worst.add_child(_label("Снижает счастье", 14, true, CARD_ACCENT))
+	for part: Array in losses.slice(0, 2):
+		worst.add_child(_card_row(_loss_icon(String(part[0])), String(part[0]), _pct(int(part[1])), C_BAD))
+	info_box.add_child(worst)
 
 
 func _need_later(cl: String, n: String) -> String:
@@ -6778,13 +6890,13 @@ func _fill_people() -> void:
 		list.add_child(more)
 
 
-## После раскладки строки прокручиваем обе оси и включаем общую стрелку.
+## После раскладки прокручиваем к строке; срок стрелки задаёт только щелчок.
 func _focus_people() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	if is_instance_valid(people_target) and people_target.is_visible_in_tree():
 		overview_scroll.ensure_control_visible(people_target)
-		show_pointer({"kind": "people", "tip": ""})
+
 
 
 ## Тот же значок над миром, что у историй. Для жителя следует за его положением.
@@ -7466,9 +7578,9 @@ func refresh() -> void:
 	show_city_name()
 	lbl_money.text = fmt(c.money)
 	lbl_money.tooltip_text = I18n.t("Денарии в казне") + ": %s / %s" % [fmt(c.money), fmt(c.money_cap())]
-	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0)) - float(c.stats.get("legion_denarii", 0.0))
+	var net := c.projected_net()
 	lbl_income.text = ("+" if net >= 0 else "") + fmt(net) + "/ч"
-	lbl_income.tooltip_text = "Доход за прошлый час: налоги минус жалованье и содержание построек. Подробно и за сутки — в «Финансах»"
+	lbl_income.tooltip_text = "Ожидаемый доход за час при нынешних жильцах и работниках. Прошедшие часы — в «Финансах»"
 	lbl_income.add_theme_color_override("font_color", C_GOOD if net >= 0 else C_BAD)
 	# сверх полок (вернули очки) — честно «сверх полок», а не «4160 / 3200»
 	lbl_rp.text = ("%s+" % fmt(c.rp)) if c.rp > c.rp_cap() + 0.5 else "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]     # «999 999+» — сверх полок (в подсказке — подробно)

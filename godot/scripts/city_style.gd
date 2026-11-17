@@ -100,7 +100,10 @@ static func apply(root: Control) -> void:
 		var key := _key(b.icon)
 		if key != "":
 			b.icon = icon(key)
-		if not b.flat:
+		var hit_area: bool = b.text == "" and b.icon == null and not b.has_meta("icon") and b.get_theme_stylebox("normal") is StyleBoxEmpty
+		if hit_area:
+			pass   # прозрачная кнопка поверх строки не закрывает её рисунок
+		elif not b.flat:
 			button(b, b.has_meta("icon") or b.has_meta("bare") or b.text == "")
 		else:
 			for state: String in ["normal", "hover", "pressed", "hover_pressed", "focus"]:

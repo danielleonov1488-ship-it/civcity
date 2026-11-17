@@ -258,7 +258,10 @@ func _check_card(h: Dictionary, families: int) -> void:
 	for icon: Node in hud.info_box.find_children("Preference", "TextureRect", true, false):
 		check((icon as Control).tooltip_text.contains("Хотят:") and (icon as Control).tooltip_text.contains("к счастью дома"), "preference tooltip has wish and actual effect")
 	for n: String in Defs.CLASSES[city.def(h)["cls"]]["needs"]:
-		check(hud.info_box.find_child("sources_" + n, true, false) != null, "needed source row " + n)
+		var required: bool = n in Defs.needs_for(String(city.def(h)["cls"]), city.level)
+		var has_source: bool = not (h.get("need_sources", {}).get(n, []) as Array).is_empty()
+		check((hud.info_box.find_child("sources_" + n, true, false) != null) == (required and has_source), "working source row " + n)
+		check((hud.info_box.find_child("Missing_" + n, true, false) != null) == (required and int(h.get("need_coverage", {}).get(n, 0)) < 100), "missing need action " + n)
 
 
 func _texts(node: Node) -> String:
