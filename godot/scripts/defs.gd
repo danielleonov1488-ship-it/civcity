@@ -110,6 +110,7 @@ static func need_rank(cls: String, need: String) -> int:
 const CLASS_ORDER := ["plebs", "artisans", "patricians"]
 
 ## Профессия остаётся с человеком; подходящий работник даёт на 20% больше.
+const PROF_ON := false
 const PROFESSIONS := {
 	"farmer": {"name": "Земледелец", "en": "Farmer", "icon": "prof_farmer", "fits": ["farming"], "chance": {"plebs": 30, "artisans": 10, "patricians": 0}},
 	"trader": {"name": "Торговец", "en": "Trader", "icon": "prof_trader", "fits": ["food", "clothes", "goods"], "chance": {"plebs": 25, "artisans": 35, "patricians": 10}},

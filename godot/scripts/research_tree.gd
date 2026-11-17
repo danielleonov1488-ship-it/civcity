@@ -40,10 +40,10 @@ func setup(owner_hud, parent: VBoxContainer) -> void:
 	var tools := HBoxContainer.new()
 	tools.name = "ResearchTools"
 	tools.add_theme_constant_override("separation", 12)
-	tools.add_child(hud._icon("research", 20, Hud.CARD_ACCENT))
-	hud.lbl_research_rp = hud._label("0", 16, true, Hud.CARD_ACCENT)
+	tools.add_child(CityStyle.pictogram("research", 20))
+	hud.lbl_research_rp = hud._label("0", 16, true, CityStyle.INK)
 	tools.add_child(hud.lbl_research_rp)
-	hud.lbl_research_rate = hud._label("", 13, true, Hud.CARD_ACCENT)
+	hud.lbl_research_rate = hud._label("", 13, true, CityStyle.INK)
 	tools.add_child(hud.lbl_research_rate)
 	var space := Control.new()
 	space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -151,10 +151,10 @@ func _build() -> void:
 		tab_body.add_theme_constant_override("separation", 0)
 		tab.add_child(tab_body)
 		tab_body.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 3)
-		var medal: TextureRect = hud._icon("level", 24, Hud.CARD_ACCENT)
+		var medal: TextureRect = CityStyle.pictogram("level", 24)
 		medal.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		tab_body.add_child(medal)
-		var caption: Label = hud._label(String(Defs.LEVELS[tier]["name"]), 11, true, Hud.CARD_ACCENT)
+		var caption: Label = hud._label(String(Defs.LEVELS[tier]["name"]), 11, true, CityStyle.INK)
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		caption.clip_text = true
 		caption.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -177,8 +177,8 @@ func _build() -> void:
 		var heading := HBoxContainer.new()
 		heading.alignment = BoxContainer.ALIGNMENT_CENTER
 		heading.add_theme_constant_override("separation", 12)
-		heading.add_child(hud._icon("housing", 18, Hud.CARD_ACCENT))
-		heading.add_child(hud._label(String(Defs.LEVELS[tier]["name"]), 18, false, Hud.CARD_ACCENT, hud.font_title))
+		heading.add_child(CityStyle.pictogram("housing", 18))
+		heading.add_child(hud._label(String(Defs.LEVELS[tier]["name"]), 18, false, CityStyle.INK, hud.font_title))
 		ribbon.add_child(heading)
 		var grid := GridContainer.new()
 		grid.name = "Items"
@@ -202,10 +202,10 @@ func _build() -> void:
 		notice.alignment = BoxContainer.ALIGNMENT_CENTER
 		notice.add_theme_constant_override("separation", 8)
 		notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		notice.add_child(hud._icon("lock", 20, Hud.C_SOFT))
-		notice.add_child(hud._label(I18n.t("Откроется на уровне «%s»") % I18n.t(String(Defs.LEVELS[tier]["name"])), 12, true, Hud.CARD_ACCENT))
+		notice.add_child(CityStyle.pictogram("lock", 20))
+		notice.add_child(hud._label(I18n.t("Откроется на уровне «%s»") % I18n.t(String(Defs.LEVELS[tier]["name"])), 12, true, CityStyle.INK))
 		section.add_child(notice)
-	_empty = hud._label("Пока нет доступных исследований", 16, true, Hud.CARD_ACCENT)
+	_empty = hud._label("Пока нет доступных исследований", 16, true, CityStyle.INK)
 	_empty.name = "ResearchEmpty"
 	_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_empty.custom_minimum_size.y = 100
@@ -251,19 +251,19 @@ func _layout_sections() -> void:
 		tab.set_meta("current", tier == hud.game.city.level)
 		var frame: StyleBoxFlat = hud._card_frame(8, 3)
 		if tier == hud.game.city.level:
-			frame.border_color = Hud.CARD_ACCENT
+			frame.border_color = CityStyle.OLIVE
 			frame.set_border_width_all(2)
 		tab.add_theme_stylebox_override("normal", frame)
 		if tier == current_rank:
 			frame = frame.duplicate() as StyleBoxFlat
-			frame.bg_color = Hud.CARD_ACCENT
+			frame.bg_color = Color("e0e2c4")
 			tab.add_theme_stylebox_override("pressed", frame)
 			tab.add_theme_stylebox_override("hover_pressed", frame)
 		for child: Control in tab.find_children("*", "Control", true, false):
 			if child is Label:
-				(child as Label).add_theme_color_override("font_color", Hud.C_CREAM if tier == current_rank else Hud.CARD_ACCENT)
+				(child as Label).add_theme_color_override("font_color", CityStyle.INK)
 			elif child is TextureRect:
-				child.modulate = Hud.C_CREAM if tier == current_rank else Hud.CARD_ACCENT
+				child.modulate = CityStyle.OLIVE
 	_empty.visible = not any_visible
 	_place_popup.call_deferred()
 
@@ -283,7 +283,7 @@ func picture(r: Dictionary) -> Texture2D:
 	for type: String in building_ids(String(r["id"])):
 		if hud.icons.get(type) != null:
 			return hud.icons[type]
-	return hud.ico(String(r["icon"]), 64)
+	return CityStyle.icon(String(r["icon"]))
 
 
 func _update_picture(img: TextureRect, r: Dictionary) -> void:
@@ -294,13 +294,15 @@ func _update_picture(img: TextureRect, r: Dictionary) -> void:
 		if hud.icons.get(type) != null:
 			building_picture = true
 			break
-	img.modulate = Color.WHITE if building_picture or hud.painted(String(r["icon"])) else Hud.C_SOFT
+	img.modulate = Color.WHITE if building_picture else CityStyle.OLIVE
 	img.modulate.a = alpha
 
 
-func _badge_style(col: Color) -> StyleBoxFlat:
+func _badge_style(_col: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = col
+	sb.bg_color = CityStyle.CREAM
+	sb.border_color = CityStyle.RIM
+	sb.set_border_width_all(1)
 	sb.set_corner_radius_all(9)
 	sb.content_margin_left = 5
 	sb.content_margin_right = 5
@@ -335,7 +337,7 @@ func make_card(r: Dictionary) -> Button:
 	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	b.add_child(img)
-	var label: Label = hud._label(String(r["name"]), 13, true, Hud.CARD_ACCENT)
+	var label: Label = hud._label(String(r["name"]), 13, true, CityStyle.INK)
 	label.name = "ItemName"
 	label.position = Vector2(0, 66)
 	label.clip_text = true
@@ -365,18 +367,18 @@ func make_card(r: Dictionary) -> Button:
 	var cost := HBoxContainer.new()
 	cost.alignment = BoxContainer.ALIGNMENT_CENTER
 	cost.add_theme_constant_override("separation", 5)
-	var coin: TextureRect = hud._icon("research", 13)
+	var coin: TextureRect = CityStyle.pictogram("research", 13)
 	coin.name = "Icon"
 	cost.add_child(coin)
-	var price: Label = hud._label("", 11, true, Color.WHITE)
+	var price: Label = hud._label("", 11, true, CityStyle.INK)
 	price.name = "Cost"
 	cost.add_child(price)
 	badge.add_child(cost)
-	var tick: TextureRect = hud._icon("check", 16)
+	var tick: TextureRect = CityStyle.pictogram("check", 16)
 	tick.name = "DoneTick"
 	tick.position = Vector2(70, 46)
 	b.add_child(tick)
-	var lock: TextureRect = hud._icon("lock", 16)
+	var lock: TextureRect = CityStyle.pictogram("lock", 16)
 	lock.name = "ParentLock"
 	lock.position = Vector2(70, 46)
 	b.add_child(lock)
@@ -384,7 +386,7 @@ func make_card(r: Dictionary) -> Button:
 	mark.name = "new_mark"
 	mark.position = Vector2(64, 0)
 	mark.add_theme_constant_override("separation", 3)
-	mark.add_child(hud._icon("research_sparkles", 16, Hud.C_GOLD))
+	mark.add_child(CityStyle.pictogram("research_sparkles", 16))
 	mark.tooltip_text = "НОВОЕ"
 	b.add_child(mark)
 	for child: Control in b.find_children("*", "Control", true, false):
@@ -419,13 +421,14 @@ func _update_card(b: Button, r: Dictionary) -> void:
 	_update_picture(img, r)
 	img.material = _done_material if done else null
 	img.modulate.a = 0.6 if locked else 1.0
-	(b.get_node("ItemName") as Label).add_theme_color_override("font_color", Hud.C_SOFT if locked else Hud.CARD_ACCENT)
+	(b.get_node("ItemName") as Label).add_theme_color_override("font_color", Hud.C_SOFT if locked else CityStyle.INK)
 	var badge := b.get_node("CostBadge") as PanelContainer
 	badge.add_theme_stylebox_override("panel", _badge_good if done or c.rp >= float(r["cost"]) else _badge_bad)
 	var cost := badge.get_child(0) as HBoxContainer
 	var coin := cost.get_node("Icon") as TextureRect
-	coin.texture = hud.ico("check" if done else "research", 26)
-	coin.modulate = Color.WHITE
+	coin.texture = CityStyle.icon("check" if done else "research")
+	coin.set_meta("city_icon", "check" if done else "research")
+	coin.modulate = CityStyle.OLIVE
 	(cost.get_node("Cost") as Label).text = "" if done else str(r["cost"])
 	badge.tooltip_text = "Изучено" if done else str(r["cost"])
 	badge.reset_size()
@@ -465,7 +468,7 @@ func _make_popup() -> void:
 	popup = PanelContainer.new()
 	popup.name = "ResearchItemPopup"
 	popup.custom_minimum_size.x = 326
-	popup.add_theme_stylebox_override("panel", hud._box_panel(8))
+	popup.add_theme_stylebox_override("panel", CityStyle.panel(12, 12))
 	hud.root.add_child(popup)
 	popup.hide()
 	var body := VBoxContainer.new()
@@ -497,7 +500,7 @@ func _make_popup() -> void:
 	_detail_scroll.add_child(detail)
 	var cost := HBoxContainer.new()
 	cost.alignment = BoxContainer.ALIGNMENT_CENTER
-	cost.add_child(hud._icon("research", 23, Hud.C_SOFT))
+	cost.add_child(CityStyle.pictogram("research", 23))
 	_popup_cost = hud._label("", 18, true)
 	cost.add_child(_popup_cost)
 	body.add_child(cost)
@@ -519,7 +522,9 @@ func _make_popup() -> void:
 				hud._fill_cards()
 		else:
 			refresh())
+	CityStyle.button(study)
 	body.add_child(study)
+	CityStyle.apply(popup)
 
 
 func paragraph(text: String, color := Hud.C_INK) -> void:
@@ -592,6 +597,7 @@ func _update_detail_state() -> void:
 	if eta != "":
 		_popup_reason.text += ("\n" if why != "" else "") + I18n.t("Хватит через %s") % eta
 	_popup_reason.visible = _popup_reason.text != ""
+	CityStyle.apply(popup)
 	_place_popup.call_deferred()
 
 

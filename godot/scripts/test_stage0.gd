@@ -346,9 +346,9 @@ func _rank_rows() -> void:
 # ---------- отзывы игроков 27.10: золотая стрелка ----------
 
 ## Стрелка — к тому, чего правда не хватает («6 сытых домов»: домов мало — к домам, а не к «Обзору»; жилья на нужных
-## жителей хватает — ждём повозку, стрелки нет); сама — только в начале (до «Хутора»), дальше — по щелчку строки
+## жителей хватает — ждём повозку, стрелки нет); после обучения — только по щелчку строки
 func _resolver() -> void:
-	print("== стрелка: к настоящей нехватке; сама — только до «Хутора»")
+	print("== стрелка: после обучения только по щелчку строки")
 	var saved: Array = c.goals_done.duplicate()
 	var lvl0 := c.level
 	var money0 := c.money
@@ -375,7 +375,7 @@ func _resolver() -> void:
 	w = hud.need_do(["fed", "food"], "", 6)
 	check(hs.size() == 6 and (foods > 0 or (String(w.get("kind", "")) == "build" and String(Defs.B.get(String(w.get("type", "")), {}).get("sub", "")) == "food")),
 		"шесть домов с жильцами, лавок еды нет — к лавке еды (%s)" % w.get("type", w.get("kind", "")))
-	# в начале (до «Хутора») стрелка к этой просьбе — сама
+	# До «Хутора» тоже нет автоматической стрелки.
 	c.level = 0
 	c.goals_done = []
 	for g in Defs.REQUESTS:
@@ -386,8 +386,15 @@ func _resolver() -> void:
 	await frames(2)
 	hud._update_pointer()
 	var g6: Dictionary = c.active_goals(1)[0]
-	check(String(g6["id"]) == "fed6" and hud.early_request(g6) and hud.pointer_target != null and hud.pointer_target == hud._request_target(g6)["target"],
-		"до «Хутора» стрелка к «6 сытых домов» сама (%s)" % hud.pointer_target)
+	check(String(g6["id"]) == "fed6" and hud.pointer_target == null and not hud.pointer.visible,
+		"до «Хутора» нет автоматической стрелки к «6 сытым домам»")
+	var early_button := task_btn(String(g6["id"]))
+	if check(early_button != null, "ранняя просьба доступна для щелчка"):
+		early_button.pressed.emit()
+		await frames(3)
+		check(hud.pointer_target != null and hud.pointer.visible, "ранняя просьба показывает стрелку по щелчку")
+	hud._ptr_shown = {}
+	game.set_tool("")
 	# стал хутором — сама стрелка больше не показывает
 	c.level = 1
 	for g in Defs.REQUESTS:

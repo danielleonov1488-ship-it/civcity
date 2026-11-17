@@ -541,6 +541,8 @@ func ico(name: String, size := 64) -> Texture2D:
 			img.convert(Image.FORMAT_RGBA8)
 			img.resize(maxi(1, roundi(img.get_width() * size / 512.0)), maxi(1, roundi(img.get_height() * size / 512.0)), Image.INTERPOLATE_LANCZOS)
 			tex = ImageTexture.create_from_image(img)
+	if tex != null:
+		tex.set_meta("city_icon", name)
 	_ico[key] = tex
 	return tex
 
@@ -559,6 +561,7 @@ func _label(text: String, size := 18, bold := false, col := C_INK, f: Font = nul
 func _icon(name: String, size := 22, col := C_INK) -> TextureRect:
 	var r := TextureRect.new()
 	r.texture = ico(name, mini(128, size * 2))
+	r.set_meta("city_icon", name)
 	r.custom_minimum_size = Vector2(size, size)
 	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -1048,6 +1051,8 @@ func apply_reveal(lvl: int) -> void:
 			top_panel.create_tween().tween_property(top_panel, "modulate:a", 1.0, 0.6)
 	if lvl < 3:
 		tasks_panel.visible = false
+	if game.tutorial != null:
+		game.tutorial.reveal()
 	# пока плашки города нет, семьи ждут в самом углу
 	_put(fam_box, Control.PRESET_TOP_LEFT, Vector2(10, 12) if lvl < 1 else Vector2(_fam_x(), FAM_Y))
 
@@ -1136,11 +1141,14 @@ func _fill_families() -> void:
 
 ## Повозка впервые встала из-за низкого счастья: объясняет советник (дальше — обычная всплывашка). Открыт другой
 ## совет — ждёт, пока его закроют (_once_tips), и говорит о счастье на тот момент
+	CityStyle.apply(fam_box)
+
+
 func on_arrive_block(text: String) -> void:
-	if game.mode == "demo" or game.mode == "menu" or (game.tutorial and game.tutorial.active()):
+	if game.mode == "demo" or game.mode == "menu" or tutorial_busy():
 		notify(text, "happy")
 		return
-	if not _tip_free():
+	if not _tip_free() or not guidance_queue.is_empty():
 		game.city.tips["arrive_wait"] = true    # открытый совет (или ролик ранга) не перебиваем — скажем, когда советник свободен
 		return
 	_arrive_advice()
@@ -1148,17 +1156,17 @@ func on_arrive_block(text: String) -> void:
 
 func _arrive_advice() -> void:
 	var c: City = game.city
+	if not _tip_free() or not guidance_queue.is_empty():
+		c.tips["arrive_wait"] = true
+		return
 	c.tips.erase("arrive_wait")
-	var ht: Array = c.stats.get("happy_tips", [])
-	var tip := ("\n\nСовет: " + String(ht[0]) + ".") if not ht.is_empty() else ""
-	var nf := int(_defc("ARRIVE_FREE", 3))
-	advisor("Новые семьи не едут", ("Первые %d %s приезжают всегда, а дальше в город переселяются, только если счастье города не ниже %d%%. Сейчас — %d%%, и повозка ждёт на дороге.\n\nНаведите мышь на счастье вверху — там видно, из чего оно складывается и что его поднимет. Как только счастье поднимется, повозка сразу поедет." % [nf, _plural(nf, "семья", "семьи", "семей"), game.city.arrive_happy(), int(c.stats.get("happy", 0))]) + tip)
+	advisor("Новые семьи не едут", "Сейчас счастье — %d%%, а для приезда семей нужно %d%%. Наведите мышь на счастье вверху — подсказка покажет, как его поднять." % [int(c.stats.get("happy", 0)), c.arrive_happy()])
 
 
 ## Советы о приезжих: первая семья; семья, которой негде жить
 func on_arrival(f: Dictionary) -> void:
 	var c: City = game.city
-	if game.mode == "demo" or (game.tutorial and game.tutorial.active()):
+	if game.mode == "demo" or tutorial_busy():
 		return
 	# приехала семья — короткая плашка (не чаще раза в игровой час; остальные приезды видны значками слева)
 	if int(c.hour_n) != _fam_toast_h:
@@ -1166,9 +1174,7 @@ func on_arrival(f: Dictionary) -> void:
 		_toast("Приехала семья %s" % f["name"], "family")          # надпись переведёт Godot (образец «Приехала семья %s»)
 	if c.settled_total == 0 and not c.tips.has("first_family"):
 		c.tips["first_family"] = true
-		advisor("Приехали первые жители!", "Семьи сошли с повозки на площадь у станции и ждут жилья. Нажмите на значок семьи слева вверху — подходящие дома засветятся, — и щёлкните по дому.
-
-Пока семьи ждут, новые не едут: на площади помещается всего несколько семей. А везёт их повозка только туда, где в домах есть свободное место, — стройте дома заранее. Так город растёт постепенно.")
+		advisor("Приехали первые жители!", "Семьи сошли с повозки на площадь у станции и ждут жилья. Нажмите на значок семьи слева вверху — подходящие дома засветятся, — и щёлкните по дому.\n\nПока семьи ждут, новые не едут: на площади помещается всего несколько семей. А везёт их повозка только туда, где в домах есть свободное место, — стройте дома заранее. Так город растёт постепенно.")
 		return
 	if c.homes_for(f).is_empty() and not c.tips.has("nohome_" + f["cls"]) and not advisor_panel.visible:   # открытый совет не перебиваем
 		c.tips["nohome_" + f["cls"]] = true
@@ -1216,7 +1222,7 @@ func _rank_button() -> void:
 func rank_shown() -> bool:
 	if game == null or game.city == null or game.mode in ["demo", "menu"]:
 		return false
-	if game.tutorial and game.tutorial.active():
+	if tutorial_busy():
 		return false
 	return ui_level() >= 1 and game.city.rank_ok()
 
@@ -3499,10 +3505,18 @@ func _pointer() -> void:
 	add_child(pointer_text)
 
 
-## Куда показывает стрелка для первого задания
+## Стрелка обучения или временная подсказка по щелчку строки
 func _update_pointer() -> void:
 	pointer_target = null
 	if game == null or game.city == null or game.mode == "demo" or game.mode == "menu":
+		return
+	if tutorial_busy():
+		if game.tutorial != null:
+			var pt: Array = game.tutorial.pointer()
+			pointer_target = pt[0]
+			pointer_text.text = pt[1]
+			if badges.has("tutorial_target") and pointer_target != badges["tutorial_target"]["n"]:
+				clear_badge("tutorial_target")
 		return
 	# щёлкнули по строке (просьба, условие уровня, цель истории) — стрелка PTR_SHOW_MS к тому, что нужно сделать
 	if not _ptr_shown.is_empty():
@@ -3513,67 +3527,17 @@ func _update_pointer() -> void:
 				return
 		else:
 			_ptr_shown = {}
-	if game.tutorial and game.tutorial.active():
-		var pt: Array = game.tutorial.pointer()
-		pointer_target = pt[0]
-		pointer_text.text = pt[1]
-		return
-	# Игрок открыл пустое рабочее здание — подскажем первый найм только в этой карточке.
-	if game.tool == "" and game.city.manual_hiring() and info_panel.visible and not info_b.is_empty() and game.city.job_max(info_b) > 0 and game.city.hired_of(info_b) == 0:
-		pointer_target = _do_target(hire_do(info_b))
-		if pointer_target != null:
-			pointer_text.text = "Нанять работника"
-			return
-	# город впервые готов к новому уровню — стрелка на кнопку, пока её не нажмут
-	if rank_btn and rank_btn.visible and not game.city.tips.has("rank_pressed") and game.tool == "":
-		pointer_target = rank_btn
-		pointer_text.text = ""                # кнопка сама говорит, что делать; подпись легла бы на просьбы
-		return
-	# Обучение Легиону: форт → окно → учебный бой → улучшение — scripts/legion_ui.gd
-	var lu := LegionUi.of(self)
-	if lu != null and lu.tut_active():
-		var lp: Array = lu.tut_pointer()
-		# шаг «Войска» при закрытом окне уступает стрелку идущей истории горожан — улучшение бойцов подождёт
-		var sto0 = game.get("stories")
-		if lp[0] != null and lp[0] != lg_upg_btn and not lu.visible and lu.lg.tut_step() == "troops" and sto0 != null and sto0.pointer_auto() \
-				and not (sto0.pointer_do() as Dictionary).is_empty():
-			lp = [null, ""]
-		if lp[0] != null:
-			pointer_target = lp[0]
-			pointer_text.text = lp[1]
-			return
-	if ui_level() < 3:
-		return
-	# Сама стрелка (отзывы игроков 27.10: путала — «Обзор» вместо домов, дома при хватающем жилье) — только в начале:
-	# обучение, первые просьбы до «Хутора» включительно и шаги историй, что явно показывают, куда идти (point:
-	# «Легион», «Этаж»). Дальше — по щелчку строки (show_pointer)
-	var sto = game.get("stories")
-	if sto != null and sto.pointer_auto():
-		var sp: Dictionary = sto.pointer_do()
-		if not sp.is_empty():
-			pointer_target = _do_target(sp)
-			if game.tool != "" and Defs.B.has(game.tool):
-				pointer_target = null
-			pointer_text.text = String(sp.get("tip", ""))
-			return
-	var goals: Array = game.city.active_goals(1)
-	if goals.is_empty() or not early_request(goals[0]):
-		return
-	# стрелка — к тому, чего не хватает: первая невыполненная часть просьбы, закрытое — к исследованиям, жители —
-	# к домам, только если жилья мало (хватает — ждём повозку, без стрелки), сытые дома — к домам или лавке еды
-	var rt := _request_target(goals[0])
-	pointer_target = rt["target"]
-	if game.tool != "" and Defs.B.has(game.tool):
-		pointer_target = null
-	pointer_text.text = String(rt["tip"])
-
+	# Владелец, 17.11: «после обучения эта стрелка не нужна вообще — мешает играть и сбивает с толку».
+	# Сама стрелка больше не появляется: ни к просьбам, ни к историям, ни к кнопке уровня, ни к Легиону.
+	# Стрелка — только в обучении и по щелчку строки просьбы / условия уровня (show_pointer, PTR_SHOW_MS).
+	return
 
 const PTR_SHOW_MS := 12000              # стрелка по щелчку строки — столько мс, потом гаснет
 var _ptr_shown := {}                   # {"do": need_do, "until": мс} — стрелка по щелчку
 var _ptr_tick := 0.0
 
 
-## Первые просьбы — до «Хутора» включительно, пока город не стал хутором: к ним стрелка показывает сама
+## Первые просьбы до «Хутора»; стрелка к ним — только по щелчку строки
 func early_request(g: Dictionary) -> bool:
 	if game.city.level >= 1:
 		return false
@@ -3856,6 +3820,8 @@ func _do_target(w: Dictionary, shown := false) -> Control:
 				if not button.is_queued_for_deletion() and button.is_visible_in_tree() and String(button.get_meta("quest_action", "")) == action and action != "":
 					return button
 			return info_panel
+		"magis":
+			return top_btns.get("magis")
 		"plaza":
 			return road_btns.get("plaza", road_target())
 		"locked":
@@ -3947,6 +3913,8 @@ func _do_click(w: Dictionary) -> void:
 			_scroll_build_card(String(w.get("type", "")))
 		"cap", "rank":
 			_open_overview("city")
+		"magis":
+			MagisUI.attach(self).open()
 		"plaza":
 			if game.tool != "plaza":
 				game.set_tool("plaza")
@@ -4063,6 +4031,17 @@ func _card_or_cat(cat: String, type: String) -> Control:
 
 
 func _process(_dt: float) -> void:
+	if game and game.ready_done:
+		_flush_guidance()
+		if tutorial_busy():
+			advisor_panel.hide()
+			notes_box.hide()
+			_ptr_tick -= _dt
+			if _ptr_tick <= 0.0:
+				_ptr_tick = 0.2
+				_update_pointer()
+		else:
+			notes_box.visible = not advisor_panel.visible
 	_fit_tray()
 	if game and game.ready_done:
 		_family_badges()
@@ -4108,6 +4087,12 @@ func _process(_dt: float) -> void:
 			_ptr_tick = 0.25
 			_update_pointer()
 	if pointer:
+		if tutorial_busy():
+			pointer.texture = CityStyle.icon("pointing")
+			pointer.modulate = CityStyle.OLIVE
+		else:
+			pointer.texture = ico("pointing", 104)
+			pointer.modulate = Color.WHITE
 		var t: Control = pointer_target
 		var cu := CampUI.of(self)
 		# лагерь Легиона закрывает город целиком: стрелка к кнопкам города (например, «Мостовая») над ним не видна
@@ -4779,11 +4764,20 @@ func _hire_row(b: Dictionary) -> VBoxContainer:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	block.add_child(title)
 	var crew := HBoxContainer.new()
-	crew.name = "profession_crew"
+	crew.name = "work_crew"
 	crew.alignment = BoxContainer.ALIGNMENT_CENTER
 	crew.add_theme_constant_override("separation", 8)
 	block.add_child(crew)
-	if profession != "":
+	# Один знак объясняет, кому доступна работа; места ниже — без рамок.
+	for cls: String in Defs.CLASS_ORDER:
+		if int(c.def(b).get("jobs", {}).get(cls, 0)) > 0:
+			var required := CityStyle.pictogram(String(CityStyle.CLASS_ICON[cls]), 28)
+			required.name = "RequiredWorkerClass"
+			required.tooltip_text = String(Defs.CLASSES[cls]["name"])
+			required.mouse_filter = Control.MOUSE_FILTER_PASS
+			crew.add_child(required)
+			break
+	if Defs.PROF_ON and profession != "":
 		var match_row := HBoxContainer.new()
 		match_row.name = "profession_summary"
 		match_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -4807,33 +4801,31 @@ func _hire_row(b: Dictionary) -> VBoxContainer:
 	for cls: String in Defs.CLASS_ORDER:
 		for k in int(c.def(b).get("jobs", {}).get(cls, 0)):
 			var occupied := false
-			var worker_cls := cls
 			var worker_prof := ""
 			var tip := String(Defs.CLASSES[cls]["name"])
 			if c.manual_hiring():
 				var same: Array = members.filter(func(w: Dictionary) -> bool: return String(w["m"].get("job_class", "")) == cls)
 				occupied = k < same.size()
 				if occupied:
-					worker_cls = String(same[k]["cls"])
 					worker_prof = String(same[k]["m"].get("prof", ""))
 					tip = Residents.full_name(same[k]["m"], same[k]["family"])
 			else:
 				occupied = index < roundi(h * float(b.get("fill", 1.0)))
-			var slot := PanelContainer.new()
+			var slot := Control.new()
 			slot.name = "worker_slot_%d" % index
-			slot.custom_minimum_size = Vector2(34, 34)
-			slot.add_theme_stylebox_override("panel", _card_frame(14, 1))
+			slot.custom_minimum_size = Vector2(28, 32)
 			slot.tooltip_text = tip
-			var portrait := Control.new()
-			portrait.custom_minimum_size = Vector2(32, 32)
-			portrait.mouse_filter = Control.MOUSE_FILTER_PASS
-			portrait.add_child(_cls_pic(worker_cls, 26) if occupied else _card_icon("person", 22, CARD_ACCENT))
-			if occupied and worker_prof != "":
+			slot.set_meta("worker_slot", true)
+			slot.set_meta("occupied", occupied)
+			var figure := CityStyle.pictogram("person", 28)
+			figure.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			figure.modulate.a = 1.0 if occupied else 0.22
+			slot.add_child(figure)
+			if Defs.PROF_ON and occupied and worker_prof != "":
 				var badge := _profession_icon(worker_prof, 18, worker_prof == profession)
 				badge.set_meta("profession_role", "worker")
 				badge.position = Vector2(14, 14)
-				portrait.add_child(badge)
-			slot.add_child(portrait)
+				slot.add_child(badge)
 			slots.add_child(slot)
 			index += 1
 	for cls: String in Defs.CLASS_ORDER:
@@ -4845,7 +4837,7 @@ func _hire_row(b: Dictionary) -> VBoxContainer:
 		available.tooltip_text = String(Defs.CLASSES[cls]["name"])
 		available.alignment = BoxContainer.ALIGNMENT_CENTER
 		available.add_theme_constant_override("separation", 5)
-		available.add_child(_cls_pic(cls, 24))
+		available.add_child(CityStyle.pictogram(String(CityStyle.CLASS_ICON[cls]), 24))
 		var free_label := _label("свободно: %d" % free, 14, true, CARD_ACCENT if free > 0 else C_BAD)
 		free_label.name = "hire_free_" + cls
 		free_label.tooltip_text = String(Defs.CLASSES[cls]["name"])
@@ -4894,7 +4886,10 @@ func _hire_row(b: Dictionary) -> VBoxContainer:
 func on_workplace_built(b: Dictionary) -> void:
 	var c: City = game.city
 	if c.manual_hiring() and c.job_max(b) > 0 and not c.tips.has("manual_hire_tip"):
-		c.tips["manual_hire_pending"] = int(b["id"])
+		if not c.tips.has("manual_hire_pending"):
+			c.tips["manual_hire_pending"] = int(b["id"])
+		if tutorial_busy():
+			c.tips["manual_hire_tutorial"] = true
 
 
 func _manual_hire_advice() -> bool:
@@ -4905,12 +4900,13 @@ func _manual_hire_advice() -> bool:
 	if not game.ready_done or game.tool != "" or not advisor_on() or not _tip_free():
 		return false
 	var b: Dictionary = c.buildings.get(int(c.tips["manual_hire_pending"]), {})
-	if b.is_empty() or c.hired_of(b) > 0:
+	if b.is_empty() or (c.hired_of(b) > 0 and not c.tips.has("manual_hire_tutorial")):
 		c.tips.erase("manual_hire_pending")
 		return false
 	c.tips["manual_hire_tip"] = true
 	c.tips.erase("manual_hire_pending")
-	advisor("Работа в новом здании", "Здание построено, но в нём никто не работает. Нажмите на него и добавьте работников кнопкой «+».")
+	c.tips.erase("manual_hire_tutorial")
+	advisor("Работа в новом здании", "Работников добавляют кнопкой «+» в карточке здания. Кнопка «−» освобождает место.", Callable(), false, false, hire_do(b))
 	return true
 
 
@@ -4986,6 +4982,8 @@ func _fill_info() -> void:
 	_fill_info_body()
 	if info_p.is_empty() and not info_b.is_empty():
 		_compact_info_style()
+	if info_b.is_empty() or game.city.def(info_b).get("kind", "") != "military":
+		CityStyle.apply(info_panel)
 	_snug(info_panel)
 	_refit(info_panel)
 
@@ -5019,7 +5017,7 @@ func _fill_info_body() -> void:
 	info_panel.custom_minimum_size = Vector2(INFO_WIDTH, 0)
 	var hdr := HBoxContainer.new()
 	hdr.add_theme_constant_override("separation", 8)
-	var ib := _round(d.get("icon", Defs.CLASSES[d["cls"]]["icon"] if d.has("cls") else "info"), "Сменить цвет" if c.is_house(b) else d["name"], 32)
+	var ib := _round(d.get("icon", Defs.CLASSES[d["cls"]]["icon"] if d.has("cls") else "info"), "Сменить цвет" if c.is_house(b) else d["name"], 42)
 	if c.is_house(b):
 		(ib.get_node("ic") as TextureRect).texture = ico("color", 60)
 		ib.pressed.connect(func(): c.recolor(b))
@@ -5028,7 +5026,7 @@ func _fill_info_body() -> void:
 	var tv := VBoxContainer.new()
 	tv.add_theme_constant_override("separation", 0)
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var nm := _wrap(_label(d["name"], 18, false, CARD_ACCENT, font_title), cw - 80.0)
+	var nm := _wrap(_label(d["name"], 18, false, CARD_ACCENT, font_title), cw - 90.0)
 	nm.name = "InfoTitle"
 	tv.add_child(nm)
 	hdr.add_child(tv)
@@ -5442,12 +5440,20 @@ func _fill_house(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float) -> 
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var sc := ScrollContainer.new()
 	sc.name = "house_scroll"
+	_olive_scroll(sc)
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sc.follow_focus = false
 	sc.add_child(body)
 	outer.add_child(sc)
 	# Полоса прокрутки помещается внутри тех же 340 точек вместе с рамкой.
-	var body_width := maxf(1.0, cw - ceilf(sc.get_v_scroll_bar().get_combined_minimum_size().x))
+	# Полоса зарезервирована сразу: её видимость не меняет минимум строки.
+	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_RESERVE
+	var scroll_width := ceilf(sc.get_v_scroll_bar().get_combined_minimum_size().x)
+	# и поля самой прокрутки (её рамка): без них карточка выходила на 344 вместо 340 (проба 17.11)
+	var sc_box: StyleBox = sc.get_theme_stylebox("panel")
+	var sc_pad := ceilf(sc_box.get_minimum_size().x) if sc_box != null else 0.0
+	sc_pad += float(sc.get_theme_constant("scrollbar_v_separation"))   # зазор между текстом и полосой (по умолчанию 4)
+	var body_width := maxf(1.0, cw - scroll_width - sc_pad)
 	body.custom_minimum_size = Vector2(body_width, 0)
 	info_box = body
 	_fill_house_body(b, d, tv, body_width)
@@ -5500,7 +5506,7 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	var occupancy := HBoxContainer.new()
 	occupancy.add_theme_constant_override("separation", 5)
 	occupancy.add_child(subtitle)
-	occupancy.add_child(_card_icon("person", 16, CARD_ACCENT))
+	occupancy.add_child(_card_icon("person", 24))
 	var residents := _label("%d/%d" % [int(b["pop"]), c.house_cap(b)], 12, true, CARD_ACCENT)
 	residents.name = "HouseOccupancy"
 	residents.tooltip_text = "жителей / мест"
@@ -5510,12 +5516,12 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	var hp := int(b["happy"])
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 5)
-	top.add_child(_card_icon("happy", 20, CARD_ACCENT))
+	top.add_child(_card_icon("happy", 26))
 	var happy := _label("Счастье %d%%" % hp, 16, true, CARD_ACCENT)
 	happy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(happy)
 	var inc := int(b["pop"]) * c.house_tax(b) * (0.5 + minf(100.0, float(hp)) / 100.0)
-	top.add_child(_card_icon("income", 18, CARD_ACCENT))
+	top.add_child(_card_icon("income", 24))
 	top.add_child(_label("+%s/ч" % fmt(inc), 13, true, CARD_ACCENT))
 	info_box.add_child(top)
 	info_box.add_child(_need_strip(b.get("need_coverage", {}), Defs.needs_for(cl, c.level), cw, cl))
@@ -5587,7 +5593,7 @@ func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void
 		fb.focus_mode = Control.FOCUS_NONE
 		fb.name = "InfoFloor"
 		fb.text = "Надстроить этаж · %s" % fmt(price)
-		fb.icon = load("res://assets/ui/kitA/icons/upgrade.png")
+		fb.icon = CityStyle.icon("level")
 		fb.expand_icon = false
 		fb.custom_minimum_size = Vector2(0, 30)
 		fb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
@@ -5610,7 +5616,7 @@ func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void
 func _more_btn(to_more: bool) -> Button:
 	var mb := Button.new()
 	mb.focus_mode = Control.FOCUS_NONE
-	mb.flat = true
+	mb.flat = false
 	mb.clip_text = true
 	mb.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	mb.text = "Подробнее: из чего счастье, жильцы ▾" if to_more else "Короче ▴"
@@ -5619,6 +5625,10 @@ func _more_btn(to_more: bool) -> Button:
 	mb.add_theme_color_override("font_hover_color", C_INK)
 	mb.size_flags_horizontal = Control.SIZE_FILL
 	mb.tooltip_text = mb.text
+	mb.text = ""
+	mb.icon = CityStyle.icon("info")
+	_card_button(mb, true)
+	mb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	mb.pressed.connect(func():
 		house_more = to_more
 		_fill_info())
@@ -5689,6 +5699,8 @@ func _family_rows(b: Dictionary, box: VBoxContainer, width: float, details: bool
 		preference.modulate = Color.WHITE if FamilyPreference.matches(c, b, f) else Color(1, 1, 1, 0.5)
 		preference.mouse_filter = Control.MOUSE_FILTER_PASS
 		preference.tooltip_text = FamilyPreference.tooltip(c, b, f)
+		# старые семьи без желания (до CITY5a) — значка нет: прежняя «черта» показывала кошку (владелец: кошки — странное желание)
+		preference.visible = f.has("want")
 		family.add_child(title)
 		var heads := HFlowContainer.new()
 		heads.name = "Members"
@@ -5698,15 +5710,15 @@ func _family_rows(b: Dictionary, box: VBoxContainer, width: float, details: bool
 		for m: Dictionary in members:
 			if int(m.get("age", 0)) > 0:
 				adults += 1
-		heads.custom_minimum_size.x = minf(width * 0.6, members.size() * 22 + adults * 22)
+		heads.custom_minimum_size.x = minf(width * 0.6, members.size() * 22 + (adults * 22 if Defs.PROF_ON else 0))
 		for m: Dictionary in members:
 			var child := int(m.get("age", 1)) == 0
 			var head := Button.new()
 			head.flat = true
-			head.custom_minimum_size = Vector2(19, 24)
+			head.custom_minimum_size = Vector2(24, 26)
 			head.icon = MapBadge.ink_texture("head_child" if child else "head_adult")
 			head.expand_icon = true
-			head.add_theme_constant_override("icon_max_width", 13 if child else 17)
+			head.add_theme_constant_override("icon_max_width", 18 if child else 22)
 			head.add_theme_color_override("icon_normal_color", CARD_ACCENT)
 			for state in ["normal", "hover", "pressed", "focus"]:
 				head.add_theme_stylebox_override(state, StyleBoxEmpty.new())
@@ -5723,7 +5735,7 @@ func _family_rows(b: Dictionary, box: VBoxContainer, width: float, details: bool
 			var person := HBoxContainer.new()
 			person.add_theme_constant_override("separation", 1)
 			person.add_child(head)
-			if not child:
+			if Defs.PROF_ON and not child:
 				var badge := _profession_icon(String(m.get("prof", "")), 20)
 				badge.set_meta("profession_role", "family")
 				person.add_child(badge)
@@ -5753,14 +5765,16 @@ func _need_rows(b: Dictionary, cls: Dictionary, left: VBoxContainer, lw: float) 
 		category.tooltip_text = String(Defs.NEEDS[n]["name"]) + ": " + (_need_hint(b, n) if needed else _need_later(cl, n))
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 5)
-		row.add_child(_card_icon(Defs.NEEDS[n]["icon"], 18, CARD_ACCENT))
+		row.add_child(_card_icon(Defs.NEEDS[n]["icon"], 26))
 		category.add_child(row)
 		var sources: Array = b.get("need_sources", {}).get(n, []) if needed else []
 		if sources.is_empty():
 			row.add_child(_label("0%" if needed else "—", 12, true, CARD_ACCENT))
 		else:
 			var pictures := HFlowContainer.new()
-			pictures.custom_minimum_size.x = lw - 24.0
+			# Значок 26 и промежуток 5 тоже входят в ширину строки.
+			pictures.custom_minimum_size.x = maxf(1.0, lw - 31.0)
+			pictures.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			pictures.add_theme_constant_override("h_separation", 8)
 			pictures.add_theme_constant_override("v_separation", 2)
 			row.add_child(pictures)
@@ -5774,9 +5788,10 @@ func _need_rows(b: Dictionary, cls: Dictionary, left: VBoxContainer, lw: float) 
 				image.custom_minimum_size = Vector2(28, 28)
 				image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-				image.texture = icons.get(type)
-				if image.texture == null:
-					image.texture = ico(String(Defs.B[type].get("icon", "housing")), 32)
+				var source_icon := String(Defs.B[type].get("icon", "housing"))
+				image.set_meta("city_icon", source_icon)
+				image.texture = CityStyle.icon(source_icon)
+				image.modulate = CityStyle.OLIVE
 				tile.add_child(image)
 				tile.add_child(_label("+%d%%" % int(source["bonus"]), 12, true, CARD_ACCENT))
 				var sid := int(source["id"])
@@ -5999,69 +6014,157 @@ func house_event(b: Dictionary, up: bool) -> void:
 
 # ---------- советник, всплывашки, события ----------
 
-func _advisor() -> void:
-	advisor_panel = _panel(null, "scroll_h", 0, 6)
-	_put(advisor_panel, Control.PRESET_CENTER_TOP, Vector2(0, ADV_Y))        # ниже значков семей; всплывашки пока прячутся
+var adv_show: Button
+var _adv_target := {}
+var guidance_queue: Array[Dictionary] = []
+var _guidance_playing := false
 
-	advisor_panel.custom_minimum_size = Vector2(640, 0)
-	advisor_panel.visible = false
+
+## Общий затвор, в том числе до создания Tutorial при загрузке.
+func tutorial_busy() -> bool:
+	return game != null and game.city != null and ((game.tutorial != null and game.tutorial.active()) or int(game.city.tips.get("tut", -1)) >= 0)
+
+
+func guide_style(path := "panels/panel_inset", _rim := 12, pad := 12) -> StyleBoxFlat:
+	return CityStyle.panel(40 if path == "panels/slot_round" else 12, pad)
+
+
+func guide_link(caption: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.text = caption
+	button.flat = true
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	button.add_theme_font_size_override("font_size", 11)
+	for state: String in ["normal", "hover", "pressed"]:
+		button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+	button.add_theme_color_override("font_color", Color("754827"))
+	button.add_theme_color_override("font_hover_color", CityStyle.OLIVE)
+	button.pressed.connect(action)
+	return button
+
+
+func guide_button(caption: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.text = caption
+	button.custom_minimum_size = Vector2(96, 34)
+	button.add_theme_font_size_override("font_size", 14)
+	CityStyle.button(button)
+	button.pressed.connect(action)
+	return button
+
+
+func _queue_guidance(item: Dictionary) -> void:
+	for queued: Dictionary in guidance_queue:
+		if queued.get("kind") == item.get("kind") and queued.get("title", queued.get("text")) == item.get("title", item.get("text")):
+			return
+	guidance_queue.append(item)
+
+
+func _flush_guidance() -> void:
+	if tutorial_busy() or not _tip_free() or not _screen_free() or notes_box.get_child_count() > 0:
+		return
+	if guidance_queue.is_empty():
+		# Ждавший совет считает счастье только перед показом.
+		if game.city.tips.has("arrive_wait") and String(game.city.stats.get("arrive_block", "")) != "":
+			_arrive_advice()
+		return
+	var item: Dictionary = guidance_queue.pop_front()
+	_guidance_playing = true
+	if item["kind"] == "advisor":
+		advisor(item["title"], item["text"], item.get("skip", Callable()), bool(item.get("force", false)), bool(item.get("corner", false)), item.get("target", {}))
+	else:
+		_toast(item["text"], item["icon"])
+	_guidance_playing = false
+
+
+## Переводим исходный совет целиком, затем оставляем две короткие фразы.
+func _short_advice(body: String) -> String:
+	var translated := I18n.t(body).replace("\n", " ")
+	var re := RegEx.create_from_string("[^.!?]+[.!?]?")
+	var lines := PackedStringArray()
+	for found: RegExMatch in re.search_all(translated):
+		var line := found.get_string().strip_edges()
+		if line == "":
+			continue
+		if line.length() > 150:
+			var cut := line.substr(0, 147)
+			var space := cut.rfind(" ")
+			line = cut.substr(0, space if space > 80 else 147) + "…"
+		lines.append(line)
+		if lines.size() == 2:
+			break
+	return " ".join(lines)
+
+
+func _advisor() -> void:
+	advisor_panel = PanelContainer.new()
+	advisor_panel.name = "AdvisorCard"
+	advisor_panel.add_theme_stylebox_override("panel", guide_style())
+	root.add_child(advisor_panel)
+	_put(advisor_panel, Control.PRESET_CENTER_TOP, Vector2(0, ADV_Y))
+	advisor_panel.custom_minimum_size = Vector2(512, 0)
+	advisor_panel.hide()
 	advisor_panel.visibility_changed.connect(func():
-		notes_box.visible = not advisor_panel.visible
+		notes_box.visible = not advisor_panel.visible and not tutorial_busy()
 		if not advisor_panel.visible:
-			_tip_next = Time.get_ticks_msec() + TIP_GAP_MS)   # следующий совет — не сразу
+			_tip_next = Time.get_ticks_msec() + TIP_GAP_MS)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 12)
 	advisor_panel.add_child(h)
-	# советник Марк — портрет в лавровой раме
-	var face := _pic("advisor.png", Vector2(100, 100))
-	adv_face = face
-	face.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	h.add_child(face)
+	var medal := PanelContainer.new()
+	medal.add_theme_stylebox_override("panel", guide_style("panels/slot_round", 12, 4))
+	medal.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	h.add_child(medal)
+	adv_face = _pic("advisor.png", Vector2(64, 64))
+	medal.add_child(adv_face)
 	var v := VBoxContainer.new()
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 6)
 	h.add_child(v)
-	adv_title = _label("", 23, false, C_INK, font_title)
+	adv_title = _label("", 16, true)
+	adv_title.clip_text = true
+	adv_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	v.add_child(adv_title)
-	adv_text = _label("", 17)
+	adv_text = _label("", 14)
 	adv_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	adv_text.custom_minimum_size = Vector2(440, 0)
+	adv_text.custom_minimum_size = Vector2(0, 0)
 	v.add_child(adv_text)
-	# «Понятно» справа; слева от него — «Пропустить обучение», если совет — шаг обучения (advisor(…, skip))
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_END
-	row.add_theme_constant_override("separation", 10)
+	row.add_theme_constant_override("separation", 8)
 	v.add_child(row)
-	adv_skip = Button.new()
-	adv_skip.text = "Пропустить обучение"
-	adv_skip.focus_mode = Control.FOCUS_NONE
-	adv_skip.add_theme_font_size_override("font_size", 14)
-	adv_skip.visible = false
-	adv_skip.pressed.connect(func():
-		advisor_panel.visible = false
+	adv_show = guide_button("Показать", func():
+		var target := _adv_target.duplicate()
+		advisor_panel.hide()
+		if not target.is_empty():
+			_do_click(target))
+	adv_show.name = "AdvisorShow"
+	adv_show.hide()
+	row.add_child(adv_show)
+	adv_ok = guide_button("Понятно", func(): advisor_panel.hide())
+	row.add_child(adv_ok)
+	adv_skip = guide_link("Пропустить обучение", func():
+		advisor_panel.hide()
 		if _adv_skip_cb.is_valid():
 			_adv_skip_cb.call()
 		_update_pointer())
-	row.add_child(adv_skip)
-	adv_never = Button.new()
-	adv_never.text = "Больше не показывать"
-	adv_never.focus_mode = Control.FOCUS_NONE
-	adv_never.add_theme_font_size_override("font_size", 14)
-	adv_never.tooltip_text = "Советы не будут всплывать. Вернуть — Настройки → «Подсказки советника»"
-	adv_never.visible = false
-	adv_never.pressed.connect(func():
+	adv_skip.hide()
+	v.add_child(adv_skip)
+	adv_never = guide_link("Больше не показывать", func():
 		game.settings["advisor_off"] = true
 		_store_settings()
-		advisor_panel.visible = false)
-	row.add_child(adv_never)
-	var ok := Button.new()
-	ok.text = "Понятно"
-	ok.pressed.connect(func(): advisor_panel.visible = false)
-	row.add_child(ok)
-	adv_ok = ok
+		advisor_panel.hide())
+	adv_never.tooltip_text = "Советы не будут всплывать. Вернуть — Настройки → «Подсказки советника»"
+	adv_never.hide()
+	v.add_child(adv_never)
 
 
 ## Советы второго плана — не всплывают окном, а тихо ложатся в колокольчик (отзыв 14.11: слишком много подсказок).
 ## Остаются окном: обучение, первые жители, «Казна пуста», новый уровень, «Новые семьи не едут», истории горожан
+	CityStyle.apply(advisor_panel)
+
+
 const QUIET_TIPS := ["Игры в честь богов", "Этаж — без карточки дома", "Перестроить дом", "Обновка для кошки", "Казна полна", "Полки полны",
 	"На этаж пока не хватает", "Налоги по классам", "Разнообразие радует больше", "Наборы украшений", "Улучшенные улицы", "Главные украшения",
 	"Как назовём город?", "Летопись города", "Кому работать", "Семье негде жить", "Зрелища", "Здания Легиона", "Герой в боях с городами",
@@ -6087,40 +6190,40 @@ func advisor_on() -> bool:
 
 ## Совет: заголовок и текст; skip — совет начинает обучение: рядом с «Понятно» кнопка «Пропустить обучение».
 ## force — игрок сам попросил (щёлкнул по просьбе): показываем всегда
-func advisor(title: String, text: String, skip := Callable(), force := false, corner := false) -> void:
-	var tut: bool = game != null and game.tutorial != null and game.tutorial.active()
-	if not force and not tut and not skip.is_valid() and game != null and game.city != null and game.mode != "demo":
+func advisor(title: String, text: String, skip := Callable(), force := false, corner := false, target: Dictionary = {}) -> void:
+	if tutorial_busy() or (not _guidance_playing and (advisor_panel.visible or not guidance_queue.is_empty() or notes_box.get_child_count() > 0)):
+		_queue_guidance({"kind": "advisor", "title": title, "text": text, "skip": skip, "force": force, "corner": corner, "target": target})
+		return
+	if not force and not skip.is_valid() and game != null and game.city != null and game.mode != "demo":
 		if _quiet_on() and (not advisor_on() or title in QUIET_TIPS or title.ends_with("— ваш герой")):
 			_advisor_quiet(title, text)
 			return
 	_advisor_layout(corner)
 	adv_title.text = title
-	adv_text.text = text
-	adv_skip.text = "Пропустить обучение"     # другое действие (Gfx: «Включить «Низкую»») ставит свою надпись после
-	adv_skip.add_theme_font_size_override("font_size", 14)
+	adv_text.text = _short_advice(text)
+	adv_text.tooltip_text = ""
+	adv_skip.text = "Пропустить обучение"
 	adv_ok.text = "Понятно"
 	_adv_skip_cb = skip
 	adv_skip.visible = skip.is_valid()
-	adv_never.visible = not skip.is_valid() and not tut and not force and not corner      # «Больше не показывать» — у обычных советов
-	advisor_panel.visible = true
+	adv_never.visible = not skip.is_valid() and not force and not corner
+	_adv_target = target.duplicate()
+	if _adv_target.is_empty():
+		if title == "Город готов к новому уровню!" or title.begins_with("Город стал"):
+			_adv_target = {"kind": "rank"}
+		elif title == StoryDefs.ADV_LEGION or title == "Лагерь открыт":
+			_adv_target = {"kind": "legion"}
+	adv_show.visible = not _adv_target.is_empty()
+	advisor_panel.show()
+	_refit(advisor_panel)
 
 
-## Совет окном посередине сверху или маленькой карточкой в правом верхнем углу (приветствие: не загораживает игру)
 func _advisor_layout(corner: bool) -> void:
-	if corner:
-		_put(advisor_panel, Control.PRESET_TOP_RIGHT, Vector2(-10, TOP_BTN + 16))
-		advisor_panel.custom_minimum_size = Vector2(380, 0)
-		adv_text.custom_minimum_size = Vector2(250, 0)
-		adv_text.add_theme_font_size_override("font_size", 15)
-		adv_title.add_theme_font_size_override("font_size", 19)
-		adv_face.custom_minimum_size = Vector2(56, 56)
-	else:
-		_put(advisor_panel, Control.PRESET_CENTER_TOP, Vector2(0, ADV_Y))
-		advisor_panel.custom_minimum_size = Vector2(640, 0)
-		adv_text.custom_minimum_size = Vector2(440, 0)
-		adv_text.add_theme_font_size_override("font_size", 17)
-		adv_title.add_theme_font_size_override("font_size", 23)
-		adv_face.custom_minimum_size = Vector2(100, 100)
+	_put(advisor_panel, Control.PRESET_TOP_RIGHT if corner else Control.PRESET_CENTER_TOP,
+		Vector2(-10, TOP_BTN + 16) if corner else Vector2(0, ADV_Y))
+	advisor_panel.custom_minimum_size = Vector2(512, 0)
+	adv_text.custom_minimum_size = Vector2(0, 0)
+	adv_face.custom_minimum_size = Vector2(64, 64)
 	advisor_panel.reset_size()
 
 
@@ -6205,9 +6308,6 @@ func notify(text: String, icon := "info", seen := false) -> void:
 	if icon == "level" and rc != null and rc.covers_toast():
 		bell(text, icon, false)           # новый ранг покажет ролик — всплывашка не нужна, только колокольчик
 		return
-	if game and game.tutorial and game.tutorial.active() and icon in ["check", "research", "info"]:
-		bell(text, icon, seen)            # во время обучения не мешаем всплывашками — только в колокольчик
-		return
 	var low := text.to_lower()
 	var important := icon == "level" or TOAST_WORDS.any(func(w): return low.begins_with(w) or low.contains(w))
 	if important:
@@ -6217,6 +6317,9 @@ func notify(text: String, icon := "info", seen := false) -> void:
 
 ## Плашка наверху на TOAST_SEC секунд: одна за раз, одно и то же сообщение — не чаще раза в игровые сутки
 func _toast(text: String, icon: String) -> void:
+	if tutorial_busy() or (not _guidance_playing and (advisor_panel.visible or not guidance_queue.is_empty() or notes_box.get_child_count() > 0)):
+		_queue_guidance({"kind": "toast", "text": text, "icon": icon})
+		return
 	var day := _game_day()
 	if int(_toast_day.get(text, -1)) == day:
 		return
@@ -6416,6 +6519,7 @@ func _refresh_overview() -> void:
 		"money": _fill_finance()
 		"people": _fill_stats()
 		"events": _fill_events()
+	CityStyle.apply(overview_panel)
 
 
 func _fill_overview_city() -> void:
@@ -6605,6 +6709,8 @@ func _fill_research() -> void:
 
 
 # ---------- финансы, статистика ----------
+	CityStyle.apply(research_panel)
+
 
 func _finance_panel() -> void:
 	var page: VBoxContainer = overview_pages["money"]
@@ -6623,7 +6729,10 @@ func _stats_panel() -> void:
 		var b := Button.new()
 		b.text = t[1]
 		b.icon = ico(t[2], 26)
-		b.expand_icon = false
+		CityStyle.button(b)
+		b.add_theme_font_size_override("font_size", 14)
+		b.custom_minimum_size = Vector2(144, 36)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
 		b.name = "tab_" + (t[0] if t[0] != "" else "main")
@@ -6779,6 +6888,9 @@ func guide_world(target: Dictionary) -> void:
 
 
 func _quest_world_tick(move_camera := false) -> void:
+	if tutorial_busy():
+		clear_badge("quest_target")
+		return
 	if _quest_world.is_empty():
 		return
 	if Time.get_ticks_msec() >= _quest_world_until:
@@ -6849,6 +6961,9 @@ func _fill_finance() -> void:
 
 
 ## «За сутки: налоги +4 200, жалованье −1 100, содержание −900, стройка −2 300» — по истории денег (City.hist)
+	CityStyle.apply(overview_panel)
+
+
 func day_line() -> String:
 	var c: City = game.city
 	var n := mini(24, c.hist.size())
@@ -7008,6 +7123,8 @@ func _fill_stats() -> void:
 
 
 # ---------- меню паузы, настройки, покупка земли ----------
+	CityStyle.apply(overview_panel)
+
 
 func _pause_panel() -> void:
 	var w := _window("Меню", 380)
@@ -7658,7 +7775,7 @@ func floor_tip(by_player := false) -> void:
 	if c.tips.has("floor_tool") or not c.research.has("floor2") or not _tip_free(not by_player):
 		return
 	c.tips["floor_tool"] = true
-	advisor("Этаж — без карточки дома", "Надстраивать этажи теперь удобнее: кнопка «Этаж» справа внизу (или клавиша U). Над каждым домом, которому можно этаж, встанет золотая стрелка с ценой, а сам дом засветится зелёным. Щёлкните по такому дому — или ведите мышью с зажатой кнопкой вдоль улицы: этаж получат все готовые дома под курсором, пока хватает денариев.\n\nГотов дом, когда он полон, а счастье в нём от %d%% (для третьего этажа — от %d%%). Наведите на дом без стрелки — у курсора будет написано, чего ему не хватает. Число на кнопке — сколько домов готовы сейчас. Выйти — Esc или правая кнопка." % [int(Defs.FLOOR_HAPPY[2]), int(Defs.FLOOR_HAPPY[3])], Callable(), by_player)
+	advisor("Этаж — без карточки дома", "Нажмите «Этаж» справа внизу или клавишу U. Для нескольких домов ведите мышью с зажатой кнопкой вдоль улицы — этаж получат готовые дома, пока хватает денариев.", Callable(), by_player)
 
 
 ## Следующий участок земли по карману: продаётся (есть табличка) и не дороже предела казны
@@ -7672,9 +7789,9 @@ func _plot_fits() -> bool:
 func _tip_free(gap := true) -> bool:
 	if game == null or not (game.mode in ["new", "play"]) or game.shot_path != "" or not visible or not root.visible:
 		return false
-	if game.tutorial and game.tutorial.active():
+	if tutorial_busy():
 		return false
-	if advisor_panel.visible:
+	if advisor_panel.visible or (not _guidance_playing and notes_box.get_child_count() > 0):
 		return false
 	if gap and (tip_gap or game == get_tree().current_scene) and Time.get_ticks_msec() < _tip_next:
 		return false                          # только что закрыли совет — дадим осмотреться
@@ -7706,7 +7823,7 @@ func _once_tips() -> void:
 		return
 	if c.unpaid_h > 0 and not c.tips.has("unpaid_tip"):
 		c.tips["unpaid_tip"] = true
-		advisor("Казна пуста", unpaid_note())   # казна в минус не уходит: один раз — что случилось и как поправить
+		advisor("Казна пуста", unpaid_advice())   # казна в минус не уходит: один раз — что случилось и как поправить
 		return
 	if _manual_hire_advice():
 		return
@@ -7814,6 +7931,11 @@ func _once_tips() -> void:
 
 
 ## Советник один раз (tips.unpaid_tip), когда казна впервые не смогла заплатить жалованье: что случилось и как поправить
+func unpaid_advice() -> String:
+	var tax := "Поднимите налоги в «Обзоре города» → «Деньги» или уберите лишних работников кнопкой «−»." if game.city.tax_open() else "Заселяйте дома — жители платят налоги; уберите лишних работников кнопкой «−»."
+	return "Жалованья и содержания построек за час набралось больше, чем есть в казне. " + tax
+
+
 func unpaid_note() -> String:
 	var c: City = game.city
 	var tax := "поднимите налоги в «Обзоре города» → «Деньги»" if c.tax_open() else "стройте дома и заселяйте семьи — налоги платят жители"
@@ -7963,7 +8085,7 @@ var _fold_glow_until := 0                    # до какого мига (мс)
 
 ## Свиток свёрнут (настройка tasks_folded); во время обучения — всегда развёрнут
 func tasks_folded() -> bool:
-	if game == null or (game.tutorial and game.tutorial.active()):
+	if game == null or tutorial_busy():
 		return false
 	return bool(game.settings.get("tasks_folded", true))        # по умолчанию — маленький значок-свиток со счётчиком (отзыв 14.11)
 
@@ -8098,7 +8220,7 @@ func _fill_tasks_body(goals: Array) -> void:
 	if sto != null and (sto.journal_any() or Chronicle.any(c)):
 		# книжка — журнал: пройденные истории («Пересмотреть») и «Летопись города» (счётчики и лавровые венки)
 		hdr.add_child(_bare("bookshelf", "Журнал: истории горожан и летопись города", 28, func(): sto.ui.open_journal("" if sto.journal_any() else "chron")))
-	if not (game.tutorial and game.tutorial.active()):
+	if not tutorial_busy():
 		var fb := _chevron_btn(false, "Свернуть свиток", 28, fold_tasks.bind(true))
 		fb.name = "fold"
 		hdr.add_child(fb)
@@ -8656,15 +8778,11 @@ func find_hero() -> void:
 func hero_note() -> String:
 	var c: City = game.city
 	var f := Hero.female(c)
-	var t := "%s живёт в городе: гуляет по улицам, заглядывает в лавки, на площади и к зданиям Легиона, а ночует в Казармах (пока их нет — на почтовой станции). %s отличишь издали: лавровый венок и плащ.
-
-Найти героя — медальон с %s лицом сверху справа. Щёлкните по %s на улице — откроется карточка героя: «Следовать», «Гардероб» (новые плащи, цвета и венки открывают рост города, Легион и истории) и «Изменить» — имя и облик." % [
+	var t := "%s живёт в городе: гуляет по улицам, заглядывает в лавки, на площади и к зданиям Легиона, а ночует в Казармах (пока их нет — на почтовой станции). %s отличишь издали: лавровый венок и плащ.\n\nНайти героя — медальон с %s лицом сверху справа. Щёлкните по %s на улице — откроется карточка героя: «Следовать», «Гардероб» (новые плащи, цвета и венки открывают рост города, Легион и истории) и «Изменить» — имя и облик." % [
 		"Ваша римлянка" if f else "Ваш римлянин", "Её" if f else "Его", "её" if f else "его", "ней" if f else "нему"]
 	if not bool(c.hero.get("made", false)):
 		t += " Своего героя можно создать там же — «Изменить»."
-	t += "
-
-Когда соберёте Легион, герой первым пойдёт в бой — на своём месте в отряде, со снаряжением со Склада оружия."
+	t += "\n\nКогда соберёте Легион, герой первым пойдёт в бой — на своём месте в отряде, со снаряжением со Склада оружия."
 	return t
 
 
@@ -8991,18 +9109,9 @@ func _notification(what: int) -> void:
 		_quitting = true                          # закрываем игру: картинки карточек больше не рисуем
 
 
-## Два цвета карточки: крем и бордо, тонкий золотой край.
+## Кремовая карточка с тонкой оливковой рамкой.
 func _card_frame(radius := 10, padding := 12) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = C_CREAM
-	sb.border_color = Color("bc9655")
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(radius)
-	sb.content_margin_left = padding
-	sb.content_margin_right = padding
-	sb.content_margin_top = padding
-	sb.content_margin_bottom = padding
-	return sb
+	return CityStyle.panel(radius, padding)
 
 
 var _card_button_textures: Dictionary = {}
@@ -9019,42 +9128,13 @@ func _card_button_texture(file: String) -> Texture2D:
 	return _card_button_textures[file]
 
 
-func _card_button(button: Button, round_button := false, green := false) -> void:
-	button.custom_minimum_size = Vector2(30, 30) if round_button else Vector2(0, 30)
+func _card_button(button: Button, round_button := false, _green := false) -> void:
+	button.custom_minimum_size = Vector2(32, 32) if round_button else Vector2(0, 32)
 	button.add_theme_font_size_override("font_size", 14)
 	button.add_theme_font_override("font", font_bold)
-	button.add_theme_constant_override("h_separation", 4)
-	button.add_theme_constant_override("icon_max_width", 22)
-	button.expand_icon = true
-	button.clip_text = not round_button and not green
+	button.clip_text = not round_button
 	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	for state: String in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
-		var frame: StyleBox
-		if green or round_button:
-			var kit := StyleBoxTexture.new()
-			var file := "round_frame" if round_button else ("btn_disabled" if state == "disabled" else ("btn_green_pressed" if state in ["pressed", "hover_pressed"] else "btn_green"))
-			kit.texture = load("res://assets/ui/kitA/buttons/%s.png" % file) if round_button else _card_button_texture(file)
-			if state in ["hover", "pressed", "hover_pressed"]:
-				kit.modulate_color = Color(1, 0.91, 0.72)
-			for side in [SIDE_LEFT, SIDE_RIGHT]:
-				kit.set_texture_margin(side, 0 if round_button else 16)
-			for side in [SIDE_TOP, SIDE_BOTTOM]:
-				kit.set_texture_margin(side, 0 if round_button else 8)
-			kit.content_margin_left = 4 if round_button else 10
-			kit.content_margin_right = 4 if round_button else 10
-			kit.content_margin_top = 3
-			kit.content_margin_bottom = 3
-			frame = kit
-		else:
-			var plain := _card_frame(15 if round_button else 7, 3 if round_button else 6)
-			plain.bg_color = Color("ead8b7") if state in ["hover", "pressed", "hover_pressed"] else C_CREAM
-			if state == "focus":
-				plain.border_color = CARD_ACCENT
-				plain.set_border_width_all(2)
-			frame = plain
-		button.add_theme_stylebox_override(state, frame)
-	for state: String in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_disabled_color", "icon_normal_color", "icon_hover_color", "icon_pressed_color"]:
-		button.add_theme_color_override(state, C_CREAM if green or round_button else CARD_ACCENT)
+	CityStyle.button(button, round_button)
 	if not round_button and button.text != "":
 		button.custom_minimum_size.x = minf(INFO_BODY, ceilf(font_bold.get_string_size(I18n.t(button.text), HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x) + 24 + (26 if button.icon != null else 0))
 	button.set_meta("compact_kit", true)
@@ -9064,12 +9144,12 @@ func _card_row(icon: String, text: String, value: String, _color := CARD_ACCENT)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 5)
 	row.tooltip_text = text + ": " + value
-	row.add_child(_card_icon(icon, 18, CARD_ACCENT))
+	row.add_child(_card_icon(icon, 26))
 	var title := _label(text, 13, false, CARD_ACCENT)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.clip_text = true
 	row.add_child(title)
-	var number := _label(value, 14, true, CARD_ACCENT)
+	var number := _label(value, 14, true, _color)
 	if number.get_minimum_size().x > 140:
 		number.custom_minimum_size.x = 140
 		number.clip_text = true
@@ -9091,7 +9171,8 @@ func _compact_info_style() -> void:
 				label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 				if label.tooltip_text == "":
 					label.tooltip_text = label.text
-			label.add_theme_color_override("font_color", CARD_ACCENT)
+			if label.get_theme_color("font_color") not in [C_BAD, C_GOOD]:
+				label.add_theme_color_override("font_color", CityStyle.INK)
 			label.add_theme_font_size_override("font_size", mini(14, label.get_theme_font_size("font_size")) if label.name != "InfoTitle" else 18)
 		elif node is Button:
 			var button := node as Button
@@ -9104,19 +9185,32 @@ func _compact_info_style() -> void:
 		elif node is TextureRect:
 			var picture := node as TextureRect
 			if picture.texture != null and picture.texture.resource_path.ends_with(".svg"):
-				picture.modulate = Color(CARD_ACCENT, picture.modulate.a)
+				picture.modulate = Color(CityStyle.OLIVE, picture.modulate.a)
 
 
 func _refresh_source_pictures() -> void:
 	for picture: TextureRect in info_box.find_children("SourcePicture*", "TextureRect", true, false):
 		var type := String(picture.get_meta("building_type", ""))
-		if icons.get(type) != null:
-			picture.texture = icons[type]
-			picture.modulate = Color.WHITE
+		picture.texture = CityStyle.icon(String(Defs.B.get(type, {}).get("icon", "housing")))
+		picture.modulate = CityStyle.OLIVE
 
 
-func _card_icon(key: String, side := 18, _color := CARD_ACCENT) -> TextureRect:
-	var picture := _icon(key, side, CARD_ACCENT)
-	picture.texture = MapBadge.ink_texture(key)
-	picture.modulate = CARD_ACCENT
-	return picture
+func _card_icon(key: String, side := 26, _color := CARD_ACCENT) -> TextureRect:
+	return CityStyle.pictogram(key, side)
+
+
+## Полоса прокрутки городских окон — оливковая на кремовом (была фиолетовая из темы по умолчанию)
+static func _olive_scroll(sc: ScrollContainer) -> void:
+	var bar := sc.get_v_scroll_bar()
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color("E8D9BA")
+	track.set_corner_radius_all(4)
+	track.content_margin_left = 3
+	track.content_margin_right = 3
+	bar.add_theme_stylebox_override("scroll", track)
+	bar.add_theme_stylebox_override("scroll_focus", track)
+	for state: Array in [["grabber", Color("4F5B2E")], ["grabber_highlight", Color("66753C")], ["grabber_pressed", Color("3E4824")]]:
+		var g := StyleBoxFlat.new()
+		g.bg_color = state[1]
+		g.set_corner_radius_all(4)
+		bar.add_theme_stylebox_override(String(state[0]), g)

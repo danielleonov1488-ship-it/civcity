@@ -7,6 +7,10 @@ var fails := 0
 
 
 func _ready() -> void:
+	if not Defs.PROF_ON:
+		print("PROF1 DONE fails=0 (off)")
+		get_tree().quit()
+		return
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"

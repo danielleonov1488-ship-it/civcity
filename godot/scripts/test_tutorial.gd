@@ -48,8 +48,6 @@ func _run() -> void:
 	await frames(30)
 	await shot("t1_move.png")
 	game.rig._target_t += Vector3(10, 0, 4)
-	await wait_step("turn")
-	game.rig._yaw_t += 1.0
 	await wait_step("road")
 	await frames(20)
 	await shot("t2_road.png")
@@ -142,8 +140,7 @@ func check(ok: bool, what: String) -> void:
 	print(("PTR PASS " if ok else "FAIL ") + what)
 
 
-## Отзывы игроков 27.10: после обучения стрелка сама показывает только первые просьбы (до «Хутора» включительно);
-## город стал хутором — сама больше не показывает; щелчок по строке просьбы — стрелка на несколько секунд, потом гаснет
+## После обучения стрелка — только по щелчку строки, в том числе до «Хутора».
 func _arrow_after() -> void:
 	var c: City = game.city
 	var hud = game.hud
@@ -151,9 +148,9 @@ func _arrow_after() -> void:
 	hud.advisor_panel.visible = false
 	var g0: Dictionary = c.active_goals(1)[0] if not c.active_goals(1).is_empty() else {}
 	hud._update_pointer()
-	var want = hud._request_target(g0)["target"] if not g0.is_empty() else null
-	check(c.level == 0 and not g0.is_empty() and hud.early_request(g0) and hud.pointer_target == want,
-		"после обучения, до «Хутора»: стрелка к просьбе «%s» сама (%s)" % [g0.get("text", ""), hud.pointer_target])
+	await frames(2)
+	check(c.level == 0 and not g0.is_empty() and hud.pointer_target == null and not hud.pointer.visible,
+		"после обучения, до «Хутора»: нет автоматической стрелки к просьбе «%s»" % g0.get("text", ""))
 	# стал хутором
 	c.level = 1
 	for g in Defs.REQUESTS:

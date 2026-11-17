@@ -59,9 +59,9 @@ func _card_bounds() -> void:
 			continue
 		check(not button.clip_text and button.get_theme_font_size("font_size") == 14, name + " readable 14px text")
 		check(button.icon != null and hud.info_panel.get_global_rect().encloses(button.get_global_rect()), name + " icon and button fit card")
-		var frame := button.get_theme_stylebox("normal") as StyleBoxTexture
-		check(frame != null and frame.texture.get_size() == Vector2(102, 32) and frame.texture_margin_left == 16 and frame.texture_margin_top == 8, name + " kit A nine-slice")
-		check(button.get_theme_stylebox("disabled") is StyleBoxTexture, name + " disabled kit A state")
+		var frame := button.get_theme_stylebox("normal") as StyleBoxFlat
+		check(frame != null and frame.bg_color == CityStyle.CREAM and frame.border_color == CityStyle.RIM, name + " cream city pill")
+		check(button.get_theme_stylebox("disabled") is StyleBoxFlat, name + " faded city state")
 		var face: Font = button.get_theme_font("font")
 		var text_width := face.get_string_size(I18n.t(button.text), HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
 		check(button.size.x >= text_width + 46.0, name + " text, icon and margins fit without clipping")
@@ -74,8 +74,7 @@ func _card_bounds() -> void:
 		for picture: TextureRect in pictures:
 			var type := String(picture.get_meta("building_type", ""))
 			check(picture.texture != null, "nonempty covering picture " + type)
-			if hud.icons.get(type) != null:
-				check(picture.texture == hud.icons[type] and picture.modulate == Color.WHITE, "same building picture as research " + type)
+			check(picture.texture == CityStyle.icon(String(Defs.B[type].get("icon", "housing"))) and picture.modulate == CityStyle.OLIVE, "olive source pictogram " + type)
 			var bonus := picture.get_parent().get_child(1) as Label
 			check(bonus != null and bonus.text.begins_with("+") and bonus.text.ends_with("%") and not bonus.clip_text, "covering bonus visible " + type)
 			var overlay := picture.get_parent().get_parent().get_child(1) as Button
@@ -86,7 +85,7 @@ func _wait_source_pictures() -> void:
 	for attempt in 3600:
 		var ready := true
 		for picture: TextureRect in hud.info_box.find_children("SourcePicture*", "TextureRect", true, false):
-			if hud.icons.get(String(picture.get_meta("building_type", ""))) == null:
+			if picture.texture == null:
 				ready = false
 		if ready:
 			hud._refresh_source_pictures()

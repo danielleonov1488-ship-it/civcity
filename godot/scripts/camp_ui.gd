@@ -235,6 +235,8 @@ func _update_entry() -> void:
 ## Лагерь открылся (50 жителей): один раз — спокойная карточка советника, стрелка и кивок кнопки «Лагерь».
 ## Занят советник или идёт ролик — подождём следующего обновления
 func _camp_moment() -> void:
+	if hud.tutorial_busy() or not hud._tip_free():
+		return
 	if lg.flags.has("camp_told") or top_button == null or not lg.window_open() or not top_button.is_visible_in_tree() or visible:
 		return
 	var rig = hud.game.get("rig")
@@ -242,7 +244,7 @@ func _camp_moment() -> void:
 		return
 	lg.flags["camp_told"] = true
 	hud.advisor("Лагерь открыт", "Новобранцы ждут у ворот форта. Примите их и назначьте в комнаты.", Callable(), false, true)
-	hud.show_pointer({"kind": "legion", "tip": "Лагерь"})
+	# стрелки сама не показываем (владелец 17.11: после обучения автоматических стрелок нет) — только совет и мигание кнопки
 	var tw := top_button.create_tween()
 	for i in 3:
 		tw.tween_property(top_button, "modulate", Color(1.7, 1.45, 0.8), 0.35)

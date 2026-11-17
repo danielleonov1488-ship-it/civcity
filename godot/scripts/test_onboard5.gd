@@ -93,6 +93,8 @@ func _run() -> void:
 	city.cozy_v = 1
 	city.auto_hire = false
 	city.tips["tut"] = -1
+	hud.guidance_queue.clear()
+	hud._clear(hud.notes_box)
 	city.tips["ui"] = 3
 	city.money = 100000
 	hud.apply_reveal(3)
@@ -175,7 +177,7 @@ func _cards() -> bool:
 		var free := hud.info_box.find_child("hire_free_" + cls, true, false) as Label
 		var row := hud.info_box.find_child("hire_class_" + cls, true, false) as HBoxContainer
 		check(free != null and free.text == "свободно: %d" % int(city.stats["free"][cls]), "free workers for " + cls)
-		check(row != null and row.get_child(0) is TextureRect and row.tooltip_text == Defs.CLASSES[cls]["name"], "required class icon for " + cls)
+		check(row != null and row.get_child(0) is TextureRect and (row.get_child(0) as TextureRect).texture == CityStyle.icon(String(CityStyle.CLASS_ICON[cls])) and row.tooltip_text == Defs.CLASSES[cls]["name"], "required class icon for " + cls)
 		if cls == "plebs":
 			fruit = b
 		else:
@@ -186,7 +188,10 @@ func _cards() -> bool:
 	var plus := hud.info_box.find_child("hire_plus", true, false) as Button
 	if not check(plus != null, "hire plus exists"):
 		return false
-	check(hud._do_target(hud.hire_do(fruit)) == plus and hud.pointer_target == plus, "hire pointer targets actual plus")
+	check(hud.pointer_target == null and not hud.pointer.visible, "no automatic hire pointer after tutorial")
+	hud.show_pointer(hud.hire_do(fruit))
+	await frames()
+	check(hud._do_target(hud.hire_do(fruit)) == plus and hud.pointer_target == plus, "requested hire pointer targets actual plus")
 	var rect := plus.get_global_rect()
 	check(hud.pointer.visible and is_equal_approx(hud.pointer.rotation, -PI / 2.0) and absf(hud.pointer.position.x + 31 - rect.position.x) < 1 and absf(hud.pointer.position.y + 16 - rect.get_center().y) < 1, "arrow tip touches plus from left without bobbing")
 	check(hud.pointer_text.get_global_rect().end.x <= hud.info_panel.get_global_rect().position.x - 6, "hire caption outside card")

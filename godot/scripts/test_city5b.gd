@@ -165,10 +165,10 @@ func _badges_without_text() -> void:
 
 
 func _card_bounds() -> void:
-	check(hud.info_panel.size.x <= 345.0 and hud.info_panel.size.x >= 335.0, "card width about 340 (now %.1f, more=%s)" % [hud.info_panel.size.x, hud.house_more])   # «Подробнее» + полоса прокрутки — 344
+	check(absf(hud.info_panel.size.x - 340.0) <= 1.0, "card width 340 including scroll (now %.1f, more=%s)" % [hud.info_panel.size.x, hud.house_more])
 	check(Rect2(Vector2.ZERO, hud.root.size).encloses(hud.info_panel.get_global_rect()), "card inside HUD")
 	for label: Label in hud.info_box.find_children("*", "Label", true, false):
-		check(label.get_theme_color("font_color") == Hud.CARD_ACCENT, "single card accent")
+		check(label.get_theme_color("font_color") in [CityStyle.INK, Hud.C_GOOD, Hud.C_BAD], "city ink and semantic numbers")
 
 
 func _research_pages() -> void:

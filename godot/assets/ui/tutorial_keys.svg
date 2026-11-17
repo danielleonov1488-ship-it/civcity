@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="296" height="56" viewBox="0 0 296 56">
+  <g fill="#f3e6cc" stroke="#9b9468" stroke-width="1.5">
+    <rect x="26" y="2" width="23" height="23" rx="4"/>
+    <rect x="1" y="28" width="23" height="23" rx="4"/>
+    <rect x="26" y="28" width="23" height="23" rx="4"/>
+    <rect x="51" y="28" width="23" height="23" rx="4"/>
+    <rect x="105" y="2" width="23" height="23" rx="4"/>
+    <rect x="80" y="28" width="23" height="23" rx="4"/>
+    <rect x="105" y="28" width="23" height="23" rx="4"/>
+    <rect x="130" y="28" width="23" height="23" rx="4"/>
+    <rect x="172" y="5" width="27" height="45" rx="13"/>
+    <rect x="225" y="16" width="27" height="27" rx="4"/>
+    <rect x="265" y="16" width="27" height="27" rx="4"/>
+  </g>
+  <g fill="#4f5b2e" font-family="sans-serif" font-size="13" font-weight="bold" text-anchor="middle">
+    <text x="37.5" y="18">W</text><text x="12.5" y="44">A</text>
+    <text x="37.5" y="44">S</text><text x="62.5" y="44">D</text>
+    <text x="238.5" y="34">Q</text><text x="278.5" y="34">E</text>
+  </g>
+  <g fill="none" stroke="#4f5b2e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M116.5 19V8m-4 4 4-4 4 4M116.5 34v11m-4-4 4 4 4-4M97 39.5H86m4-4-4 4 4 4M136 39.5h11m-4-4 4 4-4 4"/>
+    <rect x="183" y="12" width="5" height="12" rx="2.5" fill="#9b9468"/>
+    <path d="M180 34h11m-11 7h11M219 5c10-4 25-4 35 0m-4-4 4 4-5 2"/>
+  </g>
+</svg>

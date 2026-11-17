@@ -182,6 +182,8 @@ func _run() -> void:
 	game.tutorial.step = Tutorial.STEPS.size()
 	game.tutorial.card.visible = false
 	c.tips["tut"] = -1
+	hud.guidance_queue.clear()
+	hud._clear(hud.notes_box)
 	c.tips["ui"] = 3
 	c.legion.flags["camp_told"] = true       # Легион 3.0: карточка «Лагерь открыт» не лезет в проверки этажей (город на 272 жителя)
 	c.tips["cover_tip"] = true
@@ -623,7 +625,7 @@ func _floor_why() -> void:
 		for b in hud.info_box.find_children("*", "Button", true, false):
 			if (b as Button).text.begins_with("Надстроить этаж ·"):
 				sbtn = b
-			if (b as Button).text.begins_with("Подробнее"):
+			if (b as Button).tooltip_text.begins_with("Подробнее"):
 				more = b
 		check(sbtn != null and more != null and is_equal_approx(hud.info_panel.size.x, 340.0),
 			"короткая карточка дома: «Надстроить этаж · цена» и «Подробнее», ширина %.0f" % hud.info_panel.size.x)
@@ -1022,26 +1024,36 @@ func _bars_scale() -> void:
 func _arrive_wait() -> void:
 	var st0: Dictionary = c.stats.duplicate()
 	var w0 := c.tips.has("arrive_wait")
-	# Проверяем очередь совета о счастье: свободной работы хватает и на ожидающие семьи.
+	# Налоги уже открыты, ещё один совет стоит в очереди: предупреждение не теряется.
+	hud.close_panels()
+	hud.advisor_panel.hide()
+	hud.guidance_queue.clear()
+	hud._clear(hud.notes_box)
+	hud._tip_next = 0
 	c.stats["jobs"] = {"plebs": 1000}
 	c.stats["filled"] = {"plebs": 0}
 	c.stats["free"] = {"plebs": 0}
+	hud.advisor("Налоги по классам", "Откройте «Обзор города» → «Деньги», чтобы изменить налоги.")
 	hud.advisor("Другой совет", "Совет, который игрок ещё читает")
 	hud.on_arrive_block("Новые семьи не едут")
-	check(hud.advisor_panel.visible and hud.adv_title.text == "Другой совет" and c.tips.has("arrive_wait"), "«Новые семьи не едут» не перебил открытый совет — ждёт («%s»)" % hud.adv_title.text)
-	# закрыли совет, а повозка уже едет — объяснять незачем, но ждём, пока встанет снова
-	hud.advisor_panel.visible = false
+	check(hud.advisor_panel.visible and hud.adv_title.text == "Налоги по классам" and c.tips.has("arrive_wait") and hud.guidance_queue.size() == 1, "«Новые семьи не едут» ждёт за налогами и очередью")
+	hud.adv_ok.pressed.emit()
+	hud._tip_next = 0
+	hud._flush_guidance()
+	check(hud.advisor_panel.visible and hud.adv_title.text == "Другой совет" and c.tips.has("arrive_wait"), "налоги закрыты — следующий совет показан, предупреждение ждёт")
+	# Повозка уже едет — предупреждение ждёт следующей остановки.
 	c.stats["arrive_block"] = ""
-	hud.refresh()
-	check(not (hud.advisor_panel.visible and hud.adv_title.text == "Новые семьи не едут") and c.tips.has("arrive_wait"), "повозка едет — совет ждёт дальше")
-	hud.advisor_panel.visible = false
+	hud.adv_ok.pressed.emit()
+	hud._tip_next = 0
+	hud._flush_guidance()
+	check(not hud.advisor_panel.visible and c.tips.has("arrive_wait"), "повозка едет — совет ждёт дальше")
 	c.stats["happy"] = 41
 	c.stats["arrive_block"] = c.arrivals_blocked()
 	check(String(c.stats["arrive_block"]).contains("%d%%" % c.arrive_happy()), "приезд остановило счастье текущего уровня")
-	hud.refresh()
-	check(hud.advisor_panel.visible and hud.adv_title.text == "Новые семьи не едут" and hud.adv_text.text.contains("Сейчас — 41%") and not c.tips.has("arrive_wait"),
-		"советник свободен — «Новые семьи не едут» с нынешним счастьем («%s»)" % hud.adv_title.text)
-	hud.advisor_panel.visible = false
+	hud._flush_guidance()
+	check(hud.advisor_panel.visible and hud.adv_title.text == "Новые семьи не едут" and hud.adv_text.text.contains("Сейчас счастье — 41%") and not c.tips.has("arrive_wait"),
+		"очередь свободна — предупреждение показывает нынешнее счастье")
+	hud.advisor_panel.hide()
 	c.stats = st0
 	if w0:
 		c.tips["arrive_wait"] = true

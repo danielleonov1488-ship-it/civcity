@@ -136,6 +136,8 @@ static func profession_roll(cls: String, roll: int) -> String:
 
 ## Старое сохранение: только имя семьи и номер человека, без городского RNG.
 static func fit_profession(m: Dictionary, fam: String, index: int, cls: String) -> void:
+	if not Defs.PROF_ON:
+		return
 	if int(m.get("age", 0)) <= 0:
 		m.erase("prof")
 	elif not Defs.PROFESSIONS.has(String(m.get("prof", ""))):
@@ -144,6 +146,8 @@ static func fit_profession(m: Dictionary, fam: String, index: int, cls: String) 
 
 ## Новая семья получает профессии из RNG города ровно один раз, при создании.
 static func new_professions(f: Dictionary, cls: String, rg: RandomNumberGenerator, key: int) -> void:
+	if not Defs.PROF_ON:
+		return
 	for m: Dictionary in fit(f, key, cls):
 		if int(m.get("age", 0)) > 0:
 			m["prof"] = profession_roll(cls, rg.randi_range(0, 99))

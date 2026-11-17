@@ -4,11 +4,21 @@ extends Control
 
 const KIT := "res://assets/ui/kitA/"
 const ART := "res://assets/ui/magis/"
+const CITY_ICON := {
+	"magis_censura": "scroll", "magis_aedilitas": "plaza", "magis_quaestura": "coins", "magis_praetura": "scales", "magis_tribunus": "shield", "magis_pontificatus": "laurels",
+	"cens_pleb_levy": "coins", "cens_artisan_charter": "scroll", "cens_settler_drive": "family",
+	"aed_public_works": "hammer", "aed_market_day": "commerce", "aed_bread_dole": "bread",
+	"quaes_export_duty": "trade", "quaes_scholars": "book", "quaes_subsidy": "housing",
+	"praet_labor_decree": "anvil", "praet_patrician_levy": "coins", "praet_guilds": "warehouse",
+	"trib_conscription": "shield", "trib_scant_rations": "bread", "trib_war_chest": "coins",
+	"pontif_grand_festivals": "laurels", "pontif_pilgrims": "path", "pontif_piety": "faith",
+}
+const INTRO := "Магистратуры — курс города: выберите один эдикт в каждой (плюс и минус)"
 const INK := Color("4a2511")
 const GOOD := Color("286312")
 const BAD := Color("9b241c")
 const Ring = preload("res://scripts/fort_ui_ring.gd")
-const FX_ICON := {"tax_k": "chest", "happy": "family", "need_radius": "need_services", "need_weight": "need_food", "shop_income": "chest", "build_cost": "build", "upkeep": "worker", "rp_rate": "research", "arrivals": "family", "arrival_class": "worker", "work_output": "craft", "goods_price": "need_goods", "tourists": "map", "festival_happy": "star", "legion_gate": "soldier", "legion_rations": "need_food", "legion_denarii": "chest"}
+const FX_ICON := {"tax_k": "coins", "happy": "happy", "need_radius": "services", "need_weight": "food", "shop_income": "income", "build_cost": "hammer", "upkeep": "coins", "rp_rate": "research", "arrivals": "family", "arrival_class": "person", "work_output": "anvil", "goods_price": "goods", "tourists": "view", "festival_happy": "laurels", "legion_gate": "shield", "legion_rations": "bread", "legion_denarii": "coins"}
 const ADVICE := {"censura": "Открыта Цензура: выберите курс города", "aedilitas": "Открыт Эдилитет: выберите курс города", "quaestura": "Открыта Квестура: выберите курс города", "praetura": "Открыта Претура: выберите курс города", "tribunus": "Открыт Военный трибунат: выберите курс города", "pontificatus": "Открыт Понтификат: выберите курс города"}
 var hud: Hud
 var city: City
@@ -42,7 +52,7 @@ static func close_for(h: Hud) -> void:
 
 
 static func advise(h: Hud) -> bool:
-	if not h._tip_free() or not h._screen_free() or not h.game.ready_done or h.game.tool != "":
+	if h.tutorial_busy() or not h._tip_free() or not h._screen_free() or not h.game.ready_done or h.game.tool != "":
 		return false
 	if h.game.tutorial != null and not h.game.tutorial.cine.is_empty():
 		return false
@@ -57,7 +67,9 @@ static func advise(h: Hud) -> bool:
 		var key := "magis_open_" + String(m["id"])
 		if Magis.is_open(c, String(m["id"])) and not c.tips.has(key):
 			c.tips[key] = true
-			h.advisor(String(ADVICE[m["id"]]), "Выберите эдикт. Он займёт место и вступит в силу через несколько игровых часов.")
+			var first := not c.tips.has("magis_intro")
+			c.tips["magis_intro"] = true
+			h.advisor(String(ADVICE[m["id"]]), INTRO if first else "Выберите эдикт: он даст городу плюс и минус.", Callable(), false, false, {"kind": "magis"})
 			return true
 	return false
 
@@ -79,11 +91,9 @@ func setup(h: Hud) -> void:
 			close())
 	frame = Panel.new()
 	frame.name = "MagisWindow"
-	frame.size = Vector2(920, 516)
+	frame.size = Vector2(920, 576)
 	frame.add_theme_stylebox_override("panel", _style("panels/card_frame", 24))
 	add_child(frame)
-	var ribbon := _image("panels/ribbon_title", Rect2(254, 5, 412, 44))
-	frame.add_child(ribbon)
 	_label(frame, "Магистратуры", Rect2(270, 10, 380, 30), 23, true)
 	var x := _button("", close, "red")
 	x.position = Vector2(872, 8)
@@ -95,14 +105,17 @@ func setup(h: Hud) -> void:
 	columns = Control.new()
 	columns.name = "MagisColumns"
 	columns.position = Vector2(22, 56)
-	columns.size = Vector2(876, 416)
+	columns.size = Vector2(876, 476)
 	frame.add_child(columns)
-	_label(frame, "С уровня «Город» — два места в каждой магистратуре", Rect2(100, 474, 720, 18), 12)
-	top_button = _button("", open, "cream")
+	_label(frame, "С уровня «Город» — два места в каждой магистратуре", Rect2(100, 541, 720, 18), 12)
+	# Верхняя полоса сохраняет свой прежний комплект.
+	top_button = Button.new()
+	top_button.pressed.connect(open)
 	top_button.name = "MagisButton"
 	top_button.custom_minimum_size = Vector2(h.TOP_BTN, h.TOP_BTN)
-	top_button.add_theme_stylebox_override("normal", _style("buttons/round_frame", 20))
-	top_button.icon = icon("magis_censura")
+	for item: Array in [["normal", "round_frame", 20], ["hover", "btn_gold", 14], ["focus", "btn_gold", 14], ["pressed", "btn_cream_pressed", 14], ["disabled", "btn_disabled", 14]]:
+		top_button.add_theme_stylebox_override(item[0], _top_style(String(item[1]), int(item[2])))
+	top_button.icon = load(ART + "magis_censura.png")
 	top_button.expand_icon = true
 	top_button.tooltip_text = I18n.t("Магистратуры")
 	h.top_panel.add_child(top_button)
@@ -113,35 +126,42 @@ func setup(h: Hud) -> void:
 	refresh()
 
 
-func _texture(path: String) -> Texture2D:
-	return load(KIT + path + ".png") as Texture2D
-
-
-func icon(id: String) -> Texture2D:
-	var path := ART + id + ".png"
-	return load(path) as Texture2D if ResourceLoader.exists(path) else _texture("icons/tasks")
-
-
-func _style(path: String, margin := 12) -> StyleBoxTexture:
-	var style := StyleBoxTexture.new()
+func _top_style(path: String, margin: int) -> StyleBoxTexture:
 	if not style_textures.has(path):
-		# Исходный комплект крупный: уменьшаем рамку до масштаба интерфейса перед 9-slice.
-		var source := _texture(path).get_image()
+		var source := Hud.src_image(KIT + "buttons/" + path + ".png")
 		if source.is_compressed():
 			source.decompress()
 		source.resize(maxi(1, source.get_width() / 4), maxi(1, source.get_height() / 4), Image.INTERPOLATE_LANCZOS)
 		source.generate_mipmaps()
 		style_textures[path] = ImageTexture.create_from_image(source)
+	var style := StyleBoxTexture.new()
 	style.texture = style_textures[path]
-	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+	for side: int in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
 		style.set_texture_margin(side, margin)
 		style.set_content_margin(side, 4)
+	return style
+
+
+func _texture(path: String) -> Texture2D:
+	return CityStyle.icon(path.get_file())
+
+
+func icon(id: String) -> Texture2D:
+	return CityStyle.icon(String(CITY_ICON.get(id, "scroll")))
+
+
+func _style(path: String, _margin := 12) -> StyleBoxFlat:
+	var style := CityStyle.panel(18 if path.contains("round") else 12, 4)
+	if path.contains("green"):
+		style.bg_color = Color("e0e2c4")
+		style.border_color = CityStyle.OLIVE
 	return style
 
 
 func _image(path: String, rect: Rect2) -> TextureRect:
 	var view := TextureRect.new()
 	view.texture = _texture(path)
+	view.modulate = CityStyle.OLIVE
 	view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	view.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	view.position = rect.position
@@ -170,18 +190,10 @@ func _label(parent: Control, text: String, rect: Rect2, pixels := 13, bold := fa
 func _button(text: String, action: Callable, color := "cream") -> Button:
 	var b := Button.new()
 	b.text = I18n.t(text)
-	b.add_theme_color_override("font_color", INK)
-	b.add_theme_color_override("font_hover_color", INK)
-	b.add_theme_color_override("font_pressed_color", INK)
-	b.add_theme_color_override("font_disabled_color", Color("806649"))
 	b.add_theme_font_size_override("font_size", 16)
-	for state: String in ["normal", "hover", "focus"]:
-		b.add_theme_stylebox_override(state, _style("buttons/btn_" + color, 14))
-	b.add_theme_stylebox_override("focus", _style("buttons/btn_gold", 14))
-	if color == "cream":
-		b.add_theme_stylebox_override("hover", _style("buttons/btn_gold", 14))
-	b.add_theme_stylebox_override("pressed", _style("buttons/btn_" + color + "_pressed", 14))
-	b.add_theme_stylebox_override("disabled", _style("buttons/btn_disabled", 14))
+	CityStyle.button(b)
+	if color == "green":
+		b.add_theme_stylebox_override("normal", _style("active_green"))
 	b.pressed.connect(action)
 	return b
 
@@ -206,7 +218,7 @@ func close() -> void:
 func _layout() -> void:
 	if frame == null:
 		return
-	var factor := minf(1.0, minf((size.x - 32.0) / 920.0, (size.y - 32.0) / 516.0))
+	var factor := minf(1.0, minf((size.x - 32.0) / 920.0, (size.y - 32.0) / 576.0))
 	frame.scale = Vector2.ONE * maxf(0.1, factor)
 	frame.position = (size - frame.size * frame.scale) * 0.5
 	if is_instance_valid(popup_panel):
@@ -233,13 +245,14 @@ func _column(m: Dictionary, index: int) -> void:
 	var column := Control.new()
 	column.name = String(m["id"])
 	column.position = Vector2(index * 146, 0)
-	column.size = Vector2(142, 416)
+	column.size = Vector2(142, 476)
 	columns.add_child(column)
 	var opened := Magis.is_open(city, String(m["id"]))
 	var medallion := _image("buttons/round_frame", Rect2(48, 0, 46, 46))
 	medallion.texture = icon(String(m["icon"]))
+	medallion.modulate = Color.WHITE if m["id"] == "praetura" else CityStyle.OLIVE
 	column.add_child(medallion)
-	_label(column, String(m["name"]), Rect2(0, 44, 142, 34), 15, true)
+	_label(column, String(m["name"]), Rect2(0, 44, 142, 36), 15, true)
 	var occupied := Magis.occupied(city, String(m["id"]))
 	for slot in (2 if opened else 0):
 		var at := Vector2(36 + slot * 38, 80)
@@ -263,13 +276,13 @@ func _column(m: Dictionary, index: int) -> void:
 				ring.size = Vector2(36, 36)
 				ring.position = Vector2(-2, -2)
 				ring.value = 1.0 - float(left) / float(Magis.edict(id)["hours"])
-				ring.tint = Color("ffb51c")
+				ring.tint = CityStyle.OLIVE
 				button.add_child(ring)
 				button.tooltip_text += " · " + (I18n.t("Через %d ч") % left)
 	for i in 3:
 		_card(column, m["edicts"][i], i, opened)
 	if not opened:
-		medallion.modulate = Color("9d907c")
+		medallion.modulate.a = 0.4
 		column.add_child(_image("icons/lock", Rect2(57, 7, 28, 28)))
 		column.add_child(_image("buttons/level_badge", Rect2(3, 84, 25, 25)))
 		var rank_label := _label(column, String(Defs.LEVELS[int(m["rank"])]["name"]), Rect2(24, 86, 110, 22), 12, true)
@@ -281,17 +294,18 @@ func _card(column: Control, e: Dictionary, index: int, opened: bool) -> void:
 	var active := Magis.active(city, id)
 	var b := _button("", func(): _popup(id), "green" if active else "cream")
 	b.name = "Edict_" + id
-	b.position = Vector2(4, 118 + index * 98)
-	b.size = Vector2(134, 94)
+	b.position = Vector2(4, 118 + index * 118)
+	b.size = Vector2(134, 114)
 	b.tooltip_text = I18n.t(String(e["text"]))
 	column.add_child(b)
 	cards[id] = b
 	if not opened:
-		b.modulate = Color(0.66, 0.64, 0.59)
-	var art := _image("icons/tasks", Rect2(7, 7, 35, 35))
+		b.modulate.a = 0.48
+	var art := _image("icons/tasks", Rect2(7, 8, 28, 28))
 	art.texture = icon(id)
+	art.modulate = CityStyle.OLIVE
 	b.add_child(art)
-	_label(b, String(e["name"]), Rect2(45, 5, 82, 38), 13, true)
+	_label(b, String(e["name"]), Rect2(39, 5, 89, 38), 13, true)
 	var fx: Dictionary = e["fx"]
 	var idx := 0
 	for key: String in fx:
@@ -300,14 +314,23 @@ func _card(column: Control, e: Dictionary, index: int, opened: bool) -> void:
 		var delta := value if addition and key != "legion_denarii" else (value * 100.0 if key == "legion_denarii" else (value - 1.0) * 100.0)
 		var positive := delta > 0.0
 		var good := not positive if key in ["upkeep", "build_cost", "legion_rations", "legion_denarii"] or key.begins_with("need_weight:") else positive
-		var x := 6.0 + idx * (122.0 / fx.size())
-		var image := _image("icons/" + String(FX_ICON[key.get_slice(":", 0)]), Rect2(x, 47, 15, 15))
+		var cell := 61.0
+		var x := 6.0 + (idx % 2) * cell
+		var y := 43.0 + (idx / 2) * 21.0
+		var effect_icon := String(FX_ICON[key.get_slice(":", 0)])
+		if key.begins_with("need_radius:") or key.begins_with("need_weight:"):
+			effect_icon = String(Defs.NEEDS.get(key.get_slice(":", 1), {}).get("icon", effect_icon))
+		var image := _image("icons/" + effect_icon, Rect2(x, y, 24, 24))
 		b.add_child(image)
 		var number := ("+" if positive else "−") + str(roundi(absf(delta))) + ("" if key.begins_with("happy:") else "%")
-		var l := _label(b, number, Rect2(x + 14, 45, 122.0 / fx.size() - 14, 20), 11, true)
+		var l := _label(b, number, Rect2(x + 24, y + 2, 37, 20), 11, true)
 		l.add_theme_color_override("font_color", GOOD if good else BAD)
 		idx += 1
-	var price := _image("panels/topbar_pill", Rect2(18, 70, 98, 19))
+	var price := Panel.new()
+	price.position = Vector2(18, 91)
+	price.size = Vector2(98, 20)
+	price.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	price.add_theme_stylebox_override("panel", CityStyle.panel(10, 0))
 	b.add_child(price)
 	var text := str(e["cost"])
 	if city.magis_orders.has(id):
@@ -316,8 +339,8 @@ func _card(column: Control, e: Dictionary, index: int, opened: bool) -> void:
 	elif int(city.magis_cooldown.get(id, 0)) > 0:
 		text = I18n.t("%d ч") % int(city.magis_cooldown[id])
 	else:
-		b.add_child(_image("icons/chest", Rect2(22, 71, 16, 16)))
-	_label(b, text, Rect2(22, 69, 92, 21), 11, true)
+		b.add_child(_image("icons/chest", Rect2(22, 93, 16, 16)))
+	_label(b, text, Rect2(40, 91, 70, 20), 11, true)
 
 
 func _close_popup() -> void:
@@ -350,6 +373,7 @@ func _popup(id: String) -> void:
 	popup.add_child(popup_panel)
 	var art := _image("icons/tasks", Rect2(22, 17, 56, 56))
 	art.texture = icon(id)
+	art.modulate = CityStyle.OLIVE
 	popup_panel.add_child(art)
 	_label(popup_panel, String(e["name"]), Rect2(82, 22, 390, 43), 22, true)
 	var x := _button("", _close_popup, "red")
