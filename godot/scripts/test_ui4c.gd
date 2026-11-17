@@ -78,12 +78,12 @@ func _arrow_look(id: int, warning: bool) -> void:
 		return
 	var badge: Badge = hud.badges[key]["n"]
 	check(badge.is_visible_in_tree(), "стрелка дома %d видна" % id)
-	check(badge.arrow and badge.size.y == 30.0 and badge.label != null and badge.pill != null, "прежняя стрелка с ценой, 30 px")
+	check(badge.arrow and badge.size.y == 66.0 and badge.label != null and badge.pill != null, "стрелка 40 px и цена под ней")
 	if badge.label == null or badge.pill == null:
 		return
-	check(badge.label.text == hud.fmt(c.floor_price(c.buildings[id])), "цена на самой стрелке")
+	check(badge.label.text == hud.fmt(c.floor_price(c.buildings[id])), "цена в плашке под стрелкой")
 	check(badge.warn == warning and badge.label.get_theme_color("font_color") == (Badge.BAD if warning else Badge.INK), "красный текст цены" if warning else "обычный текст цены")
-	check(badge.pill.border_color == (Badge.BAD if warning else Badge.RIM) and badge.pill.border_width_top == 1 and badge.pill.corner_radius_top_left == 15, "прежняя тонкая рамка цены")
+	check(badge.label.position.y >= 44 and badge.pill.border_color == Badge.RIM and badge.pill.border_width_top == 1 and badge.pill.corner_radius_top_left == 10, "тонкая кремовая плашка цены")
 	check(not cover.want.has(id) if warning else cover.want.get(id) == Cover.GREEN, "красная цена без зелёной подсветки" if warning else "доступный дом подсвечен")
 
 
@@ -104,7 +104,7 @@ func _floor_tool() -> void:
 	var home: Dictionary = c.buildings[id]
 	var expected_y: float = float(home["y"]) + c.blueprint(home).top_y() + 1.2
 	check(is_equal_approx(pos.y, expected_y), "скрытая обычная стрелка не поднимает стрелку инструмента")
-	check(hud.world_icons.has(id) and not (hud.badges["b%d" % id]["n"] as Control).visible, "обычная стрелка скрыта при инструменте")
+	check((not hud.world_icons.has(id) or not (hud.badges["b%d" % id]["n"] as Control).visible), "обычный значок не заслоняет инструмент")
 	var money: float = c.money
 	c.money = c.floor_price(home) - 1.0
 	c.changed.emit()

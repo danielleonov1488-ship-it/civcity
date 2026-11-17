@@ -116,9 +116,9 @@ func _run() -> void:
 	for id: String in tree.cards:
 		item_ids[id] = tree.cards[id].get_instance_id()
 	var rank: Control = tree.sections[3]
-	if not check(absf(float(tree.scroll.scroll_vertical) - rank.position.y) < 3, "open at current rank"):
+	if not check(tree.current_rank == 3 and rank.visible, "open at current rank"):
 		return
-	if not check(tree.scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED and not tree.popup.visible, "vertical scroll without a permanent side panel"):
+	if not check(tree.scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED and tree.scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED and not tree.popup.visible, "rank page without scrolling or permanent side panel"):
 		return
 	for pair: Array in [["dyer", "done"], ["potter", "available"], ["mimes", "points"], ["floor3", "locked"], ["patricians", "locked"]]:
 		if not check(String(tree.cards[pair[0]].get_meta("state")) == pair[1], "state " + String(pair[0])):
@@ -142,9 +142,10 @@ func _run() -> void:
 		return
 	for tier: int in tree.sections:
 		var grid: GridContainer = tree.sections[tier].get_node("Items")
-		if not check(grid.columns in [4, 5], "four or five items per row"):
+		if not check(grid.columns == 8, "eight compact items per row"):
 			return
-	tree.scroll.scroll_vertical = 0
+	tree.focus_rank(0)
+	await frames(4)
 	if not await shot("1_research_top.png"):
 		return
 	tree.focus_rank(3)
@@ -154,7 +155,7 @@ func _run() -> void:
 	var potter: Button = tree.cards["potter"]
 	var image: TextureRect = potter.get_node("Picture")
 	var buildings: Array[String] = tree.building_ids("potter")
-	if not check(not buildings.is_empty() and image.texture == hud.icons[buildings[0]] and image.size.x >= 120 and image.size.y >= 100, "large HUD building picture"):
+	if not check(not buildings.is_empty() and image.texture == hud.icons[buildings[0]] and image.size == Vector2(64, 64), "compact HUD building picture"):
 		return
 	if not check(potter.get_node("new_mark").visible, "new sparkle before inspecting"):
 		return
@@ -229,13 +230,13 @@ func _run() -> void:
 		return
 	hud._top_action("research")
 	await frames(8)
-	if not check(same_items() and not tree.popup.visible and absf(float(tree.scroll.scroll_vertical) - rank.position.y) < 3, "reopen current rank without rebuilding"):
+	if not check(same_items() and not tree.popup.visible and tree.current_rank == 3 and rank.visible, "reopen current rank without rebuilding"):
 		return
-	# Узкое окно перестраивает только раскладку: четыре предмета вместо пяти.
+	# Восемь предметов помещаются и в узком варианте, узлы остаются прежними.
 	hud.research_panel.custom_minimum_size.x = 800
 	hud._snug(hud.research_panel)
 	await frames(8)
-	if not check((rank.get_node("Items") as GridContainer).columns == 4 and same_items(), "four columns in a narrow window without rebuilding"):
+	if not check((rank.get_node("Items") as GridContainer).columns == 8 and same_items(), "eight columns in a narrow window without rebuilding"):
 		return
 	if not check(Rect2(Vector2.ZERO, hud.root.size).encloses(hud.research_panel.get_global_rect()), "narrow window fits HUD"):
 		return

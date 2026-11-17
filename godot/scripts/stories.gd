@@ -2239,7 +2239,8 @@ func _marks(on: bool) -> void:
 			icon = "check"
 			cb = play_ready
 	if key != "":
-		hud.set_badge("story", pos, icon, false, "Просьба" if icon == "scroll" else "Готово", cb)
+		hud.set_badge("story", pos, "request", false, "", cb)
+		(hud.badges["story"]["n"] as Control).tooltip_text = "Просьба" if icon == "scroll" else "Готово"
 	else:
 		hud.clear_badge("story")
 	# след лапки над кошкой (значок над осликом) — через paw_h часов поисков
@@ -2255,9 +2256,9 @@ func _marks(on: bool) -> void:
 			trail = a
 	if paw and not cat.is_empty():
 		# значок над кошкой — как у истории (чёрная Мася — чёрная кошка на значке)
-		hud.set_badge("story_paw", _cat_pos() + Vector3(0, 0.75, 0), String(_story(a).get("icon", "cat")), false, "", found)
+		hud.set_badge("story_paw", _cat_pos() + Vector3(0, 0.75, 0), "request", false, "", found)
 	elif paw:
-		hud.set_badge("story_paw", _pet_pos() + Vector3(0, 1.6, 0), "horse", false, "", found)
+		hud.set_badge("story_paw", _pet_pos() + Vector3(0, 1.6, 0), "request", false, "", found)
 	else:
 		hud.clear_badge("story_paw")
 	# лужи: через hint_h часов над каждой ещё не найденной — значок с каплей (щёлкнуть можно и по нему)
@@ -2275,7 +2276,7 @@ func _marks(on: bool) -> void:
 		if String(k).begins_with(CLICK_HINT) and not hints.has(k):
 			hud.clear_badge(k)
 	for k in hints:
-		hud.set_badge(k, hints[k][0], "water", false, "", click_target.bind(int(hints[k][1])), "mark")
+		hud.set_badge(k, hints[k][0], "request", false, "", click_target.bind(int(hints[k][1])), "mark")
 	_noise_marks(on and not cine_on and not a.is_empty() and not a.get("ready", false) and not a.has("homeless"))
 	_route_marks(on and not cine_on and not a.is_empty() and not a.get("ready", false) and not a.has("homeless"))
 	_gift_marks(on and not cine_on and not a.is_empty() and not a.get("ready", false) and not a.has("homeless"))
@@ -4003,7 +4004,9 @@ func _trees_clear() -> void:
 		var tree := String(Defs.B[bd["type"]].get("sub", "")) == "trees"
 		if not tree and top < 1.6:
 			continue
-		if hit.call(p, clampf(top * 0.4, 0.8, 2.2) if tree else 0.7, float(bd["y"]), float(bd["y"]) + top):
+		# У фонаря убираем и ореол света у края кадра, а не только тонкий столб.
+		var clear_radius := 1.2 if not bpd.lights.is_empty() else 0.7
+		if hit.call(p, clampf(top * 0.4, 0.8, 2.2) if tree else clear_radius, float(bd["y"]), float(bd["y"]) + top):
 			var vis: Dictionary = game.visuals.get(id, {})
 			if not vis.is_empty():
 				_hid_parts.append_array(game.parts.hide_handles(vis["h"]))
@@ -5499,7 +5502,7 @@ func _noise_marks(on: bool) -> void:
 		if not want.has(k):
 			hud.clear_badge(String(k))
 	for k in want:
-		hud.set_badge(k, want[k][0], "hammer", bool(want[k][1]), "", Callable(), "mark")
+		hud.set_badge(k, want[k][0], "building", bool(want[k][1]), "", Callable(), "mark")
 	_noise_keys = want.keys()
 
 
@@ -5951,7 +5954,7 @@ func _gift_marks(on: bool) -> void:
 		if not want.has(k):
 			hud.clear_badge(String(k))
 	for k in want:
-		hud.set_badge(k, want[k][0], "cat", false, "", gift.bind(int(want[k][1])), "mark")
+		hud.set_badge(k, want[k][0], "request", false, "", gift.bind(int(want[k][1])), "mark")
 	_gift_keys = want.keys()
 
 
@@ -6597,7 +6600,7 @@ func _route_marks(on: bool) -> void:
 		if not bad.has(k):
 			hud.clear_badge(String(k))
 	for k in bad:
-		hud.set_badge(k, bad[k][0], "happy", true, "", _open_house.bind(int(bad[k][1])), "mark")
+		hud.set_badge(k, bad[k][0], "sad", true, "", _open_house.bind(int(bad[k][1])), "mark")
 	_route_badges = bad.keys()
 
 

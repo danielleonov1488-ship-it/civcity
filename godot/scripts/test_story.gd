@@ -2257,7 +2257,7 @@ func _wedding() -> void:
 	# фонарь на луче камеры прячется вместе со своим светом (пятно света без фонаря не висит)
 	# место — такое, где фонарь встал бы и у игрока (check_place): у домов из своего набора след шире, и точка у
 	# самой пары часто задевает стену соседа — тогда фонарь «ставился» на высоту 0 под землю и в луч не попадал.
-	# Чуть в сторону от луча (до 0,5 м: фонарь всё равно заслоняет пару) — если на самом луче места нет
+	# Желания меняют расход rng и план домов; ищем шире, но фонарь должен пересекать луч.
 	var lamp_bp := c.blueprint({"type": "lamp_post", "tier": 1, "variant": 0, "color": 0})
 	var lamp_top := lamp_bp.top_y()
 	for lp: Vector3 in lamp_bp.lights:
@@ -2265,17 +2265,18 @@ func _wedding() -> void:
 	var lamp_p := Vector2.INF
 	var ray_n := Vector2(kl.x - kc.x, kl.z - kc.z).normalized().orthogonal()
 	var lamp_why := []
-	for k in range(90, 40, -2):
+	for k in range(90, 29, -2):
 		var t := k / 100.0
 		var q0 := Vector2(lerpf(kc.x, kl.x, t), lerpf(kc.z, kl.z, t))
 		var ry := lerpf(kc.y, kl.y, t)
-		for off: float in [0.0, 0.3, -0.3, 0.5, -0.5]:
+		for off: float in [0.0, 0.3, -0.3, 0.5, -0.5, 0.7, -0.7, 0.9, -0.9, 1.2, -1.2]:
 			var q := q0 + ray_n * off
 			if q.distance_to(Vector2(kl.x, kl.z)) <= 1.6:
 				continue
 			var ck: Dictionary = c.check_place("lamp_post", q, 0.0, 0, 0, -2)
 			var ly: float = ck["y"]
-			if ck["err"] == "" and ry > ly + 0.3 and ry < ly + lamp_top:
+			var on_ray := Geometry2D.get_closest_point_to_segment(q, Vector2(kc.x, kc.z), Vector2(kl.x, kl.z)).distance_to(q) <= 1.2
+			if ck["err"] == "" and on_ray and ry > ly + 0.3 and ry < ly + lamp_top:
 				lamp_p = q
 				break
 			lamp_why.append("%.2f/%+.1f: %s" % [t, off, ck["err"] if ck["err"] != "" else "луч на %.2f м" % (ry - ly)])
@@ -2693,17 +2694,17 @@ func _bandits() -> void:
 	check(q.size() == 3 and qc.distance_to(Land.GATE) < 70.0 and game.land.is_owned(qc), "военный квартал у арки: %s (%.0f м от арки)" % [q, qc.distance_to(Land.GATE)])
 	var ga: Array = sto._goal_area(A)
 	check(ga.size() >= 3 and Vector2(float(ga[0]), float(ga[1])).distance_to(qc) < 0.1, "квартал подсвечен на земле (пятно, не кольцо)")
-	# одна стрелка: обучение Легиону и история показывают на одно и то же — Казармы
+	# История и обучение ведут на одну кнопку «Легион», а не в меню города.
 	await frames(3)
 	hud._update_pointer()
 	var tut_t = lu.tut_pointer()[0]
-	check(lu.tut_active() and hud.pointer_target != null and hud.pointer_target == tut_t and String(sto.pointer_do().get("type", "")) == "barracks",
-		"одна стрелка — на Казармы (обучение Легиону; история показала бы туда же)")
+	check(lu.tut_active() and hud.pointer_target != null and hud.pointer_target == tut_t and String(sto.pointer_do().get("kind", "")) == "legion" and tut_t == lu.btn and hud._do_target(sto.pointer_do()) == lu.btn,
+		"одна стрелка — на «Легион» (история и обучение ведут в форт)")
 	# советник: военный квартал, один раз
 	hud.advisor_panel.visible = false
 	sto.tick()
 	check(c.tips.has("story_adv_bandits_barracks") and hud.adv_title.text == StoryDefs.ADV_LEGION and hud.adv_text.text.contains("Готового Легиона нет")
-		and hud.adv_text.text.contains("Стрельбище") and hud.adv_text.text.contains("Улучшить") and hud.adv_text.text.contains("других городов"),
+		and hud.adv_text.text.contains("внутри форта") and hud.adv_text.text.contains("Стрельбище") and hud.adv_text.text.contains("Улучшить") and hud.adv_text.text.contains("других городов"),
 		"советник: «%s» — что такое Легион и что его строят сами" % hud.adv_title.text)
 	await frames(10)
 	get_viewport().get_texture().get_image().save_png(out + "story_bandits_advice.png")   # с советником (shot() его прячет)

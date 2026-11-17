@@ -1,8 +1,9 @@
 extends VBoxContainer
-## Исследования по рангам: крупные картинки без рамок и линий.
+## Один ранг на странице, восемь маленьких картинок в ряд, без прокрутки.
 
-const CARD := Vector2(158, 206)
-const GAP := 20.0
+const CARD := Vector2(92, 112)
+const GAP := 8.0
+const COLUMNS := 8
 const BADGE_GOOD := Color("487333")
 const BADGE_BAD := Color("a53d32")
 var hud
@@ -11,6 +12,9 @@ var detail: VBoxContainer
 var only_available: CheckBox
 var cards: Dictionary = {}
 var sections: Dictionary = {}
+var rank_tabs: Dictionary = {}
+var current_rank := 0
+var _rank_bar: HBoxContainer
 var selected := ""
 var study: Button
 var popup: PanelContainer
@@ -36,10 +40,10 @@ func setup(owner_hud, parent: VBoxContainer) -> void:
 	var tools := HBoxContainer.new()
 	tools.name = "ResearchTools"
 	tools.add_theme_constant_override("separation", 12)
-	tools.add_child(hud._icon("research", 30, Hud.C_SOFT))
-	hud.lbl_research_rp = hud._label("0", 24, true)
+	tools.add_child(hud._icon("research", 20, Hud.CARD_ACCENT))
+	hud.lbl_research_rp = hud._label("0", 16, true, Hud.CARD_ACCENT)
 	tools.add_child(hud.lbl_research_rp)
-	hud.lbl_research_rate = hud._label("", 17, true, Hud.C_GOOD)
+	hud.lbl_research_rate = hud._label("", 13, true, Hud.CARD_ACCENT)
 	tools.add_child(hud.lbl_research_rate)
 	var space := Control.new()
 	space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -47,16 +51,22 @@ func setup(owner_hud, parent: VBoxContainer) -> void:
 	only_available = CheckBox.new()
 	only_available.name = "OnlyAvailable"
 	only_available.text = "Только доступные"
-	only_available.add_theme_font_size_override("font_size", 17)
+	only_available.add_theme_font_size_override("font_size", 13)
 	only_available.toggled.connect(func(_on: bool):
 		close_detail()
 		rebuild(true))
 	tools.add_child(only_available)
 	parent.add_child(tools)
+	_rank_bar = HBoxContainer.new()
+	_rank_bar.name = "ResearchRankTabs"
+	_rank_bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	_rank_bar.add_theme_constant_override("separation", 8)
+	parent.add_child(_rank_bar)
 	scroll = ScrollContainer.new()
 	scroll.name = "ResearchScroll"
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.follow_focus = true
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.follow_focus = false
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(scroll)
 	hud.research_box = VBoxContainer.new()
@@ -65,7 +75,7 @@ func setup(owner_hud, parent: VBoxContainer) -> void:
 	hud.research_box.add_child(self)
 	name = "ResearchRanks"
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	add_theme_constant_override("separation", 24)
+	add_theme_constant_override("separation", 0)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	resized.connect(_layout_sections)
 	scroll.get_v_scroll_bar().value_changed.connect(func(_value: float): _place_popup())
@@ -75,16 +85,17 @@ func setup(owner_hud, parent: VBoxContainer) -> void:
 
 
 func fit_window() -> void:
-	hud.research_panel.custom_minimum_size.x = minf(1040, maxf(780, hud.root.size.x - 48))
-	scroll.custom_minimum_size = Vector2(720, clampf(hud.root.size.y - 220, 260, 510))
+	hud.research_panel.custom_minimum_size = Vector2(900, 460)
+	scroll.custom_minimum_size = Vector2(792, 284)
 	_detail_scroll.custom_minimum_size.y = clampf(hud.root.size.y - 510, 100, 160)
 	hud._snug(hud.research_panel)
+	_layout_sections()
 	_place_popup.call_deferred()
 
 
 func state_key() -> String:
 	var c: City = hud.game.city
-	return str([c.level, int(c.rp), c.econ, c.research, c.tips.get("seen_r", {}), only_available.button_pressed])
+	return str([c.level, int(c.rp), c.econ, c.research, c.tips.get("seen_r", {}), only_available.button_pressed, current_rank])
 
 
 func refresh() -> void:
@@ -127,7 +138,32 @@ func _build() -> void:
 	_done_material.shader = shader
 	_badge_good = _badge_style(BADGE_GOOD)
 	_badge_bad = _badge_style(BADGE_BAD)
+	current_rank = clampi(hud.game.city.level, 0, Defs.LEVELS.size() - 1)
 	for tier in Defs.LEVELS.size():
+		var tab := Button.new()
+		tab.name = "RankTab_%d" % tier
+		tab.toggle_mode = true
+		tab.custom_minimum_size = Vector2(84, 52)
+		tab.tooltip_text = String(Defs.LEVELS[tier]["name"])
+		hud._card_button(tab)
+		tab.custom_minimum_size = Vector2(84, 52)
+		var tab_body := VBoxContainer.new()
+		tab_body.add_theme_constant_override("separation", 0)
+		tab.add_child(tab_body)
+		tab_body.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 3)
+		var medal: TextureRect = hud._icon("level", 24, Hud.CARD_ACCENT)
+		medal.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		tab_body.add_child(medal)
+		var caption: Label = hud._label(String(Defs.LEVELS[tier]["name"]), 11, true, Hud.CARD_ACCENT)
+		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		caption.clip_text = true
+		caption.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		tab_body.add_child(caption)
+		for child: Control in tab.find_children("*", "Control", true, false):
+			child.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tab.pressed.connect(select_rank.bind(tier))
+		_rank_bar.add_child(tab)
+		rank_tabs[tier] = tab
 		var section := Control.new()
 		section.name = "Rank_%d" % tier
 		section.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -136,13 +172,13 @@ func _build() -> void:
 		var ribbon := PanelContainer.new()
 		ribbon.name = "Ribbon"
 		ribbon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		ribbon.add_theme_stylebox_override("panel", hud._box_scroll_h(0))
+		ribbon.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 		section.add_child(ribbon)
 		var heading := HBoxContainer.new()
 		heading.alignment = BoxContainer.ALIGNMENT_CENTER
 		heading.add_theme_constant_override("separation", 12)
-		heading.add_child(hud._icon("housing", 30, Hud.C_SOFT))
-		heading.add_child(hud._label(String(Defs.LEVELS[tier]["name"]), 28, false, Hud.C_INK, hud.font_title))
+		heading.add_child(hud._icon("housing", 18, Hud.CARD_ACCENT))
+		heading.add_child(hud._label(String(Defs.LEVELS[tier]["name"]), 18, false, Hud.CARD_ACCENT, hud.font_title))
 		ribbon.add_child(heading)
 		var grid := GridContainer.new()
 		grid.name = "Items"
@@ -167,9 +203,9 @@ func _build() -> void:
 		notice.add_theme_constant_override("separation", 8)
 		notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		notice.add_child(hud._icon("lock", 20, Hud.C_SOFT))
-		notice.add_child(hud._label(I18n.t("Откроется на уровне «%s»") % I18n.t(String(Defs.LEVELS[tier]["name"])), 16, true, Hud.C_SOFT))
+		notice.add_child(hud._label(I18n.t("Откроется на уровне «%s»") % I18n.t(String(Defs.LEVELS[tier]["name"])), 12, true, Hud.CARD_ACCENT))
 		section.add_child(notice)
-	_empty = hud._label("Пока нет доступных исследований", 20, true, Hud.C_SOFT)
+	_empty = hud._label("Пока нет доступных исследований", 16, true, Hud.CARD_ACCENT)
 	_empty.name = "ResearchEmpty"
 	_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_empty.custom_minimum_size.y = 100
@@ -180,9 +216,8 @@ func _build() -> void:
 func _layout_sections() -> void:
 	if not _built:
 		return
-	var width := maxf(720, size.x)
-	var columns := 5 if width >= CARD.x * 5 + GAP * 4 + 32 else 4
-	var grid_width := CARD.x * columns + GAP * (columns - 1)
+	var width := maxf(792, size.x)
+	var grid_width := CARD.x * COLUMNS + GAP * (COLUMNS - 1)
 	var any_visible := false
 	for tier: int in sections:
 		var section: Control = sections[tier]
@@ -191,28 +226,44 @@ func _layout_sections() -> void:
 		for child: Control in grid.get_children():
 			if child.visible:
 				count += 1
-		section.visible = count > 0
-		if count == 0:
-			continue
-		any_visible = true
+		section.visible = tier == current_rank and count > 0
+		any_visible = any_visible or section.visible
 		var locked: bool = tier > hud.game.city.level
-		var top := 110.0 if locked else 78.0
-		var rows := ceili(float(count) / columns)
-		var height := top + rows * CARD.y + maxi(0, rows - 1) * GAP + 12
+		var rows := ceili(float(count) / COLUMNS)
+		var height := 32 + rows * CARD.y + maxi(0, rows - 1) * GAP + 20
 		section.custom_minimum_size = Vector2(0, height)
 		var ribbon := section.get_node("Ribbon") as PanelContainer
-		ribbon.position = Vector2((width - minf(560, width - 48)) * 0.5, 6)
-		ribbon.size = Vector2(minf(560, width - 48), 54)
-		grid.columns = columns
-		grid.position = Vector2((width - grid_width) * 0.5, top)
+		ribbon.position = Vector2(0, 0)
+		ribbon.size = Vector2(width, 26)
+		grid.columns = COLUMNS
+		grid.position = Vector2((width - grid_width) * 0.5, 32)
 		grid.size = Vector2(grid_width, 0)
 		var wash := section.get_node("RankLockOverlay") as ColorRect
 		wash.size = Vector2(width, height)
 		wash.visible = locked
 		var notice := section.get_node("RankLockNotice") as HBoxContainer
-		notice.position = Vector2(12, 66)
-		notice.size = Vector2(width - 24, 30)
+		notice.position = Vector2(0, height - 20)
+		notice.size = Vector2(width, 20)
 		notice.visible = locked
+		var tab := rank_tabs[tier] as Button
+		tab.set_pressed_no_signal(tier == current_rank)
+		tab.modulate = Color(1, 1, 1, 0.45) if locked else Color.WHITE
+		tab.set_meta("current", tier == hud.game.city.level)
+		var frame: StyleBoxFlat = hud._card_frame(8, 3)
+		if tier == hud.game.city.level:
+			frame.border_color = Hud.CARD_ACCENT
+			frame.set_border_width_all(2)
+		tab.add_theme_stylebox_override("normal", frame)
+		if tier == current_rank:
+			frame = frame.duplicate() as StyleBoxFlat
+			frame.bg_color = Hud.CARD_ACCENT
+			tab.add_theme_stylebox_override("pressed", frame)
+			tab.add_theme_stylebox_override("hover_pressed", frame)
+		for child: Control in tab.find_children("*", "Control", true, false):
+			if child is Label:
+				(child as Label).add_theme_color_override("font_color", Hud.C_CREAM if tier == current_rank else Hud.CARD_ACCENT)
+			elif child is TextureRect:
+				child.modulate = Hud.C_CREAM if tier == current_rank else Hud.CARD_ACCENT
 	_empty.visible = not any_visible
 	_place_popup.call_deferred()
 
@@ -232,7 +283,7 @@ func picture(r: Dictionary) -> Texture2D:
 	for type: String in building_ids(String(r["id"])):
 		if hud.icons.get(type) != null:
 			return hud.icons[type]
-	return hud.ico(String(r["icon"]), 128)
+	return hud.ico(String(r["icon"]), 64)
 
 
 func _update_picture(img: TextureRect, r: Dictionary) -> void:
@@ -250,11 +301,11 @@ func _update_picture(img: TextureRect, r: Dictionary) -> void:
 func _badge_style(col: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = col
-	sb.set_corner_radius_all(12)
-	sb.content_margin_left = 10
-	sb.content_margin_right = 10
-	sb.content_margin_top = 3
-	sb.content_margin_bottom = 3
+	sb.set_corner_radius_all(9)
+	sb.content_margin_left = 5
+	sb.content_margin_right = 5
+	sb.content_margin_top = 1
+	sb.content_margin_bottom = 1
 	return sb
 
 
@@ -279,50 +330,51 @@ func make_card(r: Dictionary) -> Button:
 	b.add_theme_stylebox_override("focus", focus)
 	var img := TextureRect.new()
 	img.name = "Picture"
-	img.position = Vector2(15, 10)
-	img.size = Vector2(128, 106)
+	img.position = Vector2(14, 0)
+	img.size = Vector2(64, 64)
 	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	b.add_child(img)
-	var label: Label = hud._label(String(r["name"]), 16, true)
+	var label: Label = hud._label(String(r["name"]), 13, true, Hud.CARD_ACCENT)
 	label.name = "ItemName"
-	label.position = Vector2(3, 120)
-	label.size = Vector2(CARD.x - 6, 44)
+	label.position = Vector2(0, 66)
+	label.size = Vector2(CARD.x, 18)
+	label.clip_text = true
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	label.max_lines_visible = 2
+	label.max_lines_visible = 1
 	b.add_child(label)
 	var badge := PanelContainer.new()
 	badge.name = "CostBadge"
-	badge.position = Vector2(32, 172)
-	badge.size = Vector2(94, 28)
+	badge.position = Vector2(12, 88)
+	badge.size = Vector2(68, 20)
 	b.add_child(badge)
 	var cost := HBoxContainer.new()
 	cost.alignment = BoxContainer.ALIGNMENT_CENTER
 	cost.add_theme_constant_override("separation", 5)
-	var coin: TextureRect = hud._icon("research", 19)
+	var coin: TextureRect = hud._icon("research", 13)
 	coin.name = "Icon"
 	cost.add_child(coin)
-	var price: Label = hud._label("", 15, true, Color.WHITE)
+	var price: Label = hud._label("", 11, true, Color.WHITE)
 	price.name = "Cost"
 	cost.add_child(price)
 	badge.add_child(cost)
-	var tick: TextureRect = hud._icon("check", 30)
+	var tick: TextureRect = hud._icon("check", 16)
 	tick.name = "DoneTick"
-	tick.position = Vector2(116, 83)
+	tick.position = Vector2(70, 46)
 	b.add_child(tick)
-	var lock: TextureRect = hud._icon("lock", 24)
+	var lock: TextureRect = hud._icon("lock", 16)
 	lock.name = "ParentLock"
-	lock.position = Vector2(119, 88)
+	lock.position = Vector2(70, 46)
 	b.add_child(lock)
 	var mark := HBoxContainer.new()
 	mark.name = "new_mark"
-	mark.position = Vector2(77, 0)
+	mark.position = Vector2(64, 0)
 	mark.add_theme_constant_override("separation", 3)
 	mark.add_child(hud._icon("research_sparkles", 16, Hud.C_GOLD))
-	mark.add_child(hud._label("НОВОЕ", 11, true, Hud.C_SOFT))
+	mark.tooltip_text = "НОВОЕ"
 	b.add_child(mark)
 	for child: Control in b.find_children("*", "Control", true, false):
 		child.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -356,14 +408,15 @@ func _update_card(b: Button, r: Dictionary) -> void:
 	_update_picture(img, r)
 	img.material = _done_material if done else null
 	img.modulate.a = 0.6 if locked else 1.0
-	(b.get_node("ItemName") as Label).add_theme_color_override("font_color", Hud.C_SOFT if locked else Hud.C_INK)
+	(b.get_node("ItemName") as Label).add_theme_color_override("font_color", Hud.C_SOFT if locked else Hud.CARD_ACCENT)
 	var badge := b.get_node("CostBadge") as PanelContainer
 	badge.add_theme_stylebox_override("panel", _badge_good if done or c.rp >= float(r["cost"]) else _badge_bad)
 	var cost := badge.get_child(0) as HBoxContainer
 	var coin := cost.get_node("Icon") as TextureRect
-	coin.texture = hud.ico("check" if done else "research", 38)
+	coin.texture = hud.ico("check" if done else "research", 26)
 	coin.modulate = Color.WHITE
-	(cost.get_node("Cost") as Label).text = I18n.t("Изучено") if done else str(r["cost"])
+	(cost.get_node("Cost") as Label).text = "" if done else str(r["cost"])
+	badge.tooltip_text = "Изучено" if done else str(r["cost"])
 	badge.reset_size()
 	badge.position.x = (CARD.x - badge.size.x) * 0.5
 	var tick := b.get_node("DoneTick") as TextureRect
@@ -553,31 +606,18 @@ func close_detail() -> void:
 
 
 func focus_rank(tier: int) -> void:
-	_focus_serial += 1
-	var serial := _focus_serial
-	await get_tree().process_frame
-	await get_tree().process_frame
-	if serial != _focus_serial or not hud.research_panel.visible or not sections.has(tier):
-		return
-	var target := sections[tier] as Control
-	if only_available.button_pressed and not target.visible:
-		for r: Dictionary in Defs.RESEARCH:
-			if (cards[String(r["id"])] as Control).visible:
-				target = sections[int(r["lvl"])]
-				break
-	if target.visible:
-		scroll.scroll_vertical = roundi(target.position.y)
+	select_rank(tier)
 
 
 func focus_card(id: String) -> bool:
+	if not cards.has(id):
+		return false
+	select_rank(int(Defs.research(id)["lvl"]))
 	_focus_serial += 1
 	var serial := _focus_serial
 	await get_tree().process_frame
 	await get_tree().process_frame
-	if serial == _focus_serial and hud.research_panel.visible and cards.has(id):
-		scroll.ensure_control_visible(cards[id])
-		return true
-	return false
+	return serial == _focus_serial and hud.research_panel.visible and (cards[id] as Control).is_visible_in_tree()
 
 
 func reveal(id: String) -> void:
@@ -600,3 +640,12 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if not popup.get_global_rect().has_point(popup.get_global_mouse_position()):
 			close_detail()
+
+
+func select_rank(tier: int) -> void:
+	var next_rank := clampi(tier, 0, Defs.LEVELS.size() - 1)
+	if current_rank != next_rank:
+		close_detail()
+	current_rank = next_rank
+	_layout_sections()
+	scroll.scroll_vertical = 0

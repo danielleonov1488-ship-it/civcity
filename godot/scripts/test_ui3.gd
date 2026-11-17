@@ -87,6 +87,8 @@ func _run() -> void:
 	hud._top_action("research")
 	await frames(6)
 	var tree = hud.research_tree
+	if not check(tree.current_rank == city.level and not tree.scroll.get_v_scroll_bar().visible, "current rank page without scrollbar"):
+		return
 	if not check(tree.cards.size() == Defs.RESEARCH.size(), "all research nodes"):
 		return
 	for pair: Array in [["warehouse", "done"], ["butcher", "available"], ["cobbler", "locked"], ["artisans", "points"], ["patricians", "locked"]]:

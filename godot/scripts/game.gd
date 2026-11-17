@@ -2573,7 +2573,8 @@ func _update_plot_signs() -> void:
 			border.name = "border"                 # режим фото прячет рамку (photo_mode.gd)
 			sign.add_child(border)
 			border.global_transform = Transform3D.IDENTITY
-			hud.set_badge("plot%d_%d" % [i, j], Vector3(at.x, y + 4.4, at.y), "coins", false, "%s ден." % hud.fmt(city.plot_price()))
+			hud.set_badge("plot%d_%d" % [i, j], Vector3(at.x, y + 4.4, at.y), "collect")
+			(hud.badges["plot%d_%d" % [i, j]]["n"] as Control).tooltip_text = "%s ден." % hud.fmt(city.plot_price())
 			plot_signs[p] = sign
 
 
@@ -4897,7 +4898,7 @@ func _settle_marks_show() -> void:
 		add_child(o)
 		settle_marks.append(o)
 		# ключи над домом: здесь есть место
-		hud.set_badge("settle%d" % b["id"], Vector3(b["pos"].x, float(b["y"]) + city.blueprint(b).top_y() + 1.2, b["pos"].y), "keys")
+		hud.set_badge("settle%d" % b["id"], Vector3(b["pos"].x, float(b["y"]) + city.blueprint(b).top_y() + 1.2, b["pos"].y), "home_room")
 		hud.set_badge_match("settle%d" % b["id"], b, settle_fam)
 		settle_keys.append("settle%d" % b["id"])
 

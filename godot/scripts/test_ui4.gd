@@ -247,7 +247,7 @@ func _check_badges(isolated: Dictionary, no_workers: Dictionary, ready: Dictiona
 	check(hud.badges.has(family_key), "waiting family badge")
 	if hud.badges.has(family_key):
 		var badge: Badge = hud.badges[family_key]["n"]
-		check(badge.size == Vector2(44, 44) and badge.ring == Badge.CLASS_RING["plebs"] and badge.get_child_count() == 0, "44px single family disc with class ring")
+		check(badge.size == Vector2(44, 44) and badge.texture == Badge.badge_texture("family") and badge.preference_texture != null and badge.get_child_count() == 0, "44px family PNG with attached want disc")
 
 
 func _check_card(h: Dictionary, families: int) -> void:
