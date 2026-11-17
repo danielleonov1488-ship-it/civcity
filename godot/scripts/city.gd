@@ -3516,8 +3516,10 @@ func rank_ok() -> bool:
 func rank_text(lvl := -1) -> String:
 	var parts := []
 	for e: Dictionary in rank_needs(lvl):
-		if e["pct"]:
+		if e["pct"] and e["p"] == ["happy"]:
 			parts.append("счастье от %d%%" % int(e["need"]))
+		elif e["pct"]:
+			parts.append(String(e.get("say", e["text"])))   # «70% исследований ряда …», а не «счастье от 70%»
 		elif e["icon"] == "family":
 			parts.append("%d %s" % [int(e["need"]), plural(int(e["need"]), "житель", "жителя", "жителей")])
 		else:
