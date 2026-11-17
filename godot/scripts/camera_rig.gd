@@ -48,6 +48,19 @@ const GESTURE_ZOOM := 0.12           # ⌘ + два пальца: множите
 static var K := tan(deg_to_rad(20.0)) / tan(deg_to_rad(FOV / 2.0))
 
 
+## Только движение игрока: ролики, полёт к зданию и масштаб к курсору не считаются.
+var look_distance := 0.0
+var look_zooms := 0
+
+
+func _pan_by(delta: Vector3) -> void:
+	var next := _target_t + delta
+	next.x = clampf(next.x, 4.0, Land.SIZE - 4.0)
+	next.z = clampf(next.z, 4.0, Land.SIZE - 4.0)
+	look_distance += Vector2(next.x - _target_t.x, next.z - _target_t.z).length()
+	_target_t = next
+
+
 func _ready() -> void:
 	cam = Camera3D.new()
 	cam.fov = FOV
@@ -115,7 +128,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			var k := _dist_t * 0.0016
 			var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
 			var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
-			_target_t -= right * mm.relative.x * k + fwd * mm.relative.y * k
+			_pan_by(-(right * mm.relative.x * k + fwd * mm.relative.y * k))
 	elif e is InputEventMagnifyGesture:
 		var f := (e as InputEventMagnifyGesture).factor
 		if f > 0.0 and gesture_once(e as InputEventGesture) and not gesture_on_ui(get_viewport()):
@@ -164,7 +177,7 @@ func pan_gesture(pg: InputEventPanGesture) -> void:
 		var k := _dist_t * 0.0016 * GESTURE_PX
 		var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
 		var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
-		_target_t += right * d.x * k + fwd * d.y * k
+		_pan_by(right * d.x * k + fwd * d.y * k)
 
 
 ## Жест над окном интерфейса? Жесты не «мышь», и Godot передаёт их родителям окна и дальше в игру, даже если окно
@@ -193,6 +206,8 @@ func _zoom(k: float) -> void:
 		if p is Vector2 and (p as Vector2).is_finite():
 			var g := Vector3((p as Vector2).x, _target_t.y, (p as Vector2).y)
 			_target_t = g + (_target_t - g) * r
+	if not is_equal_approx(d1, _dist_t):
+		look_zooms += 1
 	_dist_t = d1
 
 
@@ -286,7 +301,7 @@ func _process(dt: float) -> void:
 		stop_follow()
 		var right := Vector3(cos(_yaw_t), 0, -sin(_yaw_t))
 		var fwd := Vector3(sin(_yaw_t), 0, cos(_yaw_t))
-		_target_t += (right * mv.x + fwd * mv.y) * _dist_t * 0.9 * dt
+		_pan_by((right * mv.x + fwd * mv.y) * _dist_t * 0.9 * dt)
 	if follow.is_valid():
 		var fp = follow.call()
 		if fp is Vector3 and (fp as Vector3).is_finite():

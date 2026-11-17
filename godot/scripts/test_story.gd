@@ -117,10 +117,12 @@ func reset_place() -> void:
 	game.snap = true
 
 
-func street(a: Vector2, b: Vector2) -> void:
+func street(a: Vector2, b: Vector2, building_sites := true) -> void:
 	var ch: Array = game.land.paint_line(a, b, 1.3, Land.Kind.ROAD, true)
 	c.road_cells += ch.size()
 	game.people.refresh(game.land.road_chunks.keys())
+	if not building_sites:
+		return
 	var dir := (b - a).normalized()
 	var side := Vector2(-dir.y, dir.x)
 	for i in int(a.distance_to(b)) + 1:
@@ -336,6 +338,7 @@ func _run() -> void:
 	for r in ["q_garden", "q_market", "deco_trees", "deco_flowers", "deco_south"]:   # «Южные деревья» — кипарис и пальма в новой игре (этап 5)
 		c.research[r] = true
 	# ---------- городок: улица, дома с семьями (у Корнелиев — сын), сено и куст в 15–30 м ----------
+	street(Vector2(Land.ROAD_X, 110), Vector2(170, 110), false)
 	street(Vector2(170, 110), Vector2(170, 178))
 	street(Vector2(170, 144), Vector2(206, 144))
 	kid_home = put("house_pleb", Vector2(172, 124))
@@ -1289,10 +1292,7 @@ func _save_mid_step() -> void:
 
 ## Семья Корнелиев с площади — в дом h (сразу, без прогулки)
 func rehouse(h: Dictionary) -> bool:
-	if h.is_empty() or not c.assign(kid_fam, int(h["id"])):
-		return false
-	c.settled(int(h["id"]), 4, kid_fam)
-	return true
+	return rehouse_fam(h, kid_fam)
 
 
 func _demolished() -> void:
@@ -2018,8 +2018,9 @@ func sq_pct(h: Dictionary) -> int:
 ## Семья fam с площади — в дом h (сразу, без прогулки)
 func rehouse_fam(h: Dictionary, fam: String) -> bool:
 	var f: Dictionary = c.arrival(fam)
-	if h.is_empty() or f.is_empty() or not c.assign(fam, int(h["id"])):
-		print("  rehouse_fam: нет — дом %s, на площади %s" % [h.get("id"), f])
+	var connected := not h.is_empty() and c.house_connected(h)
+	if not connected or f.is_empty() or not c.assign(fam, int(h["id"])):
+		print("  rehouse_fam: нет — дом %s, дорога %s, на площади %s" % [h.get("id"), connected, f])
 		return false
 	for ff: Dictionary in h.get("families", []):
 		if String(ff["name"]) == fam:
@@ -2343,6 +2344,7 @@ func _wedding_more() -> void:
 	for id in c.buildings.keys():
 		if String(c.buildings[id]["type"]) in ["thermopolium", "taberna"]:
 			c.remove(c.buildings[id])        # прежние таверны — прочь: пир — только у станции
+	street(Vector2(Land.ROAD_X, 122), Vector2(200, 122), false)
 	street(Vector2(200, 86), Vector2(200, 122))
 	c.level = 3
 	fresh(2800, ["cat", "square"])
@@ -2679,7 +2681,10 @@ func _leak() -> void:
 	hud.set_overlay("water")
 	await frames(6)
 	var ns: Array = game.cover.sets.get("n", [0, 0, 0])
-	check(int(ns[0]) >= 6 and hud._ov_title.text == "Вода", "«Обзор → Вода»: с водой %d домов, без — %d" % [int(ns[0]), int(ns[2])])
+	# Просьба считает и пустые дома, а обзор показывает только дома с жителями.
+	var occupied_with_water := c._count(func(b): return c.is_house(b) and int(b["pop"]) + int(b.get("coming", 0)) > 0 and b.get("mon_types", {}).has("fountain"))
+	check(occupied_with_water > 0 and int(ns[0]) == occupied_with_water and int(ns[2]) > 0 and hud._ov_title.text == "Вода",
+		"«Обзор → Вода»: с водой %d домов, без — %d" % [int(ns[0]), int(ns[2])])
 	await look_at_pt(fp, 40.0)
 	await frames(20)
 	await shot("story_leak_water.png")

@@ -10,7 +10,7 @@ var tag := "UNI6"
 var out := ""
 
 
-func boot_run(prefix: String, folder: String) -> bool:
+func boot_run(prefix: String, folder: String, profiles := "D:/CivCity/.work/stage5/uni6/profiles") -> bool:
 	tag = prefix
 	out = folder
 	var lang := "ru"
@@ -19,7 +19,7 @@ func boot_run(prefix: String, folder: String) -> bool:
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
 		if arg.begins_with("lang="):
 			lang = arg.trim_prefix("lang=")
-	var profile := "D:/CivCity/.work/stage5/uni6/profiles/%s_%d_%d" % [tag, int(Time.get_unix_time_from_system()), Time.get_ticks_usec()]
+	var profile := "%s/%s_%d_%d" % [profiles, tag, int(Time.get_unix_time_from_system()), Time.get_ticks_usec()]
 	if not check(DirAccess.make_dir_recursive_absolute(profile) == OK and DirAccess.make_dir_recursive_absolute(out) == OK, "isolated output directories"):
 		return false
 	OS.set_environment("CIVCITY_SAVEDIR", profile)

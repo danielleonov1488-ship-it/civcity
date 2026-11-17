@@ -189,6 +189,7 @@ const UPC_COL := {"upc_a": Color("e0904a"), "upc_p": Color("a77ee0")}
 var cloud_off: CloudBadge             # значок «нет связи с облаком» слева от колокольчика
 var pointer: TextureRect
 var pointer_target: Control
+var _pointer_badge := {}
 var pointer_text: Label
 var credits_panel: PanelContainer         # титры: кто и что сделал для игры
 var journal_panel: PanelContainer = null  # журнал «Истории горожан» (собирает StoryUi при первом открытии)
@@ -3508,6 +3509,8 @@ func select_build(type: String, from_tray := false) -> void:
 		return
 	game.end_copy()                           # карточку взяли сами — обычная стройка, не продолжение копии
 	game.set_tool(type)
+	if game.tutorial != null and Tutorial.BUILD_STEPS.get(game.tutorial.cur_id(), "") == type:
+		_close_tray()
 	_update_pointer()
 
 
@@ -3515,11 +3518,13 @@ func select_build(type: String, from_tray := false) -> void:
 
 func _pointer() -> void:
 	pointer = TextureRect.new()
+	pointer.name = "GuidanceArrow"
 	pointer.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	pointer.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	pointer.texture = ico("arrow_down", 104)          # золотая стрелка с лавром
-	pointer.custom_minimum_size = Vector2(52, 52)
-	pointer.size = Vector2(52, 52)
+	pointer.texture = preload("res://assets/ui/tutorial_arrow.svg")
+	pointer.custom_minimum_size = Vector2(64, 64)
+	pointer.size = Vector2(64, 64)
+	pointer.pivot_offset = Vector2(32, 32)
 	pointer.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	pointer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pointer.visible = false
@@ -3534,6 +3539,7 @@ func _pointer() -> void:
 ## Стрелка обучения или временная подсказка по щелчку строки
 func _update_pointer() -> void:
 	pointer_target = null
+	_pointer_badge = {}
 	if game == null or game.city == null or game.mode == "demo" or game.mode == "menu":
 		return
 	if tutorial_busy():
@@ -3543,6 +3549,11 @@ func _update_pointer() -> void:
 			pointer_text.text = pt[1]
 			if badges.has("tutorial_target") and pointer_target != badges["tutorial_target"]["n"]:
 				clear_badge("tutorial_target")
+			if pointer_target is MapBadge:
+				for badge: Dictionary in badges.values():
+					if pointer_target == badge["n"]:
+						_pointer_badge = badge
+						break
 		return
 	# щёлкнули по строке (просьба, условие уровня, цель истории) — стрелка PTR_SHOW_MS к тому, что нужно сделать
 	if not _ptr_shown.is_empty():
@@ -4016,7 +4027,7 @@ func _process(_dt: float) -> void:
 			advisor_panel.hide()
 			notes_box.hide()
 			_ptr_tick -= _dt
-			if _ptr_tick <= 0.0:
+			if _ptr_tick <= 0.0 or game.tutorial != null and game.tutorial.cur_id() == "cart":
 				_ptr_tick = 0.2
 				_update_pointer()
 		else:
@@ -4066,56 +4077,94 @@ func _process(_dt: float) -> void:
 			_ptr_tick = 0.25
 			_update_pointer()
 	if pointer:
-		if tutorial_busy():
-			pointer.texture = CityStyle.icon("pointing")
-			pointer.modulate = CityStyle.OLIVE
-		else:
-			pointer.texture = ico("pointing", 104)
-			pointer.modulate = Color.WHITE
 		var t: Control = pointer_target
 		var cu := CampUI.of(self)
 		# лагерь Легиона закрывает город целиком: стрелка к кнопкам города (например, «Мостовая») над ним не видна
-		var show := t != null and is_instance_valid(t) and t.is_visible_in_tree() and root.visible and (cu == null or not cu.visible or cu.is_ancestor_of(t))
+		var world := _tutorial_pointer_projection()
+		var show := is_instance_valid(t) and (t.is_visible_in_tree() or world.is_finite()) and root.visible and (cu == null or not cu.visible or cu.is_ancestor_of(t))
 		pointer.visible = show
-		pointer_text.visible = show
+		pointer_text.visible = show and pointer_text.text != ""
 		if show:
+			if tutorial_busy():
+				_place_tutorial_pointer(t, world)
+				return
 			var r := t.get_global_rect()
-			var bob := sin(Time.get_ticks_msec() / 160.0) * 7.0
+			var bob := sin(Time.get_ticks_msec() / 450.0) * 4.0
 			var above := r.position.y > 200.0
-			pointer.custom_minimum_size = Vector2(52, 52)
-			pointer.size = Vector2(52, 52)
 			pointer.rotation = 0.0 if above else PI
-			pointer.pivot_offset = Vector2(26, 26)
-			pointer.position = Vector2(r.get_center().x - 26, (r.position.y - 58 - bob) if above else (r.end.y + 2 + bob))
+			pointer.position = Vector2(r.get_center().x - 32, (r.position.y - 68 - bob) if above else (r.end.y + 4 + bob))
 			if info_panel.visible and info_panel.is_ancestor_of(t):
 				# В карточке наконечник стоит у кнопки, подпись — за левым краем окна.
 				pointer.rotation = 0.0
-				pointer.position = Vector2(r.get_center().x - 26, r.position.y - 50)
+				pointer.position = Vector2(r.get_center().x - 32, r.position.y - 64 - bob)
 				var label_y := r.position.y - 26.0
 				if t.name == "hire_plus":
-					# Маленькая стрелка слева помещается в промежутке между числом и «+».
-					pointer.custom_minimum_size = Vector2(32, 32)
-					pointer.size = Vector2(32, 32)
-					pointer.pivot_offset = Vector2(16, 16)
+					# Крупная стрелка слева: наконечник точно у «+».
 					pointer.rotation = -PI / 2.0
-					pointer.position = Vector2(r.position.x - 31, r.get_center().y - 16)
+					pointer.position = Vector2(r.position.x - 64 - bob, r.get_center().y - 32)
 					label_y = r.get_center().y
 				pointer_text.position = Vector2(maxf(6.0, info_panel.get_global_rect().position.x - pointer_text.size.x - 12.0), label_y - pointer_text.size.y / 2.0)
 			elif above:
-				pointer_text.position = pointer.position + Vector2(26 - pointer_text.size.x / 2.0, -26)
+				pointer_text.position = pointer.position + Vector2(32 - pointer_text.size.x / 2.0, -26)
 			else:
 				# стрелка снизу смотрит вверх: подпись сбоку от неё, чтобы не налезать на окна ниже
 				var vw := root.size.x
-				var px := pointer.position.x + 50.0
+				var px := pointer.position.x + 64.0
 				if px + pointer_text.size.x > vw - 6.0:
 					px = pointer.position.x + 2.0 - pointer_text.size.x
-				pointer_text.position = Vector2(px, pointer.position.y + 26.0 - pointer_text.size.y / 2.0)
+				pointer_text.position = Vector2(px, pointer.position.y + 32.0 - pointer_text.size.y / 2.0)
 			# стрелка к медальону или кнопке легла бы на открытую карточку (подпись — поверх имени героя): пока карточка
 			# открыта, стрелки нет (проверка 26.10); стрелка к кнопке в самой карточке («Улучшить» Казарм) — остаётся
 			if info_panel.visible and not info_panel.is_ancestor_of(t) and Rect2(pointer.position, pointer.size).merge(
 					Rect2(pointer_text.position, pointer_text.size)).intersects(info_panel.get_global_rect()):
 				pointer.visible = false
 				pointer_text.visible = false
+
+
+func _tutorial_pointer_projection() -> Vector2:
+	if _pointer_badge.is_empty():
+		return Vector2.INF
+	var cam := get_viewport().get_camera_3d()
+	var vr := get_viewport().get_visible_rect()
+	var pos: Vector3 = _pointer_badge["pos"]
+	if not _badge_camera_safe(cam, vr) or not pos.is_finite():
+		return Vector2.INF
+	var point := cam.unproject_position(pos)
+	if cam.is_position_behind(pos):
+		point = 2.0 * vr.get_center() - point
+	return point if point.is_finite() else Vector2.INF
+
+
+## Подбираем сторону у самой цели, чтобы карточки не прятали стрелку.
+func _place_tutorial_pointer(target: Control, world: Vector2) -> void:
+	var screen := get_viewport().get_visible_rect().grow(-4)
+	var r := target.get_global_rect()
+	if world.is_finite() and (not target.is_visible_in_tree() or not screen.has_point(world)):
+		r = Rect2(world.clamp(screen.position, screen.end), Vector2.ZERO)
+	var half := pointer.size * 0.5
+	var bob := 6.0 + sin(Time.get_ticks_msec() / 450.0) * 4.0
+	var sides: Array[Vector2] = [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]
+	if target == game.tutorial.next_btn or r.get_center().y < 120.0:
+		sides = [Vector2.DOWN, Vector2.RIGHT, Vector2.LEFT, Vector2.UP]
+	elif target.name == "hire_plus" or target == game.tutorial.camera_keys:
+		sides = [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]
+	var best := INF
+	var direction := Vector2.DOWN
+	for side: Vector2 in sides:
+		var desired := r.get_center() + side * (half.x + (r.size * 0.5).dot(side.abs()) + bob) - half
+		var at := desired.clamp(screen.position, screen.end - pointer.size).round()
+		var box := Rect2(at, pointer.size)
+		var cost := desired.distance_squared_to(at)
+		for panel: Control in [game.tutorial.card, info_panel, tray, tool_panel, fam_box, research_panel]:
+			if panel.is_visible_in_tree() and not panel.is_ancestor_of(target):
+				cost += box.intersection(panel.get_global_rect()).get_area()
+		if cost < best:
+			best = cost
+			pointer.position = at
+			direction = side
+	pointer.rotation = Vector2.UP.angle_to(direction)
+	var label_at := pointer.position + Vector2(half.x - pointer_text.size.x * 0.5, -pointer_text.size.y - 4.0)
+	pointer_text.position = label_at.clamp(screen.position, screen.end - pointer_text.size)
 
 
 
@@ -4855,7 +4904,7 @@ func _hire_row(b: Dictionary) -> VBoxContainer:
 	if c.manual_hiring() and h == 0:
 		var pointer_gap := Control.new()
 		pointer_gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pointer_gap.custom_minimum_size.x = 32
+		pointer_gap.custom_minimum_size.x = 64
 		row.add_child(pointer_gap)
 	row.add_child(plus)
 	row.add_child(_label("%d%%" % roundi(float(b.get("staff", 0.0)) * 100.0), 14, true, C_SOFT))

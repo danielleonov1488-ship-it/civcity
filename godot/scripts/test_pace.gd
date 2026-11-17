@@ -689,6 +689,7 @@ func _bot() -> void:
 	_bstreet()
 	for i in 3:                               # как в обучении: три дома у дороги — и повозка едет
 		_bput("house_pleb", B_HOME, false)
+	check(c.has_connected_house(), "bot starts with houses connected to station")
 	var lvl := 0
 	var wall0 := Time.get_ticks_msec()
 	while t < MAX_H and c.level < Defs.LEVELS.size() - 1:

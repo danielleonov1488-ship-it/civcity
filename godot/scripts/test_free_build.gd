@@ -148,6 +148,7 @@ func _run() -> void:
 	var cells: PackedInt32Array = L.footprint_cells([Rect2(-30, -30, 60, 60)], Vector2(200, 205), 0.0)
 	L.flatten_cells(cells, snappedf(L.height_at(200, 205), Land.STEP))
 	game.clear_nature(Vector2(200, 205), 45.0)
+	L.paint_line(game.city.door_point(game.city.center()), Vector2(192, ROAD_Z), 1.3, Land.Kind.ROAD, true)
 	L.paint_line(Vector2(172, ROAD_Z), Vector2(228, ROAD_Z), 2.0, Land.Kind.ROAD, true)
 	game.rig.set_view(Vector3(200, 2, 207), 15, 58, 40)
 	await frames(50)
@@ -160,7 +161,7 @@ func _run() -> void:
 	if fb:
 		ok("A far from roads: house may be placed, flagged without road", far["err"] == "" and bool(far.get("noroad", false)) and far.get("sub", "") == "free", "err=%s sub=%s" % [far["err"], far.get("sub", "")])
 	else:
-		ok("A (old rules) far from roads: needs a road at the door", far["err"] == "Нужна дорога у входа", str(far["err"]))
+		ok("A houses without roads also work with free build off", far["err"] == "" and bool(far.get("noroad", false)), str(far["err"]))
 	reset()
 	var near: Dictionary = game.placement("house_pleb", NEAR)
 	ok("B near the road: fine and with a road", near["err"] == "" and not bool(near.get("noroad", false)), "err=%s sub=%s" % [near["err"], near.get("sub", "")])
@@ -261,43 +262,41 @@ func _run() -> void:
 	for id in game.city.buildings:
 		if not before.has(id):
 			ids.append(id)
-	if fb:
-		if ok("G house placed far from roads", ids.size() == 1):
-			var b: Dictionary = game.city.buildings[ids[0]]
-			game.set_tool("")
-			game.city.compute()
-			await frames(30)
-			game.hud.refresh()
-			await frames(20)
-			ok("G2 it has no road and does not work", not bool(b["road"]) and not bool(b.get("active", true)) == false or not bool(b["road"]))
-			ok("G3 world icon floats above it", game.hud.world_icons.has(int(b["id"])) and game.hud.world_icons[int(b["id"])][0] == "road", str(game.hud.world_icons.get(int(b["id"]))))
+	if ok("G house placed far from roads", ids.size() == 1):
+		var b: Dictionary = game.city.buildings[ids[0]]
+		game.set_tool("")
+		game.city.compute()
+		await frames(30)
+		game.hud.refresh()
+		await frames(20)
+		ok("G2 it has no road and does not work", not bool(b["road"]) and not bool(b.get("active", true)) == false or not bool(b["road"]))
+		ok("G3 world icon floats above it", game.hud.world_icons.has(int(b["id"])) and game.hud.world_icons[int(b["id"])][0] == "road", str(game.hud.world_icons.get(int(b["id"]))))
+		if fb:
 			ok("G4 red tint mark on the building", game.noroad_marks.has(int(b["id"])))
-			game.rig.set_view(Vector3(FAR.x, float(b["y"]), FAR.y), 15, 52, 14)
-			await frames(40)
-			shot("2_placed_no_road")
-			game.select_building(b)
-			game.hud.open_info(b)
-			await frames(10)
-			var ct := card_text()
-			ok("G5 card says why", ct.contains("Нет дороги — постройте дорогу ко входу"), ct.replace("\n", " | ").substr(0, 160))
-			shot("2b_card_no_road")
-			# дорога ко входу — всё заработало
-			var dp: Vector2 = game.city.door_point(b)
-			L.paint_circle(dp + City.facing(float(b["yaw"])) * 0.6, 1.4, Land.Kind.ROAD, true, true, false)
-			game.city.compute()
-			await frames(30)
-			game.hud.refresh()
-			await frames(20)
-			ok("G6 road to the door: works, icon and tint gone", bool(b["road"]) and not game.hud.world_icons.has(int(b["id"])) and not game.noroad_marks.has(int(b["id"])), "road=%s" % str(b["road"]))
-	else:
-		ok("G (old rules) far house is refused", ids.size() == 0)
-		shot("2_refused")
+		game.rig.set_view(Vector3(FAR.x, float(b["y"]), FAR.y), 15, 52, 14)
+		await frames(40)
+		shot("2_placed_no_road")
+		game.select_building(b)
+		game.hud.open_info(b)
+		await frames(10)
+		var ct := card_text()
+		ok("G5 card says why", ct.contains("Нет дороги — постройте дорогу ко входу"), ct.replace("\n", " | ").substr(0, 160))
+		shot("2b_card_no_road")
+		# дорога ко входу — всё заработало
+		var dp: Vector2 = game.city.door_point(b)
+		L.paint_line(Vector2(210, ROAD_Z), Vector2(210, dp.y), 1.3, Land.Kind.ROAD, true)
+		L.paint_line(Vector2(210, dp.y), dp, 1.3, Land.Kind.ROAD, true)
+		game.city.compute()
+		await frames(30)
+		game.hud.refresh()
+		await frames(20)
+		ok("G6 road to the door: works, icon and tint gone", bool(b["road"]) and not game.hud.world_icons.has(int(b["id"])) and not game.noroad_marks.has(int(b["id"])), "road=%s" % str(b["road"]))
 
 	# --- выключение на лету ---
 	game.set_free_build(false)
 	reset()
 	var old: Dictionary = game.placement("house_pleb", Vector2(200, 226))
-	ok("H switch off: old rule is back", old["err"] == "Нужна дорога у входа", str(old["err"]))
+	ok("H switch off: houses still allowed without roads", old["err"] == "" and bool(old.get("noroad", false)), str(old["err"]))
 	game.set_free_build(true)
 	reset()
 	ok("H2 switch on: new rule is back", game.placement("house_pleb", Vector2(200, 226))["err"] == "")

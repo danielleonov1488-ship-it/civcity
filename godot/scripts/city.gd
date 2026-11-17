@@ -478,7 +478,7 @@ func check_place(type: String, pos: Vector2, yaw: float, variant := 0, color := 
 		res["err"] = "Ставится у самой воды — у пруда или озера"
 		return res
 	res["y"] = roundf((lo + hi) * 0.5 / Land.STEP) * Land.STEP
-	if not road_optional and d["kind"] != "decor" and d["kind"] != "farm" and type != "center" and not d.get("noroad", false):
+	if not road_optional and d["kind"] not in ["decor", "farm", "house"] and type != "center" and not d.get("noroad", false):
 		var dp3: Vector3 = Transform3D(Basis(Vector3.UP, yaw), Vector3(pos.x, 0, pos.y)) * bp.door
 		if not _road_near(Vector2(dp3.x, dp3.z), 1.7, cells):
 			res["err"] = "Нужна дорога у входа"
@@ -526,6 +526,70 @@ func _road_near(p: Vector2, r: float, own_cells: PackedInt32Array) -> bool:
 			continue
 		var k := j * Land.N + i
 		if Land.walk_kind(land.kind[k]) and land.occ[k] == 0 and land.cell_center(i, j).distance_to(p) <= r:
+			return true
+	return false
+
+
+var _home_net_ver := -1
+var _home_net_center := -1
+var _home_net := {}
+
+
+## Дороги от площади станции. Пересчитываем только после правок земли.
+func _home_network() -> void:
+	var ctr := center()
+	var cid := int(ctr.get("id", -1))
+	if _home_net_ver == land.walk_ver and _home_net_center == cid:
+		return
+	_home_net_ver = land.walk_ver
+	_home_net_center = cid
+	_home_net.clear()
+	if ctr.is_empty():
+		return
+	var start := land.cell(door_point(ctr))
+	var queue := PackedInt32Array()
+	for z in range(start.y - 7, start.y + 8):
+		for x in range(start.x - 7, start.x + 8):
+			if not land.inside(x, z):
+				continue
+			var k := land.idx(x, z)
+			if Land.walk_kind(land.kind[k]) and (land.occ[k] == 0 or land.occ[k] == cid):
+				_home_net[k] = true
+				queue.append(k)
+	var head := 0
+	while head < queue.size():
+		var k := queue[head]
+		head += 1
+		for off: Vector2i in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			var at := Vector2i(k % Land.N, k / Land.N) + off
+			if not land.inside(at.x, at.y):
+				continue
+			var next := land.idx(at.x, at.y)
+			if _home_net.has(next) or not Land.walk_kind(land.kind[next]) or (land.occ[next] != 0 and land.occ[next] != cid):
+				continue
+			_home_net[next] = true
+			queue.append(next)
+
+
+## У входа есть мостовая, связанная с площадью, а не отдельный мазок.
+func house_connected(b: Dictionary) -> bool:
+	if not is_house(b) or not _road_near(door_point(b), 1.7, b["cells"]):
+		return false
+	_home_network()
+	var at := land.cell(door_point(b))
+	var own: PackedInt32Array = b["cells"]
+	for z in range(at.y - 7, at.y + 8):
+		for x in range(at.x - 7, at.x + 8):
+			if land.inside(x, z):
+				var k := land.idx(x, z)
+				if _home_net.has(k) and not own.has(k):
+					return true
+	return false
+
+
+func has_connected_house() -> bool:
+	for b: Dictionary in buildings.values():
+		if is_house(b) and house_connected(b):
 			return true
 	return false
 
@@ -1055,7 +1119,7 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 				if d.has("mon"):
 					prem.append(b)
 				continue
-		b["road"] = d["kind"] in ["farm", "center"] or d.get("noroad", false) or _road_near(door_point(b), 1.7, b["cells"])
+		b["road"] = house_connected(b) if is_house(b) else d["kind"] in ["farm", "center"] or d.get("noroad", false) or _road_near(door_point(b), 1.7, b["cells"])
 		if d.has("jobs") and b["road"] and not oc.has(int(id)):
 			var jb := jobs_of(b)
 			for c in jb:
@@ -1408,6 +1472,8 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 	stats["class_happy"] = per_class
 	stats["happy_tips"] = _happy_tips(houses, stores)
 	stats["arrive_block"] = arrivals_blocked()
+	if families_came() == 0 and has_connected_house():
+		_tick_arrivals()
 	_upg_ready = null                          # готовность к перестройке — заново (счастье, лавки, соседи могли поменяться)
 
 
@@ -2917,7 +2983,7 @@ func _free_rooms() -> Dictionary:
 	var free := {}
 	for id in buildings:
 		var b: Dictionary = buildings[id]
-		if is_house(b) and arrival_class_open(String(def(b)["cls"])):
+		if is_house(b) and house_connected(b) and arrival_class_open(String(def(b)["cls"])):
 			free[id] = house_free_floors(b)
 	var wait := arrivals.duplicate()
 	wait.sort_custom(func(x, y): return int(x["n"]) > int(y["n"]))      # большие семьи — первыми
@@ -2996,9 +3062,11 @@ func arrive_wait() -> String:
 ## Раз в час: не пора ли повозке привезти новую семью. Едут только туда, где есть место (free_fit);
 ## если места нет, а на площади и в повозке пусто — одна семья «ищет жильё» (подсказка, что пора строить)
 func _tick_arrivals() -> void:
-	# Первая повозка ждёт своего шага: сначала улица и три дома.
+	# Новая игра: сначала жильё и связь с площадью.
 	var tutorial_step := Tutorial.saved_step(tips)
-	if tutorial_step >= 0 and tutorial_step < Tutorial.step_index("cart"):
+	if tutorial_step >= 0 and tutorial_step < Tutorial.step_index("road"):
+		return
+	if families_came() == 0 and not has_connected_house():
 		return
 	if arrivals_paused:
 		stats["arrive_block"] = arrivals_blocked()
@@ -3184,7 +3252,7 @@ func refuse_family(name: String) -> bool:
 
 ## Подходит ли дом семье: её класса и хватает места
 func can_host(b: Dictionary, f: Dictionary) -> bool:
-	return is_house(b) and def(b)["cls"] == f["cls"] and house_free_floors(b) > 0
+	return is_house(b) and house_connected(b) and def(b)["cls"] == f["cls"] and house_free_floors(b) > 0
 
 
 func homes_for(f: Dictionary) -> Array:
