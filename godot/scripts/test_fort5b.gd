@@ -438,11 +438,14 @@ func _instant_checks(kitchen: int, forge: int) -> void:
 	check(not lg.fort_instant(kitchen) and lg.city_money() == money, "instant needs ingots before normal payment")
 	lg.ingots = 10000
 	var quote := lg.fort_instant_info(kitchen)
+	check(int(quote["price"]) == maxi(1, ceili(1.2 * sqrt(float(lg.fort_info(kitchen)["next_time"]) / 60.0))), "fresh instant price follows square root")
 	var level := int(lg.fort_plot(kitchen)["lv"])
 	check(lg.fort_instant(kitchen), "instant upgrade succeeds")
 	check(int(lg.fort_plot(kitchen)["lv"]) == level + 1 and lg.ingots == 10000 - int(quote["price"]) and lg.city_money() < money, "instant pays both costs and completes once")
 	check(lg.fort_upgrade(kitchen), "timed upgrade starts")
 	var timed_quote := lg.fort_instant_info(kitchen)
+	var left := float(lg.fort_plot(kitchen)["up"]["end"]) - Legion.now()
+	check(int(timed_quote["price"]) == maxi(1, ceili(1.2 * sqrt(left / 60.0))), "active instant price follows remaining minutes")
 	var paid := lg.city_money()
 	var stock := lg.ingots
 	check(lg.fort_instant(kitchen) and lg.city_money() == paid and lg.ingots == stock - int(timed_quote["price"]), "active timer instant does not charge upgrade twice")

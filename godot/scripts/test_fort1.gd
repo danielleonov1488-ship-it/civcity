@@ -93,6 +93,7 @@ func _build_produce() -> void:
 	check(l.fort_plot(id)["lv"] == 0 and l.fort_info(id)["producing"].is_empty()
 		and l.fort_count("kitchen") == 1 and l.camp_busy(), "construction has no effect yet")
 	var end := float(l.fort_plot(id)["up"]["end"])
+	check(is_equal_approx(end - Legion.now(), 300.0), "first room builds in five minutes")
 	Legion.clock = end - 1.0
 	l.fort_finish()
 	check(l.fort_plot(id)["lv"] == 0 and l.fort_collect(id) == 0, "not complete early")
@@ -135,6 +136,7 @@ func _build_produce() -> void:
 	l.fort_plot(id)["t"] = Legion.now()
 	check(l.fort_upgrade(id), "upgrade kitchen")
 	end = float(l.fort_plot(id)["up"]["end"])
+	check(is_equal_approx(end - Legion.now(), 900.0), "room level two takes fifteen minutes")
 	Legion.clock = end + 3600.0
 	l.fort_finish()
 	check(l.fort_plot(id)["lv"] == 2 and is_equal_approx(float(l.fort_plot(id)["pend"]), 2.0), "upgrading room pauses production")
@@ -155,6 +157,7 @@ func _expand_effects() -> void:
 	check(not l.fort_expand() and c.money == money and l.fort["up"].is_empty(), "missing expansion materials do not spend")
 	l.mats["wood"] = wood
 	check(l.fort_expand() and l.mat("wood") == wood - 20 and c.money == money - 1000, "expansion pays coins and materials")
+	check(is_equal_approx(float(l.fort["up"]["total"]), 7200.0), "first expansion takes two hours")
 	check(not l.speed_up("fort_invalid") and l.timer3("fort_expand") == l.fort["up"], "expansion timer key and invalid key")
 	check(l.fort["plots"].size() == 5 and l.camp_busy() and not l.fort_build("kitchen", l.fort_empty_plot()), "expansion waits and uses builder")
 	Legion.clock = float(l.fort["up"]["end"]) - 1.0

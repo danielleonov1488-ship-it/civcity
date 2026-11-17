@@ -143,9 +143,9 @@ const CAMP_MAX := {"hq": 12, "barracks": 12, "forge": 10, "drill": 10, "mars": 5
 const CAMP_START := {"hq": 1, "barracks": 1, "forge": 0, "drill": 1, "mars": 0, "store": 0}     # 0 — ещё не построено
 const CAMP_HQ_NEED := {"forge": 2, "store": 2, "mars": 3}       # со Штабом какого уровня можно построить
 const CAMP_COST_KEY := {"hq": "principia", "barracks": "legionary", "forge": "forge", "drill": "legionary", "mars": "mars", "store": "armory"}
-## Часов на улучшение до уровня n (индекс): 5 мин, 30 мин, 2 ч, 8 ч, 24 ч, дальше +12 ч за уровень. Строится за 5 мин. Один строитель
-const CAMP_TIME_H := [0.0, 5.0 / 60.0, 5.0 / 60.0, 0.5, 2.0, 8.0, 24.0]
-const CAMP_TIME_STEP_H := 12.0
+## До уровня n: стройка 5 мин, затем 15 мин, 2, 6, 12, 24 ч, дальше +24 ч. Один строитель.
+const CAMP_TIME_H := [0.0, 5.0 / 60.0, 0.25, 2.0, 6.0, 12.0, 24.0]
+const CAMP_TIME_STEP_H := 24.0
 ## Что раньше читало уровни зданий города → какое здание лагеря (здание города того же вида в новой игре не ставится)
 const V3_CAMP_OF := {"barracks": "barracks", "forge": "forge", "armory": "store", "mars": "mars", "principia": "hq", "infirmary": "infirmary", "drill": "drill"}
 ## Военные здания, которых на карте города в Легионе 3.0 нет (мастерские — плавильня, лесопилка, дубильня — остаются в городе)
@@ -4104,7 +4104,9 @@ static func fmt_duration(sec: float) -> String:
 		return "%d мин%s" % [s / 60, (" %d с" % (s % 60)) if s % 60 != 0 and s < 600 else ""]
 	if s < 86400:
 		return "%d ч%s" % [s / 3600, (" %d мин" % (s % 3600 / 60)) if s % 3600 >= 60 else ""]
-	return "%d сут%s" % [s / 86400, (" %d ч" % (s % 86400 / 3600)) if s % 86400 >= 3600 else ""]
+	if s % 86400 >= 3600:
+		return I18n.t("%d д %d ч") % [s / 86400, s % 86400 / 3600]
+	return I18n.t("%d д") % (s / 86400)
 
 
 # =====================================================================
@@ -4543,8 +4545,8 @@ func fort_upgrade(plot_id: int) -> bool:
 	return true
 
 
-## Слиток снимает десять минут ожидания; обычная цена улучшения сохраняется.
-const FORT_INSTANT_SECONDS := 600.0
+## Цена в слитках растёт как корень минут ожидания; обычная цена сохраняется.
+const FORT_INSTANT_K := 1.2
 
 
 func fort_instant_info(plot_id: int) -> Dictionary:
@@ -4559,7 +4561,7 @@ func fort_instant_info(plot_id: int) -> Dictionary:
 	if timer.is_empty():
 		why = fort_can_upgrade(plot_id)
 		seconds = float(fort_info(plot_id)["next_time"])
-	var price := maxi(1, ceili(seconds / FORT_INSTANT_SECONDS))
+	var price := maxi(1, ceili(FORT_INSTANT_K * sqrt(seconds / 60.0)))
 	if why == "" and ingots < price:
 		why = "Не хватает слитков"
 	return {"price": price, "why": why, "stamp": str([p["b"], p["lv"], timer.get("end", 0), timer.get("to", -1)])}
