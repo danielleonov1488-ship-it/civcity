@@ -158,8 +158,7 @@ const V3_TAGS := {"legionary": ["armored", "melee"]}
 const SQUAD_V3 := 5                       # мест в отряде; 0–2 — первый ряд, 3–4 — второй
 const SQUAD_V3_FRONT := 3
 const CAMP_POP := 50                      # жителей, с которых открывается лагерь
-const RESIDENT_FLOOR := 30                # меньше жителей в городе не станет: призыв не берёт последнего
-const CAMP_OPEN_TEXT := "Лагерь открыт: призывайте жителей в Легион — кнопка «Легион» наверху"
+const CAMP_OPEN_TEXT := "Форт открыт: принимайте новобранцев у ворот — кнопка «Легион» наверху"
 const RATION_BASE := 2.0                  # паёк в игровой день; пекарня с работниками — ещё RATION_BAKERY
 const RATION_BAKERY := 3.0
 const RATION_CAP0 := 20
@@ -4961,7 +4960,7 @@ func perks_open() -> bool:
 	return not v3() or camp_built("mars")
 
 
-# ---------- призыв из жителей ----------
+# ---------- жители форта у ворот ----------
 
 func can_recruit_resident() -> String:
 	if v3():
@@ -4979,11 +4978,7 @@ func can_recruit_resident() -> String:
 
 ## Совместимый вход: принимает только ожидающего у ворот, город не меняет.
 func recruit_resident(pick: Dictionary = {}) -> Dictionary:
-	if bool(pick.get("gate", false)):
-		return _recruit_gate(pick)
-	if pick.is_empty() and city() != null and not city().magis_gate_queue.is_empty():
-		return _recruit_gate(city().magis_gate_queue[0])
-	if not pick.is_empty() and city_pop() <= RESIDENT_FLOOR:
+	if not pick.is_empty() and not pick.has("id"):
 		return {}
 	if can_recruit_resident() != "":
 		return {}
@@ -5002,7 +4997,7 @@ func fort_arrival_interval() -> float:
 	var c = city()
 	var happy := float(c.stats.get("happy", 0)) if c != null else 0.0
 	var population_k := clampf(float(city_pop()) / 50.0, 1.0, 2.0)
-	return (8.0 - 6.0 * clampf((happy - 50.0) / 40.0, 0.0, 1.0)) / population_k
+	return (8.0 - 6.0 * clampf((happy - 50.0) / 40.0, 0.0, 1.0)) / population_k / city_edict_mul("legion_gate")
 
 
 ## Игровые часы, без офлайн-начисления по нынешнему счастью.
@@ -5857,25 +5852,3 @@ func open_chest(kind: String) -> Dictionary:
 func city_edict_mul(key: String) -> float:
 	var c = city()
 	return c.edict_mul(key) if c != null else 1.0
-
-
-## Добровольцы — по игровым часам после первого военного эдикта.
-func gate_interval() -> float:
-	return 24.0 / city_edict_mul("legion_gate")
-
-
-func _recruit_gate(pick: Dictionary) -> Dictionary:
-	var c = city()
-	if c == null or not v3() or not window_open() or soldiers.size() >= roster_cap():
-		return {}
-	for i in c.magis_gate_queue.size():
-		var rec: Dictionary = c.magis_gate_queue[i]
-		if rec["key"] != pick.get("key", ""):
-			continue
-		c.magis_gate_queue.remove_at(i)
-		var s := _add_soldier({"name": rec["name"], "from": I18n.t("Доброволец у ворот"), "cls": "legionary", "stars": int(rec["stars"])})
-		_v3_reclass(s)
-		changed.emit()
-		daily_note("recruit")
-		return s
-	return {}

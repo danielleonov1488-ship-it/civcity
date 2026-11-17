@@ -77,7 +77,7 @@ static func metric(c: City, key: String) -> Dictionary:
 						value += float(Tourism.inn_info(c, b)["guests"])
 			"festival_happy": value = float(Defs.FESTIVAL["happy"]) * c.edict_mul(key)
 			"legion_gate":
-				value = c.legion.gate_interval()
+				value = c.legion.fort_arrival_interval()
 				unit = " ч"
 				reverse = true
 			"legion_rations": value = c.legion.ration_cost({})

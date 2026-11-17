@@ -211,6 +211,14 @@ func _update_button() -> void:
 			_d10_tips()
 
 
+## Старые советы Легиона имеют приоритет перед магистратурами.
+func advice_pending() -> bool:
+	if lg == null or lg.v3() or not lg.window_open():
+		return false
+	return (not lg.flags.has("advised") and not lg.flags.has("seen") and lg.tut_step() == "barracks") \
+		or lg.flags.has("d10_new") or (lg.pvp_hero() and lg.pvp_open() and not lg.flags.has("tip_hero_pvp"))
+
+
 ## Не идёт и не ждёт ролик «Новый ранг» и ролик истории горожан
 func _cine_free() -> bool:
 	var rc = game.get("rank_cine")

@@ -1,15 +1,19 @@
 extends Node3D
 ## MAGIS1: модель, все эффекты, совместимость и четыре кадра. Запускает проверяющий.
 
-var out := "D:/CivCity/.work/stage5/magis/shots/"
+const Fixture = preload("res://scripts/test_fort_fixture.gd")
+var out := "D:/CivCity/.work/stage5/magis2/shots/magis1/"
 var game
 var fails := 0
+var saved_clock := -1.0
 
 
 func _ready() -> void:
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
+	saved_clock = Legion.clock
+	Legion.clock = 1000000.0
 	Game.boot = {"new": "1", "hour": "11"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -125,7 +129,6 @@ func _all_effects(c: City) -> void:
 		for e: Dictionary in m["edicts"]:
 			c.magis_orders.clear()
 			c.magis_cooldown.clear()
-			c.magis_gate_on = false
 			c.compute()
 			var baseline := {}
 			for key: String in e["fx"]:
@@ -165,30 +168,153 @@ func _all_effects(c: City) -> void:
 	c.legion._pay({"money": held * 0.5})
 	check(is_equal_approx(c.magis_treasury, held * 0.5) and c.money == money, "Legion spends its treasury first")
 	c.magis_orders.clear()
-	c.magis_gate_on = true
-	c.magis_gate_h = 0.0
-	c.magis_gate_queue.clear()
-	for i in 24:
+
+
+func _fort_effects(c: City) -> void:
+	var lg := c.legion
+	lg.army_tick()
+	lg.fort["newcomers"] = []
+	lg.fort["arrival"] = 0.0
+	c.stats["happy"] = 80
+	var interval := lg.fort_arrival_interval()
+	check(Magis.adopt(c, "trib_conscription"), "gate edict adopted")
+	c.stats["happy"] = 80 # Принятие пересчитывает город; для сравнения держим счастье прежним.
+	check(is_equal_approx(lg.fort_arrival_interval(), interval), "pending gate edict is neutral")
+	for i in 16:
 		Magis.hour(c)
-	check(c.magis_gate_queue.size() == 1, "one volunteer after 24 game hours")
-	var gate_pick: Dictionary = c.magis_gate_queue[0].duplicate()
+	check(lg.fort_newcomers().is_empty(), "Magis hours never create a second queue")
+	var faster := lg.fort_arrival_interval()
+	check(is_equal_approx(faster, interval / 1.25), "edict shortens real fort arrival interval")
+	check(is_equal_approx(float(MagisPreview.metric(c, "legion_gate")["value"]), faster), "preview uses fort arrival interval")
+	lg.fort_arrival_hour(faster - 0.01)
+	check(lg.fort_newcomers().is_empty(), "fort arrival waits for scaled interval")
+	lg.fort_arrival_hour(0.02)
+	check(lg.fort_newcomers().size() == 1, "fort arrival uses scaled interval")
+	lg.fort_arrival_hour(faster * 10)
+	check(lg.fort_newcomers().size() == 3, "one gate capped at three")
 	var pop_before := int(c.stats["pop"])
-	check(not c.legion.recruit_resident(gate_pick).is_empty(), "gate volunteer can be recruited")
-	check(int(c.stats["pop"]) == pop_before and c.magis_gate_queue.is_empty(), "volunteer does not remove a resident")
+	var buildings: Dictionary = c.buildings.duplicate(true)
+	var workers: Dictionary = c.stats["workers"].duplicate(true)
+	check(c.resident_choices().is_empty() and c.take_resident().is_empty(), "V3 city cannot supply recruits")
+	check(lg.recruit_resident({"key": "old-city-pick", "home": 1}).is_empty(), "old city candidate is rejected")
+	for pick: Dictionary in lg.fort_newcomers():
+		check(not lg.fort_accept(int(pick["id"])).is_empty(), "fort newcomer accepted")
+	check(lg.fort_newcomers().is_empty(), "acceptance consumes the real queue")
+	check(int(c.stats["pop"]) == pop_before and c.buildings == buildings and c.stats["workers"] == workers, "acceptance preserves population, families and workers")
+	c.stats["happy"] = 54
+	lg.fort_arrival_hour(100)
+	check(lg.fort_newcomers().is_empty(), "edict never bypasses unhappy gate")
+	c.stats["happy"] = 80
+	c.magis_orders.clear()
+	check(is_equal_approx(lg.fort_arrival_interval(), interval), "cancelled gate effect returns to baseline")
+	Fixture.gate(lg, 1)
+	c.stats["pop"] = 1
+	check(not lg.recruit_resident(lg.fort_newcomers()[0]).is_empty() and int(c.stats["pop"]) == 1, "fort acceptance has no old city population floor")
+	c.stats["pop"] = pop_before
+	check(Magis.adopt(c, "trib_scant_rations"), "ration edict adopted")
+	c.stats["happy"] = 80
+	check(lg.ration_cost({}) == 2.0, "pending rations are neutral")
+	for i in 14:
+		Magis.hour(c)
+	check(is_equal_approx(lg.fort_arrival_interval(), interval / 0.9), "scant rations slows the same gate")
+	check(is_equal_approx(lg.ration_cost({}), 1.7) and is_equal_approx(lg.ration_cost({"boss": true}), 3.4) and is_equal_approx(lg.ration_cost({"junior": true}), 3.4), "fort battle costs keep fractional edict amounts")
+	lg.rations = 100.0
+	var stage := {"idx": -1, "key": "magis-rations"}
+	for i in 10:
+		lg.apply_result({"stage": stage}, {"win": false})
+	lg.apply_result({"stage": {"idx": -1, "key": "magis-rations-boss", "boss": true}}, {"win": false})
+	check(is_equal_approx(lg.rations, 79.6), "eleven real battles spend fractional fort rations deterministically")
+	var copy := City.new(Land.new())
+	copy.auto_hire = true
+	copy.land.load_changes(c.land.save_changes())
+	copy.load_data(JSON.parse_string(JSON.stringify(c.save_data())))
+	copy.legion.apply_result({"stage": stage}, {"win": false})
+	lg.apply_result({"stage": stage}, {"win": false})
+	check(is_equal_approx(lg.rations, 77.9) and is_equal_approx(copy.legion.rations, lg.rations), "active ration edict spends the same fraction after JSON reload")
+	c.magis_orders.clear()
+	check(lg.ration_cost({}) == 2.0 and lg.ration_cost({"boss": true}) == 4.0, "rations return to baseline after cancel")
+	c.compute()
+
+
+func _fort_treasury() -> void:
+	var c := City.new(Land.new())
+	c.cozy_v = 1
+	c.legion_v = 3
+	c.level = 5
+	var lg := c.legion
+	lg.flags["camp_open"] = true
+	lg.army_tick()
+	Fixture.set_level(lg, "hq", 5)
+	Fixture.set_level(lg, "kitchen", 1)
+	lg.mats = {"wood": 10000.0, "iron": 10000.0, "leather": 10000.0}
+	lg.glory = 10000.0
+	lg.ingots = 10000
+	var plot := lg.fort_empty_plot()
+	var price := float(Legion.fort_cost("forge", 1)["money"])
+	c.money = 0.0
+	c.magis_treasury = price + 100.0
+	check(lg.fort_can_build("forge", plot) == "" and lg.fort_build("forge", plot), "treasury alone can build a fort room")
+	check(c.money == 0.0 and is_equal_approx(c.magis_treasury, 100.0), "fort build uses treasury once")
+	var ingots := lg.ingots
+	var quote := lg.fort_instant_info(plot)
+	check(lg.fort_instant(plot, quote), "finish paid construction instantly")
+	check(c.money == 0.0 and c.magis_treasury == 100.0 and lg.ingots == ingots - int(quote["price"]), "paid construction instant charges only ingots")
+	var kitchen := int(lg.fort_slot_plot("kitchen")["id"])
+	var cost := Legion.fort_cost("kitchen", 2)
+	price = float(cost["money"])
+	c.magis_treasury = price / 2.0 + 0.25
+	c.money = price + 100.0
+	var remainder := price - c.magis_treasury
+	var money := c.money
+	var mats: Dictionary = lg.mats.duplicate(true)
+	check(lg.fort_upgrade(kitchen), "fort timed upgrade starts with split funds")
+	check(c.magis_treasury == 0.0 and is_equal_approx(c.money, money - remainder), "upgrade spends treasury first, city pays only remainder")
+	for resource: String in cost["mats"]:
+		check(is_equal_approx(float(lg.mats[resource]), float(mats[resource]) - float(cost["mats"][resource])), "materials charged once: " + resource)
+	money = c.money
+	mats = lg.mats.duplicate(true)
+	check(not lg.fort_upgrade(kitchen) and c.money == money and lg.mats == mats, "repeated upgrade cannot debit")
+	quote = lg.fort_instant_info(kitchen)
+	check(lg.fort_instant(kitchen, quote) and c.money == money and lg.mats == mats and c.magis_treasury == 0.0, "instant of active upgrade does not debit normal price twice")
+	price = float(Legion.fort_cost("kitchen", 3)["money"])
+	c.magis_treasury = price + 100.0
+	c.money = 0.0
+	check(lg.fort_instant(kitchen) and int(lg.fort_plot(kitchen)["lv"]) == 3, "instant can start and complete a fresh upgrade")
+	check(c.magis_treasury == 100.0 and c.money == 0.0, "fresh instant spends treasury exactly once")
+	lg.ingots = 0
+	check(not lg.fort_instant(kitchen) and c.magis_treasury == 100.0 and c.money == 0.0, "failed instant leaves both treasuries intact")
 
 
 func _saves(c: City) -> void:
 	c.magis_orders = {"cens_pleb_levy": {"left": 0, "paid": 400}, "quaes_scholars": {"left": 7, "paid": 900}}
 	c.magis_cooldown = {"cens_settler_drive": 17}
-	c.magis_gate_h = 7.5
+	c.legion.fort["arrival"] = 0.375
+	Fixture.gate(c.legion, 1)
 	var save := c.save_data()
 	var land := Land.new()
 	land.load_changes(c.land.save_changes())
 	var restored := City.new(land)
 	restored.auto_hire = true
 	restored.load_data(JSON.parse_string(JSON.stringify(save)))
-	check(c.magis_orders == restored.magis_orders and c.magis_cooldown == restored.magis_cooldown and c.magis_gate_h == restored.magis_gate_h and c.magis_gate_queue == restored.magis_gate_queue and is_equal_approx(c.magis_treasury, restored.magis_treasury), "JSON save/load active, pending, cooldown, gate and treasury")
+	check(c.magis_orders == restored.magis_orders and c.magis_cooldown == restored.magis_cooldown and c.legion.fort["arrival"] == restored.legion.fort["arrival"] and c.legion.fort_newcomers() == restored.legion.fort_newcomers() and is_equal_approx(c.legion.rations, restored.legion.rations) and is_equal_approx(c.magis_treasury, restored.magis_treasury), "JSON save/load active, pending, cooldown, fort gate, fractional rations and treasury")
 	check(restored.edict_mul("tax_k:plebs") == 1.2 and restored.edict_mul("rp_rate") == 1.0, "pending stays inactive after load")
+	var legacy := save.duplicate(true)
+	legacy["magis"]["gate_queue"] = [null, {"gate": true}, {"key": "gate:1", "gate": true, "name": "Legacy I", "stars": 4}, {"key": "gate:2", "gate": true, "name": "Legacy II", "stars": 8}, {"key": "gate:3", "gate": true, "name": "Legacy III"}]
+	legacy["magis"]["gate_h"] = 7.5
+	legacy["magis"]["gate_on"] = true
+	restored.load_data(JSON.parse_string(JSON.stringify(legacy)))
+	var queue := restored.legion.fort_newcomers()
+	check(queue.size() == 3 and queue[0] == c.legion.fort_newcomers()[0] and queue[1]["name"] == "Legacy I" and int(queue[1]["stars"]) == 4 and int(queue[2]["stars"]) == 5, "legacy volunteers merge into real gate, capped at three")
+	check(int(queue[0]["id"]) != int(queue[1]["id"]) and int(queue[1]["id"]) != int(queue[2]["id"]), "migration allocates distinct fort IDs")
+	check(int(restored.stats["pop"]) == int(c.stats["pop"]), "migration leaves city population intact")
+	var migrated := restored.save_data()
+	check(not migrated["magis"].has("gate_queue") and not migrated["magis"].has("gate_on"), "new saves have no duplicate gate state")
+	restored.load_data(JSON.parse_string(JSON.stringify(migrated)))
+	check(restored.legion.fort_newcomers() == queue, "migrated volunteers survive next save without duplication")
+	legacy["magis"].erase("gate_queue")
+	legacy["magis_gate_queue"] = [{"gate": true, "name": "Legacy root", "stars": 2}]
+	restored.load_data(JSON.parse_string(JSON.stringify(legacy)))
+	check(restored.legion.fort_newcomers().size() == 2 and restored.legion.fort_newcomers()[1]["name"] == "Legacy root", "top-level legacy queue also migrates")
 	var old := save.duplicate(true)
 	old.erase("magis_v")
 	old.erase("magis")
@@ -239,6 +365,8 @@ func _run() -> void:
 	_fixture(fixture)
 	_rules(fixture)
 	_all_effects(fixture)
+	_fort_effects(fixture)
+	_fort_treasury()
 	_saves(fixture)
 	var c: City = game.city
 	_fixture(c)
@@ -283,5 +411,6 @@ func _run() -> void:
 
 
 func _finish() -> void:
+	Legion.clock = saved_clock
 	print("MAGIS1 DONE fails=", fails)
 	get_tree().quit(1 if fails > 0 else 0)

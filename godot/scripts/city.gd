@@ -28,10 +28,6 @@ signal festival_changed(on)          # игры в честь богов нач�
 
 var magis_orders := {}                 # id → {left: игровые часы, paid: цена}
 var magis_cooldown := {}
-var magis_gate_on := false
-var magis_gate_h := 0.0
-var magis_gate_serial := 0
-var magis_gate_queue: Array = []
 var magis_treasury := 0.0
 var land: Land
 var money := float(Defs.START_MONEY)
@@ -3231,11 +3227,12 @@ func resident_pick() -> Dictionary:
 	return {"cls": cls, "job": job, "home": home}
 
 
-## Взять жителя в лагерь: {name, job (вид постройки или "" — был безработным), cls, fam, m} или {}. В доме меньше на одного
-## (запись члена семьи уходит из семьи), People убирает его с улиц (resident_taken); новые семьи заселятся как обычно
+## Старый призыв до V3. Население нового форта отдельно от города.
 ## Взрослые жители: постоянный ключ — дом, семья и зерно облика.
 func resident_choices() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
+	if legion_v >= 3:
+		return out
 	var fallback := resident_pick()
 	var ids: Array = buildings.keys()
 	ids.sort()
@@ -3275,6 +3272,8 @@ func _resident_choice(pick: Dictionary) -> Dictionary:
 
 
 func take_resident(pick: Dictionary = {}) -> Dictionary:
+	if legion_v >= 3:
+		return {}
 	var pk := resident_pick() if pick.is_empty() else _resident_choice(pick)
 	if pk.is_empty():
 		return {}
@@ -4405,6 +4404,7 @@ func load_data(d: Dictionary) -> void:
 	plots_bought = maxi(0, int(d.get("plots_bought", land.owned.size() - Land.OLD_PLOTS)))
 	_drop_roads2()
 	legion.from_dict(d.get("legion", {}))
+	Magis.migrate_gate(self, d)
 	hero = Hero.norm(d.get("hero", {}))           # старые сохранения — героя ещё нет: его создаст игра (Game._hero_check)
 	cats = []
 	var cl = d.get("cats", [])

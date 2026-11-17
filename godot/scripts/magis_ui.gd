@@ -42,6 +42,16 @@ static func close_for(h: Hud) -> void:
 
 
 static func advise(h: Hud) -> bool:
+	if not h._tip_free() or not h._screen_free() or not h.game.ready_done or h.game.tool != "":
+		return false
+	if h.game.tutorial != null and not h.game.tutorial.cine.is_empty():
+		return false
+	var stories: Stories = h.game.get("stories")
+	if stories != null and (stories.busy() or stories.advice_pending()):
+		return false
+	var legion_ui := LegionUi.of(h)
+	if legion_ui != null and legion_ui.advice_pending():
+		return false
 	var c: City = h.game.city
 	for m: Dictionary in Defs.MAGIS:
 		var key := "magis_open_" + String(m["id"])
@@ -200,7 +210,7 @@ func _layout() -> void:
 
 
 func refresh() -> void:
-	top_button.visible = city.level >= 1 and hud.game.mode in ["new", "play"] and not hud.clean
+	top_button.visible = Magis.is_open(city, String(Defs.MAGIS[0]["id"])) and hud.game.mode in ["new", "play"] and not hud.clean
 	if not visible:
 		return
 	for child in columns.get_children():

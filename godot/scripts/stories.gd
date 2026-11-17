@@ -2800,6 +2800,22 @@ func show_area() -> void:
 	hud.guide_world({"pos": Vector3(c.x, game.land.height_at(c.x, c.y) + 2.0, c.y)})
 
 
+## Не даём необязательным советам занять советника до очередного опроса историй.
+func advice_pending() -> bool:
+	if not allowed():
+		return false
+	if not (S()["offer"] as Dictionary).is_empty() and not city.tips.has("story_tip"):
+		return true
+	var a: Dictionary = S()["active"]
+	if a.is_empty():
+		return false
+	if _goal_kind(a) == "square" and not city.tips.has("story_square"):
+		return true
+	var st := _step(a)
+	var key := "story_adv_%s_%s" % [String(a.get("id", "")), String(st.get("id", ""))]
+	return not bool(a.get("ready", false)) and st.has("advice") and not city.tips.has(key)
+
+
 ## Советник один раз: как устроен скверик — пороги по скамьям и «Готово»
 func _advise_square() -> void:
 	var a: Dictionary = S()["active"]

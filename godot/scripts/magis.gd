@@ -116,27 +116,11 @@ static func hour(c: City) -> void:
 		var order: Dictionary = c.magis_orders[id]
 		if int(order["left"]) > 0:
 			order["left"] = int(order["left"]) - 1
-			if int(order["left"]) == 0 and edict(id)["fx"].has("legion_gate"):
-				c.magis_gate_on = true
-	if c.magis_gate_on and c.legion.v3() and c.legion.window_open():
-		c.magis_gate_h += 1.0
-		var interval := c.legion.gate_interval()
-		if c.magis_gate_h >= interval and c.magis_gate_queue.size() < 3:
-			c.magis_gate_h -= interval
-			c.magis_gate_serial += 1
-			c.magis_gate_queue.append({"key": "gate:%d" % c.magis_gate_serial,
-				"name": I18n.t("Доброволец %d") % c.magis_gate_serial,
-				"gate": true, "stars": clampi(1 + c.level / 2, 1, 5), "former": I18n.t("Доброволец у ворот")})
-		c.magis_gate_h = minf(c.magis_gate_h, interval)
 
 
 static func load_state(c: City, d: Dictionary) -> void:
 	c.magis_orders = {}
 	c.magis_cooldown = {}
-	c.magis_gate_on = false
-	c.magis_gate_h = 0.0
-	c.magis_gate_serial = 0
-	c.magis_gate_queue = []
 	c.magis_treasury = 0.0
 	if int(d.get("magis_v", 0)) != 1:
 		return
@@ -155,22 +139,34 @@ static func load_state(c: City, d: Dictionary) -> void:
 	for id: String in cooldown:
 		if not edict(id).is_empty() and not c.magis_orders.has(id):
 			c.magis_cooldown[id] = clampi(int(cooldown[id]), 0, 24)
-	c.magis_gate_on = bool(data.get("gate_on", false))
-	c.magis_gate_h = clampf(float(data.get("gate_h", 0.0)), 0.0, 48.0)
-	c.magis_gate_serial = maxi(0, int(data.get("gate_serial", 0)))
-	if data.get("gate_queue", []) is Array:
-		for pick in data.get("gate_queue", []):
-			if pick is Dictionary and bool(pick.get("gate", false)) and pick.has("key") and pick.has("name"):
-				c.magis_gate_queue.append(pick.duplicate(true))
-				if c.magis_gate_queue.size() >= 3:
-					break
 	c.magis_treasury = maxf(0.0, float(data.get("treasury", 0.0)))
 
 
 static func save_state(c: City) -> Dictionary:
-	return {"orders": c.magis_orders.duplicate(true), "cooldown": c.magis_cooldown.duplicate(true),
-		"gate_on": c.magis_gate_on, "gate_h": c.magis_gate_h, "gate_serial": c.magis_gate_serial,
-		"gate_queue": c.magis_gate_queue.duplicate(true), "treasury": c.magis_treasury}
+	return {"orders": c.magis_orders.duplicate(true), "cooldown": c.magis_cooldown.duplicate(true), "treasury": c.magis_treasury}
+
+
+## Старый набор переносим после загрузки форта; лишние записи больше не сохраняем.
+static func migrate_gate(c: City, d: Dictionary) -> void:
+	if not c.legion.v3():
+		return
+	var data: Dictionary = d.get("magis", {}) if d.get("magis", {}) is Dictionary else {}
+	var queue: Variant = data.get("gate_queue", d.get("magis_gate_queue", []))
+	if not queue is Array or queue.is_empty():
+		return
+	c.legion._fort_init()
+	var newcomers: Array = c.legion.fort["newcomers"]
+	for pick: Variant in queue:
+		if newcomers.size() >= 3:
+			break
+		if not pick is Dictionary or not bool(pick.get("gate", false)) or not pick.has("name"):
+			continue
+		var person := c.legion._fort_newcomer()
+		person["name"] = String(pick["name"])
+		person["stars"] = clampi(int(pick.get("stars", 1)), 1, 5)
+		newcomers.append(person)
+	if newcomers.size() >= 3:
+		c.legion.fort["arrival"] = 0.0
 
 
 ## Часть прежних налогов от торговли: без эдиктов общая сумма не меняется.
