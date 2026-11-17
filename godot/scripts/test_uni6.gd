@@ -57,6 +57,8 @@ func run() -> void:
 	# После обхода рангов целевое знание надо сначала вернуть в видимую страницу.
 	tree.reveal("deco_flowers")
 	await frames()
+	(tree.cards["deco_flowers"] as Control).mouse_entered.emit()
+	await frames()
 	inspect_panel(tree.popup)
 	hud.close_panels()
 	check(not tree.popup.visible, "research popup closes with window")

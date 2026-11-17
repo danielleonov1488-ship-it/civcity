@@ -70,6 +70,9 @@ var fam_box: HBoxContainer            # семьи на площади ждут 
 var _fam_known := {}
 var tasks_box: VBoxContainer
 var tasks_panel: PanelContainer
+var hover_money: Control
+var hover_rp: Control
+var _build_menu_key := ""
 var lbl_money: Label
 var lbl_income: Label
 var lbl_rp: Label
@@ -97,7 +100,6 @@ var tray_dtabs: HBoxContainer
 var tray_dtools: HBoxContainer
 var decor_mode := ""
 var decor_query := ""
-var decor_open_only := false
 var decor_search: LineEdit
 const RECENT_N := 8
 var tool_panel: PanelContainer
@@ -877,27 +879,17 @@ func _city_card() -> void:
 	row.add_child(class_box)
 	row.add_child(_vsep())
 	# казна и очки исследований (раньше — внизу справа)
-	var mz := HBoxContainer.new()
-	mz.add_theme_constant_override("separation", 4)
-	mz.add_child(_icon("coins", 24, C_GOLD))
+	var money_icon := CityStyle.pictogram("coins", 24)
 	lbl_money = _label("0", 17, true)
-	lbl_money.mouse_filter = Control.MOUSE_FILTER_PASS
-	mz.add_child(lbl_money)
 	lbl_income = _label("", 14, true, C_GOOD)
-	lbl_income.mouse_filter = Control.MOUSE_FILTER_PASS
-	mz.add_child(lbl_income)
-	mz.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(mz)
-	var rz := HBoxContainer.new()
-	rz.add_theme_constant_override("separation", 4)
-	rz.add_child(_icon("research", 24, C_SOFT))
+	hover_money = _hover_zone(row, [money_icon, lbl_money, lbl_income], _tip_money)
+	hover_money.name = "MoneyHover"
+	hover_money.set_meta("tip_anchor", bar)
 	lbl_rp = _label("0 / 300", 17, true)
-	lbl_rp.mouse_filter = Control.MOUSE_FILTER_PASS
-	rz.add_child(lbl_rp)
 	lbl_rp_day = _label("", 14, true, C_GOOD)
-	rz.add_child(lbl_rp_day)
-	rz.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(rz)
+	hover_rp = _hover_zone(row, [CityStyle.pictogram("research", 24), lbl_rp, lbl_rp_day], _tip_rp)
+	hover_rp.name = "ResearchPointsHover"
+	hover_rp.set_meta("tip_anchor", bar)
 	row.add_child(_vsep())
 	# день, скорость, время
 	var t := HBoxContainer.new()
@@ -2990,13 +2982,15 @@ func _types_in(cat: String, sub := "") -> Array:
 			continue                          # мастерские Легиона 2.0 и гостиница — только в новой игре
 		if d.get("kind", "") == "military" or d.get("cat", "") == "military":
 			continue                          # военные постройки доступны только внутри форта
+		if game != null and game.city != null and not game.city.unlocked(type):
+			continue
 		out.append(type)
 	return out
 
 
 # ---------- меню украшений (этап 5.4): избранное, недавние, поиск ----------
 
-## Ряд под вкладками украшений: «★ Избранное», «Недавние», поиск, «Только открытые»
+## Ряд под вкладками украшений: избранное, недавние, поиск.
 func _decor_tools(v: VBoxContainer) -> void:
 	tray_dtools = HBoxContainer.new()
 	tray_dtools.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -3032,17 +3026,7 @@ func _decor_tools(v: VBoxContainer) -> void:
 		_fill_cards())
 	decor_search.text_submitted.connect(func(_t: String): decor_search.release_focus())
 	tray_dtools.add_child(decor_search)
-	var only := CheckBox.new()
-	only.name = "only"
-	only.text = "Только открытые"
-	only.tooltip_text = "Спрятать украшения, которые ещё не открыты"
-	only.focus_mode = Control.FOCUS_NONE
-	only.add_theme_font_override("font", font_bold)
-	only.add_theme_font_size_override("font_size", 15)
-	for k in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
-		only.add_theme_color_override(k, C_INK)
-	only.toggled.connect(func(x: bool): decor_open_only = x; _fill_cards())
-	tray_dtools.add_child(only)
+
 
 
 ## Кнопка-«таблетка» с надписью (переключатель)
@@ -3113,7 +3097,7 @@ func note_recent(type: String) -> void:
 	_store_settings()
 
 
-## Карточки меню украшений по выбранному: вкладка, избранное, недавние или поиск; «Только открытые» — без закрытых
+## Вкладка, избранное, недавние или поиск: всегда только открытые украшения.
 func _decor_list() -> Array:
 	var out := []
 	match decor_mode:
@@ -3133,12 +3117,13 @@ func _decor_list() -> Array:
 					out.append(t)
 		_:
 			out = _types_in("decor", open_dsub)
-	if decor_open_only and game and game.city:
+	if game and game.city:
 		out = out.filter(func(t): return game.city.unlocked(t))
 	return out
 
 
 func _fill_cards() -> void:
+	_sync_build_tabs()
 	for ch in tray_grid.get_children():
 		tray_grid.remove_child(ch)
 		ch.queue_free()
@@ -3399,6 +3384,7 @@ func _jobs_text(d: Dictionary) -> String:
 
 
 func _update_cards() -> void:
+	_sync_build_menu()
 	var c: City = game.city
 	for b in tray_grid.get_children():
 		if not b.has_meta("type"):
@@ -3415,31 +3401,7 @@ func _update_cards() -> void:
 		var pr: HBoxContainer = b.find_child("price", true, false)
 		for x in pr.get_children():
 			x.queue_free()
-		if not c.unlocked(type):
-			# серая карточка с замком (замок нарисован на рамке); украшение уровней впереди — тёмный силуэт и уровень
-			var uid := c.unlock_id(type)
-			var why := Defs.unlock_short(uid)
-			var lv_u := int(Defs.research(uid).get("lvl", -1))
-			if d["kind"] == "decor" and lv_u > c.level:
-				why = String(Defs.LEVELS[lv_u]["name"])
-			if why == d["name"]:
-				why = "Исследование"
-			var ln := _label(why, 12, true, C_SOFT)
-			ln.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			ln.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-			ln.custom_minimum_size = Vector2(84, 0)
-			pr.add_child(ln)
-			var sp := Control.new()                  # справа на рамке нарисован замок
-			sp.custom_minimum_size = Vector2(16, 0)
-			pr.add_child(sp)
-			b.add_theme_stylebox_override("normal", _card_box("g_card_lock"))
-			if d["kind"] == "decor" and lv_u > c.level:
-				_grey(img, false)
-				img.modulate = Color(0.16, 0.13, 0.12, 0.78)     # силуэт: что будет — видно, но ещё не открыто
-			else:
-				img.modulate = Color.WHITE                       # город дорос до уровня — силуэт снять
-				_grey(img)
-		elif c.cap_err(type) != "":
+		if c.cap_err(type) != "":
 			# предел уровня города: больше таких не поставить, пока город не вырастет
 			var lm := _label("Предел: %d" % c.build_max(type), 12, true, C_SOFT)
 			lm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -3847,7 +3809,7 @@ func _do_target(w: Dictionary, shown := false) -> Control:
 				return null
 			return info_box.find_child("hire_plus", true, false) as Control
 		"study":
-			return research_tree.study if research_panel.visible else null
+			return research_tree.study_target() if research_panel.visible else null
 		"people":
 			return people_target if is_instance_valid(people_target) and people_target.is_visible_in_tree() else null
 		"info":
@@ -6693,6 +6655,7 @@ func _research_panel() -> void:
 	(w[1] as VBoxContainer).get_child(1).hide()
 	research_panel = w[0]
 	research_panel.name = "ResearchWindow"
+	CityStyle.apply(research_panel)
 	research_tree = preload("res://scripts/research_tree.gd").new()
 	research_tree.setup(self, w[1])
 	research_panel.visibility_changed.connect(func():
@@ -6726,11 +6689,7 @@ func _fill_research() -> void:
 		research_tree.focus_rank(game.city.level)
 	research_tree.open_scroll = false
 
-
 # ---------- финансы, статистика ----------
-	CityStyle.apply(research_panel)
-
-
 func _finance_panel() -> void:
 	var page: VBoxContainer = overview_pages["money"]
 	var v := VBoxContainer.new()
@@ -7596,6 +7555,7 @@ func refresh() -> void:
 	if ub:
 		ub.visible = c.research.has(Defs.ROAD_UP_RES)    # кисть «Улучшить» — после «Базальтовой мостовой» (этап 5.7)
 	update_new_marks()
+	_sync_build_menu()
 	_sync_military_tab()
 	_fit_bottom()                             # «Полки полны» — правая полоса шире
 	_fill_classes()
@@ -9234,3 +9194,83 @@ static func _olive_scroll(sc: ScrollContainer) -> void:
 		g.bg_color = state[1]
 		g.set_corner_radius_all(4)
 		bar.add_theme_stylebox_override(String(state[0]), g)
+
+
+## Пустых разделов нет; новые открытия появляются даже при открытом свитке.
+func _category_types(cat: String) -> Array:
+	if cat != "commerce":
+		return _types_in(cat)
+	var out := []
+	for need: String in Defs.NEED_ORDER:
+		out.append_array(_types_in(cat, need))
+	return out
+
+
+func _sync_build_menu() -> void:
+	var key := ""
+	for cid: String in cats:
+		var types := _category_types(cid)
+		key += str(types)
+		var box := (cats[cid] as Control).get_parent() as Control
+		box.visible = not types.is_empty()
+		if types.is_empty() and open_cat == cid:
+			tray.hide()
+			open_cat = ""
+	if key != _build_menu_key:
+		_build_menu_key = key
+		if tray.visible:
+			_fill_cards()
+		_refresh_cat_buttons()
+		_fit_bottom.call_deferred()
+
+
+func _sync_build_tabs() -> void:
+	for pair: Array in [[tray_tabs, "commerce", open_sub], [tray_dtabs, "decor", open_dsub], [tray_stabs, "special", open_ssub]]:
+		var first := ""
+		var found := false
+		for tab: Button in (pair[0] as Control).get_children():
+			var sub := String(tab.get_meta("sub"))
+			tab.visible = not _types_in(String(pair[1]), sub).is_empty()
+			if tab.visible:
+				if first == "":
+					first = sub
+				found = found or sub == String(pair[2])
+		if not found and first != "":
+			match String(pair[1]):
+				"commerce": open_sub = first
+				"decor": open_dsub = first
+				"special": open_ssub = first
+
+
+func _tip_money(v: VBoxContainer) -> void:
+	var c: City = game.city
+	var flow := c.projected_finance()
+	_tip_head(v, CityStyle.pictogram("coins", 24), "Денарии в казне")
+	_tip_row(v, "coins", "Доход в час", "+%s/ч" % fmt_rate(float(flow["income"])), C_GOOD)
+	_tip_row(v, "person", "Налоги", "+%s" % fmt_rate(float(flow["tax"])))
+	_tip_row(v, "commerce", "Лавки", "+%s" % fmt_rate(float(flow["shops"])))
+	_tip_row(v, "family", "Туристы", "+%s" % fmt_rate(float(flow["tourists"])))
+	if not is_zero_approx(float(flow["export"])):
+		_tip_row(v, "warehouse", "Продажа товаров", "+%s" % fmt_rate(float(flow["export"])))
+	if float(flow["levy"]) > 0.0:
+		_tip_row(v, "shield", "Отчисления Легиону", "−%s" % fmt_rate(float(flow["levy"])), C_BAD)
+	_tip_row(v, "coins", "Расход в час", "−%s/ч" % fmt_rate(float(flow["expense"])), C_BAD)
+	_tip_row(v, "hammer", "Содержание", "−%s" % fmt_rate(float(flow["upkeep"])))
+	_tip_row(v, "worker", "Жалованье", "−%s" % fmt_rate(float(flow["wages"])))
+	_tip_row(v, "chest", "Казна вмещает", fmt(c.money_cap()))
+	CityStyle.apply(v)
+
+
+func _tip_rp(v: VBoxContainer) -> void:
+	var c: City = game.city
+	var sources := c.rp_sources()
+	var total := 0.0
+	for value: float in sources.values():
+		total += value
+	_tip_head(v, CityStyle.pictogram("research", 24), "Очки исследований")
+	_tip_row(v, "research", "Прирост в час", "+%s/ч" % fmt_rate(total), C_GOOD)
+	for source: String in ["post", "scriptorium", "school", "library", "academy"]:
+		var names := {"post": "Почта", "scriptorium": "Скриптории", "school": "Школы", "library": "Библиотеки", "academy": "Академии"}
+		_tip_row(v, "mail" if source == "post" else "research", String(names[source]), "+%s" % fmt_rate(float(sources.get(source, 0.0))))
+	_tip_row(v, "scroll", "Полки вмещают", fmt(c.rp_cap()))
+	CityStyle.apply(v)

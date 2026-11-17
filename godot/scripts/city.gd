@@ -1888,25 +1888,41 @@ func _store_near(s: Dictionary, stores: Array) -> bool:
 
 ## Прогноз по нынешним жильцам и найму, без промотки часа и записи в историю.
 func projected_net() -> float:
-	var income := 0.0
+	var flow := projected_finance()
+	return float(flow["income"]) - float(flow["expense"])
+
+
+## Нынешние жильцы и найм: расшифровка без промотки часа и записи в историю.
+func projected_finance() -> Dictionary:
+	var tax := 0.0
 	var upkeep := 0.0
+	var wages := 0.0
 	for b: Dictionary in buildings.values():
 		var d := def(b)
 		match String(d["kind"]):
 			"house":
-				income += int(b["pop"]) * house_tax(b) * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
+				tax += int(b["pop"]) * house_tax(b) * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
 				if cozy_v >= 1:
 					upkeep += float(d["cost"]) * upkeep_rate() * 0.5
-			"rp":
-				if not bool(b.get("over", false)):
-					upkeep += float(d["cost"]) * upkeep_rate() + wage() * hired_of(b)
-			"shop", "monument", "store", "farm", "military", "inn":
-				upkeep += float(d["cost"]) * upkeep_rate() + wage() * hired_of(b)
-	income += float(Magis.commerce(self, income)["delta"])
+			"rp", "shop", "monument", "store", "farm", "military", "inn":
+				if d["kind"] == "rp" and bool(b.get("over", false)):
+					continue
+				upkeep += float(d["cost"]) * upkeep_rate()
+				wages += wage() * hired_of(b)
+	var commerce := Magis.commerce(self, tax)
+	# Оборот лавок и складов уже включён в прежние налоговые поступления.
+	var shops := float(commerce["shop"])
+	var exports := float(commerce["export"])
+	tax += float(commerce["delta"]) - shops - exports
 	if int(stories.get("tax_off", 0)) > 0:
-		income = 0.0
-	var gross := income + Tourism.hour_income(self)
-	return gross * (1.0 - clampf(edict_add("legion_denarii"), 0.0, 1.0)) - upkeep
+		tax = 0.0
+		shops = 0.0
+		exports = 0.0
+	var tourists := Tourism.hour_income(self)
+	var income := tax + shops + exports + tourists
+	var levy := income * clampf(edict_add("legion_denarii"), 0.0, 1.0)
+	return {"tax": tax, "shops": shops, "export": exports, "tourists": tourists,
+		"income": income, "upkeep": upkeep, "wages": wages, "levy": levy, "expense": upkeep + wages + levy}
 
 
 ## Налог с жителя дома в час (до поправки на счастье): по классу, патриции — с «taxes1» на четверть больше

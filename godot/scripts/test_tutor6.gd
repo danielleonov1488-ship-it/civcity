@@ -209,6 +209,9 @@ func run() -> void:
 	check(hud.pointer_target == hud.research_tree.study and not hud.research_tree.study.disabled, "pointer on Study")
 	check(not tut._check("research"), "opening knowledge is not completion")
 	hud.research_tree.study.pressed.emit()
+	hud._update_pointer()
+	check(hud.pointer_target == hud.research_tree.confirm_yes, "pointer on inline Yes")
+	hud.research_tree.confirm_yes.pressed.emit()
 	if not await snapshot_step("done"):
 		return
 	check(not hud.advisor_panel.visible and hud.guidance_queue.size() >= 2, "queue still waits at done card")

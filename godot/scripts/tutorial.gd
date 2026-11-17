@@ -471,7 +471,9 @@ func pointer() -> Array:
 			if not hud.research_panel.visible:
 				return [hud.top_btns.get("research"), "Исследования"]
 			var tree = hud.research_tree
-			if tree.popup.visible and not tree.study.disabled:
+			if tree.pending != "":
+				return [tree.confirm_yes, "Да"]
+			if is_instance_valid(tree.study) and tree.study.is_visible_in_tree() and not tree.study.disabled:
 				return [tree.study, "Изучить"]
 			var target: Control = hud._research_card("")
 			if target != null and not target.is_visible_in_tree():
