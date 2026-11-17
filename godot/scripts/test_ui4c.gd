@@ -2,7 +2,7 @@ extends "res://scripts/test_ux.gd"
 ## Регрессия «Этажа»: прежние проверки UX и снимки стрелок после UI4/UI4b.
 
 const Badge = preload("res://scripts/map_badge.gd")
-var out := "D:/CivCity/.work/stage4/ui4c/shots/"
+var out := "D:/CivCity/.work/stage5/floor/shots/"
 
 
 func _ready() -> void:
@@ -64,6 +64,7 @@ func _run() -> void:
 	await _floor_tool()
 	await _floor_stroke()
 	await _floor_broke()
+	await _floor_money_advice()
 	await _floor_why()
 	await _floor_mixed()
 	await _badge_top()
@@ -95,6 +96,10 @@ func _floor_tool() -> void:
 		_arrow_look(int(id), false)
 	if ready.is_empty():
 		return
+	# Сравниваем цвет цены при неподвижной камере, а не её плавный подъём над землёй.
+	var rig_processing: bool = game.rig.is_processing()
+	game.rig.set_process(false)
+	hud._place_badges()
 	# Исчезновение скрытого обычного значка не должно сдвинуть стрелку инструмента.
 	var id: int = ready[0]
 	var key := "fl%d" % id
@@ -105,11 +110,17 @@ func _floor_tool() -> void:
 	var home: Dictionary = c.buildings[id]
 	var expected_y: float = float(home["y"]) + c.blueprint(home).top_y() + 1.2
 	check(is_equal_approx(pos.y, expected_y), "скрытая обычная стрелка не поднимает стрелку инструмента")
-	check((not hud.world_icons.has(id) or not (hud.badges["b%d" % id]["n"] as Control).visible), "обычный значок не заслоняет инструмент")
+	var ordinary_hidden := true
+	for world_id in hud.world_icons:
+		if String(hud.world_icons[world_id][0]) == "up":
+			ordinary_hidden = ordinary_hidden and not (hud.badges["b%d" % int(world_id)]["n"] as Control).is_visible_in_tree()
+	check(ordinary_hidden, "обычная стрелка скрыта при инструменте")
 	var money: float = c.money
+	c.tips.erase("floor_money")
 	c.money = c.floor_price(home) - 1.0
 	c.changed.emit()
 	await frames(4)
+	check(not hud.advisor_panel.visible and not c.tips.has("floor_money"), "совет о денариях ждёт выхода из инструмента")
 	hud._place_badges()
 	_arrow_look(id, true)
 	check(hud.badges[key]["n"] == original, "красная цена сохраняет узел стрелки")
@@ -123,10 +134,11 @@ func _floor_tool() -> void:
 	await frames(4)
 	_arrow_look(id, false)
 	check(hud.badges[key]["pos"] == pos and (hud.badges[key]["n"] as Control).get_global_rect() == rect, "возврат обычной стрелки не сдвигает инструмент")
+	game.rig.set_process(rig_processing)
 
 
-func _floor_broke() -> void:
-	await super._floor_broke()
+func _floor_broke_look() -> void:
+	check(not hud.advisor_panel.visible and not c.tips.has("floor_money"), "совет о денариях не перекрыл мазок")
 	var red := 0
 	for id in row1:
 		var key := "fl%d" % int(id)
@@ -134,3 +146,28 @@ func _floor_broke() -> void:
 			_arrow_look(int(id), true)
 			red += 1
 	check(red > 0, "после исчерпания денег осталась видимая красная цена")
+	await shot("ui4c_broke_released.png")
+
+
+func _floor_money_advice() -> void:
+	var ready: Array = c.floor_ready(false)
+	if not check(not ready.is_empty(), "есть готовый дом для совета о денариях"):
+		return
+	var money: float = c.money
+	var previous_tool: String = game.tool
+	var price: int = c.floor_price(c.buildings[ready[0]])
+	c.money = price - 1.0
+	c.tips.erase("floor_money")
+	game.set_tool("floor")
+	c.changed.emit()
+	await frames(4)
+	check(not hud.advisor_panel.visible and not c.tips.has("floor_money"), "совет снова ждёт, пока инструмент в руках")
+	game.set_tool("")
+	hud._once_tips()
+	await frames(2)
+	check(hud.advisor_panel.visible and hud.adv_title.text == "На этаж пока не хватает" and c.tips.has("floor_money"), "убрали инструмент — отложенный совет показан")
+	await shot("ui4c_money_advice.png")
+	hud.advisor_panel.hide()
+	c.money = money
+	c.changed.emit()
+	game.set_tool(previous_tool)

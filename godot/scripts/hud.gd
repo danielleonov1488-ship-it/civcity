@@ -7624,7 +7624,8 @@ func _once_tips() -> void:
 		advisor("%s — ваш герой" % Hero.name_of(c), hero_note())
 		return
 	# «Хутор»: дом готов к этажу, а денариев не хватает — один раз: налоги подойдут (этап 2.3, денег впритык)
-	if c.level == 1 and c.research.has("floor2") and not c.tips.has("floor_money") and c.tips.has("floor_tool"):
+	# С инструментом в руках совет ждёт: окно перекрыло бы улицу и забрало мазок.
+	if game.tool == "" and not game.floor_drag and c.level == 1 and c.research.has("floor2") and not c.tips.has("floor_money") and c.tips.has("floor_tool"):
 		var ready: Array = c.floor_ready(false)
 		if not ready.is_empty() and c.money < float(c.floor_price(c.buildings[ready[0]])):
 			c.tips["floor_money"] = true
