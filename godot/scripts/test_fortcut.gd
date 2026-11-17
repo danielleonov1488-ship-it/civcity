@@ -28,14 +28,6 @@ func frames(count: int) -> void:
 		await get_tree().process_frame
 
 
-func active_player(entry: Dictionary) -> AnimationPlayer:
-	# В модели есть и служебные проигрыватели без выбранного движения.
-	for player: AnimationPlayer in entry["players"]:
-		if player.is_playing() and player.current_animation != "":
-			return player
-	return null
-
-
 func check(ok: bool, reason: String) -> bool:
 	if not ok:
 		fails += 1
@@ -47,18 +39,18 @@ func shot(file: String) -> void:
 	await frames(45)
 	for i in 8:
 		await RenderingServer.frame_post_draw
-		var draws := camp.diorama.sub.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
+		var draws := camp.diorama.sub.get_render_info(Viewport.RENDER_INFO_TYPE_CANVAS, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
 		peak_draws = maxi(peak_draws, draws)
 		await frames(1)
 	await RenderingServer.frame_post_draw
 	if check(get_viewport().get_texture().get_image().save_png(out + file) == OK, "save " + file):
 		print("FORTCUT SHOT " + out + file)
-	check(camp.diorama.figures.size() <= 16, "figure cap: " + file)
+	check(camp.diorama.figures.size() < FortCutaway.SPRITE_LIMIT, "figure cap: " + file)
 	check(peak_draws <= 600, "draw calls > 600: " + file)
 
 
 func fixture(late: bool) -> void:
-	lg.fort = {"exp": 3 if late else 0, "plots": [], "next_id": 0, "up": {}}
+	lg.fort = {"money": 1e7, "smith_knowledge": true, "exp": 3 if late else 0, "plots": [], "next_id": 0, "up": {}}
 	lg.upg.clear()
 	lg.camp.clear()
 	lg.soldiers.clear()
@@ -207,11 +199,11 @@ func _run() -> void:
 			vacant += 1
 		elif int(p["lv"]) > 0 and (p["up"] as Dictionary).is_empty():
 			built += 1
-	if not check(view.grid == Vector2i(3, 2) and view.room_meshes.size() == 5 and built == 4 and vacant == 1, "early: two floors, four built and one empty"):
+	if not check(view.grid == Vector2i(3, 2) and view.room_sprites.size() == 5 and built == 4 and vacant == 1, "early: two floors, four built and one empty"):
 		_finish()
 		return
-	check(view.sub.own_world_3d and view.camera.projection == Camera3D.PROJECTION_ORTHOGONAL, "separate orthographic world")
-	check(not view.figures.is_empty(), "live 3D figures loaded")
+	check(view.sub.disable_3d and view.find_children("*", "Node3D", true, false).is_empty(), "separate 2D viewport")
+	check(not view.figures.is_empty() and view.figures[0]["node"] is Sprite2D, "drawn dwellers loaded")
 	for id: int in view.room_rects:
 		check(view._pick(view.project(id)) == "plot_%d" % id, "room picking " + str(id))
 	var empty := lg.fort_empty_plot()
@@ -226,7 +218,7 @@ func _run() -> void:
 	model_checks()
 	view.sync()
 	camp._refresh()
-	check(view.grid == Vector2i(4, 4) and view.room_meshes.size() == 15, "late expansion 3")
+	check(view.grid == Vector2i(4, 4) and view.room_sprites.size() == 15, "late expansion 3")
 	var kitchen := int(lg.fort_slot_plot("kitchen")["id"])
 	check((camp.plot_markers[kitchen]["state"] as Label).visible, "unassigned room shows !")
 	var seen := {}
@@ -235,27 +227,31 @@ func _run() -> void:
 	check(seen.size() == 15, "all fifteen painted room types (seen %s)" % [seen.keys()])
 	await shot("2_late.png")
 	var forge := int(lg.fort_slot_plot("forge")["id"])
-	view.focus_plot("plot_%d" % forge)
-	await get_tree().create_timer(0.8).timeout
+	(camp.plot_markers[forge]["button"] as Button).pressed.emit()
+	check(camp.selected_plot == forge, "forge selected from room button")
+	camp._hide_card()
+	await get_tree().create_timer(1.1).timeout
 	var smith := false
 	for entry: Dictionary in view.figures:
 		if int(entry["plot"]) == forge and entry["role"] == "forge":
-			smith = is_instance_valid(active_player(entry))
+			var sprite: Sprite2D = entry["node"]
+			for i in 32:
+				view._animate_people(0.25)
+				smith = smith or (sprite.visible and sprite.frame >= 6)
 	check(smith, "smith working in forge")
-	check(absf(view.zoom - FortCutaway.CLOSE_ZOOM) < 0.05, "room occupies sixty percent of viewport height")
+	var forge_rect := view.plot_footprint(forge)
+	var room_height := forge_rect.size.y / view.size.y
+	check(room_height >= 0.45 and room_height <= 0.50, "selected room occupies 45 to 50 percent of viewport height")
+	check(Rect2(Vector2.ZERO, view.size).encloses(forge_rect), "selected room fits in viewport")
 	await shot("3_zoom_forge.png")
 	var paused := false
 	for entry: Dictionary in view.figures:
-		if (entry["node"] as Node3D).visible:
+		var sprite: Sprite2D = entry["node"]
+		if sprite.visible:
 			continue
-		var player := active_player(entry)
-		if not is_instance_valid(player):
-			continue
-		check(player.callback_mode_process == AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL, "room animation advances manually")
-		var animation := player.current_animation
-		var before := player.current_animation_position
-		await frames(6)
-		check(player.current_animation == animation and is_equal_approx(before, player.current_animation_position), "off-screen room animation pauses")
+		var before := sprite.frame
+		view._animate_people(0.45)
+		check(not sprite.visible and sprite.frame == before, "off-screen sprite frame is held")
 		paused = true
 		break
 	check(paused, "zoom leaves rooms off screen")

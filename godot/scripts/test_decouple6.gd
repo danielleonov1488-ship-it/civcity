@@ -300,19 +300,19 @@ func _fort_payment() -> void:
 	legion.glory = 10000.0
 	var kitchen := int(legion.fort_slot_plot("kitchen")["id"])
 	var price := float(Legion.fort_cost("kitchen", 2)["money"])
-	city.magis_treasury = price / 2.0
+	legion.fort["money"] = price + 100.0
 	city.money = 1000000.0
 	var money := city.money
 	check(legion.fort_upgrade(kitchen), "fort upgrade starts")
-	check(is_zero_approx(city.magis_treasury) and is_equal_approx(city.money, money - price / 2.0), "fort spends treasury first then city money")
+	check(is_equal_approx(legion.city_money(), 100.0) and city.money == money, "fort pays only its own denarii")
 
 
 func _rewards() -> void:
 	var money := city.money
 	var rp := city.rp
-	var treasury := city.magis_treasury
+	var treasury := city.legion.city_money()
 	city.legion._give({"money": 125, "rp": 20, "glory": 3})
-	check(city.money == money and city.rp == rp and city.magis_treasury == treasury + 125, "military rewards stay out of city economy")
+	check(city.money == money and city.rp == rp and city.legion.city_money() == treasury + 125, "military rewards stay out of city economy")
 	check(float(city.legion.flags.get("research_loot", 0)) >= 20.0, "former research loot retained in Legion save")
 	var signature := _city_signature()
 	city.legion.pvp_rating = 100000

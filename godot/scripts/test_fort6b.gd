@@ -98,7 +98,7 @@ func _run() -> void:
 		await frames(16)
 		check(Vector2i(get_viewport().get_visible_rect().size) == sizes[index], "requested viewport %s" % sizes[index])
 		for fresh: bool in [false, true]:
-			game.city.money = 1740 if fresh else 2500
+			lg.fort["money"] = 1740.0 if fresh else 2500.0
 			lg.rations = lg.ration_cap() if fresh else 28
 			lg.glory = 0 if fresh else 3850
 			lg.ingots = 0 if fresh else 120

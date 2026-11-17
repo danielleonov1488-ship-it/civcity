@@ -115,6 +115,8 @@ var _net_checked := false
 var tut_bar: PanelContainer
 var tut_lbl: Label
 var tut_act: Button                        # «Поставить Казармы» (шаг 1, если окно открыто раньше)
+var guide_stage_button: Button
+var guide_region_button: Button
 var _fight_btn: Button                     # «В бой!» в карточке боя
 var _front_btn: Button                     # передний край на карте
 var _upg_btn: Button                       # «На карте» у Казарм во «Войсках» (обучение, шаг 4: улучшения — в карточке здания)
@@ -252,6 +254,10 @@ func open(tab_id := "") -> void:
 		view_r = int(fr["r"])
 		view_c = int(fr["cycle"])
 		sel = {}
+	if lg.v3() and tab_id == "campaign" and lg.fort_guide_step() == Legion.FortGuide.CAMPAIGN:
+		view_r = 0
+		view_c = 0
+		sel = {"c": 0, "r": 0, "s": 0}
 	if lg.flags.has("turn_page") and tab_id != "pvp":
 		# босс побеждён (в 3D-бою или пока окно было закрыто) — карта перелистывается на новую провинцию
 		lg.flags.erase("turn_page")
@@ -272,6 +278,10 @@ func close(return_camp := true) -> void:
 	hud._update_pointer()
 	if back:
 		CampUI.attach(hud).open()
+	else:
+		var camp := CampUI.of(hud)
+		if camp != null:
+			camp._layout_guide()
 
 
 func _on_city() -> void:
@@ -300,7 +310,7 @@ func _sig() -> String:
 	if not sel.is_empty():
 		var st := lg.stage_info(int(sel["c"]), int(sel["r"]), int(sel["s"]))
 		a.append(lg.can_fight(st))
-		a.append(lg.food_cost(st) <= game.city.money)
+		a.append(lg.food_cost(st) <= lg.city_money())
 		if Legion.V2:
 			a.append(lg.food_now())
 	return str(a)
@@ -340,8 +350,6 @@ func _process(dt: float) -> void:
 
 ## Таймеры: полоски улучшений, заряды атак. Улучшение дошло — завершаем сразу (не ждём игрового часа)
 func _tick_live() -> void:
-	if lg.v3():
-		CampUI.attach(hud)._refresh_speeds()
 	_odds_poll()
 	if lg.army_on():
 		for m in lg.army_tick():
@@ -632,6 +640,8 @@ func _rebuild() -> void:
 	_live = []
 	hud._clear(content)
 	_fight_btn = null
+	guide_stage_button = null
+	guide_region_button = null
 	_front_btn = null
 	_upg_btn = null
 	# «Воины» (Легион 2.0, этап 1) — только в новой игре «Уютного Рима»; вкладки чуть уже, чтобы уместились пять
@@ -744,7 +754,7 @@ func _update_header() -> void:
 	if lbl_glory == null or lg == null:
 		return
 	lbl_glory.text = hud.fmt(floorf(lg.glory))
-	lbl_money.text = hud.fmt(game.city.money)
+	lbl_money.text = hud.fmt(lg.city_money())
 	lbl_rating.text = "Рейтинг %s" % hud.fmt(lg.rating)
 	if daily_chip != null:
 		daily_chip.visible = lg.army_on()
@@ -774,13 +784,17 @@ func _fit() -> void:
 	if toast:
 		toast.reset_size()
 		toast.position = Vector2((avail.x - toast.size.x) / 2.0, win.position.y + s.y * k - toast.size.y - 30.0)
+	if visible and lg != null and lg.v3():
+		var camp := CampUI.of(hud)
+		if camp != null:
+			camp._layout_guide.call_deferred()
 
 
 ## Короткая надпись внизу окна (почему нельзя и т. п.) — сама гаснет
 func _say(text: String) -> void:
 	if text == "" or toast == null:
 		return
-	if hud.tutorial_busy():
+	if hud.tutorial_busy() and not lg.v3():
 		hud._toast(text, "info")
 		return
 	(toast.get_node("t") as Label).text = text
@@ -1023,7 +1037,7 @@ func _cost_row(cost: Dictionary, sz := 16) -> HBoxContainer:
 	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if int(cost.get("money", 0)) > 0:
 		h.add_child(_tr(hud.ico("coins", 64), sz + 6))
-		h.add_child(_l(hud.fmt(float(cost["money"])), sz, true, C_INK if float(cost["money"]) <= game.city.money else C_BAD))
+		h.add_child(_l(hud.fmt(float(cost["money"])), sz, true, C_INK if float(cost["money"]) <= lg.city_money() else C_BAD))
 	if int(cost.get("glory", 0)) > 0:
 		if h.get_child_count() > 0:
 			h.add_child(_gap(6))
@@ -1313,6 +1327,8 @@ func _map_view() -> Control:
 		camp.tooltip_text = "Стоянка легиона: отсюда отряд выходит в поход"
 		m.add_child(camp)
 	# бои по тропе
+	var guide_first_stage := (lg.v3() and lg.fort_guide_step() == Legion.FortGuide.CAMPAIGN
+		and not bool(lg.flags.get("fort_guide_stage", false)))
 	for s in Legion.stages():
 		var boss := s == Legion.stages() - 1
 		var p: Vector2 = (pts["boss"] if boss else (pts["stops"] as Array)[s]) * k
@@ -1328,13 +1344,23 @@ func _map_view() -> Control:
 		b.position = p - Vector2(sz, sz) / 2.0
 		b.size = Vector2(sz, sz)
 		b.pivot_offset = Vector2(sz, sz) / 2.0
-		b.pressed.connect(func(): sel = st; _rebuild())
+		var first_stage := vc == 0 and view_r == 0 and s == 0
+		if first_stage:
+			b.name = "LegionFirstStage"
+			guide_stage_button = b
+		b.pressed.connect(func():
+			sel = st
+			if lg.fort_guide_step() == Legion.FortGuide.CAMPAIGN:
+				lg.flags["fort_guide_stage"] = first_stage
+			_rebuild())
 		m.add_child(b)
 		if front:
 			_front_btn = b
-			var tw := b.create_tween().set_loops()
-			tw.tween_property(b, "scale", Vector2(1.1, 1.1), 0.55).set_trans(Tween.TRANS_SINE)
-			tw.tween_property(b, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
+			# Под стрелкой размер кнопки постоянный.
+			if not (first_stage and guide_first_stage):
+				var tw := b.create_tween().set_loops()
+				tw.tween_property(b, "scale", Vector2(1.1, 1.1), 0.55).set_trans(Tween.TRANS_SINE)
+				tw.tween_property(b, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
 			# орёл легиона над передним краем
 			var eg := _tr(_ic38("eagle"), 44)
 			eg.size = Vector2(44, 44)
@@ -1470,6 +1496,8 @@ func _region_strip() -> Control:
 		elif done:
 			tip += "\nПройдена: босс побеждён"
 		var b := _pic_btn(face, 56, tip, func(): view_r = rr; sel = {}; _rebuild())
+		if r == 0:
+			guide_region_button = b
 		b.position = Vector2(21 + dx, 1)
 		b.size = Vector2(56, 56)
 		holder.add_child(b)
@@ -1585,11 +1613,13 @@ func _stage_card(st: Dictionary) -> Control:
 					var af := Legion.affix_of(st, String(k))
 					bits.append("%s — %s (%s)" % [String(Legion.ENEMIES[k]["name"]).to_lower(), Legion.AFFIX_NAME[af], Legion.AFFIX_TIP[af]])
 		v.add_child(_wl("Ветераны: " + "; ".join(bits) + ".", CARD_W - 24, 13, C_BAD))
-	var tips := lg.tips(st)
+	var guide_step := lg.fort_guide_step()
+	var teaching := lg.v3() and guide_step > Legion.FortGuide.INACTIVE and guide_step <= Legion.FortGuide.CAMPAIGN
+	var tips := "" if teaching else lg.tips(st)
 	if tips != "":
 		v.add_child(_wl(tips, CARD_W - 24, 14, C_SOFT))
 	# отряд не под этот бой (пока мест три — загадка на выбор отряда; дальше — лучник в волчьем бою): совет и кнопка «Под бой»
-	var hint := lg.squad_hint(st)
+	var hint := "" if teaching else lg.squad_hint(st)
 	if hint != "":
 		var hb := HBoxContainer.new()
 		hb.add_theme_constant_override("separation", 6)
@@ -1664,7 +1694,10 @@ func _stage_card(st: Dictionary) -> Control:
 	var fh := HBoxContainer.new()
 	fh.add_theme_constant_override("separation", 5)
 	fh.add_child(_l("Провиант в поход:", 15, true, C_SOFT))
-	if Legion.V2:
+	if lg.v3():
+		fh.add_child(_tr(hud.ico("bread", 64), 22))
+		fh.add_child(_l(I18n.t("Пайки: %.1f · есть %.1f") % [lg.ration_cost(st), lg.rations], 15, true, C_INK if lg.rations >= lg.ration_cost(st) else C_BAD))
+	elif Legion.V2:
 		fh.add_child(_tr(hud.ico("bread", 64), 22))
 		var have := lg.food_now()
 		fh.add_child(_l("%d · есть %d из %d" % [Legion.FOOD2_BATTLE, have, lg.food_cap()], 15, true, C_INK if have >= Legion.FOOD2_BATTLE else C_BAD))
@@ -1673,7 +1706,7 @@ func _stage_card(st: Dictionary) -> Control:
 	else:
 		fh.add_child(_tr(hud.ico("coins", 64), 22))
 		var food := lg.food_cost(st)
-		fh.add_child(_l(hud.fmt(food), 15, true, C_INK if food <= game.city.money else C_BAD))
+		fh.add_child(_l(hud.fmt(food), 15, true, C_INK if food <= lg.city_money() else C_BAD))
 	v.add_child(fh)
 	v.add_child(_hdiv(12))
 	# отряд
@@ -1708,7 +1741,14 @@ func _stage_card(st: Dictionary) -> Control:
 	v.add_child(fill)
 	# в бой
 	var why := lg.can_fight(st)
-	var fb := _btn("Повторить бой" if st["done"] else "В бой!", CARD_W - 30, 24, _ic39("battle"), why, func(): _fight(st))
+	var fight_title := I18n.t("Повторить бой" if st["done"] else "В бой!")
+	if lg.v3():
+		fight_title += " · %.1f" % lg.ration_cost(st)
+	var fb := _btn(fight_title, CARD_W - 30, 24, hud.ico("bread", 64) if lg.v3() else _ic39("battle"), why, func(): _fight(st))
+	if lg.v3():
+		fb.name = "LegionRationBattle"
+		fb.set_meta("ration_cost", lg.ration_cost(st))
+		fb.add_theme_color_override("font_disabled_color", C_BAD if lg.rations < lg.ration_cost(st) else C_SOFT)
 	fb.add_theme_font_override("font", hud.font_title)
 	fb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(fb)
@@ -1721,7 +1761,7 @@ func _stage_card(st: Dictionary) -> Control:
 		v.add_child(_wl("Учебный бой — для трёх легионеров: лучника в лесу некому прикрыть. «Состав» → «Лучший состав».", CARD_W - 24, 13, C_BAD, true, true))
 	elif lg.tutorial_battle(st):
 		v.add_child(_wl("Учебный бой: в нужный миг подскажем, что нажать.", CARD_W - 24, 13, C_GOOD, true, true))
-	else:
+	elif not teaching:
 		v.add_child(_wl("Отряд дерётся сам; ваше — состав и умения в нужный миг." + ("" if st["done"] else " «Авто» — после первой победы."), CARD_W - 24, 13, C_SOFT, false, true))
 	return p
 
@@ -1839,7 +1879,9 @@ func _fight(st: Dictionary) -> void:
 		close(false)
 		lg.start_battle(st)
 		return
-	var setup := lg.make_battle(st)
+	var setup := lg.prepare_battle(st)
+	if setup.is_empty():
+		return
 	var sim := LegionSim.new(setup)
 	var res := sim.run(true)
 	var out := lg.apply_result(setup, res)
@@ -1858,6 +1900,9 @@ func _on_battle_closed(out: Dictionary) -> void:
 	_pending = {}
 	if was_pvp:
 		_pvp_state = "idle"
+	elif lg.fort_guide_step() == Legion.FortGuide.FINISH:
+		CampUI.attach(hud).open()
+		return
 	if bool(out.get("win", false)) and out.has("next") and not (out["next"] as Dictionary).is_empty() and not lg.flags.has("turn_page"):
 		var nx: Dictionary = out["next"]
 		sel = {"c": int(nx["cycle"]), "r": int(nx["r"]), "s": int(nx["s"])}
@@ -1947,7 +1992,7 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 	if not unl.is_empty():
 		v.add_child(_hdiv(14))
 		v.add_child(_wl("Открыто: " + ", ".join(unl) + ".", 420, 17, C_INK, true, true))
-	if not win_b:
+	if not win_b and not bool(setup.get("fort_guide_first", false)):
 		v.add_child(_hdiv(14))
 		v.add_child(_wl("Не беда! Улучшите бойцов во вкладке «Войска», поставьте в отряд тех, кто сильнее против этих врагов, и вовремя жмите умения в бою.", 420, 15, C_SOFT, false, true))
 	if not _has_battle_scene():
@@ -1955,7 +2000,9 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 	var bh := HBoxContainer.new()
 	bh.alignment = BoxContainer.ALIGNMENT_CENTER
 	bh.add_theme_constant_override("separation", 12)
-	if win_b:
+	if lg.fort_guide_step() == Legion.FortGuide.FINISH and not pvp:
+		bh.add_child(_btn(I18n.t("← Лагерь"), 180, 20, null, "", func(): close()))
+	elif win_b:
 		var nx: Dictionary = out.get("next", {})
 		bh.add_child(_btn("Дальше", 180, 20, null, "", func(): _after_win(nx)))
 	else:
@@ -2377,8 +2424,6 @@ func _soldier_card(s: Dictionary) -> Control:
 				_close_overlay())
 	bv.add_child(db)
 	h.add_child(bv)
-	if lg.v3():
-		CampUI.attach(hud)._add_speed(v, "train_%d" % int(s["id"]))
 	return p
 
 
@@ -2674,8 +2719,6 @@ func _forge_win() -> void:
 			_live.append({"kind": "forge", "label": fl})
 		fh.add_child(fl)
 		v.add_child(fh)
-		if lg.v3():
-			CampUI.attach(hud)._add_speed(v, "forge")
 	v.add_child(_hdiv(8))
 	# что ковать: слот и (для оружия и щита) класс
 	var srow := HBoxContainer.new()

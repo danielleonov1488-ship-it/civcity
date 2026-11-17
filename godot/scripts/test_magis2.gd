@@ -95,6 +95,7 @@ func _run() -> void:
 	c.tips["ui"] = 3
 	hud.apply_reveal(3)
 	hud.close_panels()
+	var legion_money := game.city.legion.city_money()
 	_free_advisor()
 	var ui := MagisUI.of(hud)
 	check(ui != null, "magistracy entry attached")
@@ -108,6 +109,7 @@ func _run() -> void:
 	c.level = int(Defs.MAGIS[0]["rank"])
 	ui.refresh()
 	check(ui.top_button.is_visible_in_tree() and _top_buttons() == 7, "seven buttons when first magistracy opens")
+	check(c.legion.city_money() == legion_money, "magistracy visibility does not transfer Legion denarii")
 	await shot("2_topbar_open.png")
 	# Оставляем только два ожидающих совета: этаж и первая магистратура.
 	for key: String in ["unpaid_tip", "rank_tip", "fest_tip", "hero_tip", "full_money", "full_rp", "tax_tip", "dim_tip", "set_tip", "pave_up_tip", "prem_tip", "chron_tip", "hire_tip"]:

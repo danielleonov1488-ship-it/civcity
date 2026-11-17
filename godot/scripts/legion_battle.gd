@@ -1673,6 +1673,7 @@ func _close_modal() -> void:
 func _show_result() -> void:
 	phase = "result"
 	var win := bool(out.get("win", false))
+	var first_lesson := bool(setup.get("fort_guide_first", false))
 	var p := _modal_panel(560)
 	var v: VBoxContainer = p.get_child(0)
 	v.add_theme_constant_override("separation", 10)
@@ -1734,6 +1735,12 @@ func _show_result() -> void:
 			var gl := _label("Все три звезды в этом бою — +%d Славы!" % int(out["star_glory"]), 16, true, C_GOOD)
 			gl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			v.add_child(gl)
+	if legion.v3() and out.has("camp_chest"):
+		var kind := String(out["camp_chest"])
+		var chest_text := I18n.t("Сундуки заполнены — откройте один в форте.") if kind == "full" else I18n.t("В форте ждёт: %s") % I18n.t(String(Legion.CHEST_NAMES.get(kind, kind)))
+		var chest_label := _label(chest_text, 18, true, C_GOOD)
+		chest_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(chest_label)
 	var chest: Dictionary = out.get("chest", {})
 	if not chest.is_empty():
 		var ct := "Все 30 звёзд «%s»! Сундук Славы +%d." % [String(chest["region"]), int(chest["glory"])]
@@ -1767,7 +1774,7 @@ func _show_result() -> void:
 		ul.custom_minimum_size = Vector2(480, 0)
 		ul.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(ul)
-	if not win:
+	if not win and not first_lesson:
 		var tip := "Не беда! Улучшите бойцов в окне «Легион» → «Войска», поставьте в отряд тех, кто сильнее против этих врагов, и вовремя жмите умения."
 		if not pvp:
 			# совет по составу под этот бой (без тех родов войск, которых у игрока ещё нет)
@@ -1788,20 +1795,24 @@ func _show_result() -> void:
 	bh.add_theme_constant_override("separation", 10)
 	v.add_child(bh)
 	var nx: Dictionary = out.get("next", {})
-	if win and not pvp and not nx.is_empty() and not bool(out.get("boss_beaten", false)):
+	if win and not pvp and not first_lesson and not nx.is_empty() and not bool(out.get("boss_beaten", false)):
 		var why := legion.can_fight(nx)
 		var nb := _button("Дальше: " + (String(nx["name"]) if bool(nx.get("boss", false)) else "бой %d" % (int(nx["s"]) + 1)), "swords", func(): _again(nx), 0)
+		_ration_button(nb, nx)
 		nb.disabled = why != ""
 		nb.tooltip_text = why
 		bh.add_child(nb)
-	if not pvp:
+	if not pvp and not first_lesson:
 		var st := legion.stage_info(int(stage["cycle"]), int(stage["r"]), int(stage["s"]))
 		var why2 := legion.can_fight(st)
 		var ab := _button("Ещё раз", "redo", func(): _again(st), 0)
+		_ration_button(ab, st)
 		ab.disabled = why2 != ""
 		ab.tooltip_text = why2
 		bh.add_child(ab)
-	bh.add_child(_button("В лагерь" if not pvp or setup.has("event") else "К соперникам", "legion", _close, 0))
+	var back := _button("В лагерь" if not pvp or setup.has("event") else "К соперникам", "legion", _close, 0)
+	back.name = "LegionBattleReturn"
+	bh.add_child(back)
 
 
 ## Три условия звёзд под звёздами: добытые — золотые, недобытая — серая и почему («пали 1 из 3»)
@@ -1825,7 +1836,7 @@ func _star_lines() -> Control:
 			h.add_child(_label("— " + Legion.star_miss(i, out, stage), 16, true, C_BAD))
 		box.add_child(h)
 	# один раз — как устроены звёзды
-	if not legion.flags.has("stars_tip"):
+	if not legion.flags.has("stars_tip") and not bool(setup.get("fort_guide_first", false)):
 		legion.flags["stars_tip"] = true
 		var tl := _label("Звёзды — за мастерство, каждая добывается раз и навсегда. Все три в бою — +%d Славы; все 30 звёзд провинции — сундук Славы и трофей в город." % Legion.STAR_GLORY, 14, false, C_SOFT)
 		tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1920,7 +1931,9 @@ func _reward_chip(key: String, n: int) -> Control:
 func _again(st: Dictionary) -> void:
 	if legion.can_fight(st) != "":
 		return
-	var s := legion.make_battle(st)
+	var s := legion.prepare_battle(st)
+	if s.is_empty():
+		return
 	_loading(s)
 	fade.modulate.a = 0.0
 	var tw := create_tween()
@@ -2225,3 +2238,11 @@ class WavePip extends Control:
 		draw_circle(c, 6.0, Color("f2c24a") if on else Color(0.55, 0.3, 0.2, 0.9))
 		if boss:
 			draw_colored_polygon(PackedVector2Array([c + Vector2(-5, -6), c + Vector2(-3, -11), c + Vector2(0, -7), c + Vector2(3, -11), c + Vector2(5, -6)]), Color("f2c24a"))
+
+
+func _ration_button(button: Button, st: Dictionary) -> void:
+	if not legion.v3():
+		return
+	button.text += " · %.1f" % legion.ration_cost(st)
+	button.icon = _icon_tex("bread")
+	button.add_theme_color_override("font_disabled_color", C_BAD if legion.rations < legion.ration_cost(st) else C_SOFT)

@@ -3,7 +3,7 @@ extends Node3D
 
 const Fixture = preload("res://scripts/test_fort_fixture.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
-var out := "D:/CivCity/.work/stage5/fort5d/shots/"
+var out := "D:/CivCity/.work/stage6/legion7a2/shots/fort5b/"
 var fails := 0
 var game: Game
 var camp: CampUI
@@ -94,6 +94,8 @@ func _run() -> void:
 	lg.flags["camp_told"] = true
 	lg.flags["camp3d_guide"] = 4
 	lg.army_tick()
+	lg.fort["money"] = 125400.0
+	lg.fort["smith_knowledge"] = true
 	for entry: Array in [["hq", 3], ["barracks", 1], ["kitchen", 1], ["forge", 4], ["store", 1]]:
 		Fixture.set_level(lg, String(entry[0]), int(entry[1]))
 	lg.mats = {"iron": 10000.0, "wood": 10000.0, "leather": 10000.0}
@@ -129,15 +131,17 @@ func _run() -> void:
 	check(camp.diorama is FortCutaway, "painted fort stays active")
 	check(camp.chips.get_child_count() == 4 and camp.resource_chips.keys() == ["money", "rations", "glory", "ingots"], "four top resources")
 	check(camp.population_button.icon == Kit.texture("family") and camp.population_button.text.contains(str(lg.fort_population())), "population pill")
-	check(camp.left_column.get_child_count() == 5 and camp.campaign_button.text == "" and camp.build_button.text == "", "icon navigation")
+	_navigation_checks()
 	check(camp.ration_label.text == "%d / %d" % [lg.rations_now(), lg.ration_cap()], "rations are in top HUD")
 	_top_bar_checks("hud")
-	await _guide_checks(1, camp.build_button, "hud/build")
+	await _guide_checks(Legion.FortGuide.CHEST, camp.chest_button, "hud/chests")
 	await shot("1_fort_hud.png")
 	await _fresh_top_bar_checks("fresh/hud")
-	await _guide_checks(0, camp.plot_markers[kitchen]["collect"], "hud/collect long text")
-	await _guide_checks(3, camp.campaign_button, "hud/campaign short text")
-	lg.flags["camp3d_guide"] = 4
+	lg.flags["fort_guide_sid"] = int(cook["id"])
+	lg.flags["fort_guide_plot"] = kitchen
+	await _guide_checks(Legion.FortGuide.RATIONS, camp.plot_markers[kitchen]["collect"], "hud/collect long text")
+	await _guide_checks(Legion.FortGuide.CAMPAIGN, camp.campaign_button, "hud/campaign short text")
+	lg.finish_fort_guide()
 	camp._layout_guide()
 	camp.show_plot(forge)
 	check(camp.card.has_meta("ui_kit_a") and camp.card.find_child("FortRoomPicture", true, false) != null, "room frame and cutaway picture")
@@ -161,10 +165,13 @@ func _run() -> void:
 	check((camp.build_cards["forge"]["picture"] as Control).get_child_count() > 0, "build pictures")
 	await _window_checks(camp.modal_panel, "build")
 	await _build_button_checks()
-	await _guide_checks(2, camp.build_cards["kitchen"]["button"], "build/kitchen")
-	lg.flags["camp3d_guide"] = 4
-	camp._layout_guide()
 	await shot("3_build_menu.png")
+	camp.show_chests()
+	await frames(4)
+	var starter := camp.modal_panel.find_child("FortChest_wooden", true, false) as Control
+	await _guide_checks(Legion.FortGuide.CHEST, starter, "chests/wooden")
+	lg.finish_fort_guide()
+	camp._layout_guide()
 	camp.show_dweller(sid)
 	var slots := camp.modal_panel.find_child("FortGearSlots", true, false)
 	check(slots != null and slots.get_child_count() == 4 and slots.find_children("TierBadge", "Label", true, false).size() == 4, "four equipped slots and tier badges")
@@ -298,9 +305,9 @@ func _small_window_checks(forge: int, sid: int) -> void:
 	await frames(12)
 	_top_bar_checks("720/hud")
 	await _fresh_top_bar_checks("720/fresh/hud")
-	await _guide_checks(1, camp.build_button, "720/build")
-	await _guide_checks(3, camp.campaign_button, "720/campaign")
-	lg.flags["camp3d_guide"] = 4
+	await _guide_checks(Legion.FortGuide.CHEST, camp.chest_button, "720/chests")
+	await _guide_checks(Legion.FortGuide.CAMPAIGN, camp.campaign_button, "720/campaign")
+	lg.finish_fort_guide()
 	camp._layout_guide()
 	camp.show_plot(forge)
 	await _window_checks(camp.card, "720/room")
@@ -328,22 +335,39 @@ func _small_window_checks(forge: int, sid: int) -> void:
 
 
 func _fresh_top_bar_checks(tag: String) -> void:
-	var money := game.city.money
+	var money := lg.city_money()
 	var rations := lg.rations
 	var glory := lg.glory
 	var ingots := lg.ingots
-	game.city.money = 1740
+	lg.fort["money"] = 1740.0
 	lg.rations = lg.ration_cap()
 	lg.glory = 0
 	lg.ingots = 0
 	camp._refresh()
 	await frames(3)
 	_top_bar_checks(tag)
-	game.city.money = money
+	lg.fort["money"] = money
 	lg.rations = rations
 	lg.glory = glory
 	lg.ingots = ingots
 	camp._refresh()
+
+
+func _navigation_checks() -> void:
+	var icons: Array[String] = ["map", "tasks", "chest", "collect", "arena", "squad"]
+	if not check(camp.left_column.get_child_count() == icons.size() and camp.build_button.text == "", "icon navigation"):
+		return
+	var buttons: Array[Button] = [camp.campaign_button, camp.daily_button, camp.chest_button,
+		camp.order_button, camp.left_column.get_child(4) as Button, camp.squad_button]
+	for i in icons.size():
+		var button: Button = buttons[i]
+		var picture: TextureRect = button.get_node_or_null("ic") as TextureRect if button != null else null
+		check(button != null and camp.left_column.get_child(i) == button and button.text == ""
+			and not button.tooltip_text.is_empty() and picture != null and picture.texture != null
+			and picture.texture == Kit.texture(icons[i]), "navigation icon and tooltip " + icons[i])
+	check(camp.order_button.name == "FortCityOrder"
+		and camp.order_button.tooltip_text.begins_with(I18n.t("Заказать денарии из города")), "city order tooltip")
+	check(camp.order_ring != null and camp.order_ring.get_parent() == camp.order_button, "city order timer ring")
 
 
 func _top_bar_checks(tag: String) -> void:
@@ -370,7 +394,7 @@ func _top_bar_checks(tag: String) -> void:
 
 
 func _guide_checks(step: int, target: Control, tag: String) -> void:
-	lg.flags["camp3d_guide"] = step
+	lg.flags["fort_guide"] = step
 	camp._layout_guide()
 	await frames(3)
 	if not check(camp.guide.is_visible_in_tree() and camp._guide_target == target, tag + " guide targets control"):
@@ -383,10 +407,12 @@ func _guide_checks(step: int, target: Control, tag: String) -> void:
 	var gap := Vector2(maxf(0, maxf(button.position.x - bubble.end.x, bubble.position.x - button.end.x)),
 		maxf(0, maxf(button.position.y - bubble.end.y, bubble.position.y - button.end.y)))
 	check(gap.length() <= 120, tag + " guide within 120 px of target")
-	check(bubble.end.y <= button.position.y + 2, tag + " guide above target")
+	check(not bubble.intersects(button), tag + " guide clears target")
 	var pointer := camp.guide_pointer.get_global_rect()
 	check(camp.guide_pointer.is_visible_in_tree() and viewport.encloses(pointer), tag + " pointer inside viewport")
-	check(absf(pointer.get_center().x - button.get_center().x) <= 1 and absf(pointer.end.y - button.position.y) <= 4, tag + " arrow touches target")
+	var above := not camp.guide_pointer.flip_v
+	var tip_gap := pointer.end.y - button.position.y if above else pointer.position.y - button.end.y
+	check(absf(pointer.get_center().x - button.get_center().x) <= 1 and absf(tip_gap) <= 4, tag + " arrow touches target")
 	var font := camp.guide_text.get_theme_font("font")
 	var text_width := font.get_string_size(camp.guide_text.text, HORIZONTAL_ALIGNMENT_LEFT, -1, camp.guide_text.get_theme_font_size("font_size")).x
 	var padding := camp.guide.get_theme_stylebox("panel").get_minimum_size().x

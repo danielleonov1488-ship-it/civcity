@@ -158,6 +158,9 @@ const SQUAD_V3 := 5                       # мест в отряде; 0–2 — 
 const SQUAD_V3_FRONT := 3
 const CAMP_POP := 50                      # жителей, с которых открывается лагерь
 const CAMP_OPEN_TEXT := "Форт открыт: принимайте новобранцев у ворот — кнопка «Легион» наверху"
+enum FortGuide {INACTIVE, RECRUIT, KITCHEN, RATIONS, CHEST, EQUIP, BARRACKS, CAMPAIGN, FINISH, DONE}
+const FORT_GUIDE_BATCH := 2
+const FORT_GUIDE_COOK_SECS := 20.0
 const RATION_BASE := 2.0                  # паёк в игровой день; пекарня с работниками — ещё RATION_BAKERY
 const RATION_BAKERY := 3.0
 const RATION_CAP0 := 20
@@ -615,12 +618,11 @@ var ingots := 0
 var hero_lv3 := 1
 var hero_training := {}
 var chest_queue: Array = []
-var speed_day := -1
-var speed_used := 0.0
 const HERO_TIME_H := [0.0, 0.0, 0.5, 2.0, 8.0, 24.0]
 const HERO_MAX3 := MAX_LEVEL + 10
 const CHEST_NAMES := {"wooden": "Деревянный сундук", "bronze": "Бронзовый сундук", "gold": "Золотой сундук"}
-const CHEST_ODDS := "Обычное 70% · Редкое 22% · Эпическое 7% · Легендарное 1%"
+const CHEST_ODDS := "Деревянный: 70 / 22 / 7 / 1% · Бронзовый: 50 / 32 / 15 / 3% · Золотой: 25 / 40 / 28 / 7%"
+const CHEST_RARITY_ODDS := {"wooden": [70, 22, 7, 1], "bronze": [50, 32, 15, 3], "gold": [25, 40, 28, 7]}
 var rations_t := 0.0            # когда пайки считались впервые (0 — ещё ни разу: полный запас)
 var daily := {}             # задания дня (Daily): {day, tasks: [...], opened: bool, step: ступень лестницы сундуков}
 var relics := {}            # Легион 2.0, этап 6: реликвии наборов {набор: сколько} (Gear.SETS)
@@ -1101,6 +1103,8 @@ func equip(sid: int, iid: int) -> bool:
 		_v3_reclass(s)                       # оружие решает класс
 		if not o.is_empty():
 			_v3_reclass(o)                   # у прежнего владельца оружия нет — получит меч даром
+	if fort_guide_step() == FortGuide.EQUIP and sid == int(flags.get("fort_guide_sid", 0)) and iid == int(flags.get("fort_guide_item", 0)):
+		flags["fort_guide"] = FortGuide.BARRACKS
 	changed.emit()
 	daily_note("equip")                   # задания дня
 	return true
@@ -1131,9 +1135,7 @@ func sell_item(iid: int) -> bool:
 	var it := item(iid)
 	if it.is_empty() or int(it.get("on", 0)) != 0:
 		return false
-	var c = city()
-	if c != null:
-		c.magis_treasury += item_price(it)       # Выручка остаётся в казне Легиона.
+	receive_money(item_price(it))
 	items.erase(it)
 	changed.emit()
 	return true
@@ -1462,6 +1464,8 @@ func mats_short(need: Dictionary) -> String:
 
 ## Добыча после победы (новая игра): шанс вещи, босс — наверняка и лучше; уровень — по глубине похода
 func _drop(st: Dictionary, first: bool) -> Dictionary:
+	if v3():
+		return {}  # Вещи — из сундуков или изученного ремесла.
 	var boss := bool(st.get("boss", false)) or bool(st.get("junior", false))
 	var p := 1.0 if boss and first else (Gear.DROP_FIRST if first else Gear.DROP_REPEAT)
 	if _rng.randf() > p:
@@ -1756,9 +1760,78 @@ func city_level() -> int:
 	return int(c.level) if c != null else 0
 
 
+## Старое имя сохранено для окон: в форте V3 это только деньги Легиона.
 func city_money() -> float:
+	if v3():
+		_fort_init()
+		return float(fort.get("money", 0.0))
 	var c = city()
 	return float(c.money) + c.magis_treasury if c != null else 1e12
+
+
+func money_cap() -> int:
+	return roundi(5000.0 * pow(1.6, maxi(0, camp_level("hq") - 1))) + 5000 * fort_level_sum("store")
+
+
+## Старую военную казну переносим один раз, городской бюджет не трогаем.
+func _fort_money_load(raw: Dictionary) -> void:
+	var c = city()
+	var old := float(c.magis_treasury) if c != null else 0.0
+	fort["money"] = maxf(0.0, float(raw.get("money", raw.get("treasury", old if old > 0.0 else 500.0))))
+	fort["order_ready_at"] = maxf(0.0, float(raw.get("order_ready_at", 0.0)))
+	fort["smith_knowledge"] = bool(raw.get("smith_knowledge", false))
+	if c != null:
+		c.magis_treasury = 0.0
+
+
+func receive_money(amount: float) -> float:
+	if not v3():
+		var c = city()
+		if c != null:
+			c.magis_treasury += maxf(0.0, amount)
+		return maxf(0.0, amount)
+	fort_finish()
+	var accepted := minf(maxf(0.0, amount), maxf(0.0, money_cap() - city_money()))
+	fort["money"] = city_money() + accepted
+	return accepted
+
+
+const CITY_ORDER_SECONDS := 5.0 * 3600.0
+
+
+func city_order_info() -> Dictionary:
+	fort_finish()
+	var c = city()
+	var percent := clampi(4 + camp_level("hq"), 5, 15)
+	var balance := maxf(0.0, float(c.money)) if c != null else 0.0
+	var amount := mini(floori(balance * percent / 100.0), maxi(0, floori(money_cap() - city_money())))
+	var left := maxf(0.0, float(fort.get("order_ready_at", 0.0)) - now())
+	var why := ""
+	if not v3() or c == null:
+		why = "Заказ доступен в форте"
+	elif left > 0.0:
+		why = "Обоз ещё в пути"
+	elif money_cap() - city_money() < 1.0:
+		why = "Казна Легиона полна"
+	elif amount <= 0:
+		why = "В городе мало денариев"
+	return {"amount": amount, "percent": percent, "left": left, "why": why}
+
+
+func order_city_money() -> int:
+	var info := city_order_info()
+	if info["why"] != "":
+		return 0
+	var c = city()
+	var amount := int(info["amount"])
+	c.money -= amount
+	fort["money"] = city_money() + amount
+	fort["order_ready_at"] = now() + CITY_ORDER_SECONDS
+	c.flow("legion", -amount)
+	c._quiet(I18n.t("Обоз отправлен в Легион: %d денариев") % amount, "legion")
+	c.changed.emit()
+	changed.emit()
+	return amount
 
 
 ## Сколько таких построек в городе
@@ -2375,15 +2448,21 @@ func _afford_text(cost: Dictionary) -> String:
 
 
 func _pay(cost: Dictionary) -> void:
-	var c = city()
-	if c != null:
-		var price := float(cost.get("money", 0))
-		var held := minf(c.magis_treasury, price)
-		c.magis_treasury -= held
-		price -= held
-		c.money = maxf(0.0, float(c.money) - price)   # платят только с хватающей казной (_afford_text)
-		if c.has_method("flow"):
-			c.flow("legion", -price)   # история денег за сутки (этап 2.4)
+	if v3():
+		fort_finish()  # Полный склад не копит доход задним числом после расхода.
+	var price := maxf(0.0, float(cost.get("money", 0)))
+	if v3():
+		_fort_init()
+		fort["money"] = maxf(0.0, city_money() - price)
+	else:
+		var c = city()
+		if c != null:
+			var held := minf(c.magis_treasury, price)
+			c.magis_treasury -= held
+			price -= held
+			c.money = maxf(0.0, float(c.money) - price)
+			if c.has_method("flow"):
+				c.flow("legion", -price)
 	glory -= float(cost.get("glory", 0))
 
 
@@ -3152,7 +3231,7 @@ func can_fight(st: Dictionary) -> String:
 	if float(food_cost(st)) > city_money():
 		return "Не хватает денариев на провиант: нужно %d." % food_cost(st)
 	if V3 and rations + 0.0001 < ration_cost(st):
-		return "Нет пайков: нужно %.1f, есть %.1f. Паёк даёт город — пекарни с работниками хлебом кормят лагерь." % [ration_cost(st), rations]
+		return "Нет пайков: нужно %.1f, есть %.1f. Назначьте жителя на кухню и соберите пайки." % [ration_cost(st), rations]
 	if V2 and not V3 and food_now() < FOOD2_BATTLE:
 		return "Мало провианта: нужно %d, есть %d. Очко — каждые %d мин." % [FOOD2_BATTLE, food_now(), roundi(FOOD2_MIN)]
 	return ""
@@ -3262,11 +3341,24 @@ func tutorial_battle(st: Dictionary) -> bool:
 
 ## Кнопка «В бой» окна «Легион»: проверить и попросить 3D-бой (сигнал battle_requested).
 ## Возвращает setup ({} — нельзя: почему — can_fight(st)). Кто слушает сигнал — тот и крутит бой
-func start_battle(st: Dictionary) -> Dictionary:
+func prepare_battle(st: Dictionary) -> Dictionary:
 	if can_fight(st) != "":
 		return {}
 	var setup := make_battle(st)
-	battle_requested.emit(setup)
+	if v3():
+		rations = maxf(0.0, rations - ration_cost(st))
+		setup["rations_paid"] = true
+		if fort_guide_step() == FortGuide.CAMPAIGN and int(st.get("idx", -1)) == 0:
+			setup["fort_guide_first"] = true
+			flags["fort_guide"] = FortGuide.FINISH
+		changed.emit()
+	return setup
+
+
+func start_battle(st: Dictionary) -> Dictionary:
+	var setup := prepare_battle(st)
+	if not setup.is_empty():
+		battle_requested.emit(setup)
 	return setup
 
 
@@ -3397,14 +3489,11 @@ func has_trophy(id: String) -> bool:
 func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 	var st: Dictionary = setup["stage"]
 	var c = city()
-	if c != null:
-		# провиант — сколько есть в казне: пока шёл бой, казна могла опустеть (в минус она не уходит)
-		var food := minf(float(setup.get("food", 0)), maxf(0.0, float(c.money)))
-		c.money -= food
-		if c.has_method("flow"):
-			c.flow("legion", -food)
+	if not V3:
+		_pay({"money": minf(float(setup.get("food", 0)), city_money())})
 	if V3:
-		rations = maxf(0.0, rations - ration_cost(st))
+		if not bool(setup.get("rations_paid", false)):
+			rations = maxf(0.0, rations - ration_cost(st))
 	elif V2:
 		_food_tick()
 		food_pts = maxf(0.0, food_pts - FOOD2_BATTLE)
@@ -3446,7 +3535,8 @@ func apply_result(setup: Dictionary, result: Dictionary) -> Dictionary:
 			out["star_glory"] = STAR_GLORY
 		out["money_lost"] = _give(reward)      # казна полна — сколько денариев не уместилось (окно итога скажет честно)
 		if army_on():
-			out["item"] = _drop(st, first)       # Легион 2.0: вещь в добычу (или {"full": true} — Склад полон)
+			if not v3():
+				out["item"] = _drop(st, first)   # Прежний поход V2.
 			out["relic"] = _relic(st, first)     # этап 6: реликвия набора с босса ("" — нет)
 		out["reward"] = reward
 		out["chest"] = _chest(int(st["cycle"]), int(st["r"]))
@@ -3506,18 +3596,17 @@ func _chest(cycle: int, r: int) -> Dictionary:
 
 ## Военная добыча остаётся у Легиона; казна и исследования города не меняются.
 func _give(reward: Dictionary) -> int:
-	var c = city()
+	var lost := 0.0
 	for k in reward:
 		var value := maxf(0.0, float(reward[k]))
 		match k:
 			"glory":
 				glory += value
 			"money":
-				if c != null:
-					c.magis_treasury += value  # Только расходы Легиона; бюджет города не растёт.
+				lost += value - receive_money(value)
 			"rp":
 				flags["research_loot"] = float(flags.get("research_loot", 0.0)) + value
-	return 0
+	return ceili(lost)
 
 
 # =====================================================================
@@ -3969,14 +4058,14 @@ const FORT_B := {
 	"smelter": {"name": "Плавильня", "icon": "iron", "gives": "Выплавляет железо", "max": [1, 5, 9], "cost_key": "smelter", "mats": {"wood": 4}, "time_k": 1.0, "production": {"resource": "iron", "rate": 4.0, "cap": 48.0}},
 	"sawmill": {"name": "Лесопилка", "icon": "wood", "gives": "Заготавливает дерево", "max": [1, 5, 9], "cost_key": "sawmill", "mats": {"iron": 4}, "time_k": 1.0, "production": {"resource": "wood", "rate": 4.0, "cap": 48.0}},
 	"tannery": {"name": "Кожевня", "icon": "leather", "gives": "Выделывает кожу", "max": [1, 5, 9], "cost_key": "tannery", "mats": {"wood": 4}, "time_k": 1.0, "production": {"resource": "leather", "rate": 4.0, "cap": 48.0}},
-	"store": {"name": "Склад", "icon": "armory", "gives": "Больше места для запасов", "max": [2, 3, 7, 12], "cost_key": "armory", "mats": {"wood": 8}, "time_k": 1.0, "rations_per": 5, "materials_per": 80, "ingots_per": 20},
+	"store": {"name": "Склад", "icon": "armory", "gives": "Больше места для денариев и запасов", "max": [2, 3, 7, 12], "cost_key": "armory", "mats": {"wood": 8}, "time_k": 1.0, "rations_per": 5, "materials_per": 80, "ingots_per": 20},
 	"forge": {"name": "Кузница", "icon": "forge", "gives": "Куёт снаряжение", "max": [2], "cost_key": "forge", "mats": {"iron": 6, "wood": 2}, "time_k": 1.0},
 	"drill": {"name": "Плац", "icon": "barracks", "gives": "Обучает одного воина", "max": [1, 5, 9], "cost_key": "legionary", "mats": {"wood": 4}, "time_k": 1.0, "speed_per": 0.1},
 	"infirmary": {"name": "Лазарет", "icon": "infirmary", "gives": "Помогает раненым", "max": [2, 7], "cost_key": "infirmary", "mats": {"wood": 4, "leather": 2}, "time_k": 1.0},
 	"mars": {"name": "Храм Марса", "icon": "mars", "gives": "Открывает благословения", "max": [3], "cost_key": "mars", "mats": {"iron": 6}, "time_k": 1.0},
 	"stable": {"name": "Конюшня", "icon": "cavalry", "gives": "Дом для конницы", "max": [3], "cost_key": "legionary", "mats": {"wood": 6, "leather": 4}, "time_k": 1.0},
 	"tower": {"name": "Сторожевая вышка", "icon": "tower", "gives": "Охраняет форт", "max": [1, 1, 1, 1, 5, 7, 9, 12], "cost_key": "legionary", "mats": {"wood": 6}, "time_k": 1.0},
-	"treasury": {"name": "Сокровищница", "icon": "gold", "gives": "Копит золотые слитки", "max": [3], "cost_key": "principia", "mats": {"iron": 8, "wood": 4}, "time_k": 1.0, "production": {"resource": "ingots", "rate": 1.0 / 12.0, "cap": 2.0}},
+	"treasury": {"name": "Сокровищница", "icon": "gold", "gives": "Копит денарии Легиона", "max": [1], "cost_key": "principia", "mats": {"iron": 8, "wood": 4}, "time_k": 1.0, "production": {"resource": "money", "rate": 240.0, "cap": 1440.0}},
 	"arsenal": {"name": "Арсенал", "icon": "armory", "gives": "Места для снаряжения", "max": [2, 7], "cost_key": "armory", "mats": {"wood": 6, "iron": 4}, "time_k": 1.0},
 }
 const FORT_EXP := [{"hq": 1, "plots": 4}, {"hq": 3, "plots": 7}, {"hq": 5, "plots": 10},
@@ -4025,10 +4114,14 @@ func _fort_init() -> void:
 		return
 	var migrated := not camp.is_empty()
 	fort = {"exp": 0, "plots": [], "next_id": 0, "up": {}, "newcomers": [], "arrival": 0.0}
+	_fort_money_load({})
+	if not migrated and not bool(flags.get("chest_start", false)):
+		chest_queue = ["wooden"]
+	flags["chest_start"] = true
 	# Старый лагерь переносим целиком, новый занимает два этажа.
-	var initial: Array = ["hq", "barracks", "forge", "drill", "store", "mars"] if migrated else ["hq", "barracks", "drill"]
+	var initial: Array = ["hq", "barracks", "forge", "drill", "store", "mars"] if migrated else ["hq", "barracks", "drill", "treasury"]
 	for type: String in initial:
-		var lv := maxi(0, int(camp.get(type, CAMP_START[type])))
+		var lv := maxi(0, int(camp.get(type, CAMP_START.get(type, 1))))
 		if type == "hq":
 			lv = maxi(1, lv)
 		var p := _fort_add_plot(type if lv > 0 else "", lv)
@@ -4045,6 +4138,63 @@ func _fort_init() -> void:
 		_fort_add_plot()
 	_fort_migrate_workers()
 	_fort_sync_camp()
+
+
+func fort_guide_step() -> int:
+	return int(flags.get("fort_guide", FortGuide.INACTIVE))
+
+
+func begin_fort_guide() -> void:
+	if fort_guide_step() != FortGuide.INACTIVE:
+		return
+	flags["camp_told"] = true
+	# Старый пройденный форт сохраняет своё состояние.
+	if int(flags.get("camp3d_guide", 0)) >= 4 or progress > 0 or not chest_queue.has("wooden"):
+		flags["fort_guide"] = FortGuide.DONE
+		return
+	for person: Dictionary in soldiers:
+		if not bool(person.get("hero", false)):
+			flags["fort_guide"] = FortGuide.DONE
+			return
+	flags["fort_guide"] = FortGuide.RECRUIT
+
+
+func fort_guide_newcomer() -> void:
+	# Первый человек уже ждёт, даже если город ещё не достиг нужного счастья.
+	if fort_guide_step() == FortGuide.RECRUIT and (fort["newcomers"] as Array).is_empty():
+		(fort["newcomers"] as Array).append(_fort_newcomer())
+
+
+func finish_fort_guide() -> void:
+	rations += float(flags.get("fort_guide_rations", 0.0))
+	for key: String in ["fort_guide_sid", "fort_guide_plot", "fort_guide_item", "fort_guide_rations", "fort_guide_stage"]:
+		flags.erase(key)
+	flags["fort_guide"] = FortGuide.DONE
+
+
+func fort_guide_cooking(plot_id: int) -> bool:
+	return fort_guide_step() == FortGuide.RATIONS and plot_id == int(flags.get("fort_guide_plot", -1))
+
+
+func _fort_guide_assign(p: Dictionary, sid: int) -> void:
+	if sid != int(flags.get("fort_guide_sid", 0)):
+		return
+	var step := fort_guide_step()
+	if p["b"] == "kitchen" and step in [FortGuide.KITCHEN, FortGuide.RATIONS]:
+		if step == FortGuide.KITCHEN:
+			# Оставляем место под первую партию в полном стартовом запасе.
+			var reserve := clampf(rations - ration_cap() + FORT_GUIDE_BATCH, 0.0, FORT_GUIDE_BATCH)
+			rations -= reserve
+			flags["fort_guide_rations"] = reserve
+		flags["fort_guide_plot"] = int(p["id"])
+		flags["fort_guide"] = FortGuide.RATIONS
+	elif p["b"] == "barracks" and step == FortGuide.BARRACKS:
+		_ensure_hero3()
+		if not squad3.has(sid):
+			for i in slots():
+				if int(squad3[i]) == 0 and set_place(i, sid):
+					break
+		flags["fort_guide"] = FortGuide.CAMPAIGN
 
 
 ## Первый готовый работник; жители казармы остаются дома и в отряде.
@@ -4123,6 +4273,7 @@ func fort_assign(plot_id: int, sid: int) -> bool:
 		return false
 	var source := fort_worker_plot(sid)
 	if source == plot_id:
+		_fort_guide_assign(p, sid)
 		return true
 	# Сначала учитываем старую работу, затем меняем оба списка без промежуточного сигнала.
 	var displaced := 0
@@ -4137,6 +4288,7 @@ func fort_assign(plot_id: int, sid: int) -> bool:
 			_fort_place(fort_plot(source), displaced)
 	_fort_place(p, sid)
 	_v3_sync_squad()
+	_fort_guide_assign(p, sid)
 	_fort_changed()
 	return true
 
@@ -4231,7 +4383,7 @@ func _fort_migrate_workers() -> void:
 
 
 func fort_stock(resource: String) -> float:
-	return float(ingots) if resource == "ingots" else rations if resource == "rations" else float(mats.get(resource, 0.0))
+	return city_money() if resource == "money" else float(ingots) if resource == "ingots" else rations if resource == "rations" else float(mats.get(resource, 0.0))
 
 
 func fort_builder_text() -> String:
@@ -4517,9 +4669,13 @@ func _fort_accrue(p: Dictionary, until: float) -> void:
 	_craft_accrue(p, until - since, until)
 	var prod := fort_production(String(p["b"]), int(p["lv"]))
 	# Время простоя не накапливается: ни без человека, ни при полном складе.
-	if not prod.is_empty() and (p["up"] as Dictionary).is_empty() and not fort_worker(int(p["id"])).is_empty():
+	if not prod.is_empty() and (p["up"] as Dictionary).is_empty():
+		var worker := fort_worker(int(p["id"]))
 		var resource := String(prod["resource"])
-		if fort_stock(resource) < resource_cap(resource) and float(p["pend"]) < float(prod["cap"]):
+		if fort_guide_cooking(int(p["id"])) and int(worker.get("id", 0)) == int(flags.get("fort_guide_sid", -1)):
+			if float(p["pend"]) < FORT_GUIDE_BATCH:
+				p["pend"] = minf(FORT_GUIDE_BATCH, float(p["pend"]) + (until - since) * FORT_GUIDE_BATCH / FORT_GUIDE_COOK_SECS)
+		elif not worker.is_empty() and fort_stock(resource) < resource_cap(resource) and float(p["pend"]) < float(prod["cap"]):
 			p["pend"] = minf(float(prod["cap"]), float(p["pend"]) + (until - since) / 3600.0 * float(prod["rate"]) * maxf(0.001, time_k))
 	p["t"] = until
 
@@ -4568,15 +4724,33 @@ func fort_collect(plot_id: int) -> int:
 	if prod.is_empty():
 		return 0
 	var resource := String(prod["resource"])
-	var stock := float(ingots) if resource == "ingots" else rations if resource == "rations" else float(mats.get(resource, 0.0))
-	var amount := maxi(0, mini(floori(float(p["pend"]) + 0.0001), floori(resource_cap(resource) - stock)))
+	var stock := fort_stock(resource)
+	var available := floori(float(p["pend"]) + 0.0001)
+	var capacity := floori(resource_cap(resource) - stock)
+	var first_batch := fort_guide_cooking(plot_id)
+	if first_batch:
+		if available < FORT_GUIDE_BATCH:
+			return 0
+		capacity = maxi(capacity, FORT_GUIDE_BATCH)
+	var amount := maxi(0, mini(available, capacity))
 	if amount == 0:
 		return 0
 	p["pend"] = maxf(0.0, float(p["pend"]) - amount)
-	if resource == "ingots":
+	if resource == "money":
+		fort["money"] = stock + amount
+	elif resource == "ingots":
 		ingots += amount
 	elif resource == "rations":
 		rations += amount
+		if first_batch:
+			flags.erase("fort_guide_rations")
+			var gear := item(int(flags.get("fort_guide_item", 0)))
+			if gear.is_empty():
+				flags["fort_guide"] = FortGuide.CHEST
+			elif int(gear.get("on", 0)) == int(flags["fort_guide_sid"]):
+				flags["fort_guide"] = FortGuide.BARRACKS
+			else:
+				flags["fort_guide"] = FortGuide.EQUIP
 	else:
 		mats[resource] = stock + amount
 	changed.emit()
@@ -4614,6 +4788,7 @@ func _fort_load(raw: Variant) -> void:
 	if not v3() or not raw is Dictionary or not raw.get("plots", null) is Array:
 		return
 	fort = {"exp": maxi(0, int(raw.get("exp", 0))), "plots": [], "next_id": maxi(1, int(raw.get("next_id", 1))), "up": {}}
+	_fort_money_load(raw)
 	fort["population_v"] = int(raw.get("population_v", 0))
 	if raw.has("sections"):
 		fort["sections"] = maxi(0, int(raw["sections"]))
@@ -4899,6 +5074,9 @@ func fort_accept(id: int) -> Dictionary:
 			person[key] = candidate.get(key, 0 if key == "look_seed" else false if key == "female" else "legionary")
 		(fort["newcomers"] as Array).erase(candidate)
 		_v3_reclass(person)
+		if fort_guide_step() == FortGuide.RECRUIT:
+			flags["fort_guide_sid"] = id
+			flags["fort_guide"] = FortGuide.KITCHEN
 		changed.emit()
 		daily_note("recruit")
 		return person
@@ -4977,13 +5155,7 @@ func _v3_reclass(s: Dictionary) -> void:
 		s["gear"] = {}
 	var gd: Dictionary = s["gear"]
 	var w := item(int(gd.get("weapon", 0)))
-	if w.is_empty():
-		var it := {"id": iid_next, "slot": "weapon", "cls": "legionary", "rarity": 0, "ilvl": 1, "tier": 1, "on": int(s["id"]), "free": true}
-		iid_next += 1
-		items.append(it)
-		gd["weapon"] = int(it["id"])
-		w = it
-	s["cls"] = Gear.weapon_class(w)
+	s["cls"] = Gear.weapon_class(w) if not w.is_empty() else "legionary"
 	_v3_sync_squad()
 
 
@@ -5113,7 +5285,7 @@ func to_dict() -> Dictionary:
 		"food_pts": food_pts, "food_t": food_t, "camp": camp, "squad3": squad3, "rations": rations, "rations_t": rations_t}
 	if v3():
 		data.merge({"fort": fort.duplicate(true), "pending_resources": pending_resources, "ingots": ingots, "hero_lv3": hero_lv3,
-			"hero_training": hero_training, "chest_queue": chest_queue, "speed_day": speed_day, "speed_used": speed_used,
+			"hero_training": hero_training, "chest_queue": chest_queue,
 			"rng_seed3": str(_rng.seed), "rng_state3": str(_rng.state)})
 	return data
 
@@ -5243,8 +5415,6 @@ func from_dict(d: Dictionary) -> void:
 	for kind in d.get("chest_queue", []):
 		if CHEST_NAMES.has(String(kind)) and chest_queue.size() < 4:
 			chest_queue.append(String(kind))
-	speed_day = int(d.get("speed_day", -1))
-	speed_used = clampf(float(d.get("speed_used", 0.0)), 0.0, 7200.0)
 	if v3() and d.has("rng_seed3"):
 		_rng.seed = int(d["rng_seed3"])
 		_rng.state = int(d.get("rng_state3", str(_rng.state)))
@@ -5267,6 +5437,8 @@ func from_dict(d: Dictionary) -> void:
 	sid_next = int(d.get("sid_next", 1))
 	for s: Dictionary in soldiers:
 		sid_next = maxi(sid_next, int(s["id"]) + 1)
+	if v3():
+		flags["chest_start"] = true  # Загрузка не выдаёт стартовый подарок заново.
 	_fort_load(d.get("fort", {}))
 	_ensure()
 	for i in squad3.size():                         # в отряде — только живые воины
@@ -5410,6 +5582,8 @@ func _hero_tick3() -> void:
 
 
 func resource_cap(resource: String) -> int:
+	if v3() and resource == "money":
+		return money_cap()
 	if v3() and resource == "ingots":
 		return FORT_INGOT_BASE + int(FORT_B["store"]["ingots_per"]) * fort_level_sum("store")
 	return ration_cap() if resource == "rations" else mat_cap(resource)
@@ -5462,9 +5636,36 @@ func craft_working(plot_id: int) -> bool:
 	return not p.is_empty() and int(p["lv"]) > 0 and (p["up"] as Dictionary).is_empty() and not fort_worker(plot_id).is_empty()
 
 
+const SMITH_KNOWLEDGE_COST := {"money": 800, "mats": {"iron": 20, "wood": 20}}
+const SMITH_LOCK := "Нужно Кузнечное знание"
+
+
+func smith_known() -> bool:
+	return v3() and bool(fort.get("smith_knowledge", false))
+
+
+func can_learn_smith() -> String:
+	if not v3() or camp_level("hq") < 2:
+		return "Нужен Штаб ур. 2"
+	if smith_known():
+		return "Знание уже изучено"
+	return _fort_afford(SMITH_KNOWLEDGE_COST)
+
+
+func learn_smith() -> bool:
+	if can_learn_smith() != "":
+		return false
+	_fort_pay(SMITH_KNOWLEDGE_COST)
+	fort["smith_knowledge"] = true
+	changed.emit()
+	return true
+
+
 func can_craft(plot_id: int, kind: String, tier: int) -> String:
 	if not v3() or not Gear.CRAFT_TYPES.has(kind):
 		return "Нет такого рецепта"
+	if not smith_known():
+		return SMITH_LOCK
 	var p := fort_plot(plot_id)
 	if p.is_empty() or p["b"] != Gear.craft_room(kind) or int(p["lv"]) <= 0:
 		return "Выберите нужную мастерскую"
@@ -5598,73 +5799,6 @@ func equip_power(sid: int, iid: int) -> Array:
 	return [before, power(soldier_stats(probe, unit_of_class(String(probe["cls"]))))]
 
 
-func speed_remaining() -> float:
-	var c = city()
-	var today := int(c.day) if c != null else 0
-	if today != speed_day:
-		speed_day = today
-		speed_used = 0.0
-	return maxf(0.0, 7200.0 - speed_used)
-
-
-func timer3(key: String) -> Dictionary:
-	if v3() and key.begins_with("craft_"):
-		var parts := key.split("_")
-		if parts.size() != 3 or not parts[1].is_valid_int() or not parts[2].is_valid_int():
-			return {}
-		var plot_id := int(parts[1])
-		if not craft_working(plot_id):
-			return {}
-		var queue := craft_queue(plot_id)
-		for i in queue.size():
-			if float(queue[i]["left"]) > 0.0:
-				return queue[i] if i == int(parts[2]) else {}
-		return {}
-	if v3() and key == "fort_expand":
-		_fort_init()
-		return fort["up"]
-	if v3() and key.begins_with("fort_"):
-		var id_text := key.substr(5)
-		return fort_plot(int(id_text)).get("up", {}) if id_text.is_valid_int() else {}
-	if key == "hero":
-		return hero_training
-	if key == "forge":
-		return forging
-	if key.begins_with("train_"):
-		return soldier(int(key.substr(6)))
-	return upg.get(key, {}) if key.begins_with("camp_") else {}
-
-
-func speed_info(key: String) -> Dictionary:
-	if key.begins_with("craft_"):
-		fort_finish()
-	var timer := timer3(key)
-	var end_key := "train_end" if key.begins_with("train_") else "end"
-	var left := maxf(0.0, float(timer.get(end_key, 0.0)) - now())
-	var seconds := minf(1800.0, minf(left, speed_remaining()))
-	var price := 25 + 5 * ceili(left / 3600.0)
-	return {"seconds": seconds, "price": price, "left": left, "allowed": v3() and seconds > 0.0 and city_money() >= price}
-
-
-func speed_up(key: String) -> bool:
-	if not v3():
-		return false
-	var info := speed_info(key)
-	if not bool(info["allowed"]):
-		return false
-	_pay({"money": info["price"]})
-	var timer := timer3(key)
-	var end_key := "train_end" if key.begins_with("train_") else "end"
-	timer[end_key] = maxf(now(), float(timer[end_key]) - float(info["seconds"]))
-	if key.begins_with("craft_"):
-		timer["left"] = maxf(0.0, float(timer["left"]) - float(info["seconds"]))
-		_craft_deadlines(fort_plot(int(key.split("_")[1])), now())
-	speed_used += float(info["seconds"])
-	tick()
-	changed.emit()
-	return true
-
-
 func queue_chest(kind: String) -> bool:
 	if not v3() or not CHEST_NAMES.has(kind) or chest_queue.size() >= 4:
 		return false
@@ -5678,7 +5812,13 @@ func open_chest(kind: String) -> Dictionary:
 		return {}
 	var tier := int({"wooden": 1, "bronze": 2, "gold": 3}[kind])
 	var roll := _rng.randi_range(1, 100)
-	var rarity := 0 if roll <= 70 else (2 if roll <= 92 else (3 if roll <= 99 else 4))
+	var rarity := 0
+	var total := 0
+	for i in 4:
+		total += int(CHEST_RARITY_ODDS[kind][i])
+		if roll <= total:
+			rarity = int([0, 2, 3, 4][i])
+			break
 	var slot := String(Gear.SLOTS_V3[_rng.randi_range(0, Gear.SLOTS_V3.size() - 1)])
 	var cls := String(["legionary", "archer", "priest", "cavalry"][_rng.randi_range(0, 3)])
 	var gear := add_item({"slot": slot, "cls": cls if slot == "weapon" else "", "rarity": rarity, "ilvl": maxi(1, camp_level("hq")),
@@ -5689,6 +5829,11 @@ func open_chest(kind: String) -> Dictionary:
 		"iron": _rng.randi_range(5, 12) * tier, "wood": _rng.randi_range(5, 12) * tier, "leather": _rng.randi_range(5, 12) * tier,
 		"ingots": _rng.randi_range(1, 3) if _rng.randi_range(1, 100) <= 2 * tier else 0, "item": gear}
 	chest_queue.erase(kind)
+	var step := fort_guide_step()
+	if kind == "wooden" and step >= FortGuide.RECRUIT and step <= FortGuide.CHEST:
+		flags["fort_guide_item"] = int(gear["id"])
+		if step == FortGuide.CHEST:
+			flags["fort_guide"] = FortGuide.EQUIP
 	reward["money_lost"] = _give({"money": reward["money"]})
 	# Награды могут превысить запас; производство и сбор всё равно ждут свободного места.
 	for resource: String in Gear.MATS:

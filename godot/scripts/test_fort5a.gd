@@ -2,7 +2,7 @@ extends Node3D
 ## Запускает владелец тестов. Не использует пользовательские сохранения.
 
 const Fixture = preload("res://scripts/test_fort_fixture.gd")
-var out := "D:/CivCity/.work/stage5/fort5a2/shots/"
+var out := "D:/CivCity/.work/stage6/legion7a2/shots/fort5a/"
 var fails := 0
 var game: Game
 var camp: CampUI
@@ -89,7 +89,10 @@ func _run() -> void:
 	lg.flags["camp_told"] = true
 	lg.flags["camp3d_guide"] = 4
 	lg.army_tick()
+	lg.fort["money"] = 1e8
 	Fixture.set_level(lg, "hq", 3)
+	# Кухня вместо Плаца: сохраняем Сокровищницу и одну пустую ячейку.
+	lg.fort_slot_plot("drill")["b"] = "kitchen"
 	Fixture.set_level(lg, "kitchen", 1)
 	lg.mats = {"wood": 10000.0, "iron": 10000.0, "leather": 10000.0}
 	lg.rations = 0
@@ -202,7 +205,9 @@ func _run() -> void:
 	check(copy.legion.fort_is_fighter(sid2) and int(copy.legion.squad3[1]) == sid2, "old squad keeps barracks home")
 	accepted["res"] = {"fam": "Старая семья", "m": {"sd": 1}}
 	check(lg.dismiss(sid) and int(city.stats["pop"]) == population and city.buildings == buildings, "old V3 soldier never returns to city families")
-	check(not camp.expand_floor.visible, "floor button hidden while a cell is free")
+	camp._refresh()
+	check(lg.fort_count("treasury") == 1 and lg.fort_empty_plot() >= 0, "treasury fixture leaves one free cell")
+	check(not camp.expand_floor.visible and not camp.expand_section.visible, "floor button hidden while a cell is free")
 	Fixture.set_level(lg, "smelter", 1)
 	camp._refresh()
 	await frames(5)

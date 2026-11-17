@@ -170,62 +170,27 @@ func _run() -> void:
 	await frames(2)
 	if not check(old.get_ref() == null and camp.find_children("Camp3D*", "", true, false).is_empty(), "no Camp3D processing after close"):
 		return
-	var saved_fort := legion.fort.duplicate(true)
-	var saved_upg := legion.upg.duplicate(true)
-	var saved_soldiers := legion.soldiers.duplicate(true)
-	var saved_squad := legion.squad3.duplicate()
-	legion.soldiers = legion.soldiers.filter(func(soldier: Dictionary): return bool(soldier.get("hero", false)))
-	for i in range(1, legion.squad3.size()):
-		legion.set_place(i, 0)
-	legion.fort = {}
-	legion.camp = {}
-	legion.upg.clear()
-	legion._camp_init()
-	legion.flags.erase("camp3d_guide")
-	legion.rations = legion.ration_cap()
-	legion.pending_resources["rations"] = 0.0
-	var total := legion.rations
 	camp.open()
-	await frames(8)
-	if not check(camp.guide.visible and int(legion.flags["camp3d_guide"]) == 0, "first guidance arrow"):
+	if not check(legion.fort_guide_step() == Legion.FortGuide.DONE and not camp.guide.is_visible_in_tree(), "completed old guide stays completed"):
 		return
-	if not check(is_equal_approx(total, legion.rations + float(legion.pending_resources["rations"])), "tutorial preserves ration total"):
+	legion.flags["fort_guide"] = Legion.FortGuide.CHEST
+	camp._layout_guide()
+	if not check(camp.guide.is_visible_in_tree() and camp._guide_target == camp.chest_button, "guide works with old diorama"):
 		return
 	if not await shot("5_guide_step1.png"):
 		return
-	camp._collect("rations")
-	if not check(int(legion.flags["camp3d_guide"]) == 1, "guide advances on collection"):
-		return
 	camp.close()
 	await frames(2)
-	legion.fort = saved_fort
-	legion.upg = saved_upg
-	legion._fort_sync_camp()
-	legion.soldiers = saved_soldiers
-	legion.squad3 = saved_squad
 	camp.open()
-	if not check(int(legion.flags["camp3d_guide"]) == 1, "guide persists on reopen"):
+	if not check(legion.fort_guide_step() == Legion.FortGuide.CHEST, "guide persists on reopen"):
 		return
 	camp.show_building("barracks")
 	if not await shot("6_card_over_3d.png"):
 		return
 	camp._hide_card()
-	camp.show_build_menu()
-	if not check(int(legion.flags["camp3d_guide"]) == 2, "guide advances on build menu"):
-		return
-	# Завершаем прежнюю стройку: у форта один строитель.
-	for plot: Dictionary in legion.fort["plots"]:
-		if not (plot["up"] as Dictionary).is_empty():
-			plot["up"]["end"] = Legion.now() - 1
-	legion.fort_finish()
-	camp._choose_build("kitchen")
-	if not check(int(legion.flags["camp3d_guide"]) == 3, "guide advances on kitchen"):
-		return
-	camp._campaign()
-	if not check(int(legion.flags["camp3d_guide"]) == 4, "guide completes at campaign"):
-		return
-	camp.lu.close()
-	if not check(camp.visible and int(legion.flags["camp3d_guide"]) == 4, "completed guide stays completed"):
+	camp._layout_guide()
+	camp.guide_skip.pressed.emit()
+	if not check(legion.fort_guide_step() == Legion.FortGuide.DONE and not camp.guide.is_visible_in_tree(), "skip in old diorama"):
 		return
 	old = weakref(camp.diorama)
 	camp.close()

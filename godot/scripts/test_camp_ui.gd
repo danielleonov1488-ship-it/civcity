@@ -66,6 +66,7 @@ func _run() -> void:
 	city.compute()
 	var legion: Legion = city.legion
 	legion.army_tick()
+	legion.fort["money"] = 1e6
 	legion.glory = 10000
 	legion.mats = {"iron": 120, "wood": 90, "leather": 60}
 	if not check(int(city.stats["pop"]) >= 60 and legion.v3(), "V3 and population"):

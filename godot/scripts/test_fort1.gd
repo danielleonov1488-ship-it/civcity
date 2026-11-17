@@ -18,6 +18,8 @@ func town(version := 3) -> City:
 	c.level = Defs.LEVELS.size() - 1
 	c.money = 1e9
 	c.legion.army_tick()
+	if version >= 3:
+		c.legion.fort["money"] = 1e9
 	c.legion.glory = 1e8
 	c.legion.mats = {"iron": 1e6, "wood": 1e6, "leather": 1e6}
 	return c
@@ -83,13 +85,13 @@ func _build_produce() -> void:
 		and l.fort_plot(0)["b"] == "hq" and l.camp_level("hq") == 1, "start: HQ 0 plus four plots")
 	check(l.fort_max("kitchen") == 1 and l.fort_empty_plot() > 0, "one kitchen allowed")
 	var id := l.fort_empty_plot()
-	c.money = 0.0
+	l.fort["money"] = 0.0
 	check(not l.fort_build("kitchen", id) and l.fort_plot(id)["b"] == "", "unaffordable build leaves plot empty")
-	c.money = 1e9
-	var money := c.money
+	l.fort["money"] = 1e9
+	var money := l.city_money()
 	check(not l.fort_build("unknown", id) and not l.fort_build("kitchen", 0)
-		and not l.fort_build("hq", id) and c.money == money, "invalid builds do not spend")
-	check(l.fort_build("kitchen", id) and c.money < money, "kitchen starts and charges")
+		and not l.fort_build("hq", id) and l.city_money() == money, "invalid builds do not spend")
+	check(l.fort_build("kitchen", id) and l.city_money() < money, "kitchen starts and charges")
 	check(l.fort_plot(id)["lv"] == 0 and l.fort_info(id)["producing"].is_empty()
 		and l.fort_count("kitchen") == 1 and l.camp_busy(), "construction has no effect yet")
 	var end := float(l.fort_plot(id)["up"]["end"])
@@ -152,13 +154,13 @@ func _expand_effects() -> void:
 	FIXTURE.set_level(l, "hq", 3)
 	var ids: Array = l.fort["plots"].map(func(p: Dictionary): return int(p["id"]))
 	var wood := l.mat("wood")
-	var money := c.money
+	var money := l.city_money()
 	l.mats["wood"] = 0.0
-	check(not l.fort_expand() and c.money == money and l.fort["up"].is_empty(), "missing expansion materials do not spend")
+	check(not l.fort_expand() and l.city_money() == money and l.fort["up"].is_empty(), "missing expansion materials do not spend")
 	l.mats["wood"] = wood
-	check(l.fort_expand() and l.mat("wood") == wood - 20 and c.money == money - 1000, "expansion pays coins and materials")
+	check(l.fort_expand() and l.mat("wood") == wood - 20 and l.city_money() == money - 1000, "expansion pays coins and materials")
 	check(is_equal_approx(float(l.fort["up"]["total"]), 7200.0), "first expansion takes two hours")
-	check(not l.speed_up("fort_invalid") and l.timer3("fort_expand") == l.fort["up"], "expansion timer key and invalid key")
+	check(not l.has_method("speed_up"), "expansion has no paid money shortcut")
 	check(l.fort["plots"].size() == 5 and l.camp_busy() and not l.fort_build("kitchen", l.fort_empty_plot()), "expansion waits and uses builder")
 	Legion.clock = float(l.fort["up"]["end"]) - 1.0
 	l.fort_finish()
@@ -201,7 +203,9 @@ func _expand_effects() -> void:
 	l._fort_load(expanded)
 	check(l.fort["plots"].size() == 24 and l.fort_expand(), "start first expansion beyond table")
 	var expand_end := float(l.fort["up"]["end"])
-	check(l.speed_up("fort_expand") and float(l.fort["up"]["end"]) == expand_end - 1800.0, "expansion can be accelerated")
+	Legion.clock = expand_end - 1.0
+	l.fort_finish()
+	check(int(l.fort["exp"]) == 5 and float(l.fort["up"]["end"]) == expand_end, "expansion waits for its full timer")
 	Legion.clock = float(l.fort["up"]["end"])
 	l.fort_finish()
 	check(l.fort["exp"] == 6 and l.fort["plots"].size() == 29, "endless expansion adds a full floor of five plots")
@@ -215,20 +219,24 @@ func _producers() -> void:
 	Legion.clock = float(l.fort["up"]["end"])
 	l.fort_finish()
 	for type: String in ["smelter", "sawmill", "tannery", "treasury"]:
-		var id := l.fort_empty_plot()
-		check(l.fort_build(type, id), "build " + type)
-		finish_build(l, id)
+		var existing := l.fort_slot_plot(type)
+		var id := int(existing["id"]) if not existing.is_empty() else l.fort_empty_plot()
+		if existing.is_empty():
+			check(l.fort_build(type, id), "build " + type)
+			finish_build(l, id)
+		else:
+			assign_worker(l, id)
 		var resource := String(Legion.FORT_B[type]["production"]["resource"])
-		if resource == "ingots":
-			l.ingots = 0
+		if resource == "money":
+			l.fort["money"] = 0.0
 		else:
 			l.mats[resource] = 0.0
 		Legion.clock += 43200.0 if resource == "ingots" else 3600.0
 		var collected := l.fort_collect(id)
-		check(collected == (1 if resource == "ingots" else 4), "production and collection: " + resource)
+		check(collected == (240 if resource == "money" else 4), "production and collection: " + resource)
 		l.fort_plot(id)["pend"] = 1.0
-		if resource == "ingots":
-			l.ingots = l.resource_cap(resource)
+		if resource == "money":
+			l.fort["money"] = l.resource_cap(resource)
 		else:
 			l.mats[resource] = l.resource_cap(resource)
 		check(l.fort_collect(id) == 0 and l.fort_plot(id)["pend"] == 1.0, "stock cap: " + resource)
@@ -268,12 +276,14 @@ func _migrate_save() -> void:
 	old["pending_resources"] = {"iron": 999.5}
 	old["ingots"] = 500
 	l.from_dict(old)
+	l.fort["money"] = 1e9
 	for type: String in old["camp"]:
 		check(l.camp_level(type) == int(old["camp"][type]), "migration preserves " + type)
 	check(l.fort_count("kitchen") == 1 and l.fort["plots"].size() == 7 and l.camp_busy(), "migration adds kitchen and keeps timer")
 	check(l.rations == 500.5 and l.pending_resources["iron"] == 999.5 and l.ingots == 500
 		and l.mats == old["mats"], "migration does not clamp existing resources")
-	check(l.speed_up("camp_forge") and float(l.fort_slot_plot("forge")["up"]["end"]) == float(l.upg["camp_forge"]["end"]), "old speed-up aliases fort timer")
+	check(float(l.fort_slot_plot("forge")["up"]["end"]) == float(old["upg"]["camp_forge"]["end"])
+		and l.fort_slot_plot("forge")["up"] == l.upg["camp_forge"], "migration preserves full timer and camp alias")
 	finish_build(l, int(l.fort_slot_plot("forge")["id"]))
 	check(l.camp_level("forge") == 4 and not l.upg.has("camp_forge"), "migrated timer finishes")
 	l.fort_slot_plot("kitchen")["pend"] = 2.5

@@ -48,6 +48,8 @@ func town() -> City:
 	c.hero = {}
 	c.money = 1e6
 	c.legion.army_tick()
+	c.legion.fort["money"] = 1e6
+	c.legion.fort["smith_knowledge"] = true
 	c.legion.flags["camp_open"] = true
 	c.legion.mats = {"iron": 10000.0, "wood": 10000.0, "leather": 10000.0}
 	Fixture.set_level(c.legion, "hq", 12)
@@ -127,7 +129,7 @@ func _queue() -> void:
 	Legion.clock += 600.0
 	lg.fort_finish()
 	check(float(lg.craft_queue(id)[0]["left"]) == 200.0 and lg.craft_ready(id) == 0 and lg.craft_ready(armory) == 1, "unassigned queue pauses; other room finishes")
-	check(not lg.speed_up("craft_%d_0" % id), "paused queue cannot bypass worker with speedup")
+	check(not lg.has_method("speed_up"), "paused queue has no paid money shortcut")
 	check(lg.fort_assign(id, sid), "resume worker")
 	Legion.clock += 250.0
 	lg.fort_finish()
@@ -144,8 +146,11 @@ func _queue() -> void:
 	var other := copy.legion.craft_collect(id)
 	check(not got.is_empty() and got == other and lg.craft_queue(id).size() == 2, "save/load preserves queue, timer and next rarity roll")
 	check(lg.craft_collect(id).is_empty(), "collect cannot take unfinished item")
-	check(lg.speed_up("craft_%d_0" % id) and lg.craft_ready(id) == 1 and lg.speed_used == 250.0, "existing speedup completes active job and spends shared allowance")
-	check(not lg.speed_up("craft_%d_2" % id), "nonactive/missing timer cannot speed up")
+	var next_left := float(lg.craft_queue(id)[1]["left"])
+	Legion.clock += 250.0
+	lg.fort_finish()
+	check(lg.craft_ready(id) == 1 and float(lg.craft_queue(id)[0]["left"]) == 0.0
+		and float(lg.craft_queue(id)[1]["left"]) == next_left, "full timer completes active job without shortening the next one")
 	var p := lg.fort_plot(id)
 	p["up"] = {"to": 9, "end": Legion.now() + 100.0, "total": 100.0}
 	var left := float(lg.craft_queue(id)[1]["left"])
@@ -286,7 +291,7 @@ func _screens() -> void:
 	lg.army_tick()
 	lg.flags["camp_open"] = true
 	lg.flags["camp3d_guide"] = 4
-	lg.fort = {"exp": 1, "plots": [], "next_id": 0, "up": {}}
+	lg.fort = {"money": 1e6, "smith_knowledge": true, "exp": 1, "plots": [], "next_id": 0, "up": {}}
 	lg._fort_add_plot("hq", 4)
 	for type: String in ["barracks", "forge", "arsenal", "kitchen", "drill", "store"]:
 		lg._fort_add_plot(type, 4)

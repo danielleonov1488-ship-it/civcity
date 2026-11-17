@@ -30,7 +30,7 @@ func _ready() -> void:
 	_choice3()
 	_hero3()
 	_collection3()
-	_speed3()
+	_timer_independence3()
 	_chests3()
 	_chest_award3()
 	print("L3 DONE fails=%d" % fails)
@@ -49,6 +49,9 @@ func _town(n_fam: int, v := 3) -> City:
 		h["families"] = [{"name": "Юлии%d" % i, "n": 4, "cls": "plebs"}]
 		h["pop"] = 4
 	c.compute()
+	if v >= 3:
+		c.legion._fort_init()
+		c.legion.fort["money"] = 1e6
 	return c
 
 
@@ -141,7 +144,7 @@ func _recruit() -> void:
 	var s := L.recruit_resident(candidate)
 	_check(not s.is_empty() and s["name"] == candidate["name"] and int(c.stats["pop"]) == pop0 and c.stats["workers"] == workers and _fams_ok(c), "новобранец не забирает горожан")
 	_check(L.fort_worker_plot(int(s["id"])) == -1 and not L.set_place(0, int(s["id"])), "принятый ждёт во дворе")
-	_check(String(s["cls"]) == "legionary" and L.worn(s).size() == 1, "меч даром")
+	_check(String(s["cls"]) == "legionary" and L.worn(s).is_empty() and L.items.is_empty(), "новобранец без вещей")
 	var sid := int(s["id"])
 	var a0 := c.arrivals.size()
 	s["res"] = {"fam": "Старая семья", "m": {"sd": 123}}
@@ -189,14 +192,14 @@ func _gear_class() -> void:
 		L.equip(sid, int(it["id"]))
 		res[w[1]] = String(L.soldier(sid)["cls"])
 	_check(res == {"bow": "archer", "staff": "priest", "spear": "cavalry", "sword": "legionary"}, "оружие → класс: %s" % [res])
-	# оружие с другого воина: у того — меч даром, класс легионер
+	# оружие с другого воина: у того — пустые руки, класс легионер
 	var bow := L.add_item({"slot": "weapon", "cls": "archer", "rarity": 1, "ilvl": 1})
 	L.equip(int(s2["id"]), int(bow["id"]))
 	L.equip(sid, int(bow["id"]))
-	_check(String(L.soldier(sid)["cls"]) == "archer" and String(L.soldier(int(s2["id"]))["cls"]) == "legionary" and L.worn(L.soldier(int(s2["id"]))).size() == 1,
-		"лук перешёл к другому воину: он лучник, прежний владелец снова легионер с мечом")
+	_check(String(L.soldier(sid)["cls"]) == "archer" and String(L.soldier(int(s2["id"]))["cls"]) == "legionary" and L.worn(L.soldier(int(s2["id"]))).is_empty(),
+		"лук перешёл к другому воину: он лучник, прежний владелец снова легионер без оружия")
 	L.unequip(sid, "weapon")
-	_check(String(L.soldier(sid)["cls"]) == "legionary" and L.worn(L.soldier(sid)).size() == 1, "сняли оружие — меч даром, легионер")
+	_check(String(L.soldier(sid)["cls"]) == "legionary" and L.worn(L.soldier(sid)).is_empty(), "сняли оружие — легионер без вещей")
 	# щит — любому; знак — нельзя, и не считается
 	var q := L.add_item({"slot": "offhand", "cls": "archer", "rarity": 1, "ilvl": 1})
 	_check(L.can_equip(sid, int(q["id"])) == "" and L.equip(sid, int(q["id"])) and String(L.soldier(sid)["cls"]) == "legionary", "щит лучника — легионеру, класс прежний")
@@ -211,7 +214,9 @@ func _gear_class() -> void:
 	var bad := false
 	for i in 300:
 		L.items.clear()
-		var d := L._drop({"idx": 6, "boss": i % 3 == 0}, true)
+		L.chest_queue.clear()
+		L.queue_chest("gold" if i % 3 == 0 else "wooden")
+		var d: Dictionary = L.open_chest(String(L.chest_queue[0])).get("item", {})
 		if d.has("slot"):
 			seen[String(d["slot"])] = true
 			if String(d["slot"]) == "weapon" and not (String(d["cls"]) in Soldiers.V3_CLASS_IDS):
@@ -291,9 +296,9 @@ func _camp() -> void:
 	var why_hq := L.camp_can_upgrade("hq")
 	_check(why_hq.contains("город"), "Штабу нужен ранг города: «%s»" % why_hq)
 	c.level = 1
-	var m0 := float(c.money)
+	var m0 := L.city_money()
 	var ok := L.camp_upgrade("hq")
-	_check(ok and L.camp_left("hq") > 0.0 and absf(L.camp_left("hq") - 900.0) < 5.0 and float(c.money) < m0, "Штаб → 2: идёт %d с, заплачено %d" % [roundi(L.camp_left("hq")), roundi(m0 - float(c.money))])
+	_check(ok and L.camp_left("hq") > 0.0 and absf(L.camp_left("hq") - 900.0) < 5.0 and L.city_money() < m0, "Штаб → 2: идёт %d с, заплачено %d" % [roundi(L.camp_left("hq")), roundi(m0 - L.city_money())])
 	_check(L.camp_can_upgrade("drill").contains("Строитель занят"), "строитель один: «%s»" % L.camp_can_upgrade("drill"))
 	L.upg["camp_hq"]["end"] = Legion.now() - 1.0
 	var ev := L.tick()
@@ -446,16 +451,16 @@ func _hero3() -> void:
 	var setup := L.make_battle(Legion.stage(0, 0, 0), 19)
 	_check(setup.has("hero_look") and setup["squad"][0]["key"] == "hero" and setup["squad"][0]["place"] == 0, "герой в бою со своим обликом")
 	L.glory = 10000
-	var money := c.money
+	var money := L.city_money()
 	var glory := L.glory
-	_check(L.train_hero() and c.money < money and L.glory < glory and L.squad_v3().size() == 1, "тренировка стоит денег и Славы; герой занят")
+	_check(L.train_hero() and L.city_money() < money and L.glory < glory and L.squad_v3().size() == 1, "тренировка стоит денег и Славы; герой занят")
 	var old_clock := Legion.clock
 	Legion.clock = float(L.hero_training["end"]) + 1.0
 	L.tick()
 	_check(L.hero_level() == 2 and L.hero_training.is_empty() and L.squad_v3().size() == 2, "герой вернулся на новом уровне")
 	_check(Legion.hero_time_h(8) > Legion.hero_time_h(7) and Legion.hero_time_h(30) > Legion.hero_time_h(20), "таймер героя растёт и за таблицей")
 	L.hero_lv3 = Legion.HERO_MAX3 - 1
-	c.money = maxf(c.money, 1000000.0)              # тренировка у предела дорогая — казна полна
+	L.fort["money"] = maxf(L.city_money(), 1000000.0)              # тренировка у предела дорогая — казна полна
 	L.glory = maxf(L.glory, 100000.0)
 	_check(L.train_hero(), "герой может вырасти выше максимума обычных воинов")
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
@@ -516,30 +521,32 @@ func _collection3() -> void:
 	Legion.clock = old_clock
 
 
-func _speed3() -> void:
+func _timer_independence3() -> void:
 	var c := _town(14)
 	var L: Legion = c.legion
 	L.army_tick()
 	var old_clock := Legion.clock
 	Legion.clock = 300000.0
-	L.fort_plot(0)["up"] = {"to": 2, "end": Legion.clock + 86400.0, "total": 86400.0}
+	var end := Legion.clock + 86400.0
+	L.fort_plot(0)["up"] = {"to": 2, "end": end, "total": 86400.0}
 	L._fort_sync_camp()
-	L.hero_training = {"to": 2, "end": Legion.clock + 86400.0, "total": 86400.0}
-	var money := c.money
-	for i in 4:
-		_check(L.speed_up("camp_hq" if i % 2 == 0 else "hero"), "ускорение %d" % (i + 1))
-	var paid := c.money
-	_check(paid < money and L.speed_remaining() == 0.0 and not L.speed_up("hero") and c.money == paid, "общий предел 2 ч, пятая попытка бесплатна и отклонена")
-	_check(float(L.upg["camp_hq"]["end"]) == Legion.clock + 82800.0 and float(L.hero_training["end"]) == Legion.clock + 82800.0, "каждый клик убрал 30 мин")
+	L.hero_training = {"to": 2, "end": end, "total": 86400.0}
+	var money := L.city_money()
+	var city_money := c.money
+	L.tick()
+	_check(float(L.upg["camp_hq"]["end"]) == end and float(L.hero_training["end"]) == end
+		and L.city_money() == money and c.money == city_money, "HQ and hero timers do not spend either treasury")
+	_check(not L.has_method("speed_up") and not L.has_method("speed_remaining"), "money speed-up and daily quota removed")
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var copy := City.new(Land.new())
-	copy.auto_hire = true  # прежняя фикстура
+	copy.auto_hire = true
 	copy.load_data(saved)
-	_check(copy.legion.speed_remaining() == 0.0, "загрузка не сбрасывает суточный предел")
+	_check(float(copy.legion.fort_plot(0)["up"]["end"]) == end and float(copy.legion.hero_training["end"]) == end,
+		"save preserves full HQ and hero timers")
 	c.day += 1
-	_check(L.speed_remaining() == 7200.0 and L.speed_up("camp_hq"), "следующий игровой день возвращает лимит")
-	c.money = 0.0
-	_check(not L.speed_up("hero"), "без казны не ускорить")
+	L.tick()
+	_check(float(L.upg["camp_hq"]["end"]) == end and float(L.hero_training["end"]) == end,
+		"city day cannot shorten HQ or hero training")
 	Legion.clock = old_clock
 
 
@@ -561,7 +568,7 @@ func _chests3() -> void:
 	_check(a == b and not a.is_empty(), "фиксированное зерно даёт одинаковую добычу")
 	_check(Gear.SLOTS_V3.has(String(a["item"]["slot"])) and int(a["item"]["rarity"]) in [0, 2, 3, 4]
 		and int(a["rations"]) > 0 and int(a["iron"]) > 0 and int(a["money"]) > 0, "сундук содержит допустимую вещь и ресурсы")
-	for i in 4:
+	for i in 3:
 		_check(L.queue_chest("wooden"), "место для сундука %d" % i)
 	_check(not L.queue_chest("gold") and L.chest_queue.size() == 4 and L.open_chest("bronze").is_empty(), "максимум 4, чужой вид не открыть")
 	L.ingots = 7
@@ -580,7 +587,7 @@ func _chests3() -> void:
 	old.legion.army_tick()
 	var old_save := old.legion.to_dict()
 	_check(not old_save.has("ingots") and not old_save.has("hero_lv3") and not old.legion.queue_chest("gold")
-		and old.legion.collect_resource("iron") == 0 and not old.legion.speed_up("camp_hq"), "V2 не получает новые ключи и действия")
+		and old.legion.collect_resource("iron") == 0 and not old.legion.has_method("speed_up"), "V2 не получает новые ключи и действия")
 	var empty := _town(14)
 	empty.legion.from_dict({})
 	_check(empty.legion.ingots == 0 and empty.legion.hero_level() == 1 and empty.legion.chest_queue.is_empty(), "старое V3 сохранение получает безопасные значения")
@@ -593,8 +600,10 @@ func _chest_award3() -> void:
 	var soldier := Fixture.recruit(L)
 	L.set_place(0, int(soldier["id"]))
 	var setup := L.make_battle(Legion.stage(0, 0, 0), 17)
-	var money := c.money
+	var city_before := c.money
+	L.fort["money"] = 0.0
+	var money := L.city_money()
 	var out := L.apply_result(setup, {"win": true, "alive": 1, "total": 1, "fallen": [], "time": 10.0,
 		"hp_left": 1.0, "inputs": [], "perks_used": {}, "summons": 0})
-	_check(L.chest_queue.size() == 1 and out.has("camp_chest") and out["camp_chest"] != "full", "первая победа гарантирует сундук")
-	_check(c.money == money and c.magis_treasury > 0.0, "добыча идёт в казну Легиона, бюджет города не меняется")
+	_check(L.chest_queue.size() == 2 and not out.has("item") and out.has("camp_chest") and out["camp_chest"] != "full", "первая победа гарантирует сундук")
+	_check(c.money == city_before and L.city_money() > money, "добыча идёт в казну Легиона, бюджет города не меняется")
