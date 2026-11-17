@@ -745,7 +745,7 @@ func _staff_roster() -> Array:
 			if allowed.has(slot) and worker["cls"] in WORK_CLASSES[slot] and int(b["hire_classes"].get(slot, 0)) < int(allowed[slot]) and int(b["staff_count"]) < int(b.get("hire", 0)):
 				b["hire_classes"][slot] = int(b["hire_classes"].get(slot, 0)) + 1
 				b["staff_count"] += 1
-				if String(m.get("prof", "")) == Defs.building_profession(def(b)):
+				if Defs.PROF_ON and String(m.get("prof", "")) == Defs.building_profession(def(b)):
 					b["prof_fit"] += 1
 				m["job_class"] = slot
 				worker["employed"] = true
@@ -785,7 +785,7 @@ func _hire_candidate(b: Dictionary) -> Dictionary:
 					continue
 				var pos: Vector2 = worker_position.call(w["m"], w["pos"]) if worker_position.is_valid() else w["pos"]
 				var d := pos.distance_squared_to(b["pos"])
-				var fits := profession != "" and String(w["m"].get("prof", "")) == profession
+				var fits: bool = Defs.PROF_ON and profession != "" and String(w["m"].get("prof", "")) == profession
 				if best.is_empty() or (fits and not best_fits) or (fits == best_fits and d < distance):
 					distance = d
 					best = w
@@ -1056,7 +1056,7 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 				if int(jb[c]) > 0:
 					st = minf(st, ratio[c])
 			b["fill"] = st if b["road"] else 0.0               # хватает ли жителей на нанятые места
-			var fitting := int(b.get("prof_fit", 0)) if manual_hiring() else 0
+			var fitting := int(b.get("prof_fit", 0)) if Defs.PROF_ON and manual_hiring() else 0
 			st *= (float(hired) + Defs.PROF_BONUS * fitting) / float(maxi(1, job_max(b)))
 		b["staff"] = st if b["road"] else 0.0
 		b["active"] = b["road"] and (not d.has("jobs") or (float(b["staff"]) > 0.0 if manual_hiring() else float(b["staff"]) >= 0.25))
@@ -2917,6 +2917,10 @@ func arrive_wait() -> String:
 ## Раз в час: не пора ли повозке привезти новую семью. Едут только туда, где есть место (free_fit);
 ## если места нет, а на площади и в повозке пусто — одна семья «ищет жильё» (подсказка, что пора строить)
 func _tick_arrivals() -> void:
+	# Первая повозка ждёт своего шага: сначала улица и три дома.
+	var tutorial_step := Tutorial.saved_step(tips)
+	if tutorial_step >= 0 and tutorial_step < Tutorial.step_index("cart"):
+		return
 	if arrivals_paused:
 		stats["arrive_block"] = arrivals_blocked()
 		return

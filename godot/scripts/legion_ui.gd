@@ -200,7 +200,7 @@ func _update_button() -> void:
 		# исследований закрыто и советник свободен: Esc, правая кнопка и щелчок по карте закрывают окно вместе
 		# с советником — совет погас бы, не показавшись (окно закрыли — hud зовёт эту проверку через кадр)
 		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"] and lg.tut_step() == "barracks" \
-				and not hud.research_panel.visible and not hud.advisor_panel.visible and _cine_free():
+				and not hud.tutorial_busy() and hud._tip_free() and not hud.research_panel.visible and _cine_free():
 			lg.flags["advised"] = true
 			# Легион открыт, а готового нет — его строят (решение владельца Д13): не «Легион собран!», пока нет Казарм
 			hud.advisor(StoryDefs.ADV_LEGION, "Готового Легиона нет — его строите вы сами. Откройте «Легион» сверху справа. Казармы и другие военные здания строятся только внутри форта; Казармы дают легионеров. Потом — Стрельбище для лучников, Кузница, Лазарет и Склад оружия; каждое здание растёт уровнями — «Улучшить» в его карточке.\n\nПоходы, бои с другими городами и чудеса света — в медальоне «Легион» сверху справа. Отряд дерётся сам; ваше — состав и умения в нужный миг.",
@@ -732,7 +732,7 @@ const TUT_TEXT := {
 
 ## Идёт обучение Легиону (только в настоящей игре: не в меню и не в показе)
 func tut_active() -> bool:
-	return lg != null and game != null and game.mode in ["play", "new"] and lg.tut_step() != "" and not lg.v3()
+	return not hud.tutorial_busy() and lg != null and game != null and game.mode in ["play", "new"] and lg.tut_step() != "" and not lg.v3()
 
 
 ## Полоса обучения в окне: «Шаг 3 из 4 · …» и «Пропустить обучение»
@@ -752,6 +752,8 @@ func _update_tut() -> void:
 
 ## Куда показывает стрелка обучения: [Control или null, подпись]
 func tut_pointer() -> Array:
+	if hud.tutorial_busy():
+		return [null, ""]
 	var step := lg.tut_step()
 	match step:
 		"barracks", "medal":
@@ -823,6 +825,9 @@ func _fit() -> void:
 ## Короткая надпись внизу окна (почему нельзя и т. п.) — сама гаснет
 func _say(text: String) -> void:
 	if text == "" or toast == null:
+		return
+	if hud.tutorial_busy():
+		hud._toast(text, "info")
 		return
 	(toast.get_node("t") as Label).text = text
 	toast.visible = true

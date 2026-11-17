@@ -395,6 +395,14 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	var hud = game.hud
 	var mode0: String = game.mode
 	game.mode = "play"
+	game.tutorial.step = Tutorial.STEPS.size()
+	c.tips["tut"] = -1
+	game.tutorial.card.hide()
+	game.tutorial.camera_keys.hide()
+	game.tutorial.next_btn.hide()
+	hud.guidance_queue.clear()
+	hud._clear(hud.notes_box)
+	hud._ptr_shown = {}
 	ui.close()
 	hud.advisor_panel.visible = false
 	for id in c.buildings.keys():
@@ -427,7 +435,7 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	# Первый совет ведёт в форт через HUD; военных построек в каталоге города нет.
 	check("обучение ведёт в форт без городских Казарм", lg.count_type("barracks") == 0 and lg.tut_step() == "barracks" and ui.tut_active() and not c.city_buildable("barracks"))
 	check("совет о форте показан один раз", hud.advisor_panel.visible and hud.adv_title.text == StoryDefs.ADV_LEGION and lg.flags.has("advised"))
-	check("история и обучение используют одну кнопку HUD", ui.tut_pointer()[0] == ui.btn and hud._do_target({"kind": "legion"}) == ui.btn and hud.pointer_target == ui.btn)
+	check("история и обучение используют одну кнопку HUD", ui.tut_pointer()[0] == ui.btn and hud._do_target({"kind": "legion"}) == ui.btn and hud.pointer_target == null and not hud.pointer.visible)
 	check("нет стрелки на скрытый раздел «Легион»", hud.pointer_target != hud.cats["military"] and not (hud.cats["military"].get_parent() as Control).visible)
 	await shot("tut1_fort")
 	hud.advisor_panel.visible = false
@@ -453,14 +461,14 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	c.place("barracks", Vector2(166, 205), 0.0, 0, -1, true)
 	c.changed.emit()
 	await frames(6)
-	check("шаг 2 — медальон: стрелка на «Легион»", lg.tut_step() == "medal" and hud.pointer_target == ui.btn)
+	check("шаг 2 — медальон без автоматической стрелки", lg.tut_step() == "medal" and hud.pointer_target == null and not hud.pointer.visible)
 	hud.advisor_panel.visible = false               # советы города (готовый город стал «игрой» на «Посёлке») — не про Легион
 	await shot("tut2_medal")
-	# шаг 3: окно открыто — полоса «Шаг 3 из 4», стрелка на «В бой!»
+	# Шаг 3: полоса внутри окна, без городской стрелки.
 	await click(center_of(ui.btn))
 	await frames(10)
 	check("шаг 3 — учебный бой: полоса в окне", lg.tut_step() == "fight" and ui.tut_bar.visible and ui.tut_lbl.text.begins_with("Шаг 3 из 4"))
-	check("стрелка на «В бой!»", ui._fight_btn != null and hud.pointer_target == ui._fight_btn)
+	check("«В бой!» доступно без автоматической стрелки", ui._fight_btn != null and not ui._fight_btn.disabled and hud.pointer_target == null and not hud.pointer.visible)
 	check("карточка: учебный бой", _texts(ui.content).contains("Учебный бой"))
 	await shot("tut3_fight")
 	# «бой» (подделка 3D-боя): после него шаг 4 — вкладка «Войска», потом «Улучшить до 2»
@@ -473,19 +481,19 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	await frames(8)
 	lg.battle_requested.disconnect(f2)
 	check("первый бой — учебный (tutorial=oil, куча во 2-й волне)", asked.size() == 1 and String(asked[0].get("tutorial", "")) == "oil" and asked[0]["packs"] == [1])
-	check("шаг 4 — стрелка на вкладку «Войска»", ui.visible and lg.tut_step() == "troops" and hud.pointer_target == ui.tabs["troops"])
+	check("шаг 4 — вкладка «Войска» без автоматической стрелки", ui.visible and lg.tut_step() == "troops" and hud.pointer_target == null and not hud.pointer.visible)
 	await shot("tut4_troops_tab")
 	ui._select_tab("troops")
 	await frames(6)
-	check("стрелка на «На карте» у Казарм", ui._upg_btn != null and hud.pointer_target == ui._upg_btn and ui.tut_lbl.text.begins_with("Шаг 4 из 4"))
+	check("«На карте» у Казарм без автоматической стрелки", ui._upg_btn != null and hud.pointer_target == null and not hud.pointer.visible and ui.tut_lbl.text.begins_with("Шаг 4 из 4"))
 	await shot("tut4_upgrade")
-	# Д10: улучшения — в карточке здания: «На карте» → карточка Казарм, стрелка на «Улучшить — …»
+	# Д10: «На карте» открывает карточку Казарм с кнопкой «Улучшить».
 	await click(center_of(ui._upg_btn))
 	await frames(10)
-	check("«На карте»: окно закрыто, карточка Казарм, стрелка на «Улучшить»", not ui.visible and hud.info_panel.visible and String(hud.info_b.get("type", "")) == "barracks"
-		and hud.lg_upg_btn != null and hud.pointer_target == hud.lg_upg_btn and hud.lg_upg_btn.text.begins_with("Улучшить — 700 ден."))
+	check("«На карте»: окно закрыто, карточка Казарм без автоматической стрелки", not ui.visible and hud.info_panel.visible and String(hud.info_b.get("type", "")) == "barracks"
+		and hud.lg_upg_btn != null and hud.pointer_target == null and not hud.pointer.visible and hud.lg_upg_btn.text.begins_with("Улучшить — 700 ден."))
 	await shot("tut4_card")
-	# стрелка шага 4 — только у Казарм: у Кузницы своя «Улучшить» (доступная), стрелка на ней не стоит — она на медальоне
+	# У Кузницы своя доступная кнопка улучшения, автоматической стрелки нет.
 	var fbk: Dictionary = lg.building_rec("forge")
 	var bbk: Dictionary = lg.building_rec("barracks")
 	var fl0 := int(lg.blevels.get("forge", 1))
@@ -501,7 +509,7 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	hud.open_info(bbk)
 	await frames(6)
 	hud._update_pointer()
-	check("снова карточка Казарм — стрелка на «Улучшить»", String(hud.info_b.get("type", "")) == "barracks" and hud.pointer_target == hud.lg_upg_btn)
+	check("снова карточка Казарм — без автоматической стрелки", String(hud.info_b.get("type", "")) == "barracks" and hud.lg_upg_btn != null and hud.pointer_target == null and not hud.pointer.visible)
 	await click(center_of(hud.lg_upg_btn))
 	await frames(6)
 	check("улучшение Казарм началось из карточки: полоска", lg.upg.has("legionary") and not hud._lg_live.is_empty())
@@ -536,7 +544,7 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	await frames(6)
 	check("окно исследований закрыто (Esc) — снова шаг 1, советник", not hud.research_panel.visible and hud.advisor_panel.visible and hud.adv_skip.visible
 		and hud.adv_title.text == StoryDefs.ADV_LEGION and lg.flags.has("advised") and lg.count_type("barracks") == 0
-		and hud.pointer_target == ui.btn and ui.tut_pointer()[0] == hud._do_target({"kind": "legion"}))
+		and hud.pointer_target == null and not hud.pointer.visible and ui.tut_pointer()[0] == hud._do_target({"kind": "legion"}))
 	await shot("tut1_after_research")
 	await click(center_of(hud.adv_skip))
 	await frames(6)

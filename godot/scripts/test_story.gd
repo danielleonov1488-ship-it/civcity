@@ -319,6 +319,8 @@ func _run() -> void:
 		game.tutorial.step = Tutorial.STEPS.size()
 		game.tutorial.card.visible = false
 	c.tips["tut"] = -1
+	hud.guidance_queue.clear()
+	hud._clear(hud.notes_box)
 	c.tips["ui"] = 3
 	hud.apply_reveal(3)
 	hud.advisor_panel.visible = false
@@ -429,6 +431,8 @@ func _legion3() -> void:
 		game.tutorial.step = Tutorial.STEPS.size()
 		game.tutorial.card.visible = false
 	c.tips["tut"] = -1
+	hud.guidance_queue.clear()
+	hud._clear(hud.notes_box)
 	c.tips["ui"] = 3
 	hud.apply_reveal(3)
 	hud.advisor_panel.visible = false
@@ -567,7 +571,11 @@ func _legion3() -> void:
 	check(String(sto.pointer_do().get("kind", "")) == "legion", "стрелка истории — на «Лагерь»")
 	await frames(3)
 	hud._update_pointer()
-	check(hud.pointer_target != null and hud.pointer_target == camp_ui.top_button, "стрелка стоит на кнопке «Лагерь» (не на медальоне и не на Казармах)")
+	check(hud.pointer_target == null and not hud.pointer.visible, "история не включает стрелку к «Лагерю» сама")
+	hud.show_pointer(sto.pointer_do())
+	await frames(3)
+	check(hud.pointer_target == camp_ui.top_button and hud.pointer.visible, "запрошенная стрелка показывает кнопку «Лагерь»")
+	hud._ptr_shown = {}
 	var all_txt := ""
 	for pt in sto.goal_parts(A, sto._step(A)["goal"], sto._step(A)):
 		all_txt += String(pt["text"]) + "|"
@@ -817,11 +825,13 @@ func _offer_flow() -> void:
 	check(not game.rank_cine.calm(), "пока идёт ролик истории, rank_cine.calm() — false")
 	var said: bool = await wait_beat("say", 12.0)     # первый ролик игры: под нагрузкой (картинки построек) — дольше
 	check(said, "реплика Марии")
+	if not said or sto.ui.name_lbl == null or sto.ui.role_lbl == null:
+		return
 	await frames(70)
 	sto.ui.finish_typing()
 	await frames(10)
 	check(sto.ui.panel != null and sto.ui.panel.modulate.a > 0.9 and sto.ui.name_lbl.text == "Мария" and sto.ui.role_lbl.text == "дочь семьи Корнелиев",
-		"облачко: «%s», %s" % [sto.ui.name_lbl.text, sto.ui.role_lbl.text])
+		"облачко: Мария, дочь семьи Корнелиев")
 	var ro: Dictionary = sto._role(sto.cine["bind"], "maria")
 	var act = sto.cine.get("actors", {}).get("maria")
 	check(bool(ro.get("female", false)) and not bool(ro.get("child", true)) and act is Citizen and (act as Citizen).scale.y > Citizen.SIZE * 0.9,
@@ -2589,7 +2599,11 @@ func _framework() -> void:
 	check(c.research.has("floor2") and String(c.events[-1]["text"]).contains("Открыто"), "шаг открыл исследование «Второй жилой этаж» (в колокольчике)")
 	game.set_tool("")
 	hud._update_pointer()
-	check(sto.pointer_do().get("kind", "") == "floor" and hud.pointer_target == hud.tool_btns.get("floor"), "стрелка истории — на «Этаж»")
+	check(sto.pointer_do().get("kind", "") == "floor" and hud.pointer_target == null, "история не включает стрелку к «Этажу» сама")
+	sto.part_click({"do": sto.pointer_do()})
+	check(hud.pointer_target == hud.tool_btns.get("floor"), "щелчок по цели истории — стрелка на «Этаж»")
+	hud._ptr_shown = {}
+	game.set_tool("")
 	S["h"] = int(S["h"]) + 2
 	sto.tick()
 	check(int(A["step"]) == 2, "ожидание кончилось — шаг «игры»")
@@ -2701,8 +2715,14 @@ func _bandits() -> void:
 	await frames(3)
 	hud._update_pointer()
 	var tut_t = lu.tut_pointer()[0]
-	check(lu.tut_active() and hud.pointer_target != null and hud.pointer_target == tut_t and String(sto.pointer_do().get("kind", "")) == "legion" and tut_t == lu.btn and hud._do_target(sto.pointer_do()) == lu.btn,
-		"одна стрелка — на «Легион» (история и обучение ведут в форт)")
+	check(lu.tut_active() and hud.pointer_target == null and not hud.pointer.visible and String(sto.pointer_do().get("kind", "")) == "legion" and tut_t == lu.btn and hud._do_target(sto.pointer_do()) == lu.btn,
+		"история и обучение ведут в форт без автоматической стрелки")
+	sto.part_click({"do": sto.pointer_do()})
+	await frames(3)
+	check(hud.pointer_target == hud._do_target(sto.pointer_do(), true) and hud.pointer.visible, "щелчок по цели истории показывает действие в «Легионе»")
+	hud._ptr_shown = {}
+	lu.close()
+	hud._update_pointer()
 	# советник: военный квартал, один раз
 	hud.advisor_panel.visible = false
 	sto.tick()
@@ -2798,8 +2818,9 @@ func _bandits() -> void:
 	var hp_poor = hud.pointer_target
 	c.money = 5000.0
 	var p_rich = lu.tut_pointer()[0]
-	check(lg.tut_step() == "troops" and p_poor == null and hp_poor != lu.btn and p_rich == lu.btn,
-		"шаг «Войска»: без денариев стрелка у просьб (%s), с денариями — на медальоне" % [hp_poor])
+	hud._update_pointer()
+	check(lg.tut_step() == "troops" and p_poor == null and hp_poor == null and p_rich == lu.btn and hud.pointer_target == null,
+		"шаг «Войска»: город без автоматической стрелки при любой казне")
 	lg.flags["tut"] = "done"
 	# старый город с изученным Легионом — история не нужна
 	fresh7(4400, ["cat"])

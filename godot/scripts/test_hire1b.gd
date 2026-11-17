@@ -178,7 +178,7 @@ func guidance(c: City, hud: Hud, shop: Dictionary, home: Dictionary) -> void:
 	var family: Dictionary = home["families"][0]
 	game.people._make_family(family["name"], 2, int(home["id"]), home["pos"], "", family)
 	check(tut._check("settle") and tut._check("house"), "settled family unlocks hiring steps")
-	tut._enter(8)
+	tut._enter(Tutorial.step_index("workers"))
 	hud._update_pointer()
 	check(hud.pointer_target != null and hud.pointer_target.name == "hire_plus", "tutorial hire pointer")
 	check(not tut._check("workers"), "tutorial requires actual hire")

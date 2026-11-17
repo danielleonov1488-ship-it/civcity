@@ -125,7 +125,7 @@ func _run() -> void:
 			return
 	var cost_good: StyleBoxFlat = tree.cards["potter"].get_node("CostBadge").get_theme_stylebox("panel")
 	var cost_bad: StyleBoxFlat = tree.cards["mimes"].get_node("CostBadge").get_theme_stylebox("panel")
-	if not check(cost_good.bg_color == tree.BADGE_GOOD and cost_bad.bg_color == tree.BADGE_BAD, "green and red costs"):
+	if not check(cost_good.bg_color == CityStyle.CREAM and cost_bad.bg_color == CityStyle.CREAM, "cream cost pills"):
 		return
 	if not check(tree.cards["dyer"].get_node("DoneTick").visible and tree.cards["dyer"].get_node("Picture").material != null, "done tick and desaturation"):
 		return
