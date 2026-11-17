@@ -9,6 +9,8 @@ const TITLE = preload("res://assets/fonts/Philosopher-Bold.ttf")
 const INK := Color("48200b")
 const CREAM := Color("fff4d9")
 const BUTTON_HEIGHT := 80.0
+const RES_BAR_SIZE := Vector2(264, 80)
+const RES_BAR_CREAM := Rect2(78, 18, 152, 46)
 const Ring = preload("res://scripts/fort_ui_ring.gd")
 static var _textures: Dictionary = {}
 static var _small_textures: Dictionary = {}
@@ -140,16 +142,16 @@ static func banner_red(text: String) -> PanelContainer:
 	return panel
 
 
-static func progress(value: float, maximum: float, color := "gold") -> ProgressBar:
+static func progress(value: float, maximum: float, color := "gold", height := 20.0) -> ProgressBar:
 	var bar := ProgressBar.new()
 	bar.show_percentage = false
 	bar.max_value = maxf(1, maximum)
 	bar.value = value
 	bar.step = 0.001
-	bar.custom_minimum_size.y = 20
+	bar.custom_minimum_size.y = height
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_theme_stylebox_override("background", box("panels/bar_frame", 32, 0, 20))
-	bar.add_theme_stylebox_override("fill", box("panels/bar_fill_" + color, 20, 0, 20))
+	bar.add_theme_stylebox_override("background", box("panels/bar_frame", 32, 0, height))
+	bar.add_theme_stylebox_override("fill", box("panels/bar_fill_" + color, 20, 0, height))
 	return bar
 
 
@@ -161,7 +163,7 @@ static func res_bar(icon: Variant, value: float, maximum: float) -> PanelContain
 	frame.set_texture_margin(SIDE_LEFT, 72)
 	frame.set_texture_margin(SIDE_RIGHT, 32)
 	panel.add_theme_stylebox_override("panel", frame)
-	panel.custom_minimum_size = Vector2(264, 80)
+	panel.custom_minimum_size = RES_BAR_SIZE
 	# Свободное расположение сохраняет крупный медальон слева.
 	var body := Control.new()
 	panel.add_child(body)
@@ -170,22 +172,33 @@ static func res_bar(icon: Variant, value: float, maximum: float) -> PanelContain
 	body.add_child(pic)
 	var number := label(str(int(value)) + (" / %d" % int(maximum) if maximum > 0 else ""), 28)
 	number.name = "Value"
-	number.position = Vector2(82, 20)
-	number.size = Vector2(140, 32)
 	number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	body.add_child(number)
-	var fill := progress(value / maxf(1, maximum), 1, "green" if maximum <= 0 else "gold")
+	# Сразу тонкая полоса: до входа в дерево минимум 20 мог остаться в кэше.
+	var fill := progress(value / maxf(1, maximum), 1, "green" if maximum <= 0 else "gold", 9)
 	fill.name = "Fill"
-	fill.position = Vector2(84, 53)
-	fill.custom_minimum_size = Vector2(138, 9)
-	fill.add_theme_stylebox_override("background", box("panels/bar_frame", 32, 0, 9))
-	fill.add_theme_stylebox_override("fill", box("panels/bar_fill_" + ("green" if maximum <= 0 else "gold"), 20, 0, 9))
-	fill.size = fill.custom_minimum_size
 	body.add_child(fill)
 	panel.set_meta("number", number)
 	panel.set_meta("fill", fill)
+	panel.resized.connect(layout_res_bar.bind(panel))
+	number.minimum_size_changed.connect(layout_res_bar.bind(panel))
+	layout_res_bar(panel)
 	return panel
+
+
+static func layout_res_bar(panel: PanelContainer) -> void:
+	# Все отступы считаем внутри крема; масштаб HUD наследуется один раз.
+	var ratio := panel.size.max(RES_BAR_SIZE) / RES_BAR_SIZE
+	var cream := Rect2(RES_BAR_CREAM.position * ratio, RES_BAR_CREAM.size * ratio)
+	var number: Label = panel.get_meta("number")
+	number.position = cream.position + Vector2(4, 2) * ratio
+	number.size = Vector2(cream.size.x - 12 * ratio.x, 32 * ratio.y)
+	var fill: ProgressBar = panel.get_meta("fill")
+	fill.custom_minimum_size = Vector2(138, 9) * ratio
+	# Шрифт может быть выше заданной строки: полоса начинается после числа.
+	fill.position = Vector2(cream.position.x + 6 * ratio.x, maxf(cream.position.y + 35 * ratio.y, number.get_rect().end.y))
+	fill.size = Vector2(cream.size.x - 14 * ratio.x, 9 * ratio.y)
 
 
 static func button(kind: String, icon: Variant = null, text := "") -> Button:
