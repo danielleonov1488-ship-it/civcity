@@ -498,6 +498,17 @@ func painted(name: String) -> bool:
 	return ResourceLoader.exists(AI + "icons/%s.png" % name) or pa_has("icons/" + name)
 
 
+## Картинка для пережатия: из исходного PNG на диске (игра запущена из проекта) — без чтения из видеокарты.
+## get_image() у импортированной текстуры читает её обратно из видеопамяти, и драйвер изредка падал (код 139
+## в test_tutorial / test_story, 17.11). В собранной игре исходников нет — тогда как раньше.
+static func src_image(path: String) -> Image:
+	if FileAccess.file_exists(path):
+		var img := Image.load_from_file(path)
+		if img != null and not img.is_empty():
+			return img
+	return (load(path) as Texture2D).get_image()
+
+
 ## Иконка нужного размера: рисованная PNG из assets/ui/ai/icons (цветная — не красится),
 ## иначе белая SVG из assets/ui/icons (красится через modulate)
 func ico(name: String, size := 64) -> Texture2D:
@@ -507,7 +518,7 @@ func ico(name: String, size := 64) -> Texture2D:
 	var tex: Texture2D = null
 	var png := ui_tex("icons/" + name)
 	if ResourceLoader.exists(png):
-		var img := (load(png) as Texture2D).get_image()
+		var img := src_image(png)
 		if img.is_compressed():
 			img.decompress()
 		img.clear_mipmaps()
@@ -4727,11 +4738,39 @@ var _tag_dwell := 0.0
 
 
 
+## Общий значок профессии: кремовый диск, у подходящего работника — зелёный край.
+func _profession_icon(prof: String, side: int, fits := false) -> PanelContainer:
+	var badge := PanelContainer.new()
+	badge.name = "ProfessionIcon"
+	badge.custom_minimum_size = Vector2(side, side)
+	badge.size = Vector2(side, side)
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	badge.mouse_filter = Control.MOUSE_FILTER_PASS
+	badge.set_meta("profession", prof)
+	badge.set_meta("fits", fits)
+	var frame := _card_frame(side >> 1, 1)
+	frame.border_color = C_GOOD if fits else Color("bc9655")
+	frame.set_border_width_all(2 if fits else 0)
+	badge.add_theme_stylebox_override("panel", frame)
+	var d: Dictionary = Defs.PROFESSIONS.get(prof, {})
+	badge.tooltip_text = String(d.get("name", "")) + "\n+20% к работе, если подходит"
+	var picture := TextureRect.new()
+	picture.name = "ProfessionPicture"
+	picture.texture = load("res://assets/ui/prof/%s.png" % String(d.get("icon", ""))) if not d.is_empty() else null
+	picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.add_child(picture)
+	return badge
+
+
 ## Работа: каждый силуэт — одно место; заполненные места показывают класс жителя.
 func _hire_row(b: Dictionary) -> VBoxContainer:
 	var c: City = game.city
 	var mx := c.job_max(b)
 	var h := c.hired_of(b)
+	var members := c.staff_members(b) if c.manual_hiring() else []
+	var profession := Defs.building_profession(c.def(b))
 	var block := VBoxContainer.new()
 	block.name = "work_block"
 	block.add_theme_constant_override("separation", 3)
@@ -4739,33 +4778,62 @@ func _hire_row(b: Dictionary) -> VBoxContainer:
 	var title := _label("Работа", 14, true, CARD_ACCENT)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	block.add_child(title)
+	var crew := HBoxContainer.new()
+	crew.name = "profession_crew"
+	crew.alignment = BoxContainer.ALIGNMENT_CENTER
+	crew.add_theme_constant_override("separation", 8)
+	block.add_child(crew)
+	if profession != "":
+		var match_row := HBoxContainer.new()
+		match_row.name = "profession_summary"
+		match_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		match_row.add_theme_constant_override("separation", 3)
+		var wanted := _profession_icon(profession, 26)
+		wanted.set_meta("profession_role", "wanted")
+		var fitting := int(b.get("prof_fit", 0)) if c.manual_hiring() else 0
+		wanted.tooltip_text += "\n" + "Подходят %d из %d" % [fitting, h]
+		match_row.add_child(wanted)
+		var number := _label("%d / %d" % [fitting, h], 13, true, C_GOOD if fitting > 0 else CARD_ACCENT)
+		number.name = "profession_count"
+		match_row.add_child(number)
+		crew.add_child(match_row)
 	var slots := GridContainer.new()
 	slots.name = "worker_slots"
-	slots.columns = mini(8, mx)
+	slots.columns = mini(6, mx)
 	slots.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	slots.add_theme_constant_override("h_separation", 5)
-	block.add_child(slots)
-	var members := c.staff_members(b) if c.manual_hiring() else []
+	crew.add_child(slots)
 	var index := 0
 	for cls: String in Defs.CLASS_ORDER:
 		for k in int(c.def(b).get("jobs", {}).get(cls, 0)):
 			var occupied := false
 			var worker_cls := cls
+			var worker_prof := ""
 			var tip := String(Defs.CLASSES[cls]["name"])
 			if c.manual_hiring():
 				var same: Array = members.filter(func(w: Dictionary) -> bool: return String(w["m"].get("job_class", "")) == cls)
 				occupied = k < same.size()
 				if occupied:
 					worker_cls = String(same[k]["cls"])
+					worker_prof = String(same[k]["m"].get("prof", ""))
 					tip = Residents.full_name(same[k]["m"], same[k]["family"])
 			else:
 				occupied = index < roundi(h * float(b.get("fill", 1.0)))
 			var slot := PanelContainer.new()
 			slot.name = "worker_slot_%d" % index
-			slot.custom_minimum_size = Vector2(28, 28)
+			slot.custom_minimum_size = Vector2(34, 34)
 			slot.add_theme_stylebox_override("panel", _card_frame(14, 1))
 			slot.tooltip_text = tip
-			slot.add_child(_cls_pic(worker_cls, 26) if occupied else _card_icon("person", 22, CARD_ACCENT))
+			var portrait := Control.new()
+			portrait.custom_minimum_size = Vector2(32, 32)
+			portrait.mouse_filter = Control.MOUSE_FILTER_PASS
+			portrait.add_child(_cls_pic(worker_cls, 26) if occupied else _card_icon("person", 22, CARD_ACCENT))
+			if occupied and worker_prof != "":
+				var badge := _profession_icon(worker_prof, 18, worker_prof == profession)
+				badge.set_meta("profession_role", "worker")
+				badge.position = Vector2(14, 14)
+				portrait.add_child(badge)
+			slot.add_child(portrait)
 			slots.add_child(slot)
 			index += 1
 	for cls: String in Defs.CLASS_ORDER:
@@ -5507,7 +5575,7 @@ func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void
 	needs.add_theme_constant_override("separation", 3)
 	info_box.add_child(needs)
 	_need_rows(b, cls, needs, cw)
-	_family_rows(b, info_box, cw, false)
+	_family_rows(b, info_box, cw, house_more)          # «Подробнее» — ещё и члены семьи по именам
 	if c.upgrade_to(b) != "" and c.research.has("artisans"):
 		_upgrade_rows(b, cw)
 	var tier := int(b["tier"])
@@ -5625,10 +5693,12 @@ func _family_rows(b: Dictionary, box: VBoxContainer, width: float, details: bool
 		var heads := HFlowContainer.new()
 		heads.name = "Members"
 		heads.add_theme_constant_override("h_separation", 3)
-		var members: Array = f.get("m", [])
-		if members.is_empty():
-			members = Residents.gen(String(f["name"]), int(f["n"]), String(c.def(b)["cls"]), int(b["id"]))
-		heads.custom_minimum_size.x = minf(width * 0.5, members.size() * 19 + maxi(0, members.size() - 1) * 3)
+		var members := Residents.fit(f, hash([String(f["name"]), int(b["id"])]), String(c.def(b)["cls"]))
+		var adults := 0
+		for m: Dictionary in members:
+			if int(m.get("age", 0)) > 0:
+				adults += 1
+		heads.custom_minimum_size.x = minf(width * 0.6, members.size() * 22 + adults * 22)
 		for m: Dictionary in members:
 			var child := int(m.get("age", 1)) == 0
 			var head := Button.new()
@@ -5650,10 +5720,22 @@ func _family_rows(b: Dictionary, box: VBoxContainer, width: float, details: bool
 						break
 			if not live.is_empty():
 				head.pressed.connect(func(): game.select_person({"r": live}))
-			heads.add_child(head)
+			var person := HBoxContainer.new()
+			person.add_theme_constant_override("separation", 1)
+			person.add_child(head)
+			if not child:
+				var badge := _profession_icon(String(m.get("prof", "")), 20)
+				badge.set_meta("profession_role", "family")
+				person.add_child(badge)
+			heads.add_child(person)
 		title.add_child(heads)
 		title.add_child(preference)
 		family.tooltip_text = FamilyPreference.tooltip(c, b, f)
+		if details:
+			# «Подробнее»: члены семьи по именам — щелчок открывает карточку жителя (было до компактных карточек)
+			var chips := PersonCard.family_chips(self, b, f, width)
+			if chips:
+				family.add_child(chips)
 		box.add_child(family)
 
 
@@ -8929,8 +9011,7 @@ var _card_button_textures: Dictionary = {}
 ## 512×160 переводим в высоту кнопки до нарезки: золотые края остаются тонкими.
 func _card_button_texture(file: String) -> Texture2D:
 	if not _card_button_textures.has(file):
-		var original: Texture2D = load("res://assets/ui/kitA/buttons/%s.png" % file)
-		var image := original.get_image()
+		var image := src_image("res://assets/ui/kitA/buttons/%s.png" % file)
 		if image.is_compressed():
 			image.decompress()
 		image.resize(102, 32, Image.INTERPOLATE_LANCZOS)

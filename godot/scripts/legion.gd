@@ -1428,7 +1428,7 @@ func workshop_k(w: String) -> float:
 	if not bool(r.get("road", true)):
 		return 0.0
 	if city() != null and city().manual_hiring():
-		return clampf(float(r.get("staff", 0.0)), 0.0, 1.0)
+		return clampf(float(r.get("staff", 0.0)), 0.0, 1.0 + Defs.PROF_BONUS)
 	return 0.25 + 0.75 * clampf(float(r.get("staff", 1.0)), 0.0, 1.0)
 
 

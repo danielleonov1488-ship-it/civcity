@@ -1129,6 +1129,8 @@ func _couple(a: Dictionary) -> void:
 	var nm := _couple_name(String(a.get("fam2", a.get("fam", ""))))
 	# молодые — те самые жених и невеста из роликов: имена и облик — в записи членов семьи (сохраняются, этап 6.1)
 	var ms := couple_members(nm, 2, String(city.def(h)["cls"]), hid, a.get("roles", {}))
+	var new_family := {"name": nm, "n": 2, "m": ms}
+	Residents.new_professions(new_family, String(city.def(h)["cls"]), city.rng, hid)
 	city.pending[nm] = {"name": nm, "n": 2, "cls": String(city.def(h)["cls"]), "home": hid, "back": true, "m": ms}
 	if city.wants_v >= 1:
 		city.pending[nm]["new_family"] = true

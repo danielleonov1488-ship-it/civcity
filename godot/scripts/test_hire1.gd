@@ -119,20 +119,22 @@ func _run() -> void:
 	for r: Dictionary in game.people.residents:
 		if int(r["job"]) < 0 and not r["child"] and int(r["home"]) > 0:
 			r["p"] = at + Vector2(60, 0)
+			r["m"]["prof"] = "farmer"
 			if nearest.is_empty():
 				nearest = r
 	if not check(not nearest.is_empty(), "free adult fixture"):
 		_finish()
 		return
 	nearest["p"] = at + Vector2(0.5, 0)
+	nearest["m"]["prof"] = "trader"
 	var plus := hud.info_box.find_child("hire_plus", true, false) as Button
 	plus.pressed.emit()
 	await frames(5)
-	check(c.hired_of(shop) == 1 and int(nearest["job"]) == int(shop["id"]), "plus hires nearest free adult")
+	check(c.hired_of(shop) == 1 and int(nearest["job"]) == int(shop["id"]), "plus hires nearest fitting free adult")
 	check(int(c.stats["free"]["plebs"]) == free_before - 1, "one free adult consumed")
 	var full_cap := int(Defs.CAPACITY[int(c.def(shop)["cap"])])
-	check(is_equal_approx(float(shop["staff"]), 1.0 / 3.0), "staff is one third")
-	check(int(shop["cap"]) == ceili(float(full_cap) / 3.0), "capacity is one third rounded to a house")
+	check(is_equal_approx(float(shop["staff"]), 1.2 / 3.0), "one fitting worker gives 1.2 of three slots")
+	check(int(shop["cap"]) == ceili(float(full_cap) * 1.2 / 3.0), "capacity includes fitting profession once")
 	check(int(shop["served"]) <= int(shop["cap"]), "served houses obey capacity")
 	hud._update_world_icons()
 	check(not hud.world_icons.has(shop["id"]), "partial shop has no permanent badge")
@@ -190,7 +192,7 @@ func _run() -> void:
 	c.fire(farm, 99)
 	check(not c.goods.has("wheat"), "empty field produces nothing")
 	c.hire(farm)
-	check(is_equal_approx(float(c.goods.get("wheat", 0.0)), 1.0 / 3.0), "field output one third")
+	check(is_equal_approx(float(c.goods.get("wheat", 0.0)), 1.2 / 3.0), "one fitting farmer gives 1.2 of three slots")
 	var smelter := place(c, "smelter", at + Vector2(25, -25))
 	check(is_zero_approx(c.legion.workshop_k("smelter")), "empty workshop has no minimum output")
 	c.hire(smelter)

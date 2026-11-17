@@ -5435,5 +5435,12 @@
 "свободно: %d": "free: %d",
 "Открылись новые исследования.": "New research is available.",
 "Условия следующего уровня — в табличке города слева вверху.": "The requirements for the next rank are in the city plaque at the top left.",
-"всадник": "cavalryman"
+"всадник": "cavalryman",
+"Земледелец": "Farmer",
+"Торговец": "Trader",
+"Артист": "Performer",
+"Учёный": "Scholar",
+"Служитель": "Attendant",
+"+20% к работе, если подходит": "+20% work output when suited",
+"Подходят %d из %d": "Suited: %d of %d"
 }

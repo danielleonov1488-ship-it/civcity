@@ -2,7 +2,7 @@ class_name Residents
 extends RefCounted
 ## Жители с именами (этап 6.1 плана от 24.10). У каждого члена семьи — запись, которая сохраняется:
 ##   {pn: имя, sx: 0 мужчина / 1 женщина, age: 0 ребёнок / 1 взрослый / 2 старик, sd: зерно облика,
-##    job: где работает (id постройки, нет — без работы), look: облик (только если поменялся — этап 6.5)}.
+##    job: где работает (id постройки, нет — без работы), prof: профессия взрослого, look: изменённый облик}.
 ## Запись лежит в семье (дом: b.families[i].m, площадь: city.arrivals[i].m, идут в дом: city.pending[имя].m), её же
 ## держит житель на улице (r.m) — имя, пол, возраст и облик не меняются при загрузке (раньше сын мог стать дочкой).
 ## Старые сохранения: записи создаются один раз — по имени семьи и номеру дома (всегда одинаково), потом сохраняются.
@@ -56,6 +56,7 @@ static func gen(fam: String, n: int, cls: String, key: int, have: Array = []) ->
 			m = {"sx": sx, "age": age}
 		m["sd"] = rg.randi()
 		m["pn"] = _name_for(fam, m, out, rg)
+		fit_profession(m, fam, i, cls)
 		out.append(m)
 	return out
 
@@ -116,8 +117,36 @@ static func fit(f: Dictionary, key: int, cls := "") -> Array:
 		ms = ms.slice(0, n)
 	elif ms.size() < n:
 		ms = gen(String(f.get("name", "")), n, cls if cls != "" else String(f.get("cls", "plebs")), key, ms)
+	var family_class := cls if cls != "" else String(f.get("cls", "plebs"))
+	for i in ms.size():
+		fit_profession(ms[i], String(f.get("name", "")), i, family_class)
 	f["m"] = ms
 	return ms
+
+
+## Один целый бросок 0…99: порядок профессий задан в Defs.
+static func profession_roll(cls: String, roll: int) -> String:
+	var left := posmod(roll, 100)
+	for id: String in Defs.PROFESSIONS:
+		left -= int(Defs.PROFESSIONS[id]["chance"].get(cls, 0))
+		if left < 0:
+			return id
+	return "attendant"
+
+
+## Старое сохранение: только имя семьи и номер человека, без городского RNG.
+static func fit_profession(m: Dictionary, fam: String, index: int, cls: String) -> void:
+	if int(m.get("age", 0)) <= 0:
+		m.erase("prof")
+	elif not Defs.PROFESSIONS.has(String(m.get("prof", ""))):
+		m["prof"] = profession_roll(cls, posmod(hash([fam, index]), 100))
+
+
+## Новая семья получает профессии из RNG города ровно один раз, при создании.
+static func new_professions(f: Dictionary, cls: String, rg: RandomNumberGenerator, key: int) -> void:
+	for m: Dictionary in fit(f, key, cls):
+		if int(m.get("age", 0)) > 0:
+			m["prof"] = profession_roll(cls, rg.randi_range(0, 99))
 
 
 ## Запись из сохранения — с целыми числами
