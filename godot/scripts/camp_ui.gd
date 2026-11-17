@@ -68,10 +68,14 @@ var _healing: Array[Dictionary] = []
 var _popup_resource := ""
 var diorama: Camp3D
 var background: TextureRect
+var guide_layer: Control
 var guide: PanelContainer
 var guide_text: Label
-var guide_pointer: Label
+var guide_pointer: TextureRect
+var guide_skip: Button
 var _guide_target: Control
+var _guide_rect := Rect2()
+var _guide_dragging := false
 var _collection_fx: Array[Dictionary] = []
 var _city_render_owned := false
 var _previous_disable_3d := false
@@ -273,10 +277,11 @@ func open() -> void:
 	hud.advisor_panel.hide()
 	lg.flags["seen"] = true
 	lg.army_tick()
+	lg.begin_fort_guide()
+	lg.fort_guide_newcomer()
 	visible = true
 	move_to_front()
 	_start_diorama()
-	_prepare_guide()
 	set_process(true)
 	set_process_input(true)
 	_refresh()
@@ -295,8 +300,7 @@ func close() -> void:
 		if is_instance_valid(entry["label"]):
 			(entry["label"] as Label).queue_free()
 	_collection_fx.clear()
-	guide.hide()
-	guide_pointer.hide()
+	guide_layer.hide()
 	set_process(false)
 	set_process_input(false)
 	hide()
@@ -412,18 +416,36 @@ func _build_screen() -> void:
 	extra_row.add_theme_constant_override("separation", 14)
 	extra_plots.add_child(extra_row)
 	_build_bubbles()
+	guide_layer = Control.new()
+	guide_layer.name = "FortGuideLayer"
+	guide_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.root.add_child(guide_layer)
+	guide_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	guide_layer.hide()
 	guide = Kit.inset()
 	guide.name = "FortGuide"
 	guide.add_theme_stylebox_override("panel", Kit.box("panels/panel_inset", 40, 12, 56))
-	add_child(guide)
+	guide_layer.add_child(guide)
 	guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	guide.resized.connect(func(): _layout_guide.call_deferred())
+	var guide_body := VBoxContainer.new()
+	guide_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	guide_body.add_theme_constant_override("separation", 3)
+	guide.add_child(guide_body)
 	guide_text = _text("", 18, true)
-	guide.add_child(guide_text)
-	guide.hide()
-	guide_pointer = _text("↓", 30, true)
+	guide_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	guide_body.add_child(guide_text)
+	guide_skip = hud.guide_link(I18n.t("Пропустить"), _skip_guide)
+	guide_skip.name = "FortGuideSkip"
+	guide_skip.add_theme_font_size_override("font_size", 14)
+	guide_skip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	guide_body.add_child(guide_skip)
+	guide_pointer = TextureRect.new()
+	guide_pointer.name = "FortGuideArrow"
+	guide_pointer.texture = preload("res://assets/ui/icons/fort_guide_arrow.svg")
+	guide_pointer.size = Vector2(64, 64)
 	guide_pointer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(guide_pointer)
-	guide_pointer.hide()
+	guide_layer.add_child(guide_pointer)
 
 
 func _resource_bar(resource: String) -> void:
@@ -516,7 +538,6 @@ func _layout() -> void:
 		Kit.fit_modal(card, size, Vector2(800, 0), 1.12)
 		card.position.y = clampf(card.position.y + _sheet_offset, 24, maxf(24, size.y - card.size.y * card.scale.y - 24))
 	_fit_modal()
-	_layout_guide()
 	if diorama is FortCutaway:
 		_layout_cutaway_markers(k)
 		for button: Button in [expand_floor, expand_section]:
@@ -524,6 +545,7 @@ func _layout() -> void:
 			button.scale = Vector2.ONE * k
 			var point: Vector2 = (diorama as FortCutaway).expansion_project("floor" if button == expand_floor else "section")
 			button.position = Vector2(clampf(point.x - button.size.x * k * 0.5, 140 * k, maxf(140 * k, size.x - button.size.x * k - 12)), clampf(point.y - button.size.y * k * 0.5, 146 * k, maxf(146 * k, size.y - 170 * k)))
+	_layout_guide()
 
 
 func _process(dt: float) -> void:
@@ -534,9 +556,10 @@ func _process(dt: float) -> void:
 		var full := float(lg.pending_resources.get(resource, 0.0)) >= lg.resource_cap(resource) - 0.001
 		var pulse := 1.0 + 0.12 * sin(Time.get_ticks_msec() * 0.005) if full else 1.0
 		bubble.modulate = Color(pulse, pulse, 1.0)
-	if is_instance_valid(_guide_target) and guide.visible:
-		var glow := 1.12 + 0.10 * sin(Time.get_ticks_msec() * 0.004)
-		_guide_target.modulate = Color(glow, glow, 1.0)
+	var dragging := diorama is FortCutaway and (diorama as FortCutaway).drag_sid != 0
+	if dragging != _guide_dragging:
+		_guide_dragging = dragging
+		_layout_guide()
 	for marker: Dictionary in plot_markers.values():
 		var collect: Button = marker["collect"]
 		var full: bool = bool(collect.get_meta("fort_full", false))
@@ -567,6 +590,7 @@ func _roster_signature() -> String:
 
 
 func _refresh() -> void:
+	lg.fort_guide_newcomer()
 	if is_instance_valid(diorama):
 		diorama.sync()
 	population_button.text = "%d / %d" % [lg.fort_population(), lg.roster_cap()]
@@ -982,6 +1006,7 @@ func show_recruit_picker() -> void:
 		stars_label.tooltip_text = I18n.t(STAR_TIP)
 		details.add_child(stars_label)
 		var choose := _button("Принять", func(): _recruit_pick(candidate), "legion")
+		choose.name = "FortGate_%d" % int(candidate["id"])
 		choose.disabled = lg.can_recruit_resident() != ""
 		choose.tooltip_text = lg.can_recruit_resident()
 		row.add_child(choose)
@@ -993,6 +1018,7 @@ func show_recruit_picker() -> void:
 
 
 func _recruit_pick(pick: Dictionary) -> void:
+	var teaching := lg.fort_guide_step() == Legion.FortGuide.RECRUIT
 	var soldier := lg.recruit_resident(pick)
 	if soldier.is_empty():
 		hud.notify(lg.can_recruit_resident() if lg.can_recruit_resident() != "" else I18n.t("Новобранец уже ушёл."), "lock")
@@ -1002,9 +1028,10 @@ func _recruit_pick(pick: Dictionary) -> void:
 	if is_instance_valid(diorama):
 		diorama.sync()
 		diorama.recruit_walk(int(soldier["id"]))
-	_refresh()
 	_close_modal()
-	show_dweller(int(soldier["id"]))
+	if not teaching:
+		show_dweller(int(soldier["id"]))
+	_refresh()
 
 
 func _new_modal(width: float) -> VBoxContainer:
@@ -1046,6 +1073,7 @@ func _fit_modal() -> void:
 		# Карточка справа оставляет путь от ворот к казарме на виду.
 		modal_panel.position = Vector2(maxf(24, size.x - dims.x * k - 24), maxf(24, size.y - dims.y * k - 82))
 	modal_panel.position = modal_panel.position.clamp(Vector2.ONE * 24, (size - dims * k - Vector2.ONE * 24).max(Vector2.ONE * 24))
+	_layout_guide.call_deferred()
 
 
 func _close_modal() -> void:
@@ -1069,6 +1097,7 @@ func _close_modal() -> void:
 	modal_panel = null
 	squad_body = null
 	selected_place = -1
+	_layout_guide.call_deferred()
 
 
 func show_squad() -> void:
@@ -1156,7 +1185,6 @@ func _assign(sid: int) -> void:
 
 
 func _campaign() -> void:
-	_guide_advance(3)
 	_close_modal()
 	_hide_card()
 	lu.open("campaign")
@@ -1235,8 +1263,6 @@ func _collect(resource: String) -> void:
 	var amount := lg.collect_resource(resource)
 	if amount <= 0:
 		return
-	if resource == "rations":
-		_guide_advance(0)
 	_fly_resource(resource, amount, origin)
 	_refresh()
 
@@ -1293,23 +1319,27 @@ func _refresh_hero() -> void:
 func show_chests(reward: Dictionary = {}) -> void:
 	var v := _new_modal(620)
 	v.add_child(_text(I18n.t("Сундуки %d / 4") % lg.chest_queue.size(), 25, true))
-	v.add_child(_wrap("Первая победа даёт сундук. За повторную: 15% за каждую звезду. Мест — 4.", 14))
-	v.add_child(_wrap("Редкости: обычное / редкое / эпическое / легендарное", 14))
-	v.add_child(_wrap(Legion.CHEST_ODDS, 15))
-	v.add_child(_wrap("Слитки: деревянный 2% · бронзовый 4% · золотой 6%. По 1–3 слитка.", 14))
+	if not guide_active():
+		v.add_child(_wrap("Первая победа даёт сундук. За повторную: 15% за каждую звезду. Мест — 4.", 14))
+		v.add_child(_wrap("Редкости: обычное / редкое / эпическое / легендарное", 14))
+		v.add_child(_wrap(Legion.CHEST_ODDS, 15))
+		v.add_child(_wrap("Слитки: деревянный 2% · бронзовый 4% · золотой 6%. По 1–3 слитка.", 14))
 	for kind: String in lg.chest_queue:
 		var b := _button(I18n.t("Открыть: %s") % I18n.t(String(Legion.CHEST_NAMES[kind])), func(): show_chests(lg.open_chest(kind)); _refresh(), "coins")
+		b.name = "FortChest_" + kind
 		b.disabled = lg.store_count() >= lg.store_cap()
 		b.tooltip_text = I18n.t("Освободите место для вещи на Складе.") if b.disabled else I18n.t("Открывается сразу.")
 		v.add_child(b)
-	if lg.chest_queue.is_empty():
+	if lg.chest_queue.is_empty() and reward.is_empty():
 		v.add_child(_wrap("Сундуки принесут победы в походах."))
 	if not reward.is_empty():
 		v.add_child(hud._divider(8))
 		v.add_child(_wrap(I18n.t("Добыча: %d ден. · %d пайков · %d слитков") % [int(reward["money"]) - int(reward.get("money_lost", 0)), int(reward["rations"]), int(reward["ingots"])], 18))
 		v.add_child(_wrap(I18n.t("Железо %d · Дерево %d · Кожа %d") % [int(reward["iron"]), int(reward["wood"]), int(reward["leather"])]))
 		v.add_child(_wrap(Gear.name_of(reward["item"]), 18))
-	v.add_child(_button("← Лагерь", _close_modal))
+	var back := _button("← Лагерь", _close_modal)
+	back.name = "FortChestBack"
+	v.add_child(back)
 	_fit_modal.call_deferred()
 
 
@@ -1375,6 +1405,8 @@ func _stop_diorama() -> void:
 
 func _exit_tree() -> void:
 	_stop_diorama()
+	if is_instance_valid(guide_layer):
+		guide_layer.queue_free()
 
 
 func _screen_anchor(center: Vector2, dims: Vector2, top_margin := 76.0, bottom_margin := 82.0) -> Vector2:
@@ -1382,111 +1414,159 @@ func _screen_anchor(center: Vector2, dims: Vector2, top_margin := 76.0, bottom_m
 		clampf(center.y - dims.y * 0.5, top_margin, maxf(top_margin, size.y - dims.y - bottom_margin)))
 
 
-func _prepare_guide() -> void:
-	if lg.flags.has("camp3d_guide"):
-		return
-	lg.flags["camp3d_guide"] = 0
-	if lg.fort_count("kitchen") == 0:
-		lg.flags["camp3d_guide"] = 1
-		return
-	# Переложить часть стартового запаса в пузырь: первый сбор без ожидания.
-	# Сумма запасов сохраняется, подарка сверх лимита нет.
-	var pending := float(lg.pending_resources.get("rations", 0.0))
-	var cap := float(lg.ration_cap())
-	if lg.rations >= cap and pending >= cap:
-		# В старом сохранении оба запаса уже полны: незачем учить сбору.
-		lg.flags["camp3d_guide"] = 1
-		return
-	if pending < 1.0 or lg.rations >= lg.ration_cap():
-		var sample := minf(3.0, minf(floorf(lg.rations), maxf(0.0, cap - pending)))
-		lg.rations -= sample
-		lg.pending_resources["rations"] = pending + sample
-	if float(lg.pending_resources.get("rations", 0.0)) < 1.0:
-		lg.flags["camp3d_guide"] = 1
+func guide_active() -> bool:
+	var step := lg.fort_guide_step()
+	return step > Legion.FortGuide.INACTIVE and step < Legion.FortGuide.DONE
 
 
-func _guide_advance(expected: int) -> void:
-	if int(lg.flags.get("camp3d_guide", 0)) == expected:
-		lg.flags["camp3d_guide"] = expected + 1
-		lg.changed.emit()
-		_layout_guide()
+func _skip_guide() -> void:
+	lg.finish_fort_guide()
+	guide_layer.hide()
+	if visible:
+		_refresh()
+	elif lu.visible:
+		lu._dirty = true
+
+
+func _guide_person(sid: int, newcomer := false) -> Rect2:
+	if diorama is FortCutaway:
+		var cutaway := diorama as FortCutaway
+		var point := cutaway.person_project(sid, newcomer)
+		if Rect2(Vector2.ZERO, size).has_point(point):
+			return Rect2(cutaway.global_position + point - Vector2(16, 16), Vector2(32, 32))
+	_guide_target = population_button
+	return Rect2()
+
+
+func _guide_room(type: String) -> Control:
+	var id := int(lg.fort_slot_plot(type).get("id", -1))
+	return plot_markers.get(id, {}).get("button") as Control
+
+
+func _guide_modal_target(target_name: String) -> Control:
+	return modal_panel.find_child(target_name, true, false) as Control
+
+
+func _guide_move_target(sid: int, type: String) -> void:
+	if is_instance_valid(modal_panel):
+		var id := int(lg.fort_slot_plot(type).get("id", -1))
+		_guide_target = _guide_modal_target("FortMoveDweller" if dweller_sid == sid else "FortMoveTo_%d" % id)
+		if _guide_target == null:
+			_guide_target = _guide_modal_target("FortPerson_%d" % sid)
+	elif diorama is FortCutaway and (diorama as FortCutaway).drag_sid == sid:
+		_guide_target = _guide_room(type)
+	else:
+		_guide_rect = _guide_person(sid)
 
 
 func _layout_guide() -> void:
-	if guide == null:
+	if not is_instance_valid(guide_layer):
 		return
-	guide_pointer.hide()
-	if is_instance_valid(_guide_target):
-		_guide_target.modulate = Color.WHITE
 	_guide_target = null
-	var step := int(lg.flags.get("camp3d_guide", 4))
-	guide.visible = visible and step < 4 and not is_instance_valid(card) and lu.camp_window == ""
-	if is_instance_valid(modal) and not is_instance_valid(build_scroll):
-		guide.hide()
-	if not guide.visible:
+	_guide_rect = Rect2()
+	if not guide_active():
+		guide_layer.hide()
 		return
-	var target: Control
+	var step := lg.fort_guide_step()
+	var sid := int(lg.flags.get("fort_guide_sid", 0))
+	var cooking_id := int(lg.flags.get("fort_guide_plot", -1))
 	var tip := ""
-	match step:
-		0:
-			target = null
-			for id: int in plot_markers:
-				var plot := lg.fort_plot(id)
-				if plot["b"] != "kitchen" or not (plot["up"] as Dictionary).is_empty():
-					continue
-				if float(plot["pend"]) < 1.0 and not lg.fort_worker(id).is_empty():
-					var sample := minf(3.0, float(lg.pending_resources.get("rations", 0.0)))
-					plot["pend"] = float(plot["pend"]) + sample
-					lg.pending_resources["rations"] = float(lg.pending_resources.get("rations", 0.0)) - sample
-				if float(plot["pend"]) >= 1.0:
-					target = plot_markers[id]["collect"]
-					target.show()
-					tip = "Нажмите на хлеб над кухней — соберите пайки"
-					break
-				if lg.fort_worker(id).is_empty():
-					target = plot_markers[id]["button"]
-					tip = "Назначьте жителя на кухню"
-		1:
-			target = build_button
-			tip = "Откройте стройку"
-		2:
-			target = build_cards.get("kitchen", {}).get("button", build_button)
-			tip = "Постройте полевую кухню" if lg.fort_count("kitchen") == 0 else "Откройте полевую кухню"
-		3:
-			target = campaign_button
-			tip = "В поход!"
-	if target == null or not target.is_visible_in_tree():
-		guide.hide()
+	if lu.visible:
+		if lu.camp_window != "" or step != Legion.FortGuide.CAMPAIGN:
+			guide_layer.hide()
+			return
+		tip = "В поход! Первый бой"
+		if lu.guide_stage_button == null:
+			_guide_target = lu.guide_region_button
+		else:
+			var first_selected := lu.sel == {"c": 0, "r": 0, "s": 0} and bool(lg.flags.get("fort_guide_stage", false))
+			_guide_target = lu._fight_btn if first_selected else lu.guide_stage_button
+	elif not visible or is_instance_valid(card):
+		guide_layer.hide()
 		return
-	_guide_target = target
-	var translated_tip := I18n.t(tip)
-	if guide_text.text != translated_tip:
-		# Новый текст до первого замера: нет старого кэша минимального размера.
-		var previous := guide
-		remove_child(previous)
-		previous.queue_free()
-		guide = Kit.inset()
-		guide.name = "FortGuide"
-		guide.add_theme_stylebox_override("panel", Kit.box("panels/panel_inset", 40, 12, 56))
-		guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		guide_text = _text(translated_tip, 18, true)
-		guide_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		guide.add_child(guide_text)
-		add_child(guide)
+	else:
+		match step:
+			Legion.FortGuide.RECRUIT:
+				tip = "Новобранец у ворот — нажмите на него"
+				var arrivals := lg.fort_newcomers()
+				if not arrivals.is_empty():
+					var newcomer := int(arrivals[0]["id"])
+					if is_instance_valid(modal_panel):
+						_guide_target = _guide_modal_target("FortAccept")
+						if _guide_target == null:
+							_guide_target = _guide_modal_target("FortGate_%d" % newcomer)
+						if _guide_target == null:
+							_guide_target = _guide_modal_target("FortGatePeople")
+					else:
+						_guide_rect = _guide_person(newcomer, true)
+			Legion.FortGuide.KITCHEN:
+				var kitchen := lg.fort_slot_plot("kitchen")
+				if kitchen.is_empty():
+					tip = "Постройте кухню"
+					_guide_target = build_cards.get("kitchen", {}).get("button") as Control if is_instance_valid(build_scroll) else build_button
+				elif int(kitchen["lv"]) == 0 or not (kitchen["up"] as Dictionary).is_empty():
+					tip = "Кухня строится…"
+					_guide_target = _guide_room("kitchen")
+				else:
+					tip = "Перетащите его на кухню"
+					_guide_move_target(sid, "kitchen")
+			Legion.FortGuide.RATIONS:
+				if lg.fort_worker_plot(sid) == cooking_id:
+					tip = "Готовит пайки… Нажмите на хлеб над кухней"
+					_guide_target = plot_markers.get(cooking_id, {}).get("collect") as Control
+				else:
+					tip = "Перетащите его на кухню"
+					_guide_move_target(sid, "kitchen")
+			Legion.FortGuide.CHEST:
+				tip = "Откройте сундук"
+				_guide_target = _guide_modal_target("FortChest_wooden") if is_instance_valid(modal_panel) else chest_button
+			Legion.FortGuide.EQUIP:
+				tip = "Оденьте воина: нажмите на него и выберите вещь"
+				if is_instance_valid(modal_panel):
+					var iid := int(lg.flags.get("fort_guide_item", 0))
+					if dweller_sid == sid:
+						_guide_target = _guide_modal_target("FortEquip_%d" % iid)
+						if _guide_target == null:
+							_guide_target = _guide_modal_target("FortAllGear")
+					else:
+						_guide_target = _guide_modal_target("FortChestBack")
+						if _guide_target == null:
+							_guide_target = _guide_modal_target("FortPerson_%d" % sid)
+				else:
+					_guide_rect = _guide_person(sid)
+			Legion.FortGuide.BARRACKS:
+				tip = "Назначьте его в казарму — он станет бойцом"
+				_guide_move_target(sid, "barracks")
+			Legion.FortGuide.CAMPAIGN:
+				tip = "В поход! Первый бой"
+				_guide_target = campaign_button
+			Legion.FortGuide.FINISH:
+				tip = "Сокровищница копит денарии.\nДеньги из города — кнопкой слева, раз в 5 часов"
+				_guide_target = order_button
+	if is_instance_valid(_guide_target) and _guide_target.is_visible_in_tree():
+		_guide_rect = _guide_target.get_global_rect()
+	if not _guide_rect.has_area():
+		guide_layer.hide()
+		return
+	guide_text.text = I18n.t(tip)
+	guide_skip.text = I18n.t("Понятно" if step == Legion.FortGuide.FINISH else "Пропустить")
 	guide.reset_size()
-	var k := minf(1.0, size.y / 720.0)
-	k = minf(k, maxf(1.0, size.x - 16) / maxf(1.0, guide.size.x))
+	var area := guide_layer.size
+	var k := minf(1.0, minf(area.y / 720.0, maxf(1.0, area.x - 16) / maxf(1.0, guide.size.x)))
 	guide.scale = Vector2.ONE * k
-	var rect := target.get_global_rect()
-	guide_pointer.reset_size()
 	guide_pointer.scale = Vector2.ONE * k
-	var point := rect.position - global_position + Vector2(rect.size.x * 0.5, 2 * k)
-	guide_pointer.position = point - Vector2(guide_pointer.size.x * 0.5, guide_pointer.size.y) * k
+	var rect := Rect2(_guide_rect.position - guide_layer.global_position, _guide_rect.size)
+	var arrow_size := guide_pointer.size * k
 	var dims := guide.size * k
-	guide.position = _screen_anchor(point - Vector2(0, guide_pointer.size.y * k + dims.y * 0.5), dims, 8, 8)
-	guide_pointer.show()
-	guide_pointer.move_to_front()
-	guide.move_to_front()
+	var x := clampf(rect.get_center().x, arrow_size.x * 0.5, maxf(arrow_size.x * 0.5, area.x - arrow_size.x * 0.5))
+	var above := rect.position.y >= arrow_size.y + dims.y + 8.0 or rect.get_center().y > area.y * 0.5
+	var y := rect.position.y - arrow_size.y + 2.0 if above else rect.end.y - 2.0
+	guide_pointer.flip_v = not above
+	guide_pointer.position = Vector2(x - arrow_size.x * 0.5, y)
+	var bubble_y := y - dims.y * 0.5 if above else y + arrow_size.y + dims.y * 0.5
+	guide.position = _screen_anchor(Vector2(x, bubble_y), dims, 8, 8)
+	guide_layer.move_to_front()
+	guide_layer.show()
 
 
 func _stock(resource: String) -> float:
@@ -1573,7 +1653,6 @@ func _jump_to_type(type: String) -> void:
 
 func show_build_menu(plot_id := -1) -> void:
 	build_plot_id = plot_id if plot_id >= 0 else lg.fort_empty_plot()
-	_guide_advance(1)
 	var v := _new_modal(1020)
 	modal_panel.name = "FortBuildMenu"
 	var head := HBoxContainer.new()
@@ -1645,7 +1724,7 @@ func show_build_menu(plot_id := -1) -> void:
 func _focus_build_card() -> void:
 	var type := build_focus
 	build_focus = ""
-	if type == "" and int(lg.flags.get("camp3d_guide", 4)) == 2:
+	if type == "" and lg.fort_guide_step() == Legion.FortGuide.KITCHEN and lg.fort_count("kitchen") == 0:
 		type = "kitchen"
 	if is_instance_valid(build_scroll) and build_cards.has(type):
 		build_scroll.ensure_control_visible(build_cards[type]["button"])
@@ -1670,12 +1749,6 @@ func _refresh_build_menu() -> void:
 		button.disabled = why != ""
 		if cap == 0:
 			why = I18n.t("Штаб ур. %d") % int(Legion.FORT_B[type]["max"][0])
-		# Уже построенная кухня остаётся доступной в обучении и после миграции.
-		if type == "kitchen" and count > 0 and int(lg.flags.get("camp3d_guide", 4)) == 2:
-			button.icon = Kit.texture("back")
-			button.text = I18n.t("Перейти")
-			button.disabled = false
-			why = ""
 		button.tooltip_text = I18n.t("Строить") + ("\n" + I18n.t(why) if why != "" else "")
 		(entry["reason"] as Label).text = I18n.t(why)
 		(entry["picture"] as Control).modulate = Color(0.55, 0.55, 0.55) if cap == 0 else Color.WHITE
@@ -1683,19 +1756,16 @@ func _refresh_build_menu() -> void:
 
 
 func _choose_build(type: String) -> void:
-	if type == "kitchen" and lg.fort_count(type) > 0 and int(lg.flags.get("camp3d_guide", 4)) == 2:
-		lg.flags["camp3d_guide"] = 0
-		_jump_to_type(type)
-		return
 	var id := build_plot_id if build_plot_id >= 0 else lg.fort_empty_plot()
 	if not lg.fort_build(type, id):
 		hud.notify(I18n.t(lg.fort_can_build(type, id)), "lock")
 		_refresh_build_menu()
 		return
-	if type == "kitchen":
-		lg.flags["camp3d_guide"] = 0
 	build_plot_id = -1
-	show_plot(id)
+	if type == "kitchen" and lg.fort_guide_step() == Legion.FortGuide.KITCHEN:
+		_close_modal()
+	else:
+		show_plot(id)
 	_refresh()
 
 
@@ -1932,6 +2002,11 @@ func _refresh_marker(marker: Dictionary) -> void:
 		if collect.disabled:
 			collect.tooltip_text += "\n" + I18n.t("Запас полон. Потратьте ресурсы, чтобы собрать ещё.")
 		marker["ring"].set("value", float(plot["pend"]) / maxf(1.0, float(prod["cap"])))
+		if lg.fort_guide_cooking(int(plot["id"])):
+			collect.show()
+			collect.disabled = float(plot["pend"]) < Legion.FORT_GUIDE_BATCH - 0.0001
+			collect.tooltip_text = I18n.t("Готовит пайки…") if collect.disabled else I18n.t("Собрать %d") % Legion.FORT_GUIDE_BATCH
+			marker["ring"].set("value", float(plot["pend"]) / Legion.FORT_GUIDE_BATCH)
 		idle = float(plot["pend"]) >= float(prod["cap"]) - 0.001
 	elif type == "drill" and level > 0:
 		idle = true
@@ -1967,9 +2042,6 @@ func _collect_plot(plot_id: int, origin := Vector2.INF) -> void:
 	if amount <= 0:
 		return
 	var resource := String(prod["resource"])
-	if resource == "rations":
-		if int(lg.flags.get("camp3d_guide", 4)) == 0:
-			lg.flags["camp3d_guide"] = 3
 	_fly_resource(resource, amount, origin)
 	_refresh()
 
@@ -2161,7 +2233,9 @@ func show_newcomer(sid: int) -> void:
 func show_people() -> void:
 	var v := _new_modal(540)
 	v.add_child(_text(I18n.t("Жители форта"), 24, true))
-	v.add_child(_button(I18n.t("У ворот: %d") % lg.fort_newcomers().size(), open_recruit_picker, "housing"))
+	var gate_people := _button(I18n.t("У ворот: %d") % lg.fort_newcomers().size(), open_recruit_picker, "housing")
+	gate_people.name = "FortGatePeople"
+	v.add_child(gate_people)
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(480, 330)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -2171,7 +2245,9 @@ func show_people() -> void:
 	scroll.add_child(body)
 	for person: Dictionary in lg.soldiers:
 		var sid := int(person["id"])
-		body.add_child(_button(_soldier_title(person), func(): _show_soldier(sid)))
+		var row := _button(_soldier_title(person), func(): _show_soldier(sid))
+		row.name = "FortPerson_%d" % sid
+		body.add_child(row)
 	v.add_child(_button("Закрыть", _close_modal))
 	_fit_modal.call_deferred()
 
@@ -2271,7 +2347,9 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 	if slot != "":
 		var filter_row := HBoxContainer.new()
 		right.add_child(filter_row)
-		filter_row.add_child(_button("Все вещи", func(): show_dweller(sid), "overview"))
+		var all_gear := _button("Все вещи", func(): show_dweller(sid), "overview")
+		all_gear.name = "FortAllGear"
+		filter_row.add_child(all_gear)
 		var remove := _button("Снять", func():
 			if lg.unequip(sid, slot):
 				show_dweller(sid, slot)
@@ -2362,7 +2440,10 @@ func _dweller_item_icon(it: Dictionary, pixels: float) -> Control:
 func _equip_dweller(sid: int, iid: int) -> void:
 	var delta := lg.equip_power(sid, iid)
 	if lg.equip(sid, iid):
-		show_dweller(sid, "", I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])])
+		if lg.fort_guide_step() == Legion.FortGuide.BARRACKS and sid == int(lg.flags.get("fort_guide_sid", 0)):
+			_close_modal()
+		else:
+			show_dweller(sid, "", I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])])
 		_refresh()
 
 
@@ -2385,7 +2466,9 @@ func _move_dweller(sid: int) -> void:
 		for plot: Dictionary in lg.fort["plots"]:
 			var id := int(plot["id"])
 			if lg.fort_can_assign(id, sid) == "":
-				v.add_child(_button(I18n.t(String(Legion.FORT_B[String(plot["b"])]["name"])), func(): lg.fort_assign(id, sid); _close_modal(); _refresh()))
+				var room := _button(I18n.t(String(Legion.FORT_B[String(plot["b"])]["name"])), func(): lg.fort_assign(id, sid); _close_modal(); _refresh())
+				room.name = "FortMoveTo_%d" % id
+				v.add_child(room)
 		v.add_child(_button("Закрыть", _close_modal))
 		_fit_modal.call_deferred()
 

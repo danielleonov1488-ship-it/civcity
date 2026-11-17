@@ -5527,5 +5527,17 @@
   "Редкости: обычное / редкое / эпическое / легендарное": "Rarities: common / rare / epic / legendary",
   "Пайки: %.1f · есть %.1f": "Rations: %.1f · have %.1f",
   "Сундуки заполнены — откройте один в форте.": "Chest storage is full. Open a chest in the fort.",
-  "В форте ждёт: %s": "Waiting in the fort: %s"
+  "В форте ждёт: %s": "Waiting in the fort: %s",
+  "Пропустить": "Skip",
+  "Новобранец у ворот — нажмите на него": "A recruit is at the gate. Tap them.",
+  "Перетащите его на кухню": "Drag the recruit to the kitchen.",
+  "Постройте кухню": "Build a kitchen.",
+  "Кухня строится…": "The kitchen is under construction…",
+  "Готовит пайки…": "Cooking rations…",
+  "Готовит пайки… Нажмите на хлеб над кухней": "Cooking rations… Tap the bread above the kitchen.",
+  "Откройте сундук": "Open a chest.",
+  "Оденьте воина: нажмите на него и выберите вещь": "Tap the recruit and choose a piece of gear.",
+  "Назначьте его в казарму — он станет бойцом": "Drag the recruit to the barracks to enlist.",
+  "В поход! Первый бой": "March out! Your first battle.",
+  "Сокровищница копит денарии.\nДеньги из города — кнопкой слева, раз в 5 часов": "The treasury earns denarii.\nUse the button on the left to order more every 5 hours."
 }

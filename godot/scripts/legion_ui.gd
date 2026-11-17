@@ -115,6 +115,8 @@ var _net_checked := false
 var tut_bar: PanelContainer
 var tut_lbl: Label
 var tut_act: Button                        # «Поставить Казармы» (шаг 1, если окно открыто раньше)
+var guide_stage_button: Button
+var guide_region_button: Button
 var _fight_btn: Button                     # «В бой!» в карточке боя
 var _front_btn: Button                     # передний край на карте
 var _upg_btn: Button                       # «На карте» у Казарм во «Войсках» (обучение, шаг 4: улучшения — в карточке здания)
@@ -252,6 +254,10 @@ func open(tab_id := "") -> void:
 		view_r = int(fr["r"])
 		view_c = int(fr["cycle"])
 		sel = {}
+	if lg.v3() and tab_id == "campaign" and lg.fort_guide_step() == Legion.FortGuide.CAMPAIGN:
+		view_r = 0
+		view_c = 0
+		sel = {"c": 0, "r": 0, "s": 0}
 	if lg.flags.has("turn_page") and tab_id != "pvp":
 		# босс побеждён (в 3D-бою или пока окно было закрыто) — карта перелистывается на новую провинцию
 		lg.flags.erase("turn_page")
@@ -272,6 +278,10 @@ func close(return_camp := true) -> void:
 	hud._update_pointer()
 	if back:
 		CampUI.attach(hud).open()
+	else:
+		var camp := CampUI.of(hud)
+		if camp != null:
+			camp._layout_guide()
 
 
 func _on_city() -> void:
@@ -630,6 +640,8 @@ func _rebuild() -> void:
 	_live = []
 	hud._clear(content)
 	_fight_btn = null
+	guide_stage_button = null
+	guide_region_button = null
 	_front_btn = null
 	_upg_btn = null
 	# «Воины» (Легион 2.0, этап 1) — только в новой игре «Уютного Рима»; вкладки чуть уже, чтобы уместились пять
@@ -772,13 +784,17 @@ func _fit() -> void:
 	if toast:
 		toast.reset_size()
 		toast.position = Vector2((avail.x - toast.size.x) / 2.0, win.position.y + s.y * k - toast.size.y - 30.0)
+	if visible and lg != null and lg.v3():
+		var camp := CampUI.of(hud)
+		if camp != null:
+			camp._layout_guide()
 
 
 ## Короткая надпись внизу окна (почему нельзя и т. п.) — сама гаснет
 func _say(text: String) -> void:
 	if text == "" or toast == null:
 		return
-	if hud.tutorial_busy():
+	if hud.tutorial_busy() and not lg.v3():
 		hud._toast(text, "info")
 		return
 	(toast.get_node("t") as Label).text = text
@@ -1326,7 +1342,15 @@ func _map_view() -> Control:
 		b.position = p - Vector2(sz, sz) / 2.0
 		b.size = Vector2(sz, sz)
 		b.pivot_offset = Vector2(sz, sz) / 2.0
-		b.pressed.connect(func(): sel = st; _rebuild())
+		var first_stage := vc == 0 and view_r == 0 and s == 0
+		if first_stage:
+			b.name = "LegionFirstStage"
+			guide_stage_button = b
+		b.pressed.connect(func():
+			sel = st
+			if lg.fort_guide_step() == Legion.FortGuide.CAMPAIGN:
+				lg.flags["fort_guide_stage"] = first_stage
+			_rebuild())
 		m.add_child(b)
 		if front:
 			_front_btn = b
@@ -1468,6 +1492,8 @@ func _region_strip() -> Control:
 		elif done:
 			tip += "\nПройдена: босс побеждён"
 		var b := _pic_btn(face, 56, tip, func(): view_r = rr; sel = {}; _rebuild())
+		if r == 0:
+			guide_region_button = b
 		b.position = Vector2(21 + dx, 1)
 		b.size = Vector2(56, 56)
 		holder.add_child(b)
@@ -1583,11 +1609,13 @@ func _stage_card(st: Dictionary) -> Control:
 					var af := Legion.affix_of(st, String(k))
 					bits.append("%s — %s (%s)" % [String(Legion.ENEMIES[k]["name"]).to_lower(), Legion.AFFIX_NAME[af], Legion.AFFIX_TIP[af]])
 		v.add_child(_wl("Ветераны: " + "; ".join(bits) + ".", CARD_W - 24, 13, C_BAD))
-	var tips := lg.tips(st)
+	var guide_step := lg.fort_guide_step()
+	var teaching := lg.v3() and guide_step > Legion.FortGuide.INACTIVE and guide_step <= Legion.FortGuide.CAMPAIGN
+	var tips := "" if teaching else lg.tips(st)
 	if tips != "":
 		v.add_child(_wl(tips, CARD_W - 24, 14, C_SOFT))
 	# отряд не под этот бой (пока мест три — загадка на выбор отряда; дальше — лучник в волчьем бою): совет и кнопка «Под бой»
-	var hint := lg.squad_hint(st)
+	var hint := "" if teaching else lg.squad_hint(st)
 	if hint != "":
 		var hb := HBoxContainer.new()
 		hb.add_theme_constant_override("separation", 6)
@@ -1729,7 +1757,7 @@ func _stage_card(st: Dictionary) -> Control:
 		v.add_child(_wl("Учебный бой — для трёх легионеров: лучника в лесу некому прикрыть. «Состав» → «Лучший состав».", CARD_W - 24, 13, C_BAD, true, true))
 	elif lg.tutorial_battle(st):
 		v.add_child(_wl("Учебный бой: в нужный миг подскажем, что нажать.", CARD_W - 24, 13, C_GOOD, true, true))
-	else:
+	elif not teaching:
 		v.add_child(_wl("Отряд дерётся сам; ваше — состав и умения в нужный миг." + ("" if st["done"] else " «Авто» — после первой победы."), CARD_W - 24, 13, C_SOFT, false, true))
 	return p
 
@@ -1868,6 +1896,9 @@ func _on_battle_closed(out: Dictionary) -> void:
 	_pending = {}
 	if was_pvp:
 		_pvp_state = "idle"
+	elif lg.fort_guide_step() == Legion.FortGuide.FINISH:
+		CampUI.attach(hud).open()
+		return
 	if bool(out.get("win", false)) and out.has("next") and not (out["next"] as Dictionary).is_empty() and not lg.flags.has("turn_page"):
 		var nx: Dictionary = out["next"]
 		sel = {"c": int(nx["cycle"]), "r": int(nx["r"]), "s": int(nx["s"])}
@@ -1957,7 +1988,7 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 	if not unl.is_empty():
 		v.add_child(_hdiv(14))
 		v.add_child(_wl("Открыто: " + ", ".join(unl) + ".", 420, 17, C_INK, true, true))
-	if not win_b:
+	if not win_b and not bool(setup.get("fort_guide_first", false)):
 		v.add_child(_hdiv(14))
 		v.add_child(_wl("Не беда! Улучшите бойцов во вкладке «Войска», поставьте в отряд тех, кто сильнее против этих врагов, и вовремя жмите умения в бою.", 420, 15, C_SOFT, false, true))
 	if not _has_battle_scene():
@@ -1965,7 +1996,9 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 	var bh := HBoxContainer.new()
 	bh.alignment = BoxContainer.ALIGNMENT_CENTER
 	bh.add_theme_constant_override("separation", 12)
-	if win_b:
+	if lg.fort_guide_step() == Legion.FortGuide.FINISH and not pvp:
+		bh.add_child(_btn(I18n.t("← Лагерь"), 180, 20, null, "", func(): close()))
+	elif win_b:
 		var nx: Dictionary = out.get("next", {})
 		bh.add_child(_btn("Дальше", 180, 20, null, "", func(): _after_win(nx)))
 	else:

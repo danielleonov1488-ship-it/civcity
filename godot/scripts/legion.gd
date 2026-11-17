@@ -158,6 +158,9 @@ const SQUAD_V3 := 5                       # мест в отряде; 0–2 — 
 const SQUAD_V3_FRONT := 3
 const CAMP_POP := 50                      # жителей, с которых открывается лагерь
 const CAMP_OPEN_TEXT := "Форт открыт: принимайте новобранцев у ворот — кнопка «Легион» наверху"
+enum FortGuide {INACTIVE, RECRUIT, KITCHEN, RATIONS, CHEST, EQUIP, BARRACKS, CAMPAIGN, FINISH, DONE}
+const FORT_GUIDE_BATCH := 2
+const FORT_GUIDE_COOK_SECS := 20.0
 const RATION_BASE := 2.0                  # паёк в игровой день; пекарня с работниками — ещё RATION_BAKERY
 const RATION_BAKERY := 3.0
 const RATION_CAP0 := 20
@@ -1100,6 +1103,8 @@ func equip(sid: int, iid: int) -> bool:
 		_v3_reclass(s)                       # оружие решает класс
 		if not o.is_empty():
 			_v3_reclass(o)                   # у прежнего владельца оружия нет — получит меч даром
+	if fort_guide_step() == FortGuide.EQUIP and sid == int(flags.get("fort_guide_sid", 0)) and iid == int(flags.get("fort_guide_item", 0)):
+		flags["fort_guide"] = FortGuide.BARRACKS
 	changed.emit()
 	daily_note("equip")                   # задания дня
 	return true
@@ -3343,6 +3348,9 @@ func prepare_battle(st: Dictionary) -> Dictionary:
 	if v3():
 		rations = maxf(0.0, rations - ration_cost(st))
 		setup["rations_paid"] = true
+		if fort_guide_step() == FortGuide.CAMPAIGN and int(st.get("idx", -1)) == 0:
+			setup["fort_guide_first"] = true
+			flags["fort_guide"] = FortGuide.FINISH
 		changed.emit()
 	return setup
 
@@ -4132,6 +4140,63 @@ func _fort_init() -> void:
 	_fort_sync_camp()
 
 
+func fort_guide_step() -> int:
+	return int(flags.get("fort_guide", FortGuide.INACTIVE))
+
+
+func begin_fort_guide() -> void:
+	if fort_guide_step() != FortGuide.INACTIVE:
+		return
+	flags["camp_told"] = true
+	# Старый пройденный форт сохраняет своё состояние.
+	if int(flags.get("camp3d_guide", 0)) >= 4 or progress > 0 or not chest_queue.has("wooden"):
+		flags["fort_guide"] = FortGuide.DONE
+		return
+	for person: Dictionary in soldiers:
+		if not bool(person.get("hero", false)):
+			flags["fort_guide"] = FortGuide.DONE
+			return
+	flags["fort_guide"] = FortGuide.RECRUIT
+
+
+func fort_guide_newcomer() -> void:
+	# Первый человек уже ждёт, даже если город ещё не достиг нужного счастья.
+	if fort_guide_step() == FortGuide.RECRUIT and (fort["newcomers"] as Array).is_empty():
+		(fort["newcomers"] as Array).append(_fort_newcomer())
+
+
+func finish_fort_guide() -> void:
+	rations += float(flags.get("fort_guide_rations", 0.0))
+	for key: String in ["fort_guide_sid", "fort_guide_plot", "fort_guide_item", "fort_guide_rations", "fort_guide_stage"]:
+		flags.erase(key)
+	flags["fort_guide"] = FortGuide.DONE
+
+
+func fort_guide_cooking(plot_id: int) -> bool:
+	return fort_guide_step() == FortGuide.RATIONS and plot_id == int(flags.get("fort_guide_plot", -1))
+
+
+func _fort_guide_assign(p: Dictionary, sid: int) -> void:
+	if sid != int(flags.get("fort_guide_sid", 0)):
+		return
+	var step := fort_guide_step()
+	if p["b"] == "kitchen" and step in [FortGuide.KITCHEN, FortGuide.RATIONS]:
+		if step == FortGuide.KITCHEN:
+			# Оставляем место под первую партию в полном стартовом запасе.
+			var reserve := clampf(rations - ration_cap() + FORT_GUIDE_BATCH, 0.0, FORT_GUIDE_BATCH)
+			rations -= reserve
+			flags["fort_guide_rations"] = reserve
+		flags["fort_guide_plot"] = int(p["id"])
+		flags["fort_guide"] = FortGuide.RATIONS
+	elif p["b"] == "barracks" and step == FortGuide.BARRACKS:
+		_ensure_hero3()
+		if not squad3.has(sid):
+			for i in slots():
+				if int(squad3[i]) == 0 and set_place(i, sid):
+					break
+		flags["fort_guide"] = FortGuide.CAMPAIGN
+
+
 ## Первый готовый работник; жители казармы остаются дома и в отряде.
 func fort_worker(plot_id: int) -> Dictionary:
 	for person: Dictionary in fort_occupants(plot_id):
@@ -4208,6 +4273,7 @@ func fort_assign(plot_id: int, sid: int) -> bool:
 		return false
 	var source := fort_worker_plot(sid)
 	if source == plot_id:
+		_fort_guide_assign(p, sid)
 		return true
 	# Сначала учитываем старую работу, затем меняем оба списка без промежуточного сигнала.
 	var displaced := 0
@@ -4222,6 +4288,7 @@ func fort_assign(plot_id: int, sid: int) -> bool:
 			_fort_place(fort_plot(source), displaced)
 	_fort_place(p, sid)
 	_v3_sync_squad()
+	_fort_guide_assign(p, sid)
 	_fort_changed()
 	return true
 
@@ -4602,9 +4669,13 @@ func _fort_accrue(p: Dictionary, until: float) -> void:
 	_craft_accrue(p, until - since, until)
 	var prod := fort_production(String(p["b"]), int(p["lv"]))
 	# Время простоя не накапливается: ни без человека, ни при полном складе.
-	if not prod.is_empty() and (p["up"] as Dictionary).is_empty() and not fort_worker(int(p["id"])).is_empty():
+	if not prod.is_empty() and (p["up"] as Dictionary).is_empty():
+		var worker := fort_worker(int(p["id"]))
 		var resource := String(prod["resource"])
-		if fort_stock(resource) < resource_cap(resource) and float(p["pend"]) < float(prod["cap"]):
+		if fort_guide_cooking(int(p["id"])) and int(worker.get("id", 0)) == int(flags.get("fort_guide_sid", -1)):
+			if float(p["pend"]) < FORT_GUIDE_BATCH:
+				p["pend"] = minf(FORT_GUIDE_BATCH, float(p["pend"]) + (until - since) * FORT_GUIDE_BATCH / FORT_GUIDE_COOK_SECS)
+		elif not worker.is_empty() and fort_stock(resource) < resource_cap(resource) and float(p["pend"]) < float(prod["cap"]):
 			p["pend"] = minf(float(prod["cap"]), float(p["pend"]) + (until - since) / 3600.0 * float(prod["rate"]) * maxf(0.001, time_k))
 	p["t"] = until
 
@@ -4654,7 +4725,14 @@ func fort_collect(plot_id: int) -> int:
 		return 0
 	var resource := String(prod["resource"])
 	var stock := fort_stock(resource)
-	var amount := maxi(0, mini(floori(float(p["pend"]) + 0.0001), floori(resource_cap(resource) - stock)))
+	var available := floori(float(p["pend"]) + 0.0001)
+	var capacity := floori(resource_cap(resource) - stock)
+	var first_batch := fort_guide_cooking(plot_id)
+	if first_batch:
+		if available < FORT_GUIDE_BATCH:
+			return 0
+		capacity = maxi(capacity, FORT_GUIDE_BATCH)
+	var amount := maxi(0, mini(available, capacity))
 	if amount == 0:
 		return 0
 	p["pend"] = maxf(0.0, float(p["pend"]) - amount)
@@ -4664,6 +4742,15 @@ func fort_collect(plot_id: int) -> int:
 		ingots += amount
 	elif resource == "rations":
 		rations += amount
+		if first_batch:
+			flags.erase("fort_guide_rations")
+			var gear := item(int(flags.get("fort_guide_item", 0)))
+			if gear.is_empty():
+				flags["fort_guide"] = FortGuide.CHEST
+			elif int(gear.get("on", 0)) == int(flags["fort_guide_sid"]):
+				flags["fort_guide"] = FortGuide.BARRACKS
+			else:
+				flags["fort_guide"] = FortGuide.EQUIP
 	else:
 		mats[resource] = stock + amount
 	changed.emit()
@@ -4987,6 +5074,9 @@ func fort_accept(id: int) -> Dictionary:
 			person[key] = candidate.get(key, 0 if key == "look_seed" else false if key == "female" else "legionary")
 		(fort["newcomers"] as Array).erase(candidate)
 		_v3_reclass(person)
+		if fort_guide_step() == FortGuide.RECRUIT:
+			flags["fort_guide_sid"] = id
+			flags["fort_guide"] = FortGuide.KITCHEN
 		changed.emit()
 		daily_note("recruit")
 		return person
@@ -5739,6 +5829,11 @@ func open_chest(kind: String) -> Dictionary:
 		"iron": _rng.randi_range(5, 12) * tier, "wood": _rng.randi_range(5, 12) * tier, "leather": _rng.randi_range(5, 12) * tier,
 		"ingots": _rng.randi_range(1, 3) if _rng.randi_range(1, 100) <= 2 * tier else 0, "item": gear}
 	chest_queue.erase(kind)
+	var step := fort_guide_step()
+	if kind == "wooden" and step >= FortGuide.RECRUIT and step <= FortGuide.CHEST:
+		flags["fort_guide_item"] = int(gear["id"])
+		if step == FortGuide.CHEST:
+			flags["fort_guide"] = FortGuide.EQUIP
 	reward["money_lost"] = _give({"money": reward["money"]})
 	# Награды могут превысить запас; производство и сбор всё равно ждут свободного места.
 	for resource: String in Gear.MATS:

@@ -3548,6 +3548,13 @@ func _update_pointer() -> void:
 	pointer_target = null
 	if game == null or game.city == null or game.mode == "demo" or game.mode == "menu":
 		return
+	var camp := CampUI.of(self)
+	var legion_ui := LegionUi.of(self)
+	if (camp != null and camp.visible) or (game.city.legion.v3() and legion_ui != null and legion_ui.visible):
+		if pointer != null:
+			pointer.hide()
+			pointer_text.hide()
+		return
 	if tutorial_busy():
 		if game.tutorial != null:
 			var pt: Array = game.tutorial.pointer()
@@ -4082,9 +4089,7 @@ func _process(_dt: float) -> void:
 			pointer.texture = ico("pointing", 104)
 			pointer.modulate = Color.WHITE
 		var t: Control = pointer_target
-		var cu := CampUI.of(self)
-		# лагерь Легиона закрывает город целиком: стрелка к кнопкам города (например, «Мостовая») над ним не видна
-		var show := t != null and is_instance_valid(t) and t.is_visible_in_tree() and root.visible and (cu == null or not cu.visible or cu.is_ancestor_of(t))
+		var show := t != null and is_instance_valid(t) and t.is_visible_in_tree() and root.visible
 		pointer.visible = show
 		pointer_text.visible = show
 		if show:

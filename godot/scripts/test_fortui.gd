@@ -276,24 +276,11 @@ func _run() -> void:
 	if not check(camp.lu.camp_window == "store" and camp.lu.visible, "craft panel opens shared gear storage"):
 		return
 	camp.lu.close()
-	# Новый порядок: стройка → кухня → назначение и сбор → поход.
-	lg.flags["camp3d_guide"] = 1
-	camp.show_build_menu()
-	if not check(int(lg.flags["camp3d_guide"]) == 2, "guide build menu"):
-		return
-	var guide_kitchen := int(lg.fort_slot_plot("kitchen")["id"])
-	camp._choose_build("kitchen")
-	if not check(int(lg.flags["camp3d_guide"]) == 0 and camp.selected_plot == guide_kitchen, "guide kitchen waits for collect"):
-		return
-	lg.rations = 0
-	lg.fort_plot(guide_kitchen)["t"] = Legion.now() - 7200
-	lg.fort_finish()
-	var before_collect := lg.rations
-	camp._collect_plot(guide_kitchen)
-	if not check(int(lg.flags["camp3d_guide"]) == 3 and lg.rations > before_collect, "guide collect"):
+	# Сохранение со старым пройденным обучением открывает обычный форт.
+	if not check(lg.fort_guide_step() == Legion.FortGuide.DONE and not camp.guide.is_visible_in_tree(), "old guide stays completed"):
 		return
 	camp._campaign()
-	if not check(int(lg.flags["camp3d_guide"]) == 4, "guide campaign"):
+	if not check(camp.lu.visible and lg.fort_guide_step() == Legion.FortGuide.DONE, "campaign stays outside completed guide"):
 		return
 	camp.lu.close()
 	camp.close()
