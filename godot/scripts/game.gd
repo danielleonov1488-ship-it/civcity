@@ -3207,7 +3207,7 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 			err = "По большой дороге ездят повозки — здесь не строят"
 	var res := {"pos": pos, "yaw": yaw, "err": err, "cells": chk["cells"], "y": chk["y"], "variant": variant, "color": color, "tier": tier,
 		"mode": "free" if free else "", "sub": sub}
-	if err == "" and City.road_optional and _needs_road(d):
+	if err == "" and (City.road_optional or d["kind"] == "house") and _needs_road(d):
 		# свободная стройка: место годное, но у входа нет мостовой — построить можно, работать не будет («Без дороги не заработает»)
 		var own := {}
 		for k in (chk["cells"] as PackedInt32Array):
@@ -3217,6 +3217,22 @@ func placement(type: String, p: Vector2, variant := -1, color := -1) -> Dictiona
 	if ry != null:
 		res["ry"] = ry
 	return res
+
+
+## Проба места для обучения не меняет привязку текущего призрака.
+func placement_hint(type: String, p: Vector2) -> Dictionary:
+	var n := last_snap_n
+	var at := last_snap_p
+	var glued := last_glued
+	var on := last_on
+	var free_rot := _free_rot
+	var pl := placement(type, p, next_variant, 0)
+	last_snap_n = n
+	last_snap_p = at
+	last_glued = glued
+	last_on = on
+	_free_rot = free_rot
+	return pl
 
 
 ## Акведук кусками (этап 5.6): курсор ближе 3,5 м к свободному концу поставленного куска — новый встаёт вплотную
@@ -3645,7 +3661,7 @@ func _free_checks(type: String, cells: PackedInt32Array, pos: Vector2, yaw: floa
 	var bp := Catalog.make(type, tier, variant, color)
 	var ax := City.axis(yaw)
 	var f := City.facing(yaw)
-	if not City.road_optional and not d.get("noroad", false) and not _road_free_near(pos + ax * bp.door.x + f * bp.door.z, 1.7, own):
+	if not City.road_optional and d["kind"] != "house" and not d.get("noroad", false) and not _road_free_near(pos + ax * bp.door.x + f * bp.door.z, 1.7, own):
 		return "Нужна дорога у входа"
 	var rects: Array = bp.footprint()
 	if rects.is_empty():

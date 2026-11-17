@@ -5509,5 +5509,14 @@
 	"%s — поставьте рядом": "%s — place nearby",
 	"Откройте лавку в исследованиях": "Unlock a shop in Research",
 	"Ожидаемый доход за час при нынешних жильцах и работниках. Прошедшие часы — в «Финансах»": "Expected hourly income with current residents and workers. Past hours are in Finances",
-	"Начнём с улицы и домов для семей.": "Let us start with a street and homes for the families."
+	"Начнём с улицы и домов для семей.": "Let us start with a street and homes for the families.",
+  "Подвигайте камеру и смените масштаб.": "Move the camera and try zooming.",
+  "Поставьте три дома. Дорогу добавим потом.": "Build three houses. Roads come next.",
+  "Соедините дома дорогой с площадью.": "Connect the houses to the square with a road.",
+  "Посмотрите на значки в карточке дома.": "Look at the icons in the house card.",
+  "Значки — что нужно семье.\nЗелёное — есть, бледное — нужно поставить рядом.": "Icons show what the family needs.\nGreen: provided. Pale: build something nearby.",
+  "Поставьте рядом с домами.": "Place it near the houses.",
+	"Ждём семью у дома.": "Waiting for the family to reach home.",
+	"Поселите ещё семью — нужен работник.": "Settle another family to get a worker.",
+	"Ещё одна семья скоро приедет.": "Another family will arrive soon."
 }

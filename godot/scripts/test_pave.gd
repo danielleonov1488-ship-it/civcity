@@ -23,7 +23,7 @@ func _ready() -> void:
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	if str(args.get("freebuild", "1")) == "0":
-		Game.FREE_BUILD = false            # прежние правила (дорога у входа обязательна, Z/X — четвертями у дороги)
+		Game.FREE_BUILD = false            # прежний поворот у дороги: Z/X — четвертями
 	if args.has("menu_hash"):
 		Game.boot = {str(args["menu_hash"]): "1", "noui": "1", "hour": "9"}
 	else:
@@ -180,6 +180,14 @@ func _run() -> void:
 	game.city.tips["intro"] = true
 	game.city.tips["cover_tip"] = true          # совет о подсветке охвата (test_cover) не загораживает щелчки по миру
 	game.city.research["fountain"] = true
+	# Здесь проверяем стройку. Открываем обычное меню жилья сразу.
+	game.tutorial.step = -1
+	game.tutorial.card.hide()
+	game.tutorial.camera_keys.hide()
+	game.city.tips["tut"] = -1
+	game.city.tips["ui"] = 3
+	game.hud.apply_reveal(3)
+	game.hud.refresh()
 	game.hud.advisor_panel.visible = false
 	game.rig.set_view(Vector3(180, 2, 150), 15, 58, 60)
 	_paint()
@@ -276,7 +284,7 @@ func _f1_snap() -> void:
 
 
 ## F2: если фасад дальше ~1 м от улицы — дом не улетает к ней, стоит, где курсор; пока вход достаёт до улицы — ровно
-## фасадом к ней ("square"), дальше — к камере ("free"), и там строить нельзя (дороги у входа нет)
+## фасадом к ней ("square"), дальше — к камере ("free"), у дома есть предупреждение о дороге
 func _f2_no_fly() -> void:
 	var bad := 0
 	var n := 0
@@ -292,16 +300,13 @@ func _f2_no_fly() -> void:
 				var sub: String = pl.get("sub", "")
 				subs[sub] = int(subs.get(sub, 0)) + 1
 				var yaw_ok: bool = yaw_is(float(pl["yaw"]), PI, 0.01) if sub == "square" else yaw_is(float(pl["yaw"]), cam_yaw(), 0.01)
-				if not (sub in ["free", "square"]) or centre("house_pleb", pl).distance_to(p) > 0.05 or not yaw_ok or (sub == "free" and pl["err"] == "" and not Game.FREE_BUILD):    # свободная стройка: без дороги у входа — можно (с пометкой)
+				if not (sub in ["free", "square"]) or centre("house_pleb", pl).distance_to(p) > 0.05 or not yaw_ok:    # свободная стройка: без дороги у входа — можно (с пометкой)
 					bad += 1
 					if bad <= 4:
 						print("PAVE   fly p=", p, " sub=", sub, " c=", centre("house_pleb", pl), " yaw=", rad_to_deg(float(pl["yaw"])), " err=", pl["err"])
 	ok("F2 a few metres away: stays at the cursor (square to the street while the door reaches it)", bad == 0 and subs.has("square") and subs.has("free"), "%d/%d %s" % [n - bad, n, str(subs)])
 	var far := probe("house_pleb", Vector2(176, 125))
-	if Game.FREE_BUILD:
-		ok("F2 far from any road: allowed, but flagged as without a road", far["err"] == "" and bool(far.get("noroad", false)), str(far["err"]))
-	else:
-		ok("F2 far from any road: needs a road at the door", far["err"] == "Нужна дорога у входа", str(far["err"]))
+	ok("F2 far from any road: allowed, but flagged as without a road", far["err"] == "" and bool(far.get("noroad", false)), str(far["err"]))
 
 
 ## F3: вдоль улицы и у границы прилипания — без дёрганья
@@ -343,6 +348,7 @@ func _f5_mouse() -> void:
 	if not ok("F5 house card found", card != null):
 		return
 	await click(center_of(card))
+	game.hud._close_tray()
 	reset()
 	move(scr(S1))
 	await frames(10)
@@ -478,13 +484,15 @@ func _f9_review() -> void:
 		and (a["pos"] as Vector2).distance_to(b["pos"]) <= 0.05 and yaw_is(float(a["yaw"]), float(b["yaw"]), 0.001), "a=%s b=%s %s" % [a.get("sub", ""), b.get("sub", ""), (a["pos"] as Vector2).distance_to(b["pos"])])
 	var c: Dictionary = game.placement("house_pleb", Vector2(176, 168.0 - 1.6))
 	ok("F9 deeper into the street: at the cursor on the paving", c.get("sub", "") == "square" and centre("house_pleb", c).distance_to(Vector2(176, 168.0 - 1.6)) <= 0.05, str(c.get("sub", "")))
-	# X у дороги — четверть оборота на месте (середина остаётся); четыре раза — снова фасадом к дороге у края
+	# Как у игрока: «X» крутит призрак именно выбранного дома.
+	game.set_tool("house_pleb")
 	reset()
 	var p := Vector2(176, 168.0 + 0.6)
 	var s0: Dictionary = game.placement("house_pleb", p)
 	var s1 := key_rot(KEY_X, p)
 	var turn := deg_to_rad(15.0) if Game.FREE_BUILD else PI / 2        # свободная стройка: Z/X — по 15°, не четвертями
-	ok("F9 X next to a road: one step in place (15 degrees; a quarter turn with the old rules)", centre("house_pleb", s1).distance_to(centre("house_pleb", s0)) <= 0.05 and yaw_is(float(s1["yaw"]), float(s0["yaw"]) + turn, 0.002),
+	ok("F9 X next to a road: one step in place (15 degrees; a quarter turn with the old rules)", s0.get("sub") == "road"
+		and centre("house_pleb", s1).distance_to(centre("house_pleb", s0)) <= 0.05 and yaw_is(float(s1["yaw"]), float(s0["yaw"]) + turn, 0.002),
 		"moved %.2f yaw %.1f -> %.1f" % [centre("house_pleb", s1).distance_to(centre("house_pleb", s0)), rad_to_deg(float(s0["yaw"])), rad_to_deg(float(s1["yaw"]))])
 	key_rot(KEY_X, p)
 	key_rot(KEY_X, p)
@@ -733,13 +741,13 @@ func _f10_angles() -> void:
 	game._release()
 	var kept := ry + 1.1 if Game.FREE_BUILD else ry + PI / 2
 	ok("F10 released: keeps the visible angle (a quarter with the old rules)", game.manual_yaw and game.place_lock.is_empty() and yaw_is(game.tool_yaw, kept, 0.002), "tool_yaw=%.1f" % rad_to_deg(game.tool_yaw))
-	# далеко от дорог — поворот свой (запомненный), косо можно: там и строить нельзя (дороги у входа нет)
+	# Далеко от дорог сохраняется свой поворот, у дома есть предупреждение о дороге.
 	reset()
 	game.yaw_set = true
 	game.free_yaw = 0.7
 	var fz: Dictionary = game.placement("house_pleb", F10_C + Vector2(-2, 17))
-	ok("F10 far from roads: own rotation; without a road at the door it is refused (old rules) or flagged (free build)", fz.get("sub", "") == "free" and yaw_is(float(fz["yaw"]), 0.7, 0.001)
-		and (bool(fz.get("noroad", false)) and fz["err"] == "" if Game.FREE_BUILD else fz["err"] == "Нужна дорога у входа"),
+	ok("F10 far from roads: own rotation; without a road at the door it is flagged in every mode", fz.get("sub", "") == "free" and yaw_is(float(fz["yaw"]), 0.7, 0.001)
+		and (bool(fz.get("noroad", false)) and fz["err"] == ""),
 		"sub=%s err=%s" % [fz.get("sub", ""), fz["err"]])
 	reset()
 	# снимок: призрак у косой улицы чуть дальше прилипания — ровно фасадом к ней
@@ -839,11 +847,15 @@ func _t8_rotate() -> void:
 
 ## T9: перенос дома на площадь — на мостовую, со старым поворотом; отмена — на место
 func _t9_move() -> void:
-	var src: Dictionary = {}
-	for id in game.city.buildings:
-		var b: Dictionary = game.city.buildings[id]
-		if b["type"] == "house_pleb" and (b["pos"] as Vector2).distance_to(S1) < 8.0:
-			src = b
+	game.set_tool("house_pleb")
+	reset()
+	game.yaw_set = true
+	game.free_yaw = 0.45
+	var at := Vector2(201, 135)
+	var start: Dictionary = game.placement("house_pleb", at)
+	if not ok("T9 the source can be placed without a road", start["err"] == "" and bool(start.get("noroad", false))):
+		return
+	var src: Dictionary = game.city.place("house_pleb", start["pos"], start["yaw"], start["variant"], start["color"])
 	if not ok("T9 a house to move", not src.is_empty()):
 		return
 	var y0 := float(src["yaw"])

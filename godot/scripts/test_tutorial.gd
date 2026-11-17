@@ -26,14 +26,17 @@ func wait_step(id: String, maxf := 3000) -> void:
 	if game.tutorial.cur_id() != id:
 		print("STUCK want ", id, " at ", game.tutorial.cur_id())
 
-func put(type: String, near: Vector2) -> void:
-	for k in 40:
-		var p := near + Vector2(randf_range(-6, 6), randf_range(-6, 6))
-		var pl: Dictionary = game.placement(type, p)
-		if pl["err"] == "":
-			game.city.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"])
-			return
-	print("FAILED ", type)
+func put(type: String, near: Vector2) -> bool:
+	for z in range(-4, 7, 2):
+		for x in range(-4, 7, 2):
+			var pl: Dictionary = game.placement(type, near + Vector2(x, z))
+			if pl["err"] != "" or type != "house_pleb" and bool(pl.get("noroad", false)):
+				continue
+			var b: Dictionary = game.city.place(type, pl["pos"], pl["yaw"], pl["variant"], pl["color"])
+			if not b.is_empty():
+				return true
+	print("FAIL не удалось поставить ", type)
+	return false
 
 func _run() -> void:
 	while not game.ready_done:
@@ -47,37 +50,59 @@ func _run() -> void:
 	game.hud.advisor_panel.visible = false
 	await frames(30)
 	await shot("t1_move.png")
-	game.rig._target_t += Vector3(10, 0, 4)
-	await wait_step("road")
+	game.rig._pan_by(Vector3(13, 0, 0))
+	game.rig._zoom(0.88)
+	await get_tree().create_timer(3.1).timeout
+	await wait_step("houses")
 	await frames(20)
-	await shot("t2_road.png")
+	await shot("t2_houses.png")
 	var ctr := c.center()
 	var dp: Vector2 = c.door_point(ctr)
+	for k in 3:
+		if not put("house_pleb", dp + Vector2(-13, 12 + k * 8)):
+			get_tree().quit(1)
+			return
+	await wait_step("road")
+	var tut: Tutorial = game.tutorial
+	c._tick_arrivals()
+	if c.has_connected_house() or c.incoming > 0 or not c.arrivals.is_empty() or not tut.cine.is_empty():
+		print("FAIL повозка ждёт дорогу к первому дому")
+		get_tree().quit(1)
+		return
+	await frames(10)
+	await shot("t3_road.png")
 	game.set_tool("road")
 	game.painting = true
 	game.stroke = []
 	game.stroke_cost = 0.0
 	game.brush_line = false
-	for k in 60:
-		game._paint_at(dp + Vector2(0, 2 + k * 0.5))
+	for k in 90:
+		game._paint_at(dp + Vector2(0, k * 0.5))
+	for home: Dictionary in c.buildings.values():
+		if not c.is_house(home):
+			continue
+		var door := c.door_point(home)
+		for k in 50:
+			game._paint_at(Vector2(dp.x, door.y).lerp(door, float(k) / 49.0))
 	game._release()
+	c.compute()
 	game.people.refresh(game.land.road_chunks.keys())
 	game.set_tool("")
-	await wait_step("houses")
-	await frames(10)
-	await shot("t3_houses.png")
-	for k in 3:
-		put("house_pleb", dp + Vector2(4, 10 + k * 6))
-	await wait_step("cart")
-	# окно свернули посреди ролика с повозкой: ролик ждёт, развернули — идёт дальше
-	var tut = game.tutorial
+	if not c.has_connected_house():
+		print("FAIL мостовая должна соединить дома с площадью")
+		get_tree().quit(1)
+		return
+	# Повозка может тронуться ещё на шаге дороги. Смотрим каждый кадр сразу после мазка.
 	var w := 0
-	while tut.cine.is_empty() and w < 600:
-		await frames(5)
-		w += 5
+	while tut.cine.is_empty() and w < 1800:
+		await get_tree().process_frame
+		w += 1
 	if tut.cine.is_empty():
 		print("CINE MIN FAIL ролик с повозкой не начался")
+		get_tree().quit(1)
+		return
 	else:
+		check(tut.cur_id() in ["road", "cart"] and c.has_connected_house(), "ролик начался после подключения дома")
 		await frames(20)
 		game.minimized_test = true
 		await frames(3)
@@ -99,11 +124,15 @@ func _run() -> void:
 	await wait_step("house")
 	await frames(30)
 	await shot("t6_house.png")
+	while c.settled_total == 0:
+		await frames(5)
 	for id in c.buildings:
-		if c.is_house(c.buildings[id]):
+		if c.is_house(c.buildings[id]) and int(c.buildings[id].get("pop", 0)) > 0:
 			game.select_building(c.buildings[id])
 			game.hud.open_info(c.buildings[id])
 			break
+	await frames(10)
+	game.tutorial.next_btn.pressed.emit()
 	await wait_step("food")
 	game.hud.close_panels()
 	await frames(10)
