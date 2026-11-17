@@ -1,0 +1,247 @@
+extends "res://scripts/test_ui4.gd"
+## CITY5b: шесть кадров, компактные карточки и все страницы исследований.
+
+
+func _ready() -> void:
+	out = "D:/CivCity/.work/stage5/city5b/shots/"
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("out="):
+			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
+	get_window().size = Vector2i(1440, 900)
+	Game.boot = {"new": "1", "hour": "11"}
+	game = (load("res://main.tscn") as PackedScene).instantiate()
+	game.can_save = false
+	add_child(game)
+	_run()
+
+
+func check(ok: bool, why: String) -> bool:
+	if not ok:
+		fails += 1
+		print("CITY5B FAIL " + why)
+	return ok
+
+
+func shot(file: String) -> void:
+	hud.advisor_panel.hide()
+	await frames(12)
+	hud._place_badges()
+	await RenderingServer.frame_post_draw
+	if check(get_viewport().get_texture().get_image().save_png(out + file) == OK, "save " + file):
+		print("CITY5B SHOT " + out + file)
+
+
+func _finish() -> void:
+	print("CITY5B DONE fails=", fails)
+	get_tree().quit(0 if fails == 0 else 1)
+
+
+func _run() -> void:
+	var waited := 0
+	while not game.ready_done:
+		await frames(5)
+		waited += 5
+		if waited >= 18000:
+			check(false, "ready_done timeout")
+			_finish()
+			return
+	game.can_save = false
+	game.settings["autosave"] = false
+	game.settings["advisor_off"] = true
+	game.settings["tasks_folded"] = true
+	game.speed = 0.0
+	game.build_anim = false
+	game.rig.cine = true
+	game.tutorial.step = Tutorial.STEPS.size()
+	game.tutorial.card.hide()
+	game.tutorial.set_process(false)
+	I18n.set_lang("ru")
+	hud = game.hud
+	city = game.city
+	city.level = 5
+	city.money = 1000000
+	city.rp = 100000
+	city.auto_hire = false
+	city.tips["tut"] = -1
+	city.tips["ui"] = 3
+	city.research["floor2"] = true
+	city.research["artisans"] = true
+	hud.apply_reveal(3)
+	hud.close_panels()
+	if not check(DirAccess.make_dir_recursive_absolute(out) == OK, "shot directory"):
+		_finish()
+		return
+	var house := place("house_pleb", Vector2(177, 136))
+	house["tier"] = 2
+	family(house, "Юлии", true)
+	(house["families"] as Array)[0]["want"] = "trees"
+	var bare := place("house_pleb", Vector2(145, 158))
+	family(bare, "Валерии", true)
+	var isolated := place("house_pleb", Vector2(227, 122), false)
+	family(isolated, "Туллии")
+	var fruit := place("stall_fruit", Vector2(183, 137))
+	var temple := place("temple", Vector2(155, 131))
+	place("barber", Vector2(207, 130))
+	city.compute()
+	for building: Dictionary in [fruit, temple]:
+		check(city.hire(building, city.job_max(building)) > 0, "hire " + String(building["type"]))
+	bare["happy"] = 20
+	bare["unhappy_h"] = 3
+	for f: Dictionary in bare["families"]:
+		f["grace_until"] = 0
+	var waiting := city.new_family("plebs")
+	waiting["want"] = "quiet"
+	city.family_arrived(waiting, false)
+	game.people._on_resident_returned(waiting)
+	city.compute()
+	city.changed.emit()
+	city.arrivals_changed.emit()
+	hud._update_world_icons()
+	hud._family_badge_next_ms = 0
+	hud._family_badges()
+	game.rig.set_view(Vector3(183, 3, 134), 0, 50, 94)
+	await frames(12)
+	_badges_without_text()
+	check(hud.badges.has("b%d" % int(bare["id"])), "problem badge present")
+	await shot("1_badges_city.png")
+	game.start_settle(String(waiting["name"]))
+	await frames(6)
+	var settle_key := "settle%d" % int(house["id"])
+	check(hud.badges.has(settle_key), "settle room present")
+	if hud.badges.has(settle_key):
+		var room: Badge = hud.badges[settle_key]["n"]
+		check(room.texture == Badge.badge_texture("home_room") and room.matches, "home_room plus want match")
+		check(room.match_texture == Badge.badge_texture("match"), "approved match disc")
+	_badges_without_text()
+	await shot("2_settle_mode.png")
+	game.set_tool("")
+	var family_key := "fam_" + String(waiting["name"])
+	check(hud.badges.has(family_key), "waiting family present")
+	if hud.badges.has(family_key):
+		var badge: Badge = hud.badges[family_key]["n"]
+		check(badge.size == Vector2(44, 44) and badge.texture == Badge.badge_texture("family"), "family 44px hit area")
+		check(badge.preference_texture == Badge.badge_texture("want_quiet"), "attached want disc")
+		var at: Vector3 = hud.badges[family_key]["pos"]
+		game.rig.set_view(at - Vector3(0, 1, 0), 0, 48, 30)
+	await shot("3_family_waiting.png")
+	game.rig.set_view(Vector3(174, 2, 137), 0, 48, 65)
+	hud.house_more = false
+	game.select_building(house)
+	hud.open_info(house)
+	await frames(8)
+	_card_bounds()
+	var strip := hud.info_box.find_child("NeedStrip", true, false) as Control
+	check(strip != null and strip.get_child_count() == 6, "six needs in one row")
+	var members := hud.info_box.find_child("Members", true, false) as Control
+	var preference := hud.info_box.find_child("Preference", true, false) as Control
+	check(members != null and preference != null and members.get_parent() == preference.get_parent(), "family heads and want on one line")
+	await shot("4_house_card.png")
+	hud.house_more = true
+	hud.open_info(house)
+	await frames(6)
+	_card_bounds()
+	hud.house_more = false
+	game.select_building(fruit)
+	hud.open_info(fruit)
+	await frames(8)
+	_card_bounds()
+	for action: String in ["InfoDemolish", "InfoMove", "InfoCopy"]:
+		var button := hud.info_box.find_child(action, true, false) as Button
+		check(button != null and button.text == "" and button.size.x <= 36, "small round " + action)
+	check(hud.info_box.find_child("hire_plus", true, false) != null, "hire action retained")
+	await shot("5_building_card.png")
+	await _research_pages()
+	_finish()
+
+
+func _badges_without_text() -> void:
+	for entry: Dictionary in hud.badges.values():
+		var badge: Badge = entry["n"]
+		check(badge.label == null and badge.find_children("*", "Label", true, false).is_empty(), "no badge label")
+		check(String(entry["text"]) == "" and badge.texture.resource_path.begins_with(Badge.BADGES), "badge uses approved PNG")
+		check(badge.size == Vector2(44, 44), "44px hit area")
+	for want: String in FamilyWant.ORDER:
+		check(Badge.want_texture(want).resource_path.ends_with("want_" + ("square" if want == "plaza" else want) + ".png"), "want texture " + want)
+
+
+func _card_bounds() -> void:
+	check(hud.info_panel.size.x <= 345.0 and hud.info_panel.size.x >= 335.0, "card width about 340 (now %.1f, more=%s)" % [hud.info_panel.size.x, hud.house_more])   # «Подробнее» + полоса прокрутки — 344
+	check(Rect2(Vector2.ZERO, hud.root.size).encloses(hud.info_panel.get_global_rect()), "card inside HUD")
+	for label: Label in hud.info_box.find_children("*", "Label", true, false):
+		check(label.get_theme_color("font_color") == Hud.CARD_ACCENT, "single card accent")
+
+
+func _research_pages() -> void:
+	city.level = 7
+	hud._top_action("research")
+	await frames(8)
+	var tree = hud.research_tree
+	check(tree.cards.size() == Defs.RESEARCH.size(), "all research controls retained")
+	check(tree.rank_tabs.size() == Defs.LEVELS.size(), "rank medallions")
+	var ids := {}
+	for id: String in tree.cards:
+		ids[id] = tree.cards[id].get_instance_id()
+	var largest := 0
+	var largest_count := 0
+	for tier: int in tree.sections:
+		tree.select_rank(tier)
+		await frames(6)
+		var count := 0
+		for r: Dictionary in Defs.RESEARCH:
+			var card: Control = tree.cards[String(r["id"])]
+			check(card.is_visible_in_tree() == (int(r["lvl"]) == tier), "only selected rank visible")
+			if card.is_visible_in_tree():
+				count += 1
+				check(tree.scroll.get_global_rect().grow(1).encloses(card.get_global_rect()), "rank item fits page " + String(r["id"]))
+				check((card.get_node("Picture") as Control).size == Vector2(64, 64), "64px research picture")
+				var name_label := card.get_node("ItemName") as Label
+				check(name_label.get_theme_font_size("font_size") == 13, "13px item name")
+				check(name_label.get_theme_font("font").get_string_size(name_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x <= card.size.x and absf(name_label.position.x + tree.name_width(name_label) * 0.5 - card.size.x * 0.5) <= 1.0, "research name fits its cell, centred (%s)" % name_label.text)
+				check(card.tooltip_text.contains(I18n.t(String(r["name"]))) and name_label.tooltip_text == String(r["name"]), "full research name in tooltip")
+		check(count <= 16, "rank fits two rows")
+		if count > largest_count:
+			largest_count = count
+			largest = tier
+		check(not tree.scroll.get_v_scroll_bar().visible and not tree.scroll.get_h_scroll_bar().visible, "no research scrollbar")
+		check((tree.sections[tier].get_node("Items") as GridContainer).columns == 8, "eight items per row")
+	check(hud.research_panel.size.x <= 920 and hud.research_panel.size.y <= 480, "research about 900x460")
+	city.level = 3
+	tree.refresh()
+	check((tree.rank_tabs[4] as Control).modulate.a < 1.0, "locked rank grey")
+	city.level = 7
+	tree.refresh()
+	tree.select_rank(largest)
+	await _wait_research_pictures()
+	await shot("6_research.png")
+	var available := ""
+	for r: Dictionary in Defs.RESEARCH:
+		if city.can_research(String(r["id"])) == "":
+			available = String(r["id"])
+			break
+	if check(available != "", "available research fixture"):
+		tree.reveal(available)
+		await frames(8)
+		check(tree.popup.visible and tree.selected == available and not tree.study.disabled, "click detail and study retained")
+		var before := city.rp
+		tree.study.pressed.emit()
+		check(city.research.has(available) and city.rp < before, "study spends points")
+	for id: String in ids:
+		check(tree.cards[id].get_instance_id() == ids[id], "research nodes reused")
+
+
+func _wait_research_pictures() -> void:
+	var tree = hud.research_tree
+	for attempt in 3600:
+		var loaded := true
+		for r: Dictionary in Defs.RESEARCH:
+			if int(r["lvl"]) != tree.current_rank:
+				continue
+			var types: Array[String] = tree.building_ids(String(r["id"]))
+			for type: String in types:
+				if city.city_buildable(type) and hud.icons.get(type) == null:
+					loaded = false
+		if loaded:
+			tree.refresh()
+			return
+		await frames(5)
+	check(false, "research pictures timeout")

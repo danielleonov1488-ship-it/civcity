@@ -5323,5 +5323,15 @@
 "Перейти": "Go to",
 "железо: %d": "iron: %d",
 "дерево: %d": "wood: %d",
-"кожа: %d": "leather: %d"
+"кожа: %d": "leather: %d",
+"Бойцы растут вместе с Казармами — по часам, даже когда игра закрыта. Казармы в форте → «Улучшить».": "Soldiers grow with the Barracks over time, even while the game is closed. Barracks in the fort → Upgrade.",
+"Готового Легиона нет — его строите вы сами. Откройте «Легион» сверху справа. Казармы и другие военные здания строятся только внутри форта; Казармы дают легионеров. Потом — Стрельбище для лучников, Кузница, Лазарет и Склад оружия; каждое здание растёт уровнями — «Улучшить» в его карточке.\n\nПоходы, бои с другими городами и чудеса света — в медальоне «Легион» сверху справа. Отряд дерётся сам; ваше — состав и умения в нужный миг.": "You build your own Legion. Open Legion at the top right. Barracks and other military buildings can only be built inside the fort; Barracks provide legionaries. Then add an Archery Range, Forge, Infirmary and Armory. Each building has levels: use Upgrade on its card.\n\nCampaigns, battles with other cities and wonders are in the Legion medallion at the top right. Your squad fights automatically; you choose the lineup and when to use abilities.",
+"Откройте «Легион»: Казармы и другие военные здания строятся внутри форта.": "Open Legion: Barracks and other military buildings are built inside the fort.",
+"Открыть форт": "Open fort",
+"Вот это слово! Готовый Легион с неба не упадёт — его строят: сначала казармы, а там и стрельбище, и кузница. Открой «Легион» наверху: все военные здания строятся внутри форта.": "That is the spirit! A Legion will not appear on its own. Build Barracks first, then an Archery Range and a Forge. Open Legion at the top: all military buildings are built inside the fort.",
+"Легион — стража вашего города: он охраняет дороги, ходит в походы, бьётся с отрядами других городов и приносит Славу — на неё возводят чудеса света.\n\nГотового Легиона нет — вы строите его сами, здание за зданием: Казармы дают легионеров, Стрельбище — лучников, Кузница, Лазарет и Склад оружия делают отряд сильнее. Каждое здание растёт уровнями: «Улучшить» в его карточке — за денарии и время.\n\nОткройте «Легион» сверху справа. Казармы, Стрельбище и другие военные здания строятся только внутри форта. Там же — походы и бои.": "The Legion guards your city: it protects roads, goes on campaigns, battles other cities and earns Glory to build wonders.\n\nYou build your own Legion, one building at a time. Barracks provide legionaries, the Archery Range provides archers, and the Forge, Infirmary and Armory strengthen your squad. Each building has levels: use Upgrade on its card to spend denarii and time.\n\nOpen Legion at the top right. Barracks, the Archery Range and other military buildings can only be built inside the fort. Campaigns and battles are there too.",
+"Откройте «Легион» сверху справа. Казармы и другие военные здания строятся внутри форта.": "Open Legion at the top right. Barracks and other military buildings are built inside the fort.",
+"Надстроить этаж · %s": "Add a floor · %s",
+"Перестроить · %s": "Rebuild · %s",
+"Несколько домов — инструментом «Этаж» (U).": "For several houses, use the Floor tool (U)."
 }

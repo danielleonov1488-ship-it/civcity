@@ -3349,12 +3349,12 @@ const TUT_STEPS := ["barracks", "medal", "fight", "troops"]
 
 
 ## Шаг обучения ("" — нет: Легион ещё закрыт, обучение пройдено или пропущено). Шаг выводится из состояния игры:
-## barracks — поставить Казармы, medal — открыть окно «Легион», fight — первый (учебный) бой, troops — улучшить бойцов
+## barracks — открыть форт без городских Казарм, medal — открыть прежний отряд, fight — учебный бой, troops — улучшить бойцов
 func tut_step() -> String:
 	if free_mode or String(flags.get("tut", "")) == "done" or not window_open():
 		return ""
 	if count_type("barracks") == 0:
-		return ""                               # строить Казармы в городе больше не просим
+		return "barracks" if not flags.has("seen") else "" # Первый совет ведёт в форт; городские Казармы не нужны.
 	if not flags.has("seen"):
 		return "medal"
 	if progress == 0 and not flags.has("tut_fought"):

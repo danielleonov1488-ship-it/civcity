@@ -2573,7 +2573,8 @@ func _update_plot_signs() -> void:
 			border.name = "border"                 # режим фото прячет рамку (photo_mode.gd)
 			sign.add_child(border)
 			border.global_transform = Transform3D.IDENTITY
-			hud.set_badge("plot%d_%d" % [i, j], Vector3(at.x, y + 4.4, at.y), "coins", false, "%s ден." % hud.fmt(city.plot_price()))
+			hud.set_badge("plot%d_%d" % [i, j], Vector3(at.x, y + 4.4, at.y), "collect")
+			(hud.badges["plot%d_%d" % [i, j]]["n"] as Control).tooltip_text = "%s ден." % hud.fmt(city.plot_price())
 			plot_signs[p] = sign
 
 
@@ -2687,6 +2688,8 @@ func _process(dt: float) -> void:
 
 
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and floor_drag:
+		_floor_end()
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and can_save and ready_done:
 		save()
 
@@ -2727,6 +2730,11 @@ func _input(e: InputEvent) -> void:
 		# правая кнопка: тянули карту — это не щелчок (он закрывает свиток и окна)
 		if _rmb_armed and e is InputEventMouseMotion:
 			_rmb_moved = maxf(_rmb_moved, _mouse_pos.distance_to(_rmb_down))
+		# Отпускание ловим до GUI, в том числе над окном. Последний отрезок не теряется.
+		if floor_drag and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
+			if hud != null and not hud.mouse_over_ui():
+				_floor_sweep()
+			_floor_end()
 		# мазок дороги (или забор) начат на карте, а кнопку отпустили над окном: окно отпускание себе не возьмёт — кончаем здесь
 		if (painting or fence_drag) and e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and not e.pressed:
 			_release()
@@ -4897,7 +4905,7 @@ func _settle_marks_show() -> void:
 		add_child(o)
 		settle_marks.append(o)
 		# ключи над домом: здесь есть место
-		hud.set_badge("settle%d" % b["id"], Vector3(b["pos"].x, float(b["y"]) + city.blueprint(b).top_y() + 1.2, b["pos"].y), "keys")
+		hud.set_badge("settle%d" % b["id"], Vector3(b["pos"].x, float(b["y"]) + city.blueprint(b).top_y() + 1.2, b["pos"].y), "home_room")
 		hud.set_badge_match("settle%d" % b["id"], b, settle_fam)
 		settle_keys.append("settle%d" % b["id"])
 
@@ -5012,8 +5020,6 @@ func _floor_pick(sweep := false) -> Dictionary:
 ## Каждый кадр с «Этажом» (или «Перестроить») в руках: подсветка и подпись у дома под курсором; с зажатой кнопкой —
 ## надстроить (перестроить) его
 func _floor_hover(over_ui: bool) -> void:
-	if floor_drag and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		_floor_end()                          # кнопку отпустили над окном — мазок окончен
 	if floor_drag:
 		if over_ui:
 			floor_last = Vector2.INF          # курсор ушёл на окно — линию поперёк окна не ведём
@@ -5104,10 +5110,16 @@ func _floor_sweep() -> void:
 	if floor_from != Vector2.INF and to.distance_to(floor_from) > 6.0:
 		floor_moved = true
 	var from := floor_last if floor_last != Vector2.INF else to
-	var n := clampi(int(from.distance_to(to) / 12.0), 1, 16)
+	var n := clampi(ceili(from.distance_to(to) / 12.0), 1, 256)
+	var samples: Array[float] = []
+	for s in range(1, n):
+		samples.append(float(s) / n) # Стены домов по-прежнему ловит луч через каждые 12 точек.
+	if hud != null:
+		samples.append_array(hud.badge_stroke_samples(from, to, "mo" if _up_tool() else "fl"))
+	samples.sort()
 	var keep := hover
-	for s in range(1, n):                     # точки между кадрами; последняя — сам курсор, ниже
-		_mouse_pos = from.lerp(to, float(s) / n)
+	for ratio: float in samples:
+		_mouse_pos = from.lerp(to, ratio)
 		hover = ground_at_mouse()             # луч по постройкам меряет глубину от земли под этой точкой
 		_floor_try(_floor_pick(true))
 	_mouse_pos = to

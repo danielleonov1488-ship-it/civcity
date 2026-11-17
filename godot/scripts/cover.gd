@@ -909,8 +909,19 @@ func _marks(mk: Dictionary) -> void:
 		var separate: bool = not world_icon.is_empty() and not (world_icon[0] == "up" and (game.tool != "" or hud.overlay != ""))
 		var top: float = c.blueprint(b).top_y() + (3.0 if separate else 1.2)
 		var cb := func(): _open(id)               # щёлкнуть значок (без стройки в руках) — карточка этой постройки
-		hud.set_badge(k, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), e[1], e[2], e[3] if e.size() > 3 else "", cb, e[4] if e.size() > 4 else "")
+		hud.set_badge(k, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), String(e[1]) if state == "floor" else _badge_icon(String(e[1])), e[2], e[3] if state == "floor" and e.size() > 3 else "", cb, e[4] if e.size() > 4 else "")
 		marks[k] = true
+
+
+## В обзоре и при стройке — только рисунки из одобренного набора.
+static func _badge_icon(icon: String) -> String:
+	if icon in ["house_problem", "face_bad", "happy"]:
+		return "sad"
+	if icon in ["face_good", "face_mid"]:
+		return "family"
+	if icon.begins_with("upc"):
+		return "floor_up"
+	return "building"
 
 
 func _open(id: int) -> void:

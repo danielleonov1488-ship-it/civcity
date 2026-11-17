@@ -964,7 +964,7 @@ func _copy() -> void:
 	await frames(4)
 	var cb: Button = null
 	for b in hud.info_box.find_children("*", "Button", true, false):
-		if (b as Button).text == "Копировать":
+		if b.name == "InfoCopy":
 			cb = b
 	if not check(cb != null, "кнопка «Копировать» в карточке дома"):
 		return
