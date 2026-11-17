@@ -128,7 +128,7 @@ func _run() -> void:
 		return
 	if not check(camp.plot_markers.has(kitchen) and camp.plot_markers.has(smelter), "new plots accessible without a pavilion"):
 		return
-	if not check(camp.build_button.custom_minimum_size == Vector2(96, 96) and camp.campaign_button.custom_minimum_size == Vector2(64, 64), "round action sizes"):
+	if not check(camp.build_button.custom_minimum_size == Vector2(150, 150) and camp.campaign_button.custom_minimum_size == Vector2(76, 76), "round action sizes"):
 		return
 	if not await shot("1_main.png"):
 		return
@@ -138,7 +138,7 @@ func _run() -> void:
 	if not await shot("2_build_menu.png"):
 		return
 	camp.show_plot(kitchen)
-	if not check(camp.selected_plot == kitchen and camp.main_action.text == I18n.t("Собрать %d") % floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001), "plot-based kitchen collect action"):
+	if not check(camp.selected_plot == kitchen and camp.main_action.text == str(floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001)) and camp.main_action.get_meta("action_name") == I18n.t("Собрать %d") % floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001), "plot-based kitchen collect action"):
 		return
 	if not await shot("3_card_kitchen.png"):
 		return
@@ -147,7 +147,7 @@ func _run() -> void:
 	if not check(lg.rations > before and not camp._collection_fx.is_empty(), "collect and fly animation"):
 		return
 	camp.show_building("hq")
-	if not check(camp.selected_plot == int(lg.fort_slot_plot("hq")["id"]) and camp.main_action.text == I18n.t("Расширить форт"), "HQ expansion action"):
+	if not check(camp.selected_plot == int(lg.fort_slot_plot("hq")["id"]) and camp.main_action.get_meta("action_name") == I18n.t("Расширить форт"), "HQ expansion action"):
 		return
 	if not await shot("4_card_hq.png"):
 		return
@@ -167,7 +167,7 @@ func _run() -> void:
 		return
 	Fixture.set_level(lg, "hq", 1)
 	camp.show_build_menu()
-	if not check((camp.build_cards["forge"]["button"] as Button).disabled and (camp.build_cards["forge"]["button"] as Button).text == I18n.t("Штаб ур. %d") % 2, "HQ gate shown on locked card"):
+	if not check((camp.build_cards["forge"]["button"] as Button).disabled and (camp.build_cards["forge"]["button"] as Button).tooltip_text.contains(I18n.t("Штаб ур. %d") % 2), "HQ gate shown on locked card"):
 		return
 	Fixture.set_level(lg, "hq", 3)
 	camp._close_modal()
@@ -269,19 +269,21 @@ func _run() -> void:
 	if not check(camp.lu.camp_window == "store" and camp.lu.visible, "craft panel opens shared gear storage"):
 		return
 	camp.lu.close()
-	# Цепочка теперь: сбор → стройка → кухня → поход; старые окна её не продвигают.
-	lg.flags["camp3d_guide"] = 0
-	lg.rations = 0
-	lg.fort_plot(kitchen)["t"] = Legion.now() - 7200
-	lg.fort_finish()
-	camp._collect_plot(kitchen)
-	if not check(int(lg.flags["camp3d_guide"]) == 1, "guide collect"):
-		return
+	# Новый порядок: стройка → кухня → назначение и сбор → поход.
+	lg.flags["camp3d_guide"] = 1
 	camp.show_build_menu()
 	if not check(int(lg.flags["camp3d_guide"]) == 2, "guide build menu"):
 		return
+	var guide_kitchen := int(lg.fort_slot_plot("kitchen")["id"])
 	camp._choose_build("kitchen")
-	if not check(int(lg.flags["camp3d_guide"]) == 3, "guide kitchen"):
+	if not check(int(lg.flags["camp3d_guide"]) == 0 and camp.selected_plot == guide_kitchen, "guide kitchen waits for collect"):
+		return
+	lg.rations = 0
+	lg.fort_plot(guide_kitchen)["t"] = Legion.now() - 7200
+	lg.fort_finish()
+	var before_collect := lg.rations
+	camp._collect_plot(guide_kitchen)
+	if not check(int(lg.flags["camp3d_guide"]) == 3 and lg.rations > before_collect, "guide collect"):
 		return
 	camp._campaign()
 	if not check(int(lg.flags["camp3d_guide"]) == 4, "guide campaign"):

@@ -143,18 +143,21 @@ func model_checks() -> void:
 	copy.legion.from_dict(JSON.parse_string(JSON.stringify(copy.legion.to_dict())))
 	check(copy.legion.fort_worker(id).is_empty(), "empty assignment stays empty on reload")
 	var old: Dictionary = saved.duplicate(true)
+	old["fort"].erase("population_v")
+	old["fort"].erase("workers_v")
 	for p: Dictionary in old["fort"]["plots"]:
 		p.erase("worker")
 		p.erase("legacy_worker")
+		p.erase("workers")
 	copy.legion.from_dict(JSON.parse_string(JSON.stringify(old)))
 	var migrated := copy.legion.fort_worker(id).duplicate(true)
 	check(not migrated.is_empty(), "legacy built rooms get a worker")
 	copy.legion.from_dict(JSON.parse_string(JSON.stringify(copy.legion.to_dict())))
 	check(copy.legion.fort_worker(id) == migrated, "legacy migration runs once")
-	check(assigned_sid != 0 and not lg.fort_assign(int(barracks["id"]), assigned_sid), "one worker cannot hold two rooms")
+	check(assigned_sid != 0 and lg.fort_assign(int(barracks["id"]), assigned_sid) and lg.fort_worker_plot(assigned_sid) == int(barracks["id"]), "worker moves between rooms")
 	var squad_person := lg._add_soldier({"name": "Воин отряда", "cls": "legionary", "stars": 1})
-	check(lg.set_place(1, int(squad_person["id"])), "place test soldier in squad")
-	check(not lg.fort_assign(id, int(squad_person["id"])), "squad soldier cannot work in a room")
+	check(lg.fort_assign(int(barracks["id"]), int(squad_person["id"])) and lg.set_place(1, int(squad_person["id"])), "barracks soldier enters squad")
+	check(lg.fort_assign(id, int(squad_person["id"])) and not lg.squad3.has(int(squad_person["id"])), "worker leaves squad when moved")
 	for type: String in Legion.FORT_B:
 		check(not (Legion.FORT_B[type]["max"] as Array).is_empty(), "HQ requirement " + type)
 	for level in range(1, 9):
@@ -229,7 +232,7 @@ func _run() -> void:
 	var seen := {}
 	for p: Dictionary in lg.fort["plots"]:
 		seen[FortCutaway.room_art(String(p["b"]))] = true
-	check(seen.size() == 12, "all twelve painted room types")
+	check(seen.size() == 15, "all fifteen painted room types (seen %s)" % [seen.keys()])
 	await shot("2_late.png")
 	var forge := int(lg.fort_slot_plot("forge")["id"])
 	view.focus_plot("plot_%d" % forge)
@@ -258,7 +261,7 @@ func _run() -> void:
 	check(paused, "zoom leaves rooms off screen")
 	view.focus_plot("hq", false)
 	camp.show_plot(kitchen)
-	check(camp.main_action.text == I18n.t("Назначить"), "main action assigns worker")
+	check(camp.main_action.get_meta("action_name") == I18n.t("Назначить"), "main action assigns worker")
 	await shot("4_card_assign.png")
 	camp.main_action.pressed.emit()
 	check(is_instance_valid(camp.modal_panel) and camp.modal_panel.name == "FortWorkerPicker", "assignment picker")
@@ -266,7 +269,7 @@ func _run() -> void:
 	camp.show_plot(int(lg.fort_slot_plot("barracks")["id"]))
 	var busy_text := I18n.t("Строитель занят: %s") % I18n.t(String(Legion.FORT_B["tannery"]["name"]))
 	check(camp.upgrade_button.disabled and camp.upgrade_reason.is_visible_in_tree() and camp.upgrade_reason.text == busy_text, "builder busy on card")
-	check(camp.main_action.disabled and camp.main_action_reason.is_visible_in_tree() and camp.main_action_reason.text == I18n.t(lg.can_recruit_resident()), "recruit refusal stays separate from builder")
+	check(not camp.main_action.disabled and camp.main_action.get_meta("action_name") == I18n.t("Отряд"), "barracks opens squad while builder is busy")
 	check(is_instance_valid(camp.card_body.get_node_or_null("FortWorker/FortWorkerName")), "worker face and name on card")
 	await shot("5_builder_busy.png")
 	print("FORTCUT DRAWCALLS %d" % peak_draws)

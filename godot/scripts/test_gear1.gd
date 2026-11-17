@@ -184,6 +184,7 @@ func _power() -> void:
 	lg.equip(sid, int(armor["id"]))
 	var after := lg.soldier_stats(s, String(s["cls"]))
 	check(int(after["hp"]) > int(before["hp"]) and float(after["armor"]) > float(before["armor"]), "equipping armour increases HP and armour")
+	check(Fixture.house_fighter(lg, sid), "fighter lives in barracks")
 	lg.set_place(0, sid)
 	var snap := lg.pvp_snapshot()
 	var stats := Legion.snapshot_stats(snap)
@@ -222,6 +223,7 @@ func _balance() -> void:
 		for kind: String in ["sword", "helmet", "armor", "offhand"]:
 			var it := lg.add_item(Gear.craft_item(kind, 1))
 			lg.equip(int(s["id"]), int(it["id"]))
+		check(Fixture.house_fighter(lg, int(s["id"])), "fixture fighter lives in barracks")
 		lg.set_place(i, int(s["id"]))
 	for stage in 3:
 		# Пращников снимает лучник; на волчьей тропе нужны щиты.
@@ -297,7 +299,7 @@ func _screens() -> void:
 	for kind: String in ["sword", "helmet", "armor", "offhand"]:
 		var it := lg.add_item(Gear.craft_item(kind, 2, 2))
 		lg.equip(int(s["id"]), int(it["id"]))
-	lg.add_item(Gear.craft_item("sword", 3, 3))
+	var better := lg.add_item(Gear.craft_item("sword", 3, 3))
 	camp = CampUI.of(game.hud)
 	check(camp != null, "HUD camp attached")
 	if camp == null:
@@ -311,11 +313,26 @@ func _screens() -> void:
 	await shot("1_craft_panel.png")
 	camp.lu.close()
 	camp._show_soldier(int(s["id"]))
-	check(camp.lu.overlay.find_children("TierBadge", "Label", true, false).size() == 4, "four tier badges")
+	if not check(is_instance_valid(camp.modal_panel) and camp.modal_panel.name == "FortDwellerCard", "new dweller gear card"):
+		_finish()
+		return
+	var slots := camp.modal_panel.find_child("FortGearSlots", true, false)
+	check(slots != null and slots.find_children("TierBadge", "Label", true, false).size() == 4, "four tier badges")
 	await shot("2_soldier_gear.png")
-	camp.lu._gear_pick(int(s["id"]), "weapon")
-	check(not camp.lu.overlay.find_children("EquipPowerChange", "Label", true, false).is_empty(), "visible equip power comparison")
-	camp.lu.close()
+	var weapon_button := camp.modal_panel.find_child("FortGear_weapon", true, false) as Button
+	if not check(weapon_button != null, "weapon slot button"):
+		_finish()
+		return
+	weapon_button.pressed.emit()
+	var change := lg.equip_power(int(s["id"]), int(better["id"]))
+	var equip_button := camp.modal_panel.find_child("FortEquip_%d" % int(better["id"]), true, false) as Button
+	if not check(equip_button != null and equip_button.tooltip_text.contains(I18n.t("Сила: %d → %d") % [int(change[0]), int(change[1])]) and int(change[1]) > int(change[0]), "visible equip power comparison"):
+		_finish()
+		return
+	equip_button.pressed.emit()
+	check(int(better["on"]) == int(s["id"]) and camp.modal_panel.find_child("FortEquipChange", true, false) != null, "equip feedback on new card")
+	await shot("2b_equip_comparison.png")
+	camp._close_modal()
 	# Только время фикстуры; готовность и пузырь проверяются обычным tick.
 	lg.fort_plot(forge)["t"] = Legion.now() - 301.0
 	lg.fort_finish()

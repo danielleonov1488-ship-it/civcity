@@ -5,6 +5,7 @@ extends Node
 ## военные здания не ставятся на карту, сохранение. Старый город (legion_v 0) — как прежде.
 ##   bash .work/py/gpu_run.sh --headless res://test_legion3.tscn      → «L3 DONE fails=N»
 
+const Fixture = preload("res://scripts/test_fort_fixture.gd")
 var fails := 0
 
 
@@ -129,90 +130,58 @@ const CAMP_TXT := "Лагерь открыт: призывайте жителе�
 
 
 func _recruit() -> void:
-	print("== призыв жителя")
 	var c := _town(13)
 	var L: Legion = c.legion
 	L.army_tick()
 	var pop0 := int(c.stats["pop"])
-	_check(pop0 == 52 and L.can_recruit_resident() == "", "52 жителя, призыв можно (%s)" % L.can_recruit_resident())
-	var m0 := float(c.money)
-	var s := L.recruit_resident()
-	_check(not s.is_empty() and int(c.stats["pop"]) == pop0 - 1 and _fams_ok(c), "призыв: жителей %d → %d, семьи в домах сходятся" % [pop0, int(c.stats["pop"])])
-	_check(String(s["from"]).contains(" безработн") and L.soldiers.size() == 1, "безработный первым: «%s»" % String(s["from"]))
-	_check(String(s["cls"]) == "legionary" and L.worn(s).size() == 1 and Gear.weapon_class(L.worn(s)[0]) == "legionary" and int(L.worn(s)[0]["rarity"]) == 0,
-		"новобранец — легионер с мечом даром")
-	_check(float(c.money) == m0, "призыв бесплатный")
-	# Уволенный возвращается в прежнюю семью, отдельную семью на площади не создаёт.
+	var workers: Dictionary = c.stats["workers"].duplicate(true)
+	_check(L.recruit_resident().is_empty(), "без очереди нельзя принять человека")
+	Fixture.gate(L, 1)
+	var candidate := L.fort_newcomers()[0]
+	var s := L.recruit_resident(candidate)
+	_check(not s.is_empty() and s["name"] == candidate["name"] and int(c.stats["pop"]) == pop0 and c.stats["workers"] == workers and _fams_ok(c), "новобранец не забирает горожан")
+	_check(L.fort_worker_plot(int(s["id"])) == -1 and not L.set_place(0, int(s["id"])), "принятый ждёт во дворе")
+	_check(String(s["cls"]) == "legionary" and L.worn(s).size() == 1, "меч даром")
 	var sid := int(s["id"])
 	var a0 := c.arrivals.size()
-	var res: Dictionary = s["res"].duplicate(true)
-	_check(_returned_member(c, res) == 0, "призванного жителя больше нет в семье")
-	var dismissed := L.dismiss(sid)
-	_check(dismissed and L.soldiers.is_empty() and c.arrivals.size() == a0 and int(c.stats["pop"]) == pop0
-		and _returned_member(c, res) == 1 and _fams_ok(c),
-		"уволили: воинов %d, жителей снова %d; тот же житель в прежней семье, очередь не выросла" % [L.soldiers.size(), int(c.stats["pop"])])
+	s["res"] = {"fam": "Старая семья", "m": {"sd": 123}}
+	_check(L.dismiss(sid) and c.arrivals.size() == a0 and int(c.stats["pop"]) == pop0 and _fams_ok(c), "старый воин не возвращается в семьи")
 	_check(not L.items.any(func(it): return bool(it.get("free", false))), "меч даром не остался на складе")
 
-
-## Не безработные: из работающей профессии, но не из еды, пока еды не хватает
 func _pick_jobs() -> void:
-	print("== откуда берут, если безработных нет")
 	var c := _town(13)
 	var L: Legion = c.legion
 	L.army_tick()
 	_work(c, "farm", Vector2(0, 40))
 	_work(c, "bakery", Vector2(10, 40))
-	c.stats["free"] = {"plebs": 0, "artisans": 0, "patricians": 0}
-	_check(c.food_short() and (c.resident_pick() as Dictionary).is_empty(), "еды не хватает: поля и пекарни не трогают (взять некого)")
-	_check(L.can_recruit_resident().begins_with("Некого"), "причина отказа: «%s»" % L.can_recruit_resident())
 	_work(c, "sawmill", Vector2(20, 40))
-	c.stats["free"] = {"plebs": 0, "artisans": 0, "patricians": 0}
-	var pk := c.resident_pick()
-	_check(String(pk.get("job", "")) == "sawmill", "берут из лесопилки: %s" % [pk])
-	var pop0 := int(c.stats["pop"])
+	c.compute()
+	var buildings: Dictionary = c.buildings.duplicate(true)
+	var workers: Dictionary = c.stats["workers"].duplicate(true)
+	Fixture.gate(L, 1)
 	var s := L.recruit_resident()
-	_check(String(s.get("from", "")).contains("пильщ") and int(c.stats["pop"]) == pop0 - 1, "«%s»" % String(s.get("from", "")))
-
+	_check(not s.is_empty() and c.buildings == buildings and c.stats["workers"] == workers and _fams_ok(c), "поля, пекарня и лесопилка сохраняют работников")
 
 func _floor_roster() -> void:
-	print("== пол 30 и места в лагере")
-	var c := _town(7)
-	var h := c.place("house_pleb", Land.START + Vector2(8.0 * 7, 0), 0.0, 0, 0, true)
-	h["families"] = [{"name": "Секстии", "n": 2, "cls": "plebs"}]
-	h["pop"] = 2
-	c.compute()
+	var c := _town(14)
 	var L: Legion = c.legion
 	L.army_tick()
-	L.flags["camp_open"] = true                  # лагерь уже открывали
-	_check(int(c.stats["pop"]) == 30 and L.can_recruit_resident().contains("мало жителей") and L.recruit_resident().is_empty()
-		and int(c.stats["pop"]) == 30, "30 жителей: призыв отказал («%s»), жителей осталось %d" % [L.can_recruit_resident(), int(c.stats["pop"])])
-	h["families"][0]["n"] = 3
-	h["pop"] = 3
-	c.compute()
-	_check(L.can_recruit_resident() == "" and not L.recruit_resident().is_empty() and int(c.stats["pop"]) == 30, "31 → призвали одного, снова 30")
-	_check(L.can_recruit_resident() != "" and L.recruit_resident().is_empty(), "дальше нельзя: 30 — предел")
-	# предел мест: 4 + уровень казарм (1) = 5
-	var c2 := _town(14)
-	var L2: Legion = c2.legion
-	L2.army_tick()
-	var n := 0
-	for i in 6:
-		if not L2.recruit_resident().is_empty():
-			n += 1
-	_check(n == 5 and L2.soldiers.size() == 5 and L2.roster_cap() == 5 and L2.can_recruit_resident().contains("нет мест"),
-		"казарма 1: воинов %d из %d, шестого не взяли («%s»)" % [L2.soldiers.size(), L2.roster_cap(), L2.can_recruit_resident()])
-	var soldiers_only := L2.soldiers.size()
-	preload("res://scripts/test_fort_fixture.gd").set_level(L2, "barracks", 3)
-	_check(L2.roster_cap() == 7 and L2.can_recruit_resident() == "" and soldiers_only == 5, "казарма 3: мест %d" % L2.roster_cap())
-
+	var pop0 := int(c.stats["pop"])
+	var count := 0
+	for i in 11:
+		if not Fixture.recruit(L, false).is_empty():
+			count += 1
+	_check(count == 10 and L.fort_population() == 10 and L.roster_cap() == 10 and L.can_recruit_resident().contains("нет мест"), "Штаб 5 + Казарма 5 = 10 мест")
+	Fixture.set_level(L, "barracks", 3)
+	_check(L.roster_cap() == 12 and L.can_recruit_resident() == "" and int(c.stats["pop"]) == pop0, "уровень казармы расширяет форт без потерь города")
 
 func _gear_class() -> void:
 	print("== оружие решает класс, четыре слота")
 	var c := _town(13)
 	var L: Legion = c.legion
 	L.army_tick()
-	var s := L.recruit_resident()
-	var s2 := L.recruit_resident()
+	var s := Fixture.recruit(L)
+	var s2 := Fixture.recruit(L)
 	var sid := int(s["id"])
 	var res := {}
 	for w in [["archer", "bow"], ["priest", "staff"], ["cavalry", "spear"], ["legionary", "sword"]]:
@@ -267,7 +236,7 @@ func _squad() -> void:
 	L.army_tick()
 	var ids := []
 	for i in 5:
-		ids.append(int(L.recruit_resident()["id"]))
+		ids.append(int(Fixture.recruit(L)["id"]))
 	var arch := L.add_item({"slot": "weapon", "cls": "archer", "rarity": 1, "ilvl": 1})
 	var stf := L.add_item({"slot": "weapon", "cls": "priest", "rarity": 1, "ilvl": 1})
 	var spr := L.add_item({"slot": "weapon", "cls": "cavalry", "rarity": 1, "ilvl": 1})
@@ -336,7 +305,7 @@ func _camp() -> void:
 	_check(L.camp_level("forge") == 1 and L.forge_lvl() == 1 and L.available("forge"), "кузница построена: уровень %d" % L.camp_level("forge"))
 	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 3)
 	preload("res://scripts/test_fort_fixture.gd").set_level(L, "drill", 6)
-	_check(L.barracks_lvl() == 3 and L.roster_cap() == 7 and L.slots() == 4 and L.train_places() == 1, "казарма 3: мест в отряде %d, воинов до %d; плац 6: тренировок %d" % [L.slots(), L.roster_cap(), L.train_places()])
+	_check(L.barracks_lvl() == 3 and L.roster_cap() == 12 and L.slots() == 4 and L.train_places() == 1, "казарма 3: мест в отряде %d, воинов до %d; плац 6: тренировок %d" % [L.slots(), L.roster_cap(), L.train_places()])
 	preload("res://scripts/test_fort_fixture.gd").set_level(L, "store", 2)
 	_check(L.store_cap() == Gear.STORE_BASE + 2 * Gear.STORE_PER and L.ration_cap() == 30, "склад 2: мест %d, пайков до %d" % [L.store_cap(), L.ration_cap()])
 	preload("res://scripts/test_fort_fixture.gd").set_level(L, "mars", 2)
@@ -348,7 +317,7 @@ func _camp() -> void:
 	var c2 := _town(13)
 	var L2: Legion = c2.legion
 	L2.army_tick()
-	var s := L2.recruit_resident()
+	var s := Fixture.recruit(L2)
 	_check(L2.can_talent(int(s["id"]), 0, 0).contains("Штабом 6") and not L2.talents_open(), "таланты скрыты до Штаба 6: «%s»" % L2.can_talent(int(s["id"]), 0, 0))
 	preload("res://scripts/test_fort_fixture.gd").set_level(L2, "hq", 6)
 	_check(L2.talents_open() and not L2.can_talent(int(s["id"]), 0, 0).contains("Штабом"), "Штаб 6: таланты открыты")
@@ -381,7 +350,7 @@ func _rations() -> void:
 	L.rations = 1.0
 	_check(L.can_fight(st).contains("Нет пайков") or L.can_fight(st).contains("воинов"), "пайков мало — в бой нельзя: «%s»" % L.can_fight(st))
 	for i in 3:
-		L.recruit_resident()
+		Fixture.recruit(L)
 	L.set_place(0, int(L.soldiers[0]["id"]))
 	L.rations = 10.0
 	_check(L.can_fight(st) == "", "пайков хватает, воин в отряде: бой разрешён («%s»)" % L.can_fight(st))
@@ -409,90 +378,61 @@ func _hidden() -> void:
 
 
 func _save() -> void:
-	print("== сохранение")
 	var c := _town(14)
 	var L: Legion = c.legion
 	L.army_tick()
-	var s := L.recruit_resident()
-	var s2 := L.recruit_resident()
+	var s := Fixture.recruit(L)
+	var s2 := Fixture.recruit(L)
 	var stf := L.add_item({"slot": "weapon", "cls": "priest", "rarity": 2, "ilvl": 2})
 	L.equip(int(s2["id"]), int(stf["id"]))
-	preload("res://scripts/test_fort_fixture.gd").set_level(L, "forge", 2)
-	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 3)
+	Fixture.set_level(L, "forge", 2)
+	Fixture.set_level(L, "barracks", 3)
 	L.set_place(0, int(s["id"]))
 	L.set_place(3, int(s2["id"]))
+	Fixture.gate(L)
 	L.rations = 7.5
 	c.level = 1
 	L.camp_upgrade("hq")
 	var d: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var c2 := City.new(Land.new())
-	c2.auto_hire = true  # прежняя фикстура
+	c2.auto_hire = true
 	c2.load_data(d)
 	var L2: Legion = c2.legion
 	L2.army_tick()
-	_check(c2.legion_v == 3 and L2.v3() and L2.camp_level("forge") == 2 and L2.camp_level("barracks") == 3 and L2.camp_level("hq") == 1, "ворота и уровни лагеря после загрузки")
-	_check(L2.upg.has("camp_hq") and L2.camp_busy(), "идущая стройка Штаба сохранилась")
-	_check(L2.soldiers.size() == 2 and String(L2.soldier(int(s2["id"]))["cls"]) == "priest" and L2.soldier(int(s["id"])).has("res") and String(L2.soldier(int(s["id"]))["from"]) == String(s["from"]),
-		"воины: %d, жрец остался жрецом, «откуда» и житель на месте" % L2.soldiers.size())
-	_check(L2.squad3 == [int(s["id"]), 0, 0, int(s2["id"]), 0] and L2.slots() == 4 and absf(L2.rations - 7.5) < 0.01, "отряд %s, пайки %.1f" % [L2.squad3, L2.rations])
+	_check(c2.legion_v == 3 and L2.camp_level("forge") == 2 and L2.camp_level("barracks") == 3 and L2.camp_level("hq") == 1, "уровни лагеря после загрузки")
+	_check(L2.upg.has("camp_hq") and L2.camp_busy(), "стройка Штаба сохранилась")
+	_check(L2.soldiers.size() == 2 and String(L2.soldier(int(s2["id"]))["cls"]) == "priest" and L2.fort_newcomers() == L.fort_newcomers(), "люди, класс и очередь ворот сохраняются")
+	_check(L2.squad3 == [int(s["id"]), 0, 0, int(s2["id"]), 0] and L2.slots() == 4 and absf(L2.rations - 7.5) < 0.01, "отряд и пайки")
 	var sq := L2.squad_v3()
-	_check(sq.size() == 2 and int(sq[0]["row"]) == 0 and int(sq[1]["row"]) == 1 and String(sq[1]["key"]) == "priest", "в бою: первый ряд и жрец во втором")
-	var pop0 := int(c2.stats["pop"])
-	var a0 := c2.arrivals.size()
-	var res: Dictionary = L2.soldier(int(s2["id"]))["res"].duplicate(true)
-	_check(_returned_member(c2, res) == 0, "после загрузки призванного жителя ещё нет в семье")
-	var ok := L2.dismiss(int(s2["id"]))
-	_check(ok and c2.arrivals.size() == a0 and int(c2.stats["pop"]) == pop0 + 1 and _returned_member(c2, res) == 1
-		and L2.soldier(int(s2["id"])).is_empty() and L2.soldiers.size() == 1 and _fams_ok(c2),
-		"после загрузки увольнение возвращает того же горожанина в прежнюю семью без новой очереди")
-
+	_check(sq.size() == 2 and int(sq[0]["row"]) == 0 and int(sq[1]["row"]) == 1 and String(sq[1]["key"]) == "priest", "ряды отряда")
+	var population := int(c2.stats["pop"])
+	_check(L2.dismiss(int(s2["id"])) and int(c2.stats["pop"]) == population and _fams_ok(c2), "увольнение не меняет город")
 
 func _choice3() -> void:
 	var c := _town(14)
 	var L: Legion = c.legion
 	L.army_tick()
+	Fixture.gate(L)
 	var first := L.recruit_candidates()
-	var again := L.recruit_candidates()
-	_check(first.size() == 4 and first == again, "кандидаты стабильны, четыре карточки")
-	if first.size() != 4:
-		return
-	var sorted := true
-	for i in range(1, first.size()):
-		sorted = sorted and int(first[i - 1]["stars"]) >= int(first[i]["stars"])
-	var next := L.recruit_candidates(4, 1)
-	_check(sorted and next.size() == 4 and first[0]["key"] != next[0]["key"], "лучшие первыми, следующая страница другая")
+	_check(first.size() == 3 and first == L.recruit_candidates(), "три стабильных кандидата у ворот")
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var copy := City.new(Land.new())
-	copy.auto_hire = true  # прежняя фикстура
+	copy.auto_hire = true
 	copy.load_data(saved)
-	_check(copy.legion.recruit_candidates() == first, "кандидаты и звёзды переживают сохранение")
-	var pick: Dictionary = first[2].duplicate()
-	var expected_stars := int(pick["stars"])
+	_check(copy.legion.recruit_candidates() == first, "кандидаты и звёзды переживают JSON")
+	var pick: Dictionary = first[1].duplicate(true)
+	var expected := int(pick["stars"])
 	pick["stars"] = 99
 	var population := int(c.stats["pop"])
-	var soldier := L.recruit_resident(pick)
-	_check(not soldier.is_empty() and soldier["name"] == pick["name"] and int(soldier["res"]["m"]["sd"]) == int(pick["sd"])
-		and int(soldier["stars"]) == expected_stars and int(c.stats["pop"]) == population - 1, "выбрали именно этого жителя; звёзды считает модель")
-	_check(L.recruit_resident(pick).is_empty() and int(c.stats["pop"]) == population - 1 and _fams_ok(c), "повторный выбор устаревшей карточки никого не забирает")
-	_check(L.candidate_stars({"sd": 123, "job": "sawmill", "cls": "artisans", "age": 2}) >= L.candidate_stars({"sd": 123, "age": 1}), "опыт и ремесло повышают качество")
-	# Реальная работа жителя; пищевые работники при нехватке еды исключены.
-	_work(c, "bakery", Vector2(0, 40))
-	var bakery := L.building_rec("bakery")
-	var p: Dictionary = L.recruit_candidates()[0]
-	var house: Dictionary = c.buildings[int(p["home"])]
-	for family: Dictionary in house["families"]:
-		for member: Dictionary in family.get("m", []):
-			if int(member["sd"]) == int(p["sd"]):
-				member["job"] = int(bakery["id"])
-	var choices := c.resident_choices()
-	_check(not c.food_short() or not choices.any(func(x: Dictionary): return x["key"] == p["key"]), "пекаря при нехватке еды не призывают")
-
+	var s := L.recruit_resident(pick)
+	_check(s["name"] == pick["name"] and int(s["stars"]) == expected and int(c.stats["pop"]) == population, "карточка не подменяет звёзды и не забирает горожан")
+	_check(L.recruit_resident(pick).is_empty() and _fams_ok(c), "устаревшую карточку нельзя принять снова")
 
 func _hero3() -> void:
 	var c := _town(14)
 	var L: Legion = c.legion
 	L.army_tick()
-	var recruit := L.recruit_resident()
+	var recruit := Fixture.recruit(L)
 	L.set_place(0, int(recruit["id"]))
 	c.hero = Hero.make("Гай Валерий", 0, Hero.PRESETS[0]["look"], true, 777)
 	var population := int(c.stats["pop"])
@@ -650,7 +590,7 @@ func _chest_award3() -> void:
 	var c := _town(14)
 	var L: Legion = c.legion
 	L.army_tick()
-	var soldier := L.recruit_resident()
+	var soldier := Fixture.recruit(L)
 	L.set_place(0, int(soldier["id"]))
 	var setup := L.make_battle(Legion.stage(0, 0, 0), 17)
 	var money := c.money

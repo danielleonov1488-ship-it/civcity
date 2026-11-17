@@ -30,7 +30,8 @@ func finish_build(l: Legion, id: int) -> void:
 		return
 	Legion.clock = float(u["end"])
 	l.tick()
-	assign_worker(l, id)
+	if l.fort_room_slots(id) > 0:
+		assign_worker(l, id)
 
 
 func assign_worker(l: Legion, id: int) -> void:
@@ -193,13 +194,14 @@ func _expand_effects() -> void:
 	check(Legion.camp_time_h(25) > Legion.camp_time_h(20), "high-level timers grow")
 	var expanded: Dictionary = l.fort.duplicate(true)
 	expanded["exp"] = 5
+	expanded["grid"] = [5, 5]
 	l._fort_load(expanded)
 	check(l.fort["plots"].size() == 24 and l.fort_expand(), "start first expansion beyond table")
 	var expand_end := float(l.fort["up"]["end"])
 	check(l.speed_up("fort_expand") and float(l.fort["up"]["end"]) == expand_end - 1800.0, "expansion can be accelerated")
 	Legion.clock = float(l.fort["up"]["end"])
 	l.fort_finish()
-	check(l.fort["exp"] == 6 and l.fort["plots"].size() == 30, "endless expansion adds six plots")
+	check(l.fort["exp"] == 6 and l.fort["plots"].size() == 29, "endless expansion adds a full floor of five plots")
 
 
 func _producers() -> void:
@@ -273,6 +275,8 @@ func _migrate_save() -> void:
 	check(l.camp_level("forge") == 4 and not l.upg.has("camp_forge"), "migrated timer finishes")
 	l.fort_slot_plot("kitchen")["pend"] = 2.5
 	check(l.fort_expand(), "expansion before save")
+	var expansion_grid: Array = l.fort["up"]["grid"].duplicate()
+	var expanded_plots := int(expansion_grid[0]) * int(expansion_grid[1]) - 1
 	var before_fort: Dictionary = l.fort.duplicate(true)
 	var before_pending: Dictionary = l.pending_resources.duplicate(true)
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
@@ -296,7 +300,8 @@ func _migrate_save() -> void:
 	check(typeof(legacy_worker.get("id")) == TYPE_INT and typeof(legacy_worker.get("stars")) == TYPE_INT, "legacy worker numbers restored as integers")
 	Legion.clock = float(copy.legion.fort["up"]["end"]) + 3600.0
 	copy.legion.tick()
-	check(copy.legion.fort["plots"].size() == 8 and copy.legion.fort_slot_plot("kitchen")["pend"] == 2.5, "offline expansion, full storage pauses kitchen")
+	check(copy.legion.fort["plots"].size() == expanded_plots and copy.legion.fort["grid"] == expansion_grid
+		and copy.legion.fort_slot_plot("kitchen")["pend"] == 2.5, "offline expansion, full storage pauses kitchen")
 	var plot := copy.legion.fort_empty_plot()
 	check(copy.legion.fort_build("kitchen", plot), "build before save")
 	var again := town()

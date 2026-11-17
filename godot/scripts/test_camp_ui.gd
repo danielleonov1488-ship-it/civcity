@@ -71,7 +71,7 @@ func _run() -> void:
 	if not check(int(city.stats["pop"]) >= 60 and legion.v3(), "V3 and population"):
 		return
 	for i in 4:
-		var s := legion.recruit_resident()
+		var s := preload("res://scripts/test_fort_fixture.gd").recruit(legion)
 		if not check(not s.is_empty(), "recruit %d: %s" % [i, legion.can_recruit_resident()]):
 			return
 		if i < 3 and not check(legion.set_place(i, int(s["id"])), "place %d" % i):
@@ -96,6 +96,7 @@ func _run() -> void:
 	camp.open_recruit_picker()
 	if not check(legion.soldiers.size() == 4 and is_instance_valid(camp.modal), "picker does not recruit yet"):
 		return
+	preload("res://scripts/test_fort_fixture.gd").gate(legion)
 	camp._recruit_pick(legion.recruit_candidates()[0])
 	if not check(legion.soldiers.size() == 5 and is_instance_valid(camp.modal), "recruit result"):
 		return

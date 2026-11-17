@@ -18,6 +18,7 @@ extends Control
 ## Бои с городами: сеть — отдельный модуль (см. _net()): pvp_ready() / pvp_opponents(cb) / pvp_report(setup, out).
 ## Картинки владельца (листы 35–41) раскладывает .work/py/legion_art.py; нет картинки — рисованные значки игры.
 
+const Kit = preload("res://scripts/ui_kit_a.gd")
 const DIR := "res://assets/ui/ai/legion/"
 const CW := 1140.0                         # ширина содержимого вкладки
 const CH := 604.0                          # высота содержимого вкладки
@@ -434,8 +435,8 @@ func _tick_live() -> void:
 # =====================================================================
 
 func _make_window() -> void:
-	win = PanelContainer.new()
-	win.add_theme_stylebox_override("panel", hud._box_panel(8))
+	win = Kit.card()
+	win.name = "LegionCampaignWindow"
 	add_child(win)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
@@ -472,7 +473,8 @@ func _make_window() -> void:
 	var r := _chip_val(_ic39("rating"), "0", "Рейтинг походов: растёт с каждой новой победой и не тратится. Открывает чудеса света")
 	lbl_rating = r[1]
 	right.add_child(r[0])
-	var close_b: Button = hud._bare("close", "Закрыть", 36, func(): close())
+	var close_b := Kit.close_button()
+	close_b.pressed.connect(func(): close())
 	close_b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	right.add_child(close_b)
 	hdr.add_child(right)
@@ -542,8 +544,8 @@ func _select_tab(id: String) -> void:
 	for k in tabs:
 		var b: Button = tabs[k]
 		var on: bool = k == id
-		b.add_theme_stylebox_override("normal", hud._box_pill(16, 6, "g_btn_on" if on else "g_btn"))
-		b.add_theme_stylebox_override("hover", hud._box_pill(16, 6, "g_btn_on" if on else "g_btn_hover"))
+		b.add_theme_stylebox_override("normal", Kit.box("panels/tab_on" if on else "panels/tab_off", 28, 8))
+		b.add_theme_stylebox_override("hover", Kit.box("panels/tab_on", 28, 8))
 	if id == "pvp" and _pvp_state != "loading":
 		_pvp_state = "idle"                  # каждый заход — свежий список соперников
 		_pvp_auto = false
@@ -1039,7 +1041,7 @@ func _wl(text: String, w: float, sz := 14, col := C_SOFT, bold := false, center 
 
 
 func _chip_val(tex: Texture2D, text: String, tip: String, sz := 19) -> Array:
-	var p: PanelContainer = hud._chip(false, 8)
+	var p := Kit.inset()
 	p.tooltip_text = tip
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 5)
@@ -1053,7 +1055,7 @@ func _chip_val(tex: Texture2D, text: String, tip: String, sz := 19) -> Array:
 
 func _bar_panel(pad := 6.0) -> PanelContainer:
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", hud._box_bar(pad))
+	p.add_theme_stylebox_override("panel", Kit.box("panels/panel_inset", 32, pad))
 	return p
 
 
@@ -1100,25 +1102,17 @@ func _bar(w: float, v: float) -> ProgressBar:
 
 ## Кнопка-плашка с надписью (и значком); why — почему нельзя (кнопка серая, причина в подсказке)
 func _btn(text: String, w: float, sz: int, icon: Texture2D, why: String, cb: Callable) -> Button:
-	var b := Button.new()
-	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_override("font", hud.font_bold)
+	var kind := "green" if text in ["В бой!", "Начать", "Улучшить", "Собрать"] else "cream"
+	var b := Kit.button(kind, icon, I18n.t(text))
 	b.add_theme_font_size_override("font_size", sz)
-	if icon != null:
-		b.icon = icon
-		b.expand_icon = false
-		b.add_theme_constant_override("icon_max_width", sz + 10)
-	b.text = text
 	if w > 0.0:
-		b.custom_minimum_size = Vector2(w, sz + 22)
-	if why != "":
-		b.disabled = true
-		b.tooltip_text = why
+		b.custom_minimum_size.x = w
+	b.tooltip_text = I18n.t(text) + ("\n" + I18n.t(why) if why != "" else "")
+	b.disabled = why != ""
 	b.pressed.connect(cb)
 	return b
 
 
-## Действие кнопки: улучшить бойца / умение, Триумф, чудо; не вышло — сказать почему
 func _do(what: String, id: String) -> void:
 	var ok := false
 	match what:
@@ -1231,7 +1225,11 @@ func _build_campaign() -> Control:
 	var left := VBoxContainer.new()
 	left.add_theme_constant_override("separation", 6)
 	if lg.v3():
-		var back := _btn("← В лагерь", 160, 17, null, "", func(): close())
+		var back := Kit.button("gold", "back")
+		back.tooltip_text = I18n.t("В лагерь")
+		back.custom_minimum_size = Vector2(112, 54)
+		back.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		back.pressed.connect(func(): close())
 		back.name = "CampaignBack"
 		left.add_child(back)
 	left.add_child(_map_view())
@@ -1419,8 +1417,7 @@ func _map_view() -> Control:
 		rh.add_child(sc)
 		rh.add_child(_l("%d/%d" % [sn, Legion.stages() * 3], 17, true, C_GOLD if sn >= Legion.stages() * 3 else C_INK))
 		var trn := String(R.get("trophy", ""))
-		rib.tooltip_text += "
-Звёзды провинции: %d из %d. За все — сундук Славы%s" % [sn, Legion.stages() * 3,
+		rib.tooltip_text += "\nЗвёзды провинции: %d из %d. За все — сундук Славы%s" % [sn, Legion.stages() * 3,
 			(" и трофей «%s» в город" % String(Defs.B[trn]["name"])) if vc == 0 and trn != "" and Defs.B.has(trn) else ""]
 	rib.add_child(rh)
 	_pin(rib, Vector2(0.5, 0.0), Vector2(0, -8))
@@ -2068,14 +2065,18 @@ func _modal(w: float) -> PanelContainer:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(dim)
-	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", hud._box_scroll_v(18))
+	var p := Kit.card()
 	p.custom_minimum_size = Vector2(w, 0)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
 	p.add_child(v)
 	if lg.v3() and camp_window != "":
-		v.add_child(_btn("← Лагерь", 160, 16, null, "", func(): close()))
+		var back := Kit.round_button("back")
+		back.custom_minimum_size = Vector2(48, 48)
+		back.tooltip_text = I18n.t("В лагерь")
+		back.size_flags_horizontal = Control.SIZE_SHRINK_END
+		back.pressed.connect(func(): close())
+		v.add_child(back)
 	_pin(p, Vector2(0.5, 0.5))
 	overlay.add_child(p)
 	return p
@@ -3056,9 +3057,7 @@ func _hero_slot(sz: float, big := true, edit := false) -> Control:
 		pvl = "В боях с городами %s тоже впереди: здоровье %d, урон %d, броня %d" % [Hero.he(game.city), int(ps["hp"]), int(ps["atk"]), roundi(float(ps["armor"]))]
 	else:
 		pvl = "В боях с городами герой пока не участвует" + ((" — там на этом месте %s" % String(Legion.UNITS[pvp_t]["name"]).to_lower()) if Legion.UNITS.has(pvp_t) else "")
-	face.tooltip_text = "%s — ваш герой: первое место отряда %s, %d уровень (растёт с Казармами, городом и Складом оружия)
-Здоровье %d, урон %d, броня %d · %s
-%s" % [
+	face.tooltip_text = "%s — ваш герой: первое место отряда %s, %d уровень (растёт с Казармами, городом и Складом оружия)\nЗдоровье %d, урон %d, броня %d · %s\n%s" % [
 		Hero.name_of(game.city), "в походах и в боях с городами" if pv else "в походах", int(hs["level"]), int(hs["hp"]), int(hs["atk"]), roundi(float(hs["armor"])),
 		String(Hero.kit_of(lg.hero_kit_level())["n"]).to_lower(), pvl]
 	var tex: Texture2D = null
@@ -3575,8 +3574,7 @@ func _wonder_card(w: Dictionary) -> Control:
 	var state := lg.wonder_state(id)
 	var p := _bar_panel(4)
 	p.custom_minimum_size = Vector2(277, 0)
-	p.tooltip_text = "%s
-%s" % [Legion.wonder_name(w), w["bonus"]]
+	p.tooltip_text = "%s\n%s" % [Legion.wonder_name(w), w["bonus"]]
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 1)
 	p.add_child(v)

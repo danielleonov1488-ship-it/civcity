@@ -140,7 +140,7 @@ func _run() -> void:
 	legion.army_tick()
 	fixture(0)
 	for i in 4:
-		var soldier := legion.recruit_resident()
+		var soldier := preload("res://scripts/test_fort_fixture.gd").recruit(legion)
 		if check(not soldier.is_empty(), "fixture recruit"):
 			legion.set_place(i, int(soldier["id"]))
 	camp = CampUI.of(game.hud)

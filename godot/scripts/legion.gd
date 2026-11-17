@@ -740,7 +740,7 @@ func barracks_lvl() -> int:
 func roster_cap() -> int:
 	if v3():
 		_fort_init()
-		var total := 0
+		var total := 5 # Базовое жильё при Штабе.
 		for p: Dictionary in fort["plots"]:
 			if p["b"] == "barracks" and int(p["lv"]) > 0:
 				total += int(FORT_B["barracks"]["places_base"]) + int(FORT_B["barracks"]["places_per"]) * int(p["lv"])
@@ -940,8 +940,8 @@ func dismiss(id: int) -> bool:
 	var s := soldier(id)
 	if s.is_empty() or (v3() and bool(s.get("hero", false))):
 		return false
-	if v3() and fort_worker_plot(id) >= 0:
-		fort_assign(fort_worker_plot(id), 0)
+	if v3():
+		fort_unassign(id)
 	for slot in (s.get("gear", {}) as Dictionary):
 		var it := item(int(s["gear"][slot]))
 		if not it.is_empty():
@@ -954,9 +954,6 @@ func dismiss(id: int) -> bool:
 			if int(squad3[i]) == id:
 				squad3[i] = 0
 		_v3_sync_squad()
-		var c = city()
-		if c != null and s.has("res"):
-			c.return_resident(s["res"])          # воин вернулся горожанином (ждёт жилья на площади)
 	changed.emit()
 	return true
 
@@ -989,8 +986,8 @@ func train(id: int) -> bool:
 	if can_train(id) != "":
 		return false
 	var s := soldier(id)
-	if v3() and fort_worker_plot(id) >= 0:
-		fort_assign(fort_worker_plot(id), 0)
+	if v3() and not fort_is_fighter(id):
+		fort_unassign(id)
 	var r := int(s["rank"])
 	_pay({"money": Soldiers.train_cost(r)})
 	var secs := Soldiers.train_h(r) * 3600.0 / maxf(0.001, time_k)
@@ -3697,6 +3694,7 @@ func on_hour() -> Array:
 		out.append([m, "legion", true])
 	if V3:
 		_rations_hour()
+		fort_arrival_hour()
 	var gd := 0.0
 	for w: Dictionary in WONDERS:
 		if float(w.get("glory_day", 0.0)) > 0.0 and wonder_built(w):
@@ -4168,7 +4166,7 @@ static func fort_production(type: String, level: int) -> Dictionary:
 
 
 func _fort_add_plot(type := "", level := 0) -> Dictionary:
-	var p := {"id": int(fort["next_id"]), "b": type, "lv": level, "up": {}, "pend": 0.0, "t": now(), "worker": 0}
+	var p := {"id": int(fort["next_id"]), "b": type, "lv": level, "up": {}, "pend": 0.0, "t": now(), "worker": 0, "workers": []}
 	fort["next_id"] = int(fort["next_id"]) + 1
 	fort["plots"].append(p)
 	return p
@@ -4178,7 +4176,7 @@ func _fort_init() -> void:
 	if not v3() or not fort.is_empty():
 		return
 	var migrated := not camp.is_empty()
-	fort = {"exp": 0, "plots": [], "next_id": 0, "up": {}}
+	fort = {"exp": 0, "plots": [], "next_id": 0, "up": {}, "newcomers": [], "arrival": 0.0}
 	# Старый лагерь переносим целиком, новый занимает два этажа.
 	var initial: Array = ["hq", "barracks", "forge", "drill", "store", "mars"] if migrated else ["hq", "barracks", "drill"]
 	for type: String in initial:
@@ -4194,29 +4192,65 @@ func _fort_init() -> void:
 		_fort_add_plot("kitchen", 1)
 		for p: Dictionary in fort["plots"]:
 			p.erase("worker")
+			p.erase("workers")
 	while (fort["plots"] as Array).size() < int(fort_exp_info(0)["plots"]) + 1:
 		_fort_add_plot()
 	_fort_migrate_workers()
 	_fort_sync_camp()
 
 
-## Человек закреплён за комнатой, отряд и работа несовместимы.
+## Первый готовый работник; жители казармы остаются дома и в отряде.
 func fort_worker(plot_id: int) -> Dictionary:
+	for person: Dictionary in fort_occupants(plot_id):
+		if s_state(person) == "ready" and (not squad3.has(int(person["id"])) or fort_plot(plot_id).get("b", "") == "barracks"):
+			return person
+	return {}
+
+
+func fort_occupants(plot_id: int) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for sid in fort_plot(plot_id).get("workers", []):
+		var person := soldier(int(sid))
+		if not person.is_empty():
+			out.append(person)
+	return out
+
+
+func fort_room_slots(plot_id: int) -> int:
 	var p := fort_plot(plot_id)
-	var sid := int(p.get("worker", 0))
-	if sid < 0:
-		return p.get("legacy_worker", {})
-	if sid == 0 or squad3.has(sid):
-		return {}
-	var person := soldier(sid)
-	return person if not person.is_empty() and s_state(person) == "ready" else {}
+	if p.is_empty() or p["b"] in ["", "hq"] or int(p["lv"]) <= 0:
+		return 0
+	if p["b"] == "barracks":
+		return int(FORT_B["barracks"]["places_base"]) + int(FORT_B["barracks"]["places_per"]) * int(p["lv"])
+	return clampi(1 + (int(p["lv"]) - 1) / 3, 1, 3)
+
+
+func fort_population() -> int:
+	var total := 0
+	for person: Dictionary in soldiers:
+		if not bool(person.get("hero", false)):
+			total += 1
+	return total
 
 
 func fort_worker_plot(sid: int) -> int:
 	for p: Dictionary in fort.get("plots", []):
-		if int(p.get("worker", 0)) == sid and sid != 0:
+		if (p.get("workers", []) as Array).has(sid) and sid != 0:
 			return int(p["id"])
 	return -1
+
+
+func fort_is_fighter(sid: int) -> bool:
+	var person := soldier(sid)
+	return not person.is_empty() and (bool(person.get("hero", false)) or fort_plot(fort_worker_plot(sid)).get("b", "") == "barracks")
+
+
+func fort_squad_candidates() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for person: Dictionary in soldiers:
+		if fort_is_fighter(int(person["id"])) and s_state(person) == "ready":
+			out.append(person)
+	return out
 
 
 func fort_worker_choices() -> Array[Dictionary]:
@@ -4230,42 +4264,121 @@ func fort_worker_choices() -> Array[Dictionary]:
 
 func fort_assign(plot_id: int, sid: int) -> bool:
 	var p := fort_plot(plot_id)
-	if p.is_empty() or p["b"] == "" or int(p["lv"]) <= 0:
+	if fort_room_slots(plot_id) <= 0:
 		return false
-	if sid != 0 and not (p["up"] as Dictionary).is_empty():
+	if sid == 0:
+		for person: Dictionary in fort_occupants(plot_id):
+			fort_unassign(int(person["id"]))
+		_fort_changed()
+		return true
+	if fort_can_assign(plot_id, sid) != "":
 		return false
-	if sid != 0:
-		var person := soldier(sid)
-		if person.is_empty() or bool(person.get("hero", false)) or squad3.has(sid) or s_state(person) != "ready":
+	var source := fort_worker_plot(sid)
+	if source == plot_id:
+		return true
+	# Сначала учитываем старую работу, затем меняем оба списка без промежуточного сигнала.
+	var displaced := 0
+	if fort_occupants(plot_id).size() >= fort_room_slots(plot_id):
+		displaced = int(p["workers"][0])
+		if s_state(soldier(displaced)) != "ready":
 			return false
-		if fort_worker_plot(sid) >= 0 and fort_worker_plot(sid) != plot_id:
-			return false
-	_fort_accrue(p, now())
-	p["worker"] = sid
-	p.erase("legacy_worker")
-	p["t"] = now()
-	_craft_deadlines(p, now())
+	fort_unassign(sid)
+	if displaced != 0:
+		fort_unassign(displaced)
+		if source >= 0:
+			_fort_place(fort_plot(source), displaced)
+	_fort_place(p, sid)
+	_v3_sync_squad()
 	_fort_changed()
 	return true
 
 
+func fort_can_assign(plot_id: int, sid: int) -> String:
+	var p := fort_plot(plot_id)
+	if fort_room_slots(plot_id) <= 0:
+		return "Выберите готовую комнату"
+	if not (p["up"] as Dictionary).is_empty():
+		return "Здание строится. Дождитесь окончания."
+	var person := soldier(sid)
+	if person.is_empty() or bool(person.get("hero", false)) or s_state(person) != "ready":
+		return "Этот человек сейчас занят"
+	var occupants := fort_occupants(plot_id)
+	if occupants.size() >= fort_room_slots(plot_id) and s_state(occupants[0]) != "ready":
+		return "Этот человек сейчас занят"
+	return ""
+
+
+func _fort_worker_alias(p: Dictionary) -> void:
+	var ids: Array = p.get("workers", [])
+	p["worker"] = int(ids[0]) if not ids.is_empty() else 0
+	p["t"] = now()
+	_craft_deadlines(p, now())
+
+
+func fort_unassign(sid: int) -> void:
+	var id := fort_worker_plot(sid)
+	if id < 0:
+		return
+	var p := fort_plot(id)
+	_fort_accrue(p, now())
+	(p["workers"] as Array).erase(sid)
+	_fort_worker_alias(p)
+	for i in squad3.size():
+		if int(squad3[i]) == sid:
+			squad3[i] = 0
+	_v3_sync_squad()
+
+
+func _fort_place(p: Dictionary, sid: int) -> void:
+	_fort_accrue(p, now())
+	if not p.has("workers"):
+		p["workers"] = []
+	(p["workers"] as Array).append(sid)
+	_fort_worker_alias(p)
+
+
 ## Старые комнаты получают местного работника один раз; новые ждут назначения.
 func _fort_migrate_workers() -> void:
+	var migration := int(fort.get("population_v", 0)) < 1
 	var used := {}
 	for p: Dictionary in fort.get("plots", []):
-		if not p.has("worker"):
+		if not p.has("worker") and not p.has("workers"):
 			p["worker"] = 0
-			if p["b"] != "" and int(p["lv"]) > 0:
+			p["workers"] = []
+			if migration and p["b"] not in ["", "hq"] and int(p["lv"]) > 0:
 				var legacy_sid := -int(p["id"]) - 1
 				p["worker"] = legacy_sid
+				p["workers"] = [legacy_sid]
 				p["legacy_worker"] = {"id": legacy_sid, "name": Soldiers.roll_name(_rng), "stars": 1, "cls": "legionary", "legacy": true}
-		var sid := int(p.get("worker", 0))
-		if sid > 0 and (soldier(sid).is_empty() or squad3.has(sid) or used.has(sid) or bool(soldier(sid).get("hero", false))):
-			p["worker"] = 0
-		elif sid < 0 and not p.get("legacy_worker", null) is Dictionary:
-			p["worker"] = 0
-		elif sid != 0:
-			used[sid] = true
+		var worker_id := int(p.get("worker", 0))
+		var ids: Array = p.get("workers", [worker_id] if worker_id != 0 else [])
+		p["workers"] = []
+		for raw_id in ids:
+			var sid := int(raw_id)
+			if sid < 0 and p.get("legacy_worker", null) is Dictionary:
+				var worker := _add_soldier(p["legacy_worker"])
+				sid = int(worker["id"])
+				worker["look_seed"] = sid * 409
+			if sid > 0 and not soldier(sid).is_empty() and not used.has(sid) and not bool(soldier(sid).get("hero", false)):
+				(p["workers"] as Array).append(sid)
+				used[sid] = true
+		p["worker"] = int(p["workers"][0]) if not (p["workers"] as Array).is_empty() else 0
+		p.erase("legacy_worker")
+	# Прежний отряд сохраняет дом в казарме, даже если старое сохранение переполнено.
+	if migration:
+		var barracks := fort_slot_plot("barracks")
+		if not barracks.is_empty():
+			for person: Dictionary in soldiers:
+				var sid := int(person["id"])
+				if not bool(person.get("hero", false)) and not used.has(sid):
+					if squad3.has(sid) or fort_occupants(int(barracks["id"])).size() < fort_room_slots(int(barracks["id"])):
+						(barracks["workers"] as Array).append(sid)
+			barracks["worker"] = int(barracks["workers"][0]) if not (barracks["workers"] as Array).is_empty() else 0
+	fort["population_v"] = 1
+	if not fort.has("newcomers"):
+		fort["newcomers"] = []
+	if not fort.has("arrival"):
+		fort["arrival"] = 0.0
 	fort["workers_v"] = 1
 
 
@@ -4338,6 +4451,8 @@ func fort_max(type: String) -> int:
 	for hq: int in FORT_B[type]["max"]:
 		if camp_level("hq") >= hq:
 			n += 1
+	if type != "hq" and camp_level("hq") > 12:
+		n += (camp_level("hq") - 12) / 3
 	return n
 
 
@@ -4429,6 +4544,62 @@ func fort_upgrade(plot_id: int) -> bool:
 	return true
 
 
+## Слиток снимает десять минут ожидания; обычная цена улучшения сохраняется.
+const FORT_INSTANT_SECONDS := 600.0
+
+
+func fort_instant_info(plot_id: int) -> Dictionary:
+	var p := fort_plot(plot_id)
+	if not v3() or p.is_empty() or p["b"] == "":
+		return {"price": 0, "why": "Нет такого здания"}
+	var timer: Dictionary = p["up"]
+	if p["b"] == "hq" and timer.is_empty():
+		timer = fort.get("up", {})
+	var seconds := maxf(0, float(timer.get("end", 0)) - now())
+	var why := ""
+	if timer.is_empty():
+		why = fort_can_upgrade(plot_id)
+		seconds = float(fort_info(plot_id)["next_time"])
+	var price := maxi(1, ceili(seconds / FORT_INSTANT_SECONDS))
+	if why == "" and ingots < price:
+		why = "Не хватает слитков"
+	return {"price": price, "why": why, "stamp": str([p["b"], p["lv"], timer.get("end", 0), timer.get("to", -1)])}
+
+
+func fort_instant(plot_id: int, quote: Dictionary = {}) -> bool:
+	var before := fort_plot(plot_id)
+	if before.is_empty():
+		return false
+	if not quote.is_empty() and quote.get("stamp", "") != fort_instant_info(plot_id).get("stamp", ""):
+		return false
+	var timer_before: Dictionary = before["up"]
+	if before["b"] == "hq" and timer_before.is_empty():
+		timer_before = fort.get("up", {})
+	var finished := not timer_before.is_empty() and float(timer_before.get("end", 0)) <= now()
+	fort_finish()
+	# Уже истёкший таймер не должен покупать следующий уровень.
+	if finished:
+		return false
+	var info := fort_instant_info(plot_id)
+	if String(info["why"]) != "":
+		return false
+	var p := fort_plot(plot_id)
+	var timer: Dictionary = p["up"]
+	if p["b"] == "hq" and timer.is_empty():
+		timer = fort.get("up", {})
+	if timer.is_empty():
+		if not fort_upgrade(plot_id):
+			return false
+		timer = p["up"]
+	if timer.is_empty():
+		return false
+	ingots -= int(info["price"])
+	timer["end"] = now()
+	fort_finish()
+	changed.emit()
+	return true
+
+
 func fort_info(plot_id: int) -> Dictionary:
 	var p := fort_plot(plot_id)
 	if p.is_empty() or p["b"] == "":
@@ -4459,15 +4630,34 @@ func fort_can_expand() -> String:
 	return _fort_afford(info["cost"])
 
 
-func fort_expand() -> bool:
+func fort_grid() -> Vector2i:
+	var grids := [Vector2i(3, 2), Vector2i(3, 3), Vector2i(4, 3), Vector2i(4, 4), Vector2i(5, 4), Vector2i(5, 5)]
+	var dims: Vector2i = grids[mini(int(fort.get("exp", 0)), grids.size() - 1)]
+	var saved: Array = fort.get("grid", [])
+	if saved.size() == 2:
+		dims = Vector2i(maxi(3, int(saved[0])), maxi(2, int(saved[1])))
+	while dims.x * dims.y - 1 < (fort.get("plots", []) as Array).size():
+		dims.y += 1
+	return dims
+
+
+func fort_expansion_info(axis := "floor") -> Dictionary:
+	var info := fort_exp_info(int(fort.get("exp", 0)) + 1)
+	var dims := fort_grid() + (Vector2i(1, 0) if axis == "section" else Vector2i(0, 1))
+	info["grid"] = [dims.x, dims.y]
+	info["plots"] = dims.x * dims.y - 2
+	return info
+
+
+func fort_expand(axis := "floor") -> bool:
 	fort_finish()
-	if fort_can_expand() != "":
+	if axis not in ["floor", "section"] or fort_can_expand() != "":
 		return false
 	var to := int(fort["exp"]) + 1
-	var info := fort_exp_info(to)
+	var info := fort_expansion_info(axis)
 	_fort_pay(info["cost"])
 	var secs := float(info["time_h"]) * 3600.0 / maxf(0.001, time_k)
-	fort["up"] = {"to": to, "end": now() + secs, "total": secs}
+	fort["up"] = {"to": to, "end": now() + secs, "total": secs, "axis": axis, "grid": info["grid"]}
 	_fort_changed()
 	return true
 
@@ -4504,7 +4694,12 @@ func fort_finish() -> Array:
 	var expansion: Dictionary = fort["up"]
 	if not expansion.is_empty() and t >= float(expansion["end"]):
 		fort["exp"] = int(expansion["to"])
+		if expansion.get("axis", "floor") == "section":
+			fort["sections"] = int(fort.get("sections", 0)) + 1
 		var count := int(fort_exp_info(int(fort["exp"]))["plots"]) + 1
+		if expansion.get("grid", []) is Array and (expansion.get("grid", []) as Array).size() == 2:
+			fort["grid"] = expansion["grid"].duplicate()
+			count = int(fort["grid"][0]) * int(fort["grid"][1]) - 1
 		while (fort["plots"] as Array).size() < count:
 			_fort_add_plot()
 		fort["up"] = {}
@@ -4571,6 +4766,25 @@ func _fort_load(raw: Variant) -> void:
 	if not v3() or not raw is Dictionary or not raw.get("plots", null) is Array:
 		return
 	fort = {"exp": maxi(0, int(raw.get("exp", 0))), "plots": [], "next_id": maxi(1, int(raw.get("next_id", 1))), "up": {}}
+	fort["population_v"] = int(raw.get("population_v", 0))
+	if raw.has("sections"):
+		fort["sections"] = maxi(0, int(raw["sections"]))
+	if raw.get("grid", []) is Array and (raw.get("grid", []) as Array).size() == 2:
+		fort["grid"] = [maxi(3, int(raw["grid"][0])), maxi(2, int(raw["grid"][1]))]
+	fort["arrival"] = clampf(float(raw.get("arrival", 0.0)), 0.0, 1.0)
+	fort["newcomers"] = []
+	for entry in raw.get("newcomers", []):
+		if entry is Dictionary and (fort["newcomers"] as Array).size() < 3:
+			var newcomer: Dictionary = entry.duplicate(true)
+			var id := int(entry.get("id", sid_next))
+			if id <= 0 or not soldier(id).is_empty() or (fort["newcomers"] as Array).any(func(p: Dictionary): return int(p["id"]) == id):
+				id = sid_next
+			newcomer["id"] = id
+			sid_next = maxi(sid_next, id + 1)
+			newcomer["stars"] = clampi(int(entry.get("stars", 1)), 1, 5)
+			if newcomer.has("look_seed"):
+				newcomer["look_seed"] = int(newcomer["look_seed"])
+			fort["newcomers"].append(newcomer)
 	var ids := {}
 	for entry in raw["plots"]:
 		if not entry is Dictionary:
@@ -4592,7 +4806,10 @@ func _fort_load(raw: Variant) -> void:
 		fort["plots"].append({"id": id, "b": type, "lv": lv, "up": u,
 			"pend": maxf(0.0, float(entry.get("pend", 0.0))), "t": maxf(0.0, float(entry.get("t", now())))})
 		var loaded: Dictionary = fort["plots"][-1]
-		_craft_load(loaded, entry.get("craft", []))
+		if entry.get("workers", null) is Array:
+			loaded["workers"] = entry["workers"].duplicate()
+		if entry.has("craft"):
+			_craft_load(loaded, entry["craft"])
 		if entry.has("worker"):
 			loaded["worker"] = int(entry["worker"])
 			if entry.get("legacy_worker", null) is Dictionary:
@@ -4603,9 +4820,16 @@ func _fort_load(raw: Variant) -> void:
 				loaded["legacy_worker"] = worker
 	if not ids.has(0):
 		fort["plots"].push_front({"id": 0, "b": "hq", "lv": 1, "up": {}, "pend": 0.0, "t": now()})
-	while (fort["plots"] as Array).size() < int(fort_exp_info(int(fort["exp"]))["plots"]) + 1:
+	var minimum := int(fort_exp_info(int(fort["exp"]))["plots"]) + 1
+	if fort.has("grid"):
+		minimum = int(fort["grid"][0]) * int(fort["grid"][1]) - 1
+	while (fort["plots"] as Array).size() < minimum:
 		_fort_add_plot()
 	fort["up"] = _fort_timer(raw.get("up", {}), int(fort["exp"]) + 1)
+	if raw.get("up", {}) is Dictionary and not fort["up"].is_empty():
+		fort["up"]["axis"] = String(raw["up"].get("axis", "floor"))
+		if raw["up"].get("grid", []) is Array and (raw["up"].get("grid", []) as Array).size() == 2:
+			fort["up"]["grid"] = [maxi(3, int(raw["up"]["grid"][0])), maxi(2, int(raw["up"]["grid"][1]))]
 	_fort_migrate_workers()
 	_fort_sync_camp()
 
@@ -4746,20 +4970,14 @@ func can_recruit_resident() -> String:
 		return "Призыв жителей — в новой игре"
 	if not window_open():
 		return lock_text()
-	if soldiers.size() >= roster_cap():
-		return "В лагере нет мест (%d из %d). Улучшите Казарму или отпустите кого-то домой." % [soldiers.size(), roster_cap()]
-	var gate_city = city()
-	if gate_city != null and not gate_city.magis_gate_queue.is_empty():
-		return ""
-	if city_pop() <= RESIDENT_FLOOR:
-		return "В городе слишком мало жителей: меньше %d не станет." % RESIDENT_FLOOR
-	var c = city()
-	if c == null or (c.resident_choices() as Array).is_empty():
-		return "Некого призвать: все нужные горожане заняты."
+	if fort_population() >= roster_cap():
+		return "В форте нет мест. Улучшите Казарму."
+	if fort_newcomers().is_empty():
+		return "У ворот пока никого. Жители приходят, когда счастье города от 55%."
 	return ""
 
 
-## Призвать жителя: новобранец-легионер (меч даром); {} — нельзя. from: «Луций Юлий, был пекарем»
+## Совместимый вход: принимает только ожидающего у ворот, город не меняет.
 func recruit_resident(pick: Dictionary = {}) -> Dictionary:
 	if bool(pick.get("gate", false)):
 		return _recruit_gate(pick)
@@ -4769,21 +4987,101 @@ func recruit_resident(pick: Dictionary = {}) -> Dictionary:
 		return {}
 	if can_recruit_resident() != "":
 		return {}
+	var id := int(pick.get("id", fort_newcomers()[0]["id"]))
+	return fort_accept(id)
+
+
+func fort_newcomers() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for person: Dictionary in fort.get("newcomers", []):
+		out.append(person.duplicate(true))
+	return out
+
+
+func fort_arrival_interval() -> float:
 	var c = city()
-	var r: Dictionary = c.take_resident(pick)
-	if r.is_empty():
+	var happy := float(c.stats.get("happy", 0)) if c != null else 0.0
+	var population_k := clampf(float(city_pop()) / 50.0, 1.0, 2.0)
+	return (8.0 - 6.0 * clampf((happy - 50.0) / 40.0, 0.0, 1.0)) / population_k
+
+
+## Игровые часы, без офлайн-начисления по нынешнему счастью.
+func fort_arrival_hour(hours := 1.0) -> void:
+	if not v3() or not camp_unlocked() or hours <= 0.0:
+		return
+	_fort_init()
+	var c = city()
+	if c == null or float(c.stats.get("happy", 0)) < 55.0 or city_pop() <= 0:
+		return
+	if not fort.has("newcomers"):
+		fort["newcomers"] = []
+	if (fort["newcomers"] as Array).size() >= 3:
+		fort["arrival"] = 0.0
+		return
+	fort["arrival"] = float(fort.get("arrival", 0.0)) + hours / fort_arrival_interval()
+	var arrived := false
+	while float(fort["arrival"]) >= 1.0 and (fort["newcomers"] as Array).size() < 3:
+		fort["arrival"] = float(fort["arrival"]) - 1.0
+		(fort["newcomers"] as Array).append(_fort_newcomer())
+		arrived = true
+	if (fort["newcomers"] as Array).size() >= 3:
+		fort["arrival"] = 0.0
+	if arrived:
+		changed.emit()
+
+
+func _fort_newcomer() -> Dictionary:
+	var id := sid_next
+	sid_next += 1
+	var seed_value := int(_rng.randi())
+	var female := _rng.randf() < 0.5
+	var roll := _rng.randf()
+	var quality := 1 if roll < 0.40 else 2 if roll < 0.72 else 3 if roll < 0.91 else 4 if roll < 0.98 else 5
+	return {"id": id, "name": Soldiers.roll_name(_rng), "from": "Пришёл к воротам форта",
+		"cls": "legionary", "class_hint": V3_UNITS[_rng.randi_range(0, V3_UNITS.size() - 1)],
+		"stars": quality, "look_seed": seed_value, "female": female}
+
+
+func fort_accept(id: int) -> Dictionary:
+	if can_recruit_resident() != "":
 		return {}
-	flags["camp_open"] = true                   # лагерь раз открылся — открыт, даже если жителей станет меньше 50
-	var m: Dictionary = r["m"]
-	var quality := candidate_stars({"sd": m.get("sd", 0), "job": r["job"], "cls": r["cls"], "age": m.get("age", 1)})
-	var s := _add_soldier({"name": String(r["name"]), "from": "%s, %s %s" % [String(r["name"]), "была" if int(m.get("sx", 0)) == 1 else "был", _was_text(String(r["job"]), int(m.get("sx", 0)) == 1)],
-		"cls": "legionary", "stars": quality})
-	s["res"] = {"fam": String(r["fam"]), "cls": String(r["cls"]), "m": m}
-	City.copy_family_state(r, s["res"])
-	_v3_reclass(s)
-	changed.emit()
-	daily_note("recruit")
-	return s
+	for candidate: Dictionary in fort["newcomers"]:
+		if int(candidate["id"]) != id:
+			continue
+		var person := _add_soldier(candidate)
+		# ID у ворот остаётся тем же после принятия.
+		person["id"] = id
+		for key: String in ["look_seed", "female", "class_hint"]:
+			person[key] = candidate.get(key, 0 if key == "look_seed" else false if key == "female" else "legionary")
+		(fort["newcomers"] as Array).erase(candidate)
+		_v3_reclass(person)
+		changed.emit()
+		daily_note("recruit")
+		return person
+	return {}
+
+
+func fort_release(id: int) -> bool:
+	for candidate: Dictionary in fort.get("newcomers", []):
+		if int(candidate["id"]) == id:
+			(fort["newcomers"] as Array).erase(candidate)
+			changed.emit()
+			return true
+	return false
+
+
+## Перетаскивание из ворот сначала проверяет комнату и вместимость.
+func fort_drop(plot_id: int, sid: int, newcomer := false) -> bool:
+	if not newcomer:
+		return fort_assign(plot_id, sid)
+	var p := fort_plot(plot_id)
+	if fort_room_slots(plot_id) <= 0 or not (p["up"] as Dictionary).is_empty() or can_recruit_resident() != "":
+		return false
+	var occupants := fort_occupants(plot_id)
+	if occupants.size() >= fort_room_slots(plot_id) and s_state(occupants[0]) != "ready":
+		return false
+	var person := fort_accept(sid)
+	return not person.is_empty() and fort_assign(plot_id, int(person["id"]))
 
 
 ## «пекарем», «безработным»: чем был житель (творительный падеж; простые правила по первому слову)
@@ -4886,12 +5184,9 @@ func set_place(i: int, sid: int) -> bool:
 		return false
 	if sid != 0 and soldier(sid).is_empty():
 		return false
+	if sid != 0 and not fort_is_fighter(sid):
+		return false
 	if sid != 0:
-		var workplace := fort_worker_plot(sid)
-		if workplace >= 0:
-			_fort_accrue(fort_plot(workplace), now())
-			fort_plot(workplace)["worker"] = 0
-			_craft_deadlines(fort_plot(workplace), now())
 		for k in squad3.size():
 			if int(squad3[k]) == sid:
 				squad3[k] = 0
@@ -4907,7 +5202,7 @@ func squad_v3() -> Array:
 	var out := []
 	for i in slots():
 		var s := soldier(int(squad3[i]))
-		if s.is_empty() or s_state(s) != "ready" or (bool(s.get("hero", false)) and not hero_training.is_empty()):
+		if s.is_empty() or not fort_is_fighter(int(s["id"])) or s_state(s) != "ready" or (bool(s.get("hero", false)) and not hero_training.is_empty()):
 			continue
 		var st := soldier_stats(s, unit_of_class(String(s["cls"])))
 		st["row"] = place_row(i)
@@ -5040,6 +5335,10 @@ func from_dict(d: Dictionary) -> void:
 		if s is Dictionary and Soldiers.CLASSES.has(String(s.get("cls", ""))):
 			var e: Dictionary = (s as Dictionary).duplicate()
 			e["id"] = int(e.get("id", 0))
+			# Идентификаторы и счётчики не меняют тип после JSON.
+			for key: String in ["look_seed", "battles", "falls", "train_plot"]:
+				if e.has(key):
+					e[key] = int(e[key])
 			e["stars"] = clampi(int(e.get("stars", 1)), 1, 5)
 			e["rank"] = clampi(int(e.get("rank", 0)), 0, Soldiers.rank_max(e))
 			for k in ["train_end", "train_total", "wound_end"]:
@@ -5183,21 +5482,12 @@ func candidate_stars(pick: Dictionary) -> int:
 
 func recruit_candidates(n := 4, page := 0) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
-	if not v3() or city() == null or n <= 0:
+	if not v3() or n <= 0:
 		return out
-	var all: Array[Dictionary] = city().resident_choices()
-	for candidate: Dictionary in all:
-		candidate["stars"] = candidate_stars(candidate)
-		candidate["former"] = ("была" if int(candidate["sx"]) == 1 else "был") + " " + _was_text(String(candidate["job"]), int(candidate["sx"]) == 1)
-	all.sort_custom(func(a: Dictionary, b: Dictionary):
-		return String(a["key"]) < String(b["key"]) if int(a["stars"]) == int(b["stars"]) else int(a["stars"]) > int(b["stars"]))
-	for pick: Dictionary in city().magis_gate_queue:
-		all.append(pick.duplicate(true))
-	if all.is_empty():
-		return out
-	var start := posmod(page, ceili(float(all.size()) / n)) * n
-	for i in mini(n, all.size()):
-		out.append(all[(start + i) % all.size()])
+	var all := fort_newcomers()
+	var start := maxi(0, page) * n
+	for i in range(start, mini(start + n, all.size())):
+		out.append(all[i])
 	return out
 
 
