@@ -904,7 +904,8 @@ func rp_per_hour(type: String) -> float:
 
 ## «Уютный Рим»: очки исследований копятся медленнее (Balance.RP_MULT) — город растёт вместе с открытиями
 func rp_mult() -> float:
-	return (Balance.RP_MULT if cozy_v >= 1 else 1.0) * edict_mul("rp_rate")
+	var early := float(Balance.EARLY_RP[level]) if cozy_v >= 1 and level >= 0 and level < Balance.EARLY_RP.size() else 1.0
+	return (Balance.RP_MULT if cozy_v >= 1 else 1.0) * early * edict_mul("rp_rate")
 
 
 func job_max(b: Dictionary) -> int:
