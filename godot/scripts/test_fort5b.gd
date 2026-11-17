@@ -3,7 +3,7 @@ extends Node3D
 
 const Fixture = preload("res://scripts/test_fort_fixture.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
-var out := "D:/CivCity/.work/stage5/fort5c/shots/"
+var out := "D:/CivCity/.work/stage5/fort5d/shots/"
 var fails := 0
 var game: Game
 var camp: CampUI
@@ -131,7 +131,14 @@ func _run() -> void:
 	check(camp.population_button.icon == Kit.texture("family") and camp.population_button.text.contains(str(lg.fort_population())), "population pill")
 	check(camp.left_column.get_child_count() == 5 and camp.campaign_button.text == "" and camp.build_button.text == "", "icon navigation")
 	check(camp.ration_label.text == "%d / %d" % [lg.rations_now(), lg.ration_cap()], "rations are in top HUD")
+	_top_bar_checks("hud")
+	await _guide_checks(1, camp.build_button, "hud/build")
 	await shot("1_fort_hud.png")
+	await _fresh_top_bar_checks("fresh/hud")
+	await _guide_checks(0, camp.plot_markers[kitchen]["collect"], "hud/collect long text")
+	await _guide_checks(3, camp.campaign_button, "hud/campaign short text")
+	lg.flags["camp3d_guide"] = 4
+	camp._layout_guide()
 	camp.show_plot(forge)
 	check(camp.card.has_meta("ui_kit_a") and camp.card.find_child("FortRoomPicture", true, false) != null, "room frame and cutaway picture")
 	check(camp.upgrade_button.disabled and camp.requirement_banner.visible and camp.instant_button.disabled, "HQ requirement gates both upgrade actions")
@@ -154,6 +161,9 @@ func _run() -> void:
 	check((camp.build_cards["forge"]["picture"] as Control).get_child_count() > 0, "build pictures")
 	await _window_checks(camp.modal_panel, "build")
 	await _build_button_checks()
+	await _guide_checks(2, camp.build_cards["kitchen"]["button"], "build/kitchen")
+	lg.flags["camp3d_guide"] = 4
+	camp._layout_guide()
 	await shot("3_build_menu.png")
 	camp.show_dweller(sid)
 	var slots := camp.modal_panel.find_child("FortGearSlots", true, false)
@@ -205,6 +215,7 @@ func _run() -> void:
 	await _small_window_checks(forge, sid)
 	camp.show_newcomer(int(lg.fort_newcomers()[0]["id"]))
 	check(camp.modal_panel.name == "FortNewcomerCard" and camp.modal_panel.has_meta("ui_kit_a"), "newcomer kit")
+	await _newcomer_checks("newcomer")
 	camp.show_expansion("floor")
 	check(camp.modal_panel.name == "FortExpansionCard" and camp.modal_panel.has_meta("ui_kit_a"), "expansion kit")
 	camp._close_modal()
@@ -285,6 +296,12 @@ func _craft_button_checks(panel: Control) -> void:
 func _small_window_checks(forge: int, sid: int) -> void:
 	get_window().size = Vector2i(1280, 720)
 	await frames(12)
+	_top_bar_checks("720/hud")
+	await _fresh_top_bar_checks("720/fresh/hud")
+	await _guide_checks(1, camp.build_button, "720/build")
+	await _guide_checks(3, camp.campaign_button, "720/campaign")
+	lg.flags["camp3d_guide"] = 4
+	camp._layout_guide()
 	camp.show_plot(forge)
 	await _window_checks(camp.card, "720/room")
 	camp.show_build_menu()
@@ -303,8 +320,114 @@ func _small_window_checks(forge: int, sid: int) -> void:
 	panel = camp.lu.overlay.find_child("CraftPanel", true, false) as Control
 	await _window_checks(panel, "720/craft/full queue")
 	camp.lu.close()
+	camp.show_newcomer(int(lg.fort_newcomers()[0]["id"]))
+	await _newcomer_checks("720/newcomer")
+	camp._close_modal()
 	get_window().size = capture_size
 	await frames(12)
+
+
+func _fresh_top_bar_checks(tag: String) -> void:
+	var money := game.city.money
+	var rations := lg.rations
+	var glory := lg.glory
+	var ingots := lg.ingots
+	game.city.money = 1740
+	lg.rations = lg.ration_cap()
+	lg.glory = 0
+	lg.ingots = 0
+	camp._refresh()
+	await frames(3)
+	_top_bar_checks(tag)
+	game.city.money = money
+	lg.rations = rations
+	lg.glory = glory
+	lg.ingots = ingots
+	camp._refresh()
+
+
+func _top_bar_checks(tag: String) -> void:
+	for resource: String in camp.resource_bars:
+		var panel: Control = camp.resource_bars[resource]["panel"]
+		var number: Label = camp.resource_chips[resource]
+		var fill: ProgressBar = camp.resource_bars[resource]["fill"]
+		var pill := panel.get_global_rect()
+		var drawn_scale := panel.get_global_transform().get_scale().abs()
+		var value_rect := number.get_global_rect()
+		check(pill.encloses(value_rect), tag + "/" + resource + " number inside pill")
+		check(pill.encloses(fill.get_global_rect()), tag + "/" + resource + " fill inside pill")
+		# Кремовая середина между золотыми краями, включая обводку числа.
+		var cream := Rect2(pill.position + Vector2(78, 18) * drawn_scale, Vector2(panel.size.x - 112, 46) * drawn_scale)
+		var outline := number.get_theme_constant("outline_size")
+		check(outline > 0 and cream.grow(0.1).encloses(value_rect.grow(outline * drawn_scale.y)), tag + "/" + resource + " outlined number inside cream")
+		check(number.vertical_alignment == VERTICAL_ALIGNMENT_CENTER, tag + "/" + resource + " number centered")
+		check(cream.grow(0.1).encloses(fill.get_global_rect()) and fill.get_global_rect().position.y >= value_rect.end.y, tag + "/" + resource + " thin fill below number inside cream")
+		var frame := panel.get_theme_stylebox("panel") as StyleBoxTexture
+		check(frame != null and frame.get_texture_margin(SIDE_TOP) + frame.get_texture_margin(SIDE_BOTTOM) <= panel.size.y, tag + "/" + resource + " pill slices fit height")
+		for state: String in ["background", "fill"]:
+			var style := fill.get_theme_stylebox(state) as StyleBoxTexture
+			check(style != null and style.get_texture_margin(SIDE_TOP) + style.get_texture_margin(SIDE_BOTTOM) <= fill.size.y, tag + "/" + resource + " fill slices fit height")
+
+
+func _guide_checks(step: int, target: Control, tag: String) -> void:
+	lg.flags["camp3d_guide"] = step
+	camp._layout_guide()
+	await frames(3)
+	if not check(camp.guide.is_visible_in_tree() and camp._guide_target == target, tag + " guide targets control"):
+		return
+	var viewport := get_viewport().get_visible_rect()
+	var bubble := camp.guide.get_global_rect()
+	var button := target.get_global_rect()
+	check(viewport.encloses(bubble), tag + " guide inside viewport")
+	check(bubble.grow(0.1).encloses(camp.guide_text.get_global_rect()), tag + " whole guide text inside bubble")
+	var gap := Vector2(maxf(0, maxf(button.position.x - bubble.end.x, bubble.position.x - button.end.x)),
+		maxf(0, maxf(button.position.y - bubble.end.y, bubble.position.y - button.end.y)))
+	check(gap.length() <= 120, tag + " guide within 120 px of target")
+	check(bubble.end.y <= button.position.y + 2, tag + " guide above target")
+	var pointer := camp.guide_pointer.get_global_rect()
+	check(camp.guide_pointer.is_visible_in_tree() and viewport.encloses(pointer), tag + " pointer inside viewport")
+	check(absf(pointer.get_center().x - button.get_center().x) <= 1 and absf(pointer.end.y - button.position.y) <= 4, tag + " arrow touches target")
+	var font := camp.guide_text.get_theme_font("font")
+	var text_width := font.get_string_size(camp.guide_text.text, HORIZONTAL_ALIGNMENT_LEFT, -1, camp.guide_text.get_theme_font_size("font_size")).x
+	var padding := camp.guide.get_theme_stylebox("panel").get_minimum_size().x
+	check(absf(camp.guide.size.x - text_width - padding) <= 4, tag + " compact text-sized bubble")
+
+
+func _newcomer_checks(tag: String) -> void:
+	await frames(16)
+	var window := camp.modal_panel
+	if not check(is_instance_valid(window), tag + " window exists"):
+		return
+	for node: Node in window.find_children("*", "PanelContainer", true, false):
+		var panel := node as PanelContainer
+		if panel.is_visible_in_tree():
+			check(_has_visible_content(panel), tag + "/" + String(window.get_path_to(panel)) + " no empty visible panel")
+	var hint := window.find_child("FortNewcomerClass", true, false) as TextureRect
+	check(hint != null and hint.texture != null and hint.is_visible_in_tree() and not hint.tooltip_text.is_empty(), tag + " class hint icon")
+	var stars := window.find_child("FortTalentStars", true, false) as Control
+	check(stars != null and stars.is_visible_in_tree() and stars.get_child_count() == 5, tag + " five talent stars")
+	var origin := window.find_child("FortNewcomerOrigin", true, false) as Label
+	check(origin != null and origin.is_visible_in_tree() and not origin.text.strip_edges().is_empty(), tag + " origin line")
+	var viewport := get_viewport().get_visible_rect()
+	check(viewport.encloses(window.get_global_rect()), tag + " window inside viewport")
+	for name: String in ["FortNewcomerClass", "FortTalentStars", "FortNewcomerOrigin"]:
+		var content := window.find_child(name, true, false) as Control
+		check(content != null and content.get_global_rect().has_area() and window.get_global_rect().encloses(content.get_global_rect()), tag + "/" + name + " content inside card")
+
+
+func _has_visible_content(node: Node) -> bool:
+	for child: Node in node.get_children():
+		if child is Control and not (child as Control).is_visible_in_tree():
+			continue
+		if child is Label and not (child as Label).text.strip_edges().is_empty():
+			return true
+		if child is TextureRect and (child as TextureRect).texture != null:
+			return true
+		if child is Button and ((child as Button).icon != null or not (child as Button).text.strip_edges().is_empty()):
+			return true
+		if _has_visible_content(child):
+			return true
+	return false
 
 
 func _instant_checks(kitchen: int, forge: int) -> void:
