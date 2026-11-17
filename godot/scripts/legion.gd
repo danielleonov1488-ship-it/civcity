@@ -158,8 +158,7 @@ const V3_TAGS := {"legionary": ["armored", "melee"]}
 const SQUAD_V3 := 5                       # мест в отряде; 0–2 — первый ряд, 3–4 — второй
 const SQUAD_V3_FRONT := 3
 const CAMP_POP := 50                      # жителей, с которых открывается лагерь
-const RESIDENT_FLOOR := 30                # меньше жителей в городе не станет: призыв не берёт последнего
-const CAMP_OPEN_TEXT := "Лагерь открыт: призывайте жителей в Легион — кнопка «Легион» наверху"
+const CAMP_OPEN_TEXT := "Форт открыт: принимайте новобранцев у ворот — кнопка «Легион» наверху"
 const RATION_BASE := 2.0                  # паёк в игровой день; пекарня с работниками — ещё RATION_BAKERY
 const RATION_BAKERY := 3.0
 const RATION_CAP0 := 20
@@ -1791,7 +1790,7 @@ func city_level() -> int:
 
 func city_money() -> float:
 	var c = city()
-	return float(c.money) if c != null else 1e12
+	return float(c.money) + c.magis_treasury if c != null else 1e12
 
 
 ## Сколько таких построек в городе
@@ -2430,9 +2429,13 @@ func _afford_text(cost: Dictionary) -> String:
 func _pay(cost: Dictionary) -> void:
 	var c = city()
 	if c != null:
-		c.money = maxf(0.0, float(c.money) - float(cost.get("money", 0)))   # платят только с хватающей казной (_afford_text)
+		var price := float(cost.get("money", 0))
+		var held := minf(c.magis_treasury, price)
+		c.magis_treasury -= held
+		price -= held
+		c.money = maxf(0.0, float(c.money) - price)   # платят только с хватающей казной (_afford_text)
 		if c.has_method("flow"):
-			c.flow("legion", -float(cost.get("money", 0)))   # история денег за сутки (этап 2.4)
+			c.flow("legion", -price)   # история денег за сутки (этап 2.4)
 	glory -= float(cost.get("glory", 0))
 
 
@@ -3213,8 +3216,8 @@ func can_fight(st: Dictionary) -> String:
 		return "В отряде нет бойцов — постройте Казармы и поставьте легионеров в отряд."
 	if float(food_cost(st)) > city_money():
 		return "Не хватает денариев на провиант: нужно %d." % food_cost(st)
-	if V3 and rations_now() < ration_cost(st):
-		return "Нет пайков: нужно %d, есть %d. Паёк даёт город — пекарни с работниками хлебом кормят лагерь." % [ration_cost(st), rations_now()]
+	if V3 and rations + 0.0001 < ration_cost(st):
+		return "Нет пайков: нужно %.1f, есть %.1f. Паёк даёт город — пекарни с работниками хлебом кормят лагерь." % [ration_cost(st), rations]
 	if V2 and not V3 and food_now() < FOOD2_BATTLE:
 		return "Мало провианта: нужно %d, есть %d. Очко — каждые %d мин." % [FOOD2_BATTLE, food_now(), roundi(FOOD2_MIN)]
 	return ""
@@ -4957,7 +4960,7 @@ func perks_open() -> bool:
 	return not v3() or camp_built("mars")
 
 
-# ---------- призыв из жителей ----------
+# ---------- жители форта у ворот ----------
 
 func can_recruit_resident() -> String:
 	if v3():
@@ -4975,6 +4978,8 @@ func can_recruit_resident() -> String:
 
 ## Совместимый вход: принимает только ожидающего у ворот, город не меняет.
 func recruit_resident(pick: Dictionary = {}) -> Dictionary:
+	if not pick.is_empty() and not pick.has("id"):
+		return {}
 	if can_recruit_resident() != "":
 		return {}
 	var id := int(pick.get("id", fort_newcomers()[0]["id"]))
@@ -4992,7 +4997,7 @@ func fort_arrival_interval() -> float:
 	var c = city()
 	var happy := float(c.stats.get("happy", 0)) if c != null else 0.0
 	var population_k := clampf(float(city_pop()) / 50.0, 1.0, 2.0)
-	return (8.0 - 6.0 * clampf((happy - 50.0) / 40.0, 0.0, 1.0)) / population_k
+	return (8.0 - 6.0 * clampf((happy - 50.0) / 40.0, 0.0, 1.0)) / population_k / city_edict_mul("legion_gate")
 
 
 ## Игровые часы, без офлайн-начисления по нынешнему счастью.
@@ -5237,8 +5242,8 @@ func rations_now() -> int:
 
 
 ## Сколько пайков стоит бой: 2, босс — 4
-func ration_cost(st: Dictionary) -> int:
-	return RATION_BOSS if bool(st.get("boss", false)) or bool(st.get("junior", false)) else RATION_BATTLE
+func ration_cost(st: Dictionary) -> float:
+	return (RATION_BOSS if bool(st.get("boss", false)) or bool(st.get("junior", false)) else RATION_BATTLE) * city_edict_mul("legion_rations")
 
 
 # =====================================================================
@@ -5842,3 +5847,8 @@ func open_chest(kind: String) -> Dictionary:
 	ingots += int(reward["ingots"])
 	changed.emit()
 	return reward
+
+
+func city_edict_mul(key: String) -> float:
+	var c = city()
+	return c.edict_mul(key) if c != null else 1.0

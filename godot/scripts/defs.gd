@@ -1056,3 +1056,38 @@ static func range_m(d: Dictionary) -> float:
 
 static func floors_max(cls: String, variant := 0) -> int:
 	return 2 if cls == "patricians" and variant < PAT_TOWN else 3
+
+
+# Магистратуры: таблица владельца, MAGIS1.
+const MAGIS := [
+	{"id": "censura", "name": "Цензура", "en": "Censorship", "icon": "magis_censura", "rank": 1, "edicts": [
+		{"id": "cens_pleb_levy", "name": "Подать с плебеев", "en": "Plebeian Levy", "text": "Плебеи платят больше, но их дома чуть мрачнее.", "text_en": "Plebeians pay more, but their homes turn a little gloomier.", "cost": 400, "hours": 6, "fx": {"tax_k:plebs": 1.2, "happy:plebs": -4}},
+		{"id": "cens_artisan_charter", "name": "Хартия ремесленников", "en": "Artisan Charter", "text": "Ремесленники довольны и едут чаще, но платят меньше налога.", "text_en": "Artisans are happier and arrive more, but pay less tax.", "cost": 450, "hours": 8, "fx": {"happy:artisans": 5, "arrival_class:artisans": 1.2, "tax_k:artisans": 0.85}},
+		{"id": "cens_settler_drive", "name": "Набор переселенцев", "en": "Settler Drive", "text": "Семьи приезжают быстрее, но весь город слегка недоволен.", "text_en": "Families arrive faster, but the whole city is a little unhappy.", "cost": 400, "hours": 6, "fx": {"arrivals": 1.2, "happy:all": -3}},
+	]},
+	{"id": "aedilitas", "name": "Эдилитет", "en": "Aedileship", "icon": "magis_aedilitas", "rank": 2, "edicts": [
+		{"id": "aed_public_works", "name": "Общественные работы", "en": "Public Works", "text": "Службы покрывают дальше, но содержание зданий дороже.", "text_en": "Services reach further, but buildings cost more to maintain.", "cost": 800, "hours": 12, "fx": {"need_radius:services": 1.2, "upkeep": 1.15}},
+		{"id": "aed_market_day", "name": "Рыночный день", "en": "Market Day", "text": "Лавки зарабатывают больше, но плебеи ворчат на цены.", "text_en": "Shops earn more, but plebeians grumble about prices.", "cost": 800, "hours": 10, "fx": {"shop_income": 1.2, "happy:plebs": -3}},
+		{"id": "aed_bread_dole", "name": "Раздача хлеба", "en": "Bread Dole", "text": "Бесплатный хлеб смягчает голод, но лавки продают меньше.", "text_en": "Free bread softens hunger, but shops sell less.", "cost": 800, "hours": 10, "fx": {"need_weight:food": 0.8, "shop_income": 0.85}},
+	]},
+	{"id": "quaestura", "name": "Квестура", "en": "Quaestorship", "icon": "magis_quaestura", "rank": 2, "edicts": [
+		{"id": "quaes_export_duty", "name": "Вывозная пошлина", "en": "Export Duty", "text": "Товары со склада уходят дороже, но лавки зарабатывают меньше.", "text_en": "Warehouse goods sell higher, but shops earn less.", "cost": 900, "hours": 12, "fx": {"goods_price": 1.2, "shop_income": 0.85}},
+		{"id": "quaes_scholars", "name": "Стипендии учёным", "en": "Scholars' Stipends", "text": "Исследования быстрее, но здания дороже содержать.", "text_en": "Research is faster, but buildings cost more to run.", "cost": 900, "hours": 12, "fx": {"rp_rate": 1.2, "upkeep": 1.1}},
+		{"id": "quaes_subsidy", "name": "Дотация на стройку", "en": "Building Subsidy", "text": "Стройка дешевле, но содержание зданий дороже.", "text_en": "Building is cheaper, but upkeep costs more.", "cost": 900, "hours": 12, "fx": {"build_cost": 0.85, "upkeep": 1.1}},
+	]},
+	{"id": "praetura", "name": "Претура", "en": "Praetorship", "icon": "magis_praetura", "rank": 3, "edicts": [
+		{"id": "praet_labor_decree", "name": "Трудовой приказ", "en": "Labor Decree", "text": "Рабочие дают больше, но весь город устаёт и ворчит.", "text_en": "Workers produce more, but the city grows tired and grumbles.", "cost": 1500, "hours": 14, "fx": {"work_output": 1.2, "happy:all": -3}},
+		{"id": "praet_patrician_levy", "name": "Подать с патрициев", "en": "Patrician Levy", "text": "Патриции платят заметно больше, но их счастье падает.", "text_en": "Patricians pay a lot more, but their happiness falls.", "cost": 1500, "hours": 14, "fx": {"tax_k:patricians": 1.25, "happy:patricians": -5}},
+		{"id": "praet_guilds", "name": "Гильдии", "en": "Guilds", "text": "Лавки гильдий богаче, но ремесленники платят меньше.", "text_en": "Guild shops earn more, but artisans pay less tax.", "cost": 1400, "hours": 12, "fx": {"shop_income": 1.15, "tax_k:artisans": 0.85}},
+	]},
+	{"id": "tribunus", "name": "Военный трибунат", "en": "Military Tribunate", "icon": "magis_tribunus", "rank": 3, "edicts": [
+		{"id": "trib_conscription", "name": "Воинский набор", "en": "Conscription", "text": "Новобранцев у ворот больше, но рабочих рук меньше.", "text_en": "More recruits at the gate, but fewer working hands.", "cost": 1500, "hours": 16, "fx": {"legion_gate": 1.25, "work_output": 0.9}},
+		{"id": "trib_scant_rations", "name": "Скудный паёк", "en": "Scant Rations", "text": "Форт тратит меньше пайков, но новобранцы идут неохотно.", "text_en": "The fort needs fewer rations, but recruits come reluctantly.", "cost": 1500, "hours": 14, "fx": {"legion_rations": 0.85, "legion_gate": 0.9}},
+		{"id": "trib_war_chest", "name": "Военная казна", "en": "War Chest", "text": "Город чувствует себя в безопасности, но 5% дохода уходит легиону.", "text_en": "The city feels safe, but 5% of income goes to the legion.", "cost": 1600, "hours": 18, "fx": {"happy:all": 4, "legion_denarii": 0.05}},
+	]},
+	{"id": "pontificatus", "name": "Понтификат", "en": "Pontificate", "icon": "magis_pontificatus", "rank": 4, "edicts": [
+		{"id": "pontif_grand_festivals", "name": "Великие праздники", "en": "Grand Festivals", "text": "Праздники радуют сильнее, но их устройство дороже.", "text_en": "Festivals cheer more, but running them costs more.", "cost": 2800, "hours": 18, "fx": {"festival_happy": 1.25, "upkeep": 1.1}},
+		{"id": "pontif_pilgrims", "name": "Дорога паломников", "en": "Pilgrims' Road", "text": "Туристов больше, но горожанам тесно и шумно.", "text_en": "More tourists, but the locals feel crowded and noisy.", "cost": 2800, "hours": 16, "fx": {"tourists": 1.25, "happy:all": -2}},
+		{"id": "pontif_piety", "name": "Благочестие", "en": "Piety", "text": "Вера покрывает дальше, но исследования медленнее.", "text_en": "Faith reaches further, but research slows.", "cost": 2600, "hours": 16, "fx": {"need_radius:faith": 1.2, "rp_rate": 0.85}},
+	]},
+]

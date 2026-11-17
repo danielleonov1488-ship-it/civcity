@@ -116,8 +116,16 @@ func _run() -> void:
 	for id: String in ["finance", "stats", "bell", "view"]:
 		if not check(hud.top_btns[id] == hud.top_btns["overview"], "legacy alias " + id):
 			return
-	if not check(hud.top_panel.find_children("*", "Button", true, false).filter(func(b): return b != hud.cloud_off).size() == 6, "six top buttons including hero"):
+	var magis := MagisUI.of(hud)
+	if not check(magis != null and not magis.top_button.is_visible_in_tree() and _top_button_count() == 6, "six visible top buttons before first magistracy"):
 		return
+	var old_level := city.level
+	city.level = int(Defs.MAGIS[0]["rank"])
+	magis.refresh()
+	if not check(magis.top_button.is_visible_in_tree() and _top_button_count() == 7, "seven visible top buttons after first magistracy"):
+		return
+	city.level = old_level
+	magis.refresh()
 	# Фильтр и счётчик: обычные строки остаются в полном журнале.
 	hud.bell_count = 0
 	hud.bell_badge.text = ""
@@ -221,3 +229,7 @@ func _run() -> void:
 		return
 	print("UI1 DONE")
 	get_tree().quit()
+
+
+func _top_button_count() -> int:
+	return hud.top_panel.find_children("*", "Button", true, false).filter(func(b: Button): return b != hud.cloud_off and b.is_visible_in_tree()).size()

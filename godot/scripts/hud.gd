@@ -228,6 +228,7 @@ func _ready() -> void:
 	_tasks()
 	_rank_button()
 	_top_right()
+	MagisUI.attach(self)
 	_bottom_left()
 	_bottom_center()
 	_bottom_right()
@@ -994,6 +995,9 @@ func open_city_name() -> void:
 
 ## Никаких окон на экране (для советов «к слову»: про название города)
 func _screen_free() -> bool:
+	var magis := MagisUI.of(self)
+	if magis != null and magis.visible:
+		return false
 	var camp_ui := CampUI.of(self)
 	if camp_ui != null and camp_ui.visible:
 		return false
@@ -1783,6 +1787,7 @@ func _toggle(p: Control) -> void:
 
 
 func _close_windows() -> void:
+	MagisUI.close_for(self)
 	CampUI.close_for(self)
 	for x in [events_panel, research_panel, finance_panel, stats_panel, pause_panel, settings_panel, buy_panel, credits_panel, journal_panel]:
 		if x:
@@ -3413,7 +3418,7 @@ func _update_cards() -> void:
 			_grey(img, false)
 		else:
 			pr.add_child(_icon("coins", 22))
-			pr.add_child(_label(fmt(d["cost"]), 18, true, C_INK if c.money >= float(d["cost"]) else C_BAD))
+			pr.add_child(_label(fmt(c.build_price(type)), 18, true, C_INK if c.money >= c.build_price(type) else C_BAD))
 			b.add_theme_stylebox_override("normal", _card_box("g_card"))
 			img.modulate = Color.WHITE
 			_grey(img, false)
@@ -4289,7 +4294,7 @@ func _fill_tool_panel_body() -> void:
 		return
 	if Defs.B.has(t):
 		var d: Dictionary = Defs.B[t]
-		tool_title.text = "%s · %s" % [d["name"], "подарок, даром" if game.city.gift_ready(t) else fmt(d["cost"]) + " ден."]
+		tool_title.text = "%s · %s" % [d["name"], "подарок, даром" if game.city.gift_ready(t) else fmt(game.city.build_price(t)) + " ден."]
 		thumb_rect.visible = true
 		color_box.visible = d["kind"] != "decor" and game.moving.is_empty()
 		color_restyle()
@@ -5670,7 +5675,7 @@ func _need_hint(b: Dictionary, n: String) -> String:
 		var d := c.def(source)
 		if HouseNeeds.category(d) != n:
 			continue
-		var reach := c.shop_range(d) if d["kind"] == "shop" else Defs.range_m(d)
+		var reach := c.shop_range(d) if d["kind"] == "shop" else c.need_range(d)
 		if (source["pos"] as Vector2).distance_to(b["pos"]) <= reach:
 			if not bool(source.get("active", true)):
 				return "«%s» рядом не работает: %s" % [d["name"], c.idle_text(source)]
@@ -5823,6 +5828,13 @@ func _defc(name: String, dflt: Variant) -> Variant:
 
 ## Закрыть окна; true — было что закрывать
 func close_panels() -> bool:
+	var magis := MagisUI.of(self)
+	if magis != null and magis.visible:
+		if is_instance_valid(magis.popup):
+			magis._close_popup()
+		else:
+			magis.close()
+		return true
 	if CampUI.close_for(self):
 		return true
 	if CityName.close(self):
@@ -6666,7 +6678,7 @@ func _fill_finance() -> void:
 		ch.queue_free()
 	var c: City = game.city
 	var wages := float(c.stats.get("wages", 0.0))
-	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0))
+	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0)) - float(c.stats.get("legion_denarii", 0.0))
 	v.add_child(_row("coins", "В казне", "%s / %s" % [fmt(c.money), fmt(c.money_cap())]))
 	v.add_child(_row("income", "Налоги за час", "+%s" % fmt(c.stats.get("income", 0.0)), C_GOOD))
 	v.add_child(_row("family", "Жалованье работникам за час", "−%s" % fmt(wages), C_BAD))
@@ -7298,7 +7310,7 @@ func refresh() -> void:
 	show_city_name()
 	lbl_money.text = fmt(c.money)
 	lbl_money.tooltip_text = I18n.t("Денарии в казне") + ": %s / %s" % [fmt(c.money), fmt(c.money_cap())]
-	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0))
+	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0)) - float(c.stats.get("legion_denarii", 0.0))
 	lbl_income.text = ("+" if net >= 0 else "") + fmt(net) + "/ч"
 	lbl_income.tooltip_text = "Доход за прошлый час: налоги минус жалованье и содержание построек. Подробно и за сутки — в «Финансах»"
 	lbl_income.add_theme_color_override("font_color", C_GOOD if net >= 0 else C_BAD)
@@ -7423,7 +7435,7 @@ func _upg_spend() -> String:
 func _update_full_marks() -> void:
 	var c: City = game.city
 	var play: bool = not (game.mode in ["demo", "menu"])
-	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0))
+	var net := float(c.stats.get("income", 0.0)) - float(c.stats.get("upkeep", 0.0)) - float(c.stats.get("legion_denarii", 0.0))
 	var m_on := play and c.money >= c.money_cap() - 0.5 and net > 0.0
 	var r_on := play and c.rp >= c.rp_cap() - 0.05 and float(c.stats.get("rp_day", 0.0)) > 0.0
 	# прошлый час не плачен и денариев так и нет (обида, что ещё держится после, — только в карточках домов)
@@ -7664,6 +7676,8 @@ func _once_tips() -> void:
 		c.tips["hire_tip"] = true
 		advisor("Кому работать", "%s на все рабочие места не хватает — каждая постройка их класса работает слабее. Сколько нанять, решаете вы, как в Town to City: в карточке постройки, что нужна меньше, нажмите «−» у строки «Работники» — освободившиеся люди пойдут туда, где нужнее. «+» вернёт их. А больше жителей — больше работников." % _hire_short())
 		return
+	# Магистратуры ждут все обычные советы и отложенные сообщения историй.
+	MagisUI.advise(self)
 
 
 ## Советник один раз (tips.unpaid_tip), когда казна впервые не смогла заплатить жалованье: что случилось и как поправить
