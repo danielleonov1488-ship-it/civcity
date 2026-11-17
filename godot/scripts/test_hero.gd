@@ -3,7 +3,7 @@ extends Node
 ##   bash .work/py/gpu_run.sh res://test_hero.tscn               — новый город: экран «Ваш герой» (наборы, «Случайный», имя),
 ##        герой на улицах (венок, плащ, свои прогулки), щелчок по нему на 34 м, медальон «Герой», карточка и «Гардероб»,
 ##        вещи гардероба → колокольчик, Легион (своё место; в боях с городами — первым, если сервер знает героя, иначе без
-##        него; снимки отряда, числа как у сервера), 3D-бой с героем, бой с городом с героями с обеих сторон
+##        него; снимки отряда, числа как у сервера), рисованный бой с героем, бой с городом с героями с обеих сторон
 ##        (учебный бой с маслом), «Разбойники у арки» — его реплики (уличный герой в ролике спрятан), сохранение и загрузка;
 ##        постройка на герое и поперёк его пути, Казармы при нём — ночует в них, экран на «Низкой», боец под медальоном
 ##        героя не в счёт советов и шансов; в конце «HERO DONE fails=0»
@@ -672,7 +672,7 @@ func _squad_keys_test() -> void:
 	lg.squad = sq0
 
 
-## 3D-бой: герой — своим бойцом (его лицо, цвета, плащ, снаряжение); учебный бой с маслом выигран
+## Герой в рисованном бою, учебный бой с маслом выигран.
 func _battle_test() -> void:
 	var lg: Legion = c.legion
 	var st := lg.stage_info(0, 0, 0)
@@ -680,7 +680,7 @@ func _battle_test() -> void:
 	lg.start_battle(st)
 	await frames(3)
 	var battle: LegionBattle = LegionBattle.current
-	if not check(battle != null, "3D-бой открылся"):
+	if not check(battle != null, "2D-бой открылся"):
 		return
 	var shot_done := false
 	var froze := false
@@ -691,11 +691,11 @@ func _battle_test() -> void:
 			continue
 		if not shot_done and battle.sim.t > 3.2:
 			shot_done = true
-			var hv := {}
-			for id in battle.views:
-				if String(battle.views[id]["u"].key) == "hero":
-					hv = battle.views[id]
-			check(not hv.is_empty() and (hv["f"] as LegionFighter)._cape_sk != null, "в бою — боец-герой с плащом")
+			var hero_found := false
+			for f in battle.views.values():
+				if f.unit.key == "hero":
+					hero_found = f is AnimatedSprite2D and f.sheet == "hero"
+			check(hero_found, "в бою — рисованный герой")
 			await shot("hero_battle.png")
 		if battle.tut_freeze and not froze:
 			froze = true
@@ -712,7 +712,7 @@ func _battle_test() -> void:
 
 ## Бои с городами с героем (сервер знает героя: Legion.pvp_hero_srv): отряды нападения и обороны — герой первым (уровень
 ## Казарм, город, Склад оружия), числа — как у сервера (server/test_pvp.js: те же 150 / 379 / 717); вкладка «Против городов»
-## — герой в отряде обороны, у соперника — его герой; 3D-бой с городом: наш герой и герой соперника, каждый в своём облике;
+## — герой в отряде обороны, у соперника — его герой; рисованный бой с городом: наш герой и герой соперника;
 ## советник говорит об этом один раз
 func _pvp_test() -> void:
 	var lg: Legion = c.legion
@@ -780,29 +780,32 @@ func _pvp_test() -> void:
 	ui.close()
 	ui._net_obj = null
 	ui._net_checked = false
-	# 3D-бой с городом: оба героя — в своих обликах, с плащами; бой доходит до итога
+	# Бой с городом: оба героя видны, бой доходит до итога.
 	lg.flags["battle_speed"] = 3.0
 	lg.flags["battle_auto"] = true
 	check(lg.pvp_can_attack() == "", "нападать можно", lg.pvp_can_attack())
 	lg.start_pvp_battle(opp)
 	await frames(3)
 	var battle: LegionBattle = LegionBattle.current
-	if check(battle != null and battle.pvp, "3D-бой с городом открылся"):
+	if check(battle != null and battle.pvp, "2D-бой с городом открылся"):
 		var shot_done := false
+		var heroes_checked := false
 		var t0 := Time.get_ticks_msec()
 		while battle.phase != "result" and (Time.get_ticks_msec() - t0) < 150000:
 			await frames(1)
 			if battle.sim == null:
 				continue
+			if not heroes_checked:
+				heroes_checked = true
+				var hv := []
+				for f in battle.views.values():
+					var u: LegionSim.Unit = f.unit
+					if u.key == "hero":
+						hv.append([u.side, f is AnimatedSprite2D and f.sheet == "hero", u.name])
+				check(hv.size() == 2 and hv.all(func(x): return x[1]) and hv.any(func(x): return x[0] == "enemy" and x[2] == "Марк Туллий"),
+					"в бою — наш герой и герой соперника, оба рисованные", hv)
 			if not shot_done and battle.sim.t > 4.5:
 				shot_done = true
-				var hv := []
-				for id in battle.views:
-					var u: LegionSim.Unit = battle.views[id]["u"]
-					if u.key == "hero":
-						hv.append([u.side, (battle.views[id]["f"] as LegionFighter)._cape_sk != null, u.name])
-				check(hv.size() == 2 and hv.all(func(x): return x[1]) and hv.any(func(x): return x[0] == "enemy" and x[2] == "Марк Туллий"),
-					"в бою — наш герой и герой соперника, оба с плащами", hv)
 				await shot("hero_pvp_battle.png", SHOTS_PVP)
 		check(battle.phase == "result", "бой с городом с героями дошёл до итога", battle.phase)
 		await frames(40)

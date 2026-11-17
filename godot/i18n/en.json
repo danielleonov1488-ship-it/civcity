@@ -5639,5 +5639,7 @@
 "Оденьте воина: нажмите на него и выберите вещь": "Tap the recruit and choose a piece of gear.",
 "Назначьте его в казарму — он станет бойцом": "Drag the recruit to the barracks to enlist.",
 "В поход! Первый бой": "March out! Your first battle.",
-"Сокровищница копит денарии.\nДеньги из города — кнопкой слева, раз в 5 часов": "The treasury earns denarii.\nUse the button on the left to order more every 5 hours."
+"Сокровищница копит денарии.\nДеньги из города — кнопкой слева, раз в 5 часов": "The treasury earns denarii.\nUse the button on the left to order more every 5 hours.",
+"Волна %d/%d": "Wave %d/%d",
+"Жмите умения, когда они готовы (клавиши 1–7).": "Use skills when they are ready (keys 1–7)."
 }

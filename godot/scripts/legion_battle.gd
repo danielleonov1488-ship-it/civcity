@@ -1,15 +1,7 @@
 class_name LegionBattle
 extends Node
-## 3D-бой Легиона: уютная диорама области похода, где наш отряд и враги дерутся сами (автобой как в Hustle Castle),
-## а игрок вовремя жмёт умения. Бой считает LegionSim (legion_sim.gd) фиксированным шагом — тот же, что в проверках
-## баланса, — а здесь он только показывается: бойцы (legion_fighter.gd) идут, бьют, стреляют, падают; летят стрелы,
-## болты и камни; масло, залп, черепаха, перевязка и рог видны на поле (legion_fx.gd); земля, деревья, свет и
-## туман — своей области (legion_field.gd).
-##
-## Как устроено: город не трогаем — он остаётся в памяти, только не рисуется (у главного окна выключен 3D-кадр,
-## интерфейс города спрятан, время города на паузе). Бой рисуется в своём мире (SubViewport с own_world_3d) в размер
-## окна и показывается картинкой поверх; поверх неё — цветокоррекция как в городе и интерфейс боя. После боя всё
-## возвращается как было.
+## Рисованный бой Легиона: ход боя считает LegionSim фиксированным шагом.
+## Город на паузе, его 3D-кадр скрыт. Поле, бойцы и эффекты рисуются в CanvasLayer.
 ##
 ## Подключение: LegionBattle.attach(game) — один раз после загрузки города (game.gd). Окно «Легион» зовёт
 ## legion.start_battle(st) / start_pvp_battle(opp) → сигнал legion.battle_requested(setup) → открывается бой.
@@ -17,12 +9,14 @@ extends Node
 ## шлёт legion.battle_closed(out) — окно «Легион» открывается снова. Можно открыть и напрямую:
 ## LegionBattle.open(host, setup, on_done, opts) (host — Game или любой узел; без города — для проверок).
 ##
-## Управление: кнопки умений внизу (или клавиши 1–5), «Авто» — умения жмёт сам отряд (только в пройденных боях
-## и боях с городами), скорость ×1/×2/×3, пробел — пауза, Esc — отступить (с вопросом), колёсико — камера ближе или дальше.
+## Управление: кнопки умений внизу (или клавиши 1–7), «Авто» — умения жмёт сам отряд (только в пройденных боях
+## и боях с городами), скорость ×1/×2/×3, пробел — пауза, Esc — отступить (с вопросом), колёсико — приблизить поле.
 ## Учебный первый бой (setup.tutorial = "oil"): ×1 без «Авто»; шайка вышла кучей — бой замирает, стрелка на масле.
 
 signal finished(out: Dictionary)          # бой окончен, итог подсчитан (до закрытия экрана итога)
 
+const BattleView = preload("res://scripts/legion_battle_view.gd")
+const Kit = preload("res://scripts/ui_kit_a.gd")
 const LAYER := 30
 const AI := "res://assets/ui/ai/"
 const C_INK := Color("4a2c17")
@@ -50,37 +44,23 @@ var sim: LegionSim
 var out := {}
 var stage := {}
 var pvp := false
-var quality := "high"
-
-# мир боя
-var sub: SubViewport
-var world: Node3D
-var cam: Camera3D
-var cam_attrs: CameraAttributesPractical
-var field := {}
-var fx: LegionFx
-var views := {}                            # id бойца → {u, f, rings…}
-var shots := {}                            # снаряд (LegionSim.Shot) → MeshInstance3D
-var _pool := {}                            # заготовленные бойцы будущих волн: ключ → [LegionFighter]
+var battle_view: BattleView
+var views := {}                            # id бойца → AnimatedSprite2D
+var shots := {}                            # снаряд симуляции → узел 2D
 
 # ход боя
 var speed := 1.0
 var paused := false
 var phase := "intro"                       # intro | fight | ending | result
 var acc := 0.0
-var t_vis := 0.0
 var intro_t := 0.0
 var end_t := 0.0
 var slowmo := 1.0
-var cam_x := -1.0
-var cam_d := 24.0
-var shake := 0.0
-var zoom := 1.0                            # колёсико мыши: ближе (до 0,6) или дальше (до 1,2)
+var zoom := 1.0
 var _snd_t := {}
 var _saved := {}
-var _seed := 1
 var _boss_unit: LegionSim.Unit
-var _last_wave := 0
+var _immune_said := false
 var _fps_t := 0.0
 var _fps_n := 0
 var fps_avg := 0.0
@@ -91,26 +71,22 @@ var tut_done := false
 var tut_arrow: TextureRect
 var hint_until := 14.0                     # до какой секунды боя видна подсказка над умениями
 ## «Толпа!»: красный круг шириной в котёл масла идёт за кучей врагов (волна-«куча», шайка атамана), пока она
-## не сбежится и ещё чуть-чуть: [{units, ring, t}]
+## не сбежится и ещё чуть-чуть.
 var _crowds: Array = []
 var _summon_warns := 0
 
 # экран
 var canvas: CanvasLayer
-var view_rect: TextureRect
-var grade: ShaderMaterial
 var ui: Control
 var bars: BarsLayer
 var fade: ColorRect
 var fade_map: TextureRect
 var fade_lbl: Label
-var title_lbl: Label
-var sub_lbl: Label
-var wave_box: HBoxContainer
 var boss_panel: Control
 var boss_name: Label
 var boss_bar: ProgressBar
 var boss_pic: TextureRect
+var wave_lbl: Label
 var perk_bar: Control
 var perk_btns := {}
 var banner: PanelContainer
@@ -150,7 +126,7 @@ static func attach(g: Node) -> void:
 
 
 ## Открыть бой: host — Game (город прячется на время боя) или любой узел (проверки без города);
-## on_done(out) — по выходу; opts: {"legion": Legion (без города), "speed": 1…3, "auto": bool, "quality": "low"|"high"}
+## on_done(out) — по выходу; opts: {"legion": Legion (без города), "speed": 1…3, "auto": bool, "zoom": float}
 static func open(h: Node, s: Dictionary, done := Callable(), o := {}) -> LegionBattle:
 	var b := LegionBattle.new()
 	b.name = "LegionBattle"
@@ -171,13 +147,8 @@ func _ready() -> void:
 	if legion == null:
 		legion = Legion.new()
 		legion.free_mode = true
-	if game != null:
-		quality = String(game.settings.get("quality", "high"))
-	quality = String(opts.get("quality", quality))
-	if quality == "verylow":
-		quality = "low"                           # бой на «Очень низкой» — как на «Низкой»
 	speed = clampf(float(opts.get("speed", legion.flags.get("battle_speed", 1.0))), 1.0, 3.0)
-	zoom = clampf(float(opts.get("zoom", 1.0)), 0.3, 1.5)
+	zoom = clampf(float(opts.get("zoom", 1.0)), 0.75, 1.25)
 	_fonts()
 	_build_screen()
 	_loading(setup)
@@ -206,6 +177,8 @@ func _enter() -> void:
 
 
 func _leave() -> void:
+	if _saved.is_empty():
+		return
 	get_viewport().disable_3d = bool(_saved.get("disable_3d", false))
 	if game != null and is_instance_valid(game):
 		game.hud.visible = bool(_saved.get("hud", true))
@@ -215,58 +188,22 @@ func _leave() -> void:
 
 
 # =====================================================================
-#   экран: картинка мира, цвет кадра, интерфейс
+#   экран: поле и интерфейс
 # =====================================================================
 
 func _build_screen() -> void:
 	canvas = CanvasLayer.new()
 	canvas.layer = LAYER
 	add_child(canvas)
-	sub = SubViewport.new()
-	sub.own_world_3d = true
-	sub.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	var root_vp := get_tree().root
-	sub.msaa_3d = root_vp.msaa_3d
-	sub.screen_space_aa = root_vp.screen_space_aa
-	sub.use_debanding = root_vp.use_debanding
-	sub.anisotropic_filtering_level = root_vp.anisotropic_filtering_level
-	if quality == "low":
-		sub.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR
-		sub.scaling_3d_scale = 0.75
-	add_child(sub)
-	_fit_sub()
-	get_window().size_changed.connect(_fit_sub)
-	view_rect = TextureRect.new()
-	view_rect.texture = sub.get_texture()
-	view_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	view_rect.stretch_mode = TextureRect.STRETCH_SCALE
-	view_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
-	view_rect.mouse_filter = Control.MOUSE_FILTER_STOP
-	view_rect.gui_input.connect(func(e: InputEvent) -> void:
-		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed:
-			var mb := e as InputEventMouseButton
-			if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-				zoom = clampf(zoom * 0.92, 0.6, 1.2)
-			elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				zoom = clampf(zoom / 0.92, 0.6, 1.2)
-		# трекпад Mac: щипок и два пальца вверх-вниз — ближе/дальше, как колёсико (двигать поле боя нечем и незачем)
-		# (Godot отдаёт каждый жест дважды — копию пропускает CameraRig.gesture_once)
-		elif e is InputEventMagnifyGesture and (e as InputEventMagnifyGesture).factor > 0.0:
-			if CameraRig.gesture_once(e as InputEventGesture, "battle"):
-				zoom = clampf(zoom / (e as InputEventMagnifyGesture).factor, 0.6, 1.2)
-			view_rect.accept_event()
-		elif e is InputEventPanGesture:
-			if CameraRig.gesture_once(e as InputEventGesture, "battle"):
-				zoom = clampf(zoom * exp(-(e as InputEventPanGesture).delta.y * 0.08), 0.6, 1.2)
-			view_rect.accept_event())
-	canvas.add_child(view_rect)
-	var gr := ColorRect.new()
-	gr.set_anchors_preset(Control.PRESET_FULL_RECT)
-	gr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	grade = ShaderMaterial.new()
-	grade.shader = load("res://shaders/grade.gdshader")
-	gr.material = grade
-	canvas.add_child(gr)
+	battle_view = BattleView.new()
+	battle_view.name = "LegionBattleView"
+	battle_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	battle_view.mouse_filter = Control.MOUSE_FILTER_STOP
+	canvas.add_child(battle_view)
+	battle_view.set_zoom(zoom)
+	battle_view.gui_input.connect(_field_input)
+	views = battle_view.views
+	shots = battle_view.shots
 	ui = Control.new()
 	ui.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -330,10 +267,24 @@ func _build_screen() -> void:
 		players.append(p)
 
 
-## Мир боя рисуется в размер окна (в настоящих точках экрана — без размытия)
-func _fit_sub() -> void:
-	var ws := get_window().size
-	sub.size = Vector2i(maxi(64, ws.x), maxi(64, ws.y))
+func _field_input(e: InputEvent) -> void:
+	var next := zoom
+	if e is InputEventMouseButton and e.pressed:
+		if e.button_index == MOUSE_BUTTON_WHEEL_UP:
+			next *= 0.92
+		elif e.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			next /= 0.92
+	elif e is InputEventMagnifyGesture and e.factor > 0.0:
+		if CameraRig.gesture_once(e, "battle"):
+			next /= e.factor
+		battle_view.accept_event()
+	elif e is InputEventPanGesture:
+		if CameraRig.gesture_once(e, "battle"):
+			next *= exp(-e.delta.y * 0.08)
+		battle_view.accept_event()
+	if next != zoom:
+		zoom = clampf(next, 0.75, 1.25)
+		battle_view.set_zoom(zoom)
 
 
 func _fonts() -> void:
@@ -437,63 +388,49 @@ func _button(text: String, icon: String, cb: Callable, w := 0.0) -> Button:
 	return b
 
 
-## Верх: слева «Отступить», посередине табличка с названием боя и волнами, справа скорость, «Авто», пауза
+## Табличка волн, быстрые команды и пауза.
 func _top_bar() -> void:
-	retreat_btn = _button("Отступить", "exit", _ask_retreat, 150)
+	retreat_btn = Kit.round_button(_icon_tex("eagle"))
+	retreat_btn.name = "LegionBattleRetreat"
+	retreat_btn.focus_mode = Control.FOCUS_NONE
+	retreat_btn.tooltip_text = "Отступить"
+	retreat_btn.pressed.connect(_ask_retreat)
 	ui.add_child(retreat_btn)
-	_pin(retreat_btn, Control.PRESET_TOP_LEFT, Vector2(18, 16), Vector2(150, 40))
-	# табличка: орёл и красная лента (как название города), под ней — волны
-	var plate := TextureRect.new()
-	plate.texture = load(AI + "plate.png")
-	plate.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	plate.stretch_mode = TextureRect.STRETCH_SCALE
-	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_pin(retreat_btn, Control.PRESET_TOP_LEFT, Vector2(18, 12), Vector2(94, 94))
+
+	var plate := Kit.image(Kit.ROOT + "panels/ribbon_title.png", Vector2.ZERO)
 	ui.add_child(plate)
-	_pin(plate, Control.PRESET_CENTER_TOP, Vector2(-235, 6), Vector2(470, 124))
-	title_lbl = _label("", 22, false, C_CREAM, font_title)
-	title_lbl.add_theme_color_override("font_outline_color", Color(0.35, 0.08, 0.05, 0.7))
-	title_lbl.add_theme_constant_override("outline_size", 4)
-	title_lbl.position = Vector2(118, 27)
-	title_lbl.size = Vector2(318, 34)
-	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_lbl.clip_text = true
-	title_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	plate.add_child(title_lbl)
-	sub_lbl = _label("", 16, true, Color("f3dfb3"))
-	sub_lbl.position = Vector2(118, 55)
-	sub_lbl.size = Vector2(318, 24)
-	sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub_lbl.add_theme_color_override("font_outline_color", Color(0.35, 0.08, 0.05, 0.6))
-	sub_lbl.add_theme_constant_override("outline_size", 3)
-	sub_lbl.clip_text = true
-	sub_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	plate.add_child(sub_lbl)
-	wave_box = HBoxContainer.new()
-	wave_box.alignment = BoxContainer.ALIGNMENT_CENTER
-	wave_box.add_theme_constant_override("separation", 6)
-	wave_box.position = Vector2(118, 92)
-	wave_box.size = Vector2(318, 22)
-	wave_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	plate.add_child(wave_box)
-	# справа: скорость боя, «Авто», пауза
+	_pin(plate, Control.PRESET_CENTER_TOP, Vector2(-268, 12), Vector2(536, 108))
+	wave_lbl = _label("", 52, false, Color("681b0c"), font_title)
+	wave_lbl.name = "LegionBattleWave"
+	wave_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	wave_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	plate.add_child(wave_lbl)
+	wave_lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
 	var right := HBoxContainer.new()
-	right.add_theme_constant_override("separation", 6)
+	right.add_theme_constant_override("separation", 5)
 	right.alignment = BoxContainer.ALIGNMENT_END
+	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui.add_child(right)
-	_pin(right, Control.PRESET_TOP_RIGHT, Vector2(-430, 16), Vector2(412, 40))
+	_pin(right, Control.PRESET_TOP_RIGHT, Vector2(-407, 28), Vector2(290, 40))
 	for s: int in [1, 2, 3]:
-		var b := _button("×%d" % s, "", func(): _set_speed(float(s)), 58)
+		var b := _button("×%d" % s, "", func(): _set_speed(float(s)), 50)
 		b.toggle_mode = true
 		b.tooltip_text = "Скорость боя ×%d" % s
 		right.add_child(b)
 		speed_btns[s] = b
-	auto_btn = _button("Авто", "", _toggle_auto, 92)
+	auto_btn = _button("Авто", "", _toggle_auto, 80)
 	auto_btn.toggle_mode = true
 	auto_btn.tooltip_text = "Умения отряд жмёт сам — вовремя и с умом"
 	right.add_child(auto_btn)
-	pause_btn = _button("", "pause", _toggle_pause, 54)
-	pause_btn.tooltip_text = "Пауза (пробел)"
-	right.add_child(pause_btn)
+
+	pause_btn = Kit.round_button(_icon_tex("pause"))
+	pause_btn.name = "LegionBattlePause"
+	pause_btn.focus_mode = Control.FOCUS_NONE
+	pause_btn.pressed.connect(_toggle_pause)
+	ui.add_child(pause_btn)
+	_pin(pause_btn, Control.PRESET_TOP_RIGHT, Vector2(-104, 12), Vector2(88, 88))
 	_refresh_speed()
 
 
@@ -537,50 +474,46 @@ func _boss_box() -> void:
 	boss_panel = p
 	p.visible = false
 	ui.add_child(p)
-	_pin(p, Control.PRESET_CENTER_TOP, Vector2(-230, 128), Vector2(460, 80))
+	_pin(p, Control.PRESET_CENTER_TOP, Vector2(-230, 116), Vector2(460, 80))
 
 
-## Умения внизу: бронзовые медальоны с картинками, перезарядка — тёмный сектор и секунды
+## Умения внизу: медальоны и кольца перезарядки.
 func _perk_bar() -> void:
-	perk_bar = PanelContainer.new()
-	(perk_bar as PanelContainer).add_theme_stylebox_override("panel", _box("g_panel_xs", [23, 23, 22, 24], [16, 8, 16, 10], true))
-	perk_bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	perk_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	perk_bar = row
 	ui.add_child(perk_bar)
 
 
 func _fill_perks() -> void:
 	for c in perk_bar.get_children():
+		perk_bar.remove_child(c)
 		c.queue_free()
 	perk_btns.clear()
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 14)
-	h.alignment = BoxContainer.ALIGNMENT_CENTER
-	perk_bar.add_child(h)
-	var ids := []
-	for id in Legion.perk_ids():
+	var ids: Array[String] = []
+	for id: String in Legion.perk_ids():
 		if sim.perks["ally"].has(id):
 			ids.append(id)
-	if ids.is_empty():
-		var l := _label("Отряд дерётся сам; ваше — состав и умения в нужный миг", 17, true, C_SOFT)
-		h.add_child(l)
-	var n := 0
-	for id: String in ids:
-		n += 1
+	var diameter := 160.0 if ids.size() <= 3 else 112.0
+	var medal := Kit.texture(Kit.ROOT + "buttons/round_frame_big.png")
+	for i in ids.size():
+		var id := ids[i]
 		var pb := PerkButton.new()
+		pb.name = "BattlePerk_" + id
 		pb.battle = self
-		pb.id = id
-		pb.key_n = n
-		pb.lvl = int(sim.perks["ally"][id]["lvl"])
-		pb.icon = Legion.art_texture("perk", id)
-		if pb.icon == null:
-			pb.icon = _icon_tex(String(PERK_ALT.get(id, "swords")))
-		pb.medal = load(AI + "medal.png")
-		pb.medal_on = load(AI + "medal_on.png")
-		pb.custom_minimum_size = Vector2(96, 122)
-		pb.tooltip_text = "%s (клавиша %d)\n%s" % [Legion.PERKS[id]["name"], n, Legion.PERKS[id]["desc"]]
+		pb.key_n = i + 1
+		pb.medal = medal
+		pb.art = Legion.art_texture("perk", id)
+		if pb.art == null:
+			pb.art = _icon_tex(String(PERK_ALT.get(id, "swords")))
+		pb.custom_minimum_size = Vector2.ONE * diameter
+		pb.tooltip_text = "%s (клавиша %d)\n%s" % [Legion.PERKS[id]["name"], i + 1, Legion.PERKS[id]["desc"]]
 		pb.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		h.add_child(pb)
+		pb.focus_mode = Control.FOCUS_NONE
+		pb.pressed.connect(use_perk.bind(id))
+		perk_bar.add_child(pb)
 		perk_btns[id] = pb
 	_place_perks()
 	await get_tree().process_frame
@@ -598,7 +531,7 @@ func _banner_box() -> void:
 	banner = PanelContainer.new()
 	banner.add_theme_stylebox_override("panel", _box("g_scroll_h", [45, 58, 45, 63], [70, 22, 70, 26]))
 	banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	banner_lbl = _label("", 34, false, C_INK, font_title)
+	banner_lbl = _label("", 29, false, C_INK, font_title)
 	banner_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.add_child(banner_lbl)
 	banner.modulate.a = 0.0
@@ -608,7 +541,7 @@ func _banner_box() -> void:
 func say(text: String, dur := 1.6) -> void:
 	banner_lbl.text = text
 	var sz := banner.get_combined_minimum_size()
-	_pin(banner, Control.PRESET_CENTER, Vector2(-sz.x * 0.5, -205), sz)
+	_pin(banner, Control.PRESET_CENTER, Vector2(-sz.x * 0.5, -232), sz)
 	_banner_t = dur
 	_banner_dur = dur
 
@@ -622,7 +555,6 @@ func _start(s: Dictionary) -> void:
 	out = {}
 	pvp = String(s.get("kind", "campaign")) == "pvp"
 	stage = s.get("stage", {})
-	_seed = int(s.get("seed", 1))
 	_clear_world()
 	var biome := "forest"
 	if pvp:
@@ -631,28 +563,7 @@ func _start(s: Dictionary) -> void:
 	else:
 		var r := int(stage.get("r", 0))
 		biome = String(Legion.regions()[clampi(r, 0, Legion.regions().size() - 1)]["biome"])
-	world = Node3D.new()
-	world.name = "BattleWorld"
-	sub.add_child(world)
-	field = LegionField.build(world, biome, int(stage.get("r", 0)) * 101 + int(stage.get("s", 0)) * 7 + 3, quality)
-	var gp: Dictionary = field.get("grade", {})
-	for k in gp:
-		grade.set_shader_parameter(k, gp[k])
-	grade.set_shader_parameter("warm_keep", 0.0)
-	grade.set_shader_parameter("vignette", 0.5)
-	fx = LegionFx.new()
-	world.add_child(fx)
-	cam = Camera3D.new()
-	cam.fov = 30.0
-	cam.near = 0.3
-	cam.far = 320.0
-	cam_attrs = CameraAttributesPractical.new()
-	cam_attrs.dof_blur_far_enabled = quality != "low"
-	cam_attrs.dof_blur_near_enabled = quality != "low"
-	cam_attrs.dof_blur_amount = 0.085
-	cam.attributes = cam_attrs
-	world.add_child(cam)
-	cam.make_current()
+	battle_view.set_field(biome)
 	sim = LegionSim.new(setup)
 	# учебный бой: управление — у игрока, скорость ×1, «Авто» и скорость спрятаны
 	tut = "" if pvp else String(s.get("tutorial", ""))
@@ -672,38 +583,33 @@ func _start(s: Dictionary) -> void:
 	auto_btn.tooltip_text = "Умения отряд жмёт сам — вовремя и с умом" if auto_ok else "Авто — для пройденных боёв: в первый раз ведите бой сами"
 	var want := bool(opts.get("auto", legion.flags.get("battle_auto", false)))
 	sim.set_auto(want and auto_ok and tut == "")   # запоминается: бой с городом повторит сервер
-	_prewarm()
-	views.clear()
-	shots.clear()
+	battle_view.prewarm()
 	for u in sim.units:
 		_view(u)
-	_title()
+	_waves_ui()
 	_fill_perks()
 	_refresh_speed()
 	# первые бои: тихая подсказка над умениями (как устроен бой), потом не мешает
 	var seen := int(legion.flags.get("battle_hints", 0))
 	hint_lbl.visible = (seen < 3 or tut != "") and not sim.perks["ally"].is_empty()
 	hint_lbl.modulate.a = 1.0
-	_pin(hint_lbl, Control.PRESET_CENTER_BOTTOM, Vector2(-420, -262 if tut != "" else -176), Vector2(840, 30))
+	_pin(hint_lbl, Control.PRESET_CENTER_BOTTOM, Vector2(-420, -258 if tut != "" else -204), Vector2(840, 30))
 	hint_until = INF if tut != "" else 14.0
 	if tut != "":
 		hint_lbl.text = "Учебный бой. Отряд дерётся сам; ваше — состав и умения в нужный миг."
 	elif hint_lbl.visible:
 		legion.flags["battle_hints"] = seen + 1
-		hint_lbl.text = "Отряд дерётся сам; ваше — состав и умения в нужный миг. Умение засветилось — жмите (клавиши 1–5)."
+		hint_lbl.text = "Жмите умения, когда они готовы (клавиши 1–7)."
 	_handle(sim.take_events())
 	phase = "intro"
 	intro_t = 0.0
 	end_t = 0.0
 	slowmo = 1.0
 	acc = 0.0
-	t_vis = 0.0
 	paused = false
 	pause_lbl.visible = false
 	retreat_btn.disabled = false
-	cam_x = -6.0
-	_camera(0.0)
-	say(stage.get("title", "Бой") if not pvp else (String((s.get("event", {}) as Dictionary).get("title", "")) if s.has("event") else "Бой с городом"), 2.2)
+	_refresh_speed()
 	if bool(stage.get("boss", false)):
 		say("Босс: " + String(stage.get("name", "")), 2.6)
 	_play("horn", -6.0)
@@ -732,148 +638,39 @@ func _loading(s: Dictionary) -> void:
 
 
 func _clear_world() -> void:
-	for id in views:
-		var v: Dictionary = views[id]
-		for k in ["testudo", "horn", "summon"]:
-			if v.has(k) and is_instance_valid(v[k]):
-				(v[k] as Node).queue_free()
-	views.clear()
-	shots.clear()
-	_pool.clear()
+	battle_view.clear()
+	bars.floats.clear()
 	_crowds.clear()
 	_summon_warns = 0
+	_immune_said = false
+	_banner_t = 0.0
+	banner.modulate.a = 0.0
 	_boss_unit = null
+	boss_pic.texture = null
 	if sim != null:
 		sim.dispose()
-	if world != null and is_instance_valid(world):
-		world.queue_free()
-	world = null
-	if modal != null and is_instance_valid(modal):
-		modal.queue_free()
-	modal = null
+		sim = null
+	_close_modal()
 
 
-## Заранее собрать бойцов будущих волн (чтобы волна вышла без рывка)
-func _prewarm() -> void:
-	var need := {}
-	var waves: Array = setup.get("waves", [])
-	for i in range(1 if not bool(setup.get("enemy_formation", false)) else 0, waves.size()):
-		for st: Dictionary in waves[i]:
-			var k := String(st["key"])
-			if k == "hero":
-				continue                              # чужой герой (бой с городом) — свой облик, его собирает _view
-			need[k] = int(need.get(k, 0)) + 1
-	# шайка атамана: на три созыва вперёд
-	for w: Array in waves:
-		for st: Dictionary in w:
-			for f: Dictionary in (st.get("summon", {}) as Dictionary).get("foes", []):
-				need[String(f["key"])] = int(need.get(String(f["key"]), 0)) + 3
-	for k in need:
-		var list: Array = []
-		for i in int(need[k]):
-			var size := float(Legion.ENEMIES.get(k, {}).get("size", 1.0))
-			var f := LegionFighter.create(k, size, _seed + i * 31 + k.hash(), Legion.UNITS.has(k))
-			f.visible = false
-			world.add_child(f)
-			list.append(f)
-		_pool[k] = list
-
-
-func _view(u: LegionSim.Unit) -> Dictionary:
-	if views.has(u.id):
-		return views[u.id]
-	var f: LegionFighter = null
-	var list: Array = _pool.get(u.key, []) if u.side == "enemy" else []
-	if not list.is_empty():
-		f = list.pop_back()
-	elif u.key == "hero":
-		# свой герой (Д11): его лицо, цвета, плащ, снаряжение; чуть крупнее. Чужой (бой с городом) — в облике из его
-		# сохранения (enemy_hero_look); облика нет — «Полководец»
-		var lk: Dictionary = setup.get("hero_look" if u.side == "ally" else "enemy_hero_look", {})
-		if lk.is_empty():
-			lk = Hero.rival_look({})
-		f = LegionFighter.create_hero(lk, u.size * 1.08, _seed + u.id * 7919)
-		world.add_child(f)
-	else:
-		# Легион 3.0: жрец (heal) — свой облик, не враг «Жрец» с пращой; у всадника — конь
-		var lk := "legionPriest" if u.heal_pow > 0.0 else u.key
-		f = LegionFighter.create(lk, u.size, _seed + u.id * 7919, u.side == "enemy" and (Legion.UNITS.has(u.key) or lk != u.key or u.key == "cavalry"))
-		world.add_child(f)
-		if u.side == "ally" and u.sid >= 0:     # Легион 2.0: вещи воина светятся цветом редкости
-			for e: Dictionary in setup.get("squad", []):
-				if e is Dictionary and int(e.get("sid", -1)) == u.sid:
-					f.dress_gear(e.get("gear_look", {}))
-	f.visible = true
-	f.position = Vector3(u.x, _h(u.x, u.z), u.z)
-	f.rotation.y = _face_yaw(u, 1.0 if u.side == "ally" else -1.0, 0.0)
-	f.set_speed(speed)
-	var v := {"u": u, "f": f, "hp": u.hp_frac(), "dead": false, "px": u.x, "pz": u.z, "step_t": 0.0}
-	views[u.id] = v
+func _view(u: LegionSim.Unit) -> BattleView.Fighter:
 	if u.boss:
 		_boss_unit = u
-	return v
-
-
-func _h(x: float, z: float) -> float:
-	var hf: Callable = field.get("height", Callable())
-	return float(hf.call(x, z)) if hf.is_valid() else 0.0
-
-
-## Куда смотреть: на цель (вполоборота к зрителю), без цели — вдоль своего хода или к врагу
-func _face_yaw(u: LegionSim.Unit, dx: float, dz: float) -> float:
-	var d := Vector2(dx, dz)
-	if u.target != null and u.target.alive:
-		d = Vector2(u.target.x - u.x, (u.target.z - u.z) * 0.6)
-	if d.length() < 0.05:
-		d = Vector2(1.0 if u.side == "ally" else -1.0, 0.0)
-	d = d.normalized()
-	# вполоборота к камере (она спереди, со стороны +z)
-	d.y += 0.68
-	return atan2(d.x, d.y)
-
-
-func _title() -> void:
-	if setup.has("event"):
-		var evd: Dictionary = setup["event"]
-		title_lbl.text = String(evd.get("title", ""))
-		sub_lbl.text = String(evd.get("sub", "")) + (" · " if String(evd.get("sub", "")) != "" else "") + "События недели"
-	elif pvp:
-		var opp: Dictionary = setup.get("opponent", {})
-		title_lbl.text = "Город «%s»" % String(opp.get("name", "?"))
-		sub_lbl.text = "Отряд обороны · рейтинг %d" % int(opp.get("rating", 0))
-	else:
-		title_lbl.text = String(stage.get("title", ""))
-		var s := int(stage.get("s", 0))
-		sub_lbl.text = String(stage.get("name", "")) if bool(stage.get("boss", false)) else "Бой %d из %d" % [s + 1, Legion.stages()]
-		if String(stage.get("theme", "")) != "":
-			sub_lbl.text += " · " + String(stage["theme"])
-	_waves_ui()
+	return battle_view.add_unit(u)
 
 
 func _waves_ui() -> void:
-	for c in wave_box.get_children():
-		c.queue_free()
-	var total := sim.waves.size() if not bool(setup.get("enemy_formation", false)) else 1
-	if total <= 1:
-		return
-	var l := _label("Волна", 14, true, Color("f3dfb3"))
-	l.add_theme_color_override("font_outline_color", Color(0.3, 0.1, 0.05, 0.7))
-	l.add_theme_constant_override("outline_size", 3)
-	wave_box.add_child(l)
-	for i in total:
-		var d := WavePip.new()
-		d.on = i <= sim.wave_idx
-		d.boss = bool(stage.get("boss", false)) and i == total - 1
-		d.custom_minimum_size = Vector2(18, 18)
-		wave_box.add_child(d)
+	var total := 1 if bool(setup.get("enemy_formation", false)) else maxi(1, sim.waves.size())
+	wave_lbl.text = I18n.t("Волна %d/%d") % [clampi(sim.wave_idx + 1, 1, total), total]
 
 
 # =====================================================================
 #   ход боя
 # =====================================================================
 
+
 func _process(dt: float) -> void:
-	if sim == null or world == null:
+	if sim == null:
 		return
 	dt = minf(dt, 0.1)
 	_fps(dt)
@@ -884,7 +681,6 @@ func _process(dt: float) -> void:
 		banner.modulate.a = maxf(0.0, banner.modulate.a - dt * 4.0)
 	var run := (not paused and not tut_freeze and modal == null) or phase == "result"
 	var gdt := dt * speed * slowmo if run else 0.0
-	t_vis += gdt
 	if phase == "intro":
 		intro_t += dt
 		if intro_t > 2.4:
@@ -910,12 +706,8 @@ func _process(dt: float) -> void:
 		slowmo = lerpf(0.4, 1.0, smoothstep(0.2, 1.6, end_t))
 		if end_t > 2.4:
 			_show_result()
-	_update_views(gdt, dt)
 	_update_crowds(gdt)
-	_update_shots()
-	fx.tick(gdt)
-	LegionField.tick(field, t_vis)
-	_camera(dt)
+	battle_view.tick(sim, gdt, dt, acc, phase == "intro" or phase == "fight")
 	_update_ui()
 	bars.queue_redraw()
 
@@ -940,7 +732,6 @@ func _handle(evs: Array) -> void:
 					var last: bool = n == int(e["total"])
 					say(("Босс: " + String(stage.get("name", ""))) if last and bool(stage.get("boss", false)) else "Волна %d из %d" % [n, int(e["total"])], 1.8)
 					_play("horn", -10.0, 1.15)
-				_last_wave = n
 				var fresh: Array = []
 				for u in sim.units:
 					if u.wave == n - 1 and u.side == "enemy":
@@ -951,134 +742,85 @@ func _handle(evs: Array) -> void:
 				_waves_ui()
 			"warn" when String(e.get("kind", "summon")) != "summon":
 				_warn2(e)
-			"revive":
-				var u: LegionSim.Unit = e["unit"]
-				var f: LegionFighter = _view(u)["f"]
-				f.dead = false
-				f.set_motion(false)
-				fx.burst(f.global_position + Vector3(0, 0.8, 0), Color(1.0, 0.85, 0.35, 1.0), 14, 0.7, 1.6, 0.12, 0.8, true, 1.0, 0.2)
-				say("%s поднимается — легион не дрогнет!" % u.name, 1.8)
-			"avalanche", "chariot", "cry", "interrupt", "ward", "storm", "immune":
-				_v2_event(e)
 			"warn":
-				# Атаман трубит в рог: через warn секунд вбежит шайка (круг под ним пульсирует — _update_views)
 				_summon_warns += 1
 				say("Атаман созывает шайку! Масло — когда сбегутся" if _summon_warns == 1 else "Атаман снова созывает шайку!", 2.4)
 				_play("horn", -4.0, 0.72)
-				var u: LegionSim.Unit = e["unit"]
-				var f: LegionFighter = _view(u)["f"]
-				fx.ring(f.position, 2.6, Color(0.95, 0.18, 0.1, 0.9), 0.9, 1.0)
+				battle_view.ring(_view(e["unit"]).position, 88.0, BattleView.ALERT)
 			"summon":
-				var fresh: Array = []
-				for nu: LegionSim.Unit in e["units"]:
-					_view(nu)
-					fresh.append(nu)
-					fx.dust(Vector3(nu.x, _h(nu.x, nu.z), nu.z), 0.8)
-					if String(e.get("kind", "")) == "raise":
-						fx.burst(Vector3(nu.x, _h(nu.x, nu.z) + 0.3, nu.z), Color(0.75, 0.9, 1.0, 0.9), 10, 0.6, 2.0, 0.12, 0.9, true, -0.5, 0.2)
-				if String(e.get("kind", "")) == "raise":
-					say("Павшие встают! Жгите их маслом — сожжённые не поднимутся", 2.4)
-				elif bool(e.get("rear", false)):
-					say("Засада с тыла!", 1.8)
-					shake = maxf(shake, 0.15)
-				else:
-					_crowd(fresh)
+				_summon(e)
 			"attack":
 				var u: LegionSim.Unit = e["unit"]
-				var v := _view(u)
-				(v["f"] as LegionFighter).attack()
+				_view(u).attack()
 				if u.key == "catapult" or u.key == "ballista":
 					_play("creak", -12.0, randf_range(0.9, 1.1))
 			"shoot":
 				var s: LegionSim.Shot = e["shot"]
-				var mi := MeshInstance3D.new()
-				mi.mesh = LegionFx.shot_mesh(s.kind)
-				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-				if s.kind == "arrow" or s.kind == "sling":
-					mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-				world.add_child(mi)
-				shots[s] = mi
-				_place_shot(s, mi)
+				battle_view.shoot(s)
 				if s.kind == "arrow" or s.kind == "bolt":
 					_play("whoosh", -16.0, randf_range(1.1, 1.4))
 			"hit":
-				var u: LegionSim.Unit = e["unit"]
-				var v := _view(u)
-				var f: LegionFighter = v["f"]
-				f.hurt()
-				var from: LegionSim.Unit = e.get("from")
-				var p := f.global_position + Vector3(0, f.top * 0.55, 0)
-				bars.float_text(_screen(f.global_position + Vector3(0, f.top + 0.1, 0)), str(int(e["dmg"])) + ("!" if bool(e["crit"]) else ""),
-					"crit" if bool(e["crit"]) else ("hurt" if u.side == "ally" else "dmg"))
-				if from != null and from.shot == "":
-					var metal := "beast" not in u.tags and "beast" not in from.tags
-					if metal:
-						fx.sparks(p + Vector3(randf_range(-0.2, 0.2), 0, 0.15))
-						_play("clash", -13.0 if not bool(e["crit"]) else -9.0, randf_range(0.9, 1.15))
-					else:
-						fx.dust(Vector3(p.x, 0.3, p.z), 0.5)
-						_play("thud", -12.0, randf_range(0.8, 1.1))
-				elif from == null:
-					pass
-				else:
-					_play("thud", -18.0, randf_range(1.2, 1.5))
+				_hit(e)
 			"death":
-				var u: LegionSim.Unit = e["unit"]
-				var v := _view(u)
-				var f: LegionFighter = v["f"]
-				f.die()
-				v["dead"] = true
-				fx.dust(Vector3(f.global_position.x, f.global_position.y, f.global_position.z), 1.2 * maxf(1.0, u.size))
 				_play("fall", -10.0, randf_range(0.85, 1.05))
-				for k in ["testudo", "horn", "summon", "rage", "ward"]:
-					if v.has(k) and is_instance_valid(v[k]):
-						(v[k] as Node).queue_free()
-						v.erase(k)
-			"slam":
-				var at := Vector3(float(e["x"]), _h(float(e["x"]), float(e["z"])), float(e["z"]))
-				fx.ring(at, float(e["r"]), Color(0.96, 0.88, 0.7, 0.85), 0.55)
-				fx.dust(at, 1.6)
-				shake = maxf(shake, 0.18)
-				_play("fall", -8.0, 0.7)
-			"boom":
-				var at := Vector3(float(e["x"]), _h(float(e["x"]), float(e["z"])), float(e["z"]))
-				fx.ring(at, float(e["r"]), Color(0.96, 0.86, 0.66, 0.9), 0.6)
-				fx.dust(at, 2.0)
-				fx.burst(at + Vector3(0, 0.2, 0), Color(0.55, 0.5, 0.44, 1.0), 10, 3.0, 3.5, 0.12, 0.8, false, 9.0, 0.0)
-				shake = maxf(shake, 0.25)
-				_play("boom", -7.0, randf_range(0.85, 1.0))
-			"charge":
+			"revive":
 				var u: LegionSim.Unit = e["unit"]
-				fx.dust(Vector3(u.x, 0.0, u.z), 1.4)
-				say(String(u.name) + " бросается в атаку!", 1.2)
-				shake = maxf(shake, 0.2)
-			"perk":
-				_perk_fx(e)
+				_view(u).revive()
+				say("%s поднимается — легион не дрогнет!" % u.name, 1.8)
 			"heal":
-				var u: LegionSim.Unit = e["unit"]
-				var v := _view(u)
-				var f: LegionFighter = v["f"]
-				for i in 6:
-					fx.add(f.global_position + Vector3(randf_range(-0.3, 0.3), randf_range(0.3, 1.2), randf_range(-0.3, 0.3)),
-						Vector3(0, 1.1, 0), Color(0.55, 1.0, 0.5, 0.9), 0.14, 1.0, -0.4, 0.2, true)
-				bars.float_text(_screen(f.global_position + Vector3(0, f.top + 0.3, 0)), "+%d" % int(e["amount"]), "heal")
-				# Легион 3.0: лечит жрец — он воздевает руку, кольца у него и у раненого, искры летят от жреца к раненому
+				var f := _view(e["unit"])
+				battle_view.burst("fx_heal", f.chest(), 1.05)
+				bars.float_text(battle_view.screen(f.head()), "+%d" % int(e["amount"]), "heal")
 				var src: LegionSim.Unit = e.get("from")
 				if src != null and src.alive:
-					var pf: LegionFighter = _view(src)["f"]
-					pf.cast()
-					fx.ring(pf.position, 1.1, Color(1.0, 0.9, 0.5, 0.9), 0.7, 0.8)
-					fx.ring(f.position, 0.9, Color(0.55, 1.0, 0.5, 0.9), 0.7, 0.8)
-					for i in 7:
-						var k := float(i) / 6.0
-						var p0 := pf.global_position + Vector3(0, pf.top * 0.8, 0)
-						var p1 := f.global_position + Vector3(0, f.top * 0.5, 0)
-						fx.add(p0.lerp(p1, k), Vector3(0, 0.5, 0), Color(1.0, 0.95, 0.6, 0.9), 0.13, 0.7 + k * 0.5, -0.2, 0.1, true)
-			"end":
-				pass
+					var priest := _view(src)
+					priest.attack()
+					battle_view.ring(priest.position, 55.0, BattleView.GOLD)
+			"slam", "boom":
+				var pos := BattleView.point(float(e["x"]), float(e["z"]))
+				battle_view.ring(pos, float(e["r"]) * 49.0, BattleView.GOLD)
+				battle_view.burst("fx_hit", pos - Vector2(0, 46), 1.25)
+				_play("boom" if e["type"] == "boom" else "fall", -8.0, 0.7)
+			"charge":
+				var u: LegionSim.Unit = e["unit"]
+				battle_view.ring(_view(u).position, 67.0, BattleView.ALERT)
+				say(String(u.name) + " бросается в атаку!", 1.2)
+			"perk":
+				_perk_fx(e)
+			"avalanche", "chariot", "cry", "interrupt", "ward", "storm", "immune":
+				_v2_event(e)
 
 
-## Поход Легиона 2.0: босс готовит приём — надпись, рог, круг под ним; лавина и колесницы — полоса по ряду
+func _hit(e: Dictionary) -> void:
+	var u: LegionSim.Unit = e["unit"]
+	var f := _view(u)
+	var crit := bool(e["crit"])
+	f.hurt()
+	battle_view.burst("fx_hit", f.chest(), 1.02 if crit else 0.78)
+	bars.float_text(battle_view.screen(f.head()), str(int(e["dmg"])) + ("!" if crit else ""),
+		"crit" if crit else ("hurt" if u.side == "ally" else "dmg"))
+	var src: LegionSim.Unit = e.get("from")
+	if src != null:
+		var metal := src.shot == "" and "beast" not in u.tags and "beast" not in src.tags
+		_play("clash" if metal else "thud", -9.0 if crit else -14.0, randf_range(0.9, 1.15))
+
+
+func _summon(e: Dictionary) -> void:
+	var fresh: Array = []
+	var raised := String(e.get("kind", "")) == "raise"
+	for u: LegionSim.Unit in e["units"]:
+		var f := _view(u)
+		fresh.append(u)
+		battle_view.ring(f.position, 50.0, Color("c9ecff") if raised else BattleView.ALERT)
+	if raised:
+		say("Павшие встают! Жгите их маслом — сожжённые не поднимутся", 2.4)
+	elif bool(e.get("rear", false)):
+		say("Засада с тыла!", 1.8)
+	else:
+		_crowd(fresh)
+
+
+## Босс готовит приём: надпись, рог, круг под ним и опасный ряд.
 const WARN2 := {"raise": "%s поднимает павших!", "avalanche": "Лавина! Сомкните «Черепаху»", "warcry": "%s трубит боевой клич — собьёте ударом машины или умением!",
 	"ambush": "%s: засада заходит с тыла!", "chariot": "Колесницы! Копейщики — в их ряд, или «Черепаха»", "ward": "%s перестраивает войско", "storm": "%s поднимает песчаную бурю!"}
 
@@ -1089,126 +831,66 @@ func _warn2(e: Dictionary) -> void:
 	var txt := String(WARN2.get(k, "%s готовит удар!"))
 	say(txt % u.name if txt.contains("%s") else txt, 2.2)
 	_play("horn", -5.0, 0.8)
-	var f: LegionFighter = _view(u)["f"]
-	fx.ring(f.position, 2.4, Color(0.95, 0.18, 0.1, 0.9), 0.9, 1.0)
+	battle_view.ring(_view(u).position, 86.0, BattleView.ALERT)
 	if k == "avalanche" or k == "chariot":
-		var z := float(e.get("z", 0.0))
-		for i in 9:
-			var x := -9.0 + i * 1.6
-			fx.ring(Vector3(x, _h(x, z), z), 0.75, Color(1.0, 0.3, 0.15, 0.8), 1.4, 0.8)
+		battle_view.lane(float(e.get("z", 0.0)), BattleView.ALERT, float(u.abil.get("warn", 1.4)))
 
 
 func _v2_event(e: Dictionary) -> void:
 	match String(e["type"]):
 		"avalanche":
-			var z := float(e["z"])
-			for i in 14:
-				var x := -9.5 + i * 1.0
-				var at := Vector3(x, _h(x, z), z)
-				fx.burst(at + Vector3(0, 0.4, 0), Color(0.95, 0.97, 1.0, 0.95), 6, float(e["w"]), 2.2, 0.22, 1.1, false, 4.0, 0.8)
-			shake = maxf(shake, 0.35)
+			battle_view.lane(float(e["z"]), Color("e7f2ff"), 0.8, 32.0)
 			_play("boom", -6.0, 0.6)
 		"chariot":
-			var z := float(e["z"])
-			for i in 12:
-				var x := 12.0 - i * 1.8
-				fx.dust(Vector3(x, _h(x, z), z), 1.4)
-			_chariot_dash(z)
-			shake = maxf(shake, 0.25)
+			battle_view.lane(float(e["z"]), Color("c6986a"), 1.2, 30.0)
 			say("Копейщики остановили колесницы!" if bool(e["stopped"]) else "Колесницы прошли по ряду!", 1.6)
 		"cry":
 			say("Боевой клич! Враги бьют сильнее", 1.8)
 			_play("horn", -3.0, 0.6)
 		"interrupt":
 			say("Клич сорван!", 1.6)
-			var u: LegionSim.Unit = e["unit"]
-			fx.burst(Vector3(u.x, _h(u.x, u.z) + 1.4, u.z), Color(1.0, 0.95, 0.6, 1.0), 12, 0.8, 1.4, 0.1, 0.6, true, 2.0, 0.0)
+			battle_view.burst("fx_hit", _view(e["unit"]).chest(), 1.1, BattleView.GOLD)
 		"ward":
 			say("Щиты от стрел и камней — бейте мечами!" if String(e["kind"]) == "ranged" else "Щиты от мечей — бейте стрелами!", 2.0)
 		"storm":
 			say("Песчаная буря: стрелы бьют слабее", 1.8)
-			for i in 40:
-				var x := randf_range(-9.0, 13.0)
-				var z := randf_range(-2.6, 2.6)
-				fx.add(Vector3(x, _h(x, z) + randf_range(0.2, 2.0), z), Vector3(-2.5, 0.2, randf_range(-0.3, 0.3)), Color(0.85, 0.7, 0.45, 0.55), 0.5, 2.5, 0.0, 1.5)
+			for z in [-2.0, 0.0, 2.0]:
+				battle_view.lane(float(z), Color("e1ab71"), float(e.get("dur", 7.0)), 28.0)
 		"immune":
 			var u: LegionSim.Unit = e["unit"]
-			var f: LegionFighter = _view(u)["f"]
-			bars.float_text(_screen(f.global_position + Vector3(0, f.top + 0.3, 0)), "неуязвим", "hurt")
+			bars.float_text(battle_view.screen(_view(u).head()), I18n.t("неуязвим"), "hurt")
 			if not _immune_said:
 				_immune_said = true
 				say("%s неуязвим, пока живы его пращники" % u.name, 2.2)
-
-
-var _immune_said := false
-
-
-## Колесница проносится по ряду z справа налево (только картинка: урон считает бой)
-func _chariot_dash(z: float) -> void:
-	var c := LegionFighter.create("chariot", 1.2, 7)
-	world.add_child(c)
-	c.position = Vector3(13.0, _h(13.0, z), z)
-	c.rotation.y = -PI / 2
-	c.set_motion(true, 6.0)
-	var tw := create_tween()
-	tw.tween_property(c, "position:x", -11.0, 1.4)
-	tw.tween_callback(c.queue_free)
 
 
 func _perk_fx(e: Dictionary) -> void:
 	var id := String(e["id"])
 	var side := String(e["side"])
 	var ours := side == "ally"
-	var allies := sim.alive_of(side)
-	var foes := sim.alive_of("enemy" if ours else "ally")
-	say((PERK_SAY.get(id, "") as String) if ours else "Соперник: " + String(Legion.PERKS[id]["name"]), 1.3)
+	say(String(PERK_SAY.get(id, "")) if ours else "Соперник: " + String(Legion.PERKS[id]["name"]), 1.3)
 	if perk_btns.has(id) and ours:
 		(perk_btns[id] as PerkButton).pop = 1.0
 	match id:
 		"oil":
-			var at := Vector3(float(e.get("x", 0.0)), 0.0, float(e.get("z", 0.0)))
-			at.y = _h(at.x, at.z)
-			fx.cauldron(at - Vector3(0.6 if ours else -0.6, 0, 0))
+			var pos := BattleView.point(float(e.get("x", 0.0)), float(e.get("z", 0.0)))
+			battle_view.ring(pos, 118.0, Color("ff8e38"), 0.95)
+			battle_view.burst("fx_hit", pos - Vector2(0, 73), 1.6, Color("ff9e49"))
 			_play("pot", -8.0, 0.8)
 			_play("oil", -10.0)
-		"volley":
-			var pts := []
+		"volley", "fire":
+			var tint := Color("ff9c4d") if id == "fire" else Color.WHITE
+			var foes := sim.alive_of("enemy" if ours else "ally")
 			for u in foes:
-				pts.append(Vector3(u.x, _h(u.x, u.z), u.z))
-			fx.volley(pts)
+				var to := _view(u).chest()
+				battle_view.volley(to + Vector2(-320.0 if ours else 320.0, -155.0), to, tint)
 			_play("volley", -9.0, randf_range(0.95, 1.05))
-		"testudo":
-			for u in allies:
-				fx.burst(Vector3(u.x, 1.0, u.z), Color(1.0, 0.84, 0.4, 0.9), 8, 0.8, 1.2, 0.1, 0.7, true, 0.5)
-			_play("pot", -10.0, 1.2)
-		"bandage":
-			for u in allies:
-				for i in 5:
-					fx.add(Vector3(u.x + randf_range(-0.3, 0.3), 0.5, u.z + randf_range(-0.3, 0.3)), Vector3(0, 1.4, 0), Color(0.55, 1.0, 0.5, 0.9), 0.12, 1.0, 0.0, 0.3, true)
-		"horn":
-			var cx := 0.0
-			for u in allies:
-				cx += u.x
-			cx /= maxf(1.0, allies.size())
-			fx.ring(Vector3(cx, 0.0, 0.0), 5.0, Color(1.0, 0.66, 0.3, 0.9), 0.9, 1.2)
-			_play("horn", -6.0, 1.0)
-		"eagle":
-			# золотое сияние под каждым бойцом, пока отряд неуязвим
-			var dur := float(e.get("dur", 2.0))
-			for u in allies:
-				var at := Vector3(u.x, _h(u.x, u.z), u.z)
-				fx.ring(at, 0.9, Color(1.0, 0.85, 0.3, 0.95), dur, 1.0)
-				fx.burst(at + Vector3(0, 1.0, 0), Color(1.0, 0.86, 0.35, 0.95), 10, 0.9, 1.0, 0.1, 0.8, true, 0.5)
-			_play("horn", -8.0, 1.25)
-		"fire":
-			var pts := []
-			for u in foes:
-				pts.append(Vector3(u.x, _h(u.x, u.z), u.z))
-			fx.volley(pts)
-			for p: Vector3 in pts:
-				fx.burst(p + Vector3(0, 0.6, 0), Color(1.0, 0.45, 0.1, 0.95), 10, 1.2, 0.9, 0.12, 0.6, true, 0.4)
-			_play("volley", -10.0, randf_range(0.8, 0.9))
-			_play("oil", -16.0, 1.2)
+			if id == "fire":
+				_play("oil", -16.0, 1.2)
+		"testudo", "horn", "eagle":
+			for u in sim.alive_of(side):
+				battle_view.ring(_view(u).position, 66.0, BattleView.GOLD, 0.9)
+			_play("pot" if id == "testudo" else "horn", -8.0)
 
 
 func _begin_end() -> void:
@@ -1228,235 +910,43 @@ func _begin_end() -> void:
 	var win := bool(out.get("win", false))
 	if not bool(out["retreat"]):
 		say("Победа!" if win else "Отряд отступает…", 2.0)
-	for id in views:
-		var v: Dictionary = views[id]
-		var u: LegionSim.Unit = v["u"]
-		if u.alive and ((u.side == "ally") == win):
-			(v["f"] as LegionFighter).cheer()
 	_play("win" if win else "fall", -6.0 if win else -10.0, 1.0)
 
 
-func _update_views(gdt: float, dt: float) -> void:
-	var k := 1.0 - exp(-dt * 16.0)
-	for id in views:
-		var v: Dictionary = views[id]
-		var u: LegionSim.Unit = v["u"]
-		var f: LegionFighter = v["f"]
-		f.set_speed(speed * slowmo if gdt > 0.0 else 0.0)
-		if gdt > 0.0:
-			f.tick(gdt)
-		if not u.alive:
-			continue
-		var p := f.position
-		var dx := u.x - float(v["px"])
-		var dz := u.z - float(v["pz"])
-		p.x = lerpf(p.x, u.x, k)
-		p.z = lerpf(p.z, u.z, k)
-		f.position = p
-		f.set_ground(_h(p.x, p.z))
-		v["px"] = u.x
-		v["pz"] = u.z
-		if phase != "ending" and phase != "result":
-			var fast := u.horn_k if u.horn > sim.t else 1.0
-			f.set_motion(u.moving, u.speed * fast * (1.4 if u.entering else 1.0))
-			f.face(_face_yaw(u, dx * 30.0 if absf(dx) > 0.001 else (1.0 if u.side == "ally" else -1.0), dz * 30.0), gdt)
-			# шаги поднимают пыль
-			if u.moving and gdt > 0.0 and (u.speed >= 1.8 or u.size > 1.2):
-				v["step_t"] = float(v["step_t"]) - gdt
-				if float(v["step_t"]) <= 0.0:
-					v["step_t"] = 0.3 / maxf(0.5, u.speed)
-					fx.add(Vector3(p.x + randf_range(-0.15, 0.15), f.position.y + 0.04, p.z + randf_range(-0.15, 0.15)), Vector3(randf_range(-0.2, 0.2), 0.2, 0),
-						Color(0.8, 0.72, 0.58, 0.16 * minf(1.6, u.size)), 0.2 * u.size, 0.7, -0.1, 1.2)
-		else:
-			f.face(_face_yaw(u, 1.0 if u.side == "ally" else -1.0, 0.0), dt)
-		# черепаха и рог — круги под ногами; ожог — языки пламени
-		_status(v, "testudo", u.testudo > sim.t, Color(1.0, 0.82, 0.35, 0.85))
-		_status(v, "horn", u.horn > sim.t, Color(1.0, 0.5, 0.25, 0.8))
-		_status(v, "summon", (u.summon_warned or u.abil_warned) and phase == "fight", Color(0.95, 0.16, 0.08, 0.9))
-		_status(v, "rage", u.rage_t > sim.t, Color(1.0, 0.25, 0.1, 0.75))
-		_status(v, "ward", u.ward_t > sim.t, Color(0.35, 0.7, 1.0, 0.8) if u.ward == "ranged" else Color(0.9, 0.9, 0.95, 0.8))
-		if not u.poison.is_empty() and gdt > 0.0 and randf() < 0.35:
-			fx.add(f.global_position + Vector3(randf_range(-0.25, 0.25), randf_range(0.3, 1.0) * u.size, randf_range(-0.2, 0.2)), Vector3(0, 0.7, 0),
-				Color(0.45, 0.95, 0.3, 0.9), 0.1, 0.7, -0.2, 0.0, true)
-		if u.burn > sim.t and gdt > 0.0 and randf() < 0.5:
-			fx.add(f.global_position + Vector3(randf_range(-0.3, 0.3), randf_range(0.2, 1.1) * u.size, randf_range(-0.2, 0.2)), Vector3(0, 1.3, 0),
-				Color(1.0, 0.55 + randf() * 0.3, 0.15, 0.95), 0.16, 0.5, -0.5, -0.4, true)
-		if f.embers and gdt > 0.0 and randf() < 0.25:
-			fx.add(f.global_position + Vector3(randf_range(-0.4, 0.4), randf_range(0.2, 0.8) * u.size, randf_range(-0.3, 0.3)), Vector3(0, 0.6, 0),
-				Color(1.0, 0.45, 0.15, 0.9), 0.06, 0.9, -0.3, 0.0, true)
-
-
-func _status(v: Dictionary, kind: String, on: bool, col: Color) -> void:
-	if on and not v.has(kind):
-		var size: float = (v["u"] as LegionSim.Unit).size
-		v[kind] = fx.status_ring(col, (1.0 if kind == "summon" else 0.6) * size)
-	elif not on and v.has(kind):
-		if is_instance_valid(v[kind]):
-			(v[kind] as Node).queue_free()
-		v.erase(kind)
-	if v.has(kind):
-		var r: MeshInstance3D = v[kind]
-		var f: LegionFighter = v["f"]
-		r.position = Vector3(f.position.x, f.position.y + 0.05 + (0.01 if kind == "horn" else 0.0), f.position.z)
-		var pulse := 1.0 + sin(t_vis * 6.0) * 0.06
-		if kind == "summon":
-			pulse = 1.0 + absf(sin(t_vis * 7.0)) * 0.3       # рог атамана: круг бьётся, как тревога
-		r.scale = Vector3(pulse, 1.0, pulse) * (1.18 if kind == "horn" else 1.0)
-
-
-## Красный круг за кучей врагов (радиус — как у котла масла): идёт за ними, пока не сбегутся, и ещё 2,5 с;
-## сбежались — надпись text (миг для масла)
+## Круг идёт за толпой до её выхода на поле и ещё 2,5 с.
 func _crowd(units: Array, text := "") -> void:
-	if units.size() < 2 or fx == null:
+	if units.size() < 2:
 		return
-	var ring := fx.status_ring(Color(0.95, 0.2, 0.1, 0.85), 2.2)
-	_crowds.append({"units": units, "ring": ring, "t": 0.0, "say": text})
+	_crowds.append({"units": units, "t": 0.0, "say": text, "position": Vector2.ZERO})
 	_update_crowds(0.0)
 
 
 func _update_crowds(gdt: float) -> void:
-	var keep: Array = []
-	for c: Dictionary in _crowds:
-		var ring: MeshInstance3D = c["ring"]
+	for i in range(_crowds.size() - 1, -1, -1):
+		var c: Dictionary = _crowds[i]
 		var n := 0
-		var at := Vector3.ZERO
+		var at := Vector2.ZERO
 		var entering := false
 		for u: LegionSim.Unit in c["units"]:
 			if u.alive:
 				n += 1
-				at += Vector3(u.x, 0.0, u.z)
+				at += BattleView.point(u.x, u.z)
 				entering = entering or u.entering
+		if n < 2 or float(c["t"]) > 2.5 or phase == "ending" or phase == "result":
+			_crowds.remove_at(i)
+			continue
 		if not entering:
-			if float(c["t"]) == 0.0 and gdt > 0.0 and String(c["say"]) != "" and n >= 2:
+			if float(c["t"]) == 0.0 and gdt > 0.0 and String(c["say"]) != "":
 				say(String(c["say"]), 2.4)
 			c["t"] = float(c["t"]) + gdt
-		if n < 2 or float(c["t"]) > 2.5 or phase == "ending" or phase == "result" or not is_instance_valid(ring):
-			if is_instance_valid(ring):
-				ring.queue_free()
-			continue
-		at /= n
-		at.y = _h(at.x, at.z) + 0.07
-		ring.position = at
-		var pulse := 1.0 + absf(sin(t_vis * 5.0)) * 0.12
-		ring.scale = Vector3(pulse, 1.0, pulse)
-		keep.append(c)
-	_crowds = keep
-
-
-func _update_shots() -> void:
-	var live := {}
-	for s in sim.shots:
-		live[s] = true
-	for s in shots.keys():
-		var mi: MeshInstance3D = shots[s]
-		if not live.has(s):
-			# долетел: стрела и болт — пыль, камни — у боя своё событие (boom)
-			var sh: LegionSim.Shot = s
-			if sh.kind == "arrow" or sh.kind == "bolt" or sh.kind == "sling":
-				fx.dust(Vector3(sh.x1, _h(sh.x1, sh.z1) + 0.3, sh.z1), 0.35)
-			mi.queue_free()
-			shots.erase(s)
-			continue
-		_place_shot(s, mi)
-
-
-func _shot_pos(s: LegionSim.Shot, k: float) -> Vector3:
-	var fs := s.from.size if s.from != null else 1.0
-	var ts := s.target.size if s.target != null else 1.0
-	var y0 := 1.25 * fs
-	if s.kind == "bolt":
-		y0 = 1.0
-	elif s.kind == "stone":
-		y0 = 1.3
-	elif s.kind == "boulder":
-		y0 = 1.9 * fs
-	var y1 := 0.8 * ts
-	if s.kind == "stone" or s.kind == "boulder":
-		y1 = 0.25
-	var d := absf(s.x1 - s.x0)
-	var arc := 0.6 + d * 0.07
-	match s.kind:
-		"stone", "boulder":
-			arc = 2.4 + d * 0.16
-		"bolt":
-			arc = 0.12 + d * 0.01
-		"sling":
-			arc = 0.4 + d * 0.05
-	return Vector3(lerpf(s.x0, s.x1, k), lerpf(y0, y1, k) + sin(k * PI) * arc, lerpf(s.z0, s.z1, k))
-
-
-func _place_shot(s: LegionSim.Shot, mi: MeshInstance3D) -> void:
-	var k := s.k() + clampf(acc / maxf(0.001, s.dur), 0.0, 0.1)
-	var p := _shot_pos(s, minf(1.0, k))
-	var q := _shot_pos(s, minf(1.0, k + 0.03))
-	mi.position = p
-	if s.kind == "stone" or s.kind == "boulder" or s.kind == "sling":
-		mi.rotation = Vector3(k * 9.0, k * 7.0, 0.0)
-		if s.kind == "sling":
-			mi.scale = Vector3.ONE * 0.8
-	elif q.distance_squared_to(p) > 1e-8:
-		mi.look_at(q, Vector3.UP)
-		mi.rotate_object_local(Vector3.UP, PI)
+		c["position"] = at / n
+	battle_view.ground.crowds = _crowds
 
 
 # =====================================================================
-#   камера: вступление, слежение за схваткой, тряска
+#   интерфейс боя и управление
 # =====================================================================
 
-func _camera(dt: float) -> void:
-	var alive_x := 0.0
-	var n := 0
-	for u in sim.units:
-		if u.alive and not u.entering and u.speed > 0.0:
-			alive_x += u.x
-			n += 1
-	var want := clampf(alive_x / n if n > 0 else 0.0, -2.5, 3.5)
-	if opts.has("cam_x"):
-		want = float(opts["cam_x"])            # проверки: камера стоит над точкой поля
-	var vs := Vector2(sub.size)
-	var aspect := vs.x / maxf(1.0, vs.y)
-	var base_d := 19.0 * maxf(1.0, 1.7 / maxf(0.5, aspect)) * zoom
-	var pitch := deg_to_rad(25.0)
-	var d := base_d
-	var tx := want
-	if phase == "intro":
-		var k := smoothstep(0.0, 2.4, intro_t)
-		k = k * k * (3.0 - 2.0 * k)
-		tx = lerpf(-6.0, want, k)
-		d = lerpf(11.5, base_d, k)
-		pitch = deg_to_rad(lerpf(14.0, 25.0, k))
-		cam_x = tx
-	elif phase == "ending" or phase == "result":
-		d = lerpf(cam_d, base_d * 0.86, minf(1.0, dt * 0.8))
-		cam_x = lerpf(cam_x, want, minf(1.0, dt * 1.0))
-	else:
-		cam_x = lerpf(cam_x, want, minf(1.0, dt * 1.2))
-		d = lerpf(cam_d, base_d, minf(1.0, dt * 2.0))
-	cam_d = d
-	var target := Vector3(cam_x + 0.6, 0.9, -1.6)
-	var pos := target + Vector3(0.0, sin(pitch), cos(pitch)) * d
-	if shake > 0.0:
-		pos += Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * shake * 0.4
-		shake = maxf(0.0, shake - dt * 0.8)
-	cam.look_at_from_position(pos, target, Vector3.UP)
-	cam_attrs.dof_blur_far_distance = d * 1.15
-	cam_attrs.dof_blur_far_transition = d * 0.9
-	cam_attrs.dof_blur_near_distance = d * 0.58
-	cam_attrs.dof_blur_near_transition = d * 0.3
-
-
-## Точка мира → точка интерфейса (интерфейс в логических единицах окна)
-func _screen(p: Vector3) -> Vector2:
-	if cam == null or cam.is_position_behind(p):
-		return Vector2(-999, -999)
-	var sp := cam.unproject_position(p)
-	var k := ui.size / Vector2(sub.size)
-	return sp * k
-
-
-# =====================================================================
-#   интерфейс: умения, босс, скорость
-# =====================================================================
 
 func _update_ui() -> void:
 	for id in perk_btns:
@@ -1464,17 +954,16 @@ func _update_ui() -> void:
 		pb.charge = sim.perk_charge(id)
 		pb.left = sim.perk_ready(id)
 		pb.active = phase == "fight" or phase == "intro"
-		pb.auto = bool(sim.auto["ally"])
+		pb.disabled = not pb.active or (tut_freeze and id != "oil")
 		pb.queue_redraw()
 	var boss := _boss_unit
 	if boss != null and boss.alive:
 		boss_panel.visible = true
 		boss_name.text = boss.name
 		boss_bar.value = boss.hp_frac()
-		if boss_pic.texture == null:
-			boss_pic.texture = Legion.art_texture("enemy", boss.key)
-			if boss_pic.texture == null:
-				boss_pic.texture = _icon_tex("helmet")
+		if boss_pic.get_meta("unit_id", -1) != boss.id or boss_pic.texture == null:
+			boss_pic.texture = BattleView.portrait(boss)
+			boss_pic.set_meta("unit_id", boss.id)
 	else:
 		boss_panel.visible = false
 
@@ -1495,7 +984,8 @@ func _refresh_speed() -> void:
 		auto_btn.set_pressed_no_signal(on)
 		auto_btn.icon = _icon_tex("check") if on else null
 	if pause_btn:
-		pause_btn.icon = _icon_tex("play" if paused else "pause")
+		(pause_btn.get_node("ic") as TextureRect).texture = _icon_tex("play" if paused else "pause")
+		pause_btn.tooltip_text = "Продолжить бой" if paused else "Пауза (пробел)"
 
 
 func _toggle_auto() -> void:
@@ -1577,7 +1067,7 @@ func _input(e: InputEvent) -> void:
 		return
 	# клавиши боя не уходят в город (там ими ставят дома, крутят камеру и меняют скорость)
 	get_viewport().set_input_as_handled()
-	if sim == null or world == null:
+	if sim == null:
 		return
 	var k := e as InputEventKey
 	if not k.pressed or k.echo:
@@ -1592,7 +1082,7 @@ func _input(e: InputEvent) -> void:
 				_ask_retreat()
 		KEY_SPACE:
 			_toggle_pause()
-		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5:
+		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7:
 			var i := int(k.keycode - KEY_1)
 			var ids := perk_btns.keys()
 			if i < ids.size():
@@ -1651,8 +1141,7 @@ func _modal_panel(w: float) -> PanelContainer:
 	back.mouse_filter = Control.MOUSE_FILTER_STOP
 	ui.add_child(back)
 	modal = back
-	var p := PanelContainer.new()
-	p.custom_minimum_size = Vector2(w, 0)
+	var p := Kit.card(Vector2(w, 0))
 	p.set_anchors_preset(Control.PRESET_CENTER)
 	back.add_child(p)
 	var v := VBoxContainer.new()
@@ -1674,7 +1163,7 @@ func _show_result() -> void:
 	phase = "result"
 	var win := bool(out.get("win", false))
 	var first_lesson := bool(setup.get("fort_guide_first", false))
-	var p := _modal_panel(560)
+	var p := _modal_panel(610)
 	var v: VBoxContainer = p.get_child(0)
 	v.add_theme_constant_override("separation", 10)
 	# лавровый венок со звездой — победа, сломанное копьё — поражение (лист 38 владельца; без него — значки игры)
@@ -1801,6 +1290,7 @@ func _show_result() -> void:
 		_ration_button(nb, nx)
 		nb.disabled = why != ""
 		nb.tooltip_text = why
+		Kit.style_button(nb, "green")
 		bh.add_child(nb)
 	if not pvp and not first_lesson:
 		var st := legion.stage_info(int(stage["cycle"]), int(stage["r"]), int(stage["s"]))
@@ -1809,8 +1299,10 @@ func _show_result() -> void:
 		_ration_button(ab, st)
 		ab.disabled = why2 != ""
 		ab.tooltip_text = why2
+		Kit.style_button(ab)
 		bh.add_child(ab)
 	var back := _button("В лагерь" if not pvp or setup.has("event") else "К соперникам", "legion", _close, 0)
+	Kit.style_button(back)
 	back.name = "LegionBattleReturn"
 	bh.add_child(back)
 
@@ -1851,7 +1343,7 @@ func _star_lines() -> Control:
 	return box
 
 
-## Отряд после боя: портреты бойцов (лист 35 владельца), павшие — серые
+## Отряд после боя: портреты B1, павшие — серые
 func _squad_row() -> Control:
 	var h := HBoxContainer.new()
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1861,13 +1353,7 @@ func _squad_row() -> Control:
 		if u.side != "ally":
 			continue
 		var tr := TextureRect.new()
-		tr.texture = Legion.art_texture("unit", u.key) if Legion.UNITS.has(u.key) else null
-		if u.key == "hero":
-			tr.texture = _hero_face()                 # свой герой — его лицо (с медальона «Герой»), в круге
-			if tr.texture != null:
-				tr.material = StoryUi._mask_mat()
-		if tr.texture == null:
-			tr.texture = _icon_tex(String({"legionary": "helmet", "spearman": "shield", "archer": "arrow", "ballista": "hammer", "catapult": "rock", "hero": "caesar"}.get(u.key, "helmet")))
+		tr.texture = BattleView.portrait(u)
 		tr.custom_minimum_size = Vector2(54, 54)
 		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -1876,15 +1362,6 @@ func _squad_row() -> Control:
 			tr.modulate = Color(0.42, 0.38, 0.36, 0.75)
 		h.add_child(tr)
 	return h
-
-
-## Лицо героя для итога боя: картинка медальона «Герой» (null — ещё не нарисована)
-func _hero_face() -> Texture2D:
-	var hud = game.hud if game != null else null
-	var hb: Button = hud.get("hero_btn") if hud != null else null
-	if hb == null or hb.get_node_or_null("ic") == null or (hb.get_node("ic") as TextureRect).material == null:
-		return null
-	return (hb.get_node("ic") as TextureRect).texture
 
 
 ## Картинка с листа владельца (assets/ui/ai/legion/<лист>.png) по номеру; null — листа нет
@@ -1969,8 +1446,6 @@ func _close() -> void:
 
 ## Бросить бой без итога (проверки, выход из игры)
 func abort() -> void:
-	if sim != null:
-		sim.dispose()
 	_clear_world()
 	_leave()
 	if current == self:
@@ -2048,7 +1523,7 @@ static func _horn_stream() -> AudioStreamWAV:
 
 
 # =====================================================================
-#   рисованные мелочи: полоски здоровья и числа, кнопки умений, звёзды, волны
+#   полоски здоровья и числа, кнопки умений, звёзды
 # =====================================================================
 
 ## Полоски здоровья над бойцами и всплывающие числа — всё одним слоем
@@ -2075,34 +1550,24 @@ class BarsLayer extends Control:
 		if battle == null or battle.sim == null or battle.phase == "result":
 			return
 		var fnt: Font = battle.font_bold
-		for id in battle.views:
-			var v: Dictionary = battle.views[id]
-			var u: LegionSim.Unit = v["u"]
-			if not u.alive or u.boss:
+		var scale_ui: float = battle.battle_view.world.scale.x
+		for f: BattleView.Fighter in battle.views.values():
+			var u := f.unit
+			if not u.alive:
 				continue
-			var f: LegionFighter = v["f"]
-			var p := battle._screen(f.global_position + Vector3(0, f.top, 0))
-			if p.x < -50.0:
-				continue
-			var w := 40.0 if u.size <= 1.05 else 56.0
+			var p := battle.battle_view.screen(f.head())
+			var w := 74.0 * scale_ui
+			var h := 5.5 * scale_ui
+			var left := p - Vector2(w * 0.5, 0)
+			var right := left + Vector2(w, 0)
+			draw_line(left, right, Color("593413"), h + 7.0, true)
+			draw_line(left, right, Color("e1a841"), h + 4.0, true)
+			draw_line(left, right, Color("512412"), h + 1.8, true)
 			var hp := u.hp_frac()
-			v["hp"] = lerpf(float(v["hp"]), hp, 0.12)
-			var r := Rect2(p.x - w * 0.5, p.y - 4.0, w, 7.0)
-			draw_rect(r.grow(1.5), Color(0.18, 0.1, 0.05, 0.75))
-			draw_rect(Rect2(r.position, Vector2(w * float(v["hp"]), 7.0)), Color(1.0, 0.9, 0.7, 0.55))
-			var col := Color("8cc63f") if u.side == "ally" else Color("d9473a")
-			if u.side == "ally" and hp < 0.35:
-				col = Color("e6b03a")
-			draw_rect(Rect2(r.position, Vector2(w * hp, 7.0)), col)
-			draw_rect(Rect2(r.position, Vector2(w * hp, 2.0)), Color(1, 1, 1, 0.25))
-			if u.key == "hero":
-				# свой герой (Д11): золотая кайма полоски и имя над ней — его видно в толчее
-				draw_rect(r.grow(1.5), Color("e8b84a"), false, 2.0)
-				var nm := u.name
-				var tw := fnt.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
-				var np := Vector2(p.x - tw * 0.5, p.y - 9.0)
-				draw_string_outline(fnt, np, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, 5, Color(0.2, 0.08, 0.03, 0.9))
-				draw_string(fnt, np, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("ffe08a"))
+			var col := Color("78da25") if u.side == "ally" else Color("ea3a2c")
+			draw_line(left, left.lerp(right, f.health), Color("cd8f52"), h, true)
+			draw_line(left, left.lerp(right, hp), col, h, true)
+			draw_line(left - Vector2(0, 1), left.lerp(right, hp) - Vector2(0, 1), Color(col.lightened(0.4), 0.9), 1.5, true)
 		for fl: Array in floats:
 			var k: float = fl[3]
 			var pos: Vector2 = fl[0] - Vector2(0, 46.0 * ease(k, 0.5))
@@ -2122,79 +1587,55 @@ class BarsLayer extends Control:
 			draw_string(fnt, pos - Vector2(tw * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
 
 
-## Кнопка умения: бронзовый медальон, картинка, перезарядка (тёмный сектор и секунды), имя, уровень, клавиша
-class PerkButton extends Control:
+## Круглая кнопка, время перезарядки видно на кольце.
+class PerkButton extends Button:
 	var battle: LegionBattle
-	var id := ""
 	var key_n := 1
-	var lvl := 1
-	var icon: Texture2D
+	var art: Texture2D
 	var medal: Texture2D
-	var medal_on: Texture2D
 	var charge := 0.0
 	var left := 0.0
 	var active := true
-	var auto := false
 	var pop := 0.0
-	var _hover := false
 
 	func _ready() -> void:
-		mouse_entered.connect(func(): _hover = true; queue_redraw())
-		mouse_exited.connect(func(): _hover = false; queue_redraw())
+		for state in ["normal", "hover", "pressed", "disabled", "focus", "hover_pressed"]:
+			add_theme_stylebox_override(state, StyleBoxEmpty.new())
 
-	func _gui_input(e: InputEvent) -> void:
-		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-			battle.use_perk(id)
-			accept_event()
+	func _has_point(p: Vector2) -> bool:
+		return p.distance_squared_to(size * 0.5) <= pow(minf(size.x, size.y) * 0.5, 2)
 
 	func _process(dt: float) -> void:
 		if pop > 0.0:
 			pop = maxf(0.0, pop - dt * 3.0)
-			queue_redraw()
 
 	func _draw() -> void:
-		var d := 86.0
-		var c := Vector2(size.x * 0.5, 46.0)
-		var ready := charge >= 1.0 and active
-		var s := d * (1.0 + 0.12 * sin(pop * PI)) * (1.04 if _hover and ready else 1.0)
-		var rect := Rect2(c - Vector2(s, s) * 0.5, Vector2(s, s))
-		if ready:
-			var glow := 0.75 + 0.25 * sin(Time.get_ticks_msec() / 1000.0 * 4.0)
-			draw_texture_rect(medal_on, rect.grow(s * 0.08), false, Color(1, 1, 1, glow))
-		draw_texture_rect(medal, rect, false)
-		if icon:
-			var ir := rect.grow(-s * 0.16)
-			draw_texture_rect(icon, ir, false, Color(1, 1, 1, 1.0 if ready else 0.75))
-		if charge < 1.0:
-			# тёмный сектор того, что ещё не накопилось (по часовой от верха)
-			var pts := PackedVector2Array([c])
-			var a0 := -PI / 2.0 + TAU * charge
-			var steps := 32
-			for i in steps + 1:
-				var a := lerpf(a0, -PI / 2.0 + TAU, float(i) / steps)
-				pts.append(c + Vector2(cos(a), sin(a)) * s * 0.4)
-			if pts.size() >= 3:
-				draw_colored_polygon(pts, Color(0.12, 0.07, 0.03, 0.62))
-			draw_arc(c, s * 0.42, -PI / 2.0, -PI / 2.0 + TAU * charge, 40, Color(1.0, 0.82, 0.35, 0.95), 4.0, true)
-			if left > 0.0:
-				var txt := str(ceili(left))
-				var f: Font = battle.font_bold
-				var tw := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x
-				draw_string_outline(f, c + Vector2(-tw * 0.5, 11), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, 6, Color(0.15, 0.08, 0.03, 0.9))
-				draw_string(f, c + Vector2(-tw * 0.5, 11), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color("fff1d2"))
-		# клавиша
-		var kf: Font = battle.font_bold
-		draw_circle(c + Vector2(-s * 0.4, -s * 0.36), 12.0, Color(0.3, 0.17, 0.07, 0.9))
-		draw_string(kf, c + Vector2(-s * 0.4 - 5, -s * 0.36 + 7), str(key_n), HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("ffe7b0"))
-		# имя и уровень
-		var nm := String(Legion.PERKS[id]["name"])
-		var fs := 15
-		var nw := battle.font_bold.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		draw_string_outline(battle.font_bold, Vector2((size.x - nw) * 0.5, 104), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(1.0, 0.96, 0.86, 0.9))
-		draw_string(battle.font_bold, Vector2((size.x - nw) * 0.5, 104), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("4a2c17"))
-		var lv := "ур. %d" % lvl + (" · авто" if auto else "")
-		var lw := battle.font.get_string_size(lv, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-		draw_string(battle.font, Vector2((size.x - lw) * 0.5, 119), lv, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("7a5a3c"))
+		var c := size * 0.5
+		var ready := charge >= 1.0 and not disabled
+		var d := minf(size.x, size.y) * (0.94 + 0.05 * sin(pop * PI))
+		var r := Rect2(c - Vector2.ONE * d * 0.5, Vector2.ONE * d)
+		var gleam := Color(1.08, 1.06, 1.0) if is_hovered() and ready else Color.WHITE
+		draw_texture_rect(medal, r, false, gleam)
+		if art != null:
+			draw_texture_rect(art, r.grow(-d * 0.19), false)
+		var radius := d * 0.39
+		if not ready:
+			draw_circle(c, radius, Color(0.13, 0.046, 0.024, 0.62), true, -1.0, true)
+		var fill := Color("fff0a0") if ready else Color("f9bd54")
+		if charge > 0.0:
+			draw_arc(c, radius, -PI / 2, -PI / 2 + TAU * charge, 48, fill, 3.0, true)
+		if left > 0.0 and active:
+			_number(c, str(ceili(left)), roundi(d * 0.26))
+		var key_pos := c + Vector2(-0.33, -0.32) * d
+		draw_circle(key_pos, 11.0, Color("633213"), true, -1.0, true)
+		_number(key_pos, str(key_n), 16)
+
+	func _number(c: Vector2, txt: String, pixels: int) -> void:
+		var f: Font = battle.font_bold
+		var w := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, pixels).x
+		var pos := c + Vector2(-w * 0.5, (f.get_ascent(pixels) - f.get_descent(pixels)) * 0.5)
+		draw_string_outline(f, pos, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, pixels, 4, Color("351505"))
+		draw_string(f, pos, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, pixels, Color("fff4dc"))
 
 
 ## Звёзды итога (рисуются, а не шрифтом)
@@ -2228,18 +1669,6 @@ class Stars extends Control:
 
 
 ## Кружок волны: пройденная/идущая — золотая, впереди — пустая; волна босса — с короной
-class WavePip extends Control:
-	var on := false
-	var boss := false
-
-	func _draw() -> void:
-		var c := size * 0.5
-		draw_circle(c, 8.0, Color(0.3, 0.12, 0.06, 0.85))
-		draw_circle(c, 6.0, Color("f2c24a") if on else Color(0.55, 0.3, 0.2, 0.9))
-		if boss:
-			draw_colored_polygon(PackedVector2Array([c + Vector2(-5, -6), c + Vector2(-3, -11), c + Vector2(0, -7), c + Vector2(3, -11), c + Vector2(5, -6)]), Color("f2c24a"))
-
-
 func _ration_button(button: Button, st: Dictionary) -> void:
 	if not legion.v3():
 		return
