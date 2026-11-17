@@ -188,8 +188,12 @@ func _research_pages() -> void:
 		await frames(6)
 		var count := 0
 		for r: Dictionary in Defs.RESEARCH:
-			var card: Control = tree.cards[String(r["id"])]
-			check(card.is_visible_in_tree() == (int(r["lvl"]) == tier), "only selected rank visible")
+			var id := String(r["id"])
+			var card: Control = tree.cards[id]
+			var allowed: bool = city.research_visible(id) and not bool(r.get("hidden", false))
+			if Defs.B.has(id) and not city.city_buildable(id):
+				allowed = false
+			check(card.is_visible_in_tree() == (allowed and int(r["lvl"]) == tier), "only selected rank and visible research shown: %s (rank %d)" % [id, tier])
 			if card.is_visible_in_tree():
 				count += 1
 				check(tree.scroll.get_global_rect().grow(1).encloses(card.get_global_rect()), "rank item fits page " + String(r["id"]))
@@ -198,6 +202,10 @@ func _research_pages() -> void:
 				check(name_label.get_theme_font_size("font_size") == 13, "13px item name")
 				check(name_label.get_theme_font("font").get_string_size(name_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x <= card.size.x and absf(name_label.position.x + tree.name_width(name_label) * 0.5 - card.size.x * 0.5) <= 1.0, "research name fits its cell, centred (%s)" % name_label.text)
 				check(card.tooltip_text.contains(I18n.t(String(r["name"]))) and name_label.tooltip_text == String(r["name"]), "full research name in tooltip")
+		# Чудеса без готовых моделей не занимают места даже в открытом ряду.
+		for type: String in Defs.B:
+			if Defs.B[type].get("sub", "") == "wonders" and not city.city_buildable(type):
+				check(not tree.cards.has(type) or not (tree.cards[type] as Control).is_visible_in_tree(), "hidden wonder has no visible research card " + type)
 		check(count <= 16, "rank fits two rows")
 		if count > largest_count:
 			largest_count = count
@@ -234,7 +242,7 @@ func _wait_research_pictures() -> void:
 	for attempt in 3600:
 		var loaded := true
 		for r: Dictionary in Defs.RESEARCH:
-			if int(r["lvl"]) != tree.current_rank:
+			if int(r["lvl"]) != tree.current_rank or not (tree.cards[String(r["id"])] as Control).is_visible_in_tree():
 				continue
 			var types: Array[String] = tree.building_ids(String(r["id"]))
 			for type: String in types:

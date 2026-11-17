@@ -14,6 +14,7 @@ extends Node
 const OWNER := "D:/CivCity/.work/owner_save/city.json"
 const SHOTS := "D:/CivCity/.work/gd/a/"
 const SHOTS_PVP := "D:/CivCity/.work/gd/c/"
+const Advice := preload("res://scripts/test_advice_fixture.gd")
 var game
 var c: City
 var ppl: People
@@ -114,6 +115,12 @@ func _new() -> void:
 	check(scr != null and scr.mode == "new", "новая игра: экран «Ваш герой»")
 	if scr == null:
 		return
+	# Совет о герое ждёт обучения, даже если оно было отключено в настройках запуска.
+	game.tutorial.step = Tutorial.STEPS.size()
+	game.tutorial.card.hide()
+	game.tutorial.set_process(false)
+	c.tips["tut"] = 0
+	hud.quiet_tips = 0
 	check(float(game.speed) == 0.0 and game.rig.cine, "пока выбираем — город стоит, камера не ездит")
 	check(Hero.exists(c) and not bool(c.hero["made"]), "до выбора у города уже есть случайный герой (made=false)")
 	# готовые наборы: каждый собирается и встаёт на подиум как задан
@@ -169,15 +176,16 @@ func _new() -> void:
 	check(float(game.speed) > 0.0 and not game.rig.cine, "город снова идёт", [game.speed, game.rig.cine])
 	check(not ppl.hero_r.is_empty() and ppl.by_id.has(Hero.HERO_RID) and not ppl.residents.has(ppl.hero_r), "герой на улицах (в by_id, не в счёте жителей)")
 	check(int(c.stats.get("pop", 0)) == 0, "герой не входит в число жителей", c.stats.get("pop"))
-	# советник один раз: кто он и где его найти
-	hud.advisor_panel.visible = false
-	for k in 8:                                # другие разовые советы (праздник, этаж…) идут раньше — закрываем их по очереди
-		hud._tip_next = 0
-		hud._once_tips()
-		if c.tips.has("hero_tip"):
-			break
-		hud.advisor_panel.visible = false
-	check(c.tips.has("hero_tip") and hud.adv_title.text.contains("ваш герой") and hud.adv_text.text.contains("медальон"), "советник один раз: «… — ваш герой»", [hud.adv_title.text, c.tips.has("hero_tip"), hud._tip_free(), game.mode, game.shot_path, hud.visible, hud.root.visible, game.tutorial != null and game.tutorial.active(), hud.advisor_panel.visible])
+	# Сначала затвор обучения, затем очередь советов; на карточке теперь две короткие фразы.
+	hud._once_tips()
+	hud._flush_guidance()
+	check(hud.tutorial_busy() and not c.tips.has("hero_tip") and not hud.advisor_panel.visible, "совет о герое ждёт окончания обучения")
+	c.tips["tut"] = -1
+	hud.close_panels()
+	var hero_title := "%s — ваш герой" % Hero.name_of(c)
+	check(Advice.show(hud, hero_title) and c.tips.has("hero_tip") and hud.adv_text.text.contains("гуляет по улицам")
+		and hud.adv_text.text.contains("лавровый венок и плащ"), "советник: «… — ваш герой» после обучения и очереди", [hud.adv_title.text, hud.adv_text.text, c.tips.has("hero_tip"), hud.guidance_queue])
+	check(Advice.repeats(hud, hero_title) == 0 and c.tips.has("hero_tip"), "совет о герое показан ровно один раз")
 	hud.advisor_panel.visible = false
 	# медальон «Герой» с лицом
 	await frames(30)

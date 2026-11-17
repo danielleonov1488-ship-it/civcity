@@ -11,6 +11,7 @@ extends Node
 ## изображает сам (CART_H, WALK_H).
 
 const OLD10 := ["road1", "houses3", "fam3", "fruit", "scriptorium", "research1", "lights", "fed6", "pop30", "decor5"]
+const Advice := preload("res://scripts/test_advice_fixture.gd")
 const SEC_H := 25.0                  # секунд в игровом часе при 1× (Game.DAY_LEN / 24)
 const CART_H := 1.3                  # повозка от края карты до станции, часов (за кадром втрое быстрее)
 const WALK_H := 0.5                  # семья идёт от станции до дома
@@ -67,8 +68,10 @@ func _run() -> void:
 	# обучение не мешает: его шаги сами подгоняют повозку и докладывают очки
 	game.tutorial.step = Tutorial.STEPS.size()
 	game.tutorial.card.visible = false
+	game.tutorial.set_process(false)
 	c.tips["tut"] = -1
 	c.tips["ui"] = 3
+	game.hud.quiet_tips = 0
 	game.hud.apply_reveal(3)
 	await frames(5)
 	if "bot" in OS.get_cmdline_user_args():
@@ -454,13 +457,35 @@ func _checks_1a(houses: Array) -> void:
 	check(c.events.size() == ev0 + 1 and String(c.events[-1]["text"]).contains("готов стать «Хутор»"), "one quiet bell note: «%s»" % String(c.events[-1]["text"]))
 	c._update_level()
 	check(c.events.size() == ev0 + 1, "…and only once")
-	hud.advisor_panel.visible = false
+	game.settings["tasks_folded"] = false
 	hud.refresh()
 	check(hud.rank_btn.visible, "button «Перейти на новый уровень» is shown")
-	check(hud.advisor_panel.visible and hud.adv_title.text == "Город готов к новому уровню!" and c.tips.has("rank_tip"), "advisor explains it once: «%s»" % hud.adv_title.text)
-	check(hud.pointer_target == hud.rank_btn, "the arrow points at the button the first time")
+	# Вступление и прежние советы закрываем по очереди, а не ждём немедленного показа.
+	var rank_title := "Город готов к новому уровню!"
+	check(Advice.show(hud, rank_title) and c.tips.has("rank_tip"), "rank advice appears after queued guidance: «%s»" % hud.adv_title.text)
+	hud._update_pointer()
+	await frames(2)
+	check(hud.pointer_target == null and not hud.pointer.visible, "no automatic rank arrow after the tutorial")
 	game.rig.set_view(Vector3(180, 2, 143), 20, 50, 46)
 	await shot("pace_rank_btn.png")
+	check(Advice.repeats(hud, rank_title) == 0 and c.tips.has("rank_tip"), "rank advice is shown exactly once")
+	# Нажимаем настоящую строку просьбы: стрелка появляется только по щелчку.
+	var rank_line: Button = null
+	for button: Button in hud.tasks_box.find_children("*", "Button", true, false):
+		if _texts(button.get_parent()).contains(String(Defs.request("hamlet")["text"])):
+			rank_line = button
+			break
+	check(rank_line != null, "rank request line is present")
+	if rank_line != null:
+		rank_line.pressed.emit()
+		await frames(2)
+		check(hud.pointer_target == hud.rank_btn and hud.pointer.visible, "clicking the request line points at the rank button")
+		await shot("pace_rank_clicked.png")
+		hud._ptr_shown["until"] = Time.get_ticks_msec() - 1
+		hud._update_pointer()
+		await frames(2)
+		check(hud.pointer_target == null and not hud.pointer.visible, "the clicked arrow expires without an automatic replacement")
+	hud.close_panels()
 	hud.advisor_panel.visible = false
 	hud._show_hover(hud.hover_level)
 	hud._hover_hold = 30                      # мыши над плашкой нет — подсказку держим для снимка
@@ -492,8 +517,9 @@ func _checks_1a(houses: Array) -> void:
 	c.sim_day()                              # (час сам обновляет интерфейс — значки и совет)
 	check(float(c.stats["money_lost"]) > 0.0 and hud.full_money.visible, "treasury full: income lost %.1f, mark shown" % float(c.stats["money_lost"]))
 	check(float(c.stats["rp_lost"]) > 0.0 and hud.full_rp.visible, "shelves full: rp lost %.1f, mark shown" % float(c.stats["rp_lost"]))
-	check(c.tips.has("full_money") and hud.advisor_panel.visible and hud.adv_title.text == "Казна полна", "advisor explains the full treasury once: «%s»" % hud.adv_title.text)
+	check(Advice.show(hud, "Казна полна") and c.tips.has("full_money"), "full treasury advice appears after queued guidance: «%s»" % hud.adv_title.text)
 	await shot("pace_full_marks.png")
+	check(Advice.repeats(hud, "Казна полна") == 0 and c.tips.has("full_money"), "full treasury advice is shown exactly once")
 	hud.advisor_panel.visible = false
 	c.money = 500.0
 	c.rp = 10.0

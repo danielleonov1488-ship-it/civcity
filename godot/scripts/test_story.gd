@@ -570,13 +570,18 @@ func _legion3() -> void:
 		lg.apply_result(setup, {"win": true, "alive": 2, "total": 2, "timeout": false, "time": 40.0})
 		check(lg.progress == 1, "кампания идёт без городской истории")
 	camp_ui.close()
-	# Удаляем только созданную выше прежнюю мастерскую из подсчёта фикстуры.
-	var legacy_count := 1 if not sm.is_empty() else 0
-	var bar := 0
+	# Плавильня не входит в V3_HIDDEN. Сверяем все военные здания с фикстурой по id.
+	var legacy_military := {}
+	if not sm.is_empty():
+		legacy_military[int(sm["id"])] = String(sm["type"])
+	var military := {}
 	for id in c.buildings:
-		if String(c.buildings[id]["type"]) in Legion.V3_HIDDEN:
-			bar += 1
-	check(bar == legacy_count and lg.quarter().is_empty() and not lg.flags.has("quarter"), "новых военных построек на карте и квартала нет")
+		var type := String(c.buildings[id]["type"])
+		var d: Dictionary = Defs.B[type]
+		if d.get("kind", "") == "military" or d.get("cat", "") == "military":
+			military[int(id)] = type
+	check(military == legacy_military, "новых военных построек на карте нет: %s (фикстура %s)" % [military, legacy_military])
+	check(lg.quarter().is_empty() and not lg.flags.has("quarter"), "военного квартала нет: %s, флаг=%s" % [lg.quarter(), lg.flags.get("quarter")])
 
 
 # ---------- отзывы игроков 27.10: в роликах не кивают без конца ----------
