@@ -282,7 +282,7 @@ func _camp() -> void:
 	var t := []
 	for to in range(2, 9):
 		t.append(roundi(Legion.camp_time_h(to) * 3600.0))
-	_check(t == [300, 1800, 7200, 28800, 86400, 129600, 172800], "таймеры до 2…8 уровня, с: %s" % [t])
+	_check(t == [900, 7200, 21600, 43200, 86400, 172800, 259200], "таймеры до 2…8 уровня, с: %s" % [t])
 	_check(L.camp_level("hq") == 1 and L.camp_level("barracks") == 1 and L.camp_level("drill") == 1 and L.camp_level("forge") == 0
 		and L.camp_level("mars") == 0 and L.camp_level("store") == 0, "старт: штаб, казарма, плац — 1; кузница, Марс, склад — не построены")
 	var why := L.camp_can_upgrade("barracks")
@@ -293,7 +293,7 @@ func _camp() -> void:
 	c.level = 1
 	var m0 := float(c.money)
 	var ok := L.camp_upgrade("hq")
-	_check(ok and L.camp_left("hq") > 0.0 and absf(L.camp_left("hq") - 300.0) < 5.0 and float(c.money) < m0, "Штаб → 2: идёт %d с, заплачено %d" % [roundi(L.camp_left("hq")), roundi(m0 - float(c.money))])
+	_check(ok and L.camp_left("hq") > 0.0 and absf(L.camp_left("hq") - 900.0) < 5.0 and float(c.money) < m0, "Штаб → 2: идёт %d с, заплачено %d" % [roundi(L.camp_left("hq")), roundi(m0 - float(c.money))])
 	_check(L.camp_can_upgrade("drill").contains("Строитель занят"), "строитель один: «%s»" % L.camp_can_upgrade("drill"))
 	L.upg["camp_hq"]["end"] = Legion.now() - 1.0
 	var ev := L.tick()

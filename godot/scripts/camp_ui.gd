@@ -521,6 +521,8 @@ func _process(dt: float) -> void:
 
 static func clock_text(seconds: float) -> String:
 	var t := maxi(0, ceili(seconds))
+	if t >= 86400:
+		return duration_text(float(t))
 	return "%d:%02d:%02d" % [t / 3600, (t % 3600) / 60, t % 60]
 
 
@@ -846,7 +848,7 @@ func _refresh_card() -> void:
 	instant_button.set_meta("quote", quote)
 	instant_price.text = str(int(quote["price"]))
 	instant_button.disabled = String(quote["why"]) != ""
-	instant_button.tooltip_text = I18n.t("Завершить сразу") + "\n" + I18n.t("1 слиток за 10 минут; цена улучшения оплачивается отдельно") + ("\n" + I18n.t(String(quote["why"])) if quote["why"] != "" else "")
+	instant_button.tooltip_text = I18n.t("Завершить сразу") + "\n" + I18n.t("Слитки: 1,2 × √минут ожидания, округление вверх (от 1). Цена улучшения — отдельно.") + ("\n" + I18n.t(String(quote["why"])) if quote["why"] != "" else "")
 	main_action_reason.text = I18n.t(reason) if not running else ""
 	main_action_reason.hide()
 	_refresh_costs(card_body)
@@ -1126,6 +1128,8 @@ func _aux(kind: String, sid := 0) -> void:
 static func duration_text(seconds: float) -> String:
 	var minutes := maxi(1, ceili(seconds / 60.0)) if seconds > 0.0 else 0
 	if minutes >= 1440:
+		if minutes % 1440 == 0:
+			return I18n.t("%d д") % (minutes / 1440)
 		return I18n.t("%d д %d ч") % [minutes / 1440, (minutes % 1440) / 60]
 	if minutes >= 60:
 		return I18n.t("%d ч %d мин") % [minutes / 60, minutes % 60]

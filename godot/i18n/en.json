@@ -5442,5 +5442,7 @@
 "Учёный": "Scholar",
 "Служитель": "Attendant",
 "+20% к работе, если подходит": "+20% work output when suited",
-"Подходят %d из %d": "Suited: %d of %d"
+"Подходят %d из %d": "Suited: %d of %d",
+"%d д": "%d d",
+"Слитки: 1,2 × √минут ожидания, округление вверх (от 1). Цена улучшения — отдельно.": "Ingots: 1.2 × √waiting minutes, rounded up (minimum 1). Upgrade cost is paid separately."
 }
