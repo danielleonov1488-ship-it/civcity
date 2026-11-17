@@ -431,6 +431,7 @@ func _count(button: Button, amount: int) -> void:
 
 func _nav(title: String, icon: String, action: Callable) -> Button:
 	var button := Kit.round_button(icon)
+	button.custom_minimum_size = Vector2(76, 76)
 	button.tooltip_text = I18n.t(title)
 	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	left_column.add_child(button)
@@ -478,10 +479,9 @@ func _layout() -> void:
 	extra_plots.size = Vector2(maxf(150, size.x / k - 310), 136)
 	gate.hide()
 	if is_instance_valid(card):
-		var card_k := minf(1.12, minf((size.x - 32) / 800.0, (size.y - 32) / 850.0))
-		card.scale = Vector2.ONE * card_k
-		card.size = Vector2(800, 850)
-		card.position = (size - card.size * card_k) * 0.5 + Vector2(0, _sheet_offset)
+		card_scroll.custom_minimum_size.y = card_body.get_combined_minimum_size().y
+		Kit.fit_modal(card, size, Vector2(800, 0), 1.12)
+		card.position.y = clampf(card.position.y + _sheet_offset, 24, maxf(24, size.y - card.size.y * card.scale.y - 24))
 	_fit_modal()
 	_layout_guide()
 	if diorama is FortCutaway:
@@ -703,11 +703,12 @@ func _build_card() -> void:
 	room_stock_label = _text("", 28, true)
 	room_stock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	stock_body.add_child(room_stock_label)
-	room_stock_bar = Kit.progress(0, 1)
+	room_stock_bar = Kit.progress(0, 1, "green" if prod.is_empty() else "gold")
+	room_stock_bar.name = "FortRoomStockFill"
 	stock_body.add_child(room_stock_bar)
 	stock.tooltip_text = String(info["gives"]) + "\n" + I18n.t("ур. %d: %s") % [int(info["lv"]) + 1, String(info["gives_next"])]
 	_worker_card(card_body)
-	main_action = Kit.button("cream", "collect")
+	main_action = Kit.button("green", "collect")
 	main_action.name = "FortMainAction"
 	main_action.pressed.connect(_main_action)
 	card_body.add_child(main_action)
@@ -818,7 +819,7 @@ func _refresh_card() -> void:
 	if int(plot["lv"]) == 0 or running:
 		reason = I18n.t("Здание строится.")
 	main_action.set_meta("action_name", title)
-	main_action.text = str(floori(float(plot["pend"]) + 0.0001)) if not prod.is_empty() and title != I18n.t("Назначить") else ""
+	main_action.text = title
 	var action_icon := "collect"
 	if title == I18n.t("Назначить"):
 		action_icon = "assign"
@@ -989,18 +990,17 @@ func _new_modal(width: float) -> VBoxContainer:
 func _fit_modal() -> void:
 	if not is_instance_valid(modal_panel):
 		return
-	modal_panel.reset_size()
-	var dims := modal_panel.get_combined_minimum_size()
-	var k := minf(1.0, minf((size.x - 24) / maxf(1, dims.x), (size.y - 24) / maxf(1, dims.y)))
-	modal_panel.scale = Vector2.ONE * k
-	modal_panel.position = (size - dims * k) * 0.5
+	Kit.fit_modal(modal_panel, size)
+	var dims := modal_panel.size
+	var k := modal_panel.scale.x
 	if _popup_resource != "":
 		var bar: Control = resource_bars[_popup_resource]["panel"]
 		var rect := bar.get_global_rect()
-		modal_panel.position = Vector2(clampf(rect.position.x - global_position.x, 12, maxf(12, size.x - dims.x * k - 12)), rect.end.y - global_position.y + 8)
+		modal_panel.position = Vector2(clampf(rect.position.x - global_position.x, 24, maxf(24, size.x - dims.x * k - 24)), rect.end.y - global_position.y + 8)
 	if recruit_result:
 		# Карточка справа оставляет путь от ворот к казарме на виду.
-		modal_panel.position = Vector2(maxf(12, size.x - dims.x * k - 16), maxf(76, size.y - dims.y * k - 82))
+		modal_panel.position = Vector2(maxf(24, size.x - dims.x * k - 24), maxf(24, size.y - dims.y * k - 82))
+	modal_panel.position = modal_panel.position.clamp(Vector2.ONE * 24, (size - dims * k - Vector2.ONE * 24).max(Vector2.ONE * 24))
 
 
 func _close_modal() -> void:
@@ -1213,6 +1213,7 @@ func _add_speed(parent: VBoxContainer, key: String) -> void:
 	var box := VBoxContainer.new()
 	parent.add_child(box)
 	var b := Kit.button("gold", Kit.resource("money"))
+	b.name = "FortSpeedAction"
 	b.pressed.connect(func(): lg.speed_up(key); _refresh())
 	box.add_child(b)
 	var quota := _text("", 13)
@@ -1227,7 +1228,7 @@ func _refresh_speeds() -> void:
 		var info := lg.speed_info(String(entry["key"]))
 		(entry["box"] as Control).visible = float(info["left"]) > 0.0
 		var b: Button = entry["button"]
-		b.text = str(int(info["price"]))
+		b.text = I18n.t("Ускорить · %d") % int(info["price"])
 		b.tooltip_text = I18n.t("Ускорить: −%s за %d ден.") % [duration_text(minf(1800.0, minf(float(info["left"]), lg.speed_remaining()))), int(info["price"])]
 		b.disabled = not bool(info["allowed"])
 		(entry["quota"] as Label).hide()
@@ -1529,7 +1530,7 @@ func _jump_to_type(type: String) -> void:
 func show_build_menu(plot_id := -1) -> void:
 	build_plot_id = plot_id if plot_id >= 0 else lg.fort_empty_plot()
 	_guide_advance(1)
-	var v := _new_modal(minf(1020, maxf(700, size.x - 100)))
+	var v := _new_modal(1020)
 	modal_panel.name = "FortBuildMenu"
 	var head := HBoxContainer.new()
 	v.add_child(head)
@@ -1575,7 +1576,7 @@ func show_build_menu(plot_id := -1) -> void:
 		body.add_child(Kit.time_row(duration_text(Legion.camp_time_h(1) * float(spec["time_k"]) * 3600.0 / maxf(0.001, lg.time_k))))
 		var count := _text("", 14, true)
 		body.add_child(count)
-		var button := Kit.button("green", "build")
+		var button := Kit.button("green", Kit.resource("money"), I18n.t("Строить"))
 		button.pressed.connect(func(): _choose_build(type))
 		button.name = "Build_" + type
 		body.add_child(button)
@@ -1584,6 +1585,13 @@ func show_build_menu(plot_id := -1) -> void:
 		reason.visible = false
 		body.add_child(reason)
 		build_cards[type] = {"panel": panel, "button": button, "count": count, "reason": reason, "picture": picture}
+	# Три целые карточки и место под полосу прокрутки; низ не обрезается.
+	var tile_width := 0.0
+	for entry: Dictionary in build_cards.values():
+		tile_width = maxf(tile_width, (entry["panel"] as Control).get_combined_minimum_size().x)
+	for entry: Dictionary in build_cards.values():
+		(entry["panel"] as Control).custom_minimum_size.x = tile_width
+	build_scroll.custom_minimum_size = Vector2(tile_width * 3.0 + 24.0, row.get_combined_minimum_size().y + 24.0)
 	_build_sig = _plot_signature()
 	_refresh_build_menu()
 	_fit_modal.call_deferred()
@@ -1613,14 +1621,15 @@ func _refresh_build_menu() -> void:
 		var why := lg.fort_can_build(type, build_plot_id if build_plot_id >= 0 else lg.fort_empty_plot())
 		(entry["count"] as Label).text = "%d / %d" % [count, cap]
 		var button: Button = entry["button"]
-		button.text = ""
+		button.text = I18n.t("Строить · %d") % int(Legion.fort_cost(type, 1).get("money", 0))
+		button.icon = Kit.resource("money")
 		button.disabled = why != ""
 		if cap == 0:
 			why = I18n.t("Штаб ур. %d") % int(Legion.FORT_B[type]["max"][0])
-			button.text = ""
 		# Уже построенная кухня остаётся доступной в обучении и после миграции.
 		if type == "kitchen" and count > 0 and int(lg.flags.get("camp3d_guide", 4)) == 2:
 			button.icon = Kit.texture("back")
+			button.text = I18n.t("Перейти")
 			button.disabled = false
 			why = ""
 		button.tooltip_text = I18n.t("Строить") + ("\n" + I18n.t(why) if why != "" else "")
@@ -2138,7 +2147,7 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 	left.add_child(_text(Soldiers.class_name_of(String(person["cls"])), 20, true))
 	var stats := lg.soldier_stats(person, Legion.unit_of_class(String(person["cls"])))
 	var stat_grid := GridContainer.new()
-	stat_grid.columns = 2
+	stat_grid.columns = 3
 	stat_grid.add_theme_constant_override("h_separation", 14)
 	left.add_child(stat_grid)
 	for entry: Array in [["need_services", "Здоровье", roundi(float(stats["hp"]))], ["soldier", "Атака", roundi(float(stats["atk"]))], ["equip", "Защита", roundi(float(stats["armor"]))], ["star", "Сила", Legion.power(stats)]]:
@@ -2146,10 +2155,11 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 		icon.mouse_filter = Control.MOUSE_FILTER_PASS
 		icon.tooltip_text = I18n.t(String(entry[1]))
 		stat_grid.add_child(icon)
+		stat_grid.add_child(_text(I18n.t(String(entry[1])), 17))
 		stat_grid.add_child(_text(str(entry[2]), 23, true))
 	var plot := lg.fort_plot(lg.fort_worker_plot(sid))
 	var work := I18n.t(String(Legion.FORT_B[String(plot["b"])]["name"])) if not plot.is_empty() else I18n.t("Двор")
-	var move := Kit.button("gold", "assign")
+	var move := Kit.button("gold", "swap", I18n.t("Переместить"))
 	move.name = "FortMoveDweller"
 	move.disabled = lg.s_state(person) != "ready"
 	move.tooltip_text = I18n.t("Работа: %s") % work + "\n" + I18n.t("Перетащите человека в комнату. Зелёная — можно, красная — нельзя.")
@@ -2175,10 +2185,14 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 	var inventory_head := HBoxContainer.new()
 	right.add_child(inventory_head)
 	var inventory_title := _text(I18n.t("На складе"), 24, true)
+	inventory_title.name = "FortInventoryTitle"
+	var inventory_font := FontVariation.new()
+	inventory_font.base_font = Kit.BOLD
+	inventory_font.spacing_space = 5
+	inventory_title.add_theme_font_override("font", inventory_font)
 	inventory_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	inventory_head.add_child(inventory_title)
 	var help := Kit.round_button("info")
-	help.custom_minimum_size = Vector2(42, 42)
 	help.tooltip_text = I18n.t("Где взять?")
 	help.pressed.connect(func():
 		var hint := _new_modal(560)
@@ -2223,6 +2237,9 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 		button.add_child(icon)
 		icon.position = Vector2(9, 6)
 		var gain := Kit.label("%+d" % (int(delta[1]) - int(delta[0])), 15, true)
+		gain.name = "PowerDelta"
+		gain.add_theme_color_override("font_color", Color("83ee8e") if int(delta[1]) >= int(delta[0]) else Color("ff8b7b"))
+		gain.add_theme_color_override("font_outline_color", Color("193d16") if int(delta[1]) >= int(delta[0]) else Color("58110b"))
 		gain.position = Vector2(8, 62)
 		button.add_child(gain)
 	if inventory.get_child_count() == 0:
@@ -2238,6 +2255,7 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 
 func _gear_slot_button(pixels: float, selected_slot := false) -> Button:
 	var b := Kit.button("cream")
+	b.set_meta("kit_role", "slot")
 	b.custom_minimum_size = Vector2.ONE * pixels
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		var style := Kit.box("panels/slot_frame", 0, 0)

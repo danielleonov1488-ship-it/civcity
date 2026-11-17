@@ -24,8 +24,10 @@ static func build(ui: Variant) -> void:
 	for job: Dictionary in queue:
 		jobs.append([job["kind"], job["tier"], job["total"]])
 	var signature := str([plot_id, room, p["lv"], ui._craft_kind, ui._craft_tier, jobs])
-	var cached: PanelContainer = ui.get_meta("craft_panel", null) as PanelContainer
+	var cached_v: Variant = ui.get_meta("craft_panel", null)
+	var cached: PanelContainer = cached_v as PanelContainer if is_instance_valid(cached_v) else null   # окно могли уже освободить
 	if is_instance_valid(cached) and is_instance_valid(ui.overlay) and cached.get_parent() == ui.overlay and not ui.overlay.is_queued_for_deletion() and cached.get_meta("signature", "") == signature:
+		CampUI.attach(ui.hud)._refresh_speeds()
 		ui._live = (cached.get_meta("live") as Array).duplicate()
 		for entry: Dictionary in ui._live:
 			if entry.get("kind") == "craft":
@@ -42,6 +44,10 @@ static func build(ui: Variant) -> void:
 	var title := Kit.ribbon(I18n.t("Кузница" if room == "forge" else "Оружейная"))
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
+	var back := v.find_child("CampModalBack", false, false) as Button
+	if back != null:
+		v.remove_child(back)
+		header.add_child(back)
 	v.add_child(header)
 	var choices := HBoxContainer.new()
 	choices.name = "CraftKinds"
@@ -52,7 +58,7 @@ static func build(ui: Variant) -> void:
 		var b := Kit.round_button(ui._gear_tex(Gear.icon_of(probe), String(probe["slot"])))
 		b.name = "CraftKind_" + kind
 		b.tooltip_text = I18n.t(String(Gear.CRAFT_TYPES[kind]))
-		b.modulate = Color.WHITE if kind == ui._craft_kind else Color(0.78, 0.70, 0.58)
+		Kit.medallion_state(b, kind == ui._craft_kind)
 		b.pressed.connect(func(): ui._craft_kind = kind; ui._craft_win())
 		choices.add_child(b)
 	v.add_child(choices)
@@ -62,10 +68,8 @@ static func build(ui: Variant) -> void:
 	for tier in range(1, Gear.TIERS + 1):
 		var b := Kit.round_button(null)
 		b.name = "CraftTier_%d" % tier
-		b.custom_minimum_size = Vector2(48, 48)
 		b.text = str(tier)
-		b.disabled = tier > unlocked
-		b.modulate = Color.WHITE if tier == ui._craft_tier else Color(0.8, 0.72, 0.6)
+		Kit.medallion_state(b, tier == ui._craft_tier, tier > unlocked)
 		b.tooltip_text = I18n.t("Тир") + " %d" % tier if not b.disabled else I18n.t("Для тира %d нужен уровень комнаты %d") % [tier, Gear.tier_room_level(tier)]
 		b.pressed.connect(func(): ui._craft_tier = tier; ui._craft_win())
 		tiers.add_child(b)
@@ -74,7 +78,7 @@ static func build(ui: Variant) -> void:
 	var preview := HBoxContainer.new()
 	preview.name = "CraftPreview"
 	preview.add_theme_constant_override("separation", 22)
-	preview.add_child(CampUI.attach(ui.hud)._dweller_item_icon(probe, 124))
+	preview.add_child(CampUI.attach(ui.hud)._dweller_item_icon(probe, 108))
 	var details := VBoxContainer.new()
 	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	preview.add_child(details)
@@ -113,9 +117,14 @@ static func build(ui: Variant) -> void:
 	var requirement := Kit.banner_red("")
 	requirement.name = "CraftRequirement"
 	v.add_child(requirement)
-	var start := Kit.button("green", "craft")
+	var materials := PackedStringArray()
+	var need := Gear.craft_mats(ui._craft_kind, ui._craft_tier)
+	for material: String in need:
+		var phrase := String({"iron": "железо: %d", "wood": "дерево: %d", "leather": "кожа: %d"}[material])
+		materials.append(I18n.t(phrase) % int(need[material]))
+	var start := Kit.button("green", "craft", I18n.t("Ковать · %s") % " · ".join(materials))
 	start.name = "CraftStart"
-	start.tooltip_text = I18n.t("Начать")
+	start.tooltip_text = I18n.t("Ковать")
 	start.pressed.connect(func(): lg.craft_start(plot_id, ui._craft_kind, ui._craft_tier); ui._craft_win())
 	v.add_child(start)
 	var summary := Kit.label("", 20)
@@ -127,25 +136,33 @@ static func build(ui: Variant) -> void:
 	queue_row.add_theme_constant_override("separation", 16)
 	v.add_child(queue_row)
 	for i in lg.craft_capacity(plot_id):
-		var column := VBoxContainer.new()
-		queue_row.add_child(column)
 		if i >= queue.size():
-			var empty := Kit.slot("plus", false, 100)
+			var empty := Kit.slot("plus", false, 88)
 			empty.tooltip_text = I18n.t("Очередь пуста. Выберите вещь и нажмите «Начать».")
-			column.add_child(empty)
+			queue_row.add_child(empty)
 			continue
+		var job_row := HBoxContainer.new()
+		job_row.add_theme_constant_override("separation", 12)
+		queue_row.add_child(job_row)
 		var job: Dictionary = queue[i]
 		var item := Gear.craft_item(String(job["kind"]), int(job["tier"]))
-		var slot := Kit.slot(ui._gear_tex(Gear.icon_of(item), String(item["slot"])), false, 100)
+		var slot := Kit.slot(ui._gear_tex(Gear.icon_of(item), String(item["slot"])), false, 88)
+		slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		slot.tooltip_text = I18n.t(String(Gear.CRAFT_TYPES[job["kind"]]))
-		column.add_child(slot)
+		job_row.add_child(slot)
 		var ring := Ring.new()
+		ring.name = "CraftTimerRing"
+		ring.thickness = 5.0
+		ring.tint = Color("ffcf56")
 		slot.add_child(ring)
 		ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var column := VBoxContainer.new()
+		job_row.add_child(column)
 		var status := Kit.label("", 18)
+		status.name = "CraftTimer"
 		column.add_child(status)
-		var collect := Kit.button("green", "collect")
-		collect.custom_minimum_size.x = 100
+		var collect := Kit.button("gold", "collect", I18n.t("Собрать · %d") % 1)
+		collect.name = "CraftCollect_%d" % i
 		collect.tooltip_text = I18n.t("Собрать")
 		collect.pressed.connect(func(): lg.craft_collect(plot_id); ui._craft_win())
 		column.add_child(collect)
@@ -156,7 +173,8 @@ static func build(ui: Variant) -> void:
 	var controls := {"kind": "craft", "plot": plot_id, "index": -1, "label": summary, "start": start, "requirement": requirement, "costs": costs}
 	ui._live.append(controls)
 	refresh(ui, controls)
-	var store := Kit.button("cream", "equip")
+	var store := Kit.button("cream", "equip", I18n.t("Снаряжение"))
+	store.name = "CraftEquipment"
 	store.tooltip_text = I18n.t("Снаряжение")
 	store.pressed.connect(func(): ui.open_camp_window("store"))
 	v.add_child(store)
@@ -170,12 +188,15 @@ static func refresh(ui: Variant, entry: Dictionary) -> void:
 	if i < 0:
 		var why: String = ui.lg.can_craft(int(entry["plot"]), ui._craft_kind, ui._craft_tier)
 		(entry["start"] as Button).disabled = why != ""
-		(entry["start"] as Button).tooltip_text = I18n.t("Начать") + ("\n" + I18n.t(why) if why != "" else "")
+		(entry["start"] as Button).tooltip_text = I18n.t("Ковать") + ("\n" + I18n.t(why) if why != "" else "")
 		var requirement: PanelContainer = entry["requirement"]
 		requirement.visible = why != ""
 		(requirement.get_meta("label") as Label).text = I18n.t(why)
 		(entry["label"] as Label).text = "%d / %d" % [queue.size(), ui.lg.craft_capacity(int(entry["plot"]))]
 		CampUI.attach(ui.hud)._refresh_costs(entry["costs"])
+		var panel := ui.get_meta("craft_panel", null) as Control
+		if is_instance_valid(panel):
+			ui._center_later(panel)
 		return
 	if i >= queue.size():
 		return

@@ -805,6 +805,10 @@ func _update_header() -> void:
 
 ## Окно — посередине и целиком на экране (при крупном интерфейсе — чуть меньше)
 func _fit() -> void:
+	if is_instance_valid(overlay):
+		for child: Node in overlay.get_children():
+			if child is PanelContainer:
+				_center_later(child as Control)
 	if win == null:
 		return
 	win.reset_size()
@@ -2072,7 +2076,7 @@ func _modal(w: float) -> PanelContainer:
 	p.add_child(v)
 	if lg.v3() and camp_window != "":
 		var back := Kit.round_button("back")
-		back.custom_minimum_size = Vector2(48, 48)
+		back.name = "CampModalBack"
 		back.tooltip_text = I18n.t("В лагерь")
 		back.size_flags_horizontal = Control.SIZE_SHRINK_END
 		back.pressed.connect(func(): close())
@@ -2129,10 +2133,7 @@ func open_camp_window(kind: String, sid := 0) -> void:
 func _center_later(p: Control) -> void:
 	await get_tree().process_frame
 	if is_instance_valid(p):
-		p.reset_size()
-		var k := minf(1.0, minf((size.x - 24) / maxf(1, p.size.x), (size.y - 24) / maxf(1, p.size.y))) if camp_window != "" else 1.0
-		p.scale = Vector2.ONE * k
-		p.position = ((size - p.size * k) / 2.0).floor()
+		Kit.fit_modal(p, size)
 
 
 func _close_overlay() -> void:

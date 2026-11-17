@@ -3,12 +3,13 @@ extends Node3D
 
 const Fixture = preload("res://scripts/test_fort_fixture.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
-var out := "D:/CivCity/.work/stage5/fort5b/shots/"
+var out := "D:/CivCity/.work/stage5/fort5c/shots/"
 var fails := 0
 var game: Game
 var camp: CampUI
 var lg: Legion
 var saved_clock := -1.0
+var capture_size := Vector2i(1920, 1080)
 
 
 func check(ok: bool, reason: String) -> bool:
@@ -34,6 +35,12 @@ func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			out = arg.substr(4).trim_suffix("/") + "/"
+		if arg.begins_with("viewport="):
+			var parts := arg.substr(9).split("x")
+			if parts.size() == 2:
+				capture_size = Vector2i(int(parts[0]), int(parts[1]))
+	get_window().content_scale_size = Vector2i.ZERO
+	get_window().size = capture_size
 	saved_clock = Legion.clock
 	Legion.clock = 2000000.0
 	Game.boot = {"new": "1"}
@@ -132,15 +139,34 @@ func _run() -> void:
 	var room_id := camp.card.get_instance_id()
 	camp._refresh()
 	check(camp.card.get_instance_id() == room_id, "room survives value refresh")
+	await _window_checks(camp.card, "room")
+	check(camp.main_action.text == I18n.t("Ковать"), "room action label")
+	check(camp.room_stock_bar.get_theme_stylebox("fill") is StyleBoxTexture, "textured room fill")
 	await shot("2_room_card.png")
+	camp.show_plot(kitchen)
+	await frames(16)
+	var production := camp.card.find_child("FortRoomStock", true, false) as Control
+	var resource_icon := production.find_children("*", "TextureRect", true, false)[0] as TextureRect
+	check(resource_icon.texture == Kit.resource("rations"), "production resource icon")
+	check(camp.room_stock_bar.value > 0 and (camp.room_stock_bar.get_theme_stylebox("fill") as StyleBoxTexture).texture == Kit.box("panels/bar_fill_gold", 20, 0, 20).texture, "production gold fill")
 	camp.show_build_menu()
 	check(camp.build_cards.size() == Legion.FORT_B.size() - 1, "all room cards")
 	check((camp.build_cards["forge"]["picture"] as Control).get_child_count() > 0, "build pictures")
+	await _window_checks(camp.modal_panel, "build")
+	await _build_button_checks()
 	await shot("3_build_menu.png")
 	camp.show_dweller(sid)
 	var slots := camp.modal_panel.find_child("FortGearSlots", true, false)
 	check(slots != null and slots.get_child_count() == 4 and slots.find_children("TierBadge", "Label", true, false).size() == 4, "four equipped slots and tier badges")
 	check(camp.modal_panel.find_child("FortInventoryGrid", true, false) != null, "inventory grid")
+	await _window_checks(camp.modal_panel, "dweller")
+	check((camp.modal_panel.find_child("FortInventoryTitle", true, false) as Label).text == I18n.t("На складе"), "inventory title spacing")
+	var move := camp.modal_panel.find_child("FortMoveDweller", true, false) as Button
+	check(move.text == I18n.t("Переместить") and move.icon == Kit.texture("swap"), "move action")
+	for gain: Label in camp.modal_panel.find_children("PowerDelta", "Label", true, false):
+		var positive := int(gain.text) >= 0
+		var tint := gain.get_theme_color("font_color")
+		check(tint.g > tint.r if positive else tint.r > tint.g, "equipment delta color")
 	await shot("4_dweller_card.png")
 	var better: Dictionary = lg.items.filter(func(it: Dictionary): return int(it.get("on", 0)) == 0 and it["slot"] == "weapon" and it["cls"] == "legionary")[0]
 	var before := Legion.power(lg.soldier_stats(person, "legionary"))
@@ -148,6 +174,9 @@ func _run() -> void:
 	check(int(better["on"]) == sid and Legion.power(lg.soldier_stats(person, "legionary")) != before, "equipment still changes stats")   # набор II распадается — сила может и упасть
 	camp._close_modal()
 	check(lg.craft_start(forge, "sword", 1), "craft fixture starts")
+	var active_job: Dictionary = lg.craft_queue(forge)[0]
+	active_job["left"] = float(active_job["total"]) * 0.65
+	active_job["end"] = Legion.now() + float(active_job["left"])
 	camp.lu.open_craft(forge)
 	await frames(4)
 	var craft := camp.lu.overlay.find_child("CraftPanel", true, false)
@@ -157,6 +186,14 @@ func _run() -> void:
 		camp.lu._tick_live()
 		check(camp.lu.overlay.find_child("CraftPanel", true, false).get_instance_id() == craft_id, "craft survives timer refresh")
 		check(craft.find_child("CraftKinds", true, false).get_child_count() == 4 and craft.find_child("CraftRarityOdds", true, false).get_child_count() == 5, "recipe icons and five rarity odds")
+		var active_ring := craft.find_child("CraftTimerRing", true, false) as Control
+		check(float(active_ring.get("value")) > 0 and float(active_ring.get("value")) < 1, "active timer ring progress")
+		await _window_checks(craft, "craft/timer")
+		active_job["left"] = 0.0
+		active_job["end"] = 0.0
+		camp.lu._craft_win()
+		await _window_checks(craft, "craft")
+		_craft_button_checks(craft)
 	await shot("5_craft_panel.png")
 	camp.lu.close()
 	camp._campaign()
@@ -165,6 +202,7 @@ func _run() -> void:
 	check(back != null and back.icon == Kit.texture("back") and camp.lu.win.has_meta("ui_kit_a"), "campaign frame and back")
 	await shot("6_campaign.png")
 	camp.lu.close()
+	await _small_window_checks(forge, sid)
 	camp.show_newcomer(int(lg.fort_newcomers()[0]["id"]))
 	check(camp.modal_panel.name == "FortNewcomerCard" and camp.modal_panel.has_meta("ui_kit_a"), "newcomer kit")
 	camp.show_expansion("floor")
@@ -172,6 +210,101 @@ func _run() -> void:
 	camp._close_modal()
 	_instant_checks(kitchen, forge)
 	_finish()
+
+
+func _window_checks(window: Control, tag: String) -> void:
+	await frames(16)
+	if not check(is_instance_valid(window), tag + " window exists"):
+		return
+	var safe := Rect2(Vector2.ONE * 24, get_viewport().get_visible_rect().size - Vector2.ONE * 48)
+	check(safe.grow(1).encloses(window.get_global_rect()), tag + " 24 px screen margin")
+	var count := 0
+	for node: Node in window.find_children("*", "Button", true, false):
+		var b := node as Button
+		if not b.has_meta("ui_kit_a") or not b.is_visible_in_tree():
+			continue
+		var rect := b.get_global_rect()
+		var visible_rect := rect
+		var parent := b.get_parent()
+		while parent is Control:
+			var control := parent as Control
+			if control.clip_contents or control is ScrollContainer:
+				visible_rect = visible_rect.intersection(control.get_global_rect())
+			if control == window:
+				break
+			parent = parent.get_parent()
+		if not visible_rect.has_area():
+			continue # За краем горизонтальной ленты кнопка не рисуется.
+		count += 1
+		check(rect.size.y >= 56.0 - 0.1, tag + "/" + b.name + " drawn height >= 56")
+		check(window.get_global_rect().grow(1).encloses(rect), tag + "/" + b.name + " inside window")
+		check(visible_rect.grow(1).encloses(rect), tag + "/" + b.name + " not clipped")
+		for state: String in ["normal", "hover", "pressed", "disabled"]:
+			var style := b.get_theme_stylebox(state) as StyleBoxTexture
+			if check(style != null and style.texture != null, tag + "/" + b.name + " texture " + state):
+				check(style.get_texture_margin(SIDE_TOP) + style.get_texture_margin(SIDE_BOTTOM) <= b.size.y, tag + "/" + b.name + " slice fits height")
+		if b.get_meta("kit_role", "") == "action":
+			var has_icon := b.icon != null
+			var has_text := not b.text.strip_edges().is_empty()
+			for child: Node in b.find_children("*", "Control", true, false):
+				if child is TextureRect and (child as TextureRect).texture != null and (child as Control).is_visible_in_tree():
+					has_icon = true
+				if child is Label and not (child as Label).text.strip_edges().is_empty() and (child as Control).is_visible_in_tree():
+					has_text = true
+			check(has_icon and has_text, tag + "/" + b.name + " action has icon and label/count")
+	check(count > 0, tag + " visible kit buttons checked")
+
+
+func _build_button_checks() -> void:
+	for type: String in camp.build_cards:
+		var b: Button = camp.build_cards[type]["button"]
+		camp.build_scroll.ensure_control_visible(b)
+		await frames(2)
+		check(camp.modal_panel.get_global_rect().grow(1).encloses(b.get_global_rect()), "build/" + type + " whole button in window")
+		check(b.get_global_rect().size.y >= 56 and b.icon != null and not b.text.is_empty(), "build/" + type + " icon, price, height")
+	camp.build_scroll.scroll_horizontal = 0
+	await frames(2)
+
+
+func _craft_button_checks(panel: Control) -> void:
+	var selected := panel.find_child("CraftKind_sword", true, false) as Button
+	check((selected.get_node("SelectionRing") as Control).visible, "selected recipe gold ring")
+	var tier := panel.find_child("CraftTier_1", true, false) as Button
+	check((tier.get_node("SelectionRing") as Control).visible, "selected tier gold ring")
+	var locked := panel.find_child("CraftTier_10", true, false) as Button
+	check(locked.disabled and (locked.get_node("MedallionLock") as Control).visible and locked.self_modulate.r < 0.7, "locked tier grey and padlock")
+	check(panel.find_children("CraftTimerRing", "Control", true, false).size() == 1, "queue timer ring")
+	var collect := panel.find_child("CraftCollect_0", true, false) as Button
+	check(collect.visible and collect.text == I18n.t("Собрать · %d") % 1, "ready collect label and count")
+	var start := panel.find_child("CraftStart", true, false) as Button
+	check(start.icon == Kit.texture("craft") and start.text.contains("10"), "craft action icon and material cost")
+	var store := panel.find_child("CraftEquipment", true, false) as Button
+	check(store.text == I18n.t("Снаряжение") and store.icon != null, "bottom action filled")
+
+
+func _small_window_checks(forge: int, sid: int) -> void:
+	get_window().size = Vector2i(1280, 720)
+	await frames(12)
+	camp.show_plot(forge)
+	await _window_checks(camp.card, "720/room")
+	camp.show_build_menu()
+	await _window_checks(camp.modal_panel, "720/build")
+	await _build_button_checks()
+	camp.show_dweller(sid)
+	await _window_checks(camp.modal_panel, "720/dweller")
+	camp._close_modal()
+	camp.lu.open_craft(forge)
+	await frames(4)
+	var panel := camp.lu.overlay.find_child("CraftPanel", true, false) as Control
+	await _window_checks(panel, "720/craft")
+	check(lg.craft_start(forge, "sword", 1), "full queue fixture starts")
+	camp.lu._craft_win()
+	await frames(4)
+	panel = camp.lu.overlay.find_child("CraftPanel", true, false) as Control
+	await _window_checks(panel, "720/craft/full queue")
+	camp.lu.close()
+	get_window().size = capture_size
+	await frames(12)
 
 
 func _instant_checks(kitchen: int, forge: int) -> void:

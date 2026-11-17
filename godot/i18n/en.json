@@ -5290,5 +5290,13 @@
   "Сменить": "Switch",
   "Сведения": "Information",
   "Звёзды провинции: %d из %d. За все — сундук Славы%s": "Province stars: %d of %d. Collect all for a Glory chest%s",
-  "Нужен Штаб ур. %d": "Requires Headquarters level %d"
+  "Нужен Штаб ур. %d": "Requires Headquarters level %d",
+  "Ускорить · %d": "Speed up · %d",
+  "Строить · %d": "Build · %d",
+  "Ковать · %s": "Forge · %s",
+  "Собрать · %d": "Collect · %d",
+  "Перейти": "Go to",
+  "железо: %d": "iron: %d",
+  "дерево: %d": "wood: %d",
+  "кожа: %d": "leather: %d"
 }

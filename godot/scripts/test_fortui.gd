@@ -138,7 +138,7 @@ func _run() -> void:
 	if not await shot("2_build_menu.png"):
 		return
 	camp.show_plot(kitchen)
-	if not check(camp.selected_plot == kitchen and camp.main_action.text == str(floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001)) and camp.main_action.get_meta("action_name") == I18n.t("Собрать %d") % floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001), "plot-based kitchen collect action"):
+	if not check(camp.selected_plot == kitchen and camp.main_action.text.contains(str(floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001))) and camp.main_action.get_meta("action_name") == I18n.t("Собрать %d") % floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001), "plot-based kitchen collect action"):
 		return
 	if not await shot("3_card_kitchen.png"):
 		return
