@@ -79,7 +79,7 @@ func setup(h: Hud) -> void:
 			close())
 	frame = Panel.new()
 	frame.name = "MagisWindow"
-	frame.size = Vector2(920, 496)
+	frame.size = Vector2(920, 516)
 	frame.add_theme_stylebox_override("panel", _style("panels/card_frame", 24))
 	add_child(frame)
 	var ribbon := _image("panels/ribbon_title", Rect2(254, 5, 412, 44))
@@ -97,7 +97,7 @@ func setup(h: Hud) -> void:
 	columns.position = Vector2(22, 56)
 	columns.size = Vector2(876, 416)
 	frame.add_child(columns)
-	_label(frame, "С уровня «Город» — два места в каждой магистратуре", Rect2(100, 473, 720, 18), 12)
+	_label(frame, "С уровня «Город» — два места в каждой магистратуре", Rect2(100, 474, 720, 18), 12)
 	top_button = _button("", open, "cream")
 	top_button.name = "MagisButton"
 	top_button.custom_minimum_size = Vector2(h.TOP_BTN, h.TOP_BTN)
@@ -151,13 +151,18 @@ func _image(path: String, rect: Rect2) -> TextureRect:
 
 
 func _label(parent: Control, text: String, rect: Rect2, pixels := 13, bold := false) -> Label:
-	var label := hud._label(I18n.t(text), pixels, bold, INK)
-	label.position = rect.position
-	label.size = rect.size
+	# Текст — ПОСЛЕ размера и переноса: иначе подпись успевает раздуться по длине текста
+	# (кэш минимального размера обновляется с задержкой) и наезжает на соседние карточки
+	var label := hud._label("", pixels, bold, INK)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.clip_text = true
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.position = rect.position
+	label.size = rect.size
+	label.text = I18n.t(text)
 	parent.add_child(label)
 	return label
 
@@ -201,7 +206,7 @@ func close() -> void:
 func _layout() -> void:
 	if frame == null:
 		return
-	var factor := minf(1.0, minf((size.x - 32.0) / 920.0, (size.y - 32.0) / 496.0))
+	var factor := minf(1.0, minf((size.x - 32.0) / 920.0, (size.y - 32.0) / 516.0))
 	frame.scale = Vector2.ONE * maxf(0.1, factor)
 	frame.position = (size - frame.size * frame.scale) * 0.5
 	if is_instance_valid(popup_panel):
