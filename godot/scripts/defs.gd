@@ -366,17 +366,29 @@ const B := {
 		"unlock": "circus_fl", "unique": true, "glory_day": 0.5, "icon": "horse",
 		"desc": "Римский цирк — это не клоуны, а скачки колесниц! Длинная дорожка вокруг «спины» с обелиском, трибуны и стартовые ворота. Радует весь город и каждый день приносит Славу."},
 	# Городские памятники открываются исследованиями и стоят денарии.
-	"arch": {"kind": "monument", "cat": "special", "name": "Триумфальная арка", "cost": 7250, "bonus": 10, "range": 4, "unlock": "arch",
+	"arch": {"sub": "wonders", "kind": "monument", "cat": "special", "name": "Триумфальная арка", "cost": 7250, "bonus": 10, "range": 4, "unlock": "arch",
 		"icon": "castle", "desc": "Арка в честь побед — гордость жителей. Радует дома вокруг."},
-	"colosseum": {"kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 32500, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum",
+	"colosseum": {"sub": "wonders", "kind": "monument", "cat": "special", "name": "Амфитеатр", "cost": 32500, "bonus": 18, "range": 5, "jobs": {"patricians": 4}, "unlock": "colosseum", "glory_day": 0.5,
 		"icon": "swords", "desc": "Гладиаторы и звери. Весь город ходит смотреть. Радует дома вокруг."},
-	"pantheon": {"kind": "monument", "need": "faith", "cat": "special", "name": "Пантеон", "cost": 64000, "bonus": 20, "range": 5, "unlock": "pantheon",
+	"pantheon": {"sub": "wonders", "kind": "monument", "need": "faith", "cat": "special", "name": "Пантеон", "cost": 64000, "bonus": 20, "range": 5, "unlock": "pantheon", "glory_day": 0.5,
 		"icon": "level", "desc": "Храм всех богов с огромным куполом. Радует дома вокруг."},
+	"trajan": {"kind": "monument", "cat": "special", "sub": "wonders", "name": "Колонна Траяна", "cost": 40000,
+		"bonus": 16, "range": 5, "unlock": "trajan", "unique": true, "glory_day": 1.0, "icon": "laurels",
+		"desc": "Высокая мраморная колонна со статуей на ступенчатой площади. Радует дома вокруг и приносит Славу каждый день."},
+	# Место в городском каталоге; откроем, когда будут готовы модели.
+	"circus": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Большой цирк", "cost": 20000,
+		"bonus": 16, "range": 5, "unique": true, "glory_day": 0.5, "icon": "horse", "desc": "Чудо города. Модель ещё готовится."},
+	"aqueduct": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Акведук Клавдия", "cost": 30000,
+		"bonus": 14, "range": 5, "unique": true, "icon": "bridge", "desc": "Чудо города. Модель ещё готовится."},
+	"caracalla": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Термы Каракаллы", "cost": 60000,
+		"bonus": 20, "range": 5, "unique": true, "icon": "bath", "desc": "Чудо города. Модель ещё готовится."},
+	"jupiter": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Храм Юпитера Капитолийского", "cost": 90000,
+		"bonus": 20, "range": 5, "unique": true, "glory_day": 1.0, "icon": "level", "desc": "Чудо города. Модель ещё готовится."},
 	"center": {"kind": "center", "cat": "", "name": "Почтовая станция", "cost": 0, "fixed": true,
 		"desc": "Сюда по большой дороге приезжают повозки с переселенцами и товарами."},
 
 	# Легион (Д10, как в Hustle Castle): здания Легиона стоят на карте и растут уровнями — улучшение в карточке здания
-	# (Legion: уровень, что даёт, «Улучшить — N ден., M Славы, время»); отряд, походы и чудеса — в окне «Легион».
+	# (Legion: уровень, что даёт, «Улучшить — N ден., M Славы, время»); отряд и походы — в окне «Легион».
 	# unique — одна на город; unlock "bossN" — открывается победой над N-м боссом походов (Legion.boss_name),
 	# "rank:N" — с уровня города N (когда Легион собран). Казармы — с «Хутора», историей «Разбойники у арки» (Д9):
 	# 400 вместо прежних 1500 — встают на первые деньги, не отнимая школу и дома ремесленников (бот темпа)
@@ -796,6 +808,8 @@ const RESEARCH := [
 	{"id": "jeweler", "lvl": 5, "name": "Ювелир", "cost": 1930, "icon": "ring"},
 	{"id": "forum", "lvl": 5, "name": "Форум", "cost": 2310, "icon": "caesar"},
 	{"id": "taxes1", "lvl": 5, "name": "Налоги для богатых", "cost": 1740, "icon": "coins", "desc": "Патриции платят на четверть больше."},
+
+	{"id": "trajan", "lvl": 5, "name": "Колонна Траяна", "cost": 2400, "icon": "laurels"},
 
 	{"id": "theatre", "lvl": 6, "name": "Театр", "cost": 4830, "icon": "fun", "after": "odeon"},
 	{"id": "arch", "lvl": 6, "name": "Триумфальная арка", "cost": 4190, "icon": "castle"},

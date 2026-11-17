@@ -179,7 +179,7 @@ static func top(ui: LegionUi) -> void:
 	var tt := ui._title("Лучшие города", 32)
 	hh.add_child(tt)
 	v.add_child(hh)
-	v.add_child(ui._wl("Рейтинг побед над городами: растёт с победами, падает с поражениями. Открывает старшие чудеса света.", 600, 15, C_SOFT, false, true))
+	v.add_child(ui._wl("Рейтинг побед над городами: растёт с победами, падает с поражениями.", 600, 15, C_SOFT, false, true))
 	var body := VBoxContainer.new()
 	body.add_theme_constant_override("separation", 4)
 	body.custom_minimum_size = Vector2(620, 420)

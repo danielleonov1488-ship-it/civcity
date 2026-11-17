@@ -38,7 +38,7 @@
    у соперника) сервер кладёт в снимок сам, из сохранения. Числа бойца — heroStats (legion_sim.js, как Legion.snap_hero).
    Старая игра героя не знает: она не шлёт hero=1 (список соперников) и hero: true (нападение) — её соперники идут без героя,
    и бой повторяется ровно так, как его видела она. Новая игра узнаёт, что сервер знает героя, по me.hero (state).
-   Числа бойцов и правила рейтинга — копия legion.gd (UNITS, PVP, WONDERS, SLOT_BOSSES, SLOT_BARRACKS): меняете там — меняйте тут. */
+   Числа бойцов и правила рейтинга — копия legion.gd (UNITS, PVP, SLOT_BOSSES, SLOT_BARRACKS): меняете там — меняйте тут. */
 
 const crypto = require('crypto');
 const { replayPvp, cleanInputs, heroStats, CITY_MAX, KIT_MAX } = require('./legion_sim');
@@ -59,11 +59,6 @@ const SLOT_BOSSES = [1, 3, 5, 7];
 // каждое новое место — ещё и с Казармами этого уровня (здания Легиона, сохранение Легиона v3); места, открытые
 // до зданий (flags.slots0 — перенос старого сохранения), не отнимаются
 const SLOT_BARRACKS = [2, 3, 5, 7];
-// чудеса, что усиливают армию: памятники в городе (building) и чудеса, возведённые в окне Легиона (id)
-const ARMY_WONDERS = [
-  { building: 'arch', atk: 0.05 }, { building: 'colosseum', hp: 0.10 }, { building: 'pantheon', atk: 0.10 },
-  { id: 'trajan', atk: 0.15, hp: 0.15 }, { id: 'jupiter', atk: 0.05, hp: 0.05 },
-];
 const PVP = { charges: 5, regen: 1800e3, win_base: 20, win_min: 8, win_max: 40, loss_base: 10, loss_min: 3, loss_max: 20,
   loot_money: 2.0, loot_base: 150, glory: 2 };
 // бои с городами — с «Посёлка» (как в игре: Legion.PVP_MIN_LEVEL): Легион теперь с «Хутора», а добыча рассчитана на казну «Посёлка»
@@ -246,6 +241,19 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
       PRIMARY KEY (season, place)
     );
   `);
+  // Старые опубликованные отряды могли сохранить прибавки чудес. Новые бои идут без них;
+  // снимки уже начатых боёв сохраняем для точного повтора.
+  if (Number(db.prepare("SELECT v FROM pvp_meta WHERE k = 'city_wonders_v'").get()?.v || 0) < 1) {
+    const update = db.prepare('UPDATE pvp_players SET snapshot = ?, power = ? WHERE user_id = ?');
+    for (const row of db.prepare('SELECT user_id, snapshot FROM pvp_players WHERE snapshot IS NOT NULL').all()) {
+      let snap;
+      try { snap = JSON.parse(row.snapshot); } catch { continue; }
+      if (!snap || typeof snap !== 'object' || (!Number(snap.atk_b) && !Number(snap.hp_b))) continue;
+      snap.atk_b = 0; snap.hp_b = 0;
+      update.run(JSON.stringify(snap), snapPower(snap), row.user_id);
+    }
+    db.prepare("INSERT OR REPLACE INTO pvp_meta (k, v) VALUES ('city_wonders_v', 1)").run();
+  }
   // арена 2.0: сезон игрока, высший рейтинг сезона, нападений в сезоне, награда прошлого сезона (ждёт, пока игра заберёт)
   {
     const cols = db.prepare('PRAGMA table_info(pvp_players)').all().map(c => c.name);
@@ -471,11 +479,7 @@ function install({ db, routes, auth, json, limited, Fail, latestSave, hooks }) {
       for (const b of Array.isArray(d.buildings) ? d.buildings : []) if (b && typeof b.type === 'string') btypes.add(b.type);
       const types = new Set();
       for (const [b, u] of Object.entries(BUILDING_UNIT)) if (btypes.has(b)) types.add(u);
-      const built = new Set(Array.isArray(L.built) ? L.built.map(String) : []);
-      let atkB = 0, hpB = 0;
-      for (const w of ARMY_WONDERS) {
-        if (w.building ? btypes.has(w.building) : built.has(w.id)) { atkB += w.atk || 0; hpB += w.hp || 0; }
-      }
+      const atkB = 0, hpB = 0;  // городские чудеса армию не усиливают
       // свой герой (Д11): запись героя в сохранении (Hero.norm: {m: {pn, sx, look…}}) и Склад оружия (его снаряжение):
       // уровень Склада — только если он построен (с идущим улучшением — с запасом, как у бойцов)
       const H = d.hero && typeof d.hero === 'object' && d.hero.m && typeof d.hero.m === 'object' && !Array.isArray(d.hero.m) ? d.hero.m : null;

@@ -5462,5 +5462,20 @@
 	"Триумф Легиона окончен": "The Legion triumph has ended",
 	"Триумф Легиона: %d дня праздника в форте.": "Legion triumph: %d days of celebrations at the fort.",
 	"форт празднует ещё %d %s": "the fort celebrates for %d more %s",
-	"праздник Легиона на %d дня": "a Legion celebration lasting %d days"
+	"праздник Легиона на %d дня": "a Legion celebration lasting %d days",
+  "Высокая мраморная колонна со статуей на ступенчатой площади. Радует дома вокруг и приносит Славу каждый день.": "A tall marble column with a statue on a stepped square. Makes nearby homes happier and brings Glory every day.",
+  "Чудо города. Модель ещё готовится.": "A city wonder. Its model is still being prepared.",
+  "Чудо пока недоступно": "This wonder is not available yet",
+  "Поставить даром": "Place for free",
+  "Прежняя покупка: одна постановка даром": "Previous purchase: one free placement",
+  "\nПрежняя покупка: одна постановка даром": "\nPrevious purchase: one free placement",
+  " · Чудеса": " · Wonders",
+  "Слава: даётся за победы. Тратится на умения, высокие уровни бойцов и Триумф": "Glory: earned in victories. Spent on abilities, higher troop levels and Triumphs",
+  "Рейтинг походов: растёт с каждой новой победой и не тратится": "Campaign rating: rises with each new victory and is never spent",
+  "Откройте медальон «Легион» сверху справа: походы и войска.": "Open the Legion medallion at the top right: campaigns and troops.",
+  "Соберите отряд обороны слева: его увидят те, кто нападёт на ваш город.": "Set up your defense squad on the left: players who attack your city will face it.",
+	"Легион — стража города: походы, бои с другими городами и Слава.\nГотового Легиона нет: Казармы, Стрельбище, Кузницу и другие его здания вы построите и улучшите сами.": "The Legion guards the city: campaigns, battles with other cities and Glory.\nThere is no ready-made Legion: you build and upgrade its Barracks, Archery Range, Forge and other buildings yourself.",
+	"Рейтинг побед над городами: растёт с победами, падает с поражениями.": "City battle rating: rises with victories and falls with defeats.",
+	"Памятники · Чудеса": "Monuments · Wonders",
+	"Даром": "Free"
 }

@@ -94,9 +94,9 @@ const P = s => pvp.snapPower({ squad: s.squad, atk_b: s.atk_b || 0, hp_b: s.hp_b
     ok(r.status === 200 && r.data.clamped === true && r.data.power === P(defA) && r.data.me.published, `defense A clamped to cloud levels and 3+1 slots (power ${r.data && r.data.power})`, r.data);
     r = await call('PUT', '/pvp/defense', { snapshot: { v: 1, squad: sq(['spearman', 6], ['legionary', 6], ['archer', 5], ['legionary', 6], ['archer', 5], ['catapult', 9]), perks: { oil: 2 }, atk_b: 0.05, hp_b: 0 },
       name: 'Сиракузы Великие' }, tok.b);
-    const defB = { squad: sq(['spearman', 5], ['legionary', 6], ['archer', 5], ['legionary', 6], ['archer', 5]), atk_b: 0.05 };
+    const defB = { squad: sq(['spearman', 5], ['legionary', 6], ['archer', 5], ['legionary', 6], ['archer', 5]), atk_b: 0 };
     ok(r.status === 200 && r.data.clamped && r.data.power === P(defB) && r.data.me.name === 'Сиракузы Великие' && r.data.me.custom,
-      `defense B: running upgrade counts, 4+1 slots, arch +5% (power ${r.data && r.data.power})`, r.data);
+      `defense B: running upgrade counts, 4+1 slots, arch gives no army bonus (power ${r.data && r.data.power})`, r.data);
     r = await call('PUT', '/pvp/defense', { snapshot: { squad: sq(['legionary', 1]) }, name: 'сиракузы  ВЕЛИКИЕ' }, tok.c);
     ok(r.status === 409, 'name taken (case and spaces ignored) → 409');
     r = await call('PUT', '/pvp/defense', { snapshot: { squad: sq(['legionary', 1]) }, name: '<b>x</b>' }, tok.c);

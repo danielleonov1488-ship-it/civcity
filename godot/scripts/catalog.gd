@@ -112,6 +112,7 @@ static func make(type: String, tier := 1, variant := 0, color := 0, legacy := fa
 		"arch": CatMonuments._arch(b)
 		"colosseum": CatMonuments._colosseum(b)
 		"pantheon": CatMonuments._pantheon(b)
+		"trajan": CatDressGrand._trajan({"b": b})
 		"center": CatCivic._center(b, tier)
 		"barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill", "tannery", "principia", "mars": CatMilitary.make(b, type, tier)
 		_: CatDecor._decor(b, type, variant, color)

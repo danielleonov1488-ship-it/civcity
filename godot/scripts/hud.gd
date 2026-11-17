@@ -81,6 +81,8 @@ var bar_mid: PanelContainer
 var bar_right: PanelContainer
 var tray: PanelContainer
 var tray_grid: HBoxContainer
+var tray_stabs: HBoxContainer
+var open_ssub := "monuments"
 var tray_tabs: HBoxContainer
 var tray_title: Label
 var open_cat := ""
@@ -2265,6 +2267,9 @@ func update_new_marks() -> void:
 		_show_new(cats[cid], int(n.get(cid, 0)) > 0)
 	for b in tray_tabs.get_children():
 		_show_new(b, int(n.get("commerce|" + String(b.get_meta("sub")), 0)) > 0)
+	for b in tray_stabs.get_children():
+		var key := "special|wonders" if b.get_meta("sub") == "wonders" else "special|"
+		_show_new(b, int(n.get(key, 0)) > 0)
 	for b in tray_dtabs.get_children():
 		_show_new(b, int(n.get("decor|" + String(b.get_meta("sub")), 0)) > 0)
 	_show_new(top_btns["research"], play and c.new_research() > 0)
@@ -2756,6 +2761,16 @@ func _bottom_center() -> void:
 		b.set_meta("sub", nn)
 		tray_tabs.add_child(b)
 		_new_pill(b, "dot")
+	tray_stabs = HBoxContainer.new()
+	tray_stabs.name = "monument_groups"
+	tray_stabs.add_theme_constant_override("separation", 6)
+	top.add_child(tray_stabs)
+	for group: Array in [["monuments", "Памятники"], ["wonders", "Чудеса"]]:
+		var sub: String = group[0]
+		var b := _tchip(String(group[1]), String(group[1]), func(): open_ssub = sub; _fill_cards())
+		b.set_meta("sub", sub)
+		tray_stabs.add_child(b)
+		_new_pill(b, "dot")
 	tray_dtabs = HBoxContainer.new()
 	tray_dtabs.add_theme_constant_override("separation", 4)
 	top.add_child(tray_dtabs)
@@ -2952,6 +2967,11 @@ func _types_in(cat: String, sub := "") -> Array:
 	var out := []
 	for type in Defs.B:
 		var d: Dictionary = Defs.B[type]
+		if bool(d.get("hidden", false)):
+			continue
+		if cat == "special" and sub in ["monuments", "wonders"]:
+			if (d.get("sub", "") == "wonders") != (sub == "wonders"):
+				continue
 		if d["cat"] != cat and d.get("also", "") != cat:
 			continue                          # also — дополнительный раздел для постройки
 		if cat == "commerce" and d.get("sub", "") != sub:
@@ -3116,6 +3136,9 @@ func _fill_cards() -> void:
 	for ch in tray_grid.get_children():
 		tray_grid.remove_child(ch)
 		ch.queue_free()
+	tray_stabs.visible = open_cat == "special"
+	for b in tray_stabs.get_children():
+		(b as Button).set_pressed_no_signal(b.get_meta("sub") == open_ssub)
 	tray_tabs.visible = open_cat == "commerce"
 	for b in tray_tabs.get_children():
 		_set_on(b, b.get_meta("sub") == open_sub)
@@ -3128,6 +3151,8 @@ func _fill_cards() -> void:
 	var names := {"housing": "Жильё", "commerce": "Лавки и мастерские", "farming": "Хозяйство и науки", "decor": "Украшения", "special": "Памятники",
 		"military": "Военные постройки Легиона"}
 	tray_title.text = names.get(open_cat, "")
+	if open_cat == "special" and open_ssub == "wonders":
+		tray_title.text += " · Чудеса"
 	if open_cat == "commerce":
 		tray_title.text += " · " + Defs.NEEDS[open_sub]["name"]
 	if open_cat == "decor":
@@ -3139,7 +3164,7 @@ func _fill_cards() -> void:
 				for ds: Array in Defs.DECOR_SUBS:
 					if ds[0] == open_dsub:
 						tray_title.text += " · " + String(ds[1])
-	var list := _decor_list() if open_cat == "decor" else _types_in(open_cat, open_sub)
+	var list := _decor_list() if open_cat == "decor" else _types_in(open_cat, open_ssub if open_cat == "special" else open_sub)
 	if list.is_empty() and open_cat == "decor":
 		var em := _label({"fav": "Здесь будут украшения со звёздочкой ★ — правая кнопка мыши по карточке.",
 			"recent": "Здесь будут украшения, что вы ставили последними.", "search": "Ничего не нашлось — попробуйте другое слово."}.get(decor_mode, "Здесь пока пусто."), 16, true, C_SOFT)
@@ -3374,7 +3399,7 @@ func _update_cards() -> void:
 			continue
 		var type: String = b.get_meta("type")
 		var d: Dictionary = Defs.B[type]
-		if c.build_max(type) >= 0:
+		if c.build_max(type) >= 0 or d.get("sub", "") == "wonders":
 			var tip := _card_tip(type)       # «В городе: N из M» меняется с каждой постройкой и рангом
 			if b.tooltip_text != tip:
 				b.tooltip_text = tip
@@ -3417,6 +3442,13 @@ func _update_cards() -> void:
 			b.add_theme_stylebox_override("normal", _card_box("g_card"))
 			img.modulate = Color.WHITE
 			_grey(img)
+		elif c.wonder_credit_ready(type):
+			pr.add_child(_icon("laurels", 22, C_GOOD))
+			pr.add_child(_label("Даром", 16, true, C_GOOD))
+			b.tooltip_text = _card_tip(type) + "\nПрежняя покупка: одна постановка даром"
+			b.add_theme_stylebox_override("normal", _card_box("g_card"))
+			img.modulate = Color.WHITE
+			_grey(img, false)
 		elif c.gift_ready(type):
 			# подарок друга (SocialNet): даром, сколько штук осталось
 			pr.add_child(_icon("mail", 22, C_GOOD))
@@ -3447,6 +3479,14 @@ func select_build(type: String, from_tray := false) -> void:
 	if decor_search and decor_search.has_focus():
 		decor_search.release_focus()          # взяли украшение — клавиши снова у карты (WASD, Z/X, пробел)
 	var cat: String = Defs.B[type]["cat"]
+	if bool(Defs.B[type].get("hidden", false)):
+		return
+	if cat == "special":
+		var sub := "wonders" if Defs.B[type].get("sub", "") == "wonders" else "monuments"
+		if open_ssub != sub:
+			open_ssub = sub
+			if tray.visible and open_cat == cat:
+				_fill_cards()
 	if cat == "commerce":
 		open_sub = Defs.B[type]["sub"]
 	if cat == "decor" and not from_tray:
@@ -3985,9 +4025,11 @@ func _card_or_cat(cat: String, type: String) -> Control:
 			if b.get_meta("type", "") == type:
 				return b
 		# карточка на другой вкладке — показать на вкладку
-		var tabs: HBoxContainer = tray_dtabs if cat == "decor" else (tray_tabs if cat == "commerce" else null)
+		var tabs: HBoxContainer = tray_dtabs if cat == "decor" else (tray_tabs if cat == "commerce" else (tray_stabs if cat == "special" else null))
 		# у украшений — вкладка меню (с переездами этапа 5: колодец — в «Воде», телега — в «Рынке»)
 		var want := Defs.decor_sub(type) if cat == "decor" else String(Defs.B[type].get("sub", ""))
+		if cat == "special" and want != "wonders":
+			want = "monuments"
 		if tabs:
 			for t in tabs.get_children():
 				if String(t.get_meta("sub", "")) == want:
@@ -5717,7 +5759,7 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 			var o: Dictionary = c.buildings[id]
 			if not nms.has(String(c.def(o)["name"])):
 				nms.append(String(c.def(o)["name"]))
-			back += float(c.def(o)["cost"]) * Defs.REFUND
+			back += c.refund_price(o)
 		var db := Button.new()
 		db.focus_mode = Control.FOCUS_NONE
 		db.text = "Снести мешающее: %s (вернётся %s ден.)" % [", ".join(nms.map(func(x): return "«%s»" % x)), fmt(int(back))]
@@ -8720,6 +8762,8 @@ func _icons_async(vp: SubViewport, cam: Camera3D, holder: Node3D) -> void:
 		if type == "center":
 			continue
 		var d: Dictionary = Defs.B[type]
+		if bool(d.get("hidden", false)):
+			continue
 		var tier := 2 if d["kind"] == "house" else 0
 		col = (col + 3) % Defs.PALETTE.size()
 		# у украшений облик задаёт тип (Catalog.make сам берёт их постоянный цвет) — картинка как поставленное

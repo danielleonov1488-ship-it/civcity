@@ -317,7 +317,7 @@ func _rewards() -> void:
 	var signature := _city_signature()
 	city.legion.pvp_rating = 100000
 	city.legion.glory = 100000.0
-	check(city.legion.build_wonder("circus") and city.legion.triumph(), "Legion wonders and triumph still work")
+	check(not city.legion.has_method("build_wonder") and city.legion.triumph(), "wonder purchases removed; Legion triumph still works")
 	check(_city_signature() == signature, "wonder and triumph leave city unchanged")
 
 
@@ -333,7 +333,7 @@ func _save_compatibility() -> void:
 	var glory := city.legion.glory
 	city.load_data(JSON.parse_string(JSON.stringify(snapshot)))
 	check(city.buildings.size() == before and city.money == money and city.legion.glory == glory, "save keeps buildings and never refunds old glory")
-	check(city.buildings.has(arch_id) and int(city.buildings[arch_id]["tier"]) == old_tier and city.legion.built.has("arch"), "legacy monument stays and military bonus migrates once")
+	check(city.buildings.has(arch_id) and int(city.buildings[arch_id]["tier"]) == old_tier and is_zero_approx(float(city.legion.defense_snapshot()["atk_b"])), "legacy monument stays without a military bonus")
 	var tier := int(city.buildings[arch_id]["tier"])
 	city.legion.sync_tiers(true)
 	check(int(city.buildings[arch_id]["tier"]) == tier, "military levels never restyle city buildings")

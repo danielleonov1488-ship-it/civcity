@@ -80,7 +80,7 @@ func _run() -> void:
 	var types := []
 	for t in Defs.B.keys():
 		var d: Dictionary = Defs.B[t]
-		if d.get("kind", "") == "decor":
+		if d.get("kind", "") == "decor" or bool(d.get("hidden", false)):
 			continue
 		if not only.is_empty() and not (t in only):
 			continue

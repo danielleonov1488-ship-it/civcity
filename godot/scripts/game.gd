@@ -4825,7 +4825,7 @@ func _hover_building(b: Dictionary) -> void:
 	highlight.transform = city.xf(b)
 	add_child(highlight)
 	if hud and tool == "bulldoze":
-		hud.tool_status("Снести: %s (вернётся %s ден.)" % [city.def(b)["name"], hud.fmt(float(city.def(b)["cost"]) * Defs.REFUND)])
+		hud.tool_status("Снести: %s (вернётся %s ден.)" % [city.def(b)["name"], hud.fmt(city.refund_price(b))])
 
 
 func _work_hover(_b: Dictionary) -> void:
@@ -5617,6 +5617,8 @@ func _moved(b: Dictionary, m := {}) -> void:
 	if m.is_empty():
 		m = moving
 	var old := int(m["id"])
+	if bool(m.get("wonder_credit", false)):
+		b["wonder_credit"] = true
 	if int(m.get("hire", -1)) >= 0:
 		b["hire"] = int(m["hire"])
 	city.moving_id = -1
@@ -5686,6 +5688,7 @@ func _build_here() -> void:
 		else:
 			var h0 := city.happy_map() if _pops_for(tool) else {}
 			var snap := _undo_snap()           # до постановки: просьба или ранг, которые она даст, — уже без полного возврата
+			var place_cost := city.build_price(tool)
 			build_anim = true
 			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(pl["color"]))
 			build_anim = false
@@ -5693,7 +5696,7 @@ func _build_here() -> void:
 				b["host"] = pl["host"]
 				b["y"] = pl["y"]
 				_show(b)
-			_push_place([b["id"]], city.build_price(tool), String(Defs.B[tool]["name"]), snap)
+			_push_place([b["id"]], place_cost, String(Defs.B[tool]["name"]), snap)
 			if hud and Defs.B[tool]["kind"] == "decor":
 				hud.note_recent(tool)              # «Недавние» в меню украшений
 			_rot_hint_count()
@@ -6195,7 +6198,7 @@ func _erase_label() -> void:
 		var back := 0.0
 		for id in erase_fences:
 			if city.buildings.has(id):
-				back += float(city.def(city.buildings[id])["cost"]) * Defs.REFUND
+				back += city.refund_price(city.buildings[id])
 		warn = "Убрать звеньев забора: %d · вернётся %s ден." % [erase_fences.size(), hud.price_txt(back)]
 	if txt == "" and warn == "":
 		txt = "Здесь нечего стирать"
@@ -6250,7 +6253,7 @@ func _erase_fences_now() -> Array:
 			continue
 		var b: Dictionary = city.buildings[id]
 		out.append({"type": b["type"], "pos": b["pos"], "yaw": b["yaw"], "variant": b["variant"], "color": b["color"],
-			"back": float(city.def(b)["cost"]) * Defs.REFUND})
+			"back": city.refund_price(b)})
 		city.remove(b, true, true)
 	return out
 
@@ -6344,7 +6347,7 @@ func _redo() -> void:
 		if city.buildings.has(id):
 			var b: Dictionary = city.buildings[id]
 			fences.append({"type": b["type"], "pos": b["pos"], "yaw": b["yaw"], "variant": b["variant"], "color": b["color"],
-				"back": float(city.def(b)["cost"]) * Defs.REFUND})
+				"back": city.refund_price(b)})
 			city.remove(b, true, true)
 	if not fences.is_empty():
 		u["fences"] = fences
@@ -6361,7 +6364,8 @@ func _push_place(ids: Array, cost: float, name: String, snap: Dictionary) -> voi
 	if ids.is_empty():
 		return
 	undo_stack.append({"t": "place", "ids": ids, "cost": cost, "name": name, "ms": Time.get_ticks_msec(),
-		"goals": int(snap["goals"]), "stories": int(snap["stories"]), "level": int(snap["level"]), "money0": float(snap["money"])})
+		"goals": int(snap["goals"]), "stories": int(snap["stories"]), "level": int(snap["level"]), "money0": float(snap["money"]),
+		"wonder_credits": (snap.get("wonder_credits", {}) as Dictionary).duplicate()})
 	if undo_stack.size() > 40:
 		undo_stack.pop_front()
 	if hud:
@@ -6370,7 +6374,7 @@ func _push_place(ids: Array, cost: float, name: String, snap: Dictionary) -> voi
 
 ## Сколько выполнено просьб, историй и заказов, какой ранг и сколько в казне — до постановки (для отмены)
 func _undo_snap() -> Dictionary:
-	return {"goals": city.goals_done.size(), "stories": _stories_done(), "level": city.level, "money": city.money}
+	return {"goals": city.goals_done.size(), "stories": _stories_done(), "level": city.level, "money": city.money, "wonder_credits": city.wonder_credits.duplicate()}
 
 
 func _stories_done() -> int:
@@ -6424,6 +6428,8 @@ func _undo_place(u: Dictionary) -> void:
 		for oid in city.buildings.keys():
 			if city.buildings.has(oid) and int(city.buildings[oid].get("host", -1)) == int(id):
 				city.remove(city.buildings[oid], true, true)     # украшения на её стенах — как при сносе
+		if bool(b.get("wonder_credit", false)) and int((u.get("wonder_credits", {}) as Dictionary).get(String(b["type"]), 0)) > 0:
+			city.wonder_credits[String(b["type"])] = 1
 		city.remove(b, false, true)
 	# 100%: постройку поставили по ошибке — но казна не полнее, чем была до неё и чем её предел (доход за эти
 	# секунды не копится сверх предела)

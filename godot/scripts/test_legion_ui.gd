@@ -146,8 +146,7 @@ func _run() -> void:
 		ui._close_overlay()
 	ui._select_tab("pvp")
 	await shot("pvp")
-	ui._select_tab("wonders")
-	await shot("wonders")
+	check("чудеса перенесены в город", not ui.tabs.has("wonders") and not ui.has_method("_wonder_card"))
 	await _soldiers(c, lg, ui)
 	# босс Крита
 	ui._select_tab("campaign")
@@ -210,8 +209,7 @@ func _run() -> void:
 	await shot("early_map")
 	ui._select_tab("troops")
 	await shot("early_troops")
-	ui._select_tab("wonders")
-	await shot("early_wonders")
+	check("в раннем Легионе тоже нет чудес", not ui.tabs.has("wonders"))
 	ui.view_r = 1
 	ui._select_tab("campaign")
 	await shot("early_locked")
@@ -421,8 +419,19 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	await frames(8)
 	var tx := _texts(ui.content)
 	check("предупреждение о лучнике в учебном бою", tx.contains("лучше три легионера") and tx.contains("для трёх легионеров"))
+	# Ранний отряд: предыдущие кадры оставили казармы всех родов войск.
+	# Они теперь доступны сами по себе, поэтому исключаем их из этой фикстуры.
+	var all_buildings := c.buildings
+	c.buildings = all_buildings.duplicate()
+	for id in c.buildings.keys():
+		if String(c.buildings[id]["type"]) in ["spearcamp", "ballistae", "catapults"]:
+			c.buildings.erase(id)
+	var army_off0 := lg.army_off
+	lg.army_off = true
 	lg.use_auto_squad()
-	check("лучший состав в лесу — три легионера", lg.squad == ["legionary", "legionary", "legionary"])
+	check("лучший ранний состав в лесу — три легионера", lg.squad == ["legionary", "legionary", "legionary"])
+	lg.army_off = army_off0
+	c.buildings = all_buildings
 	ui.close()
 	c.remove(rb, false)
 	await _d10_fixes(c, lg, ui)

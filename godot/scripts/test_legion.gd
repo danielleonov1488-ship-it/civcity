@@ -610,7 +610,7 @@ func _api() -> void:
 	L.rating = 30
 	L.glory = 3.0
 	city.money = 20000.0
-	_check(not city.unlocked("arch") and L.wonder_state("arch") == "open", "рейтинг открывает только чудо Легиона")
+	_check(not city.unlocked("arch") and not L.has_method("build_wonder"), "рейтинг не открывает городскую арку, покупки чудес в Легионе нет")
 	city.research["arch"] = true
 	var ca := city.check_place("arch", p + Vector2(30, 0), 0.0)
 	_check(city.unlocked("arch") and not String(ca["err"]).contains("Славы"), "городская арка не требует Славы")
@@ -624,7 +624,7 @@ func _api() -> void:
 	L.pvp_rating = 250
 	L.glory = 500.0
 	city.money = 50000.0
-	_check(L.can_build_wonder("circus") == "" and L.build_wonder("circus") and L.city_happy() == 0, "Большой цирк возведён без городского бонуса")
+	_check(not city.unlocked("circus") and not L.has_method("can_build_wonder") and L.city_happy() == 0, "Большой цирк ждёт городской модели")
 	# бой с городом
 	var opp := {"name": "Город Марка", "rating": 300, "city_level": 5, "snapshot": {"v": 1, "squad": [{"type": "legionary", "level": 1}, {"type": "archer", "level": 1}], "perks": {}}}
 	var ps := L.make_pvp_battle(opp, 7)
@@ -669,7 +669,7 @@ func _d10_api() -> void:
 	var fb := city.place("forge", p + Vector2(0, 26), 0.0, 0, -1, true)
 	var hp2 := int(L.stats("legionary")["hp"])
 	var snap := L.defense_snapshot()
-	_check(not Legion.PVP_MODS and hp2 > hp1 and int(L.stats("legionary", true)["hp"]) == hp1 and is_equal_approx(float(snap["atk_b"]), L.bonus("atk"))
+	_check(not Legion.PVP_MODS and hp2 > hp1 and int(L.stats("legionary", true)["hp"]) == hp1 and is_zero_approx(float(snap["atk_b"]))
 		and int(L.squad_stats("pvp")[0]["hp"]) == hp1 and int(L.squad_stats()[0]["hp"]) == hp2, "Кузница 1 ур.: здоровье %d → %d в походах, в боях с городами — %d" % [hp1, hp2, hp1])
 	var m0 := L.city_money()
 	_check(L.upgrade("forge") and is_equal_approx(m0 - L.city_money(), 840.0), "улучшение Кузницы до 2 ур. — 840 ден.")

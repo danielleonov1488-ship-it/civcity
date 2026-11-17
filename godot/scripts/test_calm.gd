@@ -257,7 +257,7 @@ func _sinks() -> void:
 			pp = p
 			break
 	check(pp.x > -99 and not c.buy_plot(pp) and c.money == 1.0, "участок земли за 1 ден. — нет")
-	check(c.legion._afford_text({"money": 100}) == "Не хватает денариев" and c.legion.can_build_wonder("circus") != "", "Легион: улучшение и чудо — «Не хватает денариев»")
+	check(c.legion._afford_text({"money": 100}) == "Не хватает денариев" and not c.legion.has_method("can_build_wonder"), "Легион: улучшение требует денарии, покупки чудес убраны")
 	# провиант после боя: пока шёл бой, казна опустела — платим, сколько есть, не в минус
 	var st: Dictionary = c.legion.stage_info(0, 0, 0)
 	var su: Dictionary = c.legion.make_battle(st, 7)
