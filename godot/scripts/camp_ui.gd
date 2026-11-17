@@ -4,7 +4,6 @@ extends Control
 
 const Kit = preload("res://scripts/ui_kit_a.gd")
 const Ring = preload("res://scripts/fort_ui_ring.gd")
-const PersonPreview = preload("res://scripts/fort_person_preview.gd")
 const USE_3D := true
 const USE_CUTAWAY := true
 var use_cutaway := USE_CUTAWAY # Старые сценарии могут явно выбрать прежнюю диораму.
@@ -539,13 +538,9 @@ func _layout() -> void:
 		card.position.y = clampf(card.position.y + _sheet_offset, 24, maxf(24, size.y - card.size.y * card.scale.y - 24))
 	_fit_modal()
 	if diorama is FortCutaway:
-		_layout_cutaway_markers(k)
-		for button: Button in [expand_floor, expand_section]:
-			button.reset_size()
-			button.scale = Vector2.ONE * k
-			var point: Vector2 = (diorama as FortCutaway).expansion_project("floor" if button == expand_floor else "section")
-			button.position = Vector2(clampf(point.x - button.size.x * k * 0.5, 140 * k, maxf(140 * k, size.x - button.size.x * k - 12)), clampf(point.y - button.size.y * k * 0.5, 146 * k, maxf(146 * k, size.y - 170 * k)))
-	_layout_guide()
+		_layout_cutaway_view()
+	else:
+		_layout_guide()
 
 
 func _process(dt: float) -> void:
@@ -560,7 +555,8 @@ func _process(dt: float) -> void:
 	if dragging != _guide_dragging:
 		_guide_dragging = dragging
 		_layout_guide()
-	for marker: Dictionary in plot_markers.values():
+	for id: int in plot_markers:
+		var marker: Dictionary = plot_markers[id]
 		var collect: Button = marker["collect"]
 		var full: bool = bool(collect.get_meta("fort_full", false))
 		collect.pivot_offset = collect.size * 0.5
@@ -996,6 +992,7 @@ func show_recruit_picker() -> void:
 		v.add_child(p)
 		var row := HBoxContainer.new()
 		p.add_child(row)
+		row.add_child(_person_portrait(candidate, 64, true))
 		var details := VBoxContainer.new()
 		details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(details)
@@ -1286,6 +1283,12 @@ func show_hero() -> void:
 	var v := _new_modal(560)
 	hero_card_level = lg.hero_level()
 	v.add_child(_text("♛ " + Hero.name_of(lg.city()), 26, true))
+	for person: Dictionary in lg.soldiers:
+		if bool(person.get("hero", false)):
+			var portrait := _person_portrait(person, 136)
+			portrait.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			v.add_child(portrait)
+			break
 	v.add_child(_wrap("Первый воин Легиона. Герой остаётся с вами.", 16))
 	v.add_child(_wrap("Снаряжение героя улучшает Склад.", 14))
 	hero_status = _wrap("", 20)
@@ -1379,8 +1382,10 @@ func _start_diorama() -> void:
 		add_child(cutaway_markers)
 		move_child(cutaway_markers, 2)
 		_plots_sig = ""
+		diorama.view_changed.connect(_layout_cutaway_view)
+	else:
+		diorama.view_changed.connect(_layout)
 	diorama.building_pressed.connect(show_building)
-	diorama.view_changed.connect(_layout)
 	background.hide()
 
 
@@ -1421,7 +1426,7 @@ func guide_active() -> bool:
 
 func _skip_guide() -> void:
 	lg.finish_fort_guide()
-	guide_layer.hide()
+	_layout_guide()
 	if visible:
 		_refresh()
 	elif lu.visible:
@@ -2103,7 +2108,7 @@ func show_worker_picker() -> void:
 	for person: Dictionary in choices:
 		var row := HBoxContainer.new()
 		body.add_child(row)
-		row.add_child(lu._portrait("unit", Legion.unit_of_class(String(person["cls"])), 46))
+		row.add_child(_person_portrait(person, 54))
 		var sid := int(person["id"])
 		var button := _button(String(person["name"]), func():
 			if lg.fort_assign(target, sid):
@@ -2135,6 +2140,7 @@ func _sync_cutaway_markers() -> void:
 			var id := int(p["id"])
 			var type := String(p["b"])
 			var marker := _marker(id, type if type != "" else "hq")
+			marker["empty"] = type == ""
 			cutaway_markers.add_child(marker["panel"])
 			var button: Button = marker["button"]
 			button.set_meta("fort_room_hit", true)
@@ -2157,24 +2163,36 @@ func _sync_cutaway_markers() -> void:
 		_refresh_marker(marker)
 
 
-func _layout_cutaway_markers(k: float) -> void:
-	extra_plots.hide()
-	for marker: Dictionary in plaques.values():
-		(marker["panel"] as Control).hide()
+func _layout_cutaway_view() -> void:
+	var view := diorama as FortCutaway
+	var k := minf(1.0, minf(size.x / 1000.0, size.y / 720.0))
+	var screen := Rect2(Vector2(0, 100), size - Vector2(0, 160))
 	for id: int in plot_markers:
 		var marker: Dictionary = plot_markers[id]
 		var panel: Control = marker["panel"]
-		var empty := String(lg.fort_plot(id)["b"]) == ""
-		var center: Vector2 = diorama.project(id, 0.0 if empty else 1.0)
+		var empty: bool = marker.get("empty", false)
+		var center := view.project(id, 0.0 if empty else 1.0)
 		panel.scale = Vector2.ONE * k * 0.85
 		panel.position = center - Vector2(34, 86 if empty else 58) * panel.scale
-		panel.visible = diorama.footprint("plot_%d" % id).intersects(Rect2(Vector2(0, 100), size - Vector2(0, 160)))
+		panel.visible = view.plot_footprint(id).intersects(screen)
+	_layout_expansion_marker(expand_floor, view.expansion_project("floor"), k)
+	_layout_expansion_marker(expand_section, view.expansion_project("section"), k)
 	# Городские буферы отделены от комнат: компактный ряд у нижней панели.
 	var index := 0
 	for resource: String in bubbles:
 		var box: Control = bubbles[resource]["box"]
 		box.position = Vector2(170 + index * 54, size.y - 62)
 		index += 1
+	if guide_layer.visible or guide_active():
+		_layout_guide()
+
+
+func _layout_expansion_marker(button: Button, point: Vector2, k: float) -> void:
+	if not button.visible:
+		return
+	button.reset_size()
+	button.scale = Vector2.ONE * k
+	button.position = Vector2(clampf(point.x - button.size.x * k * 0.5, 140 * k, maxf(140 * k, size.x - button.size.x * k - 12)), clampf(point.y - button.size.y * k * 0.5, 146 * k, maxf(146 * k, size.y - 170 * k)))
 
 
 func show_newcomer(sid: int) -> void:
@@ -2184,14 +2202,16 @@ func show_newcomer(sid: int) -> void:
 		var v := _new_modal(400)
 		modal_panel.name = "FortNewcomerCard"
 		v.add_child(Kit.ribbon(I18n.t("Новобранец")))
-		var face := _person_portrait(person, 190)
+		var face := _person_portrait(person, 190, true)
 		face.name = "FortNewcomerPortrait"
 		face.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		v.add_child(face)
 		var cls := String(person.get("class_hint", "legionary"))
 		var overlay := Control.new()
 		overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		face.add_child(overlay)
+		# Внутри рамки контейнер размещает сам рисунок.
+		(face.get_node("FortPortraitArt") as TextureRect).add_child(overlay)
+		overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		var hint := Kit.image(hud.ico(String(CLASS_ICON.get(cls, "swords")), 42), Vector2(42, 42))
 		hint.name = "FortNewcomerClass"
 		hint.tooltip_text = I18n.t(Soldiers.class_name_of(cls))
@@ -2508,23 +2528,18 @@ func _instant_upgrade() -> void:
 
 func _room_picture(type: String, level: int, dims: Vector2, building := false) -> PanelContainer:
 	var frame := Kit.inset()
-	var stage := 1 if level < 4 else 2 if level < 8 else 3
-	var path := "rooms/building.jpg" if building else "rooms/" + FortCutaway.room_art(type) + "_%d.jpg" % stage
-	var pic := Kit.image(FortCutaway.ART + path, dims)
+	var pic := Kit.image(FortCutaway.room_texture_path(type, level, building), dims)
 	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	pic.clip_contents = true
 	frame.add_child(pic)
 	return frame
 
 
-func _person_portrait(person: Dictionary, pixels: float) -> PanelContainer:
-	var frame := Kit.slot(null, true, pixels)
-	var preview := PersonPreview.new()
-	frame.add_child(preview)
-	preview.setup(person)
-	preview.custom_minimum_size = Vector2.ONE * (pixels - 18)
-	# Портрет неподвижен; живой человек продолжает двигаться в разрезе.
-	(preview.get_child(0) as SubViewport).render_target_update_mode = SubViewport.UPDATE_ONCE
+func _person_portrait(person: Dictionary, pixels: float, newcomer := false) -> PanelContainer:
+	var room := "" if newcomer else String(lg.fort_plot(lg.fort_worker_plot(int(person["id"]))).get("b", ""))
+	var frame := Kit.slot(FortCutaway.portrait_path(person, room, newcomer), true, pixels)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.get_child(0).name = "FortPortraitArt"
 	return frame
 
 

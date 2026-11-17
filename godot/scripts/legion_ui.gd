@@ -787,7 +787,7 @@ func _fit() -> void:
 	if visible and lg != null and lg.v3():
 		var camp := CampUI.of(hud)
 		if camp != null:
-			camp._layout_guide()
+			camp._layout_guide.call_deferred()
 
 
 ## Короткая надпись внизу окна (почему нельзя и т. п.) — сама гаснет
@@ -1327,6 +1327,8 @@ func _map_view() -> Control:
 		camp.tooltip_text = "Стоянка легиона: отсюда отряд выходит в поход"
 		m.add_child(camp)
 	# бои по тропе
+	var guide_first_stage := (lg.v3() and lg.fort_guide_step() == Legion.FortGuide.CAMPAIGN
+		and not bool(lg.flags.get("fort_guide_stage", false)))
 	for s in Legion.stages():
 		var boss := s == Legion.stages() - 1
 		var p: Vector2 = (pts["boss"] if boss else (pts["stops"] as Array)[s]) * k
@@ -1354,9 +1356,11 @@ func _map_view() -> Control:
 		m.add_child(b)
 		if front:
 			_front_btn = b
-			var tw := b.create_tween().set_loops()
-			tw.tween_property(b, "scale", Vector2(1.1, 1.1), 0.55).set_trans(Tween.TRANS_SINE)
-			tw.tween_property(b, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
+			# Под стрелкой размер кнопки постоянный.
+			if not (first_stage and guide_first_stage):
+				var tw := b.create_tween().set_loops()
+				tw.tween_property(b, "scale", Vector2(1.1, 1.1), 0.55).set_trans(Tween.TRANS_SINE)
+				tw.tween_property(b, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
 			# орёл легиона над передним краем
 			var eg := _tr(_ic38("eagle"), 44)
 			eg.size = Vector2(44, 44)

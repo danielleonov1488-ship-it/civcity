@@ -39,7 +39,8 @@ func check(ok: bool, message: String) -> bool:
 
 func shot(file: String, step: int, target: Control = null, person := -1, newcomer := false) -> void:
 	await frames(8)
-	camp._layout_guide()
+	if not camp.lu.visible:
+		camp._layout_guide()
 	await frames(2)
 	check(lg.fort_guide_step() == step, file + " step")
 	var arrows := game.hud.root.find_children("FortGuideArrow", "TextureRect", true, false)
@@ -170,9 +171,11 @@ func _run() -> void:
 	check(bread.disabled, "batch cannot be collected at once")
 	var during := save_round_trip()
 	var before_load := lg.rations
+	var reserved := float(during["flags"]["fort_guide_rations"])
 	camp.close()
 	await frames(2)
-	lg.from_dict(during)
+	# Продолжаем на копии, чтобы флаги в снимке остались на шаге готовки.
+	lg.from_dict(during.duplicate(true))
 	camp.open()
 	bread = camp.plot_markers[kitchen_id]["collect"]
 	await shot("03_resumed", Step.RATIONS, bread)
@@ -264,12 +267,15 @@ func _run() -> void:
 		return
 	await shot("08_complete", Step.DONE)
 	camp.close()
-	lg.from_dict(during)
+	lg.from_dict(during.duplicate(true))
 	camp.open()
 	await frames(6)
+	check(lg.fort_guide_step() == Step.RATIONS and camp.guide_pointer.is_visible_in_tree(), "skip starts on active rations step")
 	if not press(camp.guide_skip, "skip an active step"):
 		return
-	check(is_equal_approx(lg.rations, before_load + float(during["flags"]["fort_guide_rations"])), "skip restores reserved rations")
+	check(lg.fort_guide_step() == Step.DONE and not camp.guide_pointer.is_visible_in_tree(), "skip hides arrow immediately")
+	check(camp._guide_target == null and not camp._guide_rect.has_area(), "skip clears guide target")
+	check(is_equal_approx(lg.rations, before_load + reserved), "skip restores reserved rations")
 	var skipped := save_round_trip()
 	camp.close()
 	lg.from_dict(skipped)
