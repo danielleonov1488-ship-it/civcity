@@ -1078,6 +1078,12 @@ func _fill_families() -> void:
 		return
 	var chip := _chip(false, 10.0)
 	chip.mouse_filter = Control.MOUSE_FILTER_PASS
+	var family_count := c.arrivals.size()
+	var family_word := _plural(family_count, "семья", "семьи", "семей")
+	match family_word:
+		"семья": chip.tooltip_text = "%d семья ждёт жилья" % family_count
+		"семьи": chip.tooltip_text = "%d семьи ждут жилья" % family_count
+		_: chip.tooltip_text = "%d семей ждут жилья" % family_count
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
 	chip.add_child(h)
@@ -1093,11 +1099,6 @@ func _fill_families() -> void:
 			func(): game.start_settle(nm))
 		if game.tool == "settle" and game.settle_fam.get("name", "") == nm:
 			_set_on(b, true)
-		var cnt := _label(str(int(f["n"])), 16, true, C_CREAM)
-		cnt.add_theme_color_override("font_outline_color", Color("3a2412"))
-		cnt.add_theme_constant_override("outline_size", 7)
-		cnt.position = Vector2(35, 28)
-		b.add_child(cnt)
 		if f["cls"] != "plebs":
 			var ci := _cls_pic(f["cls"], 24)
 			ci.position = Vector2(-6, -6)
@@ -1111,6 +1112,12 @@ func _fill_families() -> void:
 			var tw := b.create_tween()
 			tw.tween_property(b, "scale", Vector2(1.12, 1.12), 0.25).set_trans(Tween.TRANS_BACK)
 			tw.tween_property(b, "scale", Vector2.ONE, 0.2)
+	# Число рядом с медальонами — семьи, не люди в одной семье.
+	var cnt := _label(str(family_count), 18, true, C_INK)
+	cnt.name = "WaitingFamilyCount"
+	cnt.tooltip_text = chip.tooltip_text
+	cnt.mouse_filter = Control.MOUSE_FILTER_PASS
+	h.add_child(cnt)
 	_fam_known = now
 	fam_box.add_child(chip)
 
@@ -4100,10 +4107,26 @@ func _process(_dt: float) -> void:
 			var r := t.get_global_rect()
 			var bob := sin(Time.get_ticks_msec() / 160.0) * 7.0
 			var above := r.position.y > 200.0
+			pointer.custom_minimum_size = Vector2(52, 52)
+			pointer.size = Vector2(52, 52)
 			pointer.rotation = 0.0 if above else PI
 			pointer.pivot_offset = Vector2(26, 26)
 			pointer.position = Vector2(r.get_center().x - 26, (r.position.y - 58 - bob) if above else (r.end.y + 2 + bob))
-			if above:
+			if info_panel.visible and info_panel.is_ancestor_of(t):
+				# В карточке наконечник стоит у кнопки, подпись — за левым краем окна.
+				pointer.rotation = 0.0
+				pointer.position = Vector2(r.get_center().x - 26, r.position.y - 50)
+				var label_y := r.position.y - 26.0
+				if t.name == "hire_plus":
+					# Маленькая стрелка слева помещается в промежутке между числом и «+».
+					pointer.custom_minimum_size = Vector2(32, 32)
+					pointer.size = Vector2(32, 32)
+					pointer.pivot_offset = Vector2(16, 16)
+					pointer.rotation = -PI / 2.0
+					pointer.position = Vector2(r.position.x - 31, r.get_center().y - 16)
+					label_y = r.get_center().y
+				pointer_text.position = Vector2(maxf(6.0, info_panel.get_global_rect().position.x - pointer_text.size.x - 12.0), label_y - pointer_text.size.y / 2.0)
+			elif above:
 				pointer_text.position = pointer.position + Vector2(26 - pointer_text.size.x / 2.0, -26)
 			else:
 				# стрелка снизу смотрит вверх: подпись сбоку от неё, чтобы не налезать на окна ниже
@@ -4745,10 +4768,22 @@ func _hire_row(b: Dictionary) -> VBoxContainer:
 			slot.add_child(_cls_pic(worker_cls, 26) if occupied else _card_icon("person", 22, CARD_ACCENT))
 			slots.add_child(slot)
 			index += 1
-	if h == 0:
-		var empty := _wrap(_label("Требуются горожане", 15, true, C_BAD), INFO_BODY)
-		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		block.add_child(empty)
+	for cls: String in Defs.CLASS_ORDER:
+		if int(c.def(b).get("jobs", {}).get(cls, 0)) <= 0:
+			continue
+		var free := int(c.stats.get("free", {}).get(cls, 0))
+		var available := HBoxContainer.new()
+		available.name = "hire_class_" + cls
+		available.tooltip_text = String(Defs.CLASSES[cls]["name"])
+		available.alignment = BoxContainer.ALIGNMENT_CENTER
+		available.add_theme_constant_override("separation", 5)
+		available.add_child(_cls_pic(cls, 24))
+		var free_label := _label("свободно: %d" % free, 14, true, CARD_ACCENT if free > 0 else C_BAD)
+		free_label.name = "hire_free_" + cls
+		free_label.tooltip_text = String(Defs.CLASSES[cls]["name"])
+		free_label.mouse_filter = Control.MOUSE_FILTER_PASS
+		available.add_child(free_label)
+		block.add_child(available)
 	var can_add := c.can_hire(b)
 	if h < mx and not can_add and not b.get("over", false):
 		var none := _wrap(_label("Нет свободных горожан нужного класса", 14, false, C_SOFT), INFO_BODY)
@@ -4776,6 +4811,11 @@ func _hire_row(b: Dictionary) -> VBoxContainer:
 	count.name = "hire_n"
 	row.add_child(minus)
 	row.add_child(count)
+	if c.manual_hiring() and h == 0:
+		var pointer_gap := Control.new()
+		pointer_gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pointer_gap.custom_minimum_size.x = 32
+		row.add_child(pointer_gap)
 	row.add_child(plus)
 	row.add_child(_label("%d%%" % roundi(float(b.get("staff", 0.0)) * 100.0), 14, true, C_SOFT))
 	block.add_child(row)
@@ -5387,9 +5427,18 @@ func _fill_house_body(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float
 	var cl := String(d["cls"])
 	var tier := int(b["tier"])
 	var fmax := Defs.floors_max(cl, int(b.get("variant", 0)))
-	var subtitle := _label("%s · %d/%d" % [Defs.CLASSES[cl]["name"], tier, fmax], 12, true, CARD_ACCENT)
+	var subtitle := _label(String(Defs.CLASSES[cl]["name"]), 12, true, CARD_ACCENT)
 	subtitle.tooltip_text = "%s · этаж %d из %d · цвет «%s»" % [Defs.CLASSES[cl]["name"], tier, fmax, Defs.PALETTE[int(b["color"])]["name"]]
-	tv.add_child(subtitle)
+	var occupancy := HBoxContainer.new()
+	occupancy.add_theme_constant_override("separation", 5)
+	occupancy.add_child(subtitle)
+	occupancy.add_child(_card_icon("person", 16, CARD_ACCENT))
+	var residents := _label("%d/%d" % [int(b["pop"]), c.house_cap(b)], 12, true, CARD_ACCENT)
+	residents.name = "HouseOccupancy"
+	residents.tooltip_text = "жителей / мест"
+	residents.mouse_filter = Control.MOUSE_FILTER_PASS
+	occupancy.add_child(residents)
+	tv.add_child(occupancy)
 	var hp := int(b["happy"])
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 5)
@@ -6443,6 +6492,7 @@ func _research_panel() -> void:
 	research_tree.setup(self, w[1])
 	research_panel.visibility_changed.connect(func():
 		if research_panel.visible:
+			_research_head()                  # В том числе при прямом show(), без кнопки верхней полосы.
 			research_tree.open_scroll = true
 		else:
 			research_tree.close_detail())
@@ -7624,7 +7674,8 @@ func _once_tips() -> void:
 		advisor("%s — ваш герой" % Hero.name_of(c), hero_note())
 		return
 	# «Хутор»: дом готов к этажу, а денариев не хватает — один раз: налоги подойдут (этап 2.3, денег впритык)
-	if c.level == 1 and c.research.has("floor2") and not c.tips.has("floor_money") and c.tips.has("floor_tool"):
+	# С инструментом в руках совет ждёт: окно перекрыло бы улицу и забрало мазок.
+	if game.tool == "" and not game.floor_drag and c.level == 1 and c.research.has("floor2") and not c.tips.has("floor_money") and c.tips.has("floor_tool"):
 		var ready: Array = c.floor_ready(false)
 		if not ready.is_empty() and c.money < float(c.floor_price(c.buildings[ready[0]])):
 			c.tips["floor_money"] = true
@@ -8117,10 +8168,8 @@ func _update_world_icons() -> void:
 				icon = "house_problem"
 				tip = "Жителям грустно уже 3 часа" if red.is_empty() else "Жителям не хватает: %s" % ", ".join(red)
 
-		elif d["kind"] == "center" and c.arrivals_paused:
-			icon = "family"
-			warn = false
-			tip = "Пауза: новые семьи не едут"
+		# У станции остаются только значки ожидающих групп из _family_badges.
+		# Пауза прибытия видна и меняется в карточке станции.
 		if icon != "":
 			want[id] = [icon, warn, price, tip]
 	for id in world_icons.keys():

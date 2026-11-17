@@ -5427,5 +5427,12 @@
 "Надстроить этаж · %s": "Add a floor · %s",
 "Перестроить · %s": "Rebuild · %s",
 "Несколько домов — инструментом «Этаж» (U).": "For several houses, use the Floor tool (U).",
-"Форт открыт: принимайте новобранцев у ворот — кнопка «Легион» наверху": "The fort is open: welcome newcomers at the gate — use the Legion button at the top"
+"Форт открыт: принимайте новобранцев у ворот — кнопка «Легион» наверху": "The fort is open: welcome newcomers at the gate — use the Legion button at the top",
+  "%d семья ждёт жилья": "%d family is waiting for a home",
+  "%d семьи ждут жилья": "%d families are waiting for homes",
+  "%d семей ждут жилья": "%d families are waiting for homes",
+  "жителей / мест": "residents / capacity",
+  "свободно: %d": "free: %d",
+  "Открылись новые исследования.": "New research is available.",
+  "Условия следующего уровня — в табличке города слева вверху.": "The requirements for the next rank are in the city plaque at the top left."
 }

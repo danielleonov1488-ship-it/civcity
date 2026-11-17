@@ -451,6 +451,7 @@ func _floor_stroke() -> void:
 		cost += c.floor_price(c.buildings[id])
 	m0 = c.money
 	coins0 = int(game.sound.played.get("coins", 0))
+	ev0 = c.events.size()
 	var tiers0 := {}
 	for id in houses():
 		tiers0[id] = int(c.buildings[id]["tier"])
@@ -492,6 +493,8 @@ func _floor_stroke() -> void:
 	check(int(game.sound.played.get("coins", 0)) == coins0 + 1, "монетки — один раз на мазок (а не %d)" % seg.size())
 	var tx: String = c.events[-1]["text"]
 	check(tx.begins_with("Надстроили %d этажей за %d ден." % [seg.size(), cost]) and tx.contains("Проба"), "итог мазка — одной строкой в колокольчик: «%s»" % tx)
+	var floor_events: Array = c.events.slice(ev0).filter(func(e): return String(e["text"]).begins_with("Надстроили ") or String(e["text"]).begins_with("Дому семьи "))
+	check(floor_events.size() == 1, "на весь мазок ровно одна запись об этажах")
 	var toast := false
 	for n in hud.notes_box.get_children().slice(notes0):
 		for l in texts(n):
@@ -550,7 +553,19 @@ func _floor_broke() -> void:
 		if int(c.buildings[id]["tier"]) == int(tiers0[id]) and hud.badges.has("fl%d" % id) and hud.badges["fl%d" % id]["warn"] and not cover.want.has(id):
 			red += 1
 	check(red == r.size() - got, "у недостроенных — красная цена без подсветки: %d" % red)
+	await _floor_broke_look()
 	c.money = 500000.0
+	c.changed.emit()
+	await frames(4)
+	for id in r:
+		if int(c.buildings[id]["tier"]) == int(tiers0[id]):
+			var k := "fl%d" % int(id)
+			check(hud.badges.has(k) and not hud.badges[k]["warn"] and cover.want.get(id) == Cover.GREEN, "денарии вернулись — цена обычная, дом %d снова подсвечен" % int(id))
+
+
+## Дополнительный снимок и проверка потомка — пока казну ещё не пополнили.
+func _floor_broke_look() -> void:
+	pass
 
 
 # ---------- над неготовым домом — почему ----------

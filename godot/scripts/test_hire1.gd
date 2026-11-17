@@ -110,7 +110,7 @@ func _run() -> void:
 	check(game.people.residents.all(func(r: Dictionary) -> bool: return int(r["job"]) != int(shop["id"])), "building never auto-hires")
 	hud._do_click(hud.hire_do(shop))
 	await frames(5)
-	check(texts(hud.info_box).contains("Требуются горожане"), "empty card message")
+	check(texts(hud.info_box).contains("свободно: %d" % int(c.stats["free"]["plebs"])), "empty card shows free workers")
 	check(hud.info_box.find_child("worker_slots", true, false).get_child_count() == 3, "three visible slots")
 	check(hud._do_target(hud.hire_do(shop)) == hud.info_box.find_child("hire_plus", true, false), "quest pointer targets plus")
 	await shot("1_card_empty.png")
