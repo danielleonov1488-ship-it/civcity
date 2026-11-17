@@ -599,19 +599,19 @@ func _floor_why() -> void:
 		for l in texts(hud.info_box):
 			tip = tip or String(l).contains("инструментом «Этаж»")
 		check(fbtn and tip, "в карточке дома кнопка «Надстроить этаж» осталась, рядом — подсказка про инструмент")
-		# короткая карточка (по умолчанию у игрока): узкая, кнопка «Этаж · цена», «Подробнее» раскрывает подробную
+		# Короткая карточка тоже сохраняет полное название действия и «Подробнее».
 		hud.house_more = false
 		hud.open_info(c.buildings[rr[0]])
 		await frames(3)
 		var sbtn: Button = null
 		var more: Button = null
 		for b in hud.info_box.find_children("*", "Button", true, false):
-			if (b as Button).text.begins_with("Этаж ·"):
+			if (b as Button).text.begins_with("Надстроить этаж ·"):
 				sbtn = b
 			if (b as Button).text.begins_with("Подробнее"):
 				more = b
-		check(sbtn != null and more != null and hud.info_panel.size.x < 470.0,
-			"короткая карточка дома: «Этаж · цена» и «Подробнее», ширина %.0f" % hud.info_panel.size.x)
+		check(sbtn != null and more != null and is_equal_approx(hud.info_panel.size.x, 340.0),
+			"короткая карточка дома: «Надстроить этаж · цена» и «Подробнее», ширина %.0f" % hud.info_panel.size.x)
 		if more:
 			more.pressed.emit()
 			await frames(3)

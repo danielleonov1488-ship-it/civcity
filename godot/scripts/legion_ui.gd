@@ -195,7 +195,7 @@ func _update_button() -> void:
 		if lg.v3():
 			btn.tooltip_text = "Легион"
 			return
-		# обучение, шаг 1: один раз советник рассказывает, с чего начать (стрелка — на Казармы). Только когда окно
+		# Первый совет один раз ведёт к кнопке «Легион», откуда открывается форт. Только когда окно
 		# исследований закрыто и советник свободен: Esc, правая кнопка и щелчок по карте закрывают окно вместе
 		# с советником — совет погас бы, не показавшись (окно закрыли — hud зовёт эту проверку через кадр)
 		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"] and lg.tut_step() == "barracks" \
@@ -744,10 +744,8 @@ func _update_tut() -> void:
 func tut_pointer() -> Array:
 	var step := lg.tut_step()
 	match step:
-		"barracks":
-			return [btn, "Легион"]
-		"medal":
-			return [btn, "Легион"]
+		"barracks", "medal":
+			return [hud._do_target({"kind": "legion"}), "Легион"]
 		"fight", "troops":
 			if not visible:
 				# «Войска»: пока улучшать не на что (на «Хуторе» и в «Деревне» денариев в обрез) — стрелка остаётся историям и просьбам

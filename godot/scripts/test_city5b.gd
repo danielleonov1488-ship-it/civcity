@@ -165,7 +165,7 @@ func _badges_without_text() -> void:
 
 
 func _card_bounds() -> void:
-	check(hud.info_panel.size.x <= 360, "card width <=360")
+	check(hud.info_panel.size.x <= 345.0 and hud.info_panel.size.x >= 335.0, "card width about 340 (now %.1f, more=%s)" % [hud.info_panel.size.x, hud.house_more])   # «Подробнее» + полоса прокрутки — 344
 	check(Rect2(Vector2.ZERO, hud.root.size).encloses(hud.info_panel.get_global_rect()), "card inside HUD")
 	for label: Label in hud.info_box.find_children("*", "Label", true, false):
 		check(label.get_theme_color("font_color") == Hud.CARD_ACCENT, "single card accent")
@@ -194,7 +194,10 @@ func _research_pages() -> void:
 				count += 1
 				check(tree.scroll.get_global_rect().grow(1).encloses(card.get_global_rect()), "rank item fits page " + String(r["id"]))
 				check((card.get_node("Picture") as Control).size == Vector2(64, 64), "64px research picture")
-				check((card.get_node("ItemName") as Label).get_theme_font_size("font_size") == 13, "13px item name")
+				var name_label := card.get_node("ItemName") as Label
+				check(name_label.get_theme_font_size("font_size") == 13, "13px item name")
+				check(name_label.get_theme_font("font").get_string_size(name_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x <= card.size.x and absf(name_label.position.x + tree.name_width(name_label) * 0.5 - card.size.x * 0.5) <= 1.0, "research name fits its cell, centred (%s)" % name_label.text)
+				check(card.tooltip_text.contains(I18n.t(String(r["name"]))) and name_label.tooltip_text == String(r["name"]), "full research name in tooltip")
 		check(count <= 16, "rank fits two rows")
 		if count > largest_count:
 			largest_count = count

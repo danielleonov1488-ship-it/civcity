@@ -424,11 +424,16 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 		hud.advisor_panel.visible = false
 		c.changed.emit()
 		await frames(6)
-	# шаг 1: советник с «Пропустить обучение», стрелка на раздел «Легион» нижней полосы
-	check("обучение не просит городские Казармы", lg.tut_step() == "" and not ui.tut_active())
-	check("нет совета о строительстве Казарм", not hud.advisor_panel.visible or hud.adv_title.text != StoryDefs.ADV_LEGION)
+	# Первый совет ведёт в форт через HUD; военных построек в каталоге города нет.
+	check("обучение ведёт в форт без городских Казарм", lg.count_type("barracks") == 0 and lg.tut_step() == "barracks" and ui.tut_active() and not c.city_buildable("barracks"))
+	check("совет о форте показан один раз", hud.advisor_panel.visible and hud.adv_title.text == StoryDefs.ADV_LEGION and lg.flags.has("advised"))
+	check("история и обучение используют одну кнопку HUD", ui.tut_pointer()[0] == ui.btn and hud._do_target({"kind": "legion"}) == ui.btn and hud.pointer_target == ui.btn)
 	check("нет стрелки на скрытый раздел «Легион»", hud.pointer_target != hud.cats["military"] and not (hud.cats["military"].get_parent() as Control).visible)
-	await shot("tut1_barracks")
+	await shot("tut1_fort")
+	hud.advisor_panel.visible = false
+	c.changed.emit()
+	await frames(4)
+	check("совет о форте не повторяется", lg.flags.has("advised") and (not hud.advisor_panel.visible or hud.adv_title.text != StoryDefs.ADV_LEGION))
 	hud.advisor_panel.visible = false
 	# Д10: военный квартал и вне истории — здание Легиона в руках: «В военном квартале ✓» / «Можно и здесь» (совет, не правило)
 	var sto = game.stories
@@ -444,7 +449,7 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	sto.force = f0
 	check("квартал вне истории: «%s» / «%s», украшения — без подписи" % [str(zin), str(zfar)], not zin.is_empty() and String(zin[0]) == "В военном квартале ✓" and bool(zin[1])
 		and not zfar.is_empty() and String(zfar[0]).begins_with("Можно и здесь") and zno.is_empty())
-	# шаг 2: Казармы стоят — стрелка на медальон
+	# Старое сохранение с городскими Казармами: сохранили прежние шаги боя и улучшений.
 	c.place("barracks", Vector2(166, 205), 0.0, 0, -1, true)
 	c.changed.emit()
 	await frames(6)
@@ -523,10 +528,15 @@ func _tutorial(c: City, lg: Legion, ui: LegionUi, fake: Callable) -> void:
 	c.changed.emit()
 	await frames(6)
 	check("при открытом окне исследований совета нет и он не потрачен", not hud.advisor_panel.visible and not lg.flags.has("advised"))
-	hud.close_panels()
+	for pressed in [true, false]:
+		var escape := InputEventKey.new()
+		escape.keycode = KEY_ESCAPE
+		escape.pressed = pressed
+		get_viewport().push_input(escape)
 	await frames(6)
 	check("окно исследований закрыто (Esc) — снова шаг 1, советник", not hud.research_panel.visible and hud.advisor_panel.visible and hud.adv_skip.visible
-		and hud.adv_title.text == StoryDefs.ADV_LEGION and lg.flags.has("advised"))
+		and hud.adv_title.text == StoryDefs.ADV_LEGION and lg.flags.has("advised") and lg.count_type("barracks") == 0
+		and hud.pointer_target == ui.btn and ui.tut_pointer()[0] == hud._do_target({"kind": "legion"}))
 	await shot("tut1_after_research")
 	await click(center_of(hud.adv_skip))
 	await frames(6)

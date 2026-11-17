@@ -475,7 +475,10 @@ func _api() -> void:
 	_check(city.unlocked("barracks") and not city.unlocked("range"), "Казармы — исследованием «Легион», Стрельбище — «Стрельбищем»")
 	_check(not city.unlocked("spearcamp") and Defs.unlock_text("boss1").contains("Атаман"), "Лагерь копейщиков закрыт до первого босса: " + Defs.unlock_text("boss1"))
 	# обучение: шаги выводятся из состояния игры
-	_check(L.tut_step() == "", "обучение не просит строить Казармы в городе: «%s»" % L.tut_step())
+	_check(L.tut_step() == "barracks" and not city.city_buildable("barracks"), "первый шаг ведёт к форту без городских Казарм: «%s»" % L.tut_step())
+	L.flags["seen"] = true
+	_check(L.tut_step() == "", "форт уже открывали — урок городских Казарм не навязывается")
+	L.flags.erase("seen")
 	var p := Land.CENTER + Vector2(14, 12)
 	city.place("barracks", p, 0.0, 0, -1, true)
 	_check(L.tut_step() == "medal", "шаг 2 — медальон: «%s»" % L.tut_step())

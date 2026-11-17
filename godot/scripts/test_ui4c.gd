@@ -78,7 +78,7 @@ func _arrow_look(id: int, warning: bool) -> void:
 		return
 	var badge: Badge = hud.badges[key]["n"]
 	check(badge.is_visible_in_tree(), "стрелка дома %d видна" % id)
-	check(badge.arrow and badge.size.y == 66.0 and badge.label != null and badge.pill != null, "стрелка 40 px и цена под ней")
+	check(badge.arrow and badge.size == Vector2(44, 44) and badge.label != null and badge.pill != null, "стрелка 40 px, область 44 px и цена под ней")
 	if badge.label == null or badge.pill == null:
 		return
 	check(badge.label.text == hud.fmt(c.floor_price(c.buildings[id])), "цена в плашке под стрелкой")
@@ -100,7 +100,8 @@ func _floor_tool() -> void:
 	var key := "fl%d" % id
 	var before: Dictionary = hud.badges[key]
 	var pos: Vector3 = before["pos"]
-	var rect: Rect2 = (before["n"] as Control).get_global_rect()
+	var original: Control = before["n"]
+	var rect: Rect2 = original.get_global_rect()
 	var home: Dictionary = c.buildings[id]
 	var expected_y: float = float(home["y"]) + c.blueprint(home).top_y() + 1.2
 	check(is_equal_approx(pos.y, expected_y), "скрытая обычная стрелка не поднимает стрелку инструмента")
@@ -111,6 +112,7 @@ func _floor_tool() -> void:
 	await frames(4)
 	hud._place_badges()
 	_arrow_look(id, true)
+	check(hud.badges[key]["n"] == original, "красная цена сохраняет узел стрелки")
 	check(hud.badges[key]["pos"] == pos and (hud.badges[key]["n"] as Control).get_global_rect() == rect, "красная цена сохраняет место и размер стрелки")
 	move(badge_scr(key))
 	await frames(3)

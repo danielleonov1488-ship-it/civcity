@@ -73,11 +73,12 @@ func setup(key: String, warning: bool, text: String, face_font: Font) -> void:
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		add_child(label)
-		var label_width := label.get_minimum_size().x
-		size = Vector2(clampf(label_width + 12.0, 44.0, 96.0) if is_finite(label_width) else 44.0, 66)
-		label.position = Vector2(0, 46)
-		label.size = Vector2(size.x, 20)
+		# Плашка не меняет область нажатия 44×44 и центр рисунка.
+		var label_width := face_font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+		var pill_width := clampf(label_width + 12.0, 44.0, 96.0) if is_finite(label_width) else 44.0
 		label.clip_text = true
+		label.position = Vector2((44.0 - pill_width) * 0.5, 46)
+		label.size = Vector2(pill_width, 20)
 		pill = StyleBoxFlat.new()
 		pill.bg_color = CREAM
 		pill.border_color = RIM
@@ -86,6 +87,14 @@ func setup(key: String, warning: bool, text: String, face_font: Font) -> void:
 		pill.shadow_color = Color(0.19, 0.12, 0.07, 0.16)
 		pill.shadow_size = 2
 		pill.shadow_offset = Vector2(0, 2)
+	queue_redraw()
+
+
+## Нехватка денег меняет только чернила, не узел и не его раскладку.
+func set_warning(value: bool) -> void:
+	warn = value
+	if label != null:
+		label.add_theme_color_override("font_color", BAD if warn else INK)
 	queue_redraw()
 
 
@@ -118,4 +127,4 @@ func _draw() -> void:
 	if pill != null:
 		if pill.shadow_size < 0 or pill.shadow_size > 4 or not pill.shadow_offset.is_finite() or pill.shadow_offset.length_squared() > 16.0:
 			return
-		draw_style_box(pill, Rect2(0, 46, size.x, 20))
+		draw_style_box(pill, label.get_rect())

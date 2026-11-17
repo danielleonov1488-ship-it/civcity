@@ -338,14 +338,25 @@ func make_card(r: Dictionary) -> Button:
 	var label: Label = hud._label(String(r["name"]), 13, true, Hud.CARD_ACCENT)
 	label.name = "ItemName"
 	label.position = Vector2(0, 66)
-	label.size = Vector2(CARD.x, 18)
 	label.clip_text = true
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	label.max_lines_visible = 1
+	label.tooltip_text = String(r["name"])
+	# Сначала обрезка, затем размер: длинное имя уже не расширит Control.
+	label.custom_minimum_size = Vector2(CARD.x, 18)
+	label.size = Vector2(CARD.x, 18)
 	b.add_child(label)
+	# Подпись вне контейнера растягивалась по тексту (проба: 178 точек у «Класс ремесленников») и наезжала
+	# на соседей — режем сами: переведённое имя с многоточием по ширине ячейки, полное — в подсказке
+	label.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	label.text = fit_name(I18n.t(String(r["name"])), label)
+	# ширину ей всё равно раздувают вправо — ставим текст влево и сдвигаем на половину свободного места:
+	# обрезанное имя стоит ровно под картинкой, как бы ни росла сама подпись
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	label.position.x = floorf((CARD.x - name_width(label)) * 0.5)
 	var badge := PanelContainer.new()
 	badge.name = "CostBadge"
 	badge.position = Vector2(12, 88)
@@ -649,3 +660,21 @@ func select_rank(tier: int) -> void:
 	current_rank = next_rank
 	_layout_sections()
 	scroll.scroll_vertical = 0
+
+
+## Имя исследования по ширине ячейки: длинное — с многоточием (Label вне контейнера сам не режет)
+static func fit_name(full: String, label: Label) -> String:
+	var f: Font = label.get_theme_font("font")
+	var fs: int = label.get_theme_font_size("font_size")
+	var room := CARD.x - 6.0
+	if f == null or f.get_string_size(full, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x <= room:
+		return full
+	var cut := full
+	while cut.length() > 1 and f.get_string_size(cut.strip_edges() + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x > room:
+		cut = cut.substr(0, cut.length() - 1)
+	return cut.strip_edges() + "…"
+
+
+static func name_width(label: Label) -> float:
+	var f: Font = label.get_theme_font("font")
+	return f.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.get_theme_font_size("font_size")).x if f else CARD.x

@@ -780,6 +780,10 @@ func mouse_over_ui() -> bool:
 	if menu_root and menu_root.visible:
 		return true
 	var h := root.get_viewport().gui_get_hovered_control()
+	# После пересборки значка Godot может ещё помнить прежний Control под мышью.
+	if h != null and game != null and game._mouse_pos.x >= 0.0:
+		if not h.is_visible_in_tree() or not h.get_global_rect().has_point(game._mouse_pos) or (game.tool in ["floor", "upgrade"] and badge_layer.is_ancestor_of(h)):
+			h = null
 	if h == null and game != null and game._mouse_pos.x >= 0.0:
 		# окно под мышью только что пересобрали (карточка после «Гардероб», «Внешность», «+ работник»): до первого
 		# движения мыши Godot не знает, над чем она, — смотрим сами, чтобы подпись постройки за карточкой не легла
@@ -3502,7 +3506,7 @@ func _update_pointer() -> void:
 		pointer_target = rank_btn
 		pointer_text.text = ""                # кнопка сама говорит, что делать; подпись легла бы на просьбы
 		return
-	# обучение Легиону (4 шага: Казармы → окно → учебный бой → улучшение) — scripts/legion_ui.gd
+	# Обучение Легиону: форт → окно → учебный бой → улучшение — scripts/legion_ui.gd
 	var lu := LegionUi.of(self)
 	if lu != null and lu.tut_active():
 		var lp: Array = lu.tut_pointer()
@@ -4042,6 +4046,8 @@ func _process(_dt: float) -> void:
 	_quest_world_tick()
 	_place_badges()
 	_place_pops()
+	if info_panel.visible and not info_b.is_empty():
+		_refresh_source_pictures()
 	_place_notes()
 	_place_overlay()
 	_cursor_tick()
@@ -4834,6 +4840,7 @@ func _clickable(row: Control, tip: String, cb: Callable) -> Control:
 		(ch as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 	m.add_child(row)
 	var b := Button.new()
+	b.set_meta("bare", true) # Прозрачное действие поверх строки, без рамки карточки.
 	b.focus_mode = Control.FOCUS_NONE
 	var e := StyleBoxEmpty.new()
 	for st in ["normal", "pressed", "focus", "disabled"]:
@@ -5317,16 +5324,20 @@ func press_festival() -> void:
 func _fill_house(b: Dictionary, d: Dictionary, tv: VBoxContainer, cw: float) -> void:
 	var outer := info_box
 	var body := VBoxContainer.new()
+	body.name = "HouseBody"
 	body.add_theme_constant_override("separation", 6)
-	body.custom_minimum_size = Vector2(cw, 0)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var sc := ScrollContainer.new()
 	sc.name = "house_scroll"
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sc.follow_focus = false
 	sc.add_child(body)
 	outer.add_child(sc)
+	# Полоса прокрутки помещается внутри тех же 340 точек вместе с рамкой.
+	var body_width := maxf(1.0, cw - ceilf(sc.get_v_scroll_bar().get_combined_minimum_size().x))
+	body.custom_minimum_size = Vector2(body_width, 0)
 	info_box = body
-	_fill_house_body(b, d, tv, cw)
+	_fill_house_body(b, d, tv, body_width)
 	info_box = outer
 	_fit_house_scroll(sc, body)
 	_fit_house_scroll_later(sc, body, int(b["id"]))
@@ -5452,13 +5463,14 @@ func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void
 		var why := String(c.call("can_buy_floor", b))
 		var fb := Button.new()
 		fb.focus_mode = Control.FOCUS_NONE
-		fb.text = "Этаж · %s ден." % fmt(price)
+		fb.name = "InfoFloor"
+		fb.text = "Надстроить этаж · %s" % fmt(price)
 		fb.icon = load("res://assets/ui/kitA/icons/upgrade.png")
 		fb.expand_icon = false
 		fb.custom_minimum_size = Vector2(0, 30)
 		fb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		_card_button(fb, false, true)
-		fb.add_theme_font_size_override("font_size", 17)
+		fb.add_theme_font_size_override("font_size", 14)
 		fb.add_theme_font_override("font", font_bold)
 		fb.disabled = why != ""
 		fb.tooltip_text = why if why != "" else "Надстроить этаж: место ещё для 1 семьи"
@@ -5468,6 +5480,7 @@ func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void
 					game.sound.ui("coins")
 				_fill_info())
 		info_box.add_child(fb)
+		info_box.add_child(_wrap(_label("Несколько домов — инструментом «Этаж» (U).", 12, false, CARD_ACCENT), cw))
 	info_box.add_child(_more_btn(not house_more))
 
 
@@ -5476,11 +5489,14 @@ func _more_btn(to_more: bool) -> Button:
 	var mb := Button.new()
 	mb.focus_mode = Control.FOCUS_NONE
 	mb.flat = true
+	mb.clip_text = true
+	mb.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	mb.text = "Подробнее: из чего счастье, жильцы ▾" if to_more else "Короче ▴"
 	mb.add_theme_font_size_override("font_size", 14)
 	mb.add_theme_color_override("font_color", C_SOFT)
 	mb.add_theme_color_override("font_hover_color", C_INK)
-	mb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	mb.size_flags_horizontal = Control.SIZE_FILL
+	mb.tooltip_text = mb.text
 	mb.pressed.connect(func():
 		house_more = to_more
 		_fill_info())
@@ -5503,7 +5519,8 @@ func _need_strip(coverage: Dictionary, required: Array, width: float, cl := "") 
 		var v := VBoxContainer.new()
 		v.modulate.a = 1.0 if needed else 0.35
 		v.name = "need_" + n
-		v.custom_minimum_size.x = clampf((width - 20.0) / 6.0, 1.0, 256.0) if is_finite(width) else 1.0
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.custom_minimum_size.x = floorf(clampf((width - 20.0) / 6.0, 1.0, 256.0)) if is_finite(width) else 1.0
 		v.add_theme_constant_override("separation", 1)
 		v.mouse_filter = Control.MOUSE_FILTER_PASS
 		v.tooltip_text = ("%s: покрытие %d%%" % [Defs.NEEDS[n]["name"], pct]) if needed else _need_later(cl, n)
@@ -5557,7 +5574,7 @@ func _family_rows(b: Dictionary, box: VBoxContainer, width: float, details: bool
 		var members: Array = f.get("m", [])
 		if members.is_empty():
 			members = Residents.gen(String(f["name"]), int(f["n"]), String(c.def(b)["cls"]), int(b["id"]))
-		heads.custom_minimum_size.x = members.size() * 19 + maxi(0, members.size() - 1) * 3
+		heads.custom_minimum_size.x = minf(width * 0.5, members.size() * 19 + maxi(0, members.size() - 1) * 3)
 		for m: Dictionary in members:
 			var child := int(m.get("age", 1)) == 0
 			var head := Button.new()
@@ -5616,10 +5633,14 @@ func _need_rows(b: Dictionary, cls: Dictionary, left: VBoxContainer, lw: float) 
 				var tile := HBoxContainer.new()
 				tile.add_theme_constant_override("separation", 2)
 				var image := TextureRect.new()
+				image.name = "SourcePicture"
+				image.set_meta("building_type", type)
 				image.custom_minimum_size = Vector2(28, 28)
 				image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-				image.texture = icons.get(type, ico(String(Defs.B[type].get("icon", "housing")), 32))
+				image.texture = icons.get(type)
+				if image.texture == null:
+					image.texture = ico(String(Defs.B[type].get("icon", "housing")), 32)
 				tile.add_child(image)
 				tile.add_child(_label("+%d%%" % int(source["bonus"]), 12, true, CARD_ACCENT))
 				var sid := int(source["id"])
@@ -5736,7 +5757,8 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 	var why := c.can_upgrade(b)
 	var ub := Button.new()
 	ub.focus_mode = Control.FOCUS_NONE
-	ub.text = "Перестроить · %s ден." % fmt(price)
+	ub.name = "InfoUpgrade"
+	ub.text = "Перестроить · %s" % fmt(price)
 	ub.icon = load("res://assets/ui/kitA/icons/upgrade.png")
 	ub.expand_icon = false
 	ub.custom_minimum_size = Vector2(0, 30)
@@ -8123,7 +8145,11 @@ func set_badge(key: String, pos: Vector3, icon: String, warn := false, text := "
 			old["cb"] = cb
 		else:
 			cb = old.get("cb", Callable())
-		if old["icon"] == icon and old["warn"] == warn and old.get("text", "") == text and old.get("style", "") == style:
+		if old["icon"] == icon and old.get("text", "") == text and old.get("style", "") == style:
+			if old["warn"] != warn:
+				old["warn"] = warn
+				(old["n"] as MapBadge).set_warning(warn)
+				_badges_dirty = true
 			return
 		(old["n"] as Control).hide()
 		(old["n"] as Node).queue_free()
@@ -8223,10 +8249,45 @@ func badge_at(mp: Vector2, prefix: String, skip_warn := false) -> String:
 	for k in badges:
 		if String(k).begins_with(prefix) and not (skip_warn and bool(badges[k]["warn"])):
 			var n: Control = badges[k]["n"]
-			if n.is_visible_in_tree() and n.get_index() > best_i and n.get_global_rect().grow(3.0).has_point(mp):
+			if n.is_visible_in_tree() and n.get_index() > best_i and n.get_global_rect().has_point(mp):
 				best_i = n.get_index()
 				best = String(k)
 	return best
+
+
+## Точки внутри всех стрелок на отрезке: быстрый мазок не перескочит узкий значок.
+func badge_stroke_samples(from: Vector2, to: Vector2, prefix: String) -> Array[float]:
+	var samples: Array[float] = []
+	if not from.is_finite() or not to.is_finite():
+		return samples
+	for key: String in badges:
+		if not key.begins_with(prefix) or bool(badges[key]["warn"]):
+			continue
+		var node: Control = badges[key]["n"]
+		if not node.is_visible_in_tree():
+			continue
+		var span := _badge_segment_span(node.get_global_rect(), from, to)
+		if span != Vector2.INF:
+			samples.append((span.x + span.y) * 0.5)
+	return samples
+
+
+static func _badge_segment_span(rect: Rect2, from: Vector2, to: Vector2) -> Vector2:
+	var delta := to - from
+	var enter := 0.0
+	var leave := 1.0
+	for axis in 2:
+		if is_zero_approx(delta[axis]):
+			if from[axis] < rect.position[axis] or from[axis] >= rect.end[axis]:
+				return Vector2.INF
+			continue
+		var near_t: float = (rect.position[axis] - from[axis]) / delta[axis]
+		var far_t: float = (rect.end[axis] - from[axis]) / delta[axis]
+		enter = maxf(enter, minf(near_t, far_t))
+		leave = minf(leave, maxf(near_t, far_t))
+		if enter > leave:
+			return Vector2.INF
+	return Vector2(enter, leave)
 
 
 func clear_badge(key: String) -> void:
@@ -8799,24 +8860,42 @@ func _card_frame(radius := 10, padding := 12) -> StyleBoxFlat:
 	return sb
 
 
+var _card_button_textures: Dictionary = {}
+
+
+## 512×160 переводим в высоту кнопки до нарезки: золотые края остаются тонкими.
+func _card_button_texture(file: String) -> Texture2D:
+	if not _card_button_textures.has(file):
+		var original: Texture2D = load("res://assets/ui/kitA/buttons/%s.png" % file)
+		var image := original.get_image()
+		if image.is_compressed():
+			image.decompress()
+		image.resize(102, 32, Image.INTERPOLATE_LANCZOS)
+		_card_button_textures[file] = ImageTexture.create_from_image(image)
+	return _card_button_textures[file]
+
+
 func _card_button(button: Button, round_button := false, green := false) -> void:
 	button.custom_minimum_size = Vector2(30, 30) if round_button else Vector2(0, 30)
 	button.add_theme_font_size_override("font_size", 14)
+	button.add_theme_font_override("font", font_bold)
+	button.add_theme_constant_override("h_separation", 4)
 	button.add_theme_constant_override("icon_max_width", 22)
 	button.expand_icon = true
-	button.clip_text = not round_button
+	button.clip_text = not round_button and not green
+	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	for state: String in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
 		var frame: StyleBox
 		if green or round_button:
 			var kit := StyleBoxTexture.new()
 			var file := "round_frame" if round_button else ("btn_disabled" if state == "disabled" else ("btn_green_pressed" if state in ["pressed", "hover_pressed"] else "btn_green"))
-			kit.texture = load("res://assets/ui/kitA/buttons/%s.png" % file)
-			if state == "disabled":
-				kit.modulate_color = Color(1, 1, 1, 0.45)
-			elif state in ["hover", "pressed", "hover_pressed"]:
+			kit.texture = load("res://assets/ui/kitA/buttons/%s.png" % file) if round_button else _card_button_texture(file)
+			if state in ["hover", "pressed", "hover_pressed"]:
 				kit.modulate_color = Color(1, 0.91, 0.72)
-			for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
-				kit.set_texture_margin(side, 0 if round_button else 12)
+			for side in [SIDE_LEFT, SIDE_RIGHT]:
+				kit.set_texture_margin(side, 0 if round_button else 16)
+			for side in [SIDE_TOP, SIDE_BOTTOM]:
+				kit.set_texture_margin(side, 0 if round_button else 8)
 			kit.content_margin_left = 4 if round_button else 10
 			kit.content_margin_right = 4 if round_button else 10
 			kit.content_margin_top = 3
@@ -8833,7 +8912,7 @@ func _card_button(button: Button, round_button := false, green := false) -> void
 	for state: String in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_disabled_color", "icon_normal_color", "icon_hover_color", "icon_pressed_color"]:
 		button.add_theme_color_override(state, C_CREAM if green or round_button else CARD_ACCENT)
 	if not round_button and button.text != "":
-		button.custom_minimum_size.x = minf(INFO_BODY, font_bold.get_string_size(I18n.t(button.text), HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 24 + (26 if button.icon != null else 0))
+		button.custom_minimum_size.x = minf(INFO_BODY, ceilf(font_bold.get_string_size(I18n.t(button.text), HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x) + 24 + (26 if button.icon != null else 0))
 	button.set_meta("compact_kit", true)
 
 
@@ -8855,25 +8934,41 @@ func _card_row(icon: String, text: String, value: String, _color := CARD_ACCENT)
 
 
 func _compact_info_style() -> void:
+	var body := info_box.find_child("HouseBody", true, false) as Control
 	for node: Control in info_box.find_children("*", "Control", true, false):
-		node.custom_minimum_size.x = minf(node.custom_minimum_size.x, INFO_BODY)
+		var width_limit := body.custom_minimum_size.x if body != null and body.is_ancestor_of(node) else INFO_BODY
+		node.custom_minimum_size.x = minf(node.custom_minimum_size.x, width_limit)
 		if node is Label:
 			var label := node as Label
 			if label.autowrap_mode != TextServer.AUTOWRAP_OFF:
-				label.custom_minimum_size.x = minf(label.custom_minimum_size.x, INFO_BODY)
+				label.custom_minimum_size.x = minf(label.custom_minimum_size.x, width_limit)
+			if label.autowrap_mode == TextServer.AUTOWRAP_OFF and label.get_parent() is VBoxContainer:
+				label.clip_text = true
+				label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+				if label.tooltip_text == "":
+					label.tooltip_text = label.text
 			label.add_theme_color_override("font_color", CARD_ACCENT)
 			label.add_theme_font_size_override("font_size", mini(14, label.get_theme_font_size("font_size")) if label.name != "InfoTitle" else 18)
 		elif node is Button:
 			var button := node as Button
 			if not button.flat and not button.has_meta("compact_kit") and not button.has_meta("icon") and not button.has_meta("bare"):
 				_card_button(button)
+				button.custom_minimum_size.x = minf(button.custom_minimum_size.x, width_limit)
 				if button.get_parent() is HBoxContainer:
 					var siblings := button.get_parent().get_child_count()
-					button.custom_minimum_size.x = minf(button.custom_minimum_size.x, (INFO_BODY - 6 * (siblings - 1)) / maxi(1, siblings))
+					button.custom_minimum_size.x = minf(button.custom_minimum_size.x, (width_limit - 6 * (siblings - 1)) / maxi(1, siblings))
 		elif node is TextureRect:
 			var picture := node as TextureRect
 			if picture.texture != null and picture.texture.resource_path.ends_with(".svg"):
 				picture.modulate = Color(CARD_ACCENT, picture.modulate.a)
+
+
+func _refresh_source_pictures() -> void:
+	for picture: TextureRect in info_box.find_children("SourcePicture*", "TextureRect", true, false):
+		var type := String(picture.get_meta("building_type", ""))
+		if icons.get(type) != null:
+			picture.texture = icons[type]
+			picture.modulate = Color.WHITE
 
 
 func _card_icon(key: String, side := 18, _color := CARD_ACCENT) -> TextureRect:
