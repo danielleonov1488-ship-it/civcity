@@ -18,7 +18,6 @@ const FILL := 0.55                     # свет-заполнение на ли
 const PROC_LEN := 15.0                 # свадебное шествие: столько метров пути до нового дома
 const PROC_V := 1.2                    # шаг шествия, м/с
 const DUSK := 21.2                     # «вечер» в свадебном ролике: такой свет (часы игры не трогаем)
-const TIER := ["нет", "бронза", "серебро", "золото"]
 ## Шествие: кто где идёт — [роль, сколько метров позади пары, в сторону]
 const PROC := [["bride", 0.0, 0.42], ["groom", 0.0, -0.42], ["mother", -1.4, 0.3], ["guest1", -2.3, -0.5], ["guest2", -2.4, 0.55],
 	["guest3", -3.3, 0.0]]
@@ -419,8 +418,6 @@ func can_offer(sd: Dictionary) -> Dictionary:
 			return {}
 	var fo := StoryDefs.find_opts(sd)
 	var cg := StoryDefs.click_goal(sd)
-	var wg := StoryDefs.works_goal(sd)
-	var room: Array = sd.get("space", [])
 	var cast0: Dictionary = (sd.get("cast", {}) as Dictionary).values()[0] if not (sd.get("cast", {}) as Dictionary).is_empty() else {}
 	var rq := int(cast0.get("route", 0))     # путь сенатора: вдоль него столько домов
 	# сначала — семьи, которые ещё ни о чём не просили (разные истории — у разных соседей)
@@ -433,12 +430,8 @@ func can_offer(sd: Dictionary) -> Dictionary:
 		(again if asked.has(String(e.get("fam", ""))) else fresh).append(e)
 	for bind: Dictionary in (fresh + again).slice(0, 4 if not fo.is_empty() else 8):
 		bind["id"] = String(sd["id"])        # тот же посев _rng, что в _start_find: проверяем то самое место
-		if not room.is_empty() and free_near(_home_pos(bind), float(room[0])) < int(room[1]):
-			continue                         # вокруг всё застроено: скверик или новый дом ставить негде
 		if not cg.is_empty() and click_spots(bind, int(cg[2]), cg[3] if cg.size() > 3 else {}, String(cg[1])).size() < int(cg[2]):
 			continue                         # у дома нет улицы, по которой бежит вода (у гончарной нет домов): места нет
-		if not wg.is_empty() and not _works_room(bind, wg):
-			continue                         # у дома возчика ни лавки, ни места под неё: историю не пройти без сноса
 		var gg: Array = StoryDefs.goal_step(sd, "give").get("goal", [])
 		if not gg.is_empty() and gift_homes(bind, gg).size() < int(gg[2]):
 			continue                         # котятам некуда: рядом мало семей с детьми
@@ -914,7 +907,11 @@ func _story(a: Dictionary) -> Dictionary:
 
 
 func _step(a: Dictionary) -> Dictionary:
-	return StoryDefs.step_at(_story(a), int(a.get("step", 0)))   # alt — поля шага без постройки, которой в игре нет
+	var st := StoryDefs.step_at(_story(a), int(a.get("step", 0)))
+	if a.has("zone") and st.has("goal"):
+		st = st.duplicate(true)
+		_set_goal_radius(st["goal"], movable_radius(st["goal"]))
+	return st
 
 
 func _goal_kind(a: Dictionary) -> String:
@@ -1117,7 +1114,7 @@ func _tick_active(play_now := false) -> void:
 			_remember_where(a, st["where"])     # Лудус: у стен или в центре — по тому, где правда встал
 		if _goal_kind(a) == "square":
 			var sq := square_center(a, float(st["goal"][1]))
-			var at := _home_pos(a)
+			var at := _hp(a)
 			(a["flags"] as Dictionary)["sq"] = [sq.x, sq.y]
 			(a["flags"] as Dictionary)["sq_at"] = [at.x, at.y]   # откуда мерили скверик (для «памятника»)
 		if String(st.get("done", "")) == "couple":
@@ -1409,7 +1406,7 @@ func _give(r: Dictionary, sd: Dictionary, a: Dictionary, full: bool) -> String:
 		out.append("дому %s +%d%% счастья на %s" % [StoryDefs.fam_gen(fam), int(hh[0]), _hours(int(hh[1]))])
 	if r.has("happy_area"):
 		var ha: Array = r["happy_area"]
-		var hp := _built_pos(a) if ha.size() > 3 and String(ha[3]) == "built" else _home_pos(a)
+		var hp := _built_pos(a) if ha.size() > 3 and String(ha[3]) == "built" else _hp(a)
 		if ha.size() > 3 and String(ha[3]) == "job" and not _job_b(a).is_empty():
 			hp = _job_b(a)["pos"]            # у работы героя (гончарная после пожара), а не у его дома
 		if ha.size() > 3 and String(ha[3]) == "where":
@@ -1436,8 +1433,8 @@ func _give(r: Dictionary, sd: Dictionary, a: Dictionary, full: bool) -> String:
 		var mo: Array = r["monument"]
 		var pct = mo[0]
 		if pct is Array:
-			pct = (pct as Array)[clampi(int((a.get("flags", {}) as Dictionary).get("tier", 1)) - 1, 0, (pct as Array).size() - 1)]
-		var hp := _home_pos(a)
+			pct = _single_need(pct)
+		var hp := _hp(a)
 		var bn := {"id": id, "line": line, "pct": int(pct), "r": float(mo[1]), "left": -1}
 		var sq: Array = (a.get("flags", {}) as Dictionary).get("sq", [])
 		if mo.size() > 2 and String(mo[2]) == "square":
@@ -1602,14 +1599,10 @@ func progress(a: Dictionary, g: Array) -> Dictionary:
 			return _square(a, g)
 		"score":
 			var n := _count_near(String(g[1]), hp, float(g[2]), -1)
-			var tiers: Array = g[3]
-			var tier := 0
-			for k in tiers.size():
-				if n >= int(tiers[k]):
-					tier = k + 1
-			flags["tier"] = tier
-			return {"have": n, "need": int(tiers[0]), "ok": tier >= 1 and bool(flags.get("ready", false)), "tier": tier,
-				"txt": "%d (%s)" % [n, ["нет", "бронза", "серебро", "золото"][mini(tier, 3)]]}
+			var need := _single_need(g[3])
+			var met := n >= need
+			flags["met"] = met
+			return {"have": n, "need": need, "met": met, "ok": met and bool(flags.get("ready", false)), "txt": "%d/%d" % [mini(n, need), need]}
 		"choice":
 			var c := String(flags.get("choice", ""))
 			return {"have": int(c != ""), "need": 1, "ok": c != "", "txt": ""}
@@ -1670,14 +1663,10 @@ func progress(a: Dictionary, g: Array) -> Dictionary:
 			return {"have": hv, "need": int(g[1]), "ok": hv >= int(g[1]) or fl_done, "txt": "%d%%/%d%%" % [hv, int(g[1])]}
 		"beauty":
 			var n := beauty_near(hp, float(g[1]))
-			var tiers: Array = g[2]
-			var tier := 0
-			for k in tiers.size():
-				if n >= int(tiers[k]):
-					tier = k + 1
-			flags["tier"] = tier
-			return {"have": n, "need": int(tiers[0]), "ok": tier >= 1 and bool(flags.get("ready", false)), "tier": tier,
-				"txt": "%d (%s)" % [n, TIER[mini(tier, 3)]]}
+			var need := _single_need(g[2])
+			var met := n >= need
+			flags["met"] = met
+			return {"have": n, "need": need, "met": met, "ok": met and bool(flags.get("ready", false)), "txt": "%d/%d" % [mini(n, need), need]}
 		"fest":
 			# {now: true} — игры, что идут сейчас, тоже в счёт (Сатурналии: устроили игры до просьбы — не ждать новых);
 			# засчитанные — так и остаются, когда игры кончатся (огни ещё ставят — платить за новые игры не надо)
@@ -1791,21 +1780,36 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 	var out := []
 	var hp := _hp(a)
 	match String(g[0]):
+		"find":
+			var pr := progress(a, g)
+			var cat_goal := String(g[1]) == "cat"
+			out.append({"text": "Мася" if cat_goal else "Ослик", "ok": bool(pr["ok"]), "icon": "cat_black" if cat_goal else "horse", "do": {"kind": "story_area"}})
+		"click", "wait":
+			var pr := progress(a, g)
+			var label := "Часы ожидания" if String(g[0]) == "wait" else ("Пожары" if String(g[1]) == "smoke" else "Лужи")
+			out.append({"text": label, "ok": bool(pr["ok"]), "icon": "brazier" if String(g[0]) == "click" and String(g[1]) == "smoke" else "water", "remaining": maxi(0, int(pr["need"]) - int(pr["have"])), "do": {"kind": "story_area"}})
+		"pay":
+			var paid := bool(progress(a, g)["ok"])
+			out.append({"text": "Взнос", "ok": paid, "icon": "coins", "remaining": 0 if paid else _pay_n(a, g), "do": {"kind": "story_pay"}})
 		"p":
 			var n := city.progress_of(g[1])
 			var need := int(g[2])
-			out.append({"text": "%s %d/%d" % [String(st.get("label", "Сделано")), mini(n, need), need], "ok": n >= need,
-				"do": {} if n >= need else hud.need_do(g[1], String(st.get("tool", "")), need)})
+			var label := String(st.get("label", "Сделано"))
+			var part := {"text": "%s %d/%d" % [label, mini(n, need), need], "ok": n >= need,
+				"do": {} if n >= need else hud.need_do(g[1], String(st.get("tool", "")), need)}
+			if st.has("label"):
+				part["label"] = label
+			out.append(part)
 			if String((g[1] as Array)[0]) == "soldiers" and n < need and city.legion.can_recruit_resident() != "":
 				out.append({"text": city.legion.can_recruit_resident(), "ok": false, "do": {}})     # почему нельзя призвать — прямо в строке
-		"around":
+		"around", "square":
 			for base in (g[2] as Dictionary):
 				var n := _count_near(String(base), hp, float(g[1]), -1)
 				var need := int(g[2][base])
 				var t := _goal_build_type(String(base))
 				var nm := String(PART_WORDS.get(String(base), Defs.B.get(String(base).split("|")[0], {}).get("name", base)))
 				out.append({"text": "%s %d/%d" % [nm, mini(n, need), need], "ok": n >= need,
-					"do": {} if n >= need or t == "" else hud._do_type(t)})
+					"do": {} if t == "" else hud._do_type(t), "icon": String(Defs.B.get(t, {}).get("icon", "decor")), "label": nm, "remaining": maxi(0, need - n)})
 		"works":
 			var w := works_eval(a, g)
 			var names := []
@@ -1842,9 +1846,13 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 			var tail := (" — не хватает: " + String(gap[0]["text"])) if not gap.is_empty() else ""
 			var action: Dictionary = gap[0]["do"] if not gap.is_empty() else ({} if h.is_empty() or bool(pr["ok"]) else {"kind": "look", "id": int(h["id"])})
 			out.append({"text": "Счастье дома %s%s" % [pr["txt"], tail], "ok": bool(pr["ok"]), "do": action})
+		"score":
+			var n := _count_near(String(g[1]), hp, float(g[2]), -1)
+			var t := _goal_build_type(String(g[1]))
+			out.append({"text": String(Defs.B.get(t, {}).get("name", g[1])), "ok": n >= _single_need(g[3]), "remaining": maxi(0, _single_need(g[3]) - n), "do": hud._do_type(t)})
 		"beauty":
 			var pr := progress(a, g)
-			out.append({"text": "Очков красоты рядом с домом: %s" % pr["txt"], "ok": int(pr.get("tier", 0)) >= 1, "do": {} if int(pr.get("tier", 0)) >= 1 else hud._do_type(_goal_build_type("flowers|planter|tree"))})
+			out.append({"text": "Очков красоты рядом с домом: %s" % pr["txt"], "ok": bool(pr.get("met", false)), "do": {} if bool(pr.get("met", false)) else hud._do_type(_goal_build_type("flowers|planter|tree"))})
 		"fest":
 			var pr := progress(a, g)
 			# щелчок — карточка почтовой станции: там кнопка игр
@@ -1878,7 +1886,7 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 				var need := int(g[2][base])
 				var t := _goal_build_type(String(base))
 				var nm := String(PART_WORDS.get(String(base), Defs.B.get(String(base).split("|")[0], {}).get("name", base)))
-				out.append({"text": "%s %d/%d" % [nm, mini(n, need), need], "ok": n >= need, "do": {} if n >= need or t == "" else hud._do_type(t)})
+				out.append({"text": "%s %d/%d" % [nm, mini(n, need), need], "ok": n >= need, "do": {} if t == "" else hud._do_type(t), "icon": String(Defs.B.get(t, {}).get("icon", "decor")), "label": nm, "remaining": maxi(0, need - n)})
 		"plaza":
 			var pr := progress(a, g)
 			out.append({"text": "Мощёная площадь у дома: %s" % pr["txt"], "ok": bool(pr["ok"]),
@@ -1955,6 +1963,27 @@ func goal_parts(a: Dictionary, g: Array, st: Dictionary = {}) -> Array:
 		"all":
 			for sg: Array in g[1]:
 				out.append_array(goal_parts(a, sg, st))
+		"flag":
+			var choice := String((a.get("flags", {}) as Dictionary).get(String(g[1]), ""))
+			var branch: Array = (g[2] as Dictionary).get(choice, [])
+			return goal_parts(a, branch, st)
+	for part: Dictionary in out:
+		if part.has("detail"):
+			continue
+		var action: Dictionary = part.get("do", {})
+		var t := String(action.get("type", ""))
+		var text := String(part.get("text", ""))
+		part["detail"] = text
+		var nums := RegEx.create_from_string("(\\d+)/(\\d+)").search(text)
+		var left := int(part.get("remaining", 0 if bool(part.get("ok", false)) else 1))
+		if nums != null and not part.has("remaining"):
+			left = maxi(0, int(nums.get_string(2)) - int(nums.get_string(1)))
+			text = text.replace(nums.get_string(), "").strip_edges()
+		if t != "" and Defs.B.has(t):
+			text = String(part.get("label", Defs.B[t]["name"]))
+		part["icon"] = part.get("icon", Defs.B.get(t, {}).get("icon", "check" if bool(part.get("ok", false)) else "scroll"))
+		part["text"] = "%s · осталось %d" % [text, left]
+		part["remaining"] = left
 	return out
 
 
@@ -2095,40 +2124,33 @@ func _new_near(base: String, p: Vector2, r: float, after: int, room: int, skip :
 	return best
 
 
-## Скверик: всё из списка рядом (скамьи, деревья, колодец); порог — по скамьям: бронза, серебро, золото (и солнечные
-## часы); «Готово» — когда хватает
+## Один порог цели; массив прежней фикстуры читаем по первому значению.
+static func _single_need(value: Variant) -> int:
+	return int(value[0]) if value is Array and not (value as Array).is_empty() else int(value)
+
+
 func _square(a: Dictionary, g: Array) -> Dictionary:
-	var flags: Dictionary = a["flags"]
-	var out := square_eval(city, _home_pos(a), g)
-	flags["tier"] = int(out["tier"])
-	out["ok"] = bool(out["min"]) and int(out["tier"]) >= 1 and bool(flags.get("ready", false))
+	var out := square_eval(city, _hp(a), g)
+	a["flags"]["met"] = bool(out["met"])
+	out["ok"] = bool(out["met"]) and bool(a["flags"].get("ready", false))
 	return out
 
 
-## Скверик у точки hp (по цели g): {have, need, min — самое нужное есть, tier, benches, sun, parts, txt}
+## Один список и один результат, без ступеней награды.
 static func square_eval(cty: City, hp: Vector2, g: Array) -> Dictionary:
-	var r := float(g[1])
 	var need: Dictionary = g[2]
-	var parts := []
-	var ok := true
+	var parts: Array = []
+	var met := true
 	var have := 0
-	var tot := 0
-	for base in need:
-		var n := count_near(cty, String(base), hp, r, -1)
-		ok = ok and n >= int(need[base])
+	var total := 0
+	for base: String in need:
+		var n := count_near(cty, base, hp, float(g[1]), -1)
+		met = met and n >= int(need[base])
 		have += mini(n, int(need[base]))
-		tot += int(need[base])
-		parts.append([String(base), n, int(need[base])])
-	var nb := count_near(cty, String(g[3]), hp, r, -1)
-	var tiers: Array = g[4]
-	var gold := String(g[5]) if g.size() > 5 else ""
-	var sun := gold == "" or count_near(cty, gold, hp, r, -1) > 0
-	var tier := 0
-	if ok:
-		for k in tiers.size():
-			if nb >= int(tiers[k]) and (k < tiers.size() - 1 or sun):
-				tier = k + 1
-	return {"have": have, "need": tot, "tier": tier, "min": ok, "benches": nb, "sun": sun, "parts": parts, "txt": "%d/%d" % [have, tot]}
+		total += int(need[base])
+		parts.append([base, n, int(need[base])])
+	return {"have": have, "need": total, "met": met, "min": met, "benches": count_near(cty, "bench", hp, float(g[1]), -1),
+		"parts": parts, "txt": "%d/%d" % [have, total]}
 
 
 ## «Памятник» готового скверика (награда без срока) — пока скверик стоит: % сейчас (0 — скверик разобрали).
@@ -2139,18 +2161,17 @@ static func square_live_pct(cty: City, b: Dictionary) -> int:
 	if g.is_empty():
 		return int(b.get("pct", 0))
 	var at: Array = b.get("at", [b.get("x", 0.0), b.get("z", 0.0)])
-	var tier := int(square_eval(cty, Vector2(float(at[0]), float(at[1])), g)["tier"])
-	if tier <= 0:
+	if not bool(square_eval(cty, Vector2(float(at[0]), float(at[1])), g)["met"]):
 		return 0
 	var mo: Array = (sd.get("reward", {}) as Dictionary).get("monument", [])
 	var pcts = mo[0] if not mo.is_empty() else int(b.get("pct", 0))
-	var p := int((pcts as Array)[mini(tier, (pcts as Array).size()) - 1]) if pcts is Array else int(pcts)
+	var p := _single_need(pcts)
 	return mini(int(b.get("pct", 0)), p)
 
 
 ## Середина скверика: среди скамеек в r м от дома (нет скамеек — сам дом)
 func square_center(a: Dictionary, r: float) -> Vector2:
-	var hp := _home_pos(a)
+	var hp := _hp(a)
 	var sum := Vector2.ZERO
 	var n := 0
 	for id in city.buildings:
@@ -2315,6 +2336,8 @@ func _marks(on: bool) -> void:
 ## Где выполнять цель шага: [x, z, радиус, яркость, край] у дома просящего — или []. Край (чёткая граница, без кольца) —
 ## только пока в руках то, что идёт в счёт цели (украшение для скверика и сада, дом для молодых): иначе мягкое пятно
 func _goal_area(a: Dictionary, g: Array = []) -> Array:
+	if game != null and String(game.tool) == "story_zone":
+		return []
 	if g.is_empty():
 		if bool(_step(a).get("quarter", false)):
 			# военный квартал у арки: мягкое пятно; с военной постройкой в руках — чёткий край (не кольцо)
@@ -2331,6 +2354,8 @@ func _goal_area(a: Dictionary, g: Array = []) -> Array:
 		return []
 	var hp := _hp(a)
 	var edge := game != null and _zone_hit(_story_zone(), String(game.tool))   # только цель истории (не заказа)
+	if a.has("zone") and movable_radius(g) > 0.0:
+		return [hp.x, hp.y, movable_radius(g), BUILD_GLOW, edge]
 	match String(g[0]):
 		"square", "around":
 			return [hp.x, hp.y, float(g[1]), BUILD_GLOW, edge]
@@ -2420,10 +2445,6 @@ func _story_zone() -> Dictionary:
 		"square":
 			r = float(g[1])
 			keys = (g[2] as Dictionary).keys()
-			if not keys.has(String(g[3])):
-				keys.append(String(g[3]))
-			if g.size() > 5:
-				keys.append(String(g[5]))       # солнечные часы — для золота
 		"around":
 			r = float(g[1])
 			keys = (g[2] as Dictionary).keys()
@@ -2530,7 +2551,7 @@ func zone_note(type: String, p: Vector2) -> Array:
 		if _zone_in(z, p):
 			return [String(z.get("ok", "В счёт %s ✓" % String(z["label"]))), true]
 		if far.is_empty():
-			far = [String(z.get("far", "Далеко от дома — не в счёт")), false]
+			far = [String(z.get("far", "Вне круга — не в счёт")), false]
 	if not far.is_empty():
 		return far
 	return [] if no == "" else [no, false]
@@ -2613,7 +2634,7 @@ const PART_WORDS := {"bench": "Скамьи", "tree|cypress|palm|bush": "Дер�
 	"lamp_post|candelabrum|brazier|bigbrazier|wall_lamp": "Огни на площади"}
 ## Цели, у которых в золотой строке — строки с ✓ (у прежних историй своя строка текста)
 const PART_KINDS := ["p", "works", "floor", "happy_home", "beauty", "fest", "legion_win", "all", "variety", "quiet", "view", "give", "census",
-	"route", "along", "plaza", "maze", "around", "built_after"]
+	"route", "along", "plaza", "maze", "around", "built_after", "square", "score", "find", "click", "wait", "pay", "flag"]
 ## Сословие в родительном падеже (награда «домам патрициев»)
 const CLS_GEN := {"plebs": "плебеев", "artisans": "ремесленников", "patricians": "патрициев"}
 ## «Разные лавки …» какого вида (родительный падеж)
@@ -2830,14 +2851,15 @@ func advice_pending() -> bool:
 	return not bool(a.get("ready", false)) and st.has("advice") and not city.tips.has(key)
 
 
-## Советник один раз: как устроен скверик — пороги по скамьям и «Готово»
+## Советник один раз: выбор места сквера и кнопка «Готово»
 func _advise_square() -> void:
 	var a: Dictionary = S()["active"]
 	if a.is_empty() or _goal_kind(a) != "square" or city.tips.has("story_square") or not hud._tip_free() or kit != null:
 		return
 	city.tips["story_square"] = true
-	# свиток просьб свёрнут (золотая точка на нём горит всю историю) — «Готово» будет, когда его развернут
-	var advice := "Ставьте скамьи, деревья, кусты и колодец в подсвеченном месте, не дальше 15 м от дома. Кнопка «Готово» — в золотой строке «Просьб»: сейчас свиток свёрнут, разверните его щелчком." if hud.tasks_folded() else "Ставьте скамьи, деревья, кусты и колодец в подсвеченном месте, не дальше 15 м от дома. Когда хватит нужного, нажмите «Готово» в золотой строке «Просьб горожан»."
+	var advice := "Нажмите «Выбрать место» и поставьте круг на земле.\nВсё нужное стройте внутри; затем нажмите «Готово»."
+	if hud.tasks_folded():
+		advice = "Разверните свиток «Просьбы» и нажмите «Выбрать место».\nПоставьте круг, постройте всё по списку и нажмите «Готово»."
 	hud.advisor("Скверик для стариков", advice)
 
 
@@ -2912,7 +2934,7 @@ func row_info() -> Dictionary:
 		"score":
 			var pr := progress(a, g)
 			text += " Сейчас: %s." % pr["txt"]
-			if int(pr.get("tier", 0)) >= 1:
+			if bool(pr.get("met", false)):
 				info["buttons"] = [["Готово", press.bind("ready", "")]]
 		"pay":
 			var pn := _pay_n(a, g)
@@ -2932,10 +2954,9 @@ func row_info() -> Dictionary:
 			info["buttons"] = bs
 		"square":
 			var pr := progress(a, g)
-			text += " " + _square_text(sd, g, pr)
 			info["buttons"] = [["Показать", show_area]]
 			if bool(pr["min"]):
-				info["buttons"] = [["Готово (%s)" % TIER[int(pr["tier"])], press.bind("ready", "")], ["Показать", show_area]]
+				info["buttons"] = [["Готово", press.bind("ready", "")], ["Показать", show_area]]
 		"flag":
 			if ch == "":
 				# ещё не выбрали (пропустили ролик и выбор): выбрать здесь
@@ -2965,14 +2986,14 @@ func row_info() -> Dictionary:
 		"beauty":
 			var pr := progress(a, g)
 			info["buttons"] = [["Показать", show_area]]
-			if int(pr.get("tier", 0)) >= 1:
-				info["buttons"] = [["Готово (%s)" % TIER[int(pr["tier"])], press.bind("ready", "")], ["Показать", show_area]]
+			if bool(pr.get("met", false)):
+				info["buttons"] = [["Готово", press.bind("ready", "")], ["Показать", show_area]]
 		"works", "floor", "happy_home", "all", "variety", "quiet", "view", "route", "along", "plaza", "maze":
 			info["buttons"] = [["Показать", show_area]]
-			var bt := _all_tier(a, g) if kind == "all" else 0
-			if bt >= 1:
-				# всё сразу и красота (роща поэта): «Готово» — как только хватает остального, а красоты — на бронзу
-				info["buttons"] = [["Готово (%s)" % TIER[bt], press.bind("ready", "")], ["Показать", show_area]]
+			var met := _all_met(a, g) if kind == "all" else false
+			if met:
+				# «Готово» — когда выполнен весь список рощи.
+				info["buttons"] = [["Готово", press.bind("ready", "")], ["Показать", show_area]]
 		"legion_win":
 			if st.has("battle") and not bool(progress(a, g)["ok"]):
 				info["buttons"] = [["В бой!", press.bind("battle", "")]]
@@ -2994,10 +3015,10 @@ func row_info() -> Dictionary:
 					text += near_miss(_hp(a), float(g[1]), g[2])
 	if kind in PART_KINDS:
 		info["parts"] = goal_parts(a, g, st)    # строки с ✓: щёлкнуть невыполненную — сразу к делу
-	var vs := _verses(sd, a)
-	if not vs.is_empty():
-		# поэт сочиняет, пока растёт роща: последний стих — в строке (порог красоты выше — стих новый)
-		text += "\n%s бормочет: «%s»" % [StoryDefs.fill("{hero}", a), String(vs[vs.size() - 1]).replace("\n", " / ")]
+	info["tip"] = text
+	text = StoryDefs.request_line(sd, st, a)
+	if movable_radius(g) > 0.0:
+		info["buttons"].append(["Перенести" if a.has("zone") else "Выбрать место", choose_zone])
 	info["text"] = text
 	return info
 
@@ -3005,6 +3026,12 @@ func row_info() -> Dictionary:
 ## Щелчок по строке цели истории: нужная постройка, исследование, «Этаж» или «Обзор» (как у просьб горожан)
 func part_click(p: Dictionary) -> void:
 	var w: Dictionary = p.get("do", {})
+	if String(w.get("kind", "")) == "story_area":
+		show_area()
+		return
+	if String(w.get("kind", "")) == "story_pay":
+		press("pay")
+		return
 	if String(w.get("kind", "")) == "look":
 		# шумная мастерская у рощи: камера к ней, её карточка (там — «Перенести»)
 		var b: Dictionary = city.buildings.get(int(w.get("id", -1)), {})
@@ -3016,6 +3043,7 @@ func part_click(p: Dictionary) -> void:
 		return
 	if String(w.get("kind", "")) == "people":
 		open_people(String(w.get("q", "")), String(w.get("f", "")))   # перепись: «Горожане» с поиском
+		hud.show_pointer(w)
 		return
 	if String(w.get("kind", "")) == "gift":
 		show_area()
@@ -3027,31 +3055,6 @@ func part_click(p: Dictionary) -> void:
 		var a: Dictionary = S()["active"]
 		if not a.is_empty() and String(w.get("kind", "")) in ["build", "floor", "road", "plaza", "upgrade"]:
 			show_area()
-
-
-## Строка скверика: что уже есть, какой порог сейчас и что нужно до следующего
-func _square_text(sd: Dictionary, g: Array, pr: Dictionary) -> String:
-	var names := {"bench": "скамей", "tree|cypress|palm|bush": "деревьев и кустов", "well|smallfountain": "колодцев"}
-	var bits := []
-	for e: Array in pr["parts"]:
-		var nm := String(names.get(String(e[0]), String(e[0])))
-		bits.append("%s %d" % [nm, int(e[1])] if String(e[0]) == String(g[3]) else "%s %d/%d" % [nm, mini(int(e[1]), int(e[2])), int(e[2])])
-	var out := "Сейчас: " + ", ".join(bits) + "."
-	var a: Dictionary = S()["active"]
-	if not a.is_empty():
-		out += near_miss(_home_pos(a), float(g[1]), g[2])
-	var tier := int(pr["tier"])
-	var tiers: Array = g[4]
-	var pct: Array = ((sd.get("reward", {}) as Dictionary).get("monument", [[0]]) as Array)[0]
-	if tier >= 1:
-		out += " Это %s: +%d%% счастья домам рядом." % [TIER[tier], int(pct[tier - 1])]
-	if tier < tiers.size():
-		var nb_need := int(tiers[tier])
-		var more := "%d %s" % [nb_need, Hud._plural(nb_need, "скамья", "скамьи", "скамей")]
-		if tier == tiers.size() - 1 and g.size() > 5 and not bool(pr["sun"]):
-			more += " и солнечные часы"
-		out += " %s — %s." % [TIER[tier + 1].capitalize(), more]
-	return out
 
 
 ## Есть что показать в журнале (кнопка-книжка у «Просьб горожан»)
@@ -5344,6 +5347,9 @@ const NOISY := ["potter", "dyer", "fullonica", "forge", "sculptor", "barracks", 
 
 ## Откуда меряем цель шага: обычно — дом просящего; шаг с at: "job" — работа героя (гончарная)
 func _hp(a: Dictionary, st: Dictionary = {}) -> Vector2:
+	var zone: Array = a.get("zone", [])
+	if zone.size() == 2:
+		return Vector2(float(zone[0]), float(zone[1]))
 	if st.is_empty():
 		st = _step(a)
 	match String(st.get("at", "")):
@@ -5419,21 +5425,21 @@ func noisy_near(p: Vector2, r: float) -> Array:
 	return out
 
 
-## «Всё сразу» с красотой (роща поэта): остальное выполнено — порог красоты (1…3), иначе 0
-func _all_tier(a: Dictionary, g: Array) -> int:
-	var tier := 0
-	var rest := true
+## Весь список рощи выполнен, включая красоту.
+func _all_met(a: Dictionary, g: Array) -> bool:
 	var any := false
 	for sg: Array in g[1]:
-		if String(sg[0]) == "beauty":
+		var pr := progress(a, sg)
+		if String(sg[0]) in ["beauty", "score", "square"]:
 			any = true
-			tier = int(progress(a, sg).get("tier", 0))
-		else:
-			rest = rest and bool(progress(a, sg)["ok"])
-	return tier if rest and any else 0
+			if not bool(pr.get("met", false)):
+				return false
+		elif not bool(pr["ok"]):
+			return false
+	return any
 
 
-## Стихи поэта: по выбранной теме, до нынешнего порога красоты рощи (в ролике — все, что сочинил)
+## Стихи поэта по выбранной теме после выполнения цели.
 func _verses(sd: Dictionary, a: Dictionary) -> Array:
 	var vv: Dictionary = sd.get("verses", {})
 	if vv.is_empty():
@@ -5441,7 +5447,7 @@ func _verses(sd: Dictionary, a: Dictionary) -> Array:
 	var fl: Dictionary = a.get("flags", {})
 	var lst: Array = vv.get(String(fl.get("choice", "")), vv.values()[0])
 	var out := []
-	for i in clampi(int(fl.get("tier", 0)), 0, lst.size()):
+	for i in (lst.size() if bool(fl.get("met", false)) else 0):
 		out.append(String(lst[i]).replace(" / ", "\n"))
 	return out
 
@@ -6565,7 +6571,7 @@ func plaza_m2(a: Dictionary, r: float) -> int:
 	if h.is_empty():
 		return 0
 	var land: Land = game.land
-	var c: Vector2 = city.door_point(h)
+	var c: Vector2 = _hp(a) if a.has("zone") else city.door_point(h)
 	var n := 0
 	var k := int(r)
 	for j in range(-k, k + 1):
@@ -7464,3 +7470,82 @@ func _fest_lights() -> void:
 			cine["lights"].append(game._light(xf * lp, 0.55))
 		put += 1
 	game._set_hour(game.hour)               # огни разгораются сразу (вечерний свет ролика)
+
+
+## Строительные поручения: один круг, который выбирает игрок.
+func movable_radius(g: Array) -> float:
+	if g.is_empty():
+		return 0.0
+	match String(g[0]):
+		"square", "around", "beauty", "variety", "quiet", "plaza", "maze":
+			return float(g[1])
+		"works", "built_after", "score":
+			return float(g[2])
+		"all":
+			var radius := 0.0
+			for sub: Array in g[1]:
+				radius = maxf(radius, movable_radius(sub))
+			return radius
+		"flag":
+			var radius := 0.0
+			for sub: Array in (g[2] as Dictionary).values():
+				radius = maxf(radius, movable_radius(sub))
+			return radius
+	return 0.0
+
+
+func _set_goal_radius(g: Array, radius: float) -> void:
+	if g.is_empty():
+		return
+	match String(g[0]):
+		"square", "around", "beauty", "variety", "quiet", "plaza", "maze":
+			g[1] = radius
+		"works", "built_after", "score":
+			g[2] = radius
+		"all":
+			for sub: Array in g[1]:
+				_set_goal_radius(sub, radius)
+		"flag":
+			for sub: Array in (g[2] as Dictionary).values():
+				_set_goal_radius(sub, radius)
+
+
+func choose_zone() -> void:
+	var a: Dictionary = S()["active"]
+	if a.is_empty() or movable_radius(_step(a).get("goal", [])) <= 0.0:
+		return
+	game.set_tool("story_zone")
+	hud._close_tray()
+	hud.refresh()
+
+
+func zone_preview(at: Vector2, over_ui: bool) -> void:
+	var a: Dictionary = S()["active"]
+	var radius := movable_radius(_step(a).get("goal", []))
+	if at == Vector2.INF or over_ui or radius <= 0.0:
+		return
+	var y: float = game.land.height_at(at.x, at.y)
+	var valid := city.land.is_owned(at)
+	var color := Color(0.50, 0.68, 0.30) if valid else Color(0.72, 0.25, 0.15)
+	game.brush_ring.visible = true
+	game.brush_ring.position = Vector3(at.x, y + 0.09, at.y)
+	game.brush_ring.scale = Vector3(radius, 1.0, radius)
+	(game.brush_ring.material_override as StandardMaterial3D).albedo_color = Color(color, 0.65)
+	game.brush_disc.visible = true
+	game.brush_disc.position = Vector3(at.x, y + 0.07, at.y)
+	game.brush_disc.scale = Vector3(radius, 1.0, radius)
+	(game.brush_disc.material_override as StandardMaterial3D).albedo_color = Color(color, 0.12)
+	hud.cursor_error("Щёлкните по земле — здесь будет место задания" if valid else "Выберите место на своей земле")
+
+
+func place_zone(at: Vector2) -> bool:
+	var a: Dictionary = S()["active"]
+	if a.is_empty() or not at.is_finite() or not city.land.is_owned(at) or movable_radius(_step(a).get("goal", [])) <= 0.0:
+		return false
+	a["zone"] = [at.x, at.y]
+	(a["flags"] as Dictionary).erase("ready")
+	(a["flags"] as Dictionary).erase("built")
+	game.set_tool("")
+	_marks(true)
+	hud.refresh()
+	return true

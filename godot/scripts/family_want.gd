@@ -24,6 +24,25 @@ const FLOWERS := ["flowers", "planter", "wall_flowers", "rosearch", "parterre", 
 const WATER := ["fountain", "smallfountain", "nymphfountain", "garden_pool", "pond", "spring", "birdbath"]
 
 
+## Редкое желание появляется только с Хутора. Пустая строка тоже сохраняется.
+static func roll(rng: RandomNumberGenerator, rank: int) -> String:
+	if rank < 1 or rng.randi_range(0, 3) != 0:
+		return ""
+	return random_id(rng)
+
+
+const ADVICE := {
+	"trees": "Семья хочет жить у деревьев.", "water": "Семья хочет жить у воды.",
+	"flowers": "Семья хочет жить у цветов.", "quiet": "Семья хочет жить на тихой улице.",
+	"market": "Семья хочет жить у рынка.", "temple": "Семья хочет жить у храма.",
+	"plaza": "Семья хочет жить у площади.",
+}
+
+
+static func advice(id: String) -> String:
+	return String(ADVICE.get(id, "")) + "\nПоселите её там — будет счастливее.\nЗначок желания — над семьёй и слева вверху."
+
+
 static func random_id(rng: RandomNumberGenerator) -> String:
 	return String(ORDER[rng.randi_range(0, ORDER.size() - 1)])
 

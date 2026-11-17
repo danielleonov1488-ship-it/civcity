@@ -874,6 +874,8 @@ func _new_marks() -> void:
 	var veg: Control = null
 	var fruit: Control = null
 	for b in hud.tray_grid.get_children():
+		if b.has_meta("type"):
+			check(c.unlocked(String(b.get_meta("type"))), "в меню нет закрытых карточек")
 		if b.get_meta("type", "") == "stall_veg":
 			veg = b
 		if b.get_meta("type", "") == "stall_fruit":

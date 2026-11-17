@@ -114,12 +114,21 @@ func _catalog() -> void:
 func _wants() -> void:
 	check(FamilyWant.ORDER.size() == 7 and FamilyWant.LOOK.size() == 7, "exactly seven wants")
 	check(not FamilyWant.ORDER.has("cat") and not FamilyWant.ORDER.has("bather") and not FamilyWant.ORDER.has("baths"), "no cat or baths want")
+	city.level = 0
+	for i in 32:
+		check(String(city.new_family("plebs").get("want", "")) == "", "no wants before Hamlet")
+	city.level = 1
 	var kinds := {}
-	for i in 256:
+	var count := 0
+	for i in 512:
 		var f := city.new_family("plebs")
-		check(f.has("want") and f["want"] in FamilyWant.ORDER, "generated want is data")
-		kinds[f["want"]] = true
-	check(kinds.size() == 7, "random generation reaches all seven wants")
+		var want := String(f.get("want", ""))
+		check(want == "" or want in FamilyWant.ORDER, "generated want is valid")
+		if want != "":
+			count += 1
+			kinds[want] = true
+	check(count >= 80 and count <= 180 and kinds.size() == 7, "about one in four families has a want")
+	city.level = 0
 	var probe := City.new(Land.new())
 	probe.cozy_v = 1
 	probe.wants_v = 1
@@ -217,20 +226,20 @@ func _happiness() -> void:
 		h["happy"] = 0
 		h["unhappy_h"] = 20
 		h["down"] = 19
-		check(not c.unhappy_badge(h), "grace hides badge at hour %d" % hour)
+		check(c.unhappy_badge(h), "below 40 percent shows sad badge at hour %d" % hour)
 		c.sim_day()
 		check(int(h["pop"]) == int(f["n"]), "grace prevents leaving at hour %d" % hour)
 	check(not c.house_in_grace(h), "grace ends at hour 24")
-	h["happy"] = 40
-	h["happy_target"] = 40
+	h["happy"] = 39
+	h["happy_target"] = 39
 	h["unhappy_h"] = 0
 	for i in 3:
 		c._happiness_hour()
-		check(c.unhappy_badge(h) == (i >= 2), "badge requires three unhappy hours")
-	h["happy"] = 45
-	h["happy_target"] = 45
+		check(c.unhappy_badge(h), "below 40 percent shows sad badge immediately")
+	h["happy"] = 40
+	h["happy_target"] = 40
 	c._happiness_hour()
-	check(not c.unhappy_badge(h) and int(h["unhappy_h"]) == 0, "45 percent clears unhappy streak")
+	check(not c.unhappy_badge(h) and int(h["unhappy_h"]) == 0, "40 percent clears unhappy streak")
 	# JSON — тот же числовой формат, что у настоящего сохранения.
 	h["happy"] = 63
 	h["unhappy_h"] = 2

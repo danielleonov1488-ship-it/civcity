@@ -197,25 +197,25 @@ func _research_pages() -> void:
 			if card.is_visible_in_tree():
 				count += 1
 				check(tree.scroll.get_global_rect().grow(1).encloses(card.get_global_rect()), "rank item fits page " + String(r["id"]))
-				check((card.get_node("Picture") as Control).size == Vector2(64, 64), "64px research picture")
+				check((card.get_node("Picture") as Control).size == Vector2(42, 42), "42px research picture")
 				var name_label := card.get_node("ItemName") as Label
-				check(name_label.get_theme_font_size("font_size") == 13, "13px item name")
-				check(name_label.get_theme_font("font").get_string_size(name_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x <= card.size.x and absf(name_label.position.x + tree.name_width(name_label) * 0.5 - card.size.x * 0.5) <= 1.0, "research name fits its cell, centred (%s)" % name_label.text)
-				check(card.tooltip_text.contains(I18n.t(String(r["name"]))) and name_label.tooltip_text == String(r["name"]), "full research name in tooltip")
+				check(name_label.get_theme_font_size("font_size") >= 14, "14px item name")
+				check(name_label.text == I18n.t(String(r["name"])) and name_label.get_line_count() <= 2, "full research name fits two lines")
+				check(tree.tooltip(r).contains(I18n.t(String(r["name"]))), "full research name in hover tooltip")
 		# Чудеса без готовых моделей не занимают места даже в открытом ряду.
 		for type: String in Defs.B:
 			if Defs.B[type].get("sub", "") == "wonders" and not city.city_buildable(type):
 				check(not tree.cards.has(type) or not (tree.cards[type] as Control).is_visible_in_tree(), "hidden wonder has no visible research card " + type)
-		check(count <= 16, "rank fits two rows")
+		check(count <= 18, "rank fits three rows")
 		if count > largest_count:
 			largest_count = count
 			largest = tier
 		check(not tree.scroll.get_v_scroll_bar().visible and not tree.scroll.get_h_scroll_bar().visible, "no research scrollbar")
-		check((tree.sections[tier].get_node("Items") as GridContainer).columns == 8, "eight items per row")
-	check(hud.research_panel.size.x <= 920 and hud.research_panel.size.y <= 480, "research about 900x460")
+		check((tree.sections[tier].get_node("Items") as GridContainer).columns == 6, "six items per row")
+	check(hud.research_panel.size.x <= 920 and hud.research_panel.size.y <= 700, "compact research fits viewport")
 	city.level = 3
 	tree.refresh()
-	check((tree.rank_tabs[4] as Control).modulate.a < 1.0, "locked rank grey")
+	check((tree.rank_tabs[4].find_child("RankPadlock", true, false) as Control).visible and (tree.rank_tabs[4] as Control).modulate.a == 1.0, "future rank readable with padlock")
 	city.level = 7
 	tree.refresh()
 	tree.select_rank(largest)
@@ -229,9 +229,11 @@ func _research_pages() -> void:
 	if check(available != "", "available research fixture"):
 		tree.reveal(available)
 		await frames(8)
-		check(tree.popup.visible and tree.selected == available and not tree.study.disabled, "click detail and study retained")
+		check(not tree.popup.visible and tree.selected == available and not tree.study.disabled, "card selected without detail popup")
 		var before := city.rp
 		tree.study.pressed.emit()
+		check(tree.confirm.visible and not city.research.has(available), "inline confirmation before study")
+		tree.confirm_yes.pressed.emit()
 		check(city.research.has(available) and city.rp < before, "study spends points")
 	for id: String in ids:
 		check(tree.cards[id].get_instance_id() == ids[id], "research nodes reused")

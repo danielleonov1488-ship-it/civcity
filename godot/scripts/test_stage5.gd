@@ -598,7 +598,7 @@ func _tray() -> void:
 	var tr: Rect2 = hud.tray.get_global_rect()
 	check(tr.position.x >= 0.0 and tr.end.x <= vw + 1.0, "свиток украшений помещается в окно 1024 px (%d…%d из %d)" % [int(tr.position.x), int(tr.end.x), int(vw)])
 	await shot("s5_tray_1024.png")
-	# силуэт у украшения уровня впереди
+	# Украшений будущих уровней в меню нет.
 	hud.open_dsub = "stone"
 	hud.decor_mode = ""
 	hud._fill_cards()
@@ -609,7 +609,7 @@ func _tray() -> void:
 			var img := b.find_child("img", true, false) as TextureRect
 			if img and img.modulate.r < 0.3:
 				sil += 1
-	check(sil > 0, "закрытые украшения уровней впереди — тёмным силуэтом (%d)" % sil)
+	check(sil == 0, "закрытые украшения уровней впереди отсутствуют (%d)" % sil)
 	await shot("s5_tray_locked.png")
 	# поиск
 	hud.decor_search.text = "пруд"
@@ -644,18 +644,14 @@ func _tray() -> void:
 		if b.has_meta("type"):
 			rec.append(b.get_meta("type"))
 	check(rec.size() >= 2 and rec[0] == "bench" and rec[1] == "veggies", "Недавние: последнее — первым, без повторов", rec)
-	# только открытые
+	# Все режимы всегда скрывают ещё закрытые украшения.
 	hud._decor_mode("recent")
-	hud.decor_open_only = true
 	hud.open_dsub = "stone"
 	hud._fill_cards()
 	await frames(3)
-	var all_open := true
 	for b in hud.tray_grid.get_children():
-		if b.has_meta("type") and not c.unlocked(b.get_meta("type")):
-			all_open = false
-	check(all_open, "«Только открытые» прячет закрытые карточки")
-	hud.decor_open_only = false
+		if b.has_meta("type"):
+			check(c.unlocked(String(b.get_meta("type"))), "закрытого украшения нет в меню")
 	hud.toggle_fav("trough")
 	hud.toggle_fav("pond_3")
 	await _tray_input()
@@ -666,8 +662,8 @@ func _tray() -> void:
 	var tip := ""
 	for b in hud.research_box.find_children("*", "Button", true, false):
 		if b.has_meta("rid") and b.get_meta("rid") == "deco_water":
-			tip = b.tooltip_text
-	check(tip.contains("Открывает украшения:") and tip.contains("Пруд с кувшинками") and tip.contains("Набор:"), "подсказка исследования набора: его украшения и бонус", tip)
+			tip = String(b.get_meta("tooltip", ""))
+	check(tip.contains("Вода в саду") and tip.split("\n").size() <= 3, "короткая подсказка исследования набора", tip)
 	await shot("s5_research_1024.png")
 	hud.close_panels()
 	get_window().size = Vector2i(1600, 900)
@@ -818,30 +814,13 @@ func _tray_input() -> void:
 	(hud.tray_dtabs.get_child(0) as Button).pressed.emit()
 	await frames(2)
 	check(hud.decor_search.text == "" and hud.decor_query == "" and hud.decor_mode == "", "вкладка после поиска — строка поиска очищена")
-	# силуэт снимается, когда город дорос до уровня украшения (свиток открыт)
+	# Будущие исследования не создают серых карточек и силуэтов.
 	hud.open_dsub = "stone"
 	hud._fill_cards()
 	await frames(3)
-	var st := ""
-	var lv := -1
 	for b in hud.tray_grid.get_children():
-		if b.has_meta("type") and not c.unlocked(b.get_meta("type")):
-			var l := int(Defs.research(c.unlock_id(b.get_meta("type"))).get("lvl", -1))
-			if l > c.level and (b.find_child("img", true, false) as TextureRect).modulate.r < 0.3:
-				st = b.get_meta("type")
-				lv = l
-				break
-	var lv0: int = c.level
-	if st != "":
-		c.level = lv
-		hud._update_cards()
-	var img: TextureRect = null
-	for b in hud.tray_grid.get_children():
-		if b.has_meta("type") and b.get_meta("type") == st:
-			img = b.find_child("img", true, false)
-	check(st != "" and img != null and img.modulate == Color.WHITE and not c.unlocked(st), "город дорос до уровня «%s» — силуэт снят, карточка серая с замком" % st)
-	c.level = lv0
-	hud._update_cards()
+		if b.has_meta("type"):
+			check(c.unlocked(String(b.get_meta("type"))), "в меню нет закрытых силуэтов")
 	# щелчок по карте — строка поиска отпускает клавиатуру
 	game.set_tool("")
 	hud.decor_search.grab_focus()

@@ -767,6 +767,7 @@ func _staff_roster() -> Array:
 	for b: Dictionary in buildings.values():
 		b["hire_classes"] = {}
 		b["staff_count"] = 0
+		b["staff_output"] = 0.0
 		b["prof_fit"] = 0
 	for worker: Dictionary in roster:
 		var m: Dictionary = worker["m"]
@@ -787,8 +788,10 @@ func _staff_roster() -> Array:
 			if allowed.has(slot) and worker["cls"] in WORK_CLASSES[slot] and int(b["hire_classes"].get(slot, 0)) < int(allowed[slot]) and int(b["staff_count"]) < int(b.get("hire", 0)):
 				b["hire_classes"][slot] = int(b["hire_classes"].get(slot, 0)) + 1
 				b["staff_count"] += 1
+				var output := happiness_output(buildings.get(int(worker["home"]), {}))
+				b["staff_output"] += output
 				if Defs.PROF_ON and String(m.get("prof", "")) == Defs.building_profession(def(b)):
-					b["prof_fit"] += 1
+					b["prof_fit"] += output
 				m["job_class"] = slot
 				worker["employed"] = true
 				continue
@@ -1081,6 +1084,15 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 				filled[w["cls"]] += 1
 			else:
 				spare[w["cls"]] += 1
+	var class_output := {}
+	for cl: String in Defs.CLASS_ORDER:
+		var weighted := 0.0
+		var total := 0
+		for h: Dictionary in houses:
+			if String(def(h)["cls"]) == cl:
+				weighted += int(h["pop"]) * happiness_output(h)
+				total += int(h["pop"])
+		class_output[cl] = weighted / float(total) if total > 0 else 1.0
 	var ratio := {}
 	for c in Defs.CLASS_ORDER:
 		ratio[c] = 1.0 if manual_hiring() else (float(filled[c]) / jobs[c] if jobs[c] > 0 else 1.0)
@@ -1097,10 +1109,11 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 			for c in jb:
 				hired += int(jb[c])
 				if int(jb[c]) > 0:
-					st = minf(st, ratio[c])
+					st = minf(st, float(ratio[c]) * (1.0 if manual_hiring() else float(class_output[c])))
 			b["fill"] = st if b["road"] else 0.0               # хватает ли жителей на нанятые места
-			var fitting := int(b.get("prof_fit", 0)) if Defs.PROF_ON and manual_hiring() else 0
-			st *= (float(hired) + Defs.PROF_BONUS * fitting) / float(maxi(1, job_max(b)))
+			var fitting := float(b.get("prof_fit", 0.0)) if Defs.PROF_ON and manual_hiring() else 0.0
+			var output := float(b.get("staff_output", 0.0)) if manual_hiring() else float(hired)
+			st *= (output + Defs.PROF_BONUS * fitting) / float(maxi(1, job_max(b)))
 		b["staff"] = st if b["road"] else 0.0
 		b["active"] = b["road"] and (not d.has("jobs") or (float(b["staff"]) > 0.0 if manual_hiring() else float(b["staff"]) >= 0.25))
 		b["over"] = oc.has(int(id))
@@ -1305,7 +1318,7 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 		h["happy_target"] = clampi(hp, 0, 200)
 		if wants_v < 1 or int(h["pop"]) <= 0 or int(h["id"]) in instant_homes:
 			h["happy"] = h["happy_target"]
-			if float(h["happy"]) >= 45.0:
+			if float(h["happy"]) >= 40.0:
 				h["unhappy_h"] = 0
 			if float(h["happy"]) >= 25.0:
 				h["down"] = 0
@@ -1888,25 +1901,41 @@ func _store_near(s: Dictionary, stores: Array) -> bool:
 
 ## Прогноз по нынешним жильцам и найму, без промотки часа и записи в историю.
 func projected_net() -> float:
-	var income := 0.0
+	var flow := projected_finance()
+	return float(flow["income"]) - float(flow["expense"])
+
+
+## Нынешние жильцы и найм: расшифровка без промотки часа и записи в историю.
+func projected_finance() -> Dictionary:
+	var tax := 0.0
 	var upkeep := 0.0
+	var wages := 0.0
 	for b: Dictionary in buildings.values():
 		var d := def(b)
 		match String(d["kind"]):
 			"house":
-				income += int(b["pop"]) * house_tax(b) * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
+				tax += int(b["pop"]) * house_tax(b) * (0.5 + minf(100.0, float(b["happy"])) / 100.0)
 				if cozy_v >= 1:
 					upkeep += float(d["cost"]) * upkeep_rate() * 0.5
-			"rp":
-				if not bool(b.get("over", false)):
-					upkeep += float(d["cost"]) * upkeep_rate() + wage() * hired_of(b)
-			"shop", "monument", "store", "farm", "military", "inn":
-				upkeep += float(d["cost"]) * upkeep_rate() + wage() * hired_of(b)
-	income += float(Magis.commerce(self, income)["delta"])
+			"rp", "shop", "monument", "store", "farm", "military", "inn":
+				if d["kind"] == "rp" and bool(b.get("over", false)):
+					continue
+				upkeep += float(d["cost"]) * upkeep_rate()
+				wages += wage() * hired_of(b)
+	var commerce := Magis.commerce(self, tax)
+	# Оборот лавок и складов уже включён в прежние налоговые поступления.
+	var shops := float(commerce["shop"])
+	var exports := float(commerce["export"])
+	tax += float(commerce["delta"]) - shops - exports
 	if int(stories.get("tax_off", 0)) > 0:
-		income = 0.0
-	var gross := income + Tourism.hour_income(self)
-	return gross * (1.0 - clampf(edict_add("legion_denarii"), 0.0, 1.0)) - upkeep
+		tax = 0.0
+		shops = 0.0
+		exports = 0.0
+	var tourists := Tourism.hour_income(self)
+	var income := tax + shops + exports + tourists
+	var levy := income * clampf(edict_add("legion_denarii"), 0.0, 1.0)
+	return {"tax": tax, "shops": shops, "export": exports, "tourists": tourists,
+		"income": income, "upkeep": upkeep, "wages": wages, "levy": levy, "expense": upkeep + wages + levy}
 
 
 ## Налог с жителя дома в час (до поправки на счастье): по классу, патриции — с «taxes1» на четверть больше
@@ -1915,7 +1944,7 @@ func house_tax(b: Dictionary) -> float:
 	var tax := float(Defs.CLASSES[cls]["tax"])
 	if cls == "patricians" and research.has("taxes1"):
 		tax *= 1.25
-	return tax * float(Defs.TAX_SET[tax_of(cls)]["k"]) * edict_mul("tax_k:" + cls)
+	return tax * float(Defs.TAX_SET[tax_of(cls)]["k"]) * edict_mul("tax_k:" + cls) * happiness_output(b)
 
 
 ## Откуда очки исследований в час: {"post": почта на станции, тип постройки: сумма} (подсказка у счётчика свитков)
@@ -2151,7 +2180,7 @@ func bump_happiness(b: Dictionary, delta: float) -> void:
 		return
 	b["happy_target"] = clampf(float(b.get("happy_target", b["happy"])) + delta, 0.0, 200.0)
 	b["happy"] = clampf(float(b["happy"]) + delta, 0.0, 200.0)
-	if float(b["happy"]) >= 45.0:
+	if float(b["happy"]) >= 40.0:
 		b["unhappy_h"] = 0
 	if float(b["happy"]) >= 25.0:
 		b["down"] = 0
@@ -2165,7 +2194,7 @@ func _happiness_hour() -> void:
 		if not is_house(b) or int(b["pop"]) <= 0:
 			continue
 		b["happy"] = move_toward(float(b["happy"]), float(b.get("happy_target", b["happy"])), 5.0)
-		b["unhappy_h"] = int(b.get("unhappy_h", 0)) + 1 if float(b["happy"]) < 45.0 else 0
+		b["unhappy_h"] = int(b.get("unhappy_h", 0)) + 1 if float(b["happy"]) < 40.0 else 0
 
 
 func family_in_grace(f: Dictionary) -> bool:
@@ -2176,8 +2205,13 @@ func house_in_grace(b: Dictionary) -> bool:
 	return (b.get("families", []) as Array).any(func(f: Dictionary) -> bool: return family_in_grace(f))
 
 
+## Налог и труд жителей снижаются одинаково, без округления числа работников.
+func happiness_output(b: Dictionary) -> float:
+	return 0.5 if not b.is_empty() and float(b.get("happy", 100.0)) < 40.0 else 1.0
+
+
 func unhappy_badge(b: Dictionary) -> bool:
-	return int(b.get("pop", 0)) > 0 and not house_in_grace(b) and float(b["happy"]) < 45.0 and int(b.get("unhappy_h", 0)) >= 3
+	return int(b.get("pop", 0)) > 0 and float(b.get("happy", 100.0)) < 40.0
 
 
 ## Час жизни дома. Сам дом больше не растёт: этаж покупает игрок (buy_floor), а несчастные семьи уезжают
@@ -2185,7 +2219,7 @@ func _grow_house(b: Dictionary) -> void:
 	# несчастные уезжают
 	if int(b["happy"]) < 25 and int(b["pop"]) > 0:
 		b["down"] = int(b["down"]) + 1
-		if int(b["down"]) >= 20:
+		if int(b["down"]) >= 48:
 			b["down"] = 0
 			var fams: Array = b["families"]
 			if not fams.is_empty():
@@ -2200,7 +2234,7 @@ func _grow_house(b: Dictionary) -> void:
 				fams.remove_at(leave)
 				b["pop"] = maxi(0, int(b["pop"]) - int(f["n"]))
 				b.erase("_fam_" + str(f["name"]))
-				_event("Семья %s уехала: им плохо живётся" % f["name"], "person")
+				_quiet("Семья %s решила переехать: в доме долго было неуютно." % f["name"], "person")
 				family_left.emit(b["id"], f["name"])
 				house_changed.emit(b, false)
 	else:
@@ -2603,11 +2637,6 @@ func can_upgrade_clearing(b: Dictionary, check_money := true) -> String:
 	var e2 := upgrade_room_clearing(b)
 	if e2 != "":
 		return e2
-	# украшения позади радуют и этот дом: без них счастье может не дотянуть — тогда и сносить нечего
-	var need := int(Defs.UPGRADE_HAPPY.get(String(Defs.B[upgrade_to(b)]["cls"]), 65))
-	var hp := upgrade_happy_without(b, upgrade_decor_blockers(b))
-	if hp < need:
-		return "Без украшений позади счастье после перестройки было бы %d%% — нужно от %d%%" % [clampi(hp, 0, 100), need]
 	if check_money and money + float(upgrade_decor_refund(b)) < float(upgrade_price(b)):
 		return "Не хватает денариев"
 	return ""
@@ -2676,20 +2705,8 @@ func can_upgrade(b: Dictionary, check_money := true) -> String:
 	if nt == "":
 		return "Это уже домус патрициев — выше класса нет"
 	var nd: Dictionary = Defs.B[nt]
-	var cl1 := String(nd["cls"])
 	if not unlocked(nt):
 		return "Сначала изучите «%s»" % Defs.research(String(nd.get("unlock", "")))["name"]
-	if int(h["pop"]) <= 0:
-		return "Дом пока пустой — перестраивают дом, где уже живут"
-	if int(h.get("coming", 0)) > 0:
-		return "Семья ещё идёт в этот дом — подождите, пока она заселится"
-	var miss := upgrade_missing(h)
-	if not miss.is_empty():
-		return "%s нужны ещё: %s — поставьте лавки рядом" % [{"artisans": "Ремесленникам", "patricians": "Патрициям"}.get(cl1, ""), ", ".join(miss)]
-	var need := int(Defs.UPGRADE_HAPPY.get(cl1, 65))
-	var hp := upgrade_happy(h)
-	if hp < need:
-		return "Счастье после перестройки было бы %d%% — нужно от %d%% (украшения и лавки рядом его поднимут)" % [clampi(hp, 0, 100), need]
 	var room := upgrade_room(h)
 	if room != "":
 		return room
@@ -3097,7 +3114,7 @@ func new_family(cls: String) -> Dictionary:
 	var roll := rng.randf()
 	var f := {"name": name, "n": 2 if roll < 0.25 else (3 if roll < 0.70 else 4), "cls": cls}
 	if wants_v >= 1:
-		f["want"] = FamilyWant.random_id(rng)
+		f["want"] = FamilyWant.roll(rng, level)
 	Residents.new_professions(f, cls, rng, Residents.key_new(self, name))
 	return f
 
@@ -3122,6 +3139,8 @@ func family_arrived(f: Dictionary, from_cart := true) -> void:
 	if typeof(f.get("m")) == TYPE_ARRAY and not (f["m"] as Array).is_empty():
 		af["m"] = f["m"]                     # члены семьи с именами (Residents) — те же, что сошли с повозки
 	arrivals.append(af)
+	if String(af.get("want", "")) != "" and not tips.has("want_advice") and not tips.has("want_arrived"):
+		tips["want_arrived"] = String(af["want"])
 	arrivals_changed.emit()
 	changed.emit()
 	if from_cart:
@@ -3216,7 +3235,7 @@ func settled(id: int, n: int, name := "") -> int:
 	copy_family_state(known, fam)
 	if wants_v >= 1:
 		if not fam.has("want") and not back:
-			fam["want"] = FamilyWant.random_id(rng)
+			fam["want"] = FamilyWant.roll(rng, level)
 		if not fam.has("grace_until") and not back:
 			fam["grace_until"] = clock_h + 24
 	if pm.size() >= n:

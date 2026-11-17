@@ -109,16 +109,13 @@ func _run() -> void:
 		return
 	var before := city.rp
 	(tree.study as Button).pressed.emit()
+	tree.confirm_yes.pressed.emit()
 	if not check(city.research.has("butcher") and is_equal_approx(city.rp, before - float(Defs.research("butcher")["cost"])), "study uses City cost and unlock"):
 		return
-	(tree.only_available as CheckBox).set_pressed(true)
-	for id: String in tree.cards:
-		if not check((tree.cards[id] as Control).visible == (city.can_research(id) == ""), "available filter " + id):
-			return
-	# Цель просьбы скрыта фильтром: раскрываем её вместе с причиной запрета.
+	# Переход к закрытому исследованию выбирает карточку без фильтра.
 	hud._scroll_research("cobbler")
 	await frames(5)
-	if not check(not tree.only_available.button_pressed and tree.cards.has("cobbler") and tree.study.disabled, "reveal locked node through filter"):
+	if not check(tree.cards.has("cobbler") and tree.study.disabled and not tree.confirm.visible, "reveal locked node without buying"):
 		return
 	hud.close_panels()
 	if not check(city.new_research() == 0, "unseen research marked on close"):
@@ -153,7 +150,8 @@ func _run() -> void:
 	(parts.get_child(0) as Button).pressed.emit()
 	await frames(8)
 	var query: LineEdit = hud.stats_panel.find_child("q", true, false)
-	if not check(query.text == String(active["census"]["name"]) and hud.people_filter == "" and hud.pointer_target == hud.people_target and hud.pointer.visible, "name filter, highlighted row and arrow"):
+	if not check(query != null and query.is_visible_in_tree() and query.text == String(active["census"]["name"]) and hud.people_filter == ""
+		and is_instance_valid(hud.people_target) and hud.pointer_target == hud.people_target and hud.pointer.visible, "name filter, highlighted row and arrow"):
 		return
 	if not check(not bool(active["flags"].get("c_person", false)), "opening list does not complete step"):
 		return

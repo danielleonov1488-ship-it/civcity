@@ -1,5 +1,7 @@
 class_name Game
 extends Node3D
+
+const DecorFacing = preload("res://scripts/decor_facing.gd")
 ## CivCity: уютный римский город как Town to City, на моделях Synty POLYGON Ancient Empire.
 ## Мир: большая карта с мягкими холмами, прудами и лесами; с севера из-за горизонта через арку идёт большая дорога — по ней приезжают
 ## повозки. Игрок рисует дороги кистью, ставит дома и лавки (постройка занимает землю своей настоящей формой
@@ -153,6 +155,7 @@ var _wall_key := []                   # настенное украшение: �
 var _wall_res := {}
 # постановка постройки (3.4–3.7)
 var color_user := -1                  # цвет фасада, выбранный в панели (−1 — «Авто»)
+var decor_arrow: MeshInstance3D       # передняя сторона скамьи и другого направленного декора
 var door_arrow: MeshInstance3D        # стрелка у входа призрака: зелёная — мостовая рядом, красная — нет
 var door_ok := false
 var _last_sub := ""
@@ -2918,6 +2921,8 @@ func view_blocked(from: Vector3, to: Vector3) -> bool:
 # ---------- инструменты ----------
 
 func set_tool(t: String) -> void:
+	if decor_arrow != null:
+		decor_arrow.hide()
 	if t != "" and rig != null:
 		rig.stop_follow()                         # взяли инструмент — камера больше не идёт за жителем (карточка остаётся)
 	if painting:
@@ -4148,6 +4153,8 @@ func _row_bounds(bp: Bp) -> Array:
 
 
 func _update_tool() -> void:
+	if decor_arrow != null:
+		decor_arrow.hide()
 	hover = ground_at_mouse()
 	brush_ring.visible = false
 	brush_box.visible = false
@@ -4156,6 +4163,9 @@ func _update_tool() -> void:
 		over_ui = false                       # мазок начат на карте: над окнами кисть ведём дальше по земле под курсором
 	brush_disc.visible = false
 	_tool_note(over_ui)
+	if tool == "story_zone" and stories != null:
+		stories.zone_preview(hover, over_ui)
+		return
 	if tool == "" and hover != Vector2.INF and not over_ui:
 		var pl := land.plot_of(hover)
 		_plot_hover(pl if plot_signs.has(pl) and not land.is_owned(hover) else Vector2i(-1, -1))
@@ -4262,6 +4272,7 @@ func _update_tool() -> void:
 	ghost.transform = Transform3D(Basis(Vector3.UP, pl["yaw"]), Vector3(pl["pos"].x, y + 0.02, pl["pos"].y))
 	_snap_pulse(String(pl.get("sub", "")))
 	_door_arrow(pl)
+	_decor_arrow(pl)
 	_ghost_trees(ok, pl)
 	# охват — без кругов: синие дома уже с такой же, зелёные получат эту (решение владельца Д3)
 	if Cover.kind_of(tool) != "":
@@ -5432,6 +5443,9 @@ func _unhandled_input(e: InputEvent) -> void:
 
 
 func _click() -> void:
+	if tool == "story_zone" and stories != null:
+		stories.place_zone(hover)
+		return
 	# история горожан: щёлкнули по потерянной кошке (или по тому, что ищем) — нашли
 	if tool == "" and stories != null and stories.try_click(_mouse_pos if _mouse_pos.x >= 0.0 else get_viewport().get_mouse_position()):
 		return
@@ -6852,3 +6866,42 @@ func _pet_react(n: Node3D, cam: Camera3D) -> void:
 		n.add_child(p3)
 		sound.cat(p3)
 		p3.finished.connect(p3.queue_free)
+
+
+## Та же ось +Z модели, по которой People усаживает жителей.
+func _decor_arrow(pl: Dictionary) -> void:
+	if decor_arrow != null:
+		decor_arrow.hide()
+	if not Defs.B.has(tool) or String(Defs.B[tool]["kind"]) != "decor" or String(pl.get("err", "")) != "":
+		return
+	var bp := Catalog.make(tool, int(pl["tier"]), int(pl["variant"]), int(pl["color"]))
+	var facing := DecorFacing.front(bp, tool)
+	if facing.is_empty():
+		return
+	if decor_arrow == null:
+		var surface := SurfaceTool.new()
+		surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var points := [Vector3(-0.09, 0, 0), Vector3(0.09, 0, 0), Vector3(0.09, 0, 0.52), Vector3(-0.09, 0, 0.52),
+			Vector3(-0.30, 0, 0.48), Vector3(0.30, 0, 0.48), Vector3(0, 0, 1.0)]
+		for i: int in [0, 2, 1, 0, 3, 2, 4, 6, 5]:
+			surface.set_normal(Vector3.UP)
+			surface.add_vertex(points[i])
+		decor_arrow = MeshInstance3D.new()
+		decor_arrow.name = "DecorFrontArrow"
+		decor_arrow.mesh = surface.commit()
+		var material := StandardMaterial3D.new()
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		material.albedo_color = Color(0.38, 0.85, 0.32, 0.55)
+		decor_arrow.material_override = material
+		decor_arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(decor_arrow)
+	var rotation := Basis(Vector3.UP, float(pl["yaw"]))
+	var forward: Vector3 = rotation * (facing["front"] as Vector3)
+	forward.y = 0.0
+	forward = forward.normalized()
+	var center: Vector3 = rotation * (facing["at"] as Vector3)
+	var at := (pl["pos"] as Vector2) + Vector2(center.x, center.z) + Vector2(forward.x, forward.z) * 0.45
+	decor_arrow.transform = Transform3D(Basis(Vector3.UP, atan2(forward.x, forward.z)), Vector3(at.x, land.height_at(at.x, at.y) + 0.085, at.y))
+	decor_arrow.show()

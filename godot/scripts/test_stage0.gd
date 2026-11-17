@@ -5,7 +5,7 @@ extends Node
 ##   … -- mode=quit at=2                                         — выход через at секунд после старта (не падает)
 ## 0.1 просьбы из частей и стрелка к тому, чего не хватает (склад → мясная лавка; закрытое — к исследованиям);
 ##     у всех просьб подсказка и щелчок; строки условий уровня — тоже со стрелкой и щелчком.
-## 0.2 «Скверик»: у курсора «В счёт скверика ✓» / «Далеко от дома — не в счёт» / «Это не дерево — не в счёт»; кусты в счёт;
+## 0.2 «Скверик»: у курсора «В счёт скверика ✓» / «Вне круга — не в счёт» / «Это не дерево — не в счёт»; кусты в счёт;
 ##     «Ещё 2 дерева стоят дальше 15 м»; чёткий край пятна — только с украшением в руках (Decal и сетка OpenGL); ✓ на 3 с.
 ## 0.3 дети без бороды, венка и щетины; облик взрослых — как был.
 ## 0.4 «казна полна — не уместилось»; Esc и правая кнопка посреди мазка — отмена (деньги и мостовая как были).
@@ -239,18 +239,24 @@ func _requests() -> void:
 	hud._close_tray()
 	hud.show_pointer(hud.request_do(c.active_goals(1)[0]))
 	check(hud.pointer_target == hud.cats["commerce"] and hud.pointer_text.text == "Мясная лавка", "(a) меню закрыто → «Лавки», подпись «Мясная лавка»", hud.pointer_text.text)
+	# Вкладка «Одежда» видна, когда в ней есть хотя бы одна открытая лавка.
+	var had_dyer := c.research.has("dyer")
+	c.research["dyer"] = true
 	hud.open_sub = "clothes"
 	hud._toggle_cat("commerce")
 	await frames(3)
 	hud._update_pointer()
-	check(hud.pointer_target != null and String(hud.pointer_target.get_meta("sub", "")) == "food", "(a) открыты «Лавки» на «Одежде» → вкладка «Еда»")
-	hud.open_sub = "food"
-	hud._fill_cards()
+	var food_tab := hud.pointer_target as Button
+	if check(hud.open_sub == "clothes" and food_tab != null and food_tab.is_visible_in_tree()
+		and String(food_tab.get_meta("sub", "")) == "food", "(a) открыты «Лавки» на «Одежде» → вкладка «Еда»"):
+		food_tab.pressed.emit()
 	await frames(2)
 	hud._update_pointer()
 	check(hud.pointer_target != null and String(hud.pointer_target.get_meta("type", "")) == "butcher", "(a) вкладка «Еда» → карточка мясной лавки")
 	await shot("s0_ptr_butcher.png")
 	hud._close_tray()
+	if not had_dyer:
+		c.research.erase("dyer")
 	hud.refresh()
 	await frames(2)
 	# строка: «Склад ✓ · Мясная лавка 0/1»; щелчок — мясная лавка в руках
@@ -626,7 +632,7 @@ func _square() -> void:
 	var n17: Array = sto.zone_note("tree", hp + Vector2(17, 0))
 	var npl: Array = sto.zone_note("planter", hp + Vector2(5, 0))
 	check(not n8.is_empty() and String(n8[0]) == "В счёт скверика ✓", "дерево в 8 м: «%s»" % [n8])
-	check(not n17.is_empty() and String(n17[0]) == "Далеко от дома — не в счёт", "дерево в 17 м: «%s»" % [n17])
+	check(not n17.is_empty() and String(n17[0]) == "Вне круга — не в счёт", "дерево в 17 м: «%s»" % [n17])
 	check(not npl.is_empty() and String(npl[0]) == "Это не дерево — не в счёт", "ваза: «%s»" % [npl])
 	# кусты — в счёт, вазы и горшки — нет
 	var bush_bad := []
@@ -646,7 +652,7 @@ func _square() -> void:
 	check(hud._note == "В счёт скверика ✓", "у курсора: «%s»" % hud._note)
 	game.place_info = {"_t": "tree", "pos": hp + Vector2(17, 0)}
 	game._tool_note(false)
-	check(hud._note == "Далеко от дома — не в счёт", "у курсора далеко: «%s»" % hud._note)
+	check(hud._note == "Вне круга — не в счёт", "у курсора далеко: «%s»" % hud._note)
 	# чёткий край — только с украшением в руках (Decal)
 	sto._marks(true)
 	check(sto._glow != null and sto._glow_edge and sto._glow is Decal and (sto._glow as Decal).texture_albedo == StoryUi.edge_tex(15.0, 0.5),
@@ -672,21 +678,25 @@ func _square() -> void:
 	check(sto._glow is MeshInstance3D and not sto._glow_edge, "OpenGL: без украшения — мягкое пятно")
 	sto._area_marks([], c.stories["active"])
 	sto._no_decals = RenderingServer.get_current_rendering_method() == "gl_compatibility"
-	# 3 скамьи + колодец, деревьев нет — строка тестера; деревья в 17 м — «Ещё 2 дерева…»
+	# Список сквера: считаются только предметы внутри зоны.
 	var placed := []
 	for v: Vector2 in [Vector2(6, 3), Vector2(-6, 3), Vector2(3, -7)]:
 		placed.append(c.place("bench", hp + v, 0.0, 0, -1, true))
 	placed.append(c.place("well", hp + Vector2(-8, -2), 0.0, 0, -1, true))
-	var row := String(sto.row_info().get("text", ""))
-	check(row.contains("скамей 3, деревьев и кустов 0/2, колодцев 1/1"), "строка тестера: «%s»" % row)
+	var parts: Array = sto.row_info().get("parts", [])
+	if check(parts.size() == 3, "скверик: три строки списка"):
+		check(bool(parts[0]["ok"]) and int(parts[0]["remaining"]) == 0 and not bool(parts[1]["ok"])
+			and int(parts[1]["remaining"]) == 2 and bool(parts[2]["ok"]) and int(parts[2]["remaining"]) == 0,
+			"скверик: скамьи и колодец готовы, осталось два дерева", parts)
 	var t1 := c.place("tree", hp + Vector2(17, 4), 0.0, 0, -1, true)
 	var t2 := c.place("cypress", hp + Vector2(-4, 17), 0.0, 0, -1, true)
-	row = String(sto.row_info().get("text", ""))
-	check(row.contains("Ещё 2 дерева стоят дальше 15 м — подвиньте их ближе"), "два дерева в 17 м: «%s»" % row)
+	parts = sto.row_info().get("parts", [])
+	check(parts.size() == 3 and int(parts[1]["remaining"]) == 2, "два дерева в 17 м не засчитаны", parts)
 	c.remove(t1, false)
 	var t1b := c.place("tree", hp + Vector2(10, 2), 0.0, 0, -1, true)
-	row = String(sto.row_info().get("text", ""))
-	check(row.contains("деревьев и кустов 1/2") and row.contains("Ещё 1 дерево стоит дальше 15 м — подвиньте его ближе"), "одно подвинули: «%s»" % row)
+	parts = sto.row_info().get("parts", [])
+	check(parts.size() == 3 and String(parts[1]["text"]) == "Деревья и кусты · осталось 1" and not bool(parts[1]["ok"]),
+		"одно дерево подвинули, осталось одно", parts)
 	# ✓ на 3 с над тем, что в счёт
 	sto.flash_counted(t1b)
 	var oks := 0
@@ -893,7 +903,9 @@ func _fold() -> void:
 		c.tips.erase("story_square")
 		c.stories["active"] = {"id": "square", "step": sqi, "home": int(sq["id"]), "fam": "Проба", "flags": {}, "t0": int(c.stories["h"]), "id0": c.next_id}
 		game.stories._advise_square()
-		check(hud.advisor_panel.visible and hud.adv_text.text.contains("сейчас свиток свёрнут, разверните его"), "свиток свёрнут — советник про скверик говорит, где «Готово»")
+		check(hud.advisor_panel.visible and hud.adv_text.text.contains("Разверните свиток «Просьбы»")
+			and hud.adv_text.text.contains("«Выбрать место»") and hud.adv_text.text.contains("«Готово»"),
+			"свиток свёрнут — советник объяснил, как выбрать место и закончить скверик")
 		c.stories["active"] = {}
 		c.remove(sq, false)
 	hud.advisor_panel.visible = false

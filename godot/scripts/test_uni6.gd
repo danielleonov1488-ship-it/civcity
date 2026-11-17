@@ -38,8 +38,15 @@ func run() -> void:
 	if work.is_empty():
 		return
 	check(city.hire(work) == 1, "hire ordinary citizen")
+	home["happy"] = 40.0
 	city.compute()
-	check(Defs.PROF_ON or is_equal_approx(float(work["staff"]), 1.0 / city.job_max(work)), "old profession gives no 20 percent bonus")
+	var full := 1.0 / city.job_max(work)
+	check(not Defs.PROF_ON and int(work["staff_count"]) == 1 and is_equal_approx(float(work["staff"]), full), "old profession gives no 20 percent bonus")
+	home["happy"] = 39.0
+	city.compute()
+	check(int(work["staff_count"]) == 1 and is_equal_approx(float(work["staff"]), full * 0.5), "below 40 halves output, not the number of workers")
+	home["happy"] = 40.0
+	city.compute()
 	hud.open_info(work)
 	await frames()
 	inspect_panel(hud.info_panel)
@@ -56,6 +63,8 @@ func run() -> void:
 		inspect_panel(hud.research_panel)
 	# После обхода рангов целевое знание надо сначала вернуть в видимую страницу.
 	tree.reveal("deco_flowers")
+	await frames()
+	(tree.cards["deco_flowers"] as Control).mouse_entered.emit()
 	await frames()
 	inspect_panel(tree.popup)
 	hud.close_panels()

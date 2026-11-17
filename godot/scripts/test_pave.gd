@@ -176,6 +176,14 @@ func _run() -> void:
 		get_tree().quit()
 		return
 	game.can_save = false
+	game.tutorial.step = Tutorial.STEPS.size()
+	game.tutorial.card.hide()
+	game.tutorial.camera_keys.hide()
+	game.tutorial.next_btn.hide()
+	game.tutorial.set_process(false)
+	game.city.tips["tut"] = -1
+	game.city.tips["ui"] = 3
+	game.hud.apply_reveal(3)
 	game.city.money = 50000.0
 	game.city.tips["intro"] = true
 	game.city.tips["cover_tip"] = true          # совет о подсветке охвата (test_cover) не загораживает щелчки по миру
@@ -334,8 +342,11 @@ func _f4_on_paving() -> void:
 func _f5_mouse() -> void:
 	game.rig.set_view(Vector3(176, 2, 141), 15, 58, 36)
 	await frames(60)
+	game.hud.advisor_panel.hide()
+	game.hud.guidance_queue.clear()
+	game.hud._clear(game.hud.notes_box)
 	await click(center_of(game.hud.cats["housing"]))
-	await frames(5)
+	await get_tree().create_timer(0.4).timeout
 	var card: Control = null
 	for c in game.hud.tray_grid.get_children():
 		if c.get_meta("type", "") == "house_pleb":
@@ -478,7 +489,8 @@ func _f9_review() -> void:
 		and (a["pos"] as Vector2).distance_to(b["pos"]) <= 0.05 and yaw_is(float(a["yaw"]), float(b["yaw"]), 0.001), "a=%s b=%s %s" % [a.get("sub", ""), b.get("sub", ""), (a["pos"] as Vector2).distance_to(b["pos"])])
 	var c: Dictionary = game.placement("house_pleb", Vector2(176, 168.0 - 1.6))
 	ok("F9 deeper into the street: at the cursor on the paving", c.get("sub", "") == "square" and centre("house_pleb", c).distance_to(Vector2(176, 168.0 - 1.6)) <= 0.05, str(c.get("sub", "")))
-	# X у дороги — четверть оборота на месте (середина остаётся); четыре раза — снова фасадом к дороге у края
+	# Z/X крутит показанный призрак вокруг его середины.
+	game.set_tool("house_pleb")
 	reset()
 	var p := Vector2(176, 168.0 + 0.6)
 	var s0: Dictionary = game.placement("house_pleb", p)

@@ -7,14 +7,14 @@ extends Node
 ## дом снесли (ждём семью, она заселилась — история идёт; не заселилась — прервалась); виды целей других историй.
 ## Снимки — .work/gd/story_*.png. Итог: «STORY DONE fails=N».
 ## «Скверик для стариков»: ранг и исследования, старик просит (седой, лицо для крупного плана), советник, пороги по скамьям
-## (бронза / серебро / золото с часами), старики приходят — скамей больше, стариков больше; сохранение посреди шага; «Готово» —
+## (готовая цель / та же цель / та же цель с часами), старики приходят — скамей больше, стариков больше; сохранение посреди шага; «Готово» —
 ## ролик и «памятник» +7% в 15 м (строки счастья рядом, у дальних нет); стол для латрункулов — утром двое играют; вечером уходят.
 ## «Свадьба Юлии»: ранг, ремесленники, жених из другого дома; таверна в выборе — только если её можно построить; сад —
 ## арка из роз сразу; ветка таверны; дом невесты перенесли; новый дом: плебейский и занятый не в счёт; молодые — семья в новом
 ## доме; ролик: вечер, шествие, жаровни; +6% в 20 м на 3 дня; «Пересмотреть»; сохранение посреди шага.
 ## Правки по проверке: «Отложить» — пауза для всех историй (скверик сутки не просят); «Бронза — 3 скамьи»; столов
 ## латрункулов с игроками — не больше StoryLife.TABLES; «Пересмотреть» скверик — дед взрослый (и по старой записи);
-## «памятник» скверика — пока скверик стоит (убрали часы — серебро, колодец — бонуса нет); дом деда снесли — стариков нет;
+## «памятник» скверика — пока скверик стоит (убрали часы — та же цель, колодец — бонуса нет); дом деда снесли — стариков нет;
 ## свадьба: дом, построенный сразу после выбора (до пира), — в счёт; свадьба готова, дом невесты снесли, семья уехала —
 ## награда есть; семья без дома — ни пир, ни новый дом не меряем от станции; дом самой семьи молодым — не в счёт.
 ## mode=owner — город владельца (копия сохранения в CIVCITY_SAVEDIR): загрузка без историй, предложение, кошка находится,
@@ -822,7 +822,7 @@ func _search_and_find() -> void:
 	sto.tick()
 	await frames(5)
 	check(sto._glow != null and is_equal_approx(sto._glow_r, 12.0), "через 3 ч пятно теснее (12 м)")
-	check(String(sto.row_info().get("text", "")).contains("тёплые уголки"), "подсказка в строке: «%s»" % sto.row_info().get("text"))
+	check(String(sto.row_info().get("tip", "")).contains("тёплые уголки"), "подсказка в строке: «%s»" % sto.row_info().get("text"))
 	S["h"] = int(A["t0"]) + 6
 	sto.tick()
 	await frames(5)
@@ -1406,7 +1406,7 @@ func _goal_kinds() -> void:
 	check(not nb.is_empty() and bool(pr["ok"]), "построен после: новый дом в 30 м")
 	var g_score := ["score", "bench", 15.0, [2, 4, 6]]
 	pr = sto.progress(a, g_score)
-	check(int(pr["tier"]) == 1 and not bool(pr["ok"]), "очки: 2 скамьи — бронза, ждём «Готово» (%s)" % pr["txt"])
+	check(bool(pr["met"]) and not bool(pr["ok"]), "очки: 2 скамьи — готовая цель, ждём «Готово» (%s)" % pr["txt"])
 	a["flags"]["ready"] = true
 	pr = sto.progress(a, g_score)
 	check(bool(pr["ok"]), "очки: «Готово» нажато")
@@ -1767,9 +1767,9 @@ func _square() -> void:
 	var g: Array = sto._step(A)["goal"]
 	var pr: Dictionary = sto.progress(A, g)
 	print("  было рядом: ", pr["parts"])
-	if int(pr["tier"]) == 0:
+	if not bool(pr["met"]):
 		var t0txt := String(sto.row_info()["text"])
-		check(t0txt.contains("Бронза — 3 скамьи.") and t0txt.contains("деревьев и кустов"), "строка в начале: «%s»" % t0txt)
+		check(not t0txt.contains("Бронза") and (sto.row_info().get("parts", []) as Array).size() == 3, "строка в начале: «%s»" % t0txt)
 	var dirs := [Vector2(6, 2), Vector2(-6, 3), Vector2(2, 7), Vector2(-3, -7), Vector2(7, -4), Vector2(-7, -3), Vector2(4, 8), Vector2(-5, 7), Vector2(8, 5)]
 	var di := 0
 	while int(sto.progress(A, g)["benches"]) < 3 and di < 9:
@@ -1782,10 +1782,10 @@ func _square() -> void:
 		deco("well", hp + Vector2(-8, 0))
 	sto.tick()
 	pr = sto.progress(A, g)
-	check(bool(pr["min"]) and int(pr["tier"]) == 1 and int(pr["benches"]) == 3, "3 скамьи, 2 дерева, колодец — бронза (%s)" % [pr["parts"]])
+	check(bool(pr["min"]) and bool(pr["met"]) and int(pr["benches"]) == 3, "3 скамьи, 2 дерева, колодец — готовая цель (%s)" % [pr["parts"]])
 	info = sto.row_info()
 	var btn0 := String((info["buttons"] as Array)[0][0])
-	check(btn0 == "Готово (бронза)" and String(info["text"]).contains("+3%") and String(info["text"]).contains("Серебро — 5 скамей"),
+	check(btn0 == "Готово" and (info["parts"] as Array).size() == 3 and not String(info["text"]).contains("Серебро"),
 		"строка: «%s» [%s]" % [info["text"], btn0])
 	# старики приходят: скамей больше — стариков больше
 	sto.life._sync(false)
@@ -1813,12 +1813,12 @@ func _square() -> void:
 	c2.auto_hire = true  # прежняя фикстура
 	c2.load_data(d)
 	check(String(c2.stories["active"].get("id", "")) == "square" and int(c2.stories["active"].get("step", -1)) == 1, "после загрузки — тот же шаг скверика")
-	# ещё скамьи: серебро, потом семь — всё ещё серебро без часов, с часами — золото
+	# ещё скамьи: та же цель, потом семь — всё ещё та же цель без часов, с часами — та же цель
 	while int(sto.progress(A, g)["benches"]) < 5 and di < 9:
 		deco("bench", hp + dirs[di])
 		di += 1
 	pr = sto.progress(A, g)
-	check(int(pr["tier"]) == 2, "5 скамей — серебро (%d)" % int(pr["benches"]))
+	check(bool(pr["met"]), "5 скамей — та же цель (%d)" % int(pr["benches"]))
 	sto.life._sync(false)
 	var n5 := elders_n()
 	check(n5 > n3, "скамей больше — и стариков больше (%d → %d)" % [n3, n5])
@@ -1826,11 +1826,11 @@ func _square() -> void:
 		deco("bench", hp + dirs[di])
 		di += 1
 	pr = sto.progress(A, g)
-	check(int(pr["benches"]) >= 7 and int(pr["tier"]) == 2 and String(sto.row_info()["text"]).contains("солнечные часы"), "7 скамей без часов — серебро, строка зовёт к часам")
+	check(int(pr["benches"]) >= 7 and bool(pr["met"]) and not String(sto.row_info()["text"]).contains("солнечные часы"), "7 скамей без часов — та же цель, строка зовёт к часам")
 	c.research["deco_stone"] = true
 	var sun_b := deco("sundial", hp + Vector2(0, -4))
 	pr = sto.progress(A, g)
-	check(int(pr["tier"]) == 3, "7 скамей и солнечные часы — золото")
+	check(bool(pr["met"]), "7 скамей и солнечные часы — та же цель")
 	sto.life._sync(true)
 	var n7 := elders_n("sit")
 	check(n7 >= 6, "старики сидят на скамьях (%d)" % n7)
@@ -1853,7 +1853,7 @@ func _square() -> void:
 			elif (b["pos"] as Vector2).distance_to(sc) > 25.0:
 				house_far = b
 	info = sto.row_info()
-	check(String((info["buttons"] as Array)[0][0]) == "Готово (золото)", "кнопка «Готово (золото)»")
+	check(String((info["buttons"] as Array)[0][0]) == "Готово", "кнопка «Готово»")
 	((info["buttons"] as Array)[0][1] as Callable).call()
 	check(sto.kit != null and (S["done"] as Dictionary).has("square"), "«Готово» — ролик сразу, история пройдена")
 	var e: Dictionary = S["done"].get("square", {})
@@ -1862,14 +1862,14 @@ func _square() -> void:
 	for bb: Dictionary in S["bonus"]:
 		if String(bb.get("id", "")) == "square":
 			mon = bb
-	check(int(mon.get("pct", 0)) == 7 and is_equal_approx(float(mon.get("r", 0)), 15.0) and int(mon.get("left", 0)) == -1, "памятник: +7%% в 15 м навсегда (%s)" % mon)
-	check(String(e.get("text", "")).contains("+7% счастья — пока стоит скверик"), "в журнале: %s" % e.get("text"))
+	check(int(mon.get("pct", 0)) == 3 and is_equal_approx(float(mon.get("r", 0)), 15.0) and int(mon.get("left", 0)) == -1, "памятник: +7%% в 15 м навсегда (%s)" % mon)
+	check(String(e.get("text", "")).contains("+3% счастья — пока стоит скверик"), "в журнале: %s" % e.get("text"))
 	c.compute()
 	var line_ok := not houses_near.is_empty()
 	for hb: Dictionary in houses_near:
 		var has := false
 		for pp: Array in hb["happy_parts"]:
-			if String(pp[0]) == "Скверик для стариков" and int(pp[1]) == 7:
+			if String(pp[0]) == "Скверик для стариков" and int(pp[1]) == 3:
 				has = true
 		line_ok = line_ok and has
 	var far_has := false
@@ -1943,7 +1943,7 @@ func _square() -> void:
 		press_key(KEY_ESCAPE)
 		await wait_kit(false, 5.0)
 		await frames(3)
-	# «памятник» — пока скверик стоит: часы убрали — серебро (+5%), колодец убрали — бонуса нет, поставили — снова +7%
+	# «памятник» — пока скверик стоит: часы убрали — та же цель (+5%), колодец убрали — бонуса нет, поставили — снова +7%
 	var hn: Dictionary = houses_near[0] if not houses_near.is_empty() else {}
 	var mat: Array = mon.get("at", [])
 	check(mat.size() == 2 and Vector2(float(mat[0]), float(mat[1])).distance_to(hp) < 0.01, "памятник помнит, где мерили скверик")
@@ -1951,10 +1951,10 @@ func _square() -> void:
 	if not sun_b.is_empty():
 		c.remove(sun_b)
 	c.compute()
-	check(sq_pct(hn) == 5, "солнечные часы убрали — скверик серебряный: +%d%%" % sq_pct(hn))
+	check(sq_pct(hn) == 3, "солнечные часы убрали — скверик серебряный: +%d%%" % sq_pct(hn))
 	sun_b = deco("sundial", sun_pos)
 	c.compute()
-	check(sq_pct(hn) == 7, "часы вернули — снова +%d%%" % sq_pct(hn))
+	check(sq_pct(hn) == 3, "часы вернули — снова +%d%%" % sq_pct(hn))
 	var wells := []
 	for id in c.buildings:
 		var wb: Dictionary = c.buildings[id]
@@ -1967,7 +1967,7 @@ func _square() -> void:
 	check(not wells.is_empty() and sq_pct(hn) == 0, "колодец снесли — скверика нет, и строки счастья нет (+%d%%)" % sq_pct(hn))
 	deco("well", well_pos)
 	c.compute()
-	check(sq_pct(hn) == 7, "колодец поставили — скверик снова золотой: +%d%%" % sq_pct(hn))
+	check(sq_pct(hn) == 3, "колодец поставили — скверик снова золотой: +%d%%" % sq_pct(hn))
 	# скверик строят, а дом деда снесли: стариков нет (и у станции тоже); семья заселилась — скверик у её нового дома
 	fresh(1500, ["cat"])
 	S = c.stories
@@ -2084,7 +2084,12 @@ func _wedding() -> void:
 		return
 	check(c.research.has("s_wedding") and c.unlocked("rosearch") and String(c.events[-1]["text"]).contains("Арка из роз"), "арка из роз открыта сразу: «%s»" % c.events[-1]["text"])
 	var info: Dictionary = sto.row_info()
-	check(String(info["text"]).contains("8 цветов") and String((info["buttons"] as Array)[-1][0]) == "Лучше: пир в таверне", "строка сада и «Лучше: пир в таверне»: %s" % [info["buttons"].map(func(x): return x[0])])
+	var garden_parts: Array = info.get("parts", [])
+	var garden_buttons: Array = (info["buttons"] as Array).map(func(b: Array) -> String: return String(b[0]))
+	check(garden_parts.size() == 2 and String(garden_parts[0]["text"]).begins_with("Цветы · осталось")
+		and String(garden_parts[1]["text"]).begins_with("Беседка или арка · осталось")
+		and garden_buttons.has("Лучше: пир в таверне") and garden_buttons.has("Выбрать место"),
+		"список сада, выбор места и «Лучше: пир в таверне»: %s" % [garden_buttons])
 	# ветка таверны (на копии): термополий в 25 м
 	var g: Array = sto._step(A)["goal"]
 	var a2 := A.duplicate(true)
@@ -2098,7 +2103,7 @@ func _wedding() -> void:
 	for i in 8:
 		deco(fl[i], bp + Vector2(cos(i * 0.8), sin(i * 0.8)) * 6.0)
 	sto.tick()
-	check(int(A["step"]) == 1 and String(sto.row_info()["text"]).contains("Сейчас:"), "8 цветов, беседки нет — ждём (%s)" % sto.row_info()["text"])
+	check(int(A["step"]) == 1 and String(sto.row_info().get("tip", "")).contains("Сейчас:"), "8 цветов, беседки нет — ждём (%s)" % sto.row_info()["text"])
 	var ra := deco("rosearch", bp + Vector2(-7, 2))
 	sto.tick()
 	check(int(A["step"]) == 2, "арка из роз поставлена — шаг «дом молодым»")
@@ -2142,7 +2147,7 @@ func _wedding() -> void:
 	if not full.is_empty():
 		settle(full, "Проба 9")
 	sto.tick()
-	check(int(A["step"]) == 2 and String(sto.row_info()["text"]).contains("заняли"), "новый дом заняли — нужен другой: «%s»" % sto.row_info()["text"])
+	check(int(A["step"]) == 2 and String(sto.row_info().get("tip", "")).contains("заняли"), "новый дом заняли — нужен другой: «%s»" % sto.row_info()["text"])
 	var nh := put("house_artisan", bp + Vector2(-12, -3))
 	sto.tick()
 	var nm := String(A.get("couple", ""))
@@ -2491,11 +2496,11 @@ func _framework() -> void:
 	var a := {"id": "cat", "home": int(kid_home["id"]), "fam": kid_fam, "flags": {}, "t0": int(S["h"]), "id0": c.next_id}
 	var bn := sto.beauty_near(hp, 15.0)
 	var pr: Dictionary = sto.progress(a, ["beauty", 15.0, [bn + 1, bn + 6, bn + 12]])
-	check(int(pr["tier"]) == 0 and int(pr["have"]) == bn, "красота: %d очков — ещё не бронза" % bn)
+	check(not bool(pr["met"]) and int(pr["have"]) == bn, "красота: %d очков — ещё не готовая цель" % bn)
 	c.research["deco_stone"] = true
 	deco("statue", hp + Vector2(-8, 3))
 	pr = sto.progress(a, ["beauty", 15.0, [bn + 1, bn + 6, bn + 12]])
-	check(int(pr["tier"]) >= 1 and not bool(pr["ok"]), "красота: статуя рядом — %s, ждём «Готово»" % pr["txt"])
+	check(bool(pr["met"]) and not bool(pr["ok"]), "красота: статуя рядом — %s, ждём «Готово»" % pr["txt"])
 	# история-проба: шаг с открытием исследования (grant), стрелка на «Этаж» (point), потом «игры в честь богов»
 	StoryDefs.extra = [{"id": "t_frame", "title": "Проба каркаса", "icon": "scroll", "lvl": 0, "pop": 0, "cast": {}, "who": "", "role": "",
 		"steps": [{"id": "a", "cine": []},
@@ -2533,7 +2538,8 @@ func _framework() -> void:
 	await frames(3)
 	var row: Node = hud.tasks_box.find_child("story_row", true, false)
 	var pv: Node = row.find_child("parts", true, false) if row != null else null
-	check(pv != null and pv.get_child_count() == 1 and String((pv.get_child(0) as Button).text).begins_with("· Жителей"), "в свитке — строка с точкой (не выполнено)")
+	var goal := pv.get_child(0) as Button if pv != null and pv.get_child_count() == 1 else null
+	check(goal != null and goal.icon != null and goal.text.begins_with("Жителей · осталось "), "в свитке — строка жителей со значком и остатком")
 	hud._update_pointer()
 	check(sto.pointer_do().get("kind", "") in ["build", "fam", "view"], "стрелка — к тому, что поднимет жителей (%s)" % sto.pointer_do().get("kind", ""))
 	S["active"] = {}
@@ -2661,7 +2667,9 @@ func _leak() -> void:
 	var pdo := sto.pointer_do()
 	check(String(pdo.get("type", "")) == "fountain", "стрелка — к фонтану (%s)" % pdo)
 	info = sto.row_info()
-	check(not (info.get("parts", []) as Array).is_empty() and String(info["parts"][0]["text"]).begins_with("Дома плебеев у фонтана"), "строка: «%s»" % info.get("parts", [{}])[0].get("text", ""))
+	var water_parts: Array = info.get("parts", [])
+	check(water_parts.size() == 1 and String(water_parts[0]["text"]).begins_with("Дома плебеев у фонтана · осталось ")
+		and int(water_parts[0]["remaining"]) > 0, "цель по воде считает дома у фонтана: %s" % [water_parts])
 	# фонтан посреди домов плебеев
 	var fp := Vector2(186, 147)
 	var f := put("fountain", fp)
@@ -2715,7 +2723,7 @@ func _donkey() -> void:
 	# лавка рядом уже стоит — предлагаем и в тесноте
 	var hp0: Vector2 = c.buildings[int(o["home"])]["pos"]
 	sto.works_room = 1 << 30               # «вокруг всё застроено»
-	check(sto.can_offer(StoryDefs.story("donkey")).is_empty(), "негде поставить лавку у дома возчика — ослика не предлагаем")
+	check(not sto.can_offer(StoryDefs.story("donkey")).is_empty(), "рядом тесно — место лавки можно выбрать в другом круге")
 	var bu0 := put("butcher", hp0 + Vector2(6, 4))
 	var ok0 := not sto.can_offer(StoryDefs.story("donkey")).is_empty()
 	if not bu0.is_empty():
@@ -2776,7 +2784,7 @@ func _donkey() -> void:
 	# лавки нет — строка и стрелка к мясной лавке
 	var info: Dictionary = sto.row_info()
 	var parts: Array = info.get("parts", [])
-	check(parts.size() == 1 and String(parts[0]["text"]) == "Мясная лавка или пекарня у дома (в 30 м): нет", "строка: «%s»" % (parts[0]["text"] if not parts.is_empty() else ""))
+	check(parts.size() == 1 and int(parts[0]["remaining"]) == 1 and String(parts[0]["text"]).contains("осталось"), "строка: «%s»" % (parts[0]["text"] if not parts.is_empty() else ""))
 	check(String(sto.pointer_do().get("type", "")) == "butcher", "стрелка — к мясной лавке")
 	# заказов старосты больше нет: и с фонарём в руках у курсора нет «в счёт заказа», следов лапок к месту заказа тоже
 	game.set_tool("lamp_post")
@@ -2792,7 +2800,7 @@ func _donkey() -> void:
 	info = sto.row_info()
 	parts = info.get("parts", [])
 	var bdist: float = (bu.get("pos", Vector2.INF) as Vector2).distance_to(hp)
-	check(not bu.is_empty() and bdist <= 30.0 and not parts.is_empty() and String(parts[0]["text"]).contains("нет склада рядом"), "лавка в %.1f м — «%s»" % [bdist, parts[0]["text"] if not parts.is_empty() else ""])
+	check(not bu.is_empty() and bdist <= 30.0 and not parts.is_empty() and String(parts[0].get("detail", "")).contains("нет склада рядом"), "лавка в %.1f м — «%s»" % [bdist, parts[0]["text"] if not parts.is_empty() else ""])
 	check(String(sto.pointer_do().get("type", "")) == "warehouse", "стрелка — к складу (%s)" % sto.pointer_do())
 	await frames(3)
 	hud.refresh()
@@ -2860,11 +2868,12 @@ func _crowded() -> void:
 	sto.tick()
 	var info: Dictionary = sto.row_info()
 	var parts: Array = info.get("parts", [])
-	check(parts.size() == 2 and String(parts[0]["text"]).begins_with("Счастье дома") and String(parts[1]["text"]).begins_with("Этажей 2/3"),
-		"строки: «%s» · «%s»" % [parts[0]["text"] if parts.size() > 0 else "", parts[1]["text"] if parts.size() > 1 else ""])
+	check(parts.size() == 2 and String(parts[0].get("detail", "")).begins_with("Счастье дома")
+		and String(parts[1]["text"]).begins_with("Этажей") and int(parts[1]["remaining"]) == 1,
+		"строки: помощь со счастьем и один недостающий этаж: %s" % [parts])
 	var hv := int(c.buildings[int(h["id"])].get("happy", 0))
 	if hv < 75:
-		check(String(parts[0]["text"]).contains("не хватает"), "чего не хватает до 75%%: «%s»" % parts[0]["text"])
+		check(String(parts[0].get("detail", "")).contains("не хватает"), "чего не хватает до 75%%: «%s»" % parts[0]["text"])
 		game.set_tool("")
 		sto.part_click(parts[0])
 		check(game.tool != "" or hud.overlay != "" or hud.research_panel.visible, "щелчок по строке — нужное в руках (%s)" % game.tool)
@@ -3054,7 +3063,7 @@ func parts_txt() -> String:
 
 func part_of(prefix: String) -> Dictionary:
 	for p: Dictionary in sto.row_info().get("parts", []):
-		if String(p["text"]).begins_with(prefix):
+		if String(p.get("detail", p["text"])).begins_with(prefix):
 			return p
 	return {}
 
@@ -3161,7 +3170,7 @@ func _fair() -> void:
 	var m_keep := c.money
 	c.money = 150.0
 	sto.press("pay")
-	var short_t := String(sto.row_info().get("text", ""))
+	var short_t := String(sto.row_info().get("tip", ""))
 	check(is_equal_approx(c.money, 150.0) and not bool(A.get("ready", false)) and short_t.contains("Не хватает 250 ден.") and short_t.contains("без сбора"),
 		"150 ден. из 400 — в строке: «%s»" % short_t.substr(maxi(0, short_t.find("Не хватает"))))
 	await frames(10)
@@ -3360,14 +3369,14 @@ func _grove() -> void:
 	sto.tick()
 	var info: Dictionary = sto.row_info()
 	var bts := row_buttons()
-	check(not bts.is_empty() and String(bts[0]).begins_with("Готово (") and String(info.get("text", "")).contains("бормочет") and String(info.get("text", "")).contains(" / "),
+	check(not bts.is_empty() and String(bts[0]) == "Готово" and not (info.get("parts", []) as Array).is_empty() and not String(info.get("text", "")).contains("бормочет"),
 		"роща собрана: %s; стих в строке: «%s»" % [bts, String(info.get("text", "")).get_slice("\n", 1)])
 	check(not bool(A.get("ready", false)), "«Готово» — по кнопке (можно сделать рощу красивее)")
 	hud.refresh()
 	await look_at_pt(hp + Vector2(0, 4), 22.0)
 	await frames(30)
 	await shot7("story_grove_row.png")
-	var tier := int((A["flags"] as Dictionary).get("tier", 0))
+	var verse_count := sto._verses(StoryDefs.story("grove"), A).size()
 	sto.press("ready")
 	var started: bool = await wait_kit(true, 3.0)
 	check(started and (A.get("flags", {}) as Dictionary).has("sq"), "«Готово» — сразу чтение стихов; середина рощи запомнена")
@@ -3397,7 +3406,7 @@ func _grove() -> void:
 			await frames(4)
 			sto._next()
 	await wait_kit(false, 4.0)
-	check(listeners >= 3 and verses == tier, "чтение: соседей слушает %d, стихов прочитано %d (порог %d)" % [listeners, verses, tier])
+	check(listeners >= 3 and verses == verse_count, "чтение: соседей слушает %d, стихов прочитано %d (порог %d)" % [listeners, verses, verse_count])
 	var e: Dictionary = (S["done"] as Dictionary).get("grove", {})
 	check(not e.is_empty() and c.unlocked("muse") and not String(e.get("text", "")).contains("ден"), "роща готова: муза с лирой, без денег (%s)" % e.get("text", ""))
 	sto.ui.open_journal()
@@ -4542,7 +4551,7 @@ func _saturnalia() -> void:
 	var pn := int(A.get("pay_n", 0))
 	check(String((A["flags"] as Dictionary).get("choice", "")) == "gifts" and sto._goal_kind(A) == "pay" and pn == clampi(int(c.stats["pop"]) * 2, 300, 4000)
 		and row_buttons() == ["Заплатить %d ден." % pn, "Обойдёмся без подарков"], "подарки: сбор %d ден. по числу жителей; кнопки %s" % [pn, row_buttons()])
-	check(String(sto.row_info().get("text", "")).contains("%d ден." % pn), "в строке — сумма: «%s»" % String(sto.row_info().get("text", "")).left(70))
+	check(String(sto.row_info().get("tip", "")).contains("%d ден." % pn), "в строке — сумма: «%s»" % String(sto.row_info().get("text", "")).left(70))
 	var m0 := c.money
 	sto.press("pay")
 	check(is_equal_approx(c.money, m0 - pn) and bool(A.get("ready", false)), "заплатили %d — праздник ждёт «Посмотреть»" % pn)
