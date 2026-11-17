@@ -108,6 +108,38 @@ static func need_rank(cls: String, need: String) -> int:
 
 
 const CLASS_ORDER := ["plebs", "artisans", "patricians"]
+
+## Профессия остаётся с человеком; подходящий работник даёт на 20% больше.
+const PROFESSIONS := {
+	"farmer": {"name": "Земледелец", "en": "Farmer", "icon": "prof_farmer", "fits": ["farming"], "chance": {"plebs": 30, "artisans": 10, "patricians": 0}},
+	"trader": {"name": "Торговец", "en": "Trader", "icon": "prof_trader", "fits": ["food", "clothes", "goods"], "chance": {"plebs": 25, "artisans": 35, "patricians": 10}},
+	"performer": {"name": "Артист", "en": "Performer", "icon": "prof_performer", "fits": ["fun"], "chance": {"plebs": 10, "artisans": 15, "patricians": 20}},
+	"scholar": {"name": "Учёный", "en": "Scholar", "icon": "prof_scholar", "fits": ["science"], "chance": {"plebs": 5, "artisans": 15, "patricians": 35}},
+	"priest": {"name": "Жрец", "en": "Priest", "icon": "prof_priest", "fits": ["temple"], "chance": {"plebs": 5, "artisans": 5, "patricians": 25}},
+	"attendant": {"name": "Служитель", "en": "Attendant", "icon": "prof_attendant", "fits": ["services", "special"], "chance": {"plebs": 25, "artisans": 20, "patricians": 10}},
+}
+const PROF_BONUS := 0.2
+const CATEGORY_PROFESSION := {
+	"farming": "farmer", "food": "trader", "clothes": "trader", "goods": "trader",
+	"fun": "performer", "services": "attendant", "science": "scholar", "temple": "priest", "special": "attendant",
+}
+
+
+static func get_category_profession(category: String) -> String:
+	return String(CATEGORY_PROFESSION.get(category, ""))
+
+
+## Наука лежит во «Фермерстве», а храмы — в «Особом»: учитываем их назначение.
+static func building_profession(d: Dictionary) -> String:
+	if d.get("kind", "") == "rp":
+		return get_category_profession("science")
+	if d.get("need", "") == "faith":
+		return get_category_profession("temple")
+	if d.get("cat", "") == "military":
+		return get_category_profession("special")
+	return get_category_profession(String(d.get("sub", "")) if d.get("cat", "") == "commerce" else String(d.get("cat", "")))
+
+
 ## повозка с новыми семьями — раз в столько игровых часов (по уровню города); счастье города ускоряет (ARRIVE_FAST)
 const ARRIVE_EVERY := [2.0, 2.5, 2.6, 2.4, 2.25, 2.1, 1.95, 1.8]
 const ARRIVAL_MAX := [2, 2, 2, 2, 3, 3, 3, 3]   # сколько семей может ждать жилья (по уровню города), как в Town to City

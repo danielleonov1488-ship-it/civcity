@@ -841,6 +841,7 @@ func _cat_test() -> void:
 func _house_card_test(houses: Array) -> void:
 	var h: Dictionary = houses[0]
 	game.select_building(h)
+	hud.house_more = true                  # имена членов семьи — в «Подробнее» (компактная карточка — только головы)
 	hud.open_info(h)
 	await frames(3)
 	var f: Dictionary = h["families"][0]

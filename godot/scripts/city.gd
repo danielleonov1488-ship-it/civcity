@@ -722,6 +722,7 @@ func _staff_roster() -> Array:
 	for b: Dictionary in buildings.values():
 		b["hire_classes"] = {}
 		b["staff_count"] = 0
+		b["prof_fit"] = 0
 	for worker: Dictionary in roster:
 		var m: Dictionary = worker["m"]
 		var id := int(m.get("job", -1))
@@ -741,6 +742,8 @@ func _staff_roster() -> Array:
 			if allowed.has(slot) and worker["cls"] in WORK_CLASSES[slot] and int(b["hire_classes"].get(slot, 0)) < int(allowed[slot]) and int(b["staff_count"]) < int(b.get("hire", 0)):
 				b["hire_classes"][slot] = int(b["hire_classes"].get(slot, 0)) + 1
 				b["staff_count"] += 1
+				if String(m.get("prof", "")) == Defs.building_profession(def(b)):
+					b["prof_fit"] += 1
 				m["job_class"] = slot
 				worker["employed"] = true
 				continue
@@ -766,20 +769,24 @@ func _hire_candidate(b: Dictionary) -> Dictionary:
 	var roster := _staff_roster()
 	var slots: Dictionary = def(b).get("jobs", {})
 	var hired := jobs_of(b)
+	var profession := Defs.building_profession(def(b))
 	for slot: String in Defs.CLASS_ORDER:
 		if int(hired.get(slot, 0)) >= int(slots.get(slot, 0)):
 			continue
 		for cls: String in WORK_CLASSES[slot]:
 			var best: Dictionary = {}
 			var distance := INF
+			var best_fits := false
 			for w: Dictionary in roster:
 				if w["cls"] != cls or bool(w.get("employed", false)):
 					continue
 				var pos: Vector2 = worker_position.call(w["m"], w["pos"]) if worker_position.is_valid() else w["pos"]
 				var d := pos.distance_squared_to(b["pos"])
-				if d < distance:
+				var fits := profession != "" and String(w["m"].get("prof", "")) == profession
+				if best.is_empty() or (fits and not best_fits) or (fits == best_fits and d < distance):
 					distance = d
 					best = w
+					best_fits = fits
 			if not best.is_empty():
 				best["slot"] = slot
 				return best
@@ -1046,7 +1053,8 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 				if int(jb[c]) > 0:
 					st = minf(st, ratio[c])
 			b["fill"] = st if b["road"] else 0.0               # хватает ли жителей на нанятые места
-			st *= float(hired) / float(maxi(1, job_max(b)))     # наняли меньше — работает слабее
+			var fitting := int(b.get("prof_fit", 0)) if manual_hiring() else 0
+			st *= (float(hired) + Defs.PROF_BONUS * fitting) / float(maxi(1, job_max(b)))
 		b["staff"] = st if b["road"] else 0.0
 		b["active"] = b["road"] and (not d.has("jobs") or (float(b["staff"]) > 0.0 if manual_hiring() else float(b["staff"]) >= 0.25))
 		b["over"] = oc.has(int(id))
@@ -3005,6 +3013,7 @@ func new_family(cls: String) -> Dictionary:
 	var f := {"name": name, "n": 2 if roll < 0.25 else (3 if roll < 0.70 else 4), "cls": cls}
 	if wants_v >= 1:
 		f["want"] = FamilyWant.random_id(rng)
+	Residents.new_professions(f, cls, rng, Residents.key_new(self, name))
 	return f
 
 
@@ -3126,7 +3135,11 @@ func settled(id: int, n: int, name := "") -> int:
 		if not fam.has("grace_until") and not back:
 			fam["grace_until"] = clock_h + 24
 	if pm.size() >= n:
-		fam["m"] = pm.slice(0, n)          # члены семьи с именами (Residents); кто вошёл — уточнит People при входе
+		fam["m"] = pm.slice(0, n)          # члены семьи с именами — те же, что сошли с повозки
+	elif back:
+		Residents.fit(fam, hash([name, id]), String(def(b)["cls"]))
+	else:
+		Residents.new_professions(fam, String(def(b)["cls"]), rng, Residents.key_new(self, name))
 	if manual_hiring():
 		for m: Dictionary in fam.get("m", []):
 			m.erase("job")
@@ -4318,7 +4331,7 @@ func load_data(d: Dictionary) -> void:
 		copy_family_state(f, af)
 		if typeof(f.get("m")) == TYPE_ARRAY and not (f["m"] as Array).is_empty():
 			af["m"] = f["m"]
-			Residents.fit(af, hash([String(af["name"]), -1]))    # члены семьи из сохранения (числа — целыми)
+		Residents.fit(af, hash([String(af["name"]), -1]))    # старые семьи тоже получают профессии, без RNG города
 		arrivals.append(af)
 	pending = {}
 	incoming = maxi(0, int(d.get("incoming", 0)))
@@ -4420,6 +4433,9 @@ func load_data(d: Dictionary) -> void:
 			b["hire"] = job_max(b)
 		if String(bd.get("gift", "")) != "":
 			b["gift"] = String(bd["gift"])       # подарок друга: помнит дарителя
+		if is_house(b):
+			for family: Dictionary in b["families"]:
+				Residents.fit(family, hash([String(family["name"]), int(b["id"])]), String(def(b)["cls"]))
 		buildings[b["id"]] = b
 		for k in cells:
 			if land.occ[k] >= 0:               # арка у въезда остаётся занятой, даже если старое сохранение залезло на неё

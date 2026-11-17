@@ -5275,5 +5275,12 @@
   "Откройте «Легион» сверху справа. Казармы и другие военные здания строятся внутри форта.": "Open Legion at the top right. Barracks and other military buildings are built inside the fort.",
   "Надстроить этаж · %s": "Add a floor · %s",
   "Перестроить · %s": "Rebuild · %s",
-  "Несколько домов — инструментом «Этаж» (U).": "For several houses, use the Floor tool (U)."
+  "Несколько домов — инструментом «Этаж» (U).": "For several houses, use the Floor tool (U).",
+  "Земледелец": "Farmer",
+  "Торговец": "Trader",
+  "Артист": "Performer",
+  "Учёный": "Scholar",
+  "Служитель": "Attendant",
+  "+20% к работе, если подходит": "+20% work output when suited",
+  "Подходят %d из %d": "Suited: %d of %d"
 }
