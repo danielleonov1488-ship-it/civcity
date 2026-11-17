@@ -232,7 +232,7 @@ func _run() -> void:
 	var seen := {}
 	for p: Dictionary in lg.fort["plots"]:
 		seen[FortCutaway.room_art(String(p["b"]))] = true
-	check(seen.size() == 12, "all twelve painted room types")
+	check(seen.size() == 15, "all fifteen painted room types (seen %s)" % [seen.keys()])
 	await shot("2_late.png")
 	var forge := int(lg.fort_slot_plot("forge")["id"])
 	view.focus_plot("plot_%d" % forge)
@@ -261,7 +261,7 @@ func _run() -> void:
 	check(paused, "zoom leaves rooms off screen")
 	view.focus_plot("hq", false)
 	camp.show_plot(kitchen)
-	check(camp.main_action.text == I18n.t("Назначить"), "main action assigns worker")
+	check(camp.main_action.get_meta("action_name") == I18n.t("Назначить"), "main action assigns worker")
 	await shot("4_card_assign.png")
 	camp.main_action.pressed.emit()
 	check(is_instance_valid(camp.modal_panel) and camp.modal_panel.name == "FortWorkerPicker", "assignment picker")
@@ -269,7 +269,7 @@ func _run() -> void:
 	camp.show_plot(int(lg.fort_slot_plot("barracks")["id"]))
 	var busy_text := I18n.t("Строитель занят: %s") % I18n.t(String(Legion.FORT_B["tannery"]["name"]))
 	check(camp.upgrade_button.disabled and camp.upgrade_reason.is_visible_in_tree() and camp.upgrade_reason.text == busy_text, "builder busy on card")
-	check(not camp.main_action.disabled and camp.main_action.text == I18n.t("Отряд"), "barracks opens squad while builder is busy")
+	check(not camp.main_action.disabled and camp.main_action.get_meta("action_name") == I18n.t("Отряд"), "barracks opens squad while builder is busy")
 	check(is_instance_valid(camp.card_body.get_node_or_null("FortWorker/FortWorkerName")), "worker face and name on card")
 	await shot("5_builder_busy.png")
 	print("FORTCUT DRAWCALLS %d" % peak_draws)
