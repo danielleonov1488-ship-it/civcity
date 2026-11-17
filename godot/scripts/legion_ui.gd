@@ -196,27 +196,12 @@ func _update_button() -> void:
 		if lg.v3():
 			btn.tooltip_text = "Легион"
 			return
-		# Первый совет один раз ведёт к кнопке «Легион», откуда открывается форт. Только когда окно
-		# исследований закрыто и советник свободен: Esc, правая кнопка и щелчок по карте закрывают окно вместе
-		# с советником — совет погас бы, не показавшись (окно закрыли — hud зовёт эту проверку через кадр)
-		if not lg.flags.has("advised") and not lg.flags.has("seen") and game.mode in ["play", "new"] and lg.tut_step() == "barracks" \
-				and not hud.research_panel.visible and not hud.advisor_panel.visible and _cine_free():
-			lg.flags["advised"] = true
-			# Легион открыт, а готового нет — его строят (решение владельца Д13): не «Легион собран!», пока нет Казарм
-			hud.advisor(StoryDefs.ADV_LEGION, "Готового Легиона нет — его строите вы сами. Откройте «Легион» сверху справа. Казармы и другие военные здания строятся только внутри форта; Казармы дают легионеров. Потом — Стрельбище для лучников, Кузница, Лазарет и Склад оружия; каждое здание растёт уровнями — «Улучшить» в его карточке.\n\nПоходы, бои с другими городами и чудеса света — в медальоне «Легион» сверху справа. Отряд дерётся сам; ваше — состав и умения в нужный миг.",
-				func(): lg.tut_skip())
-		# советы о зданиях (Д10) — как разовые советы города: игра загружена, советник свободен, не идёт обучение города
-		# и ролики (ранг: город вырос — сначала ролик и «Город стал…», потом этот совет — при следующем обновлении города)
-		elif game.ready_done and hud._tip_free() and not visible and not hud.research_panel.visible and hud._screen_free() and _cine_free():
-			_d10_tips()
+
 
 
 ## Старые советы Легиона имеют приоритет перед магистратурами.
 func advice_pending() -> bool:
-	if lg == null or lg.v3() or not lg.window_open():
-		return false
-	return (not lg.flags.has("advised") and not lg.flags.has("seen") and lg.tut_step() == "barracks") \
-		or lg.flags.has("d10_new") or (lg.pvp_hero() and lg.pvp_open() and not lg.flags.has("tip_hero_pvp"))
+	return false  # Военное обучение не занимает советника города.
 
 
 ## Не идёт и не ждёт ролик «Новый ранг» и ролик истории горожан
@@ -231,33 +216,7 @@ func _cine_free() -> bool:
 ## Советник о зданиях Легиона (Д10) — по разу: старое сохранение (уровни войск стали уровнями зданий, что ждёт «в запасе»);
 ## открылось новое здание (Кузница — с «Деревни», Лазарет — с «Посёлка», Склад оружия — с «Городка»)
 func _d10_tips() -> void:
-	var c: City = game.city
-	if lg.flags.has("d10_new"):
-		lg.flags.erase("d10_new")
-		var res := []
-		for bt: String in Legion.BUILDING_IDS:
-			if lg.b_reserve(bt) > 0 and c.unlocked(bt):
-				res.append("%s — %d уровень" % [Defs.B[bt]["name"], lg.b_reserve(bt)])
-		var txt := "Здания Легиона теперь растут прямо в городе: щёлкните Казармы на карте — в карточке видно их уровень, что они дают, и кнопка «Улучшить». С каждым уровнем здание меняется: знамёна, пристройки, статуи. Ваши уровни войск перенесены в здания."
-		if not res.is_empty():
-			txt += "\n\nЕщё не построены, но уровень ждёт «в запасе»: %s. Поставьте их (раздел «Легион» на нижней полосе) — и они сразу будут этого уровня." % ", ".join(res)
-		txt += "\n\nНовые здания — Кузница, Лазарет и Склад оружия — открываются с ростом города. Лучшее место для них — военный квартал у арки."
-		for bt: String in Legion.SUPPORT:
-			if c.unlocked(bt):
-				lg.flags["new_" + bt] = true    # об уже открытых сказано здесь — отдельных советов не будет
-		hud.advisor("Здания Легиона", txt)
-		return
-	# «Новое здание Легиона…» всплывашкой больше нет (отзыв 14.11): хватает значка «НОВОЕ» на карточке — флаг ставим молча
-	for bt: String in Legion.SUPPORT:
-		if c.unlocked(bt) and not lg.flags.has("new_" + bt):
-			lg.flags["new_" + bt] = true
-	# герой и в боях с городами (сервер боёв его знает) — сказать один раз, когда бои с городами открыты
-	if lg.pvp_hero() and lg.pvp_open() and not lg.flags.has("tip_hero_pvp"):
-		lg.flags["tip_hero_pvp"] = true
-		lg.hero_pvp_check()
-		var pf := "первой" if Hero.female(c) else "первым"
-		var mv := " Боец, который раньше стоял на этом месте в боях с городами, перешёл на другое место отряда." if str(lg.flags.get("hero_pvp_fix", "")) == "moved" else ""
-		hud.advisor("Герой в боях с городами", "%s теперь сражается и в боях с другими городами: идёт %s в отряде нападения и стоит %s в отряде обороны — как в походах.%s Уровень героя растёт с Казармами и городом, снаряжение — со Складом оружия.\n\nУ соперников тоже бывают свои герои — их видно по имени над головой." % [Hero.name_of(c), pf, pf, mv])
+	pass  # Старые городские военные советы отключены.
 
 
 func toggle() -> void:
@@ -3542,9 +3501,9 @@ func _build_wonders() -> Control:
 	tv.add_child(_l("Триумф", 17, true))
 	if lg.triumph_left > 0:
 		var days := ceili(lg.triumph_left / 24.0)
-		tv.add_child(_l("город празднует ещё %d %s: счастье +%d%%" % [days, Hud._plural(days, "день", "дня", "дней"), int(Legion.TRIUMPH["happy"])], 13, true, C_GOOD))
+		tv.add_child(_l("форт празднует ещё %d %s" % [days, Hud._plural(days, "день", "дня", "дней")], 13, true, C_GOOD))
 	else:
-		tv.add_child(_l("праздник на %d дня: счастье всех домов +%d%%" % [int(Legion.TRIUMPH["hours"]) / 24, int(Legion.TRIUMPH["happy"])], 13, true, C_SOFT))
+		tv.add_child(_l("праздник Легиона на %d дня" % (int(Legion.TRIUMPH["hours"]) / 24), 13, true, C_SOFT))
 	th.add_child(tv)
 	if lg.triumph_left <= 0:
 		var why := lg.can_triumph()
@@ -3631,14 +3590,7 @@ func _wonder_card(w: Dictionary) -> Control:
 	cr.alignment = BoxContainer.ALIGNMENT_CENTER
 	v.add_child(cr)
 	var why := lg.can_build_wonder(id)
-	var b: Button
-	if w.has("building"):
-		var bt: String = w["building"]
-		b = _btn("Поставить в городе", 230, 16, hud.ico("hammer", 64), why, func(): close(); hud.select_build(bt))
-		if why == "":
-			b.tooltip_text = "Окно закроется — выберите место в городе. Слава спишется, когда поставите"
-	else:
-		b = _btn("Возвести", 230, 16, hud.ico("hammer", 64), why, func(): _do("wonder", id))
+	var b := _btn("Возвести", 230, 16, hud.ico("hammer", 64), why, func(): _do("wonder", id))
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(b)
 	return p

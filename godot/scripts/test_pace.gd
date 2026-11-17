@@ -1495,6 +1495,8 @@ func _floor_needed() -> bool:
 ## История «Разбойники у арки» (Д9) — по правилам предложения историй (StoryDefs.FIRST_H, GAP_H, lvl, «после Маси»);
 ## игрок соглашается сразу: Легион открыт, Казармы — как только хватает денариев, потом учебный бой (победа с маслом)
 func _bstory() -> void:
+	if not StoryDefs.city_enabled(StoryDefs.story("bandits")):
+		return
 	var sh := float(c.stories["h"])
 	match String(d9["state"]):
 		"wait":

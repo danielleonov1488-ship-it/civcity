@@ -76,6 +76,8 @@ func _need_p_h(rh: Array, np: Array) -> float:
 
 
 func _ready_h(rh: Array, sd: Dictionary) -> float:
+	if not StoryDefs.city_enabled(sd):
+		return INF
 	var h := float(rh[int(sd.get("lvl", 0))])
 	for r in sd.get("needs", []):
 		h = maxf(h, _research_h(rh, String(r)))
@@ -207,7 +209,7 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 	# хотя бы одна история на каждом ранге 1–7 и без историй — не дольше 25 минут (ранги 1–6)
 	for r in STORY_RANKS:
 		check(offers.has(r), "сид %d: на ранге «%s» есть история (%s)" % [seed, Defs.LEVELS[r]["name"], offers.get(r, [])])
-	check(int(offer_rank.get("bandits", 99)) == 1, "сид %d: «Разбойники у арки» — на «Хуторе» (Легион почти со старта)" % seed)
+	check(not offer_rank.has("bandits") and not offer_rank.has("letter"), "сид %d: военные истории не предлагаются" % seed)
 	var t0 := float(rh[GAP_STORIES_RANKS[0]])
 	var t1 := float(rh[GAP_STORIES_RANKS[-1] + 1])
 	var longest := 0.0
@@ -249,7 +251,7 @@ func _run_seed(seed: int, play_h: float, gate: bool) -> void:
 ## если её очередь (та, что в after, пройдена, ранг позволяет) — как Stories.gap_now
 func _gap_after(done: Dictionary, rh: Array, h: float) -> float:
 	for sd: Dictionary in StoryDefs.STORIES:
-		if not sd.has("gap_h") or done.has(String(sd["id"])) or not done.has(String(sd.get("after", ""))):
+		if not StoryDefs.city_enabled(sd) or not sd.has("gap_h") or done.has(String(sd["id"])) or not done.has(String(sd.get("after", ""))):
 			continue
 		if _rank_at(rh, h) < int(sd.get("lvl", 0)):
 			continue
@@ -265,6 +267,8 @@ func _first_cover(cover: Array) -> float:
 func _rewards() -> void:
 	print("== награды историй")
 	for sd: Dictionary in StoryDefs.STORIES:
+		if not StoryDefs.city_enabled(sd):
+			continue
 		# история не ждёт набора украшений по желанию (лабиринт: живую изгородь открывает сама история)
 		for t in sd.get("need_b", []):
 			check(not (Defs.unlock_of(String(t), true) in Defs.DECOR_SETS), "«%s»: нужна «%s» — не из набора по желанию" % [sd["title"], t])

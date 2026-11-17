@@ -123,7 +123,7 @@ var brush_over := true                # рисовать поверх други
 var line_from := Vector2.INF
 var stroke := []
 var stroke_cost := 0.0
-var undo_stack := []                  # мазки дорог {"ch", "cost"} и постройки {"t": "place", "ids", "cost", "glory", "ms", "name", …} (3.6)
+var undo_stack := []                  # мазки дорог {"ch", "cost"} и постройки {"t": "place", "ids", "cost", "ms", "name", …} (3.6)
 var redo_stack := []
 var painting := false
 const UNDO_PLACE_MS := 30000          # постройку можно отменить с полным возвратом 30 с, пока в ней никто не живёт (3.6)
@@ -5670,8 +5670,7 @@ func _build_here() -> void:
 		if not moving.is_empty():
 			b = city.place(tool, pl["pos"], pl["yaw"], int(pl["variant"]), int(moving["color"]), true)
 			b["born"] = int(moving.get("born", b["born"]))
-			if not Legion.is_building(tool):
-				b["tier"] = int(moving["tier"])   # здание Легиона: облик — по нынешнему уровню (city.place уже посчитал; улучшение могло кончиться в руках)
+			b["tier"] = int(moving["tier"])   # Перенос сохраняет облик старой постройки.
 			b["pop"] = int(moving["pop"])
 			b["families"] = moving["families"]
 			for key: String in ["happy", "unhappy_h", "down"]:
@@ -5694,7 +5693,7 @@ func _build_here() -> void:
 				b["host"] = pl["host"]
 				b["y"] = pl["y"]
 				_show(b)
-			_push_place([b["id"]], city.build_price(tool), String(Defs.B[tool]["name"]), snap, float(Defs.B[tool].get("glory", 0)))
+			_push_place([b["id"]], city.build_price(tool), String(Defs.B[tool]["name"]), snap)
 			if hud and Defs.B[tool]["kind"] == "decor":
 				hud.note_recent(tool)              # «Недавние» в меню украшений
 			_rot_hint_count()
@@ -5724,8 +5723,7 @@ func _cancel_move() -> void:
 	moving = {}
 	var b := city.place(m["type"], m["pos"], m["yaw"], int(m["variant"]), int(m["color"]), true)
 	b["born"] = int(m.get("born", b["born"]))
-	if not Legion.is_building(String(m["type"])):
-		b["tier"] = int(m["tier"])            # здание Легиона — в облике своего уровня (city.place)
+	b["tier"] = int(m["tier"])
 	b["pop"] = int(m["pop"])
 	b["families"] = m["families"]
 	_moved(b, m)
@@ -6359,10 +6357,10 @@ func _redo() -> void:
 
 ## Поставили постройку (или протянули забор) игроком — её можно отменить 30 с с полным возвратом (3.6).
 ## snap — _undo_snap() ДО постановки: просьба, история, заказ старосты или новый ранг, которые она дала, — уже не отменить
-func _push_place(ids: Array, cost: float, name: String, snap: Dictionary, glory := 0.0) -> void:
+func _push_place(ids: Array, cost: float, name: String, snap: Dictionary) -> void:
 	if ids.is_empty():
 		return
-	undo_stack.append({"t": "place", "ids": ids, "cost": cost, "glory": glory, "name": name, "ms": Time.get_ticks_msec(),
+	undo_stack.append({"t": "place", "ids": ids, "cost": cost, "name": name, "ms": Time.get_ticks_msec(),
 		"goals": int(snap["goals"]), "stories": int(snap["stories"]), "level": int(snap["level"]), "money0": float(snap["money"])})
 	if undo_stack.size() > 40:
 		undo_stack.pop_front()
@@ -6428,10 +6426,9 @@ func _undo_place(u: Dictionary) -> void:
 				city.remove(city.buildings[oid], true, true)     # украшения на её стенах — как при сносе
 		city.remove(b, false, true)
 	# 100%: постройку поставили по ошибке — но казна не полнее, чем была до неё и чем её предел (доход за эти
-	# секунды не копится сверх предела); памятник Легиона — и его Славу
+	# секунды не копится сверх предела)
 	var top := maxf(city.money_cap(), float(u.get("money0", INF)))
 	city.money = maxf(city.money, minf(top, city.money + float(u["cost"])))
-	city.legion.glory += float(u.get("glory", 0.0))
 	city.compute()
 	city.changed.emit()
 	if hud:
@@ -6532,7 +6529,6 @@ func _hero_check() -> void:
 	rr.seed = hash([city.name, city.day, city.buildings.size(), city.settled_total, "hero"])
 	city.hero = Hero.random(rr)
 	Hero.take_new(city, true)
-	city.hero["kit"] = Hero.kit_tier(city.legion.hero_kit_level())
 	city.legion.hero_squad_fix()             # первое место в походах — героя: не легионер оттуда — на видное место
 
 
@@ -6568,12 +6564,6 @@ func _hero_hour() -> void:
 		if got.size() > 4:
 			s += " и ещё %d" % (got.size() - 3)
 		city._quiet("В гардеробе героя — новое: %s" % s, "cape")
-	var t := Hero.kit_tier(city.legion.hero_kit_level())
-	var was := int(city.hero.get("kit", -1))
-	if t != was:
-		if was >= 0 and t > was:
-			city._quiet("Склад оружия выдал герою: %s" % String(Hero.KIT[t]["n"]).to_lower(), "shield")
-		city.hero["kit"] = t
 
 
 func _load(path := "") -> bool:

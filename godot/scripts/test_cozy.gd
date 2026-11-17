@@ -311,10 +311,10 @@ func _gear() -> void:
 	_check(L.store_count() == 2 and int(L.item(int(arm["id"]))["on"]) == 0, "сняли — на Складе 2")
 	# продажа
 	c.money = 100.0
-	var m0 := float(c.money)
+	var m0 := c.magis_treasury
 	var price := Legion.item_price(bow)
 	L.sell_item(int(bow["id"]))
-	_check(L.store_count() == 1 and is_equal_approx(float(c.money) - m0, float(price)) and price > 0, "продали лук за %d ден." % price)
+	_check(L.store_count() == 1 and is_equal_approx(c.magis_treasury - m0, float(price)) and price > 0, "продали лук за %d ден." % price)
 	# добыча: босс — наверняка; Склад полон — честно
 	var boss := {"boss": true, "idx": 29}
 	var d := L._drop(boss, true)
@@ -396,8 +396,8 @@ func _mats() -> void:
 	old.level = 3
 	old.research["legion"] = true
 	old.place("barracks", Land.START + Vector2(20, 0), 0.0, 0, 0, true)
-	_check(gift and c.unlocked("smelter") and c.unlocked("tannery") and not old.unlocked("smelter") and L.mat_rate("iron") == 0.0,
-		"подарок по %d; мастерские открыты в новой игре, в старой — нет; без Плавильни железа не прибавляется" % Legion.MAT_GIFT)
+	_check(gift and c.unlocked("smelter") and c.unlocked("tannery") and old.unlocked("smelter") and L.mat_rate("iron") == 0.0,
+		"подарок по %d; мастерские открываются рангом города; без Плавильни железа не прибавляется" % Legion.MAT_GIFT)
 	var sm := c.place("smelter", Land.START + Vector2(-20, 0), 0.0, 0, 0, true)
 	sm["staff"] = 1.0
 	sm["road"] = true

@@ -55,9 +55,9 @@ func _curve() -> void:
 			hutor += int(q["rp"])
 	_check(early == 65 and hutor == 150, "очки просьб: до «Хутора» %d, на «Хуторе» %d" % [early, hutor])
 	var lr := Defs.research("legion")
-	_check(int(lr["lvl"]) == 1 and int(lr["cost"]) == 0 and String(lr.get("story", "")) == "bandits" and String(Defs.research("archery").get("after", "")) == "legion"
+	_check(int(lr["lvl"]) == 1 and int(lr["cost"]) == 80 and String(lr.get("story", "")) == "" and String(Defs.research("archery").get("after", "")) == "legion"
 		and int(Defs.research("archery")["lvl"]) == 2 and int(Defs.B["barracks"]["cost"]) <= 600,
-		"Легион — история «Разбойники у арки» на «Хуторе»; Стрельбище — «Деревня»; Казармы %d ден." % int(Defs.B["barracks"]["cost"]))
+		"Прежний Легион — исследование на «Хуторе»; Стрельбище — «Деревня»; Казармы %d ден." % int(Defs.B["barracks"]["cost"]))
 	# самое дорогое в ряду помещается на полки этого ранга (с «Новыми полками» — вдвое, с «Городка»)
 	var bad := []
 	for l in row:
@@ -319,9 +319,8 @@ func _legion_gate() -> void:
 	var t5 := L.lock_text()
 	S["active"] = {}
 	var t6 := L.lock_text()
-	_check(t0.contains("станет «Хутор»") and t1.contains("после истории «Где Мася?»") and t2.contains("скоро придёт") and not t2.contains("Хутор")
-		and t3.contains("свиток") and t4.contains("отложили") and t5.contains("после истории «Течь") and t6.contains("скоро придёт") and not t6.contains("Хутор"),
-		"подсказка медальона: «%s» / «%s» / «%s» / «%s» / «%s» / «%s»" % [t0.get_slice("— ", 1), t1.get_slice("— ", 1), t2.get_slice("— ", 1), t3.get_slice("— ", 1), t4.get_slice("— ", 1), t5.get_slice("— ", 1)])
+	_check(t0 == t1 and t1 == t2 and t2 == t3 and t3 == t4 and t4 == t5 and t5 == t6 and t0.contains("исследованием"),
+		"городские истории не меняют подсказку Легиона")
 	c.research["legion"] = true                   # открыт историей «Разбойники у арки»
 	var by_lvl := []
 	for lv in [1, 2, 3]:

@@ -41,30 +41,6 @@ static func sections(c: City) -> Array:
 	out.append({"title": "Статуи", "icon": "laurels", "have": statues.values(), "all": st_all, "hint": "Статуи — в разделе «Украшения» → «Камень»."})
 	out.append({"title": "Виды украшений в городе", "icon": "flower", "have": [], "count": decor.size(), "all": maxi(decor_all, decor.size()),
 		"hint": "Сколько разных украшений стоит в городе из открытых."})
-	# Легион: трофеи, реликвии и вещи наборов
-	var lg := c.legion
-	var tro := []
-	for R: Dictionary in Legion.regions():
-		if lg.has_trophy(String(R["id"])):
-			tro.append(String(R["name"]))
-	out.append({"title": "Трофеи Легиона", "icon": "legion", "have": tro, "all": maxi(1, Legion.regions().filter(func(R): return String(R.get("trophy", "")) != "").size()),
-		"hint": "Трофей — за все звёзды провинции."})
-	if lg.army_on():
-		var sets := {}
-		for it: Dictionary in lg.items:
-			var k := String(it.get("set", ""))
-			if k != "":
-				sets["%s|%s" % [k, it.get("slot", "")]] = true
-		var names := []
-		for k: String in Gear.SET_IDS:
-			var n := 0
-			for key in sets:
-				if String(key).begins_with(k + "|"):
-					n += 1
-			if n > 0:
-				names.append("%s %d/5" % [Gear.SETS[k]["name"], n])
-		out.append({"title": "Вещи наборов", "icon": "swords", "have": names, "count": sets.size(), "all": Gear.SET_IDS.size() * Gear.SLOTS.size(),
-			"hint": "Вещи наборов куются в Кузнице из реликвий боссов похода."})
 	# праздники и титулы (новая игра)
 	if Renown.on(c):
 		var fests := []

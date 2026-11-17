@@ -426,7 +426,6 @@ static func _shop_for(c: City, n: String) -> String:
 static func _fill_hero(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 	var ppl: People = hud.game.people
 	var c: City = hud.game.city
-	var lg: Legion = c.legion
 	var hdr := HBoxContainer.new()
 	hdr.add_theme_constant_override("separation", 10)
 	hdr.add_child(_portrait_box(hud, "h:%s" % Citizen.look_key(Hero.look(c)), func(vp: SubViewport): _person_subject(vp, ppl, r)))
@@ -434,7 +433,7 @@ static func _fill_hero(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 	tv.add_theme_constant_override("separation", 1)
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tv.add_child(hud._wrap(hud._label(Hero.name_of(c), 24, false, Hud.C_INK, hud.font_title), W - PORTRAIT - 60.0))
-	var sub := "Герой города" + (" · первый воин Легиона" if lg.window_open() else "")
+	var sub := "Герой города"
 	tv.add_child(hud._wrap(hud._label(sub, 15, true, Hud.C_SOFT), W - PORTRAIT - 60.0))
 	var chip := HBoxContainer.new()
 	chip.add_theme_constant_override("separation", 4)
@@ -456,35 +455,6 @@ static func _fill_hero(hud: Hud, box: VBoxContainer, r: Dictionary) -> void:
 	_now.custom_minimum_size = Vector2(230, 0)
 	_now.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	box.add_child(nr)
-	# Легион: своё место в отряде и числа; ещё не собран — какая история его откроет
-	if lg.window_open():
-		var hs := lg.hero_stats()
-		var lr := hud._row("legion", "Легион", "первое место в отряде · %d ур." % int(hs["level"]))
-		box.add_child(hud._clickable(lr, "Окно «Легион»: отряд и походы", func():
-			var lu := LegionUi.of(hud)
-			if lu != null:
-				hud._hide_info()
-				lu.open("troops")))
-		var sr := HBoxContainer.new()
-		sr.add_theme_constant_override("separation", 12)
-		sr.alignment = BoxContainer.ALIGNMENT_END
-		for e: Array in [["medic", "Здоровье", float(hs["hp"])], ["swords", "Урон за удар", float(hs["atk"])], ["shield", "Броня", float(hs["armor"])]]:
-			var h := HBoxContainer.new()
-			h.add_theme_constant_override("separation", 3)
-			h.tooltip_text = String(e[1])
-			h.mouse_filter = Control.MOUSE_FILTER_PASS
-			h.add_child(hud._icon(String(e[0]), 20))
-			h.add_child(hud._label(hud.fmt(float(e[2])), 15, true))
-			sr.add_child(h)
-		box.add_child(sr)
-	else:
-		box.add_child(hud._row("legion", "Легион", "ещё не собран", Hud.C_SOFT))
-		box.add_child(hud._wrap(hud._label("   Легион откроет история «%s» — герой пойдёт в бой первым" % Legion.story_title(), 13, false, Hud.C_SOFT), W))
-	# снаряжение со Склада оружия
-	var kl := lg.hero_kit_level()
-	var kit := Hero.kit_of(kl)
-	box.add_child(hud._row("shield", "Снаряжение", "", Hud.C_INK))
-	box.add_child(hud._wrap(hud._label("   " + String(kit["n"]) + ("" if kl > 0 else " — лучшее даст Склад оружия"), 14, true, Hud.C_INK if kl > 0 else Hud.C_SOFT), W))
 	# гардероб
 	var wc := Hero.wardrobe_count(c, 1 if Hero.female(c) else 0)
 	box.add_child(hud._row("cape", "Гардероб", "открыто %d из %d" % [int(wc[0]), int(wc[1])]))

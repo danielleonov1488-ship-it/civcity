@@ -543,22 +543,22 @@ const TRIUMPH := {"glory": 15, "hours": 72, "happy": 5}
 ## army — бонус бойцам (доля), happy — счастье всех домов (%), glory_day — Славы в игровой день.
 ## art — картинка: лист 41 (4×2), номер.
 const WONDERS := [
-	{"id": "arch", "building": "arch", "rating": 30, "glory": 25, "army": {"atk": 0.05}, "glory_day": 0.0, "art": 0,
-		"bonus": "+5% урона всем бойцам. Красота и счастье вокруг арки."},
-	{"id": "colosseum", "building": "colosseum", "rating": 120, "glory": 50, "army": {"hp": 0.10}, "glory_day": 0.5, "art": 1,
-		"bonus": "+10% здоровья бойцам, Слава каждый день. Счастье большого квартала."},
-	{"id": "pantheon", "building": "pantheon", "rating": 250, "glory": 80, "army": {"atk": 0.10}, "glory_day": 0.5, "art": 2,
-		"bonus": "+10% урона бойцам, Слава каждый день. Счастье большого квартала."},
+	{"id": "arch", "building": "arch", "money": 6000, "rating": 30, "glory": 25, "army": {"atk": 0.05}, "glory_day": 0.0, "art": 0,
+		"bonus": "+5% урона всем бойцам."},
+	{"id": "colosseum", "building": "colosseum", "money": 30000, "rating": 120, "glory": 50, "army": {"hp": 0.10}, "glory_day": 0.5, "art": 1,
+		"bonus": "+10% здоровья бойцам, Слава каждый день."},
+	{"id": "pantheon", "building": "pantheon", "money": 60000, "rating": 250, "glory": 80, "army": {"atk": 0.10}, "glory_day": 0.5, "art": 2,
+		"bonus": "+10% урона бойцам, Слава каждый день."},
 	{"id": "circus", "name": "Большой цирк", "pvp": true, "rating": 200, "glory": 120, "money": 20000, "happy": 4, "glory_day": 0.5, "art": 3,
-		"bonus": "Скачки колесниц: +4% счастья всему городу и Слава каждый день."},
+		"bonus": "Скачки колесниц в форте. Слава каждый день."},
 	{"id": "aqueduct", "name": "Акведук Клавдия", "pvp": true, "rating": 450, "glory": 160, "money": 30000, "happy": 4, "art": 4,
-		"bonus": "Чистая вода всему городу: +4% счастья всем домам."},
+		"bonus": "Акведук в честь Легиона."},
 	{"id": "trajan", "name": "Колонна Траяна", "pvp": true, "rating": 800, "glory": 220, "money": 40000, "army": {"atk": 0.15, "hp": 0.15}, "art": 5,
 		"bonus": "+15% урона и здоровья всей армии."},
 	{"id": "caracalla", "name": "Термы Каракаллы", "pvp": true, "rating": 1200, "glory": 300, "money": 60000, "happy": 6, "art": 6,
-		"bonus": "Термы для всего города: +6% счастья всем домам."},
+		"bonus": "Термы в честь Легиона."},
 	{"id": "jupiter", "name": "Храм Юпитера Капитолийского", "pvp": true, "rating": 1800, "glory": 400, "money": 90000, "happy": 4, "glory_day": 1.0,
-		"army": {"atk": 0.05, "hp": 0.05}, "art": 7, "bonus": "Величайший храм Рима: +4% счастья, +5% силы армии и Слава каждый день."},
+		"army": {"atk": 0.05, "hp": 0.05}, "art": 7, "bonus": "Величайший храм Рима: +5% силы армии и Слава каждый день."},
 ]
 
 # =====================================================================
@@ -1145,7 +1145,7 @@ func sell_item(iid: int) -> bool:
 		return false
 	var c = city()
 	if c != null:
-		c.money = minf(float(c.money) + item_price(it), maxf(float(c.money), float(c.money_cap())))
+		c.magis_treasury += item_price(it)       # Выручка остаётся в казне Легиона.
 	items.erase(it)
 	changed.emit()
 	return true
@@ -1743,27 +1743,7 @@ func _lock_why() -> String:
 		return ""
 	if v3():
 		return I18n.t("Лагерь откроется, когда в городе будет %d жителей (сейчас %d).") % [CAMP_POP, city_pop()]
-	var c = city()
-	var rank := int(REGIONS[0]["rank"])         # Легион открывается с этого уровня города (и в походе 2.0)
-	var head := I18n.t("Легион откроется в истории горожан «%s»") % I18n.t(story_title())       # части переводим по отдельности: склейка целиком в словаре не найдётся
-	if c == null or int(c.level) < rank:
-		return head + I18n.t(" — она придёт, когда город станет «%s».") % I18n.t(String(Defs.LEVELS[rank]["name"]))
-	# город уже дорос: говорим, чего история ждёт на самом деле (старый город без Легиона — тоже сюда)
-	var s: Dictionary = c.stories
-	var off: Dictionary = s.get("offer", {})
-	if String(off.get("id", "")) == STORY:
-		return head + I18n.t(" — она уже ждёт вас: над домом переселенца свиток с просьбой, щёлкните его.")
-	if (s.get("later", {}) as Dictionary).has(STORY):
-		return head + I18n.t(" — вы её отложили, она скоро вернётся.")
-	# истории идут по одной: сначала та, что идёт (или ждёт ответа)
-	var act: Dictionary = s.get("active", {})
-	var busy: Dictionary = act if not act.is_empty() else off
-	if not busy.is_empty():
-		return head + I18n.t(" — она придёт после истории «%s».") % I18n.t(StoryDefs.title_of(StoryDefs.story(String(busy.get("id", ""))), busy))
-	var af := String(StoryDefs.story(STORY).get("after", ""))
-	if af != "" and int(c.level) < 2 and not (s.get("done", {}) as Dictionary).has(af):
-		return head + I18n.t(" — она придёт после истории «%s».") % I18n.t(String(StoryDefs.story(af).get("title", af)))
-	return head + I18n.t(" — она скоро придёт: горожане попросят о защите.")
+	return I18n.t("Легион откроется исследованием «Легион» на уровне «Хутор».")
 
 
 ## История, которая открывает Легион (Д9), и её название
@@ -1984,10 +1964,8 @@ func squad_off(st: Dictionary) -> bool:
 #   бонусы чудес
 # =====================================================================
 
-## Чудо возведено: постройка стоит в городе (или куплено в окне)
+## Чудо Легиона куплено в его окне.
 func wonder_built(w: Dictionary) -> bool:
-	if w.has("building"):
-		return count_type(String(w["building"])) > 0
 	return built.has(w["id"])
 
 
@@ -2550,21 +2528,8 @@ func building_rec(btype: String) -> Dictionary:
 
 
 ## Облик зданий Легиона по их уровням (после загрузки и улучшения); show — перерисовать изменившиеся (с облачком)
-func sync_tiers(show := false) -> void:
-	var c = city()
-	if c == null:
-		return
-	for id in c.buildings:
-		var b: Dictionary = c.buildings[id]
-		if not is_building(String(b["type"])):
-			continue
-		var t := vis_tier(b_level(String(b["type"])))
-		if int(b["tier"]) != t:
-			b["tier"] = t
-			if "place_gen" in c:
-				c.place_gen += 1               # облик другой (и вход): проверки места перестройки — заново
-			if show and c.has_signal("house_changed"):
-				c.house_changed.emit(b, true)
+func sync_tiers(_show := false) -> void:
+	pass  # Старые городские постройки сохраняют свой облик.
 
 
 ## Кузница, Склад оружия, Лазарет — пока стоят в городе (уровень «в запасе» не действует)
@@ -3565,30 +3530,24 @@ func _chest(cycle: int, r: int) -> Dictionary:
 	var c = city()
 	if c != null and c.has_method("_event"):
 		c._event("Все %d звёзд: %s! Сундук Славы +%d%s" % [stages() * 3, R["name"], g,
-			(". Трофей «%s» — в разделе «Украшения»" % Defs.B[tr]["name"]) if tr != "" and Defs.B.has(tr) else ""], "laurels")
+			(". Трофей Легиона: «%s»" % Defs.B[tr]["name"]) if tr != "" and Defs.B.has(tr) else ""], "laurels")
 	return {"glory": g, "trophy": tr, "region": String(R["name"])}
 
 
-## Выдать награду; вернёт, сколько денариев не уместилось в казну (полна — предел остаётся, но говорим честно)
+## Военная добыча остаётся у Легиона; казна и исследования города не меняются.
 func _give(reward: Dictionary) -> int:
 	var c = city()
-	var lost := 0
 	for k in reward:
-		var v := float(reward[k])
+		var value := maxf(0.0, float(reward[k]))
 		match k:
 			"glory":
-				glory += v
+				glory += value
 			"money":
 				if c != null:
-					lost = maxi(0, roundi(v - maxf(0.0, c.money_cap() - c.money)))
-					var m0: float = c.money
-					c.money = maxf(c.money, minf(c.money_cap(), c.money + v)) if v3() else minf(c.money_cap(), c.money + v)
-					if c.has_method("flow"):
-						c.flow("legion", c.money - m0)
+					c.magis_treasury += value  # Только расходы Легиона; бюджет города не растёт.
 			"rp":
-				if c != null:
-					c.rp = maxf(c.rp, minf(c.rp_cap(), c.rp + v))   # сверх полок (возврат очков) не срезаем — как в sim_day
-	return lost
+				flags["research_loot"] = float(flags.get("research_loot", 0.0)) + value
+	return 0
 
 
 # =====================================================================
@@ -3626,8 +3585,6 @@ func wonder_state(id: String) -> String:
 ## Цена чуда: {money, glory}
 func wonder_cost(id: String) -> Dictionary:
 	var w := wonder(id)
-	if w.has("building"):
-		return {"money": int(Defs.B[w["building"]]["cost"]), "glory": int(w["glory"])}
 	return {"money": int(w.get("money", 0)), "glory": int(w["glory"])}
 
 
@@ -3639,8 +3596,7 @@ func wonder_unlocks(type: String) -> bool:
 	return false
 
 
-## Можно ли возвести чудо ("" — можно). Для чудес-построек — ставит игрок (game.set_tool(building)),
-## Слава спишется при постановке (City.place)
+## Можно ли возвести чудо Легиона ("" — можно).
 func can_build_wonder(id: String) -> String:
 	var w := wonder(id)
 	if w.is_empty():
@@ -3653,10 +3609,10 @@ func can_build_wonder(id: String) -> String:
 	return _afford_text(wonder_cost(id))
 
 
-## Возвести чудо без постройки (кнопка в окне). Чудеса-постройки ставятся в городе — тут false
+## Возвести чудо в Легионе: городская постройка для него не нужна.
 func build_wonder(id: String) -> bool:
 	var w := wonder(id)
-	if w.has("building") or can_build_wonder(id) != "":
+	if w.is_empty() or can_build_wonder(id) != "":
 		return false
 	_pay(wonder_cost(id))
 	built[id] = true
@@ -3664,7 +3620,6 @@ func build_wonder(id: String) -> bool:
 	if c != null:
 		if c.has_method("_event"):
 			c._event("Возведено чудо света: %s! %s" % [wonder_name(w), w["bonus"]], "laurels")
-		c.compute()
 		c.changed.emit()
 	changed.emit()
 	return true
@@ -3674,15 +3629,9 @@ func build_wonder(id: String) -> bool:
 #   город: счастье, Слава по часам, триумф
 # =====================================================================
 
-## Сколько процентов счастья всем домам дают чудеса-без-постройки и триумф (City.compute)
+## Прежний интерфейс: город больше не получает военного счастья.
 func city_happy() -> int:
-	var h := 0
-	for w: Dictionary in WONDERS:
-		if not w.has("building") and built.has(w["id"]):
-			h += int(w.get("happy", 0))
-	if triumph_left > 0:
-		h += int(TRIUMPH["happy"])
-	return h
+	return 0  # Совместимость: Легион больше не даёт счастье городу.
 
 
 ## Раз в игровой час (City.sim_day): таймеры улучшений, Слава от чудес, триумф. Возвращает события [[текст, значок, тихо?]]
@@ -3707,10 +3656,7 @@ func on_hour() -> Array:
 	if triumph_left > 0:
 		triumph_left -= 1
 		if triumph_left == 0:
-			out.append(["Триумф окончен: город возвращается к будням", "laurels"])
-			var c = city()
-			if c != null:
-				c.compute()
+			out.append(["Триумф Легиона окончен", "laurels"])
 	return out
 
 
@@ -3724,7 +3670,7 @@ func can_triumph() -> String:
 	return ""
 
 
-## Триумф: за Славу весь город празднует — счастье всех домов выше
+## Триумф: праздник Легиона за Славу, без городского бонуса.
 func triumph() -> bool:
 	if can_triumph() != "":
 		return false
@@ -3733,8 +3679,7 @@ func triumph() -> bool:
 	var c = city()
 	if c != null:
 		if c.has_method("_event"):
-			c._event("Триумф! Город празднует %d дня: счастье домов +%d%%." % [int(TRIUMPH["hours"]) / 24, TRIUMPH["happy"]], "laurels")
-		c.compute()
+			c._event("Триумф Легиона: %d дня праздника в форте." % (int(TRIUMPH["hours"]) / 24), "laurels")
 		c.changed.emit()
 	changed.emit()
 	return true
@@ -5259,7 +5204,7 @@ func to_dict() -> Dictionary:
 	var data := {"v": 3, "levels": levels, "blevels": blevels, "upg": upg, "squad": squad, "defense": defense, "perks": perks, "stars": stars,
 		"progress": progress, "wins": wins, "rating": rating, "glory": glory, "pvp_rating": pvp_rating, "pvp_charges": pvp_charges,
 		"pvp_charge_t": pvp_charge_t, "pvp_wins": pvp_wins, "pvp_losses": pvp_losses, "pvp_log": pvp_log, "built": built.keys(),
-		"triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
+		"city_decoupled": true, "triumph_left": triumph_left, "glory_acc": glory_acc, "flags": flags, "chests": chests.keys(), "trophies": trophies.keys(),
 		"soldiers": soldiers, "recruits": recruits, "recruit_day": recruit_day, "sid_next": sid_next, "items": items, "iid_next": iid_next, "shards": shards, "forging": forging, "relics": relics, "daily": daily, "mats": mats, "mats_t": mats_t,
 		"food_pts": food_pts, "food_t": food_t, "camp": camp, "squad3": squad3, "rations": rations, "rations_t": rations_t}
 	if v3():
@@ -5267,6 +5212,15 @@ func to_dict() -> Dictionary:
 			"hero_training": hero_training, "chest_queue": chest_queue, "speed_day": speed_day, "speed_used": speed_used,
 			"rng_seed3": str(_rng.seed), "rng_state3": str(_rng.state)})
 	return data
+
+
+## После загрузки городских зданий, один раз для старого сохранения.
+func migrate_city_wonders(data: Dictionary) -> void:
+	if bool(data.get("city_decoupled", false)):
+		return
+	for w: Dictionary in WONDERS:
+		if w.has("building") and count_type(String(w["building"])) > 0:
+			built[String(w["id"])] = true
 
 
 func from_dict(d: Dictionary) -> void:
@@ -5322,6 +5276,7 @@ func from_dict(d: Dictionary) -> void:
 	built = {}
 	for k in d.get("built", []):
 		built[String(k)] = true
+
 	triumph_left = int(d.get("triumph_left", 0))
 	glory_acc = float(d.get("glory_acc", 0.0))
 	flags = d.get("flags", {})

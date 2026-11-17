@@ -318,9 +318,9 @@ func _pace() -> void:
 	sto.pace_mark()
 	check(not sto.time_ok(), "в час нового заказа — история не приходит")
 	# «Разбойники у арки» — своей паузой после «Маси»
-	check(sto.gap_now() == mini(StoryDefs.GAP_H, int(StoryDefs.story("bandits").get("gap_h", 99))), "после «Маси» — своя пауза «Разбойников» (%d ч)" % sto.gap_now())
+	check(sto.gap_now() == StoryDefs.GAP_H, "после «Маси» — обычная городская пауза (%d ч)" % sto.gap_now())
 	S["h"] = int(S["h"]) + maxi(sto.gap_now(), Stories.OFFER_GAP_H)
-	check(sto.time_ok(), "«Разбойники у арки» — когда пауза прошла (на «Хуторе»)")
+	check(sto.time_ok(), "городские истории — когда пауза прошла")
 	# заказов старосты в игре больше нет (убраны по отзыву 14.11): «Другой заказ» и их темп не проверяем;
 	# история — по-прежнему не в тот же час, что и новый ранг/новое
 	var lh0 := int(S["last_h"])

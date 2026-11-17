@@ -488,8 +488,9 @@ func _treasury() -> void:
 	var ev := last_event("Просьба выполнена: Склад и мясная лавка")
 	check(not bt.is_empty() and ev.contains("казна полна — не уместилось"), "просьба при полной казне: «%s»" % ev)
 	c.money = c.money_cap()
+	var held := c.magis_treasury
 	var lost: int = c.legion._give({"money": 120.0})
-	check(lost == 120, "Легион: награда при полной казне — не уместилось %d" % lost)
+	check(lost == 0 and c.money == c.money_cap() and c.magis_treasury == held + 120.0, "военная награда остаётся в казне Легиона, городская казна не меняется")
 	c.money = 50000.0
 
 

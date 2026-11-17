@@ -131,7 +131,7 @@ func _run() -> void:
 	c.rp = c.rp_cap() + 160.0
 	over = c.rp
 	c.legion._give({"rp": 50.0, "money": 0.0})
-	check(c.rp >= over - 0.01, "награда Легиона очками не срезает их до полок", [over, c.rp, c.rp_cap()])
+	check(c.rp == over, "награда Легиона не меняет исследования города", [over, c.rp, c.rp_cap()])
 	c.rp = 0.0
 
 	# ---------- 0.3 охват с «Большим охватом» — как в расчёте (кругов больше нет: подсветка домов, cover.gd) ----------
@@ -444,6 +444,8 @@ func _unlockable(late: bool) -> void:
 			if not _kind_by(String(e[0]), int(o["lvl"]), late):
 				bad.append("заказ %s: %s" % [o["id"], e[0]])
 	for s: Dictionary in StoryDefs.STORIES:
+		if not StoryDefs.city_enabled(s):
+			continue
 		var ks := []
 		var granted := []                    # что история открывает сама (ларарий в «Письме сыну»)
 		for st: Dictionary in s.get("steps", []):

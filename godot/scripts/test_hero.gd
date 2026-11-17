@@ -486,8 +486,8 @@ func _card_test() -> void:
 	game.select_person({"r": ppl.hero_r})
 	await frames(10)
 	var txt := _texts(hud.info_box)
-	check(txt.contains("Гай Валерий") and txt.contains("Герой города") and txt.contains("Гардероб") and txt.contains("Снаряжение"),
-		"карточка героя: имя, «Герой города», снаряжение, гардероб")
+	check(txt.contains("Гай Валерий") and txt.contains("Герой города") and txt.contains("Гардероб"),
+		"карточка героя: имя, «Герой города», гардероб")
 	PersonCard.edit = true
 	hud._fill_info()
 	await frames(20)

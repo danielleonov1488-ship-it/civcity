@@ -89,9 +89,6 @@ func setup(g) -> void:
 	city.family_left.connect(_on_family_left)
 	city.festival_changed.connect(_on_fest)
 	city.level_up.connect(func(_l): pace_mark())   # новый ранг: ролик, исследования — сперва осмотреться
-	if city.legion != null:
-		city.legion.battle_requested.connect(_on_battle_req)   # письмо сыну: победа в провинции после начала шага
-		city.legion.battle_closed.connect(_on_battle_done)
 	if game.mode in ["new", "play"]:
 		_restore()
 
@@ -118,6 +115,7 @@ func S() -> Dictionary:
 
 func _restore() -> void:
 	var s := S()
+	StoryDefs.suspend_disabled(s)
 	for p: Dictionary in s["pets"]:
 		var h: Dictionary = city.buildings.get(int(p.get("home", -1)), {})
 		if h.is_empty():
@@ -263,6 +261,7 @@ func tick() -> void:
 			city.goals_vis = 3                 # не своя игра (снимок, автопроверка) — просьбы как раньше, три сразу
 		return
 	var s := S()
+	StoryDefs.suspend_disabled(s)
 	var h := int(s["h"])
 	if h != _h_seen:
 		var first := _h_seen < 0
@@ -311,7 +310,7 @@ func gap_now() -> int:
 	var s := S()
 	var done: Dictionary = s["done"]
 	for sd: Dictionary in StoryDefs.all():
-		if not sd.has("gap_h") or done.has(String(sd["id"])) or not done.has(String(sd.get("after", ""))):
+		if not StoryDefs.city_enabled(sd) or not sd.has("gap_h") or done.has(String(sd["id"])) or not done.has(String(sd.get("after", ""))):
 			continue
 		if city.level < int(sd.get("lvl", 0)) or int(city.stats.get("pop", 0)) < int(sd.get("pop", 0)):
 			continue
@@ -383,6 +382,8 @@ func _yield_yearly() -> void:
 
 ## Можно ли предложить историю сейчас (ранг, жители, есть кого просить и её правда можно пройти) — привязка или {}
 func can_offer(sd: Dictionary) -> Dictionary:
+	if not StoryDefs.city_enabled(sd):
+		return {}
 	if city.level < int(sd.get("lvl", 0)) or int(city.stats.get("pop", 0)) < int(sd.get("pop", 0)):
 		return {}
 	# Легион уже открыт (старый город изучил его за очки) — «Разбойники у арки» не нужны. Открыла его сама эта история,
@@ -392,7 +393,7 @@ func can_offer(sd: Dictionary) -> Dictionary:
 		return {}
 	# сначала та история (на «Хуторе» первой остаётся «Где Мася?»); с «Деревни» не держим, если ту сейчас не предложить
 	var af := String(sd.get("after", ""))
-	if af != "" and not (S()["done"] as Dictionary).has(af) and not StoryDefs.story(af).is_empty():
+	if af != "" and not (S()["done"] as Dictionary).has(af) and StoryDefs.city_enabled(StoryDefs.story(af)):
 		if city.level < 2 or not can_offer(StoryDefs.story(af)).is_empty():
 			return {}
 	for r in sd.get("needs", []):
@@ -864,6 +865,7 @@ func _after_ask() -> void:
 ## Согласились помочь: история идёт, со второго шага; choice — что выбрали в ролике (сад или таверна)
 func accept(choice := "go") -> void:
 	var s := S()
+	StoryDefs.suspend_disabled(s)
 	var o: Dictionary = s["offer"]
 	if o.is_empty():
 		return
@@ -960,11 +962,6 @@ func _enter_step(i: int) -> void:
 				city._quiet("Открыто украшение «%s» (Украшения) — для истории «%s»." % [dn, StoryDefs.title_of(_story(a), a)], "decor")
 			else:
 				city._quiet("Открыто: «%s» — для истории «%s»." % [rd.get("name", r), StoryDefs.title_of(_story(a), a)], "research")
-		if String(r) == "legion":
-			city.legion.flags["advised"] = true   # что такое Легион и как его строить, скажет совет шага (с военным кварталом), не окно Легиона
-	if bool(st.get("camp", false)) and city.legion.v3():
-		city.legion.flags["camp_open"] = true     # Легион 3.0: шаг «призовите воина» — лагерь открыт, шаг не застрянет
-		city.legion.changed.emit()
 	if bool(st.get("quarter", false)):
 		quarter()                        # военный квартал у арки — один раз на город (Legion.flags.quarter)
 	if not (st.get("grant", []) as Array).is_empty():
@@ -1071,6 +1068,7 @@ func _on_hour() -> void:
 ## play_now — игрок сам нажал «Готово»: ролик-шаг — сразу
 func _tick_active(play_now := false) -> void:
 	var s := S()
+	StoryDefs.suspend_disabled(s)
 	var a: Dictionary = s["active"]
 	if _story(a).is_empty():
 		s["active"] = {}
@@ -4762,15 +4760,7 @@ const QUARTER_GROW := 6.0
 ## Военный квартал вне истории (Д10): здание Легиона в руках — мягкое пятно и у курсора «В военном квартале ✓»
 ## (строить можно где угодно: квартал — совет, бонуса «рядом» нет). {} — квартала нет или Легион закрыт
 func _legion_zone() -> Dictionary:
-	if city == null or not city.legion.window_open():
-		return {}
-	var q: Array = city.legion.quarter()
-	if q.size() != 3 and game != null and String(game.tool) in MILITARY:
-		q = quarter()                        # старый город (Легион изучен до истории): квартал ищем, когда здание в руках
-	if q.size() != 3:
-		return {}
-	return {"hp": Vector2(float(q[0]), float(q[1])), "r": float(q[2]) + QUARTER_GROW, "keys": MILITARY.duplicate(), "label": "военного квартала",
-		"ok": "В военном квартале ✓", "far": "Можно и здесь — а военный квартал у арки", "no": "", "after": -1, "room": 0, "skip": []}
+	return {}
 
 
 ## Где у арки стоит телега переселенцев: на обочине большой дороги, по эту сторону арки (помним до конца ролика)

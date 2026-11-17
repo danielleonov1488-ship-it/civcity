@@ -447,11 +447,8 @@ func _api() -> void:
 	var city := City.new(land)
 	city.place("center", Land.CENTER, PI / 2, 0, 0, true)
 	var L: Legion = city.legion
-	_check(not L.window_open() and L.lock_text().contains("Разбойники у арки") and L.lock_text().contains("Хутор"), "окно закрыто, пока Легион не открыт историей: " + L.lock_text())
-	# Д9: Легион с «Хутора» через историю «Разбойники у арки» (без очков), лес — там же, предел бойцов не ниже самого трудного боя
-	_check(int(Defs.research("legion")["lvl"]) == int(Legion.regions()[0]["rank"]) and int(Legion.regions()[0]["rank"]) == 1 and Defs.research("legion").has("story")
-		and city.can_research("legion").contains("Разбойники у арки"), "«Легион» — история на «%s», там же открыт лес; за очки не изучить: «%s»" % [
-		Defs.LEVELS[int(Defs.research("legion")["lvl"])]["name"], city.can_research("legion")])
+	_check(not L.window_open() and L.lock_text().contains("исследованием") and L.lock_text().contains("Хутор"), "старое окно открывается исследованием: " + L.lock_text())
+	_check(int(Defs.research("legion")["lvl"]) == 1 and not Defs.research("legion").has("story"), "старый Легион не требует городской истории")
 	var ranks := []
 	var walls := []
 	for r in Legion.regions().size():
@@ -554,8 +551,8 @@ func _api() -> void:
 	city.money = 5000.0
 	L.time_k = 20000.0
 	_check(L.can_upgrade("legionary") == "", "можно улучшить легионеров")
-	var m0 := city.money
-	_check(L.upgrade("legionary") and is_equal_approx(m0 - city.money, 700.0), "улучшение до 2 ур. стоит 700 ден.")
+	var m0 := L.city_money()
+	_check(L.upgrade("legionary") and is_equal_approx(m0 - L.city_money(), 700.0), "улучшение до 2 ур. стоит 700 ден.")
 	_check(L.can_upgrade("legionary") == "Уже улучшается", "второй раз — «Уже улучшается»")
 	_check(L.tut_step() == "" and String(L.flags.get("tut", "")) == "done", "обучение пройдено: улучшение началось")
 	OS.delay_msec(120)
@@ -576,7 +573,7 @@ func _api() -> void:
 	L.progress = 9
 	var bst := L.stage_info(0, 0, 9)
 	var bout := L.apply_result(L.make_battle(bst, 1), {"win": true, "alive": 2, "total": 3, "timeout": false, "time": 50.0})
-	_check(bool(bout["boss_beaten"]) and int(L.perks["oil"]) == 1 and L.slots() == 4 and city.unlocked("spearcamp"), "босс побеждён: %s" % str(bout["unlocks"]))
+	_check(bool(bout["boss_beaten"]) and int(L.perks["oil"]) == 1 and L.slots() == 4 , "босс побеждён: %s" % str(bout["unlocks"]))
 	_slots4_api(city, L, p)
 	_tasks_api()
 	_stars_api(city, L)
@@ -590,7 +587,7 @@ func _api() -> void:
 	var L2: Legion = city2.legion
 	_check(L2.progress == L.progress and L2.rating == L.rating and is_equal_approx(L2.glory, L.glory) and int(L2.levels["legionary"]) == 3
 		and L2.upg.has("legionary") and L2.squad.size() == 4 and int(L2.perks["oil"]) == 1 and L2.stars == L.stars
-		and L2.trophies.has("forest") and L2.chests.size() == L.chests.size() and city2.unlocked("trophy_cart")
+		and L2.trophies.has("forest") and L2.chests.size() == L.chests.size()
 		and String(L2.flags.get("tut", "")) == "done", "сохранение и загрузка (JSON) — всё на месте, звёзды-биты, сундук и трофей")
 	# старые звёзды (v1 — число по выжившим): честно — победа и «все вернулись» (3), задание боя заново
 	var L5 := Legion.new()
@@ -609,18 +606,17 @@ func _api() -> void:
 	L4.tut_skip()
 	_check(L4.tut_step() == "" and L4.tutorial_battle(Legion.stage(0, 0, 0)) and not L4.flags.has("tut_oil"),
 		"«Пропустить обучение» — без стрелок и полосы, но учебный бой (масло) один раз остаётся")
-	# чудеса: арка открывается рейтингом походов, стоит Славы
-	L.rating = 10
-	_check(not city.unlocked("arch"), "арка закрыта без исследования и рейтинга")
+	# Городская арка и военное чудо независимы.
 	L.rating = 30
 	L.glory = 3.0
-	city.money = 20000.0                           # арка дороже денариев после прокачки (6000 с этапа 1b) — проверяем именно Славу
-	_check(city.unlocked("arch") and L.wonder_state("arch") == "open", "рейтинг 30 открывает Триумфальную арку")
+	city.money = 20000.0
+	_check(not city.unlocked("arch") and L.wonder_state("arch") == "open", "рейтинг открывает только чудо Легиона")
+	city.research["arch"] = true
 	var ca := city.check_place("arch", p + Vector2(30, 0), 0.0)
-	_check(String(ca["err"]).begins_with("Не хватает Славы"), "без Славы арку не поставить: " + String(ca["err"]))
+	_check(city.unlocked("arch") and not String(ca["err"]).contains("Славы"), "городская арка не требует Славы")
 	# триумф и счастье
 	L.glory = 20.0
-	_check(L.triumph() and L.city_happy() == int(Legion.TRIUMPH["happy"]) and is_equal_approx(L.glory, 5.0), "триумф: +%d%% счастья, Слава 5" % L.city_happy())
+	_check(L.triumph() and L.city_happy() == 0 and is_equal_approx(L.glory, 5.0), "триумф Легиона стоит Славы и не меняет счастье города")
 	for i in int(Legion.TRIUMPH["hours"]):
 		L.on_hour()
 	_check(L.city_happy() == 0, "триумф закончился через %d игровых часов" % int(Legion.TRIUMPH["hours"]))
@@ -628,7 +624,7 @@ func _api() -> void:
 	L.pvp_rating = 250
 	L.glory = 500.0
 	city.money = 50000.0
-	_check(L.can_build_wonder("circus") == "" and L.build_wonder("circus") and L.city_happy() == 4, "Большой цирк возведён: +4% счастья городу")
+	_check(L.can_build_wonder("circus") == "" and L.build_wonder("circus") and L.city_happy() == 0, "Большой цирк возведён без городского бонуса")
 	# бой с городом
 	var opp := {"name": "Город Марка", "rating": 300, "city_level": 5, "snapshot": {"v": 1, "squad": [{"type": "legionary", "level": 1}, {"type": "archer", "level": 1}], "perks": {}}}
 	var ps := L.make_pvp_battle(opp, 7)
@@ -654,9 +650,9 @@ func _d10_api() -> void:
 	city.research["legion"] = true
 	city.money = 60000.0
 	_check(city.unlocked("forge") and not city.unlocked("infirmary") and not city.unlocked("armory") and Defs.unlock_text("rank:3").contains("Посёлок")
-		and Legion.BUILDING_IDS.size() == 13 and not city.unlocked("smelter") and not city.unlocked("principia"), "здания Легиона: Кузница с «Деревни», Лазарет — %s" % Defs.unlock_text("rank:3"))
+		and Legion.BUILDING_IDS.size() == 13 and city.unlocked("smelter") and city.unlocked("principia"), "здания Легиона: Кузница с «Деревни», Лазарет — %s" % Defs.unlock_text("rank:3"))
 	city.research.erase("legion")
-	_check(not city.unlocked("forge"), "без Легиона Кузницы нет")
+	_check(city.unlocked("forge"), "прежняя Кузница открывается рангом города")
 	city.research["legion"] = true
 	var p := Land.CENTER + Vector2(14, 12)
 	var bb := city.place("barracks", p, 0.0, 0, -1, true)
@@ -666,8 +662,8 @@ func _d10_api() -> void:
 	_check(L.upgrade(Legion.bkey("barracks")), "улучшение Казарм началось")
 	OS.delay_msec(120)
 	var ev := L.tick()
-	_check(L.b_level("barracks") == 2 and int(L.levels["legionary"]) == 2 and int(bb["tier"]) == 1 and int(L.stats("legionary")["hp"]) > int(s0["hp"])
-		and ev.size() == 1 and String(ev[0]).begins_with("Казармы — 2 уровень"), "Казармы 2-го уровня: легионеры сильнее, облик вырос: %s" % str(ev))
+	_check(L.b_level("barracks") == 2 and int(L.levels["legionary"]) == 2 and int(bb["tier"]) == 0 and int(L.stats("legionary")["hp"]) > int(s0["hp"])
+		and ev.size() == 1 and String(ev[0]).begins_with("Казармы — 2 уровень"), "Казармы 2-го уровня: легионеры сильнее, городская постройка прежняя: %s" % str(ev))
 	# Кузница: в походах +3% урона и здоровья за уровень; в бою с городом и в снимке обороны — без неё (PVP_MODS)
 	var hp1 := int(L.stats("legionary")["hp"])
 	var fb := city.place("forge", p + Vector2(0, 26), 0.0, 0, -1, true)
@@ -675,11 +671,11 @@ func _d10_api() -> void:
 	var snap := L.defense_snapshot()
 	_check(not Legion.PVP_MODS and hp2 > hp1 and int(L.stats("legionary", true)["hp"]) == hp1 and is_equal_approx(float(snap["atk_b"]), L.bonus("atk"))
 		and int(L.squad_stats("pvp")[0]["hp"]) == hp1 and int(L.squad_stats()[0]["hp"]) == hp2, "Кузница 1 ур.: здоровье %d → %d в походах, в боях с городами — %d" % [hp1, hp2, hp1])
-	var m0 := city.money
-	_check(L.upgrade("forge") and is_equal_approx(m0 - city.money, 840.0), "улучшение Кузницы до 2 ур. — 840 ден.")
+	var m0 := L.city_money()
+	_check(L.upgrade("forge") and is_equal_approx(m0 - L.city_money(), 840.0), "улучшение Кузницы до 2 ур. — 840 ден.")
 	OS.delay_msec(120)
 	L.tick()
-	_check(L.b_level("forge") == 2 and int(fb["tier"]) == 1 and is_equal_approx(L.forge_b(), 0.06) and String(L.b_effect("forge", 2)[0]).begins_with("+6%"),
+	_check(L.b_level("forge") == 2 and int(fb["tier"]) == 0 and is_equal_approx(L.forge_b(), 0.06) and String(L.b_effect("forge", 2)[0]).begins_with("+6%"),
 		"Кузница 2 ур.: %s" % L.b_effect("forge", 2)[0])
 	L.upgrade("forge")
 	OS.delay_msec(300)
@@ -708,8 +704,8 @@ func _d10_api() -> void:
 	var a0 := float(L.stats("legionary")["armor"])
 	_check(L.b_reserve("armory") == 3 and is_equal_approx(L.armory_b(), 0.0), "Склад оружия не поставлен: 3 ур. в запасе, брони не даёт")
 	var ab := city.place("armory", p + Vector2(26, 26), 0.0, 0, -1, true)
-	_check(int(ab["tier"]) == 2 and is_equal_approx(float(L.stats("legionary")["armor"]) - a0, 6.0) and L.b_reserve("armory") == 0,
-		"поставили — сразу 3-го уровня: облик 3, брони +%d" % roundi(float(L.stats("legionary")["armor"]) - a0))
+	_check(int(ab["tier"]) == 0 and is_equal_approx(float(L.stats("legionary")["armor"]) - a0, 6.0) and L.b_reserve("armory") == 0,
+		"военный уровень 3, городской облик прежний, брони +%d" % roundi(float(L.stats("legionary")["armor"]) - a0))
 	# места в отряде: 4-е — после 1-го босса и с Казармами 2 ур.; 5-е — после 3-го и с Казармами 3 ур.
 	L.progress = 30
 	L.levels["legionary"] = 2
@@ -743,8 +739,8 @@ func _d10_api() -> void:
 	city2.load_data(d)
 	var L2: Legion = city2.legion
 	var fb2: Dictionary = L2.building_rec("forge")
-	_check(L2.b_level("forge") == 3 and L2.b_level("armory") == 3 and L2.upg.has("infirmary") and int(fb2.get("tier", -1)) == 2 and not L2.flags.has("d10_new"),
-		"сохранение v3: Кузница 3, Склад оружия 3, улучшение Лазарета идёт, облик Кузницы 3")
+	_check(L2.b_level("forge") == 3 and L2.b_level("armory") == 3 and L2.upg.has("infirmary") and int(fb2.get("tier", -1)) == 0 and not L2.flags.has("d10_new"),
+		"сохранение v3: Кузница 3, Склад оружия 3, улучшение Лазарета идёт, городской облик Кузницы сохранён")
 	# старое сохранение (v2): уровни войск — уровни зданий; без здания — «в запасе»; умения — в запас новым зданиям;
 	# места, открытые боссами до Д10, не отнимаются; облик зданий — по уровням
 	var old := {"money": 9000.0, "level": 5, "research": ["legion", "archery"], "next_id": 3,
@@ -755,7 +751,7 @@ func _d10_api() -> void:
 	var city3 := City.new(Land.new())
 	city3.load_data(old)
 	var L3: Legion = city3.legion
-	_check(int(city3.buildings[2]["tier"]) == 2 and L3.b_level("barracks") == 3 and L3.b_reserve("range") == 4 and L3.upg.has("archer")
+	_check(int(city3.buildings[2]["tier"]) == 0 and L3.b_level("barracks") == 3 and L3.b_reserve("range") == 4 and L3.upg.has("archer")
 		and L3.b_level("infirmary") == 3 and L3.b_level("armory") == 2 and L3.b_level("forge") == 1 and int(L3.flags.get("slots0", 0)) == 5
 		and L3.slots() == 5 and L3.flags.has("d10_new") and int(L3.perks["bandage"]) == 3,
 		"старое сохранение: Казармы 3 (облик 3), Стрельбище 4 ур. в запасе, Лазарет 3 и Склад 2 из умений, мест 5 как было")
@@ -773,7 +769,7 @@ func _d10_api() -> void:
 	_check(city4.legion.b_level("armory") == 4 and city4.legion.cap_of("armory") == 4 and int(city4.legion.perks["testudo"]) == 5,
 		"перенос на «Посёлке»: Склад оружия %d ур. «в запасе» при пределе %d, Черепаха 5 цела" % [city4.legion.b_level("armory"), city4.legion.cap_of("armory")])
 	var rb := city3.place("range", p + Vector2(0, 26), 0.0, 0, -1, true)
-	_check(int(rb["tier"]) == 3 and L3.b_reserve("range") == 0 and L3.available("archer"), "Стрельбище поставили — сразу 4 ур. (облик 4)")
+	_check(int(rb["tier"]) == 0 and L3.b_reserve("range") == 0 and L3.available("archer"), "Стрельбище поставили — сразу 4 ур. (облик 4)")
 	# облик по уровню: всё, что прибавляется, — внутри участка 1-го уровня (не залезает на дорогу и к соседям)
 	var out := []
 	for t: String in Legion.BUILDING_IDS:
@@ -825,7 +821,7 @@ func _stars_api(city: City, L: Legion) -> void:
 		and int(o2["reward"]["glory"]) >= Legion.STAR_GLORY and L.glory - g1 >= Legion.STAR_GLORY and int(o3["star_glory"]) == 0 and int(L.stars[String(s1["key"])]) == Legion.STAR_ALL,
 		"звёзды копятся: 2★ (все вернулись), потом задание — лучшее 3★, +%d Славы один раз" % Legion.STAR_GLORY)
 	# все 30 звёзд леса: сундук Славы и трофей в город (украшение бесплатно, одно на город); второй раз — ничего
-	_check(not city.unlocked("trophy_cart") and Defs.unlock_text("trophy:forest").contains("30 звёздами"), "трофей закрыт: открывается " + Defs.unlock_text("trophy:forest"))
+	var cart_open := city.unlocked("trophy_cart")
 	for s in Legion.stages():
 		L.stars[Legion.stage_key(0, 0, s)] = Legion.STAR_ALL
 	var s9 := L.stage_info(0, 0, 9)
@@ -833,10 +829,9 @@ func _stars_api(city: City, L: Legion) -> void:
 	var g2 := L.glory
 	var o4 := L.apply_result(L.make_battle(s9, 3), {"win": true, "alive": 3, "total": 3, "timeout": false, "time": 30.0, "hp_left": 0.7, "oil_best": 5})
 	var ch: Dictionary = o4["chest"]
-	var cp := city.check_place("trophy_cart", Land.CENTER + Vector2(-16, 14), 0.0)
 	_check(not ch.is_empty() and int(ch["glory"]) == int(Legion.CHEST[0]) and String(ch["trophy"]) == "trophy_cart" and L.region_stars(0, 0) == 30
-		and L.glory - g2 >= float(Legion.CHEST[0]) and city.unlocked("trophy_cart") and String(cp["err"]) == "" and float(Defs.B["trophy_cart"]["cost"]) == 0.0,
-		"все 30 звёзд: сундук +%d Славы, трофей «%s» открыт и ставится бесплатно" % [int(ch.get("glory", 0)), Defs.B["trophy_cart"]["name"]])
+		and L.glory - g2 >= float(Legion.CHEST[0]) and city.unlocked("trophy_cart") == cart_open,
+		"все 30 звёзд: сундук +%d Славы и трофей «%s» остаются в Легионе" % [int(ch.get("glory", 0)), Defs.B["trophy_cart"]["name"]])
 	var o5 := L.apply_result(L.make_battle(s9, 3), {"win": true, "alive": 3, "total": 3, "timeout": false, "time": 30.0, "hp_left": 0.7, "oil_best": 5})
 	_check((o5["chest"] as Dictionary).is_empty(), "сундук — один раз")
 
