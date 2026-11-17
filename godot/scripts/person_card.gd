@@ -708,35 +708,41 @@ static func cat_activity(ppl: People, ct: Dictionary) -> String:
 ## «Погладить»: камера близко к кошке — с той стороны, откуда её видно (у двери — со стороны двери, чуть наискосок),
 ## а не в стену дома; поворот — ближний к нынешнему (без долгого разворота)
 static func pet_view(hud: Hud, ct: Dictionary) -> void:
-	var rig = hud.game.rig
+	var rig: CameraRig = hud.game.rig
 	var ppl: People = hud.game.people
 	if rig == null or ppl == null:
 		return
-	var p: Vector3 = ppl.cat_pos(ct)
-	rig.fly_to(p)
-	rig._dist_t = minf(rig._dist_t, 12.0)
-	var y0: float = rig._yaw_t
-	var yaws := []
-	var c: City = hud.game.city
-	var h: Dictionary = c.buildings.get(int(ct.get("home", -1)), {})
+	var p := ppl.cat_pos(ct)
+	var target := Vector3(p.x, maxf(1.0, p.y), p.z)
+	var distance := minf(rig._dist_t, 12.0)
+	# Проверяем ту же высоту цели, на которой камера остановится.
+	rig.look_at_point(target, distance, distance)
+	var yaw := rig._yaw_t
+	var pitch := rig._pitch_t
+	var yaws: Array[float] = []
+	var h: Dictionary = ppl.city.buildings.get(int(ct.get("home", -1)), {})
 	if not h.is_empty() and _near_home(ppl, ct):
-		var dir: Vector2 = c.door_point(h) - (h["pos"] as Vector2)
-		if dir.length() > 0.1:
-			var ty := atan2(dir.x, dir.y)
-			var a := y0 + wrapf(ty + 0.4 - y0, -PI, PI)
-			var b := y0 + wrapf(ty - 0.4 - y0, -PI, PI)
-			yaws.append_array([a, b] if absf(a - y0) <= absf(b - y0) else [b, a])
-	yaws.append_array([y0, y0 + PI / 2.0, y0 - PI / 2.0, y0 + PI])
-	var d: float = rig._dist_t * CameraRig.K
-	var pt: float = rig._pitch_t
-	var t := Vector3(p.x, maxf(1.0, p.y), p.z)
+		var front := float(h["yaw"])
+		var left := yaw + angle_difference(yaw, front + 0.4)
+		var right := yaw + angle_difference(yaw, front - 0.4)
+		yaws.append_array([left, right] if absf(left - yaw) <= absf(right - yaw) else [right, left])
+		yaws.append(yaw + angle_difference(yaw, front))
+	yaws.append(yaw)
+	for offset: float in [PI / 4.0, -PI / 4.0, PI / 2.0, -PI / 2.0, PI * 0.75, -PI * 0.75, PI]:
+		yaws.append(yaw + offset)
 	var look := p + Vector3(0, 0.2, 0)
-	for y: float in yaws:
-		var cpos := t + Vector3(sin(y) * cos(pt), sin(pt), cos(y) * cos(pt)) * d
-		if not hud.game.view_blocked(cpos, look):
-			rig._yaw_t = y
-			return
-	rig._yaw_t = float(yaws[0])
+	var center := target + Vector3.UP * rig.lift if rig.photo else target
+	# Если у двери тесно, смотрим выше — над соседней крышей.
+	for angle: float in [pitch, maxf(pitch, deg_to_rad(65.0)), deg_to_rad(80.0)]:
+		for y: float in yaws:
+			var eye := center + Vector3(sin(y) * cos(angle), sin(angle), cos(y) * cos(angle)) * distance * CameraRig.K
+			if rig.photo:
+				eye.y = maxf(eye.y, ppl.land.height_at(eye.x, eye.z) + 0.3)
+			if not hud.game.view_blocked(eye, look):
+				rig._yaw_t = y
+				rig._pitch_t = angle
+				return
+	rig._yaw_t = yaws[0]
 
 
 static func _near_home(ppl: People, ct: Dictionary) -> bool:

@@ -77,8 +77,9 @@ func _run() -> void:
 	if "bot" in OS.get_cmdline_user_args():
 		await _bot()
 	else:
-		c.wants_v = 0                          # прежние проверки; бот остаётся на CITY5a
-		c.cozy_v = 0                             # проверки — на прежних числах темпа; «Уютный Рим» — test_cozy и бот
+		c.auto_hire = true                   # проверяем темп при занятых местах писцов
+		c.wants_v = 1
+		c.cozy_v = 1
 		await _checks()
 	get_tree().quit()
 
@@ -157,6 +158,10 @@ func fill(houses: Array, pop: int) -> void:
 			if took == 0:
 				break
 			now += took
+	if c.wants_v >= 1:
+		for h: Dictionary in houses:
+			if int(h["pop"]) > 0:
+				h["happy"] = maxf(60.0, float(h["happy"]))
 	c.compute()
 
 
@@ -187,11 +192,14 @@ func _checks() -> void:
 	check(tip.contains("В городе: 1 из 1 (на уровне «Хутор» — 2)"), "card tip: «%s»" % tip.get_slice("\n", tip.get_slice_count("\n") - 1))
 	await shot("pace_cap_card.png")
 	game.hud.close_panels()
-	# 2) очки в час на Стоянке: писцы 2 + почта 1
+	# 2) очки в час на Стоянке: писцы 2 + почта 1, с ранней прибавкой BAL6
+	var station_mult := Balance.RP_MULT * float(Balance.EARLY_RP[0])
+	var hamlet_mult := Balance.RP_MULT * float(Balance.EARLY_RP[1])
 	fill(houses, 12)
 	c.sim_day()
 	var rpd := float(c.stats["rp_day"])
-	check(is_equal_approx(rpd, 3.0), "rp/h at «Стоянка» = 2 scribes + 1 post: %.2f (scriptorium staff %.2f)" % [rpd, float(s1.get("staff", 0))])
+	check(is_equal_approx(rpd, 3.0 * station_mult) and is_equal_approx(float(s1.get("staff", 0)), 1.0),
+		"rp/h at «Стоянка»: %.2f, expected %.2f (scriptorium staff %.2f)" % [rpd, 3.0 * station_mult, float(s1.get("staff", 0))])
 	# 3) живое сохранение: просьбы 1–10 по старому списку (с pop30), хутор, 51 житель, 97 очков
 	c.level = 1
 	fill(houses, 51)                          # (заселение само проверяет просьбы — список задаём после)
@@ -202,7 +210,7 @@ func _checks() -> void:
 	c.sim_day()
 	rpd = float(c.stats["rp_day"])
 	check(c.goals_done.has("hamlet"), "«Станьте хутором» done after one hour (already «Хутор»)")
-	check(is_equal_approx(rpd, 4.5), "rp/h at «Хутор» = 2 + 2.5: %.2f" % rpd)
+	check(is_equal_approx(rpd, 4.5 * hamlet_mult), "rp/h at «Хутор»: %.2f, expected %.2f" % [rpd, 4.5 * hamlet_mult])
 	var hamlet_rp := float(Defs.request("hamlet")["rp"])
 	check(is_equal_approx(float(c.rp), 97.0 + rpd + hamlet_rp), "rp after the hour = 97 + %.1f + %d: %.1f" % [rpd, int(hamlet_rp), float(c.rp)])
 	check(c.level == 1 and int(c.stats["pop"]) == 51, "still «Хутор»: pop %d, level %d" % [int(c.stats["pop"]), c.level])
@@ -221,14 +229,14 @@ func _checks() -> void:
 	c.sim_day()
 	rpd = float(c.stats["rp_day"])
 	check(c.goals_done.has("scriptorium2"), "«Второй скрипторий» done")
-	check(is_equal_approx(rpd, 6.5), "rp/h with 2 scriptoria = 2×2 + 2.5: %.2f" % rpd)
+	check(is_equal_approx(rpd, 6.5 * hamlet_mult), "rp/h with 2 scriptoria: %.2f, expected %.2f" % [rpd, 6.5 * hamlet_mult])
 	c.research["scribes1"] = true
 	c.sim_day()
 	rpd = float(c.stats["rp_day"])
-	check(is_equal_approx(c.rp_per_hour("scriptorium"), 3.0) and is_equal_approx(rpd, 8.5),
-		"«Ученики писцов»: %.1f per scriptorium, %.2f/h (2×3 + 2.5)" % [c.rp_per_hour("scriptorium"), rpd])
+	check(is_equal_approx(c.rp_per_hour("scriptorium"), 3.0 * hamlet_mult) and is_equal_approx(rpd, 8.5 * hamlet_mult),
+		"«Ученики писцов»: %.1f per scriptorium, %.2f/h (expected %.2f)" % [c.rp_per_hour("scriptorium"), rpd, 8.5 * hamlet_mult])
 	c.research["scribes2"] = true
-	check(is_equal_approx(c.rp_per_hour("scriptorium"), 4.0), "«Мастерская писцов»: %.1f per scriptorium" % c.rp_per_hour("scriptorium"))
+	check(is_equal_approx(c.rp_per_hour("scriptorium"), 4.0 * hamlet_mult), "«Мастерская писцов»: %.1f per scriptorium" % c.rp_per_hour("scriptorium"))
 	var mx := []
 	for lv in Defs.LEVELS.size():
 		c.level = lv
@@ -237,6 +245,9 @@ func _checks() -> void:
 	check(mx == [1, 2, 3, 4, 5, 6, 8, 10], "scriptorium cap by level: %s" % [mx])
 	check(int(K["ARRIVE_FREE"]) == 7 and float(K["ARRIVE_EVERY"][0]) == 2.0 and int(Defs.LEVELS[1]["pop"]) == 20 and int(Defs.LEVELS[2]["pop"]) == 60,
 		"arrivals: 7 free families, cart every 2 h; ranks 20 / 60")
+	# Остальные проверки используют условия рангов и повозки старого сохранения.
+	c.cozy_v = 0
+	c.wants_v = 0
 	await _checks_1a(houses)
 	print("PACE CHECKS fails=%d" % fails)
 

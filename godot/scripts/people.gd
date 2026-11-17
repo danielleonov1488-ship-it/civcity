@@ -2181,15 +2181,11 @@ func _seat_target(r: Dictionary, b: Dictionary) -> Dictionary:
 		var s: Array = seats[k]
 		var w: Vector3 = xf * (s[0] as Vector3)
 		var yaw := float(b["yaw"]) + float(s[1])
-		# лицом к стене или к постройке не садятся: у скамьи без спинки — на другую сторону, у скамьи со спинкой — не сюда
+		# Садятся только лицом вперёд; если там стена, выбирают другую скамью.
 		var mw: Vector3 = xf * (s[3] as Vector3) if s.size() > 3 else w
-		var f := Vector2(w.x - mw.x, w.z - mw.z).normalized()
-		if f != Vector2.ZERO and not _front_free(Vector2(mw.x, mw.z), f, int(b["id"])):
-			if s.size() > 4 and bool(s[4]) and _front_free(Vector2(mw.x, mw.z), -f, int(b["id"])):
-				w = mw - (w - mw)
-				yaw += PI
-			else:
-				continue
+		var front := Vector2(sin(yaw), cos(yaw))
+		if not _front_free(Vector2(mw.x, mw.z), front, int(b["id"])):
+			continue
 		return {"act": "sit", "bid": b["id"], "k": k, "p": Vector2(w.x, w.z), "yaw": yaw, "seat": float(s[2])}
 	return {}
 

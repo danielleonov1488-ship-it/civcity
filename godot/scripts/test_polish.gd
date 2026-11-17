@@ -590,49 +590,18 @@ func _clear_edge_new() -> void:
 		c.remove(h, false)
 		return
 	c.compute()
-	var ids: Array = c.upgrade_decor_blockers(h)
-	var cl1 := String(Defs.B[c.upgrade_to(h)]["cls"])
-	var need := int(Defs.UPGRADE_HAPPY.get(cl1, 65))
-	# нужды класса — есть; счастье без колодца — ровно target (с ним — больше на его очки)
-	var prep := func(target: int) -> void:
-		for n in Defs.CLASSES[cl1]["needs"]:
-			h["needs"][n] = true
-		h["missing"] = []
-		(h["happy_parts"] as Array).append(["проба", target - c.upgrade_happy_without(h, ids)])
-	prep.call(need - 1)
-	var drop := c.upgrade_happy(h) - c.upgrade_happy_without(h, ids)
-	var m0 := c.money
-	var why := c.can_upgrade_clearing(h)
-	check(drop >= 1 and c.can_upgrade(h, false) == c.upgrade_room(h) and why.begins_with("Без украшений позади"),
-		"с колодцем %d%%, без него %d%% (нужно %d%%): «%s»" % [c.upgrade_happy(h), c.upgrade_happy_without(h, ids), need, why])
-	var ok := c.upgrade_clearing(h)
-	check(not ok and c.buildings.has(int(well["id"])) and String(h["type"]) == "house_pleb" and is_equal_approx(c.money, m0), "на грани — колодец на месте, дом тот же, деньги те же")
-	game.upg_decor = true
-	var sets: Dictionary = Cover.upgrade_sets(c, true)
-	check(not (sets["ready"] as Array).has(int(h["id"])) and not (sets["short"] as Array).has(int(h["id"])), "с галочкой дом на грани — не в готовых (без зелёной подсветки)")
-	game.select_building(h)
-	hud.open_info(h)
-	await frames(3)
-	var card := _labels(hud.info_box)
-	check(card.contains("Но без них счастье после перестройки упадёт до %d%%" % (need - 1)), "карточка: кнопка сноса предупреждает про счастье")
-	game.rig.set_view(Vector3((h["pos"] as Vector2).x, Land.BASE_Y, (h["pos"] as Vector2).y), 30, 48, 26)
-	await frames(30)
-	await shot("pol_clear_edge_card.png")
-	hud._hide_info()
-	game.select_building({})
-	# прогноз «можно» (с запасом): подпись обещает счастье без колодца; а пересчёт без него — нет (нужд у дома нет): не сносим
-	c.compute()
-	h["pop"] = 2
-	prep.call(need + 5)
-	var ln: Array = game._upg_lines(h, c.can_upgrade_clearing(h, false))
-	check(String(ln[0]).contains("счастье станет %d%%" % (need + 5)) and String(ln[0]).contains("украшения позади уберём"), "подпись у курсора — счастье без колодца: «%s»" % ln[0])
-	m0 = c.money
-	ok = c.upgrade_clearing(h)
-	check(not ok and c.buildings.has(int(well["id"])) and String(h["type"]) == "house_pleb" and is_equal_approx(c.money, m0) and land.occ[(well["cells"] as PackedInt32Array)[0]] == int(well["id"]),
-		"проба без колодца не прошла — колодец на месте, клетки его, деньги те же")
+	var price := c.upgrade_price(h)
+	var refund := c.upgrade_decor_refund(h)
+	h["happy"] = 10
+	h["happy_target"] = 10
+	var before := c.money
+	check(c.can_upgrade_clearing(h) == "", "счастье и нужды не блокируют перестройку со сносом украшений")
+	check(c.upgrade_clearing(h), "дом перестроен при низком счастье")
+	check(String(h["type"]) == "house_artisan" and not c.buildings.has(int(well["id"])) and is_equal_approx(c.money, before - price + refund), "перестройка оплачена, мешающий колодец снесён с возвратом")
+	check(not (h.get("missing", []) as Array).is_empty(), "новый класс показывает недостающие нужды")
 	game.upg_decor = false
-	c.remove(well, false)
 	c.remove(h, false)
+
 
 
 ## Снос мешающих украшений и счастье: они радуют и сам дом. Прогноз «без них» — как пересчёт города, где их правда нет;
@@ -656,28 +625,8 @@ func _clearing_happy(dh: Dictionary, dec: Array) -> void:
 	var occ0 := []
 	for id in dec:
 		occ0.append(Array(c.buildings[id]["cells"]).filter(func(k): return land.occ[k] == int(id)).size())
-	if hp1 > hp0:
-		# на грани: с украшениями прогноз need + (hp1 − hp0) − 1, без них — need − 1
-		(dh["happy_parts"] as Array).append(["проба", need - 1 - hp0])
-		var why_b := c.can_upgrade_clearing(dh)
-		var m0 := c.money
-		var t0 := String(dh["type"])
-		var ok_b := c.upgrade_clearing(dh)
-		check(c.upgrade_happy(dh) >= need and why_b.begins_with("Без украшений позади") and not ok_b and String(dh["type"]) == t0
-			and dec.all(func(i): return c.buildings.has(i)) and is_equal_approx(c.money, m0),
-			"на грани: «%s» — украшения на месте, деньги те же" % why_b)
-		# подпись у курсора с галочкой: обещанное счастье — без них (сама подпись — как если бы на грани не было)
-		(dh["happy_parts"] as Array).pop_back()
-		var mm := c.money
-		c.money = maxf(mm, 1e6)
-		game.upg_decor = true
-		var ln: Array = game._upg_lines(dh, c.can_upgrade_clearing(dh, false))
-		game.upg_decor = false
-		c.money = mm
-		check(ln[0] == "" or String(ln[0]).contains("счастье станет %d%%" % clampi(hp0, 0, 100)), "подпись у курсора — счастье без них (%d%%): «%s»" % [hp0, ln[0]])
-		c.compute()
-	else:
-		print("POL NOTE украшения позади дома %d счастья не прибавляют — грань не проверяем" % int(dh["id"]))
+	# Низкое счастье больше не мешает пробе. Проба возвращает все постройки.
+	check(c._upgrade_try_without(dh, dec), "перестройка без украшений разрешена независимо от счастья")
 	# проба сноса: ни одной постройки не пропало, клетки снова заняты ими
 	var cm0 = dh.get("coming", 0)
 	dh["coming"] = 1
@@ -686,7 +635,7 @@ func _clearing_happy(dh: Dictionary, dec: Array) -> void:
 	var occ1 := []
 	for id in dec:
 		occ1.append(Array(c.buildings[id]["cells"]).filter(func(k): return land.occ[k] == int(id)).size() if c.buildings.has(id) else -1)
-	check(not ok_t and c.buildings.size() == n0 and occ1 == occ0, "проба без украшений (семья ещё идёт — нельзя): город как был, клетки %s" % str(occ1))
+	check(ok_t and c.buildings.size() == n0 and occ1 == occ0, "проба перестройки с идущей семьёй: город и клетки сохранены %s" % str(occ1))
 	c.compute()
 
 

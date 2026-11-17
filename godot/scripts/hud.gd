@@ -1113,6 +1113,18 @@ func _fill_families() -> void:
 			var ci := _cls_pic(f["cls"], 24)
 			ci.position = Vector2(-6, -6)
 			b.add_child(ci)
+		var want_id := String(f.get("want", ""))
+		if want_id != "":
+			var want := TextureRect.new()
+			want.name = "WantIcon"
+			want.texture = MapBadge.want_texture(want_id)
+			want.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			want.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			want.position = Vector2(29, 29)
+			want.size = Vector2(23, 23)
+			want.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			b.add_child(want)
+			b.tooltip_text += "\nХотят: %s" % String(FamilyWant.LOOK[want_id][1])
 		h.add_child(b)
 		now[nm] = true
 		if not _fam_known.has(nm):
@@ -1158,7 +1170,19 @@ func _arrive_advice() -> void:
 
 
 ## Советы о приезжих: первая семья; семья, которой негде жить
+## Первый совет ждёт окончания обучения; желание берём из реально приехавшей семьи.
+func _want_advice() -> bool:
+	var c: City = game.city
+	if game.mode in ["demo", "menu"] or tutorial_busy() or c.tips.has("want_advice") or not c.tips.has("want_arrived"):
+		return false
+	var id := String(c.tips["want_arrived"])
+	c.tips["want_advice"] = true
+	advisor("Желание семьи", FamilyWant.advice(id), Callable(), true, false, {"want_icon": id})
+	return true
+
+
 func on_arrival(f: Dictionary) -> void:
+	_want_advice()
 	var c: City = game.city
 	if game.mode == "demo" or tutorial_busy():
 		return
@@ -1359,6 +1383,7 @@ func _hover_tick() -> void:
 
 func _tip_head(v: Control, icon: Variant, text: String) -> void:
 	var h := HBoxContainer.new()
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_theme_constant_override("separation", 7)
 	h.add_child(icon if icon is Control else _icon(String(icon), 28))
 	var l := _label(text, 20, false, C_INK, font_title)
@@ -1374,6 +1399,7 @@ func _tip_text(v: Control, text: String, col := C_SOFT, size := 15, bold := fals
 ## Строка подсказки: значок · подпись · значение; ok = 1 / 0 — галочка или крестик в конце
 func _tip_row(v: Control, icon: Variant, text: String, val: String, col := C_INK, ok := -1) -> void:
 	var h := HBoxContainer.new()
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_theme_constant_override("separation", 6)
 	h.custom_minimum_size = Vector2(TIP_W, 0)
 	if icon is Control:
@@ -4241,11 +4267,15 @@ func _fill_tool_panel_body() -> void:
 			n = (us["ready"] as Array).size() + (us["short"] as Array).size()
 		tool_title.text = "Перестроить · готовы домов: %d" % n
 		tool_err.text = ""
-		tool_keys.text = "Щёлкните по дому с двойной стрелкой — он станет следующим классом: дом плебеев — домом ремесленников, дом ремесленников — городским домусом. Ведите с зажатой кнопкой вдоль улицы — перестроятся все готовые дома под курсором, пока хватает денариев.\nГотов дом, где живут, когда рядом есть всё для нового класса, а счастье после перестройки — от %d%% (домус — от %d%%). Esc или правая кнопка — выход." % [int(Defs.UPGRADE_HAPPY["artisans"]), int(Defs.UPGRADE_HAPPY["patricians"])]
+		tool_keys.text = "Щёлкните по дому или ведите мышью вдоль улицы — класс станет выше.\nНужны исследование, денарии и место. Esc — выход."
 		if not c.research.has("artisans"):
 			tool_err.text = "Перестройку откроет исследование «%s» (уровень «%s»)" % [Defs.research("artisans")["name"], Defs.LEVELS[int(Defs.research("artisans")["lvl"])]["name"]]
 		elif n == 0:
 			tool_err.text = "Пока ни один дом не готов: наведите на дом — у курсора будет написано, чего ему не хватает"
+		return
+	if t == "story_zone":
+		tool_title.text = "Место задания"
+		tool_keys.text = "Щёлкните по земле, чтобы поставить круг.\nEsc или правая кнопка — отмена."
 		return
 	if t == "settle":
 		var f: Dictionary = game.settle_fam
@@ -5449,7 +5479,7 @@ func _fill_house_short(b: Dictionary, d: Dictionary, cw: float, hp: int) -> void
 	var cl: String = d["cls"]
 	var cls: Dictionary = Defs.CLASSES[cl]
 	if hp < 25 and int(b["pop"]) > 0:
-		info_box.add_child(_wrap(_label("Счастье ниже 25% — семьи скоро начнут уезжать!", 14, true, C_BAD), cw))
+		info_box.add_child(_wrap(_label("Ниже 25% двое суток — одна семья переедет.", 14, true, C_BAD), cw))
 	var needs := VBoxContainer.new()
 	needs.add_theme_constant_override("separation", 3)
 	info_box.add_child(needs)
@@ -5574,7 +5604,7 @@ func _family_rows(b: Dictionary, box: VBoxContainer, width: float, details: bool
 		preference.mouse_filter = Control.MOUSE_FILTER_PASS
 		preference.tooltip_text = FamilyPreference.tooltip(c, b, f)
 		# старые семьи без желания (до CITY5a) — значка нет: прежняя «черта» показывала кошку (владелец: кошки — странное желание)
-		preference.visible = f.has("want")
+		preference.visible = String(f.get("want", "")) != ""
 		family.add_child(title)
 		var heads := HFlowContainer.new()
 		heads.name = "Members"
@@ -5830,15 +5860,8 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 	var rows := []
 	var res_ok := c.unlocked(nt)
 	rows.append([res_ok, "Изучен «%s»" % Defs.research(String(nd.get("unlock", "")))["name"]])
-	var miss := c.upgrade_missing(b)
-	var needs := []
-	for n in Defs.needs_for(cl1, c.level):
-		needs.append(String(Defs.NEEDS[n]["name"]).to_lower())
-	rows.append([miss.is_empty(), ("Рядом есть всё для класса: " + ", ".join(needs)) if miss.is_empty() else "Не хватает: " + ", ".join(miss)])
-	var need := int(Defs.UPGRADE_HAPPY.get(cl1, 65))
 	var hp := c.upgrade_happy(b)
-	var res := " (запас +%d в счёт)" % (int(b["happy"]) - 100) if int(b["happy"]) > 100 else ""
-	rows.append([hp >= need, "Счастье после перестройки: %d%% — нужно от %d%%%s" % [clampi(hp, 0, 100), need, res]])
+	rows.append([true, "Счастье после перестройки: %d%%" % clampi(hp, 0, 100)])
 	# место позади — когда класс изучен (до того check_place клетки не смотрит); текст — тот же, что у кнопки
 	var room := ""
 	if res_ok:
@@ -5870,10 +5893,6 @@ func _upgrade_rows(b: Dictionary, cw: float) -> void:
 		db.custom_minimum_size = Vector2(cw, 40)
 		db.clip_text = true
 		db.tooltip_text = "Украшения за домом уберут, половина их цены вернётся в казну — дому хватит места"
-		var hp2 := c.upgrade_happy_without(b, dec)
-		if hp >= need and hp2 < need:
-			# они же и радуют дом: без них перестройка не выйдет — сказать до сноса
-			info_box.add_child(_wrap(_label("Но без них счастье после перестройки упадёт до %d%% — нужно от %d%%" % [clampi(hp2, 0, 100), need], 13, false, C_BAD), cw))
 		db.pressed.connect(func():
 			for id in dec:
 				if c.buildings.has(id):
@@ -6181,7 +6200,7 @@ func advisor(title: String, text: String, skip := Callable(), force := false, co
 			return
 	_advisor_layout(corner)
 	adv_title.text = title
-	adv_text.text = _short_advice(text)
+	adv_text.text = I18n.t(text) if target.has("want_icon") else _short_advice(text)
 	adv_text.tooltip_text = ""
 	adv_skip.text = "Пропустить обучение"
 	adv_ok.text = "Понятно"
@@ -6194,7 +6213,21 @@ func advisor(title: String, text: String, skip := Callable(), force := false, co
 			_adv_target = {"kind": "rank"}
 		elif title == StoryDefs.ADV_LEGION or title == "Лагерь открыт":
 			_adv_target = {"kind": "legion"}
-	adv_show.visible = not _adv_target.is_empty()
+	adv_show.visible = _adv_target.has("kind")
+	var want_icon := advisor_panel.find_child("WantAdviceIcon", true, false) as TextureRect
+	if want_icon == null:
+		want_icon = TextureRect.new()
+		want_icon.name = "WantAdviceIcon"
+		want_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		want_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		want_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		adv_face.add_child(want_icon)
+	want_icon.custom_minimum_size = Vector2(32, 32)
+	want_icon.position = Vector2(34, 34)
+	want_icon.size = Vector2(32, 32)
+	want_icon.visible = target.has("want_icon")
+	if want_icon.visible:
+		want_icon.texture = MapBadge.want_texture(String(target["want_icon"]))
 	advisor_panel.show()
 	_refit(advisor_panel)
 
@@ -7745,7 +7778,7 @@ func upgrade_tip(by_player := false) -> void:
 	if c.tips.has("upgrade_tool") or not c.research.has("artisans") or not _tip_free(not by_player):
 		return
 	c.tips["upgrade_tool"] = true
-	advisor("Перестроить дом", "Дом плебеев можно перестроить в дом ремесленников, а дом ремесленников — в городской домус патрициев. Сам дом никогда не растёт — только когда вы этого захотите: кнопка «Перестроить» справа внизу (или Shift+U). Над готовыми домами — двойная стрелка с ценой: медная — станет домом ремесленников, лиловая — домусом. Щёлкните по такому дому или ведите мышью вдоль улицы.\n\nГотов дом, где живут, когда рядом есть всё, что нужно новому классу, и счастье в нём после перестройки будет не ниже %d%% (для домуса — %d%%). Запас счастья выше 100%% тоже идёт в счёт. Семья остаётся и становится новым классом; если мест станет меньше, чем жильцов, — тесновато, но никто не уедет. Наведите на дом без стрелки — у курсора будет написано, чего ему не хватает." % [int(Defs.UPGRADE_HAPPY["artisans"]), int(Defs.UPGRADE_HAPPY["patricians"])], Callable(), by_player)
+	advisor("Перестроить дом", "Выберите «Перестроить» и щёлкните по дому — его класс станет выше.\nНужны исследование, денарии и место; недостающие нужды появятся в карточке.", Callable(), by_player)
 
 
 ## Советник один раз (tips.floor_tool): этажи — инструментом «Этаж», без карточки каждого дома
@@ -7800,6 +7833,14 @@ func _once_tips() -> void:
 	var c: City = game.city
 	if not _tip_free():
 		return
+	if _want_advice():
+		return
+	if not c.tips.has("unhappy_penalty"):
+		for h: Dictionary in c.buildings.values():
+			if c.is_house(h) and c.unhappy_badge(h):
+				c.tips["unhappy_penalty"] = true
+				advisor("Когда дома неуютно", "Ниже 40% счастья жители работают и платят налоги вполовину.\nЕсли счастье ниже 25% двое суток, одна семья переедет.", Callable(), true)
+				return
 	if c.unpaid_h > 0 and not c.tips.has("unpaid_tip"):
 		c.tips["unpaid_tip"] = true
 		advisor("Казна пуста", unpaid_advice())   # казна в минус не уходит: один раз — что случилось и как поправить
@@ -8336,7 +8377,10 @@ func _update_world_icons() -> void:
 		var warn := true
 		var price := ""
 		var tip := ""
-		if not bool(b.get("road", true)):
+		if c.is_house(b) and c.unhappy_badge(b):
+			icon = "house_problem"
+			tip = "Счастье ниже 40%: труд и налоги вполовину"
+		elif not bool(b.get("road", true)):
 			icon = "road"
 			tip = "Нет дороги — постройте дорогу ко входу"
 		elif c.job_max(b) > 0 and (c.hired_of(b) == 0 or float(b.get("staff", 0.0)) <= 0.0):
@@ -8345,11 +8389,11 @@ func _update_world_icons() -> void:
 		elif c.is_house(b):
 			var red := []
 			for n: String in Defs.needs_for(String(d["cls"]), c.level):
-				if int(b.get("need_coverage", {}).get(n, 0)) < 34:
+				if int(b.get("need_coverage", {}).get(n, 0)) < 100:
 					red.append(Defs.NEEDS[n]["name"])
-			if (c.unhappy_badge(b) if c.wants_v >= 1 else not red.is_empty() and int(b["pop"]) + int(b.get("coming", 0)) > 0):
+			if c.unhappy_badge(b) or (not red.is_empty() and String(d["cls"]) in ["artisans", "patricians"] and int(b["pop"]) > 0):
 				icon = "house_problem"
-				tip = "Жителям грустно уже 3 часа" if red.is_empty() else "Жителям не хватает: %s" % ", ".join(red)
+				tip = "Счастье ниже 40%: труд и налоги вполовину" if red.is_empty() else "Жителям не хватает: %s" % ", ".join(red)
 
 		# У станции остаются только значки ожидающих групп из _family_badges.
 		# Пауза прибытия видна и меняется в карточке станции.
@@ -8474,7 +8518,7 @@ func _family_badges() -> void:
 			var p: MapBadge = badges[key]["n"]
 			var pref: Array = FamilyPreference.look(f)
 			var old_size := p.size
-			p.family(String(f["cls"]), String(f.get("want", pref[0])))
+			p.family(String(f["cls"]), String(f.get("want", "")))
 			if old_size != p.size:
 				_badges_dirty = true
 			var cls: String = Defs.CLASSES[f["cls"]]["name"]

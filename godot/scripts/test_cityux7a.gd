@@ -59,9 +59,10 @@ func text_in(node: Node) -> String:
 
 func move_to(node: Control) -> void:
 	var event := InputEventMouseMotion.new()
-	event.position = node.get_global_rect().get_center()
+	event.position = node.get_viewport().get_final_transform() * (node.get_global_transform_with_canvas() * (node.size * 0.5))
 	event.global_position = event.position
 	Input.parse_input_event(event)
+	Input.flush_buffered_events()
 	await frames(3)
 
 
@@ -243,14 +244,16 @@ func _build_menus() -> void:
 
 
 func _top_tooltips() -> void:
+	hud._close_tray()
 	hud.refresh()
+	await frames()
 	var flow := city.projected_finance()
 	check(is_equal_approx(float(flow["income"]) - float(flow["expense"]), city.projected_net()), "money breakdown equals net")
 	await move_to(hud.hover_money)
 	var money := text_in(hud.hover_box)
-	check(hud.hover_tip.visible and money.contains("Налоги") and money.contains("Лавки") and money.contains("Туристы") and money.contains("Содержание") and money.contains("Жалованье") and money.contains("Казна вмещает"), "money hover breakdown and cap")
+	check(hud.hover_src == hud.hover_money and hud.hover_tip.visible and money.contains("Налоги") and money.contains("Лавки") and money.contains("Туристы") and money.contains("Содержание") and money.contains("Жалованье") and money.contains("Казна вмещает"), "money hover breakdown and cap")
 	await shot("06_money_breakdown.png")
 	await move_to(hud.hover_rp)
 	var rp := text_in(hud.hover_box)
-	check(hud.hover_tip.visible and rp.contains("Почта") and rp.contains("Скриптории") and rp.contains("Школы") and rp.contains("Полки вмещают"), "research hover breakdown and shelf cap")
+	check(hud.hover_src == hud.hover_rp and hud.hover_tip.visible and rp.contains("Почта") and rp.contains("Скриптории") and rp.contains("Школы") and rp.contains("Полки вмещают"), "research hover breakdown and shelf cap")
 	await shot("07_research_breakdown.png")

@@ -46,7 +46,7 @@ func squares() -> Array:
 		elif (st._goal_kind(a) == "square" or bool(a.get("ready", false))) and not a.has("homeless") \
 				and city.buildings.has(int(a.get("home", -1))):
 			# строят — у дома просящего; дом снесли (семья без дома) — стариков нет (а не у станции)
-			out.append({"c": st._home_pos(a), "r": r})
+			out.append({"c": st._hp(a), "r": r})
 	var e: Dictionary = (S["done"] as Dictionary).get("square", {})
 	var sq: Array = (e.get("flags", {}) as Dictionary).get("sq", [])
 	if sq.size() == 2:

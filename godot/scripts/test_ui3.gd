@@ -150,7 +150,8 @@ func _run() -> void:
 	(parts.get_child(0) as Button).pressed.emit()
 	await frames(8)
 	var query: LineEdit = hud.stats_panel.find_child("q", true, false)
-	if not check(query.text == String(active["census"]["name"]) and hud.people_filter == "" and hud.pointer_target == hud.people_target and hud.pointer.visible, "name filter, highlighted row and arrow"):
+	if not check(query != null and query.is_visible_in_tree() and query.text == String(active["census"]["name"]) and hud.people_filter == ""
+		and is_instance_valid(hud.people_target) and hud.pointer_target == hud.people_target and hud.pointer.visible, "name filter, highlighted row and arrow"):
 		return
 	if not check(not bool(active["flags"].get("c_person", false)), "opening list does not complete step"):
 		return

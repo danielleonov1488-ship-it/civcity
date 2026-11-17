@@ -431,9 +431,9 @@ func _row(box: Control, info: Dictionary, gold: bool, on_part: Callable) -> void
 		return
 	var pc := PanelContainer.new()
 	pc.name = "story_row" if gold else "order_row"
-	var sb: StyleBox = hud._box_pill(10, 6, "g_btn_on") if gold else hud._box_pill(10, 6)
+	var sb: StyleBox = CityStyle.panel(12, 10)
 	if not gold:
-		(sb as StyleBoxTexture).modulate_color = Color(1, 1, 1, 0.55)
+		(sb as StyleBoxFlat).bg_color = Color(CityStyle.CREAM, 0.8)
 	pc.add_theme_stylebox_override("panel", sb)
 	pc.mouse_filter = Control.MOUSE_FILTER_PASS
 	pc.tooltip_text = String(info.get("tip", ""))
@@ -447,7 +447,7 @@ func _row(box: Control, info: Dictionary, gold: bool, on_part: Callable) -> void
 	med.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	med.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	med.add_theme_stylebox_override("panel", hud._medal("medal_on", 44))
-	var ic: TextureRect = hud._icon(String(info.get("icon", "scroll")), 28, hud.C_INK)
+	var ic: TextureRect = CityStyle.pictogram(String(info.get("icon", "scroll")), 28)
 	ic.position = Vector2(8, 8)
 	med.add_child(ic)
 	if bool(info.get("waiting", false)):
@@ -477,7 +477,12 @@ func _row(box: Control, info: Dictionary, gold: bool, on_part: Callable) -> void
 		for p: Dictionary in parts:
 			var ok := bool(p.get("ok", false))
 			var b := Button.new()
-			b.text = ("✓ " if ok else "· ") + String(p.get("text", ""))
+			b.text = String(p.get("text", ""))
+			b.icon = CityStyle.icon(String(p.get("icon", "check")))
+			b.expand_icon = true
+			b.add_theme_constant_override("icon_max_width", 18)
+			b.add_theme_color_override("icon_normal_color", CityStyle.OLIVE)
+			b.add_theme_color_override("icon_hover_color", CityStyle.OLIVE)
 			b.flat = true
 			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -493,7 +498,7 @@ func _row(box: Control, info: Dictionary, gold: bool, on_part: Callable) -> void
 			var e := StyleBoxEmpty.new()
 			for s in ["normal", "hover", "pressed", "focus", "disabled"]:
 				b.add_theme_stylebox_override(s, e)
-			var can := not ok and not (p.get("do", {}) as Dictionary).is_empty()
+			var can := not (p.get("do", {}) as Dictionary).is_empty()
 			b.disabled = not can
 			b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if can else Control.CURSOR_ARROW
 			if can:
@@ -504,8 +509,9 @@ func _row(box: Control, info: Dictionary, gold: bool, on_part: Callable) -> void
 		v.add_child(pv)
 	var btns: Array = info.get("buttons", [])
 	if not btns.is_empty():
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
+		var row := HFlowContainer.new()
+		row.add_theme_constant_override("h_separation", 6)
+		row.add_theme_constant_override("v_separation", 4)
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		for bd: Array in btns:
 			var b := Button.new()
