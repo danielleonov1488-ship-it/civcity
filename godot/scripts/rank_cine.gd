@@ -655,29 +655,18 @@ func _advise(to: int) -> void:
 	var tut = game.tutorial
 	if tut != null and tut.active():
 		return
-	var t := ""
-	var mx: Array = Defs.B["scriptorium"].get("max", [])
-	if not mx.is_empty():
-		var n := int(mx[mini(to, mx.size() - 1)])
-		if ORD.has(n) and n > int(mx[mini(to - 1, mx.size() - 1)]):
-			t += "Теперь можно поставить %s скрипторий — исследования пойдут быстрее. " % ORD[n]
 	var names := []
 	for id in PICK:
 		for r in Defs.RESEARCH:
 			if r["id"] == id and int(r["lvl"]) == to:
-				names.append("«%s»" % r["name"])
+				names.append("«%s»" % I18n.t(String(r["name"])))
 	for r in Defs.RESEARCH:
-		if names.size() >= 3:
+		if names.size() >= 2:
 			break
 		if int(r["lvl"]) == to and not (r["id"] in PICK) and Defs.story_of(r) == "":
-			names.append("«%s»" % r["name"])
+			names.append("«%s»" % I18n.t(String(r["name"])))
+	var t := I18n.t("Открылись новые исследования.")
 	if not names.is_empty():
-		t += "В свитке исследований вверху справа открылись %s и другие." % ", ".join(names)
-	var nx: Dictionary = Defs.LEVELS[to + 1]
-	var need: String = game.city.rank_text(to + 1)
-	if to == 1:
-		t += "\n\nСледующий уровень — «%s»: нужно %s." % [nx["name"], need]
-	else:
-		t += "\n\nДальше город растёт спокойнее: следующий уровень — «%s», ему нужно %s." % [nx["name"], need]
-	t += " Когда всё будет готово, под табличкой города снова появится кнопка «Перейти на новый уровень»."
+		t = I18n.t("Открылись исследования: %s.") % ", ".join(names.slice(0, 2))
+	t += " " + I18n.t("Условия следующего уровня — в табличке города слева вверху.")
 	hud.advisor("Город стал %s!" % AS_NAME[to], t)
