@@ -2,7 +2,7 @@ extends Node3D
 ## Таймеры и четыре кадра форта. Запускает владелец проверки.
 
 const Fixture = preload("res://scripts/test_fort_fixture.gd")
-var out := "D:/CivCity/.work/stage5/fort6/shots/"
+var out := "D:/CivCity/.work/stage6/legion7a2/shots/fort6/"
 var fails := 0
 var logic_only := false
 var saved_clock := -1.0
@@ -31,7 +31,7 @@ func _ready() -> void:
 	_timers()
 	_timer_paths()
 	_instant()
-	_city_speed()
+	_separate_money()
 	_formatting()
 	if logic_only or fails > 0:
 		_finish()
@@ -52,6 +52,7 @@ func town() -> City:
 	c.level = Defs.LEVELS.size() - 1
 	c.money = 1e12
 	c.legion.army_tick()
+	c.legion.fort["money"] = 1e12
 	c.legion.mats = {"iron": 1e9, "wood": 1e9, "leather": 1e9}
 	c.legion.glory = 1e9
 	c.legion.ingots = 10000
@@ -127,44 +128,56 @@ func _instant() -> void:
 	p["up"] = {}
 	var quote := lg.fort_instant_info(id)
 	check(int(quote["price"]) == 121, "fresh seven-day upgrade price")
-	var money := c.money
+	var money := lg.city_money()
 	var cost := float(Legion.fort_cost("kitchen", 12)["money"])
 	if check(lg.fort_instant(id, quote), "fresh instant succeeds"):
 		check(int(p["lv"]) == 12 and lg.ingots == 10000 - 121
-			and is_equal_approx(c.money, money - cost), "fresh instant pays both costs once")
+			and is_equal_approx(lg.city_money(), money - cost), "fresh instant pays both costs once")
 	var ingots := lg.ingots
 	check(not lg.fort_instant(id, quote) and lg.ingots == ingots, "stale quote cannot buy next level")
 	p["up"] = {"to": 13, "end": Legion.now() + 86400.0, "total": 86400.0}
 	lg.ingots = 45
-	check(not lg.fort_instant(id) and lg.ingots == 45 and c.money == money - cost, "insufficient ingots never debit")
+	check(not lg.fort_instant(id) and lg.ingots == 45 and lg.city_money() == money - cost, "insufficient ingots never debit")
 	lg.ingots = 1000
-	money = c.money
+	money = lg.city_money()
 	if check(lg.fort_instant(id), "active instant succeeds"):
-		check(int(p["lv"]) == 13 and lg.ingots == 954 and c.money == money, "active instant only pays ingots")
+		check(int(p["lv"]) == 13 and lg.ingots == 954 and lg.city_money() == money, "active instant only pays ingots")
 	p["up"] = {"to": 14, "end": Legion.now(), "total": 86400.0}
 	check(not lg.fort_instant(id) and lg.ingots == 954 and int(p["lv"]) == 14, "expired timer finishes without buying next level")
 	lg.fort["up"] = {"to": 1, "end": Legion.now() + 604800.0, "total": 604800.0}
 	check(int(lg.fort_instant_info(0)["price"]) == 121, "HQ expansion instant uses same formula")
 
 
-func _city_speed() -> void:
+func _separate_money() -> void:
 	var c := town()
 	var lg: Legion = c.legion
 	Fixture.set_level(lg, "hq", 12)
 	Fixture.set_level(lg, "kitchen", 11)
 	var id := int(lg.fort_slot_plot("kitchen")["id"])
-	if not check(lg.fort_upgrade(id), "speed fixture starts seven-day upgrade"):
+	if not check(lg.fort_upgrade(id), "separate money fixture starts seven-day upgrade"):
 		return
-	var key := "fort_%d" % id
-	var info := lg.speed_info(key)
-	check(float(info["seconds"]) == 1800.0 and int(info["price"]) == 865, "city speed price remains proportional to hours left")
-	var end := float(lg.fort_plot(id)["up"]["end"])
+	var timer: Dictionary = lg.fort_plot(id)["up"].duplicate(true)
 	var money := c.money
-	check(lg.speed_up(key) and float(lg.fort_plot(id)["up"]["end"]) == end - 1800.0
-		and c.money == money - 865.0, "city money removes only thirty minutes")
-	for i in 3:
-		check(lg.speed_up(key), "daily speed allowance %d" % i)
-	check(lg.speed_remaining() == 0.0 and not lg.speed_up(key), "shared city speed cap stays two hours")
+	lg.fort["money"] = 0.0
+	lg.tick()
+	check(lg.fort_plot(id)["up"] == timer and c.money == money and lg.city_money() == 0.0,
+		"rich city cannot fund or shorten a Legion timer")
+	c.money = 0.0
+	c.day += 1
+	lg.tick()
+	check(lg.fort_plot(id)["up"] == timer and lg.city_money() == 0.0,
+		"city balance and day do not change Legion timers")
+	check(not lg.has_method("speed_up") and not lg.has_method("speed_info")
+		and not lg.has_method("speed_remaining"), "paid money speed-up removed")
+	var saved: Dictionary = JSON.parse_string(JSON.stringify(lg.to_dict()))
+	saved["speed_day"] = c.day
+	saved["speed_used"] = 7200.0
+	var copy := town()
+	copy.legion.from_dict(saved)
+	var loaded := copy.legion.to_dict()
+	check(copy.legion.fort_plot(id)["up"] == timer and copy.legion.city_money() == 0.0,
+		"old speed quota loads without changing timer or Legion money")
+	check(not loaded.has("speed_day") and not loaded.has("speed_used"), "obsolete speed quota is no longer saved")
 
 
 func _formatting() -> void:
@@ -227,6 +240,7 @@ func _screens() -> void:
 	lg.flags["camp_told"] = true
 	lg.flags["camp3d_guide"] = 4
 	lg.army_tick()
+	lg.fort["money"] = 1e12
 	lg.mats = {"iron": 1e9, "wood": 1e9, "leather": 1e9}
 	lg.glory = 1e9
 	lg.ingots = 1000
@@ -247,6 +261,7 @@ func _screens() -> void:
 		return
 	camp._refresh()
 	check(camp.upgrade_timer.visible and camp.upgrade_timer.text == "7 д", "room running timer shows days")
+	check(camp.card.find_child("FortSpeedAction", true, false) == null, "room has no paid money speed-up")
 	var marker: Dictionary = camp.plot_markers[id]
 	check((marker["button"] as Button).tooltip_text.contains("7 д"), "builder marker HUD uses days")
 	await shot("2_room_running.png")
@@ -262,6 +277,10 @@ func _screens() -> void:
 	await shot("4_expansion.png")
 	camp.show_expansion("section")
 	check(has_text(camp.modal_panel, "7 д"), "section expansion shows days")
+	camp.show_plot(0)
+	check(camp.card.find_child("FortSpeedAction", true, false) == null, "HQ has no expansion money speed-up")
+	camp.show_hero()
+	check(camp.modal_panel.find_child("FortSpeedAction", true, false) == null, "hero has no paid money speed-up")
 	_finish()
 
 

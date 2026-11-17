@@ -92,6 +92,12 @@ func _run() -> void:
 	lg.camp = {}
 	lg.upg.clear()
 	lg._camp_init()
+	lg.fort["money"] = 1e6
+	lg.fort["smith_knowledge"] = true
+	# Эта фикстура проверяет пять новых производственных комнат.
+	var treasury_fixture := lg.fort_slot_plot("treasury")
+	treasury_fixture["b"] = ""
+	treasury_fixture["lv"] = 0
 	Fixture.set_level(lg, "hq", 3)
 	lg.glory = 10000
 	lg.mats = {"iron": 100.0, "wood": 100.0, "leather": 10.0}
@@ -186,7 +192,7 @@ func _run() -> void:
 	camp._refresh()
 	if not check(camp.main_action.disabled, "full storage disables collection"):
 		return
-	# Кнопка стройки вызывает fort_build, новый участок получает таймер и ускорение.
+	# Кнопка стройки вызывает fort_build, новый участок ждёт таймер.
 	var free_ids: Array[int] = []
 	for plot: Dictionary in lg.fort["plots"]:
 		if int(plot["id"]) > 0 and plot["b"] == "":
@@ -205,17 +211,18 @@ func _run() -> void:
 	Legion.clock = Legion.now() + 1.0e7
 	lg.fort_finish()
 	Legion.clock = clk
-	game.city.money = maxf(game.city.money, 1000000.0)   # казна на стройку лесопилки (прежние шаги её потратили)
+	lg.fort["money"] = maxf(lg.city_money(), 1000000.0)   # казна на стройку лесопилки (прежние шаги её потратили)
 	camp._choose_build("sawmill")
 	if not check(camp.selected_plot == empty and lg.fort_plot(empty)["b"] == "sawmill" and camp.card_ring.visible, "build menu auto-picks free plot"):
 		return
 	if not await shot("6_auto_build.png"):
 		return
-	if not check(lg.speed_info("fort_%d" % empty)["allowed"], "plot speed-up available"):
+	if not check(camp.card.find_child("FortSpeedAction", true, false) == null, "construction has no paid money shortcut"):
 		return
-	lg.speed_up("fort_%d" % empty)
+	Legion.clock = float(lg.fort_plot(empty)["up"]["end"])
+	lg.fort_finish()
 	camp._refresh()
-	if not check((lg.fort_plot(empty)["up"] as Dictionary).is_empty(), "speed-up completes short build"):
+	if not check((lg.fort_plot(empty)["up"] as Dictionary).is_empty(), "timer completes short build"):
 		return
 	if not check(build("tower") >= 0, "fill last expansion plot"):
 		return
@@ -248,11 +255,11 @@ func _run() -> void:
 		return
 	# Бедная казна: цена и доступность обновляются, не только при открытии меню.
 	camp.show_build_menu()
-	city.money = 0
+	lg.fort["money"] = 0.0
 	camp._refresh()
 	if not check((camp.build_cards["tower"]["button"] as Button).disabled, "unaffordable build blocked"):
 		return
-	city.money = 1000000
+	lg.fort["money"] = 1000000.0
 	camp._close_modal()
 	camp.show_stocks()
 	if not check(camp.stock_labels.size() == 3, "warehouse material amounts and caps"):

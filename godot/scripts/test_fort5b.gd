@@ -3,7 +3,7 @@ extends Node3D
 
 const Fixture = preload("res://scripts/test_fort_fixture.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
-var out := "D:/CivCity/.work/stage5/fort5d/shots/"
+var out := "D:/CivCity/.work/stage6/legion7a2/shots/fort5b/"
 var fails := 0
 var game: Game
 var camp: CampUI
@@ -94,6 +94,8 @@ func _run() -> void:
 	lg.flags["camp_told"] = true
 	lg.flags["camp3d_guide"] = 4
 	lg.army_tick()
+	lg.fort["money"] = 125400.0
+	lg.fort["smith_knowledge"] = true
 	for entry: Array in [["hq", 3], ["barracks", 1], ["kitchen", 1], ["forge", 4], ["store", 1]]:
 		Fixture.set_level(lg, String(entry[0]), int(entry[1]))
 	lg.mats = {"iron": 10000.0, "wood": 10000.0, "leather": 10000.0}
@@ -129,7 +131,7 @@ func _run() -> void:
 	check(camp.diorama is FortCutaway, "painted fort stays active")
 	check(camp.chips.get_child_count() == 4 and camp.resource_chips.keys() == ["money", "rations", "glory", "ingots"], "four top resources")
 	check(camp.population_button.icon == Kit.texture("family") and camp.population_button.text.contains(str(lg.fort_population())), "population pill")
-	check(camp.left_column.get_child_count() == 5 and camp.campaign_button.text == "" and camp.build_button.text == "", "icon navigation")
+	_navigation_checks()
 	check(camp.ration_label.text == "%d / %d" % [lg.rations_now(), lg.ration_cap()], "rations are in top HUD")
 	_top_bar_checks("hud")
 	await _guide_checks(1, camp.build_button, "hud/build")
@@ -328,22 +330,39 @@ func _small_window_checks(forge: int, sid: int) -> void:
 
 
 func _fresh_top_bar_checks(tag: String) -> void:
-	var money := game.city.money
+	var money := lg.city_money()
 	var rations := lg.rations
 	var glory := lg.glory
 	var ingots := lg.ingots
-	game.city.money = 1740
+	lg.fort["money"] = 1740.0
 	lg.rations = lg.ration_cap()
 	lg.glory = 0
 	lg.ingots = 0
 	camp._refresh()
 	await frames(3)
 	_top_bar_checks(tag)
-	game.city.money = money
+	lg.fort["money"] = money
 	lg.rations = rations
 	lg.glory = glory
 	lg.ingots = ingots
 	camp._refresh()
+
+
+func _navigation_checks() -> void:
+	var icons: Array[String] = ["map", "tasks", "chest", "collect", "arena", "squad"]
+	if not check(camp.left_column.get_child_count() == icons.size() and camp.build_button.text == "", "icon navigation"):
+		return
+	var buttons: Array[Button] = [camp.campaign_button, camp.daily_button, camp.chest_button,
+		camp.order_button, camp.left_column.get_child(4) as Button, camp.squad_button]
+	for i in icons.size():
+		var button: Button = buttons[i]
+		var picture: TextureRect = button.get_node_or_null("ic") as TextureRect if button != null else null
+		check(button != null and camp.left_column.get_child(i) == button and button.text == ""
+			and not button.tooltip_text.is_empty() and picture != null and picture.texture != null
+			and picture.texture == Kit.texture(icons[i]), "navigation icon and tooltip " + icons[i])
+	check(camp.order_button.name == "FortCityOrder"
+		and camp.order_button.tooltip_text.begins_with(I18n.t("Заказать денарии из города")), "city order tooltip")
+	check(camp.order_ring != null and camp.order_ring.get_parent() == camp.order_button, "city order timer ring")
 
 
 func _top_bar_checks(tag: String) -> void:

@@ -23,11 +23,10 @@ static func build(ui: Variant) -> void:
 	var jobs := []
 	for job: Dictionary in queue:
 		jobs.append([job["kind"], job["tier"], job["total"]])
-	var signature := str([plot_id, room, p["lv"], ui._craft_kind, ui._craft_tier, jobs])
+	var signature := str([plot_id, room, p["lv"], ui._craft_kind, ui._craft_tier, lg.smith_known(), jobs])
 	var cached_v: Variant = ui.get_meta("craft_panel", null)
 	var cached: PanelContainer = cached_v as PanelContainer if is_instance_valid(cached_v) else null   # окно могли уже освободить
 	if is_instance_valid(cached) and is_instance_valid(ui.overlay) and cached.get_parent() == ui.overlay and not ui.overlay.is_queued_for_deletion() and cached.get_meta("signature", "") == signature:
-		CampUI.attach(ui.hud)._refresh_speeds()
 		ui._live = (cached.get_meta("live") as Array).duplicate()
 		for entry: Dictionary in ui._live:
 			if entry.get("kind") == "craft":
@@ -49,6 +48,16 @@ static func build(ui: Variant) -> void:
 		v.remove_child(back)
 		header.add_child(back)
 	v.add_child(header)
+	if not lg.smith_known():
+		v.add_child(Kit.banner_red(I18n.t(Legion.SMITH_LOCK)))
+		v.add_child(CampUI.attach(ui.hud)._cost_icons(Legion.SMITH_KNOWLEDGE_COST))
+		var learn := Kit.button("gold", "tasks", I18n.t("Кузнечное знание"))
+		learn.name = "CraftLearnSmith"
+		learn.pressed.connect(func(): ui.close(); CampUI.attach(ui.hud).show_smith_knowledge())
+		v.add_child(learn)
+		panel.set_meta("live", [])
+		ui._center_later(panel)
+		return
 	var choices := HBoxContainer.new()
 	choices.name = "CraftKinds"
 	choices.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -169,7 +178,6 @@ static func build(ui: Variant) -> void:
 		var entry := {"kind": "craft", "plot": plot_id, "index": i, "label": status, "collect": collect, "ring": ring}
 		ui._live.append(entry)
 		refresh(ui, entry)
-		CampUI.attach(ui.hud)._add_speed(column, "craft_%d_%d" % [plot_id, i])
 	var controls := {"kind": "craft", "plot": plot_id, "index": -1, "label": summary, "start": start, "requirement": requirement, "costs": costs}
 	ui._live.append(controls)
 	refresh(ui, controls)

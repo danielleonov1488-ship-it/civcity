@@ -1734,6 +1734,12 @@ func _show_result() -> void:
 			var gl := _label("Все три звезды в этом бою — +%d Славы!" % int(out["star_glory"]), 16, true, C_GOOD)
 			gl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			v.add_child(gl)
+	if legion.v3() and out.has("camp_chest"):
+		var kind := String(out["camp_chest"])
+		var chest_text := I18n.t("Сундуки заполнены — откройте один в форте.") if kind == "full" else I18n.t("В форте ждёт: %s") % I18n.t(String(Legion.CHEST_NAMES.get(kind, kind)))
+		var chest_label := _label(chest_text, 18, true, C_GOOD)
+		chest_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(chest_label)
 	var chest: Dictionary = out.get("chest", {})
 	if not chest.is_empty():
 		var ct := "Все 30 звёзд «%s»! Сундук Славы +%d." % [String(chest["region"]), int(chest["glory"])]
@@ -1791,6 +1797,7 @@ func _show_result() -> void:
 	if win and not pvp and not nx.is_empty() and not bool(out.get("boss_beaten", false)):
 		var why := legion.can_fight(nx)
 		var nb := _button("Дальше: " + (String(nx["name"]) if bool(nx.get("boss", false)) else "бой %d" % (int(nx["s"]) + 1)), "swords", func(): _again(nx), 0)
+		_ration_button(nb, nx)
 		nb.disabled = why != ""
 		nb.tooltip_text = why
 		bh.add_child(nb)
@@ -1798,6 +1805,7 @@ func _show_result() -> void:
 		var st := legion.stage_info(int(stage["cycle"]), int(stage["r"]), int(stage["s"]))
 		var why2 := legion.can_fight(st)
 		var ab := _button("Ещё раз", "redo", func(): _again(st), 0)
+		_ration_button(ab, st)
 		ab.disabled = why2 != ""
 		ab.tooltip_text = why2
 		bh.add_child(ab)
@@ -1920,7 +1928,9 @@ func _reward_chip(key: String, n: int) -> Control:
 func _again(st: Dictionary) -> void:
 	if legion.can_fight(st) != "":
 		return
-	var s := legion.make_battle(st)
+	var s := legion.prepare_battle(st)
+	if s.is_empty():
+		return
 	_loading(s)
 	fade.modulate.a = 0.0
 	var tw := create_tween()
@@ -2225,3 +2235,11 @@ class WavePip extends Control:
 		draw_circle(c, 6.0, Color("f2c24a") if on else Color(0.55, 0.3, 0.2, 0.9))
 		if boss:
 			draw_colored_polygon(PackedVector2Array([c + Vector2(-5, -6), c + Vector2(-3, -11), c + Vector2(0, -7), c + Vector2(3, -11), c + Vector2(5, -6)]), Color("f2c24a"))
+
+
+func _ration_button(button: Button, st: Dictionary) -> void:
+	if not legion.v3():
+		return
+	button.text += " · %.1f" % legion.ration_cost(st)
+	button.icon = _icon_tex("bread")
+	button.add_theme_color_override("font_disabled_color", C_BAD if legion.rations < legion.ration_cost(st) else C_SOFT)

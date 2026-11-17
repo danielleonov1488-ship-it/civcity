@@ -2061,7 +2061,7 @@ func sim_day() -> void:
 		flow("tour", tour)
 	stats["tour"] = tour
 	var levy := maxf(0.0, income + tour) * clampf(edict_add("legion_denarii"), 0.0, 1.0)
-	magis_treasury += levy
+	levy = legion.receive_money(levy)
 	stats["legion_denarii"] = levy
 	if levy > 0.0:
 		flow("legion", -levy)
@@ -4393,6 +4393,7 @@ func load_data(d: Dictionary) -> void:
 	day = int(d.get("day", 0))
 	level = int(d.get("level", 0))
 	Magis.load_state(self, d)
+	var loaded_treasury: float = magis_treasury  # legion_v временно создаёт форт до чтения сохранения.
 	research = {}
 	for r in d.get("research", []):
 		research[r] = true
@@ -4468,6 +4469,7 @@ func load_data(d: Dictionary) -> void:
 	# старые сохранения: своя земля с начала была 4×4 участка — купленные сверх них (земля загружена раньше города)
 	plots_bought = maxi(0, int(d.get("plots_bought", land.owned.size() - Land.OLD_PLOTS)))
 	_drop_roads2()
+	magis_treasury = loaded_treasury
 	legion.from_dict(d.get("legion", {}))
 	Magis.migrate_gate(self, d)
 	hero = Hero.norm(d.get("hero", {}))           # старые сохранения — героя ещё нет: его создаст игра (Game._hero_check)

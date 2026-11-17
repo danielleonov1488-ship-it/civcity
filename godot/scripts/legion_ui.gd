@@ -300,7 +300,7 @@ func _sig() -> String:
 	if not sel.is_empty():
 		var st := lg.stage_info(int(sel["c"]), int(sel["r"]), int(sel["s"]))
 		a.append(lg.can_fight(st))
-		a.append(lg.food_cost(st) <= game.city.money)
+		a.append(lg.food_cost(st) <= lg.city_money())
 		if Legion.V2:
 			a.append(lg.food_now())
 	return str(a)
@@ -340,8 +340,6 @@ func _process(dt: float) -> void:
 
 ## Таймеры: полоски улучшений, заряды атак. Улучшение дошло — завершаем сразу (не ждём игрового часа)
 func _tick_live() -> void:
-	if lg.v3():
-		CampUI.attach(hud)._refresh_speeds()
 	_odds_poll()
 	if lg.army_on():
 		for m in lg.army_tick():
@@ -744,7 +742,7 @@ func _update_header() -> void:
 	if lbl_glory == null or lg == null:
 		return
 	lbl_glory.text = hud.fmt(floorf(lg.glory))
-	lbl_money.text = hud.fmt(game.city.money)
+	lbl_money.text = hud.fmt(lg.city_money())
 	lbl_rating.text = "Рейтинг %s" % hud.fmt(lg.rating)
 	if daily_chip != null:
 		daily_chip.visible = lg.army_on()
@@ -1023,7 +1021,7 @@ func _cost_row(cost: Dictionary, sz := 16) -> HBoxContainer:
 	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if int(cost.get("money", 0)) > 0:
 		h.add_child(_tr(hud.ico("coins", 64), sz + 6))
-		h.add_child(_l(hud.fmt(float(cost["money"])), sz, true, C_INK if float(cost["money"]) <= game.city.money else C_BAD))
+		h.add_child(_l(hud.fmt(float(cost["money"])), sz, true, C_INK if float(cost["money"]) <= lg.city_money() else C_BAD))
 	if int(cost.get("glory", 0)) > 0:
 		if h.get_child_count() > 0:
 			h.add_child(_gap(6))
@@ -1664,7 +1662,10 @@ func _stage_card(st: Dictionary) -> Control:
 	var fh := HBoxContainer.new()
 	fh.add_theme_constant_override("separation", 5)
 	fh.add_child(_l("Провиант в поход:", 15, true, C_SOFT))
-	if Legion.V2:
+	if lg.v3():
+		fh.add_child(_tr(hud.ico("bread", 64), 22))
+		fh.add_child(_l(I18n.t("Пайки: %.1f · есть %.1f") % [lg.ration_cost(st), lg.rations], 15, true, C_INK if lg.rations >= lg.ration_cost(st) else C_BAD))
+	elif Legion.V2:
 		fh.add_child(_tr(hud.ico("bread", 64), 22))
 		var have := lg.food_now()
 		fh.add_child(_l("%d · есть %d из %d" % [Legion.FOOD2_BATTLE, have, lg.food_cap()], 15, true, C_INK if have >= Legion.FOOD2_BATTLE else C_BAD))
@@ -1673,7 +1674,7 @@ func _stage_card(st: Dictionary) -> Control:
 	else:
 		fh.add_child(_tr(hud.ico("coins", 64), 22))
 		var food := lg.food_cost(st)
-		fh.add_child(_l(hud.fmt(food), 15, true, C_INK if food <= game.city.money else C_BAD))
+		fh.add_child(_l(hud.fmt(food), 15, true, C_INK if food <= lg.city_money() else C_BAD))
 	v.add_child(fh)
 	v.add_child(_hdiv(12))
 	# отряд
@@ -1708,7 +1709,14 @@ func _stage_card(st: Dictionary) -> Control:
 	v.add_child(fill)
 	# в бой
 	var why := lg.can_fight(st)
-	var fb := _btn("Повторить бой" if st["done"] else "В бой!", CARD_W - 30, 24, _ic39("battle"), why, func(): _fight(st))
+	var fight_title := I18n.t("Повторить бой" if st["done"] else "В бой!")
+	if lg.v3():
+		fight_title += " · %.1f" % lg.ration_cost(st)
+	var fb := _btn(fight_title, CARD_W - 30, 24, hud.ico("bread", 64) if lg.v3() else _ic39("battle"), why, func(): _fight(st))
+	if lg.v3():
+		fb.name = "LegionRationBattle"
+		fb.set_meta("ration_cost", lg.ration_cost(st))
+		fb.add_theme_color_override("font_disabled_color", C_BAD if lg.rations < lg.ration_cost(st) else C_SOFT)
 	fb.add_theme_font_override("font", hud.font_title)
 	fb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(fb)
@@ -1839,7 +1847,9 @@ func _fight(st: Dictionary) -> void:
 		close(false)
 		lg.start_battle(st)
 		return
-	var setup := lg.make_battle(st)
+	var setup := lg.prepare_battle(st)
+	if setup.is_empty():
+		return
 	var sim := LegionSim.new(setup)
 	var res := sim.run(true)
 	var out := lg.apply_result(setup, res)
@@ -2377,8 +2387,6 @@ func _soldier_card(s: Dictionary) -> Control:
 				_close_overlay())
 	bv.add_child(db)
 	h.add_child(bv)
-	if lg.v3():
-		CampUI.attach(hud)._add_speed(v, "train_%d" % int(s["id"]))
 	return p
 
 
@@ -2674,8 +2682,6 @@ func _forge_win() -> void:
 			_live.append({"kind": "forge", "label": fl})
 		fh.add_child(fl)
 		v.add_child(fh)
-		if lg.v3():
-			CampUI.attach(hud)._add_speed(v, "forge")
 	v.add_child(_hdiv(8))
 	# что ковать: слот и (для оружия и щита) класс
 	var srow := HBoxContainer.new()

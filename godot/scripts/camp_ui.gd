@@ -10,6 +10,11 @@ const USE_CUTAWAY := true
 var use_cutaway := USE_CUTAWAY # Старые сценарии могут явно выбрать прежнюю диораму.
 var cutaway_markers: Control
 var _worker_target := -1
+var city_plaque: PanelContainer
+var city_name_label: Label
+var hq_level_label: Label
+var order_button: Button
+var order_ring: Control
 var population_button: Button
 var expand_floor: Button
 var expand_section: Button
@@ -24,10 +29,10 @@ const FORT_ICON := {"hq": "castle", "barracks": "legion", "kitchen": "bread",
 const TOP_NAMES := {"money": "Денарии", "rations": "Пайки", "glory": "Слава", "ingots": "Слитки"}
 const TOP_ICONS := {"money": "coins", "rations": "bread", "glory": "laurels", "ingots": "coins"}
 const TOP_TIPS := {
-	"money": "Денарии поступают в казну города от налогов.",
+	"money": "Денарии Легиона: Сокровищница, сундуки и обоз из города. Склад повышает потолок.",
 	"rations": "Пайки — еда для походов. Готовит кухня",
 	"glory": "Слава — награда за победы и задания дня.",
-	"ingots": "Слитки копятся в Сокровищнице. Ещё их можно найти в сундуках.",
+	"ingots": "Слитки можно найти в сундуках. Они завершают стройку сразу.",
 }
 var room_stock_label: Label
 var room_stock_bar: ProgressBar
@@ -107,7 +112,6 @@ var resource_chips := {}
 var bubbles := {}
 var ingot_label: Label
 var chest_button: Button
-var speed_widgets: Array = []
 var hero_status: Label
 var hero_train_button: Button
 var hero_bar: ProgressBar
@@ -326,6 +330,24 @@ func _build_screen() -> void:
 		var marker := _marker(-1, slot)
 		add_child(marker["panel"])
 		plaques[slot] = marker
+	city_plaque = Kit.inset()
+	city_plaque.name = "FortCityPlaque"
+	city_plaque.custom_minimum_size = Vector2(300, 80)
+	add_child(city_plaque)
+	var city_row := HBoxContainer.new()
+	city_plaque.add_child(city_row)
+	var level_badge := Kit.level_badge(1)
+	level_badge.custom_minimum_size = Vector2(56, 56)
+	level_badge.name = "FortHQMedallion"
+	city_row.add_child(level_badge)
+	hq_level_label = level_badge.get_child(0) as Label
+	city_name_label = Kit.label("", 26, true)
+	city_name_label.name = "FortCityName"
+	city_name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	city_name_label.custom_minimum_size.x = 150
+	city_name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	city_name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	city_row.add_child(city_name_label)
 	chips = HBoxContainer.new()
 	chips.name = "FortResources"
 	chips.add_theme_constant_override("separation", 12)
@@ -341,6 +363,12 @@ func _build_screen() -> void:
 	campaign_button = _nav("Поход", "map", _campaign)
 	daily_button = _nav("Задания дня", "tasks", func(): _aux("daily"))
 	chest_button = _nav("Сундуки", "chest", show_chests)
+	order_button = _nav("Заказать денарии из города", "collect", _order_city_money)
+	order_button.name = "FortCityOrder"
+	order_ring = Ring.new()
+	order_ring.name = "FortCityOrderRing"
+	order_button.add_child(order_ring)
+	order_ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var arena := _nav("Арена", "arena", func(): pass)
 	arena.disabled = true
 	arena.tooltip_text = I18n.t("Бои с другими игроками откроются позже.")
@@ -462,9 +490,12 @@ func _layout() -> void:
 		marker.position = _screen_anchor(center, Vector2(68, 118) * k)
 	_layout_bubbles(k)
 	chips.reset_size()
-	var hk := minf(1.35, minf(size.x / 1440.0, size.y / 900.0))
+	var hk := minf(1.15, minf(size.x / (chips.size.x + 178 + 300 + 104), size.y / 900.0))
 	chips.scale = Vector2.ONE * hk
-	chips.position = Vector2(maxf(12, (size.x - (chips.size.x + 256) * hk) * 0.5), 12)
+	city_plaque.scale = Vector2.ONE * hk
+	city_plaque.size = Vector2(300, 80)
+	city_plaque.position = Vector2(16, 12)
+	chips.position = city_plaque.position + Vector2(312 * hk, 0)
 	population_button.size = population_button.custom_minimum_size
 	population_button.scale = Vector2.ONE * hk
 	population_button.position = chips.position + Vector2((chips.size.x + 12) * hk, 0)
@@ -472,7 +503,7 @@ func _layout() -> void:
 	exit_button.position = Vector2(size.x - 62 * hk, 12)
 	left_column.reset_size()
 	left_column.scale = Vector2.ONE * hk
-	left_column.position = Vector2(16, 108 * hk)
+	left_column.position = Vector2(16, 12 + 108 * hk)
 	build_button.scale = Vector2.ONE * hk
 	build_button.position = size - Vector2(174, 174) * hk
 	bottom.hide()
@@ -532,7 +563,7 @@ func _roster_signature() -> String:
 	var entries := []
 	for s: Dictionary in lg.soldiers:
 		entries.append([s["id"], s["name"], _class(s), s["stars"], s["rank"], lg.s_state(s)])
-	return str([entries, lg.squad3, lg.camp, lg.upg.keys(), lg.hero_level(), lg.hero_training.is_empty(), lg.forging.is_empty(), _plot_signature()])
+	return str([entries, lg.squad3, lg.camp, lg.upg.keys(), lg.hero_level(), lg.hero_training.is_empty(), lg.forging.is_empty(), lg.smith_known(), _plot_signature()])
 
 
 func _refresh() -> void:
@@ -546,13 +577,21 @@ func _refresh() -> void:
 	var expand_tip := lg.fort_can_expand()
 	expand_floor.tooltip_text = I18n.t("+ этаж") + ("\n" + I18n.t(expand_tip) if expand_tip != "" else "")
 	expand_section.tooltip_text = I18n.t("+ секция") + ("\n" + I18n.t(expand_tip) if expand_tip != "" else "")
-	(resource_chips["money"] as Label).text = hud.fmt(lg.city_money())
+	city_name_label.text = hud.game.city.name if hud.game.city.name != "" else I18n.t("Новый Рим")
+	city_plaque.tooltip_text = city_name_label.text + " · " + I18n.t("Штаб ур. %d") % lg.camp_level("hq")
+	hq_level_label.text = str(lg.camp_level("hq"))
+	_refresh_city_order()
+	(resource_chips["money"] as Label).text = "%s / %s" % [hud.fmt(lg.city_money()), hud.fmt(lg.money_cap())]
+	var money_label: Label = resource_chips["money"]
+	var money_width := money_label.get_theme_font("font").get_string_size(money_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x
+	money_label.add_theme_font_size_override("font_size", mini(28, maxi(12, floori(28.0 * 132.0 / maxf(1, money_width)))))
+	(resource_bars["money"]["fill"] as ProgressBar).value = lg.city_money() / maxf(1, lg.money_cap())
 	ration_label.text = "%d / %d" % [lg.rations_now(), lg.ration_cap()]
 	glory_label.text = hud.fmt(lg.glory)
 	ingot_label.text = "%d / %d" % [lg.ingots, lg.resource_cap("ingots")]
 	(resource_bars["rations"]["fill"] as ProgressBar).value = lg.rations / maxf(1, lg.ration_cap())
 	(resource_bars["ingots"]["fill"] as ProgressBar).value = float(lg.ingots) / maxf(1, lg.resource_cap("ingots"))
-	for resource: String in ["money", "glory"]:
+	for resource: String in ["glory"]:
 		(resource_bars[resource]["fill"] as ProgressBar).value = 1.0 if _stock(resource) > 0 else 0.0
 	_count(squad_button, lg.fort_squad_candidates().size())
 	_count(chest_button, lg.chest_queue.size())
@@ -570,7 +609,6 @@ func _refresh() -> void:
 	_sync_markers()
 	_refresh_bubbles()
 	_refresh_hero()
-	_refresh_speeds()
 	var sig := _roster_signature()
 	if selected_plot >= 0 and is_instance_valid(card):
 		if sig != _card_sig:
@@ -712,6 +750,10 @@ func _build_card() -> void:
 	stock_body.add_child(room_stock_bar)
 	stock.tooltip_text = String(info["gives"]) + "\n" + I18n.t("ур. %d: %s") % [int(info["lv"]) + 1, String(info["gives_next"])]
 	_worker_card(card_body)
+	if selected in ["forge", "arsenal"] and not lg.smith_known():
+		var lock := Kit.banner_red(I18n.t(Legion.SMITH_LOCK))
+		lock.name = "FortSmithLock"
+		card_body.add_child(lock)
 	main_action = Kit.button("green", "collect")
 	main_action.name = "FortMainAction"
 	main_action.pressed.connect(_main_action)
@@ -766,9 +808,6 @@ func _build_card() -> void:
 	timer_row.add_child(card_ring)
 	upgrade_timer = _text("", 24, true)
 	timer_row.add_child(upgrade_timer)
-	_add_speed(card_body, "fort_%d" % selected_plot)
-	if selected == "hq":
-		_add_speed(card_body, "fort_expand")
 
 
 func _refresh_card() -> void:
@@ -819,6 +858,9 @@ func _refresh_card() -> void:
 			_: title = I18n.t("Отряд")
 	if selected != "hq" and lg.fort_worker(selected_plot).is_empty() and not running:
 		title = I18n.t("Назначить")
+		reason = ""
+	if selected in ["forge", "arsenal"] and not lg.smith_known():
+		title = I18n.t("Кузнечное знание")
 		reason = ""
 	if int(plot["lv"]) == 0 or running:
 		reason = I18n.t("Здание строится.")
@@ -902,7 +944,6 @@ func _roster(parent: VBoxContainer, training: bool) -> void:
 			var train_button := _button(I18n.t("Тренировать · %s") % hud.fmt(float(Soldiers.train_cost(rank))), func(): lg.train(sid); _refresh(), "coins")
 			v.add_child(train_button)
 			_training.append({"id": sid, "status": status, "bar": bar, "button": train_button})
-			_add_speed(v, "train_%d" % sid)
 		else:
 			var home := Kit.round_button("back")
 			home.custom_minimum_size = Vector2(40, 40)
@@ -1215,32 +1256,6 @@ func _fly_resource(resource: String, amount: int, origin: Vector2) -> void:
 	tween.chain().tween_callback(fly.queue_free)
 
 
-func _add_speed(parent: VBoxContainer, key: String) -> void:
-	var box := VBoxContainer.new()
-	parent.add_child(box)
-	var b := Kit.button("gold", Kit.resource("money"))
-	b.name = "FortSpeedAction"
-	b.pressed.connect(func(): lg.speed_up(key); _refresh())
-	box.add_child(b)
-	var quota := _text("", 13)
-	box.add_child(quota)
-	speed_widgets.append({"box": box, "button": b, "quota": quota, "key": key})
-	_refresh_speeds()
-
-
-func _refresh_speeds() -> void:
-	speed_widgets = speed_widgets.filter(func(entry: Dictionary): return is_instance_valid(entry["box"]) and not entry["box"].is_queued_for_deletion())
-	for entry: Dictionary in speed_widgets:
-		var info := lg.speed_info(String(entry["key"]))
-		(entry["box"] as Control).visible = float(info["left"]) > 0.0
-		var b: Button = entry["button"]
-		b.text = I18n.t("Ускорить · %d") % int(info["price"])
-		b.tooltip_text = I18n.t("Ускорить: −%s за %d ден.") % [duration_text(minf(1800.0, minf(float(info["left"]), lg.speed_remaining()))), int(info["price"])]
-		b.disabled = not bool(info["allowed"])
-		(entry["quota"] as Label).hide()
-		b.tooltip_text += "\n" + I18n.t("сегодня ещё %s") % duration_text(lg.speed_remaining())
-
-
 func show_hero() -> void:
 	var v := _new_modal(560)
 	hero_card_level = lg.hero_level()
@@ -1254,7 +1269,6 @@ func show_hero() -> void:
 	v.add_child(lu._cost_row(lg.hero_train_info()["cost"]))
 	hero_train_button = _button("Тренировать героя", func(): lg.train_hero(); show_hero(), "laurels")
 	v.add_child(hero_train_button)
-	_add_speed(v, "hero")
 	v.add_child(_button("← Лагерь", _close_modal))
 	_refresh_hero()
 	_fit_modal.call_deferred()
@@ -1280,6 +1294,7 @@ func show_chests(reward: Dictionary = {}) -> void:
 	var v := _new_modal(620)
 	v.add_child(_text(I18n.t("Сундуки %d / 4") % lg.chest_queue.size(), 25, true))
 	v.add_child(_wrap("Первая победа даёт сундук. За повторную: 15% за каждую звезду. Мест — 4.", 14))
+	v.add_child(_wrap("Редкости: обычное / редкое / эпическое / легендарное", 14))
 	v.add_child(_wrap(Legion.CHEST_ODDS, 15))
 	v.add_child(_wrap("Слитки: деревянный 2% · бронзовый 4% · золотой 6%. По 1–3 слитка.", 14))
 	for kind: String in lg.chest_queue:
@@ -1534,8 +1549,13 @@ func show_resource_popup(resource: String) -> void:
 	v.add_child(_wrap(I18n.t(String(TOP_TIPS[resource])), 16))
 	match resource:
 		"rations": v.add_child(_button("К полевой кухне", func(): _jump_to_type("kitchen"), "bread"))
-		"ingots": v.add_child(_button("К Сокровищнице", func(): _jump_to_type("treasury"), "coins"))
-		"money": v.add_child(_button("В город", close, "housing"))
+		"ingots": v.add_child(_button("Сундуки", show_chests, "commerce"))
+		"money":
+			v.add_child(_button("К Сокровищнице", func(): _jump_to_type("treasury"), "coins"))
+			var order := _button("Заказать денарии из города", _order_city_money, "coins")
+			order.disabled = lg.city_order_info()["why"] != ""
+			order.tooltip_text = order_button.tooltip_text
+			v.add_child(order)
 		"glory": v.add_child(_button("Поход", _campaign, "scroll"))
 	_fit_modal.call_deferred()
 
@@ -1680,6 +1700,9 @@ func _choose_build(type: String) -> void:
 
 
 func _main_action() -> void:
+	if selected in ["forge", "arsenal"] and not lg.smith_known():
+		show_smith_knowledge()
+		return
 	var plot := lg.fort_plot(selected_plot)
 	if plot.is_empty():
 		return
@@ -2431,3 +2454,39 @@ func _add_stars(parent: Control, count: int) -> void:
 		var star := Kit.image("star", Vector2(30, 30))
 		star.modulate = Color.WHITE if i < count else Color(0.38, 0.26, 0.16, 0.45)
 		row.add_child(star)
+
+
+func _refresh_city_order() -> void:
+	var info := lg.city_order_info()
+	var left := float(info["left"])
+	order_button.disabled = info["why"] != ""
+	order_button.tooltip_text = I18n.t("Заказать денарии из города") + "\n" + I18n.t("%d%% казны города · %d денариев") % [int(info["percent"]), int(info["amount"])]
+	order_button.tooltip_text += "\n" + (I18n.t("Следующий обоз через %s") % clock_text(left) if left > 0.0 else I18n.t("Обоз готов · раз в 5 часов"))
+	if info["why"] != "" and left <= 0.0:
+		order_button.tooltip_text += "\n" + I18n.t(String(info["why"]))
+	order_ring.set("value", 1.0 - left / Legion.CITY_ORDER_SECONDS)
+
+
+func _order_city_money() -> void:
+	lg.order_city_money()
+	if _popup_resource == "money":
+		_close_modal()
+	_refresh()
+
+
+func show_smith_knowledge() -> void:
+	var v := _new_modal(560)
+	modal_panel.name = "FortSmithKnowledge"
+	v.add_child(Kit.ribbon(I18n.t("Кузнечное знание")))
+	v.add_child(_wrap("Открывает изготовление оружия и доспехов в мастерских Легиона."))
+	v.add_child(_cost_icons(Legion.SMITH_KNOWLEDGE_COST))
+	var why := lg.can_learn_smith()
+	var learn := _button("Изучить", func(): lg.learn_smith(); _close_modal(); _refresh(), "book")
+	learn.name = "FortLearnSmith"
+	learn.disabled = why != ""
+	learn.tooltip_text = I18n.t(why)
+	v.add_child(learn)
+	if why != "":
+		v.add_child(Kit.banner_red(I18n.t(why)))
+	v.add_child(_button("Закрыть", _close_modal))
+	_fit_modal.call_deferred()

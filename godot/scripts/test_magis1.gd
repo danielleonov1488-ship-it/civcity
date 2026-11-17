@@ -160,13 +160,13 @@ func _all_effects(c: City) -> void:
 	check(Magis.adopt(c, "trib_war_chest"), "war chest fixture")
 	for i in 18:
 		Magis.hour(c)
-	var held := c.magis_treasury
+	var held := c.legion.city_money()
 	c.sim_day()
-	check(c.magis_treasury > held and float(c.stats["legion_denarii"]) > 0.0, "city income reaches Legion treasury")
-	held = c.magis_treasury
+	check(c.legion.city_money() > held and float(c.stats["legion_denarii"]) > 0.0, "city income reaches Legion treasury")
+	held = c.legion.city_money()
 	var money := c.money
 	c.legion._pay({"money": held * 0.5})
-	check(is_equal_approx(c.magis_treasury, held * 0.5) and c.money == money, "Legion spends its treasury first")
+	check(is_equal_approx(c.legion.city_money(), held * 0.5) and c.money == money, "Legion spends its treasury first")
 	c.magis_orders.clear()
 
 
@@ -252,37 +252,36 @@ func _fort_treasury() -> void:
 	var plot := lg.fort_empty_plot()
 	var price := float(Legion.fort_cost("forge", 1)["money"])
 	c.money = 0.0
-	c.magis_treasury = price + 100.0
+	lg.fort["money"] = price + 100.0
 	check(lg.fort_can_build("forge", plot) == "" and lg.fort_build("forge", plot), "treasury alone can build a fort room")
-	check(c.money == 0.0 and is_equal_approx(c.magis_treasury, 100.0), "fort build uses treasury once")
+	check(c.money == 0.0 and is_equal_approx(lg.fort["money"], 100.0), "fort build uses treasury once")
 	var ingots := lg.ingots
 	var quote := lg.fort_instant_info(plot)
 	check(lg.fort_instant(plot, quote), "finish paid construction instantly")
-	check(c.money == 0.0 and c.magis_treasury == 100.0 and lg.ingots == ingots - int(quote["price"]), "paid construction instant charges only ingots")
+	check(c.money == 0.0 and lg.fort["money"] == 100.0 and lg.ingots == ingots - int(quote["price"]), "paid construction instant charges only ingots")
 	var kitchen := int(lg.fort_slot_plot("kitchen")["id"])
 	var cost := Legion.fort_cost("kitchen", 2)
 	price = float(cost["money"])
-	c.magis_treasury = price / 2.0 + 0.25
+	lg.fort["money"] = price + 0.25
 	c.money = price + 100.0
-	var remainder := price - c.magis_treasury
 	var money := c.money
 	var mats: Dictionary = lg.mats.duplicate(true)
-	check(lg.fort_upgrade(kitchen), "fort timed upgrade starts with split funds")
-	check(c.magis_treasury == 0.0 and is_equal_approx(c.money, money - remainder), "upgrade spends treasury first, city pays only remainder")
+	check(lg.fort_upgrade(kitchen), "fort timed upgrade uses Legion funds")
+	check(is_equal_approx(lg.city_money(), 0.25) and c.money == money, "upgrade leaves city money intact")
 	for resource: String in cost["mats"]:
 		check(is_equal_approx(float(lg.mats[resource]), float(mats[resource]) - float(cost["mats"][resource])), "materials charged once: " + resource)
 	money = c.money
 	mats = lg.mats.duplicate(true)
 	check(not lg.fort_upgrade(kitchen) and c.money == money and lg.mats == mats, "repeated upgrade cannot debit")
 	quote = lg.fort_instant_info(kitchen)
-	check(lg.fort_instant(kitchen, quote) and c.money == money and lg.mats == mats and c.magis_treasury == 0.0, "instant of active upgrade does not debit normal price twice")
+	check(lg.fort_instant(kitchen, quote) and c.money == money and lg.mats == mats and lg.city_money() == 0.25, "instant of active upgrade does not debit normal price twice")
 	price = float(Legion.fort_cost("kitchen", 3)["money"])
-	c.magis_treasury = price + 100.0
+	lg.fort["money"] = price + 100.0
 	c.money = 0.0
 	check(lg.fort_instant(kitchen) and int(lg.fort_plot(kitchen)["lv"]) == 3, "instant can start and complete a fresh upgrade")
-	check(c.magis_treasury == 100.0 and c.money == 0.0, "fresh instant spends treasury exactly once")
+	check(lg.fort["money"] == 100.0 and c.money == 0.0, "fresh instant spends treasury exactly once")
 	lg.ingots = 0
-	check(not lg.fort_instant(kitchen) and c.magis_treasury == 100.0 and c.money == 0.0, "failed instant leaves both treasuries intact")
+	check(not lg.fort_instant(kitchen) and lg.fort["money"] == 100.0 and c.money == 0.0, "failed instant leaves both treasuries intact")
 
 
 func _saves(c: City) -> void:
@@ -296,7 +295,7 @@ func _saves(c: City) -> void:
 	var restored := City.new(land)
 	restored.auto_hire = true
 	restored.load_data(JSON.parse_string(JSON.stringify(save)))
-	check(c.magis_orders == restored.magis_orders and c.magis_cooldown == restored.magis_cooldown and c.legion.fort["arrival"] == restored.legion.fort["arrival"] and c.legion.fort_newcomers() == restored.legion.fort_newcomers() and is_equal_approx(c.legion.rations, restored.legion.rations) and is_equal_approx(c.magis_treasury, restored.magis_treasury), "JSON save/load active, pending, cooldown, fort gate, fractional rations and treasury")
+	check(c.magis_orders == restored.magis_orders and c.magis_cooldown == restored.magis_cooldown and c.legion.fort["arrival"] == restored.legion.fort["arrival"] and c.legion.fort_newcomers() == restored.legion.fort_newcomers() and is_equal_approx(c.legion.rations, restored.legion.rations) and is_equal_approx(c.legion.city_money(), restored.legion.city_money()), "JSON save/load active, pending, cooldown, fort gate, fractional rations and treasury")
 	check(restored.edict_mul("tax_k:plebs") == 1.2 and restored.edict_mul("rp_rate") == 1.0, "pending stays inactive after load")
 	var legacy := save.duplicate(true)
 	legacy["magis"]["gate_queue"] = [null, {"gate": true}, {"key": "gate:1", "gate": true, "name": "Legacy I", "stars": 4}, {"key": "gate:2", "gate": true, "name": "Legacy II", "stars": 8}, {"key": "gate:3", "gate": true, "name": "Legacy III"}]
