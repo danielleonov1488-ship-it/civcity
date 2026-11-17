@@ -1,5 +1,5 @@
 extends Node
-## Проверка 3D-боя Легиона без города: открывает бой похода и снимает кадры.
+## Проверка рисованного боя Легиона без города: открывает бой похода и снимает кадры.
 ##   console.exe --path godot res://test_battle.tscn -- region=0 stage=2 cycle=0 lvl=+0 squad=auto perks=bosses auto=0 speed=1
 ##     shots=3,9,20 result=1 tag=forest out=D:/CivCity/.work/legion_battle quality=high perk_at=6:oil,10:volley
 ## lvl — уровень бойцов: число или +N/−N к рекомендованному; squad — "auto" или список родов через запятую;
