@@ -383,11 +383,11 @@ func _build_screen() -> void:
 	extra_plots.add_child(extra_row)
 	_build_bubbles()
 	guide = Kit.inset()
+	guide.name = "FortGuide"
+	guide.add_theme_stylebox_override("panel", Kit.box("panels/panel_inset", 40, 12, 56))
 	add_child(guide)
 	guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	guide_text = _text("", 18, true)
-	guide_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	guide_text.custom_minimum_size.x = 420
 	guide.add_child(guide_text)
 	guide.hide()
 	guide_pointer = _text("↓", 30, true)
@@ -1356,9 +1356,9 @@ func _exit_tree() -> void:
 	_stop_diorama()
 
 
-func _screen_anchor(center: Vector2, dims: Vector2) -> Vector2:
+func _screen_anchor(center: Vector2, dims: Vector2, top_margin := 76.0, bottom_margin := 82.0) -> Vector2:
 	return Vector2(clampf(center.x - dims.x * 0.5, 8, maxf(8, size.x - dims.x - 8)),
-		clampf(center.y - dims.y * 0.5, 76, maxf(76, size.y - dims.y - 82)))
+		clampf(center.y - dims.y * 0.5, top_margin, maxf(top_margin, size.y - dims.y - bottom_margin)))
 
 
 func _prepare_guide() -> void:
@@ -1438,13 +1438,31 @@ func _layout_guide() -> void:
 		guide.hide()
 		return
 	_guide_target = target
-	guide_text.text = I18n.t(tip)
+	var translated_tip := I18n.t(tip)
+	if guide_text.text != translated_tip:
+		# Новый текст до первого замера: нет старого кэша минимального размера.
+		var previous := guide
+		remove_child(previous)
+		previous.queue_free()
+		guide = Kit.inset()
+		guide.name = "FortGuide"
+		guide.add_theme_stylebox_override("panel", Kit.box("panels/panel_inset", 40, 12, 56))
+		guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		guide_text = _text(translated_tip, 18, true)
+		guide_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		guide.add_child(guide_text)
+		add_child(guide)
 	guide.reset_size()
 	var k := minf(1.0, size.y / 720.0)
+	k = minf(k, maxf(1.0, size.x - 16) / maxf(1.0, guide.size.x))
 	guide.scale = Vector2.ONE * k
 	var rect := target.get_global_rect()
-	guide.position = _screen_anchor(rect.position - global_position + Vector2(rect.size.x * 0.5, -28 * k), guide.size * k)
-	guide_pointer.position = rect.position - global_position + Vector2(rect.size.x * 0.5 - 10, -34)
+	guide_pointer.reset_size()
+	guide_pointer.scale = Vector2.ONE * k
+	var point := rect.position - global_position + Vector2(rect.size.x * 0.5, 2 * k)
+	guide_pointer.position = point - Vector2(guide_pointer.size.x * 0.5, guide_pointer.size.y) * k
+	var dims := guide.size * k
+	guide.position = _screen_anchor(point - Vector2(0, guide_pointer.size.y * k + dims.y * 0.5), dims, 8, 8)
 	guide_pointer.show()
 	guide_pointer.move_to_front()
 	guide.move_to_front()
@@ -2066,10 +2084,31 @@ func show_newcomer(sid: int) -> void:
 		modal_panel.name = "FortNewcomerCard"
 		v.add_child(Kit.ribbon(I18n.t("Новобранец")))
 		var face := _person_portrait(person, 190)
+		face.name = "FortNewcomerPortrait"
 		face.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		v.add_child(face)
+		var cls := String(person.get("class_hint", "legionary"))
+		var overlay := Control.new()
+		overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		face.add_child(overlay)
+		var hint := Kit.image(hud.ico(String(CLASS_ICON.get(cls, "swords")), 42), Vector2(42, 42))
+		hint.name = "FortNewcomerClass"
+		hint.tooltip_text = I18n.t(Soldiers.class_name_of(cls))
+		hint.mouse_filter = Control.MOUSE_FILTER_PASS
+		overlay.add_child(hint)
+		hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+		hint.offset_left = -42
+		hint.offset_top = -42
+		hint.offset_right = 0
+		hint.offset_bottom = 0
 		v.add_child(_text(String(person["name"]), 24, true))
 		_add_stars(v, int(person["stars"]))
+		var origin := String(person.get("from", "")).strip_edges()
+		if origin == "":
+			origin = "Пришёл к воротам форта"
+		var source := _wrap(I18n.t(origin), 16)
+		source.name = "FortNewcomerOrigin"
+		v.add_child(source)
 		var why := lg.can_recruit_resident()
 		if why != "":
 			v.add_child(Kit.banner_red(I18n.t(why)))

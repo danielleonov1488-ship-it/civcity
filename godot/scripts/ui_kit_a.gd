@@ -156,7 +156,11 @@ static func progress(value: float, maximum: float, color := "gold") -> ProgressB
 static func res_bar(icon: Variant, value: float, maximum: float) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.name = "ResourceBar"
-	panel.add_theme_stylebox_override("panel", box("panels/topbar_pill", 48, 0))
+	var frame := box("panels/topbar_pill", 32, 0, 80)
+	# Медальон и торец не растягиваются вместе с серединой плашки.
+	frame.set_texture_margin(SIDE_LEFT, 72)
+	frame.set_texture_margin(SIDE_RIGHT, 32)
+	panel.add_theme_stylebox_override("panel", frame)
 	panel.custom_minimum_size = Vector2(264, 80)
 	# Свободное расположение сохраняет крупный медальон слева.
 	var body := Control.new()
@@ -166,14 +170,17 @@ static func res_bar(icon: Variant, value: float, maximum: float) -> PanelContain
 	body.add_child(pic)
 	var number := label(str(int(value)) + (" / %d" % int(maximum) if maximum > 0 else ""), 28)
 	number.name = "Value"
-	number.position = Vector2(82, 8)
-	number.size = Vector2(140, 36)
+	number.position = Vector2(82, 20)
+	number.size = Vector2(140, 32)
 	number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	body.add_child(number)
 	var fill := progress(value / maxf(1, maximum), 1, "green" if maximum <= 0 else "gold")
 	fill.name = "Fill"
-	fill.position = Vector2(84, 50)
-	fill.custom_minimum_size = Vector2(138, 16)
+	fill.position = Vector2(84, 53)
+	fill.custom_minimum_size = Vector2(138, 9)
+	fill.add_theme_stylebox_override("background", box("panels/bar_frame", 32, 0, 9))
+	fill.add_theme_stylebox_override("fill", box("panels/bar_fill_" + ("green" if maximum <= 0 else "gold"), 20, 0, 9))
 	fill.size = fill.custom_minimum_size
 	body.add_child(fill)
 	panel.set_meta("number", number)
