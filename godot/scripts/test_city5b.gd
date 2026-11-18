@@ -1,5 +1,7 @@
 extends "res://scripts/test_ui4.gd"
-## CITY5b: шесть кадров, компактные карточки и все страницы исследований.
+## CITY5b: шесть кадров, компактные карточки и дерево исследований.
+
+const ResearchChecks = preload("res://scripts/test_research8.gd")
 
 
 func _ready() -> void:
@@ -182,64 +184,47 @@ func _research_pages() -> void:
 	await frames(8)
 	var tree = hud.research_tree
 	check(tree.cards.size() == Defs.RESEARCH.size(), "all research controls retained")
-	check(tree.rank_tabs.size() == Defs.LEVELS.size(), "rank medallions")
+	check(tree.sections.size() == Defs.LEVELS.size(), "one section per city rank")
 	var ids := {}
-	for id: String in tree.cards:
-		ids[id] = tree.cards[id].get_instance_id()
+	var counts := {}
 	var largest := 0
-	var largest_count := 0
-	for tier: int in tree.sections:
-		tree.select_rank(tier)
-		await frames(6)
-		var count := 0
-		for r: Dictionary in Defs.RESEARCH:
-			var id := String(r["id"])
-			var card: Control = tree.cards[id]
-			var allowed: bool = city.research_visible(id) and not bool(r.get("hidden", false))
-			if Defs.B.has(id) and not city.city_buildable(id):
-				allowed = false
-			check(card.is_visible_in_tree() == (allowed and int(r["lvl"]) == tier), "only selected rank and visible research shown: %s (rank %d)" % [id, tier])
-			if card.is_visible_in_tree():
-				count += 1
-				check(tree.scroll.get_global_rect().grow(1).encloses(card.get_global_rect()), "rank item fits page " + String(r["id"]))
-				check((card.get_node("Picture") as Control).size == Vector2(42, 42), "42px research picture")
-				var name_label := card.get_node("ItemName") as Label
-				check(name_label.get_theme_font_size("font_size") >= 14, "14px item name")
-				check(name_label.text == I18n.t(String(r["name"])) and name_label.get_line_count() <= 2, "full research name fits two lines")
-				check(tree.tooltip(r).contains(I18n.t(String(r["name"]))), "full research name in hover tooltip")
-		# Чудеса без готовых моделей не занимают места даже в открытом ряду.
-		for type: String in Defs.B:
-			if Defs.B[type].get("sub", "") == "wonders" and not city.city_buildable(type):
-				check(not tree.cards.has(type) or not (tree.cards[type] as Control).is_visible_in_tree(), "hidden wonder has no visible research card " + type)
-		check(count <= 18, "rank fits three rows")
-		if count > largest_count:
-			largest_count = count
-			largest = tier
-		check(not tree.scroll.get_v_scroll_bar().visible and not tree.scroll.get_h_scroll_bar().visible, "no research scrollbar")
-		check((tree.sections[tier].get_node("Items") as GridContainer).columns == 6, "six items per row")
-	check(hud.research_panel.size.x <= 920 and hud.research_panel.size.y <= 700, "compact research fits viewport")
+	for id: String in tree.cards:
+		var card: Button = tree.cards[id]
+		ids[id] = card.get_instance_id()
+		if card.visible:
+			var tier := int(Defs.research(id)["lvl"])
+			counts[tier] = 1 + int(counts.get(tier, 0))
+			if int(counts[tier]) > int(counts.get(largest, 0)):
+				largest = tier
+	ResearchChecks.check_tree(hud, city, check)
 	city.level = 3
 	tree.refresh()
-	check((tree.rank_tabs[4].find_child("RankPadlock", true, false) as Control).visible and (tree.rank_tabs[4] as Control).modulate.a == 1.0, "future rank readable with padlock")
+	await frames(6)
+	ResearchChecks.check_tree(hud, city, check)
 	city.level = 7
 	tree.refresh()
 	tree.select_rank(largest)
+	await frames(6)
 	await _wait_research_pictures()
 	await shot("6_research.png")
-	var available := ""
-	for r: Dictionary in Defs.RESEARCH:
-		if city.can_research(String(r["id"])) == "":
-			available = String(r["id"])
+	var available: Button
+	for card: Button in tree.cards.values():
+		if card.is_visible_in_tree() and not card.disabled:
+			available = card
 			break
-	if check(available != "", "available research fixture"):
-		tree.reveal(available)
+	if check(available != null, "available research fixture"):
+		var id := String(available.get_meta("rid"))
+		tree.reveal(id)
 		await frames(8)
-		check(not tree.popup.visible and tree.selected == available and not tree.study.disabled, "card selected without detail popup")
+		check(not tree.popup.visible and tree.selected == id and tree.study == available, "reveal scrolls to item without opening tooltip")
+		tree.show_detail(id)
+		await frames(6)
+		ResearchChecks.check_tooltip(tree.popup, check)
 		var before := city.rp
-		tree.study.pressed.emit()
-		check(tree.confirm.visible and not city.research.has(available), "inline confirmation before study")
+		available.pressed.emit()
+		check(tree.confirm.visible and tree.confirm.get_parent() == available and not city.research.has(id), "inline confirmation before study")
 		tree.confirm_yes.pressed.emit()
-		check(city.research.has(available) and city.rp < before, "study spends points")
+		check(hud.research_panel.visible and city.research.has(id) and city.rp < before, "study spends points and leaves the menu open")
 	for id: String in ids:
 		check(tree.cards[id].get_instance_id() == ids[id], "research nodes reused")
 

@@ -1,8 +1,12 @@
 extends Node3D
 ## Проверки интерфейса; запускает проверяющий. Пользовательские сохранения не пишем.
 
+const ResearchChecks = preload("res://scripts/test_research8.gd")
+
 var out := "D:/CivCity/.work/stage6/cityux7a/shots/"
 var prefix := "CITYUX7A"
+var resolution := Vector2i(1280, 720)
+var only_research := false
 var game
 var hud: Hud
 var city: City
@@ -16,7 +20,7 @@ func _ready() -> void:
 		var pair := arg.split("=", true, 1)
 		if pair.size() == 2 and pair[0] == "out":
 			out = pair[1].trim_suffix("/") + "/"
-	get_window().size = Vector2i(1280, 720)
+	get_window().size = resolution
 	Game.boot = {"new": "1", "legion": "0"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -39,8 +43,8 @@ func check(ok: bool, message: String) -> bool:
 func shot(file: String) -> void:
 	await frames(8)
 	await RenderingServer.frame_post_draw
-	check(get_viewport().get_texture().get_image().save_png(out + file) == OK, "save " + file)
-	print(prefix, " SHOT ", out + file)
+	if check(get_viewport().get_texture().get_image().save_png(out + file) == OK, "save " + file):
+		print(prefix, " SHOT ", out + file)
 
 
 func same_items() -> bool:
@@ -59,7 +63,7 @@ func text_in(node: Node) -> String:
 
 func move_to(node: Control) -> void:
 	var event := InputEventMouseMotion.new()
-	event.position = node.get_viewport().get_final_transform() * (node.get_global_transform_with_canvas() * (node.size * 0.5))
+	event.position = _pointer_at(node)
 	event.global_position = event.position
 	Input.parse_input_event(event)
 	Input.flush_buffered_events()
@@ -105,6 +109,7 @@ func _run() -> void:
 		game.tutorial.card.hide()
 	hud = game.hud
 	city = game.city
+	I18n.set_lang("ru")
 	city.tips["tut"] = -1
 	city.tips["ui"] = 3
 	city.tips["rank_pressed"] = true
@@ -122,90 +127,116 @@ func _run() -> void:
 	city.compute()
 	hud._top_action("research")
 	tree = hud.research_tree
+	await _research_menu()
+	hud.close_panels()
+	if not only_research:
+		await _build_menus()
+		await _top_tooltips()
+	_finish()
+
+
+func _finish() -> void:
+	print(prefix, " DONE fails=", fails)
+	get_tree().quit(1 if fails > 0 else 0)
+
+
+func _pointer_at(node: Control) -> Vector2:
+	return node.get_viewport().get_final_transform() * (node.get_global_transform_with_canvas() * (node.size * 0.5))
+
+
+func _click(node: Control, button := MOUSE_BUTTON_LEFT) -> void:
+	await move_to(node)
+	for down: bool in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = button
+		event.button_mask = MOUSE_BUTTON_MASK_LEFT if down and button == MOUSE_BUTTON_LEFT else 0
+		event.pressed = down
+		event.position = _pointer_at(node)
+		event.global_position = event.position
+		Input.parse_input_event(event)
+		Input.flush_buffered_events()
+		await frames(1)
+	await frames()
+
+
+func _research_menu() -> void:
 	await frames()
 	await wait_for_pictures()
 	check(tree.cards.size() == Defs.RESEARCH.size(), "all research nodes")
-	check(tree.current_rank == city.level, "opens current rank")
-	check(hud.research_panel.find_child("OnlyAvailable", true, false) == null, "no research filter")
-	for tier: int in tree.rank_tabs:
-		var tab: Control = tree.rank_tabs[tier]
-		var caption := tab.find_child("RankName", true, false) as Label
-		check(caption.get_theme_font_size("font_size") >= 14, "readable rank %d" % tier)
-		check(caption.get_theme_color("font_color") == CityStyle.INK and tab.modulate.a == 1.0, "dark future rank text")
-		check((tab.find_child("RankPadlock", true, false) as Control).visible == (tier > city.level), "future rank padlock")
+	check(tree.current_rank == city.level, "opens at current rank")
+	var tab_row := hud.research_panel.find_child("ResearchTabs", true, false) as Control
+	var city_tab := tab_row.get_node("CityTab") as Button
+	check(city_tab.button_pressed and not city_tab.disabled and tab_row.get_child_count() == 4, "City tab selected")
+	for node: Button in tab_row.get_children():
+		if node != city_tab:
+			check(node.disabled, "reserved tab locked")
 	for id: String in tree.cards:
 		item_ids[id] = tree.cards[id].get_instance_id()
-	for tier: int in tree.sections:
-		tree.select_rank(tier)
+	for lang: String in ["en", "ru"]:
+		I18n.set_lang(lang)
+		hud._fill_research()
 		await frames()
-		var bounds := Rect2(Vector2.ZERO, hud.root.size)
-		check(bounds.encloses(hud.research_panel.get_global_rect()), "rank fits viewport %d" % tier)
-		for r: Dictionary in Defs.RESEARCH:
-			var card: Control = tree.cards[String(r["id"])]
-			if not card.is_visible_in_tree():
-				continue
-			var label := card.get_node("ItemName") as Label
-			check(label.text == I18n.t(String(r["name"])), "full name " + String(r["id"]))
-			check(label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING and not label.text.contains("…"), "no name ellipsis")
-			check(label.get_line_count() <= 2 and label.size.y >= label.get_line_height() * label.get_line_count(), "name fits two lines " + String(r["id"]))
-			check(tree.scroll.get_global_rect().grow(1).encloses(card.get_global_rect()), "card fits page")
-			var price := card.get_node("CostBadge").get_child(0) as Control
-			check((price.get_node("Icon") as Control).custom_minimum_size.x >= 18, "18px price icon")
-			check((price.get_node("Cost") as Label).get_theme_font_size("font_size") >= 14, "14px price")
-			check(card.has_node("Study"), "per-card study")
-		check(not tree.scroll.get_v_scroll_bar().visible and not tree.scroll.get_h_scroll_bar().visible, "no research scrolling")
-	tree.select_rank(2)
-	await shot("00_full_names.png")
+		ResearchChecks.check_tree(hud, city, check)
+
+	tree.select_rank(0)
+	await frames()
+	check(tree.scroll.scroll_vertical == 0, "scroll returns to first rank")
+	await shot("00_research_top.png")
+	await _click(tree.scroll, MOUSE_BUTTON_WHEEL_DOWN)
+	check(tree.scroll.scroll_vertical > 0, "mouse wheel scrolls research")
 	tree.select_rank(3)
 	await frames()
+	check(tree.scroll.scroll_vertical > 0, "middle rank is further down")
+	await shot("01_research_middle.png")
+
 	var potter: Button = tree.cards["potter"]
-	var action := potter.get_node("Study") as Button
-	check(not action.disabled and (tree.cards["mimes"].get_node("Study") as Button).disabled, "affordability buttons")
-	check((tree.cards["floor3"].get_node("ParentLock") as Control).visible, "prerequisite padlock")
+	var mimes: Button = tree.cards["mimes"]
+	var floor3: Button = tree.cards["floor3"]
+	check(not potter.disabled and mimes.disabled, "affordability on the item")
+	check((floor3.get_node("ParentLock") as Control).visible and (floor3.get_node("Upgrade") as Control).visible, "locked upgrade has both badges")
 	check(tree.tooltip(Defs.research("floor3")).contains("Сначала: " + String(Defs.research("floor2")["name"])), "prerequisite in tooltip")
-	check((tree.cards["floor3"].get_node("PrerequisiteIcon") as Control).visible, "other rank prerequisite icon")
-	var good := (potter.get_node("CostBadge").get_child(0).get_node("Cost") as Label).get_theme_color("font_color")
-	var grey := (tree.cards["mimes"].get_node("CostBadge").get_child(0).get_node("Cost") as Label).get_theme_color("font_color")
-	check(good != grey, "green and grey price states")
 	await move_to(potter)
 	check(tree.popup.visible and tree.popup.name == "ResearchTooltip", "tooltip on actual hover")
-	check(tree.popup.find_children("*", "Button", true, false).is_empty(), "tooltip has no popup actions")
-	check(tree.detail.get_child_count() <= 3 and tree._popup_picture.texture != null, "tiny picture and short tooltip")
-	await shot("01_research_hover.png")
+	ResearchChecks.check_tooltip(tree.popup, check)
+	check(tree.popup.find_children("*", "Button", true, false).is_empty(), "tooltip has no actions")
+	check(tree.detail.get_child_count() <= 3 and tree._popup_picture.texture != null, "picture and short tooltip")
+	await shot("02_research_hover.png")
+
 	var before := city.rp
-	action.pressed.emit()
-	check(tree.confirm.visible and tree.pending == "potter" and not city.research.has("potter"), "study asks before spending")
-	check(tree.confirm_text.text == "Изучить «Гончарная» за 320 свитков?", "inline confirm copy")
+	await _click(potter)
+	check(tree.confirm.visible and tree.pending == "potter" and not city.research.has("potter"), "click asks before spending")
+	check(tree.confirm.get_parent() == potter and tree.confirm.position.y >= (potter.get_node("ItemName") as Label).get_rect().end.y, "confirm is inline below the item name")
+	check(tree.confirm_text.text == "Изучить за 320?", "inline confirm copy")
 	check(tree.study_target() == tree.confirm_yes, "tutorial targets confirmation")
-	await shot("02_inline_confirm.png")
-	(tree.confirm.get_node("ConfirmNo") as Button).pressed.emit()
+	await shot("03_research_confirm.png")
+	await _click(tree.confirm.find_child("ConfirmNo", true, false) as Button)
 	check(city.rp == before and not tree.confirm.visible, "No cancels free of charge")
-	action.pressed.emit()
+	await _click(potter)
 	city.rp = 0
 	hud._fill_research()
 	tree.confirm_yes.pressed.emit()
 	check(not city.research.has("potter"), "stale confirmation cannot study")
 	city.rp = before
 	hud._fill_research()
-	action.pressed.emit()
-	tree.confirm_yes.pressed.emit()
+	await _click(potter)
+	await _click(tree.confirm_yes)
 	check(city.research.has("potter") and is_equal_approx(city.rp, before - 320.0), "Yes spends exactly once")
 	tree.confirm_yes.pressed.emit()
 	check(is_equal_approx(city.rp, before - 320.0), "double Yes cannot spend twice")
-	check(hud.research_panel.visible and action.disabled and action.text == "Изучено", "window stays and card updates")
-	check(same_items(), "card nodes reused")
-	await shot("03_studied.png")
-	tree.select_rank(1)
+	check(hud.research_panel.visible and potter.disabled and (potter.get_node("DoneTick") as Control).visible
+		and not (potter.get_node("CostBadge") as Control).visible, "window stays open and bought item gets its badge")
+	check(same_items(), "item nodes reused")
+
+	get_window().size = resolution
 	await frames()
-	var link := tree.sections[1].get_node("PrerequisiteLinks").get_node_or_null("butcher") as Line2D
-	check(link != null and link.visible and link.points.size() >= 4, "same-page prerequisite connector")
-	await shot("04_dependencies.png")
+	ResearchChecks.check_tree(hud, city, check)
+	await tree.focus_card("floor3")
+	await frames()
+	tree.show_detail("floor3")
+	await frames()
+	ResearchChecks.check_tooltip(tree.popup, check)
 	hud.close_panels()
 	check(not tree.popup.visible and not tree.confirm.visible, "closing hides tooltip and confirmation")
-	await _build_menus()
-	await _top_tooltips()
-	print(prefix, " DONE fails=", fails)
-	get_tree().quit(1 if fails > 0 else 0)
 
 
 func _build_menus() -> void:

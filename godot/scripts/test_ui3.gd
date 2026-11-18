@@ -87,7 +87,7 @@ func _run() -> void:
 	hud._top_action("research")
 	await frames(6)
 	var tree = hud.research_tree
-	if not check(tree.current_rank == city.level and not tree.scroll.get_v_scroll_bar().visible, "current rank page without scrollbar"):
+	if not check(tree.current_rank == city.level and tree.scroll.get_v_scroll_bar().visible, "opens at the current rank in the tree"):
 		return
 	if not check(tree.cards.size() == Defs.RESEARCH.size(), "all research nodes"):
 		return
@@ -103,12 +103,11 @@ func _run() -> void:
 	await frames(5)
 	(tree.cards["butcher"] as Button).pressed.emit()
 	await frames(4)
-	if not check(String(tree.selected) == "butcher" and not tree.study.disabled and hud.pointer_target == tree.study, "node details and study pointer"):
+	if not check(String(tree.selected) == "butcher" and tree.pending == "butcher" and hud.pointer_target == tree.confirm_yes, "item click shows inline confirmation and pointer"):
 		return
 	if not await shot("2_tree_node_panel.png"):
 		return
 	var before := city.rp
-	(tree.study as Button).pressed.emit()
 	tree.confirm_yes.pressed.emit()
 	if not check(city.research.has("butcher") and is_equal_approx(city.rp, before - float(Defs.research("butcher")["cost"])), "study uses City cost and unlock"):
 		return

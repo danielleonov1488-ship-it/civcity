@@ -148,6 +148,7 @@ var events_panel: PanelContainer
 var research_panel: PanelContainer
 var research_tree
 var research_box: VBoxContainer
+var research_points: PanelContainer
 var lbl_research_rp: Label
 var lbl_research_rate: Label              # «+11 в час» у очков в окне исследований (этап 2.2)
 var _tax_warn := {}                       # окно «Финансы»: предупреждения о налогах — пересчёт раз в игровой час
@@ -3799,9 +3800,11 @@ func _do_type(type: String) -> Dictionary:
 func _do_research(rid: String, say: String) -> Dictionary:
 	var c: City = game.city
 	var r := Defs.research(rid)
-	while r.has("after") and not c.research.has(String(r["after"])):
-		rid = String(r["after"])
+	var prerequisite := c.missing_research_prerequisite(r)
+	while prerequisite != "" and not c.research_done(rid):
+		rid = prerequisite
 		r = Defs.research(rid)
+		prerequisite = c.missing_research_prerequisite(r)
 	var why := c.can_research(rid)
 	if why != "" and why != "Уже изучено":
 		say += ". Сейчас: " + why.left(1).to_lower() + why.substr(1)
@@ -6738,22 +6741,20 @@ func _fill_events() -> void:
 # ---------- исследования ----------
 
 func _research_panel() -> void:
-	var w := _window("Исследования", 900)
-	(w[0] as PanelContainer).add_theme_stylebox_override("panel", _card_frame())
-	((w[2] as HBoxContainer).get_child(1) as Label).add_theme_font_size_override("font_size", 22)
-	(w[1] as VBoxContainer).get_child(1).hide()
+	var w := _window("Исследования", 820)
 	research_panel = w[0]
 	research_panel.name = "ResearchWindow"
 	CityStyle.apply(research_panel)
+	(w[1] as VBoxContainer).get_child(1).hide()
 	research_tree = preload("res://scripts/research_tree.gd").new()
-	research_tree.setup(self, w[1])
+	research_tree.setup(self, w[1], w[2])
 	research_panel.visibility_changed.connect(func():
 		if research_panel.visible:
-			_research_head()                  # В том числе при прямом show(), без кнопки верхней полосы.
 			research_tree.open_scroll = true
+			_fill_research.call_deferred()     # В том числе при прямом show().
 		else:
 			research_tree.close_detail())
-	# окно закрыли — всё, что в нём было новым, игрок видел: «НОВОЕ» с исследований снимается
+	# При закрытии снимаем метки новых исследований.
 	research_panel.visibility_changed.connect(func():
 		if not research_panel.visible and game and game.city and game.mode in ["new", "play"]:
 			for r in Defs.RESEARCH:
@@ -6774,9 +6775,14 @@ func _fill_research() -> void:
 	_research_head()
 	research_tree.refresh()
 	if research_tree.open_scroll:
-		research_tree.close_detail()
+		research_tree.open_scroll = false
+		if game.tutorial != null and game.tutorial.cur_id() == "research":
+			var target: Button = research_tree.cheapest_available()
+			if target != null:
+				await research_tree.focus_card(String(target.get_meta("rid")))
+				_update_pointer()
+				return
 		research_tree.focus_rank(game.city.level)
-	research_tree.open_scroll = false
 
 # ---------- финансы, статистика ----------
 func _finance_panel() -> void:
@@ -7596,7 +7602,7 @@ func plot_cap_note() -> String:
 		var r := Defs.research(id)
 		if c.research.has(id):
 			continue
-		if c.level >= int(r["lvl"]) and (not r.has("after") or c.research.has(r["after"])) and c.money_cap() * 2.0 >= price:
+		if c.level >= int(r["lvl"]) and c.missing_research_prerequisite(r) == "" and c.money_cap() * 2.0 >= price:
 			vault = r["name"]
 		break
 	if lv != "":
@@ -7671,10 +7677,10 @@ func refresh() -> void:
 ## Заголовок окна исследований: очки / полки и «+N в час»
 func _research_head() -> void:
 	var c: City = game.city
-	lbl_research_rp.text = ("%s (сверх полок)" % fmt(c.rp)) if c.rp > c.rp_cap() + 0.5 else "%s / %s" % [fmt(c.rp), fmt(c.rp_cap())]
+	lbl_research_rp.text = fmt(c.rp)
 	var ph := float(c.stats.get("rp_day", 0.0))
 	lbl_research_rate.text = "+%s в час" % fmt_rate(ph)
-	lbl_research_rp.get_parent().set("tooltip_text", rp_tip())
+	research_points.tooltip_text = rp_tip()
 
 
 ## «13,5» — прибавка в час с одной цифрой после запятой (целые — без неё)

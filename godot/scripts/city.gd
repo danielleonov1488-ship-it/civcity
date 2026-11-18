@@ -1725,7 +1725,7 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 	# исследование новой лавки (если готовые уже стоят)
 	var rb := [0.0, ""]
 	for r in Defs.RESEARCH:
-		if research.has(r["id"]) or int(r["lvl"]) > level or (r.has("after") and not research.has(r["after"])):
+		if research.has(r["id"]) or int(r["lvl"]) > level or missing_research_prerequisite(r) != "":
 			continue
 		for t in Defs.B:
 			var d: Dictionary = Defs.B[t]
@@ -3723,9 +3723,20 @@ func research_visible(id: String) -> bool:
 	return not (cozy_v >= 1 and legion_v >= 3 and id in ["legion", "archery"])
 
 
+func research_done(id: String) -> bool:
+	return research.has(id) or bool(Defs.research(id).get("initial", false))
+
+
+func missing_research_prerequisite(r: Dictionary) -> String:
+	for parent: String in Defs.research_prerequisites(r):
+		if not research_done(parent):
+			return parent
+	return ""
+
+
 func can_research(id: String) -> String:
 	var r := Defs.research(id)
-	if r.is_empty() or research.has(id):
+	if r.is_empty() or research_done(id):
 		return "Уже изучено"
 	if not research_visible(id):
 		return "Военные постройки — только в форте"
@@ -3733,8 +3744,9 @@ func can_research(id: String) -> String:
 		return "Откроется %s" % Defs.unlock_text(id)
 	if int(r["lvl"]) > level:
 		return "Нужен уровень «%s»" % Defs.LEVELS[int(r["lvl"])]["name"]
-	if r.has("after") and not research.has(r["after"]):
-		return "Сначала — «%s»" % Defs.research(r["after"])["name"]
+	var prerequisite := missing_research_prerequisite(r)
+	if prerequisite != "":
+		return "Сначала — «%s»" % Defs.research(prerequisite)["name"]
 	if rp < float(r["cost"]):
 		# дороже, чем вмещают полки: копить бесполезно — сказать, что поможет
 		if float(r["cost"]) > rp_cap():
@@ -3826,7 +3838,7 @@ func mark_seen(type: String) -> bool:
 ## Исследование можно изучать (уровень есть, нужное раньше изучено), но ещё не изучено
 func research_open(id: String) -> bool:
 	var r := Defs.research(id)
-	return research_visible(id) and not r.is_empty() and Defs.story_of(r) == "" and not research.has(id) and int(r["lvl"]) <= level and (not r.has("after") or research.has(r["after"]))
+	return research_visible(id) and not r.is_empty() and Defs.story_of(r) == "" and not research_done(id) and int(r["lvl"]) <= level and missing_research_prerequisite(r) == ""
 
 
 func is_new_r(id: String) -> bool:
@@ -4054,7 +4066,7 @@ func progress_of(pp: Array) -> int:
 			var all := 0
 			var done := 0
 			for r: Dictionary in Defs.RESEARCH:
-				if int(r["lvl"]) == int(arg) and research_visible(String(r["id"])) and not r.has("story"):
+				if int(r["lvl"]) == int(arg) and research_visible(String(r["id"])) and not r.has("story") and not bool(r.get("initial", false)):
 					all += 1
 					done += 1 if research.has(r["id"]) else 0
 			return int(floor(100.0 * done / all)) if all > 0 else 100

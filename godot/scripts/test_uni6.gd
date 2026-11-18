@@ -57,11 +57,11 @@ func run() -> void:
 	inspect_panel(hud.research_panel)
 	await shot("03_research.png")
 	var tree = hud.research_tree
-	for tier: int in tree.rank_tabs:
+	for tier: int in tree.sections:
 		tree.select_rank(tier)
 		await frames(2)
 		inspect_panel(hud.research_panel)
-	# После обхода рангов целевое знание надо сначала вернуть в видимую страницу.
+	# После обхода рангов прокручиваем к целевому исследованию.
 	tree.reveal("deco_flowers")
 	await frames()
 	(tree.cards["deco_flowers"] as Control).mouse_entered.emit()

@@ -1170,9 +1170,9 @@ func _bresearch() -> void:
 		order.append(r["id"])
 	for id in order:
 		var r := Defs.research(id)
-		if r.is_empty() or c.research.has(id) or int(r["lvl"]) > c.level or id in B_SKIP or Defs.story_of(r) != "":
+		if r.is_empty() or c.research_done(id) or int(r["lvl"]) > c.level or id in B_SKIP or Defs.story_of(r) != "":
 			continue
-		if r.has("after") and not c.research.has(r["after"]):
+		if c.missing_research_prerequisite(r) != "":
 			continue
 		var why: String = c.can_research(id)
 		if why == "":
@@ -1627,9 +1627,9 @@ func _blegion(save: float) -> void:
 func _econ_hour() -> void:
 	var avail := []
 	for r in Defs.RESEARCH:
-		if c.research.has(r["id"]) or int(r["lvl"]) > c.level or r["id"] in B_SKIP or r.has("story"):
+		if c.research_done(String(r["id"])) or int(r["lvl"]) > c.level or r["id"] in B_SKIP or r.has("story"):
 			continue
-		if r.has("after") and not c.research.has(r["after"]):
+		if c.missing_research_prerequisite(r) != "":
 			continue
 		avail.append(float(r["cost"]))
 	if avail.is_empty():

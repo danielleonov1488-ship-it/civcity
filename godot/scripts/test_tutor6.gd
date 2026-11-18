@@ -315,19 +315,19 @@ func run() -> void:
 	await frames()
 	hud._update_pointer()
 	var research_card := hud.pointer_target as Button
-	if not check(research_card != null and hud.research_panel.is_ancestor_of(research_card), "pointer on available knowledge"):
+	var tree = hud.research_tree
+	if not check(research_card != null and research_card == tree.cheapest_available()
+			and tree.is_on_scroll(research_card) and not research_card.disabled, "pointer on cheapest available research"):
 		return
 	await pointer_shot(research_card, "10_research_card.png")
 	research_card.pressed.emit()
 	await frames()
 	hud._update_pointer()
-	check(hud.pointer_target == hud.research_tree.study and not hud.research_tree.study.disabled, "pointer on Study")
-	check(not tut._check("research"), "opening knowledge is not completion")
-	await pointer_shot(hud.research_tree.study, "10_research_study.png")
-	hud.research_tree.study.pressed.emit()
-	hud._update_pointer()
-	check(hud.pointer_target == hud.research_tree.confirm_yes, "pointer on inline Yes")
-	hud.research_tree.confirm_yes.pressed.emit()
+	if not check(hud.pointer_target == tree.confirm_yes and tree.confirm.get_parent() == research_card, "pointer on inline Yes"):
+		return
+	check(not tut._check("research"), "opening confirmation is not completion")
+	await pointer_shot(tree.confirm_yes, "10_research_study.png")
+	tree.confirm_yes.pressed.emit()
 	if not await snapshot_step("done"):
 		return
 	check(not hud.advisor_panel.visible and hud.guidance_queue.size() >= 2, "queue still waits at done card")

@@ -5641,5 +5641,11 @@
 "В поход! Первый бой": "March out! Your first battle.",
 "Сокровищница копит денарии.\nДеньги из города — кнопкой слева, раз в 5 часов": "The treasury earns denarii.\nUse the button on the left to order more every 5 hours.",
 "Волна %d/%d": "Wave %d/%d",
-"Жмите умения, когда они готовы (клавиши 1–7).": "Use skills when they are ready (keys 1–7)."
+"Жмите умения, когда они готовы (клавиши 1–7).": "Use skills when they are ready (keys 1–7).",
+"Изучить ·": "Study ·",
+"Изучить за %s?": "Study for %s?",
+"Закрыто": "Locked",
+"Да": "Yes",
+"Нет": "No",
+"Доступно с начала игры": "Available from the start"
 }

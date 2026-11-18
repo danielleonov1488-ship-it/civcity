@@ -232,7 +232,7 @@ func _enter(i: int) -> void:
 			hud._hide_info()
 			var cheapest := 1e9
 			for r: Dictionary in Defs.RESEARCH:
-				if int(r["lvl"]) <= c.level and not r.has("after") and Defs.story_of(r) == "" and not c.research.has(r["id"]):
+				if c.research_open(String(r["id"])):
 					cheapest = minf(cheapest, float(r["cost"]))
 			if cheapest < 1e9:
 				c.rp = maxf(c.rp, minf(c.rp_cap(), cheapest))
@@ -596,18 +596,10 @@ func pointer() -> Array:
 			var tree = hud.research_tree
 			if tree.pending != "":
 				return [tree.confirm_yes, "Да"]
-			if is_instance_valid(tree.study) and tree.study.is_visible_in_tree() and not tree.study.disabled:
-				return [tree.study, "Изучить"]
-			var rid := ""
-			var cost := INF
-			for r: Dictionary in Defs.RESEARCH:
-				if c.can_research(String(r["id"])) == "" and float(r["cost"]) < cost:
-					rid = String(r["id"])
-					cost = float(r["cost"])
-			var target: Control = tree.cards.get(rid)
-			if target != null and not target.is_visible_in_tree():
-				return [tree.rank_tabs.get(c.level), "Исследования"]
-			return [target, "Исследования"]
+			var target: Button = tree.cheapest_available()
+			if target != null and not tree.is_on_scroll(target):
+				return [tree.scroll.get_v_scroll_bar(), "Исследования"]
+			return [target, "Изучить"]
 		"done":
 			return [next_btn, ""]
 	return [null, ""]

@@ -738,10 +738,12 @@ const CAT_SHORT := {"housing": "Жильё", "commerce": "Лавки", "farming"
 ## Пекарня и Сапожник — в ряду «Деревни»; самое дорогое в ряду «Деревни» — четверть полок, а не половина.
 ## story — исследование открывает история горожан (без очков): в свитке оно серое, изучить нельзя
 const RESEARCH := [
-	# первые исследования дешёвые: просьбы до хутора дают ~65 очков
+	# Первые исследования дешёвые: просьбы до хутора дают ~65 очков.
+	{"id": "stall_fruit", "lvl": 0, "name": "Фруктовая лавка", "cost": 0, "icon": "food", "initial": true},
 	{"id": "stall_veg", "lvl": 0, "name": "Овощная лавка", "cost": 20, "icon": "veg"},
 	{"id": "stall_fish", "lvl": 0, "name": "Рыбная лавка", "cost": 30, "icon": "fish"},
-	{"id": "reach1", "lvl": 0, "name": "Больший охват", "cost": 80, "icon": "arrow", "after": "stall_veg",
+	{"id": "reach1", "lvl": 0, "name": "Больший охват", "cost": 80, "icon": "arrow",
+		"requires": ["stall_fruit", "stall_veg", "stall_fish"],
 		"desc": "Лавки с едой обслуживают дома дальше."},
 	{"id": "farm", "lvl": 0, "name": "Пшеничное поле", "cost": 50, "icon": "wheat"},
 	{"id": "deco_flowers", "lvl": 0, "name": "Цветы и вазоны", "cost": 15, "icon": "daisy"},
@@ -1053,6 +1055,12 @@ static func story_of(r: Dictionary) -> String:
 	if story_rules >= 1 and STORY_NEW.has(String(r.get("id", ""))):
 		return String(STORY_NEW[String(r["id"])])
 	return ""
+
+
+static func research_prerequisites(r: Dictionary) -> Array:
+	if r.has("requires"):
+		return r["requires"]
+	return [r["after"]] if r.has("after") else []
 
 
 static func research(id: String) -> Dictionary:
