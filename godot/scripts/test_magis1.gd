@@ -402,9 +402,9 @@ func _run() -> void:
 	ui.close()
 	var home: Dictionary = c.buildings.values().filter(func(b: Dictionary): return b["type"] == "house_pleb")[0]
 	check(home["happy_parts"].any(func(part: Array): return part[0] == "Эдикты" and int(part[1]) == -4), "happiness edicts row")
-	hud.house_more = true
 	hud.open_info(home)
-	check(hud.info_box.find_children("*", "Label", true, false).any(func(label: Label): return label.text == "Эдикты"), "happiness row visible in detailed card")
+	var happy := hud.info_box.find_child("HouseHappiness", true, false) as Label
+	check(happy != null and happy.tooltip_text.contains("Эдикты"), "edict effects shown in happiness tooltip")
 	await shot("4_happiness_row.png")
 	_finish()
 

@@ -239,11 +239,9 @@ func visual_checks() -> void:
 	check(not (home["missing"] as Array).is_empty(), "new class missing needs computed immediately")
 	hud.open_info(home)
 	await frames()
-	var block := hud.info_box.find_child("HouseMissing", true, false)
-	check(block != null, "upgraded house shows missing block")
-	if block != null:
-		for need: String in Defs.needs_for("artisans", city.level):
-			check((block.find_child("Missing_" + need, true, false) != null) == (int(home["need_coverage"].get(need, 0)) < 100), "missing block exactly matches " + need)
+	for need: String in Defs.needs_for("artisans", city.level):
+		var row := hud.info_box.find_child("sources_" + need, true, false)
+		check(row != null and (row.find_child("MissingNeed", true, false) != null) == (home["need_sources"][need] as Array).is_empty(), "missing row exactly matches " + need)
 	game.rig.set_view(Vector3(177, Land.BASE_Y, 136), 20, 48, 32)
 	await shot("06_upgraded_missing.png")
 	clear_guidance()

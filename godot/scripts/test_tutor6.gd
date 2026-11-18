@@ -114,7 +114,7 @@ func run() -> void:
 		check(String(s["text"]).length() <= 60 and String(s["title"]).length() <= 60, "short step " + String(s["id"]))
 	clear_guidance()
 	# Чужой совет, всплывашка и будущие магистратуры ждут окончания цепочки.
-	hud.advisor("Работа в новом здании", "Работников добавляют кнопкой «+» в карточке здания. Кнопка «−» освобождает место.", Callable(), true)
+	hud.advisor("Работа в новом здании", "Выберите класс и нажмите «+». Чтобы уволить работника, нажмите на его портрет.", Callable(), true)
 	hud._toast("Первые переселенцы прибыли в ваш город!", "family")
 	check(hud.guidance_queue.size() == 2, "advisor and toast queued")
 	check(not MagisUI.advise(hud), "magistracy waits for tutorial")

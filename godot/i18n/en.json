@@ -5641,5 +5641,22 @@
 "В поход! Первый бой": "March out! Your first battle.",
 "Сокровищница копит денарии.\nДеньги из города — кнопкой слева, раз в 5 часов": "The treasury earns denarii.\nUse the button on the left to order more every 5 hours.",
 "Волна %d/%d": "Wave %d/%d",
-"Жмите умения, когда они готовы (клавиши 1–7).": "Use skills when they are ready (keys 1–7)."
+"Жмите умения, когда они готовы (клавиши 1–7).": "Use skills when they are ready (keys 1–7).",
+"РАБОТА": "WORK",
+"Уволить": "Dismiss",
+"Требуются %s": "Accepts %s",
+"Нет свободных мест": "No open slots",
+"Выберите класс и нажмите «+». Чтобы уволить работника, нажмите на его портрет.": "Choose a class and click '+'. To dismiss a worker, click their portrait.",
+"%s к счастью работников": "%s worker happiness",
+" ден./ч": " denarii/h",
+"Производство: %s": "Production: %s",
+"Спрос: %s": "Demand: %s",
+"Связи": "Connections",
+"%s счастье жителя": "%s resident happiness",
+"Плотность населения": "Population density",
+"Доходы": "Income",
+"Снести мешающие украшения · возврат %s ден.": "Remove blocking decorations · refund %s denarii",
+"Дом пока пуст": "No residents yet",
+"Семья: %s": "Family: %s",
+"нет рядом": "None nearby"
 }

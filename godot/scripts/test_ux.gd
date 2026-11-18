@@ -176,7 +176,6 @@ func _run() -> void:
 	c.auto_hire = true  # прежняя фикстура
 	cover = game.cover
 	hud = game.hud
-	hud.house_more = true                 # карточка дома — подробная (проверки её строк); короткую — ниже
 	game.can_save = false
 	game.speed = 0.0
 	game.tutorial.step = Tutorial.STEPS.size()
@@ -609,34 +608,12 @@ func _floor_why() -> void:
 		game.select_building(c.buildings[rr[0]])
 		hud.open_info(c.buildings[rr[0]])
 		await frames(3)
-		var fbtn := false
-		for b in hud.info_box.find_children("*", "Button", true, false):
-			fbtn = fbtn or (b as Button).text.begins_with("Надстроить этаж")
-		var tip := false
-		for l in texts(hud.info_box):
-			tip = tip or String(l).contains("инструментом «Этаж»")
-		check(fbtn and tip, "в карточке дома кнопка «Надстроить этаж» осталась, рядом — подсказка про инструмент")
-		# Короткая карточка тоже сохраняет полное название действия и «Подробнее».
-		hud.house_more = false
-		hud.open_info(c.buildings[rr[0]])
-		await frames(3)
-		var sbtn: Button = null
-		var more: Button = null
-		for b in hud.info_box.find_children("*", "Button", true, false):
-			if (b as Button).text.begins_with("Надстроить этаж ·"):
-				sbtn = b
-			if (b as Button).tooltip_text.begins_with("Подробнее"):
-				more = b
-		check(sbtn != null and more != null and is_equal_approx(hud.info_panel.size.x, 340.0),
-			"короткая карточка дома: «Надстроить этаж · цена» и «Подробнее», ширина %.0f" % hud.info_panel.size.x)
-		if more:
-			more.pressed.emit()
-			await frames(3)
-			var det := false
-			for l in texts(hud.info_box):
-				det = det or String(l) == "Из чего счастье"
-			check(hud.house_more and det, "«Подробнее» — подробная карточка с «Из чего счастье»")
-		hud.house_more = true
+		var floor_btn := hud.info_box.find_child("InfoFloor", true, false) as Button
+		check(floor_btn != null and floor_btn.text == "Этаж" and floor_btn.tooltip_text.begins_with("Надстроить этаж ·"),
+			"кнопка «Этаж» показывает цену в подсказке")
+		var happy := hud.info_box.find_child("HouseHappiness", true, false) as Label
+		check(happy != null and happy.tooltip_text.contains("Основа"), "состав счастья в подсказке")
+		check(is_equal_approx(hud.info_panel.size.x, 340.0) and hud.info_panel.size.y <= 600.0, "компактный размер карточки")
 		hud.close_panels()
 		await frames(2)
 

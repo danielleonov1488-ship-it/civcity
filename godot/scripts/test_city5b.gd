@@ -130,22 +130,18 @@ func _run() -> void:
 		game.rig.set_view(at - Vector3(0, 1, 0), 0, 48, 30)
 	await shot("3_family_waiting.png")
 	game.rig.set_view(Vector3(174, 2, 137), 0, 48, 65)
-	hud.house_more = false
 	game.select_building(house)
 	hud.open_info(house)
 	await frames(8)
 	_card_bounds()
-	var strip := hud.info_box.find_child("NeedStrip", true, false) as Control
-	check(strip != null and strip.get_child_count() == 6, "six needs in one row")
+	check(hud.info_box.find_children("sources_*", "Control", true, false).size() == Defs.needs_for("plebs", city.level).size(), "only required needs get rows")
+	var scroll := hud.info_box.find_child("house_scroll", true, false) as ScrollContainer
+	check(scroll != null and hud.info_panel.size.y <= 600.0, "compact house scroll")
 	var members := hud.info_box.find_child("Members", true, false) as Control
 	var preference := hud.info_box.find_child("Preference", true, false) as Control
-	check(members != null and preference != null and members.get_parent() == preference.get_parent(), "family heads and want on one line")
+	var family := hud.info_box.find_child("family_0", true, false)
+	check(family is PanelContainer and members != null and preference != null and family.is_ancestor_of(members) and family.is_ancestor_of(preference), "busts and want share one family block")
 	await shot("4_house_card.png")
-	hud.house_more = true
-	hud.open_info(house)
-	await frames(6)
-	_card_bounds()
-	hud.house_more = false
 	game.select_building(fruit)
 	hud.open_info(fruit)
 	await frames(8)
@@ -170,7 +166,7 @@ func _badges_without_text() -> void:
 
 
 func _card_bounds() -> void:
-	check(absf(hud.info_panel.size.x - 340.0) <= 1.0, "card width 340 including scroll (now %.1f, more=%s)" % [hud.info_panel.size.x, hud.house_more])
+	check(absf(hud.info_panel.size.x - 340.0) <= 1.0, "card width 340 including scroll (now %.1f)" % hud.info_panel.size.x)
 	check(Rect2(Vector2.ZERO, hud.root.size).encloses(hud.info_panel.get_global_rect()), "card inside HUD")
 	for label: Label in hud.info_box.find_children("*", "Label", true, false):
 		check(label.get_theme_color("font_color") in [CityStyle.INK, Hud.C_GOOD, Hud.C_BAD], "city ink and semantic numbers")

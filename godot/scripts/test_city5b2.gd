@@ -68,13 +68,14 @@ func _card_bounds() -> void:
 	if city.is_house(hud.info_b):
 		var floor_button := hud.info_box.find_child("InfoFloor", true, false) as Button
 		if int(hud.info_b["tier"]) < Defs.floors_max(String(city.def(hud.info_b)["cls"]), int(hud.info_b.get("variant", 0))):
-			check(floor_button != null and floor_button.text.begins_with("Надстроить этаж · "), "floor action retained")
+			check(floor_button != null and floor_button.text == "Этаж" and floor_button.tooltip_text.begins_with("Надстроить этаж · "), "floor action retained")
 		var pictures := hud.info_box.find_children("SourcePicture*", "TextureRect", true, false)
 		check(not pictures.is_empty(), "house has covering-building pictures")
 		for picture: TextureRect in pictures:
 			var type := String(picture.get_meta("building_type", ""))
 			check(picture.texture != null, "nonempty covering picture " + type)
-			check(picture.texture == CityStyle.icon(String(Defs.B[type].get("icon", "housing"))) and picture.modulate == CityStyle.OLIVE, "olive source pictogram " + type)
+			if hud.icons.has(type):
+				check(picture.texture == hud.icons[type] and picture.modulate == Color.WHITE, "colored covering building picture " + type)
 			var bonus := picture.get_parent().get_child(1) as Label
 			check(bonus != null and bonus.text.begins_with("+") and bonus.text.ends_with("%") and not bonus.clip_text, "covering bonus visible " + type)
 			var overlay := picture.get_parent().get_parent().get_child(1) as Button
@@ -85,10 +86,10 @@ func _wait_source_pictures() -> void:
 	for attempt in 3600:
 		var ready := true
 		for picture: TextureRect in hud.info_box.find_children("SourcePicture*", "TextureRect", true, false):
-			if picture.texture == null:
+			if not hud.icons.has(String(picture.get_meta("building_type", ""))):
 				ready = false
 		if ready:
-			hud._refresh_source_pictures()
+			hud._refresh_building_pictures()
 			return
 		await frames(5)
 	check(false, "covering pictures timeout")

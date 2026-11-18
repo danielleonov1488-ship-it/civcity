@@ -96,13 +96,10 @@ func _run() -> void:
 		hud.refresh()
 		hud.open_info(home)
 		await frames(3)
-		var strip := hud.info_box.find_child("NeedStrip", true, false) as Control
-		check(strip != null, "need strip")
-		if strip != null:
-			var faith := strip.get_node("need_faith") as Control
-			check(String(faith.get_meta("state")) == ("red" if rank >= 2 else "disabled"), "faith UI state")
-			if rank < 2:
-				check(faith.tooltip_text == "с уровня «Деревня»", "faith unlock tooltip")
+		var faith := hud.info_box.find_child("sources_faith", true, false) as Control
+		check((faith != null) == (rank >= 2), "faith row appears when required")
+		if faith != null:
+			check(String(faith.get_meta("state")) == "red" and faith.find_child("MissingNeed", true, false) != null, "faith UI state")
 		await shot("needs_rank%d.png" % rank)
 	hud.close_panels()
 	_projection_checks()

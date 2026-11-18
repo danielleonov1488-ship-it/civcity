@@ -78,7 +78,8 @@ func run_fixes() -> void:
 	hud.open_info(home)
 	await frames(12)
 	check_missing(home)
-	check(hud.info_box.find_child("HouseLosses", true, false) != null, "two main happiness losses visible without More")
+	var happy := hud.info_box.find_child("HouseHappiness", true, false) as Label
+	check(happy != null and happy.tooltip_text.contains("Нет лавки:"), "happiness tooltip explains unmet needs")
 	await shot("02_missing_food_faith.png")
 	var garden := place("ogorod", Vector2(185, 136))
 	if garden.is_empty():
@@ -127,22 +128,16 @@ func run_fixes() -> void:
 
 
 func check_missing(home: Dictionary) -> void:
-	var block := hud.info_box.find_child("HouseMissing", true, false) as VBoxContainer
-	if not check(block != null, "compact missing block"):
-		return
 	for need: String in Defs.needs_for(String(city.def(home)["cls"]), city.level):
-		if int(home["need_coverage"][need]) >= 100:
+		if not (home["need_sources"][need] as Array).is_empty():
 			continue
-		var row := block.find_child("Missing_" + need, true, false) as Control
+		var row := hud.info_box.find_child("sources_" + need, true, false) as Control
 		if not check(row != null, "missing need " + need):
 			continue
-		var picture := row.find_child("SuggestedBuilding", true, false) as TextureRect
-		var caption := row.find_child("MissingAction", true, false) as Label
-		check(picture != null and picture.texture != null and HouseNeeds.category(Defs.B[picture.get_meta("building_type")]) == need, "fitting building picture " + need)
-		check(caption != null and caption.text.contains("поставьте рядом"), "visible nearby action " + need)
-	var losses := hud.info_box.find_child("HouseLosses", true, false) as VBoxContainer
-	if losses != null:
-		check(losses.get_child_count() <= 3, "at most two worst losses plus heading")
+		var picture := row.find_child("NeedIcon", true, false) as TextureRect
+		var caption := row.find_child("MissingNeed", true, false) as Label
+		check(picture != null and picture.texture == CityStyle.icon(need) and picture.modulate.a < 0.5, "faded need icon " + need)
+		check(caption != null and caption.text == "нет рядом", "visible missing need " + need)
 
 
 func check_sources() -> void:

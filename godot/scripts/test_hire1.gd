@@ -111,7 +111,8 @@ func _run() -> void:
 	check(game.people.residents.all(func(r: Dictionary) -> bool: return int(r["job"]) != int(shop["id"])), "building never auto-hires")
 	hud._do_click(hud.hire_do(shop))
 	await frames(5)
-	check(texts(hud.info_box).contains("свободно: %d" % int(c.stats["free"]["plebs"])), "empty card shows free workers")
+	var free_label := hud.info_box.find_child("hire_free_plebs", true, false) as Label
+	check(free_label != null and free_label.text == str(c.stats["free"]["plebs"]), "empty card shows free workers")
 	check(hud.info_box.find_child("worker_slots", true, false).get_child_count() == 3, "three visible slots")
 	check(hud._do_target(hud.hire_do(shop)) == hud.info_box.find_child("hire_plus", true, false), "quest pointer targets plus")
 	await shot("1_card_empty.png")
@@ -154,10 +155,18 @@ func _run() -> void:
 	restored.load_data(snapshot)
 	check(restored.manual_hiring() and restored.hired_of(restored.buildings[int(shop["id"])]) == 1, "save restores manual hire")
 	check(int(restored.stats["free"]["plebs"]) == int(c.stats["free"]["plebs"]), "save restores free count")
-	var minus := hud.info_box.find_child("hire_minus", true, false) as Button
-	minus.pressed.emit()
+	var slot := hud.info_box.find_child("worker_slot_0", true, false) as Button
+	if not check(slot != null and bool(slot.get_meta("occupied")), "worker slot is filled"):
+		_finish()
+		return
+	slot.pressed.emit()
+	var confirm := hud.info_box.find_child("FireWorker", true, false) as Button
+	if not check(confirm != null and c.hired_of(shop) == 1, "slot asks for confirmation"):
+		_finish()
+		return
+	confirm.pressed.emit()
 	await frames(5)
-	check(c.hired_of(shop) == 0 and int(nearest["job"]) < 0, "minus frees same worker")
+	check(c.hired_of(shop) == 0 and int(nearest["job"]) < 0, "confirmation frees the selected worker")
 	check(int(c.stats["free"]["plebs"]) == free_before, "free counter restored")
 	check(int(shop["cap"]) == 0 and int(shop["served"]) == 0, "fire clears previous coverage")
 	hud.close_panels()

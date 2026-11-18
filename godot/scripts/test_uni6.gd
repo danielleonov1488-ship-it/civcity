@@ -29,7 +29,6 @@ func run() -> void:
 	for m: Dictionary in home["families"][0]["m"]:
 		m["prof"] = "scholar"
 	city.compute()
-	hud.house_more = true
 	hud.open_info(home)
 	await frames()
 	inspect_panel(hud.info_panel)
@@ -99,7 +98,7 @@ func run() -> void:
 	game.tutorial.finish()
 	clear_guidance()
 	hud._hide_info()
-	hud.advisor("Работа в новом здании", "Работников добавляют кнопкой «+» в карточке здания. Кнопка «−» освобождает место.", Callable(), true, false, hud.hire_do(shop))
+	hud.advisor("Работа в новом здании", "Выберите класс и нажмите «+». Чтобы уволить работника, нажмите на его портрет.", Callable(), true, false, hud.hire_do(shop))
 	await frames()
 	check(hud.advisor_panel.size.x <= 520.0 and hud.adv_show.visible, "advisor width and show target")
 	inspect_panel(hud.advisor_panel)

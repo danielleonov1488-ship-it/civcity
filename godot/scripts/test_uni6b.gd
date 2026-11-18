@@ -39,15 +39,13 @@ func cards_and_research() -> void:
 	city.compute()
 	for lang: String in ["ru", "en"]:
 		I18n.set_lang(lang)
-		for more: bool in [false, true]:
-			hud.house_more = more
-			hud.open_info(home)
-			await frames(12)
-			check(absf(hud.info_panel.size.x - Hud.INFO_WIDTH) <= 1.0, lang + " house stays 340 including scroll, more=%s" % more)
-			var scroll := hud.info_box.find_child("house_scroll", true, false) as ScrollContainer
-			check(scroll != null and scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_RESERVE, "house reserves scrollbar inside card")
-			inspect_panel(hud.info_panel)
-			await shot("01_house_%s_%s.png" % [lang, "more" if more else "short"])
+		hud.open_info(home)
+		await frames(12)
+		check(absf(hud.info_panel.size.x - Hud.INFO_WIDTH) <= 1.0 and hud.info_panel.size.y <= 600.0, lang + " house stays compact including scroll")
+		var scroll := hud.info_box.find_child("house_scroll", true, false) as ScrollContainer
+		check(scroll != null and scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_RESERVE, "house reserves scrollbar inside card")
+		inspect_panel(hud.info_panel)
+		await shot("01_house_%s.png" % lang)
 		hud.close_panels()
 		hud._open_overview("people")
 		await frames()

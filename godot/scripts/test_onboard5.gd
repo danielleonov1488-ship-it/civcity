@@ -162,7 +162,7 @@ func _cards() -> bool:
 	hud.open_info(home)
 	await frames()
 	var occupancy := hud.info_box.find_child("HouseOccupancy", true, false) as Label
-	check(occupancy != null and occupancy.text == "3/4" and occupancy.tooltip_text == "жителей / мест", "residents / capacity instead of unlabelled floors")
+	check(occupancy != null and occupancy.text == "3/4" and occupancy.tooltip_text.begins_with("жителей / мест"), "residents / capacity instead of unlabelled floors")
 	await shot("02_house_card.png")
 	var types := {"plebs": "stall_fruit", "artisans": "taberna", "patricians": "theatre"}
 	var fruit: Dictionary = {}
@@ -176,7 +176,7 @@ func _cards() -> bool:
 		await frames()
 		var free := hud.info_box.find_child("hire_free_" + cls, true, false) as Label
 		var row := hud.info_box.find_child("hire_class_" + cls, true, false) as HBoxContainer
-		check(free != null and free.text == "свободно: %d" % int(city.stats["free"][cls]), "free workers for " + cls)
+		check(free != null and free.text == str(city.stats["free"][cls]), "free workers for " + cls)
 		check(row != null and row.get_child(0) is TextureRect and (row.get_child(0) as TextureRect).texture == CityStyle.icon(String(CityStyle.CLASS_ICON[cls])) and row.tooltip_text == Defs.CLASSES[cls]["name"], "required class icon for " + cls)
 		if cls == "plebs":
 			fruit = b
@@ -202,7 +202,7 @@ func _cards() -> bool:
 	plus.pressed.emit()
 	await frames()
 	check(city.hired_of(fruit) == 1 and int(city.stats["free"]["plebs"]) == before - 1, "plus hires one free worker")
-	check((hud.info_box.find_child("hire_free_plebs", true, false) as Label).text == "свободно: %d" % (before - 1), "free count refreshes after hire")
+	check((hud.info_box.find_child("hire_free_plebs", true, false) as Label).text == str(before - 1), "free count refreshes after hire")
 	check(hud._do_target(hud.hire_do(fruit)) == null, "first-hire pointer clears after hire")
 	await shot("04_hired.png")
 	return true

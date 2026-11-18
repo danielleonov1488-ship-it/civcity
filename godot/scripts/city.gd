@@ -875,17 +875,43 @@ func empty_jobs(cls: String) -> int:
 	return n
 
 
-func _hire_candidate(b: Dictionary) -> Dictionary:
+## Классы, которым разрешено занять хотя бы одно место в здании.
+func accepted_worker_classes(b: Dictionary) -> Array:
+	var slots: Dictionary = def(b).get("jobs", {})
+	for slot: String in Defs.CLASS_ORDER:
+		if int(slots.get(slot, 0)) > 0:
+			return WORK_CLASSES[slot].duplicate()
+	return []
+
+
+func has_vacancy(b: Dictionary, worker_class: String) -> bool:
+	if b.get("over", false):
+		return false
+	var slots: Dictionary = def(b).get("jobs", {})
+	var filled := jobs_of(b)
+	for slot: String in Defs.CLASS_ORDER:
+		if worker_class in WORK_CLASSES[slot] and int(filled.get(slot, 0)) < int(slots.get(slot, 0)):
+			return true
+	return false
+
+
+func _hire_candidate(b: Dictionary, worker_class := "") -> Dictionary:
 	if b.is_empty() or not buildings.has(int(b["id"])) or hired_of(b) >= job_max(b) or b.get("over", false):
 		return {}
 	var roster := _staff_roster()
 	var slots: Dictionary = def(b).get("jobs", {})
 	var hired := jobs_of(b)
 	var profession := Defs.building_profession(def(b))
-	for slot: String in Defs.CLASS_ORDER:
+	var order: Array = Defs.CLASS_ORDER.duplicate()
+	# Выбранный класс сначала занимает самое строгое из доступных мест.
+	if worker_class != "":
+		order.reverse()
+	for slot: String in order:
 		if int(hired.get(slot, 0)) >= int(slots.get(slot, 0)):
 			continue
 		for cls: String in WORK_CLASSES[slot]:
+			if worker_class != "" and cls != worker_class:
+				continue
 			var best: Dictionary = {}
 			var distance := INF
 			var best_fits := false
@@ -905,17 +931,21 @@ func _hire_candidate(b: Dictionary) -> Dictionary:
 	return {}
 
 
-func can_hire(b: Dictionary) -> bool:
-	return not _hire_candidate(b).is_empty() if manual_hiring() else hired_of(b) < job_max(b)
+func can_hire(b: Dictionary, worker_class := "") -> bool:
+	if manual_hiring():
+		return not _hire_candidate(b, worker_class).is_empty()
+	return worker_class == "" and hired_of(b) < job_max(b)
 
 
-func hire(b: Dictionary, n := 1) -> int:
+func hire(b: Dictionary, n := 1, worker_class := "") -> int:
 	var before := hired_of(b)
 	if not manual_hiring():
+		if worker_class != "":
+			return 0
 		set_hire(b, before + maxi(0, n))
 		return hired_of(b) - before
 	for i in maxi(0, n):
-		var w := _hire_candidate(b)
+		var w := _hire_candidate(b, worker_class)
 		if w.is_empty():
 			break
 		w["m"]["job"] = int(b["id"])
@@ -941,6 +971,21 @@ func fire(b: Dictionary, n := 1) -> int:
 	compute(true)
 	changed.emit()
 	return before - hired_of(b)
+
+
+## Увольняем именно запись жителя, выбранного в карточке.
+func fire_worker(b: Dictionary, member: Dictionary) -> bool:
+	if not manual_hiring() or not is_same(buildings.get(int(b.get("id", -1))), b):
+		return false
+	for worker: Dictionary in staff_members(b):
+		if is_same(worker["m"], member):
+			b["hire"] = hired_of(b) - 1
+			member.erase("job")
+			member.erase("job_class")
+			compute(true)
+			changed.emit()
+			return true
+	return false
 
 
 ## Денариев в час за каждого нанятого работника — растёт с уровнем города (Defs.WAGE)
@@ -1132,7 +1177,7 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 		workers[c] = int(floor(residents[c] * float(Defs.CLASSES[c]["work"])))
 		filled[c] = mini(jobs[c], workers[c])
 		spare[c] = workers[c] - filled[c]
-	for pair: Array in [["patricians", "artisans"], ["artisans", "plebs"]]:
+	for pair: Array in [["patricians", "artisans"], ["artisans", "plebs"], ["patricians", "plebs"]]:
 		var take := mini(jobs[pair[1]] - filled[pair[1]], spare[pair[0]])
 		if take > 0:
 			filled[pair[1]] += take

@@ -1,10 +1,9 @@
 extends Node3D
 ## UI4: реальные нужды, пять видов значков и пять кадров. Godot запускает проверяющий.
 
-const Preference = preload("res://scripts/family_preference.gd")
 const Badge = preload("res://scripts/map_badge.gd")
-var out := "D:/CivCity/.work/stage4/ui4/shots/"
-var game
+var out := "D:/CivCity/.work/stage7/cityttc9b/shots/ui4/"
+var game: Game
 var hud: Hud
 var city: City
 var fails := 0
@@ -14,10 +13,18 @@ func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
-	Game.boot = {"new": "1", "hour": "11"}
-	game = (load("res://main.tscn") as PackedScene).instantiate()
-	add_child(game)
+	var profile := "D:/CivCity/.work/stage7/cityttc9b/profiles/ui4_%d_%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_usec()]
+	if not check(DirAccess.make_dir_recursive_absolute(profile) == OK, "isolated profile directory"):
+		_finish()
+		return
+	OS.set_environment("CIVCITY_SAVEDIR", profile)
+	OS.set_environment("CIVCITY_NOMINPAUSE", "1")
+	OS.set_environment("CIVCITY_HEROSCREEN", "0")
+	GamePaths._dir = ""
+	Game.boot = {"new": "1", "hour": "11", "nologin": "1"}
+	game = (load("res://main.tscn") as PackedScene).instantiate() as Game
 	game.can_save = false
+	add_child(game)
 	_run()
 
 
@@ -102,17 +109,20 @@ func _run() -> void:
 		_finish()
 		return
 	var plebs := place("house_pleb", Vector2(177, 136))
+	var patrician := place("house_patrician", Vector2(173, 154), true, Defs.PAT_TOWN)
+	var ready := place("house_pleb", Vector2(177, 116))
+	var bare := place("house_pleb", Vector2(145, 158))
+	var isolated := place("house_pleb", Vector2(227, 122), false)
+	if [plebs, patrician, ready, bare, isolated].any(func(h: Dictionary) -> bool: return h.is_empty()):
+		_finish()
+		return
 	plebs["tier"] = 2
 	family(plebs, "Юлии", true)
-	var patrician := place("house_patrician", Vector2(173, 154), true, Defs.PAT_TOWN)
 	patrician["tier"] = 3
 	for name: String in ["Корнелии", "Клавдии", "Фабии"]:
 		family(patrician, name, true)
-	var ready := place("house_pleb", Vector2(177, 116))
 	family(ready, "Ливии", true)
-	var bare := place("house_pleb", Vector2(145, 158))
 	family(bare, "Валерии", true)
-	var isolated := place("house_pleb", Vector2(227, 122), false)
 	family(isolated, "Туллии")
 	var fruit := place("stall_fruit", Vector2(183, 137))
 	var temple := place("temple", Vector2(155, 131))
@@ -121,6 +131,11 @@ func _run() -> void:
 	var dice := place("dice", Vector2(164, 164))
 	var no_workers := place("barber", Vector2(207, 130))
 	place("forum", Vector2(150, 108))
+	if [fruit, temple, weaver, potter, dice, no_workers].any(func(b: Dictionary) -> bool: return b.is_empty()):
+		_finish()
+		return
+	# Поперечные улицы соединяются с площадью через продолжение главной дороги.
+	game.land.paint_line(Vector2(Land.ROAD_X, 126), Vector2(Land.ROAD_X, 167), 1.4, Land.Kind.ROAD)
 	# Два взрослых в каждой семье: нанимаем настоящие записи жителей.
 	city.compute()
 	for b: Dictionary in [fruit, temple, dice]:
@@ -128,6 +143,8 @@ func _run() -> void:
 	for b: Dictionary in [weaver, potter]:
 		check(city.hire(b, 1) == 1, "half staff " + String(b["type"]))
 	var waiting := city.new_family("plebs")
+	waiting["want"] = "quiet"
+	city.tips["want_advice"] = true
 	city.family_arrived(waiting, false)
 	game.people._on_resident_returned(waiting)
 	city.compute()
@@ -135,6 +152,10 @@ func _run() -> void:
 	city.arrivals_changed.emit()
 	await frames(15)
 	_check_needs(plebs, patrician, temple, ready, bare)
+	check(city.house_connected(bare) and not city.house_connected(isolated), "badge houses have distinct road access")
+	# У этих двух значков разные причины. Несчастье имеет приоритет над дорогой.
+	bare["happy"] = 20
+	isolated["happy"] = 50
 	hud._update_world_icons()
 	hud._family_badge_next_ms = 0
 	hud._family_badges()
@@ -147,41 +168,42 @@ func _run() -> void:
 	game.rig.set_view(Vector3(183, 3, 134), 0, 50, 160)
 	await frames(8)
 	hud._place_badges()
-	var problem: Control = hud.badges["b%d" % int(bare["id"])]["n"]
-	check(problem.visible and problem.scale.x >= 0.85 and is_equal_approx(problem.modulate.a, 1.0), "problem pin stays clear at far zoom")
+	var problem_key := "b%d" % int(bare["id"])
+	var problem: Badge = hud.badges.get(problem_key, {}).get("n")
+	check(is_instance_valid(problem) and problem.kind == "house_problem" and problem.visible and problem.scale.x >= 0.85 and is_equal_approx(problem.modulate.a, 1.0), "problem pin stays clear at far zoom")
 	await shot("2_badges_far.png")
-	hud._badge_click("b%d" % int(bare["id"]))
+	hud._badge_click(problem_key)
 	check(int(hud.info_b.get("id", -1)) == int(bare["id"]), "problem pin opens house card")
-	hud.house_more = false
 	game.rig.set_view(Vector3(174, 2, 137), 0, 48, 65)
 	game.select_building(plebs)
 	hud.open_info(plebs)
 	await frames(6)
 	_check_card(plebs, 1)
-	check((hud.info_box.find_child("need_clothes", true, false) as Control).get_meta("state") == "disabled", "unneeded clothes grey in plebs card")
-	check(_texts(hud.info_box).contains("Место ещё для 1 семьи"), "free family floor visible")
+	check(hud.info_box.find_child("sources_clothes", true, false) == null, "unneeded clothes omitted from plebs card")
+	var occupancy := hud.info_box.find_child("HouseOccupancy", true, false) as Label
+	check(occupancy != null and occupancy.tooltip_text.contains("Место ещё для 1 семьи"), "free family floor shown in occupancy tooltip")
 	await shot("3_house_card_plebs.png")
 	game.select_building(patrician)
 	hud.open_info(patrician)
 	await frames(6)
 	_check_card(patrician, 3)
 	await shot("4_house_card_patrician.png")
-	# Никакой обрезки после четвёртой семьи, и в подробном режиме тоже.
+	# В прокрутке остаются все семьи, включая пятую.
 	family(patrician, "Эмилии")
 	family(patrician, "Антонии")
 	city.compute()
-	for details: bool in [false, true]:
-		hud.house_more = details
-		hud.open_info(patrician)
-		_check_card(patrician, 5)
+	hud.open_info(patrician)
+	await frames(6)
+	_check_card(patrician, 5)
 	hud.close_panels()
 	hud._open_overview("city")
 	await frames(6)
-	var strip := hud.overview_pages["city"].find_child("NeedStrip", true, false) as Control
-	check(strip != null and strip.get_child_count() == 6, "overview contains six needs")
-	if strip != null:
+	var page: Control = hud.overview_pages.get("city")
+	var strip: Control = page.find_child("NeedStrip", true, false) as Control if page != null else null
+	if check(strip != null and strip.get_child_count() == 6, "overview contains six needs"):
 		for n: String in Defs.NEED_ORDER:
-			check(int(strip.get_node("need_" + n).get_meta("coverage")) == int(city.stats["needs"][n]["coverage"]), "overview uses average " + n)
+			var row := strip.get_node_or_null("need_" + n)
+			check(row != null and int(row.get_meta("coverage", -1)) == int(city.stats["needs"][n]["coverage"]), "overview uses average " + n)
 	await shot("5_overview_needs.png")
 	hud.close_panels()
 	_perf()
@@ -233,8 +255,9 @@ func _check_shrines() -> void:
 func _check_badges(isolated: Dictionary, no_workers: Dictionary, ready: Dictionary, bare: Dictionary, waiting: Dictionary) -> void:
 	var counts := {}
 	for entry: Dictionary in hud.badges.values():
-		var badge: Badge = entry["n"]
-		counts[badge.kind] = int(counts.get(badge.kind, 0)) + 1
+		var badge: Badge = entry.get("n")
+		if check(is_instance_valid(badge), "world badge node exists"):
+			counts[badge.kind] = int(counts.get(badge.kind, 0)) + 1
 	for kind: String in ["family_waiting", "house_problem", "no_road", "no_workers"]:
 		check(int(counts.get(kind, 0)) > 0, "badge count " + kind)
 		print("UI4 BADGES ", kind, "=", int(counts.get(kind, 0)))
@@ -246,29 +269,31 @@ func _check_badges(isolated: Dictionary, no_workers: Dictionary, ready: Dictiona
 	var family_key := "fam_" + String(waiting["name"])
 	check(hud.badges.has(family_key), "waiting family badge")
 	if hud.badges.has(family_key):
-		var badge: Badge = hud.badges[family_key]["n"]
-		check(badge.size == Vector2(44, 44) and badge.texture == Badge.badge_texture("family") and badge.preference_texture != null and badge.get_child_count() == 0, "44px family PNG with attached want disc")
+		var badge: Badge = hud.badges[family_key].get("n")
+		var correct_badge := (is_instance_valid(badge) and badge.size == Vector2(44, 44)
+				and badge.texture != null and badge.texture == Badge.badge_texture("family")
+				and badge.preference_texture != null and badge.preference_texture == Badge.want_texture(String(waiting["want"]))
+				and badge.get_child_count() == 0)
+		check(correct_badge, "44px family PNG with attached want disc")
 
 
 func _check_card(h: Dictionary, families: int) -> void:
-	var strip := hud.info_box.find_child("NeedStrip", true, false) as Control
-	check(strip != null and strip.get_child_count() == 6, "house has six icons")
-	check(hud.info_box.find_children("family_*", "VBoxContainer", true, false).size() == families, "all families visible")
+	var scroll := hud.info_box.find_child("house_scroll", true, false) as ScrollContainer
+	check(scroll != null and hud.info_panel.size.y <= 600.0, "house has a compact scroll")
+	check(hud.info_box.find_children("family_*", "PanelContainer", true, false).size() == families, "all families represented")
 	check(hud.info_box.find_children("Members", "HFlowContainer", true, false).size() == families, "member heads in every family")
-	for icon: Node in hud.info_box.find_children("Preference", "TextureRect", true, false):
-		check((icon as Control).tooltip_text.contains("Хотят:") and (icon as Control).tooltip_text.contains("к счастью дома"), "preference tooltip has wish and actual effect")
+	var preferences := hud.info_box.find_children("Preference", "TextureRect", true, false)
+	check(preferences.size() == families, "preference icon in every family")
+	for icon: TextureRect in preferences:
+		check(icon.tooltip_text.contains("Хотят:") and icon.tooltip_text.contains("к счастью дома"), "preference tooltip has wish and actual effect")
 	for n: String in Defs.CLASSES[city.def(h)["cls"]]["needs"]:
 		var required: bool = n in Defs.needs_for(String(city.def(h)["cls"]), city.level)
 		var has_source: bool = not (h.get("need_sources", {}).get(n, []) as Array).is_empty()
-		check((hud.info_box.find_child("sources_" + n, true, false) != null) == (required and has_source), "working source row " + n)
-		check((hud.info_box.find_child("Missing_" + n, true, false) != null) == (required and int(h.get("need_coverage", {}).get(n, 0)) < 100), "missing need action " + n)
-
-
-func _texts(node: Node) -> String:
-	var text := String(node.text) + "\n" if node is Label or node is Button else ""
-	for child in node.get_children():
-		text += _texts(child)
-	return text
+		var row := hud.info_box.find_child("sources_" + n, true, false)
+		check((row != null) == required, "one row per current need " + n)
+		if row != null:
+			check((row.find_child("SourcePicture", true, false) != null) == has_source, "source picture " + n)
+			check((row.find_child("MissingNeed", true, false) != null) == not has_source, "missing need label " + n)
 
 
 func _perf() -> void:
@@ -277,7 +302,9 @@ func _perf() -> void:
 	hud._place_badges()
 	hud.set_badge("perf_probe", Vector3(180, 8, 128), "family")
 	hud._place_badges()
-	var badge: Control = hud.badges["perf_probe"]["n"]
+	var badge: Control = hud.badges.get("perf_probe", {}).get("n")
+	if not check(is_instance_valid(badge), "performance badge node exists"):
+		return
 	var before := badge.position
 	var started := Time.get_ticks_usec()
 	for i in 200:
