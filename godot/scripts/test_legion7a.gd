@@ -236,7 +236,7 @@ func _screens() -> void:
 	camp.open()
 	camp.set_process(false)
 	check(camp.city_name_label.text == c.name and camp.hq_level_label.text == "1", "city name and HQ medallion")
-	check((camp.resource_chips["money"] as Label).text.contains("/"), "Legion money shows balance and cap")
+	check((camp.resource_chips["money"] as Label).text == game.hud.fmt(lg.city_money()), "Legion money shows current balance")
 	check(camp.order_button.is_visible_in_tree() and camp.order_button.tooltip_text.contains("500"), "round order button and amount tooltip")
 	await shot("1_start.png")
 	camp.order_button.pressed.emit()
@@ -253,6 +253,7 @@ func _screens() -> void:
 	camp._close_modal()
 	lg.rations = 0.0
 	camp._campaign()
+	camp.lu.open_fort_stage(0, 0, 0)
 	await frames(8)
 	var fight := camp.lu._fight_btn
 	check(fight != null and fight.disabled and fight.icon != null and float(fight.get_meta("ration_cost", 0)) == 2.0, "battle button shows ration icon, cost and shortage")

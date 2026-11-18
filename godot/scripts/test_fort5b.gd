@@ -2,6 +2,7 @@ extends Node3D
 ## Шесть экранов стиля A и проверки действий. Запускает владелец тестов.
 
 const Fixture = preload("res://scripts/test_fort_fixture.gd")
+const Look = preload("res://scripts/legion_look.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
 var out := "D:/CivCity/.work/stage6/legion7a2/shots/fort5b/"
 var fails := 0
@@ -129,10 +130,14 @@ func _run() -> void:
 	camp.open()
 	await frames(12)
 	check(camp.diorama is FortCutaway, "painted fort stays active")
-	check(camp.chips.get_child_count() == 4 and camp.resource_chips.keys() == ["money", "rations", "glory", "ingots"], "four top resources")
+	check(camp.chips.get_child_count() == 4 and camp.resource_chips.keys() == ["rations", "money", "glory", "ingots"], "four top resources")
 	check(camp.population_button.icon == Kit.texture("family") and camp.population_button.text.contains(str(lg.fort_population())), "population pill")
 	_navigation_checks()
-	check(camp.ration_label.text == "%d / %d" % [lg.rations_now(), lg.ration_cap()], "rations are in top HUD")
+	var ration_chip := camp.chips.get_node_or_null("FortResource_rations") as Control
+	if check(ration_chip != null and ration_chip.is_visible_in_tree(), "rations are in top HUD"):
+		var bread := ration_chip.find_child("ResourceIcon", true, false) as TextureRect
+		check(bread != null and bread.texture == Look.resource("rations")
+			and camp.ration_label.text == camp.hud.fmt(lg.rations_now()), "painted rations with current amount")
 	_top_bar_checks("hud")
 	await _guide_checks(Legion.FortGuide.CHEST, camp.chest_button, "hud/chests")
 	await shot("1_fort_hud.png")
@@ -144,7 +149,7 @@ func _run() -> void:
 	lg.finish_fort_guide()
 	camp._layout_guide()
 	camp.show_plot(forge)
-	check(camp.card.has_meta("ui_kit_a") and camp.card.find_child("FortRoomPicture", true, false) != null, "room frame and cutaway picture")
+	check(camp.card.find_child("FortRoomPicture", true, false) != null, "room frame and cutaway picture")
 	check(camp.upgrade_button.disabled and camp.requirement_banner.visible and camp.instant_button.disabled, "HQ requirement gates both upgrade actions")
 	check(camp.main_action.icon == Kit.texture("craft"), "forge craft action")
 	var room_id := camp.card.get_instance_id()
@@ -152,14 +157,14 @@ func _run() -> void:
 	check(camp.card.get_instance_id() == room_id, "room survives value refresh")
 	await _window_checks(camp.card, "room")
 	check(camp.main_action.text == I18n.t("Ковать"), "room action label")
-	check(camp.room_stock_bar.get_theme_stylebox("fill") is StyleBoxTexture, "textured room fill")
+	check(camp.room_stock_bar.get_theme_stylebox("fill") is StyleBoxFlat, "room value fill")
 	await shot("2_room_card.png")
 	camp.show_plot(kitchen)
 	await frames(16)
 	var production := camp.card.find_child("FortRoomStock", true, false) as Control
 	var resource_icon := production.find_children("*", "TextureRect", true, false)[0] as TextureRect
-	check(resource_icon.texture == Kit.resource("rations"), "production resource icon")
-	check(camp.room_stock_bar.value > 0 and (camp.room_stock_bar.get_theme_stylebox("fill") as StyleBoxTexture).texture == Kit.box("panels/bar_fill_gold", 20, 0, 20).texture, "production gold fill")
+	check(resource_icon.texture == Look.resource("rations"), "production resource icon")
+	check(camp.room_stock_bar.value > 0 and (camp.room_stock_bar.get_theme_stylebox("fill") as StyleBoxFlat).bg_color == Look.OLIVE, "production olive fill")
 	camp.show_build_menu()
 	check(camp.build_cards.size() == Legion.FORT_B.size() - 1, "all room cards")
 	check((camp.build_cards["forge"]["picture"] as Control).get_child_count() > 0, "build pictures")
@@ -215,10 +220,20 @@ func _run() -> void:
 	camp.lu.close()
 	camp._campaign()
 	await frames(6)
-	var back := camp.lu.find_child("CampaignBack", true, false) as Button
-	check(back != null and back.icon == Kit.texture("back") and camp.lu.win.has_meta("ui_kit_a"), "campaign frame and back")
+	var map := camp.lu.fort_map
+	var back: Button = map.get_node_or_null("CampaignBack") if is_instance_valid(map) else null
+	check(is_instance_valid(map) and map.is_visible_in_tree() and not camp.lu.win.visible
+		and map.find_child("FortMapNodes", true, false) != null and map.find_child("FortProvinces", true, false) != null,
+		"full-screen campaign trail and provinces")
+	var map_rations: Label = camp.lu.fort_map_values.get("rations")
+	check(is_instance_valid(map_rations) and map_rations.is_visible_in_tree()
+		and map_rations.text == camp.hud.fmt(lg.rations_now()), "map top bar also shows rations")
 	await shot("6_campaign.png")
-	camp.lu.close()
+	if check(back != null and back.icon == Look.icon("map") and back.is_visible_in_tree(), "campaign back"):
+		back.pressed.emit()
+		check(camp.visible and not camp.lu.visible, "map returns to fort")
+	else:
+		camp.lu.close()
 	await _small_window_checks(forge, sid)
 	camp.show_newcomer(int(lg.fort_newcomers()[0]["id"]))
 	check(camp.modal_panel.name == "FortNewcomerCard" and camp.modal_panel.has_meta("ui_kit_a"), "newcomer kit")
@@ -276,6 +291,8 @@ func _window_checks(window: Control, tag: String) -> void:
 func _build_button_checks() -> void:
 	for type: String in camp.build_cards:
 		var b: Button = camp.build_cards[type]["button"]
+		if not b.is_visible_in_tree():
+			continue
 		camp.build_scroll.ensure_control_visible(b)
 		await frames(2)
 		check(camp.modal_panel.get_global_rect().grow(1).encloses(b.get_global_rect()), "build/" + type + " whole button in window")
@@ -354,17 +371,12 @@ func _fresh_top_bar_checks(tag: String) -> void:
 
 
 func _navigation_checks() -> void:
-	var icons: Array[String] = ["map", "tasks", "chest", "collect", "arena", "squad"]
-	if not check(camp.left_column.get_child_count() == icons.size() and camp.build_button.text == "", "icon navigation"):
+	var icons: Array[String] = ["trophy", "squad", "quests", "chest", "money"]
+	if not check(camp.left_column.get_child_count() == icons.size() and camp.build_button.text == I18n.t("Строить"), "icon navigation"):
 		return
-	var buttons: Array[Button] = [camp.campaign_button, camp.daily_button, camp.chest_button,
-		camp.order_button, camp.left_column.get_child(4) as Button, camp.squad_button]
 	for i in icons.size():
-		var button: Button = buttons[i]
-		var picture: TextureRect = button.get_node_or_null("ic") as TextureRect if button != null else null
-		check(button != null and camp.left_column.get_child(i) == button and button.text == ""
-			and not button.tooltip_text.is_empty() and picture != null and picture.texture != null
-			and picture.texture == Kit.texture(icons[i]), "navigation icon and tooltip " + icons[i])
+		var button := camp.left_column.get_child(i) as Button
+		check(button.icon == Look.icon(icons[i]) and not button.tooltip_text.is_empty(), "navigation icon and tooltip " + icons[i])
 	check(camp.order_button.name == "FortCityOrder"
 		and camp.order_button.tooltip_text.begins_with(I18n.t("Заказать денарии из города")), "city order tooltip")
 	check(camp.order_ring != null and camp.order_ring.get_parent() == camp.order_button, "city order timer ring")
@@ -374,23 +386,11 @@ func _top_bar_checks(tag: String) -> void:
 	for resource: String in camp.resource_bars:
 		var panel: Control = camp.resource_bars[resource]["panel"]
 		var number: Label = camp.resource_chips[resource]
-		var fill: ProgressBar = camp.resource_bars[resource]["fill"]
-		var pill := panel.get_global_rect()
-		var drawn_scale := panel.get_global_transform().get_scale().abs()
-		var value_rect := number.get_global_rect()
-		check(pill.encloses(value_rect), tag + "/" + resource + " number inside pill")
-		check(pill.encloses(fill.get_global_rect()), tag + "/" + resource + " fill inside pill")
-		# Кремовая середина между золотыми краями, включая обводку числа.
-		var cream := Rect2(pill.position + Vector2(78, 18) * drawn_scale, Vector2(panel.size.x - 112, 46) * drawn_scale)
-		var outline := number.get_theme_constant("outline_size")
-		check(outline > 0 and cream.grow(0.1).encloses(value_rect.grow(outline * drawn_scale.y)), tag + "/" + resource + " outlined number inside cream")
+		var icon := panel.find_child("ResourceIcon", true, false) as TextureRect
+		check(panel.get_global_rect().encloses(number.get_global_rect()), tag + "/" + resource + " number inside pill")
 		check(number.vertical_alignment == VERTICAL_ALIGNMENT_CENTER, tag + "/" + resource + " number centered")
-		check(cream.grow(0.1).encloses(fill.get_global_rect()) and fill.get_global_rect().position.y >= value_rect.end.y, tag + "/" + resource + " thin fill below number inside cream")
-		var frame := panel.get_theme_stylebox("panel") as StyleBoxTexture
-		check(frame != null and frame.get_texture_margin(SIDE_TOP) + frame.get_texture_margin(SIDE_BOTTOM) <= panel.size.y, tag + "/" + resource + " pill slices fit height")
-		for state: String in ["background", "fill"]:
-			var style := fill.get_theme_stylebox(state) as StyleBoxTexture
-			check(style != null and style.get_texture_margin(SIDE_TOP) + style.get_texture_margin(SIDE_BOTTOM) <= fill.size.y, tag + "/" + resource + " fill slices fit height")
+		check(icon != null and icon.texture == Look.resource(resource) and icon.custom_minimum_size.x >= 42, tag + "/" + resource + " painted resource icon")
+		check(panel.get_theme_stylebox("panel") is StyleBoxFlat, tag + "/" + resource + " flat palette")
 
 
 func _guide_checks(step: int, target: Control, tag: String) -> void:

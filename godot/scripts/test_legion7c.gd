@@ -37,7 +37,7 @@ func check(ok: bool, message: String) -> bool:
 	return ok
 
 
-func shot(file: String, step: int, target: Control = null, person := -1, newcomer := false) -> void:
+func shot(file: String, step: int, target: Control = null, person := -1, newcomer := false, drop_plot := -1) -> void:
 	await frames(8)
 	if not camp.lu.visible:
 		camp._layout_guide()
@@ -54,6 +54,12 @@ func shot(file: String, step: int, target: Control = null, person := -1, newcome
 		if target != null:
 			check(camp._guide_target == target and target.is_visible_in_tree(), file + " arrow control")
 			check(camp._guide_rect.is_equal_approx(target.get_global_rect()), file + " target bounds")
+		elif drop_plot >= 0:
+			var view := camp.diorama as FortCutaway
+			var room := view.plot_footprint(drop_plot)
+			var expected := Rect2(view.global_position + room.position, room.size)
+			check(view.drag_sid > 0 and camp._guide_target == null and room.has_area()
+				and camp._guide_rect.is_equal_approx(expected), file + " arrow on room footprint")
 		elif person > 0 and camp.diorama is FortCutaway:
 			var view := camp.diorama as FortCutaway
 			var point := view.global_position + view.person_project(person, newcomer)
@@ -151,7 +157,12 @@ func _run() -> void:
 	await frames(4)
 	var kitchen_button := camp.build_cards.get("kitchen", {}).get("button") as Button
 	await shot("02_kitchen_card", Step.KITCHEN, kitchen_button)
-	if not press(kitchen_button, "build kitchen"):
+	if not press(kitchen_button, "choose kitchen"):
+		return
+	var first_plot := lg.fort_empty_plot()
+	var hammer: Button = camp.plot_markers[first_plot]["button"]
+	await shot("02_place_kitchen", Step.KITCHEN, hammer)
+	if not press(hammer, "place kitchen"):
 		return
 	var kitchen := lg.fort_slot_plot("kitchen")
 	if not check(not kitchen.is_empty() and not (kitchen["up"] as Dictionary).is_empty(), "real construction"):
@@ -163,7 +174,7 @@ func _run() -> void:
 	await shot("02_drag_to_kitchen", Step.KITCHEN, null, sid)
 	var view := camp.diorama as FortCutaway
 	view.begin_person_move(sid, false, view.person_project(sid))
-	await shot("02_drop_kitchen", Step.KITCHEN, camp.plot_markers[kitchen_id]["button"])
+	await shot("02_drop_kitchen", Step.KITCHEN, null, -1, false, kitchen_id)
 	if not check(view.finish_person_move(view.project(kitchen_id)), "drop in kitchen"):
 		return
 	var bread: Button = camp.plot_markers[kitchen_id]["collect"]
@@ -221,7 +232,7 @@ func _run() -> void:
 	view = camp.diorama as FortCutaway
 	view.begin_person_move(sid, false, view.person_project(sid))
 	var barracks := int(lg.fort_slot_plot("barracks")["id"])
-	await shot("06_drop_barracks", Step.BARRACKS, camp.plot_markers[barracks]["button"])
+	await shot("06_drop_barracks", Step.BARRACKS, null, -1, false, barracks)
 	if not check(view.finish_person_move(view.project(barracks)), "drop in barracks"):
 		return
 	check(lg.fort_is_fighter(sid) and lg.squad3.has(sid), "recruit joins battle squad")
@@ -229,8 +240,11 @@ func _run() -> void:
 	if not press(camp.campaign_button, "open campaign"):
 		return
 	await frames(5)
-	await shot("07_stage_one", Step.CAMPAIGN, camp.lu.guide_stage_button)
-	if not press(camp.lu.guide_stage_button, "select first stage"):
+	if not check(is_instance_valid(camp.lu.fort_map), "full-screen tutorial map"):
+		return
+	var first_stage := camp.lu.fort_map.find_child("LegionFirstStage", true, false) as Button
+	await shot("07_stage_one", Step.CAMPAIGN, first_stage)
+	if not press(first_stage, "select first stage"):
 		return
 	var fight := camp.lu._fight_btn
 	if not check(is_instance_valid(fight), "fight action exists"):

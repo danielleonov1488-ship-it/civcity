@@ -103,6 +103,7 @@ func _fixture() -> void:
 		if type in ["barracks", "kitchen", "treasury", "forge", "mars"]:
 			var person := lg._add_soldier({"name": "Луций", "cls": "legionary", "stars": 2})
 			check(lg.fort_assign(int(plot["id"]), int(person["id"])), "fixture worker " + type)
+	lg._fort_fill_grid()
 	lg._fort_sync_camp()
 	lg._ensure_hero3()
 	lg.fort_slot_plot("kitchen")["pend"] = 6.0
@@ -159,7 +160,7 @@ func _drag_person(sid: int, target: int, newcomer := false) -> bool:
 	if not check(view.drag_sid == sid and view.drag_target == target and is_instance_valid(ghost), "drag starts and follows pointer"):
 		return false
 	check(ghost.texture == source.texture and ghost.frame == source.frame and ghost.flip_h == source.flip_h
-		and is_equal_approx(ghost.modulate.a, 0.5), "same drawn frame at half opacity")
+		and ghost.modulate.a < 1.0 and ghost.material is ShaderMaterial, "same frame as a translucent silhouette")
 	return true
 
 
@@ -238,7 +239,7 @@ func _run() -> void:
 	view = camp.diorama as FortCutaway
 	if not check(is_instance_valid(view), "2D fort active"):
 		return
-	check(view.grid == Vector2i(3, 3) and view.room_sprites.size() == 8, "three floors and eight plots")
+	check(view.grid == Vector2i(5, 3) and view.room_sprites.size() == 14, "wider three-floor fort")
 	check(view.backdrop.texture.resource_path.ends_with("/legion_b1/fort/background.jpg")
 		and view.shell.get_node_or_null("Gate") is Sprite2D, "painted landscape and gate")
 	check(view.find_children("*", "Node3D", true, false).is_empty(), "no 3D nodes in fort")
@@ -289,6 +290,11 @@ func _run() -> void:
 	build.pressed.emit()
 	if not check(_room_image(empty, FortCutaway.room_texture_path("smelter", 0, true)), "construction uses B1 art"):
 		return
+	for plot: Dictionary in lg.fort["plots"]:
+		if plot["b"] == "":
+			plot["b"] = "tower"
+			plot["lv"] = 1
+	camp._refresh()
 	check(camp.expand_floor.visible and camp.expand_section.visible, "both expansion controls are available when full")
 	camp._hide_card()
 	await shot("3_build.png")

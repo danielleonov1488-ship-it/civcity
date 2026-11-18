@@ -67,7 +67,7 @@ static func _none(hud, list: VBoxContainer, sn: SocialNet) -> void:
 	list.add_child(hud._label("Создать свой союз", 16, true, hud.C_INK))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	var e := _edit(hud, _name, "Название, например Волчья стая")
+	var e := _edit(hud, _name, "Название, например Римский орёл")
 	e.text_changed.connect(func(t): _name = t)
 	row.add_child(e)
 	list.add_child(row)

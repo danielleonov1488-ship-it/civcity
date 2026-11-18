@@ -16,7 +16,7 @@ func _init() -> void:
 	check(LegionEvents.week(1793577600.0) == 0 and LegionEvents.week(1793577600.0 + 604800.0 + 5.0) == 1, "неделя — как на сервере")
 	check(LegionEvents.kind(0) == "invasion" and LegionEvents.kind(1) == "dungeon", "нашествие и подземелья чередуются")
 	# враги под силу
-	var foes := LegionEvents.foes_for(["gaul", "gaul", "gaulArcher", "berserker", "wolf"], 3000.0)
+	var foes := LegionEvents.foes_for(["gaul", "gaul", "gaulArcher", "berserker", "forestBear"], 3000.0)
 	var p := 0
 	for f: Dictionary in foes:
 		p += Legion.power(f)

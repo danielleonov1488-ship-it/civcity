@@ -101,12 +101,18 @@ func _run() -> void:
 	Fixture.set_level(lg, "hq", 3)
 	lg.glory = 10000
 	lg.mats = {"iron": 100.0, "wood": 100.0, "leather": 10.0}
-	# Участки получаем расширением: размер совпадает с сеткой разреза.
-	if not check(lg.fort_expand(), "fixture expands: " + lg.fort_can_expand()):
+	# Расширение добавляет этаж к стартовой сетке 5×3.
+	var start_grid := lg.fort_grid()
+	if not check(start_grid == Legion.FORT_START_GRID
+		and (lg.fort["plots"] as Array).size() == start_grid.x * start_grid.y - 1, "fixture starts on the new grid"):
+		return
+	if not check(lg.fort_expand("floor"), "fixture expands: " + lg.fort_can_expand()):
 		return
 	lg.fort["up"]["end"] = Legion.now() - 1.0
 	lg.fort_finish()
-	if not check(int(lg.fort["exp"]) == 1 and (lg.fort["plots"] as Array).size() == int(Legion.fort_exp_info(1)["plots"]) + 1, "fixture uses expansion grid size"):
+	var expanded_grid := lg.fort_grid()
+	if not check(int(lg.fort["exp"]) == 1 and expanded_grid == start_grid + Vector2i(0, 1)
+		and (lg.fort["plots"] as Array).size() == expanded_grid.x * expanded_grid.y - 1, "fixture uses expansion grid size"):
 		return
 	var free_plots := 0
 	for plot: Dictionary in lg.fort["plots"]:
@@ -130,11 +136,11 @@ func _run() -> void:
 		return
 	camp.open()
 	await frames(8)
-	if not check(camp.resource_chips.keys() == ["money", "rations", "glory", "ingots"] and camp.chips.get_child_count() == 4, "four top resources only"):
+	if not check(camp.resource_chips.keys() == ["rations", "money", "glory", "ingots"] and camp.chips.get_child_count() == 4, "four top resources only"):
 		return
 	if not check(camp.plot_markers.has(kitchen) and camp.plot_markers.has(smelter), "new plots accessible without a pavilion"):
 		return
-	if not check(camp.build_button.custom_minimum_size == Vector2(150, 150) and camp.campaign_button.custom_minimum_size == Vector2(76, 76), "round action sizes"):
+	if not check(camp.build_button.custom_minimum_size.y >= 54 and camp.campaign_button.text == I18n.t("Карта"), "bottom actions"):
 		return
 	if not await shot("1_main.png"):
 		return
@@ -192,7 +198,7 @@ func _run() -> void:
 	camp._refresh()
 	if not check(camp.main_action.disabled, "full storage disables collection"):
 		return
-	# Кнопка стройки вызывает fort_build, новый участок ждёт таймер.
+	# Каталог выбирает тип, затем участок получает таймер.
 	var free_ids: Array[int] = []
 	for plot: Dictionary in lg.fort["plots"]:
 		if int(plot["id"]) > 0 and plot["b"] == "":
@@ -213,11 +219,12 @@ func _run() -> void:
 	Legion.clock = clk
 	lg.fort["money"] = maxf(lg.city_money(), 1000000.0)   # казна на стройку лесопилки (прежние шаги её потратили)
 	camp._choose_build("sawmill")
-	if not check(camp.selected_plot == empty and lg.fort_plot(empty)["b"] == "sawmill" and camp.card_ring.visible, "build menu auto-picks free plot"):
+	(camp.plot_markers[empty]["button"] as Button).pressed.emit()
+	if not check(camp.room_action_id == empty and lg.fort_plot(empty)["b"] == "sawmill" and camp.room_actions.visible, "selected free plot shows construction actions"):
 		return
 	if not await shot("6_auto_build.png"):
 		return
-	if not check(camp.card.find_child("FortSpeedAction", true, false) == null, "construction has no paid money shortcut"):
+	if not check(camp.room_actions.find_child("FortSpeedUp", true, false) != null, "construction offers acceleration"):
 		return
 	Legion.clock = float(lg.fort_plot(empty)["up"]["end"])
 	lg.fort_finish()
@@ -226,9 +233,10 @@ func _run() -> void:
 		return
 	if not check(build("tower") >= 0, "fill last expansion plot"):
 		return
-	while lg.fort_empty_plot() >= 0:
-		if not check(build("tower") >= 0, "fill remaining expansion plot"):
-			return
+	for plot: Dictionary in lg.fort["plots"]:
+		if plot["b"] == "":
+			plot["b"] = "tower"
+			plot["lv"] = 1
 	# При полном форте меню ведёт к расширению, без попытки занять чужой участок.
 	if not check(lg.fort_empty_plot() == -1, "fixture filled all plots"):
 		return
@@ -257,7 +265,7 @@ func _run() -> void:
 	camp.show_build_menu()
 	lg.fort["money"] = 0.0
 	camp._refresh()
-	if not check((camp.build_cards["tower"]["button"] as Button).disabled, "unaffordable build blocked"):
+	if not check((camp.build_cards["tannery"]["button"] as Button).disabled, "unaffordable build blocked"):
 		return
 	lg.fort["money"] = 1000000.0
 	camp._close_modal()

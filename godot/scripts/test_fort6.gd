@@ -253,8 +253,8 @@ func _screens() -> void:
 	camp.open()
 	var id := int(lg.fort_slot_plot("kitchen")["id"])
 	camp.show_plot(id)
-	check(has_text(camp.upgrade_cost, "7 д"), "room preview shows seven days")
-	check(camp.instant_price.text == "121" and camp.instant_button.tooltip_text.contains("√минут"), "room shows new price and explanation")
+	check(camp.upgrade_button.text.contains("7 д"), "room preview shows seven days")
+	check(camp.instant_price.text == "121" and camp.instant_button.icon != null, "room shows new price and icon")
 	await shot("1_room_preview.png")
 	if not check(lg.fort_upgrade(id), "visual seven-day upgrade starts"):
 		_finish()
@@ -263,7 +263,7 @@ func _screens() -> void:
 	check(camp.upgrade_timer.visible and camp.upgrade_timer.text == "7 д", "room running timer shows days")
 	check(camp.card.find_child("FortSpeedAction", true, false) == null, "room has no paid money speed-up")
 	var marker: Dictionary = camp.plot_markers[id]
-	check((marker["button"] as Button).tooltip_text.contains("7 д"), "builder marker HUD uses days")
+	check((marker["clock"] as Button).text.contains("7 д"), "builder marker HUD uses days")
 	await shot("2_room_running.png")
 	Legion.clock = float(lg.fort_plot(id)["up"]["end"])
 	lg.fort_finish()

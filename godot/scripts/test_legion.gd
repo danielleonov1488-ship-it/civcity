@@ -242,7 +242,7 @@ func _player(st: Dictionary, lvl: int, with_perks: bool) -> Dictionary:
 	if b >= 5:
 		have.append("catapult")
 	# как Legion.auto_squad («Лучший состав» под бой); пока мест три — нарочно «не тот» отряд: wrong=1 (лучник против
-	# волков, три легионера против пращников), bow=1 — всегда с лучником, leg3=1 — всегда три легионера
+	# медведей, три легионера против пращников), bow=1 — всегда с лучником, leg3=1 — всегда три легионера
 	var types := Legion.counter_squad(st, have, slots)
 	if slots <= Legion.SQUAD_BASE:
 		var with_bow := "archer" in types
@@ -485,21 +485,21 @@ func _api() -> void:
 	var chk := city.check_place("barracks", p + Vector2(30, 0), 0.0)
 	_check(String(chk["err"]) == "Военные постройки — только в форте", "новые городские Казармы нельзя: " + String(chk["err"]))
 	# лес, три места — загадка на выбор отряда: «Лучший состав» под бой — с лучником против пращников, три легионера
-	# против волков и шайки (учебный бой — на трёх легионерах); «не тот» отряд — честное предупреждение в шансах и совет
+	# против медведей и шайки (учебный бой — на трёх легионерах); «не тот» отряд — честное предупреждение в шансах и совет
 	_check(L.squad_hint(L.stage_info(0, 0, 1)).contains("Стрельбище"), "без Стрельбища: «%s»" % L.squad_hint(L.stage_info(0, 0, 1)))
 	var rng_b := city.place("range", p + Vector2(0, 26), 0.0, 0, -1, true)
 	var sq0 := L.auto_squad(L.stage_info(0, 0, 0))
 	var sq1 := L.auto_squad(L.stage_info(0, 0, 1))
 	var sq2 := L.auto_squad(L.stage_info(0, 0, 2))
 	_check(L.available("archer") and sq0 == ["legionary", "legionary", "legionary"] and sq1 == ["legionary", "archer", "legionary"]
-		and sq2 == ["legionary", "legionary", "legionary"], "«Лучший состав» под бой: учебный %s, пращники %s, волки %s" % [str(sq0), str(sq1), str(sq2)])
+		and sq2 == ["legionary", "legionary", "legionary"], "«Лучший состав» под бой: учебный %s, пращники %s, медведи %s" % [str(sq0), str(sq1), str(sq2)])
 	L.squad = ["legionary", "legionary", "legionary"]
 	var od1 := L.odds(L.stage_info(0, 0, 1))
 	var h1 := L.squad_hint(L.stage_info(0, 0, 1))
 	var e1 := L.odds_estimate(L.stage_info(0, 0, 1))
 	var oe1 := L.odds(L.stage_info(0, 0, 1), e1)
 	L.squad = ["legionary", "archer", "legionary"]
-	L.levels["legionary"] = 2                      # волчья тропа — на её уровне (2)
+	L.levels["legionary"] = 2                      # медвежья тропа — на её уровне (2)
 	L.levels["archer"] = 2
 	var h2 := L.squad_hint(L.stage_info(0, 0, 2))
 	var e2 := L.odds_estimate(L.stage_info(0, 0, 2))
@@ -511,7 +511,7 @@ func _api() -> void:
 		"«не тот» отряд: шансы «%s», советы «%s» / «%s»" % [String(od1[1]), h1, h2])
 	_check(e1.has("best") and float(e1["best"]) > float(e1["cur"]) and String(oe1[1]).contains("с лучником")
 		and e2.has("best") and float(e2["best"]) > float(e2["cur"]) and String(oe2[1]).contains("тремя легионерами"),
-		"оценка шансов прогоном боёв: пращники «%s», волки с лучником «%s»" % [String(oe1[1]), String(oe2[1])])
+		"оценка шансов прогоном боёв: пращники «%s», медведи с лучником «%s»" % [String(oe1[1]), String(oe2[1])])
 	# советы не зовут тех, кого ещё нет: копейщики и катапульты — после боссов
 	var tp := L.tips(Legion.stage(0, 0, 3)) + " " + L.tips(Legion.stage(0, 0, 7)) + " " + L.tips(Legion.stage(0, 0, 9))
 	_check(not tp.contains("копейщик") and not tp.contains("катапульт") and Legion.counter_tips(Legion.stage(0, 1, 2)).contains("копейщики"),
@@ -836,9 +836,9 @@ func _stars_api(city: City, L: Legion) -> void:
 	_check((o5["chest"] as Dictionary).is_empty(), "сундук — один раз")
 
 
-## Четыре места (после Атамана): «Лучший состав» в волчьем бою леса — без лучника, как велит совет на карточке;
+## Четыре места (после Атамана): «Лучший состав» в медвежьем бою леса — без лучника, как велит совет на карточке;
 ## прочим отрядам нет красного «есть состав лучше» (с четырёх мест «Лучший состав» — не ответ на бой); лучник
-## в волчьем бою — «загрызут» при любом числе мест
+## в медвежьем бою — «загрызут» при любом числе мест
 func _slots4_api(city: City, L: Legion, p: Vector2) -> void:
 	var keep := L.squad.duplicate()
 	var rb := city.place("range", p + Vector2(0, 26), 0.0, 0, -1, true)
@@ -859,9 +859,9 @@ func _slots4_api(city: City, L: Legion, p: Vector2) -> void:
 	city.remove(rb, false)
 	L.squad = keep
 	_check(arch and L.slots() == 4 and best2.size() == 4 and not "archer" in best2 and not "archer" in best7 and "archer" in best1,
-		"4 места: «Лучший состав» волкам %s, «Волчьей ночи» %s, пращникам %s" % [str(best2), str(best7), str(best1)])
+		"4 места: «Лучший состав» медведям %s, «Медвежьей ночи» %s, пращникам %s" % [str(best2), str(best7), str(best1)])
 	_check(h_leg == "" and h_other == "" and not off_leg and h_bow.contains("загрызут") and off_bow and h_bow_hill == "",
-		"4 места: четыре легионера — без красного совета («%s»), с лучником против волков — «%s»" % [h_leg + h_other, h_bow])
+		"4 места: четыре легионера — без красного совета («%s»), с лучником против медведей — «%s»" % [h_leg + h_other, h_bow])
 
 
 ## Задание на третью звезду выполнимо в каждом бою (иначе сундук провинции за 30 звёзд не открыть): «масло накрыло
@@ -888,7 +888,7 @@ func _tasks_api() -> void:
 				if int(t[1]) > big:
 					bad.append("%s: масло %d+ при %d врагах" % [st["key"], int(t[1]), big])
 	_check(bad.is_empty() and hp.has("1-0") and hp.has("1-2") and hp.has("2-1") and hp.has("2-2") and hp.has("7-0") and not hp.has("1-3")
-		and Legion.task_of({"waves": [["wolf", "boar"]]}) == ["hp", 50],
+		and Legion.task_of({"waves": [["forestBear", "boar"]]}) == ["hp", 50],
 		"задание на третью звезду по силам во всех боях %s; бои по двое и без кучи — «здоровье»: %s" % [str(bad), str(hp)])
 
 

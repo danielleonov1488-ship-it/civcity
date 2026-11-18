@@ -90,6 +90,7 @@ func screen(p: Vector2) -> Vector2:
 
 static func sheet_id(u: LegionSim.Unit) -> String:
 	if u.side == "enemy":
+		# Медведи, включая лесного, ядовитого и подземных, используют лист B1.
 		if "beast" in u.tags:
 			return "bear"
 		if u.boss:

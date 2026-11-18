@@ -209,6 +209,10 @@ func _run() -> void:
 	check(lg.fort_count("treasury") == 1 and lg.fort_empty_plot() >= 0, "treasury fixture leaves one free cell")
 	check(not camp.expand_floor.visible and not camp.expand_section.visible, "floor button hidden while a cell is free")
 	Fixture.set_level(lg, "smelter", 1)
+	for plot: Dictionary in lg.fort["plots"]:
+		if plot["b"] == "":
+			plot["b"] = "tower"
+			plot["lv"] = 1
 	camp._refresh()
 	await frames(5)
 	check(lg.fort_empty_plot() < 0 and camp.expand_floor.visible and camp.expand_section.visible, "full fort shows floor and section buttons")

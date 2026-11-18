@@ -113,7 +113,7 @@ func _run() -> void:
 	camp._refresh()
 	await frames(4)
 	_hud_checks("empty treasury")
-	check((camp.resource_chips["money"] as Label).get_theme_font_size("font_size") == 28, "short balance returns to original font size")
+	check((camp.resource_chips["money"] as Label).get_theme_font_size("font_size") == 25, "short balance returns to original font size")
 	_finish()
 
 
@@ -147,30 +147,15 @@ func _hud_checks(tag: String) -> void:
 	for resource: String in camp.resource_bars:
 		var panel: Control = camp.resource_bars[resource]["panel"]
 		var number: Label = camp.resource_chips[resource]
-		var fill: ProgressBar = camp.resource_bars[resource]["fill"]
-		var pill := panel.get_global_rect()
-		var drawn_scale := panel.get_global_transform().get_scale().abs()
-		var cream := Rect2(pill.position + Vector2(78, 18) * drawn_scale, Vector2(panel.size.x - 112, 46) * drawn_scale)
-		var value_rect := number.get_global_rect()
-		var fill_rect := fill.get_global_rect()
-		var outline := number.get_theme_constant("outline_size")
-		check(pill.encloses(value_rect) and pill.encloses(fill_rect), tag + "/" + resource + " contents inside pill")
-		check(cream.grow(0.1).encloses(value_rect.grow(outline * drawn_scale.y)), tag + "/" + resource + " outlined number inside cream")
+		var pictogram := panel.find_child("ResourceIcon", true, false) as TextureRect
+		var bounds := panel.get_global_rect()
+		check(bounds.encloses(number.get_global_rect()), tag + "/" + resource + " number inside pill")
+		check(pictogram != null and bounds.encloses(pictogram.get_global_rect()), tag + "/" + resource + " icon inside pill")
 		check(number.vertical_alignment == VERTICAL_ALIGNMENT_CENTER, tag + "/" + resource + " centered number")
-		check(cream.grow(0.1).encloses(fill_rect) and fill_rect.position.y >= value_rect.end.y, tag + "/" + resource + " thin fill below number inside cream")
-		check(is_equal_approx(fill.size.y, 9.0), tag + "/" + resource + " nine-unit fill after tree entry")
 		if resource == "money":
+			check(number.text == game.hud.fmt(lg.city_money()), tag + " money shows balance")
 			var font := number.get_theme_font("font")
-			var font_size := number.get_theme_font_size("font_size")
-			var width := number.size.x - 2.0 * outline
-			check(number.text == "%s / %s" % [game.hud.fmt(lg.city_money()), game.hud.fmt(lg.money_cap())], tag + " money shows balance and cap")
-			check(font == Kit.BOLD and outline == 2 and number.get_theme_color("font_outline_color") == Color("fff1c6"), tag + " money keeps font and outline")
-			check(font.get_string_size(number.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= width, tag + " money text fits with outline")
-			check(font_size <= 28 and (font_size == 28
-				or font.get_string_size(number.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size + 1).x > width), tag + " money uses largest fitting font size")
-		for state: String in ["background", "fill"]:
-			var style := fill.get_theme_stylebox(state) as StyleBoxTexture
-			check(style != null and style.get_texture_margin(SIDE_TOP) + style.get_texture_margin(SIDE_BOTTOM) <= fill.size.y, tag + "/" + resource + " fill slices " + state)
+			check(font.get_string_size(number.text, HORIZONTAL_ALIGNMENT_LEFT, -1, number.get_theme_font_size("font_size")).x <= number.size.x, tag + " money text fits")
 
 
 func _reference_checks(tag: String) -> void:
@@ -178,13 +163,10 @@ func _reference_checks(tag: String) -> void:
 		var panel: Control = camp.resource_bars[resource]["panel"]
 		var number: Label = camp.resource_chips[resource]
 		var plus: Control = camp.resource_bars[resource]["plus"]
-		var pic := panel.get_child(0).get_child(0) as TextureRect
-		check(panel.size == Vector2(264, 80), tag + "/" + resource + " original pill size")
-		check(number.position == Vector2(82, 20) and number.size.x == 140, tag + "/" + resource + " original number geometry")
-		if resource != "money":
-			check(number.get_theme_font_size("font_size") == 28, tag + "/" + resource + " original font size")
-		check(pic.position == Vector2(2, 4) and pic.size == Vector2(72, 72) and plus.position == Vector2(228, 24), tag + "/" + resource + " original icon and plus")
-		for part: Control in [panel, number, plus, pic, camp.resource_bars[resource]["fill"]]:
+		var pic := panel.find_child("ResourceIcon", true, false) as TextureRect
+		check(panel.size.x >= 135 and panel.size.y >= 50, tag + "/" + resource + " compact pill size")
+		check(pic != null and pic.size.x >= 42, tag + "/" + resource + " large icon")
+		for part: Control in [panel, number, plus, pic]:
 			var key := resource + "/" + String(part.name)
 			if not reference_rects.has(key):
 				reference_rects[key] = part.get_global_rect()

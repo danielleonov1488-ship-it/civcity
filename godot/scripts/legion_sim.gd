@@ -592,7 +592,7 @@ func _attack(u: Unit, tg: Unit) -> void:
 		events.append({"type": "shoot", "shot": s})
 		return
 	if u.bites > 0:
-		# Цербер кусает тремя головами сразу трёх ближайших
+		# Зверь задевает несколько ближайших целей
 		var near := foes_of(u)
 		near.sort_custom(func(a: Unit, b: Unit) -> bool: return dist(u, a) < dist(u, b))
 		for i in mini(u.bites, near.size()):

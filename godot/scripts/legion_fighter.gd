@@ -6,7 +6,7 @@ extends Node3D
 ## Люди — персонажи Synty Ancient Empire со скелетом и движениями Quaternius (как жители города, Citizen);
 ## оружие и щиты Synty — в руках (BoneAttachment3D, хват считается по позе движения, см. _grip).
 ## У щитоносцев левая рука в любом движении держит щит перед собой («G_…» — движения со стойкой левой руки).
-## Звери — анимированные животные Quaternius: волк, бык, свинья (вепрь — с клыками), медведь «вылеплен» из волка
+## Звери — анимированные животные Quaternius: бык, вепрь и медведь
 ## (толще тело, круглые уши, без хвоста — масштаб костей). Чудовища без скелета (Минотавр, боевой слон — статуи
 ## Artisau) идут, бьют и падают движениями кода. Машины — модели Kit (баллиста, онагр с отдельным рычагом) и расчёт.
 ## Модель смотрит вдоль +Z; поворачивает бойца бой.
@@ -74,15 +74,15 @@ const LOOKS := {
 }
 ## Звери: файл Quaternius, длина тела (м), раскраска поверхностей (по порядку: основной, светлый, глаза, нос …)
 const BEASTS := {
-	"wolf": {"file": "Wolf_a", "len": 1.35},
-	"hellhound": {"file": "Wolf_a", "len": 1.45, "cols": ["2b2326", "7a2a1c", "ff7a1a", "1a1414"], "glow": [2], "embers": true},
+	"forestBear": {"file": "Wolf_a", "len": 1.35, "cols": ["5e3d26", "6a4630", "141010", "1a1010"], "sculpt": "bear"},
+	"hadesBear": {"file": "Wolf_a", "len": 1.45, "cols": ["2b2326", "7a2a1c", "ff7a1a", "1a1414"], "glow": [2], "embers": true, "sculpt": "bear"},
 	"boar": {"file": "Wolf_a", "len": 1.25, "cols": ["4a3b31", "5e4a3c", "120d0b", "2a1c18"], "sculpt": "boar"},
 	"bear": {"file": "Wolf_a", "len": 1.7, "cols": ["5e3d26", "6a4630", "141010", "1a1010"], "sculpt": "bear"},
 	"greatbear": {"file": "Wolf_a", "len": 1.7, "cols": ["4e321f", "5a3b27", "141010", "1a1010"], "sculpt": "bear"},
 	"bull": {"file": "Bull", "len": 2.0},
-	"cerberus": {"file": "Wolf_a", "len": 1.6, "cols": ["2b2326", "7a2a1c", "ff7a1a", "1a1414"], "glow": [2], "embers": true, "heads": 3},
+	"hadesGuardian": {"file": "Wolf_a", "len": 1.7, "cols": ["302020", "7a2a1c", "ff7a1a", "1a1414"], "glow": [2], "embers": true, "sculpt": "bear"},
 	# поход Легиона 2.0
-	"jackal": {"file": "Wolf_a", "len": 1.15, "cols": ["a8834e", "cdb07c", "120d0b", "2a1c18"]},
+	"venomBear": {"file": "Wolf_a", "len": 1.25, "cols": ["7f6344", "a8834e", "394320", "2a1c18"], "sculpt": "bear"},
 	"chariot": {"file": "Horse_b", "len": 1.7, "cart": true},
 	"charioteer": {"file": "Horse_b", "len": 1.9, "cart": true},
 	"bullLeader": {"file": "Bull", "len": 2.3},
@@ -107,7 +107,7 @@ var crew: LegionFighter                # расчёт машины
 var weapon: Node3D                     # оружие в правой руке (у копейщика выпад — кодом)
 var offhand: Node3D                    # щит или лук в левой руке
 var head_att: Node3D                   # всё, что на голове (шлем, волосы)
-var heads: Array[Node3D] = []          # головы Цербера (кивают, когда кусает)
+var heads: Array[Node3D] = []          # добавочные головы (кивают, когда кусает)
 var mount: AnimationPlayer             # всадник (Легион 3.0): движения коня под ним
 var _saddle := Vector3.ZERO            # где сидит всадник (в осях бойца)
 var embers := false
@@ -543,7 +543,7 @@ func _beast(B: Dictionary, size: float) -> void:
 		var n := models[i]
 		body.add_child(n)
 		if n_heads > 1:
-			# Цербер: три пса плечом к плечу — средний впереди, крайние чуть сзади и развёрнуты наружу
+			# Составная модель зверя — средний впереди, крайние чуть сзади и развёрнуты наружу
 			var side := float(i - 1)
 			n.position = Vector3(side * 0.38, 0.0, -absf(side) * 0.5) / maxf(0.01, _len_k(n, B, size))
 			n.rotation.y = -side * 0.3

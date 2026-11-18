@@ -57,7 +57,7 @@ func _setup(legion: Legion) -> Dictionary:
 		unit["row"] = 0
 	var waves := []
 	for keys: Array in [["bandit", "slinger", "bear", "gaul", "gaulArcher"],
-			["bandit", "gaul", "slinger"], ["gaul", "gaulArcher", "wolf"], ["bear", "slinger"], ["chief", "bandit"]]:
+			["bandit", "gaul", "slinger"], ["gaul", "gaulArcher", "forestBear"], ["bear", "slinger"], ["chief", "bandit"]]:
 		var wave := []
 		for key: String in keys:
 			wave.append(Legion.enemy_stats(key, 1.0))

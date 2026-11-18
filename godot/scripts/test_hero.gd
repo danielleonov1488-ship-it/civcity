@@ -659,8 +659,8 @@ func _squad_keys_test() -> void:
 	lg.squad = ["archer", "legionary", "legionary"]
 	check(lg.campaign_keys() == ["legionary", "legionary", "legionary"] and lg.squad_off(bow) and lg.squad_hint(bow).contains("лучника"),
 		"лучник под медальоном героя в бой не идёт — совет «возьмите лучника»", [lg.campaign_keys(), lg.squad_hint(bow)])
-	var wolf := lg.stage_info(0, 0, 2)               # «Волчья тропа»: про спрятанного лучника волки не говорят
-	check(not lg.squad_hint(wolf).contains("Волки"), "волчий бой: о спрятанном лучнике не предупреждает", lg.squad_hint(wolf))
+	var bears := lg.stage_info(0, 0, 2)               # «Медвежья тропа»: про спрятанного лучника медведи не говорят
+	check(not lg.squad_hint(bears).contains("Медведи"), "медвежий бой: о спрятанном лучнике не предупреждает", lg.squad_hint(bears))
 	lg.hero_squad_fix()
 	check(lg.squad == ["legionary", "archer", "legionary"] and not lg.squad_off(bow) and lg.squad_hint(bow) == "",
 		"старый город: лучник с первого места — на видное, отряд под бой; в боях с городами — те же бойцы", lg.squad)

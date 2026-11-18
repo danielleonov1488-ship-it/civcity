@@ -259,7 +259,7 @@ func _army() -> void:
 	# настоящий бой: павшие воины приходят в итоге (fallen)
 	for s: Dictionary in L.soldiers:
 		s["wound_end"] = 0.0
-	var sim_setup := {"kind": "campaign", "squad": L._army_squad(), "waves": [[Legion.enemy_stats("wolf", 6.0), Legion.enemy_stats("wolf", 6.0), Legion.enemy_stats("wolf", 6.0)]],
+	var sim_setup := {"kind": "campaign", "squad": L._army_squad(), "waves": [[Legion.enemy_stats("forestBear", 6.0), Legion.enemy_stats("forestBear", 6.0), Legion.enemy_stats("forestBear", 6.0)]],
 		"perks": {}, "seed": 7, "food": 0, "packs": []}
 	var res := LegionSim.new(sim_setup).run(true)
 	_check(not bool(res["win"]) and (res.get("fallen", []) as Array).size() == int(res["total"]) - int(res["alive"]),

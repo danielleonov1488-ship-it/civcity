@@ -24,7 +24,7 @@ static func build(ui: Variant) -> void:
 	for job: Dictionary in queue:
 		jobs.append([job["kind"], job["tier"], job["total"]])
 	var signature := str([plot_id, room, p["lv"], ui._craft_kind, ui._craft_tier, lg.smith_known(), jobs])
-	var cached_v: Variant = ui.get_meta("craft_panel", null)
+	var cached_v: Variant = ui.get_meta("craft_panel") if ui.has_meta("craft_panel") else null
 	var cached: PanelContainer = cached_v as PanelContainer if is_instance_valid(cached_v) else null   # окно могли уже освободить
 	if is_instance_valid(cached) and is_instance_valid(ui.overlay) and cached.get_parent() == ui.overlay and not ui.overlay.is_queued_for_deletion() and cached.get_meta("signature", "") == signature:
 		ui._live = (cached.get_meta("live") as Array).duplicate()
@@ -202,7 +202,7 @@ static func refresh(ui: Variant, entry: Dictionary) -> void:
 		(requirement.get_meta("label") as Label).text = I18n.t(why)
 		(entry["label"] as Label).text = "%d / %d" % [queue.size(), ui.lg.craft_capacity(int(entry["plot"]))]
 		CampUI.attach(ui.hud)._refresh_costs(entry["costs"])
-		var panel := ui.get_meta("craft_panel", null) as Control
+		var panel: Control = ui.get_meta("craft_panel") if ui.has_meta("craft_panel") else null
 		if is_instance_valid(panel):
 			ui._center_later(panel)
 		return
