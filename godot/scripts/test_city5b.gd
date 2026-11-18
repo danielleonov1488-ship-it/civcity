@@ -78,11 +78,15 @@ func _run() -> void:
 	var bare := place("house_pleb", Vector2(145, 158))
 	family(bare, "Валерии", true)
 	var isolated := place("house_pleb", Vector2(227, 122), false)
+	isolated["tier"] = 2
 	family(isolated, "Туллии")
 	var fruit := place("stall_fruit", Vector2(183, 137))
 	var temple := place("temple", Vector2(155, 131))
 	place("barber", Vector2(207, 130))
+	# Поперечные улицы упираются в продолжение дороги от площади станции.
+	game.land.paint_line(Vector2(Land.ROAD_X, 126), Vector2(Land.ROAD_X, 165), 1.4, Land.Kind.ROAD)
 	city.compute()
+	check(city.house_connected(house) and city.house_connected(bare), "fixture streets connect both houses to station")
 	for building: Dictionary in [fruit, temple]:
 		check(city.hire(building, city.job_max(building)) > 0, "hire " + String(building["type"]))
 	bare["happy"] = 20
@@ -108,6 +112,7 @@ func _run() -> void:
 	await frames(6)
 	var settle_key := "settle%d" % int(house["id"])
 	check(hud.badges.has(settle_key), "settle room present")
+	check(city.house_free_floors(isolated) > 0 and not hud.badges.has("settle%d" % int(isolated["id"])), "disconnected house has no settle badge despite free room")
 	if hud.badges.has(settle_key):
 		var room: Badge = hud.badges[settle_key]["n"]
 		check(room.texture == Badge.badge_texture("home_room") and room.matches, "home_room plus want match")

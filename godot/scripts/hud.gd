@@ -4101,13 +4101,14 @@ func _process(_dt: float) -> void:
 			pointer.position = Vector2(r.get_center().x - 32, (r.position.y - 68 - bob) if above else (r.end.y + 4 + bob))
 			if info_panel.visible and info_panel.is_ancestor_of(t):
 				# В карточке наконечник стоит у кнопки, подпись — за левым краем окна.
+				var tip := 59.0  # наконечник с обводкой на SVG 64×64
 				pointer.rotation = 0.0
-				pointer.position = Vector2(r.get_center().x - 32, r.position.y - 64 - bob)
+				pointer.position = Vector2(r.get_center().x - 32, r.position.y - tip)
 				var label_y := r.position.y - 26.0
 				if t.name == "hire_plus":
 					# Крупная стрелка слева: наконечник точно у «+».
 					pointer.rotation = -PI / 2.0
-					pointer.position = Vector2(r.position.x - 64 - bob, r.get_center().y - 32)
+					pointer.position = Vector2(r.position.x - tip, r.get_center().y - 32)
 					label_y = r.get_center().y
 				pointer_text.position = Vector2(maxf(6.0, info_panel.get_global_rect().position.x - pointer_text.size.x - 12.0), label_y - pointer_text.size.y / 2.0)
 			elif above:
@@ -8684,6 +8685,10 @@ func _place_badges() -> void:
 			# PASS сохраняет перетаскивание правой/средней кнопкой.
 			p.mouse_filter = Control.MOUSE_FILTER_PASS if can else Control.MOUSE_FILTER_IGNORE
 		if not place:
+			continue
+		var key := String(k)
+		if tl == "floor" and key.begins_with("b") and badges.has("fl" + key.substr(1)):
+			p.hide()
 			continue
 		if b["icon"] == "up" and tl != "floor":
 			p.visible = false

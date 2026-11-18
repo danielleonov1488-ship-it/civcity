@@ -11,6 +11,7 @@ const CREAM := Color("fff4d9")
 const BUTTON_HEIGHT := 80.0
 const RES_BAR_SIZE := Vector2(264, 80)
 const RES_BAR_CREAM := Rect2(78, 18, 152, 46)
+const RES_BAR_FONT_SIZE := 28
 const Ring = preload("res://scripts/fort_ui_ring.gd")
 static var _textures: Dictionary = {}
 static var _small_textures: Dictionary = {}
@@ -155,7 +156,7 @@ static func progress(value: float, maximum: float, color := "gold", height := 20
 	return bar
 
 
-static func res_bar(icon: Variant, value: float, maximum: float) -> PanelContainer:
+static func res_bar(icon: Variant, value: float, maximum: float, fit_number := false) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.name = "ResourceBar"
 	var frame := box("panels/topbar_pill", 32, 0, 80)
@@ -170,8 +171,9 @@ static func res_bar(icon: Variant, value: float, maximum: float) -> PanelContain
 	var pic := image(icon, Vector2(72, 72))
 	pic.position = Vector2(2, 4)
 	body.add_child(pic)
-	var number := label(str(int(value)) + (" / %d" % int(maximum) if maximum > 0 else ""), 28)
+	var number := label(str(int(value)) + (" / %d" % int(maximum) if maximum > 0 else ""), RES_BAR_FONT_SIZE)
 	number.name = "Value"
+	number.clip_text = fit_number
 	number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	body.add_child(number)
@@ -194,6 +196,15 @@ static func layout_res_bar(panel: PanelContainer) -> void:
 	var number: Label = panel.get_meta("number")
 	number.position = cream.position + Vector2(4, 2) * ratio
 	number.size = Vector2(cream.size.x - 12 * ratio.x, 32 * ratio.y)
+	if number.clip_text:
+		# Число с потолком подгоняем по ширине строки с обводкой.
+		var available := number.size.x - 2.0 * number.get_theme_constant("outline_size")
+		var font := number.get_theme_font("font")
+		var font_size := RES_BAR_FONT_SIZE
+		while font_size > 1 and font.get_string_size(number.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > available:
+			font_size -= 1
+		if number.get_theme_font_size("font_size") != font_size:
+			number.add_theme_font_size_override("font_size", font_size)
 	var fill: ProgressBar = panel.get_meta("fill")
 	fill.custom_minimum_size = Vector2(138, 9) * ratio
 	# Шрифт может быть выше заданной строки: полоса начинается после числа.

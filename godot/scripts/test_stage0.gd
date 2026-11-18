@@ -21,13 +21,15 @@ var fails := 0
 var mask := 0
 var mode := ""
 var cands: Array = []
-const SHOTS := "D:/CivCity/.work/gd/a/"
+var out := "D:/CivCity/.work/gd/a/"
 
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("mode="):
 			mode = a.trim_prefix("mode=")
+		elif a.begins_with("out="):
+			out = a.trim_prefix("out=").trim_suffix("/") + "/"
 	if mode == "quit":
 		_quit_test()
 		return
@@ -51,8 +53,8 @@ func check(ok: bool, what: String, extra = null) -> bool:
 
 func shot(name: String) -> void:
 	await frames(8)
-	DirAccess.make_dir_recursive_absolute(SHOTS)
-	get_viewport().get_texture().get_image().save_png(SHOTS + name)
+	DirAccess.make_dir_recursive_absolute(out)
+	get_viewport().get_texture().get_image().save_png(out + name)
 	print("SHOT ", name)
 
 
@@ -500,10 +502,17 @@ func _treasury() -> void:
 	var bt := put("butcher", Vector2(166, 132))
 	var ev := last_event("Просьба выполнена: Склад и мясная лавка")
 	check(not bt.is_empty() and ev.contains("казна полна — не уместилось"), "просьба при полной казне: «%s»" % ev)
-	c.money = c.money_cap()
-	var held := c.magis_treasury
-	var lost: int = c.legion._give({"money": 120.0})
-	check(lost == 0 and c.money == c.money_cap() and c.magis_treasury == held + 120.0, "военная награда остаётся в казне Легиона, городская казна не меняется")
+	var city_cap := c.money_cap()
+	c.money = city_cap
+	var lg := c.legion
+	var held := lg.city_money()
+	var legion_cap := lg.money_cap()
+	lg.fort["money"] = legion_cap - 120.0
+	var lost := lg._give({"money": 120.0})
+	check(lost == 0 and c.money == city_cap and lg.city_money() == legion_cap, "военная награда остаётся в казне Легиона, городская казна не меняется")
+	lost = lg._give({"money": 120.0})
+	check(lost == 120 and c.money == city_cap and lg.city_money() == legion_cap, "полная казна Легиона не вмещает лишнюю награду")
+	lg.fort["money"] = held
 	c.money = 50000.0
 
 

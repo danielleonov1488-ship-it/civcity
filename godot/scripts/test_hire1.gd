@@ -96,6 +96,7 @@ func _run() -> void:
 		var family := {"name": "Юлии%d" % i, "n": 2, "cls": "plebs"}
 		home["families"] = [family]
 		home["pop"] = 2
+		home["happy"] = 60  # новосёлы довольны, проверяем выпуск без штрафа
 		game.people._make_family(family["name"], 2, int(home["id"]), c.door_point(home), "plebs", family)
 	c.compute()
 	var farm := place(c, "farm", at + Vector2(-23, -10))

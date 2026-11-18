@@ -98,7 +98,7 @@ func _run() -> void:
 		await frames(16)
 		check(Vector2i(get_viewport().get_visible_rect().size) == sizes[index], "requested viewport %s" % sizes[index])
 		for fresh: bool in [false, true]:
-			lg.fort["money"] = 1740.0 if fresh else 2500.0
+			lg.fort["money"] = 1740.0 if fresh else float(lg.money_cap())
 			lg.rations = lg.ration_cap() if fresh else 28
 			lg.glory = 0 if fresh else 3850
 			lg.ingots = 0 if fresh else 120
@@ -109,6 +109,11 @@ func _run() -> void:
 			if sizes[index] == Vector2i(1920, 1080):
 				_reference_checks(tag)
 			await shot(tag + ".png")
+	lg.fort["money"] = 0.0
+	camp._refresh()
+	await frames(4)
+	_hud_checks("empty treasury")
+	check((camp.resource_chips["money"] as Label).get_theme_font_size("font_size") == 28, "short balance returns to original font size")
 	_finish()
 
 
@@ -154,6 +159,15 @@ func _hud_checks(tag: String) -> void:
 		check(number.vertical_alignment == VERTICAL_ALIGNMENT_CENTER, tag + "/" + resource + " centered number")
 		check(cream.grow(0.1).encloses(fill_rect) and fill_rect.position.y >= value_rect.end.y, tag + "/" + resource + " thin fill below number inside cream")
 		check(is_equal_approx(fill.size.y, 9.0), tag + "/" + resource + " nine-unit fill after tree entry")
+		if resource == "money":
+			var font := number.get_theme_font("font")
+			var font_size := number.get_theme_font_size("font_size")
+			var width := number.size.x - 2.0 * outline
+			check(number.text == "%s / %s" % [game.hud.fmt(lg.city_money()), game.hud.fmt(lg.money_cap())], tag + " money shows balance and cap")
+			check(font == Kit.BOLD and outline == 2 and number.get_theme_color("font_outline_color") == Color("fff1c6"), tag + " money keeps font and outline")
+			check(font.get_string_size(number.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= width, tag + " money text fits with outline")
+			check(font_size <= 28 and (font_size == 28
+				or font.get_string_size(number.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size + 1).x > width), tag + " money uses largest fitting font size")
 		for state: String in ["background", "fill"]:
 			var style := fill.get_theme_stylebox(state) as StyleBoxTexture
 			check(style != null and style.get_texture_margin(SIDE_TOP) + style.get_texture_margin(SIDE_BOTTOM) <= fill.size.y, tag + "/" + resource + " fill slices " + state)
@@ -166,7 +180,9 @@ func _reference_checks(tag: String) -> void:
 		var plus: Control = camp.resource_bars[resource]["plus"]
 		var pic := panel.get_child(0).get_child(0) as TextureRect
 		check(panel.size == Vector2(264, 80), tag + "/" + resource + " original pill size")
-		check(number.position == Vector2(82, 20) and number.size.x == 140 and number.get_theme_font_size("font_size") == 28, tag + "/" + resource + " original number geometry and font")
+		check(number.position == Vector2(82, 20) and number.size.x == 140, tag + "/" + resource + " original number geometry")
+		if resource != "money":
+			check(number.get_theme_font_size("font_size") == 28, tag + "/" + resource + " original font size")
 		check(pic.position == Vector2(2, 4) and pic.size == Vector2(72, 72) and plus.position == Vector2(228, 24), tag + "/" + resource + " original icon and plus")
 		for part: Control in [panel, number, plus, pic, camp.resource_bars[resource]["fill"]]:
 			var key := resource + "/" + String(part.name)

@@ -100,21 +100,26 @@ func _floor_tool() -> void:
 	var rig_processing: bool = game.rig.is_processing()
 	game.rig.set_process(false)
 	hud._place_badges()
-	# Исчезновение скрытого обычного значка не должно сдвинуть стрелку инструмента.
-	var id: int = ready[0]
+	# Берём готовый дом, у которого новый значок дороги мог поднять стрелку.
+	var id := -1
+	for candidate: int in ready:
+		var world_icon: Array = hud.world_icons.get(candidate, [])
+		if not world_icon.is_empty() and world_icon[0] == "road":
+			id = candidate
+			break
+	if not check(id >= 0, "готовый дом со значком дороги в фикстуре"):
+		game.rig.set_process(rig_processing)
+		return
 	var key := "fl%d" % id
+	var road_badge: Control = hud.badges["b%d" % id]["n"]
 	var before: Dictionary = hud.badges[key]
 	var pos: Vector3 = before["pos"]
 	var original: Control = before["n"]
 	var rect: Rect2 = original.get_global_rect()
 	var home: Dictionary = c.buildings[id]
 	var expected_y: float = float(home["y"]) + c.blueprint(home).top_y() + 1.2
-	check(is_equal_approx(pos.y, expected_y), "скрытая обычная стрелка не поднимает стрелку инструмента")
-	var ordinary_hidden := true
-	for world_id in hud.world_icons:
-		if String(hud.world_icons[world_id][0]) == "up":
-			ordinary_hidden = ordinary_hidden and not (hud.badges["b%d" % int(world_id)]["n"] as Control).is_visible_in_tree()
-	check(ordinary_hidden, "обычная стрелка скрыта при инструменте")
+	check(is_equal_approx(pos.y, expected_y), "значок дороги не поднимает стрелку инструмента")
+	check(not road_badge.is_visible_in_tree(), "значок дороги скрыт под стрелкой инструмента")
 	var money: float = c.money
 	c.tips.erase("floor_money")
 	c.money = c.floor_price(home) - 1.0

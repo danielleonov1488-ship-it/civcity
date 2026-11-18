@@ -905,8 +905,8 @@ func _marks(mk: Dictionary) -> void:
 		var b: Dictionary = c.buildings[id]
 		# над бедой постройки (нет работников, склада…) свой пузырь — наш значок выше него
 		var world_icon: Array = hud.world_icons.get(id, [])
-		# Обычная стрелка скрыта при инструменте и в «Обзоре»: место под неё не оставляем.
-		var separate: bool = not world_icon.is_empty() and not (world_icon[0] == "up" and (game.tool != "" or hud.overlay != ""))
+		# «Этаж» ставит стрелку у крыши: обычный значок этого дома временно скрыт.
+		var separate: bool = state != "floor" and not world_icon.is_empty() and not (world_icon[0] == "up" and (game.tool != "" or hud.overlay != ""))
 		var top: float = c.blueprint(b).top_y() + (3.0 if separate else 1.2)
 		var cb := func(): _open(id)               # щёлкнуть значок (без стройки в руках) — карточка этой постройки
 		hud.set_badge(k, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), String(e[1]) if state == "floor" else _badge_icon(String(e[1])), e[2], e[3] if state == "floor" and e.size() > 3 else "", cb, e[4] if e.size() > 4 else "")

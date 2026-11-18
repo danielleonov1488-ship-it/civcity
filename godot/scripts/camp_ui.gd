@@ -448,7 +448,7 @@ func _build_screen() -> void:
 
 
 func _resource_bar(resource: String) -> void:
-	var panel := Kit.res_bar(Kit.resource(resource), 0, 0)
+	var panel := Kit.res_bar(Kit.resource(resource), 0, 0, resource == "money")
 	panel.name = "FortResource_" + resource
 	panel.tooltip_text = I18n.t(String(TOP_NAMES[resource])) + "\n" + I18n.t(String(TOP_TIPS[resource]))
 	chips.add_child(panel)
@@ -601,11 +601,14 @@ func _refresh() -> void:
 	city_plaque.tooltip_text = city_name_label.text + " · " + I18n.t("Штаб ур. %d") % lg.camp_level("hq")
 	hq_level_label.text = str(lg.camp_level("hq"))
 	_refresh_city_order()
-	(resource_chips["money"] as Label).text = "%s / %s" % [hud.fmt(lg.city_money()), hud.fmt(lg.money_cap())]
+	var balance := lg.city_money()
+	var capacity := lg.money_cap()
 	var money_label: Label = resource_chips["money"]
-	var money_width := money_label.get_theme_font("font").get_string_size(money_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x
-	money_label.add_theme_font_size_override("font_size", mini(28, maxi(12, floori(28.0 * 132.0 / maxf(1, money_width)))))
-	(resource_bars["money"]["fill"] as ProgressBar).value = lg.city_money() / maxf(1, lg.money_cap())
+	var money_text := "%s / %s" % [hud.fmt(balance), hud.fmt(capacity)]
+	if money_label.text != money_text:
+		money_label.text = money_text
+		Kit.layout_res_bar(resource_bars["money"]["panel"])
+	(resource_bars["money"]["fill"] as ProgressBar).value = balance / maxf(1, capacity)
 	ration_label.text = "%d / %d" % [lg.rations_now(), lg.ration_cap()]
 	glory_label.text = hud.fmt(lg.glory)
 	ingot_label.text = "%d / %d" % [lg.ingots, lg.resource_cap("ingots")]

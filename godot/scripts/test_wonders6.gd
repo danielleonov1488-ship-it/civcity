@@ -87,7 +87,7 @@ func _catalog() -> void:
 	expected.sort()
 	check(found == expected, "all eight entries belong to city Wonders group")
 	var visible: Array = game.hud._types_in("special", "wonders")
-	check(visible.size() == 4 and visible.has("trajan"), "city group shows four completed models")
+	check(visible.is_empty(), "locked wonders are absent from the build menu")
 	for type: String in HIDDEN:
 		check(Defs.B[type].get("hidden", false) and not visible.has(type) and not city.unlocked(type)
 			and not city.city_buildable(type) and city.place(type, AT, 0.0).is_empty(), "hidden and unbuildable " + type)
@@ -212,8 +212,20 @@ func _migration() -> void:
 
 func _views() -> void:
 	_square(city)
+	var hud: Hud = game.hud
+	var wonders_tab: Button
+	for tab: Button in hud.tray_stabs.get_children():
+		if tab.get_meta("sub") == "wonders":
+			wonders_tab = tab
+			break
+	if not check(wonders_tab != null, "Wonders tab exists"):
+		return
+	hud._sync_build_tabs()
+	check(not wonders_tab.visible, "Wonders tab hidden before research")
 	city.level = 5
-	city.research["trajan"] = true
+	city.rp = float(Defs.research("trajan")["cost"])
+	if not check(city.do_research("trajan"), "study Trajan to unlock first wonder"):
+		return
 	city.money = 100000.0
 	city.auto_hire = true
 	for p: Vector2 in [Vector2(151, 209), Vector2(175, 209), Vector2(151, 220), Vector2(175, 220), Vector2(163, 224)]:
@@ -236,10 +248,11 @@ func _views() -> void:
 	await frames(35)
 	await shot("3_trajan_night.png")
 	game._set_hour(11.0)
-	game.hud.open_ssub = "wonders"
-	game.hud._toggle_cat("special")
-	check(game.hud.tray_stabs.visible and game.hud.tray_title.text.contains("Чудеса")
-		and game.hud.tray_grid.get_child_count() == 4, "city build menu displays Wonders group")
+	hud._toggle_cat("special")
+	check(wonders_tab.is_visible_in_tree(), "Wonders tab appears after first unlock")
+	wonders_tab.pressed.emit()
+	check(hud.open_ssub == "wonders" and hud.tray_grid.get_child_count() == 1
+		and hud.tray_grid.get_child(0).get_meta("type") == "trajan", "Wonders shows only the unlocked Trajan card")
 	await shot("4_build_menu_wonders.png")
 	# Призрак настоящего инструмента и отмена бесплатной постановки.
 	city.remove(column, false)
