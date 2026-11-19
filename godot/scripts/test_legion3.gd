@@ -221,7 +221,7 @@ func _gear_class() -> void:
 			seen[String(d["slot"])] = true
 			if String(d["slot"]) == "weapon" and not (String(d["cls"]) in Soldiers.V3_CLASS_IDS):
 				bad = true
-	_check(Gear.SLOTS_V3.size() == 4 and seen.size() == 4 and not seen.has("badge") and not bad, "добыча: слоты %s, знака нет, оружие — четырёх классов" % [seen.keys()])
+	_check(Gear.SLOTS_V3.size() == 4 and Gear.SLOTS_V3.all(func(sl): return seen.has(sl)) and seen.keys().all(func(sl): return Gear.EQUIP_SLOTS_V3.has(sl)) and not seen.has("badge") and not bad, "добыча (LEGION9: и рабочая одежда): слоты %s, знака нет, оружие — четырёх классов" % [seen.keys()])
 	var e := Legion.new()
 	_check(Legion.UNITS["priest"]["hp"] == 170 and Legion.UNITS["priest"]["heal"] > 0.0 and Legion.UNITS["priest"]["armor"] == 12 and Legion.UNITS["priest"]["range"] == 6.0
 		and Legion.UNITS["cavalry"]["hp"] == 240 and bool(Legion.UNITS["cavalry"]["backline"]) and Legion.UNITS["cavalry"]["armor"] == 22 and Legion.UNITS["cavalry"]["speed"] > 2.0,
@@ -566,7 +566,7 @@ func _chests3() -> void:
 	var a := L.open_chest("gold")
 	var b := M.open_chest("gold")
 	_check(a == b and not a.is_empty(), "фиксированное зерно даёт одинаковую добычу")
-	_check(Gear.SLOTS_V3.has(String(a["item"]["slot"])) and int(a["item"]["rarity"]) in [0, 2, 3, 4]
+	_check(Gear.EQUIP_SLOTS_V3.has(String(a["item"]["slot"])) and int(a["item"]["rarity"]) in [0, 2, 3, 4]
 		and int(a["rations"]) > 0 and int(a["iron"]) > 0 and int(a["money"]) > 0, "сундук содержит допустимую вещь и ресурсы")
 	for i in 3:
 		_check(L.queue_chest("wooden"), "место для сундука %d" % i)

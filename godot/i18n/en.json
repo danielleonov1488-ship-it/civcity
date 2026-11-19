@@ -5724,5 +5724,17 @@
 "Повар": "Cook",
 "Кузнец": "Blacksmith",
 "Женщина": "Woman",
-"Мужчина": "Man"
+"Мужчина": "Man",
+"одежда": "clothing",
+"Фартук повара": "Cook’s apron",
+"Фартук кузнеца": "Smith’s apron",
+"Тога писца": "Scribe’s toga",
+"Одеяние жреца": "Priest’s robe",
+"Одежда мастера": "Builder’s clothes",
+"+%d%% к выпуску кухни": "+%d%% kitchen output",
+"+%d%% к скорости ковки": "+%d%% forging speed",
+"+%d%% к выпуску казны": "+%d%% treasury output",
+"+%d%% к скорости лечения": "+%d%% healing speed",
+"+%d%% к скорости строительства": "+%d%% construction speed",
+"Одежду носят в форте": "Work clothes are worn in the fort"
 }

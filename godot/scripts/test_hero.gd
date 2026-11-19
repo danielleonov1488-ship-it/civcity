@@ -694,8 +694,8 @@ func _battle_test() -> void:
 			var hero_found := false
 			for f in battle.views.values():
 				if f.unit.key == "hero":
-					hero_found = f is AnimatedSprite2D and f.sheet == "hero"
-			check(hero_found, "в бою — рисованный герой")
+					hero_found = f.actor is Node3D and f.sprite == null and f.actor.has_outfit("centurion")
+			check(hero_found, "в бою — герой в форме центуриона")
 			await shot("hero_battle.png")
 		if battle.tut_freeze and not froze:
 			froze = true
@@ -801,9 +801,9 @@ func _pvp_test() -> void:
 				for f in battle.views.values():
 					var u: LegionSim.Unit = f.unit
 					if u.key == "hero":
-						hv.append([u.side, f is AnimatedSprite2D and f.sheet == "hero", u.name])
+						hv.append([u.side, f.actor is Node3D and f.sprite == null if u.side == "ally" else f.sprite is AnimatedSprite2D and f.actor == null, u.name])
 				check(hv.size() == 2 and hv.all(func(x): return x[1]) and hv.any(func(x): return x[0] == "enemy" and x[2] == "Марк Туллий"),
-					"в бою — наш герой и герой соперника, оба рисованные", hv)
+					"в бою — наш 3D-герой и рисованный герой соперника", hv)
 			if not shot_done and battle.sim.t > 4.5:
 				shot_done = true
 				await shot("hero_pvp_battle.png", SHOTS_PVP)

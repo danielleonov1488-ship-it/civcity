@@ -203,7 +203,7 @@ func _test_drag(sid: int) -> void:
 	var target := view.project(drill)
 	view.begin_person_move(sid, false, view.person_project(sid))
 	view.update_person_move(target)
-	check(is_instance_valid(view.drag_ghost) and view.drag_ghost.material is ShaderMaterial and view.drag_target == drill, "translucent drag silhouette")
+	check(is_instance_valid(view.drag_ghost) and view.drag_ghost._opacity < 1.0 and view.drag_target == drill, "translucent drag silhouette")
 	check(camp.drag_name.visible and camp.drag_name.text == String(lg.soldier(sid)["name"]), "dweller name follows drag")
 	check(camp.drag_context.visible and camp.drag_context.text.contains(I18n.t("свободно %d из %d") % [1, 2]), "training room shows free capacity")
 	await shot("04_dweller_drag.png")

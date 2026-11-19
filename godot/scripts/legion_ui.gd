@@ -870,6 +870,8 @@ func _ic39(n: String) -> Texture2D:
 
 
 func _gear_tex(idx: int, slot := "weapon") -> Texture2D:
+	if slot == Gear.OUTFIT_SLOT:
+		return hud.ico("clothes", 64)
 	var t := _sheet("42", idx)
 	return t if t != null else hud.ico(String(GEAR_ICON.get(slot, "swords")), 64)
 
@@ -2997,7 +2999,7 @@ func _soldier_card(s: Dictionary) -> Control:
 	return p
 
 
-const GEAR_ICON := {"weapon": "swords", "offhand": "shield", "helmet": "helmet", "armor": "legion", "badge": "laurels"}
+const GEAR_ICON := {"weapon": "swords", "offhand": "shield", "helmet": "helmet", "armor": "legion", "badge": "laurels", Gear.OUTFIT_SLOT: "clothes"}
 
 
 ## Слот вещи воина: цвет — редкость надетой вещи (пусто — бледный); щелчок — выбрать вещь

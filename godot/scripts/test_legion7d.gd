@@ -1,6 +1,7 @@
 extends Node3D
 ## Три кадра форта B1 на новой тестовой партии.
 
+const Actor = preload("res://scripts/charpilot_actor.gd")
 const OUT := "D:/CivCity/.work/stage6/legion7d/shots/"
 var out := OUT
 var game: Game
@@ -110,6 +111,8 @@ func _fixture() -> void:
 	for female: bool in [false, true]:
 		var newcomer := lg._fort_newcomer()
 		newcomer["female"] = female
+		newcomer.erase("look")
+		lg._person_look(newcomer)
 		(lg.fort["newcomers"] as Array).append(newcomer)
 	lg._add_soldier({"name": "Марк", "cls": "legionary", "stars": 1})
 
@@ -145,7 +148,7 @@ func _click_person(sid: int, newcomer := false) -> void:
 
 
 func _drag_person(sid: int, target: int, newcomer := false) -> bool:
-	var source := _entry(sid, newcomer).get("node") as Sprite2D
+	var source := _entry(sid, newcomer).get("node") as Actor
 	if not check(source != null, "drag source is drawn"):
 		return false
 	var click := InputEventMouseButton.new()
@@ -159,8 +162,8 @@ func _drag_person(sid: int, target: int, newcomer := false) -> bool:
 	var ghost := view.drag_ghost
 	if not check(view.drag_sid == sid and view.drag_target == target and is_instance_valid(ghost), "drag starts and follows pointer"):
 		return false
-	check(ghost.texture == source.texture and ghost.frame == source.frame and ghost.flip_h == source.flip_h
-		and ghost.modulate.a < 1.0 and ghost.material is ShaderMaterial, "same frame as a translucent silhouette")
+	check(ghost.get_meta("look") == source.get_meta("look") and ghost.get_meta("loadout") == source.get_meta("loadout")
+		and ghost._sample_clip == source._sample_clip and ghost._opacity < 1.0, "same outfit and pose in translucent ghost")
 	return true
 
 
@@ -172,21 +175,22 @@ func _check_animation() -> void:
 	for i in 48:
 		view._animate_people(0.17)
 		for person: Dictionary in view.figures:
-			var art: String = person["art"]
-			var sprite: Sprite2D = person["node"]
-			var phases: int = seen.get(art, 0)
-			seen[art] = phases | (1 << sprite.frame)
+			var role: String = person["role"]
+			var clip: String = person["clip"]
+			var clips: Dictionary = seen.get(role, {})
+			clips[clip] = true
+			seen[role] = clips
 			var plot := int(person["plot"])
 			if plot >= 0:
-				stays_in_room = stays_in_room and (view.room_rects[plot] as Rect2).has_point(sprite.position)
-			if art == "legionary" and sprite.frame in [2, 3, 4, 5]:
-				left = left or sprite.flip_h
-				right = right or not sprite.flip_h
-	for art: String in ["cook", "smith", "treasurer"]:
-		check((int(seen.get(art, 0)) & 0xC0) == 0xC0, "both work frames " + art)
-	check((int(seen.get("legionary", 0)) & 0x3F) == 0x3F and left and right, "idle, walk and turn in room")
+				stays_in_room = stays_in_room and (view.room_rects[plot] as Rect2).has_point(person["feet"])
+			if role == "barracks" and clip == "Walk":
+				left = left or float(person["yaw"]) < 0.0
+				right = right or float(person["yaw"]) > 0.0
+	for role: String in FortCutaway.WORK_CLIPS:
+		check(seen.get(role, {}).has(FortCutaway.WORK_CLIPS[role]), "work animation " + role)
+	var clips: Dictionary = seen.get("barracks", {})
+	check(clips.has("Idle") and clips.has("Walk") and left and right, "idle, walk and turn in room")
 	check(stays_in_room, "walk stays inside the assigned room")
-
 
 func _check_expansion() -> void:
 	var build := lg.fort_slot_plot("smelter")
@@ -242,11 +246,11 @@ func _run() -> void:
 	check(view.grid == Vector2i(5, 3) and view.room_sprites.size() == 14, "wider three-floor fort")
 	check(view.backdrop.texture.resource_path.ends_with("/legion_b1/fort/background.jpg")
 		and view.shell.get_node_or_null("Gate") is Sprite2D, "painted landscape and gate")
-	check(view.find_children("*", "Node3D", true, false).is_empty(), "no 3D nodes in fort")
+	check(view.people_layer.viewport.transparent_bg, "transparent 3D layer in painted fort")
 	check(not view.figures.is_empty(), "dwellers present")
 	for person: Dictionary in view.figures:
-		var sprite := person["node"] as Sprite2D
-		check(sprite != null and sprite.hframes == 8, "dweller uses an eight-frame sprite")
+		var actor := person["node"] as Actor
+		check(actor != null and actor.get_parent() == view.people_layer.viewport and not actor.identity.is_empty(), "dweller uses the shared 3D layer")
 	var kitchen := int(lg.fort_slot_plot("kitchen")["id"])
 	var cook := int(lg.fort_worker(kitchen)["id"])
 	var empty := lg.fort_empty_plot()
@@ -264,8 +268,8 @@ func _run() -> void:
 	_click_person(cook)
 	if not check(is_instance_valid(camp.modal_panel), "dweller opens from sprite"):
 		return
-	check(_portrait(camp.modal_panel.find_child("FortDwellerPortrait", true, false), "cook"), "dweller card portrait")
-	check(camp.find_children("*", "Node3D", true, false).is_empty(), "fort and open card contain no 3D models")
+	var portrait := camp.modal_panel.find_child("FortPortraitArt", true, false) as FortPersonPreview
+	check(portrait != null and portrait.actor.get_meta("look") == lg.soldier(cook)["look"], "live portrait of the selected worker")
 	await shot("2_dweller_card.png")
 	camp._close_modal()
 	camp.show_plot(kitchen)

@@ -179,7 +179,7 @@ func _run() -> void:
 	camp._layout_guide()
 	camp.show_dweller(sid)
 	var slots := camp.modal_panel.find_child("FortGearSlots", true, false)
-	check(slots != null and slots.get_child_count() == 4 and slots.find_children("TierBadge", "Label", true, false).size() == 4, "four equipped slots and tier badges")
+	check(slots != null and slots.get_child_count() == 5 and slots.find_children("TierBadge", "Label", true, false).size() == 4, "five slots and four equipped tier badges")
 	check(camp.modal_panel.find_child("FortInventoryGrid", true, false) != null, "inventory grid")
 	await _window_checks(camp.modal_panel, "dweller")
 	check((camp.modal_panel.find_child("FortInventoryTitle", true, false) as Label).text == I18n.t("На складе"), "inventory title spacing")
@@ -207,7 +207,9 @@ func _run() -> void:
 		camp.lu._craft_win()
 		camp.lu._tick_live()
 		check(camp.lu.overlay.find_child("CraftPanel", true, false).get_instance_id() == craft_id, "craft survives timer refresh")
-		check(craft.find_child("CraftKinds", true, false).get_child_count() == 4 and craft.find_child("CraftRarityOdds", true, false).get_child_count() == 5, "recipe icons and five rarity odds")
+		check(craft.find_child("CraftKinds", true, false).get_child_count() == 4
+			and craft.find_child("CraftOutfits", true, false).get_child_count() == Gear.WORK_OUTFITS.size()
+			and craft.find_child("CraftRarityOdds", true, false).get_child_count() == 5, "weapons, work outfits and five weapon rarity odds")
 		var active_ring := craft.find_child("CraftTimerRing", true, false) as Control
 		check(float(active_ring.get("value")) > 0 and float(active_ring.get("value")) < 1, "active timer ring progress")
 		await _window_checks(craft, "craft/timer")

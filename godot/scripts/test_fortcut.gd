@@ -203,8 +203,8 @@ func _run() -> void:
 	if not check(view.grid == Vector2i(5, 3) and view.room_sprites.size() == 14 and built == 4 and vacant == 10, "early: three floors, four built and ten empty"):
 		_finish()
 		return
-	check(view.sub.disable_3d and view.find_children("*", "Node3D", true, false).is_empty(), "separate 2D viewport")
-	check(not view.figures.is_empty() and view.figures[0]["node"] is Sprite2D, "drawn dwellers loaded")
+	check(view.sub.disable_3d and view.people_layer.viewport.own_world_3d and view.people_layer.viewport.transparent_bg, "painted viewport and shared 3D people")
+	check(not view.figures.is_empty() and view.figures[0]["node"] is Node3D, "3D dwellers loaded")
 	for id: int in view.room_rects:
 		check(view._pick(view.project(id)) == "plot_%d" % id, "room picking " + str(id))
 	var empty := lg.fort_empty_plot()
@@ -248,10 +248,10 @@ func _run() -> void:
 	var smith := false
 	for entry: Dictionary in view.figures:
 		if int(entry["plot"]) == forge and entry["role"] == "forge":
-			var sprite: Sprite2D = entry["node"]
+			var actor: Node3D = entry["node"]
 			for i in 32:
 				view._animate_people(0.25)
-				smith = smith or (sprite.visible and sprite.frame >= 6)
+				smith = smith or (actor.visible and entry["clip"] == "Interact")
 	check(smith, "smith working in forge")
 	var forge_rect := view.plot_footprint(forge)
 	var room_height := forge_rect.size.y / view.size.y
@@ -266,12 +266,12 @@ func _run() -> void:
 	check(off_screen, "close-up leaves some rooms off screen")
 	var paused := false
 	for entry: Dictionary in view.figures:
-		var sprite: Sprite2D = entry["node"]
-		if sprite.visible:
+		var actor: Node3D = entry["node"]
+		if actor.visible:
 			continue
-		var before := sprite.frame
+		var before := float(entry["sample"])
 		view._animate_people(0.45)
-		check(not sprite.visible and sprite.frame == before, "off-screen sprite frame is held")
+		check(not actor.visible and float(entry["sample"]) == before, "off-screen pose is held")
 		paused = true
 		break
 	check(paused, "close-up pauses off-screen figures")

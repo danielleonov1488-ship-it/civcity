@@ -40,6 +40,9 @@ extends RefCounted
 ##   картинки: art(kind, id) {file, grid, i}, art_texture(kind, id) -> Texture2D | null (kind: unit|enemy|perk|wonder|map)
 ##   слова:    fmt_duration(с), roman(n), boss_name(n)
 
+const PersonLook = preload("res://scripts/legion_person_look.gd")
+
+
 signal changed                      # что-то поменялось (уровень, отряд, Слава) — перерисовать окно
 ## Окно «Легион» просит бой (start_battle / start_pvp_battle): setup из make_battle / make_pvp_battle.
 ## 3D-бой подключается к сигналу, крутит LegionSim и зовёт apply_result / apply_pvp_result; если никто не слушает —
@@ -801,9 +804,21 @@ func class_open(cls: String) -> bool:
 	return false
 
 
+func _person_look(person: Dictionary, fallback_id := 1) -> void:
+	var c = city()
+	if bool(person.get("hero", false)) and not person.has("look") and c != null and Hero.exists(c):
+		person["look"] = Hero.look(c).duplicate()
+		person["female"] = Hero.female(c)
+	PersonLook.ensure(person, fallback_id)
+
+
 func _add_soldier(d: Dictionary) -> Dictionary:
 	var s := {"id": sid_next, "name": String(d.get("name", "")), "from": String(d.get("from", "")), "cls": String(d.get("cls", "legionary")),
 		"stars": clampi(int(d.get("stars", 1)), 1, 5), "rank": 0, "train_end": 0.0, "train_total": 0.0, "wound_end": 0.0, "battles": 0, "falls": 0, "gear": {}}
+	for key: String in ["look_seed", "female", "look", "res", "hero"]:
+		if d.has(key):
+			s[key] = d[key]
+	_person_look(s)
 	sid_next += 1
 	soldiers.append(s)
 	return s
@@ -883,8 +898,10 @@ func roll_recruits() -> void:
 	var n := 3 + (1 if barracks_lvl() >= 6 else 0) + (1 if barracks_lvl() >= 10 else 0)
 	var q := recruit_quality()
 	for i in n:
-		recruits.append({"name": Soldiers.roll_name(_rng), "from": Soldiers.ORIGINS[_rng.randi() % Soldiers.ORIGINS.size()],
-			"cls": open[_rng.randi() % open.size()], "stars": Soldiers.roll_stars(_rng, q)})
+		var recruit_data := {"name": Soldiers.roll_name(_rng), "from": Soldiers.ORIGINS[_rng.randi() % Soldiers.ORIGINS.size()],
+			"cls": open[_rng.randi() % open.size()], "stars": Soldiers.roll_stars(_rng, q)}
+		_person_look(recruit_data, recruit_day * 7 + i + 1)
+		recruits.append(recruit_data)
 
 
 ## Насколько хорош город для новобранцев (0…1): счастье и уровень
@@ -1054,7 +1071,7 @@ func gear_bonus(s: Dictionary) -> Dictionary:
 	var out := {"atk": 0.0, "hp": 0.0, "armor": 0.0}
 	var v := v3()
 	for slot in (s.get("gear", {}) as Dictionary):
-		if v and slot == "badge":
+		if slot == Gear.OUTFIT_SLOT or (v and slot == "badge"):
 			continue
 		var it := item(int(s["gear"][slot]))
 		if it.is_empty():
@@ -1072,6 +1089,8 @@ func can_equip(sid: int, iid: int) -> String:
 	var it := item(iid)
 	if s.is_empty() or it.is_empty():
 		return "Нет такой вещи"
+	if String(it["slot"]) == Gear.OUTFIT_SLOT and not v3():
+		return "Одежду носят в форте"
 	if v3():
 		return "Знак в лагере не носят" if String(it["slot"]) == "badge" else ""     # любое оружие любому: класс меняется
 	if not Gear.fits(it, String(s["cls"])):
@@ -1087,6 +1106,8 @@ func equip(sid: int, iid: int) -> bool:
 	var it := item(iid)
 	var slot := String(it["slot"])
 	var was := int(it.get("on", 0))
+	if slot == Gear.OUTFIT_SLOT:
+		fort_finish()
 	var o := {}
 	if was != 0 and was != sid:
 		o = soldier(was)
@@ -1099,6 +1120,8 @@ func equip(sid: int, iid: int) -> bool:
 		old["on"] = 0
 	s["gear"][slot] = iid
 	it["on"] = sid
+	if slot == Gear.OUTFIT_SLOT:
+		_update_smith_deadlines(s, o)
 	if v3() and slot == "weapon":
 		_v3_reclass(s)                       # оружие решает класс
 		if not o.is_empty():
@@ -1116,10 +1139,14 @@ func unequip(sid: int, slot: String) -> bool:
 		return false
 	if store_count() >= store_cap():
 		return false
+	if slot == Gear.OUTFIT_SLOT:
+		fort_finish()
 	var it := item(int(s["gear"][slot]))
 	if not it.is_empty():
 		it["on"] = 0
 	(s["gear"] as Dictionary).erase(slot)
+	if slot == Gear.OUTFIT_SLOT:
+		_update_smith_deadlines(s, {})
 	if v3() and slot == "weapon":
 		_v3_reclass(s)                       # без оружия — меч даром, легионер
 	changed.emit()
@@ -1680,7 +1707,7 @@ func _army_after(setup: Dictionary, result: Dictionary) -> Array:
 		s["battles"] = int(s.get("battles", 0)) + 1
 		if fallen.has(int(u["sid"])):
 			s["falls"] = int(s.get("falls", 0)) + 1
-			var m := Soldiers.HEAL_MIN * (int(s["rank"]) + 1) * heal_k()
+			var m := Soldiers.HEAL_MIN * (int(s["rank"]) + 1) * heal_k() / _fort_healing_speed()
 			if hurt >= beds():
 				m *= 2.0
 			hurt += 1
@@ -4366,7 +4393,6 @@ func _fort_migrate_workers() -> void:
 			if sid < 0 and p.get("legacy_worker", null) is Dictionary:
 				var worker := _add_soldier(p["legacy_worker"])
 				sid = int(worker["id"])
-				worker["look_seed"] = sid * 409
 			if sid > 0 and not soldier(sid).is_empty() and not used.has(sid) and not bool(soldier(sid).get("hero", false)):
 				(p["workers"] as Array).append(sid)
 				used[sid] = true
@@ -4508,7 +4534,7 @@ func fort_can_build(type: String, plot_id: int) -> String:
 func _fort_start(p: Dictionary, type: String, to: int) -> void:
 	_fort_accrue(p, now())
 	_fort_pay(fort_cost(type, to))
-	var secs := camp_time_h(to) * float(FORT_B[type]["time_k"]) * 3600.0 / maxf(0.001, time_k)
+	var secs := fort_build_seconds(type, to)
 	p["b"] = type
 	p["up"] = {"to": to, "end": now() + secs, "total": secs}
 	_craft_deadlines(p, now())
@@ -4658,6 +4684,43 @@ func fort_instant(plot_id: int, quote: Dictionary = {}) -> bool:
 	return true
 
 
+func _fort_build_speed() -> float:
+	var bonus := 0.0
+	for person: Dictionary in soldiers:
+		if not bool(person.get("hero", false)) and not squad3.has(int(person["id"])) and s_state(person) == "ready":
+			bonus = maxf(bonus, work_bonus(person, "builder"))
+	return 1.0 + bonus
+
+
+func fort_build_seconds(type: String, level: int) -> float:
+	return camp_time_h(level) * float(FORT_B[type]["time_k"]) * 3600.0 / (maxf(0.001, time_k) * _fort_build_speed())
+
+
+func work_bonus(person: Dictionary, kind: String) -> float:
+	var gear: Dictionary = person.get("gear", {})
+	return Gear.work_bonus(item(int(gear.get(Gear.OUTFIT_SLOT, 0))), kind)
+
+
+func fort_work_speed(plot_id: int, type: String) -> float:
+	var kind := String(Gear.WORK_ROOM.get(type, ""))
+	return 1.0 if kind.is_empty() else 1.0 + work_bonus(fort_worker(plot_id), kind)
+
+
+func _fort_healing_speed() -> float:
+	var speed := 1.0
+	for p: Dictionary in fort.get("plots", []):
+		if p["b"] in ["mars", "infirmary"] and int(p["lv"]) > 0 and (p["up"] as Dictionary).is_empty():
+			speed = maxf(speed, fort_work_speed(int(p["id"]), String(p["b"])))
+	return speed
+
+
+func fort_plot_production(plot_id: int, type: String, level: int) -> Dictionary:
+	var prod := fort_production(type, level)
+	if not prod.is_empty() and type in ["kitchen", "treasury"]:
+		prod["rate"] = float(prod["rate"]) * fort_work_speed(plot_id, type)
+	return prod
+
+
 func fort_info(plot_id: int) -> Dictionary:
 	var p := fort_plot(plot_id)
 	if p.is_empty() or p["b"] == "":
@@ -4665,12 +4728,13 @@ func fort_info(plot_id: int) -> Dictionary:
 	var type := String(p["b"])
 	var lv := int(p["lv"])
 	return {"type": type, "lv": lv, "next_cost": fort_cost(type, lv + 1),
-		"next_time": camp_time_h(lv + 1) * float(FORT_B[type]["time_k"]) * 3600.0 / maxf(0.001, time_k),
-		"gives": fort_gives(type, lv), "gives_next": fort_gives(type, lv + 1), "producing": fort_production(type, lv)}
+		"next_time": fort_build_seconds(type, lv + 1),
+		"gives": fort_gives(type, lv, plot_id), "gives_next": fort_gives(type, lv + 1, plot_id),
+		"producing": fort_plot_production(plot_id, type, lv)}
 
 
-func fort_gives(type: String, lv: int) -> String:
-	var prod := fort_production(type, lv)
+func fort_gives(type: String, lv: int, plot_id := -1) -> String:
+	var prod := fort_plot_production(plot_id, type, lv) if plot_id >= 0 else fort_production(type, lv)
 	if not prod.is_empty():
 		return I18n.t("%s: %.2f в час, запас %.0f") % [I18n.t(String(FORT_B[type]["gives"])), prod["rate"], prod["cap"]]
 	return I18n.t("%s · уровень %d") % [I18n.t(String(FORT_B[type]["gives"])), lv]
@@ -4713,6 +4777,7 @@ func fort_grid() -> Vector2i:
 
 func fort_expansion_info(axis := "floor") -> Dictionary:
 	var info := fort_exp_info(int(fort.get("exp", 0)) + 1)
+	info["seconds"] = float(info["time_h"]) * 3600.0 / (maxf(0.001, time_k) * _fort_build_speed())
 	var dims := fort_grid() + (Vector2i(1, 0) if axis == "section" else Vector2i(0, 1))
 	info["grid"] = [dims.x, dims.y]
 	info["plots"] = dims.x * dims.y - 2
@@ -4726,7 +4791,7 @@ func fort_expand(axis := "floor") -> bool:
 	var to := int(fort["exp"]) + 1
 	var info := fort_expansion_info(axis)
 	_fort_pay(info["cost"])
-	var secs := float(info["time_h"]) * 3600.0 / maxf(0.001, time_k)
+	var secs := float(info["seconds"])
 	fort["up"] = {"to": to, "end": now() + secs, "total": secs, "axis": axis, "grid": info["grid"]}
 	_fort_changed()
 	return true
@@ -4737,14 +4802,14 @@ func _fort_accrue(p: Dictionary, until: float) -> void:
 	if until <= since:
 		return
 	_craft_accrue(p, until - since, until)
-	var prod := fort_production(String(p["b"]), int(p["lv"]))
+	var prod := fort_plot_production(int(p["id"]), String(p["b"]), int(p["lv"]))
 	# Время простоя не накапливается: ни без человека, ни при полном складе.
 	if not prod.is_empty() and (p["up"] as Dictionary).is_empty():
 		var worker := fort_worker(int(p["id"]))
 		var resource := String(prod["resource"])
 		if fort_guide_cooking(int(p["id"])) and int(worker.get("id", 0)) == int(flags.get("fort_guide_sid", -1)):
 			if float(p["pend"]) < FORT_GUIDE_BATCH:
-				p["pend"] = minf(FORT_GUIDE_BATCH, float(p["pend"]) + (until - since) * FORT_GUIDE_BATCH / FORT_GUIDE_COOK_SECS)
+				p["pend"] = minf(FORT_GUIDE_BATCH, float(p["pend"]) + (until - since) * fort_work_speed(int(p["id"]), "kitchen") * FORT_GUIDE_BATCH / FORT_GUIDE_COOK_SECS)
 		elif not worker.is_empty() and fort_stock(resource) < resource_cap(resource) and float(p["pend"]) < float(prod["cap"]):
 			p["pend"] = minf(float(prod["cap"]), float(p["pend"]) + (until - since) / 3600.0 * float(prod["rate"]) * maxf(0.001, time_k))
 	p["t"] = until
@@ -4878,6 +4943,7 @@ func _fort_load(raw: Variant) -> void:
 			newcomer["stars"] = clampi(int(entry.get("stars", 1)), 1, 5)
 			if newcomer.has("look_seed"):
 				newcomer["look_seed"] = int(newcomer["look_seed"])
+			_person_look(newcomer)
 			fort["newcomers"].append(newcomer)
 	var ids := {}
 	for entry in raw["plots"]:
@@ -5127,9 +5193,11 @@ func _fort_newcomer() -> Dictionary:
 	var female := _rng.randf() < 0.5
 	var roll := _rng.randf()
 	var quality := 1 if roll < 0.40 else 2 if roll < 0.72 else 3 if roll < 0.91 else 4 if roll < 0.98 else 5
-	return {"id": id, "name": Soldiers.roll_name(_rng), "from": "Пришёл к воротам форта",
+	var person := {"id": id, "name": Soldiers.roll_name(_rng), "from": "Пришёл к воротам форта",
 		"cls": "legionary", "class_hint": V3_UNITS[_rng.randi_range(0, V3_UNITS.size() - 1)],
 		"stars": quality, "look_seed": seed_value, "female": female}
+	_person_look(person)
+	return person
 
 
 func fort_accept(id: int) -> Dictionary:
@@ -5141,8 +5209,7 @@ func fort_accept(id: int) -> Dictionary:
 		var person := _add_soldier(candidate)
 		# ID у ворот остаётся тем же после принятия.
 		person["id"] = id
-		for key: String in ["look_seed", "female", "class_hint"]:
-			person[key] = candidate.get(key, 0 if key == "look_seed" else false if key == "female" else "legionary")
+		person["class_hint"] = candidate.get("class_hint", "legionary")
 		(fort["newcomers"] as Array).erase(candidate)
 		_v3_reclass(person)
 		if fort_guide_step() == FortGuide.RECRUIT:
@@ -5431,14 +5498,17 @@ func from_dict(d: Dictionary) -> void:
 			e["rank"] = clampi(int(e.get("rank", 0)), 0, Soldiers.rank_max(e))
 			for k in ["train_end", "train_total", "wound_end"]:
 				e[k] = float(e.get(k, 0.0))
+			_person_look(e)
 			soldiers.append(e)
 	recruits = []
 	for s in d.get("recruits", []):
 		if s is Dictionary and Soldiers.CLASSES.has(String(s.get("cls", ""))):
-			recruits.append((s as Dictionary).duplicate())
+			var recruit_data: Dictionary = s.duplicate()
+			_person_look(recruit_data, int(d.get("recruit_day", -1)) * 7 + recruits.size() + 1)
+			recruits.append(recruit_data)
 	items = []
 	for it in d.get("items", []):
-		if it is Dictionary and String(it.get("slot", "")) in Gear.SLOTS:
+		if it is Dictionary and (String(it.get("slot", "")) in Gear.SLOTS or Gear.work_kind(it) in Gear.WORK_OUTFITS):
 			var e: Dictionary = (it as Dictionary).duplicate()
 			e["id"] = int(e.get("id", 0))
 			e["on"] = int(e.get("on", 0))
@@ -5589,8 +5659,7 @@ func _ensure_hero3() -> void:
 			hero = s
 			break
 	if hero.is_empty():
-		hero = _add_soldier({"name": Hero.name_of(c), "cls": "legionary", "stars": 5})
-		hero["hero"] = true
+		hero = _add_soldier({"name": Hero.name_of(c), "cls": "legionary", "stars": 5, "hero": true})
 		hero_lv3 = maxi(hero_lv3, barracks_lvl())
 	hero["name"] = Hero.name_of(c)
 	if soldiers[0] != hero:
@@ -5768,7 +5837,7 @@ func craft_start(plot_id: int, kind: String, tier: int) -> bool:
 func _craft_accrue(p: Dictionary, elapsed: float, until: float) -> void:
 	if not p.has("craft"):
 		return
-	var budget := elapsed if craft_working(int(p["id"])) else 0.0
+	var budget := elapsed * _craft_speed(p) if craft_working(int(p["id"])) else 0.0
 	for job: Dictionary in p["craft"]:
 		var left := maxf(0.0, float(job["left"]))
 		var used := minf(budget, left)
@@ -5777,12 +5846,25 @@ func _craft_accrue(p: Dictionary, elapsed: float, until: float) -> void:
 	_craft_deadlines(p, until)
 
 
+func _craft_speed(p: Dictionary) -> float:
+	return fort_work_speed(int(p["id"]), "forge") if p["b"] == "forge" else 1.0
+
+
+func _update_smith_deadlines(person: Dictionary, previous_owner: Dictionary) -> void:
+	for worker: Dictionary in [person, previous_owner]:
+		if not worker.is_empty():
+			var p := fort_plot(fort_worker_plot(int(worker["id"])))
+			if p.get("b") == "forge":
+				_craft_deadlines(p, now())
+
+
 func _craft_deadlines(p: Dictionary, at: float) -> void:
 	var sum := 0.0
 	var working := craft_working(int(p["id"]))
+	var speed := _craft_speed(p) if working else 1.0
 	for job: Dictionary in p.get("craft", []):
 		sum += float(job["left"])
-		job["end"] = at + sum if working and float(job["left"]) > 0.0 else 0.0
+		job["end"] = at + sum / speed if working and float(job["left"]) > 0.0 else 0.0
 
 
 func craft_ready(plot_id: int) -> int:
@@ -5890,10 +5972,19 @@ func open_chest(kind: String) -> Dictionary:
 		if roll <= total:
 			rarity = int([0, 2, 3, 4][i])
 			break
-	var slot := String(Gear.SLOTS_V3[_rng.randi_range(0, Gear.SLOTS_V3.size() - 1)])
-	var cls := String(["legionary", "archer", "priest", "cavalry"][_rng.randi_range(0, 3)])
-	var gear := add_item({"slot": slot, "cls": cls if slot == "weapon" else "", "rarity": rarity, "ilvl": maxi(1, camp_level("hq")),
-		"tier": clampi(1 + progress / STAGES2, 1, Gear.TIERS)})
+	var slot_index := _rng.randi_range(0, Gear.SLOTS_V3.size() - 1)
+	var class_index := _rng.randi_range(0, 3)
+	var slot: String = Gear.SLOTS_V3[slot_index]
+	var cls: String = V3_UNITS[class_index]
+	var item_tier := clampi(1 + progress / STAGES2, 1, Gear.TIERS)
+	var loot := {"slot": slot, "cls": cls if slot == "weapon" else "", "rarity": rarity,
+		"ilvl": maxi(1, camp_level("hq")), "tier": item_tier}
+	var guide_chest := kind == "wooden" and fort_guide_step() >= FortGuide.RECRUIT and fort_guide_step() <= FortGuide.CHEST
+	# Переиспользуем броски вещи, чтобы ресурсы сундука и следующее зерно не сдвигались.
+	if not guide_chest and rarity <= 2 and roll % 5 == 0:
+		var outfit: String = Gear.WORK_OUTFITS[(slot_index * 4 + class_index) % Gear.WORK_OUTFITS.size()]
+		loot = Gear.craft_item(outfit, item_tier, rarity)
+	var gear := add_item(loot)
 	if gear.is_empty():
 		return {}
 	var reward := {"money": _rng.randi_range(30, 60) * tier, "rations": _rng.randi_range(1, 3) * tier,

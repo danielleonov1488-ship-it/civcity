@@ -1094,7 +1094,7 @@ func _build_card() -> void:
 	card_body.add_child(summary)
 	var prod: Dictionary = info["producing"]
 	if not prod.is_empty():
-		var next := Legion.fort_production(selected, level + 1)
+		var next := lg.fort_plot_production(selected_plot, selected, level + 1)
 		var resource_icon := Look.resource(String(prod["resource"]))
 		_room_metric(stats, I18n.t("Производство в час"), resource_icon, float(prod["rate"]), float(next["rate"]))
 		_room_metric(stats, I18n.t("Запас в комнате"), resource_icon, float(prod["cap"]), float(next["cap"]))
@@ -1227,7 +1227,7 @@ func _refresh_card() -> void:
 	upgrade_button.tooltip_text = I18n.t("Улучшить") + ("\n" + I18n.t(why) if why != "" else "")
 	upgrade_reason.text = I18n.t("Нужен Штаб ур. %d") % (int(plot["lv"]) + 1) if why.begins_with("Выше Штаба") else I18n.t(why)
 	requirement_banner.visible = why != ""
-	var prod := Legion.fort_production(selected, maxi(1, int(plot["lv"])))
+	var prod := lg.fort_plot_production(int(plot["id"]), selected, maxi(1, int(plot["lv"])))
 	var title := ""
 	var reason := ""
 	if not prod.is_empty():
@@ -2107,7 +2107,7 @@ func show_build_menu(plot_id := -1) -> void:
 		body.add_child(gives)
 		panel.tooltip_text = gives.text
 		body.add_child(_cost_icons(Legion.fort_cost(type, 1)))
-		body.add_child(Kit.time_row(duration_text(Legion.camp_time_h(1) * float(spec["time_k"]) * 3600.0 / maxf(0.001, lg.time_k))))
+		body.add_child(Kit.time_row(duration_text(lg.fort_build_seconds(type, 1))))
 		var count := _text("", 14, true)
 		body.add_child(count)
 		var button := Look.button(I18n.t("Строить"), Look.icon("build"), Look.WINE, Vector2(132, 58))
@@ -2459,7 +2459,7 @@ func _refresh_marker(marker: Dictionary) -> void:
 				if float(job["left"]) > 0.0:
 					(marker["timer"] as Control).visible = true
 					marker["timer"].set("value", 1.0 - float(job["left"]) / maxf(1.0, float(job["total"])))
-					button.tooltip_text += " · " + clock_text(float(job["left"]))
+					button.tooltip_text += " · " + clock_text(float(job["left"]) / lg.fort_work_speed(int(plot["id"]), type))
 					break
 	else:
 		collect.visible = not prod.is_empty() and float(plot["pend"]) >= 0.9999
@@ -2774,8 +2774,13 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 	var left := VBoxContainer.new()
 	left.custom_minimum_size.x = 250
 	columns.add_child(left)
-	var portrait := _person_portrait(person, 216)
+	var portrait := Kit.slot(null, false, 216)
+	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	portrait.name = "FortDwellerPortrait"
+	var preview := FortPersonPreview.new()
+	preview.name = "FortPortraitArt"
+	portrait.add_child(preview)
+	preview.setup(person, lg.worn(person), 198)
 	portrait.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	left.add_child(portrait)
 	_add_stars(left, int(person["stars"]))
@@ -2805,9 +2810,9 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 	columns.add_child(right)
 	var slots := HBoxContainer.new()
 	slots.name = "FortGearSlots"
-	slots.add_theme_constant_override("separation", 20)
+	slots.add_theme_constant_override("separation", 12)
 	right.add_child(slots)
-	for gear_slot: String in ["weapon", "helmet", "armor", "offhand"]:
+	for gear_slot: String in ["weapon", "helmet", "armor", "offhand", Gear.OUTFIT_SLOT]:
 		var it := lg.item(int(person.get("gear", {}).get(gear_slot, 0)))
 		var button := _gear_slot_button(104, slot == gear_slot)
 		button.name = "FortGear_" + gear_slot
@@ -2817,6 +2822,11 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 		var icon: Control = _dweller_item_icon(it, 86) if not it.is_empty() else Kit.image(hud.ico(String(LegionUi.GEAR_ICON[gear_slot]), 80), Vector2(86, 86))
 		button.add_child(icon)
 		icon.position = Vector2(9, 9)
+	var clothes := lg.item(int(person.get("gear", {}).get(Gear.OUTFIT_SLOT, 0)))
+	if not clothes.is_empty():
+		var bonus := _text(Gear.name_of(clothes) + " · " + Gear.stats_text(clothes), 17)
+		bonus.name = "FortOutfitBonus"
+		right.add_child(bonus)
 	var inventory_head := HBoxContainer.new()
 	right.add_child(inventory_head)
 	var inventory_title := _text(I18n.t("На складе"), 24, true)
@@ -2859,13 +2869,15 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 	inventory.add_theme_constant_override("v_separation", 8)
 	scroll.add_child(inventory)
 	for it: Dictionary in lg.items:
-		if int(it.get("on", 0)) != 0 or String(it["slot"]) not in Gear.SLOTS_V3 or (slot != "" and it["slot"] != slot):
+		if int(it.get("on", 0)) != 0 or String(it["slot"]) not in Gear.EQUIP_SLOTS_V3 or (slot != "" and it["slot"] != slot):
 			continue
 		var iid := int(it["id"])
 		var delta := lg.equip_power(sid, iid)
 		var button := _gear_slot_button(88)
 		button.name = "FortEquip_%d" % iid
-		button.tooltip_text = Gear.name_of(it) + "\n" + Gear.stats_text(it) + "\n" + I18n.t("Сила: %d → %d") % [int(delta[0]), int(delta[1])] + "\n" + I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])]
+		button.tooltip_text = Gear.name_of(it) + "\n" + Gear.stats_text(it)
+		if it["slot"] != Gear.OUTFIT_SLOT:
+			button.tooltip_text += "\n" + I18n.t("Сила: %d → %d") % [int(delta[0]), int(delta[1])] + "\n" + I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])]
 		button.set_meta("power_before", int(delta[0]))
 		button.set_meta("power_after", int(delta[1]))
 		button.pressed.connect(func(): _equip_dweller(sid, iid))
@@ -2873,6 +2885,8 @@ func show_dweller(sid: int, slot := "", change := "") -> void:
 		var icon := _dweller_item_icon(it, 70)
 		button.add_child(icon)
 		icon.position = Vector2(9, 6)
+		if it["slot"] == Gear.OUTFIT_SLOT:
+			continue
 		var gain := Kit.label("%+d" % (int(delta[1]) - int(delta[0])), 15, true)
 		gain.name = "PowerDelta"
 		gain.add_theme_color_override("font_color", Color("83ee8e") if int(delta[1]) >= int(delta[0]) else Color("ff8b7b"))
@@ -2934,7 +2948,9 @@ func _equip_dweller(sid: int, iid: int) -> void:
 		if lg.fort_guide_step() == Legion.FortGuide.BARRACKS and sid == int(lg.flags.get("fort_guide_sid", 0)):
 			_close_modal()
 		else:
-			show_dweller(sid, "", I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])])
+			var it := lg.item(iid)
+			var feedback: String = "" if it.get("slot") == Gear.OUTFIT_SLOT else I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])]
+			show_dweller(sid, "", feedback)
 		_refresh()
 
 
@@ -2971,7 +2987,7 @@ func show_expansion(axis: String) -> void:
 	v.add_child(_room_picture("hq", lg.camp_level("hq"), Vector2(400, 150)))
 	var info := lg.fort_expansion_info(axis)
 	v.add_child(_cost_icons(info["cost"]))
-	v.add_child(Kit.time_row(duration_text(float(info["time_h"]) * 3600.0 / maxf(0.001, lg.time_k))))
+	v.add_child(Kit.time_row(duration_text(float(info["seconds"]))))
 	var why := lg.fort_can_expand()
 	if why != "":
 		v.add_child(Kit.banner_red(I18n.t(why)))

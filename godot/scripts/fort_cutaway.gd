@@ -9,6 +9,8 @@ signal room_deselected
 signal drag_updated(point: Vector2, room_id: int, person_name: String)
 
 const FortPerson = preload("res://scripts/fort_person.gd")
+const Actor = preload("res://scripts/charpilot_actor.gd")
+const PersonLayer = preload("res://scripts/fort_person_layer.gd")
 const ART := "res://assets/legion_b1/"
 const ICON_ART := "res://assets/fort/cutaway/icons/"
 const ROOM_ART := {"hq": "praetorium", "barracks": "barracks", "kitchen": "kitchen",
@@ -16,17 +18,18 @@ const ROOM_ART := {"hq": "praetorium", "barracks": "barracks", "kitchen": "kitch
 	"mars": "shrine", "smelter": "smelter", "sawmill": "carpentry", "tannery": "tannery",
 	"treasury": "treasury", "drill": "drill", "stable": "stable", "tower": "tower"}
 const STATIONS := {"kitchen": [0.35, 0.53, 0.38], "forge": [0.70, 0.49, 0.25],
-	"treasury": [0.59, 0.57, 0.49]}
+	"treasury": [0.59, 0.57, 0.49], "barracks": [0.45, 0.48, 0.46]}
+const WORK_CLIPS := {"kitchen": "PickUp_Table", "forge": "Interact", "treasury": "Interact", "barracks": "Sword_Idle"}
 
 
 const CELL := Vector2(360, 240)
+const PERSON_HEIGHT := CELL.y * 0.44
 const ROW_PITCH := 285.0
 const PILLAR_WIDTH := 45.0
 const STAIR_WIDTH := 155.0
 const CLOSE_ZOOM := CELL.y / 0.6
 const ROOM_FOCUS_ZOOM := CELL.y / 0.48
 const SPRITE_LIMIT := 40
-const BODY_CENTER := Vector2(-12, -112)
 const NO_POINT := Vector2(-10000, -10000)
 
 var room_rects: Dictionary = {}
@@ -37,7 +40,8 @@ var backdrop: Sprite2D
 var grid := Legion.FORT_START_GRID
 var _stage: Node2D
 var _rooms: Node2D
-var _figure_layer: Node2D
+var people_layer: PersonLayer
+var _people_nodes: Dictionary = {}
 var _rim_layer: Node2D
 var _shell_texture: Texture2D
 var _textures: Dictionary = {}
@@ -57,7 +61,8 @@ var _drag_name := ""
 var _drop_allowed: Dictionary = {}
 var drag_sid := 0
 var drag_newcomer := false
-var drag_ghost: Sprite2D
+var drag_ghost: Actor
+var _drag_height := PERSON_HEIGHT
 var drag_target := -1
 var _person_down := 0
 var _down_newcomer := false
@@ -118,8 +123,12 @@ func setup(legion: Legion, game: Node) -> bool:
 	_stage.name = "PaintedFort"
 	sub.add_child(_stage)
 	_shell_texture = _texture(ART + "fort/shell_front.png")
-	_figure_layer = _layer("Dwellers", 2)
-	_figure_layer.y_sort_enabled = true
+	people_layer = PersonLayer.new()
+	people_layer.name = "Dwellers"
+	people_layer.z_index = 2
+	sub.add_child(people_layer)
+	people_layer.setup("FortPeople3D", 14.0)
+	people_layer.fit(size)
 	var fade := Gradient.new()
 	fade.colors = PackedColorArray([Color(1.0, 0.86, 0.62, 0.88), Color(0.94, 0.74, 0.52, 0)])
 	_dust.gradient = fade
@@ -177,7 +186,7 @@ func sync() -> void:
 		people_data.append(p.get("workers", []))
 	for person: Dictionary in lg.soldiers:
 		var state := "" if bool(person.get("hero", false)) else lg.s_state(person)
-		people_data.append([person["id"], state, person_art(person), person.get("cls", "")])
+		people_data.append([person["id"], state, person.get("look", {}), lg.worn(person)])
 	people_data.append(lg.squad3)
 	var sig := str(layout_data)
 	var rebuilt := sig != _layout_sig
@@ -374,28 +383,34 @@ func _add_dweller(person: Dictionary, id: int, role: String, home: Vector2, away
 	if figures.size() >= SPRITE_LIMIT - 1:
 		return
 	var sid := int(person["id"])
-	var sprite := FortPerson.make(person, role, role == "newcomer", height)
-	sprite.name = "Dweller_%d" % sid
-	sprite.position = home
-	_figure_layer.add_child(sprite)
-	figures.append({"node": sprite, "id": sid, "plot": id, "role": role, "art": FortPerson.art(person, role, role == "newcomer"), "home": home,
-		"away": away, "phase": fmod(float(sid) * 1.23, 6.0), "works": works})
-
+	var gear := lg.worn(person)
+	var clothes := FortPerson.loadout(person, gear)
+	var actor: Actor = _people_nodes.get(sid)
+	if actor == null or actor.get_meta("look", {}) != person.get("look", {}):
+		if actor != null:
+			actor.free()
+		actor = FortPerson.make(person, people_layer.viewport, gear)
+		actor.name = "Dweller_%d" % sid
+		_people_nodes[sid] = actor
+	elif actor.get_meta("loadout") != clothes and actor.problem.is_empty():
+		actor.set_loadout(clothes)
+		actor.set_meta("loadout", clothes)
+	figures.append({"node": actor, "id": sid, "plot": id, "role": role, "home": home, "feet": home,
+		"away": away, "height": height, "phase": fmod(float(sid) * 1.23, 6.0), "works": works,
+		"clip": "Idle", "sample": 0.0, "yaw": 15.0})
 
 func _build_people(entries: Array, newcomers: Array[Dictionary]) -> void:
-	for entry: Dictionary in figures:
-		(entry["node"] as Sprite2D).free()
 	figures.clear()
 	for index in newcomers.size():
 		var person := newcomers[index]
 		var home := Vector2(gate.x + (index - (newcomers.size() - 1) * 0.5) * 115, gate.y + (index % 2) * 13)
-		_add_dweller(person, -2, "newcomer", home, home.x, 178.0)
+		_add_dweller(person, -2, "newcomer", home, home.x, PERSON_HEIGHT)
 	if room_rects.has(0):
 		var rect: Rect2 = room_rects[0]
 		for person: Dictionary in lg.soldiers:
 			if bool(person.get("hero", false)):
 				var home := rect.position + rect.size * Vector2(0.63, 0.88)
-				_add_dweller(person, 0, "hero", home, home.x - 58.0, 172.0)
+				_add_dweller(person, 0, "hero", home, home.x - 58.0, PERSON_HEIGHT)
 				break
 	var occupied: Array[Dictionary] = []
 	var widest_room := 0
@@ -417,21 +432,28 @@ func _build_people(entries: Array, newcomers: Array[Dictionary]) -> void:
 			if index < occupants.size():
 				_place_occupant(occupants[index], entry, index, mini(occupants.size(), SPRITE_LIMIT - 1))
 			if figures.size() >= SPRITE_LIMIT - 1:
-				return
+				break
 	var yard := lg.fort_worker_choices()
 	var columns := maxi(1, floori(_right_edge / 100.0))
 	for index in mini(yard.size(), SPRITE_LIMIT - 1 - figures.size()):
 		var person := yard[index]
 		var home := Vector2(60.0 + (index % columns) * 100.0, _ground_y + 12.0 - floorf(float(index) / columns) * 52.0)
-		_add_dweller(person, -1, "courtyard", home, home.x + 32.0, 158.0)
+		_add_dweller(person, -1, "courtyard", home, home.x + 32.0, PERSON_HEIGHT)
+	var retained := {}
+	for entry: Dictionary in figures:
+		retained[entry["id"]] = true
+	for sid: int in _people_nodes.keys():
+		if not retained.has(sid):
+			(_people_nodes[sid] as Node3D).free()
+			_people_nodes.erase(sid)
+	_animate_people(0.0)
 
 
 func _place_occupant(person: Dictionary, entry: Dictionary, index: int, count: int) -> void:
 	var type: String = entry["type"]
 	var id: int = entry["id"]
 	var room: Rect2 = entry["rect"]
-	var art := person_art(person, type)
-	var works := index == 0 and STATIONS.has(type)
+	var works: bool = STATIONS.has(type) and lg.fort_worker(id).get("id") == person["id"]
 	var ranks := 1 if count <= 5 else 2 if count <= 12 else 3
 	var across := ceili(float(count) / ranks)
 	var rank := floori(float(index) / across)
@@ -443,44 +465,56 @@ func _place_occupant(person: Dictionary, entry: Dictionary, index: int, count: i
 	var home := room.position + room.size * Vector2(x, y)
 	var walk_width := 62.0 if count == 1 else 25.0
 	var direction := -1.0 if x >= 0.5 else 1.0
-	var height := 185.0 if art == "cavalry" else 171.0
-	if count >= 3:
-		height *= maxf(0.42, 0.74 - rank * 0.08 - maxi(0, across - 5) * 0.024)
+	var height := PERSON_HEIGHT * (1.0 - rank * 0.06)
 	_add_dweller(person, id, type, home, home.x + walk_width * direction, height, works)
 
 
 func _animate_people(delta: float) -> void:
 	_clock += delta
-	var half := size * (0.5 / _view_scale)
-	var visible_area := Rect2(Vector2(focus.x, focus.y) - half - Vector2(75, 4), half * 2.0 + Vector2(150, 195))
+	var screen_area := Rect2(Vector2.ZERO, size).grow(32.0)
+	people_layer.shadows.clear()
 	for entry: Dictionary in figures:
-		var sprite: Sprite2D = entry["node"]
+		var actor: Actor = entry["node"]
 		var home: Vector2 = entry["home"]
+		var height := float(entry["height"]) * _view_scale
+		if not actor.problem.is_empty() or (int(entry["id"]) == drag_sid and (entry["role"] == "newcomer") == drag_newcomer):
+			actor.hide()
+			continue
+		if not screen_area.grow(height + 64.0 * _view_scale).has_point(_screen_point(home)):
+			actor.hide()
+			continue
 		var away: float = entry["away"]
 		var phase := _clock + float(entry["phase"])
 		var t := fposmod(phase, 7.2)
 		var x := home.x
-		var frame := int(phase * 2.0) % 2
-		var flip := away < home.x
+		var clip := "Idle"
+		var yaw := 24.0 if away >= home.x else -24.0
 		if bool(entry["works"]) and t < 3.4:
-			frame = 6 + int(phase * 3.5) % 2
-			flip = false
+			clip = String(WORK_CLIPS[entry["role"]])
+			yaw = 24.0
 		elif away != home.x:
 			if t >= 5.8:
 				x = lerpf(away, home.x, (t - 5.8) / 1.4)
-				frame = 2 + int(phase * 8.0) % 4
-				flip = not flip
+				clip = "Walk"
+				yaw *= -2.0
 			elif t >= 4.8:
 				x = away
 			elif t >= 3.4:
 				x = lerpf(home.x, away, (t - 3.4) / 1.4)
-				frame = 2 + int(phase * 8.0) % 4
-		var point := Vector2(x, home.y)
-		sprite.visible = visible_area.has_point(point)
-		if sprite.visible:
-			sprite.position = point
-			sprite.flip_h = flip
-			sprite.frame = frame
+				clip = "Walk"
+				yaw *= 2.0
+		var feet := Vector2(x, home.y)
+		var pixel := _screen_point(feet)
+		actor.visible = screen_area.has_point(pixel) or screen_area.has_point(pixel - Vector2(0.0, height))
+		if actor.visible:
+			entry["feet"] = feet
+			entry["clip"] = clip
+			entry["sample"] = phase
+			entry["yaw"] = yaw
+			people_layer.place(actor, pixel, height, yaw)
+			actor.animate(clip, phase)
+			people_layer.shadows.append(Vector3(pixel.x, pixel.y, height))
+	people_layer.queue_redraw()
 
 
 func recruit_walk(_sid: int) -> void:
@@ -626,11 +660,8 @@ func _gui_input(event: InputEvent) -> void:
 			highlight(_pick(event.position))
 
 
-func _body_center(sprite: Sprite2D) -> Vector2:
-	var body := BODY_CENTER
-	if sprite.flip_h:
-		body.x = -body.x
-	return sprite.position + body * sprite.scale
+func _body_center(entry: Dictionary) -> Vector2:
+	return Vector2(entry["feet"]) - Vector2(0.0, float(entry["height"]) * 0.49)
 
 
 func _find_person(sid: int, newcomer: bool) -> Dictionary:
@@ -644,8 +675,8 @@ func person_project(sid: int, newcomer := false) -> Vector2:
 	var entry := _find_person(sid, newcomer)
 	if entry.is_empty():
 		return NO_POINT
-	var sprite: Sprite2D = entry["node"]
-	return _screen_point(_body_center(sprite)) if sprite.visible else NO_POINT
+	var actor: Actor = entry["node"]
+	return _screen_point(_body_center(entry)) if actor.visible else NO_POINT
 
 
 func pick_person(pos: Vector2) -> Dictionary:
@@ -653,11 +684,11 @@ func pick_person(pos: Vector2) -> Dictionary:
 	var distance := INF
 	var point := _plane_point(pos)
 	for entry: Dictionary in figures:
-		var sprite: Sprite2D = entry["node"]
-		if int(entry["id"]) == 0 or not sprite.visible:
+		var actor: Actor = entry["node"]
+		if int(entry["id"]) == 0 or not actor.visible:
 			continue
-		var center := _body_center(sprite)
-		var half := Vector2(85 if entry["art"] == "cavalry" else 67, 113) * sprite.scale
+		var center := _body_center(entry)
+		var half := Vector2(0.32, 0.52) * float(entry["height"])
 		var d := center.distance_squared_to(point)
 		if d < distance and Rect2(center - half, half * 2.0).has_point(point):
 			best = entry
@@ -710,24 +741,13 @@ func begin_person_move(sid: int, newcomer := false, pos := Vector2.INF, click_mo
 	if person.is_empty() or bool(person.get("hero", false)) or (not newcomer and lg.s_state(person) != "ready"):
 		return
 	var entry := _find_person(sid, newcomer)
-	var room := String(lg.fort_plot(lg.fort_worker_plot(sid)).get("b", "")) if not newcomer else ""
-	var source: Sprite2D = entry.get("node")
-	drag_ghost = FortPerson.make(person, room, newcomer)
-	if source != null:
-		drag_ghost.texture = source.texture
-		drag_ghost.scale = source.scale
-		drag_ghost.frame = source.frame
-		drag_ghost.flip_h = source.flip_h
+	drag_ghost = FortPerson.make(person, people_layer.viewport, lg.worn(person))
 	drag_ghost.name = "FortDragGhost"
-	var silhouette := Shader.new()
-	silhouette.code = "shader_type canvas_item; void fragment() { vec4 p = texture(TEXTURE, UV); COLOR = vec4(0.71, 0.81, 0.82, p.a * 0.72); }"
-	var material := ShaderMaterial.new()
-	material.shader = silhouette
-	drag_ghost.material = material
-	drag_ghost.modulate.a = 0.72
+	_drag_height = float(entry.get("height", PERSON_HEIGHT))
+	drag_ghost.set_opacity(0.62)
+	if drag_ghost.problem.is_empty():
+		drag_ghost.animate(String(entry.get("clip", "Idle")), float(entry.get("sample", 0.0)))
 	_drag_name = String(person.get("name", ""))
-	drag_ghost.z_index = 4
-	_stage.add_child(drag_ghost)
 	drag_sid = sid
 	drag_newcomer = newcomer
 	_click_move = click_move
@@ -763,8 +783,9 @@ func _refresh_drop_rims() -> void:
 func update_person_move(pos: Vector2) -> void:
 	if drag_sid == 0 or not is_instance_valid(drag_ghost):
 		return
-	drag_ghost.position = _plane_point(pos)
-	drag_ghost.position += drag_ghost.position - _body_center(drag_ghost)
+	var source := _find_person(drag_sid, drag_newcomer)
+	var height := _drag_height * _view_scale
+	people_layer.place(drag_ghost, pos + Vector2(0.0, height * 0.49), height, float(source.get("yaw", 15.0)), true)
 	var id := _pick_id(pos)
 	drag_updated.emit(pos, id, _drag_name)
 	if drag_target == id:
@@ -835,6 +856,7 @@ func _fit_zoom() -> float:
 
 
 func _resize_view() -> void:
+	people_layer.fit(size)
 	var overview_mode := absf(_target_zoom - default_zoom) < 0.1
 	default_zoom = _fit_zoom()
 	_target_zoom = default_zoom if overview_mode else clampf(_target_zoom, CLOSE_ZOOM, default_zoom)

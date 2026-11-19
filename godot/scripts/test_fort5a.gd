@@ -170,7 +170,7 @@ func _run() -> void:
 	var item := lg.add_item({"slot": "weapon", "cls": "legionary", "tier": 3, "rarity": 2, "ilvl": 3})
 	var before := Legion.power(lg.soldier_stats(accepted, "legionary"))
 	camp.show_dweller(sid)
-	check(camp.modal_panel.name == "FortDwellerCard" and camp.modal_panel.find_child("FortGearSlots", true, false).get_child_count() == 4, "dweller card has four slots")
+	check(camp.modal_panel.name == "FortDwellerCard" and camp.modal_panel.find_child("FortGearSlots", true, false).get_child_count() == 5, "dweller card has five slots")
 	camp._equip_dweller(sid, int(item["id"]))
 	check(Legion.power(lg.soldier_stats(accepted, "legionary")) > before and int(item["on"]) == sid and camp.modal_panel.find_child("FortEquipChange", true, false) != null, "card equip changes stats and shows before/after")
 	await shot("3_dweller_card.png")
