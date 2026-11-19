@@ -158,7 +158,12 @@ static func build(ui: Variant) -> void:
 	var start := Kit.button("green", "craft", I18n.t("Ковать · %s") % " · ".join(materials))
 	start.name = "CraftStart"
 	start.tooltip_text = I18n.t("Ковать")
-	start.pressed.connect(func(): lg.craft_start(plot_id, ui._craft_kind, ui._craft_tier); ui._craft_win())
+	start.pressed.connect(func():
+		lg.craft_start(plot_id, ui._craft_kind, ui._craft_tier)
+		ui._craft_win()
+		var camp := CampUI.of(ui.hud)
+		if camp != null:
+			camp._layout_guide.call_deferred())
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 12)
 	start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -242,7 +247,14 @@ static func _recipe(ui: Variant, kind: String, icon: Texture2D) -> Button:
 			ui._craft_kind = kind
 			_open_tree(ui, ui._craft_plot, needed))
 	else:
-		button.pressed.connect(func(): ui._craft_kind = kind; ui._craft_win())
+		button.pressed.connect(func():
+			ui._craft_kind = kind
+			if kind == "sword" and ui.lg.fort_lesson() == "knowledge":
+				ui.lg.flags["fort_lesson_recipe"] = true
+				var camp := CampUI.of(ui.hud)
+				if camp != null:
+					camp._layout_guide.call_deferred()
+			ui._craft_win())
 	return button
 
 

@@ -59,7 +59,9 @@ static func build(ui: Variant, selected: String, back: Callable) -> void:
 	spacer.custom_minimum_size.x = 58.0
 	header.add_child(spacer)
 	header.add_child(Look.heading(I18n.t("Знание снаряжения"), 47))
-	header.add_child(Look.close_button(back if back.is_valid() else ui._close_modal, 58))
+	var close := Look.close_button(back if back.is_valid() else ui._close_modal, 58)
+	close.name = "FortKnowledgeBack"
+	header.add_child(close)
 	body.add_child(header)
 	body.add_child(Look.divider())
 	var columns := HBoxContainer.new()
@@ -300,7 +302,11 @@ static func _detail(ui: Variant, id: String, back: Callable) -> PanelContainer:
 		action.name = "FortLearnSmith" if id == "smith" else "FortLearnKnowledge"
 		action.tooltip_text = why
 		action.pressed.connect(func():
-			if lg.learn(id):
+			if not lg.learn(id):
+				return
+			if id == "smith" and lg.fort_lesson() == "knowledge" and back.is_valid():
+				back.call()
+			else:
 				ui.show_knowledge(id, back))
 		body.add_child(action)
 	return panel

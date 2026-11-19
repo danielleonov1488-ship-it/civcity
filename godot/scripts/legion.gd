@@ -162,6 +162,7 @@ const SQUAD_V3_FRONT := 3
 const CAMP_POP := 50                      # жителей, с которых открывается лагерь
 const CAMP_OPEN_TEXT := "Форт открыт: принимайте новобранцев у ворот — кнопка «Легион» наверху"
 enum FortGuide {INACTIVE, RECRUIT, KITCHEN, RATIONS, CHEST, EQUIP, BARRACKS, CAMPAIGN, FINISH, DONE}
+const FORT_LESSONS := ["store", "knowledge", "outfit", "hq"]
 const FORT_GUIDE_BATCH := 2
 const FORT_GUIDE_COOK_SECS := 20.0
 const RATION_BASE := 2.0                  # паёк в игровой день; пекарня с работниками — ещё RATION_BAKERY
@@ -1055,6 +1056,8 @@ func add_item(it: Dictionary) -> Dictionary:
 	e["on"] = 0
 	iid_next += 1
 	items.append(e)
+	if Gear.work_kind(e) != "":
+		note_fort_lesson("outfit")
 	return e
 
 
@@ -1127,6 +1130,8 @@ func equip(sid: int, iid: int) -> bool:
 	it["on"] = sid
 	if slot == Gear.OUTFIT_SLOT:
 		_update_smith_deadlines(s, o)
+		if _fort_outfit_matches(s, Gear.work_kind(it)):
+			finish_fort_lesson("outfit")
 	if v3() and slot == "weapon":
 		_v3_reclass(s)                       # оружие решает класс
 		if not o.is_empty():
@@ -2348,7 +2353,11 @@ func prin_lvl() -> int:
 func prin_cap() -> int:
 	if not army_on() or free_mode:
 		return 999
-	return maxi(maxi(PRIN_NONE, prin_lvl()), int(flags.get("prin0", 0)))   # prin0 — уровни, набранные до Принципии, не отнимаем
+	return _prin_cap_at(prin_lvl())
+
+
+func _prin_cap_at(level: int) -> int:
+	return maxi(maxi(PRIN_NONE, level), int(flags.get("prin0", 0)))   # prin0 — уровни, набранные до Принципии, не отнимаем
 
 
 ## Какой уровень Принципии разрешает город сейчас
@@ -2573,6 +2582,7 @@ func tick() -> Array:
 		if t >= float(upg[type]["end"]):
 			out.append(camp_finish(String(type).substr(5)) if String(type).begins_with("camp_") else finish_upgrade(type))
 	out.append_array(army_tick())
+	watch_fort_lessons()
 	return out
 
 
@@ -4196,12 +4206,19 @@ func fort_guide_step() -> int:
 	return int(flags.get("fort_guide", FortGuide.INACTIVE))
 
 
+func _migrate_fort_guide() -> void:
+	if fort_guide_step() == FortGuide.INACTIVE and int(flags.get("camp3d_guide", 0)) >= 4:
+		flags["fort_guide"] = FortGuide.DONE
+		flags["camp_told"] = true
+
+
 func begin_fort_guide() -> void:
+	_migrate_fort_guide()
 	if fort_guide_step() != FortGuide.INACTIVE:
 		return
 	flags["camp_told"] = true
 	# Старый пройденный форт сохраняет своё состояние.
-	if int(flags.get("camp3d_guide", 0)) >= 4 or progress > 0 or not chest_queue.has("wooden"):
+	if progress > 0 or not chest_queue.has("wooden"):
 		flags["fort_guide"] = FortGuide.DONE
 		return
 	for person: Dictionary in soldiers:
@@ -4218,10 +4235,90 @@ func fort_guide_newcomer() -> void:
 
 
 func finish_fort_guide() -> void:
+	if fort_guide_step() == FortGuide.FINISH and not bool(flags.get("fort_lessons_off", false)):
+		flags.get_or_add("fort_lessons", {})
 	rations += float(flags.get("fort_guide_rations", 0.0))
 	for key: String in ["fort_guide_sid", "fort_guide_plot", "fort_guide_item", "fort_guide_rations", "fort_guide_stage"]:
 		flags.erase(key)
 	flags["fort_guide"] = FortGuide.DONE
+
+
+func fort_lesson_state(id: String) -> String:
+	return String(flags.get("fort_lessons", {}).get(id, ""))
+
+
+func _fort_lessons_enabled() -> bool:
+	# Старые сохранения с пройденным обучением не открывают вторую главу.
+	return fort_guide_step() == FortGuide.DONE and flags.has("fort_lessons") and not bool(flags.get("fort_lessons_off", false))
+
+
+func note_fort_lesson(id: String) -> void:
+	if not _fort_lessons_enabled() or fort_lesson_state(id) != "":
+		return
+	flags["fort_lessons"][id] = "pending"
+
+
+func finish_fort_lesson(id: String, skip := false) -> void:
+	if fort_lesson_state(id) != "pending":
+		return
+	flags["fort_lessons"][id] = "skipped" if skip else "done"
+	if id == "knowledge":
+		flags.erase("fort_lesson_recipe")
+	if flags.get("fort_lesson_active", "") == id:
+		flags.erase("fort_lesson_active")
+
+
+func watch_fort_lessons() -> void:
+	if not v3() or not _fort_lessons_enabled():
+		return
+	if fort_lesson_state("store") == "":
+		for resource: String in STOCK_RESOURCES:
+			if fort_stock(resource) >= resource_cap(resource):
+				note_fort_lesson("store")
+				break
+	if camp_level("hq") >= int(Knowledge.NODES["smith"]["hq"]):
+		note_fort_lesson("knowledge")
+	if fort_lesson_state("outfit") == "":
+		for it: Dictionary in items:
+			if Gear.work_kind(it) != "":
+				note_fort_lesson("outfit")
+				break
+	if fort_lesson_state("hq") == "" and fort_can_upgrade(int(fort_slot_plot("hq").get("id", -1))) == "":
+		note_fort_lesson("hq")
+
+
+func fort_lesson() -> String:
+	if not _fort_lessons_enabled():
+		return ""
+	var active := String(flags.get("fort_lesson_active", ""))
+	if fort_lesson_state(active) == "pending":
+		return active
+	for id: String in FORT_LESSONS:
+		if fort_lesson_state(id) == "pending":
+			flags["fort_lesson_active"] = id
+			return id
+	return ""
+
+
+func _fort_outfit_matches(person: Dictionary, kind: String) -> bool:
+	if kind.is_empty() or bool(person.get("hero", false)):
+		return false
+	# Одежда строителя ускоряет стройку у любого жителя.
+	if kind == "builder":
+		return true
+	var plot := fort_plot(fort_worker_plot(int(person["id"])))
+	return Gear.WORK_ROOM.get(plot.get("b", ""), "") == kind
+
+
+func fort_outfit_lesson_target(preferred_sid := 0) -> Vector2i:
+	for it: Dictionary in items:
+		if Gear.work_kind(it) == "" or int(it.get("on", 0)) != 0:
+			continue
+		for person: Dictionary in soldiers:
+			var sid := int(person["id"])
+			if (preferred_sid == 0 or preferred_sid == sid) and _fort_outfit_matches(person, Gear.work_kind(it)) and can_equip(sid, int(it["id"])) == "":
+				return Vector2i(sid, int(it["id"]))
+	return Vector2i.ZERO
 
 
 func fort_guide_cooking(plot_id: int) -> bool:
@@ -4504,13 +4601,57 @@ func fort_count(type: String) -> int:
 func fort_max(type: String) -> int:
 	if not v3() or not FORT_B.has(type):
 		return 0
+	return fort_max_at(type, camp_level("hq"))
+
+
+static func fort_max_at(type: String, level: int) -> int:
 	var n := 0
 	for hq: int in FORT_B[type]["max"]:
-		if camp_level("hq") >= hq:
+		if level >= hq:
 			n += 1
-	if type != "hq" and camp_level("hq") > 12:
-		n += (camp_level("hq") - 12) / 3
+	if type != "hq" and level > 12:
+		n += (level - 12) / 3
 	return n
+
+
+## Разница между соседними уровнями при том же составе форта.
+func fort_hq_unlocks(level: int) -> Dictionary:
+	var next := level + 1
+	var rooms := {}
+	for type: String in FORT_B:
+		var before := fort_max_at(type, level)
+		var after := fort_max_at(type, next)
+		if after > before:
+			rooms[type] = after - before
+	var expansion := {}
+	for e in range(int(fort.get("exp", 0)) + 1, next + 1):
+		var gate := int(fort_exp_info(e)["hq"])
+		if gate > next:
+			break
+		if gate > level:
+			var grid := fort_grid()
+			expansion = {"floor": grid.x, "section": grid.y}
+			break
+	var caps := {}
+	var stores := fort_level_sum("store")
+	for resource: String in STOCK_RESOURCES:
+		var gain := resource_cap_at(resource, next, stores) - resource_cap_at(resource, level, stores)
+		if gain > 0:
+			caps[resource] = gain
+	var knowledge: Array[String] = []
+	for id: String in Knowledge.NODES:
+		if int(Knowledge.NODES[id]["hq"]) == next:
+			knowledge.append(id)
+	var provinces: Array[int] = []
+	if V2 and army_on() and not free_mode:
+		for r in REGIONS2.size():
+			var gate := int(REGIONS2[r]["prin"])
+			if gate > _prin_cap_at(level) and gate <= _prin_cap_at(next):
+				provinces.append(r)
+	return {"rooms": rooms, "expansion": expansion, "caps": caps, "room_level": next,
+		"knowledge": knowledge, "barracks": fort_room_slots_at("barracks", next) - fort_room_slots_at("barracks", level),
+		"squad": places_at(next) - places_at(level), "provinces": provinces}
+
 
 
 func fort_level_sum(type: String) -> int:
@@ -4535,6 +4676,7 @@ func _fort_pay(cost: Dictionary) -> void:
 
 func _fort_changed() -> void:
 	_fort_sync_camp()
+	watch_fort_lessons()
 	var c = city()
 	if c != null:
 		c.changed.emit()
@@ -5610,6 +5752,7 @@ func from_dict(d: Dictionary) -> void:
 		sid_next = maxi(sid_next, int(s["id"]) + 1)
 	if v3():
 		flags["chest_start"] = true  # Загрузка не выдаёт стартовый подарок заново.
+		_migrate_fort_guide()
 	_fort_load(d.get("fort", {}))
 	_ensure()
 	for i in squad3.size():                         # в отряде — только живые воины
@@ -6021,6 +6164,8 @@ func craft_start(plot_id: int, kind: String, tier: int) -> bool:
 	var secs := float(Gear.TIER_TIME[tier - 1]) / maxf(0.001, time_k)
 	craft_queue(plot_id).append({"kind": kind, "tier": tier, "left": secs, "total": secs, "end": 0.0})
 	_craft_deadlines(fort_plot(plot_id), now())
+	if Gear.craft_room(kind) == "forge":
+		finish_fort_lesson("knowledge")
 	daily_note("forge")
 	changed.emit()
 	return true

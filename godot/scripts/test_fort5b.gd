@@ -145,7 +145,7 @@ func _run() -> void:
 	await _fresh_top_bar_checks("fresh/hud")
 	lg.flags["fort_guide_sid"] = int(cook["id"])
 	lg.flags["fort_guide_plot"] = kitchen
-	await _guide_checks(Legion.FortGuide.RATIONS, camp.plot_markers[kitchen]["collect"], "hud/collect long text")
+	await _guide_checks(Legion.FortGuide.RATIONS, camp.resource_bars["rations"]["plus"], "hud/rations chip")
 	await _guide_checks(Legion.FortGuide.CAMPAIGN, camp.campaign_button, "hud/campaign short text")
 	lg.finish_fort_guide()
 	camp._layout_guide()
@@ -413,27 +413,26 @@ func _top_bar_checks(tag: String) -> void:
 func _guide_checks(step: int, target: Control, tag: String) -> void:
 	lg.flags["fort_guide"] = step
 	camp._layout_guide()
-	await frames(3)
+	await frames(12)
+	await RenderingServer.frame_post_draw
 	if not check(camp.guide.is_visible_in_tree() and camp._guide_target == target, tag + " guide targets control"):
 		return
 	var viewport := get_viewport().get_visible_rect()
-	var bubble := camp.guide.get_global_rect()
+	var strip := camp.guide.get_global_rect()
 	var button := target.get_global_rect()
-	check(viewport.encloses(bubble), tag + " guide inside viewport")
-	check(bubble.grow(0.1).encloses(camp.guide_text.get_global_rect()), tag + " whole guide text inside bubble")
-	var gap := Vector2(maxf(0, maxf(button.position.x - bubble.end.x, bubble.position.x - button.end.x)),
-		maxf(0, maxf(button.position.y - bubble.end.y, bubble.position.y - button.end.y)))
-	check(gap.length() <= 120, tag + " guide within 120 px of target")
-	check(not bubble.intersects(button), tag + " guide clears target")
+	var text_rect := camp.guide_text.get_global_rect()
+	check(viewport.encloses(strip), tag + " dialog strip inside viewport")
+	check(viewport.end.y - strip.end.y <= 24.0, tag + " dialog strip at the bottom")
+	check(camp.guide_text.is_visible_in_tree() and strip.grow(0.1).encloses(text_rect),
+		"%s whole text inside dialog strip (text %s, strip %s)" % [tag, text_rect, strip])
+	check(not strip.intersects(button), tag + " dialog strip clears target")
 	var pointer := camp.guide_pointer.get_global_rect()
 	check(camp.guide_pointer.is_visible_in_tree() and viewport.encloses(pointer), tag + " pointer inside viewport")
 	var above := not camp.guide_pointer.flip_v
-	var tip_gap := pointer.end.y - button.position.y if above else pointer.position.y - button.end.y
-	check(absf(pointer.get_center().x - button.get_center().x) <= 1 and absf(tip_gap) <= 4, tag + " arrow touches target")
-	var font := camp.guide_text.get_theme_font("font")
-	var text_width := font.get_string_size(camp.guide_text.text, HORIZONTAL_ALIGNMENT_LEFT, -1, camp.guide_text.get_theme_font_size("font_size")).x
-	var padding := camp.guide.get_theme_stylebox("panel").get_minimum_size().x
-	check(absf(camp.guide.size.x - text_width - padding) <= 4, tag + " compact text-sized bubble")
+	var tip := Vector2(pointer.get_center().x, pointer.end.y if above else pointer.position.y)
+	var edge := Vector2(button.get_center().x, button.position.y if above else button.end.y)
+	check(pointer.get_center().distance_to(edge) <= 120.0 and tip.distance_to(edge) <= 4.0,
+		tag + " green arrow near and pointing at target")
 
 
 func _newcomer_checks(tag: String) -> void:

@@ -2,6 +2,7 @@ extends Node3D
 ## Обычные действия форта. Часы двигаем вручную, сохранение проверяем в памяти.
 
 const Step = Legion.FortGuide
+var suite := "LEGION7C"
 var out := "D:/CivCity/.work/stage6/legion7c/shots/"
 var game: Game
 var camp: CampUI
@@ -21,7 +22,7 @@ func _ready() -> void:
 	previous_clock = Legion.clock
 	await _run()
 	Legion.clock = previous_clock
-	print("LEGION7C DONE fails=", fails)
+	print(suite, " DONE fails=", fails)
 	get_tree().quit(0 if fails == 0 else 1)
 
 
@@ -33,7 +34,7 @@ func frames(count: int) -> void:
 func check(ok: bool, message: String) -> bool:
 	if not ok:
 		fails += 1
-		print("LEGION7C FAIL ", message)
+		print(suite, " FAIL ", message)
 	return ok
 
 
@@ -66,16 +67,21 @@ func shot(file: String, step: int, target: Control = null, person := -1, newcome
 			check(camp._guide_rect.get_center().distance_to(point) < 3.0, file + " arrow on person")
 		else:
 			check(false, file + " target missing")
+		check(get_viewport().get_visible_rect().grow(1).encloses(camp._guide_rect), file + " target on screen")
 		var rect := camp.guide_pointer.get_global_rect()
 		var tip_y := rect.position.y if camp.guide_pointer.flip_v else rect.end.y
 		var edge := camp._guide_rect.end.y if camp.guide_pointer.flip_v else camp._guide_rect.position.y
 		check(absf(tip_y - edge) <= 4.0 and absf(rect.get_center().x - camp._guide_rect.get_center().x) <= 4.0, file + " arrow tip")
 		for line: String in camp.guide_text.text.split("\n"):
 			check(line.length() <= 60, file + " short copy")
+	await intro_capture(file)
+
+
+func intro_capture(file: String) -> void:
 	await RenderingServer.frame_post_draw
 	var path := out + file + ".png"
 	if check(get_viewport().get_texture().get_image().save_png(path) == OK, "save " + file):
-		print("LEGION7C SHOT ", path)
+		print(suite, " SHOT ", path)
 
 
 func press(button: Button, message: String) -> bool:
@@ -178,7 +184,8 @@ func _run() -> void:
 	if not check(view.finish_person_move(view.project(kitchen_id)), "drop in kitchen"):
 		return
 	var bread: Button = camp.plot_markers[kitchen_id]["collect"]
-	await shot("03_cooking", Step.RATIONS, bread)
+	var rations_chip: Button = camp.resource_bars["rations"]["plus"]
+	await shot("03_cooking", Step.RATIONS, rations_chip)
 	check(bread.disabled, "batch cannot be collected at once")
 	var during := save_round_trip()
 	var before_load := lg.rations
@@ -189,7 +196,7 @@ func _run() -> void:
 	lg.from_dict(during.duplicate(true))
 	camp.open()
 	bread = camp.plot_markers[kitchen_id]["collect"]
-	await shot("03_resumed", Step.RATIONS, bread)
+	await shot("03_resumed", Step.RATIONS, rations_chip)
 	check(is_equal_approx(lg.rations, before_load) and lg.fort_worker_plot(sid) == kitchen_id, "loaded worker and rations")
 	Legion.clock += Legion.FORT_GUIDE_COOK_SECS - 1.0
 	lg.fort_finish()
@@ -198,8 +205,8 @@ func _run() -> void:
 	Legion.clock += 1.1
 	lg.fort_finish()
 	camp._refresh()
-	await shot("03_collect", Step.RATIONS, bread)
-	if not press(bread, "collect rations"):
+	await shot("03_collect", Step.RATIONS, rations_chip)
+	if not press(rations_chip, "collect rations"):
 		return
 	check(is_equal_approx(lg.rations - before_load, float(Legion.FORT_GUIDE_BATCH)), "first batch adds rations")
 	await shot("04_chests", Step.CHEST, camp.chest_button)
@@ -228,10 +235,7 @@ func _run() -> void:
 		return
 	var equip := camp.modal_panel.find_child("FortEquip_%d" % iid, true, false) as Button
 	await shot("05_equip", Step.EQUIP, equip)
-	if not press(equip, "compare starter item"):
-		return
-	var confirm_equip := camp.modal_panel.find_child("FortItemEquip", true, false) as Button
-	if not press(confirm_equip, "equip starter item"):
+	if not press(equip, "equip starter item"):
 		return
 	check(int(lg.item(iid).get("on", 0)) == sid, "item worn by recruit")
 	await shot("06_barracks", Step.BARRACKS, null, sid)
@@ -283,9 +287,18 @@ func _run() -> void:
 	if not check(camp.visible, "battle returns to fort"):
 		return
 	await shot("08_treasury", Step.FINISH, camp.order_button)
-	if not press(camp.guide_skip, "acknowledge last step"):
+	_before_finish()
+	if not press(camp.guide_next, "acknowledge last step"):
 		return
 	await shot("08_complete", Step.DONE)
+	await _after_intro(during, before_load, reserved)
+
+
+func _before_finish() -> void:
+	lg.flags["fort_lessons_off"] = true
+
+
+func _after_intro(during: Dictionary, before_load: float, reserved: float) -> void:
 	camp.close()
 	lg.from_dict(during.duplicate(true))
 	camp.open()

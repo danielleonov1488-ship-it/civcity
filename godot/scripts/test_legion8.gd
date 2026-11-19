@@ -121,7 +121,12 @@ func _test_fort() -> void:
 	check(camp.builder_counter.text == "1/1" and camp.builder_plus.visible, "idle builder HUD")
 	check(camp.quest_line.visible and camp.quest_progress.text == "0/1", "pinned campaign goal")
 	check(camp.campaign_button.text == I18n.t("Карта") and camp.market_button.text == I18n.t("Рынок"), "map and market buttons")
-	check(camp.guide_skip.text == I18n.t("Пропустить обучение"), "clear guide skip caption")
+	check(not camp.guide_layer.is_visible_in_tree(), "completed old guide stays hidden")
+	lg.flags["fort_guide"] = Legion.FortGuide.CAMPAIGN
+	camp._layout_guide()
+	check(camp.guide_skip.is_visible_in_tree() and camp.guide_skip.text == I18n.t("Пропустить обучение"), "clear guide skip caption")
+	lg.flags["fort_guide"] = Legion.FortGuide.DONE
+	camp._layout_guide()
 	var vacant := 0
 	for plot: Dictionary in lg.fort["plots"]:
 		if plot["b"] == "" and view.plot_footprint(int(plot["id"])).intersects(Rect2(Vector2.ZERO, camp.size)):

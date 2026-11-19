@@ -62,6 +62,11 @@ static func grid(ui: Variant, parent: VBoxContainer, sid: int, tab: String, page
 		var group := kind if kind == "weapon" else "outfit" if kind == Gear.OUTFIT_SLOT else "armor"
 		if tab in ["all", group]:
 			items.append(it)
+	var guided: int = ui.guide_equip_item(sid, slot) if sid > 0 else 0
+	for index in items.size():
+		if int(items[index]["id"]) == guided:
+			items.push_front(items.pop_at(index))
+			break
 	var columns := 10 if sid == 0 else 6
 	var per_page := columns * (4 if sid == 0 else 3)
 	var capacity := lg.store_cap() if sid == 0 else maxi(per_page, items.size())
@@ -231,7 +236,10 @@ static func _item_tile(ui: Variant, button: Button, it: Dictionary, sid: int, pi
 		button.set_meta("power_after", int(compare[1]))
 		if it["slot"] != Gear.OUTFIT_SLOT:
 			button.tooltip_text += "\n" + I18n.t("Было → стало: %d → %d") % [int(compare[0]), int(compare[1])]
-	button.pressed.connect(item_card.bind(ui, iid, sid, back))
+	if sid > 0 and iid == ui.guide_equip_item(sid, ui.dweller_slot):
+		button.pressed.connect(ui._equip_dweller.bind(sid, iid))
+	else:
+		button.pressed.connect(item_card.bind(ui, iid, sid, back))
 	_tile_art(button, item_icon(ui, it), pixels)
 	_tile_text(button, str(Gear.tier_of(it)), pixels)
 	var outfit := Gear.work_kind(it)
