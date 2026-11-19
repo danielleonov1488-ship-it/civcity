@@ -7,13 +7,18 @@ extends Node3D
 ## Возврат очков за убранное «Площади из плитки» — и ни час, ни награда Легиона не срезают их до полок.
 ## В живой сервер не ходит: «нет связи» — закрытый порт 127.0.0.1:9 (на Windows он не отказывает, а молчит: вид сбоя
 ## тогда timeout, а не connect — поэтому ждём ответа не дольше 2 с, NetHttp.test_timeout). Снимки — D:/CivCity/.work/gd/fix_*.png
+const DecorFacing := preload("res://scripts/decor_facing.gd")
+
 var game
 var fails := 0
-const OUT := "D:/CivCity/.work/gd/"
+var out := "D:/CivCity/.work/gd/"
 const DEAD := "https://127.0.0.1:9/api"
 
 
 func _ready() -> void:
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("out="):
+			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
 	Game.boot = {"new": "1", "hour": "10.5", "legion": "0"}     # бои с городами и их ошибки — прежний Легион (3.0 — test_legion3)
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -46,8 +51,12 @@ func check(ok: bool, what: String, extra = null) -> void:
 
 func shot(name: String) -> void:
 	await frames(8)
-	get_viewport().get_texture().get_image().save_png(OUT + name)
-	print("FIX shot ", OUT + name)
+	await RenderingServer.frame_post_draw
+	var path := out + name
+	if DirAccess.make_dir_recursive_absolute(out) == OK and get_viewport().get_texture().get_image().save_png(path) == OK:
+		print("FIX SHOT ", path)
+	else:
+		check(false, "снимок не сохранился: " + path)
 
 
 func _labels(n: Node) -> String:
@@ -316,8 +325,8 @@ func _run() -> void:
 
 	NetHttp.test_timeout = 0.0
 
-	# ---------- 0.4 настоящая загрузка старого города (своя папка .work/fix_save): очки и число на колокольчике ----------
-	var dir := "D:/CivCity/.work/fix_save"
+	# ---------- 0.4 загрузка старого города в отдельном профиле: очки и число на колокольчике ----------
+	var dir := GamePaths.save_dir().path_join("fix_save_%d_%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_usec()])
 	DirAccess.make_dir_recursive_absolute(dir)
 	var sd := c.save_data()
 	sd["land"] = game.land.save_changes()
@@ -327,6 +336,11 @@ func _run() -> void:
 	sd["rp"] = 10.0
 	sd["tips"]["rank_cine"] = c.level
 	var f := FileAccess.open(dir + "/city.json", FileAccess.WRITE)
+	if f == null:
+		check(false, "сохранение для проверки старого города", FileAccess.get_open_error())
+		print("FIX DONE fails=%d" % fails)
+		get_tree().quit(1)
+		return
 	f.store_string(JSON.stringify(sd))
 	f.close()
 	game.queue_free()
@@ -343,47 +357,59 @@ func _run() -> void:
 	var ev_ok: bool = gc.events.any(func(e): return String(e.get("text", "")).contains("Площади из плитки"))
 	check(not gc.research.has("roads2") and is_equal_approx(gc.rp, 10.0 + City.ROADS2_RP) and ev_ok and not game.hud._overview_events().any(func(e): return String(e.get("text", "")).contains("Площади из плитки")) and gc.unread == 0,
 		"загрузили город с «Площадями из плитки»: очки вернулись, запись в полном журнале, без уведомления в обзоре", [gc.rp, game.hud.bell_count])
-	DirAccess.remove_absolute(dir + "/city.json")
 	_unlockable(false)
 	_unlockable(true)
 	_bench_face()
 	_pave_under()
 
 	print("FIX DONE fails=%d" % fails)
+	get_tree().quit(1 if fails > 0 else 0)
 
 
-## Скамья без спинки у стены: житель садится лицом к свободной стороне, а не к стене; обе стороны заняты — не садится
+## Житель смотрит туда, куда указывает стрелка скамьи. Стена сзади не мешает, стена спереди закрывает места.
 func _bench_face() -> void:
 	var c: City = game.city
-	var ppl = game.people
+	var ppl: People = game.people
+	var land: Land = game.land
 	var bp := Land.START + Vector2(6, 9)
-	var bench := c.place("bench", bp, 0.0, 0, 0, true)
-	var d0: Dictionary = ppl._seat_target({}, bench)
-	var seats: Array = ppl._bench_seats(bench)
+	var bench := c.place("bench", bp, PI * 0.5, 0, 0, true)
+	if bench.is_empty():
+		check(false, "скамья для проверки посадки встала")
+		return
+	var direction := DecorFacing.front(c.blueprint(bench), "bench")
+	var seats := ppl._bench_seats(bench)
+	if direction.is_empty() or seats.is_empty():
+		check(false, "у скамьи есть передняя сторона и места")
+		c.remove(bench, false, true)
+		return
 	var xf := c.xf(bench)
-	var mid: Vector3 = xf * (seats[int(d0.get("k", 0))][3] as Vector3)
-	var f := (d0["p"] as Vector2 - Vector2(mid.x, mid.z)).normalized()
-	var L: Land = game.land
+	var facing := xf.basis * (direction["front"] as Vector3)
+	var front := Vector2(facing.x, facing.z)
 	var saved := {}
 	var block := func(dir: Vector2) -> void:
-		for dd: float in [0.55, 0.7, 0.9]:
-			for so: float in [-1.2, -0.6, 0.0, 0.6, 1.2]:
-				var q := Vector2(mid.x, mid.z) + dir * dd + Vector2(-dir.y, dir.x) * so
-				var cc := L.cell(q)
-				var k := L.idx(cc.x, cc.y)
+		for seat: Array in seats:
+			var mid := xf * (seat[3] as Vector3)
+			for distance: float in [0.55, 0.9]:
+				var cell := land.cell(Vector2(mid.x, mid.z) + dir * distance)
+				var k := land.idx(cell.x, cell.y)
 				if not saved.has(k):
-					saved[k] = L.occ[k]
-				L.occ[k] = 987654
-	block.call(f)
-	var d1: Dictionary = ppl._seat_target({}, bench)
-	var turned := not d1.is_empty() and absf(wrapf(float(d1["yaw"]) - float(d0["yaw"]) - PI, -PI, PI)) < 0.01 		and (d1["p"] as Vector2).distance_to(Vector2(mid.x, mid.z) - f * People.SIT_BACK) < 0.3
-	block.call(-f)
-	var d2: Dictionary = ppl._seat_target({}, bench)
+					saved[k] = land.occ[k]
+				land.occ[k] = 987654
+	var open := ppl._seat_target({}, bench)
+	check(not open.is_empty() and City.facing(float(open["yaw"])).dot(front) > 0.99, "свободная скамья: житель сидит по стрелке", open)
+	block.call(-front)
+	var back_wall := ppl._seat_target({}, bench)
+	check(not back_wall.is_empty() and City.facing(float(back_wall["yaw"])).dot(front) > 0.99, "стена за скамьёй: житель садится по стрелке", back_wall)
+	block.call(front)
+	check(ppl._seat_target({}, bench).is_empty(), "обе стороны скамьи заняты: нет доступных мест")
 	for k in saved:
-		L.occ[k] = saved[k]
+		land.occ[k] = saved[k]
+	saved.clear()
+	block.call(front)
+	check(ppl._seat_target({}, bench).is_empty(), "стена перед скамьёй: житель ищет другое место")
+	for k in saved:
+		land.occ[k] = saved[k]
 	c.remove(bench, false, true)
-	check(not d0.is_empty() and turned and d2.is_empty(), "скамья у стены: садятся лицом к свободной стороне, обе заняты — не садятся", [d0.get("yaw"), d1.get("yaw"), d2])
-	get_tree().quit(1 if fails > 0 else 0)
 
 
 # ---------- этап 5.2: всё, что просят, открыто к тому уровню, где просят (и в живых городах, и в новой игре) ----------

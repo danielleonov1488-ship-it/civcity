@@ -3,22 +3,27 @@ extends Node
 ##   bash .work/py/gpu_run.sh res://test_sinks.tscn   — в конце «SINKS DONE fails=0»; снимки — .work/gd/sinks_*.png
 ## Земля: новая игра — свои участки x 2–3, z 1–3 (x 128–256, z 64–256 м), цена k-го купленного 6000 × 1,3^(k−1) до
 ## тысяч, счётчик купленных в сохранении (у старых сохранений — сверх 16); готовый город меню — как был.
-## Праздник: с «Посёлка», 2,5 часовых налога с жителя (плебей — 3 ден.; налогами игры не окупаются), сутки +8% счастья
+## Праздник: с «Посёлка», 2,5 часовых налога с жителя (дома со счастьем ниже 40% платят половину), сутки +8% счастья
 ## всем домам и повозка ×0,7 (дробный промежуток — в среднем, остаток часа переносится), снова — через 48 ч;
 ## сохраняется; карточка станции, советник один раз, наряд города (шесты, знамёна, гирлянды) и толпа у станции —
 ## не на полосе повозки. Окно покупки участка дороже предела казны — объясняет, «Купить» погашена.
 
+const Advice := preload("res://scripts/test_advice_fixture.gd")
 const STREETS := [[Vector2(172, 136), Vector2(198, 136)], [Vector2(172, 150), Vector2(198, 150)], [Vector2(172, 164), Vector2(198, 164)]]
 const PRICES := [6000, 8000, 10000, 13000, 17000, 22000, 29000, 38000, 49000, 64000, 83000]
 
-var game
-var c                                # City
+var out := "D:/CivCity/.work/gd/"
+var game: Game
+var c: City
 var fails := 0
 var cands: Array = []
 
 
 func _ready() -> void:
-	Game.boot = {"new": "1"}
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("out="):
+			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
+	Game.boot = {"new": "1", "hour": "10"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
 	_run()
@@ -29,17 +34,19 @@ func frames(n: int) -> void:
 		await get_tree().process_frame
 
 
-func check(ok: bool, what: String) -> void:
+func check(ok: bool, what: String) -> bool:
 	print(("SINKS PASS " if ok else "SINKS FAIL ") + what)
 	if not ok:
 		fails += 1
+	return ok
 
 
 func shot(name: String) -> void:
 	await frames(6)
-	DirAccess.make_dir_recursive_absolute("D:/CivCity/.work/gd")
-	get_viewport().get_texture().get_image().save_png("D:/CivCity/.work/gd/" + name)
-	print("SHOT ", name)
+	await RenderingServer.frame_post_draw
+	var path := out + name
+	if check(DirAccess.make_dir_recursive_absolute(out) == OK and get_viewport().get_texture().get_image().save_png(path) == OK, "save screenshot " + name):
+		print("SINKS SHOT ", path)
 
 
 func reset() -> void:
@@ -90,7 +97,7 @@ func _run() -> void:
 	await _land()
 	await _festival()
 	print("SINKS DONE fails=%d" % fails)
-	get_tree().quit()
+	get_tree().quit(0 if fails == 0 else 1)
 
 
 # ---------- земля ----------
@@ -215,7 +222,8 @@ func _festival() -> void:
 		var b := put("house_pleb", Vector2(185, 150))
 		if not b.is_empty():
 			houses.append(b)
-	check(houses.size() == 12, "12 houses: %d" % houses.size())
+	if not check(houses.size() == 12, "12 houses: %d" % houses.size()):
+		return
 	for h in houses:
 		var nm := "Проба %d" % int(h["id"])
 		c.settled(int(h["id"]), c.house_cap(h), nm)
@@ -228,54 +236,67 @@ func _festival() -> void:
 	hud.refresh()
 	check(not c.tips.has("fest_tip"), "no advisor before «Посёлок»")
 	c.level = 3
-	c.money = 100.0
-	# цена — 2,5 часовых налога с жителя (плебей 1,2 → 3 ден.), вверх до десятков: 48 плебеев — 144 → 150
-	check(c.fest_price() == 150 and c.can_festival().begins_with("Не хватает денариев"), "price %d for %d plebs (3 each, up to tens); «%s»" % [c.fest_price(), pop, c.can_festival()])
-	houses[0]["type"] = "house_artisan"           # ремесленники платят налогов больше — и игры для них дороже (5,5 с жителя)
-	var p_art: int = c.fest_price()
+	# Граница штрафа: ровно 40% — обычный налог, 39% — половина. Цена округляется вверх до десятков.
+	for h: Dictionary in houses:
+		h["happy"] = 40
+	check(c.fest_price() == 150, "48 plebs at 40%% happiness: 48 × 1.2 × 2.5 = 144 → %d" % c.fest_price())
+	houses[0]["type"] = "house_artisan"
+	check(c.fest_price() == 160, "4 artisans instead of plebs: (44 × 1.2 + 4 × 2.2) × 2.5 = 154 → %d" % c.fest_price())
 	houses[0]["type"] = "house_pleb"
-	check(p_art == 160, "4 artisans instead of plebs: (44 × 1,2 + 4 × 2,2) × 2,5 = 154 → %d" % p_art)
-	check(not c.festival(), "not enough money: no games")
-	# советник объясняет один раз
-	hud.advisor_panel.visible = false
+	for h: Dictionary in houses:
+		h["happy"] = 39
+	check(c.fest_price() == 80, "48 plebs at 39%% happiness: half tax, 72 → %d" % c.fest_price())
+	c.compute()
+	var price0 := c.fest_price()
+	c.money = float(price0 - 1)
+	check(price0 == 80 and c.can_festival() == "Не хватает денариев: нужно %d" % price0,
+		"unhappy houses without shops: %d den., one short of the price %d" % [int(c.money), price0])
+	if not check(not c.festival() and c.fest_left == 0 and c.fest_cd == 0 and is_equal_approx(c.money, float(price0 - 1)),
+			"not enough money: no games, no charge, no cooldown"):
+		return
+	# Советы открываются по очереди, в том числе новый совет о недовольстве.
+	var title := "Игры в честь богов"
 	hud.refresh()
-	check(c.tips.has("fest_tip") and hud.advisor_panel.visible and hud.adv_title.text == "Игры в честь богов", "advisor explains the games once: «%s»" % hud.adv_title.text)
+	check(Advice.show(hud, title) and c.tips.has("fest_tip"), "advisor explains the games once: «%s»" % hud.adv_title.text)
 	print("  advisor: ", hud.adv_text.text.replace("\n", " / "))
 	game.rig.set_view(Vector3(185, 2, 120), 20, 48, 60)
 	await shot("sinks_fest_advisor.png")
-	hud.advisor_panel.visible = false
-	hud.refresh()
-	check(not hud.advisor_panel.visible, "…and not again")
+	check(Advice.repeats(hud, title) == 0 and c.tips.has("fest_tip"), "festival advice is shown exactly once")
 	# карточка станции: кнопка «Устроить игры — N ден.»
-	c.money = 3000.0
 	var ctr: Dictionary = c.center()
+	if not check(not ctr.is_empty(), "post station exists"):
+		return
 	hud.open_info(ctr)
-	await frames(3)
-	var btn: Button = hud.info_box.find_child("fest_btn", true, false)
-	var price0: int = c.fest_price()
-	check(btn != null and not btn.disabled and btn.text == "Устроить игры — %s ден." % hud.fmt(price0), "station card button: «%s»" % (btn.text if btn else "-"))
-	check(_texts(hud.info_box).contains("по 3 ден. за плебея, 5,5 — за ремесленника, 11,3 — за патриция"), "card: the price depends on taxes")
+	var btn := hud.info_box.find_child("fest_btn", true, false) as Button
+	check(btn != null and btn.disabled and btn.tooltip_text == c.can_festival(), "station card disables games and shows the reason when money is short")
+	c.money = 3000.0
+	hud.refresh()
+	check(_texts(hud.info_box).contains("Цена зависит от налогов: по 3 ден. за плебея, 5,5 — за ремесленника, 11,3 — за патриция"), "card: the price depends on taxes")
 	game.rig.set_view(Vector3(ctr["pos"].x, 2, ctr["pos"].y), 25, 40, 30)
 	await shot("sinks_fest_card.png")
+	btn = hud.info_box.find_child("fest_btn", true, false) as Button
+	if not check(btn != null and not btn.disabled and btn.text == "Устроить игры — %s ден." % hud.fmt(price0),
+			"station card button: «%s»" % (btn.text if btn else "-")):
+		return
 	# игры: деньги, счастье +8% всем домам, повозка чаще, колокольчик, наряд города
 	var hp0 := {}
 	for h in houses:
 		hp0[h["id"]] = int(h["happy"])
 	var city_hp0 := int(c.stats["happy"])
+	var tax0 := float(c.projected_finance()["tax"])
 	var ev0: int = c.events.size()
 	var bell0: int = hud.bell_count
 	var notes0: int = hud.notes_box.get_child_count()
 	btn.pressed.emit()
-	check(c.fest_left == 24 and c.fest_cd == 48 and is_equal_approx(c.money, 3000.0 - price0), "games on: 24 h, again in 48 h, paid %d" % price0)
+	if not check(c.fest_left == 24 and c.fest_cd == 48 and is_equal_approx(c.money, 3000.0 - price0), "games on: 24 h, again in 48 h, paid %d" % price0):
+		return
 	var plus8 := true
 	for h in houses:
 		plus8 = plus8 and int(h["happy"]) == int(hp0[h["id"]]) + 8
 	check(plus8 and int(c.stats["happy"]) == city_hp0 + 8, "every house +8%% (city %d → %d)" % [city_hp0, int(c.stats["happy"])])
-	# игры не окупаются: за сутки +8% счастья вернут налогами меньше, чем стоили (налог дома — как в City.sim_day)
-	var back := 0.0
-	for h in houses:
-		back += int(h["pop"]) * c.house_tax(h) * (minf(100.0, float(h["happy"])) - minf(100.0, float(hp0[h["id"]]))) / 100.0 * 24.0
-	check(back > 0.0 and back < 0.8 * price0, "24 h of games return %d in taxes, less than the price %d" % [int(back), price0])
+	# Сравниваем начисления городской казны до и после игр.
+	var back := (float(c.projected_finance()["tax"]) - tax0) * 24.0
+	check(back > 0.0 and back < price0, "24 h of games return %d in taxes in this city, less than the price %d" % [int(back), price0])
 	var row := false
 	for p: Array in c.stats["happy_parts"]:
 		if String(p[0]).begins_with("Праздник") and int(p[1]) == 8:
@@ -305,10 +326,12 @@ func _festival() -> void:
 	c.compute()
 	check(good, "carts in 48 h match the interval: %s" % ", ".join(got))
 	check(c.can_festival().begins_with("Игры уже идут"), "second games refused: «%s»" % c.can_festival())
-	check(not game.fest_vis.is_empty() and (game.fest_vis["h"] as Array).size() >= 16 and game.fest_vis["mesh"] != null, "the city is dressed: %d parts and garlands" % (game.fest_vis["h"] as Array).size())
+	var decor_count := (game.fest_vis.get("h", []) as Array).size()
+	check(decor_count >= 16 and game.fest_vis.get("mesh") != null, "the city is dressed: %d parts and garlands" % decor_count)
 	await frames(3)
 	var st_txt := _texts(hud.info_box)
-	check(st_txt.contains("идут, ещё 24 ч") and st_txt.contains("Чаще обычного"), "station card while the games go on")
+	check(st_txt.contains("идут, ещё 24 ч") and st_txt.contains("Чаще обычного") and hud.info_box.find_child("fest_btn", true, false) == null,
+		"station card shows the running games and the faster cart")
 	await shot("sinks_fest_card_on.png")
 	hud.close_panels()
 	# толпа: жители идут на площадь у станции
