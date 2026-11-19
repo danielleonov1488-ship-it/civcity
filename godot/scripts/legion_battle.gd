@@ -564,6 +564,7 @@ func _start(s: Dictionary) -> void:
 		var r := int(stage.get("r", 0))
 		biome = String(Legion.regions()[clampi(r, 0, Legion.regions().size() - 1)]["biome"])
 	battle_view.set_field(biome)
+	battle_view.pvp = pvp
 	battle_view.legion = legion
 	battle_view.hero_look = s.get("hero_look", {})
 	sim = LegionSim.new(setup)
@@ -585,7 +586,7 @@ func _start(s: Dictionary) -> void:
 	auto_btn.tooltip_text = "Умения отряд жмёт сам — вовремя и с умом" if auto_ok else "Авто — для пройденных боёв: в первый раз ведите бой сами"
 	var want := bool(opts.get("auto", legion.flags.get("battle_auto", false)))
 	sim.set_auto(want and auto_ok and tut == "")   # запоминается: бой с городом повторит сервер
-	battle_view.prewarm()
+	battle_view.prewarm(s.get("waves", []))
 	for u in sim.units:
 		_view(u)
 	_waves_ui()

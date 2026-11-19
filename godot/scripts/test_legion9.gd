@@ -231,7 +231,9 @@ func _fight() -> void:
 	var hero := false
 	for f: BattleView.Fighter in battle.views.values():
 		if f.unit.side == "enemy":
-			check(f.sprite is AnimatedSprite2D and f.actor == null, "враг использует B1-спрайт")
+			check(f.sprite == null and f.actor != null and f.actor.problem.is_empty()
+				and f.actor.get_parent() == battle.battle_view.people_layer.viewport
+				and f.actor.rotation_degrees.y < 0.0, "противник в общем 3D-слое")
 			continue
 		count += 1
 		var person := lg.soldier(f.unit.sid)
@@ -253,7 +255,7 @@ func _fight() -> void:
 	var allies: Array[BattleView.Fighter] = []
 	var crop := Rect2()
 	for f: BattleView.Fighter in battle.views.values():
-		if f.actor == null or not f.unit.alive:
+		if f.unit.side != "ally" or f.actor == null or not f.unit.alive:
 			continue
 		check(f.actor.rotation_degrees.y > 0.0 and not f.flip_h, "в бою союзники смотрят вправо")
 		for ally: BattleView.Fighter in allies:

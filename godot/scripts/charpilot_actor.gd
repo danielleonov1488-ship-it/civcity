@@ -201,8 +201,8 @@ func _load_outfit(outfit: String) -> bool:
 
 
 ## В GLB свои оси костей. Привязываем его вершины к живому скелету по именам и общей позе покоя.
-func _add_kit_file(stem: String, group: Node3D, atlas: Material) -> bool:
-	var entries := _kit_file(stem)
+func _add_kit_file(stem: String, group: Node3D, atlas: Material, folder := KIT) -> bool:
+	var entries := _kit_file(stem, folder)
 	if entries.is_empty():
 		return _fail("missing or unskinned kit GLB " + stem)
 	var rig_from_model := Citizen._rel(_rig, self).affine_inverse()
@@ -238,10 +238,10 @@ func _add_kit_file(stem: String, group: Node3D, atlas: Material) -> bool:
 	return true
 
 
-static func _kit_file(stem: String) -> Array:
-	if _kit_cache.has(stem):
-		return _kit_cache[stem]
-	var path := KIT + stem + ".glb"
+static func _kit_file(stem: String, folder := KIT) -> Array:
+	var path := folder + stem + ".glb"
+	if _kit_cache.has(path):
+		return _kit_cache[path]
 	var entries: Array = []
 	if not ResourceLoader.exists(path, "PackedScene"):
 		return entries
@@ -271,7 +271,7 @@ static func _kit_file(stem: String) -> Array:
 			"transform": Citizen._rel(part, root), "used": used})
 	root.free()
 	if not entries.is_empty():
-		_kit_cache[stem] = entries
+		_kit_cache[path] = entries
 	return entries
 
 
@@ -367,7 +367,7 @@ func _set_material_opacity(value: float) -> void:
 		var mesh: MeshInstance3D = entry["mesh"]
 		var material: BaseMaterial3D = entry["fade"]
 		var color := material.albedo_color
-		color.a = value
+		color.a = float(entry["alpha"]) * value
 		material.albedo_color = color
 		var active: Material = entry["original"] if value >= 1.0 else material
 		var index := int(entry["surface"])
@@ -381,7 +381,8 @@ func _add_fade_material(mesh: MeshInstance3D, index: int, active: Material, orig
 	if active is BaseMaterial3D:
 		var faded := active.duplicate() as BaseMaterial3D
 		faded.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		_fade_materials.append({"mesh": mesh, "surface": index, "original": original, "fade": faded})
+		_fade_materials.append({"mesh": mesh, "surface": index, "original": original,
+			"fade": faded, "alpha": faded.albedo_color.a})
 
 
 func set_loadout(loadout: Dictionary) -> bool:
