@@ -10,10 +10,12 @@ var actor: Actor
 var layer: PersonLayer
 var _clock := 0.0
 var _full_body := false
+var _headroom := 0.0
 
 
-func setup(person: Dictionary, gear: Array, pixels: float, full_body := false) -> void:
+func setup(person: Dictionary, gear: Array, pixels: float, full_body := false, headroom := 0.0) -> void:
 	_full_body = full_body
+	_headroom = headroom
 	custom_minimum_size = Vector2(pixels, pixels)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer = PersonLayer.new()
@@ -33,7 +35,7 @@ func _fit() -> void:
 		layer.shadows = PackedVector3Array([Vector3(feet.x, feet.y, height)])
 		layer.queue_redraw()
 	else:
-		layer.place(actor, size * Vector2(0.5, 1.94), size.y * 1.83, 14.0)
+		layer.place(actor, size * Vector2(0.5, 1.94 + _headroom), size.y * 1.83, 14.0)
 
 
 func _process(delta: float) -> void:

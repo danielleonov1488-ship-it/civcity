@@ -130,6 +130,11 @@ func _run() -> void:
 		return
 	if not check(float(lg.fort_plot(kitchen)["pend"]) >= 2.9 and float(lg.fort_plot(smelter)["pend"]) >= 11.9, "production accrues through API"):
 		return
+	var legacy_save: Dictionary = JSON.parse_string(JSON.stringify(lg.to_dict()))
+	legacy_save["flags"].erase("fort_guide")
+	lg.from_dict(legacy_save)
+	if not check(lg.fort_guide_step() == Legion.FortGuide.DONE, "old guide migrates when loading the save"):
+		return
 	city.changed.emit()
 	camp = CampUI.of(game.hud)
 	if not check(camp != null, "CampUI attached"):
@@ -288,7 +293,8 @@ func _run() -> void:
 		return
 	camp._close_modal()
 	# Сохранение со старым пройденным обучением открывает обычный форт.
-	if not check(lg.fort_guide_step() == Legion.FortGuide.DONE and not camp.guide.is_visible_in_tree(), "old guide stays completed"):
+	if not check(lg.fort_guide_step() == Legion.FortGuide.DONE and lg.fort_lesson() == ""
+			and not camp.guide_layer.is_visible_in_tree(), "old guide stays completed"):
 		return
 	camp._campaign()
 	if not check(camp.lu.visible and lg.fort_guide_step() == Legion.FortGuide.DONE, "campaign stays outside completed guide"):

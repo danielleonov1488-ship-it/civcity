@@ -696,6 +696,19 @@ func person_project(sid: int, newcomer := false) -> Vector2:
 	return _screen_point(_body_center(entry)) if actor.visible else NO_POINT
 
 
+func person_hit_rect(sid: int, newcomer := false) -> Rect2:
+	var entry := _find_person(sid, newcomer)
+	if entry.is_empty() or not (entry["node"] as Actor).visible:
+		return Rect2()
+	var center := _body_center(entry)
+	var half := _person_hit_half(entry)
+	return Rect2(_screen_point(center - half), half * (2.0 * _view_scale))
+
+
+func _person_hit_half(entry: Dictionary) -> Vector2:
+	return Vector2(0.32, 0.52) * float(entry["height"])
+
+
 func pick_person(pos: Vector2) -> Dictionary:
 	var best := {}
 	var distance := INF
@@ -705,7 +718,7 @@ func pick_person(pos: Vector2) -> Dictionary:
 		if int(entry["id"]) == 0 or not actor.visible:
 			continue
 		var center := _body_center(entry)
-		var half := Vector2(0.32, 0.52) * float(entry["height"])
+		var half := _person_hit_half(entry)
 		var d := center.distance_squared_to(point)
 		if d < distance and Rect2(center - half, half * 2.0).has_point(point):
 			best = entry

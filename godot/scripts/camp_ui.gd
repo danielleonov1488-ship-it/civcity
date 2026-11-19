@@ -7,6 +7,7 @@ const Look = preload("res://scripts/legion_look.gd")
 const FortPerson = preload("res://scripts/fort_person.gd")
 const Ring = preload("res://scripts/fort_ui_ring.gd")
 const KnowUI = preload("res://scripts/legion_knowledge_ui.gd")
+const HqUI = preload("res://scripts/legion_hq_ui.gd")
 const StoreUI = preload("res://scripts/legion_store_ui.gd")
 const USE_3D := true
 const USE_CUTAWAY := true
@@ -79,6 +80,14 @@ var guide: PanelContainer
 var guide_text: Label
 var guide_pointer: TextureRect
 var guide_skip: Button
+var guide_next: Button
+var guide_speaker: Label
+var guide_portrait: FortPersonPreview
+var guide_shade: ColorRect
+var guide_spotlight := Rect2()
+var _guide_ack := ""
+var _guide_lesson_id := ""
+var hq_window_id := -1
 var _guide_target: Control
 var _guide_rect := Rect2()
 var _guide_dragging := false
@@ -484,25 +493,44 @@ func _build_screen() -> void:
 	guide_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.root.add_child(guide_layer)
 	guide_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	guide_layer.resized.connect(_layout_guide, Object.CONNECT_DEFERRED)
 	guide_layer.hide()
-	guide = Kit.inset()
+	guide_shade = ColorRect.new()
+	guide_shade.color = Color(0.07, 0.035, 0.026, 0.63)
+	guide_shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var shade := ShaderMaterial.new()
+	shade.shader = preload("res://shaders/fort_guide_shade.gdshader")
+	guide_shade.material = shade
+	guide_layer.add_child(guide_shade)
+	guide_shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	guide = PanelContainer.new()
 	guide.name = "FortGuide"
-	guide.add_theme_stylebox_override("panel", Kit.box("panels/panel_inset", 40, 12, 56))
+	guide.add_theme_stylebox_override("panel", Look.box(Color(0.24, 0.105, 0.08, 0.94), Color("d1a765"), 13, 0))
 	guide_layer.add_child(guide)
 	guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	guide.resized.connect(func(): _layout_guide.call_deferred())
-	var guide_body := VBoxContainer.new()
-	guide_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	guide_body.add_theme_constant_override("separation", 3)
-	guide.add_child(guide_body)
-	guide_text = _text("", 18, true)
-	guide_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	guide_body.add_child(guide_text)
+	var surface := Control.new()
+	surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	guide.add_child(surface)
+	guide_speaker = Look.label(I18n.t("Центурион"), 23, Color("fff0cb"), true)
+	guide_speaker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	guide_speaker.add_theme_stylebox_override("normal", Look.box(Color("633628"), Color("d1a765"), 8, 8))
+	surface.add_child(guide_speaker)
+	guide_text = Look.label("", 26, Look.PAPER)
+	guide_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	guide_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	guide_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	surface.add_child(guide_text)
 	guide_skip = hud.guide_link(I18n.t("Пропустить обучение"), _skip_guide)
 	guide_skip.name = "FortGuideSkip"
-	guide_skip.add_theme_font_size_override("font_size", 14)
-	guide_skip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	guide_body.add_child(guide_skip)
+	guide_skip.add_theme_font_size_override("font_size", 16)
+	guide_skip.add_theme_color_override("font_color", Color("f1d7a5"))
+	surface.add_child(guide_skip)
+	guide_next = hud.guide_link("▼", _continue_guide)
+	guide_next.name = "FortGuideContinue"
+	guide_next.tooltip_text = I18n.t("Продолжить")
+	guide_next.add_theme_font_size_override("font_size", 21)
+	guide_next.add_theme_color_override("font_color", Look.PAPER)
+	surface.add_child(guide_next)
 	guide_pointer = TextureRect.new()
 	guide_pointer.name = "FortGuideArrow"
 	guide_pointer.texture = preload("res://assets/ui/icons/fort_guide_arrow.svg")
@@ -561,7 +589,7 @@ func _build_fort_overlays() -> void:
 
 func _resource_bar(resource: String) -> void:
 	var compact := resource in Gear.MATS
-	var panel := Look.chip(resource, "0", show_resource_popup.bind(resource), compact)
+	var panel := Look.chip(resource, "0", _resource_pressed.bind(resource), compact)
 	panel.name = "FortResource_" + resource
 	panel.tooltip_text = I18n.t(String(TOP_NAMES[resource]))
 	chips.add_child(panel)
@@ -730,6 +758,7 @@ func _roster_signature() -> String:
 
 func _refresh() -> void:
 	lg.fort_guide_newcomer()
+	lg.watch_fort_lessons()
 	if is_instance_valid(diorama):
 		diorama.sync()
 	population_button.text = "%d/%d" % [lg.fort_population(), lg.roster_cap()]
@@ -770,6 +799,7 @@ func _refresh() -> void:
 	knowledge_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER if know.is_empty() else HORIZONTAL_ALIGNMENT_LEFT
 
 	KnowUI.refresh(self)
+	HqUI.refresh(self)
 
 
 	_count(squad_button, lg.fort_squad_candidates().size())
@@ -839,6 +869,8 @@ func _select_fort_room(key: String) -> void:
 	if plot["b"] == "":
 		show_build_menu(id)
 		return
+	if _show_lesson_room(id):
+		return
 	room_action_id = id
 	room_action_running = not lg.fort_plot_timer(id).is_empty()
 	(diorama as FortCutaway).select_room(id)
@@ -894,7 +926,10 @@ func _build_room_actions() -> void:
 			_room_action("Отменить", "", _show_cancel_construction.bind(id)).name = "FortCancelBuild"
 		_room_action("Ускорить", "build", _show_speed_up.bind(id), Look.WINE).name = "FortSpeedUp"
 	else:
-		_room_action("Улучшить", "build", show_plot.bind(id), Look.WINE)
+		if type == "hq":
+			_room_action("Улучшить", "build", show_hq_upgrade.bind(id), Look.WINE)
+		else:
+			_room_action("Улучшить", "build", show_plot.bind(id), Look.WINE)
 		var quick := String({"barracks": "Отряд", "drill": "Тренировать", "forge": "Ковать", "arsenal": "Изготовить", "infirmary": "Лечить"}.get(type, "Назначить"))
 		if type != "hq":
 			_room_action(quick, "squad", func():
@@ -1040,6 +1075,8 @@ func show_plot(plot_id: int) -> void:
 	_hide_card()
 	selected_plot = plot_id
 	selected = String(plot["b"])
+	if selected == "store":
+		lg.finish_fort_lesson("store")
 	card_backdrop = Control.new()
 	add_child(card_backdrop)
 	card_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1078,6 +1115,7 @@ func _fit_room_card() -> void:
 		return
 	Kit.fit_modal(card, size, Vector2(900, 0))
 	card.position.y = minf(card.position.y + _sheet_offset, size.y - card.size.y * card.scale.y - 24.0)
+	_layout_guide.call_deferred()
 
 
 func _hide_card() -> void:
@@ -1174,15 +1212,7 @@ func _build_card() -> void:
 		_cap_row(caps, KnowUI.art("store", "all"), lg.store_cap(), lg.store_cap_after(1), "Снаряжение")
 	elif selected == "hq":
 		_room_metric(stats, I18n.t("Уровень форта"), FortCutaway.room_icon(selected), level, level + 1)
-		var opens := HBoxContainer.new()
-		for type: String in Legion.FORT_B:
-			if type == "hq" or not (Legion.FORT_B[type]["max"] as Array).has(level + 1):
-				continue
-			var symbol := Kit.image(FortCutaway.room_icon(type), Vector2(42, 42))
-			symbol.mouse_filter = Control.MOUSE_FILTER_PASS
-			symbol.tooltip_text = I18n.t(String(Legion.FORT_B[type]["name"]))
-			opens.add_child(symbol)
-		stats.add_child(opens)
+
 	else:
 		_room_metric(stats, I18n.t("Места в комнате"), FortCutaway.room_icon(selected),
 			Legion.fort_room_slots_at(selected, level), Legion.fort_room_slots_at(selected, level + 1))
@@ -1195,7 +1225,11 @@ func _build_card() -> void:
 		var id := selected_plot
 		var knowledge := Look.button(I18n.t("Знание снаряжения"), KnowUI.node_icon("sets"), Look.INSET, Vector2(132, 46))
 		knowledge.name = "FortRoomKnowledge"
-		knowledge.pressed.connect(func(): show_knowledge("smith" if selected == "forge" else "armor1", show_plot.bind(id)))
+		knowledge.pressed.connect(func():
+			var focus := "smith" if selected == "forge" else "armor1"
+			if selected == "forge" and lg.fort_lesson() == "knowledge" and not lg.smith_known():
+				focus = "bows"
+			show_knowledge(focus, show_plot.bind(id)))
 		card_body.add_child(knowledge)
 	main_action = Look.button("", Look.icon("squad"), Look.INSET, Vector2(132, 46))
 	main_action.name = "FortMainAction"
@@ -1222,6 +1256,7 @@ func _build_card() -> void:
 
 	instant_button = Look.button(I18n.t("Мгновенно"), Look.resource("ingots"), Look.PAPER, Vector2(215, 64))
 	instant_button.name = "FortInstant"
+	instant_button.visible = selected != "hq"
 	instant_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	instant_button.pressed.connect(_instant_upgrade)
 	instant_price = Look.label("")
@@ -1234,6 +1269,9 @@ func _build_card() -> void:
 	actions.add_child(timed)
 	upgrade_button = Look.button(I18n.t("Улучшить") + " · " + hud.fmt(float(info["next_cost"].get("money", 0))) + " · " + duration_text(float(info["next_time"])),
 		Look.resource("money"), Look.WINE, Vector2(265, 64))
+	if selected == "hq":
+		upgrade_button.text = I18n.t("Улучшить")
+		upgrade_button.icon = Look.icon("build")
 	upgrade_button.name = "FortUpgrade"
 	upgrade_button.pressed.connect(_upgrade)
 	timed.add_child(upgrade_button)
@@ -1305,7 +1343,7 @@ func _refresh_card() -> void:
 	if not is_instance_valid(main_action) or running:
 		return
 	var why := lg.fort_can_upgrade(selected_plot)
-	upgrade_button.disabled = why != ""
+	upgrade_button.disabled = selected != "hq" and why != ""
 	upgrade_button.tooltip_text = I18n.t("Улучшить") + ("\n" + I18n.t(why) if why != "" else "")
 	upgrade_reason.text = I18n.t("Нужен Штаб ур. %d") % (int(plot["lv"]) + 1) if why.begins_with("Выше Штаба") else I18n.t(why)
 	requirement_banner.visible = why != ""
@@ -1361,6 +1399,9 @@ func _refresh_card() -> void:
 
 func _upgrade() -> void:
 	var id := selected_plot
+	if selected == "hq":
+		show_hq_upgrade(id)
+		return
 	if lg.fort_upgrade(id):
 		_hide_card()
 		_select_fort_room("plot_%d" % id)
@@ -1530,6 +1571,7 @@ func _fit_modal() -> void:
 
 
 func _close_modal() -> void:
+	hq_window_id = -1
 	knowledge_focus = ""
 	knowledge_back = Callable()
 	dweller_sid = 0
@@ -1874,11 +1916,18 @@ func _screen_anchor(center: Vector2, dims: Vector2, top_margin := 76.0, bottom_m
 
 func guide_active() -> bool:
 	var step := lg.fort_guide_step()
-	return step > Legion.FortGuide.INACTIVE and step < Legion.FortGuide.DONE
+	return (step > Legion.FortGuide.INACTIVE and step < Legion.FortGuide.DONE) or lg.fort_lesson() != ""
 
 
 func _skip_guide() -> void:
-	lg.finish_fort_guide()
+	var step := lg.fort_guide_step()
+	if step == Legion.FortGuide.DONE:
+		lg.finish_fort_lesson(lg.fort_lesson(), true)
+	else:
+		if step != Legion.FortGuide.FINISH:
+			lg.flags["fort_lessons_off"] = true
+		lg.finish_fort_guide()
+	_guide_ack = ""
 	_layout_guide()
 	if visible:
 		_refresh()
@@ -1886,12 +1935,20 @@ func _skip_guide() -> void:
 		lu._dirty = true
 
 
+func _continue_guide() -> void:
+	if lg.fort_guide_step() == Legion.FortGuide.FINISH:
+		_skip_guide()
+		return
+	_guide_ack = guide_text.text
+	_layout_guide()
+
+
 func _guide_person(sid: int, newcomer := false) -> Rect2:
 	if diorama is FortCutaway:
 		var cutaway := diorama as FortCutaway
-		var point := cutaway.person_project(sid, newcomer)
-		if Rect2(Vector2.ZERO, size).has_point(point):
-			return Rect2(cutaway.global_position + point - Vector2(16, 16), Vector2(32, 32))
+		var hit := cutaway.person_hit_rect(sid, newcomer)
+		if hit.has_area() and Rect2(Vector2.ZERO, cutaway.size).has_point(hit.get_center()):
+			return Rect2(cutaway.global_position + hit.position, hit.size)
 	_guide_target = population_button
 	return Rect2()
 
@@ -1905,7 +1962,7 @@ func _guide_room(type: String) -> Control:
 
 
 func _guide_modal_target(target_name: String) -> Control:
-	return modal_panel.find_child(target_name, true, false) as Control
+	return modal_panel.find_child(target_name, true, false) as Control if is_instance_valid(modal_panel) else null
 
 
 func _guide_move_target(sid: int, type: String) -> void:
@@ -1931,14 +1988,39 @@ func _layout_guide() -> void:
 	if not guide_active():
 		guide_layer.hide()
 		return
+	_guide_lesson_id = lg.fort_lesson()
+	var tip := _guide_lesson_tip(_guide_lesson_id) if _guide_lesson_id != "" else _guide_first_tip()
+	if _guide_lesson_id in ["store", "hq"] and (is_instance_valid(modal) and not is_instance_valid(build_scroll) or is_instance_valid(card) and selected != _lesson_room(_guide_lesson_id)):
+		tip = ""
+	var area := guide_layer.size
+	if area.x <= 0.0 or area.y <= 0.0:
+		guide_layer.hide()
+		return
+	var bounds := Rect2(guide_layer.global_position, area)
+	if is_instance_valid(_guide_target) and _guide_target.is_visible_in_tree():
+		_guide_rect = _guide_target.get_global_rect()
+		if _guide_target == lu.guide_stage_button and is_instance_valid(lu.fort_map):
+			_guide_rect = _guide_rect.intersection(lu.fort_map.get_global_rect())
+		var parent := _guide_target.get_parent()
+		while parent is Control:
+			if parent.clip_contents:
+				_guide_rect = _guide_rect.intersection((parent as Control).get_global_rect())
+			parent = parent.get_parent()
+	_guide_rect = _guide_rect.intersection(bounds)
+	if tip == "" or (not _guide_rect.has_area() and _guide_lesson_id == ""):
+		guide_layer.hide()
+		return
+	_draw_guide(tip, area)
+
+
+func _guide_first_tip() -> String:
 	var step := lg.fort_guide_step()
 	var sid := int(lg.flags.get("fort_guide_sid", 0))
 	var cooking_id := int(lg.flags.get("fort_guide_plot", -1))
 	var tip := ""
 	if lu.visible:
 		if lu.camp_window != "" or step != Legion.FortGuide.CAMPAIGN:
-			guide_layer.hide()
-			return
+			return ""
 		tip = "В поход! Первый бой"
 		if lu.guide_stage_button == null:
 			_guide_target = lu.guide_region_button
@@ -1946,8 +2028,7 @@ func _layout_guide() -> void:
 			var first_selected := lu.sel == {"c": 0, "r": 0, "s": 0} and is_instance_valid(lu._fight_btn) and bool(lg.flags.get("fort_guide_stage", false))
 			_guide_target = lu._fight_btn if first_selected else lu.guide_stage_button
 	elif not visible or is_instance_valid(card):
-		guide_layer.hide()
-		return
+		return ""
 	else:
 		match step:
 			Legion.FortGuide.RECRUIT:
@@ -1981,8 +2062,10 @@ func _layout_guide() -> void:
 					_guide_move_target(sid, "kitchen")
 			Legion.FortGuide.RATIONS:
 				if lg.fort_worker_plot(sid) == cooking_id:
-					tip = "Готовит пайки… Нажмите на хлеб над кухней"
-					_guide_target = plot_markers.get(cooking_id, {}).get("collect") as Control
+					var collect := plot_markers.get(cooking_id, {}).get("collect") as Button
+					tip = "Пайки готовятся. Подождите немного." if not is_instance_valid(collect) or collect.disabled else "Нажмите на пайки в верхней панели."
+					if not is_instance_valid(modal):
+						_guide_target = resource_bars["rations"]["plus"] as Control
 				else:
 					tip = "Перетащите его на кухню"
 					_guide_move_target(sid, "kitchen")
@@ -1994,10 +2077,11 @@ func _layout_guide() -> void:
 					if _guide_target == null:
 						_guide_target = _guide_modal_target("FortChest_wooden")
 			Legion.FortGuide.EQUIP:
-				tip = "Оденьте воина: нажмите на него и выберите вещь"
+				tip = "Откройте карточку воина."
 				if is_instance_valid(modal_panel):
 					var iid := int(lg.flags.get("fort_guide_item", 0))
 					if dweller_sid == sid:
+						tip = "Нажмите на трофей, чтобы надеть его."
 						_guide_target = _guide_modal_target("FortItemEquip")
 						if _guide_target == null:
 							_guide_target = _guide_modal_target("FortEquip_%d" % iid)
@@ -2016,34 +2100,199 @@ func _layout_guide() -> void:
 				tip = "В поход! Первый бой"
 				_guide_target = campaign_button
 			Legion.FortGuide.FINISH:
-				tip = "Сокровищница копит денарии.\nДеньги из города — кнопкой слева, раз в 5 часов"
+				tip = "Денарии можно заказать из города."
 				_guide_target = order_button
-	if is_instance_valid(_guide_target) and _guide_target.is_visible_in_tree():
-		_guide_rect = _guide_target.get_global_rect()
-		if _guide_target == lu.guide_stage_button and is_instance_valid(lu.fort_map):
-			_guide_rect = _guide_rect.intersection(lu.fort_map.get_global_rect())
-	if not _guide_rect.has_area():
-		guide_layer.hide()
-		return
-	guide_text.text = I18n.t(tip)
-	guide_skip.text = I18n.t("Понятно" if step == Legion.FortGuide.FINISH else "Пропустить обучение")
-	guide.reset_size()
-	var area := guide_layer.size
-	var k := minf(1.0, minf(area.y / 720.0, maxf(1.0, area.x - 16) / maxf(1.0, guide.size.x)))
+	return tip
+
+
+func _show_lesson_room(id: int) -> bool:
+	var type := String(lg.fort_plot(id).get("b", ""))
+	if type == "" or type != _lesson_room(lg.fort_lesson()) or not lg.fort_plot_timer(id).is_empty():
+		return false
+	show_plot(id)
+	return true
+
+
+func _lesson_room(lesson: String) -> String:
+	return String({"store": "store", "knowledge": "forge", "hq": "hq"}.get(lesson, ""))
+
+
+func _guide_lesson_room(type: String) -> void:
+	var id := int(lg.fort_slot_plot(type).get("id", -1))
+	if id < 0:
+		if placement_type == type:
+			_guide_target = plot_markers.get(lg.fort_empty_plot(), {}).get("button") as Control
+		elif is_instance_valid(build_scroll):
+			_guide_target = build_cards.get(type, {}).get("button") as Control
+			if is_instance_valid(_guide_target) and not _guide_target.is_visible_in_tree():
+				_guide_target = _guide_modal_target("FortBuildTab_2")
+		elif not is_instance_valid(modal) and not is_instance_valid(card):
+			_guide_target = build_button
+	elif not is_instance_valid(modal) and not is_instance_valid(card):
+		if diorama is FortCutaway and lg.fort_plot_timer(id).is_empty():
+			var view := diorama as FortCutaway
+			var footprint := view.plot_footprint(id).intersection(Rect2(Vector2.ZERO, view.size))
+			_guide_rect = Rect2(view.global_position + footprint.position, footprint.size)
+		else:
+			_guide_target = _guide_room(type)
+
+
+func _guide_lesson_tip(id: String) -> String:
+	if not visible:
+		return ""
+	if lu.visible:
+		if id != "knowledge" or lu.camp_window != "craft" or not is_instance_valid(lu.overlay):
+			return ""
+		if lg.craft_tier_max(lu._craft_plot) < 1:
+			_guide_target = lu.overlay.find_child("CampModalBack", true, false) as Control
+			return "Улучшите Кузницу для ковки."
+		var recipe := lu.overlay.find_child("CraftKind_sword", true, false) as Control
+		_guide_target = recipe
+		if lu._craft_kind == "sword" and bool(lg.flags.get("fort_lesson_recipe", false)):
+			if lu._craft_tier == 1:
+				_guide_target = lu.overlay.find_child("CraftStart", true, false) as Control
+				return "Начните ковку меча."
+			_guide_target = lu.overlay.find_child("CraftTier_1", true, false) as Control
+		return "Выберите меч первого уровня."
+	match id:
+		"store":
+			_guide_lesson_room("store")
+			return "Склад полон — производство стоит. Улучшите Склад."
+		"knowledge":
+			return _guide_knowledge_tip()
+		"outfit":
+			var target := lg.fort_outfit_lesson_target(dweller_sid)
+			if target.x == 0:
+				target = lg.fort_outfit_lesson_target()
+			if dweller_sid > 0 and target.x == dweller_sid:
+				_guide_target = _guide_modal_target("FortGear_outfit")
+				if dweller_slot == Gear.OUTFIT_SLOT:
+					_guide_target = _guide_modal_target("FortEquip_%d" % target.y)
+				return "Наденьте рабочую одежду."
+			if is_instance_valid(modal_panel):
+				_guide_target = _guide_modal_target("FortPerson_%d" % target.x)
+				if _guide_target == null:
+					return ""
+			elif not is_instance_valid(card):
+				if target.x != 0:
+					_guide_rect = _guide_person(target.x)
+				else:
+					return "Назначьте работника для новой одежды."
+			return "Откройте карточку работника."
+		"hq":
+			if is_instance_valid(card) and selected == "hq":
+				_guide_target = upgrade_button
+				return "Нажмите «Улучшить» и посмотрите, что откроется."
+			_guide_lesson_room("hq")
+			return "Можно улучшить Штаб. Откройте его."
+	return ""
+
+
+func _guide_knowledge_tip() -> String:
+	var forge := lg.fort_slot_plot("forge")
+	if knowledge_focus != "":
+		if lg.smith_known():
+			_guide_target = _guide_modal_target("FortKnowledgeBack")
+			return "Вернитесь в кузницу."
+		_guide_target = _guide_modal_target("KnowNode_smith")
+		if knowledge_focus == "smith":
+			_guide_target = _guide_modal_target("FortLearnSmith")
+		return "Изучите кузнечное знание."
+	if is_instance_valid(modal_panel) and modal_panel.name == "FortWorkerPicker":
+		var choices := lg.fort_worker_choices()
+		_guide_target = _guide_modal_target("FortWorkerRecruit" if choices.is_empty() else "FortWorkerChoice_%d" % int(choices[0]["id"]))
+		return "Назначьте кузнеца."
+	if is_instance_valid(modal) and not is_instance_valid(build_scroll) or is_instance_valid(card) and selected != "forge":
+		return ""
+	var forge_id := int(forge.get("id", -1))
+	var renovating := not lg.fort_plot_timer(forge_id).is_empty()
+	if is_instance_valid(card) and not renovating:
+		if not lg.smith_known():
+			_guide_target = card.find_child("FortRoomKnowledge", true, false) as Control
+			return "Откройте знания в кузнице."
+		if lg.craft_tier_max(selected_plot) < 1:
+			_guide_target = upgrade_button
+			return "Улучшите Кузницу для ковки."
+		_guide_target = main_action
+		return "Назначьте кузнеца." if lg.fort_worker(selected_plot).is_empty() else "Откройте рецепты кузницы."
+	if renovating:
+		_guide_target = _guide_room("forge") if not is_instance_valid(card) else null
+		return "Кузница улучшается. Подождите."
+	_guide_lesson_room("forge")
+	return "Постройте кузницу." if forge.is_empty() else "Откройте кузницу."
+
+
+func _draw_guide(tip: String, area: Vector2) -> void:
+	var translated := I18n.t(tip)
+	if guide_text.text != translated:
+		_guide_ack = ""
+	var k := minf(1.0, area.y / 840.0)
+	var dims := Vector2(minf(1100.0, area.x * 0.78 / k), 130.0)
 	guide.scale = Vector2.ONE * k
-	guide_pointer.scale = Vector2.ONE * k
+	guide.size = dims
+	guide.position = Vector2((area.x - dims.x * k) * 0.5, area.y - (dims.y + 22.0) * k)
+	guide_speaker.reset_size()
+	guide_speaker.position = Vector2(174, -21)
+	guide_text.position = Vector2(174, 25)
+	# Текст — только после ширины (иначе перенос по старой ширине раздувает высоту метки), затем размер ещё раз.
+	guide_text.size = Vector2(dims.x - 212, 65)
+	guide_text.text = translated
+	guide_text.size = Vector2(dims.x - 212, 65)
+	var finish := lg.fort_guide_step() == Legion.FortGuide.FINISH
+	var read := _guide_ack == translated
+	guide_skip.text = I18n.t("Понятно" if finish else ("Пропустить урок" if _guide_lesson_id != "" else "Пропустить обучение"))
+	guide_skip.reset_size()
+	guide_skip.position = Vector2(174, dims.y - guide_skip.size.y - 11)
+	guide_next.reset_size()
+	guide_next.position = dims - guide_next.size - Vector2(27, 10)
+
+	if read:
+		dims.y = 48.0
+		guide.size = dims
+		guide.position.y = area.y - (dims.y + 22.0) * k
+		guide_speaker.position = Vector2(13, (dims.y - guide_speaker.size.y) * 0.5)
+		guide_skip.position = Vector2(dims.x - guide_skip.size.x - 22, (dims.y - guide_skip.size.y) * 0.5)
 	var rect := Rect2(_guide_rect.position - guide_layer.global_position, _guide_rect.size)
-	var arrow_size := guide_pointer.size * k
-	var dims := guide.size * k
-	var x := clampf(rect.get_center().x, arrow_size.x * 0.5, maxf(arrow_size.x * 0.5, area.x - arrow_size.x * 0.5))
-	var above := rect.position.y >= arrow_size.y + dims.y + 8.0 or rect.get_center().y > area.y * 0.5
-	var y := rect.position.y - arrow_size.y + 2.0 if above else rect.end.y - 2.0
-	guide_pointer.flip_v = not above
-	guide_pointer.position = Vector2(x - arrow_size.x * 0.5, y)
-	var bubble_y := y - dims.y * 0.5 if above else y + arrow_size.y + dims.y * 0.5
-	guide.position = _screen_anchor(Vector2(x, bubble_y), dims, 8, 8)
+	var has_target := rect.has_area()
+	guide_pointer.visible = has_target
+	guide_pointer.scale = Vector2.ONE * k
+	if has_target:
+		var arrow_size := guide_pointer.size * k
+		var above := rect.position.y >= arrow_size.y
+		var x := clampf(rect.get_center().x, arrow_size.x * 0.5, area.x - arrow_size.x * 0.5)
+		guide_pointer.flip_v = not above
+		guide_pointer.position = Vector2(x - arrow_size.x * 0.5, rect.position.y - arrow_size.y + 2.0 if above else rect.end.y - 2.0)
+		# Полоса не перекрывает подсвеченную кнопку.
+		var strip := Rect2(guide.position, dims * k)
+		if strip.intersects(rect.grow(6)):
+			var left := rect.position.x - strip.size.x - 12.0
+			var right := rect.end.x + 12.0
+			if left >= 12.0:
+				guide.position.x = left
+			elif right + strip.size.x <= area.x - 12.0:
+				guide.position.x = right
+			else:
+				guide.position.y = maxf(30.0 * k, rect.position.y - (dims.y + 18.0) * k - (arrow_size.y if above else 0.0))
+	guide_spotlight = rect.grow(5).intersection(Rect2(Vector2.ZERO, area)) if has_target else Rect2()
+	var corner := guide_spotlight.position / area
+	var end := guide_spotlight.end / area
+	(guide_shade.material as ShaderMaterial).set_shader_parameter("spotlight", Vector4(corner.x, corner.y, end.x, end.y))
 	guide_layer.move_to_front()
 	guide_layer.show()
+	guide.show()
+	guide_shade.visible = has_target and not read
+	guide_text.visible = not read
+	guide_next.visible = not read
+	if not is_instance_valid(guide_portrait):
+		guide_portrait = FortPersonPreview.new()
+		guide_portrait.name = "FortGuidePortrait"
+		var surface := guide.get_child(0) as Control
+		surface.add_child(guide_portrait)
+		surface.move_child(guide_portrait, 0)
+		guide_portrait.setup({"id": 1, "hero": true}, [], 150, false, 0.10)
+		guide_portrait.position = Vector2(10, -23)
+		guide_portrait.size = Vector2.ONE * 150
+	guide_portrait.visible = not read
 
 
 func _stock(resource: String) -> float:
@@ -2095,6 +2344,14 @@ func _refresh_costs(node: Node) -> void:
 		_refresh_costs(child)
 
 
+func _resource_pressed(resource: String) -> void:
+	var plot_id := int(lg.flags.get("fort_guide_plot", -1))
+	if resource == "rations" and lg.fort_guide_cooking(plot_id) and lg.fort_worker_plot(int(lg.flags.get("fort_guide_sid", 0))) == plot_id:
+		_collect_plot(plot_id, (resource_bars[resource]["plus"] as Control).global_position)
+		return
+	show_resource_popup(resource)
+
+
 func show_resource_popup(resource: String) -> void:
 	if not TOP_NAMES.has(resource):
 		return
@@ -2142,6 +2399,10 @@ func show_build_menu(plot_id := -1) -> void:
 	_clear_room_selection()
 	build_pinned = plot_id >= 0
 	build_plot_id = plot_id if build_pinned else lg.fort_empty_plot()
+	var lesson_room := _lesson_room(lg.fort_lesson())
+	if not is_instance_valid(build_scroll) and lesson_room in ["store", "forge"] and lg.fort_count(lesson_room) == 0:
+		build_tab = 2
+		build_focus = lesson_room
 	var v := _new_modal(970, true)
 	if lg.fort_guide_step() == Legion.FortGuide.KITCHEN:
 		build_tab = 0
@@ -2208,8 +2469,11 @@ func show_build_menu(plot_id := -1) -> void:
 	var tab_names := ["Добыча", "Тренировка", "Поддержка"]
 	for tab_index in tab_names.size():
 		var tab := Look.button(I18n.t(tab_names[tab_index]), null, Look.SLATE if build_tab == tab_index else Look.PAPER)
+		tab.name = "FortBuildTab_%d" % tab_index
 		tab.pressed.connect(func():
 			build_tab = tab_index
+			if tab_index == 2 and lesson_room in ["store", "forge"]:
+				build_focus = lesson_room
 			show_build_menu(build_plot_id if build_pinned else -1))
 		tabs_row.add_child(tab)
 	for type: String in build_cards:
@@ -2692,9 +2956,11 @@ func show_worker_picker() -> void:
 				_close_modal()
 				show_plot(target)
 				_refresh())
+		button.name = "FortWorkerChoice_%d" % sid
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(button)
 	var recruit_worker := _button("У ворот форта", open_recruit_picker, "legion")
+	recruit_worker.name = "FortWorkerRecruit"
 	v.add_child(recruit_worker)
 	v.add_child(_button("Закрыть", _close_modal))
 	_fit_modal.call_deferred()
@@ -2924,6 +3190,13 @@ func show_dweller(sid: int, slot := "", change := "", tab := "all", page := 0) -
 		bonus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		bonus.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		left.add_child(bonus)
+		if change == "outfit":
+			bonus.modulate = Color(1.0, 1.0, 1.0, 0.0)
+			bonus.resized.connect(func(): bonus.pivot_offset = bonus.size * 0.5)
+			bonus.scale = Vector2.ONE * 0.82
+			var pop := create_tween().set_parallel(true)
+			pop.tween_property(bonus, "modulate", Color.WHITE, 0.16)
+			pop.tween_property(bonus, "scale", Vector2.ONE, 0.30).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	var move := Look.button(I18n.t("Переместить"), Kit.texture("swap"), Look.INSET)
 	move.name = "FortMoveDweller"
 	move.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -2943,7 +3216,7 @@ func show_dweller(sid: int, slot := "", change := "", tab := "all", page := 0) -
 	head.add_child(caption)
 	head.add_child(Look.close_button(_close_modal, 49))
 	StoreUI.grid(self, right, sid, tab, page, slot)
-	if change != "":
+	if change != "" and change != "outfit":
 		var feedback := Look.label(change, 20, Look.OLIVE)
 		feedback.name = "FortEquipChange"
 		right.add_child(feedback)
@@ -2976,7 +3249,10 @@ func _dweller_slot(parent: Control, person: Dictionary, slot: String, tab: Strin
 	button.tooltip_text = I18n.t(String(Gear.SLOT_NAME[slot])).capitalize()
 	if not it.is_empty():
 		button.tooltip_text += "\n" + Gear.name_of(it) + "\n" + StoreUI.item_stats(lg, it)
-		button.pressed.connect(StoreUI.item_card.bind(self, int(it["id"]), sid, show_dweller.bind(sid, "", "", tab, page)))
+		if slot == Gear.OUTFIT_SLOT and lg.fort_lesson() == "outfit" and lg.fort_outfit_lesson_target(sid).x == sid:
+			button.pressed.connect(show_dweller.bind(sid, slot))
+		else:
+			button.pressed.connect(StoreUI.item_card.bind(self, int(it["id"]), sid, show_dweller.bind(sid, "", "", tab, page)))
 	else:
 		button.pressed.connect(show_dweller.bind(sid, slot))
 	var icon := Kit.image(StoreUI.item_icon(self, it) if not it.is_empty() else Kit.texture("res://assets/ui/ai/icons/%s.png" % String(LegionUi.GEAR_ICON[slot])), Vector2(62, 62))
@@ -3028,6 +3304,14 @@ func _dweller_item_icon(it: Dictionary, pixels: float) -> Control:
 	return frame
 
 
+func guide_equip_item(sid: int, slot: String) -> int:
+	if lg.fort_guide_step() == Legion.FortGuide.EQUIP and sid == int(lg.flags.get("fort_guide_sid", 0)):
+		return int(lg.flags.get("fort_guide_item", 0))
+	if slot == Gear.OUTFIT_SLOT and lg.fort_lesson() == "outfit":
+		return lg.fort_outfit_lesson_target(sid).y
+	return 0
+
+
 func _equip_dweller(sid: int, iid: int) -> void:
 	var delta := lg.equip_power(sid, iid)
 	if lg.equip(sid, iid):
@@ -3035,7 +3319,7 @@ func _equip_dweller(sid: int, iid: int) -> void:
 			_close_modal()
 		else:
 			var it := lg.item(iid)
-			var feedback: String = "" if it.get("slot") == Gear.OUTFIT_SLOT else I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])]
+			var feedback: String = "outfit" if it.get("slot") == Gear.OUTFIT_SLOT else I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])]
 			show_dweller(sid, "", feedback)
 		_refresh()
 
@@ -3091,6 +3375,16 @@ func show_expansion(axis: String) -> void:
 	row.add_child(build)
 	row.add_child(_button("Закрыть", _close_modal))
 	_fit_modal.call_deferred()
+
+
+func show_hq_upgrade(id: int) -> void:
+	if lg.fort_plot(id).get("b") != "hq":
+		return
+	if not lg.fort_plot_timer(id).is_empty():
+		show_plot(id)
+		return
+	HqUI.build(self, id)
+	lg.finish_fort_lesson("hq")
 
 
 func _instant_upgrade() -> void:

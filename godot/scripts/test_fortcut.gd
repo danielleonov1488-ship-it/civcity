@@ -290,6 +290,21 @@ func _run() -> void:
 			and view._pick_id(view.project(id)) == id, "room %d reachable by panning" % id)
 	pan.pressed = false
 	view._gui_input(pan)
+	# Урок с целью за краем кадра не перехватывает камеру.
+	var hq_id := int(lg.fort_slot_plot("hq")["id"])
+	var screen := Rect2(Vector2.ZERO, view.size)
+	check(not screen.intersects(view.plot_footprint(hq_id)), "HQ is offscreen after panning")
+	var before_lesson := view._target_focus
+	lg.flags["fort_lessons"] = {"hq": "pending"}
+	camp._layout_guide()
+	check(camp.guide.is_visible_in_tree() and not camp.guide_shade.is_visible_in_tree()
+		and not camp.guide_pointer.is_visible_in_tree(), "offscreen lesson leaves the fort readable")
+	view._process(2.0)
+	check(view._target_focus.is_equal_approx(before_lesson), "visible lesson leaves camera where player panned")
+	lg.finish_fort_lesson("hq", true)
+	lg.flags.erase("fort_lessons")
+	camp._layout_guide()
+	check(not camp.guide_layer.is_visible_in_tree(), "inactive guide layer is hidden")
 	view.focus_plot("hq", false)
 	view._process(2.0)
 	for id: int in view.room_rects:
