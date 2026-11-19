@@ -1,0 +1,7 @@
+Quaternius (https://quaternius.com/) — CC0 1.0 Universal.
+Universal Base Characters, Modular Character Outfits - Fantasy, Universal Animation Library.
+
+PilotFemale and PilotMale contain the heads, hairstyles, Peasant and Ranger
+parts and selected UAL animations, adapted to the respective outfit rigs.
+The Ranger hood and the hidden base body were removed. Some maps are shared
+with assets/people. The local textures were downscaled for the room view.
