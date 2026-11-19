@@ -5,7 +5,7 @@ const Enemy = preload("res://scripts/legion_enemy_actor.gd")
 const View = preload("res://scripts/legion_battle_view.gd")
 const PersonLayer = preload("res://scripts/fort_person_layer.gd")
 const FortPerson = preload("res://scripts/fort_person.gd")
-const OUT := "D:/CivCity/.work/stage7/boss3d/shots/"
+const OUT := "D:/CivCity/.work/stage7/boss3d_b/shots/"
 const STRESS := ["elephant", "chariot", "charioteer", "mercenary", "briton",
 	"cataphractFoe", "khopesh", "bear", "gaulArcher", "druid"]
 
@@ -105,20 +105,184 @@ func _run() -> void:
 	for file: String in DirAccess.get_files_at(Enemy.ASSETS):
 		check(_good_name(file), "asset name " + file)
 	check(_good_name(Enemy.Boss.HORSE), "mount asset name")
+	await _portraits()
+	_long_models()
 	await _lineup(false)
 	_make_squad(game.city.legion)
+	await _campaign_ui()
 	# Крит, Сицилия и Карфаген входят в прежнюю карту похода.
 	Legion.V2 = false
-	await _fight("crete", ["bull", "minotaur", "pirate", "slinger"], "2_battle_crete.png")
-	await _fight("sicily", ["pirate", "cyclops", "slinger", "boar"], "3_battle_sicily.png")
-	await _fight("carthage", ["mercenary", "elephant", "slinger", "pirate"], "4_battle_carthage.png")
+	await _fight("crete", ["bull", "minotaur", "pirate", "slinger"], "")
+	await _fight("sicily", ["pirate", "cyclops", "slinger", "boar"], "")
+	await _fight("carthage", ["mercenary", "elephant", "slinger", "pirate"], "2_boss_panel_elephant.png", "elephant")
 	Legion.V2 = true
-	await _fight("britannia", ["chariot", "briton", "charioteer", "druid"], "5_battle_britannia.png")
-	await _fight("parthia", ["horseArcher", "cataphractFoe", "cataphract", "numidian", "horseArcher"], "6_battle_parthia.png")
-	await _fight("africa", STRESS, "", true)
+	await _fight("britannia", ["chariot", "briton", "charioteer", "druid"], "3_boss_panel_charioteer.png", "charioteer")
+	await _fight("parthia", ["horseArcher", "cataphractFoe", "cataphract", "numidian", "horseArcher"], "4_boss_panel_cataphract.png", "cataphract")
+	await _fight("africa", STRESS, "", "", true)
 	await _lineup(true)
 	check(deaths.size() == Enemy.BOSSES.size(), "all seven models fell: %s" % [deaths.keys()])
 	check(releases.has("cyclops") and releases.has("horseArcher"), "both releases use the model")
+
+
+func _portraits() -> void:
+	var canvas := CanvasLayer.new()
+	canvas.layer = 80
+	add_child(canvas)
+	var paper := ColorRect.new()
+	paper.color = Color("ead8ba")
+	paper.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	canvas.add_child(paper)
+	var grid := GridContainer.new()
+	grid.columns = 10
+	grid.position = Vector2(60, 28)
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 10)
+	paper.add_child(grid)
+	var seen := {}
+	var ids := Legion.ENEMIES.keys()
+	ids.sort_custom(func(a: String, b: String) -> bool: return a.nocasecmp_to(b) < 0)
+	for id: String in ids:
+		var path := Enemy.PORTRAITS + id + ".png"
+		if not check(FileAccess.file_exists(path), "portrait file " + id):
+			continue
+		var u := LegionSim.Unit.new()
+		u.side = "enemy"
+		u.key = id
+		var tex := View.portrait(u)
+		if not check(tex != null and tex.resource_path == path, "battle portrait route " + id):
+			continue
+		var pic := tex.get_image()
+		if not check(pic != null and pic.get_size() == Vector2i(256, 256), "portrait size " + id):
+			continue
+		pic.convert(Image.FORMAT_RGBA8)
+		var hash := HashingContext.new()
+		hash.start(HashingContext.HASH_SHA256)
+		hash.update(pic.get_data())
+		var digest := hash.finish().hex_encode()
+		check(not seen.has(digest), "identical portraits %s and %s" % [id, seen.get(digest, "")])
+		seen[digest] = id
+		var column := VBoxContainer.new()
+		grid.add_child(column)
+		var icon := TextureRect.new()
+		icon.texture = tex
+		icon.custom_minimum_size = Vector2(168, 160)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		column.add_child(icon)
+		var caption := Label.new()
+		caption.text = id
+		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		caption.add_theme_font_size_override("font_size", 21)
+		caption.add_theme_color_override("font_color", Color("432b20"))
+		column.add_child(caption)
+	print("ENEMY3D PORTRAITS %d unique / %d" % [seen.size(), ids.size()])
+	await shot("1_portraits_all.png")
+	canvas.queue_free()
+	await get_tree().process_frame
+
+
+func _long_models() -> void:
+	var view := View.new()
+	add_child(view)
+	view.size = Vector2(1600, 900)
+	view.prewarm()
+	var count := 0
+	for id: String in Enemy.LONG_MODELS:
+		var u := LegionSim.Unit.new()
+		u.id = count + 1
+		u.side = "enemy"
+		u.key = id
+		var f := view.add_unit(u)
+		if not check(f.actor != null and not f.long_model.is_empty(), "long model " + id):
+			continue
+		for left: bool in [false, true]:
+			f.face(left)
+			view._place_actor(f)
+			var dir := -1.0 if left else 1.0
+			var front: Vector2 = f.long_model[0]
+			var muzzle := view._actor_mark(f, Vector3(dir * front.x, 0, front.y))
+			check(absf(muzzle.x - f.position.x) < 1.0, "muzzle at contact " + id)
+			check((muzzle.x - f.chest().x) * dir > 20.0, "hit within body " + id)
+			check(f.head().y < f.chest().y - 30.0, "health bar above body " + id)
+			var projectile := LegionSim.Shot.new()
+			projectile.target = u
+			var sprite := Node2D.new()
+			view._place_shot(projectile, sprite, 1.0)
+			check(sprite.position.distance_to(f.chest()) < 0.1, "arrow lands on body " + id)
+			sprite.free()
+		if id == "horseArcher":
+			_check_turn(f)
+		count += 1
+	view.free()
+	print("ENEMY3D CONTACT %d long models, both sides and projectile targets" % count)
+
+
+func _check_turn(f: View.Fighter) -> void:
+	var resting := f.facing_angle()
+	f.attack()
+	f.attack_left = 0.30
+	f.tick(0.075, 1.0, 0.0, true, 0.0)
+	var first := absf(f.facing_angle() - resting)
+	check(first > 20.0 and first < 35.0, "ease into the shot")
+	f.tick(0.225, 1.0, 0.0, true, 0.0)
+	check(is_equal_approx(absf(f.facing_angle() - resting), 180.0), "full turn after 0.30 s")
+	f.attack_left = 0.0
+	f.tick(0.075, 1.0, 0.0, true, 0.0)
+	check(is_equal_approx(absf(f.facing_angle() - resting), 180.0 - first), "ease out of the shot")
+	f.tick(0.225, 1.0, 0.0, true, 0.0)
+	check(is_equal_approx(f.facing_angle(), resting), "normal yaw after 0.30 s")
+	print("ENEMY3D YAW %.1f degrees at 0.075 s, 180 at 0.30 s" % first)
+
+
+func _campaign_ui() -> void:
+	var legion := game.city.legion
+	var ui := LegionUi.attach(game.hud)
+	var progress := legion.progress
+	var free_mode := legion.free_mode
+	var fort_guide := legion.fort_guide_step()
+	var slots := legion.squad3.duplicate()
+	legion.free_mode = true
+	legion.flags["fort_guide"] = Legion.FortGuide.DONE
+	var province := _province("britannia")
+	if not check(province >= 0, "Britannia campaign"):
+		return
+	legion.progress = Legion.stage_index(0, Legion.regions().size() - 1, Legion.stages() - 1)
+	var last := Legion.stages() - 1
+	game.city.legion_v = 2
+	ui.view_c = 0
+	ui.view_r = province
+	ui.sel = {"c": 0, "r": province, "s": last}
+	ui.open("campaign")
+	await shot("5_map_boss_cards.png")
+	check(_has_portrait(ui.win, "charioteer") and _has_portrait(ui.win, "boudicca"), "map bosses")
+	ui.close(false)
+	game.city.legion_v = 3
+	for i in 3:
+		legion.squad3[i] = int(squad[i + 1]["sid"])
+	ui.open("campaign")
+	ui.open_fort_stage(0, province, Legion.JUNIOR2)
+	await shot("6_prep_screen.png")
+	var prep := ui.find_child("FortPrepEnemies", true, false)
+	check(prep != null and _has_portrait(prep, "charioteer"), "prep roster portrait")
+	ui.close(false)
+	legion.squad3 = slots
+	legion.progress = progress
+	legion.free_mode = free_mode
+	legion.flags["fort_guide"] = fort_guide
+
+
+func _has_portrait(root: Node, id: String) -> bool:
+	for icon: TextureRect in root.find_children("*", "TextureRect", true, false):
+		if icon.is_visible_in_tree() and icon.texture != null and icon.texture.resource_path == Enemy.PORTRAITS + id + ".png":
+			return true
+	return false
+
+
+func _province(region: String) -> int:
+	for i in Legion.regions().size():
+		if Legion.regions()[i].get("id", "") == region:
+			return i
+	return -1
 
 func _good_name(value: String) -> bool:
 	var lower := value.to_lower()
@@ -249,13 +413,9 @@ func _make_squad(legion: Legion) -> void:
 		squad.append(stats)
 
 
-func _fight(region: String, keys: Array, file: String, stress := false) -> void:
+func _fight(region: String, keys: Array, file: String, boss_id := "", stress := false) -> void:
 	var legion := game.city.legion
-	var region_index := -1
-	for i in Legion.regions().size():
-		if Legion.regions()[i].get("id", "") == region:
-			region_index = i
-			break
+	var region_index := _province(region)
 	if not check(region_index >= 0, "province " + region):
 		return
 	var troops := squad.duplicate(true)
@@ -268,7 +428,8 @@ func _fight(region: String, keys: Array, file: String, stress := false) -> void:
 	var stage := legion.stage_info(0, region_index, last)
 	var setup := {"kind": "campaign", "stage": stage, "seed": 532,
 		"squad": troops, "waves": [wave], "rations_paid": true, "perks": {"oil": 1, "bandage": 1, "volley": 1}}
-	battle = LegionBattle.open(game, setup, Callable(), {"legion": legion, "speed": 1.0})
+	var zoom := 1.14 if not file.is_empty() else 1.0
+	battle = LegionBattle.open(game, setup, Callable(), {"legion": legion, "speed": 1.0, "zoom": zoom})
 	if not check(await until(func() -> bool: return battle.sim != null and battle.fade.modulate.a <= 0.01, 35), "battle " + region):
 		battle.abort()
 		return
@@ -306,9 +467,16 @@ func _fight(region: String, keys: Array, file: String, stress := false) -> void:
 		await _fps()
 		await _close_battle()
 	else:
-		battle.paused = true
-		await shot(file)
-		battle.paused = false
+		if boss_id == "charioteer":
+			await _contact_shot(boss_id, "7_chariot_contact.png")
+		elif boss_id == "elephant":
+			await _contact_shot(boss_id, "8_elephant_contact.png")
+		if not file.is_empty():
+			battle.paused = true
+			check(battle.boss_panel.visible and battle.boss_pic.texture != null
+				and battle.boss_pic.texture.resource_path == Enemy.PORTRAITS + boss_id + ".png", "boss panel portrait " + boss_id)
+			await shot(file)
+			battle.paused = false
 		await _death(boss_views)
 	battle.abort()
 	await get_tree().process_frame
@@ -353,6 +521,43 @@ func _close_battle() -> void:
 	var height := maxf(ally.body_height(), enemy.body_height()) * view.world.scale.y
 	var crop := Rect2i(Vector2i(feet - Vector2(675.0, height * 1.08 + 160.0)), Vector2i(1350, int(height * 1.17 + 240.0)))
 	await shot("7_close_fight.png", crop)
+	battle.paused = false
+
+
+func _at_contact(key: String) -> View.Fighter:
+	for f: View.Fighter in battle.views.values():
+		var u := f.unit
+		if u.key != key or not u.alive or u.entering or u.target == null or not u.target.alive:
+			continue
+		var ally: View.Fighter = battle.views.get(u.target.id)
+		if ally == null:
+			continue
+		var reach := u.range_m + 0.35 * (u.size + u.target.size - 2.0)
+		var gap := (f.contact_point().x - ally.position.x) * (1.0 if f.flip_h else -1.0)
+		if LegionSim.dist(u, u.target) <= reach + 0.12 and absf(gap - 48.0 * ally.scale.x) <= 14.0:
+			return f
+	return null
+
+
+func _contact_shot(key: String, file: String) -> void:
+	if not check(await until(func() -> bool: return _at_contact(key) != null, 14.0), "front touches the line " + key):
+		for f: View.Fighter in battle.views.values():
+			var u := f.unit
+			if u.key == key and u.target != null:
+				var ally: View.Fighter = battle.views.get(u.target.id)
+				print("ENEMY3D CONTACT ", key, " t=", battle.sim.t, " clip=", f.clip, " facing left=", f.flip_h,
+					" distance=", LegionSim.dist(u, u.target), " reach=", u.range_m, " placement=", f.position,
+					" adjusted=", f.contact_point(), " ally=", ally.position if ally != null else Vector2.ZERO)
+		return
+	battle.paused = true
+	var f := _at_contact(key)
+	var ally: View.Fighter = battle.views.get(f.unit.target.id)
+	var view := battle.battle_view
+	var center := view.screen(f.contact_point().lerp(f.body_ground(), 0.36))
+	var height := maxf(f.body_height(), ally.body_height()) * view.world.scale.y
+	var crop := Rect2i(Vector2i(center - Vector2(645, height + 95)), Vector2i(1290, int(height + 260)))
+	print("ENEMY3D CONTACT ", key, " gap=", snappedf(absf(f.contact_point().x - ally.position.x), 0.1), " px")
+	await shot(file, crop.intersection(Rect2i(0, 202, 1920, 670)))
 	battle.paused = false
 
 func _fps() -> void:

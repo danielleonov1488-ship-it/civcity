@@ -5,6 +5,17 @@ const ASSETS := "res://assets/legion_enemies/"
 const BULL := "res://assets/animals/Bull.glb"
 const Boss = preload("res://scripts/legion_boss_model.gd")
 const BOSSES := Boss.MODELS
+const PORTRAITS := ASSETS + "portraits/"
+# Полуширина и вылет морды, точка попадания и место полоски здоровья в координатах модели.
+const LONG_MODELS := {
+	"chariot": [Vector2(0.09, 3.19), Vector3(0, 1.03, 2.06), Vector3(0, 2.09, -0.61)],
+	"charioteer": [Vector2(0.52, 3.21), Vector3(0.43, 1.03, 2.08), Vector3(-0.16, 2.09, -0.61)],
+	"horseArcher": [Vector2(0.11, 1.73), Vector3(0, 1.13, 0.27), Vector3(0, 2.55, -0.21)],
+	"cataphract": [Vector2(0.12, 1.75), Vector3(0, 1.13, 0.27), Vector3(0, 2.66, -0.21)],
+	"elephant": [Vector2(0.40, 2.11), Vector3(0, 1.34, 0.39), Vector3(0, 2.84, -0.29)],
+	"bull": [Vector2(0.14, 1.74), Vector3(0, 0.91, 0.27), Vector3(0, 1.64, 0.10)],
+	"bullLeader": [Vector2(0.14, 1.74), Vector3(0, 0.91, 0.27), Vector3(0, 1.64, 0.10)],
+}
 const TROUSERS := ["celt", "dacian", "eastern"]
 const ROBES := ["druid", "priest", "shade"]
 # Туника, оружие, щит или колчан, головные уборы для двух вариантов.
@@ -70,6 +81,11 @@ var size_factor := 1.0
 var yaw := 57.0
 var wide := false
 var boss_model: Boss
+
+
+static func portrait_texture(id: String) -> Texture2D:
+	var path := PORTRAITS.path_join(id + ".png")
+	return load(path) as Texture2D if ResourceLoader.exists(path, "Texture2D") else null
 
 
 static func prewarm(waves: Array) -> void:

@@ -11,6 +11,7 @@ const ART := "res://assets/legion_b1/"
 const DESIGN := Vector2(1600, 900)
 const CELL := 256
 const BASELINE := 242
+const PEOPLE_TILT := 5.0
 const FIELDS := {"forest": 2, "darkforest": 2, "swamp": 3, "labyrinth": 4,
 	"rocks": 4, "desert": 4, "hades": 4}
 const TRAIL_Y := [0.718, 0.710, 0.743, 0.714]
@@ -62,7 +63,7 @@ func _ready() -> void:
 	people_layer = PersonLayer.new()
 	people_layer.name = "AlliedPeople"
 	add_child(people_layer)
-	people_layer.setup("BattlePeople3D", 5.0)
+	people_layer.setup("BattlePeople3D", PEOPLE_TILT)
 	units.z_index = 2
 	effects.z_index = 3
 	people_layer.z_index = 1
@@ -122,6 +123,10 @@ static func sheet_id(u: LegionSim.Unit) -> String:
 
 
 static func portrait(u: LegionSim.Unit) -> Texture2D:
+	if u.side == "enemy":
+		var enemy := Enemy.portrait_texture(u.key)
+		if enemy != null:
+			return enemy
 	return load(ART + "chars/%s_portrait.png" % sheet_id(u))
 
 
@@ -248,6 +253,7 @@ func _add_enemy(f: Fighter) -> void:
 		f.actor_height = model.stature
 		f.wide = model.wide
 		f.boss_model = model.boss_model
+		f.long_model = Enemy.LONG_MODELS.get(u.key, [])
 		f.yaw = model.yaw
 		f.idle_clip = model.idle
 		f.walk_clip = model.walk
@@ -276,16 +282,45 @@ func _ally_person(u: LegionSim.Unit) -> Dictionary:
 func _place_actor(f: Fighter) -> void:
 	if not is_instance_valid(f.actor):
 		return
-	var feet := screen(f.position)
+	var feet := screen(f.body_ground())
 	var height := f.model_height() * world.scale.y
-	f.actor.visible = f.modulate.a > 0.0 and Rect2(Vector2.ZERO, size).grow(height).has_point(feet)
+	var frame := Rect2(Vector2.ZERO, size).grow(height)
+	var long := not f.long_model.is_empty()
+	f.actor.visible = f.modulate.a > 0.0 and (frame.has_point(feet) or (long and frame.has_point(screen(f.contact_point()))))
+	if f.actor.visible or long:
+		people_layer.place(f.actor, feet, height, f.facing_angle(), false, -4.6 if f.wide else 0.0)
 	if f.actor.visible:
-		var angle := -f.yaw if f.flip_h else f.yaw
-		if f.backward_shot():
-			angle -= 180.0 if angle > 0.0 else -180.0
-		people_layer.place(f.actor, feet, height, angle, false, -4.6 if f.wide else 0.0)
 		f.actor.set_opacity(f.modulate.a)
 		f.actor.animate(f.clip, f.sample)
+	if long:
+		var hit: Vector3 = f.long_model[1]
+		if sin(deg_to_rad(f.facing_angle())) > 0.0:
+			hit.x = -hit.x
+		f.hit_mark = _actor_mark(f, hit)
+		f.bar_mark = _actor_mark(f, f.long_model[2])
+
+
+func _actor_mark(f: Fighter, local: Vector3) -> Vector2:
+	var at := people_layer.camera.unproject_position(f.actor.to_global(local))
+	return (at - world.position) / world.scale
+
+
+func _track_contact(f: Fighter, weight: float) -> void:
+	if f.long_model.is_empty() or not f.unit.alive:
+		return
+	var u := f.unit
+	var target: Fighter = views.get(u.target.id) if u.target != null and u.target.alive else null
+	var offset := Vector2.ZERO
+	if not u.ranged() and not u.entering and target != null:
+		var reach := u.range_m + 0.35 * (u.size + target.unit.size - 2.0)
+		var blend := 1.0 - smoothstep(reach, reach + 0.85, LegionSim.dist(u, target.unit))
+		var flank := -1.0 if f.flip_h else 1.0
+		var guard := target.position - Vector2(flank * 48.0 * target.scale.x, 20.0)
+		# Ряды на экране разнесены по ширине сильнее, чем в симуляции.
+		offset = guard - f.position
+		offset.y = clampf(offset.y, -20.0, 20.0)
+		offset *= blend
+	f.contact_adjust = f.contact_adjust.lerp(offset, 1.0 - sqrt(1.0 - weight))
 
 
 func burst(kind: String, where: Vector2, radius := 1.0, tint := Color.WHITE) -> void:
@@ -357,6 +392,8 @@ func _place_shot(s: LegionSim.Shot, sprite: Node2D, k: float) -> void:
 	if sprite.has_meta("boss_launch"):
 		a = sprite.get_meta("boss_launch")
 	var b := (target.layout_point(s.x1, s.z1) if target != null else point(s.x1, s.z1)) - Vector2(0, 100.0)
+	if target != null and not target.long_model.is_empty():
+		b = target.chest()
 	var arc := 32.0 + absf(b.x - a.x) * 0.08
 	if s.kind in ["stone", "boulder"]:
 		arc *= 1.8
@@ -375,6 +412,9 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 	for id in views.keys():
 		var f: Fighter = views[id]
 		f.tick(gdt, gdt / dt if dt > 0.0 else 0.0, weight, fighting, sim.t)
+	for id in views.keys():
+		var f: Fighter = views[id]
+		_track_contact(f, weight)
 		_place_actor(f)
 		if f.unit.alive:
 			f.status(sim.t, fighting)
@@ -441,6 +481,11 @@ class Fighter extends Node2D:
 	var actor_height := 0.0
 	var wide := false
 	var boss_model: Boss
+	var long_model: Array = []
+	var contact_adjust := Vector2.ZERO
+	var hit_mark := Vector2.ZERO
+	var bar_mark := Vector2.ZERO
+	var shoot_turn := 0.0
 	var idle_clip := "Idle"
 	var walk_clip := "Walk"
 	var attack_clip := "Sword_Attack"
@@ -486,14 +531,29 @@ class Fighter extends Node2D:
 	func model_height() -> float:
 		return 234.0 * scale.y if actor_height > 0.0 else body_height()
 
+	func contact_point() -> Vector2:
+		return position + contact_adjust
+
+	func body_ground() -> Vector2:
+		if long_model.is_empty():
+			return position
+		# Конь лучника разворачивается на месте, сохраняя опору корпуса.
+		var outline: Vector2 = long_model[0]
+		var angle := deg_to_rad(yaw)
+		var front := (outline.x * cos(angle) + outline.y * sin(angle)) * model_height() / (1.79 * cos(deg_to_rad(PEOPLE_TILT)))
+		return contact_point() + Vector2(front if flip_h else -front, 0)
+
 	func head() -> Vector2:
-		return position - Vector2(0, body_height() + 10.0)
+		return position - Vector2(0, body_height() + 10.0) if long_model.is_empty() else bar_mark
 
 	func chest() -> Vector2:
-		return position.lerp(head(), 0.55)
+		return position.lerp(head(), 0.55) if long_model.is_empty() else hit_mark
 
 	func backward_shot() -> bool:
 		return boss_model != null and unit.key == "horseArcher" and clip in ["Windup", attack_clip]
+
+	func facing_angle() -> float:
+		return (yaw - 180.0 * smoothstep(0.0, 1.0, shoot_turn)) * (-1.0 if flip_h else 1.0)
 
 	func attack(action := "") -> void:
 		if sprite != null:
@@ -521,6 +581,7 @@ class Fighter extends Node2D:
 		hit_left = 0.0
 		clip = idle_clip
 		sample = 0.0
+		shoot_turn = 0.0
 		if sprite != null:
 			sprite.play(&"idle")
 
@@ -576,6 +637,8 @@ class Fighter extends Node2D:
 			var next := walk_clip if walking else idle_clip
 			sample = sample + gdt * (walk_rate if walking else 1.0) if clip == next else 0.0
 			clip = next
+		if unit.key == "horseArcher" and boss_model != null:
+			shoot_turn = move_toward(shoot_turn, float(backward_shot()), gdt / 0.30)
 
 	func _windup(now: float) -> bool:
 		if unit.key not in ["cyclops", "horseArcher"] or unit.entering or unit.target == null or not unit.target.alive:
@@ -632,7 +695,7 @@ class GroundLayer extends Node2D:
 			tint.a *= sin(float(lane_mark["t"]) / float(lane_mark["lifetime"]) * PI) * 0.7
 			draw_line(LegionBattleView.point(-15.0, z), LegionBattleView.point(15.0, z), tint, float(lane_mark["width"]), true)
 		for f: Fighter in views.values():
-			var foot := f.position + Vector2(0, 2)
+			var foot := f.body_ground().lerp(f.contact_point(), 0.34) + Vector2(0, 2)
 			draw_set_transform(foot, 0.0, Vector2(1.0, 0.22 if not f.wide else 0.18))
 			var r := (65.0 if f.wide else 39.0) * f.scale.x
 			draw_circle(Vector2.ZERO, r * 1.15, Color(0.24, 0.11, 0.04, 0.19 * f.modulate.a), true, -1.0, true)
