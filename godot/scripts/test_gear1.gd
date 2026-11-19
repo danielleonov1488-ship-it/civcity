@@ -49,7 +49,8 @@ func town() -> City:
 	c.money = 1e6
 	c.legion.army_tick()
 	c.legion.fort["money"] = 1e6
-	c.legion.fort["smith_knowledge"] = true
+	c.legion.fort["know"] = {"smith": true, "bows": true, "staffs": true, "spears": true, "armor1": true, "outfit": true,
+		"weap3": true, "weap5": true, "weap7": true, "weap9": true}
 	c.legion.flags["camp_open"] = true
 	c.legion.mats = {"iron": 10000.0, "wood": 10000.0, "leather": 10000.0}
 	Fixture.set_level(c.legion, "hq", 12)
@@ -291,7 +292,7 @@ func _screens() -> void:
 	lg.army_tick()
 	lg.flags["camp_open"] = true
 	lg.flags["camp3d_guide"] = 4
-	lg.fort = {"money": 1e6, "smith_knowledge": true, "exp": 1, "plots": [], "next_id": 0, "up": {}}
+	lg.fort = {"money": 1e6, "know": {"smith": true}, "exp": 1, "plots": [], "next_id": 0, "up": {}}
 	lg._fort_add_plot("hq", 4)
 	for type: String in ["barracks", "forge", "arsenal", "kitchen", "drill", "store"]:
 		lg._fort_add_plot(type, 4)
@@ -329,12 +330,19 @@ func _screens() -> void:
 		_finish()
 		return
 	weapon_button.pressed.emit()
+	check(camp.modal_panel.name == "FortItemCard", "equipped item card")
+	camp.show_dweller(int(s["id"]), "weapon")
 	var change := lg.equip_power(int(s["id"]), int(better["id"]))
 	var equip_button := camp.modal_panel.find_child("FortEquip_%d" % int(better["id"]), true, false) as Button
-	if not check(equip_button != null and equip_button.tooltip_text.contains(I18n.t("Сила: %d → %d") % [int(change[0]), int(change[1])]) and int(change[1]) > int(change[0]), "visible equip power comparison"):
+	if not check(equip_button != null and equip_button.tooltip_text.contains(I18n.t("Было → стало: %d → %d") % [int(change[0]), int(change[1])]) and int(change[1]) > int(change[0]), "visible equip power comparison"):
 		_finish()
 		return
 	equip_button.pressed.emit()
+	var apply := camp.modal_panel.find_child("FortItemEquip", true, false) as Button
+	if not check(apply != null and not apply.disabled, "compare card equip action"):
+		_finish()
+		return
+	apply.pressed.emit()
 	check(int(better["on"]) == int(s["id"]) and camp.modal_panel.find_child("FortEquipChange", true, false) != null, "equip feedback on new card")
 	await shot("2b_equip_comparison.png")
 	camp._close_modal()

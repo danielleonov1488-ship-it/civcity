@@ -209,7 +209,10 @@ func _run() -> void:
 		return
 	var chest := camp.modal_panel.find_child("FortChest_wooden", true, false) as Button
 	await shot("04_wooden", Step.CHEST, chest)
-	if not press(chest, "open starter chest"):
+	if not press(chest, "preview starter chest"):
+		return
+	var confirm_chest := camp.modal_panel.find_child("FortChestOpen", true, false) as Button
+	if not press(confirm_chest, "open starter chest"):
 		return
 	var iid := int(lg.flags.get("fort_guide_item", 0))
 	if not check(not lg.item(iid).is_empty() and not lg.chest_queue.has("wooden") and is_instance_valid(camp.modal_panel), "starter item received"):
@@ -225,7 +228,10 @@ func _run() -> void:
 		return
 	var equip := camp.modal_panel.find_child("FortEquip_%d" % iid, true, false) as Button
 	await shot("05_equip", Step.EQUIP, equip)
-	if not press(equip, "equip starter item"):
+	if not press(equip, "compare starter item"):
+		return
+	var confirm_equip := camp.modal_panel.find_child("FortItemEquip", true, false) as Button
+	if not press(confirm_equip, "equip starter item"):
 		return
 	check(int(lg.item(iid).get("on", 0)) == sid, "item worn by recruit")
 	await shot("06_barracks", Step.BARRACKS, null, sid)

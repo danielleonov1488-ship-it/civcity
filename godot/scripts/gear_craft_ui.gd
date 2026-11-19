@@ -3,6 +3,8 @@ extends RefCounted
 
 const Kit = preload("res://scripts/ui_kit_a.gd")
 const Ring = preload("res://scripts/fort_ui_ring.gd")
+const KnowUI = preload("res://scripts/legion_knowledge_ui.gd")
+const StoreUI = preload("res://scripts/legion_store_ui.gd")
 const OUTFIT_ICONS := {"cook": "need_food", "smith": "craft", "scribe": "research",
 	"priest": "need_faith", "builder": "build"}
 
@@ -20,12 +22,12 @@ static func build(ui: Variant) -> void:
 	if not ui._craft_kind in kinds and not (room == "forge" and ui._craft_kind in Gear.WORK_OUTFITS):
 		ui._craft_kind = String(kinds[0])
 	var unlocked := lg.craft_tier_max(plot_id)
-	ui._craft_tier = clampi(ui._craft_tier, 1, maxi(1, unlocked))
+	ui._craft_tier = clampi(ui._craft_tier, 1, Gear.TIERS)
 	var queue := lg.craft_queue(plot_id)
 	var jobs := []
 	for job: Dictionary in queue:
 		jobs.append([job["kind"], job["tier"], job["total"]])
-	var signature := str([plot_id, room, p["lv"], ui._craft_kind, ui._craft_tier, lg.smith_known(), jobs])
+	var signature := str([plot_id, room, p["lv"], ui._craft_kind, ui._craft_tier, lg.fort.get("know", {}), jobs])
 	var cached_v: Variant = ui.get_meta("craft_panel") if ui.has_meta("craft_panel") else null
 	var cached: PanelContainer = cached_v as PanelContainer if is_instance_valid(cached_v) else null   # окно могли уже освободить
 	if is_instance_valid(cached) and is_instance_valid(ui.overlay) and cached.get_parent() == ui.overlay and not ui.overlay.is_queued_for_deletion() and cached.get_meta("signature", "") == signature:
@@ -50,16 +52,6 @@ static func build(ui: Variant) -> void:
 		v.remove_child(back)
 		header.add_child(back)
 	v.add_child(header)
-	if not lg.smith_known():
-		v.add_child(Kit.banner_red(I18n.t(Legion.SMITH_LOCK)))
-		v.add_child(CampUI.attach(ui.hud)._cost_icons(Legion.SMITH_KNOWLEDGE_COST))
-		var learn := Kit.button("gold", "tasks", I18n.t("Кузнечное знание"))
-		learn.name = "CraftLearnSmith"
-		learn.pressed.connect(func(): ui.close(); CampUI.attach(ui.hud).show_smith_knowledge())
-		v.add_child(learn)
-		panel.set_meta("live", [])
-		ui._center_later(panel)
-		return
 	var recipes := HBoxContainer.new()
 	recipes.alignment = BoxContainer.ALIGNMENT_CENTER
 	recipes.add_theme_constant_override("separation", 24)
@@ -68,8 +60,8 @@ static func build(ui: Variant) -> void:
 	choices.name = "CraftKinds"
 	recipes.add_child(choices)
 	for kind: String in kinds:
-		var probe := Gear.craft_item(kind, 1)
-		choices.add_child(_recipe(ui, kind, ui._gear_tex(Gear.icon_of(probe), String(probe["slot"]))))
+		var probe := Gear.craft_item(kind, ui._craft_tier)
+		choices.add_child(_recipe(ui, kind, StoreUI.item_icon(CampUI.attach(ui.hud), probe)))
 	if room == "forge":
 		var clothes := HBoxContainer.new()
 		clothes.name = "CraftOutfits"
@@ -83,9 +75,19 @@ static func build(ui: Variant) -> void:
 		var b := Kit.round_button(null)
 		b.name = "CraftTier_%d" % tier
 		b.text = str(tier)
-		Kit.medallion_state(b, tier == ui._craft_tier, tier > unlocked)
-		b.tooltip_text = I18n.t("Тир") + " %d" % tier if not b.disabled else I18n.t("Для тира %d нужен уровень комнаты %d") % [tier, Gear.tier_room_level(tier)]
-		b.pressed.connect(func(): ui._craft_tier = tier; ui._craft_win())
+		var needed := lg.craft_knowledge(ui._craft_kind, tier)
+		Kit.medallion_state(b, tier == ui._craft_tier)
+		if needed != "":
+			_recipe_lock(b, needed, 22)
+			b.tooltip_text = lg.knowledge_requirement(needed)
+		else:
+			b.tooltip_text = I18n.t("Тир") + " %d" % tier if tier <= unlocked else I18n.t("Для тира %d нужен уровень комнаты %d") % [tier, Gear.tier_room_level(tier)]
+		b.pressed.connect(func():
+			ui._craft_tier = tier
+			if needed != "":
+				_open_tree(ui, plot_id, needed)
+			else:
+				ui._craft_win())
 		tiers.add_child(b)
 	v.add_child(tiers)
 	var probe := Gear.craft_item(ui._craft_kind, ui._craft_tier)
@@ -99,7 +101,7 @@ static func build(ui: Variant) -> void:
 	details.add_child(Kit.label(I18n.t(String(Gear.CRAFT_TYPES[ui._craft_kind])), 25))
 	var work_outfit: bool = probe["slot"] == Gear.OUTFIT_SLOT
 	if work_outfit:
-		details.add_child(Kit.label(Gear.stats_text(probe), 20))
+		details.add_child(Kit.label(StoreUI.item_stats(lg, probe), 20))
 	else:
 		var g := Gear.tier_stats(probe)
 		var cls: String = Gear.weapon_class(probe) if probe["slot"] == "weapon" else "legionary"
@@ -119,8 +121,9 @@ static func build(ui: Variant) -> void:
 	odds.alignment = BoxContainer.ALIGNMENT_CENTER
 	odds.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	odds.add_theme_constant_override("separation", 10)
-	var rarity_odds: Array = [Gear.CRAFT_ODDS[0] + Gear.CRAFT_ODDS[1], 0,
-		Gear.CRAFT_ODDS[2] + Gear.CRAFT_ODDS[3] + Gear.CRAFT_ODDS[4]] if work_outfit else Gear.CRAFT_ODDS
+	var base_odds := lg.craft_odds()
+	var rarity_odds: Array = [base_odds[0] + base_odds[1], 0,
+		base_odds[2] + base_odds[3] + base_odds[4]] if work_outfit else base_odds
 	for r in rarity_odds.size():
 		if int(rarity_odds[r]) == 0:
 			continue
@@ -140,6 +143,13 @@ static func build(ui: Variant) -> void:
 	var requirement := Kit.banner_red("")
 	requirement.name = "CraftRequirement"
 	v.add_child(requirement)
+	var missing := lg.craft_knowledge(ui._craft_kind, ui._craft_tier)
+	if missing != "":
+		var lock := Kit.button("gold", KnowUI.node_icon(missing), lg.knowledge_requirement(missing))
+		lock.name = "CraftLearnSmith" if missing == "smith" else "CraftKnowledgeLock"
+		_recipe_lock(lock, missing, 26)
+		lock.pressed.connect(_open_tree.bind(ui, plot_id, missing))
+		v.add_child(lock)
 	var materials := PackedStringArray()
 	var need := Gear.craft_mats(ui._craft_kind, ui._craft_tier)
 	for material: String in need:
@@ -174,7 +184,7 @@ static func build(ui: Variant) -> void:
 		queue_row.add_child(job_row)
 		var job: Dictionary = queue[i]
 		var item := Gear.craft_item(String(job["kind"]), int(job["tier"]))
-		var slot := Kit.slot(ui._gear_tex(Gear.icon_of(item), String(item["slot"])), false, 88)
+		var slot := Kit.slot(StoreUI.item_icon(CampUI.attach(ui.hud), item), false, 88)
 		slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		slot.tooltip_text = I18n.t(String(Gear.CRAFT_TYPES[job["kind"]]))
 		job_row.add_child(slot)
@@ -204,8 +214,17 @@ static func build(ui: Variant) -> void:
 	store.name = "CraftEquipment"
 	store.custom_minimum_size.x = 190.0
 	store.tooltip_text = I18n.t("Снаряжение")
-	store.pressed.connect(func(): ui.open_camp_window("store"))
+	store.pressed.connect(func(): ui.close(); CampUI.attach(ui.hud).show_storage())
 	actions.add_child(store)
+	if room == "forge":
+		var sets := Kit.round_button(KnowUI.node_icon("sets"))
+		sets.tooltip_text = I18n.t("Реликвии легионов")
+		if not lg.knows("sets"):
+			_recipe_lock(sets, "sets", 24)
+			sets.pressed.connect(_open_tree.bind(ui, plot_id, "sets"))
+		else:
+			sets.pressed.connect(_open_sets.bind(ui, plot_id))
+		actions.add_child(sets)
 	panel.set_meta("live", ui._live.duplicate())
 	ui._center_later(panel)
 
@@ -215,8 +234,78 @@ static func _recipe(ui: Variant, kind: String, icon: Texture2D) -> Button:
 	button.name = "CraftKind_" + kind
 	button.tooltip_text = I18n.t(String(Gear.CRAFT_TYPES[kind]))
 	Kit.medallion_state(button, kind == ui._craft_kind)
-	button.pressed.connect(func(): ui._craft_kind = kind; ui._craft_win())
+	var needed: String = ui.lg.craft_knowledge(kind, ui._craft_tier)
+	if needed != "":
+		_recipe_lock(button, needed, 25)
+		button.tooltip_text += "\n" + ui.lg.knowledge_requirement(needed)
+		button.pressed.connect(func():
+			ui._craft_kind = kind
+			_open_tree(ui, ui._craft_plot, needed))
+	else:
+		button.pressed.connect(func(): ui._craft_kind = kind; ui._craft_win())
 	return button
+
+
+static func _recipe_lock(button: Button, id: String, pixels: int) -> void:
+	var chip := Kit.image(KnowUI.node_icon(id), Vector2.ONE * pixels)
+	chip.position = Vector2(4, 4)
+	button.add_child(chip)
+	var lock := Kit.image(KnowUI.lock_icon(), Vector2(17, 17))
+	lock.name = "CraftRecipeLock"
+	button.add_child(lock)
+	lock.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	lock.offset_left = -20
+	lock.offset_top = 3
+	lock.offset_right = -3
+	lock.offset_bottom = 20
+
+
+static func _open_tree(ui: Variant, plot: int, id: String) -> void:
+	var camp := CampUI.attach(ui.hud)
+	ui.close()
+	camp.show_knowledge(id, func(): camp._close_modal(); ui.open_craft(plot))
+
+
+static func _open_sets(ui: Variant, plot: int, kind := "sword") -> void:
+	var lg: Legion = ui.lg
+	var camp := CampUI.attach(ui.hud)
+	ui.close()
+	var body: VBoxContainer = camp._new_modal(700, true)
+	var header := HBoxContainer.new()
+	var title := Kit.label(I18n.t("Реликвии легионов"), 32)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	header.add_child(camp._button("×", func(): camp._close_modal(); ui.open_craft(plot)))
+	body.add_child(header)
+	var kinds := HBoxContainer.new()
+	body.add_child(kinds)
+	for key: String in ["sword", "bow", "staff", "spear", "helmet", "offhand", "armor"]:
+		var it := Gear.craft_item(key, 1)
+		var choice := Kit.round_button(StoreUI.item_icon(camp, it))
+		Kit.medallion_state(choice, key == kind)
+		choice.tooltip_text = I18n.t(Gear.CRAFT_TYPES[key])
+		choice.pressed.connect(_open_sets.bind(ui, plot, key))
+		kinds.add_child(choice)
+	var slot := Gear.craft_slot(kind)
+	var cls := String(Gear.KIND_CLS.get(kind, "legionary"))
+	body.add_child(camp._cost_icons({"money": Gear.SET_FORGE["money"], "mats": lg.set_mats(slot)}))
+	for set_id: String in Gear.SET_IDS:
+		var name_text := I18n.t(Gear.SETS[set_id]["name"])
+		var row := HBoxContainer.new()
+		var label := Kit.label(name_text + " · " + str(lg.relics.get(set_id, 0)), 22)
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(label)
+		var action := Kit.button("cream", "craft", I18n.t("Ковать"))
+		var why := lg.can_forge_set(set_id, slot, cls)
+		action.disabled = why != ""
+		action.tooltip_text = I18n.t(why)
+		action.pressed.connect(func():
+			if lg.forge_set(set_id, slot, cls):
+				camp._close_modal()
+				ui.open_craft(plot))
+		row.add_child(action)
+		body.add_child(row)
+	camp._fit_modal.call_deferred()
 
 
 static func refresh(ui: Variant, entry: Dictionary) -> void:
@@ -227,7 +316,7 @@ static func refresh(ui: Variant, entry: Dictionary) -> void:
 		(entry["start"] as Button).disabled = why != ""
 		(entry["start"] as Button).tooltip_text = I18n.t("Ковать") + ("\n" + I18n.t(why) if why != "" else "")
 		var requirement: PanelContainer = entry["requirement"]
-		requirement.visible = why != ""
+		requirement.visible = why != "" and ui.lg.craft_knowledge(ui._craft_kind, ui._craft_tier) == ""
 		(requirement.get_meta("label") as Label).text = I18n.t(why)
 		(entry["label"] as Label).text = "%d / %d" % [queue.size(), ui.lg.craft_capacity(int(entry["plot"]))]
 		CampUI.attach(ui.hud)._refresh_costs(entry["costs"])

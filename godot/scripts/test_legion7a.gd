@@ -248,7 +248,7 @@ func _screens() -> void:
 	check(camp.card.find_child("FortSmithLock", true, false) != null and camp.main_action.text == I18n.t("Кузнечное знание"), "forge card explains knowledge lock")
 	await shot("3_forge_locked.png")
 	camp.main_action.pressed.emit()
-	check(camp.modal_panel.name == "FortSmithKnowledge", "knowledge action opens research")
+	check(camp.modal_panel.name == "FortKnowledgeTree", "knowledge action opens research")
 	await shot("4_knowledge.png")
 	camp._close_modal()
 	lg.rations = 0.0

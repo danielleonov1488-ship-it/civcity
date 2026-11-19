@@ -148,10 +148,10 @@ static func craft_item(kind: String, tier: int, rarity := 0) -> Dictionary:
 	return it
 
 
-static func roll_craft_rarity(rng: RandomNumberGenerator) -> int:
+static func roll_craft_rarity(rng: RandomNumberGenerator, odds: Array = CRAFT_ODDS) -> int:
 	var n := rng.randi_range(1, 100)
-	for r in CRAFT_ODDS.size():
-		n -= int(CRAFT_ODDS[r])
+	for r in odds.size():
+		n -= int(odds[r])
 		if n <= 0:
 			return r
 	return 0
