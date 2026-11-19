@@ -511,6 +511,7 @@ static func kit_mesh(name: String) -> Mesh:
 	var k := Kit.new()
 	match name:
 		"#mil_sand": _k_sand(k)
+		"#mil_race_sand": _race_sand(k)
 		"#mil_target": _k_target(k)
 		"#mil_dummy": _k_dummy(k)
 		"#mil_tent": _k_tent(k)
@@ -559,6 +560,18 @@ static func _k_eagle(k: Kit) -> void:
 ## Утоптанный песок плаца: плитка 1×1 м (масштабируется по месту), чуть неровная по краю
 static func _k_sand(k: Kit) -> void:
 	k.box(Vector3(-0.5, 0.0, -0.5), Vector3(0.5, 0.015, 0.5), SAND, ["bottom"])
+
+
+## Песок по контуру дорожки: две прямые и два поворота без стыков плиток.
+static func _race_sand(k: Kit) -> void:
+	var rim := PackedVector3Array()
+	var radius := CatDressGrand.CIRCUS_SAND_RADIUS
+	for side: float in [1.0, -1.0]:
+		for i in 17:
+			var a := -PI * 0.5 + PI * i / 16.0
+			rim.append(Vector3(side * (CatDressGrand.CIRCUS_TURN + radius * cos(a)), 0, side * radius * sin(a)))
+	for i in rim.size():
+		k.tri(Vector3.ZERO, rim[(i + 1) % rim.size()], rim[i], SAND)
 
 
 ## Мишень: соломенный круг с красно-белыми кольцами на деревянной треноге, в ней пара стрел

@@ -18,6 +18,10 @@ var sp
 var V: Dictionary
 var rng := RandomNumberGenerator.new()
 var k := 1.0
+var straight_half := A
+var lane_min := LANE_MIN
+var lane_max := LANE_MAX
+var teams := TEAMS.size()
 var floor_y := 0.0
 var chariots := []
 var on := false
@@ -29,7 +33,13 @@ func _init(s, v: Dictionary) -> void:
 	V = v
 	rng.seed = int(V["id"]) * 17 + 3
 	k = Catalog.scale_of(String(V.get("type", "circus_fl")))
-	var h: float = V["lay"]["tris"].surface(0.0, 2.2 * k, 1.0)
+	if V["type"] == "circus":
+		k = 1.0
+		straight_half = CatDressGrand.CIRCUS_TURN
+		lane_min = 1.95
+		lane_max = 3.05
+		teams = 2
+	var h: float = V["lay"]["tris"].surface(0.0, (lane_min + lane_max) * 0.5 * k, 1.0)
 	floor_y = h if h > -INF else 0.02
 
 
@@ -52,7 +62,7 @@ func free_all() -> void:
 ## Колесница: кузов (пол, изогнутый передок, борта) в цвете партии с золотой каймой, два колеса со спицами, дышло,
 ## пара коней в галопе; возничий — в толпе площадки
 func _spawn() -> void:
-	for i in TEAMS.size():
+	for i in teams:
 		var col: Color = TEAMS[i][1]
 		var n := Node3D.new()
 		(V["root"] as Node3D).add_child(n)
@@ -105,7 +115,7 @@ func _spawn() -> void:
 		var dust := _dust()
 		body.add_child(dust)
 		dust.position = Vector3(0, 0.1, 0.4)
-		var lane := lerpf(LANE_MIN, LANE_MAX, (i + 0.5) / TEAMS.size())
+		var lane := lerpf(lane_min, lane_max, (i + 0.5) / teams)
 		var c := {"n": n, "body": body, "wheels": wheels, "horses": horses, "dust": dust, "team": TEAMS[i][0], "hoof": hoof,
 			"lane": lane * k, "lane_to": lane * k, "s": i * 4.2, "v": V_STRAIGHT * 0.8, "pace": rng.randf_range(0.94, 1.06),
 			"ph": rng.randf() * TAU, "lap": 0, "yaw": 0.0}
@@ -251,7 +261,7 @@ func _dust() -> GPUParticles3D:
 
 ## Точка и направление на круге: прямые z = ∓r от −A до +A, повороты вокруг мет (±A, 0) радиусом r
 func _at(s: float, r: float) -> Array:
-	var a := A * k
+	var a := straight_half * k
 	var P := 4.0 * a + 2.0 * PI * r
 	s = fposmod(s, P)
 	if s < 2.0 * a:
@@ -269,11 +279,11 @@ func _at(s: float, r: float) -> Array:
 
 
 func _lap_len(r: float) -> float:
-	return 4.0 * A * k + 2.0 * PI * r
+	return 4.0 * straight_half * k + 2.0 * PI * r
 
 
 func _in_turn(s: float, r: float) -> float:
-	var a := A * k
+	var a := straight_half * k
 	var P := _lap_len(r)
 	s = fposmod(s, P)
 	var t1 := 2.0 * a
@@ -307,7 +317,7 @@ func tick(dt: float, ph: String) -> void:
 			if gap > 0.0 and gap < 3.4 and absf(float(o["lane"]) - r) < 0.6:
 				block = true
 				if float(o["v"]) < want:
-					c["lane_to"] = clampf(float(o["lane"]) + 0.75 * k * (1.0 if float(o["lane"]) < LANE_MAX * k - 0.6 else -1.0), LANE_MIN * k, LANE_MAX * k)
+					c["lane_to"] = clampf(float(o["lane"]) + 0.75 * k * (1.0 if float(o["lane"]) < lane_max * k - 0.6 else -1.0), lane_min * k, lane_max * k)
 					if not c.has("pass") and turn < 0.2:
 						c["pass"] = o
 		if block and turn > 0.5:
@@ -316,7 +326,7 @@ func tick(dt: float, ph: String) -> void:
 		# дорожка: к цели, на прямых — медленно назад к своей
 		c["lane"] = move_toward(r, float(c["lane_to"]), dt * 0.55)
 		if not block and turn < 0.1 and rng.randf() < dt * 0.15:
-			c["lane_to"] = lerpf(LANE_MIN, LANE_MAX, rng.randf()) * k
+			c["lane_to"] = lerpf(lane_min, lane_max, rng.randf()) * k
 		var P0 := _lap_len(r)
 		var old_prog := float(c["s"]) / P0
 		c["s"] = float(c["s"]) + float(c["v"]) * dt

@@ -6,6 +6,8 @@ render_mode blend_mix, depth_draw_opaque, cull_back, specular_schlick_ggx;
 
 uniform vec3 tint : source_color = vec3(0.34, 0.74, 0.78);
 uniform vec3 deep : source_color = vec3(0.13, 0.44, 0.54);
+uniform float surface_roughness = 0.06;
+uniform float surface_specular = 0.7;
 
 varying vec3 wpos;
 varying vec3 wnrm;
@@ -45,6 +47,6 @@ void fragment() {
 	vec3 col = mix(deep, tint, 0.6 + 0.4 * vn(p * 1.5 + t * 0.1));
 	ALBEDO = col + vec3(0.25, 0.3, 0.3) * c * top;
 	ALPHA = 0.86;
-	ROUGHNESS = 0.06;
-	SPECULAR = 0.7;
+	ROUGHNESS = surface_roughness;
+	SPECULAR = surface_specular;
 }

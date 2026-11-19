@@ -7,6 +7,10 @@ static func category(d: Dictionary) -> String:
 	return String(d.get("need", d.get("sub", "") if d.get("kind", "") == "shop" else ""))
 
 
+static func supplies(d: Dictionary, need: String) -> bool:
+	return need != "" and (category(d) == need or String(d.get("need_extra", "")) == need)
+
+
 static func state(coverage: int) -> String:
 	return "red" if coverage < 34 else ("yellow" if coverage < 67 else "green")
 
@@ -26,8 +30,8 @@ static func reset(h: Dictionary) -> void:
 		h["need_sources"][n] = []
 
 
-static func add(h: Dictionary, b: Dictionary, d: Dictionary, bonus: int) -> void:
-	var n := category(d)
+static func add(h: Dictionary, b: Dictionary, d: Dictionary, bonus: int, need := "") -> void:
+	var n := category(d) if need == "" else need
 	if n not in Defs.NEED_ORDER:
 		return
 	var pct := percent(float(b.get("staff", 1.0)) * 100.0)

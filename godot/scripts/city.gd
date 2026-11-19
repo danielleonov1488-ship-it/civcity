@@ -103,7 +103,7 @@ var renown := 0.0                     # известность города (Ren
 var clock_h := 0                       # игровых часов с начала города (сохраняется; для походов этапа 3)
 var visits := {}                       # «Уютный Рим», этап 3: дом → {вид похода: clock_h} (Balance.VISIT_BONUS)
 var wonders_v := 1                     # городские чудеса: разовый перенос старых покупок
-var wonder_credits := {}               # тип → бесплатные постановки, включая ещё скрытые модели
+var wonder_credits := {}               # тип → бесплатные постановки
 var gifts := {}                        # подарки друзей (SocialNet, docs/ONLINE_V2.md): тип → [названия городов-дарителей];
                                        # каждый — одна постройка этого типа даром (и без исследования), она помнит дарителя
 ## Украшения этапа 5 (решение владельца Q17): 0 — живой город (все прежние облики открыты, как были), 1 — новая игра:
@@ -149,7 +149,7 @@ func is_house(b: Dictionary) -> bool:
 const APRON_KINDS := ["house", "shop", "rp", "store", "military"]
 const KERB_TYPES := ["house_patrician", "temple", "pantheon"]
 ## Большие постройки, под которыми весь след — мостовая (Land.pave_under): между ними и улицей нет травы
-const PAVE_TYPES := ["colosseum", "circus_fl", "forum", "theatre", "odeon", "thermae", "ludus", "trajan"]
+const PAVE_TYPES := ["colosseum", "circus_fl", "forum", "theatre", "odeon", "thermae", "ludus", "trajan", "circus", "aqueduct", "caracalla", "jupiter"]
 const PAVE_SLOPE := 0.5                # дом и лавка на мостовой — только на почти ровном месте (иначе ступени вокруг)
 
 
@@ -261,7 +261,7 @@ func wonder_credit_ready(type: String) -> bool:
 	return int(wonder_credits.get(type, 0)) > 0 and not bool(Defs.B[type].get("hidden", false))
 
 
-## После загрузки зданий: четыре будущие модели сохраняют право на постановку.
+## После загрузки зданий: сохраняем права на постановку старых чудес.
 func _migrate_wonders(d: Dictionary) -> void:
 	wonder_credits = {}
 	for type: String in d.get("wonder_credits", {}):
@@ -1348,9 +1348,14 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 		var mon := {}                   # вид памятника → бонус (одинаковые не складываются)
 		for m in monuments:
 			var md := def(m)
-			if (h["pos"] as Vector2).distance_to(m["pos"]) <= need_range(md):
-				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), roundi(float(md["bonus"]) * (float(m.get("staff", 1.0)) if manual_hiring() else 1.0)))
-				HouseNeeds.add(h, m, md, roundi(float(md["bonus"]) * (float(m.get("staff", 1.0)) if manual_hiring() else 1.0)))
+			var dist: float = (h["pos"] as Vector2).distance_to(m["pos"])
+			var bonus := roundi(float(md["bonus"]) * (float(m.get("staff", 1.0)) if manual_hiring() else 1.0))
+			if dist <= need_range(md):
+				mon[m["type"]] = maxi(int(mon.get(m["type"], 0)), bonus)
+				HouseNeeds.add(h, m, md, bonus)
+			var extra := String(md.get("need_extra", ""))
+			if extra != "" and dist <= need_range(md, extra):
+				HouseNeeds.add(h, m, md, 0, extra)
 		for m in prem:                  # «главные» украшения — каждый вид один раз, сверх предела украшений
 			var pd := def(m)
 			if (h["pos"] as Vector2).distance_to(m["pos"]) <= need_range(pd):
@@ -4721,8 +4726,8 @@ func build_price(type: String) -> float:
 	return 0.0 if wonder_credit_ready(type) else float(Defs.B[type]["cost"]) * edict_mul("build_cost")
 
 
-func need_range(d: Dictionary) -> float:
-	return Defs.range_m(d) * edict_mul("need_radius:" + HouseNeeds.category(d))
+func need_range(d: Dictionary, need := "") -> float:
+	return Defs.range_m(d) * edict_mul("need_radius:" + (HouseNeeds.category(d) if need == "" else need))
 
 
 func need_penalty(need: String) -> int:

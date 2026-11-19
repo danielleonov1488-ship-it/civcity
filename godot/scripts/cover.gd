@@ -380,25 +380,25 @@ static func overview_sets(c: City, mode: String) -> Dictionary:
 	var fountains := []                         # «Вода»: фонтаны (как у просьбы «фонтан у домов» — City.progress_of near)
 	if mode == "water":
 		for id in c.buildings:
-			if c.buildings[id]["type"] == "fountain":
+			if c.buildings[id]["type"] in ["fountain", "aqueduct"]:
 				fountains.append(c.buildings[id])
 				shops.append(id)
 	for id in c.buildings:
 		var b: Dictionary = c.buildings[id]
 		var d := c.def(b)
-		if HouseNeeds.category(d) == mode or d["kind"] == "shop":
-			if HouseNeeds.category(d) == mode:
+		if HouseNeeds.supplies(d, mode) or d["kind"] == "shop":
+			if HouseNeeds.supplies(d, mode):
 				shops.append(id)
 			continue
 		if d["kind"] != "house" or int(b["pop"]) + int(b.get("coming", 0)) <= 0:
 			continue
 		if mode == "water":
-			# зелёный — фонтан правда поит дом (+6% счастья, как в карточке); золотой — фонтан рядом, но не работает
-			# (нет дороги у входа); красный — фонтана рядом нет
-			var k := 0 if (b.get("mon_types", {}) as Dictionary).has("fountain") else 2
+			# Зелёный — источник работает, золотой — рядом, но не работает, красный — далеко.
+			var mon: Dictionary = b.get("mon_types", {})
+			var k := 0 if mon.has("fountain") or mon.has("aqueduct") else 2
 			if k == 2:
 				for f: Dictionary in fountains:
-					if (f["pos"] as Vector2).distance_to(b["pos"]) <= maxf(18.0, Defs.range_m(c.def(f))):
+					if (f["pos"] as Vector2).distance_to(b["pos"]) <= maxf(18.0, c.need_range(c.def(f))):
 						k = 1
 						break
 			tint[id] = [GREEN, GOLD, RED][k]

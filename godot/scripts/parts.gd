@@ -290,10 +290,13 @@ static func _special_mesh(name: String) -> Mesh:
 			m = Synty.material("Marble_01").duplicate()
 			m.uv1_triplanar = true
 			m.uv1_scale = Vector3(0.4, 0.4, 0.4)
-		"#water":
-			# вода бассейнов и фонтанов — живая (рябь, блики, прожилки света: shaders/pool_water.gdshader)
+		"#water", "#water_bath":
+			# Термы: рябь под паром рассеивает яркий блик, особенно ночью.
 			var wm := ShaderMaterial.new()
 			wm.shader = load("res://shaders/pool_water.gdshader")
+			if name == "#water_bath":
+				wm.set_shader_parameter("surface_roughness", 0.28)
+				wm.set_shader_parameter("surface_specular", 0.40)
 			bm.material = wm
 			_special[name] = bm
 			return bm

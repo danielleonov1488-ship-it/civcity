@@ -7,7 +7,7 @@ extends Node3D
 
 const NEAR := 55.0
 const SCAN := 2.0                        # с — как часто пересматривать фонтаны города
-const TYPES := ["fountain", "smallfountain", "nymphaeum"]
+const TYPES := ["fountain", "smallfountain", "nymphaeum", "aqueduct"]
 
 var game
 var jets := {}                           # id постройки → {em: [GPUParticles3D], kind: [top|spout], aqua}

@@ -2108,8 +2108,10 @@ func _show(b: Dictionary) -> void:
 		vis["lights"].append(_light(xf * lp, HOUSE_LIGHT if city.is_house(b) else 1.0))
 	var lived: bool = not city.is_house(b) or int(b["pop"]) > 0
 	if lived and (int(b["id"]) % 3 == 0 or not city.is_house(b)):    # дымок — тонкой струйкой и не над каждым домом
-		for sp in bp.smoke.slice(0, 1):
-			vis["smoke"].append(_smoke(xf * sp))
+		var steam: bool = b["type"] == "caracalla"
+		var sources := bp.smoke if steam else bp.smoke.slice(0, 1)
+		for sp in sources:
+			vis["smoke"].append(_smoke(xf * sp, steam))
 	visuals[b["id"]] = vis
 	if shutters and not bp.kit_mov.is_empty():
 		shutters.reset(int(b["id"]))
@@ -2368,20 +2370,20 @@ func _sync_all_actors() -> void:
 
 
 ## Дым из отдушины — мягкие клубы
-func _smoke(at: Vector3) -> GPUParticles3D:
+func _smoke(at: Vector3, steam := false) -> GPUParticles3D:
 	var p := GPUParticles3D.new()
-	p.amount = 7
+	p.amount = 15 if steam else 7
 	p.lifetime = 4.0
 	p.preprocess = 4.0
 	p.position = at
 	var pm := ParticleProcessMaterial.new()
 	pm.direction = Vector3(0.25, 1, 0.1)
-	pm.spread = 12.0
-	pm.initial_velocity_min = 0.35
-	pm.initial_velocity_max = 0.55
+	pm.spread = 25.0 if steam else 12.0
+	pm.initial_velocity_min = 0.49 if steam else 0.35
+	pm.initial_velocity_max = 0.75 if steam else 0.55
 	pm.gravity = Vector3(0.12, 0.05, 0.04)
-	pm.scale_min = 0.22
-	pm.scale_max = 0.34
+	pm.scale_min = 0.40 if steam else 0.22
+	pm.scale_max = 0.64 if steam else 0.34
 	var sc := Curve.new()
 	sc.add_point(Vector2(0, 0.5))
 	sc.add_point(Vector2(1, 2.2))
@@ -2391,6 +2393,13 @@ func _smoke(at: Vector3) -> GPUParticles3D:
 	var grad := Gradient.new()
 	grad.set_color(0, Color(0.86, 0.84, 0.82, 0.32))
 	grad.set_color(1, Color(0.8, 0.8, 0.8, 0.0))
+	if steam:
+		pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+		pm.emission_sphere_radius = 0.25
+		p.visibility_aabb = AABB(Vector3(-2, -0.4, -2), Vector3(4, 5, 4))
+		grad.set_color(0, Color(0.95, 0.96, 1.0, 0.0))
+		grad.add_point(0.16, Color(0.95, 0.96, 1.0, 0.59))
+		grad.add_point(0.54, Color(0.90, 0.93, 0.99, 0.36))
 	var gt := GradientTexture1D.new()
 	gt.gradient = grad
 	pm.color_ramp = gt

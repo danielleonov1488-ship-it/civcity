@@ -620,11 +620,11 @@ func _api() -> void:
 	for i in int(Legion.TRIUMPH["hours"]):
 		L.on_hour()
 	_check(L.city_happy() == 0, "триумф закончился через %d игровых часов" % int(Legion.TRIUMPH["hours"]))
-	# чудо без постройки (за рейтинг побед над городами)
+	# Рейтинг Легиона не открывает городское исследование.
 	L.pvp_rating = 250
 	L.glory = 500.0
 	city.money = 50000.0
-	_check(not city.unlocked("circus") and not L.has_method("can_build_wonder") and L.city_happy() == 0, "Большой цирк ждёт городской модели")
+	_check(not city.unlocked("circus") and not L.has_method("can_build_wonder") and L.city_happy() == 0, "Большой цирк требует городского исследования")
 	# бой с городом
 	var opp := {"name": "Город Марка", "rating": 300, "city_level": 5, "snapshot": {"v": 1, "squad": [{"type": "legionary", "level": 1}, {"type": "archer", "level": 1}], "perks": {}}}
 	var ps := L.make_pvp_battle(opp, 7)

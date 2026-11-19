@@ -209,9 +209,9 @@ const LEVELS := [
 
 ## дальность обслуживания, м. 11.11: дома и лавки из своего набора шире (шаг ряда 3,4 → 4,3 м) — дальность ×1,25,
 ## чтобы лавка по-прежнему доставала до стольких же домов (было 13/19/26/36/50)
-const RANGE := {1: 16.0, 2: 24.0, 3: 32.0, 4: 45.0, 5: 62.0}
+const RANGE := {1: 16.0, 2: 24.0, 3: 32.0, 4: 45.0, 5: 62.0, 6: 78.0}
 const CAPACITY := {1: 4, 2: 7, 3: 11, 4: 16, 5: 24}                   # сколько домов обслуживает
-const WORD := {1: "очень низкая", 2: "низкая", 3: "средняя", 4: "высокая", 5: "очень высокая"}
+const WORD := {1: "очень низкая", 2: "низкая", 3: "средняя", 4: "высокая", 5: "очень высокая", 6: "очень высокая"}
 
 # ---------- постройки ----------
 ## kind: house | shop | farm | rp | store | monument | decor | center
@@ -376,15 +376,18 @@ const B := {
 	"trajan": {"kind": "monument", "cat": "special", "sub": "wonders", "name": "Колонна Траяна", "cost": 40000,
 		"bonus": 16, "range": 5, "unlock": "trajan", "unique": true, "glory_day": 1.0, "icon": "laurels",
 		"desc": "Высокая мраморная колонна со статуей на ступенчатой площади. Радует дома вокруг и приносит Славу каждый день."},
-	# Место в городском каталоге; откроем, когда будут готовы модели.
-	"circus": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Большой цирк", "cost": 20000,
-		"bonus": 16, "range": 5, "unique": true, "glory_day": 0.5, "icon": "horse", "desc": "Чудо города. Модель ещё готовится."},
-	"aqueduct": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Акведук Клавдия", "cost": 30000,
-		"bonus": 14, "range": 5, "unique": true, "icon": "bridge", "desc": "Чудо города. Модель ещё готовится."},
-	"caracalla": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Термы Каракаллы", "cost": 60000,
-		"bonus": 20, "range": 5, "unique": true, "icon": "bath", "desc": "Чудо города. Модель ещё готовится."},
-	"jupiter": {"kind": "monument", "cat": "special", "sub": "wonders", "hidden": true, "name": "Храм Юпитера Капитолийского", "cost": 90000,
-		"bonus": 20, "range": 5, "unique": true, "glory_day": 1.0, "icon": "level", "desc": "Чудо города. Модель ещё готовится."},
+	"circus": {"kind": "monument", "cat": "special", "sub": "wonders", "need": "fun", "name": "Большой цирк", "cost": 50000,
+		"bonus": 16, "range": 6, "unlock": "circus", "unique": true, "glory_day": 1.0, "icon": "horse",
+		"desc": "Скачки колесниц и зрелища для домов в большой округе."},
+	"aqueduct": {"kind": "monument", "cat": "special", "sub": "wonders", "need": "services", "name": "Большой акведук", "cost": 45000,
+		"bonus": 14, "range": 5, "unlock": "aqueduct", "unique": true, "glory_day": 0.5, "icon": "bridge",
+		"desc": "Два яруса арок подают чистую воду к фонтану и домам вокруг."},
+	"caracalla": {"kind": "monument", "cat": "special", "sub": "wonders", "need": "services", "need_extra": "fun", "name": "Термы Каракаллы", "cost": 70000,
+		"bonus": 20, "range": 5, "unlock": "caracalla", "unique": true, "glory_day": 1.0, "icon": "bath",
+		"desc": "Горячие купальни и двор для отдыха. Покрывают службы и зрелища."},
+	"jupiter": {"kind": "monument", "cat": "special", "sub": "wonders", "need": "faith", "name": "Храм Юпитера Капитолийского", "cost": 90000,
+		"bonus": 24, "range": 6, "unlock": "jupiter", "unique": true, "glory_day": 1.5, "icon": "level",
+		"desc": "Храм на высоком подиуме укрепляет веру домов в большой округе."},
 	"center": {"kind": "center", "cat": "", "name": "Почтовая станция", "cost": 0, "fixed": true,
 		"desc": "Сюда по большой дороге приезжают повозки с переселенцами и товарами."},
 
@@ -813,15 +816,19 @@ const RESEARCH := [
 	{"id": "taxes1", "lvl": 5, "name": "Налоги для богатых", "cost": 1740, "icon": "coins", "desc": "Патриции платят на четверть больше."},
 
 	{"id": "trajan", "lvl": 5, "name": "Колонна Траяна", "cost": 2400, "icon": "laurels"},
+	{"id": "circus", "lvl": 5, "name": "Большой цирк", "cost": 3000, "icon": "horse", "after": "odeon"},
+	{"id": "aqueduct", "lvl": 5, "name": "Большой акведук", "cost": 2700, "icon": "bridge", "after": "aqua"},
 
 	{"id": "theatre", "lvl": 6, "name": "Театр", "cost": 4830, "icon": "fun", "after": "odeon"},
 	{"id": "arch", "lvl": 6, "name": "Триумфальная арка", "cost": 4190, "icon": "castle"},
+	{"id": "caracalla", "lvl": 6, "name": "Термы Каракаллы", "cost": 5200, "icon": "bath", "after": "thermae"},
 	{"id": "academy", "lvl": 6, "name": "Академия", "cost": 5150, "icon": "book", "after": "library"},
 	{"id": "vault2", "lvl": 6, "name": "Подвалы казны", "cost": 3860, "icon": "money", "after": "vault1", "desc": "Казна вмещает ещё вдвое больше."},
 
 	{"id": "colosseum", "lvl": 7, "name": "Амфитеатр", "cost": 10000, "icon": "swords"},
 	# не дороже предела очков на высшем уровне (6000 × 2 с «research1») — иначе изучить нельзя вовсе
 	{"id": "pantheon", "lvl": 7, "name": "Пантеон", "cost": 11500, "icon": "level"},
+	{"id": "jupiter", "lvl": 7, "name": "Храм Юпитера Капитолийского", "cost": 11800, "icon": "level", "after": "pantheon"},
 
 	# этап 5: новые здания (по одному-два на уровень) и наборы украшений (по исследованию на набор, на всех уровнях;
 	# «Главные» — дорогие украшения сверх предела, как маленькие памятники)

@@ -146,7 +146,8 @@ func _run() -> void:
 ## Пикселей в тёмных (яркость < 0,03) связных областях ≥ minpx внутри силуэта; снимок — jpg, разметка — красным в *_mark.jpg
 func _analyze(img: Image, base: String) -> int:
 	img.convert(Image.FORMAT_RGB8)
-	img.save_jpg(base + ".jpg", 0.85)
+	if base != "":
+		img.save_jpg(base + ".jpg", 0.85)
 	var im := img.duplicate() as Image
 	im.resize(W, H, Image.INTERPOLATE_BILINEAR)
 	var d := im.get_data()
@@ -206,7 +207,7 @@ func _analyze(img: Image, base: String) -> int:
 		if comp.size() >= minpx:
 			total += comp.size()
 			mark.append_array(comp)
-	if total > 0:
+	if total > 0 and base != "":
 		for p in mark:
 			im.set_pixel(p % W, p / W, Color(1, 0.1, 0.1))
 		im.save_jpg(base + "_mark.jpg", 0.8)

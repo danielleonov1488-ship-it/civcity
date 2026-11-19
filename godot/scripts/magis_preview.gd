@@ -26,8 +26,8 @@ static func metric(c: City, key: String) -> Dictionary:
 		title = I18n.t("Дальность: %s") % I18n.t(String(Defs.NEEDS[need]["name"]))
 		for b: Dictionary in c.buildings.values():
 			var d := c.def(b)
-			if HouseNeeds.category(d) == need:
-				value = maxf(value, c.shop_range(d) if d["kind"] == "shop" else c.need_range(d))
+			if HouseNeeds.supplies(d, need):
+				value = maxf(value, c.shop_range(d) if d["kind"] == "shop" else c.need_range(d, need))
 		unit = " м"
 	elif key.begins_with("need_weight:"):
 		title = "Штраф за нехватку еды"

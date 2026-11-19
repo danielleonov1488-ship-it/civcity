@@ -2,7 +2,7 @@ extends Node3D
 ## Проверки и пять кадров. Запускает владелец проверки; сохранения игрока не пишем.
 
 const IDS := ["arch", "colosseum", "pantheon", "circus", "aqueduct", "trajan", "caracalla", "jupiter"]
-const HIDDEN := ["circus", "aqueduct", "caracalla", "jupiter"]
+const CREDIT_IDS := ["circus", "aqueduct", "caracalla", "jupiter"]
 const AT := Vector2(163, 210)
 var game
 var city: City
@@ -87,10 +87,10 @@ func _catalog() -> void:
 	expected.sort()
 	check(found == expected, "all eight entries belong to city Wonders group")
 	var visible: Array = game.hud._types_in("special", "wonders")
-	check(visible.is_empty(), "locked wonders are absent from the build menu")
-	for type: String in HIDDEN:
-		check(Defs.B[type].get("hidden", false) and not visible.has(type) and not city.unlocked(type)
-			and not city.city_buildable(type) and city.place(type, AT, 0.0).is_empty(), "hidden and unbuildable " + type)
+	check(visible.size() == IDS.size(), "locked wonders appear in the build menu")
+	for type: String in CREDIT_IDS:
+		check(visible.has(type) and not city.unlocked(type) and city.city_buildable(type)
+			and city.place(type, AT, 0.0).is_empty(), "visible and research locked " + type)
 	var bp := Catalog.make("trajan", 0, 0, 0)
 	var bounds: Array = game._bounds(bp)
 	check(absf(float(bounds[1]) - float(bounds[0]) - 6.0) < 0.6
@@ -206,8 +206,8 @@ func _migration() -> void:
 	var id := int(col["id"])
 	c.remove(c.buildings[id])
 	check(c.money == 0.0 and not c.wonder_credit_ready("trajan") and c.build_price("trajan") == 40000.0, "demolition never recreates a spent credit or prints denarii")
-	for type: String in HIDDEN:
-		check(c.wonder_credits.has(type) and not c.unlocked(type), "future credit stored and unavailable " + type)
+	for type: String in CREDIT_IDS:
+		check(c.wonder_credit_ready(type) and c.unlocked(type), "stored credit is available " + type)
 
 
 func _views() -> void:
@@ -221,7 +221,7 @@ func _views() -> void:
 	if not check(wonders_tab != null, "Wonders tab exists"):
 		return
 	hud._sync_build_tabs()
-	check(not wonders_tab.visible, "Wonders tab hidden before research")
+	check(wonders_tab.visible, "Wonders tab visible before research")
 	city.level = 5
 	city.rp = float(Defs.research("trajan")["cost"])
 	if not check(city.do_research("trajan"), "study Trajan to unlock first wonder"):
@@ -251,8 +251,8 @@ func _views() -> void:
 	hud._toggle_cat("special")
 	check(wonders_tab.is_visible_in_tree(), "Wonders tab appears after first unlock")
 	wonders_tab.pressed.emit()
-	check(hud.open_ssub == "wonders" and hud.tray_grid.get_child_count() == 1
-		and hud.tray_grid.get_child(0).get_meta("type") == "trajan", "Wonders shows only the unlocked Trajan card")
+	check(hud.open_ssub == "wonders" and hud.tray_grid.get_child_count() == IDS.size()
+		and city.unlocked("trajan"), "Wonders shows Trajan and seven other cards")
 	await shot("4_build_menu_wonders.png")
 	# Призрак настоящего инструмента и отмена бесплатной постановки.
 	city.remove(column, false)

@@ -22,6 +22,7 @@ signal sfx(kind: String, at: Vector3, vol: float)     # звук зрелища 
 const VENUES := {
 	"colosseum": {"kind": "arena", "hours": [12.6, 14.0, 17.4, 18.2], "fill": 0.86},
 	"circus_fl": {"kind": "circus", "hours": [9.0, 10.2, 13.0, 13.8], "fill": 0.82},
+	"circus": {"kind": "circus", "hours": [10.0, 11.0, 13.0, 13.7], "fill": 0.37},
 	"theatre": {"kind": "theatre", "hours": [16.4, 17.6, 20.4, 21.0], "fill": 0.8},
 	# «Уютный Рим», этап 3: большие здания работают — утренняя служба в храме, термы открыты днём
 	"temple": {"kind": "temple", "hours": [7.0, 7.8, 9.4, 10.0], "fill": 0.9},

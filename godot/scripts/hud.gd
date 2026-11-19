@@ -3012,7 +3012,7 @@ func _types_in(cat: String, sub := "") -> Array:
 			continue                          # мастерские Легиона 2.0 и гостиница — только в новой игре
 		if d.get("kind", "") == "military" or d.get("cat", "") == "military":
 			continue                          # военные постройки доступны только внутри форта
-		if game != null and game.city != null and not game.city.unlocked(type):
+		if game != null and game.city != null and not game.city.unlocked(type) and d.get("sub", "") != "wonders":
 			continue
 		out.append(type)
 	return out
@@ -3430,8 +3430,14 @@ func _update_cards() -> void:
 			img.texture = icons.get(type)
 		var pr: HBoxContainer = b.find_child("price", true, false)
 		for x in pr.get_children():
+			pr.remove_child(x)
 			x.queue_free()
-		if c.cap_err(type) != "":
+		if not c.unlocked(type):
+			pr.add_child(_icon("lock", 17, C_SOFT))
+			pr.add_child(_label(I18n.t("Исследование"), 13, true, C_SOFT))
+			b.add_theme_stylebox_override("normal", _card_box("g_card_lock"))
+			_grey(img)
+		elif c.cap_err(type) != "":
 			# предел уровня города: больше таких не поставить, пока город не вырастет
 			var lm := _label("Предел: %d" % c.build_max(type), 12, true, C_SOFT)
 			lm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -5934,7 +5940,7 @@ func _need_building(b: Dictionary, need: String) -> String:
 	var distance := INF
 	for source: Dictionary in c.buildings.values():
 		var d := c.def(source)
-		if HouseNeeds.category(d) != need or not c.unlocked(String(source["type"])):
+		if not HouseNeeds.supplies(d, need) or not c.unlocked(String(source["type"])):
 			continue
 		var ds: float = (source["pos"] as Vector2).distance_squared_to(b["pos"])
 		if ds < distance:
@@ -5946,7 +5952,7 @@ func _need_building(b: Dictionary, need: String) -> String:
 	var available := false
 	for type: String in Defs.B:
 		var d: Dictionary = Defs.B[type]
-		if HouseNeeds.category(d) != need or bool(d.get("hidden", false)):
+		if not HouseNeeds.supplies(d, need) or bool(d.get("hidden", false)):
 			continue
 		var open := c.unlocked(type)
 		if (open and not available) or (open == available and float(d["cost"]) < cheapest):
@@ -5972,9 +5978,9 @@ func _need_hint(b: Dictionary, n: String) -> String:
 	var c: City = game.city
 	for source: Dictionary in c.buildings.values():
 		var d := c.def(source)
-		if HouseNeeds.category(d) != n:
+		if not HouseNeeds.supplies(d, n):
 			continue
-		var reach := c.shop_range(d) if d["kind"] == "shop" else c.need_range(d)
+		var reach := c.shop_range(d) if d["kind"] == "shop" else c.need_range(d, n)
 		if (source["pos"] as Vector2).distance_to(b["pos"]) <= reach:
 			if not bool(source.get("active", true)):
 				return "«%s» рядом не работает: %s" % [d["name"], c.idle_text(source)]
@@ -9021,7 +9027,7 @@ func _make_icons() -> void:
 ## картинки рисуются заново; старые папки удаляются. В редакторе ключ — сами скрипты построек
 const ICON_V := 1                         # поменяли свет, камеру или размер картинок — увеличить
 const ICON_SRC := ["catalog.gd", "cat_houses.gd", "cat_shops.gd", "cat_civic.gd", "cat_monuments.gd", "cat_decor.gd", "cat_military.gd",
-	"parts.gd", "synty.gd", "kit.gd", "bp.gd", "artisau.gd", "entrance.gd", "hud.gd", "cat_decor2.gd", "cat_extra.gd", "cat_grand.gd", "cat_nature.gd", "cat_meadow.gd", "meadow.gd"]
+	"parts.gd", "synty.gd", "kit.gd", "bp.gd", "artisau.gd", "entrance.gd", "hud.gd", "cat_decor2.gd", "cat_extra.gd", "cat_grand.gd", "cat_dress_grand.gd", "cat_nature.gd", "cat_meadow.gd", "meadow.gd"]
 
 
 func _icon_dir() -> String:
@@ -9035,10 +9041,11 @@ func _icon_dir() -> String:
 			var fa := FileAccess.open(p, FileAccess.READ)
 			if fa:
 				key += "_%d_%d" % [FileAccess.get_modified_time(p), fa.get_length()]
-	var root := "user://icons"
+	var isolated := OS.get_environment("CIVCITY_ICONDIR")
+	var root := "user://icons" if isolated.is_empty() else isolated
 	var name := key.md5_text().substr(0, 12)
 	DirAccess.make_dir_recursive_absolute(root.path_join(name))
-	for old in DirAccess.get_directories_at(root):
+	for old in DirAccess.get_directories_at(root) if isolated.is_empty() else PackedStringArray():
 		if old != name:
 			var od := root.path_join(old)
 			for f in DirAccess.get_files_at(od):

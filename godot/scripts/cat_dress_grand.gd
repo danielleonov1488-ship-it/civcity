@@ -15,7 +15,13 @@ extends RefCounted
 
 const MIL := ["barracks", "range", "spearcamp", "ballistae", "catapults", "forge", "infirmary", "armory", "smelter", "sawmill",
 	"tannery", "principia", "mars"]
-const GRAND := ["center", "colosseum", "circus_fl", "theatre", "odeon", "pantheon", "venus", "arch", "fountain", "pharos", "nymphaeum", "aqua", "trajan"]
+const GRAND := ["center", "colosseum", "circus_fl", "theatre", "odeon", "pantheon", "venus", "arch", "fountain", "pharos", "nymphaeum", "aqua", "trajan", "circus", "aqueduct", "caracalla", "jupiter"]
+const REBUILT := ["trajan", "circus", "aqueduct", "caracalla", "jupiter"]
+const CIRCUS_TURN := 11.25
+const CIRCUS_SAND_RADIUS := 4.19
+const GABLE_MARBLE := {"Stone_01": "Building_Marble_02"}
+const CORNICE_MARBLE := {"PolygonAncientEmpire_01_A": "Building_Marble_02"}
+const GABLE_FRIEZE := {"PolygonAncientEmpire_01_A": "Stucco_Red_01", "tints": {"Stucco_Red_01": Color(0.64, 0.39, 0.31)}}
 ## Выключатель для проверок «было/стало» (вместе с CatDressCivic.ON)
 static var ON := true
 
@@ -25,7 +31,7 @@ static func handles(type: String) -> bool:
 
 
 static func dress(b: Bp, type: String, tier := 0) -> void:
-	if type == "trajan":
+	if type in REBUILT:
 		return                                 # вся новая сборка уже сделана в Catalog.make
 	var x := CatDressCivic._ctx(b, type)
 	if type in MIL:
@@ -393,7 +399,7 @@ static func _grand(x: Dictionary, type: String, tier: int) -> void:
 		"theatre": _theatre(x)
 		"odeon": _odeon(x)
 		"pantheon": _pantheon(x)
-		"circus_fl": _circus(x)
+		"circus_fl": _circus_fl_dress(x)
 		"venus": _venus(x)
 		"arch": _arch(x)
 		"fountain": _fountain(x)
@@ -479,7 +485,7 @@ static func _pantheon(x: Dictionary) -> void:
 
 
 ## Цирк: у передней аркады — торговцы (подушки для зрителей, хлеб), вазы с цветами, амфоры; дорожку и трибуны не трогаем
-static func _circus(x: Dictionary) -> void:
+static func _circus_fl_dress(x: Dictionary) -> void:
 	var z := 8.8                         # на мостовой перед цоколем аркады (не на его краю)
 	for e: Array in [[-17.0, "cushions"], [-10.0, "bread"], [-5.2, "vasebloom"], [5.2, "vasebloom"], [10.0, "cushions"], [17.0, "bread"]]:
 		var k := String(e[1])
@@ -506,11 +512,11 @@ static func _arch(x: Dictionary) -> void:
 
 ## Колонна Траяна: вся сборка из Synty, площадь ровно 6 × 6 м после Catalog.ARCH.
 ## Растягиваем детали по их настоящим габаритам: ступени соприкасаются, у статуи родные пропорции.
-static func _trajan_piece(b: Bp, nm: String, p: Vector3, size: Vector3, rm := {}, yaw := 0.0) -> float:
+static func _piece(b: Bp, nm: String, p: Vector3, size: Vector3, rm := {}, yaw := 0.0, roll := 0.0) -> float:
 	var box := Bp.model_aabb(nm)
 	var sy := size.y / maxf(0.001, box.size.y)
 	var scale := Vector3(size.x / maxf(0.001, box.size.x), sy, size.z / maxf(0.001, box.size.z)) if size.x > 0.0 else Vector3.ONE * sy
-	var basis := Basis(Vector3.UP, yaw) * Basis.from_scale(scale)
+	var basis := Basis(Vector3.UP, yaw) * Basis(Vector3.BACK, roll) * Basis.from_scale(scale)
 	var center := Vector3(box.get_center().x, box.position.y, box.get_center().z)
 	b.parts.append([nm, b.base * Transform3D(basis, p - basis * center), rm])
 	return p.y + size.y
@@ -523,24 +529,334 @@ static func _trajan(x: Dictionary) -> void:
 	# Невысокая мощёная площадь, три широкие ступени и квадратный пьедестал.
 	for ix in 3:
 		for iz in 3:
-			_trajan_piece(b, "SM_Bld_Base_Floor_01", Vector3((ix - 1) * tile, -0.04, (iz - 1) * tile), Vector3(tile, 0.14, tile), marble)
+			_piece(b, "SM_Bld_Base_Floor_01", Vector3((ix - 1) * tile, -0.04, (iz - 1) * tile), Vector3(tile, 0.14, tile), marble)
 	var top := 0.10
 	for width: float in [5.4, 4.8, 4.2]:
-		top = _trajan_piece(b, "SM_Bld_Base_Floor_01", Vector3(0, top, 0), Vector3(width, 0.22, width), marble)
-	top = _trajan_piece(b, "SM_Bld_Base_Pillar_03", Vector3(0, top, 0), Vector3(2.0, 1.35, 2.0), marble)
+		top = _piece(b, "SM_Bld_Base_Floor_01", Vector3(0, top, 0), Vector3(width, 0.22, width), marble)
+	top = _piece(b, "SM_Bld_Base_Pillar_03", Vector3(0, top, 0), Vector3(2.0, 1.35, 2.0), marble)
 	# Три мраморных барабана с рельефом и тонкими поясами между ними.
 	for i in 3:
-		top = _trajan_piece(b, "SM_Bld_Pillar_Monument_01" if i != 1 else "SM_Bld_Pillar_Monument_02",
+		top = _piece(b, "SM_Bld_Pillar_Monument_01" if i != 1 else "SM_Bld_Pillar_Monument_02",
 			Vector3(0, top - 0.03, 0), Vector3(1.45, 4.6, 1.45), marble, i * PI / 2.0)
-		top = _trajan_piece(b, "SM_Bld_Pillar_Monument_Trim_01", Vector3(0, top - 0.03, 0), Vector3(1.65, 0.22, 1.65), marble)
+		top = _piece(b, "SM_Bld_Pillar_Monument_Trim_01", Vector3(0, top - 0.03, 0), Vector3(1.65, 0.22, 1.65), marble)
 	if Synty.has("SM_Prop_Statue_02"):
-		_trajan_piece(b, "SM_Prop_Statue_02", Vector3(0, top, 0), Vector3(0, 2.2, 0))
+		_piece(b, "SM_Prop_Statue_02", Vector3(0, top, 0), Vector3(0, 2.2, 0))
 	# Две жаровни у передних углов, две скамьи сзади. Вход посредине свободен.
 	for side: float in [-1.0, 1.0]:
 		b.brazier(Vector3(side * 3.25, 0.10, 3.25))
 		var bench := _stand("SM_Prop_Seat_Bench_03", 0.75, PI, Vector3(side * 2.5, 0.10, -3.3))
 		b.parts.append([bench[0], b.base * (bench[1] as Transform3D), {}])
 	b.door = Vector3(0, 0.10, 4.15)
+
+
+## Новые чудеса задаём в метрах. След занимает всю площадь, включая дворы и арки.
+static func _wonder_square(b: Bp, lot: Vector2, tiles: Vector2i, pattern := CatMonuments.PAVING) -> void:
+	b.base = Transform3D(Basis.from_scale(Vector3.ONE / Catalog.ARCH), Vector3.ZERO)
+	b.fp_override = [Rect2(-lot * 0.5, lot)]
+	var tile := lot / Vector2(tiles)
+	for i in tiles.x:
+		for j in tiles.y:
+			var p := (Vector2(i, j) + Vector2(0.5, 0.5)) * tile - lot * 0.5
+			_piece(b, "SM_Bld_Base_Floor_01", Vector3(p.x, -0.08, p.y), Vector3(tile.x, 0.18, tile.y), pattern)
+
+
+## За аркой — улица, камень или створки. Автоматический задник комнаты здесь лишний.
+static func _wonder_arch(b: Bp, p: Vector3, size: Vector3, rm := CatMonuments.TRAV_BLOCKS, yaw := 0.0) -> void:
+	b.free_parts[b.parts.size()] = true
+	_piece(b, "SM_Bld_Wall_Door_Double_01", p, size, rm, yaw)
+
+
+static func _wonder_door(b: Bp, p: Vector3, width: float, height: float, yaw := 0.0) -> void:
+	var front := Basis(Vector3.UP, yaw).z
+	_wonder_arch(b, p, Vector3(width, height, 0.34), CatMonuments.TRAV_BLOCKS, yaw)
+	_piece(b, "SM_Bld_Door_Large_01", p + front * 0.12, Vector3(width * 0.73, height * 0.89, 0.14), {}, yaw)
+
+
+static func _circus(b: Bp) -> void:
+	_wonder_square(b, Vector2(36, 14), Vector2i(9, 4), CatMonuments.WARM_PAVING)
+	b.add("#mil_race_sand", Vector3(0, 0.135, 0))
+	CatMonuments._box(b, "#marble", Vector3(0, 0.33, 0), Vector3(20.1, 0.48, 1.38))
+	for i in 4:
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3((i - 1.5) * 5.04, 0.51, 0),
+			Vector3(5.055, 0.095, 1.52), CatMonuments.CAP_MARBLE)
+	_piece(b, "SM_Bld_Base_Pillar_03", Vector3(0, 0.59, 0), Vector3(1.25, 0.56, 1.22))
+	b.add("#d2_obelisk", Vector3(0, 1.13, 0), 0.0, 1.46)
+	for side: float in [-1.0, 1.0]:
+		for distance: float in [3.8, 8.9]:
+			var x := side * distance
+			var y := _piece(b, "SM_Prop_Plinth_04", Vector3(x, 0.59, 0), Vector3(0.94, 0.54, 0.86))
+			_piece(b, "SM_Prop_Statue_04" if distance < 5.0 else "SM_Prop_Statue_Lion_01",
+				Vector3(x, y - 0.02, 0), Vector3(0, 1.35 if distance < 5.0 else 0.78, 0), {}, side * PI / 2)
+	for i in 7:
+		var x := 4.85 + i * 0.44
+		_piece(b, "SM_Bld_Pillar_02", Vector3(x, 0.59, 0), Vector3(0.22, 0.89, 0.22))
+		_piece(b, "SM_Prop_Senser_01", Vector3(x, 1.46, 0), Vector3(0.26, 0.34, 0.26))
+	# Четыре сектора с каменными сиденьями и ступенями. Аркада видна с улицы.
+	for side: float in [-1.0, 1.0]:
+		var inward := Vector3(0, 0, -side)
+		var along := Vector3(-side, 0, 0)
+		for row in 3:
+			var z := side * (4.19 + row * 0.72)
+			var y := 0.48 + row * 0.37
+			for x: float in [-8.1, -2.7, 2.7, 8.1]:
+				CatGrand._row(b, x - 2.38, x + 2.38, z, side, y, 0.36, 0.72, Crowd.SEAT_DROP, along, inward)
+			for x: float in [-10.9, -5.4, 0.0, 5.4, 10.9]:
+				CatMonuments._box(b, "#marble", Vector3(x, y * 0.5, z + side * 0.36), Vector3(0.67, y, 0.72))
+		for i in 8:
+			var x := (i - 3.5) * 2.74
+			_wonder_arch(b, Vector3(x, 0.10, side * 6.59), Vector3(2.75, 1.82, 0.52),
+				CatMonuments.TRAV_BLOCKS, 0.0 if side > 0.0 else PI)
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(0, 1.82, side * 6.59), Vector3(22.4, 0.24, 0.68))
+		for x: float in [-10.2, -6.1, 6.1, 10.2]:
+			_piece(b, "SM_Bld_Pillar_03", Vector3(x, 1.96, side * 6.53), Vector3(0.23, 1.58, 0.23))
+		for x: float in [-8.15, 8.15]:
+			_piece(b, "SM_Prop_Banner_Roof_02", Vector3(x, 3.37, side * 5.58), Vector3(4.24, 0.48, 2.35),
+				CatMonuments.VELA_SAFFRON if side < 0.0 else {}, 0.0 if side < 0.0 else PI)
+		for x: float in [-9.7, 0.0, 9.7]:
+			var z := side * 6.52
+			_piece(b, "SM_Prop_Banner_03_B", Vector3(x, 1.40, z + side * 0.28), Vector3(0, 1.06, 0), {}, 0.0 if side > 0.0 else PI)
+		b.brazier(Vector3(-13.15, 0.10, side * 5.30))
+		b.brazier(Vector3(13.32, 0.10, side * 5.15))
+		b.brazier(Vector3(0, 2.05, side * 6.54))
+	# Карцеры и две башенки на западе, полукруглая стенка и арка на востоке.
+	for i in 6:
+		_wonder_door(b, Vector3(-16.1, 0.10, (i - 2.5) * 1.32), 1.34, 2.44, PI / 2)
+	_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(-16.12, 2.42, 0), Vector3(8.2, 0.27, 0.74), {}, PI / 2)
+	for side: float in [-1.0, 1.0]:
+		_piece(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(-16.15, 0.08, side * 4.63), Vector3(1.65, 3.38, 1.5), CatMonuments.TRAV_BLOCKS)
+		_piece(b, "SM_Bld_Wall_Large_Pillar_Cap_01", Vector3(-16.15, 3.40, side * 4.63), Vector3(1.78, 0.31, 1.66))
+		for i in 4:
+			var ang := (i + 0.72) * 0.37 * side
+			var p := Vector3(CIRCUS_TURN + cos(ang) * 4.45, 0.10, sin(ang) * 4.45)
+			_piece(b, "SM_Bld_Wall_01", p, Vector3(1.67, 1.36, 0.47), CatMonuments.STONE_WALL, PI / 2 - ang)
+			_piece(b, "SM_Bld_Wall_Large_Cap_01", p + Vector3.UP * 1.26, Vector3(1.78, 0.19, 0.59), {}, PI / 2 - ang)
+	_wonder_arch(b, Vector3(15.92, 0.10, 0), Vector3(2.38, 3.09, 0.91), CatMonuments.TRAV_BLOCKS, PI / 2)
+	_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(15.92, 3.10, 0), Vector3(2.65, 0.27, 1.05), {}, PI / 2)
+	_piece(b, "SM_Prop_Statue_02", Vector3(15.92, 3.37, 0), Vector3(0, 0.99, 0), {}, -PI / 2)
+	b.door = b.base * Vector3(0, 0.1, 7.0)
+
+
+static func _aqueduct(b: Bp) -> void:
+	_wonder_square(b, Vector2(24, 6), Vector2i(6, 2))
+	var trav := CatMonuments.TRAV_BLOCKS
+	for i in 4:
+		var x := -9.0 + i * 4.45
+		_wonder_arch(b, Vector3(x, 0.38, -0.71), Vector3(4.46, 4.12, 1.80), trav)
+	for i in 5:
+		var x := -11.23 + i * 4.45
+		_piece(b, "SM_Bld_Base_Pillar_03", Vector3(x, 0.10, -0.71), Vector3(0.91, 0.54, 2.18))
+		_piece(b, "SM_Bld_Wall_Large_Pillar_01", Vector3(x, 0.62, -0.71), Vector3(0.64, 3.78, 1.94), trav)
+	for i in 8:
+		var x := -10.1125 + i * 2.225
+		_wonder_arch(b, Vector3(x, 4.54, -0.71), Vector3(2.23, 2.02, 1.21), trav)
+	for i in 4:
+		var x := -9.0 + i * 4.45
+		for level: float in [4.39, 6.53]:
+			_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(x, level, -0.715), Vector3(4.45, 0.20, 2.06 if level < 5.0 else 1.65))
+	# Открытый жёлоб, чуть утопленный между каменными стенками.
+	CatMonuments._box(b, "#water", Vector3(-1.48, 6.75, -0.71), Vector3(19.8, 0.04, 0.86))
+	for z: float in [-1.27, -0.15]:
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(-1.5, 6.67, z), Vector3(19.8, 0.31, 0.29))
+	_piece(b, "SM_Bld_Base_Pillar_03", Vector3(-11.34, 6.69, -0.71), Vector3(0.35, 0.28, 1.34))
+	# Кастеллум: светлый фасад, черепица и львиная пасть над чашей.
+	_piece(b, "SM_Bld_Wall_Large_01", Vector3(8.81, 0.10, -0.80), Vector3(5.22, 5.22, 3.70), trav)
+	_wonder_arch(b, Vector3(8.81, 0.15, 1.11), Vector3(4.62, 4.30, 0.41), CatMonuments.MARBLE_BLOCKS)
+	_piece(b, "SM_Prop_Marble_LionHead_01", Vector3(8.81, 1.35, 1.46), Vector3(0, 0.79, 0))
+	_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(8.81, 5.17, -0.81), Vector3(5.48, 0.34, 4.0))
+	for x: float in [6.52, 11.10]:
+		_piece(b, "SM_Bld_Pillar_Large_02", Vector3(x, 0.10, 1.28), Vector3(0.48, 5.12, 0.46))
+	_piece(b, "SM_Bld_Wall_Large_01", Vector3(9.40, 5.46, -0.79), Vector3(3.87, 1.57, 2.84), trav)
+	var square := b.base
+	b.base = square.translated_local(Vector3(9.40, 0, 0))
+	CatGrand._roof(b, 1.61, 0.84, -2.44, 6.99, {}, CatMonuments.TYMPANUM)
+	b.base = square
+	_piece(b, "SM_Bld_Base_Floor_01", Vector3(8.80, 0.10, 1.99), Vector3(4.2, 0.23, 1.76), CatMonuments.MOSAIC)
+	CatMonuments._box(b, "#water", Vector3(8.8, 0.45, 1.99), Vector3(3.68, 0.045, 1.27))
+	for x: float in [6.82, 10.78]:
+		_piece(b, "SM_Bld_Bath_Edge_01", Vector3(x, 0.24, 1.99), Vector3(1.76, 0.40, 0.26), {}, PI / 2)
+	_piece(b, "SM_Bld_Bath_Edge_01", Vector3(8.8, 0.24, 2.76), Vector3(4.02, 0.40, 0.27))
+	for x: float in [-9.2, -4.8, 0.1, 4.4]:
+		b.brazier(Vector3(x, 0.10, 1.57))
+	b.light(Vector3(8.8, 1.95, 2.06))
+	b.door = b.base * Vector3(8.8, 0.10, 3.0)
+
+
+## ??? ??????? ????????? ??????. ?????????? ???????? ? ??????, ????????? ????? ?? ??????.
+static func _sculpted_pediment(b: Bp, half: float, eave: float, ridge: float, z: float, temple: bool) -> void:
+	var rise := ridge - eave
+	var cap := "SM_Bld_Wall_Large_Cap_01"
+	var face := z + 0.04
+	_piece(b, cap, Vector3(0, eave - 0.20, face + 0.06), Vector3(half * 2.0 + 0.12, 0.24, 0.47), CORNICE_MARBLE)
+	_piece(b, cap, Vector3(0, eave - 0.34, face + 0.03), Vector3(half * 2.0 - 0.06, 0.14, 0.38), GABLE_FRIEZE)
+	var slope := Vector2(half, rise)
+	for side: float in [-1.0, 1.0]:
+		_piece(b, cap, Vector3(side * half * 0.5, eave + rise * 0.5 - 0.075, face),
+			Vector3(slope.length() + 0.10, 0.18, 0.42), CORNICE_MARBLE, 0.0, -side * slope.angle())
+		_piece(b, "SM_Bld_Ornament_04", Vector3(side * half * 0.49, eave + rise * 0.12, face + 0.085),
+			Vector3(rise * 0.48, rise * 0.32, 0.15))
+		_piece(b, "SM_Prop_Statue_05", Vector3(side * half * 0.24, eave + rise * 0.11, face + 0.08),
+			Vector3(rise * 0.24, rise * 0.52, 0.21), {}, -side * 0.39)
+		var ledge := _piece(b, cap, Vector3(side * (half - 0.29), eave + 0.095, z - 0.12),
+			Vector3(0.58, 0.17, 0.57), CORNICE_MARBLE)
+		_piece(b, "SM_Prop_Statue_05", Vector3(side * (half - 0.29), ledge, z - 0.12),
+			Vector3(0, 0.79 if temple else 0.68, 0), {}, -side * 0.24)
+	_piece(b, "SM_Prop_Statue_04" if temple else "SM_Prop_Statue_06", Vector3(0, eave + rise * 0.12, face + 0.115),
+		Vector3(rise * 0.58, rise * 0.72, 0.30))
+	var top := _piece(b, "SM_Prop_Plinth_04", Vector3(0, ridge - 0.055, z - 0.22), Vector3(0.79, 0.31, 0.68))
+	if temple:
+		b.add("#mil_eagle", Vector3(0, top - 0.025, z - 0.22), 0.0, 1.32)
+	else:
+		_piece(b, "SM_Prop_Statue_06", Vector3(0, top, z - 0.22), Vector3(0, 0.98, 0))
+
+
+## ??????? ???? Synty ? ?????? ?????? ? ??????? ??????.
+static func _bath_window(b: Bp, p: Vector3, width: float, height: float, yaw := 0.0) -> void:
+	var frame := CatMonuments.BRICK.duplicate()
+	frame["PolygonAncientEmpire_01_A"] = "Building_Marble_02"
+	b.free_parts[b.parts.size()] = true
+	_piece(b, "SM_Bld_Wall_Door_Double_01", p, Vector3(width, height, 0.43), frame, yaw)
+	var front := Basis(Vector3.UP, yaw).z
+	CatMonuments._box(b, "#plate_lit", p - front * 0.16 + Vector3.UP * (height * 0.5),
+		Vector3(width * 0.96, height, 0.075), yaw)
+	_piece(b, "SM_Bld_Wall_Large_Cap_01", p - Vector3.UP * 0.12,
+		Vector3(width, 0.14, 0.53), CORNICE_MARBLE, yaw)
+
+
+static func _bath_hall(b: Bp) -> void:
+	var brick := CatMonuments.BRICK
+	var marble := CatMonuments.MARBLE_BLOCKS
+	var rear := -7.40
+	var facade := -1.66
+	var mid_z := (rear + facade) * 0.5
+	var half := 4.28
+	var window_y := 4.43
+	var roof_y := 6.49
+	for side: float in [-1.0, 1.0]:
+		_piece(b, "SM_Bld_Wall_Large_01", Vector3(side * 2.82, 0.42, facade), Vector3(2.94, 4.05, 0.43), brick)
+		_piece(b, "SM_Bld_Wall_Large_01", Vector3(side * half, 0.42, mid_z), Vector3(5.75, 4.05, 0.43), brick, side * PI / 2)
+		for z: float in [mid_z - 1.45, mid_z + 1.45]:
+			_bath_window(b, Vector3(side * half, window_y, z), 2.91, roof_y - window_y, side * PI / 2)
+		b.smoke.append(b.base * Vector3(side * 2.82, 5.43, facade + 0.36))
+		b.light(Vector3(side * 2.82, 5.28, facade + 0.35))
+	_piece(b, "SM_Bld_Wall_Large_01", Vector3(0, 0.42, rear), Vector3(8.57, 4.05, 0.43), brick, PI)
+	for x: float in [-2.86, 0.0, 2.86]:
+		_bath_window(b, Vector3(x, window_y, facade), 2.87, roof_y - window_y)
+		_bath_window(b, Vector3(x, window_y, rear), 2.87, roof_y - window_y, PI)
+	_wonder_door(b, Vector3(0, 0.42, facade), 2.72, 3.48)
+	_piece(b, "SM_Bld_Wall_Large_01", Vector3(0, 3.89, facade), Vector3(2.74, 0.57, 0.43), marble)
+	_piece(b, "SM_Bld_Base_Floor_01", Vector3(0, roof_y - 0.07, mid_z), Vector3(8.96, 0.34, 6.24), CatMonuments.PORCH)
+	for z: float in [rear, facade]:
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(0, roof_y - 0.10, z), Vector3(8.97, 0.34, 0.77), CORNICE_MARBLE)
+	for side: float in [-1.0, 1.0]:
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(side * half, roof_y - 0.10, mid_z),
+			Vector3(5.83, 0.34, 0.74), CORNICE_MARBLE, side * PI / 2)
+	# ??????? ?????? ????? ?????? ???????, ??? ? ????????.
+	const DRUM_SIDES := 12
+	const DRUM_R := 2.84
+	var span := 2.0 * DRUM_R * tan(PI / DRUM_SIDES)
+	for i in DRUM_SIDES:
+		var angle := (i + 0.5) * TAU / DRUM_SIDES
+		var rim := Vector3(sin(angle) * DRUM_R, roof_y + 0.20, mid_z + cos(angle) * DRUM_R)
+		_piece(b, "SM_Bld_Wall_Large_01", rim, Vector3(span + 0.04, 0.69, 0.39), marble, angle)
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", rim + Vector3.UP * 0.54, Vector3(span + 0.13, 0.21, 0.47), CORNICE_MARBLE, angle)
+	var dome_mat := {"Stucco_Blue_01": "Stucco_White_01", "tints": {"Stucco_White_01": Color(0.68, 0.75, 0.71)}}
+	CatMonuments._put(b, "SM_Prop_Pergola_01", Transform3D(Basis.from_scale(Vector3(1.29, 1.16, 1.19)),
+		Vector3(0, roof_y + 0.38 - 3.6 * 1.16, mid_z)), dome_mat)
+
+
+static func _bath_wing(b: Bp, side: float) -> void:
+	var x := side * 5.72
+	var outer := side * 7.13
+	var brick := CatMonuments.BRICK
+	var marble := CatMonuments.MARBLE_BLOCKS
+	for end: float in [-1.0, 1.0]:
+		var z := -3.94 + end * 3.02
+		var yaw := 0.0 if end > 0.0 else PI
+		_piece(b, "SM_Bld_Wall_Large_01", Vector3(x, 0.40, z), Vector3(2.92, 0.82, 0.44), marble, yaw)
+		_bath_window(b, Vector3(x, 1.18, z), 2.92, 2.15, yaw)
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(x, 3.28, z), Vector3(3.14, 0.39, 0.69), CORNICE_MARBLE, yaw)
+	for z: float in [-5.45, -2.43]:
+		_piece(b, "SM_Bld_Wall_Large_01", Vector3(outer, 0.40, z), Vector3(3.03, 0.82, 0.44), marble, side * PI / 2)
+		_bath_window(b, Vector3(outer, 1.18, z), 3.03, 2.15, side * PI / 2)
+	_piece(b, "SM_Bld_Wall_Large_01", Vector3(side * 4.31, 0.40, -3.94), Vector3(6.06, 2.97, 0.43), brick, side * -PI / 2)
+	_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(outer, 3.28, -3.94), Vector3(6.32, 0.39, 0.69), CORNICE_MARBLE, side * PI / 2)
+	for z: float in [-5.44, -2.44]:
+		_piece(b, "SM_Bld_Roof_Base_Flat_02", Vector3(x, 3.56, z), Vector3(2.94, 0.14, 3.01))
+	b.light(Vector3(x, 2.28, -0.55))
+
+
+static func _caracalla(b: Bp) -> void:
+	_wonder_square(b, Vector2(16, 16), Vector2i(4, 4), CatMonuments.WARM_PAVING)
+	_piece(b, "SM_Bld_Base_Floor_01", Vector3(0, 0.10, -3.57), Vector3(15.14, 0.32, 8.42), CatMonuments.PORCH)
+	_bath_hall(b)
+	for side: float in [-1.0, 1.0]:
+		_bath_wing(b, side)
+	# ?????? ???? ? ?????? ??????? ????????? ????? ? ?????????.
+	for i in 6:
+		_piece(b, "SM_Bld_Pillar_Large_04", Vector3((i - 2.5) * 1.48, 0.40, 0.17), Vector3(0.60, 3.75, 0.60))
+	for z: float in [-1.58, 0.19]:
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(0, 4.11, z), Vector3(8.22, 0.38, 0.76), CORNICE_MARBLE)
+	for side: float in [-1.0, 1.0]:
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(side * 3.94, 4.11, -0.71), Vector3(2.18, 0.38, 0.62), CORNICE_MARBLE, PI / 2)
+		b.brazier(Vector3(side * 2.87, 0.42, -0.64))
+	var ridge := CatGrand._roof(b, 4.08, 0.56, -1.88, 4.45, {}, GABLE_MARBLE)
+	_sculpted_pediment(b, 4.08, 4.45, ridge, 0.56, false)
+	# ???????: ???????, ???????, ????????? ? ?????? ?????? ?? ?????.
+	_piece(b, "SM_Bld_Base_Floor_01", Vector3(0, 0.10, 4.04), Vector3(8.10, 0.19, 5.06), CatMonuments.MOSAIC)
+	CatMonuments._box(b, "#water_bath", Vector3(0, 0.52, 4.04), Vector3(7.29, 0.05, 4.59))
+	for side: float in [-1.0, 1.0]:
+		_piece(b, "SM_Bld_Bath_Edge_01", Vector3(side * 3.81, 0.19, 4.04), Vector3(4.90, 0.58, 0.33), {}, side * PI / 2)
+		for z: float in [1.59, 6.49]:
+			var yaw := (0.0 if side > 0.0 else PI / 2) + (0.0 if z > 4.0 else side * PI / 2)
+			_piece(b, "SM_Bld_Bath_Corner_01", Vector3(side * 3.81, 0.19, z), Vector3(0.42, 0.58, 0.42), {}, yaw)
+		_piece(b, "SM_Bld_Bath_Edge_01", Vector3(side * 2.47, 0.19, 6.49), Vector3(2.30, 0.58, 0.32))
+		for z: float in [1.17, 2.96, 4.75, 6.54]:
+			_piece(b, "SM_Bld_Pillar_03", Vector3(side * 5.65, 0.10, z), Vector3(0.52, 2.77, 0.52))
+		_piece(b, "SM_Bld_Wall_Large_Cap_01", Vector3(side * 5.65, 2.82, 3.85), Vector3(6.05, 0.34, 0.92), CORNICE_MARBLE, PI / 2)
+		for z: float in [1.54, 6.57]:
+			var y := _piece(b, "SM_Prop_Plinth_04", Vector3(side * 4.65, 0.10, z), Vector3(0.76, 0.54, 0.78))
+			_piece(b, "SM_Prop_Statue_05" if z > 4.0 else "SM_Prop_Statue_04", Vector3(side * 4.65, y, z),
+				Vector3(0, 1.37, 0), {}, -side * (0.45 if z > 4.0 else 1.14))
+		CatMonuments._big_brazier(b, Vector3(side * 6.58, 0.10, 6.29), 0.67)
+		b.smoke.append(b.base * Vector3(side * 2.21, 0.60, 3.48 if side > 0.0 else 5.11))
+	_piece(b, "SM_Bld_Bath_Edge_01", Vector3(0, 0.19, 1.59), Vector3(7.26, 0.58, 0.32), {}, PI)
+	_piece(b, "SM_Bld_Bath_Stairs_01", Vector3(0, 0.19, 6.34), Vector3(2.70, 0.58, 1.22), {}, PI)
+	b.door = b.base * Vector3(0, 0.10, 8.0)
+
+
+static func _jupiter(b: Bp) -> void:
+	_wonder_square(b, Vector2(12, 18), Vector2i(3, 4), CatMonuments.PAVING)
+	var marble := CatMonuments.MARBLE_BLOCKS
+	_piece(b, "SM_Bld_Base_Floor_01", Vector3(0, 0.10, -2.4), Vector3(11.04, 0.42, 12.1), CatMonuments.PORCH)
+	_piece(b, "SM_Bld_Wall_Large_01", Vector3(0, 0.46, -2.40), Vector3(10.60, 1.09, 11.72), marble)
+	_piece(b, "SM_Bld_Base_Floor_01", Vector3(0, 1.54, -2.40), Vector3(11.06, 0.28, 12.12), CatMonuments.PORCH)
+	for i in 4:
+		_piece(b, "SM_Bld_Stairs_01", Vector3((i - 1.5) * 1.91, 0.10, 5.15), Vector3(1.91, 1.73, 3.06))
+	for z: float in [3.21, 1.19]:
+		for i in 6:
+			_piece(b, "SM_Bld_Pillar_Large_04", Vector3((i - 2.5) * 1.83, 1.81, z), Vector3(0.78, 4.59, 0.78), CatMonuments.CAP_MARBLE)
+	for side: float in [-1.0, 1.0]:
+		_piece(b, "SM_Bld_Wall_Large_01", Vector3(side * 4.49, 1.81, -3.93), Vector3(7.53, 4.61, 0.54),
+			CatMonuments.MARBLE_WALL, side * PI / 2)
+		_piece(b, "SM_Bld_Wall_Large_01", Vector3(side * 2.80, 1.81, -0.21), Vector3(3.41, 4.61, 0.54), CatMonuments.MARBLE_WALL)
+		_piece(b, "SM_Bld_Ornament_02", Vector3(side * 2.83, 3.66, 0.12), Vector3(1.32, 1.19, 0.20))
+		b.brazier(Vector3(side * 1.66, 1.81, 0.57))
+		_piece(b, "SM_Prop_Plinth_04", Vector3(side * 4.91, 0.10, 5.84), Vector3(0.91, 0.75, 0.92))
+		_piece(b, "SM_Prop_Statue_05", Vector3(side * 4.91, 0.84, 5.84), Vector3(0, 1.72, 0), {}, -side * 0.35)
+	_piece(b, "SM_Bld_Wall_Large_01", Vector3(0, 1.81, -7.72), Vector3(9.53, 4.61, 0.50), CatMonuments.MARBLE_WALL, PI)
+	_piece(b, "SM_Bld_Wall_Large_01", Vector3(0, 4.69, -0.22), Vector3(2.54, 1.75, 0.54), CatMonuments.MARBLE_WALL)
+	_wonder_door(b, Vector3(0, 1.81, -0.20), 2.55, 2.97)
+	b.light(Vector3(0, 3.04, 0.81))
+	var eave := CatMonuments._entablature(b, -5.12, 5.12, -7.87, 3.59, 6.32)
+	var ridge := CatGrand._roof(b, 5.37, 3.80, -8.06, eave, CatGrand.GOLD_ROOF, GABLE_MARBLE)
+	_sculpted_pediment(b, 5.37, eave, ridge, 3.80, true)
+	var altar := _piece(b, "SM_Prop_Plinth_04", Vector3(0, 0.10, 7.38), Vector3(1.75, 0.93, 1.57))
+	CatMonuments._fire_bowl(b, Vector3(0, altar, 7.38), 0.94)
+	CatDecor._flame(b, Vector3(0, altar + 0.32, 7.38), 0.15)
+	for x: float in [-3.6, 3.6]:
+		b.brazier(Vector3(x, 0.10, 7.75))
+	b.door = b.base * Vector3(0, 0.10, 9.0)
+
 
 
 ## Фонтан: вазы с цветами у задних углов чаши
