@@ -360,10 +360,28 @@ func _layout_sections() -> void:
 			layers[depth].append(card)
 			count += 1
 		var y := RIBBON_HEIGHT + 16.0
-		for depth in layers.size():
-			var layer: Array = layers[depth]
-			for offset in range(0, layer.size(), columns):
-				y = _place_row(layer.slice(offset, offset + columns), width, y, columns, pitch, depth)
+		# Ряды заполняем по порядку глубины, но наследник встаёт в ближайший ряд сразу под своими родителями
+		# (владелец: «Больший охват» — ровно под тремя лавками, линия не обходит соседний ряд).
+		var queue: Array = []
+		for layer: Array in layers:
+			queue.append_array(layer)
+		var placed := {}
+		while not queue.is_empty():
+			var row: Array = []
+			for pass_children: bool in [true, false]:   # сначала наследники готовых родителей, потом остальные
+				for card: Button in queue:
+					var rid := String(card.get_meta("rid"))
+					if row.size() >= columns or row.has(card) or _has_parent(rid, tier) != pass_children:
+						continue
+					if _parents_placed(rid, tier, placed):
+						row.append(card)
+			if row.is_empty():
+				row.append(queue[0])
+			for card: Button in row:
+				queue.erase(card)
+			y = _place_row(row, width, y, columns, pitch, tier)
+			for card: Button in row:
+				placed[String(card.get_meta("rid"))] = true
 		section.custom_minimum_size.y = y
 		ranks_y += y + get_theme_constant("separation")
 	_empty.visible = count == 0
@@ -382,17 +400,41 @@ func _depth(r: Dictionary, tier: int) -> int:
 	return depth
 
 
-func _place_row(row: Array, width: float, y: float, columns: int, pitch: float, depth: int) -> float:
-	var n := columns if depth > 0 else row.size()
+## Все видимые родители этого ранга уже стоят в рядах выше.
+func _parents_placed(id: String, tier: int, placed: Dictionary) -> bool:
+	for previous: String in Defs.research_prerequisites(Defs.research(id)):
+		var parent: Control = cards[previous]
+		if parent.visible and int(Defs.research(previous)["lvl"]) == tier and not placed.has(previous):
+			return false
+	return true
+
+
+## Есть ли у карточки видимый родитель того же ранга (тогда её место — под родителями).
+func _has_parent(id: String, tier: int) -> bool:
+	for previous: String in Defs.research_prerequisites(Defs.research(id)):
+		var parent: Control = cards[previous]
+		if parent.visible and int(Defs.research(previous)["lvl"]) == tier:
+			return true
+	return false
+
+
+func _place_row(row: Array, width: float, y: float, columns: int, pitch: float, tier: int) -> float:
+	var children: Array = row.filter(func(c: Button) -> bool: return _has_parent(String(c.get_meta("rid")), tier))
+	var n := columns if not children.is_empty() else row.size()
 	var left := (width - ((n - 1) * pitch + CARD_WIDTH)) * 0.5
 	var free: Array[int] = []
 	for i in n:
 		free.append(i)
 	var bottom := y
+	# Сначала наследники занимают места под родителями, остальные — свободные места слева направо.
+	var ordered: Array = children.duplicate()
 	for card: Button in row:
+		if not ordered.has(card):
+			ordered.append(card)
+	for card: Button in ordered:
 		var id := String(card.get_meta("rid"))
 		var slot := free[0]
-		if depth > 0:
+		if children.has(card):
 			var parent_x := 0.0
 			var parents := 0
 			for previous: String in Defs.research_prerequisites(Defs.research(id)):
