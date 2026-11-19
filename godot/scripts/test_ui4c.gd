@@ -47,7 +47,6 @@ func _run() -> void:
 	c.auto_hire = true
 	cover = game.cover
 	hud = game.hud
-	hud.house_more = true
 	game.can_save = false
 	game.settings["autosave"] = false
 	game.speed = 0.0

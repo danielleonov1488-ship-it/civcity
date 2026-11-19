@@ -85,7 +85,6 @@ func _run() -> void:
 	c.auto_hire = true  # прежняя фикстура
 	land = game.land
 	hud = game.hud
-	hud.house_more = true                 # карточка дома — подробная (проверки её строк); короткую смотрит test_ux
 	game.can_save = false
 	if mode == "cam":
 		await _cam()
@@ -429,7 +428,7 @@ func _hire_new() -> void:
 	hud.open_info(shop)
 	await frames(4)
 	var txt := _labels(hud.info_panel)
-	check(txt.contains("Работа") and txt.contains("1 / %d" % mx), "в карточке пекарни — «Работники 1 / %d»" % mx)
+	check(txt.contains("РАБОТА") and txt.contains("1 / %d" % mx), "в карточке пекарни — «Работники 1 / %d»" % mx)
 	await shot("pol_hire_card.png")
 	hud.close_panels()
 	c.set_hire(shop, mx)

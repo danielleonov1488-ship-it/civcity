@@ -152,19 +152,21 @@ func style_ok(style: StyleBox, path: String) -> void:
 
 func inspect_slots() -> void:
 	var slots := hud.info_box.find_child("worker_slots", true, false)
-	if not check(slots != null and slots.get_child_count() == city.job_max(hud.info_b), "one worker silhouette per slot"):
+	if not check(slots != null and slots.get_child_count() == city.job_max(hud.info_b), "one bust per worker slot"):
 		return
-	for slot: Control in slots.get_children():
-		check(not slot is PanelContainer and not slot is Panel, "worker slot has no circle")
-		check(slot.has_meta("occupied"), "worker slot has occupancy")
-		for descendant: Control in slot.find_children("*", "Control", true, false):
-			check(not descendant is PanelContainer and not descendant is Panel, "worker silhouette has no frame")
-			if descendant is TextureRect:
-				var picture := descendant as TextureRect
-				check(picture.texture == CityStyle.icon("person"), "worker slot is a plain person, no portrait")
-				check(is_equal_approx(picture.modulate.a, 1.0 if bool(slot.get_meta("occupied")) else 0.22), "filled/free worker visibility")
-	var required := hud.info_box.find_child("RequiredWorkerClass", true, false) as Control
-	check(required != null and required.tooltip_text != "", "required class pictogram has a tooltip")
+	var roster := city.staff_members(hud.info_b)
+	var lowest := String(city.accepted_worker_classes(hud.info_b)[0])
+	for i in slots.get_child_count():
+		var slot := slots.get_child(i) as Button
+		var occupied := i < roster.size()
+		var cls := String(roster[i]["cls"]) if occupied else lowest
+		var picture := slot.get_node_or_null("WorkerBust") as TextureRect
+		check(bool(slot.get_meta("occupied")) == occupied and slot.disabled != occupied, "only hired workers can be selected")
+		check(picture != null and picture.texture == CityStyle.bust(cls), "slot shows its class bust")
+		if picture != null:
+			check(is_equal_approx(picture.modulate.a, 1.0 if occupied else 0.28), "filled/free worker visibility")
+	var required := hud.info_box.find_child("RequiredWorkerClass", true, false) as Label
+	check(required != null and required.text.begins_with(I18n.t("Требуются %s").get_slice("%", 0)), "requirements are written below slots")
 
 
 func finish_run() -> void:

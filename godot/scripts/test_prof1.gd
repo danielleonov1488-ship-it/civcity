@@ -321,7 +321,6 @@ func cards() -> void:
 		check(not visible_texts(hud.info_box).contains(String(Defs.PROFESSIONS[id]["name"])), "no profession text panel " + id)
 	await shot("1_building_card.png")
 	game.select_building(h)
-	hud.house_more = false
 	hud.open_info(h)
 	await frames(8)
 	icons = hud.info_box.find_children("ProfessionIcon", "PanelContainer", true, false)

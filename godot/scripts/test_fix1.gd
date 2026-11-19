@@ -117,7 +117,6 @@ func _run() -> void:
 	hud._close_tray()
 	await _birds(h)
 	hud.visible = true
-	hud.house_more = false
 	game.rig.set_view(Vector3(h["pos"].x, h["y"] + 2.0, h["pos"].y), 20, 36, 24)
 	game.select_building(h)
 	hud.open_info(h)

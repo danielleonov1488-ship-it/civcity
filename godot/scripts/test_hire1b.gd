@@ -1,8 +1,8 @@
 extends Node3D
 ## Регресс HIRE1b: сохранение работы, обучение, просьбы и очередь советника.
 
-var out := "D:/CivCity/.work/stage4/hire1b/shots/"
-var game
+var out := "D:/CivCity/.work/stage7/cityttc9b/shots/hire1b/"
+var game: Game
 var fails := 0
 
 
@@ -11,10 +11,18 @@ func _ready() -> void:
 		var pair := arg.split("=", true, 1)
 		if pair.size() == 2 and pair[0] == "out":
 			out = pair[1].trim_suffix("/") + "/"
-	Game.boot = {"new": "1", "hour": "10"}
-	game = (load("res://main.tscn") as PackedScene).instantiate()
-	add_child(game)
+	var profile := "D:/CivCity/.work/stage7/cityttc9b/profiles/hire1b_%d_%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_usec()]
+	if not check(DirAccess.make_dir_recursive_absolute(profile) == OK, "isolated profile directory"):
+		_finish()
+		return
+	OS.set_environment("CIVCITY_SAVEDIR", profile)
+	OS.set_environment("CIVCITY_NOMINPAUSE", "1")
+	OS.set_environment("CIVCITY_HEROSCREEN", "0")
+	GamePaths._dir = ""
+	Game.boot = {"new": "1", "hour": "10", "nologin": "1"}
+	game = (load("res://main.tscn") as PackedScene).instantiate() as Game
 	game.can_save = false
+	add_child(game)
 	_run()
 
 
@@ -166,24 +174,29 @@ func request_row(hud: Hud, text: String) -> Button:
 	return null
 
 
-func guidance(c: City, hud: Hud, shop: Dictionary, home: Dictionary) -> void:
+func guidance(c: City, hud: Hud, shop: Dictionary, home: Dictionary) -> Dictionary:
 	var tut: Tutorial = game.tutorial
 	c.settled_total = 0
-	c.pending["Проверка"] = {"n": 2, "cls": "plebs"}
-	check(not tut._check("settle"), "walking family does not complete settlement step")
-	c.pending.clear()
-	hud.open_info(home)
+	check(not tut._check("settle"), "settlement waits for a choice of home")
+	c.pending["Проверка"] = {"n": 2, "cls": "plebs", "home": int(home["id"]), "m": [
+		{"pn": "Первый", "sx": 0, "age": 1, "sd": 1}, {"pn": "Вторая", "sx": 1, "age": 1, "sd": 2}]}
+	check(tut._check("settle"), "assigned family completes settlement step")
 	check(c.workforce().is_empty() and not c.can_hire(shop), "walking family is not available for hiring yet")
-	check(c.settled(int(home["id"]), 2, "Проверка") == 2, "family arrives at home")
+	if not check(c.settled(int(home["id"]), 2, "Проверка") == 2, "family arrives at home"):
+		return {}
 	var family: Dictionary = home["families"][0]
 	game.people._make_family(family["name"], 2, int(home["id"]), home["pos"], "", family)
-	check(tut._check("settle") and tut._check("house"), "settled family unlocks hiring steps")
+	tut._enter(Tutorial.step_index("house"))
+	hud.open_info(home)
+	tut._house_hint()
+	check(not tut._check("house") and tut.next_btn.visible and not tut.next_btn.disabled, "house step waits for confirmation")
+	tut.next_btn.pressed.emit()
+	check(tut._wait > 0.0, "house confirmation advances tutorial")
 	tut._enter(Tutorial.step_index("workers"))
 	hud._update_pointer()
-	check(hud.pointer_target != null and hud.pointer_target.name == "hire_plus", "tutorial hire pointer")
 	check(not tut._check("workers"), "tutorial requires actual hire")
 	var plus := hud._do_target(hud.hire_do(shop)) as Button
-	if check(plus != null and not plus.disabled, "settled adult can be hired"):
+	if check(plus != null and hud.pointer_target == plus and not plus.disabled and plus.get_meta("hire_class", "") == "plebs" and plus.icon == CityStyle.icon("plus"), "tutorial points to the plebeian hire button"):
 		plus.pressed.emit()
 	check(tut._check("workers"), "real plus completes worker requirement")
 	# Завершённое обучение; настройки и пользовательские сохранения не пишем.
@@ -199,23 +212,31 @@ func guidance(c: City, hud: Hud, shop: Dictionary, home: Dictionary) -> void:
 	c.tips["rank_pressed"] = true
 	hud._ptr_shown = {}
 	hud.refresh()
-	var first: Dictionary = c.active_goals(1)[0]
-	check(first["id"] == "fam3", "first request fixture")
+	var goals := c.active_goals(1)
+	if not check(not goals.is_empty() and goals[0]["id"] == "fam3", "first request fixture"):
+		return {}
+	var first: Dictionary = goals[0]
 	hud._update_pointer()
-	check(hud.pointer_target == hud._request_target(first)["target"], "early request keeps pointer priority")
-	await shot("1_early_request.png")
+	check(hud.pointer_target == null, "early request has no automatic pointer")
+	var request: Dictionary = hud._request_target(first)
+	hud.show_pointer(request["do"])
+	check(hud.pointer_target != null and hud.pointer_target == request["target"], "requested early pointer keeps priority")
 	# Ненанятое здание само не открывается и не забирает стрелку просьбы.
 	var empty := place(c, "scriptorium", Land.START + Vector2(38, 16))
 	hud.close_panels()
 	hud._update_pointer()
-	check(not hud.info_panel.visible and hud.pointer_target == hud._request_target(first)["target"], "unopened workplace never steals pointer")
+	check(not hud.info_panel.visible and hud.pointer_target != null and hud.pointer_target == request["target"], "unopened workplace never steals pointer")
+	await shot("1_early_request.png")
+	hud._ptr_shown = {}
 	hud.open_info(empty)
-	hud._update_pointer()
-	check(hud.pointer_target == hud._do_target(hud.hire_do(empty)) and hud.pointer_target != null, "opened empty card points to plus")
+	check(hud.pointer_target == null, "opened workplace has no automatic pointer")
+	hud.show_pointer(hud.hire_do(empty))
+	check(hud.pointer_target == hud._do_target(hud.hire_do(empty)) and hud.pointer_target != null, "requested hire points to plus")
 	await shot("2_open_empty_card.png")
 	check(c.hire(empty) == 1, "hire in opened card")
 	hud._update_pointer()
 	check(hud._do_target(hud.hire_do(empty)) == null, "partially staffed card does not point to plus")
+	hud._ptr_shown = {}
 	hud.close_panels()
 	c.level = 1
 	for goal: Dictionary in Defs.REQUESTS:
@@ -227,8 +248,10 @@ func guidance(c: City, hud: Hud, shop: Dictionary, home: Dictionary) -> void:
 	hud.refresh()
 	await frames(5)
 	hud._update_pointer()
-	var goal: Dictionary = c.active_goals(1)[0]
-	check(goal["id"] == "scriptorium2", "hamlet request fixture")
+	goals = c.active_goals(1)
+	if not check(not goals.is_empty() and goals[0]["id"] == "scriptorium2", "hamlet request fixture"):
+		return {}
+	var goal: Dictionary = goals[0]
 	check(hud.pointer_target == null, "hamlet does not show automatic request pointer")
 	var row := request_row(hud, String(goal["text"]))
 	if check(row != null and row.is_visible_in_tree(), "second scriptorium request row visible"):
@@ -239,19 +262,31 @@ func guidance(c: City, hud: Hud, shop: Dictionary, home: Dictionary) -> void:
 	hud._ptr_shown = {}
 	hud.close_panels()
 	hud.advisor_panel.hide()
+	return empty
 
 
-func advice(c: City, hud: Hud) -> void:
+func advice(c: City, hud: Hud, shop: Dictionary, scriptorium: Dictionary) -> void:
+	game.set_tool("")
+	var home := place(c, "house_artisan", Land.START + Vector2(49, 20))
+	home["families"] = [{"name": "Мастера", "n": 2, "m": [
+		{"pn": "Взрослый", "sx": 0, "age": 1, "sd": 3}, {"pn": "Ребёнок", "sx": 1, "age": 0, "sd": 4}]}]
+	home["pop"] = 2
+	c.compute()
+	check(c.hired_of(shop) == c.job_max(shop) and c.hired_of(scriptorium) == 1 and c.can_hire(scriptorium, "artisans") and not c.can_hire(scriptorium, "plebs"), "filled first workplace and one artisan available for the next slot")
+	# Оставляем только советы, чью очерёдность проверяем.
+	hud.advisor_panel.hide()
+	hud.guidance_queue.clear()
+	hud._clear(hud.notes_box)
 	game.settings["advisor_off"] = false
 	hud._tip_next = 0
 	c.tips.erase("manual_hire_tip")
+	c.tips.erase("manual_hire_pending")
 	c.tips.erase("unpaid_tip")
-	var empty := place(c, "stall_fruit", Land.START + Vector2(48, 4))
-	hud.advisor_panel.hide()
-	c.tips.erase("manual_hire_tip")
+	c.tips["unhappy_penalty"] = true
+	c.tips["want_advice"] = true
 	c.unpaid_h = Defs.UNPAID_H
 	c.money = 0
-	hud.on_workplace_built(empty)
+	hud.on_workplace_built(shop)
 	check(not hud.advisor_panel.visible and c.tips.has("manual_hire_pending"), "building queues advice")
 	hud._once_tips()
 	check(hud.adv_title.text == "Казна пуста" and c.tips.has("unpaid_tip"), "urgent treasury tip wins")
@@ -270,11 +305,19 @@ func advice(c: City, hud: Hud) -> void:
 	check(not hud.advisor_panel.visible and c.tips.has("manual_hire_pending") and not c.tips.has("manual_hire_tip"), "hire advice waits while building")
 	game.set_tool("")
 	hud._once_tips()
-	check(hud.advisor_panel.visible and hud.adv_title.text == "Работа в новом здании" and c.tips.has("manual_hire_tip"), "hire advice uses next free slot")
+	if not check(hud.advisor_panel.visible and hud.adv_title.text == "Работа в новом здании" and c.tips.has("manual_hire_tip") and hud.adv_show.visible, "hire advice opens with a Show action"):
+		return
 	await shot("5_hire_advisor.png")
-	hud.advisor_panel.hide()
-	hud.on_workplace_built(empty)
-	check(not c.tips.has("manual_hire_pending"), "hire explanation is one time")
+	hud.adv_show.pressed.emit()
+	await shot("6_advisor_hire_target.png")
+	var next_plus := hud.pointer_target as Button
+	var correct_target: bool = (hud.info_panel.visible and hud.info_b == scriptorium and hud.pointer.visible
+			and next_plus != null and not next_plus.disabled and next_plus.get_meta("hire_class", "") == "artisans")
+	if check(correct_target, "hire advice uses the available artisan plus in the partially staffed workplace"):
+		next_plus.pressed.emit()
+		check(c.hired_of(scriptorium) == 2 and int(c.stats["free"]["artisans"]) == 0, "highlighted plus fills the remaining slot")
+	hud.on_workplace_built(scriptorium)
+	check(not c.tips.has("manual_hire_pending") and not hud._manual_hire_advice(), "hire explanation is one time")
 
 
 func _run() -> void:
@@ -312,8 +355,9 @@ func _run() -> void:
 	var home := place(c, "house_pleb", Land.START + Vector2(12, 12))
 	var shop := place(c, "stall_fruit", Land.START + Vector2(25, 12))
 	game.rig.set_view(Vector3(210, Land.BASE_Y, 160), 20, 45, 48)
-	await guidance(c, hud, shop, home)
-	await advice(c, hud)
+	var scriptorium := await guidance(c, hud, shop, home)
+	if not scriptorium.is_empty():
+		await advice(c, hud, shop, scriptorium)
 	_finish()
 
 

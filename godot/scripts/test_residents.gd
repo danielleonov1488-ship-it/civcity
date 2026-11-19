@@ -53,7 +53,6 @@ func _bind() -> void:
 	c.auto_hire = true  # прежняя фикстура
 	ppl = game.people
 	hud = game.hud
-	hud.house_more = true                 # карточка дома — подробная (проверки её строк); короткую смотрит test_ux
 	game.can_save = false
 
 
@@ -841,14 +840,12 @@ func _cat_test() -> void:
 func _house_card_test(houses: Array) -> void:
 	var h: Dictionary = houses[0]
 	game.select_building(h)
-	hud.house_more = true                  # имена членов семьи — в «Подробнее» (компактная карточка — только головы)
 	hud.open_info(h)
 	await frames(3)
 	var f: Dictionary = h["families"][0]
 	var first := String(f["m"][0]["pn"])
 	var chip := _family_chip(first)
-	var t := _texts(hud.info_box)
-	if check(chip != null and (t.contains(first + " —") or t.contains(first + ",")), "в карточке дома — члены семьи («%s — …»)" % first):
+	if check(chip != null and chip.icon != null and chip.icon.resource_path.begins_with(CityStyle.TTC_PATH), "портрет члена семьи с настроением: " + first):
 		await shot("res_house_family.png")
 		chip = _family_chip(first)                   # карточка могла пересобраться, пока снимали, — фишка уже новая
 		if chip != null:
@@ -860,12 +857,10 @@ func _house_card_test(houses: Array) -> void:
 
 
 func _family_chip(pn: String) -> Button:
-	var chip: Button = null
-	var cl: Node = hud.info_box.find_child("m_" + pn, true, false)
-	if cl != null:
-		for b in cl.find_children("*", "Button", true, false):
-			chip = b
-	return chip
+	for button: Button in hud.info_box.find_children("FamilyMember*", "Button", true, false):
+		if button.tooltip_text.begins_with(pn + " · "):
+			return button
+	return null
 
 
 ## «Горожане»: поиск по имени и по семье

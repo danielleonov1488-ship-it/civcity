@@ -221,11 +221,10 @@ func _new() -> void:
 	check(blk.begins_with("Не помещается") or not c.upgrade_missing(hblk).is_empty() or c.upgrade_happy(hblk) < 65, "у курсора — почему: «%s»" % blk)
 	# --- карточка дома: галочки и кнопка ---
 	game.select_building(hp3)
-	game.hud.house_more = true                    # подробная карточка дома: «Перестроить» с условиями
 	game.hud.open_info(hp3)
 	await frames(6)
-	var card := _labels(game.hud.info_box)
-	check(card.contains("Перестроить в дом ремесленников") and card.contains("Счастье после перестройки"), "карточка дома: «Перестроить» с условиями")
+	var upgrade := game.hud.info_box.find_child("InfoUpgrade", true, false) as Button
+	check(upgrade != null and upgrade.text == "Перестроить" and upgrade.tooltip_text.contains("Счастье после перестройки"), "карточка дома: «Перестроить» с прогнозом")
 	if shots:
 		var hp: Vector2 = hp3["pos"]
 		game.rig.set_view(Vector3(hp.x, Land.BASE_Y, hp.y), rad_to_deg(float(hp3["yaw"])) + 20.0, 38, 22)
@@ -427,11 +426,8 @@ func _decor_blocker(hid: int) -> void:
 	game.select_building(hb)
 	game.hud.open_info(hb)
 	await frames(6)
-	var btn: Button = null
-	for bt in game.hud.info_box.find_children("*", "Button", true, false):
-		if (bt as Button).text.begins_with("Снести мешающее"):
-			btn = bt
-	if check(btn != null and btn.text.contains("«Статуя воина»") and btn.text.contains("вернётся"), "карточка дома: «%s»" % (btn.text if btn else "нет кнопки")):
+	var btn := game.hud.info_box.find_child("InfoClearDecor", true, false) as Button
+	if check(btn != null and btn.tooltip_text.contains("возврат"), "карточка дома: убрать мешающие украшения с возвратом"):
 		var m0 := c.money
 		btn.pressed.emit()
 		await frames(3)

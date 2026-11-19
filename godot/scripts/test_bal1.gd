@@ -250,7 +250,6 @@ func _run_ui() -> void:
 				_road(c, shop)
 			c.hire(shop, c.job_max(shop))
 		c.compute()
-		hud.house_more = true
 		hud.open_info(house)
 		for type: String in shops:
 			check(not texts(hud.info_box).contains(String(Defs.B[type]["name"])), "house card hides unneeded " + type)
