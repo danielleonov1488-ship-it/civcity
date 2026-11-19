@@ -4,6 +4,7 @@ extends Control
 
 const FortPerson = preload("res://scripts/fort_person.gd")
 const Actor = preload("res://scripts/charpilot_actor.gd")
+const Enemy = preload("res://scripts/legion_enemy_actor.gd")
 const PersonLayer = preload("res://scripts/fort_person_layer.gd")
 const ART := "res://assets/legion_b1/"
 const DESIGN := Vector2(1600, 900)
@@ -27,6 +28,7 @@ static var _frames := {}
 
 var field: TextureRect
 var legion: Legion
+var pvp := false
 var hero_look: Dictionary = {}
 var people_layer: PersonLayer
 var world := Node2D.new()
@@ -37,6 +39,7 @@ var views := {}
 var shots := {}
 var _bursts: Array[Burst] = []
 var _flights: Array[Flight] = []
+var _enemy_variants := {}
 var _stone: Texture2D
 var _trail_y := 0.72
 var _zoom := 1.0
@@ -89,7 +92,7 @@ func _fit() -> void:
 	world.scale = Vector2.ONE * maxf(0.001, minf(size.x / DESIGN.x, size.y / DESIGN.y) / _zoom)
 	people_layer.fit(size)
 	for f: Fighter in views.values():
-		_place_ally(f)
+		_place_actor(f)
 
 
 static func point(x: float, z: float) -> Vector2:
@@ -159,13 +162,14 @@ static func _effect_frames(kind: String) -> SpriteFrames:
 	return _frames[kind] as SpriteFrames
 
 
-func prewarm() -> void:
+func prewarm(waves: Array = []) -> void:
 	# Листы будущих волн и эффекты подгружаются под занавесом.
 	for atlas: String in SILHOUETTE:
 		_unit_frames(atlas)
 	for kind: String in ["fx_hit", "fx_heal", "fx_arrow"]:
 		_effect_frames(kind)
 	_stone = load("res://assets/ui/ai/icons/rock.png")
+	Enemy.prewarm(waves)
 
 
 func add_unit(u: LegionSim.Unit) -> Fighter:
@@ -181,31 +185,66 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 	f.position = f.layout_point(u.x, u.z)
 	f.health = u.hp_frac()
 	units.add_child(f)
-	if u.side == "ally":
-		var person := _ally_person(u)
+	if u.side == "ally" or (pvp and (Legion.UNITS.has(u.key) or u.key == "hero")):
+		var person := _ally_person(u) if u.side == "ally" else {}
 		if person.is_empty():
 			person = {"id": u.id, "hero": u.key == "hero"}
-			if u.key == "hero" and not hero_look.is_empty():
+			if u.side == "ally" and u.key == "hero" and not hero_look.is_empty():
 				person["female"] = int(hero_look.get("sx", 0)) == 1
 				person["look"] = hero_look
-		var gear: Array = legion.worn(person) if legion != null else []
+		var gear: Array = legion.worn(person) if legion != null and u.side == "ally" else []
 		f.actor = FortPerson.make(person, people_layer.viewport, gear, u.key)
-		f.actor.name = "Ally_%d" % u.id
+		f.actor.name = ("%s_%d" % ["Ally" if u.side == "ally" else "Enemy", u.id])
 		var loadout: Dictionary = f.actor.get_meta("loadout")
 		f.yaw = 48.0 if loadout["outfit"] == "archer" else 56.0
 		f.idle_clip = "Spell_Simple_Idle" if loadout["outfit"] == "archer" else ("Sword_Idle" if bool(loadout["sword"]) else "Idle")
 		f.attack_clip = "Spell_Simple_Shoot" if loadout["outfit"] == "archer" or u.heal_pow > 0.0 else "Sword_Attack"
 		f.clip = f.idle_clip
-	else:
+		if u.side == "enemy":
+			f.hit_clip = "Hit_Chest"
+			f.death_clip = "Death01"
+	elif u.key not in Enemy.SPRITES:
+		_add_enemy(f)
+	if f.actor != null and not f.actor.problem.is_empty():
+		f.actor.free()
+		f.actor = null
+	if f.actor == null:
 		f.sprite = AnimatedSprite2D.new()
-		f.sprite.name = "EnemySprite"
+		f.sprite.name = ("EnemySprite" if u.side == "enemy" else "AllySprite")
 		f.sprite.sprite_frames = _unit_frames(f.sheet)
 		f.add_child(f.sprite)
 		f.sprite.play(&"idle")
 	f.face(u.side == "enemy" and (not u.entering or u.enter_dir < 0.0))
-	_place_ally(f)
+	_place_actor(f)
 	views[u.id] = f
 	return f
+
+
+func _add_enemy(f: Fighter) -> void:
+	var u := f.unit
+	var model := Enemy.new()
+	model.name = "Enemy_%d" % u.id
+	model.set_meta("enemy_id", u.key)
+	people_layer.viewport.add_child(model)
+	var variant := int(_enemy_variants.get(u.key, u.id % 2))
+	_enemy_variants[u.key] = 1 - variant
+	if model.build_enemy(u.key, u.id, variant):
+		f.actor = model
+		f.scale = Vector2.ONE * clampf(u.size * 1.08 * model.size_factor, 0.82, 2.18)
+		f.actor_height = model.stature
+		f.wide = model.wide
+		f.yaw = model.yaw
+		f.idle_clip = model.idle
+		f.walk_clip = model.walk
+		f.attack_clip = model.strike
+		f.hit_clip = model.reaction
+		f.death_clip = model.fall
+		f.clip = f.idle_clip
+		f.sample = float(u.id % 6) * 0.13
+	else:
+		if not model.problem.is_empty():
+			push_warning("Legion enemy %s: %s" % [u.key, model.problem])
+		model.free()
 
 
 func _ally_person(u: LegionSim.Unit) -> Dictionary:
@@ -219,14 +258,14 @@ func _ally_person(u: LegionSim.Unit) -> Dictionary:
 	return person
 
 
-func _place_ally(f: Fighter) -> void:
-	if not is_instance_valid(f.actor) or not f.actor.problem.is_empty():
+func _place_actor(f: Fighter) -> void:
+	if not is_instance_valid(f.actor):
 		return
 	var feet := screen(f.position)
-	var height := f.body_height() * world.scale.y
+	var height := f.model_height() * world.scale.y
 	f.actor.visible = f.modulate.a > 0.0 and Rect2(Vector2.ZERO, size).grow(height).has_point(feet)
 	if f.actor.visible:
-		people_layer.place(f.actor, feet, height, f.yaw)
+		people_layer.place(f.actor, feet, height, -f.yaw if f.flip_h else f.yaw)
 		f.actor.set_opacity(f.modulate.a)
 		f.actor.animate(f.clip, f.sample)
 
@@ -310,7 +349,7 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 	for id in views.keys():
 		var f: Fighter = views[id]
 		f.tick(gdt, gdt / dt if dt > 0.0 else 0.0, weight, fighting)
-		_place_ally(f)
+		_place_actor(f)
 		if f.unit.alive:
 			f.status(sim.t, fighting)
 		elif f.modulate.a <= 0.0:
@@ -350,6 +389,7 @@ func clear() -> void:
 			root.remove_child(child)
 			child.queue_free()
 	views.clear()
+	_enemy_variants.clear()
 	shots.clear()
 	_bursts.clear()
 	_flights.clear()
@@ -372,11 +412,17 @@ class Fighter extends Node2D:
 	var flip_h := false
 	var lane_z := 0.0
 	var yaw := 56.0
+	var actor_height := 0.0
+	var wide := false
 	var idle_clip := "Idle"
+	var walk_clip := "Walk"
 	var attack_clip := "Sword_Attack"
+	var hit_clip := ""
+	var death_clip := ""
 	var clip := "Idle"
 	var sample := 0.0
 	var attack_left := 0.0
+	var hit_left := 0.0
 
 	func _exit_tree() -> void:
 		if is_instance_valid(actor):
@@ -393,7 +439,7 @@ class Fighter extends Node2D:
 		# В бою симуляция сближает ряды. На экране оставляем каждому бойцу свой проход.
 		var depth := lerpf(lane_z, z, 0.28)
 		var p := LegionBattleView.point(x, depth)
-		if unit.side == "ally" and absf(lane_z) > 1.25:
+		if absf(lane_z) > 1.25:
 			# На широком фланге сохраняем разнос в глубину, но сдерживаем боковой сдвиг.
 			var inner := clampf(depth, -1.25, 1.25)
 			p.x = LegionBattleView.point(x, lerpf(inner, depth, 0.28)).x
@@ -403,8 +449,13 @@ class Fighter extends Node2D:
 		return p
 
 	func body_height() -> float:
+		if actor_height > 0.0:
+			return model_height() * actor_height / 1.79
 		var y := 26.0 if sheet == "bear" and sprite != null and sprite.animation == &"attack" else silhouette.y
 		return (LegionBattleView.BASELINE - y) * scale.y
+
+	func model_height() -> float:
+		return 234.0 * scale.y if actor_height > 0.0 else body_height()
 
 	func head() -> Vector2:
 		return position - Vector2(0, body_height() + 10.0)
@@ -420,15 +471,24 @@ class Fighter extends Node2D:
 			clip = attack_clip
 			sample = 0.0
 			attack_left = actor.clip_length(attack_clip)
+			hit_left = 0.0
 
 	func hurt() -> void:
 		flash = 0.14
 		modulate = Color(1.8, 1.24, 1.12)
+		if actor != null and not hit_clip.is_empty() and unit.alive:
+			clip = hit_clip
+			sample = 0.0
+			attack_left = 0.0
+			hit_left = minf(actor.clip_length(hit_clip), 0.24)
 
 	func revive() -> void:
 		death = 0.0
 		modulate = Color.WHITE
 		attack_left = 0.0
+		hit_left = 0.0
+		clip = idle_clip
+		sample = 0.0
 		if sprite != null:
 			sprite.play(&"idle")
 
@@ -436,8 +496,14 @@ class Fighter extends Node2D:
 		if not unit.alive:
 			if sprite != null:
 				sprite.speed_scale = 0.0
-			death = minf(1.0, death + gdt / 0.63)
-			modulate.a = 1.0 - death
+			if actor != null and not death_clip.is_empty():
+				death = minf(1.0, death + gdt / 0.91)
+				clip = death_clip
+				sample = minf(0.999, death / 0.73) * actor.clip_length(death_clip)
+				modulate.a = 1.0 - smoothstep(0.39, 1.0, death)
+			else:
+				death = minf(1.0, death + gdt / 0.63)
+				modulate.a = 1.0 - death
 			return
 		flash = maxf(0.0, flash - gdt)
 		modulate = Color.WHITE.lerp(Color(1.8, 1.24, 1.12), flash / 0.14)
@@ -458,11 +524,14 @@ class Fighter extends Node2D:
 			if sprite.animation != &"attack" or not sprite.is_playing():
 				sprite.play(&"walk" if walking else &"idle")
 			sprite.speed_scale = rate * (walk_rate if sprite.animation == &"walk" else 1.0)
+		elif hit_left > 0.0:
+			sample += minf(gdt, maxf(0.0, hit_left - 0.001))
+			hit_left = maxf(0.0, hit_left - gdt)
 		elif attack_left > 0.0:
 			sample += minf(gdt, maxf(0.0, attack_left - 0.001))
 			attack_left = maxf(0.0, attack_left - gdt)
 		else:
-			var next := "Walk" if walking else idle_clip
+			var next := walk_clip if walking else idle_clip
 			sample = sample + gdt * (walk_rate if walking else 1.0) if clip == next else 0.0
 			clip = next
 
@@ -513,8 +582,8 @@ class GroundLayer extends Node2D:
 			draw_line(LegionBattleView.point(-15.0, z), LegionBattleView.point(15.0, z), tint, float(lane_mark["width"]), true)
 		for f: Fighter in views.values():
 			var foot := f.position + Vector2(0, 2)
-			draw_set_transform(foot, 0.0, Vector2(1.0, 0.22))
-			var r := 39.0 * f.scale.x
+			draw_set_transform(foot, 0.0, Vector2(1.0, 0.22 if not f.wide else 0.18))
+			var r := (65.0 if f.wide else 39.0) * f.scale.x
 			draw_circle(Vector2.ZERO, r * 1.15, Color(0.24, 0.11, 0.04, 0.19 * f.modulate.a), true, -1.0, true)
 			draw_circle(Vector2.ZERO, r, Color(0.24, 0.11, 0.04, 0.27 * f.modulate.a), true, -1.0, true)
 			if f.unit.alive and f.status_color.a > 0.0:
