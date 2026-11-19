@@ -13,7 +13,7 @@ const EXTRA := {
 	"centurion": ["outfit_centurion_skirt", "outfit_centurion_helmet", "outfit_centurion_cape"],
 	"cook": ["under_cook", "outfit_cook_apron", "outfit_cook_cap"],
 	"smith": ["under_smith", "outfit_smith_apron", "outfit_smith_bracers"],
-	"archer": ["under_archer", "outfit_archer_cuirass", "outfit_archer_bracers", "outfit_archer_quiver", "outfit_archer_bow"],
+	"archer": ["under_archer", "outfit_archer_cuirass", "outfit_archer_bracers", "outfit_archer_quiver"],
 	"priest": ["under_priest", "outfit_priest_veil"],
 }
 const RIGHT_HAND := ["hand_r", "RightHand"]
@@ -31,6 +31,9 @@ var _extra_helmet: Node3D
 var _sword: Node3D
 var _shield: Node3D
 var _back_shield: Node3D
+var _hair: Node3D
+var _kit_hair: MeshInstance3D
+var _bow: Node3D
 var _hammer: Node3D
 var _rig: Skeleton3D
 var _groups: Dictionary = {}
@@ -40,12 +43,14 @@ var _female := false
 var _outfit := ""
 var _atlas: Material
 var _clips: Dictionary = {}
+var _clip_lengths: Dictionary = {}
 var _sample_time := -INF
 var _sample_clip := ""
 var _faded_meshes: Array[Node] = []
 var _fade_materials: Array[Dictionary] = []
 var _opacity := 1.0
 static var _kit_cache: Dictionary = {}
+static var _bound_skins: Dictionary = {}
 
 
 func build(family: int, female: bool, variant: String, look := {}, outfit := "peasant") -> bool:
@@ -108,7 +113,7 @@ func _build_synty(variant: String, look: Dictionary) -> bool:
 	if _rig.find_bone("Hips") < 0 or _rig.find_bone("Head") < 0:
 		return _fail("Synty skeleton is not retargeted")
 	for mesh: MeshInstance3D in source.find_children("*", "MeshInstance3D", true, false):
-		mesh.hide()
+		mesh.free()
 	if not ResourceLoader.exists("res://assets/people/UAL1_Standard.glb", "PackedScene"):
 		return _fail("local UAL animations missing")
 	var player := AnimationPlayer.new()
@@ -123,10 +128,13 @@ func _build_synty(variant: String, look: Dictionary) -> bool:
 	var base := Node3D.new()
 	base.name = "Identity"
 	_rig.add_child(base)
-	var head_width := 1.0 + (int(look.get("head", 1)) - 1) * 0.055
-	if not _add_kit_file("base" + _suffix(), base, _atlas, head_width):
+	if not _add_kit_file("base" + _suffix(), base, _atlas):
 		return false
 	identity.assign(base.get_children())
+	for part: MeshInstance3D in identity:
+		if String(part.name).begins_with("Identity_Hair"):
+			_kit_hair = part
+			break
 	if not look.is_empty():
 		_set_hair(look, variant)
 	return true
@@ -140,30 +148,33 @@ func _set_hair(look: Dictionary, variant: String) -> void:
 	var hair := int(look["hair"])
 	var color := String(look["hair_color"])
 	var kit_hair := 1 if _female else 2
-	for mesh: MeshInstance3D in identity.duplicate():
-		if not String(mesh.name).begins_with("Identity_Hair"):
-			continue
-		if hair == kit_hair:
-			mesh.material_override = Citizen._hair_mat(color, variant)
-			return
-		identity.erase(mesh)
-		mesh.free()
-	if hair == 0:
-		return
-	var sex := "Female" if _female else "Male"
-	var path := "res://assets/synty/FBX/Attachments/SM_Chr_Hair_%s_%02d.fbx" % [sex, hair]
-	var pack := load(path) as PackedScene
-	if pack == null:
-		return
-	var socket := BoneAttachment3D.new()
-	socket.name = "Hair"
-	socket.bone_name = "Head"
-	_rig.add_child(socket)
-	var piece := pack.instantiate() as Node3D
-	socket.add_child(piece)
-	Citizen.paint_hair(piece, color, variant)
+	if _kit_hair != null and hair == kit_hair:
+		_kit_hair.material_override = Citizen._hair_mat(color, variant)
+	else:
+		if _kit_hair != null:
+			identity.erase(_kit_hair)
+			_kit_hair.free()
+			_kit_hair = null
+		if hair > 0:
+			var sex := "Female" if _female else "Male"
+			_hair = _head_piece("%s_%02d" % [sex, hair], color, variant)
+	var beard := int(look.get("beard", 0))
+	if not _female and beard > 0:
+		_head_piece("Beard_%02d" % beard, color, variant, true)
+
+
+func _head_piece(part: String, color: String, variant: String, beard := false) -> Node3D:
+	var path := "res://assets/synty/FBX/Attachments/SM_Chr_Hair_" + part + ".fbx"
+	if not ResourceLoader.exists(path, "PackedScene"):
+		return null
+	var piece := (load(path) as PackedScene).instantiate() as Node3D
+	# Точка крепления исходной причёски из CHARKIT в общей позе покоя.
+	var at := Transform3D(Basis.IDENTITY, Vector3(0.0, 1.5691, -0.0048))
+	_mount("Head", piece, _bone_frame(_rig, "Head", true), at)
+	Citizen.paint_hair(piece, color, variant, beard)
 	for mesh: MeshInstance3D in piece.find_children("*", "MeshInstance3D", true, false):
 		identity.append(mesh)
+	return piece
 
 
 func _load_outfit(outfit: String) -> bool:
@@ -190,29 +201,31 @@ func _load_outfit(outfit: String) -> bool:
 
 
 ## В GLB свои оси костей. Привязываем его вершины к живому скелету по именам и общей позе покоя.
-func _add_kit_file(stem: String, group: Node3D, atlas: Material, head_width := 1.0) -> bool:
+func _add_kit_file(stem: String, group: Node3D, atlas: Material) -> bool:
 	var entries := _kit_file(stem)
 	if entries.is_empty():
 		return _fail("missing or unskinned kit GLB " + stem)
 	var rig_from_model := Citizen._rel(_rig, self).affine_inverse()
 	for entry: Dictionary in entries:
 		var model_from_mesh: Transform3D = entry["transform"]
-		if String(entry["name"]).begins_with("Identity_Head"):
-			model_from_mesh = Transform3D(Basis.from_scale(Vector3(head_width, 1, 1)), Vector3.ZERO) * model_from_mesh
 		var rig_from_mesh := rig_from_model * model_from_mesh
 		var names: PackedStringArray = entry["bones"]
-		var used: Dictionary = entry["used"]
-		var skin := Skin.new()
-		skin.set_bind_count(names.size())
-		for i in names.size():
-			var mapped: StringName = BONE_MAP.find_profile_bone_name(StringName(names[i]))
-			var bone := _rig.find_bone(mapped if mapped != &"" else StringName(names[i]))
-			if bone < 0:
-				if used.has(i):
-					return _fail("%s missing weighted bone %s" % [stem, names[i]])
-				bone = _rig.find_bone("Hips")
-			skin.set_bind_bone(i, bone)
-			skin.set_bind_pose(i, _rig.get_bone_global_rest(bone).affine_inverse() * rig_from_mesh)
+		var key := [_female, names, rig_from_mesh]
+		var skin: Skin = _bound_skins.get(key)
+		if skin == null:
+			var used: Dictionary = entry["used"]
+			skin = Skin.new()
+			skin.set_bind_count(names.size())
+			for i in names.size():
+				var mapped: StringName = BONE_MAP.find_profile_bone_name(StringName(names[i]))
+				var bone := _rig.find_bone(mapped if mapped != &"" else StringName(names[i]))
+				if bone < 0:
+					if used.has(i):
+						return _fail("%s missing weighted bone %s" % [stem, names[i]])
+					bone = _rig.find_bone("Hips")
+				skin.set_bind_bone(i, bone)
+				skin.set_bind_pose(i, _rig.get_bone_global_rest(bone).affine_inverse() * rig_from_mesh)
+			_bound_skins[key] = skin
 		var part := MeshInstance3D.new()
 		part.name = entry["name"]
 		part.mesh = entry["mesh"]
@@ -251,7 +264,10 @@ static func _kit_file(stem: String) -> Array:
 			for i in weights.size():
 				if weights[i] > 0.0:
 					used[bones[i]] = true
-		entries.append({"mesh": part.mesh, "name": part.name, "bones": names,
+		var mesh: Mesh = part.mesh
+		if stem == "base_m" and String(part.name).begins_with("Identity_Head"):
+			mesh = _separate_brows(part.mesh)
+		entries.append({"mesh": mesh, "name": part.name, "bones": names,
 			"transform": Citizen._rel(part, root), "used": used})
 	root.free()
 	if not entries.is_empty():
@@ -259,27 +275,60 @@ static func _kit_file(stem: String) -> Array:
 	return entries
 
 
+static func _separate_brows(head: Mesh) -> Mesh:
+	# В исходной мужской голове обе брови и перемычка используют один образец атласа.
+	# Разводим половины этой сетки. Сами глаза, привязки к костям и файлы Synty те же.
+	var brow_uv := Vector2(0.05146, 0.81604)
+	var surface := SurfaceTool.new()
+	surface.create_from(head, 0)
+	surface.deindex()
+	var arrays := surface.commit_to_arrays()
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+	var changed := false
+	for i in range(0, vertices.size(), 3):
+		if uvs[i].distance_squared_to(brow_uv) > 0.000001:
+			continue
+		var side := signf(vertices[i].x + vertices[i + 1].x + vertices[i + 2].x)
+		for index in range(i, i + 3):
+			var v := vertices[index]
+			v.x = v.x * 0.49 + side * 0.023
+			v.y = 1.695 + (v.y - 1.685) * 0.34
+			v.z = 0.127 + (v.z - 0.114) * 0.40
+			vertices[index] = v
+		changed = true
+	if not changed:
+		return head
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
 func _register_player(player: AnimationPlayer) -> void:
 	player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	for key: String in player.get_animation_list():
-		_clips[key.get_file().to_lower().trim_suffix("_loop")] = StringName(key)
+		var clip := key.get_file().to_lower().trim_suffix("_loop")
+		_clips[clip] = StringName(key)
+		_clip_lengths[clip] = player.get_animation(key).length
 	_players.append(player)
 
 
 func pose_at(clip: String, elapsed: float) -> bool:
-	var found := StringName(_clips.get(clip.to_lower(), &""))
+	var key := clip.to_lower()
+	var found := StringName(_clips.get(key, &""))
 	if found == &"":
 		return _fail("missing animation " + clip)
 	for player: AnimationPlayer in _players:
 		if player.assigned_animation != found or not player.is_playing():
 			player.play(found, 0.0)
-		player.seek(fposmod(elapsed, maxf(0.001, player.get_animation(found).length)), true)
+		player.seek(fposmod(elapsed, maxf(0.001, float(_clip_lengths[key]))), true)
 	return true
 
 
 func animate(clip: String, elapsed: float) -> void:
-	# Видимые позы обновляются с частотой 30 Гц, движение по экрану остаётся плавным.
-	var sample := floorf(elapsed * 30.0) / 30.0
+	# Видимые позы обновляются с частотой 24 Гц, движение по экрану остаётся плавным.
+	var sample := floorf(elapsed * 24.0) / 24.0
 	if _sample_clip != clip or _sample_time != sample:
 		_sample_clip = clip
 		_sample_time = sample
@@ -287,8 +336,7 @@ func animate(clip: String, elapsed: float) -> void:
 
 
 func clip_length(clip: String) -> float:
-	var key := StringName(_clips.get(clip.to_lower(), &""))
-	return _players[0].get_animation(key).length if key != &"" else 0.0
+	return float(_clip_lengths.get(clip.to_lower(), 0.0))
 
 
 func set_opacity(value: float) -> void:
@@ -360,6 +408,11 @@ func set_loadout(loadout: Dictionary) -> bool:
 		var part := group.get_node_or_null(headwear) as Node3D
 		if part != null:
 			part.visible = not wants_helmet
+	var hair_visible := not wants_helmet and _outfit not in ["cook", "priest"]
+	if _kit_hair != null:
+		_kit_hair.visible = hair_visible
+	if _hair != null:
+		_hair.visible = hair_visible
 	_sword.visible = bool(loadout.get("sword", false))
 	_hammer.visible = _outfit in ["worker", "smith"] and not _sword.visible
 	var shield := bool(loadout.get("shield", false))
@@ -393,6 +446,10 @@ func set_outfit(outfit: String) -> bool:
 		for name: String in _groups:
 			var group: Node3D = _groups[name]
 			group.visible = name == outfit
+		if outfit == "archer" and _bow == null and not _add_bow():
+			return false
+		if _bow != null:
+			_bow.visible = outfit == "archer"
 		var active: Node3D = _groups[outfit]
 		var helmet := active.get_node_or_null("outfit_" + outfit + "_helmet") as Node3D
 		if helmet != null:
@@ -448,6 +505,10 @@ func _mount(bone: String, item: Node3D, frame: Transform3D, target: Transform3D)
 	var socket := BoneAttachment3D.new()
 	socket.bone_name = bone
 	_rig.add_child(socket)
+	for mesh: MeshInstance3D in item.find_children("*", "MeshInstance3D", true, false):
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if item is MeshInstance3D:
+		(item as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var holder := Node3D.new()
 	socket.add_child(holder)
 	holder.transform = frame.affine_inverse() * target
@@ -469,6 +530,23 @@ func _add_work() -> bool:
 	var direction := Vector3(0.0, 0.55, -0.84).normalized()
 	var grip := LegionFighter._basis(Vector3.UP, direction).scaled(Vector3.ONE * 0.85)
 	_mount(hand, _hammer, frame, Transform3D(grip, frame.origin - grip.z * 0.17))
+	return true
+
+
+func _add_bow() -> bool:
+	_bow = Artisau.make("Bow", 0.90)
+	if not _has_mesh(_bow):
+		return _fail("bow missing")
+	_bow.name = "ArcherBow"
+	_bow.position.y -= 0.45
+	var hand: String = LEFT_HAND[_family]
+	if not pose_at("Spell_Simple_Idle", 0.2):
+		return false
+	var frame := _bone_frame(_rig, hand, false)
+	var grip := LegionFighter._basis(Vector3(0.0, 1.0, 0.12), Vector3(-1.0, 0.0, 0.0))
+	_mount(hand, _bow, frame, Transform3D(grip, frame.origin + Vector3(0, 0.0, 0.03)))
+	_faded_meshes.clear()
+	_fade_materials.clear()
 	return true
 
 

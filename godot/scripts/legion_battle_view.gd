@@ -94,10 +94,10 @@ func _fit() -> void:
 
 static func point(x: float, z: float) -> Vector2:
 	# Поперечные ряды немного сдвинуты вбок, чтобы бойцы одного строя были видны.
-	var px := x * 73.0 + z * 92.0
+	var px := x * 73.0 + z * 126.0
 	if absf(px) > 530.0:
 		px = signf(px) * (530.0 + (absf(px) - 530.0) * 0.27)
-	return Vector2(px, z * 16.0)
+	return Vector2(px, z * 43.0)
 
 
 func screen(p: Vector2) -> Vector2:
@@ -177,7 +177,8 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 	f.sheet = sheet_id(u)
 	f.silhouette = SILHOUETTE[f.sheet]
 	f.scale = Vector2.ONE * clampf(u.size * 1.08, 0.82, 1.54)
-	f.position = point(u.x, u.z)
+	f.lane_z = u.z
+	f.position = f.layout_point(u.x, u.z)
 	f.health = u.hp_frac()
 	units.add_child(f)
 	if u.side == "ally":
@@ -191,6 +192,7 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 		f.actor = FortPerson.make(person, people_layer.viewport, gear, u.key)
 		f.actor.name = "Ally_%d" % u.id
 		var loadout: Dictionary = f.actor.get_meta("loadout")
+		f.yaw = 48.0 if loadout["outfit"] == "archer" else 56.0
 		f.idle_clip = "Spell_Simple_Idle" if loadout["outfit"] == "archer" else ("Sword_Idle" if bool(loadout["sword"]) else "Idle")
 		f.attack_clip = "Spell_Simple_Shoot" if loadout["outfit"] == "archer" or u.heal_pow > 0.0 else "Sword_Attack"
 		f.clip = f.idle_clip
@@ -200,7 +202,7 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 		f.sprite.sprite_frames = _unit_frames(f.sheet)
 		f.add_child(f.sprite)
 		f.sprite.play(&"idle")
-	f.face(u.enter_dir < 0.0 if u.entering else u.side == "enemy")
+	f.face(u.side == "enemy" and (not u.entering or u.enter_dir < 0.0))
 	_place_ally(f)
 	views[u.id] = f
 	return f
@@ -224,7 +226,7 @@ func _place_ally(f: Fighter) -> void:
 	var height := f.body_height() * world.scale.y
 	f.actor.visible = f.modulate.a > 0.0 and Rect2(Vector2.ZERO, size).grow(height).has_point(feet)
 	if f.actor.visible:
-		people_layer.place(f.actor, feet, height, -67.0 if f.flip_h else 67.0)
+		people_layer.place(f.actor, feet, height, f.yaw)
 		f.actor.set_opacity(f.modulate.a)
 		f.actor.animate(f.clip, f.sample)
 
@@ -286,8 +288,10 @@ func volley(origin: Vector2, target: Vector2, tint: Color) -> void:
 
 
 func _place_shot(s: LegionSim.Shot, sprite: Node2D, k: float) -> void:
-	var a := point(s.x0, s.z0) - Vector2(0, 138.0)
-	var b := point(s.x1, s.z1) - Vector2(0, 100.0)
+	var source: Fighter = views.get(s.from.id) if s.from != null else null
+	var target: Fighter = views.get(s.target.id) if s.target != null else null
+	var a := (source.layout_point(s.x0, s.z0) if source != null else point(s.x0, s.z0)) - Vector2(0, 138.0)
+	var b := (target.layout_point(s.x1, s.z1) if target != null else point(s.x1, s.z1)) - Vector2(0, 100.0)
 	var arc := 32.0 + absf(b.x - a.x) * 0.08
 	if s.kind in ["stone", "boulder"]:
 		arc *= 1.8
@@ -366,6 +370,8 @@ class Fighter extends Node2D:
 	var sprite: AnimatedSprite2D
 	var actor: Actor
 	var flip_h := false
+	var lane_z := 0.0
+	var yaw := 56.0
 	var idle_clip := "Idle"
 	var attack_clip := "Sword_Attack"
 	var clip := "Idle"
@@ -382,6 +388,19 @@ class Fighter extends Node2D:
 		if sprite != null:
 			sprite.flip_h = left
 			sprite.offset = Vector2((silhouette.x - 128.0) * (1.0 if left else -1.0), 128.0 - LegionBattleView.BASELINE)
+
+	func layout_point(x: float, z: float) -> Vector2:
+		# В бою симуляция сближает ряды. На экране оставляем каждому бойцу свой проход.
+		var depth := lerpf(lane_z, z, 0.28)
+		var p := LegionBattleView.point(x, depth)
+		if unit.side == "ally" and absf(lane_z) > 1.25:
+			# На широком фланге сохраняем разнос в глубину, но сдерживаем боковой сдвиг.
+			var inner := clampf(depth, -1.25, 1.25)
+			p.x = LegionBattleView.point(x, lerpf(inner, depth, 0.28)).x
+		if unit.row > 0 or unit.ranged():
+			p.x = maxf(-692.0, p.x - 242.0) if unit.side == "ally" else p.x + 72.0
+			p.y -= 30.0
+		return p
 
 	func body_height() -> float:
 		var y := 26.0 if sheet == "bear" and sprite != null and sprite.animation == &"attack" else silhouette.y
@@ -423,17 +442,16 @@ class Fighter extends Node2D:
 		flash = maxf(0.0, flash - gdt)
 		modulate = Color.WHITE.lerp(Color(1.8, 1.24, 1.12), flash / 0.14)
 		health = lerpf(health, unit.hp_frac(), weight)
-		var p := LegionBattleView.point(unit.x, unit.z)
+		var p := layout_point(unit.x, unit.z)
 		var direction_x := p.x - position.x
 		position = position.lerp(p, weight)
-		if unit.entering:
-			face(unit.enter_dir < 0.0)
-		elif unit.target != null and unit.target.alive:
-			var target := LegionBattleView.point(unit.target.x, unit.target.z)
-			if absf(target.x - p.x) > 12.0:
-				face(target.x < p.x)
-		elif unit.moving and absf(direction_x) > 3.0:
-			face(direction_x < 0.0)
+		if unit.side == "enemy":
+			if unit.entering:
+				face(unit.enter_dir < 0.0)
+			elif unit.target != null and unit.target.alive and absf(unit.target.x - unit.x) > 0.16:
+				face(unit.target.x < unit.x)
+			elif unit.moving and absf(direction_x) > 3.0:
+				face(direction_x < 0.0)
 		var walking := (unit.moving or unit.entering) and fighting
 		var walk_rate := clampf(unit.speed / 1.5, 0.7, 1.65)
 		if sprite != null:

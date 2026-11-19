@@ -91,6 +91,11 @@ func _run() -> void:
 	if not check(camp.visible, "fort opened"):
 		_finish()
 		return
+	lg.fort["money"] = 0.0
+	camp._refresh()
+	await frames(4)
+	var balance := camp.resource_chips["money"] as Label
+	var short_size := balance.get_theme_font_size("font_size")
 	# Два возврата ловят накопление координат после смены масштаба.
 	var sizes: Array[Vector2i] = [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1920, 1080), Vector2i(1280, 720), Vector2i(1920, 1080)]
 	for index in sizes.size():
@@ -113,7 +118,7 @@ func _run() -> void:
 	camp._refresh()
 	await frames(4)
 	_hud_checks("empty treasury")
-	check((camp.resource_chips["money"] as Label).get_theme_font_size("font_size") == 25, "short balance returns to original font size")
+	check(balance.get_theme_font_size("font_size") == short_size, "short balance returns to original font size")
 	_finish()
 
 

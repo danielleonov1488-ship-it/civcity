@@ -708,10 +708,10 @@ func _refresh() -> void:
 	var builder := lg.fort_builder_count()
 	builder_counter.text = "%d/%d" % [builder.x, builder.y]
 	builder_counter.tooltip_text = I18n.t("Свободные строители") if builder.x > 0 else I18n.t(lg.fort_builder_text())
-	(resource_chips["money"] as Label).text = hud.fmt(lg.city_money())
-	ration_label.text = hud.fmt(lg.rations_now())
-	glory_label.text = hud.fmt(lg.glory)
-	ingot_label.text = hud.fmt(lg.ingots)
+	Look.set_chip_value(resource_chips["money"], hud.fmt(lg.city_money()))
+	Look.set_chip_value(ration_label, hud.fmt(lg.rations_now()))
+	Look.set_chip_value(glory_label, hud.fmt(lg.glory))
+	Look.set_chip_value(ingot_label, hud.fmt(lg.ingots))
 
 
 	_count(squad_button, lg.fort_squad_candidates().size())
@@ -783,6 +783,7 @@ func _select_fort_room(key: String) -> void:
 	room_action_id = id
 	room_action_running = not lg.fort_plot_timer(id).is_empty()
 	(diorama as FortCutaway).select_room(id)
+	_refresh_fort_visibility()
 	_build_room_actions()
 	_layout()
 

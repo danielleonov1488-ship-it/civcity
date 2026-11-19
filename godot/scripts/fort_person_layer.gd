@@ -23,20 +23,22 @@ var viewport: SubViewport
 var camera: Camera3D
 var overlay: TextureRect
 var extent := Vector2.ONE
-var shadows: Array[Vector3] = []
+var shadows := PackedVector3Array()
+var _frame := Transform3D.IDENTITY
+var _render_rect := Rect2()
 var _tilt := 0.0
 static var _outline: ShaderMaterial
 static var _shadow: GradientTexture2D
 
 
-func setup(view_name: String, tilt: float) -> void:
+func setup(view_name: String, tilt: float, antialias := true) -> void:
 	_tilt = tilt
 	viewport = SubViewport.new()
 	viewport.name = view_name
 	viewport.own_world_3d = true
 	viewport.transparent_bg = true
 	viewport.gui_disable_input = true
-	viewport.msaa_3d = Viewport.MSAA_2X
+	viewport.msaa_3d = Viewport.MSAA_2X if antialias else Viewport.MSAA_DISABLED
 	viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
 	viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
 	add_child(viewport)
@@ -47,14 +49,15 @@ func setup(view_name: String, tilt: float) -> void:
 	camera.rotation_degrees.x = -tilt
 	viewport.add_child(camera)
 	camera.make_current()
+	_frame = camera.transform
 	var world := WorldEnvironment.new()
 	world.environment = Environment.new()
 	world.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	world.environment.ambient_light_color = Color("eadfcd")
-	world.environment.ambient_light_energy = 0.65
+	world.environment.ambient_light_energy = 0.55
 	viewport.add_child(world)
 	_light(Color("ffe0ad"), 1.35, Vector3(-36, -27, 0))
-	_light(Color("fff1cf"), 0.85, Vector3(-34, 151, 0))
+	_light(Color("fff1cf"), 0.75, Vector3(-34, 151, 0))
 	if _outline == null:
 		var shader := Shader.new()
 		shader.code = EDGE
@@ -72,24 +75,53 @@ func _light(color: Color, energy: float, angles: Vector3) -> void:
 	var light := DirectionalLight3D.new()
 	light.light_color = color
 	light.light_energy = energy
+	light.shadow_enabled = false
 	light.rotation_degrees = angles
 	viewport.add_child(light)
 
 
 func fit(area: Vector2) -> void:
 	extent = area.max(Vector2.ONE)
-	var factor := minf(1.0, minf(1920.0 / extent.x, 1080.0 / extent.y))
-	viewport.size = Vector2i((extent * factor).round()).max(Vector2i.ONE)
-	overlay.size = extent
+	_render_rect = Rect2()
+	_view_rect(Rect2(Vector2.ZERO, extent))
+
+
+func crop_to(bounds: Rect2) -> void:
+	# Округляем границы, чтобы при анимации не пересоздавать буфер каждый кадр.
+	var tile := Vector2(96, 96)
+	var start := (bounds.position / tile).floor() * tile
+	var end := (bounds.end / tile).ceil() * tile
+	var area := Rect2(start, end - start).intersection(Rect2(Vector2.ZERO, extent))
+	overlay.visible = area.has_area()
+	if overlay.visible:
+		_view_rect(area)
+
+
+func _view_rect(area: Rect2) -> void:
+	if _render_rect == area:
+		return
+	_render_rect = area
+	var factor := minf(1.0, minf(1920.0 / area.size.x, 1080.0 / area.size.y))
+	viewport.size = Vector2i((area.size * factor).round()).max(Vector2i(2, 2))
+	var at := (area.get_center() - extent * 0.5) * (10.0 / extent.y)
+	camera.position = _frame * Vector3(at.x, -at.y, 0.0)
+	camera.size = 10.0 * area.size.y / extent.y
+	overlay.position = area.position
+	overlay.size = area.size
 
 
 func place(actor: Actor, feet: Vector2, height: float, yaw: float, foreground := false) -> void:
-	var units_per_pixel := camera.size / extent.y
+	var units_per_pixel := 10.0 / extent.y
 	var at := (feet - extent * 0.5) * units_per_pixel
 	var depth := 9.0 if foreground else clampf(feet.y / extent.y, 0.0, 1.0) * 4.0
-	actor.position = camera.transform * Vector3(at.x, -at.y, depth - 18.0)
-	actor.rotation_degrees.y = yaw
-	actor.scale = Vector3.ONE * (height * units_per_pixel / (1.79 * cos(deg_to_rad(_tilt))))
+	var origin := _frame * Vector3(at.x, -at.y, depth - 18.0)
+	var body_scale := Vector3.ONE * (height * units_per_pixel / (1.79 * cos(deg_to_rad(_tilt))))
+	if actor.position != origin:
+		actor.position = origin
+	if actor.rotation.y != deg_to_rad(yaw):
+		actor.rotation.y = deg_to_rad(yaw)
+	if actor.scale != body_scale:
+		actor.scale = body_scale
 
 
 func _draw() -> void:

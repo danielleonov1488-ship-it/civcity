@@ -7,7 +7,7 @@ const FortPerson = preload("res://scripts/fort_person.gd")
 const Actor = preload("res://scripts/charpilot_actor.gd")
 const PersonLayer = preload("res://scripts/fort_person_layer.gd")
 const BattleView = preload("res://scripts/legion_battle_view.gd")
-const SHOTS := "D:/CivCity/.work/stage7/legion9/shots/"
+const SHOTS := "D:/CivCity/.work/stage7/legion9b/shots/"
 
 var out := SHOTS
 var game: Game
@@ -57,7 +57,7 @@ func finish() -> void:
 	get_tree().quit(int(fails > 0))
 
 
-func shot(file: String, layer: PersonLayer) -> void:
+func shot(file: String, layer: PersonLayer, crop := Rect2i()) -> void:
 	if not graphics:
 		return
 	await frames(8)
@@ -73,6 +73,8 @@ func shot(file: String, layer: PersonLayer) -> void:
 	check(drawn >= 8, "фигуры видны в 3D-слое " + file)
 	var path := out.path_join(file)
 	var image := get_viewport().get_texture().get_image()
+	if crop.has_area() and image != null:
+		image = image.get_region(crop.intersection(Rect2i(Vector2i.ZERO, image.get_size())))
 	if check(image != null and not image.is_empty() and image.save_png(path) == OK, "кадр " + file):
 		print("LEGION9 SHOT ", path)
 
@@ -118,7 +120,7 @@ func _fixture() -> int:
 	var sid := int(person["id"])
 	var kitchen := int(lg.fort_slot_plot("kitchen")["id"])
 	var treasury := int(lg.fort_slot_plot("treasury")["id"])
-	check(lg.fort_assign(treasury, sid) and lg.fort_assign(kitchen, sid) and person["look"] == identity, "переезд между комнатами сохраняет пол, голову и волосы")
+	check(lg.fort_assign(treasury, sid) and lg.fort_assign(kitchen, sid) and person["look"] == identity, "переезд между комнатами сохраняет пол, лицо и волосы")
 	for role: String in ["forge", "treasury", "drill"]:
 		var worker := lg._add_soldier({"name": "Юлий", "cls": "legionary"})
 		var plot := lg.fort_slot_plot(role)
@@ -178,7 +180,8 @@ func _outfit_examples(sid: int, apron: Dictionary, smith: Dictionary) -> void:
 		var x := area.x * (0.23 + float(i) * 0.27)
 		var actor := FortPerson.make(person, layer.viewport, outfits[i])
 		var feet := Vector2(x, area.y * 0.84)
-		layer.place(actor, feet, area.y * 0.52, 18.0)
+		actor.pose_at("Idle", 0.24)
+		layer.place(actor, feet, area.y * 0.52, 14.0)
 		layer.shadows.append(Vector3(feet.x, feet.y, area.y * 0.52))
 		var label := Kit.ribbon(names[i])
 		label.position = Vector2(x - 170.0, area.y * 0.89)
@@ -202,6 +205,10 @@ func _fps() -> void:
 	await frames(120)
 	var fps := 120000000.0 / maxf(1.0, Time.get_ticks_usec() - started)
 	print("LEGION9 FPS %.1f (фигур %d)" % [fps, view.figures.size()])
+	var vp := view.people_layer.viewport
+	var draws := vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
+	var triangles := vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_PRIMITIVES_IN_FRAME)
+	print("LEGION9 3D %dx%d draws=%d triangles=%d" % [vp.size.x, vp.size.y, draws, triangles])
 	check(fps >= 55.0, "не меньше 55 кадров/с при 1920×1080")
 
 
@@ -231,12 +238,37 @@ func _fight() -> void:
 		if check(f.actor != null and f.actor.problem.is_empty() and f.sprite == null
 				and f.actor.get_parent() == battle.battle_view.people_layer.viewport, "наш боец в общем 3D-слое"):
 			check(not person.is_empty() and f.actor.get_meta("look") == person.get("look"), "тот же житель в бою")
-			archer = archer or f.unit.key == "archer" and f.actor.has_outfit("archer")
+			if f.unit.key == "archer" and f.actor.has_outfit("archer"):
+				archer = true
+				var bow := f.actor.find_child("ArcherBow", true, false) as Node3D
+				var quiver := f.actor.find_child("outfit_archer_quiver", true, false) as Node3D
+				var grip := bow.get_parent().get_parent() as BoneAttachment3D if bow != null else null
+				check(grip != null and grip.bone_name == "LeftHand" and bow.is_visible_in_tree()
+					and quiver != null and quiver.is_visible_in_tree(), "лук у левой кисти, колчан на спине")
+			check(f.actor.rotation_degrees.y > 0.0 and not f.flip_h, "союзники смотрят вправо на старте")
 			hero = hero or f.unit.key == "hero" and f.actor.has_outfit("centurion")
 	check(count == squad.size() and archer and hero, "лучник и центурион в отряде")
 	while battle.sim.t < 3.5 and Time.get_ticks_msec() - started < 25000:
 		await frames(1)
+	var allies: Array[BattleView.Fighter] = []
+	var crop := Rect2()
+	for f: BattleView.Fighter in battle.views.values():
+		if f.actor == null or not f.unit.alive:
+			continue
+		check(f.actor.rotation_degrees.y > 0.0 and not f.flip_h, "в бою союзники смотрят вправо")
+		for ally: BattleView.Fighter in allies:
+			var gap := (f.position - ally.position).abs()
+			check(gap.x >= 75.0 or gap.y >= 40.0, "у союзников раздельные силуэты")
+		allies.append(f)
+		var feet := battle.battle_view.screen(f.position)
+		var height := f.body_height() * battle.battle_view.world.scale.y
+		var figure := Rect2(feet - Vector2(height * 0.56, height * 1.14), Vector2(height * 1.12, height * 1.21))
+		crop = crop.merge(figure) if crop.has_area() else figure
+	check(allies.size() == squad.size(), "в кадре есть весь отряд")
+	battle.paused = true
 	await shot("5_battle.png", battle.battle_view.people_layer)
+	if crop.has_area():
+		await shot("6_battle_close.png", battle.battle_view.people_layer, Rect2i(crop.grow(16.0)))
 
 
 func _run() -> void:
@@ -276,6 +308,14 @@ func _run() -> void:
 	var meshes: Array[MeshInstance3D] = actor.identity.duplicate()
 	for other: Dictionary in view.figures:
 		check(other["node"] is Actor and other["node"].get_parent() == layer.viewport, "нет спрайтов жителей")
+		var room: Rect2 = view.room_rects.get(other["plot"], Rect2())
+		if room.has_area():
+			var height := float(other["height"])
+			var home: Vector2 = other["home"]
+			var away := Vector2(float(other["away"]), home.y)
+			check(height >= room.size.y * 0.50 and height <= room.size.y * 0.56
+				and room.has_point(home) and room.has_point(away)
+				and home.y - height >= room.position.y, "житель в пределах комнаты")
 	var person := lg.soldier(sid)
 	var kitchen := int(lg.fort_slot_plot("kitchen")["id"])
 	var p := lg.fort_plot(kitchen)

@@ -105,6 +105,27 @@ static func meter(current: float, maximum: float) -> ProgressBar:
 	return bar
 
 
+const CHIP_NUMBER_SIZE := 30
+
+
+static func set_chip_value(number: Label, value: String) -> void:
+	if number.text == value:
+		return
+	number.text = value
+	_fit_chip_number(number)
+
+
+static func _fit_chip_number(number: Label) -> void:
+	if number.size.x <= 0.0:
+		return
+	var font := number.get_theme_font("font")
+	var pixels := CHIP_NUMBER_SIZE
+	while pixels > 1 and font.get_string_size(number.text, HORIZONTAL_ALIGNMENT_LEFT, -1, pixels).x > number.size.x:
+		pixels -= 1
+	if number.get_theme_font_size("font_size") != pixels:
+		number.add_theme_font_size_override("font_size", pixels)
+
+
 static func chip(resource_id: String, value: String, action := Callable()) -> PanelContainer:
 	var p := panel(DARK, 5)
 	p.custom_minimum_size = Vector2(150, 62)
@@ -115,12 +136,14 @@ static func chip(resource_id: String, value: String, action := Callable()) -> Pa
 	image.name = "ResourceIcon"
 	image.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(image)
-	var number := label(value, 30, PAPER)
+	var number := label(value, CHIP_NUMBER_SIZE, PAPER)
+	number.clip_text = true
 	number.name = "ResourceNumber"
 	number.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	number.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(number)
+	number.resized.connect(func(): _fit_chip_number(number))
 	p.set_meta("number", number)
 	if action.is_valid():
 		var hit := Button.new()

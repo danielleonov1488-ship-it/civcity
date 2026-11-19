@@ -23,7 +23,7 @@ const WORK_CLIPS := {"kitchen": "PickUp_Table", "forge": "Interact", "treasury":
 
 
 const CELL := Vector2(360, 240)
-const PERSON_HEIGHT := CELL.y * 0.44
+const PERSON_HEIGHT := CELL.y * 0.55
 const ROW_PITCH := 285.0
 const PILLAR_WIDTH := 45.0
 const STAIR_WIDTH := 155.0
@@ -127,7 +127,7 @@ func setup(legion: Legion, game: Node) -> bool:
 	people_layer.name = "Dwellers"
 	people_layer.z_index = 2
 	sub.add_child(people_layer)
-	people_layer.setup("FortPeople3D", 14.0)
+	people_layer.setup("FortPeople3D", 14.0, false)
 	people_layer.fit(size)
 	var fade := Gradient.new()
 	fade.colors = PackedColorArray([Color(1.0, 0.86, 0.62, 0.88), Color(0.94, 0.74, 0.52, 0)])
@@ -434,11 +434,11 @@ func _build_people(entries: Array, newcomers: Array[Dictionary]) -> void:
 			if figures.size() >= SPRITE_LIMIT - 1:
 				break
 	var yard := lg.fort_worker_choices()
-	var columns := maxi(1, floori(_right_edge / 100.0))
+	var columns := maxi(1, floori(_right_edge / 112.0))
 	for index in mini(yard.size(), SPRITE_LIMIT - 1 - figures.size()):
 		var person := yard[index]
-		var home := Vector2(60.0 + (index % columns) * 100.0, _ground_y + 12.0 - floorf(float(index) / columns) * 52.0)
-		_add_dweller(person, -1, "courtyard", home, home.x + 32.0, PERSON_HEIGHT)
+		var home := Vector2(80.0 + (index % columns) * 112.0, _ground_y + 12.0 - floorf(float(index) / columns) * 52.0)
+		_add_dweller(person, -1, "courtyard", home, minf(home.x + 26.0, _right_edge - 78.0), PERSON_HEIGHT)
 	var retained := {}
 	for entry: Dictionary in figures:
 		retained[entry["id"]] = true
@@ -459,19 +459,25 @@ func _place_occupant(person: Dictionary, entry: Dictionary, index: int, count: i
 	var rank := floori(float(index) / across)
 	var rank_count := mini(across, count - rank * across)
 	var x := 0.5 if rank_count == 1 else lerpf(0.19, 0.81, float(index % across) / (rank_count - 1))
-	var y := 0.88 - rank * 0.14
+	var y := 0.89 - rank * 0.07
 	if works:
 		x = float(STATIONS[type][int(room_stages[id]) - 1])
+	var height := PERSON_HEIGHT * (1.0 - rank * 0.04)
+	var margin := height * 0.62
+	var left := room.position.x + margin
+	var right := room.end.x - margin
 	var home := room.position + room.size * Vector2(x, y)
+	home.x = clampf(home.x, left, right)
 	var walk_width := 62.0 if count == 1 else 25.0
 	var direction := -1.0 if x >= 0.5 else 1.0
-	var height := PERSON_HEIGHT * (1.0 - rank * 0.06)
-	_add_dweller(person, id, type, home, home.x + walk_width * direction, height, works)
+	var away := clampf(home.x + walk_width * direction, left, right)
+	_add_dweller(person, id, type, home, away, height, works)
 
 
 func _animate_people(delta: float) -> void:
 	_clock += delta
-	var screen_area := Rect2(Vector2.ZERO, size).grow(32.0)
+	var screen_area := Rect2(Vector2.ZERO, size)
+	var render_area := Rect2()
 	people_layer.shadows.clear()
 	for entry: Dictionary in figures:
 		var actor: Actor = entry["node"]
@@ -505,7 +511,8 @@ func _animate_people(delta: float) -> void:
 				yaw *= 2.0
 		var feet := Vector2(x, home.y)
 		var pixel := _screen_point(feet)
-		actor.visible = screen_area.has_point(pixel) or screen_area.has_point(pixel - Vector2(0.0, height))
+		var bounds := _figure_bounds(pixel, height)
+		actor.visible = screen_area.intersects(bounds)
 		if actor.visible:
 			entry["feet"] = feet
 			entry["clip"] = clip
@@ -514,7 +521,17 @@ func _animate_people(delta: float) -> void:
 			people_layer.place(actor, pixel, height, yaw)
 			actor.animate(clip, phase)
 			people_layer.shadows.append(Vector3(pixel.x, pixel.y, height))
+			render_area = render_area.merge(bounds) if render_area.has_area() else bounds
+	if is_instance_valid(drag_ghost):
+		# Призрак двигается по всему экрану вслед за мышью.
+		render_area = screen_area
+	people_layer.crop_to(render_area)
 	people_layer.queue_redraw()
+
+
+func _figure_bounds(feet: Vector2, height: float) -> Rect2:
+	return Rect2(feet - Vector2(height * 0.65, height * 1.13),
+		Vector2(height * 1.3, height * 1.23)).grow(4.0)
 
 
 func recruit_walk(_sid: int) -> void:

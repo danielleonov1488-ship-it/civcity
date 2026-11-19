@@ -3,6 +3,8 @@ extends RefCounted
 
 const Kit = preload("res://scripts/ui_kit_a.gd")
 const Ring = preload("res://scripts/fort_ui_ring.gd")
+const OUTFIT_ICONS := {"cook": "need_food", "smith": "craft", "scribe": "research",
+	"priest": "need_faith", "builder": "build"}
 
 
 static func build(ui: Variant) -> void:
@@ -33,7 +35,7 @@ static func build(ui: Variant) -> void:
 				refresh(ui, entry)
 		return
 	ui._live.clear()
-	var panel: PanelContainer = ui._modal(760)
+	var panel: PanelContainer = ui._modal(960)
 	panel.name = "CraftPanel"
 	panel.set_meta("signature", signature)
 	ui.set_meta("craft_panel", panel)
@@ -58,30 +60,22 @@ static func build(ui: Variant) -> void:
 		panel.set_meta("live", [])
 		ui._center_later(panel)
 		return
+	var recipes := HBoxContainer.new()
+	recipes.alignment = BoxContainer.ALIGNMENT_CENTER
+	recipes.add_theme_constant_override("separation", 24)
+	v.add_child(recipes)
 	var choices := HBoxContainer.new()
 	choices.name = "CraftKinds"
-	choices.alignment = BoxContainer.ALIGNMENT_CENTER
-	choices.add_theme_constant_override("separation", 12)
+	recipes.add_child(choices)
 	for kind: String in kinds:
 		var probe := Gear.craft_item(kind, 1)
-		var b := Kit.round_button(ui._gear_tex(Gear.icon_of(probe), String(probe["slot"])))
-		b.name = "CraftKind_" + kind
-		b.tooltip_text = I18n.t(String(Gear.CRAFT_TYPES[kind]))
-		Kit.medallion_state(b, kind == ui._craft_kind)
-		b.pressed.connect(func(): ui._craft_kind = kind; ui._craft_win())
-		choices.add_child(b)
-	v.add_child(choices)
+		choices.add_child(_recipe(ui, kind, ui._gear_tex(Gear.icon_of(probe), String(probe["slot"]))))
 	if room == "forge":
-		var clothes := HFlowContainer.new()
+		var clothes := HBoxContainer.new()
 		clothes.name = "CraftOutfits"
-		clothes.alignment = FlowContainer.ALIGNMENT_CENTER
-		var icon: Texture2D = ui._gear_tex(0, Gear.OUTFIT_SLOT)
+		recipes.add_child(clothes)
 		for kind: String in Gear.WORK_OUTFITS:
-			var option := Kit.button("gold" if kind == ui._craft_kind else "cream", icon, I18n.t(String(Gear.CRAFT_TYPES[kind])))
-			option.name = "CraftKind_" + kind
-			option.pressed.connect(func(): ui._craft_kind = kind; ui._craft_win())
-			clothes.add_child(option)
-		v.add_child(clothes)
+			clothes.add_child(_recipe(ui, kind, Kit.texture(OUTFIT_ICONS[kind])))
 	var tiers := HBoxContainer.new()
 	tiers.name = "CraftTiers"
 	tiers.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -123,6 +117,7 @@ static func build(ui: Variant) -> void:
 	var odds := HBoxContainer.new()
 	odds.name = "CraftRarityOdds"
 	odds.alignment = BoxContainer.ALIGNMENT_CENTER
+	odds.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	odds.add_theme_constant_override("separation", 10)
 	var rarity_odds: Array = [Gear.CRAFT_ODDS[0] + Gear.CRAFT_ODDS[1], 0,
 		Gear.CRAFT_ODDS[2] + Gear.CRAFT_ODDS[3] + Gear.CRAFT_ODDS[4]] if work_outfit else Gear.CRAFT_ODDS
@@ -141,7 +136,7 @@ static func build(ui: Variant) -> void:
 		chip.add_child(Kit.label(str(rarity_odds[r]) + "%", 19, true))
 		chip.tooltip_text = I18n.t("Шансы редкости при сборе") + "\n" + I18n.t(String(Gear.RARITY[r])).capitalize()
 		odds.add_child(chip)
-	v.add_child(odds)
+	preview.add_child(odds)
 	var requirement := Kit.banner_red("")
 	requirement.name = "CraftRequirement"
 	v.add_child(requirement)
@@ -154,14 +149,19 @@ static func build(ui: Variant) -> void:
 	start.name = "CraftStart"
 	start.tooltip_text = I18n.t("Ковать")
 	start.pressed.connect(func(): lg.craft_start(plot_id, ui._craft_kind, ui._craft_tier); ui._craft_win())
-	v.add_child(start)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 12)
+	start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	actions.add_child(start)
+	v.add_child(actions)
 	var summary := Kit.label("", 20)
 	summary.name = "CraftQueueCount"
-	v.add_child(summary)
 	var queue_row := HBoxContainer.new()
 	queue_row.name = "CraftQueue"
 	queue_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	queue_row.add_theme_constant_override("separation", 16)
+	summary.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	queue_row.add_child(summary)
 	v.add_child(queue_row)
 	for i in lg.craft_capacity(plot_id):
 		if i >= queue.size():
@@ -202,11 +202,21 @@ static func build(ui: Variant) -> void:
 	refresh(ui, controls)
 	var store := Kit.button("cream", "equip", I18n.t("Снаряжение"))
 	store.name = "CraftEquipment"
+	store.custom_minimum_size.x = 190.0
 	store.tooltip_text = I18n.t("Снаряжение")
 	store.pressed.connect(func(): ui.open_camp_window("store"))
-	v.add_child(store)
+	actions.add_child(store)
 	panel.set_meta("live", ui._live.duplicate())
 	ui._center_later(panel)
+
+
+static func _recipe(ui: Variant, kind: String, icon: Texture2D) -> Button:
+	var button := Kit.round_button(icon)
+	button.name = "CraftKind_" + kind
+	button.tooltip_text = I18n.t(String(Gear.CRAFT_TYPES[kind]))
+	Kit.medallion_state(button, kind == ui._craft_kind)
+	button.pressed.connect(func(): ui._craft_kind = kind; ui._craft_win())
+	return button
 
 
 static func refresh(ui: Variant, entry: Dictionary) -> void:
