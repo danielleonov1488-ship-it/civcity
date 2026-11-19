@@ -15,13 +15,13 @@ const NODES := {
 	"armor5": {"name": "Броня V–VI", "needs": ["armor3"], "hq": 6, "money": 8000, "mats": {"iron": 250, "leather": 150}, "hours": 16, "art": "armor", "opens": ["helmet", "offhand", "armor"], "tiers": "V–VI"},
 	"armor7": {"name": "Броня VII–VIII", "needs": ["armor5"], "hq": 8, "money": 20000, "mats": {"iron": 600, "leather": 400}, "hours": 30, "art": "armor", "opens": ["helmet", "offhand", "armor"], "tiers": "VII–VIII"},
 	"armor9": {"name": "Броня IX–X", "needs": ["armor7"], "hq": 10, "money": 45000, "mats": {"iron": 1400, "leather": 900}, "hours": 48, "art": "armor", "opens": ["helmet", "offhand", "armor"], "tiers": "IX–X"},
-	"outfit": {"name": "Рабочая одежда", "needs": ["smith"], "hq": 3, "money": 1500, "mats": {"leather": 60}, "hours": 3, "art": "cloth", "opens": ["cook", "smith", "scribe", "priest", "builder"], "tiers": ""},
+	"outfit": {"name": "Рабочая одежда", "needs": ["smith"], "hq": 3, "money": 1500, "mats": {"leather": 60}, "hours": 3, "art": "cloth", "opens": ["cook", "smith", "scribe", "priest", "builder"], "tiers": "5 видов"},
 	"outfit2": {"name": "Тонкое шитьё", "needs": ["outfit"], "hq": 6, "money": 8000, "mats": {"leather": 300}, "hours": 24, "art": "cloth", "opens": [], "tiers": "+5%"},
 	"smelt": {"name": "Чистая переплавка", "needs": ["smith"], "hq": 4, "money": 3000, "mats": {}, "hours": 6, "art": "smelt", "opens": [], "tiers": "×1.5"},
 	"reforge": {"name": "Перековка", "needs": ["weap3"], "hq": 5, "money": 7000, "mats": {"iron": 200, "wood": 100}, "hours": 12, "art": "reforge", "opens": [], "tiers": "+1"},
-	"luck1": {"name": "Удачная ковка I", "needs": ["smelt"], "hq": 6, "money": 10000, "mats": {"iron": 300}, "hours": 24, "art": "laurel", "opens": [], "tiers": "52/30/13/4/1"},
-	"luck2": {"name": "Удачная ковка II", "needs": ["luck1"], "hq": 8, "money": 25000, "mats": {"iron": 800}, "hours": 48, "art": "laurel", "opens": [], "tiers": "42/33/17/6/2"},
-	"sets": {"name": "Реликвии легионов", "needs": ["weap5", "armor5"], "hq": 6, "money": 12000, "mats": {"iron": 300, "leather": 300}, "hours": 24, "art": "scroll", "opens": [], "tiers": ""},
+	"luck1": {"name": "Удачная ковка I", "needs": ["smelt"], "hq": 6, "money": 10000, "mats": {"iron": 300}, "hours": 24, "art": "laurel", "opens": [], "tiers": "★ 18%"},
+	"luck2": {"name": "Удачная ковка II", "needs": ["luck1"], "hq": 8, "money": 25000, "mats": {"iron": 800}, "hours": 48, "art": "laurel", "opens": [], "tiers": "★ 25%"},
+	"sets": {"name": "Реликвии легионов", "needs": ["weap5", "armor5"], "hq": 6, "money": 12000, "mats": {"iron": 300, "leather": 300}, "hours": 24, "art": "scroll", "opens": [], "tiers": "наборы"},
 }
 
 

@@ -323,7 +323,14 @@ func _screens() -> void:
 		_finish()
 		return
 	var slots := camp.modal_panel.find_child("FortGearSlots", true, false)
-	check(slots != null and slots.find_children("TierBadge", "Label", true, false).size() == 4, "four tier badges")
+	check(slots != null and slots.find_children("FortGear_*", "Button", true, false).size() == 5, "five gear slots")
+	for slot: String in Gear.SLOTS_V3:
+		var button := camp.modal_panel.find_child("FortGear_" + slot, true, false) as Button
+		if not check(button != null, "slot " + slot):
+			continue
+		var tier := button.get_node_or_null("TierBadge") as Label
+		var worn := lg.item(int(s.get("gear", {}).get(slot, 0)))
+		check(tier == null if worn.is_empty() else tier != null and tier.text == str(Gear.tier_of(worn)), "worn tier " + slot)
 	await shot("2_soldier_gear.png")
 	var weapon_button := camp.modal_panel.find_child("FortGear_weapon", true, false) as Button
 	if not check(weapon_button != null, "weapon slot button"):

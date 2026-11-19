@@ -9,51 +9,97 @@ const TABS := {"all": "Все", "weapon": "Оружие", "armor": "Броня",
 
 
 static func store(ui: Variant, tab: String, page: int, chest: String, reward: Dictionary) -> void:
-	var body: VBoxContainer = ui._new_modal(998, true)
-	ui.modal_panel.custom_minimum_size.y = 900
+	var body: VBoxContainer = ui._new_framed_modal(1000)
 	ui.modal_panel.name = "FortStorage"
 	var lg: Legion = ui.lg
 	var header := HBoxContainer.new()
-	var knowledge := Look.button("", KnowUI.node_icon("sets"), Look.WINE, Vector2(52, 50))
+	var entry := HBoxContainer.new()
+	header.add_child(entry)
+	var knowledge := Kit.round_button(KnowUI.node_icon("sets"))
+	knowledge.custom_minimum_size = Vector2.ONE * 55
 	knowledge.tooltip_text = I18n.t("Знание снаряжения")
 	knowledge.pressed.connect(func(): ui.show_knowledge("smith", ui.show_storage.bind(tab, page, chest)))
-	header.add_child(knowledge)
-	var title := Look.label(I18n.t("Склад"), 42, Look.INK, true)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	header.add_child(title)
-	var count := Look.label(I18n.t("Вещи %d/%d") % [lg.store_count(), lg.store_cap()], 25,
+	entry.add_child(knowledge)
+	header.add_child(Look.heading(I18n.t("Склад"), 45))
+	var counter := HBoxContainer.new()
+	header.add_child(counter)
+	var stock := Look.panel(Color("ead5b4"), 8)
+	stock.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	counter.add_child(stock)
+	var count := Look.label(I18n.t("Вещи %d/%d") % [lg.store_count(), lg.store_cap()], 24,
 		Look.WINE if lg.store_count() >= lg.store_cap() else Look.INK)
 	count.name = "FortStoreCount"
-	count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	header.add_child(count)
-	var close := Look.button("×", null, Look.INSET, Vector2(48, 48))
+	stock.add_child(count)
+	var close := Look.close_button(ui._close_modal, 55)
 	close.name = "FortChestBack"
-	close.pressed.connect(ui._close_modal)
-	header.add_child(close)
+	counter.add_child(close)
+	entry.custom_minimum_size.x = counter.get_combined_minimum_size().x
 	body.add_child(header)
-	var preview := chest != "" and lg.chest_queue.has(chest)
-	grid(ui, body, 0, tab, page, "", 3 if preview or not reward.is_empty() else 5)
-	var breathing_space := Control.new()
-	breathing_space.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	breathing_space.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(breathing_space)
+	body.add_child(Look.divider())
+	grid(ui, body, 0, tab, page)
 	if not reward.is_empty():
 		body.add_child(_reward(ui, reward))
-	elif preview:
+	elif chest != "" and lg.chest_queue.has(chest):
 		body.add_child(_chest(ui, tab, page, chest))
 	ui._fit_modal.call_deferred()
 
 
-static func grid(ui: Variant, parent: VBoxContainer, sid: int, tab: String, page: int, slot := "", rows := 3) -> void:
+static func grid(ui: Variant, parent: VBoxContainer, sid: int, tab: String, page: int, slot := "") -> void:
+	_tabs(ui, parent, sid, tab)
 	var lg: Legion = ui.lg
+	if sid == 0 and tab in ["all", "chest", "material"]:
+		_stock_shelf(ui, parent, tab, page)
+	if sid == 0 and tab in ["chest", "material"]:
+		return
+
+	var items: Array[Dictionary] = []
+	for it: Dictionary in lg.items:
+		if int(it.get("on", 0)) != 0 or (slot != "" and it["slot"] != slot):
+			continue
+		if sid != 0 and lg.can_equip(sid, int(it["id"])) != "":
+			continue
+		var kind := String(it["slot"])
+		var group := kind if kind == "weapon" else "outfit" if kind == Gear.OUTFIT_SLOT else "armor"
+		if tab in ["all", group]:
+			items.append(it)
+	var columns := 10 if sid == 0 else 6
+	var per_page := columns * (4 if sid == 0 else 3)
+	var capacity := lg.store_cap() if sid == 0 else maxi(per_page, items.size())
+	var pages := maxi(1, ceili(float(maxi(capacity, items.size())) / per_page))
+	page = clampi(page, 0, pages - 1)
+	var tiles := GridContainer.new()
+	tiles.name = "FortInventoryGrid"
+	tiles.columns = columns
+	tiles.add_theme_constant_override("h_separation", 8)
+	tiles.add_theme_constant_override("v_separation", 8)
+	tiles.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	parent.add_child(tiles)
+	var back := _page.bind(ui, sid, tab, page, slot)
+	var pixels := 84.0 if sid == 0 else 94.0
+	var first := page * per_page
+	var cell_count := clampi(maxi(capacity, items.size()) - first, 0, per_page) if sid == 0 else per_page
+	for j in cell_count:
+		var button := Look.button("", null, Look.INSET, Vector2.ONE * pixels)
+		tiles.add_child(button)
+		if first + j < items.size():
+			_item_tile(ui, button, items[first + j], sid, pixels, back)
+		else:
+			button.disabled = true
+			button.add_theme_stylebox_override("disabled", Look.box(Color("e2d0b3"), Color("bba183"), 9, 0))
+			button.focus_mode = Control.FOCUS_NONE
+	if sid == 0:
+		_locked_row(parent, lg)
+	_page_buttons(ui, parent, sid, tab, page, slot, pages)
+
+
+static func _tabs(ui: Variant, parent: VBoxContainer, sid: int, tab: String) -> void:
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 5)
 	parent.add_child(tabs)
 	for id: String in TABS:
 		var active := tab == id
-		var b := Look.button("", null, Look.WINE if active else Look.INSET, Vector2(86, 73))
-		b.name = "FortAllGear" if id == "all" else "StoreTab_" + id
+		var b := Look.button("", null, Look.WINE if active else Look.INSET, Vector2(86, 67))
+		b.name = "FortAllGear" if id == "all" else "FortTab_" + id
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.tooltip_text = I18n.t(TABS[id])
 		b.pressed.connect(_page.bind(ui, sid, id, 0))
@@ -70,67 +116,83 @@ static func grid(ui: Variant, parent: VBoxContainer, sid: int, tab: String, page
 		var caption := Look.label(I18n.t(TABS[id]), 18 if sid != 0 else 20, Look.PAPER if active else Look.INK)
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		column.add_child(caption)
-	var entries: Array[Dictionary] = []
-	if sid == 0 and tab in ["all", "chest"]:
+
+
+static func _stock_shelf(ui: Variant, parent: VBoxContainer, tab: String, page: int) -> void:
+	# Сундуки и запасы не расходуют места для вещей.
+	var lg: Legion = ui.lg
+	var shelf := HBoxContainer.new()
+	shelf.alignment = BoxContainer.ALIGNMENT_CENTER
+	shelf.add_theme_constant_override("separation", 18)
+	parent.add_child(shelf)
+	var pixels := 68.0 if tab == "all" else 87.0
+	if tab in ["all", "chest"] and (not lg.chest_queue.is_empty() or tab == "chest"):
+		var chests := _shelf_group(shelf, "chest", tab == "all")
 		for kind: String in Legion.CHEST_NAMES:
 			var count := lg.chest_queue.count(kind)
-			if count > 0:
-				entries.append({"chest": kind, "count": count})
-	for it: Dictionary in lg.items:
-		if int(it.get("on", 0)) != 0 or (slot != "" and it["slot"] != slot):
-			continue
-		if sid != 0 and lg.can_equip(sid, int(it["id"])) != "":
-			continue
-		var kind := String(it["slot"])
-		var group := kind if kind == "weapon" else "outfit" if kind == Gear.OUTFIT_SLOT else "armor"
-		if tab in ["all", group]:
-			entries.append({"item": it})
-	if sid == 0 and tab in ["all", "material"]:
-		for res: String in Gear.MATS:
-			entries.append({"material": res})
-	var columns := 8 if sid == 0 else 6
-	var per_page := columns * rows
-	var pages := maxi(1, ceili(float(entries.size()) / per_page))
-	page = clampi(page, 0, pages - 1)
-	var tiles := GridContainer.new()
-	tiles.name = "FortInventoryGrid"
-	tiles.columns = columns
-	tiles.add_theme_constant_override("h_separation", 8)
-	tiles.add_theme_constant_override("v_separation", 8)
-	tiles.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	parent.add_child(tiles)
-	var back := _page.bind(ui, sid, tab, page, slot)
-	var pixels := 109.0 if sid == 0 else 94.0
-	for j in per_page:
-		var index := page * per_page + j
-		var entry: Dictionary = entries[index] if index < entries.size() else {}
-		var button := Look.button("", null, Look.INSET, Vector2.ONE * pixels)
-		tiles.add_child(button)
-		if entry.has("item"):
-			_item_tile(ui, button, entry["item"], sid, pixels, back)
-		elif entry.has("chest"):
-			var kind: String = entry["chest"]
+			if count == 0:
+				continue
+			var button := Look.button("", null, Color("ead5b4"), Vector2.ONE * pixels)
 			button.name = "FortChest_" + kind
 			button.tooltip_text = I18n.t(Legion.CHEST_NAMES[kind])
 			_tile_art(button, _chest_icon(kind), pixels)
-			if kind == "bronze":
-				var border := Look.box(Look.INSET, Look.BRONZE, 10, 0)
-				border.set_border_width_all(2)
-				button.add_theme_stylebox_override("normal", border)
-			_tile_text(button, "×%d" % int(entry["count"]), pixels)
+			_tile_text(button, "×%d" % count, pixels)
 			button.pressed.connect(func(): ui.show_storage(tab, page, kind))
-		elif entry.has("material"):
-			var res: String = entry["material"]
-			_tile_art(button, Look.resource(res), pixels)
-			_tile_text(button, str(lg.mat(res)), pixels)
-			button.tooltip_text = I18n.t(Gear.MAT_NAME[res]) + " · %d/%d" % [lg.mat(res), lg.resource_cap(res)]
-		else:
-			button.disabled = true
-			button.add_theme_stylebox_override("disabled", Look.box(Look.INSET.darkened(0.045), Look.EDGE, 9, 0))
-			button.focus_mode = Control.FOCUS_NONE
+			chests.add_child(button)
+		if chests.get_child_count() == 0:
+			chests.add_child(Look.label(I18n.t("Нет сундуков"), 23, Look.SOFT))
+	if tab in ["all", "material"]:
+		var mats := _shelf_group(shelf, "material", tab == "all")
+		for res: String in Gear.MATS:
+			var tile := Look.panel(Color("ead5b4"), 0)
+			tile.custom_minimum_size = Vector2.ONE * pixels
+			var icon := Kit.image(Look.resource(res), Vector2.ONE * (pixels - 12.0))
+			tile.add_child(icon)
+			var amount := Look.label(str(lg.mat(res)), 19, Look.PAPER)
+			amount.add_theme_stylebox_override("normal", Look.box(Look.DARK, Look.BRONZE, 7, 3))
+			amount.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+			amount.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+			amount.size_flags_vertical = Control.SIZE_SHRINK_END
+			tile.add_child(amount)
+			tile.tooltip_text = I18n.t(Gear.MAT_NAME[res]) + " · %d/%d" % [lg.mat(res), lg.resource_cap(res)]
+			mats.add_child(tile)
+
+
+static func _shelf_group(parent: HBoxContainer, id: String, caption: bool) -> HBoxContainer:
+	var panel := Look.panel(Color("f1e2c8"), 5)
+	parent.add_child(panel)
+	var group := HBoxContainer.new()
+	group.add_theme_constant_override("separation", 7)
+	panel.add_child(group)
+	if caption:
+		var label := Look.label(I18n.t(TABS[id]), 21, Look.SOFT, true)
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		group.add_child(label)
+	return group
+
+
+static func _locked_row(parent: VBoxContainer, lg: Legion) -> void:
+	var row := HBoxContainer.new()
+	row.name = "FortStoreLockedRow"
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 8)
+	parent.add_child(row)
+	for i in Gear.STORE_PER:
+		var cell := Look.panel(Color("dbcaaf"), 4)
+		cell.name = "FortStoreLocked_%d" % i
+		cell.custom_minimum_size = Vector2(60, 47)
+		cell.add_child(Kit.image(KnowUI.lock_icon(), Vector2.ONE * 22))
+		row.add_child(cell)
+	var hint := Look.label(I18n.t("+%d · Склад ур. %d") % [Gear.STORE_PER, lg.camp_level("store") + 1], 22, Look.SOFT)
+	hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(hint)
+
+
+static func _page_buttons(ui: Variant, parent: VBoxContainer, sid: int, tab: String, page: int, slot: String, pages: int) -> void:
+	if pages <= 1:
+		return
 	var nav := HBoxContainer.new()
 	nav.alignment = BoxContainer.ALIGNMENT_CENTER
-	nav.visible = pages > 1
 	parent.add_child(nav)
 	var prev := Look.button("‹", null, Look.INSET, Vector2(46, 38))
 	var next := Look.button("›", null, Look.INSET, Vector2(46, 38))
@@ -143,6 +205,7 @@ static func grid(ui: Variant, parent: VBoxContainer, sid: int, tab: String, page
 	counter.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	nav.add_child(counter)
 	nav.add_child(next)
+
 
 
 static func _page(ui: Variant, sid: int, tab: String, page: int, slot := "") -> void:
@@ -222,20 +285,24 @@ static func _chest_icon(kind: String) -> Texture2D:
 
 static func _chest(ui: Variant, tab: String, page: int, kind: String) -> Control:
 	var lg: Legion = ui.lg
-	var panel := Look.panel(Look.INSET, 12)
+	var panel := Kit.inset()
 	panel.name = "FortChestPreview"
 	var body := VBoxContainer.new()
 	panel.add_child(body)
+	var header := HBoxContainer.new()
+	header.add_child(Look.heading(I18n.t(Legion.CHEST_NAMES[kind]), 30))
+	var close := Look.close_button(ui.show_storage.bind(tab, page), 42)
+	close.name = "FortChestPreviewClose"
+	header.add_child(close)
+	body.add_child(header)
+	body.add_child(Look.divider())
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 20)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	body.add_child(row)
-	row.add_child(Kit.image(_chest_icon(kind), Vector2(126, 124)))
-	var title := Look.label(I18n.t(Legion.CHEST_NAMES[kind]), 30, Look.INK, true)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(title)
+	row.add_child(Kit.image(_chest_icon(kind), Vector2(146, 121)))
 	var loot := VBoxContainer.new()
-	loot.custom_minimum_size.x = 350
+	loot.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_child(loot)
 	var odds := HBoxContainer.new()
 	odds.add_child(Kit.image(KnowUI.art("store", "weapon"), Vector2(34, 34)))
@@ -252,7 +319,8 @@ static func _chest(ui: Variant, tab: String, page: int, kind: String) -> Control
 		var bounds := Legion.chest_range(kind, res)
 		loot.add_child(_pair(Look.resource(res), "%d–%d" % [bounds.x, bounds.y], 32))
 	var full := lg.store_count() >= lg.store_cap()
-	var open := Look.button(I18n.t("Открыть ×1"), KnowUI.lock_icon() if full else _chest_icon(kind), Look.WINE, Vector2(248, 50))
+	var open := Kit.button("red", KnowUI.lock_icon() if full else _chest_icon(kind), I18n.t("Открыть ×1"))
+	open.custom_minimum_size = Vector2(248, 59)
 	open.name = "FortChestOpen"
 	open.disabled = full
 	open.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -270,7 +338,7 @@ static func _chest(ui: Variant, tab: String, page: int, kind: String) -> Control
 
 
 static func _reward(ui: Variant, reward: Dictionary) -> PanelContainer:
-	var panel := Look.panel(Look.INSET, 10)
+	var panel := Kit.inset()
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	panel.add_child(row)
@@ -298,7 +366,7 @@ static func item_card(ui: Variant, iid: int, sid: int, back: Callable) -> void:
 		back.call()
 		return
 	it["new"] = false
-	var body: VBoxContainer = ui._new_modal(790, true)
+	var body: VBoxContainer = ui._new_framed_modal(790)
 	ui.modal_panel.name = "FortItemCard"
 	ui.dweller_sid = sid
 	var head := HBoxContainer.new()
@@ -306,9 +374,7 @@ static func item_card(ui: Variant, iid: int, sid: int, back: Callable) -> void:
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
-	var close := Look.button("×", null, Look.INSET, Vector2(48, 44))
-	close.pressed.connect(back)
-	head.add_child(close)
+	head.add_child(Look.close_button(back, 51))
 	body.add_child(head)
 	var is_worn := int(it.get("on", 0)) != 0
 	var person := lg.soldier(sid)

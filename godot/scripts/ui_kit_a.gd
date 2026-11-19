@@ -19,12 +19,13 @@ static var _small_textures: Dictionary = {}
 
 class CardPanel extends PanelContainer:
 	var plate: NinePatchRect
+	var plate_scale := 0.625
 
 	func fit_plate() -> void:
 		if is_instance_valid(plate):
 			plate.position = Vector2.ZERO
-			plate.scale = Vector2.ONE * 0.625
-			plate.size = size / 0.625
+			plate.scale = Vector2.ONE * plate_scale
+			plate.size = size / plate_scale
 
 
 static func texture(id: Variant) -> Texture2D:

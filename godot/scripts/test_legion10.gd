@@ -2,7 +2,7 @@ extends Node3D
 
 const Fixture = preload("res://scripts/test_fort_fixture.gd")
 const Know = preload("res://scripts/legion_knowledge.gd")
-var out := "D:/CivCity/.work/stage7/legion10/shots/"
+var out := "D:/CivCity/.work/stage7/legion10b/shots/"
 var game: Game
 var camp: CampUI
 var lg: Legion
@@ -247,7 +247,16 @@ func _screens() -> void:
 	await shot("1_topbar_full.png")
 	camp.chest_button.pressed.emit()
 	await _panel("1080 store")
+	var cells := camp.modal_panel.find_child("FortInventoryGrid", true, false)
+	var locks := camp.modal_panel.find_children("FortStoreLocked_*", "PanelContainer", true, false)
+	check(cells != null and cells.get_child_count() == lg.store_cap() and locks.size() == Gear.STORE_PER, "store capacity and one locked row")
 	await shot("2_store_window.png")
+	Fixture.set_level(lg, "store", 5)
+	camp.show_storage("all", 1)
+	cells = camp.modal_panel.find_child("FortInventoryGrid", true, false)
+	check(cells != null and cells.get_child_count() == 5, "last store page shows only the remaining capacity")
+	Fixture.set_level(lg, "store", 1)
+	camp.show_storage()
 	var chest := camp.modal_panel.find_child("FortChest_wooden", true, false) as Button
 	if check(chest != null, "chest storage tile"):
 		chest.pressed.emit()
@@ -255,18 +264,33 @@ func _screens() -> void:
 	await shot("3_chest_preview.png")
 	var open := camp.modal_panel.find_child("FortChestOpen", true, false) as Button
 	check(open != null and not open.disabled, "preview offers open")
+	var close_preview := camp.modal_panel.find_child("FortChestPreviewClose", true, false) as Button
+	if check(close_preview != null and close_preview.get_meta("kit_role", "") == "close", "preview uses B1 close"):
+		close_preview.pressed.emit()
+		check(camp.modal_panel.find_child("FortChestPreview", true, false) == null, "preview close keeps storage open")
 	while lg.store_count() < lg.store_cap():
 		lg.add_item(Gear.craft_item("bow", 1))
 	camp.show_storage("chest", 0, "wooden")
 	open = camp.modal_panel.find_child("FortChestOpen", true, false) as Button
 	check(open != null and open.disabled, "full preview disables confirm")
-	camp.show_knowledge()
+	camp.show_knowledge("bows")
 	await _panel("1080 tree")
+	check(camp.modal_panel.find_children("KnowledgeTier_*", "PanelContainer", true, false).size() == Know.NODES.size(), "all knowledge nodes show a tier or effect")
+	check(camp.modal_panel.find_child("KnowledgeClock_staffs", true, false) != null
+		and camp.modal_panel.find_child("KnowledgeLock_armor9", true, false) != null, "tree shows learning and HQ pills")
+	var medallions := camp.modal_panel.find_children("KnowNode_*", "Button", true, false)
+	for pattern: String in ["KnowledgeTier_*", "KnowledgeClock_*", "KnowledgeLock_*"]:
+		for pill: Control in camp.modal_panel.find_children(pattern, "PanelContainer", true, false):
+			for button: Control in medallions:
+				check(not pill.get_global_rect().intersects(button.get_global_rect()), "%s clear of %s" % [pill.name, button.name])
+	var learned := camp.modal_panel.find_child("FortLearnKnowledge", true, false) as Button
+	check(learned != null and learned.disabled, "learned node has disabled action")
 	await shot("4_tree.png")
 	var timer := lg.knowledge_timer()
 	lg.fort["know_at"] = {}
 	camp.show_knowledge("spears")
-	check(camp.modal_panel.find_child("FortLearnKnowledge", true, false) != null, "available knowledge action")
+	var learn := camp.modal_panel.find_child("FortLearnKnowledge", true, false) as Button
+	check(learn != null and not learn.disabled, "available knowledge action")
 	await shot("5_node_card.png")
 	lg.fort["know_at"] = timer
 	camp._close_modal()
@@ -301,6 +325,8 @@ func _screens() -> void:
 
 func _responsive(tag: String, language: String) -> void:
 	I18n.set_lang(language)
+	camp.show_storage()
+	await _panel(tag + " storage")
 	camp.show_storage("chest", 0, "wooden")
 	await _panel(tag + " storage + preview")
 	for id: String in ["smith", "staffs", "armor1", "outfit", "sets"]:
@@ -321,6 +347,10 @@ func _panel(tag: String) -> void:
 		return
 	var viewport := get_viewport().get_visible_rect().grow(0.5)
 	var rect := camp.modal_panel.get_global_rect().grow(0.5)
+	var close_found := false
+	for button: Button in camp.modal_panel.find_children("*", "Button", true, false):
+		close_found = close_found or button.get_meta("kit_role", "") == "close"
+	check(camp.modal_panel is UiKitA.CardPanel and close_found, tag + " shared frame and B1 close")
 	check(viewport.encloses(rect), tag + " modal outside viewport")
 	check(camp.modal_panel.find_children("*", "ScrollContainer", true, false).is_empty(), tag + " unexpected scrollbar")
 	for label: Label in camp.modal_panel.find_children("*", "Label", true, false):

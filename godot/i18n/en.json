@@ -5771,5 +5771,21 @@
 "Выбранное": "Selected",
 "Материалы": "Materials",
 "Мастерство": "Mastery",
-"Оружие": "Weapons"
+"Оружие": "Weapons",
+"Открывает изготовление мечей.": "Unlocks sword crafting.",
+"Открывает изготовление луков для лучников.": "Unlocks bows for archers.",
+"Открывает изготовление посохов для жрецов.": "Unlocks staves for priests.",
+"Открывает изготовление копий для конницы.": "Unlocks spears for cavalry.",
+"Открывает пошив рабочей одежды.": "Unlocks work outfit crafting.",
+"Усиливает бонус рабочей одежды.": "Improves the work outfit bonus.",
+"Даёт больше материалов при разборе вещей.": "Returns more materials when dismantling items.",
+"Позволяет повысить уровень готовой вещи.": "Lets you raise the tier of an existing item.",
+"Повышает шанс выковать редкую вещь.": "Improves the odds of forging a rare item.",
+"Открывает ковку комплектов снаряжения.": "Unlocks equipment set crafting.",
+"Открывает ковку снаряжения этих уровней.": "Unlocks gear crafting at these tiers.",
+"Стоимость изучения": "Research cost",
+"Нет сундуков": "No chests",
+"+%d · Склад ур. %d": "+%d · Storehouse Lv. %d",
+"5 видов": "5 kinds",
+"наборы": "sets"
 }

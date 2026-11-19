@@ -388,13 +388,14 @@ func _build_screen() -> void:
 	city_name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	city_row.add_child(city_name_label)
 	chips = GridContainer.new()
-	chips.columns = 3
+	chips.columns = 4
 	chips.name = "FortResources"
 	chips.add_theme_constant_override("h_separation", 8)
 	chips.add_theme_constant_override("v_separation", 6)
 	add_child(chips)
 	for resource: String in ["rations", "money", "ingots", "iron", "wood", "leather", "glory"]:
 		_resource_bar(resource)
+	chips.move_child(resource_bars["glory"]["panel"], 3)
 	ration_label = resource_chips["rations"]
 	glory_label = resource_chips["glory"]
 	ingot_label = resource_chips["ingots"]
@@ -559,7 +560,8 @@ func _build_fort_overlays() -> void:
 
 
 func _resource_bar(resource: String) -> void:
-	var panel := Look.chip(resource, "0", show_resource_popup.bind(resource))
+	var compact := resource in Gear.MATS
+	var panel := Look.chip(resource, "0", show_resource_popup.bind(resource), compact)
 	panel.name = "FortResource_" + resource
 	panel.tooltip_text = I18n.t(String(TOP_NAMES[resource]))
 	chips.add_child(panel)
@@ -583,7 +585,7 @@ func _resource_bar(resource: String) -> void:
 		var lock := Kit.image(KnowUI.lock_icon(), Vector2(22, 22))
 		lock.name = "FortCapacityLock"
 		click.add_child(lock)
-		lock.position = Vector2(43, 3)
+		lock.position = Vector2(36 if compact else 43, 3)
 		resource_bars[resource]["meter"] = bar
 		resource_bars[resource]["lock"] = lock
 
@@ -1500,6 +1502,12 @@ func _new_modal(width: float, marble := false) -> VBoxContainer:
 	v.add_theme_constant_override("separation", 10)
 	modal_panel.add_child(v)
 	return v
+
+
+func _new_framed_modal(width: float) -> VBoxContainer:
+	var body := _new_modal(width)
+	Look.bronze_frame(modal_panel as UiKitA.CardPanel)
+	return body
 
 
 func _fit_modal() -> void:
@@ -2848,7 +2856,7 @@ func show_dweller(sid: int, slot := "", change := "", tab := "all", page := 0) -
 	if person.is_empty():
 		_close_modal()
 		return
-	var v := _new_modal(1460, true)
+	var v := _new_framed_modal(1480)
 	modal_panel.name = "FortDwellerCard"
 	dweller_sid = sid
 	dweller_slot = slot
@@ -2933,9 +2941,7 @@ func show_dweller(sid: int, slot := "", change := "", tab := "all", page := 0) -
 	caption.name = "FortInventoryTitle"
 	caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(caption)
-	var close := Look.button("×", null, Look.INSET, Vector2(45, 42))
-	close.pressed.connect(_close_modal)
-	head.add_child(close)
+	head.add_child(Look.close_button(_close_modal, 49))
 	StoreUI.grid(self, right, sid, tab, page, slot)
 	if change != "":
 		var feedback := Look.label(change, 20, Look.OLIVE)
@@ -2976,6 +2982,12 @@ func _dweller_slot(parent: Control, person: Dictionary, slot: String, tab: Strin
 	var icon := Kit.image(StoreUI.item_icon(self, it) if not it.is_empty() else Kit.texture("res://assets/ui/ai/icons/%s.png" % String(LegionUi.GEAR_ICON[slot])), Vector2(62, 62))
 	icon.position = Vector2(8, 8)
 	button.add_child(icon)
+	if not it.is_empty():
+		var badge := Look.label(str(Gear.tier_of(it)), 18, Look.PAPER)
+		badge.name = "TierBadge"
+		badge.add_theme_stylebox_override("normal", Look.box(Look.DARK, Look.BRONZE, 6, 3))
+		badge.position = Vector2(5, 50)
+		button.add_child(badge)
 	parent.add_child(button)
 
 func _gear_slot_button(pixels: float, selected_slot := false) -> Button:

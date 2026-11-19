@@ -130,7 +130,8 @@ func _run() -> void:
 	camp.open()
 	await frames(12)
 	check(camp.diorama is FortCutaway, "painted fort stays active")
-	check(camp.chips.get_child_count() == 7 and camp.resource_chips.keys() == ["rations", "money", "ingots", "iron", "wood", "leather", "glory"], "six capped resources and glory")
+	check(camp.chips.get_child_count() == 7 and camp.chips.columns == 4
+		and camp.chips.get_child(3).name == "FortResource_glory", "seven resources with glory in the top row")
 	check(camp.population_button.icon == Kit.texture("family") and camp.population_button.text.contains(str(lg.fort_population())), "population pill")
 	_navigation_checks()
 	var ration_chip := camp.chips.get_node_or_null("FortResource_rations") as Control
@@ -179,7 +180,13 @@ func _run() -> void:
 	camp._layout_guide()
 	camp.show_dweller(sid)
 	var slots := camp.modal_panel.find_child("FortGearSlots", true, false)
-	check(slots != null and slots.find_children("FortGear_*", "Button", true, false).size() == 5 and slots.find_children("TierBadge", "Label", true, false).size() == 4, "five slots and four equipped tier badges")
+	check(slots != null and slots.find_children("FortGear_*", "Button", true, false).size() == 5, "five equipment slots")
+	for slot: String in Gear.SLOTS_V3:
+		var button := camp.modal_panel.find_child("FortGear_" + slot, true, false) as Button
+		if not check(button != null, "slot " + slot):
+			continue
+		var tier := button.get_node_or_null("TierBadge") as Label
+		check(tier == null if slot == Gear.OUTFIT_SLOT else tier != null and tier.text == "2", "equipped tier " + slot)
 	check(camp.modal_panel.find_child("FortInventoryGrid", true, false) != null, "inventory grid")
 	await _window_checks(camp.modal_panel, "dweller")
 	check((camp.modal_panel.find_child("FortInventoryTitle", true, false) as Label).text == I18n.t("На складе"), "inventory title spacing")
@@ -271,7 +278,14 @@ func _window_checks(window: Control, tag: String) -> void:
 		if not visible_rect.has_area():
 			continue # За краем горизонтальной ленты кнопка не рисуется.
 		count += 1
-		check(rect.size.y >= 56.0 - 0.1, tag + "/" + b.name + " drawn height >= 56")
+		var compact_close: bool = window.name == "FortDwellerCard" and b.get_meta("kit_role", "") == "close"
+		var minimum_height := 40.0 if compact_close else 56.0
+		check(rect.size.y >= minimum_height - 0.1, "%s/%s drawn height >= %d" % [tag, b.name, int(minimum_height)])
+		if compact_close:
+			var close_skin := b.get_theme_stylebox("normal") as StyleBoxTexture
+			check(is_equal_approx(rect.size.x, rect.size.y) and close_skin != null
+				and close_skin.texture == Kit.texture(Kit.ROOT + "buttons/close_btn.png"),
+				tag + " round B1 close")
 		check(window.get_global_rect().grow(1).encloses(rect), tag + "/" + b.name + " inside window")
 		check(visible_rect.grow(1).encloses(rect), tag + "/" + b.name + " not clipped")
 		for state: String in ["normal", "hover", "pressed", "disabled"]:

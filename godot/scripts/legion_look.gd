@@ -20,6 +20,7 @@ const ICONS := {"money": "denarii", "rations": "rations", "glory": "glory", "ing
 const ALIASES := {"coins": "money", "bread": "rations", "laurels": "glory", "hammer": "build",
 	"arena": "trophy", "tasks": "quests", "commerce": "market", "scroll": "map", "swords": "squad"}
 static var textures: Dictionary = {}
+static var frame_material: ShaderMaterial
 
 
 static func icon(id: String) -> Texture2D:
@@ -55,6 +56,66 @@ static func panel(fill := PAPER, pad := 16.0) -> PanelContainer:
 	var p := PanelContainer.new()
 	p.add_theme_stylebox_override("panel", box(fill, BRONZE, 12, pad))
 	return p
+
+
+static func bronze_frame(panel: UiKitA.CardPanel) -> void:
+	# На мраморной рамке меняем винный кант на бронзу.
+	panel.plate_scale = 0.47
+	if frame_material == null:
+		var shader := Shader.new()
+		shader.code = """
+shader_type canvas_item;
+void fragment() {
+	vec4 stone = COLOR;
+	float rim = smoothstep(0.15, 0.42, stone.r - stone.g)
+		* (1.0 - smoothstep(0.12, 0.32, stone.g - stone.b));
+	vec3 bronze = vec3(0.14, 0.085, 0.04) + stone.r * vec3(0.93, 0.69, 0.47);
+	float gold = smoothstep(0.40, 0.72, stone.r - stone.b) * smoothstep(0.12, 0.31, stone.g - stone.b);
+	vec3 brass = stone.rgb * vec3(0.83, 0.75, 0.78) + vec3(0.09, 0.13, 0.18);
+	COLOR = vec4(mix(mix(stone.rgb, brass, gold), bronze, rim), stone.a);
+}
+"""
+		frame_material = ShaderMaterial.new()
+		frame_material.shader = shader
+	panel.plate.material = frame_material
+
+
+static func close_button(action: Callable, pixels := 54.0) -> Button:
+	var close := Kit.close_button()
+	close.custom_minimum_size = Vector2.ONE * pixels
+	close.size_flags_horizontal = Control.SIZE_SHRINK_END
+	close.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	close.pressed.connect(action)
+	return close
+
+
+static func sprig(pixels: float, flipped: bool) -> TextureRect:
+	var leaf := AtlasTexture.new()
+	leaf.atlas = icon("glory")
+	leaf.region = Rect2(7, 2, 55, 99)
+	var art := Kit.image(leaf, Vector2(pixels, pixels))
+	art.flip_h = flipped
+	art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return art
+
+
+static func heading(value: String, pixels: int) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 13)
+	row.add_child(sprig(float(pixels), false))
+	var title := label(value, pixels, INK, true)
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(title)
+	row.add_child(sprig(float(pixels), true))
+	return row
+
+
+static func divider() -> TextureRect:
+	var line := Kit.image("res://assets/ui/marble/divider.png", Vector2(0, 11))
+	line.stretch_mode = TextureRect.STRETCH_SCALE
+	return line
 
 
 static func label(value: String, pixels := 22, color := INK, title := false) -> Label:
@@ -126,13 +187,15 @@ static func _fit_chip_number(number: Label) -> void:
 		number.add_theme_font_size_override("font_size", pixels)
 
 
-static func chip(resource_id: String, value: String, action := Callable()) -> PanelContainer:
+static func chip(resource_id: String, value: String, action := Callable(), compact := false) -> PanelContainer:
 	var p := panel(DARK, 5)
-	p.custom_minimum_size = Vector2(150, 62)
+	p.custom_minimum_size = Vector2(138, 52) if compact else Vector2(150, 62)
+	if compact:
+		p.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	var row := HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	p.add_child(row)
-	var image := Kit.image(resource(resource_id), Vector2(50, 50))
+	var image := Kit.image(resource(resource_id), Vector2.ONE * (42 if compact else 50))
 	image.name = "ResourceIcon"
 	image.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(image)
