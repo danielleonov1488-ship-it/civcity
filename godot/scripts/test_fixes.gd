@@ -138,13 +138,19 @@ func _run() -> void:
 	c.research["stall_veg"] = true
 	c.research["reach1"] = true
 	var want := Defs.range_m(Defs.B["stall_veg"]) * (1.2 if c.cozy_v >= 1 else 1.33)
-	var far := c.place("house_pleb", Vector2(176 + Defs.range_m(Defs.B["stall_veg"]) * 1.15, 150), PI * 0.5, 0, -1, true)
-	var sets := Cover.place_sets(c, "stall_veg", Vector2(176, 150))
-	check(is_equal_approx(c.shop_range(Defs.B["stall_veg"]), want) and not far.is_empty() and (sets["green"] as Array).has(int(far["id"])),
-		"охват лавки с едой — по правилам города (%.1f м): дом на 1,15 дальности подсвечен" % want, sets)
+	var forecast := City.new(c.land)
+	forecast.cozy_v = c.cozy_v
+	forecast.auto_hire = true
+	var pos := Vector2(176, 150)
+	var far := {"id": 1, "type": "house_pleb", "pos": pos + Vector2(Defs.range_m(Defs.B["stall_veg"]) * 1.15, 0),
+		"pop": 6, "happy": 60}
+	forecast.buildings[1] = far
+	var out_of_range := Cover.place_sets(forecast, "stall_veg", pos)
+	forecast.research["reach1"] = true
+	var sets := Cover.place_sets(forecast, "stall_veg", pos)
+	check(is_equal_approx(forecast.shop_range(Defs.B["stall_veg"]), want) and not out_of_range["green"].has(1) and sets["green"].has(1),
+		"охват лавки с едой — по правилам города (%.1f м): дом на 1,15 дальности подсвечен после исследования" % want, sets)
 	check(game.get("range_ring") == null and not hud.has_method("_toggle_reach"), "кругов охвата больше нет")
-	if not far.is_empty():
-		c.remove(far, false)
 	await frames(5)
 
 	# ---------- 0.1 вкладка «Против городов» без связи ----------

@@ -11,6 +11,7 @@ extends Node
 ## «НОВОЕ»: новая игра — ничего не горит; изучили — горит на разделе, вкладке, карточке; навели / взяли — гаснет;
 ## исследования нового уровня — на кнопке и в окне; в сохранении; старое сохранение — ничего не новое.
 
+var out := "D:/CivCity/.work/gd/"
 var game
 var c: City
 var cover                            # Cover
@@ -23,6 +24,9 @@ var row2: Array = []                 # дома без еды рядом (не �
 
 
 func _ready() -> void:
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("out="):
+			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
 	Game.boot = {"new": "1", "hour": "11"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -43,9 +47,11 @@ func check(ok: bool, what: String, extra = null) -> bool:
 
 func shot(name: String) -> void:
 	await frames(8)
-	DirAccess.make_dir_recursive_absolute("D:/CivCity/.work/gd")
-	get_viewport().get_texture().get_image().save_png("D:/CivCity/.work/gd/" + name)
-	print("SHOT ", name)
+	await RenderingServer.frame_post_draw
+	var path := out + name
+	if check(DirAccess.make_dir_recursive_absolute(out) == OK and get_viewport().get_texture().get_image().save_png(path) == OK,
+			"снимок сохранён: %s" % name):
+		print("UX SHOT ", path)
 
 
 func move(p: Vector2) -> void:

@@ -4292,7 +4292,7 @@ func _update_tool() -> void:
 	_ghost_trees(ok, pl)
 	# охват — без кругов: синие дома уже с такой же, зелёные получат эту (решение владельца Д3)
 	if Cover.kind_of(tool) != "":
-		cover.preview(tool, pl["pos"])
+		cover.preview(tool, pl["pos"], not bool(pl.get("noroad", false)), ok)
 	if hud:
 		hud.tool_status(pl["err"])
 		hud.cursor_error(_short_err(pl["err"]), rot_hint_on())   # что не так — и у курсора, одной красной строкой (3.5)

@@ -1177,19 +1177,10 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 			var jb := jobs_of(b)
 			for c in jb:
 				jobs[c] += int(jb[c])
-	# работники: у каждого класса свои, лишние высшего класса идут на работу классом ниже
-	var workers := {}
-	var spare := {}
-	var filled := {}
-	for c in Defs.CLASS_ORDER:
-		workers[c] = int(floor(residents[c] * float(Defs.CLASSES[c]["work"])))
-		filled[c] = mini(jobs[c], workers[c])
-		spare[c] = workers[c] - filled[c]
-	for pair: Array in [["patricians", "artisans"], ["artisans", "plebs"], ["patricians", "plebs"]]:
-		var take := mini(jobs[pair[1]] - filled[pair[1]], spare[pair[0]])
-		if take > 0:
-			filled[pair[1]] += take
-			spare[pair[0]] -= take
+	var workforce := _auto_workforce(residents, jobs)
+	var workers: Dictionary = workforce[0]
+	var filled: Dictionary = workforce[1]
+	var spare: Dictionary = workforce[2]
 	if manual_hiring():
 		for c: String in Defs.CLASS_ORDER:
 			workers[c] = 0
@@ -1201,38 +1192,18 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 				filled[w["cls"]] += 1
 			else:
 				spare[w["cls"]] += 1
-	var class_output := {}
-	for cl: String in Defs.CLASS_ORDER:
-		var weighted := 0.0
-		var total := 0
-		for h: Dictionary in houses:
-			if String(def(h)["cls"]) == cl:
-				weighted += int(h["pop"]) * happiness_output(h)
-				total += int(h["pop"])
-		class_output[cl] = weighted / float(total) if total > 0 else 1.0
-	var ratio := {}
-	for c in Defs.CLASS_ORDER:
-		ratio[c] = 1.0 if manual_hiring() else (float(filled[c]) / jobs[c] if jobs[c] > 0 else 1.0)
+	var class_output := _class_work_output(houses)
+	var ratio := _work_ratio(jobs, filled)
 	goods = {}
 	for id in buildings:
 		var b: Dictionary = buildings[id]
 		var d := def(b)
 		if d["kind"] == "decor" or d["kind"] == "house":
 			continue
-		var st := 1.0
-		if d.has("jobs"):
-			var jb := jobs_of(b)
-			var hired := 0
-			for c in jb:
-				hired += int(jb[c])
-				if int(jb[c]) > 0:
-					st = minf(st, float(ratio[c]) * (1.0 if manual_hiring() else float(class_output[c])))
-			b["fill"] = st if b["road"] else 0.0               # хватает ли жителей на нанятые места
-			var fitting := float(b.get("prof_fit", 0.0)) if Defs.PROF_ON and manual_hiring() else 0.0
-			var output := float(b.get("staff_output", 0.0)) if manual_hiring() else float(hired)
-			st *= (output + Defs.PROF_BONUS * fitting) / float(maxi(1, job_max(b)))
-		b["staff"] = st if b["road"] else 0.0
-		b["active"] = b["road"] and (not d.has("jobs") or (float(b["staff"]) > 0.0 if manual_hiring() else float(b["staff"]) >= 0.25))
+		var staffing := _staffing(b, jobs_of(b), ratio, class_output)
+		b["fill"] = staffing[0] if b["road"] else 0.0
+		b["staff"] = staffing[1] if b["road"] else 0.0
+		b["active"] = b["road"] and _is_staffed(d, b["staff"])
 		b["over"] = oc.has(int(id))
 		if b["over"]:
 			b["fill"] = 0.0
@@ -1249,13 +1220,8 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 			b["served"] = 0
 			b["serves"] = []
 			b["cap"] = 0
-			b["why"] = "" if b["active"] else ("road" if not b["road"] else "staff")
-			if b["active"] and d.get("store", false) and not _store_near(b, stores):
-				b["active"] = false
-				b["why"] = "store"
-			if b["active"] and d.has("needs_good") and not goods.has(d["needs_good"]):
-				b["active"] = false
-				b["why"] = "good"
+			b["why"] = _shop_block(d, b, b["road"], b["staff"], stores, goods)
+			b["active"] = b["active"] and b["why"] == ""
 			if b["active"]:
 				if manual_hiring() and d.get("store", false):
 					b["staff"] *= _store_supply(b, stores)
@@ -1277,30 +1243,18 @@ func compute(same_place := false, instant_homes: Array = []) -> void:
 	for s in shops:
 		var d := def(s)
 		var r := shop_range(d)
-		var cap := int(ceil(float(Defs.CAPACITY[int(d["cap"])]) * float(s["staff"]) * edict_mul("work_output")))
-		var near := []
-		for hn: int in _grid_near(hgrid, s["pos"], r):
-			var h: Dictionary = houses[hn]
-			var dd := (h["pos"] as Vector2).distance_to(s["pos"])
-			if dd <= r:
-				# сначала — дома, где живут (или куда уже идёт семья), потом пустые; среди них — ближние
-				var lived := int(h["pop"]) + int(h.get("coming", 0)) > 0
-				near.append([dd + (0.0 if lived else 10000.0), h])
-		near.sort_custom(func(a, b): return a[0] < b[0])
-		var served := 0
+		var cap := _shop_capacity(d, s["staff"])
+		var near := _shop_targets(houses, _grid_near(hgrid, s["pos"], r), s["pos"], r)
 		var serves := []
-		for e in near:
-			if served >= cap:
-				break
-			var h: Dictionary = e[1]
+		for i in mini(cap, near.size()):
+			var h: Dictionary = near[i][1]
 			serves.append(h["id"])
 			var sc: Dictionary = h["score"]
 			if int(sc.get(s["type"], 0)) < int(d["bonus"]):
 				sc[s["type"]] = int(d["bonus"])
 			h["needs"][d["sub"]] = true
 			HouseNeeds.add(h, s, d, int(d["bonus"]))
-			served += 1
-		s["served"] = served
+		s["served"] = serves.size()
 		s["serves"] = serves           # какие дома обслуживает (для подсветки охвата)
 		s["cap"] = cap                 # сколько домов может обслужить сейчас (с нынешними работниками)
 		s["near_n"] = near.size()      # сколько домов в её дальности
@@ -1876,6 +1830,141 @@ func _happy_tips(houses: Array, stores: Array) -> Array:
 		if float(c[0]) >= 1.0 and out.size() < 3:
 			out.append(c[1])
 	return out
+
+
+func _auto_workforce(residents: Dictionary, jobs: Dictionary) -> Array:
+	# работники: у каждого класса свои, лишние высшего класса идут на работу классом ниже
+	var workers := {}
+	var spare := {}
+	var filled := {}
+	for c in Defs.CLASS_ORDER:
+		workers[c] = int(floor(residents[c] * float(Defs.CLASSES[c]["work"])))
+		filled[c] = mini(jobs[c], workers[c])
+		spare[c] = workers[c] - filled[c]
+	for pair: Array in [["patricians", "artisans"], ["artisans", "plebs"], ["patricians", "plebs"]]:
+		var take := mini(jobs[pair[1]] - filled[pair[1]], spare[pair[0]])
+		if take > 0:
+			filled[pair[1]] += take
+			spare[pair[0]] -= take
+	return [workers, filled, spare]
+
+
+func _class_work_output(houses: Array) -> Dictionary:
+	var output := {}
+	for cls: String in Defs.CLASS_ORDER:
+		var weighted := 0.0
+		var total := 0
+		for h: Dictionary in houses:
+			if String(def(h)["cls"]) == cls:
+				weighted += int(h["pop"]) * happiness_output(h)
+				total += int(h["pop"])
+		output[cls] = weighted / float(total) if total > 0 else 1.0
+	return output
+
+
+func _work_ratio(jobs: Dictionary, filled: Dictionary) -> Dictionary:
+	var ratio := {}
+	for cls: String in Defs.CLASS_ORDER:
+		ratio[cls] = 1.0 if manual_hiring() else (float(filled[cls]) / jobs[cls] if jobs[cls] > 0 else 1.0)
+	return ratio
+
+
+## x — заполненность мест, y — производительность с учётом нанятых жителей.
+func _staffing(b: Dictionary, jobs: Dictionary, ratio: Dictionary, class_output: Dictionary) -> Array[float]:
+	if not def(b).has("jobs"):
+		return [1.0, 1.0]
+	var manual := manual_hiring()
+	var fill := 1.0
+	var hired := 0
+	for cls: String in jobs:
+		hired += int(jobs[cls])
+		if int(jobs[cls]) > 0:
+			fill = minf(fill, float(ratio[cls]) * (1.0 if manual else float(class_output[cls])))
+	var fitting := float(b.get("prof_fit", 0.0)) if Defs.PROF_ON and manual else 0.0
+	var output := float(b.get("staff_output", 0.0)) if manual else float(hired)
+	return [fill, fill * (output + Defs.PROF_BONUS * fitting) / float(maxi(1, job_max(b)))]
+
+
+func _is_staffed(d: Dictionary, staff: float) -> bool:
+	return not d.has("jobs") or (staff > 0.0 if manual_hiring() else staff >= 0.25)
+
+
+func _shop_block(d: Dictionary, shop: Dictionary, road: bool, staff: float, stores: Array, supply: Dictionary) -> String:
+	if not road:
+		return "road"
+	if not _is_staffed(d, staff):
+		return "staff"
+	if d.get("store", false) and not _store_near(shop, stores):
+		return "store"
+	if d.has("needs_good") and not supply.has(d["needs_good"]):
+		return "good"
+	return ""
+
+
+func _shop_capacity(d: Dictionary, staff: float) -> int:
+	return ceili(float(Defs.CAPACITY[int(d["cap"])]) * staff * edict_mul("work_output"))
+
+
+func _shop_targets(houses: Array, indices: Array, pos: Vector2, radius: float) -> Array:
+	var near := []
+	for index: int in indices:
+		var h: Dictionary = houses[index]
+		var dist := (h["pos"] as Vector2).distance_to(pos)
+		if dist <= radius:
+			var lived := int(h["pop"]) + int(h.get("coming", 0)) > 0
+			near.append([dist + (0.0 if lived else 10000.0), h])
+	near.sort_custom(func(a, b): return a[0] < b[0])
+	return near
+
+
+## Охват новой лавки в момент открытия. При ручном найме места пока пусты.
+func preview_shop(type: String, pos: Vector2, road: bool) -> Dictionary:
+	var d: Dictionary = Defs.B[type]
+	if not road:
+		return {"why": "road", "serves": []}
+	if manual_hiring() and d.has("jobs"):
+		return {"why": "staff", "serves": []}
+	var shop := {"type": type, "pos": pos}
+	var houses := []
+	var residents := {}
+	var jobs := {}
+	var suppliers := []
+	var new_jobs: Dictionary = d.get("jobs", {})
+	for cls: String in Defs.CLASS_ORDER:
+		residents[cls] = 0
+		jobs[cls] = int(new_jobs.get(cls, 0))
+	for b: Dictionary in buildings.values():
+		var bd := def(b)
+		if bd["kind"] == "house":
+			houses.append(b)
+			residents[bd["cls"]] += int(b["pop"])
+		elif bool(b.get("road", true)) and not bool(b.get("over", false)):
+			var jb := jobs_of(b)
+			for cls: String in jb:
+				jobs[cls] += int(jb[cls])
+			if bd["kind"] in ["farm", "store"]:
+				suppliers.append(b)
+	var filled: Dictionary = _auto_workforce(residents, jobs)[1]
+	var ratio := _work_ratio(jobs, filled)
+	var output := _class_work_output(houses)
+	var staff: float = _staffing(shop, new_jobs, ratio, output)[1]
+	var stores := []
+	var supply := {}
+	for b: Dictionary in suppliers:
+		var bd := def(b)
+		var supplier_staff: float = _staffing(b, jobs_of(b), ratio, output)[1]
+		if _is_staffed(bd, supplier_staff):
+			if bd["kind"] == "store":
+				stores.append(b)
+			else:
+				supply[bd["makes"]] = true
+	var why := _shop_block(d, shop, road, staff, stores, supply)
+	var serves := []
+	if why == "":
+		var near := _shop_targets(houses, range(houses.size()), pos, shop_range(d))
+		for i in mini(_shop_capacity(d, staff), near.size()):
+			serves.append(near[i][1]["id"])
+	return {"why": why, "serves": serves}
 
 
 ## Дальность лавки (еда — дальше после исследования «reach1»), как в compute()

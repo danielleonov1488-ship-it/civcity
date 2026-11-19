@@ -5810,5 +5810,7 @@
 "Нет сундуков": "No chests",
 "+%d · Склад ур. %d": "+%d · Storehouse Lv. %d",
 "5 видов": "5 kinds",
-"наборы": "sets"
+"наборы": "sets",
+"Зелёные дома получат товар от новой лавки, синие уже снабжает такая же. Откройте «Обзор города» → «Город» → «Счастье на карте».": "Green homes will get goods from the new shop, while blue homes already have the same shop. Open City Overview → City → Happiness on the map.",
+"Наймите работников, чтобы лавка заработала": "Hire workers to open the shop."
 }

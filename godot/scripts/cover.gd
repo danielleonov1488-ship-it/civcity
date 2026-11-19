@@ -19,7 +19,6 @@ const PER_FRAME := 40                 # домов за кадр: ~3 мс, го�
 const FRAME_US := 4000                # и не дольше 4 мс за кадр
 const HAPPY_GOOD := 65                # с такого счастья можно второй этаж (Defs.FLOOR_HAPPY)
 const HAPPY_BAD := 40
-const FAR := 80.0                     # камера дальше — над домами «Обзора» только рожицы, без цифр (не налезают)
 
 ## «уже с гончарной»: с чем дом уже (творительный падеж)
 const WITH := {"stall_fruit": "с фруктовой лавкой", "stall_veg": "с овощной лавкой", "stall_fish": "с рыбной лавкой",
@@ -164,7 +163,8 @@ var _type := ""
 var _cell := Vector2i(1 << 30, 0)
 var _near := Vector2.INF
 var _shown := false           # подпись у курсора видна
-var _far := false             # «Обзор» счастья построен для дальней камеры (рожицы без цифр)
+var _road := true
+var _valid := true
 
 
 func setup(g) -> void:
@@ -193,10 +193,10 @@ static func with_name(type: String) -> String:
 ## Если поставить type в pos: green — кому постройка правда что-то даст; blue — у кого такое уже есть
 ## (у лавок, памятников и складов — по всему городу, у украшений — в их радиусе, кому больше не прибавится);
 ## new / dup — для подписи: сколько новых и сколько из её охвата уже с такой же. pos = INF — только синие
-## why — лавка тут не заработает: "store" (нет склада рядом), "good" (нет сырья); тогда зелёных нет.
+## why — лавка тут не заработает: нет дороги, работников, склада или сырья.
 ## half — украшение: дома, где его очки копятся (прибавит вместе со следующим), — без цвета.
 ## Зелёные у украшения — и сверх предела: «главное» в своей дальности, третий разный вид набора (как City.compute)
-static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
+static func place_sets(c: City, type: String, pos: Vector2, road := true) -> Dictionary:
 	var d: Dictionary = Defs.B[type]
 	var green := []
 	var blue := []
@@ -210,14 +210,10 @@ static func place_sets(c: City, type: String, pos: Vector2) -> Dictionary:
 				var h: Dictionary = c.buildings[id]
 				if c.is_house(h) and (h.get("score", {}) as Dictionary).has(type):
 					blue.append(id)
-			# как в City.compute: без склада рядом или без сырья лавка стоит — никому ничего не даст
-			if at and d.get("store", false) and not _store_near({"pos": pos}, _stores(c, -1), _store_r(c)):
-				why = "store"
-			elif at and d.has("needs_good") and not c.goods.has(d["needs_good"]):
-				why = "good"
-			if at and why == "":
-				# как в City.compute: ближайшие дома в дальности, сначала жилые, сколько потянет при полном найме
-				for id in _nearest(c, pos, c.shop_range(d), ceili(float(Defs.CAPACITY[int(d["cap"])]) * c.edict_mul("work_output"))):
+			if at:
+				var preview := c.preview_shop(type, pos, road)
+				why = preview["why"]
+				for id in preview["serves"]:
 					if (c.buildings[id].get("score", {}) as Dictionary).has(type):
 						dup += 1
 					else:
@@ -525,6 +521,10 @@ static func caption(type: String, s: Dictionary) -> Array:
 	match Defs.B[type]["kind"]:
 		"shop":
 			match String(s.get("why", "")):
+				"road":
+					return ["", "", "Нужна дорога у входа"]
+				"staff":
+					return ["", "", "Наймите работников, чтобы лавка заработала"]
 				"store":
 					return ["", "", "Нет склада рядом — лавка не заработает"]
 				"good":
@@ -559,23 +559,6 @@ static func _farm_name(good: String) -> String:
 		if Defs.B[t].get("makes", "") == good:
 			return String(Defs.B[t]["name"])
 	return "поле"
-
-
-static func _nearest(c: City, pos: Vector2, r: float, n: int) -> Array:
-	var near := []
-	for id in c.buildings:
-		var h: Dictionary = c.buildings[id]
-		if not c.is_house(h):
-			continue
-		var dd := (h["pos"] as Vector2).distance_to(pos)
-		if dd <= r:
-			var lived := int(h["pop"]) + int(h.get("coming", 0)) > 0
-			near.append([dd + (0.0 if lived else 10000.0), id])
-	near.sort_custom(func(a, b): return a[0] < b[0])
-	var out := []
-	for i in mini(n, near.size()):
-		out.append(near[i][1])
-	return out
 
 
 ## Украшения в 2 × DECOR_RADIUS от точки p: [[место, вид, очки, облик], …] — один обход города на place_sets/selected_sets,
@@ -713,6 +696,8 @@ func refresh() -> void:
 	elif kind_of(t) != "":
 		if t != _type:
 			_near = Vector2.INF                  # новая стройка: зелёные — когда курсор встанет на землю
+			_road = true
+			_valid = true
 		_type = t
 		_place(t, _near)
 	elif t == "" and not game.selected.is_empty() and c.buildings.has(int(game.selected.get("id", -1))) \
@@ -722,13 +707,16 @@ func refresh() -> void:
 		clear()
 
 
-## Курсор со стройкой над землёй (каждый кадр из game._update_tool): пересчёт, только если сдвинулись на метр
-func preview(type: String, pos: Vector2) -> void:
+## Для лавки важны точная дальность и дорога у входа даже при повороте на месте.
+func preview(type: String, pos: Vector2, road := true, valid := true) -> void:
 	var cell := Vector2i(floori(pos.x), floori(pos.y))
-	if cell != _cell or type != _type:
+	var shop := kind_of(type) == "shop"
+	if cell != _cell or type != _type or (shop and (pos != _near or road != _road or valid != _valid)):
 		_cell = cell
 		_type = type
 		_near = pos
+		_road = road
+		_valid = valid
 		_place(type, pos)
 	if game.hud:
 		game.hud.cover_caption(cap[0], cap[1], cap[2])
@@ -756,7 +744,8 @@ func clear() -> void:
 
 func _place(type: String, pos: Vector2) -> void:
 	var c: City = game.city
-	sets = place_sets(c, type, pos)
+	var target := Vector2.INF if kind_of(type) == "shop" and not _valid else pos
+	sets = place_sets(c, type, target, _road)
 	state = "place"
 	var w := {}
 	for id in sets["blue"]:
@@ -765,7 +754,7 @@ func _place(type: String, pos: Vector2) -> void:
 		w[id] = GREEN
 	_apply(w, pos)
 	_marks(_wh_marks(type, _same_marks(type, -1)))
-	cap = caption(type, sets) if pos.is_finite() else ["", "", ""]
+	cap = caption(type, sets) if target.is_finite() else ["", "", ""]
 
 
 func _selected(b: Dictionary) -> void:
@@ -789,12 +778,10 @@ func _overview(mode: String) -> void:
 	cap = ["", "", ""]
 	_apply(sets["tint"], Vector2.INF)
 	var mk := {}
-	_far = game.rig != null and float(game.rig.dist) > FAR
 	if mode == "happy":
 		for id in sets["faces"]:
-			var hp: int = sets["faces"][id]
-			var face := "face_good" if hp >= HAPPY_GOOD else ("face_mid" if hp >= HAPPY_BAD else "face_bad")
-			mk["ov%d" % id] = [id, face, false, "", "plain"] if _far else [id, face, false, "%d%%" % hp]
+			var unhappy := c.unhappy_badge(c.buildings[id])
+			mk["ov%d" % id] = [id, "sad" if unhappy else "family", unhappy, "", "plain"]
 	elif mode == "classes":
 		# готовые — двойная стрелка цвета нового класса с ценой (как у «Перестроить»); остальным — значок помехи
 		for id in sets["tint"]:
@@ -909,16 +896,16 @@ func _marks(mk: Dictionary) -> void:
 		var separate: bool = state != "floor" and not world_icon.is_empty() and not (world_icon[0] == "up" and (game.tool != "" or hud.overlay != ""))
 		var top: float = c.blueprint(b).top_y() + (3.0 if separate else 1.2)
 		var cb := func(): _open(id)               # щёлкнуть значок (без стройки в руках) — карточка этой постройки
-		hud.set_badge(k, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), String(e[1]) if state == "floor" else _badge_icon(String(e[1])), e[2], e[3] if state == "floor" and e.size() > 3 else "", cb, e[4] if e.size() > 4 else "")
+		hud.set_badge(k, Vector3(b["pos"].x, float(b["y"]) + top, b["pos"].y), String(e[1]) if state == "floor" else _badge_icon(String(e[1]), c.unhappy_badge(b)), e[2], e[3] if state == "floor" and e.size() > 3 else "", cb, e[4] if e.size() > 4 else "")
 		marks[k] = true
 
 
 ## В обзоре и при стройке — только рисунки из одобренного набора.
-static func _badge_icon(icon: String) -> String:
-	if icon in ["house_problem", "face_bad", "happy"]:
-		return "sad"
-	if icon in ["face_good", "face_mid"]:
-		return "family"
+static func _badge_icon(icon: String, unhappy: bool) -> String:
+	if icon in ["house_problem", "face_bad"]:
+		return "sad" if unhappy else "request"
+	if icon in ["family", "sad"]:
+		return icon
 	if icon.begins_with("upc"):
 		return "floor_up"
 	return "building"
@@ -1010,8 +997,6 @@ func _reserve(c: City) -> void:
 func _process(_dt: float) -> void:
 	if game == null or pool == null:
 		return
-	if state == "ov" and game.rig != null and game.hud != null and game.hud.overlay == "happy" and (float(game.rig.dist) > FAR) != _far:
-		_overview("happy")                   # камеру отдалили или приблизили — рожицы с цифрами или без
 	if not todo.is_empty():
 		_light_some()
 	_vis()

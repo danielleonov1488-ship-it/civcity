@@ -2444,7 +2444,7 @@ func cover_tip(by_player := false) -> void:
 	if c.tips.has("cover_tip") or not _tip_free(not by_player):
 		return
 	c.tips["cover_tip"] = true
-	advisor("Кому достанется лавка", "Кругов охвата больше нет — смотрите на цвет домов. Пока ставите лавку, зелёные дома получат её впервые, а синие уже снабжает такая же лавка: вторая такая же им ничего не прибавит. У курсора написано, сколько новых домов, а значки над крышами показывают, где такие лавки уже стоят. С памятниками и украшениями так же: зелёным домам станет лучше.\n\nОткройте «Обзор города» → «Город» → «Счастье на карте»: там видно счастье домов и наличие нужных лавок.")
+	advisor("Кому достанется лавка", "Зелёные дома получат товар от новой лавки, синие уже снабжает такая же. Откройте «Обзор города» → «Город» → «Счастье на карте».")
 
 
 ## Кнопка «Фото» — режим фото (scripts/photo_mode.gd): интерфейс прячется, наклон, время суток, размытие, снимок
@@ -8431,9 +8431,9 @@ func _update_world_icons() -> void:
 			for n: String in Defs.needs_for(String(d["cls"]), c.level):
 				if int(b.get("need_coverage", {}).get(n, 0)) < 100:
 					red.append(Defs.NEEDS[n]["name"])
-			if c.unhappy_badge(b) or (not red.is_empty() and String(d["cls"]) in ["artisans", "patricians"] and int(b["pop"]) > 0):
-				icon = "house_problem"
-				tip = "Счастье ниже 40%: труд и налоги вполовину" if red.is_empty() else "Жителям не хватает: %s" % ", ".join(red)
+			if not red.is_empty() and String(d["cls"]) in ["artisans", "patricians"] and int(b["pop"]) > 0:
+				icon = "request"
+				tip = "Жителям не хватает: %s" % ", ".join(red)
 
 		# У станции остаются только значки ожидающих групп из _family_badges.
 		# Пауза прибытия видна и меняется в карточке станции.

@@ -10,8 +10,10 @@ extends Node
 ## 1 очко украшения на голом доме — не синий (копится); значок такой же лавки щёлкается; карточка в «Обзоре» не
 ## закрывает его окно; пул без подсветки — вне сцены и без прежнего пика; подпись у курсора не уезжает за край.
 
+const Badge = preload("res://scripts/map_badge.gd")
 const STREETS := [[Vector2(140, 150), Vector2(236, 150)], [Vector2(140, 172), Vector2(236, 172)]]
 
+var out := "D:/CivCity/.work/gd/"
 var game
 var c                                # City
 var cover                            # Cover
@@ -22,6 +24,9 @@ var mask := 0
 
 
 func _ready() -> void:
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("out="):
+			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
 	Game.boot = {"new": "1", "hour": "11"}
 	game = (load("res://main.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -42,9 +47,11 @@ func check(ok: bool, what: String, extra = null) -> bool:
 
 func shot(name: String) -> void:
 	await frames(8)
-	DirAccess.make_dir_recursive_absolute("D:/CivCity/.work/gd")
-	get_viewport().get_texture().get_image().save_png("D:/CivCity/.work/gd/" + name)
-	print("SHOT ", name)
+	await RenderingServer.frame_post_draw
+	var path := out + name
+	if check(DirAccess.make_dir_recursive_absolute(out) == OK and get_viewport().get_texture().get_image().save_png(path) == OK,
+			"снимок сохранён: %s" % name):
+		print("COVER SHOT ", path)
 
 
 func move(p: Vector2) -> void:
@@ -189,13 +196,14 @@ func _run() -> void:
 	await _tip()
 	await _shop_place()
 	await _shop_selected()
+	_shop_access()
 	await _monument()
 	await _decor()
 	await _store()
 	await _overview()
 	await _big_city()
 	print("COVER DONE fails=%d" % fails)
-	get_tree().quit()
+	get_tree().quit(0 if fails == 0 else 1)
 
 
 # ---------- кругов нет ----------
@@ -238,7 +246,7 @@ func _tip() -> void:
 	await frames(2)
 	check(hud.advisor_panel.visible and hud.adv_title.text == "Кому достанется лавка" and c.tips.has("cover_tip"),
 		"советник объясняет подсветку и «Обзор»: «%s»" % hud.adv_title.text)
-	check(hud.adv_text.text.contains("зелёные") and hud.adv_text.text.contains("синие")
+	check(String(hud.adv_text.text).to_lower().contains("зелёные") and hud.adv_text.text.contains("синие")
 		and hud.adv_text.text.contains("«Обзор города» → «Город» → «Счастье на карте»"),
 		"в совете — зелёные, синие и путь к счастью на карте")
 	hud.advisor_panel.visible = false
@@ -278,16 +286,20 @@ func _shop_place() -> void:
 	var g := colors_of(Cover.GREEN)
 	var dup: int = cover.sets["dup"]
 	check(not g.is_empty() and dup > 0, "под второй лавкой: зелёных %d, уже с фруктовой %d" % [g.size(), dup])
-	var cap := int(Defs.CAPACITY[int(Defs.B["stall_fruit"]["cap"])])
-	check(g.size() + dup == mini(cap, Cover._nearest(c, P, c.shop_range(Defs.B["stall_fruit"]), 999).size()), "зелёные + уже с ней = сколько лавка потянет (%d)" % cap)
+	var max_cap := int(Defs.CAPACITY[int(Defs.B["stall_fruit"]["cap"])])
+	check(g.size() + dup < max_cap, "подсветка учитывает неполную отдачу работников: %d из %d" % [g.size() + dup, max_cap])
 	for id in g:
 		if had.has(id):
 			check(false, "зелёный дом %d уже с фруктовой лавкой" % id)
 	check(cover.cap == ["Новых домов: %d" % g.size(), "Уже с фруктовой лавкой: %d" % dup, ""], "подпись: %s" % [cover.cap])
-	# тот же метр — ничего не пересчитываем
+	# Поворот на месте меняет доступ к дороге без сдвига курсора.
 	var same: Dictionary = cover.sets
-	cover.preview("stall_fruit", P + Vector2(0.1, 0.1) if floori(P.x + 0.1) == floori(P.x) and floori(P.y + 0.1) == floori(P.y) else P)
+	cover.preview("stall_fruit", P)
 	check(is_same(same, cover.sets), "курсор стоит — наборы не пересчитываются")
+	cover.preview("stall_fruit", P, false)
+	check(colors_of(Cover.GREEN).is_empty() and cover.sets["why"] == "road", "вход без дороги: зелёных домов нет")
+	cover.preview("stall_fruit", P)
+	check(colors_of(Cover.GREEN) == g, "вход снова у дороги: зелёные дома вернулись")
 	# по-настоящему: мышь над местом — призрак, подсветка и подпись у курсора; снимок
 	game.rig.set_view(Vector3(170, 2, 156), 0, 55, 58)
 	await frames(10)
@@ -319,7 +331,9 @@ func _shop_place() -> void:
 			gained.append(int(id))
 	gained.sort()
 	check(gained == g2, "получили фруктовую лавку ровно зелёные: %s / %s" % [gained, g2])
-	check(int(s2["served"]) == g2.size() + d2, "вторая обслуживает %d = зелёные %d + синие %d" % [int(s2["served"]), g2.size(), d2])
+	var actual_dup: int = (s2["serves"] as Array).filter(func(id: int) -> bool: return had.has(id)).size()
+	check(int(s2["served"]) == g2.size() + d2 and actual_dup == d2,
+		"вторая обслуживает %d = зелёные %d + синие %d" % [int(s2["served"]), g2.size(), d2])
 	# без домов рядом и «все уже с ней»
 	check(Cover.caption("stall_fruit", {"new": 0, "dup": 0})[1].begins_with("Рядом нет домов"), "нет домов рядом — так и сказано")
 	check(Cover.caption("potter", {"new": 0, "dup": 3})[1] == "Тут все дома уже с гончарной — поставьте дальше", "все уже с гончарной — «поставьте дальше»")
@@ -395,6 +409,32 @@ func _shop_selected() -> void:
 	hud.close_panels()
 	await frames(2)
 	check(cover.state == "" and cover.want.is_empty(), "сняли выбор — подсветка гаснет")
+
+
+## Новая лавка без дороги или найма действительно никого не снабжает.
+func _shop_access() -> void:
+	var isolated := {}
+	for p in [Vector2(158, 183), Vector2(174, 183), Vector2(184, 192)]:
+		reset()
+		var pl: Dictionary = game.placement("stall_fruit", p)
+		if pl["err"] == "" and pl.get("noroad", false):
+			isolated = pl
+			break
+	if check(not isolated.is_empty(), "нашлось место для лавки без дороги"):
+		var no_road := Cover.place_sets(c, "stall_fruit", isolated["pos"], not isolated["noroad"])
+		var shop: Dictionary = c.place("stall_fruit", isolated["pos"], isolated["yaw"], isolated["variant"], isolated["color"])
+		check(no_road["green"].is_empty() and no_road["why"] == "road" and shop["why"] == "road" and shop["serves"].is_empty(),
+			"предпросмотр и постройка без дороги: охвата нет")
+		c.remove(shop, false)
+	var pl := spot("stall_fruit", Vector2(195, 147))
+	if check(not pl.is_empty(), "место для лавки с ручным наймом"):
+		c.auto_hire = false
+		var no_staff := Cover.place_sets(c, "stall_fruit", pl["pos"], not pl.get("noroad", false))
+		var shop: Dictionary = c.place("stall_fruit", pl["pos"], pl["yaw"], pl["variant"], pl["color"])
+		check(no_staff["green"].is_empty() and no_staff["why"] == "staff" and shop["why"] == "staff" and shop["serves"].is_empty(),
+			"при ручном найме новая лавка ждёт работников")
+		c.auto_hire = true
+		c.remove(shop, false)
 
 
 # ---------- памятник ----------
@@ -582,7 +622,9 @@ func _store() -> void:
 	c.remove(bt, false)
 	c.compute()
 	var had := with_shop("butcher")
+	c.research["reach1"] = true
 	var sg := Cover.place_sets(c, "butcher", bpos)
+	check(c.shop_range(Defs.B["butcher"]) > Defs.range_m(Defs.B["butcher"]), "исследование увеличило дальность еды")
 	check(sg["why"] == "" and not (sg["green"] as Array).is_empty(), "у склада: мясная лавка правда даст мясо — зелёных %d" % (sg["green"] as Array).size())
 	c.money = 20000.0
 	var bt2: Dictionary = c.place("butcher", bpos, byaw, bvar, bcol)
@@ -593,6 +635,7 @@ func _store() -> void:
 			gained.append(int(id))
 	check(bool(bt2["active"]) and sorted(gained) == sorted(sg["green"]), "мясо получили ровно зелёные: %s / %s" % [sorted(gained), sorted(sg["green"])])
 	check(Cover.caption("butcher", sg)[0] == "Новых домов: %d" % (sg["green"] as Array).size(), "подпись: %s" % [Cover.caption("butcher", sg)])
+	c.research.erase("reach1")
 	c.remove(w, false)
 	c.remove(bt2, false)
 
@@ -630,23 +673,14 @@ func _overview() -> void:
 		ok = ok and cover.want.get(id) == want_col[id]
 	check(ok, "счастье: дома с жильцами подсвечены по порогам 65 / 40 (%s)" % [n])
 	check(n[0] > 0 and n[1] > 0 and n[2] > 0, "есть и зелёные, и золотые, и красные: %s" % [n])
-	var faces := 0
-	for id in lived:
-		if hud.badges.has("ov%d" % id) and String(hud.badges["ov%d" % id]["icon"]).begins_with("face_") and hud.badges["ov%d" % id]["text"] == "":
-			faces += 1
-	check(faces == lived.size(), "камера далеко: над каждым жилым домом — рожица без цифры: %d из %d" % [faces, lived.size()])
+	_happy_badges(lived, "камера далеко")
 	var lt := texts(hud.overlay_panel)
 	check(lt.has("%d %s" % [n[0], hud._plural(n[0], "дом", "дома", "домов")]) and hud._ov_title.text == "Счастье каждого дома", "в легенде — сколько домов: %s" % [lt])
 	await frames(20)
 	await shot("cover_overview_happy_far.png")
-	# ближе — рожица и цифра
 	game.rig.set_view(Vector3(166, 2, 161), 0, 56, 52)
 	await frames(4)
-	faces = 0
-	for id in lived:
-		if hud.badges.has("ov%d" % id) and hud.badges["ov%d" % id]["text"] == "%d%%" % clampi(int(c.buildings[id]["happy"]), 0, 100):
-			faces += 1
-	check(faces == lived.size(), "камера близко: рожица и цифра у %d из %d" % [faces, lived.size()])
+	_happy_badges(lived, "камера близко")
 	await frames(20)
 	await shot("cover_overview_happy.png")
 	await _overview_card(lived)
@@ -666,13 +700,19 @@ func _overview() -> void:
 		else:
 			miss.append(id)
 	check(ok and fed > 0 and miss.size() > 0, "еда: цвета совпадают с покрытием 34 / 67")
-	var xs := 0
-	for id in miss:
-		if hud.badges.has("ov%d" % id) and hud.badges["ov%d" % id]["icon"] == "house_problem":
-			xs += 1
-	check(xs == miss.size(), "над домами с красной нуждой — булавки (%d)" % xs)
+	var pins := 0
+	var fed_clean := true
+	for id in lived:
+		var key := "ov%d" % id
+		if miss.has(id):
+			var unhappy: bool = c.unhappy_badge(c.buildings[id])
+			if _disc(key, "sad" if unhappy else "request"):
+				pins += 1
+		else:
+			fed_clean = fed_clean and not hud.badges.has(key)
+	check(pins == miss.size(), "над домами с красной нуждой — кружки без текста (%d из %d)" % [pins, miss.size()])
 	check(hud.badges.has("ovs%d" % int(s1["id"])) and hud.badges.has("ovs%d" % int(s2["id"])), "над лавками с едой — их значки")
-	check(not hud.badges.has("ov%d" % int(lived[0])) or miss.has(lived[0]), "у сытых домов значка нет")
+	check(fed_clean, "у сытых домов значков нужды нет")
 	await frames(20)
 	await shot("cover_overview_food.png")
 	# живой: убрали лавку — дома покраснели сами
@@ -711,6 +751,30 @@ func _overview() -> void:
 	game.set_tool("")
 	for b in dec:
 		c.remove(b, false)
+
+
+func _disc(key: String, icon: String) -> bool:
+	var entry: Dictionary = hud.badges.get(key, {})
+	var node: Badge = entry.get("n")
+	return node != null and node.texture == Badge.badge_texture(icon) and entry["text"] == "" and node.label == null
+
+
+func _happy_badges(lived: Array, zoom: String) -> void:
+	var good := 0
+	var sad := 0
+	var visible := 0
+	for id in lived:
+		var key := "ov%d" % id
+		var unhappy: bool = c.unhappy_badge(c.buildings[id])
+		if _disc(key, "sad" if unhappy else "family"):
+			if unhappy:
+				sad += 1
+			else:
+				good += 1
+			if hud.badges[key]["n"].is_visible_in_tree():
+				visible += 1
+	check(good > 0 and sad > 0 and good + sad == lived.size() and visible > 0,
+		"%s: кружки без текста, красная точка у несчастливых (%d без точки, %d с точкой, %d видно)" % [zoom, good, sad, visible])
 
 
 ## Щёлкнули по дому в «Обзоре» — карточка не закрывает окно «Обзора» (режимы, легенду, ✕); и при крупном интерфейсе
