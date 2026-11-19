@@ -261,18 +261,26 @@ func wonder_credit_ready(type: String) -> bool:
 	return int(wonder_credits.get(type, 0)) > 0 and not bool(Defs.B[type].get("hidden", false))
 
 
-## После загрузки зданий: четыре будущие модели сохраняют право на постановку.
+## Четыре прежних «чуда» Легиона уже стоят в городе своими постройками Synty (владелец 19.11: дублей не делать):
+## право на бесплатную постановку переходит на эти постройки.
+const WONDER_ALIAS := {"circus": "circus_fl", "aqueduct": "aqua", "caracalla": "thermae", "jupiter": "temple"}
+
+
+## После загрузки зданий: прежние покупки Легиона дают право один раз поставить постройку даром.
 func _migrate_wonders(d: Dictionary) -> void:
 	wonder_credits = {}
 	for type: String in d.get("wonder_credits", {}):
-		if Defs.B.has(type) and Defs.B[type].get("sub", "") == "wonders" and int(d["wonder_credits"][type]) > 0:
-			wonder_credits[type] = 1
+		var t: String = String(WONDER_ALIAS.get(type, type))
+		var ok: bool = Defs.B.has(t) and (Defs.B[t].get("sub", "") == "wonders" or WONDER_ALIAS.values().has(t))
+		if ok and int(d["wonder_credits"][type]) > 0:
+			wonder_credits[t] = 1
 	if int(d.get("wonders_v", 0)) < 1:
 		var old: Dictionary = d.get("legion", {})
 		var bought: Array = old.get("built", [])
 		for type: String in ["circus", "aqueduct", "trajan", "caracalla", "jupiter"]:
-			if bought.has(type) and count_type(type) == 0:
-				wonder_credits[type] = 1
+			var t: String = String(WONDER_ALIAS.get(type, type))
+			if bought.has(type) and count_type(t) == 0:
+				wonder_credits[t] = 1
 	wonders_v = 1
 
 

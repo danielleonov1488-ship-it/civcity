@@ -207,7 +207,8 @@ func _migration() -> void:
 	c.remove(c.buildings[id])
 	check(c.money == 0.0 and not c.wonder_credit_ready("trajan") and c.build_price("trajan") == 40000.0, "demolition never recreates a spent credit or prints denarii")
 	for type: String in HIDDEN:
-		check(c.wonder_credits.has(type) and not c.unlocked(type), "future credit stored and unavailable " + type)
+		var t: String = String(c.WONDER_ALIAS[type])
+		check(c.wonder_credit_ready(t) and c.unlocked(t) and not c.unlocked(type), "legacy credit moves to the existing Synty building %s (no duplicate %s)" % [t, type])
 
 
 func _views() -> void:
