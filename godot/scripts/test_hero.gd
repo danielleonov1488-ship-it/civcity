@@ -801,9 +801,9 @@ func _pvp_test() -> void:
 				for f in battle.views.values():
 					var u: LegionSim.Unit = f.unit
 					if u.key == "hero":
-						hv.append([u.side, f.actor is Node3D and f.sprite == null if u.side == "ally" else f.sprite is AnimatedSprite2D and f.actor == null, u.name])
+						hv.append([u.side, f.actor is Node3D and f.sprite == null, u.name])
 				check(hv.size() == 2 and hv.all(func(x): return x[1]) and hv.any(func(x): return x[0] == "enemy" and x[2] == "Марк Туллий"),
-					"в бою — наш 3D-герой и рисованный герой соперника", hv)
+					"в бою — оба героя в 3D (наш и соперника)", hv)
 			if not shot_done and battle.sim.t > 4.5:
 				shot_done = true
 				await shot("hero_pvp_battle.png", SHOTS_PVP)
