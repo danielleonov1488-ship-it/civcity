@@ -567,6 +567,7 @@ func _start(s: Dictionary) -> void:
 	battle_view.pvp = pvp
 	battle_view.legion = legion
 	battle_view.hero_look = s.get("hero_look", {})
+	battle_view.enemy_hero_look = s.get("enemy_hero_look", {})
 	sim = LegionSim.new(setup)
 	# учебный бой: управление — у игрока, скорость ×1, «Авто» и скорость спрятаны
 	tut = "" if pvp else String(s.get("tutorial", ""))
@@ -786,7 +787,10 @@ func _handle(evs: Array) -> void:
 				_play("boom" if e["type"] == "boom" else "fall", -8.0, 0.7)
 			"charge":
 				var u: LegionSim.Unit = e["unit"]
-				battle_view.ring(_view(u).position, 67.0, BattleView.ALERT)
+				var fighter := _view(u)
+				if fighter.boss_model != null and fighter.actor.clip_length("Charge") > 0.0:
+					fighter.attack("Charge")
+				battle_view.ring(fighter.position, 67.0, BattleView.ALERT)
 				say(String(u.name) + " бросается в атаку!", 1.2)
 			"perk":
 				_perk_fx(e)

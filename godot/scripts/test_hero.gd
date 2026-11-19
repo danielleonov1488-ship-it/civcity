@@ -21,6 +21,7 @@ var ppl: People
 var hud
 var fails := 0
 var mode := ""
+var shot_root := ""
 var cands := []
 
 
@@ -28,6 +29,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("mode="):
 			mode = a.trim_prefix("mode=")
+		elif a.begins_with("out="):
+			shot_root = a.trim_prefix("out=").trim_suffix("/") + "/"
 	if mode == "owner" and FileAccess.file_exists(OWNER):
 		DirAccess.copy_absolute(OWNER, GamePaths.save_dir().path_join("city.json"))
 		_boot({"play": "1", "hour": "11"})
@@ -79,6 +82,8 @@ func shot(name: String, dir := SHOTS) -> void:
 	if hud != null and hud.advisor_panel != null:
 		hud.advisor_panel.visible = false
 	await frames(8)
+	if not shot_root.is_empty():
+		dir = shot_root
 	DirAccess.make_dir_recursive_absolute(dir)
 	get_viewport().get_texture().get_image().save_png(dir + name)
 	print("SHOT ", name)
@@ -802,6 +807,9 @@ func _pvp_test() -> void:
 					var u: LegionSim.Unit = f.unit
 					if u.key == "hero":
 						hv.append([u.side, f.actor is Node3D and f.sprite == null, u.name])
+						if u.side == "enemy" and f.actor != null:
+							check(f.actor.get_meta("look", {}) == ps["enemy_hero_look"],
+								"3D-герой использует облик и снаряжение соперника")
 				check(hv.size() == 2 and hv.all(func(x): return x[1]) and hv.any(func(x): return x[0] == "enemy" and x[2] == "Марк Туллий"),
 					"в бою — оба героя в 3D (наш и соперника)", hv)
 			if not shot_done and battle.sim.t > 4.5:

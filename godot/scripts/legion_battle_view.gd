@@ -5,6 +5,7 @@ extends Control
 const FortPerson = preload("res://scripts/fort_person.gd")
 const Actor = preload("res://scripts/charpilot_actor.gd")
 const Enemy = preload("res://scripts/legion_enemy_actor.gd")
+const Boss = preload("res://scripts/legion_boss_model.gd")
 const PersonLayer = preload("res://scripts/fort_person_layer.gd")
 const ART := "res://assets/legion_b1/"
 const DESIGN := Vector2(1600, 900)
@@ -30,6 +31,7 @@ var field: TextureRect
 var legion: Legion
 var pvp := false
 var hero_look: Dictionary = {}
+var enemy_hero_look: Dictionary = {}
 var people_layer: PersonLayer
 var world := Node2D.new()
 var units := Node2D.new()
@@ -182,10 +184,21 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 	f.silhouette = SILHOUETTE[f.sheet]
 	f.scale = Vector2.ONE * clampf(u.size * 1.08, 0.82, 1.54)
 	f.lane_z = u.z
-	f.position = f.layout_point(u.x, u.z)
 	f.health = u.hp_frac()
 	units.add_child(f)
-	if u.side == "ally" or (pvp and (Legion.UNITS.has(u.key) or u.key == "hero")):
+	if pvp and u.side == "enemy" and u.key == "hero":
+		f.actor = Actor.new()
+		f.actor.name = "Enemy_%d" % u.id
+		people_layer.viewport.add_child(f.actor)
+		var chosen := enemy_hero_look if not enemy_hero_look.is_empty() else Hero.rival_look(u.src)
+		var clips := f.actor.build_rival_hero(chosen, u.id)
+		f.idle_clip = String(clips["idle"])
+		f.walk_clip = String(clips["walk"])
+		f.attack_clip = String(clips["attack"])
+		f.hit_clip = String(clips["hit"])
+		f.death_clip = String(clips["death"])
+		f.clip = f.idle_clip
+	elif u.side == "ally" or (pvp and Legion.UNITS.has(u.key)):
 		var person := _ally_person(u) if u.side == "ally" else {}
 		if person.is_empty():
 			person = {"id": u.id, "hero": u.key == "hero"}
@@ -203,7 +216,7 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 		if u.side == "enemy":
 			f.hit_clip = "Hit_Chest"
 			f.death_clip = "Death01"
-	elif u.key not in Enemy.SPRITES:
+	else:
 		_add_enemy(f)
 	if f.actor != null and not f.actor.problem.is_empty():
 		f.actor.free()
@@ -214,6 +227,7 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 		f.sprite.sprite_frames = _unit_frames(f.sheet)
 		f.add_child(f.sprite)
 		f.sprite.play(&"idle")
+	f.position = f.layout_point(u.x, u.z)
 	f.face(u.side == "enemy" and (not u.entering or u.enter_dir < 0.0))
 	_place_actor(f)
 	views[u.id] = f
@@ -233,6 +247,7 @@ func _add_enemy(f: Fighter) -> void:
 		f.scale = Vector2.ONE * clampf(u.size * 1.08 * model.size_factor, 0.82, 2.18)
 		f.actor_height = model.stature
 		f.wide = model.wide
+		f.boss_model = model.boss_model
 		f.yaw = model.yaw
 		f.idle_clip = model.idle
 		f.walk_clip = model.walk
@@ -265,7 +280,10 @@ func _place_actor(f: Fighter) -> void:
 	var height := f.model_height() * world.scale.y
 	f.actor.visible = f.modulate.a > 0.0 and Rect2(Vector2.ZERO, size).grow(height).has_point(feet)
 	if f.actor.visible:
-		people_layer.place(f.actor, feet, height, -f.yaw if f.flip_h else f.yaw)
+		var angle := -f.yaw if f.flip_h else f.yaw
+		if f.backward_shot():
+			angle -= 180.0 if angle > 0.0 else -180.0
+		people_layer.place(f.actor, feet, height, angle, false, -4.6 if f.wide else 0.0)
 		f.actor.set_opacity(f.modulate.a)
 		f.actor.animate(f.clip, f.sample)
 
@@ -309,6 +327,12 @@ func shoot(s: LegionSim.Shot) -> void:
 	sprite.name = "BattleProjectile"
 	effects.add_child(sprite)
 	shots[s] = sprite
+	var source: Fighter = views.get(s.from.id) if s.from != null else null
+	if source != null and source.boss_model != null and source.unit.key in ["cyclops", "horseArcher"]:
+		source.actor.pose_at(source.attack_clip, 0.0)
+		_place_actor(source)
+		var launch := people_layer.camera.unproject_position(source.boss_model.launch_point())
+		sprite.set_meta("boss_launch", (launch - world.position) / world.scale)
 	_place_shot(s, sprite, 0.0)
 
 
@@ -330,6 +354,8 @@ func _place_shot(s: LegionSim.Shot, sprite: Node2D, k: float) -> void:
 	var source: Fighter = views.get(s.from.id) if s.from != null else null
 	var target: Fighter = views.get(s.target.id) if s.target != null else null
 	var a := (source.layout_point(s.x0, s.z0) if source != null else point(s.x0, s.z0)) - Vector2(0, 138.0)
+	if sprite.has_meta("boss_launch"):
+		a = sprite.get_meta("boss_launch")
 	var b := (target.layout_point(s.x1, s.z1) if target != null else point(s.x1, s.z1)) - Vector2(0, 100.0)
 	var arc := 32.0 + absf(b.x - a.x) * 0.08
 	if s.kind in ["stone", "boulder"]:
@@ -348,7 +374,7 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 	var weight := 1.0 - exp(-dt * 16.0) if gdt > 0.0 else 0.0
 	for id in views.keys():
 		var f: Fighter = views[id]
-		f.tick(gdt, gdt / dt if dt > 0.0 else 0.0, weight, fighting)
+		f.tick(gdt, gdt / dt if dt > 0.0 else 0.0, weight, fighting, sim.t)
 		_place_actor(f)
 		if f.unit.alive:
 			f.status(sim.t, fighting)
@@ -414,6 +440,7 @@ class Fighter extends Node2D:
 	var yaw := 56.0
 	var actor_height := 0.0
 	var wide := false
+	var boss_model: Boss
 	var idle_clip := "Idle"
 	var walk_clip := "Walk"
 	var attack_clip := "Sword_Attack"
@@ -446,6 +473,8 @@ class Fighter extends Node2D:
 		if unit.row > 0 or unit.ranged():
 			p.x = maxf(-692.0, p.x - 242.0) if unit.side == "ally" else p.x + 72.0
 			p.y -= 30.0
+		if wide:
+			p.y -= 31.0
 		return p
 
 	func body_height() -> float:
@@ -463,20 +492,23 @@ class Fighter extends Node2D:
 	func chest() -> Vector2:
 		return position.lerp(head(), 0.55)
 
-	func attack() -> void:
+	func backward_shot() -> bool:
+		return boss_model != null and unit.key == "horseArcher" and clip in ["Windup", attack_clip]
+
+	func attack(action := "") -> void:
 		if sprite != null:
 			sprite.stop()
 			sprite.play(&"attack")
 		else:
-			clip = attack_clip
+			clip = attack_clip if action.is_empty() else action
 			sample = 0.0
-			attack_left = actor.clip_length(attack_clip)
+			attack_left = actor.clip_length(clip)
 			hit_left = 0.0
 
 	func hurt() -> void:
 		flash = 0.14
 		modulate = Color(1.8, 1.24, 1.12)
-		if actor != null and not hit_clip.is_empty() and unit.alive:
+		if actor != null and not hit_clip.is_empty() and unit.alive and (boss_model == null or attack_left <= 0.0):
 			clip = hit_clip
 			sample = 0.0
 			attack_left = 0.0
@@ -492,14 +524,15 @@ class Fighter extends Node2D:
 		if sprite != null:
 			sprite.play(&"idle")
 
-	func tick(gdt: float, rate: float, weight: float, fighting: bool) -> void:
+	func tick(gdt: float, rate: float, weight: float, fighting: bool, now: float) -> void:
 		if not unit.alive:
 			if sprite != null:
 				sprite.speed_scale = 0.0
 			if actor != null and not death_clip.is_empty():
-				death = minf(1.0, death + gdt / 0.91)
+				var duration := 0.91 if boss_model == null else (1.42 if unit.key == "elephant" else 1.17)
+				death = minf(1.0, death + gdt / duration)
 				clip = death_clip
-				sample = minf(0.999, death / 0.73) * actor.clip_length(death_clip)
+				sample = minf(0.999, death / (0.94 if boss_model != null else 0.73)) * actor.clip_length(death_clip)
 				modulate.a = 1.0 - smoothstep(0.39, 1.0, death)
 			else:
 				death = minf(1.0, death + gdt / 0.63)
@@ -510,6 +543,7 @@ class Fighter extends Node2D:
 		health = lerpf(health, unit.hp_frac(), weight)
 		var p := layout_point(unit.x, unit.z)
 		var direction_x := p.x - position.x
+		var last_x := position.x
 		position = position.lerp(p, weight)
 		if unit.side == "enemy":
 			if unit.entering:
@@ -520,6 +554,10 @@ class Fighter extends Node2D:
 				face(direction_x < 0.0)
 		var walking := (unit.moving or unit.entering) and fighting
 		var walk_rate := clampf(unit.speed / 1.5, 0.7, 1.65)
+		if boss_model != null:
+			boss_model.moving = walking
+			var direction := -1.0 if flip_h else 1.0
+			boss_model.roll((position.x - last_x) * direction * 1.79 / (model_height() * sin(deg_to_rad(yaw))))
 		if sprite != null:
 			if sprite.animation != &"attack" or not sprite.is_playing():
 				sprite.play(&"walk" if walking else &"idle")
@@ -530,10 +568,23 @@ class Fighter extends Node2D:
 		elif attack_left > 0.0:
 			sample += minf(gdt, maxf(0.0, attack_left - 0.001))
 			attack_left = maxf(0.0, attack_left - gdt)
+		elif boss_model != null and fighting and _windup(now):
+			clip = "Windup"
+			var length := actor.clip_length(clip)
+			sample = clampf(length - unit.timer, 0.0, length)
 		else:
 			var next := walk_clip if walking else idle_clip
 			sample = sample + gdt * (walk_rate if walking else 1.0) if clip == next else 0.0
 			clip = next
+
+	func _windup(now: float) -> bool:
+		if unit.key not in ["cyclops", "horseArcher"] or unit.entering or unit.target == null or not unit.target.alive:
+			return false
+		if unit.stun_t > now:
+			return false
+		var distance := LegionSim.dist(unit, unit.target)
+		var reach := unit.range_m + 0.35 * (unit.size + unit.target.size - 2.0)
+		return distance <= reach + 0.05 and unit.timer < actor.clip_length("Windup")
 
 	func status(t: float, fighting: bool) -> void:
 		status_color = Color.TRANSPARENT

@@ -1,18 +1,21 @@
 extends Node
-## Модели, четыре поля, смена поз и нагрузка полного отряда.
+## Боссы, общая 3D-сцена, гибель и нагрузка полного отряда.
 
 const Enemy = preload("res://scripts/legion_enemy_actor.gd")
 const View = preload("res://scripts/legion_battle_view.gd")
 const PersonLayer = preload("res://scripts/fort_person_layer.gd")
-const OUT := "D:/CivCity/.work/stage7/enemy3d/shots/"
-const STRESS := ["gaul", "bandit", "berserker", "cataphractFoe", "khopesh", "bear",
-	"boar", "gaulArcher", "druid", "nileArcher", "giant"]
+const FortPerson = preload("res://scripts/fort_person.gd")
+const OUT := "D:/CivCity/.work/stage7/boss3d/shots/"
+const STRESS := ["elephant", "chariot", "charioteer", "mercenary", "briton",
+	"cataphractFoe", "khopesh", "bear", "gaulArcher", "druid"]
 
 var game: Game
 var battle: LegionBattle
 var out := OUT
 var fails := 0
 var squad: Array[Dictionary]
+var deaths: Dictionary = {}
+var releases: Dictionary = {}
 
 
 func _ready() -> void:
@@ -81,23 +84,41 @@ func _run() -> void:
 	if not check(DisplayServer.get_name() != "headless", "screenshots require graphics"):
 		return
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	var ids := Enemy.HUMANS.keys() + Enemy.BEASTS.keys() + Enemy.BOSSES.keys()
 	for id: String in Legion.ENEMIES:
-		var options := int(Enemy.HUMANS.has(id)) + int(Enemy.BEASTS.has(id)) + int(id in Enemy.SPRITES)
-		check(options == 1, "mapping " + id)
-	for id: String in Enemy.HUMANS.keys() + Enemy.BEASTS.keys() + Enemy.SPRITES:
+		check(ids.count(id) == 1, "mapping " + id)
+	for id: String in ids:
 		check(Legion.ENEMIES.has(id), "unknown key " + id)
-	print("ENEMY3D ROSTER %d humans %d beasts %d sprites" % [Enemy.HUMANS.size(), Enemy.BEASTS.size(), Enemy.SPRITES.size()])
+	var probe := Node3D.new()
+	add_child(probe)
+	var modeled := 0
+	for id: String in Legion.ENEMIES:
+		var actor := Enemy.new()
+		probe.add_child(actor)
+		if check(actor.build_enemy(id, 0), "3D model %s: %s" % [id, actor.problem]):
+			modeled += 1
+		_nodes(actor)
+		actor.free()
+	probe.queue_free()
+	print("ENEMY3D ROSTER %d humans %d beasts %d bosses %d sprites" %
+		[Enemy.HUMANS.size(), Enemy.BEASTS.size(), Enemy.BOSSES.size(), Legion.ENEMIES.size() - modeled])
 	for file: String in DirAccess.get_files_at(Enemy.ASSETS):
 		check(_good_name(file), "asset name " + file)
-	await _lineup(Enemy.HUMANS.keys(), 12, 155.0, "1_lineup_humans.png")
-	await _lineup(Enemy.BEASTS.keys(), 5, 197.0, "2_lineup_beasts.png")
+	check(_good_name(Enemy.Boss.HORSE), "mount asset name")
+	await _lineup(false)
 	_make_squad(game.city.legion)
-	await _fight("forest", ["forestBear", "boar", "bear", "boar"], "3_battle_forest.png")
-	await _fight("gaul", ["gaul", "gaul", "gaulArcher", "druid"], "4_battle_gaul.png", true)
-	await _fight("egypt", ["khopesh", "nileArcher", "priest", "venomBear"], "5_battle_egypt.png")
-	await _fight("germania", STRESS, "7_boss.png")
-	await _fight("britannia", ["briton", "chariot", "horseArcher"], "")
-
+	# Крит, Сицилия и Карфаген входят в прежнюю карту похода.
+	Legion.V2 = false
+	await _fight("crete", ["bull", "minotaur", "pirate", "slinger"], "2_battle_crete.png")
+	await _fight("sicily", ["pirate", "cyclops", "slinger", "boar"], "3_battle_sicily.png")
+	await _fight("carthage", ["mercenary", "elephant", "slinger", "pirate"], "4_battle_carthage.png")
+	Legion.V2 = true
+	await _fight("britannia", ["chariot", "briton", "charioteer", "druid"], "5_battle_britannia.png")
+	await _fight("parthia", ["horseArcher", "cataphractFoe", "cataphract", "numidian", "horseArcher"], "6_battle_parthia.png")
+	await _fight("africa", STRESS, "", true)
+	await _lineup(true)
+	check(deaths.size() == Enemy.BOSSES.size(), "all seven models fell: %s" % [deaths.keys()])
+	check(releases.has("cyclops") and releases.has("horseArcher"), "both releases use the model")
 
 func _good_name(value: String) -> bool:
 	var lower := value.to_lower()
@@ -110,7 +131,19 @@ func _nodes(root: Node) -> void:
 		_nodes(child)
 
 
-func _lineup(keys: Array, columns: int, height: float, file: String) -> void:
+func _caption(parent: Node, title: String, feet: Vector2, width: float) -> void:
+	var caption := Label.new()
+	caption.text = title
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	caption.add_theme_color_override("font_color", Color("36221c"))
+	caption.add_theme_font_size_override("font_size", 22)
+	caption.size.x = width - 18.0
+	caption.position = feet + Vector2(-caption.size.x * 0.5, 20.0)
+	parent.add_child(caption)
+
+
+func _lineup(comparison: bool) -> void:
 	var vp := get_viewport()
 	var old_disable := vp.disable_3d
 	vp.disable_3d = true
@@ -124,45 +157,71 @@ func _lineup(keys: Array, columns: int, height: float, file: String) -> void:
 	var area := vp.get_visible_rect().size
 	var layer := PersonLayer.new()
 	background.add_child(layer)
-	layer.setup("Lineup3D", 6.0)
+	layer.setup("Lineup3D", 7.0)
 	layer.fit(area)
 	var labels := Node2D.new()
 	background.add_child(labels)
-	var rows := ceili(float(keys.size()) / columns)
+	var keys: Array = ["khopesh", "khopesh", "bear", "bear"] if comparison else ["legionary"] + Enemy.BOSSES.keys()
+	var widths := PackedFloat32Array([148, 206, 215, 252, 290, 333, 202, 274])
+	var slot_x := 0.0
 	for i in keys.size():
 		var id: String = keys[i]
-		var model := Enemy.new()
-		model.name = id
-		layer.viewport.add_child(model)
-		if not check(model.build_enemy(id, i), "%s %s" % [id, model.problem]):
+		var step := area.x / 4.0 if comparison else area.x * widths[i] / 1920.0
+		var feet := Vector2(slot_x + step * 0.5, area.y * (0.65 if comparison else 0.60))
+		slot_x += step
+		if id == "legionary":
+			var soldier := FortPerson.make({"id": 21}, layer.viewport, [{"slot": "armor"}], "legionary")
+			layer.place(soldier, feet, 131.0, 41.0)
+			layer.shadows.append(Vector3(feet.x, feet.y + 2.0, 105.0))
+			_caption(labels, I18n.t(String(Legion.UNITS[id]["name"])), feet, step)
 			continue
-		var row: int = i / columns
-		var count := mini(columns, keys.size() - row * columns)
-		var step := area.x / columns
-		var feet := Vector2(area.x * 0.5 + ((i % columns) - (count - 1) * 0.5) * step,
-			area.y * (0.06 + (row + 0.78) * 0.88 / rows))
-		var visual_scale := clampf(float(Legion.ENEMIES[id].get("size", 1.0)), 0.9, 1.48 if model.wide else 1.25)
-		if Enemy.HUMANS.has(id) and Enemy.HUMANS[id][1] in ["staff", "spear"]:
-			visual_scale = minf(visual_scale, 1.06)
-		if id in ["bear", "boar"]:
-			_check_palette(model, id)
-		layer.shadows.append(Vector3(feet.x, feet.y + 2.0, height * (1.24 if model.wide else 0.68)))
-		layer.place(model, feet, height * visual_scale, -15.0 if not model.wide else -59.0)
-		var caption := Label.new()
-		caption.text = I18n.t(String(Legion.ENEMIES[id]["name"]))
-		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		caption.add_theme_color_override("font_color", Color("36221c"))
-		caption.add_theme_font_size_override("font_size", 17 if rows > 2 else 25)
-		caption.size.x = step - 8.0
-		caption.position = feet + Vector2(-caption.size.x * 0.5, 15.0)
-		labels.add_child(caption)
+		var actor := Enemy.new()
+		actor.name = id
+		layer.viewport.add_child(actor)
+		if not check(actor.build_enemy(id, 0 if comparison else i), "%s %s" % [id, actor.problem]):
+			continue
+		var model: Node3D = actor
+		if comparison and i == 0:
+			actor.pose_at("Idle", 0.10)
+			var outfit := actor._rig.get_node("EnemyOutfit")
+			for part: Node in outfit.get_children():
+				if String(part.name).contains("nemes_flat"):
+					part.hide()
+			check(actor._add_kit_file("nemes", outfit, actor._atlas, Enemy.ASSETS), "old nemes comparison")
+		elif comparison and i == 2:
+			actor.hide()
+			model = (load(Enemy.ASSETS + "bear.glb") as PackedScene).instantiate() as Node3D
+			layer.viewport.add_child(model)
+			for mesh: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
+				for surface in mesh.mesh.get_surface_count():
+					var material := mesh.get_active_material(surface) as StandardMaterial3D
+					mesh.set_surface_override_material(surface, Enemy._animal_skin("bear", material, Enemy.BEASTS["bear"], true))
+			var anim := model.find_children("*", "AnimationPlayer", true, false)[0] as AnimationPlayer
+			anim.play("Idle")
+			anim.seek(0.0, true)
+		elif comparison and i == 1:
+			actor.pose_at("Idle", 0.10)
+		elif comparison and i == 3:
+			_check_palette(actor, id)
+		var visual := 1.0 if comparison else float(Legion.ENEMIES[id].get("size", 1.0)) * actor.size_factor
+		var cart := id in ["chariot", "charioteer"]
+		var height := (240.0 if comparison else (119.0 if cart else 131.0)) * visual
+		var yaw := -30.0 if comparison and i < 2 else (-59.0 if comparison or cart else -actor.yaw)
+		var center := 70.0 if cart else (43.0 if id == "elephant" else 0.0)
+		var place_at := feet + Vector2(0 if comparison else center, 0)
+		layer.shadows.append(Vector3(place_at.x, place_at.y + 2.0, height * (1.24 if actor.wide else 0.68)))
+		layer.place(model, place_at, height, yaw)
+		var caption := I18n.t(String(Legion.ENEMIES[id]["name"]))
+		if comparison:
+			caption = ["Немес до", "Немес после", "Медведь до", "Медведь после"][i]
+		_caption(labels, caption, feet, step)
+	layer.queue_redraw()
 	_nodes(layer.viewport)
-	await shot(file)
+	var crop := Rect2i(0, 300 if comparison else 255, 1920, 555)
+	await shot("8_nemes_bear_fix.png" if comparison else "1_lineup_bosses.png", crop)
 	canvas.queue_free()
 	vp.disable_3d = old_disable
 	await get_tree().process_frame
-
 
 func _check_palette(model: Node3D, id: String) -> void:
 	var ok := false
@@ -190,7 +249,7 @@ func _make_squad(legion: Legion) -> void:
 		squad.append(stats)
 
 
-func _fight(region: String, keys: Array, file: String, close := false) -> void:
+func _fight(region: String, keys: Array, file: String, stress := false) -> void:
 	var legion := game.city.legion
 	var region_index := -1
 	for i in Legion.regions().size():
@@ -203,11 +262,11 @@ func _fight(region: String, keys: Array, file: String, close := false) -> void:
 	var wave := []
 	for id: String in keys:
 		wave.append(Legion.enemy_stats(id, 1.0))
-	if keys == STRESS:
-		# Оставляем все 16 моделей в кадре до конца замера.
-		for stats: Dictionary in troops + wave:
-			stats["hp"] = int(stats["hp"]) * 8
-	var setup := {"kind": "campaign", "stage": legion.stage_info(0, region_index, 0), "seed": 532,
+	for stats: Dictionary in troops + wave:
+		stats["hp"] = int(stats["hp"]) * 10
+	var last := Legion.JUNIOR2 if Legion.V2 else Legion.stages() - 1
+	var stage := legion.stage_info(0, region_index, last)
+	var setup := {"kind": "campaign", "stage": stage, "seed": 532,
 		"squad": troops, "waves": [wave], "rations_paid": true, "perks": {"oil": 1, "bandage": 1, "volley": 1}}
 	battle = LegionBattle.open(game, setup, Callable(), {"legion": legion, "speed": 1.0})
 	if not check(await until(func() -> bool: return battle.sim != null and battle.fade.modulate.a <= 0.01, 35), "battle " + region):
@@ -216,75 +275,94 @@ func _fight(region: String, keys: Array, file: String, close := false) -> void:
 	var layer := battle.battle_view.people_layer
 	var enemies := 0
 	var sprites := 0
-	var gaul_variants := {}
-	var live_model: View.Fighter
+	var boss_views: Array[View.Fighter] = []
 	for view: View.Fighter in battle.views.values():
 		if view.unit.side == "ally":
 			check(view.actor != null and view.actor.get_parent() == layer.viewport, "ally shared viewport")
-		elif view.unit.key in Enemy.SPRITES:
+		elif view.sprite != null:
 			sprites += 1
-			check(view.sprite != null and view.actor == null, "2D fallback " + view.unit.key)
-			if view.sprite != null:
-				check(is_equal_approx(view.sprite.offset.y + View.BASELINE, View.CELL * 0.5), "2D baseline")
-		elif check(view.actor != null and view.sprite == null and view.actor.get_parent() == layer.viewport
-				and view.actor.rotation_degrees.y < 0.0, "3D shared viewport/facing " + view.unit.key):
+		elif check(view.actor != null and view.actor.get_parent() == layer.viewport
+				and (view.actor.rotation_degrees.y < 0.0 or view.backward_shot()), "3D shared viewport/facing " + view.unit.key):
 			enemies += 1
-			if view.unit.key == "gaul":
-				gaul_variants[view.actor.get_meta("enemy_variant", -1)] = true
-			if view.unit.boss or live_model == null:
-				live_model = view
-	check(enemies > 0 and enemies + sprites == keys.size(), "province coverage " + region)
-	if region == "gaul":
-		check(gaul_variants.size() == 2, "two variants of Gaul")
+			if Enemy.BOSSES.has(view.unit.key):
+				boss_views.append(view)
+				check(view.boss_model != null, "composite model " + view.unit.key)
+	check(enemies == keys.size() and sprites == 0, "province coverage " + region)
 	print("ENEMY3D PROVINCE %s 3D=%d 2D=%d" % [region, enemies, sprites])
 	_nodes(layer.viewport)
 	_nodes(battle.battle_view.units)
-	if not file.is_empty():
-		await until(func() -> bool: return battle.sim.t >= 2.7, 14)
-		if keys == STRESS:
-			await _fps()
+	var ranged := "cyclops" if region == "sicily" else ("horseArcher" if region == "parthia" else "")
+	if not ranged.is_empty():
+		if check(await until(func() -> bool: return _boss_shot(ranged), 14.0), "projectile from " + ranged):
+			var launched_at := battle.sim.t
+			await until(func() -> bool: return battle.sim.t >= launched_at + 0.12, 1.0)
+	else:
+		check(await until(func() -> bool: return battle.sim.t >= 2.75, 14.0), "battle time " + region)
+	for fighter: View.Fighter in boss_views:
+		if fighter.unit.key in ["chariot", "charioteer"] and fighter.boss_model != null:
+			check(fighter.boss_model.wheels.size() == 2 and fighter.boss_model.wheel_angle > 0.001,
+				"wheels move " + fighter.unit.key)
+	if stress:
+		await _fps()
+		await _close_battle()
+	else:
 		battle.paused = true
 		await shot(file)
 		battle.paused = false
-		if close:
-			await _close_battle()
-		if keys == STRESS:
-			if check(is_instance_valid(live_model) and live_model.unit.alive, "live target for death check"):
-				await _death(live_model)
+		await _death(boss_views)
 	battle.abort()
 	await get_tree().process_frame
+
+
+func _boss_shot(key: String) -> bool:
+	if releases.has(key):
+		return true
+	for event: LegionSim.Shot in battle.battle_view.shots:
+		if event.from == null or event.from.key != key:
+			continue
+		var sprite: Node2D = battle.battle_view.shots[event]
+		if sprite.has_meta("boss_launch"):
+			releases[key] = event.kind
+			print("ENEMY3D RELEASE ", key, " ", event.kind)
+			return true
+	return false
 
 
 func _melee() -> View.Fighter:
 	for f: View.Fighter in battle.views.values():
 		var u := f.unit
-		if u.side == "ally" and u.alive and not u.ranged() and u.target != null and u.target.alive and f.clip == f.attack_clip:
-			return f
+		if u.side == "ally" and u.alive and not u.ranged() and u.target != null and u.target.alive:
+			var foe: View.Fighter = battle.views.get(u.target.id)
+			if foe != null and foe.wide and foe.boss_model != null and f.clip == f.attack_clip:
+				return f
 	return null
 
 
 func _close_battle() -> void:
-	if not check(await until(func() -> bool: return _melee() != null, 8.0), "melee close-up"):
+	if not check(await until(func() -> bool: return _melee() != null, 12.0), "close-up against a wide boss"):
 		return
 	battle.paused = true
 	var ally := _melee()
 	var enemy: View.Fighter = battle.views[ally.unit.target.id]
 	var view := battle.battle_view
+	var camera := view.people_layer.camera
+	var near_z := camera.to_local(ally.actor.global_position).z
+	var far_z := camera.to_local(enemy.actor.global_position).z
+	check(near_z - far_z > 3.0, "wide boss behind the nearby soldier")
 	var feet := view.screen(ally.position).lerp(view.screen(enemy.position), 0.5)
 	var height := maxf(ally.body_height(), enemy.body_height()) * view.world.scale.y
-	var crop := Rect2i(Vector2i(feet - Vector2(510.0, height * 1.28 + 55.0)), Vector2i(1020, int(height * 1.42 + 105.0)))
-	await shot("6_battle_close.png", crop)
+	var crop := Rect2i(Vector2i(feet - Vector2(675.0, height * 1.08 + 160.0)), Vector2i(1350, int(height * 1.17 + 240.0)))
+	await shot("7_close_fight.png", crop)
 	battle.paused = false
 
-
 func _fps() -> void:
-	check(battle.views.size() == 16, "5 allies + 10 enemies + boss for FPS")
+	check(battle.views.size() == 15, "5 allies and 10 enemies including the elephant and two chariots")
 	check(get_viewport().get_texture().get_size() == Vector2(1920.0, 1080.0), "FPS resolution")
 	var start := Time.get_ticks_usec()
 	for i in 120:
 		await get_tree().process_frame
 	var fps := 120000000.0 / maxf(1.0, Time.get_ticks_usec() - start)
-	check(battle.views.size() == 16, "all 16 combatants at end of FPS sample")
+	check(battle.views.size() == 15, "all 15 combatants at end of FPS sample")
 	var viewport := battle.battle_view.people_layer.viewport
 	var draws := viewport.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_DRAW_CALLS_IN_FRAME)
 	var triangles := viewport.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_PRIMITIVES_IN_FRAME)
@@ -292,12 +370,19 @@ func _fps() -> void:
 	check(fps >= 60.0, "60 FPS budget")
 
 
-func _death(view: View.Fighter) -> void:
-	var id := view.unit.id
-	var unit := view.unit
-	battle.sim._hurt(unit, unit.hp + 1.0)
+func _death(fighters: Array[View.Fighter]) -> void:
+	var fallen := {}
+	for view: View.Fighter in fighters:
+		if check(view.unit.alive, "live model before kill " + view.unit.key):
+			fallen[view.unit.id] = view.unit.key
+			battle.sim._hurt(view.unit, view.unit.hp + 1.0)
 	await get_tree().process_frame
 	await get_tree().process_frame
-	check(not unit.alive and view.clip == view.death_clip and view.death >= 0.0, "death starts on sim kill")
-	check(await until(func() -> bool: return not battle.views.has(id), 3.0), "fallen model hides and leaves the view")
-	print("ENEMY3D DEATH ", unit.key)
+	for id: int in fallen:
+		var view: View.Fighter = battle.views.get(id)
+		check(view != null and not view.unit.alive and view.clip == view.death_clip and view.death > 0.0,
+			"death starts on sim kill " + String(fallen[id]))
+	for id: int in fallen:
+		if check(await until(func() -> bool: return not battle.views.has(id), 3.0), "fallen model hides " + String(fallen[id])):
+			deaths[fallen[id]] = true
+			print("ENEMY3D DEATH ", fallen[id])

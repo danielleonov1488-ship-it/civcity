@@ -1,7 +1,6 @@
 extends Node2D
 ## Один прозрачный 3D-слой для персонажей на рисованном фоне.
 
-const Actor = preload("res://scripts/charpilot_actor.gd")
 const EDGE := """
 shader_type canvas_item;
 render_mode blend_premul_alpha;
@@ -110,11 +109,11 @@ func _view_rect(area: Rect2) -> void:
 	overlay.size = area.size
 
 
-func place(actor: Actor, feet: Vector2, height: float, yaw: float, foreground := false) -> void:
+func place(actor: Node3D, feet: Vector2, height: float, yaw: float, foreground := false, depth_offset := 0.0) -> void:
 	var units_per_pixel := 10.0 / extent.y
 	var at := (feet - extent * 0.5) * units_per_pixel
 	var depth := 9.0 if foreground else clampf(feet.y / extent.y, 0.0, 1.0) * 4.0
-	var origin := _frame * Vector3(at.x, -at.y, depth - 18.0)
+	var origin := _frame * Vector3(at.x, -at.y, depth + depth_offset - 18.0)
 	var body_scale := Vector3.ONE * (height * units_per_pixel / (1.79 * cos(deg_to_rad(_tilt))))
 	if actor.position != origin:
 		actor.position = origin
