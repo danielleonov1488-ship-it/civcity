@@ -231,7 +231,7 @@ func _balance() -> void:
 		check(Fixture.house_fighter(lg, int(s["id"])), "fixture fighter lives in barracks")
 		lg.set_place(i, int(s["id"]))
 	for stage in 3:
-		# Пращников снимает лучник; на волчьей тропе нужны щиты.
+		# Пращников снимает лучник; на медвежьей тропе нужны щиты.
 		var first := lg.soldier(int(lg.squad3[0]))
 		var it := lg.add_item(Gear.craft_item("bow" if stage == 1 else "sword", 2 if stage == 1 else 1))
 		lg.equip(int(first["id"]), int(it["id"]))

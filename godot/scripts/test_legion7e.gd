@@ -1,5 +1,5 @@
 extends Node
-## Бой с пятью рисованными бойцами, проверка повтора и три кадра из игры.
+## Бой с пятью 3D-союзниками, проверка повтора и три кадра из игры.
 
 const View = preload("res://scripts/legion_battle_view.gd")
 const SKILLS := ["oil", "bandage", "volley"]
@@ -57,7 +57,7 @@ func _setup(legion: Legion) -> Dictionary:
 		unit["row"] = 0
 	var waves := []
 	for keys: Array in [["bandit", "slinger", "bear", "gaul", "gaulArcher"],
-			["bandit", "gaul", "slinger"], ["gaul", "gaulArcher", "wolf"], ["bear", "slinger"], ["chief", "bandit"]]:
+			["bandit", "gaul", "slinger"], ["gaul", "gaulArcher", "forestBear"], ["bear", "slinger"], ["chief", "bandit"]]:
 		var wave := []
 		for key: String in keys:
 			wave.append(Legion.enemy_stats(key, 1.0))
@@ -104,7 +104,7 @@ func _run() -> void:
 		finish()
 		return
 
-	check(battle.find_children("*", "Node3D", true, false).is_empty(), "в дереве боя есть 3D-узлы")
+	check(battle.battle_view.people_layer.viewport.transparent_bg, "прозрачный 3D-слой союзников")
 	check(battle.views.size() == 10, "на старте нужно десять бойцов")
 	var ally_sheets := {}
 	var enemy_sheets := {}
@@ -112,8 +112,12 @@ func _run() -> void:
 		var ours := f.unit.side == "ally"
 		var sheets := ally_sheets if ours else enemy_sheets
 		sheets[f.sheet] = true
-		check(f is AnimatedSprite2D and f.sprite_frames.get_frame_count(&"idle") == 2
-			and f.sprite_frames.get_frame_count(&"walk") == 4 and f.sprite_frames.get_frame_count(&"attack") == 2, "кадры " + f.sheet)
+		if ours:
+			check(f.sprite == null and f.actor != null and f.actor.problem.is_empty()
+				and f.actor.get_parent() == battle.battle_view.people_layer.viewport, "модель " + f.sheet)
+		else:
+			check(f.actor == null and f.sprite.sprite_frames.get_frame_count(&"idle") == 2
+				and f.sprite.sprite_frames.get_frame_count(&"walk") == 4 and f.sprite.sprite_frames.get_frame_count(&"attack") == 2, "кадры " + f.sheet)
 		check((f.position.x < 0.0 if ours else f.position.x > 0.0) and (ours or f.flip_h), "сторона и направление " + f.sheet)
 	check(ally_sheets.size() == 5 and enemy_sheets.has("bear") and enemy_sheets.has("barbarian_archer"), "листы отрядов")
 	check(battle.wave_lbl.text == (I18n.t("Волна %d/%d") % [1, 5]), "табличка первой волны")

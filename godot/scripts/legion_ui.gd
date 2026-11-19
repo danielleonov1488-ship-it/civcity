@@ -17,6 +17,8 @@ extends Control
 ## Бои с городами: сеть — отдельный модуль (см. _net()): pvp_ready() / pvp_opponents(cb) / pvp_report(setup, out).
 ## Картинки владельца (листы 35–41) раскладывает .work/py/legion_art.py; нет картинки — рисованные значки игры.
 
+const Look = preload("res://scripts/legion_look.gd")
+const FortPerson = preload("res://scripts/fort_person.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
 const DIR := "res://assets/ui/ai/legion/"
 const CW := 1140.0                         # ширина содержимого вкладки
@@ -93,6 +95,14 @@ var lbl_daily: Label
 var view_r := -1                           # какая провинция на карте
 var view_c := -1                           # какой круг похода
 var sel := {}                              # выбранный бой {c, r, s}
+var fort_map: Control
+var fort_trail: Control
+var fort_map_zoom := 1.0
+var fort_map_focus := Vector2(0.5, 0.5)
+var fort_map_values := {}
+var fort_prep_open := false
+var fort_reward_tab := false
+var fort_pick_place := -1
 var overlay: Control                       # окно поверх (итог боя, выбор бойца)
 var toast: PanelContainer
 var _live := []                            # что обновлять каждые 0,2 с: таймеры улучшений, заряды атак
@@ -258,6 +268,8 @@ func open(tab_id := "") -> void:
 		view_r = 0
 		view_c = 0
 		sel = {"c": 0, "r": 0, "s": 0}
+		fort_map_zoom = 1.0
+		fort_map_focus = Vector2(0.5, 0.5)
 	if lg.flags.has("turn_page") and tab_id != "pvp":
 		# босс побеждён (в 3D-бою или пока окно было закрыто) — карта перелистывается на новую провинцию
 		lg.flags.erase("turn_page")
@@ -272,6 +284,10 @@ func close(return_camp := true) -> void:
 	var back := return_camp and visible and lg != null and lg.v3()
 	visible = false
 	camp_window = ""
+	_clear_fort_map()
+	fort_prep_open = false
+	fort_pick_place = -1
+	fort_reward_tab = false
 	win.show()
 	_close_overlay()
 	_update_button()
@@ -351,6 +367,7 @@ func _process(dt: float) -> void:
 ## Таймеры: полоски улучшений, заряды атак. Улучшение дошло — завершаем сразу (не ждём игрового часа)
 func _tick_live() -> void:
 	_odds_poll()
+	_update_fort_map_resources()
 	if lg.army_on():
 		for m in lg.army_tick():
 			if game.city.has_method("_quiet"):
@@ -418,13 +435,13 @@ func _make_window() -> void:
 	var left := HBoxContainer.new()
 	left.custom_minimum_size = Vector2(360, 0)
 	left.add_theme_constant_override("separation", 8)
-	var g := _chip_val(_ic39("glory"), "0", "Слава: даётся за победы. Тратится на умения, высокие уровни бойцов и Триумф")
+	var g := _chip_val(Look.resource("glory"), "0", "Слава: даётся за победы. Тратится на умения, высокие уровни бойцов и Триумф")
 	lbl_glory = g[1]
 	left.add_child(g[0])
-	var m := _chip_val(hud.ico("coins", 64), "0", "Денарии в казне города: на них улучшают бойцов и собирают провиант в поход")
+	var m := _chip_val(Look.resource("money"), "0", "Денарии в казне города: на них улучшают бойцов и собирают провиант в поход")
 	lbl_money = m[1]
 	left.add_child(m[0])
-	var dc := _chip_val(_ic38("chest"), "0/5", "Задания дня: 5 дел каждый день, за все — сундук. Сундуки растут по лестнице недели до «Сундука Цезаря»")
+	var dc := _chip_val(Look.icon("chest"), "0/5", "Задания дня: 5 дел каждый день, за все — сундук. Сундуки растут по лестнице недели до «Сундука Цезаря»")
 	daily_chip = dc[0]
 	lbl_daily = dc[1]
 	daily_chip.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -644,6 +661,13 @@ func _rebuild() -> void:
 	guide_region_button = null
 	_front_btn = null
 	_upg_btn = null
+	if lg.v3() and camp_window == "":
+		win.hide()
+		_build_fort_map()
+		_last_sig = _sig()
+		hud._update_pointer()
+		return
+	_clear_fort_map()
 	# «Воины» (Легион 2.0, этап 1) — только в новой игре «Уютного Рима»; вкладки чуть уже, чтобы уместились пять
 	var army := lg.army_on()
 	if not lg.v3():
@@ -770,6 +794,8 @@ func _fit() -> void:
 		for child: Node in overlay.get_children():
 			if child is PanelContainer:
 				_center_later(child as Control)
+	if is_instance_valid(fort_map):
+		_layout_fort_trail()
 	if win == null:
 		return
 	win.reset_size()
@@ -783,7 +809,7 @@ func _fit() -> void:
 	win.position = ((avail - s * k) / 2.0).floor()
 	if toast:
 		toast.reset_size()
-		toast.position = Vector2((avail.x - toast.size.x) / 2.0, win.position.y + s.y * k - toast.size.y - 30.0)
+		toast.position = Vector2((avail.x - toast.size.x) / 2.0, (avail.y if is_instance_valid(fort_map) else win.position.y + s.y * k) - toast.size.y - 30.0)
 	if visible and lg != null and lg.v3():
 		var camp := CampUI.of(hud)
 		if camp != null:
@@ -844,6 +870,8 @@ func _ic39(n: String) -> Texture2D:
 
 
 func _gear_tex(idx: int, slot := "weapon") -> Texture2D:
+	if slot == Gear.OUTFIT_SLOT:
+		return hud.ico("clothes", 64)
 	var t := _sheet("42", idx)
 	return t if t != null else hud.ico(String(GEAR_ICON.get(slot, "swords")), 64)
 
@@ -1036,12 +1064,12 @@ func _cost_row(cost: Dictionary, sz := 16) -> HBoxContainer:
 	h.add_theme_constant_override("separation", 4)
 	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if int(cost.get("money", 0)) > 0:
-		h.add_child(_tr(hud.ico("coins", 64), sz + 6))
+		h.add_child(_tr(Look.resource("money"), sz + 6))
 		h.add_child(_l(hud.fmt(float(cost["money"])), sz, true, C_INK if float(cost["money"]) <= lg.city_money() else C_BAD))
 	if int(cost.get("glory", 0)) > 0:
 		if h.get_child_count() > 0:
 			h.add_child(_gap(6))
-		h.add_child(_tr(_ic39("glory"), sz + 8))
+		h.add_child(_tr(Look.resource("glory"), sz + 8))
 		h.add_child(_l(str(int(cost["glory"])), sz, true, C_INK if float(cost["glory"]) <= lg.glory + 0.001 else C_BAD))
 	return h
 
@@ -1174,6 +1202,546 @@ func _pin(c: Control, corner: Vector2, push := Vector2.ZERO) -> void:
 # =====================================================================
 #   «Походы»
 # =====================================================================
+
+func _clear_fort_map() -> void:
+	if is_instance_valid(fort_map):
+		remove_child(fort_map)
+		fort_map.queue_free()
+	fort_map = null
+	fort_map_values.clear()
+
+
+func _build_fort_map() -> void:
+	_clear_fort_map()
+	var frontier := lg.frontier()
+	view_c = clampi(view_c, 0, int(frontier["cycle"]))
+	view_r = clampi(view_r, 0, Legion.regions().size() - 1)
+	if sel.is_empty() or int(sel["r"]) != view_r or int(sel["c"]) != view_c:
+		sel = {"c": view_c, "r": view_r, "s": _default_stage(view_c, view_r)}
+	var region: Dictionary = Legion.regions()[view_r]
+	fort_map = Control.new()
+	fort_map.name = "FortCampaignMap"
+	fort_map.clip_contents = true
+	add_child(fort_map)
+	move_child(fort_map, 0)
+	fort_map.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	fort_map.gui_input.connect(_fort_map_input)
+	fort_trail = Control.new()
+	fort_trail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fort_trail.size = MAP_PX
+	fort_map.add_child(fort_trail)
+	var texture := _art("map", String(region["id"]))
+	var points := _stops(view_r, texture != null)
+	if texture != null:
+		var art := Kit.image(texture, Vector2.ZERO)
+		art.stretch_mode = TextureRect.STRETCH_SCALE
+		art.size = MAP_PX
+		fort_trail.add_child(art)
+	else:
+		var art := MapPaint.new()
+		art.biome = String(region["biome"])
+		art.seed_v = 1000 + view_r * 17
+		art.k = Vector2.ONE
+		art.pts = (points["stops"] as Array).duplicate()
+		if points["camp"] != null:
+			art.pts.push_front(points["camp"])
+		art.pts.append(points["boss"])
+		art.size = MAP_PX
+		var biome: Dictionary = BIOMES.get(art.biome, BIOMES["forest"])
+		for id: String in (biome["deco"] as Array) + (biome["land"] as Array):
+			art.icons[id] = _ic39("camp") if id == "camp" else hud.ico(id, 96)
+		art.emblem = _art("enemy", String(region["boss"]))
+		var cache_key := "ground:%d" % view_r
+		if not _tex.has(cache_key):
+			art._make_ground(biome)
+			_tex[cache_key] = art._ground
+		art._ground = _tex[cache_key]
+		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fort_trail.add_child(art)
+	var done_count := 0
+	var pins := Control.new()
+	pins.name = "FortMapNodes"
+	pins.size = MAP_PX
+	pins.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fort_trail.add_child(pins)
+	for index in Legion.stages():
+		var boss := index == Legion.stages() - 1
+		var stage := lg.stage_info(view_c, view_r, index)
+		var done := lg.stage_done(view_c, view_r, index)
+		var open_stage := lg.stage_open(view_c, view_r, index) and lg.region_rank_ok(view_r)
+		var focus := index == int(sel["s"])
+		if done:
+			done_count += 1
+		var fill := Look.OLIVE if done else Look.WINE if open_stage else Look.DARK
+		var glyph := "✓" if done and not boss else "⚑" if open_stage and not boss else ""
+		var tex := Look.icon("squad") if boss else null if glyph != "" else _ic39("lock")
+		var span := 62.0 if boss or focus else 46.0
+		var button := Look.button(glyph, tex, fill, Vector2(span, span), true)
+		button.name = "LegionFirstStage" if view_c == 0 and view_r == 0 and index == 0 else "FortStage_%d" % index
+		button.set_meta("locked", not open_stage)
+		button.set_meta("boss", boss)
+		button.set_meta("stage", index)
+		button.tooltip_text = _fort_stage_title(stage)
+		var point: Vector2 = points["boss"] if boss else points["stops"][index]
+		button.size = Vector2(span, span)
+		button.position = point - button.size * 0.5
+		pins.add_child(button)
+		if button.name == "LegionFirstStage":
+			guide_stage_button = button
+		if boss and not open_stage:
+			var lock_badge := Kit.image(_ic39("lock"), Vector2(24, 24))
+			lock_badge.size = Vector2(24, 24)
+			lock_badge.position = Vector2(span - 22, span - 22)
+			button.add_child(lock_badge)
+		button.pressed.connect(open_fort_stage.bind(view_c, view_r, index))
+		if done:
+			var mask := int(lg.stars.get(Legion.stage_key(view_c, view_r, index), 0))
+			var stars := Stars.new(Legion.star_count(mask), 11.0, 3, mask)
+			stars.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			stars.position = point + Vector2(-stars.custom_minimum_size.x * 0.5, span * 0.45)
+			pins.add_child(stars)
+		if focus and open_stage and not done:
+			var marker := Look.label(_fort_stage_title(stage), 22, Look.PAPER)
+			marker.add_theme_stylebox_override("normal", Look.box(fill, Look.BRONZE, 8, 5))
+			pins.add_child(marker)
+			marker.reset_size()
+			marker.position = point - Vector2(marker.size.x * 0.5, -span * 0.5 - 4)
+	if points["camp"] != null:
+		var home := Look.button("", Look.icon("map"), Look.SLATE, Vector2(56, 56), true)
+		home.tooltip_text = I18n.t("В форт")
+		home.position = Vector2(points["camp"]) - Vector2(28, 28)
+		home.pressed.connect(func(): close())
+		pins.add_child(home)
+
+	var header := Look.panel(Look.DARK, 12)
+	header.name = "FortProvinceTitle"
+	header.position = Vector2(22, 22)
+	fort_map.add_child(header)
+	var heading := VBoxContainer.new()
+	heading.custom_minimum_size.x = 235
+	header.add_child(heading)
+	heading.add_child(Look.label(I18n.t(String(region["name"])), 38, Look.PAPER, true))
+	heading.add_child(Look.label(I18n.t("Пройдено %d из %d") % [done_count, Legion.stages()], 20, Look.PAPER))
+
+	var hud_resources := GridContainer.new()
+	hud_resources.columns = 2
+	fort_map.add_child(hud_resources)
+	for id: String in ["rations", "money", "glory", "ingots"]:
+		var chip := Look.chip(id, "0")
+		hud_resources.add_child(chip)
+		fort_map_values[id] = chip.get_meta("number")
+	_pin(hud_resources, Vector2(1, 0), Vector2(-22, -22))
+	var back := Look.button(I18n.t("В форт"), Look.icon("map"), Look.WINE, Vector2(155, 60))
+	back.name = "CampaignBack"
+	back.pressed.connect(func(): close())
+	fort_map.add_child(back)
+	_pin(back, Vector2(0, 1), Vector2(-22, -22))
+	_build_fort_provinces()
+	_update_fort_map_resources()
+	_layout_fort_trail()
+	_fit.call_deferred()
+	if fort_prep_open:
+		_show_fort_prep()
+	var camp := CampUI.of(hud)
+	if camp != null:
+		camp._layout_guide.call_deferred()
+
+
+func _fort_stage_title(stage: Dictionary) -> String:
+	var theme := String(stage.get("theme", ""))
+	return I18n.t(theme if not theme.is_empty() else String(stage["name"]))
+
+
+func _build_fort_provinces() -> void:
+	var list := Look.panel(Look.DARK, 10)
+	list.name = "FortProvinces"
+	fort_map.add_child(list)
+	var body := VBoxContainer.new()
+	list.add_child(body)
+	body.add_child(Look.label(I18n.t("Провинции"), 30, Look.PAPER, true))
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size = Vector2(263, minf(196.0, size.y * 0.30))
+	body.add_child(scroll)
+	var rows := VBoxContainer.new()
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(rows)
+	for index in Legion.regions().size():
+		var region: Dictionary = Legion.regions()[index]
+		var open_region := lg.stage_open(view_c, index, 0) and lg.region_rank_ok(index)
+		var count := 0
+		for stage in Legion.stages():
+			if lg.stage_done(view_c, index, stage):
+				count += 1
+		var name_text := I18n.t(String(region["name"]))
+		var text := "%s    %d/%d" % [name_text, count, Legion.stages()] if open_region else name_text
+		var row := Look.button(text, Look.icon("map") if open_region else _ic39("lock"),
+			Look.SLATE if index == view_r else Look.DARK, Vector2(238, 45))
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.add_theme_font_size_override("font_size", 20)
+		row.add_theme_constant_override("icon_max_width", 27)
+		row.tooltip_text = name_text if open_region else _fort_region_lock(index)
+		row.pressed.connect(_select_fort_province.bind(index))
+		rows.add_child(row)
+		if index == 0:
+			guide_region_button = row
+	if int(lg.frontier()["cycle"]) > 0:
+		var cycle := Look.button(I18n.t("Ветеранский поход" if view_c > 0 else "Первый поход"), null, Look.DARK, Vector2(215, 45))
+		cycle.pressed.connect(func():
+			view_c = (view_c + 1) % (int(lg.frontier()["cycle"]) + 1)
+			sel = {}
+			_rebuild())
+		body.add_child(cycle)
+	_pin(list, Vector2(1, 1), Vector2(-22, -22))
+
+
+func _fort_region_lock(index: int) -> String:
+	var reason := lg.vet_lock_text(view_c, index)
+	if reason != "":
+		return I18n.t(reason)
+	return I18n.t(lg.region_lock_text(index)) if not lg.region_rank_ok(index) else I18n.t("Сначала пройдите предыдущие бои")
+
+
+func _select_fort_province(index: int) -> void:
+	if not lg.stage_open(view_c, index, 0) or not lg.region_rank_ok(index):
+		_say(_fort_region_lock(index))
+		return
+	if view_r != index:
+		fort_map_zoom = 1.0
+		fort_map_focus = Vector2(0.5, 0.5)
+	view_r = index
+	sel = {}
+	_rebuild()
+
+
+func _fort_map_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		var before := fort_map_zoom
+		fort_map_zoom = clampf(fort_map_zoom * (1.13 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.13), 1.0, 2.2)
+		var normalized = event.position / size
+		fort_map_focus += (normalized - Vector2(0.5, 0.5)) * (1.0 / before - 1.0 / fort_map_zoom)
+		_layout_fort_trail()
+		fort_map.accept_event()
+	elif event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
+		fort_map_focus -= event.relative / size / fort_map_zoom
+		_layout_fort_trail()
+		fort_map.accept_event()
+
+
+func _layout_fort_trail() -> void:
+	if not is_instance_valid(fort_trail) or size.x <= 1 or size.y <= 1:
+		return
+	var inset := Vector2.ONE * (0.5 / fort_map_zoom)
+	fort_map_focus = fort_map_focus.clamp(inset, Vector2.ONE - inset)
+	fort_trail.scale = (size / MAP_PX) * fort_map_zoom
+	fort_trail.position = size * (Vector2(0.5, 0.5) - fort_map_focus * fort_map_zoom)
+	if lg.fort_guide_step() == Legion.FortGuide.CAMPAIGN:
+		var camp := CampUI.of(hud)
+		if camp != null:
+			camp._layout_guide.call_deferred()
+
+
+func _update_fort_map_resources() -> void:
+	if fort_map_values.is_empty():
+		return
+	var supplies := {"rations": lg.rations_now(), "money": lg.city_money(), "glory": lg.glory, "ingots": lg.ingots}
+	for id: String in supplies:
+		(fort_map_values[id] as Label).text = hud.fmt(float(supplies[id]))
+
+
+func open_fort_stage(cycle: int, region: int, index: int) -> void:
+	if not lg.stage_open(cycle, region, index) or not lg.region_rank_ok(region):
+		_say(_fort_region_lock(region))
+		return
+	view_c = cycle
+	view_r = region
+	sel = {"c": cycle, "r": region, "s": index}
+	if lg.fort_guide_step() == Legion.FortGuide.CAMPAIGN:
+		lg.flags["fort_guide_stage"] = cycle == 0 and region == 0 and index == 0
+	fort_reward_tab = false
+	fort_pick_place = -1
+	fort_prep_open = true
+	_rebuild()
+
+
+func _close_fort_prep() -> void:
+	fort_prep_open = false
+	fort_pick_place = -1
+	_fight_btn = null
+	_close_overlay()
+	var camp := CampUI.of(hud)
+	if camp != null:
+		camp._layout_guide.call_deferred()
+
+
+func _show_fort_prep() -> void:
+	var stage := _card_stage()
+	if stage.is_empty():
+		_close_fort_prep()
+		return
+	var panel := _modal(1090)
+	panel.name = "FortBattlePrep"
+	panel.add_theme_stylebox_override("panel", Look.box(Look.PAPER, Look.BRONZE, 16, 24))
+	var body: VBoxContainer = panel.get_child(0)
+	body.add_theme_constant_override("separation", 8)
+	var head := HBoxContainer.new()
+	body.add_child(head)
+	var squad := Look.button("", Look.icon("squad"), Look.OLIVE if not fort_reward_tab else Look.INSET, Vector2(50, 50))
+	squad.tooltip_text = I18n.t("Ваш отряд")
+	squad.pressed.connect(func():
+		fort_reward_tab = false
+		fort_pick_place = -1
+		_show_fort_prep())
+	head.add_child(squad)
+	var reward := Look.button("", Look.icon("chest"), Look.OLIVE if fort_reward_tab else Look.INSET, Vector2(50, 50))
+	reward.tooltip_text = I18n.t("Награда")
+	reward.pressed.connect(func():
+		fort_reward_tab = true
+		fort_pick_place = -1
+		_show_fort_prep())
+	head.add_child(reward)
+	var title := Look.label(_fort_stage_title(stage), 46, Look.INK, true)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	head.add_child(title)
+	var close_button := Look.button("×", null, Look.INSET, Vector2(48, 48))
+	close_button.tooltip_text = I18n.t("Закрыть")
+	close_button.pressed.connect(_close_fort_prep)
+	head.add_child(close_button)
+	body.add_child(HSeparator.new())
+	if fort_pick_place >= 0:
+		_fort_prep_picker(body)
+	elif fort_reward_tab:
+		_fort_prep_reward_details(body, stage)
+	else:
+		_fort_prep_squads(body, stage)
+	_fort_prep_footer(body, stage)
+	_center_later(panel)
+	var camp := CampUI.of(hud)
+	if camp != null and lg.fort_guide_step() == Legion.FortGuide.CAMPAIGN:
+		panel.item_rect_changed.connect(camp._layout_guide, Object.CONNECT_DEFERRED)
+		_fight_btn.item_rect_changed.connect(camp._layout_guide, Object.CONNECT_DEFERRED)
+		camp._layout_guide.call_deferred()
+
+
+func _fort_prep_squads(body: VBoxContainer, stage: Dictionary) -> void:
+	body.add_child(_fort_prep_title("Ваш отряд"))
+	var allies := HBoxContainer.new()
+	allies.name = "FortPrepAllies"
+	allies.alignment = BoxContainer.ALIGNMENT_CENTER
+	allies.add_theme_constant_override("separation", 26)
+	body.add_child(allies)
+	for index in Legion.SQUAD_V3:
+		var locked := index >= lg.slots()
+		var person := lg.soldier(int(lg.squad3[index])) if not locked else {}
+		var name_text := String(person.get("name", ""))
+		var role := ""
+		var icon := Kit.texture("plus")
+		if locked:
+			icon = _ic39("lock")
+			name_text = I18n.t("Казарма")
+			role = I18n.t("ур. %d") % Legion.place_barracks_level(index)
+		elif person.is_empty():
+			name_text = I18n.t("Свободно")
+		else:
+			var kind := String(person.get("cls", "legionary"))
+			role = I18n.t(String(Legion.UNITS[Legion.unit_of_class(kind)]["name"]))
+			if lg.s_state(person) != "ready":
+				role = _soldier_status(person)
+		var pick := func():
+			fort_pick_place = index
+			_show_fort_prep()
+		var row := _fort_prep_slot(name_text, role, icon, locked, person, pick)
+		row.name = "FortPrepSlot_%d" % index
+		row.set_meta("locked", locked)
+		allies.add_child(row)
+
+	var power := HBoxContainer.new()
+	power.name = "FortPrepPower"
+	power.add_theme_constant_override("separation", 4)
+	power.add_child(_fort_power_chip(lg.squad_power(), Look.OLIVE))
+	power.add_child(Kit.image(Look.icon("squad"), Vector2(52, 52)))
+	power.add_child(_fort_power_chip(Legion.stage_power(stage), Look.WINE))
+	body.add_child(power)
+
+	body.add_child(_fort_prep_title("Отряд противника"))
+	var waves := ScrollContainer.new()
+	waves.name = "FortPrepEnemies"
+	waves.custom_minimum_size.y = 137
+	waves.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body.add_child(waves)
+	var enemies := HBoxContainer.new()
+	enemies.alignment = BoxContainer.ALIGNMENT_CENTER
+	enemies.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	enemies.add_theme_constant_override("separation", 16)
+	waves.add_child(enemies)
+	var counts := {}
+	for wave: Array in stage["waves"]:
+		for key: String in wave:
+			counts[key] = int(counts.get(key, 0)) + 1
+	for key: String in counts:
+		var info: Dictionary = Legion.ENEMIES[key]
+		var enemy := VBoxContainer.new()
+		enemy.custom_minimum_size.x = 112
+		enemy.add_theme_constant_override("separation", 0)
+		enemies.add_child(enemy)
+		var face := _portrait("enemy", key, 86)
+		face.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		enemy.add_child(face)
+		var suffix := " ×%d" % int(counts[key]) if int(counts[key]) > 1 else ""
+		enemy.add_child(_fort_center(I18n.t(String(info["name"])) + suffix, 18))
+		enemy.mouse_filter = Control.MOUSE_FILTER_PASS
+		enemy.tooltip_text = _enemy_tip(stage, key)
+
+
+func _fort_prep_slot(name_text: String, role: String, icon: Texture2D, locked: bool, person: Dictionary, pick: Callable) -> VBoxContainer:
+	var slot := VBoxContainer.new()
+	slot.custom_minimum_size.x = 137
+	slot.add_theme_constant_override("separation", 2)
+	var frame := Look.button("", icon if person.is_empty() else null, Look.DARK if locked else Look.OLIVE, Vector2(100, 100), true)
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	slot.add_child(frame)
+	if not person.is_empty():
+		var view := FortPerson.portrait(person, "barracks", false, 92)
+		view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		frame.add_child(view)
+		view.position = Vector2(4, 4)
+	frame.tooltip_text = name_text + (" · " + role if role != "" else "")
+	if not locked and not bool(person.get("hero", false)):
+		frame.pressed.connect(pick)
+	else:
+		frame.mouse_default_cursor_shape = Control.CURSOR_ARROW
+		frame.focus_mode = Control.FOCUS_NONE
+	slot.add_child(_fort_center(name_text, 22))
+	slot.add_child(_fort_center(role, 18))
+	if not person.is_empty():
+		var hp := Look.meter(1.0 if lg.s_state(person) == "ready" else 0.0, 1.0)
+		hp.custom_minimum_size = Vector2(68, 7)
+		hp.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		slot.add_child(hp)
+	return slot
+
+
+func _fort_power_chip(value: int, color: Color) -> PanelContainer:
+	var chip := Look.panel(color, 8)
+	chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	chip.mouse_filter = Control.MOUSE_FILTER_PASS
+	chip.tooltip_text = I18n.t("Оценка силы состава")
+	var label := Look.label(I18n.t("Сила %s") % hud.fmt(value), 28, Look.PAPER)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	chip.add_child(label)
+	return chip
+
+
+func _fort_center(value: String, pixels: int) -> Label:
+	var label := Look.label(value, pixels)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	return label
+
+
+func _fort_prep_title(value: String) -> Label:
+	var label := Look.label(I18n.t(value), 31, Look.INK, true)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	return label
+
+
+func _fort_prep_picker(body: VBoxContainer) -> void:
+	body.add_child(_fort_prep_title("Кто пойдёт в бой?"))
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, 295)
+	body.add_child(scroll)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(list)
+	for person: Dictionary in lg.fort_squad_candidates():
+		if bool(person.get("hero", false)):
+			continue
+		var sid := int(person["id"])
+		var option := Look.button(String(person["name"]), Look.icon("squad"), Look.PAPER, Vector2(230, 52))
+		option.pressed.connect(_set_fort_prep_place.bind(sid))
+		list.add_child(option)
+	var clear := Look.button(I18n.t("Освободить место"))
+	clear.pressed.connect(_set_fort_prep_place.bind(0))
+	list.add_child(clear)
+	var back := Look.button(I18n.t("Назад"))
+	back.pressed.connect(func():
+		fort_pick_place = -1
+		_show_fort_prep())
+	body.add_child(back)
+
+
+func _set_fort_prep_place(sid: int) -> void:
+	if lg.set_place(fort_pick_place, sid):
+		fort_pick_place = -1
+		_show_fort_prep()
+	else:
+		_say(I18n.t("Место недоступно"))
+
+
+func _fort_prep_reward_details(body: VBoxContainer, stage: Dictionary) -> void:
+	body.add_child(_fort_prep_title("Награда"))
+	var criteria := VBoxContainer.new()
+	criteria.custom_minimum_size.y = 300
+	criteria.alignment = BoxContainer.ALIGNMENT_CENTER
+	body.add_child(criteria)
+	var mask := int(stage.get("star_mask", 0))
+	var texts := Legion.star_texts(stage)
+	for index in texts.size():
+		var row := HBoxContainer.new()
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.add_child(Stars.new(1 if (mask & (1 << index)) != 0 else 0, 26.0, 1))
+		row.add_child(Look.label(I18n.t(String(texts[index])), 21))
+		criteria.add_child(row)
+
+
+func _fort_prep_footer(body: VBoxContainer, stage: Dictionary) -> void:
+	body.add_child(HSeparator.new())
+	var footer := HBoxContainer.new()
+	footer.add_theme_constant_override("separation", 10)
+	body.add_child(footer)
+	var bounty := VBoxContainer.new()
+	bounty.name = "FortPrepRewards"
+	bounty.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	footer.add_child(bounty)
+	bounty.add_child(Look.label(I18n.t("Награда"), 27, Look.INK, true))
+	var rewards := HBoxContainer.new()
+	rewards.add_theme_constant_override("separation", 9)
+	bounty.add_child(rewards)
+	var why := lg.can_fight(stage)
+	var first := bool(stage["first"])
+	var prizes := Legion.reward_for(stage, first)
+	_fort_reward(rewards, Look.resource("money"), hud.fmt(float(prizes.get("money", 0))), "Денарии")
+	_fort_reward(rewards, Look.resource("glory"), hud.fmt(float(prizes.get("glory", 0))), "Слава")
+	if int(prizes.get("rp", 0)) > 0:
+		_fort_reward(rewards, hud.ico("research", 64), hud.fmt(float(prizes["rp"])), "Исследования")
+	_fort_reward(rewards, Look.icon("chest"), I18n.t("Сундук" if first else "Шанс на сундук"), "Сундук")
+	var cost := lg.ration_cost(stage)
+	var title := I18n.t("Повторить бой" if stage["done"] else "Начать бой")
+	_fight_btn = Look.button(title + "\n" + I18n.t("%.1f пайков") % cost, Look.resource("rations"), Look.WINE, Vector2(246, 84))
+	_fight_btn.name = "LegionRationBattle"
+	_fight_btn.set_meta("ration_cost", cost)
+	_fight_btn.disabled = why != ""
+	_fight_btn.tooltip_text = I18n.t(why) if why != "" else title
+	_fight_btn.pressed.connect(_fight.bind(stage))
+	footer.add_child(_fight_btn)
+	if why != "":
+		body.add_child(_wl(I18n.t(why), 980, 20, Look.WINE, true))
+	elif lg.tutorial_battle(stage):
+		body.add_child(_fort_center(I18n.t("Учебный бой"), 18))
+
+
+func _fort_reward(row: HBoxContainer, tex: Texture2D, value: String, tip: String) -> void:
+	var item := HBoxContainer.new()
+	item.mouse_filter = Control.MOUSE_FILTER_PASS
+	item.tooltip_text = I18n.t(tip)
+	var image := Kit.image(tex, Vector2(38, 38))
+	item.add_child(image)
+	var label := Look.label(value, 20)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	item.add_child(label)
+	row.add_child(item)
+
 
 func _build_campaign() -> Control:
 	var fr := lg.frontier()
@@ -1618,7 +2186,7 @@ func _stage_card(st: Dictionary) -> Control:
 	var tips := "" if teaching else lg.tips(st)
 	if tips != "":
 		v.add_child(_wl(tips, CARD_W - 24, 14, C_SOFT))
-	# отряд не под этот бой (пока мест три — загадка на выбор отряда; дальше — лучник в волчьем бою): совет и кнопка «Под бой»
+	# отряд не под этот бой (пока мест три — загадка на выбор отряда; дальше — лучник в медвежьем бою): совет и кнопка «Под бой»
 	var hint := "" if teaching else lg.squad_hint(st)
 	if hint != "":
 		var hb := HBoxContainer.new()
@@ -1679,9 +2247,9 @@ func _stage_card(st: Dictionary) -> Control:
 	var rh := HBoxContainer.new()
 	rh.add_theme_constant_override("separation", 5)
 	rh.add_child(_l("Награда:", 16, true))
-	rh.add_child(_tr(hud.ico("coins", 64), 24))
+	rh.add_child(_tr(Look.resource("money"), 24))
 	rh.add_child(_l(hud.fmt(float(rw["money"])), 16, true))
-	rh.add_child(_tr(_ic39("glory"), 26))
+	rh.add_child(_tr(Look.resource("glory"), 26))
 	rh.add_child(_l(str(int(rw["glory"])), 16, true))
 	if rw.has("rp"):
 		rh.add_child(_tr(hud.ico("research", 64), 24))
@@ -1695,16 +2263,16 @@ func _stage_card(st: Dictionary) -> Control:
 	fh.add_theme_constant_override("separation", 5)
 	fh.add_child(_l("Провиант в поход:", 15, true, C_SOFT))
 	if lg.v3():
-		fh.add_child(_tr(hud.ico("bread", 64), 22))
+		fh.add_child(_tr(Look.resource("rations"), 22))
 		fh.add_child(_l(I18n.t("Пайки: %.1f · есть %.1f") % [lg.ration_cost(st), lg.rations], 15, true, C_INK if lg.rations >= lg.ration_cost(st) else C_BAD))
 	elif Legion.V2:
-		fh.add_child(_tr(hud.ico("bread", 64), 22))
+		fh.add_child(_tr(Look.resource("rations"), 22))
 		var have := lg.food_now()
 		fh.add_child(_l("%d · есть %d из %d" % [Legion.FOOD2_BATTLE, have, lg.food_cap()], 15, true, C_INK if have >= Legion.FOOD2_BATTLE else C_BAD))
 		fh.tooltip_text = "Провиант копится сам: очко каждые %d минут (и хлебный обоз из города). Склад оружия держит больше." % roundi(Legion.FOOD2_MIN)
 		fh.mouse_filter = Control.MOUSE_FILTER_PASS
 	else:
-		fh.add_child(_tr(hud.ico("coins", 64), 22))
+		fh.add_child(_tr(Look.resource("money"), 22))
 		var food := lg.food_cost(st)
 		fh.add_child(_l(hud.fmt(food), 15, true, C_INK if food <= lg.city_money() else C_BAD))
 	v.add_child(fh)
@@ -1744,7 +2312,7 @@ func _stage_card(st: Dictionary) -> Control:
 	var fight_title := I18n.t("Повторить бой" if st["done"] else "В бой!")
 	if lg.v3():
 		fight_title += " · %.1f" % lg.ration_cost(st)
-	var fb := _btn(fight_title, CARD_W - 30, 24, hud.ico("bread", 64) if lg.v3() else _ic39("battle"), why, func(): _fight(st))
+	var fb := _btn(fight_title, CARD_W - 30, 24, Look.resource("rations") if lg.v3() else _ic39("battle"), why, func(): _fight(st))
 	if lg.v3():
 		fb.name = "LegionRationBattle"
 		fb.set_meta("ration_cost", lg.ration_cost(st))
@@ -1970,12 +2538,12 @@ func _show_result(out: Dictionary, setup: Dictionary) -> void:
 		var rh := HBoxContainer.new()
 		rh.alignment = BoxContainer.ALIGNMENT_CENTER
 		rh.add_theme_constant_override("separation", 6)
-		rh.add_child(_tr(_ic38("chest"), 34))
+		rh.add_child(_tr(Look.icon("chest"), 34))
 		if rw.has("money"):
-			rh.add_child(_tr(hud.ico("coins", 64), 26))
+			rh.add_child(_tr(Look.resource("money"), 26))
 			rh.add_child(_l("+" + hud.fmt(float(rw["money"])), 20, true, C_GOOD))
 		if rw.has("glory"):
-			rh.add_child(_tr(_ic39("glory"), 28))
+			rh.add_child(_tr(Look.resource("glory"), 28))
 			rh.add_child(_l("+%d" % int(rw["glory"]), 20, true, C_GOOD))
 		if rw.has("rp"):
 			rh.add_child(_tr(hud.ico("research", 64), 26))
@@ -2031,6 +2599,7 @@ func _after_win(nx: Dictionary) -> void:
 
 ## Босс побеждён — карта «перелистывается» на следующую провинцию
 func _turn_page() -> void:
+	fort_prep_open = false
 	var fr := lg.frontier()
 	view_r = int(fr["r"])
 	view_c = int(fr["cycle"])
@@ -2061,7 +2630,7 @@ func _modal(w: float) -> PanelContainer:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(dim)
-	var p := Kit.card()
+	var p := Look.panel(Look.PAPER, 24) if is_instance_valid(fort_map) and fort_prep_open else Kit.card()
 	p.custom_minimum_size = Vector2(w, 0)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
@@ -2084,6 +2653,8 @@ func open_camp_window(kind: String, sid := 0) -> void:
 		return
 	if kind in ["forge", "mars"] and not lg.camp_built(kind):
 		return
+	_clear_fort_map()
+	fort_prep_open = false
 	camp_window = kind
 	_dirty = false
 	_live.clear()
@@ -2130,6 +2701,7 @@ func _center_later(p: Control) -> void:
 
 func _close_overlay() -> void:
 	if overlay != null and is_instance_valid(overlay):
+		overlay.hide()
 		overlay.queue_free()
 	overlay = null
 
@@ -2410,7 +2982,7 @@ func _soldier_card(s: Dictionary) -> Control:
 	var id := str(int(s["id"]))
 	if not lg.v3() and st == "ready" and r < Soldiers.rank_max(s):
 		var why := lg.can_train(int(s["id"]))
-		var tb := _btn("Тренировать · %s" % hud.fmt(float(Soldiers.train_cost(r))), 0, 13, hud.ico("coins", 64), why, func(): _do("train", id))
+		var tb := _btn("Тренировать · %s" % hud.fmt(float(Soldiers.train_cost(r))), 0, 13, Look.resource("money"), why, func(): _do("train", id))
 		tb.tooltip_text = (why + "\n" if why != "" else "") + "Ранг «%s» за %s" % [Soldiers.rank_name(r + 1), Legion.fmt_duration(Soldiers.train_h(r) * 3600.0)]
 		bv.add_child(tb)
 	var db := _btn("Отпустить", 0, 12, null, "", func(): pass)
@@ -2427,7 +2999,7 @@ func _soldier_card(s: Dictionary) -> Control:
 	return p
 
 
-const GEAR_ICON := {"weapon": "swords", "offhand": "shield", "helmet": "helmet", "armor": "legion", "badge": "laurels"}
+const GEAR_ICON := {"weapon": "swords", "offhand": "shield", "helmet": "helmet", "armor": "legion", "badge": "laurels", Gear.OUTFIT_SLOT: "clothes"}
 
 
 ## Слот вещи воина: цвет — редкость надетой вещи (пусто — бледный); щелчок — выбрать вещь
@@ -2589,7 +3161,8 @@ func _gear_pick(sid: int, slot: String) -> void:
 func _store() -> void:
 	var p := _modal(560)
 	var v: VBoxContainer = p.get_child(0)
-	v.add_child(_title("Склад: %d из %d" % [lg.store_count(), lg.store_cap()], 22))
+	var title := I18n.t("Рынок") + " · " if lg.v3() else ""
+	v.add_child(_title(title + I18n.t("Склад: %d из %d") % [lg.store_count(), lg.store_cap()], 24))
 	v.add_child(_wl("Вещи из добычи, что сейчас никто не носит. Надеть — щелчком по слоту в карточке воина. Лишнее можно продать.", 520, 13, C_SOFT))
 	var list := []
 	for it: Dictionary in lg.items:
@@ -2619,7 +3192,7 @@ func _store() -> void:
 			var smb := _btn("Разобрать", 0, 14, _gear_tex(Gear.ICON_SHARD), "", func(): _do("smelt", iid); _store())
 			smb.tooltip_text = "В Кузнице: +1 %s" % Gear.SHARD[int(it["rarity"])]
 			h.add_child(smb)
-		h.add_child(_btn("Продать · %s" % hud.fmt(float(Legion.item_price(it))), 0, 14, hud.ico("coins", 64), "", func(): _do("sell", iid); _store()))
+		h.add_child(_btn("Продать · %s" % hud.fmt(float(Legion.item_price(it))), 0, 14, Look.resource("money"), "", func(): _do("sell", iid); _store()))
 		lv.add_child(h)
 	sc.add_child(lv)
 	v.add_child(sc)
@@ -2667,7 +3240,7 @@ func _daily_win(got := {}) -> void:
 	bh.add_theme_constant_override("separation", 10)
 	var why := lg.can_open_daily()
 	if got.is_empty() and not bool(lg.daily.get("opened", false)):
-		bh.add_child(_btn("Открыть сундук", 0, 16, _ic38("chest"), why, func():
+		bh.add_child(_btn("Открыть сундук", 0, 16, Look.icon("chest"), why, func():
 			var g := lg.open_daily()
 			_daily_win(g)
 			_update_header()))
@@ -2822,7 +3395,7 @@ func _recruit_row(i: int) -> Control:
 	h.add_child(v)
 	var why := lg.can_recruit(i)
 	var ii := str(i)
-	var b := _btn("Взять · %s" % hud.fmt(float(lg.recruit_cost(i))), 0, 13, hud.ico("coins", 64), why, func(): _do("recruit", ii))
+	var b := _btn("Взять · %s" % hud.fmt(float(lg.recruit_cost(i))), 0, 13, Look.resource("money"), why, func(): _do("recruit", ii))
 	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	h.add_child(b)
 	return h
@@ -2956,7 +3529,7 @@ func _squad_panel(which: String) -> Control:
 		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		h.add_child(sp)
 		var b := _btn("Лучший состав", 0, 17, _ic39("battle"), "", func(): lg.use_auto_squad(_card_stage()))
-		b.tooltip_text = "Собрать отряд под выбранный бой: впереди легионеры и копейщики, за ними лучники, в тылу машины. Пока мест три — под врага: против пращников — с лучником, против волков — три легионера"
+		b.tooltip_text = "Собрать отряд под бой. На три места: против пращников берите лучника, против медведей — трёх легионеров."
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		h.add_child(b)
 	return p
@@ -3148,7 +3721,7 @@ func _perks_panel() -> Control:
 				tv.add_child(_l("наивысший", 13, true, C_GOOD))
 			else:
 				var ii := id
-				var b := _btn("+1 за %d" % lg.perk_cost(id), 0, 14, _ic39("glory"), why, func(): _do("perk", ii))
+				var b := _btn("+1 за %d" % lg.perk_cost(id), 0, 14, Look.resource("glory"), why, func(): _do("perk", ii))
 				b.custom_minimum_size = Vector2(120, 30)
 				tv.add_child(b)
 		else:
@@ -3529,7 +4102,7 @@ func _triumph_card() -> Control:
 	th.add_child(tv)
 	if lg.triumph_left <= 0:
 		var why := lg.can_triumph()
-		var tb := _btn("%d" % int(Legion.TRIUMPH["glory"]), 0, 16, _ic39("glory"), why, func(): _do("triumph", ""))
+		var tb := _btn("%d" % int(Legion.TRIUMPH["glory"]), 0, 16, Look.resource("glory"), why, func(): _do("triumph", ""))
 		tb.tooltip_text = "Устроить Триумф за %d Славы" % int(Legion.TRIUMPH["glory"]) if why == "" else why
 		tb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		th.add_child(tb)
@@ -3832,14 +4405,24 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mouse := event as InputEventMouseButton
 		if mouse.pressed and mouse.button_index == MOUSE_BUTTON_RIGHT:
-			close()
+			if is_instance_valid(fort_map) and fort_prep_open:
+				_close_fort_prep()
+			else:
+				close()
 			get_viewport().set_input_as_handled()
 		return
 	if not event is InputEventKey:
 		return
 	var key := event as InputEventKey
 	if key.pressed and not key.echo and key.keycode == KEY_ESCAPE:
-		close()
+		if is_instance_valid(fort_map) and fort_prep_open:
+			if fort_pick_place >= 0:
+				fort_pick_place = -1
+				_show_fort_prep()
+			else:
+				_close_fort_prep()
+		else:
+			close()
 		get_viewport().set_input_as_handled()
 
 

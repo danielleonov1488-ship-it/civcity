@@ -72,6 +72,7 @@ func fixture(late: bool) -> void:
 		if type != "":
 			var person := lg._add_soldier({"name": "Луций %d" % (i + 1), "cls": "legionary", "stars": 2})
 			check(lg.fort_assign(int(p["id"]), int(person["id"])), "fixture assignment " + type)
+	lg._fort_fill_grid()
 	lg._fort_sync_camp()
 	lg._ensure_hero3()
 	# Три спешенных бойца у коек. Работники остаются закреплены за комнатами.
@@ -199,11 +200,11 @@ func _run() -> void:
 			vacant += 1
 		elif int(p["lv"]) > 0 and (p["up"] as Dictionary).is_empty():
 			built += 1
-	if not check(view.grid == Vector2i(3, 2) and view.room_sprites.size() == 5 and built == 4 and vacant == 1, "early: two floors, four built and one empty"):
+	if not check(view.grid == Vector2i(5, 3) and view.room_sprites.size() == 14 and built == 4 and vacant == 10, "early: three floors, four built and ten empty"):
 		_finish()
 		return
-	check(view.sub.disable_3d and view.find_children("*", "Node3D", true, false).is_empty(), "separate 2D viewport")
-	check(not view.figures.is_empty() and view.figures[0]["node"] is Sprite2D, "drawn dwellers loaded")
+	check(view.sub.disable_3d and view.people_layer.viewport.own_world_3d and view.people_layer.viewport.transparent_bg, "painted viewport and shared 3D people")
+	check(not view.figures.is_empty() and view.figures[0]["node"] is Node3D, "3D dwellers loaded")
 	for id: int in view.room_rects:
 		check(view._pick(view.project(id)) == "plot_%d" % id, "room picking " + str(id))
 	var empty := lg.fort_empty_plot()
@@ -211,14 +212,14 @@ func _run() -> void:
 		_finish()
 		return
 	(camp.plot_markers[empty]["button"] as Button).pressed.emit()
-	check(camp.build_plot_id == empty and is_instance_valid(camp.build_scroll), "empty plus opens this plot")
+	check(camp.build_plot_id == empty and is_instance_valid(camp.build_scroll), "empty slot opens its catalog")
 	camp._close_modal()
 	await shot("1_early.png")
 	fixture(true)
 	model_checks()
 	view.sync()
 	camp._refresh()
-	check(view.grid == Vector2i(4, 4) and view.room_sprites.size() == 15, "late expansion 3")
+	check(view.grid == Vector2i(5, 4) and view.room_sprites.size() == 19, "late expansion 3")
 	var kitchen := int(lg.fort_slot_plot("kitchen")["id"])
 	check((camp.plot_markers[kitchen]["state"] as Label).visible, "unassigned room shows !")
 	var seen := {}
@@ -227,35 +228,72 @@ func _run() -> void:
 	check(seen.size() == 15, "all fifteen painted room types (seen %s)" % [seen.keys()])
 	await shot("2_late.png")
 	var forge := int(lg.fort_slot_plot("forge")["id"])
-	(camp.plot_markers[forge]["button"] as Button).pressed.emit()
-	check(camp.selected_plot == forge, "forge selected from room button")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.position = view.plot_footprint(forge).position + Vector2(8, 8)
+	click.pressed = true
+	view._gui_input(click)
+	click.pressed = false
+	view._gui_input(click)
+	check(camp.room_action_id == forge and view.selected_room == forge and camp.room_actions.visible,
+		"forge selected from cutaway")
+	var info := camp.room_actions.find_child("FortRoomInfo", true, false) as Button
+	if not check(info != null, "selected forge offers room info"):
+		return
+	info.pressed.emit()
+	check(camp.selected_plot == forge and is_instance_valid(camp.card), "info opens forge card")
 	camp._hide_card()
+	view.focus_plot("forge")
 	await get_tree().create_timer(1.1).timeout
 	var smith := false
 	for entry: Dictionary in view.figures:
 		if int(entry["plot"]) == forge and entry["role"] == "forge":
-			var sprite: Sprite2D = entry["node"]
+			var actor: Node3D = entry["node"]
 			for i in 32:
 				view._animate_people(0.25)
-				smith = smith or (sprite.visible and sprite.frame >= 6)
+				smith = smith or (actor.visible and entry["clip"] == "Interact")
 	check(smith, "smith working in forge")
 	var forge_rect := view.plot_footprint(forge)
 	var room_height := forge_rect.size.y / view.size.y
 	check(room_height >= 0.45 and room_height <= 0.50, "selected room occupies 45 to 50 percent of viewport height")
 	check(Rect2(Vector2.ZERO, view.size).encloses(forge_rect), "selected room fits in viewport")
 	await shot("3_zoom_forge.png")
+	var off_screen := false
+	for id: int in view.room_rects:
+		if not Rect2(Vector2.ZERO, view.size).intersects(view.plot_footprint(id)):
+			off_screen = true
+			break
+	check(off_screen, "close-up leaves some rooms off screen")
 	var paused := false
 	for entry: Dictionary in view.figures:
-		var sprite: Sprite2D = entry["node"]
-		if sprite.visible:
+		var actor: Node3D = entry["node"]
+		if actor.visible:
 			continue
-		var before := sprite.frame
+		var before := float(entry["sample"])
 		view._animate_people(0.45)
-		check(not sprite.visible and sprite.frame == before, "off-screen sprite frame is held")
+		check(not actor.visible and float(entry["sample"]) == before, "off-screen pose is held")
 		paused = true
 		break
-	check(paused, "zoom leaves rooms off screen")
+	check(paused, "close-up pauses off-screen figures")
+	# Панорамируем с приближением до каждого участка, включая дальний этаж.
+	var pan := InputEventMouseButton.new()
+	pan.button_index = MOUSE_BUTTON_MIDDLE
+	pan.position = view.size * 0.5
+	pan.pressed = true
+	view._gui_input(pan)
+	for id: int in view.room_rects:
+		var motion := InputEventMouseMotion.new()
+		motion.relative = view.size * 0.5 - view.project(id)
+		view._gui_input(motion)
+		view._process(2.0)
+		check(Rect2(Vector2.ZERO, view.size).encloses(view.plot_footprint(id))
+			and view._pick_id(view.project(id)) == id, "room %d reachable by panning" % id)
+	pan.pressed = false
+	view._gui_input(pan)
 	view.focus_plot("hq", false)
+	view._process(2.0)
+	for id: int in view.room_rects:
+		check(Rect2(Vector2.ZERO, view.size).encloses(view.plot_footprint(id)), "room %d visible in overview" % id)
 	camp.show_plot(kitchen)
 	check(camp.main_action.get_meta("action_name") == I18n.t("Назначить"), "main action assigns worker")
 	await shot("4_card_assign.png")

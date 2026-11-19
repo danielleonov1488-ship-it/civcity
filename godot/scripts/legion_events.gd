@@ -5,7 +5,7 @@ extends RefCounted
 ##   - Испытание недели — с сервером (SocialNet.events_*): бой по правилу недели против врага недели, три сложности,
 ##     таблица очков; награду за первую победу на сложности даёт сервер.
 ##   - Нашествие варваров (чётные недели) и Подземелья (нечётные) — без сервера: бои против варваров (враги походов:
-##     галлы, германцы, берсерки, волки), сила — под силу нашего отряда. Набегов — RAIDS_DAY в сутки; этажей
+##     галлы, германцы, берсерки, медведи), сила — под силу нашего отряда. Набегов — RAIDS_DAY в сутки; этажей
 ##     подземелья — FLOORS за неделю, по порядку, каждый сильнее. Награда — денарии и Слава (подземелье — ещё обломки
 ##     для Кузницы, если Легион 2.0).
 ## Бой — обычный 3D-бой с городом (kind "pvp": враги строем, их умения жмёт бой) с пометкой setup.event; итог считает
@@ -15,13 +15,13 @@ const EPOCH := 1793577600                # 2.11.2026 00:00 UTC — как EPOCH 
 const WEEK := 604800
 const RAIDS_DAY := 3
 const RAID_K := [0.85, 1.0, 1.15]
-const RAID_FOES := ["gaul", "gaul", "gaulArcher", "berserker", "germArcher", "wolf"]
+const RAID_FOES := ["gaul", "gaul", "gaulArcher", "berserker", "germArcher", "forestBear"]
 const FLOORS := 5
 const FLOOR_K := [0.8, 0.95, 1.1, 1.25, 1.45]
-const FLOOR_FOES := [["wolf", "wolf", "wolf", "wolf", "bandit"], ["bandit", "bandit", "gaulArcher", "bandit", "wolf"],
+const FLOOR_FOES := [["forestBear", "forestBear", "forestBear", "forestBear", "bandit"], ["bandit", "bandit", "gaulArcher", "bandit", "forestBear"],
 	["gaul", "gaul", "gaulArcher", "gaulArcher", "gaul"], ["berserker", "berserker", "germArcher", "germArcher", "berserker"],
 	["gaulKing", "gaul", "gaul", "gaulArcher", "gaulArcher"]]
-const FLOOR_NAMES := ["Волчье логово", "Пещера разбойников", "Галльские катакомбы", "Святилище берсерков", "Чертог вождя"]
+const FLOOR_NAMES := ["Медвежья берлога", "Пещера разбойников", "Галльские катакомбы", "Святилище берсерков", "Чертог вождя"]
 
 
 static func week(t := -1.0) -> int:

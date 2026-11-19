@@ -521,12 +521,12 @@ func _card_puzzle(c: City, lg: Legion, ui: LegionUi) -> void:
 		await frames(2)
 	await frames(16)
 	await shot("card_slingers_bow")
-	# «Волчья тропа» с лучником: советует трёх легионеров
+	# «Медвежья тропа» с лучником: советует трёх легионеров
 	lg.progress = 2
 	ui.sel = {}
 	ui._rebuild()
 	await frames(6)
-	check("«Волчья тропа» с лучником — «загрызут»", _texts(ui.content).contains("Волки загрызут лучника"))
+	check("«Медвежья тропа» с лучником — «загрызут»", _texts(ui.content).contains("Медведи загрызут лучника"))
 	lg.squad = ["legionary", "legionary", "legionary"]
 	c.remove(rb, false)
 	lg.progress = p0

@@ -40,6 +40,9 @@ extends RefCounted
 ##   картинки: art(kind, id) {file, grid, i}, art_texture(kind, id) -> Texture2D | null (kind: unit|enemy|perk|wonder|map)
 ##   слова:    fmt_duration(с), roman(n), boss_name(n)
 
+const PersonLook = preload("res://scripts/legion_person_look.gd")
+
+
 signal changed                      # что-то поменялось (уровень, отряд, Слава) — перерисовать окно
 ## Окно «Легион» просит бой (start_battle / start_pvp_battle): setup из make_battle / make_pvp_battle.
 ## 3D-бой подключается к сигналу, крутит LegionSim и зовёт apply_result / apply_pvp_result; если никто не слушает —
@@ -183,7 +186,7 @@ const VIS_MAX := 5
 const ENEMIES := {
 	"bandit": {"name": "Разбойник", "hp": 120, "atk": 12, "armor": 5, "range": 0.95, "rate": 1.0, "speed": 1.7, "tags": ["human"], "art": 0},
 	"slinger": {"name": "Пращник", "hp": 85, "atk": 11, "armor": 0, "range": 6.5, "rate": 1.3, "speed": 1.6, "shot": "sling", "tags": ["human", "ranged"], "art": 1},
-	"wolf": {"name": "Волк", "hp": 85, "atk": 10, "armor": 0, "range": 0.85, "rate": 0.75, "speed": 2.8, "prefer": "ranged", "tags": ["beast", "swift", "swarm"], "art": 2},
+	"forestBear": {"name": "Лесной медведь", "hp": 85, "atk": 10, "armor": 0, "range": 0.85, "rate": 0.75, "speed": 2.8, "prefer": "ranged", "tags": ["beast", "swift", "swarm"], "art": 4},
 	"boar": {"name": "Вепрь", "hp": 170, "atk": 15, "armor": 18, "range": 0.9, "rate": 1.1, "speed": 2.1, "tags": ["beast"], "art": 3},
 	"bear": {"name": "Медведь", "hp": 380, "atk": 26, "armor": 20, "range": 1.1, "rate": 1.4, "speed": 1.4, "size": 1.25, "tags": ["beast", "giant"], "art": 4},
 	"gaul": {"name": "Галл", "hp": 200, "atk": 18, "armor": 14, "range": 1.0, "rate": 1.05, "speed": 1.6, "tags": ["human"], "art": 5},
@@ -193,7 +196,7 @@ const ENEMIES := {
 	"pirate": {"name": "Пират", "hp": 190, "atk": 20, "armor": 10, "range": 1.0, "rate": 0.95, "speed": 1.8, "tags": ["human", "swift"], "art": 9},
 	"mercenary": {"name": "Наёмник Карфагена", "hp": 260, "atk": 20, "armor": 38, "range": 1.0, "rate": 1.1, "speed": 1.4, "tags": ["human", "armored"], "art": 10},
 	"shade": {"name": "Тень Аида", "hp": 240, "atk": 23, "armor": 32, "range": 1.0, "rate": 1.0, "speed": 1.6, "tags": ["human", "armored"], "art": 11},
-	"hellhound": {"name": "Адский пёс", "hp": 130, "atk": 15, "armor": 8, "range": 0.85, "rate": 0.7, "speed": 3.0, "prefer": "ranged", "tags": ["beast", "swift", "swarm"], "art": 12},
+	"hadesBear": {"name": "Медведь Аида", "hp": 130, "atk": 15, "armor": 8, "range": 0.85, "rate": 0.7, "speed": 3.0, "prefer": "ranged", "tags": ["beast", "swift", "swarm"], "art": 4},
 	# боссы — последний бой каждой провинции
 	"chief": {"name": "Атаман разбойников", "boss": true, "hp": 620, "atk": 26, "armor": 18, "range": 1.1, "rate": 1.0, "speed": 1.6, "size": 1.3, "tags": ["human"], "art": 0,
 		"summon": {"first": 5.0, "every": 12.0, "warn": 3.0, "foes": ["bandit", "bandit", "bandit"]}},
@@ -203,7 +206,7 @@ const ENEMIES := {
 	"minotaur": {"name": "Минотавр", "boss": true, "hp": 2300, "atk": 56, "armor": 40, "range": 1.5, "rate": 1.4, "speed": 1.6, "size": 1.75, "cleave": 1.3, "charge": true, "tags": ["beast", "giant", "armored"], "art": 4},
 	"cyclops": {"name": "Циклоп", "boss": true, "hp": 3000, "atk": 62, "armor": 30, "range": 8.0, "rate": 2.6, "speed": 1.1, "size": 2.1, "shot": "boulder", "splash": 1.8, "tags": ["giant"], "art": 5},
 	"elephant": {"name": "Боевой слон Ганнибала", "boss": true, "hp": 4000, "atk": 70, "armor": 50, "range": 1.7, "rate": 1.8, "speed": 1.2, "size": 1.45, "cleave": 1.8, "tags": ["beast", "giant", "armored"], "art": 6},
-	"cerberus": {"name": "Цербер", "boss": true, "hp": 4600, "atk": 80, "armor": 40, "range": 1.5, "rate": 1.1, "speed": 1.9, "size": 1.9, "bites": 3, "tags": ["beast", "giant"], "art": 7},
+	"hadesGuardian": {"name": "Медведь-страж", "boss": true, "hp": 4600, "atk": 80, "armor": 40, "range": 1.5, "rate": 1.1, "speed": 1.9, "size": 1.9, "bites": 3, "tags": ["beast", "giant"], "art": 1},
 	# ---- поход Легиона 2.0 (10 провинций × 15 боёв, только новая игра; docs/LEGION_V2.md 3.6). sheet — лист портретов:
 	# 44 — враги (4×4), 45 — боссы (4×4). Приёмы (legion_sim.gd): aura — лечит своих {every, k}; poison — яд в ударе;
 	# sunder — броня не спасает; kite — отходит от мечей и стреляет; guard — неуязвим, пока живы эти враги;
@@ -216,14 +219,14 @@ const ENEMIES := {
 	"celtiberian": {"name": "Кельтибер", "hp": 230, "atk": 21, "armor": 18, "range": 1.0, "rate": 1.0, "speed": 1.7, "tags": ["human"], "sheet": "44", "art": 4},
 	"numidian": {"name": "Нумидиец", "hp": 130, "atk": 18, "armor": 4, "range": 6.0, "rate": 1.4, "speed": 2.4, "shot": "arrow", "tags": ["human", "ranged", "swift"], "sheet": "44", "art": 5},
 	"nileArcher": {"name": "Лучник Нила", "hp": 140, "atk": 20, "armor": 6, "range": 7.0, "rate": 1.25, "speed": 1.5, "shot": "arrow", "tags": ["human", "ranged"], "sheet": "44", "art": 6},
-	"jackal": {"name": "Шакал", "hp": 120, "atk": 15, "armor": 4, "range": 0.85, "rate": 0.7, "speed": 3.0, "prefer": "ranged", "poison": 0.2, "tags": ["beast", "swift", "swarm"], "sheet": "44", "art": 7},
+	"venomBear": {"name": "Ядовитый медведь", "hp": 120, "atk": 15, "armor": 4, "range": 0.85, "rate": 0.7, "speed": 3.0, "prefer": "ranged", "poison": 0.2, "tags": ["beast", "swift", "swarm"], "art": 4},
 	"khopesh": {"name": "Страж с хопешем", "hp": 280, "atk": 24, "armor": 26, "range": 1.0, "rate": 1.05, "speed": 1.5, "tags": ["human", "armored"], "sheet": "44", "art": 8},
 	"priest": {"name": "Жрец", "hp": 160, "atk": 12, "armor": 6, "range": 6.0, "rate": 1.6, "speed": 1.4, "shot": "sling", "tags": ["human", "ranged"],
 		"aura": {"every": 5.0, "k": 0.05}, "sheet": "44", "art": 9},
 	"horseArcher": {"name": "Парфянский лучник", "hp": 170, "atk": 22, "armor": 10, "range": 7.0, "rate": 1.15, "speed": 2.6, "shot": "arrow", "kite": 6.0,
 		"tags": ["human", "ranged", "swift"], "sheet": "44", "art": 10},
 	"cataphractFoe": {"name": "Катафракт", "hp": 380, "atk": 26, "armor": 60, "range": 1.1, "rate": 1.15, "speed": 1.3, "tags": ["human", "armored"], "sheet": "44", "art": 11},
-	"dacian": {"name": "Дак с фальксом", "hp": 260, "atk": 30, "armor": 8, "range": 1.05, "rate": 1.1, "speed": 1.8, "sunder": true, "tags": ["human"], "sheet": "44", "art": 12},
+	"dacian": {"name": "Дак с фальксом", "hp": 260, "atk": 30, "armor": 8, "range": 1.05, "rate": 1.1, "speed": 1.8, "sunder": true, "tags": ["human"], "portrait": "barbarian_warrior"},
 	# младшие боссы (8-й бой провинции)
 	"druidBoss": {"name": "Верховный друид", "boss": true, "hp": 900, "atk": 22, "armor": 12, "range": 6.5, "rate": 1.5, "speed": 1.3, "size": 1.25, "shot": "sling",
 		"tags": ["human", "ranged"], "aura": {"every": 4.0, "k": 0.07}, "sheet": "45", "art": 0},
@@ -233,12 +236,12 @@ const ENEMIES := {
 		"tags": ["beast", "giant"], "sheet": "45", "art": 2},
 	"setPriest": {"name": "Жрец Сета", "boss": true, "hp": 2600, "atk": 40, "armor": 20, "range": 6.5, "rate": 1.6, "speed": 1.3, "size": 1.3, "shot": "sling",
 		"tags": ["human", "ranged"], "abil": {"kind": "storm", "first": 5.0, "every": 18.0, "warn": 2.5, "dur": 7.0, "k": 0.4},
-		"summon": {"first": 10.0, "every": 18.0, "warn": 3.0, "foes": ["jackal", "jackal", "jackal"]}, "sheet": "45", "art": 3},
+		"summon": {"first": 10.0, "every": 18.0, "warn": 3.0, "foes": ["venomBear", "venomBear", "venomBear"]}, "sheet": "44", "art": 9},
 	"cataphract": {"name": "Катафракт-вожак", "boss": true, "hp": 3200, "atk": 58, "armor": 85, "range": 1.3, "rate": 1.3, "speed": 1.3, "size": 1.4, "cleave": 1.0,
 		"tags": ["human", "armored"], "sheet": "45", "art": 4},
 	"zalPriest": {"name": "Жрец Залмоксиса", "boss": true, "hp": 3600, "atk": 50, "armor": 25, "range": 6.5, "rate": 1.5, "speed": 1.3, "size": 1.3, "shot": "sling",
-		"tags": ["human", "ranged"], "aura": {"every": 4.0, "k": 0.06}, "summon": {"first": 8.0, "every": 16.0, "warn": 3.0, "foes": ["wolf", "wolf", "wolf"]},
-		"sheet": "45", "art": 5},
+		"tags": ["human", "ranged"], "aura": {"every": 4.0, "k": 0.06}, "summon": {"first": 8.0, "every": 16.0, "warn": 3.0, "foes": ["forestBear", "forestBear", "forestBear"]},
+		"sheet": "45", "art": 0},
 	# главные боссы (15-й бой провинции)
 	"spartacus": {"name": "Спартак-самозванец", "boss": true, "hp": 900, "atk": 30, "armor": 20, "range": 1.1, "rate": 1.0, "speed": 1.6, "size": 1.35, "tags": ["human"],
 		"abil": {"kind": "raise", "first": 8.0, "every": 14.0, "warn": 2.5, "n": 3, "k": 0.6}, "sheet": "45", "art": 6,
@@ -250,25 +253,25 @@ const ENEMIES := {
 		"tags": ["human", "armored"], "abil": {"kind": "warcry", "first": 6.0, "every": 16.0, "warn": 2.5, "dur": 6.0, "k": 0.3}, "sheet": "45", "art": 8,
 		"tip": "Боевой клич: враги бьют на треть сильнее. Сбить клич — удар баллисты, катапульты или умение, пока он трубит."},
 	"arminius": {"name": "Арминий", "boss": true, "hp": 2100, "atk": 46, "armor": 30, "range": 1.2, "rate": 1.1, "speed": 1.6, "size": 1.4, "tags": ["human"],
-		"abil": {"kind": "ambush", "first": 6.0, "every": 24.0, "warn": 3.0, "foes": ["berserker", "berserker", "germArcher", "wolf"]}, "sheet": "45", "art": 9,
+		"abil": {"kind": "ambush", "first": 6.0, "every": 24.0, "warn": 3.0, "foes": ["berserker", "berserker", "germArcher", "forestBear"]}, "sheet": "45", "art": 9,
 		"tip": "Засада: волна заходит с тыла и бьёт по лучникам и машинам — держите сзади легионера."},
 	"boudicca": {"name": "Боудикка", "boss": true, "hp": 2500, "atk": 48, "armor": 26, "range": 1.1, "rate": 1.1, "speed": 1.8, "size": 1.35, "tags": ["human"],
 		"abil": {"kind": "chariot", "first": 6.0, "every": 14.0, "warn": 2.5, "k": 1.6}, "sheet": "45", "art": 10,
 		"tip": "Колесницы проносятся по ряду: копейщики в ряду их останавливают, «Черепаха» гасит удар."},
 	"viriathus": {"name": "Вириат", "boss": true, "hp": 2900, "atk": 52, "armor": 34, "range": 1.2, "rate": 1.1, "speed": 1.6, "size": 1.4, "tags": ["human"],
-		"guard": ["slinger"], "summon": {"first": 14.0, "every": 18.0, "warn": 3.0, "foes": ["slinger", "slinger"]}, "sheet": "45", "art": 11,
+		"guard": ["slinger"], "summon": {"first": 14.0, "every": 18.0, "warn": 3.0, "foes": ["slinger", "slinger"]}, "portrait": "barbarian_chief",
 		"tip": "Неуязвим, пока живы его пращники, и зовёт новых — нужны лучники."},
 	"hannibal": {"name": "Ганнибал", "boss": true, "hp": 3400, "atk": 58, "armor": 40, "range": 1.2, "rate": 1.1, "speed": 1.5, "size": 1.4, "cleave": 0.9,
 		"tags": ["human", "armored"], "abil": {"kind": "ward", "first": 5.0, "every": 15.0, "warn": 0.0, "dur": 6.0}, "sheet": "45", "art": 12,
 		"tip": "Перестраивает войско: то щиты от стрел, то от мечей. Нужны и стрелки, и мечи."},
 	"pharaoh": {"name": "Последний фараон", "boss": true, "hp": 3800, "atk": 60, "armor": 34, "range": 1.2, "rate": 1.1, "speed": 1.5, "size": 1.4, "poison": 0.3,
-		"tags": ["human"], "summon": {"first": 8.0, "every": 18.0, "warn": 3.0, "foes": ["jackal", "jackal", "jackal"]}, "sheet": "45", "art": 13,
-		"tip": "Яд его и шакалов копится — «Перевязка» снимает яд."},
+		"tags": ["human"], "summon": {"first": 8.0, "every": 18.0, "warn": 3.0, "foes": ["venomBear", "venomBear", "venomBear"]}, "sheet": "45", "art": 13,
+		"tip": "Яд фараона и медведей снимает «Перевязка»."},
 	"surena": {"name": "Сурена", "boss": true, "hp": 4000, "atk": 64, "armor": 30, "range": 7.5, "rate": 1.4, "speed": 2.0, "size": 1.35, "shot": "arrow", "kite": 8.0,
 		"tags": ["human", "ranged"], "summon": {"first": 10.0, "every": 20.0, "warn": 3.0, "foes": ["horseArcher", "horseArcher"]}, "sheet": "45", "art": 14,
 		"tip": "Парфянский выстрел: его лучники отходят и стреляют — догонят баллисты и лучники."},
 	"decebalus": {"name": "Децебал", "boss": true, "hp": 4800, "atk": 76, "armor": 40, "range": 1.3, "rate": 1.2, "speed": 1.6, "size": 1.45, "cleave": 1.1, "sunder": true,
-		"tags": ["human"], "sheet": "45", "art": 15, "tip": "Фалькс бьёт сквозь щит — броня не спасает. Нужны лекари-перевязки и лучники."},
+		"tags": ["human"], "portrait": "barbarian_chief", "tip": "Фалькс бьёт сквозь щит — броня не спасает. Нужны лекари-перевязки и лучники."},
 }
 
 # =====================================================================
@@ -281,14 +284,14 @@ const ENEMIES := {
 ## Самый трудный бой провинции (target_level) не выше предела бойцов CAP_BY_CITY её уровня — стены нет.
 ## trophy — украшение в город за все 30 звёзд провинции (Defs.B, unlock «trophy:<id провинции>»)
 const REGIONS := [
-	{"id": "forest", "name": "Лес разбойников", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "wolf"], "boss": "chief", "rank": 1,
-		"desc": "Шайки на лесной дороге: пращники в кустах, волчьи тропы, атаман с шайкой. Подбирайте отряд под бой.", "map": "40a",
+	{"id": "forest", "name": "Лес разбойников", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "forestBear"], "boss": "chief", "rank": 1,
+		"desc": "Пращники в кустах, медведи на тропах и шайка атамана. Подбирайте отряд под бой.", "map": "40a",
 		"trophy": "trophy_cart"},
-	{"id": "hills", "name": "Дикие холмы", "biome": "hills", "foes": ["wolf", "wolf", "boar", "bear"], "boss": "greatbear", "rank": 3,
-		"desc": "Волчьи стаи и медведи. Копейщики держат зверя на расстоянии.", "map": "40b"},
+	{"id": "hills", "name": "Дикие холмы", "biome": "hills", "foes": ["forestBear", "forestBear", "boar", "bear"], "boss": "greatbear", "rank": 3,
+		"desc": "Вепри и медведи. Копейщики держат зверей на расстоянии.", "map": "40b"},
 	{"id": "gaul", "name": "Галльская чаща", "biome": "darkforest", "foes": ["gaul", "gaul", "gaulArcher", "boar"], "boss": "gaulKing", "rank": 5,
 		"desc": "Галлы бьются отчаянно, их лучники прячутся за деревьями.", "map": "40c"},
-	{"id": "germania", "name": "Германские болота", "biome": "swamp", "foes": ["berserker", "wolf", "gaulArcher", "berserker"], "boss": "giant", "rank": 5,
+	{"id": "germania", "name": "Германские болота", "biome": "swamp", "foes": ["berserker", "forestBear", "gaulArcher", "berserker"], "boss": "giant", "rank": 5,
 		"desc": "Берсерки не знают страха. В тумане ждёт великан.", "map": "40d"},
 	{"id": "crete", "name": "Лабиринт Минотавра", "biome": "labyrinth", "foes": ["bull", "pirate", "bull", "slinger"], "boss": "minotaur", "rank": 6,
 		"desc": "Каменные коридоры Крита и бешеные быки.", "map": "40e"},
@@ -296,21 +299,21 @@ const REGIONS := [
 		"desc": "Пираты на берегу, а наверху — циклоп с камнями.", "map": "40f"},
 	{"id": "carthage", "name": "Пески Карфагена", "biome": "desert", "foes": ["mercenary", "slinger", "mercenary", "pirate"], "boss": "elephant", "rank": 7,
 		"desc": "Наёмники в броне и боевые слоны Ганнибала.", "map": "40g"},
-	{"id": "hades", "name": "Врата Аида", "biome": "hades", "foes": ["shade", "hellhound", "shade", "hellhound"], "boss": "cerberus", "rank": 7,
-		"desc": "Тени и адские псы стерегут вход. За ними — Цербер.", "map": "40h"},
+	{"id": "hades", "name": "Врата Аида", "biome": "hades", "foes": ["shade", "hadesBear", "shade", "hadesBear"], "boss": "hadesGuardian", "rank": 7,
+		"desc": "Тени и медведи стерегут вход. За ними — медведь-страж.", "map": "40h"},
 ]
 const STAGES := 10
 ## ---- Поход Легиона 2.0 (только новая игра, Legion.V2 — выставляет army_on): 10 провинций по 15 боёв, 8-й — младший
 ## босс (junior), 15-й — главный со своим приёмом (docs/LEGION_V2.md 3.6). prin — с какого уровня Принципии открыта
 ## (без Принципии — как PRIN_NONE). map — рисованная карта (нет файла — окно рисует свою)
 const REGIONS2 := [
-	{"id": "forest", "name": "Италия", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "wolf"], "junior": "chief", "boss": "spartacus",
-		"prin": 1, "map": "40a", "trophy": "trophy_cart", "desc": "Шайки на дорогах Италии, пращники в кустах, волчьи тропы. В конце — Спартак-самозванец."},
-	{"id": "alps", "name": "Альпы", "biome": "rocks", "foes": ["wolf", "wolf", "boar", "bear"], "junior": "greatbear", "boss": "salassi",
-		"prin": 2, "map": "40b", "desc": "Перевалы, волки и медведи. Вождь салассов обрушивает лавины."},
+	{"id": "forest", "name": "Италия", "biome": "forest", "foes": ["bandit", "bandit", "slinger", "forestBear"], "junior": "chief", "boss": "spartacus",
+		"prin": 1, "map": "40a", "trophy": "trophy_cart", "desc": "На дорогах Италии — разбойники, пращники и медведи. В конце ждёт Спартак-самозванец."},
+	{"id": "alps", "name": "Альпы", "biome": "rocks", "foes": ["forestBear", "forestBear", "boar", "bear"], "junior": "greatbear", "boss": "salassi",
+		"prin": 2, "map": "40b", "desc": "На перевалах — вепри и медведи. Вождь салассов обрушивает лавины."},
 	{"id": "gaul", "name": "Галлия", "biome": "darkforest", "foes": ["gaul", "gaul", "gaulArcher", "druid"], "junior": "druidBoss", "boss": "vercingetorix",
 		"prin": 3, "map": "40c", "desc": "Галлы, лучники за деревьями и друиды, что лечат своих. Друидов — первыми."},
-	{"id": "germania", "name": "Германия", "biome": "swamp", "foes": ["berserker", "wolf", "germArcher", "berserker"], "junior": "giant", "boss": "arminius",
+	{"id": "germania", "name": "Германия", "biome": "swamp", "foes": ["berserker", "forestBear", "germArcher", "berserker"], "junior": "giant", "boss": "arminius",
 		"prin": 4, "map": "40d", "desc": "Берсерки в болотах, великан в тумане. Арминий заходит с тыла."},
 	{"id": "britannia", "name": "Британия", "biome": "hills", "foes": ["briton", "briton", "chariot", "druid"], "junior": "charioteer", "boss": "boudicca",
 		"prin": 5, "map": "40i", "desc": "Бритты на холмах и боевые колесницы. Копейщики их держат."},
@@ -318,11 +321,11 @@ const REGIONS2 := [
 		"prin": 6, "map": "40f", "desc": "Кельтиберы, пращники в скалах и быки. Вириат неуязвим, пока живы его пращники."},
 	{"id": "africa", "name": "Африка", "biome": "desert", "foes": ["mercenary", "numidian", "mercenary", "slinger"], "junior": "elephant", "boss": "hannibal",
 		"prin": 7, "map": "40g", "desc": "Наёмники в броне, нумидийцы с дротиками, боевые слоны. Ганнибал меняет строй."},
-	{"id": "egypt", "name": "Египет", "biome": "desert", "foes": ["nileArcher", "jackal", "khopesh", "priest"], "junior": "setPriest", "boss": "pharaoh",
-		"prin": 8, "map": "40j", "desc": "Лучники Нила, шакалы с ядом и жрецы. Песчаная буря слепит стрелков."},
+	{"id": "egypt", "name": "Египет", "biome": "desert", "foes": ["nileArcher", "venomBear", "khopesh", "priest"], "junior": "setPriest", "boss": "pharaoh",
+		"prin": 8, "map": "40j", "desc": "Лучники Нила, ядовитые медведи и жрецы. Буря слепит стрелков."},
 	{"id": "parthia", "name": "Парфия", "biome": "rocks", "foes": ["horseArcher", "cataphractFoe", "horseArcher", "numidian"], "junior": "cataphract", "boss": "surena",
 		"prin": 10, "map": "40k", "desc": "Лучники, что стреляют на отходе, и катафракты в тяжёлой броне."},
-	{"id": "dacia", "name": "Дакия", "biome": "darkforest", "foes": ["dacian", "wolf", "dacian", "priest"], "junior": "zalPriest", "boss": "decebalus",
+	{"id": "dacia", "name": "Дакия", "biome": "darkforest", "foes": ["dacian", "forestBear", "dacian", "priest"], "junior": "zalPriest", "boss": "decebalus",
 		"prin": 11, "map": "40l", "desc": "Даки с фальксами бьют сквозь щит. Децебал — последний враг похода."},
 ]
 const STAGES2 := 15
@@ -801,9 +804,21 @@ func class_open(cls: String) -> bool:
 	return false
 
 
+func _person_look(person: Dictionary, fallback_id := 1) -> void:
+	var c = city()
+	if bool(person.get("hero", false)) and not person.has("look") and c != null and Hero.exists(c):
+		person["look"] = Hero.look(c).duplicate()
+		person["female"] = Hero.female(c)
+	PersonLook.ensure(person, fallback_id)
+
+
 func _add_soldier(d: Dictionary) -> Dictionary:
 	var s := {"id": sid_next, "name": String(d.get("name", "")), "from": String(d.get("from", "")), "cls": String(d.get("cls", "legionary")),
 		"stars": clampi(int(d.get("stars", 1)), 1, 5), "rank": 0, "train_end": 0.0, "train_total": 0.0, "wound_end": 0.0, "battles": 0, "falls": 0, "gear": {}}
+	for key: String in ["look_seed", "female", "look", "res", "hero"]:
+		if d.has(key):
+			s[key] = d[key]
+	_person_look(s)
 	sid_next += 1
 	soldiers.append(s)
 	return s
@@ -883,8 +898,10 @@ func roll_recruits() -> void:
 	var n := 3 + (1 if barracks_lvl() >= 6 else 0) + (1 if barracks_lvl() >= 10 else 0)
 	var q := recruit_quality()
 	for i in n:
-		recruits.append({"name": Soldiers.roll_name(_rng), "from": Soldiers.ORIGINS[_rng.randi() % Soldiers.ORIGINS.size()],
-			"cls": open[_rng.randi() % open.size()], "stars": Soldiers.roll_stars(_rng, q)})
+		var recruit_data := {"name": Soldiers.roll_name(_rng), "from": Soldiers.ORIGINS[_rng.randi() % Soldiers.ORIGINS.size()],
+			"cls": open[_rng.randi() % open.size()], "stars": Soldiers.roll_stars(_rng, q)}
+		_person_look(recruit_data, recruit_day * 7 + i + 1)
+		recruits.append(recruit_data)
 
 
 ## Насколько хорош город для новобранцев (0…1): счастье и уровень
@@ -1054,7 +1071,7 @@ func gear_bonus(s: Dictionary) -> Dictionary:
 	var out := {"atk": 0.0, "hp": 0.0, "armor": 0.0}
 	var v := v3()
 	for slot in (s.get("gear", {}) as Dictionary):
-		if v and slot == "badge":
+		if slot == Gear.OUTFIT_SLOT or (v and slot == "badge"):
 			continue
 		var it := item(int(s["gear"][slot]))
 		if it.is_empty():
@@ -1072,6 +1089,8 @@ func can_equip(sid: int, iid: int) -> String:
 	var it := item(iid)
 	if s.is_empty() or it.is_empty():
 		return "Нет такой вещи"
+	if String(it["slot"]) == Gear.OUTFIT_SLOT and not v3():
+		return "Одежду носят в форте"
 	if v3():
 		return "Знак в лагере не носят" if String(it["slot"]) == "badge" else ""     # любое оружие любому: класс меняется
 	if not Gear.fits(it, String(s["cls"])):
@@ -1087,6 +1106,8 @@ func equip(sid: int, iid: int) -> bool:
 	var it := item(iid)
 	var slot := String(it["slot"])
 	var was := int(it.get("on", 0))
+	if slot == Gear.OUTFIT_SLOT:
+		fort_finish()
 	var o := {}
 	if was != 0 and was != sid:
 		o = soldier(was)
@@ -1099,6 +1120,8 @@ func equip(sid: int, iid: int) -> bool:
 		old["on"] = 0
 	s["gear"][slot] = iid
 	it["on"] = sid
+	if slot == Gear.OUTFIT_SLOT:
+		_update_smith_deadlines(s, o)
 	if v3() and slot == "weapon":
 		_v3_reclass(s)                       # оружие решает класс
 		if not o.is_empty():
@@ -1116,10 +1139,14 @@ func unequip(sid: int, slot: String) -> bool:
 		return false
 	if store_count() >= store_cap():
 		return false
+	if slot == Gear.OUTFIT_SLOT:
+		fort_finish()
 	var it := item(int(s["gear"][slot]))
 	if not it.is_empty():
 		it["on"] = 0
 	(s["gear"] as Dictionary).erase(slot)
+	if slot == Gear.OUTFIT_SLOT:
+		_update_smith_deadlines(s, {})
 	if v3() and slot == "weapon":
 		_v3_reclass(s)                       # без оружия — меч даром, легионер
 	changed.emit()
@@ -1680,7 +1707,7 @@ func _army_after(setup: Dictionary, result: Dictionary) -> Array:
 		s["battles"] = int(s.get("battles", 0)) + 1
 		if fallen.has(int(u["sid"])):
 			s["falls"] = int(s.get("falls", 0)) + 1
-			var m := Soldiers.HEAL_MIN * (int(s["rank"]) + 1) * heal_k()
+			var m := Soldiers.HEAL_MIN * (int(s["rank"]) + 1) * heal_k() / _fort_healing_speed()
 			if hurt >= beds():
 				m *= 2.0
 			hurt += 1
@@ -1944,8 +1971,8 @@ func set_defense_slot(i: int, type: String) -> void:
 
 ## Хороший состав из доступных родов войск под бой st: впереди держат строй легионеры и копейщики, за ними лучники,
 ## в тылу машины (кнопка «Лучший состав» в окне; так же собирают отряд проверки баланса). Пока мест три (лес до
-## первого босса), состав — ответ на бой: против пращников — с лучником, против волков и шайки — три легионера
-## (wants_archer); волчьи бои леса (bite) — без лучника при любом числе мест. Без боя (st пуст) — бой переднего края
+## первого босса), состав — ответ на бой: против пращников — с лучником, против медведей и шайки — три легионера
+## (wants_archer); медвежьи бои леса (bite) — без лучника при любом числе мест. Без боя (st пуст) — бой переднего края
 func auto_squad(st := {}) -> Array:
 	var have := []
 	for t in UNIT_IDS:
@@ -1965,9 +1992,9 @@ static func counter_squad(st: Dictionary, have: Array, n: int) -> Array:
 		return out
 	# порядок предпочтения по местам: каждый род по очереди, пока есть места
 	var plan := ["legionary", "archer", "spearman", "ballista", "legionary", "catapult", "archer", "spearman", "legionary"]
-	# волки леса рвут лучников (bite): там лучника не берём и при четырёх местах и больше, пока есть легионеры
-	var wolves := bool(st.get("bite", false)) and "legionary" in have
-	var bow := not wolves and (n > SQUAD_BASE or wants_archer(st) or not ("legionary" in have))
+	# медведи леса бросаются на лучников (bite): там лучника не берём и при четырёх местах и больше, пока есть легионеры
+	var rushes_archers := bool(st.get("bite", false)) and "legionary" in have
+	var bow := not rushes_archers and (n > SQUAD_BASE or wants_archer(st) or not ("legionary" in have))
 	for t in plan:
 		if out.size() >= n:
 			break
@@ -2004,7 +2031,7 @@ func use_auto_squad(st := {}) -> void:
 
 ## Отряд отличается от «Лучшего состава» для боя st (по родам войск, порядок мест не важен). Бою «годятся оба»
 ## (squad "any") подходят и три легионера, и легионеры с лучником. С четырёх мест «Лучший состав» уже не ответ на бой
-## (общий порядок родов войск) — не под бой только лучник в волчьем бою леса (bite)
+## (общий порядок родов войск) — не под бой только лучник в медвежьем бою леса (bite)
 func squad_off(st: Dictionary) -> bool:
 	var a := campaign_keys()
 	a.sort()
@@ -2356,7 +2383,7 @@ func _set_level(key: String, v: int) -> void:
 		blevels[key] = v
 
 
-## Сколько кругов походов пройдено целиком (побеждён Цербер)
+## Сколько кругов походов пройдено целиком (побеждён медведь-страж)
 func cycles_done() -> int:
 	return progress / (regions().size() * stages())
 
@@ -2805,9 +2832,9 @@ static func target_level(cycle: int, r: int, s: int) -> int:
 	return base + add + cycle * CYCLE_CAP
 
 
-## Бои с заданным составом (лес — загадка на выбор отряда: «пращники в кустах — берите лучника, волчья тропа —
+## Бои с заданным составом (лес — загадка на выбор отряда: «пращники в кустах — берите лучника, медвежья тропа —
 ## легионеров»): "r-s" → {name — название боя, waves, packs (номера волн, которые выходят тесной кучей — масло
-## накроет всех), kite — пращники «в кустах» отходят от мечей (лучники выцеливают их издалека), bite — волки рвут
+## накроет всех), kite — пращники «в кустах» отходят от мечей (лучники выцеливают их издалека), bite — медведи атакуют
 ## стрелков (урон по лучникам ×BITE), squad — кого брать, пока мест три: "bow" — с лучником, "leg" — три легионера,
 ## "any" — годятся оба (test_legion mode=squads: «не тот» отряд там почти не хуже); без squad — "bow" при kite без bite,
 ## иначе "leg"; task — задание на третью звезду [вид, число] (STAR_TASKS), tip — совет на карточке}.
@@ -2818,24 +2845,24 @@ const FIXED := {
 		"task": ["oil", 4]},
 	"0-1": {"name": "Пращники в кустах", "waves": [["slinger", "slinger", "slinger", "bandit"]], "kite": true, "task": ["fast", 20],
 		"tip": "Пращники прячутся в кустах и отбегают от мечей — лучник снимет их издалека."},
-	"0-2": {"name": "Волчья тропа", "waves": [["wolf", "wolf", "wolf"], ["wolf", "wolf", "wolf"]], "bite": true, "task": ["hp", 25],
-		"tip": "Волки бросаются на лучников и рвут их — идите легионерами."},
+	"0-2": {"name": "Медвежья тропа", "waves": [["forestBear", "forestBear", "forestBear"], ["forestBear", "forestBear", "forestBear"]], "bite": true, "task": ["hp", 25],
+		"tip": "Медведи бросаются на лучников. Возьмите легионеров."},
 	"0-3": {"name": "Шайка у брода", "waves": [["bandit", "bandit", "slinger"], ["bandit", "bandit", "bandit", "bandit", "bandit"]], "packs": [1],
 		"squad": "any", "task": ["oil", 4], "tip": "Вторая волна идёт толпой — приберегите масло."},
 	"0-4": {"name": "Лесные стрелки", "waves": [["slinger", "slinger", "bandit"], ["bandit", "bandit", "slinger", "slinger"]], "kite": true,
 		"task": ["hp", 40], "tip": "Пращники отбегают в кусты — без лучника их долго ловить."},
-	"0-5": {"name": "Волки и шайка", "waves": [["wolf", "wolf", "wolf"], ["bandit", "bandit", "bandit", "bandit", "bandit"]], "packs": [1], "bite": true,
-		"task": ["oil", 4], "tip": "Сначала волки (лучника загрызут), потом шайка толпой — масло для неё."},
+	"0-5": {"name": "Медведи и шайка", "waves": [["forestBear", "forestBear", "forestBear"], ["bandit", "bandit", "bandit", "bandit", "bandit"]], "packs": [1], "bite": true,
+		"task": ["oil", 4], "tip": "Сначала медведи, потом шайка. Приберегите масло для шайки."},
 	"0-6": {"name": "Пращники за частоколом", "waves": [["bandit", "slinger", "slinger", "slinger"], ["bandit", "bandit", "slinger", "slinger", "slinger"]],
 		"kite": true, "task": ["fast", 60], "tip": "Разбойники прикрывают пращников — лучник достанет их из-за спин."},
-	"0-7": {"name": "Волчья ночь", "waves": [["wolf", "wolf", "wolf"], ["bandit", "bandit", "wolf"], ["wolf", "wolf", "wolf", "bandit"]], "bite": true,
-		"task": ["hp", 35], "tip": "Три волчьих набега — лучника в отряд не берите."},
+	"0-7": {"name": "Медвежья ночь", "waves": [["forestBear", "forestBear", "forestBear"], ["bandit", "bandit", "forestBear"], ["forestBear", "forestBear", "forestBear", "bandit"]], "bite": true,
+		"task": ["hp", 35], "tip": "Три набега медведей. Лучника лучше оставить в форте."},
 	"0-8": {"name": "Большая шайка", "waves": [["slinger", "slinger", "slinger"], ["slinger", "bandit", "slinger", "slinger"], ["bandit", "bandit", "bandit", "bandit", "bandit", "bandit"]],
 		"packs": [2], "kite": true, "squad": "any", "task": ["oil", 5], "tip": "Сначала пращники в кустах, в конце — шайка толпой: масло прибережите для неё."},
 	"0-9": {"waves": [["bandit", "bandit", "slinger", "slinger"], ["chief", "bandit", "bandit"]], "squad": "any", "task": ["oil", 4],
 		"tip": "Атаман трубит в рог и созывает шайку. Масло — когда она сбежится к нему."},
 }
-## Волки на «волчьей тропе» (bite) рвут стрелков: урон по лучникам во столько раз больше
+## Медведи на «медвежьей тропе» (bite) рвут стрелков: урон по лучникам во столько раз больше
 static var BITE := 3.2
 ## Стрелки «в кустах» (kite): сколько метров могут отойти от мечей; урон по ним мечом (BUSH) и стрелой или камнем
 ## (BUSH_SHOT) — во столько раз (прячутся в кустах: мечом их не достать, стрела сверху достанет)
@@ -2925,7 +2952,7 @@ static func default_task(waves: Array) -> Array:
 
 
 ## Бои не из FIXED, где трое врагов есть, а в кучу под котёл не сбиваются (пращник или лучник стоит поодаль от пары
-## бойцов, волки и псы бросаются на стрелков врозь с берсерками и тенями) — задание тоже «здоровье»: масло больше двоих
+## бойцов, медведи бросаются на стрелков врозь с берсерками и тенями) — задание тоже «здоровье»: масло больше двоих
 ## не накроет. Мерил test_legion mode=tasks (терпеливый игрок бережёт масло до кучи; он же проверка regress.sh)
 const TASK_HP := ["2-2", "2-3", "3-0", "3-1", "3-2", "4-1", "5-0", "5-1", "7-0"]
 ## То же для похода 2.0 (test_legion mode=tasks v2=1)
@@ -3069,8 +3096,8 @@ func squad_hint(st: Dictionary) -> String:
 		return "Для этого боя возьмите лучника — «Лучший состав»."
 	if "archer" in cur and not "archer" in best and bool(st.get("bite", false)):
 		if slots() <= SQUAD_BASE:
-			return "Волки загрызут лучника — лучше три легионера («Лучший состав»)."
-		return "Волки загрызут лучника — идите без него («Лучший состав»)."
+			return "Медведи загрызут лучника — лучше три легионера («Лучший состав»)."
+		return "Медведи загрызут лучника — идите без него («Лучший состав»)."
 	if "archer" in cur and not "archer" in best and slots() <= SQUAD_BASE:
 		return "Тут лучше три легионера: лучника некому прикрыть («Лучший состав»)."
 	return "Для этого боя есть состав лучше — «Лучший состав»."
@@ -3256,9 +3283,9 @@ static func counter_tips(st: Dictionary, have := []) -> String:
 	var advice := []
 	if (tags.has("beast") or tags.has("giant")) and ok.call("spearman"):
 		advice.append("копейщики сильнее против зверей и великанов")
-	# пока мест три, лучник — только против стрелков без волков (wants_archer): совет — по составу боя
+	# пока мест три, лучник — только против стрелков без медведей (wants_archer): совет — по составу боя
 	if (tags.has("ranged") or tags.has("swift")) and ok.call("archer") and (int(st.get("r", -1)) != 0 or int(st.get("cycle", 0)) > 0 or wants_archer(st)):
-		advice.append("лучники быстро снимают стрелков и волков")
+		advice.append("лучники быстро снимают стрелков и медведей")
 	if (tags.has("armored") or tags.has("giant")) and ok.call("ballista"):
 		advice.append("баллиста пробивает броню")
 	if tags.has("swarm") or big:
@@ -3991,6 +4018,8 @@ static func art(kind: String, id: String) -> Dictionary:
 			i = int(UNITS[id]["art"])
 		"enemy":
 			var E: Dictionary = ENEMIES[id]
+			if E.has("portrait"):
+				return {"file": "res://assets/legion_b1/chars/%s_portrait.png" % String(E["portrait"]), "grid": [1, 1], "i": 0}
 			sheet = String(E.get("sheet", "37" if bool(E.get("boss", false)) else "36"))
 			i = int(E["art"])
 		"perk":
@@ -4070,6 +4099,7 @@ const FORT_B := {
 }
 const FORT_EXP := [{"hq": 1, "plots": 4}, {"hq": 3, "plots": 7}, {"hq": 5, "plots": 10},
 	{"hq": 7, "plots": 14}, {"hq": 9, "plots": 18}, {"hq": 12, "plots": 23}]
+const FORT_START_GRID := Vector2i(5, 3)
 const FORT_EXP_COST := {"money": 1000, "wood": 20, "iron": 10}
 const FORT_INGOT_BASE := 20
 
@@ -4118,7 +4148,7 @@ func _fort_init() -> void:
 	if not migrated and not bool(flags.get("chest_start", false)):
 		chest_queue = ["wooden"]
 	flags["chest_start"] = true
-	# Старый лагерь переносим целиком, новый занимает два этажа.
+	# Старый лагерь переносим целиком, в новом оставляем места для стройки.
 	var initial: Array = ["hq", "barracks", "forge", "drill", "store", "mars"] if migrated else ["hq", "barracks", "drill", "treasury"]
 	for type: String in initial:
 		var lv := maxi(0, int(camp.get(type, CAMP_START.get(type, 1))))
@@ -4134,8 +4164,7 @@ func _fort_init() -> void:
 		for p: Dictionary in fort["plots"]:
 			p.erase("worker")
 			p.erase("workers")
-	while (fort["plots"] as Array).size() < int(fort_exp_info(0)["plots"]) + 1:
-		_fort_add_plot()
+	_fort_fill_grid()
 	_fort_migrate_workers()
 	_fort_sync_camp()
 
@@ -4216,11 +4245,17 @@ func fort_occupants(plot_id: int) -> Array[Dictionary]:
 
 func fort_room_slots(plot_id: int) -> int:
 	var p := fort_plot(plot_id)
-	if p.is_empty() or p["b"] in ["", "hq"] or int(p["lv"]) <= 0:
+	if p.is_empty():
 		return 0
-	if p["b"] == "barracks":
-		return int(FORT_B["barracks"]["places_base"]) + int(FORT_B["barracks"]["places_per"]) * int(p["lv"])
-	return clampi(1 + (int(p["lv"]) - 1) / 3, 1, 3)
+	return fort_room_slots_at(String(p["b"]), int(p["lv"]))
+
+
+static func fort_room_slots_at(type: String, level: int) -> int:
+	if level <= 0 or type in ["", "hq"]:
+		return 0
+	if type == "barracks":
+		return int(FORT_B["barracks"]["places_base"]) + int(FORT_B["barracks"]["places_per"]) * level
+	return clampi(1 + (level - 1) / 3, 1, 3)
 
 
 func fort_population() -> int:
@@ -4358,7 +4393,6 @@ func _fort_migrate_workers() -> void:
 			if sid < 0 and p.get("legacy_worker", null) is Dictionary:
 				var worker := _add_soldier(p["legacy_worker"])
 				sid = int(worker["id"])
-				worker["look_seed"] = sid * 409
 			if sid > 0 and not soldier(sid).is_empty() and not used.has(sid) and not bool(soldier(sid).get("hero", false)):
 				(p["workers"] as Array).append(sid)
 				used[sid] = true
@@ -4488,7 +4522,7 @@ func fort_can_build(type: String, plot_id: int) -> String:
 	if not v3() or not FORT_B.has(type):
 		return "Нет такого здания"
 	var p := fort_plot(plot_id)
-	if p.is_empty() or plot_id == 0 or p["b"] != "":
+	if p.is_empty() or plot_id == 0 or p["b"] != "" or type == "hq":
 		return "Нет свободного участка"
 	if fort_count(type) >= fort_max(type):
 		return "Лимит зданий: улучшите Штаб"
@@ -4500,7 +4534,7 @@ func fort_can_build(type: String, plot_id: int) -> String:
 func _fort_start(p: Dictionary, type: String, to: int) -> void:
 	_fort_accrue(p, now())
 	_fort_pay(fort_cost(type, to))
-	var secs := camp_time_h(to) * float(FORT_B[type]["time_k"]) * 3600.0 / maxf(0.001, time_k)
+	var secs := fort_build_seconds(type, to)
 	p["b"] = type
 	p["up"] = {"to": to, "end": now() + secs, "total": secs}
 	_craft_deadlines(p, now())
@@ -4548,13 +4582,65 @@ func fort_upgrade(plot_id: int) -> bool:
 const FORT_INSTANT_K := 1.2
 
 
+func fort_plot_timer(plot_id: int) -> Dictionary:
+	var p := fort_plot(plot_id)
+	var timer: Dictionary = p.get("up", {})
+	# Старые сохранения могли хранить стройку Штаба вне участка.
+	return fort.get("up", {}) if timer.is_empty() and p.get("b") == "hq" else timer
+
+
+func fort_cancel_quote(plot_id: int) -> Dictionary:
+	var p := fort_plot(plot_id)
+	var timer: Dictionary = p.get("up", {})
+	if timer.is_empty() or float(timer["end"]) <= now():
+		return {}
+	var cost := fort_cost(String(p["b"]), int(timer["to"]))
+	var refund := {"money": minf(float(cost.get("money", 0)), maxf(0.0, money_cap() - city_money())),
+		"glory": float(cost.get("glory", 0)), "mats": {}}
+	for resource: String in cost["mats"]:
+		refund["mats"][resource] = minf(float(cost["mats"][resource]), maxf(0.0, resource_cap(resource) - fort_stock(resource)))
+	return {"stamp": float(timer["end"]), "type": p["b"], "refund": refund}
+
+
+func fort_cancel(plot_id: int, quote: Dictionary) -> bool:
+	var current := fort_cancel_quote(plot_id)
+	if current.is_empty() or current != quote:
+		return false
+	var p := fort_plot(plot_id)
+	_fort_accrue(p, now())
+	p["up"] = {}
+	if int(p["lv"]) == 0:
+		p["b"] = ""
+		p["pend"] = 0.0
+	var refund: Dictionary = current["refund"]
+	fort["money"] = city_money() + float(refund["money"])
+	glory += float(refund["glory"])
+	for resource: String in refund["mats"]:
+		mats[resource] = fort_stock(resource) + float(refund["mats"][resource])
+	_craft_deadlines(p, now())
+	_fort_changed()
+	return true
+
+
+func fort_speed_up(plot_id: int, quote: Dictionary) -> bool:
+	var timer := fort_plot_timer(plot_id)
+	if timer.is_empty() or float(timer["end"]) <= now():
+		fort_finish()
+		return false
+	if quote.get("stamp", "") != fort_instant_info(plot_id).get("stamp", ""):
+		return false
+	if fort_guide_step() == FortGuide.KITCHEN and fort_plot(plot_id).get("b") == "kitchen":
+		timer["end"] = now()
+		fort_finish()
+		return true
+	return fort_instant(plot_id, quote)
+
+
 func fort_instant_info(plot_id: int) -> Dictionary:
 	var p := fort_plot(plot_id)
 	if not v3() or p.is_empty() or p["b"] == "":
 		return {"price": 0, "why": "Нет такого здания"}
-	var timer: Dictionary = p["up"]
-	if p["b"] == "hq" and timer.is_empty():
-		timer = fort.get("up", {})
+	var timer := fort_plot_timer(plot_id)
 	var seconds := maxf(0, float(timer.get("end", 0)) - now())
 	var why := ""
 	if timer.is_empty():
@@ -4572,9 +4658,7 @@ func fort_instant(plot_id: int, quote: Dictionary = {}) -> bool:
 		return false
 	if not quote.is_empty() and quote.get("stamp", "") != fort_instant_info(plot_id).get("stamp", ""):
 		return false
-	var timer_before: Dictionary = before["up"]
-	if before["b"] == "hq" and timer_before.is_empty():
-		timer_before = fort.get("up", {})
+	var timer_before := fort_plot_timer(plot_id)
 	var finished := not timer_before.is_empty() and float(timer_before.get("end", 0)) <= now()
 	fort_finish()
 	# Уже истёкший таймер не должен покупать следующий уровень.
@@ -4600,6 +4684,43 @@ func fort_instant(plot_id: int, quote: Dictionary = {}) -> bool:
 	return true
 
 
+func _fort_build_speed() -> float:
+	var bonus := 0.0
+	for person: Dictionary in soldiers:
+		if not bool(person.get("hero", false)) and not squad3.has(int(person["id"])) and s_state(person) == "ready":
+			bonus = maxf(bonus, work_bonus(person, "builder"))
+	return 1.0 + bonus
+
+
+func fort_build_seconds(type: String, level: int) -> float:
+	return camp_time_h(level) * float(FORT_B[type]["time_k"]) * 3600.0 / (maxf(0.001, time_k) * _fort_build_speed())
+
+
+func work_bonus(person: Dictionary, kind: String) -> float:
+	var gear: Dictionary = person.get("gear", {})
+	return Gear.work_bonus(item(int(gear.get(Gear.OUTFIT_SLOT, 0))), kind)
+
+
+func fort_work_speed(plot_id: int, type: String) -> float:
+	var kind := String(Gear.WORK_ROOM.get(type, ""))
+	return 1.0 if kind.is_empty() else 1.0 + work_bonus(fort_worker(plot_id), kind)
+
+
+func _fort_healing_speed() -> float:
+	var speed := 1.0
+	for p: Dictionary in fort.get("plots", []):
+		if p["b"] in ["mars", "infirmary"] and int(p["lv"]) > 0 and (p["up"] as Dictionary).is_empty():
+			speed = maxf(speed, fort_work_speed(int(p["id"]), String(p["b"])))
+	return speed
+
+
+func fort_plot_production(plot_id: int, type: String, level: int) -> Dictionary:
+	var prod := fort_production(type, level)
+	if not prod.is_empty() and type in ["kitchen", "treasury"]:
+		prod["rate"] = float(prod["rate"]) * fort_work_speed(plot_id, type)
+	return prod
+
+
 func fort_info(plot_id: int) -> Dictionary:
 	var p := fort_plot(plot_id)
 	if p.is_empty() or p["b"] == "":
@@ -4607,12 +4728,13 @@ func fort_info(plot_id: int) -> Dictionary:
 	var type := String(p["b"])
 	var lv := int(p["lv"])
 	return {"type": type, "lv": lv, "next_cost": fort_cost(type, lv + 1),
-		"next_time": camp_time_h(lv + 1) * float(FORT_B[type]["time_k"]) * 3600.0 / maxf(0.001, time_k),
-		"gives": fort_gives(type, lv), "gives_next": fort_gives(type, lv + 1), "producing": fort_production(type, lv)}
+		"next_time": fort_build_seconds(type, lv + 1),
+		"gives": fort_gives(type, lv, plot_id), "gives_next": fort_gives(type, lv + 1, plot_id),
+		"producing": fort_plot_production(plot_id, type, lv)}
 
 
-func fort_gives(type: String, lv: int) -> String:
-	var prod := fort_production(type, lv)
+func fort_gives(type: String, lv: int, plot_id := -1) -> String:
+	var prod := fort_plot_production(plot_id, type, lv) if plot_id >= 0 else fort_production(type, lv)
 	if not prod.is_empty():
 		return I18n.t("%s: %.2f в час, запас %.0f") % [I18n.t(String(FORT_B[type]["gives"])), prod["rate"], prod["cap"]]
 	return I18n.t("%s · уровень %d") % [I18n.t(String(FORT_B[type]["gives"])), lv]
@@ -4630,12 +4752,24 @@ func fort_can_expand() -> String:
 	return _fort_afford(info["cost"])
 
 
+func _fort_fill_grid() -> void:
+	var dims := fort_grid()
+	while (fort["plots"] as Array).size() < dims.x * dims.y - 1:
+		_fort_add_plot()
+
+
+func fort_builder_count() -> Vector2i:
+	# Модель форта допускает одну стройку, в том числе расширение.
+	return Vector2i(0 if camp_busy() else 1, 1)
+
+
 func fort_grid() -> Vector2i:
 	var grids := [Vector2i(3, 2), Vector2i(3, 3), Vector2i(4, 3), Vector2i(4, 4), Vector2i(5, 4), Vector2i(5, 5)]
 	var dims: Vector2i = grids[mini(int(fort.get("exp", 0)), grids.size() - 1)]
 	var saved: Array = fort.get("grid", [])
 	if saved.size() == 2:
 		dims = Vector2i(maxi(3, int(saved[0])), maxi(2, int(saved[1])))
+	dims = dims.max(FORT_START_GRID)
 	while dims.x * dims.y - 1 < (fort.get("plots", []) as Array).size():
 		dims.y += 1
 	return dims
@@ -4643,6 +4777,7 @@ func fort_grid() -> Vector2i:
 
 func fort_expansion_info(axis := "floor") -> Dictionary:
 	var info := fort_exp_info(int(fort.get("exp", 0)) + 1)
+	info["seconds"] = float(info["time_h"]) * 3600.0 / (maxf(0.001, time_k) * _fort_build_speed())
 	var dims := fort_grid() + (Vector2i(1, 0) if axis == "section" else Vector2i(0, 1))
 	info["grid"] = [dims.x, dims.y]
 	info["plots"] = dims.x * dims.y - 2
@@ -4656,7 +4791,7 @@ func fort_expand(axis := "floor") -> bool:
 	var to := int(fort["exp"]) + 1
 	var info := fort_expansion_info(axis)
 	_fort_pay(info["cost"])
-	var secs := float(info["time_h"]) * 3600.0 / maxf(0.001, time_k)
+	var secs := float(info["seconds"])
 	fort["up"] = {"to": to, "end": now() + secs, "total": secs, "axis": axis, "grid": info["grid"]}
 	_fort_changed()
 	return true
@@ -4667,14 +4802,14 @@ func _fort_accrue(p: Dictionary, until: float) -> void:
 	if until <= since:
 		return
 	_craft_accrue(p, until - since, until)
-	var prod := fort_production(String(p["b"]), int(p["lv"]))
+	var prod := fort_plot_production(int(p["id"]), String(p["b"]), int(p["lv"]))
 	# Время простоя не накапливается: ни без человека, ни при полном складе.
 	if not prod.is_empty() and (p["up"] as Dictionary).is_empty():
 		var worker := fort_worker(int(p["id"]))
 		var resource := String(prod["resource"])
 		if fort_guide_cooking(int(p["id"])) and int(worker.get("id", 0)) == int(flags.get("fort_guide_sid", -1)):
 			if float(p["pend"]) < FORT_GUIDE_BATCH:
-				p["pend"] = minf(FORT_GUIDE_BATCH, float(p["pend"]) + (until - since) * FORT_GUIDE_BATCH / FORT_GUIDE_COOK_SECS)
+				p["pend"] = minf(FORT_GUIDE_BATCH, float(p["pend"]) + (until - since) * fort_work_speed(int(p["id"]), "kitchen") * FORT_GUIDE_BATCH / FORT_GUIDE_COOK_SECS)
 		elif not worker.is_empty() and fort_stock(resource) < resource_cap(resource) and float(p["pend"]) < float(prod["cap"]):
 			p["pend"] = minf(float(prod["cap"]), float(p["pend"]) + (until - since) / 3600.0 * float(prod["rate"]) * maxf(0.001, time_k))
 	p["t"] = until
@@ -4706,6 +4841,7 @@ func fort_finish() -> Array:
 			count = int(fort["grid"][0]) * int(fort["grid"][1]) - 1
 		while (fort["plots"] as Array).size() < count:
 			_fort_add_plot()
+		_fort_fill_grid()
 		fort["up"] = {}
 		out.append("Форт расширен")
 	if not out.is_empty():
@@ -4807,6 +4943,7 @@ func _fort_load(raw: Variant) -> void:
 			newcomer["stars"] = clampi(int(entry.get("stars", 1)), 1, 5)
 			if newcomer.has("look_seed"):
 				newcomer["look_seed"] = int(newcomer["look_seed"])
+			_person_look(newcomer)
 			fort["newcomers"].append(newcomer)
 	var ids := {}
 	for entry in raw["plots"]:
@@ -4843,11 +4980,7 @@ func _fort_load(raw: Variant) -> void:
 				loaded["legacy_worker"] = worker
 	if not ids.has(0):
 		fort["plots"].push_front({"id": 0, "b": "hq", "lv": 1, "up": {}, "pend": 0.0, "t": now()})
-	var minimum := int(fort_exp_info(int(fort["exp"]))["plots"]) + 1
-	if fort.has("grid"):
-		minimum = int(fort["grid"][0]) * int(fort["grid"][1]) - 1
-	while (fort["plots"] as Array).size() < minimum:
-		_fort_add_plot()
+	_fort_fill_grid()
 	fort["up"] = _fort_timer(raw.get("up", {}), int(fort["exp"]) + 1)
 	if raw.get("up", {}) is Dictionary and not fort["up"].is_empty():
 		fort["up"]["axis"] = String(raw["up"].get("axis", "floor"))
@@ -4968,7 +5101,11 @@ func camp_finish(slot: String) -> String:
 
 ## Мест в отряде при Казарме уровня lvl: 3, 4 (с 3-го), 5 (с 5-го)
 static func places_at(lvl: int) -> int:
-	return SQUAD_BASE + (1 if lvl >= 3 else 0) + (1 if lvl >= 5 else 0)
+	return SQUAD_BASE + (1 if lvl >= place_barracks_level(SQUAD_BASE) else 0) + (1 if lvl >= place_barracks_level(SQUAD_BASE + 1) else 0)
+
+
+static func place_barracks_level(index: int) -> int:
+	return 1 if index < SQUAD_BASE else 3 if index == SQUAD_BASE else 5
 
 
 ## Ряд места отряда: 0 — первый (места 0–2), 1 — второй (3–4)
@@ -5056,9 +5193,11 @@ func _fort_newcomer() -> Dictionary:
 	var female := _rng.randf() < 0.5
 	var roll := _rng.randf()
 	var quality := 1 if roll < 0.40 else 2 if roll < 0.72 else 3 if roll < 0.91 else 4 if roll < 0.98 else 5
-	return {"id": id, "name": Soldiers.roll_name(_rng), "from": "Пришёл к воротам форта",
+	var person := {"id": id, "name": Soldiers.roll_name(_rng), "from": "Пришёл к воротам форта",
 		"cls": "legionary", "class_hint": V3_UNITS[_rng.randi_range(0, V3_UNITS.size() - 1)],
 		"stars": quality, "look_seed": seed_value, "female": female}
+	_person_look(person)
+	return person
 
 
 func fort_accept(id: int) -> Dictionary:
@@ -5070,8 +5209,7 @@ func fort_accept(id: int) -> Dictionary:
 		var person := _add_soldier(candidate)
 		# ID у ворот остаётся тем же после принятия.
 		person["id"] = id
-		for key: String in ["look_seed", "female", "class_hint"]:
-			person[key] = candidate.get(key, 0 if key == "look_seed" else false if key == "female" else "legionary")
+		person["class_hint"] = candidate.get("class_hint", "legionary")
 		(fort["newcomers"] as Array).erase(candidate)
 		_v3_reclass(person)
 		if fort_guide_step() == FortGuide.RECRUIT:
@@ -5360,14 +5498,17 @@ func from_dict(d: Dictionary) -> void:
 			e["rank"] = clampi(int(e.get("rank", 0)), 0, Soldiers.rank_max(e))
 			for k in ["train_end", "train_total", "wound_end"]:
 				e[k] = float(e.get(k, 0.0))
+			_person_look(e)
 			soldiers.append(e)
 	recruits = []
 	for s in d.get("recruits", []):
 		if s is Dictionary and Soldiers.CLASSES.has(String(s.get("cls", ""))):
-			recruits.append((s as Dictionary).duplicate())
+			var recruit_data: Dictionary = s.duplicate()
+			_person_look(recruit_data, int(d.get("recruit_day", -1)) * 7 + recruits.size() + 1)
+			recruits.append(recruit_data)
 	items = []
 	for it in d.get("items", []):
-		if it is Dictionary and String(it.get("slot", "")) in Gear.SLOTS:
+		if it is Dictionary and (String(it.get("slot", "")) in Gear.SLOTS or Gear.work_kind(it) in Gear.WORK_OUTFITS):
 			var e: Dictionary = (it as Dictionary).duplicate()
 			e["id"] = int(e.get("id", 0))
 			e["on"] = int(e.get("on", 0))
@@ -5518,8 +5659,7 @@ func _ensure_hero3() -> void:
 			hero = s
 			break
 	if hero.is_empty():
-		hero = _add_soldier({"name": Hero.name_of(c), "cls": "legionary", "stars": 5})
-		hero["hero"] = true
+		hero = _add_soldier({"name": Hero.name_of(c), "cls": "legionary", "stars": 5, "hero": true})
 		hero_lv3 = maxi(hero_lv3, barracks_lvl())
 	hero["name"] = Hero.name_of(c)
 	if soldiers[0] != hero:
@@ -5697,7 +5837,7 @@ func craft_start(plot_id: int, kind: String, tier: int) -> bool:
 func _craft_accrue(p: Dictionary, elapsed: float, until: float) -> void:
 	if not p.has("craft"):
 		return
-	var budget := elapsed if craft_working(int(p["id"])) else 0.0
+	var budget := elapsed * _craft_speed(p) if craft_working(int(p["id"])) else 0.0
 	for job: Dictionary in p["craft"]:
 		var left := maxf(0.0, float(job["left"]))
 		var used := minf(budget, left)
@@ -5706,12 +5846,25 @@ func _craft_accrue(p: Dictionary, elapsed: float, until: float) -> void:
 	_craft_deadlines(p, until)
 
 
+func _craft_speed(p: Dictionary) -> float:
+	return fort_work_speed(int(p["id"]), "forge") if p["b"] == "forge" else 1.0
+
+
+func _update_smith_deadlines(person: Dictionary, previous_owner: Dictionary) -> void:
+	for worker: Dictionary in [person, previous_owner]:
+		if not worker.is_empty():
+			var p := fort_plot(fort_worker_plot(int(worker["id"])))
+			if p.get("b") == "forge":
+				_craft_deadlines(p, now())
+
+
 func _craft_deadlines(p: Dictionary, at: float) -> void:
 	var sum := 0.0
 	var working := craft_working(int(p["id"]))
+	var speed := _craft_speed(p) if working else 1.0
 	for job: Dictionary in p.get("craft", []):
 		sum += float(job["left"])
-		job["end"] = at + sum if working and float(job["left"]) > 0.0 else 0.0
+		job["end"] = at + sum / speed if working and float(job["left"]) > 0.0 else 0.0
 
 
 func craft_ready(plot_id: int) -> int:
@@ -5819,10 +5972,19 @@ func open_chest(kind: String) -> Dictionary:
 		if roll <= total:
 			rarity = int([0, 2, 3, 4][i])
 			break
-	var slot := String(Gear.SLOTS_V3[_rng.randi_range(0, Gear.SLOTS_V3.size() - 1)])
-	var cls := String(["legionary", "archer", "priest", "cavalry"][_rng.randi_range(0, 3)])
-	var gear := add_item({"slot": slot, "cls": cls if slot == "weapon" else "", "rarity": rarity, "ilvl": maxi(1, camp_level("hq")),
-		"tier": clampi(1 + progress / STAGES2, 1, Gear.TIERS)})
+	var slot_index := _rng.randi_range(0, Gear.SLOTS_V3.size() - 1)
+	var class_index := _rng.randi_range(0, 3)
+	var slot: String = Gear.SLOTS_V3[slot_index]
+	var cls: String = V3_UNITS[class_index]
+	var item_tier := clampi(1 + progress / STAGES2, 1, Gear.TIERS)
+	var loot := {"slot": slot, "cls": cls if slot == "weapon" else "", "rarity": rarity,
+		"ilvl": maxi(1, camp_level("hq")), "tier": item_tier}
+	var guide_chest := kind == "wooden" and fort_guide_step() >= FortGuide.RECRUIT and fort_guide_step() <= FortGuide.CHEST
+	# Переиспользуем броски вещи, чтобы ресурсы сундука и следующее зерно не сдвигались.
+	if not guide_chest and rarity <= 2 and roll % 5 == 0:
+		var outfit: String = Gear.WORK_OUTFITS[(slot_index * 4 + class_index) % Gear.WORK_OUTFITS.size()]
+		loot = Gear.craft_item(outfit, item_tier, rarity)
+	var gear := add_item(loot)
 	if gear.is_empty():
 		return {}
 	var reward := {"money": _rng.randi_range(30, 60) * tier, "rations": _rng.randi_range(1, 3) * tier,

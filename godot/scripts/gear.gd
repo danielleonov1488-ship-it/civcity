@@ -8,9 +8,16 @@ class_name Gear
 const SLOTS := ["weapon", "offhand", "helmet", "armor", "badge"]
 ## Легион 3.0 (docs/LEGION_V3.md): 4 слота (знак скрыт); оружие решает класс воина — меч, лук, посох, копьё
 const SLOTS_V3 := ["weapon", "offhand", "helmet", "armor"]
+const OUTFIT_SLOT := "outfit"
+const EQUIP_SLOTS_V3 := ["weapon", "offhand", "helmet", "armor", OUTFIT_SLOT]
+const WORK_OUTFITS := ["cook", "smith", "scribe", "priest", "builder"]
+const WORK_LOOK := {"cook": "cook", "smith": "smith", "scribe": "toga", "priest": "priest", "builder": "worker"}
+const WORK_ROOM := {"kitchen": "cook", "forge": "smith", "treasury": "scribe", "mars": "priest", "infirmary": "priest"}
+const WORK_TIP := {"cook": "+%d%% к выпуску кухни", "smith": "+%d%% к скорости ковки",
+	"scribe": "+%d%% к выпуску казны", "priest": "+%d%% к скорости лечения", "builder": "+%d%% к скорости строительства"}
 const KIND_CLS := {"sword": "legionary", "bow": "archer", "staff": "priest", "spear": "cavalry"}
 const CLS_KIND := {"legionary": "sword", "archer": "bow", "priest": "staff", "cavalry": "spear"}
-const SLOT_NAME := {"weapon": "оружие", "offhand": "щит", "helmet": "шлем", "armor": "доспех", "badge": "знак"}
+const SLOT_NAME := {"weapon": "оружие", "offhand": "щит", "helmet": "шлем", "armor": "доспех", "badge": "знак", OUTFIT_SLOT: "одежда"}
 const RARITY := ["обычная", "добротная", "редкая", "эпическая", "легендарная"]
 const RARITY_M := ["обычный", "добротный", "редкий", "эпический", "легендарный"]
 const RARITY_N := ["обычное", "добротное", "редкое", "эпическое", "легендарное"]
@@ -61,6 +68,7 @@ const MAT_OF := {
 	"helmet": {"iron": 0.7, "leather": 0.3},
 	"armor": {"iron": 0.5, "leather": 0.5},
 	"badge": {"iron": 0.6, "leather": 0.4},
+	OUTFIT_SLOT: {"leather": 0.7, "wood": 0.3},
 }
 const FORGE_MAT := [20, 60, 160, 400, 900]
 const SMELT_K := 0.3
@@ -77,7 +85,19 @@ const TIER_BASE := {
 	"armor": {"hp": 0.25, "armor": 9.0},
 }
 const CRAFT_TYPES := {"sword": "Меч", "bow": "Лук", "staff": "Посох", "spear": "Копьё",
-	"helmet": "Шлем", "armor": "Доспех", "offhand": "Щит"}
+	"helmet": "Шлем", "armor": "Доспех", "offhand": "Щит",
+	"cook": "Фартук повара", "smith": "Фартук кузнеца", "scribe": "Тога писца",
+	"priest": "Одеяние жреца", "builder": "Одежда мастера"}
+
+
+static func work_kind(it: Dictionary) -> String:
+	return String(it.get("kind", "")) if it.get("slot") == OUTFIT_SLOT else ""
+
+
+static func work_bonus(it: Dictionary, kind: String) -> float:
+	if kind.is_empty() or work_kind(it) != kind or not WORK_LOOK.has(kind):
+		return 0.0
+	return (15.0 + 5.0 * mini(2, int(it.get("rarity", 0))) + 2.0 * (tier_of(it) - 1)) / 100.0
 
 
 static func tier_of(it: Dictionary) -> int:
@@ -96,6 +116,8 @@ static func tier_stats(it: Dictionary) -> Dictionary:
 
 
 static func craft_slot(kind: String) -> String:
+	if WORK_LOOK.has(kind):
+		return OUTFIT_SLOT
 	return "weapon" if KIND_CLS.has(kind) else kind
 
 
@@ -104,21 +126,26 @@ static func craft_kind(slot: String, cls: String) -> String:
 
 
 static func craft_room(kind: String) -> String:
-	return "forge" if KIND_CLS.has(kind) else "arsenal"
+	return "forge" if KIND_CLS.has(kind) or WORK_LOOK.has(kind) else "arsenal"
 
 
 static func craft_mats(kind: String, tier: int) -> Dictionary:
 	var out := {}
 	var slot := craft_slot(kind)
 	var n := 20.0 * pow(1.55, clampi(tier, 1, TIERS) - 1)
-	for m: String in MAT_OF.get(slot, {}):
-		out[m] = maxi(5, roundi(n * float(MAT_OF[slot][m]) / 5.0) * 5)
+	var recipe: Dictionary = MAT_OF.get(slot, {})
+	for m: String in recipe:
+		out[m] = maxi(5, roundi(n * float(recipe[m]) / 5.0) * 5)
 	return out
 
 
 static func craft_item(kind: String, tier: int, rarity := 0) -> Dictionary:
 	var t := clampi(tier, 1, TIERS)
-	return {"slot": craft_slot(kind), "cls": String(KIND_CLS.get(kind, "")), "tier": t, "ilvl": 1 + (t - 1) * 5, "rarity": clampi(rarity, 0, 4)}
+	var it := {"slot": craft_slot(kind), "cls": String(KIND_CLS.get(kind, "")), "tier": t, "ilvl": 1 + (t - 1) * 5, "rarity": clampi(rarity, 0, 4)}
+	if it["slot"] == OUTFIT_SLOT:
+		it["kind"] = kind
+		it["rarity"] = 2 if rarity >= 2 else 0
+	return it
 
 
 static func roll_craft_rarity(rng: RandomNumberGenerator) -> int:
@@ -143,7 +170,9 @@ static func forge_mats(slot: String, r: int) -> Dictionary:
 ## Что вернёт разобранная вещь
 static func smelt_mats(it: Dictionary) -> Dictionary:
 	var out := {}
-	var fm := craft_mats(craft_kind(String(it.get("slot", "")), String(it.get("cls", ""))), tier_of(it)) if it.has("tier") else forge_mats(String(it.get("slot", "")), int(it.get("rarity", 0)))
+	var slot := String(it.get("slot", ""))
+	var kind := work_kind(it) if slot == OUTFIT_SLOT else craft_kind(slot, String(it.get("cls", "")))
+	var fm := craft_mats(kind, tier_of(it)) if it.has("tier") else forge_mats(slot, int(it.get("rarity", 0)))
 	for m: String in fm:
 		out[m] = maxi(1, roundi(float(fm[m]) * SMELT_K))
 	return out
@@ -231,6 +260,8 @@ static func score(it: Dictionary) -> float:
 
 
 static func name_of(it: Dictionary) -> String:
+	if it.get("slot") == OUTFIT_SLOT:
+		return I18n.t(String(CRAFT_TYPES.get(work_kind(it), SLOT_NAME[OUTFIT_SLOT])))
 	var slot := String(it.get("slot", ""))
 	var cls := String(it.get("cls", ""))
 	var e: Array = []
@@ -259,6 +290,9 @@ static func icon_of(it: Dictionary) -> int:
 
 ## Строка чисел: «+12% урона, +4 брони»
 static func stats_text(it: Dictionary) -> String:
+	var kind := work_kind(it)
+	if WORK_TIP.has(kind):
+		return I18n.t(String(WORK_TIP[kind])) % roundi(work_bonus(it, kind) * 100.0)
 	var s := stats(it)
 	var out := []
 	if float(s["atk"]) > 0.0:
@@ -276,6 +310,8 @@ static func stats_text(it: Dictionary) -> String:
 static func set_bonus(worn: Array) -> Dictionary:
 	var cnt := {}
 	for it: Dictionary in worn:
+		if it.get("slot") == OUTFIT_SLOT:
+			continue
 		var k := String(it.get("set", ""))
 		if k != "" and SETS.has(k):
 			cnt[k] = int(cnt.get(k, 0)) + 1

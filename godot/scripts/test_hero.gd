@@ -659,8 +659,8 @@ func _squad_keys_test() -> void:
 	lg.squad = ["archer", "legionary", "legionary"]
 	check(lg.campaign_keys() == ["legionary", "legionary", "legionary"] and lg.squad_off(bow) and lg.squad_hint(bow).contains("лучника"),
 		"лучник под медальоном героя в бой не идёт — совет «возьмите лучника»", [lg.campaign_keys(), lg.squad_hint(bow)])
-	var wolf := lg.stage_info(0, 0, 2)               # «Волчья тропа»: про спрятанного лучника волки не говорят
-	check(not lg.squad_hint(wolf).contains("Волки"), "волчий бой: о спрятанном лучнике не предупреждает", lg.squad_hint(wolf))
+	var bears := lg.stage_info(0, 0, 2)               # «Медвежья тропа»: про спрятанного лучника медведи не говорят
+	check(not lg.squad_hint(bears).contains("Медведи"), "медвежий бой: о спрятанном лучнике не предупреждает", lg.squad_hint(bears))
 	lg.hero_squad_fix()
 	check(lg.squad == ["legionary", "archer", "legionary"] and not lg.squad_off(bow) and lg.squad_hint(bow) == "",
 		"старый город: лучник с первого места — на видное, отряд под бой; в боях с городами — те же бойцы", lg.squad)
@@ -694,8 +694,8 @@ func _battle_test() -> void:
 			var hero_found := false
 			for f in battle.views.values():
 				if f.unit.key == "hero":
-					hero_found = f is AnimatedSprite2D and f.sheet == "hero"
-			check(hero_found, "в бою — рисованный герой")
+					hero_found = f.actor is Node3D and f.sprite == null and f.actor.has_outfit("centurion")
+			check(hero_found, "в бою — герой в форме центуриона")
 			await shot("hero_battle.png")
 		if battle.tut_freeze and not froze:
 			froze = true
@@ -801,9 +801,9 @@ func _pvp_test() -> void:
 				for f in battle.views.values():
 					var u: LegionSim.Unit = f.unit
 					if u.key == "hero":
-						hv.append([u.side, f is AnimatedSprite2D and f.sheet == "hero", u.name])
+						hv.append([u.side, f.actor is Node3D and f.sprite == null if u.side == "ally" else f.sprite is AnimatedSprite2D and f.actor == null, u.name])
 				check(hv.size() == 2 and hv.all(func(x): return x[1]) and hv.any(func(x): return x[0] == "enemy" and x[2] == "Марк Туллий"),
-					"в бою — наш герой и герой соперника, оба рисованные", hv)
+					"в бою — наш 3D-герой и рисованный герой соперника", hv)
 			if not shot_done and battle.sim.t > 4.5:
 				shot_done = true
 				await shot("hero_pvp_battle.png", SHOTS_PVP)

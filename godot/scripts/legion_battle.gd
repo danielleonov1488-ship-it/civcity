@@ -564,6 +564,8 @@ func _start(s: Dictionary) -> void:
 		var r := int(stage.get("r", 0))
 		biome = String(Legion.regions()[clampi(r, 0, Legion.regions().size() - 1)]["biome"])
 	battle_view.set_field(biome)
+	battle_view.legion = legion
+	battle_view.hero_look = s.get("hero_look", {})
 	sim = LegionSim.new(setup)
 	# учебный бой: управление — у игрока, скорость ×1, «Авто» и скорость спрятаны
 	tut = "" if pvp else String(s.get("tutorial", ""))

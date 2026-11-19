@@ -284,7 +284,7 @@ func _sig(k: String) -> String:
 			var sq := [Legion.unit_stats("legionary", 3), Legion.unit_stats("legionary", 3), Legion.unit_stats("archer", 3),
 				Legion.unit_stats("archer", 3), Legion.unit_stats("ballista", 2), Legion.unit_stats("catapult", 2)]
 			var w1 := []
-			for e in ["bandit", "bandit", "slinger", "wolf", "gaul", "gaulArcher"]:
+			for e in ["bandit", "bandit", "slinger", "forestBear", "gaul", "gaulArcher"]:
 				w1.append(Legion.enemy_stats(e, 1.1))
 			var w2 := []
 			for e in ["boar", "bear", "berserker", "slinger"]:

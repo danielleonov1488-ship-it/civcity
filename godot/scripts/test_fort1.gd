@@ -81,8 +81,8 @@ func _plot_order() -> void:
 func _build_produce() -> void:
 	var c := town()
 	var l: Legion = c.legion
-	check(l.fort["exp"] == 0 and l.fort["plots"].size() == 5 and l.fort_count("hq") == 1
-		and l.fort_plot(0)["b"] == "hq" and l.camp_level("hq") == 1, "start: HQ 0 plus four plots")
+	check(l.fort["exp"] == 0 and l.fort["plots"].size() == 14 and l.fort_count("hq") == 1
+		and l.fort_plot(0)["b"] == "hq" and l.camp_level("hq") == 1, "start: HQ 0 plus thirteen plots")
 	check(l.fort_max("kitchen") == 1 and l.fort_empty_plot() > 0, "one kitchen allowed")
 	var id := l.fort_empty_plot()
 	l.fort["money"] = 0.0
@@ -161,13 +161,13 @@ func _expand_effects() -> void:
 	check(l.fort_expand() and l.mat("wood") == wood - 20 and l.city_money() == money - 1000, "expansion pays coins and materials")
 	check(is_equal_approx(float(l.fort["up"]["total"]), 7200.0), "first expansion takes two hours")
 	check(not l.has_method("speed_up"), "expansion has no paid money shortcut")
-	check(l.fort["plots"].size() == 5 and l.camp_busy() and not l.fort_build("kitchen", l.fort_empty_plot()), "expansion waits and uses builder")
+	check(l.fort["plots"].size() == 14 and l.camp_busy() and not l.fort_build("kitchen", l.fort_empty_plot()), "expansion waits and uses builder")
 	Legion.clock = float(l.fort["up"]["end"]) - 1.0
 	l.fort_finish()
-	check(l.fort["plots"].size() == 5, "no early plots")
+	check(l.fort["plots"].size() == 14, "no early plots")
 	Legion.clock += 1.0
 	l.tick()
-	check(l.fort["exp"] == 1 and l.fort["plots"].size() == 8 and not l.camp_busy(), "expansion adds three plots")
+	check(l.fort["exp"] == 1 and l.fort["plots"].size() == 19 and not l.camp_busy(), "expansion adds a floor of five plots")
 	for i in ids.size():
 		check(int(l.fort["plots"][i]["id"]) == int(ids[i]), "stable plot order %d" % i)
 	var roster := l.roster_cap()
@@ -279,7 +279,7 @@ func _migrate_save() -> void:
 	l.fort["money"] = 1e9
 	for type: String in old["camp"]:
 		check(l.camp_level(type) == int(old["camp"][type]), "migration preserves " + type)
-	check(l.fort_count("kitchen") == 1 and l.fort["plots"].size() == 7 and l.camp_busy(), "migration adds kitchen and keeps timer")
+	check(l.fort_count("kitchen") == 1 and l.fort["plots"].size() == 14 and l.camp_busy(), "migration adds kitchen and keeps timer")
 	check(l.rations == 500.5 and l.pending_resources["iron"] == 999.5 and l.ingots == 500
 		and l.mats == old["mats"], "migration does not clamp existing resources")
 	check(float(l.fort_slot_plot("forge")["up"]["end"]) == float(old["upg"]["camp_forge"]["end"])
@@ -337,7 +337,7 @@ func _defaults_v2() -> void:
 	var c := town()
 	var l: Legion = c.legion
 	l.from_dict({})
-	check(l.fort_count("hq") == 1 and l.camp_level("hq") == 1 and l.fort["plots"].size() == 5, "empty save has safe defaults")
+	check(l.fort_count("hq") == 1 and l.camp_level("hq") == 1 and l.fort["plots"].size() == 14, "empty save has safe defaults")
 	l.from_dict({"fort": {"plots": [null, {}, {"id": 0, "lv": -2}, {"id": 0, "b": "invalid"}], "exp": -1}})
 	var seen := {}
 	var unique := true
