@@ -1,0 +1,9 @@
+# Licensed Synty geometry and its import sidecars are kept local.
+/base_*.glb*
+/under_*.glb*
+/outfit_peasant_*.glb*
+/outfit_worker_*.glb*
+/outfit_legionary_*.glb*
+/outfit_centurion_*.glb*
+/outfit_patrician_*.glb*
+/outfit_toga_*.glb*
