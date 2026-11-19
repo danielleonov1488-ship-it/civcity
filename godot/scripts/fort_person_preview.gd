@@ -9,9 +9,11 @@ const PersonLayer = preload("res://scripts/fort_person_layer.gd")
 var actor: Actor
 var layer: PersonLayer
 var _clock := 0.0
+var _full_body := false
 
 
-func setup(person: Dictionary, gear: Array, pixels: float) -> void:
+func setup(person: Dictionary, gear: Array, pixels: float, full_body := false) -> void:
+	_full_body = full_body
 	custom_minimum_size = Vector2(pixels, pixels)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer = PersonLayer.new()
@@ -24,10 +26,17 @@ func setup(person: Dictionary, gear: Array, pixels: float) -> void:
 
 func _fit() -> void:
 	layer.fit(size)
-	layer.place(actor, size * Vector2(0.5, 1.94), size.y * 1.83, 14.0)
+	if _full_body:
+		var feet := size * Vector2(0.5, 0.94)
+		var height := minf(size.y * 0.81, size.x * 1.48)
+		layer.place(actor, feet, height, 12.0)
+		layer.shadows = PackedVector3Array([Vector3(feet.x, feet.y, height)])
+		layer.queue_redraw()
+	else:
+		layer.place(actor, size * Vector2(0.5, 1.94), size.y * 1.83, 14.0)
 
 
 func _process(delta: float) -> void:
 	if is_instance_valid(actor) and actor.visible and is_visible_in_tree():
-		_clock += delta
+		_clock += delta * (0.65 if _full_body else 1.0)
 		actor.animate("Idle", _clock)

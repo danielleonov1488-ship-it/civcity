@@ -88,7 +88,8 @@ func _run() -> void:
 	if not check(camp != null, "camp attached"):
 		return
 	camp.open()
-	if not check(camp.visible and camp.bubbles.size() == 4 and camp.resource_chips.size() == 4, "bubbles and chips"):
+	if not check(camp.visible and camp.bubbles.size() == 4 and camp.resource_chips.size() == 7
+			and camp.chips.columns == 4 and camp.chips.get_child(3).name == "FortResource_glory", "four bubbles and seven chips in two rows"):
 		return
 	if not await shot("1_camp.png"):
 		return

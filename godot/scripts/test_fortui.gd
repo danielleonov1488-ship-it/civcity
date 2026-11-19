@@ -93,7 +93,7 @@ func _run() -> void:
 	lg.upg.clear()
 	lg._camp_init()
 	lg.fort["money"] = 1e6
-	lg.fort["smith_knowledge"] = true
+	lg.fort["know"] = {"smith": true}
 	# Эта фикстура проверяет пять новых производственных комнат.
 	var treasury_fixture := lg.fort_slot_plot("treasury")
 	treasury_fixture["b"] = ""
@@ -136,7 +136,7 @@ func _run() -> void:
 		return
 	camp.open()
 	await frames(8)
-	if not check(camp.resource_chips.keys() == ["rations", "money", "glory", "ingots"] and camp.chips.get_child_count() == 4, "four top resources only"):
+	if not check(camp.resource_chips.keys() == ["rations", "money", "ingots", "iron", "wood", "leather", "glory"] and camp.chips.get_child_count() == 7, "six capped resources and glory"):
 		return
 	if not check(camp.plot_markers.has(kitchen) and camp.plot_markers.has(smelter), "new plots accessible without a pavilion"):
 		return
@@ -280,10 +280,13 @@ func _run() -> void:
 	camp.main_action.pressed.emit()
 	if not check(camp.lu.camp_window == "craft" and camp.lu.visible and camp.lu._craft_plot == arsenal, "arsenal opens its craft queue without warehouse"):
 		return
-	camp.lu.open_camp_window("store")
-	if not check(camp.lu.camp_window == "store" and camp.lu.visible, "craft panel opens shared gear storage"):
+	var storage := camp.lu.overlay.find_child("CraftEquipment", true, false) as Button
+	if not check(storage != null, "craft storage button"):
 		return
-	camp.lu.close()
+	storage.pressed.emit()
+	if not check(is_instance_valid(camp.modal_panel) and camp.modal_panel.name == "FortStorage", "craft panel opens shared gear storage"):
+		return
+	camp._close_modal()
 	# Сохранение со старым пройденным обучением открывает обычный форт.
 	if not check(lg.fort_guide_step() == Legion.FortGuide.DONE and not camp.guide.is_visible_in_tree(), "old guide stays completed"):
 		return

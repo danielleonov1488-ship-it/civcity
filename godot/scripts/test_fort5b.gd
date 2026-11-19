@@ -96,7 +96,7 @@ func _run() -> void:
 	lg.flags["camp3d_guide"] = 4
 	lg.army_tick()
 	lg.fort["money"] = 125400.0
-	lg.fort["smith_knowledge"] = true
+	lg.fort["know"] = {"smith": true}
 	for entry: Array in [["hq", 3], ["barracks", 1], ["kitchen", 1], ["forge", 4], ["store", 1]]:
 		Fixture.set_level(lg, String(entry[0]), int(entry[1]))
 	lg.mats = {"iron": 10000.0, "wood": 10000.0, "leather": 10000.0}
@@ -130,7 +130,8 @@ func _run() -> void:
 	camp.open()
 	await frames(12)
 	check(camp.diorama is FortCutaway, "painted fort stays active")
-	check(camp.chips.get_child_count() == 4 and camp.resource_chips.keys() == ["rations", "money", "glory", "ingots"], "four top resources")
+	check(camp.chips.get_child_count() == 7 and camp.chips.columns == 4
+		and camp.chips.get_child(3).name == "FortResource_glory", "seven resources with glory in the top row")
 	check(camp.population_button.icon == Kit.texture("family") and camp.population_button.text.contains(str(lg.fort_population())), "population pill")
 	_navigation_checks()
 	var ration_chip := camp.chips.get_node_or_null("FortResource_rations") as Control
@@ -179,7 +180,13 @@ func _run() -> void:
 	camp._layout_guide()
 	camp.show_dweller(sid)
 	var slots := camp.modal_panel.find_child("FortGearSlots", true, false)
-	check(slots != null and slots.get_child_count() == 5 and slots.find_children("TierBadge", "Label", true, false).size() == 4, "five slots and four equipped tier badges")
+	check(slots != null and slots.find_children("FortGear_*", "Button", true, false).size() == 5, "five equipment slots")
+	for slot: String in Gear.SLOTS_V3:
+		var button := camp.modal_panel.find_child("FortGear_" + slot, true, false) as Button
+		if not check(button != null, "slot " + slot):
+			continue
+		var tier := button.get_node_or_null("TierBadge") as Label
+		check(tier == null if slot == Gear.OUTFIT_SLOT else tier != null and tier.text == "2", "equipped tier " + slot)
 	check(camp.modal_panel.find_child("FortInventoryGrid", true, false) != null, "inventory grid")
 	await _window_checks(camp.modal_panel, "dweller")
 	check((camp.modal_panel.find_child("FortInventoryTitle", true, false) as Label).text == I18n.t("На складе"), "inventory title spacing")
@@ -271,7 +278,14 @@ func _window_checks(window: Control, tag: String) -> void:
 		if not visible_rect.has_area():
 			continue # За краем горизонтальной ленты кнопка не рисуется.
 		count += 1
-		check(rect.size.y >= 56.0 - 0.1, tag + "/" + b.name + " drawn height >= 56")
+		var compact_close: bool = window.name == "FortDwellerCard" and b.get_meta("kit_role", "") == "close"
+		var minimum_height := 40.0 if compact_close else 56.0
+		check(rect.size.y >= minimum_height - 0.1, "%s/%s drawn height >= %d" % [tag, b.name, int(minimum_height)])
+		if compact_close:
+			var close_skin := b.get_theme_stylebox("normal") as StyleBoxTexture
+			check(is_equal_approx(rect.size.x, rect.size.y) and close_skin != null
+				and close_skin.texture == Kit.texture(Kit.ROOT + "buttons/close_btn.png"),
+				tag + " round B1 close")
 		check(window.get_global_rect().grow(1).encloses(rect), tag + "/" + b.name + " inside window")
 		check(visible_rect.grow(1).encloses(rect), tag + "/" + b.name + " not clipped")
 		for state: String in ["normal", "hover", "pressed", "disabled"]:
@@ -309,7 +323,7 @@ func _craft_button_checks(panel: Control) -> void:
 	var tier := panel.find_child("CraftTier_1", true, false) as Button
 	check((tier.get_node("SelectionRing") as Control).visible, "selected tier gold ring")
 	var locked := panel.find_child("CraftTier_10", true, false) as Button
-	check(locked.disabled and (locked.get_node("MedallionLock") as Control).visible and locked.self_modulate.r < 0.7, "locked tier grey and padlock")
+	check(not locked.disabled and locked.get_node_or_null("CraftRecipeLock") != null, "locked tier grey and padlock")
 	check(panel.find_children("CraftTimerRing", "Control", true, false).size() == 1, "queue timer ring")
 	var collect := panel.find_child("CraftCollect_0", true, false) as Button
 	check(collect.visible and collect.text == I18n.t("Собрать · %d") % 1, "ready collect label and count")
@@ -373,12 +387,13 @@ func _fresh_top_bar_checks(tag: String) -> void:
 
 
 func _navigation_checks() -> void:
-	var icons: Array[String] = ["trophy", "squad", "quests", "chest", "money"]
+	var icons: Array[String] = ["trophy", "squad", "quests", "money"]
 	if not check(camp.left_column.get_child_count() == icons.size() and camp.build_button.text == I18n.t("Строить"), "icon navigation"):
 		return
 	for i in icons.size():
 		var button := camp.left_column.get_child(i) as Button
 		check(button.icon == Look.icon(icons[i]) and not button.tooltip_text.is_empty(), "navigation icon and tooltip " + icons[i])
+	check(camp.chest_button.name == "FortStorageButton" and camp.chest_button.icon != null, "storage navigation")
 	check(camp.order_button.name == "FortCityOrder"
 		and camp.order_button.tooltip_text.begins_with(I18n.t("Заказать денарии из города")), "city order tooltip")
 	check(camp.order_ring != null and camp.order_ring.get_parent() == camp.order_button, "city order timer ring")

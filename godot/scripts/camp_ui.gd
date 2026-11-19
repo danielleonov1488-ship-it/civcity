@@ -6,6 +6,8 @@ const Kit = preload("res://scripts/ui_kit_a.gd")
 const Look = preload("res://scripts/legion_look.gd")
 const FortPerson = preload("res://scripts/fort_person.gd")
 const Ring = preload("res://scripts/fort_ui_ring.gd")
+const KnowUI = preload("res://scripts/legion_knowledge_ui.gd")
+const StoreUI = preload("res://scripts/legion_store_ui.gd")
 const USE_3D := true
 const USE_CUTAWAY := true
 var use_cutaway := USE_CUTAWAY # Старые сценарии могут явно выбрать прежнюю диораму.
@@ -19,6 +21,10 @@ var order_ring: Control
 var population_button: Button
 var expand_floor: Button
 var expand_section: Button
+var knowledge_focus := ""
+var knowledge_back := Callable()
+var knowledge_sig := ""
+var knowledge_button: Button
 var dweller_sid := 0
 var dweller_slot := ""
 var dweller_change := ""
@@ -27,7 +33,8 @@ const FORT_ICON := {"hq": "castle", "barracks": "legion", "kitchen": "bread",
 	"smelter": "anvil", "sawmill": "wood", "tannery": "clothes", "store": "amphora",
 	"forge": "hammer", "drill": "swords", "infirmary": "medic", "mars": "laurels",
 	"stable": "horse", "tower": "castle", "treasury": "coins", "arsenal": "shield"}
-const TOP_NAMES := {"money": "Денарии", "rations": "Пайки", "glory": "Слава", "ingots": "Слитки"}
+const TOP_NAMES := {"money": "Денарии", "rations": "Пайки", "glory": "Слава", "ingots": "Слитки",
+	"iron": "Железо", "wood": "Дерево", "leather": "Кожа"}
 const TOP_TIPS := {
 	"money": "Денарии Легиона: Сокровищница, сундуки и обоз из города. Склад повышает потолок.",
 	"rations": "Пайки — еда для походов. Готовит кухня",
@@ -332,6 +339,8 @@ func _input(event: InputEvent) -> void:
 	if key.pressed and not key.echo and key.keycode == KEY_ESCAPE:
 		if lu.camp_window != "":
 			lu.close()
+		elif knowledge_focus != "" and knowledge_back.is_valid():
+			knowledge_back.call()
 		elif is_instance_valid(modal):
 			_close_modal()
 		elif is_instance_valid(card):
@@ -379,13 +388,14 @@ func _build_screen() -> void:
 	city_name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	city_row.add_child(city_name_label)
 	chips = GridContainer.new()
-	chips.columns = 2
+	chips.columns = 4
 	chips.name = "FortResources"
 	chips.add_theme_constant_override("h_separation", 8)
 	chips.add_theme_constant_override("v_separation", 6)
 	add_child(chips)
-	for resource: String in ["rations", "money", "glory", "ingots"]:
+	for resource: String in ["rations", "money", "ingots", "iron", "wood", "leather", "glory"]:
 		_resource_bar(resource)
+	chips.move_child(resource_bars["glory"]["panel"], 3)
 	ration_label = resource_chips["rations"]
 	glory_label = resource_chips["glory"]
 	ingot_label = resource_chips["ingots"]
@@ -401,7 +411,15 @@ func _build_screen() -> void:
 	arena.tooltip_text = I18n.t("Бои с другими игроками откроются позже.")
 	squad_button = _nav("Отряд", "squad", show_squad)
 	daily_button = _nav("Задания дня", "quests", func(): _aux("daily"))
-	chest_button = _nav("Сундуки", "chest", show_chests)
+	chest_button = _screen_button("", "", show_storage, Look.DARK, Vector2(65, 52))
+	chest_button.icon = KnowUI.art("store", "all")
+	chest_button.name = "FortStorageButton"
+	chest_button.tooltip_text = I18n.t("Склад")
+	_badge(chest_button)
+	knowledge_button = _screen_button("", "", func(): show_knowledge(String(lg.knowledge_timer().get("id", "smith"))), Look.DARK, Vector2(66, 50))
+	knowledge_button.icon = KnowUI.node_icon("sets")
+	knowledge_button.name = "FortKnowledgeButton"
+	knowledge_button.tooltip_text = I18n.t("Знание снаряжения")
 	order_button = _nav("Заказать денарии из города", "money", _order_city_money)
 	order_button.name = "FortCityOrder"
 	order_ring = Ring.new()
@@ -542,15 +560,34 @@ func _build_fort_overlays() -> void:
 
 
 func _resource_bar(resource: String) -> void:
-	var panel := Look.chip(resource, "0", show_resource_popup.bind(resource))
+	var compact := resource in Gear.MATS
+	var panel := Look.chip(resource, "0", show_resource_popup.bind(resource), compact)
 	panel.name = "FortResource_" + resource
-	panel.tooltip_text = I18n.t(String(TOP_NAMES[resource])) + "\n" + I18n.t(String(TOP_TIPS[resource]))
+	panel.tooltip_text = I18n.t(String(TOP_NAMES[resource]))
 	chips.add_child(panel)
 	var click: Button = panel.get_meta("hit")
 	click.name = "Plus_" + resource
 	click.tooltip_text = panel.tooltip_text
 	resource_chips[resource] = panel.get_meta("number")
 	resource_bars[resource] = {"panel": panel, "plus": click}
+	if resource in Legion.STOCK_RESOURCES:
+		var bar := Look.meter(0, 1)
+		bar.name = "FortCapacityBar"
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bar.custom_minimum_size.y = 5
+		bar.add_theme_stylebox_override("background", Look.box(Color("55493b"), Color("55493b"), 3, 0))
+		click.add_child(bar)
+		bar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+		bar.offset_left = 8
+		bar.offset_right = -8
+		bar.offset_top = -7
+		bar.offset_bottom = -2
+		var lock := Kit.image(KnowUI.lock_icon(), Vector2(22, 22))
+		lock.name = "FortCapacityLock"
+		click.add_child(lock)
+		lock.position = Vector2(36 if compact else 43, 3)
+		resource_bars[resource]["meter"] = bar
+		resource_bars[resource]["lock"] = lock
 
 
 func _badge(button: Button) -> Label:
@@ -617,6 +654,8 @@ func _layout() -> void:
 	left_column.position = Vector2(edge, edge + 77 * hk)
 	quest_line.position = Vector2(edge, minf(size.y * 0.68, size.y - edge - 132 * hk))
 	campaign_button.position = Vector2(edge, size.y - edge - 60 * hk)
+	chest_button.position = campaign_button.position - Vector2(0, 64 * hk)
+	knowledge_button.position = Vector2(size.x - edge - knowledge_button.custom_minimum_size.x * hk, edge + 202 * hk)
 	market_button.position = size - Vector2(edge + 148 * hk, edge + 60 * hk)
 	build_button.position = market_button.position - Vector2(160 * hk, 0)
 	placement_back.position = market_button.position
@@ -624,7 +663,7 @@ func _layout() -> void:
 	placement_hint.scale = Vector2.ONE * hk
 	placement_hint.position = Vector2((size.x - placement_hint.size.x * hk) * 0.5, size.y - edge - 53.0 * hk)
 	for button: Button in [campaign_button, build_button, market_button, population_button, builder_counter,
-			builder_plus, profile_button, exit_button, quest_line, placement_back]:
+			builder_plus, profile_button, exit_button, quest_line, placement_back, chest_button, knowledge_button]:
 		button.reset_size()
 		button.scale = Vector2.ONE * hk
 	room_actions.reset_size()
@@ -708,14 +747,34 @@ func _refresh() -> void:
 	var builder := lg.fort_builder_count()
 	builder_counter.text = "%d/%d" % [builder.x, builder.y]
 	builder_counter.tooltip_text = I18n.t("Свободные строители") if builder.x > 0 else I18n.t(lg.fort_builder_text())
-	Look.set_chip_value(resource_chips["money"], hud.fmt(lg.city_money()))
-	Look.set_chip_value(ration_label, hud.fmt(lg.rations_now()))
-	Look.set_chip_value(glory_label, hud.fmt(lg.glory))
-	Look.set_chip_value(ingot_label, hud.fmt(lg.ingots))
+	for resource: String in resource_bars:
+		var stock := _stock(resource)
+		Look.set_chip_value(resource_chips[resource], _stock_text(resource, stock))
+		if resource not in Legion.STOCK_RESOURCES:
+			continue
+		var entry: Dictionary = resource_bars[resource]
+		var cap := lg.resource_cap(resource)
+		var full := stock >= cap
+		var bar: ProgressBar = entry["meter"]
+		bar.max_value = cap
+		bar.value = stock
+		if bool(bar.get_meta("full", false)) != full or not bar.has_meta("full"):
+			bar.set_meta("full", full)
+			var shade := Color("e5bb5b") if full else Color("879766")
+			bar.add_theme_stylebox_override("fill", Look.box(shade, shade, 3, 0))
+		(entry["lock"] as Control).visible = full
+		(entry["plus"] as Button).tooltip_text = I18n.t(TOP_NAMES[resource]) + " · %s / %s" % [_stock_text(resource, stock), hud.fmt(cap)]
+	var know := lg.knowledge_timer()
+	knowledge_button.text = "" if know.is_empty() else clock_text(float(know["end"]) - Legion.now())
+	knowledge_button.custom_minimum_size.x = 66 if know.is_empty() else 150
+	knowledge_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER if know.is_empty() else HORIZONTAL_ALIGNMENT_LEFT
+
+	KnowUI.refresh(self)
 
 
 	_count(squad_button, lg.fort_squad_candidates().size())
-	_count(chest_button, lg.chest_queue.size())
+	_count(chest_button, lg.store_count())
+	chest_button.tooltip_text = I18n.t("Вещи %d/%d") % [lg.store_count(), lg.store_cap()]
 	_count(daily_button, lg.daily_done() if lg.can_open_daily() == "" else 0)
 	var frontier := lg.frontier()
 	var stage := lg.stage_info(int(frontier["cycle"]), int(frontier["r"]), int(frontier["s"]))
@@ -798,7 +857,7 @@ func _clear_room_selection() -> void:
 func _refresh_fort_visibility() -> void:
 	var quiet := placement_type != "" or _guide_dragging
 	left_column.visible = not quiet
-	for button: Control in [quest_line, campaign_button, market_button, build_button, exit_button]:
+	for button: Control in [quest_line, campaign_button, market_button, build_button, exit_button, chest_button, knowledge_button]:
 		button.visible = not quiet
 	placement_back.visible = placement_type != "" and not _guide_dragging
 	placement_hint.visible = placement_back.visible
@@ -1104,8 +1163,15 @@ func _build_card() -> void:
 		_room_metric(stats, I18n.t("Места в казарме"), Look.icon("family"),
 			Legion.fort_room_slots_at(selected, level), Legion.fort_room_slots_at(selected, level + 1))
 	elif selected == "store":
-		var added := int(Legion.FORT_B["store"]["rations_per"])
-		_room_metric(stats, I18n.t("Запас пайков"), Look.resource("rations"), lg.ration_cap(), lg.ration_cap() + added)
+		var caps := GridContainer.new()
+		caps.name = "FortStoreCaps"
+		caps.columns = 2
+		caps.add_theme_constant_override("h_separation", 18)
+		caps.add_theme_constant_override("v_separation", 3)
+		stats.add_child(caps)
+		for resource: String in Legion.STOCK_RESOURCES:
+			_cap_row(caps, Look.resource(resource), lg.resource_cap(resource), lg.resource_cap(resource, 1), TOP_NAMES[resource])
+		_cap_row(caps, KnowUI.art("store", "all"), lg.store_cap(), lg.store_cap_after(1), "Снаряжение")
 	elif selected == "hq":
 		_room_metric(stats, I18n.t("Уровень форта"), FortCutaway.room_icon(selected), level, level + 1)
 		var opens := HBoxContainer.new()
@@ -1125,6 +1191,12 @@ func _build_card() -> void:
 		var lock := Look.label(I18n.t(Legion.SMITH_LOCK), 18, Look.WINE)
 		lock.name = "FortSmithLock"
 		card_body.add_child(lock)
+	if selected in ["forge", "arsenal"]:
+		var id := selected_plot
+		var knowledge := Look.button(I18n.t("Знание снаряжения"), KnowUI.node_icon("sets"), Look.INSET, Vector2(132, 46))
+		knowledge.name = "FortRoomKnowledge"
+		knowledge.pressed.connect(func(): show_knowledge("smith" if selected == "forge" else "armor1", show_plot.bind(id)))
+		card_body.add_child(knowledge)
 	main_action = Look.button("", Look.icon("squad"), Look.INSET, Vector2(132, 46))
 	main_action.name = "FortMainAction"
 	main_action.pressed.connect(_main_action)
@@ -1170,6 +1242,15 @@ func _build_card() -> void:
 	upgrade_cost = _cost_icons(extra_cost)
 	(upgrade_cost as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
 	timed.add_child(upgrade_cost)
+
+
+func _cap_row(parent: Control, texture: Texture2D, current: int, next: int, title: String) -> void:
+	var row := HBoxContainer.new()
+	row.tooltip_text = I18n.t(title)
+	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	row.add_child(Kit.image(texture, Vector2(30, 30)))
+	row.add_child(Look.label("%s → %s" % [hud.fmt(current), hud.fmt(next)], 22))
+	parent.add_child(row)
 
 
 func _room_metric(parent: VBoxContainer, title: String, tex: Texture2D, current: float, next: float) -> void:
@@ -1244,14 +1325,14 @@ func _refresh_card() -> void:
 			"forge": title = I18n.t("Ковать")
 			"drill": title = I18n.t("Тренировать")
 			"mars": title = I18n.t("Таланты")
-			"store": title = I18n.t("Запасы")
+			"store": title = I18n.t("Склад")
 			"infirmary": title = I18n.t("Лечить")
 			"arsenal": title = I18n.t("Изготовить")
 			"hq":
 				title = I18n.t("Расширить форт")
 				reason = lg.fort_can_expand()
 			_: title = I18n.t("Отряд")
-	if selected != "hq" and lg.fort_worker(selected_plot).is_empty() and not running:
+	if selected not in ["hq", "store"] and lg.fort_worker(selected_plot).is_empty() and not running:
 		title = I18n.t("Назначить")
 		reason = ""
 	if selected in ["forge", "arsenal"] and not lg.smith_known():
@@ -1404,7 +1485,10 @@ func _new_modal(width: float, marble := false) -> VBoxContainer:
 	modal.mouse_filter = Control.MOUSE_FILTER_STOP
 	modal.gui_input.connect(func(event: InputEvent):
 		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-			_close_modal())
+			if knowledge_focus != "" and knowledge_back.is_valid():
+				knowledge_back.call()
+			else:
+				_close_modal())
 	var shade := ColorRect.new()
 	shade.color = Color(0.10, 0.06, 0.03, 0.48)
 	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1418,6 +1502,12 @@ func _new_modal(width: float, marble := false) -> VBoxContainer:
 	v.add_theme_constant_override("separation", 10)
 	modal_panel.add_child(v)
 	return v
+
+
+func _new_framed_modal(width: float) -> VBoxContainer:
+	var body := _new_modal(width)
+	Look.bronze_frame(modal_panel as UiKitA.CardPanel)
+	return body
 
 
 func _fit_modal() -> void:
@@ -1440,6 +1530,8 @@ func _fit_modal() -> void:
 
 
 func _close_modal() -> void:
+	knowledge_focus = ""
+	knowledge_back = Callable()
 	dweller_sid = 0
 	_worker_target = -1
 	_popup_resource = ""
@@ -1643,7 +1735,7 @@ func _fly_resource(resource: String, amount: int, origin: Vector2) -> void:
 	fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(fly)
 	fly.global_position = origin
-	# Материалы летят к Складу: в верхней строке только четыре основных ресурса.
+	# Собранное число поднимается к своей плашке.
 	var target: Control = resource_chips[resource] if resource_chips.has(resource) else plaques["store"]["panel"]
 	var tween := create_tween().set_parallel(true)
 	_collection_fx = _collection_fx.filter(func(entry: Dictionary): return is_instance_valid(entry["label"]))
@@ -1693,32 +1785,12 @@ func _refresh_hero() -> void:
 	hero_train_button.tooltip_text = lg.can_train_hero()
 
 
-func show_chests(reward: Dictionary = {}) -> void:
-	var v := _new_modal(620)
-	v.add_child(_text(I18n.t("Сундуки %d / 4") % lg.chest_queue.size(), 25, true))
-	if not guide_active():
-		v.add_child(_wrap("Первая победа даёт сундук. За повторную: 15% за каждую звезду. Мест — 4.", 14))
-		v.add_child(_wrap("Редкости: обычное / редкое / эпическое / легендарное", 14))
-		v.add_child(_wrap(Legion.CHEST_ODDS, 15))
-		v.add_child(_wrap("Слитки: деревянный 2% · бронзовый 4% · золотой 6%. По 1–3 слитка.", 14))
-	for kind: String in lg.chest_queue:
-		var b := _button(I18n.t("Открыть: %s") % I18n.t(String(Legion.CHEST_NAMES[kind])), func(): show_chests(lg.open_chest(kind)); _refresh(), "coins")
-		b.name = "FortChest_" + kind
-		b.disabled = lg.store_count() >= lg.store_cap()
-		b.tooltip_text = I18n.t("Освободите место для вещи на Складе.") if b.disabled else I18n.t("Открывается сразу.")
-		v.add_child(b)
-	if lg.chest_queue.is_empty() and reward.is_empty():
-		v.add_child(_wrap("Сундуки принесут победы в походах."))
-	if not reward.is_empty():
-		v.add_child(hud._divider(8))
-		v.add_child(_wrap(I18n.t("Добыча: %d ден. · %d пайков · %d слитков") % [int(reward["money"]) - int(reward.get("money_lost", 0)), int(reward["rations"]), int(reward["ingots"])], 18))
-		v.add_child(_wrap(I18n.t("Железо %d · Дерево %d · Кожа %d") % [int(reward["iron"]), int(reward["wood"]), int(reward["leather"])]))
-		v.add_child(_wrap(Gear.name_of(reward["item"]), 18))
-	var back := _button("← Лагерь", _close_modal)
-	back.name = "FortChestBack"
-	v.add_child(back)
-	_fit_modal.call_deferred()
+func show_storage(tab := "all", page := 0, chest := "", reward: Dictionary = {}) -> void:
+	StoreUI.store(self, tab, page, chest, reward)
 
+
+func show_chests(reward: Dictionary = {}) -> void:
+	show_storage("chest", 0, "", reward)
 
 func _show_soldier(sid: int) -> void:
 	if bool(lg.soldier(sid).get("hero", false)):
@@ -1916,13 +1988,19 @@ func _layout_guide() -> void:
 					_guide_move_target(sid, "kitchen")
 			Legion.FortGuide.CHEST:
 				tip = "Откройте сундук"
-				_guide_target = _guide_modal_target("FortChest_wooden") if is_instance_valid(modal_panel) else chest_button
+				_guide_target = chest_button
+				if is_instance_valid(modal_panel):
+					_guide_target = _guide_modal_target("FortChestOpen")
+					if _guide_target == null:
+						_guide_target = _guide_modal_target("FortChest_wooden")
 			Legion.FortGuide.EQUIP:
 				tip = "Оденьте воина: нажмите на него и выберите вещь"
 				if is_instance_valid(modal_panel):
 					var iid := int(lg.flags.get("fort_guide_item", 0))
 					if dweller_sid == sid:
-						_guide_target = _guide_modal_target("FortEquip_%d" % iid)
+						_guide_target = _guide_modal_target("FortItemEquip")
+						if _guide_target == null:
+							_guide_target = _guide_modal_target("FortEquip_%d" % iid)
 						if _guide_target == null:
 							_guide_target = _guide_modal_target("FortAllGear")
 					else:
@@ -1978,6 +2056,10 @@ func _stock(resource: String) -> float:
 	return lg.rations if resource == "rations" else float(lg.mats.get(resource, 0.0))
 
 
+func _stock_text(resource: String, stock: float) -> String:
+	return hud.fmt(floori(stock + 0.0001) if resource == "rations" or resource in Gear.MATS else stock)
+
+
 func _cost_icons(cost: Dictionary, highlight_shortage := true) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 7)
@@ -2016,34 +2098,33 @@ func _refresh_costs(node: Node) -> void:
 func show_resource_popup(resource: String) -> void:
 	if not TOP_NAMES.has(resource):
 		return
-	var v := _new_modal(390)
+	var v := _new_modal(385, true)
 	_popup_resource = resource
 	modal_panel.name = "FortResourcePopup"
 	var heading := HBoxContainer.new()
-	v.add_child(heading)
-	var heading_icon := TextureRect.new()
-	heading_icon.texture = Look.icon(resource)
-	heading_icon.custom_minimum_size = Vector2(38, 38)
-	heading_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	heading_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	heading.add_child(heading_icon)
-	var title := _text(I18n.t(String(TOP_NAMES[resource])), 24, true)
+	heading.add_child(Kit.image(Look.resource(resource), Vector2(46, 46)))
+	var title := Look.label(I18n.t(TOP_NAMES[resource]), 28, Look.INK, true)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	heading.add_child(title)
 	heading.add_child(_button("×", _close_modal))
-	v.add_child(_wrap(I18n.t(String(TOP_TIPS[resource])), 16))
-	match resource:
-		"rations": v.add_child(_button("К полевой кухне", func(): _jump_to_type("kitchen"), "bread"))
-		"ingots": v.add_child(_button("Сундуки", show_chests, "commerce"))
-		"money":
-			v.add_child(_button("К Сокровищнице", func(): _jump_to_type("treasury"), "coins"))
-			var order := _button("Заказать денарии из города", _order_city_money, "coins")
-			order.disabled = lg.city_order_info()["why"] != ""
-			order.tooltip_text = order_button.tooltip_text
-			v.add_child(order)
-		"glory": v.add_child(_button("Поход", _campaign, "scroll"))
+	v.add_child(heading)
+	if resource in Legion.STOCK_RESOURCES:
+		var numbers := Look.label("%s / %s" % [_stock_text(resource, _stock(resource)), hud.fmt(lg.resource_cap(resource))], 34)
+		numbers.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(numbers)
+		var store := Look.button(I18n.t("К складу"), FortCutaway.room_icon("store"), Look.INSET)
+		store.pressed.connect(_jump_to_type.bind("store"))
+		v.add_child(store)
+	if resource == "money":
+		var info := lg.city_order_info()
+		var order := _button("Заказать денарии из города", _order_city_money, "coins")
+		order.disabled = info["why"] != ""
+		order.text += " · +%s / %s" % [hud.fmt(float(info["amount"])), hud.fmt(lg.resource_cap(resource))]
+		order.tooltip_text = order_button.tooltip_text
+		v.add_child(order)
+	elif resource == "glory":
+		v.add_child(_button("Поход", _campaign, "scroll"))
 	_fit_modal.call_deferred()
-
 
 func _jump_to_type(type: String) -> void:
 	var plot := lg.fort_slot_plot(type)
@@ -2228,7 +2309,7 @@ func _main_action() -> void:
 	var plot := lg.fort_plot(selected_plot)
 	if plot.is_empty():
 		return
-	if selected != "hq" and lg.fort_worker(selected_plot).is_empty():
+	if selected not in ["hq", "store"] and lg.fort_worker(selected_plot).is_empty():
 		show_worker_picker()
 		return
 	if not Legion.fort_production(selected, int(plot["lv"])).is_empty():
@@ -2242,7 +2323,7 @@ func _main_action() -> void:
 			_hide_card()
 			lu.open_craft(plot_id)
 		"mars": _aux(selected)
-		"store": show_stocks()
+		"store": show_storage()
 		"drill": _show_support("drill")
 		"infirmary": _show_support("infirmary")
 		"hq":
@@ -2354,6 +2435,8 @@ func _marker(plot_id: int, type: String) -> Dictionary:
 	var collect := Look.button("", Look.resource("rations"), Look.PAPER, Vector2(90, 42))
 	collect.name = "FortCollect"
 	collect.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	collect.add_theme_color_override("icon_disabled_color", Color.WHITE)
+	collect.add_theme_stylebox_override("disabled", Look.box(Look.DARK, Look.BRONZE, 10, 4))
 	collect.pressed.connect(func(): _collect_plot(int(panel.get_meta("plot"))))
 	panel.add_child(collect)
 	collect.position = Vector2(-11, 2)
@@ -2369,7 +2452,15 @@ func _marker(plot_id: int, type: String) -> Dictionary:
 	clock.position = Vector2(-22, 0)
 	clock.hide()
 	panel.add_child(clock)
-	return {"panel": panel, "button": button, "clock": clock, "title": level, "state": alert, "collect": collect, "ring": ring, "timer": timer}
+	var knowledge := Look.button("", KnowUI.node_icon("smith"), Look.DARK, Vector2(132, 38))
+	knowledge.name = "FortForgeKnowledgeTimer"
+	knowledge.position = Vector2(-32, -42)
+	knowledge.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	knowledge.add_theme_constant_override("icon_max_width", 28)
+	knowledge.pressed.connect(func(): show_knowledge(String(lg.knowledge_timer().get("id", "smith"))))
+	panel.add_child(knowledge)
+	knowledge.hide()
+	return {"knowledge": knowledge, "panel": panel, "button": button, "clock": clock, "title": level, "state": alert, "collect": collect, "ring": ring, "timer": timer}
 
 
 func _sync_markers() -> void:
@@ -2423,6 +2514,8 @@ func _refresh_marker(marker: Dictionary) -> void:
 	var cutaway := diorama is FortCutaway
 	room_button.visible = not cutaway or (type == "" and placement_type != "" and lg.fort_can_build(placement_type, int(plot["id"])) == "")
 	clock.hide()
+	var know_badge: Button = marker["knowledge"]
+	know_badge.hide()
 	if type == "":
 		(marker["title"] as Control).hide()
 		(marker["collect"] as Control).hide()
@@ -2446,6 +2539,10 @@ func _refresh_marker(marker: Dictionary) -> void:
 			return
 	var prod := Legion.fort_production(type, level)
 	var collect: Button = marker["collect"]
+	if type == "forge" and not lg.knowledge_timer().is_empty():
+		know_badge.text = clock_text(float(lg.knowledge_timer()["end"]) - Legion.now())
+		know_badge.icon = KnowUI.node_icon(String(lg.knowledge_timer()["id"]))
+		know_badge.show()
 	if type in ["forge", "arsenal"]:
 		collect.visible = lg.craft_ready(int(plot["id"])) > 0
 		collect.icon = Kit.texture("equip")
@@ -2470,16 +2567,26 @@ func _refresh_marker(marker: Dictionary) -> void:
 		collect.icon = Look.resource(resource)
 		collect.text = "+" + str(floori(float(plot["pend"]) + 0.0001))
 		collect.tooltip_text = I18n.t("Собрать %d") % floori(float(plot["pend"]) + 0.0001)
-		collect.disabled = _stock(resource) >= lg.resource_cap(resource)
-		if collect.disabled:
-			collect.tooltip_text += "\n" + I18n.t("Запас полон. Потратьте ресурсы, чтобы собрать ещё.")
+		var full := _stock(resource) >= lg.resource_cap(resource)
+		collect.disabled = full
+		if full and not lg.fort_guide_cooking(int(plot["id"])):
+			collect.show()
+			collect.icon = KnowUI.lock_icon()
+			collect.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			collect.text = ""
+			collect.tooltip_text = I18n.t("Запас полон. Потратьте ресурсы, чтобы собрать ещё.")
+			collect.set_meta("stock_lock", true)
+		else:
+			collect.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+			collect.set_meta("stock_lock", false)
+		(marker["ring"] as Control).visible = not bool(collect.get_meta("stock_lock"))
 		marker["ring"].set("value", float(plot["pend"]) / maxf(1.0, float(prod["cap"])))
 		if lg.fort_guide_cooking(int(plot["id"])):
 			collect.show()
 			collect.disabled = float(plot["pend"]) < Legion.FORT_GUIDE_BATCH - 0.0001
 			collect.tooltip_text = I18n.t("Готовит пайки…") if collect.disabled else I18n.t("Собрать %d") % Legion.FORT_GUIDE_BATCH
 			marker["ring"].set("value", float(plot["pend"]) / Legion.FORT_GUIDE_BATCH)
-		idle = float(plot["pend"]) >= float(prod["cap"]) - 0.001
+		idle = not full and float(plot["pend"]) >= float(prod["cap"]) - 0.001
 	elif type == "drill" and level > 0:
 		idle = true
 		for soldier: Dictionary in lg.soldiers:
@@ -2744,166 +2851,144 @@ func show_people() -> void:
 	_fit_modal.call_deferred()
 
 
-func show_dweller(sid: int, slot := "", change := "") -> void:
+func show_dweller(sid: int, slot := "", change := "", tab := "all", page := 0) -> void:
 	var person := lg.soldier(sid)
 	if person.is_empty():
 		_close_modal()
 		return
-	var v := _new_modal(970)
+	var v := _new_framed_modal(1480)
+	modal_panel.name = "FortDwellerCard"
 	dweller_sid = sid
 	dweller_slot = slot
 	dweller_change = change
-	modal_panel.name = "FortDwellerCard"
-	var head := HBoxContainer.new()
-	v.add_child(head)
-	var previous := Kit.round_button("swap")
-	previous.tooltip_text = I18n.t("Предыдущий житель")
-	previous.pressed.connect(func(): _dweller_next(sid, -1))
-	head.add_child(previous)
-	var title := Kit.ribbon(String(person["name"]))
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	head.add_child(title)
-	var next := Kit.round_button("swap")
-	next.tooltip_text = I18n.t("Следующий житель")
-	next.pressed.connect(func(): _dweller_next(sid, 1))
-	head.add_child(next)
-	(previous.get_node("ic") as TextureRect).flip_h = true
-	head.add_child(_button("×", _close_modal))
 	var columns := HBoxContainer.new()
-	columns.add_theme_constant_override("separation", 24)
+	columns.add_theme_constant_override("separation", 8)
 	v.add_child(columns)
+	var left_panel := Look.panel(Look.INSET, 14)
+	left_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.add_child(left_panel)
 	var left := VBoxContainer.new()
-	left.custom_minimum_size.x = 250
-	columns.add_child(left)
-	var portrait := Kit.slot(null, false, 216)
-	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_panel.add_child(left)
+	var title := Look.label(String(person["name"]), 37, Look.INK, true)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	left.add_child(title)
+	var stats := lg.soldier_stats(person, Legion.unit_of_class(String(person["cls"])))
+	var health := Look.meter(float(stats["hp"]), float(stats["hp"]))
+	health.custom_minimum_size.y = 7
+	left.add_child(health)
+	var figure_row := HBoxContainer.new()
+	figure_row.add_theme_constant_override("separation", 8)
+	left.add_child(figure_row)
+	var profile := VBoxContainer.new()
+	profile.alignment = BoxContainer.ALIGNMENT_CENTER
+	profile.custom_minimum_size.x = 113
+	figure_row.add_child(profile)
+	var job := Look.label(Soldiers.class_name_of(String(person["cls"])).capitalize(), 21)
+	profile.add_child(job)
+	var stars := Look.label("★".repeat(int(person["stars"])) + "☆".repeat(5 - int(person["stars"])), 18, Look.WINE)
+	stars.tooltip_text = I18n.t(STAR_TIP)
+	stars.mouse_filter = Control.MOUSE_FILTER_PASS
+	profile.add_child(stars)
+	for entry: Array in [["need_services", "Здоровье", roundi(float(stats["hp"]))], ["soldier", "Атака", roundi(float(stats["atk"]))],
+			["equip", "Защита", roundi(float(stats["armor"]))], ["star", "Сила", Legion.power(stats)]]:
+		var stat := HBoxContainer.new()
+		stat.add_child(Kit.image(String(entry[0]), Vector2(30, 30)))
+		stat.add_child(Look.label(str(entry[2]), 25))
+		stat.tooltip_text = I18n.t(String(entry[1]))
+		stat.mouse_filter = Control.MOUSE_FILTER_PASS
+		profile.add_child(stat)
+	var hands := VBoxContainer.new()
+	figure_row.name = "FortGearSlots"
+	hands.alignment = BoxContainer.ALIGNMENT_CENTER
+	figure_row.add_child(hands)
+	_dweller_slot(hands, person, "weapon", tab, page)
+	_dweller_slot(hands, person, "offhand", tab, page)
+	var portrait := Look.panel(Look.PAPER, 3)
 	portrait.name = "FortDwellerPortrait"
+	portrait.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	figure_row.add_child(portrait)
 	var preview := FortPersonPreview.new()
 	preview.name = "FortPortraitArt"
 	portrait.add_child(preview)
-	preview.setup(person, lg.worn(person), 198)
-	portrait.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	left.add_child(portrait)
-	_add_stars(left, int(person["stars"]))
-	left.add_child(_text(Soldiers.class_name_of(String(person["cls"])), 20, true))
-	var stats := lg.soldier_stats(person, Legion.unit_of_class(String(person["cls"])))
-	var stat_grid := GridContainer.new()
-	stat_grid.columns = 3
-	stat_grid.add_theme_constant_override("h_separation", 14)
-	left.add_child(stat_grid)
-	for entry: Array in [["need_services", "Здоровье", roundi(float(stats["hp"]))], ["soldier", "Атака", roundi(float(stats["atk"]))], ["equip", "Защита", roundi(float(stats["armor"]))], ["star", "Сила", Legion.power(stats)]]:
-		var icon := Kit.image(String(entry[0]), Vector2(32, 32))
-		icon.mouse_filter = Control.MOUSE_FILTER_PASS
-		icon.tooltip_text = I18n.t(String(entry[1]))
-		stat_grid.add_child(icon)
-		stat_grid.add_child(_text(I18n.t(String(entry[1])), 17))
-		stat_grid.add_child(_text(str(entry[2]), 23, true))
-	var plot := lg.fort_plot(lg.fort_worker_plot(sid))
-	var work := I18n.t(String(Legion.FORT_B[String(plot["b"])]["name"])) if not plot.is_empty() else I18n.t("Двор")
-	var move := Kit.button("gold", "swap", I18n.t("Переместить"))
-	move.name = "FortMoveDweller"
-	move.disabled = lg.s_state(person) != "ready"
-	move.tooltip_text = I18n.t("Работа: %s") % work + "\n" + I18n.t("Перетащите человека в комнату. Зелёная — можно, красная — нельзя.")
-	move.pressed.connect(func(): _move_dweller(sid))
-	left.add_child(move)
-	var right := VBoxContainer.new()
-	right.custom_minimum_size.x = 610
-	columns.add_child(right)
-	var slots := HBoxContainer.new()
-	slots.name = "FortGearSlots"
-	slots.add_theme_constant_override("separation", 12)
-	right.add_child(slots)
-	for gear_slot: String in ["weapon", "helmet", "armor", "offhand", Gear.OUTFIT_SLOT]:
-		var it := lg.item(int(person.get("gear", {}).get(gear_slot, 0)))
-		var button := _gear_slot_button(104, slot == gear_slot)
-		button.name = "FortGear_" + gear_slot
-		button.tooltip_text = I18n.t(String(Gear.SLOT_NAME[gear_slot])).capitalize() + "\n" + (Gear.name_of(it) + "\n" + Gear.stats_text(it) if not it.is_empty() else I18n.t("Выберите вещь на складе"))
-		button.pressed.connect(func(): show_dweller(sid, gear_slot))
-		slots.add_child(button)
-		var icon: Control = _dweller_item_icon(it, 86) if not it.is_empty() else Kit.image(hud.ico(String(LegionUi.GEAR_ICON[gear_slot]), 80), Vector2(86, 86))
-		button.add_child(icon)
-		icon.position = Vector2(9, 9)
+	preview.setup(person, lg.worn(person), 245, true)
+	preview.custom_minimum_size = Vector2(245, 355)
+	var clothing := VBoxContainer.new()
+	clothing.alignment = BoxContainer.ALIGNMENT_CENTER
+	figure_row.add_child(clothing)
+	for gear_slot: String in ["helmet", "armor", Gear.OUTFIT_SLOT]:
+		_dweller_slot(clothing, person, gear_slot, tab, page)
 	var clothes := lg.item(int(person.get("gear", {}).get(Gear.OUTFIT_SLOT, 0)))
 	if not clothes.is_empty():
-		var bonus := _text(Gear.name_of(clothes) + " · " + Gear.stats_text(clothes), 17)
+		var bonus := Look.label(StoreUI.item_stats(lg, clothes), 20)
 		bonus.name = "FortOutfitBonus"
-		right.add_child(bonus)
-	var inventory_head := HBoxContainer.new()
-	right.add_child(inventory_head)
-	var inventory_title := _text(I18n.t("На складе"), 24, true)
-	inventory_title.name = "FortInventoryTitle"
-	var inventory_font := FontVariation.new()
-	inventory_font.base_font = Kit.BOLD
-	inventory_font.spacing_space = 5
-	inventory_title.add_theme_font_override("font", inventory_font)
-	inventory_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	inventory_head.add_child(inventory_title)
-	var help := Kit.round_button("info")
-	help.tooltip_text = I18n.t("Где взять?")
-	help.pressed.connect(func():
-		var hint := _new_modal(560)
-		hint.add_child(_wrap(I18n.t("Кузница и оружейная куют вещи; сундуки за победы дают вещи"), 19))
-		hint.add_child(_button("Назад", func(): show_dweller(sid, slot), "back"))
-		_fit_modal.call_deferred())
-	inventory_head.add_child(help)
-	if slot != "":
-		var filter_row := HBoxContainer.new()
-		right.add_child(filter_row)
-		var all_gear := _button("Все вещи", func(): show_dweller(sid), "overview")
-		all_gear.name = "FortAllGear"
-		filter_row.add_child(all_gear)
-		var remove := _button("Снять", func():
-			if lg.unequip(sid, slot):
-				show_dweller(sid, slot)
-				_refresh(), "back")
-		remove.disabled = not (person["gear"] as Dictionary).has(slot) or lg.store_count() >= lg.store_cap()
-		remove.tooltip_text = I18n.t("Склад полон. Продайте или наденьте лишние вещи.") if lg.store_count() >= lg.store_cap() else I18n.t("Снять")
-		filter_row.add_child(remove)
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(600, 288)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	right.add_child(scroll)
-	var inventory := GridContainer.new()
-	inventory.name = "FortInventoryGrid"
-	inventory.columns = 6
-	inventory.add_theme_constant_override("h_separation", 8)
-	inventory.add_theme_constant_override("v_separation", 8)
-	scroll.add_child(inventory)
-	for it: Dictionary in lg.items:
-		if int(it.get("on", 0)) != 0 or String(it["slot"]) not in Gear.EQUIP_SLOTS_V3 or (slot != "" and it["slot"] != slot):
-			continue
-		var iid := int(it["id"])
-		var delta := lg.equip_power(sid, iid)
-		var button := _gear_slot_button(88)
-		button.name = "FortEquip_%d" % iid
-		button.tooltip_text = Gear.name_of(it) + "\n" + Gear.stats_text(it)
-		if it["slot"] != Gear.OUTFIT_SLOT:
-			button.tooltip_text += "\n" + I18n.t("Сила: %d → %d") % [int(delta[0]), int(delta[1])] + "\n" + I18n.t("Было → стало: %d → %d") % [int(delta[0]), int(delta[1])]
-		button.set_meta("power_before", int(delta[0]))
-		button.set_meta("power_after", int(delta[1]))
-		button.pressed.connect(func(): _equip_dweller(sid, iid))
-		inventory.add_child(button)
-		var icon := _dweller_item_icon(it, 70)
-		button.add_child(icon)
-		icon.position = Vector2(9, 6)
-		if it["slot"] == Gear.OUTFIT_SLOT:
-			continue
-		var gain := Kit.label("%+d" % (int(delta[1]) - int(delta[0])), 15, true)
-		gain.name = "PowerDelta"
-		gain.add_theme_color_override("font_color", Color("83ee8e") if int(delta[1]) >= int(delta[0]) else Color("ff8b7b"))
-		gain.add_theme_color_override("font_outline_color", Color("193d16") if int(delta[1]) >= int(delta[0]) else Color("58110b"))
-		gain.position = Vector2(8, 62)
-		button.add_child(gain)
-	if inventory.get_child_count() == 0:
-		var empty := Kit.slot("equip", false, 88)
-		empty.tooltip_text = I18n.t("Подходящих вещей на складе нет.")
-		inventory.add_child(empty)
+		bonus.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		bonus.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		left.add_child(bonus)
+	var move := Look.button(I18n.t("Переместить"), Kit.texture("swap"), Look.INSET)
+	move.name = "FortMoveDweller"
+	move.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	move.disabled = lg.s_state(person) != "ready"
+	move.pressed.connect(func(): _move_dweller(sid))
+	left.add_child(move)
+	var store_panel := Look.panel(Look.PAPER, 14)
+	columns.add_child(store_panel)
+	var right := VBoxContainer.new()
+	right.custom_minimum_size.x = 652
+	store_panel.add_child(right)
+	var head := HBoxContainer.new()
+	right.add_child(head)
+	var caption := Look.label(I18n.t("На складе"), 32, Look.INK, true)
+	caption.name = "FortInventoryTitle"
+	caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(caption)
+	head.add_child(Look.close_button(_close_modal, 49))
+	StoreUI.grid(self, right, sid, tab, page, slot)
 	if change != "":
-		var feedback := _text(change, 18, true)
+		var feedback := Look.label(change, 20, Look.OLIVE)
 		feedback.name = "FortEquipChange"
 		right.add_child(feedback)
+	var navigation := HBoxContainer.new()
+	navigation.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_child(navigation)
+	var previous := Look.button("‹", null, Look.INSET, Vector2(52, 42))
+	var next := Look.button("›", null, Look.INSET, Vector2(52, 42))
+	previous.tooltip_text = I18n.t("Предыдущий житель")
+	next.tooltip_text = I18n.t("Следующий житель")
+	previous.pressed.connect(_dweller_next.bind(sid, -1))
+	next.pressed.connect(_dweller_next.bind(sid, 1))
+	navigation.add_child(previous)
+	for s: Dictionary in lg.soldiers:
+		if bool(s.get("hero", false)):
+			continue
+		var id := int(s["id"])
+		var dot := Look.label("●" if id == sid else "○", 20, Look.WINE if id == sid else Look.EDGE)
+		dot.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		navigation.add_child(dot)
+	navigation.add_child(next)
 	_fit_modal.call_deferred()
 
+
+func _dweller_slot(parent: Control, person: Dictionary, slot: String, tab: String, page: int) -> void:
+	var sid := int(person["id"])
+	var it := lg.item(int(person.get("gear", {}).get(slot, 0)))
+	var button := _gear_slot_button(78, dweller_slot == slot)
+	button.name = "FortGear_" + slot
+	button.tooltip_text = I18n.t(String(Gear.SLOT_NAME[slot])).capitalize()
+	if not it.is_empty():
+		button.tooltip_text += "\n" + Gear.name_of(it) + "\n" + StoreUI.item_stats(lg, it)
+		button.pressed.connect(StoreUI.item_card.bind(self, int(it["id"]), sid, show_dweller.bind(sid, "", "", tab, page)))
+	else:
+		button.pressed.connect(show_dweller.bind(sid, slot))
+	var icon := Kit.image(StoreUI.item_icon(self, it) if not it.is_empty() else Kit.texture("res://assets/ui/ai/icons/%s.png" % String(LegionUi.GEAR_ICON[slot])), Vector2(62, 62))
+	icon.position = Vector2(8, 8)
+	button.add_child(icon)
+	if not it.is_empty():
+		var badge := Look.label(str(Gear.tier_of(it)), 18, Look.PAPER)
+		badge.name = "TierBadge"
+		badge.add_theme_stylebox_override("normal", Look.box(Look.DARK, Look.BRONZE, 6, 3))
+		badge.position = Vector2(5, 50)
+		button.add_child(badge)
+	parent.add_child(button)
 
 func _gear_slot_button(pixels: float, selected_slot := false) -> Button:
 	var b := Kit.button("cream")
@@ -2933,7 +3018,7 @@ func _dweller_item_icon(it: Dictionary, pixels: float) -> Control:
 	rim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	body.add_child(rim)
 	rim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var icon := Kit.image(lu._gear_tex(Gear.icon_of(it), String(it["slot"])), Vector2.ZERO)
+	var icon := Kit.image(StoreUI.item_icon(self, it), Vector2.ZERO)
 	body.add_child(icon)
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var badge := Kit.label(str(Gear.tier_of(it)), 14, true)
@@ -3047,6 +3132,7 @@ func _refresh_city_order() -> void:
 	var left := float(info["left"])
 	order_button.disabled = info["why"] != ""
 	order_button.tooltip_text = I18n.t("Заказать денарии из города") + "\n" + I18n.t("%d%% казны города · %d денариев") % [int(info["percent"]), int(info["amount"])]
+	order_button.tooltip_text += "\n%s / %s" % [hud.fmt(lg.city_money()), hud.fmt(lg.resource_cap("money"))]
 	order_button.tooltip_text += "\n" + (I18n.t("Следующий обоз через %s") % clock_text(left) if left > 0.0 else I18n.t("Обоз готов · раз в 5 часов"))
 	if info["why"] != "" and left <= 0.0:
 		order_button.tooltip_text += "\n" + I18n.t(String(info["why"]))
@@ -3061,18 +3147,9 @@ func _order_city_money() -> void:
 
 
 func show_smith_knowledge() -> void:
-	var v := _new_modal(560)
-	modal_panel.name = "FortSmithKnowledge"
-	v.add_child(Kit.ribbon(I18n.t("Кузнечное знание")))
-	v.add_child(_wrap("Открывает изготовление оружия и доспехов в мастерских Легиона."))
-	v.add_child(_cost_icons(Legion.SMITH_KNOWLEDGE_COST))
-	var why := lg.can_learn_smith()
-	var learn := _button("Изучить", func(): lg.learn_smith(); _close_modal(); _refresh(), "book")
-	learn.name = "FortLearnSmith"
-	learn.disabled = why != ""
-	learn.tooltip_text = I18n.t(why)
-	v.add_child(learn)
-	if why != "":
-		v.add_child(Kit.banner_red(I18n.t(why)))
-	v.add_child(_button("Закрыть", _close_modal))
-	_fit_modal.call_deferred()
+	show_knowledge("smith")
+
+
+func show_knowledge(id := "smith", back := Callable()) -> void:
+	KnowUI.build(self, id, back)
+	KnowUI.refresh(self)

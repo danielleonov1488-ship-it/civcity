@@ -148,7 +148,17 @@ func _factory_checks() -> void:
 
 
 func _hud_checks(tag: String) -> void:
-	check(camp.resource_bars.size() == 4, tag + " four resources")
+	var order := ["rations", "money", "ingots", "glory", "iron", "wood", "leather"]
+	if not check(camp.resource_bars.size() == order.size() and camp.chips.get_child_count() == order.size(), tag + " seven resources"):
+		return
+	var top := camp.chips.get_child(0) as Control
+	var second := camp.chips.get_child(4) as Control
+	check(second.position.y >= top.position.y + top.size.y, tag + " distinct rows")
+	for j in order.size():
+		var chip := camp.chips.get_child(j) as Control
+		var row := top if j < 4 else second
+		check(chip.name == "FortResource_" + order[j] and is_equal_approx(chip.position.y, row.position.y), tag + " chip row " + order[j])
+	check(second.size.x < top.size.x and second.size.y < top.size.y, tag + " compact material row")
 	for resource: String in camp.resource_bars:
 		var panel: Control = camp.resource_bars[resource]["panel"]
 		var number: Label = camp.resource_chips[resource]

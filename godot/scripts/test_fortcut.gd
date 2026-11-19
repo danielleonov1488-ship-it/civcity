@@ -50,7 +50,7 @@ func shot(file: String) -> void:
 
 
 func fixture(late: bool) -> void:
-	lg.fort = {"money": 1e7, "smith_knowledge": true, "exp": 3 if late else 0, "plots": [], "next_id": 0, "up": {}}
+	lg.fort = {"money": 1e7, "know": {"smith": true}, "exp": 3 if late else 0, "plots": [], "next_id": 0, "up": {}}
 	lg.upg.clear()
 	lg.camp.clear()
 	lg.soldiers.clear()

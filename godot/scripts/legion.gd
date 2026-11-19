@@ -1020,8 +1020,12 @@ func train_progress(s: Dictionary) -> float:
 ## Мест на Складе (вещи, что не надеты): 20 + 5 × уровень Склада оружия
 func store_cap() -> int:
 	if v3():
-		return Gear.STORE_BASE + Gear.STORE_PER * (fort_level_sum("store") + fort_level_sum("arsenal"))
+		return store_cap_after(0)
 	return Gear.STORE_BASE + Gear.STORE_PER * (level_of("armory") if b_built("armory") else 0)
+
+
+func store_cap_after(levels: int) -> int:
+	return Gear.STORE_BASE + Gear.STORE_PER * (fort_level_sum("store") + fort_level_sum("arsenal") + levels)
 
 
 func store_count() -> int:
@@ -1046,6 +1050,7 @@ func add_item(it: Dictionary) -> Dictionary:
 	var e := it.duplicate()
 	if v3():
 		e["tier"] = Gear.tier_of(e)
+		e["new"] = true
 	e["id"] = iid_next
 	e["on"] = 0
 	iid_next += 1
@@ -1190,13 +1195,24 @@ func can_smelt(iid: int) -> String:
 	return ""
 
 
+func smelt_preview(iid: int) -> Dictionary:
+	var it := item(iid)
+	if it.is_empty():
+		return {}
+	var back := Gear.smelt_mats(it)
+	if knows("smelt"):
+		for key: String in back:
+			back[key] = roundi(float(back[key]) * 1.5)
+	return back
+
+
 ## Разобрать вещь: обломок её редкости
 func smelt(iid: int) -> bool:
 	if can_smelt(iid) != "":
 		return false
 	var it := item(iid)
 	shards[int(it["rarity"])] = int(shards[int(it["rarity"])]) + 1
-	var back := Gear.smelt_mats(it)
+	var back := smelt_preview(iid)
 	for m: String in back:
 		mats[m] = float(mats.get(m, 0.0)) + float(back[m])
 	items.erase(it)
@@ -1259,6 +1275,8 @@ func forge(slot: String, cls: String, r: int) -> bool:
 ## Вещь набora: реликвия провинции, эпические обломки (синие), материалы ×2, денарии, 8 ч; Кузница 5+
 func can_forge_set(set_id: String, slot: String, cls: String) -> String:
 	if v3():
+		if not knows("sets"):
+			return knowledge_requirement("sets")
 		var kind := Gear.craft_kind(slot, cls)
 		var plot_id := int(fort_slot_plot(Gear.craft_room(kind)).get("id", -1))
 		var why := can_craft(plot_id, kind, Gear.tier_of({"ilvl": forge_ilvl()}))
@@ -1266,7 +1284,10 @@ func can_forge_set(set_id: String, slot: String, cls: String) -> String:
 			return why
 	if not army_on():
 		return "Наборы — в новой игре"
-	if forge_lvl() < int(Gear.SET_FORGE["lvl"]):
+	if v3():
+		if not camp_built("forge"):
+			return "Постройте Кузницу"
+	elif forge_lvl() < int(Gear.SET_FORGE["lvl"]):
 		return "Нужна Кузница %d уровня" % int(Gear.SET_FORGE["lvl"])
 	if not forging.is_empty():
 		return "Кузница занята: ещё %s" % fmt_duration(forge_left())
@@ -1301,6 +1322,8 @@ func _set_where(set_id: String) -> String:
 
 
 func forge_set(set_id: String, slot: String, cls: String) -> bool:
+	if v3():
+		fort_finish()
 	if can_forge_set(set_id, slot, cls) != "":
 		return false
 	_pay({"money": int(Gear.SET_FORGE["money"])})
@@ -1459,7 +1482,7 @@ func mat_rate(m: String) -> float:
 
 func mat_cap(m: String) -> int:
 	if v3():
-		return MAT_CAP0 + int(FORT_B["store"]["materials_per"]) * fort_level_sum("store")
+		return resource_cap(m)
 	var w := workshop_of(m)
 	return MAT_CAP0 + (MAT_CAP_PER * level_of(w) if w != "" and count_type(w) > 0 else 0)
 
@@ -1797,7 +1820,7 @@ func city_money() -> float:
 
 
 func money_cap() -> int:
-	return roundi(5000.0 * pow(1.6, maxi(0, camp_level("hq") - 1))) + 5000 * fort_level_sum("store")
+	return resource_cap("money")
 
 
 ## Старую военную казну переносим один раз, городской бюджет не трогаем.
@@ -1806,7 +1829,7 @@ func _fort_money_load(raw: Dictionary) -> void:
 	var old := float(c.magis_treasury) if c != null else 0.0
 	fort["money"] = maxf(0.0, float(raw.get("money", raw.get("treasury", old if old > 0.0 else 500.0))))
 	fort["order_ready_at"] = maxf(0.0, float(raw.get("order_ready_at", 0.0)))
-	fort["smith_knowledge"] = bool(raw.get("smith_knowledge", false))
+	_load_knowledge(raw)
 	if c != null:
 		c.magis_treasury = 0.0
 
@@ -4582,6 +4605,10 @@ func fort_upgrade(plot_id: int) -> bool:
 const FORT_INSTANT_K := 1.2
 
 
+static func instant_ingots(seconds: float) -> int:
+	return maxi(1, ceili(FORT_INSTANT_K * sqrt(maxf(0.0, seconds) / 60.0)))
+
+
 func fort_plot_timer(plot_id: int) -> Dictionary:
 	var p := fort_plot(plot_id)
 	var timer: Dictionary = p.get("up", {})
@@ -4646,7 +4673,7 @@ func fort_instant_info(plot_id: int) -> Dictionary:
 	if timer.is_empty():
 		why = fort_can_upgrade(plot_id)
 		seconds = float(fort_info(plot_id)["next_time"])
-	var price := maxi(1, ceili(FORT_INSTANT_K * sqrt(seconds / 60.0)))
+	var price := instant_ingots(seconds)
 	if why == "" and ingots < price:
 		why = "Не хватает слитков"
 	return {"price": price, "why": why, "stamp": str([p["b"], p["lv"], timer.get("end", 0), timer.get("to", -1)])}
@@ -4698,7 +4725,8 @@ func fort_build_seconds(type: String, level: int) -> float:
 
 func work_bonus(person: Dictionary, kind: String) -> float:
 	var gear: Dictionary = person.get("gear", {})
-	return Gear.work_bonus(item(int(gear.get(Gear.OUTFIT_SLOT, 0))), kind)
+	var bonus := Gear.work_bonus(item(int(gear.get(Gear.OUTFIT_SLOT, 0))), kind)
+	return bonus + 0.05 if bonus > 0.0 and knows("outfit2") else bonus
 
 
 func fort_work_speed(plot_id: int, type: String) -> float:
@@ -4844,6 +4872,8 @@ func fort_finish() -> Array:
 		_fort_fill_grid()
 		fort["up"] = {}
 		out.append("Форт расширен")
+	if _finish_knowledge(t):
+		out.append(I18n.t("Знание изучено"))
 	if not out.is_empty():
 		_fort_changed()
 	return out
@@ -5369,7 +5399,7 @@ func squad_v3() -> Array:
 
 func ration_cap() -> int:
 	if v3():
-		return RATION_CAP0 + int(FORT_B["store"]["rations_per"]) * fort_level_sum("store")
+		return resource_cap("rations")
 	return RATION_CAP0 + RATION_CAP_PER * camp_level("store")
 
 
@@ -5721,13 +5751,30 @@ func _hero_tick3() -> void:
 		changed.emit()
 
 
-func resource_cap(resource: String) -> int:
-	if v3() and resource == "money":
-		return money_cap()
-	if v3() and resource == "ingots":
-		return FORT_INGOT_BASE + int(FORT_B["store"]["ingots_per"]) * fort_level_sum("store")
-	return ration_cap() if resource == "rations" else mat_cap(resource)
+const STOCK_RESOURCES := ["money", "rations", "ingots", "iron", "wood", "leather"]
+# Нижняя граница для Склада I. На Штабе VI самые дорогие детали набора стоят 560.
+const FORT_MAT_CAP_MIN := [0, 0, 0, 0, 0, 0, 560, 560, 800, 1200, 1400]
 
+
+func resource_cap(resource: String, store_extra := 0) -> int:
+	if not v3() and resource != "money":
+		return ration_cap() if resource == "rations" else mat_cap(resource)
+	return resource_cap_at(resource, camp_level("hq"), fort_level_sum("store") + store_extra)
+
+
+static func resource_cap_at(resource: String, hq: int, stores: int) -> int:
+	var store: Dictionary = FORT_B["store"]
+	match resource:
+		"money": return roundi(5000.0 * pow(1.6, maxi(0, hq - 1))) + 5000 * stores
+		"rations": return RATION_CAP0 + int(store["rations_per"]) * stores
+		"ingots":
+			var progression := instant_ingots(camp_time_h(hq + 1) * 3600.0) - int(store["ingots_per"])
+			return maxi(FORT_INGOT_BASE, progression) + int(store["ingots_per"]) * stores
+		"iron", "wood", "leather":
+			var per := int(store["materials_per"])
+			var min_with_store := maxi(int(FORT_MAT_CAP_MIN[clampi(hq, 0, FORT_MAT_CAP_MIN.size() - 1)]), 8 * hq)
+			return maxi(MAT_CAP0, min_with_store - per) + per * stores
+	return 0
 
 func collect_resource(resource: String) -> int:
 	if not v3() or resource not in ["iron", "wood", "leather", "rations"]:
@@ -5776,27 +5823,172 @@ func craft_working(plot_id: int) -> bool:
 	return not p.is_empty() and int(p["lv"]) > 0 and (p["up"] as Dictionary).is_empty() and not fort_worker(plot_id).is_empty()
 
 
-const SMITH_KNOWLEDGE_COST := {"money": 800, "mats": {"iron": 20, "wood": 20}}
+const Knowledge = preload("res://scripts/legion_knowledge.gd")
 const SMITH_LOCK := "Нужно Кузнечное знание"
 
 
+func _load_knowledge(raw: Dictionary) -> void:
+	var learned := {}
+	var old: Variant = raw.get("know", {})
+	if old is Dictionary:
+		for id: String in Knowledge.NODES:
+			if bool(old.get(id, false)):
+				learned[id] = true
+	if bool(raw.get("smith_knowledge", false)):
+		learned["smith"] = true
+	fort["know"] = learned
+	fort["know_at"] = {}
+	var active: Variant = raw.get("know_at", {})
+	if active is Dictionary:
+		var id := String(active.get("id", ""))
+		var deadline := float(active.get("end", 0.0))
+		if Knowledge.NODES.has(id) and not learned.has(id) and is_finite(deadline) and deadline > 0.0:
+			fort["know_at"] = {"id": id, "end": deadline,
+				"total": maxf(1.0, float(active.get("total", knowledge_seconds(id))))}
+
+
+func knows(id: String) -> bool:
+	if not v3():
+		return false
+	var learned: Dictionary = fort.get("know", {})
+	return bool(learned.get(id, false)) or (id == "smith" and bool(fort.get("smith_knowledge", false)))
+
+
 func smith_known() -> bool:
-	return v3() and bool(fort.get("smith_knowledge", false))
+	return knows("smith")
+
+
+func knowledge_timer() -> Dictionary:
+	return fort.get("know_at", {})
+
+
+func knowledge_seconds(id: String) -> float:
+	return float(Knowledge.NODES[id]["hours"]) * 3600.0 / maxf(0.001, time_k)
+
+
+func knowledge_requirement(id: String) -> String:
+	return I18n.t(SMITH_LOCK) if id == "smith" else I18n.t("Нужно: %s") % I18n.t(Knowledge.NODES[id]["name"])
+
+
+func knowledge_gate(id: String) -> String:
+	var node: Dictionary = Knowledge.NODES.get(id, {})
+	if not v3() or node.is_empty():
+		return I18n.t("Нет такого знания")
+	for need: String in node["needs"]:
+		if not knows(need):
+			return knowledge_requirement(need)
+	if camp_level("hq") < int(node["hq"]):
+		return I18n.t("Штаб %d") % int(node["hq"])
+	return ""
+
+
+func can_learn(id: String) -> String:
+	if knows(id):
+		return I18n.t("Знание уже изучено")
+	var why := knowledge_gate(id)
+	if why != "":
+		return why
+	if float(knowledge_timer().get("end", 0.0)) > now():
+		return I18n.t("Уже идёт изучение")
+	return I18n.t(_fort_afford(Knowledge.NODES[id]))
+
+
+func learn(id: String) -> bool:
+	fort_finish()
+	if can_learn(id) != "":
+		return false
+	_fort_pay(Knowledge.NODES[id])
+	var seconds := knowledge_seconds(id)
+	fort["know_at"] = {"id": id, "end": now() + seconds, "total": seconds}
+	_finish_knowledge(now())
+	changed.emit()
+	return true
+
+
+func _finish_knowledge(at: float) -> bool:
+	var timer := knowledge_timer()
+	if timer.is_empty() or float(timer["end"]) > at:
+		return false
+	if not fort.has("know"):
+		fort["know"] = {}
+	fort["know"][String(timer["id"])] = true
+	fort["know_at"] = {}
+	return true
+
+
+func knowledge_instant_price() -> int:
+	var timer := knowledge_timer()
+	return 0 if timer.is_empty() else instant_ingots(float(timer["end"]) - now())
+
+
+func finish_knowledge_now(id: String) -> bool:
+	fort_finish()
+	var timer := knowledge_timer()
+	var price := knowledge_instant_price()
+	if timer.get("id") != id or price <= 0 or ingots < price:
+		return false
+	ingots -= price
+	timer["end"] = now()
+	_finish_knowledge(now())
+	changed.emit()
+	return true
 
 
 func can_learn_smith() -> String:
-	if not v3() or camp_level("hq") < 2:
-		return "Нужен Штаб ур. 2"
-	if smith_known():
-		return "Знание уже изучено"
-	return _fort_afford(SMITH_KNOWLEDGE_COST)
+	return can_learn("smith")
 
 
 func learn_smith() -> bool:
-	if can_learn_smith() != "":
+	return learn("smith")
+
+
+func craft_knowledge(kind: String, tier: int) -> String:
+	if not smith_known():
+		return "smith"
+	for id: String in Knowledge.recipe_requirements(kind, tier):
+		if not knows(id):
+			return id
+	return ""
+
+
+func craft_odds() -> Array:
+	if knows("luck2"):
+		return [42, 33, 17, 6, 2]
+	if knows("luck1"):
+		return [52, 30, 13, 4, 1]
+	return Gear.CRAFT_ODDS
+
+
+func reforge_quote(iid: int) -> Dictionary:
+	var it := item(iid)
+	if it.is_empty():
+		return {"why": I18n.t("Нет такой вещи")}
+	var tier := Gear.tier_of(it) + 1
+	var kind := Gear.work_kind(it) if it.get("slot") == Gear.OUTFIT_SLOT else Gear.craft_kind(String(it["slot"]), Gear.weapon_class(it))
+	var quote := {"tier": tier, "mats": Gear.craft_mats(kind, tier), "why": ""}
+	if not knows("reforge"):
+		quote["why"] = knowledge_requirement("reforge")
+	elif not Gear.CRAFT_TYPES.has(kind) or tier > Gear.TIERS:
+		quote["why"] = I18n.t("Перековка недоступна")
+	else:
+		var needed := craft_knowledge(kind, tier)
+		var room := Gear.craft_room(kind)
+		if needed != "":
+			quote["why"] = knowledge_requirement(needed)
+		elif not (fort["plots"] as Array).any(func(p: Dictionary): return p["b"] == room and int(p["lv"]) >= Gear.tier_room_level(tier) and p["up"].is_empty()):
+			quote["why"] = I18n.t("Для тира %d нужен уровень комнаты %d") % [tier, Gear.tier_room_level(tier)]
+		else:
+			quote["why"] = I18n.t(mats_short(quote["mats"]))
+	return quote
+
+
+func reforge_item(iid: int, to: int) -> bool:
+	fort_finish()
+	var quote := reforge_quote(iid)
+	if quote["why"] != "" or int(quote["tier"]) != to:
 		return false
-	_fort_pay(SMITH_KNOWLEDGE_COST)
-	fort["smith_knowledge"] = true
+	_fort_pay(quote)
+	item(iid)["tier"] = to
 	changed.emit()
 	return true
 
@@ -5804,8 +5996,9 @@ func learn_smith() -> bool:
 func can_craft(plot_id: int, kind: String, tier: int) -> String:
 	if not v3() or not Gear.CRAFT_TYPES.has(kind):
 		return "Нет такого рецепта"
-	if not smith_known():
-		return SMITH_LOCK
+	var needed := craft_knowledge(kind, tier)
+	if needed != "":
+		return knowledge_requirement(needed)
 	var p := fort_plot(plot_id)
 	if p.is_empty() or p["b"] != Gear.craft_room(kind) or int(p["lv"]) <= 0:
 		return "Выберите нужную мастерскую"
@@ -5884,7 +6077,7 @@ func craft_collect(plot_id: int) -> Dictionary:
 		var job: Dictionary = queue[i]
 		if float(job["left"]) > 0.0:
 			continue
-		var it: Dictionary = (job["legacy"] as Dictionary).duplicate(true) if job.has("legacy") else Gear.craft_item(String(job["kind"]), int(job["tier"]), Gear.roll_craft_rarity(_rng))
+		var it: Dictionary = (job["legacy"] as Dictionary).duplicate(true) if job.has("legacy") else Gear.craft_item(String(job["kind"]), int(job["tier"]), Gear.roll_craft_rarity(_rng, craft_odds()))
 		var got := add_item(it)
 		if got.is_empty():
 			return {}
@@ -5938,18 +6131,23 @@ func _craft_migrate() -> void:
 	_craft_deadlines(p, now())
 
 
-## Сравнение без переодевания живого воина и без сигналов/случайных чисел.
-func equip_power(sid: int, iid: int) -> Array:
+## Сравнение без переодевания живого воина и без случайных чисел.
+func equip_stat_preview(sid: int, iid: int) -> Array[Dictionary]:
 	var s := soldier(sid)
 	var it := item(iid)
 	if s.is_empty() or it.is_empty():
-		return [0, 0]
-	var before := power(soldier_stats(s, unit_of_class(String(s["cls"]))))
+		return []
+	var before := soldier_stats(s, unit_of_class(String(s["cls"])))
 	var probe := s.duplicate(true)
 	probe["gear"][String(it["slot"])] = iid
 	if v3() and it["slot"] == "weapon":
 		probe["cls"] = Gear.weapon_class(it)
-	return [before, power(soldier_stats(probe, unit_of_class(String(probe["cls"]))))]
+	return [before, soldier_stats(probe, unit_of_class(String(probe["cls"])))]
+
+
+func equip_power(sid: int, iid: int) -> Array:
+	var comparison := equip_stat_preview(sid, iid)
+	return [0, 0] if comparison.is_empty() else [power(comparison[0]), power(comparison[1])]
 
 
 func queue_chest(kind: String) -> bool:
@@ -5960,10 +6158,19 @@ func queue_chest(kind: String) -> bool:
 	return true
 
 
+const CHEST_TIER := {"wooden": 1, "bronze": 2, "gold": 3}
+const CHEST_RANGES := {"money": Vector2i(30, 60), "rations": Vector2i(1, 3)}
+
+
+static func chest_range(kind: String, resource: String) -> Vector2i:
+	var limits: Vector2i = CHEST_RANGES[resource]
+	return limits * int(CHEST_TIER[kind])
+
+
 func open_chest(kind: String) -> Dictionary:
 	if not v3() or not CHEST_NAMES.has(kind) or not chest_queue.has(kind) or store_count() >= store_cap():
 		return {}
-	var tier := int({"wooden": 1, "bronze": 2, "gold": 3}[kind])
+	var tier := int(CHEST_TIER[kind])
 	var roll := _rng.randi_range(1, 100)
 	var rarity := 0
 	var total := 0
@@ -5987,7 +6194,8 @@ func open_chest(kind: String) -> Dictionary:
 	var gear := add_item(loot)
 	if gear.is_empty():
 		return {}
-	var reward := {"money": _rng.randi_range(30, 60) * tier, "rations": _rng.randi_range(1, 3) * tier,
+	var reward := {"money": _rng.randi_range(CHEST_RANGES["money"].x, CHEST_RANGES["money"].y) * tier,
+		"rations": _rng.randi_range(CHEST_RANGES["rations"].x, CHEST_RANGES["rations"].y) * tier,
 		"iron": _rng.randi_range(5, 12) * tier, "wood": _rng.randi_range(5, 12) * tier, "leather": _rng.randi_range(5, 12) * tier,
 		"ingots": _rng.randi_range(1, 3) if _rng.randi_range(1, 100) <= 2 * tier else 0, "item": gear}
 	chest_queue.erase(kind)

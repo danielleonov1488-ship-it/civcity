@@ -103,7 +103,7 @@ func _fixture() -> int:
 	for type: String in ["hq", "barracks", "kitchen", "forge", "treasury"]:
 		Fixture.set_level(lg, type, 2)
 	lg.fort["money"] = 2840.0
-	lg.fort["smith_knowledge"] = false
+	lg.fort["know"] = {}
 	lg.mats = {"wood": 100.0, "iron": 100.0, "leather": 100.0}
 	lg.ingots = 18
 	lg.glory = 120
@@ -339,7 +339,12 @@ func _run() -> void:
 	person = lg.soldier(sid)
 	var forge := int(lg.fort_slot_plot("forge")["id"])
 	check(lg.can_craft(forge, "smith", 1) == Legion.SMITH_LOCK, "одежда требует Кузнечное знание")
-	check(lg.learn_smith() and lg.craft_start(forge, "smith", 1), "запуск рецепта одежды в кузнице")
+	check(lg.learn_smith() and not lg.craft_start(forge, "smith", 1), "рабочая одежда требует отдельного знания")
+	Fixture.set_level(lg, "hq", 3)
+	check(lg.learn("outfit"), "изучение рабочей одежды")
+	Legion.clock += lg.knowledge_seconds("outfit") + 1.0
+	lg.fort_finish()
+	check(lg.craft_start(forge, "smith", 1), "запуск рецепта одежды в кузнице")
 	Legion.clock += float(Gear.TIER_TIME[0]) + 1.0
 	var smith := lg.craft_collect(forge)
 	if not check(Gear.work_kind(smith) == "smith", "готовый фартук кузнеца"):

@@ -85,7 +85,7 @@ func _fixture() -> void:
 	lg = city.legion
 	Legion.clock = Time.get_unix_time_from_system()
 	lg.fort = {"exp": 1, "grid": [3, 3], "money": 4290, "plots": [], "next_id": 0, "up": {},
-		"newcomers": [], "arrival": 0.0, "smith_knowledge": true, "population_v": true, "workers_v": true}
+		"newcomers": [], "arrival": 0.0, "know": {"smith": true}, "population_v": true, "workers_v": true}
 	lg.camp = {}
 	lg.upg.clear()
 	lg.soldiers.clear()
