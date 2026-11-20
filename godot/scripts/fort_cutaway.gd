@@ -32,10 +32,22 @@ const CLOSE_ZOOM := CELL.y / 0.6
 const ROOM_FOCUS_ZOOM := CELL.y / 0.48
 const SPRITE_LIMIT := 40
 const NO_POINT := Vector2(-10000, -10000)
+const EMPTY_ROOM_LIGHT := """
+shader_type canvas_item;
+uniform float light = 0.55;
+
+void fragment() {
+	vec2 edge = abs(UV * 2.0 - 1.0);
+	float vignette = smoothstep(0.06, 1.38, length(edge));
+	COLOR.rgb *= vec3(0.89, 0.96, 1.05) * light * mix(1.0, 0.76, vignette);
+}
+"""
 
 var room_rects: Dictionary = {}
 var room_sprites: Dictionary = {}
 var room_stages: Dictionary = {}
+var _empty_lights: Dictionary = {}
+var _empty_shader: Shader
 var shell: Node2D
 var backdrop: Sprite2D
 var grid := Legion.FORT_START_GRID
@@ -215,6 +227,7 @@ func _build_cutaway(entries: Array) -> void:
 	room_rects.clear()
 	room_sprites.clear()
 	room_stages.clear()
+	_empty_lights.clear()
 	highlights.clear()
 	scaffolds.clear()
 	_hover_id = -1
@@ -270,10 +283,14 @@ func _build_cutaway(entries: Array) -> void:
 		if building:
 			scaffolds[key] = room
 			_construction_overlay(id, rect)
+		elif String(p["b"]).is_empty():
+			_shade_empty(room, rect, id)
 	# У старых фортов бывают ячейки без игрового участка.
 	for i in range(index, cells.size()):
 		var cell := cells[i]
-		_paint(_rooms, _texture(room_texture_path("", 0)), Rect2(Vector2(_column_x[cell.x], cell.y * ROW_PITCH), CELL))
+		var rect := Rect2(Vector2(_column_x[cell.x], cell.y * ROW_PITCH), CELL)
+		var room := _paint(_rooms, _texture(room_texture_path("", 0)), rect)
+		_shade_empty(room, rect, -i - 1)
 	_build_shell()
 	_refresh_rims()
 	bounds = Rect2(-540, -382, _right_edge + 625, _ground_y + 382 + 35)
@@ -286,6 +303,91 @@ func _build_cutaway(entries: Array) -> void:
 		zoom = default_zoom
 		_target_zoom = zoom
 	_update_camera()
+
+
+func _shade_empty(room: Sprite2D, rect: Rect2, id: int) -> void:
+	if _empty_shader == null:
+		_empty_shader = Shader.new()
+		_empty_shader.code = EMPTY_ROOM_LIGHT
+	var light := ShaderMaterial.new()
+	light.shader = _empty_shader
+	room.material = light
+	if id >= 0:
+		_empty_lights[id] = light
+	else:
+		light.set_shader_parameter("light", 0.44)
+	var webs := Cobwebs.new()
+	webs.name = "Cobwebs"
+	webs.scale = Vector2.ONE / room.scale
+	webs.build(rect.size, id)
+	room.add_child(webs)
+
+
+func _light_empty(id: int, hovered: bool) -> void:
+	var light: ShaderMaterial = _empty_lights.get(id)
+	if light != null:
+		light.set_shader_parameter("light", 0.65 if hovered else 0.55)
+
+
+class Cobwebs extends Node2D:
+	static var _textures: Dictionary = {}
+	var threads: Array[PackedVector2Array] = []
+	var _texture: Texture2D
+	var _area := Vector2.ZERO
+
+	func build(area: Vector2, id: int) -> void:
+		_area = area
+		var key := Vector3i(id, roundi(area.x), roundi(area.y))
+		_texture = _textures.get(key)
+		if _texture != null:
+			return
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(id) + 50351
+		_web(Vector2(5, 4), Vector2.ONE, rng.randf_range(46.0, 64.0), rng)
+		_web(Vector2(area.x - 5, 4), Vector2(-1, 1), rng.randf_range(32.0, 51.0), rng)
+		if rng.randf() > 0.43:
+			var flip := rng.randf() > 0.5
+			_web(Vector2(area.x - 6 if flip else 6.0, area.y - 5), Vector2(-1 if flip else 1, -1),
+				rng.randf_range(21.0, 34.0), rng)
+		# Все нити клетки рисуются одной текстурой.
+		var svg := PackedStringArray(['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">' % [key.y, key.z],
+			'<g fill="none" stroke="#d1dbe6" stroke-width="1.05" stroke-linecap="round" stroke-linejoin="round">'])
+		for i in threads.size():
+			var points := PackedStringArray()
+			for p in threads[i]:
+				points.append("%.2f,%.2f" % [p.x, p.y])
+			svg.append('<polyline stroke-opacity="%.2f" points="%s"/>' % [0.39 if i % 10 < 6 else 0.30, " ".join(points)])
+		svg.append("</g></svg>")
+		var image := Image.new()
+		if image.load_svg_from_string("".join(svg), 2.0) == OK:
+			_texture = ImageTexture.create_from_image(image)
+			_textures[key] = _texture
+		threads.clear()
+
+	func _web(at: Vector2, mirror: Vector2, radius: float, rng: RandomNumberGenerator) -> void:
+		var rays := PackedVector2Array()
+		var hub := Vector2(radius * 0.06, radius * 0.07)
+		for i in 6:
+			var angle := lerpf(0.04, PI * 0.48, float(i) / 5.0)
+			var end := Vector2.from_angle(angle) * radius * rng.randf_range(0.77, 1.12)
+			rays.append(end)
+			var middle := hub.lerp(end, 0.55) + Vector2(0, radius * 0.028 * mirror.y)
+			threads.append(PackedVector2Array([at + hub * mirror, at + middle * mirror, at + end * mirror]))
+		for turn in 4:
+			var line := PackedVector2Array()
+			for i in rays.size():
+				var t := (float(turn) + 1.0 + float(i) * 0.09) * 0.185
+				var knot := hub.lerp(rays[i], t)
+				if i > 0:
+					var previous := hub.lerp(rays[i - 1], t - 0.017)
+					var sag := previous.lerp(knot, 0.52) + Vector2(0, radius * 0.032 * mirror.y)
+					line.append(at + sag * mirror)
+				line.append(at + knot * mirror)
+			threads.append(line)
+
+	func _draw() -> void:
+		if _texture != null:
+			draw_texture_rect(_texture, Rect2(Vector2.ZERO, _area), false)
 
 
 func _construction_overlay(id: int, rect: Rect2) -> void:
@@ -613,6 +715,8 @@ func highlight(slot: String) -> void:
 
 
 func _refresh_rims() -> void:
+	for id: int in _empty_lights:
+		_light_empty(id, id == (_hover_id if drag_sid == 0 else drag_target))
 	for id: int in room_rects:
 		var rim: ReferenceRect = highlights["plot_%d" % id]
 		var marked := id == selected_room or id == _hover_id or placement_rooms.has(id)
@@ -829,6 +933,8 @@ func update_person_move(pos: Vector2) -> void:
 		return
 	var previous := drag_target
 	drag_target = id
+	_light_empty(previous, false)
+	_light_empty(id, true)
 	if room_rects.has(previous):
 		_tint_drop_rim(previous, highlights["plot_%d" % previous])
 	if id >= 0:

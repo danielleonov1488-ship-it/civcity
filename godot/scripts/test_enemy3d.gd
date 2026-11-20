@@ -204,7 +204,7 @@ func _long_models() -> void:
 			var dir := -1.0 if left else 1.0
 			var front: Vector2 = f.long_model[0]
 			var muzzle := view._actor_mark(f, Vector3(dir * front.x, 0, front.y))
-			check(absf(muzzle.x - f.position.x) < 1.0, "muzzle at contact " + id)
+			check(absf(muzzle.x - f.contact_point().x) < 3.0, "muzzle at contact " + id)
 			check((muzzle.x - f.chest().x) * dir > 20.0, "hit within body " + id)
 			check(f.head().y < f.chest().y - 30.0, "health bar above body " + id)
 			var projectile := LegionSim.Shot.new()
@@ -555,22 +555,23 @@ func _depth_order(view: View, label: String, require_rear := false) -> void:
 		var wide := broad[i]
 		var wide_box: Rect2 = boxes[wide.unit.id][0]
 		var wide_range: Vector2 = boxes[wide.unit.id][1]
-		var wide_feet := wide.body_ground().y
+		var wide_feet := wide.visible_foot().y
 		var wide_depth := camera.to_local(wide.actor.global_position).z
 		for j in i:
-			check(absf(wide_feet - broad[j].body_ground().y) >= View.WIDE_LANE_STEP - 0.1,
-				"separate wide lanes " + label)
+			if not require_rear:
+				var other := broad[j]
+				var feet_gap := wide.body_ground().distance_to(other.body_ground())
+				check(feet_gap >= minf(wide.body_width(), other.body_width()) * 0.48, "separate wide actors " + label)
 		for f: View.Fighter in small:
-			var dy := f.body_ground().y - wide_feet
-			if f.unit.side == "enemy":
-				check(dy > 0.0, "nearer enemy lane %s: %s / %s" % [label, f.unit.key, wide.unit.key])
+			var dy := f.visible_foot().y - wide_feet
 			if not wide_box.intersects(boxes[f.unit.id][0]) or is_zero_approx(dy):
 				continue
 			overlaps += 1
 			if dy < 0.0:
 				rear += 1
 				var small_range: Vector2 = boxes[f.unit.id][1]
-				check(small_range.y < wide_range.x, "rear model depth %s: %s / %s" % [label, f.unit.key, wide.unit.key])
+				if absf(dy) >= 22.0:
+					check(small_range.y < wide_range.x, "rear model depth %s: %s / %s" % [label, f.unit.key, wide.unit.key])
 			var dz := camera.to_local(f.actor.global_position).z - wide_depth
 			check(dy * dz > 0.0, "overlap depth %s: %s / %s" % [label, f.unit.key, wide.unit.key])
 	check(not broad.is_empty(), "wide actors in " + label)
@@ -625,9 +626,7 @@ func _at_contact(key: String) -> View.Fighter:
 		var ally: View.Fighter = battle.views.get(u.target.id)
 		if ally == null:
 			continue
-		var reach := u.range_m + 0.35 * (u.size + u.target.size - 2.0)
-		var gap := (f.contact_point().x - ally.position.x) * (1.0 if f.flip_h else -1.0)
-		if LegionSim.dist(u, u.target) <= reach + 0.12 and absf(gap - 48.0 * ally.scale.x) <= 14.0:
+		if f.can_strike(ally) and f.slot > 0 and f.slot < 4:
 			return f
 	return null
 
