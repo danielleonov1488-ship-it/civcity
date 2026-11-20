@@ -6,6 +6,7 @@ signal building_pressed(slot: String)
 signal view_changed
 
 const SCENERY := preload("res://scripts/camp_scenery.gd")
+const ArcheryPose = preload("res://scripts/legion_ranged_pose.gd")
 const MAX_FIGURES := 16
 const DEFAULT_ZOOM := 48.0
 const MIN_ZOOM := 18.0
@@ -395,7 +396,17 @@ func _register(node: Node3D, pos: Vector3, role: String, sid := 0) -> void:
 	world.add_child(node)
 	node.position = pos
 	var players := _manual_animations(node)
-	figures.append({"node": node, "home": pos, "role": role, "id": sid, "phase": figures.size() * 0.61, "players": players})
+	var entry := {"node": node, "home": pos, "role": role, "id": sid, "phase": figures.size() * 0.61, "players": players}
+	var fighter := node as LegionFighter
+	if fighter != null and fighter.style == "bow":
+		fighter.offhand.hide()
+		fighter.clip["idle"] = "Idle"
+		fighter.set_motion(false)
+		fighter.anim.advance(0.0)
+		var archery := ArcheryPose.new(fighter.skel, fighter.body, "bow")
+		archery.apply(ArcheryPose.BOW_IDLE, 0.0)
+		entry["archery"] = archery
+	figures.append(entry)
 
 
 func _fighter(soldier: Dictionary) -> LegionFighter:
@@ -504,6 +515,7 @@ func _process(dt: float) -> void:
 	for entry: Dictionary in figures:
 		var node: Node3D = entry["node"]
 		var role := String(entry["role"])
+		var archery: ArcheryPose = entry.get("archery")
 		var sid := int(entry["id"])
 		var phase := float(entry["phase"])
 		if arrivals.has(sid):
@@ -524,11 +536,16 @@ func _process(dt: float) -> void:
 			node.rotation.x = 0.025 * sin(_clock * 1.3)
 		if node is LegionFighter:
 			var f := node as LegionFighter
-			if role == "drill" and fposmod(_clock + phase, 2.3) < step:
+			if archery == null and role == "drill" and fposmod(_clock + phase, 2.3) < step:
 				f.attack()
 			f.tick(step)
 		for ap: AnimationPlayer in entry["players"]:
 			ap.advance(step)
+		if archery != null:
+			var t := fposmod(_clock + phase, 2.3)
+			var walking: bool = (node as LegionFighter)._moving
+			var practice := not walking and role == "drill" and t < float(ArcheryPose.LENGTHS[ArcheryPose.BOW])
+			archery.apply(ArcheryPose.BOW if practice else ArcheryPose.BOW_IDLE, t, 0.0 if walking else 1.0)
 	# При быстром призыве видны лишь шесть последних; остальные тоже доходят.
 	for sid: int in arrivals.keys():
 		if float(arrivals[sid]) >= WALK_TIME:

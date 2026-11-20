@@ -214,7 +214,7 @@ func _long_models() -> void:
 			check(sprite.position.distance_to(f.chest()) < 0.1, "arrow lands on body " + id)
 			sprite.free()
 		if id == "horseArcher":
-			_check_turn(f)
+			_check_turn(f, view)
 		count += 1
 	# В походе дальний проход обычно пуст. Проверяем перекрытие со специально поставленным союзником.
 	var cart: View.Fighter = view.views.get(1)
@@ -231,21 +231,34 @@ func _long_models() -> void:
 	print("ENEMY3D CONTACT %d long models, both sides and projectile targets" % count)
 
 
-func _check_turn(f: View.Fighter) -> void:
+func _check_turn(f: View.Fighter, view: View) -> void:
 	var resting := f.facing_angle()
-	f.attack()
-	f.attack_left = 0.30
+	var target := LegionSim.Unit.new()
+	target.x = f.unit.x - 0.7
+	f.unit.target = target
+	f.unit.timer = 2.0
 	f.tick(0.075, 1.0, 0.0, true, 0.0)
 	var first := absf(f.facing_angle() - resting)
-	check(first > 20.0 and first < 35.0, "ease into the shot")
-	f.tick(0.225, 1.0, 0.0, true, 0.0)
-	check(is_equal_approx(absf(f.facing_angle() - resting), 180.0), "full turn after 0.30 s")
-	f.attack_left = 0.0
-	f.tick(0.075, 1.0, 0.0, true, 0.0)
-	check(is_equal_approx(absf(f.facing_angle() - resting), 180.0 - first), "ease out of the shot")
-	f.tick(0.225, 1.0, 0.0, true, 0.0)
-	check(is_equal_approx(f.facing_angle(), resting), "normal yaw after 0.30 s")
-	print("ENEMY3D YAW %.1f degrees at 0.075 s, 180 at 0.30 s" % first)
+	check(first > 20.0 and first < 35.0, "horse eases into retreat")
+	f.tick(0.245, 1.0, 0.0, true, 0.0)
+	var retreat := f.facing_angle()
+	check(is_equal_approx(absf(retreat - resting), 180.0), "horse faces away before the draw")
+	view._place_actor(f)
+	var rider := f.boss_model.rider_rigs[0]
+	var chest := rider.find_bone("spine_03")
+	var pelvis := rider.find_bone("pelvis")
+	var chest_before := rider.get_bone_global_pose(chest).basis.get_rotation_quaternion()
+	var pelvis_before := rider.get_bone_pose_rotation(pelvis)
+	f.unit.timer = 0.07
+	f.tick(0.42, 1.0, 0.0, true, 0.42)
+	view._place_actor(f)
+	var twist := chest_before.angle_to(rider.get_bone_global_pose(chest).basis.get_rotation_quaternion())
+	check(twist > 1.0 and f.actor.ranged.arrow.visible, "mounted draw twists the chest")
+	check(pelvis_before.angle_to(rider.get_bone_pose_rotation(pelvis)) < 0.01, "rider stays seated")
+	f.release_ranged()
+	view._place_actor(f)
+	check(is_equal_approx(f.facing_angle(), retreat) and not f.actor.ranged.arrow.visible, "horse keeps heading on release")
+	print("ENEMY3D PARTHIAN torso %.1f degrees, horse yaw stable" % rad_to_deg(twist))
 
 
 func _campaign_ui() -> void:

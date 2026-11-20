@@ -5,6 +5,7 @@ const QUATERNIUS := "res://assets/quaternius/"
 const HELMET := "res://assets/synty/FBX/Attachments/SM_Chr_Attach_Helmet_03.fbx"
 const KIT := "res://assets/legion_chars/"
 const BONE_MAP := preload("res://assets/rig/bonemap_synty.tres")
+const RangedPose = preload("res://scripts/legion_ranged_pose.gd")
 const A_STYLES := ["peasant", "worker", "legionary"]
 const STYLES := ["peasant", "worker", "legionary", "centurion", "patrician", "toga",
 	"cook", "smith", "archer", "priest"]
@@ -34,6 +35,8 @@ var _back_shield: Node3D
 var _hair: Node3D
 var _kit_hair: MeshInstance3D
 var _bow: Node3D
+var ranged: RangedPose
+var _rival_hero: LegionFighter
 var _hammer: Node3D
 var _rig: Skeleton3D
 var _groups: Dictionary = {}
@@ -46,6 +49,8 @@ var _clips: Dictionary = {}
 var _clip_lengths: Dictionary = {}
 var _sample_time := -INF
 var _sample_clip := ""
+var _sample_weight := 1.0
+var _ranged_visible := false
 var _faded_meshes: Array[Node] = []
 var _fade_materials: Array[Dictionary] = []
 var _opacity := 1.0
@@ -73,6 +78,8 @@ func build(family: int, female: bool, variant: String, look := {}, outfit := "pe
 func build_rival_hero(look: Dictionary, id: int) -> Dictionary:
 	var hero := LegionFighter.create_hero(look, 1.0, id)
 	add_child(hero)
+	_rival_hero = hero
+	_rig = hero.skel
 	_register_player(hero.anim)
 	set_meta("look", look.duplicate(true))
 	set_meta("loadout", {"outfit": "centurion", "sword": true, "shield": true, "helmet": false})
@@ -220,7 +227,9 @@ func _add_kit_file(stem: String, group: Node3D, atlas: Material, folder := KIT) 
 		var model_from_mesh: Transform3D = entry["transform"]
 		var rig_from_mesh := rig_from_model * model_from_mesh
 		var names: PackedStringArray = entry["bones"]
-		var key := [_female, names, rig_from_mesh]
+		# У плаща нет своих костей. Таз в UAL Death01 сильно уходит от лопаток.
+		var cape := stem.contains("_cape_")
+		var key := [_female, names, rig_from_mesh, cape]
 		var skin: Skin = _bound_skins.get(key)
 		if skin == null:
 			var used: Dictionary = entry["used"]
@@ -229,6 +238,8 @@ func _add_kit_file(stem: String, group: Node3D, atlas: Material, folder := KIT) 
 			for i in names.size():
 				var mapped: StringName = BONE_MAP.find_profile_bone_name(StringName(names[i]))
 				var bone := _rig.find_bone(mapped if mapped != &"" else StringName(names[i]))
+				if cape:
+					bone = _rig.find_bone("UpperChest")
 				if bone < 0:
 					if used.has(i):
 						return _fail("%s missing weighted bone %s" % [stem, names[i]])
@@ -325,28 +336,79 @@ func _register_player(player: AnimationPlayer) -> void:
 
 
 func pose_at(clip: String, elapsed: float) -> bool:
+	return _pose_with_ranged(clip, elapsed, 1.0)
+
+
+func _pose_with_ranged(clip: String, elapsed: float, weight: float) -> bool:
 	var key := clip.to_lower()
+	var procedural := _ranged_visible and clip in [ranged.idle_clip(), ranged.action_clip()]
+	if procedural:
+		key = "idle"
 	var found := StringName(_clips.get(key, &""))
 	if found == &"":
 		return _fail("missing animation " + clip)
 	for player: AnimationPlayer in _players:
 		if player.assigned_animation != found or not player.is_playing():
 			player.play(found, 0.0)
-		player.seek(fposmod(elapsed, maxf(0.001, float(_clip_lengths[key]))), true)
+		var animation := player.get_animation(found)
+		var t := 0.0 if procedural else elapsed
+		t = fposmod(t, animation.length) if animation.loop_mode != Animation.LOOP_NONE else clampf(t, 0.0, animation.length)
+		player.seek(t, true)
+	if _ranged_visible:
+		if procedural:
+			ranged.apply(clip, elapsed, weight)
+		elif key.begins_with("death"):
+			ranged.set_visible(false)
+		else:
+			ranged.apply(ranged.idle_clip(), 0.0, 0.0)
 	return true
 
 
-func animate(clip: String, elapsed: float) -> void:
+func animate(clip: String, elapsed: float, weight := 1.0) -> void:
 	# Видимые позы обновляются с частотой 24 Гц, движение по экрану остаётся плавным.
 	var sample := floorf(elapsed * 24.0) / 24.0
-	if _sample_clip != clip or _sample_time != sample:
+	if ranged != null and clip == ranged.action_clip():
+		var release := float(RangedPose.RELEASES[clip])
+		sample = maxf(sample, release) if elapsed >= release else sample
+		if elapsed < release and ranged.mode == "bow" and elapsed >= RangedPose.NOCK:
+			sample = maxf(sample, RangedPose.NOCK)
+	if _sample_clip != clip or _sample_time != sample or _sample_weight != weight:
 		_sample_clip = clip
 		_sample_time = sample
-		pose_at(clip, sample)
+		_sample_weight = weight
+		if weight == 1.0:
+			pose_at(clip, sample)
+		else:
+			_pose_with_ranged(clip, sample, weight)
 
 
 func clip_length(clip: String) -> float:
+	if ranged != null and clip in [ranged.idle_clip(), ranged.action_clip()]:
+		return RangedPose.LENGTHS[clip]
 	return float(_clip_lengths.get(clip.to_lower(), 0.0))
+
+
+func equip_ranged(mode: String) -> void:
+	if _rig == null:
+		return
+	if ranged != null:
+		if ranged.mode == mode:
+			_ranged_visible = true
+			return
+		ranged.set_visible(false)
+	ranged = RangedPose.new(_rig, self, mode)
+	_ranged_visible = true
+	if mode == "bow" and _rival_hero != null:
+		for item: Node3D in [_rival_hero.weapon, _rival_hero.offhand]:
+			if item != null:
+				item.hide()
+	if mode == "bow" and _outfit == "centurion":
+		_sword.hide()
+		_shield.hide()
+		_add_kit_file("outfit_archer_quiver" + _suffix(), _groups["centurion"], _atlas)
+	_sample_time = -INF
+	_faded_meshes.clear()
+	_fade_materials.clear()
 
 
 func set_opacity(value: float) -> void:
@@ -425,6 +487,8 @@ func set_loadout(loadout: Dictionary) -> bool:
 	if _hair != null:
 		_hair.visible = hair_visible
 	_sword.visible = bool(loadout.get("sword", false))
+	if bool(loadout.get("bow", false)) and _outfit != "archer":
+		equip_ranged("bow")
 	_hammer.visible = _outfit in ["worker", "smith"] and not _sword.visible
 	var shield := bool(loadout.get("shield", false))
 	if shield and _outfit == "archer" and _back_shield == null:
@@ -459,8 +523,9 @@ func set_outfit(outfit: String) -> bool:
 			group.visible = name == outfit
 		if outfit == "archer" and _bow == null and not _add_bow():
 			return false
-		if _bow != null:
-			_bow.visible = outfit == "archer"
+		if ranged != null and ranged.mode == "bow":
+			_ranged_visible = outfit == "archer"
+			ranged.set_visible(_ranged_visible)
 		var active: Node3D = _groups[outfit]
 		var helmet := active.get_node_or_null("outfit_" + outfit + "_helmet") as Node3D
 		if helmet != null:
@@ -545,19 +610,8 @@ func _add_work() -> bool:
 
 
 func _add_bow() -> bool:
-	_bow = Artisau.make("Bow", 0.90)
-	if not _has_mesh(_bow):
-		return _fail("bow missing")
-	_bow.name = "ArcherBow"
-	_bow.position.y -= 0.45
-	var hand: String = LEFT_HAND[_family]
-	if not pose_at("Spell_Simple_Idle", 0.2):
-		return false
-	var frame := _bone_frame(_rig, hand, false)
-	var grip := LegionFighter._basis(Vector3(0.0, 1.0, 0.12), Vector3(-1.0, 0.0, 0.0))
-	_mount(hand, _bow, frame, Transform3D(grip, frame.origin + Vector3(0, 0.0, 0.03)))
-	_faded_meshes.clear()
-	_fade_materials.clear()
+	equip_ranged("bow")
+	_bow = ranged.bow
 	return true
 
 

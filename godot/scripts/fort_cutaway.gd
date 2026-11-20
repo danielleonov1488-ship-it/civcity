@@ -20,6 +20,7 @@ const ROOM_ART := {"hq": "praetorium", "barracks": "barracks", "kitchen": "kitch
 const STATIONS := {"kitchen": [0.35, 0.53, 0.38], "forge": [0.70, 0.49, 0.25],
 	"treasury": [0.59, 0.57, 0.49], "barracks": [0.45, 0.48, 0.46]}
 const WORK_CLIPS := {"kitchen": "PickUp_Table", "forge": "Interact", "treasury": "Interact", "barracks": "Sword_Idle"}
+const RangedPose = preload("res://scripts/legion_ranged_pose.gd")
 
 
 const CELL := Vector2(360, 240)
@@ -510,16 +511,22 @@ func _animate_people(delta: float) -> void:
 				clip = "Walk"
 				yaw *= 2.0
 		var feet := Vector2(x, home.y)
+		var sample := phase
+		if actor.ranged != null and actor.ranged.mode == "bow" and clip != "Walk":
+			var training := String(entry["role"]) in ["drill", "tower"]
+			var drill_time := fposmod(phase, 3.0)
+			clip = RangedPose.BOW if training and drill_time < RangedPose.LENGTHS[RangedPose.BOW] else RangedPose.BOW_IDLE
+			sample = drill_time
 		var pixel := _screen_point(feet)
 		var bounds := _figure_bounds(pixel, height)
 		actor.visible = screen_area.intersects(bounds)
 		if actor.visible:
 			entry["feet"] = feet
 			entry["clip"] = clip
-			entry["sample"] = phase
+			entry["sample"] = sample
 			entry["yaw"] = yaw
 			people_layer.place(actor, pixel, height, yaw)
-			actor.animate(clip, phase)
+			actor.animate(clip, sample)
 			people_layer.shadows.append(Vector3(pixel.x, pixel.y, height))
 			render_area = render_area.merge(bounds) if render_area.has_area() else bounds
 	if is_instance_valid(drag_ghost):

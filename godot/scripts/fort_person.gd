@@ -50,13 +50,15 @@ static func loadout(person: Dictionary, gear: Array, battle_class := "") -> Dict
 		outfit = work
 	elif archer:
 		outfit = "archer"
+	elif battle_class == "priest":
+		outfit = "priest"
 	elif armor:
 		outfit = "legionary"
 	elif work != "":
 		outfit = work
-	return {"outfit": outfit, "helmet": helmet or hero,
-		"sword": hero or weapon == "legionary" or battle_class in ["legionary", "spearman", "cavalry"],
-		"shield": shield or hero}
+	return {"outfit": outfit, "helmet": helmet or hero, "bow": hero and archer,
+		"sword": (hero and not archer) or weapon == "legionary" or battle_class in ["legionary", "spearman", "cavalry"],
+		"shield": (shield or hero) and not (hero and archer)}
 
 
 static func make(person: Dictionary, parent: Node, gear: Array, battle_class := "") -> Actor:
