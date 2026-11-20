@@ -205,7 +205,8 @@ func _sample_battle(province: String, speed: float) -> float:
 			if speed == 1.0:
 				_check(_counts.has("sling_whirl") and _counts.has("stone_hit"), "slinger windup and impact " + tag)
 		"gaul":
-			_check(_sync.has("gaulArcher") and _counts.has("stone_hit"), "Gaul ranged signatures " + tag)
+			# на ×3 окно замера короткое: пращник может не успеть бросить — камень проверяем только на ×1
+			_check(_sync.has("gaulArcher") and (speed != 1.0 or _counts.has("stone_hit")), "Gaul ranged signatures " + tag)
 		"carthage":
 			_check(_counts.has("elephant"), "elephant " + tag)
 		"britannia":
