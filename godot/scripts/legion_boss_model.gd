@@ -338,7 +338,7 @@ func pose_at(clip: String, elapsed: float, ranged_weight := 1.0) -> bool:
 	var length := clip_length(clip)
 	if length <= 0.0:
 		return false
-	var bow_pose := ranged != null and clip in [RangedPose.BOW_IDLE, RangedPose.BOW]
+	var bow_pose := ranged != null and (clip == RangedPose.BOW_IDLE or clip == RangedPose.BOW)
 	var base := "Idle" if bow_pose else clip
 	var looping := clip in ["Idle", "Walk", "Run", RangedPose.BOW_IDLE]
 	var phase := (fposmod(elapsed, length) if looping else minf(elapsed, length)) / length
@@ -379,8 +379,12 @@ func pose_at(clip: String, elapsed: float, ranged_weight := 1.0) -> bool:
 	if ranged != null:
 		if clip == "Death":
 			ranged.set_visible(false)
+		elif clip == RangedPose.BOW:
+			ranged.apply(clip, elapsed, ranged_weight)
+		elif clip == RangedPose.BOW_IDLE and not moving:
+			ranged.hold_bow()
 		else:
-			ranged.apply(clip, elapsed, ranged_weight if bow_pose else 0.0)
+			ranged.follow_hands()
 	return true
 
 

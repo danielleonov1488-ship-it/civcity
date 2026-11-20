@@ -8,7 +8,7 @@ const Pose = preload("res://scripts/legion_ranged_pose.gd")
 const View = preload("res://scripts/legion_battle_view.gd")
 const WIDTH := 1920
 const HEIGHT := 1080
-const OUT := "D:/CivCity/.work/stage7/bowanim/shots/"
+const OUT := "D:/CivCity/.work/stage7/bowanim_b/shots/"
 
 var game: Game
 var battle: LegionBattle
@@ -72,19 +72,16 @@ func _run() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
 	get_viewport().disable_3d = true
-	await _phases("1_bow_phases.png", "gaulArcher",
+	await _phases("4_bow_unchanged.png", "gaulArcher",
 		["Стойка", "К колчану", "Стрела на тетиве", "Натяжение", "Выпуск", "После выстрела"], [-1.0, 0.22, 0.42, 0.83, 0.91, 1.06])
-	await _phases("2_sling_phases.png", "slinger",
+	await _phases("1_sling_phases.png", "slinger",
 		["Стойка", "Замах", "Праща над головой", "Шаг", "Выпуск", "Возврат"], [-1.0, 0.24, 0.39, 0.77, 0.84, 1.02])
-	await _phases("3_cast_phases.png", "druid",
-		["Стойка", "Подъём", "Посох вверху", "Сияние", "Опускание", "Стойка"], [-1.0, 0.26, 0.52, 0.70, 0.96, 1.18])
-	await _parthian()
-	await _cape()
+	await _fallen_soldiers()
 	get_viewport().disable_3d = false
 	await _battle()
 
 
-func _sheet() -> Layer:
+func _sheet(tilt := 4.0) -> Layer:
 	var canvas := CanvasLayer.new()
 	canvas.layer = 180
 	add_child(canvas)
@@ -94,7 +91,7 @@ func _sheet() -> Layer:
 	canvas.add_child(paper)
 	var layer := Layer.new()
 	paper.add_child(layer)
-	layer.setup("AnimationStudy", 4.0)
+	layer.setup("AnimationStudy", tilt)
 	layer.fit(paper.size)
 	return layer
 
@@ -122,14 +119,6 @@ func _phases(file: String, key: String, labels: Array, samples: Array) -> void:
 		var y := 470.0 + floorf(float(i) / 3.0) * 490.0
 		layer.place(actor, Vector2(x, y), 348, 82)
 		actor.pose_at(actor.idle if elapsed < 0.0 else actor.strike, maxf(0.0, elapsed))
-		if key == "druid" and i == 3:
-			var glow := AnimatedSprite2D.new()
-			glow.sprite_frames = View._effect_frames("fx_heal")
-			glow.animation = &"effect"
-			glow.frame = 2
-			glow.position = layer.camera.unproject_position(actor.to_global(actor.ranged.launch))
-			glow.scale = Vector2.ONE * 0.55
-			layer.add_child(glow)
 		_caption(layer, labels[i], x, y + 25)
 		if key == "gaulArcher":
 			_check(actor.ranged.arrow.visible == (elapsed >= Pose.NOCK and elapsed < 0.91), "arrow phase %d" % i)
@@ -145,6 +134,7 @@ func _phases(file: String, key: String, labels: Array, samples: Array) -> void:
 				_cancel(actor)
 		elif key == "slinger":
 			_check(actor.ranged.stone.visible == (elapsed < 0.84), "stone phase %d" % i)
+			_sling_check(actor.ranged, elapsed)
 	await get_tree().process_frame
 	_save(file, await _capture())
 	layer.get_parent().get_parent().queue_free()
@@ -159,6 +149,7 @@ func _cancel(actor: Enemy) -> void:
 	f.unit.range_m = 7.5
 	f.unit.target = LegionSim.Unit.new()
 	f.attack_clip = Pose.BOW
+	f.release_time = Pose.RELEASES[Pose.BOW]
 	_check(f._ranged_windup(0.40, 1.0, true, INF) and f.sample > 0.65, "anticipate attack cooldown")
 	f.unit.target.alive = false
 	_check(f._ranged_windup(0.05, 1.05, true, INF) and f.ranged_mix > 0.0 and f.ranged_mix < 1.0, "ease out of draw")
@@ -167,61 +158,115 @@ func _cancel(actor: Enemy) -> void:
 	f.free()
 
 
-func _parthian() -> void:
-	var layer := _sheet()
-	for i in 2:
-		var actor := Enemy.new()
-		layer.viewport.add_child(actor)
-		if not _check(actor.build_enemy("horseArcher", 6, 0), "mounted actor " + actor.problem):
-			continue
-		var x := 450.0 + 1020.0 * i
-		layer.place(actor, Vector2(x, 815), 440, 107)
-		actor.pose_at(actor.idle if i == 0 else actor.strike, 0.82)
-		_caption(layer, "В седле" if i == 0 else "Выстрел назад", x, 875)
-	await get_tree().process_frame
-	_save("5_parthian.png", await _capture())
-	layer.get_parent().get_parent().queue_free()
-	await get_tree().process_frame
+func _sling_check(pose: Pose, elapsed: float) -> void:
+	var cords := pose._cords
+	_check(cords.instance_count == 2 * Pose.CORD_STEPS, "two segmented sling cords")
+	for cord in 2:
+		var index := cord * Pose.CORD_STEPS
+		var first := cords.get_instance_transform(index)
+		var last := cords.get_instance_transform(index + Pose.CORD_STEPS - 1)
+		var a := first * (Vector3.DOWN * 0.5)
+		var b := last * (Vector3.UP * 0.5)
+		var length := 0.0
+		for step in Pose.CORD_STEPS:
+			var part := cords.get_instance_transform(index + step)
+			var segment := part.basis.y.length()
+			length += segment
+			_check(segment < Pose.CORD_LENGTH * 0.5, "no long solid segment")
+			if step > 0:
+				var prev := cords.get_instance_transform(index + step - 1)
+				_check((prev * (Vector3.UP * 0.5)).distance_to(part * (Vector3.DOWN * 0.5)) < 0.002,
+					"continuous cord")
+		_check(length <= (Pose.CORD_LENGTH + 0.04) * pose._height, "cord length")
+		if elapsed < 0.0:
+			_check(length - a.distance_to(b) > 0.020, "idle cord sags")
+		if is_equal_approx(elapsed, 0.39):
+			_check(length - a.distance_to(b) < 0.012 and pose._arc.visible, "taut cord and visible arc")
+		if is_equal_approx(elapsed, 0.84) and cord == 1:
+			var grip := pose.point("RightHand") + Vector3(0, -0.035, 0.035)
+			_check(a.distance_to(grip) > 0.10, "release cord leaves fingers")
+	print("BOWANIM SLING phase=%.2f two cords" % elapsed)
 
 
-func _cape() -> void:
-	var layer := _sheet()
-	var fixed := 0
-	for i in 4:
+func _fallen_soldiers() -> void:
+	var layer := _sheet(33.0)
+	for i in 6:
+		var column := i % 3
+		var after := i >= 3
 		var actor := Actor.new()
 		layer.viewport.add_child(actor)
-		if not _check(actor.build(1, false, "A", {}, "legionary"), actor.problem):
+		var clip := "Death01"
+		if column == 2:
+			var clips := actor.build_rival_hero({"skin": "A", "cape": "a3283a"}, 63)
+			clip = clips["death"]
+		elif not _check(actor.build(1, column == 1, "A", {}, "centurion" if column == 1 else "legionary"), actor.problem):
 			continue
-		var group := actor.find_child("outfit_legionary_cape", true, false)
-		var entries := Actor._kit_file("outfit_legionary_cape_m", Actor.KIT)
-		for j in group.get_child_count():
-			var part := group.get_child(j) as MeshInstance3D
-			var rig: Skeleton3D = actor._rig
-			var mesh_transform: Transform3D = entries[j]["transform"]
-			var from_mesh := Citizen._rel(rig, actor).affine_inverse() * mesh_transform
-			var names: PackedStringArray = entries[j]["bones"]
-			if i % 2 == 0:
-				part.skin = part.skin.duplicate() as Skin
-				for bind in names.size():
-					var name_on_rig := Actor.BONE_MAP.find_profile_bone_name(names[bind])
-					var bone := rig.find_bone(name_on_rig)
-					if bone >= 0:
-						part.skin.set_bind_bone(bind, bone)
-						part.skin.set_bind_pose(bind, rig.get_bone_global_rest(bone).affine_inverse() * from_mesh)
-			else:
-				for bind in part.skin.get_bind_count():
-					if part.skin.get_bind_bone(bind) == rig.find_bone("UpperChest"):
-						fixed += 1
-		var x := 520.0 + (i % 2) * 880.0
-		var y := 490.0 if i < 2 else 790.0
-		layer.place(actor, Vector2(x, y), 370, 63)
-		actor.pose_at("Hit_Chest" if i < 2 else "Death01", 0.11 if i < 2 else actor.clip_length("Death01") * 0.63)
-		_caption(layer, ["Удар до", "Удар после", "Падение до", "Падение после"][i], x, y + (120 if i >= 2 else 24))
-	_check(fixed > 0, "cape follows chest")
+		var x := 415.0 + column * 615.0
+		var y := 326.0 if not after else 823.0
+		layer.place(actor, Vector2(x, y), 322, 69)
+		var t := actor.clip_length(clip) * 0.999
+		if after:
+			actor.pose_at(clip, t)
+			_check_fallen(actor, str(column))
+		else:
+			var key := StringName(actor._clips[clip.to_lower()])
+			for player: AnimationPlayer in actor._players:
+				player.play(key, 0.0)
+				player.seek(t, true)
+		var rig_to_model := Citizen._rel(actor._rig, actor)
+		var hips := rig_to_model * actor._rig.get_bone_global_pose(actor._rig.find_bone("Hips")).origin
+		var feet := rig_to_model * actor._rig.get_bone_global_pose(actor._rig.find_bone("RightFoot")).origin
+		var head := rig_to_model * actor._rig.get_bone_global_pose(actor._rig.find_bone("Head")).origin
+		var center := layer.camera.unproject_position(actor.to_global(hips.lerp((head + feet) * 0.5, 0.8).slide(Vector3.UP)))
+		layer.shadows.append(Vector3(center.x, center.y, 590))
+		_caption(layer, ["Legionary", "Centurion", "Hero"][column], x - 73, y + 118)
+	_caption(layer, "Before", 140, 76)
+	_caption(layer, "After", 140, 554)
+	layer.queue_redraw()
 	await get_tree().process_frame
-	_save("6_legionary_death.png", await _capture())
+	_save("2_fallen_soldiers.png", await _capture())
 	layer.get_parent().get_parent().queue_free()
 	await get_tree().process_frame
+
+	for king: String in ["gaulKing", "vercingetorix", "boudicca", "hannibal"]:
+		var actor := Enemy.new()
+		add_child(actor)
+		if _check(actor.build_enemy(king, 21, 0), "build " + king):
+			actor.pose_at(actor.fall, actor.clip_length(actor.fall) * 0.999)
+			_check_fallen(actor, king)
+			actor.pose_at(actor.idle, 0.0)
+			_check(actor._enemy_shield != null and actor._enemy_shield.visible and actor._fall_shield != null and not actor._fall_shield.visible, "restore shield " + king)
+		actor.queue_free()
+	var kneeling := Actor.new()
+	add_child(kneeling)
+	if _check(kneeling.build(1, false, "A", {}, "centurion"), "kneeling centurion"):
+		_check(kneeling.pose_at("Fixing_Kneeling", 0.5) and kneeling._shield.visible and kneeling._capes[0].visible, "kneeling keeps gear")
+		kneeling.pose_at("Death01", kneeling.clip_length("Death01") * 0.999)
+		_check_fallen(kneeling, "after kneeling")
+		kneeling.pose_at("Fixing_Kneeling", 0.5)
+		_check(kneeling._shield.visible and kneeling._capes[0].visible, "revived kneeling restores gear")
+	kneeling.queue_free()
+
+
+func _check_fallen(actor: Actor, label: String) -> void:
+	var shield := actor._fall_shield
+	if not _check(actor._fallen and shield != null and shield.visible, "dropped shield " + label):
+		return
+	var normal := Vector3.BACK if actor._enemy_shield == null else Actor.ENEMY_SHIELD_NORMAL
+	var up := absf((shield.basis * normal).normalized().dot(Vector3.UP))
+	var aabb := shield.transform * actor._fall_flat_to_mesh * actor._fall_bounds
+	var hip := actor._fall_point(0).y
+	_check(up > 0.92 and aabb.get_center().y < hip and absf(aabb.position.y - 0.012) < 0.01, "grounded shield " + label)
+	var first := (actor._fall_point(4) - actor._fall_point(3)).normalized()
+	var second := (actor._fall_point(5) - actor._fall_point(4)).normalized()
+	_check(first.dot(second) < 0.75, "bent elbow " + label)
+	var lowest := INF
+	for i in actor._fall_indices.size():
+		lowest = minf(lowest, actor._fall_point(i).y - float(Actor.FALL_RADIUS[i]))
+	_check(absf(lowest) < 0.035, "grounded body " + label)
+	for cape: Node3D in actor._capes:
+		_check(not cape.visible, "cape folded out of sight " + label)
+	print("BOWANIM FALL ", label, " shield_up=", up, " hip=", hip, " shield_y=", aabb.get_center().y, " ground=", lowest)
 
 
 func _battle() -> void:
@@ -254,8 +299,6 @@ func _battle() -> void:
 	var release_counts := [{}, {}]
 	var draw_counts := [{}, {}]
 	var speed_index := 0
-	var strips: Array[Image] = []
-	var capture_after := 3.58
 	var field_saved := false
 	var horse_draw := false
 	while battle.sim.t < 14.0 and Time.get_ticks_usec() - start < 16000000:
@@ -290,14 +333,8 @@ func _battle() -> void:
 				_check(not f.actor.ranged.stone.visible, "hide stone on release")
 			var kind := f.unit.side + "/" + f.actor.ranged.mode
 			release_counts[speed_index][kind] = int(release_counts[speed_index].get(kind, 0)) + 1
-		if not field_saved and ally_draw and enemy_draw:
-			_save("4_battle_archers.png", await _capture())
+		if ally_draw and enemy_draw:
 			field_saved = true
-		if battle.sim.t >= capture_after and strips.size() < 12:
-			var frame := await _capture()
-			frame.resize(480, 270, Image.INTERPOLATE_LANCZOS)
-			strips.append(frame)
-			capture_after += 0.29
 		if speed_index == 0 and battle.sim.t >= 7.0:
 			speed_index = 1
 			changed_at = battle.sim.t
@@ -309,17 +346,48 @@ func _battle() -> void:
 	_check(field_saved and horse_draw, "battle shot coverage")
 	for speed: float in [1.0, 3.0]:
 		battle._set_speed(speed)
+		var view := battle.battle_view
+		view.profile_poses = true
+		view.pose_usec = 0
+		view.windup_usec = 0
+		Pose.profile_enabled = true
+		Pose.profile_usec = 0
+		Pose.profile_calls = 0
 		var begin := Time.get_ticks_usec()
 		for i in 120:
 			await get_tree().process_frame
 		var fps := 120000000.0 / maxf(1.0, Time.get_ticks_usec() - begin)
+		view.profile_poses = false
+		Pose.profile_enabled = false
+		print("BOWANIM CPU x%.0f pose=%.4f ms ranged=%.4f ms calls/frame=%.2f state+windup=%.4f ms" % [speed, view.pose_usec / 120000.0, Pose.profile_usec / 120000.0, Pose.profile_calls / 120.0, view.windup_usec / 120000.0])
 		var extent := battle.battle_view.people_layer.viewport.size
 		print("BOWANIM FPS ×%.0f %.1f at %dx%d figures=%d" % [speed, fps, extent.x, extent.y, battle.views.size()])
-		_check(fps > 60.0 and figures == 16 and battle.views.size() == 16 and extent == Vector2i(WIDTH, HEIGHT),
-			"1920x1080 performance")
-	_check(strips.size() == 12, "battle frame strip")
-	if not strips.is_empty():
-		var strip := Image.create(1920, 810, false, strips[0].get_format())
-		for i in strips.size():
-			strip.blit_rect(strips[i], Rect2i(0, 0, 480, 270), Vector2i(i % 4, int(floorf(float(i) / 4.0))) * Vector2i(480, 270))
-		_save("7_bow_loop.png", strip)
+		var target := 340.0 if speed == 1.0 else 300.0
+		_check(fps >= target and figures == 16 and battle.views.size() == 16 and extent == Vector2i(WIDTH, HEIGHT),
+			"1920x1080 performance x%.0f target %.0f" % [speed, target])
+	await _battle_fall()
+
+
+func _battle_fall() -> void:
+	battle._set_speed(1.0)
+	var fallen: View.Fighter
+	for id in battle.views:
+		var f: View.Fighter = battle.views[id]
+		if f.unit.key == "legionary" and f.unit.side == "ally":
+			fallen = f
+			f.actor.set_outfit("legionary")
+			# Let the next actual enemy hit finish this fighter.
+			f.unit.hp = 1.0
+			break
+	if not _check(fallen != null, "battle death fixture"):
+		return
+	var ready := func() -> bool:
+		return is_instance_valid(fallen) and fallen.death >= 0.49 and fallen.death <= 0.75
+	if _check(await _until(ready, 12), "battle shows fallen soldier"):
+		var slingers := 0
+		for id in battle.views:
+			var f: View.Fighter = battle.views[id]
+			if f.unit.alive and f.actor != null and f.actor.visible and f.actor.ranged != null and f.actor.ranged.mode == "sling":
+				slingers += 1
+		_check(slingers >= 2 and fallen.actor._fall_shield.visible, "battle shows live slingers and fallen gear")
+		_save("3_battle.png", await _capture())
