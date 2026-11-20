@@ -109,6 +109,10 @@ func _view_rect(area: Rect2) -> void:
 	overlay.size = area.size
 
 
+func project(at: Vector3) -> Vector2:
+	return overlay.position + camera.unproject_position(at) * overlay.size / Vector2(viewport.size)
+
+
 func place(actor: Node3D, feet: Vector2, height: float, yaw: float, foreground := false, depth_offset := 0.0) -> void:
 	var units_per_pixel := 10.0 / extent.y
 	var at := (feet - extent * 0.5) * units_per_pixel

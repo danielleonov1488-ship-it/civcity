@@ -218,6 +218,7 @@ func _build_screen() -> void:
 	battle_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	battle_view.mouse_filter = Control.MOUSE_FILTER_STOP
 	canvas.add_child(battle_view)
+	battle_view.legacy_layout = bool(opts.get("legacy_layout", false))
 	battle_view.set_zoom(zoom)
 	battle_view.field_sound.connect(_field_sound)
 	battle_view.gui_input.connect(_field_input)
@@ -781,7 +782,7 @@ func _handle(evs: Array) -> void:
 			"attack":
 				var u: LegionSim.Unit = e["unit"]
 				var fighter := _view(u)
-				fighter.attack()
+				battle_view.request_strike(fighter, _view(e["target"]))
 				if u.shot == "":
 					_melee_foley(u, fighter)
 			"shoot":
@@ -820,7 +821,7 @@ func _handle(evs: Array) -> void:
 				battle_sound.play("heal", battle_view.sound_pan(f.position))
 				if src != null and src.alive:
 					var priest := _view(src)
-					battle_view.cast(priest)
+					battle_view.cast(priest, f)
 					battle_view.ring(priest.position, 55.0, BattleView.GOLD)
 			"slam", "boom":
 				var pos := BattleView.point(float(e["x"]), float(e["z"]))
@@ -830,7 +831,7 @@ func _handle(evs: Array) -> void:
 				var u: LegionSim.Unit = e["unit"]
 				var fighter := _view(u)
 				if fighter.boss_model != null and fighter.actor.clip_length("Charge") > 0.0:
-					fighter.attack("Charge")
+					battle_view.request_strike(fighter, _view(e["target"]), "Charge")
 				_melee_foley(u, fighter)
 				battle_view.ring(fighter.position, 67.0, BattleView.ALERT)
 				say(String(u.name) + " бросается в атаку!", 1.2)
@@ -1574,13 +1575,17 @@ class BarsLayer extends Control:
 			return
 		var fnt: Font = battle.font_bold
 		var scale_ui: float = battle.battle_view.world.scale.x
-		for f: BattleView.Fighter in battle.views.values():
+		for id in battle.views:
+			var f: BattleView.Fighter = battle.views[id]
 			var u := f.unit
 			if not u.alive:
 				continue
 			var p := battle.battle_view.screen(f.head())
 			var w := 74.0 * scale_ui
 			var h := 5.5 * scale_ui
+			if not battle.battle_view.legacy_layout:
+				w = clampf(f.body_height() * 0.29, 39.0, 88.0) * scale_ui
+				h *= 0.78
 			var left := p - Vector2(w * 0.5, 0)
 			var right := left + Vector2(w, 0)
 			draw_line(left, right, Color("593413"), h + 7.0, true)
@@ -1595,7 +1600,9 @@ class BarsLayer extends Control:
 			var k: float = fl[3]
 			var pos: Vector2 = fl[0] - Vector2(0, 46.0 * ease(k, 0.5))
 			var kind: String = fl[2]
-			var size := 20 if kind != "crit" else 27
+			var size := 22 if kind != "crit" else 28
+			if battle.battle_view.legacy_layout:
+				size = 20 if kind != "crit" else 27
 			var col := Color("fff1d2")
 			if kind == "crit":
 				col = Color("ffd34d")

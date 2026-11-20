@@ -257,10 +257,13 @@ func _fight() -> void:
 	for f: BattleView.Fighter in battle.views.values():
 		if f.unit.side != "ally" or f.actor == null or not f.unit.alive:
 			continue
-		check(f.actor.rotation_degrees.y > 0.0 and not f.flip_h, "в бою союзники смотрят вправо")
+		if f.unit.target != null and f.unit.target.alive:
+			var target: BattleView.Fighter = battle.views.get(f.unit.target.id)
+			if target != null and f.strike_target == null:
+				check(f.flip_h == (target.position.x < f.position.x), "союзник смотрит на цель")
 		for ally: BattleView.Fighter in allies:
-			var gap := (f.position - ally.position).abs()
-			check(gap.x >= 75.0 or gap.y >= 40.0, "у союзников раздельные силуэты")
+			var gap := f.body_ground().distance_to(ally.body_ground())
+			check(gap >= minf(f.body_width(), ally.body_width()) * 0.50, "у союзников раздельные позиции")
 		allies.append(f)
 		var feet := battle.battle_view.screen(f.position)
 		var height := f.body_height() * battle.battle_view.world.scale.y
