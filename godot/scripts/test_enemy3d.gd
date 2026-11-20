@@ -570,6 +570,7 @@ func _depth_order(view: View, label: String, require_rear := false) -> void:
 			small.append(f)
 	var overlaps := 0
 	var rear := 0
+	var mount_line_gap := INF
 	for i in broad.size():
 		var wide := broad[i]
 		var wide_box: Rect2 = boxes[wide.unit.id][0]
@@ -584,7 +585,17 @@ func _depth_order(view: View, label: String, require_rear := false) -> void:
 				if not check(feet_gap >= required_gap, "separate wide actors " + label):
 					print("ENEMY3D WIDE %s/%s gap=%.1f required=%.1f at %s/%s" %
 						[wide.unit.key, other.unit.key, feet_gap, required_gap, wide.position, other.position])
+				if wide.rear_mount and other.rear_mount:
+					var other_box: Rect2 = boxes[other.unit.id][0]
+					var gap := maxf(wide_box.position.x - other_box.end.x, other_box.position.x - wide_box.end.x)
+					var to_field := view.people_layer.overlay.size.x / (float(view.people_layer.viewport.size.x) * view.world.scale.x)
+					print("ENEMY3D MOUNTS %s feet=%.1f required=%.1f projected_gap=%.1f" %
+						[label, feet_gap, required_gap, gap * to_field])
+					check(gap >= 0.0, "mounted archers have separate projections " + label)
 		for f: View.Fighter in small:
+			if wide.rear_mount and f.unit.side == "ally":
+				var ally_box: Rect2 = boxes[f.unit.id][0]
+				mount_line_gap = minf(mount_line_gap, wide_box.position.x - ally_box.end.x)
 			var dy := f.visible_foot().y - wide_feet
 			if not wide_box.intersects(boxes[f.unit.id][0]) or is_zero_approx(dy):
 				continue
@@ -598,6 +609,10 @@ func _depth_order(view: View, label: String, require_rear := false) -> void:
 			check(dy * dz > 0.0, "overlap depth %s: %s / %s" % [label, f.unit.key, wide.unit.key])
 	check(not broad.is_empty(), "wide actors in " + label)
 	check(not require_rear or rear > 0, "rear ally overlaps a wide model")
+	if label.begins_with("parthia"):
+		var to_field := view.people_layer.overlay.size.x / (float(view.people_layer.viewport.size.x) * view.world.scale.x)
+		print("ENEMY3D MOUNT LINE %s projected_gap=%.1f" % [label, mount_line_gap * to_field])
+		check(mount_line_gap < INF and mount_line_gap >= 0.0, "mounted archers clear of the Roman line " + label)
 	print("ENEMY3D DEPTH %s wide=%d overlaps=%d farther_small=%d" % [label, broad.size(), overlaps, rear])
 
 
@@ -662,6 +677,8 @@ func _at_contact(key: String) -> View.Fighter:
 		var ally: View.Fighter = battle.views.get(u.target.id)
 		if ally == null:
 			continue
+		if key == "charioteer" and (f.attack_left <= 0.0 or f.strike_target != ally or not ally.holds_chariot()):
+			continue
 		var reach := u.range_m + 0.35 * (u.size + ally.unit.size - 2.0)
 		if f.slot > 0 and f.slot < 4 and f.can_strike(ally) and LegionSim.dist(u, ally.unit) <= reach \
 				and absf(_front_gap(f, ally)) <= ally.body_width() * 0.12:
@@ -684,8 +701,9 @@ func _contact_shot(key: String, file: String) -> void:
 	var f := _at_contact(key)
 	var ally: View.Fighter = battle.views.get(f.unit.target.id)
 	_depth_order(battle.battle_view, key + " contact")
-	var gap := _front_gap(f, ally) * battle.battle_view.world.scale.x
-	print("ENEMY3D CONTACT ", key, " signed gap=", snappedf(gap, 0.1), " screen px")
+	var gap := _front_gap(f, ally)
+	print("ENEMY3D CONTACT %s signed gap=%.1f field (%.1f px) defender=%s" %
+		[key, gap, gap * battle.battle_view.world.scale.x, ally.unit.key])
 	await shot(file, _fight_crop(f, ally))
 	if report_full_contact and key == "charioteer":
 		await shot("2_chariots.png")
