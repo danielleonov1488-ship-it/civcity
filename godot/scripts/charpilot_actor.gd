@@ -70,6 +70,16 @@ func build(family: int, female: bool, variant: String, look := {}, outfit := "pe
 	return set_outfit(outfit) and pose_at("Idle", 0.0)
 
 
+func build_rival_hero(look: Dictionary, id: int) -> Dictionary:
+	var hero := LegionFighter.create_hero(look, 1.0, id)
+	add_child(hero)
+	_register_player(hero.anim)
+	set_meta("look", look.duplicate(true))
+	set_meta("loadout", {"outfit": "centurion", "sword": true, "shield": true, "helmet": false})
+	pose_at(String(hero.clip["idle"]), 0.0)
+	return hero.clip
+
+
 func _fail(reason: String) -> bool:
 	problem = reason
 	return false

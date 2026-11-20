@@ -3,7 +3,19 @@ extends "res://scripts/charpilot_actor.gd"
 
 const ASSETS := "res://assets/legion_enemies/"
 const BULL := "res://assets/animals/Bull.glb"
-const SPRITES := ["minotaur", "cyclops", "elephant", "chariot", "charioteer", "horseArcher", "cataphract"]
+const Boss = preload("res://scripts/legion_boss_model.gd")
+const BOSSES := Boss.MODELS
+const PORTRAITS := ASSETS + "portraits/"
+# Полуширина и вылет морды, точка попадания и место полоски здоровья в координатах модели.
+const LONG_MODELS := {
+	"chariot": [Vector2(0.09, 3.19), Vector3(0, 1.03, 2.06), Vector3(0, 2.09, -0.61)],
+	"charioteer": [Vector2(0.52, 3.21), Vector3(0.43, 1.03, 2.08), Vector3(-0.16, 2.09, -0.61)],
+	"horseArcher": [Vector2(0.11, 1.73), Vector3(0, 1.13, 0.27), Vector3(0, 2.55, -0.21)],
+	"cataphract": [Vector2(0.12, 1.75), Vector3(0, 1.13, 0.27), Vector3(0, 2.66, -0.21)],
+	"elephant": [Vector2(0.40, 2.11), Vector3(0, 1.34, 0.39), Vector3(0, 2.84, -0.29)],
+	"bull": [Vector2(0.14, 1.74), Vector3(0, 0.91, 0.27), Vector3(0, 1.64, 0.10)],
+	"bullLeader": [Vector2(0.14, 1.74), Vector3(0, 0.91, 0.27), Vector3(0, 1.64, 0.10)],
+}
 const TROUSERS := ["celt", "dacian", "eastern"]
 const ROBES := ["druid", "priest", "shade"]
 # Туника, оружие, щит или колчан, головные уборы для двух вариантов.
@@ -22,12 +34,12 @@ const HUMANS := {
 	"arminius": ["german", "spear", "round", ["headband", "celt_helm"]],
 	"druid": ["druid", "staff", "", ["druid_hood", "druid_hood"]],
 	"druidBoss": ["druid", "staff", "", ["druid_hood", "druid_hood"]],
-	"priest": ["priest", "staff", "", ["veil", "nemes"]],
-	"setPriest": ["priest", "staff", "", ["nemes_gold", "nemes_gold"]],
+	"priest": ["priest", "staff", "", ["veil", "nemes_flat"]],
+	"setPriest": ["priest", "staff", "", ["nemes_flat_gold", "nemes_flat_gold"]],
 	"zalPriest": ["druid", "staff", "", ["cap", "druid_hood"]],
-	"khopesh": ["egypt", "khopesh", "", ["nemes", "nemes"]],
-	"nileArcher": ["egypt", "bow", "quiver", ["nemes", "nemes"]],
-	"pharaoh": ["egypt", "khopesh", "", ["nemes_gold", "nemes_gold"]],
+	"khopesh": ["egypt", "khopesh", "", ["nemes_flat", "nemes_flat"]],
+	"nileArcher": ["egypt", "bow", "quiver", ["nemes_flat", "nemes_flat"]],
+	"pharaoh": ["egypt", "khopesh", "", ["nemes_flat_gold", "nemes_flat_gold"]],
 	"mercenary": ["carthage", "sword", "round", ["celt_helm", ""]],
 	"hannibal": ["carthage", "sword", "round", ["crest", "crest"]],
 	"numidian": ["numidian", "bow", "quiver", ["headband", ""]],
@@ -68,6 +80,12 @@ var stature := 1.79
 var size_factor := 1.0
 var yaw := 57.0
 var wide := false
+var boss_model: Boss
+
+
+static func portrait_texture(id: String) -> Texture2D:
+	var path := PORTRAITS.path_join(id + ".png")
+	return load(path) as Texture2D if ResourceLoader.exists(path, "Texture2D") else null
 
 
 static func prewarm(waves: Array) -> void:
@@ -78,7 +96,9 @@ static func prewarm(waves: Array) -> void:
 			if warmed.has(key):
 				continue
 			warmed[key] = true
-			if BEASTS.has(key):
+			if BOSSES.has(key):
+				Boss.prewarm(key)
+			elif BEASTS.has(key):
 				animal_scene(String(BEASTS[key][0]))
 			elif HUMANS.has(key):
 				var kit: Array = HUMANS[key]
@@ -99,12 +119,41 @@ func build_enemy(key: String, number: int, variant := -1) -> bool:
 		wanted = _build_human(key, posmod(number if variant < 0 else variant, 2))
 	elif BEASTS.has(key):
 		wanted = _build_beast(key)
+	elif BOSSES.has(key):
+		wanted = _build_boss(key)
 	if not wanted:
 		return false
 	for action: String in [idle, walk, strike, reaction, fall]:
 		if clip_length(action) <= 0.0:
 			return _fail("missing enemy clip %s: %s" % [key, action])
 	return pose_at(idle, float(number % 6) * 0.13)
+
+func _build_boss(key: String) -> bool:
+	var profile: Array = BOSSES[key]
+	boss_model = Boss.new()
+	boss_model.name = "BossModel"
+	add_child(boss_model)
+	if not boss_model.build(key):
+		return _fail(boss_model.problem)
+	stature = float(profile[1])
+	size_factor = float(profile[2])
+	yaw = float(profile[3])
+	wide = bool(profile[4])
+	idle = "Idle"
+	walk = String(profile[5])
+	strike = "Attack"
+	reaction = "Hit"
+	fall = "Death"
+	set_meta("enemy_style", key)
+	return true
+
+
+func clip_length(clip: String) -> float:
+	return super.clip_length(clip) if boss_model == null else boss_model.clip_length(clip)
+
+
+func pose_at(clip: String, elapsed: float) -> bool:
+	return super.pose_at(clip, elapsed) if boss_model == null else boss_model.pose_at(clip, elapsed)
 
 
 static func _body_file(style: String, suffix: String) -> String:
@@ -173,7 +222,8 @@ static func _shade(atlas: StandardMaterial3D) -> StandardMaterial3D:
 
 static func animal_scene(kind: String) -> PackedScene:
 	if not _animals.has(kind):
-		var path := BULL if kind == "bull" else ASSETS + kind + ".glb"
+		var stem := "bear_round" if kind == "bear" else kind
+		var path := BULL if kind == "bull" else ASSETS + stem + ".glb"
 		if ResourceLoader.exists(path, "PackedScene"):
 			_animals[kind] = load(path)
 	return _animals.get(kind) as PackedScene

@@ -17,6 +17,7 @@ extends Control
 ## Бои с городами: сеть — отдельный модуль (см. _net()): pvp_ready() / pvp_opponents(cb) / pvp_report(setup, out).
 ## Картинки владельца (листы 35–41) раскладывает .work/py/legion_art.py; нет картинки — рисованные значки игры.
 
+const Enemy = preload("res://scripts/legion_enemy_actor.gd")
 const Look = preload("res://scripts/legion_look.gd")
 const FortPerson = preload("res://scripts/fort_person.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
@@ -840,7 +841,8 @@ func _say(text: String) -> void:
 func _art(kind: String, id: String) -> Texture2D:
 	var key := kind + ":" + id
 	if not _tex.has(key):
-		_tex[key] = Legion.art_texture(kind, id)
+		var tex: Texture2D = Enemy.portrait_texture(id) if kind == "enemy" else null
+		_tex[key] = tex if tex != null else Legion.art_texture(kind, id)
 	return _tex[key]
 
 
