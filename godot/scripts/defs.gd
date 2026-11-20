@@ -1139,7 +1139,7 @@ const MAGIS := [
 	]},
 	{"id": "tribunus", "name": "Военный трибунат", "en": "Military Tribunate", "icon": "magis_tribunus", "rank": 3, "edicts": [
 		{"id": "trib_conscription", "name": "Воинский набор", "en": "Conscription", "text": "Новобранцев у ворот больше, но рабочих рук меньше.", "text_en": "More recruits at the gate, but fewer working hands.", "cost": 1500, "hours": 16, "fx": {"legion_gate": 1.25, "work_output": 0.9}},
-		{"id": "trib_scant_rations", "name": "Скудный паёк", "en": "Scant Rations", "text": "Форт тратит меньше пайков, но новобранцы идут неохотно.", "text_en": "The fort needs fewer rations, but recruits come reluctantly.", "cost": 1500, "hours": 14, "fx": {"legion_rations": 0.85, "legion_gate": 0.9}},
+		{"id": "trib_scant_rations", "name": "Бережливость", "en": "Frugal March", "text": "Походы требуют меньше еды. Новобранцы приходят реже.", "text_en": "Marches cost less food. Recruits arrive less often.", "cost": 1500, "hours": 14, "fx": {"legion_rations": 0.85, "legion_gate": 0.9}},
 		{"id": "trib_war_chest", "name": "Военная казна", "en": "War Chest", "text": "Город чувствует себя в безопасности, но 5% дохода уходит легиону.", "text_en": "The city feels safe, but 5% of income goes to the legion.", "cost": 1600, "hours": 18, "fx": {"happy:all": 4, "legion_denarii": 0.05}},
 	]},
 	{"id": "pontificatus", "name": "Понтификат", "en": "Pontificate", "icon": "magis_pontificatus", "rank": 4, "edicts": [

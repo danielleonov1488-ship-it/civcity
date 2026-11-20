@@ -556,16 +556,27 @@ function cleanInputs(list) {
   return out;
 }
 
-// Бойцы снимка отряда — как Legion.snapshot_stats: герой — только на первом месте (на других не в счёт)
+// Бойцы снимка отряда — как Legion.snapshot_stats.
 function snapStats(snap) {
   const ab = clamp(num(snap.atk_b), 0.0, 0.6), hb = clamp(num(snap.hp_b), 0.0, 0.6);
   const out = [];
-  (Array.isArray(snap.squad) ? snap.squad : []).forEach((e, i) => {
+  (Array.isArray(snap.squad) ? snap.squad : []).forEach(e => {
     if (!e || typeof e !== 'object' || Array.isArray(e)) return;
+    function add(stats) {
+      if (Number.isInteger(e.place) && e.place >= 0 && e.place < 5) {
+        stats.place = e.place;
+        stats.row = e.place < 3 ? 0 : 1;
+      }
+      out.push(stats);
+    }
     if (e.type === 'hero') {
-      if (i === 0) out.push(heroStats(clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), clamp(Math.trunc(num(e.city)), 0, CITY_MAX), clamp(Math.trunc(num(e.kit)), 0, KIT_MAX), ab, hb));
+      if (e.hero_v === 3 && own(UNITS, e.unit)) {
+        add(Object.assign(unitStats(e.unit, clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), ab, hb), { key: 'hero' }));
+        return;
+      }
+      add(heroStats(clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), clamp(Math.trunc(num(e.city)), 0, CITY_MAX), clamp(Math.trunc(num(e.kit)), 0, KIT_MAX), ab, hb));
     } else if (typeof e.type === 'string' && own(UNITS, e.type)) {
-      out.push(unitStats(e.type, clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), ab, hb));
+      add(unitStats(e.type, clamp(Math.trunc(num(e.level)) || 1, 1, MAX_LEVEL), ab, hb));
     }
   });
   return out;

@@ -21,10 +21,13 @@ func intro_capture(file: String) -> void:
 
 func _before_finish() -> void:
 	game.city.level = 0
-	lg.rations = 8.0
+	lg.rations = 800.0
 	lg.ingots = 0
 	lg.fort["money"] = 500.0
 	lg.mats = {"iron": 0.0, "wood": 0.0, "leather": 0.0}
+	lg.flags["fort_guide"] = Step.FINISH
+	lg.finish_fort_guide()
+	lg.flags["fort_lessons"].erase("outfit")
 
 
 func _after_intro(_during: Dictionary, _before_load: float, _reserved: float) -> void:
@@ -60,13 +63,14 @@ func _storage_lesson() -> bool:
 	check(lg.fort_lesson_state("store") == "", "storage lesson waits for cap")
 	lg.rations = lg.resource_cap("rations")
 	await _settle()
-	if not _lesson_target("store", camp.build_button):
-		return false
-	pending_saves["store"] = save_round_trip()
-	# Проверяем и запасной путь без комнаты, и путь с уже построенным Складом.
+	check(lg.fort_lesson_state("store") == "", "no store lesson before the room is built")
+	Fixture.set_level(lg, "hq", 2)
 	Fixture.set_level(lg, "store", 1)
+	lg.fort["money"] = 30000.0
 	lg.rations = lg.resource_cap("rations")
 	await _settle()
+	pending_saves["store"] = save_round_trip()
+	lg.flags["fort_lessons"].erase("hq")
 	if not _lesson_target("store"):
 		return false
 	_check_dialog("1080 store")
@@ -75,7 +79,10 @@ func _storage_lesson() -> bool:
 	await _settle()
 	var opened := is_instance_valid(camp.card) and camp.selected == "store"
 	camp._hide_card()
-	lg.rations -= 2
+	lg.rations -= 200
+	Fixture.set_level(lg, "hq", 1)
+	lg.fort["money"] = 500.0
+	lg.flags["fort_lessons"].erase("hq")
 	return check(opened and lg.fort_lesson_state("store") == "done", "opening store card finishes lesson")
 
 
@@ -120,7 +127,7 @@ func _hq_lesson() -> bool:
 	camp._clear_room_selection()
 	await _settle()
 	await _resize(Vector2i(1280, 720))
-	_check_dialog("720 knowledge")
+	check(not camp.guide_layer.is_visible_in_tree(), "720p: knowledge waits until the Forge exists")
 	camp.show_hq_upgrade(hq)
 	await _settle()
 	if not _verify_hq(2):
@@ -152,11 +159,12 @@ func _hq_lesson() -> bool:
 
 
 func _knowledge_lesson() -> bool:
-	if not _lesson_target("knowledge", camp.build_button):
-		return false
-	pending_saves["knowledge"] = save_round_trip()
-	lg.fort["money"] = 3600.0
+	check(lg.fort_lesson_state("knowledge") == "", "no knowledge lesson before the Forge")
+	lg.fort["money"] = 1000000.0
+	lg.mats = {"iron": 900000.0, "wood": 900000.0, "leather": 900000.0}
 	Fixture.set_level(lg, "forge", 1)
+	await _settle()
+	pending_saves["knowledge"] = save_round_trip()
 	var forge := int(lg.fort_slot_plot("forge")["id"])
 	var smith := Fixture.recruit(lg, false)
 	if not check(not smith.is_empty() and lg.fort_assign(forge, int(smith["id"])), "smith fixture assigned"):
@@ -250,9 +258,11 @@ func _verify_hq(level: int) -> bool:
 	for tile: Control in grid.get_children():
 		actual[tile.get_meta("hq_key")] = tile.get_meta("hq_value")
 	var next := level + 1
-	var expected := {"room_level": str(next), "barracks": "+1"}
+	var expected := {"room_level": str(next)}
+	if Legion.fort_room_slots_at("barracks", next) > Legion.fort_room_slots_at("barracks", level):
+		expected["barracks"] = "+1"
 	for type: String in Legion.FORT_B:
-		var amount := (Legion.FORT_B[type]["max"] as Array).count(next)
+		var amount := Legion.fort_max_at(type, next) - Legion.fort_max_at(type, level)
 		if amount > 0:
 			expected["room:" + type] = "+%d" % amount
 	for e in Legion.FORT_EXP:

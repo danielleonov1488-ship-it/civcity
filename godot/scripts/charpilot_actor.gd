@@ -105,6 +105,16 @@ func build_rival_hero(look: Dictionary, id: int) -> Dictionary:
 	return hero.clip
 
 
+func add_dweller_hero_trim(color: String, crown: int) -> void:
+	var cape := Citizen.add_cape(_rig, color)
+	if cape != null:
+		_capes.append(cape)
+	var wreath_path := "res://assets/synty/FBX/Attachments/SM_Chr_Attach_Crown_Leaf_0%d.fbx" % clampi(crown, 1, 2)
+	if ResourceLoader.exists(wreath_path, "PackedScene"):
+		var wreath := (load(wreath_path) as PackedScene).instantiate() as Node3D
+		_mount("Head", wreath, _bone_frame(_rig, "Head", true), Transform3D(Basis.IDENTITY, Vector3(0.0, 1.5691, -0.0048)))
+
+
 func _fail(reason: String) -> bool:
 	problem = reason
 	return false

@@ -434,7 +434,13 @@ async function heroTests() {
 
     // герой не первым, два героя, старое сохранение без героя, грубое имя, Склад не построен
     r = await call2('PUT /api/pvp/defense', 11, { snapshot: { squad: [{ type: 'legionary', level: 6 }, H(6, 5, 5)] } });
-    ok(r.clamped && r.power === pvp.snapPower({ squad: [{ type: 'legionary', level: 6 }] }), 'hero not in the first place → dropped', r);
+    ok(!r.clamped && r.power === pvp.snapPower({ squad: [{ type: 'legionary', level: 6 }, H(6, 5, 5)] }), 'hero accepted after an ordinary fighter', r);
+    const formation = { squad: [{ type: 'legionary', level: 1, place: 0 },
+      H(2, 0, 0, { hero_v: 3, unit: 'archer', place: 4 })] };
+    const replayStats = sim.snapStats(formation);
+    ok(replayStats.length === 2 && replayStats[1].key === 'hero' && replayStats[1].row === 1 &&
+      replayStats[1].place === 4 && replayStats[1].atk === sim.unitStats('archer', 2, 0, 0).atk,
+      'fort hero uses normal weapon stats and keeps the back-row slot in the server replay', replayStats);
     r = await call2('PUT /api/pvp/defense', 11, { snapshot: { squad: [H(6, 5, 5), H(6, 5, 5), { type: 'legionary', level: 6 }] } });
     ok(r.clamped && r.power === pvp.snapPower({ squad: [H(6, 5, 5), { type: 'legionary', level: 6 }] }), 'second hero → dropped', r);
     r = await call2('PUT /api/pvp/defense', 12, { snapshot: { squad: [H(3, 4, 0), { type: 'legionary', level: 3 }, { type: 'legionary', level: 3 }] } });

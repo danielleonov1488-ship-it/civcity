@@ -2,7 +2,7 @@ class_name MagisPreview
 extends RefCounted
 ## Проекция чисел без изменения города и его RNG.
 
-const LABELS := {"shop_income": "Доход лавок", "build_cost": "Дом плебеев", "upkeep": "Содержание", "rp_rate": "Исследования", "arrivals": "Повозка каждые", "work_output": "Выработка", "goods_price": "Продажи склада", "tourists": "Гостей в сутки", "festival_happy": "Счастье праздника", "legion_gate": "Новобранец каждые", "legion_rations": "Пайки на поход", "legion_denarii": "В казну Легиона"}
+const LABELS := {"shop_income": "Доход лавок", "build_cost": "Дом плебеев", "upkeep": "Содержание", "rp_rate": "Исследования", "arrivals": "Повозка каждые", "work_output": "Выработка", "goods_price": "Продажи склада", "tourists": "Гостей в сутки", "festival_happy": "Счастье праздника", "legion_gate": "Новобранец каждые", "legion_rations": "Еда на поход", "legion_denarii": "В казну Легиона"}
 const CLASS_TAX := {"plebs": "Налог плебеев", "artisans": "Налог ремесленников", "patricians": "Налог патрициев"}
 const CLASS_HAPPY := {"all": "Счастье города", "plebs": "Счастье плебеев", "artisans": "Счастье ремесленников", "patricians": "Счастье патрициев"}
 

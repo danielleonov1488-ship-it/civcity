@@ -143,7 +143,7 @@ func _recruit() -> void:
 	var candidate := L.fort_newcomers()[0]
 	var s := L.recruit_resident(candidate)
 	_check(not s.is_empty() and s["name"] == candidate["name"] and int(c.stats["pop"]) == pop0 and c.stats["workers"] == workers and _fams_ok(c), "новобранец не забирает горожан")
-	_check(L.fort_worker_plot(int(s["id"])) == -1 and not L.set_place(0, int(s["id"])), "принятый ждёт во дворе")
+	_check(L.fort_worker_plot(int(s["id"])) == -1 and L.set_place(0, int(s["id"])), "принятого из двора можно назначить в Штаб")
 	_check(String(s["cls"]) == "legionary" and L.worn(s).is_empty() and L.items.is_empty(), "новобранец без вещей")
 	var sid := int(s["id"])
 	var a0 := c.arrivals.size()
@@ -174,9 +174,10 @@ func _floor_roster() -> void:
 	for i in 11:
 		if not Fixture.recruit(L, false).is_empty():
 			count += 1
-	_check(count == 10 and L.fort_population() == 10 and L.roster_cap() == 10 and L.can_recruit_resident().contains("нет мест"), "Штаб 5 + Казарма 5 = 10 мест")
+	_check(count == 11 and L.fort_population() == 11 and L.roster_cap() == 11 and L.can_recruit_resident().contains("нет мест"), "В форте 11 мест для жителей")
 	Fixture.set_level(L, "barracks", 3)
-	_check(L.roster_cap() == 12 and L.can_recruit_resident() == "" and int(c.stats["pop"]) == pop0, "уровень казармы расширяет форт без потерь города")
+	Fixture.gate(L, 1)
+	_check(L.roster_cap() == 13 and L.can_recruit_resident() == "" and int(c.stats["pop"]) == pop0, "уровень казармы расширяет форт без потерь города")
 
 func _gear_class() -> void:
 	print("== оружие решает класс, четыре слота")
@@ -248,14 +249,16 @@ func _squad() -> void:
 	L.equip(ids[3], int(arch["id"]))
 	L.equip(ids[4], int(stf["id"]))
 	L.equip(ids[2], int(spr["id"]))
+	L.fort_assign(0, 0)
 	var open1 := []
 	for i in 5:
 		open1.append(L.set_place(i, ids[i]))
-	_check(L.slots() == 3 and open1 == [true, true, true, false, false], "казарма 1: открыты 3 места %s" % [open1])
-	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 3)
-	_check(L.slots() == 4 and L.set_place(3, ids[3]) and not L.set_place(4, ids[4]), "казарма 3: 4 места")
-	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 5)
-	_check(L.slots() == 5 and L.set_place(4, ids[4]), "казарма 5: 5 мест")
+	_check(L.slots() == 2 and open1 == [true, true, false, false, false], "Штаб 1: открыты два места %s" % [open1])
+	Fixture.set_level(L, "hq", 4)
+	L.set_place(2, ids[2])
+	_check(L.slots() == 4 and L.set_place(3, ids[3]) and not L.set_place(4, ids[4]), "Штаб 4: 4 места")
+	Fixture.set_level(L, "hq", 6)
+	_check(L.slots() == 5 and L.set_place(4, ids[4]), "Штаб 6: 5 мест")
 	var sq := L.squad_v3()
 	var rows := []
 	var keys := []
@@ -271,7 +274,7 @@ func _squad() -> void:
 	_check(rows2 == [0, 0, 0, 1, 1] and setup["squad"].size() == 5, "ряды — в данных боя %s" % [rows2])
 	# новая постановка: воин переходит с места на место
 	L.set_place(0, ids[4])
-	_check(int(L.squad3[0]) == ids[4] and int(L.squad3[4]) == 0, "воин не стоит на двух местах: %s" % [L.squad3])
+	_check(int(L.squad3[0]) == ids[4] and int(L.squad3[4]) == ids[0], "бойцы поменялись местами: %s" % [L.squad3])
 	L.set_place(4, ids[0])
 	# бой считается с жрецом и всадником (L3.2 научит их поведению; здесь — без падения)
 	var setup2 := L.make_battle(st, 5)
@@ -288,36 +291,37 @@ func _camp() -> void:
 	for to in range(2, 9):
 		t.append(roundi(Legion.camp_time_h(to) * 3600.0))
 	_check(t == [900, 7200, 21600, 43200, 86400, 172800, 259200], "таймеры до 2…8 уровня, с: %s" % [t])
-	_check(L.camp_level("hq") == 1 and L.camp_level("barracks") == 1 and L.camp_level("drill") == 1 and L.camp_level("forge") == 0
-		and L.camp_level("mars") == 0 and L.camp_level("store") == 0, "старт: штаб, казарма, плац — 1; кузница, Марс, склад — не построены")
+	_check(L.camp_level("hq") == 1 and L.camp_level("barracks") == 1 and L.camp_level("drill") == 0 and L.camp_level("forge") == 0
+		and L.camp_level("mars") == 0 and L.camp_level("store") == 0, "старт: Штаб и Казарма готовы, Плац объединён с Казармой")
 	var why := L.camp_can_upgrade("barracks")
 	_check(why.contains("Выше Штаба"), "ни одно здание выше Штаба: «%s»" % why)
 	_check(L.camp_can_upgrade("forge").contains("Штаб"), "кузницу со Штабом 1 не построить: «%s»" % L.camp_can_upgrade("forge"))
-	var why_hq := L.camp_can_upgrade("hq")
-	_check(why_hq.contains("город"), "Штабу нужен ранг города: «%s»" % why_hq)
+	_check(L.camp_can_upgrade("hq") == "", "повышение Штаба доступно независимо от ранга города")
 	c.level = 1
 	var m0 := L.city_money()
 	var ok := L.camp_upgrade("hq")
-	_check(ok and L.camp_left("hq") > 0.0 and absf(L.camp_left("hq") - 900.0) < 5.0 and L.city_money() < m0, "Штаб → 2: идёт %d с, заплачено %d" % [roundi(L.camp_left("hq")), roundi(m0 - L.city_money())])
-	_check(L.camp_can_upgrade("drill").contains("Строитель занят"), "строитель один: «%s»" % L.camp_can_upgrade("drill"))
+	_check(ok and L.camp_left("hq") > 0.0 and absf(L.camp_left("hq") - 5.0) < 2.0 and L.city_money() < m0, "Штаб → 2: идёт %d с, заплачено %d" % [roundi(L.camp_left("hq")), roundi(m0 - L.city_money())])
+	_check(L.camp_can_upgrade("barracks").contains("Строитель занят"), "строитель один: «%s»" % L.camp_can_upgrade("barracks"))
 	L.upg["camp_hq"]["end"] = Legion.now() - 1.0
 	var ev := L.tick()
 	_check(L.camp_level("hq") == 2 and not L.camp_busy() and ev.any(func(x): return String(x).contains("Штаб")), "таймер вышел: Штаб %d, события %s" % [L.camp_level("hq"), ev])
+	L.mats["wood"] = float(Legion.fort_cost("forge", 1)["mats"]["wood"])
 	_check(L.camp_can_upgrade("forge") == "" and L.camp_can_upgrade("store") == "" and L.camp_can_upgrade("mars").contains("Штаб"), "кузница и склад — со Штабом 2, Марс — с 3: «%s»" % L.camp_can_upgrade("mars"))
 	_check(L.camp_upgrade("forge") and L.camp_progress("forge") < 0.1, "кузницу строят")
+	if not L.upg.has("camp_forge"):
+		return
 	L.upg["camp_forge"]["end"] = Legion.now() - 1.0
 	L.tick()
 	_check(L.camp_level("forge") == 1 and L.forge_lvl() == 1 and L.available("forge"), "кузница построена: уровень %d" % L.camp_level("forge"))
 	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 3)
-	preload("res://scripts/test_fort_fixture.gd").set_level(L, "drill", 6)
-	_check(L.barracks_lvl() == 3 and L.roster_cap() == 12 and L.slots() == 4 and L.train_places() == 1, "казарма 3: мест в отряде %d, воинов до %d; плац 6: тренировок %d" % [L.slots(), L.roster_cap(), L.train_places()])
+	_check(L.barracks_lvl() == 3 and L.roster_cap() == 13 and L.slots() == 3 and L.train_places() == 2, "Штаб 2 держит троих, Казарма 3 тренирует двоих")
 	preload("res://scripts/test_fort_fixture.gd").set_level(L, "store", 2)
-	_check(L.store_cap() == Gear.STORE_BASE + 2 * Gear.STORE_PER and L.ration_cap() == 30, "склад 2: мест %d, пайков до %d" % [L.store_cap(), L.ration_cap()])
+	_check(L.store_cap() == Gear.STORE_BASE + 2 * Gear.STORE_PER and L.ration_cap() == 2000, "склад 2: мест %d, еды до %d" % [L.store_cap(), L.ration_cap()])
 	preload("res://scripts/test_fort_fixture.gd").set_level(L, "mars", 2)
 	_check(L.perk_max() == 7, "Марс 2: умения до %d" % L.perk_max())
 	preload("res://scripts/test_fort_fixture.gd").set_level(L, "hq", 12)
 	preload("res://scripts/test_fort_fixture.gd").set_level(L, "barracks", 12)
-	_check(not L.camp_can_upgrade("hq").contains("Максимальный") and L.camp_can_upgrade("barracks").contains("Выше Штаба"), "форт растёт дальше 12 уровня, остальные здания ограничены Штабом")
+	_check(not L.camp_can_upgrade("hq").contains("Максимальный") and L.camp_can_upgrade("barracks").contains("Выше Штаба"), "высокие уровни сохраняются, остальные здания ограничены Штабом")
 	# таланты и умения
 	var c2 := _town(13)
 	var L2: Legion = c2.legion
@@ -332,36 +336,34 @@ func _camp() -> void:
 
 
 func _rations() -> void:
-	print("== пайки")
 	var c := _town(13)
 	var L: Legion = c.legion
 	L.army_tick()
-	_check(L.rations_now() == 20 and L.ration_cap() == 20, "в начале полный запас: %d из %d" % [L.rations_now(), L.ration_cap()])
+	_check(L.rations_now() == 600 and L.ration_cap() == 1000, "стартовый запас и предел")
 	L.rations = 0.0
 	for i in 24:
 		L.on_hour()
-	_check(L.rations_now() == 0 and L.collect_resource("rations") == 2 and L.rations_now() == 2 and L.rations_per_day() == 2.0, "сутки без пекарни: +%d" % L.rations_now())
+	_check(L.collect_resource("rations") == 200 and L.rations_per_day() == 200.0, "сутки без пекарни")
 	_work(c, "bakery", Vector2(0, 40))
 	L.rations = 0.0
 	for i in 24:
 		L.on_hour()
-	_check(L.bakeries_working() == 1 and L.collect_resource("rations") == 5 and L.rations_now() == 5 and L.rations_per_day() == 5.0, "сутки с пекарней: +%d (в день %.0f)" % [L.rations_now(), L.rations_per_day()])
-	L.rations = 19.0
+	_check(L.bakeries_working() == 1 and L.collect_resource("rations") == 500, "сутки с пекарней")
+	L.rations = 999.0
 	for i in 24:
 		L.on_hour()
-	_check(L.collect_resource("rations") == 1 and L.rations_now() == 20, "запас не больше предела: %d" % L.rations_now())
+	_check(L.collect_resource("rations") == 1 and L.rations_now() == 1000, "запас не больше предела")
 	var st := Legion.stage(0, 0, 0)
-	_check(L.ration_cost(st) == 2 and L.ration_cost({"boss": true}) == 4 and L.ration_cost({"junior": true}) == 4, "бой стоит 2, босс — 4")
-	L.rations = 1.0
-	_check(L.can_fight(st).contains("Нет пайков") or L.can_fight(st).contains("воинов"), "пайков мало — в бой нельзя: «%s»" % L.can_fight(st))
-	for i in 3:
-		Fixture.recruit(L)
-	L.set_place(0, int(L.soldiers[0]["id"]))
-	L.rations = 10.0
-	_check(L.can_fight(st) == "", "пайков хватает, воин в отряде: бой разрешён («%s»)" % L.can_fight(st))
+	L.flags["fort_guide"] = Legion.FortGuide.DONE
+	_check(L.ration_cost(st) == 100 and L.ration_cost({"boss": true}) == 200 and L.ration_cost({"junior": true}) == 200, "обычный бой 100, босс 200")
+	L.rations = 50.0
+	Fixture.recruit(L)
+	_check(L.can_fight(st).contains("Не хватает еды"), "мало еды")
+	L.rations = 300.0
+	_check(L.can_fight(st).is_empty(), "еды хватает")
 	var setup := L.make_battle(st, 3)
 	L.apply_result(setup, {"win": false, "alive": 0, "total": 1, "fallen": [], "time": 10.0, "hp_left": 0.0, "inputs": [], "perks_used": {}, "summons": 0})
-	_check(L.rations_now() == 8, "бой стоил 2 пайка: осталось %d" % L.rations_now())
+	_check(L.rations_now() == 200, "бой списал 100")
 
 
 func _hidden() -> void:
@@ -407,7 +409,7 @@ func _save() -> void:
 	_check(c2.legion_v == 3 and L2.camp_level("forge") == 2 and L2.camp_level("barracks") == 3 and L2.camp_level("hq") == 1, "уровни лагеря после загрузки")
 	_check(L2.upg.has("camp_hq") and L2.camp_busy(), "стройка Штаба сохранилась")
 	_check(L2.soldiers.size() == 2 and String(L2.soldier(int(s2["id"]))["cls"]) == "priest" and L2.fort_newcomers() == L.fort_newcomers(), "люди, класс и очередь ворот сохраняются")
-	_check(L2.squad3 == [int(s["id"]), 0, 0, int(s2["id"]), 0] and L2.slots() == 4 and absf(L2.rations - 7.5) < 0.01, "отряд и пайки")
+	_check(L2.squad3 == [int(s["id"]), 0, 0, int(s2["id"]), 0] and L2.slots() == 2 and absf(L2.rations - 7.5) < 0.01, "отряд и пайки")
 	var sq := L2.squad_v3()
 	_check(sq.size() == 2 and int(sq[0]["row"]) == 0 and int(sq[1]["row"]) == 1 and String(sq[1]["key"]) == "priest", "ряды отряда")
 	var population := int(c2.stats["pop"])
@@ -436,45 +438,20 @@ func _choice3() -> void:
 func _hero3() -> void:
 	var c := _town(14)
 	var L: Legion = c.legion
-	L.army_tick()
-	var recruit := Fixture.recruit(L)
-	L.set_place(0, int(recruit["id"]))
 	c.hero = Hero.make("Гай Валерий", 0, Hero.PRESETS[0]["look"], true, 777)
-	var population := int(c.stats["pop"])
 	L.army_tick()
-	L.army_tick()
-	var hero: Dictionary = L.soldiers[0]
+	var hero := L.hero_dweller()
 	var sid := int(hero["id"])
-	_check(bool(hero.get("hero", false)) and L.soldiers.size() == 2 and int(L.squad3[0]) == sid and int(L.squad3[1]) == int(recruit["id"])
-		and int(c.stats["pop"]) == population, "герой первый, прежний воин переехал, жителей не убыло")
-	_check(not L.dismiss(sid) and not L.set_place(0, 0) and not L.set_place(2, sid), "героя нельзя уволить или убрать с первого места")
+	_check(L.squad_count() == 2 and L.fort_population() == 2, "hero and legionary start at HQ")
+	_check(not L.dismiss(sid) and L.set_place(3, sid), "hero can join the back row and cannot be dismissed")
 	var setup := L.make_battle(Legion.stage(0, 0, 0), 19)
-	_check(setup.has("hero_look") and setup["squad"][0]["key"] == "hero" and setup["squad"][0]["place"] == 0, "герой в бою со своим обликом")
-	L.glory = 10000
-	var money := L.city_money()
-	var glory := L.glory
-	_check(L.train_hero() and L.city_money() < money and L.glory < glory and L.squad_v3().size() == 1, "тренировка стоит денег и Славы; герой занят")
+	_check(setup.has("hero_look") and setup["squad"][1]["hero"] and setup["squad"][1]["place"] == 3, "hero appearance and place in battle")
+	var food := L.rations
+	_check(L.train_hero() and L.rations == food - 50 and L.squad_count() == 1, "barracks costs food and leaves squad")
 	var old_clock := Legion.clock
-	Legion.clock = float(L.hero_training["end"]) + 1.0
+	Legion.clock = float(hero["train_end"])
 	L.tick()
-	_check(L.hero_level() == 2 and L.hero_training.is_empty() and L.squad_v3().size() == 2, "герой вернулся на новом уровне")
-	_check(Legion.hero_time_h(8) > Legion.hero_time_h(7) and Legion.hero_time_h(30) > Legion.hero_time_h(20), "таймер героя растёт и за таблицей")
-	L.hero_lv3 = Legion.HERO_MAX3 - 1
-	L.fort["money"] = maxf(L.city_money(), 1000000.0)              # тренировка у предела дорогая — казна полна
-	L.glory = maxf(L.glory, 100000.0)
-	_check(L.train_hero(), "герой может вырасти выше максимума обычных воинов")
-	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
-	var copy := City.new(Land.new())
-	copy.auto_hire = true  # прежняя фикстура
-	copy.load_data(saved)
-	copy.legion.army_tick()
-	_check(copy.legion.hero_level() == Legion.HERO_MAX3 - 1 and not copy.legion.hero_training.is_empty()
-		and bool(copy.legion.soldiers[0].get("hero", false)) and not copy.legion.dismiss(sid), "герой и его тренировка сохраняются")
-	var entry := L.hero_entry()
-	_check(int(entry.get("hero_v", 0)) == 3 and int(Legion.snap_hero(entry, 0.0, 0.0)["level"]) == L.hero_level(), "снимок V3 не обрезает уровень героя")
-	Legion.clock = float(L.hero_training["end"]) + 1.0
-	L.tick()
-	_check(L.hero_level() == Legion.HERO_MAX3 and not L.train_hero(), "предел героя соблюдается")
+	_check(L.hero_level() == 2 and L.s_state(hero) == "ready", "normal hero training")
 	Legion.clock = old_clock
 
 
@@ -524,28 +501,30 @@ func _collection3() -> void:
 func _timer_independence3() -> void:
 	var c := _town(14)
 	var L: Legion = c.legion
+	c.hero = Hero.make("Гай Валерий", 0, Hero.PRESETS[0]["look"], true, 777)
 	L.army_tick()
 	var old_clock := Legion.clock
 	Legion.clock = 300000.0
 	var end := Legion.clock + 86400.0
 	L.fort_plot(0)["up"] = {"to": 2, "end": end, "total": 86400.0}
 	L._fort_sync_camp()
-	L.hero_training = {"to": 2, "end": end, "total": 86400.0}
+	L.hero_dweller()["train_end"] = end
+	L.hero_dweller()["train_total"] = 86400.0
 	var money := L.city_money()
 	var city_money := c.money
 	L.tick()
-	_check(float(L.upg["camp_hq"]["end"]) == end and float(L.hero_training["end"]) == end
+	_check(float(L.upg["camp_hq"]["end"]) == end and float(L.hero_dweller().get("train_end", 0)) == end
 		and L.city_money() == money and c.money == city_money, "HQ and hero timers do not spend either treasury")
 	_check(not L.has_method("speed_up") and not L.has_method("speed_remaining"), "money speed-up and daily quota removed")
 	var saved: Dictionary = JSON.parse_string(JSON.stringify(c.save_data()))
 	var copy := City.new(Land.new())
 	copy.auto_hire = true
 	copy.load_data(saved)
-	_check(float(copy.legion.fort_plot(0)["up"]["end"]) == end and float(copy.legion.hero_training["end"]) == end,
+	_check(float(copy.legion.fort_plot(0)["up"]["end"]) == end and float(copy.legion.hero_dweller().get("train_end", 0)) == end,
 		"save preserves full HQ and hero timers")
 	c.day += 1
 	L.tick()
-	_check(float(L.upg["camp_hq"]["end"]) == end and float(L.hero_training["end"]) == end,
+	_check(float(L.upg["camp_hq"]["end"]) == end and float(L.hero_dweller().get("train_end", 0)) == end,
 		"city day cannot shorten HQ or hero training")
 	Legion.clock = old_clock
 

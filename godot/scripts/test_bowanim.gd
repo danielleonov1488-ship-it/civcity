@@ -360,7 +360,7 @@ func _battle() -> void:
 		view.profile_poses = false
 		Pose.profile_enabled = false
 		print("BOWANIM CPU x%.0f pose=%.4f ms ranged=%.4f ms calls/frame=%.2f state+windup=%.4f ms" % [speed, view.pose_usec / 120000.0, Pose.profile_usec / 120000.0, Pose.profile_calls / 120.0, view.windup_usec / 120000.0])
-		var extent := battle.battle_view.people_layer.viewport.size
+		var extent := Vector2i(battle.battle_view.size)
 		print("BOWANIM FPS ×%.0f %.1f at %dx%d figures=%d" % [speed, fps, extent.x, extent.y, battle.views.size()])
 		var target := 340.0 if speed == 1.0 else 300.0
 		_check(fps >= target and figures == 16 and battle.views.size() == 16 and extent == Vector2i(WIDTH, HEIGHT),

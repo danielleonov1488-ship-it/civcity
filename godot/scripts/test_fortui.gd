@@ -92,15 +92,18 @@ func _run() -> void:
 	lg.camp = {}
 	lg.upg.clear()
 	lg._camp_init()
-	lg.fort["money"] = 1e6
+	lg.fort["money"] = 2e6
 	lg.fort["know"] = {"smith": true}
 	# Эта фикстура проверяет пять новых производственных комнат.
+	var start_kitchen := lg.fort_slot_plot("kitchen")
+	start_kitchen["b"] = ""
+	start_kitchen["lv"] = 0
 	var treasury_fixture := lg.fort_slot_plot("treasury")
 	treasury_fixture["b"] = ""
 	treasury_fixture["lv"] = 0
 	Fixture.set_level(lg, "hq", 3)
 	lg.glory = 10000
-	lg.mats = {"iron": 100.0, "wood": 100.0, "leather": 10.0}
+	lg.mats = {"iron": 550000.0, "wood": 850000.0, "leather": 2000.0}
 	# Расширение добавляет этаж к стартовой сетке 5×3.
 	var start_grid := lg.fort_grid()
 	if not check(start_grid == Legion.FORT_START_GRID
@@ -132,6 +135,7 @@ func _run() -> void:
 		return
 	var legacy_save: Dictionary = JSON.parse_string(JSON.stringify(lg.to_dict()))
 	legacy_save["flags"].erase("fort_guide")
+	legacy_save["flags"].erase("fort_guide_v")
 	lg.from_dict(legacy_save)
 	if not check(lg.fort_guide_step() == Legion.FortGuide.DONE, "old guide migrates when loading the save"):
 		return
@@ -150,12 +154,12 @@ func _run() -> void:
 	if not await shot("1_main.png"):
 		return
 	camp.show_build_menu()
-	if not check(camp.build_cards.size() == Legion.FORT_B.size() - 1, "all build cards"):
+	if not check(camp.build_cards.size() == Legion.FORT_B.size() - 2 and not camp.build_cards.has("drill"), "catalog excludes the merged drill"):
 		return
 	if not await shot("2_build_menu.png"):
 		return
 	camp.show_plot(kitchen)
-	if not check(camp.selected_plot == kitchen and camp.main_action.text.contains(str(floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001))) and camp.main_action.get_meta("action_name") == I18n.t("Собрать %d") % floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001), "plot-based kitchen collect action"):
+	if not check(camp.selected_plot == kitchen and camp.main_action.text.contains(str(floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001))) and camp.main_action.get_meta("action_name") == I18n.t("Собрать %s") % game.hud.fmt(floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001)), "plot-based kitchen collect action"):
 		return
 	if not await shot("3_card_kitchen.png"):
 		return
@@ -164,7 +168,13 @@ func _run() -> void:
 	if not check(lg.rations > before and not camp._collection_fx.is_empty(), "collect and fly animation"):
 		return
 	camp.show_building("hq")
-	if not check(camp.selected_plot == int(lg.fort_slot_plot("hq")["id"]) and camp.main_action.get_meta("action_name") == I18n.t("Расширить форт"), "HQ expansion action"):
+	var expand := camp.card.find_child("FortMainAction", true, false) as Button
+	if not check(camp.selected_plot == int(lg.fort_slot_plot("hq")["id"]) and expand != null
+		and expand.is_visible_in_tree() and expand.text == I18n.t("Расширить форт") and expand.icon != null,
+		"HQ expansion action"):
+		return
+	if not check(expand.disabled == (lg.fort_can_expand() != "") and camp.upgrade_button.text == I18n.t("Улучшить"),
+		"separate HQ level action and expansion availability"):
 		return
 	if not await shot("4_card_hq.png"):
 		return
@@ -257,9 +267,17 @@ func _run() -> void:
 	if not check(lg.fort_can_expand() == "" and not camp.main_action.disabled, "HQ expansion allowed: " + lg.fort_can_expand()):
 		return
 	camp.main_action.pressed.emit()
-	if not check(not (lg.fort["up"] as Dictionary).is_empty(), "HQ starts expansion: " + lg.fort_can_expand()):
+	var floor := camp.modal_panel.find_child("FortExpand_floor", true, false) as Button
+	if not check(floor != null and not floor.disabled, "HQ offers adding a floor"):
 		return
-	if not check(camp.card_ring.visible, "HQ expansion timer visible"):
+	floor.pressed.emit()
+	var confirm := camp.modal_panel.find_child("FortExpansionConfirm", true, false) as Button
+	if not check(confirm != null and not confirm.disabled, "HQ expansion confirmation"):
+		return
+	confirm.pressed.emit()
+	if not check(lg.fort["up"].get("axis") == "floor", "HQ starts expansion: " + lg.fort_can_expand()):
+		return
+	if not check(is_instance_valid(camp.card_ring) and camp.card_ring.is_visible_in_tree(), "HQ expansion timer visible"):
 		return
 	lg.fort["up"]["end"] = Legion.now() - 1
 	lg.fort_finish()
@@ -278,6 +296,9 @@ func _run() -> void:
 	if not check(camp.stock_labels.size() == 3, "warehouse material amounts and caps"):
 		return
 	camp._close_modal()
+	# Строим Арсенал без Склада, поэтому выдаём дерево сверх обычного лимита.
+	var arsenal_cost := Legion.fort_cost("arsenal", 1)
+	lg.mats["wood"] = maxf(lg.mat("wood"), float(arsenal_cost["mats"]["wood"]))
 	var arsenal := build("arsenal")
 	if not check(arsenal >= 0 and not lg.camp_built("store"), "arsenal without warehouse fixture"):
 		return

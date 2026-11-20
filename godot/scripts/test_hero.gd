@@ -736,7 +736,8 @@ func _pvp_test() -> void:
 	var dsn := lg.defense_snapshot()
 	check(String(((dsn["squad"] as Array)[0] as Dictionary).get("type", "")) == "hero" and int(dsn["power"]) == Legion.snapshot_power(dsn)
 		and lg.squad_power("defense") == int(dsn["power"]) and lg.squad_power("pvp") == Legion.snapshot_power(att), "отряд обороны: герой первым, сила — с ним (как посчитает сервер)", dsn)
-	check(Legion.snapshot_stats({"squad": [{"type": "legionary", "level": 2}, he]}).size() == 1, "герой не на первом месте — не в счёт (как на сервере)")
+	var reordered := Legion.snapshot_stats({"squad": [{"type": "legionary", "level": 2}, he]})
+	check(reordered.size() == 2 and reordered[1]["key"] == "hero", "герой участвует со второго места, как на сервере")
 	var rival := {"v": 1, "squad": [{"type": "hero", "level": 2, "city": 3, "kit": 1, "name": "Марк Туллий", "look": {"sx": 0, "mdl": "SK_Chr_Worker_Male_01",
 		"skin": "C", "hair": 6, "beard": 2, "hc": "S", "main": "4d7397", "second": "e3d8c3", "cape": "b0202e", "crown": 2}},
 		{"type": "legionary", "level": 1}, {"type": "archer", "level": 1}], "perks": {"oil": 1}}

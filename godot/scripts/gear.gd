@@ -129,13 +129,32 @@ static func craft_room(kind: String) -> String:
 	return "forge" if KIND_CLS.has(kind) or WORK_LOOK.has(kind) else "arsenal"
 
 
+static func material_scale(resource: String) -> float:
+	return 225.0 if resource == "iron" else 197.5
+
+
+static func fort_material(resource: String, amount: int) -> int:
+	var scaled := amount * material_scale(resource)
+	var unit := pow(10.0, maxf(0.0, floorf(log(maxf(scaled, 1.0)) / log(10.0)) - 2.0))
+	return roundi(roundf(scaled / unit) * unit)
+
+
+static func stock_text(value: int) -> String:
+	var digits := str(absi(value))
+	var grouped := ""
+	while digits.length() > 3:
+		grouped = " " + digits.right(3) + grouped
+		digits = digits.left(digits.length() - 3)
+	return ("-" if value < 0 else "") + digits + grouped
+
+
 static func craft_mats(kind: String, tier: int) -> Dictionary:
 	var out := {}
 	var slot := craft_slot(kind)
 	var n := 20.0 * pow(1.55, clampi(tier, 1, TIERS) - 1)
 	var recipe: Dictionary = MAT_OF.get(slot, {})
 	for m: String in recipe:
-		out[m] = maxi(5, roundi(n * float(recipe[m]) / 5.0) * 5)
+		out[m] = fort_material(m, maxi(5, roundi(n * float(recipe[m]) / 5.0) * 5))
 	return out
 
 
@@ -183,7 +202,7 @@ static func mats_text(d: Dictionary) -> String:
 	var out := []
 	for m: String in MATS:
 		if d.has(m):
-			out.append("%d %s" % [int(d[m]), String(MAT_NAME[m])])
+			out.append("%s %s" % [stock_text(int(d[m])), I18n.t(String(MAT_NAME[m]))])
 	return ", ".join(out)
 
 

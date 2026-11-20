@@ -17,6 +17,7 @@ const INTRO := "Магистратуры — курс города: выбери
 const INK := Color("4a2511")
 const GOOD := Color("286312")
 const BAD := Color("9b241c")
+const Look = preload("res://scripts/legion_look.gd")
 const Ring = preload("res://scripts/fort_ui_ring.gd")
 const FX_ICON := {"tax_k": "coins", "happy": "happy", "need_radius": "services", "need_weight": "food", "shop_income": "income", "build_cost": "hammer", "upkeep": "coins", "rp_rate": "research", "arrivals": "family", "arrival_class": "person", "work_output": "anvil", "goods_price": "goods", "tourists": "view", "festival_happy": "laurels", "legion_gate": "shield", "legion_rations": "bread", "legion_denarii": "coins"}
 const ADVICE := {"censura": "Открыта Цензура: выберите курс города", "aedilitas": "Открыт Эдилитет: выберите курс города", "quaestura": "Открыта Квестура: выберите курс города", "praetura": "Открыта Претура: выберите курс города", "tribunus": "Открыт Военный трибунат: выберите курс города", "pontificatus": "Открыт Понтификат: выберите курс города"}
@@ -321,6 +322,8 @@ func _card(column: Control, e: Dictionary, index: int, opened: bool) -> void:
 		if key.begins_with("need_radius:") or key.begins_with("need_weight:"):
 			effect_icon = String(Defs.NEEDS.get(key.get_slice(":", 1), {}).get("icon", effect_icon))
 		var image := _image("icons/" + effect_icon, Rect2(x, y, 24, 24))
+		if key == "legion_rations":
+			image.texture = Look.resource("rations")
 		b.add_child(image)
 		var number := ("+" if positive else "−") + str(roundi(absf(delta))) + ("" if key.begins_with("happy:") else "%")
 		var l := _label(b, number, Rect2(x + 24, y + 2, 37, 20), 11, true)
@@ -384,12 +387,26 @@ func _popup(id: String) -> void:
 	popup_panel.add_child(x)
 	_label(popup_panel, String(e["text"]), Rect2(26, 77, 478, 42), 15)
 	var lines := [I18n.t("Было → стало")]
+	var food_change := ""
 	for row: Dictionary in MagisPreview.rows(city, id):
-		lines.append("%s: %s → %s%s" % [row["label"], Hud.fmt_rate(float(row["before"])), Hud.fmt_rate(float(row["after"])), row["unit"]])
+		if row["key"] == "legion_rations":
+			food_change = "%s → %s" % [hud.fmt(float(row["before"])), hud.fmt(float(row["after"]))]
+		else:
+			lines.append("%s: %s → %s%s" % [row["label"], Hud.fmt_rate(float(row["before"])), Hud.fmt_rate(float(row["after"])), row["unit"]])
 	if id == "trib_war_chest":
-		lines.append(I18n.t("Казна Легиона: %s") % Hud.fmt_rate(city.magis_treasury))
-	preview_label = _label(popup_panel, "\n".join(lines), Rect2(30, 122, 470, 91), 15, true)
+		lines.append(I18n.t("Казна Легиона: %s") % hud.fmt(city.magis_treasury))
+	preview_label = _label(popup_panel, "\n".join(lines), Rect2(30, 122, 470, 66 if food_change != "" else 91), 15, true)
 	preview_label.name = "EdictPreview"
+	if food_change != "":
+		var food_row := HBoxContainer.new()
+		food_row.position = Vector2(30, 182)
+		food_row.size = Vector2(470, 25)
+		food_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		food_row.tooltip_text = I18n.t("Еда на поход")
+		food_row.mouse_filter = Control.MOUSE_FILTER_PASS
+		popup_panel.add_child(food_row)
+		food_row.add_child(preload("res://scripts/ui_kit_a.gd").image(Look.resource("rations"), Vector2(23, 23)))
+		food_row.add_child(Look.label(food_change, 15, INK, true))
 	var adopted := city.magis_orders.has(id)
 	var pending := adopted and int(city.magis_orders[id]["left"]) > 0
 	var reason := Magis.can_adopt(city, id) if not adopted else ""
@@ -399,7 +416,7 @@ func _popup(id: String) -> void:
 	if reason != "":
 		timing = I18n.t(reason)
 	_label(popup_panel, timing, Rect2(28, 219, 474, 27), 14, true)
-	var label := I18n.t("Отменить · вернуть %d") % int(e["cost"]) if pending else (I18n.t("Отменить") if adopted else I18n.t("Принять · %d") % int(e["cost"]))
+	var label := I18n.t("Отменить · вернуть %s") % hud.fmt(float(e["cost"])) if pending else (I18n.t("Отменить") if adopted else I18n.t("Принять · %s") % hud.fmt(float(e["cost"])))
 	var action := func() -> void:
 		if adopted:
 			Magis.cancel(city, id)

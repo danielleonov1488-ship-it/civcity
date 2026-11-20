@@ -10,6 +10,7 @@ static func build(ui: Variant, id: int) -> void:
 	var lg: Legion = ui.lg
 	var plot := lg.fort_plot(id)
 	var level := int(plot["lv"])
+	var free := lg.fort_guide_free("hq", level + 1)
 	var unlocks := lg.fort_hq_unlocks(level)
 	var body: VBoxContainer = ui._new_framed_modal(1250)
 	ui.hq_window_id = id
@@ -42,9 +43,9 @@ static func build(ui: Variant, id: int) -> void:
 	if not expansion.is_empty():
 		_tile(grid, "floor", Look.icon("build"), I18n.t("Этаж · места"), "+%d" % int(expansion["floor"]))
 		_tile(grid, "section", Look.icon("build"), I18n.t("Секция · места"), "+%d" % int(expansion["section"]))
-	var stock_names := {"money": "Денарии", "rations": "Пайки", "ingots": "Слитки", "iron": "железо", "wood": "Дерево", "leather": "кожа"}
+	var stock_names := {"money": "Денарии", "rations": "Еда", "ingots": "Слитки", "iron": "железо", "wood": "Дерево", "leather": "кожа"}
 	for resource: String in unlocks["caps"]:
-		_tile(grid, "cap:" + resource, Look.resource(resource), I18n.t("Запас: %s") % I18n.t(stock_names[resource]).capitalize(), "+" + ui.hud.fmt(unlocks["caps"][resource]))
+		_tile(grid, "cap:" + resource, Look.resource(resource), I18n.t("Запас") if resource == "rations" else I18n.t("Запас: %s") % I18n.t(stock_names[resource]).capitalize(), "+" + ui.hud.fmt(unlocks["caps"][resource]))
 	_tile(grid, "room_level", FortCutaway.room_icon("hq"), I18n.t("Предел уровня комнат"), str(unlocks["room_level"]))
 	for key: String in ["barracks", "squad"]:
 		if int(unlocks[key]) > 0:
@@ -62,15 +63,15 @@ static func build(ui: Variant, id: int) -> void:
 	price.alignment = BoxContainer.ALIGNMENT_CENTER
 	body.add_child(price)
 	var info := lg.fort_info(id)
-	var cost: Dictionary = info["next_cost"]
+	var cost: Dictionary = {} if free else info["next_cost"]
 	for resource: String in ["money", "iron", "wood", "leather", "glory"]:
-		var amount := int(cost.get(resource, cost["mats"].get(resource, 0)))
+		var amount := int(cost.get(resource, cost.get("mats", {}).get(resource, 0)))
 		if amount > 0:
 			var name_text := I18n.t(stock_names.get(resource, "Слава")).capitalize()
 			var tile := _tile(price, "price:" + resource, Look.resource(resource), name_text, ui.hud.fmt(amount))
 			tile.set_meta("cost_resource", resource)
 			tile.set_meta("cost_amount", amount)
-	var time := _tile(price, "time", Look.icon("timer"), I18n.t("Время"), ui.duration_text(float(info["next_time"])))
+	var time := _tile(price, "time", Look.icon("timer"), I18n.t("Время"), I18n.t("Мгновенно") if free else ui.duration_text(float(info["next_time"])))
 	time.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var status := HBoxContainer.new()
@@ -94,8 +95,11 @@ static func build(ui: Variant, id: int) -> void:
 	instant.name = "FortHQInstant"
 	instant.pressed.connect(_apply.bind(ui, panel, id, level, true))
 	buttons.add_child(instant)
+	instant.visible = not free
 	var upgrade := Look.button(I18n.t("Улучшить"), Look.icon("build"), Look.WINE, Vector2(225, 56))
 	upgrade.name = "FortHQConfirm"
+	if free:
+		upgrade.text = I18n.t("Улучшить · Бесплатно")
 	upgrade.pressed.connect(_apply.bind(ui, panel, id, level, false))
 	buttons.add_child(upgrade)
 	refresh(ui)
@@ -141,7 +145,7 @@ static func refresh(ui: Variant) -> void:
 	instant.text = I18n.t("Мгновенно") + " · " + ui.hud.fmt(quote["price"])
 	instant.set_meta("quote", quote)
 	instant.tooltip_text = I18n.t(String(quote["why"]))
-	reason.text = I18n.t(why if why != "" else String(quote["why"]))
+	reason.text = "" if lg.fort_guide_free("hq", int(panel.get_meta("before_level")) + 1) else I18n.t(why if why != "" else String(quote["why"]))
 	(reason.get_parent().get_child(0) as Control).visible = reason.text != ""
 	var price := panel.find_child("FortHQPrice", true, false)
 	for tile: PanelContainer in price.get_children():
