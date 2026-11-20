@@ -733,6 +733,7 @@ func _process(dt: float) -> void:
 	battle_sound.update_field(sim, dt, run and fighting, battle_view)
 	battle_view.tick(sim, gdt, dt, acc, fighting)
 	_update_ui()
+	bars.age_floats(dt)
 	bars.queue_redraw()
 
 
@@ -815,7 +816,7 @@ func _handle(evs: Array) -> void:
 			"heal":
 				var f := _view(e["unit"])
 				battle_view.burst("fx_heal", f.chest(), 1.05)
-				bars.float_text(battle_view.screen(f.head()), "+%d" % int(e["amount"]), "heal")
+				bars.float_value(f, int(e["amount"]), "heal", sim.t)
 				var src: LegionSim.Unit = e.get("from")
 				battle_sound.play("heal", battle_view.sound_pan(f.position))
 				if src != null and src.alive:
@@ -846,8 +847,7 @@ func _hit(e: Dictionary) -> void:
 	var crit := bool(e["crit"])
 	f.hurt()
 	battle_view.burst("fx_hit", f.chest(), 1.02 if crit else 0.78)
-	bars.float_text(battle_view.screen(f.head()), str(int(e["dmg"])) + ("!" if crit else ""),
-		"crit" if crit else ("hurt" if u.side == "ally" else "dmg"))
+	bars.float_value(f, int(e["dmg"]), "crit" if crit else ("hurt" if u.side == "ally" else "dmg"), sim.t)
 	var src: LegionSim.Unit = e.get("from")
 	var pan := battle_view.sound_pan(f.position)
 	var melee := src != null and src.shot == ""
@@ -935,7 +935,7 @@ func _v2_event(e: Dictionary) -> void:
 				battle_view.lane(float(z), Color("e1ab71"), float(e.get("dur", 7.0)), 28.0)
 		"immune":
 			var u: LegionSim.Unit = e["unit"]
-			bars.float_text(battle_view.screen(_view(u).head()), I18n.t("неуязвим"), "hurt")
+			bars.float_text(_view(u), I18n.t("неуязвим"), "hurt")
 			if not _immune_said:
 				_immune_said = true
 				say("%s неуязвим, пока живы его пращники" % u.name, 2.2)
@@ -1539,23 +1539,130 @@ func abort() -> void:
 
 ## Полоски здоровья над бойцами и всплывающие числа — всё одним слоем
 class BarsLayer extends Control:
+	const MERGE_WINDOW := 0.15
+	const MAX_PER_TARGET := 3
+	const OUTLINE := 5
+
+	class FloatText:
+		var id: int
+		var anchor: Vector2
+		var caption: String
+		var kind: String
+		var amount := 0
+		var numeric := false
+		var since := 0.0
+		var age := 0.0
+		var older := false
+		var box := Rect2()
+		var baseline := Vector2()
+		var font_size := 22
+
 	var battle: LegionBattle
-	var floats: Array = []                 # [pos, text, kind, t]
+	var floats: Array[FloatText] = []
 
-	func float_text(p: Vector2, text: String, kind: String) -> void:
-		if p.x < -100.0:
-			return
-		if floats.size() > 40:
-			floats.pop_front()
-		floats.append([p + Vector2(randf_range(-14, 14), 0), text, kind, 0.0])
+	func float_value(target: BattleView.Fighter, amount: int, kind: String, now: float) -> void:
+		for i in range(floats.size() - 1, -1, -1):
+			var fl := floats[i]
+			if fl.id != target.unit.id or not fl.numeric or (fl.kind == "heal") != (kind == "heal"):
+				continue
+			if now - fl.since <= MERGE_WINDOW + 0.00001:
+				fl.amount += amount
+				if kind == "crit":
+					fl.kind = "crit"
+				_format_value(fl)
+				return
+			break
+		var fl := _add_float(target, kind)
+		fl.numeric = true
+		fl.amount = amount
+		fl.since = now
+		_format_value(fl)
 
-	func _process(dt: float) -> void:
-		var keep: Array = []
-		for f: Array in floats:
-			f[3] += dt
-			if f[3] < 1.0:
-				keep.append(f)
-		floats = keep
+	func _format_value(fl: FloatText) -> void:
+		fl.caption = ("+" if fl.kind == "heal" else "") + str(fl.amount) + ("!" if fl.kind == "crit" else "")
+
+	func float_text(target: BattleView.Fighter, caption: String, kind: String) -> void:
+		_add_float(target, kind).caption = caption
+
+	func _add_float(target: BattleView.Fighter, kind: String) -> FloatText:
+		var count := 0
+		for i in range(floats.size() - 1, -1, -1):
+			if floats[i].id != target.unit.id:
+				continue
+			count += 1
+			floats[i].older = true
+			if count >= MAX_PER_TARGET:
+				floats.remove_at(i)
+		var fl := FloatText.new()
+		fl.id = target.unit.id
+		fl.anchor = battle.battle_view.screen(target.head())
+		fl.kind = kind
+		floats.append(fl)
+		return fl
+
+	func age_floats(dt: float) -> void:
+		for i in range(floats.size() - 1, -1, -1):
+			var fl := floats[i]
+			fl.age += dt * (1.8 if fl.older else 1.0)
+			if fl.age >= 1.0:
+				floats.remove_at(i)
+
+	func layout_floats() -> void:
+		var rows := {}
+		var occupied: Array[Rect2] = []
+		var fnt := battle.font_bold
+		for i in range(floats.size() - 1, -1, -1):
+			var fl := floats[i]
+			var target: BattleView.Fighter = battle.views.get(fl.id)
+			if target != null:
+				fl.anchor = battle.battle_view.screen(target.head())
+			var row: int = rows.get(fl.id, 0)
+			rows[fl.id] = row + 1
+			fl.font_size = 28 if fl.kind == "crit" else 22
+			var width := fnt.get_string_size(fl.caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fl.font_size).x
+			var ascent := fnt.get_ascent(fl.font_size)
+			var height := ascent + fnt.get_descent(fl.font_size)
+			var extent := Vector2(width, height) + Vector2.ONE * OUTLINE
+			# Свежая цифра ближе к полоске здоровья.
+			var y := maxf(44.0, fl.anchor.y - 13.0 - row * 37.0 - 12.0 * fl.age - extent.y)
+			var x := clampf(fl.anchor.x - extent.x * 0.5, 6.0, maxf(6.0, size.x - extent.x - 6.0))
+			var box := Rect2(Vector2(x, y), extent)
+			if size.x > extent.x + 12.0:
+				box = _free_number_box(box, occupied)
+			occupied.append(box)
+			fl.box = box
+			fl.baseline = box.position + Vector2(OUTLINE * 0.5, OUTLINE * 0.5 + ascent)
+
+	func _free_number_box(box: Rect2, occupied: Array[Rect2]) -> Rect2:
+		# Проверяем ближайшие края занятых мест слева и справа.
+		while true:
+			var candidates: Array[float] = [box.position.x]
+			for other in occupied:
+				if other.end.y > box.position.y and other.position.y < box.end.y:
+					candidates.append(other.position.x - box.size.x - 3.0)
+					candidates.append(other.end.x + 3.0)
+			var best := INF
+			var x := box.position.x
+			for candidate in candidates:
+				if candidate < 6.0 or candidate + box.size.x > size.x - 6.0:
+					continue
+				var distance := absf(candidate - box.position.x)
+				if distance >= best:
+					continue
+				var proposed := Rect2(Vector2(candidate, box.position.y), box.size)
+				var free := true
+				for other in occupied:
+					if proposed.intersects(other):
+						free = false
+						break
+				if free:
+					best = distance
+					x = candidate
+			if best < INF:
+				box.position.x = x
+				return box
+			box.position.y -= box.size.y + 3.0
+		return box
 
 	func _draw() -> void:
 		if battle == null or battle.sim == null or battle.phase == "result":
@@ -1583,25 +1690,19 @@ class BarsLayer extends Control:
 			draw_line(left, left.lerp(right, f.health), Color("cd8f52"), h, true)
 			draw_line(left, left.lerp(right, hp), col, h, true)
 			draw_line(left - Vector2(0, 1), left.lerp(right, hp) - Vector2(0, 1), Color(col.lightened(0.4), 0.9), 1.5, true)
-		for fl: Array in floats:
-			var k: float = fl[3]
-			var pos: Vector2 = fl[0] - Vector2(0, 46.0 * ease(k, 0.5))
-			var kind: String = fl[2]
-			var size := 22 if kind != "crit" else 28
-			if battle.battle_view.legacy_layout:
-				size = 20 if kind != "crit" else 27
+		layout_floats()
+		for fl in floats:
 			var col := Color("fff1d2")
-			if kind == "crit":
+			if fl.kind == "crit":
 				col = Color("ffd34d")
-			elif kind == "hurt":
+			elif fl.kind == "hurt":
 				col = Color("ff9a7a")
-			elif kind == "heal":
+			elif fl.kind == "heal":
 				col = Color("9cf08a")
-			col.a = 1.0 - smoothstep(0.6, 1.0, k)
-			var txt: String = fl[1]
-			var tw := fnt.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-			draw_string_outline(fnt, pos - Vector2(tw * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size, 5, Color(0.2, 0.08, 0.03, col.a * 0.85))
-			draw_string(fnt, pos - Vector2(tw * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+			col.a = 1.0 - smoothstep(0.50 if fl.older else 0.66, 1.0, fl.age)
+			draw_string_outline(fnt, fl.baseline, fl.caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fl.font_size,
+				OUTLINE, Color(0.2, 0.08, 0.03, col.a * 0.85))
+			draw_string(fnt, fl.baseline, fl.caption, HORIZONTAL_ALIGNMENT_LEFT, -1, fl.font_size, col)
 
 
 ## Круглая кнопка, время перезарядки видно на кольце.
