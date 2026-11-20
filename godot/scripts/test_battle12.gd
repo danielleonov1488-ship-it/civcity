@@ -3,7 +3,7 @@ extends Node
 
 const View = preload("res://scripts/legion_battle_view.gd")
 const EnemyTest = preload("res://scripts/test_enemy3d.gd")
-const OUT := "D:/CivCity/.work/stage7/battle12c/shots/"
+const OUT := "D:/CivCity/.work/stage7/battle12d/shots/"
 const HD := Vector2i(1920, 1080)
 const SMALL := Vector2i(1280, 720)
 const SEED := 532
@@ -31,6 +31,8 @@ var three_on_one: Array[float] = []
 var heights := PackedFloat32Array()
 var ally_boxes: Array[float] = []
 var big_boxes: Array[float] = []
+var horse_line_min := INF
+var horse_line_samples := 0
 var flank_samples := [0, 0]
 var flank_clear := [0, 0]
 var battle_flanks := [0, 0]
@@ -200,6 +202,8 @@ func _play(name_: String, setup: Dictionary, resolution: Vector2i, speed: float,
 	heights.clear()
 	ally_boxes.clear()
 	big_boxes.clear()
+	horse_line_min = INF
+	horse_line_samples = 0
 	battle_flanks = [0, 0]
 	battle_groups = [0, 0]
 	numbers_peak = 0
@@ -266,6 +270,9 @@ func _play(name_: String, setup: Dictionary, resolution: Vector2i, speed: float,
 		check(big <= 0.20, label + " long body screen boxes p95 <= 0.20")
 		if name_ in ["carthage", "britannia", "parthia"]:
 			check(not big_boxes.is_empty(), label + " long model samples")
+		if name_ == "parthia":
+			print("BATTLE12 MOUNT LINE min=%.1f samples=%d" % [horse_line_min, horse_line_samples])
+			check(horse_line_samples > 0 and horse_line_min >= 0.0, "horse archer bodies clear of the Roman line")
 		check(numbers_overlap <= 0.20 and numbers_per_target <= 3 and numbers_peak > 0, label + " readable damage numbers")
 		check(median >= 0.15 and median <= 0.21, label + " figure height")
 		check(overlap_pct <= 1.0 and low == 0, label + " overlap")
@@ -414,10 +421,18 @@ func _measure(view: View) -> View.Fighter:
 				low += int(distance < width * 0.3)
 				if not legacy:
 					var same_side := f.unit.side == other.unit.side
+					if distance < width * 0.3:
+						print("BATTLE12 FEET %s t=%.2f %s/%s at %s/%s gap=%.1f min=%.1f" %
+							[label, battle.sim.t, f.unit.key, other.unit.key, f.position, other.position, distance, width * 0.3])
 					if same_side and f.unit.side == "ally":
 						ally_boxes.append(_overlap(projected[i], projected[j]))
 					if not same_side and (not f.long_model.is_empty() or not other.long_model.is_empty()):
 						big_boxes.append(_overlap(projected[i], projected[j]))
+					if not same_side and (f.rear_mount or other.rear_mount):
+						var dx := maxf(projected[i].position.x - projected[j].end.x,
+							projected[j].position.x - projected[i].end.x)
+						horse_line_min = minf(horse_line_min, dx / view.world.scale.x)
+						horse_line_samples += 1
 			if f.rear and not other.rear and f.unit.side == other.unit.side:
 				rear = minf(rear, (foot.x - other_foot.x) * f.side_dir / (f.beam * view.world.scale.x))
 			if _engaged(other, f):
