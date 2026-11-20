@@ -64,7 +64,7 @@ func fixture(late: bool) -> void:
 	lg.glory = 100000
 	lg._fort_add_plot("hq", 8 if late else 2)
 	var types: Array[String] = []
-	types.assign(["barracks", "kitchen", "store", "forge", "arsenal", "infirmary", "mars", "smelter", "sawmill", "tannery", "treasury", "drill", "tower", "stable"] if late else ["barracks", "kitchen", "forge", ""])
+	types.assign(["barracks", "kitchen", "store", "forge", "arsenal", "infirmary", "mars", "smelter", "sawmill", "tannery", "treasury", "tower", "stable"] if late else ["barracks", "kitchen", "forge", ""])
 	for i in types.size():
 		var type := types[i]
 		var level: int = int([1, 4, 8][i % 3]) if late else 1
@@ -147,9 +147,10 @@ func model_checks() -> void:
 	check(not migrated.is_empty(), "legacy built rooms get a worker")
 	copy.legion.from_dict(JSON.parse_string(JSON.stringify(copy.legion.to_dict())))
 	check(copy.legion.fort_worker(id) == migrated, "legacy migration runs once")
+	lg.fort_assign(int(barracks["id"]), 0)
 	check(assigned_sid != 0 and lg.fort_assign(int(barracks["id"]), assigned_sid) and lg.fort_worker_plot(assigned_sid) == int(barracks["id"]), "worker moves between rooms")
 	var squad_person := lg._add_soldier({"name": "Воин отряда", "cls": "legionary", "stars": 1})
-	check(lg.fort_assign(int(barracks["id"]), int(squad_person["id"])) and lg.set_place(1, int(squad_person["id"])), "barracks soldier enters squad")
+	check(lg.set_place(1, int(squad_person["id"])), "ready dweller enters squad")
 	check(lg.fort_assign(id, int(squad_person["id"])) and not lg.squad3.has(int(squad_person["id"])), "worker leaves squad when moved")
 	for type: String in Legion.FORT_B:
 		check(not (Legion.FORT_B[type]["max"] as Array).is_empty(), "HQ requirement " + type)
@@ -225,7 +226,7 @@ func _run() -> void:
 	var seen := {}
 	for p: Dictionary in lg.fort["plots"]:
 		seen[FortCutaway.room_art(String(p["b"]))] = true
-	check(seen.size() == 15, "all fifteen painted room types (seen %s)" % [seen.keys()])
+	check(seen.size() == 14, "all fourteen painted room types (seen %s)" % [seen.keys()])
 	await shot("2_late.png")
 	var forge := int(lg.fort_slot_plot("forge")["id"])
 	var click := InputEventMouseButton.new()
@@ -297,8 +298,7 @@ func _run() -> void:
 	var before_lesson := view._target_focus
 	lg.flags["fort_lessons"] = {"hq": "pending"}
 	camp._layout_guide()
-	check(camp.guide.is_visible_in_tree() and not camp.guide_shade.is_visible_in_tree()
-		and not camp.guide_pointer.is_visible_in_tree(), "offscreen lesson leaves the fort readable")
+	check(not camp.guide_layer.is_visible_in_tree(), "unavailable HQ lesson leaves the fort readable")
 	view._process(2.0)
 	check(view._target_focus.is_equal_approx(before_lesson), "visible lesson leaves camera where player panned")
 	lg.finish_fort_lesson("hq", true)
@@ -318,7 +318,7 @@ func _run() -> void:
 	camp.show_plot(int(lg.fort_slot_plot("barracks")["id"]))
 	var busy_text := I18n.t("Строитель занят: %s") % I18n.t(String(Legion.FORT_B["tannery"]["name"]))
 	check(camp.upgrade_button.disabled and camp.upgrade_reason.is_visible_in_tree() and camp.upgrade_reason.text == busy_text, "builder busy on card")
-	check(not camp.main_action.disabled and camp.main_action.get_meta("action_name") == I18n.t("Отряд"), "barracks opens squad while builder is busy")
+	check(not camp.main_action.disabled and camp.main_action.get_meta("action_name") == I18n.t("Назначить"), "barracks assigns trainees while builder is busy")
 	check(is_instance_valid(camp.card_body.get_node_or_null("FortWorker/FortWorkerName")), "worker face and name on card")
 	await shot("5_builder_busy.png")
 	print("FORTCUT DRAWCALLS %d" % peak_draws)

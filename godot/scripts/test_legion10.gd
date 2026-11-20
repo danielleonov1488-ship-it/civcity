@@ -102,7 +102,7 @@ func _fixture() -> bool:
 	forge = int(lg.fort_slot_plot("forge")["id"])
 	kitchen = int(lg.fort_slot_plot("kitchen")["id"])
 	lg.fort["money"] = 19000.0
-	lg.mats = {"iron": 575.0, "wood": 500.0, "leather": 400.0}
+	lg.mats = {"iron": 130000.0, "wood": 99000.0, "leather": 79000.0}
 	lg.ingots = 100
 	lg.glory = 120
 	lg.chest_queue = ["wooden", "bronze", "gold"]
@@ -132,7 +132,7 @@ func _model() -> void:
 	Fixture.set_level(lg, "hq", 5)
 	var start := lg.city_money()
 	var iron := lg.mat("iron")
-	check(lg.learn("smith") and not lg.learn("smith") and lg.city_money() == start - 800 and lg.mat("iron") == iron - 20, "root paid once")
+	check(lg.learn("smith") and not lg.learn("smith") and lg.city_money() == start - 800 and lg.mat("iron") == iron - Legion.Knowledge.NODES["smith"]["mats"]["iron"], "root paid once")
 	check(not lg.craft_start(forge, "bow", 1), "bows refused before knowledge")
 	check(not lg.craft_start(forge, "sword", 3), "tier 3 sword needs weap3")
 	check(lg.fort_assign(forge, 0), "unassign smith for research")
@@ -140,7 +140,7 @@ func _model() -> void:
 	var leather := lg.mat("leather")
 	start = lg.city_money()
 	check(lg.learn("bows") and not lg.learn("bows") and not lg.learn("staffs")
-		and lg.city_money() == start - 1200 and lg.mat("wood") == wood - 40 and lg.mat("leather") == leather - 20
+		and lg.city_money() == start - 1200 and lg.mat("wood") == wood - Legion.Knowledge.NODES["bows"]["mats"]["wood"] and lg.mat("leather") == leather - Legion.Knowledge.NODES["bows"]["mats"]["leather"]
 		and lg.knowledge_timer().get("id") == "bows", "one paid timer without a worker")
 	var during := lg.to_dict().duplicate(true)
 	var end := float(lg.knowledge_timer().get("end", 0.0))
@@ -288,6 +288,8 @@ func _screens() -> void:
 	await shot("4_tree.png")
 	var timer := lg.knowledge_timer()
 	lg.fort["know_at"] = {}
+	for material: String in Legion.Knowledge.NODES["spears"]["mats"]:
+		lg.mats[material] = float(Legion.Knowledge.NODES["spears"]["mats"][material])
 	camp.show_knowledge("spears")
 	var learn := camp.modal_panel.find_child("FortLearnKnowledge", true, false) as Button
 	check(learn != null and not learn.disabled, "available knowledge action")

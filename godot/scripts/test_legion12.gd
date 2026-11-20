@@ -1,0 +1,450 @@
+extends Node3D
+
+const Step = Legion.FortGuide
+const Look = preload("res://scripts/legion_look.gd")
+const Fixture = preload("res://scripts/test_fort_fixture.gd")
+const OUTPUT := "D:/CivCity/.work/stage7/legion12/shots/"
+
+var game: Game
+var camp: CampUI
+var legion: Legion
+var fails := 0
+var actions := 0
+var tutorial_wait := 0.0
+var longest_wait := 0.0
+
+
+func _ready() -> void:
+	Game.boot = {"new": "1"}
+	game = (load("res://main.tscn") as PackedScene).instantiate() as Game
+	add_child(game)
+	game.can_save = false
+	var previous_clock := Legion.clock
+	await _run()
+	Legion.clock = previous_clock
+	print("LEGION12 DONE fails=", fails)
+	get_tree().quit(0 if fails == 0 else 1)
+
+
+func check(ok: bool, reason: String) -> bool:
+	if not ok:
+		fails += 1
+		print("LEGION12 FAIL ", reason)
+	return ok
+
+
+func frames(count: int) -> void:
+	for i in count:
+		await get_tree().process_frame
+
+
+func ready_ui() -> void:
+	await frames(6)
+	camp._layout_guide()
+	await frames(2)
+
+
+func shot(name_text: String) -> void:
+	await ready_ui()
+	if DisplayServer.get_name() == "headless":
+		return
+	await RenderingServer.frame_post_draw
+	var path := OUTPUT + name_text + ".png"
+	if check(get_viewport().get_texture().get_image().save_png(path) == OK, "PNG " + name_text):
+		print("LEGION12 SHOT ", path)
+
+
+func resize(pixels: Vector2i) -> void:
+	get_window().content_scale_size = Vector2i.ZERO
+	get_window().size = pixels
+	await frames(10)
+	check(get_viewport().get_visible_rect().size.is_equal_approx(Vector2(pixels)), "viewport " + str(pixels))
+
+
+func spot(context: String, target: Control = null) -> void:
+	camp._layout_guide()
+	check(camp.guide_pointer.is_visible_in_tree() and camp._guide_rect.has_area(), "guide arrow " + context)
+	check(get_viewport().get_visible_rect().grow(1.0).encloses(camp._guide_rect), "guide bounds " + context)
+	if target != null:
+		check(camp._guide_target == target and target.is_visible_in_tree(), "guide target " + context)
+
+
+func tap(button: Button, context: String, guided := true) -> bool:
+	await ready_ui()
+	if not check(is_instance_valid(button) and button.is_visible_in_tree() and not button.disabled, "button " + context):
+		return false
+	if guided:
+		spot(context, button)
+		actions += 1
+	button.pressed.emit()
+	return true
+
+
+func drag(sid: int, room: int, newcomer: bool) -> bool:
+	await ready_ui()
+	spot("person %d" % sid)
+	var view := camp.diorama as FortCutaway
+	view.begin_person_move(sid, newcomer, view.person_project(sid, newcomer))
+	view.update_person_move(view.project(room))
+	await ready_ui()
+	spot("drop %d" % room)
+	actions += 1
+	return check(view.finish_person_move(view.project(room)), "move %d to %d" % [sid, room])
+
+
+func scan_ui(node: Node, context: String, fit := false) -> void:
+	if node is Control and node.is_visible_in_tree():
+		var texts: Array[String] = [node.tooltip_text]
+		if node is Button or node is Label:
+			texts.append(node.text)
+		for value: String in texts:
+			var lower := value.to_lower()
+			check(not lower.contains("пайк") and not lower.contains("паёк") and not lower.contains("пайок"), "food wording " + context + " " + value)
+		if fit and node is Label and node.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING and not node.clip_text:
+			check(node.size.y + 2.0 >= node.get_minimum_size().y, "label height " + context + " " + node.text)
+			if node.autowrap_mode == TextServer.AUTOWRAP_OFF:
+				check(node.size.x + 2.0 >= node.get_minimum_size().x, "label width " + context + " " + node.text)
+	for child: Node in node.get_children():
+		scan_ui(child, context, fit)
+
+
+func _run() -> void:
+	var waited := 0
+	while not game.ready_done and waited < 18000:
+		await frames(5)
+		waited += 5
+	if not check(game.ready_done, "game ready"):
+		return
+	game.settings["autosave"] = false
+	game.hud.set_speed(0.0)
+	await resize(Vector2i(1920, 1080))
+	var city := game.city
+	city.legion_v = 3
+	city.cozy_v = 1
+	legion = city.legion
+	legion.sync_v2()
+	Legion.clock = 1900000000.0
+	legion.flags["camp_open"] = true
+	camp = CampUI.attach(game.hud)
+	camp.open()
+	if not check(legion.fort_guide_step() == Step.FIRST_BATTLE and legion.squad_count() == 2, "starter squad and guide"):
+		return
+	balance()
+	await shot("1_top_bar_food")
+	scan_ui(camp, "fort", true)
+	spot("first battle", camp.campaign_button)
+	await shot("4_tut_first_battle")
+	var first := legion.stage_info(0, 0, 0)
+	for seed in range(1, 21):
+		var result := LegionSim.new(legion.make_battle(first, seed)).run(false)
+		check(result["win"] and int(result["alive"]) == 2, "opening ×1 seed %d" % seed)
+		check(float(result["time"]) <= 10.0, "opening length seed %d" % seed)
+	print("LEGION12 SEEDS 20")
+	if not await fight(0):
+		return
+	if not check(legion.fort_guide_step() == Step.TREASURY, "rescued at the gate"):
+		return
+	if not await outfit_step("treasury", "scribe", "6_tut_treasury_outfit"):
+		return
+	if not await outfit_step("kitchen", "cook", "7_tut_kitchen"):
+		return
+	var before := legion.city_money()
+	await ready_ui()
+	spot("HQ room")
+	camp._select_fort_room("plot_0")
+	actions += 1
+	await shot("8_tut_hq_free")
+	scan_ui(camp, "HQ window", true)
+	var upgrade := camp.modal_panel.find_child("FortHQConfirm", true, false) as Button
+	check(upgrade != null and upgrade.text.contains("Бесплатно"), "HQ free label")
+	if not await tap(upgrade, "HQ confirm"):
+		return
+	check(legion.camp_level("hq") == 2 and legion.fort_plot_timer(0).is_empty() and legion.city_money() == before, "free instant HQ2")
+	if not await tap(camp.build_button, "build"):
+		return
+	await shot("9_tut_store")
+	var build := camp.build_cards.get("store", {}).get("button") as Button
+	if not await tap(build, "store catalog"):
+		return
+	var empty := legion.fort_empty_plot()
+	spot("empty plot")
+	camp._select_fort_room("plot_%d" % empty)
+	actions += 1
+	if not check(legion.fort_plot(empty).get("b") == "store" and legion.fort_plot_timer(empty).is_empty() and legion.city_money() == before, "free instant store"):
+		return
+	var arrivals := legion.fort_newcomers()
+	if not check(not arrivals.is_empty(), "third arrival"):
+		return
+	var learner := int(arrivals[0]["id"])
+	var barracks := int(legion.fort_slot_plot("barracks")["id"])
+	var food := legion.rations
+	if not await drag(learner, barracks, true):
+		return
+	await shot("10_tut_train")
+	var wait := legion.s_left(legion.soldier(learner))
+	check(wait > 0 and wait <= 10.0 and legion.rations == food, "training is free and takes 10 seconds")
+	waited_for(wait)
+	check(legion.soldier(learner)["rank"] == 1, "training leveled third dweller")
+	await shot("11_tut_squad")
+	if not await drag(learner, 0, false):
+		return
+	check(legion.squad_count() == 3 and legion.fort_guide_step() == Step.SECOND_BATTLE, "third squad place")
+	if not await fight(1):
+		return
+	check(legion.fort_guide_step() == Step.FINISH, "finish after second victory")
+	if not await tap(camp.guide_skip, "finish guide", false):
+		return
+	check(legion.fort_guide_step() == Step.DONE, "guide saved as done")
+	camp.show_plot(empty)
+	await ready_ui()
+	scan_ui(camp, "store card", true)
+	camp.show_plot(0)
+	await shot("12_hq_squad_room")
+	scan_ui(camp, "HQ card", true)
+	camp._hide_card()
+	await model_checks(barracks, learner)
+	pacing()
+
+
+func balance() -> void:
+	check(Legion.fort_production("kitchen", 1).get("rate") == 100 and Legion.fort_production("kitchen", 1).get("cap") == 1000, "kitchen L1")
+	check(Legion.fort_production("kitchen", 2).get("rate") == 200 and Legion.fort_production("kitchen", 2).get("cap") == 2000, "kitchen L2")
+	check(Legion.fort_production("treasury", 1).get("rate") == 200 and Legion.fort_production("treasury", 1).get("cap") == 1500, "treasury L1")
+	for level in range(2, 5):
+		check(legion.fort_build_seconds("hq", level) == [5.0, 900.0, 1800.0][level - 2], "HQ time %d" % level)
+	check(legion.ration_cost(Legion.stage(0, 0, 1)) == 100 and legion.ration_cost(Legion.stage(0, 0, Legion.stages() - 1)) == 200, "campaign and boss cost")
+
+
+func waited_for(seconds: float) -> void:
+	Legion.clock += seconds
+	tutorial_wait += seconds
+	longest_wait = maxf(longest_wait, seconds)
+	legion.army_tick()
+	camp._refresh()
+
+
+func fight(index: int) -> bool:
+	if not await tap(camp.campaign_button, "map"):
+		return false
+	await ready_ui()
+	if not check(is_instance_valid(camp.lu.fort_map), "fort map"):
+		return false
+	scan_ui(camp.lu, "map", true)
+	if index == 1:
+		await shot("3_map_stage_card")
+	if not await tap(camp.lu.guide_stage_button, "stage %d" % index):
+		return false
+	await ready_ui()
+	var fight_button: Button = camp.lu._fight_btn
+	if index == 1:
+		await shot("2_fight_button")
+	scan_ui(camp.lu, "stage card", true)
+	var cost := 0 if index == 0 else 100
+	var food := legion.rations
+	check(int(fight_button.get_meta("ration_cost", -1)) == cost, "displayed cost %d" % index)
+	if cost > 0:
+		check(fight_button.icon == Look.resource("rations") and fight_button.text.ends_with("100"), "bread icon and whole cost")
+	if not await tap(fight_button, "fight %d" % index):
+		return false
+	check(is_equal_approx(food - legion.rations, float(cost)), "food deduction %d" % index)
+	var battle := LegionBattle.current
+	if not check(is_instance_valid(battle), "battle launched"):
+		return false
+	battle.speed = 8.0
+	var deadline := Time.get_ticks_msec() + 60000
+	while is_instance_valid(battle) and battle.phase != "result" and Time.get_ticks_msec() < deadline:
+		await frames(3)
+	if not check(is_instance_valid(battle) and battle.phase == "result", "battle result"):
+		return false
+	check(bool(battle.out.get("win", false)), "tutorial victory %d" % index)
+	var seconds := float(battle.out.get("time", 0.0))
+	tutorial_wait += seconds
+	longest_wait = maxf(longest_wait, seconds)
+	if index == 0:
+		check((battle.out.get("rescued", []) as Array).size() == 3, "rescued three people")
+		check(battle.find_child("FortRescuedRewards", true, false) != null, "rescued reward row")
+		await shot("5_tut_rescued")
+	if not await tap(battle.find_child("LegionBattleReturn", true, false) as Button, "return to fort", false):
+		return false
+	deadline = Time.get_ticks_msec() + 8000
+	while not camp.visible and Time.get_ticks_msec() < deadline:
+		await frames(3)
+	print("LEGION12 BATTLE stage=%d time=%.2f" % [index + 1, seconds])
+	return check(camp.visible, "battle returns to fort")
+
+
+func outfit_step(type: String, kind: String, picture: String) -> bool:
+	var arrivals := legion.fort_newcomers()
+	if not check(not arrivals.is_empty(), "newcomer " + type):
+		return false
+	var sid := int(arrivals[0]["id"])
+	var id := int(legion.fort_slot_plot(type)["id"])
+	if not await drag(sid, id, true):
+		return false
+	var outfit := int(legion.flags.get("fort_guide_item", 0))
+	check(Gear.work_kind(legion.item(outfit)) == kind, "outfit drop " + type)
+	await ready_ui()
+	spot("open dweller " + type)
+	actions += 1
+	camp.show_dweller(sid)
+	var slot := camp.modal_panel.find_child("FortGear_outfit", true, false) as Button
+	if not await tap(slot, "outfit slot " + type):
+		return false
+	await shot(picture)
+	var option := camp.modal_panel.find_child("FortEquip_%d" % outfit, true, false) as Button
+	if not await tap(option, "equip " + type):
+		return false
+	if int(legion.item(outfit).get("on", 0)) != sid:
+		await ready_ui()
+		var equip := camp.modal_panel.find_child("FortItemEquip", true, false) as Button
+		if not await tap(equip, "confirm outfit " + type):
+			return false
+	check(int(legion.item(outfit).get("on", 0)) == sid and legion.work_bonus(legion.soldier(sid), kind) > 0.0, "outfit worn " + type)
+	await ready_ui()
+	var collect := camp.plot_markers.get(id, {}).get("collect") as Button
+	var resource := "money" if type == "treasury" else "rations"
+	check(collect != null and collect.icon == Look.resource(resource), "collect icon " + type)
+	return await tap(collect, "collect " + type)
+
+
+func snapshot() -> Dictionary:
+	return JSON.parse_string(JSON.stringify(legion.to_dict())) as Dictionary
+
+
+func synced() -> bool:
+	var ids: Array = legion.fort_occupants(0).map(func(person: Dictionary): return int(person["id"]))
+	return ids == legion.squad3.filter(func(id: int): return id != 0)
+
+
+func model_checks(barracks: int, learner: int) -> void:
+	var save := snapshot()
+	check(synced(), "squad matches room")
+	var hero := int(legion.hero_dweller()["id"])
+	var kitchen := int(legion.fort_slot_plot("kitchen")["id"])
+	check(legion.fort_assign(kitchen, hero) and synced() and not legion.squad3.has(hero), "hero works outside squad")
+	var cook := legion.add_item(Gear.craft_item("cook", 1))
+	check(legion.equip(hero, int(cook["id"])) and legion.work_bonus(legion.soldier(hero), "cook") > 0.0, "hero uses work outfit")
+	await shot("14_hero_working")
+	var stage := legion.stage_info(0, 0, 0)
+	check(LegionSim.new(legion.make_battle(stage, 100)).run(false)["win"], "battle without hero")
+	var food := legion.rations
+	check(legion.fort_assign(barracks, hero) and legion.rations == food - 50.0 and legion.s_state(legion.soldier(hero)) == "train", "hero starts paid training")
+	check(not legion.squad3.has(hero), "training outside squad")
+	camp.show_plot(barracks)
+	await shot("13_barracks_training")
+	camp._hide_card()
+	legion.soldier(hero)["rank"] = Legion.training_cap(1) - 1
+	legion.soldier(hero)["train_end"] = 0.0
+	check(not legion.train(hero), "room training cap")
+	check(legion.set_place(4, hero) and synced() and legion.squad3[4] == hero, "hero joins in back row")
+	check(legion.set_place(0, hero) and synced() and legion.squad3[0] == hero, "reorder swaps and keeps membership")
+	check(legion.set_place(4, hero) and not legion.dismiss(hero), "hero moved and protected from release")
+	legion.from_dict(snapshot())
+	check(synced() and legion.squad3[4] == hero and legion.hero_level() == Legion.training_cap(1), "hero and squad survive save/load")
+	check(legion.fort_drop(-1, learner) and synced() and not legion.squad3.has(learner), "drop to yard")
+	legion.from_dict(save.duplicate(true))
+	lesson_checks()
+	legion.from_dict(save.duplicate(true))
+	migration_checks()
+	legion.from_dict(save.duplicate(true))
+	camp._refresh()
+	await resize(Vector2i(1280, 720))
+	camp.show_plot(0)
+	await shot("15_720p")
+	scan_ui(camp, "720p HQ", true)
+	camp._hide_card()
+
+
+func lesson_checks() -> void:
+	var store := legion.fort_slot_plot("store")
+	store["b"] = ""
+	store["lv"] = 0
+	legion.rations = legion.ration_cap()
+	legion.fort["money"] = 0
+	legion.flags["fort_lessons"] = {}
+	legion.flags.erase("fort_lesson_active")
+	legion.watch_fort_lessons()
+	check(legion.fort_lesson_state("store") == "" and legion.fort_lesson_state("knowledge") == "", "locked lessons wait")
+	store["b"] = "store"
+	store["lv"] = 1
+	legion.rations = legion.ration_cap()
+	legion.fort["money"] = 30000
+	legion.watch_fort_lessons()
+	check(legion.fort_lesson() == "store", "store lesson after affordable store exists (%s, %s)" % [legion.fort_lesson(), legion.fort_can_upgrade(int(store["id"]))])
+
+
+func migration_checks() -> void:
+	var old := snapshot()
+	old["fort"].erase("roles_v")
+	old["flags"].erase("fort_guide_v")
+	old["flags"].erase("fort_economy_v")
+	old["flags"]["fort_guide"] = 6
+	old["progress"] = 1
+	old["hero_lv3"] = 5
+	old["hero_training"] = {"to": 6, "end": Legion.now() + 60.0, "total": 60.0}
+	var old_squad: Array = (old["squad3"] as Array).map(func(id: Variant): return int(id))
+	var plots: Array = old["fort"]["plots"]
+	var drill := int(legion.fort_empty_plot())
+	var worker := int(legion.fort_occupants(int(legion.fort_slot_plot("treasury")["id"]))[0]["id"])
+	for person: Dictionary in old["soldiers"]:
+		if int(person["id"]) == worker:
+			person["train_plot"] = drill
+			person["train_end"] = Legion.now() + 90.0
+	for plot: Dictionary in plots:
+		if plot["b"] == "barracks":
+			plot["workers"] = old_squad.filter(func(id): return int(id) != 0)
+		if int(plot["id"]) == drill:
+			plot["b"] = "drill"
+			plot["lv"] = 2
+	old["mats"] = {"wood": 40.0, "iron": 40.0, "leather": 40.0}
+	legion.from_dict(old)
+	check(legion.squad3 == old_squad and synced(), "migration keeps the old squad: %s vs %s" % [legion.squad3, old_squad])
+	check(legion.fort_plot(drill)["b"] == "" and legion.mat("wood") > 7900, "drill emptied and refunded")
+	check(legion.hero_level() == 5 and legion.s_state(legion.hero_dweller()) == "train", "old hero level and timer")
+	check(legion.fort_plot(legion.fort_worker_plot(worker)).get("b") == "barracks", "old trainee moved")
+	check(legion.fort_guide_step() == Step.SECOND_BATTLE, "old guide resumes near current progress")
+
+
+func pacing() -> void:
+	# 20 секунд на чтение, выбор и жест. Бои и постройки используют часы модели.
+	var tutorial := actions * 19.0 + tutorial_wait
+	check(tutorial >= 300.0 and tutorial <= 480.0 and longest_wait <= 10.0, "tutorial pace")
+	var original := snapshot()
+	var origin := Legion.now() - tutorial
+	var next_battle := Legion.now()
+	var last_loss := -1
+	var stage_attempts := 0
+	var reached := {2: tutorial / 60.0}
+	for i in 1200:
+		legion.army_tick()
+		var level := legion.camp_level("hq")
+		if not reached.has(level):
+			reached[level] = (Legion.now() - origin) / 60.0
+		if level >= 5:
+			break
+		for type: String in ["treasury", "kitchen"]:
+			legion.fort_collect(int(legion.fort_slot_plot(type)["id"]))
+		if legion.fort_can_upgrade(0) == "":
+			legion.fort_upgrade(0)
+		elif Legion.now() >= next_battle and legion.city_money() < legion.money_cap():
+			var front := legion.frontier()
+			var index := int(front["s"])
+			if last_loss == legion.progress:
+				index = maxi(0, index - 1)
+			var st := legion.stage_info(int(front["cycle"]), int(front["r"]), index)
+			if legion.can_fight(st) == "":
+				var setup := legion.prepare_battle(st)
+				var result := LegionSim.new(setup).run(false)
+				legion.apply_result(setup, result)
+				stage_attempts += 1
+				if not bool(result["win"]):
+					last_loss = legion.progress
+				if stage_attempts <= 12:
+					print("LEGION12 GREEDY stage=%d win=%s stock=%d" % [int(st["idx"]) + 1, result["win"], legion.city_money()])
+				next_battle = Legion.now() + maxf(10.0, float(result["time"]))
+		Legion.clock += 15.0
+	print("LEGION12 PACE tutorial=%.2f min max_wait=%.2f sec HQ=%s" % [tutorial / 60.0, longest_wait, str(reached)])
+	check(float(reached.get(3, -1)) >= 15.0 and float(reached.get(3, 999)) <= 25.0, "HQ3 pace")
+	check(float(reached.get(4, -1)) >= 30.0 and float(reached.get(4, 999)) <= 60.0, "HQ4 pace")
+	check(float(reached.get(5, -1)) >= 85.0 and float(reached.get(5, 999)) <= 240.0, "HQ5 pace")
+	legion.from_dict(original)

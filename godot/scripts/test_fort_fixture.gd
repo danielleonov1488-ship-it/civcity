@@ -30,5 +30,4 @@ static func recruit(legion: Legion, fighter := true) -> Dictionary:
 
 
 static func house_fighter(legion: Legion, sid: int) -> bool:
-	var barracks := legion.fort_slot_plot("barracks")
-	return not barracks.is_empty() and legion.fort_assign(int(barracks["id"]), sid)
+	return legion.fort_assign(0, sid)

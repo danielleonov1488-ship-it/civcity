@@ -16,7 +16,7 @@ static func art(person: Dictionary, room := "", newcomer := false) -> String:
 			return "hero"
 		if WORKERS.has(room):
 			return String(WORKERS[room])
-		if room in ["barracks", "drill", "tower", "arsenal"]:
+		if room in ["hq", "barracks", "tower", "arsenal"]:
 			var cls := String(person.get("cls", "legionary"))
 			return cls if cls in CLASSES else "legionary"
 	var female := bool(person.get("female", int(person.get("res", {}).get("m", {}).get("sx", 0)) == 1))
@@ -24,6 +24,8 @@ static func art(person: Dictionary, room := "", newcomer := false) -> String:
 
 
 static func loadout(person: Dictionary, gear: Array, battle_class := "") -> Dictionary:
+	if bool(person.get("centurion", false)) or battle_class == "hero":
+		return {"outfit": "centurion", "helmet": true, "bow": false, "sword": true, "shield": true}
 	var hero := bool(person.get("hero", false)) or battle_class == "hero"
 	var weapon := ""
 	var work := ""
@@ -44,9 +46,7 @@ static func loadout(person: Dictionary, gear: Array, battle_class := "") -> Dict
 				work = String(Gear.WORK_LOOK.get(Gear.work_kind(item), ""))
 	var archer := weapon == "archer" or battle_class in ["archer", "ballista", "catapult"]
 	var outfit := "peasant"
-	if hero:
-		outfit = "centurion"
-	elif work != "" and battle_class.is_empty():
+	if work != "" and battle_class.is_empty():
 		outfit = work
 	elif archer:
 		outfit = "archer"
@@ -56,9 +56,9 @@ static func loadout(person: Dictionary, gear: Array, battle_class := "") -> Dict
 		outfit = "legionary"
 	elif work != "":
 		outfit = work
-	return {"outfit": outfit, "helmet": helmet or hero, "bow": hero and archer,
-		"sword": (hero and not archer) or weapon == "legionary" or battle_class in ["legionary", "spearman", "cavalry"],
-		"shield": (shield or hero) and not (hero and archer)}
+	return {"outfit": outfit, "helmet": helmet and not hero, "bow": hero and archer,
+		"sword": weapon == "legionary" or battle_class in ["legionary", "hero", "spearman", "cavalry"],
+		"shield": shield and not archer}
 
 
 static func make(person: Dictionary, parent: Node, gear: Array, battle_class := "") -> Actor:
@@ -71,6 +71,8 @@ static func make(person: Dictionary, parent: Node, gear: Array, battle_class := 
 	if not actor.build(1, bool(look["female"]), String(look["skin"]), look, String(clothes["outfit"])) or not actor.set_loadout(clothes):
 		push_warning("Synty: " + actor.problem)
 		actor.hide()
+	elif bool(person.get("hero", false)) and battle_class != "hero":
+		actor.add_dweller_hero_trim(String(person.get("cape", "a3283a")), int(person.get("crown", 1)))
 	return actor
 
 

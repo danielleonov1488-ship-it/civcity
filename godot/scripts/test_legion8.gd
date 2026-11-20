@@ -83,12 +83,12 @@ func _populate() -> int:
 	Fixture.set_level(lg, "hq", 2)
 	Fixture.set_level(lg, "barracks", 2)
 	Fixture.set_level(lg, "kitchen", 2)
-	Fixture.set_level(lg, "drill", 4)
+
 	lg.mats = {"wood": 40.0, "iron": 40.0, "leather": 40.0}
-	lg.fort["money"] = 2840.0
+	lg.fort["money"] = 20000.0
 	lg.ingots = 18
 	lg.glory = 120
-	lg.rations = 12
+	lg.rations = 1200
 	lg.progress = 2
 	lg.chest_queue = ["wooden", "bronze"]
 	var tit := Fixture.recruit(lg)
@@ -99,13 +99,13 @@ func _populate() -> int:
 	livia["name"] = "Ливия"
 	lg.set_place(1, int(tit["id"]))
 	lg.set_place(2, int(livia["id"]))
-	for type: String in ["kitchen", "treasury", "drill"]:
+	for type: String in ["kitchen", "treasury", "barracks"]:
 		var person := Fixture.recruit(lg, false)
 		if not check(not person.is_empty(), "dweller for " + type):
 			return 0
 		var plot := lg.fort_slot_plot(type)
 		lg.fort_assign(int(plot["id"]), int(person["id"]))
-		if type != "drill":
+		if type != "barracks":
 			plot["pend"] = 18.0 if type == "kitchen" else 54.0
 	Fixture.gate(lg, 1)
 	return int(tit["id"])
@@ -122,9 +122,9 @@ func _test_fort() -> void:
 	check(camp.quest_line.visible and camp.quest_progress.text == "0/1", "pinned campaign goal")
 	check(camp.campaign_button.text == I18n.t("Карта") and camp.market_button.text == I18n.t("Рынок"), "map and market buttons")
 	check(not camp.guide_layer.is_visible_in_tree(), "completed old guide stays hidden")
-	lg.flags["fort_guide"] = Legion.FortGuide.CAMPAIGN
+	lg.flags["fort_guide"] = Legion.FortGuide.FIRST_BATTLE
 	camp._layout_guide()
-	check(camp.guide_skip.is_visible_in_tree() and camp.guide_skip.text == I18n.t("Пропустить обучение"), "clear guide skip caption")
+	check(camp.guide_skip.is_visible_in_tree() and camp.guide_skip.text == I18n.t("Пропустить урок"), "clear guide skip caption")
 	lg.flags["fort_guide"] = Legion.FortGuide.DONE
 	camp._layout_guide()
 	var vacant := 0
@@ -140,7 +140,7 @@ func _test_room() -> void:
 	await frames(6)
 	check(camp.card.find_child("FortRoomDescription", true, false) == null, "room card uses metric titles and icons")
 	check(camp.card.find_children("*", "ScrollContainer", true, false).is_empty(), "room card has no scrolling")
-	check(camp.card.find_children("FortRoomMetricIcon", "TextureRect", true, false).size() >= 1, "room metrics have pictograms")
+	check(camp.card.find_child("FortTrainingTimer", true, false) != null, "training metrics show a timer")
 	check(camp.requirement_banner.visible and camp.requirement_banner.find_child("RequirementIcon", true, false) != null, "HQ requirement and lock")
 	check(camp.instant_button.icon == Look.resource("ingots") and camp.upgrade_button.icon == Look.resource("money")
 		and camp.upgrade_button.disabled and camp.instant_button.disabled, "both priced actions use resource icons")
@@ -204,13 +204,13 @@ func _test_build() -> void:
 
 
 func _test_drag(sid: int) -> void:
-	var drill := int(lg.fort_slot_plot("drill")["id"])
+	var drill := int(lg.fort_slot_plot("barracks")["id"])
 	var target := view.project(drill)
 	view.begin_person_move(sid, false, view.person_project(sid))
 	view.update_person_move(target)
 	check(is_instance_valid(view.drag_ghost) and view.drag_ghost._opacity < 1.0 and view.drag_target == drill, "translucent drag silhouette")
 	check(camp.drag_name.visible and camp.drag_name.text == String(lg.soldier(sid)["name"]), "dweller name follows drag")
-	check(camp.drag_context.visible and camp.drag_context.text.contains(I18n.t("свободно %d из %d") % [1, 2]), "training room shows free capacity")
+	check(camp.drag_context.visible and camp.drag_context.text.contains(I18n.t("Все места заняты")), "training room shows that its only place is occupied")
 	await shot("04_dweller_drag.png")
 	view.cancel_person_move()
 	check(not camp.drag_name.visible and lg.fort_is_fighter(sid), "cancel drag keeps assignment")
@@ -234,7 +234,7 @@ func _test_campaign() -> void:
 	if check(prep != null, "battle preparation modal"):
 		check(prep.find_children("FortPrepSlot_*", "", true, false).size() == Legion.SQUAD_V3, "full squad slot row")
 		var locked := prep.find_child("FortPrepSlot_3", true, false)
-		check(locked != null and bool(locked.get_meta("locked", false)), "Barracks requirements on locked slots")
+		check(locked != null and bool(locked.get_meta("locked", false)), "HQ capacity marks an empty position")
 		for key: String in ["FortPrepPower", "FortPrepEnemies", "FortPrepRewards"]:
 			check(prep.find_child(key, true, false) != null, key)
 		check(ui._fight_btn.icon == Look.resource("rations")

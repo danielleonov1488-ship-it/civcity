@@ -186,7 +186,7 @@ func sync() -> void:
 		layout_data.append([p["id"], p["b"], p["lv"], not lg.fort_plot_timer(int(p["id"])).is_empty()])
 		people_data.append(p.get("workers", []))
 	for person: Dictionary in lg.soldiers:
-		var state := "" if bool(person.get("hero", false)) else lg.s_state(person)
+		var state := lg.s_state(person)
 		people_data.append([person["id"], state, person.get("look", {}), lg.worn(person)])
 	people_data.append(lg.squad3)
 	var sig := str(layout_data)
@@ -406,19 +406,10 @@ func _build_people(entries: Array, newcomers: Array[Dictionary]) -> void:
 		var person := newcomers[index]
 		var home := Vector2(gate.x + (index - (newcomers.size() - 1) * 0.5) * 115, gate.y + (index % 2) * 13)
 		_add_dweller(person, -2, "newcomer", home, home.x, PERSON_HEIGHT)
-	if room_rects.has(0):
-		var rect: Rect2 = room_rects[0]
-		for person: Dictionary in lg.soldiers:
-			if bool(person.get("hero", false)):
-				var home := rect.position + rect.size * Vector2(0.63, 0.88)
-				_add_dweller(person, 0, "hero", home, home.x - 58.0, PERSON_HEIGHT)
-				break
 	var occupied: Array[Dictionary] = []
 	var widest_room := 0
 	for plot: Dictionary in entries:
 		var id := int(plot["id"])
-		if id == 0:
-			continue
 		var room: Rect2 = room_rects[id]
 		var type := String(plot["b"])
 		if lg.fort_plot_timer(id).is_empty() and int(plot["lv"]) > 0:
@@ -775,7 +766,7 @@ func begin_person_move(sid: int, newcomer := false, pos := Vector2.INF, click_mo
 				break
 	else:
 		person = lg.soldier(sid)
-	if person.is_empty() or bool(person.get("hero", false)) or (not newcomer and lg.s_state(person) != "ready"):
+	if person.is_empty() or (not newcomer and not lg.fort_can_move(sid)):
 		return
 	var entry := _find_person(sid, newcomer)
 	drag_ghost = FortPerson.make(person, people_layer.viewport, lg.worn(person))
@@ -793,13 +784,7 @@ func begin_person_move(sid: int, newcomer := false, pos := Vector2.INF, click_mo
 
 
 func _drop_valid(id: int) -> bool:
-	if drag_newcomer:
-		var p := lg.fort_plot(id)
-		if lg.fort_room_slots(id) <= 0 or not (p["up"] as Dictionary).is_empty() or lg.can_recruit_resident() != "":
-			return false
-		var occupants := lg.fort_occupants(id)
-		return occupants.size() < lg.fort_room_slots(id) or lg.s_state(occupants[0]) == "ready"
-	return lg.fort_can_assign(id, drag_sid) == ""
+	return lg.fort_can_drop(id, drag_sid, drag_newcomer)
 
 
 func _tint_drop_rim(id: int, rim: ReferenceRect) -> void:
@@ -840,7 +825,8 @@ func finish_person_move(pos: Vector2) -> bool:
 		return false
 	var sid := drag_sid
 	var id := _pick_id(pos)
-	var ok := id >= 0 and _drop_valid(id) and lg.fort_drop(id, sid, drag_newcomer)
+	var yard := id == -1 and Rect2(Vector2.ZERO, size).has_point(pos) and pos.y >= _screen_point(Vector2(0.0, _ground_y)).y - 36.0 * _view_scale
+	var ok := (id >= 0 or yard) and lg.fort_drop(id, sid, drag_newcomer)
 	cancel_person_move()
 	if ok:
 		sync()

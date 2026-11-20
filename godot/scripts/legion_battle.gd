@@ -15,6 +15,7 @@ extends Node
 
 signal finished(out: Dictionary)          # бой окончен, итог подсчитан (до закрытия экрана итога)
 
+const Look = preload("res://scripts/legion_look.gd")
 const BattleView = preload("res://scripts/legion_battle_view.gd")
 const BattleSound = preload("res://scripts/legion_battle_sound.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
@@ -1216,6 +1217,7 @@ func _modal_panel(w: float) -> PanelContainer:
 		modal.queue_free()
 	var back := ColorRect.new()
 	back.color = Color(0.1, 0.06, 0.03, 0.45)
+	back.z_index = 8
 	back.set_anchors_preset(Control.PRESET_FULL_RECT)
 	back.mouse_filter = Control.MOUSE_FILTER_STOP
 	ui.add_child(back)
@@ -1241,7 +1243,7 @@ func _close_modal() -> void:
 func _show_result() -> void:
 	phase = "result"
 	var win := bool(out.get("win", false))
-	var first_lesson := bool(setup.get("fort_guide_first", false))
+	var first_lesson := bool(setup.get("fort_guide_first", false)) or bool(out.get("guide_finished", false))
 	var p := _modal_panel(610)
 	var v: VBoxContainer = p.get_child(0)
 	v.add_theme_constant_override("separation", 10)
@@ -1286,13 +1288,20 @@ func _show_result() -> void:
 		var rh := HBoxContainer.new()
 		rh.alignment = BoxContainer.ALIGNMENT_CENTER
 		rh.add_theme_constant_override("separation", 18)
-		for key: String in ["money", "glory", "rp"]:
+		for key: String in ["money", "glory", "rp", "rations", "wood", "iron", "leather"]:
 			if rw.has(key):
 				rh.add_child(_reward_chip(key, int(rw[key])))
+		var rescued: Array = out.get("rescued", [])
+		if not rescued.is_empty():
+			rh.name = "FortRescuedRewards"
+			for person: Dictionary in rescued:
+				var portrait := preload("res://scripts/fort_person.gd").portrait(person, "", true, 58)
+				portrait.tooltip_text = I18n.t("Спасённые жители") + " · " + String(person["name"])
+				rh.add_child(portrait)
 		v.add_child(rh)
 		if int(out.get("money_lost", 0)) > 0:
 			# казна полна: предел остаётся, но честно — сколько не уместилось
-			var ll := _label("Казна полна — не уместилось %d ден." % int(out["money_lost"]), 15, true, C_BAD)
+			var ll := _label(I18n.t("Казна полна — не уместилось %s ден.") % game.hud.fmt(out["money_lost"]), 15, true, C_BAD)
 			ll.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			v.add_child(ll)
 		if bool(out.get("first", false)):
@@ -1472,13 +1481,17 @@ func _reward_chip(key: String, n: int) -> Control:
 			tex = _icon_tex("laurels")
 		"rp":
 			tex = _icon_tex("research")
+		_:
+			tex = Look.resource(key)
 	ic.texture = tex
 	ic.custom_minimum_size = Vector2(34, 34)
 	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	h.add_child(ic)
-	var names := {"money": "денариев", "glory": "Славы", "rp": "очков знаний"}
-	var l := _label("+%d %s" % [n, names.get(key, "")], 21, true, C_GOOD)
+	var names := {"money": "денариев", "glory": "Славы", "rp": "очков знаний", "rations": "Еда", "wood": "Дерево", "iron": "Железо", "leather": "Кожа"}
+	var l := _label("+" + Gear.stock_text(n), 21, true, C_GOOD)
+	l.tooltip_text = I18n.t(String(names.get(key, "")))
+	l.mouse_filter = Control.MOUSE_FILTER_PASS
 	h.add_child(l)
 	return h
 
@@ -1682,6 +1695,7 @@ class Stars extends Control:
 func _ration_button(button: Button, st: Dictionary) -> void:
 	if not legion.v3():
 		return
-	button.text += " · %.1f" % legion.ration_cost(st)
+	button.text += " · " + game.hud.fmt(legion.ration_cost(st))
+	button.icon = Look.resource("rations")
 	button.icon = _icon_tex("bread")
 	button.add_theme_color_override("font_disabled_color", C_BAD if legion.rations < legion.ration_cost(st) else C_SOFT)

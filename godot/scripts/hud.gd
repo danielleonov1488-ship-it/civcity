@@ -784,13 +784,7 @@ func _chip(dark := false, cm := 10.0) -> PanelContainer:
 
 
 func fmt(v: float) -> String:
-	var n := int(round(absf(v)))
-	var s := str(n)
-	var out := ""
-	while s.length() > 3:
-		out = " " + s.substr(s.length() - 3) + out
-		s = s.substr(0, s.length() - 3)
-	return ("-" if v < 0 else "") + s + out
+	return Gear.stock_text(roundi(v))
 
 
 func mouse_over_ui() -> bool:

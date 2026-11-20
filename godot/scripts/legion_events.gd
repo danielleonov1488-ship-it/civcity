@@ -192,7 +192,7 @@ static func apply(lg: Legion, setup: Dictionary, result: Dictionary) -> Dictiona
 			if lg.army_on():
 				var n := 10 + 6 * f                       # материалы мастерских (Gear.MATS) — до вместимости Склада
 				for m: String in Gear.MATS:
-					lg.mats[m] = minf(float(lg.mat_cap(m)), float(lg.mats.get(m, 0.0)) + n)
+					lg.mats[m] = minf(float(lg.mat_cap(m)), float(lg.mats.get(m, 0.0)) + (Gear.fort_material(m, n) if lg.v3() else n))
 				out["note"] = "Подземелье пройдено! Материалы для Кузницы: +%d каждого" % n
 			else:
 				out["note"] = "Подземелье пройдено!"

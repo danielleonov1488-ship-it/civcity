@@ -92,15 +92,18 @@ func _run() -> void:
 	lg.camp = {}
 	lg.upg.clear()
 	lg._camp_init()
-	lg.fort["money"] = 1e6
+	lg.fort["money"] = 2e6
 	lg.fort["know"] = {"smith": true}
 	# Эта фикстура проверяет пять новых производственных комнат.
+	var start_kitchen := lg.fort_slot_plot("kitchen")
+	start_kitchen["b"] = ""
+	start_kitchen["lv"] = 0
 	var treasury_fixture := lg.fort_slot_plot("treasury")
 	treasury_fixture["b"] = ""
 	treasury_fixture["lv"] = 0
 	Fixture.set_level(lg, "hq", 3)
 	lg.glory = 10000
-	lg.mats = {"iron": 100.0, "wood": 100.0, "leather": 10.0}
+	lg.mats = {"iron": 550000.0, "wood": 850000.0, "leather": 2000.0}
 	# Расширение добавляет этаж к стартовой сетке 5×3.
 	var start_grid := lg.fort_grid()
 	if not check(start_grid == Legion.FORT_START_GRID
@@ -132,6 +135,7 @@ func _run() -> void:
 		return
 	var legacy_save: Dictionary = JSON.parse_string(JSON.stringify(lg.to_dict()))
 	legacy_save["flags"].erase("fort_guide")
+	legacy_save["flags"].erase("fort_guide_v")
 	lg.from_dict(legacy_save)
 	if not check(lg.fort_guide_step() == Legion.FortGuide.DONE, "old guide migrates when loading the save"):
 		return
@@ -150,12 +154,12 @@ func _run() -> void:
 	if not await shot("1_main.png"):
 		return
 	camp.show_build_menu()
-	if not check(camp.build_cards.size() == Legion.FORT_B.size() - 1, "all build cards"):
+	if not check(camp.build_cards.size() == Legion.FORT_B.size() - 2 and not camp.build_cards.has("drill"), "catalog excludes the merged drill"):
 		return
 	if not await shot("2_build_menu.png"):
 		return
 	camp.show_plot(kitchen)
-	if not check(camp.selected_plot == kitchen and camp.main_action.text.contains(str(floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001))) and camp.main_action.get_meta("action_name") == I18n.t("Собрать %d") % floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001), "plot-based kitchen collect action"):
+	if not check(camp.selected_plot == kitchen and camp.main_action.text.contains(str(floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001))) and camp.main_action.get_meta("action_name") == I18n.t("Собрать %s") % game.hud.fmt(floori(float(lg.fort_plot(kitchen)["pend"]) + 0.0001)), "plot-based kitchen collect action"):
 		return
 	if not await shot("3_card_kitchen.png"):
 		return
