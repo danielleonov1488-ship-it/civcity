@@ -12,6 +12,9 @@ const DESIGN := Vector2(1600, 900)
 const CELL := 256
 const BASELINE := 242
 const PEOPLE_TILT := 5.0
+const WIDE_LANE_Y := -118.0
+const WIDE_LANE_STEP := 48.0
+const PEOPLE_DEPTH := 1024.0
 const FIELDS := {"forest": 2, "darkforest": 2, "swamp": 3, "labyrinth": 4,
 	"rocks": 4, "desert": 4, "hades": 4}
 const TRAIL_Y := [0.718, 0.710, 0.743, 0.714]
@@ -232,6 +235,17 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 		f.sprite.sprite_frames = _unit_frames(f.sheet)
 		f.add_child(f.sprite)
 		f.sprite.play(&"idle")
+	if u.side == "enemy":
+		var occupied := {}
+		for other: Fighter in views.values():
+			if other.wide:
+				occupied[other.wide_lane] = true
+			if other.unit.side == "enemy" and other.unit.wave == u.wave:
+				other.in_wide_wave = other.in_wide_wave or f.wide
+				f.in_wide_wave = f.in_wide_wave or other.wide
+		if f.wide:
+			while occupied.has(f.wide_lane):
+				f.wide_lane += 1
 	f.position = f.layout_point(u.x, u.z)
 	f.face(u.side == "enemy" and (not u.entering or u.enter_dir < 0.0))
 	_place_actor(f)
@@ -288,7 +302,9 @@ func _place_actor(f: Fighter) -> void:
 	var long := not f.long_model.is_empty()
 	f.actor.visible = f.modulate.a > 0.0 and (frame.has_point(feet) or (long and frame.has_point(screen(f.contact_point()))))
 	if f.actor.visible or long:
-		people_layer.place(f.actor, feet, height, f.facing_angle(), false, -4.6 if f.wide else 0.0)
+		# Ортокамера сохраняет проекцию. Разнос по глубине не даёт длинным моделям пересечь соседний ряд.
+		var depth := (clampf(feet.y / maxf(size.y, 1.0), 0.0, 1.0) - 1.0) * PEOPLE_DEPTH
+		people_layer.place(f.actor, feet, height, f.facing_angle(), false, depth)
 	if f.actor.visible:
 		f.actor.set_opacity(f.modulate.a)
 		f.actor.animate(f.clip, f.sample)
@@ -315,11 +331,9 @@ func _track_contact(f: Fighter, weight: float) -> void:
 		var reach := u.range_m + 0.35 * (u.size + target.unit.size - 2.0)
 		var blend := 1.0 - smoothstep(reach, reach + 0.85, LegionSim.dist(u, target.unit))
 		var flank := -1.0 if f.flip_h else 1.0
-		var guard := target.position - Vector2(flank * 48.0 * target.scale.x, 20.0)
-		# Ряды на экране разнесены по ширине сильнее, чем в симуляции.
-		offset = guard - f.position
-		offset.y = clampf(offset.y, -20.0, 20.0)
-		offset *= blend
+		var guard_x := target.position.x - flank * 48.0 * target.scale.x
+		# Подводим морду к строю по X, сохраняя её экранную дорожку.
+		offset.x = (guard_x - f.position.x) * blend
 	f.contact_adjust = f.contact_adjust.lerp(offset, 1.0 - sqrt(1.0 - weight))
 
 
@@ -480,6 +494,8 @@ class Fighter extends Node2D:
 	var yaw := 56.0
 	var actor_height := 0.0
 	var wide := false
+	var wide_lane := 0
+	var in_wide_wave := false
 	var boss_model: Boss
 	var long_model: Array = []
 	var contact_adjust := Vector2.ZERO
@@ -519,7 +535,13 @@ class Fighter extends Node2D:
 			p.x = maxf(-692.0, p.x - 242.0) if unit.side == "ally" else p.x + 72.0
 			p.y -= 30.0
 		if wide:
-			p.y -= 31.0
+			p.y = WIDE_LANE_Y - wide_lane * WIDE_LANE_STEP
+			if unit.ranged():
+				# Конные лучники держат дистанцию и не сходятся на одной экранной точке.
+				p.x -= minf(340.0, wide_lane * 168.0)
+		elif in_wide_wave and p.y < -90.0:
+			# Сохраняем разнос дальних пеших рядов перед крупными врагами.
+			p.y = maxf(WIDE_LANE_Y + 12.0, lerpf(-90.0, p.y, 0.30))
 		return p
 
 	func body_height() -> float:

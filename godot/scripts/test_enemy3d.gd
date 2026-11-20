@@ -5,7 +5,7 @@ const Enemy = preload("res://scripts/legion_enemy_actor.gd")
 const View = preload("res://scripts/legion_battle_view.gd")
 const PersonLayer = preload("res://scripts/fort_person_layer.gd")
 const FortPerson = preload("res://scripts/fort_person.gd")
-const OUT := "D:/CivCity/.work/stage7/boss3d_b/shots/"
+const OUT := "D:/CivCity/.work/stage7/boss3d_c/shots/"
 const STRESS := ["elephant", "chariot", "charioteer", "mercenary", "briton",
 	"cataphractFoe", "khopesh", "bear", "gaulArcher", "druid"]
 
@@ -112,12 +112,15 @@ func _run() -> void:
 	await _campaign_ui()
 	# Крит, Сицилия и Карфаген входят в прежнюю карту похода.
 	Legion.V2 = false
-	await _fight("crete", ["bull", "minotaur", "pirate", "slinger"], "")
+	await _fight("crete", ["bull", "bullLeader", "minotaur", "pirate", "slinger"], "", "", false, "4_crete.png")
 	await _fight("sicily", ["pirate", "cyclops", "slinger", "boar"], "")
 	await _fight("carthage", ["mercenary", "elephant", "slinger", "pirate"], "2_boss_panel_elephant.png", "elephant")
 	Legion.V2 = true
+	await _fight("forest", ["forestBear", "forestBear", "forestBear", "bandit"], "", "", false, "2_forest_bears.png")
 	await _fight("britannia", ["chariot", "briton", "charioteer", "druid"], "3_boss_panel_charioteer.png", "charioteer")
-	await _fight("parthia", ["horseArcher", "cataphractFoe", "cataphract", "numidian", "horseArcher"], "4_boss_panel_cataphract.png", "cataphract")
+	await _fight("parthia", ["horseArcher", "cataphractFoe", "cataphract", "numidian", "horseArcher"],
+		"4_boss_panel_cataphract.png", "cataphract", false, "5_parthia.png")
+	await _fight("africa", ["mercenary", "numidian", "elephant", "hannibal"], "")
 	await _fight("africa", STRESS, "", "", true)
 	await _lineup(true)
 	check(deaths.size() == Enemy.BOSSES.size(), "all seven models fell: %s" % [deaths.keys()])
@@ -213,6 +216,17 @@ func _long_models() -> void:
 		if id == "horseArcher":
 			_check_turn(f)
 		count += 1
+	# В походе дальний проход обычно пуст. Проверяем перекрытие со специально поставленным союзником.
+	var cart: View.Fighter = view.views.get(1)
+	if check(cart != null, "wide fixture"):
+		var soldier := LegionSim.Unit.new()
+		soldier.id = 100
+		soldier.side = "ally"
+		soldier.key = "legionary"
+		var rear := view.add_unit(soldier)
+		rear.position = Vector2(cart.chest().x, cart.body_ground().y - 26.0)
+		view._place_actor(rear)
+		_depth_order(view, "rear ally fixture", true)
 	view.free()
 	print("ENEMY3D CONTACT %d long models, both sides and projectile targets" % count)
 
@@ -413,7 +427,7 @@ func _make_squad(legion: Legion) -> void:
 		squad.append(stats)
 
 
-func _fight(region: String, keys: Array, file: String, boss_id := "", stress := false) -> void:
+func _fight(region: String, keys: Array, file: String, boss_id := "", stress := false, field_file := "") -> void:
 	var legion := game.city.legion
 	var region_index := _province(region)
 	if not check(region_index >= 0, "province " + region):
@@ -429,6 +443,8 @@ func _fight(region: String, keys: Array, file: String, boss_id := "", stress := 
 	var setup := {"kind": "campaign", "stage": stage, "seed": 532,
 		"squad": troops, "waves": [wave], "rations_paid": true, "perks": {"oil": 1, "bandage": 1, "volley": 1}}
 	var zoom := 1.14 if not file.is_empty() else 1.0
+	if not field_file.is_empty():
+		zoom = 1.34 if region == "parthia" else 1.26
 	battle = LegionBattle.open(game, setup, Callable(), {"legion": legion, "speed": 1.0, "zoom": zoom})
 	if not check(await until(func() -> bool: return battle.sim != null and battle.fade.modulate.a <= 0.01, 35), "battle " + region):
 		battle.abort()
@@ -459,6 +475,11 @@ func _fight(region: String, keys: Array, file: String, boss_id := "", stress := 
 			await until(func() -> bool: return battle.sim.t >= launched_at + 0.12, 1.0)
 	else:
 		check(await until(func() -> bool: return battle.sim.t >= 2.75, 14.0), "battle time " + region)
+	_depth_order(battle.battle_view, region + (" stress" if stress else ""))
+	if not field_file.is_empty():
+		var field_time := 5.75 if region == "parthia" else (3.15 if region == "forest" else 3.55)
+		check(await until(func() -> bool: return battle.sim.t >= field_time, 8.0), "field shot time " + region)
+		_depth_order(battle.battle_view, region + " shot")
 	for fighter: View.Fighter in boss_views:
 		if fighter.unit.key in ["chariot", "charioteer"] and fighter.boss_model != null:
 			check(fighter.boss_model.wheels.size() == 2 and fighter.boss_model.wheel_angle > 0.001,
@@ -468,9 +489,13 @@ func _fight(region: String, keys: Array, file: String, boss_id := "", stress := 
 		await _close_battle()
 	else:
 		if boss_id == "charioteer":
-			await _contact_shot(boss_id, "7_chariot_contact.png")
+			await _contact_shot(boss_id, "1_britannia_contact.png")
 		elif boss_id == "elephant":
-			await _contact_shot(boss_id, "8_elephant_contact.png")
+			await _contact_shot(boss_id, "3_carthage.png")
+		if not field_file.is_empty():
+			battle.paused = true
+			await shot(field_file, Rect2i(220, 202, 1700, 670))
+			battle.paused = false
 		if not file.is_empty():
 			battle.paused = true
 			check(battle.boss_panel.visible and battle.boss_pic.texture != null
@@ -480,6 +505,64 @@ func _fight(region: String, keys: Array, file: String, boss_id := "", stress := 
 		await _death(boss_views)
 	battle.abort()
 	await get_tree().process_frame
+
+
+func _model_bounds(actor: Node3D, camera: Camera3D) -> Array:
+	var box := Rect2(camera.unproject_position(actor.global_position), Vector2.ZERO)
+	var root_depth := camera.to_local(actor.global_position).z
+	var depth := Vector2(root_depth, root_depth)
+	for mesh: MeshInstance3D in actor.find_children("*", "MeshInstance3D", true, false):
+		if mesh.mesh == null or not mesh.is_visible_in_tree():
+			continue
+		var bounds := mesh.get_aabb()
+		for i in 8:
+			var point := mesh.to_global(bounds.get_endpoint(i))
+			box = box.expand(camera.unproject_position(point))
+			var z := camera.to_local(point).z
+			depth = Vector2(minf(depth.x, z), maxf(depth.y, z))
+	return [box, depth]
+
+
+func _depth_order(view: View, label: String, require_rear := false) -> void:
+	var camera := view.people_layer.camera
+	var boxes := {}
+	var broad: Array[View.Fighter] = []
+	var small: Array[View.Fighter] = []
+	for f: View.Fighter in view.views.values():
+		if not f.unit.alive or f.actor == null or not f.actor.visible:
+			continue
+		boxes[f.unit.id] = _model_bounds(f.actor, camera)
+		if f.wide:
+			broad.append(f)
+		else:
+			small.append(f)
+	var overlaps := 0
+	var rear := 0
+	for i in broad.size():
+		var wide := broad[i]
+		var wide_box: Rect2 = boxes[wide.unit.id][0]
+		var wide_range: Vector2 = boxes[wide.unit.id][1]
+		var wide_feet := wide.body_ground().y
+		var wide_depth := camera.to_local(wide.actor.global_position).z
+		for j in i:
+			check(absf(wide_feet - broad[j].body_ground().y) >= View.WIDE_LANE_STEP - 0.1,
+				"separate wide lanes " + label)
+		for f: View.Fighter in small:
+			var dy := f.body_ground().y - wide_feet
+			if f.unit.side == "enemy":
+				check(dy > 0.0, "nearer enemy lane %s: %s / %s" % [label, f.unit.key, wide.unit.key])
+			if not wide_box.intersects(boxes[f.unit.id][0]) or is_zero_approx(dy):
+				continue
+			overlaps += 1
+			if dy < 0.0:
+				rear += 1
+				var small_range: Vector2 = boxes[f.unit.id][1]
+				check(small_range.y < wide_range.x, "rear model depth %s: %s / %s" % [label, f.unit.key, wide.unit.key])
+			var dz := camera.to_local(f.actor.global_position).z - wide_depth
+			check(dy * dz > 0.0, "overlap depth %s: %s / %s" % [label, f.unit.key, wide.unit.key])
+	check(not broad.is_empty(), "wide actors in " + label)
+	check(not require_rear or rear > 0, "rear ally overlaps a wide model")
+	print("ENEMY3D DEPTH %s wide=%d overlaps=%d farther_small=%d" % [label, broad.size(), overlaps, rear])
 
 
 func _boss_shot(key: String) -> bool:
@@ -513,10 +596,7 @@ func _close_battle() -> void:
 	var ally := _melee()
 	var enemy: View.Fighter = battle.views[ally.unit.target.id]
 	var view := battle.battle_view
-	var camera := view.people_layer.camera
-	var near_z := camera.to_local(ally.actor.global_position).z
-	var far_z := camera.to_local(enemy.actor.global_position).z
-	check(near_z - far_z > 3.0, "wide boss behind the nearby soldier")
+	_depth_order(view, "africa close fight")
 	var feet := view.screen(ally.position).lerp(view.screen(enemy.position), 0.5)
 	var height := maxf(ally.body_height(), enemy.body_height()) * view.world.scale.y
 	var crop := Rect2i(Vector2i(feet - Vector2(675.0, height * 1.08 + 160.0)), Vector2i(1350, int(height * 1.17 + 240.0)))
@@ -554,10 +634,10 @@ func _contact_shot(key: String, file: String) -> void:
 	var ally: View.Fighter = battle.views.get(f.unit.target.id)
 	var view := battle.battle_view
 	var center := view.screen(f.contact_point().lerp(f.body_ground(), 0.36))
-	var height := maxf(f.body_height(), ally.body_height()) * view.world.scale.y
-	var crop := Rect2i(Vector2i(center - Vector2(645, height + 95)), Vector2i(1290, int(height + 260)))
+	var crop := Rect2i(roundi(center.x) - 680, 202, 1360, 670)
+	_depth_order(view, key + " contact")
 	print("ENEMY3D CONTACT ", key, " gap=", snappedf(absf(f.contact_point().x - ally.position.x), 0.1), " px")
-	await shot(file, crop.intersection(Rect2i(0, 202, 1920, 670)))
+	await shot(file, crop)
 	battle.paused = false
 
 func _fps() -> void:
