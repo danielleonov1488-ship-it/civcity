@@ -524,9 +524,25 @@ func _tab_btn(text: String, icon: Texture2D) -> Button:
 	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.set_anchors_preset(Control.PRESET_FULL_RECT)
 	h.add_child(_tr(icon, 32))
-	h.add_child(hud._label(text, 20, true))
+	var lbl := hud._label(text, 20, true)
+	lbl.name = "TabText"
+	h.add_child(lbl)
 	b.add_child(h)
+	b.set_meta("tab_label", lbl)
+	# светлая надпись на тёмно-красной вкладке, тёмная — на светлой (выбранной или под мышью)
+	b.mouse_entered.connect(func(): _paint_tab(b, true))
+	b.mouse_exited.connect(func(): _paint_tab(b, tabs.get(tab) == b))
+	_paint_tab(b, false)
 	return b
+
+
+func _paint_tab(b: Button, light_bg: bool) -> void:
+	var lbl: Label = b.get_meta("tab_label", null)
+	if lbl == null:
+		return
+	lbl.add_theme_color_override("font_color", C_INK if light_bg else C_CREAM)
+	lbl.add_theme_color_override("font_outline_color", Color("3a1a0e"))
+	lbl.add_theme_constant_override("outline_size", 0 if light_bg else 6)
 
 
 func _select_tab(id: String) -> void:
@@ -536,6 +552,7 @@ func _select_tab(id: String) -> void:
 		var on: bool = k == tab
 		b.add_theme_stylebox_override("normal", Kit.box("panels/tab_on" if on else "panels/tab_off", 28, 8))
 		b.add_theme_stylebox_override("hover", Kit.box("panels/tab_on", 28, 8))
+		_paint_tab(b, on)
 	if id == "pvp" and _pvp_state != "loading":
 		_pvp_state = "idle"                  # каждый заход — свежий список соперников
 		_pvp_auto = false
