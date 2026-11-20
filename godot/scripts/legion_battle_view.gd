@@ -2,6 +2,8 @@ class_name LegionBattleView
 extends Control
 ## Рисованное поле боя. Читает позы и события LegionSim, не меняет состояние боя.
 
+signal field_sound(event: String, pan: float)
+
 const FortPerson = preload("res://scripts/fort_person.gd")
 const Actor = preload("res://scripts/charpilot_actor.gd")
 const Enemy = preload("res://scripts/legion_enemy_actor.gd")
@@ -122,6 +124,26 @@ static func point(x: float, z: float) -> Vector2:
 
 func screen(p: Vector2) -> Vector2:
 	return world.position + p * world.scale
+
+
+func sound_pan(where: Vector2) -> float:
+	var width := maxf(1.0, size.x)
+	return clampf(screen(where).x / width, 0.0, 1.0) * 1.2 - 0.6
+
+
+static func melee_sound(source: LegionSim.Unit, target: LegionSim.Unit, now: float) -> String:
+	var gear: Array = Enemy.HUMANS.get(source.key, [])
+	var weapon := String(gear[1]) if not gear.is_empty() else ""
+	if weapon in ["axe", "falx"] or source.key in ["bull", "bullLeader", "elephant"] or "giant" in source.tags:
+		return "hit_heavy"
+	if weapon in ["club", "cudgel", "staff"]:
+		return "hit_wood"
+	if target.testudo > now or "armored" in target.tags or target.key in ["legionary", "spearman", "hero"]:
+		return "hit_metal"
+	var shield: Array = Enemy.HUMANS.get(target.key, [])
+	if (not shield.is_empty() and String(shield[2]) in ["oval", "round", "hex"]) or "beast" in source.tags:
+		return "hit_wood"
+	return "hit_metal"
 
 
 static func sheet_id(u: LegionSim.Unit) -> String:
@@ -490,7 +512,19 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 	var started := Time.get_ticks_usec() if profile_poses else 0
 	for id in views:
 		var f: Fighter = views[id]
+		var was_winding := f.ranged_winding
+		var death_before := f.death
 		f.tick(gdt, rate, weight, fighting, sim.t, f.heal_due(sim, fighting))
+		if f.ranged_winding and not was_winding:
+			match f.actor.ranged.mode:
+				"bow":
+					field_sound.emit("bow_draw", sound_pan(f.position))
+				"sling":
+					field_sound.emit("sling_whirl", sound_pan(f.position))
+		if not f.unit.alive:
+			var ground_at := f.death_ground()
+			if death_before < ground_at and f.death >= ground_at:
+				field_sound.emit("fall", sound_pan(f.position))
 	if started != 0:
 		windup_usec += Time.get_ticks_usec() - started
 	for id in views:
@@ -510,6 +544,11 @@ func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> 
 	for s: LegionSim.Shot in shots:
 		var sprite: Node2D = shots[s]
 		if s.done or not sim.result.is_empty():
+			if s.done:
+				var event := "boulder" if s.kind in ["stone", "boulder", "bolt"] else ("stone_hit" if s.kind == "sling" else "arrow_hit")
+				var target: Fighter = views.get(s.target.id) if s.target != null else null
+				var impact := target.position if target != null and s.kind in ["arrow", "sling"] else point(s.x1, s.z1)
+				field_sound.emit(event, sound_pan(impact))
 			sprite.queue_free()
 			_done_shots.append(s)
 		elif int(sprite.get_meta("release_frame", -1)) != frame:
@@ -578,6 +617,7 @@ class Fighter extends Node2D:
 	var bar_mark := Vector2.ZERO
 	var shoot_turn := 0.0
 	var ranged_mix := 1.0
+	var ranged_winding := false
 	var aim_target: LegionSim.Unit
 	var release_frame := -1
 	var release_time := 0.0
@@ -671,6 +711,7 @@ class Fighter extends Node2D:
 			hit_left = 0.0
 
 	func release_ranged() -> void:
+		ranged_winding = false
 		clip = attack_clip
 		sample = release_time
 		attack_left = actor.clip_length(clip) - sample
@@ -701,7 +742,13 @@ class Fighter extends Node2D:
 		if sprite != null:
 			sprite.play(&"idle")
 
+	func death_ground() -> float:
+		if actor == null or death_clip.is_empty():
+			return 0.70
+		return 0.88 if boss_model != null else 0.52
+
 	func tick(gdt: float, rate: float, weight: float, fighting: bool, now: float, heal_due := INF) -> void:
+		ranged_winding = false
 		if not unit.alive:
 			if sprite != null:
 				sprite.speed_scale = 0.0
@@ -794,6 +841,7 @@ class Fighter extends Node2D:
 			sample = minf(release - 0.001, move_toward(sample, maxf(0.0, release - due), gdt * 2.0))
 			if due < heal_due:
 				aim_target = target
+				ranged_winding = true
 			ranged_mix = 1.0
 			return true
 		if clip == attack_clip and sample < release:

@@ -16,6 +16,7 @@ extends Node
 signal finished(out: Dictionary)          # бой окончен, итог подсчитан (до закрытия экрана итога)
 
 const BattleView = preload("res://scripts/legion_battle_view.gd")
+const BattleSound = preload("res://scripts/legion_battle_sound.gd")
 const Kit = preload("res://scripts/ui_kit_a.gd")
 const LAYER := 30
 const AI := "res://assets/ui/ai/"
@@ -45,6 +46,8 @@ var out := {}
 var stage := {}
 var pvp := false
 var battle_view: BattleView
+var battle_sound: BattleSound
+var _city_sound: Sound
 var views := {}                            # id бойца → AnimatedSprite2D
 var shots := {}                            # снаряд симуляции → узел 2D
 
@@ -57,7 +60,6 @@ var intro_t := 0.0
 var end_t := 0.0
 var slowmo := 1.0
 var zoom := 1.0
-var _snd_t := {}
 var _saved := {}
 var _boss_unit: LegionSim.Unit
 var _immune_said := false
@@ -100,7 +102,6 @@ var retreat_btn: Button
 var modal: Control
 var pause_lbl: Label
 var hint_lbl: Label
-var players: Array[AudioStreamPlayer] = []
 
 var font: Font
 var font_bold: Font
@@ -150,6 +151,8 @@ func _ready() -> void:
 	speed = clampf(float(opts.get("speed", legion.flags.get("battle_speed", 1.0))), 1.0, 3.0)
 	zoom = clampf(float(opts.get("zoom", 1.0)), 0.75, 1.25)
 	_fonts()
+	battle_sound = BattleSound.new()
+	add_child(battle_sound)
 	_build_screen()
 	_loading(setup)
 	# сначала экран с картой провинции, потом (пока он виден) собирается поле — без «замёрзшего» города
@@ -164,6 +167,9 @@ func _enter() -> void:
 	var vp := get_viewport()
 	_saved = {"disable_3d": vp.disable_3d}
 	if game != null:
+		_city_sound = game.sound
+		if is_instance_valid(_city_sound):
+			_city_sound.duck_for_battle(get_instance_id(), true)
 		_saved["speed"] = game.speed
 		_saved["hud"] = game.hud.visible
 		_saved["cine"] = game.rig.cine if game.rig else false
@@ -177,6 +183,7 @@ func _enter() -> void:
 
 
 func _leave() -> void:
+	_release_music()
 	if _saved.is_empty():
 		return
 	get_viewport().disable_3d = bool(_saved.get("disable_3d", false))
@@ -185,6 +192,16 @@ func _leave() -> void:
 		if game.rig:
 			game.rig.cine = bool(_saved.get("cine", false))
 		game.hud.set_speed(float(_saved.get("speed", 1.0)))
+
+
+func _exit_tree() -> void:
+	_release_music()
+
+
+func _release_music() -> void:
+	if is_instance_valid(_city_sound):
+		_city_sound.duck_for_battle(get_instance_id(), false)
+	_city_sound = null
 
 
 # =====================================================================
@@ -201,6 +218,7 @@ func _build_screen() -> void:
 	battle_view.mouse_filter = Control.MOUSE_FILTER_STOP
 	canvas.add_child(battle_view)
 	battle_view.set_zoom(zoom)
+	battle_view.field_sound.connect(_field_sound)
 	battle_view.gui_input.connect(_field_input)
 	views = battle_view.views
 	shots = battle_view.shots
@@ -260,11 +278,6 @@ func _build_screen() -> void:
 	fade_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	fade.add_child(fade_lbl)
 	_pin(fade_lbl, Control.PRESET_CENTER, Vector2(-500, -40), Vector2(1000, 80))
-	for i in 8:
-		var p := AudioStreamPlayer.new()
-		p.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
-		add_child(p)
-		players.append(p)
 
 
 func _field_input(e: InputEvent) -> void:
@@ -564,6 +577,7 @@ func _start(s: Dictionary) -> void:
 		var r := int(stage.get("r", 0))
 		biome = String(Legion.regions()[clampi(r, 0, Legion.regions().size() - 1)]["biome"])
 	battle_view.set_field(biome)
+	battle_sound.reset(biome)
 	battle_view.pvp = pvp
 	battle_view.legion = legion
 	battle_view.hero_look = s.get("hero_look", {})
@@ -616,8 +630,6 @@ func _start(s: Dictionary) -> void:
 	_refresh_speed()
 	if bool(stage.get("boss", false)):
 		say("Босс: " + String(stage.get("name", "")), 2.6)
-	_play("horn", -6.0)
-	_play("cry", -15.0)
 	var tw := create_tween()
 	fade.modulate.a = 1.0
 	tw.tween_interval(0.25)
@@ -660,7 +672,11 @@ func _clear_world() -> void:
 func _view(u: LegionSim.Unit) -> BattleView.Fighter:
 	if u.boss:
 		_boss_unit = u
-	return battle_view.add_unit(u)
+	var fresh := not views.has(u.id)
+	var fighter := battle_view.add_unit(u)
+	if fresh and u.alive and BattleSound.is_horse(u):
+		battle_sound.play("horse_whinny", battle_view.sound_pan(fighter.position))
+	return fighter
 
 
 func _waves_ui() -> void:
@@ -685,6 +701,7 @@ func _process(dt: float) -> void:
 		banner.modulate.a = maxf(0.0, banner.modulate.a - dt * 4.0)
 	var run := (not paused and not tut_freeze and modal == null) or phase == "result"
 	var gdt := dt * speed * slowmo if run else 0.0
+	battle_sound.advance(dt, speed, run)
 	if phase == "intro":
 		intro_t += dt
 		if intro_t > 2.4:
@@ -711,7 +728,9 @@ func _process(dt: float) -> void:
 		if end_t > 2.4:
 			_show_result()
 	_update_crowds(gdt)
-	battle_view.tick(sim, gdt, dt, acc, phase == "intro" or phase == "fight")
+	var fighting := phase == "intro" or phase == "fight"
+	battle_sound.update_field(sim, dt, run and fighting, battle_view)
+	battle_view.tick(sim, gdt, dt, acc, fighting)
 	_update_ui()
 	bars.queue_redraw()
 
@@ -735,7 +754,12 @@ func _handle(evs: Array) -> void:
 				if n > 1:
 					var last: bool = n == int(e["total"])
 					say(("Босс: " + String(stage.get("name", ""))) if last and bool(stage.get("boss", false)) else "Волна %d из %d" % [n, int(e["total"])], 1.8)
-					_play("horn", -10.0, 1.15)
+				var boss_wave := false
+				for u in sim.units:
+					if u.wave == n - 1 and u.side == "enemy" and u.boss:
+						boss_wave = true
+						break
+				battle_sound.wave(boss_wave)
 				var fresh: Array = []
 				for u in sim.units:
 					if u.wave == n - 1 and u.side == "enemy":
@@ -749,24 +773,40 @@ func _handle(evs: Array) -> void:
 			"warn":
 				_summon_warns += 1
 				say("Атаман созывает шайку! Масло — когда сбегутся" if _summon_warns == 1 else "Атаман снова созывает шайку!", 2.4)
-				_play("horn", -4.0, 0.72)
+				battle_sound.play("war_horn", 0.0, -1.0, 0.86)
 				battle_view.ring(_view(e["unit"]).position, 88.0, BattleView.ALERT)
 			"summon":
 				_summon(e)
 			"attack":
 				var u: LegionSim.Unit = e["unit"]
-				_view(u).attack()
-				if u.key == "catapult" or u.key == "ballista":
-					_play("creak", -12.0, randf_range(0.9, 1.1))
+				var fighter := _view(u)
+				fighter.attack()
+				if u.shot == "":
+					_melee_foley(u, fighter)
 			"shoot":
 				var s: LegionSim.Shot = e["shot"]
 				battle_view.shoot(s)
-				if s.kind == "arrow" or s.kind == "bolt":
-					_play("whoosh", -16.0, randf_range(1.1, 1.4))
+				if s.from != null:
+					var pan := battle_view.sound_pan(_view(s.from).position)
+					match s.kind:
+						"arrow":
+							battle_sound.play("bow_release", pan)
+							if battle_sound.chance(0.32):
+								battle_sound.later("arrow_fly", 0.038, pan * 0.7)
+						"bolt", "stone":
+							battle_sound.play("swing", pan, 0.0, 0.88)
+						"boulder":
+							battle_sound.play("giant_vox", pan)
 			"hit":
 				_hit(e)
 			"death":
-				_play("fall", -10.0, randf_range(0.85, 1.05))
+				var u: LegionSim.Unit = e["unit"]
+				var pan := battle_view.sound_pan(_view(u).position)
+				_animal_foley(u, pan, true)
+				if u.boss or u.key == "hero" or (not "beast" in u.tags and battle_sound.chance(0.25)):
+					battle_sound.play("death_vox", pan, -4.0 if not BattleSound.animal_voice(u.key, true).is_empty() else 0.0)
+				if BattleSound.is_horse(u):
+					battle_sound.play("horse_whinny", pan, -2.0)
 			"revive":
 				var u: LegionSim.Unit = e["unit"]
 				_view(u).revive()
@@ -776,6 +816,7 @@ func _handle(evs: Array) -> void:
 				battle_view.burst("fx_heal", f.chest(), 1.05)
 				bars.float_text(battle_view.screen(f.head()), "+%d" % int(e["amount"]), "heal")
 				var src: LegionSim.Unit = e.get("from")
+				battle_sound.play("heal", battle_view.sound_pan(f.position))
 				if src != null and src.alive:
 					var priest := _view(src)
 					battle_view.cast(priest)
@@ -784,12 +825,12 @@ func _handle(evs: Array) -> void:
 				var pos := BattleView.point(float(e["x"]), float(e["z"]))
 				battle_view.ring(pos, float(e["r"]) * 49.0, BattleView.GOLD)
 				battle_view.burst("fx_hit", pos - Vector2(0, 46), 1.25)
-				_play("boom" if e["type"] == "boom" else "fall", -8.0, 0.7)
 			"charge":
 				var u: LegionSim.Unit = e["unit"]
 				var fighter := _view(u)
 				if fighter.boss_model != null and fighter.actor.clip_length("Charge") > 0.0:
 					fighter.attack("Charge")
+				_melee_foley(u, fighter)
 				battle_view.ring(fighter.position, 67.0, BattleView.ALERT)
 				say(String(u.name) + " бросается в атаку!", 1.2)
 			"perk":
@@ -807,9 +848,35 @@ func _hit(e: Dictionary) -> void:
 	bars.float_text(battle_view.screen(f.head()), str(int(e["dmg"])) + ("!" if crit else ""),
 		"crit" if crit else ("hurt" if u.side == "ally" else "dmg"))
 	var src: LegionSim.Unit = e.get("from")
-	if src != null:
-		var metal := src.shot == "" and "beast" not in u.tags and "beast" not in src.tags
-		_play("clash" if metal else "thud", -9.0 if crit else -14.0, randf_range(0.9, 1.15))
+	var pan := battle_view.sound_pan(f.position)
+	var melee := src != null and src.shot == ""
+	if melee:
+		# Симуляция сообщает замах и урон одним шагом. Оставляем зазор в звуке.
+		battle_sound.later(BattleView.melee_sound(src, u, sim.t), BattleSound.ATTACK_BEAT, pan, 1.0 if crit else 0.0)
+	if src != null and (crit or not u.alive):
+		battle_sound.later("hit_flesh", BattleSound.ATTACK_BEAT + 0.018 if melee else 0.035, pan)
+	if u.alive and src != null and u.hp > 0.0:
+		if battle_sound.chance(0.22):
+			_animal_foley(u, pan, true)
+		var big := crit or float(e["dmg"]) >= u.max_hp * 0.15
+		if big and "human" in u.tags and battle_sound.chance(0.34):
+			battle_sound.later("grunt", BattleSound.ATTACK_BEAT if melee else 0.02, pan)
+
+
+func _field_sound(event: String, pan: float) -> void:
+	battle_sound.play(event, pan)
+
+
+func _melee_foley(u: LegionSim.Unit, fighter: BattleView.Fighter) -> void:
+	var pan := battle_view.sound_pan(fighter.position)
+	battle_sound.play("swing", pan)
+	_animal_foley(u, pan, false)
+
+
+func _animal_foley(u: LegionSim.Unit, pan: float, hurt: bool) -> void:
+	var event := BattleSound.animal_voice(u.key, hurt)
+	if not event.is_empty():
+		battle_sound.play(event, pan, -2.0 if hurt else 0.0)
 
 
 func _summon(e: Dictionary) -> void:
@@ -837,7 +904,7 @@ func _warn2(e: Dictionary) -> void:
 	var k := String(e.get("kind", ""))
 	var txt := String(WARN2.get(k, "%s готовит удар!"))
 	say(txt % u.name if txt.contains("%s") else txt, 2.2)
-	_play("horn", -5.0, 0.8)
+	battle_sound.play("war_horn", 0.0, -2.0, 0.83)
 	battle_view.ring(_view(u).position, 86.0, BattleView.ALERT)
 	if k == "avalanche" or k == "chariot":
 		battle_view.lane(float(e.get("z", 0.0)), BattleView.ALERT, float(u.abil.get("warn", 1.4)))
@@ -847,13 +914,15 @@ func _v2_event(e: Dictionary) -> void:
 	match String(e["type"]):
 		"avalanche":
 			battle_view.lane(float(e["z"]), Color("e7f2ff"), 0.8, 32.0)
-			_play("boom", -6.0, 0.6)
+			battle_sound.play("boulder", 0.0, 0.0, 0.85)
 		"chariot":
 			battle_view.lane(float(e["z"]), Color("c6986a"), 1.2, 30.0)
+			var impact := BattleView.point(0.0, float(e["z"]))
+			battle_sound.play("hit_wood" if bool(e["stopped"]) else "hit_heavy", battle_view.sound_pan(impact))
 			say("Копейщики остановили колесницы!" if bool(e["stopped"]) else "Колесницы прошли по ряду!", 1.6)
 		"cry":
 			say("Боевой клич! Враги бьют сильнее", 1.8)
-			_play("horn", -3.0, 0.6)
+			battle_sound.play("battle_cry", battle_view.sound_pan(_view(e["unit"]).position), 0.0, 0.95)
 		"interrupt":
 			say("Клич сорван!", 1.6)
 			battle_view.burst("fx_hit", _view(e["unit"]).chest(), 1.1, BattleView.GOLD)
@@ -883,21 +952,24 @@ func _perk_fx(e: Dictionary) -> void:
 			var pos := BattleView.point(float(e.get("x", 0.0)), float(e.get("z", 0.0)))
 			battle_view.ring(pos, 118.0, Color("ff8e38"), 0.95)
 			battle_view.burst("fx_hit", pos - Vector2(0, 73), 1.6, Color("ff9e49"))
-			_play("pot", -8.0, 0.8)
-			_play("oil", -10.0)
+			battle_sound.play("oil", battle_view.sound_pan(pos), 0.0, 1.0, true)
 		"volley", "fire":
 			var tint := Color("ff9c4d") if id == "fire" else Color.WHITE
 			var foes := sim.alive_of("enemy" if ours else "ally")
 			for u in foes:
 				var to := _view(u).chest()
 				battle_view.volley(to + Vector2(-320.0 if ours else 320.0, -155.0), to, tint)
-			_play("volley", -9.0, randf_range(0.95, 1.05))
+			var pan := -0.3 if ours else 0.3
+			for delay: float in [0.0, 0.13, 0.27]:
+				battle_sound.later("bow_release", delay, pan, -2.0, 1.0, true)
+			battle_sound.later("arrow_fly", 0.17, pan * 0.5)
 			if id == "fire":
-				_play("oil", -16.0, 1.2)
+				battle_sound.play("oil", pan, -6.0)
 		"testudo", "horn", "eagle":
 			for u in sim.alive_of(side):
 				battle_view.ring(_view(u).position, 66.0, BattleView.GOLD, 0.9)
-			_play("pot" if id == "testudo" else "horn", -8.0)
+			var event := "hit_metal" if id == "testudo" else ("war_horn" if id == "horn" else "war_drum")
+			battle_sound.play(event, -0.25 if ours else 0.25, -2.0, 1.0, true)
 
 
 func _begin_end() -> void:
@@ -913,11 +985,11 @@ func _begin_end() -> void:
 	else:
 		out = legion.apply_result(setup, res)
 	out["retreat"] = bool(res.get("retreat", false))
-	finished.emit(out)
 	var win := bool(out.get("win", false))
+	battle_sound.finish(win)
+	finished.emit(out)
 	if not bool(out["retreat"]):
 		say("Победа!" if win else "Отряд отступает…", 2.0)
-	_play("win" if win else "fall", -6.0 if win else -10.0, 1.0)
 
 
 ## Круг идёт за толпой до её выхода на поле и ещё 2,5 с.
@@ -1458,75 +1530,6 @@ func abort() -> void:
 	if current == self:
 		current = null
 	queue_free()
-
-
-# =====================================================================
-#   звук: удары, щиты, падения, скрип машин, рог (рог — синтез)
-#   hf_* — звуки из Higgsfield (Mirelo): звон мечей, залп, удар камня, шипение масла, клич
-# =====================================================================
-
-const SOUNDS := {"clash": ["hf_clash1", "hf_clash2", "hf_clash3", "knifeSlice"], "thud": ["dropLeather", "chop"], "fall": ["dropLeather"],
-	"pot": ["metalPot1", "metalPot2", "metalPot3"], "creak": ["creak1", "creak3"], "whoosh": ["cloth1", "drawKnife1", "drawKnife2"],
-	"boom": ["hf_boom"], "win": ["handleCoins"], "volley": ["hf_volley"], "oil": ["hf_oil"], "cry": ["hf_cry"]}
-static var _streams := {}
-static var _horn: AudioStreamWAV
-
-
-func _play(kind: String, db := -10.0, pitch := 1.0) -> void:
-	var now := Time.get_ticks_msec() / 1000.0
-	if now - float(_snd_t.get(kind, -1.0)) < 0.07:
-		return
-	_snd_t[kind] = now
-	var st: AudioStream = null
-	if kind == "horn":
-		st = _horn_stream()
-	else:
-		var list: Array = SOUNDS.get(kind, [])
-		if list.is_empty():
-			return
-		var nm: String = list[randi() % list.size()]
-		if not _streams.has(nm):
-			var path := "res://assets/sfx/battle/%s.ogg" % nm
-			_streams[nm] = load(path) if ResourceLoader.exists(path) else null
-		st = _streams[nm]
-	if st == null:
-		return
-	for p in players:
-		if not p.playing:
-			p.stream = st
-			p.volume_db = db
-			p.pitch_scale = pitch
-			p.play()
-			return
-
-
-## Боевой рог (корну): низкий тёплый звук с вибрато, мягкое нарастание и затухание
-static func _horn_stream() -> AudioStreamWAV:
-	if _horn != null:
-		return _horn
-	var rate := 22050
-	var dur := 1.25
-	var n := int(rate * dur)
-	var data := PackedByteArray()
-	data.resize(n * 2)
-	var lp := 0.0
-	for i in n:
-		var t := float(i) / rate
-		var env := smoothstep(0.0, 0.12, t) * (1.0 - smoothstep(dur - 0.45, dur, t))
-		var f := 146.8 * (1.0 + 0.006 * sin(TAU * 5.2 * t)) * (1.0 + 0.04 * (1.0 - smoothstep(0.0, 0.15, t)))
-		var ph := fmod(f * t, 1.0)
-		var saw := 2.0 * ph - 1.0
-		var ph2 := fmod(f * 1.5 * t, 1.0)
-		var s := saw * 0.6 + (2.0 * ph2 - 1.0) * 0.25 + sin(TAU * f * 0.5 * t) * 0.35
-		lp += (s - lp) * 0.12
-		var v := clampf(lp * env * 0.55, -1.0, 1.0)
-		data.encode_s16(i * 2, int(v * 32000.0))
-	_horn = AudioStreamWAV.new()
-	_horn.format = AudioStreamWAV.FORMAT_16_BITS
-	_horn.mix_rate = rate
-	_horn.stereo = false
-	_horn.data = data
-	return _horn
 
 
 # =====================================================================

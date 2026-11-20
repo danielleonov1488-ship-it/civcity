@@ -1,0 +1,57 @@
+Legion battle sounds (assets/sfx/battle2) — sources
+
+Sonniss GDC Game Audio Bundles (https://sonniss.com/gameaudiogdc) — royalty-free, commercial use, no attribution required.
+Libraries used:
+  - 2496SoundEffects - Super Heroes Sound Design
+  - 344 Audio - Medieval Battle
+  - Alexander Kopeikin - Rocks
+  - Articulated Sounds - Fight Vocalizations
+  - Baxter Audio - IMPACT
+  - Bottle Rocket Fx - Impact Collection
+  - Bottle Rocket Fx - Scream
+  - Coll Anderson - The Battle Crowd Collection Add on
+  - David Dumais Audio - Melee Weapons Sound Effects Pack 1
+  - David Dumais Audio - Weapon Sounds - Weapon Swings
+  - Double Trouble Audio - Medieval Armor and Impacts
+  - Eiravaein Works - Nocked
+  - G4F SFX - Horses
+  - Game Audio Factory - GAFSFX03 - Small Crowds Outdoors
+  - Gamemaster Audio -  Human Vocalizations
+  - Gamemaster Audio -  Punch Sound Pack
+  - Gamemaster Audio - Animal Sounds
+  - Gamemaster Audio - Punch and Combat Sounds
+  - Gamemaster Audio - Troll Monster Vocalizations
+  - Gregor Quendel – Designed Fire
+  - Jack Powell - Shetland Pony Vox
+  - Joshua Reinhardt - Ultimate Creature Footstep and Movement Library
+  - Justsoundeffects - Melee Weapons
+  - Mechanical Wave - Farm Animals
+  - Mechanical Wave - Rock,Brick and Dirt - Part 02
+  - Red Libraries - Bodyfall
+  - Rock The Speakerbox - Melee
+  - SmartSoundFX – Medieval
+  - Sound Ex Machina -  Animal Farm
+  - Sound Ex Machina - Rolling Objects
+  - Sound Spark LLC – Gore
+  - Sound Spark LLC – Magic Spells, Buffs and Attacks
+  - SoundBits -  Screams & Shouts 2 - Humans
+  - SoundBits -  Screams & Shouts 2 - Monsters
+  - SoundFxwizard - PARTICLES An Organic & Granular Journey
+  - SoundMorph - FUTURE WEAPONS 3
+  - Soundrangers - Foley Elements Rocks, Dirt And Stone
+  - The AudioVille - Wooden Staffs and Sword Fight
+  - The Chris Alan - Hand-to-Hand Combat - Body Hits & Vocal Excursions
+
+Wikimedia Commons — public domain / CC0 (no attribution required):
+  - Elephant sound effect.wav (CC0) https://commons.wikimedia.org/wiki/File:Elephant_sound_effect.wav
+  - Elephant voice - trumpeting.ogg (CC0) https://commons.wikimedia.org/wiki/File:Elephant_voice_-_trumpeting.ogg
+  - Grizzly bear sound effect.wav (CC0) https://commons.wikimedia.org/wiki/File:Grizzly_bear_sound_effect.wav
+  - Yellowstone sound library - Grizzly Bears Roar - 001.mp3 (Public domain) https://commons.wikimedia.org/wiki/File:Yellowstone_sound_library_-_Grizzly_Bears_Roar_-_001.mp3
+  - Yellowstone sound library - Grizzly Bear vocalizations - 001.mp3 (Public domain) https://commons.wikimedia.org/wiki/File:Yellowstone_sound_library_-_Grizzly_Bear_vocalizations_-_001.mp3
+  - Buffalo and bison sound effect.wav (CC0) https://commons.wikimedia.org/wiki/File:Buffalo_and_bison_sound_effect.wav
+  - Bison.wav (Public domain) https://commons.wikimedia.org/wiki/File:Bison.wav
+  - Hunting horn tone.ogg (CC0) https://commons.wikimedia.org/wiki/File:Hunting_horn_tone.ogg
+  - Six Horses Galloping By.ogg (CC0) https://commons.wikimedia.org/wiki/File:Six_Horses_Galloping_By.ogg
+  - Horse in Antefasy.wav (CC0) https://commons.wikimedia.org/wiki/File:Horse_in_Antefasy.wav
+
+Cut, trimmed, pitched and loudness-normalised for CivCity by .work/py/sfx_process.py.

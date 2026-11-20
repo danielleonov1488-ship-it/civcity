@@ -1,0 +1,808 @@
+{
+ "hit_metal": [
+  {
+   "file": "hit_metal_01.ogg",
+   "src": "Weapon_Impact_Parry_01.wav",
+   "len": 0.88,
+   "loop": false
+  },
+  {
+   "file": "hit_metal_02.ogg",
+   "src": "Chainmail_Impact_Hard_03.wav",
+   "len": 0.53,
+   "loop": false
+  },
+  {
+   "file": "hit_metal_03.ogg",
+   "src": "Plate_Impact_Hard_02.wav",
+   "len": 0.48,
+   "loop": false
+  },
+  {
+   "file": "hit_metal_04.ogg",
+   "src": "SWORD Hit Metal 02.wav",
+   "len": 0.62,
+   "loop": false
+  },
+  {
+   "file": "hit_metal_05.ogg",
+   "src": "SWSH_Sword Slash Impact V2 Assorted 18_DDUMAIS_NONE.wav",
+   "len": 0.8,
+   "loop": false
+  },
+  {
+   "file": "hit_metal_06.ogg",
+   "src": "WEAPArmr_Metal Shield Block Hits_JSE_MW.wav",
+   "len": 0.95,
+   "loop": false
+  },
+  {
+   "file": "hit_metal_07.ogg",
+   "src": "WEAPArmr_Metal Shield Block Hits_JSE_MW.wav",
+   "len": 1.05,
+   "loop": false
+  },
+  {
+   "file": "hit_metal_08.ogg",
+   "src": "WEAPArmr_Metal Shield Block Hits_JSE_MW.wav",
+   "len": 0.85,
+   "loop": false
+  },
+  {
+   "file": "hit_metal_09.ogg",
+   "src": "WEAPArmr_Metal Shield Block Hits_JSE_MW.wav",
+   "len": 0.78,
+   "loop": false
+  },
+  {
+   "file": "hit_metal_10.ogg",
+   "src": "WEAPArmr_Metal Shield Block Hits_JSE_MW.wav",
+   "len": 0.73,
+   "loop": false
+  }
+ ],
+ "hit_wood": [
+  {
+   "file": "hit_wood_01.ogg",
+   "src": "WOODImpt_Impact Wood 23_DDUMAIS_NONE.wav",
+   "len": 0.77,
+   "loop": false
+  },
+  {
+   "file": "hit_wood_02.ogg",
+   "src": "WOODImpt_Impact Wood 23_DDUMAIS_NONE.wav",
+   "len": 0.12,
+   "loop": false
+  },
+  {
+   "file": "hit_wood_03.ogg",
+   "src": "STICK HIT-07 - DEFEND.M.wav",
+   "len": 0.17,
+   "loop": false
+  },
+  {
+   "file": "hit_wood_04.ogg",
+   "src": "STICK HIT-13 - WILD.M.wav",
+   "len": 0.22,
+   "loop": false
+  },
+  {
+   "file": "hit_wood_05.ogg",
+   "src": "WOODEN SWORD HIT-11.M.wav",
+   "len": 0.18,
+   "loop": false
+  }
+ ],
+ "hit_heavy": [
+  {
+   "file": "hit_heavy_01.ogg",
+   "src": "WEAPAxe_Long Two-Handed Axe Flesh Hit_JSE_MW.wav",
+   "len": 0.69,
+   "loop": false
+  },
+  {
+   "file": "hit_heavy_02.ogg",
+   "src": "WEAPAxe_Long Two-Handed Axe Flesh Hit_JSE_MW.wav",
+   "len": 0.78,
+   "loop": false
+  },
+  {
+   "file": "hit_heavy_03.ogg",
+   "src": "WEAPAxe_Long Two-Handed Axe Flesh Hit_JSE_MW.wav",
+   "len": 0.95,
+   "loop": false
+  },
+  {
+   "file": "hit_heavy_04.ogg",
+   "src": "WEAPAxe_Long Two-Handed Axe Flesh Hit_JSE_MW.wav",
+   "len": 0.87,
+   "loop": false
+  },
+  {
+   "file": "hit_heavy_05.ogg",
+   "src": "WEAPAxe_Long Two-Handed Axe Flesh Hit_JSE_MW.wav",
+   "len": 0.69,
+   "loop": false
+  },
+  {
+   "file": "hit_heavy_06.ogg",
+   "src": "Hand-to-Hand Combat - Body Hits - Deep Punch 02.wav",
+   "len": 0.2,
+   "loop": false
+  },
+  {
+   "file": "hit_heavy_07.ogg",
+   "src": "Hand-to-Hand Combat - Body Hits - Body Slam Floor 08.wav",
+   "len": 0.42,
+   "loop": false
+  }
+ ],
+ "hit_flesh": [
+  {
+   "file": "hit_flesh_01.ogg",
+   "src": "punch_general_body_impact_03.wav",
+   "len": 0.27,
+   "loop": false
+  },
+  {
+   "file": "hit_flesh_02.ogg",
+   "src": "punch_grit_wet_impact_05.wav",
+   "len": 0.36,
+   "loop": false
+  },
+  {
+   "file": "hit_flesh_03.ogg",
+   "src": "Melee_Sword_Attack_04.wav",
+   "len": 0.96,
+   "loop": false
+  }
+ ],
+ "swing": [
+  {
+   "file": "swing_01.ogg",
+   "src": "MeleeSwingsPack_96khz_Mono_DesignedSwings12.wav",
+   "len": 1.04,
+   "loop": false
+  },
+  {
+   "file": "swing_02.ogg",
+   "src": "MeleeSwingsPack_96khz_Stereo_HighSwings15.wav",
+   "len": 0.34,
+   "loop": false
+  },
+  {
+   "file": "swing_03.ogg",
+   "src": "MeleeSwingsPack_96khz_Stereo_LowSwings31.wav",
+   "len": 1.2,
+   "loop": false
+  },
+  {
+   "file": "swing_04.ogg",
+   "src": "MeleeSwingsPack_96khz_Stereo_NormalSwings39.wav",
+   "len": 0.71,
+   "loop": false
+  },
+  {
+   "file": "swing_05.ogg",
+   "src": "SWSH_Swing 3 Large 03_DDUMAIS_NONE.wav",
+   "len": 0.37,
+   "loop": false
+  },
+  {
+   "file": "swing_06.ogg",
+   "src": "whoosh_weapon_knife_swing_04.wav",
+   "len": 0.21,
+   "loop": false
+  }
+ ],
+ "bow_draw": [
+  {
+   "file": "bow_draw_01.ogg",
+   "src": "Nocked,archery,crossbow1,composite,string,functions,bolt,slideintorest,set,drag,nock,remov",
+   "len": 0.44,
+   "loop": false
+  },
+  {
+   "file": "bow_draw_02.ogg",
+   "src": "Nocked,archery,crossbow1,composite,string,functions,bolt,slideintorest,set,drag,nock,remov",
+   "len": 0.78,
+   "loop": false
+  }
+ ],
+ "bow_release": [
+  {
+   "file": "bow_release_01.ogg",
+   "src": "Nocked,archery,firing,loose,crossbow1,carbonbolt,atbow,snap,buzz,airy,bright,alt.wav",
+   "len": 0.18,
+   "loop": false
+  },
+  {
+   "file": "bow_release_02.ogg",
+   "src": "Hawk's Arrow Flies Bow and Arrow shoot 2.wav",
+   "len": 1.1,
+   "loop": false
+  },
+  {
+   "file": "bow_release_03.ogg",
+   "src": "Nocked,archery,firing,loose,Vaeyanbow,midflight,wide,mythic,sleek,swirl,rattle,alt14.wav",
+   "len": 0.51,
+   "loop": false
+  }
+ ],
+ "arrow_fly": [
+  {
+   "file": "arrow_fly_01.ogg",
+   "src": "PARTICLES_WHOOSH_Arrow 01.wav",
+   "len": 1.06,
+   "loop": false
+  }
+ ],
+ "arrow_hit": [
+  {
+   "file": "arrow_hit_01.ogg",
+   "src": "BOW Arrow Hit 05.wav",
+   "len": 0.83,
+   "loop": false
+  },
+  {
+   "file": "arrow_hit_02.ogg",
+   "src": "Future Weapons 3 - Crossbow -Arrow Hit 2.wav",
+   "len": 0.81,
+   "loop": false
+  }
+ ],
+ "sling_whirl": [
+  {
+   "file": "sling_whirl_01.ogg",
+   "src": "MELEE - CK - ROPE WHOOSH Fast Light 01.wav",
+   "len": 0.27,
+   "loop": false
+  },
+  {
+   "file": "sling_whirl_02.ogg",
+   "src": "MELEE - CK - ROPE WHOOSH Fast Light 01.wav",
+   "len": 0.38,
+   "loop": false
+  },
+  {
+   "file": "sling_whirl_03.ogg",
+   "src": "MELEE - CK - ROPE WHOOSH Fast Light 01.wav",
+   "len": 0.27,
+   "loop": false
+  },
+  {
+   "file": "sling_whirl_04.ogg",
+   "src": "MELEE - CK - ROPE WHOOSH Fast Light 01.wav",
+   "len": 0.23,
+   "loop": false
+  }
+ ],
+ "stone_hit": [
+  {
+   "file": "stone_hit_01.ogg",
+   "src": "Rock Hit and Bounce Dirt_RBDII 06.wav",
+   "len": 0.78,
+   "loop": false
+  },
+  {
+   "file": "stone_hit_02.ogg",
+   "src": "rock impact medium 26.wav",
+   "len": 1.52,
+   "loop": false
+  }
+ ],
+ "boulder": [
+  {
+   "file": "boulder_01.ogg",
+   "src": "boulder_impact_on_stones_14.wav",
+   "len": 0.74,
+   "loop": false
+  },
+  {
+   "file": "boulder_02.ogg",
+   "src": "boulder_impact_on_stones_14.wav",
+   "len": 0.29,
+   "loop": false
+  },
+  {
+   "file": "boulder_03.ogg",
+   "src": "rock impact medium 26.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "boulder_04.ogg",
+   "src": "rock impact medium 26.wav",
+   "len": 0.64,
+   "loop": false
+  }
+ ],
+ "fall": [
+  {
+   "file": "fall_01.ogg",
+   "src": "RL_bodyfall_Dirt_M4_Close_Stereo_Hard_Impact_10.wav",
+   "len": 0.66,
+   "loop": false
+  },
+  {
+   "file": "fall_02.ogg",
+   "src": "RL_bodyfall_Concrete_Generic_Feet_Mid_Mono_Med_Impact_02.wav",
+   "len": 0.78,
+   "loop": false
+  },
+  {
+   "file": "fall_03.ogg",
+   "src": "ARMOR Body Drop Chain Leather Short 02.wav",
+   "len": 0.63,
+   "loop": false
+  }
+ ],
+ "grunt": [
+  {
+   "file": "grunt_01.ogg",
+   "src": "Male_Grunt-Shout_317.wav",
+   "len": 0.68,
+   "loop": false
+  },
+  {
+   "file": "grunt_02.ogg",
+   "src": "EMOTE Joshua, Man, Pain Hurt Grunt Big 03.wav",
+   "len": 0.35,
+   "loop": false
+  },
+  {
+   "file": "grunt_03.ogg",
+   "src": "Grunt_Pain_Male_BB_10_SCREAM LIBRARY_BRFX-004.wav",
+   "len": 0.38,
+   "loop": false
+  },
+  {
+   "file": "grunt_04.ogg",
+   "src": "EMOTE David, Man, Anger Fight Grunt Special Power 03.wav",
+   "len": 0.43,
+   "loop": false
+  }
+ ],
+ "death_vox": [
+  {
+   "file": "death_vox_01.ogg",
+   "src": "voice_male_b_death_low_09.wav",
+   "len": 1.14,
+   "loop": false
+  },
+  {
+   "file": "death_vox_02.ogg",
+   "src": "voice_male_b_death_low_09.wav",
+   "len": 1.11,
+   "loop": false
+  },
+  {
+   "file": "death_vox_03.ogg",
+   "src": "Male_Shout-of-Pain_132.wav",
+   "len": 0.85,
+   "loop": false
+  }
+ ],
+ "battle_cry": [
+  {
+   "file": "battle_cry_01.ogg",
+   "src": "Battle Cry, Charge, Screams, Army Attacking, Running 1.wav",
+   "len": 4.5,
+   "loop": false
+  },
+  {
+   "file": "battle_cry_02.ogg",
+   "src": "GAF SFX03 - War Unit - Small Crowd Mixed, Shout Charge Attack, Long, Aaah - ORTF.wav",
+   "len": 4.5,
+   "loop": false
+  },
+  {
+   "file": "battle_cry_03.ogg",
+   "src": "GAF SFX03 - War Unit - Small Crowd Mixed, Shout Charge Attack, Long, Aaah - ORTF.wav",
+   "len": 4.5,
+   "loop": false
+  },
+  {
+   "file": "battle_cry_04.ogg",
+   "src": "GAF SFX03 - War Unit - Solo Man 5, Charge Attack, Long, Ya - ORTF.wav",
+   "len": 2.92,
+   "loop": false
+  },
+  {
+   "file": "battle_cry_05.ogg",
+   "src": "GAF SFX03 - War Unit - Solo Man 5, Charge Attack, Long, Ya - ORTF.wav",
+   "len": 2.98,
+   "loop": false
+  },
+  {
+   "file": "battle_cry_06.ogg",
+   "src": "voice_male_b_battle_shout_short_09.wav",
+   "len": 0.86,
+   "loop": false
+  }
+ ],
+ "war_drum": [
+  {
+   "file": "war_drum_01.ogg",
+   "src": "03 Hit Big Drum.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "war_drum_02.ogg",
+   "src": "Impact_Drum Hit_03.wav",
+   "len": 1.8,
+   "loop": false
+  }
+ ],
+ "war_horn": [
+  {
+   "file": "war_horn_01.ogg",
+   "src": "Hunting horn tone.ogg",
+   "len": 1.73,
+   "loop": false
+  },
+  {
+   "file": "war_horn_02.ogg",
+   "src": "Hunting horn tone.ogg",
+   "len": 2.6,
+   "loop": false
+  }
+ ],
+ "battle_bed": [
+  {
+   "file": "battle_bed_01.ogg",
+   "src": "ADR Battle In House 02.wav",
+   "len": 5.66,
+   "loop": true
+  }
+ ],
+ "gallop": [
+  {
+   "file": "gallop_01.ogg",
+   "src": "G4F SFX06 - HORSES - Galloping outside in sand.wav",
+   "len": 6.0,
+   "loop": true
+  },
+  {
+   "file": "gallop_02.ogg",
+   "src": "Six Horses Galloping By.ogg",
+   "len": 4.0,
+   "loop": true
+  }
+ ],
+ "horse_snort": [
+  {
+   "file": "horse_snort_01.ogg",
+   "src": "G4F SFX06 - HORSES - Snort 03.wav",
+   "len": 0.55,
+   "loop": false
+  },
+  {
+   "file": "horse_snort_02.ogg",
+   "src": "G4F SFX06 - HORSES - Snort 03.wav",
+   "len": 0.5,
+   "loop": false
+  },
+  {
+   "file": "horse_snort_03.ogg",
+   "src": "G4F SFX06 - HORSES - Snort 03.wav",
+   "len": 1.05,
+   "loop": false
+  }
+ ],
+ "horse_whinny": [
+  {
+   "file": "horse_whinny_01.ogg",
+   "src": "Pony Whinny Heavy_05.wav",
+   "len": 0.43,
+   "loop": false
+  },
+  {
+   "file": "horse_whinny_02.ogg",
+   "src": "Pony Whinny Heavy_05.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "horse_whinny_03.ogg",
+   "src": "G4F SFX06 - HORSES - Whinny distant 01.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "horse_whinny_04.ogg",
+   "src": "G4F SFX06 - HORSES - Whinny distant 01.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "horse_whinny_05.ogg",
+   "src": "Horse in Antefasy.wav",
+   "len": 1.09,
+   "loop": false
+  }
+ ],
+ "cart_roll": [
+  {
+   "file": "cart_roll_01.ogg",
+   "src": "Wooden cart rolling on concrete 04.wav",
+   "len": 1.53,
+   "loop": true
+  }
+ ],
+ "bear_roar": [
+  {
+   "file": "bear_roar_01.ogg",
+   "src": "Yellowstone sound library - Grizzly Bears Roar - 001.mp3",
+   "len": 1.41,
+   "loop": false
+  },
+  {
+   "file": "bear_roar_02.ogg",
+   "src": "Yellowstone sound library - Grizzly Bears Roar - 001.mp3",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "bear_roar_03.ogg",
+   "src": "Yellowstone sound library - Grizzly Bears Roar - 001.mp3",
+   "len": 1.28,
+   "loop": false
+  },
+  {
+   "file": "bear_roar_04.ogg",
+   "src": "Grizzly bear sound effect.wav",
+   "len": 1.66,
+   "loop": false
+  },
+  {
+   "file": "bear_roar_05.ogg",
+   "src": "Grizzly bear sound effect.wav",
+   "len": 1.41,
+   "loop": false
+  },
+  {
+   "file": "bear_roar_06.ogg",
+   "src": "Grizzly bear sound effect.wav",
+   "len": 1.34,
+   "loop": false
+  },
+  {
+   "file": "bear_roar_07.ogg",
+   "src": "Grizzly bear sound effect.wav",
+   "len": 0.67,
+   "loop": false
+  },
+  {
+   "file": "bear_roar_08.ogg",
+   "src": "Monster_Roar_Growl_164.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "bear_roar_09.ogg",
+   "src": "Monster_Roar_Growl_164.wav",
+   "len": 0.31,
+   "loop": false
+  }
+ ],
+ "bear_hurt": [
+  {
+   "file": "bear_hurt_01.ogg",
+   "src": "bear_pain_hurt_groan_01.wav",
+   "len": 0.38,
+   "loop": false
+  },
+  {
+   "file": "bear_hurt_02.ogg",
+   "src": "Yellowstone sound library - Grizzly Bear vocalizations - 001.mp3",
+   "len": 1.2,
+   "loop": false
+  },
+  {
+   "file": "bear_hurt_03.ogg",
+   "src": "Yellowstone sound library - Grizzly Bear vocalizations - 001.mp3",
+   "len": 1.2,
+   "loop": false
+  },
+  {
+   "file": "bear_hurt_04.ogg",
+   "src": "Yellowstone sound library - Grizzly Bear vocalizations - 001.mp3",
+   "len": 1.2,
+   "loop": false
+  }
+ ],
+ "boar": [
+  {
+   "file": "boar_01.ogg",
+   "src": "ANMLFarm_Pig Squeal and Snort-18_MWSFX_FA.wav",
+   "len": 1.0,
+   "loop": false
+  },
+  {
+   "file": "boar_02.ogg",
+   "src": "ANMLFarm_Pig Squeal and Snort-18_MWSFX_FA.wav",
+   "len": 1.0,
+   "loop": false
+  },
+  {
+   "file": "boar_03.ogg",
+   "src": "ANMLFarm_Pig Squeal and Snort-18_MWSFX_FA.wav",
+   "len": 1.0,
+   "loop": false
+  },
+  {
+   "file": "boar_04.ogg",
+   "src": "ANMLFarm_Pig Squeal and Snort-18_MWSFX_FA.wav",
+   "len": 0.95,
+   "loop": false
+  }
+ ],
+ "bull": [
+  {
+   "file": "bull_01.ogg",
+   "src": "Bison.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "bull_02.ogg",
+   "src": "Bison.wav",
+   "len": 0.99,
+   "loop": false
+  },
+  {
+   "file": "bull_03.ogg",
+   "src": "Buffalo and bison sound effect.wav",
+   "len": 1.6,
+   "loop": false
+  },
+  {
+   "file": "bull_04.ogg",
+   "src": "Buffalo and bison sound effect.wav",
+   "len": 1.6,
+   "loop": false
+  },
+  {
+   "file": "bull_05.ogg",
+   "src": "Buffalo and bison sound effect.wav",
+   "len": 1.6,
+   "loop": false
+  },
+  {
+   "file": "bull_06.ogg",
+   "src": "Buffalo and bison sound effect.wav",
+   "len": 1.6,
+   "loop": false
+  }
+ ],
+ "elephant": [
+  {
+   "file": "elephant_01.ogg",
+   "src": "Elephant sound effect.wav",
+   "len": 2.36,
+   "loop": false
+  },
+  {
+   "file": "elephant_02.ogg",
+   "src": "Elephant sound effect.wav",
+   "len": 2.22,
+   "loop": false
+  },
+  {
+   "file": "elephant_03.ogg",
+   "src": "Elephant sound effect.wav",
+   "len": 3.0,
+   "loop": false
+  },
+  {
+   "file": "elephant_04.ogg",
+   "src": "Elephant sound effect.wav",
+   "len": 1.26,
+   "loop": false
+  },
+  {
+   "file": "elephant_05.ogg",
+   "src": "Elephant sound effect.wav",
+   "len": 1.04,
+   "loop": false
+  },
+  {
+   "file": "elephant_06.ogg",
+   "src": "Elephant voice - trumpeting.ogg",
+   "len": 1.31,
+   "loop": false
+  }
+ ],
+ "giant_vox": [
+  {
+   "file": "giant_vox_01.ogg",
+   "src": "troll_monster_growl_long_05.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "giant_vox_02.ogg",
+   "src": "troll_monster_growl_long_05.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "giant_vox_03.ogg",
+   "src": "troll_monster_taunt_03.wav",
+   "len": 2.5,
+   "loop": false
+  },
+  {
+   "file": "giant_vox_04.ogg",
+   "src": "troll_monster_taunt_03.wav",
+   "len": 0.74,
+   "loop": false
+  },
+  {
+   "file": "giant_vox_05.ogg",
+   "src": "Monster_Roar_Growl_009.wav",
+   "len": 1.8,
+   "loop": false
+  },
+  {
+   "file": "giant_vox_06.ogg",
+   "src": "Monster_Roar_Growl_009.wav",
+   "len": 1.8,
+   "loop": false
+  }
+ ],
+ "giant_hurt": [
+  {
+   "file": "giant_hurt_01.ogg",
+   "src": "troll_monster_hurt_pain_01.wav",
+   "len": 0.66,
+   "loop": false
+  },
+  {
+   "file": "giant_hurt_02.ogg",
+   "src": "troll_monster_death_01.wav",
+   "len": 2.5,
+   "loop": false
+  }
+ ],
+ "oil": [
+  {
+   "file": "oil_01.ogg",
+   "src": "Designed Fire - Swooshes - Burst, evolving 34.wav",
+   "len": 2.5,
+   "loop": false
+  },
+  {
+   "file": "oil_02.ogg",
+   "src": "Designed Fire - Swooshes - Burst, evolving 34.wav",
+   "len": 2.5,
+   "loop": false
+  }
+ ],
+ "heal": [
+  {
+   "file": "heal_01.ogg",
+   "src": "Ice_Spell_Ice_Spell_Buff_Positive_02.wav",
+   "len": 1.4,
+   "loop": false
+  }
+ ],
+ "victory": [
+  {
+   "file": "victory_01.ogg",
+   "src": "GAF SFX03 - Audience Reactions - Small Crowd Men, Cheer Applause, Long, Decrescendo, Cresc",
+   "len": 5.0,
+   "loop": false
+  }
+ ],
+ "ambience_field": [
+  {
+   "file": "ambience_field_01.ogg",
+   "src": "Rural background, birdsong, cuckoos, loop.wav",
+   "len": 20.0,
+   "loop": true
+  }
+ ]
+}
