@@ -168,7 +168,13 @@ func _run() -> void:
 	if not check(lg.rations > before and not camp._collection_fx.is_empty(), "collect and fly animation"):
 		return
 	camp.show_building("hq")
-	if not check(camp.selected_plot == int(lg.fort_slot_plot("hq")["id"]) and camp.main_action.get_meta("action_name") == I18n.t("Расширить форт"), "HQ expansion action"):
+	var expand := camp.card.find_child("FortMainAction", true, false) as Button
+	if not check(camp.selected_plot == int(lg.fort_slot_plot("hq")["id"]) and expand != null
+		and expand.is_visible_in_tree() and expand.text == I18n.t("Расширить форт") and expand.icon != null,
+		"HQ expansion action"):
+		return
+	if not check(expand.disabled == (lg.fort_can_expand() != "") and camp.upgrade_button.text == I18n.t("Улучшить"),
+		"separate HQ level action and expansion availability"):
 		return
 	if not await shot("4_card_hq.png"):
 		return
@@ -261,9 +267,17 @@ func _run() -> void:
 	if not check(lg.fort_can_expand() == "" and not camp.main_action.disabled, "HQ expansion allowed: " + lg.fort_can_expand()):
 		return
 	camp.main_action.pressed.emit()
-	if not check(not (lg.fort["up"] as Dictionary).is_empty(), "HQ starts expansion: " + lg.fort_can_expand()):
+	var floor := camp.modal_panel.find_child("FortExpand_floor", true, false) as Button
+	if not check(floor != null and not floor.disabled, "HQ offers adding a floor"):
 		return
-	if not check(camp.card_ring.visible, "HQ expansion timer visible"):
+	floor.pressed.emit()
+	var confirm := camp.modal_panel.find_child("FortExpansionConfirm", true, false) as Button
+	if not check(confirm != null and not confirm.disabled, "HQ expansion confirmation"):
+		return
+	confirm.pressed.emit()
+	if not check(lg.fort["up"].get("axis") == "floor", "HQ starts expansion: " + lg.fort_can_expand()):
+		return
+	if not check(is_instance_valid(camp.card_ring) and camp.card_ring.is_visible_in_tree(), "HQ expansion timer visible"):
 		return
 	lg.fort["up"]["end"] = Legion.now() - 1
 	lg.fort_finish()
@@ -282,6 +296,9 @@ func _run() -> void:
 	if not check(camp.stock_labels.size() == 3, "warehouse material amounts and caps"):
 		return
 	camp._close_modal()
+	# Строим Арсенал без Склада, поэтому выдаём дерево сверх обычного лимита.
+	var arsenal_cost := Legion.fort_cost("arsenal", 1)
+	lg.mats["wood"] = maxf(lg.mat("wood"), float(arsenal_cost["mats"]["wood"]))
 	var arsenal := build("arsenal")
 	if not check(arsenal >= 0 and not lg.camp_built("store"), "arsenal without warehouse fixture"):
 		return

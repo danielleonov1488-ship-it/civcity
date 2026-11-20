@@ -1557,17 +1557,18 @@ func _fort_prep_squads(body: VBoxContainer, stage: Dictionary) -> void:
 	var allies := HBoxContainer.new()
 	allies.name = "FortPrepAllies"
 	allies.alignment = BoxContainer.ALIGNMENT_CENTER
-	allies.add_theme_constant_override("separation", 26)
+	allies.add_theme_constant_override("separation", 20)
 	body.add_child(allies)
 	for index in Legion.SQUAD_V3:
 		var person := lg.soldier(int(lg.squad3[index]))
-		var locked := person.is_empty() and lg.squad_count() >= lg.slots()
+		var unlock := lg.fort_place_unlock_level(index)
+		var locked := unlock > 0
 		var name_text := String(person.get("name", ""))
 		var role := ""
 		var icon := Kit.texture("plus")
 		if locked:
-			icon = _ic39("lock")
-			name_text = I18n.t("Все места заняты")
+			icon = Look.icon("lock")
+			name_text = I18n.t("Штаб %s") % Legion.roman(unlock)
 		elif person.is_empty():
 			name_text = I18n.t("Свободно")
 		else:
@@ -1623,7 +1624,7 @@ func _fort_prep_squads(body: VBoxContainer, stage: Dictionary) -> void:
 
 func _fort_prep_slot(name_text: String, role: String, icon: Texture2D, locked: bool, person: Dictionary, pick: Callable) -> VBoxContainer:
 	var slot := VBoxContainer.new()
-	slot.custom_minimum_size.x = 137
+	slot.custom_minimum_size.x = 164
 	slot.add_theme_constant_override("separation", 2)
 	var frame := Look.button("", icon if person.is_empty() else null, Look.DARK if locked else Look.OLIVE, Vector2(100, 100), true)
 	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -1639,8 +1640,13 @@ func _fort_prep_slot(name_text: String, role: String, icon: Texture2D, locked: b
 	else:
 		frame.mouse_default_cursor_shape = Control.CURSOR_ARROW
 		frame.focus_mode = Control.FOCUS_NONE
-	slot.add_child(_fort_center(name_text, 22))
-	slot.add_child(_fort_center(role, 18))
+	var heading := _fort_center(name_text, 22)
+	heading.name = "FortPrepPlaceLabel"
+	heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	slot.add_child(heading)
+	var status := _fort_center(role, 18)
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	slot.add_child(status)
 	if not person.is_empty():
 		var hp := Look.meter(1.0 if lg.s_state(person) == "ready" else 0.0, 1.0)
 		hp.custom_minimum_size = Vector2(68, 7)
@@ -1663,7 +1669,6 @@ func _fort_power_chip(value: int, color: Color) -> PanelContainer:
 func _fort_center(value: String, pixels: int) -> Label:
 	var label := Look.label(value, pixels)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	return label
 
 
@@ -2727,6 +2732,10 @@ func _center_later(p: Control) -> void:
 	await get_tree().process_frame
 	if is_instance_valid(p):
 		Kit.fit_modal(p, size)
+		if p.name == "FortBattlePrep" and lg.fort_guide_combat():
+			var guide_space := 170.0 * minf(1.0, size.y / 840.0)
+			if p.position.y + p.size.y * p.scale.y > size.y - guide_space:
+				Kit.fit_modal(p, size - Vector2(0, guide_space))
 
 
 func _close_overlay() -> void:

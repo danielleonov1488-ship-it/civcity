@@ -5556,9 +5556,25 @@ func camp_finish(slot: String) -> String:
 	return ""
 
 
-## Мест в отряде при Казарме уровня lvl: 3, 4 (с 3-го), 5 (с 5-го)
+## Вместимость отряда на уровне Штаба.
 static func places_at(lvl: int) -> int:
 	return 5 if lvl >= 6 else 4 if lvl >= 4 else 3 if lvl >= 2 else 2
+
+
+## Учитываем занятые места в любом ряду, в том числе в старых сохранениях.
+func fort_place_unlock_level(index: int) -> int:
+	if squad3[index] != 0:
+		return 0
+	var capacity := squad_count()
+	for i in range(index + 1):
+		if squad3[i] == 0:
+			capacity += 1
+	if capacity <= slots():
+		return 0
+	for level in range(2, 7):
+		if places_at(level) >= capacity:
+			return level
+	return 0
 
 
 static func place_barracks_level(index: int) -> int:
