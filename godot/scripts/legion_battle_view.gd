@@ -62,6 +62,8 @@ var _trail_depth := 51.0
 var _field_bounds := Rect2()
 var _fighters: Array[Fighter] = []
 var _wide_fighters: Array[Fighter] = []
+var _mounted_line_edge := INF
+var _mounted_front_min := -INF
 var _layout_step := -1
 var _layout_time := 0.0
 var _layout_sim_time := 0.0
@@ -332,6 +334,10 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 	views[u.id] = f
 	_fighters.append(f)
 	_layout_step = -1
+	if not legacy_layout and f.mounted_line:
+		# Расставляем подкрепление и обновляем 3D-слой в том же кадре.
+		_layout_time = 1.0 / 60.0
+		_people_time = 1.0 / 80.0
 	return f
 
 
@@ -450,9 +456,12 @@ func _fit_foot(f: Fighter, pos: Vector2) -> Vector2:
 		left = maxf(left, -f.front_limit)
 		if f.rear:
 			right = clampf(-rear_edge, left, right)
+		right = clampf(_mounted_line_edge - f.outline.end.x, left, right)
 	else:
 		right = minf(right, f.front_limit)
-		if f.rear:
+		if f.mounted_line and not f.rear:
+			left = clampf(_mounted_front_min - f.outline.position.x, left, right)
+		if f.rear and not f.rear_mount:
 			left = clampf(rear_edge, left, right)
 	return Vector2(clampf(pos.x, left, right), clampf(pos.y, -_trail_depth, _trail_depth))
 
@@ -460,21 +469,35 @@ func _fit_foot(f: Fighter, pos: Vector2) -> Vector2:
 func _plan_layout() -> void:
 	var ally_rear := INF
 	var enemy_rear := INF
-	for f in _fighters:
+	var ally_front_width := 0.0
+	var mount_edge := _field_bounds.end.x - 12.0
+	for i in range(_fighters.size() - 1, -1, -1):
+		var f: Fighter = _fighters[i]
 		f.approachers.clear()
 		f.primary_attacker = null
 		f.contact_front = null
 		f.visit = 0
 		f.contact_blend = 0.0
-		if not f.unit.alive or not f.rear:
+		if not f.unit.alive:
+			continue
+		if not f.rear:
+			if f.side_dir < 0.0:
+				ally_front_width += f.body_width()
 			continue
 		var u := f.unit
 		f.goal = _fit_foot(f, f.layout_point(u.x, u.z))
+		if f.rear_mount:
+			# Резервируем конным стрелкам место для полного разворота.
+			f.goal.x = minf(f.goal.x, mount_edge - f.outline.end.x)
+			f.goal = _fit_foot(f, f.goal)
+			mount_edge = f.goal.x + f.outline.position.x - 12.0
 		var gate := minf(f.goal.x * f.side_dir, f.position.x * f.side_dir) - f.rear_spacing()
 		if f.side_dir < 0.0:
 			ally_rear = minf(ally_rear, gate)
 		else:
 			enemy_rear = minf(enemy_rear, gate)
+	# Перед конницей должно остаться место для всего пешего строя.
+	_mounted_front_min = -ally_rear + ally_front_width + 12.0
 	for f in _fighters:
 		var previous := f.layout_target
 		f.layout_target = null
@@ -508,6 +531,11 @@ func _plan_layout() -> void:
 			_reserve_spots(target)
 	for f in _fighters:
 		var target := f.layout_target
+		if f.holds_chariot():
+			f.goal = f.position
+			f.visit = 2
+		if f.visit != 0 or (target != null and target.holds_chariot()):
+			continue
 		if target == null or target.layout_target != f or f.slot != 1 or target.slot != 1 or f.unit.id > target.unit.id:
 			continue
 		# Взаимная пара встречается посередине между исходными местами.
@@ -591,7 +619,7 @@ func _spot(f: Fighter, target: Fighter, at: Vector2, slot: int) -> Vector2:
 	var our_long := f.wide
 	var their_long := target.wide
 	# У длинной модели переднее место всегда у морды.
-	if not target.long_model.is_empty() and not our_long:
+	if not target.long_model.is_empty() and not target.mounted_line and not our_long:
 		dir = -1.0 if target.flip_h else 1.0
 	var depth := at.y
 	var source_edge := f.edge_toward(-dir) if our_long and f.long_model.is_empty() else f.muzzle
@@ -615,7 +643,7 @@ func _spot(f: Fighter, target: Fighter, at: Vector2, slot: int) -> Vector2:
 		space += maxf(64.0, f.body_width())
 		depth = f.goal.y
 	var target_edge := target.edge_toward(dir)
-	if not target.long_model.is_empty() and not our_long:
+	if not target.long_model.is_empty() and not target.rear_mount and not our_long:
 		target_edge = target.muzzle
 	var distance := source_edge + target_edge + space
 	var x := at.x + dir * distance
@@ -644,7 +672,7 @@ func _layout(weight: float) -> void:
 		var goal := f.goal
 		f.passing = false
 		var front := f.contact_front
-		if front != null:
+		if front != null and not f.holds_chariot():
 			# Линия держится по спроецированной морде ведущей повозки.
 			var dir := -1.0 if front.flip_h else 1.0
 			var x := front.position.x + dir * (front.muzzle + f.edge_toward(-dir) + front.front_clearance())
@@ -664,15 +692,14 @@ func _layout(weight: float) -> void:
 		if f.unit.alive:
 			f.position = f.next_foot
 	_space_wide()
+	_fit_mounted_line()
 	for f in _fighters:
 		var front := f.contact_front
-		if not f.unit.alive or front == null or not front.unit.alive or front.contact_blend < 0.95:
+		if not f.unit.alive or front == null or not front.unit.alive or front.contact_blend < 0.95 or f.holds_chariot():
 			continue
 		var dir := -1.0 if front.flip_h else 1.0
 		var contact := front.position.x + dir * (front.muzzle + f.edge_toward(-dir) + front.front_clearance())
 		var pull := minf(1.0, weight * 2.5)
-		if f.guard_priority() == 2 and absf(f.position.x - contact) < f.body_width():
-			pull = 1.0
 		f.position = _fit_foot(f, Vector2(lerpf(f.position.x, contact, pull), f.position.y))
 	_separate()
 	for f in _fighters:
@@ -768,6 +795,8 @@ func _wide_order(f: Fighter) -> float:
 	# Колесничий, который ведёт атаку, остаётся впереди второй повозки.
 	if f.unit.key == "charioteer":
 		return _field_bounds.position.x if f.side_dir > 0.0 else _field_bounds.end.x
+	if f.rear_mount:
+		return _field_bounds.end.x + _field_bounds.size.x * 2.0 + float(f.unit.id)
 	if f.rear:
 		return f.position.x + _field_bounds.size.x * f.side_dir
 	return f.position.x
@@ -791,13 +820,27 @@ func _space_wide() -> void:
 func _wide_gap(a: Fighter, b: Fighter) -> float:
 	var min_width := minf(a.body_width(), b.body_width())
 	var edges := a.outline.end.x - b.outline.position.x
+	if a.rear_mount or b.rear_mount:
+		return edges + 12.0
 	var overlap := minf(a.outline.size.x, b.outline.size.x) * (0.42 if _wide_fighters.size() > 2 else 0.25)
 	return clampf(edges - overlap, min_width * 0.53, min_width * 0.92)
 
 
+func _fit_mounted_line() -> void:
+	_mounted_line_edge = INF
+	for f in _wide_fighters:
+		if f.mounted_line:
+			var nose := minf(f.outline.position.x, -f.outline.end.x)
+			_mounted_line_edge = minf(_mounted_line_edge, f.position.x + nose - 12.0)
+	if _mounted_line_edge < INF:
+		for f in _fighters:
+			if f.unit.alive and f.side_dir < 0.0:
+				f.position = _fit_foot(f, f.position)
+
+
 func _separate() -> void:
 	# Раздвигаем экранные корпуса, сохраняя контакт ведущей модели.
-	for pass_index in 6:
+	for pass_index in 7:
 		var moved := false
 		for i in _fighters.size():
 			var a := _fighters[i]
@@ -816,7 +859,13 @@ func _separate() -> void:
 					continue
 				var same_side := a.unit.side == b.unit.side
 				var feet := minf(a.body_width(), b.body_width()) * 0.55
-				if absf(d.x) >= maxf(feet, maxf(b_box.end.x - a_box.position.x, a_box.end.x - b_box.position.x)):
+				if pass_index == 6:
+					if same_side and not a_wide and not b_wide and d.length_squared() < (feet * 0.60) ** 2:
+						_step_aside(a, b, d, feet)
+					continue
+				var mount_pair := a.rear_mount or b.rear_mount
+				var clearance := 12.0 if mount_pair else 0.0
+				if absf(d.x) >= maxf(feet, maxf(b_box.end.x - a_box.position.x, a_box.end.x - b_box.position.x) + clearance):
 					continue
 				var dx := sqrt(maxf(0.0, feet * feet - d.y * d.y)) - absf(d.x)
 				var side := signf(d.x) if absf(d.x) > 0.01 else a.side_dir
@@ -826,7 +875,7 @@ func _separate() -> void:
 					if height > 0.0:
 						var min_area := minf(a_box.get_area(), b_box.get_area())
 						var tolerance := 0.13 if same_side else (0.08 if a_wide or b_wide else 0.20)
-						var permitted := min_area * tolerance / height
+						var permitted := -clearance if mount_pair else min_area * tolerance / height
 						if permitted < minf(a_box.size.x, b_box.size.x):
 							var facing := d.x + a_box.get_center().x - b_box.get_center().x
 							# У повозки порядок берём по центру проекции.
@@ -863,6 +912,25 @@ func _separate() -> void:
 				moved = true
 		if not moved:
 			break
+
+
+func _step_aside(a: Fighter, b: Fighter, d: Vector2, feet: float) -> void:
+	# Когда по X места не осталось, освобождаем проход в глубину.
+	var gap := sqrt(maxf(0.0, feet * feet - d.x * d.x)) - absf(d.y)
+	var direction := -1.0 if d.y < 0.0 else 1.0
+	var start := a.position.y
+	var fixed_a := a.holds_chariot()
+	var fixed_b := b.holds_chariot()
+	if not fixed_a:
+		var share := 1.0 if fixed_b else 0.5
+		a.position.y = clampf(start + direction * gap * share, -_trail_depth, _trail_depth)
+	gap -= (a.position.y - start) * direction
+	if not fixed_b:
+		start = b.position.y
+		b.position.y = clampf(start - direction * gap, -_trail_depth, _trail_depth)
+		gap -= (start - b.position.y) * direction
+	if not fixed_a and gap > 0.0:
+		a.position.y = clampf(a.position.y + direction * gap, -_trail_depth, _trail_depth)
 
 
 func burst(kind: String, where: Vector2, radius := 1.0, tint := Color.WHITE) -> void:
@@ -1091,6 +1159,8 @@ func clear() -> void:
 	views.clear()
 	_fighters.clear()
 	_wide_fighters.clear()
+	_mounted_line_edge = INF
+	_mounted_front_min = -INF
 	_layout_step = -1
 	_layout_time = 0.0
 	_layout_sim_time = 0.0
@@ -1109,6 +1179,9 @@ class Fighter extends Node2D:
 	var view: LegionBattleView
 	var side_dir := 1.0
 	var rear := false
+	var rear_mount := false
+	var mounted_line := false
+	var turn_radius := 0.0
 	var goal := Vector2.ZERO
 	var travel := Vector2.ZERO
 	var drawn_foot := Vector2.ZERO
@@ -1189,6 +1262,8 @@ class Fighter extends Node2D:
 	func measure_body() -> void:
 		side_dir = -1.0 if unit.side == "ally" else 1.0
 		rear = unit.ranged() or unit.heal_pow > 0.0
+		rear_mount = rear and wide and not long_model.is_empty()
+		mounted_line = rear_mount or unit.key == "cataphract"
 		var torso := 0.63
 		var breadth := torso
 		var front_edge := 0.0
@@ -1211,6 +1286,11 @@ class Fighter extends Node2D:
 				front_edge = end.x * cos(angle) + end.y * sin(angle)
 				torso = maxf(torso, front_edge * 1.38)
 		var units := model_height() / 1.79
+		turn_radius = 0.0
+		if rear_mount:
+			for corner in hull_points:
+				turn_radius = maxf(turn_radius, Vector2(corner.x, corner.z).length())
+			turn_radius *= units / cos(deg_to_rad(PEOPLE_TILT))
 		body_half = torso * units * 0.5
 		beam = breadth * units
 		muzzle = front_edge * units / cos(deg_to_rad(PEOPLE_TILT)) if front_edge > 0.0 else body_half
@@ -1229,7 +1309,7 @@ class Fighter extends Node2D:
 			outline = Rect2(-body_half, -body_height(), body_width(), body_height())
 			return
 		var left := flip_h != (shoot_turn >= 0.5)
-		var angle := -yaw if left else yaw
+		var angle := facing_angle() if rear_mount else (-yaw if left else yaw)
 		if absf(angle - hull_angle) < 2.0:
 			return
 		hull_angle = angle
@@ -1241,7 +1321,9 @@ class Fighter extends Node2D:
 		for corner in hull_points:
 			var p := rot * corner
 			outline = outline.expand(Vector2(p.x, p.dot(vertical)) * pixels)
-		if not long_model.is_empty():
+		if rear_mount:
+			outline = Rect2(-turn_radius, outline.position.y, turn_radius * 2.0, outline.size.y)
+		elif not long_model.is_empty():
 			# Углы AABB выступают перед мордой при повороте. Передний край задан на модели.
 			if left:
 				outline = Rect2(-muzzle, outline.position.y, outline.end.x + muzzle, outline.size.y)
@@ -1263,8 +1345,11 @@ class Fighter extends Node2D:
 			return 0
 		return 2 if contact_front.unit.key == "charioteer" else 1
 
+	func holds_chariot() -> bool:
+		return guard_priority() == 2 and contact_front.contact_blend >= 0.95
+
 	func edge_toward(dir: float) -> float:
-		if wide and long_model.is_empty() and not hull_points.is_empty():
+		if rear_mount or (wide and long_model.is_empty() and not hull_points.is_empty()):
 			return -outline.position.x if dir < 0.0 else outline.end.x
 		return muzzle if (dir < 0.0) == flip_h else rump
 
@@ -1279,6 +1364,10 @@ class Fighter extends Node2D:
 			return false
 		if view == null or view.legacy_layout:
 			return true
+		if target.contact_front == self and target.holds_chariot():
+			var front_gap := absf(d.x) - source_edge - target.edge_toward(-d.x)
+			if absf(front_gap) > target.body_width() * 0.12:
+				return false
 		var relative_box := Rect2(outline.position - d, outline.size)
 		var shared := relative_box.intersection(target.outline).get_area()
 		if shared > minf(outline.get_area(), target.outline.get_area()) * 0.29:

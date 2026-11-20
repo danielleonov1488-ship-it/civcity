@@ -114,6 +114,9 @@ func _run() -> void:
 		_finish()
 		return
 	check(lg.fort_assign(kitchen, int(cook["id"])) and lg.fort_assign(forge, int(smith["id"])), "assign production workers")
+	var cook_id := int(cook["id"])
+	var outfit := lg.add_item(Gear.craft_item("cook", 1))
+	check(lg.equip(cook_id, int(outfit["id"])), "equip kitchen worker for the guide")
 	var sid := int(person["id"])
 	person["stars"] = 3
 	for kind: String in ["sword", "helmet", "armor", "offhand"]:
@@ -129,6 +132,7 @@ func _run() -> void:
 		return
 	camp.open()
 	await frames(12)
+	check(get_viewport().get_visible_rect().size.is_equal_approx(Vector2(capture_size)), "initial viewport size")
 	check(camp.diorama is FortCutaway, "painted fort stays active")
 	check(camp.chips.get_child_count() == 7 and camp.chips.columns == 4
 		and camp.chips.get_child(3).name == "FortResource_glory", "seven resources with glory in the top row")
@@ -140,15 +144,11 @@ func _run() -> void:
 		check(bread != null and bread.texture == Look.resource("rations")
 			and camp.ration_label.text == camp.hud.fmt(lg.rations_now()), "painted rations with current amount")
 	_top_bar_checks("hud")
-	await _guide_checks(Legion.FortGuide.CHEST, camp.chest_button, "hud/chests")
+	var guide_tag := str(capture_size.y)
+	await _guide_checks(Legion.FortGuide.FIRST_BATTLE, camp.campaign_button, guide_tag + "/first battle")
 	await shot("1_fort_hud.png")
 	await _fresh_top_bar_checks("fresh/hud")
-	lg.flags["fort_guide_sid"] = int(cook["id"])
-	lg.flags["fort_guide_plot"] = kitchen
-	await _guide_checks(Legion.FortGuide.RATIONS, camp.resource_bars["rations"]["plus"], "hud/rations chip")
-	await _guide_checks(Legion.FortGuide.CAMPAIGN, camp.campaign_button, "hud/campaign short text")
-	lg.finish_fort_guide()
-	camp._layout_guide()
+	await _fort_guide_checks(kitchen, cook_id, int(outfit["id"]), guide_tag)
 	camp.show_plot(forge)
 	check(camp.card.find_child("FortRoomPicture", true, false) != null, "room frame and cutaway picture")
 	check(camp.upgrade_button.disabled and camp.requirement_banner.visible and camp.instant_button.disabled, "HQ requirement gates both upgrade actions")
@@ -167,7 +167,8 @@ func _run() -> void:
 	check(resource_icon.texture == Look.resource("rations"), "production resource icon")
 	check(camp.room_stock_bar.value > 0 and (camp.room_stock_bar.get_theme_stylebox("fill") as StyleBoxFlat).bg_color == Look.OLIVE, "production olive fill")
 	camp.show_build_menu()
-	check(camp.build_cards.size() == Legion.FORT_B.size() - 1, "all room cards")
+	check(camp.build_cards.size() == Legion.FORT_B.size() - 2
+		and not camp.build_cards.has("hq") and not camp.build_cards.has("drill"), "room catalog without HQ and drill")
 	check((camp.build_cards["forge"]["picture"] as Control).get_child_count() > 0, "build pictures")
 	await _window_checks(camp.modal_panel, "build")
 	await _build_button_checks()
@@ -175,9 +176,7 @@ func _run() -> void:
 	camp.show_chests()
 	await frames(4)
 	var starter := camp.modal_panel.find_child("FortChest_wooden", true, false) as Control
-	await _guide_checks(Legion.FortGuide.CHEST, starter, "chests/wooden")
-	lg.finish_fort_guide()
-	camp._layout_guide()
+	check(is_instance_valid(starter) and starter.is_visible_in_tree(), "wooden chest in storage")
 	camp.show_dweller(sid)
 	var slots := camp.modal_panel.find_child("FortGearSlots", true, false)
 	check(slots != null and slots.find_children("FortGear_*", "Button", true, false).size() == 5, "five equipment slots")
@@ -243,7 +242,7 @@ func _run() -> void:
 		check(camp.visible and not camp.lu.visible, "map returns to fort")
 	else:
 		camp.lu.close()
-	await _small_window_checks(forge, sid)
+	await _small_window_checks(forge, sid, kitchen, cook_id, int(outfit["id"]))
 	camp.show_newcomer(int(lg.fort_newcomers()[0]["id"]))
 	check(camp.modal_panel.name == "FortNewcomerCard" and camp.modal_panel.has_meta("ui_kit_a"), "newcomer kit")
 	await _newcomer_checks("newcomer")
@@ -328,20 +327,24 @@ func _craft_button_checks(panel: Control) -> void:
 	var collect := panel.find_child("CraftCollect_0", true, false) as Button
 	check(collect.visible and collect.text == I18n.t("Собрать · %d") % 1, "ready collect label and count")
 	var start := panel.find_child("CraftStart", true, false) as Button
-	check(start.icon == Kit.texture("craft") and start.text.contains("10"), "craft action icon and material cost")
+	var cost := Gear.craft_mats("sword", 1)
+	var iron := I18n.t("железо: %d") % int(cost["iron"])
+	var wood := I18n.t("дерево: %d") % int(cost["wood"])
+	check(start.icon == Kit.texture("craft") and start.text == I18n.t("Ковать · %s") % (iron + " · " + wood),
+		"craft action icon and material costs")
 	var store := panel.find_child("CraftEquipment", true, false) as Button
 	check(store.text == I18n.t("Снаряжение") and store.icon != null, "bottom action filled")
 
 
-func _small_window_checks(forge: int, sid: int) -> void:
-	get_window().size = Vector2i(1280, 720)
+func _small_window_checks(forge: int, sid: int, kitchen: int, cook_id: int, outfit: int) -> void:
+	var small_size := Vector2i(1280, 720)
+	get_window().size = small_size
 	await frames(12)
+	check(get_viewport().get_visible_rect().size.is_equal_approx(Vector2(small_size)), "720 viewport size")
 	_top_bar_checks("720/hud")
 	await _fresh_top_bar_checks("720/fresh/hud")
-	await _guide_checks(Legion.FortGuide.CHEST, camp.chest_button, "720/chests")
-	await _guide_checks(Legion.FortGuide.CAMPAIGN, camp.campaign_button, "720/campaign")
-	lg.finish_fort_guide()
-	camp._layout_guide()
+	await _guide_checks(Legion.FortGuide.FIRST_BATTLE, camp.campaign_button, "720/first battle")
+	await _fort_guide_checks(kitchen, cook_id, outfit, "720")
 	camp.show_plot(forge)
 	await _window_checks(camp.card, "720/room")
 	camp.show_build_menu()
@@ -410,19 +413,35 @@ func _top_bar_checks(tag: String) -> void:
 		check(panel.get_theme_stylebox("panel") is StyleBoxFlat, tag + "/" + resource + " flat palette")
 
 
+func _fort_guide_checks(kitchen: int, cook_id: int, outfit: int, tag: String) -> void:
+	lg.flags["fort_guide_sid"] = cook_id
+	lg.flags["fort_guide_plot"] = kitchen
+	lg.flags["fort_guide_item"] = outfit
+	var collect := camp.plot_markers.get(kitchen, {}).get("collect") as Control
+	await _guide_checks(Legion.FortGuide.KITCHEN, collect, tag + "/kitchen collect")
+	await _guide_checks(Legion.FortGuide.STORE, camp.build_button, tag + "/store build")
+	await _guide_checks(Legion.FortGuide.SECOND_BATTLE, camp.campaign_button, tag + "/second battle")
+	lg.finish_fort_guide()
+	camp._layout_guide()
+
+
 func _guide_checks(step: int, target: Control, tag: String) -> void:
 	lg.flags["fort_guide"] = step
 	camp._layout_guide()
 	await frames(12)
 	await RenderingServer.frame_post_draw
-	if not check(camp.guide.is_visible_in_tree() and camp._guide_target == target, tag + " guide targets control"):
+	if not check(is_instance_valid(target) and target.is_visible_in_tree()
+		and camp.guide.is_visible_in_tree() and camp._guide_target == target, tag + " guide targets control"):
 		return
 	var viewport := get_viewport().get_visible_rect()
 	var strip := camp.guide.get_global_rect()
 	var button := target.get_global_rect()
 	var text_rect := camp.guide_text.get_global_rect()
 	check(viewport.encloses(strip), tag + " dialog strip inside viewport")
-	check(viewport.end.y - strip.end.y <= 24.0, tag + " dialog strip at the bottom")
+	var bottom := Rect2(Vector2(viewport.get_center().x - strip.size.x * 0.5,
+		viewport.end.y - strip.size.y - 22.0 * camp.guide.scale.y), strip.size)
+	if not bottom.intersects(button.grow(6.0)):
+		check(viewport.end.y - strip.end.y <= 24.0, tag + " dialog strip at the bottom")
 	check(camp.guide_text.is_visible_in_tree() and strip.grow(0.1).encloses(text_rect),
 		"%s whole text inside dialog strip (text %s, strip %s)" % [tag, text_rect, strip])
 	check(not strip.intersects(button), tag + " dialog strip clears target")

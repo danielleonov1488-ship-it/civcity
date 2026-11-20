@@ -523,7 +523,7 @@ func _legion3() -> void:
 	await frames(3)
 	check(camp_ui.visible and not lu.visible, "медальон Легиона (если его нажали) ведёт в Лагерь")
 	camp_ui.close()
-	# пекарня: пайки
+	# пекарня даёт еду Легиону
 	c.research["bakery"] = true
 	var bk := put("bakery", Vector2(176, 134))
 	if bk.is_empty():
@@ -532,10 +532,17 @@ func _legion3() -> void:
 	if not bk.is_empty():
 		hud.open_info(bk)
 		await frames(3)
-		var tx := ""
-		for l in hud.info_box.find_children("*", "Label", true, false):
-			tx += (l as Label).text + "|"
-		check(tx.contains("Пайки Легиону") and tx.contains("+3 в день"), "карточка пекарни: «Пайки Легиону: +3 в день»")
+		var title := "Еда Легиону"
+		var food := "+%d в день" % roundi(Legion.RATION_BAKERY)
+		var found := false
+		for row: Node in hud.info_box.get_children():
+			if row is HBoxContainer and row.get_child_count() == 3:
+				var name_label := row.get_child(1) as Label
+				var value_label := row.get_child(2) as Label
+				if name_label != null and name_label.text == title and value_label != null and value_label.text == food:
+					found = true
+					break
+		check(found, "карточка пекарни: «Еда Легиону: %s»" % food)
 		hud.close_panels()
 	# старый Легион не навязывается: обучение выключено, Казармы строить нельзя
 	check(not lu.tut_active() and not c.unlocked("barracks") and not c.unlocked("forge"), "обучение старому Легиону выключено, Казармы и Кузница на карте недоступны")
@@ -556,18 +563,23 @@ func _legion3() -> void:
 			sol = soldier
 	check(not sol.is_empty(), "форт принимает новобранца без городской истории")
 	if not sol.is_empty():
-		check(not lg.set_place(0, int(sol["id"])), "место 0 остаётся у героя")
+		var hero_id := int(lg.hero_dweller().get("id", 0))
+		var hero_place := lg.squad3.find(hero_id)
+		check(hero_id > 0 and hero_place >= 0 and lg.set_place(hero_place, 0)
+			and not lg.squad3.has(hero_id) and not lg.hero_dweller().is_empty(), "герой может выйти из отряда")
+		check(lg.set_place(1, hero_id) and int(lg.squad3[1]) == hero_id and lg.squad3.count(hero_id) == 1,
+			"герой может занять другое место в отряде")
 		check(preload("res://scripts/test_fort_fixture.gd").house_fighter(lg, int(sol["id"])), "новобранец живёт в казарме")
 		camp_ui.show_squad()
 		for node in camp_ui.squad_body.find_children("*", "Button", true, false):
-			if int(node.get_meta("quest_slot", -1)) == 1:
+			if int(node.get_meta("quest_slot", -1)) == 0:
 				(node as Button).pressed.emit()
 				break
 		for node in camp_ui.squad_body.find_children("*", "Button", true, false):
 			if int(node.get_meta("quest_soldier", -1)) == int(sol["id"]):
 				(node as Button).pressed.emit()
 				break
-		check(int(lg.squad3[1]) == int(sol["id"]), "новобранец занимает свободное место через интерфейс форта")
+		check(int(lg.squad3[0]) == int(sol["id"]), "новобранец занимает место 0 через интерфейс форта")
 		var setup := lg.make_battle(lg.stage_info(0, 0, 0), 1)
 		check((setup["squad"] as Array).size() == 2, "герой и новобранец идут в бой")
 		lg.apply_result(setup, {"win": true, "alive": 2, "total": 2, "timeout": false, "time": 40.0})
