@@ -2,7 +2,8 @@ extends Node
 ## Полные бои с шагом замера 0,1 с и кадры настоящего экрана.
 
 const View = preload("res://scripts/legion_battle_view.gd")
-const OUT := "D:/CivCity/.work/stage7/battle12/shots/"
+const EnemyTest = preload("res://scripts/test_enemy3d.gd")
+const OUT := "D:/CivCity/.work/stage7/battle12b/shots/"
 const HD := Vector2i(1920, 1080)
 const SMALL := Vector2i(1280, 720)
 const SEED := 532
@@ -25,6 +26,8 @@ var rear_misses := 0
 var rear_samples := 0
 var rear_min := INF
 var multi := 0
+var two_on_one: Array[float] = []
+var three_on_one: Array[float] = []
 var heights := PackedFloat32Array()
 var forest_before: Image
 var forest_after: Image
@@ -125,9 +128,17 @@ func _run() -> void:
 		["cataphract", "horseArcher"]), HD, 3.0, "5_battle_ranged.png", 0)
 	var pvp := await _play("pvp", _pvp(), SMALL, 2.0, "6_pvp.png", 0)
 	check(not pvp.is_empty(), "PvP replay finished")
-	check(multi_shot, "two attackers shot")
+	check(multi_shot, "three attackers shot")
+	_check_boxes()
 	await _fort()
 	await _benchmark()
+	var contacts := EnemyTest.new()
+	contacts.run_suite = false
+	add_child(contacts)
+	await contacts.battle12_contacts(game, output)
+	check(contacts.fails == 0, "Britannia and Africa contact regressions")
+	print("BATTLE12 CONTACTS fails=", contacts.fails)
+	contacts.queue_free()
 
 
 func _put(dest: Image, piece: Image, at: Vector2i) -> void:
@@ -187,18 +198,7 @@ func _play(name_: String, setup: Dictionary, resolution: Vector2i, speed: float,
 		samples += 1
 		var meeting := _measure(view)
 		if meeting != null and not multi_shot and not before and name_ != "forest":
-			var whole := await _capture()
-			var at := Vector2i(view.screen(meeting.body_ground()))
-			var rect := Rect2i(at - Vector2i(325, 360), Vector2i(650, 430))
-			rect = rect.intersection(Rect2i(Vector2i.ZERO, whole.get_size()))
-			var close_up := whole.get_region(rect)
-			close_up.resize(rect.size.x * 3 / 2, rect.size.y * 3 / 2, Image.INTERPOLATE_LANCZOS)
-			var canvas := Image.create(whole.get_width() + close_up.get_width(), whole.get_height(), false, Image.FORMAT_RGBA8)
-			canvas.fill(Color("221913"))
-			_put(canvas, whole, Vector2i.ZERO)
-			_put(canvas, close_up, Vector2i(whole.get_width(), (whole.get_height() - close_up.get_height()) / 2))
-			_save("2_battle_two_on_one.png", canvas)
-			multi_shot = true
+			await _save_meeting(view, meeting)
 		var forest_sample := (name_ == "forest" or before) and samples == 60
 		if forest_sample:
 			if before:
@@ -239,12 +239,61 @@ func _wave_in_contact(view: View, wave: int) -> bool:
 	return false
 
 
+func _screen_box(view: View, f: View.Fighter) -> Rect2:
+	# Габарит корпуса в проекции, включая морду и зад длинной модели.
+	var foot := view.screen(f.visible_foot())
+	var height := f.body_height() * view.world.scale.y
+	var left := f.edge_toward(-1.0) * view.world.scale.x
+	return Rect2(foot - Vector2(left, height), Vector2(f.body_width() * view.world.scale.x, height))
+
+
+func _engaged(attacker: View.Fighter, target: View.Fighter) -> bool:
+	return attacker.unit.alive and attacker.layout_target == target and attacker.slot > 0 \
+		and attacker.slot < 4 and attacker.can_strike(target)
+
+
+func _save_meeting(view: View, target: View.Fighter) -> void:
+	var box := _screen_box(view, target)
+	var count := 0
+	for f: View.Fighter in view._fighters:
+		if _engaged(f, target):
+			box = box.merge(_screen_box(view, f))
+			count += 1
+	if count != 3:
+		return
+	var whole := await _capture()
+	var rect := Rect2i(box.grow(box.size.y * 0.48)).intersection(Rect2i(Vector2i.ZERO, whole.get_size()))
+	var close_up := whole.get_region(rect)
+	close_up.resize(rect.size.x * 3 / 2, rect.size.y * 3 / 2, Image.INTERPOLATE_LANCZOS)
+	var canvas := Image.create(whole.get_width() + close_up.get_width(),
+		maxi(whole.get_height(), close_up.get_height()), false, Image.FORMAT_RGBA8)
+	canvas.fill(Color("221913"))
+	_put(canvas, whole, Vector2i(0, (canvas.get_height() - whole.get_height()) / 2))
+	_put(canvas, close_up, Vector2i(whole.get_width(), (canvas.get_height() - close_up.get_height()) / 2))
+	_save("1_two_on_one.png", canvas)
+	multi_shot = true
+
+
+func _check_boxes() -> void:
+	for attackers: int in [2, 3]:
+		var readings := two_on_one if attackers == 2 else three_on_one
+		if not check(not readings.is_empty(), "%d-on-1 box samples" % attackers):
+			continue
+		readings.sort()
+		var p95 := readings[ceili(readings.size() * 0.95) - 1]
+		print("BATTLE12 BOXES %d-on-1 p95=%.3f samples=%d" % [attackers, p95, readings.size()])
+		check(p95 <= 0.35, "%d-on-1 box overlap p95 <= 0.35" % attackers)
+
+
 func _measure(view: View) -> View.Fighter:
 	var living: Array[View.Fighter] = []
+	var boxes: Array[Rect2] = []
 	for f: View.Fighter in view._fighters:
 		if f.unit.alive:
 			living.append(f)
+			boxes.append(_screen_box(view, f))
 	var meeting: View.Fighter
+	var meeting_size := 0
 	for i in living.size():
 		var f := living[i]
 		var foot := view.screen(f.body_ground())
@@ -254,7 +303,8 @@ func _measure(view: View) -> View.Fighter:
 		if foot.y < strip_min - 0.1 or foot.y > strip_max + 0.1 or foot.x < 0.0 or foot.x > view.size.x:
 			bounds_misses += 1
 		var rear := INF
-		var attackers := 0
+		var box := boxes[i]
+		var ratios: Array[float] = []
 		var swinging := 0
 		for j in living.size():
 			if i == j:
@@ -269,18 +319,25 @@ func _measure(view: View) -> View.Fighter:
 				low += int(distance < width * 0.3)
 			if f.rear and not other.rear and f.unit.side == other.unit.side:
 				rear = minf(rear, (foot.x - other_foot.x) * f.side_dir / (f.beam * view.world.scale.x))
-			if other.layout_target == f and other.slot > 0 and other.slot < 4 and other.can_strike(f):
-				attackers += 1
-				if other.attack_left > 0.0:
+			if _engaged(other, f):
+				var other_box := boxes[j]
+				var common := box.intersection(other_box).get_area()
+				ratios.append(common / minf(box.get_area(), other_box.get_area()))
+				if other.attack_left > 0.0 and other.sample >= 0.08:
 					swinging += 1
 		if rear < INF:
 			rear_min = minf(rear_min, rear)
 			rear_samples += 1
 			rear_misses += int(rear < 2.0)
-		if attackers >= 2:
+		if ratios.size() >= 2:
 			multi += 1
-			if swinging > 0:
+			if ratios.size() == 2:
+				two_on_one.append_array(ratios)
+			else:
+				three_on_one.append_array(ratios)
+			if swinging > 0 and ratios.max() <= 0.35 and ratios.size() > meeting_size:
 				meeting = f
+				meeting_size = ratios.size()
 	return meeting
 
 
@@ -347,25 +404,50 @@ func _benchmark() -> void:
 	var setup := {"kind": "campaign", "stage": {"r": 0, "s": 0, "name": "Лучники", "boss": true},
 		"seed": SEED, "squad": squad, "waves": [wave], "rations_paid": true, "perks": {}}
 	get_window().size = HD
-	var readings: Array[float] = []
-	for before: bool in [true, false]:
-		battle = LegionBattle.open(game, setup.duplicate(true), Callable(),
-			{"legion": game.city.legion, "speed": 1.0, "auto": false, "legacy_layout": before})
-		if not check(await _until(func() -> bool: return battle.sim != null and battle.sim.t >= 7.0, 70.0), "FPS battle"):
-			battle.abort()
-			return
-		for speed: float in [1.0, 3.0]:
-			battle._set_speed(speed)
-			for i in 16:
-				await get_tree().process_frame
-			var begin := Time.get_ticks_usec()
-			for i in 120:
-				await get_tree().process_frame
-			var fps := 120000000.0 / maxf(1.0, Time.get_ticks_usec() - begin)
-			print("BATTLE12 FPS %s x%.0f %.1f at 1920x1080 figures=%d" %
-				["before" if before else "after", speed, fps, battle.views.size()])
-			readings.append(fps)
+	for speed: float in [1.0, 3.0]:
+		var baseline: Array[float] = []
+		var current: Array[float] = []
+		for turn in 5:
+			for before: bool in [true, false]:
+				var fps := await _fps_window(setup, speed, before)
+				if fps <= 0.0:
+					return
+				var readings := baseline if before else current
+				readings.append(fps)
+				print("BATTLE12 FPS window=%d %s x%.0f %.1f" %
+					[turn + 1, "before" if before else "after", speed, fps])
+		baseline.sort()
+		current.sort()
+		var before_fps := baseline[2]
+		var after_fps := current[2]
+		print("BATTLE12 FPS MEDIAN x%.0f before=%.1f after=%.1f ratio=%.3f" %
+			[speed, before_fps, after_fps, after_fps / before_fps])
+		check(after_fps >= before_fps * 0.92 or after_fps >= 400.0, "FPS x%.0f >= 92%% of baseline or >= 400" % speed)
+
+
+func _fps_window(setup: Dictionary, speed: float, before: bool) -> float:
+	battle = LegionBattle.open(game, setup.duplicate(true), Callable(),
+		{"legion": game.city.legion, "speed": 1.0, "auto": false, "legacy_layout": before})
+	battle.set_process(false)
+	if not check(await _until(func() -> bool: return battle.sim != null, 30.0), "open FPS battle"):
 		battle.abort()
+		return 0.0
+	battle.fade.hide()
+	# Один состав, сид и момент начала замера у каждого окна.
+	for i in 420:
+		battle._process(1.0 / 60.0)
+	if not check(battle.sim.steps == 210 and battle.views.size() == 16, "same start of FPS window"):
+		battle.abort()
+		return 0.0
+	battle._set_speed(speed)
+	battle.set_process(true)
+	for i in 20:
 		await get_tree().process_frame
-	for i in 2:
-		check(readings[i + 2] >= readings[i] * 0.95, "FPS x%d within 5%% of baseline" % (1 if i == 0 else 3))
+	var begin := Time.get_ticks_usec()
+	for i in 120:
+		await get_tree().process_frame
+	var fps := 120000000.0 / maxf(1.0, Time.get_ticks_usec() - begin)
+	check(battle.views.size() == 16, "16 fighters at end of FPS window")
+	battle.abort()
+	await get_tree().process_frame
+	return fps

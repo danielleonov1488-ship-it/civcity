@@ -16,9 +16,12 @@ var fails := 0
 var squad: Array[Dictionary]
 var deaths: Dictionary = {}
 var releases: Dictionary = {}
+var run_suite := true
 
 
 func _ready() -> void:
+	if not run_suite:
+		return
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("out="):
 			out = arg.trim_prefix("out=").trim_suffix("/") + "/"
@@ -45,6 +48,20 @@ func _ready() -> void:
 	Legion.v2_test = forced_v2
 	print("ENEMY3D DONE fails=", fails)
 	get_tree().quit(int(fails > 0))
+
+
+func battle12_contacts(test_game: Game, shots: String) -> void:
+	game = test_game
+	out = shots
+	var saved_v2 := Legion.V2
+	var forced_v2 := Legion.v2_test
+	Legion.V2 = true
+	Legion.v2_test = true
+	_make_squad(game.city.legion)
+	await _fight("britannia", ["chariot", "briton", "charioteer", "druid"], "3_boss_panel_charioteer.png", "charioteer")
+	await _fight("africa", STRESS, "", "", true)
+	Legion.V2 = saved_v2
+	Legion.v2_test = forced_v2
 
 
 func check(ok: bool, reason: String) -> bool:
@@ -595,12 +612,21 @@ func _boss_shot(key: String) -> bool:
 
 func _melee() -> View.Fighter:
 	for f: View.Fighter in battle.views.values():
-		var u := f.unit
-		if u.side == "ally" and u.alive and not u.ranged() and u.target != null and u.target.alive:
-			var foe: View.Fighter = battle.views.get(u.target.id)
-			if foe != null and foe.wide and foe.boss_model != null and f.clip == f.attack_clip:
-				return f
+		var foe := f.strike_target
+		if f.unit.side == "ally" and f.unit.alive and f.attack_left > 0.0 and f.clip == f.attack_clip \
+				and is_instance_valid(foe) and foe.unit.alive and foe.wide and foe.boss_model != null and f.can_strike(foe):
+			return f
 	return null
+
+
+func _fight_crop(first: View.Fighter, second: View.Fighter) -> Rect2i:
+	var layer := battle.battle_view.people_layer
+	var first_box: Rect2 = _model_bounds(first.actor, layer.camera)[0]
+	var second_box: Rect2 = _model_bounds(second.actor, layer.camera)[0]
+	var box := first_box.merge(second_box)
+	var scale := layer.overlay.size / Vector2(layer.viewport.size)
+	box = Rect2(layer.overlay.position + box.position * scale, box.size * scale)
+	return Rect2i(box.grow(box.size.y * 0.30))
 
 
 func _close_battle() -> void:
@@ -608,25 +634,32 @@ func _close_battle() -> void:
 		return
 	battle.paused = true
 	var ally := _melee()
-	var enemy: View.Fighter = battle.views[ally.unit.target.id]
-	var view := battle.battle_view
-	_depth_order(view, "africa close fight")
-	var feet := view.screen(ally.position).lerp(view.screen(enemy.position), 0.5)
-	var height := maxf(ally.body_height(), enemy.body_height()) * view.world.scale.y
-	var crop := Rect2i(Vector2i(feet - Vector2(675.0, height * 1.08 + 160.0)), Vector2i(1350, int(height * 1.17 + 240.0)))
-	await shot("7_close_fight.png", crop)
+	var enemy := ally.strike_target
+	_depth_order(battle.battle_view, "africa close fight")
+	print("ENEMY3D CLOSE ", ally.unit.key, " → ", enemy.unit.key)
+	await shot("7_close_fight.png", _fight_crop(ally, enemy))
 	battle.paused = false
+
+
+func _front_gap(f: View.Fighter, ally: View.Fighter) -> float:
+	var dir := -1.0 if f.flip_h else 1.0
+	var front: Vector2 = f.long_model[0]
+	var muzzle := battle.battle_view._actor_mark(f, Vector3(dir * front.x, 0.0, front.y))
+	var guard := ally.visible_foot().x - dir * ally.edge_toward(-dir)
+	return (guard - muzzle.x) * dir
 
 
 func _at_contact(key: String) -> View.Fighter:
 	for f: View.Fighter in battle.views.values():
 		var u := f.unit
-		if u.key != key or not u.alive or u.entering or u.target == null or not u.target.alive:
+		if u.key != key or not u.alive or u.entering or u.target == null or not u.target.alive or f.long_model.is_empty():
 			continue
 		var ally: View.Fighter = battle.views.get(u.target.id)
 		if ally == null:
 			continue
-		if f.can_strike(ally) and f.slot > 0 and f.slot < 4:
+		var reach := u.range_m + 0.35 * (u.size + ally.unit.size - 2.0)
+		if f.slot > 0 and f.slot < 4 and f.can_strike(ally) and LegionSim.dist(u, ally.unit) <= reach \
+				and absf(_front_gap(f, ally)) <= ally.body_width() * 0.12:
 			return f
 	return null
 
@@ -639,17 +672,16 @@ func _contact_shot(key: String, file: String) -> void:
 				var ally: View.Fighter = battle.views.get(u.target.id)
 				print("ENEMY3D CONTACT ", key, " t=", battle.sim.t, " clip=", f.clip, " facing left=", f.flip_h,
 					" distance=", LegionSim.dist(u, u.target), " reach=", u.range_m, " placement=", f.position,
-					" adjusted=", f.contact_point(), " ally=", ally.position if ally != null else Vector2.ZERO)
+					" adjusted=", f.contact_point(), " ally=", ally.position if ally != null else Vector2.ZERO,
+					" slot=", f.slot, " signed gap=", _front_gap(f, ally) if ally != null and not f.long_model.is_empty() else INF)
 		return
 	battle.paused = true
 	var f := _at_contact(key)
 	var ally: View.Fighter = battle.views.get(f.unit.target.id)
-	var view := battle.battle_view
-	var center := view.screen(f.contact_point().lerp(f.body_ground(), 0.36))
-	var crop := Rect2i(roundi(center.x) - 680, 202, 1360, 670)
-	_depth_order(view, key + " contact")
-	print("ENEMY3D CONTACT ", key, " gap=", snappedf(absf(f.contact_point().x - ally.position.x), 0.1), " px")
-	await shot(file, crop)
+	_depth_order(battle.battle_view, key + " contact")
+	var gap := _front_gap(f, ally) * battle.battle_view.world.scale.x
+	print("ENEMY3D CONTACT ", key, " signed gap=", snappedf(gap, 0.1), " screen px")
+	await shot(file, _fight_crop(f, ally))
 	battle.paused = false
 
 func _fps() -> void:
