@@ -73,7 +73,7 @@ func _run() -> void:
 	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "forge", 2)
 	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "store", 2)
 	preload("res://scripts/test_fort_fixture.gd").set_level(legion, "mars", 1)
-	legion.rations = 8
+	legion.rations = legion.ration_cap()
 	legion.ingots = 3
 	legion.pending_resources = {"iron": legion.mat_cap("iron"), "wood": 34.0, "leather": 18.0, "rations": 6.0}
 	var population := int(city.stats["pop"])
