@@ -3,6 +3,7 @@ extends Node3D
 
 const ASSETS := "res://assets/legion_enemies/"
 const HORSE := "res://assets/animals/Horse_b.glb"
+const RangedPose = preload("res://scripts/legion_ranged_pose.gd")
 const MODELS := {
 	"minotaur": ["minotaur", 2.10, 0.91, 53.0, false, "Walk"],
 	"cyclops": ["cyclops", 1.98, 0.94, 45.0, false, "Walk"],
@@ -25,6 +26,7 @@ const REINS := Color("5a3a25")
 
 static var _packs: Dictionary = {}
 static var _leather: StandardMaterial3D
+static var _unarmed_rider: Mesh
 
 var key: String
 var problem := ""
@@ -38,6 +40,7 @@ var mouth: Array[Node3D] = []
 var wheels: PackedInt32Array = []
 var wheel_angle := 0.0
 var moving := false
+var ranged: RangedPose
 var _wheel_rest: Array[Quaternion] = []
 var _seats: Array[Node3D] = []
 var _seat_positions: Array[Vector3] = []
@@ -221,12 +224,73 @@ func _add_rider(skeleton: Skeleton3D, entry: Array) -> bool:
 	var sk := _first(crew, "Skeleton3D") as Skeleton3D
 	if player == null or sk == null:
 		return _fail("rider animation or skeleton missing")
+	if key == "horseArcher":
+		var body := _first(crew, "MeshInstance3D") as MeshInstance3D
+		if body == null or not _replace_rider_bow(body, sk):
+			return _fail("rider bow mesh missing")
+		ranged = RangedPose.new(sk, crew, "bow", true)
 	_seats.append(seat)
 	_seat_positions.append(at)
 	_seat_mounts.append(socket)
 	_rider_scale.append(scale)
 	riders.append(player)
 	rider_rigs.append(sk)
+	return true
+
+
+# У старого всадника лук и тетива входят в ту же сетку, что и тело.
+# Снимаем две отдельные детали, целиком привязанные к кисти.
+static func _replace_rider_bow(body: MeshInstance3D, sk: Skeleton3D) -> bool:
+	if _unarmed_rider != null:
+		body.mesh = _unarmed_rider
+		return true
+	var source := body.mesh as ArrayMesh
+	if source == null or source.get_surface_count() != 1:
+		return false
+	var arrays := source.surface_get_arrays(0)
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+	var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+	var hand_binds := {}
+	var hand := sk.find_bone("hand_l")
+	for i in body.skin.get_bind_count():
+		if body.skin.get_bind_bone(i) == hand or body.skin.get_bind_name(i) == &"hand_l":
+			hand_binds[i] = true
+	var neighbors := {}
+	for i in range(0, indices.size(), 3):
+		var a := vertices[indices[i]].snapped(Vector3.ONE * 0.00001)
+		var b := vertices[indices[i + 1]].snapped(Vector3.ONE * 0.00001)
+		var c := vertices[indices[i + 2]].snapped(Vector3.ONE * 0.00001)
+		for v: Vector3 in [a, b, c]:
+			if not neighbors.has(v):
+				neighbors[v] = []
+			(neighbors[v] as Array).append_array([a, b, c])
+	var removed := {}
+	var stride := int(float(bones.size()) / vertices.size())
+	for i in vertices.size():
+		var v := vertices[i]
+		if not hand_binds.has(bones[i * stride]) or weights[i * stride] < 0.99 or absf(v.y - 1.35) < 0.20:
+			continue
+		var stack: Array = [v.snapped(Vector3.ONE * 0.00001)]
+		while not stack.is_empty():
+			var at: Vector3 = stack.pop_back()
+			if not removed.has(at):
+				removed[at] = true
+				stack.append_array(neighbors.get(at, []))
+	if removed.is_empty():
+		return false
+	var keep := PackedInt32Array()
+	for i in range(0, indices.size(), 3):
+		if not removed.has(vertices[indices[i]].snapped(Vector3.ONE * 0.00001)):
+			keep.append(indices[i])
+			keep.append(indices[i + 1])
+			keep.append(indices[i + 2])
+	arrays[Mesh.ARRAY_INDEX] = keep
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_unarmed_rider = mesh
+	body.mesh = mesh
 	return true
 
 
@@ -242,6 +306,8 @@ func _add_armor(skeleton: Skeleton3D, joint: String, model: String) -> bool:
 
 
 func clip_length(clip: String) -> float:
+	if ranged != null and clip in [RangedPose.BOW_IDLE, RangedPose.BOW]:
+		return RangedPose.LENGTHS[clip]
 	var player: AnimationPlayer = main_player if main_player != null else riders[0]
 	return player.get_animation(clip).length if player.has_animation(clip) else 0.0
 
@@ -268,18 +334,20 @@ func _sync_rider_seat(i: int, clip: String, phase: float) -> void:
 	seat.set_meta("fallen", true)
 
 
-func pose_at(clip: String, elapsed: float) -> bool:
+func pose_at(clip: String, elapsed: float, ranged_weight := 1.0) -> bool:
 	var length := clip_length(clip)
 	if length <= 0.0:
 		return false
-	var looping := clip in ["Idle", "Walk", "Run"]
+	var bow_pose := ranged != null and (clip == RangedPose.BOW_IDLE or clip == RangedPose.BOW)
+	var base := "Idle" if bow_pose else clip
+	var looping := clip in ["Idle", "Walk", "Run", RangedPose.BOW_IDLE]
 	var phase := (fposmod(elapsed, length) if looping else minf(elapsed, length)) / length
 	if main_player != null:
 		_sample(main_player, clip, elapsed, looping)
 	if not mounts.is_empty():
-		var horse_clip: String = HORSE_CLIPS[clip]
+		var horse_clip: String = HORSE_CLIPS[base]
 		var horse_time := elapsed
-		if key == "horseArcher" and clip in ["Windup", "Attack"]:
+		if ranged != null and clip == RangedPose.BOW:
 			horse_clip = "Gallop" if moving else "Idle"
 			if _last_horse_clip != clip:
 				_last_horse_base = mounts[0].current_animation_position
@@ -294,7 +362,11 @@ func pose_at(clip: String, elapsed: float) -> bool:
 		_last_horse_clip = clip
 	for i in riders.size():
 		var player := riders[i]
-		_sample(player, clip, phase * player.get_animation(clip).length, looping)
+		var rider_clip := "Run" if bow_pose and moving else base
+		var rider_time := phase * player.get_animation(rider_clip).length
+		if bow_pose:
+			rider_time = mounts[0].current_animation_position if moving else 0.0
+		_sample(player, rider_clip, rider_time, looping or (bow_pose and moving))
 		_sync_rider_seat(i, clip, phase)
 		if clip != "Death" and _seats[i].has_meta("fallen"):
 			_seats[i].remove_meta("fallen")
@@ -304,6 +376,15 @@ func pose_at(clip: String, elapsed: float) -> bool:
 	_turn_wheels()
 	if _reins_view != null:
 		_draw_reins(clip != "Death" or phase < 0.27)
+	if ranged != null:
+		if clip == "Death":
+			ranged.set_visible(false)
+		elif clip == RangedPose.BOW:
+			ranged.apply(clip, elapsed, ranged_weight)
+		elif clip == RangedPose.BOW_IDLE and not moving:
+			ranged.hold_bow()
+		else:
+			ranged.follow_hands()
 	return true
 
 
@@ -327,6 +408,8 @@ func _bone_global(skeleton: Skeleton3D, joint: String) -> Vector3:
 func launch_point() -> Vector3:
 	if key == "cyclops":
 		return _bone_global(rig, "Rock")
+	if ranged != null:
+		return ranged.anchor.to_global(ranged.launch)
 	return _bone_global(rider_rigs[0], "hand_l")
 
 

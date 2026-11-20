@@ -144,6 +144,10 @@ func _build_boss(key: String) -> bool:
 	strike = "Attack"
 	reaction = "Hit"
 	fall = "Death"
+	if boss_model.ranged != null:
+		ranged = boss_model.ranged
+		idle = ranged.idle_clip()
+		strike = ranged.action_clip()
 	set_meta("enemy_style", key)
 	return true
 
@@ -154,6 +158,10 @@ func clip_length(clip: String) -> float:
 
 func pose_at(clip: String, elapsed: float) -> bool:
 	return super.pose_at(clip, elapsed) if boss_model == null else boss_model.pose_at(clip, elapsed)
+
+
+func _pose_with_ranged(clip: String, elapsed: float, weight: float) -> bool:
+	return super._pose_with_ranged(clip, elapsed, weight) if boss_model == null else boss_model.pose_at(clip, elapsed, weight)
 
 
 static func _body_file(style: String, suffix: String) -> String:
@@ -192,15 +200,18 @@ func _build_human(key: String, variation: int) -> bool:
 	_rig.add_child(outfit_root)
 	# У друидов и египтян выбираем светлое льняное полотно из двух выкрасок.
 	var fabric := 1 if style == "priest" else (0 if style in ["egypt", "druid"] else variation)
-	for part: String in [_body_file(style, _suffix()), "%s_%d%s" % [style, fabric, _suffix()], equipment, kit[2], hat]:
+	var ranged_mode := String({"bow": "bow", "staff": "cast", "sling": "sling"}.get(equipment, ""))
+	var held := equipment if ranged_mode.is_empty() else ""
+	for part: String in [_body_file(style, _suffix()), "%s_%d%s" % [style, fabric, _suffix()], held, kit[2], hat]:
 		if not part.is_empty() and not _add_kit_file(part, outfit_root, _atlas, ASSETS):
 			return false
 	if style == "celt" and not _female and not _add_kit_file("moustache", outfit_root, _atlas, ASSETS):
 		return false
-	if equipment in ["bow", "staff", "sling"]:
-		idle = "Spell_Simple_Idle"
-		strike = "Spell_Simple_Shoot" if equipment != "sling" else "Punch_Cross"
-		yaw = 49.0
+	if not ranged_mode.is_empty():
+		equip_ranged(ranged_mode)
+		idle = ranged.idle_clip()
+		strike = ranged.action_clip()
+		yaw = 67.0 if ranged_mode == "bow" else 52.0
 	if hat == "crest":
 		stature = 2.02
 	elif hat in ["cap", "cone"]:

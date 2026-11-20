@@ -778,7 +778,7 @@ func _handle(evs: Array) -> void:
 				var src: LegionSim.Unit = e.get("from")
 				if src != null and src.alive:
 					var priest := _view(src)
-					priest.attack()
+					battle_view.cast(priest)
 					battle_view.ring(priest.position, 55.0, BattleView.GOLD)
 			"slam", "boom":
 				var pos := BattleView.point(float(e["x"]), float(e["z"]))

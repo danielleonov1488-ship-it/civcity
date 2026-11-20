@@ -5,6 +5,7 @@ const QUATERNIUS := "res://assets/quaternius/"
 const HELMET := "res://assets/synty/FBX/Attachments/SM_Chr_Attach_Helmet_03.fbx"
 const KIT := "res://assets/legion_chars/"
 const BONE_MAP := preload("res://assets/rig/bonemap_synty.tres")
+const RangedPose = preload("res://scripts/legion_ranged_pose.gd")
 const A_STYLES := ["peasant", "worker", "legionary"]
 const STYLES := ["peasant", "worker", "legionary", "centurion", "patrician", "toga",
 	"cook", "smith", "archer", "priest"]
@@ -34,6 +35,8 @@ var _back_shield: Node3D
 var _hair: Node3D
 var _kit_hair: MeshInstance3D
 var _bow: Node3D
+var ranged: RangedPose
+var _rival_hero: LegionFighter
 var _hammer: Node3D
 var _rig: Skeleton3D
 var _groups: Dictionary = {}
@@ -46,9 +49,27 @@ var _clips: Dictionary = {}
 var _clip_lengths: Dictionary = {}
 var _sample_time := -INF
 var _sample_clip := ""
+var _sample_weight := 1.0
+var _ranged_visible := false
 var _faded_meshes: Array[Node] = []
 var _fade_materials: Array[Dictionary] = []
 var _opacity := 1.0
+var _capes: Array[Node3D] = []
+var _enemy_shield: MeshInstance3D
+var _fall_shield_source: Node3D
+var _fall_shield: MeshInstance3D
+var _fall_start: Transform3D
+var _fall_target: Transform3D
+var _fall_bounds: AABB
+var _fall_flat_to_mesh: Transform3D
+var _fall_rig_from_model: Basis
+var _fall_indices := PackedInt32Array()
+var _fall_from_rig: Transform3D
+var _fallen := false
+const ENEMY_SHIELD_NORMAL := Vector3(0.770, 0.192, 0.609)
+const FALL_JOINTS := ["Hips", "Chest", "Head", "LeftUpperArm", "LeftLowerArm", "LeftHand",
+	"RightUpperArm", "RightLowerArm", "RightHand", "LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot"]
+const FALL_RADIUS := [0.145, 0.175, 0.125, 0.089, 0.070, 0.048, 0.089, 0.070, 0.048, 0.080, 0.080, 0.074, 0.074]
 static var _kit_cache: Dictionary = {}
 static var _bound_skins: Dictionary = {}
 
@@ -73,7 +94,11 @@ func build(family: int, female: bool, variant: String, look := {}, outfit := "pe
 func build_rival_hero(look: Dictionary, id: int) -> Dictionary:
 	var hero := LegionFighter.create_hero(look, 1.0, id)
 	add_child(hero)
+	_rival_hero = hero
+	_rig = hero.skel
 	_register_player(hero.anim)
+	if hero._cape_sk != null:
+		_capes.append(hero._cape_sk.get_parent() as Node3D)
 	set_meta("look", look.duplicate(true))
 	set_meta("loadout", {"outfit": "centurion", "sword": true, "shield": true, "helmet": false})
 	pose_at(String(hero.clip["idle"]), 0.0)
@@ -205,6 +230,9 @@ func _load_outfit(outfit: String) -> bool:
 			group.free()
 			return false
 	_groups[outfit] = group
+	var cape := group.get_node_or_null("outfit_" + outfit + "_cape") as Node3D
+	if cape != null:
+		_capes.append(cape)
 	_faded_meshes.clear()
 	_fade_materials.clear()
 	return true
@@ -220,7 +248,9 @@ func _add_kit_file(stem: String, group: Node3D, atlas: Material, folder := KIT) 
 		var model_from_mesh: Transform3D = entry["transform"]
 		var rig_from_mesh := rig_from_model * model_from_mesh
 		var names: PackedStringArray = entry["bones"]
-		var key := [_female, names, rig_from_mesh]
+		# У плаща нет своих костей. Таз в UAL Death01 сильно уходит от лопаток.
+		var cape := stem.contains("_cape_")
+		var key := [_female, names, rig_from_mesh, cape]
 		var skin: Skin = _bound_skins.get(key)
 		if skin == null:
 			var used: Dictionary = entry["used"]
@@ -229,6 +259,8 @@ func _add_kit_file(stem: String, group: Node3D, atlas: Material, folder := KIT) 
 			for i in names.size():
 				var mapped: StringName = BONE_MAP.find_profile_bone_name(StringName(names[i]))
 				var bone := _rig.find_bone(mapped if mapped != &"" else StringName(names[i]))
+				if cape:
+					bone = _rig.find_bone("UpperChest")
 				if bone < 0:
 					if used.has(i):
 						return _fail("%s missing weighted bone %s" % [stem, names[i]])
@@ -245,6 +277,8 @@ func _add_kit_file(stem: String, group: Node3D, atlas: Material, folder := KIT) 
 		part.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		part.skeleton = NodePath("../..") if group.get_parent() == _rig else NodePath("../../..")
 		group.add_child(part)
+		if folder != KIT and stem in ["oval", "hex", "round"]:
+			_enemy_shield = part
 	return true
 
 
@@ -325,28 +359,231 @@ func _register_player(player: AnimationPlayer) -> void:
 
 
 func pose_at(clip: String, elapsed: float) -> bool:
+	_sample_time = -INF
+	return _pose_with_ranged(clip, elapsed, 1.0)
+
+
+func _pose_with_ranged(clip: String, elapsed: float, weight: float) -> bool:
 	var key := clip.to_lower()
+	var action := _ranged_visible and clip == ranged.action_clip()
+	var still := _ranged_visible and clip == ranged.idle_clip()
+	var procedural := action or still
+	var fall := _rig != null and key.begins_with("death")
+	if _fallen and not fall:
+		_restore_fall()
+	if procedural:
+		key = "idle"
 	var found := StringName(_clips.get(key, &""))
 	if found == &"":
 		return _fail("missing animation " + clip)
 	for player: AnimationPlayer in _players:
 		if player.assigned_animation != found or not player.is_playing():
 			player.play(found, 0.0)
-		player.seek(fposmod(elapsed, maxf(0.001, float(_clip_lengths[key]))), true)
+		var animation := player.get_animation(found)
+		var t := 0.0 if procedural else elapsed
+		t = fposmod(t, animation.length) if animation.loop_mode != Animation.LOOP_NONE else clampf(t, 0.0, animation.length)
+		player.seek(t, true)
+	if fall:
+		_pose_fall(clampf(elapsed / maxf(0.001, float(_clip_lengths[key])), 0.0, 1.0))
+	if _ranged_visible:
+		if still and ranged.mode == "bow" and weight == 1.0:
+			ranged.hold_bow()
+		elif procedural:
+			ranged.apply(clip, elapsed, weight)
+		elif fall:
+			ranged.set_visible(false)
+		else:
+			ranged.follow_hands()
 	return true
 
 
-func animate(clip: String, elapsed: float) -> void:
-	# Видимые позы обновляются с частотой 24 Гц, движение по экрану остаётся плавным.
-	var sample := floorf(elapsed * 24.0) / 24.0
-	if _sample_clip != clip or _sample_time != sample:
+func animate(clip: String, elapsed: float, weight := 1.0, hz := 24.0) -> void:
+	# Стойка стрелка на земле фиксирована. Посадка всадника следует за конём.
+	var sample := 0.0 if _ranged_visible and clip == ranged.idle_clip() else floorf(elapsed * hz) / hz
+	if ranged != null and clip == ranged.action_clip():
+		var release := ranged.release_time
+		sample = maxf(sample, release) if elapsed >= release else sample
+		if elapsed < release and ranged.mode == "bow" and elapsed >= RangedPose.NOCK:
+			sample = maxf(sample, RangedPose.NOCK)
+	if _sample_clip != clip or _sample_time != sample or _sample_weight != weight:
 		_sample_clip = clip
 		_sample_time = sample
-		pose_at(clip, sample)
+		_sample_weight = weight
+		_pose_with_ranged(clip, sample, weight)
 
+
+func _pose_fall(phase: float) -> void:
+	if _fall_indices.is_empty():
+		for joint: String in FALL_JOINTS:
+			_fall_indices.append(_rig.find_bone(joint))
+		_fall_from_rig = Citizen._rel(_rig, self)
+		_fall_rig_from_model = _fall_from_rig.basis.inverse()
+	if _fall_indices.has(-1):
+		return
+	_fallen = true
+	for cape: Node3D in _capes:
+		cape.visible = phase < 0.24
+	var settle := smoothstep(0.32, 0.88, phase)
+	if settle <= 0.0:
+		_drop_shield(phase)
+		return
+	var i := _fall_indices[0]
+	var hip := _rig.get_bone_global_pose(i)
+	var up := _fall_rig_from_model * Vector3.UP
+	hip.basis = hip.basis.rotated(up.normalized(), 0.14 * settle)
+	_rig.set_bone_global_pose(i, hip)
+	var side := (_fall_point(3) - _fall_point(6)).normalized()
+	var feet := (_fall_point(0) - _fall_point(1)).normalized()
+	_fall_aim(3, 4, feet * 0.72 + side * 0.48 + Vector3.UP * 0.09, settle)
+	_fall_aim(4, 5, feet * 0.34 - side * 0.88 + Vector3.UP * 0.43, settle)
+	_fall_aim(6, 7, feet * 0.84 - side * 0.49, settle)
+	_fall_aim(7, 8, feet * 0.27 - side * 0.85 + Vector3.UP * 0.17, settle)
+	var lowest := INF
+	for joint in _fall_indices.size():
+		lowest = minf(lowest, _fall_point(joint).y - float(FALL_RADIUS[joint]))
+	hip.origin += up * ((0.016 - lowest) * settle)
+	_rig.set_bone_global_pose(i, hip)
+	_drop_shield(phase)
+
+
+func _fall_point(joint: int) -> Vector3:
+	return _fall_from_rig * _rig.get_bone_global_pose(_fall_indices[joint]).origin
+
+
+func _fall_aim(joint: int, child: int, direction: Vector3, weight: float) -> void:
+	var i := _fall_indices[joint]
+	var frame := _rig.get_bone_global_pose(i)
+	var old := frame.basis * _rig.get_bone_pose_position(_fall_indices[child])
+	var next := _fall_rig_from_model * direction
+	var turn := Quaternion(old.normalized(), next.normalized())
+	frame.basis = Basis(Quaternion.IDENTITY.slerp(turn, weight)) * frame.basis
+	_rig.set_bone_global_pose(i, frame)
+
+
+func _drop_shield(phase: float) -> void:
+	if phase < 0.28:
+		if _fall_shield_source != null:
+			_restore_shield()
+		return
+	if _fall_shield_source == null:
+		var shield := _enemy_shield as Node3D
+		if shield == null:
+			shield = _rival_hero.offhand if _rival_hero != null else _shield
+		if (shield == null or not shield.visible) and _back_shield != null:
+			shield = _back_shield
+		if shield == null or not shield.visible:
+			return
+		_prepare_shield_drop(shield)
+		if _fall_shield_source == null:
+			return
+	var k := smoothstep(0.28, 0.76, phase)
+	var hips := _fall_point(0)
+	var feet := (hips - _fall_point(1)).slide(Vector3.UP).normalized()
+	var side := feet.cross(Vector3.UP)
+	if side.is_zero_approx():
+		side = Vector3.RIGHT
+	var ground := hips.slide(Vector3.UP) + side * 0.88 - feet * 0.12
+	var center := _fall_bounds.get_center()
+	_fall_target.origin = ground - Vector3(center.x, _fall_bounds.position.y - 0.012, center.z)
+	var target := _fall_start.interpolate_with(_fall_target, k)
+	var at := (_fall_start * (_fall_flat_to_mesh * center)).lerp(_fall_target.origin + center, k)
+	target.origin = at - target.basis * (_fall_flat_to_mesh * center) + Vector3.UP * (0.12 * sin(k * PI))
+	var base := (target * _fall_flat_to_mesh * _fall_bounds).position.y
+	target.origin.y += maxf(0.0, 0.012 - base)
+	_fall_shield.transform = target
+
+func _prepare_shield_drop(shield: Node3D) -> void:
+	var mesh := shield as MeshInstance3D
+	if mesh == null:
+		var parts := shield.find_children("*", "MeshInstance3D", true, false)
+		if parts.is_empty():
+			return
+		mesh = parts[0] as MeshInstance3D
+	if mesh.mesh == null:
+		return
+	_fall_start = Citizen._rel(mesh, self)
+	var normal := Vector3.FORWARD
+	if shield == _enemy_shield:
+		# Вражеский щит запечён в сетку и привязан к кисти одной костью.
+		normal = ENEMY_SHIELD_NORMAL
+		var hand := _fall_indices[5]
+		for bind in mesh.skin.get_bind_count():
+			if mesh.skin.get_bind_bone(bind) == hand:
+				_fall_start = _fall_from_rig * _rig.get_bone_global_pose(hand) * mesh.skin.get_bind_pose(bind)
+				break
+	var size := _fall_start.basis.get_scale().abs()
+	var tilt := Basis(Quaternion(normal.normalized(), Vector3.UP))
+	var flat := (Basis(Vector3.UP, 0.38) * tilt).scaled_local(size)
+	_fall_target = Transform3D(flat, Vector3.ZERO)
+	_fall_flat_to_mesh = _fall_target.affine_inverse()
+	# Размеры считаем в плоскости щита, чтобы его нижний край лёг на землю.
+	var has_point := false
+	for surface in mesh.mesh.get_surface_count():
+		var vertices: PackedVector3Array = mesh.mesh.surface_get_arrays(surface)[Mesh.ARRAY_VERTEX]
+		for vertex: Vector3 in vertices:
+			var point := flat * vertex
+			_fall_bounds = _fall_bounds.expand(point) if has_point else AABB(point, Vector3.ZERO)
+			has_point = true
+	if not has_point:
+		return
+	if _fall_shield == null:
+		_fall_shield = MeshInstance3D.new()
+		_fall_shield.name = "FallenShield"
+		_fall_shield.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_fall_shield)
+	_fall_shield.mesh = mesh.mesh
+	_fall_shield.material_override = mesh.material_override
+	for surface in mesh.mesh.get_surface_count():
+		_fall_shield.set_surface_override_material(surface, mesh.get_surface_override_material(surface))
+	_fall_shield_source = shield
+	shield.hide()
+	_fall_shield.show()
+	_faded_meshes.clear()
+	_fade_materials.clear()
+
+
+func _restore_shield() -> void:
+	_fall_shield_source.show()
+	_fall_shield_source = null
+	_fall_shield.hide()
+	_faded_meshes.clear()
+	_fade_materials.clear()
+
+
+func _restore_fall() -> void:
+	_fallen = false
+	for cape: Node3D in _capes:
+		cape.show()
+	if _fall_shield_source != null:
+		_restore_shield()
 
 func clip_length(clip: String) -> float:
+	if ranged != null and (clip == ranged.idle_clip() or clip == ranged.action_clip()):
+		return RangedPose.LENGTHS[clip]
 	return float(_clip_lengths.get(clip.to_lower(), 0.0))
+
+
+func equip_ranged(mode: String) -> void:
+	if _rig == null:
+		return
+	if ranged != null:
+		if ranged.mode == mode:
+			_ranged_visible = true
+			return
+		ranged.set_visible(false)
+	ranged = RangedPose.new(_rig, self, mode)
+	_ranged_visible = true
+	if mode == "bow" and _rival_hero != null:
+		for item: Node3D in [_rival_hero.weapon, _rival_hero.offhand]:
+			if item != null:
+				item.hide()
+	if mode == "bow" and _outfit == "centurion":
+		_sword.hide()
+		_shield.hide()
+		_add_kit_file("outfit_archer_quiver" + _suffix(), _groups["centurion"], _atlas)
+	_sample_time = -INF
+	_faded_meshes.clear()
+	_fade_materials.clear()
 
 
 func set_opacity(value: float) -> void:
@@ -425,6 +662,8 @@ func set_loadout(loadout: Dictionary) -> bool:
 	if _hair != null:
 		_hair.visible = hair_visible
 	_sword.visible = bool(loadout.get("sword", false))
+	if bool(loadout.get("bow", false)) and _outfit != "archer":
+		equip_ranged("bow")
 	_hammer.visible = _outfit in ["worker", "smith"] and not _sword.visible
 	var shield := bool(loadout.get("shield", false))
 	if shield and _outfit == "archer" and _back_shield == null:
@@ -459,8 +698,9 @@ func set_outfit(outfit: String) -> bool:
 			group.visible = name == outfit
 		if outfit == "archer" and _bow == null and not _add_bow():
 			return false
-		if _bow != null:
-			_bow.visible = outfit == "archer"
+		if ranged != null and ranged.mode == "bow":
+			_ranged_visible = outfit == "archer"
+			ranged.set_visible(_ranged_visible)
 		var active: Node3D = _groups[outfit]
 		var helmet := active.get_node_or_null("outfit_" + outfit + "_helmet") as Node3D
 		if helmet != null:
@@ -545,19 +785,8 @@ func _add_work() -> bool:
 
 
 func _add_bow() -> bool:
-	_bow = Artisau.make("Bow", 0.90)
-	if not _has_mesh(_bow):
-		return _fail("bow missing")
-	_bow.name = "ArcherBow"
-	_bow.position.y -= 0.45
-	var hand: String = LEFT_HAND[_family]
-	if not pose_at("Spell_Simple_Idle", 0.2):
-		return false
-	var frame := _bone_frame(_rig, hand, false)
-	var grip := LegionFighter._basis(Vector3(0.0, 1.0, 0.12), Vector3(-1.0, 0.0, 0.0))
-	_mount(hand, _bow, frame, Transform3D(grip, frame.origin + Vector3(0, 0.0, 0.03)))
-	_faded_meshes.clear()
-	_fade_materials.clear()
+	equip_ranged("bow")
+	_bow = ranged.bow
 	return true
 
 

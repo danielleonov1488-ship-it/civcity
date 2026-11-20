@@ -6,6 +6,7 @@ const FortPerson = preload("res://scripts/fort_person.gd")
 const Actor = preload("res://scripts/charpilot_actor.gd")
 const Enemy = preload("res://scripts/legion_enemy_actor.gd")
 const Boss = preload("res://scripts/legion_boss_model.gd")
+const RangedPose = preload("res://scripts/legion_ranged_pose.gd")
 const PersonLayer = preload("res://scripts/fort_person_layer.gd")
 const ART := "res://assets/legion_b1/"
 const DESIGN := Vector2(1600, 900)
@@ -15,6 +16,7 @@ const PEOPLE_TILT := 5.0
 const WIDE_LANE_Y := -118.0
 const WIDE_LANE_STEP := 48.0
 const PEOPLE_DEPTH := 1024.0
+const PEOPLE_FRAME := 1.0 / 120.0
 const FIELDS := {"forest": 2, "darkforest": 2, "swamp": 3, "labyrinth": 4,
 	"rocks": 4, "desert": 4, "hades": 4}
 const TRAIL_Y := [0.718, 0.710, 0.743, 0.714]
@@ -49,6 +51,12 @@ var _enemy_variants := {}
 var _stone: Texture2D
 var _trail_y := 0.72
 var _zoom := 1.0
+var _people_time := 0.0
+var _dead_ids: Array[int] = []
+var _done_shots: Array[LegionSim.Shot] = []
+var profile_poses := false
+var pose_usec := 0
+var windup_usec := 0
 
 
 func _ready() -> void:
@@ -67,6 +75,7 @@ func _ready() -> void:
 	people_layer.name = "AlliedPeople"
 	add_child(people_layer)
 	people_layer.setup("BattlePeople3D", PEOPLE_TILT)
+	people_layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	units.z_index = 2
 	effects.z_index = 3
 	people_layer.z_index = 1
@@ -97,7 +106,9 @@ func _fit() -> void:
 	world.position = Vector2(size.x * 0.5, minf(path_y, size.y * 0.79))
 	world.scale = Vector2.ONE * maxf(0.001, minf(size.x / DESIGN.x, size.y / DESIGN.y) / _zoom)
 	people_layer.fit(size)
-	for f: Fighter in views.values():
+	people_layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	for id in views:
+		var f: Fighter = views[id]
 		_place_actor(f)
 
 
@@ -206,6 +217,8 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 		f.hit_clip = String(clips["hit"])
 		f.death_clip = String(clips["death"])
 		f.clip = f.idle_clip
+		if u.shot == "arrow":
+			f.actor.equip_ranged("bow")
 	elif u.side == "ally" or (pvp and Legion.UNITS.has(u.key)):
 		var person := _ally_person(u) if u.side == "ally" else {}
 		if person.is_empty():
@@ -217,18 +230,28 @@ func add_unit(u: LegionSim.Unit) -> Fighter:
 		f.actor = FortPerson.make(person, people_layer.viewport, gear, u.key)
 		f.actor.name = ("%s_%d" % ["Ally" if u.side == "ally" else "Enemy", u.id])
 		var loadout: Dictionary = f.actor.get_meta("loadout")
-		f.yaw = 48.0 if loadout["outfit"] == "archer" else 56.0
-		f.idle_clip = "Spell_Simple_Idle" if loadout["outfit"] == "archer" else ("Sword_Idle" if bool(loadout["sword"]) else "Idle")
-		f.attack_clip = "Spell_Simple_Shoot" if loadout["outfit"] == "archer" or u.heal_pow > 0.0 else "Sword_Attack"
+		if u.heal_pow > 0.0:
+			f.actor.equip_ranged("cast")
+		elif u.key == "slinger" or u.shot == "sling":
+			f.actor.equip_ranged("sling")
+		elif u.shot == "arrow":
+			f.actor.equip_ranged("bow")
+		f.idle_clip = "Sword_Idle" if bool(loadout["sword"]) else "Idle"
 		f.clip = f.idle_clip
-		if u.side == "enemy":
-			f.hit_clip = "Hit_Chest"
-			f.death_clip = "Death01"
+		f.hit_clip = "Hit_Chest"
+		f.death_clip = "Death01"
 	else:
 		_add_enemy(f)
 	if f.actor != null and not f.actor.problem.is_empty():
 		f.actor.free()
 		f.actor = null
+	if f.actor != null and f.actor.ranged != null:
+		f.idle_clip = f.actor.ranged.idle_clip()
+		f.attack_clip = f.actor.ranged.action_clip()
+		f.release_time = f.actor.ranged.release_time
+		f.clip = f.idle_clip
+		if f.boss_model == null and f.actor.ranged.mode == "bow":
+			f.yaw = 67.0
 	if f.actor == null:
 		f.sprite = AnimatedSprite2D.new()
 		f.sprite.name = ("EnemySprite" if u.side == "enemy" else "AllySprite")
@@ -293,7 +316,7 @@ func _ally_person(u: LegionSim.Unit) -> Dictionary:
 	return person
 
 
-func _place_actor(f: Fighter) -> void:
+func _place_actor(f: Fighter, rate := 1.0, force_pose := false) -> void:
 	if not is_instance_valid(f.actor):
 		return
 	var feet := screen(f.body_ground())
@@ -307,7 +330,14 @@ func _place_actor(f: Fighter) -> void:
 		people_layer.place(f.actor, feet, height, f.facing_angle(), false, depth)
 	if f.actor.visible:
 		f.actor.set_opacity(f.modulate.a)
-		f.actor.animate(f.clip, f.sample)
+		var started := Time.get_ticks_usec() if profile_poses else 0
+		var hz := (15.0 if height < 165.0 else 24.0) / maxf(1.0, rate)
+		if force_pose:
+			f.actor.pose_at(f.clip, f.sample)
+		else:
+			f.actor.animate(f.clip, f.sample, f.ranged_mix, hz)
+		if started != 0:
+			pose_usec += Time.get_ticks_usec() - started
 	if long:
 		var hit: Vector3 = f.long_model[1]
 		if sin(deg_to_rad(f.facing_angle())) > 0.0:
@@ -377,12 +407,39 @@ func shoot(s: LegionSim.Shot) -> void:
 	effects.add_child(sprite)
 	shots[s] = sprite
 	var source: Fighter = views.get(s.from.id) if s.from != null else null
-	if source != null and source.boss_model != null and source.unit.key in ["cyclops", "horseArcher"]:
+	if source != null and source.actor != null and source.actor.ranged != null:
+		var launch := _release(source)
+		sprite.set_meta("launch", launch)
+		sprite.set_meta("release_frame", Engine.get_process_frames())
+		if source.boss_model != null:
+			sprite.set_meta("boss_launch", launch)
+	elif source != null and source.boss_model != null and source.unit.key == "cyclops":
 		source.actor.pose_at(source.attack_clip, 0.0)
 		_place_actor(source)
 		var launch := people_layer.camera.unproject_position(source.boss_model.launch_point())
 		sprite.set_meta("boss_launch", (launch - world.position) / world.scale)
 	_place_shot(s, sprite, 0.0)
+
+
+func cast(source: Fighter) -> void:
+	if source.actor != null and source.actor.ranged != null and source.actor.ranged.mode == "cast":
+		_release(source)
+	else:
+		source.attack()
+
+
+func _release(source: Fighter) -> Vector2:
+	source.release_ranged()
+	_place_actor(source, 1.0, true)
+	people_layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	if not source.actor.visible:
+		source.actor.pose_at(source.clip, source.sample)
+	var ranged := source.actor.ranged
+	var launch := people_layer.camera.unproject_position(ranged.anchor.to_global(ranged.launch))
+	var at := (launch - world.position) / world.scale
+	if ranged.mode == "cast":
+		burst("fx_heal", at, 0.70)
+	return at
 
 
 func volley(origin: Vector2, target: Vector2, tint: Color) -> void:
@@ -403,7 +460,9 @@ func _place_shot(s: LegionSim.Shot, sprite: Node2D, k: float) -> void:
 	var source: Fighter = views.get(s.from.id) if s.from != null else null
 	var target: Fighter = views.get(s.target.id) if s.target != null else null
 	var a := (source.layout_point(s.x0, s.z0) if source != null else point(s.x0, s.z0)) - Vector2(0, 138.0)
-	if sprite.has_meta("boss_launch"):
+	if sprite.has_meta("launch"):
+		a = sprite.get_meta("launch")
+	elif sprite.has_meta("boss_launch"):
 		a = sprite.get_meta("boss_launch")
 	var b := (target.layout_point(s.x1, s.z1) if target != null else point(s.x1, s.z1)) - Vector2(0, 100.0)
 	if target != null and not target.long_model.is_empty():
@@ -423,25 +482,41 @@ func _place_shot(s: LegionSim.Shot, sprite: Node2D, k: float) -> void:
 
 func tick(sim: LegionSim, gdt: float, dt: float, acc: float, fighting: bool) -> void:
 	var weight := 1.0 - exp(-dt * 16.0) if gdt > 0.0 else 0.0
-	for id in views.keys():
+	var rate := gdt / dt if dt > 0.0 else 0.0
+	_people_time += dt
+	if _people_time >= PEOPLE_FRAME:
+		_people_time = fposmod(_people_time, PEOPLE_FRAME)
+		people_layer.viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	var started := Time.get_ticks_usec() if profile_poses else 0
+	for id in views:
 		var f: Fighter = views[id]
-		f.tick(gdt, gdt / dt if dt > 0.0 else 0.0, weight, fighting, sim.t)
-	for id in views.keys():
+		f.tick(gdt, rate, weight, fighting, sim.t, f.heal_due(sim, fighting))
+	if started != 0:
+		windup_usec += Time.get_ticks_usec() - started
+	for id in views:
 		var f: Fighter = views[id]
 		_track_contact(f, weight)
-		_place_actor(f)
+		if f.release_frame != Engine.get_process_frames():
+			_place_actor(f, rate)
 		if f.unit.alive:
 			f.status(sim.t, fighting)
 		elif f.modulate.a <= 0.0:
 			f.queue_free()
-			views.erase(id)
-	for s: LegionSim.Shot in shots.keys():
+			_dead_ids.append(id)
+	for id in _dead_ids:
+		views.erase(id)
+	_dead_ids.clear()
+	var frame := Engine.get_process_frames()
+	for s: LegionSim.Shot in shots:
 		var sprite: Node2D = shots[s]
 		if s.done or not sim.result.is_empty():
 			sprite.queue_free()
-			shots.erase(s)
-		else:
+			_done_shots.append(s)
+		elif int(sprite.get_meta("release_frame", -1)) != frame:
 			_place_shot(s, sprite, clampf((s.t + acc) / s.dur, 0.0, 1.0))
+	for s: LegionSim.Shot in _done_shots:
+		shots.erase(s)
+	_done_shots.clear()
 	for i in range(_bursts.size() - 1, -1, -1):
 		var f := _bursts[i]
 		f.age += gdt
@@ -502,6 +577,12 @@ class Fighter extends Node2D:
 	var hit_mark := Vector2.ZERO
 	var bar_mark := Vector2.ZERO
 	var shoot_turn := 0.0
+	var ranged_mix := 1.0
+	var aim_target: LegionSim.Unit
+	var release_frame := -1
+	var release_time := 0.0
+	var heal_step := -1
+	var heal_ready := false
 	var idle_clip := "Idle"
 	var walk_clip := "Walk"
 	var attack_clip := "Sword_Attack"
@@ -572,12 +653,14 @@ class Fighter extends Node2D:
 		return position.lerp(head(), 0.55) if long_model.is_empty() else hit_mark
 
 	func backward_shot() -> bool:
-		return boss_model != null and unit.key == "horseArcher" and clip in ["Windup", attack_clip]
+		return boss_model != null and unit.key == "horseArcher" and shoot_turn > 0.0
 
 	func facing_angle() -> float:
 		return (yaw - 180.0 * smoothstep(0.0, 1.0, shoot_turn)) * (-1.0 if flip_h else 1.0)
 
 	func attack(action := "") -> void:
+		if action.is_empty() and actor != null and actor.ranged != null:
+			return # Кадр выпуска задаёт событие снаряда.
 		if sprite != null:
 			sprite.stop()
 			sprite.play(&"attack")
@@ -587,10 +670,19 @@ class Fighter extends Node2D:
 			attack_left = actor.clip_length(clip)
 			hit_left = 0.0
 
+	func release_ranged() -> void:
+		clip = attack_clip
+		sample = release_time
+		attack_left = actor.clip_length(clip) - sample
+		hit_left = 0.0
+		ranged_mix = 1.0
+		aim_target = null
+		release_frame = Engine.get_process_frames()
+
 	func hurt() -> void:
 		flash = 0.14
 		modulate = Color(1.8, 1.24, 1.12)
-		if actor != null and not hit_clip.is_empty() and unit.alive and (boss_model == null or attack_left <= 0.0):
+		if actor != null and not hit_clip.is_empty() and unit.alive and (actor.ranged == null or clip != attack_clip) and (boss_model == null or attack_left <= 0.0):
 			clip = hit_clip
 			sample = 0.0
 			attack_left = 0.0
@@ -604,19 +696,22 @@ class Fighter extends Node2D:
 		clip = idle_clip
 		sample = 0.0
 		shoot_turn = 0.0
+		aim_target = null
+		ranged_mix = 1.0
 		if sprite != null:
 			sprite.play(&"idle")
 
-	func tick(gdt: float, rate: float, weight: float, fighting: bool, now: float) -> void:
+	func tick(gdt: float, rate: float, weight: float, fighting: bool, now: float, heal_due := INF) -> void:
 		if not unit.alive:
 			if sprite != null:
 				sprite.speed_scale = 0.0
 			if actor != null and not death_clip.is_empty():
-				var duration := 0.91 if boss_model == null else (1.42 if unit.key == "elephant" else 1.17)
+				var duration := 1.38 if boss_model == null else (1.42 if unit.key == "elephant" else 1.17)
 				death = minf(1.0, death + gdt / duration)
 				clip = death_clip
-				sample = minf(0.999, death / (0.94 if boss_model != null else 0.73)) * actor.clip_length(death_clip)
-				modulate.a = 1.0 - smoothstep(0.39, 1.0, death)
+				sample = minf(0.999, death / (0.94 if boss_model != null else 0.52)) * actor.clip_length(death_clip)
+				modulate.a = 1.0 - smoothstep(0.39 if boss_model != null else 0.60, 1.0, death)
+				ranged_mix = 1.0
 			else:
 				death = minf(1.0, death + gdt / 0.63)
 				modulate.a = 1.0 - death
@@ -649,8 +744,11 @@ class Fighter extends Node2D:
 			sample += minf(gdt, maxf(0.0, hit_left - 0.001))
 			hit_left = maxf(0.0, hit_left - gdt)
 		elif attack_left > 0.0:
-			sample += minf(gdt, maxf(0.0, attack_left - 0.001))
-			attack_left = maxf(0.0, attack_left - gdt)
+			if release_frame != Engine.get_process_frames():
+				sample += minf(gdt, maxf(0.0, attack_left - 0.001))
+				attack_left = maxf(0.0, attack_left - gdt)
+		elif actor.ranged != null and _ranged_windup(gdt, now, fighting, heal_due):
+			pass
 		elif boss_model != null and fighting and _windup(now):
 			clip = "Windup"
 			var length := actor.clip_length(clip)
@@ -660,10 +758,54 @@ class Fighter extends Node2D:
 			sample = sample + gdt * (walk_rate if walking else 1.0) if clip == next else 0.0
 			clip = next
 		if unit.key == "horseArcher" and boss_model != null:
-			shoot_turn = move_toward(shoot_turn, float(backward_shot()), gdt / 0.30)
+			var retreat := not unit.entering and unit.target != null and unit.target.alive
+			shoot_turn = move_toward(shoot_turn, float(retreat), gdt / 0.32)
+
+	func heal_due(sim: LegionSim, fighting: bool) -> float:
+		if not fighting or not unit.alive or unit.heal_pow <= 0.0 or unit.heal_t > RangedPose.RELEASES[RangedPose.CAST]:
+			return INF
+		if heal_step != sim.steps:
+			heal_step = sim.steps
+			heal_ready = false
+			for ally: LegionSim.Unit in sim.units:
+				if ally.alive and ally.side == unit.side and ally.hp < ally.max_hp and LegionSim.dist(unit, ally) <= unit.range_m:
+					heal_ready = true
+					break
+		return unit.heal_t if heal_ready else INF
+
+	func _ranged_windup(gdt: float, now: float, fighting: bool, heal_due: float) -> bool:
+		var due := heal_due
+		var target := unit.target
+		var valid := fighting and not unit.entering and unit.stun_t <= now
+		var release := release_time
+		if valid and target != null and target.alive:
+			var fast := unit.horn_k if unit.horn > now else 1.0
+			var cooldown := unit.timer / fast
+			if cooldown <= release and cooldown < due:
+				var distance := LegionSim.dist(unit, target)
+				var reach := unit.range_m + 0.35 * (unit.size + target.size - 2.0)
+				if distance + 0.01 >= unit.min_range:
+					var approach := maxf(0.0, distance - reach) / maxf(0.01, unit.speed * fast)
+					due = minf(due, approach + cooldown)
+		if valid and due <= release and (aim_target == null or aim_target.alive):
+			if clip != attack_clip or sample >= release or ranged_mix < 1.0:
+				clip = attack_clip
+				sample = 0.0
+			sample = minf(release - 0.001, move_toward(sample, maxf(0.0, release - due), gdt * 2.0))
+			if due < heal_due:
+				aim_target = target
+			ranged_mix = 1.0
+			return true
+		if clip == attack_clip and sample < release:
+			ranged_mix = move_toward(ranged_mix, 0.0, gdt / RangedPose.BLEND)
+			if ranged_mix > 0.0:
+				return true
+		aim_target = null
+		ranged_mix = 1.0
+		return false
 
 	func _windup(now: float) -> bool:
-		if unit.key not in ["cyclops", "horseArcher"] or unit.entering or unit.target == null or not unit.target.alive:
+		if unit.key != "cyclops" or unit.entering or unit.target == null or not unit.target.alive:
 			return false
 		if unit.stun_t > now:
 			return false
@@ -700,15 +842,30 @@ class GroundLayer extends Node2D:
 	var marks: Array[Dictionary] = []
 	var lanes: Array[Dictionary] = []
 	var time := 0.0
+	var shadow: GradientTexture2D
+
+	func _ready() -> void:
+		shadow = GradientTexture2D.new()
+		shadow.width = 64
+		shadow.height = 64
+		shadow.fill = GradientTexture2D.FILL_RADIAL
+		shadow.fill_from = Vector2(0.5, 0.5)
+		shadow.fill_to = Vector2(1.0, 0.5)
+		shadow.gradient = Gradient.new()
+		shadow.gradient.offsets = PackedFloat32Array([0.0, 0.84, 1.0])
+		shadow.gradient.colors = PackedColorArray([Color(1, 1, 1, 0.41), Color(1, 1, 1, 0.31), Color(1, 1, 1, 0)])
 
 	func tick(dt: float) -> void:
 		time += dt
-		for list: Array in [marks, lanes]:
-			for i in range(list.size() - 1, -1, -1):
-				list[i]["t"] = float(list[i]["t"]) - dt
-				if float(list[i]["t"]) <= 0.0:
-					list.remove_at(i)
+		_age_marks(marks, dt)
+		_age_marks(lanes, dt)
 		queue_redraw()
+
+	func _age_marks(list: Array[Dictionary], dt: float) -> void:
+		for i in range(list.size() - 1, -1, -1):
+			list[i]["t"] = float(list[i]["t"]) - dt
+			if float(list[i]["t"]) <= 0.0:
+				list.remove_at(i)
 
 	func _draw() -> void:
 		for lane_mark in lanes:
@@ -716,12 +873,23 @@ class GroundLayer extends Node2D:
 			var tint: Color = lane_mark["color"]
 			tint.a *= sin(float(lane_mark["t"]) / float(lane_mark["lifetime"]) * PI) * 0.7
 			draw_line(LegionBattleView.point(-15.0, z), LegionBattleView.point(15.0, z), tint, float(lane_mark["width"]), true)
-		for f: Fighter in views.values():
+		for id in views:
+			var f: Fighter = views[id]
 			var foot := f.body_ground().lerp(f.contact_point(), 0.34) + Vector2(0, 2)
-			draw_set_transform(foot, 0.0, Vector2(1.0, 0.22 if not f.wide else 0.18))
 			var r := (65.0 if f.wide else 39.0) * f.scale.x
-			draw_circle(Vector2.ZERO, r * 1.15, Color(0.24, 0.11, 0.04, 0.19 * f.modulate.a), true, -1.0, true)
-			draw_circle(Vector2.ZERO, r, Color(0.24, 0.11, 0.04, 0.27 * f.modulate.a), true, -1.0, true)
+			var tint := Color(0.24, 0.11, 0.04, f.modulate.a)
+			var aspect := 0.18 if f.wide else 0.22
+			var fallen := f.death > 0.16 and f.actor != null and f.actor._fallen
+			if fallen:
+				var k := smoothstep(0.16, 0.52, f.death)
+				var at := f.actor._fall_point(0).lerp(f.actor._fall_point(1), 0.5)
+				var offset := f.actor.basis * Vector3(at.x, 0, at.z)
+				foot += Vector2(offset.x, offset.z * sin(deg_to_rad(PEOPLE_TILT))) * (f.model_height() / 1.79) / f.actor.scale.x
+				r *= lerpf(1.0, 2.1, k)
+				aspect = lerpf(aspect, 0.16, k)
+			draw_set_transform(foot, 0.0, Vector2(1.0, aspect))
+			var half := Vector2.ONE * r * 1.15
+			draw_texture_rect(shadow, Rect2(-half, half * 2.0), false, tint)
 			if f.unit.alive and f.status_color.a > 0.0:
 				_ellipse(foot, r * (1.15 + sin(time * 6.0) * 0.08), f.status_color)
 		for m in marks:
